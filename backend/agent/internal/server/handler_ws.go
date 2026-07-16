@@ -1754,6 +1754,8 @@ func appendDoagentStructuredResultContract(instruction, resultPath string) strin
 		"The terminal response is not used as the machine result. " +
 		"For a DeploymentRun, status may contain only phase, mutationCount, capabilities, evidence, and failures. " +
 		"Do not emit plannedMutations, runtimeAttestation, resultDigest, or any other status field. " +
+		"Every DeploymentRun evidence item must reference one of the allowed trusted DoOps plan tools; " +
+		"generic Bash, filesystem, browser, or delegation calls are not valid evidence. " +
 		"If the object is a DeploymentRun, every evidence item must contain exactly subject, observedAt, and toolRef; " +
 		"toolRef.tool is the exact runtime tool name and toolRef.input is the exact JSON input used for that call. " +
 		"The Gateway consumes toolRef and injects toolCall with the completed runtime call's exact id, tool, input, and result."

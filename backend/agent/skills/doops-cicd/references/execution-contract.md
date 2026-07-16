@@ -183,6 +183,10 @@ For `DeploymentRun`, `status` may contain only `phase`, `mutationCount`,
 such as `plannedMutations`, and do not emit runtime-owned fields such as
 `runtimeAttestation` or `resultDigest`.
 
+Every evidence `toolRef` must identify one of the allowed trusted DoOps plan
+tools. Generic Bash, filesystem, browser and delegation calls are not valid
+deployment evidence.
+
 Allowed phases are `planned`, `converged`, `blocked`, `failed` and
 `outcome-unknown`.
 
