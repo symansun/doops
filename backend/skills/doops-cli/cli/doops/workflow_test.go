@@ -350,7 +350,7 @@ func TestRunCICDCommandStopsBeforePromptWhenCredentialPrepareFails(t *testing.T)
 		"release-test",
 		false,
 	)
-	if err == nil || !strings.Contains(err.Error(), "credential prepare") {
+	if err == nil || !strings.Contains(err.Error(), "credential prepare failed: HTTP 403 Forbidden: credential_grant_denied") {
 		t.Fatalf("credential prepare failure must be returned, got %v", err)
 	}
 	if caller.calls != 0 {

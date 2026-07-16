@@ -110,11 +110,13 @@ type credentialSemanticRelease struct {
 		Name string `yaml:"name"`
 	} `yaml:"metadata"`
 	Spec struct {
-		Parameters          map[string]credentialTemplateParameter `yaml:"parameters,omitempty"`
-		Application         string                                 `yaml:"application"`
-		Release             credentialSemanticReleaseRelease       `yaml:"release,omitempty"`
-		Environment         string                                 `yaml:"environment"`
-		ConfigurationSource string                                 `yaml:"configurationSource"`
+		Parameters           map[string]credentialTemplateParameter `yaml:"parameters,omitempty"`
+		Application          string                                 `yaml:"application"`
+		Release              credentialSemanticReleaseRelease       `yaml:"release,omitempty"`
+		Environment          string                                 `yaml:"environment"`
+		ConfigurationSource  string                                 `yaml:"configurationSource"`
+		CredentialRefs       []credentialTemplateCredentialRef      `yaml:"credentialRefs,omitempty"`
+		CredentialBundleRefs []credentialTemplateBundleRef          `yaml:"credentialBundleRefs,omitempty"`
 	} `yaml:"spec"`
 }
 
@@ -308,6 +310,9 @@ func parseCredentialPlan(root, workflowPath string) (CredentialPlan, error) {
 		template.Spec.Application = semantic.Spec.Application
 		template.Spec.Environment = semantic.Spec.Environment
 		template.Spec.ConfigurationSource = semantic.Spec.ConfigurationSource
+		template.Spec.Parameters = semantic.Spec.Parameters
+		template.Spec.CredentialRefs = semantic.Spec.CredentialRefs
+		template.Spec.CredentialBundleRefs = semantic.Spec.CredentialBundleRefs
 	default:
 		if err := strictCredentialYAMLDecode(workflowData, &template); err != nil {
 			return CredentialPlan{}, invalidCredentialDeclaration(err)
@@ -334,19 +339,15 @@ func parseCredentialPlan(root, workflowPath string) (CredentialPlan, error) {
 	if err != nil {
 		return CredentialPlan{}, err
 	}
-	if _, err := credentialYAMLDocument(configurationData); err != nil {
+	configurationDocument, err := credentialYAMLDocument(configurationData)
+	if err != nil {
 		return CredentialPlan{}, err
 	}
 
-	var configuration credentialConfigurationSource
-	if err := strictCredentialYAMLDecode(configurationData, &configuration); err != nil {
-		return CredentialPlan{}, invalidCredentialDeclaration(err)
+	target, err := credentialConfigurationTargetForEnvironment(configurationDocument, configurationData, template.Spec.Environment)
+	if err != nil {
+		return CredentialPlan{}, err
 	}
-	environment, ok := configuration.Environments[template.Spec.Environment]
-	if !ok {
-		return CredentialPlan{}, invalidCredentialDeclaration(fmt.Errorf("environment %q is not declared", template.Spec.Environment))
-	}
-	target := environment.Target
 	if strings.TrimSpace(target.Name) == "" || strings.TrimSpace(target.Cluster) == "" || strings.TrimSpace(target.Instance) == "" {
 		return CredentialPlan{}, invalidCredentialDeclaration(fmt.Errorf("environment %q has an incomplete target", template.Spec.Environment))
 	}
@@ -395,6 +396,71 @@ func parseCredentialPlan(root, workflowPath string) (CredentialPlan, error) {
 		CredentialRefs: refs,
 		BundleRefs:     bundles,
 	}, nil
+}
+
+func credentialConfigurationTargetForEnvironment(document *yaml.Node, data []byte, environmentName string) (credentialConfigurationTarget, error) {
+	var identity credentialWorkflowIdentity
+	if err := yaml.Unmarshal(data, &identity); err != nil {
+		return credentialConfigurationTarget{}, invalidCredentialDeclaration(err)
+	}
+	if identity.Kind == "EnvironmentDefinition" {
+		if document == nil || len(document.Content) == 0 {
+			return credentialConfigurationTarget{}, invalidCredentialDeclaration(errors.New("EnvironmentDefinition document is empty"))
+		}
+		root := document.Content[0]
+		metadata := credentialYAMLMappingValue(root, "metadata")
+		deploy := credentialYAMLMappingValue(
+			credentialYAMLMappingValue(credentialYAMLMappingValue(root, "spec"), "execution"),
+			"deploy",
+		)
+		target := credentialConfigurationTarget{
+			Name:     credentialYAMLScalarValue(credentialYAMLMappingValue(deploy, "target")),
+			Cluster:  credentialYAMLScalarValue(credentialYAMLMappingValue(deploy, "cluster")),
+			Instance: credentialYAMLScalarValue(credentialYAMLMappingValue(deploy, "instance")),
+		}
+		if identity.APIVersion != "doops.sh/v2" ||
+			credentialYAMLScalarValue(credentialYAMLMappingValue(metadata, "name")) != environmentName {
+			return credentialConfigurationTarget{}, invalidCredentialDeclaration(fmt.Errorf("environment %q has an invalid EnvironmentDefinition identity", environmentName))
+		}
+		return target, nil
+	}
+	var configuration credentialConfigurationSource
+	if err := strictCredentialYAMLDecode(data, &configuration); err != nil {
+		return credentialConfigurationTarget{}, invalidCredentialDeclaration(err)
+	}
+	environment, ok := configuration.Environments[environmentName]
+	if !ok {
+		return credentialConfigurationTarget{}, invalidCredentialDeclaration(fmt.Errorf("environment %q is not declared", environmentName))
+	}
+	return environment.Target, nil
+}
+
+func credentialYAMLMappingValue(node *yaml.Node, key string) *yaml.Node {
+	if node == nil {
+		return nil
+	}
+	if node.Kind == yaml.DocumentNode {
+		if len(node.Content) == 0 {
+			return nil
+		}
+		node = node.Content[0]
+	}
+	if node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for index := 0; index < len(node.Content); index += 2 {
+		if node.Content[index].Value == key {
+			return node.Content[index+1]
+		}
+	}
+	return nil
+}
+
+func credentialYAMLScalarValue(node *yaml.Node) string {
+	if node == nil || node.Kind != yaml.ScalarNode {
+		return ""
+	}
+	return strings.TrimSpace(node.Value)
 }
 
 func parseCredentialPlanDocuments(workflowPath string, workflowData, configurationData []byte) (CredentialPlan, error) {
@@ -530,7 +596,8 @@ func auditCredentialYAMLNode(node *yaml.Node, visited map[*yaml.Node]struct{}) e
 			if key.Value == "<<" {
 				return invalidCredentialDeclaration(errors.New("YAML merge keys are not allowed"))
 			}
-			if credentialSecretLikeKeys[strings.ToLower(strings.TrimSpace(key.Value))] {
+			if credentialSecretLikeKeys[strings.ToLower(strings.TrimSpace(key.Value))] &&
+				!credentialKubernetesSecretReference(value) {
 				return fmt.Errorf("%w: YAML key %q is not allowed", ErrInlineCredentialMaterial, key.Value)
 			}
 			if err := auditCredentialYAMLNode(key, visited); err != nil {
@@ -544,6 +611,23 @@ func auditCredentialYAMLNode(node *yaml.Node, visited map[*yaml.Node]struct{}) e
 		return auditCredentialYAMLNode(node.Alias, visited)
 	}
 	return nil
+}
+
+func credentialKubernetesSecretReference(value *yaml.Node) bool {
+	if value == nil || value.Kind != yaml.MappingNode {
+		return false
+	}
+	if credentialYAMLScalarValue(credentialYAMLMappingValue(value, "kind")) != "KubernetesSecret" ||
+		credentialYAMLScalarValue(credentialYAMLMappingValue(value, "name")) == "" {
+		return false
+	}
+	for index := 0; index < len(value.Content); index += 2 {
+		key := value.Content[index].Value
+		if key != "kind" && key != "name" {
+			return false
+		}
+	}
+	return true
 }
 
 func strictCredentialYAMLDecode(data []byte, target any) error {

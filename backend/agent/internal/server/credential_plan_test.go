@@ -340,6 +340,55 @@ environments:
 	}
 }
 
+func TestParseCredentialPlanAcceptsSemanticReleaseEnvironmentDefinition(t *testing.T) {
+	root := t.TempDir()
+	writeCredentialPlanTestFile(t, root, "deploy/workflows/oilan.yaml", `
+apiVersion: doops.sh/v2
+kind: SemanticRelease
+metadata:
+  name: zhiyong-oilan-release
+spec:
+  parameters:
+    reason:
+      required: true
+  application: zhiyong
+  release:
+    revision: ${inputs.revision}
+  environment: oilan
+  configurationSource: deploy/environments/oilan/environment.yaml
+  serviceCatalog:
+    frontend:
+      uses: services/frontend.yaml
+  flow:
+    - intent: establish-release-context
+`)
+	writeCredentialPlanTestFile(t, root, "deploy/environments/oilan/environment.yaml", `
+apiVersion: doops.sh/v2
+kind: EnvironmentDefinition
+metadata:
+  name: oilan
+spec:
+  execution:
+    deploy:
+      target: gw-edu-coder
+      cluster: doops-edu
+      instance: edu-coder
+  artifacts:
+    runtimeImagePullSecret:
+      kind: KubernetesSecret
+      name: regcred
+`)
+
+	plan, err := parseCredentialPlan(root, "deploy/workflows/oilan.yaml")
+	if err != nil {
+		t.Fatalf("parse SemanticRelease EnvironmentDefinition: %v", err)
+	}
+	if plan.Template != "zhiyong-oilan-release" || plan.Target != "gw-edu-coder" ||
+		plan.Cluster != "doops-edu" || plan.Instance != "edu-coder" {
+		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
 func TestParseCredentialPlanAcceptsCurrentEnvironmentRegistryFields(t *testing.T) {
 	root := t.TempDir()
 	writeCredentialPlanTestFile(t, root, "deploy/release.yaml", `
