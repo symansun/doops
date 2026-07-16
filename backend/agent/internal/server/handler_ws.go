@@ -1712,6 +1712,7 @@ func appendDoagentStructuredResultContract(instruction string) string {
 		"It must contain exactly one JSON object with no Markdown or surrounding text. " +
 		"For a DeploymentRun, status may contain only phase, mutationCount, capabilities, evidence, and failures. " +
 		"Do not emit plannedMutations, runtimeAttestation, resultDigest, or any other status field. " +
+		"DeploymentRun evidence must be a non-empty array: before the final response, call at least one allowed trusted DoOps plan tool and reference that completed call. " +
 		"Every DeploymentRun evidence item must reference one of the allowed trusted DoOps plan tools; " +
 		"generic Bash, filesystem, browser, or delegation calls are not valid evidence. " +
 		"If the object is a DeploymentRun, every evidence item must contain exactly subject, observedAt, and toolRef; " +

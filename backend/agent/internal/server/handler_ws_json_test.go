@@ -59,6 +59,10 @@ func TestAgentPromptJSONReturnsFinalMessageInStructuredContent(t *testing.T) {
 			!strings.Contains(prompt, "generic Bash") {
 			t.Errorf("structured prompt must restrict DeploymentRun evidence tools: %s", prompt)
 		}
+		if !strings.Contains(prompt, "evidence must be a non-empty array") ||
+			!strings.Contains(prompt, "call at least one allowed trusted DoOps plan tool") {
+			t.Errorf("structured prompt must require runtime evidence before the final response: %s", prompt)
+		}
 		if !strings.Contains(prompt, "exactly subject, observedAt, and toolRef") ||
 			!strings.Contains(prompt, "toolRef.input") ||
 			!strings.Contains(prompt, "injects toolCall") {
