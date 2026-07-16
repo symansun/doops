@@ -191,13 +191,12 @@ func TestBuildTrustedReconciliationAdmissionAddsExecutorsOnlyForApply(t *testing
 
 func TestTrustedReconciliationContextDigestMatchesDoagentCanonicalJSON(t *testing.T) {
 	context := trustedReconciliationContext{
-		SchemaVersion:       trustedReconciliationContextSchema,
-		OperationID:         "op_" + strings.Repeat("0", 32),
-		ExecutionMode:       "dry-run",
-		MutationAuthorized:  false,
-		PlanDigest:          "sha256:" + strings.Repeat("1", 64),
-		PlanBindingDigest:   "sha256:" + strings.Repeat("2", 64),
-		CredentialRunDigest: "sha256:" + strings.Repeat("4", 64),
+		SchemaVersion:      trustedReconciliationContextSchema,
+		OperationID:        "op_" + strings.Repeat("0", 32),
+		ExecutionMode:      "dry-run",
+		MutationAuthorized: false,
+		PlanDigest:         "sha256:" + strings.Repeat("1", 64),
+		PlanBindingDigest:  "sha256:" + strings.Repeat("2", 64),
 		Source: trustedReconciliationSource{
 			Repository:      "https://example.test/app.git",
 			Revision:        strings.Repeat("b", 40),
@@ -223,7 +222,7 @@ func TestTrustedReconciliationContextDigestMatchesDoagentCanonicalJSON(t *testin
 	if err != nil {
 		t.Fatalf("calculate context digest: %v", err)
 	}
-	const want = "sha256:4647c390906534200be402c6c213e6cc65350ad6dc2112c01db37151efc25f94"
+	const want = "sha256:511ccf1c6389a50280913da368d30dffa425e9291ec403c43ca55d0a63edda0d"
 	if digest != want {
 		t.Fatalf("context digest = %q, want DoAgent JCS digest %q", digest, want)
 	}
@@ -513,6 +512,17 @@ func TestBuildDoagentPromptParamsUsesExactPlanToolsAndNoGenericTools(t *testing.
 	}
 	if !reflect.DeepEqual(params["trustedReconciliationContext"], context) {
 		t.Fatalf("trusted context missing from prompt params: %#v", params)
+	}
+	encodedContext, err := json.Marshal(params["trustedReconciliationContext"])
+	if err != nil {
+		t.Fatalf("encode trusted context: %v", err)
+	}
+	var contextFields map[string]interface{}
+	if err := json.Unmarshal(encodedContext, &contextFields); err != nil {
+		t.Fatalf("decode trusted context: %v", err)
+	}
+	if _, exists := contextFields["credentialRunDigest"]; exists {
+		t.Fatalf("v1 trusted context must preserve the doagent-compatible field set: %#v", contextFields)
 	}
 	for _, forbidden := range []string{"Bash", "Read", "Agent", "Glob"} {
 		if containsString(allowed, forbidden) {
