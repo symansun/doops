@@ -43,6 +43,16 @@ func TestDoopsPlanMCPListsOnlyReservedPlanTools(t *testing.T) {
 	}
 }
 
+func TestDoopsPlanArtifactNameUsesDeclaredSourceArtifactName(t *testing.T) {
+	artifactNames := map[string]string{"doops-agent": "doops.sh"}
+	if got := doopsPlanArtifactName("doops-agent", artifactNames); got != "doops.sh" {
+		t.Fatalf("artifact name = %q, want doops.sh", got)
+	}
+	if got := doopsPlanArtifactName("gateway", artifactNames); got != "gateway" {
+		t.Fatalf("undeclared artifact name = %q, want gateway", got)
+	}
+}
+
 func TestBuildDoopsPlanAttestedResultBindsTrustedContext(t *testing.T) {
 	context := trustedReconciliationContext{
 		SchemaVersion:      trustedReconciliationContextSchema,

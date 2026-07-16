@@ -73,6 +73,7 @@ type doopsPlanRuntime struct {
 	SourceRegistry      string
 	TargetRegistry      string
 	Services            []string
+	ArtifactNames       map[string]string
 	SourceImages        []doopsPlanImage
 	TargetImages        []doopsPlanImage
 	Namespace           string
@@ -351,6 +352,7 @@ func loadDoopsPlanRuntimeFromWorkspace(
 		SourceRegistry:      sourceRegistry,
 		TargetRegistry:      targetRegistry,
 		Services:            append([]string(nil), configuration.ArtifactContract.Services...),
+		ArtifactNames:       configuration.ArtifactContract.SourceArtifactNames,
 		Namespace:           executor.Namespace,
 		Release:             executor.Release,
 		Chart:               executor.Chart,
@@ -510,6 +512,7 @@ func doopsPlanReleaseScope(runtime doopsPlanRuntime) map[string]interface{} {
 		"source": map[string]interface{}{
 			"registry": runtime.SourceRegistry, "repository": runtime.SourceRepository,
 			"branch": runtime.SourceBranch, "services": runtime.Services,
+			"artifactNames": runtime.ArtifactNames,
 		},
 		"targetRegistry":     runtime.TargetRegistry,
 		"registryCredential": doopsPlanSecretRefScope(runtime.RegistryCredential),
@@ -849,11 +852,13 @@ func resolveDoopsPlanImageSet(
 	ctx context.Context,
 	registry string,
 	services []string,
+	artifactNames map[string]string,
 	version string,
 ) ([]doopsPlanImage, error) {
 	images := make([]doopsPlanImage, 0, len(services))
 	for _, service := range services {
-		repository := strings.TrimSuffix(registry, "/") + "/" + service
+		artifactName := doopsPlanArtifactName(service, artifactNames)
+		repository := strings.TrimSuffix(registry, "/") + "/" + artifactName
 		digest, err := resolveDoopsPlanRegistryDigest(ctx, repository, version)
 		if err != nil {
 			return nil, fmt.Errorf("resolve image %s:%s: %w", repository, version, err)
@@ -866,6 +871,13 @@ func resolveDoopsPlanImageSet(
 	return images, nil
 }
 
+func doopsPlanArtifactName(service string, artifactNames map[string]string) string {
+	if artifactName := strings.TrimSpace(artifactNames[service]); artifactName != "" {
+		return artifactName
+	}
+	return service
+}
+
 func resolveDoopsPlanRuntimeImages(
 	ctx context.Context,
 	runtime doopsPlanRuntime,
@@ -876,7 +888,7 @@ func resolveDoopsPlanRuntimeImages(
 	credential credentialConfigurationSecretRef,
 ) ([]doopsPlanImage, error) {
 	if len(declared) == 0 {
-		return resolveDoopsPlanImageSet(ctx, registry, services, version)
+		return resolveDoopsPlanImageSet(ctx, registry, services, runtime.ArtifactNames, version)
 	}
 	images := append([]doopsPlanImage(nil), declared...)
 	for _, image := range images {
