@@ -515,6 +515,11 @@ func TestBuildDoagentPromptParamsUsesExactPlanToolsAndNoGenericTools(t *testing.
 	if params["toolsEnabled"] != true {
 		t.Fatalf("trusted prompt must explicitly enable tools: %#v", params)
 	}
+	contract := appendDoagentStructuredResultContract("execute", &admission)
+	if !strings.Contains(contract, "status.evidence[0].toolRef must reference that completed call exactly") ||
+		!strings.Contains(contract, `{"tool":"plan.ObserveWorkspaceSource","input":{}}`) {
+		t.Fatalf("trusted prompt must pin evidence[0] to the completed source observation: %s", contract)
+	}
 	encodedContext, err := json.Marshal(params["trustedReconciliationContext"])
 	if err != nil {
 		t.Fatalf("encode trusted context: %v", err)

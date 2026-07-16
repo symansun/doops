@@ -1728,7 +1728,7 @@ func appendDoagentStructuredResultContract(
 		"For any other allowed tool, toolRef.tool is the exact model-visible tool name and toolRef.input is the exact JSON input used for that call. " +
 		"The Gateway consumes toolRef and injects toolCall with the completed runtime call's exact id, tool, input, and result."
 	if admission != nil && containsString(admission.AllowedTools, "mcp_doops_plan_ObserveWorkspaceSource") {
-		contract += " Your first action must be calling the allowed internal tool mcp_doops_plan_ObserveWorkspaceSource with exact JSON input {}; do not emit the final response before that completed call. In evidence, reference that call exactly as {\"tool\":\"plan.ObserveWorkspaceSource\",\"input\":{}}; never include the internal mcp_doops_plan_ prefix inside toolRef.tool."
+		contract += " Your first action must be calling the allowed internal tool mcp_doops_plan_ObserveWorkspaceSource with exact JSON input {}; do not emit the final response before that completed call. DeploymentRun status.evidence[0].toolRef must reference that completed call exactly as {\"tool\":\"plan.ObserveWorkspaceSource\",\"input\":{}}; never include the internal mcp_doops_plan_ prefix inside toolRef.tool."
 	}
 	return contract
 }
