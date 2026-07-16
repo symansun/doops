@@ -23,15 +23,16 @@ type trustedReconciliationAdmission struct {
 const trustedReconciliationContextSchema = "doops.reconciliation-context/v1"
 
 type trustedReconciliationContext struct {
-	SchemaVersion      string                                     `json:"schemaVersion"`
-	OperationID        string                                     `json:"operationId"`
-	ExecutionMode      string                                     `json:"executionMode"`
-	MutationAuthorized bool                                       `json:"mutationAuthorized"`
-	PlanDigest         string                                     `json:"planDigest"`
-	PlanBindingDigest  string                                     `json:"planBindingDigest"`
-	ContextDigest      string                                     `json:"contextDigest,omitempty"`
-	Source             trustedReconciliationSource                `json:"source"`
-	Capabilities       map[string]trustedReconciliationCapability `json:"capabilities"`
+	SchemaVersion       string                                     `json:"schemaVersion"`
+	OperationID         string                                     `json:"operationId"`
+	ExecutionMode       string                                     `json:"executionMode"`
+	MutationAuthorized  bool                                       `json:"mutationAuthorized"`
+	PlanDigest          string                                     `json:"planDigest"`
+	PlanBindingDigest   string                                     `json:"planBindingDigest"`
+	CredentialRunDigest string                                     `json:"credentialRunDigest"`
+	ContextDigest       string                                     `json:"contextDigest,omitempty"`
+	Source              trustedReconciliationSource                `json:"source"`
+	Capabilities        map[string]trustedReconciliationCapability `json:"capabilities"`
 }
 
 type trustedReconciliationSource struct {
@@ -57,11 +58,8 @@ type doopsCICDInstructionEnvelope struct {
 	WorkflowPath    string            `json:"workflowPath"`
 	WorkspaceCommit string            `json:"workspaceCommit"`
 	Inputs          map[string]string `json:"inputs"`
-	CredentialRun   struct {
-		ID               string                      `json:"id"`
-		Materializations []CredentialMaterialization `json:"materializations"`
-	} `json:"credentialRun"`
-	ResultContract struct {
+	CredentialRun   CredentialRun     `json:"credentialRun"`
+	ResultContract  struct {
 		APIVersion      string `json:"apiVersion"`
 		Kind            string `json:"kind"`
 		RequireEvidence bool   `json:"requireEvidence"`
@@ -126,19 +124,15 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 	if err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
-	if envelope.Task != "execute-doops-cicd-workflow" || envelope.Skill != "$doops-cicd" ||
-		(envelope.ExecutionMode != "dry-run" && envelope.ExecutionMode != "apply") ||
-		strings.TrimSpace(envelope.RunID) == "" || strings.TrimSpace(envelope.WorkflowPath) == "" ||
-		envelope.WorkspaceCommit != workspaceCommit ||
-		strings.TrimSpace(envelope.CredentialRun.ID) == "" ||
-		envelope.CredentialRun.Materializations == nil ||
-		envelope.ResultContract.Kind != "DeploymentRun" ||
-		!envelope.ResultContract.RequireEvidence {
+	if envelope.WorkspaceCommit != workspaceCommit {
 		return trustedReconciliationAdmission{}, fmt.Errorf("reconciliation instruction binding is invalid")
 	}
-	for key := range envelope.Inputs {
+	for key, value := range envelope.Inputs {
 		if credentialSecretLikeKey(key) {
 			return trustedReconciliationAdmission{}, fmt.Errorf("sensitive workflow input %q is forbidden", key)
+		}
+		if credentialScalarContainsInlineMaterial(value) {
+			return trustedReconciliationAdmission{}, fmt.Errorf("workflow input %q contains inline credential material", key)
 		}
 	}
 
@@ -194,11 +188,23 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 	if source.Repository == "" || source.Branch == "" || !validLowerHex(source.Revision, 40) {
 		return trustedReconciliationAdmission{}, fmt.Errorf("release source identity is incomplete")
 	}
+	if envelope.CredentialRun.Cluster != plan.Cluster ||
+		envelope.CredentialRun.Instance != plan.Instance ||
+		envelope.CredentialRun.Template != plan.Template ||
+		envelope.CredentialRun.Project != plan.Project ||
+		envelope.CredentialRun.Environment != plan.Environment {
+		return trustedReconciliationAdmission{}, fmt.Errorf("credential run target binding is invalid")
+	}
+	credentialRunDigest, err := digestJSON(envelope.CredentialRun)
+	if err != nil {
+		return trustedReconciliationAdmission{}, err
+	}
 
 	planBinding := map[string]interface{}{
 		"template": plan.Template, "project": plan.Project, "environment": plan.Environment,
 		"target": plan.Target, "cluster": plan.Cluster, "instance": plan.Instance,
 		"workflowPath": envelope.WorkflowPath, "inputs": envelope.Inputs,
+		"credentialRunDigest": credentialRunDigest,
 	}
 	planDigest, err := digestJSON(plan)
 	if err != nil {
@@ -259,14 +265,15 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 	}
 
 	context := trustedReconciliationContext{
-		SchemaVersion:      trustedReconciliationContextSchema,
-		OperationID:        trustedOperationID(envelope.RunID, workspaceCommit),
-		ExecutionMode:      envelope.ExecutionMode,
-		MutationAuthorized: envelope.ExecutionMode == "apply",
-		PlanDigest:         planDigest,
-		PlanBindingDigest:  planBindingDigest,
-		Source:             source,
-		Capabilities:       capabilities,
+		SchemaVersion:       trustedReconciliationContextSchema,
+		OperationID:         trustedOperationID(envelope.RunID, workspaceCommit),
+		ExecutionMode:       envelope.ExecutionMode,
+		MutationAuthorized:  envelope.ExecutionMode == "apply",
+		PlanDigest:          planDigest,
+		PlanBindingDigest:   planBindingDigest,
+		CredentialRunDigest: credentialRunDigest,
+		Source:              source,
+		Capabilities:        capabilities,
 	}
 	context.ContextDigest, err = context.calculatedDigest()
 	if err != nil {
@@ -282,8 +289,23 @@ func decodeDoopsCICDInstruction(instruction string) (doopsCICDInstructionEnvelop
 	if err := decoder.Decode(&envelope); err != nil {
 		return doopsCICDInstructionEnvelope{}, fmt.Errorf("invalid reconciliation instruction")
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
 		return doopsCICDInstructionEnvelope{}, fmt.Errorf("invalid reconciliation instruction")
+	}
+	if envelope.Task != "execute-doops-cicd-workflow" || envelope.Skill != "$doops-cicd" ||
+		(envelope.ExecutionMode != "dry-run" && envelope.ExecutionMode != "apply") ||
+		strings.TrimSpace(envelope.RunID) == "" || strings.TrimSpace(envelope.WorkflowPath) == "" ||
+		(envelope.ResultContract.APIVersion != "doops.sh/v2" &&
+			envelope.ResultContract.APIVersion != "doops.sh/v3") ||
+		envelope.ResultContract.Kind != "DeploymentRun" ||
+		!envelope.ResultContract.RequireEvidence ||
+		envelope.CredentialRun.APIVersion != "doops.sh/v2" ||
+		envelope.CredentialRun.Kind != "CredentialRun" ||
+		strings.TrimSpace(envelope.CredentialRun.ID) == "" ||
+		envelope.CredentialRun.Materializations == nil ||
+		envelope.CredentialRun.Mode != envelope.ExecutionMode {
+		return doopsCICDInstructionEnvelope{}, fmt.Errorf("reconciliation instruction binding is invalid")
 	}
 	return envelope, nil
 }

@@ -8,10 +8,25 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
+
+var workflowInlineCredentialPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\bgh[pousr]_[A-Za-z0-9]{20,255}\b`),
+	regexp.MustCompile(`(?i)\bgithub_pat_[A-Za-z0-9_]{20,255}\b`),
+	regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{20,255}\b`),
+	regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`),
+	regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`),
+	regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,255}\b`),
+	regexp.MustCompile(`\b(?:sk|rk)_live_[A-Za-z0-9]{16,255}\b`),
+	regexp.MustCompile(`\bnpm_[A-Za-z0-9]{36,255}\b`),
+}
 
 type WorkspaceSourceIdentity struct {
 	Repository string `json:"repository"`
@@ -109,6 +124,10 @@ func runCICDCommand(
 	if strings.TrimSpace(server.Gateway) == "" {
 		return fmt.Errorf("target %q must use a configured DoOps gateway", server.Name)
 	}
+	manifestAPIVersion, err := workflowExecutionAPIVersion(request.File)
+	if err != nil {
+		return err
+	}
 	client, closeClient := openWorkflowAgent(*server, sessionStore, sessionID, verbose)
 	defer closeClient()
 
@@ -137,10 +156,6 @@ func runCICDCommand(
 	if err != nil {
 		return fmt.Errorf("credential prepare: %w", err)
 	}
-	manifestAPIVersion, err := workflowAPIVersion(request.File)
-	if err != nil {
-		return err
-	}
 	runID, err := generateWorkflowRunID(sessionID)
 	if err != nil {
 		return fmt.Errorf("generate workflow run id: %w", err)
@@ -153,10 +168,7 @@ func runCICDCommand(
 		"workflowPath":    workflowPath,
 		"workspaceCommit": workspaceCommit,
 		"inputs":          request.Inputs,
-		"credentialRun": map[string]interface{}{
-			"id":               credentialRun.ID,
-			"materializations": credentialRun.Materializations,
-		},
+		"credentialRun":   credentialRun,
 		"resultContract": map[string]interface{}{
 			"apiVersion":      manifestAPIVersion,
 			"kind":            "DeploymentRun",
@@ -191,21 +203,53 @@ func runCICDCommand(
 }
 
 func workflowAPIVersion(path string) (string, error) {
+	version, _, err := workflowIdentity(path)
+	if err != nil {
+		return "", err
+	}
+	return version, nil
+}
+
+func workflowExecutionAPIVersion(path string) (string, error) {
+	version, kind, err := workflowIdentity(path)
+	if err != nil {
+		return "", err
+	}
+	if version != workspaceManifestAPIVersion || kind != "DeploymentTemplate" {
+		return "", fmt.Errorf(
+			"trusted cicd execution currently requires %s DeploymentTemplate, got %s %s",
+			workspaceManifestAPIVersion,
+			version,
+			kind,
+		)
+	}
+	return version, nil
+}
+
+func workflowIdentity(path string) (string, string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("read workflow apiVersion: %w", err)
+		return "", "", fmt.Errorf("read workflow apiVersion: %w", err)
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		key, value, ok := strings.Cut(line, ":")
-		if ok && strings.TrimSpace(key) == "apiVersion" {
-			version := strings.TrimSpace(value)
-			if version == "doops.sh/v2" || version == "doops.sh/v3" {
-				return version, nil
-			}
-			return "", fmt.Errorf("unsupported workflow apiVersion %q", version)
+	var identity struct {
+		APIVersion string `yaml:"apiVersion"`
+		Kind       string `yaml:"kind"`
+	}
+	if err := yaml.Unmarshal(data, &identity); err != nil {
+		return "", "", fmt.Errorf("decode workflow identity: %w", err)
+	}
+	identity.APIVersion = strings.TrimSpace(identity.APIVersion)
+	identity.Kind = strings.TrimSpace(identity.Kind)
+	if identity.APIVersion != "doops.sh/v2" && identity.APIVersion != "doops.sh/v3" {
+		if identity.APIVersion == "" {
+			return "", "", fmt.Errorf("workflow apiVersion is required")
 		}
+		return "", "", fmt.Errorf("unsupported workflow apiVersion %q", identity.APIVersion)
 	}
-	return "", fmt.Errorf("workflow apiVersion is required")
+	if identity.Kind == "" {
+		return "", "", fmt.Errorf("workflow kind is required")
+	}
+	return identity.APIVersion, identity.Kind, nil
 }
 
 func generateWorkflowRunID(sessionID string) (string, error) {
@@ -239,12 +283,78 @@ func (f workflowSetFlags) Set(value string) error {
 }
 
 func validateWorkflowInputs(inputs map[string]string) error {
-	for key := range inputs {
+	for key, value := range inputs {
 		if strings.TrimSpace(key) == "" || strings.TrimSpace(key) != key {
 			return fmt.Errorf("workflow input name must be non-empty and trimmed")
 		}
+		if workflowInputContainsCredentialMaterial(key) {
+			return fmt.Errorf("sensitive workflow input %q is forbidden; use credentialRef", key)
+		}
+		if workflowInputValueContainsCredentialMaterial(value) {
+			return fmt.Errorf("workflow input %q contains inline credential material; use credentialRef", key)
+		}
 	}
 	return nil
+}
+
+func workflowInputValueContainsCredentialMaterial(value string) bool {
+	value = strings.TrimSpace(value)
+	lower := strings.ToLower(value)
+	if strings.Contains(lower, "-----begin ") && strings.Contains(lower, " private key-----") {
+		return true
+	}
+	if strings.Contains(lower, "bearer ") || strings.Contains(lower, "basic ") ||
+		strings.Contains(lower, "sk-") {
+		return true
+	}
+	for _, pattern := range workflowInlineCredentialPatterns {
+		if pattern.MatchString(value) {
+			return true
+		}
+	}
+	if strings.Contains(value, "://") || strings.Contains(value, "?") {
+		parsed, err := url.Parse(value)
+		if err == nil {
+			if parsed.User != nil {
+				return true
+			}
+			for key, values := range parsed.Query() {
+				if workflowInputContainsCredentialMaterial(key) {
+					for _, queryValue := range values {
+						if strings.TrimSpace(queryValue) != "" {
+							return true
+						}
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func workflowInputContainsCredentialMaterial(key string) bool {
+	normalized := strings.Map(func(r rune) rune {
+		switch r {
+		case '_', '-', '.', ' ':
+			return -1
+		default:
+			return r
+		}
+	}, strings.ToLower(strings.TrimSpace(key)))
+	if normalized == "auth" || normalized == "authorization" || normalized == "cookie" ||
+		normalized == "data" || normalized == "stringdata" || normalized == "secret" ||
+		normalized == "sig" {
+		return true
+	}
+	for _, suffix := range []string{
+		"token", "password", "privatekey", "clientsecret", "apikey", "accesskey", "secretkey",
+		"credential", "pat", "passphrase", "dockerconfigjson", "sshidentity", "signature",
+	} {
+		if strings.HasSuffix(normalized, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 func workflowPathInGitRepository(path string) (root, relative string, err error) {

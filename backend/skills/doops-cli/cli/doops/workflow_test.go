@@ -20,6 +20,40 @@ type fakeWorkflowCaller struct {
 	onCall    func()
 }
 
+func TestValidateWorkflowInputsRejectsCredentialMaterial(t *testing.T) {
+	for _, key := range []string{
+		"token", "client_secret", "registry-password", "private.key", "accessToken",
+		"dbPassword", "secretKey", "authorization", "cookie", "githubToken",
+		"registryCredential", "githubPAT", "passphrase", "dockerConfigJson", "sshIdentity",
+	} {
+		t.Run(key, func(t *testing.T) {
+			if err := validateWorkflowInputs(map[string]string{key: "synthetic"}); err == nil {
+				t.Fatalf("validateWorkflowInputs(%q) succeeded, want rejection", key)
+			}
+		})
+	}
+	if err := validateWorkflowInputs(map[string]string{"releaseId": strings.Repeat("a", 40)}); err != nil {
+		t.Fatalf("non-sensitive workflow input rejected: %v", err)
+	}
+	for _, value := range []string{
+		"Bearer synthetic-canary",
+		"https://user:synthetic@example.test/repo.git",
+		"https://example.test/repo.git?access_token=synthetic",
+		"https://example.test/repo.git?X-Goog-Signature=synthetic",
+		"scheduled release Bearer synthetic-canary",
+		"sk-synthetic",
+		"ghp_" + strings.Repeat("a", 36),
+		"github_pat_" + strings.Repeat("a", 82),
+		"glpat-" + strings.Repeat("a", 20),
+		"AKIA" + strings.Repeat("A", 16),
+		"-----BEGIN PRIVATE KEY-----\nsynthetic\n-----END PRIVATE KEY-----",
+	} {
+		if err := validateWorkflowInputs(map[string]string{"releaseId": value}); err == nil {
+			t.Fatalf("secret-bearing workflow input value %q was accepted", value)
+		}
+	}
+}
+
 func (f *fakeWorkflowCaller) CallStructured(toolName string, arguments map[string]interface{}, destination interface{}) error {
 	f.calls++
 	f.toolName = toolName
@@ -317,7 +351,9 @@ func TestRunCICDCommandStopsBeforePromptWhenCredentialPrepareFails(t *testing.T)
 		t.Fatalf("create repository marker: %v", err)
 	}
 	workflow := filepath.Join(root, "release.yaml")
-	if err := os.WriteFile(workflow, []byte("kind: DeploymentTemplate\n"), 0o644); err != nil {
+	if err := os.WriteFile(workflow, []byte(
+		"apiVersion: doops.sh/v2\nkind: DeploymentTemplate\n",
+	), 0o644); err != nil {
 		t.Fatalf("write workflow: %v", err)
 	}
 
@@ -567,5 +603,58 @@ func TestWorkflowAPIVersionAcceptsV3(t *testing.T) {
 	}
 	if version != "doops.sh/v3" {
 		t.Fatalf("apiVersion = %q, want doops.sh/v3", version)
+	}
+	if _, err := workflowExecutionAPIVersion(path); err == nil ||
+		!strings.Contains(err.Error(), "requires doops.sh/v2 DeploymentTemplate") {
+		t.Fatalf("v3 execution contract error = %v", err)
+	}
+}
+
+func TestRunCICDCommandRejectsUnsupportedWorkflowBeforePushOrAgentContact(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("create repository marker: %v", err)
+	}
+	workflow := filepath.Join(root, "environment.yaml")
+	if err := os.WriteFile(workflow, []byte(
+		"apiVersion: doops.sh/v3\nkind: EnvironmentDefinition\n",
+	), 0o600); err != nil {
+		t.Fatalf("write v3 environment: %v", err)
+	}
+
+	originalPush := pushWorkflowWorkspace
+	originalOpen := openWorkflowAgent
+	pushes := 0
+	agentContacts := 0
+	pushWorkflowWorkspace = func(Server, string, string, bool, []string, string) (string, error) {
+		pushes++
+		return strings.Repeat("a", 40), nil
+	}
+	openWorkflowAgent = func(Server, *SessionStore, string, bool) (workflowAgentCaller, func()) {
+		agentContacts++
+		return nil, func() {}
+	}
+	t.Cleanup(func() {
+		pushWorkflowWorkspace = originalPush
+		openWorkflowAgent = originalOpen
+	})
+
+	err := runCICDCommand(
+		context.Background(),
+		[]string{"run", "-f", workflow, "-target", "agent-runtime", "--dry-run"},
+		[]Server{{
+			Name: "agent-runtime", Gateway: "https://gateway.example.com",
+			Cluster: "doops", Instance: "runner",
+		}},
+		nil,
+		NewSessionStore(),
+		"release-test",
+		false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "requires doops.sh/v2 DeploymentTemplate") {
+		t.Fatalf("unsupported workflow error = %v", err)
+	}
+	if pushes != 0 || agentContacts != 0 {
+		t.Fatalf("unsupported workflow caused side effects: pushes=%d agentContacts=%d", pushes, agentContacts)
 	}
 }

@@ -41,7 +41,6 @@ type GatewayHub struct {
 
 	scheduler            *Scheduler
 	credentialMutationMu sync.Mutex
-	credentialRuns       *credentialPreparationRegistry
 }
 
 // AttachScheduler 注入定时巡检调度器，供 /v1/admin/jobs run-now 等接口使用。
@@ -327,21 +326,31 @@ type auditResponse struct {
 }
 
 type auditRecord struct {
-	ID             int64  `json:"id"`
-	UserID         string `json:"user_id"`
-	TokenID        string `json:"token_id"`
-	Cluster        string `json:"cluster"`
-	Instance       string `json:"instance"`
-	Action         string `json:"action"`
-	Session        string `json:"session"`
-	CommandSummary string `json:"command_summary"`
-	Status         string `json:"status"`
-	Error          string `json:"error,omitempty"`
-	Tail           string `json:"tail,omitempty"`
-	BytesIn        int64  `json:"bytes_in"`
-	BytesOut       int64  `json:"bytes_out"`
-	StartedAt      string `json:"started_at"`
-	EndedAt        string `json:"ended_at,omitempty"`
+	ID              int64  `json:"id"`
+	UserID          string `json:"user_id"`
+	TokenID         string `json:"token_id"`
+	Cluster         string `json:"cluster"`
+	Instance        string `json:"instance"`
+	CredentialID    string `json:"credential_id,omitempty"`
+	VersionID       string `json:"credential_version_id,omitempty"`
+	GrantID         string `json:"credential_grant_id,omitempty"`
+	Project         string `json:"project,omitempty"`
+	Environment     string `json:"environment,omitempty"`
+	Template        string `json:"template,omitempty"`
+	Namespace       string `json:"namespace,omitempty"`
+	ResourceVersion string `json:"resource_version,omitempty"`
+	Digest          string `json:"digest,omitempty"`
+	CorrelationID   string `json:"correlation_id,omitempty"`
+	Action          string `json:"action"`
+	Session         string `json:"session"`
+	CommandSummary  string `json:"command_summary"`
+	Status          string `json:"status"`
+	Error           string `json:"error,omitempty"`
+	Tail            string `json:"tail,omitempty"`
+	BytesIn         int64  `json:"bytes_in"`
+	BytesOut        int64  `json:"bytes_out"`
+	StartedAt       string `json:"started_at"`
+	EndedAt         string `json:"ended_at,omitempty"`
 }
 
 type auditPurgeResponse struct {
@@ -400,10 +409,9 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		opts.MaxQueuedPerTarget = 0
 	}
 	hub := &GatewayHub{
-		store:          store,
-		opts:           opts,
-		registry:       registry,
-		credentialRuns: newCredentialPreparationRegistry(),
+		store:    store,
+		opts:     opts,
+		registry: registry,
 	}
 	hub.registration = NewAgentRegistrationHandler(
 		store,
@@ -411,7 +419,7 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		opts.AgentLease,
 		newGatewayMessageBudget(gatewayMessageBudgetMaxBytes),
 	)
-	hub.client = NewClientService(store, registry, opts, hub.credentialRuns)
+	hub.client = NewClientService(store, registry, opts)
 	if err := hub.client.upgrades.ResumePending(opts.OperationTimeout); err != nil {
 		panic(err)
 	}
@@ -728,7 +736,10 @@ func (h *GatewayHub) HandleAudit(w http.ResponseWriter, r *http.Request) {
 		h.writeUserAuthError(w, r)
 		return
 	}
-	if !h.store.UserHasAction(auth.UserID, ActionAdmin) {
+	isAdmin := h.store.UserIsPlatformAdmin(auth.UserID)
+	canReadCredentialAudit := h.store.UserHasAction(auth.UserID, ActionCredentialAudit)
+	canReadUnscopedCredentialAudit := h.store.UserCan(auth.UserID, "", "", ActionCredentialAudit)
+	if !isAdmin && !canReadCredentialAudit {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -737,6 +748,10 @@ func (h *GatewayHub) HandleAudit(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		query := r.URL.Query()
 		limit, _ := strconv.Atoi(strings.TrimSpace(query.Get("limit")))
+		fetchLimit := limit
+		if !isAdmin {
+			fetchLimit = 500
+		}
 		events, err := h.store.ListAuditFiltered(AuditFilter{
 			UserID:   query.Get("user_id"),
 			Cluster:  query.Get("cluster"),
@@ -744,7 +759,7 @@ func (h *GatewayHub) HandleAudit(w http.ResponseWriter, r *http.Request) {
 			Session:  query.Get("session"),
 			Action:   GatewayAction(query.Get("action")),
 			Status:   query.Get("status"),
-			Limit:    limit,
+			Limit:    fetchLimit,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -752,21 +767,50 @@ func (h *GatewayHub) HandleAudit(w http.ResponseWriter, r *http.Request) {
 		}
 		records := make([]auditRecord, 0, len(events))
 		for _, event := range events {
+			if !isAdmin && !strings.HasPrefix(string(event.Action), "credential:") {
+				continue
+			}
+			if !isAdmin {
+				if event.Cluster == "" || event.Instance == "" {
+					if !canReadUnscopedCredentialAudit {
+						continue
+					}
+				} else if !h.store.UserCan(auth.UserID, event.Cluster, event.Instance, ActionCredentialAudit) {
+					continue
+				}
+			}
+			if !isAdmin && query.Get("action") != "" &&
+				string(event.Action) != strings.TrimSpace(query.Get("action")) {
+				continue
+			}
+			if limit > 0 && len(records) >= limit {
+				break
+			}
 			record := auditRecord{
-				ID:             event.ID,
-				UserID:         event.UserID,
-				TokenID:        event.TokenID,
-				Cluster:        event.Cluster,
-				Instance:       event.Instance,
-				Action:         string(event.Action),
-				Session:        event.Session,
-				CommandSummary: event.CommandSummary,
-				Status:         event.Status,
-				Error:          event.Error,
-				Tail:           event.Tail,
-				BytesIn:        event.BytesIn,
-				BytesOut:       event.BytesOut,
-				StartedAt:      event.StartedAt.UTC().Format(time.RFC3339),
+				ID:              event.ID,
+				UserID:          event.UserID,
+				TokenID:         event.TokenID,
+				Cluster:         event.Cluster,
+				Instance:        event.Instance,
+				CredentialID:    event.CredentialID,
+				VersionID:       event.VersionID,
+				GrantID:         event.GrantID,
+				Project:         event.Project,
+				Environment:     event.Environment,
+				Template:        event.Template,
+				Namespace:       event.Namespace,
+				ResourceVersion: event.ResourceVersion,
+				Digest:          event.Digest,
+				CorrelationID:   event.CorrelationID,
+				Action:          string(event.Action),
+				Session:         event.Session,
+				CommandSummary:  event.CommandSummary,
+				Status:          event.Status,
+				Error:           event.Error,
+				Tail:            event.Tail,
+				BytesIn:         event.BytesIn,
+				BytesOut:        event.BytesOut,
+				StartedAt:       event.StartedAt.UTC().Format(time.RFC3339),
 			}
 			if !event.EndedAt.IsZero() {
 				record.EndedAt = event.EndedAt.UTC().Format(time.RFC3339)
@@ -775,6 +819,10 @@ func (h *GatewayHub) HandleAudit(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSONHTTP(w, auditResponse{Events: records})
 	case http.MethodDelete:
+		if !isAdmin {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
 		beforeRaw := strings.TrimSpace(r.URL.Query().Get("before"))
 		if beforeRaw == "" {
 			http.Error(w, "missing before", http.StatusBadRequest)
@@ -921,17 +969,29 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32003, "credential control-plane tools are internal only"))
 		return nil
 	}
-	var applyEnvelope *doopsCICDInstructionEnvelope
+	var workflowInstruction *doopsCICDInstructionEnvelope
 	if params.Name == "doops_agent_prompt" {
 		operation := extractStringArg(params.Arguments, "operation")
-		if operation == "apply" {
-			instruction := extractStringArg(params.Arguments, "instruction")
-			envelope, err := validatedDoagentApplyInstruction(instruction)
+		instruction := extractStringArg(params.Arguments, "instruction")
+		var marker struct {
+			Task string `json:"task"`
+		}
+		_ = json.Unmarshal([]byte(instruction), &marker)
+		if marker.Task == "execute-doops-cicd-workflow" {
+			envelope, err := decodeDoopsCICDInstruction(instruction)
 			if err != nil {
 				writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
 				return nil
 			}
-			applyEnvelope = &envelope
+			if (envelope.ExecutionMode == "apply" && operation != "apply") ||
+				(envelope.ExecutionMode == "dry-run" && operation != "ask") {
+				writeJSON(buildErrorResponse(req.ID, -32602, "credential workflow operation does not match execution mode"))
+				return nil
+			}
+			workflowInstruction = &envelope
+		} else if operation == "apply" {
+			writeJSON(buildErrorResponse(req.ID, -32602, "apply requires a structured doops-cicd instruction"))
+			return nil
 		} else if operation != "" && operation != "ask" {
 			writeJSON(buildErrorResponse(req.ID, -32602, "unsupported agent prompt operation: "+operation))
 			return nil
@@ -957,6 +1017,9 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	finishAudit := func(status, errMsg, tail string, bytesOut int64) {
+		errMsg, tail = sanitizeAgentPromptAudit(params.Name, errMsg, tail)
+		errMsg = sanitizeSecretText(errMsg)
+		tail = sanitizeSecretText(tail)
 		if err := h.store.FinishAudit(auditID, AuditFinish{
 			Status:   status,
 			Error:    errMsg,
@@ -981,7 +1044,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32004, errMsg))
 		return nil
 	}
-	if applyEnvelope != nil {
+	if workflowInstruction != nil {
 		if !h.store.UserCan(auth.UserID, cluster, instance, ActionCredentialUse) {
 			errMsg := fmt.Sprintf("forbidden: %s on %s/%s", ActionCredentialUse, cluster, instance)
 			finishAudit("forbidden", errMsg, "", 0)
@@ -1044,17 +1107,20 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	defer agent.releaseForAction(action, resourceKey)
-	if applyEnvelope != nil {
-		if err := h.credentialRuns.consumeApply(
-			auth.UserID,
+	if workflowInstruction != nil {
+		if err := h.store.ConsumeCredentialRunAuthorization(
+			auth,
 			cluster,
 			instance,
 			extractSession(params.Arguments),
-			*applyEnvelope,
+			workflowInstruction.WorkflowPath,
+			workflowInstruction.WorkspaceCommit,
+			workflowInstruction.ExecutionMode,
+			workflowInstruction.CredentialRun,
 		); err != nil {
-			errMsg := err.Error()
-			finishAudit("error", errMsg, "", 0)
-			writeJSON(buildErrorResponse(req.ID, -32009, errMsg))
+			category := credentialErrorCategory(err)
+			finishAudit("forbidden", category, "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32003, category))
 			return nil
 		}
 	}
@@ -1172,12 +1238,22 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			_ = writeJSON(buildErrorResponse(req.ID, -32007, finalErr))
 		} else {
 			finalStatus = "error"
-			finalErr = err.Error()
-			_ = writeJSON(buildErrorResponse(req.ID, -32603, err.Error()))
+			finalErr = sanitizeSecretText(err.Error())
+			_ = writeJSON(buildErrorResponse(req.ID, -32603, finalErr))
 		}
 	}
 	finishAudit(finalStatus, finalErr, tail.String(), bytesOut)
 	return nil
+}
+
+func sanitizeAgentPromptAudit(toolName, errMsg, tail string) (string, string) {
+	if toolName != "doops_agent_prompt" {
+		return sanitizeSecretText(errMsg), sanitizeSecretText(tail)
+	}
+	if errMsg != "" {
+		errMsg = sanitizeCredentialCategory(errMsg)
+	}
+	return errMsg, ""
 }
 
 func internalCredentialTool(tool string) bool {
@@ -2016,9 +2092,8 @@ func summarizeToolCall(tool string, args json.RawMessage) string {
 			return trimTail(cmd, 512)
 		}
 	case "doops_agent_prompt":
-		if msg, _ := m["instruction"].(string); msg != "" {
-			return trimTail(msg, 512)
-		}
+		operation, _ := m["operation"].(string)
+		return "doops_agent_prompt operation=" + strings.ToLower(strings.TrimSpace(operation))
 	case "doops_git_clone":
 		repoURL, _ := m["url"].(string)
 		branch, _ := m["branch"].(string)

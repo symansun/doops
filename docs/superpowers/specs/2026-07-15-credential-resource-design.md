@@ -65,6 +65,10 @@ credential and a Helm repository credential under one authorization boundary.
 | `personal` | One DoOps user | Owner; platform credential admin for emergency recovery | Explicit grants made by the owner within permissions |
 | `platform` | Platform or administrator-managed service identity | Platform credential admin | Explicit grants to multiple targets, environments, or templates |
 
+“Platform credential admin” means a user with a global `admin` or `*` action
+grant scoped to `*/*`. Target-scoped credential actions do not grant platform
+administration.
+
 Lifecycle states are `active`, `rotating`, `revoked`, and `retired`.
 
 - `active` credentials can be used only when a matching active grant exists.

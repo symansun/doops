@@ -60,13 +60,17 @@ New actions:
 - `credential:metadata`
 - `credential:grant`
 - `credential:use`
+- `credential:verify`
 - `credential:rotate`
 - `credential:revoke`
 - `credential:audit`
 
 Personal credential owners can update and rotate their own payload, but can
 grant only deployment scopes for which they already have target permission.
-Platform resources and grants require `credential:grant` or `admin`.
+Platform resources, emergency recovery of another user's personal resource,
+and platform-wide grant/rotate/revoke/verify operations require a global
+`admin` or `*` grant scoped to `*/*`. A credential action granted on one target
+never becomes platform administration.
 
 Use requires both:
 
@@ -93,8 +97,10 @@ Use requires both:
    performs type-specific verification, and returns structured evidence.
 9. Gateway persists redacted verification and audit records and returns a
    `CredentialRun`.
-10. CLI includes only the CredentialRun ID and materialized resource metadata
-    in the ordinary doops-cicd prompt.
+10. Gateway persists a single-use authorization bound to the complete
+    CredentialRun digest, actor/token, target, session, workflow path, commit,
+    and mode. CLI includes that complete redacted CredentialRun in the ordinary
+    doops-cicd prompt; the Gateway consumes the authorization exactly once.
 
 Failure stops the deployment before the doops-cicd apply prompt. There is no
 fallback to an existing Secret, inline YAML, shell, SSH, or another target.
@@ -129,8 +135,12 @@ promotion, and revocation so concurrent requests cannot leave the active
 database version different from the materialized target version.
 
 An individual grant can be revoked without revoking the Credential Resource.
-Grant revocation blocks future authorization immediately; target objects remain
-owned by the Credential Resource and are removed only by resource revocation.
+Grant revocation blocks future authorization immediately and removes that
+grant's generated Secret plus its workload reference. Generated Secret names
+and ownership labels are grant-scoped, so revoking one grant cannot remove or
+overwrite another grant's materialization. Resource revocation removes every
+recorded grant-scoped materialization across active, staged, superseded,
+pending, and outcome-unknown versions.
 
 Revocation blocks new use before Agent contact, marks the version/resource
 revoked, and schedules or explicitly performs removal of DoOps-owned target
@@ -139,16 +149,18 @@ deleted.
 
 ## Verification
 
-Allowed evidence:
+The public verify response contains only status, Kubernetes resourceVersion,
+digest, and a stable error category. Resource/version/grant IDs, target,
+namespace, resource name, Secret type/key names, TLS fingerprint/expiration,
+endpoint identity, and correlation ID remain internal structured audit
+metadata and are never secret values.
 
-- credential resource/version IDs;
-- target, namespace, generated resource name;
-- Secret type and sorted key names;
-- Kubernetes resourceVersion;
-- OCI manifest digest;
-- TLS fingerprint and expiration;
-- Helm/Git endpoint identity and status;
-- error category and correlation ID.
+Credential mutations write the audit start before authorization or mutation.
+Local state changes and the successful audit terminal state commit in one
+SQLite transaction. Remote revocation uses a `revoking -> cleanup ->
+revoked+audit` state machine. A failed audit completion rolls back local
+mutation, revokes any issued CredentialRun, and rolls back target
+materialization where applicable.
 
 Tests must scan API responses, CLI output, logs, audits, `DeploymentRun`,
 workspace files, and serialized errors for seeded canary values.

@@ -453,6 +453,7 @@ var knownActions = map[string]GatewayAction{
 	"credential:metadata": ActionCredentialMetadata,
 	"credential:grant":    ActionCredentialGrant,
 	"credential:use":      ActionCredentialUse,
+	"credential:verify":   ActionCredentialVerify,
 	"credential:rotate":   ActionCredentialRotate,
 	"credential:revoke":   ActionCredentialRevoke,
 	"credential:audit":    ActionCredentialAudit,

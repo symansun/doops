@@ -104,7 +104,7 @@ environments:
 		"workflowPath":"deploy/release.yaml",
 		"workspaceCommit":"` + workspaceCommit + `",
 		"inputs":{"releaseId":"` + revision + `"},
-		"credentialRun":{"id":"credrun_123","materializations":[]},
+		"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops","instance":"runner","template":"release","project":"app","environment":"production","materializations":[]},
 		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
 	}`
 	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit)
@@ -191,12 +191,13 @@ func TestBuildTrustedReconciliationAdmissionAddsExecutorsOnlyForApply(t *testing
 
 func TestTrustedReconciliationContextDigestMatchesDoagentCanonicalJSON(t *testing.T) {
 	context := trustedReconciliationContext{
-		SchemaVersion:      trustedReconciliationContextSchema,
-		OperationID:        "op_" + strings.Repeat("0", 32),
-		ExecutionMode:      "dry-run",
-		MutationAuthorized: false,
-		PlanDigest:         "sha256:" + strings.Repeat("1", 64),
-		PlanBindingDigest:  "sha256:" + strings.Repeat("2", 64),
+		SchemaVersion:       trustedReconciliationContextSchema,
+		OperationID:         "op_" + strings.Repeat("0", 32),
+		ExecutionMode:       "dry-run",
+		MutationAuthorized:  false,
+		PlanDigest:          "sha256:" + strings.Repeat("1", 64),
+		PlanBindingDigest:   "sha256:" + strings.Repeat("2", 64),
+		CredentialRunDigest: "sha256:" + strings.Repeat("4", 64),
 		Source: trustedReconciliationSource{
 			Repository:      "https://example.test/app.git",
 			Revision:        strings.Repeat("b", 40),
@@ -222,7 +223,7 @@ func TestTrustedReconciliationContextDigestMatchesDoagentCanonicalJSON(t *testin
 	if err != nil {
 		t.Fatalf("calculate context digest: %v", err)
 	}
-	const want = "sha256:511ccf1c6389a50280913da368d30dffa425e9291ec403c43ca55d0a63edda0d"
+	const want = "sha256:4647c390906534200be402c6c213e6cc65350ad6dc2112c01db37151efc25f94"
 	if digest != want {
 		t.Fatalf("context digest = %q, want DoAgent JCS digest %q", digest, want)
 	}
@@ -262,6 +263,8 @@ func TestBuildTrustedReconciliationAdmissionUsesRegistrySourceForCurrentReleaseS
 		name            string
 		workflow        string
 		inputs          string
+		template        string
+		project         string
 		wantRevision    string
 		workspaceCommit string
 	}{
@@ -283,6 +286,8 @@ spec:
   configurationSource: deploy/environments.yaml
 `,
 			inputs:          `"version":"release-20260716"`,
+			template:        "ecp-test-deploy",
+			project:         "ecp",
 			wantRevision:    strings.Repeat("c", 40),
 			workspaceCommit: strings.Repeat("c", 40),
 		},
@@ -296,9 +301,6 @@ spec:
 				t.Fatalf("create workspace: %v", err)
 			}
 			writeCredentialPlanTestFile(t, workspace, "deploy/release.yaml", test.workflow)
-			if test.name == "semantic release binds declared revision" {
-				writeCredentialServiceReleaseFixture(t, workspace, "deploy/services/frontend.yaml", "frontend", "zhiyong")
-			}
 			writeCredentialPlanTestFile(t, workspace, "deploy/environments.yaml", `
 apiVersion: doops.sh/v2
 kind: EnvironmentRegistry
@@ -335,7 +337,7 @@ environments:
 				"workflowPath":"deploy/release.yaml",
 				"workspaceCommit":"` + test.workspaceCommit + `",
 				"inputs":{` + test.inputs + `},
-				"credentialRun":{"id":"credrun_123","materializations":[]},
+				"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops-oilan","instance":"oilan-node","template":"` + test.template + `","project":"` + test.project + `","environment":"test","materializations":[]},
 				"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
 			}`
 			admission, err := buildTrustedReconciliationAdmission(sessionID, instruction, test.workspaceCommit)
@@ -418,7 +420,7 @@ environments:
 		"workflowPath":"deploy/release.yaml",
 		"workspaceCommit":"` + commit + `",
 		"inputs":{"revision":"` + strings.Repeat("d", 40) + `"},
-		"credentialRun":{"id":"credrun_123","materializations":[]},
+		"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops-oilan","instance":"oilan-node","template":"zhiyong-test-release","project":"zhiyong","environment":"test","materializations":[]},
 		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
 	}`
 	if _, err := buildTrustedReconciliationAdmission(sessionID, instruction, commit); err == nil ||
@@ -471,7 +473,7 @@ func TestBuildTrustedReconciliationAdmissionRejectsV3WithoutNativeExecutor(t *te
 		"workflowPath":"deploy/environments/oilan/environment.yaml",
 		"workspaceCommit":"` + commit + `",
 		"inputs":{"reason":"contract-test"},
-		"credentialRun":{"id":"credrun_v3","materializations":[]},
+		"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_v3","mode":"dry-run","cluster":"doops-edu","instance":"edu-coder","template":"oilan","project":"zhiyong","environment":"oilan","materializations":[]},
 		"resultContract":{"apiVersion":"doops.sh/v3","kind":"DeploymentRun","requireEvidence":true}
 	}`
 	if _, err := buildTrustedReconciliationAdmission(sessionID, instruction, commit); err == nil ||
@@ -536,7 +538,7 @@ const trustedAdmissionInstructionFixture = `{
 	"workflowPath":"deploy/release.yaml",
 	"workspaceCommit":"${WORKSPACE_COMMIT}",
 	"inputs":{"releaseId":"${REVISION}"},
-	"credentialRun":{"id":"credrun_123","materializations":[]},
+	"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"${MODE}","cluster":"doops","instance":"runner","template":"release","project":"app","environment":"production","materializations":[]},
 	"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
 }`
 

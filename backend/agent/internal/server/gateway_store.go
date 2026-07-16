@@ -38,6 +38,7 @@ const (
 	ActionCredentialMetadata GatewayAction = "credential:metadata"
 	ActionCredentialGrant    GatewayAction = "credential:grant"
 	ActionCredentialUse      GatewayAction = "credential:use"
+	ActionCredentialVerify   GatewayAction = "credential:verify"
 	ActionCredentialRotate   GatewayAction = "credential:rotate"
 	ActionCredentialRevoke   GatewayAction = "credential:revoke"
 	ActionCredentialAudit    GatewayAction = "credential:audit"
@@ -118,21 +119,31 @@ type ScopeGrant struct {
 }
 
 type AuditEvent struct {
-	ID             int64
-	UserID         string
-	TokenID        string
-	Cluster        string
-	Instance       string
-	Action         GatewayAction
-	Session        string
-	CommandSummary string
-	Status         string
-	Error          string
-	Tail           string
-	BytesIn        int64
-	BytesOut       int64
-	StartedAt      time.Time
-	EndedAt        time.Time
+	ID              int64
+	UserID          string
+	TokenID         string
+	Cluster         string
+	Instance        string
+	CredentialID    string
+	VersionID       string
+	GrantID         string
+	Project         string
+	Environment     string
+	Template        string
+	Namespace       string
+	ResourceVersion string
+	Digest          string
+	CorrelationID   string
+	Action          GatewayAction
+	Session         string
+	CommandSummary  string
+	Status          string
+	Error           string
+	Tail            string
+	BytesIn         int64
+	BytesOut        int64
+	StartedAt       time.Time
+	EndedAt         time.Time
 }
 
 type AgentStatus struct {
@@ -162,12 +173,22 @@ type UpgradeOperation struct {
 }
 
 type AuditFinish struct {
-	Status   string
-	Error    string
-	Tail     string
-	BytesIn  int64
-	BytesOut int64
-	EndedAt  time.Time
+	Status          string
+	Error           string
+	Tail            string
+	BytesIn         int64
+	BytesOut        int64
+	Cluster         string
+	Instance        string
+	VersionID       string
+	GrantID         string
+	Project         string
+	Environment     string
+	Template        string
+	Namespace       string
+	ResourceVersion string
+	Digest          string
+	EndedAt         time.Time
 }
 
 type AuditFilter struct {
@@ -272,10 +293,20 @@ func (s *GatewayStore) migrate() error {
 		`CREATE TABLE IF NOT EXISTS audit_events (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			user_id TEXT NOT NULL DEFAULT '',
-			token_id TEXT NOT NULL DEFAULT '',
-			cluster TEXT NOT NULL DEFAULT '',
-			instance TEXT NOT NULL DEFAULT '',
-			action TEXT NOT NULL DEFAULT '',
+				token_id TEXT NOT NULL DEFAULT '',
+				cluster TEXT NOT NULL DEFAULT '',
+				instance TEXT NOT NULL DEFAULT '',
+				credential_id TEXT NOT NULL DEFAULT '',
+				credential_version_id TEXT NOT NULL DEFAULT '',
+				credential_grant_id TEXT NOT NULL DEFAULT '',
+				project TEXT NOT NULL DEFAULT '',
+				environment TEXT NOT NULL DEFAULT '',
+				template TEXT NOT NULL DEFAULT '',
+				namespace TEXT NOT NULL DEFAULT '',
+				resource_version TEXT NOT NULL DEFAULT '',
+				digest TEXT NOT NULL DEFAULT '',
+				correlation_id TEXT NOT NULL DEFAULT '',
+				action TEXT NOT NULL DEFAULT '',
 			session TEXT NOT NULL DEFAULT '',
 			command_summary TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'running',
@@ -387,22 +418,63 @@ func (s *GatewayStore) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_credential_grants_authorize
 			ON credential_grants(grantee_id, cluster, instance, project, environment, template, namespace, state)`,
 		`CREATE TABLE IF NOT EXISTS credential_verifications (
-			id TEXT PRIMARY KEY,
-			credential_id TEXT NOT NULL,
-			version_id TEXT NOT NULL,
-			grant_id TEXT NOT NULL,
-			use TEXT NOT NULL,
-			request_json TEXT NOT NULL,
-			evidence_json TEXT NOT NULL,
-			status TEXT NOT NULL,
-			verified_at TEXT NOT NULL,
-			UNIQUE(version_id, grant_id, use),
-			FOREIGN KEY(credential_id) REFERENCES credentials(id),
-			FOREIGN KEY(version_id) REFERENCES credential_versions(id),
-			FOREIGN KEY(grant_id) REFERENCES credential_grants(id)
-		)`,
+				id TEXT PRIMARY KEY,
+				credential_id TEXT NOT NULL,
+				version_id TEXT NOT NULL,
+				grant_id TEXT NOT NULL,
+				use TEXT NOT NULL,
+				context_key TEXT NOT NULL,
+				request_json TEXT NOT NULL,
+				evidence_json TEXT NOT NULL,
+				status TEXT NOT NULL,
+				verified_at TEXT NOT NULL,
+				UNIQUE(version_id, grant_id, use, context_key),
+				FOREIGN KEY(credential_id) REFERENCES credentials(id),
+				FOREIGN KEY(version_id) REFERENCES credential_versions(id),
+				FOREIGN KEY(grant_id) REFERENCES credential_grants(id)
+			)`,
 		`CREATE INDEX IF NOT EXISTS idx_credential_verifications_resource
-			ON credential_verifications(credential_id, version_id, status)`,
+				ON credential_verifications(credential_id, version_id, status)`,
+		`CREATE TABLE IF NOT EXISTS credential_materializations (
+				id TEXT PRIMARY KEY,
+				credential_id TEXT NOT NULL,
+				version_id TEXT NOT NULL,
+				grant_id TEXT NOT NULL,
+				use TEXT NOT NULL,
+				context_key TEXT NOT NULL,
+				request_json TEXT NOT NULL,
+				evidence_json TEXT NOT NULL DEFAULT '{}',
+				status TEXT NOT NULL,
+				error_category TEXT NOT NULL DEFAULT '',
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL,
+				UNIQUE(version_id, grant_id, use, context_key),
+				FOREIGN KEY(credential_id) REFERENCES credentials(id),
+				FOREIGN KEY(version_id) REFERENCES credential_versions(id),
+				FOREIGN KEY(grant_id) REFERENCES credential_grants(id)
+			)`,
+		`CREATE INDEX IF NOT EXISTS idx_credential_materializations_resource
+				ON credential_materializations(credential_id, version_id, grant_id, status)`,
+		`CREATE TABLE IF NOT EXISTS credential_run_authorizations (
+				run_id TEXT PRIMARY KEY,
+				user_id TEXT NOT NULL,
+				token_id TEXT NOT NULL,
+				cluster TEXT NOT NULL,
+				instance TEXT NOT NULL,
+				session_id TEXT NOT NULL,
+				workflow_path TEXT NOT NULL,
+				workspace_commit TEXT NOT NULL,
+				mode TEXT NOT NULL,
+				run_digest TEXT NOT NULL,
+				state TEXT NOT NULL DEFAULT 'issued',
+				created_at TEXT NOT NULL,
+				expires_at TEXT NOT NULL,
+				consumed_at TEXT NOT NULL DEFAULT '',
+				FOREIGN KEY(user_id) REFERENCES users(id),
+				FOREIGN KEY(token_id) REFERENCES tokens(id)
+			)`,
+		`CREATE INDEX IF NOT EXISTS idx_credential_run_authorizations_expiry
+				ON credential_run_authorizations(state, expires_at)`,
 		`CREATE TABLE IF NOT EXISTS credential_bundles (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -436,6 +508,9 @@ func (s *GatewayStore) migrate() error {
 			return err
 		}
 	}
+	if err := s.migrateCredentialVerifications(); err != nil {
+		return err
+	}
 	if err := s.ensureColumn("users", "password_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -447,6 +522,25 @@ func (s *GatewayStore) migrate() error {
 	}
 	if err := s.ensureColumn("upgrade_operations", "old_runtime_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
+	}
+	for _, column := range []struct {
+		name       string
+		definition string
+	}{
+		{"credential_id", "TEXT NOT NULL DEFAULT ''"},
+		{"credential_version_id", "TEXT NOT NULL DEFAULT ''"},
+		{"credential_grant_id", "TEXT NOT NULL DEFAULT ''"},
+		{"project", "TEXT NOT NULL DEFAULT ''"},
+		{"environment", "TEXT NOT NULL DEFAULT ''"},
+		{"template", "TEXT NOT NULL DEFAULT ''"},
+		{"namespace", "TEXT NOT NULL DEFAULT ''"},
+		{"resource_version", "TEXT NOT NULL DEFAULT ''"},
+		{"digest", "TEXT NOT NULL DEFAULT ''"},
+		{"correlation_id", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := s.ensureColumn("audit_events", column.name, column.definition); err != nil {
+			return err
+		}
 	}
 	for _, column := range []struct {
 		table      string
@@ -748,6 +842,36 @@ func (s *GatewayStore) UserHasAction(userID string, action GatewayAction) bool {
 	return false
 }
 
+func (s *GatewayStore) UserIsPlatformAdmin(userID string) bool {
+	if userID == "" {
+		return false
+	}
+	rows, err := s.db.Query(`SELECT cluster, instance, actions_json FROM grants WHERE user_id = ?`, userID)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cluster, instance, rawActions string
+		if err := rows.Scan(&cluster, &instance, &rawActions); err != nil {
+			return false
+		}
+		if cluster != "*" || instance != "*" {
+			continue
+		}
+		var actions []GatewayAction
+		if json.Unmarshal([]byte(rawActions), &actions) != nil {
+			continue
+		}
+		for _, action := range actions {
+			if action == ActionAdmin || action == ActionAll {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func gatewayActionAllows(granted, requested GatewayAction) bool {
 	if granted == requested || granted == ActionAdmin || granted == ActionAll {
 		return true
@@ -945,9 +1069,13 @@ func (s *GatewayStore) StartAudit(event AuditEvent) (int64, error) {
 		event.StartedAt = time.Now().UTC()
 	}
 	res, err := s.db.Exec(`INSERT INTO audit_events
-		(user_id, token_id, cluster, instance, action, session, command_summary, status, started_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		event.UserID, event.TokenID, event.Cluster, event.Instance, string(event.Action),
+		(user_id, token_id, cluster, instance, credential_id, credential_version_id,
+		 credential_grant_id, project, environment, template, namespace, resource_version,
+		 digest, correlation_id, action, session, command_summary, status, started_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		event.UserID, event.TokenID, event.Cluster, event.Instance, event.CredentialID,
+		event.VersionID, event.GrantID, event.Project, event.Environment, event.Template,
+		event.Namespace, event.ResourceVersion, event.Digest, event.CorrelationID, string(event.Action),
 		event.Session, event.CommandSummary, firstNonEmpty(event.Status, "running"), formatTime(event.StartedAt.UTC()))
 	if err != nil {
 		return 0, err
@@ -959,6 +1087,14 @@ func (s *GatewayStore) FinishAudit(id int64, finish AuditFinish) error {
 	if id == 0 {
 		return nil
 	}
+	return finishAuditWith(s.db, id, finish)
+}
+
+type auditExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func finishAuditWith(execer auditExecer, id int64, finish AuditFinish) error {
 	if finish.EndedAt.IsZero() {
 		finish.EndedAt = time.Now().UTC()
 	}
@@ -969,12 +1105,38 @@ func (s *GatewayStore) FinishAudit(id int64, finish AuditFinish) error {
 			finish.Status = "success"
 		}
 	}
-	_, err := s.db.Exec(`UPDATE audit_events
-		SET status = ?, error = ?, tail = ?, bytes_in = ?, bytes_out = ?, ended_at = ?
+	result, err := execer.Exec(`UPDATE audit_events
+		SET status = ?, error = ?, tail = ?, bytes_in = ?, bytes_out = ?,
+			cluster = CASE WHEN ? = '' THEN cluster ELSE ? END,
+			instance = CASE WHEN ? = '' THEN instance ELSE ? END,
+			credential_version_id = CASE WHEN ? = '' THEN credential_version_id ELSE ? END,
+			credential_grant_id = CASE WHEN ? = '' THEN credential_grant_id ELSE ? END,
+			project = CASE WHEN ? = '' THEN project ELSE ? END,
+			environment = CASE WHEN ? = '' THEN environment ELSE ? END,
+			template = CASE WHEN ? = '' THEN template ELSE ? END,
+			namespace = CASE WHEN ? = '' THEN namespace ELSE ? END,
+			resource_version = CASE WHEN ? = '' THEN resource_version ELSE ? END,
+			digest = CASE WHEN ? = '' THEN digest ELSE ? END,
+			ended_at = ?
 		WHERE id = ?`,
 		finish.Status, finish.Error, trimTail(finish.Tail, 8192), finish.BytesIn, finish.BytesOut,
+		finish.Cluster, finish.Cluster, finish.Instance, finish.Instance,
+		finish.VersionID, finish.VersionID, finish.GrantID, finish.GrantID,
+		finish.Project, finish.Project, finish.Environment, finish.Environment,
+		finish.Template, finish.Template, finish.Namespace, finish.Namespace,
+		finish.ResourceVersion, finish.ResourceVersion, finish.Digest, finish.Digest,
 		formatTime(finish.EndedAt.UTC()), id)
-	return err
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (s *GatewayStore) ListAudit(limit int) ([]AuditEvent, error) {
@@ -1011,8 +1173,10 @@ func (s *GatewayStore) ListAuditFiltered(filter AuditFilter) ([]AuditEvent, erro
 		conditions = append(conditions, "status = ?")
 		args = append(args, v)
 	}
-	query := `SELECT id, user_id, token_id, cluster, instance, action, session,
-		command_summary, status, error, tail, bytes_in, bytes_out, started_at, ended_at
+	query := `SELECT id, user_id, token_id, cluster, instance, credential_id,
+			credential_version_id, credential_grant_id, project, environment, template,
+			namespace, resource_version, digest, correlation_id, action, session,
+			command_summary, status, error, tail, bytes_in, bytes_out, started_at, ended_at
 		FROM audit_events`
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
@@ -1029,6 +1193,8 @@ func (s *GatewayStore) ListAuditFiltered(filter AuditFilter) ([]AuditEvent, erro
 		var ev AuditEvent
 		var action, started, ended string
 		if err := rows.Scan(&ev.ID, &ev.UserID, &ev.TokenID, &ev.Cluster, &ev.Instance,
+			&ev.CredentialID, &ev.VersionID, &ev.GrantID, &ev.Project, &ev.Environment,
+			&ev.Template, &ev.Namespace, &ev.ResourceVersion, &ev.Digest, &ev.CorrelationID,
 			&action, &ev.Session, &ev.CommandSummary, &ev.Status, &ev.Error, &ev.Tail,
 			&ev.BytesIn, &ev.BytesOut, &started, &ended); err != nil {
 			return nil, err

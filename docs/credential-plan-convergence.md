@@ -24,6 +24,9 @@ Gateway and Agent uses one credential-plan control-plane protocol.
 
 - v2 execution roots: `DeploymentTemplate` and `SemanticRelease`.
 - v2 configuration source: `EnvironmentRegistry`.
+- A v2 `EnvironmentRegistry` entry may select one strict v3
+  `EnvironmentDefinition` through its repository-relative `file` field. The
+  entry must not also declare an inline target.
 - v2 referenced release document: `ServiceRelease`.
 - v3 deployment root:
   `deploy/environments/<environment>/environment.yaml`
@@ -45,6 +48,9 @@ configuration sources are rejected.
 - v3 required Secret references marked undeclared block during credential
   prepare.
 - v2 configuration sources require an explicit `EnvironmentRegistry`.
+- Registry `file` entries are resolved through the same strict v3 workflow
+  compiler, including environment identity, path, service, and service
+  definition validation.
 - Agents advertise `doops.sh/credential-plan/v2`; Gateway prepare rejects
   offline targets with 503 and incompatible Agents with 426 before dispatch.
 - Apply requires `ask` and `credential:use`, a compatible Agent, and one exact
