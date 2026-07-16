@@ -172,6 +172,16 @@ func TestValidateDoopsPlanWorkspaceRejectsTrackedFileTampering(t *testing.T) {
 	if _, err := validateDoopsPlanWorkspace(workspace, commit); err != nil {
 		t.Fatalf("validate workspace with agent audit log: %v", err)
 	}
+	agentRuntime := filepath.Join(workspace, ".agent", "sessions", "session-a")
+	if err := os.MkdirAll(agentRuntime, 0o700); err != nil {
+		t.Fatalf("create agent runtime: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(agentRuntime, "messages.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("write agent runtime file: %v", err)
+	}
+	if _, err := validateDoopsPlanWorkspace(workspace, commit); err != nil {
+		t.Fatalf("validate workspace with agent runtime: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(workspace, "untracked.yaml"), []byte("unsafe: true\n"), 0o644); err != nil {
 		t.Fatalf("write untracked file: %v", err)
 	}
@@ -188,6 +198,22 @@ func TestValidateDoopsPlanWorkspaceRejectsTrackedFileTampering(t *testing.T) {
 	if _, err := validateDoopsPlanWorkspace(workspace, commit); err == nil ||
 		!strings.Contains(err.Error(), "differs from the pushed source snapshot") {
 		t.Fatalf("tampered workspace error = %v", err)
+	}
+}
+
+func TestResolveDoopsPlanWorkspacePathRejectsAgentRuntime(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, ".agent", "sessions", "unsafe", "values.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("create agent runtime path: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("unsafe: true\n"), 0o600); err != nil {
+		t.Fatalf("write agent runtime path: %v", err)
+	}
+
+	if _, err := resolveDoopsPlanWorkspacePath(root, ".agent/sessions/unsafe/values.yaml"); err == nil ||
+		!strings.Contains(err.Error(), "agent runtime directory") {
+		t.Fatalf("agent runtime deployment path error = %v", err)
 	}
 }
 

@@ -1030,6 +1030,12 @@ func verifyDoopsPlanWorkspaceFileSet(root, bareRepository, workspaceCommit strin
 			}
 			return nil
 		}
+		if relative == ".agent" || strings.HasPrefix(relative, ".agent/") {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if relative == ".doops-ready" || relative == ".doops-audit-log" {
 			return nil
 		}
@@ -1079,6 +1085,9 @@ func resolveDoopsPlanWorkspacePath(root, relative string) (string, error) {
 	clean, err := credentialDeclarationRelativePath(relative)
 	if err != nil {
 		return "", err
+	}
+	if clean == ".agent" || strings.HasPrefix(clean, ".agent/") {
+		return "", errors.New("declared deployment paths cannot use the agent runtime directory")
 	}
 	path := filepath.Join(root, clean)
 	resolved, err := filepath.EvalSymlinks(path)
