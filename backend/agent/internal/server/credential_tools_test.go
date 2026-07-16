@@ -105,6 +105,7 @@ func TestAgentCredentialMaterializeToolAcceptsBoundSession(t *testing.T) {
 	result, err := handleCredentialMaterializeTool(context.Background(), mustJSON(t, map[string]any{
 		"session_id":      "credential-apply",
 		"credential_id":   "cred_opaque",
+		"grant_id":        "grant_opaque",
 		"version_id":      "ver_opaque",
 		"credential_type": CredentialTypeOpaque,
 		"use":             CredentialUseOpaqueSecret,

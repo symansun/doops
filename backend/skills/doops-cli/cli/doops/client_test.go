@@ -7,11 +7,178 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+func TestCallRetriesWebSocketHandshakeEOFBeforeSendingToolCall(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	var connections atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if connections.Add(1) == 1 {
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("test server does not support hijacking")
+			}
+			conn, _, err := hijacker.Hijack()
+			if err != nil {
+				t.Fatalf("hijack first websocket handshake: %v", err)
+			}
+			_ = conn.Close()
+			return
+		}
+
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("upgrade retry: %v", err)
+		}
+		defer conn.Close()
+		for {
+			var req map[string]interface{}
+			if err := conn.ReadJSON(&req); err != nil {
+				return
+			}
+			switch req["method"] {
+			case "initialize":
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{"protocolVersion": "2024-11-05"},
+				})
+			case "tools/call":
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]interface{}{
+						"content": []interface{}{
+							map[string]interface{}{"type": "text", "text": "ok"},
+						},
+					},
+				})
+			}
+		}
+	}))
+	defer ts.Close()
+
+	host, port, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
+	if err != nil {
+		t.Fatalf("split test server address: %v", err)
+	}
+	client := NewMCPClient(
+		Server{Name: "direct", IP: host, Port: port},
+		NewSessionStore(),
+		"handshake-eof",
+		false,
+	)
+	defer client.Close()
+
+	if err := client.Call("doops_shell", map[string]interface{}{"command": "hostname"}); err != nil {
+		t.Fatalf("call should recover from pre-request handshake EOF: %v", err)
+	}
+	if got := connections.Load(); got != 2 {
+		t.Fatalf("expected one handshake retry, got %d connections", got)
+	}
+}
+
+func TestCallStopsAfterWebSocketHandshakeRetryLimit(t *testing.T) {
+	var connections atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connections.Add(1)
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatal("test server does not support hijacking")
+		}
+		conn, _, err := hijacker.Hijack()
+		if err != nil {
+			t.Fatalf("hijack websocket handshake: %v", err)
+		}
+		_ = conn.Close()
+	}))
+	defer ts.Close()
+
+	client := newDirectTestClient(t, ts.URL, "handshake-limit")
+	defer client.Close()
+	if err := client.Call("doops_shell", map[string]interface{}{"command": "hostname"}); err == nil {
+		t.Fatal("expected repeated handshake EOF to fail")
+	}
+	if got := connections.Load(); got != websocketHandshakeAttempts {
+		t.Fatalf("expected %d handshake attempts, got %d", websocketHandshakeAttempts, got)
+	}
+}
+
+func TestCallDoesNotRetryHTTPHandshakeError(t *testing.T) {
+	var connections atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connections.Add(1)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	}))
+	defer ts.Close()
+
+	client := newDirectTestClient(t, ts.URL, "handshake-http-error")
+	defer client.Close()
+	err := client.Call("doops_shell", map[string]interface{}{"command": "hostname"})
+	if err == nil || !strings.Contains(err.Error(), "HTTP 401") {
+		t.Fatalf("expected HTTP handshake error, got %v", err)
+	}
+	if got := connections.Load(); got != 1 {
+		t.Fatalf("HTTP handshake errors must not be retried, got %d attempts", got)
+	}
+}
+
+func TestCallDoesNotRetryAfterToolCallWasSent(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	var connections atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connections.Add(1)
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("upgrade websocket: %v", err)
+		}
+		defer conn.Close()
+		for {
+			var req map[string]interface{}
+			if err := conn.ReadJSON(&req); err != nil {
+				return
+			}
+			if req["method"] == "initialize" {
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{"protocolVersion": "2024-11-05"},
+				})
+				continue
+			}
+			return
+		}
+	}))
+	defer ts.Close()
+
+	client := newDirectTestClient(t, ts.URL, "tool-call-disconnect")
+	defer client.Close()
+	if err := client.Call("doops_shell", map[string]interface{}{"command": "hostname"}); err == nil {
+		t.Fatal("expected disconnect after tool submission to fail")
+	}
+	if got := connections.Load(); got != 1 {
+		t.Fatalf("submitted tool calls must not be replayed, got %d connections", got)
+	}
+}
+
+func newDirectTestClient(t *testing.T, serverURL, session string) *MCPClient {
+	t.Helper()
+	host, port, err := net.SplitHostPort(strings.TrimPrefix(serverURL, "http://"))
+	if err != nil {
+		t.Fatalf("split test server address: %v", err)
+	}
+	return NewMCPClient(
+		Server{Name: "direct", IP: host, Port: port},
+		NewSessionStore(),
+		session,
+		false,
+	)
+}
 
 func TestGatewayTargetUsesVersionedRPCEndpoint(t *testing.T) {
 	client := NewMCPClient(Server{

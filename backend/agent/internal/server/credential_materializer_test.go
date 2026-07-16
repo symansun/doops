@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -45,6 +46,7 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 
 	result, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
 		CredentialID:       "cred_registry",
+		GrantID:            "grant_registry",
 		VersionID:          "ver_registry",
 		CredentialType:     CredentialTypeRegistry,
 		Use:                CredentialUseImagePull,
@@ -71,6 +73,66 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 	assertCredentialCanaryNotInText(t, "command arguments", readCredentialTestFile(t, argsLog), "materializer-canary-secret")
 }
 
+func TestVerifyRegistryManifestUsesBearerChallenge(t *testing.T) {
+	allowCredentialPrivateEndpointsForTest(t)
+	const canary = "bearer-canary-secret"
+	var tokenRequests atomic.Int64
+	var manifestRequests atomic.Int64
+	var registry *httptest.Server
+	registry = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			tokenRequests.Add(1)
+			username, password, ok := r.BasicAuth()
+			if !ok || username != "deploy" || password != canary ||
+				r.URL.Query().Get("service") != "registry.test" ||
+				r.URL.Query().Get("scope") != "repository:team/app:pull" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			_, _ = w.Write([]byte(`{"token":"short-lived-registry-token"}`))
+		case "/v2/team/app/manifests/latest":
+			manifestRequests.Add(1)
+			accept := r.Header.Get("Accept")
+			if !strings.Contains(accept, "application/vnd.oci.image.index.v1+json") ||
+				!strings.Contains(accept, "application/vnd.docker.distribution.manifest.list.v2+json") {
+				http.Error(w, "multi-platform media types required", http.StatusNotAcceptable)
+				return
+			}
+			if r.Header.Get("Authorization") != "Bearer short-lived-registry-token" {
+				w.Header().Set("WWW-Authenticate",
+					fmt.Sprintf(`Bearer realm=%q,service="registry.test",scope="repository:team/app:pull"`, registry.URL+"/token"))
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Docker-Content-Digest", "sha256:bearer-manifest")
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer registry.Close()
+
+	digest, err := verifyRegistryManifest(
+		context.Background(), registry.URL, "deploy", canary, "team/app", "latest",
+	)
+	if err != nil {
+		t.Fatalf("verify registry manifest with bearer challenge: %v", err)
+	}
+	if digest != "sha256:bearer-manifest" || tokenRequests.Load() != 1 || manifestRequests.Load() != 2 {
+		t.Fatalf("digest=%q tokenRequests=%d manifestRequests=%d",
+			digest, tokenRequests.Load(), manifestRequests.Load())
+	}
+}
+
+func TestCredentialSecretNameIsGrantScoped(t *testing.T) {
+	first := credentialSecretName("cred_registry", "grant_a")
+	second := credentialSecretName("cred_registry", "grant_b")
+	if first == second {
+		t.Fatalf("different grants share credential Secret name %q", first)
+	}
+}
+
 func TestMaterializeTLSCredentialValidatesKeyPair(t *testing.T) {
 	bin, argsLog := installCredentialTestCommands(t)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -80,6 +142,7 @@ func TestMaterializeTLSCredentialValidatesKeyPair(t *testing.T) {
 
 	result, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
 		CredentialID:   "cred_tls",
+		GrantID:        "grant_tls",
 		VersionID:      "ver_tls",
 		CredentialType: CredentialTypeTLS,
 		Use:            CredentialUseTLS,
@@ -103,6 +166,7 @@ func TestMaterializeTLSCredentialValidatesKeyPair(t *testing.T) {
 	_, wrongKey := credentialTestCertificate(t)
 	_, err = materializeCredential(context.Background(), CredentialMaterializeRequest{
 		CredentialID:   "cred_tls_bad",
+		GrantID:        "grant_tls_bad",
 		VersionID:      "ver_tls_bad",
 		CredentialType: CredentialTypeTLS,
 		Use:            CredentialUseTLS,
@@ -126,6 +190,7 @@ func TestMaterializeOpaqueCredentialRequiresExactKeySet(t *testing.T) {
 
 	result, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
 		CredentialID:   "cred_opaque",
+		GrantID:        "grant_opaque",
 		VersionID:      "ver_opaque",
 		CredentialType: CredentialTypeOpaque,
 		Use:            CredentialUseOpaqueSecret,
@@ -142,6 +207,7 @@ func TestMaterializeOpaqueCredentialRequiresExactKeySet(t *testing.T) {
 
 	_, err = materializeCredential(context.Background(), CredentialMaterializeRequest{
 		CredentialID:   "cred_opaque_bad",
+		GrantID:        "grant_opaque_bad",
 		VersionID:      "ver_opaque_bad",
 		CredentialType: CredentialTypeOpaque,
 		Use:            CredentialUseOpaqueSecret,
@@ -180,6 +246,7 @@ func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T
 
 	helmResult, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
 		CredentialID:   "cred_helm",
+		GrantID:        "grant_helm",
 		VersionID:      "ver_helm",
 		CredentialType: CredentialTypeHelmRepository,
 		Use:            CredentialUseHelmPull,
@@ -199,6 +266,7 @@ func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T
 
 	gitResult, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
 		CredentialID:   "cred_git",
+		GrantID:        "grant_git",
 		VersionID:      "ver_git",
 		CredentialType: CredentialTypeGitToken,
 		Use:            CredentialUseGitCheckout,
@@ -238,14 +306,16 @@ fi
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("DOOPS_TEST_ARGS_LOG", logPath)
 	credentialID := "cred_cleanup"
+	grantID := "grant_cleanup"
 	versionID := "credver_cleanup"
 	t.Setenv("DOOPS_TEST_SECRET_JSON", fmt.Sprintf(
-		`{"metadata":{"labels":{"app.kubernetes.io/managed-by":"doops","doops.sh/credential-id":%q},"annotations":{"doops.sh/credential-version":%q}}}`,
-		credentialID, versionID,
+		`{"metadata":{"labels":{"app.kubernetes.io/managed-by":"doops","doops.sh/credential-id":%q,"doops.sh/credential-grant-id":%q},"annotations":{"doops.sh/credential-version":%q}}}`,
+		credentialID, grantID, versionID,
 	))
 	if err := cleanupCredential(context.Background(), CredentialCleanupRequest{
 		SessionID:    "cleanup-session",
 		CredentialID: credentialID,
+		GrantID:      grantID,
 		VersionID:    versionID,
 		Namespace:    "apps",
 		Workload:     CredentialPlanWorkload{Kind: "Deployment", Name: "app"},
@@ -253,17 +323,18 @@ fi
 		t.Fatalf("cleanup credential: %v", err)
 	}
 	logged := readCredentialTestFile(t, logPath)
-	if !strings.Contains(logged, "delete secret "+credentialSecretName(credentialID)) {
+	if !strings.Contains(logged, "delete secret "+credentialSecretName(credentialID, grantID)) {
 		t.Fatalf("cleanup did not delete the owned Secret: %s", logged)
 	}
 
 	t.Setenv("DOOPS_TEST_SECRET_JSON", fmt.Sprintf(
-		`{"metadata":{"labels":{"app.kubernetes.io/managed-by":"doops","doops.sh/credential-id":%q},"annotations":{"doops.sh/credential-version":"other"}}}`,
-		credentialID,
+		`{"metadata":{"labels":{"app.kubernetes.io/managed-by":"doops","doops.sh/credential-id":%q,"doops.sh/credential-grant-id":%q},"annotations":{"doops.sh/credential-version":"other"}}}`,
+		credentialID, grantID,
 	))
 	if err := cleanupCredential(context.Background(), CredentialCleanupRequest{
 		SessionID:    "cleanup-session",
 		CredentialID: credentialID,
+		GrantID:      grantID,
 		VersionID:    versionID,
 		Namespace:    "apps",
 	}); err == nil || !strings.Contains(err.Error(), "ownership_mismatch") {

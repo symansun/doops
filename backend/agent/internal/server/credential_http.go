@@ -185,6 +185,11 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 			http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
 			return
 		}
+		if err := h.cleanupCredentialGrantMaterializations(r.Context(), resource.ID, grant.ID); err != nil {
+			h.finishCredentialAudit(auditID, "error", "credential_grant_revocation_outcome_unknown")
+			http.Error(w, "credential_grant_revocation_outcome_unknown", http.StatusBadGateway)
+			return
+		}
 		h.finishCredentialAudit(auditID, "success", "")
 		writeJSONHTTP(w, grant)
 		return
@@ -301,7 +306,8 @@ func (h *GatewayHub) handleCredentialPromote(w http.ResponseWriter, r *http.Requ
 		seen[key] = struct{}{}
 		ref := credentialReferenceFromRequest(request)
 		evidence, refreshedRequest, err := h.materializeCredentialVersion(
-			r.Context(), request.Cluster, request.Instance, request.SessionID, resource, version, ref,
+			r.Context(), request.Cluster, request.Instance, request.SessionID,
+			resource, version, request.GrantID, ref,
 		)
 		if err != nil {
 			if rollbackErr := h.rollbackCredentialPromotion(r.Context(), resource, previous, previousErr, applied); rollbackErr != nil {

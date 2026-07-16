@@ -178,7 +178,7 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 			var request CredentialMaterializeRequest
 			materialization, request, err = h.materializeCredentialVersion(
 				r.Context(), body.Cluster, body.Instance, body.SessionID,
-				item.Authorized.Resource, item.Authorized.Version, item.Reference,
+				item.Authorized.Resource, item.Authorized.Version, item.Authorized.Grant.ID, item.Reference,
 			)
 			if err != nil {
 				category := "credential_materialization_failed"
@@ -241,6 +241,7 @@ func (h *GatewayHub) rollbackCredentialPrepare(ctx context.Context, completed []
 			Cluster:            entry.Item.Authorized.Grant.Cluster,
 			Instance:           entry.Item.Authorized.Grant.Instance,
 			CredentialID:       entry.Item.Authorized.Resource.ID,
+			GrantID:            entry.Item.Authorized.Grant.ID,
 			VersionID:          materialization.VersionID,
 			CredentialType:     entry.Item.Authorized.Resource.Type,
 			Use:                entry.Item.Reference.Use,
@@ -268,6 +269,7 @@ func (h *GatewayHub) rollbackCredentialPrepare(ctx context.Context, completed []
 			request.SessionID,
 			entry.Item.Authorized.Resource,
 			previous,
+			request.GrantID,
 			entry.Item.Reference,
 		); err != nil {
 			rollbackErr = err
@@ -283,6 +285,7 @@ func (h *GatewayHub) materializeCredentialVersion(
 	sessionID string,
 	resource CredentialResource,
 	version CredentialVersion,
+	grantID string,
 	ref CredentialPlanReference,
 ) (CredentialMaterialization, CredentialMaterializeRequest, error) {
 	payload, err := h.store.ResolveCredentialPayload(resource.ID, version.ID)
@@ -302,6 +305,7 @@ func (h *GatewayHub) materializeCredentialVersion(
 		Cluster:            cluster,
 		Instance:           instance,
 		CredentialID:       resource.ID,
+		GrantID:            grantID,
 		VersionID:          version.ID,
 		CredentialType:     resource.Type,
 		Use:                ref.Use,
@@ -356,7 +360,15 @@ func (h *GatewayHub) handleCredentialVerify(
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	auditID := h.startCredentialAudit(auth, ActionCredentialRotate, resource.ID, "credential verify")
+	auditStatus := "error"
+	auditCategory := "credential_verification_failed"
+	defer func() {
+		h.finishCredentialAudit(auditID, auditStatus, auditCategory)
+	}()
 	if !h.canRotateCredential(auth.UserID, resource) {
+		auditStatus = "forbidden"
+		auditCategory = "credential_forbidden"
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -376,6 +388,13 @@ func (h *GatewayHub) handleCredentialVerify(
 	if body.VersionID == "" || body.Cluster == "" || body.Instance == "" || body.SessionID == "" ||
 		body.WorkflowPath == "" || !validCredentialWorkspaceCommit(body.WorkspaceCommit) {
 		http.Error(w, "invalid credential verify request", http.StatusBadRequest)
+		return
+	}
+	if !h.store.UserCan(auth.UserID, body.Cluster, body.Instance, ActionAsk) ||
+		!h.store.UserCan(auth.UserID, body.Cluster, body.Instance, ActionCredentialUse) {
+		auditStatus = "forbidden"
+		auditCategory = "credential_target_forbidden"
+		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	version, err := h.store.CredentialVersionByID(resource.ID, body.VersionID)
@@ -417,43 +436,45 @@ func (h *GatewayHub) handleCredentialVerify(
 		http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
 		return
 	}
-	evidence, request, err := h.materializeCredentialVersion(
-		r.Context(), body.Cluster, body.Instance, body.SessionID, resource, version, *reference,
-	)
-	if err != nil {
-		http.Error(w, "credential_verification_failed", http.StatusBadGateway)
-		return
-	}
 	active, activeErr := h.store.ActiveCredentialVersion(resource.ID)
-	switch {
-	case activeErr == nil:
-		if _, _, err := h.materializeCredentialVersion(
-			r.Context(), body.Cluster, body.Instance, body.SessionID, resource, active, *reference,
-		); err != nil {
-			http.Error(w, "credential_verification_restore_failed", http.StatusBadGateway)
-			return
-		}
-	case errors.Is(activeErr, ErrCredentialVersionNotFound):
-		if err := h.cleanupCredentialVersion(r.Context(), request); err != nil {
-			http.Error(w, "credential_verification_cleanup_failed", http.StatusBadGateway)
-			return
-		}
-	default:
+	if activeErr != nil && !errors.Is(activeErr, ErrCredentialVersionNotFound) {
 		http.Error(w, credentialErrorCategory(activeErr), credentialHTTPStatus(activeErr))
 		return
 	}
+	evidence := make([]CredentialMaterialization, 0, len(grants))
 	for _, grant := range grants {
+		observed, request, err := h.materializeCredentialVersion(
+			r.Context(), body.Cluster, body.Instance, body.SessionID,
+			resource, version, grant.ID, *reference,
+		)
+		if err != nil {
+			http.Error(w, "credential_verification_failed", http.StatusBadGateway)
+			return
+		}
+		if activeErr == nil {
+			if _, _, err := h.materializeCredentialVersion(
+				r.Context(), body.Cluster, body.Instance, body.SessionID,
+				resource, active, grant.ID, *reference,
+			); err != nil {
+				http.Error(w, "credential_verification_outcome_unknown", http.StatusBadGateway)
+				return
+			}
+		} else if err := h.cleanupCredentialVersion(r.Context(), request); err != nil {
+			http.Error(w, "credential_verification_outcome_unknown", http.StatusBadGateway)
+			return
+		}
 		if err := h.store.RecordCredentialVerification(CredentialVerification{
 			CredentialID: resource.ID,
 			VersionID:    version.ID,
 			GrantID:      grant.ID,
 			Use:          reference.Use,
 			Request:      request,
-			Evidence:     evidence,
+			Evidence:     observed,
 		}); err != nil {
 			http.Error(w, "credential_verification_persist_failed", http.StatusInternalServerError)
 			return
 		}
+		evidence = append(evidence, observed)
 	}
 	writeJSONHTTP(w, map[string]any{
 		"credential_id": resource.ID,
@@ -461,6 +482,8 @@ func (h *GatewayHub) handleCredentialVerify(
 		"verified":      true,
 		"evidence":      evidence,
 	})
+	auditStatus = "success"
+	auditCategory = ""
 }
 
 func (h *GatewayHub) loadCredentialPlan(ctx context.Context, body credentialPrepareHTTPBody) (CredentialPlan, error) {
@@ -513,12 +536,46 @@ func (h *GatewayHub) cleanupCredentialVersion(ctx context.Context, request Crede
 	arguments := map[string]any{
 		"session_id":    request.SessionID,
 		"credential_id": request.CredentialID,
+		"grant_id":      request.GrantID,
 		"version_id":    request.VersionID,
 		"namespace":     request.Namespace,
 		"workload":      request.Workload,
 	}
 	_, err := h.RunInternalToolCall(ctx, request.Cluster, request.Instance, "doops_credential_cleanup", arguments)
 	return err
+}
+
+func (h *GatewayHub) cleanupCredentialGrantMaterializations(
+	ctx context.Context,
+	credentialID string,
+	grantID string,
+) error {
+	active, err := h.store.ActiveCredentialVersion(credentialID)
+	if errors.Is(err, ErrCredentialVersionNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	verifications, err := h.store.CredentialVerifications(credentialID, active.ID)
+	if err != nil {
+		return err
+	}
+	seen := make(map[string]struct{})
+	for _, verification := range verifications {
+		if verification.GrantID != grantID {
+			continue
+		}
+		key := credentialMaterializationContextKey(verification.Request)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if err := h.cleanupCredentialVersion(ctx, verification.Request); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func credentialReferenceFromRequest(request CredentialMaterializeRequest) CredentialPlanReference {
@@ -536,6 +593,7 @@ func credentialMaterializationContextKey(request CredentialMaterializeRequest) s
 	return strings.Join([]string{
 		request.Cluster,
 		request.Instance,
+		request.GrantID,
 		request.Namespace,
 		string(request.Use),
 		request.Workload.Kind,
@@ -562,6 +620,7 @@ func (h *GatewayHub) rollbackCredentialPromotion(
 				request.SessionID,
 				resource,
 				previous,
+				request.GrantID,
 				credentialReferenceFromRequest(request),
 			); err != nil {
 				return err

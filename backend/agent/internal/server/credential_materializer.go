@@ -28,6 +28,7 @@ type CredentialMaterializeRequest struct {
 	Cluster            string                 `json:"cluster,omitempty"`
 	Instance           string                 `json:"instance,omitempty"`
 	CredentialID       string                 `json:"credential_id"`
+	GrantID            string                 `json:"grant_id"`
 	VersionID          string                 `json:"version_id"`
 	CredentialType     CredentialType         `json:"credential_type"`
 	Use                CredentialUse          `json:"use"`
@@ -42,6 +43,7 @@ type CredentialMaterializeRequest struct {
 type CredentialCleanupRequest struct {
 	SessionID    string                 `json:"session_id"`
 	CredentialID string                 `json:"credential_id"`
+	GrantID      string                 `json:"grant_id"`
 	VersionID    string                 `json:"version_id"`
 	Namespace    string                 `json:"namespace"`
 	Workload     CredentialPlanWorkload `json:"workload,omitempty"`
@@ -56,7 +58,8 @@ type credentialTargetSnapshot struct {
 }
 
 func materializeCredential(ctx context.Context, req CredentialMaterializeRequest) (CredentialMaterialization, error) {
-	if strings.TrimSpace(req.CredentialID) == "" || strings.TrimSpace(req.VersionID) == "" ||
+	if strings.TrimSpace(req.CredentialID) == "" || strings.TrimSpace(req.GrantID) == "" ||
+		strings.TrimSpace(req.VersionID) == "" ||
 		strings.TrimSpace(req.Namespace) == "" || !validCredentialType(req.CredentialType) ||
 		!validCredentialUse(req.Use) {
 		return CredentialMaterialization{}, errors.New("credential_request_invalid")
@@ -65,7 +68,7 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 		return CredentialMaterialization{}, ErrCredentialPayloadInvalid
 	}
 
-	name := credentialSecretName(req.CredentialID)
+	name := credentialSecretName(req.CredentialID, req.GrantID)
 	result := CredentialMaterialization{
 		CredentialID: req.CredentialID,
 		VersionID:    req.VersionID,
@@ -293,6 +296,7 @@ func applyCredentialSecret(ctx context.Context, req CredentialMaterializeRequest
 			"labels": map[string]string{
 				"app.kubernetes.io/managed-by": "doops",
 				"doops.sh/credential-id":       req.CredentialID,
+				"doops.sh/credential-grant-id": req.GrantID,
 			},
 			"annotations": map[string]string{
 				"doops.sh/credential-version": req.VersionID,
@@ -362,11 +366,12 @@ func inspectImagePullSecrets(ctx context.Context, namespace, kind, name string) 
 }
 
 func cleanupCredential(ctx context.Context, req CredentialCleanupRequest) error {
-	if strings.TrimSpace(req.CredentialID) == "" || strings.TrimSpace(req.VersionID) == "" ||
+	if strings.TrimSpace(req.CredentialID) == "" || strings.TrimSpace(req.GrantID) == "" ||
+		strings.TrimSpace(req.VersionID) == "" ||
 		!validKubernetesCredentialName(req.Namespace) {
 		return errors.New("credential_cleanup_invalid")
 	}
-	name := credentialSecretName(req.CredentialID)
+	name := credentialSecretName(req.CredentialID, req.GrantID)
 	cmd := exec.CommandContext(ctx, "kubectl", "get", "secret", name, "-n", req.Namespace, "--ignore-not-found", "-o", "json")
 	output, err := cmd.Output()
 	if err != nil {
@@ -386,6 +391,7 @@ func cleanupCredential(ctx context.Context, req CredentialCleanupRequest) error 
 	}
 	if secret.Metadata.Labels["app.kubernetes.io/managed-by"] != "doops" ||
 		secret.Metadata.Labels["doops.sh/credential-id"] != req.CredentialID ||
+		secret.Metadata.Labels["doops.sh/credential-grant-id"] != req.GrantID ||
 		secret.Metadata.Annotations["doops.sh/credential-version"] != req.VersionID {
 		return errors.New("credential_secret_ownership_mismatch")
 	}
@@ -462,15 +468,34 @@ func verifyRegistryManifest(ctx context.Context, server, username, password, rep
 		server = "https://" + server
 	}
 	endpoint := strings.TrimRight(server, "/") + "/v2/" + repository + "/manifests/" + reference
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	request, err := registryManifestRequest(ctx, endpoint)
 	if err != nil {
 		return "", errors.New("registry_request_invalid")
 	}
 	request.SetBasicAuth(username, password)
-	request.Header.Set("Accept", "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json")
 	response, err := credentialHTTPClient(request.URL).Do(request)
 	if err != nil {
 		return "", errors.New("registry_manifest_unavailable")
+	}
+	if response.StatusCode == http.StatusUnauthorized {
+		challenge := response.Header.Get("WWW-Authenticate")
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+		_ = response.Body.Close()
+		token, err := exchangeRegistryBearerToken(
+			ctx, request.URL, challenge, username, password,
+		)
+		if err != nil {
+			return "", err
+		}
+		request, err = registryManifestRequest(ctx, endpoint)
+		if err != nil {
+			return "", errors.New("registry_request_invalid")
+		}
+		request.Header.Set("Authorization", "Bearer "+token)
+		response, err = credentialHTTPClient(request.URL).Do(request)
+		if err != nil {
+			return "", errors.New("registry_manifest_unavailable")
+		}
 	}
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
@@ -482,6 +507,126 @@ func verifyRegistryManifest(ctx context.Context, server, username, password, rep
 		return "", errors.New("registry_digest_missing")
 	}
 	return digest, nil
+}
+
+func registryManifestRequest(ctx context.Context, endpoint string) (*http.Request, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set(
+		"Accept",
+		"application/vnd.oci.image.manifest.v1+json, "+
+			"application/vnd.oci.image.index.v1+json, "+
+			"application/vnd.docker.distribution.manifest.v2+json, "+
+			"application/vnd.docker.distribution.manifest.list.v2+json",
+	)
+	return request, nil
+}
+
+func exchangeRegistryBearerToken(
+	ctx context.Context,
+	registryURL *url.URL,
+	challenge string,
+	username string,
+	password string,
+) (string, error) {
+	parameters, err := parseRegistryBearerChallenge(challenge)
+	if err != nil {
+		return "", errors.New("registry_auth_challenge_invalid")
+	}
+	realm, err := url.Parse(parameters["realm"])
+	if err != nil || realm.User != nil || realm.Hostname() == "" || realm.Fragment != "" {
+		return "", errors.New("registry_auth_challenge_invalid")
+	}
+	if realm.Scheme != "https" &&
+		!(realm.Scheme == "http" && registryURL.Scheme == "http" && realm.Host == registryURL.Host) {
+		return "", errors.New("registry_auth_challenge_invalid")
+	}
+	query := realm.Query()
+	for _, key := range []string{"service", "scope"} {
+		if value := parameters[key]; value != "" {
+			query.Set(key, value)
+		}
+	}
+	realm.RawQuery = query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, realm.String(), nil)
+	if err != nil {
+		return "", errors.New("registry_auth_challenge_invalid")
+	}
+	request.SetBasicAuth(username, password)
+	response, err := credentialHTTPClient(request.URL).Do(request)
+	if err != nil {
+		return "", errors.New("registry_auth_failed")
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+		return "", errors.New("registry_auth_failed")
+	}
+	var payload struct {
+		Token       string `json:"token"`
+		AccessToken string `json:"access_token"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(response.Body, 1<<20))
+	if err := decoder.Decode(&payload); err != nil {
+		return "", errors.New("registry_auth_response_invalid")
+	}
+	token := strings.TrimSpace(payload.Token)
+	if token == "" {
+		token = strings.TrimSpace(payload.AccessToken)
+	}
+	if token == "" {
+		return "", errors.New("registry_auth_response_invalid")
+	}
+	return token, nil
+}
+
+func parseRegistryBearerChallenge(header string) (map[string]string, error) {
+	header = strings.TrimSpace(header)
+	if len(header) < len("Bearer ") || !strings.EqualFold(header[:len("Bearer")], "Bearer") {
+		return nil, errors.New("not a bearer challenge")
+	}
+	raw := strings.TrimSpace(header[len("Bearer"):])
+	parts := make([]string, 0, 3)
+	start := 0
+	quoted := false
+	escaped := false
+	for index, char := range raw {
+		switch {
+		case escaped:
+			escaped = false
+		case char == '\\' && quoted:
+			escaped = true
+		case char == '"':
+			quoted = !quoted
+		case char == ',' && !quoted:
+			parts = append(parts, raw[start:index])
+			start = index + 1
+		}
+	}
+	if quoted || escaped {
+		return nil, errors.New("invalid bearer challenge quoting")
+	}
+	parts = append(parts, raw[start:])
+	parameters := make(map[string]string, len(parts))
+	for _, part := range parts {
+		key, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		key = strings.ToLower(strings.TrimSpace(key))
+		value = strings.TrimSpace(value)
+		if !ok || key == "" || len(value) < 2 || value[0] != '"' || value[len(value)-1] != '"' {
+			return nil, errors.New("invalid bearer challenge parameter")
+		}
+		value = strings.ReplaceAll(value[1:len(value)-1], `\"`, `"`)
+		if value == "" {
+			return nil, errors.New("empty bearer challenge parameter")
+		}
+		parameters[key] = value
+	}
+	if parameters["realm"] == "" {
+		return nil, errors.New("bearer challenge realm is required")
+	}
+	return parameters, nil
 }
 
 func validateTLSCredential(certificatePEM, privateKeyPEM string) (*x509.Certificate, string, error) {
@@ -636,8 +781,8 @@ func runCredentialCommand(ctx context.Context, stdin []byte, command string, arg
 	return nil
 }
 
-func credentialSecretName(credentialID string) string {
-	sum := sha256.Sum256([]byte(credentialID))
+func credentialSecretName(credentialID, grantID string) string {
+	sum := sha256.Sum256([]byte(credentialID + "\x00" + grantID))
 	return "doops-cred-" + hex.EncodeToString(sum[:8])
 }
 

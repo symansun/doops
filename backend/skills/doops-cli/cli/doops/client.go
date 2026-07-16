@@ -13,6 +13,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,6 +25,11 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+)
+
+const (
+	websocketHandshakeAttempts   = 3
+	websocketHandshakeRetryDelay = 50 * time.Millisecond
 )
 
 // MCPClient 是 doops CLI 的 MCP 客户端。
@@ -111,10 +117,25 @@ func (c *MCPClient) connect() error {
 		header.Set("X-Doops-Key", c.Token)
 	}
 
-	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, header)
+	var conn *websocket.Conn
+	var resp *http.Response
+	for attempt := 1; attempt <= websocketHandshakeAttempts; attempt++ {
+		conn, resp, err = websocket.DefaultDialer.Dial(wsURL, header)
+		if err == nil || resp != nil || !isTransientWebSocketHandshakeError(err) || attempt == websocketHandshakeAttempts {
+			break
+		}
+		c.log("CLIENT:WS_RETRY", fmt.Sprintf(
+			"WebSocket handshake ended before a response (attempt %d/%d): %v",
+			attempt,
+			websocketHandshakeAttempts,
+			err,
+		))
+		time.Sleep(time.Duration(attempt) * websocketHandshakeRetryDelay)
+	}
 	if err != nil {
 		if resp != nil {
 			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
 			return fmt.Errorf("failed to connect to agent WS: %v (HTTP %s: %s)", err, resp.Status, string(body))
 		}
 		return fmt.Errorf("failed to connect to agent WS: %v", err)
@@ -182,6 +203,10 @@ func (c *MCPClient) connect() error {
 	c.connected = true
 	c.log("CLIENT:CONNECTED", "Persistent WebSocket connection established")
 	return nil
+}
+
+func isTransientWebSocketHandshakeError(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func (c *MCPClient) targetWebSocketURL(defaultPort string) (string, error) {

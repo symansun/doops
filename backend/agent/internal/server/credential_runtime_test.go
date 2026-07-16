@@ -42,7 +42,7 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	if err != nil {
 		t.Fatalf("put credential: %v", err)
 	}
-	_, err = store.CreateCredentialGrant(CredentialGrantCreateRequest{
+	grantRequest := CredentialGrantCreateRequest{
 		CredentialID: credential.ID,
 		GranteeID:    deployer.ID,
 		Cluster:      "doops-edu",
@@ -53,7 +53,8 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 		Namespace:    "kz-ops",
 		Uses:         []CredentialUse{CredentialUseImagePull},
 		CreatedBy:    admin.ID,
-	})
+	}
+	grant, err := store.CreateCredentialGrant(grantRequest)
 	if err != nil {
 		t.Fatalf("create credential grant: %v", err)
 	}
@@ -119,6 +120,18 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 		run.Materializations[0].VersionID != version.ID {
 		t.Fatalf("unexpected credential run: %#v", run)
 	}
+	operator, adminToken := createCredentialHTTPUser(t, store, "credential-operator", true)
+	revokeGrant := credentialHTTPRequest(t, mux, adminToken, http.MethodDelete,
+		"/v1/credentials/"+credential.ID+"/grants", map[string]any{"grant_id": grant.ID})
+	if revokeGrant.Code != http.StatusOK {
+		t.Fatalf("credential grant revoke: HTTP %d: %s", revokeGrant.Code, revokeGrant.Body.String())
+	}
+	if cleanupCalls.Load() != 1 {
+		t.Fatalf("credential grant revoke cleanup calls=%d, want 1", cleanupCalls.Load())
+	}
+	if _, err := store.CreateCredentialGrant(grantRequest); err != nil {
+		t.Fatalf("restore credential grant: %v", err)
+	}
 	staged, err := store.PutCredentialVersion(CredentialVersionPutRequest{
 		CredentialID: credential.ID,
 		Payload:      json.RawMessage(`{"server":"registry.example.com","username":"deploy","password":"rotated-canary-secret"}`),
@@ -139,7 +152,24 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	if verify.Code != http.StatusForbidden {
 		t.Fatalf("deployer credential verify = HTTP %d, want 403: %s", verify.Code, verify.Body.String())
 	}
-	_, adminToken := createCredentialHTTPUser(t, store, "credential-operator", true)
+	verify = credentialHTTPRequest(t, mux, adminToken, http.MethodPost,
+		"/v1/credentials/"+credential.ID+"/verify", map[string]any{
+			"version_id":       staged.ID,
+			"cluster":          "doops-edu",
+			"instance":         "edu-coder",
+			"session_id":       "release-1",
+			"workflow_path":    "deploy/release.yaml",
+			"workspace_commit": strings.Repeat("a", 40),
+		})
+	if verify.Code != http.StatusForbidden {
+		t.Fatalf("operator without target authority verify = HTTP %d, want 403: %s", verify.Code, verify.Body.String())
+	}
+	if err := store.GrantUser(operator.ID, ScopeGrant{
+		Cluster: "doops-edu", Instance: "edu-coder",
+		Actions: []GatewayAction{ActionAsk, ActionCredentialUse},
+	}); err != nil {
+		t.Fatalf("grant operator target authority: %v", err)
+	}
 	verify = credentialHTTPRequest(t, mux, adminToken, http.MethodPost,
 		"/v1/credentials/"+credential.ID+"/verify", map[string]any{
 			"version_id":       staged.ID,
@@ -170,7 +200,7 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 		t.Fatalf("credential revoke: HTTP %d: %s", revoke.Code, revoke.Body.String())
 	}
 	revoked, err := store.CredentialByID(credential.ID)
-	if err != nil || revoked.State != CredentialStateRevoked || cleanupCalls.Load() != 1 {
+	if err != nil || revoked.State != CredentialStateRevoked || cleanupCalls.Load() != 2 {
 		t.Fatalf("credential revoke state=%#v cleanupCalls=%d err=%v", revoked, cleanupCalls.Load(), err)
 	}
 	audits, err := store.ListAudit(100)
@@ -180,6 +210,34 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	serialized, _ := json.Marshal(audits)
 	if strings.Contains(string(serialized), "runtime-canary-secret") {
 		t.Fatalf("credential audit exposed payload: %s", serialized)
+	}
+	var verifiedAudit bool
+	for _, audit := range audits {
+		if audit.Session == credential.ID &&
+			audit.CommandSummary == "credential verify" &&
+			audit.Status == "success" {
+			verifiedAudit = true
+		}
+	}
+	if !verifiedAudit {
+		t.Fatalf("credential verify success audit missing: %#v", audits)
+	}
+}
+
+func TestCredentialMaterializationContextKeyIncludesGrant(t *testing.T) {
+	base := CredentialMaterializeRequest{
+		Cluster:      "doops-edu",
+		Instance:     "edu-coder",
+		CredentialID: "cred_registry",
+		GrantID:      "grant_a",
+		Namespace:    "kz-ops",
+		Use:          CredentialUseImagePull,
+		Workload:     CredentialPlanWorkload{Kind: "Deployment", Name: "app"},
+	}
+	other := base
+	other.GrantID = "grant_b"
+	if credentialMaterializationContextKey(base) == credentialMaterializationContextKey(other) {
+		t.Fatal("different grants share one materialization context key")
 	}
 }
 
