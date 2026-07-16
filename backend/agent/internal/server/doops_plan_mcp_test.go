@@ -105,6 +105,10 @@ func TestBuildDoopsPlanAttestedResultBindsTrustedContext(t *testing.T) {
 		attestation["tool"] != "ObserveWorkspaceSource" {
 		t.Fatalf("attestation binding mismatch: %#v", attestation)
 	}
+	structured := result["structuredContent"].(map[string]interface{})
+	if _, exists := structured["_meta"]; exists {
+		t.Fatalf("attestation must remain transport metadata: %#v", structured)
+	}
 	withoutMeta := make(map[string]interface{}, len(result)-1)
 	for key, value := range result {
 		if key != "_meta" {

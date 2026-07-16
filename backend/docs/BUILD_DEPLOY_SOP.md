@@ -62,6 +62,7 @@ bash scripts/deploy-gateway.sh \
 doops -session oilan-agent-bootstrap cicd run \
   -f backend/deploy/workflows/oilan-agent-bootstrap.yaml \
   -target <configured-doops-target> \
+  -model <tool-capable-model> \
   --dry-run \
   --set releaseId=<main-commit-sha>
 ```

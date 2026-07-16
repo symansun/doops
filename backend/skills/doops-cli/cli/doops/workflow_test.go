@@ -324,7 +324,7 @@ spec:
 
 	err := runCICDCommand(
 		context.Background(),
-		[]string{"run", "-f", workflow, "-target", "agent-runtime", "--dry-run"},
+		[]string{"run", "-f", workflow, "-target", "agent-runtime", "-model", "quan2go/gpt-5-4", "--dry-run"},
 		[]Server{{Name: "agent-runtime", Gateway: gateway.URL, Cluster: "doops-edu", Instance: "edu-coder"}},
 		nil,
 		NewSessionStore(),
@@ -342,6 +342,9 @@ spec:
 	}
 	if caller.arguments["operation"] != "ask" {
 		t.Fatalf("dry-run must use ask operation: %#v", caller.arguments)
+	}
+	if caller.arguments["model"] != "quan2go/gpt-5-4" {
+		t.Fatalf("dry-run model mismatch: %#v", caller.arguments)
 	}
 }
 

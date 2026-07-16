@@ -525,6 +525,9 @@ func TestBuildDoagentPromptParamsUsesExactPlanToolsAndNoGenericTools(t *testing.
 	if !reflect.DeepEqual(params["trustedReconciliationContext"], context) {
 		t.Fatalf("trusted context missing from prompt params: %#v", params)
 	}
+	if params["toolsEnabled"] != true {
+		t.Fatalf("trusted prompt must explicitly enable tools: %#v", params)
+	}
 	encodedContext, err := json.Marshal(params["trustedReconciliationContext"])
 	if err != nil {
 		t.Fatalf("encode trusted context: %v", err)
@@ -549,6 +552,9 @@ func TestBuildDoagentPromptParamsUsesExactPlanToolsAndNoGenericTools(t *testing.
 	}
 	if _, ok := plain["trustedReconciliationContext"]; ok {
 		t.Fatalf("plain JSON prompt must not carry trusted context: %#v", plain)
+	}
+	if plain["toolsEnabled"] != false {
+		t.Fatalf("plain JSON prompt must explicitly disable tools: %#v", plain)
 	}
 }
 

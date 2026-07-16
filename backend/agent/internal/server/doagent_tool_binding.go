@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 )
@@ -29,6 +30,7 @@ type doagentToolTrace struct {
 	ScopeDigest          string
 	InputDigest          string
 	AttestedResultDigest string
+	PublicResultDigest   string
 	inputJSON            json.RawMessage
 	resultJSON           json.RawMessage
 }
@@ -105,6 +107,9 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 		trace.Status = status
 	}
 	if result, ok := update["rawOutput"]; ok {
+		if err := mergeDoagentToolAttestationUpdate(update, result); err != nil {
+			return fmt.Errorf("read tool call %q attestation: %w", toolCallID, err)
+		}
 		encoded, err := stableDoagentJSON(result)
 		if err != nil {
 			return fmt.Errorf("encode tool call %q result: %w", toolCallID, err)
@@ -114,25 +119,111 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 		}
 		trace.resultJSON = encoded
 	}
-	trace.AttestationSchema, _ = update["attestationSchemaVersion"].(string)
-	trace.ContextSchema, _ = update["contextSchemaVersion"].(string)
-	trace.OperationID, _ = update["operationId"].(string)
-	trace.ContextDigest, _ = update["contextDigest"].(string)
-	trace.PlanDigest, _ = update["planDigest"].(string)
-	trace.PlanBindingDigest, _ = update["planBindingDigest"].(string)
-	trace.ExecutionMode, _ = update["executionMode"].(string)
-	if value, ok := update["mutationAuthorized"].(bool); ok {
-		trace.MutationAuthorized = &value
+	stringFields := []struct {
+		source string
+		target *string
+	}{
+		{"attestationSchemaVersion", &trace.AttestationSchema},
+		{"contextSchemaVersion", &trace.ContextSchema},
+		{"operationId", &trace.OperationID},
+		{"contextDigest", &trace.ContextDigest},
+		{"planDigest", &trace.PlanDigest},
+		{"planBindingDigest", &trace.PlanBindingDigest},
+		{"executionMode", &trace.ExecutionMode},
+		{"capabilityKey", &trace.CapabilityKey},
+		{"attestedTool", &trace.AttestedTool},
+		{"evidenceKind", &trace.EvidenceKind},
+		{"evidenceSubject", &trace.EvidenceSubject},
+		{"scopeDigest", &trace.ScopeDigest},
+		{"inputDigest", &trace.InputDigest},
+		{"resultDigest", &trace.AttestedResultDigest},
+		{"publicResultDigest", &trace.PublicResultDigest},
 	}
-	trace.CapabilityKey, _ = update["capabilityKey"].(string)
-	trace.AttestedTool, _ = update["attestedTool"].(string)
-	trace.EvidenceKind, _ = update["evidenceKind"].(string)
-	trace.EvidenceSubject, _ = update["evidenceSubject"].(string)
-	trace.CanonicalScope, _ = update["canonicalScope"].(map[string]interface{})
-	trace.ScopeDigest, _ = update["scopeDigest"].(string)
-	trace.InputDigest, _ = update["inputDigest"].(string)
-	trace.AttestedResultDigest, _ = update["resultDigest"].(string)
+	for _, field := range stringFields {
+		value, exists := update[field.source]
+		if !exists {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("%s must be a string", field.source)
+		}
+		if *field.target != "" && *field.target != text {
+			return fmt.Errorf("conflicting %s", field.source)
+		}
+		*field.target = text
+	}
+	if value, exists := update["mutationAuthorized"]; exists {
+		authorized, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("mutationAuthorized must be a boolean")
+		}
+		if trace.MutationAuthorized != nil && *trace.MutationAuthorized != authorized {
+			return fmt.Errorf("conflicting mutationAuthorized")
+		}
+		trace.MutationAuthorized = &authorized
+	}
+	if value, exists := update["canonicalScope"]; exists {
+		scope, ok := value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("canonicalScope must be an object")
+		}
+		if trace.CanonicalScope != nil && !reflect.DeepEqual(trace.CanonicalScope, scope) {
+			return fmt.Errorf("conflicting canonicalScope")
+		}
+		trace.CanonicalScope = scope
+	}
 	c.calls[toolCallID] = trace
+	return nil
+}
+
+func mergeDoagentToolAttestationUpdate(update map[string]interface{}, result interface{}) error {
+	var attestations []map[string]interface{}
+	if direct, exists := update["attestation"]; exists {
+		attestation, ok := direct.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("attestation must be an object")
+		}
+		attestations = append(attestations, attestation)
+	}
+	if resultObject, ok := result.(map[string]interface{}); ok {
+		if meta, ok := resultObject["_meta"].(map[string]interface{}); ok {
+			if attestation, ok := meta["doops.sh/tool-attestation"].(map[string]interface{}); ok {
+				attestations = append(attestations, attestation)
+			}
+		}
+	}
+	fields := map[string]string{
+		"schemaVersion":        "attestationSchemaVersion",
+		"contextSchemaVersion": "contextSchemaVersion",
+		"operationId":          "operationId",
+		"contextDigest":        "contextDigest",
+		"planDigest":           "planDigest",
+		"planBindingDigest":    "planBindingDigest",
+		"executionMode":        "executionMode",
+		"mutationAuthorized":   "mutationAuthorized",
+		"capabilityKey":        "capabilityKey",
+		"tool":                 "attestedTool",
+		"evidenceKind":         "evidenceKind",
+		"evidenceSubject":      "evidenceSubject",
+		"canonicalScope":       "canonicalScope",
+		"scopeDigest":          "scopeDigest",
+		"inputDigest":          "inputDigest",
+		"resultDigest":         "resultDigest",
+		"publicResultDigest":   "publicResultDigest",
+	}
+	for _, attestation := range attestations {
+		for source, target := range fields {
+			value, exists := attestation[source]
+			if !exists {
+				continue
+			}
+			if current, exists := update[target]; exists && !reflect.DeepEqual(current, value) {
+				return fmt.Errorf("conflicting %s", target)
+			}
+			update[target] = value
+		}
+	}
 	return nil
 }
 
@@ -197,7 +288,7 @@ func (trace doagentToolTrace) eligibleForContext(expected *trustedReconciliation
 		trace.EvidenceSubject != capability.EvidenceSubject ||
 		trace.ScopeDigest != capability.ScopeDigest ||
 		!validSHA256Digest(trace.InputDigest) ||
-		!validSHA256Digest(trace.AttestedResultDigest) {
+		!validSHA256Digest(trace.effectiveResultDigest()) {
 		return false
 	}
 	expectedScopeDigest, err := digestJSON(capability.CanonicalScope)
@@ -242,10 +333,17 @@ func (trace doagentToolTrace) verifiedResult() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("digest runtime tool result: %w", err)
 	}
-	if expectedResultDigest != trace.AttestedResultDigest {
+	if expectedResultDigest != trace.effectiveResultDigest() {
 		return nil, fmt.Errorf("runtime tool result digest mismatch")
 	}
 	return resultObject, nil
+}
+
+func (trace doagentToolTrace) effectiveResultDigest() string {
+	if trace.PublicResultDigest != "" {
+		return trace.PublicResultDigest
+	}
+	return trace.AttestedResultDigest
 }
 
 func rejectSensitiveToolResult(value interface{}) error {

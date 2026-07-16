@@ -40,6 +40,7 @@ const workspaceManifestAPIVersion = "doops.sh/v2"
 type workflowCommand struct {
 	File   string
 	Target string
+	Model  string
 	Inputs map[string]string
 	DryRun bool
 }
@@ -93,6 +94,7 @@ func runCICDCommand(
 	flags.StringVar(&request.File, "f", "", "workflow YAML file")
 	flags.StringVar(&request.File, "file", "", "workflow YAML file")
 	flags.StringVar(&request.Target, "target", "", "configured DoOps target")
+	flags.StringVar(&request.Model, "model", "", "model to use for trusted reconciliation")
 	flags.Var(sets, "set", "workflow input override in key=value form")
 	flags.BoolVar(&request.DryRun, "dry-run", false, "observe without mutation")
 	if err := flags.Parse(args[1:]); err != nil {
@@ -185,6 +187,9 @@ func runCICDCommand(
 		"response_format":  "json",
 		"operation":        operation,
 		"workspace_commit": workspaceCommit,
+	}
+	if model := strings.TrimSpace(request.Model); model != "" {
+		callArguments["model"] = model
 	}
 	if err := client.CallStructured("doops_agent_prompt", callArguments, &result); err != nil {
 		return fmt.Errorf("ask doops-cicd: %w", err)
