@@ -28,16 +28,16 @@ gateway 是统一公网控制面：
 
 当前受管 gateway 主机信息：
 
-- 公网地址：`203.0.113.10`
+- SSH 地址：`106.54.197.139`
 - SSH 用户：`ubuntu`
 - Gateway 服务端口：`42222`
-- Gateway URL：`http://203.0.113.10:42222`
+- Gateway URL：`https://doops.l8ai.cn`
 - 维护用途：发布和自恢复 `doops-gateway` 控制面，不作为普通 `doops-agent` target 使用。
 
 维护凭据不得写入仓库。需要发布 gateway 时使用：
 
 ```bash
-bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
+bash scripts/deploy-gateway.sh --host 106.54.197.139 --user ubuntu
 ```
 
 第一版是 SQLite + 单活可靠部署：
@@ -327,14 +327,14 @@ doops -session upgrade_20260511 upgrade \
 
 这段 smoke 使用的是受控实验 gateway。doops 支持 `http` / `https` gateway；公网生产环境建议改用 `https` / `wss` gateway，但 CLI 和 agent 不会因为 gateway 是 HTTP 而拒绝连接。
 
-公网 gateway 部署在 `203.0.113.10:42222`，当前已接入：
+这段记录对应早期受控实验环境，不是当前 target 或发布配置。实验时接入：
 
 - `doops-114/vm-114`
 - `doops-jm/jm-228`
 
 已验证：
 
-- `doops targets --gateway http://203.0.113.10:42222`
+- `doops targets --gateway <historical-test-gateway>`
 - 89/114/JM 的 `exec`
 - 89/114/JM 的 `write` + `read`
 - 89/114/JM 的 gateway `push` 到 `/root/ws/$SESSION`，并校验 `.doops-ready` 和文件 sha256；传输路径为 `/v1/git/<cluster>/<instance>/<session>.git` 的 Git HTTP 反向隧道
@@ -345,10 +345,10 @@ JM 第三实例已通过 89 内网路径接入，目标标识为 `doops-jm/jm-22
 
 ## Current Managed Targets
 
-当前文档维护口径：
+当前文档维护口径只使用 Gateway 的 `cluster/instance` 身份，不维护推断或示例 IP：
 
-- `doops-oilan / oilan-node` -> `198.51.100.24`，oilan 集群，标准 k3s 部署
-- `doops-edu / edu-coder` -> `198.51.100.23`，edu-coder 集群
+- `doops-oilan / oilan-node`，oilan 集群，标准 k3s 部署
+- `doops-edu / edu-coder`，edu-coder 集群
 - `doops-jm / jm-228` -> JM 集群
 - `doops-zheyin / node-239` -> 浙音集群
 - `doops-114 / vm-114` -> 114 集群

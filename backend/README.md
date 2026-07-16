@@ -50,10 +50,10 @@ flowchart LR
 
 ## 当前纳管目标
 
-当前统一命名口径：
+当前统一命名口径只使用 Gateway 的 `cluster/instance` 身份，不维护推断或示例 IP：
 
-- `doops-oilan / oilan-node` -> `198.51.100.24`，oilan 集群
-- `doops-edu / edu-coder` -> `198.51.100.23`，edu-coder 集群
+- `doops-oilan / oilan-node`，oilan 集群
+- `doops-edu / edu-coder`，edu-coder 集群
 - `doops-jm / jm-228`
 - `doops-zheyin / node-239`
 - `doops-114 / vm-114`
@@ -126,7 +126,8 @@ bash scripts/build-gateway.sh
 
 2026-05-11 gateway 验收状态（历史记录）：
 
-- 公网 gateway：生产标准应使用 TLS 域名；`203.0.113.10:42222` 仅保留作受控实验 smoke，客户端需显式允许不安全 gateway 才能连
+- 公网 gateway：当前标准入口为 `https://doops.l8ai.cn`；早期明文 HTTP
+  地址只属于历史受控实验，不得进入当前客户端配置
 - 已接入 target：`doops-114/vm-114`、`doops-jm/jm-228`
 - 已验证：`targets`、`exec`、`write/read`、`push`、高危 action 未授权拒绝、90 秒以上 heartbeat 保活
 - `ask` 链路通过 `doops-agent -> doagent ACP HTTP`；模型配置必须来自 `doagent-model-settings` Secret，Agent 镜像升级不得覆盖该 Secret

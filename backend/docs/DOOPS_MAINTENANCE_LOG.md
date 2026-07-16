@@ -7,7 +7,9 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
 - Keep one default local config source: `~/.agent/skills/doops/config.json`.
 - Keep token cache in `~/.agent/skills/doops/auth.json` with the `tokens` object shape.
 - Do not use or document `~/.doops/auth.json`, `~/.config/doops/config.json`, or project `.doops/` as current config sources.
-- Gateway mode is the default operating path. Direct agent mode remains a fallback entry in the same config file.
+- Gateway mode is the only normal operating path. Direct agent mode is limited
+  to explicit first-install or Agent self-recovery work and is not a daily
+  target or deployment path.
 - Do not commit runtime state: `.agents/`, `.doops/`, `auth.json`, `config.json`, `history.jsonl`, or `sessions.json`.
 - Never print complete user or agent tokens in logs, docs, commands, or commit messages.
 - Treat `/v1/targets` as connection state. Verify health with active probes for `exec`, git `push/pull`, and `ask` when release risk requires it.
@@ -62,7 +64,9 @@ Do not publish new agent fixes under floating `v1`; use the explicit release ver
 ## 2026-05-19 Gateway And Config Cleanup
 
 - Consolidated the CLI default config source to `~/.agent/skills/doops/config.json`.
-- Kept direct agent mode as a fallback entry type in the same config file.
+- Historical decision: direct agent mode remained in the config schema. This is
+  now superseded by the Gateway-only normal path; direct mode is restricted to
+  explicit first-install or Agent self-recovery work.
 - Clarified that `auth.json` is only a token cache and must use `{"tokens":{...}}`.
 - Removed tracked `.agents/skills/*` generated skill mirrors from the repository.
 - Added ignore rules for `.agents/`, `.doops/`, and doops runtime credential/history/session files.
