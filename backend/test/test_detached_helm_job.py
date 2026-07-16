@@ -44,7 +44,7 @@ def submit_args(module, candidate_digest="a"):
             "--kubeconfig-host-path",
             "/etc/kubernetes/admin.conf",
             "--agent-home-host-path",
-            "/var/lib/doops-release-runner-home",
+            "/var/lib/doops-agent-home",
             "--timeout",
             "10m",
         ]
@@ -66,7 +66,7 @@ def test_detached_helm_job_is_immutable_and_independent():
         node_selector_key="kubernetes.io/hostname",
         node_selector_value="192.168.0.24",
         kubeconfig_host_path="/etc/kubernetes/admin.conf",
-        agent_home_host_path="/var/lib/doops-release-runner-home",
+        agent_home_host_path="/var/lib/doops-agent-home",
         timeout="10m",
     )
 
@@ -84,7 +84,7 @@ def test_detached_helm_job_is_immutable_and_independent():
     assert "--wait" in command
     assert "configure_kubeconfig.py" in command
     assert "/etc/kubernetes/admin.conf" in str(pod["volumes"])
-    assert "/var/lib/doops-release-runner-home" in str(pod["volumes"])
+    assert "/var/lib/doops-agent-home" in str(pod["volumes"])
     assert "token" not in str(manifest).lower()
 
 

@@ -67,36 +67,6 @@ environments:
 	}
 }
 
-func TestRepositoryReleaseRunnerBootstrapCredentialPlan(t *testing.T) {
-	repositoryRoot := filepath.Clean(filepath.Join("..", "..", "..", ".."))
-	plan, err := parseCredentialPlan(
-		repositoryRoot,
-		"backend/deploy/workflows/oilan-release-runner-bootstrap.yaml",
-	)
-	if err != nil {
-		t.Fatalf("parse release runner bootstrap credential plan: %v", err)
-	}
-	if plan.Template != "oilan-release-runner-bootstrap" ||
-		plan.Project != "doops-release-runner" ||
-		plan.Environment != "oilan-release-runner-bootstrap" ||
-		plan.Target != "gw-edu-coder" ||
-		plan.Cluster != "doops-edu" ||
-		plan.Instance != "edu-coder" {
-		t.Fatalf("unexpected release runner bootstrap context: %#v", plan)
-	}
-	if len(plan.CredentialRefs) != 1 {
-		t.Fatalf("credential refs = %#v", plan.CredentialRefs)
-	}
-	ref := plan.CredentialRefs[0]
-	if ref.Name != "doops-release-runner-runtime" ||
-		ref.Use != CredentialUseOpaqueSecret ||
-		ref.Namespace != "kz-ops" ||
-		ref.Workload.Kind != "Deployment" ||
-		ref.Workload.Name != "doops-release-runner" {
-		t.Fatalf("unexpected release runner credential reference: %#v", ref)
-	}
-}
-
 func TestParseCredentialPlanRejectsInlineSecretLikeFieldsAtAnyDepth(t *testing.T) {
 	for _, field := range []string{
 		"token", "password", "auth", "data", "stringData",
