@@ -11,8 +11,20 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+var workflowInlineCredentialPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\bgh[pousr]_[A-Za-z0-9]{20,255}\b`),
+	regexp.MustCompile(`(?i)\bgithub_pat_[A-Za-z0-9_]{20,255}\b`),
+	regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{20,255}\b`),
+	regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`),
+	regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`),
+	regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,255}\b`),
+	regexp.MustCompile(`\b(?:sk|rk)_live_[A-Za-z0-9]{16,255}\b`),
+	regexp.MustCompile(`\bnpm_[A-Za-z0-9]{36,255}\b`),
+}
 
 type WorkspaceSourceIdentity struct {
 	Repository string `json:"repository"`
@@ -110,7 +122,6 @@ func runCICDCommand(
 	if strings.TrimSpace(server.Gateway) == "" {
 		return fmt.Errorf("target %q must use a configured DoOps gateway", server.Name)
 	}
-
 	client, closeClient := openWorkflowAgent(*server, sessionStore, sessionID, verbose)
 	defer closeClient()
 
@@ -139,6 +150,10 @@ func runCICDCommand(
 	if err != nil {
 		return fmt.Errorf("credential prepare: %w", err)
 	}
+	manifestAPIVersion, err := workflowAPIVersion(request.File)
+	if err != nil {
+		return err
+	}
 	runID, err := generateWorkflowRunID(sessionID)
 	if err != nil {
 		return fmt.Errorf("generate workflow run id: %w", err)
@@ -153,7 +168,7 @@ func runCICDCommand(
 		"inputs":          request.Inputs,
 		"credentialRun":   credentialRun,
 		"resultContract": map[string]interface{}{
-			"apiVersion":      workspaceManifestAPIVersion,
+			"apiVersion":      manifestAPIVersion,
 			"kind":            "DeploymentRun",
 			"requireEvidence": true,
 		},
@@ -173,7 +188,7 @@ func runCICDCommand(
 		return fmt.Errorf("ask doops-cicd: %w", err)
 	}
 	output := string(result)
-	if err := validateWorkflowResult(output, executionMode, workspaceCommit); err != nil {
+	if err := validateWorkflowResult(output, manifestAPIVersion, executionMode, workspaceCommit); err != nil {
 		return fmt.Errorf("doops-cicd returned invalid execution evidence: %w", err)
 	}
 	if strings.TrimSpace(output) != "" {
@@ -183,6 +198,24 @@ func runCICDCommand(
 		}
 	}
 	return nil
+}
+
+func workflowAPIVersion(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read workflow apiVersion: %w", err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if ok && strings.TrimSpace(key) == "apiVersion" {
+			version := strings.TrimSpace(value)
+			if version == "doops.sh/v2" || version == "doops.sh/v3" {
+				return version, nil
+			}
+			return "", fmt.Errorf("unsupported workflow apiVersion %q", version)
+		}
+	}
+	return "", fmt.Errorf("workflow apiVersion is required")
 }
 
 func generateWorkflowRunID(sessionID string) (string, error) {
@@ -239,6 +272,11 @@ func workflowInputValueContainsCredentialMaterial(value string) bool {
 	if strings.Contains(lower, "bearer ") || strings.Contains(lower, "basic ") ||
 		strings.Contains(lower, "sk-") {
 		return true
+	}
+	for _, pattern := range workflowInlineCredentialPatterns {
+		if pattern.MatchString(value) {
+			return true
+		}
 	}
 	if strings.Contains(value, "://") || strings.Contains(value, "?") {
 		parsed, err := url.Parse(value)
@@ -327,6 +365,7 @@ func validWorkspaceCommit(value string) bool {
 
 func validateWorkflowResult(
 	output,
+	apiVersion,
 	executionMode,
 	workspaceCommit string,
 ) error {
@@ -355,8 +394,8 @@ func validateWorkflowResult(
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return fmt.Errorf("DeploymentRun must be exactly one JSON object")
 	}
-	if result.APIVersion != workspaceManifestAPIVersion || result.Kind != "DeploymentRun" {
-		return fmt.Errorf("result must be doops.sh/v2 DeploymentRun")
+	if result.APIVersion != apiVersion || result.Kind != "DeploymentRun" {
+		return fmt.Errorf("result must be %s DeploymentRun", apiVersion)
 	}
 	if result.Metadata.WorkspaceCommit != workspaceCommit {
 		return fmt.Errorf("result workspaceCommit does not match pushed workspace")

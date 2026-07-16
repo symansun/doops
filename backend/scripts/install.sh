@@ -88,7 +88,7 @@ detect_host_platform() {
 }
 
 install_cli() {
-  local platform prebuilt checksums expected actual
+  local platform prebuilt checksums expected actual install_tmp
   platform="$(detect_host_platform)"
   if [[ "${platform}" == unsupported-* ]]; then
     cat >&2 <<EOF
@@ -118,8 +118,13 @@ EOF
       echo "Prebuilt checksum mismatch for ${prebuilt}" >&2
       exit 1
     fi
-    cp "${prebuilt}" "${CLI_OUT}"
-    chmod +x "${CLI_OUT}"
+    install_tmp="$(mktemp "${CLI_OUT}.tmp.XXXXXX")"
+    if ! cp "${prebuilt}" "${install_tmp}"; then
+      rm -f "${install_tmp}"
+      exit 1
+    fi
+    chmod +x "${install_tmp}"
+    mv -f "${install_tmp}" "${CLI_OUT}"
     echo "  CLI installed from prebuilt artifact: ${prebuilt}"
     echo "  CLI installed to ${CLI_OUT}"
     return

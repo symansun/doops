@@ -550,6 +550,8 @@ func credentialErrorCategory(err error) string {
 		return "credential_revoked"
 	case errors.Is(err, ErrCredentialGrantDenied):
 		return "credential_grant_denied"
+	case errors.Is(err, ErrCredentialPrepareBindingInvalid):
+		return "credential_prepare_binding_invalid"
 	case errors.Is(err, ErrCredentialForbidden):
 		return "credential_forbidden"
 	case errors.Is(err, ErrSecretKeyUnavailable):

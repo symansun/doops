@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -178,6 +179,13 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 		!strings.Contains(verify.Body.String(), `"digest":"sha256:manifest"`) {
 		t.Fatalf("credential verify response omitted allowed evidence: %s", verify.Body.String())
 	}
+	stagedMaterializations, err := store.CredentialMaterializations(credential.ID, staged.ID, grant.ID)
+	if err != nil {
+		t.Fatalf("list staged materializations after verify: %v", err)
+	}
+	if len(stagedMaterializations) != 0 {
+		t.Fatalf("staged verification materialization remained active after restore: %#v", stagedMaterializations)
+	}
 	promote := credentialHTTPRequest(t, mux, adminToken, http.MethodPost,
 		"/v1/credentials/"+credential.ID+"/promote", map[string]any{"version_id": staged.ID})
 	if promote.Code != http.StatusOK {
@@ -244,6 +252,97 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	}
 	if !materializationAudit {
 		t.Fatalf("credential materialization audit fields missing: %#v", audits)
+	}
+}
+
+func TestLoadCredentialPlanRejectsIncompatibleAgentBeforeToolDispatch(t *testing.T) {
+	store := openCredentialTestStore(t)
+	hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: time.Second})
+	agent := &GatewayAgent{
+		Cluster:                "doops-edu",
+		Instance:               "legacy",
+		Key:                    "doops-edu/legacy",
+		CredentialPlanProtocol: "",
+		ConnectedAt:            time.Now().UTC(),
+		LastSeen:               time.Now().UTC(),
+		closed:                 make(chan struct{}),
+	}
+	if err := hub.registry.Register(agent); err != nil {
+		t.Fatalf("register legacy agent: %v", err)
+	}
+
+	_, err := hub.loadCredentialPlan(context.Background(), credentialPrepareHTTPBody{
+		Cluster: "doops-edu", Instance: "legacy",
+	})
+	if err == nil || err.Error() != "agent_protocol_incompatible" {
+		t.Fatalf("incompatible agent error = %v", err)
+	}
+	if got := credentialPlanHTTPStatus(err); got != http.StatusUpgradeRequired {
+		t.Fatalf("incompatible agent status = %d", got)
+	}
+}
+
+func TestCredentialPrepareReturnsVersionedProtocolErrors(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		register   bool
+		wantStatus int
+		want       string
+	}{
+		{
+			name:       "offline target",
+			wantStatus: http.StatusServiceUnavailable,
+			want:       "credential_target_offline",
+		},
+		{
+			name:       "incompatible agent",
+			register:   true,
+			wantStatus: http.StatusUpgradeRequired,
+			want:       "agent_protocol_incompatible",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := openCredentialTestStore(t)
+			deployer, token := createCredentialHTTPUser(t, store, "deployer", false)
+			if err := store.GrantUser(deployer.ID, ScopeGrant{
+				Cluster: "doops-edu", Instance: "legacy",
+				Actions: []GatewayAction{ActionAsk, ActionCredentialUse},
+			}); err != nil {
+				t.Fatalf("grant deployer actions: %v", err)
+			}
+			hub := NewGatewayHub(store, GatewayHubOptions{OperationTimeout: time.Second})
+			if test.register {
+				if err := hub.registry.Register(&GatewayAgent{
+					Cluster: "doops-edu", Instance: "legacy", Key: "doops-edu/legacy",
+					ConnectedAt: time.Now().UTC(), LastSeen: time.Now().UTC(),
+					closed: make(chan struct{}),
+				}); err != nil {
+					t.Fatalf("register incompatible agent: %v", err)
+				}
+			}
+			mux := http.NewServeMux()
+			hub.RegisterRoutes(mux)
+			response := credentialHTTPRequest(t, mux, token, http.MethodPost, "/v1/credentials/prepare", map[string]any{
+				"cluster":          "doops-edu",
+				"instance":         "legacy",
+				"session_id":       "release",
+				"workflow_path":    "deploy/release.yaml",
+				"workspace_commit": strings.Repeat("a", 40),
+				"mode":             "dry-run",
+			})
+			if response.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", response.Code, test.wantStatus, response.Body.String())
+			}
+			var failure credentialPrepareErrorResponse
+			if err := json.Unmarshal(response.Body.Bytes(), &failure); err != nil {
+				t.Fatalf("decode protocol error: %v", err)
+			}
+			if failure.APIVersion != "doops.sh/v2" ||
+				failure.Kind != "CredentialPrepareError" ||
+				failure.Category != test.want {
+				t.Fatalf("protocol error = %#v", failure)
+			}
+		})
 	}
 }
 
@@ -369,7 +468,12 @@ func serveCredentialRuntimeAgent(
 			_ = conn.WriteJSON(map[string]any{
 				"jsonrpc": "2.0",
 				"id":      message["id"],
-				"result":  map[string]any{"protocolVersion": "2024-11-05"},
+				"result": map[string]any{
+					"protocolVersion": "2024-11-05",
+					"capabilities": map[string]any{
+						"protocols": map[string]any{"credentialPlan": credentialPlanProtocolV2},
+					},
+				},
 			})
 		case "tools/call":
 			params, _ := message["params"].(map[string]any)

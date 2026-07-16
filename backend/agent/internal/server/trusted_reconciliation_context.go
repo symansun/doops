@@ -1,14 +1,17 @@
 package server
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
 	"strings"
-
-	"gopkg.in/yaml.v3"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 type trustedReconciliationAdmission struct {
@@ -46,7 +49,7 @@ type trustedReconciliationCapability struct {
 	ScopeDigest     string                 `json:"scopeDigest"`
 }
 
-type credentialWorkflowInstruction struct {
+type doopsCICDInstructionEnvelope struct {
 	Task            string            `json:"task"`
 	Skill           string            `json:"skill"`
 	ExecutionMode   string            `json:"executionMode"`
@@ -60,32 +63,6 @@ type credentialWorkflowInstruction struct {
 		Kind            string `json:"kind"`
 		RequireEvidence bool   `json:"requireEvidence"`
 	} `json:"resultContract"`
-}
-
-func decodeCredentialWorkflowInstruction(instruction string) (credentialWorkflowInstruction, error) {
-	var envelope credentialWorkflowInstruction
-	decoder := json.NewDecoder(strings.NewReader(instruction))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&envelope); err != nil {
-		return credentialWorkflowInstruction{}, fmt.Errorf("invalid reconciliation instruction")
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return credentialWorkflowInstruction{}, fmt.Errorf("reconciliation instruction must contain exactly one JSON object")
-	}
-	if envelope.Task != "execute-doops-cicd-workflow" || envelope.Skill != "$doops-cicd" ||
-		(envelope.ExecutionMode != "dry-run" && envelope.ExecutionMode != "apply") ||
-		strings.TrimSpace(envelope.RunID) == "" || strings.TrimSpace(envelope.WorkflowPath) == "" ||
-		envelope.ResultContract.APIVersion != "doops.sh/v2" ||
-		envelope.ResultContract.Kind != "DeploymentRun" ||
-		!envelope.ResultContract.RequireEvidence ||
-		envelope.CredentialRun.APIVersion != "doops.sh/v2" ||
-		envelope.CredentialRun.Kind != "CredentialRun" ||
-		strings.TrimSpace(envelope.CredentialRun.ID) == "" ||
-		envelope.CredentialRun.Mode != envelope.ExecutionMode {
-		return credentialWorkflowInstruction{}, fmt.Errorf("reconciliation instruction binding is invalid")
-	}
-	return envelope, nil
 }
 
 func buildDoagentPromptParams(sessionID, prompt string, admission *trustedReconciliationAdmission, structured bool) map[string]interface{} {
@@ -123,9 +100,16 @@ func (c trustedReconciliationContext) ValidateDigest() error {
 }
 
 func (c trustedReconciliationContext) calculatedDigest() (string, error) {
-	copy := c
-	copy.ContextDigest = ""
-	return digestJSON(copy)
+	data, err := json.Marshal(c)
+	if err != nil {
+		return "", err
+	}
+	var object map[string]interface{}
+	if err := json.Unmarshal(data, &object); err != nil {
+		return "", err
+	}
+	delete(object, "contextDigest")
+	return digestJSON(object)
 }
 
 func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit string) (trustedReconciliationAdmission, error) {
@@ -135,7 +119,7 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 		return trustedReconciliationAdmission{}, fmt.Errorf("trusted reconciliation identity is invalid")
 	}
 
-	envelope, err := decodeCredentialWorkflowInstruction(instruction)
+	envelope, err := decodeDoopsCICDInstruction(instruction)
 	if err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
@@ -155,20 +139,50 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 	if err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
-	workflowData, err := readCredentialDeclarationFile(root, envelope.WorkflowPath)
+	parsedWorkflow, err := parseCredentialWorkflow(root, envelope.WorkflowPath)
 	if err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
-	parameters, source, err := trustedWorkflowSource(root, workflowData, envelope.Inputs, workspaceCommit)
-	if err != nil {
+	workflow := parsedWorkflow.Template
+	if envelope.ResultContract.APIVersion != workflow.APIVersion {
+		return trustedReconciliationAdmission{}, fmt.Errorf("reconciliation result contract version does not match workflow")
+	}
+	if err := validateTrustedWorkflowInputs(workflow.Spec.Parameters, envelope.Inputs); err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
-	if err := validateTrustedWorkflowInputs(parameters, envelope.Inputs); err != nil {
+	var environment credentialEnvironmentContext
+	if parsedWorkflow.Environment != nil {
+		environment = *parsedWorkflow.Environment
+	} else {
+		environment, err = parseCredentialEnvironment(
+			root,
+			workflow.Spec.ConfigurationSource,
+			workflow.Spec.Environment,
+		)
+		if err != nil {
+			return trustedReconciliationAdmission{}, err
+		}
+	}
+	revisionDeclaration := workflow.Spec.Release.Source.Revision
+	if strings.TrimSpace(revisionDeclaration) == "" {
+		revisionDeclaration = parsedWorkflow.SemanticRevision
+	}
+	if strings.TrimSpace(revisionDeclaration) == "" {
+		revisionDeclaration = workspaceCommit
+	}
+	revision, err := resolveTrustedRevision(revisionDeclaration, envelope.Inputs)
+	if err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
 	plan, err := parseCredentialPlan(root, envelope.WorkflowPath)
 	if err != nil {
 		return trustedReconciliationAdmission{}, err
+	}
+	source := trustedReconciliationSource{
+		Repository:      selectTrustedSource(workflow.Spec.Release.Source.Repository, environment.SourceRepository),
+		Revision:        revision,
+		Branch:          selectTrustedSource(workflow.Spec.Release.Source.Branch, environment.SourceBranch),
+		WorkspaceCommit: workspaceCommit,
 	}
 	if source.Repository == "" || source.Branch == "" || !validLowerHex(source.Revision, 40) {
 		return trustedReconciliationAdmission{}, fmt.Errorf("release source identity is incomplete")
@@ -250,72 +264,46 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 		Source:              source,
 		Capabilities:        capabilities,
 	}
-	context.ContextDigest, err = digestJSON(context)
+	context.ContextDigest, err = context.calculatedDigest()
 	if err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
 	return trustedReconciliationAdmission{AllowedTools: tools, Context: context}, nil
 }
 
-func trustedWorkflowSource(
-	root string,
-	workflowData []byte,
-	inputs map[string]string,
-	workspaceCommit string,
-) (map[string]credentialTemplateParameter, trustedReconciliationSource, error) {
-	var identity credentialDocumentIdentity
-	if err := yaml.Unmarshal(workflowData, &identity); err != nil {
-		return nil, trustedReconciliationSource{}, invalidCredentialDeclaration(err)
+func decodeDoopsCICDInstruction(instruction string) (doopsCICDInstructionEnvelope, error) {
+	var envelope doopsCICDInstructionEnvelope
+	decoder := json.NewDecoder(strings.NewReader(instruction))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&envelope); err != nil {
+		return doopsCICDInstructionEnvelope{}, fmt.Errorf("invalid reconciliation instruction")
 	}
-	switch identity.Kind {
-	case "DeploymentTemplate":
-		var workflow credentialDeploymentTemplate
-		if err := strictCredentialYAMLDecode(workflowData, &workflow); err != nil {
-			return nil, trustedReconciliationSource{}, invalidCredentialDeclaration(err)
-		}
-		revision, err := resolveTrustedRevision(workflow.Spec.Release.Source.Revision, inputs)
-		if err != nil {
-			return nil, trustedReconciliationSource{}, err
-		}
-		return workflow.Spec.Parameters, trustedReconciliationSource{
-			Repository:      strings.TrimSpace(workflow.Spec.Release.Source.Repository),
-			Revision:        revision,
-			Branch:          strings.TrimSpace(workflow.Spec.Release.Source.Branch),
-			WorkspaceCommit: workspaceCommit,
-		}, nil
-	case "SemanticRelease":
-		var workflow credentialSemanticRelease
-		if err := strictCredentialYAMLDecode(workflowData, &workflow); err != nil {
-			return nil, trustedReconciliationSource{}, invalidCredentialDeclaration(err)
-		}
-		revision := workspaceCommit
-		if strings.TrimSpace(workflow.Spec.Release.Revision) != "" {
-			resolved, err := resolveTrustedRevision(workflow.Spec.Release.Revision, inputs)
-			if err != nil {
-				return nil, trustedReconciliationSource{}, err
-			}
-			revision = resolved
-		}
-		configurationData, err := readCredentialDeclarationFile(root, workflow.Spec.ConfigurationSource)
-		if err != nil {
-			return nil, trustedReconciliationSource{}, err
-		}
-		document, err := credentialYAMLDocument(configurationData)
-		if err != nil {
-			return nil, trustedReconciliationSource{}, err
-		}
-		artifactContract := yamlMappingValue(document.Content[0], "artifactContract")
-		return workflow.Spec.Parameters, trustedReconciliationSource{
-			Repository:      yamlScalarValue(yamlMappingValue(artifactContract, "sourceRepository")),
-			Revision:        revision,
-			Branch:          yamlScalarValue(yamlMappingValue(artifactContract, "sourceBranch")),
-			WorkspaceCommit: workspaceCommit,
-		}, nil
-	default:
-		return nil, trustedReconciliationSource{}, invalidCredentialDeclaration(
-			fmt.Errorf("unsupported root kind %q", identity.Kind),
-		)
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return doopsCICDInstructionEnvelope{}, fmt.Errorf("invalid reconciliation instruction")
 	}
+	if envelope.Task != "execute-doops-cicd-workflow" || envelope.Skill != "$doops-cicd" ||
+		(envelope.ExecutionMode != "dry-run" && envelope.ExecutionMode != "apply") ||
+		strings.TrimSpace(envelope.RunID) == "" || strings.TrimSpace(envelope.WorkflowPath) == "" ||
+		(envelope.ResultContract.APIVersion != "doops.sh/v2" &&
+			envelope.ResultContract.APIVersion != "doops.sh/v3") ||
+		envelope.ResultContract.Kind != "DeploymentRun" ||
+		!envelope.ResultContract.RequireEvidence ||
+		envelope.CredentialRun.APIVersion != "doops.sh/v2" ||
+		envelope.CredentialRun.Kind != "CredentialRun" ||
+		strings.TrimSpace(envelope.CredentialRun.ID) == "" ||
+		envelope.CredentialRun.Materializations == nil ||
+		envelope.CredentialRun.Mode != envelope.ExecutionMode {
+		return doopsCICDInstructionEnvelope{}, fmt.Errorf("reconciliation instruction binding is invalid")
+	}
+	return envelope, nil
+}
+
+func selectTrustedSource(declared, registry string) string {
+	if declared = strings.TrimSpace(declared); declared != "" {
+		return declared
+	}
+	return strings.TrimSpace(registry)
 }
 
 func digestJSON(value interface{}) (string, error) {
@@ -323,8 +311,149 @@ func digestJSON(value interface{}) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(data)
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var normalized interface{}
+	if err := decoder.Decode(&normalized); err != nil {
+		return "", err
+	}
+	var canonical bytes.Buffer
+	if err := writeCanonicalJSON(&canonical, normalized); err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(canonical.Bytes())
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func writeCanonicalJSON(output *bytes.Buffer, value interface{}) error {
+	switch typed := value.(type) {
+	case nil:
+		output.WriteString("null")
+	case bool:
+		if typed {
+			output.WriteString("true")
+		} else {
+			output.WriteString("false")
+		}
+	case string:
+		if err := writeCanonicalJSONString(output, typed); err != nil {
+			return err
+		}
+	case json.Number:
+		number, err := canonicalJSONNumber(typed.String())
+		if err != nil {
+			return err
+		}
+		output.WriteString(number)
+	case []interface{}:
+		output.WriteByte('[')
+		for index, item := range typed {
+			if index > 0 {
+				output.WriteByte(',')
+			}
+			if err := writeCanonicalJSON(output, item); err != nil {
+				return err
+			}
+		}
+		output.WriteByte(']')
+	case map[string]interface{}:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			if !utf8.ValidString(key) {
+				return fmt.Errorf("canonical JSON object key is not valid UTF-8")
+			}
+			keys = append(keys, key)
+		}
+		sort.Slice(keys, func(i, j int) bool {
+			return compareUTF16(keys[i], keys[j]) < 0
+		})
+		output.WriteByte('{')
+		for index, key := range keys {
+			if index > 0 {
+				output.WriteByte(',')
+			}
+			if err := writeCanonicalJSONString(output, key); err != nil {
+				return err
+			}
+			output.WriteByte(':')
+			if err := writeCanonicalJSON(output, typed[key]); err != nil {
+				return err
+			}
+		}
+		output.WriteByte('}')
+	default:
+		return fmt.Errorf("unsupported canonical JSON type %T", value)
+	}
+	return nil
+}
+
+func writeCanonicalJSONString(output *bytes.Buffer, value string) error {
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("canonical JSON string is not valid UTF-8")
+	}
+	output.WriteByte('"')
+	for _, char := range value {
+		switch char {
+		case '\b':
+			output.WriteString(`\b`)
+		case '\t':
+			output.WriteString(`\t`)
+		case '\n':
+			output.WriteString(`\n`)
+		case '\f':
+			output.WriteString(`\f`)
+		case '\r':
+			output.WriteString(`\r`)
+		case '"':
+			output.WriteString(`\"`)
+		case '\\':
+			output.WriteString(`\\`)
+		default:
+			if char < 0x20 {
+				_, _ = fmt.Fprintf(output, `\u%04x`, char)
+			} else {
+				output.WriteRune(char)
+			}
+		}
+	}
+	output.WriteByte('"')
+	return nil
+}
+
+func canonicalJSONNumber(value string) (string, error) {
+	number, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return "", fmt.Errorf("invalid canonical JSON number %q: %w", value, err)
+	}
+	if number == 0 {
+		return "0", nil
+	}
+	data, err := json.Marshal(number)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func compareUTF16(left, right string) int {
+	leftUnits := utf16.Encode([]rune(left))
+	rightUnits := utf16.Encode([]rune(right))
+	for index := 0; index < len(leftUnits) && index < len(rightUnits); index++ {
+		if leftUnits[index] < rightUnits[index] {
+			return -1
+		}
+		if leftUnits[index] > rightUnits[index] {
+			return 1
+		}
+	}
+	switch {
+	case len(leftUnits) < len(rightUnits):
+		return -1
+	case len(leftUnits) > len(rightUnits):
+		return 1
+	default:
+		return 0
+	}
 }
 
 func validateTrustedWorkflowInputs(parameters map[string]credentialTemplateParameter, inputs map[string]string) error {

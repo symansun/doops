@@ -116,6 +116,9 @@ doops list
 doops targets --target unicom
 ```
 
+`targets --target` 只检查该配置对应的 `cluster/instance`，不会返回同一 gateway
+上的其它节点；目标离线时命令明确失败。
+
 常用命令：
 
 | 需求 | 命令 |

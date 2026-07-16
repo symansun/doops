@@ -24,7 +24,11 @@ type ClientService struct {
 	activeSeq   uint64
 }
 
-func NewClientService(store *GatewayStore, registry *AgentRegistry, opts GatewayHubOptions) *ClientService {
+func NewClientService(
+	store *GatewayStore,
+	registry *AgentRegistry,
+	opts GatewayHubOptions,
+) *ClientService {
 	return &ClientService{
 		store:     store,
 		registry:  registry,

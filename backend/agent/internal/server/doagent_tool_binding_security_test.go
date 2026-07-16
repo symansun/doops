@@ -5,6 +5,18 @@ import (
 	"testing"
 )
 
+func TestRejectSensitiveToolResultRejectsSecretValuesWithoutSensitiveKeys(t *testing.T) {
+	for _, value := range []string{
+		"ghp_" + strings.Repeat("a", 36),
+		"AKIA" + strings.Repeat("A", 16),
+		"scheduled release Bearer synthetic-canary",
+	} {
+		if err := rejectSensitiveToolResult(map[string]interface{}{"message": value}); err == nil {
+			t.Fatalf("sensitive tool result value %q was accepted", value)
+		}
+	}
+}
+
 func TestDoagentToolTraceCollectorRequiresMatchingTrustedAttestationForCICD(t *testing.T) {
 	scope := map[string]interface{}{"repository": "example/repo"}
 	scopeDigest, err := digestJSON(scope)

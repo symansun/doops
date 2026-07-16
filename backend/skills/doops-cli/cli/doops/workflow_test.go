@@ -42,6 +42,10 @@ func TestValidateWorkflowInputsRejectsCredentialMaterial(t *testing.T) {
 		"https://example.test/repo.git?X-Goog-Signature=synthetic",
 		"scheduled release Bearer synthetic-canary",
 		"sk-synthetic",
+		"ghp_" + strings.Repeat("a", 36),
+		"github_pat_" + strings.Repeat("a", 82),
+		"glpat-" + strings.Repeat("a", 20),
+		"AKIA" + strings.Repeat("A", 16),
 		"-----BEGIN PRIVATE KEY-----\nsynthetic\n-----END PRIVATE KEY-----",
 	} {
 		if err := validateWorkflowInputs(map[string]string{"releaseId": value}); err == nil {
@@ -352,7 +356,9 @@ func TestRunCICDCommandStopsBeforePromptWhenCredentialPrepareFails(t *testing.T)
 	}
 
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "credential_grant_denied", http.StatusForbidden)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"apiVersion":"doops.sh/v2","kind":"CredentialPrepareError","category":"credential_grant_denied"}`))
 	}))
 	defer gateway.Close()
 	caller := &fakeWorkflowCaller{
@@ -490,6 +496,7 @@ func TestValidateWorkflowResultRejectsSyntheticResultsAndDryRunMutation(t *testi
 		t.Run(name, func(t *testing.T) {
 			if err := validateWorkflowResult(
 				result,
+				"doops.sh/v2",
 				"dry-run",
 				strings.Repeat("a", 40),
 			); err == nil {
@@ -541,6 +548,7 @@ func TestValidateWorkflowResultRejectsUnboundEvidence(t *testing.T) {
 			)
 			if err := validateWorkflowResult(
 				result,
+				"doops.sh/v2",
 				"dry-run",
 				strings.Repeat("a", 40),
 			); err == nil {
@@ -579,5 +587,19 @@ func TestRunCICDCommandRequiresTargetBeforePush(t *testing.T) {
 	}
 	if pushes != 0 {
 		t.Fatalf("invalid invocations must not push, got %d pushes", pushes)
+	}
+}
+
+func TestWorkflowAPIVersionAcceptsV3(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "environment.yaml")
+	if err := os.WriteFile(path, []byte("apiVersion: doops.sh/v3\nkind: EnvironmentDefinition\n"), 0o600); err != nil {
+		t.Fatalf("write v3 environment: %v", err)
+	}
+	version, err := workflowAPIVersion(path)
+	if err != nil {
+		t.Fatalf("read v3 apiVersion: %v", err)
+	}
+	if version != "doops.sh/v3" {
+		t.Fatalf("apiVersion = %q, want doops.sh/v3", version)
 	}
 }

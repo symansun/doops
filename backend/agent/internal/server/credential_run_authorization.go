@@ -3,12 +3,13 @@ package server
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 )
 
 const credentialRunAuthorizationTTL = 15 * time.Minute
+
+var ErrCredentialPrepareBindingInvalid = errors.New("credential prepare binding invalid")
 
 func (s *GatewayStore) IssueCredentialRunAuthorization(
 	auth TokenAuth,
@@ -18,7 +19,7 @@ func (s *GatewayStore) IssueCredentialRunAuthorization(
 	if strings.TrimSpace(run.ID) == "" || strings.TrimSpace(auth.UserID) == "" ||
 		strings.TrimSpace(auth.TokenID) == "" || run.Cluster != request.Cluster ||
 		run.Instance != request.Instance || run.Mode != request.Mode {
-		return fmt.Errorf("credential run authorization identity is invalid")
+		return ErrCredentialPrepareBindingInvalid
 	}
 	digest, err := digestJSON(run)
 	if err != nil {
@@ -67,7 +68,7 @@ func (s *GatewayStore) ConsumeCredentialRunAuthorization(
 		&authorization.RunDigest, &authorization.State, &createdAt, &expiresAt, &consumedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ErrCredentialGrantDenied
+		return ErrCredentialPrepareBindingInvalid
 	}
 	if err != nil {
 		return err
@@ -86,13 +87,13 @@ func (s *GatewayStore) ConsumeCredentialRunAuthorization(
 		authorization.Mode != strings.TrimSpace(mode) || authorization.RunDigest != digest ||
 		run.Cluster != authorization.Cluster || run.Instance != authorization.Instance ||
 		run.Mode != authorization.Mode {
-		return ErrCredentialGrantDenied
+		return ErrCredentialPrepareBindingInvalid
 	}
 	for _, materialization := range run.Materializations {
 		if strings.TrimSpace(materialization.CredentialID) == "" ||
 			strings.TrimSpace(materialization.VersionID) == "" ||
 			strings.TrimSpace(materialization.GrantID) == "" {
-			return ErrCredentialGrantDenied
+			return ErrCredentialPrepareBindingInvalid
 		}
 		var credentialState, versionState, grantState string
 		err := tx.QueryRow(`SELECT c.state, v.state, g.state
@@ -103,7 +104,7 @@ func (s *GatewayStore) ConsumeCredentialRunAuthorization(
 			materialization.CredentialID, materialization.VersionID, materialization.GrantID,
 		).Scan(&credentialState, &versionState, &grantState)
 		if errors.Is(err, sql.ErrNoRows) {
-			return ErrCredentialGrantDenied
+			return ErrCredentialPrepareBindingInvalid
 		}
 		if err != nil {
 			return err
@@ -111,7 +112,7 @@ func (s *GatewayStore) ConsumeCredentialRunAuthorization(
 		if credentialState != string(CredentialStateActive) ||
 			versionState != string(CredentialVersionActive) ||
 			grantState != string(CredentialStateActive) {
-			return ErrCredentialGrantDenied
+			return ErrCredentialPrepareBindingInvalid
 		}
 	}
 	result, err := tx.Exec(`UPDATE credential_run_authorizations
@@ -126,7 +127,7 @@ func (s *GatewayStore) ConsumeCredentialRunAuthorization(
 		return err
 	}
 	if affected != 1 {
-		return ErrCredentialGrantDenied
+		return ErrCredentialPrepareBindingInvalid
 	}
 	return tx.Commit()
 }
@@ -144,7 +145,7 @@ func (s *GatewayStore) RevokeCredentialRunAuthorization(runID string) error {
 		return err
 	}
 	if affected != 1 {
-		return ErrCredentialGrantDenied
+		return ErrCredentialPrepareBindingInvalid
 	}
 	return nil
 }

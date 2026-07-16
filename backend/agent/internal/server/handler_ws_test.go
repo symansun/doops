@@ -627,6 +627,27 @@ func TestSubscribeDoagentSSEDoesNotForwardMalformedRawData(t *testing.T) {
 	}
 }
 
+func TestSubscribeDoagentSSEDoesNotForwardMalformedRawData(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: Authorization: Bearer synthetic-canary`)
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	var progress strings.Builder
+	err := subscribeDoagentSSE(t.Context(), ts.URL, "malformed-sse", func(evt notificationEvent) {
+		progress.WriteString(evt.Data)
+	})
+	if err == nil || !strings.Contains(err.Error(), "doagent_sse_protocol_invalid") {
+		t.Fatalf("malformed SSE error = %v", err)
+	}
+	if strings.Contains(progress.String(), "synthetic-canary") ||
+		!strings.Contains(progress.String(), "doagent_sse_protocol_invalid") {
+		t.Fatalf("malformed SSE raw data leaked to progress: %q", progress.String())
+	}
+}
+
 func TestSubscribeDoagentSSEReturnsErrorWhenStreamGoesIdle(t *testing.T) {
 	t.Setenv("DOOPS_DOAGENT_SSE_IDLE_TIMEOUT", "20ms")
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

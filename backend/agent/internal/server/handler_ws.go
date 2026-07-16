@@ -269,6 +269,9 @@ func (gw *Gateway) ServeWebSocketConnWithReady(conn *websocket.Conn, remoteAddr 
 					"runtimeId": agentProcessRuntimeID,
 					"capabilities": map[string]interface{}{
 						"tools": map[string]interface{}{},
+						"protocols": map[string]interface{}{
+							"credentialPlan": credentialPlanProtocolV2,
+						},
 					},
 				},
 			})
@@ -974,20 +977,30 @@ func doagentModeForPrompt(operation, executionMode string) (string, error) {
 }
 
 func validateDoagentApplyInstruction(instruction string) error {
-	var envelope struct {
-		Task          string `json:"task"`
-		Skill         string `json:"skill"`
-		ExecutionMode string `json:"executionMode"`
-	}
-	if err := json.Unmarshal([]byte(instruction), &envelope); err != nil {
-		return fmt.Errorf("apply requires a structured doops-cicd instruction")
+	_, err := validatedDoagentApplyInstruction(instruction)
+	return err
+}
+
+func validatedDoagentApplyInstruction(instruction string) (doopsCICDInstructionEnvelope, error) {
+	envelope, err := decodeDoopsCICDInstruction(instruction)
+	if err != nil {
+		return doopsCICDInstructionEnvelope{}, fmt.Errorf("apply requires a structured doops-cicd instruction")
 	}
 	if envelope.Task != "execute-doops-cicd-workflow" ||
 		envelope.Skill != "$doops-cicd" ||
-		envelope.ExecutionMode != "apply" {
-		return fmt.Errorf("apply is only supported for an explicit doops-cicd apply instruction")
+		envelope.ExecutionMode != "apply" ||
+		strings.TrimSpace(envelope.RunID) == "" ||
+		strings.TrimSpace(envelope.WorkflowPath) == "" ||
+		!validCredentialWorkspaceCommit(envelope.WorkspaceCommit) ||
+		strings.TrimSpace(envelope.CredentialRun.ID) == "" ||
+		envelope.CredentialRun.Materializations == nil ||
+		(envelope.ResultContract.APIVersion != "doops.sh/v2" &&
+			envelope.ResultContract.APIVersion != "doops.sh/v3") ||
+		envelope.ResultContract.Kind != "DeploymentRun" ||
+		!envelope.ResultContract.RequireEvidence {
+		return doopsCICDInstructionEnvelope{}, fmt.Errorf("apply is only supported for an explicit prepared doops-cicd apply instruction")
 	}
-	return nil
+	return envelope, nil
 }
 
 type agentPromptExecutionContext struct {
@@ -1009,15 +1022,8 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		return
 	}
 
-	var structuredResultPath string
 	if responseFormat == "json" {
-		var err error
-		structuredResultPath, err = prepareDoagentStructuredResult(doopsSessionID)
-		if err != nil {
-			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("prepare structured result file: %v", err)))
-			return
-		}
-		instr = appendDoagentStructuredResultContract(instr, structuredResultPath)
+		instr = appendDoagentStructuredResultContract(instr)
 	}
 
 	// Machine-result prompts use a fresh doagent session so their tool trace
@@ -1139,6 +1145,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			pushProgress,
 			toolTraces.collect,
 			turnIDReady,
+			responseFormat == "json",
 			sseReady,
 		)
 	}()
@@ -1188,9 +1195,9 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		return
 	}
 	if responseFormat == "json" {
-		resultText, structuredContent, err := readDoagentStructuredResult(structuredResultPath)
+		resultText, structuredContent, err := toolTraces.structuredResult()
 		if err != nil {
-			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("read structured result file: %v", err)))
+			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("read final machine result: %v", err)))
 			return
 		}
 		resultText, structuredContent, err = bindDeploymentRunEvidence(
@@ -1198,7 +1205,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			toolTraces.completed(),
 		)
 		if err != nil {
-			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("bind structured result file: %v", err)))
+			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("bind final machine result: %v", err)))
 			return
 		}
 		writeJSON(buildStructuredSuccessResponse(reqID, resultText, structuredContent))
@@ -1705,75 +1712,18 @@ func decodeDoagentJSONObject(text string) (map[string]interface{}, error) {
 	return object, nil
 }
 
-func prepareDoagentStructuredResult(sessionID string) (string, error) {
-	workspace, err := workspacePath(sessionID)
-	if err != nil {
-		return "", err
-	}
-	if err := ensureDoagentResultDirectory(workspace); err != nil {
-		return "", fmt.Errorf("prepare session workspace: %w", err)
-	}
-	resultDirectory := filepath.Join(workspace, ".doops")
-	if err := ensureDoagentResultDirectory(resultDirectory); err != nil {
-		return "", fmt.Errorf("prepare result directory: %w", err)
-	}
-	resultPath := filepath.Join(resultDirectory, "structured-result.json")
-	if err := os.Remove(resultPath); err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("remove stale result: %w", err)
-	}
-	return resultPath, nil
-}
-
-func ensureDoagentResultDirectory(path string) error {
-	info, err := os.Lstat(path)
-	switch {
-	case os.IsNotExist(err):
-		if err := os.Mkdir(path, 0o700); err != nil {
-			return fmt.Errorf("create directory: %w", err)
-		}
-	case err != nil:
-		return fmt.Errorf("inspect directory: %w", err)
-	case info.Mode()&os.ModeSymlink != 0 || !info.IsDir():
-		return fmt.Errorf("path must be a real directory")
-	}
-	return nil
-}
-
-func appendDoagentStructuredResultContract(instruction, resultPath string) string {
-	contract := instruction + "\n\nMachine-readable result channel: before your final response, write the same final JSON object to " +
-		resultPath + " using a temporary file in that directory followed by an atomic rename. " +
-		"The file must contain exactly one JSON object with no Markdown or surrounding text. " +
-		"The terminal response is not used as the machine result. " +
+func appendDoagentStructuredResultContract(instruction string) string {
+	contract := instruction + "\n\nMachine-readable result channel: your final response is the machine result. " +
+		"It must contain exactly one JSON object with no Markdown or surrounding text. " +
+		"For a DeploymentRun, status may contain only phase, mutationCount, capabilities, evidence, and failures. " +
+		"Do not emit plannedMutations, runtimeAttestation, resultDigest, or any other status field. " +
+		"DeploymentRun evidence must be a non-empty array: before the final response, call at least one allowed trusted DoOps plan tool and reference that completed call. " +
+		"Every DeploymentRun evidence item must reference one of the allowed trusted DoOps plan tools; " +
+		"generic Bash, filesystem, browser, or delegation calls are not valid evidence. " +
 		"If the object is a DeploymentRun, every evidence item must contain exactly subject, observedAt, and toolRef; " +
 		"toolRef.tool is the exact runtime tool name and toolRef.input is the exact JSON input used for that call. " +
 		"The Gateway consumes toolRef and injects toolCall with the completed runtime call's exact id, tool, input, and result."
 	return contract
-}
-
-func readDoagentStructuredResult(path string) (string, map[string]interface{}, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil, fmt.Errorf("structured result file was not created")
-		}
-		return "", nil, fmt.Errorf("inspect structured result file: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return "", nil, fmt.Errorf("structured result file must be a regular file")
-	}
-	if info.Size() > maxFileReadBytes() {
-		return "", nil, fmt.Errorf("structured result file size %d exceeds limit %d", info.Size(), maxFileReadBytes())
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", nil, fmt.Errorf("read structured result file: %w", err)
-	}
-	text := string(data)
-	object, err := decodeDoagentJSONObject(text)
-	if err != nil {
-		return "", nil, fmt.Errorf("structured result file must contain one JSON object: %w", err)
-	}
-	return text, object, nil
 }
 
 // subscribeDoagentSSE 订阅 doagent 的 SSE 事件流，将内容实时转发到 WebSocket 客户端。
@@ -1783,7 +1733,7 @@ func subscribeDoagentSSE(ctx context.Context, baseURL string, sessionID string, 
 }
 
 func subscribeDoagentSSEWithCollector(ctx context.Context, baseURL string, sessionID string, pushProgress notificationSender, collector doagentSSECollector) error {
-	return subscribeDoagentSSEWithCollectorReady(ctx, baseURL, sessionID, pushProgress, collector, nil, nil)
+	return subscribeDoagentSSEWithCollectorReady(ctx, baseURL, sessionID, pushProgress, collector, nil, false, nil)
 }
 
 func subscribeDoagentSSEWithCollectorReady(
@@ -1793,6 +1743,7 @@ func subscribeDoagentSSEWithCollectorReady(
 	pushProgress notificationSender,
 	collector doagentSSECollector,
 	targetTurnIDReady <-chan string,
+	allowUntaggedCurrentTurn bool,
 	ready chan<- error,
 ) error {
 	ctx, cancel := context.WithCancel(ctx)
@@ -1833,26 +1784,13 @@ func subscribeDoagentSSEWithCollectorReady(
 
 	var eventData strings.Builder
 	var pendingAgentMessage strings.Builder
-	flushPendingAgentMessage := func(turnID interface{}) error {
+	flushPendingAgentMessage := func() {
 		if pendingAgentMessage.Len() == 0 {
-			return nil
+			return
 		}
 		text := sanitizeSecretText(pendingAgentMessage.String())
-		buffered := map[string]interface{}{
-			"sessionUpdate": "agent_message",
-			"content":       map[string]interface{}{"type": "text", "text": text},
-		}
-		if turnID != nil {
-			buffered["turnId"] = turnID
-		}
-		if collector != nil {
-			if err := collector(buffered); err != nil {
-				return err
-			}
-		}
 		pushProgress(assistantDeltaNotification(text))
 		pendingAgentMessage.Reset()
-		return nil
 	}
 	receivedEvent := false
 	targetTurnID := ""
@@ -1920,6 +1858,7 @@ func subscribeDoagentSSEWithCollectorReady(
 			case "session/update":
 				// session/update 包含不同类型的更新
 				sessionUpdate, _ := params["update"].(map[string]interface{})
+				updateType, _ := sessionUpdate["sessionUpdate"].(string)
 				if targetTurnIDReady != nil {
 					if targetTurnID == "" {
 						select {
@@ -1934,13 +1873,15 @@ func subscribeDoagentSSEWithCollectorReady(
 					}
 					eventTurnID, _ := sessionUpdate["turnId"].(string)
 					if strings.TrimSpace(eventTurnID) == "" {
-						continue
-					}
-					if eventTurnID != targetTurnID {
+						if !allowUntaggedCurrentTurn ||
+							sessionUpdate["replay"] == true ||
+							updateType == "turn_finished" {
+							continue
+						}
+					} else if eventTurnID != targetTurnID {
 						continue
 					}
 				}
-				updateType, _ := sessionUpdate["sessionUpdate"].(string)
 				if updateType == "agent_message_chunk" {
 					text, err := doagentAgentMessageText(sessionUpdate["content"])
 					if err != nil {
@@ -1953,22 +1894,17 @@ func subscribeDoagentSSEWithCollectorReady(
 					continue
 				}
 				if updateType == "agent_message" {
-					if err := flushPendingAgentMessage(sessionUpdate["turnId"]); err != nil {
-						return err
-					}
+					flushPendingAgentMessage()
 				}
 				if updateType == "turn_finished" && pendingAgentMessage.Len() > 0 {
-					if err := flushPendingAgentMessage(sessionUpdate["turnId"]); err != nil {
-						return err
-					}
+					flushPendingAgentMessage()
 				}
-				sessionUpdate = sanitizeDoagentSessionUpdate(sessionUpdate)
 				if collector != nil {
 					if err := collector(sessionUpdate); err != nil {
 						return err
 					}
 				}
-
+				sessionUpdate = sanitizeDoagentSessionUpdate(sessionUpdate)
 				switch updateType {
 				case "tool_call_update":
 					// 工具调用进度

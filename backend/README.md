@@ -193,7 +193,7 @@ Doops 有两件事容易混淆，文档里必须先分开看：
 | :--- | :--- |
 | `ws(s)://<gateway>/v1/rpc` | 内网 agent 主动 `-gateway-url ... -cluster ... -instance ...` 连公网 gateway |
 
-是否“可以操作某节点”取决于该 agent 是否已经主动注册到 gateway。`doops targets --target <gateway-target>` 能看到对应 `cluster/instance` 在线，后续 `exec/ask/push/pull` 才能成功。如果某节点只是本地二进制直装且没有 `-gateway-url`，它不会自动出现在 gateway 里。
+是否“可以操作某节点”取决于该 agent 是否已经主动注册到 gateway。`doops targets --target <gateway-target>` 只查询配置中对应的 `cluster/instance`，离线时明确失败；需要列出当前凭据可见的全部在线节点时使用 `doops targets --gateway <url> --token <user-token>`。如果某节点只是本地二进制直装且没有 `-gateway-url`，它不会自动出现在 gateway 里。
 
 ## 客户端安装与连接
 

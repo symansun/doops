@@ -34,9 +34,10 @@ type doagentToolTrace struct {
 }
 
 type doagentToolTraceCollector struct {
-	mu       sync.Mutex
-	calls    map[string]doagentToolTrace
-	expected *trustedReconciliationContext
+	mu           sync.Mutex
+	calls        map[string]doagentToolTrace
+	expected     *trustedReconciliationContext
+	finalMessage string
 }
 
 func newDoagentToolTraceCollector(
@@ -50,7 +51,23 @@ func newDoagentToolTraceCollector(
 }
 
 func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error {
-	if update["sessionUpdate"] != "tool_call_update" || update["replay"] == true {
+	if update["replay"] == true {
+		return nil
+	}
+	if update["sessionUpdate"] == "agent_message" {
+		text, err := doagentAgentMessageText(update["content"])
+		if err != nil {
+			return err
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.finalMessage != "" {
+			return fmt.Errorf("multiple final agent messages were observed")
+		}
+		c.finalMessage = text
+		return nil
+	}
+	if update["sessionUpdate"] != "tool_call_update" {
 		return nil
 	}
 	toolCallID, _ := update["toolCallId"].(string)
@@ -87,7 +104,7 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 		}
 		trace.Status = status
 	}
-	if result, ok := update["result"]; ok {
+	if result, ok := update["rawOutput"]; ok {
 		encoded, err := stableDoagentJSON(result)
 		if err != nil {
 			return fmt.Errorf("encode tool call %q result: %w", toolCallID, err)
@@ -119,6 +136,20 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 	return nil
 }
 
+func (c *doagentToolTraceCollector) structuredResult() (string, map[string]interface{}, error) {
+	c.mu.Lock()
+	text := c.finalMessage
+	c.mu.Unlock()
+	if strings.TrimSpace(text) == "" {
+		return "", nil, fmt.Errorf("final machine result was not emitted")
+	}
+	object, err := decodeDoagentJSONObject(text)
+	if err != nil {
+		return "", nil, fmt.Errorf("final machine result must contain one JSON object: %w", err)
+	}
+	return text, object, nil
+}
+
 func (c *doagentToolTraceCollector) completed() []doagentToolTrace {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -139,7 +170,7 @@ func (trace doagentToolTrace) eligibleForContext(expected *trustedReconciliation
 		len(trace.resultJSON) == 0 {
 		return false
 	}
-	resultObject, err := publicDoagentToolResult(trace)
+	_, err := publicDoagentToolResult(trace)
 	if err != nil {
 		return false
 	}
@@ -194,11 +225,27 @@ func (trace doagentToolTrace) eligibleForContext(expected *trustedReconciliation
 	if err != nil || expectedInputDigest != trace.InputDigest {
 		return false
 	}
-	expectedResultDigest, err := digestJSON(resultObject)
-	if err != nil || expectedResultDigest != trace.AttestedResultDigest {
-		return false
+	_, err = trace.verifiedResult()
+	return err == nil
+}
+
+func (trace doagentToolTrace) verifiedResult() (map[string]interface{}, error) {
+	result, err := publicDoagentToolResult(trace)
+	if err != nil {
+		return nil, err
 	}
-	return true
+	resultObject, ok := result.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("runtime tool result must be an object")
+	}
+	expectedResultDigest, err := digestJSON(resultObject)
+	if err != nil {
+		return nil, fmt.Errorf("digest runtime tool result: %w", err)
+	}
+	if expectedResultDigest != trace.AttestedResultDigest {
+		return nil, fmt.Errorf("runtime tool result digest mismatch")
+	}
+	return resultObject, nil
 }
 
 func rejectSensitiveToolResult(value interface{}) error {
@@ -298,9 +345,9 @@ func bindDeploymentRunEvidence(
 		if err != nil {
 			return "", nil, fmt.Errorf("decode runtime tool input: %w", err)
 		}
-		runtimeResult, err := publicDoagentToolResult(trace)
+		runtimeResult, err := trace.verifiedResult()
 		if err != nil {
-			return "", nil, fmt.Errorf("validate runtime tool result: %w", err)
+			return "", nil, fmt.Errorf("verify runtime tool result: %w", err)
 		}
 		delete(entry, "toolRef")
 		entry["toolCall"] = map[string]interface{}{

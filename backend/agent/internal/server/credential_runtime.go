@@ -68,6 +68,12 @@ type credentialPrepareHTTPBody struct {
 	Mode            string `json:"mode"`
 }
 
+type credentialPrepareErrorResponse struct {
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+	Category   string `json:"category"`
+}
+
 type credentialVerifyHTTPBody struct {
 	credentialPrepareHTTPBody
 	VersionID string `json:"version_id"`
@@ -87,17 +93,21 @@ type authorizedCredentialMaterialization struct {
 
 func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		writeCredentialPrepareError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 	auth, err := h.authenticateUser(r)
 	if err != nil {
-		h.writeUserAuthError(w, r)
+		if _, agentErr := h.store.VerifyAgentToken(bearerToken(r)); agentErr == nil {
+			writeCredentialPrepareError(w, http.StatusForbidden, "forbidden")
+		} else {
+			writeCredentialPrepareError(w, http.StatusUnauthorized, "unauthorized")
+		}
 		return
 	}
 	var body credentialPrepareHTTPBody
 	if err := decodeCredentialJSON(w, r, &body); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeCredentialPrepareError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
 	body.Cluster = strings.TrimSpace(body.Cluster)
@@ -109,12 +119,12 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 	if body.Cluster == "" || body.Instance == "" || body.SessionID == "" ||
 		body.WorkflowPath == "" || !validCredentialWorkspaceCommit(body.WorkspaceCommit) ||
 		(body.Mode != "dry-run" && body.Mode != "apply") {
-		http.Error(w, "invalid credential prepare request", http.StatusBadRequest)
+		writeCredentialPrepareError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
 	if !h.store.UserCan(auth.UserID, body.Cluster, body.Instance, ActionAsk) ||
 		!h.store.UserCan(auth.UserID, body.Cluster, body.Instance, ActionCredentialUse) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		writeCredentialPrepareError(w, http.StatusForbidden, "forbidden")
 		return
 	}
 	if body.Mode == "apply" {
@@ -133,7 +143,7 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 		StartedAt:      time.Now().UTC(),
 	})
 	if err != nil {
-		http.Error(w, "credential_audit_unavailable", http.StatusInternalServerError)
+		writeCredentialPrepareError(w, http.StatusInternalServerError, "credential_audit_unavailable")
 		return
 	}
 	finishAudit := func(status, category string) error {
@@ -148,14 +158,14 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		category := err.Error()
 		_ = finishAudit("error", category)
-		http.Error(w, category, credentialPlanHTTPStatus(err))
+		writeCredentialPrepareError(w, credentialPlanHTTPStatus(err), category)
 		return
 	}
 	plan.CredentialRefs, err = h.resolveCredentialPlanReferences(auth.UserID, plan)
 	if err != nil {
 		category := credentialErrorCategory(err)
 		_ = finishAudit("error", category)
-		http.Error(w, category, credentialHTTPStatus(err))
+		writeCredentialPrepareError(w, credentialHTTPStatus(err), category)
 		return
 	}
 
@@ -176,7 +186,7 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 		if err != nil {
 			category := credentialErrorCategory(err)
 			_ = finishAudit("forbidden", category)
-			http.Error(w, category, credentialHTTPStatus(err))
+			writeCredentialPrepareError(w, credentialHTTPStatus(err), category)
 			return
 		}
 		authorized = append(authorized, authorizedCredentialMaterialization{Reference: ref, Authorized: resolved})
@@ -259,7 +269,7 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 					Status: "error", Error: category, EndedAt: time.Now().UTC(),
 				})
 				_ = finishAudit("error", category)
-				http.Error(w, category, http.StatusBadGateway)
+				writeCredentialPrepareError(w, http.StatusBadGateway, category)
 				return
 			}
 			materialization.GrantID = item.Authorized.Grant.ID
@@ -284,7 +294,7 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 					Status: "error", Error: category, EndedAt: time.Now().UTC(),
 				})
 				_ = finishAudit("error", category)
-				http.Error(w, category, http.StatusInternalServerError)
+				writeCredentialPrepareError(w, http.StatusInternalServerError, category)
 				return
 			}
 			completed = append(completed, completedCredentialMaterialization{
@@ -307,7 +317,7 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 				}
 			}
 			_ = finishAudit("error", category)
-			http.Error(w, category, http.StatusInternalServerError)
+			writeCredentialPrepareError(w, http.StatusInternalServerError, category)
 			return
 		}
 		sort.Strings(materialization.Keys)
@@ -317,11 +327,11 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 	if err := h.store.IssueCredentialRunAuthorization(auth, body, run); err != nil {
 		if rollbackErr := h.rollbackCredentialPrepare(r.Context(), completed); rollbackErr != nil {
 			_ = finishAudit("error", "credential_run_authorization_outcome_unknown")
-			http.Error(w, "credential_run_authorization_outcome_unknown", http.StatusInternalServerError)
+			writeCredentialPrepareError(w, http.StatusInternalServerError, "credential_run_authorization_outcome_unknown")
 			return
 		}
 		_ = finishAudit("error", "credential_run_authorization_failed")
-		http.Error(w, "credential_run_authorization_failed", http.StatusInternalServerError)
+		writeCredentialPrepareError(w, http.StatusInternalServerError, "credential_run_authorization_failed")
 		return
 	}
 	if err := finishAudit("success", ""); err != nil {
@@ -332,7 +342,7 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 		if rollbackErr := h.rollbackCredentialPrepare(r.Context(), completed); rollbackErr != nil {
 			category = "credential_materialization_outcome_unknown"
 		}
-		http.Error(w, category, http.StatusInternalServerError)
+		writeCredentialPrepareError(w, http.StatusInternalServerError, category)
 		return
 	}
 	writeJSONHTTP(w, run)
@@ -600,6 +610,10 @@ func (h *GatewayHub) handleCredentialVerify(
 				http.Error(w, "credential_verification_outcome_unknown", http.StatusBadGateway)
 				return
 			}
+			if err := h.store.MarkCredentialMaterializationCleaned(request); err != nil {
+				http.Error(w, "credential_verification_outcome_unknown", http.StatusBadGateway)
+				return
+			}
 		} else if err := h.cleanupCredentialVersion(r.Context(), request); err != nil {
 			http.Error(w, "credential_verification_outcome_unknown", http.StatusBadGateway)
 			return
@@ -643,6 +657,13 @@ func (h *GatewayHub) handleCredentialVerify(
 }
 
 func (h *GatewayHub) loadCredentialPlan(ctx context.Context, body credentialPrepareHTTPBody) (CredentialPlan, error) {
+	agent := h.registry.Get(body.Cluster, body.Instance)
+	if agent == nil {
+		return CredentialPlan{}, errors.New("credential_target_offline")
+	}
+	if agent.CredentialPlanProtocol != credentialPlanProtocolV2 {
+		return CredentialPlan{}, errors.New("agent_protocol_incompatible")
+	}
 	planText, err := h.RunInternalToolCall(ctx, body.Cluster, body.Instance, "doops_credential_plan", map[string]any{
 		"session_id":       body.SessionID,
 		"workflow_path":    body.WorkflowPath,
@@ -663,6 +684,10 @@ func (h *GatewayHub) loadCredentialPlan(ctx context.Context, body credentialPrep
 
 func credentialPlanHTTPStatus(err error) int {
 	switch err.Error() {
+	case "agent_protocol_incompatible":
+		return http.StatusUpgradeRequired
+	case "credential_target_offline":
+		return http.StatusServiceUnavailable
 	case "credential_declaration_invalid", "inline_credential_material_forbidden":
 		return http.StatusUnprocessableEntity
 	case "credential_workspace_commit_mismatch", "credential_workspace_not_ready":
@@ -670,6 +695,16 @@ func credentialPlanHTTPStatus(err error) int {
 	default:
 		return http.StatusBadGateway
 	}
+}
+
+func writeCredentialPrepareError(w http.ResponseWriter, status int, category string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(credentialPrepareErrorResponse{
+		APIVersion: "doops.sh/v2",
+		Kind:       "CredentialPrepareError",
+		Category:   category,
+	})
 }
 
 func (h *GatewayHub) resolveCredentialPlanReferences(actorID string, plan CredentialPlan) ([]CredentialPlanReference, error) {

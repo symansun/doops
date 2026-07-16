@@ -61,6 +61,7 @@ const (
 	gatewayAgentTouchTimeout           = 2 * time.Second
 	gatewayReadProgressAckInterval     = 5 * time.Second
 	gatewayReadProgressAckWriteTimeout = 3 * time.Second
+	credentialPlanProtocolV2           = "doops.sh/credential-plan/v2"
 )
 
 type GatewayActiveOperation struct {
@@ -83,21 +84,22 @@ type gatewayActiveOperation struct {
 }
 
 type GatewayAgent struct {
-	Cluster     string    `json:"cluster"`
-	Instance    string    `json:"instance"`
-	Key         string    `json:"key"`
-	Remote      string    `json:"remote"`
-	TokenID     string    `json:"token_id,omitempty"`
-	Generation  uint64    `json:"generation"`
-	RuntimeID   string    `json:"runtime_id,omitempty"`
-	ConnectedAt time.Time `json:"connected_at"`
-	LastSeen    time.Time `json:"last_seen"`
-	HeartbeatAt time.Time `json:"heartbeat_at,omitempty"`
-	Busy        bool      `json:"busy"`
-	Status      string    `json:"status,omitempty"`
-	BusyReason  string    `json:"busy_reason,omitempty"`
-	ActiveOps   int       `json:"active_ops,omitempty"`
-	QueuedOps   int       `json:"queued_ops,omitempty"`
+	Cluster                string    `json:"cluster"`
+	Instance               string    `json:"instance"`
+	Key                    string    `json:"key"`
+	Remote                 string    `json:"remote"`
+	TokenID                string    `json:"token_id,omitempty"`
+	Generation             uint64    `json:"generation"`
+	RuntimeID              string    `json:"runtime_id,omitempty"`
+	CredentialPlanProtocol string    `json:"credential_plan_protocol,omitempty"`
+	ConnectedAt            time.Time `json:"connected_at"`
+	LastSeen               time.Time `json:"last_seen"`
+	HeartbeatAt            time.Time `json:"heartbeat_at,omitempty"`
+	Busy                   bool      `json:"busy"`
+	Status                 string    `json:"status,omitempty"`
+	BusyReason             string    `json:"busy_reason,omitempty"`
+	ActiveOps              int       `json:"active_ops,omitempty"`
+	QueuedOps              int       `json:"queued_ops,omitempty"`
 
 	stateMu         sync.RWMutex
 	conn            *websocket.Conn
@@ -967,7 +969,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32003, "credential control-plane tools are internal only"))
 		return nil
 	}
-	var workflowInstruction *credentialWorkflowInstruction
+	var workflowInstruction *doopsCICDInstructionEnvelope
 	if params.Name == "doops_agent_prompt" {
 		operation := extractStringArg(params.Arguments, "operation")
 		instruction := extractStringArg(params.Arguments, "instruction")
@@ -976,17 +978,17 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		}
 		_ = json.Unmarshal([]byte(instruction), &marker)
 		if marker.Task == "execute-doops-cicd-workflow" {
-			parsed, err := decodeCredentialWorkflowInstruction(instruction)
+			envelope, err := decodeDoopsCICDInstruction(instruction)
 			if err != nil {
 				writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
 				return nil
 			}
-			if (parsed.ExecutionMode == "apply" && operation != "apply") ||
-				(parsed.ExecutionMode == "dry-run" && operation != "ask") {
+			if (envelope.ExecutionMode == "apply" && operation != "apply") ||
+				(envelope.ExecutionMode == "dry-run" && operation != "ask") {
 				writeJSON(buildErrorResponse(req.ID, -32602, "credential workflow operation does not match execution mode"))
 				return nil
 			}
-			workflowInstruction = &parsed
+			workflowInstruction = &envelope
 		} else if operation == "apply" {
 			writeJSON(buildErrorResponse(req.ID, -32602, "apply requires a structured doops-cicd instruction"))
 			return nil
@@ -1034,6 +1036,12 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	agent := h.registry.Get(cluster, instance)
+	if agent == nil {
+		errMsg := fmt.Sprintf("target offline: %s/%s", cluster, instance)
+		finishAudit("offline", errMsg, "", 0)
+		writeJSON(buildErrorResponse(req.ID, -32004, errMsg))
+		return nil
+	}
 	if workflowInstruction != nil {
 		if !h.store.UserCan(auth.UserID, cluster, instance, ActionCredentialUse) {
 			errMsg := fmt.Sprintf("forbidden: %s on %s/%s", ActionCredentialUse, cluster, instance)
@@ -1041,33 +1049,12 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
 			return nil
 		}
-		if agent == nil {
-			errMsg := fmt.Sprintf("target offline: %s/%s", cluster, instance)
-			finishAudit("offline", errMsg, "", 0)
-			writeJSON(buildErrorResponse(req.ID, -32004, errMsg))
+		if agent.CredentialPlanProtocol != credentialPlanProtocolV2 {
+			errMsg := "agent_protocol_incompatible"
+			finishAudit("error", errMsg, "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32008, errMsg))
 			return nil
 		}
-		if err := h.store.ConsumeCredentialRunAuthorization(
-			auth,
-			cluster,
-			instance,
-			extractSession(params.Arguments),
-			workflowInstruction.WorkflowPath,
-			workflowInstruction.WorkspaceCommit,
-			workflowInstruction.ExecutionMode,
-			workflowInstruction.CredentialRun,
-		); err != nil {
-			category := credentialErrorCategory(err)
-			finishAudit("forbidden", category, "", 0)
-			writeJSON(buildErrorResponse(req.ID, -32003, category))
-			return nil
-		}
-	}
-	if agent == nil {
-		errMsg := fmt.Sprintf("target offline: %s/%s", cluster, instance)
-		finishAudit("offline", errMsg, "", 0)
-		writeJSON(buildErrorResponse(req.ID, -32004, errMsg))
-		return nil
 	}
 	var upgradeOp UpgradeOperation
 	waitForUpgradeReplacement := false
@@ -1118,6 +1105,23 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	defer agent.releaseForAction(action, resourceKey)
+	if workflowInstruction != nil {
+		if err := h.store.ConsumeCredentialRunAuthorization(
+			auth,
+			cluster,
+			instance,
+			extractSession(params.Arguments),
+			workflowInstruction.WorkflowPath,
+			workflowInstruction.WorkspaceCommit,
+			workflowInstruction.ExecutionMode,
+			workflowInstruction.CredentialRun,
+		); err != nil {
+			category := credentialErrorCategory(err)
+			finishAudit("forbidden", category, "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32003, category))
+			return nil
+		}
+	}
 	if waitForUpgradeReplacement {
 		var beginErr error
 		upgradeOp, beginErr = h.upgrades.Begin(cluster, instance, upgradeImage, agent.Generation, agent.RuntimeID)
@@ -1353,6 +1357,12 @@ func (a *GatewayAgent) initialize() error {
 			if result, ok := msg.Parsed["result"].(map[string]interface{}); ok {
 				a.RuntimeID, _ = result["runtimeId"].(string)
 				a.RuntimeID = strings.TrimSpace(a.RuntimeID)
+				if capabilities, ok := result["capabilities"].(map[string]interface{}); ok {
+					if protocols, ok := capabilities["protocols"].(map[string]interface{}); ok {
+						a.CredentialPlanProtocol, _ = protocols["credentialPlan"].(string)
+						a.CredentialPlanProtocol = strings.TrimSpace(a.CredentialPlanProtocol)
+					}
+				}
 			}
 			return nil
 		}

@@ -74,7 +74,7 @@ func TestCredentialRunAuthorizationIsBoundAndSingleUse(t *testing.T) {
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
 		request.WorkspaceCommit, request.Mode, tampered,
-	); !errors.Is(err, ErrCredentialGrantDenied) {
+	); !errors.Is(err, ErrCredentialPrepareBindingInvalid) {
 		t.Fatalf("tampered credential run error = %v, want grant denied", err)
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
@@ -86,7 +86,7 @@ func TestCredentialRunAuthorizationIsBoundAndSingleUse(t *testing.T) {
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
 		request.WorkspaceCommit, request.Mode, run,
-	); !errors.Is(err, ErrCredentialGrantDenied) {
+	); !errors.Is(err, ErrCredentialPrepareBindingInvalid) {
 		t.Fatalf("replayed credential run error = %v, want grant denied", err)
 	}
 }
@@ -114,7 +114,7 @@ func TestRevokedCredentialRunAuthorizationCannotBeConsumed(t *testing.T) {
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
 		request.WorkspaceCommit, request.Mode, run,
-	); !errors.Is(err, ErrCredentialGrantDenied) {
+	); !errors.Is(err, ErrCredentialPrepareBindingInvalid) {
 		t.Fatalf("revoked credential run error = %v, want grant denied", err)
 	}
 }
@@ -143,7 +143,7 @@ func TestOfflineWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.T) {
 		t.Fatalf("issue credential run authorization: %v", err)
 	}
 
-	instruction := credentialWorkflowInstruction{
+	instruction := doopsCICDInstructionEnvelope{
 		Task:            "execute-doops-cicd-workflow",
 		Skill:           "$doops-cicd",
 		ExecutionMode:   request.Mode,
@@ -203,6 +203,106 @@ func TestOfflineWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.T) {
 		request.WorkspaceCommit, request.Mode, run,
 	); err != nil {
 		t.Fatalf("offline workflow consumed credential authorization: %v", err)
+	}
+}
+
+func TestRateLimitedWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.T) {
+	store := openCredentialTestStore(t)
+	user, token := createCredentialRunAuthorizationUser(t, store)
+	auth := TokenAuth{UserID: user.ID, TokenID: token.ID}
+	request := credentialPrepareHTTPBody{
+		Cluster: "doops", Instance: "runner", SessionID: "release-session",
+		WorkflowPath: "deploy/release.yaml", WorkspaceCommit: strings.Repeat("a", 40), Mode: "dry-run",
+	}
+	run := CredentialRun{
+		APIVersion: "doops.sh/v2", Kind: "CredentialRun", ID: "credrun_rate_limited",
+		Mode: request.Mode, Cluster: request.Cluster, Instance: request.Instance,
+		Template: "release", Project: "app", Environment: "production",
+		Materializations: []CredentialMaterialization{}, CreatedAt: time.Now().UTC(),
+	}
+	if err := store.GrantUser(user.ID, ScopeGrant{
+		Cluster: request.Cluster, Instance: request.Instance,
+		Actions: []GatewayAction{ActionAsk, ActionCredentialUse},
+	}); err != nil {
+		t.Fatalf("grant workflow actions: %v", err)
+	}
+	if err := store.IssueCredentialRunAuthorization(auth, request, run); err != nil {
+		t.Fatalf("issue credential run authorization: %v", err)
+	}
+
+	instruction := doopsCICDInstructionEnvelope{
+		Task:            "execute-doops-cicd-workflow",
+		Skill:           "$doops-cicd",
+		ExecutionMode:   request.Mode,
+		RunID:           "run-rate-limited",
+		WorkflowPath:    request.WorkflowPath,
+		WorkspaceCommit: request.WorkspaceCommit,
+		Inputs:          map[string]string{},
+		CredentialRun:   run,
+	}
+	instruction.ResultContract.APIVersion = "doops.sh/v2"
+	instruction.ResultContract.Kind = "DeploymentRun"
+	instruction.ResultContract.RequireEvidence = true
+	instructionJSON, err := json.Marshal(instruction)
+	if err != nil {
+		t.Fatalf("encode workflow instruction: %v", err)
+	}
+	arguments, err := json.Marshal(map[string]interface{}{
+		"operation":   "ask",
+		"session_id":  request.SessionID,
+		"instruction": string(instructionJSON),
+	})
+	if err != nil {
+		t.Fatalf("encode tool arguments: %v", err)
+	}
+	params, err := json.Marshal(api.ToolCallParams{
+		Name:      "doops_agent_prompt",
+		Arguments: arguments,
+	})
+	if err != nil {
+		t.Fatalf("encode tool params: %v", err)
+	}
+
+	hub := NewGatewayHub(store, GatewayHubOptions{MaxConcurrentOperations: 1, MaxConcurrentPerUser: 1})
+	if err := hub.registry.Register(&GatewayAgent{
+		Cluster: request.Cluster, Instance: request.Instance, Key: request.Cluster + "/" + request.Instance,
+		CredentialPlanProtocol: credentialPlanProtocolV2,
+		ConnectedAt:            time.Now().UTC(), LastSeen: time.Now().UTC(), closed: make(chan struct{}),
+	}); err != nil {
+		t.Fatalf("register workflow agent: %v", err)
+	}
+	release, err := hub.client.acquireOperationSlot(user.ID)
+	if err != nil {
+		t.Fatalf("occupy operation slot: %v", err)
+	}
+	defer release()
+
+	var response api.JSONRPCResponse
+	if err := hub.client.handleGatewayToolCall(
+		context.Background(),
+		auth,
+		request.Cluster,
+		request.Instance,
+		api.JSONRPCRequest{JSONRPC: "2.0", ID: 1, Params: params},
+		func([]byte) error { return nil },
+		func(value interface{}) error {
+			encoded, marshalErr := json.Marshal(value)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			return json.Unmarshal(encoded, &response)
+		},
+	); err != nil {
+		t.Fatalf("handle rate-limited workflow: %v", err)
+	}
+	if response.Error == nil || response.Error.Code != -32006 {
+		t.Fatalf("rate-limited workflow response = %#v, want operation limit", response)
+	}
+	if err := store.ConsumeCredentialRunAuthorization(
+		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
+		request.WorkspaceCommit, request.Mode, run,
+	); err != nil {
+		t.Fatalf("rate-limited workflow consumed credential authorization: %v", err)
 	}
 }
 
