@@ -129,8 +129,11 @@ def test_installer_replaces_execute_only_cli_with_launchable_mode(tmp_path):
     project.mkdir()
     tool_bin.mkdir()
     sha256sum = tool_bin / "sha256sum"
-    sha256sum.write_text("#!/bin/sh\nexec /usr/bin/shasum -a 256 \"$@\"\n")
-    sha256sum.chmod(0o755)
+    if platform.system() == "Darwin":
+        sha256sum.write_text("#!/bin/sh\nexec /usr/bin/shasum -a 256 \"$@\"\n")
+        sha256sum.chmod(0o755)
+    else:
+        sha256sum.symlink_to("/usr/bin/sha256sum")
     cli.write_text("stale")
     cli.chmod(0o111)
 
