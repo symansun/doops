@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 )
@@ -105,6 +106,9 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 		trace.Status = status
 	}
 	if result, ok := update["rawOutput"]; ok {
+		if err := mergeDoagentToolAttestationUpdate(update, result); err != nil {
+			return fmt.Errorf("read tool call %q attestation: %w", toolCallID, err)
+		}
 		encoded, err := stableDoagentJSON(result)
 		if err != nil {
 			return fmt.Errorf("encode tool call %q result: %w", toolCallID, err)
@@ -133,6 +137,50 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 	trace.InputDigest, _ = update["inputDigest"].(string)
 	trace.AttestedResultDigest, _ = update["resultDigest"].(string)
 	c.calls[toolCallID] = trace
+	return nil
+}
+
+func mergeDoagentToolAttestationUpdate(update map[string]interface{}, result interface{}) error {
+	resultObject, ok := result.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	meta, ok := resultObject["_meta"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	attestation, ok := meta["doops.sh/tool-attestation"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	fields := map[string]string{
+		"schemaVersion":        "attestationSchemaVersion",
+		"contextSchemaVersion": "contextSchemaVersion",
+		"operationId":          "operationId",
+		"contextDigest":        "contextDigest",
+		"planDigest":           "planDigest",
+		"planBindingDigest":    "planBindingDigest",
+		"executionMode":        "executionMode",
+		"mutationAuthorized":   "mutationAuthorized",
+		"capabilityKey":        "capabilityKey",
+		"tool":                 "attestedTool",
+		"evidenceKind":         "evidenceKind",
+		"evidenceSubject":      "evidenceSubject",
+		"canonicalScope":       "canonicalScope",
+		"scopeDigest":          "scopeDigest",
+		"inputDigest":          "inputDigest",
+		"resultDigest":         "resultDigest",
+	}
+	for source, target := range fields {
+		value, exists := attestation[source]
+		if !exists {
+			continue
+		}
+		if current, exists := update[target]; exists && !reflect.DeepEqual(current, value) {
+			return fmt.Errorf("conflicting %s", target)
+		}
+		update[target] = value
+	}
 	return nil
 }
 

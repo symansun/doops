@@ -107,6 +107,58 @@ func TestDoagentToolTraceCollectorRequiresMatchingTrustedAttestationForCICD(t *t
 		t.Fatalf("matching trusted call was not eligible: %#v", calls)
 	}
 
+	nativeResult := make(map[string]interface{}, len(result)+1)
+	for key, value := range result {
+		nativeResult[key] = value
+	}
+	nativeResult["_meta"] = map[string]interface{}{
+		"doops.sh/tool-attestation": map[string]interface{}{
+			"schemaVersion":        "doops.tool-attestation/v1",
+			"contextSchemaVersion": trustedReconciliationContextSchema,
+			"operationId":          context.OperationID,
+			"contextDigest":        context.ContextDigest,
+			"planDigest":           context.PlanDigest,
+			"planBindingDigest":    context.PlanBindingDigest,
+			"executionMode":        context.ExecutionMode,
+			"mutationAuthorized":   context.MutationAuthorized,
+			"capabilityKey":        "source-identity",
+			"tool":                 "ObserveWorkspaceSource",
+			"evidenceKind":         "source-identity",
+			"evidenceSubject":      "source-identity",
+			"canonicalScope":       scope,
+			"scopeDigest":          scopeDigest,
+			"inputDigest":          inputDigest,
+			"resultDigest":         resultDigest,
+		},
+	}
+	nativeUpdate := map[string]interface{}{
+		"sessionUpdate": "tool_call_update",
+		"toolCallId":    "call-native-source",
+		"toolName":      "mcp_doops_plan_ObserveWorkspaceSource",
+		"status":        "completed",
+		"input":         map[string]interface{}{},
+		"rawOutput":     nativeResult,
+	}
+	collector = newDoagentToolTraceCollector(admission)
+	if err := collector.collect(nativeUpdate); err != nil {
+		t.Fatalf("collect native MCP attestation: %v", err)
+	}
+	if calls := collector.completed(); len(calls) != 1 {
+		t.Fatalf("native MCP attestation was not eligible: %#v", calls)
+	}
+
+	conflictingUpdate := make(map[string]interface{}, len(update))
+	for key, value := range update {
+		conflictingUpdate[key] = value
+	}
+	conflictingUpdate["rawOutput"] = nativeResult
+	conflictingUpdate["operationId"] = "op_ffffffffffffffffffffffffffffffff"
+	collector = newDoagentToolTraceCollector(admission)
+	if err := collector.collect(conflictingUpdate); err == nil ||
+		!strings.Contains(err.Error(), "conflicting operationId") {
+		t.Fatalf("expected conflicting native attestation error, got %v", err)
+	}
+
 	tampered := make(map[string]interface{}, len(update))
 	for key, value := range update {
 		tampered[key] = value
