@@ -91,6 +91,7 @@ func TestDoagentToolTraceCollectorRequiresMatchingTrustedAttestationForCICD(t *t
 		"attestedTool":             "ObserveWorkspaceSource",
 		"evidenceKind":             "source-identity",
 		"evidenceSubject":          "source-identity",
+		"observedAt":               "2026-07-16T00:00:00Z",
 		"canonicalScope":           scope,
 		"scopeDigest":              scopeDigest,
 		"inputDigest":              inputDigest,
@@ -103,6 +104,23 @@ func TestDoagentToolTraceCollectorRequiresMatchingTrustedAttestationForCICD(t *t
 	}
 	if calls := collector.completed(); len(calls) != 1 {
 		t.Fatalf("matching trusted call was not eligible: %#v", calls)
+	}
+	missingObservedAt := make(map[string]interface{}, len(update))
+	for key, value := range update {
+		missingObservedAt[key] = value
+	}
+	delete(missingObservedAt, "observedAt")
+	missingObservedAt["toolCallId"] = "call-without-observed-at"
+	collector = newDoagentToolTraceCollector(admission)
+	if err := collector.collect(missingObservedAt); err != nil {
+		t.Fatalf("collect trace without observedAt: %v", err)
+	}
+	if calls := collector.completed(); len(calls) != 0 {
+		t.Fatalf("trusted trace without attested observedAt was eligible: %#v", calls)
+	}
+	collector = newDoagentToolTraceCollector(admission)
+	if err := collector.collect(update); err != nil {
+		t.Fatalf("restore matching trusted call: %v", err)
 	}
 	if err := collector.collect(map[string]interface{}{
 		"sessionUpdate": "tool_call_update",
@@ -134,6 +152,7 @@ func TestDoagentToolTraceCollectorRequiresMatchingTrustedAttestationForCICD(t *t
 			"tool":                 "ObserveWorkspaceSource",
 			"evidenceKind":         "source-identity",
 			"evidenceSubject":      "source-identity",
+			"observedAt":           "2026-07-16T00:00:00Z",
 			"canonicalScope":       scope,
 			"scopeDigest":          scopeDigest,
 			"inputDigest":          inputDigest,

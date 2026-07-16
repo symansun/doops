@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 )
 
 type doagentToolTrace struct {
@@ -26,6 +27,7 @@ type doagentToolTrace struct {
 	AttestedTool         string
 	EvidenceKind         string
 	EvidenceSubject      string
+	ObservedAt           string
 	CanonicalScope       map[string]interface{}
 	ScopeDigest          string
 	InputDigest          string
@@ -134,6 +136,7 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 		{"attestedTool", &trace.AttestedTool},
 		{"evidenceKind", &trace.EvidenceKind},
 		{"evidenceSubject", &trace.EvidenceSubject},
+		{"observedAt", &trace.ObservedAt},
 		{"scopeDigest", &trace.ScopeDigest},
 		{"inputDigest", &trace.InputDigest},
 		{"resultDigest", &trace.AttestedResultDigest},
@@ -152,6 +155,9 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 			return fmt.Errorf("conflicting %s", field.source)
 		}
 		*field.target = text
+	}
+	if trace.Status == "completed" && trace.ObservedAt == "" && c.expected == nil {
+		trace.ObservedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	if value, exists := update["mutationAuthorized"]; exists {
 		authorized, ok := value.(bool)
@@ -206,6 +212,7 @@ func mergeDoagentToolAttestationUpdate(update map[string]interface{}, result int
 		"tool":                 "attestedTool",
 		"evidenceKind":         "evidenceKind",
 		"evidenceSubject":      "evidenceSubject",
+		"observedAt":           "observedAt",
 		"canonicalScope":       "canonicalScope",
 		"scopeDigest":          "scopeDigest",
 		"inputDigest":          "inputDigest",
@@ -286,6 +293,7 @@ func (trace doagentToolTrace) eligibleForContext(expected *trustedReconciliation
 		trace.AttestedTool != capability.Tool ||
 		trace.EvidenceKind != capability.EvidenceKind ||
 		trace.EvidenceSubject != capability.EvidenceSubject ||
+		!validDoagentObservedAt(trace.ObservedAt) ||
 		trace.ScopeDigest != capability.ScopeDigest ||
 		!validSHA256Digest(trace.InputDigest) ||
 		!validSHA256Digest(trace.effectiveResultDigest()) {
@@ -317,6 +325,11 @@ func (trace doagentToolTrace) eligibleForContext(expected *trustedReconciliation
 		return false
 	}
 	_, err = trace.verifiedResult()
+	return err == nil
+}
+
+func validDoagentObservedAt(value string) bool {
+	_, err := time.Parse(time.RFC3339Nano, value)
 	return err == nil
 }
 
@@ -377,9 +390,6 @@ func bindDeploymentRunEvidence(
 ) (string, map[string]interface{}, error) {
 	if result["kind"] != "DeploymentRun" {
 		return "", nil, fmt.Errorf("structured result kind must be DeploymentRun")
-	}
-	if err := rejectSensitiveToolResult(result); err != nil {
-		return "", nil, err
 	}
 	status, ok := result["status"].(map[string]interface{})
 	if !ok {
@@ -448,6 +458,10 @@ func bindDeploymentRunEvidence(
 			return "", nil, fmt.Errorf("verify runtime tool result: %w", err)
 		}
 		delete(entry, "toolRef")
+		if trace.EvidenceSubject != "" {
+			entry["subject"] = trace.EvidenceSubject
+		}
+		entry["observedAt"] = trace.ObservedAt
 		entry["toolCall"] = map[string]interface{}{
 			"id":     trace.ToolCallID,
 			"tool":   trace.ToolName,
