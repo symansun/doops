@@ -239,7 +239,7 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 		return trustedReconciliationAdmission{}, err
 	}
 	if releaseScope == nil {
-		return trustedReconciliationAdmission{}, errors.New("trusted native reconciliation currently requires a v2 DeploymentTemplate")
+		return trustedReconciliationAdmission{}, errors.New("trusted native reconciliation requires a v2 DeploymentTemplate or v3 EnvironmentDefinition")
 	}
 	capabilities := make(map[string]trustedReconciliationCapability, len(tools))
 	for _, tool := range tools {

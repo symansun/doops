@@ -1205,6 +1205,9 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			toolTraces.completed(),
 		)
 		if err != nil {
+			if rejections := toolTraces.rejectionSummary(); rejections != "" {
+				err = fmt.Errorf("%w; trace categories: %s", err, rejections)
+			}
 			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("bind final machine result: %v", err)))
 			return
 		}

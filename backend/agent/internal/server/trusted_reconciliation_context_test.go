@@ -456,7 +456,7 @@ func TestBuildTrustedReconciliationAdmissionRejectsSecretInputNames(t *testing.T
 	}
 }
 
-func TestBuildTrustedReconciliationAdmissionRejectsV3WithoutNativeExecutor(t *testing.T) {
+func TestBuildTrustedReconciliationAdmissionAcceptsV3EnvironmentDefinition(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 	sessionID := "v3-environment-root"
@@ -474,9 +474,22 @@ func TestBuildTrustedReconciliationAdmissionRejectsV3WithoutNativeExecutor(t *te
 		"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_v3","mode":"dry-run","cluster":"doops-edu","instance":"edu-coder","template":"oilan","project":"zhiyong","environment":"oilan","materializations":[]},
 		"resultContract":{"apiVersion":"doops.sh/v3","kind":"DeploymentRun","requireEvidence":true}
 	}`
-	if _, err := buildTrustedReconciliationAdmission(sessionID, instruction, commit); err == nil ||
-		!strings.Contains(err.Error(), "requires a v2 DeploymentTemplate") {
-		t.Fatalf("unsupported v3 error = %v", err)
+	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction, commit)
+	if err != nil {
+		t.Fatalf("build v3 admission: %v", err)
+	}
+	if len(admission.AllowedTools) == 0 || admission.Context.Source.Repository != "https://example.test/zhiyong.git" {
+		t.Fatalf("unexpected v3 admission: %#v", admission)
+	}
+	scope := admission.Context.Capabilities["ObserveWorkspaceSource"].CanonicalScope
+	releasePlan, ok := scope["releasePlan"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("v3 release plan missing: %#v", scope)
+	}
+	targetImages, ok := releasePlan["targetImages"].([]map[string]interface{})
+	if !ok || len(targetImages) != 1 ||
+		targetImages[0]["digest"] != "sha256:"+strings.Repeat("a", 64) {
+		t.Fatalf("v3 target image binding missing: %#v", releasePlan)
 	}
 }
 

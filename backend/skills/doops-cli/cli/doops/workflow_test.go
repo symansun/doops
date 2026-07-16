@@ -607,9 +607,12 @@ func TestWorkflowAPIVersionAcceptsV3(t *testing.T) {
 	if version != "doops.sh/v3" {
 		t.Fatalf("apiVersion = %q, want doops.sh/v3", version)
 	}
-	if _, err := workflowExecutionAPIVersion(path); err == nil ||
-		!strings.Contains(err.Error(), "requires doops.sh/v2 DeploymentTemplate") {
-		t.Fatalf("v3 execution contract error = %v", err)
+	executionVersion, err := workflowExecutionAPIVersion(path)
+	if err != nil {
+		t.Fatalf("read v3 execution contract: %v", err)
+	}
+	if executionVersion != "doops.sh/v3" {
+		t.Fatalf("execution apiVersion = %q, want doops.sh/v3", executionVersion)
 	}
 }
 
@@ -620,7 +623,7 @@ func TestRunCICDCommandRejectsUnsupportedWorkflowBeforePushOrAgentContact(t *tes
 	}
 	workflow := filepath.Join(root, "environment.yaml")
 	if err := os.WriteFile(workflow, []byte(
-		"apiVersion: doops.sh/v3\nkind: EnvironmentDefinition\n",
+		"apiVersion: doops.sh/v3\nkind: EnvironmentReleaseDeclaration\n",
 	), 0o600); err != nil {
 		t.Fatalf("write v3 environment: %v", err)
 	}
@@ -654,7 +657,10 @@ func TestRunCICDCommandRejectsUnsupportedWorkflowBeforePushOrAgentContact(t *tes
 		"release-test",
 		false,
 	)
-	if err == nil || !strings.Contains(err.Error(), "requires doops.sh/v2 DeploymentTemplate") {
+	if err == nil || !strings.Contains(
+		err.Error(),
+		"requires doops.sh/v2 DeploymentTemplate or doops.sh/v3 EnvironmentDefinition",
+	) {
 		t.Fatalf("unsupported workflow error = %v", err)
 	}
 	if pushes != 0 || agentContacts != 0 {
