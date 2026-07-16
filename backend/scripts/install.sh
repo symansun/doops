@@ -87,6 +87,20 @@ detect_host_platform() {
   printf '%s-%s\n' "${os}" "${arch}"
 }
 
+sha256_file() {
+  local file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${file}" | awk '{print $1}'
+    return
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "${file}" | awk '{print $1}'
+    return
+  fi
+  echo "Neither sha256sum nor shasum is available" >&2
+  return 1
+}
+
 install_cli() {
   local platform prebuilt checksums expected actual candidate
   platform="$(detect_host_platform)"
@@ -113,7 +127,7 @@ EOF
       echo "Prebuilt checksum is missing for $(basename "${prebuilt}")" >&2
       exit 1
     fi
-    actual="$(shasum -a 256 "${prebuilt}" | awk '{print $1}')"
+    actual="$(sha256_file "${prebuilt}")"
     if [[ "${actual}" != "${expected}" ]]; then
       echo "Prebuilt checksum mismatch for ${prebuilt}" >&2
       exit 1

@@ -123,9 +123,14 @@ def test_prebuilt_cli_exposes_only_agent_native_cicd_run():
 def test_installer_replaces_execute_only_cli_with_launchable_mode(tmp_path):
     home = tmp_path / "home"
     project = tmp_path / "project"
+    tool_bin = tmp_path / "bin"
     cli = home / ".local" / "bin" / "doops"
     cli.parent.mkdir(parents=True)
     project.mkdir()
+    tool_bin.mkdir()
+    sha256sum = tool_bin / "sha256sum"
+    sha256sum.write_text("#!/bin/sh\nexec /usr/bin/shasum -a 256 \"$@\"\n")
+    sha256sum.chmod(0o755)
     cli.write_text("stale")
     cli.chmod(0o111)
 
@@ -139,7 +144,7 @@ def test_installer_replaces_execute_only_cli_with_launchable_mode(tmp_path):
         text=True,
         capture_output=True,
         check=False,
-        env={"HOME": str(home), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+        env={"HOME": str(home), "PATH": f"{tool_bin}:/usr/bin:/bin:/usr/sbin:/sbin"},
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert stat.S_IMODE(cli.stat().st_mode) == 0o755
