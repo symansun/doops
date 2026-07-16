@@ -105,8 +105,13 @@ func TestBuildDoopsPlanAttestedResultBindsTrustedContext(t *testing.T) {
 		attestation["tool"] != "ObserveWorkspaceSource" {
 		t.Fatalf("attestation binding mismatch: %#v", attestation)
 	}
-	withoutMeta := make(map[string]interface{}, len(result)-1)
-	for key, value := range result {
+	structured := result["structuredContent"].(map[string]interface{})
+	structuredMeta := structured["_meta"].(map[string]interface{})
+	if structuredMeta["doops.sh/tool-attestation"] == nil {
+		t.Fatalf("structured result must carry native doagent attestation: %#v", structured)
+	}
+	withoutMeta := make(map[string]interface{}, len(structured)-1)
+	for key, value := range structured {
 		if key != "_meta" {
 			withoutMeta[key] = value
 		}

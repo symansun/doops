@@ -860,16 +860,7 @@ func buildDoopsPlanAttestedResult(
 	} else {
 		payload["ok"] = true
 	}
-	text, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	result := map[string]interface{}{
-		"content":           []interface{}{map[string]interface{}{"type": "text", "text": string(text)}},
-		"structuredContent": payload,
-		"isError":           toolErr != nil,
-	}
-	resultDigest, err := digestJSON(result)
+	resultDigest, err := digestJSON(payload)
 	if err != nil {
 		return nil, err
 	}
@@ -880,25 +871,37 @@ func buildDoopsPlanAttestedResult(
 	if err != nil {
 		return nil, err
 	}
-	result["_meta"] = map[string]interface{}{
-		"doops.sh/tool-attestation": map[string]interface{}{
-			"schemaVersion":        doopsPlanAttestationSchema,
-			"contextSchemaVersion": callContext.Context.SchemaVersion,
-			"operationId":          callContext.Context.OperationID,
-			"contextDigest":        callContext.Context.ContextDigest,
-			"planDigest":           callContext.Context.PlanDigest,
-			"planBindingDigest":    callContext.Context.PlanBindingDigest,
-			"executionMode":        callContext.Context.ExecutionMode,
-			"mutationAuthorized":   callContext.Context.MutationAuthorized,
-			"capabilityKey":        callContext.CapabilityKey,
-			"tool":                 name,
-			"evidenceKind":         callContext.Capability.EvidenceKind,
-			"evidenceSubject":      callContext.Capability.EvidenceSubject,
-			"canonicalScope":       callContext.Capability.CanonicalScope,
-			"scopeDigest":          callContext.Capability.ScopeDigest,
-			"inputDigest":          inputDigest,
-			"resultDigest":         resultDigest,
-		},
+	attestation := map[string]interface{}{
+		"schemaVersion":        doopsPlanAttestationSchema,
+		"contextSchemaVersion": callContext.Context.SchemaVersion,
+		"operationId":          callContext.Context.OperationID,
+		"contextDigest":        callContext.Context.ContextDigest,
+		"planDigest":           callContext.Context.PlanDigest,
+		"planBindingDigest":    callContext.Context.PlanBindingDigest,
+		"executionMode":        callContext.Context.ExecutionMode,
+		"mutationAuthorized":   callContext.Context.MutationAuthorized,
+		"capabilityKey":        callContext.CapabilityKey,
+		"tool":                 name,
+		"evidenceKind":         callContext.Capability.EvidenceKind,
+		"evidenceSubject":      callContext.Capability.EvidenceSubject,
+		"canonicalScope":       callContext.Capability.CanonicalScope,
+		"scopeDigest":          callContext.Capability.ScopeDigest,
+		"inputDigest":          inputDigest,
+		"resultDigest":         resultDigest,
+	}
+	meta := map[string]interface{}{
+		"doops.sh/tool-attestation": attestation,
+	}
+	payload["_meta"] = meta
+	text, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]interface{}{
+		"content":           []interface{}{map[string]interface{}{"type": "text", "text": string(text)}},
+		"structuredContent": payload,
+		"isError":           toolErr != nil,
+		"_meta":             meta,
 	}
 	return result, nil
 }

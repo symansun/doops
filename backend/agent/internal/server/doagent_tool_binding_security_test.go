@@ -60,11 +60,9 @@ func TestDoagentToolTraceCollectorRequiresMatchingTrustedAttestationForCICD(t *t
 		t.Fatalf("digest input: %v", err)
 	}
 	result := map[string]interface{}{
-		"structuredContent": map[string]interface{}{
-			"schemaVersion": "doops.reconciliation-tool-result/v2",
-			"tool":          "ObserveWorkspaceSource",
-			"status":        "observed",
-		},
+		"schemaVersion": "doops.reconciliation-tool-result/v2",
+		"tool":          "ObserveWorkspaceSource",
+		"status":        "observed",
 	}
 	resultDigest, err := digestJSON(result)
 	if err != nil {
