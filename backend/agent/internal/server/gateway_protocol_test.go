@@ -1293,12 +1293,20 @@ func TestGatewayRPCForwardsBackgroundToolsAsExec(t *testing.T) {
 		}
 	}
 
-	events, err := store.ListAuditFiltered(AuditFilter{Session: "release", Limit: 10})
-	if err != nil {
-		t.Fatalf("list audit: %v", err)
-	}
-	if len(events) != 2 {
-		t.Fatalf("expected two background-task audit events, got %#v", events)
+	var events []AuditEvent
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		events, err = store.ListAuditFiltered(AuditFilter{Session: "release", Limit: 10})
+		if err != nil {
+			t.Fatalf("list audit: %v", err)
+		}
+		if len(events) == 2 && events[0].Status == "success" && events[1].Status == "success" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected two completed background-task audit events, got %#v", events)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	for _, event := range events {
 		if event.Action != ActionExec || event.Status != "success" {
