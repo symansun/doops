@@ -4,8 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 type trustedReconciliationAdmission struct {
@@ -133,14 +136,63 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 	if err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
-	var workflow credentialDeploymentTemplate
-	if err := strictCredentialYAMLDecode(workflowData, &workflow); err != nil {
+	if _, err := credentialYAMLDocument(workflowData); err != nil {
+		return trustedReconciliationAdmission{}, err
+	}
+	var identity credentialWorkflowIdentity
+	if err := yaml.Unmarshal(workflowData, &identity); err != nil {
 		return trustedReconciliationAdmission{}, invalidCredentialDeclaration(err)
+	}
+	var workflow credentialDeploymentTemplate
+	var semanticReleaseRevision string
+	switch identity.Kind {
+	case "SemanticRelease":
+		var semantic credentialSemanticRelease
+		if err := yaml.Unmarshal(workflowData, &semantic); err != nil {
+			return trustedReconciliationAdmission{}, invalidCredentialDeclaration(err)
+		}
+		if semantic.APIVersion != "doops.sh/v2" || semantic.Kind != "SemanticRelease" ||
+			strings.TrimSpace(semantic.Metadata.Name) == "" ||
+			strings.TrimSpace(semantic.Spec.Application) == "" ||
+			strings.TrimSpace(semantic.Spec.Environment) == "" ||
+			strings.TrimSpace(semantic.Spec.ConfigurationSource) == "" {
+			return trustedReconciliationAdmission{}, invalidCredentialDeclaration(errors.New("invalid SemanticRelease identity or deployment context"))
+		}
+		workflow.APIVersion = semantic.APIVersion
+		workflow.Kind = semantic.Kind
+		workflow.Metadata.Name = semantic.Metadata.Name
+		workflow.Spec.Parameters = semantic.Spec.Parameters
+		workflow.Spec.Application = semantic.Spec.Application
+		workflow.Spec.Environment = semantic.Spec.Environment
+		workflow.Spec.ConfigurationSource = semantic.Spec.ConfigurationSource
+		semanticReleaseRevision = semantic.Spec.Release.Revision
+	default:
+		if err := strictCredentialYAMLDecode(workflowData, &workflow); err != nil {
+			return trustedReconciliationAdmission{}, invalidCredentialDeclaration(err)
+		}
 	}
 	if err := validateTrustedWorkflowInputs(workflow.Spec.Parameters, envelope.Inputs); err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
-	revision, err := resolveTrustedRevision(workflow.Spec.Release.Source.Revision, envelope.Inputs)
+	configurationData, err := readCredentialDeclarationFile(root, workflow.Spec.ConfigurationSource)
+	if err != nil {
+		return trustedReconciliationAdmission{}, err
+	}
+	if _, err := credentialYAMLDocument(configurationData); err != nil {
+		return trustedReconciliationAdmission{}, err
+	}
+	var configuration credentialConfigurationSource
+	if err := strictCredentialYAMLDecode(configurationData, &configuration); err != nil {
+		return trustedReconciliationAdmission{}, invalidCredentialDeclaration(err)
+	}
+	revisionDeclaration := workflow.Spec.Release.Source.Revision
+	if strings.TrimSpace(revisionDeclaration) == "" {
+		revisionDeclaration = semanticReleaseRevision
+	}
+	if strings.TrimSpace(revisionDeclaration) == "" {
+		revisionDeclaration = workspaceCommit
+	}
+	revision, err := resolveTrustedRevision(revisionDeclaration, envelope.Inputs)
 	if err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
@@ -149,9 +201,9 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 		return trustedReconciliationAdmission{}, err
 	}
 	source := trustedReconciliationSource{
-		Repository:      strings.TrimSpace(workflow.Spec.Release.Source.Repository),
+		Repository:      selectTrustedSource(workflow.Spec.Release.Source.Repository, configuration.ArtifactContract.SourceRepository),
 		Revision:        revision,
-		Branch:          strings.TrimSpace(workflow.Spec.Release.Source.Branch),
+		Branch:          selectTrustedSource(workflow.Spec.Release.Source.Branch, configuration.ArtifactContract.SourceBranch),
 		WorkspaceCommit: workspaceCommit,
 	}
 	if source.Repository == "" || source.Branch == "" || !validLowerHex(source.Revision, 40) {
@@ -226,6 +278,13 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 		return trustedReconciliationAdmission{}, err
 	}
 	return trustedReconciliationAdmission{AllowedTools: tools, Context: context}, nil
+}
+
+func selectTrustedSource(declared, registry string) string {
+	if declared = strings.TrimSpace(declared); declared != "" {
+		return declared
+	}
+	return strings.TrimSpace(registry)
 }
 
 func digestJSON(value interface{}) (string, error) {

@@ -110,10 +110,16 @@ type credentialSemanticRelease struct {
 		Name string `yaml:"name"`
 	} `yaml:"metadata"`
 	Spec struct {
-		Application         string `yaml:"application"`
-		Environment         string `yaml:"environment"`
-		ConfigurationSource string `yaml:"configurationSource"`
+		Parameters          map[string]credentialTemplateParameter `yaml:"parameters,omitempty"`
+		Application         string                                 `yaml:"application"`
+		Release             credentialSemanticReleaseRelease       `yaml:"release,omitempty"`
+		Environment         string                                 `yaml:"environment"`
+		ConfigurationSource string                                 `yaml:"configurationSource"`
 	} `yaml:"spec"`
+}
+
+type credentialSemanticReleaseRelease struct {
+	Revision string `yaml:"revision,omitempty"`
 }
 
 type credentialWorkflowIdentity struct {

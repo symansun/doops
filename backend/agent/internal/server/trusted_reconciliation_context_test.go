@@ -187,6 +187,121 @@ func TestBuildTrustedReconciliationAdmissionAddsExecutorsOnlyForApply(t *testing
 	}
 }
 
+func TestBuildTrustedReconciliationAdmissionUsesRegistrySourceForCurrentReleaseShapes(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		workflow        string
+		inputs          string
+		wantRevision    string
+		workspaceCommit string
+	}{
+		{
+			name: "version release binds workspace commit",
+			workflow: `
+apiVersion: doops.sh/v2
+kind: DeploymentTemplate
+metadata:
+  name: ecp-test-deploy
+spec:
+  parameters:
+    version:
+      required: true
+  application: ecp
+  release:
+    version: ${inputs.version}
+  environment: test
+  configurationSource: deploy/environments.yaml
+`,
+			inputs:          `"version":"release-20260716"`,
+			wantRevision:    strings.Repeat("c", 40),
+			workspaceCommit: strings.Repeat("c", 40),
+		},
+		{
+			name: "semantic release binds declared revision",
+			workflow: `
+apiVersion: doops.sh/v2
+kind: SemanticRelease
+metadata:
+  name: zhiyong-test-release
+spec:
+  parameters:
+    revision:
+      required: true
+  application: zhiyong
+  release:
+    revision: ${inputs.revision}
+  environment: test
+  configurationSource: deploy/environments.yaml
+  serviceCatalog:
+    frontend:
+      uses: services/frontend.yaml
+`,
+			inputs:          `"revision":"` + strings.Repeat("d", 40) + `"`,
+			wantRevision:    strings.Repeat("d", 40),
+			workspaceCommit: strings.Repeat("c", 40),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+			sessionID := "current-release-" + strings.ReplaceAll(test.name, " ", "-")
+			workspace := filepath.Join(root, sessionID)
+			if err := os.MkdirAll(filepath.Join(workspace, "deploy"), 0o700); err != nil {
+				t.Fatalf("create workspace: %v", err)
+			}
+			writeCredentialPlanTestFile(t, workspace, "deploy/release.yaml", test.workflow)
+			writeCredentialPlanTestFile(t, workspace, "deploy/environments.yaml", `
+apiVersion: doops.sh/v2
+kind: EnvironmentRegistry
+metadata:
+  name: current-environments
+artifactContract:
+  type: image-set
+  sourceRepository: https://example.test/current.git
+  sourceBranch: main
+  sourceRegistry: registry.example.test/source
+  services: [frontend]
+  imageTagPattern: "^release-[0-9]{8}$"
+verificationProfiles:
+  application:
+    requiredEvidence: [runtime-state]
+environments:
+  test:
+    target: {name: gw-oilan-node, cluster: doops-oilan, instance: oilan-node}
+    executor:
+      type: helm
+      config:
+        namespace: test
+        release: app
+        registry: registry.example.test/target
+        chart: deploy/chart
+        values: deploy/values.yaml
+    verificationProfile: application
+`)
+			instruction := `{
+				"task":"execute-doops-cicd-workflow",
+				"skill":"$doops-cicd",
+				"executionMode":"dry-run",
+				"runId":"current-release-0123456789abcdef",
+				"workflowPath":"deploy/release.yaml",
+				"workspaceCommit":"` + test.workspaceCommit + `",
+				"inputs":{` + test.inputs + `},
+				"credentialRun":{"id":"credrun_123","materializations":[]},
+				"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
+			}`
+			admission, err := buildTrustedReconciliationAdmission(sessionID, instruction, test.workspaceCommit)
+			if err != nil {
+				t.Fatalf("build trusted admission: %v", err)
+			}
+			if admission.Context.Source.Repository != "https://example.test/current.git" ||
+				admission.Context.Source.Branch != "main" ||
+				admission.Context.Source.Revision != test.wantRevision {
+				t.Fatalf("unexpected source: %#v", admission.Context.Source)
+			}
+		})
+	}
+}
+
 func TestBuildTrustedReconciliationAdmissionRejectsSecretInputNames(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
