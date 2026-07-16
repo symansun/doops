@@ -34,6 +34,10 @@ func TestAgentPromptJSONReturnsResultFileInStructuredContent(t *testing.T) {
 		if !strings.Contains(prompt, resultPath) {
 			t.Errorf("structured prompt must declare the result file path: %s", prompt)
 		}
+		if !strings.Contains(prompt, "status may contain only phase, mutationCount, capabilities, evidence, and failures") ||
+			!strings.Contains(prompt, "Do not emit plannedMutations") {
+			t.Errorf("structured prompt must define DeploymentRun status fields: %s", prompt)
+		}
 		if !strings.Contains(prompt, "exactly subject, observedAt, and toolRef") ||
 			!strings.Contains(prompt, "toolRef.input") ||
 			!strings.Contains(prompt, "injects toolCall") {

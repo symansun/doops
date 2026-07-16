@@ -1752,6 +1752,8 @@ func appendDoagentStructuredResultContract(instruction, resultPath string) strin
 		resultPath + " using a temporary file in that directory followed by an atomic rename. " +
 		"The file must contain exactly one JSON object with no Markdown or surrounding text. " +
 		"The terminal response is not used as the machine result. " +
+		"For a DeploymentRun, status may contain only phase, mutationCount, capabilities, evidence, and failures. " +
+		"Do not emit plannedMutations, runtimeAttestation, resultDigest, or any other status field. " +
 		"If the object is a DeploymentRun, every evidence item must contain exactly subject, observedAt, and toolRef; " +
 		"toolRef.tool is the exact runtime tool name and toolRef.input is the exact JSON input used for that call. " +
 		"The Gateway consumes toolRef and injects toolCall with the completed runtime call's exact id, tool, input, and result."

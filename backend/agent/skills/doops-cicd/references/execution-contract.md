@@ -178,6 +178,11 @@ to doagent multi-agent execution, not to the DoOps command or module surface.
 Deployment evidence should cite the calls that observe, build, deploy, or verify
 the declared release.
 
+For `DeploymentRun`, `status` may contain only `phase`, `mutationCount`,
+`capabilities`, `evidence`, and `failures`. Do not emit planning-only fields
+such as `plannedMutations`, and do not emit runtime-owned fields such as
+`runtimeAttestation` or `resultDigest`.
+
 Allowed phases are `planned`, `converged`, `blocked`, `failed` and
 `outcome-unknown`.
 
