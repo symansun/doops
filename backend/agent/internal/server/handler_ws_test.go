@@ -1533,6 +1533,11 @@ func initializeAgentTestWS(t *testing.T, conn *websocket.Conn) {
 	if strings.TrimSpace(fmt.Sprint(result["runtimeId"])) == "" {
 		t.Fatalf("initialize result must identify the agent process: %#v", resp)
 	}
+	capabilities, _ := result["capabilities"].(map[string]interface{})
+	protocols, _ := capabilities["protocols"].(map[string]interface{})
+	if protocols["credentialPlan"] != credentialPlanProtocolV2 {
+		t.Fatalf("initialize result must advertise credential plan v2: %#v", resp)
+	}
 }
 
 func callTool(t *testing.T, conn *websocket.Conn, tool string, args map[string]interface{}) string {

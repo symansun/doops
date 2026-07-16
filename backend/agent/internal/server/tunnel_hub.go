@@ -41,6 +41,7 @@ type GatewayHub struct {
 
 	scheduler            *Scheduler
 	credentialMutationMu sync.Mutex
+	credentialRuns       *credentialPreparationRegistry
 }
 
 // AttachScheduler 注入定时巡检调度器，供 /v1/admin/jobs run-now 等接口使用。
@@ -61,6 +62,7 @@ const (
 	gatewayAgentTouchTimeout           = 2 * time.Second
 	gatewayReadProgressAckInterval     = 5 * time.Second
 	gatewayReadProgressAckWriteTimeout = 3 * time.Second
+	credentialPlanProtocolV2           = "doops.sh/credential-plan/v2"
 )
 
 type GatewayActiveOperation struct {
@@ -83,21 +85,22 @@ type gatewayActiveOperation struct {
 }
 
 type GatewayAgent struct {
-	Cluster     string    `json:"cluster"`
-	Instance    string    `json:"instance"`
-	Key         string    `json:"key"`
-	Remote      string    `json:"remote"`
-	TokenID     string    `json:"token_id,omitempty"`
-	Generation  uint64    `json:"generation"`
-	RuntimeID   string    `json:"runtime_id,omitempty"`
-	ConnectedAt time.Time `json:"connected_at"`
-	LastSeen    time.Time `json:"last_seen"`
-	HeartbeatAt time.Time `json:"heartbeat_at,omitempty"`
-	Busy        bool      `json:"busy"`
-	Status      string    `json:"status,omitempty"`
-	BusyReason  string    `json:"busy_reason,omitempty"`
-	ActiveOps   int       `json:"active_ops,omitempty"`
-	QueuedOps   int       `json:"queued_ops,omitempty"`
+	Cluster                string    `json:"cluster"`
+	Instance               string    `json:"instance"`
+	Key                    string    `json:"key"`
+	Remote                 string    `json:"remote"`
+	TokenID                string    `json:"token_id,omitempty"`
+	Generation             uint64    `json:"generation"`
+	RuntimeID              string    `json:"runtime_id,omitempty"`
+	CredentialPlanProtocol string    `json:"credential_plan_protocol,omitempty"`
+	ConnectedAt            time.Time `json:"connected_at"`
+	LastSeen               time.Time `json:"last_seen"`
+	HeartbeatAt            time.Time `json:"heartbeat_at,omitempty"`
+	Busy                   bool      `json:"busy"`
+	Status                 string    `json:"status,omitempty"`
+	BusyReason             string    `json:"busy_reason,omitempty"`
+	ActiveOps              int       `json:"active_ops,omitempty"`
+	QueuedOps              int       `json:"queued_ops,omitempty"`
 
 	stateMu         sync.RWMutex
 	conn            *websocket.Conn
@@ -397,9 +400,10 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		opts.MaxQueuedPerTarget = 0
 	}
 	hub := &GatewayHub{
-		store:    store,
-		opts:     opts,
-		registry: registry,
+		store:          store,
+		opts:           opts,
+		registry:       registry,
+		credentialRuns: newCredentialPreparationRegistry(),
 	}
 	hub.registration = NewAgentRegistrationHandler(
 		store,
@@ -407,7 +411,7 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		opts.AgentLease,
 		newGatewayMessageBudget(gatewayMessageBudgetMaxBytes),
 	)
-	hub.client = NewClientService(store, registry, opts)
+	hub.client = NewClientService(store, registry, opts, hub.credentialRuns)
 	if err := hub.client.upgrades.ResumePending(opts.OperationTimeout); err != nil {
 		panic(err)
 	}
@@ -917,14 +921,17 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32003, "credential control-plane tools are internal only"))
 		return nil
 	}
+	var applyEnvelope *doopsCICDInstructionEnvelope
 	if params.Name == "doops_agent_prompt" {
 		operation := extractStringArg(params.Arguments, "operation")
 		if operation == "apply" {
 			instruction := extractStringArg(params.Arguments, "instruction")
-			if err := validateDoagentApplyInstruction(instruction); err != nil {
+			envelope, err := validatedDoagentApplyInstruction(instruction)
+			if err != nil {
 				writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
 				return nil
 			}
+			applyEnvelope = &envelope
 		} else if operation != "" && operation != "ask" {
 			writeJSON(buildErrorResponse(req.ID, -32602, "unsupported agent prompt operation: "+operation))
 			return nil
@@ -973,6 +980,20 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		finishAudit("offline", errMsg, "", 0)
 		writeJSON(buildErrorResponse(req.ID, -32004, errMsg))
 		return nil
+	}
+	if applyEnvelope != nil {
+		if !h.store.UserCan(auth.UserID, cluster, instance, ActionCredentialUse) {
+			errMsg := fmt.Sprintf("forbidden: %s on %s/%s", ActionCredentialUse, cluster, instance)
+			finishAudit("forbidden", errMsg, "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
+			return nil
+		}
+		if agent.CredentialPlanProtocol != credentialPlanProtocolV2 {
+			errMsg := "agent_protocol_incompatible"
+			finishAudit("error", errMsg, "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32008, errMsg))
+			return nil
+		}
 	}
 	var upgradeOp UpgradeOperation
 	waitForUpgradeReplacement := false
@@ -1023,6 +1044,20 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	defer agent.releaseForAction(action, resourceKey)
+	if applyEnvelope != nil {
+		if err := h.credentialRuns.consumeApply(
+			auth.UserID,
+			cluster,
+			instance,
+			extractSession(params.Arguments),
+			*applyEnvelope,
+		); err != nil {
+			errMsg := err.Error()
+			finishAudit("error", errMsg, "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32009, errMsg))
+			return nil
+		}
+	}
 	if waitForUpgradeReplacement {
 		var beginErr error
 		upgradeOp, beginErr = h.upgrades.Begin(cluster, instance, upgradeImage, agent.Generation, agent.RuntimeID)
@@ -1248,6 +1283,12 @@ func (a *GatewayAgent) initialize() error {
 			if result, ok := msg.Parsed["result"].(map[string]interface{}); ok {
 				a.RuntimeID, _ = result["runtimeId"].(string)
 				a.RuntimeID = strings.TrimSpace(a.RuntimeID)
+				if capabilities, ok := result["capabilities"].(map[string]interface{}); ok {
+					if protocols, ok := capabilities["protocols"].(map[string]interface{}); ok {
+						a.CredentialPlanProtocol, _ = protocols["credentialPlan"].(string)
+						a.CredentialPlanProtocol = strings.TrimSpace(a.CredentialPlanProtocol)
+					}
+				}
 			}
 			return nil
 		}

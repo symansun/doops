@@ -260,7 +260,8 @@ doops -session build push --target prod-master --src .
 - `targets:list`
 - `admin`
 
-普通 user token 默认拥有上述 target 操作能力；旧库中只授予 `targets:list` 的 scope 也按全功能 target access 兼容，避免“能看到但不能操作”。需要最小权限隔离时，再显式授予较小 action 集。
+普通 user token 默认不拥有 target 操作能力。每个 target/action 都必须显式授权；
+`targets:list` 只允许列出可见 target，不隐式授予 `exec`、`ask`、`write` 或其他操作。
 `admin` 只用于 gateway 管理，不随默认 target 权限下发。
 
 ## Gateway Broadcast Upgrade

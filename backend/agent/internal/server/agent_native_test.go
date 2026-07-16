@@ -48,16 +48,27 @@ func TestValidateDoagentApplyInstructionRequiresCICDEnvelope(t *testing.T) {
 	valid := `{
 		"task":"execute-doops-cicd-workflow",
 		"skill":"$doops-cicd",
-		"executionMode":"apply"
+		"executionMode":"apply",
+		"runId":"release-0123456789abcdef",
+		"workflowPath":"deploy/release.yaml",
+		"workspaceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"inputs":{},
+		"credentialRun":{"id":"credrun_123","materializations":[]},
+		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
 	}`
 	if err := validateDoagentApplyInstruction(valid); err != nil {
 		t.Fatalf("valid apply envelope rejected: %v", err)
 	}
+	validV3 := strings.Replace(valid, `"apiVersion":"doops.sh/v2"`, `"apiVersion":"doops.sh/v3"`, 1)
+	if err := validateDoagentApplyInstruction(validV3); err != nil {
+		t.Fatalf("valid v3 apply envelope rejected: %v", err)
+	}
 	for name, instruction := range map[string]string{
-		"plain prompt": "deploy this",
-		"wrong task":   `{"task":"shell","skill":"$doops-cicd","executionMode":"apply"}`,
-		"wrong skill":  `{"task":"execute-doops-cicd-workflow","skill":"$shell","executionMode":"apply"}`,
-		"wrong mode":   `{"task":"execute-doops-cicd-workflow","skill":"$doops-cicd","executionMode":"dry-run"}`,
+		"plain prompt":  "deploy this",
+		"wrong task":    `{"task":"shell","skill":"$doops-cicd","executionMode":"apply"}`,
+		"wrong skill":   `{"task":"execute-doops-cicd-workflow","skill":"$shell","executionMode":"apply"}`,
+		"wrong mode":    `{"task":"execute-doops-cicd-workflow","skill":"$doops-cicd","executionMode":"dry-run"}`,
+		"wrong version": strings.Replace(valid, `"apiVersion":"doops.sh/v2"`, `"apiVersion":"doops.sh/v4"`, 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := validateDoagentApplyInstruction(instruction); err == nil {

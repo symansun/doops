@@ -21,7 +21,8 @@ from a single versioned workflow YAML.
   previously online required target reconnects within 60 seconds.
 - Every registered environment passes target discovery, version inspection,
   remote execution, and service health checks using a named DoOps session.
-- One committed workflow YAML produces a converged `doops.sh/v2 DeploymentRun`.
+- One committed deployment root produces a converged `DeploymentRun` with the
+  same apiVersion as that root.
 - The deployed workload, HTTP contract, audit evidence, and rollback path are
   verified after the real deployment.
 - Credential values do not appear in Git, workspace files, prompts, CLI output,

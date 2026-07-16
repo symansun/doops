@@ -38,6 +38,10 @@ spec:
   configurationSource: deploy/environments.yaml
 `)
 	writeCredentialPlanTestFile(t, workspace, "deploy/environments.yaml", `
+apiVersion: doops.sh/v2
+kind: EnvironmentRegistry
+metadata:
+  name: test-environments
 artifactContract:
   type: image-set
   sourceRegistry: registry.example.test/source
@@ -304,6 +308,8 @@ spec:
   serviceCatalog:
     frontend:
       uses: services/frontend.yaml
+  flow:
+    - intent: establish-release-context
 `,
 			inputs:          `"revision":"` + strings.Repeat("d", 40) + `"`,
 			wantRevision:    strings.Repeat("d", 40),
@@ -319,6 +325,9 @@ spec:
 				t.Fatalf("create workspace: %v", err)
 			}
 			writeCredentialPlanTestFile(t, workspace, "deploy/release.yaml", test.workflow)
+			if test.name == "semantic release binds declared revision" {
+				writeCredentialServiceReleaseFixture(t, workspace, "deploy/services/frontend.yaml", "frontend", "zhiyong")
+			}
 			writeCredentialPlanTestFile(t, workspace, "deploy/environments.yaml", `
 apiVersion: doops.sh/v2
 kind: EnvironmentRegistry
@@ -405,27 +414,7 @@ func TestBuildTrustedReconciliationAdmissionAcceptsV3EnvironmentRoot(t *testing.
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 	sessionID := "v3-environment-root"
 	workspace := filepath.Join(root, sessionID)
-	writeCredentialPlanTestFile(t, workspace, "deploy/environments/oilan/environment.yaml", `
-apiVersion: doops.sh/v3
-kind: EnvironmentDefinition
-metadata:
-  name: oilan
-spec:
-  application: zhiyong
-  parameters:
-    reason:
-      required: true
-  source:
-    repository: https://example.test/zhiyong.git
-    branch: main
-  execution:
-    deploy:
-      target: gw-edu-coder
-      cluster: doops-edu
-      instance: edu-coder
-  helm:
-    namespace: oilan
-`)
+	writeCredentialV3EnvironmentFixture(t, workspace)
 	commit := strings.Repeat("a", 40)
 	instruction := `{
 		"task":"execute-doops-cicd-workflow",
@@ -530,6 +519,10 @@ spec:
   configurationSource: deploy/environments.yaml
 `)
 	writeCredentialPlanTestFile(t, workspace, "deploy/environments.yaml", `
+apiVersion: doops.sh/v2
+kind: EnvironmentRegistry
+metadata:
+  name: test-environments
 artifactContract:
   type: image-set
   sourceRegistry: registry.example.test/source

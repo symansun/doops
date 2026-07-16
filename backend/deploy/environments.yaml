@@ -1,3 +1,7 @@
+apiVersion: doops.sh/v2
+kind: EnvironmentRegistry
+metadata:
+  name: doops-environments
 artifactContract:
   type: image-set
   sourceRegistry: docker.cnb.cool/l8ai/ai

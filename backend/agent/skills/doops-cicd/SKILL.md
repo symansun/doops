@@ -53,6 +53,21 @@ target、默认 registry、默认 namespace 或默认服务集合。
 - **dry-run**：观察事实并返回尚需执行的 mutation，`mutationCount` 必须为 0。
 - **apply**：仅在受信任请求显式授权后执行，并在每次 mutation 后重新观察。
 
+## Credential Plan 控制面
+
+- Gateway 与 Agent 之间的唯一 credential-plan 协议是
+  `doops.sh/credential-plan/v2`，它独立于根声明的 `doops.sh/v2` 或
+  `doops.sh/v3` apiVersion。
+- Gateway 只能向注册时显式声明该协议的在线 Agent 发起
+  `credential_plan`；协议缺失或版本不同必须在 dispatch 前阻断。
+- credential prepare 与受信任 reconciliation 必须使用同一个严格声明编译器，
+  不得各自解析、推断或放宽字段。
+- apply 必须绑定当前用户、target、session、workflow、workspace commit、模式和
+  materialization digest 的短时单次 `CredentialRun`。
+- v3 中任一必需 Secret 引用标记为 `undeclared` 或
+  `deploymentBlockedUntilDeclared` 时，credential prepare 必须阻断，不能返回空计划
+  后继续。
+
 ## v3 部署规则
 
 - 命令行只传环境声明允许的操作意图，例如 `reason`；不得覆盖 target、服务、
