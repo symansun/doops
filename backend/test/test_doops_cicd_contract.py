@@ -97,6 +97,7 @@ def test_release_runner_values_use_distinct_workload_and_gateway_identity():
 
 def test_release_runner_bootstrap_declares_opaque_agent_token_reference():
     workflow = yaml.safe_load(RUNNER_WORKFLOW.read_text())
+    contract = (SKILL / "references" / "execution-contract.md").read_text()
     assert workflow["spec"]["environment"] == "oilan-release-runner-bootstrap"
     assert workflow["spec"]["credentialRefs"] == [
         {

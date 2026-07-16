@@ -314,3 +314,9 @@ func validLowerHex(value string, length int) bool {
 	}
 	return true
 }
+
+func validSHA256Digest(value string) bool {
+	const prefix = "sha256:"
+	return strings.HasPrefix(value, prefix) &&
+		validLowerHex(strings.TrimPrefix(value, prefix), sha256.Size*2)
+}
