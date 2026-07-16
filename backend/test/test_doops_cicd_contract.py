@@ -1,4 +1,5 @@
 import platform
+import stat
 import subprocess
 from pathlib import Path
 
@@ -117,3 +118,59 @@ def test_prebuilt_cli_exposes_only_agent_native_cicd_run():
     retired_text = retired_result.stdout + retired_result.stderr
     assert retired_result.returncode != 0
     assert "only `cicd run` is supported" in retired_text
+
+
+def test_installer_replaces_execute_only_cli_with_launchable_mode(tmp_path):
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    cli = home / ".local" / "bin" / "doops"
+    cli.parent.mkdir(parents=True)
+    project.mkdir()
+    cli.write_text("stale")
+    cli.chmod(0o111)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(ROOT / "scripts" / "install.sh"),
+            "--project",
+            str(project),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert stat.S_IMODE(cli.stat().st_mode) == 0o755
+    help_result = subprocess.run(
+        [str(cli), "-help"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert help_result.returncode == 0
+
+
+def test_installer_rejects_directory_cli_target(tmp_path):
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    cli = home / ".local" / "bin" / "doops"
+    cli.mkdir(parents=True)
+    project.mkdir()
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(ROOT / "scripts" / "install.sh"),
+            "--project",
+            str(project),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+    )
+    assert result.returncode != 0
+    assert "CLI install path is a directory" in result.stderr
+    assert list(cli.iterdir()) == []

@@ -88,7 +88,7 @@ detect_host_platform() {
 }
 
 install_cli() {
-  local platform prebuilt checksums expected actual
+  local platform prebuilt checksums expected actual candidate
   platform="$(detect_host_platform)"
   if [[ "${platform}" == unsupported-* ]]; then
     cat >&2 <<EOF
@@ -118,8 +118,22 @@ EOF
       echo "Prebuilt checksum mismatch for ${prebuilt}" >&2
       exit 1
     fi
-    cp "${prebuilt}" "${CLI_OUT}"
-    chmod +x "${CLI_OUT}"
+    if [[ -d "${CLI_OUT}" ]]; then
+      echo "CLI install path is a directory: ${CLI_OUT}" >&2
+      exit 1
+    fi
+    candidate="$(mktemp "$(dirname "${CLI_OUT}")/.doops-install.XXXXXX")"
+    if ! install -m 0755 "${prebuilt}" "${candidate}" ||
+      ! "${candidate}" -help >/dev/null 2>&1; then
+      rm -f "${candidate}"
+      echo "Prebuilt CLI failed its launch self-check: ${prebuilt}" >&2
+      exit 1
+    fi
+    if ! mv -f "${candidate}" "${CLI_OUT}"; then
+      rm -f "${candidate}"
+      echo "Failed to replace CLI at ${CLI_OUT}" >&2
+      exit 1
+    fi
     echo "  CLI installed from prebuilt artifact: ${prebuilt}"
     echo "  CLI installed to ${CLI_OUT}"
     return

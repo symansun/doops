@@ -70,6 +70,16 @@ doops admin token create \
   --save-as jm
 ```
 
+查看 token 元数据和撤销旧 token：
+
+```bash
+doops admin token list --target jm --kind user
+doops admin token revoke --target jm --id <token-id>
+```
+
+列表只返回 ID、前缀、归属和状态，不返回 token 明文。管理员凭据只从
+`--target` 对应的本地受限存储读取，不得通过命令行参数传入。
+
 ## Exec
 
 ```bash
