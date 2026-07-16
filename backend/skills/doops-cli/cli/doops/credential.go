@@ -27,11 +27,17 @@ type credentialRun struct {
 	Mode             string                              `json:"mode"`
 	Cluster          string                              `json:"cluster"`
 	Instance         string                              `json:"instance"`
+	Template         string                              `json:"template"`
+	Project          string                              `json:"project"`
+	Environment      string                              `json:"environment"`
+	MutationCount    int                                 `json:"mutationCount"`
 	Materializations []credentialMaterializationMetadata `json:"materializations"`
+	CreatedAt        time.Time                           `json:"createdAt"`
 }
 
 type credentialMaterializationMetadata struct {
 	CredentialID    string   `json:"credentialId"`
+	GrantID         string   `json:"grantId,omitempty"`
 	VersionID       string   `json:"versionId"`
 	ResourceName    string   `json:"resourceName,omitempty"`
 	Namespace       string   `json:"namespace"`
@@ -85,8 +91,12 @@ func prepareWorkflowCredentials(
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
-		return credentialRun{}, fmt.Errorf("credential prepare failed: HTTP %s", response.Status)
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		category := strings.TrimSpace(string(body))
+		if !validCredentialErrorCategory(category) {
+			category = "gateway_error"
+		}
+		return credentialRun{}, fmt.Errorf("credential prepare failed: HTTP %s: %s", response.Status, category)
 	}
 
 	var run credentialRun
@@ -107,4 +117,16 @@ func prepareWorkflowCredentials(
 		run.Materializations = []credentialMaterializationMetadata{}
 	}
 	return run, nil
+}
+
+func validCredentialErrorCategory(category string) bool {
+	if category == "" || len(category) > 128 {
+		return false
+	}
+	for _, char := range category {
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '_' {
+			return false
+		}
+	}
+	return true
 }

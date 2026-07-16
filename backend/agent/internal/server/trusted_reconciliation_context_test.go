@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestBuildTrustedReconciliationAdmissionBindsWorkspacePlanAndExactTools(t *testing.T) {
@@ -102,7 +104,20 @@ environments:
 		"workflowPath":"deploy/release.yaml",
 		"workspaceCommit":"` + workspaceCommit + `",
 		"inputs":{"releaseId":"` + revision + `"},
-		"credentialRun":{"id":"credrun_123","materializations":[]},
+		"credentialRun":{
+			"apiVersion":"doops.sh/v2",
+			"kind":"CredentialRun",
+			"id":"credrun_123",
+			"mode":"dry-run",
+			"cluster":"doops",
+			"instance":"runner",
+			"template":"release",
+			"project":"app",
+			"environment":"production",
+			"mutationCount":0,
+			"materializations":[],
+			"createdAt":"2026-07-16T00:00:00Z"
+		},
 		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
 	}`
 	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit)
@@ -133,6 +148,7 @@ environments:
 		!strings.HasPrefix(admission.Context.OperationID, "op_") ||
 		!validSHA256Digest(admission.Context.PlanDigest) ||
 		!validSHA256Digest(admission.Context.PlanBindingDigest) ||
+		!validSHA256Digest(admission.Context.CredentialRunDigest) ||
 		!validSHA256Digest(admission.Context.ContextDigest) {
 		t.Fatalf("unexpected trusted context: %#v", admission.Context)
 	}
@@ -216,6 +232,178 @@ func TestBuildTrustedReconciliationAdmissionRejectsSecretInputNames(t *testing.T
 	}
 }
 
+func TestBuildTrustedReconciliationAdmissionRejectsSecretInputValues(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	sessionID := "secret-value"
+	workspace := filepath.Join(root, sessionID)
+	if err := os.MkdirAll(filepath.Join(workspace, "deploy"), 0o700); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	writeTrustedAdmissionFixture(t, workspace)
+	instruction := strings.NewReplacer(
+		"${MODE}", "dry-run",
+		"${RUN_ID}", "secret-value-0123456789abcdef",
+		"${WORKSPACE_COMMIT}", strings.Repeat("a", 40),
+		"${REVISION}", "https://example.test/repo.git?access_token=synthetic",
+	).Replace(trustedAdmissionInstructionFixture)
+	if _, err := buildTrustedReconciliationAdmission(
+		sessionID,
+		instruction,
+		strings.Repeat("a", 40),
+	); err == nil {
+		t.Fatal("secret-bearing workflow input value must be rejected")
+	}
+}
+
+func TestBuildTrustedReconciliationAdmissionSupportsSemanticRelease(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	sessionID := "semantic-release"
+	workspace := filepath.Join(root, sessionID)
+	if err := os.MkdirAll(filepath.Join(workspace, "deploy/workflows/services"), 0o700); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	writeCredentialPlanTestFile(t, workspace, "deploy/workflows/release.yaml", `
+apiVersion: doops.sh/v2
+kind: SemanticRelease
+metadata:
+  name: application-release
+spec:
+  parameters:
+    reason:
+      required: true
+  application: application
+  release:
+    reason: ${inputs.reason}
+    selectedServices: all
+  environment: production
+  configurationSource: deploy/environments.yaml
+  serviceCatalog:
+    api:
+      uses: services/api.yaml
+  flow:
+    - intent: converge-release
+`)
+	writeCredentialPlanTestFile(t, workspace, "deploy/workflows/services/api.yaml", `
+apiVersion: doops.sh/v2
+kind: ServiceRelease
+metadata:
+  name: application-api
+spec:
+  service: api
+  application: application
+  artifact:
+    type: oci-image
+    declarationSource: environment-service
+    identity: exact-sha256-digest
+  binding:
+    helmValue: api
+    workload: deployment/application-api
+    container: application-api
+  intents: [converge]
+  evidence:
+    required: [runtime-state]
+`)
+	writeCredentialPlanTestFile(t, workspace, "deploy/environments.yaml", `
+apiVersion: doops.sh/v2
+kind: EnvironmentRegistry
+metadata:
+  name: application-environments
+artifactContract:
+  sourceRepository: https://example.test/application.git
+  sourceBranch: main
+environments:
+  production:
+    file: deploy/environments/production.yaml
+`)
+	writeCredentialPlanTestFile(t, workspace, "deploy/environments/production.yaml", `
+apiVersion: doops.sh/v2
+kind: EnvironmentDefinition
+metadata:
+  name: production
+spec:
+  execution:
+    deploy:
+      target: control
+      cluster: doops
+      instance: runner
+`)
+	workspaceCommit := strings.Repeat("a", 40)
+	instruction := `{
+		"task":"execute-doops-cicd-workflow",
+		"skill":"$doops-cicd",
+		"executionMode":"dry-run",
+		"runId":"semantic-release-0123456789abcdef",
+		"workflowPath":"deploy/workflows/release.yaml",
+		"workspaceCommit":"` + workspaceCommit + `",
+		"inputs":{"reason":"scheduled-release"},
+		"credentialRun":{
+			"apiVersion":"doops.sh/v2",
+			"kind":"CredentialRun",
+			"id":"credrun_semantic",
+			"mode":"dry-run",
+			"cluster":"doops",
+			"instance":"runner",
+			"template":"application-release",
+			"project":"application",
+			"environment":"production",
+			"mutationCount":0,
+			"materializations":[],
+			"createdAt":"2026-07-16T00:00:00Z"
+		},
+		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
+	}`
+	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit)
+	if err != nil {
+		t.Fatalf("build SemanticRelease trusted admission: %v", err)
+	}
+	if admission.Context.Source.Repository != "https://example.test/application.git" ||
+		admission.Context.Source.Branch != "main" ||
+		admission.Context.Source.Revision != workspaceCommit {
+		t.Fatalf("unexpected SemanticRelease source: %#v", admission.Context.Source)
+	}
+}
+
+func TestCredentialSecretLikeKeyNormalizesSeparators(t *testing.T) {
+	for _, key := range []string{
+		"client_secret", "registry-password", "private.key", "accessToken",
+		"dbPassword", "secretKey", "authorization", "cookie", "githubToken",
+		"registryCredential", "githubPAT", "passphrase", "dockerConfigJson", "sshIdentity",
+	} {
+		if !credentialSecretLikeKey(key) {
+			t.Fatalf("credentialSecretLikeKey(%q) = false, want true", key)
+		}
+	}
+	if credentialSecretLikeKey("releaseId") {
+		t.Fatal("releaseId must not be classified as credential material")
+	}
+	for _, key := range []string{"secretName", "imagePullSecrets", "agentTokenSecret"} {
+		value := &yaml.Node{Kind: yaml.MappingNode}
+		if credentialSecretLikeYAMLField(key, value) {
+			t.Fatalf("reference metadata %q must not be classified as inline material", key)
+		}
+	}
+	if !credentialSecretLikeYAMLField("stringData", &yaml.Node{Kind: yaml.MappingNode}) {
+		t.Fatal("stringData mapping must be rejected")
+	}
+	if !credentialSecretLikeYAMLField("githubToken", &yaml.Node{Kind: yaml.MappingNode}) {
+		t.Fatal("sensitive parameter declaration mapping must be rejected")
+	}
+	for _, value := range []string{
+		"https://user:token@example.test/repo.git",
+		"https://example.test/repo.git?access_token=synthetic",
+		"https://example.test/repo.git?X-Goog-Signature=synthetic",
+		"scheduled release Bearer synthetic-canary",
+		"Bearer synthetic-canary",
+		"-----BEGIN PRIVATE KEY-----",
+	} {
+		if !credentialScalarContainsInlineMaterial(value) {
+			t.Fatalf("inline credential scalar %q was accepted", value)
+		}
+	}
+}
+
 func TestBuildDoagentPromptParamsUsesExactPlanToolsAndNoGenericTools(t *testing.T) {
 	context := trustedReconciliationContext{
 		SchemaVersion:      trustedReconciliationContextSchema,
@@ -272,7 +460,20 @@ const trustedAdmissionInstructionFixture = `{
 	"workflowPath":"deploy/release.yaml",
 	"workspaceCommit":"${WORKSPACE_COMMIT}",
 	"inputs":{"releaseId":"${REVISION}"},
-	"credentialRun":{"id":"credrun_123","materializations":[]},
+	"credentialRun":{
+		"apiVersion":"doops.sh/v2",
+		"kind":"CredentialRun",
+		"id":"credrun_123",
+		"mode":"${MODE}",
+		"cluster":"doops",
+		"instance":"runner",
+		"template":"release",
+		"project":"app",
+		"environment":"production",
+		"mutationCount":0,
+		"materializations":[],
+		"createdAt":"2026-07-16T00:00:00Z"
+	},
 	"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
 }`
 

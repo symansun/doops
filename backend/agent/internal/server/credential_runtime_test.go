@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,7 +19,7 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	deployer, deployerToken := createCredentialHTTPUser(t, store, "deployer", false)
 	admin := createCredentialTestUser(t, store, "credential-admin")
 	if err := store.GrantUser(admin.ID, ScopeGrant{
-		Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionCredentialGrant, ActionCredentialRotate},
+		Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin},
 	}); err != nil {
 		t.Fatalf("grant credential admin: %v", err)
 	}
@@ -120,7 +121,7 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 		run.Materializations[0].VersionID != version.ID {
 		t.Fatalf("unexpected credential run: %#v", run)
 	}
-	operator, adminToken := createCredentialHTTPUser(t, store, "credential-operator", true)
+	_, adminToken := createCredentialHTTPUser(t, store, "credential-operator", true)
 	revokeGrant := credentialHTTPRequest(t, mux, adminToken, http.MethodDelete,
 		"/v1/credentials/"+credential.ID+"/grants", map[string]any{"grant_id": grant.ID})
 	if revokeGrant.Code != http.StatusOK {
@@ -161,26 +162,21 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 			"workflow_path":    "deploy/release.yaml",
 			"workspace_commit": strings.Repeat("a", 40),
 		})
-	if verify.Code != http.StatusForbidden {
-		t.Fatalf("operator without target authority verify = HTTP %d, want 403: %s", verify.Code, verify.Body.String())
-	}
-	if err := store.GrantUser(operator.ID, ScopeGrant{
-		Cluster: "doops-edu", Instance: "edu-coder",
-		Actions: []GatewayAction{ActionAsk, ActionCredentialUse},
-	}); err != nil {
-		t.Fatalf("grant operator target authority: %v", err)
-	}
-	verify = credentialHTTPRequest(t, mux, adminToken, http.MethodPost,
-		"/v1/credentials/"+credential.ID+"/verify", map[string]any{
-			"version_id":       staged.ID,
-			"cluster":          "doops-edu",
-			"instance":         "edu-coder",
-			"session_id":       "release-1",
-			"workflow_path":    "deploy/release.yaml",
-			"workspace_commit": strings.Repeat("a", 40),
-		})
 	if verify.Code != http.StatusOK {
 		t.Fatalf("credential verify: HTTP %d: %s", verify.Code, verify.Body.String())
+	}
+	for _, forbidden := range []string{
+		"credential_id", "version_id", "grantId", "resourceName", "namespace",
+		"secretType", "keys", "fingerprint", "expiresAt",
+	} {
+		if strings.Contains(verify.Body.String(), forbidden) {
+			t.Fatalf("credential verify response exposed %q: %s", forbidden, verify.Body.String())
+		}
+	}
+	if !strings.Contains(verify.Body.String(), `"status":"verified"`) ||
+		!strings.Contains(verify.Body.String(), `"resourceVersion":"42"`) ||
+		!strings.Contains(verify.Body.String(), `"digest":"sha256:manifest"`) {
+		t.Fatalf("credential verify response omitted allowed evidence: %s", verify.Body.String())
 	}
 	promote := credentialHTTPRequest(t, mux, adminToken, http.MethodPost,
 		"/v1/credentials/"+credential.ID+"/promote", map[string]any{"version_id": staged.ID})
@@ -211,16 +207,43 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	if strings.Contains(string(serialized), "runtime-canary-secret") {
 		t.Fatalf("credential audit exposed payload: %s", serialized)
 	}
-	var verifiedAudit bool
+	var verifiedAudit, materializationAudit bool
 	for _, audit := range audits {
-		if audit.Session == credential.ID &&
+		if audit.Action == ActionCredentialVerify &&
+			audit.Session == credential.ID &&
 			audit.CommandSummary == "credential verify" &&
+			audit.Cluster == "doops-edu" &&
+			audit.Instance == "edu-coder" &&
+			audit.VersionID == staged.ID &&
+			audit.GrantID == grant.ID &&
+			audit.Environment == "production" &&
+			audit.Namespace == "kz-ops" &&
+			audit.Template == "oilan-agent-release" &&
+			audit.ResourceVersion == "42" &&
+			audit.Digest == "sha256:manifest" &&
 			audit.Status == "success" {
 			verifiedAudit = true
+		}
+		if audit.Action == ActionCredentialUse &&
+			audit.CredentialID == credential.ID &&
+			audit.VersionID == version.ID &&
+			audit.GrantID == grant.ID &&
+			audit.Cluster == "doops-edu" &&
+			audit.Instance == "edu-coder" &&
+			audit.Environment == "production" &&
+			audit.Namespace == "kz-ops" &&
+			audit.Template == "oilan-agent-release" &&
+			audit.ResourceVersion == "42" &&
+			audit.Digest == "sha256:manifest" &&
+			strings.HasPrefix(audit.CorrelationID, "credrun_") {
+			materializationAudit = true
 		}
 	}
 	if !verifiedAudit {
 		t.Fatalf("credential verify success audit missing: %#v", audits)
+	}
+	if !materializationAudit {
+		t.Fatalf("credential materialization audit fields missing: %#v", audits)
 	}
 }
 
@@ -247,7 +270,7 @@ func TestCredentialPlanBundleResolvesToExactCredentialID(t *testing.T) {
 	admin := createCredentialTestUser(t, store, "admin")
 	deployer := createCredentialTestUser(t, store, "deployer")
 	if err := store.GrantUser(admin.ID, ScopeGrant{
-		Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionCredentialGrant},
+		Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin},
 	}); err != nil {
 		t.Fatalf("grant credential admin: %v", err)
 	}
@@ -406,4 +429,16 @@ func serveCredentialRuntimeAgent(
 func stringValue(value any) string {
 	text, _ := value.(string)
 	return text
+}
+
+func TestCredentialPlanHTTPStatusDistinguishesDeclarationFromTransportFailures(t *testing.T) {
+	if got := credentialPlanHTTPStatus(errors.New("credential_declaration_invalid")); got != http.StatusUnprocessableEntity {
+		t.Fatalf("declaration status = %d, want %d", got, http.StatusUnprocessableEntity)
+	}
+	if got := credentialPlanHTTPStatus(errors.New("credential_workspace_commit_mismatch")); got != http.StatusConflict {
+		t.Fatalf("workspace status = %d, want %d", got, http.StatusConflict)
+	}
+	if got := credentialPlanHTTPStatus(errors.New("credential_tool_failed")); got != http.StatusBadGateway {
+		t.Fatalf("transport status = %d, want %d", got, http.StatusBadGateway)
+	}
 }

@@ -45,6 +45,7 @@ type CredentialCleanupRequest struct {
 	CredentialID string                 `json:"credential_id"`
 	GrantID      string                 `json:"grant_id"`
 	VersionID    string                 `json:"version_id"`
+	AnyVersion   bool                   `json:"any_version,omitempty"`
 	Namespace    string                 `json:"namespace"`
 	Workload     CredentialPlanWorkload `json:"workload,omitempty"`
 }
@@ -367,7 +368,7 @@ func inspectImagePullSecrets(ctx context.Context, namespace, kind, name string) 
 
 func cleanupCredential(ctx context.Context, req CredentialCleanupRequest) error {
 	if strings.TrimSpace(req.CredentialID) == "" || strings.TrimSpace(req.GrantID) == "" ||
-		strings.TrimSpace(req.VersionID) == "" ||
+		(!req.AnyVersion && strings.TrimSpace(req.VersionID) == "") ||
 		!validKubernetesCredentialName(req.Namespace) {
 		return errors.New("credential_cleanup_invalid")
 	}
@@ -378,6 +379,9 @@ func cleanupCredential(ctx context.Context, req CredentialCleanupRequest) error 
 		return errors.New("credential_secret_get_failed")
 	}
 	if len(bytes.TrimSpace(output)) == 0 {
+		if strings.TrimSpace(req.Workload.Name) != "" {
+			return removeImagePullSecret(ctx, req.Namespace, req.Workload, name)
+		}
 		return nil
 	}
 	var secret struct {
@@ -392,7 +396,7 @@ func cleanupCredential(ctx context.Context, req CredentialCleanupRequest) error 
 	if secret.Metadata.Labels["app.kubernetes.io/managed-by"] != "doops" ||
 		secret.Metadata.Labels["doops.sh/credential-id"] != req.CredentialID ||
 		secret.Metadata.Labels["doops.sh/credential-grant-id"] != req.GrantID ||
-		secret.Metadata.Annotations["doops.sh/credential-version"] != req.VersionID {
+		(!req.AnyVersion && secret.Metadata.Annotations["doops.sh/credential-version"] != req.VersionID) {
 		return errors.New("credential_secret_ownership_mismatch")
 	}
 	if strings.TrimSpace(req.Workload.Name) != "" {

@@ -139,6 +139,10 @@ func (trace doagentToolTrace) eligibleForContext(expected *trustedReconciliation
 		len(trace.resultJSON) == 0 {
 		return false
 	}
+	resultObject, err := publicDoagentToolResult(trace)
+	if err != nil {
+		return false
+	}
 	if expected == nil {
 		return true
 	}
@@ -190,30 +194,18 @@ func (trace doagentToolTrace) eligibleForContext(expected *trustedReconciliation
 	if err != nil || expectedInputDigest != trace.InputDigest {
 		return false
 	}
-	result, err := decodeDoagentJSONValue(trace.resultJSON)
-	if err != nil {
-		return false
-	}
-	resultObject, ok := result.(map[string]interface{})
-	if !ok {
-		return false
-	}
-	delete(resultObject, "_meta")
 	expectedResultDigest, err := digestJSON(resultObject)
 	if err != nil || expectedResultDigest != trace.AttestedResultDigest {
 		return false
 	}
-	return rejectSensitiveToolResult(resultObject) == nil
+	return true
 }
 
 func rejectSensitiveToolResult(value interface{}) error {
 	switch typed := value.(type) {
 	case map[string]interface{}:
 		for key, item := range typed {
-			switch strings.ToLower(strings.TrimSpace(key)) {
-			case "token", "password", "passwd", "secret", "cookie", "authorization",
-				"privatekey", "private_key", "clientsecret", "client_secret",
-				"stringdata", "dockerconfigjson":
+			if credentialSecretLikeKey(key) || strings.EqualFold(strings.TrimSpace(key), "passwd") {
 				return fmt.Errorf("runtime tool result contains forbidden sensitive field %q", key)
 			}
 			if err := rejectSensitiveToolResult(item); err != nil {
@@ -226,6 +218,10 @@ func rejectSensitiveToolResult(value interface{}) error {
 				return err
 			}
 		}
+	case string:
+		if credentialScalarContainsInlineMaterial(typed) {
+			return fmt.Errorf("runtime tool result contains forbidden sensitive scalar")
+		}
 	}
 	return nil
 }
@@ -235,8 +231,10 @@ func bindDeploymentRunEvidence(
 	traces []doagentToolTrace,
 ) (string, map[string]interface{}, error) {
 	if result["kind"] != "DeploymentRun" {
-		data, err := json.Marshal(result)
-		return string(data), result, err
+		return "", nil, fmt.Errorf("structured result kind must be DeploymentRun")
+	}
+	if err := rejectSensitiveToolResult(result); err != nil {
+		return "", nil, err
 	}
 	status, ok := result["status"].(map[string]interface{})
 	if !ok {
@@ -300,9 +298,9 @@ func bindDeploymentRunEvidence(
 		if err != nil {
 			return "", nil, fmt.Errorf("decode runtime tool input: %w", err)
 		}
-		runtimeResult, err := decodeDoagentJSONValue(trace.resultJSON)
+		runtimeResult, err := publicDoagentToolResult(trace)
 		if err != nil {
-			return "", nil, fmt.Errorf("decode runtime tool result: %w", err)
+			return "", nil, fmt.Errorf("validate runtime tool result: %w", err)
 		}
 		delete(entry, "toolRef")
 		entry["toolCall"] = map[string]interface{}{
@@ -313,11 +311,28 @@ func bindDeploymentRunEvidence(
 		}
 	}
 
+	if err := rejectSensitiveToolResult(result); err != nil {
+		return "", nil, err
+	}
 	payload, err := json.Marshal(result)
 	if err != nil {
 		return "", nil, fmt.Errorf("encode DeploymentRun: %w", err)
 	}
 	return string(payload), result, nil
+}
+
+func publicDoagentToolResult(trace doagentToolTrace) (interface{}, error) {
+	result, err := decodeDoagentJSONValue(trace.resultJSON)
+	if err != nil {
+		return nil, err
+	}
+	if err := rejectSensitiveToolResult(result); err != nil {
+		return nil, err
+	}
+	if resultObject, ok := result.(map[string]interface{}); ok {
+		delete(resultObject, "_meta")
+	}
+	return result, nil
 }
 
 func resolveDoagentToolTrace(

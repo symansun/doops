@@ -601,8 +601,29 @@ func TestSubscribeDoagentSSEReturnsErrorWhenStreamEndsWithoutFinalEvent(t *testi
 	if !strings.Contains(err.Error(), "ended before final") {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := progress.String(); got != "partial" {
+	if got := progress.String(); got != "" {
 		t.Fatalf("progress mismatch: %q", got)
+	}
+}
+
+func TestSubscribeDoagentSSEDoesNotForwardMalformedRawData(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: Authorization: Bearer synthetic-canary`)
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	var progress strings.Builder
+	err := subscribeDoagentSSE(t.Context(), ts.URL, "malformed-sse", func(evt notificationEvent) {
+		progress.WriteString(evt.Data)
+	})
+	if err == nil || !strings.Contains(err.Error(), "doagent_sse_protocol_invalid") {
+		t.Fatalf("malformed SSE error = %v", err)
+	}
+	if strings.Contains(progress.String(), "synthetic-canary") ||
+		!strings.Contains(progress.String(), "doagent_sse_protocol_invalid") {
+		t.Fatalf("malformed SSE raw data leaked to progress: %q", progress.String())
 	}
 }
 
@@ -739,9 +760,9 @@ func TestAgentPromptReturnsAdmissionErrorImmediately(t *testing.T) {
 		"session_id":  "admission-error",
 		"instruction": "inspect",
 	})
-	if !strings.Contains(fmt.Sprint(result), "session/prompt failed") ||
-		!strings.Contains(fmt.Sprint(result), "queue full") {
-		t.Fatalf("prompt admission error must be returned directly: %#v", result)
+	if !strings.Contains(fmt.Sprint(result), "doagent_prompt_failed") ||
+		strings.Contains(fmt.Sprint(result), "queue full") {
+		t.Fatalf("prompt admission error must return only a stable category: %#v", result)
 	}
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("prompt admission error must not wait for SSE timeout, took %s", elapsed)
@@ -1567,4 +1588,76 @@ func mustJSON(t *testing.T, v interface{}) json.RawMessage {
 		t.Fatalf("marshal json: %v", err)
 	}
 	return data
+}
+
+func TestSanitizeSecretTextRedactsCredentialFields(t *testing.T) {
+	raw := "authorization=Bearer synthetic cookie=session-canary dbPassword=database-canary githubToken=token-canary " +
+		"https://user:url-canary@example.test/repo.git?access_token=query-canary Basic YmFzaWMtY2FuYXJ5 " +
+		"https://storage.example.test/object?X-Goog-Signature=signature-canary&X-Amz-Security-Token=security-token-canary&githubToken=github-query-canary " +
+		"-----BEGIN PRIVATE KEY-----\npem-canary\n-----END PRIVATE KEY-----"
+	sanitized := sanitizeSecretText(raw)
+	for _, secret := range []string{
+		"synthetic", "session-canary", "database-canary", "token-canary",
+		"url-canary", "query-canary", "signature-canary", "security-token-canary",
+		"github-query-canary", "YmFzaWMtY2FuYXJ5", "pem-canary",
+	} {
+		if strings.Contains(sanitized, secret) {
+			t.Fatalf("sanitized text retained %q: %s", secret, sanitized)
+		}
+	}
+}
+
+func TestMarshalDoagentHistorySanitizesNestedMessages(t *testing.T) {
+	history, err := marshalDoagentHistory("history-session", []interface{}{
+		map[string]interface{}{
+			"role":  "assistant",
+			"token": "opaque-history-canary",
+			"content": []interface{}{
+				map[string]interface{}{"text": "https://storage.example.test/object?signature=history-canary"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal history: %v", err)
+	}
+	if strings.Contains(history, "history-canary") ||
+		strings.Contains(history, "opaque-history-canary") ||
+		!strings.Contains(history, "REDACTED") {
+		t.Fatalf("history was not sanitized: %s", history)
+	}
+}
+
+func TestSubscribeDoagentSSESanitizesAgentMessagesBeforeCollectorAndProgress(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"https://storage.example.test/object?X-Amz-Signature="}}}}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"stream-canary"}}}}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","status":"completed","stopReason":"end_turn"}}}`)
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	var progress strings.Builder
+	var collected string
+	err := subscribeDoagentSSEWithCollector(
+		t.Context(),
+		ts.URL,
+		"sse-sanitize",
+		func(evt notificationEvent) { progress.WriteString(evt.Data) },
+		func(update map[string]interface{}) error {
+			data, _ := json.Marshal(update)
+			collected += string(data)
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("subscribe sanitized SSE: %v", err)
+	}
+	if strings.Contains(progress.String(), "stream-canary") ||
+		strings.Contains(collected, "stream-canary") ||
+		!strings.Contains(progress.String(), "REDACTED") {
+		t.Fatalf("raw agent message escaped sanitization: progress=%q collector=%q", progress.String(), collected)
+	}
 }

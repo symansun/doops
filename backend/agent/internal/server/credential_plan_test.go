@@ -97,6 +97,121 @@ func TestRepositoryReleaseRunnerBootstrapCredentialPlan(t *testing.T) {
 	}
 }
 
+func TestParseCredentialPlanSupportsSemanticRelease(t *testing.T) {
+	root := t.TempDir()
+	writeCredentialPlanTestFile(t, root, "deploy/workflows/release.yaml", `
+apiVersion: doops.sh/v2
+kind: SemanticRelease
+metadata:
+  name: application-release
+spec:
+  parameters:
+    revision:
+      required: true
+    version:
+      required: true
+    reason:
+      required: true
+    services:
+      required: true
+  application: application
+  release:
+    revision: ${inputs.revision}
+    version: ${inputs.version}
+    reason: ${inputs.reason}
+    selectedServices: ${inputs.services}
+  environment: production
+  configurationSource: deploy/environments/production.yaml
+  serviceCatalog:
+    api:
+      uses: services/api.yaml
+  flow:
+    - intent: materialize-selected-artifacts
+      forEach: selected-services
+      produces:
+        - source-artifact
+`)
+	writeCredentialPlanTestFile(t, root, "deploy/workflows/services/api.yaml", `
+apiVersion: doops.sh/v2
+kind: ServiceRelease
+metadata:
+  name: application-api
+spec:
+  service: api
+  application: application
+  source:
+    repository: https://example.invalid/application.git
+    branch: main
+    revision: ${inputs.revision}
+    context: api
+  artifact:
+    type: oci-image
+    repository: application-api
+    version: ${inputs.version}
+  binding:
+    helmValue: api
+    workload: deployment/application-api
+    container: application-api
+  intents:
+    - materialize-artifact
+  evidence:
+    required:
+      - target-image-digest
+`)
+	writeCredentialPlanTestFile(t, root, "deploy/environments/production.yaml", `
+apiVersion: doops.sh/v2
+kind: EnvironmentDefinition
+metadata:
+  name: production
+spec:
+  execution:
+    deploy:
+      executor: doops
+      target: gw-edu-coder
+      cluster: doops-edu
+      instance: edu-coder
+  artifacts:
+    runtimeImagePullSecret:
+      kind: KubernetesSecret
+      name: regcred
+`)
+
+	plan, err := parseCredentialPlan(root, "deploy/workflows/release.yaml")
+	if err != nil {
+		t.Fatalf("parse SemanticRelease credential plan: %v", err)
+	}
+	if plan.Template != "application-release" ||
+		plan.Project != "application" ||
+		plan.Environment != "production" ||
+		plan.Target != "gw-edu-coder" ||
+		plan.Cluster != "doops-edu" ||
+		plan.Instance != "edu-coder" {
+		t.Fatalf("unexpected SemanticRelease context: %#v", plan)
+	}
+	if len(plan.CredentialRefs) != 0 || len(plan.BundleRefs) != 0 {
+		t.Fatalf("unexpected SemanticRelease credential references: %#v", plan)
+	}
+}
+
+func TestParseCredentialPlanRejectsSemanticServiceIdentityMismatch(t *testing.T) {
+	root := t.TempDir()
+	writeSemanticCredentialPlanFixture(t, root, "different-service")
+
+	if _, err := parseCredentialPlan(root, "deploy/workflows/release.yaml"); !errors.Is(err, ErrCredentialDeclarationInvalid) {
+		t.Fatalf("service identity mismatch error = %v, want ErrCredentialDeclarationInvalid", err)
+	}
+}
+
+func TestParseCredentialPlanRejectsEmptySemanticEnvironmentDefinition(t *testing.T) {
+	root := t.TempDir()
+	writeSemanticCredentialPlanFixture(t, root, "api")
+	writeCredentialPlanTestFile(t, root, "deploy/environments/production.yaml", "")
+
+	if _, err := parseCredentialPlan(root, "deploy/workflows/release.yaml"); !errors.Is(err, ErrCredentialDeclarationInvalid) {
+		t.Fatalf("empty EnvironmentDefinition error = %v, want ErrCredentialDeclarationInvalid", err)
+	}
+}
+
 func TestParseCredentialPlanRejectsInlineSecretLikeFieldsAtAnyDepth(t *testing.T) {
 	for _, field := range []string{
 		"token", "password", "auth", "data", "stringData",
@@ -294,6 +409,67 @@ environments:
 	if _, err := parseCredentialPlan(root, "release.yaml"); !errors.Is(err, ErrInlineCredentialMaterial) {
 		t.Fatalf("configuration secret-like field error = %v, want ErrInlineCredentialMaterial", err)
 	}
+}
+
+func writeSemanticCredentialPlanFixture(t *testing.T, root, serviceIdentity string) {
+	t.Helper()
+	writeCredentialPlanTestFile(t, root, "deploy/workflows/release.yaml", `
+apiVersion: doops.sh/v2
+kind: SemanticRelease
+metadata:
+  name: application-release
+spec:
+  application: application
+  release:
+    revision: ${inputs.revision}
+    version: ${inputs.version}
+    reason: ${inputs.reason}
+    selectedServices: ${inputs.services}
+  environment: production
+  configurationSource: deploy/environments/production.yaml
+  serviceCatalog:
+    api:
+      uses: services/api.yaml
+  flow:
+    - intent: materialize-selected-artifacts
+`)
+	writeCredentialPlanTestFile(t, root, "deploy/workflows/services/api.yaml", `
+apiVersion: doops.sh/v2
+kind: ServiceRelease
+metadata:
+  name: application-api
+spec:
+  service: `+serviceIdentity+`
+  application: application
+  source:
+    repository: https://example.invalid/application.git
+    revision: ${inputs.revision}
+  artifact:
+    type: oci-image
+    repository: application-api
+    version: ${inputs.version}
+  binding:
+    helmValue: api
+    workload: deployment/application-api
+    container: application-api
+  intents:
+    - materialize-artifact
+  evidence:
+    required:
+      - target-image-digest
+`)
+	writeCredentialPlanTestFile(t, root, "deploy/environments/production.yaml", `
+apiVersion: doops.sh/v2
+kind: EnvironmentDefinition
+metadata:
+  name: production
+spec:
+  execution:
+    deploy:
+      target: gw-edu-coder
+      cluster: doops-edu
+      instance: edu-coder
+`)
 }
 
 func TestParseCredentialPlanRejectsDuplicateKeysInConfigurationSource(t *testing.T) {

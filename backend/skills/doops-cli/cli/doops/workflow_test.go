@@ -20,6 +20,36 @@ type fakeWorkflowCaller struct {
 	onCall    func()
 }
 
+func TestValidateWorkflowInputsRejectsCredentialMaterial(t *testing.T) {
+	for _, key := range []string{
+		"token", "client_secret", "registry-password", "private.key", "accessToken",
+		"dbPassword", "secretKey", "authorization", "cookie", "githubToken",
+		"registryCredential", "githubPAT", "passphrase", "dockerConfigJson", "sshIdentity",
+	} {
+		t.Run(key, func(t *testing.T) {
+			if err := validateWorkflowInputs(map[string]string{key: "synthetic"}); err == nil {
+				t.Fatalf("validateWorkflowInputs(%q) succeeded, want rejection", key)
+			}
+		})
+	}
+	if err := validateWorkflowInputs(map[string]string{"releaseId": strings.Repeat("a", 40)}); err != nil {
+		t.Fatalf("non-sensitive workflow input rejected: %v", err)
+	}
+	for _, value := range []string{
+		"Bearer synthetic-canary",
+		"https://user:synthetic@example.test/repo.git",
+		"https://example.test/repo.git?access_token=synthetic",
+		"https://example.test/repo.git?X-Goog-Signature=synthetic",
+		"scheduled release Bearer synthetic-canary",
+		"sk-synthetic",
+		"-----BEGIN PRIVATE KEY-----\nsynthetic\n-----END PRIVATE KEY-----",
+	} {
+		if err := validateWorkflowInputs(map[string]string{"releaseId": value}); err == nil {
+			t.Fatalf("secret-bearing workflow input value %q was accepted", value)
+		}
+	}
+}
+
 func (f *fakeWorkflowCaller) CallStructured(toolName string, arguments map[string]interface{}, destination interface{}) error {
 	f.calls++
 	f.toolName = toolName
@@ -350,7 +380,7 @@ func TestRunCICDCommandStopsBeforePromptWhenCredentialPrepareFails(t *testing.T)
 		"release-test",
 		false,
 	)
-	if err == nil || !strings.Contains(err.Error(), "credential prepare") {
+	if err == nil || !strings.Contains(err.Error(), "credential prepare failed: HTTP 403 Forbidden: credential_grant_denied") {
 		t.Fatalf("credential prepare failure must be returned, got %v", err)
 	}
 	if caller.calls != 0 {

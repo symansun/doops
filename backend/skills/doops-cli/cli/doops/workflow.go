@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -150,10 +151,7 @@ func runCICDCommand(
 		"workflowPath":    workflowPath,
 		"workspaceCommit": workspaceCommit,
 		"inputs":          request.Inputs,
-		"credentialRun": map[string]interface{}{
-			"id":               credentialRun.ID,
-			"materializations": credentialRun.Materializations,
-		},
+		"credentialRun":   credentialRun,
 		"resultContract": map[string]interface{}{
 			"apiVersion":      workspaceManifestAPIVersion,
 			"kind":            "DeploymentRun",
@@ -218,12 +216,73 @@ func (f workflowSetFlags) Set(value string) error {
 }
 
 func validateWorkflowInputs(inputs map[string]string) error {
-	for key := range inputs {
+	for key, value := range inputs {
 		if strings.TrimSpace(key) == "" || strings.TrimSpace(key) != key {
 			return fmt.Errorf("workflow input name must be non-empty and trimmed")
 		}
+		if workflowInputContainsCredentialMaterial(key) {
+			return fmt.Errorf("sensitive workflow input %q is forbidden; use credentialRef", key)
+		}
+		if workflowInputValueContainsCredentialMaterial(value) {
+			return fmt.Errorf("workflow input %q contains inline credential material; use credentialRef", key)
+		}
 	}
 	return nil
+}
+
+func workflowInputValueContainsCredentialMaterial(value string) bool {
+	value = strings.TrimSpace(value)
+	lower := strings.ToLower(value)
+	if strings.Contains(lower, "-----begin ") && strings.Contains(lower, " private key-----") {
+		return true
+	}
+	if strings.Contains(lower, "bearer ") || strings.Contains(lower, "basic ") ||
+		strings.Contains(lower, "sk-") {
+		return true
+	}
+	if strings.Contains(value, "://") || strings.Contains(value, "?") {
+		parsed, err := url.Parse(value)
+		if err == nil {
+			if parsed.User != nil {
+				return true
+			}
+			for key, values := range parsed.Query() {
+				if workflowInputContainsCredentialMaterial(key) {
+					for _, queryValue := range values {
+						if strings.TrimSpace(queryValue) != "" {
+							return true
+						}
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func workflowInputContainsCredentialMaterial(key string) bool {
+	normalized := strings.Map(func(r rune) rune {
+		switch r {
+		case '_', '-', '.', ' ':
+			return -1
+		default:
+			return r
+		}
+	}, strings.ToLower(strings.TrimSpace(key)))
+	if normalized == "auth" || normalized == "authorization" || normalized == "cookie" ||
+		normalized == "data" || normalized == "stringdata" || normalized == "secret" ||
+		normalized == "sig" {
+		return true
+	}
+	for _, suffix := range []string{
+		"token", "password", "privatekey", "clientsecret", "apikey", "accesskey", "secretkey",
+		"credential", "pat", "passphrase", "dockerconfigjson", "sshidentity", "signature",
+	} {
+		if strings.HasSuffix(normalized, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 func workflowPathInGitRepository(path string) (root, relative string, err error) {

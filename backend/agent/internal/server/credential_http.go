@@ -45,7 +45,7 @@ func (h *GatewayHub) HandleCredentials(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		filter := CredentialListFilter{ActorID: auth.UserID}
-		if h.store.UserHasAction(auth.UserID, ActionCredentialGrant) {
+		if h.store.UserIsPlatformAdmin(auth.UserID) {
 			filter.ActorID = ""
 		}
 		resources, err := h.store.ListCredentials(filter)
@@ -67,7 +67,7 @@ func (h *GatewayHub) HandleCredentials(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if body.Scope == CredentialScopePlatform && !h.store.UserHasAction(auth.UserID, ActionCredentialGrant) {
+		if body.Scope == CredentialScopePlatform && !h.store.UserIsPlatformAdmin(auth.UserID) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -75,16 +75,20 @@ func (h *GatewayHub) HandleCredentials(w http.ResponseWriter, r *http.Request) {
 		if body.Scope == CredentialScopePersonal {
 			ownerID = auth.UserID
 		}
-		auditID := h.startCredentialAudit(auth, ActionCredentialCreate, "", "credential create "+strings.TrimSpace(body.Name))
-		resource, err := h.store.CreateCredential(CredentialCreateRequest{
+		auditID, ok := h.requireCredentialAudit(
+			w, auth, ActionCredentialCreate, "", "credential create "+strings.TrimSpace(body.Name),
+		)
+		if !ok {
+			return
+		}
+		resource, err := h.store.CreateCredentialAudited(CredentialCreateRequest{
 			Name: body.Name, Scope: body.Scope, Type: body.Type, OwnerID: ownerID, CreatedBy: auth.UserID,
-		})
+		}, auditID)
 		if err != nil {
-			h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
+			_ = h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
 			http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
 			return
 		}
-		h.finishCredentialAudit(auditID, "success", "")
 		writeJSONHTTP(w, resource)
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -113,7 +117,8 @@ func (h *GatewayHub) HandleCredential(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if !h.canViewCredential(auth.UserID, resource) {
+		if !h.store.UserHasAction(auth.UserID, ActionCredentialMetadata) ||
+			!h.canViewCredential(auth.UserID, resource) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -151,17 +156,20 @@ func (h *GatewayHub) handleCredentialPayload(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "credential payload must be valid JSON", http.StatusBadRequest)
 		return
 	}
-	auditID := h.startCredentialAudit(auth, ActionCredentialRotate, resource.ID, "credential payload put")
-	version, err := h.store.PutCredentialVersion(CredentialVersionPutRequest{
+	auditID, ok := h.requireCredentialAudit(w, auth, ActionCredentialRotate, resource.ID, "credential payload put")
+	if !ok {
+		clear(payload)
+		return
+	}
+	version, err := h.store.PutCredentialVersionAudited(CredentialVersionPutRequest{
 		CredentialID: resource.ID, Payload: payload, CreatedBy: auth.UserID,
-	})
+	}, auditID)
 	clear(payload)
 	if err != nil {
-		h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
+		_ = h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
 		http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
 		return
 	}
-	h.finishCredentialAudit(auditID, "success", "")
 	writeJSONHTTP(w, version)
 }
 
@@ -178,19 +186,36 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 			http.Error(w, "invalid credential grant revoke request", http.StatusBadRequest)
 			return
 		}
-		auditID := h.startCredentialAudit(auth, ActionCredentialGrant, resource.ID, "credential grant revoke")
-		grant, err := h.store.RevokeCredentialGrant(resource.ID, body.GrantID, auth.UserID)
+		if resource.Scope == CredentialScopePersonal {
+			if resource.OwnerID != auth.UserID && !h.store.UserIsPlatformAdmin(auth.UserID) {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+		} else if !h.store.UserIsPlatformAdmin(auth.UserID) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		auditID, ok := h.requireCredentialAudit(w, auth, ActionCredentialGrant, resource.ID, "credential grant revoke")
+		if !ok {
+			return
+		}
+		grant, err := h.store.BeginCredentialGrantRevocation(resource.ID, body.GrantID, auth.UserID)
 		if err != nil {
-			h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
+			_ = h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
 			http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
 			return
 		}
 		if err := h.cleanupCredentialGrantMaterializations(r.Context(), resource.ID, grant.ID); err != nil {
-			h.finishCredentialAudit(auditID, "error", "credential_grant_revocation_outcome_unknown")
+			_ = h.finishCredentialAudit(auditID, "error", "credential_grant_revocation_outcome_unknown")
 			http.Error(w, "credential_grant_revocation_outcome_unknown", http.StatusBadGateway)
 			return
 		}
-		h.finishCredentialAudit(auditID, "success", "")
+		grant, err = h.store.FinalizeCredentialGrantRevocation(resource.ID, grant.ID, auditID)
+		if err != nil {
+			_ = h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
+			http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
+			return
+		}
 		writeJSONHTTP(w, grant)
 		return
 	}
@@ -200,17 +225,25 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if resource.Scope == CredentialScopePersonal {
-		if resource.OwnerID != auth.UserID || !h.store.UserCan(auth.UserID, body.Cluster, body.Instance, ActionAsk) {
+		if resource.OwnerID == auth.UserID {
+			if !h.store.UserCan(auth.UserID, body.Cluster, body.Instance, ActionAsk) {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+		} else if !h.store.UserIsPlatformAdmin(auth.UserID) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
-	} else if !h.store.UserHasAction(auth.UserID, ActionCredentialGrant) {
+	} else if !h.store.UserIsPlatformAdmin(auth.UserID) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	auditID := h.startCredentialAudit(auth, ActionCredentialGrant, resource.ID,
+	auditID, ok := h.requireCredentialAudit(w, auth, ActionCredentialGrant, resource.ID,
 		fmt.Sprintf("credential grant %s/%s", strings.TrimSpace(body.Cluster), strings.TrimSpace(body.Instance)))
-	grant, err := h.store.CreateCredentialGrant(CredentialGrantCreateRequest{
+	if !ok {
+		return
+	}
+	grant, err := h.store.CreateCredentialGrantAudited(CredentialGrantCreateRequest{
 		CredentialID: resource.ID,
 		GranteeID:    body.GranteeID,
 		Cluster:      body.Cluster,
@@ -221,13 +254,12 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 		Namespace:    body.Namespace,
 		Uses:         body.Uses,
 		CreatedBy:    auth.UserID,
-	})
+	}, auditID)
 	if err != nil {
-		h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
+		_ = h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
 		http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
 		return
 	}
-	h.finishCredentialAudit(auditID, "success", "")
 	writeJSONHTTP(w, grant)
 }
 
@@ -249,49 +281,50 @@ func (h *GatewayHub) handleCredentialPromote(w http.ResponseWriter, r *http.Requ
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	auditID := h.startCredentialAudit(auth, ActionCredentialRotate, resource.ID, "credential version promote")
+	auditID, ok := h.requireCredentialAudit(w, auth, ActionCredentialRotate, resource.ID, "credential version promote")
+	if !ok {
+		return
+	}
 	version, err := h.store.CredentialVersionByID(resource.ID, body.VersionID)
 	if err != nil {
-		h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
+		_ = h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
 		http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
 		return
 	}
 	if version.State != CredentialVersionStaged {
-		h.finishCredentialAudit(auditID, "error", "credential_version_not_staged")
+		_ = h.finishCredentialAudit(auditID, "error", "credential_version_not_staged")
 		http.Error(w, "credential_version_not_staged", http.StatusConflict)
 		return
 	}
 	grants, err := h.store.ActiveCredentialGrants(resource.ID)
 	if err != nil {
-		h.finishCredentialAudit(auditID, "error", "credential_grants_unavailable")
+		_ = h.finishCredentialAudit(auditID, "error", "credential_grants_unavailable")
 		http.Error(w, "credential_grants_unavailable", http.StatusInternalServerError)
 		return
 	}
 	verifications, err := h.store.CredentialVerifications(resource.ID, version.ID)
 	if err != nil {
-		h.finishCredentialAudit(auditID, "error", "credential_verifications_unavailable")
+		_ = h.finishCredentialAudit(auditID, "error", "credential_verifications_unavailable")
 		http.Error(w, "credential_verifications_unavailable", http.StatusInternalServerError)
 		return
 	}
-	verificationByGrantUse := make(map[string]CredentialVerification, len(verifications))
+	verificationCountByGrantUse := make(map[string]int, len(verifications))
 	for _, verification := range verifications {
-		verificationByGrantUse[verification.GrantID+"\x00"+string(verification.Use)] = verification
+		verificationCountByGrantUse[verification.GrantID+"\x00"+string(verification.Use)]++
 	}
-	required := make([]CredentialVerification, 0)
 	for _, grant := range grants {
 		for _, use := range grant.Uses {
-			verification, ok := verificationByGrantUse[grant.ID+"\x00"+string(use)]
-			if !ok {
-				h.finishCredentialAudit(auditID, "error", "credential_verification_required")
+			if verificationCountByGrantUse[grant.ID+"\x00"+string(use)] == 0 {
+				_ = h.finishCredentialAudit(auditID, "error", "credential_verification_required")
 				http.Error(w, "credential_verification_required", http.StatusConflict)
 				return
 			}
-			required = append(required, verification)
 		}
 	}
+	required := verifications
 	previous, previousErr := h.store.CredentialVersionByState(resource.ID, CredentialVersionActive)
 	if previousErr != nil && !errors.Is(previousErr, ErrCredentialVersionNotFound) {
-		h.finishCredentialAudit(auditID, "error", credentialErrorCategory(previousErr))
+		_ = h.finishCredentialAudit(auditID, "error", credentialErrorCategory(previousErr))
 		http.Error(w, credentialErrorCategory(previousErr), credentialHTTPStatus(previousErr))
 		return
 	}
@@ -311,11 +344,11 @@ func (h *GatewayHub) handleCredentialPromote(w http.ResponseWriter, r *http.Requ
 		)
 		if err != nil {
 			if rollbackErr := h.rollbackCredentialPromotion(r.Context(), resource, previous, previousErr, applied); rollbackErr != nil {
-				h.finishCredentialAudit(auditID, "error", "credential_promotion_outcome_unknown")
+				_ = h.finishCredentialAudit(auditID, "error", "credential_promotion_outcome_unknown")
 				http.Error(w, "credential_promotion_outcome_unknown", http.StatusBadGateway)
 				return
 			}
-			h.finishCredentialAudit(auditID, "error", "credential_promotion_materialization_failed")
+			_ = h.finishCredentialAudit(auditID, "error", "credential_promotion_materialization_failed")
 			http.Error(w, "credential_promotion_materialization_failed", http.StatusBadGateway)
 			return
 		}
@@ -323,17 +356,16 @@ func (h *GatewayHub) handleCredentialPromote(w http.ResponseWriter, r *http.Requ
 		verification.Evidence = evidence
 		applied = append(applied, verification)
 	}
-	if err := h.store.PromoteCredentialVersion(resource.ID, body.VersionID, auth.UserID); err != nil {
+	if err := h.store.PromoteCredentialVersionAudited(resource.ID, body.VersionID, auth.UserID, auditID); err != nil {
 		if rollbackErr := h.rollbackCredentialPromotion(r.Context(), resource, previous, previousErr, applied); rollbackErr != nil {
-			h.finishCredentialAudit(auditID, "error", "credential_promotion_outcome_unknown")
+			_ = h.finishCredentialAudit(auditID, "error", "credential_promotion_outcome_unknown")
 			http.Error(w, "credential_promotion_outcome_unknown", http.StatusBadGateway)
 			return
 		}
-		h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
+		_ = h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
 		http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
 		return
 	}
-	h.finishCredentialAudit(auditID, "success", "")
 	writeJSONHTTP(w, map[string]any{"credential_id": resource.ID, "version_id": body.VersionID, "promoted": true})
 }
 
@@ -343,59 +375,54 @@ func (h *GatewayHub) handleCredentialRevoke(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if resource.Scope == CredentialScopePersonal {
-		if resource.OwnerID != auth.UserID && !h.store.UserHasAction(auth.UserID, ActionCredentialRevoke) {
+		if resource.OwnerID != auth.UserID && !h.store.UserIsPlatformAdmin(auth.UserID) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
-	} else if !h.store.UserHasAction(auth.UserID, ActionCredentialRevoke) {
+	} else if !h.store.UserIsPlatformAdmin(auth.UserID) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	h.credentialMutationMu.Lock()
 	defer h.credentialMutationMu.Unlock()
-	auditID := h.startCredentialAudit(auth, ActionCredentialRevoke, resource.ID, "credential revoke")
-	active, activeErr := h.store.CredentialVersionByState(resource.ID, CredentialVersionActive)
+	auditID, ok := h.requireCredentialAudit(w, auth, ActionCredentialRevoke, resource.ID, "credential revoke")
+	if !ok {
+		return
+	}
 	if _, err := h.store.BeginCredentialRevocation(resource.ID, auth.UserID); err != nil {
-		h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
+		_ = h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
 		http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
 		return
 	}
-	if activeErr == nil {
-		verifications, err := h.store.CredentialVerifications(resource.ID, active.ID)
-		if err != nil {
-			h.finishCredentialAudit(auditID, "error", "credential_cleanup_context_unavailable")
-			http.Error(w, "credential_cleanup_context_unavailable", http.StatusInternalServerError)
+	materializations, err := h.store.CredentialMaterializations(resource.ID, "", "")
+	if err != nil {
+		_ = h.finishCredentialAudit(auditID, "error", "credential_cleanup_context_unavailable")
+		http.Error(w, "credential_cleanup_context_unavailable", http.StatusInternalServerError)
+		return
+	}
+	seen := make(map[string]struct{})
+	for _, materialization := range materializations {
+		key := credentialMaterializationContextKey(materialization.Request)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if err := h.cleanupCredentialMaterializationContext(r.Context(), materialization.Request); err != nil {
+			_ = h.finishCredentialAudit(auditID, "error", "credential_cleanup_failed")
+			http.Error(w, "credential_cleanup_failed", http.StatusBadGateway)
 			return
 		}
-		seen := make(map[string]struct{})
-		for _, verification := range verifications {
-			key := credentialMaterializationContextKey(verification.Request)
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			if err := h.cleanupCredentialVersion(r.Context(), verification.Request); err != nil {
-				h.finishCredentialAudit(auditID, "error", "credential_cleanup_failed")
-				http.Error(w, "credential_cleanup_failed", http.StatusBadGateway)
-				return
-			}
-		}
-	} else if !errors.Is(activeErr, ErrCredentialVersionNotFound) {
-		h.finishCredentialAudit(auditID, "error", credentialErrorCategory(activeErr))
-		http.Error(w, credentialErrorCategory(activeErr), credentialHTTPStatus(activeErr))
-		return
 	}
-	if err := h.store.FinalizeCredentialRevocation(resource.ID); err != nil {
-		h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
+	if err := h.store.FinalizeCredentialRevocationAudited(resource.ID, auditID); err != nil {
+		_ = h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
 		http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
 		return
 	}
-	h.finishCredentialAudit(auditID, "success", "")
 	writeJSONHTTP(w, map[string]any{"credential_id": resource.ID, "revoked": true})
 }
 
 func (h *GatewayHub) canViewCredential(actorID string, resource CredentialResource) bool {
-	if h.store.UserHasAction(actorID, ActionCredentialGrant) {
+	if h.store.UserIsPlatformAdmin(actorID) {
 		return true
 	}
 	if resource.Scope == CredentialScopePersonal && resource.OwnerID == actorID {
@@ -417,7 +444,14 @@ func (h *GatewayHub) canRotateCredential(actorID string, resource CredentialReso
 	if resource.Scope == CredentialScopePersonal && resource.OwnerID == actorID {
 		return true
 	}
-	return h.store.UserHasAction(actorID, ActionCredentialRotate)
+	return h.store.UserIsPlatformAdmin(actorID)
+}
+
+func (h *GatewayHub) canVerifyCredential(actorID string, resource CredentialResource) bool {
+	if resource.Scope == CredentialScopePersonal && resource.OwnerID == actorID {
+		return true
+	}
+	return h.store.UserIsPlatformAdmin(actorID)
 }
 
 func credentialPath(path string) (id, operation string, ok bool) {
@@ -453,24 +487,53 @@ func decodeCredentialJSON(w http.ResponseWriter, r *http.Request, destination an
 	return nil
 }
 
-func (h *GatewayHub) startCredentialAudit(auth TokenAuth, action GatewayAction, credentialID, summary string) int64 {
-	id, _ := h.store.StartAudit(AuditEvent{
+func (h *GatewayHub) startCredentialAudit(auth TokenAuth, action GatewayAction, credentialID, summary string) (int64, error) {
+	return h.store.StartAudit(AuditEvent{
 		UserID:         auth.UserID,
 		TokenID:        auth.TokenID,
+		CredentialID:   credentialID,
+		CorrelationID:  "credop_" + randomHex(12),
 		Action:         action,
 		Session:        credentialID,
 		CommandSummary: summary,
 		StartedAt:      time.Now().UTC(),
 	})
-	return id
 }
 
-func (h *GatewayHub) finishCredentialAudit(id int64, status, category string) {
-	_ = h.store.FinishAudit(id, AuditFinish{
+func (h *GatewayHub) finishCredentialAudit(id int64, status, category string) error {
+	return h.store.FinishAudit(id, AuditFinish{
 		Status:  status,
 		Error:   category,
 		EndedAt: time.Now().UTC(),
 	})
+}
+
+func (h *GatewayHub) requireCredentialAudit(
+	w http.ResponseWriter,
+	auth TokenAuth,
+	action GatewayAction,
+	credentialID string,
+	summary string,
+) (int64, bool) {
+	id, err := h.startCredentialAudit(auth, action, credentialID, summary)
+	if err != nil {
+		http.Error(w, "credential_audit_unavailable", http.StatusInternalServerError)
+		return 0, false
+	}
+	return id, true
+}
+
+func (h *GatewayHub) completeCredentialAudit(
+	w http.ResponseWriter,
+	id int64,
+	status string,
+	category string,
+) bool {
+	if err := h.finishCredentialAudit(id, status, category); err != nil {
+		http.Error(w, "credential_audit_unavailable", http.StatusInternalServerError)
+		return false
+	}
+	return true
 }
 
 func credentialErrorCategory(err error) string {
@@ -493,6 +556,8 @@ func credentialErrorCategory(err error) string {
 		return "credential_key_unavailable"
 	case errors.Is(err, ErrCredentialPayloadInvalid):
 		return "credential_payload_invalid"
+	case errors.Is(err, ErrCredentialAuditUnavailable):
+		return "credential_audit_unavailable"
 	default:
 		return "credential_invalid"
 	}
@@ -509,6 +574,8 @@ func credentialHTTPStatus(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, ErrSecretKeyUnavailable):
 		return http.StatusServiceUnavailable
+	case errors.Is(err, ErrCredentialAuditUnavailable):
+		return http.StatusInternalServerError
 	default:
 		return http.StatusBadRequest
 	}

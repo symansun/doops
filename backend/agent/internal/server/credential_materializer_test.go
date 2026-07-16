@@ -327,6 +327,25 @@ fi
 		t.Fatalf("cleanup did not delete the owned Secret: %s", logged)
 	}
 
+	if err := os.WriteFile(logPath, nil, 0600); err != nil {
+		t.Fatalf("reset command log: %v", err)
+	}
+	t.Setenv("DOOPS_TEST_SECRET_JSON", "")
+	if err := cleanupCredential(context.Background(), CredentialCleanupRequest{
+		SessionID:    "cleanup-session",
+		CredentialID: credentialID,
+		GrantID:      grantID,
+		VersionID:    versionID,
+		Namespace:    "apps",
+		Workload:     CredentialPlanWorkload{Kind: "Deployment", Name: "app"},
+	}); err != nil {
+		t.Fatalf("cleanup missing Secret workload reference: %v", err)
+	}
+	logged = readCredentialTestFile(t, logPath)
+	if !strings.Contains(logged, "patch deployment app") {
+		t.Fatalf("cleanup skipped workload reference after Secret disappeared: %s", logged)
+	}
+
 	t.Setenv("DOOPS_TEST_SECRET_JSON", fmt.Sprintf(
 		`{"metadata":{"labels":{"app.kubernetes.io/managed-by":"doops","doops.sh/credential-id":%q,"doops.sh/credential-grant-id":%q},"annotations":{"doops.sh/credential-version":"other"}}}`,
 		credentialID, grantID,
@@ -339,6 +358,17 @@ fi
 		Namespace:    "apps",
 	}); err == nil || !strings.Contains(err.Error(), "ownership_mismatch") {
 		t.Fatalf("mismatched ownership cleanup error = %v", err)
+	}
+
+	if err := cleanupCredential(context.Background(), CredentialCleanupRequest{
+		SessionID:    "cleanup-session",
+		CredentialID: credentialID,
+		GrantID:      grantID,
+		VersionID:    versionID,
+		AnyVersion:   true,
+		Namespace:    "apps",
+	}); err != nil {
+		t.Fatalf("revoke cleanup must accept the current DoOps-owned version: %v", err)
 	}
 }
 
