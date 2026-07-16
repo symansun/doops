@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -254,58 +255,102 @@ func (c *doagentToolTraceCollector) completed() []doagentToolTrace {
 	return traces
 }
 
+func (c *doagentToolTraceCollector) rejectionSummary() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	rejections := make([]string, 0, len(c.calls))
+	for _, trace := range c.calls {
+		if reason := trace.ineligibilityReason(c.expected); reason != "" {
+			tool := modelVisibleDoagentToolName(trace.ToolName)
+			if tool == "" {
+				tool = "unknown"
+			}
+			rejections = append(rejections, tool+"="+reason)
+		}
+	}
+	sort.Strings(rejections)
+	return strings.Join(rejections, ",")
+}
+
 func (trace doagentToolTrace) eligibleForContext(expected *trustedReconciliationContext) bool {
-	if trace.Status != "completed" ||
-		trace.ToolName == "" ||
-		len(trace.inputJSON) == 0 ||
-		len(trace.resultJSON) == 0 {
-		return false
+	return trace.ineligibilityReason(expected) == ""
+}
+
+func (trace doagentToolTrace) ineligibilityReason(expected *trustedReconciliationContext) string {
+	switch {
+	case trace.Status != "completed":
+		return "status_not_completed"
+	case trace.ToolName == "":
+		return "tool_name_missing"
+	case len(trace.inputJSON) == 0:
+		return "input_missing"
+	case len(trace.resultJSON) == 0:
+		return "raw_output_missing"
 	}
 	_, err := publicDoagentToolResult(trace)
 	if err != nil {
-		return false
+		return "public_result_invalid"
 	}
 	if expected == nil {
-		return true
+		return ""
 	}
-	if expected.ValidateDigest() != nil ||
-		trace.AttestationSchema != "doops.tool-attestation/v1" ||
-		trace.ContextSchema != expected.SchemaVersion ||
-		trace.OperationID != expected.OperationID ||
-		trace.ContextDigest != expected.ContextDigest ||
-		trace.PlanDigest != expected.PlanDigest ||
-		trace.PlanBindingDigest != expected.PlanBindingDigest ||
-		trace.ExecutionMode != expected.ExecutionMode ||
-		trace.MutationAuthorized == nil ||
-		*trace.MutationAuthorized != expected.MutationAuthorized {
-		return false
+	switch {
+	case expected.ValidateDigest() != nil:
+		return "expected_context_invalid"
+	case trace.AttestationSchema != "doops.tool-attestation/v1":
+		return "attestation_schema_mismatch"
+	case trace.ContextSchema != expected.SchemaVersion:
+		return "context_schema_mismatch"
+	case trace.OperationID != expected.OperationID:
+		return "operation_mismatch"
+	case trace.ContextDigest != expected.ContextDigest:
+		return "context_digest_mismatch"
+	case trace.PlanDigest != expected.PlanDigest:
+		return "plan_digest_mismatch"
+	case trace.PlanBindingDigest != expected.PlanBindingDigest:
+		return "plan_binding_digest_mismatch"
+	case trace.ExecutionMode != expected.ExecutionMode:
+		return "execution_mode_mismatch"
+	case trace.MutationAuthorized == nil:
+		return "mutation_authorization_missing"
+	case *trace.MutationAuthorized != expected.MutationAuthorized:
+		return "mutation_authorization_mismatch"
 	}
 	capability, ok := expected.Capabilities[trace.CapabilityKey]
-	if !ok ||
-		trace.ToolName != "mcp_doops_plan_"+capability.Tool ||
-		trace.AttestedTool != capability.Tool ||
-		trace.EvidenceKind != capability.EvidenceKind ||
-		trace.EvidenceSubject != capability.EvidenceSubject ||
-		trace.ScopeDigest != capability.ScopeDigest ||
-		!validSHA256Digest(trace.InputDigest) ||
-		!validSHA256Digest(trace.effectiveResultDigest()) {
-		return false
+	switch {
+	case !ok:
+		return "capability_missing"
+	case trace.ToolName != "mcp_doops_plan_"+capability.Tool:
+		return "runtime_tool_mismatch"
+	case trace.AttestedTool != capability.Tool:
+		return "attested_tool_mismatch"
+	case trace.EvidenceKind != capability.EvidenceKind:
+		return "evidence_kind_mismatch"
+	case trace.EvidenceSubject != capability.EvidenceSubject:
+		return "evidence_subject_mismatch"
+	case trace.ScopeDigest != capability.ScopeDigest:
+		return "scope_digest_mismatch"
+	case !validSHA256Digest(trace.InputDigest):
+		return "input_digest_invalid"
+	case !validSHA256Digest(trace.effectiveResultDigest()):
+		return "result_digest_invalid"
 	}
 	expectedScopeDigest, err := digestJSON(capability.CanonicalScope)
 	if err != nil || expectedScopeDigest != trace.ScopeDigest {
-		return false
+		return "expected_scope_digest_mismatch"
 	}
 	actualScopeDigest, err := digestJSON(trace.CanonicalScope)
 	if err != nil || actualScopeDigest != trace.ScopeDigest {
-		return false
+		return "actual_scope_digest_mismatch"
 	}
 	input, err := decodeDoagentJSONValue(trace.inputJSON)
 	if err != nil {
-		return false
+		return "input_invalid"
 	}
 	arguments, ok := input.(map[string]interface{})
 	if !ok || len(arguments) != 0 {
-		return false
+		return "input_not_empty_object"
 	}
 	expectedInputDigest, err := digestJSON(map[string]interface{}{
 		"arguments":     arguments,
@@ -314,10 +359,13 @@ func (trace doagentToolTrace) eligibleForContext(expected *trustedReconciliation
 		"tool":          capability.Tool,
 	})
 	if err != nil || expectedInputDigest != trace.InputDigest {
-		return false
+		return "input_digest_mismatch"
 	}
 	_, err = trace.verifiedResult()
-	return err == nil
+	if err != nil {
+		return "result_digest_mismatch"
+	}
+	return ""
 }
 
 func (trace doagentToolTrace) verifiedResult() (map[string]interface{}, error) {

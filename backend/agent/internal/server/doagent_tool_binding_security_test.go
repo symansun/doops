@@ -208,4 +208,7 @@ func TestDoagentToolTraceCollectorRequiresMatchingTrustedAttestationForCICD(t *t
 	if calls := collector.completed(); len(calls) != 0 {
 		t.Fatalf("mismatched trusted call became eligible: %#v", calls)
 	}
+	if summary := collector.rejectionSummary(); !strings.Contains(summary, "operation_mismatch") {
+		t.Fatalf("rejection summary must expose only the mismatch category: %q", summary)
+	}
 }
