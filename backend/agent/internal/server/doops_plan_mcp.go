@@ -303,7 +303,7 @@ func loadDoopsPlanRuntimeFromWorkspace(
 	if err := strictCredentialYAMLDecode(workflowData, &workflow); err != nil {
 		return doopsPlanRuntime{}, err
 	}
-	version, err := resolveDoopsPlanInput(workflow.Spec.Release.Version, inputs)
+	version, err := resolveDoopsPlanInput(doopsPlanVersionDeclaration(workflow), inputs)
 	if err != nil {
 		return doopsPlanRuntime{}, err
 	}
@@ -378,7 +378,7 @@ func trustedDoopsPlanReleaseScope(
 	if err := strictCredentialYAMLDecode(workflowData, &workflow); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(workflow.Spec.Release.Version) == "" {
+	if strings.TrimSpace(doopsPlanVersionDeclaration(workflow)) == "" {
 		return nil, nil
 	}
 	runtime, err := loadDoopsPlanRuntimeFromWorkspace(root, workflowPath, inputs)
@@ -386,6 +386,13 @@ func trustedDoopsPlanReleaseScope(
 		return nil, err
 	}
 	return doopsPlanReleaseScope(runtime), nil
+}
+
+func doopsPlanVersionDeclaration(workflow credentialDeploymentTemplate) string {
+	if version := strings.TrimSpace(workflow.Spec.Release.Version); version != "" {
+		return version
+	}
+	return strings.TrimSpace(workflow.Spec.Release.Source.Revision)
 }
 
 func doopsPlanReleaseScope(runtime doopsPlanRuntime) map[string]interface{} {
