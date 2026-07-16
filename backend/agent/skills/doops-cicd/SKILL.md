@@ -99,7 +99,7 @@ target, and warnings must not hide a validation error.
 7. Execute only the resolved declaration. Never infer another target,
    repository, namespace, release, credential or verification endpoint.
 8. Re-observe real state after every mutation and write the single JSON
-   `DeploymentRun` artifact described in the execution contract.
+   `DeploymentRun` result file described in the execution contract.
 
 For a `SemanticRelease`:
 
@@ -139,18 +139,20 @@ against the session-ready commit, then returns one structured `DeploymentRun`
 result with `status.mutationCount` and structured evidence. Without
 `--dry-run`, `cicd run` is an explicit apply request and the Gateway selects the
 native doagent mutation-capable mode; no separate mutation flag exists.
-The adapter rejects missing workspace binding, capability snapshot, result
-digest or evidence, unsupported phases, synthetic `admitted`, and any non-zero
-dry-run mutation count.
+The adapter rejects missing workspace binding, capability snapshot or evidence,
+unsupported phases, synthetic `admitted`, and any non-zero dry-run mutation
+count.
 
-Every evidence item must cite the completed runtime tool call that produced it.
-The Gateway creates the runtime attestation from ACP tool-call events and
-computes the final result digest; Agent-authored text cannot substitute for it.
-Immediately before writing the final result, read the Gateway-designated
-runtime tool call catalog. Copy each evidence `toolCallId` exactly from a
-completed catalog entry and set `module` exactly to that entry's `toolName`.
-Never invent semantic aliases such as `yaml-validation`, `kubectl-get`, or
-`helm-template` when the runtime catalog reports another tool name.
+Each Agent-authored evidence item contains only `subject`, `observedAt`, and
+`toolRef` with the exact runtime tool name and JSON input. The Gateway consumes
+that reference and injects one `toolCall` object with the completed call's
+exact `id`, `tool`, `input`, and `result` from the accepted `turnId`. Missing,
+ambiguous, replayed, or conflicting calls fail. The complete schema and
+validation rules live in
+[`references/execution-contract.md`](references/execution-contract.md).
+Image generation belongs to doagent's multi-agent engine; DoOps neither exposes
+nor invokes it. Deployment evidence should come from the tools that observe,
+build, deploy, or verify the declared release.
 
 When the Ask request requires `response_format=json`, the Gateway appends the
 only permitted machine-result path to the prompt. Write exactly one JSON object

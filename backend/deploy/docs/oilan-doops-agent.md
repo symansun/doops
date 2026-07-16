@@ -66,10 +66,10 @@ and session resource lock.
 
 doagent is the sole Agent executor. It selects existing DoOps modules, observes
 the declared target, and writes the Gateway-designated JSON `DeploymentRun`
-artifact. The Gateway binds every evidence item to a completed ACP tool call and
-computes the result digest. `planned`,
+result file. The Gateway binds every evidence item to a completed ACP tool call
+from the accepted `turnId`. `planned`,
 `converged`, `blocked`, `failed`, and `outcome-unknown` are valid phases.
-`admitted` text, generic attestation, or an Agent claim without structured
+`admitted` text or an Agent claim without structured
 observed data is not evidence. Dry-run mutation count must be zero.
 
 The bridge waits for doagent's authoritative `turn_finished` event. Apply uses

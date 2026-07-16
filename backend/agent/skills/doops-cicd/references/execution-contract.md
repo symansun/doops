@@ -60,10 +60,10 @@ not a successful partial release.
 ## Run Evidence
 
 For an Ask request with `response_format=json`, the Gateway supplies the exact
-session-local artifact path. Write exactly one JSON object to that path using a
+session-local result file path. Write exactly one JSON object to that path using a
 temporary file in the same directory followed by an atomic rename. The terminal
 response is not the machine result. Do not create a YAML result or a second
-artifact.
+result file.
 
 ```json
 {
@@ -83,7 +83,6 @@ artifact.
   "status": {
     "phase": "blocked",
     "mutationCount": 0,
-    "resultDigest": "sha256:resolved-declaration-and-evidence",
     "capabilities": {
       "source-observer": {
         "status": "available",
@@ -96,12 +95,13 @@ artifact.
     "evidence": [
       {
         "subject": "source",
-        "module": "runtime-module-name",
-        "toolCallId": "runtime-tool-call-id",
-        "observedAt": "2026-07-14T00:00:00Z",
-        "result": {
-          "revision": "immutable-identity"
-        }
+        "toolRef": {
+          "tool": "Read",
+          "input": {
+            "path": "release/source.json"
+          }
+        },
+        "observedAt": "2026-07-14T00:00:00Z"
       }
     ],
     "failures": [
@@ -114,21 +114,38 @@ artifact.
 }
 ```
 
-Evidence must contain the runtime module identity, runtime `toolCallId`,
-observation time, declared subject and structured result. Do not store Secret
-values. Every evidence item must reference a completed tool call from this
-doagent turn.
-The Gateway supplies a session-local runtime tool call catalog alongside the
-result path. Read that catalog immediately before writing the result. Copy
-`toolCallId` exactly from a completed entry and set `module` exactly to that
-entry's `toolName`; semantic aliases and invented identifiers are invalid.
+Evidence must contain observation time, a declared subject and a model-visible
+`toolRef`. `toolRef.tool` is the exact runtime tool name and `toolRef.input` is
+the exact JSON input used for that call. Do not store Secret values in tool
+inputs. The Agent-authored evidence object contains exactly `subject`,
+`observedAt`, and `toolRef`. `credentialRun` is instruction-only preparation
+context and must not be copied into the result.
 
 `metadata.workspaceCommit` must equal the commit returned by the preceding
-workspace push. The Gateway adds `status.runtimeAttestation` from completed ACP
-tool-call events and computes `status.resultDigest` from the structured result
-plus that attestation. The Agent must not invent either field. A status message
-or admission text is never a digest input. `status.capabilities` must be a
-non-empty snapshot of the
+workspace push. The Gateway resolves each exact tool-plus-input reference to
+one completed ACP call, removes `toolRef`, and injects:
+
+```json
+{
+  "subject": "source",
+  "observedAt": "2026-07-14T00:00:00Z",
+  "toolCall": {
+    "id": "runtime-call-id",
+    "tool": "Read",
+    "input": {
+      "path": "release/source.json"
+    },
+    "result": {
+      "revision": "immutable-identity"
+    }
+  }
+}
+```
+
+Only updates whose `turnId` equals the accepted prompt turn are eligible.
+Replayed events, conflicting duplicate IDs, unknown, failed, non-terminal or
+ambiguous references are rejected. A status message or admission text is never
+evidence. `status.capabilities` must be a non-empty snapshot of the
 runtime-discovered capabilities, including availability and version or identity
 where reported; missing required capabilities must be represented as blocked
 evidence, not hidden by a fallback.
@@ -136,8 +153,10 @@ evidence, not hidden by a fallback.
 The result is an execution report, not an admission acknowledgement. It must
 not use `admitted` as a terminal phase. A dry-run result must set
 `mutationCount: 0`; an apply result must report the observed mutation count
-and current post-mutation evidence. The runtime attestation binds each evidence
-item to an actual completed tool output digest from the same turn.
+and current post-mutation evidence. Image generation and Agent delegation belong
+to doagent multi-agent execution, not to the DoOps command or module surface.
+Deployment evidence should cite the calls that observe, build, deploy, or verify
+the declared release.
 
 Allowed phases are `planned`, `converged`, `blocked`, `failed` and
 `outcome-unknown`.

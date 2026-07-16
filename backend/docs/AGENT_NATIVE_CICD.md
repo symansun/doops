@@ -3,7 +3,7 @@
 DoOps 不实现 Agent 框架。DoOps keeps CI/CD on the existing Agent-native path:
 
 ```text
-SemanticRelease -> doops push -> Ask -> doagent -> $doops-cicd -> runtime attestation
+SemanticRelease -> doops push -> Ask -> doagent -> $doops-cicd -> runtime tool binding
 ```
 
 There is one Agent-native release path. It does not introduce another controller,
@@ -17,11 +17,11 @@ private deployment API, shell adapter, or external release event.
 | Gateway | Authenticate the target, enforce the session/resource boundary, route Ask, and bind the result to authoritative ACP tool-call events |
 | `doops-agent` | Bind the doagent session to the pushed workspace and expose ordinary DoOps primitives |
 | `doagent` | Select the Skill, coordinate multiple agents, call available modules, and report observed facts |
-| `$doops-cicd` Skill | Read the declarative workflow, select existing DoOps modules, execute dry-run/apply within authorization, and write the Gateway-designated JSON `DeploymentRun` artifact |
+| `$doops-cicd` Skill | Read the declarative workflow, select existing DoOps modules, execute dry-run/apply within authorization, and write the Gateway-designated JSON `DeploymentRun` result file |
 
 DoOps does not implement planning, Skill routing, tool registries, retry loops,
-or recovery policy in a second control plane. The Gateway only attests completed
-runtime tool calls and computes the result digest. doagent
+or recovery policy in a second control plane. The Gateway only binds completed
+runtime tool calls to declared evidence references. doagent
 retains native context, planning, 多 Agent delegation, Skill composition, and
 tool selection.
 
@@ -67,16 +67,16 @@ deployment evidence. It records completed ACP tool calls and rejects evidence
 that does not reference one of those calls.
 
 `response_format=json` remains a generic structured-result transport for callers
-that need it. The bridge only accepts the artifact written by doagent, waits
-for the authoritative `turn_finished` event, adds the runtime tool-call
-attestation, and computes the final result digest.
+that need it. The bridge only accepts the result file written by doagent, waits
+for the authoritative `turn_finished` event, and binds declared evidence to the
+matching completed runtime tool call.
 
 Permission requests from doagent are fail-closed. DoOps never answers a
 `permission.updated` request on behalf of the user or the Agent engine.
 
 ## Skill Result
 
-For `response_format=json`, the Gateway supplies the sole result-artifact path.
+For `response_format=json`, the Gateway supplies the sole result-file path.
 `$doops-cicd` writes exactly one JSON result to that path:
 
 ```json
@@ -92,12 +92,13 @@ For `response_format=json`, the Gateway supplies the sole result-artifact path.
     "evidence": [
       {
         "subject": "source",
-        "module": "source-observer",
-        "toolCallId": "completed-runtime-call",
-        "observedAt": "2026-07-15T00:00:00Z",
-        "result": {
-          "revision": "immutable-revision"
-        }
+        "toolRef": {
+          "tool": "Read",
+          "input": {
+            "path": "release/source.json"
+          }
+        },
+        "observedAt": "2026-07-15T00:00:00Z"
       }
     ]
   }
@@ -107,7 +108,15 @@ For `response_format=json`, the Gateway supplies the sole result-artifact path.
 Valid phases are `planned`, `converged`, `blocked`, `failed`, and
 `outcome-unknown`. A successful result must contain evidence from real module
 outputs. The literal text `admitted`, an Agent-authored attestation, or an Agent
-claim without a completed runtime `toolCallId` is not evidence.
+claim without completed runtime tool calls is not evidence. Agent-authored
+evidence contains exactly `subject`, `observedAt`, and `toolRef`, with the exact
+tool name and JSON input. `credentialRun` is instruction-only preparation
+context and is not copied into the result. The Gateway resolves `toolRef` to one
+completed call from the accepted `turnId` and injects `toolCall` with its exact
+ID, tool, input and result. Conflicting duplicate IDs and ambiguous repeated
+calls are rejected.
+Image generation and Agent delegation belong to doagent multi-agent execution,
+not to the DoOps command or module surface.
 
 The Skill owns the workflow-specific schema and evidence requirements. It must
 use existing DoOps modules and preserve credential boundaries: references and

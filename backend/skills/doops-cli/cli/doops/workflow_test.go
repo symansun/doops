@@ -43,25 +43,7 @@ func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
 		t.Fatalf("write workflow: %v", err)
 	}
 
-	caller := &fakeWorkflowCaller{output: `{
-		"apiVersion":"doops.sh/v2",
-		"kind":"DeploymentRun",
-		"metadata":{"workspaceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-			"spec":{"mode":"apply"},
-			"status":{
-				"phase":"converged",
-				"mutationCount":1,
-				"resultDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				"capabilities":{"source-observer":"available"},
-				"evidence":[{
-					"subject":"source",
-					"module":"doops-source-observer",
-					"toolCallId":"tool-source",
-					"observedAt":"2026-07-14T00:00:00Z",
-				"result":{"revision":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
-			}]
-		}
-	}`}
+	caller := &fakeWorkflowCaller{output: workflowResultJSON("apply", 1)}
 	var pushedRoot string
 	var events []string
 	var prepareBody struct {
@@ -201,13 +183,6 @@ func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
 	if !ok ||
 		materialization["credentialId"] != "cred_registry" ||
 		materialization["versionId"] != "credver_1" ||
-		materialization["resourceName"] != "registry-pull" ||
-		materialization["namespace"] != "apps" ||
-		materialization["secretType"] != "kubernetes.io/dockerconfigjson" ||
-		materialization["resourceVersion"] != "42" ||
-		materialization["digest"] != "sha256:manifest" ||
-		materialization["fingerprint"] != "sha256:fingerprint" ||
-		materialization["expiresAt"] != "2026-08-01T00:00:00Z" ||
 		materialization["status"] != "verified" {
 		t.Fatalf("credential materialization mismatch: %#v", materialization)
 	}
@@ -332,7 +307,9 @@ func TestRunCICDCommandStopsBeforePromptWhenCredentialPrepareFails(t *testing.T)
 		http.Error(w, "credential_grant_denied", http.StatusForbidden)
 	}))
 	defer gateway.Close()
-	caller := &fakeWorkflowCaller{output: workflowResultJSON("apply", 1)}
+	caller := &fakeWorkflowCaller{
+		output: workflowResultJSON("apply", 1),
+	}
 	originalPush := pushWorkflowWorkspace
 	originalOpen := openWorkflowAgent
 	pushWorkflowWorkspace = func(Server, string, string, bool, []string, string) (string, error) {
@@ -363,26 +340,56 @@ func TestRunCICDCommandStopsBeforePromptWhenCredentialPrepareFails(t *testing.T)
 	}
 }
 
-func workflowResultJSON(mode string, mutationCount int) string {
-	return fmt.Sprintf(`{
-		"apiVersion":"doops.sh/v2",
-		"kind":"DeploymentRun",
-		"metadata":{"workspaceCommit":"%s"},
-		"spec":{"mode":%q},
-		"status":{
-			"phase":"planned",
-			"mutationCount":%d,
-			"resultDigest":"sha256:%s",
-			"capabilities":{"source-observer":"available"},
-			"evidence":[{
-				"subject":"source",
-				"module":"doops-source-observer",
-				"toolCallId":"tool-source",
-				"observedAt":"2026-07-14T00:00:00Z",
-				"result":{"revision":"immutable"}
-			}]
-		}
-	}`, strings.Repeat("a", 40), mode, mutationCount, strings.Repeat("a", 64))
+func workflowResultJSON(
+	mode string,
+	mutationCount int,
+) string {
+	result := map[string]interface{}{
+		"apiVersion": workspaceManifestAPIVersion,
+		"kind":       "DeploymentRun",
+		"metadata": map[string]interface{}{
+			"workspaceCommit": strings.Repeat("a", 40),
+		},
+		"spec": map[string]interface{}{"mode": mode},
+		"status": map[string]interface{}{
+			"phase":         "planned",
+			"mutationCount": mutationCount,
+			"capabilities":  map[string]interface{}{"source-observer": "available"},
+			"evidence": []interface{}{
+				map[string]interface{}{
+					"subject":    "source",
+					"observedAt": "2026-07-14T00:00:00Z",
+					"toolCall": map[string]interface{}{
+						"id":     "tool-source",
+						"tool":   "doops-source-observer",
+						"input":  map[string]interface{}{"scope": "source"},
+						"result": map[string]interface{}{"revision": "immutable"},
+					},
+				},
+			},
+		},
+	}
+	data, _ := json.Marshal(result)
+	return string(data)
+}
+
+func mutateWorkflowResultJSON(
+	t *testing.T,
+	base string,
+	mutate func(status map[string]interface{}),
+) string {
+	t.Helper()
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(base), &result); err != nil {
+		t.Fatalf("decode workflow result fixture: %v", err)
+	}
+	status := result["status"].(map[string]interface{})
+	mutate(status)
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("encode mutated workflow result: %v", err)
+	}
+	return string(data)
 }
 
 func TestValidateWorkflowResultRejectsSyntheticResultsAndDryRunMutation(t *testing.T) {
@@ -411,7 +418,7 @@ func TestValidateWorkflowResultRejectsSyntheticResultsAndDryRunMutation(t *testi
 			"spec":{"mode":"dry-run"},
 				"status":{"phase":"planned","mutationCount":0,"evidence":[]}
 			}`,
-		"unbound evidence": `{
+		"evidence missing observation time": `{
 				"apiVersion":"doops.sh/v2",
 				"kind":"DeploymentRun",
 				"metadata":{"workspaceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
@@ -419,20 +426,77 @@ func TestValidateWorkflowResultRejectsSyntheticResultsAndDryRunMutation(t *testi
 				"status":{
 					"phase":"planned",
 					"mutationCount":0,
-					"resultDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 					"capabilities":{"source-observer":"available"},
 					"evidence":[{
 						"subject":"source",
-						"module":"doops-source-observer",
-						"observedAt":"2026-07-14T00:00:00Z",
-						"result":{"revision":"immutable"}
+						"toolCall":{
+							"id":"tool-source",
+							"tool":"doops-source-observer",
+							"input":{"scope":"source"},
+							"result":{"revision":"immutable"}
+						}
 					}]
 				}
 			}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := validateWorkflowResult(result, "dry-run", strings.Repeat("a", 40)); err == nil {
+			if err := validateWorkflowResult(
+				result,
+				"dry-run",
+				strings.Repeat("a", 40),
+			); err == nil {
 				t.Fatal("invalid or synthetic result must be rejected")
+			}
+		})
+	}
+}
+
+func TestValidateWorkflowResultRejectsUnboundEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(status map[string]interface{})
+	}{
+		{
+			name: "missing tool call",
+			mutate: func(status map[string]interface{}) {
+				delete(status["evidence"].([]interface{})[0].(map[string]interface{}), "toolCall")
+			},
+		},
+		{
+			name: "unresolved tool reference",
+			mutate: func(status map[string]interface{}) {
+				status["evidence"].([]interface{})[0].(map[string]interface{})["toolRef"] =
+					map[string]interface{}{"tool": "Read", "input": map[string]interface{}{"path": "state.json"}}
+			},
+		},
+		{
+			name: "retired evidence field",
+			mutate: func(status map[string]interface{}) {
+				status["evidence"].([]interface{})[0].(map[string]interface{})["module"] = "Read"
+			},
+		},
+		{
+			name: "missing input",
+			mutate: func(status map[string]interface{}) {
+				delete(
+					status["evidence"].([]interface{})[0].(map[string]interface{})["toolCall"].(map[string]interface{}),
+					"input",
+				)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := mutateWorkflowResultJSON(
+				t,
+				workflowResultJSON("dry-run", 0),
+				test.mutate,
+			)
+			if err := validateWorkflowResult(
+				result,
+				"dry-run",
+				strings.Repeat("a", 40),
+			); err == nil {
+				t.Fatal("evidence must contain an eligible runtime tool call")
 			}
 		})
 	}

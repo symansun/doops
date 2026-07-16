@@ -984,20 +984,14 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	}
 
 	var structuredResultPath string
-	var runtimeToolCallsPath string
 	if responseFormat == "json" {
 		var err error
 		structuredResultPath, err = prepareDoagentStructuredResult(doopsSessionID)
 		if err != nil {
-			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("prepare structured result artifact: %v", err)))
+			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("prepare structured result file: %v", err)))
 			return
 		}
-		runtimeToolCallsPath = filepath.Join(filepath.Dir(structuredResultPath), "runtime-tool-calls.json")
-		if err := writeDoagentToolTraceCatalog(runtimeToolCallsPath, nil); err != nil {
-			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("prepare runtime tool call catalog: %v", err)))
-			return
-		}
-		instr = appendDoagentStructuredResultContract(instr, structuredResultPath, runtimeToolCallsPath)
+		instr = appendDoagentStructuredResultContract(instr, structuredResultPath)
 	}
 
 	// 查找已有的 doagent session 映射
@@ -1099,7 +1093,8 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 
 	sseDone := make(chan error, 1)
 	sseReady := make(chan error, 1)
-	toolTraces := newDoagentToolTraceCollector(runtimeToolCallsPath)
+	turnIDReady := make(chan string, 1)
+	toolTraces := newDoagentToolTraceCollector()
 	go func() {
 		sseDone <- subscribeDoagentSSEWithCollectorReady(
 			sseCtx,
@@ -1107,6 +1102,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			targetSessionID,
 			pushProgress,
 			toolTraces.collect,
+			turnIDReady,
 			sseReady,
 		)
 	}()
@@ -1115,23 +1111,34 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		return
 	}
 
-	// session/prompt 的同步响应只代表 admission；终态仍以 SSE turn_finished 为准。
-	if _, err := doagentRPC(doagentURL, map[string]interface{}{
+	// session/prompt 只返回本轮 turnId；终态仍以同 turn 的 SSE turn_finished 为准。
+	promptResponse, err := doagentRPC(doagentURL, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      "prompt-" + doopsSessionID,
 		"method":  "session/prompt",
 		"params": map[string]interface{}{
-			"sessionId": targetSessionID,
-			"prompt":    instr,
+			"sessionId":    targetSessionID,
+			"prompt":       instr,
+			"responseMode": "stream",
 		},
-	}); err != nil {
+	})
+	if err != nil {
 		sseCancel()
 		<-sseDone
 		writeJSON(buildErrorResponse(reqID, -32603, "doagent session/prompt failed: "+err.Error()))
 		return
 	}
+	turnID, err := doagentPromptTurnID(promptResponse)
+	if err != nil {
+		sseCancel()
+		<-sseDone
+		writeJSON(buildErrorResponse(reqID, -32603, "doagent session/prompt returned invalid admission: "+err.Error()))
+		return
+	}
+	turnIDReady <- turnID
+	close(turnIDReady)
 
-	// 等待权威 turn_finished 终态或错误。
+	// 等待本轮权威 turn_finished 终态或错误。
 	if err := <-sseDone; err != nil && err != context.Canceled {
 		errMsg := fmt.Sprintf("doagent execution error: %v", err)
 		log.Printf("⚠️ %s", errMsg)
@@ -1145,15 +1152,15 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	if responseFormat == "json" {
 		resultText, structuredContent, err := readDoagentStructuredResult(structuredResultPath)
 		if err != nil {
-			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("read structured result artifact: %v", err)))
+			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("read structured result file: %v", err)))
 			return
 		}
-		resultText, structuredContent, err = attestDeploymentRun(
+		resultText, structuredContent, err = bindDeploymentRunEvidence(
 			structuredContent,
 			toolTraces.completed(),
 		)
 		if err != nil {
-			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("attest structured result artifact: %v", err)))
+			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("bind structured result file: %v", err)))
 			return
 		}
 		writeJSON(buildStructuredSuccessResponse(reqID, resultText, structuredContent))
@@ -1580,11 +1587,6 @@ func doagentRPC(baseURL string, payload map[string]interface{}) (map[string]inte
 	}
 	defer resp.Body.Close()
 
-	// 202 Accepted = 异步执行，无需等待完整 body
-	if resp.StatusCode == http.StatusAccepted {
-		return map[string]interface{}{"status": "accepted"}, nil
-	}
-
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
@@ -1602,7 +1604,23 @@ func doagentRPC(baseURL string, payload map[string]interface{}) (map[string]inte
 	return result, nil
 }
 
-type doagentSSECollector func(update map[string]interface{}) (handled bool, completed bool, err error)
+func doagentPromptTurnID(response map[string]interface{}) (string, error) {
+	result, ok := response["result"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("result must be an object")
+	}
+	status, _ := result["status"].(string)
+	if status != "accepted" && status != "queued" {
+		return "", fmt.Errorf("result.status must be accepted or queued")
+	}
+	turnID, _ := result["turnId"].(string)
+	if strings.TrimSpace(turnID) == "" {
+		return "", fmt.Errorf("result.turnId is required")
+	}
+	return turnID, nil
+}
+
+type doagentSSECollector func(update map[string]interface{}) error
 
 func doagentAgentMessageText(content interface{}) (string, error) {
 	switch value := content.(type) {
@@ -1639,6 +1657,7 @@ func doagentAgentMessageText(content interface{}) (string, error) {
 
 func decodeDoagentJSONObject(text string) (map[string]interface{}, error) {
 	decoder := json.NewDecoder(strings.NewReader(text))
+	decoder.UseNumber()
 	var object map[string]interface{}
 	if err := decoder.Decode(&object); err != nil {
 		return nil, err
@@ -1690,14 +1709,14 @@ func ensureDoagentResultDirectory(path string) error {
 	return nil
 }
 
-func appendDoagentStructuredResultContract(instruction, resultPath, runtimeToolCallsPath string) string {
+func appendDoagentStructuredResultContract(instruction, resultPath string) string {
 	contract := instruction + "\n\nMachine-readable result channel: before your final response, write the same final JSON object to " +
 		resultPath + " using a temporary file in that directory followed by an atomic rename. " +
 		"The file must contain exactly one JSON object with no Markdown or surrounding text. " +
-		"Immediately before writing that object, read " + runtimeToolCallsPath + ". " +
-		"For every evidence item, copy toolCallId exactly from a completed entry in that catalog and set module exactly to that entry's toolName. " +
-		"Do not invent, abbreviate, alias, or predict runtime tool call identifiers. " +
-		"The terminal response is not used as the machine result."
+		"The terminal response is not used as the machine result. " +
+		"If the object is a DeploymentRun, every evidence item must contain exactly subject, observedAt, and toolRef; " +
+		"toolRef.tool is the exact runtime tool name and toolRef.input is the exact JSON input used for that call. " +
+		"The Gateway consumes toolRef and injects toolCall with the completed runtime call's exact id, tool, input, and result."
 	return contract
 }
 
@@ -1705,24 +1724,24 @@ func readDoagentStructuredResult(path string) (string, map[string]interface{}, e
 	info, err := os.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", nil, fmt.Errorf("structured result artifact was not created")
+			return "", nil, fmt.Errorf("structured result file was not created")
 		}
-		return "", nil, fmt.Errorf("inspect structured result artifact: %w", err)
+		return "", nil, fmt.Errorf("inspect structured result file: %w", err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return "", nil, fmt.Errorf("structured result artifact must be a regular file")
+		return "", nil, fmt.Errorf("structured result file must be a regular file")
 	}
 	if info.Size() > maxFileReadBytes() {
-		return "", nil, fmt.Errorf("structured result artifact size %d exceeds limit %d", info.Size(), maxFileReadBytes())
+		return "", nil, fmt.Errorf("structured result file size %d exceeds limit %d", info.Size(), maxFileReadBytes())
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", nil, fmt.Errorf("read structured result artifact: %w", err)
+		return "", nil, fmt.Errorf("read structured result file: %w", err)
 	}
 	text := string(data)
 	object, err := decodeDoagentJSONObject(text)
 	if err != nil {
-		return "", nil, fmt.Errorf("structured result artifact must contain one JSON object: %w", err)
+		return "", nil, fmt.Errorf("structured result file must contain one JSON object: %w", err)
 	}
 	return text, object, nil
 }
@@ -1734,7 +1753,7 @@ func subscribeDoagentSSE(ctx context.Context, baseURL string, sessionID string, 
 }
 
 func subscribeDoagentSSEWithCollector(ctx context.Context, baseURL string, sessionID string, pushProgress notificationSender, collector doagentSSECollector) error {
-	return subscribeDoagentSSEWithCollectorReady(ctx, baseURL, sessionID, pushProgress, collector, nil)
+	return subscribeDoagentSSEWithCollectorReady(ctx, baseURL, sessionID, pushProgress, collector, nil, nil)
 }
 
 func subscribeDoagentSSEWithCollectorReady(
@@ -1743,6 +1762,7 @@ func subscribeDoagentSSEWithCollectorReady(
 	sessionID string,
 	pushProgress notificationSender,
 	collector doagentSSECollector,
+	targetTurnIDReady <-chan string,
 	ready chan<- error,
 ) error {
 	ctx, cancel := context.WithCancel(ctx)
@@ -1783,6 +1803,7 @@ func subscribeDoagentSSEWithCollectorReady(
 
 	var eventData strings.Builder
 	receivedEvent := false
+	targetTurnID := ""
 	idleTimeout := doagentSSEIdleTimeout()
 	idleTimer := time.NewTimer(idleTimeout)
 	idleDone := make(chan struct{})
@@ -1838,8 +1859,8 @@ func subscribeDoagentSSEWithCollectorReady(
 			resetIdle()
 
 			// doagent SSE 使用 JSON-RPC 2.0 通知格式：{"jsonrpc":"2.0","method":"...","params":{...}}
-			var update map[string]interface{}
-			if json.Unmarshal([]byte(data), &update) != nil {
+			update, err := decodeDoagentJSONObject(data)
+			if err != nil {
 				pushProgress(rawNotification(data))
 				continue
 			}
@@ -1851,16 +1872,29 @@ func subscribeDoagentSSEWithCollectorReady(
 			case "session/update":
 				// session/update 包含不同类型的更新
 				sessionUpdate, _ := params["update"].(map[string]interface{})
-				if collector != nil {
-					handled, completed, err := collector(sessionUpdate)
-					if err != nil {
-						return err
+				if targetTurnIDReady != nil {
+					if targetTurnID == "" {
+						select {
+						case turnID, ok := <-targetTurnIDReady:
+							if !ok || strings.TrimSpace(turnID) == "" {
+								return fmt.Errorf("doagent prompt turn scope was not established")
+							}
+							targetTurnID = turnID
+						case <-ctx.Done():
+							return ctx.Err()
+						}
 					}
-					if completed {
-						return nil
-					}
-					if handled {
+					eventTurnID, _ := sessionUpdate["turnId"].(string)
+					if strings.TrimSpace(eventTurnID) == "" {
 						continue
+					}
+					if eventTurnID != targetTurnID {
+						continue
+					}
+				}
+				if collector != nil {
+					if err := collector(sessionUpdate); err != nil {
+						return err
 					}
 				}
 				updateType, _ := sessionUpdate["sessionUpdate"].(string)

@@ -62,7 +62,7 @@ by the CLI. Ordinary prompts cannot request the mutation-capable mode.
 
 ## Result
 
-Before its terminal response, doagent writes one JSON artifact to the
+Before its terminal response, doagent writes one JSON result file to the
 Gateway-designated session path:
 
 ```json
@@ -85,8 +85,13 @@ Gateway-designated session path:
 ```
 
 The Gateway rejects missing, symlinked, oversized, Markdown-wrapped, or
-non-object artifacts. It binds every evidence item to a completed ACP tool call,
-adds runtime attestation, and computes `status.resultDigest`.
+non-object result files. Agent-authored evidence uses `toolRef` with an exact
+tool name and exact JSON input. The Gateway rejects model-authored runtime
+payloads, resolves every reference to one completed tool call from the accepted
+`turnId`, and injects `toolCall` with the exact ID, tool, input and result.
+Conflicting duplicate IDs, replayed events, missing calls or ambiguous
+references fail. Image generation belongs to doagent multi-agent execution;
+DoOps does not expose or invoke it.
 
 The CLI accepts only `doops.sh/v2` `DeploymentRun` results whose:
 
