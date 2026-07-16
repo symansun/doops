@@ -135,6 +135,8 @@ doops targets --target unicom
 | 工作区清理 | `doops -session <s> clean --target <t>` |
 | 升级在线 agent | `doops -session <s> upgrade ... --dry-run` |
 | 管理员签发 token | `doops admin token create --target <t> --user <u> --name <label> --expires 720h` |
+| 管理员查看 token | `doops admin token list --target <t> [--kind user\|agent]` |
+| 管理员撤销 token | `doops admin token revoke --target <t> --id <token-id>` |
 
 大文件、压缩包、数据库导出、图片、视频、课程资源包等资产，用 `pull` 拉取整个 session 工作区。不要用 `read`，也不要让 `exec` 输出 base64。
 
@@ -149,6 +151,7 @@ doops admin token create \
 ```
 
 `--target` 负责选择 gateway 地址和当前管理员 token。新 token 只打印一次；如需写入本机 token 缓存，显式加 `--save-as <target-name>`。
+轮换时先创建并缓存新 token，再用 `admin token list` 按 ID/前缀确认旧 token，最后执行 `admin token revoke`。管理员 token 不得通过命令行参数传入。
 
 完整命令说明和示例见 `docs/DOOPS_USAGE_GUIDE.md`。
 

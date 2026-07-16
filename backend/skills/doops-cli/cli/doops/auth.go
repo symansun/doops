@@ -88,6 +88,23 @@ type gatewayAdminTokenCreateResponse struct {
 	Username  string `json:"username"`
 }
 
+type gatewayAdminTokenInfo struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	UserName  string `json:"user_name,omitempty"`
+	Name      string `json:"name"`
+	Prefix    string `json:"prefix"`
+	Cluster   string `json:"cluster,omitempty"`
+	Instance  string `json:"instance,omitempty"`
+	Revoked   bool   `json:"revoked"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+	CreatedAt string `json:"created_at"`
+}
+
+type gatewayAdminTokensResponse struct {
+	Tokens []gatewayAdminTokenInfo `json:"tokens"`
+}
+
 type gatewayActiveOperation struct {
 	ID             string `json:"id"`
 	UserID         string `json:"user_id"`
@@ -200,6 +217,62 @@ func GatewayAdminTokenCreate(gateway, adminToken string, create gatewayAdminToke
 	return parsed, nil
 }
 
+func GatewayAdminTokensList(gateway, adminToken, kind string) ([]gatewayAdminTokenInfo, error) {
+	listURL, err := gatewayAdminTokensURL(gateway, strings.TrimSpace(kind), "")
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodGet, listURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(adminToken) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(adminToken))
+	}
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("gateway admin token list failed: HTTP %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+	}
+	var parsed gatewayAdminTokensResponse
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return nil, err
+	}
+	return parsed.Tokens, nil
+}
+
+func GatewayAdminTokenRevoke(gateway, adminToken, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("token id is required")
+	}
+	revokeURL, err := gatewayAdminTokensURL(gateway, "", id)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodDelete, revokeURL, nil)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(adminToken) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(adminToken))
+	}
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("gateway admin token revoke failed: HTTP %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
+
 func GatewayAdminOperationsList(gateway, adminToken string) ([]gatewayActiveOperation, error) {
 	opsURL, err := gatewayAdminOperationsURL(gateway, "")
 	if err != nil {
@@ -289,6 +362,17 @@ func gatewayAuthLoginURL(rawGateway string) (string, error) {
 
 func gatewayAdminTokenCreateURL(rawGateway string) (string, error) {
 	return gatewayURLWithPath(rawGateway, "/v1/admin/tokens", nil)
+}
+
+func gatewayAdminTokensURL(rawGateway, kind, id string) (string, error) {
+	values := url.Values{}
+	if strings.TrimSpace(kind) != "" {
+		values.Set("kind", strings.TrimSpace(kind))
+	}
+	if strings.TrimSpace(id) != "" {
+		values.Set("id", strings.TrimSpace(id))
+	}
+	return gatewayURLWithPath(rawGateway, "/v1/admin/tokens", values)
 }
 
 func gatewayAdminOperationsURL(rawGateway, id string) (string, error) {

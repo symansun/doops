@@ -114,9 +114,16 @@ doops admin token create \
   --expires 720h
 ```
 
-`--target` 用于选择本机配置里的 gateway 地址和管理员 token；也可以显式传
-`--gateway` 和 `--token`。如需把新 token 写入本机缓存，必须显式加
+`--target` 用于选择本机配置里的 gateway 地址和管理员 token。管理员 token
+不得通过命令行参数传入。如需把新 token 写入本机缓存，必须显式加
 `--save-as <configured-target>`。
+
+轮换旧 token：
+
+```bash
+doops admin token list --target <gateway-target> --kind user
+doops admin token revoke --target <gateway-target> --id <token-id>
+```
 
 管理员能力应覆盖：
 
