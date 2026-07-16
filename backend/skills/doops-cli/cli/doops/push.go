@@ -32,7 +32,7 @@ var immutableGitCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var (
 	gitAuthCleanupOnce   sync.Once
 	gitAuthCleanupMu     sync.Mutex
-	gitAuthCleanupDirs   = make(map[string]struct{})
+	signalCleanupDirs    = make(map[string]struct{})
 	activeGitProcesses   = make(map[int]struct{})
 	gitShutdownRequested bool
 )
@@ -119,8 +119,7 @@ func pushWorkspaceSnapshotWithSource(
 	if err != nil {
 		return "", fmt.Errorf("创建幽灵临时目录失败: %v", err)
 	}
-	// 进程退出时挫骨扬灰，实现真正的无痕搬运
-	defer os.RemoveAll(tmpDir)
+	defer cleanupSignalDirectory(tmpDir)
 
 	start := time.Now()
 	fmt.Printf("🧊 正在构建本地隔离快照（大型仓库首次扫描可能较慢）...\n")
@@ -229,7 +228,18 @@ func pushWorkspaceSnapshotWithSource(
 }
 
 func createWorkspaceSnapshotDirectory(sessionID string) (string, error) {
-	return os.MkdirTemp("", "doops-sync-"+sessionID+"-")
+	ensureSignalCleanupHandler()
+	gitAuthCleanupMu.Lock()
+	defer gitAuthCleanupMu.Unlock()
+	if gitShutdownRequested {
+		return "", fmt.Errorf("workspace snapshot canceled by shutdown")
+	}
+	dir, err := os.MkdirTemp("", "doops-sync-"+sessionID+"-")
+	if err != nil {
+		return "", err
+	}
+	signalCleanupDirs[dir] = struct{}{}
+	return dir, nil
 }
 
 func createWorkspaceSnapshotCommit(root string, source *WorkspaceSourceIdentity) (string, error) {
@@ -423,19 +433,28 @@ func prepareGitAuthEnvironment(token string) ([]string, func(), error) {
 		return env, func() {}, nil
 	}
 
+	ensureSignalCleanupHandler()
+	gitAuthCleanupMu.Lock()
+	if gitShutdownRequested {
+		gitAuthCleanupMu.Unlock()
+		return nil, nil, fmt.Errorf("Git authentication canceled by shutdown")
+	}
 	buildingDir, err := os.MkdirTemp("", ".doops-git-auth-")
 	if err != nil {
+		gitAuthCleanupMu.Unlock()
 		return nil, nil, fmt.Errorf("create Git authentication directory: %w", err)
 	}
 	lockPath := filepath.Join(buildingDir, "active.lock")
 	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		_ = os.RemoveAll(buildingDir)
+		gitAuthCleanupMu.Unlock()
 		return nil, nil, fmt.Errorf("create Git authentication lock: %w", err)
 	}
 	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = lockFile.Close()
 		_ = os.RemoveAll(buildingDir)
+		gitAuthCleanupMu.Unlock()
 		return nil, nil, fmt.Errorf("lock Git authentication directory: %w", err)
 	}
 	authDir := filepath.Join(
@@ -446,16 +465,15 @@ func prepareGitAuthEnvironment(token string) ([]string, func(), error) {
 		_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
 		_ = lockFile.Close()
 		_ = os.RemoveAll(buildingDir)
+		gitAuthCleanupMu.Unlock()
 		return nil, nil, fmt.Errorf("activate Git authentication directory: %w", err)
 	}
-	registerGitAuthCleanup(authDir)
+	signalCleanupDirs[authDir] = struct{}{}
+	gitAuthCleanupMu.Unlock()
 	cleanup := func() {
-		unregisterGitAuthCleanup(authDir)
 		_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
 		_ = lockFile.Close()
-		if err := os.RemoveAll(authDir); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: remove Git authentication directory: %v\n", err)
-		}
+		cleanupSignalDirectory(authDir)
 	}
 	tokenPath := filepath.Join(authDir, "token")
 	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
@@ -478,10 +496,7 @@ esac
 	return env, cleanup, nil
 }
 
-func registerGitAuthCleanup(dir string) {
-	gitAuthCleanupMu.Lock()
-	gitAuthCleanupDirs[dir] = struct{}{}
-	gitAuthCleanupMu.Unlock()
+func ensureSignalCleanupHandler() {
 	gitAuthCleanupOnce.Do(func() {
 		signals := make(chan os.Signal, 1)
 		signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
@@ -489,8 +504,8 @@ func registerGitAuthCleanup(dir string) {
 			sig := <-signals
 			gitAuthCleanupMu.Lock()
 			gitShutdownRequested = true
-			dirs := make([]string, 0, len(gitAuthCleanupDirs))
-			for dir := range gitAuthCleanupDirs {
+			dirs := make([]string, 0, len(signalCleanupDirs))
+			for dir := range signalCleanupDirs {
 				dirs = append(dirs, dir)
 			}
 			pids := make([]int, 0, len(activeGitProcesses))
@@ -554,10 +569,14 @@ func terminateGitProcessGroups(pids []int) {
 	}
 }
 
-func unregisterGitAuthCleanup(dir string) {
+func cleanupSignalDirectory(dir string) {
 	gitAuthCleanupMu.Lock()
-	delete(gitAuthCleanupDirs, dir)
+	err := os.RemoveAll(dir)
+	delete(signalCleanupDirs, dir)
 	gitAuthCleanupMu.Unlock()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: remove temporary directory: %v\n", err)
+	}
 }
 
 func cleanupDeadGitAuthDirectories() {

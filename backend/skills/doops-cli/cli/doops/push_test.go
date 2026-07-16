@@ -413,12 +413,12 @@ func TestWorkspaceSnapshotDirectoriesAreIsolatedPerPush(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create first snapshot directory: %v", err)
 	}
-	defer os.RemoveAll(first)
+	defer cleanupSignalDirectory(first)
 	second, err := createWorkspaceSnapshotDirectory("shared-session")
 	if err != nil {
 		t.Fatalf("create second snapshot directory: %v", err)
 	}
-	defer os.RemoveAll(second)
+	defer cleanupSignalDirectory(second)
 	if first == second {
 		t.Fatalf("concurrent pushes reused snapshot directory %s", first)
 	}

@@ -15,7 +15,11 @@
 固定发布入口：
 
 ```bash
-bash scripts/deploy-gateway.sh --host 106.54.197.139 --user ubuntu
+bash scripts/deploy-gateway.sh \
+  --host 106.54.197.139 \
+  --user ubuntu \
+  --verify-target gw-edu-coder \
+  --verify-session gateway-release-<release>
 ```
 
 当前 gateway 维护主机：
@@ -33,7 +37,8 @@ bash scripts/deploy-gateway.sh --host 106.54.197.139 --user ubuntu
 4. 备份 `/usr/local/bin/doops-gateway`。
 5. 替换二进制并重启 gateway。
 6. 校验 `/proc/<pid>/exe` hash 与本地构建一致。
-7. 校验 `/v1/targets` 未认证访问返回 `401`；可选用 `--verify-token` 校验认证访问返回 `200`。
+7. 校验 `/v1/targets` 未认证访问返回 `401`，并通过 `--verify-target` 复用 DoOps 已配置认证，
+   确认发布前的全部 target 均已重新连接；不得为发布导出或新建明文 token 文件。
 
 禁止事项：
 

@@ -37,7 +37,11 @@ gateway 是统一公网控制面：
 维护凭据不得写入仓库。需要发布 gateway 时使用：
 
 ```bash
-bash scripts/deploy-gateway.sh --host 106.54.197.139 --user ubuntu
+bash scripts/deploy-gateway.sh \
+  --host 106.54.197.139 \
+  --user ubuntu \
+  --verify-target gw-edu-coder \
+  --verify-session gateway-release-<release>
 ```
 
 第一版是 SQLite + 单活可靠部署：
@@ -73,12 +77,17 @@ gateway 是独立发布包，不登记为 doops target，也不通过任何 targ
 标准发布入口：
 
 ```bash
-bash scripts/deploy-gateway.sh --host <gateway-host> --user <ssh-user>
+bash scripts/deploy-gateway.sh \
+  --host <gateway-host> \
+  --user <ssh-user> \
+  --verify-target <configured-doops-target> \
+  --verify-session <session-name>
 ```
 
 脚本只走 SSH/SCP，并在宿主机真实 root 下校验 DB、备份二进制、替换、重启和
-校验 `/proc/<pid>/exe` hash。不要用 `doops exec/push/write` 或 base64 分片部署
-`doops-gateway`。
+校验 `/proc/<pid>/exe` hash。`--verify-target` 只用于复用本机 DoOps CLI 的认证检查
+发布前后 target 基线，不通过 target 传输或替换 Gateway。不要用
+`doops exec/push/write` 或 base64 分片部署 `doops-gateway`。
 
 手工构建入口在仓库一级目录 `gateway/`：
 

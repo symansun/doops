@@ -24,3 +24,12 @@ def test_gateway_deploy_bootstraps_external_key_only_without_existing_ciphertext
     assert "payload_ciphertext" in text
     assert "secrets.token_hex(32)" in text
     assert "gateway encrypted data exists but no legacy secret key is available" in text
+
+
+def test_gateway_deploy_can_verify_with_configured_doops_target_without_exporting_token():
+    text = DEPLOY.read_text()
+
+    assert "--verify-target" in text
+    assert "--verify-session" in text
+    assert 'doops -session "${VERIFY_SESSION}" targets --target "${VERIFY_TARGET}"' in text
+    assert "--verify-token-file and --verify-target are mutually exclusive" in text
