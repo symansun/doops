@@ -17,8 +17,35 @@ func TestRejectSensitiveToolResultRejectsSecretValuesWithoutSensitiveKeys(t *tes
 	}
 }
 
+func TestPublicDoagentToolResultStillRejectsSensitivePublicFields(t *testing.T) {
+	result, err := stableDoagentJSON(map[string]interface{}{
+		"structuredContent": map[string]interface{}{"token": "synthetic-secret"},
+		"_meta": map[string]interface{}{
+			"doops.sh/tool-attestation": map[string]interface{}{
+				"canonicalScope": map[string]interface{}{
+					"registryCredential": map[string]interface{}{"name": "reference-only"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("encode result: %v", err)
+	}
+	if _, err := publicDoagentToolResult(doagentToolTrace{resultJSON: result}); err == nil {
+		t.Fatal("sensitive public result field was accepted")
+	}
+}
+
 func TestDoagentToolTraceCollectorRequiresMatchingTrustedAttestationForCICD(t *testing.T) {
-	scope := map[string]interface{}{"repository": "example/repo"}
+	scope := map[string]interface{}{
+		"repository": "example/repo",
+		"releasePlan": map[string]interface{}{
+			"registryCredential": map[string]interface{}{
+				"kind": "Secret",
+				"name": "registry-reference",
+			},
+		},
+	}
 	scopeDigest, err := digestJSON(scope)
 	if err != nil {
 		t.Fatalf("digest scope: %v", err)

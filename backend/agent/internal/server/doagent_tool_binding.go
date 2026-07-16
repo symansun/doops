@@ -519,11 +519,22 @@ func publicDoagentToolResult(trace doagentToolTrace) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	if resultObject, ok := result.(map[string]interface{}); ok {
+		if metadata, exists := resultObject["_meta"]; exists {
+			attestationOnly := false
+			if meta, ok := metadata.(map[string]interface{}); ok && len(meta) == 1 {
+				_, attestationOnly = meta["doops.sh/tool-attestation"].(map[string]interface{})
+			}
+			if !attestationOnly {
+				if err := rejectSensitiveToolResult(metadata); err != nil {
+					return nil, err
+				}
+			}
+			delete(resultObject, "_meta")
+		}
+	}
 	if err := rejectSensitiveToolResult(result); err != nil {
 		return nil, err
-	}
-	if resultObject, ok := result.(map[string]interface{}); ok {
-		delete(resultObject, "_meta")
 	}
 	return result, nil
 }
