@@ -860,7 +860,16 @@ func buildDoopsPlanAttestedResult(
 	} else {
 		payload["ok"] = true
 	}
-	publicResultDigest, err := digestJSON(payload)
+	text, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]interface{}{
+		"content":           []interface{}{map[string]interface{}{"type": "text", "text": string(text)}},
+		"structuredContent": payload,
+		"isError":           toolErr != nil,
+	}
+	resultDigest, err := digestJSON(result)
 	if err != nil {
 		return nil, err
 	}
@@ -871,7 +880,7 @@ func buildDoopsPlanAttestedResult(
 	if err != nil {
 		return nil, err
 	}
-	nativeAttestation := map[string]interface{}{
+	attestation := map[string]interface{}{
 		"schemaVersion":        doopsPlanAttestationSchema,
 		"contextSchemaVersion": callContext.Context.SchemaVersion,
 		"operationId":          callContext.Context.OperationID,
@@ -887,33 +896,12 @@ func buildDoopsPlanAttestedResult(
 		"canonicalScope":       callContext.Capability.CanonicalScope,
 		"scopeDigest":          callContext.Capability.ScopeDigest,
 		"inputDigest":          inputDigest,
-		"publicResultDigest":   publicResultDigest,
+		"resultDigest":         resultDigest,
 	}
-	nativeMeta := map[string]interface{}{
-		"doops.sh/tool-attestation": nativeAttestation,
+	meta := map[string]interface{}{
+		"doops.sh/tool-attestation": attestation,
 	}
-	payload["_meta"] = nativeMeta
-	text, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	result := map[string]interface{}{
-		"content":           []interface{}{map[string]interface{}{"type": "text", "text": string(text)}},
-		"structuredContent": payload,
-		"isError":           toolErr != nil,
-	}
-	envelopeResultDigest, err := digestJSON(result)
-	if err != nil {
-		return nil, err
-	}
-	envelopeAttestation := make(map[string]interface{}, len(nativeAttestation)+1)
-	for key, value := range nativeAttestation {
-		envelopeAttestation[key] = value
-	}
-	envelopeAttestation["resultDigest"] = envelopeResultDigest
-	result["_meta"] = map[string]interface{}{
-		"doops.sh/tool-attestation": envelopeAttestation,
-	}
+	result["_meta"] = meta
 	return result, nil
 }
 
