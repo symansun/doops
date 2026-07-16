@@ -34,7 +34,6 @@ spec:
       repository: https://example.test/app.git
       revision: ${inputs.releaseId}
       branch: main
-    version: ${inputs.releaseId}
   environment: production
   configurationSource: deploy/environments.yaml
 `)
