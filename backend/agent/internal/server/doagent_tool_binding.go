@@ -10,20 +10,43 @@ import (
 )
 
 type doagentToolTrace struct {
-	ToolCallID string
-	ToolName   string
-	Status     string
-	inputJSON  json.RawMessage
-	resultJSON json.RawMessage
+	ToolCallID           string
+	ToolName             string
+	Status               string
+	AttestationSchema    string
+	ContextSchema        string
+	OperationID          string
+	ContextDigest        string
+	PlanDigest           string
+	PlanBindingDigest    string
+	ExecutionMode        string
+	MutationAuthorized   *bool
+	CapabilityKey        string
+	AttestedTool         string
+	EvidenceKind         string
+	EvidenceSubject      string
+	CanonicalScope       map[string]interface{}
+	ScopeDigest          string
+	InputDigest          string
+	AttestedResultDigest string
+	inputJSON            json.RawMessage
+	resultJSON           json.RawMessage
 }
 
 type doagentToolTraceCollector struct {
-	mu    sync.Mutex
-	calls map[string]doagentToolTrace
+	mu       sync.Mutex
+	calls    map[string]doagentToolTrace
+	expected *trustedReconciliationContext
 }
 
-func newDoagentToolTraceCollector() *doagentToolTraceCollector {
-	return &doagentToolTraceCollector{calls: make(map[string]doagentToolTrace)}
+func newDoagentToolTraceCollector(
+	admission ...*trustedReconciliationAdmission,
+) *doagentToolTraceCollector {
+	collector := &doagentToolTraceCollector{calls: make(map[string]doagentToolTrace)}
+	if len(admission) > 0 && admission[0] != nil {
+		collector.expected = &admission[0].Context
+	}
+	return collector
 }
 
 func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error {
@@ -74,6 +97,24 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 		}
 		trace.resultJSON = encoded
 	}
+	trace.AttestationSchema, _ = update["attestationSchemaVersion"].(string)
+	trace.ContextSchema, _ = update["contextSchemaVersion"].(string)
+	trace.OperationID, _ = update["operationId"].(string)
+	trace.ContextDigest, _ = update["contextDigest"].(string)
+	trace.PlanDigest, _ = update["planDigest"].(string)
+	trace.PlanBindingDigest, _ = update["planBindingDigest"].(string)
+	trace.ExecutionMode, _ = update["executionMode"].(string)
+	if value, ok := update["mutationAuthorized"].(bool); ok {
+		trace.MutationAuthorized = &value
+	}
+	trace.CapabilityKey, _ = update["capabilityKey"].(string)
+	trace.AttestedTool, _ = update["attestedTool"].(string)
+	trace.EvidenceKind, _ = update["evidenceKind"].(string)
+	trace.EvidenceSubject, _ = update["evidenceSubject"].(string)
+	trace.CanonicalScope, _ = update["canonicalScope"].(map[string]interface{})
+	trace.ScopeDigest, _ = update["scopeDigest"].(string)
+	trace.InputDigest, _ = update["inputDigest"].(string)
+	trace.AttestedResultDigest, _ = update["resultDigest"].(string)
 	c.calls[toolCallID] = trace
 	return nil
 }
@@ -84,14 +125,109 @@ func (c *doagentToolTraceCollector) completed() []doagentToolTrace {
 
 	traces := make([]doagentToolTrace, 0, len(c.calls))
 	for _, trace := range c.calls {
-		if trace.Status == "completed" &&
-			trace.ToolName != "" &&
-			len(trace.inputJSON) != 0 &&
-			len(trace.resultJSON) != 0 {
+		if trace.eligibleForContext(c.expected) {
 			traces = append(traces, trace)
 		}
 	}
 	return traces
+}
+
+func (trace doagentToolTrace) eligibleForContext(expected *trustedReconciliationContext) bool {
+	if trace.Status != "completed" ||
+		trace.ToolName == "" ||
+		len(trace.inputJSON) == 0 ||
+		len(trace.resultJSON) == 0 {
+		return false
+	}
+	if expected == nil {
+		return true
+	}
+	if expected.ValidateDigest() != nil ||
+		trace.AttestationSchema != "doops.tool-attestation/v1" ||
+		trace.ContextSchema != expected.SchemaVersion ||
+		trace.OperationID != expected.OperationID ||
+		trace.ContextDigest != expected.ContextDigest ||
+		trace.PlanDigest != expected.PlanDigest ||
+		trace.PlanBindingDigest != expected.PlanBindingDigest ||
+		trace.ExecutionMode != expected.ExecutionMode ||
+		trace.MutationAuthorized == nil ||
+		*trace.MutationAuthorized != expected.MutationAuthorized {
+		return false
+	}
+	capability, ok := expected.Capabilities[trace.CapabilityKey]
+	if !ok ||
+		trace.ToolName != "mcp_doops_plan_"+capability.Tool ||
+		trace.AttestedTool != capability.Tool ||
+		trace.EvidenceKind != capability.EvidenceKind ||
+		trace.EvidenceSubject != capability.EvidenceSubject ||
+		trace.ScopeDigest != capability.ScopeDigest ||
+		!validSHA256Digest(trace.InputDigest) ||
+		!validSHA256Digest(trace.AttestedResultDigest) {
+		return false
+	}
+	expectedScopeDigest, err := digestJSON(capability.CanonicalScope)
+	if err != nil || expectedScopeDigest != trace.ScopeDigest {
+		return false
+	}
+	actualScopeDigest, err := digestJSON(trace.CanonicalScope)
+	if err != nil || actualScopeDigest != trace.ScopeDigest {
+		return false
+	}
+	input, err := decodeDoagentJSONValue(trace.inputJSON)
+	if err != nil {
+		return false
+	}
+	arguments, ok := input.(map[string]interface{})
+	if !ok || len(arguments) != 0 {
+		return false
+	}
+	expectedInputDigest, err := digestJSON(map[string]interface{}{
+		"arguments":     arguments,
+		"capabilityKey": trace.CapabilityKey,
+		"contextDigest": expected.ContextDigest,
+		"tool":          capability.Tool,
+	})
+	if err != nil || expectedInputDigest != trace.InputDigest {
+		return false
+	}
+	result, err := decodeDoagentJSONValue(trace.resultJSON)
+	if err != nil {
+		return false
+	}
+	resultObject, ok := result.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	delete(resultObject, "_meta")
+	expectedResultDigest, err := digestJSON(resultObject)
+	if err != nil || expectedResultDigest != trace.AttestedResultDigest {
+		return false
+	}
+	return rejectSensitiveToolResult(resultObject) == nil
+}
+
+func rejectSensitiveToolResult(value interface{}) error {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for key, item := range typed {
+			switch strings.ToLower(strings.TrimSpace(key)) {
+			case "token", "password", "passwd", "secret", "cookie", "authorization",
+				"privatekey", "private_key", "clientsecret", "client_secret",
+				"stringdata", "dockerconfigjson":
+				return fmt.Errorf("runtime tool result contains forbidden sensitive field %q", key)
+			}
+			if err := rejectSensitiveToolResult(item); err != nil {
+				return err
+			}
+		}
+	case []interface{}:
+		for _, item := range typed {
+			if err := rejectSensitiveToolResult(item); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func bindDeploymentRunEvidence(

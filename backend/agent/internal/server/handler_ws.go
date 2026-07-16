@@ -1129,7 +1129,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	sseDone := make(chan error, 1)
 	sseReady := make(chan error, 1)
 	turnIDReady := make(chan string, 1)
-	toolTraces := newDoagentToolTraceCollector()
+	toolTraces := newDoagentToolTraceCollector(execution.Admission)
 	go func() {
 		sseDone <- subscribeDoagentSSEWithCollectorReady(
 			sseCtx,
