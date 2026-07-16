@@ -59,8 +59,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 	Agent 原生声明式 CI/CD 示例:
 	  # run 先同步当前仓库，再通过 Ask 选择 doops-cicd Skill。
-	  doops -session test_ops cicd run -f deploy/workflows/release.yaml --target agent-runtime --dry-run --set version=release-YYYYMMDD
-	  doops -session test_ops cicd run -f deploy/workflows/release.yaml --target agent-runtime --set version=release-YYYYMMDD
+	  doops -session test_ops cicd run -f deploy/environments/test/environment.yaml --target agent-runtime --dry-run --set reason=change-reference
+	  doops -session test_ops cicd run -f deploy/environments/test/environment.yaml --target agent-runtime --set reason=change-reference
 `)
 	}
 	flag.Parse()

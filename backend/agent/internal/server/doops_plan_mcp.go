@@ -72,6 +72,8 @@ type doopsPlanRuntime struct {
 	SourceRegistry      string
 	TargetRegistry      string
 	Services            []string
+	SourceImages        []doopsPlanImage
+	TargetImages        []doopsPlanImage
 	Namespace           string
 	Release             string
 	Chart               string
@@ -296,8 +298,11 @@ func loadDoopsPlanRuntimeFromWorkspace(
 	if err := yaml.Unmarshal(workflowData, &identity); err != nil {
 		return doopsPlanRuntime{}, invalidCredentialDeclaration(err)
 	}
+	if identity.APIVersion == "doops.sh/v3" && identity.Kind == "EnvironmentDefinition" {
+		return loadDoopsPlanV3Runtime(root, workflowPath, inputs, plan, workflowData)
+	}
 	if identity.APIVersion != "doops.sh/v2" || identity.Kind != "DeploymentTemplate" {
-		return doopsPlanRuntime{}, errors.New("doops_plan currently requires a v2 DeploymentTemplate")
+		return doopsPlanRuntime{}, errors.New("doops_plan requires a v2 DeploymentTemplate or v3 EnvironmentDefinition")
 	}
 	var workflow credentialDeploymentTemplate
 	if err := strictCredentialYAMLDecode(workflowData, &workflow); err != nil {
@@ -358,6 +363,77 @@ func loadDoopsPlanRuntimeFromWorkspace(
 	}, nil
 }
 
+func loadDoopsPlanV3Runtime(
+	root string,
+	workflowPath string,
+	inputs map[string]string,
+	plan CredentialPlan,
+	workflowData []byte,
+) (doopsPlanRuntime, error) {
+	var definition credentialEnvironmentDefinition
+	if err := strictCredentialYAMLDecode(workflowData, &definition); err != nil {
+		return doopsPlanRuntime{}, err
+	}
+	if err := validateTrustedWorkflowInputs(definition.Spec.Parameters, inputs); err != nil {
+		return doopsPlanRuntime{}, err
+	}
+	services := make([]string, 0, len(definition.Spec.Services))
+	sourceImages := make([]doopsPlanImage, 0, len(definition.Spec.Services))
+	targetImages := make([]doopsPlanImage, 0, len(definition.Spec.Services))
+	imageBindings := make(map[string]string, len(definition.Spec.Services))
+	workloadChecks := make([]credentialConfigurationWorkloadCheck, 0, len(definition.Spec.Services))
+	for service, path := range definition.Spec.Services {
+		data, err := readCredentialDeclarationFile(root, path)
+		if err != nil {
+			return doopsPlanRuntime{}, err
+		}
+		var declaration credentialEnvironmentService
+		if err := strictCredentialYAMLDecode(data, &declaration); err != nil {
+			return doopsPlanRuntime{}, err
+		}
+		workload := strings.TrimPrefix(declaration.Spec.Helm.Workload, "deployment/")
+		services = append(services, service)
+		sourceImages = append(sourceImages, doopsPlanImage{
+			Service: service, Repository: declaration.Spec.Artifact.Source, Digest: declaration.Spec.Artifact.Digest,
+		})
+		targetImages = append(targetImages, doopsPlanImage{
+			Service: service, Repository: declaration.Spec.Artifact.Target, Digest: declaration.Spec.Artifact.Digest,
+		})
+		imageBindings[service] = declaration.Spec.Helm.Value
+		requireEndpoints := declaration.Spec.Verification.RequireEndpoints
+		workloadChecks = append(workloadChecks, credentialConfigurationWorkloadCheck{
+			Service: workload, MinReadyReplicas: declaration.Spec.Verification.MinReadyReplicas,
+			RequireEndpoints: &requireEndpoints,
+		})
+	}
+	sort.Strings(services)
+	sort.Slice(sourceImages, func(i, j int) bool { return sourceImages[i].Service < sourceImages[j].Service })
+	sort.Slice(targetImages, func(i, j int) bool { return targetImages[i].Service < targetImages[j].Service })
+	sort.Slice(workloadChecks, func(i, j int) bool { return workloadChecks[i].Service < workloadChecks[j].Service })
+	secretRef := func(reference credentialEnvironmentSecretRef) credentialConfigurationSecretRef {
+		return credentialConfigurationSecretRef{
+			Kind: reference.Kind, Name: reference.Name, Namespace: definition.Spec.Helm.Namespace,
+		}
+	}
+	return doopsPlanRuntime{
+		Root: root, WorkflowPath: workflowPath, Version: "declared-digests", Plan: plan,
+		SourceRegistry: strings.TrimSuffix(definition.Spec.Source.ImageRegistry, "/"),
+		TargetRegistry: strings.TrimSuffix(definition.Spec.Artifacts.TargetRegistry, "/"),
+		Services:       services, SourceImages: sourceImages, TargetImages: targetImages,
+		Namespace: definition.Spec.Helm.Namespace, Release: definition.Spec.Helm.Release,
+		Chart: definition.Spec.Helm.Chart, Values: definition.Spec.Helm.Values,
+		ImageBindings: imageBindings, PublicChecks: definition.Spec.HealthChecks.Public,
+		WorkloadChecks: workloadChecks, SourceRepository: definition.Spec.Source.Repository,
+		SourceBranch:       definition.Spec.Source.Branch,
+		RegistryCredential: secretRef(definition.Spec.Artifacts.RuntimeImagePullSecret),
+		ArtifactSync: credentialConfigurationArtifactSync{
+			SourceCredentialRef:   secretRef(definition.Spec.Artifacts.SourceCredentialRef),
+			RegistryCredentialRef: secretRef(definition.Spec.Artifacts.TargetCredentialRef),
+		},
+		VerificationProfile: definition.Spec.VerificationProfile,
+	}, nil
+}
+
 func trustedDoopsPlanReleaseScope(
 	root string,
 	workflowPath string,
@@ -370,6 +446,13 @@ func trustedDoopsPlanReleaseScope(
 	var identity credentialWorkflowIdentity
 	if err := yaml.Unmarshal(workflowData, &identity); err != nil {
 		return nil, invalidCredentialDeclaration(err)
+	}
+	if identity.APIVersion == "doops.sh/v3" && identity.Kind == "EnvironmentDefinition" {
+		runtime, err := loadDoopsPlanRuntimeFromWorkspace(root, workflowPath, inputs)
+		if err != nil {
+			return nil, err
+		}
+		return doopsPlanReleaseScope(runtime), nil
 	}
 	if identity.APIVersion != "doops.sh/v2" || identity.Kind != "DeploymentTemplate" {
 		return nil, nil
@@ -410,7 +493,7 @@ func doopsPlanReleaseScope(runtime doopsPlanRuntime) map[string]interface{} {
 			"requireEndpoints": check.RequireEndpoints,
 		})
 	}
-	return map[string]interface{}{
+	scope := map[string]interface{}{
 		"version": runtime.Version,
 		"source": map[string]interface{}{
 			"registry": runtime.SourceRegistry, "repository": runtime.SourceRepository,
@@ -433,6 +516,21 @@ func doopsPlanReleaseScope(runtime doopsPlanRuntime) map[string]interface{} {
 		},
 		"verificationProfile": runtime.VerificationProfile,
 	}
+	if len(runtime.SourceImages) > 0 {
+		scope["sourceImages"] = doopsPlanImagesScope(runtime.SourceImages)
+		scope["targetImages"] = doopsPlanImagesScope(runtime.TargetImages)
+	}
+	return scope
+}
+
+func doopsPlanImagesScope(images []doopsPlanImage) []map[string]interface{} {
+	scope := make([]map[string]interface{}, 0, len(images))
+	for _, image := range images {
+		scope = append(scope, map[string]interface{}{
+			"service": image.Service, "repository": image.Repository, "digest": image.Digest,
+		})
+	}
+	return scope
 }
 
 func doopsPlanSecretRefScope(reference credentialConfigurationSecretRef) map[string]interface{} {
@@ -452,10 +550,10 @@ func executeDoopsPlanTool(
 	case "ObserveWorkspaceSource":
 		return observeDoopsPlanWorkspace(ctx, callContext, runtime)
 	case "ObserveSourceRegistryImageSet":
-		images, err := resolveDoopsPlanImageSet(ctx, runtime.SourceRegistry, runtime.Services, runtime.Version)
+		images, err := resolveDoopsPlanRuntimeImages(ctx, runtime.SourceImages, runtime.SourceRegistry, runtime.Services, runtime.Version)
 		return map[string]interface{}{"registry": runtime.SourceRegistry, "version": runtime.Version, "images": images}, err
 	case "ObserveTargetRegistryImageSet":
-		images, err := resolveDoopsPlanImageSet(ctx, runtime.TargetRegistry, runtime.Services, runtime.Version)
+		images, err := resolveDoopsPlanRuntimeImages(ctx, runtime.TargetImages, runtime.TargetRegistry, runtime.Services, runtime.Version)
 		return map[string]interface{}{"registry": runtime.TargetRegistry, "version": runtime.Version, "images": images}, err
 	case "RenderHelmRelease":
 		return renderDoopsPlanHelm(ctx, runtime)
@@ -470,7 +568,7 @@ func executeDoopsPlanTool(
 			registryMode = "unsupported-cross-registry"
 		}
 		return map[string]interface{}{
-			"authorized":   sameRegistry && (callContext.Context.ExecutionMode == "dry-run" || callContext.Context.MutationAuthorized),
+			"authorized":   callContext.Context.ExecutionMode == "dry-run" || (sameRegistry && callContext.Context.MutationAuthorized),
 			"mode":         callContext.Context.ExecutionMode,
 			"target":       runtime.Plan.Target,
 			"registryMode": registryMode,
@@ -486,7 +584,7 @@ func executeDoopsPlanTool(
 		if runtime.SourceRegistry != runtime.TargetRegistry {
 			return nil, errors.New("cross-registry synchronization requires a declared detached copy executor")
 		}
-		images, err := resolveDoopsPlanImageSet(ctx, runtime.TargetRegistry, runtime.Services, runtime.Version)
+		images, err := resolveDoopsPlanRuntimeImages(ctx, runtime.TargetImages, runtime.TargetRegistry, runtime.Services, runtime.Version)
 		return map[string]interface{}{"changed": false, "registry": runtime.TargetRegistry, "images": images}, err
 	case "ReconcileHelmRelease":
 		if !callContext.Context.MutationAuthorized {
@@ -517,7 +615,7 @@ func observeDoopsPlanWorkspace(
 }
 
 func renderDoopsPlanHelm(ctx context.Context, runtime doopsPlanRuntime) (map[string]interface{}, error) {
-	images, err := resolveDoopsPlanImageSet(ctx, runtime.TargetRegistry, runtime.Services, runtime.Version)
+	images, err := resolveDoopsPlanRuntimeImages(ctx, runtime.TargetImages, runtime.TargetRegistry, runtime.Services, runtime.Version)
 	if err != nil {
 		return nil, err
 	}
@@ -641,9 +739,10 @@ func observeDoopsPlanHTTP(ctx context.Context, runtime doopsPlanRuntime) (map[st
 }
 
 func observeDoopsPlanLogs(ctx context.Context, runtime doopsPlanRuntime) (map[string]interface{}, error) {
-	results := make([]map[string]interface{}, 0, len(runtime.Services))
+	services := doopsPlanWorkloadServices(runtime)
+	results := make([]map[string]interface{}, 0, len(services))
 	pattern := regexp.MustCompile(`(?i)(panic|fatal|exception|error)`)
-	for _, service := range runtime.Services {
+	for _, service := range services {
 		namespace := runtime.WorkloadNamespaces[service]
 		if namespace == "" {
 			namespace = runtime.Namespace
@@ -670,7 +769,7 @@ func observeDoopsPlanLogs(ctx context.Context, runtime doopsPlanRuntime) (map[st
 }
 
 func reconcileDoopsPlanHelm(ctx context.Context, runtime doopsPlanRuntime) (map[string]interface{}, error) {
-	images, err := resolveDoopsPlanImageSet(ctx, runtime.TargetRegistry, runtime.Services, runtime.Version)
+	images, err := resolveDoopsPlanRuntimeImages(ctx, runtime.TargetImages, runtime.TargetRegistry, runtime.Services, runtime.Version)
 	if err != nil {
 		return nil, err
 	}
@@ -738,6 +837,29 @@ func resolveDoopsPlanImageSet(
 		})
 	}
 	sort.Slice(images, func(i, j int) bool { return images[i].Service < images[j].Service })
+	return images, nil
+}
+
+func resolveDoopsPlanRuntimeImages(
+	ctx context.Context,
+	declared []doopsPlanImage,
+	registry string,
+	services []string,
+	version string,
+) ([]doopsPlanImage, error) {
+	if len(declared) == 0 {
+		return resolveDoopsPlanImageSet(ctx, registry, services, version)
+	}
+	images := append([]doopsPlanImage(nil), declared...)
+	for _, image := range images {
+		digest, err := resolveDoopsPlanRegistryDigest(ctx, image.Repository, image.Digest)
+		if err != nil {
+			return nil, fmt.Errorf("verify image %s@%s: %w", image.Repository, image.Digest, err)
+		}
+		if digest != image.Digest {
+			return nil, fmt.Errorf("image %s digest mismatch: %s != %s", image.Repository, digest, image.Digest)
+		}
+	}
 	return images, nil
 }
 

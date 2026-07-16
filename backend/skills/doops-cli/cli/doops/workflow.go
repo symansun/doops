@@ -215,15 +215,16 @@ func workflowExecutionAPIVersion(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if version != workspaceManifestAPIVersion || kind != "DeploymentTemplate" {
-		return "", fmt.Errorf(
-			"trusted cicd execution currently requires %s DeploymentTemplate, got %s %s",
-			workspaceManifestAPIVersion,
-			version,
-			kind,
-		)
+	if (version == workspaceManifestAPIVersion && kind == "DeploymentTemplate") ||
+		(version == "doops.sh/v3" && kind == "EnvironmentDefinition") {
+		return version, nil
 	}
-	return version, nil
+	return "", fmt.Errorf(
+		"trusted cicd execution requires %s DeploymentTemplate or doops.sh/v3 EnvironmentDefinition, got %s %s",
+		workspaceManifestAPIVersion,
+		version,
+		kind,
+	)
 }
 
 func workflowIdentity(path string) (string, string, error) {
