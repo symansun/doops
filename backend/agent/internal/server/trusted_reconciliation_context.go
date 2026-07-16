@@ -57,9 +57,7 @@ func buildDoagentPromptParams(sessionID, prompt string, admission *trustedReconc
 }
 
 func (c trustedReconciliationContext) ValidateDigest() error {
-	copy := c
-	copy.ContextDigest = ""
-	digest, err := digestJSON(copy)
+	digest, err := c.calculatedDigest()
 	if err != nil {
 		return err
 	}
@@ -76,6 +74,12 @@ func (c trustedReconciliationContext) ValidateDigest() error {
 		}
 	}
 	return nil
+}
+
+func (c trustedReconciliationContext) calculatedDigest() (string, error) {
+	copy := c
+	copy.ContextDigest = ""
+	return digestJSON(copy)
 }
 
 func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit string) (trustedReconciliationAdmission, error) {

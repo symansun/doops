@@ -814,7 +814,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 				built, err := buildTrustedReconciliationAdmission(
 					sessionID,
 					args.Instruction,
-					instruction.WorkspaceCommit,
+					args.WorkspaceCommit,
 				)
 				if err != nil {
 					writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
