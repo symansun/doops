@@ -166,6 +166,12 @@ func TestValidateDoopsPlanWorkspaceRejectsTrackedFileTampering(t *testing.T) {
 	if _, err := validateDoopsPlanWorkspace(workspace, commit); err != nil {
 		t.Fatalf("validate clean workspace: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(workspace, ".doops-audit-log"), []byte("agent-owned\n"), 0o600); err != nil {
+		t.Fatalf("write audit log: %v", err)
+	}
+	if _, err := validateDoopsPlanWorkspace(workspace, commit); err != nil {
+		t.Fatalf("validate workspace with agent audit log: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(workspace, "untracked.yaml"), []byte("unsafe: true\n"), 0o644); err != nil {
 		t.Fatalf("write untracked file: %v", err)
 	}

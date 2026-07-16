@@ -1030,7 +1030,7 @@ func verifyDoopsPlanWorkspaceFileSet(root, bareRepository, workspaceCommit strin
 			}
 			return nil
 		}
-		if relative == ".doops-ready" {
+		if relative == ".doops-ready" || relative == ".doops-audit-log" {
 			return nil
 		}
 		if !entry.IsDir() {
