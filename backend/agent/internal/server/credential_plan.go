@@ -122,9 +122,19 @@ type credentialWorkflowIdentity struct {
 }
 
 type credentialConfigurationSource struct {
+	APIVersion           string                                                `yaml:"apiVersion"`
+	Kind                 string                                                `yaml:"kind"`
+	Metadata             credentialConfigurationMetadata                       `yaml:"metadata"`
+	IdentityRules        []string                                              `yaml:"identityRules"`
 	ArtifactContract     credentialConfigurationArtifactContract               `yaml:"artifactContract"`
+	ServiceCatalog       map[string]credentialConfigurationServiceCatalogItem  `yaml:"serviceCatalog"`
 	VerificationProfiles map[string]credentialConfigurationVerificationProfile `yaml:"verificationProfiles"`
 	Environments         map[string]credentialConfigurationEnvironment         `yaml:"environments"`
+}
+
+type credentialConfigurationMetadata struct {
+	Name      string `yaml:"name"`
+	UpdatedAt string `yaml:"updatedAt"`
 }
 
 type credentialConfigurationArtifactContract struct {
@@ -136,6 +146,16 @@ type credentialConfigurationArtifactContract struct {
 	SourceArtifactNames  map[string]string `yaml:"sourceArtifactNames"`
 	ImageTagPattern      string            `yaml:"imageTagPattern"`
 	ImageReferenceFormat string            `yaml:"imageReferenceFormat"`
+	ImageTagTimeZone     string            `yaml:"imageTagTimeZone"`
+}
+
+type credentialConfigurationServiceCatalogItem struct {
+	Artifact         string `yaml:"artifact"`
+	SourceContext    string `yaml:"sourceContext"`
+	HelmValue        string `yaml:"helmValue"`
+	Workload         string `yaml:"workload"`
+	Container        string `yaml:"container"`
+	EndpointRequired *bool  `yaml:"endpointRequired"`
 }
 
 type credentialConfigurationVerificationProfile struct {
@@ -143,11 +163,16 @@ type credentialConfigurationVerificationProfile struct {
 }
 
 type credentialConfigurationEnvironment struct {
-	DeploymentPlatform  string                          `yaml:"deploymentPlatform"`
-	Target              credentialConfigurationTarget   `yaml:"target"`
-	DeploymentTarget    credentialConfigurationTarget   `yaml:"deploymentTarget"`
-	Executor            credentialConfigurationExecutor `yaml:"executor"`
-	VerificationProfile string                          `yaml:"verificationProfile"`
+	DisplayName             string                          `yaml:"displayName"`
+	Services                []string                        `yaml:"services"`
+	DeploymentPlatform      string                          `yaml:"deploymentPlatform"`
+	Target                  credentialConfigurationTarget   `yaml:"target"`
+	DeploymentTarget        credentialConfigurationTarget   `yaml:"deploymentTarget"`
+	Executor                credentialConfigurationExecutor `yaml:"executor"`
+	VerificationProfile     string                          `yaml:"verificationProfile"`
+	DeploymentMode          string                          `yaml:"deploymentMode"`
+	ControlPlaneEnvironment string                          `yaml:"controlPlaneEnvironment"`
+	PublicHosts             []string                        `yaml:"publicHosts"`
 }
 
 type credentialConfigurationTarget struct {
@@ -171,10 +196,44 @@ type credentialConfigurationExecutorConfig struct {
 	ReleaseManifestRepository string                               `yaml:"releaseManifestRepository"`
 	Chart                     string                               `yaml:"chart"`
 	Values                    string                               `yaml:"values"`
+	RuntimeFiles              string                               `yaml:"runtimeFiles"`
+	DeploymentMode            string                               `yaml:"deploymentMode"`
+	RegistryCredential        credentialConfigurationSecretRef     `yaml:"registryCredential"`
+	ArtifactSync              credentialConfigurationArtifactSync  `yaml:"artifactSync"`
 	DetachedJob               credentialConfigurationDetachedJob   `yaml:"detachedJob,omitempty"`
 	ImageBindings             map[string]string                    `yaml:"imageBindings"`
+	WorkloadNamespaces        map[string]string                    `yaml:"workloadNamespaces"`
+	PublicHosts               []string                             `yaml:"publicHosts"`
 	HealthChecks              credentialConfigurationHealthChecks  `yaml:"healthChecks"`
 	Authz                     credentialConfigurationAuthorization `yaml:"authz"`
+	RetiredResources          []credentialConfigurationResource    `yaml:"retiredResources"`
+}
+
+type credentialConfigurationSecretRef struct {
+	Kind       string `yaml:"kind"`
+	Name       string `yaml:"name"`
+	Namespace  string `yaml:"namespace"`
+	SecretName string `yaml:"secretName"`
+	Key        string `yaml:"key"`
+}
+
+type credentialConfigurationArtifactSync struct {
+	SourceCredentialRef   credentialConfigurationSecretRef `yaml:"sourceCredentialRef"`
+	RegistryCredentialRef credentialConfigurationSecretRef `yaml:"registryCredentialRef"`
+}
+
+type credentialConfigurationResource struct {
+	APIVersion     string                                  `yaml:"apiVersion"`
+	Kind           string                                  `yaml:"kind"`
+	Name           string                                  `yaml:"name"`
+	DeletionPolicy string                                  `yaml:"deletionPolicy"`
+	Expected       credentialConfigurationResourceExpected `yaml:"expected"`
+}
+
+type credentialConfigurationResourceExpected struct {
+	Manager          string   `yaml:"manager"`
+	IngressClassName string   `yaml:"ingressClassName"`
+	Hosts            []string `yaml:"hosts"`
 }
 
 type credentialConfigurationDetachedJob struct {
@@ -187,13 +246,21 @@ type credentialConfigurationDetachedJob struct {
 }
 
 type credentialConfigurationHealthChecks struct {
-	Public []credentialConfigurationHTTPCheck `yaml:"public"`
+	Public    []credentialConfigurationHTTPCheck     `yaml:"public"`
+	Workloads []credentialConfigurationWorkloadCheck `yaml:"workloads"`
 }
 
 type credentialConfigurationHTTPCheck struct {
 	ID             string `yaml:"id"`
 	URL            string `yaml:"url"`
 	ExpectedStatus int    `yaml:"expectedStatus"`
+	BodyContains   string `yaml:"bodyContains"`
+}
+
+type credentialConfigurationWorkloadCheck struct {
+	Service          string `yaml:"service"`
+	MinReadyReplicas int    `yaml:"minReadyReplicas"`
+	RequireEndpoints *bool  `yaml:"requireEndpoints"`
 }
 
 type credentialConfigurationAuthorization struct {

@@ -340,6 +340,133 @@ environments:
 	}
 }
 
+func TestParseCredentialPlanAcceptsCurrentEnvironmentRegistryFields(t *testing.T) {
+	root := t.TempDir()
+	writeCredentialPlanTestFile(t, root, "deploy/release.yaml", `
+apiVersion: doops.sh/v2
+kind: DeploymentTemplate
+metadata:
+  name: ecp-oilan-deploy
+spec:
+  parameters:
+    version:
+      required: true
+    reason:
+      required: true
+  application: ecp
+  release:
+    version: ${inputs.version}
+  environment: oilan
+  configurationSource: deploy/environments.yaml
+`)
+	writeCredentialPlanTestFile(t, root, "deploy/environments.yaml", `
+apiVersion: doops.sh/v2
+kind: EnvironmentRegistry
+metadata:
+  name: current-environments
+  updatedAt: "2026-07-13"
+identityRules:
+  - Environment keys identify release destinations.
+artifactContract:
+  type: image-set
+  sourceRegistry: docker.cnb.cool/l8ai/app
+  sourceRepository: https://cnb.cool/l8ai/app.git
+  sourceBranch: main
+  services:
+    - frontend
+  sourceArtifactNames:
+    frontend: app-frontend
+  imageTagPattern: "^release-[0-9]{8}$"
+  imageReferenceFormat: registry/repository:tag
+  imageTagTimeZone: Asia/Shanghai
+serviceCatalog:
+  frontend:
+    artifact: app-frontend
+    sourceContext: app-frontend
+    helmValue: frontend
+    workload: deployment/app-frontend
+    container: app-frontend
+    endpointRequired: true
+verificationProfiles:
+  application:
+    requiredEvidence:
+      - runtime-state
+      - public-http
+environments:
+  oilan:
+    displayName: Oilan
+    services:
+      - frontend
+    target:
+      name: gw-edu-coder
+      cluster: doops-edu
+      instance: edu-coder
+    deploymentMode: application
+    controlPlaneEnvironment: oilan
+    publicHosts:
+      - app.oilan.ai
+    executor:
+      type: helm
+      lifecycle: detached-kubernetes-job
+      config:
+        namespace: oilan
+        release: app
+        workload: deployment/app-frontend
+        container: app-frontend
+        registry: repo.aiedulab.cn:8443/oilan-system
+        registryCredential:
+          namespace: oilan
+          secretName: regcred
+          key: .dockerconfigjson
+        chart: deploy/chart
+        values: deploy/values.yaml
+        runtimeFiles: deploy/runtime
+        deploymentMode: application
+        imageBindings:
+          app-frontend: frontend
+        workloadNamespaces:
+          app-frontend: oilan
+        artifactSync:
+          sourceCredentialRef:
+            kind: KubernetesSecret
+            name: cnb-regcred
+          registryCredentialRef:
+            kind: KubernetesSecret
+            name: regcred
+        publicHosts:
+          - app.oilan.ai
+        healthChecks:
+          public:
+            - id: frontend-health
+              url: https://app.oilan.ai/healthz
+              expectedStatus: 200
+              bodyContains: healthy
+          workloads:
+            - service: app-frontend
+              minReadyReplicas: 1
+              requireEndpoints: true
+        retiredResources:
+          - apiVersion: networking.k8s.io/v1
+            kind: Ingress
+            name: old-app
+            deletionPolicy: require-unmanaged-exact-match
+            expected:
+              manager: kubectl-client-side-apply
+              ingressClassName: oilan-edge
+              hosts:
+                - old-app.oilan.ai
+    verificationProfile: application
+`)
+
+	plan, err := parseCredentialPlan(root, "deploy/release.yaml")
+	if err != nil {
+		t.Fatalf("parse current environment registry: %v", err)
+	}
+	if plan.Target != "gw-edu-coder" || plan.Cluster != "doops-edu" || plan.Instance != "edu-coder" {
+		t.Fatalf("unexpected plan target: %#v", plan)
+	}
+}
+
 func TestParseCredentialPlanRejectsInlineSecretLikeFieldsInConfigurationSource(t *testing.T) {
 	root := t.TempDir()
 	writeCredentialPlanTestFile(t, root, "release.yaml", `
