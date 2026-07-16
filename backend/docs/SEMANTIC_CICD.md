@@ -108,10 +108,12 @@ doagent emits exactly one JSON object as its final response:
 
 The Gateway rejects a missing, Markdown-wrapped, non-object, or multiple-object
 final response. Agent-authored evidence uses `toolRef` with an exact tool name
-and exact JSON input. The Gateway rejects model-authored runtime payloads,
-resolves every reference to one completed tool call from the accepted `turnId`,
-and injects `toolCall` with the exact ID, tool, input and attested result after
-removing transport-only `_meta`.
+and exact JSON input. Trusted DoOps plan references use the model-visible
+`plan.<Tool>` name and `{}` input because trusted context is injected outside
+model arguments. The Gateway rejects model-authored runtime payloads, resolves
+every reference to one completed tool call from the accepted `turnId`, and
+injects `toolCall` with the exact ID, runtime tool name, input and attested
+result after removing transport-only `_meta`.
 Conflicting duplicate IDs, replayed events, missing calls or ambiguous
 references fail. Image generation belongs to doagent multi-agent execution;
 DoOps does not expose or invoke it.

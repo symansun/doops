@@ -117,10 +117,12 @@ Valid phases are `planned`, `converged`, `blocked`, `failed`, and
 outputs. The literal text `admitted`, an Agent-authored attestation, or an Agent
 claim without completed runtime tool calls is not evidence. Agent-authored
 evidence contains exactly `subject`, `observedAt`, and `toolRef`, with the exact
-tool name and JSON input. `credentialRun` is instruction-only preparation
-context and is not copied into the result. The Gateway resolves `toolRef` to one
-completed call from the accepted `turnId` and injects `toolCall` with its exact
-ID, tool, input and result. Conflicting duplicate IDs and ambiguous repeated
+model-visible tool name and JSON input. Trusted DoOps plan tools use
+`plan.<Tool>` with `{}` because the trusted context is injected outside model
+arguments. `credentialRun` is instruction-only preparation context and is not
+copied into the result. The Gateway resolves `toolRef` to one completed call
+from the accepted `turnId` and injects `toolCall` with its exact ID, runtime
+tool name, input and result. Conflicting duplicate IDs and ambiguous repeated
 calls are rejected.
 Image generation and Agent delegation belong to doagent multi-agent execution,
 not to the DoOps command or module surface.

@@ -369,7 +369,8 @@ func resolveDoagentToolTrace(
 ) (doagentToolTrace, error) {
 	var matches []doagentToolTrace
 	for _, trace := range traces {
-		if trace.ToolName == tool && bytes.Equal(trace.inputJSON, inputJSON) {
+		if modelVisibleDoagentToolName(trace.ToolName) == tool &&
+			bytes.Equal(trace.inputJSON, inputJSON) {
 			matches = append(matches, trace)
 		}
 	}
@@ -381,6 +382,17 @@ func resolveDoagentToolTrace(
 	default:
 		return doagentToolTrace{}, fmt.Errorf("runtime tool reference is ambiguous")
 	}
+}
+
+func modelVisibleDoagentToolName(runtimeName string) string {
+	const trustedPlanPrefix = "mcp_doops_plan_"
+	if strings.HasPrefix(runtimeName, trustedPlanPrefix) {
+		name := strings.TrimPrefix(runtimeName, trustedPlanPrefix)
+		if name != "" {
+			return "plan." + name
+		}
+	}
+	return runtimeName
 }
 
 func stableDoagentJSON(value interface{}) (json.RawMessage, error) {

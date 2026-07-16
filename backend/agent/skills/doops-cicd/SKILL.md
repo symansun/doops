@@ -88,6 +88,10 @@ review 返回一个 `DeploymentReview`；dry-run/apply 返回一个与根声明�
 Agent 先写 `toolRef`，Gateway 再绑定不可改写的 `toolCall`。普通 Bash、文件读取和
 浏览器输出不是部署证据。
 
+受信任 DoOps plan 工具的 `toolRef.tool` 必须使用模型可见名称
+`plan.<Tool>`，`toolRef.input` 必须是 `{}`；受信任上下文由 Gateway 在模型参数
+之外注入，不能把工具结果或声明字段伪装成调用参数。
+
 当 Ask 请求使用 `response_format=json` 时，final response 就是唯一机器结果：
 只输出一个 JSON object，不得使用 Markdown、YAML、结果文件、外围文本或第二个
 JSON object。Gateway 注入的 `toolCall.result` 是摘要验证通过并移除 transport

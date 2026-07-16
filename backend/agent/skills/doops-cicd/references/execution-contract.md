@@ -43,6 +43,8 @@ Agent 发布必须由独立 control target 执行，不能让正在被替换的 
 phase 只允许 `planned`、`converged`、`blocked`、`failed`、
 `outcome-unknown`。每条 evidence 必须引用当前 turn 中完成的受信任工具调用；Gateway
 只接受匹配 `turnId` 的调用，并负责把 `toolRef` 解析为不可改写的 `toolCall`。
+受信任 DoOps plan 工具必须用模型可见名称 `plan.<Tool>` 和精确输入 `{}` 引用；
+声明字段、观察结果或 Gateway 注入的受信任上下文都不是模型调用参数。
 
 当请求使用 `response_format=json` 时，doagent 必须把一个且仅一个 JSON object
 作为 final response；该 final response 就是机器结果，不得写结果文件或输出

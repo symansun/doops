@@ -1729,7 +1729,8 @@ func appendDoagentStructuredResultContract(instruction string) string {
 		"Every DeploymentRun evidence item must reference one of the allowed trusted DoOps plan tools; " +
 		"generic Bash, filesystem, browser, or delegation calls are not valid evidence. " +
 		"If the object is a DeploymentRun, every evidence item must contain exactly subject, observedAt, and toolRef; " +
-		"toolRef.tool is the exact runtime tool name and toolRef.input is the exact JSON input used for that call. " +
+		"For trusted DoOps plan tools, toolRef.tool is the exact model-visible name plan.<Tool> and toolRef.input is {} because trusted context is injected outside model arguments. " +
+		"For any other allowed tool, toolRef.tool is the exact model-visible tool name and toolRef.input is the exact JSON input used for that call. " +
 		"The Gateway consumes toolRef and injects toolCall with the completed runtime call's exact id, tool, input, and result."
 	return contract
 }
