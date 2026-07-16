@@ -27,7 +27,7 @@ def test_doops_cicd_skill_is_generic_and_agent_native():
     assert "preserve-observed" in text
     assert "converge-shared-release" in text
     assert "pipeline" in text
-    assert "runtime attestation" in text.lower()
+    assert "`toolRef`" in text
     for forbidden in (
         "DeploymentPlan",
         "ReconciliationResult",
@@ -55,7 +55,9 @@ def test_existing_workflow_and_execution_contract_define_one_result():
     assert "zero deployment executor" in contract
     assert "invocations" in contract
     assert "unselected service" in contract
-    assert "toolCallId" in contract
+    assert "toolRef" in contract
+    assert "toolCall" in contract
+    assert "turnId" in contract
     assert "Gateway" in contract
     assert registry["environments"]["oilan"]["executor"]["lifecycle"] == "detached-kubernetes-job"
     assert "control target" in contract.lower()
@@ -107,6 +109,8 @@ def test_release_runner_bootstrap_declares_opaque_agent_token_reference():
             },
         }
     ]
+    assert "Image generation" in contract
+    assert "Agent delegation" in contract
 
 
 def test_system_prompt_routes_templates_to_doops_cicd():

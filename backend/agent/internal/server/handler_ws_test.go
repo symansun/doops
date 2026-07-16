@@ -394,9 +394,20 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 			case "session/prompt":
 				params, _ := req["params"].(map[string]interface{})
 				prompt, _ := params["prompt"].(string)
+				if params["responseMode"] != "stream" {
+					t.Fatalf("prompt must request SSE terminal delivery: %#v", params)
+				}
 				receivedPrompt <- prompt
 				close(prompted)
-				w.WriteHeader(http.StatusAccepted)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]interface{}{
+						"status":   "accepted",
+						"delivery": "sse",
+						"turnId":   "turn-kind",
+					},
+				})
 			default:
 				t.Fatalf("unexpected rpc method: %v", req["method"])
 			}
@@ -406,9 +417,9 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 				flusher.Flush()
 			}
 			<-prompted
-			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello"}}}}`)
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message_chunk","turnId":"turn-kind","content":{"type":"text","text":"hello"}}}}`)
 			fmt.Fprintln(w)
-			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","content":{"type":"text","text":"done"}}}}`)
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","turnId":"turn-kind","content":{"type":"text","text":"done"}}}}`)
 			fmt.Fprintln(w)
 			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-kind","status":"completed","stopReason":"end_turn"}}}`)
 			fmt.Fprintln(w)
@@ -694,6 +705,7 @@ func TestAgentPromptReturnsAdmissionErrorImmediately(t *testing.T) {
 				})
 			case "session/prompt":
 				close(prompted)
+				w.WriteHeader(http.StatusAccepted)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"jsonrpc": "2.0",
 					"id":      req["id"],

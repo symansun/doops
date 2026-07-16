@@ -29,6 +29,19 @@ type workflowCommand struct {
 	DryRun bool
 }
 
+type workflowRuntimeToolCall struct {
+	ID     string          `json:"id"`
+	Tool   string          `json:"tool"`
+	Input  json.RawMessage `json:"input"`
+	Result json.RawMessage `json:"result"`
+}
+
+type workflowEvidence struct {
+	Subject    string                   `json:"subject"`
+	ObservedAt string                   `json:"observedAt"`
+	ToolCall   *workflowRuntimeToolCall `json:"toolCall"`
+}
+
 type workflowAgentCaller interface {
 	CallStructured(toolName string, arguments map[string]interface{}, destination interface{}) error
 }
@@ -253,7 +266,11 @@ func validWorkspaceCommit(value string) bool {
 	return true
 }
 
-func validateWorkflowResult(output, executionMode, workspaceCommit string) error {
+func validateWorkflowResult(
+	output,
+	executionMode,
+	workspaceCommit string,
+) error {
 	var result struct {
 		APIVersion string `json:"apiVersion"`
 		Kind       string `json:"kind"`
@@ -266,12 +283,12 @@ func validateWorkflowResult(output, executionMode, workspaceCommit string) error
 		Status struct {
 			Phase         string          `json:"phase"`
 			MutationCount *int            `json:"mutationCount"`
-			ResultDigest  string          `json:"resultDigest"`
 			Capabilities  json.RawMessage `json:"capabilities"`
 			Evidence      json.RawMessage `json:"evidence"`
 		} `json:"status"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(output))
+	decoder.UseNumber()
 	if err := decoder.Decode(&result); err != nil {
 		return fmt.Errorf("decode DeploymentRun: %w", err)
 	}
@@ -299,9 +316,6 @@ func validateWorkflowResult(output, executionMode, workspaceCommit string) error
 	if executionMode == "dry-run" && *result.Status.MutationCount != 0 {
 		return fmt.Errorf("dry-run result must have mutationCount=0")
 	}
-	if !validWorkflowResultDigest(result.Status.ResultDigest) {
-		return fmt.Errorf("result resultDigest must be a sha256 digest")
-	}
 	if len(result.Status.Capabilities) == 0 || string(result.Status.Capabilities) == "null" {
 		return fmt.Errorf("result capabilities snapshot is required")
 	}
@@ -315,37 +329,55 @@ func validateWorkflowResult(output, executionMode, workspaceCommit string) error
 	if len(result.Status.Evidence) == 0 || string(result.Status.Evidence) == "null" {
 		return fmt.Errorf("result evidence is required")
 	}
-	var evidence []struct {
-		Subject    string          `json:"subject"`
-		Module     string          `json:"module"`
-		ToolCallID string          `json:"toolCallId"`
-		ObservedAt string          `json:"observedAt"`
-		Result     json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(result.Status.Evidence, &evidence); err != nil {
+	var evidence []workflowEvidence
+	evidenceDecoder := json.NewDecoder(strings.NewReader(string(result.Status.Evidence)))
+	evidenceDecoder.DisallowUnknownFields()
+	if err := evidenceDecoder.Decode(&evidence); err != nil {
 		return fmt.Errorf("decode result evidence: %w", err)
+	}
+	var evidenceExtra interface{}
+	if err := evidenceDecoder.Decode(&evidenceExtra); err != io.EOF {
+		return fmt.Errorf("result evidence must be exactly one JSON array")
 	}
 	if len(evidence) == 0 {
 		return fmt.Errorf("result evidence must contain at least one observation or execution fact")
 	}
 	for index, item := range evidence {
 		if strings.TrimSpace(item.Subject) == "" ||
-			strings.TrimSpace(item.Module) == "" ||
-			strings.TrimSpace(item.ToolCallID) == "" ||
-			strings.TrimSpace(item.ObservedAt) == "" ||
-			len(item.Result) == 0 ||
-			string(item.Result) == "null" {
-			return fmt.Errorf("evidence[%d] must bind subject, module, observedAt and result", index)
+			strings.TrimSpace(item.ObservedAt) == "" {
+			return fmt.Errorf("evidence[%d] must contain subject and observedAt", index)
+		}
+		if item.ToolCall == nil ||
+			strings.TrimSpace(item.ToolCall.ID) == "" ||
+			strings.TrimSpace(item.ToolCall.Tool) == "" {
+			return fmt.Errorf("evidence[%d] must contain a runtime toolCall", index)
+		}
+		if err := validateWorkflowJSONValue(item.ToolCall.Input); err != nil {
+			return fmt.Errorf("evidence[%d] toolCall.input: %w", index, err)
+		}
+		if err := validateWorkflowJSONValue(item.ToolCall.Result); err != nil {
+			return fmt.Errorf("evidence[%d] toolCall.result: %w", index, err)
 		}
 	}
 	return nil
 }
 
-func validWorkflowResultDigest(value string) bool {
-	const prefix = "sha256:"
-	if !strings.HasPrefix(value, prefix) {
-		return false
+func validateWorkflowJSONValue(raw json.RawMessage) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return fmt.Errorf("is required")
 	}
-	decoded, err := hex.DecodeString(strings.TrimPrefix(value, prefix))
-	return err == nil && len(decoded) == 32
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.UseNumber()
+	var value interface{}
+	if err := decoder.Decode(&value); err != nil {
+		return err
+	}
+	var extra interface{}
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("must contain exactly one JSON value")
+		}
+		return err
+	}
+	return nil
 }
