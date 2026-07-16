@@ -107,7 +107,8 @@ func TestBuildDoopsPlanAttestedResultBindsTrustedContext(t *testing.T) {
 	}
 	structured := result["structuredContent"].(map[string]interface{})
 	structuredMeta := structured["_meta"].(map[string]interface{})
-	if structuredMeta["doops.sh/tool-attestation"] == nil {
+	nativeAttestation := structuredMeta["doops.sh/tool-attestation"].(map[string]interface{})
+	if nativeAttestation["publicResultDigest"] == nil {
 		t.Fatalf("structured result must carry native doagent attestation: %#v", structured)
 	}
 	withoutMeta := make(map[string]interface{}, len(structured)-1)
@@ -120,8 +121,21 @@ func TestBuildDoopsPlanAttestedResultBindsTrustedContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("digest result: %v", err)
 	}
-	if attestation["resultDigest"] != digest {
-		t.Fatalf("result digest = %v, want %s", attestation["resultDigest"], digest)
+	if nativeAttestation["publicResultDigest"] != digest {
+		t.Fatalf("public result digest = %v, want %s", nativeAttestation["publicResultDigest"], digest)
+	}
+	withoutEnvelopeMeta := make(map[string]interface{}, len(result)-1)
+	for key, value := range result {
+		if key != "_meta" {
+			withoutEnvelopeMeta[key] = value
+		}
+	}
+	envelopeDigest, err := digestJSON(withoutEnvelopeMeta)
+	if err != nil {
+		t.Fatalf("digest envelope result: %v", err)
+	}
+	if attestation["resultDigest"] != envelopeDigest {
+		t.Fatalf("envelope result digest = %v, want %s", attestation["resultDigest"], envelopeDigest)
 	}
 }
 

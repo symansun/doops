@@ -860,7 +860,7 @@ func buildDoopsPlanAttestedResult(
 	} else {
 		payload["ok"] = true
 	}
-	resultDigest, err := digestJSON(payload)
+	publicResultDigest, err := digestJSON(payload)
 	if err != nil {
 		return nil, err
 	}
@@ -871,7 +871,7 @@ func buildDoopsPlanAttestedResult(
 	if err != nil {
 		return nil, err
 	}
-	attestation := map[string]interface{}{
+	nativeAttestation := map[string]interface{}{
 		"schemaVersion":        doopsPlanAttestationSchema,
 		"contextSchemaVersion": callContext.Context.SchemaVersion,
 		"operationId":          callContext.Context.OperationID,
@@ -887,12 +887,12 @@ func buildDoopsPlanAttestedResult(
 		"canonicalScope":       callContext.Capability.CanonicalScope,
 		"scopeDigest":          callContext.Capability.ScopeDigest,
 		"inputDigest":          inputDigest,
-		"resultDigest":         resultDigest,
+		"publicResultDigest":   publicResultDigest,
 	}
-	meta := map[string]interface{}{
-		"doops.sh/tool-attestation": attestation,
+	nativeMeta := map[string]interface{}{
+		"doops.sh/tool-attestation": nativeAttestation,
 	}
-	payload["_meta"] = meta
+	payload["_meta"] = nativeMeta
 	text, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -901,7 +901,18 @@ func buildDoopsPlanAttestedResult(
 		"content":           []interface{}{map[string]interface{}{"type": "text", "text": string(text)}},
 		"structuredContent": payload,
 		"isError":           toolErr != nil,
-		"_meta":             meta,
+	}
+	envelopeResultDigest, err := digestJSON(result)
+	if err != nil {
+		return nil, err
+	}
+	envelopeAttestation := make(map[string]interface{}, len(nativeAttestation)+1)
+	for key, value := range nativeAttestation {
+		envelopeAttestation[key] = value
+	}
+	envelopeAttestation["resultDigest"] = envelopeResultDigest
+	result["_meta"] = map[string]interface{}{
+		"doops.sh/tool-attestation": envelopeAttestation,
 	}
 	return result, nil
 }

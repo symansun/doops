@@ -126,7 +126,7 @@ func TestDoagentToolTraceCollectorRequiresMatchingTrustedAttestationForCICD(t *t
 			"canonicalScope":       scope,
 			"scopeDigest":          scopeDigest,
 			"inputDigest":          inputDigest,
-			"resultDigest":         resultDigest,
+			"publicResultDigest":   resultDigest,
 		},
 	}
 	nativeUpdate := map[string]interface{}{

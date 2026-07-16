@@ -30,6 +30,7 @@ type doagentToolTrace struct {
 	ScopeDigest          string
 	InputDigest          string
 	AttestedResultDigest string
+	PublicResultDigest   string
 	inputJSON            json.RawMessage
 	resultJSON           json.RawMessage
 }
@@ -136,6 +137,7 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 	trace.ScopeDigest, _ = update["scopeDigest"].(string)
 	trace.InputDigest, _ = update["inputDigest"].(string)
 	trace.AttestedResultDigest, _ = update["resultDigest"].(string)
+	trace.PublicResultDigest, _ = update["publicResultDigest"].(string)
 	c.calls[toolCallID] = trace
 	return nil
 }
@@ -170,6 +172,7 @@ func mergeDoagentToolAttestationUpdate(update map[string]interface{}, result int
 		"scopeDigest":          "scopeDigest",
 		"inputDigest":          "inputDigest",
 		"resultDigest":         "resultDigest",
+		"publicResultDigest":   "publicResultDigest",
 	}
 	for source, target := range fields {
 		value, exists := attestation[source]
@@ -245,7 +248,7 @@ func (trace doagentToolTrace) eligibleForContext(expected *trustedReconciliation
 		trace.EvidenceSubject != capability.EvidenceSubject ||
 		trace.ScopeDigest != capability.ScopeDigest ||
 		!validSHA256Digest(trace.InputDigest) ||
-		!validSHA256Digest(trace.AttestedResultDigest) {
+		!validSHA256Digest(trace.effectiveResultDigest()) {
 		return false
 	}
 	expectedScopeDigest, err := digestJSON(capability.CanonicalScope)
@@ -290,10 +293,17 @@ func (trace doagentToolTrace) verifiedResult() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("digest runtime tool result: %w", err)
 	}
-	if expectedResultDigest != trace.AttestedResultDigest {
+	if expectedResultDigest != trace.effectiveResultDigest() {
 		return nil, fmt.Errorf("runtime tool result digest mismatch")
 	}
 	return resultObject, nil
+}
+
+func (trace doagentToolTrace) effectiveResultDigest() string {
+	if trace.PublicResultDigest != "" {
+		return trace.PublicResultDigest
+	}
+	return trace.AttestedResultDigest
 }
 
 func rejectSensitiveToolResult(value interface{}) error {
