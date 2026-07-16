@@ -68,7 +68,7 @@ func TestDoagentToolTraceCollectorRequiresMatchingTrustedAttestationForCICD(t *t
 		"toolName":                 "mcp_doops_plan_ObserveWorkspaceSource",
 		"status":                   "completed",
 		"input":                    map[string]interface{}{},
-		"result":                   result,
+		"rawOutput":                result,
 		"attestationSchemaVersion": "doops.tool-attestation/v1",
 		"contextSchemaVersion":     trustedReconciliationContextSchema,
 		"operationId":              context.OperationID,

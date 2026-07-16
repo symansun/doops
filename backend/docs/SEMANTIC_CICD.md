@@ -62,8 +62,7 @@ by the CLI. Ordinary prompts cannot request the mutation-capable mode.
 
 ## Result
 
-Before its terminal response, doagent writes one JSON result file to the
-Gateway-designated session path:
+doagent emits exactly one JSON object as its final response:
 
 ```json
 {
@@ -84,11 +83,12 @@ Gateway-designated session path:
 }
 ```
 
-The Gateway rejects missing, symlinked, oversized, Markdown-wrapped, or
-non-object result files. Agent-authored evidence uses `toolRef` with an exact
-tool name and exact JSON input. The Gateway rejects model-authored runtime
-payloads, resolves every reference to one completed tool call from the accepted
-`turnId`, and injects `toolCall` with the exact ID, tool, input and result.
+The Gateway rejects a missing, Markdown-wrapped, non-object, or multiple-object
+final response. Agent-authored evidence uses `toolRef` with an exact tool name
+and exact JSON input. The Gateway rejects model-authored runtime payloads,
+resolves every reference to one completed tool call from the accepted `turnId`,
+and injects `toolCall` with the exact ID, tool, input and attested result after
+removing transport-only `_meta`.
 Conflicting duplicate IDs, replayed events, missing calls or ambiguous
 references fail. Image generation belongs to doagent multi-agent execution;
 DoOps does not expose or invoke it.

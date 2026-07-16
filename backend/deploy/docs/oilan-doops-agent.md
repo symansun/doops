@@ -71,9 +71,9 @@ resulting workspace commit. The Gateway uses the normal `ActionAsk` permission
 and session resource lock.
 
 doagent is the sole Agent executor. It selects existing DoOps modules, observes
-the declared target, and writes the Gateway-designated JSON `DeploymentRun`
-result file. The Gateway binds every evidence item to a completed ACP tool call
-from the accepted `turnId`. `planned`,
+the declared target, and emits one JSON `DeploymentRun` as its final response.
+The Gateway binds every evidence item to a completed ACP tool call from the
+accepted `turnId`. `planned`,
 requires the evidence result, subject, and observation time to match that
 tool's actual JSON output.
 `converged`, `blocked`, `failed`, and `outcome-unknown` are valid phases.

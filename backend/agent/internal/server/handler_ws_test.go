@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -603,6 +604,65 @@ func TestSubscribeDoagentSSEReturnsErrorWhenStreamEndsWithoutFinalEvent(t *testi
 	}
 	if got := progress.String(); got != "partial" {
 		t.Fatalf("progress mismatch: %q", got)
+	}
+}
+
+func TestSubscribeDoagentSSEScopesUntaggedEventsToFreshMachineSession(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		allowUntagged bool
+		wantTypes     []string
+	}{
+		{
+			name:          "fresh machine session accepts current untagged event",
+			allowUntagged: true,
+			wantTypes:     []string{"agent_message", "turn_finished"},
+		},
+		{
+			name:          "reused session rejects untagged event",
+			allowUntagged: false,
+			wantTypes:     []string{"turn_finished"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/events" {
+					t.Fatalf("unexpected path: %s", r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","replay":true,"content":{"type":"text","text":"stale"}}}}`)
+				fmt.Fprintln(w)
+				fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","content":{"type":"text","text":"current"}}}}`)
+				fmt.Fprintln(w)
+				fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-current","status":"completed","stopReason":"end_turn"}}}`)
+				fmt.Fprintln(w)
+			}))
+			defer ts.Close()
+
+			turnIDReady := make(chan string, 1)
+			turnIDReady <- "turn-current"
+			close(turnIDReady)
+			var gotTypes []string
+			err := subscribeDoagentSSEWithCollectorReady(
+				t.Context(),
+				ts.URL,
+				"scope-test",
+				func(notificationEvent) {},
+				func(update map[string]interface{}) error {
+					gotTypes = append(gotTypes, fmt.Sprint(update["sessionUpdate"]))
+					return nil
+				},
+				turnIDReady,
+				test.allowUntagged,
+				nil,
+			)
+			if err != nil {
+				t.Fatalf("subscribe: %v", err)
+			}
+			if !reflect.DeepEqual(gotTypes, test.wantTypes) {
+				t.Fatalf("collected update types = %#v, want %#v", gotTypes, test.wantTypes)
+			}
+		})
 	}
 }
 

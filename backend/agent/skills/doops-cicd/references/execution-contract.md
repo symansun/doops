@@ -44,6 +44,11 @@ phase 只允许 `planned`、`converged`、`blocked`、`failed`、
 `outcome-unknown`。每条 evidence 必须引用当前 turn 中完成的受信任工具调用；Gateway
 只接受匹配 `turnId` 的调用，并负责把 `toolRef` 解析为不可改写的 `toolCall`。
 
+当请求使用 `response_format=json` 时，doagent 必须把一个且仅一个 JSON object
+作为 final response；该 final response 就是机器结果，不得写结果文件或输出
+Markdown、YAML、外围文本。`toolCall.result` 只包含摘要验证通过且移除 transport
+`_meta` 后的工具结果。
+
 不得把普通 Bash、Read、浏览器、子 Agent 文本或 Secret 内容当成部署证据。
 禁止 fallback 或静默降级。Image generation 与 Agent delegation 属于 doagent，
 不属于 DoOps 部署证据工具。

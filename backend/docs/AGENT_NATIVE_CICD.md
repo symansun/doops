@@ -17,7 +17,7 @@ private deployment API, shell adapter, or external release event.
 | Gateway | Authenticate the target, enforce the session/resource boundary, route Ask, and bind the result to authoritative ACP tool-call events |
 | `doops-agent` | Bind the doagent session to the pushed workspace and expose ordinary DoOps primitives |
 | `doagent` | Select the Skill, coordinate multiple agents, call available modules, and report observed facts |
-| `$doops-cicd` Skill | Read the declarative workflow, select existing DoOps modules, execute dry-run/apply within authorization, and write the Gateway-designated JSON `DeploymentRun` result file |
+| `$doops-cicd` Skill | Read the declarative workflow, select existing DoOps modules, execute dry-run/apply within authorization, and emit one JSON `DeploymentRun` as the final response |
 
 DoOps does not implement planning, Skill routing, tool registries, retry loops,
 or recovery policy in a second control plane. The Gateway only binds completed
@@ -74,17 +74,17 @@ result, subject, and observation time to match the completed tool's actual JSON
 output.
 
 `response_format=json` remains a generic structured-result transport for callers
-that need it. The bridge only accepts the result file written by doagent, waits
-for the authoritative `turn_finished` event, and binds declared evidence to the
-matching completed runtime tool call.
+that need it. The bridge accepts exactly one final JSON response from the fresh
+doagent session, waits for the authoritative `turn_finished` event, and binds
+declared evidence to the matching completed runtime tool call.
 
 Permission requests from doagent are fail-closed. DoOps never answers a
 `permission.updated` request on behalf of the user or the Agent engine.
 
 ## Skill Result
 
-For `response_format=json`, the Gateway supplies the sole result-file path.
-`$doops-cicd` writes exactly one JSON result to that path:
+For `response_format=json`, `$doops-cicd` emits exactly one JSON object as its
+final response:
 
 ```json
 {

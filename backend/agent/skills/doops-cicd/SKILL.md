@@ -73,6 +73,11 @@ review 返回一个 `DeploymentReview`；dry-run/apply 返回一个与根声明�
 Agent 先写 `toolRef`，Gateway 再绑定不可改写的 `toolCall`。普通 Bash、文件读取和
 浏览器输出不是部署证据。
 
+当 Ask 请求使用 `response_format=json` 时，final response 就是唯一机器结果：
+只输出一个 JSON object，不得使用 Markdown、YAML、结果文件、外围文本或第二个
+JSON object。Gateway 注入的 `toolCall.result` 是摘要验证通过并移除 transport
+`_meta` 后的结果；Agent 不得改写或补充该结果。
+
 ## 安全
 
 - 不读取或输出 Secret 内容，只使用声明中的 Secret 引用元数据。

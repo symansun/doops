@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func TestAgentPromptJSONReturnsResultFileInStructuredContent(t *testing.T) {
+func TestAgentPromptJSONReturnsFinalMessageInStructuredContent(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 	workspaceCommit := strings.Repeat("a", 40)
@@ -22,8 +22,24 @@ func TestAgentPromptJSONReturnsResultFileInStructuredContent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(workspaceCommit+"\n"), 0o600); err != nil {
 		t.Fatalf("write workspace commit: %v", err)
 	}
-	resultPath := filepath.Join(workspace, ".doops", "structured-result.json")
-	doagent := newJSONAgentPromptTestServer(t, "```json\n{\"ignored\":true}\n```", func(prompt string, params map[string]interface{}) {
+	finalResult := `{
+		"apiVersion":"doops.sh/v2",
+		"kind":"DeploymentRun",
+		"spec":{"mode":"dry-run"},
+		"status":{
+			"phase":"planned",
+			"mutationCount":0,
+			"evidence":[{
+				"subject":"source",
+				"toolRef":{
+					"tool":"doops-source-observer",
+					"input":{"value":9007199254740993}
+				},
+				"observedAt":"2026-07-15T00:00:00Z"
+			}]
+		}
+	}`
+	doagent := newJSONAgentPromptTestServer(t, finalResult, func(prompt string, params map[string]interface{}) {
 		allowed, ok := params["allowedTools"].([]interface{})
 		if !ok || len(allowed) != 0 {
 			t.Errorf("plain JSON prompt must disable all tools: %#v", params)
@@ -31,8 +47,9 @@ func TestAgentPromptJSONReturnsResultFileInStructuredContent(t *testing.T) {
 		if _, ok := params["trustedReconciliationContext"]; ok {
 			t.Errorf("plain JSON prompt must not carry trusted reconciliation context: %#v", params)
 		}
-		if !strings.Contains(prompt, resultPath) {
-			t.Errorf("structured prompt must declare the result file path: %s", prompt)
+		if !strings.Contains(prompt, "your final response is the machine result") ||
+			!strings.Contains(prompt, "exactly one JSON object with no Markdown") {
+			t.Errorf("structured prompt must declare the final response contract: %s", prompt)
 		}
 		if !strings.Contains(prompt, "status may contain only phase, mutationCount, capabilities, evidence, and failures") ||
 			!strings.Contains(prompt, "Do not emit plannedMutations") {
@@ -46,28 +63,6 @@ func TestAgentPromptJSONReturnsResultFileInStructuredContent(t *testing.T) {
 			!strings.Contains(prompt, "toolRef.input") ||
 			!strings.Contains(prompt, "injects toolCall") {
 			t.Errorf("structured prompt must define one runtime tool identity: %s", prompt)
-		}
-		if err := os.MkdirAll(filepath.Dir(resultPath), 0o700); err != nil {
-			t.Fatalf("create result directory: %v", err)
-		}
-		if err := os.WriteFile(resultPath, []byte(`{
-			"apiVersion":"doops.sh/v2",
-			"kind":"DeploymentRun",
-			"spec":{"mode":"dry-run"},
-			"status":{
-				"phase":"planned",
-				"mutationCount":0,
-					"evidence":[{
-						"subject":"source",
-						"toolRef":{
-							"tool":"doops-source-observer",
-							"input":{"value":9007199254740993}
-						},
-						"observedAt":"2026-07-15T00:00:00Z"
-				}]
-			}
-		}`), 0o600); err != nil {
-			t.Fatalf("write structured result: %v", err)
 		}
 	})
 	defer doagent.Close()
@@ -119,6 +114,9 @@ func TestAgentPromptJSONReturnsResultFileInStructuredContent(t *testing.T) {
 	if runtimeResult["revision"] != "immutable" {
 		t.Fatalf("Gateway must inject the exact runtime tool result: %#v", entry)
 	}
+	if _, exists := runtimeResult["_meta"]; exists {
+		t.Fatalf("Gateway must not inject unverified MCP metadata: %#v", entry)
+	}
 	if _, exists := entry["toolRef"]; exists {
 		t.Fatalf("Gateway must consume the model-visible toolRef: %#v", entry)
 	}
@@ -126,10 +124,10 @@ func TestAgentPromptJSONReturnsResultFileInStructuredContent(t *testing.T) {
 
 func TestBindDeploymentRunEvidenceUsesEligibleRuntimeCalls(t *testing.T) {
 	traces := completedDoagentToolTraces(t, []map[string]interface{}{
-		{"sessionUpdate": "tool_call_update", "toolCallId": "agent-1", "toolName": "Agent", "status": "completed", "input": map[string]interface{}{"task": "inspect"}, "result": "delegated"},
-		{"sessionUpdate": "tool_call_update", "toolCallId": "image-1", "toolName": "image_gen", "status": "completed", "input": map[string]interface{}{"prompt": "diagram"}, "result": map[string]interface{}{"path": "output/diagram.png"}},
-		{"sessionUpdate": "tool_call_update", "toolCallId": "read-target", "toolName": "Read", "status": "completed", "input": map[string]interface{}{"path": "target.json"}, "result": map[string]interface{}{"revision": "target"}},
-		{"sessionUpdate": "tool_call_update", "toolCallId": "read-source", "toolName": "Read", "status": "completed", "input": map[string]interface{}{"path": "source.json"}, "result": map[string]interface{}{"revision": "source"}},
+		{"sessionUpdate": "tool_call_update", "toolCallId": "agent-1", "toolName": "Agent", "status": "completed", "input": map[string]interface{}{"task": "inspect"}, "rawOutput": map[string]interface{}{"status": "delegated"}},
+		{"sessionUpdate": "tool_call_update", "toolCallId": "image-1", "toolName": "image_gen", "status": "completed", "input": map[string]interface{}{"prompt": "diagram"}, "rawOutput": map[string]interface{}{"path": "output/diagram.png"}},
+		{"sessionUpdate": "tool_call_update", "toolCallId": "read-target", "toolName": "Read", "status": "completed", "input": map[string]interface{}{"path": "target.json"}, "rawOutput": map[string]interface{}{"revision": "target"}},
+		{"sessionUpdate": "tool_call_update", "toolCallId": "read-source", "toolName": "Read", "status": "completed", "input": map[string]interface{}{"path": "source.json"}, "rawOutput": map[string]interface{}{"revision": "source"}},
 	})
 
 	result := deploymentRunWithToolRef("Read", map[string]interface{}{"path": "source.json"})
@@ -144,8 +142,8 @@ func TestBindDeploymentRunEvidenceUsesEligibleRuntimeCalls(t *testing.T) {
 		t.Fatalf("toolRef must resolve by exact input: %#v", entry)
 	}
 	ambiguous := completedDoagentToolTraces(t, []map[string]interface{}{
-		{"sessionUpdate": "tool_call_update", "toolCallId": "read-1", "toolName": "Read", "status": "completed", "input": map[string]interface{}{"path": "same.json"}, "result": "one"},
-		{"sessionUpdate": "tool_call_update", "toolCallId": "read-2", "toolName": "Read", "status": "completed", "input": map[string]interface{}{"path": "same.json"}, "result": "two"},
+		{"sessionUpdate": "tool_call_update", "toolCallId": "read-1", "toolName": "Read", "status": "completed", "input": map[string]interface{}{"path": "same.json"}, "rawOutput": map[string]interface{}{"value": "one"}},
+		{"sessionUpdate": "tool_call_update", "toolCallId": "read-2", "toolName": "Read", "status": "completed", "input": map[string]interface{}{"path": "same.json"}, "rawOutput": map[string]interface{}{"value": "two"}},
 	})
 	for _, test := range []struct {
 		name   string
@@ -166,7 +164,7 @@ func TestBindDeploymentRunEvidenceUsesEligibleRuntimeCalls(t *testing.T) {
 
 func TestBindDeploymentRunEvidenceRejectsModelAuthoredRuntimePayload(t *testing.T) {
 	traces := completedDoagentToolTraces(t, []map[string]interface{}{
-		{"sessionUpdate": "tool_call_update", "toolCallId": "read-1", "toolName": "Read", "status": "completed", "input": map[string]interface{}{"path": "state.json"}, "result": map[string]interface{}{"revision": "current"}},
+		{"sessionUpdate": "tool_call_update", "toolCallId": "read-1", "toolName": "Read", "status": "completed", "input": map[string]interface{}{"path": "state.json"}, "rawOutput": map[string]interface{}{"revision": "current"}},
 	})
 	for _, test := range []struct {
 		name   string
@@ -233,7 +231,7 @@ func TestDeploymentToolBindingPreservesLargeJSONIntegers(t *testing.T) {
 			"toolName":      "Read",
 			"status":        "completed",
 			"input":         traceInput,
-			"result":        map[string]interface{}{"revision": "current"},
+			"rawOutput":     map[string]interface{}{"revision": "current"},
 		},
 	})
 	_, _, err = bindTestDeploymentRun(
@@ -251,7 +249,7 @@ func TestDeploymentToolBindingPreservesLargeJSONIntegers(t *testing.T) {
 			"toolName":      "Read",
 			"status":        "completed",
 			"input":         map[string]interface{}{"path": "state.json"},
-			"result":        traceInput,
+			"rawOutput":     traceInput,
 		},
 	})
 	_, bound, err := bindTestDeploymentRun(
@@ -272,6 +270,26 @@ func completedDoagentToolTraces(t *testing.T, updates []map[string]interface{}) 
 	t.Helper()
 	collector := newDoagentToolTraceCollector()
 	for _, update := range updates {
+		if rawOutput, ok := update["rawOutput"]; ok {
+			encoded, err := stableDoagentJSON(rawOutput)
+			if err != nil {
+				t.Fatalf("encode raw output: %v", err)
+			}
+			resultView, err := decodeDoagentJSONValue(encoded)
+			if err != nil {
+				t.Fatalf("decode raw output: %v", err)
+			}
+			resultObject, ok := resultView.(map[string]interface{})
+			if !ok {
+				t.Fatalf("raw output must be an object: %#v", rawOutput)
+			}
+			delete(resultObject, "_meta")
+			resultDigest, err := digestJSON(resultObject)
+			if err != nil {
+				t.Fatalf("digest raw output: %v", err)
+			}
+			update["resultDigest"] = resultDigest
+		}
 		if err := collector.collect(update); err != nil {
 			t.Fatalf("collect completed trace: %v", err)
 		}
@@ -414,17 +432,10 @@ func TestAgentPromptRejectsInstructionWorkspaceCommitMismatchBeforeDoagent(t *te
 	}
 }
 
-func TestAgentPromptJSONRejectsMissingResultFile(t *testing.T) {
+func TestAgentPromptJSONRejectsMissingFinalMachineResult(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	resultPath := filepath.Join(root, "invalid-json-prompt", ".doops", "structured-result.json")
-	if err := os.MkdirAll(filepath.Dir(resultPath), 0o700); err != nil {
-		t.Fatalf("create stale result directory: %v", err)
-	}
-	if err := os.WriteFile(resultPath, []byte(`{"status":"stale"}`), 0o600); err != nil {
-		t.Fatalf("write stale structured result: %v", err)
-	}
-	doagent := newJSONAgentPromptTestServer(t, `{"status":"converged"}`, nil)
+	doagent := newJSONAgentPromptTestServer(t, "", nil)
 	defer doagent.Close()
 	t.Setenv("DO_AGENT_URL", doagent.URL)
 
@@ -442,23 +453,23 @@ func TestAgentPromptJSONRejectsMissingResultFile(t *testing.T) {
 	})
 	toolResult, _ := result["result"].(map[string]interface{})
 	if toolResult["isError"] != true {
-		t.Fatalf("missing structured result file must fail: %#v", result)
+		t.Fatalf("missing final machine result must fail: %#v", result)
 	}
-	if !strings.Contains(fmt.Sprint(toolResult["content"]), "structured result file") {
-		t.Fatalf("expected structured result file error, got %#v", result)
-	}
-	if _, err := os.Stat(resultPath); !os.IsNotExist(err) {
-		t.Fatalf("stale structured result must be removed before prompting, stat error: %v", err)
+	if !strings.Contains(fmt.Sprint(toolResult["content"]), "final machine result") {
+		t.Fatalf("expected final machine result error, got %#v", result)
 	}
 }
 
-func TestReadDoagentStructuredResultRejectsMarkdown(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "structured-result.json")
-	if err := os.WriteFile(path, []byte("```json\n{\"status\":\"converged\"}\n```"), 0o600); err != nil {
-		t.Fatalf("write structured result: %v", err)
+func TestDoagentStructuredResultCollectorRejectsMarkdown(t *testing.T) {
+	collector := newDoagentToolTraceCollector()
+	if err := collector.collect(map[string]interface{}{
+		"sessionUpdate": "agent_message",
+		"content":       map[string]interface{}{"text": "```json\n{\"status\":\"converged\"}\n```"},
+	}); err != nil {
+		t.Fatalf("collect final message: %v", err)
 	}
-	if _, _, err := readDoagentStructuredResult(path); err == nil || !strings.Contains(err.Error(), "one JSON object") {
-		t.Fatalf("Markdown-wrapped result file must be rejected, got %v", err)
+	if _, _, err := collector.structuredResult(); err == nil || !strings.Contains(err.Error(), "one JSON object") {
+		t.Fatalf("Markdown-wrapped final message must be rejected, got %v", err)
 	}
 }
 
@@ -546,11 +557,38 @@ func newJSONAgentPromptTestServer(t *testing.T, finalMessage string, onPrompt fu
 			fmt.Fprintln(w)
 			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"stale-turn","status":"completed","stopReason":"end_turn"}}}`)
 			fmt.Fprintln(w)
-			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","turnId":"turn-json","toolCallId":"runtime-tool-source","toolName":"doops-source-observer","status":"in_progress","input":{"value":9007199254740993}}}}`)
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"runtime-tool-source","toolName":"doops-source-observer","status":"in_progress","input":{"value":9007199254740993}}}}`)
 			fmt.Fprintln(w)
-			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","turnId":"turn-json","toolCallId":"runtime-tool-source","toolName":"doops-source-observer","status":"completed","input":{"value":9007199254740993},"result":{"revision":"immutable"}}}}`)
-			fmt.Fprintln(w)
-			fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"update\":{\"sessionUpdate\":\"agent_message\",\"turnId\":\"turn-json\",\"content\":{\"type\":\"text\",\"text\":%q}}}}\n\n", finalMessage)
+			rawOutput := map[string]interface{}{
+				"revision": "immutable",
+				"_meta":    map[string]interface{}{"untrusted": "must-not-enter-evidence"},
+			}
+			resultDigest, err := digestJSON(map[string]interface{}{"revision": "immutable"})
+			if err != nil {
+				t.Fatalf("digest test raw output: %v", err)
+			}
+			payload, err := json.Marshal(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"method":  "session/update",
+				"params": map[string]interface{}{
+					"update": map[string]interface{}{
+						"sessionUpdate": "tool_call_update",
+						"toolCallId":    "runtime-tool-source",
+						"toolName":      "doops-source-observer",
+						"status":        "completed",
+						"input":         map[string]interface{}{"value": json.Number("9007199254740993")},
+						"rawOutput":     rawOutput,
+						"resultDigest":  resultDigest,
+					},
+				},
+			})
+			if err != nil {
+				t.Fatalf("encode test tool update: %v", err)
+			}
+			fmt.Fprintf(w, "data: %s\n\n", payload)
+			if finalMessage != "" {
+				fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"update\":{\"sessionUpdate\":\"agent_message\",\"content\":{\"type\":\"text\",\"text\":%q}}}}\n\n", finalMessage)
+			}
 			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-json","status":"completed","stopReason":"end_turn"}}}`)
 			fmt.Fprintln(w)
 		default:

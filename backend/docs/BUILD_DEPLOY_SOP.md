@@ -62,8 +62,8 @@ doops -session oilan-agent-bootstrap cicd run \
 ```
 
 The command synchronizes the repository, then sends one ordinary Ask to doagent
-for the `$doops-cicd` Skill. The Skill writes the Gateway-designated JSON
-`DeploymentRun` result file;
+for the `$doops-cicd` Skill. The Skill emits one JSON `DeploymentRun` as its
+final response;
 text such as `admitted` is not evidence, and dry-run mutation count must be zero.
 
 **DoOps Agent 执行顺序：**
