@@ -1,12 +1,17 @@
 package server
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -80,9 +85,16 @@ func (c trustedReconciliationContext) ValidateDigest() error {
 }
 
 func (c trustedReconciliationContext) calculatedDigest() (string, error) {
-	copy := c
-	copy.ContextDigest = ""
-	return digestJSON(copy)
+	data, err := json.Marshal(c)
+	if err != nil {
+		return "", err
+	}
+	var object map[string]interface{}
+	if err := json.Unmarshal(data, &object); err != nil {
+		return "", err
+	}
+	delete(object, "contextDigest")
+	return digestJSON(object)
 }
 
 func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit string) (trustedReconciliationAdmission, error) {
@@ -273,7 +285,7 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 		Source:             source,
 		Capabilities:       capabilities,
 	}
-	context.ContextDigest, err = digestJSON(context)
+	context.ContextDigest, err = context.calculatedDigest()
 	if err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
@@ -292,8 +304,149 @@ func digestJSON(value interface{}) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(data)
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var normalized interface{}
+	if err := decoder.Decode(&normalized); err != nil {
+		return "", err
+	}
+	var canonical bytes.Buffer
+	if err := writeCanonicalJSON(&canonical, normalized); err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(canonical.Bytes())
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func writeCanonicalJSON(output *bytes.Buffer, value interface{}) error {
+	switch typed := value.(type) {
+	case nil:
+		output.WriteString("null")
+	case bool:
+		if typed {
+			output.WriteString("true")
+		} else {
+			output.WriteString("false")
+		}
+	case string:
+		if err := writeCanonicalJSONString(output, typed); err != nil {
+			return err
+		}
+	case json.Number:
+		number, err := canonicalJSONNumber(typed.String())
+		if err != nil {
+			return err
+		}
+		output.WriteString(number)
+	case []interface{}:
+		output.WriteByte('[')
+		for index, item := range typed {
+			if index > 0 {
+				output.WriteByte(',')
+			}
+			if err := writeCanonicalJSON(output, item); err != nil {
+				return err
+			}
+		}
+		output.WriteByte(']')
+	case map[string]interface{}:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			if !utf8.ValidString(key) {
+				return fmt.Errorf("canonical JSON object key is not valid UTF-8")
+			}
+			keys = append(keys, key)
+		}
+		sort.Slice(keys, func(i, j int) bool {
+			return compareUTF16(keys[i], keys[j]) < 0
+		})
+		output.WriteByte('{')
+		for index, key := range keys {
+			if index > 0 {
+				output.WriteByte(',')
+			}
+			if err := writeCanonicalJSONString(output, key); err != nil {
+				return err
+			}
+			output.WriteByte(':')
+			if err := writeCanonicalJSON(output, typed[key]); err != nil {
+				return err
+			}
+		}
+		output.WriteByte('}')
+	default:
+		return fmt.Errorf("unsupported canonical JSON type %T", value)
+	}
+	return nil
+}
+
+func writeCanonicalJSONString(output *bytes.Buffer, value string) error {
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("canonical JSON string is not valid UTF-8")
+	}
+	output.WriteByte('"')
+	for _, char := range value {
+		switch char {
+		case '\b':
+			output.WriteString(`\b`)
+		case '\t':
+			output.WriteString(`\t`)
+		case '\n':
+			output.WriteString(`\n`)
+		case '\f':
+			output.WriteString(`\f`)
+		case '\r':
+			output.WriteString(`\r`)
+		case '"':
+			output.WriteString(`\"`)
+		case '\\':
+			output.WriteString(`\\`)
+		default:
+			if char < 0x20 {
+				_, _ = fmt.Fprintf(output, `\u%04x`, char)
+			} else {
+				output.WriteRune(char)
+			}
+		}
+	}
+	output.WriteByte('"')
+	return nil
+}
+
+func canonicalJSONNumber(value string) (string, error) {
+	number, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return "", fmt.Errorf("invalid canonical JSON number %q: %w", value, err)
+	}
+	if number == 0 {
+		return "0", nil
+	}
+	data, err := json.Marshal(number)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func compareUTF16(left, right string) int {
+	leftUnits := utf16.Encode([]rune(left))
+	rightUnits := utf16.Encode([]rune(right))
+	for index := 0; index < len(leftUnits) && index < len(rightUnits); index++ {
+		if leftUnits[index] < rightUnits[index] {
+			return -1
+		}
+		if leftUnits[index] > rightUnits[index] {
+			return 1
+		}
+	}
+	switch {
+	case len(leftUnits) < len(rightUnits):
+		return -1
+	case len(leftUnits) > len(rightUnits):
+		return 1
+	default:
+		return 0
+	}
 }
 
 func validateTrustedWorkflowInputs(parameters map[string]credentialTemplateParameter, inputs map[string]string) error {

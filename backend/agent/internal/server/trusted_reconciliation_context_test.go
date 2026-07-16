@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -184,6 +185,74 @@ func TestBuildTrustedReconciliationAdmissionAddsExecutorsOnlyForApply(t *testing
 		if !containsString(admission.AllowedTools, tool) {
 			t.Fatalf("apply allowed tools missing %s: %#v", tool, admission.AllowedTools)
 		}
+	}
+}
+
+func TestTrustedReconciliationContextDigestMatchesDoagentCanonicalJSON(t *testing.T) {
+	context := trustedReconciliationContext{
+		SchemaVersion:      trustedReconciliationContextSchema,
+		OperationID:        "op_" + strings.Repeat("0", 32),
+		ExecutionMode:      "dry-run",
+		MutationAuthorized: false,
+		PlanDigest:         "sha256:" + strings.Repeat("1", 64),
+		PlanBindingDigest:  "sha256:" + strings.Repeat("2", 64),
+		Source: trustedReconciliationSource{
+			Repository:      "https://example.test/app.git",
+			Revision:        strings.Repeat("b", 40),
+			Branch:          "main",
+			WorkspaceCommit: strings.Repeat("a", 40),
+		},
+		Capabilities: map[string]trustedReconciliationCapability{
+			"ObserveWorkspaceSource": {
+				Tool:            "ObserveWorkspaceSource",
+				EvidenceKind:    "source-identity",
+				EvidenceSubject: "source-identity",
+				CanonicalScope: map[string]interface{}{
+					"environment": "test",
+					"project":     "ecp",
+					"tool":        "mcp_doops_plan_ObserveWorkspaceSource",
+				},
+				ScopeDigest: "sha256:" + strings.Repeat("3", 64),
+			},
+		},
+	}
+
+	digest, err := context.calculatedDigest()
+	if err != nil {
+		t.Fatalf("calculate context digest: %v", err)
+	}
+	const want = "sha256:511ccf1c6389a50280913da368d30dffa425e9291ec403c43ca55d0a63edda0d"
+	if digest != want {
+		t.Fatalf("context digest = %q, want DoAgent JCS digest %q", digest, want)
+	}
+}
+
+func TestDigestJSONMatchesJCSStringNumberAndUTF16Ordering(t *testing.T) {
+	value := map[string]interface{}{
+		"html":    "a&b<c>d",
+		"unicode": "line\u2028sep\u2029end",
+		"numbers": []interface{}{
+			333333333.33333329,
+			1e30,
+			4.50,
+			2e-3,
+			1e-27,
+			json.Number("-0"),
+			json.Number("9007199254740993"),
+		},
+		"nested": map[string]interface{}{
+			"\U0001f600": "supplementary",
+			"\u20ac":     "bmp",
+		},
+	}
+
+	digest, err := digestJSON(value)
+	if err != nil {
+		t.Fatalf("digest canonical JSON: %v", err)
+	}
+	const want = "sha256:138bc68e5d8a50403aa62eb6ce9332e6e835d8b465a7aee7e2f115908a8ea9a2"
+	if digest != want {
+		t.Fatalf("canonical digest = %q, want DoAgent JCS digest %q", digest, want)
 	}
 }
 
