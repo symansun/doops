@@ -141,17 +141,20 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 }
 
 func mergeDoagentToolAttestationUpdate(update map[string]interface{}, result interface{}) error {
-	resultObject, ok := result.(map[string]interface{})
-	if !ok {
-		return nil
+	var attestations []map[string]interface{}
+	if direct, exists := update["attestation"]; exists {
+		attestation, ok := direct.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("attestation must be an object")
+		}
+		attestations = append(attestations, attestation)
 	}
-	meta, ok := resultObject["_meta"].(map[string]interface{})
-	if !ok {
-		return nil
-	}
-	attestation, ok := meta["doops.sh/tool-attestation"].(map[string]interface{})
-	if !ok {
-		return nil
+	if resultObject, ok := result.(map[string]interface{}); ok {
+		if meta, ok := resultObject["_meta"].(map[string]interface{}); ok {
+			if attestation, ok := meta["doops.sh/tool-attestation"].(map[string]interface{}); ok {
+				attestations = append(attestations, attestation)
+			}
+		}
 	}
 	fields := map[string]string{
 		"schemaVersion":        "attestationSchemaVersion",
@@ -171,15 +174,17 @@ func mergeDoagentToolAttestationUpdate(update map[string]interface{}, result int
 		"inputDigest":          "inputDigest",
 		"resultDigest":         "resultDigest",
 	}
-	for source, target := range fields {
-		value, exists := attestation[source]
-		if !exists {
-			continue
+	for _, attestation := range attestations {
+		for source, target := range fields {
+			value, exists := attestation[source]
+			if !exists {
+				continue
+			}
+			if current, exists := update[target]; exists && !reflect.DeepEqual(current, value) {
+				return fmt.Errorf("conflicting %s", target)
+			}
+			update[target] = value
 		}
-		if current, exists := update[target]; exists && !reflect.DeepEqual(current, value) {
-			return fmt.Errorf("conflicting %s", target)
-		}
-		update[target] = value
 	}
 	return nil
 }

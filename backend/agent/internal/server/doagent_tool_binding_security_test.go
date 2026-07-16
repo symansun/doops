@@ -145,6 +145,23 @@ func TestDoagentToolTraceCollectorRequiresMatchingTrustedAttestationForCICD(t *t
 		t.Fatalf("native MCP attestation was not eligible: %#v", calls)
 	}
 
+	directUpdate := map[string]interface{}{
+		"sessionUpdate": "tool_call_update",
+		"toolCallId":    "call-direct-source",
+		"toolName":      "mcp_doops_plan_ObserveWorkspaceSource",
+		"status":        "completed",
+		"input":         map[string]interface{}{},
+		"rawOutput":     result,
+		"attestation":   nativeResult["_meta"].(map[string]interface{})["doops.sh/tool-attestation"],
+	}
+	collector = newDoagentToolTraceCollector(admission)
+	if err := collector.collect(directUpdate); err != nil {
+		t.Fatalf("collect direct doagent attestation: %v", err)
+	}
+	if calls := collector.completed(); len(calls) != 1 {
+		t.Fatalf("direct doagent attestation was not eligible: %#v", calls)
+	}
+
 	conflictingUpdate := make(map[string]interface{}, len(update))
 	for key, value := range update {
 		conflictingUpdate[key] = value
@@ -155,6 +172,17 @@ func TestDoagentToolTraceCollectorRequiresMatchingTrustedAttestationForCICD(t *t
 	if err := collector.collect(conflictingUpdate); err == nil ||
 		!strings.Contains(err.Error(), "conflicting operationId") {
 		t.Fatalf("expected conflicting native attestation error, got %v", err)
+	}
+
+	conflictingDirectUpdate := make(map[string]interface{}, len(directUpdate)+1)
+	for key, value := range directUpdate {
+		conflictingDirectUpdate[key] = value
+	}
+	conflictingDirectUpdate["operationId"] = "op_ffffffffffffffffffffffffffffffff"
+	collector = newDoagentToolTraceCollector(admission)
+	if err := collector.collect(conflictingDirectUpdate); err == nil ||
+		!strings.Contains(err.Error(), "conflicting operationId") {
+		t.Fatalf("expected conflicting direct attestation error, got %v", err)
 	}
 
 	tampered := make(map[string]interface{}, len(update))
