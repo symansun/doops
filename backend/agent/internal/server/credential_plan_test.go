@@ -8,6 +8,33 @@ import (
 	"testing"
 )
 
+func TestCredentialScalarRejectsKnownSecretFormats(t *testing.T) {
+	for _, value := range []string{
+		"ghp_" + strings.Repeat("a", 36),
+		"github_pat_" + strings.Repeat("a", 82),
+		"glpat-" + strings.Repeat("a", 20),
+		"AKIA" + strings.Repeat("A", 16),
+		"https://user:synthetic@example.test/repo.git",
+		"https://example.test/repo.git?access_token=synthetic",
+		"https://example.test/repo.git?X-Goog-Signature=synthetic",
+		"scheduled release Bearer synthetic-canary",
+		"-----BEGIN PRIVATE KEY-----",
+	} {
+		if !credentialScalarContainsInlineMaterial(value) {
+			t.Fatalf("inline credential scalar %q was accepted", value)
+		}
+	}
+	for _, value := range []string{
+		"https://example.test/repo.git",
+		"release-20260716",
+		"sha256:" + strings.Repeat("a", 64),
+	} {
+		if credentialScalarContainsInlineMaterial(value) {
+			t.Fatalf("ordinary scalar %q was rejected", value)
+		}
+	}
+}
+
 func TestParseCredentialPlanReturnsOnlyDeclaredReferenceMetadata(t *testing.T) {
 	root := t.TempDir()
 	writeCredentialPlanTestFile(t, root, "deploy/release.yaml", `
@@ -426,6 +453,59 @@ environments:
 				t.Fatalf("expected no managed credentials, got %#v", plan)
 			}
 		})
+	}
+}
+
+func TestParseCredentialPlanResolvesEnvironmentRegistryFileToStrictV3Environment(t *testing.T) {
+	root := t.TempDir()
+	writeCredentialV3EnvironmentFixture(t, root)
+	writeCredentialPlanTestFile(t, root, "deploy/workflows/release.yaml", `
+apiVersion: doops.sh/v2
+kind: SemanticRelease
+metadata:
+  name: zhiyong-oilan-release
+spec:
+  application: zhiyong
+  release:
+    revision: ${inputs.revision}
+    version: ${inputs.version}
+    reason: ${inputs.reason}
+  environment: oilan
+  configurationSource: deploy/environments.yaml
+  serviceCatalog:
+    frontend:
+      uses: services/frontend.yaml
+  flow:
+    - intent: establish-release-context
+`)
+	writeCredentialServiceReleaseFixture(
+		t,
+		root,
+		"deploy/workflows/services/frontend.yaml",
+		"frontend",
+		"zhiyong",
+	)
+	writeCredentialPlanTestFile(t, root, "deploy/environments.yaml", `
+apiVersion: doops.sh/v2
+kind: EnvironmentRegistry
+metadata:
+  name: environment-index
+environments:
+  oilan:
+    file: deploy/environments/oilan/environment.yaml
+`)
+
+	plan, err := parseCredentialPlan(root, "deploy/workflows/release.yaml")
+	if err != nil {
+		t.Fatalf("resolve registry v3 environment: %v", err)
+	}
+	if plan.Template != "zhiyong-oilan-release" ||
+		plan.Project != "zhiyong" ||
+		plan.Environment != "oilan" ||
+		plan.Target != "gw-edu-coder" ||
+		plan.Cluster != "doops-edu" ||
+		plan.Instance != "edu-coder" {
+		t.Fatalf("unexpected registry v3 plan: %#v", plan)
 	}
 }
 

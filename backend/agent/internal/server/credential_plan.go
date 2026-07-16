@@ -5,16 +5,28 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 var (
-	ErrCredentialDeclarationInvalid = errors.New("credential declaration is invalid")
-	ErrInlineCredentialMaterial     = errors.New("inline credential material is forbidden")
+	ErrCredentialDeclarationInvalid  = errors.New("credential declaration is invalid")
+	ErrInlineCredentialMaterial      = errors.New("inline credential material is forbidden")
+	credentialInlineMaterialPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bgh[pousr]_[A-Za-z0-9]{20,255}\b`),
+		regexp.MustCompile(`(?i)\bgithub_pat_[A-Za-z0-9_]{20,255}\b`),
+		regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{20,255}\b`),
+		regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`),
+		regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`),
+		regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,255}\b`),
+		regexp.MustCompile(`\b(?:sk|rk)_live_[A-Za-z0-9]{16,255}\b`),
+		regexp.MustCompile(`\bnpm_[A-Za-z0-9]{36,255}\b`),
+	}
 )
 
 type CredentialPlan struct {
@@ -391,6 +403,7 @@ type credentialConfigurationVerificationProfile struct {
 }
 
 type credentialConfigurationEnvironment struct {
+	File                    string                          `yaml:"file,omitempty"`
 	DisplayName             string                          `yaml:"displayName"`
 	Services                []string                        `yaml:"services"`
 	DeploymentPlatform      string                          `yaml:"deploymentPlatform"`
@@ -912,41 +925,69 @@ func parseCredentialEnvironment(
 	if _, err := credentialYAMLDocument(configurationData); err != nil {
 		return credentialEnvironmentContext{}, err
 	}
-	return credentialConfigurationForEnvironment(
+	environment, file, err := credentialConfigurationForEnvironment(
 		configurationData,
 		environmentName,
 	)
+	if err != nil {
+		return credentialEnvironmentContext{}, err
+	}
+	if file == "" {
+		return environment, nil
+	}
+	parsed, err := parseCredentialWorkflow(root, file)
+	if err != nil {
+		return credentialEnvironmentContext{}, err
+	}
+	if parsed.Template.APIVersion != "doops.sh/v3" ||
+		parsed.Template.Kind != "EnvironmentDefinition" ||
+		parsed.Template.Spec.Environment != environmentName ||
+		parsed.Environment == nil {
+		return credentialEnvironmentContext{}, invalidCredentialDeclaration(
+			fmt.Errorf("environment %q file must reference its v3 EnvironmentDefinition", environmentName),
+		)
+	}
+	return *parsed.Environment, nil
 }
 
 func credentialConfigurationForEnvironment(
 	data []byte,
 	environmentName string,
-) (credentialEnvironmentContext, error) {
+) (credentialEnvironmentContext, string, error) {
 	var identity credentialWorkflowIdentity
 	if err := yaml.Unmarshal(data, &identity); err != nil {
-		return credentialEnvironmentContext{}, invalidCredentialDeclaration(err)
+		return credentialEnvironmentContext{}, "", invalidCredentialDeclaration(err)
 	}
 	switch identity.Kind {
 	case "EnvironmentRegistry":
 		var configuration credentialConfigurationSource
 		if err := strictCredentialYAMLDecode(data, &configuration); err != nil {
-			return credentialEnvironmentContext{}, invalidCredentialDeclaration(err)
+			return credentialEnvironmentContext{}, "", invalidCredentialDeclaration(err)
 		}
 		if configuration.APIVersion != "doops.sh/v2" || configuration.Kind != "EnvironmentRegistry" ||
 			strings.TrimSpace(configuration.Metadata.Name) == "" {
-			return credentialEnvironmentContext{}, invalidCredentialDeclaration(errors.New("invalid EnvironmentRegistry identity"))
+			return credentialEnvironmentContext{}, "", invalidCredentialDeclaration(errors.New("invalid EnvironmentRegistry identity"))
 		}
 		environment, ok := configuration.Environments[environmentName]
 		if !ok {
-			return credentialEnvironmentContext{}, invalidCredentialDeclaration(fmt.Errorf("environment %q is not declared", environmentName))
+			return credentialEnvironmentContext{}, "", invalidCredentialDeclaration(fmt.Errorf("environment %q is not declared", environmentName))
+		}
+		file := strings.TrimSpace(environment.File)
+		hasInlineTarget := strings.TrimSpace(environment.Target.Name) != "" ||
+			strings.TrimSpace(environment.Target.Cluster) != "" ||
+			strings.TrimSpace(environment.Target.Instance) != ""
+		if file != "" && hasInlineTarget {
+			return credentialEnvironmentContext{}, "", invalidCredentialDeclaration(
+				fmt.Errorf("environment %q must declare either file or target", environmentName),
+			)
 		}
 		return credentialEnvironmentContext{
 			Target:           environment.Target,
 			SourceRepository: configuration.ArtifactContract.SourceRepository,
 			SourceBranch:     configuration.ArtifactContract.SourceBranch,
-		}, nil
+		}, file, nil
 	default:
-		return credentialEnvironmentContext{}, invalidCredentialDeclaration(
+		return credentialEnvironmentContext{}, "", invalidCredentialDeclaration(
 			fmt.Errorf("unsupported configuration kind %q", identity.Kind),
 		)
 	}
@@ -1113,8 +1154,7 @@ func auditCredentialYAMLNode(node *yaml.Node, visited map[*yaml.Node]struct{}) e
 			if key.Value == "<<" {
 				return invalidCredentialDeclaration(errors.New("YAML merge keys are not allowed"))
 			}
-			if credentialSecretLikeKey(key.Value) &&
-				!credentialKubernetesSecretReference(value) {
+			if credentialSecretLikeYAMLField(key.Value, value) {
 				return fmt.Errorf("%w: YAML key %q is not allowed", ErrInlineCredentialMaterial, key.Value)
 			}
 			if err := auditCredentialYAMLNode(key, visited); err != nil {
@@ -1126,6 +1166,10 @@ func auditCredentialYAMLNode(node *yaml.Node, visited map[*yaml.Node]struct{}) e
 		}
 	case yaml.AliasNode:
 		return auditCredentialYAMLNode(node.Alias, visited)
+	case yaml.ScalarNode:
+		if credentialScalarContainsInlineMaterial(node.Value) {
+			return fmt.Errorf("%w: scalar value contains inline credential material", ErrInlineCredentialMaterial)
+		}
 	}
 	return nil
 }
@@ -1145,6 +1189,74 @@ func credentialKubernetesSecretReference(value *yaml.Node) bool {
 		}
 	}
 	return true
+}
+
+func credentialNamedSecretReference(value *yaml.Node) bool {
+	if value == nil || value.Kind != yaml.MappingNode {
+		return false
+	}
+	if credentialKubernetesSecretReference(value) {
+		return true
+	}
+	name := credentialYAMLScalarValue(credentialYAMLMappingValue(value, "name"))
+	if name == "" {
+		name = credentialYAMLScalarValue(credentialYAMLMappingValue(value, "secretName"))
+	}
+	if name == "" {
+		return false
+	}
+	for index := 0; index < len(value.Content); index += 2 {
+		switch value.Content[index].Value {
+		case "kind", "name", "namespace", "secretName", "key", "status", "deploymentBlockedUntilDeclared":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func credentialSecretLikeYAMLField(key string, value *yaml.Node) bool {
+	if !credentialSecretLikeKey(key) {
+		return false
+	}
+	if credentialKubernetesSecretReference(value) || credentialNamedSecretReference(value) {
+		return false
+	}
+	return value == nil || value.Kind != yaml.ScalarNode ||
+		!strings.HasSuffix(normalizeCredentialKey(key), "ref") ||
+		strings.TrimSpace(value.Value) == ""
+}
+
+func credentialScalarContainsInlineMaterial(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	lower := strings.ToLower(value)
+	if strings.Contains(lower, "-----begin ") && strings.Contains(lower, "private key-----") {
+		return true
+	}
+	for _, pattern := range credentialInlineMaterialPatterns {
+		if pattern.MatchString(value) {
+			return true
+		}
+	}
+	if strings.Contains(lower, "bearer ") || strings.Contains(lower, "basic ") {
+		return true
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return false
+	}
+	if parsed.User != nil {
+		return true
+	}
+	for key := range parsed.Query() {
+		if credentialSecretLikeKey(key) {
+			return true
+		}
+	}
+	return false
 }
 
 func strictCredentialYAMLDecode(data []byte, target any) error {
@@ -1171,16 +1283,20 @@ var credentialSecretLikeKeys = map[string]bool{
 	"token":            true,
 	"password":         true,
 	"auth":             true,
+	"authorization":    true,
+	"cookie":           true,
 	"data":             true,
 	"stringdata":       true,
+	"secret":           true,
+	"sig":              true,
 	"clientsecret":     true,
 	"apikey":           true,
 	"privatekey":       true,
 	"registrypassword": true,
 }
 
-func credentialSecretLikeKey(key string) bool {
-	normalized := strings.Map(func(char rune) rune {
+func normalizeCredentialKey(key string) string {
+	return strings.Map(func(char rune) rune {
 		switch char {
 		case '_', '-', '.', ' ':
 			return -1
@@ -1188,11 +1304,16 @@ func credentialSecretLikeKey(key string) bool {
 			return char
 		}
 	}, strings.ToLower(strings.TrimSpace(key)))
+}
+
+func credentialSecretLikeKey(key string) bool {
+	normalized := normalizeCredentialKey(key)
 	if credentialSecretLikeKeys[normalized] {
 		return true
 	}
 	for _, suffix := range []string{
 		"token", "password", "privatekey", "clientsecret", "apikey", "accesskey", "secretkey",
+		"credential", "pat", "passphrase", "dockerconfigjson", "sshidentity", "signature",
 	} {
 		if strings.HasSuffix(normalized, suffix) {
 			return true

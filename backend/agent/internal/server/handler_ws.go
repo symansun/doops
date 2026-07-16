@@ -1010,14 +1010,15 @@ type agentPromptExecutionContext struct {
 
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
 func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, model string, responseFormat string, execution agentPromptExecutionContext, pushProgress notificationSender, writeJSON func(v interface{})) {
-	log.Printf("🤖 WS Running doagent via ACP HTTP: %s [Model: %s]", instr, model)
+	log.Printf("🤖 WS Running doagent via ACP HTTP: session=%s structured=%t model=%s",
+		doopsSessionID, responseFormat == "json", model)
 
 	doagentURL := os.Getenv("DO_AGENT_URL")
 	if doagentURL == "" {
 		doagentURL = "http://127.0.0.1:9000"
 	}
 	if err := ensureDoagentAvailable(doagentURL); err != nil {
-		writeJSON(buildErrorResponse(reqID, -32603, "doagent unavailable: "+err.Error()))
+		writeJSON(buildErrorResponse(reqID, -32603, "doagent_unavailable"))
 		return
 	}
 
@@ -1069,7 +1070,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			},
 		})
 		if err != nil {
-			writeJSON(buildErrorResponse(reqID, -32603, "doagent session/new failed: "+err.Error()))
+			writeJSON(buildErrorResponse(reqID, -32603, "doagent_session_create_failed"))
 			return
 		}
 
@@ -1079,7 +1080,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			}
 		}
 		if targetSessionID == "" {
-			writeJSON(buildErrorResponse(reqID, -32603, "doagent session/new returned no sessionId"))
+			writeJSON(buildErrorResponse(reqID, -32603, "doagent_session_create_invalid"))
 			return
 		}
 
@@ -1109,7 +1110,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 				"model":     targetModel,
 			},
 		}); err != nil {
-			writeJSON(buildErrorResponse(reqID, -32603, "doagent session/setModel failed: "+err.Error()))
+			writeJSON(buildErrorResponse(reqID, -32603, "doagent_model_configuration_failed"))
 			return
 		}
 	}
@@ -1123,7 +1124,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			"modeId":    execution.NativeMode,
 		},
 	}); err != nil {
-		writeJSON(buildErrorResponse(reqID, -32603, "doagent session/setMode failed: "+err.Error()))
+		writeJSON(buildErrorResponse(reqID, -32603, "doagent_mode_configuration_failed"))
 		return
 	}
 	log.Printf("🧭 Session %s using native doagent mode %s", targetSessionID, execution.NativeMode)
@@ -1149,7 +1150,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		)
 	}()
 	if err := <-sseReady; err != nil {
-		writeJSON(buildErrorResponse(reqID, -32603, "doagent SSE subscribe failed: "+err.Error()))
+		writeJSON(buildErrorResponse(reqID, -32603, "doagent_sse_unavailable"))
 		return
 	}
 
@@ -1170,14 +1171,14 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	if err != nil {
 		sseCancel()
 		<-sseDone
-		writeJSON(buildErrorResponse(reqID, -32603, "doagent session/prompt failed: "+err.Error()))
+		writeJSON(buildErrorResponse(reqID, -32603, "doagent_prompt_failed"))
 		return
 	}
 	turnID, err := doagentPromptTurnID(promptResponse)
 	if err != nil {
 		sseCancel()
 		<-sseDone
-		writeJSON(buildErrorResponse(reqID, -32603, "doagent session/prompt returned invalid admission: "+err.Error()))
+		writeJSON(buildErrorResponse(reqID, -32603, "doagent_prompt_admission_invalid"))
 		return
 	}
 	turnIDReady <- turnID
@@ -1185,9 +1186,8 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 
 	// 等待本轮权威 turn_finished 终态或错误。
 	if err := <-sseDone; err != nil && err != context.Canceled {
-		errMsg := fmt.Sprintf("doagent execution error: %v", err)
-		log.Printf("⚠️ %s", errMsg)
-		writeJSON(buildToolErrorResponse(reqID, errMsg))
+		log.Printf("doagent execution failed: session=%s category=doagent_execution_failed", targetSessionID)
+		writeJSON(buildToolErrorResponse(reqID, "doagent_execution_failed"))
 		return
 	}
 	if ctx.Err() != nil {
@@ -1229,7 +1229,7 @@ func (gw *Gateway) handleAgentMetadataWS(ctx context.Context, doopsSessionID str
 		status.channels = upsertModelChannel(status.channels, agentModelChannelStatus{
 			Name:    "acp",
 			Status:  "error",
-			Message: err.Error(),
+			Message: "doagent_unavailable",
 		})
 		return marshalDoagentMetadataStatus(status)
 	}
@@ -1245,7 +1245,7 @@ func (gw *Gateway) handleAgentMetadataWS(ctx context.Context, doopsSessionID str
 		status.channels = upsertModelChannel(status.channels, agentModelChannelStatus{
 			Name:    "acp",
 			Status:  "error",
-			Message: err.Error(),
+			Message: "doagent_initialize_failed",
 		})
 		return marshalDoagentMetadataStatus(status)
 	}
@@ -1303,7 +1303,7 @@ func (gw *Gateway) handleAgentHistoryWS(ctx context.Context, doopsSessionID stri
 		doagentURL = "http://127.0.0.1:9000"
 	}
 	if err := ensureDoagentAvailable(doagentURL); err != nil {
-		return "", err
+		return "", errors.New("doagent_unavailable")
 	}
 	resp, err := doagentRPC(doagentURL, map[string]interface{}{
 		"jsonrpc": "2.0",
@@ -1314,7 +1314,7 @@ func (gw *Gateway) handleAgentHistoryWS(ctx context.Context, doopsSessionID stri
 		},
 	})
 	if err != nil {
-		return "", err
+		return "", errors.New("doagent_history_unavailable")
 	}
 	return marshalDoagentHistory(doopsSessionID, resp["result"])
 }
@@ -1326,7 +1326,7 @@ func marshalDoagentHistory(doopsSessionID string, messages interface{}) (string,
 	data, err := json.Marshal(map[string]interface{}{
 		"source":    "doagent",
 		"sessionId": doopsSessionID,
-		"messages":  messages,
+		"messages":  sanitizeDoagentValue(messages),
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal doagent history: %w", err)
@@ -1558,17 +1558,9 @@ func ensureDoagentAvailable(baseURL string) error {
 	if err := os.MkdirAll("/root/ws", 0755); err != nil {
 		return fmt.Errorf("create /root/ws: %w", err)
 	}
-	if err := os.MkdirAll("/var/log", 0755); err != nil {
-		return fmt.Errorf("create /var/log: %w", err)
-	}
-	logFile, err := os.OpenFile("/var/log/do-agent-acp.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("open doagent log: %w", err)
-	}
-	defer logFile.Close()
 	cmd := exec.Command(bin, "acp-http", "--port", port, "--cwd", "/root/ws")
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
 	cmd.Env = os.Environ()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start do-agent acp-http: %w", err)
@@ -1579,11 +1571,11 @@ func ensureDoagentAvailable(baseURL string) error {
 			return nil
 		}
 		if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
-			return fmt.Errorf("do-agent exited before listening: %s", tailFile("/var/log/do-agent-acp.log", 2048))
+			return errors.New("do-agent exited before listening")
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	return fmt.Errorf("do-agent did not listen on %s after startup: %s", baseURL, tailFile("/var/log/do-agent-acp.log", 2048))
+	return errors.New("do-agent did not listen after startup")
 }
 
 func doagentTCPReady(baseURL string, timeout time.Duration) bool {
@@ -1792,6 +1784,15 @@ func subscribeDoagentSSEWithCollectorReady(
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 
 	var eventData strings.Builder
+	var pendingAgentMessage strings.Builder
+	flushPendingAgentMessage := func() {
+		if pendingAgentMessage.Len() == 0 {
+			return
+		}
+		text := sanitizeSecretText(pendingAgentMessage.String())
+		pushProgress(assistantDeltaNotification(text))
+		pendingAgentMessage.Reset()
+	}
 	receivedEvent := false
 	targetTurnID := ""
 	idleTimeout := doagentSSEIdleTimeout()
@@ -1815,11 +1816,7 @@ func subscribeDoagentSSEWithCollectorReady(
 	go func() {
 		select {
 		case <-idleTimer.C:
-			recent := recentDoagentLogSummary()
 			err := fmt.Errorf("doagent SSE idle timeout after %s", idleTimeout)
-			if recent != "" {
-				err = fmt.Errorf("%w: recent doagent log: %s", err, recent)
-			}
 			idleMu.Lock()
 			idleErr = err
 			idleMu.Unlock()
@@ -1851,8 +1848,8 @@ func subscribeDoagentSSEWithCollectorReady(
 			// doagent SSE 使用 JSON-RPC 2.0 通知格式：{"jsonrpc":"2.0","method":"...","params":{...}}
 			update, err := decodeDoagentJSONObject(data)
 			if err != nil {
-				pushProgress(rawNotification(data))
-				continue
+				pushProgress(errorNotification("[error] doagent_sse_protocol_invalid"))
+				return errors.New("doagent_sse_protocol_invalid")
 			}
 
 			method, _ := update["method"].(string)
@@ -1886,24 +1883,30 @@ func subscribeDoagentSSEWithCollectorReady(
 						continue
 					}
 				}
+				if updateType == "agent_message_chunk" {
+					text, err := doagentAgentMessageText(sessionUpdate["content"])
+					if err != nil {
+						return errors.New("doagent_sse_protocol_invalid")
+					}
+					if pendingAgentMessage.Len()+len(text) > 4<<20 {
+						return errors.New("doagent_message_too_large")
+					}
+					pendingAgentMessage.WriteString(text)
+					continue
+				}
+				if updateType == "agent_message" {
+					flushPendingAgentMessage()
+				}
+				if updateType == "turn_finished" && pendingAgentMessage.Len() > 0 {
+					flushPendingAgentMessage()
+				}
 				if collector != nil {
 					if err := collector(sessionUpdate); err != nil {
 						return err
 					}
 				}
+				sessionUpdate = sanitizeDoagentSessionUpdate(sessionUpdate)
 				switch updateType {
-				case "agent_message_chunk":
-					// 流式文本块：content 是 map{"text":"...","type":"text"} 或直接字符串
-					switch c := sessionUpdate["content"].(type) {
-					case map[string]interface{}:
-						if text, ok := c["text"].(string); ok && text != "" {
-							pushProgress(assistantDeltaNotification(text))
-						}
-					case string:
-						if c != "" {
-							pushProgress(assistantDeltaNotification(c))
-						}
-					}
 				case "tool_call_update":
 					// 工具调用进度
 					toolName, _ := sessionUpdate["toolName"].(string)
@@ -1913,71 +1916,38 @@ func subscribeDoagentSSEWithCollectorReady(
 					}
 				case "agent_message":
 					// 最终文本先转发，但只有后续 turn_finished 才能结束本轮。
-					switch c := sessionUpdate["content"].(type) {
-					case map[string]interface{}:
-						if text, ok := c["text"].(string); ok && text != "" {
-							pushProgress(assistantDeltaNotification(text))
-						}
-					case []interface{}:
-						for _, item := range c {
-							if m, ok := item.(map[string]interface{}); ok {
-								if inner, ok := m["content"].(map[string]interface{}); ok {
-									if text, ok := inner["text"].(string); ok && text != "" {
-										pushProgress(assistantDeltaNotification(text))
-									}
-								}
-							}
-						}
-					case string:
-						if c != "" {
-							pushProgress(assistantDeltaNotification(c))
-						}
+					text, err := doagentAgentMessageText(sessionUpdate["content"])
+					if err != nil {
+						return errors.New("doagent_sse_protocol_invalid")
 					}
+					pushProgress(assistantDeltaNotification(text))
 				case "completed", "usage_update":
 					// 非权威状态或 token 统计，继续等待 turn_finished。
 				case "turn_finished":
 					if err := doagentTurnFinishedError(sessionUpdate); err != nil {
-						pushProgress(errorNotification("[error] " + err.Error()))
+						pushProgress(errorNotification("[error] doagent_execution_failed"))
 						return err
 					}
 					return nil
 				}
 
 			case "permission.updated":
-				details := make([]string, 0, 3)
-				if perm, ok := params["permission"].(map[string]interface{}); ok {
-					permID, _ := perm["id"].(string)
-					if permID != "" {
-						details = append(details, "id="+permID)
-					}
-					if title, _ := perm["title"].(string); title != "" {
-						details = append(details, "title="+title)
-					}
-					if toolName, _ := perm["toolName"].(string); toolName != "" {
-						details = append(details, "tool="+toolName)
-					}
-				}
 				message := "doagent permission required"
-				if len(details) > 0 {
-					message += ": " + strings.Join(details, ", ")
-				}
 				pushProgress(errorNotification("[error] " + message))
 				return errors.New(message)
 
 			case "error":
-				errMsg := "unknown error"
-				if msg, ok := params["message"].(string); ok {
-					errMsg = msg
-				}
+				errMsg := "doagent_execution_failed"
 				pushProgress(errorNotification("[error] " + errMsg))
-				return fmt.Errorf("doagent: %s", errMsg)
+				return errors.New(errMsg)
 
 			default:
 				// 其他事件（session/update chunks 等）静默处理
 				if method != "" {
-					log.Printf("🔔 SSE event: %s", method)
+					log.Printf("doagent SSE event ignored")
 				} else {
-					pushProgress(rawNotification(data))
+					pushProgress(errorNotification("[error] doagent_sse_protocol_invalid"))
+					return errors.New("doagent_sse_protocol_invalid")
 				}
 			}
 			continue
@@ -2044,26 +2014,78 @@ func doagentSSEIdleTimeout() time.Duration {
 	return 5 * time.Minute
 }
 
-func recentDoagentLogSummary() string {
-	return sanitizeSecretText(strings.TrimSpace(tailFile("/var/log/do-agent-acp.log", 2048)))
-}
-
 func sanitizeSecretText(s string) string {
 	if s == "" {
 		return ""
 	}
 	replacers := []*regexp.Regexp{
+		regexp.MustCompile(`(?is)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----`),
+		regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://)[^/@\s]+@`),
+		regexp.MustCompile(`(?i)([?&](?:[A-Za-z0-9._-]*(?:token|password|secret|signature|credential|api[_-]?key)|sig|auth|authorization|cookie)=)[^&#\s]+`),
 		regexp.MustCompile(`sk-[A-Za-z0-9_-]+`),
 		regexp.MustCompile(`(?i)(api[_-]?key[=: ]+)[^ ,}\n]+`),
 		regexp.MustCompile(`(?i)(Bearer )[A-Za-z0-9._-]+`),
+		regexp.MustCompile(`(?i)(Basic )[A-Za-z0-9+/=._-]+`),
+		regexp.MustCompile(`(?i)((?:authorization|cookie|password|token|secret)[_-]?[A-Za-z0-9_-]*[=: ]+)[^ ,}\n]+`),
 	}
-	s = replacers[0].ReplaceAllString(s, "sk-...REDACTED")
-	s = replacers[1].ReplaceAllString(s, "${1}...REDACTED")
-	s = replacers[2].ReplaceAllString(s, "${1}...REDACTED")
+	s = replacers[0].ReplaceAllString(s, "...REDACTED PRIVATE KEY...")
+	for _, replacer := range replacers[1:] {
+		s = replacer.ReplaceAllString(s, "${1}...REDACTED")
+	}
+	for _, pattern := range credentialInlineMaterialPatterns {
+		s = pattern.ReplaceAllString(s, "...REDACTED")
+	}
 	if len(s) > 1200 {
 		return s[len(s)-1200:]
 	}
 	return s
+}
+
+func sanitizeDoagentValue(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case string:
+		return sanitizeSecretText(typed)
+	case []interface{}:
+		sanitized := make([]interface{}, len(typed))
+		for index, item := range typed {
+			sanitized[index] = sanitizeDoagentValue(item)
+		}
+		return sanitized
+	case map[string]interface{}:
+		sanitized := make(map[string]interface{}, len(typed))
+		for key, item := range typed {
+			if credentialSecretLikeKey(key) || strings.EqualFold(strings.TrimSpace(key), "passwd") {
+				sanitized[key] = "...REDACTED"
+			} else {
+				sanitized[key] = sanitizeDoagentValue(item)
+			}
+		}
+		return sanitized
+	default:
+		return value
+	}
+}
+
+func sanitizeDoagentSessionUpdate(update map[string]interface{}) map[string]interface{} {
+	if update == nil {
+		return nil
+	}
+	sanitized := make(map[string]interface{}, len(update))
+	for key, value := range update {
+		sanitized[key] = value
+	}
+	updateType, _ := update["sessionUpdate"].(string)
+	switch updateType {
+	case "agent_message_chunk", "agent_message":
+		sanitized["content"] = sanitizeDoagentValue(update["content"])
+	case "error", "permission_request", "turn_finished":
+		for _, key := range []string{"error", "failureReason", "message", "reason"} {
+			if value, ok := update[key].(string); ok {
+				sanitized[key] = sanitizeSecretText(value)
+			}
+		}
+	}
+	return sanitized
 }
 
 // -----------------------------------------------------------------------------

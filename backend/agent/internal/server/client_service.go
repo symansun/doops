@@ -10,11 +10,10 @@ import (
 )
 
 type ClientService struct {
-	store          *GatewayStore
-	registry       *AgentRegistry
-	opts           GatewayHubOptions
-	upgrades       *UpgradeCoordinator
-	credentialRuns *credentialPreparationRegistry
+	store    *GatewayStore
+	registry *AgentRegistry
+	opts     GatewayHubOptions
+	upgrades *UpgradeCoordinator
 
 	opsMu   sync.Mutex
 	active  int
@@ -29,16 +28,14 @@ func NewClientService(
 	store *GatewayStore,
 	registry *AgentRegistry,
 	opts GatewayHubOptions,
-	credentialRuns *credentialPreparationRegistry,
 ) *ClientService {
 	return &ClientService{
-		store:          store,
-		registry:       registry,
-		opts:           opts,
-		upgrades:       NewUpgradeCoordinator(store, registry),
-		credentialRuns: credentialRuns,
-		userOps:        make(map[string]int),
-		activeOps:      make(map[string]*gatewayActiveOperation),
+		store:     store,
+		registry:  registry,
+		opts:      opts,
+		upgrades:  NewUpgradeCoordinator(store, registry),
+		userOps:   make(map[string]int),
+		activeOps: make(map[string]*gatewayActiveOperation),
 	}
 }
 

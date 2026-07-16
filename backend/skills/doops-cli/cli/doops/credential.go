@@ -27,11 +27,17 @@ type credentialRun struct {
 	Mode             string                              `json:"mode"`
 	Cluster          string                              `json:"cluster"`
 	Instance         string                              `json:"instance"`
+	Template         string                              `json:"template"`
+	Project          string                              `json:"project"`
+	Environment      string                              `json:"environment"`
+	MutationCount    int                                 `json:"mutationCount"`
 	Materializations []credentialMaterializationMetadata `json:"materializations"`
+	CreatedAt        time.Time                           `json:"createdAt"`
 }
 
 type credentialMaterializationMetadata struct {
 	CredentialID    string   `json:"credentialId"`
+	GrantID         string   `json:"grantId,omitempty"`
 	VersionID       string   `json:"versionId"`
 	ResourceName    string   `json:"resourceName,omitempty"`
 	Namespace       string   `json:"namespace"`

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -45,6 +46,7 @@ type CredentialCleanupRequest struct {
 	CredentialID string                 `json:"credential_id"`
 	GrantID      string                 `json:"grant_id"`
 	VersionID    string                 `json:"version_id"`
+	AnyVersion   bool                   `json:"any_version,omitempty"`
 	Namespace    string                 `json:"namespace"`
 	Workload     CredentialPlanWorkload `json:"workload,omitempty"`
 }
@@ -367,7 +369,7 @@ func inspectImagePullSecrets(ctx context.Context, namespace, kind, name string) 
 
 func cleanupCredential(ctx context.Context, req CredentialCleanupRequest) error {
 	if strings.TrimSpace(req.CredentialID) == "" || strings.TrimSpace(req.GrantID) == "" ||
-		strings.TrimSpace(req.VersionID) == "" ||
+		(!req.AnyVersion && strings.TrimSpace(req.VersionID) == "") ||
 		!validKubernetesCredentialName(req.Namespace) {
 		return errors.New("credential_cleanup_invalid")
 	}
@@ -378,6 +380,9 @@ func cleanupCredential(ctx context.Context, req CredentialCleanupRequest) error 
 		return errors.New("credential_secret_get_failed")
 	}
 	if len(bytes.TrimSpace(output)) == 0 {
+		if strings.TrimSpace(req.Workload.Name) != "" {
+			return removeImagePullSecret(ctx, req.Namespace, req.Workload, name)
+		}
 		return nil
 	}
 	var secret struct {
@@ -392,7 +397,7 @@ func cleanupCredential(ctx context.Context, req CredentialCleanupRequest) error 
 	if secret.Metadata.Labels["app.kubernetes.io/managed-by"] != "doops" ||
 		secret.Metadata.Labels["doops.sh/credential-id"] != req.CredentialID ||
 		secret.Metadata.Labels["doops.sh/credential-grant-id"] != req.GrantID ||
-		secret.Metadata.Annotations["doops.sh/credential-version"] != req.VersionID {
+		(!req.AnyVersion && secret.Metadata.Annotations["doops.sh/credential-version"] != req.VersionID) {
 		return errors.New("credential_secret_ownership_mismatch")
 	}
 	if strings.TrimSpace(req.Workload.Name) != "" {
@@ -639,12 +644,8 @@ func validateTLSCredential(certificatePEM, privateKeyPEM string) (*x509.Certific
 	if err != nil {
 		return nil, "", errors.New("tls_key_pair_invalid")
 	}
-	privateKey, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+	signer, err := parseTLSPrivateKey(keyBlock)
 	if err != nil {
-		return nil, "", errors.New("tls_key_pair_invalid")
-	}
-	signer, ok := privateKey.(crypto.Signer)
-	if !ok {
 		return nil, "", errors.New("tls_key_pair_invalid")
 	}
 	certificatePublicKey, certificateErr := x509.MarshalPKIXPublicKey(certificate.PublicKey)
@@ -654,6 +655,30 @@ func validateTLSCredential(certificatePEM, privateKeyPEM string) (*x509.Certific
 	}
 	sum := sha256.Sum256(certificate.Raw)
 	return certificate, "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func parseTLSPrivateKey(block *pem.Block) (crypto.Signer, error) {
+	if block == nil {
+		return nil, errors.New("private key is missing")
+	}
+	switch block.Type {
+	case "PRIVATE KEY":
+		privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		signer, ok := privateKey.(crypto.Signer)
+		if !ok {
+			return nil, errors.New("private key does not implement crypto.Signer")
+		}
+		return signer, nil
+	case "RSA PRIVATE KEY":
+		return x509.ParsePKCS1PrivateKey(block.Bytes)
+	case "EC PRIVATE KEY":
+		return x509.ParseECPrivateKey(block.Bytes)
+	default:
+		return nil, fmt.Errorf("unsupported private key PEM type %q", block.Type)
+	}
 }
 
 func verifyHelmRepository(ctx context.Context, repositoryURL, username, password string) (string, error) {

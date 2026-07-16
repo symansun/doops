@@ -53,13 +53,18 @@ func TestValidateDoagentApplyInstructionRequiresCICDEnvelope(t *testing.T) {
 		"workflowPath":"deploy/release.yaml",
 		"workspaceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"inputs":{},
-		"credentialRun":{"id":"credrun_123","materializations":[]},
+		"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"apply","cluster":"doops","instance":"runner","template":"release","project":"app","environment":"production","materializations":[]},
 		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
 	}`
 	if err := validateDoagentApplyInstruction(valid); err != nil {
 		t.Fatalf("valid apply envelope rejected: %v", err)
 	}
-	validV3 := strings.Replace(valid, `"apiVersion":"doops.sh/v2"`, `"apiVersion":"doops.sh/v3"`, 1)
+	validV3 := strings.Replace(
+		valid,
+		`"resultContract":{"apiVersion":"doops.sh/v2"`,
+		`"resultContract":{"apiVersion":"doops.sh/v3"`,
+		1,
+	)
 	if err := validateDoagentApplyInstruction(validV3); err != nil {
 		t.Fatalf("valid v3 apply envelope rejected: %v", err)
 	}

@@ -33,6 +33,10 @@ func (h *GatewayHub) HandleCredentialBundles(w http.ResponseWriter, r *http.Requ
 			http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
 			return
 		}
+		if bundle.Scope == CredentialScopePlatform && !h.store.UserIsPlatformAdmin(auth.UserID) {
+			http.Error(w, credentialErrorCategory(ErrCredentialBundleNotFound), http.StatusNotFound)
+			return
+		}
 		writeJSONHTTP(w, bundle)
 	case http.MethodPost:
 		if !h.store.UserHasAction(auth.UserID, ActionCredentialCreate) {
@@ -44,7 +48,7 @@ func (h *GatewayHub) HandleCredentialBundles(w http.ResponseWriter, r *http.Requ
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if body.Scope == CredentialScopePlatform && !h.store.UserHasAction(auth.UserID, ActionCredentialGrant) {
+		if body.Scope == CredentialScopePlatform && !h.store.UserIsPlatformAdmin(auth.UserID) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -52,16 +56,20 @@ func (h *GatewayHub) HandleCredentialBundles(w http.ResponseWriter, r *http.Requ
 		if body.Scope == CredentialScopePersonal {
 			ownerID = auth.UserID
 		}
-		auditID := h.startCredentialAudit(auth, ActionCredentialCreate, "", "credential bundle create "+strings.TrimSpace(body.Name))
-		bundle, err := h.store.CreateCredentialBundle(CredentialBundleCreateRequest{
+		auditID, ok := h.requireCredentialAudit(
+			w, auth, ActionCredentialCreate, "", "credential bundle create "+strings.TrimSpace(body.Name),
+		)
+		if !ok {
+			return
+		}
+		bundle, err := h.store.CreateCredentialBundleAudited(CredentialBundleCreateRequest{
 			Name: body.Name, Scope: body.Scope, OwnerID: ownerID, CreatedBy: auth.UserID, Items: body.Items,
-		})
+		}, auditID)
 		if err != nil {
-			h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
+			_ = h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
 			http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
 			return
 		}
-		h.finishCredentialAudit(auditID, "success", "")
 		writeJSONHTTP(w, bundle)
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)

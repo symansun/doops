@@ -16,15 +16,16 @@ import (
 )
 
 var (
-	ErrSecretKeyUnavailable      = errors.New("DOOPS_GATEWAY_SECRET_KEY is required")
-	ErrCredentialNotFound        = errors.New("credential not found")
-	ErrCredentialVersionNotFound = errors.New("credential version not found")
-	ErrCredentialRevoked         = errors.New("credential is revoked")
-	ErrCredentialGrantDenied     = errors.New("credential grant denied")
-	ErrCredentialForbidden       = errors.New("credential operation forbidden")
-	ErrCredentialPayloadInvalid  = errors.New("credential payload is invalid")
-	ErrCredentialBundleNotFound  = errors.New("credential bundle not found")
-	ErrCredentialAmbiguous       = errors.New("credential reference is ambiguous")
+	ErrSecretKeyUnavailable       = errors.New("DOOPS_GATEWAY_SECRET_KEY is required")
+	ErrCredentialNotFound         = errors.New("credential not found")
+	ErrCredentialVersionNotFound  = errors.New("credential version not found")
+	ErrCredentialRevoked          = errors.New("credential is revoked")
+	ErrCredentialGrantDenied      = errors.New("credential grant denied")
+	ErrCredentialForbidden        = errors.New("credential operation forbidden")
+	ErrCredentialPayloadInvalid   = errors.New("credential payload is invalid")
+	ErrCredentialBundleNotFound   = errors.New("credential bundle not found")
+	ErrCredentialAmbiguous        = errors.New("credential reference is ambiguous")
+	ErrCredentialAuditUnavailable = errors.New("credential audit unavailable")
 )
 
 type CredentialScope string
@@ -207,6 +208,14 @@ type CredentialVerification struct {
 }
 
 func (s *GatewayStore) CreateCredential(req CredentialCreateRequest) (CredentialResource, error) {
+	return s.createCredential(req, 0)
+}
+
+func (s *GatewayStore) CreateCredentialAudited(req CredentialCreateRequest, auditID int64) (CredentialResource, error) {
+	return s.createCredential(req, auditID)
+}
+
+func (s *GatewayStore) createCredential(req CredentialCreateRequest, auditID int64) (CredentialResource, error) {
 	req.Name = strings.TrimSpace(req.Name)
 	req.OwnerID = strings.TrimSpace(req.OwnerID)
 	req.CreatedBy = strings.TrimSpace(req.CreatedBy)
@@ -234,12 +243,25 @@ func (s *GatewayStore) CreateCredential(req CredentialCreateRequest) (Credential
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	_, err := s.db.Exec(`INSERT INTO credentials
+	tx, err := s.db.Begin()
+	if err != nil {
+		return CredentialResource{}, err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO credentials
 		(id, name, scope, owner_id, type, state, created_by, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		resource.ID, resource.Name, resource.Scope, resource.OwnerID, resource.Type, resource.State,
 		resource.CreatedBy, formatTime(now), formatTime(now))
 	if err != nil {
+		return CredentialResource{}, err
+	}
+	if auditID != 0 {
+		if err := finishAuditWith(tx, auditID, AuditFinish{Status: "success", EndedAt: now}); err != nil {
+			return CredentialResource{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return CredentialResource{}, err
 	}
 	return resource, nil
@@ -280,6 +302,14 @@ func (s *GatewayStore) ListCredentials(filter CredentialListFilter) ([]Credentia
 }
 
 func (s *GatewayStore) PutCredentialVersion(req CredentialVersionPutRequest) (CredentialVersion, error) {
+	return s.putCredentialVersion(req, 0)
+}
+
+func (s *GatewayStore) PutCredentialVersionAudited(req CredentialVersionPutRequest, auditID int64) (CredentialVersion, error) {
+	return s.putCredentialVersion(req, auditID)
+}
+
+func (s *GatewayStore) putCredentialVersion(req CredentialVersionPutRequest, auditID int64) (CredentialVersion, error) {
 	req.CredentialID = strings.TrimSpace(req.CredentialID)
 	req.CreatedBy = strings.TrimSpace(req.CreatedBy)
 	if req.CredentialID == "" || req.CreatedBy == "" {
@@ -329,7 +359,7 @@ func (s *GatewayStore) PutCredentialVersion(req CredentialVersionPutRequest) (Cr
 	if req.Activate {
 		if _, err := tx.Exec(`UPDATE credential_versions SET state = ? WHERE credential_id = ? AND state = ?`,
 			CredentialVersionSuperseded, resource.ID, CredentialVersionActive); err != nil {
-			return CredentialVersion{}, err
+			return CredentialVersion{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 		}
 	}
 	var promotedAt string
@@ -345,6 +375,13 @@ func (s *GatewayStore) PutCredentialVersion(req CredentialVersionPutRequest) (Cr
 	}
 	if _, err := tx.Exec(`UPDATE credentials SET updated_at = ? WHERE id = ?`, formatTime(now), resource.ID); err != nil {
 		return CredentialVersion{}, err
+	}
+	if auditID != 0 {
+		if err := finishAuditWith(tx, auditID, AuditFinish{
+			Status: "success", VersionID: version.ID, EndedAt: now,
+		}); err != nil {
+			return CredentialVersion{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return CredentialVersion{}, err
@@ -399,6 +436,14 @@ func (s *GatewayStore) ActiveCredentialVersion(credentialID string) (CredentialV
 }
 
 func (s *GatewayStore) CreateCredentialGrant(req CredentialGrantCreateRequest) (CredentialGrant, error) {
+	return s.createCredentialGrant(req, 0)
+}
+
+func (s *GatewayStore) CreateCredentialGrantAudited(req CredentialGrantCreateRequest, auditID int64) (CredentialGrant, error) {
+	return s.createCredentialGrant(req, auditID)
+}
+
+func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, auditID int64) (CredentialGrant, error) {
 	req.CredentialID = strings.TrimSpace(req.CredentialID)
 	req.GranteeID = strings.TrimSpace(req.GranteeID)
 	req.CreatedBy = strings.TrimSpace(req.CreatedBy)
@@ -438,7 +483,12 @@ func (s *GatewayStore) CreateCredentialGrant(req CredentialGrantCreateRequest) (
 	if err != nil {
 		return CredentialGrant{}, err
 	}
-	_, err = s.db.Exec(`INSERT INTO credential_grants
+	tx, err := s.db.Begin()
+	if err != nil {
+		return CredentialGrant{}, err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO credential_grants
 		(id, credential_id, grantee_id, cluster, instance, project, environment, template, namespace, uses_json, state, created_by, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(credential_id, grantee_id, cluster, instance, project, environment, template, namespace, uses_json)
@@ -453,14 +503,54 @@ func (s *GatewayStore) CreateCredentialGrant(req CredentialGrantCreateRequest) (
 	if err != nil {
 		return CredentialGrant{}, err
 	}
-	existing, err := s.credentialGrantByIdentity(grant, string(usesJSON))
+	var existing CredentialGrant
+	var uses, createdAt, revokedAt string
+	err = tx.QueryRow(`SELECT id, credential_id, grantee_id, cluster, instance, project, environment, template,
+			namespace, uses_json, state, created_by, created_at, revoked_at
+		FROM credential_grants
+		WHERE credential_id = ? AND grantee_id = ? AND cluster = ? AND instance = ? AND project = ?
+			AND environment = ? AND template = ? AND namespace = ? AND uses_json = ?`,
+		grant.CredentialID, grant.GranteeID, grant.Cluster, grant.Instance, grant.Project,
+		grant.Environment, grant.Template, grant.Namespace, string(usesJSON),
+	).Scan(
+		&existing.ID, &existing.CredentialID, &existing.GranteeID, &existing.Cluster, &existing.Instance,
+		&existing.Project, &existing.Environment, &existing.Template, &existing.Namespace, &uses,
+		&existing.State, &existing.CreatedBy, &createdAt, &revokedAt,
+	)
 	if err != nil {
+		return CredentialGrant{}, err
+	}
+	if err := json.Unmarshal([]byte(uses), &existing.Uses); err != nil {
+		return CredentialGrant{}, err
+	}
+	existing.CreatedAt, _ = parseTime(createdAt)
+	if auditID != 0 {
+		if err := finishAuditWith(tx, auditID, AuditFinish{
+			Status: "success", Cluster: existing.Cluster, Instance: existing.Instance,
+			GrantID: existing.ID, Project: existing.Project, Environment: existing.Environment,
+			Template: existing.Template, Namespace: existing.Namespace, EndedAt: time.Now().UTC(),
+		}); err != nil {
+			return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return CredentialGrant{}, err
 	}
 	return existing, nil
 }
 
 func (s *GatewayStore) RevokeCredentialGrant(credentialID, grantID, actorID string) (CredentialGrant, error) {
+	grant, err := s.BeginCredentialGrantRevocation(credentialID, grantID, actorID)
+	if err != nil {
+		return CredentialGrant{}, err
+	}
+	if grant.State == CredentialStateRevoked {
+		return grant, nil
+	}
+	return s.FinalizeCredentialGrantRevocation(credentialID, grantID, 0)
+}
+
+func (s *GatewayStore) BeginCredentialGrantRevocation(credentialID, grantID, actorID string) (CredentialGrant, error) {
 	resource, err := s.credentialByID(strings.TrimSpace(credentialID))
 	if err != nil {
 		return CredentialGrant{}, err
@@ -475,11 +565,13 @@ func (s *GatewayStore) RevokeCredentialGrant(credentialID, grantID, actorID stri
 	if grant.State == CredentialStateRevoked {
 		return grant, nil
 	}
-	now := time.Now().UTC()
+	if grant.State == CredentialStateRevoking {
+		return grant, nil
+	}
 	result, err := s.db.Exec(`UPDATE credential_grants
-		SET state = ?, revoked_at = ?
+		SET state = ?, revoked_at = ''
 		WHERE id = ? AND credential_id = ? AND state = ?`,
-		CredentialStateRevoked, formatTime(now), grant.ID, resource.ID, CredentialStateActive)
+		CredentialStateRevoking, grant.ID, resource.ID, CredentialStateActive)
 	if err != nil {
 		return CredentialGrant{}, err
 	}
@@ -489,6 +581,67 @@ func (s *GatewayStore) RevokeCredentialGrant(credentialID, grantID, actorID stri
 	}
 	if affected != 1 {
 		return CredentialGrant{}, ErrCredentialGrantDenied
+	}
+	grant.State = CredentialStateRevoking
+	grant.RevokedAt = nil
+	return grant, nil
+}
+
+func (s *GatewayStore) FinalizeCredentialGrantRevocation(
+	credentialID string,
+	grantID string,
+	auditID int64,
+) (CredentialGrant, error) {
+	grant, err := s.credentialGrantByID(strings.TrimSpace(credentialID), strings.TrimSpace(grantID))
+	if err != nil {
+		return CredentialGrant{}, err
+	}
+	if grant.State == CredentialStateRevoked {
+		if auditID != 0 {
+			if err := s.FinishAudit(auditID, AuditFinish{
+				Status: "success", GrantID: grant.ID, Cluster: grant.Cluster, Instance: grant.Instance,
+				Project: grant.Project, Environment: grant.Environment, Template: grant.Template,
+				Namespace: grant.Namespace, EndedAt: time.Now().UTC(),
+			}); err != nil {
+				return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
+			}
+		}
+		return grant, nil
+	}
+	if grant.State != CredentialStateRevoking {
+		return CredentialGrant{}, fmt.Errorf("credential grant is not revoking")
+	}
+	now := time.Now().UTC()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return CredentialGrant{}, err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`UPDATE credential_grants
+		SET state = ?, revoked_at = ?
+		WHERE id = ? AND credential_id = ? AND state = ?`,
+		CredentialStateRevoked, formatTime(now), grant.ID, grant.CredentialID, CredentialStateRevoking)
+	if err != nil {
+		return CredentialGrant{}, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return CredentialGrant{}, err
+	}
+	if affected != 1 {
+		return CredentialGrant{}, ErrCredentialGrantDenied
+	}
+	if auditID != 0 {
+		if err := finishAuditWith(tx, auditID, AuditFinish{
+			Status: "success", GrantID: grant.ID, Cluster: grant.Cluster, Instance: grant.Instance,
+			Project: grant.Project, Environment: grant.Environment, Template: grant.Template,
+			Namespace: grant.Namespace, EndedAt: now,
+		}); err != nil {
+			return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return CredentialGrant{}, err
 	}
 	grant.State = CredentialStateRevoked
 	grant.RevokedAt = &now
@@ -563,6 +716,14 @@ func (s *GatewayStore) AuthorizeCredentialGrant(req CredentialUseRequest) (Crede
 }
 
 func (s *GatewayStore) CreateCredentialBundle(req CredentialBundleCreateRequest) (CredentialBundle, error) {
+	return s.createCredentialBundle(req, 0)
+}
+
+func (s *GatewayStore) CreateCredentialBundleAudited(req CredentialBundleCreateRequest, auditID int64) (CredentialBundle, error) {
+	return s.createCredentialBundle(req, auditID)
+}
+
+func (s *GatewayStore) createCredentialBundle(req CredentialBundleCreateRequest, auditID int64) (CredentialBundle, error) {
 	req.Name = strings.TrimSpace(req.Name)
 	req.OwnerID = strings.TrimSpace(req.OwnerID)
 	req.CreatedBy = strings.TrimSpace(req.CreatedBy)
@@ -586,7 +747,7 @@ func (s *GatewayStore) CreateCredentialBundle(req CredentialBundleCreateRequest)
 		item.RequiredKeys = normalizedCredentialKeys(item.RequiredKeys)
 		resource, err := s.credentialByID(item.CredentialID)
 		if err != nil {
-			return CredentialBundle{}, err
+			return CredentialBundle{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 		}
 		if !s.canManageCredential(resource, req.CreatedBy, ActionCredentialGrant) {
 			return CredentialBundle{}, ErrCredentialForbidden
@@ -628,6 +789,11 @@ func (s *GatewayStore) CreateCredentialBundle(req CredentialBundleCreateRequest)
 			bundle.ID, item.CredentialID, item.Use, item.Namespace, string(workloadJSON),
 			item.RegistryRepository, item.RegistryReference, string(requiredKeysJSON)); err != nil {
 			return CredentialBundle{}, err
+		}
+	}
+	if auditID != 0 {
+		if err := finishAuditWith(tx, auditID, AuditFinish{Status: "success", EndedAt: now}); err != nil {
+			return CredentialBundle{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -728,6 +894,14 @@ func validateCredentialBundleItem(credentialType CredentialType, item Credential
 }
 
 func (s *GatewayStore) PromoteCredentialVersion(credentialID, versionID, actorID string) error {
+	return s.promoteCredentialVersion(credentialID, versionID, actorID, 0)
+}
+
+func (s *GatewayStore) PromoteCredentialVersionAudited(credentialID, versionID, actorID string, auditID int64) error {
+	return s.promoteCredentialVersion(credentialID, versionID, actorID, auditID)
+}
+
+func (s *GatewayStore) promoteCredentialVersion(credentialID, versionID, actorID string, auditID int64) error {
 	resource, err := s.credentialByID(credentialID)
 	if err != nil {
 		return err
@@ -765,6 +939,13 @@ func (s *GatewayStore) PromoteCredentialVersion(credentialID, versionID, actorID
 	if _, err := tx.Exec(`UPDATE credentials SET updated_at = ? WHERE id = ?`, formatTime(now), resource.ID); err != nil {
 		return err
 	}
+	if auditID != 0 {
+		if err := finishAuditWith(tx, auditID, AuditFinish{
+			Status: "success", VersionID: version.ID, EndedAt: now,
+		}); err != nil {
+			return fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
+		}
+	}
 	return tx.Commit()
 }
 
@@ -801,6 +982,31 @@ func (s *GatewayStore) RevokeCredential(credentialID, actorID string) error {
 }
 
 func (s *GatewayStore) RecordCredentialVerification(verification CredentialVerification) error {
+	return recordCredentialVerificationWith(s.db, verification)
+}
+
+func (s *GatewayStore) RecordCredentialVerificationsAudited(
+	verifications []CredentialVerification,
+	auditID int64,
+	finish AuditFinish,
+) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, verification := range verifications {
+		if err := recordCredentialVerificationWith(tx, verification); err != nil {
+			return err
+		}
+	}
+	if err := finishAuditWith(tx, auditID, finish); err != nil {
+		return fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
+	}
+	return tx.Commit()
+}
+
+func recordCredentialVerificationWith(execer auditExecer, verification CredentialVerification) error {
 	verification.CredentialID = strings.TrimSpace(verification.CredentialID)
 	verification.VersionID = strings.TrimSpace(verification.VersionID)
 	verification.GrantID = strings.TrimSpace(verification.GrantID)
@@ -820,27 +1026,28 @@ func (s *GatewayStore) RecordCredentialVerification(verification CredentialVerif
 	if verification.ID == "" {
 		verification.ID = "credverify_" + randomHex(12)
 	}
+	contextKey := credentialMaterializationContextKey(verification.Request)
 	if verification.VerifiedAt.IsZero() {
 		verification.VerifiedAt = time.Now().UTC()
 	}
-	_, err = s.db.Exec(`INSERT INTO credential_verifications
-		(id, credential_id, version_id, grant_id, use, request_json, evidence_json, status, verified_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'verified', ?)
-		ON CONFLICT(version_id, grant_id, use) DO UPDATE SET
+	_, err = execer.Exec(`INSERT INTO credential_verifications
+		(id, credential_id, version_id, grant_id, use, context_key, request_json, evidence_json, status, verified_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'verified', ?)
+		ON CONFLICT(version_id, grant_id, use, context_key) DO UPDATE SET
 			id = excluded.id,
 			request_json = excluded.request_json,
 			evidence_json = excluded.evidence_json,
 			status = excluded.status,
 			verified_at = excluded.verified_at`,
 		verification.ID, verification.CredentialID, verification.VersionID, verification.GrantID,
-		verification.Use, string(requestJSON), string(evidenceJSON), formatTime(verification.VerifiedAt))
+		verification.Use, contextKey, string(requestJSON), string(evidenceJSON), formatTime(verification.VerifiedAt))
 	return err
 }
 
 func (s *GatewayStore) CredentialVerifications(credentialID, versionID string) ([]CredentialVerification, error) {
 	rows, err := s.db.Query(`SELECT id, credential_id, version_id, grant_id, use, request_json, evidence_json, status, verified_at
 		FROM credential_verifications WHERE credential_id = ? AND version_id = ? AND status = 'verified'
-		ORDER BY grant_id, use`, strings.TrimSpace(credentialID), strings.TrimSpace(versionID))
+		ORDER BY grant_id, use, context_key`, strings.TrimSpace(credentialID), strings.TrimSpace(versionID))
 	if err != nil {
 		return nil, err
 	}
@@ -929,11 +1136,26 @@ func (s *GatewayStore) BeginCredentialRevocation(credentialID, actorID string) (
 }
 
 func (s *GatewayStore) FinalizeCredentialRevocation(credentialID string) error {
+	return s.finalizeCredentialRevocation(credentialID, 0)
+}
+
+func (s *GatewayStore) FinalizeCredentialRevocationAudited(credentialID string, auditID int64) error {
+	return s.finalizeCredentialRevocation(credentialID, auditID)
+}
+
+func (s *GatewayStore) finalizeCredentialRevocation(credentialID string, auditID int64) error {
 	resource, err := s.credentialByID(credentialID)
 	if err != nil {
 		return err
 	}
 	if resource.State == CredentialStateRevoked {
+		if auditID != 0 {
+			if err := s.FinishAudit(auditID, AuditFinish{
+				Status: "success", EndedAt: time.Now().UTC(),
+			}); err != nil {
+				return fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
+			}
+		}
 		return nil
 	}
 	if resource.State != CredentialStateRevoking {
@@ -956,6 +1178,11 @@ func (s *GatewayStore) FinalizeCredentialRevocation(credentialID string) error {
 	if _, err := tx.Exec(`UPDATE credential_grants SET state = ?, revoked_at = ? WHERE credential_id = ? AND state != ?`,
 		CredentialStateRevoked, formatTime(now), resource.ID, CredentialStateRevoked); err != nil {
 		return err
+	}
+	if auditID != 0 {
+		if err := finishAuditWith(tx, auditID, AuditFinish{Status: "success", EndedAt: now}); err != nil {
+			return fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
+		}
 	}
 	return tx.Commit()
 }
@@ -1117,9 +1344,9 @@ func credentialPayloadAAD(credentialID, versionID string, credentialType Credent
 
 func (s *GatewayStore) canManageCredential(resource CredentialResource, actorID string, action GatewayAction) bool {
 	if resource.Scope == CredentialScopePersonal {
-		return resource.OwnerID == actorID
+		return resource.OwnerID == actorID || s.UserIsPlatformAdmin(actorID)
 	}
-	return s.UserHasAction(actorID, action)
+	return s.UserIsPlatformAdmin(actorID)
 }
 
 func validCredentialScope(scope CredentialScope) bool {

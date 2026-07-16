@@ -191,7 +191,7 @@ func TestCredentialBundleResolvesMetadataAndNamedAuthorizationRejectsAmbiguity(t
 	deployer := createCredentialTestUser(t, store, "deployer")
 	if err := store.GrantUser(admin.ID, ScopeGrant{
 		Cluster: "*", Instance: "*",
-		Actions: []GatewayAction{ActionCredentialGrant, ActionCredentialRotate, ActionCredentialRevoke},
+		Actions: []GatewayAction{ActionAdmin},
 	}); err != nil {
 		t.Fatalf("grant credential administration: %v", err)
 	}
@@ -319,7 +319,7 @@ func TestCredentialGrantMustMatchEveryDeploymentDimension(t *testing.T) {
 	owner := createCredentialTestUser(t, store, "owner")
 	deployer := createCredentialTestUser(t, store, "deployer")
 	if err := store.GrantUser(owner.ID, ScopeGrant{
-		Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionCredentialGrant, ActionCredentialRotate},
+		Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin},
 	}); err != nil {
 		t.Fatalf("grant credential administration: %v", err)
 	}
@@ -469,7 +469,7 @@ func TestPlatformCredentialAdministratorCanManageResourceCreatedByAnotherAdmin(t
 	deployer := createCredentialTestUser(t, store, "deployer")
 	if err := store.GrantUser(operator.ID, ScopeGrant{
 		Cluster: "*", Instance: "*",
-		Actions: []GatewayAction{ActionCredentialGrant, ActionCredentialRotate, ActionCredentialRevoke},
+		Actions: []GatewayAction{ActionAdmin},
 	}); err != nil {
 		t.Fatalf("grant credential administration: %v", err)
 	}
@@ -519,7 +519,7 @@ func TestPlatformCredentialAdministratorCanManageResourceCreatedByAnotherAdmin(t
 	}
 }
 
-func TestPlatformCredentialAdministratorCannotManageAnotherUsersPersonalCredential(t *testing.T) {
+func TestCredentialAdministratorCanRecoverAnotherUsersPersonalCredential(t *testing.T) {
 	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("m", 32))
 	store := openCredentialTestStore(t)
 	owner := createCredentialTestUser(t, store, "owner")
@@ -527,7 +527,7 @@ func TestPlatformCredentialAdministratorCannotManageAnotherUsersPersonalCredenti
 	deployer := createCredentialTestUser(t, store, "deployer")
 	if err := store.GrantUser(operator.ID, ScopeGrant{
 		Cluster: "*", Instance: "*",
-		Actions: []GatewayAction{ActionCredentialGrant, ActionCredentialRotate, ActionCredentialRevoke},
+		Actions: []GatewayAction{ActionAdmin},
 	}); err != nil {
 		t.Fatalf("grant credential administration: %v", err)
 	}
@@ -539,15 +539,16 @@ func TestPlatformCredentialAdministratorCannotManageAnotherUsersPersonalCredenti
 	if err != nil {
 		t.Fatalf("create personal credential: %v", err)
 	}
-	if _, err := store.PutCredentialVersion(CredentialVersionPutRequest{
+	version, err := store.PutCredentialVersion(CredentialVersionPutRequest{
 		CredentialID: credential.ID,
-		Payload:      json.RawMessage(`{"server":"registry.example.com","username":"operator","password":"forbidden"}`),
+		Payload:      json.RawMessage(`{"server":"registry.example.com","username":"operator","password":"synthetic-canary"}`),
 		CreatedBy:    operator.ID,
 		Activate:     true,
-	}); !errors.Is(err, ErrCredentialForbidden) {
-		t.Fatalf("operator rotate personal credential error = %v, want ErrCredentialForbidden", err)
+	})
+	if err != nil || version.State != CredentialVersionActive {
+		t.Fatalf("operator rotate personal credential = %#v, %v", version, err)
 	}
-	if _, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
+	grant, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 		CredentialID: credential.ID,
 		GranteeID:    deployer.ID,
 		Cluster:      "doops-edu",
@@ -558,11 +559,12 @@ func TestPlatformCredentialAdministratorCannotManageAnotherUsersPersonalCredenti
 		Namespace:    "kz-ops",
 		Uses:         []CredentialUse{CredentialUseImagePull},
 		CreatedBy:    operator.ID,
-	}); !errors.Is(err, ErrCredentialForbidden) {
-		t.Fatalf("operator grant personal credential error = %v, want ErrCredentialForbidden", err)
+	})
+	if err != nil || grant.State != CredentialStateActive {
+		t.Fatalf("operator grant personal credential = %#v, %v", grant, err)
 	}
-	if err := store.RevokeCredential(credential.ID, operator.ID); !errors.Is(err, ErrCredentialForbidden) {
-		t.Fatalf("operator revoke personal credential error = %v, want ErrCredentialForbidden", err)
+	if err := store.RevokeCredential(credential.ID, operator.ID); err != nil {
+		t.Fatalf("operator revoke personal credential: %v", err)
 	}
 }
 

@@ -212,6 +212,12 @@ func TestBindDeploymentRunEvidenceRejectsModelAuthoredRuntimePayload(t *testing.
 		},
 		{name: "retired status object", mutate: func(status map[string]interface{}) { status["runtimeAttestation"] = map[string]interface{}{} }, want: "is not supported"},
 		{name: "retired status string", mutate: func(status map[string]interface{}) { status["resultDigest"] = "sha256:" + strings.Repeat("a", 64) }, want: "is not supported"},
+		{name: "sensitive failure field", mutate: func(status map[string]interface{}) {
+			status["failures"] = []interface{}{map[string]interface{}{"githubToken": "token-canary"}}
+		}, want: "forbidden sensitive field"},
+		{name: "sensitive capability scalar", mutate: func(status map[string]interface{}) {
+			status["capabilities"] = []interface{}{"https://storage.example.test/object?X-Amz-Signature=signature-canary"}
+		}, want: "forbidden sensitive scalar"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			result := deploymentRunWithToolRef("Read", map[string]interface{}{"path": "state.json"})
@@ -221,6 +227,85 @@ func TestBindDeploymentRunEvidenceRejectsModelAuthoredRuntimePayload(t *testing.
 				t.Fatalf("model-authored managed payload must fail: %v", err)
 			}
 		})
+	}
+}
+
+func TestBindDeploymentRunEvidenceRejectsOtherStructuredKinds(t *testing.T) {
+	_, _, err := bindTestDeploymentRun(
+		map[string]interface{}{"kind": "ArbitraryResult", "status": map[string]interface{}{}},
+		nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "kind must be DeploymentRun") {
+		t.Fatalf("non-DeploymentRun structured result must fail closed: %v", err)
+	}
+}
+
+func TestBindDeploymentRunEvidenceRemovesRuntimeMetadata(t *testing.T) {
+	traces := completedDoagentToolTraces(t, []map[string]interface{}{
+		{
+			"sessionUpdate": "tool_call_update",
+			"toolCallId":    "read-1",
+			"toolName":      "Read",
+			"status":        "completed",
+			"input":         map[string]interface{}{"path": "state.json"},
+			"rawOutput": map[string]interface{}{
+				"revision": "current",
+				"_meta":    map[string]interface{}{"model": "test-model"},
+			},
+		},
+	})
+	_, bound, err := bindTestDeploymentRun(
+		deploymentRunWithToolRef("Read", map[string]interface{}{"path": "state.json"}),
+		traces,
+	)
+	if err != nil {
+		t.Fatalf("bind runtime evidence: %v", err)
+	}
+	entry := bound["status"].(map[string]interface{})["evidence"].([]interface{})[0].(map[string]interface{})
+	runtimeResult := entry["toolCall"].(map[string]interface{})["result"].(map[string]interface{})
+	if _, exists := runtimeResult["_meta"]; exists {
+		t.Fatalf("runtime metadata must not enter DeploymentRun: %#v", runtimeResult)
+	}
+}
+
+func TestDoagentToolTraceCollectorRejectsSensitiveRuntimeMetadata(t *testing.T) {
+	traces := completedDoagentToolTraces(t, []map[string]interface{}{
+		{
+			"sessionUpdate": "tool_call_update",
+			"toolCallId":    "read-1",
+			"toolName":      "Read",
+			"status":        "completed",
+			"input":         map[string]interface{}{"path": "state.json"},
+			"rawOutput": map[string]interface{}{
+				"revision": "current",
+				"_meta":    map[string]interface{}{"token": "token-canary"},
+			},
+		},
+	})
+	if len(traces) != 0 {
+		t.Fatalf("sensitive runtime metadata must make the tool trace ineligible: %#v", traces)
+	}
+}
+
+func TestDoagentToolTraceCollectorRejectsSensitiveRuntimeScalars(t *testing.T) {
+	for index, value := range []string{
+		"ghp_" + strings.Repeat("a", 36),
+		"glpat-" + strings.Repeat("a", 20),
+		"AKIA" + strings.Repeat("A", 16),
+	} {
+		traces := completedDoagentToolTraces(t, []map[string]interface{}{
+			{
+				"sessionUpdate": "tool_call_update",
+				"toolCallId":    fmt.Sprintf("read-%d", index),
+				"toolName":      "Read",
+				"status":        "completed",
+				"input":         map[string]interface{}{"path": "state.json"},
+				"rawOutput":     map[string]interface{}{"value": value},
+			},
+		})
+		if len(traces) != 0 {
+			t.Fatalf("sensitive runtime scalar must make the tool trace ineligible: %#v", traces)
+		}
 	}
 }
 
@@ -352,6 +437,24 @@ func bindTestDeploymentRun(
 	return bindDeploymentRunEvidence(result, traces)
 }
 
+func TestRejectSensitiveToolResultRejectsSensitiveFieldsAndScalars(t *testing.T) {
+	for _, result := range []interface{}{
+		map[string]interface{}{"token": "opaque-canary"},
+		map[string]interface{}{"url": "https://storage.example.test/object?X-Amz-Signature=signature-canary"},
+		map[string]interface{}{"nested": []interface{}{"scheduled Bearer bearer-canary"}},
+	} {
+		if err := rejectSensitiveToolResult(result); err == nil {
+			t.Fatalf("sensitive tool result was accepted: %#v", result)
+		}
+	}
+	if err := rejectSensitiveToolResult(map[string]interface{}{
+		"status": "healthy",
+		"digest": "sha256:" + strings.Repeat("a", 64),
+	}); err != nil {
+		t.Fatalf("safe tool result rejected: %v", err)
+	}
+}
+
 func testCICDInstructionJSON(t *testing.T) string {
 	t.Helper()
 	data, err := json.Marshal(map[string]interface{}{
@@ -450,7 +553,7 @@ func TestAgentPromptRejectsInstructionWorkspaceCommitMismatchBeforeDoagent(t *te
 			"workflowPath":"deploy/release.yaml",
 			"workspaceCommit":"` + strings.Repeat("b", 40) + `",
 			"inputs":{"releaseId":"` + strings.Repeat("c", 40) + `"},
-			"credentialRun":{"id":"credrun_123","materializations":[]},
+			"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops","instance":"runner","template":"release","project":"app","environment":"production","materializations":[]},
 			"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
 		}`,
 		"response_format":  "json",
