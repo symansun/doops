@@ -269,6 +269,9 @@ func (gw *Gateway) ServeWebSocketConnWithReady(conn *websocket.Conn, remoteAddr 
 					"runtimeId": agentProcessRuntimeID,
 					"capabilities": map[string]interface{}{
 						"tools": map[string]interface{}{},
+						"protocols": map[string]interface{}{
+							"credentialPlan": credentialPlanProtocolV2,
+						},
 					},
 				},
 			})
@@ -974,20 +977,30 @@ func doagentModeForPrompt(operation, executionMode string) (string, error) {
 }
 
 func validateDoagentApplyInstruction(instruction string) error {
-	var envelope struct {
-		Task          string `json:"task"`
-		Skill         string `json:"skill"`
-		ExecutionMode string `json:"executionMode"`
-	}
-	if err := json.Unmarshal([]byte(instruction), &envelope); err != nil {
-		return fmt.Errorf("apply requires a structured doops-cicd instruction")
+	_, err := validatedDoagentApplyInstruction(instruction)
+	return err
+}
+
+func validatedDoagentApplyInstruction(instruction string) (doopsCICDInstructionEnvelope, error) {
+	envelope, err := decodeDoopsCICDInstruction(instruction)
+	if err != nil {
+		return doopsCICDInstructionEnvelope{}, fmt.Errorf("apply requires a structured doops-cicd instruction")
 	}
 	if envelope.Task != "execute-doops-cicd-workflow" ||
 		envelope.Skill != "$doops-cicd" ||
-		envelope.ExecutionMode != "apply" {
-		return fmt.Errorf("apply is only supported for an explicit doops-cicd apply instruction")
+		envelope.ExecutionMode != "apply" ||
+		strings.TrimSpace(envelope.RunID) == "" ||
+		strings.TrimSpace(envelope.WorkflowPath) == "" ||
+		!validCredentialWorkspaceCommit(envelope.WorkspaceCommit) ||
+		strings.TrimSpace(envelope.CredentialRun.ID) == "" ||
+		envelope.CredentialRun.Materializations == nil ||
+		(envelope.ResultContract.APIVersion != "doops.sh/v2" &&
+			envelope.ResultContract.APIVersion != "doops.sh/v3") ||
+		envelope.ResultContract.Kind != "DeploymentRun" ||
+		!envelope.ResultContract.RequireEvidence {
+		return doopsCICDInstructionEnvelope{}, fmt.Errorf("apply is only supported for an explicit prepared doops-cicd apply instruction")
 	}
-	return nil
+	return envelope, nil
 }
 
 type agentPromptExecutionContext struct {

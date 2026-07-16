@@ -1154,6 +1154,96 @@ func TestGatewayRPCForwardsAllowedActionAndRejectsDeniedAction(t *testing.T) {
 	}
 }
 
+func TestGatewayRPCApplyRequiresCredentialPrepareGate(t *testing.T) {
+	for _, test := range []struct {
+		name               string
+		actions            []GatewayAction
+		credentialProtocol bool
+		wantError          string
+	}{
+		{
+			name:               "credential permission",
+			actions:            []GatewayAction{ActionAsk, ActionExec},
+			credentialProtocol: true,
+			wantError:          string(ActionCredentialUse),
+		},
+		{
+			name:               "agent protocol",
+			actions:            []GatewayAction{ActionAsk, ActionExec, ActionCredentialUse},
+			credentialProtocol: false,
+			wantError:          "agent_protocol_incompatible",
+		},
+		{
+			name:               "prepared run binding",
+			actions:            []GatewayAction{ActionAsk, ActionExec, ActionCredentialUse},
+			credentialProtocol: true,
+			wantError:          "credential_prepare_binding_invalid",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+			if err != nil {
+				t.Fatalf("open store: %v", err)
+			}
+			defer store.Close()
+			user, _ := store.CreateUser("deployer")
+			userToken, _ := store.CreateToken(CreateTokenRequest{
+				Kind: TokenKindUser, UserID: user.ID, Name: "deployer",
+			})
+			agentToken, _ := store.CreateToken(CreateTokenRequest{
+				Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local",
+			})
+			if err := store.GrantUser(user.ID, ScopeGrant{
+				Cluster: "dev", Instance: "local", Actions: test.actions,
+			}); err != nil {
+				t.Fatalf("grant target actions: %v", err)
+			}
+
+			hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, MaxQueuedPerTarget: -1})
+			mux := http.NewServeMux()
+			hub.RegisterRoutes(mux)
+			server := httptest.NewServer(mux)
+			defer server.Close()
+
+			agentConn := dialFakeGatewayAgent(t, server.URL, agentToken.Plaintext, "dev", "local")
+			defer agentConn.Close()
+			go serveApplyGateFakeAgent(agentConn, test.credentialProtocol)
+			client := dialGatewayRPCClient(t, server.URL, userToken.Plaintext, "dev", "local")
+			defer client.Close()
+
+			instruction := `{
+				"task":"execute-doops-cicd-workflow",
+				"skill":"$doops-cicd",
+				"executionMode":"apply",
+				"runId":"release-0123456789abcdef",
+				"workflowPath":"deploy/release.yaml",
+				"workspaceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"inputs":{},
+				"credentialRun":{"id":"credrun_forged","materializations":[]},
+				"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
+			}`
+			arguments, _ := json.Marshal(map[string]interface{}{
+				"session_id":       "release",
+				"instruction":      instruction,
+				"response_format":  "json",
+				"operation":        "apply",
+				"workspace_commit": strings.Repeat("a", 40),
+			})
+			writeGatewayJSON(t, client, map[string]interface{}{
+				"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+				"params": map[string]interface{}{
+					"name": "doops_agent_prompt", "arguments": json.RawMessage(arguments),
+				},
+			})
+			response := readUntilID(t, client, 2)
+			failure, ok := response["error"].(map[string]interface{})
+			if !ok || !strings.Contains(fmt.Sprint(failure["message"]), test.wantError) {
+				t.Fatalf("apply gate response = %#v, want error containing %q", response, test.wantError)
+			}
+		})
+	}
+}
+
 func TestGatewayRPCForwardsBackgroundToolsAsExec(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
@@ -3163,6 +3253,41 @@ func serveFakeAgentWithRuntimeID(t *testing.T, conn *websocket.Conn, runtimeID s
 				"id":      msg["id"],
 				"result": map[string]interface{}{
 					"content": []map[string]interface{}{{"type": "text", "text": "ok " + params["name"].(string)}},
+				},
+			})
+		}
+	}
+}
+
+func serveApplyGateFakeAgent(conn *websocket.Conn, credentialProtocol bool) {
+	for {
+		var msg map[string]interface{}
+		if err := conn.ReadJSON(&msg); err != nil {
+			return
+		}
+		switch msg["method"] {
+		case "initialize":
+			result := map[string]interface{}{
+				"protocolVersion": "2024-11-05",
+			}
+			if credentialProtocol {
+				result["capabilities"] = map[string]interface{}{
+					"protocols": map[string]interface{}{
+						"credentialPlan": credentialPlanProtocolV2,
+					},
+				}
+			}
+			_ = conn.WriteJSON(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      msg["id"],
+				"result":  result,
+			})
+		case "tools/call":
+			_ = conn.WriteJSON(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      msg["id"],
+				"result": map[string]interface{}{
+					"content": []map[string]interface{}{{"type": "text", "text": "unexpected dispatch"}},
 				},
 			})
 		}

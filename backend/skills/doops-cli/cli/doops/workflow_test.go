@@ -322,7 +322,9 @@ func TestRunCICDCommandStopsBeforePromptWhenCredentialPrepareFails(t *testing.T)
 	}
 
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "credential_grant_denied", http.StatusForbidden)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"apiVersion":"doops.sh/v2","kind":"CredentialPrepareError","category":"credential_grant_denied"}`))
 	}))
 	defer gateway.Close()
 	caller := &fakeWorkflowCaller{

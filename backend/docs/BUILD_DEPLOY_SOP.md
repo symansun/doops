@@ -15,14 +15,14 @@
 固定发布入口：
 
 ```bash
-bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
+bash scripts/deploy-gateway.sh --host 106.54.197.139 --user ubuntu
 ```
 
 当前 gateway 维护主机：
 
-- 公网地址：`203.0.113.10`
+- SSH 地址：`106.54.197.139`
 - SSH 用户：`ubuntu`
-- Gateway URL：`http://203.0.113.10:42222`
+- Gateway URL：`https://doops.l8ai.cn`
 - SSH 凭据由运维密钥库或维护人保管，禁止写入仓库、日志、提交信息和文档正文。
 
 这条脚本只走 SSH/SCP，在宿主机真实 root 下完成：
@@ -48,7 +48,7 @@ bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
 
 ## 二、 Agent 标准构建工作流 (Server-Side Build)
 
-在进行任何修改后，若需要更新大模型管控组件 `doops-agent`，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA 为标签的候选镜像；候选镜像必须在下一步被解析为 registry digest。已注册的 DoOps Agent 只能通过版本化 DoOps `DeploymentTemplate` 消费该 digest 并完成环境同步、Helm 收敛与验证。CNB 不负责环境部署、回滚或 Helm/Kubernetes 操作；`deploy.sh` 与任何 SSH/rsync 手工发布入口均已移除。
+在进行任何修改后，若需要更新大模型管控组件 `doops-agent`，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA 为标签的候选镜像；候选镜像必须在下一步被解析为 registry digest。已注册的 DoOps Agent 只能通过版本化 DoOps 声明消费该 digest并完成环境同步、Helm 收敛与验证。DoOps 自身的 Agent bootstrap 当前使用 v2 `DeploymentTemplate`；业务环境可以使用 v3 `EnvironmentDefinition`，不得在二者之间生成中间 workflow 或静默降级。CNB 不负责环境部署、回滚或 Helm/Kubernetes 操作；`deploy.sh` 与任何 SSH/rsync 手工发布入口均已移除。
 
 ### 1. 触发受控发布 (在控制端执行)
 发布者必须先将待发布提交推送到 `main`，确认 CNB CI 的候选镜像已经生成，并在无未提交文件的精确 commit checkout 中，以该完整 commit SHA 作为 `releaseId` 执行环境 `DeploymentTemplate`。CLI 会拒绝 HEAD 不匹配或工作区不干净的 source release。运行期必须使用该候选镜像的 registry digest，不得以可变 tag 作为实际部署镜像。Oilan 的入口为 `deploy/workflows/oilan-agent-bootstrap.yaml`，运行期目标清单由 `deploy/environments.yaml`、Helm Chart 和环境 values 定义。

@@ -10,7 +10,7 @@ and released by .cnb.yml as <repo>/web:<tag>. This legacy script is disabled
 because normal doops environments do not provide direct SSH connections.
 
 Usage:
-  bash scripts/deploy-webui.sh --host 203.0.113.10 --user ubuntu
+  bash scripts/deploy-webui.sh --host <audited-legacy-host> --user ubuntu
 
 Options:
   --host HOST             Host or IP. Required.

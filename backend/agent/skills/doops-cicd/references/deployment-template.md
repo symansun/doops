@@ -46,3 +46,17 @@
 
 `doops.sh/v2` 的 `DeploymentTemplate`、`SemanticRelease` 和 `ServiceRelease` 保持原
 契约。v3 执行器不得生成或读取 v2 workflow 作为中间产物。
+
+v2 workflow 的 `configurationSource` 只接受显式
+`doops.sh/v2 EnvironmentRegistry`。`EnvironmentDefinition` 是 v3 部署根，不是 v2
+配置源。
+
+## Credential Plan
+
+声明 apiVersion 与 Gateway-Agent credential-plan 协议是两个不同维度：
+
+- 声明编译器显式接受 v2 workflow 根和 v3 `EnvironmentDefinition` 根；
+- Gateway-Agent 控制面统一使用 `doops.sh/credential-plan/v2`；
+- credential prepare 与可信执行上下文共享同一严格编译结果；
+- v3 根必须闭合验证全部 `EnvironmentService` 和 `ServiceDefinition` 引用；
+- 未声明的 source/target/runtime Secret 引用直接阻断。

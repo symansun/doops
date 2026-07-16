@@ -7,13 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
-
-	"gopkg.in/yaml.v3"
 )
 
 type trustedReconciliationAdmission struct {
@@ -48,6 +47,25 @@ type trustedReconciliationCapability struct {
 	EvidenceSubject string                 `json:"evidenceSubject"`
 	CanonicalScope  map[string]interface{} `json:"canonicalScope"`
 	ScopeDigest     string                 `json:"scopeDigest"`
+}
+
+type doopsCICDInstructionEnvelope struct {
+	Task            string            `json:"task"`
+	Skill           string            `json:"skill"`
+	ExecutionMode   string            `json:"executionMode"`
+	RunID           string            `json:"runId"`
+	WorkflowPath    string            `json:"workflowPath"`
+	WorkspaceCommit string            `json:"workspaceCommit"`
+	Inputs          map[string]string `json:"inputs"`
+	CredentialRun   struct {
+		ID               string                      `json:"id"`
+		Materializations []CredentialMaterialization `json:"materializations"`
+	} `json:"credentialRun"`
+	ResultContract struct {
+		APIVersion      string `json:"apiVersion"`
+		Kind            string `json:"kind"`
+		RequireEvidence bool   `json:"requireEvidence"`
+	} `json:"resultContract"`
 }
 
 func buildDoagentPromptParams(sessionID, prompt string, admission *trustedReconciliationAdmission, structured bool) map[string]interface{} {
@@ -104,39 +122,22 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 		return trustedReconciliationAdmission{}, fmt.Errorf("trusted reconciliation identity is invalid")
 	}
 
-	var envelope struct {
-		Task            string            `json:"task"`
-		Skill           string            `json:"skill"`
-		ExecutionMode   string            `json:"executionMode"`
-		RunID           string            `json:"runId"`
-		WorkflowPath    string            `json:"workflowPath"`
-		WorkspaceCommit string            `json:"workspaceCommit"`
-		Inputs          map[string]string `json:"inputs"`
-		CredentialRun   json.RawMessage   `json:"credentialRun"`
-		ResultContract  struct {
-			APIVersion      string `json:"apiVersion"`
-			Kind            string `json:"kind"`
-			RequireEvidence bool   `json:"requireEvidence"`
-		} `json:"resultContract"`
-	}
-	decoder := json.NewDecoder(strings.NewReader(instruction))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&envelope); err != nil {
-		return trustedReconciliationAdmission{}, fmt.Errorf("invalid reconciliation instruction")
+	envelope, err := decodeDoopsCICDInstruction(instruction)
+	if err != nil {
+		return trustedReconciliationAdmission{}, err
 	}
 	if envelope.Task != "execute-doops-cicd-workflow" || envelope.Skill != "$doops-cicd" ||
 		(envelope.ExecutionMode != "dry-run" && envelope.ExecutionMode != "apply") ||
 		strings.TrimSpace(envelope.RunID) == "" || strings.TrimSpace(envelope.WorkflowPath) == "" ||
 		envelope.WorkspaceCommit != workspaceCommit ||
-		(envelope.ResultContract.APIVersion != "doops.sh/v2" &&
-			envelope.ResultContract.APIVersion != "doops.sh/v3") ||
+		strings.TrimSpace(envelope.CredentialRun.ID) == "" ||
+		envelope.CredentialRun.Materializations == nil ||
 		envelope.ResultContract.Kind != "DeploymentRun" ||
 		!envelope.ResultContract.RequireEvidence {
 		return trustedReconciliationAdmission{}, fmt.Errorf("reconciliation instruction binding is invalid")
 	}
 	for key := range envelope.Inputs {
-		lower := strings.ToLower(strings.TrimSpace(key))
-		if credentialSecretLikeKeys[lower] {
+		if credentialSecretLikeKey(key) {
 			return trustedReconciliationAdmission{}, fmt.Errorf("sensitive workflow input %q is forbidden", key)
 		}
 	}
@@ -145,86 +146,33 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 	if err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
-	workflowData, err := readCredentialDeclarationFile(root, envelope.WorkflowPath)
+	parsedWorkflow, err := parseCredentialWorkflow(root, envelope.WorkflowPath)
 	if err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
-	if _, err := credentialYAMLDocument(workflowData); err != nil {
-		return trustedReconciliationAdmission{}, err
-	}
-	var identity credentialWorkflowIdentity
-	if err := yaml.Unmarshal(workflowData, &identity); err != nil {
-		return trustedReconciliationAdmission{}, invalidCredentialDeclaration(err)
-	}
-	var workflow credentialDeploymentTemplate
-	var semanticReleaseRevision string
-	switch identity.Kind {
-	case "EnvironmentDefinition":
-		var environment credentialEnvironmentDefinitionV3
-		if err := yaml.Unmarshal(workflowData, &environment); err != nil {
-			return trustedReconciliationAdmission{}, invalidCredentialDeclaration(err)
-		}
-		if environment.APIVersion != "doops.sh/v3" ||
-			envelope.ResultContract.APIVersion != environment.APIVersion ||
-			strings.TrimSpace(environment.Metadata.Name) == "" ||
-			strings.TrimSpace(environment.Spec.Application) == "" ||
-			strings.TrimSpace(environment.Spec.Source.Repository) == "" ||
-			strings.TrimSpace(environment.Spec.Source.Branch) == "" {
-			return trustedReconciliationAdmission{}, invalidCredentialDeclaration(errors.New("invalid v3 EnvironmentDefinition"))
-		}
-		workflow.APIVersion = environment.APIVersion
-		workflow.Kind = environment.Kind
-		workflow.Metadata.Name = environment.Metadata.Name
-		workflow.Spec.Application = environment.Spec.Application
-		workflow.Spec.Parameters = environment.Spec.Parameters
-		workflow.Spec.Environment = environment.Metadata.Name
-		workflow.Spec.Release.Source.Repository = environment.Spec.Source.Repository
-		workflow.Spec.Release.Source.Branch = environment.Spec.Source.Branch
-		workflow.Spec.Release.Source.Revision = workspaceCommit
-	case "SemanticRelease":
-		var semantic credentialSemanticRelease
-		if err := yaml.Unmarshal(workflowData, &semantic); err != nil {
-			return trustedReconciliationAdmission{}, invalidCredentialDeclaration(err)
-		}
-		if semantic.APIVersion != "doops.sh/v2" || semantic.Kind != "SemanticRelease" ||
-			strings.TrimSpace(semantic.Metadata.Name) == "" ||
-			strings.TrimSpace(semantic.Spec.Application) == "" ||
-			strings.TrimSpace(semantic.Spec.Environment) == "" ||
-			strings.TrimSpace(semantic.Spec.ConfigurationSource) == "" {
-			return trustedReconciliationAdmission{}, invalidCredentialDeclaration(errors.New("invalid SemanticRelease identity or deployment context"))
-		}
-		workflow.APIVersion = semantic.APIVersion
-		workflow.Kind = semantic.Kind
-		workflow.Metadata.Name = semantic.Metadata.Name
-		workflow.Spec.Parameters = semantic.Spec.Parameters
-		workflow.Spec.Application = semantic.Spec.Application
-		workflow.Spec.Environment = semantic.Spec.Environment
-		workflow.Spec.ConfigurationSource = semantic.Spec.ConfigurationSource
-		semanticReleaseRevision = semantic.Spec.Release.Revision
-	default:
-		if err := strictCredentialYAMLDecode(workflowData, &workflow); err != nil {
-			return trustedReconciliationAdmission{}, invalidCredentialDeclaration(err)
-		}
+	workflow := parsedWorkflow.Template
+	if envelope.ResultContract.APIVersion != workflow.APIVersion {
+		return trustedReconciliationAdmission{}, fmt.Errorf("reconciliation result contract version does not match workflow")
 	}
 	if err := validateTrustedWorkflowInputs(workflow.Spec.Parameters, envelope.Inputs); err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
-	var configuration credentialConfigurationSource
-	if identity.Kind != "EnvironmentDefinition" {
-		configurationData, err := readCredentialDeclarationFile(root, workflow.Spec.ConfigurationSource)
+	var environment credentialEnvironmentContext
+	if parsedWorkflow.Environment != nil {
+		environment = *parsedWorkflow.Environment
+	} else {
+		environment, err = parseCredentialEnvironment(
+			root,
+			workflow.Spec.ConfigurationSource,
+			workflow.Spec.Environment,
+		)
 		if err != nil {
 			return trustedReconciliationAdmission{}, err
-		}
-		if _, err := credentialYAMLDocument(configurationData); err != nil {
-			return trustedReconciliationAdmission{}, err
-		}
-		if err := strictCredentialYAMLDecode(configurationData, &configuration); err != nil {
-			return trustedReconciliationAdmission{}, invalidCredentialDeclaration(err)
 		}
 	}
 	revisionDeclaration := workflow.Spec.Release.Source.Revision
 	if strings.TrimSpace(revisionDeclaration) == "" {
-		revisionDeclaration = semanticReleaseRevision
+		revisionDeclaration = parsedWorkflow.SemanticRevision
 	}
 	if strings.TrimSpace(revisionDeclaration) == "" {
 		revisionDeclaration = workspaceCommit
@@ -238,9 +186,9 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 		return trustedReconciliationAdmission{}, err
 	}
 	source := trustedReconciliationSource{
-		Repository:      selectTrustedSource(workflow.Spec.Release.Source.Repository, configuration.ArtifactContract.SourceRepository),
+		Repository:      selectTrustedSource(workflow.Spec.Release.Source.Repository, environment.SourceRepository),
 		Revision:        revision,
-		Branch:          selectTrustedSource(workflow.Spec.Release.Source.Branch, configuration.ArtifactContract.SourceBranch),
+		Branch:          selectTrustedSource(workflow.Spec.Release.Source.Branch, environment.SourceBranch),
 		WorkspaceCommit: workspaceCommit,
 	}
 	if source.Repository == "" || source.Branch == "" || !validLowerHex(source.Revision, 40) {
@@ -325,6 +273,19 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 		return trustedReconciliationAdmission{}, err
 	}
 	return trustedReconciliationAdmission{AllowedTools: tools, Context: context}, nil
+}
+
+func decodeDoopsCICDInstruction(instruction string) (doopsCICDInstructionEnvelope, error) {
+	var envelope doopsCICDInstructionEnvelope
+	decoder := json.NewDecoder(strings.NewReader(instruction))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&envelope); err != nil {
+		return doopsCICDInstructionEnvelope{}, fmt.Errorf("invalid reconciliation instruction")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return doopsCICDInstructionEnvelope{}, fmt.Errorf("invalid reconciliation instruction")
+	}
+	return envelope, nil
 }
 
 func selectTrustedSource(declared, registry string) string {

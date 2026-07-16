@@ -40,7 +40,7 @@ cd agent && go run ./cmd/webui -port 8088
 ## 运行
 
 ```bash
-./bin/doops-webui -port 8088 -gateway http://203.0.113.10:42222
+./bin/doops-webui -port 8088 -gateway https://doops.l8ai.cn
 ```
 
 参数：

@@ -44,6 +44,10 @@ spec:
 		t.Fatalf("write workflow: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(sessionRoot, "deploy", "environments.yaml"), []byte(`
+apiVersion: doops.sh/v2
+kind: EnvironmentRegistry
+metadata:
+  name: test-environments
 environments:
   production:
     target:
@@ -93,6 +97,18 @@ func TestAgentCredentialPlanToolRejectsWorkspaceCommitMismatch(t *testing.T) {
 	}))
 	if err == nil || !strings.Contains(err.Error(), "workspace commit mismatch") {
 		t.Fatalf("workspace mismatch error = %v", err)
+	}
+}
+
+func TestAgentCredentialPlanToolRejectsUnknownFields(t *testing.T) {
+	_, err := handleCredentialPlanTool(mustJSON(t, map[string]interface{}{
+		"session_id":       "credential-plan",
+		"workflow_path":    "deploy/release.yaml",
+		"workspace_commit": strings.Repeat("a", 40),
+		"unexpected":       true,
+	}))
+	if err == nil || err.Error() != "invalid credential plan params" {
+		t.Fatalf("unknown field error = %v, want invalid credential plan params", err)
 	}
 }
 

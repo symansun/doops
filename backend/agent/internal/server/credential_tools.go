@@ -17,8 +17,13 @@ type credentialPlanToolParams struct {
 
 func handleCredentialPlanTool(argBytes json.RawMessage) (string, error) {
 	var args credentialPlanToolParams
-	if err := json.Unmarshal(argBytes, &args); err != nil {
-		return "", fmt.Errorf("invalid credential plan params: %w", err)
+	decoder := json.NewDecoder(bytes.NewReader(argBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&args); err != nil {
+		return "", fmt.Errorf("invalid credential plan params")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return "", fmt.Errorf("invalid credential plan params")
 	}
 	args.SessionID = strings.TrimSpace(args.SessionID)
 	args.WorkflowPath = strings.TrimSpace(args.WorkflowPath)

@@ -10,7 +10,7 @@ doops target; targets are doops-agent execution contexts and can point at the
 wrong root filesystem.
 
 Usage:
-  bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
+  bash scripts/deploy-gateway.sh --host 106.54.197.139 --user ubuntu
 
 Options:
   --host HOST             Gateway host or IP. Required.
