@@ -128,7 +128,8 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 		(envelope.ExecutionMode != "dry-run" && envelope.ExecutionMode != "apply") ||
 		strings.TrimSpace(envelope.RunID) == "" || strings.TrimSpace(envelope.WorkflowPath) == "" ||
 		envelope.WorkspaceCommit != workspaceCommit ||
-		envelope.ResultContract.APIVersion != "doops.sh/v2" ||
+		(envelope.ResultContract.APIVersion != "doops.sh/v2" &&
+			envelope.ResultContract.APIVersion != "doops.sh/v3") ||
 		envelope.ResultContract.Kind != "DeploymentRun" ||
 		!envelope.ResultContract.RequireEvidence {
 		return trustedReconciliationAdmission{}, fmt.Errorf("reconciliation instruction binding is invalid")
@@ -158,6 +159,28 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 	var workflow credentialDeploymentTemplate
 	var semanticReleaseRevision string
 	switch identity.Kind {
+	case "EnvironmentDefinition":
+		var environment credentialEnvironmentDefinitionV3
+		if err := yaml.Unmarshal(workflowData, &environment); err != nil {
+			return trustedReconciliationAdmission{}, invalidCredentialDeclaration(err)
+		}
+		if environment.APIVersion != "doops.sh/v3" ||
+			envelope.ResultContract.APIVersion != environment.APIVersion ||
+			strings.TrimSpace(environment.Metadata.Name) == "" ||
+			strings.TrimSpace(environment.Spec.Application) == "" ||
+			strings.TrimSpace(environment.Spec.Source.Repository) == "" ||
+			strings.TrimSpace(environment.Spec.Source.Branch) == "" {
+			return trustedReconciliationAdmission{}, invalidCredentialDeclaration(errors.New("invalid v3 EnvironmentDefinition"))
+		}
+		workflow.APIVersion = environment.APIVersion
+		workflow.Kind = environment.Kind
+		workflow.Metadata.Name = environment.Metadata.Name
+		workflow.Spec.Application = environment.Spec.Application
+		workflow.Spec.Parameters = environment.Spec.Parameters
+		workflow.Spec.Environment = environment.Metadata.Name
+		workflow.Spec.Release.Source.Repository = environment.Spec.Source.Repository
+		workflow.Spec.Release.Source.Branch = environment.Spec.Source.Branch
+		workflow.Spec.Release.Source.Revision = workspaceCommit
 	case "SemanticRelease":
 		var semantic credentialSemanticRelease
 		if err := yaml.Unmarshal(workflowData, &semantic); err != nil {
@@ -186,16 +209,18 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 	if err := validateTrustedWorkflowInputs(workflow.Spec.Parameters, envelope.Inputs); err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
-	configurationData, err := readCredentialDeclarationFile(root, workflow.Spec.ConfigurationSource)
-	if err != nil {
-		return trustedReconciliationAdmission{}, err
-	}
-	if _, err := credentialYAMLDocument(configurationData); err != nil {
-		return trustedReconciliationAdmission{}, err
-	}
 	var configuration credentialConfigurationSource
-	if err := strictCredentialYAMLDecode(configurationData, &configuration); err != nil {
-		return trustedReconciliationAdmission{}, invalidCredentialDeclaration(err)
+	if identity.Kind != "EnvironmentDefinition" {
+		configurationData, err := readCredentialDeclarationFile(root, workflow.Spec.ConfigurationSource)
+		if err != nil {
+			return trustedReconciliationAdmission{}, err
+		}
+		if _, err := credentialYAMLDocument(configurationData); err != nil {
+			return trustedReconciliationAdmission{}, err
+		}
+		if err := strictCredentialYAMLDecode(configurationData, &configuration); err != nil {
+			return trustedReconciliationAdmission{}, invalidCredentialDeclaration(err)
+		}
 	}
 	revisionDeclaration := workflow.Spec.Release.Source.Revision
 	if strings.TrimSpace(revisionDeclaration) == "" {

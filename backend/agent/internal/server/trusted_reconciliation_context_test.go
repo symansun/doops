@@ -400,6 +400,55 @@ func TestBuildTrustedReconciliationAdmissionRejectsSecretInputNames(t *testing.T
 	}
 }
 
+func TestBuildTrustedReconciliationAdmissionAcceptsV3EnvironmentRoot(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	sessionID := "v3-environment-root"
+	workspace := filepath.Join(root, sessionID)
+	writeCredentialPlanTestFile(t, workspace, "deploy/environments/oilan/environment.yaml", `
+apiVersion: doops.sh/v3
+kind: EnvironmentDefinition
+metadata:
+  name: oilan
+spec:
+  application: zhiyong
+  parameters:
+    reason:
+      required: true
+  source:
+    repository: https://example.test/zhiyong.git
+    branch: main
+  execution:
+    deploy:
+      target: gw-edu-coder
+      cluster: doops-edu
+      instance: edu-coder
+  helm:
+    namespace: oilan
+`)
+	commit := strings.Repeat("a", 40)
+	instruction := `{
+		"task":"execute-doops-cicd-workflow",
+		"skill":"$doops-cicd",
+		"executionMode":"dry-run",
+		"runId":"v3-environment-root-0123456789abcdef",
+		"workflowPath":"deploy/environments/oilan/environment.yaml",
+		"workspaceCommit":"` + commit + `",
+		"inputs":{"reason":"contract-test"},
+		"credentialRun":{"id":"credrun_v3","materializations":[]},
+		"resultContract":{"apiVersion":"doops.sh/v3","kind":"DeploymentRun","requireEvidence":true}
+	}`
+	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction, commit)
+	if err != nil {
+		t.Fatalf("build v3 trusted admission: %v", err)
+	}
+	if admission.Context.Source.Repository != "https://example.test/zhiyong.git" ||
+		admission.Context.Source.Branch != "main" ||
+		admission.Context.Source.Revision != commit {
+		t.Fatalf("unexpected v3 source: %#v", admission.Context.Source)
+	}
+}
+
 func TestBuildDoagentPromptParamsUsesExactPlanToolsAndNoGenericTools(t *testing.T) {
 	context := trustedReconciliationContext{
 		SchemaVersion:      trustedReconciliationContextSchema,

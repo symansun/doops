@@ -14,20 +14,22 @@ CLI_BIN = ROOT / "skills" / "doops-cli" / "bin"
 
 def test_doops_cicd_skill_is_generic_and_agent_native():
     text = (SKILL / "SKILL.md").read_text()
+    assert "doops.sh/v3" in text
     assert "doops.sh/v2" in text
-    assert "DeploymentTemplate" in text
-    assert "native doagent multi-agent engine" in text
-    assert "$doops-cicd" in text
+    assert "doagent 原生多 Agent 引擎" in text
+    assert "BuildDefinition" in text
+    assert "EnvironmentDefinition" in text
+    assert "ServiceDefinition" in text
+    assert "EnvironmentService" in text
     assert "DeploymentReview" in text
-    assert "exactly one `DeploymentTemplate` artifact" in text
-    assert "imperative plan" in text
     assert "SemanticRelease" in text
     assert "ServiceRelease" in text
-    assert "selected-services" in text
-    assert "preserve-observed" in text
-    assert "converge-shared-release" in text
+    assert "deploy/deploy.yaml" in text
+    assert "deploy/environments/<environment>/environment.yaml" in text
+    assert "不得把 v3 声明降级" in text
+    assert "回滚基线" in text
     assert "pipeline" in text
-    assert "`toolRef`" in text
+    assert "toolRef" in text
     for forbidden in (
         "DeploymentPlan",
         "ReconciliationResult",
@@ -35,6 +37,23 @@ def test_doops_cicd_skill_is_generic_and_agent_native():
         "reconcilehelmrelease",
     ):
         assert forbidden not in text
+
+
+def test_v3_split_contract_is_chinese_and_has_no_workflow_index():
+    declaration = (SKILL / "references" / "deployment-template.md").read_text()
+    execution = (SKILL / "references" / "execution-contract.md").read_text()
+    for kind in (
+        "BuildDefinition",
+        "EnvironmentDefinition",
+        "ServiceDefinition",
+        "EnvironmentService",
+    ):
+        assert kind in declaration
+    assert "deploy/environments.yaml" not in declaration
+    assert "deploy/workflows/" not in declaration
+    assert "同一 apiVersion" in (SKILL / "SKILL.md").read_text()
+    assert "只执行一次" in execution
+    assert "rollback baseline" in execution
 
 
 def test_existing_workflow_and_execution_contract_define_one_result():

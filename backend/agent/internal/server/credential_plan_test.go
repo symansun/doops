@@ -516,6 +516,40 @@ environments:
 	}
 }
 
+func TestParseCredentialPlanAcceptsV3EnvironmentDefinitionRoot(t *testing.T) {
+	root := t.TempDir()
+	writeCredentialPlanTestFile(t, root, "deploy/environments/oilan/environment.yaml", `
+apiVersion: doops.sh/v3
+kind: EnvironmentDefinition
+metadata:
+  name: oilan
+spec:
+  application: zhiyong
+  parameters:
+    reason:
+      required: true
+  source:
+    repository: https://example.test/zhiyong.git
+    branch: main
+  execution:
+    deploy:
+      target: gw-edu-coder
+      cluster: doops-edu
+      instance: edu-coder
+  helm:
+    namespace: oilan
+`)
+	plan, err := parseCredentialPlan(root, "deploy/environments/oilan/environment.yaml")
+	if err != nil {
+		t.Fatalf("parse v3 credential plan: %v", err)
+	}
+	if plan.Template != "oilan" || plan.Project != "zhiyong" ||
+		plan.Environment != "oilan" || plan.Target != "gw-edu-coder" ||
+		plan.Cluster != "doops-edu" || plan.Instance != "edu-coder" {
+		t.Fatalf("unexpected v3 plan: %#v", plan)
+	}
+}
+
 func TestParseCredentialPlanRejectsInlineSecretLikeFieldsInConfigurationSource(t *testing.T) {
 	root := t.TempDir()
 	writeCredentialPlanTestFile(t, root, "release.yaml", `

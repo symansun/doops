@@ -460,6 +460,7 @@ func TestValidateWorkflowResultRejectsSyntheticResultsAndDryRunMutation(t *testi
 		t.Run(name, func(t *testing.T) {
 			if err := validateWorkflowResult(
 				result,
+				"doops.sh/v2",
 				"dry-run",
 				strings.Repeat("a", 40),
 			); err == nil {
@@ -511,6 +512,7 @@ func TestValidateWorkflowResultRejectsUnboundEvidence(t *testing.T) {
 			)
 			if err := validateWorkflowResult(
 				result,
+				"doops.sh/v2",
 				"dry-run",
 				strings.Repeat("a", 40),
 			); err == nil {
@@ -549,5 +551,19 @@ func TestRunCICDCommandRequiresTargetBeforePush(t *testing.T) {
 	}
 	if pushes != 0 {
 		t.Fatalf("invalid invocations must not push, got %d pushes", pushes)
+	}
+}
+
+func TestWorkflowAPIVersionAcceptsV3(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "environment.yaml")
+	if err := os.WriteFile(path, []byte("apiVersion: doops.sh/v3\nkind: EnvironmentDefinition\n"), 0o600); err != nil {
+		t.Fatalf("write v3 environment: %v", err)
+	}
+	version, err := workflowAPIVersion(path)
+	if err != nil {
+		t.Fatalf("read v3 apiVersion: %v", err)
+	}
+	if version != "doops.sh/v3" {
+		t.Fatalf("apiVersion = %q, want doops.sh/v3", version)
 	}
 }

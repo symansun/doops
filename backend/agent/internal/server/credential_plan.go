@@ -129,6 +129,32 @@ type credentialWorkflowIdentity struct {
 	Kind       string `yaml:"kind"`
 }
 
+type credentialEnvironmentDefinitionV3 struct {
+	APIVersion string `yaml:"apiVersion"`
+	Kind       string `yaml:"kind"`
+	Metadata   struct {
+		Name string `yaml:"name"`
+	} `yaml:"metadata"`
+	Spec struct {
+		Application string                                 `yaml:"application"`
+		Parameters  map[string]credentialTemplateParameter `yaml:"parameters,omitempty"`
+		Source      struct {
+			Repository string `yaml:"repository"`
+			Branch     string `yaml:"branch"`
+		} `yaml:"source"`
+		Execution struct {
+			Deploy struct {
+				Target   string `yaml:"target"`
+				Cluster  string `yaml:"cluster"`
+				Instance string `yaml:"instance"`
+			} `yaml:"deploy"`
+		} `yaml:"execution"`
+		Helm struct {
+			Namespace string `yaml:"namespace"`
+		} `yaml:"helm"`
+	} `yaml:"spec"`
+}
+
 type credentialConfigurationSource struct {
 	APIVersion           string                                                `yaml:"apiVersion"`
 	Kind                 string                                                `yaml:"kind"`
@@ -293,6 +319,27 @@ func parseCredentialPlan(root, workflowPath string) (CredentialPlan, error) {
 	var template credentialDeploymentTemplate
 	var semantic credentialSemanticRelease
 	switch identity.Kind {
+	case "EnvironmentDefinition":
+		var environment credentialEnvironmentDefinitionV3
+		if err := yaml.Unmarshal(workflowData, &environment); err != nil {
+			return CredentialPlan{}, invalidCredentialDeclaration(err)
+		}
+		if environment.APIVersion != "doops.sh/v3" ||
+			strings.TrimSpace(environment.Metadata.Name) == "" ||
+			strings.TrimSpace(environment.Spec.Application) == "" ||
+			strings.TrimSpace(environment.Spec.Execution.Deploy.Target) == "" ||
+			strings.TrimSpace(environment.Spec.Execution.Deploy.Cluster) == "" ||
+			strings.TrimSpace(environment.Spec.Execution.Deploy.Instance) == "" {
+			return CredentialPlan{}, invalidCredentialDeclaration(errors.New("invalid v3 EnvironmentDefinition identity or deployment target"))
+		}
+		return CredentialPlan{
+			Template:    environment.Metadata.Name,
+			Project:     environment.Spec.Application,
+			Environment: environment.Metadata.Name,
+			Target:      environment.Spec.Execution.Deploy.Target,
+			Cluster:     environment.Spec.Execution.Deploy.Cluster,
+			Instance:    environment.Spec.Execution.Deploy.Instance,
+		}, nil
 	case "SemanticRelease":
 		if err := yaml.Unmarshal(workflowData, &semantic); err != nil {
 			return CredentialPlan{}, invalidCredentialDeclaration(err)
