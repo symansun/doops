@@ -1023,7 +1023,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	}
 
 	if responseFormat == "json" {
-		instr = appendDoagentStructuredResultContract(instr)
+		instr = appendDoagentStructuredResultContract(instr, execution.Admission)
 	}
 
 	// Machine-result prompts use a fresh doagent session so their tool trace
@@ -1712,7 +1712,10 @@ func decodeDoagentJSONObject(text string) (map[string]interface{}, error) {
 	return object, nil
 }
 
-func appendDoagentStructuredResultContract(instruction string) string {
+func appendDoagentStructuredResultContract(
+	instruction string,
+	admission *trustedReconciliationAdmission,
+) string {
 	contract := instruction + "\n\nMachine-readable result channel: your final response is the machine result. " +
 		"It must contain exactly one JSON object with no Markdown or surrounding text. " +
 		"For a DeploymentRun, status may contain only phase, mutationCount, capabilities, evidence, and failures. " +
@@ -1724,6 +1727,9 @@ func appendDoagentStructuredResultContract(instruction string) string {
 		"For trusted DoOps plan tools, toolRef.tool is the exact model-visible name plan.<Tool> and toolRef.input is {} because trusted context is injected outside model arguments. " +
 		"For any other allowed tool, toolRef.tool is the exact model-visible tool name and toolRef.input is the exact JSON input used for that call. " +
 		"The Gateway consumes toolRef and injects toolCall with the completed runtime call's exact id, tool, input, and result."
+	if admission != nil && containsString(admission.AllowedTools, "mcp_doops_plan_ObserveWorkspaceSource") {
+		contract += " Your first action must be calling the allowed tool mcp_doops_plan_ObserveWorkspaceSource with exact JSON input {}; do not emit the final response before that completed call."
+	}
 	return contract
 }
 

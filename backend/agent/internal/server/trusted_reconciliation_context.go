@@ -70,12 +70,14 @@ func buildDoagentPromptParams(sessionID, prompt string, admission *trustedReconc
 		"sessionId":    sessionID,
 		"prompt":       prompt,
 		"allowedTools": []string{},
+		"toolsEnabled": false,
 	}
 	if !structured || admission == nil {
 		return params
 	}
 	params["allowedTools"] = append([]string(nil), admission.AllowedTools...)
 	params["trustedReconciliationContext"] = admission.Context
+	params["toolsEnabled"] = true
 	return params
 }
 
