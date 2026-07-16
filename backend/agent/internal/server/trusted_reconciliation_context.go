@@ -279,13 +279,23 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 			"mcp_doops_plan_ReconcileHelmRelease",
 		)
 	}
+	releaseScope, err := trustedDoopsPlanReleaseScope(root, envelope.WorkflowPath, envelope.Inputs)
+	if err != nil {
+		return trustedReconciliationAdmission{}, err
+	}
+	if releaseScope == nil {
+		return trustedReconciliationAdmission{}, errors.New("trusted native reconciliation currently requires a v2 DeploymentTemplate")
+	}
 	capabilities := make(map[string]trustedReconciliationCapability, len(tools))
 	for _, tool := range tools {
 		key := strings.TrimPrefix(tool, "mcp_doops_plan_")
 		scope := map[string]interface{}{
 			"cluster": plan.Cluster, "instance": plan.Instance, "project": plan.Project,
 			"environment": plan.Environment, "template": plan.Template, "tool": tool,
+			"workspacePath": root, "workflowPath": envelope.WorkflowPath,
+			"inputs": envelope.Inputs,
 		}
+		scope["releasePlan"] = releaseScope
 		scopeDigest, err := digestJSON(scope)
 		if err != nil {
 			return trustedReconciliationAdmission{}, err

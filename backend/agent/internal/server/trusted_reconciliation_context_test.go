@@ -34,6 +34,7 @@ spec:
       repository: https://example.test/app.git
       revision: ${inputs.releaseId}
       branch: main
+    version: ${inputs.releaseId}
   environment: production
   configurationSource: deploy/environments.yaml
 `)
@@ -66,10 +67,6 @@ environments:
       name: control
       cluster: doops
       instance: runner
-    deploymentTarget:
-      name: workload
-      cluster: doops
-      instance: app
     executor:
       type: helm
       lifecycle: in-process
@@ -285,30 +282,6 @@ spec:
 			wantRevision:    strings.Repeat("c", 40),
 			workspaceCommit: strings.Repeat("c", 40),
 		},
-		{
-			name: "semantic release binds declared revision",
-			workflow: `
-apiVersion: doops.sh/v2
-kind: SemanticRelease
-metadata:
-  name: zhiyong-test-release
-spec:
-  parameters:
-    revision:
-      required: true
-  application: zhiyong
-  release:
-    revision: ${inputs.revision}
-  environment: test
-  configurationSource: deploy/environments.yaml
-  serviceCatalog:
-    frontend:
-      uses: services/frontend.yaml
-`,
-			inputs:          `"revision":"` + strings.Repeat("d", 40) + `"`,
-			wantRevision:    strings.Repeat("d", 40),
-			workspaceCommit: strings.Repeat("c", 40),
-		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -371,6 +344,69 @@ environments:
 	}
 }
 
+func TestBuildTrustedReconciliationAdmissionRejectsUnsupportedReleaseShapes(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	sessionID := "semantic-release"
+	workspace := filepath.Join(root, sessionID)
+	if err := os.MkdirAll(filepath.Join(workspace, "deploy"), 0o700); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	writeCredentialPlanTestFile(t, workspace, "deploy/release.yaml", `
+apiVersion: doops.sh/v2
+kind: SemanticRelease
+metadata:
+  name: zhiyong-test-release
+spec:
+  parameters:
+    revision:
+      required: true
+  application: zhiyong
+  release:
+    revision: ${inputs.revision}
+  environment: test
+  configurationSource: deploy/environments.yaml
+  serviceCatalog:
+    frontend:
+      uses: services/frontend.yaml
+`)
+	writeCredentialPlanTestFile(t, workspace, "deploy/environments.yaml", `
+artifactContract:
+  type: image-set
+  sourceRepository: https://example.test/current.git
+  sourceBranch: main
+  sourceRegistry: registry.example.test/source
+  services: [frontend]
+environments:
+  test:
+    target: {name: gw-oilan-node, cluster: doops-oilan, instance: oilan-node}
+    executor:
+      type: helm
+      config:
+        namespace: test
+        release: app
+        registry: registry.example.test/target
+        chart: deploy/chart
+        values: deploy/values.yaml
+`)
+	commit := strings.Repeat("c", 40)
+	instruction := `{
+		"task":"execute-doops-cicd-workflow",
+		"skill":"$doops-cicd",
+		"executionMode":"dry-run",
+		"runId":"semantic-release-0123456789abcdef",
+		"workflowPath":"deploy/release.yaml",
+		"workspaceCommit":"` + commit + `",
+		"inputs":{"revision":"` + strings.Repeat("d", 40) + `"},
+		"credentialRun":{"id":"credrun_123","materializations":[]},
+		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
+	}`
+	if _, err := buildTrustedReconciliationAdmission(sessionID, instruction, commit); err == nil ||
+		!strings.Contains(err.Error(), "requires a v2 DeploymentTemplate") {
+		t.Fatalf("unsupported release error = %v", err)
+	}
+}
+
 func TestBuildTrustedReconciliationAdmissionRejectsSecretInputNames(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
@@ -400,7 +436,7 @@ func TestBuildTrustedReconciliationAdmissionRejectsSecretInputNames(t *testing.T
 	}
 }
 
-func TestBuildTrustedReconciliationAdmissionAcceptsV3EnvironmentRoot(t *testing.T) {
+func TestBuildTrustedReconciliationAdmissionRejectsV3WithoutNativeExecutor(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 	sessionID := "v3-environment-root"
@@ -438,14 +474,9 @@ spec:
 		"credentialRun":{"id":"credrun_v3","materializations":[]},
 		"resultContract":{"apiVersion":"doops.sh/v3","kind":"DeploymentRun","requireEvidence":true}
 	}`
-	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction, commit)
-	if err != nil {
-		t.Fatalf("build v3 trusted admission: %v", err)
-	}
-	if admission.Context.Source.Repository != "https://example.test/zhiyong.git" ||
-		admission.Context.Source.Branch != "main" ||
-		admission.Context.Source.Revision != commit {
-		t.Fatalf("unexpected v3 source: %#v", admission.Context.Source)
+	if _, err := buildTrustedReconciliationAdmission(sessionID, instruction, commit); err == nil ||
+		!strings.Contains(err.Error(), "requires a v2 DeploymentTemplate") {
+		t.Fatalf("unsupported v3 error = %v", err)
 	}
 }
 
@@ -526,6 +557,7 @@ spec:
       repository: https://example.test/app.git
       revision: ${inputs.releaseId}
       branch: main
+    version: ${inputs.releaseId}
   environment: production
   configurationSource: deploy/environments.yaml
 `)
@@ -554,7 +586,6 @@ environments:
   production:
     deploymentPlatform: linux/amd64
     target: {name: control, cluster: doops, instance: runner}
-    deploymentTarget: {name: workload, cluster: doops, instance: app}
     executor:
       type: helm
       lifecycle: in-process

@@ -1866,6 +1866,9 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 	case "doops_shell", "doops_bg", "doops_task_status":
 		return ActionExec
 	case "doops_agent_prompt":
+		if extractStringArg(args, "operation") == "apply" {
+			return ActionExec
+		}
 		switch extractStringArg(args, "mode") {
 		case "metadata", "history":
 			return ActionAsk

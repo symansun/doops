@@ -274,6 +274,7 @@ def test_single_model_policy_preserves_mounted_settings_and_omits_duplicate_tier
         == "secret-must-be-preserved"
     )
     assert "model_tiers" not in rendered
+    assert rendered["mcp_servers"] == [module.DOOPS_PLAN_SERVER]
     assert original["model_tiers"]["high"] == "quan2go/gpt-5-4"
 
 

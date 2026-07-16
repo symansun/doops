@@ -172,6 +172,7 @@ READY_FILE="$DEST/.doops-ready"
 echo "remote: 🚀 doops-agent: Preparing to deploy to $DEST"
 mkdir -p "$DEST"
 rm -f "$READY_FILE" "$READY_FILE.tmp"
+git --work-tree="$DEST" clean -fdx
 if ! git --work-tree="$DEST" checkout -f HEAD; then
     rm -f "$READY_FILE" "$READY_FILE.tmp"
     echo "remote: ❌ doops-agent: Checkout failed!" >&2
