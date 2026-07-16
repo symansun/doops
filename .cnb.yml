@@ -54,23 +54,11 @@ main:
             set -euo pipefail
             RELEASE_TAG="${CNB_COMMIT}"
             source backend/runtime-versions.env
-            BASE_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/base-light:${RELEASE_TAG}"
+            BASE_IMAGE="${DOOPS_AGENT_BASE_IMAGE}"
             APP_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${RELEASE_TAG}"
-            docker build \
-              --platform linux/amd64 \
-              --build-arg DO_AGENT_IMAGE="${DO_AGENT_IMAGE}" \
-              --build-arg DO_AGENT_VERSION="${DO_AGENT_VERSION}" \
-              --build-arg DO_AGENT_INDEX_DIGEST="${DO_AGENT_INDEX_DIGEST}" \
-              --build-arg DO_AGENT_PLATFORM="${DO_AGENT_PLATFORM}" \
-              --build-arg DO_AGENT_PLATFORM_DIGEST="${DO_AGENT_PLATFORM_DIGEST}" \
-              --label org.opencontainers.image.revision="${CNB_COMMIT}" \
-              --label org.opencontainers.image.version="${RELEASE_TAG}" \
-              -f backend/Dockerfile.base.light \
-              -t "${BASE_IMAGE}" \
-              backend
+            docker pull "${BASE_IMAGE}"
             ACTUAL_DOAGENT_VERSION="$(docker run --rm --entrypoint /usr/local/bin/do-agent "${BASE_IMAGE}" --version | awk '{print $NF}')"
             test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"
-            docker push "${BASE_IMAGE}"
             docker build \
               --platform linux/amd64 \
               --build-arg DOOPS_AGENT_BASE_IMAGE="${BASE_IMAGE}" \
