@@ -269,6 +269,77 @@ environments:
 	}
 }
 
+func TestParseCredentialPlanAcceptsCurrentReleaseShapesWithoutManagedCredentials(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		workflow string
+	}{
+		{
+			name: "deployment template version release",
+			workflow: `
+apiVersion: doops.sh/v2
+kind: DeploymentTemplate
+metadata:
+  name: ecp-test-deploy
+spec:
+  application: ecp
+  release:
+    version: ${inputs.version}
+  environment: test
+  configurationSource: deploy/environments.yaml
+`,
+		},
+		{
+			name: "semantic release",
+			workflow: `
+apiVersion: doops.sh/v2
+kind: SemanticRelease
+metadata:
+  name: zhiyong-test-release
+spec:
+  application: zhiyong
+  release:
+    revision: ${inputs.revision}
+    version: ${inputs.version}
+    reason: ${inputs.reason}
+  environment: test
+  configurationSource: deploy/environments.yaml
+  serviceCatalog:
+    frontend:
+      uses: services/frontend.yaml
+  flow:
+    - intent: establish-release-context
+`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeCredentialPlanTestFile(t, root, "deploy/release.yaml", test.workflow)
+			writeCredentialPlanTestFile(t, root, "deploy/environments.yaml", `
+environments:
+  test:
+    target:
+      name: gw-oilan-node
+      cluster: doops-oilan
+      instance: oilan-node
+`)
+
+			plan, err := parseCredentialPlan(root, "deploy/release.yaml")
+			if err != nil {
+				t.Fatalf("parse credential plan: %v", err)
+			}
+			if plan.Template == "" || plan.Project == "" || plan.Environment != "test" ||
+				plan.Target != "gw-oilan-node" || plan.Cluster != "doops-oilan" ||
+				plan.Instance != "oilan-node" {
+				t.Fatalf("unexpected plan: %#v", plan)
+			}
+			if len(plan.CredentialRefs) != 0 || len(plan.BundleRefs) != 0 {
+				t.Fatalf("expected no managed credentials, got %#v", plan)
+			}
+		})
+	}
+}
+
 func TestParseCredentialPlanRejectsInlineSecretLikeFieldsInConfigurationSource(t *testing.T) {
 	root := t.TempDir()
 	writeCredentialPlanTestFile(t, root, "release.yaml", `

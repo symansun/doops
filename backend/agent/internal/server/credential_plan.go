@@ -70,6 +70,8 @@ type credentialTemplateParameter struct {
 type credentialTemplateRelease struct {
 	Source   credentialTemplateReleaseSource   `yaml:"source,omitempty"`
 	Manifest credentialTemplateReleaseManifest `yaml:"manifest,omitempty"`
+	Version  string                            `yaml:"version,omitempty"`
+	Reason   string                            `yaml:"reason,omitempty"`
 }
 
 type credentialTemplateReleaseSource struct {
@@ -99,6 +101,24 @@ type credentialTemplateWorkload struct {
 
 type credentialTemplateBundleRef struct {
 	Name string `yaml:"name"`
+}
+
+type credentialSemanticRelease struct {
+	APIVersion string `yaml:"apiVersion"`
+	Kind       string `yaml:"kind"`
+	Metadata   struct {
+		Name string `yaml:"name"`
+	} `yaml:"metadata"`
+	Spec struct {
+		Application         string `yaml:"application"`
+		Environment         string `yaml:"environment"`
+		ConfigurationSource string `yaml:"configurationSource"`
+	} `yaml:"spec"`
+}
+
+type credentialWorkflowIdentity struct {
+	APIVersion string `yaml:"apiVersion"`
+	Kind       string `yaml:"kind"`
 }
 
 type credentialConfigurationSource struct {
@@ -190,16 +210,42 @@ func parseCredentialPlan(root, workflowPath string) (CredentialPlan, error) {
 		return CredentialPlan{}, err
 	}
 
-	var template credentialDeploymentTemplate
-	if err := strictCredentialYAMLDecode(workflowData, &template); err != nil {
+	var identity credentialWorkflowIdentity
+	if err := yaml.Unmarshal(workflowData, &identity); err != nil {
 		return CredentialPlan{}, invalidCredentialDeclaration(err)
 	}
-	if template.APIVersion != "doops.sh/v2" || template.Kind != "DeploymentTemplate" ||
-		strings.TrimSpace(template.Metadata.Name) == "" ||
-		strings.TrimSpace(template.Spec.Application) == "" ||
-		strings.TrimSpace(template.Spec.Environment) == "" ||
-		strings.TrimSpace(template.Spec.ConfigurationSource) == "" {
-		return CredentialPlan{}, invalidCredentialDeclaration(errors.New("invalid DeploymentTemplate identity or deployment context"))
+
+	var template credentialDeploymentTemplate
+	var semantic credentialSemanticRelease
+	switch identity.Kind {
+	case "SemanticRelease":
+		if err := yaml.Unmarshal(workflowData, &semantic); err != nil {
+			return CredentialPlan{}, invalidCredentialDeclaration(err)
+		}
+		if semantic.APIVersion != "doops.sh/v2" || semantic.Kind != "SemanticRelease" ||
+			strings.TrimSpace(semantic.Metadata.Name) == "" ||
+			strings.TrimSpace(semantic.Spec.Application) == "" ||
+			strings.TrimSpace(semantic.Spec.Environment) == "" ||
+			strings.TrimSpace(semantic.Spec.ConfigurationSource) == "" {
+			return CredentialPlan{}, invalidCredentialDeclaration(errors.New("invalid SemanticRelease identity or deployment context"))
+		}
+		template.APIVersion = semantic.APIVersion
+		template.Kind = semantic.Kind
+		template.Metadata.Name = semantic.Metadata.Name
+		template.Spec.Application = semantic.Spec.Application
+		template.Spec.Environment = semantic.Spec.Environment
+		template.Spec.ConfigurationSource = semantic.Spec.ConfigurationSource
+	default:
+		if err := strictCredentialYAMLDecode(workflowData, &template); err != nil {
+			return CredentialPlan{}, invalidCredentialDeclaration(err)
+		}
+		if template.APIVersion != "doops.sh/v2" || template.Kind != "DeploymentTemplate" ||
+			strings.TrimSpace(template.Metadata.Name) == "" ||
+			strings.TrimSpace(template.Spec.Application) == "" ||
+			strings.TrimSpace(template.Spec.Environment) == "" ||
+			strings.TrimSpace(template.Spec.ConfigurationSource) == "" {
+			return CredentialPlan{}, invalidCredentialDeclaration(errors.New("invalid DeploymentTemplate identity or deployment context"))
+		}
 	}
 	for name, parameter := range template.Spec.Parameters {
 		if parameter.Default != nil {
