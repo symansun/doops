@@ -104,6 +104,17 @@ func TestDoagentToolTraceCollectorRequiresMatchingTrustedAttestationForCICD(t *t
 	if calls := collector.completed(); len(calls) != 1 {
 		t.Fatalf("matching trusted call was not eligible: %#v", calls)
 	}
+	if err := collector.collect(map[string]interface{}{
+		"sessionUpdate": "tool_call_update",
+		"toolCallId":    "call-source",
+		"toolName":      "mcp_doops_plan_ObserveWorkspaceSource",
+		"status":        "completed",
+	}); err != nil {
+		t.Fatalf("collect duplicate completion update: %v", err)
+	}
+	if calls := collector.completed(); len(calls) != 1 {
+		t.Fatalf("duplicate completion update erased trusted attestation: %#v", calls)
+	}
 
 	nativeResult := make(map[string]interface{}, len(result)+1)
 	for key, value := range result {
