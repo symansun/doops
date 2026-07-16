@@ -41,9 +41,6 @@ func NewUpgradeCoordinator(store *GatewayStore, registry *AgentRegistry) *Upgrad
 }
 
 func (c *UpgradeCoordinator) Begin(cluster, instance, image string, oldGeneration uint64, oldRuntimeID string) (UpgradeOperation, error) {
-	if oldRuntimeID == "" {
-		return UpgradeOperation{}, fmt.Errorf("agent runtime identity is required for verified upgrade")
-	}
 	return c.store.CreateUpgradeOperation(UpgradeOperation{
 		Cluster:       cluster,
 		Instance:      instance,

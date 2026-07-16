@@ -66,6 +66,57 @@ func TestUpgradeCoordinatorCompletesAfterNewGenerationHeartbeat(t *testing.T) {
 	}
 }
 
+func TestUpgradeCoordinatorBootstrapsLegacyAgentWithoutRuntimeIdentity(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	registry, err := NewAgentRegistry(store)
+	if err != nil {
+		t.Fatalf("new registry: %v", err)
+	}
+	old := &GatewayAgent{
+		Cluster:     "dev",
+		Instance:    "local",
+		Key:         "dev/local",
+		ConnectedAt: time.Now().UTC(),
+		LastSeen:    time.Now().UTC(),
+	}
+	if err := registry.Register(old); err != nil {
+		t.Fatalf("register legacy session: %v", err)
+	}
+	coordinator := NewUpgradeCoordinator(store, registry)
+	op, err := coordinator.Begin("dev", "local", "registry.example/doops@sha256:abc", old.Generation, old.RuntimeID)
+	if err != nil {
+		t.Fatalf("begin legacy upgrade: %v", err)
+	}
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		now := time.Now().UTC()
+		_ = registry.Register(&GatewayAgent{
+			Cluster:     "dev",
+			Instance:    "local",
+			Key:         "dev/local",
+			RuntimeID:   "runtime-new",
+			ConnectedAt: now,
+			LastSeen:    now,
+			HeartbeatAt: now,
+		})
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	replacement, err := coordinator.WaitForReplacement(ctx, op)
+	if err != nil {
+		t.Fatalf("wait for legacy replacement: %v", err)
+	}
+	if replacement.RuntimeID != "runtime-new" {
+		t.Fatalf("unexpected legacy replacement: %#v", replacement)
+	}
+}
+
 func TestUpgradeCoordinatorResumeRequiresDifferentRuntimeHeartbeat(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
