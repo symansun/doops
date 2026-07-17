@@ -61,6 +61,10 @@ func TestAgentPromptJSONReturnsFinalMessageInStructuredContent(t *testing.T) {
 			!strings.Contains(prompt, "Do not rename these output fields or put mode under metadata") {
 			t.Errorf("structured prompt must bind required DeploymentRun fields to request values: %s", prompt)
 		}
+		if !strings.Contains(prompt, "status.phase must be exactly one of planned, converged, blocked, failed, or outcome-unknown") ||
+			!strings.Contains(prompt, "do not use Succeeded") {
+			t.Errorf("structured prompt must define the exact DeploymentRun phase enum: %s", prompt)
+		}
 		if !strings.Contains(prompt, "status may contain only phase, mutationCount, capabilities, evidence, and failures") ||
 			!strings.Contains(prompt, "Do not emit plannedMutations") {
 			t.Errorf("structured prompt must define DeploymentRun status fields: %s", prompt)
@@ -315,6 +319,7 @@ func TestBindDeploymentRunEvidenceRejectsModelAuthoredRuntimePayload(t *testing.
 		},
 		{name: "retired status object", mutate: func(status map[string]interface{}) { status["runtimeAttestation"] = map[string]interface{}{} }, want: "is not supported"},
 		{name: "retired status string", mutate: func(status map[string]interface{}) { status["resultDigest"] = "sha256:" + strings.Repeat("a", 64) }, want: "is not supported"},
+		{name: "unsupported phase alias", mutate: func(status map[string]interface{}) { status["phase"] = "Succeeded" }, want: "status.phase is invalid"},
 		{name: "sensitive failure field", mutate: func(status map[string]interface{}) {
 			status["failures"] = []interface{}{map[string]interface{}{"githubToken": "token-canary"}}
 		}, want: "forbidden sensitive field"},
@@ -521,6 +526,7 @@ func deploymentRunWithToolRef(tool string, input interface{}) map[string]interfa
 	return map[string]interface{}{
 		"kind": "DeploymentRun",
 		"status": map[string]interface{}{
+			"phase":         "planned",
 			"mutationCount": 0,
 			"evidence": []interface{}{
 				map[string]interface{}{
