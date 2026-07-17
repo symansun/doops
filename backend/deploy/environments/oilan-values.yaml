@@ -15,9 +15,6 @@ gateway:
   url: https://doops.l8ai.cn
   cluster: doops-edu
   instance: edu-coder
-  agentTokenSecret:
-    name: doops-agent-runtime
-    key: token
 
 nodeSelector:
   kubernetes.io/hostname: 192.168.0.24
