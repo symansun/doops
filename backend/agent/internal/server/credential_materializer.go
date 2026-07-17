@@ -60,6 +60,15 @@ type credentialTargetSnapshot struct {
 	ImagePullNames    []string
 }
 
+type credentialSecretInspection struct {
+	SecretType      string
+	ResourceVersion string
+	CredentialID    string
+	GrantID         string
+	VersionID       string
+	Data            map[string]string
+}
+
 func materializeCredential(ctx context.Context, req CredentialMaterializeRequest) (CredentialMaterialization, error) {
 	if strings.TrimSpace(req.CredentialID) == "" || strings.TrimSpace(req.GrantID) == "" ||
 		strings.TrimSpace(req.VersionID) == "" ||
@@ -194,22 +203,27 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 			return CredentialMaterialization{}, err
 		}
 	}
-	actualType, resourceVersion, keys, err := inspectCredentialSecret(ctx, req.Namespace, name)
+	actual, err := inspectCredentialSecret(ctx, req.Namespace, name)
 	if err != nil {
 		if restoreErr := restoreCredentialTarget(ctx, req.Namespace, name, snapshot); restoreErr != nil {
 			return CredentialMaterialization{}, errors.New("credential_target_outcome_unknown")
 		}
 		return CredentialMaterialization{}, err
 	}
-	expectedKeys := mapKeys(secretData)
-	if actualType != secretType || !sameCredentialKeys(expectedKeys, keys) {
+	defer clear(actual.Data)
+	keys := mapKeys(actual.Data)
+	if actual.SecretType != secretType ||
+		actual.CredentialID != req.CredentialID ||
+		actual.GrantID != req.GrantID ||
+		actual.VersionID != req.VersionID ||
+		!sameCredentialData(secretData, actual.Data) {
 		if restoreErr := restoreCredentialTarget(ctx, req.Namespace, name, snapshot); restoreErr != nil {
 			return CredentialMaterialization{}, errors.New("credential_target_outcome_unknown")
 		}
 		return CredentialMaterialization{}, errors.New("credential_secret_verification_failed")
 	}
-	result.SecretType = actualType
-	result.ResourceVersion = resourceVersion
+	result.SecretType = actual.SecretType
+	result.ResourceVersion = actual.ResourceVersion
 	result.Keys = keys
 	return result, nil
 }
@@ -260,11 +274,17 @@ func snapshotCredentialTarget(ctx context.Context, req CredentialMaterializeRequ
 
 func restoreCredentialTarget(ctx context.Context, namespace, name string, snapshot credentialTargetSnapshot) error {
 	if len(snapshot.Secret) == 0 {
-		if err := exec.CommandContext(ctx, "kubectl", "delete", "secret", name, "-n", namespace, "--ignore-not-found", "--wait=true").Run(); err != nil {
+		_ = exec.CommandContext(ctx, "kubectl", "delete", "secret", name, "-n", namespace, "--ignore-not-found", "--wait=true").Run()
+		remaining, err := getCredentialSecret(ctx, namespace, name)
+		if err != nil || len(bytes.TrimSpace(remaining)) != 0 {
 			return errors.New("credential_secret_restore_failed")
 		}
-	} else if err := runCredentialCommand(ctx, snapshot.Secret, "kubectl", "replace", "-f", "-"); err != nil {
-		return errors.New("credential_secret_restore_failed")
+	} else {
+		_ = runCredentialCommand(ctx, snapshot.Secret, "kubectl", "replace", "-f", "-")
+		restored, err := getCredentialSecret(ctx, namespace, name)
+		if err != nil || !sameCredentialSecretSnapshot(snapshot.Secret, restored) {
+			return errors.New("credential_secret_restore_failed")
+		}
 	}
 	if snapshot.WorkloadName == "" {
 		return nil
@@ -278,8 +298,10 @@ func restoreCredentialTarget(ctx context.Context, namespace, name string, snapsh
 			"imagePullSecrets": imagePullSecrets,
 		}}},
 	})
-	if err := runCredentialCommand(ctx, nil, "kubectl", "patch", snapshot.WorkloadKind, snapshot.WorkloadName,
-		"-n", namespace, "--type=merge", "--patch", string(patch)); err != nil {
+	_ = runCredentialCommand(ctx, nil, "kubectl", "patch", snapshot.WorkloadKind, snapshot.WorkloadName,
+		"-n", namespace, "--type=merge", "--patch", string(patch))
+	observed, err := inspectImagePullSecrets(ctx, namespace, snapshot.WorkloadKind, snapshot.WorkloadName)
+	if err != nil || !sameCredentialKeys(observed, snapshot.ImagePullNames) {
 		return errors.New("credential_workload_restore_failed")
 	}
 	return nil
@@ -375,65 +397,143 @@ func cleanupCredential(ctx context.Context, req CredentialCleanupRequest) error 
 		return errors.New("credential_cleanup_invalid")
 	}
 	name := credentialSecretName(req.CredentialID, req.GrantID)
-	cmd := exec.CommandContext(ctx, "kubectl", "get", "secret", name, "-n", req.Namespace, "--ignore-not-found", "-o", "json")
-	output, err := cmd.Output()
-	if err != nil {
-		return errors.New("credential_secret_get_failed")
-	}
-	if len(bytes.TrimSpace(output)) == 0 {
-		if strings.TrimSpace(req.Workload.Name) != "" {
-			return removeImagePullSecret(ctx, req.Namespace, req.Workload, name)
-		}
-		return nil
-	}
-	var secret struct {
-		Metadata struct {
-			Labels      map[string]string `json:"labels"`
-			Annotations map[string]string `json:"annotations"`
-		} `json:"metadata"`
-	}
-	if err := json.Unmarshal(output, &secret); err != nil {
-		return errors.New("credential_secret_verification_failed")
-	}
-	if secret.Metadata.Labels["app.kubernetes.io/managed-by"] != "doops" ||
-		secret.Metadata.Labels["doops.sh/credential-id"] != req.CredentialID ||
-		secret.Metadata.Labels["doops.sh/credential-grant-id"] != req.GrantID ||
-		(!req.AnyVersion && secret.Metadata.Annotations["doops.sh/credential-version"] != req.VersionID) {
-		return errors.New("credential_secret_ownership_mismatch")
-	}
-	if strings.TrimSpace(req.Workload.Name) != "" {
-		if err := removeImagePullSecret(ctx, req.Namespace, req.Workload, name); err != nil {
-			return err
-		}
-	}
-	if err := exec.CommandContext(ctx, "kubectl", "delete", "secret", name, "-n", req.Namespace, "--wait=true").Run(); err != nil {
-		return errors.New("credential_secret_delete_failed")
-	}
-	return nil
-}
-
-func removeImagePullSecret(ctx context.Context, namespace string, workload CredentialPlanWorkload, secretName string) error {
-	kind := strings.ToLower(strings.TrimSpace(workload.Kind))
-	if (kind != "deployment" && kind != "statefulset" && kind != "daemonset") ||
-		!validKubernetesCredentialName(workload.Name) {
-		return errors.New("credential_workload_invalid")
-	}
-	names, err := inspectImagePullSecrets(ctx, namespace, kind, workload.Name)
+	output, err := getCredentialSecret(ctx, req.Namespace, name)
 	if err != nil {
 		return err
 	}
-	filtered := make([]map[string]string, 0, len(names))
-	for _, name := range names {
-		if name != secretName {
-			filtered = append(filtered, map[string]string{"name": name})
+	secretExists := len(bytes.TrimSpace(output)) != 0
+	var secretUID string
+	var secretResourceVersion string
+	if secretExists {
+		var secret struct {
+			Metadata struct {
+				UID             string            `json:"uid"`
+				ResourceVersion string            `json:"resourceVersion"`
+				Labels          map[string]string `json:"labels"`
+				Annotations     map[string]string `json:"annotations"`
+			} `json:"metadata"`
 		}
+		if err := json.Unmarshal(output, &secret); err != nil {
+			return errors.New("credential_secret_verification_failed")
+		}
+		secretUID = strings.TrimSpace(secret.Metadata.UID)
+		secretResourceVersion = strings.TrimSpace(secret.Metadata.ResourceVersion)
+		if secret.Metadata.Labels["app.kubernetes.io/managed-by"] != "doops" ||
+			secret.Metadata.Labels["doops.sh/credential-id"] != req.CredentialID ||
+			secret.Metadata.Labels["doops.sh/credential-grant-id"] != req.GrantID ||
+			secretUID == "" || secretResourceVersion == "" ||
+			(!req.AnyVersion && secret.Metadata.Annotations["doops.sh/credential-version"] != req.VersionID) {
+			return errors.New("credential_secret_ownership_mismatch")
+		}
+	}
+
+	var workloadKind string
+	var originalNames []string
+	workloadChanged := false
+	if strings.TrimSpace(req.Workload.Name) != "" {
+		workloadKind, err = credentialWorkloadKind(req.Workload)
+		if err != nil {
+			return err
+		}
+		originalNames, err = inspectImagePullSecrets(ctx, req.Namespace, workloadKind, req.Workload.Name)
+		if err != nil {
+			return err
+		}
+		filtered := withoutString(originalNames, name)
+		if !sameCredentialKeys(originalNames, filtered) {
+			mutationErr := patchImagePullSecrets(ctx, req.Namespace, workloadKind, req.Workload.Name, filtered)
+			observed, inspectErr := inspectImagePullSecrets(ctx, req.Namespace, workloadKind, req.Workload.Name)
+			if inspectErr != nil {
+				return errors.New("credential_target_outcome_unknown")
+			}
+			switch {
+			case sameCredentialKeys(observed, filtered):
+				workloadChanged = true
+			case mutationErr != nil && sameCredentialKeys(observed, originalNames):
+				return mutationErr
+			default:
+				return errors.New("credential_target_outcome_unknown")
+			}
+		}
+	}
+
+	if !secretExists {
+		return nil
+	}
+	deleteOptions, _ := json.Marshal(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "DeleteOptions",
+		"preconditions": map[string]string{
+			"uid":             secretUID,
+			"resourceVersion": secretResourceVersion,
+		},
+	})
+	_ = runCredentialCommand(ctx, deleteOptions, "kubectl", "delete",
+		"--raw", "/api/v1/namespaces/"+req.Namespace+"/secrets/"+name, "-f", "-")
+	remaining, inspectErr := getCredentialSecret(ctx, req.Namespace, name)
+	if inspectErr != nil {
+		return errors.New("credential_target_outcome_unknown")
+	}
+	if len(bytes.TrimSpace(remaining)) == 0 {
+		return nil
+	}
+	var remainingSecret struct {
+		Metadata struct {
+			UID string `json:"uid"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(remaining, &remainingSecret); err != nil ||
+		strings.TrimSpace(remainingSecret.Metadata.UID) != secretUID {
+		return errors.New("credential_target_outcome_unknown")
+	}
+	if workloadChanged {
+		_ = patchImagePullSecrets(ctx, req.Namespace, workloadKind, req.Workload.Name, originalNames)
+		observed, verifyErr := inspectImagePullSecrets(ctx, req.Namespace, workloadKind, req.Workload.Name)
+		if verifyErr != nil || !sameCredentialKeys(observed, originalNames) {
+			return errors.New("credential_target_outcome_unknown")
+		}
+	}
+	return errors.New("credential_secret_delete_failed")
+}
+
+func patchImagePullSecrets(ctx context.Context, namespace, kind, name string, names []string) error {
+	imagePullSecrets := make([]map[string]string, 0, len(names))
+	for _, item := range names {
+		imagePullSecrets = append(imagePullSecrets, map[string]string{"name": item})
 	}
 	patch, _ := json.Marshal(map[string]any{
 		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{
-			"imagePullSecrets": filtered,
+			"imagePullSecrets": imagePullSecrets,
 		}}},
 	})
-	return runCredentialCommand(ctx, nil, "kubectl", "patch", kind, workload.Name, "-n", namespace, "--type=merge", "--patch", string(patch))
+	return runCredentialCommand(ctx, nil, "kubectl", "patch", kind, name, "-n", namespace, "--type=merge", "--patch", string(patch))
+}
+
+func credentialWorkloadKind(workload CredentialPlanWorkload) (string, error) {
+	kind := strings.ToLower(strings.TrimSpace(workload.Kind))
+	if (kind != "deployment" && kind != "statefulset" && kind != "daemonset") ||
+		!validKubernetesCredentialName(workload.Name) {
+		return "", errors.New("credential_workload_invalid")
+	}
+	return kind, nil
+}
+
+func withoutString(values []string, excluded string) []string {
+	filtered := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != excluded {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered
+}
+
+func getCredentialSecret(ctx context.Context, namespace, name string) ([]byte, error) {
+	output, err := exec.CommandContext(ctx, "kubectl", "get", "secret", name, "-n", namespace, "--ignore-not-found", "-o", "json").Output()
+	if err != nil {
+		return nil, errors.New("credential_secret_get_failed")
+	}
+	return output, nil
 }
 
 func containsString(values []string, want string) bool {
@@ -445,15 +545,17 @@ func containsString(values []string, want string) bool {
 	return false
 }
 
-func inspectCredentialSecret(ctx context.Context, namespace, name string) (string, string, []string, error) {
+func inspectCredentialSecret(ctx context.Context, namespace, name string) (credentialSecretInspection, error) {
 	cmd := exec.CommandContext(ctx, "kubectl", "get", "secret", name, "-n", namespace, "-o", "json")
 	output, err := cmd.Output()
 	if err != nil {
-		return "", "", nil, errors.New("credential_secret_get_failed")
+		return credentialSecretInspection{}, errors.New("credential_secret_get_failed")
 	}
 	var secret struct {
 		Metadata struct {
-			ResourceVersion string `json:"resourceVersion"`
+			ResourceVersion string            `json:"resourceVersion"`
+			Labels          map[string]string `json:"labels"`
+			Annotations     map[string]string `json:"annotations"`
 		} `json:"metadata"`
 		Type string            `json:"type"`
 		Data map[string]string `json:"data"`
@@ -461,14 +563,26 @@ func inspectCredentialSecret(ctx context.Context, namespace, name string) (strin
 	if err := json.Unmarshal(output, &secret); err != nil ||
 		strings.TrimSpace(secret.Type) == "" ||
 		strings.TrimSpace(secret.Metadata.ResourceVersion) == "" {
-		return "", "", nil, errors.New("credential_secret_verification_failed")
+		return credentialSecretInspection{}, errors.New("credential_secret_verification_failed")
 	}
-	keys := make([]string, 0, len(secret.Data))
-	for key := range secret.Data {
-		keys = append(keys, key)
+	data := make(map[string]string, len(secret.Data))
+	for key, encoded := range secret.Data {
+		decoded, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			clear(data)
+			return credentialSecretInspection{}, errors.New("credential_secret_verification_failed")
+		}
+		data[key] = string(decoded)
+		clear(decoded)
 	}
-	sort.Strings(keys)
-	return strings.TrimSpace(secret.Type), strings.TrimSpace(secret.Metadata.ResourceVersion), keys, nil
+	return credentialSecretInspection{
+		SecretType:      strings.TrimSpace(secret.Type),
+		ResourceVersion: strings.TrimSpace(secret.Metadata.ResourceVersion),
+		CredentialID:    strings.TrimSpace(secret.Metadata.Labels["doops.sh/credential-id"]),
+		GrantID:         strings.TrimSpace(secret.Metadata.Labels["doops.sh/credential-grant-id"]),
+		VersionID:       strings.TrimSpace(secret.Metadata.Annotations["doops.sh/credential-version"]),
+		Data:            data,
+	}, nil
 }
 
 func verifyRegistryManifest(ctx context.Context, server, username, password, repository, reference string) (string, error) {
@@ -870,6 +984,54 @@ func sameCredentialKeys(left, right []string) bool {
 	sort.Strings(a)
 	sort.Strings(b)
 	return strings.Join(a, "\x00") == strings.Join(b, "\x00")
+}
+
+func sameCredentialData(left, right map[string]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, value := range left {
+		if right[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func sameCredentialSecretSnapshot(left, right []byte) bool {
+	var decode = func(raw []byte) (struct {
+		Metadata struct {
+			Labels      map[string]string `json:"labels"`
+			Annotations map[string]string `json:"annotations"`
+		} `json:"metadata"`
+		Type string            `json:"type"`
+		Data map[string]string `json:"data"`
+	}, error) {
+		var secret struct {
+			Metadata struct {
+				Labels      map[string]string `json:"labels"`
+				Annotations map[string]string `json:"annotations"`
+			} `json:"metadata"`
+			Type string            `json:"type"`
+			Data map[string]string `json:"data"`
+		}
+		err := json.Unmarshal(raw, &secret)
+		return secret, err
+	}
+	expected, err := decode(left)
+	if err != nil {
+		return false
+	}
+	actual, err := decode(right)
+	if err != nil {
+		return false
+	}
+	return expected.Type == actual.Type &&
+		sameCredentialData(expected.Data, actual.Data) &&
+		expected.Metadata.Labels["app.kubernetes.io/managed-by"] == actual.Metadata.Labels["app.kubernetes.io/managed-by"] &&
+		expected.Metadata.Labels["doops.sh/credential-id"] == actual.Metadata.Labels["doops.sh/credential-id"] &&
+		expected.Metadata.Labels["doops.sh/credential-grant-id"] == actual.Metadata.Labels["doops.sh/credential-grant-id"] &&
+		expected.Metadata.Annotations["doops.sh/credential-version"] == actual.Metadata.Annotations["doops.sh/credential-version"]
 }
 
 func validKubernetesCredentialName(value string) bool {
