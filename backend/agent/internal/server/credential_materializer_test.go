@@ -35,7 +35,7 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 	manifest := `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json"}`
 	registryDigest := credentialTestManifestDigest(manifest)
 	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v2/team/app/manifests/latest" {
+		if r.URL.Path != "/v2/team/app/manifests/"+registryDigest {
 			http.NotFound(w, r)
 			return
 		}
@@ -52,15 +52,19 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 	defer registry.Close()
 
 	result, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
-		CredentialID:       "cred_registry",
-		GrantID:            "grant_registry",
-		VersionID:          "ver_registry",
-		CredentialType:     CredentialTypeRegistry,
-		Use:                CredentialUseImagePull,
-		Namespace:          "kz-ops",
-		Workload:           CredentialPlanWorkload{Kind: "Deployment", Name: "doops-agent-live"},
-		RegistryRepository: "team/app",
-		RegistryReference:  "latest",
+		CredentialID:   "cred_registry",
+		GrantID:        "grant_registry",
+		VersionID:      "ver_registry",
+		CredentialType: CredentialTypeRegistry,
+		Scope: CredentialGrantScope{
+			Cluster: "doops", Instance: "runner", Namespace: "kz-ops",
+			Use: CredentialUseImagePull,
+			Workload: CredentialPlanWorkload{
+				Kind: "deployment", Name: "doops-agent-live",
+			},
+			ImageRepository: "team/app",
+			ImageDigest:     registryDigest,
+		},
 		Payload: json.RawMessage(fmt.Sprintf(
 			`{"server":%q,"username":"deploy","password":"materializer-canary-secret"}`,
 			registry.URL,
@@ -254,8 +258,7 @@ func TestMaterializeTLSCredentialValidatesKeyPair(t *testing.T) {
 		GrantID:        "grant_tls",
 		VersionID:      "ver_tls",
 		CredentialType: CredentialTypeTLS,
-		Use:            CredentialUseTLS,
-		Namespace:      "kz-ops",
+		Scope:          credentialMaterializerTestScope(CredentialUseTLS, "kz-ops"),
 		Payload: mustJSON(t, map[string]string{
 			"certificate": certificate,
 			"privateKey":  privateKey,
@@ -288,8 +291,7 @@ func TestMaterializeTLSCredentialValidatesKeyPair(t *testing.T) {
 		GrantID:        "grant_tls_bad",
 		VersionID:      "ver_tls_bad",
 		CredentialType: CredentialTypeTLS,
-		Use:            CredentialUseTLS,
-		Namespace:      "kz-ops",
+		Scope:          credentialMaterializerTestScope(CredentialUseTLS, "kz-ops"),
 		Payload: mustJSON(t, map[string]string{
 			"certificate": certificate,
 			"privateKey":  wrongKey,
@@ -312,10 +314,12 @@ func TestMaterializeOpaqueCredentialRequiresExactKeySet(t *testing.T) {
 		GrantID:        "grant_opaque",
 		VersionID:      "ver_opaque",
 		CredentialType: CredentialTypeOpaque,
-		Use:            CredentialUseOpaqueSecret,
-		Namespace:      "app",
-		RequiredKeys:   []string{"API_KEY", "ENDPOINT"},
-		Payload:        json.RawMessage(`{"data":{"API_KEY":"opaque-canary-secret","ENDPOINT":"https://service.example.com"}}`),
+		Scope: credentialGrantScopeWithKeys(
+			credentialMaterializerTestScope(CredentialUseOpaqueSecret, "app"),
+			[]string{"API_KEY", "ENDPOINT"},
+		),
+		RequiredKeys: []string{"API_KEY", "ENDPOINT"},
+		Payload:      json.RawMessage(`{"data":{"API_KEY":"opaque-canary-secret","ENDPOINT":"https://service.example.com"}}`),
 	})
 	if err != nil {
 		t.Fatalf("materialize opaque credential: %v", err)
@@ -329,10 +333,12 @@ func TestMaterializeOpaqueCredentialRequiresExactKeySet(t *testing.T) {
 		GrantID:        "grant_opaque_bad",
 		VersionID:      "ver_opaque_bad",
 		CredentialType: CredentialTypeOpaque,
-		Use:            CredentialUseOpaqueSecret,
-		Namespace:      "app",
-		RequiredKeys:   []string{"API_KEY", "ENDPOINT"},
-		Payload:        json.RawMessage(`{"data":{"API_KEY":"opaque-canary-secret","EXTRA":"not-allowed"}}`),
+		Scope: credentialGrantScopeWithKeys(
+			credentialMaterializerTestScope(CredentialUseOpaqueSecret, "app"),
+			[]string{"API_KEY", "ENDPOINT"},
+		),
+		RequiredKeys: []string{"API_KEY", "ENDPOINT"},
+		Payload:      json.RawMessage(`{"data":{"API_KEY":"opaque-canary-secret","EXTRA":"not-allowed"}}`),
 	})
 	if err == nil || !strings.Contains(err.Error(), "credential_key_mismatch") {
 		t.Fatalf("opaque key mismatch error = %v", err)
@@ -368,8 +374,15 @@ func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T
 		GrantID:        "grant_helm",
 		VersionID:      "ver_helm",
 		CredentialType: CredentialTypeHelmRepository,
-		Use:            CredentialUseHelmPull,
-		Namespace:      "kz-ops",
+		Scope: CredentialGrantScope{
+			Cluster: "doops", Instance: "runner", Namespace: "kz-ops",
+			Use: CredentialUseHelmPull,
+			Workload: CredentialPlanWorkload{
+				Kind: "deployment", Name: "doops-agent-live",
+			},
+			HelmRelease: "doops-agent",
+			HelmChart:   "doops/agent",
+		},
 		Payload: mustJSON(t, map[string]string{
 			"url":      helmRepo.URL,
 			"username": "helm",
@@ -388,8 +401,7 @@ func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T
 		GrantID:        "grant_git",
 		VersionID:      "ver_git",
 		CredentialType: CredentialTypeGitToken,
-		Use:            CredentialUseGitCheckout,
-		Namespace:      "kz-ops",
+		Scope:          credentialMaterializerTestScope(CredentialUseGitCheckout, "kz-ops"),
 		Payload:        json.RawMessage(`{"url":"https://127.0.0.1/repo.git","username":"git","token":"git-canary-secret"}`),
 	})
 	if err != nil {
@@ -612,6 +624,18 @@ func assertCredentialCanaryNotInText(t *testing.T, subject, text, canary string)
 	if canary != "" && strings.Contains(text, canary) {
 		t.Fatalf("%s exposed credential canary", subject)
 	}
+}
+
+func credentialMaterializerTestScope(use CredentialUse, namespace string) CredentialGrantScope {
+	return CredentialGrantScope{
+		Cluster: "doops", Instance: "runner", Namespace: namespace, Use: use,
+		Workload: CredentialPlanWorkload{Kind: "deployment", Name: "doops-agent-live"},
+	}
+}
+
+func credentialGrantScopeWithKeys(scope CredentialGrantScope, keys []string) CredentialGrantScope {
+	scope.RequiredKeys = keys
+	return scope
 }
 
 func allowCredentialPrivateEndpointsForTest(t *testing.T) {

@@ -1214,8 +1214,7 @@ func sanitizeAgentPromptAudit(toolName, errMsg, tail string) (string, string) {
 }
 
 func internalCredentialTool(tool string) bool {
-	return tool == "doops_credential_plan" ||
-		tool == "doops_credential_materialize" ||
+	return tool == "doops_credential_materialize" ||
 		tool == "doops_credential_cleanup"
 }
 
@@ -1954,8 +1953,6 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 		return ActionClean
 	case "doops_agent_upgrade":
 		return ActionAgentUpgrade
-	case "doops_credential_plan":
-		return ActionCredentialMetadata
 	case "doops_credential_materialize":
 		return ActionCredentialUse
 	case "doops_credential_cleanup":

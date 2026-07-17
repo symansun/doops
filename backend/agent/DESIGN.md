@@ -83,16 +83,17 @@ doagent 可以根据任务创建多 Agent、组合 Skill 并选择工具；DoOps
 
 ## CI/CD
 
-CI/CD 只走 Gateway 绑定的结构化 Agent-native Ask：
+部署只走 Gateway 绑定的显式 Agent-native Ask：
 
 ```text
-EnvironmentRegistry -> Gateway credential prepare -> CredentialRun-bound Ask
-  -> doagent -> $doops-cicd
+doops ask --apply --credential <resource-name>
+  -> Gateway exact-scope authorization and materialization
+  -> metadata-only doagent task -> apply -> verification and audit
 ```
 
-CLI 负责显式 registry/target/session、不可变 source commit 和任务信封。Gateway
-与 Agent 强制 credential authorization、严格 admission、workspace commit 绑定和
-trusted reconciliation；Skill 通过现有 DoOps 模块执行并返回单一 JSON 结构化结果。
+CLI 只传递显式 credential resource name、target、session 和自然语言任务。Gateway
+绑定用户与目标，按 cluster/instance、namespace、use、workload、image 或 Helm
+精确授权和物化；doagent 只接收元数据，不接收 credential payload。
 
 ## 安全原则
 
