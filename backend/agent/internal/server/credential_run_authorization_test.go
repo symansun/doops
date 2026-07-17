@@ -228,6 +228,96 @@ func TestCredentialPromptBindingRejectsSecretBearingInput(t *testing.T) {
 	}
 }
 
+func TestCredentialMaterializationMetadataRejectsUntrustedDigest(t *testing.T) {
+	materialization := CredentialMaterialization{
+		CredentialID: "cred_test", GrantID: "grant_test", VersionID: "version_test",
+		ResourceName: "managed-secret", Namespace: "apps", SecretType: "Opaque",
+		Keys: []string{"canary"}, ResourceVersion: "42", Status: "verified",
+		Digest: "Bearer synthetic-secret",
+	}
+	if err := validateCredentialMaterializationMetadata(materialization); err == nil {
+		t.Fatal("secret-bearing digest was accepted as credential metadata")
+	}
+	materialization.Digest = "sha256:" + strings.Repeat("a", 64)
+	if err := validateCredentialMaterializationMetadata(materialization); err != nil {
+		t.Fatalf("valid credential metadata rejected: %v", err)
+	}
+	materialization.Digest += " "
+	if err := validateCredentialMaterializationMetadata(materialization); err == nil {
+		t.Fatal("non-canonical digest was accepted as credential metadata")
+	}
+	materialization.Digest = "sha256:" + strings.Repeat("a", 64)
+	materialization.ResourceVersion = "ghp_" + strings.Repeat("a", 32)
+	if err := validateCredentialMaterializationMetadata(materialization); err == nil {
+		t.Fatal("PAT-bearing resourceVersion was accepted as credential metadata")
+	}
+	materialization.ResourceVersion = "42"
+	materialization.Keys = []string{"github_pat_" + strings.Repeat("a", 32)}
+	if err := validateCredentialMaterializationMetadata(materialization); err == nil {
+		t.Fatal("PAT-bearing key was accepted as credential metadata")
+	}
+}
+
+func TestCredentialPromptMaterializationDropsTargetEvidence(t *testing.T) {
+	materialization := CredentialMaterialization{
+		CredentialID: "cred_test", GrantID: "grant_test", VersionID: "credver_" + strings.Repeat("a", 24),
+		ResourceName: "managed-secret", Namespace: "apps", SecretType: "Opaque",
+		Keys: []string{"canary"}, ResourceVersion: "42", Status: "verified",
+		Digest: "sha256:" + strings.Repeat("b", 64),
+	}
+	prompt := credentialPromptMaterialization(materialization)
+	if prompt.CredentialID != materialization.CredentialID ||
+		prompt.GrantID != materialization.GrantID ||
+		prompt.VersionID != materialization.VersionID ||
+		prompt.Namespace != materialization.Namespace ||
+		prompt.Status != materialization.Status ||
+		prompt.ResourceName != "" ||
+		prompt.ResourceVersion != "" ||
+		prompt.Digest != "" ||
+		len(prompt.Keys) != 0 {
+		t.Fatalf("unsafe prompt materialization: %#v", prompt)
+	}
+}
+
+func TestCredentialPromptBindingLeavesOrdinaryAskUnchanged(t *testing.T) {
+	arguments := mustJSON(t, map[string]any{
+		"operation": "ask", "session_id": "ordinary-session",
+		"instruction": "inspect runtime health", "response_format": "json",
+	})
+	binding, err := parseCredentialPromptBinding(arguments, "doops", "runner")
+	if err != nil || binding != nil {
+		t.Fatalf("ordinary Ask binding=%#v err=%v", binding, err)
+	}
+}
+
+func TestCredentialPromptBindingAcceptsApplyMode(t *testing.T) {
+	request, run := credentialRunAuthorizationFixture("runner", "credrun_apply")
+	request.Mode = "apply"
+	run.Mode = "apply"
+	instruction, err := json.Marshal(map[string]any{
+		"task": "execute-doops-cicd", "skill": "$doops-cicd",
+		"executionMode": request.Mode, "manifestPath": request.WorkflowPath,
+		"workspaceCommit": credentialRunFixtureCommit,
+		"source": map[string]string{
+			"repository": request.SourceRepository,
+			"branch":     request.SourceBranch,
+		},
+		"inputs": map[string]string{}, "credentialRun": run,
+	})
+	if err != nil {
+		t.Fatalf("encode apply instruction: %v", err)
+	}
+	arguments := mustJSON(t, map[string]any{
+		"operation": "apply", "session_id": request.SessionID,
+		"workspace_commit": credentialRunFixtureCommit, "response_format": "json",
+		"instruction": string(instruction),
+	})
+	binding, err := parseCredentialPromptBinding(arguments, request.Cluster, request.Instance)
+	if err != nil || binding == nil || binding.Mode != "apply" {
+		t.Fatalf("apply binding=%#v err=%v", binding, err)
+	}
+}
+
 func credentialRunAuthorizationFixture(instance, runID string) (credentialPrepareHTTPBody, CredentialRun) {
 	request := credentialPrepareHTTPBody{
 		Cluster: "doops", Instance: instance, SessionID: "release-session",

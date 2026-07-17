@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 )
@@ -57,6 +56,103 @@ type CredentialRunAuthorization struct {
 	CreatedAt     time.Time
 	ExpiresAt     time.Time
 	ConsumedAt    *time.Time
+}
+
+func validateCredentialMaterializationMetadata(materialization CredentialMaterialization) error {
+	if !validCredentialMetadataToken(materialization.CredentialID, 128) ||
+		!validCredentialMetadataToken(materialization.GrantID, 128) ||
+		!validCredentialMetadataToken(materialization.VersionID, 128) ||
+		strings.TrimSpace(materialization.Namespace) != materialization.Namespace ||
+		!validKubernetesCredentialName(materialization.Namespace) {
+		return errors.New("credential_materialization_metadata_invalid")
+	}
+	if materialization.ResourceName != "" &&
+		(strings.TrimSpace(materialization.ResourceName) != materialization.ResourceName ||
+			!validKubernetesCredentialName(materialization.ResourceName)) {
+		return errors.New("credential_materialization_metadata_invalid")
+	}
+	switch materialization.SecretType {
+	case "", "Opaque", "kubernetes.io/dockerconfigjson", "kubernetes.io/tls":
+	default:
+		return errors.New("credential_materialization_metadata_invalid")
+	}
+	switch materialization.Status {
+	case "planned", "verified", "outcome_unknown":
+	default:
+		return errors.New("credential_materialization_metadata_invalid")
+	}
+	if materialization.ResourceVersion != "" &&
+		(!validCredentialMetadataToken(materialization.ResourceVersion, 256) ||
+			credentialScalarContainsInlineMaterial(materialization.ResourceVersion)) {
+		return errors.New("credential_materialization_metadata_invalid")
+	}
+	if materialization.Digest != "" &&
+		(strings.TrimSpace(materialization.Digest) != materialization.Digest ||
+			!validCredentialSHA256Digest(materialization.Digest)) {
+		return errors.New("credential_materialization_metadata_invalid")
+	}
+	if materialization.Fingerprint != "" &&
+		(strings.TrimSpace(materialization.Fingerprint) != materialization.Fingerprint ||
+			!validCredentialSHA256Digest(materialization.Fingerprint)) {
+		return errors.New("credential_materialization_metadata_invalid")
+	}
+	if materialization.ExpiresAt != "" {
+		if _, err := time.Parse(time.RFC3339, materialization.ExpiresAt); err != nil {
+			return errors.New("credential_materialization_metadata_invalid")
+		}
+	}
+	if materialization.ErrorCategory != "" && !validCredentialErrorCategory(materialization.ErrorCategory) {
+		return errors.New("credential_materialization_metadata_invalid")
+	}
+	for _, key := range materialization.Keys {
+		if !validCredentialMetadataToken(key, 253) ||
+			credentialScalarContainsInlineMaterial(key) {
+			return errors.New("credential_materialization_metadata_invalid")
+		}
+	}
+	if materialization.PreviousVersionID != "" &&
+		(!strings.HasPrefix(materialization.PreviousVersionID, "credver_") ||
+			!validLowerHex(strings.TrimPrefix(materialization.PreviousVersionID, "credver_"), 24)) {
+		return errors.New("credential_materialization_metadata_invalid")
+	}
+	return nil
+}
+
+func credentialPromptMaterialization(materialization CredentialMaterialization) CredentialMaterialization {
+	return CredentialMaterialization{
+		CredentialID: materialization.CredentialID,
+		GrantID:      materialization.GrantID,
+		VersionID:    materialization.VersionID,
+		Namespace:    materialization.Namespace,
+		Status:       materialization.Status,
+	}
+}
+
+func validCredentialMetadataToken(value string, maxLength int) bool {
+	if value == "" || len(value) > maxLength || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '_' || char == '-' ||
+			char == '.' || char == ':' || char == '/' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validCredentialErrorCategory(category string) bool {
+	if category == "" || len(category) > 128 {
+		return false
+	}
+	for _, char := range category {
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 type credentialPrepareHTTPBody struct {
@@ -335,9 +431,7 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 			writeCredentialPrepareError(w, http.StatusInternalServerError, category)
 			return
 		}
-		sort.Strings(materialization.Keys)
-		materialization.PreviousVersionID = ""
-		run.Materializations = append(run.Materializations, materialization)
+		run.Materializations = append(run.Materializations, credentialPromptMaterialization(materialization))
 	}
 	if err := h.store.IssueCredentialRunAuthorization(auth, body, run); err != nil {
 		if rollbackErr := h.rollbackCredentialPrepare(r.Context(), completed); rollbackErr != nil {
@@ -483,11 +577,83 @@ func (h *GatewayHub) materializeCredentialVersion(
 		return CredentialMaterialization{}, intentRequest, ErrCredentialPayloadInvalid
 	}
 	materialization.GrantID = grantID
+	if err := h.validateCredentialMaterializationResult(
+		materialization,
+		resource,
+		grantID,
+		ref,
+		requiredKeys,
+	); err != nil {
+		_ = h.store.MarkCredentialMaterializationUnknown(intent.ID, err.Error())
+		return CredentialMaterialization{}, intentRequest, err
+	}
 	if err := h.store.CompleteCredentialMaterialization(intent.ID, materialization); err != nil {
 		_ = h.store.MarkCredentialMaterializationUnknown(intent.ID, "credential_materialization_inventory_failed")
 		return CredentialMaterialization{}, intentRequest, err
 	}
 	return materialization, intentRequest, nil
+}
+
+func (h *GatewayHub) validateCredentialMaterializationResult(
+	materialization CredentialMaterialization,
+	resource CredentialResource,
+	grantID string,
+	ref CredentialPlanReference,
+	requiredKeys []string,
+) error {
+	if err := validateCredentialMaterializationMetadata(materialization); err != nil {
+		return err
+	}
+	if materialization.ResourceName != credentialSecretName(resource.ID, grantID) ||
+		materialization.ResourceVersion == "" ||
+		materialization.ErrorCategory != "" ||
+		!sameCredentialKeys(materialization.Keys, requiredKeys) {
+		return errors.New("credential_materialization_metadata_invalid")
+	}
+
+	var expectedSecretType string
+	switch resource.Type {
+	case CredentialTypeRegistry:
+		expectedSecretType = "kubernetes.io/dockerconfigjson"
+	case CredentialTypeTLS:
+		expectedSecretType = "kubernetes.io/tls"
+	case CredentialTypeOpaque, CredentialTypeHelmRepository, CredentialTypeGitToken:
+		expectedSecretType = "Opaque"
+	default:
+		return errors.New("credential_materialization_metadata_invalid")
+	}
+	if materialization.SecretType != expectedSecretType {
+		return errors.New("credential_materialization_metadata_invalid")
+	}
+
+	switch resource.Type {
+	case CredentialTypeRegistry, CredentialTypeHelmRepository, CredentialTypeGitToken:
+		if materialization.Digest == "" ||
+			materialization.Fingerprint != "" ||
+			materialization.ExpiresAt != "" {
+			return errors.New("credential_materialization_metadata_invalid")
+		}
+	case CredentialTypeTLS:
+		if materialization.Digest != "" ||
+			materialization.Fingerprint == "" ||
+			materialization.ExpiresAt == "" {
+			return errors.New("credential_materialization_metadata_invalid")
+		}
+	case CredentialTypeOpaque:
+		if materialization.Digest != "" ||
+			materialization.Fingerprint != "" ||
+			materialization.ExpiresAt != "" {
+			return errors.New("credential_materialization_metadata_invalid")
+		}
+	}
+
+	if materialization.PreviousVersionID != "" {
+		previous, err := h.store.CredentialVersionByID(resource.ID, materialization.PreviousVersionID)
+		if err != nil || previous.State != CredentialVersionActive {
+			return errors.New("credential_materialization_metadata_invalid")
+		}
+	}
+	return nil
 }
 
 func credentialToolArguments(request CredentialMaterializeRequest) (map[string]any, error) {
@@ -885,16 +1051,24 @@ func (h *GatewayHub) rollbackCredentialPromotion(
 }
 
 func credentialRequiredKeys(credentialType CredentialType, payload json.RawMessage) ([]string, error) {
-	if credentialType != CredentialTypeOpaque {
-		return nil, nil
-	}
-	var value struct {
-		Data map[string]string `json:"data"`
-	}
-	if err := decodeStrictCredentialPayload(payload, &value); err != nil || len(value.Data) == 0 {
+	switch credentialType {
+	case CredentialTypeRegistry:
+		return []string{".dockerconfigjson"}, nil
+	case CredentialTypeTLS:
+		return []string{"tls.crt", "tls.key"}, nil
+	case CredentialTypeHelmRepository, CredentialTypeGitToken:
+		return []string{"password", "url", "username"}, nil
+	case CredentialTypeOpaque:
+		var value struct {
+			Data map[string]string `json:"data"`
+		}
+		if err := decodeStrictCredentialPayload(payload, &value); err != nil || len(value.Data) == 0 {
+			return nil, ErrCredentialPayloadInvalid
+		}
+		return mapKeys(value.Data), nil
+	default:
 		return nil, ErrCredentialPayloadInvalid
 	}
-	return mapKeys(value.Data), nil
 }
 
 func validCredentialWorkspaceCommit(value string) bool {
