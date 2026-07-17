@@ -434,7 +434,7 @@ func rejectSensitiveToolResult(value interface{}) error {
 func bindDeploymentRunEvidence(
 	result map[string]interface{},
 	traces []doagentToolTrace,
-	primaryTool string,
+	admission *trustedReconciliationAdmission,
 ) (string, map[string]interface{}, error) {
 	if result["kind"] != "DeploymentRun" {
 		return "", nil, fmt.Errorf("structured result kind must be DeploymentRun")
@@ -446,12 +446,29 @@ func bindDeploymentRunEvidence(
 	if err := rejectRetainedSensitiveDeploymentRunFields(result); err != nil {
 		return "", nil, err
 	}
+	if admission != nil {
+		metadata, ok := result["metadata"].(map[string]interface{})
+		if !ok {
+			return "", nil, fmt.Errorf("DeploymentRun.metadata must be an object")
+		}
+		spec, ok := result["spec"].(map[string]interface{})
+		if !ok {
+			return "", nil, fmt.Errorf("DeploymentRun.spec must be an object")
+		}
+		metadata["workspaceCommit"] = admission.Context.Source.WorkspaceCommit
+		spec["mode"] = admission.Context.ExecutionMode
+	}
 	for field := range status {
 		switch field {
 		case "phase", "mutationCount", "capabilities", "evidence", "failures":
 		default:
 			return "", nil, fmt.Errorf("DeploymentRun.status field %q is not supported", field)
 		}
+	}
+	switch status["phase"] {
+	case "planned", "converged", "blocked", "failed", "outcome-unknown":
+	default:
+		return "", nil, fmt.Errorf("DeploymentRun.status.phase is invalid")
 	}
 	evidence, ok := status["evidence"].([]interface{})
 	if !ok || len(evidence) == 0 {
@@ -500,6 +517,7 @@ func bindDeploymentRunEvidence(
 		if err != nil {
 			return "", nil, fmt.Errorf("DeploymentRun evidence[%d]: %w", index, err)
 		}
+		primaryTool := primaryDeploymentEvidenceTool(admission)
 		if index == 0 && primaryTool != "" && trace.ToolName != primaryTool {
 			return "", nil, fmt.Errorf(
 				"DeploymentRun evidence[0] must reference %s",
