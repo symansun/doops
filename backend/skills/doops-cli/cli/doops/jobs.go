@@ -320,7 +320,7 @@ func applyTargetDefaults(target, gateway, token string, servers []Server, config
 			gateway = server.Gateway
 		}
 		if token == "" {
-			token = ResolveToken(server.Name, server.Token)
+			token = ResolveToken(*server)
 		}
 	}
 	return gateway, token

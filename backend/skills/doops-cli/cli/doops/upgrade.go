@@ -27,11 +27,20 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 	if !opts.DryRun {
 		return fmt.Errorf("direct agent self-upgrade is prohibited; use an external release controller or GitOps")
 	}
+	if strings.TrimSpace(opts.Gateway) != "" && strings.TrimSpace(base.Gateway) != "" &&
+		gatewayAuthKey(opts.Gateway) != gatewayAuthKey(base.Gateway) {
+		return fmt.Errorf("configured target belongs to gateway %s, not %s",
+			gatewayAuthKey(base.Gateway), gatewayAuthKey(opts.Gateway))
+	}
 	gateway := firstNonEmptyLocal(opts.Gateway, base.Gateway)
 	if gateway == "" {
 		return fmt.Errorf("gateway is required")
 	}
-	token := firstNonEmptyLocal(opts.Token, ResolveToken(base.Name, base.Token))
+	token := strings.TrimSpace(opts.Token)
+	if token == "" {
+		base.Gateway = gateway
+		token = ResolveToken(base)
+	}
 	targets, err := fetchGatewayTargets(gateway, token)
 	if err != nil {
 		return err

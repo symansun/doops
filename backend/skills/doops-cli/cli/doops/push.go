@@ -107,7 +107,7 @@ func pushWorkspaceSnapshotWithSource(
 		return "", fmt.Errorf("session ID 必传：请通过 -session 指定会话 ID 以隔离工作区 (例如: doops exec -session prod ...)")
 	}
 
-	token := ResolveToken(server.Name, server.Token)
+	token := ResolveToken(server)
 	gitURL, err := buildGitRemoteURLForServer(server, sessionID, token != "")
 	if err != nil {
 		return "", err

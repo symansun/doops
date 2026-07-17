@@ -157,8 +157,8 @@ CNB 非同名制品必须使用仓库下级路径，例如 `docker.cnb.cool/l8ai
 - Skill 源码权威位置：`skills/SKILL.md`
 - Skill 安装目标：`<project>/.agent/skills/doops/SKILL.md`
 - CLI 唯一默认配置：`~/.agent/skills/doops/config.json`
-- CLI token 缓存：`~/.agent/skills/doops/auth.json`
-- target 已配置 token 时以配置 token 为唯一权威来源；`auth.json` 只用于未配置 token 的交互登录，避免短期或已撤销登录缓存覆盖仍有效的长期密钥
+- Gateway 登录态：`~/.agent/skills/doops/auth.json`
+- Gateway target 只保存路由；同一 Gateway 的所有 target 共享按 Gateway URL 保存的一份登录态
 - CLI 发布资产：CNB Release 的 `doops-<os>-<arch>` 与 `checksums.txt`
 - Agent local token：服务端 `/root/.doops/agent-token`，只用于遗留直连或本机 `/ws` 保护，不用于 gateway 注册
 
@@ -231,11 +231,12 @@ bash scripts/install.sh \
   --target-cluster doops-jm \
   --target-instance jm-228 \
   --target-aliases jy \
-  --target-token '<GATEWAY_USER_TOKEN>' \
   --use 'JM via gateway'
 ```
 
-Skill 会随安装同步到项目目录。标准 target 的配置必须有 `gateway`/`cluster`/`instance`，`token` 是 gateway user token。
+Skill 会随安装同步到项目目录。标准 target 的配置只包含
+`gateway`/`cluster`/`instance` 路由。安装后运行一次
+`doops login --target jm`，登录态会供同一 Gateway 的全部 target 使用。
 
 - target 支持短名和别名，例如主名 `jm`，别名 `jy`。后续 `doops -session smoke exec --target jy --cmd hostname` 会解析到同一个 `doops-jm/jm-228`。
 
@@ -286,8 +287,9 @@ doops add \
   --cluster prod \
   --instance master-1 \
   --aliases prod,master \
-  --token '<USER_TOKEN>' \
   --use 'prod cluster via gateway'
+
+doops login --target prod-master
 ```
 
 doops 支持 `http` / `https` gateway；`http` 会自动转换为 WebSocket 隧道使用的 `ws`。
@@ -418,7 +420,8 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 
 | 命令 | 说明 |
 | :--- | :--- |
-| `doops add --gateway --cluster --instance --token` | 添加 gateway target |
+| `doops add --gateway --cluster --instance` | 添加 gateway target 路由 |
+| `doops login --target <name>` | 登录该 target 所属 Gateway |
 | `doops list` | 列出客户端已配置节点 |
 | `doops exec` | 在远端 agent 容器内执行确定性命令 |
 | `doops ask` | 交给远端 doagent 自主分析和执行 |

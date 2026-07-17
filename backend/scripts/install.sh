@@ -16,7 +16,6 @@ Doops 一键安装脚本
     --target-cluster doops-jm \
     --target-instance jm-228 \
     --target-aliases jy,oilan \
-    --target-token 'gateway-user-token' \
     --use 'JM via gateway'
 
 安装结果:
@@ -39,8 +38,8 @@ Skill 维护规则:
 
 连接模式:
   标准入口只有 Gateway 模式:
-    --target-gateway + --target-cluster/--target-instance + --target-token
-  --target-token 是 gateway user token。
+    --target-gateway + --target-cluster/--target-instance
+  target 配置只保存路由；安装后通过 doops login 为整个 Gateway 建立统一登录态。
   --target-ip 是遗留直连参数，install.sh 不再用它写入标准配置。
 
 如果只是临时连受控实验 gateway，且它还没有 TLS，可以在客户端显式设置 `DOOPS_ALLOW_INSECURE_GATEWAY=1`，但不要把它当成生产标准写法。
@@ -232,6 +231,38 @@ PROJECT_PATH="$(cd "${PROJECT_PATH}" && pwd)"
 SKILL_DEST="${PROJECT_PATH}/.agent/skills/doops"
 CANONICAL_CONFIG_FILE="${HOME}/.agent/skills/doops/config.json"
 
+if [[ -n "${TARGET_GATEWAY}" && -n "${TARGET_IP}" ]]; then
+  cat >&2 <<EOF
+  Refusing ambiguous config: standard config must be gateway mode only.
+EOF
+  exit 1
+fi
+
+if [[ -n "${TARGET_IP}" ]]; then
+  cat >&2 <<EOF
+  Refusing legacy direct config: install.sh only writes gateway targets.
+  Use --target-gateway --target-cluster --target-instance.
+EOF
+  exit 1
+fi
+
+if [[ -n "${TARGET_TOKEN}" ]]; then
+  cat >&2 <<EOF
+  --target-token is no longer supported. Target config stores routes only.
+  Run backend/scripts/migrate-gateway-auth.py --target <name> before upgrading.
+EOF
+  exit 1
+fi
+
+if [[ -f "${CANONICAL_CONFIG_FILE}" ]] &&
+   grep -Eq '"token"[[:space:]]*:' "${CANONICAL_CONFIG_FILE}"; then
+  cat >&2 <<EOF
+  Refusing to replace the CLI while config.json still contains per-target token fields.
+  Run backend/scripts/migrate-gateway-auth.py --target <name> first.
+EOF
+  exit 1
+fi
+
 echo "[1/4] Installing CLI to fixed path"
 install_cli
 
@@ -246,26 +277,11 @@ echo "  Skill docs installed to ${SKILL_DEST}/docs/"
 
 echo "[3/4] Preparing canonical doops config"
 
-if [[ -n "${TARGET_GATEWAY}" && -n "${TARGET_IP}" ]]; then
-  cat >&2 <<EOF
-  Refusing ambiguous config: standard config must be gateway mode only.
-EOF
-  exit 1
-fi
-
-if [[ -n "${TARGET_IP}" ]]; then
-  cat >&2 <<EOF
-  Refusing legacy direct config: install.sh only writes gateway targets.
-  Use --target-gateway --target-cluster --target-instance --target-token.
-EOF
-  exit 1
-fi
-
-if [[ -n "${TARGET_GATEWAY}" && -n "${TARGET_NAME}" && -n "${TARGET_TOKEN}" ]]; then
+if [[ -n "${TARGET_GATEWAY}" && -n "${TARGET_NAME}" ]]; then
   if [[ -z "${TARGET_INSTANCE}" ]]; then
     TARGET_INSTANCE="${TARGET_NAME}"
   fi
-  add_args=(add --name "${TARGET_NAME}" --gateway "${TARGET_GATEWAY}" --cluster "${TARGET_CLUSTER}" --instance "${TARGET_INSTANCE}" --token "${TARGET_TOKEN}" --use "${TARGET_USE}")
+  add_args=(add --name "${TARGET_NAME}" --gateway "${TARGET_GATEWAY}" --cluster "${TARGET_CLUSTER}" --instance "${TARGET_INSTANCE}" --use "${TARGET_USE}")
   if [[ -n "${TARGET_ALIASES}" ]]; then
     add_args+=(--aliases "${TARGET_ALIASES}")
   fi
@@ -275,7 +291,7 @@ else
   cat <<EOF
   Canonical config not changed automatically.
   To make the project immediately connectable in gateway mode, rerun with:
-    --target-name --target-gateway --target-cluster --target-instance --target-token [--use]
+    --target-name --target-gateway --target-cluster --target-instance [--use]
 EOF
 fi
 
@@ -294,6 +310,7 @@ If ~/.local/bin is not in PATH, run:
 Quick verify:
   cd "${PROJECT_PATH}"
   doops list
+  doops login --target ${TARGET_NAME:-<target-name>}
   doops -session smoke exec --target ${TARGET_NAME:-<target-name>} --cmd "hostname"
 EOF
 

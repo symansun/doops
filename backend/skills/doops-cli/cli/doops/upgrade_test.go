@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -67,5 +69,41 @@ func TestUpgradeAgentsRejectsApplyBeforeGatewayCall(t *testing.T) {
 	}, false)
 	if err == nil || !strings.Contains(err.Error(), "direct agent self-upgrade is prohibited") {
 		t.Fatalf("expected direct self-upgrade rejection, got %v", err)
+	}
+}
+
+func TestUpgradeAgentsUsesExplicitTokenWithoutResolvingTargetLogin(t *testing.T) {
+	var gotAuth string
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"targets":[]}`))
+	}))
+	defer gateway.Close()
+
+	err := UpgradeAgents(Server{}, UpgradeOptions{
+		Gateway:  gateway.URL,
+		Token:    "explicit-token",
+		Cluster:  "*",
+		Instance: "*",
+		Image:    "registry.example/doops@sha256:abc",
+		DryRun:   true,
+	}, false)
+	if err == nil || !strings.Contains(err.Error(), "no online targets matched") {
+		t.Fatalf("expected empty target result, got %v", err)
+	}
+	if gotAuth != "Bearer explicit-token" {
+		t.Fatalf("explicit token was not used: %q", gotAuth)
+	}
+}
+
+func TestUpgradeAgentsRejectsGatewayMismatchBeforeRequest(t *testing.T) {
+	err := UpgradeAgents(Server{Gateway: "https://trusted.example.com"}, UpgradeOptions{
+		Gateway: "https://other.example.com",
+		Token:   "explicit-token",
+		Image:   "registry.example/doops@sha256:abc",
+		DryRun:  true,
+	}, false)
+	if err == nil || !strings.Contains(err.Error(), "configured target belongs to gateway") {
+		t.Fatalf("expected gateway mismatch, got %v", err)
 	}
 }

@@ -115,12 +115,16 @@ docker run -d \
      "gateway": "https://gateway.example.com",
      "cluster": "doops-new",
      "instance": "master-1",
-     "use": "新测试环境 via gateway",
-     "token": "<GATEWAY_USER_TOKEN>"
+     "use": "新测试环境 via gateway"
    }
    ```
 
-3. **终端测试验证**:
+3. **登录 Gateway**:
+   ```bash
+   doops login --target new-cluster
+   ```
+
+4. **终端测试验证**:
    ```bash
    doops -session dev01 exec --target new-cluster --cmd "uname -a"
    ```

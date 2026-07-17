@@ -22,7 +22,7 @@ func Pull(server Server, dest, sessionID string) error {
 		return fmt.Errorf("解析目标路径失败: %v", err)
 	}
 
-	token := ResolveToken(server.Name, server.Token)
+	token := ResolveToken(server)
 	gitURL, err := buildGitRemoteURLForServer(server, sessionID, token != "")
 	if err != nil {
 		return err

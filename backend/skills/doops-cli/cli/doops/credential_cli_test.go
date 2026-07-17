@@ -63,10 +63,18 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		"name":"gw-edu-release-runner",
 		"gateway":"`+gateway.URL+`",
 		"cluster":"doops-edu",
-		"instance":"release-runner",
-		"token":"cli-token"
+		"instance":"release-runner"
 	}]}`), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
+	}
+	auth := AuthStore{Tokens: map[string]string{}}
+	auth.SetGateway(gateway.URL, "cli-token")
+	authData, err := json.Marshal(&auth)
+	if err != nil {
+		t.Fatalf("marshal auth: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(config), "auth.json"), authData, 0o600); err != nil {
+		t.Fatalf("write auth: %v", err)
 	}
 	run := func(stdin string, args ...string) string {
 		t.Helper()
@@ -179,6 +187,24 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 	if requests[9].Method != http.MethodGet || requests[9].Path != "/v1/credential-bundles" ||
 		requests[9].Query.Get("name") != "release" {
 		t.Fatalf("credential bundle get request mismatch: %#v", requests[9])
+	}
+}
+
+func TestResolveCredentialGatewayRejectsTargetGatewayMismatch(t *testing.T) {
+	t.Setenv("DOOPS_GATEWAY_TOKEN", "explicit-token")
+	_, _, err := resolveCredentialGateway(
+		"gateway",
+		"https://other.example.com",
+		[]Server{{
+			Name:     "gateway",
+			Gateway:  "https://trusted.example.com",
+			Cluster:  "prod",
+			Instance: "node",
+		}},
+		nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "belongs to gateway") {
+		t.Fatalf("expected gateway mismatch, got %v", err)
 	}
 }
 

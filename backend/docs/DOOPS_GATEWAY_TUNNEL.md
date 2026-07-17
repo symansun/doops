@@ -237,12 +237,15 @@ doops-agent \
       "gateway": "https://gateway.example.com",
       "cluster": "prod",
       "instance": "master-1",
-      "token": "<USER_TOKEN>",
       "use": "prod cluster master via gateway"
     }
   ]
 }
 ```
+
+Target config stores routing only. Run `doops login --target prod-master` once;
+the resulting Gateway login state is shared by every target using the same
+Gateway URL.
 
 或者：
 

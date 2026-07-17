@@ -144,11 +144,11 @@ doops login --target jm --gateway https://gateway.example.com --username alice
 doops logout --target jm
 ```
 
-For targets with a configured token, that token is authoritative and remains in
-use until the target configuration is updated. `auth.json` is only used for
-targets without a configured token, so an expired or revoked interactive login
-cannot shadow a valid long-lived target token. Gateway permissions still come
-from gateway user scopes.
+Login and logout apply to the Gateway, not one target. `auth.json` stores one
+token under the normalized Gateway URL, and every configured target on that
+Gateway uses the same login state. Target configuration contains routing only;
+it must not contain a Gateway user token. Gateway permissions still come from
+the user's grants.
 
 ## Upgrade
 

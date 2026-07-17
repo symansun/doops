@@ -516,11 +516,13 @@ func resolveCredentialGateway(target, gateway string, servers []Server, configEr
 		if server == nil {
 			return "", "", fmt.Errorf("target %q not found", target)
 		}
-		if gateway == "" {
-			gateway = strings.TrimSpace(server.Gateway)
+		if gateway != "" && gatewayAuthKey(gateway) != gatewayAuthKey(server.Gateway) {
+			return "", "", fmt.Errorf("target %q belongs to gateway %s, not %s",
+				target, gatewayAuthKey(server.Gateway), gatewayAuthKey(gateway))
 		}
+		gateway = strings.TrimSpace(server.Gateway)
 		if token == "" {
-			token = ResolveToken(server.Name, server.Token)
+			token = ResolveToken(*server)
 		}
 	}
 	if gateway == "" {

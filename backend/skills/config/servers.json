@@ -8,7 +8,6 @@
         "gateway": "https://doops.l8ai.cn",
         "cluster": "doops-silicon",
         "instance": "vm-49",
-        "use": "Silicon Valley via gateway",
-        "token": "<GATEWAY_USER_TOKEN>"
+        "use": "Silicon Valley via gateway"
     }
 ]

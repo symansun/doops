@@ -2,6 +2,18 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-07-17 Unified Gateway Authentication
+
+- Gateway target configuration stores routes only and no longer accepts
+  per-target user tokens.
+- `auth.json` stores one token per normalized Gateway URL. Login and logout
+  therefore affect every target on that Gateway.
+- Migration from an older installation:
+  `python3 backend/scripts/migrate-gateway-auth.py --target
+  <one-target-on-the-gateway>`. The selected target's current token becomes the
+  Gateway login state, and token fields are removed from all targets on that
+  Gateway.
+
 ## Maintenance Rules
 
 - Keep one default local config source: `~/.agent/skills/doops/config.json`.

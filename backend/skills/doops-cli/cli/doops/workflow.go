@@ -52,7 +52,7 @@ var openWorkflowAgent = func(
 	verbose bool,
 ) (workflowAgentCaller, func()) {
 	client := NewMCPClient(server, sessionStore, sessionID, verbose)
-	client.Token = ResolveToken(server.Name, server.Token)
+	client.Token = ResolveToken(server)
 	return client, client.Close
 }
 
@@ -148,7 +148,7 @@ func runCICDCommand(
 	credentialRun, err := prepareWorkflowCredentials(
 		ctx,
 		*server,
-		ResolveToken(server.Name, server.Token),
+		ResolveToken(*server),
 		prepareRequest,
 	)
 	if err != nil {

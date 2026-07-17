@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -57,35 +59,56 @@ func TestDoopsStatePathsUseCanonicalAgentSkillDirectory(t *testing.T) {
 	}
 }
 
-func TestResolveTokenPrefersConfiguredLongLivedToken(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	auth := &AuthStore{Tokens: map[string]string{
-		"gateway": "revoked-cached-login-token",
-	}}
-	if err := auth.Save(); err != nil {
-		t.Fatalf("save auth store: %v", err)
+func TestGatewayAuthKeyNormalizesEquivalentURLs(t *testing.T) {
+	if got := gatewayAuthKey("HTTPS://Gateway.Example.com/"); got != "https://gateway.example.com" {
+		t.Fatalf("gateway auth key mismatch: %q", got)
 	}
-
-	if got := ResolveToken("gateway", "configured-long-lived-token"); got != "configured-long-lived-token" {
-		t.Fatalf("configured token must be authoritative, got %q", got)
+	for _, equivalent := range []string{
+		"wss://gateway.example.com",
+		"https://gateway.example.com:443/",
+		"https://user@gateway.example.com/",
+	} {
+		if got := gatewayAuthKey(equivalent); got != "https://gateway.example.com" {
+			t.Fatalf("equivalent gateway %q normalized to %q", equivalent, got)
+		}
 	}
 }
 
-func TestResolveTokenUsesCachedLoginWithoutConfiguredToken(t *testing.T) {
+func TestResolveTokenSharesOneGatewayLoginAcrossTargets(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	auth := &AuthStore{Tokens: map[string]string{
-		"gateway": "cached-login-token",
-	}}
+	auth := &AuthStore{Tokens: map[string]string{}}
+	auth.SetGateway("https://gateway.example.com", "shared-gateway-token")
 	if err := auth.Save(); err != nil {
 		t.Fatalf("save auth store: %v", err)
 	}
 
-	if got := ResolveToken("gateway", ""); got != "cached-login-token" {
-		t.Fatalf("expected cached login token, got %q", got)
+	first := Server{
+		Name:     "first",
+		Gateway:  "https://gateway.example.com/",
+		Cluster:  "cluster-a",
+		Instance: "node-a",
+		Token:    "stale-target-token",
+	}
+	second := Server{
+		Name:     "second",
+		Gateway:  "HTTPS://GATEWAY.EXAMPLE.COM",
+		Cluster:  "cluster-b",
+		Instance: "node-b",
+	}
+	if got := ResolveToken(first); got != "shared-gateway-token" {
+		t.Fatalf("first target did not use shared gateway token: %q", got)
+	}
+	if got := ResolveToken(second); got != "shared-gateway-token" {
+		t.Fatalf("second target did not use shared gateway token: %q", got)
+	}
+}
+
+func TestResolveTokenKeepsLegacyDirectTokenOutOfGatewayAuth(t *testing.T) {
+	server := Server{Name: "legacy", Token: "legacy-direct-token"}
+	if got := ResolveToken(server); got != "legacy-direct-token" {
+		t.Fatalf("expected legacy direct token, got %q", got)
 	}
 }
 
@@ -194,5 +217,50 @@ func TestGatewayAdminTokenListAndRevokeUseMetadataOnly(t *testing.T) {
 	}
 	if queries[0] != "kind=user" || queries[1] != "id=tok_1" {
 		t.Fatalf("queries mismatch: %#v", queries)
+	}
+}
+
+func TestAdminTokenCreateValidatesSaveTargetBeforeIssuing(t *testing.T) {
+	requests := 0
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "must not be called", http.StatusInternalServerError)
+	}))
+	defer gateway.Close()
+
+	root := t.TempDir()
+	config := filepath.Join(root, "config.json")
+	if err := os.WriteFile(config, []byte(`{"servers":[{
+		"name":"source",
+		"gateway":"`+gateway.URL+`",
+		"cluster":"prod",
+		"instance":"node"
+	}]}`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	auth := AuthStore{Tokens: map[string]string{}}
+	auth.SetGateway(gateway.URL, "admin-token")
+	authData, err := json.Marshal(&auth)
+	if err != nil {
+		t.Fatalf("marshal auth: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "auth.json"), authData, 0o600); err != nil {
+		t.Fatalf("write auth: %v", err)
+	}
+
+	command := exec.Command(
+		buildDoopsCLIBinary(t),
+		"admin", "token", "create",
+		"--target", "source",
+		"--user", "codex",
+		"--save-as", "missing",
+	)
+	command.Env = append(os.Environ(), "DOOPS_CONFIG="+config)
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "Gateway target 'missing' not found") {
+		t.Fatalf("expected local save target validation, got err=%v output=%s", err, output)
+	}
+	if requests != 0 {
+		t.Fatalf("token was issued before local validation: %d request(s)", requests)
 	}
 }

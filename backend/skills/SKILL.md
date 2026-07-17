@@ -57,8 +57,8 @@ Doops CLI 默认只有一个配置源：
 
 同目录运行态文件：
 
-- `auth.json`：`doops login/logout` 管理的 token 缓存，结构必须是 `{"tokens":{"target-name":"..."}}`。
-- target 已配置 token 时以配置 token 为权威来源；`auth.json` 只用于未配置 token 的交互登录，不能覆盖长期 target token。
+- `auth.json`：`doops login/logout` 管理的 Gateway 登录态，结构必须是 `{"tokens":{"https://gateway.example.com":"..."}}`。
+- 同一 Gateway 的所有 target 共用一份 token；target 配置只保存路由，禁止写入 Gateway user token。
 - `history.jsonl`：本机命令历史。
 - `sessions.json`：本机会话缓存。
 
@@ -81,8 +81,7 @@ Doops CLI 默认只有一个配置源：
       "gateway": "https://gateway.example.com",
       "cluster": "doops-jm",
       "instance": "jm-228",
-      "use": "JM via gateway",
-      "token": "<GATEWAY_USER_TOKEN>"
+      "use": "JM via gateway"
     }
   ]
 }
@@ -113,8 +112,9 @@ doops add \
   --cluster doops-jm \
   --instance jm-228 \
   --aliases jy \
-  --token '<GATEWAY_USER_TOKEN>' \
   --use 'JM via gateway'
+
+doops login --target jm
 ```
 
 首次安装 agent 到新机器、K8s/DaemonSet 接入、裸二进制迁移等细节见 `docs/CLUSTER_INSTALL_GUIDE.md`。如果必须临时排查遗留直连节点，要在问题结论里明确标注它不是标准 gateway target。
@@ -160,7 +160,7 @@ doops admin token create \
   --expires 720h
 ```
 
-`--target` 负责选择 gateway 地址和当前管理员 token。新 token 只打印一次；如需写入本机 token 缓存，显式加 `--save-as <target-name>`。
+`--target` 负责选择 gateway 地址和当前管理员登录态。新 token 只打印一次；如需把新 token 设为该 Gateway 的统一登录态，显式加 `--save-as <target-name>`。
 轮换时先创建并缓存新 token，再用 `admin token list` 按 ID/前缀确认旧 token，最后执行 `admin token revoke`。管理员 token 不得通过命令行参数传入。
 
 完整命令说明和示例见 `docs/DOOPS_USAGE_GUIDE.md`。

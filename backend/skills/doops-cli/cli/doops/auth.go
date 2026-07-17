@@ -51,19 +51,57 @@ func (s *AuthStore) Save() error {
 	return os.Chmod(path, 0600)
 }
 
-func (s *AuthStore) Get(target string) string {
-	return s.Tokens[target]
+func gatewayAuthKey(rawGateway string) string {
+	rawGateway = strings.TrimSpace(rawGateway)
+	if rawGateway == "" {
+		return ""
+	}
+	if !strings.Contains(rawGateway, "://") {
+		rawGateway = "https://" + rawGateway
+	}
+	parsed, err := url.Parse(rawGateway)
+	if err != nil {
+		return strings.TrimRight(rawGateway, "/")
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	switch parsed.Scheme {
+	case "wss":
+		parsed.Scheme = "https"
+	case "ws":
+		parsed.Scheme = "http"
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	port := parsed.Port()
+	if (parsed.Scheme == "https" && port == "443") || (parsed.Scheme == "http" && port == "80") {
+		port = ""
+	}
+	if port != "" {
+		host += ":" + port
+	}
+	parsed.Host = host
+	parsed.User = nil
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.TrimRight(parsed.String(), "/")
 }
 
-func (s *AuthStore) Set(target, token string) {
+func (s *AuthStore) GetGateway(gateway string) string {
+	return s.Tokens[gatewayAuthKey(gateway)]
+}
+
+func (s *AuthStore) SetGateway(gateway, token string) {
 	if s.Tokens == nil {
 		s.Tokens = make(map[string]string)
 	}
-	s.Tokens[target] = token
+	s.Tokens[gatewayAuthKey(gateway)] = token
 }
 
-func (s *AuthStore) Remove(target string) {
-	delete(s.Tokens, target)
+func (s *AuthStore) RemoveGateway(gateway string) {
+	delete(s.Tokens, gatewayAuthKey(gateway))
 }
 
 type gatewayLoginResponse struct {
