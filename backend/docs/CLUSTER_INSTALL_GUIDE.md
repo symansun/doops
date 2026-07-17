@@ -76,7 +76,10 @@ docker run -d \
   -v /var/lib/nerdctl:/var/lib/nerdctl \
   -v /root/.kube/config:/root/.kube/config:ro \
   -v /path/to/doagent-model-settings.json:/opt/doagent_config/settings.json:ro \
-  docker.cnb.cool/l8ai/ai/doops.sh:v1.1
+  docker.cnb.cool/l8ai/ai/doops.sh@sha256:e43a2b207fcf0a6e734216d6ac3cb95235a7fd13d36e7a566aadb48c9a67033c \
+  -gateway-url https://gateway.example.com \
+  -cluster doops-new \
+  -instance master-1
 ```
 
 > [!TIP]
@@ -86,14 +89,19 @@ docker run -d \
 
 ## 安装完成后的验收标准
 
-不要再以“容器起来了”或“`ps` 里有进程”作为安装成功标准。当前版本的 `doops install` 会在安装后主动做一次 agent 侧能力自检，建议至少满足下面四项：
+`doops install` 直连安装入口已停用。不要以“容器起来了”或“`ps` 里有进程”
+作为安装成功标准；必须从 Gateway 和真实远程调用两侧验收：
 
-- `agent process`: `OK`
-- `container runtime`: `OK`
-- `kubectl`: `OK` 或至少有明确的 kubeconfig 来源
-- `buildkit`: `OK`，且 `buildkit-sock` 可见
+- `doops targets --target <gateway-target>` 返回指定 `cluster/instance`，不是其它同
+  Gateway 节点。
+- `doops -session install-verify exec --target <gateway-target> --cmd 'do-agent --version'`
+  返回当前发布版本。
+- 容器运行时可见（`nerdctl` / `docker` / `podman`）。
+- `kubectl` 或 kubeconfig 来源明确。
+- `buildctl` 与 `/run/buildkit/buildkitd.sock` 可见。
 
-如果 `agent process` 或 `container runtime` 失败，安装应直接视为失败；如果 `kubectl` 或 `buildkit` 为 `MISSING`，说明目标只能做部分能力，不能再被当成“完整可运维节点”。
+Gateway heartbeat、Agent 版本或容器运行时任一失败，安装都应直接视为失败；如果
+`kubectl` 或 `buildkit` 为 `MISSING`，说明目标只能做部分能力，不能被当成完整发布节点。
 > - `-v /root/.kube/config` 允许 Agent 继承宿主机的 Kube 凭证操作集群（如果不涉及 K8s 操作可略去）。
 
 ---

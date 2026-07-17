@@ -198,7 +198,7 @@ docker run -d --name doops-agent \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /root/.kube:/root/.kube:ro \
   -v /etc/kubernetes:/etc/kubernetes:ro \
-  docker.cnb.cool/l8ai/ai/doops.sh:v1.1 \
+  docker.cnb.cool/l8ai/ai/doops.sh@sha256:e43a2b207fcf0a6e734216d6ac3cb95235a7fd13d36e7a566aadb48c9a67033c \
   -port 42222 \
   -gateway-url https://gateway.example.com \
   -cluster prod \
@@ -255,8 +255,9 @@ doops add \
   --aliases prod,master \
   --gateway https://gateway.example.com \
   --cluster prod \
-  --instance master-1 \
-  --token "$DOOPS_GATEWAY_USER_TOKEN"
+  --instance master-1
+
+doops login --target prod-master
 ```
 
 ## Use
@@ -304,7 +305,7 @@ Gateway 注册和心跳验证。历史挂起的自升级 operation 会在 Gatewa
 doops -session upgrade_20260511 upgrade \
   --target prod-master \
   --cluster doops-jm \
-  --image docker.cnb.cool/l8ai/ai/doops.sh:v1.1 \
+  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:e43a2b207fcf0a6e734216d6ac3cb95235a7fd13d36e7a566aadb48c9a67033c \
   --mode k8s \
   --dry-run
 ```

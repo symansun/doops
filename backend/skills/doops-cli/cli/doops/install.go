@@ -347,37 +347,8 @@ func InstallAgent(name, ip, user, sshPassword, sshPort, agentPort, binaryPath st
 	}
 	printInstallCapabilityResults(results)
 
-	// Update local config
-	servers, _ := LoadServers()
-	updated := false
-	for i, s := range servers {
-		if s.Name == name {
-			servers[i].IP = ip
-			servers[i].Port = agentPort
-			servers[i].Use = "Dynamically installed node"
-			servers[i].Token = agentToken
-			// 保留原有 SSHUser/SSHPort（install 参数中已有 user/sshPort）
-			// SSH 密码不落盘：仅作为一次性 bootstrap 凭据使用。
-			if servers[i].SSHUser == "" {
-				servers[i].SSHUser = user
-			}
-			if servers[i].SSHPort == "" {
-				servers[i].SSHPort = sshPort
-			}
-			servers[i].SSHPassword = ""
-			updated = true
-			break
-		}
-	}
-	if !updated {
-		servers = append(servers, Server{Name: name, IP: ip, Port: agentPort, Use: "Dynamically installed node", Token: agentToken, SSHUser: user, SSHPort: sshPort})
-	}
-
-	if err := saveServers(servers); err != nil {
-		return fmt.Errorf("failed to update config: %v", err)
-	}
-
-	fmt.Printf("✅ Config updated. Node '%s' is ready!\n", name)
+	fmt.Printf("Agent bootstrap completed on %s, but no target was written: direct targets are retired.\n", name)
+	fmt.Println("Register the Agent with Gateway, verify its heartbeat, then add the Gateway route with `doops add`.")
 	return nil
 }
 

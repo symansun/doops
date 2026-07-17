@@ -188,7 +188,7 @@ docs/DOOPS_MAINTENANCE_LOG.md
 
 ## 故障入口
 
-- `401 Unauthorized`：认证失败。先确认 CLI 读的是 `~/.agent/skills/doops/config.json`，标准 target 的 token 必须是 gateway user token。
+- `401 Unauthorized`：认证失败。先确认 CLI 读的是 `~/.agent/skills/doops/config.json`，并确认统一 `auth.json` 中存在该 Gateway 的 user token；标准 target 配置不得包含 token。
 - `403 Forbidden`：认证通过但权限不足，或用户被显式收窄。
 - `credential prepare HTTP 426`：目标 Agent 未声明完整 credential-plan capability，或仍使用旧字符串声明；必须升级 Agent，不能重试或回退。
 - `credential prepare HTTP 503`：目标 Agent 离线，先恢复 Gateway 注册连接。
