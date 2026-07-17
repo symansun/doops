@@ -333,6 +333,14 @@ func TestCredentialPrepareReturnsVersionedProtocolErrors(t *testing.T) {
 			if response.Code != test.wantStatus {
 				t.Fatalf("status = %d, want %d: %s", response.Code, test.wantStatus, response.Body.String())
 			}
+			if test.wantStatus == http.StatusUpgradeRequired {
+				if got := response.Header().Get("Upgrade"); got != credentialPlanProtocolV2 {
+					t.Fatalf("upgrade header = %q, want %q", got, credentialPlanProtocolV2)
+				}
+				if got := response.Header().Get("Doops-Agent-Required-Protocol"); got != credentialPlanProtocolV2 {
+					t.Fatalf("required protocol header = %q, want %q", got, credentialPlanProtocolV2)
+				}
+			}
 			var failure credentialPrepareErrorResponse
 			if err := json.Unmarshal(response.Body.Bytes(), &failure); err != nil {
 				t.Fatalf("decode protocol error: %v", err)

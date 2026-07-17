@@ -96,7 +96,11 @@ func prepareWorkflowCredentials(
 		if err != nil {
 			return credentialRun{}, fmt.Errorf("invalid credential prepare error response: HTTP %s", response.Status)
 		}
-		return credentialRun{}, fmt.Errorf("credential prepare failed: HTTP %s: %s", response.Status, category)
+		return credentialRun{}, credentialPrepareFailureError(
+			response.Status,
+			category,
+			response.Header.Get("Doops-Agent-Required-Protocol"),
+		)
 	}
 
 	var run credentialRun
@@ -117,6 +121,14 @@ func prepareWorkflowCredentials(
 		run.Materializations = []credentialMaterializationMetadata{}
 	}
 	return run, nil
+}
+
+func credentialPrepareFailureError(status, category, requiredProtocol string) error {
+	requiredProtocol = strings.TrimSpace(requiredProtocol)
+	if requiredProtocol == "" {
+		return fmt.Errorf("credential prepare failed: HTTP %s: %s", status, category)
+	}
+	return fmt.Errorf("credential prepare failed: HTTP %s: %s required_protocol=%s", status, category, requiredProtocol)
 }
 
 func decodeCredentialPrepareFailure(body []byte) (string, error) {
