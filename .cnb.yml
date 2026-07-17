@@ -50,46 +50,7 @@ main:
             pnpm exec tsc --noEmit
             pnpm build
         - name: build immutable agent images
-          script: |
-            set -euo pipefail
-            RELEASE_TAG="${CNB_COMMIT}"
-            source backend/runtime-versions.env
-            BASE_IMAGE="${DOOPS_AGENT_BASE_IMAGE}"
-            docker pull "${DO_AGENT_IMAGE}"
-            ACTUAL_DOAGENT_VERSION="$(docker run --rm --entrypoint /usr/local/bin/do-agent "${DO_AGENT_IMAGE}" --version | awk '{print $NF}')"
-            test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"
-            ACTUAL_DOAGENT_REVISION="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${DO_AGENT_IMAGE}")"
-            test "${ACTUAL_DOAGENT_REVISION}" = "${DO_AGENT_REVISION}"
-            APP_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${RELEASE_TAG}"
-            docker pull "${BASE_IMAGE}"
-            docker build \
-              --platform linux/amd64 \
-              --build-arg DOOPS_AGENT_BASE_IMAGE="${BASE_IMAGE}" \
-              --build-arg DO_AGENT_IMAGE="${DO_AGENT_IMAGE}" \
-              --build-arg DO_AGENT_VERSION="${DO_AGENT_VERSION}" \
-              --build-arg DO_AGENT_REVISION="${DO_AGENT_REVISION}" \
-              --build-arg DO_AGENT_INDEX_DIGEST="${DO_AGENT_INDEX_DIGEST}" \
-              --build-arg DO_AGENT_PLATFORM="${DO_AGENT_PLATFORM}" \
-              --build-arg DO_AGENT_PLATFORM_DIGEST="${DO_AGENT_PLATFORM_DIGEST}" \
-              --label org.opencontainers.image.revision="${CNB_COMMIT}" \
-              --label org.opencontainers.image.version="${RELEASE_TAG}" \
-              -f backend/Dockerfile \
-              -t "${APP_IMAGE}" \
-              backend
-            ACTUAL_BASE_IMAGE="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.base.name" }}' "${APP_IMAGE}")"
-            test "${ACTUAL_BASE_IMAGE}" = "${BASE_IMAGE}"
-            ACTUAL_DOAGENT_IMAGE="$(docker inspect --format '{{ index .Config.Labels "org.l8ai.doagent.image" }}' "${APP_IMAGE}")"
-            test "${ACTUAL_DOAGENT_IMAGE}" = "${DO_AGENT_IMAGE}"
-            ACTUAL_DOAGENT_REVISION="$(docker inspect --format '{{ index .Config.Labels "org.l8ai.doagent.revision" }}' "${APP_IMAGE}")"
-            test "${ACTUAL_DOAGENT_REVISION}" = "${DO_AGENT_REVISION}"
-            docker run --rm --entrypoint /app/doops-agent "${APP_IMAGE}" -help >/dev/null
-            docker run --rm --entrypoint /app/doops-gateway "${APP_IMAGE}" -help >/dev/null
-            ACTUAL_DOAGENT_VERSION="$(docker run --rm --entrypoint /usr/local/bin/do-agent "${APP_IMAGE}" --version | awk '{print $NF}')"
-            test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"
-            docker run --rm --entrypoint /usr/local/bin/buildctl "${APP_IMAGE}" --version
-            docker run --rm --entrypoint /usr/bin/python3 "${APP_IMAGE}" -c 'import yaml'
-            docker run --rm --entrypoint /usr/local/bin/helm "${APP_IMAGE}" version --short
-            docker push "${APP_IMAGE}"
+          script: DOOPS_RELEASE_TAG="${CNB_COMMIT}" bash backend/scripts/build-agent-image.sh
 
 master:
   pull_request:
@@ -142,18 +103,38 @@ master:
 
 $:
   tag_push:
-    - name: publish-cli-release-assets
+    - name: publish-release
       runner:
-        cpus: 2
+        cpus: 4
+      services:
+        - docker
       docker:
         image: docker.io/library/golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191
       stages:
         - name: prepare tools
-          script: apk add --no-cache bash curl git nodejs
+          script: apk add --no-cache bash curl docker-cli git helm nodejs npm python3 py3-pytest py3-yaml
         - name: release contract tests
+          script: python3 -m pytest backend/test -q
+        - name: agent tests
           script: |
-            apk add --no-cache python3 py3-pytest py3-yaml
-            python3 -m pytest backend/test -q
+            cd backend/agent
+            go test ./...
+        - name: gateway tests
+          script: |
+            cd backend/gateway
+            go test ./...
+        - name: cli tests
+          script: |
+            cd backend/skills/doops-cli
+            go test ./...
+        - name: web build
+          script: |
+            npm i -g pnpm@11.7.0
+            pnpm install --frozen-lockfile
+            pnpm exec tsc --noEmit
+            pnpm build
+        - name: build release agent image
+          script: DOOPS_RELEASE_TAG="${CNB_BRANCH}" bash backend/scripts/build-agent-image.sh
         - name: build CLI release assets
           script: |
             rm -rf backend/dist/cli
@@ -166,6 +147,7 @@ $:
               --repo "${CNB_REPO}" \
               --tag "${CNB_BRANCH}" \
               --commit "${CNB_COMMIT}" \
-              --dir "${PWD}/backend/dist/cli"
+              --dir "${PWD}/backend/dist/cli" \
+              --image "${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_BRANCH}"
         - name: verify published CLI release assets
           script: DOOPS_RELEASE_TAG="${CNB_BRANCH}" bash backend/scripts/verify-published-cli-release.sh

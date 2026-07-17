@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 SKILL = ROOT / "agent" / "skills" / "doops-cicd" / "SKILL.md"
 DOCKERFILE = ROOT / "Dockerfile"
-CNB_PIPELINE = ROOT.parent / ".cnb.yml"
+IMAGE_BUILD = ROOT / "scripts" / "build-agent-image.sh"
 ACTIVE_CONTRACT_DOCS = (
     ROOT / "agent" / "DESIGN.md",
     ROOT / "skills" / "SKILL.md",
@@ -112,10 +112,10 @@ def test_each_release_protocol_doc_declares_gateway_bound_v3_contract():
 
 def test_ci_image_contains_agent_and_gateway_from_the_same_revision():
     dockerfile = DOCKERFILE.read_text()
-    pipeline = CNB_PIPELINE.read_text()
+    image_build = IMAGE_BUILD.read_text()
 
     assert "go build -o /app/doops-agent ./cmd/agent" in dockerfile
     assert "go build -o /app/doops-gateway ." in dockerfile
     assert "COPY --from=builder /app/doops-gateway /app/doops-gateway" in dockerfile
     assert "/app/doops-gateway -help" in dockerfile
-    assert "docker run --rm --entrypoint /app/doops-gateway" in pipeline
+    assert "docker run --rm --entrypoint /app/doops-gateway" in image_build

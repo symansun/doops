@@ -3,7 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "runtime-versions.env"
-CI = ROOT.parent / ".cnb.yml"
+IMAGE_BUILD = ROOT / "scripts" / "build-agent-image.sh"
 DOCKERFILES = (
     ROOT / "Dockerfile",
     ROOT / "Dockerfile.base.light",
@@ -26,11 +26,11 @@ def test_doagent_runtime_lock_includes_exact_source_revision():
         f"@{runtime['DO_AGENT_INDEX_DIGEST']}"
     )
 
-    ci = CI.read_text()
-    assert '--build-arg DO_AGENT_REVISION="${DO_AGENT_REVISION}"' in ci
+    image_build = IMAGE_BUILD.read_text()
+    assert '--build-arg DO_AGENT_REVISION="${DO_AGENT_REVISION}"' in image_build
     assert (
         'test "${ACTUAL_DOAGENT_REVISION}" = "${DO_AGENT_REVISION}"'
-        in ci
+        in image_build
     )
 
     for dockerfile in DOCKERFILES:

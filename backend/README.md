@@ -455,7 +455,7 @@ git tag v1.2.4
 git push cnb v1.2.4
 ```
 
-CNB 的 `tag_push` 流水线会构建四个平台二进制、生成 `checksums.txt`、上传到同名 Release，并从公开下载入口回读校验。二进制不进入 Git。
+CNB 的 `main` push 会构建并推送以 commit SHA 命名的 Agent 镜像。`tag_push` 则在完整测试后推送同 tag 的 Agent 镜像，构建四个平台 CLI、生成 `checksums.txt`、上传到同名 Release，并从公开下载入口回读校验。二进制不进入 Git。
 
 ## 边界
 

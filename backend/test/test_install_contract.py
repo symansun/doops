@@ -44,9 +44,12 @@ def test_tag_pipeline_publishes_and_verifies_release_assets():
     verify = VERIFY_PUBLISHED.read_text()
 
     assert "tag_push:" in ci
+    assert 'DOOPS_RELEASE_TAG="${CNB_BRANCH}" bash backend/scripts/build-agent-image.sh' in ci
+    assert "build release agent image" in ci
     assert "publish CLI release assets" in ci
     assert "verify published CLI release assets" in ci
     assert "https://api.cnb.cool" in publish
     assert "asset-upload-url" in publish
     assert 'CNB_TOKEN is required' in publish
+    assert "Agent image: ${image}" in publish
     assert "https://cnb.cool/${RELEASE_REPO}/-/releases/download/${RELEASE_TAG}" in verify
