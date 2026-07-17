@@ -25,6 +25,11 @@ func TestAgentPromptJSONReturnsFinalMessageInStructuredContent(t *testing.T) {
 	finalResult := `{
 		"apiVersion":"doops.sh/v2",
 		"kind":"DeploymentRun",
+		"metadata":{
+			"workflow":"deploy/release.yaml",
+			"runId":"run-json-prompt",
+			"workspaceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		},
 		"spec":{"mode":"dry-run"},
 		"status":{
 			"phase":"planned",
@@ -245,7 +250,12 @@ func TestBindDeploymentRunEvidenceEnforcesPrimarySourceObservation(t *testing.T)
 		result,
 		traces,
 		&deploymentRunContractBinding{
-			PrimaryTool: "mcp_doops_plan_ObserveWorkspaceSource",
+			APIVersion:      "doops.sh/v2",
+			Workflow:        "deploy/release.yaml",
+			RunID:           "run-test",
+			WorkspaceCommit: strings.Repeat("a", 40),
+			Mode:            "dry-run",
+			PrimaryTool:     "mcp_doops_plan_ObserveWorkspaceSource",
 		},
 	)
 	if err == nil || !strings.Contains(err.Error(), "evidence[0] must reference plan.ObserveWorkspaceSource") {
@@ -266,9 +276,12 @@ func TestBindDeploymentRunEvidenceBindsTrustedEnvelope(t *testing.T) {
 		},
 	})
 	result := deploymentRunWithToolRef("plan.ObserveWorkspaceSource", map[string]interface{}{})
-	result["apiVersion"] = "spoofed"
-	result["metadata"] = map[string]interface{}{"runId": "spoofed"}
-	result["spec"] = map[string]interface{}{"mode": "apply"}
+	result["apiVersion"] = "doops.sh/v3"
+	result["metadata"] = map[string]interface{}{
+		"workflow":        "deploy/environments/scu/environment.yaml",
+		"runId":           "run-verified",
+		"workspaceCommit": strings.Repeat("a", 40),
+	}
 
 	_, bound, err := bindDeploymentRunEvidence(
 		result,
@@ -295,6 +308,71 @@ func TestBindDeploymentRunEvidenceBindsTrustedEnvelope(t *testing.T) {
 		metadata["workspaceCommit"] != strings.Repeat("a", 40) ||
 		spec["mode"] != "dry-run" {
 		t.Fatalf("trusted DeploymentRun metadata/spec mismatch: %#v", bound)
+	}
+
+	result = deploymentRunWithToolRef("plan.ObserveWorkspaceSource", map[string]interface{}{})
+	result["apiVersion"] = "doops.sh/v3"
+	result["metadata"] = map[string]interface{}{
+		"workflow":        "deploy/environments/scu/environment.yaml",
+		"runId":           "spoofed",
+		"workspaceCommit": strings.Repeat("a", 40),
+	}
+	_, _, err = bindDeploymentRunEvidence(
+		result,
+		traces,
+		&deploymentRunContractBinding{
+			APIVersion:      "doops.sh/v3",
+			Workflow:        "deploy/environments/scu/environment.yaml",
+			RunID:           "run-verified",
+			WorkspaceCommit: strings.Repeat("a", 40),
+			Mode:            "dry-run",
+			PrimaryTool:     "mcp_doops_plan_ObserveWorkspaceSource",
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "does not match the trusted reconciliation instruction") {
+		t.Fatalf("spoofed trusted DeploymentRun envelope was accepted: %v", err)
+	}
+}
+
+func TestBindDeploymentRunEvidenceRejectsInvalidTopLevelEnvelope(t *testing.T) {
+	traces := completedDoagentToolTraces(t, []map[string]interface{}{
+		{
+			"sessionUpdate": "tool_call_update",
+			"toolCallId":    "read-1",
+			"toolName":      "Read",
+			"status":        "completed",
+			"input":         map[string]interface{}{"path": "state.json"},
+			"rawOutput":     map[string]interface{}{"revision": "current"},
+		},
+	})
+	for _, test := range []struct {
+		name   string
+		mutate func(map[string]interface{})
+		want   string
+	}{
+		{
+			name: "missing metadata",
+			mutate: func(result map[string]interface{}) {
+				delete(result, "metadata")
+			},
+			want: "must contain exactly apiVersion, kind, metadata, spec, and status",
+		},
+		{
+			name: "legacy flat field",
+			mutate: func(result map[string]interface{}) {
+				result["phase"] = "planned"
+			},
+			want: "must contain exactly apiVersion, kind, metadata, spec, and status",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := deploymentRunWithToolRef("Read", map[string]interface{}{"path": "state.json"})
+			test.mutate(result)
+			_, _, err := bindTestDeploymentRun(result, traces)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("invalid DeploymentRun envelope was accepted: %v", err)
+			}
+		})
 	}
 }
 
@@ -520,7 +598,16 @@ func completedDoagentToolTraces(t *testing.T, updates []map[string]interface{}) 
 
 func deploymentRunWithToolRef(tool string, input interface{}) map[string]interface{} {
 	return map[string]interface{}{
-		"kind": "DeploymentRun",
+		"apiVersion": "doops.sh/v2",
+		"kind":       "DeploymentRun",
+		"metadata": map[string]interface{}{
+			"workflow":        "deploy/release.yaml",
+			"runId":           "run-test",
+			"workspaceCommit": strings.Repeat("a", 40),
+		},
+		"spec": map[string]interface{}{
+			"mode": "dry-run",
+		},
 		"status": map[string]interface{}{
 			"mutationCount": 0,
 			"evidence": []interface{}{

@@ -804,7 +804,6 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			return
 		}
 		var admission *trustedReconciliationAdmission
-		var executionInstruction *doopsCICDInstructionEnvelope
 		if args.ResponseFormat == "json" {
 			var instruction struct {
 				Task            string `json:"task"`
@@ -825,12 +824,6 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 					return
 				}
 				admission = &built
-				envelope, err := decodeDoopsCICDInstruction(args.Instruction)
-				if err != nil {
-					writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
-					return
-				}
-				executionInstruction = &envelope
 			}
 		}
 		switch strings.ToLower(strings.TrimSpace(args.Mode)) {
@@ -867,9 +860,8 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			args.Model,
 			args.ResponseFormat,
 			agentPromptExecutionContext{
-				NativeMode:  nativeMode,
-				Admission:   admission,
-				Instruction: executionInstruction,
+				NativeMode: nativeMode,
+				Admission:  admission,
 			},
 			pushProgress,
 			writeJSON,
@@ -1012,9 +1004,8 @@ func validatedDoagentApplyInstruction(instruction string) (doopsCICDInstructionE
 }
 
 type agentPromptExecutionContext struct {
-	NativeMode  string
-	Admission   *trustedReconciliationAdmission
-	Instruction *doopsCICDInstructionEnvelope
+	NativeMode string
+	Admission  *trustedReconciliationAdmission
 }
 
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
@@ -1759,10 +1750,10 @@ func primaryDeploymentEvidenceTool(admission *trustedReconciliationAdmission) st
 }
 
 func deploymentRunBinding(execution agentPromptExecutionContext) *deploymentRunContractBinding {
-	if execution.Admission == nil || execution.Instruction == nil {
+	if execution.Admission == nil {
 		return nil
 	}
-	instruction := execution.Instruction
+	instruction := &execution.Admission.Instruction
 	return &deploymentRunContractBinding{
 		APIVersion:      instruction.ResultContract.APIVersion,
 		Workflow:        instruction.WorkflowPath,

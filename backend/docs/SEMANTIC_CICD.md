@@ -92,6 +92,8 @@ doagent emits exactly one JSON object as its final response:
   "apiVersion": "doops.sh/v2",
   "kind": "DeploymentRun",
   "metadata": {
+    "workflow": "deploy/environments/oilan/environment.yaml",
+    "runId": "run-example",
     "workspaceCommit": "0123456789abcdef0123456789abcdef01234567"
   },
   "spec": {
@@ -101,7 +103,16 @@ doagent emits exactly one JSON object as its final response:
     "phase": "planned",
     "mutationCount": 0,
     "capabilities": {},
-    "evidence": []
+    "evidence": [
+      {
+        "subject": "source-identity",
+        "observedAt": "2026-07-17T00:00:00Z",
+        "toolRef": {
+          "tool": "plan.ObserveWorkspaceSource",
+          "input": {}
+        }
+      }
+    ]
   }
 }
 ```
