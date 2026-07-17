@@ -64,6 +64,38 @@ func (f *fakeWorkflowCaller) CallStructured(toolName string, arguments map[strin
 	return json.Unmarshal([]byte(f.output), destination)
 }
 
+func TestWorkflowDeclaredSourceUsesConfigurationSourceArtifactContract(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("create repository marker: %v", err)
+	}
+	workflow := filepath.Join(root, "deploy", "workflows", "oilan.yaml")
+	if err := os.MkdirAll(filepath.Dir(workflow), 0o755); err != nil {
+		t.Fatalf("create workflow directory: %v", err)
+	}
+	if err := os.WriteFile(workflow, []byte(`apiVersion: doops.sh/v2
+kind: DeploymentTemplate
+spec:
+  configurationSource: deploy/environments.yaml
+`), 0o644); err != nil {
+		t.Fatalf("write workflow: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "deploy", "environments.yaml"), []byte(`artifactContract:
+  sourceRepository: https://example.test/ecp.git
+  sourceBranch: main
+`), 0o644); err != nil {
+		t.Fatalf("write configuration source: %v", err)
+	}
+
+	repository, branch, err := workflowDeclaredSource(workflow)
+	if err != nil {
+		t.Fatalf("resolve workflow source: %v", err)
+	}
+	if repository != "https://example.test/ecp.git" || branch != "main" {
+		t.Fatalf("unexpected source: repository=%q branch=%q", repository, branch)
+	}
+}
+
 func TestRunCICDCommandRoutesApplyThroughDeclaredSourceAndAsk(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
