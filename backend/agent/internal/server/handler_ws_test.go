@@ -1556,9 +1556,8 @@ func initializeAgentTestWS(t *testing.T, conn *websocket.Conn) {
 		t.Fatalf("initialize result must identify the agent process: %#v", resp)
 	}
 	capabilities, _ := result["capabilities"].(map[string]interface{})
-	protocols, _ := capabilities["protocols"].(map[string]interface{})
-	if protocols["credentialPlan"] != credentialPlanProtocolV2 {
-		t.Fatalf("initialize result must advertise credential plan v2: %#v", resp)
+	if _, ok := capabilities["tools"]; !ok {
+		t.Fatalf("initialize result must advertise tools capability: %#v", resp)
 	}
 }
 

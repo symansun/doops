@@ -58,9 +58,6 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 					out.WriteString(text)
 				}
 				if isErr, ok := result["isError"]; ok && fmt.Sprintf("%v", isErr) == "true" {
-					if internalCredentialTool(tool) {
-						return fmt.Errorf("%s", credentialToolErrorCategory(text))
-					}
 					return fmt.Errorf("tool returned an error")
 				}
 			} else if rpcErr, ok := msg.Parsed["error"]; ok && rpcErr != nil {
@@ -70,28 +67,6 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 		return nil
 	})
 	return out.String(), relayErr
-}
-
-func credentialToolErrorCategory(text string) string {
-	normalized := strings.ToLower(strings.TrimSpace(text))
-	switch {
-	case strings.Contains(normalized, "inline credential material is forbidden"):
-		return "inline_credential_material_forbidden"
-	case strings.Contains(normalized, "credential declaration is invalid"):
-		return "credential_declaration_invalid"
-	case strings.Contains(normalized, "workspace commit mismatch"):
-		return "credential_workspace_commit_mismatch"
-	case strings.Contains(normalized, "workspace is not ready"):
-		return "credential_workspace_not_ready"
-	case strings.Contains(normalized, "source revision") ||
-		strings.Contains(normalized, "immutable source revision"):
-		return "credential_source_revision_mismatch"
-	}
-	category := sanitizeCredentialCategory(strings.TrimSpace(text))
-	if category == "credential_operation_failed" {
-		return "credential_tool_failed"
-	}
-	return category
 }
 
 func resultContentText(result map[string]interface{}) string {

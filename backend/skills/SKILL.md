@@ -13,7 +13,7 @@ description: |
 - 日常使用：先看本文命令选择，再按 `docs/DOOPS_USAGE_GUIDE.md` 执行。
 - Gateway/API 细节：看 `docs/DOOPS_GATEWAY_TUNNEL.md` 和 `docs/DOOPS_API_GUIDE.md`。
 - 构建、发布、升级：看 `docs/BUILD_DEPLOY_SOP.md` 和 `docs/DOOPS_MAINTENANCE_LOG.md`。
-- Agent 原生 CI/CD：看 `docs/SEMANTIC_CICD.md`。
+- Agent 原生 CI/CD：看 `docs/AGENT_NATIVE_CICD.md`。
 - 模型与 ask 配置：看 `docs/MODEL_STANDARDS.md`。
 
 权威源码在 doops.sh 仓库 `skills/SKILL.md`。项目里的 `.agent/skills/doops/SKILL.md` 是安装副本；修改 skill 时必须先改 doops.sh 源码，再通过 `scripts/install.sh` 同步。
@@ -27,10 +27,8 @@ description: |
 - `doops-gateway` 是独立发布包，必须用 `scripts/deploy-gateway.sh --host <gateway-host>` 从 SSH 宿主机上下文发布。
 - gateway 控制面不登记为 doops target，不通过任何 doops target 发布 gateway 本体。
 - 不要用 base64、tar 或手写分片传输绕过 `push`。`doops_workspace_*` 是低层兼容 JSON-RPC 工具，不是 CLI、发布脚本和 skill 的标准路径；如果看到 512KB 分块日志，说明调用方绕过了当前 `doops push/pull`。应修复 Git HTTP 反向隧道、目标 agent 版本或发布脚本。
-- `doops cicd run` 只接受显式版本化根声明：v2
-  v3 `EnvironmentRegistry`。不得生成中间 workflow 或静默降级。
-- 声明 apiVersion 与 Gateway-Agent 控制面协议是两个维度。所有保留 Agent 必须在注册时声明 `doops.sh/credential-plan/v2`；Gateway 必须在 credential prepare dispatch 前阻断离线或不兼容 Agent。
-- credential prepare 与受信任 reconciliation 必须消费同一个严格声明编译结果。v3 中 source、target 或 runtime Secret 引用未声明时必须在 prepare 阶段阻断。
+- CI/CD 只通过 `doops ask` 交付自然语言任务。任务必须明确 target、服务范围、镜像版本、
+  变更原因和验收条件；不得以 Environment、DeploymentTemplate 或 YAML workflow 作为发布根。
 - 长构建或发布使用 `doops -session <s> exec --bg --target <t> --cmd '<cmd>'`。不要在普通 `exec` 命令中使用 `&`、`nohup` 或 `setsid`，因为调用结束时 agent 会终止该 shell 的子进程。
 - 不要混用 token：
   - gateway CLI 操作用 gateway user token。
@@ -130,8 +128,8 @@ doops targets --target unicom
 | :--- | :--- |
 | 执行确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'` |
 | AI 自主分析 | `doops -session <s> ask --target <t> --msg '<task>'` |
-| CI/CD 只读预演 | `doops -session <s> cicd run -target <t> -f <root.yaml> -dry-run -set reason=<reason>` |
-| CI/CD 正式收敛 | `doops -session <s> cicd run -target <t> -f <root.yaml> -set reason=<reason>` |
+| CI/CD 只读预演 | `doops -session <s> ask --target <t> --msg '只读检查发布范围、当前镜像和验收状态'` |
+| CI/CD 正式收敛 | `doops -session <s> ask --target <t> --msg '部署 <服务> 到 <目标>，使用 <镜像>；原因：<原因>；验收：<条件>'` |
 | 推送本地目录 | `doops -session <s> push --target <t> --src <dir>` |
 | 拉取远端工作区 | `doops -session <s> pull --target <t> --dest <dir>` |
 | 小文本读写 | `doops read/write ...` |
@@ -183,9 +181,6 @@ docs/DOOPS_MAINTENANCE_LOG.md
 
 - `401 Unauthorized`：认证失败。先确认 CLI 读的是 `~/.agent/skills/doops/config.json`，标准 target 的 token 必须是 gateway user token。
 - `403 Forbidden`：认证通过但权限不足，或用户被显式收窄。
-- `credential prepare HTTP 426`：目标 Agent 未声明 `doops.sh/credential-plan/v2`，必须升级 Agent，不能重试或回退。
-- `credential prepare HTTP 503`：目标 Agent 离线，先恢复 Gateway 注册连接。
-- `credential prepare HTTP 502`：Agent 已接收请求但凭据计划或物化失败；按返回的版本化错误 category 定位，不得把它解释为版本不兼容。
 - target 不在线：先跑 `doops targets --target <gateway-target>`。
 - `busy=true`：表示 target-wide 阻塞；`status=active` 且 `busy=false` 表示有 session 在跑，但其它 session 仍可使用。
 - gateway `push/pull` 失败：确认 `/v1/git/<cluster>/<instance>/<session>.git` 能路由到在线 agent，并检查 agent 本地 `/git/` handler/token。

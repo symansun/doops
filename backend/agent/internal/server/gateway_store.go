@@ -435,46 +435,6 @@ func (s *GatewayStore) migrate() error {
 			)`,
 		`CREATE INDEX IF NOT EXISTS idx_credential_verifications_resource
 				ON credential_verifications(credential_id, version_id, status)`,
-		`CREATE TABLE IF NOT EXISTS credential_materializations (
-				id TEXT PRIMARY KEY,
-				credential_id TEXT NOT NULL,
-				version_id TEXT NOT NULL,
-				grant_id TEXT NOT NULL,
-				use TEXT NOT NULL,
-				context_key TEXT NOT NULL,
-				request_json TEXT NOT NULL,
-				evidence_json TEXT NOT NULL DEFAULT '{}',
-				status TEXT NOT NULL,
-				error_category TEXT NOT NULL DEFAULT '',
-				created_at TEXT NOT NULL,
-				updated_at TEXT NOT NULL,
-				UNIQUE(version_id, grant_id, use, context_key),
-				FOREIGN KEY(credential_id) REFERENCES credentials(id),
-				FOREIGN KEY(version_id) REFERENCES credential_versions(id),
-				FOREIGN KEY(grant_id) REFERENCES credential_grants(id)
-			)`,
-		`CREATE INDEX IF NOT EXISTS idx_credential_materializations_resource
-				ON credential_materializations(credential_id, version_id, grant_id, status)`,
-		`CREATE TABLE IF NOT EXISTS credential_run_authorizations (
-				run_id TEXT PRIMARY KEY,
-				user_id TEXT NOT NULL,
-				token_id TEXT NOT NULL,
-				cluster TEXT NOT NULL,
-				instance TEXT NOT NULL,
-				session_id TEXT NOT NULL,
-				workflow_path TEXT NOT NULL,
-				workspace_commit TEXT NOT NULL,
-				mode TEXT NOT NULL,
-				run_digest TEXT NOT NULL,
-				state TEXT NOT NULL DEFAULT 'issued',
-				created_at TEXT NOT NULL,
-				expires_at TEXT NOT NULL,
-				consumed_at TEXT NOT NULL DEFAULT '',
-				FOREIGN KEY(user_id) REFERENCES users(id),
-				FOREIGN KEY(token_id) REFERENCES tokens(id)
-			)`,
-		`CREATE INDEX IF NOT EXISTS idx_credential_run_authorizations_expiry
-				ON credential_run_authorizations(state, expires_at)`,
 		`CREATE TABLE IF NOT EXISTS credential_bundles (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -507,9 +467,6 @@ func (s *GatewayStore) migrate() error {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return err
 		}
-	}
-	if err := s.migrateCredentialVerifications(); err != nil {
-		return err
 	}
 	if err := s.ensureColumn("users", "password_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err

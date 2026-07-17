@@ -2298,52 +2298,6 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	}
 }
 
-func TestGatewayRPCRejectsInternalCredentialToolsFromUserClients(t *testing.T) {
-	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	defer store.Close()
-	user, err := store.CreateUser("credential-caller")
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-	if err := store.GrantUser(user.ID, ScopeGrant{
-		Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAll},
-	}); err != nil {
-		t.Fatalf("grant user: %v", err)
-	}
-	token, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "credential-caller"})
-	if err != nil {
-		t.Fatalf("create token: %v", err)
-	}
-	hub := NewGatewayHub(store, GatewayHubOptions{})
-	mux := http.NewServeMux()
-	hub.RegisterRoutes(mux)
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	client := dialGatewayRPCClient(t, server.URL, token.Plaintext, "dev", "local")
-	defer client.Close()
-	for index, tool := range []string{"doops_credential_plan", "doops_credential_materialize", "doops_credential_cleanup"} {
-		id := float64(index + 2)
-		writeGatewayJSON(t, client, map[string]interface{}{
-			"jsonrpc": "2.0",
-			"id":      id,
-			"method":  "tools/call",
-			"params": map[string]interface{}{
-				"name":      tool,
-				"arguments": map[string]interface{}{},
-			},
-		})
-		response := readUntilID(t, client, id)
-		rpcError, _ := response["error"].(map[string]interface{})
-		if rpcError["code"] != float64(-32003) {
-			t.Fatalf("%s was not rejected as internal-only: %#v", tool, response)
-		}
-	}
-}
-
 func TestGatewayRPCAllowsConcurrentReadOnlyOperationsForSameTarget(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
@@ -3144,13 +3098,7 @@ func serveApplyGateFakeAgent(conn *websocket.Conn, credentialProtocol bool) {
 			result := map[string]interface{}{
 				"protocolVersion": "2024-11-05",
 			}
-			if credentialProtocol {
-				result["capabilities"] = map[string]interface{}{
-					"protocols": map[string]interface{}{
-						"credentialPlan": credentialPlanProtocolV2,
-					},
-				}
-			}
+			_ = credentialProtocol
 			_ = conn.WriteJSON(map[string]interface{}{
 				"jsonrpc": "2.0",
 				"id":      msg["id"],

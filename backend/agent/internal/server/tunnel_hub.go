@@ -39,8 +39,7 @@ type GatewayHub struct {
 	registration *AgentRegistrationHandler
 	client       *ClientService
 
-	scheduler            *Scheduler
-	credentialMutationMu sync.Mutex
+	scheduler *Scheduler
 }
 
 // AttachScheduler 注入定时巡检调度器，供 /v1/admin/jobs run-now 等接口使用。
@@ -61,7 +60,6 @@ const (
 	gatewayAgentTouchTimeout           = 2 * time.Second
 	gatewayReadProgressAckInterval     = 5 * time.Second
 	gatewayReadProgressAckWriteTimeout = 3 * time.Second
-	credentialPlanProtocolV2           = "doops.sh/credential-plan/v2"
 )
 
 type GatewayActiveOperation struct {
@@ -84,22 +82,21 @@ type gatewayActiveOperation struct {
 }
 
 type GatewayAgent struct {
-	Cluster                string    `json:"cluster"`
-	Instance               string    `json:"instance"`
-	Key                    string    `json:"key"`
-	Remote                 string    `json:"remote"`
-	TokenID                string    `json:"token_id,omitempty"`
-	Generation             uint64    `json:"generation"`
-	RuntimeID              string    `json:"runtime_id,omitempty"`
-	CredentialPlanProtocol string    `json:"credential_plan_protocol,omitempty"`
-	ConnectedAt            time.Time `json:"connected_at"`
-	LastSeen               time.Time `json:"last_seen"`
-	HeartbeatAt            time.Time `json:"heartbeat_at,omitempty"`
-	Busy                   bool      `json:"busy"`
-	Status                 string    `json:"status,omitempty"`
-	BusyReason             string    `json:"busy_reason,omitempty"`
-	ActiveOps              int       `json:"active_ops,omitempty"`
-	QueuedOps              int       `json:"queued_ops,omitempty"`
+	Cluster     string    `json:"cluster"`
+	Instance    string    `json:"instance"`
+	Key         string    `json:"key"`
+	Remote      string    `json:"remote"`
+	TokenID     string    `json:"token_id,omitempty"`
+	Generation  uint64    `json:"generation"`
+	RuntimeID   string    `json:"runtime_id,omitempty"`
+	ConnectedAt time.Time `json:"connected_at"`
+	LastSeen    time.Time `json:"last_seen"`
+	HeartbeatAt time.Time `json:"heartbeat_at,omitempty"`
+	Busy        bool      `json:"busy"`
+	Status      string    `json:"status,omitempty"`
+	BusyReason  string    `json:"busy_reason,omitempty"`
+	ActiveOps   int       `json:"active_ops,omitempty"`
+	QueuedOps   int       `json:"queued_ops,omitempty"`
 
 	stateMu         sync.RWMutex
 	conn            *websocket.Conn
@@ -433,10 +430,6 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/targets", h.HandleTargets)
 	mux.HandleFunc("/v1/targets/unlock", h.HandleTargetUnlock)
 	mux.HandleFunc("/v1/audit", h.HandleAudit)
-	mux.HandleFunc("/v1/credentials/prepare", h.HandleCredentialPrepare)
-	mux.HandleFunc("/v1/credential-bundles", h.HandleCredentialBundles)
-	mux.HandleFunc("/v1/credentials", h.HandleCredentials)
-	mux.HandleFunc("/v1/credentials/", h.HandleCredential)
 	mux.HandleFunc("/v1/admin/tokens", h.HandleAdminTokens)
 	mux.HandleFunc("/v1/admin/users", h.HandleAdminUsers)
 	mux.HandleFunc("/v1/admin/users/password", h.HandleAdminUserPassword)
@@ -964,31 +957,9 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32602, "invalid tools/call params"))
 		return nil
 	}
-	if internalCredentialTool(params.Name) {
-		writeJSON(buildErrorResponse(req.ID, -32003, "credential control-plane tools are internal only"))
-		return nil
-	}
 	if params.Name == "doops_agent_prompt" {
 		operation := extractStringArg(params.Arguments, "operation")
-		instruction := extractStringArg(params.Arguments, "instruction")
-		var marker struct {
-			Task string `json:"task"`
-		}
-		_ = json.Unmarshal([]byte(instruction), &marker)
-		if marker.Task == "execute-doops-cicd" {
-			var envelope struct {
-				ExecutionMode string `json:"executionMode"`
-			}
-			if err := json.Unmarshal([]byte(instruction), &envelope); err != nil ||
-				(envelope.ExecutionMode == "apply" && operation != "apply") ||
-				(envelope.ExecutionMode == "dry-run" && operation != "ask") {
-				writeJSON(buildErrorResponse(req.ID, -32602, "cicd operation does not match execution mode"))
-				return nil
-			}
-		} else if operation == "apply" {
-			writeJSON(buildErrorResponse(req.ID, -32602, "apply requires a structured doops-cicd instruction"))
-			return nil
-		} else if operation != "" && operation != "ask" {
+		if operation != "" && operation != "ask" && operation != "apply" {
 			writeJSON(buildErrorResponse(req.ID, -32602, "unsupported agent prompt operation: "+operation))
 			return nil
 		}
@@ -1216,15 +1187,9 @@ func sanitizeAgentPromptAudit(toolName, errMsg, tail string) (string, string) {
 		return sanitizeSecretText(errMsg), sanitizeSecretText(tail)
 	}
 	if errMsg != "" {
-		errMsg = sanitizeCredentialCategory(errMsg)
+		errMsg = sanitizeSecretText(errMsg)
 	}
 	return errMsg, ""
-}
-
-func internalCredentialTool(tool string) bool {
-	return tool == "doops_credential_plan" ||
-		tool == "doops_credential_materialize" ||
-		tool == "doops_credential_cleanup"
 }
 
 func (h *GatewayHub) registerAgent(agent *GatewayAgent) error {
@@ -1324,12 +1289,6 @@ func (a *GatewayAgent) initialize() error {
 			if result, ok := msg.Parsed["result"].(map[string]interface{}); ok {
 				a.RuntimeID, _ = result["runtimeId"].(string)
 				a.RuntimeID = strings.TrimSpace(a.RuntimeID)
-				if capabilities, ok := result["capabilities"].(map[string]interface{}); ok {
-					if protocols, ok := capabilities["protocols"].(map[string]interface{}); ok {
-						a.CredentialPlanProtocol, _ = protocols["credentialPlan"].(string)
-						a.CredentialPlanProtocol = strings.TrimSpace(a.CredentialPlanProtocol)
-					}
-				}
 			}
 			return nil
 		}
@@ -1971,12 +1930,6 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 		return ActionClean
 	case "doops_agent_upgrade":
 		return ActionAgentUpgrade
-	case "doops_credential_plan":
-		return ActionCredentialMetadata
-	case "doops_credential_materialize":
-		return ActionCredentialUse
-	case "doops_credential_cleanup":
-		return ActionCredentialRevoke
 	case "doops_workspace_begin", "doops_workspace_chunk", "doops_workspace_commit":
 		return ActionPush
 	case "doops_workspace_pull_begin", "doops_workspace_pull_chunk":
