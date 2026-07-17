@@ -21,7 +21,6 @@ import (
 
 const (
 	defaultAgentTokenPath     = "/root/.doops/agent-token"
-	defaultGatewayTokenPath   = "/run/secrets/doops/gateway-agent-token"
 	defaultAgentListenAddress = "0.0.0.0"
 )
 
@@ -71,11 +70,7 @@ func main() {
 	// doagent ACP HTTP 服务由 entrypoint.sh 在容器启动时拉起（port 9000）
 
 	if strings.TrimSpace(*gatewayURL) != "" {
-		gatewayToken, err := loadGatewayAgentToken()
-		if err != nil {
-			log.Fatal(err)
-		}
-		go runReverseTunnel(gw, gatewayToken, *gatewayURL, *cluster, *instance, *reconnectDelay)
+		go runReverseTunnel(gw, *gatewayURL, *cluster, *instance, *reconnectDelay)
 	}
 
 	http.HandleFunc("/ws", gw.HandleWebSocket) // 新增 WebSocket 端点
@@ -131,7 +126,7 @@ func setReverseTunnelConnected(connected bool) {
 	atomic.StoreInt32(&reverseTunnelConnected, 0)
 }
 
-func runReverseTunnel(gw *server.Gateway, registrationToken, rawURL, cluster, instance string, reconnectDelay time.Duration) {
+func runReverseTunnel(gw *server.Gateway, rawURL, cluster, instance string, reconnectDelay time.Duration) {
 	setReverseTunnelConnected(false)
 	if reconnectDelay <= 0 {
 		reconnectDelay = time.Second
@@ -158,10 +153,8 @@ func runReverseTunnel(gw *server.Gateway, registrationToken, rawURL, cluster, in
 			continue
 		}
 
-		header := http.Header{}
-		header.Set("Authorization", "Bearer "+registrationToken)
 		log.Printf("🌉 connecting reverse tunnel to %s (cluster=%s instance=%s)", tunnelURL, cluster, instance)
-		conn, resp, err := reverseTunnelDial(tunnelURL, header)
+		conn, resp, err := reverseTunnelDial(tunnelURL, nil)
 		if err != nil {
 			if resp != nil {
 				log.Printf("❌ reverse tunnel dial failed: %v (HTTP %s)", err, resp.Status)
@@ -182,22 +175,6 @@ func runReverseTunnel(gw *server.Gateway, registrationToken, rawURL, cluster, in
 		log.Printf("⚠️ reverse tunnel disconnected; reconnecting in %s", reconnectDelay)
 		time.Sleep(reconnectDelay)
 	}
-}
-
-func loadGatewayAgentToken() (string, error) {
-	path := strings.TrimSpace(os.Getenv("DOOPS_GATEWAY_AGENT_TOKEN_PATH"))
-	if path == "" {
-		path = defaultGatewayTokenPath
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read gateway agent registration token: %w", err)
-	}
-	token := strings.TrimSpace(string(data))
-	if token == "" {
-		return "", fmt.Errorf("gateway agent registration token is empty")
-	}
-	return token, nil
 }
 
 func buildGatewayAgentURL(rawURL, cluster, instance string) (string, error) {

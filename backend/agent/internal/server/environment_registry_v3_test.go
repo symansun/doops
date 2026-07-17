@@ -27,30 +27,6 @@ func TestEnvironmentRegistryV3SelectsOneService(t *testing.T) {
 		t.Fatalf("unexpected v3 registry plan: %#v", plan)
 	}
 
-	runtime, err := loadDoopsPlanRuntimeFromWorkspace(root, "deploy/environments.yaml", inputs)
-	if err != nil {
-		t.Fatalf("load v3 registry runtime: %v", err)
-	}
-	if !runtime.ServiceScoped ||
-		len(runtime.Services) != 1 ||
-		runtime.Services[0] != "frontend" ||
-		len(runtime.SourceImages) != 1 ||
-		len(runtime.TargetImages) != 1 ||
-		runtime.WorkloadNames["frontend"] != "zhiyong-frontend" {
-		t.Fatalf("v3 runtime is not service scoped: %#v", runtime)
-	}
-
-	args, err := doopsPlanHelmArgs(runtime, runtime.TargetImages, true)
-	if err != nil {
-		t.Fatalf("build service-scoped Helm args: %v", err)
-	}
-	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "--reuse-values") ||
-		strings.Contains(joined, " -f ") ||
-		!strings.Contains(joined, "frontend.image.repository=") ||
-		strings.Contains(joined, "lab-api.image.repository=") {
-		t.Fatalf("unexpected service-scoped Helm args: %s", joined)
-	}
 }
 
 func TestEnvironmentRegistryV3RequiresExplicitSelection(t *testing.T) {

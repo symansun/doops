@@ -21,9 +21,6 @@ gateway:
   url: ""
   cluster: ""
   instance: ""
-  agentTokenSecret:
-    name: ""
-    key: ""
 
 nodeSelector: {}
 

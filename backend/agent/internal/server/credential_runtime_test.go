@@ -551,8 +551,8 @@ func TestCredentialPlanHTTPStatusDistinguishesDeclarationFromTransportFailures(t
 	if got := credentialPlanHTTPStatus(errors.New("credential_declaration_invalid")); got != http.StatusUnprocessableEntity {
 		t.Fatalf("declaration status = %d, want %d", got, http.StatusUnprocessableEntity)
 	}
-	if got := credentialPlanHTTPStatus(errors.New("credential_workspace_commit_mismatch")); got != http.StatusConflict {
-		t.Fatalf("workspace status = %d, want %d", got, http.StatusConflict)
+	if got := credentialPlanHTTPStatus(errors.New("credential_target_offline")); got != http.StatusServiceUnavailable {
+		t.Fatalf("offline status = %d, want %d", got, http.StatusServiceUnavailable)
 	}
 	if got := credentialPlanHTTPStatus(errors.New("credential_tool_failed")); got != http.StatusBadGateway {
 		t.Fatalf("transport status = %d, want %d", got, http.StatusBadGateway)

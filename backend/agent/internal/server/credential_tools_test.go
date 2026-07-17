@@ -6,10 +6,22 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func runTestCommand(t *testing.T, directory, name string, arguments ...string) string {
+	t.Helper()
+	command := exec.Command(name, arguments...)
+	command.Dir = directory
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %v: %v\n%s", name, arguments, err, output)
+	}
+	return string(output)
+}
 
 func TestAgentCredentialPlanToolParsesBoundWorkspace(t *testing.T) {
 	_, _ = createCredentialPlanWorkspaceFixture(t)

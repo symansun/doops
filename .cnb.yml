@@ -74,9 +74,6 @@ main:
             ACTUAL_BASE_IMAGE="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.base.name" }}' "${APP_IMAGE}")"
             test "${ACTUAL_BASE_IMAGE}" = "${BASE_IMAGE}"
             docker run --rm --entrypoint /app/doops-agent "${APP_IMAGE}" -help >/dev/null
-            printf '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}\n' \
-              | docker run --rm -i --entrypoint /app/doops-plan-mcp "${APP_IMAGE}" \
-              | grep -q '"ObserveWorkspaceSource"'
             ACTUAL_DOAGENT_VERSION="$(docker run --rm --entrypoint /usr/local/bin/do-agent "${APP_IMAGE}" --version | awk '{print $NF}')"
             test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"
             docker run --rm --entrypoint /usr/local/bin/buildctl "${APP_IMAGE}" --version

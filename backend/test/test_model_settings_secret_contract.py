@@ -14,7 +14,6 @@ REGISTRY = ROOT / "deploy" / "environments.yaml"
 SETTINGS_MODULE = ROOT / "agent" / "configure_doagent_settings.py"
 KUBECONFIG_MODULE = ROOT / "agent" / "configure_kubeconfig.py"
 SANDBOX_ENTRYPOINT = ROOT / "agent" / "sandbox-entrypoint.sh"
-AGENT_ENTRYPOINT = ROOT / "agent" / "agent-entrypoint.sh"
 IMAGE_DIGEST = "sha256:" + ("b" * 64)
 
 
@@ -110,30 +109,17 @@ def test_oilan_agent_model_settings_are_secret_backed():
     assert env_value(container, "DOOPS_GATEWAY_INSTANCE")["value"] == "edu-coder"
     assert '-listen "0.0.0.0"' in container["command"][-1]
     assert "-agent-token" not in container["command"][-1]
-    assert env_value(container, "DOOPS_GATEWAY_AGENT_TOKEN_PATH")["value"] == (
-        "/run/secrets/doops/gateway-agent-token"
+    assert all(
+        item["name"] != "DOOPS_AGENT_TOKEN_PATH" for item in container["env"]
     )
-    assert next(
-        mount
+    assert all(
+        mount["name"] != "agent-registration-token"
         for mount in container["volumeMounts"]
-        if mount["name"] == "gateway-agent-registration-token"
-    ) == {
-        "name": "gateway-agent-registration-token",
-        "mountPath": "/run/secrets/doops",
-        "readOnly": True,
-    }
-    assert next(
-        volume
+    )
+    assert all(
+        volume["name"] != "agent-registration-token"
         for volume in deployment["spec"]["template"]["spec"]["volumes"]
-        if volume["name"] == "gateway-agent-registration-token"
-    ) == {
-        "name": "gateway-agent-registration-token",
-        "secret": {
-            "secretName": "doops-agent-runtime",
-            "defaultMode": 0o400,
-            "items": [{"key": "agent-token", "path": "gateway-agent-token"}],
-        },
-    }
+    )
     assert "/app/configure_kubeconfig.py" in SANDBOX_ENTRYPOINT.read_text()
     probes = {
         name: container[name]["exec"]["command"][-1]
@@ -171,13 +157,6 @@ def test_oilan_agent_model_settings_are_secret_backed():
     assert host_paths["containerd-socket"] == "/run/containerd/containerd.sock"
     assert host_paths["nerdctl-bin"] == "/usr/bin/nerdctl"
     assert host_paths["crictl-bin"] == "/usr/bin/crictl"
-
-
-def test_entrypoints_materialize_settings_at_writable_runtime_path():
-    for entrypoint in (AGENT_ENTRYPOINT, SANDBOX_ENTRYPOINT):
-        content = entrypoint.read_text(encoding="utf-8")
-        assert 'DO_AGENT_SETTINGS:-/tmp/doops-doagent/settings.json' in content
-        assert 'DO_AGENT_SETTINGS:-/root/.agent/settings.json' not in content
 
 
 def test_runtime_kubeconfig_uses_in_cluster_api_without_changing_admin_identity(
@@ -291,7 +270,7 @@ def test_single_model_policy_preserves_mounted_settings_and_omits_duplicate_tier
         == "secret-must-be-preserved"
     )
     assert "model_tiers" not in rendered
-    assert rendered["mcp_servers"] == [module.DOOPS_PLAN_SERVER]
+    assert rendered["mcp_servers"] == []
     assert original["model_tiers"]["high"] == "quan2go/gpt-5-4"
 
 

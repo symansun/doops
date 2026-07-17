@@ -43,7 +43,8 @@ func handleCredentialPlanTool(argBytes json.RawMessage) (string, error) {
 	}
 	for key, value := range args.Inputs {
 		if strings.TrimSpace(key) == "" || strings.TrimSpace(key) != key ||
-			credentialSecretLikeKey(key) || credentialScalarContainsInlineMaterial(value) {
+			strings.TrimSpace(value) != value || credentialSecretLikeKey(key) ||
+			credentialScalarContainsInlineMaterial(value) {
 			return "", fmt.Errorf("invalid credential plan inputs")
 		}
 	}

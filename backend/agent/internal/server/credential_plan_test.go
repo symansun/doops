@@ -456,7 +456,7 @@ environments:
 	}
 }
 
-func TestParseCredentialPlanResolvesEnvironmentRegistryFileToStrictV3Environment(t *testing.T) {
+func TestParseCredentialPlanRejectsEnvironmentRegistryFileIndirection(t *testing.T) {
 	root := t.TempDir()
 	writeCredentialV3EnvironmentFixture(t, root)
 	writeCredentialPlanTestFile(t, root, "deploy/workflows/release.yaml", `
@@ -495,17 +495,11 @@ environments:
     file: deploy/environments/oilan/environment.yaml
 `)
 
-	plan, err := parseCredentialPlan(root, "deploy/workflows/release.yaml")
-	if err != nil {
-		t.Fatalf("resolve registry v3 environment: %v", err)
-	}
-	if plan.Template != "zhiyong-oilan-release" ||
-		plan.Project != "zhiyong" ||
-		plan.Environment != "oilan" ||
-		plan.Target != "gw-edu-coder" ||
-		plan.Cluster != "doops-edu" ||
-		plan.Instance != "edu-coder" {
-		t.Fatalf("unexpected registry v3 plan: %#v", plan)
+	if _, err := parseCredentialPlan(root, "deploy/workflows/release.yaml"); !errors.Is(
+		err,
+		ErrCredentialDeclarationInvalid,
+	) {
+		t.Fatalf("obsolete environment file indirection error = %v", err)
 	}
 }
 
@@ -683,17 +677,14 @@ environments:
 	}
 }
 
-func TestParseCredentialPlanAcceptsV3EnvironmentDefinitionRoot(t *testing.T) {
+func TestParseCredentialPlanRejectsObsoleteV3EnvironmentDefinitionRoot(t *testing.T) {
 	root := t.TempDir()
 	writeCredentialV3EnvironmentFixture(t, root)
-	plan, err := parseCredentialPlan(root, "deploy/environments/oilan/environment.yaml")
-	if err != nil {
-		t.Fatalf("parse v3 credential plan: %v", err)
-	}
-	if plan.Template != "oilan" || plan.Project != "zhiyong" ||
-		plan.Environment != "oilan" || plan.Target != "gw-edu-coder" ||
-		plan.Cluster != "doops-edu" || plan.Instance != "edu-coder" {
-		t.Fatalf("unexpected v3 plan: %#v", plan)
+	if _, err := parseCredentialPlan(
+		root,
+		"deploy/environments/oilan/environment.yaml",
+	); !errors.Is(err, ErrCredentialDeclarationInvalid) {
+		t.Fatalf("obsolete v3 environment root error = %v", err)
 	}
 }
 

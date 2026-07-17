@@ -167,7 +167,7 @@ func TestRunReverseTunnelUpdatesReadyStateOnConnectAndDisconnect(t *testing.T) {
 	done := make(chan struct{})
 	gw := server.NewGateway("0")
 	go func() {
-		runReverseTunnel(gw, "synthetic-agent-token", "wss://gateway.example.com", "dev", "instance", 1*time.Millisecond)
+		runReverseTunnel(gw, "wss://gateway.example.com", "dev", "instance", 1*time.Millisecond)
 		close(done)
 	}()
 
@@ -185,7 +185,7 @@ func TestRunReverseTunnelUpdatesReadyStateOnConnectAndDisconnect(t *testing.T) {
 	if isReverseTunnelConnected() {
 		t.Fatal("reverse tunnel should be not ready after serve returns")
 	}
-	if want := "Bearer synthetic-agent-token"; authorization != want {
-		t.Fatalf("reverse tunnel authorization mismatch: got %q want %q", authorization, want)
+	if authorization != "" {
+		t.Fatalf("reverse tunnel registration must not send authorization, got %q", authorization)
 	}
 }

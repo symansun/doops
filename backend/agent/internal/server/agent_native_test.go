@@ -46,34 +46,20 @@ func TestDoagentModeForPromptUsesOnlyNativeAskMode(t *testing.T) {
 
 func TestValidateDoagentApplyInstructionRequiresCICDEnvelope(t *testing.T) {
 	valid := `{
-		"task":"execute-doops-cicd-workflow",
+		"task":"execute-doops-cicd",
 		"skill":"$doops-cicd",
 		"executionMode":"apply",
-		"runId":"release-0123456789abcdef",
-		"workflowPath":"deploy/release.yaml",
-		"source":{"repository":"https://example.test/app.git","branch":"main"},
-		"inputs":{},
-		"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"apply","cluster":"doops","instance":"runner","template":"release","project":"app","environment":"production","materializations":[]},
-		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun"}
+		"manifestPath":"deploy/environments.yaml",
+		"inputs":{"environment":"oilan","service":"lab-api"}
 	}`
 	if err := validateDoagentApplyInstruction(valid); err != nil {
 		t.Fatalf("valid apply envelope rejected: %v", err)
 	}
-	validV3 := strings.Replace(
-		valid,
-		`"resultContract":{"apiVersion":"doops.sh/v2"`,
-		`"resultContract":{"apiVersion":"doops.sh/v3"`,
-		1,
-	)
-	if err := validateDoagentApplyInstruction(validV3); err != nil {
-		t.Fatalf("valid v3 apply envelope rejected: %v", err)
-	}
 	for name, instruction := range map[string]string{
-		"plain prompt":  "deploy this",
-		"wrong task":    `{"task":"shell","skill":"$doops-cicd","executionMode":"apply"}`,
-		"wrong skill":   `{"task":"execute-doops-cicd-workflow","skill":"$shell","executionMode":"apply"}`,
-		"wrong mode":    `{"task":"execute-doops-cicd-workflow","skill":"$doops-cicd","executionMode":"dry-run"}`,
-		"wrong version": strings.Replace(valid, `"apiVersion":"doops.sh/v2"`, `"apiVersion":"doops.sh/v4"`, 1),
+		"plain prompt": "deploy this",
+		"wrong task":   `{"task":"shell","skill":"$doops-cicd","executionMode":"apply"}`,
+		"wrong skill":  `{"task":"execute-doops-cicd","skill":"$shell","executionMode":"apply"}`,
+		"wrong mode":   `{"task":"execute-doops-cicd","skill":"$doops-cicd","executionMode":"dry-run"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := validateDoagentApplyInstruction(instruction); err == nil {

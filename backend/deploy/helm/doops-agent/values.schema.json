@@ -29,8 +29,7 @@
       "required": [
         "url",
         "cluster",
-        "instance",
-        "agentTokenSecret"
+        "instance"
       ],
       "properties": {
         "url": {
@@ -44,24 +43,6 @@
         "instance": {
           "type": "string",
           "minLength": 1
-        },
-        "agentTokenSecret": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "name",
-            "key"
-          ],
-          "properties": {
-            "name": {
-              "type": "string",
-              "minLength": 1
-            },
-            "key": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
         }
       }
     }
