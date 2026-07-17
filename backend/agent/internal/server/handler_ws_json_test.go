@@ -55,6 +55,12 @@ func TestAgentPromptJSONReturnsFinalMessageInStructuredContent(t *testing.T) {
 			!strings.Contains(prompt, "Never return the status object by itself") {
 			t.Errorf("structured prompt must require the complete DeploymentRun envelope: %s", prompt)
 		}
+		if !strings.Contains(prompt, "apiVersion=resultContract.apiVersion") ||
+			!strings.Contains(prompt, "metadata.workspaceCommit=workspaceCommit") ||
+			!strings.Contains(prompt, "spec.mode=executionMode") ||
+			!strings.Contains(prompt, "Do not rename these output fields or put mode under metadata") {
+			t.Errorf("structured prompt must bind required DeploymentRun fields to request values: %s", prompt)
+		}
 		if !strings.Contains(prompt, "status may contain only phase, mutationCount, capabilities, evidence, and failures") ||
 			!strings.Contains(prompt, "Do not emit plannedMutations") {
 			t.Errorf("structured prompt must define DeploymentRun status fields: %s", prompt)
