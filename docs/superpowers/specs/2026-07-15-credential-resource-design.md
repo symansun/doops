@@ -1,5 +1,9 @@
 # DoOps Credential Resource Design
 
+> Updated on 2026-07-17 for the authoritative `doops.sh/v3`
+> `EnvironmentRegistry` execution path. Credential payloads remain write-only;
+> Git contains only metadata and references.
+
 ## Goal
 
 Make credentials a managed DoOps resource rather than hand-authored Kubernetes
@@ -8,7 +12,8 @@ contain a token, password, private key, cookie, or encoded secret payload.
 
 The first release addresses private OCI image pulls, while defining one
 resource model for registry, TLS, opaque, Helm repository, and Git credentials.
-It extends the existing `DeploymentTemplate -> doops cicd run -> doagent`
+It extends the existing
+`EnvironmentRegistry -> credential prepare -> doops cicd run -> doagent`
 release path; it does not introduce an SSH or direct `kubectl` deployment path.
 
 ## Scope And Non-Goals
@@ -37,7 +42,7 @@ Out of scope for the first release:
 CredentialResource
   + CredentialGrant(s)
   + optional CredentialBundle
-  -> DeploymentTemplate credentialRef / credentialBundleRef
+  -> EnvironmentRegistry / EnvironmentService credential reference
   -> Gateway authorization and target resolution
   -> Agent materialization in the authorized target
   -> non-sensitive verification evidence in DeploymentRun and audit
@@ -49,8 +54,8 @@ materialization policy. Its payload is write-only: no normal API, CLI, issue,
 Git, workspace, Agent prompt, audit record, or result artifact can return it.
 
 `CredentialGrant` binds a credential to one or more allowed consumers. A
-consumer can be a target, project, environment, namespace, or deployment
-template. A grant also limits permitted uses, such as `imagePull`,
+consumer can be a target, project, environment, namespace, or selected
+environment service. A grant also limits permitted uses, such as `imagePull`,
 `helmRepository`, `gitCheckout`, or `runtimeMount`.
 
 `CredentialBundle` is a named, versioned list of credential references for one
@@ -100,7 +105,7 @@ representations. A caller cannot select arbitrary Secret types or keys.
 The target Secret name is generated deterministically from the credential ID,
 version, namespace, and materialization intent. It is never provided by a
 deployment manifest and does not expose a credential value. The Gateway
-resolves target and namespace from the DeploymentTemplate plus the selected
+resolves target and namespace from the selected v3 environment service plus the selected
 grant; the Agent does not infer them.
 
 ## Authorization Model
@@ -131,111 +136,86 @@ prevent new materialization before any Agent call is made.
 
 ## YAML Contract
 
-Credential metadata and grants may be managed declaratively, but their payload
-is provided through a dedicated write-only command outside Git. The following
-contains no secret material:
+Credential payloads are provided through a dedicated write-only command
+outside Git. Metadata and grants are managed through the Gateway API/CLI. The
+deployment repository contains only a reference. For a private runtime OCI
+registry, the v3 environment declares the managed credential name:
 
 ```yaml
-apiVersion: doops.sh/v2
-kind: CredentialResource
+apiVersion: doops.sh/v3
+kind: EnvironmentRegistry
 metadata:
-  name: cnb-oci-pull
-spec:
-  scope: platform
-  type: registry
-  materialization:
-    kubernetes:
-      secretType: kubernetes.io/dockerconfigjson
-      requiredKeys:
-        - .dockerconfigjson
----
-apiVersion: doops.sh/v2
-kind: CredentialGrant
-metadata:
-  name: cnb-oci-pull-oilan
-spec:
-  credentialRef:
-    name: cnb-oci-pull
-  consumers:
-    targets:
-      - gw-edu-coder
-    environments:
-      - oilan
-    namespaces:
-      - kz-ops
-    deploymentTemplates:
-      - oilan-agent-release
-  allowedUses:
-    - imagePull
-```
-
-A deployment template references a credential or bundle. It must not accept
-`data`, `stringData`, `password`, `token`, `auth`, or equivalent secret fields.
-
-```yaml
-apiVersion: doops.sh/v2
-kind: DeploymentTemplate
-metadata:
-  name: oilan-agent-release
-spec:
-  environment: oilan
-  credentialRefs:
-    - name: cnb-oci-pull
-      use: imagePull
+  name: doops
+environments:
+  oilan:
+    target:
+      name: gw-edu-coder
+      cluster: doops-edu
+      instance: edu-coder
+      session: doops-oilan-release
+    source:
+      repository: https://cnb.cool/l8ai/ai/doops.sh.git
+      branch: main
+      build: deploy/deploy.yaml
+    helm:
+      release: doops-agent-live
       namespace: kz-ops
-      workload:
-        kind: Deployment
-        name: doops-agent-live
+      chart: backend/deploy/helm/doops-agent
+      values: deploy/environments/oilan/values.yaml
+      atomic: true
+      wait: true
+    artifacts:
+      targetRegistry: registry.example.internal/team
+      runtimeImagePullSecret:
+        kind: KubernetesSecret
+        name: cnb-oci-pull
+    services:
+      doops-agent: deploy/environments/oilan/services/doops-agent.yaml
+    healthChecks:
+      - https://doops.l8ai.cn/health
 ```
 
-A multi-credential template uses a bundle reference:
+The manifest must not accept `data`, `stringData`, `password`, `token`,
+`auth`, or equivalent secret fields. The compiler derives the namespace,
+registry repository, immutable digest, and workload from the selected
+environment service; users cannot override those fields in deployment inputs.
 
-```yaml
-apiVersion: doops.sh/v2
-kind: CredentialBundle
-metadata:
-  name: oilan-release-inputs
-spec:
-  credentials:
-    - name: cnb-oci-pull
-      use: imagePull
-    - name: oilan-helm-repo
-      use: helmRepository
-```
-
-```yaml
-spec:
-  credentialBundleRefs:
-    - name: oilan-release-inputs
-```
-
-The CLI surface is intentionally small:
+The implemented CLI surface is intentionally small:
 
 ```text
-doops credential apply -f credential-metadata.yaml
-doops credential put --name cnb-oci-pull --input stdin
-doops credential grant apply -f credential-grant.yaml
-doops credential rotate --name cnb-oci-pull --input stdin --target gw-edu-coder
-doops credential verify --name cnb-oci-pull --target gw-edu-coder --use imagePull
-doops credential revoke --name cnb-oci-pull
-doops -session <session> cicd run -f <workflow.yaml> -target <target> [--dry-run]
+doops credential create --target <target> --name <name> --scope <personal|platform> --type <type>
+doops credential put --target <target> --id <credential-id> < payload.json
+doops credential grant --target <target> --id <credential-id> --grantee-id <user-id> \
+  --cluster <cluster> --instance <instance> --project <project> \
+  --environment <environment> --template <template> --namespace <namespace> \
+  --uses <comma-separated-uses>
+doops credential verify --target <target> --id <credential-id> --version-id <version-id> \
+  --session <session> --workflow-path <path> --workspace-commit <commit>
+doops credential promote --target <target> --id <credential-id> --version-id <version-id>
+doops credential grant-revoke --target <target> --id <credential-id> --grant-id <grant-id>
+doops credential revoke --target <target> --id <credential-id>
+doops credential bundle-create --target <target> < bundle.json
+doops credential bundle-get --target <target> --name <name>
+doops -session <session> cicd run -f deploy/environments.yaml -target <target> \
+  --set environment=<environment> --set service=<service> [--dry-run]
 ```
 
-`--input stdin` is a protected local input flow: it must disable terminal echo
-when interactive, avoid argument/environment transport, and never print the
-value. The CLI must reject payload values in YAML, `--set`, command arguments,
-or workflow inputs instead of attempting compatibility behavior.
+Payload input is read only from stdin, is size-bounded and schema-validated,
+and is never printed. The CLI rejects payload values in YAML, `--set`, command
+arguments, or workflow inputs instead of attempting compatibility behavior.
 
 ## Deployment Resolution
 
 For an apply operation, the Gateway and Agent execute the following ordered
 flow:
 
-1. Parse the DeploymentTemplate and reject secret-like inline fields.
+1. Parse the selected v3 EnvironmentRegistry and EnvironmentService and reject
+   secret-like inline fields.
 2. Resolve each credential or bundle reference by immutable resource ID and
    current active version.
 3. Verify caller deployment permission and an active CredentialGrant that
-   covers the target, environment, template, namespace, and requested use.
+   covers the target, environment, selected service identity, namespace, and
+   requested use.
 4. Construct target materialization only from the credential type's fixed
    schema and grant-approved destination.
 5. Send payload only through the authenticated Gateway-to-Agent operation
@@ -350,8 +330,8 @@ cannot list, export, or repurpose credentials.
 
 1. Define Gateway schema, encryption provider contract, metadata-only APIs,
    grants, redaction tests, and audit extensions.
-2. Add CLI metadata/grant/payload commands and DeploymentTemplate reference
-   validation; reject inline secret fields.
+2. Add CLI metadata/grant/payload commands and v3 EnvironmentRegistry
+   reference validation; reject inline secret fields.
 3. Implement Agent materializers beginning with registry image pull Secrets and
    OCI manifest verification.
 4. Add TLS, opaque, Helm repository, and Git token materializers only after

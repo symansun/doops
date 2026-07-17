@@ -53,31 +53,28 @@ bash scripts/deploy-gateway.sh \
 
 ## 二、 Agent 标准构建工作流 (Server-Side Build)
 
-在进行任何修改后，若需要更新大模型管控组件 `doops-agent`，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA 为标签的候选镜像；候选镜像必须在下一步被解析为 registry digest。已注册的 DoOps Agent 只能通过版本化 DoOps 声明消费该 digest并完成环境同步、Helm 收敛与验证。DoOps 自身的 Agent bootstrap 当前使用 v2 `DeploymentTemplate`；业务环境可以使用 v3 `EnvironmentDefinition`，不得在二者之间生成中间 workflow 或静默降级。CNB 不负责环境部署、回滚或 Helm/Kubernetes 操作；`deploy.sh` 与任何 SSH/rsync 手工发布入口均已移除。
+在进行任何修改后，若需要更新 `doops-agent`，先由 `main` 的 CNB CI 构建候选镜像。
+CNB 不执行环境部署、回滚或 Helm/Kubernetes 操作。
 
 ### 1. 触发受控发布 (在控制端执行)
-发布者必须先将待发布提交推送到 `main`，确认 CNB CI 的候选镜像已经生成，并在无未提交文件的精确 commit checkout 中，以该完整 commit SHA 作为 `releaseId` 执行环境 `DeploymentTemplate`。CLI 会拒绝 HEAD 不匹配或工作区不干净的 source release。运行期必须使用该候选镜像的 registry digest，不得以可变 tag 作为实际部署镜像。Oilan 的入口为 `deploy/workflows/oilan-agent-bootstrap.yaml`，运行期目标清单由 `deploy/environments.yaml`、Helm Chart 和环境 values 定义。
+DoOps v3 使用自然语言任务。任务必须明确 target、服务范围、候选镜像、变更原因、
+验收条件和 mutation 授权。CLI 通过 `--allow-mutate` 将该请求按 exec 权限审计。
 
 ```bash
-doops -session oilan-agent-bootstrap cicd run \
-  -f backend/deploy/workflows/oilan-agent-bootstrap.yaml \
-  -target <configured-doops-target> \
-  -model <tool-capable-model> \
-  --dry-run \
-  --set releaseId=<main-commit-sha>
+doops -session oilan-agent-bootstrap ask \
+  --allow-mutate \
+  --target <configured-doops-target> \
+  --msg '部署 doops-agent；镜像=<candidate>; 原因=<reason>; 验收=<checks>; 已授权执行变更'
 ```
 
-The command synchronizes the repository, then sends one ordinary Ask to doagent
-for the `$doops-cicd` Skill. The Skill emits one JSON `DeploymentRun` as its
-final response;
-text such as `admitted` is not evidence, and dry-run mutation count must be zero.
+Mutation ask 使用自动清理的临时工作目录，不创建或复用 `/root/ws` 发布快照。
+Agent 必须实际调用工具并读回线上状态；零工具调用直接失败。
 
 **DoOps Agent 执行顺序：**
-1. 校验工作区与 `main` 上的精确 source commit 一致。
-2. 解析 CI 候选镜像的 registry digest，并按环境声明同步到目标 registry。
-3. 在候选镜像内校验 `doops-agent`、`do-agent`、BuildKit、Python/PyYAML、Helm 与嵌入的 Helm Chart。
-4. 通过版本化 bootstrap Job 将现有 Deployment 纳入 Helm 管理，并执行 `helm upgrade --install`。
-5. 等待 Job、Helm release 和 Kubernetes rollout 均成功。
+1. 核对 target、现有 Agent、并发操作和回滚点。
+2. 拉取候选镜像并执行受控 Agent upgrade。
+3. 等待新 Agent 注册、heartbeat 和版本读回。
+4. 回归 `exec`、只读 `ask` 与一次零工具 mutation 拒绝。
 
 ### 双镜像构建原则
 

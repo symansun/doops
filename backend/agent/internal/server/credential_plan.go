@@ -312,6 +312,35 @@ type credentialEnvironmentSecretRef struct {
 	DeploymentBlockedUntilDeclared bool   `yaml:"deploymentBlockedUntilDeclared,omitempty"`
 }
 
+func validateCredentialEnvironmentSecretRef(
+	environmentName, label string,
+	ref credentialEnvironmentSecretRef,
+) error {
+	if !credentialEnvironmentSecretRefDeclared(ref) {
+		return nil
+	}
+	if strings.TrimSpace(ref.Status) == "undeclared" || ref.DeploymentBlockedUntilDeclared {
+		return invalidCredentialDeclaration(
+			fmt.Errorf("environment %q %s is undeclared", environmentName, label),
+		)
+	}
+	if strings.TrimSpace(ref.Status) != "" ||
+		strings.TrimSpace(ref.Kind) != "KubernetesSecret" ||
+		strings.TrimSpace(ref.Name) == "" {
+		return invalidCredentialDeclaration(
+			fmt.Errorf("environment %q %s is incomplete", environmentName, label),
+		)
+	}
+	return nil
+}
+
+func credentialEnvironmentSecretRefDeclared(ref credentialEnvironmentSecretRef) bool {
+	return strings.TrimSpace(ref.Kind) != "" ||
+		strings.TrimSpace(ref.Name) != "" ||
+		strings.TrimSpace(ref.Status) != "" ||
+		ref.DeploymentBlockedUntilDeclared
+}
+
 type credentialEnvironmentService struct {
 	APIVersion string `yaml:"apiVersion"`
 	Kind       string `yaml:"kind"`
@@ -654,13 +683,6 @@ func parseCredentialWorkflowForInputs(
 			strings.TrimSpace(template.Spec.ConfigurationSource) == "" {
 			return credentialParsedWorkflow{}, invalidCredentialDeclaration(errors.New("invalid DeploymentTemplate identity or deployment context"))
 		}
-	case identity.APIVersion == "doops.sh/v3" && identity.Kind == "EnvironmentRegistry":
-		return parseCredentialEnvironmentRegistryV3(
-			root,
-			workflowPath,
-			workflowData,
-			inputs,
-		)
 	default:
 		return credentialParsedWorkflow{}, invalidCredentialDeclaration(
 			fmt.Errorf("unsupported workflow contract %q %q", identity.APIVersion, identity.Kind),
@@ -756,17 +778,8 @@ func validateCredentialEnvironmentDefinitionV3(
 		"targetCredentialRef":    definition.Spec.Artifacts.TargetCredentialRef,
 		"runtimeImagePullSecret": definition.Spec.Artifacts.RuntimeImagePullSecret,
 	} {
-		if strings.TrimSpace(ref.Status) == "undeclared" || ref.DeploymentBlockedUntilDeclared {
-			return credentialEnvironmentContext{}, invalidCredentialDeclaration(
-				fmt.Errorf("environment %q %s is undeclared", environmentName, label),
-			)
-		}
-		if strings.TrimSpace(ref.Status) != "" ||
-			strings.TrimSpace(ref.Kind) != "KubernetesSecret" ||
-			strings.TrimSpace(ref.Name) == "" {
-			return credentialEnvironmentContext{}, invalidCredentialDeclaration(
-				fmt.Errorf("environment %q %s is incomplete", environmentName, label),
-			)
+		if err := validateCredentialEnvironmentSecretRef(environmentName, label, ref); err != nil {
+			return credentialEnvironmentContext{}, err
 		}
 	}
 	if err := validateCredentialEnvironmentServicesV3(root, workflowPath, definition); err != nil {

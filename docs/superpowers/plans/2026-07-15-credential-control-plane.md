@@ -1,5 +1,9 @@
 # DoOps Credential Control Plane Implementation Plan
 
+> Superseded on 2026-07-17 by `docs/credential-plan-convergence.md` and
+> `backend/docs/AGENT_NATIVE_CICD.md`. This file records the earlier v2 plan;
+> `doops cicd run` no longer accepts that declaration model.
+
 ## Outcome
 
 DoOps manages versioned personal and platform credentials as first-class

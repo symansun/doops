@@ -99,57 +99,14 @@ environments:
 	}
 }
 
-func TestRepositoryDeploymentWorkflowsCompileCredentialPlans(t *testing.T) {
+func TestRepositoryDoesNotContainLegacyDeploymentWorkflows(t *testing.T) {
 	repositoryRoot := filepath.Clean(filepath.Join("..", "..", "..", ".."))
 	workflowPaths, err := filepath.Glob(filepath.Join(repositoryRoot, "backend", "deploy", "workflows", "*.yaml"))
 	if err != nil {
 		t.Fatalf("list repository workflows: %v", err)
 	}
-	if len(workflowPaths) == 0 {
-		t.Fatal("repository must contain deployment workflows")
-	}
-	for _, path := range workflowPaths {
-		relative, err := filepath.Rel(repositoryRoot, path)
-		if err != nil {
-			t.Fatalf("resolve workflow path %s: %v", path, err)
-		}
-		t.Run(filepath.Base(path), func(t *testing.T) {
-			if _, err := parseCredentialPlan(repositoryRoot, filepath.ToSlash(relative)); err != nil {
-				t.Fatalf("compile repository workflow: %v", err)
-			}
-		})
-	}
-}
-
-func TestExternalRepositoryDeploymentWorkflowsCompileCredentialPlans(t *testing.T) {
-	repositoryRoot := strings.TrimSpace(os.Getenv("DOOPS_CREDENTIAL_CONTRACT_ROOT"))
-	if repositoryRoot == "" {
-		t.Skip("DOOPS_CREDENTIAL_CONTRACT_ROOT is not set")
-	}
-	workflowPattern := strings.TrimSpace(os.Getenv("DOOPS_CREDENTIAL_CONTRACT_WORKFLOWS"))
-	if workflowPattern == "" {
-		workflowPattern = "deploy/workflows/*.yaml"
-	}
-	workflowPaths, err := filepath.Glob(filepath.Join(
-		repositoryRoot,
-		filepath.FromSlash(workflowPattern),
-	))
-	if err != nil {
-		t.Fatalf("list external repository workflows: %v", err)
-	}
-	if len(workflowPaths) == 0 {
-		t.Fatalf("external repository has no workflows matching %q", workflowPattern)
-	}
-	for _, path := range workflowPaths {
-		relative, err := filepath.Rel(repositoryRoot, path)
-		if err != nil {
-			t.Fatalf("resolve external workflow path %s: %v", path, err)
-		}
-		t.Run(filepath.Base(path), func(t *testing.T) {
-			if _, err := parseCredentialPlan(repositoryRoot, filepath.ToSlash(relative)); err != nil {
-				t.Fatalf("compile external repository workflow: %v", err)
-			}
-		})
+	if len(workflowPaths) != 0 {
+		t.Fatalf("legacy deployment workflows remain: %v", workflowPaths)
 	}
 }
 

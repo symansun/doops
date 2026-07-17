@@ -11,9 +11,15 @@ if [[ ! -f "${RELEASE_DIR}/checksums.txt" ]]; then
   exit 1
 fi
 
-DOOPS_CLI_OUT="${TEMP_DIR}/doops-host" \
-DOOPS_CLI_RELEASE_DIR="${TEMP_DIR}/release" \
-  bash "${REPO_ROOT}/scripts/build-cli.sh" --all
+actual_builder="$(go env GOOS)/$(go env GOARCH) $(go version | awk '{print $3}')"
+if [[ "${actual_builder}" == "linux/amd64 go1.24.13" ]]; then
+  DOOPS_CLI_OUT="${TEMP_DIR}/doops-host" \
+  DOOPS_CLI_RELEASE_DIR="${TEMP_DIR}/release" \
+    bash "${REPO_ROOT}/scripts/build-cli.sh" --all
+else
+  DOOPS_CLI_RELEASE_DIR="${TEMP_DIR}/release" \
+    bash "${REPO_ROOT}/scripts/build-cli-release.sh"
+fi
 
 diff -u "${RELEASE_DIR}/checksums.txt" "${TEMP_DIR}/release/checksums.txt"
 for artifact in doops-darwin-amd64 doops-darwin-arm64 doops-linux-amd64 doops-linux-arm64; do

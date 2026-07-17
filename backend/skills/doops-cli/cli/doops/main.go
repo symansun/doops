@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"crypto/rand"
 	"flag"
 	"fmt"
@@ -14,9 +13,12 @@ import (
 	"golang.org/x/term"
 )
 
+const cicdContractVersion = "doops.sh/cicd-contract/v3"
+
 func main() {
 	verbose := flag.Bool("verbose", false, "Enable verbose logging")
 	sessionName := flag.String("session", "", "Session/Task ID for isolation (REQUIRED)")
+	printContract := flag.Bool("contract", false, "Print the machine-readable CLI contract version")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `
 Doops 分布式服务器管理工具 (doops.sh CLI)
@@ -37,7 +39,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   write       写入文件到目标服务器
   info        获取节点系统信息 (CPU/内存/磁盘)
   k8s         受限 Kubernetes 观察与运维入口
-  cicd        声明式 CI/CD workflow 入口 (run)
   credential  管理 Gateway 凭据元数据与版本
   session     生成并输出一个新的唯一 Session ID
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
@@ -55,15 +56,18 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 选项:
   -verbose    启用详细日志
   -session    会话/任务ID (无默认值，涉及远程调用的命令必须提供以严格隔离工作空间)
+  -contract   输出机器可读的 CLI 契约版本
   -help       显示此帮助信息
 
-	Agent 原生声明式 CI/CD 示例:
-	  # run 先同步当前仓库，再通过 Ask 选择 doops-cicd Skill。
-	  doops -session test_ops cicd run -f deploy/environments.yaml --target agent-runtime --dry-run --set environment=test --set service=frontend
-	  doops -session test_ops cicd run -f deploy/environments.yaml --target agent-runtime --set environment=test --set service=frontend
+	Agent 原生 CI/CD 示例:
+	  doops -session release ask --allow-mutate --target agent-runtime --msg '$doops-cicd 部署 frontend；镜像=<image>; 原因=<reason>; 验收=<checks>; 已授权执行变更'
 `)
 	}
 	flag.Parse()
+	if *printContract {
+		fmt.Println(cicdContractVersion)
+		return
+	}
 
 	args := flag.Args()
 	if len(args) == 0 {
@@ -341,12 +345,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Println(msg)
 		}
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("k8s %s", req.Payload["operation"]))
-
-	case "cicd":
-		if err := runCICDCommand(context.Background(), cmdArgs, servers, configErr, ss, *sessionName, *verbose); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
-		}
 
 	case "credential":
 		if err := runCredentialCommand(cmdArgs, servers, configErr, os.Stdin, os.Stdout); err != nil {

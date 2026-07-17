@@ -57,14 +57,14 @@ DoOps 不在 Gateway 或脚本中复制 doagent 的 Agent 引擎。
 - doops-agent 不自动回复 `permission.updated`。
 - Skill 选择和多 Agent 调度由 doagent 完成。
 - system prompt 和 Skill 不写死环境命令、target 坐标或固定回滚实现。
-- CI/CD 只使用 `doops.sh/v2` 的 `DeploymentTemplate -> doops push -> Ask ->
-  doops-cicd -> DeploymentRun` Agent-native 链路。
+- CI/CD 使用完整自然语言任务和显式 `ask --allow-mutate` 授权进入
+  Gateway-bound Ask，再由 doops-cicd 执行并读回验收证据。
 
 ## 工作区与状态
 
-- session 工作区是 Agent 和确定性工具共享的任务上下文。
-- Git 工作区同步必须绑定精确 commit。
-- CI/CD 在锁内校验 `.doops-ready`，防止并发 push 替换待发布代码。
+- 普通 ask 的 session 工作区是 Agent 和确定性工具共享的任务上下文。
+- mutation ask 使用自动清理的临时工作目录，不复用 push/pull 工作区。
+- 发布前检查 target 操作锁，避免并发修改同一 Helm release。
 - 密钥通过 Secret 或节点本地设置注入，不进入 Skill、计划、日志和仓库。
 
 ## Skill 和脚本

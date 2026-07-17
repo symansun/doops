@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -503,15 +504,51 @@ func verifyRegistryManifest(ctx context.Context, server, username, password, rep
 		}
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
+	if response.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
 		return "", errors.New("registry_manifest_unavailable")
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	if err != nil || len(body) == 0 || len(body) > 1<<20 {
+		return "", errors.New("registry_manifest_invalid")
+	}
+	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if err != nil || !validRegistryManifestMediaType(mediaType) {
+		return "", errors.New("registry_manifest_invalid")
+	}
+	var manifest struct {
+		SchemaVersion int `json:"schemaVersion"`
+	}
+	if err := json.Unmarshal(body, &manifest); err != nil || manifest.SchemaVersion != 2 {
+		return "", errors.New("registry_manifest_invalid")
 	}
 	digest := strings.TrimSpace(response.Header.Get("Docker-Content-Digest"))
 	if digest == "" {
 		return "", errors.New("registry_digest_missing")
 	}
+	if !validCredentialSHA256Digest(digest) {
+		return "", errors.New("registry_digest_invalid")
+	}
+	computed := sha256.Sum256(body)
+	if digest != "sha256:"+hex.EncodeToString(computed[:]) {
+		return "", errors.New("registry_digest_mismatch")
+	}
+	if validCredentialSHA256Digest(reference) && digest != reference {
+		return "", errors.New("registry_reference_digest_mismatch")
+	}
 	return digest, nil
+}
+
+func validRegistryManifestMediaType(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "application/vnd.oci.image.manifest.v1+json",
+		"application/vnd.oci.image.index.v1+json",
+		"application/vnd.docker.distribution.manifest.v2+json",
+		"application/vnd.docker.distribution.manifest.list.v2+json":
+		return true
+	default:
+		return false
+	}
 }
 
 func registryManifestRequest(ctx context.Context, endpoint string) (*http.Request, error) {
