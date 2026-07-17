@@ -983,10 +983,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 				writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
 				return nil
 			}
-		} else if operation == "apply" {
-			writeJSON(buildErrorResponse(req.ID, -32602, "apply requires a structured doops-cicd instruction"))
-			return nil
-		} else if operation != "" && operation != "ask" {
+		} else if operation != "" && operation != "ask" && operation != "apply" {
 			writeJSON(buildErrorResponse(req.ID, -32602, "unsupported agent prompt operation: "+operation))
 			return nil
 		}

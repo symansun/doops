@@ -240,6 +240,12 @@ func (c *doagentToolTraceCollector) structuredResult() (string, map[string]inter
 	return text, object, nil
 }
 
+func (c *doagentToolTraceCollector) finalText() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return strings.TrimSpace(c.finalMessage)
+}
+
 func (c *doagentToolTraceCollector) completed() []doagentToolTrace {
 	c.mu.Lock()
 	defer c.mu.Unlock()

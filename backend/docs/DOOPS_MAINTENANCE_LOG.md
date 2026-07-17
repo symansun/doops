@@ -61,6 +61,19 @@ Do not publish new agent fixes under floating `v1`; use the explicit release ver
 
 - Fixed Git-backed source snapshots to use Git's own ignore semantics, keeping
   tracked release files and respecting root-anchored patterns such as `/ecp`.
+
+## 2026-07-17 Natural-Language V3 Mutation
+
+- Added explicit `doops ask --allow-mutate` authorization for natural-language
+  v3 release tasks.
+- Mutation asks use a fresh temporary working directory and remove it after the
+  turn instead of creating or reusing a `/root/ws` workspace snapshot.
+- Agent prompt results now return the actual final agent message. A mutation
+  turn with no completed tool call fails as `doagent_apply_no_tool_activity`
+  instead of returning `Operation complete.`
+- Verified the Agent server suite, CLI suite, v3 skill contract test, and the
+  temporary-workspace/no-tool-activity regression test.
+
 ## 2026-05-19 Gateway And Config Cleanup
 
 - Consolidated the CLI default config source to `~/.agent/skills/doops/config.json`.

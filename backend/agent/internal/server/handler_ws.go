@@ -785,8 +785,8 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		json.Unmarshal(argBytes, &args)
 		operation := strings.ToLower(strings.TrimSpace(args.Operation))
 		if operation == "apply" {
-			if err := validateDoagentApplyInstruction(args.Instruction); err != nil {
-				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+			if strings.TrimSpace(args.Instruction) == "" {
+				writeJSON(buildErrorResponse(reqID, -32602, "apply instruction must not be empty"))
 				return
 			}
 		}
@@ -834,6 +834,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			args.ResponseFormat,
 			agentPromptExecutionContext{
 				NativeMode: nativeMode,
+				Mutating:   operation == "apply",
 			},
 			pushProgress,
 			writeJSON,
@@ -948,33 +949,9 @@ func doagentModeForPrompt(operation, executionMode string) (string, error) {
 	}
 }
 
-func validateDoagentApplyInstruction(instruction string) error {
-	_, err := validatedDoagentApplyInstruction(instruction)
-	return err
-}
-
-func validatedDoagentApplyInstruction(instruction string) (map[string]interface{}, error) {
-	var envelope map[string]interface{}
-	err := json.Unmarshal([]byte(instruction), &envelope)
-	if err != nil {
-		return nil, fmt.Errorf("apply requires a structured doops-cicd instruction")
-	}
-	if envelope["task"] != "execute-doops-cicd" ||
-		envelope["skill"] != "$doops-cicd" ||
-		envelope["executionMode"] != "apply" ||
-		strings.TrimSpace(doopsCICDString(envelope["manifestPath"])) == "" {
-		return nil, fmt.Errorf("apply is only supported for an explicit doops-cicd apply instruction")
-	}
-	return envelope, nil
-}
-
-func doopsCICDString(value interface{}) string {
-	text, _ := value.(string)
-	return text
-}
-
 type agentPromptExecutionContext struct {
 	NativeMode string
+	Mutating   bool
 }
 
 const trustedReconciliationContextProtocolV2 = "doops.reconciliation-context/v2"
@@ -1040,7 +1017,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	// Machine-result prompts use a fresh doagent session so their tool trace
 	// catalog and turn_finished boundary cannot include a previous turn.
 	var entry *sessionEntry
-	if responseFormat != "json" {
+	if responseFormat != "json" && !execution.Mutating {
 		gw.sessionMapMu.RLock()
 		entry = gw.sessionMap[doopsSessionID]
 		gw.sessionMapMu.RUnlock()
@@ -1060,6 +1037,17 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		if responseFormat == "json" {
 			requestedSessionID = fmt.Sprintf("%s-json-%d", doopsSessionID, time.Now().UnixNano())
 		}
+		sessionCWD := "/root/ws/" + doopsSessionID
+		if execution.Mutating {
+			var err error
+			sessionCWD, err = os.MkdirTemp("", "doops-apply-")
+			if err != nil {
+				writeJSON(buildErrorResponse(reqID, -32603, "doagent_temporary_workspace_failed"))
+				return
+			}
+			defer os.RemoveAll(sessionCWD)
+			requestedSessionID = fmt.Sprintf("%s-apply-%d", doopsSessionID, time.Now().UnixNano())
+		}
 		var systemPrompt string
 		sysPromptPaths := []string{"/app/skills/system_prompt.md", "/app/self-docs/agent/skills/system_prompt.md"}
 		for _, sp := range sysPromptPaths {
@@ -1077,7 +1065,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			"params": map[string]interface{}{
 				"sessionId":    requestedSessionID,
 				"systemPrompt": systemPrompt,
-				"cwd":          "/root/ws/" + doopsSessionID,
+				"cwd":          sessionCWD,
 			},
 		})
 		if err != nil {
@@ -1095,7 +1083,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			return
 		}
 
-		if responseFormat != "json" {
+		if responseFormat != "json" && !execution.Mutating {
 			gw.sessionMapMu.Lock()
 			gw.sessionMap[doopsSessionID] = &sessionEntry{
 				doagentSessionID: targetSessionID,
@@ -1214,7 +1202,19 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		return
 	}
 
-	writeJSON(buildSuccessResponse(reqID, "Operation complete."))
+	resultText := toolTraces.finalText()
+	if execution.Mutating && len(toolTraces.completed()) == 0 {
+		if resultText == "" {
+			resultText = "agent returned without any completed tool call"
+		}
+		writeJSON(buildToolErrorResponse(reqID, "doagent_apply_no_tool_activity: "+resultText))
+		return
+	}
+	if resultText == "" {
+		writeJSON(buildToolErrorResponse(reqID, "doagent_final_result_missing"))
+		return
+	}
+	writeJSON(buildSuccessResponse(reqID, resultText))
 }
 
 func (gw *Gateway) handleAgentMetadataWS(ctx context.Context, doopsSessionID string) (string, error) {

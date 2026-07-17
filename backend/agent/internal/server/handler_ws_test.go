@@ -487,6 +487,92 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 	}
 }
 
+func TestNaturalLanguageApplyRejectsNoToolActivityAndCleansTemporaryWorkspace(t *testing.T) {
+	prompted := make(chan struct{})
+	cwdSeen := make(chan string, 1)
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rpc":
+			var req map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode rpc: %v", err)
+			}
+			switch req["method"] {
+			case "session/new":
+				params, _ := req["params"].(map[string]interface{})
+				cwd, _ := params["cwd"].(string)
+				cwdSeen <- cwd
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{"sessionId": "apply-no-tool"},
+				})
+			case "session/setMode":
+				params, _ := req["params"].(map[string]interface{})
+				if params["modeId"] != "build" {
+					t.Fatalf("mutating prompt must use build mode: %#v", params)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{},
+				})
+			case "session/prompt":
+				close(prompted)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]interface{}{
+						"status":   "accepted",
+						"delivery": "sse",
+						"turnId":   "turn-apply-no-tool",
+					},
+				})
+			default:
+				t.Fatalf("unexpected rpc method: %v", req["method"])
+			}
+		case "/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			<-prompted
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","turnId":"turn-apply-no-tool","content":{"type":"text","text":"no mutation was performed"}}}}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-apply-no-tool","status":"completed","stopReason":"end_turn"}}}`)
+			fmt.Fprintln(w)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id":  "natural-apply",
+		"instruction": "deploy the selected service",
+		"operation":   "apply",
+	})
+	if !strings.Contains(fmt.Sprint(result), "doagent_apply_no_tool_activity") {
+		t.Fatalf("zero-tool apply must fail with the explicit category: %#v", result)
+	}
+	cwd := <-cwdSeen
+	if !strings.HasPrefix(filepath.Base(cwd), "doops-apply-") {
+		t.Fatalf("mutating prompt used non-temporary cwd: %q", cwd)
+	}
+	requireEventually(t, time.Second, func() bool {
+		_, err := os.Stat(cwd)
+		return os.IsNotExist(err)
+	})
+}
+
 func TestAgentInitializeDoesNotExposeDedicatedCICDReconciliation(t *testing.T) {
 	gw := NewGateway("0")
 	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))

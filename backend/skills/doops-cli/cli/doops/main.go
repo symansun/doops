@@ -357,7 +357,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 	case "exec", "ask", "write", "read", "info":
 		var target, cmdStr, msgStr, path, modelStr, contentStr, fileStr string
 		var subSession string
-		var background bool
+		var background, allowMutate bool
 		subFlag := flag.NewFlagSet(command, flag.ExitOnError)
 		subFlag.StringVar(&target, "target", "", "Target server name")
 		subFlag.StringVar(&subSession, "session", "", "Session ID (can also be set before subcommand)")
@@ -369,6 +369,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		case "ask":
 			subFlag.StringVar(&msgStr, "msg", "", "Instruction")
 			subFlag.StringVar(&modelStr, "model", "", "Model to use for this instruction (optional)")
+			subFlag.BoolVar(&allowMutate, "allow-mutate", false, "Authorize the natural-language task to mutate the selected target")
 		case "write":
 			subFlag.StringVar(&path, "path", "", "Destination path")
 			subFlag.StringVar(&contentStr, "content", "", "Content to write; for multi-line content prefer --file or stdin")
@@ -481,6 +482,9 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		case "ask":
 			toolName = "doops_agent_prompt"
 			arguments["instruction"] = msgStr
+			if allowMutate {
+				arguments["operation"] = "apply"
+			}
 			if modelStr != "" {
 				arguments["model"] = modelStr
 			}
