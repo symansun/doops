@@ -160,7 +160,7 @@ Authorization: Bearer <USER_TOKEN>
 
 ## Git 工作区同步
 
-`push/pull` 使用 Git HTTP，不使用 stdout、base64 或 tar 分块传输。直连 agent 时访问 agent 的 `/git/<session>.git/...`；gateway 模式访问：
+`push/pull` 使用 Git HTTP，不使用 stdout、base64 或 tar 分块传输。标准公共 API 只通过 Gateway 访问：
 
 ```http
 GET/POST /v1/git/<cluster>/<instance>/<session>.git/...
@@ -299,21 +299,23 @@ websocat \
 
 ### `doops_agent_prompt`
 
-向目标 AI agent 下发自然语言任务。
+向目标 AI agent 下发非发布类的诊断或运维任务。生产发布不得使用该通用入口，
+必须使用后文的声明式发布协议。
 
 参数：
 
 ```json
 {
-  "session_id": "deploy_20260514",
-  "instruction": "检查仓库，生成部署计划，执行构建并更新 deployment/app。保留日志和脚本。",
+  "session_id": "diagnose_20260514",
+  "instruction": "检查目标节点磁盘和容器运行时状态，只返回诊断结果，不修改资源。",
   "model": "openai/gpt-5.4"
 }
 ```
 
 需要权限：`ask`。
 
-适用于首次适配环境、排障修复、生成部署脚本等探索型任务。AI 跑通后，应把生成的脚本或命令固化回代码仓库。
+适用于诊断、信息收集和用户明确授权的非发布运维任务。它不能替代
+`doops.sh/v3 EnvironmentRegistry`、credential prepare、发布 admission 或审计。
 
 ### `doops_file_read`
 
@@ -346,16 +348,16 @@ websocat \
 
 ### Workspace 同步协议
 
-标准 CLI 和发布脚本必须使用 Git HTTP 同步：
+通用文件同步 CLI 使用 Git HTTP：
 
 ```text
 doops push -> /v1/git/<cluster>/<instance>/<session>.git -> agent /git/<session>.git
 doops pull <- /v1/git/<cluster>/<instance>/<session>.git <- agent /git/<session>.git
 ```
 
-`doops_workspace_begin`、`doops_workspace_chunk`、`doops_workspace_commit`、`doops_workspace_pull_begin`、`doops_workspace_pull_chunk` 是低层兼容 JSON-RPC 工具，保留给旧客户端或定制客户端做兼容，不是发布、升级、构建脚本的标准入口。
+`doops_workspace_begin`、`doops_workspace_chunk`、`doops_workspace_commit`、`doops_workspace_pull_begin`、`doops_workspace_pull_chunk` 是低层 JSON-RPC 文件传输工具，不是声明式发布协议的一部分。
 
-如果标准部署过程中看到 `512KB` 分块上传日志，通常说明调用方绕过了当前 CLI 的 `doops push/pull`，仍在走兼容工具。应修复调用方，让它执行：
+普通文件同步应直接执行：
 
 ```bash
 doops -session <session> push --target <target> --src <dir>
@@ -415,9 +417,11 @@ doops -session <session> pull --target <target> --dest <dir>
 目标 Agent 之外的 CI/CD、GitOps 或 release controller 执行，并负责新实例心跳验证与
 失败回滚。
 
-## 自然语言部署 API 对接模式
+## 声明式发布 API 对接模式
 
-平台可以对外提供更高层的“部署这个仓库”接口，然后在内部组合 Doops Gateway 调用。一个典型的平台接口可以是：
+平台可以对外提供更高层的发布接口，但内部必须收敛到仓库中的
+`doops.sh/v3 EnvironmentRegistry`，不能把自然语言指令、工作区上传或直接 Agent
+工具调用作为生产发布协议。一个典型的平台接口可以是：
 
 ```http
 POST /your-platform/deployments
@@ -426,34 +430,31 @@ Content-Type: application/json
 {
   "repository": "https://cnb.cool/org/project.git",
   "ref": "main",
-  "cluster": "doops-oilan",
-  "instance": "oilan-node",
-  "mode": "ai",
-  "instruction": "构建并部署这个仓库，保留部署脚本和报告。"
+  "workflow": "deploy/environments.yaml",
+  "environment": "oilan",
+  "service": "api",
+  "dry_run": true
 }
 ```
 
-平台内部映射为以下 Doops 操作：
+平台内部必须按以下固定协议执行：
 
-1. 生成 `session_id`，例如 `deploy_${repo}_${timestamp}`。
-2. 查询 `/v1/targets`，确认目标在线；`busy=false` 表示没有 target-wide 阻塞，`status=active` 仍可继续使用不同 session。
-3. 使用 `doops push` 或 workspace upload 工具上传仓库内容。
-4. 调用 `doops_agent_prompt`，使用边界清晰的指令：
+1. 解析并校验指定 revision 中的 `deploy/environments.yaml`、环境和单个服务声明。
+2. 由 Gateway `/v1/credentials/prepare` 生成 metadata-only、单次使用且绑定
+   source revision、target、session 和 build definition 的 `CredentialRun`。
+3. Gateway 校验目标 Agent 精确声明
+   `doops.sh/credential-plan/v2`、`doops.sh/v3`、`doops.sh/cicd-contract/v3`
+   及全部绑定能力；不一致时返回
+   `426 Upgrade Required`，不得继续分发。
+4. Gateway 通过已授权反向隧道发送严格的
+   `doops.reconciliation-context/v2` apply envelope；Agent 公共 `/ws` 不接受
+   credential control-plane 工具或 apply。
+5. Agent 仅在当前 session 内临时物化凭据，调用 doagent 执行声明式 dry-run/apply，
+   完成后清理；Gateway 消费 `CredentialRun` 并记录审计。
+6. 返回发布状态、审计 ID、source revision、目标和健康检查结果。
 
-   ```text
-   你正在部署仓库 <repo>。只能在 /root/ws/<session> 内工作。
-   先检查项目结构。如果已有 deploy.sh，优先使用它。
-   使用 BuildKit 构建镜像，Kubernetes 变更必须先 server-side dry-run，
-   再真实 apply，等待 rollout 完成，并把最终报告写入
-   /root/ws/<session>/doops-report.md。所有命令必须可追溯。
-   ```
-
-5. 从 `notifications/message` 实时推送进展给调用方。
-6. 通过 `/v1/audit?session=<session>` 查询持久审计记录。
-7. 使用 `doops pull` 拉回 `/root/ws/<session>`，保存生成的脚本和报告。
-8. 向调用方返回最终状态、审计 ID、报告路径和拉回的产物位置。
-
-对于可重复的生产部署，应把 AI 首次探索成功后的结果固化为仓库内脚本，后续通过 `doops_shell` 调用固定脚本。
+生产发布必须由 CI/CD、GitOps 或独立 release controller 调用该协议，不能由被升级的
+目标 Agent 自升级。
 
 ## 进展和可追溯性
 

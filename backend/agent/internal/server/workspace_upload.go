@@ -474,8 +474,8 @@ func handleAgentUpgrade(argBytes json.RawMessage) (string, error) {
 		workload := firstNonEmptyString(args.Workload, "daemonset/doops-agent")
 		container := firstNonEmptyString(args.Container, "doops-agent")
 		return fmt.Sprintf(
-			"dry-run: external release controller must update %s/%s: kubectl -n %s set image %s %s=%s",
-			namespace, workload, namespace, workload, container, image,
+			"dry-run: image=%s runtime=k8s namespace=%s workload=%s container=%s; external Helm/GitOps controller must reconcile the complete workload and verify readiness plus gateway heartbeat",
+			image, namespace, workload, container,
 		), nil
 	case "docker", "container":
 		container := firstNonEmptyString(args.Container, "doops-agent")
@@ -804,6 +804,18 @@ func validateWorkspaceCommitBinding(sessionID, expectedCommit string) error {
 		}
 		if strings.TrimSpace(string(head)) != expectedCommit {
 			return fmt.Errorf("workspace Git commit mismatch")
+		}
+		statusCommand := exec.Command("git", "-C", workspace, "status", "--porcelain", "--untracked-files=all")
+		statusCommand.Env = command.Env
+		status, err := statusCommand.Output()
+		if err != nil {
+			return fmt.Errorf("read workspace Git status")
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(status)), "\n") {
+			if line == "" || line == "?? .doops-ready" {
+				continue
+			}
+			return fmt.Errorf("workspace contains changes outside the authorized commit")
 		}
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("inspect workspace Git metadata: %w", err)

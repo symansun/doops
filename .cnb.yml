@@ -87,6 +87,7 @@ main:
             ACTUAL_DOAGENT_REVISION="$(docker inspect --format '{{ index .Config.Labels "org.l8ai.doagent.revision" }}' "${APP_IMAGE}")"
             test "${ACTUAL_DOAGENT_REVISION}" = "${DO_AGENT_REVISION}"
             docker run --rm --entrypoint /app/doops-agent "${APP_IMAGE}" -help >/dev/null
+            docker run --rm --entrypoint /app/doops-gateway "${APP_IMAGE}" -help >/dev/null
             ACTUAL_DOAGENT_VERSION="$(docker run --rm --entrypoint /usr/local/bin/do-agent "${APP_IMAGE}" --version | awk '{print $NF}')"
             test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"
             docker run --rm --entrypoint /usr/local/bin/buildctl "${APP_IMAGE}" --version

@@ -7,7 +7,8 @@ The Oilan release has one authoritative declaration chain:
 - service definition: `deploy/services/doops-agent.yaml`;
 - build definition: `deploy/deploy.yaml`;
 - chart: `backend/deploy/helm/doops-agent`;
-- values: `deploy/environments/oilan/values.yaml`.
+- managed Agent values: `deploy/environments/oilan/values.yaml`;
+- release runner values: `deploy/environments/oilan/release-runner-values.yaml`.
 
 All declarations use `doops.sh/v3`. Generated workflows and v2
 `DeploymentTemplate` files are not release inputs.
@@ -34,8 +35,16 @@ workload.
 ## Runtime Contract
 
 The image contains the pinned doagent release. Gateway credential prepare
-requires the target Agent to advertise `doops.sh/credential-plan/v2`, and the
-embedded doagent must advertise the exact reconciliation contract:
+requires the target Agent to advertise the exact credential-plan capability:
+
+- `schemaVersion=doops.sh/credential-plan/v2`;
+- `declarationSchemaVersion=doops.sh/v3`;
+- `sourceRevision=true`;
+- `targetBinding=true`;
+- `sessionBinding=true`;
+- `buildDefinition=true`.
+
+The embedded doagent must advertise the exact reconciliation contract:
 
 - `schemaVersion=doops.reconciliation-context/v2`;
 - `callContextSchemaVersion=doops.reconciliation-call-context/v1`;
@@ -43,15 +52,17 @@ embedded doagent must advertise the exact reconciliation contract:
 - `credentialRunDigest=true`;
 - `sourceWorkspaceCommit=true`.
 
-Any mismatch stops before Ask. There is no direct-Agent, SSH, local Helm, or
-older-protocol execution branch.
+Any mismatch stops before Ask. The managed `doops-agent-live` Deployment never
+executes its own release. The distinct `doops-release-runner` Deployment uses a
+different Gateway identity, selector, and Agent home. There is no direct-Agent,
+local Helm, self-upgrade, or older-protocol execution branch.
 
 ## Execution
 
 ```bash
 doops -session doops-oilan-release cicd run \
   -f deploy/environments.yaml \
-  -target gw-edu-coder \
+  -target gw-edu-release-runner \
   --dry-run \
   --set environment=oilan \
   --set service=doops-agent

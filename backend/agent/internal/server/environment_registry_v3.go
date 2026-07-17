@@ -56,6 +56,21 @@ type credentialEnvironmentRegistryV3Selection struct {
 	Service         credentialEnvironmentService
 }
 
+type credentialBuildDefinitionV3 struct {
+	APIVersion string `yaml:"apiVersion"`
+	Kind       string `yaml:"kind"`
+	Metadata   struct {
+		Name string `yaml:"name"`
+	} `yaml:"metadata"`
+	Spec struct {
+		Services map[string]struct {
+			Context    string `yaml:"context"`
+			Dockerfile string `yaml:"dockerfile"`
+			Image      string `yaml:"image"`
+		} `yaml:"services"`
+	} `yaml:"spec"`
+}
+
 func parseCredentialEnvironmentRegistryV3(
 	root, workflowPath string,
 	data []byte,
@@ -319,6 +334,26 @@ func validateCredentialEnvironmentRegistryV3Service(
 	if definition.Spec.BuildManifest != environment.Source.Build {
 		return credentialEnvironmentService{}, invalidCredentialDeclaration(
 			fmt.Errorf("service %q buildManifest does not match environment source.build", serviceName),
+		)
+	}
+	buildData, err := readCredentialDeclarationFile(root, environment.Source.Build)
+	if err != nil {
+		return credentialEnvironmentService{}, err
+	}
+	var build credentialBuildDefinitionV3
+	if err := strictCredentialYAMLDecode(buildData, &build); err != nil {
+		return credentialEnvironmentService{}, invalidCredentialDeclaration(err)
+	}
+	buildService, ok := build.Spec.Services[serviceName]
+	if build.APIVersion != "doops.sh/v3" ||
+		build.Kind != "BuildDefinition" ||
+		strings.TrimSpace(build.Metadata.Name) == "" ||
+		!ok ||
+		buildService.Context != definition.Spec.SourceContext ||
+		buildService.Dockerfile != definition.Spec.Dockerfile ||
+		buildService.Image != service.Spec.Artifact.Source {
+		return credentialEnvironmentService{}, invalidCredentialDeclaration(
+			fmt.Errorf("service %q build definition is incomplete or inconsistent", serviceName),
 		)
 	}
 	return service, nil

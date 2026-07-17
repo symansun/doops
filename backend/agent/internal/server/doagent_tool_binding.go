@@ -39,17 +39,42 @@ type doagentToolTrace struct {
 }
 
 type doagentToolTraceCollector struct {
-	mu           sync.Mutex
-	calls        map[string]doagentToolTrace
-	finalMessage string
+	mu                 sync.Mutex
+	calls              map[string]doagentToolTrace
+	collectAgentReport bool
+	finalMessage       string
+	finalReport        json.RawMessage
 }
 
-func newDoagentToolTraceCollector() *doagentToolTraceCollector {
-	return &doagentToolTraceCollector{calls: make(map[string]doagentToolTrace)}
+func newDoagentToolTraceCollector(collectAgentReport bool) *doagentToolTraceCollector {
+	return &doagentToolTraceCollector{
+		calls:              make(map[string]doagentToolTrace),
+		collectAgentReport: collectAgentReport,
+	}
 }
 
 func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error {
 	if update["replay"] == true {
+		return nil
+	}
+	if update["sessionUpdate"] == "agent_report" {
+		if !c.collectAgentReport {
+			return nil
+		}
+		report, ok := update["report"].(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("agent report must be an object")
+		}
+		encoded, err := stableDoagentJSON(report)
+		if err != nil {
+			return fmt.Errorf("encode agent report: %w", err)
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if len(c.finalReport) != 0 {
+			return fmt.Errorf("multiple agent reports were observed")
+		}
+		c.finalReport = encoded
 		return nil
 	}
 	if update["sessionUpdate"] == "agent_message" {
@@ -226,10 +251,21 @@ func mergeDoagentToolAttestationUpdate(update map[string]interface{}, result int
 	return nil
 }
 
-func (c *doagentToolTraceCollector) structuredResult() (string, map[string]interface{}, error) {
+func (c *doagentToolTraceCollector) structuredResult(requireAgentReport bool) (string, map[string]interface{}, error) {
 	c.mu.Lock()
 	text := c.finalMessage
+	report := append(json.RawMessage(nil), c.finalReport...)
 	c.mu.Unlock()
+	if requireAgentReport {
+		if len(report) == 0 {
+			return "", nil, fmt.Errorf("structured CI/CD report was not emitted")
+		}
+		var object map[string]interface{}
+		if err := json.Unmarshal(report, &object); err != nil {
+			return "", nil, fmt.Errorf("decode structured CI/CD report: %w", err)
+		}
+		return string(report), object, nil
+	}
 	if strings.TrimSpace(text) == "" {
 		return "", nil, fmt.Errorf("final machine result was not emitted")
 	}
@@ -238,12 +274,6 @@ func (c *doagentToolTraceCollector) structuredResult() (string, map[string]inter
 		return "", nil, fmt.Errorf("final machine result must contain one JSON object: %w", err)
 	}
 	return text, object, nil
-}
-
-func (c *doagentToolTraceCollector) finalText() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return strings.TrimSpace(c.finalMessage)
 }
 
 func (c *doagentToolTraceCollector) completed() []doagentToolTrace {

@@ -173,6 +173,47 @@ func TestGatewayAgentRegistrationDoesNotRequireToken(t *testing.T) {
 	resp.Body.Close()
 }
 
+func TestCredentialPlanCapabilityRequiresExactContract(t *testing.T) {
+	valid := credentialPlanCapability()
+	if !credentialPlanCapabilityCompatible(valid) {
+		t.Fatalf("current credential plan capability rejected: %#v", valid)
+	}
+
+	for name, capability := range map[string]interface{}{
+		"legacy string": credentialPlanProtocolV2,
+		"missing source revision": map[string]interface{}{
+			"schemaVersion":            credentialPlanProtocolV2,
+			"declarationSchemaVersion": credentialPlanDeclarationV3,
+			"targetBinding":            true,
+			"sessionBinding":           true,
+			"buildDefinition":          true,
+		},
+		"wrong declaration schema": map[string]interface{}{
+			"schemaVersion":            credentialPlanProtocolV2,
+			"declarationSchemaVersion": "doops.sh/v2",
+			"sourceRevision":           true,
+			"targetBinding":            true,
+			"sessionBinding":           true,
+			"buildDefinition":          true,
+		},
+		"unknown field": map[string]interface{}{
+			"schemaVersion":            credentialPlanProtocolV2,
+			"declarationSchemaVersion": credentialPlanDeclarationV3,
+			"sourceRevision":           true,
+			"targetBinding":            true,
+			"sessionBinding":           true,
+			"buildDefinition":          true,
+			"legacyFallback":           true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if credentialPlanCapabilityCompatible(capability) {
+				t.Fatalf("incompatible credential plan capability accepted: %#v", capability)
+			}
+		})
+	}
+}
+
 func TestGatewayAgentCandidateDoesNotReplaceReadySessionBeforeInitialize(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
@@ -1350,18 +1391,25 @@ func TestGatewayRejectsAgentSelfMutationShellBeforeDispatch(t *testing.T) {
 
 	client := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
 	defer client.Close()
-	args, _ := json.Marshal(map[string]interface{}{
-		"command":    "kubectl -n doops-system set image deployment/doops-agent doops-agent=image:v2",
-		"session_id": "blocked-self-mutation",
-	})
-	writeGatewayJSON(t, client, map[string]interface{}{
-		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-		"params": map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(args)},
-	})
-	resp := readUntilID(t, client, 2)
-	errObj, ok := resp["error"].(map[string]interface{})
-	if !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "blocked dangerous command") {
-		t.Fatalf("expected gateway command rejection, got %#v", resp)
+	commands := []string{
+		"kubectl -n doops-system set image deployment/doops-agent doops-agent=image:v2",
+		"printf '%s' 'encoded-job' | base64 -d | kubectl apply -f -",
+	}
+	for index, command := range commands {
+		id := index + 2
+		args, _ := json.Marshal(map[string]interface{}{
+			"command":    command,
+			"session_id": fmt.Sprintf("blocked-self-mutation-%d", id),
+		})
+		writeGatewayJSON(t, client, map[string]interface{}{
+			"jsonrpc": "2.0", "id": id, "method": "tools/call",
+			"params": map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(args)},
+		})
+		resp := readUntilID(t, client, float64(id))
+		errObj, ok := resp["error"].(map[string]interface{})
+		if !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "blocked dangerous command") {
+			t.Fatalf("expected gateway command rejection for %q, got %#v", command, resp)
+		}
 	}
 	if gw.getAgent("dev", "local") == nil {
 		t.Fatal("rejected shell command disconnected the agent")
@@ -2066,7 +2114,7 @@ func TestGatewayRPCDoesNotFallbackSessionNotificationsWithoutSessionID(t *testin
 }
 
 func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
-	if got := resourceKeyForTool(ActionExec, "doops_shell", json.RawMessage(`{"session_id":"exec-a"}`), "dev", "node"); got != "session:exec-a" {
+	if got := resourceKeyForTool(ActionExec, "doops_shell", json.RawMessage(`{"session_id":"exec-a"}`), "dev", "node"); got != "workspace:exec-a" {
 		t.Fatalf("exec resource key mismatch: %q", got)
 	}
 	genericPromptArgs := json.RawMessage(`{"session_id":"ask-a","instruction":"inspect and repair the service"}`)
@@ -2098,6 +2146,9 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	}
 	if got := resourceKeyForTool(ActionWrite, "doops_file_write", json.RawMessage(`{"path":"/tmp/x"}`), "dev", "node"); got != "path:/tmp/x" {
 		t.Fatalf("write resource key mismatch: %q", got)
+	}
+	if got := resourceKeyForTool(ActionWrite, "doops_file_write", json.RawMessage(`{"session_id":"write-a","path":"config.yaml"}`), "dev", "node"); got != "workspace:write-a" {
+		t.Fatalf("session write resource key mismatch: %q", got)
 	}
 	if got := resourceKeyForTool(ActionAgentUpgrade, "doops_agent_upgrade", json.RawMessage(`{}`), "dev", "node"); got != "target:dev/node" {
 		t.Fatalf("upgrade resource key mismatch: %q", got)
@@ -2937,7 +2988,7 @@ func serveApplyGateFakeAgent(conn *websocket.Conn, credentialProtocol bool) {
 			if credentialProtocol {
 				result["capabilities"] = map[string]interface{}{
 					"protocols": map[string]interface{}{
-						"credentialPlan": credentialPlanProtocolV2,
+						"credentialPlan": credentialPlanCapability(),
 					},
 				}
 			}

@@ -11,7 +11,6 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Best for known checks and deploy scripts. |
 | Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | Agent-managed task with status polling; required when the command outlives a normal remote shell call. |
 | Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
-| Run a declared deployment | `doops -session <s> cicd run -f deploy/environments.yaml -target <t> --set environment=<e> --set service=<svc>` | Resolves one immutable source commit, prepares credentials, and consumes one bound `CredentialRun`. |
 | Push a local directory | `doops -session <s> push --target <t> --src <dir>` | Syncs into `/root/ws/<session>`. |
 | Pull a remote workspace | `doops -session <s> pull --target <t> --dest <dir>` | Use for large files and binary assets. |
 | Read small text | `doops -session <s> read --target <t> --path <file>` | Small text only. |

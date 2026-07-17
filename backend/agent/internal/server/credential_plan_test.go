@@ -35,67 +35,20 @@ func TestCredentialScalarRejectsKnownSecretFormats(t *testing.T) {
 	}
 }
 
-func TestParseCredentialPlanReturnsOnlyDeclaredReferenceMetadata(t *testing.T) {
-	root := t.TempDir()
-	writeCredentialPlanTestFile(t, root, "deploy/release.yaml", `
+func TestParseCredentialPlanRejectsV2WorkflowContracts(t *testing.T) {
+	for _, kind := range []string{"DeploymentTemplate", "SemanticRelease"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			writeCredentialPlanTestFile(t, root, "deploy/release.yaml", `
 apiVersion: doops.sh/v2
-kind: DeploymentTemplate
+kind: `+kind+`
 metadata:
-  name: oilan-agent-release
-spec:
-  application: oilan
-  environment: production
-  configurationSource: deploy/environments.yaml
-  credentialRefs:
-    - name: cnb-oci-pull
-      use: imagePull
-      namespace: kz-ops
-      registryRepository: team/app
-      registryReference: latest
-      workload:
-        kind: Deployment
-        name: doops-agent-live
-  credentialBundleRefs:
-    - name: release-shared
+  name: obsolete-release
 `)
-	writeCredentialPlanTestFile(t, root, "deploy/environments.yaml", `
-apiVersion: doops.sh/v2
-kind: EnvironmentRegistry
-metadata:
-  name: test-environments
-environments:
-  production:
-    target:
-      name: gw-edu-coder
-      cluster: doops-edu
-      instance: edu-coder
-`)
-
-	plan, err := parseCredentialPlan(root, "deploy/release.yaml")
-	if err != nil {
-		t.Fatalf("parse credential plan: %v", err)
-	}
-	if plan.Template != "oilan-agent-release" ||
-		plan.Project != "oilan" ||
-		plan.Environment != "production" ||
-		plan.Target != "gw-edu-coder" ||
-		plan.Cluster != "doops-edu" ||
-		plan.Instance != "edu-coder" {
-		t.Fatalf("unexpected deployment context: %#v", plan)
-	}
-	if len(plan.CredentialRefs) != 1 {
-		t.Fatalf("credential refs = %#v", plan.CredentialRefs)
-	}
-	ref := plan.CredentialRefs[0]
-	if ref.Name != "cnb-oci-pull" ||
-		ref.Use != CredentialUseImagePull ||
-		ref.Namespace != "kz-ops" ||
-		ref.Workload.Kind != "Deployment" ||
-		ref.Workload.Name != "doops-agent-live" {
-		t.Fatalf("unexpected credential reference: %#v", ref)
-	}
-	if len(plan.BundleRefs) != 1 || plan.BundleRefs[0] != "release-shared" {
-		t.Fatalf("bundle refs = %#v", plan.BundleRefs)
+			if _, err := parseCredentialPlan(root, "deploy/release.yaml"); !errors.Is(err, ErrCredentialDeclarationInvalid) {
+				t.Fatalf("v2 %s error = %v, want ErrCredentialDeclarationInvalid", kind, err)
+			}
+		})
 	}
 }
 
@@ -107,6 +60,74 @@ func TestRepositoryDoesNotContainLegacyDeploymentWorkflows(t *testing.T) {
 	}
 	if len(workflowPaths) != 0 {
 		t.Fatalf("legacy deployment workflows remain: %v", workflowPaths)
+	}
+}
+
+func TestExternalRepositoryEnvironmentRegistryCompiles(t *testing.T) {
+	repositoryRoot := strings.TrimSpace(os.Getenv("DOOPS_CREDENTIAL_CONTRACT_ROOT"))
+	if repositoryRoot == "" {
+		t.Skip("DOOPS_CREDENTIAL_CONTRACT_ROOT is not set")
+	}
+	manifestPath := "deploy/environments.yaml"
+	data, err := readCredentialDeclarationFile(repositoryRoot, manifestPath)
+	if err != nil {
+		t.Fatalf("read external environment registry: %v", err)
+	}
+	var registry credentialEnvironmentRegistryV3
+	if err := strictCredentialYAMLDecode(data, &registry); err != nil {
+		t.Fatalf("decode external environment registry: %v", err)
+	}
+	if registry.APIVersion != "doops.sh/v3" || registry.Kind != "EnvironmentRegistry" {
+		t.Fatalf("external repository must declare doops.sh/v3 EnvironmentRegistry")
+	}
+	for environmentName, environment := range registry.Environments {
+		for serviceName := range environment.Services {
+			t.Run(environmentName+"/"+serviceName, func(t *testing.T) {
+				if _, err := parseCredentialPlanForInputs(repositoryRoot, manifestPath, map[string]string{
+					"environment": environmentName,
+					"service":     serviceName,
+				}); err != nil {
+					t.Fatalf("compile external environment service: %v", err)
+				}
+			})
+		}
+		if len(environment.Services) == 0 {
+			t.Errorf("environment %q has no services", environmentName)
+		}
+	}
+	if len(registry.Environments) == 0 {
+		t.Fatal("external environment registry has no environments")
+	}
+}
+
+func TestRepositoryEnvironmentRegistryCompilesEveryService(t *testing.T) {
+	repositoryRoot := filepath.Clean(filepath.Join("..", "..", "..", ".."))
+	manifestPath := "deploy/environments.yaml"
+	data, err := readCredentialDeclarationFile(repositoryRoot, manifestPath)
+	if err != nil {
+		t.Fatalf("read repository environment registry: %v", err)
+	}
+	var registry credentialEnvironmentRegistryV3
+	if err := strictCredentialYAMLDecode(data, &registry); err != nil {
+		t.Fatalf("decode repository environment registry: %v", err)
+	}
+	if len(registry.Environments) == 0 {
+		t.Fatal("repository environment registry has no environments")
+	}
+	for environmentName, environment := range registry.Environments {
+		if len(environment.Services) == 0 {
+			t.Errorf("environment %q has no services", environmentName)
+		}
+		for serviceName := range environment.Services {
+			t.Run(environmentName+"/"+serviceName, func(t *testing.T) {
+				if _, err := parseCredentialPlanForInputs(repositoryRoot, manifestPath, map[string]string{
+					"environment": environmentName,
+					"service":     serviceName,
+				}); err != nil {
+					t.Fatalf("compile repository environment service: %v", err)
+				}
+			})
+		}
 	}
 }
 
@@ -179,39 +200,6 @@ environments:
 `)
 	if _, err := parseCredentialPlan(root, "release.yaml"); !errors.Is(err, ErrInlineCredentialMaterial) {
 		t.Fatalf("parameter default error = %v, want ErrInlineCredentialMaterial", err)
-	}
-}
-
-func TestParseCredentialPlanAcceptsNonSensitiveParameterDefaults(t *testing.T) {
-	root := t.TempDir()
-	writeCredentialPlanTestFile(t, root, "release.yaml", `
-apiVersion: doops.sh/v2
-kind: DeploymentTemplate
-metadata:
-  name: release
-spec:
-  application: app
-  environment: production
-  configurationSource: environments.yaml
-  parameters:
-    reason:
-      required: false
-      default: routine-release
-`)
-	writeCredentialPlanTestFile(t, root, "environments.yaml", `
-apiVersion: doops.sh/v2
-kind: EnvironmentRegistry
-metadata:
-  name: test-environments
-environments:
-  production:
-    target:
-      name: target
-      cluster: cluster
-      instance: instance
-`)
-	if _, err := parseCredentialPlan(root, "release.yaml"); err != nil {
-		t.Fatalf("non-sensitive parameter default: %v", err)
 	}
 }
 
@@ -335,84 +323,6 @@ environments:
 	}
 }
 
-func TestParseCredentialPlanAcceptsCurrentReleaseShapesWithoutManagedCredentials(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		workflow string
-	}{
-		{
-			name: "deployment template version release",
-			workflow: `
-apiVersion: doops.sh/v2
-kind: DeploymentTemplate
-metadata:
-  name: ecp-test-deploy
-spec:
-  application: ecp
-  release:
-    version: ${inputs.version}
-  environment: test
-  configurationSource: deploy/environments.yaml
-`,
-		},
-		{
-			name: "semantic release",
-			workflow: `
-apiVersion: doops.sh/v2
-kind: SemanticRelease
-metadata:
-  name: zhiyong-test-release
-spec:
-  application: zhiyong
-  release:
-    revision: ${inputs.revision}
-    version: ${inputs.version}
-    reason: ${inputs.reason}
-  environment: test
-  configurationSource: deploy/environments.yaml
-  serviceCatalog:
-    frontend:
-      uses: services/frontend.yaml
-  flow:
-    - intent: establish-release-context
-`,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			writeCredentialPlanTestFile(t, root, "deploy/release.yaml", test.workflow)
-			if test.name == "semantic release" {
-				writeCredentialServiceReleaseFixture(t, root, "deploy/services/frontend.yaml", "frontend", "zhiyong")
-			}
-			writeCredentialPlanTestFile(t, root, "deploy/environments.yaml", `
-apiVersion: doops.sh/v2
-kind: EnvironmentRegistry
-metadata:
-  name: test-environments
-environments:
-  test:
-    target:
-      name: gw-oilan-node
-      cluster: doops-oilan
-      instance: oilan-node
-`)
-
-			plan, err := parseCredentialPlan(root, "deploy/release.yaml")
-			if err != nil {
-				t.Fatalf("parse credential plan: %v", err)
-			}
-			if plan.Template == "" || plan.Project == "" || plan.Environment != "test" ||
-				plan.Target != "gw-oilan-node" || plan.Cluster != "doops-oilan" ||
-				plan.Instance != "oilan-node" {
-				t.Fatalf("unexpected plan: %#v", plan)
-			}
-			if len(plan.CredentialRefs) != 0 || len(plan.BundleRefs) != 0 {
-				t.Fatalf("expected no managed credentials, got %#v", plan)
-			}
-		})
-	}
-}
-
 func TestParseCredentialPlanRejectsEnvironmentRegistryFileIndirection(t *testing.T) {
 	root := t.TempDir()
 	writeCredentialV3EnvironmentFixture(t, root)
@@ -507,133 +417,6 @@ spec:
 	}
 }
 
-func TestParseCredentialPlanAcceptsCurrentEnvironmentRegistryFields(t *testing.T) {
-	root := t.TempDir()
-	writeCredentialPlanTestFile(t, root, "deploy/release.yaml", `
-apiVersion: doops.sh/v2
-kind: DeploymentTemplate
-metadata:
-  name: ecp-oilan-deploy
-spec:
-  parameters:
-    version:
-      required: true
-    reason:
-      required: true
-  application: ecp
-  release:
-    version: ${inputs.version}
-  environment: oilan
-  configurationSource: deploy/environments.yaml
-`)
-	writeCredentialPlanTestFile(t, root, "deploy/environments.yaml", `
-apiVersion: doops.sh/v2
-kind: EnvironmentRegistry
-metadata:
-  name: current-environments
-  updatedAt: "2026-07-13"
-identityRules:
-  - Environment keys identify release destinations.
-artifactContract:
-  type: image-set
-  sourceRegistry: docker.cnb.cool/l8ai/app
-  sourceRepository: https://cnb.cool/l8ai/app.git
-  sourceBranch: main
-  services:
-    - frontend
-  sourceArtifactNames:
-    frontend: app-frontend
-  imageTagPattern: "^release-[0-9]{8}$"
-  imageReferenceFormat: registry/repository:tag
-  imageTagTimeZone: Asia/Shanghai
-serviceCatalog:
-  frontend:
-    artifact: app-frontend
-    sourceContext: app-frontend
-    helmValue: frontend
-    workload: deployment/app-frontend
-    container: app-frontend
-    endpointRequired: true
-verificationProfiles:
-  application:
-    requiredEvidence:
-      - runtime-state
-      - public-http
-environments:
-  oilan:
-    displayName: Oilan
-    services:
-      - frontend
-    target:
-      name: gw-edu-coder
-      cluster: doops-edu
-      instance: edu-coder
-    deploymentMode: application
-    controlPlaneEnvironment: oilan
-    publicHosts:
-      - app.oilan.ai
-    executor:
-      type: helm
-      lifecycle: detached-kubernetes-job
-      config:
-        namespace: oilan
-        release: app
-        workload: deployment/app-frontend
-        container: app-frontend
-        registry: repo.aiedulab.cn:8443/oilan-system
-        registryCredential:
-          namespace: oilan
-          secretName: regcred
-          key: .dockerconfigjson
-        chart: deploy/chart
-        values: deploy/values.yaml
-        runtimeFiles: deploy/runtime
-        deploymentMode: application
-        imageBindings:
-          app-frontend: frontend
-        workloadNamespaces:
-          app-frontend: oilan
-        artifactSync:
-          sourceCredentialRef:
-            kind: KubernetesSecret
-            name: cnb-regcred
-          registryCredentialRef:
-            kind: KubernetesSecret
-            name: regcred
-        publicHosts:
-          - app.oilan.ai
-        healthChecks:
-          public:
-            - id: frontend-health
-              url: https://app.oilan.ai/healthz
-              expectedStatus: 200
-              bodyContains: healthy
-          workloads:
-            - service: app-frontend
-              minReadyReplicas: 1
-              requireEndpoints: true
-        retiredResources:
-          - apiVersion: networking.k8s.io/v1
-            kind: Ingress
-            name: old-app
-            deletionPolicy: require-unmanaged-exact-match
-            expected:
-              manager: kubectl-client-side-apply
-              ingressClassName: oilan-edge
-              hosts:
-                - old-app.oilan.ai
-    verificationProfile: application
-`)
-
-	plan, err := parseCredentialPlan(root, "deploy/release.yaml")
-	if err != nil {
-		t.Fatalf("parse current environment registry: %v", err)
-	}
-	if plan.Target != "gw-edu-coder" || plan.Cluster != "doops-edu" || plan.Instance != "edu-coder" {
-		t.Fatalf("unexpected plan target: %#v", plan)
-	}
-}
-
 func TestParseCredentialPlanRejectsObsoleteV3EnvironmentDefinitionRoot(t *testing.T) {
 	root := t.TempDir()
 	writeCredentialV3EnvironmentFixture(t, root)
@@ -686,37 +469,6 @@ func TestParseCredentialPlanRejectsMissingV3HealthChecks(t *testing.T) {
 	}
 	if _, err := parseCredentialPlan(root, "deploy/environments/oilan/environment.yaml"); !errors.Is(err, ErrCredentialDeclarationInvalid) {
 		t.Fatalf("missing v3 health checks error = %v", err)
-	}
-}
-
-func TestParseCredentialPlanRejectsInlineSecretLikeFieldsInConfigurationSource(t *testing.T) {
-	root := t.TempDir()
-	writeCredentialPlanTestFile(t, root, "release.yaml", `
-apiVersion: doops.sh/v2
-kind: DeploymentTemplate
-metadata:
-  name: release
-spec:
-  application: app
-  environment: production
-  configurationSource: environments.yaml
-`)
-	writeCredentialPlanTestFile(t, root, "environments.yaml", `
-apiVersion: doops.sh/v2
-kind: EnvironmentRegistry
-metadata:
-  name: test-environments
-environments:
-  production:
-    target:
-      name: target
-      cluster: cluster
-      instance: instance
-    nested:
-      StringData: canary-secret
-`)
-	if _, err := parseCredentialPlan(root, "release.yaml"); !errors.Is(err, ErrInlineCredentialMaterial) {
-		t.Fatalf("configuration secret-like field error = %v, want ErrInlineCredentialMaterial", err)
 	}
 }
 

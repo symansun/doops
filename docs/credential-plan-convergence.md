@@ -11,7 +11,10 @@ versioned, while every Gateway and Agent uses one credential-plan protocol.
 - Credential preparation and the prompt binding consume the same declaration
   source identity and immutable revision.
 - The v3 registry selects one explicit environment and one explicit service.
-- Agent registration advertises `doops.sh/credential-plan/v2`.
+- Agent registration advertises an exact credential-plan capability object with
+  `schemaVersion=doops.sh/credential-plan/v2`,
+  `declarationSchemaVersion=doops.sh/v3`, `sourceRevision=true`,
+  `targetBinding=true`, `sessionBinding=true`, and `buildDefinition=true`.
 - doagent `initialize` advertises the complete
   `doops.reconciliation-context/v2` capability.
 - Gateway credential preparation rejects incompatible Agents before tool
@@ -39,8 +42,9 @@ Legacy v2 workflows are not a compatibility path and are rejected.
   prepare.
 - Registry selection and prompt binding use the same environment and service
   inputs.
-- Agents advertise `doops.sh/credential-plan/v2`; Gateway prepare rejects
-  offline targets with 503 and incompatible Agents with 426 before dispatch.
+- Agents advertise the exact credential-plan capability object; Gateway prepare
+  rejects offline targets with 503 and legacy string, incomplete, or otherwise
+  incompatible capabilities with 426 before dispatch.
 - Apply requires `ask` and `credential:use`, a compatible Agent, and one exact
   short-lived prepared run bound to the user, target, session, workflow and
   workspace commit. The binding is consumed once before dispatch.

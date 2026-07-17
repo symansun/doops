@@ -149,9 +149,10 @@ func TestRepositoryEnvironmentRegistryV3CompilesOilanDoopsAgent(t *testing.T) {
 		t.Fatalf("compile repository Oilan declaration: %v", err)
 	}
 	if plan.Template != "doops-oilan-doops-agent" ||
-		plan.Target != "gw-edu-coder" ||
+		plan.Target != "gw-edu-release-runner" ||
 		plan.Cluster != "doops-edu" ||
-		plan.Instance != "edu-coder" ||
+		plan.Instance != "release-runner" ||
+		plan.Session != "doops-oilan-release" ||
 		len(plan.CredentialRefs) != 0 {
 		t.Fatalf("unexpected repository plan: %#v", plan)
 	}
@@ -248,11 +249,45 @@ spec:
   verification:
     endpointRequired: true
 `)
-	write("deploy/deploy.yaml", "apiVersion: doops.sh/v3\nkind: BuildDefinition\n")
+	write("deploy/deploy.yaml", `
+apiVersion: doops.sh/v3
+kind: BuildDefinition
+metadata:
+  name: zhiyong
+spec:
+  services:
+    frontend:
+      context: frontend
+      dockerfile: frontend/Dockerfile
+      image: source.example.test/zhiyong-frontend
+`)
 	write("deploy/environments/oilan/chart/values.yaml", "frontend: {}\n")
 	resolved, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		t.Fatalf("resolve fixture root: %v", err)
 	}
 	return resolved
+}
+
+func TestEnvironmentRegistryV3RejectsInconsistentBuildDefinition(t *testing.T) {
+	root := writeEnvironmentRegistryV3Fixture(t)
+	path := filepath.Join(root, "deploy", "deploy.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.ReplaceAll(
+		string(data),
+		"      dockerfile: frontend/Dockerfile\n",
+		"      dockerfile: frontend/Other.Dockerfile\n",
+	))
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseCredentialPlanForInputs(root, "deploy/environments.yaml", map[string]string{
+		"environment": "oilan",
+		"service":     "frontend",
+	}); err == nil || !strings.Contains(err.Error(), "build definition is incomplete or inconsistent") {
+		t.Fatalf("inconsistent build definition error = %v", err)
+	}
 }

@@ -60,10 +60,10 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 	repositoryRoot := filepath.Clean(filepath.Join("..", "..", "..", "..", ".."))
 	config := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(config, []byte(`{"servers":[{
-		"name":"gateway",
+		"name":"gw-edu-release-runner",
 		"gateway":"`+gateway.URL+`",
 		"cluster":"doops-edu",
-		"instance":"edu-coder",
+		"instance":"release-runner",
 		"token":"cli-token"
 	}]}`), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -87,26 +87,26 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		return string(output)
 	}
 
-	run("", "credential", "create", "--target", "gateway", "--name", "registry", "--scope", "personal", "--type", "registry")
-	run("", "credential", "list", "--target", "gateway")
+	run("", "credential", "create", "--target", "gw-edu-release-runner", "--name", "registry", "--scope", "personal", "--type", "registry")
+	run("", "credential", "list", "--target", "gw-edu-release-runner")
 	run(`{"server":"registry.example.com","username":"deploy","password":"stdin-wins"}`,
-		"credential", "put", "--target", "gateway", "--id", "cred_123")
-	run("", "credential", "grant", "--target", "gateway", "--id", "cred_123",
+		"credential", "put", "--target", "gw-edu-release-runner", "--id", "cred_123")
+	run("", "credential", "grant", "--target", "gw-edu-release-runner", "--id", "cred_123",
 		"--grantee-id", "user_42", "--cluster", "doops-edu", "--instance", "edu-coder",
 		"--project", "oilan", "--environment", "production", "--template", "oilan-release",
 		"--namespace", "apps", "--uses", "imagePull")
-	run("", "credential", "grant-revoke", "--target", "gateway", "--id", "cred_123", "--grant-id", "credgrant_789")
-	run("", "credential", "verify", "--target", "gateway", "--id", "cred_123",
+	run("", "credential", "grant-revoke", "--target", "gw-edu-release-runner", "--id", "cred_123", "--grant-id", "credgrant_789")
+	run("", "credential", "verify", "--target", "gw-edu-release-runner", "--id", "cred_123",
 		"--version-id", "credver_456", "--session", "doops-oilan-release",
 		"--workflow-path", "deploy/environments.yaml", "--workspace-commit", strings.Repeat("a", 40),
 		"--environment", "oilan", "--service", "doops-agent")
-	run("", "credential", "promote", "--target", "gateway", "--id", "cred_123", "--version-id", "credver_456")
-	run("", "credential", "revoke", "--target", "gateway", "--id", "cred_123")
+	run("", "credential", "promote", "--target", "gw-edu-release-runner", "--id", "cred_123", "--version-id", "credver_456")
+	run("", "credential", "revoke", "--target", "gw-edu-release-runner", "--id", "cred_123")
 	run(`{"name":"release","scope":"platform","items":[{"credential_id":"cred_123","use":"imagePull","namespace":"apps","workload":{"Kind":"Deployment","Name":"api"},"registry_repository":"team/api","registry_reference":"sha256:manifest"}]}`,
-		"credential", "bundle-create", "--target", "gateway")
-	run("", "credential", "bundle-get", "--target", "gateway", "--name", "release")
+		"credential", "bundle-create", "--target", "gw-edu-release-runner")
+	run("", "credential", "bundle-get", "--target", "gw-edu-release-runner", "--name", "release")
 
-	command := exec.Command(binary, "credential", "put", "--target", "gateway", "--id", "cred_123", "--payload", payloadCanary)
+	command := exec.Command(binary, "credential", "put", "--target", "gw-edu-release-runner", "--id", "cred_123", "--payload", payloadCanary)
 	command.Env = append(os.Environ(), "DOOPS_CONFIG="+config)
 	command.Stdin = strings.NewReader(`{"password":"stdin-is-required"}`)
 	if output, err := command.CombinedOutput(); err == nil {
@@ -154,8 +154,8 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 	assertCredentialCLIJSON(t, requests[5], http.MethodPost, "/v1/credentials/cred_123/verify", map[string]any{
 		"version_id":        "credver_456",
 		"cluster":           "doops-edu",
-		"instance":          "edu-coder",
-		"target":            "gateway",
+		"instance":          "release-runner",
+		"target":            "gw-edu-release-runner",
 		"session_id":        "doops-oilan-release",
 		"workflow_path":     "deploy/environments.yaml",
 		"source_revision":   strings.Repeat("a", 40),

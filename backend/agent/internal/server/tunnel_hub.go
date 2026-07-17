@@ -62,7 +62,31 @@ const (
 	gatewayReadProgressAckInterval     = 5 * time.Second
 	gatewayReadProgressAckWriteTimeout = 3 * time.Second
 	credentialPlanProtocolV2           = "doops.sh/credential-plan/v2"
+	credentialPlanDeclarationV3        = "doops.sh/v3"
 )
+
+func credentialPlanCapability() map[string]interface{} {
+	return map[string]interface{}{
+		"schemaVersion":            credentialPlanProtocolV2,
+		"declarationSchemaVersion": credentialPlanDeclarationV3,
+		"sourceRevision":           true,
+		"targetBinding":            true,
+		"sessionBinding":           true,
+		"buildDefinition":          true,
+	}
+}
+
+func credentialPlanCapabilityCompatible(value interface{}) bool {
+	capability, ok := value.(map[string]interface{})
+	return ok &&
+		len(capability) == 6 &&
+		capability["schemaVersion"] == credentialPlanProtocolV2 &&
+		capability["declarationSchemaVersion"] == credentialPlanDeclarationV3 &&
+		capability["sourceRevision"] == true &&
+		capability["targetBinding"] == true &&
+		capability["sessionBinding"] == true &&
+		capability["buildDefinition"] == true
+}
 
 type GatewayActiveOperation struct {
 	ID             string        `json:"id"`
@@ -952,7 +976,22 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	var credentialBinding *credentialPromptBinding
 	if params.Name == "doops_agent_prompt" {
 		operation := extractStringArg(params.Arguments, "operation")
-		if operation != "" && operation != "ask" && operation != "apply" {
+		instruction := extractStringArg(params.Arguments, "instruction")
+		var marker struct {
+			Task string `json:"task"`
+		}
+		_ = json.Unmarshal([]byte(instruction), &marker)
+		if marker.Task == "execute-doops-cicd" {
+			var err error
+			credentialBinding, err = parseCredentialPromptBinding(params.Arguments, cluster, instance)
+			if err != nil {
+				writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
+				return nil
+			}
+		} else if operation == "apply" {
+			writeJSON(buildErrorResponse(req.ID, -32602, "apply requires a structured doops-cicd instruction"))
+			return nil
+		} else if operation != "" && operation != "ask" {
 			writeJSON(buildErrorResponse(req.ID, -32602, "unsupported agent prompt operation: "+operation))
 			return nil
 		}
@@ -1233,8 +1272,9 @@ func (a *GatewayAgent) initialize() error {
 				a.RuntimeID = strings.TrimSpace(a.RuntimeID)
 				if capabilities, ok := result["capabilities"].(map[string]interface{}); ok {
 					if protocols, ok := capabilities["protocols"].(map[string]interface{}); ok {
-						a.CredentialPlanProtocol, _ = protocols["credentialPlan"].(string)
-						a.CredentialPlanProtocol = strings.TrimSpace(a.CredentialPlanProtocol)
+						if credentialPlanCapabilityCompatible(protocols["credentialPlan"]) {
+							a.CredentialPlanProtocol = credentialPlanProtocolV2
+						}
 					}
 				}
 			}
@@ -1893,11 +1933,12 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 
 func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage, cluster, instance string) string {
 	switch action {
-	case ActionExec, ActionAsk:
+	case ActionExec:
 		if sessionID := extractSession(args); sessionID != "" {
-			if extractStringArg(args, "workspace_commit") != "" {
-				return "workspace:" + sessionID
-			}
+			return "workspace:" + sessionID
+		}
+	case ActionAsk:
+		if sessionID := extractSession(args); sessionID != "" {
 			return "session:" + sessionID
 		}
 	case ActionPush, ActionPull, ActionClean:
@@ -1905,6 +1946,9 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 			return "workspace:" + sessionID
 		}
 	case ActionWrite:
+		if sessionID := extractSession(args); sessionID != "" {
+			return "workspace:" + sessionID
+		}
 		if path := extractStringArg(args, "path"); path != "" {
 			return "path:" + path
 		}

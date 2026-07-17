@@ -41,25 +41,51 @@ apiVersion: doops.sh/v3
 kind: EnvironmentRegistry
 environments:
   oilan:
-    target:
-      session: zhiyong-oilan-release
     source:
       repository: https://example.test/zhiyong.git
       branch: main
+    target:
+      name: gw-edu-coder
+      cluster: doops-edu
+      instance: edu-coder
+      session: zhiyong-oilan-release
     services:
       frontend: deploy/environments/oilan/services/frontend.yaml
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	repository, branch, session, err := workflowDeclaredSource(path, map[string]string{
+	declaration, err := workflowDeclaredDeployment(path, map[string]string{
 		"environment": "oilan",
 		"service":     "frontend",
 	})
 	if err != nil {
 		t.Fatalf("resolve declared source: %v", err)
 	}
-	if repository != "https://example.test/zhiyong.git" || branch != "main" ||
-		session != "zhiyong-oilan-release" {
-		t.Fatalf("repository=%q branch=%q session=%q", repository, branch, session)
+	if declaration.SourceRepository != "https://example.test/zhiyong.git" ||
+		declaration.SourceBranch != "main" ||
+		declaration.TargetName != "gw-edu-coder" ||
+		declaration.TargetCluster != "doops-edu" ||
+		declaration.TargetInstance != "edu-coder" ||
+		declaration.TargetSession != "zhiyong-oilan-release" {
+		t.Fatalf("declaration=%#v", declaration)
+	}
+}
+
+func TestWorkflowCredentialPrepareRequestBindsImmutableWorkspaceCommit(t *testing.T) {
+	revision := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	request := workflowCredentialPrepareRequest(
+		Server{Name: "gw-release", Cluster: "doops", Instance: "release-runner"},
+		"release",
+		"deploy/environments.yaml",
+		workflowDeclaration{
+			SourceRepository: "https://example.test/app.git",
+			SourceBranch:     "main",
+		},
+		revision,
+		map[string]string{"environment": "oilan", "service": "api"},
+		"apply",
+	)
+	if request.SourceRevision != revision || request.WorkspaceCommit != revision {
+		t.Fatalf("prepare request is not bound to one immutable revision: %#v", request)
 	}
 }

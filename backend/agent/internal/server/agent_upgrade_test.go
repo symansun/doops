@@ -26,11 +26,17 @@ func TestHandleAgentUpgradeDryRunK8s(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dry-run k8s upgrade: %v", err)
 	}
-	if !strings.Contains(out, "kubectl -n ai set image daemonset/doops-agent doops-agent=repo.example/doops-agent:latest") {
+	if strings.Contains(out, "kubectl") || strings.Contains(out, "set image") {
+		t.Fatalf("dry-run must not emit an executable mutation command: %s", out)
+	}
+	if !strings.Contains(out, "image=repo.example/doops-agent:latest") ||
+		!strings.Contains(out, "namespace=ai") ||
+		!strings.Contains(out, "workload=daemonset/doops-agent") {
 		t.Fatalf("unexpected dry-run output: %s", out)
 	}
-	if !strings.Contains(out, "external release controller must update") {
-		t.Fatalf("dry-run should require an external release controller: %s", out)
+	if !strings.Contains(out, "external Helm/GitOps controller") ||
+		!strings.Contains(out, "gateway heartbeat") {
+		t.Fatalf("dry-run should require complete external reconciliation: %s", out)
 	}
 }
 

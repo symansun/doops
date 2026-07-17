@@ -116,100 +116,9 @@ type credentialTemplateBundleRef struct {
 	Name string `yaml:"name"`
 }
 
-type credentialSemanticRelease struct {
-	APIVersion string `yaml:"apiVersion"`
-	Kind       string `yaml:"kind"`
-	Metadata   struct {
-		Name        string `yaml:"name"`
-		Description string `yaml:"description,omitempty"`
-	} `yaml:"metadata"`
-	Spec struct {
-		Parameters           map[string]credentialTemplateParameter `yaml:"parameters,omitempty"`
-		Application          string                                 `yaml:"application"`
-		Release              credentialSemanticReleaseRelease       `yaml:"release,omitempty"`
-		Environment          string                                 `yaml:"environment"`
-		ConfigurationSource  string                                 `yaml:"configurationSource"`
-		ServiceCatalog       map[string]credentialSemanticService   `yaml:"serviceCatalog"`
-		Flow                 []credentialSemanticFlow               `yaml:"flow"`
-		FailurePolicy        credentialSemanticFailurePolicy        `yaml:"failurePolicy,omitempty"`
-		CredentialRefs       []credentialTemplateCredentialRef      `yaml:"credentialRefs,omitempty"`
-		CredentialBundleRefs []credentialTemplateBundleRef          `yaml:"credentialBundleRefs,omitempty"`
-	} `yaml:"spec"`
-}
-
-type credentialSemanticReleaseRelease struct {
-	Revision         string `yaml:"revision,omitempty"`
-	Version          string `yaml:"version,omitempty"`
-	Reason           string `yaml:"reason,omitempty"`
-	SelectedServices string `yaml:"selectedServices,omitempty"`
-	Strategy         string `yaml:"strategy,omitempty"`
-	ServiceSelection string `yaml:"serviceSelection,omitempty"`
-	ArtifactIdentity string `yaml:"artifactIdentity,omitempty"`
-}
-
-type credentialSemanticService struct {
-	Uses string `yaml:"uses"`
-}
-
-type credentialSemanticFlow struct {
-	Intent      string            `yaml:"intent"`
-	Purpose     string            `yaml:"purpose,omitempty"`
-	ForEach     string            `yaml:"forEach,omitempty"`
-	Concurrency string            `yaml:"concurrency,omitempty"`
-	Requires    []string          `yaml:"requires,omitempty"`
-	Produces    []string          `yaml:"produces,omitempty"`
-	Satisfies   []string          `yaml:"satisfies,omitempty"`
-	Scope       map[string]string `yaml:"scope,omitempty"`
-}
-
-type credentialSemanticFailurePolicy struct {
-	StopBeforeConvergeOnArtifactFailure  bool `yaml:"stopBeforeConvergeOnArtifactFailure,omitempty"`
-	StopBeforeConvergeOnImagePullFailure bool `yaml:"stopBeforeConvergeOnImagePullFailure,omitempty"`
-	Converge                             struct {
-		Atomic   bool   `yaml:"atomic,omitempty"`
-		Wait     bool   `yaml:"wait,omitempty"`
-		Rollback string `yaml:"rollback,omitempty"`
-	} `yaml:"converge,omitempty"`
-	UnknownOutcome string `yaml:"unknownOutcome,omitempty"`
-}
-
-type credentialServiceRelease struct {
-	APIVersion string `yaml:"apiVersion"`
-	Kind       string `yaml:"kind"`
-	Metadata   struct {
-		Name        string `yaml:"name"`
-		Description string `yaml:"description,omitempty"`
-	} `yaml:"metadata"`
-	Spec struct {
-		Service     string `yaml:"service"`
-		Application string `yaml:"application"`
-		Source      struct {
-			Repository string `yaml:"repository"`
-			Branch     string `yaml:"branch,omitempty"`
-			Revision   string `yaml:"revision"`
-			Context    string `yaml:"context,omitempty"`
-		} `yaml:"source"`
-		Artifact struct {
-			Type       string `yaml:"type"`
-			Repository string `yaml:"repository"`
-			Version    string `yaml:"version"`
-		} `yaml:"artifact"`
-		Binding struct {
-			HelmValue string `yaml:"helmValue"`
-			Workload  string `yaml:"workload"`
-			Container string `yaml:"container"`
-		} `yaml:"binding"`
-		Intents  []string `yaml:"intents"`
-		Evidence struct {
-			Required []string `yaml:"required"`
-		} `yaml:"evidence"`
-	} `yaml:"spec"`
-}
-
 type credentialParsedWorkflow struct {
-	Template         credentialDeploymentTemplate
-	SemanticRevision string
-	Environment      *credentialEnvironmentContext
+	Template    credentialDeploymentTemplate
+	Environment *credentialEnvironmentContext
 }
 
 type credentialEnvironmentContext struct {
@@ -642,110 +551,17 @@ func parseCredentialWorkflowForInputs(
 		return credentialParsedWorkflow{}, invalidCredentialDeclaration(err)
 	}
 
-	var template credentialDeploymentTemplate
-	var semantic credentialSemanticRelease
-	semanticRevision := ""
-	switch {
-	case identity.APIVersion == "doops.sh/v2" && identity.Kind == "SemanticRelease":
-		if err := strictCredentialYAMLDecode(workflowData, &semantic); err != nil {
-			return credentialParsedWorkflow{}, invalidCredentialDeclaration(err)
-		}
-		if strings.TrimSpace(semantic.Metadata.Name) == "" ||
-			strings.TrimSpace(semantic.Spec.Application) == "" ||
-			strings.TrimSpace(semantic.Spec.Environment) == "" ||
-			strings.TrimSpace(semantic.Spec.ConfigurationSource) == "" ||
-			len(semantic.Spec.ServiceCatalog) == 0 ||
-			len(semantic.Spec.Flow) == 0 {
-			return credentialParsedWorkflow{}, invalidCredentialDeclaration(errors.New("invalid SemanticRelease identity or deployment context"))
-		}
-		template.APIVersion = semantic.APIVersion
-		template.Kind = semantic.Kind
-		template.Metadata.Name = semantic.Metadata.Name
-		template.Spec.Application = semantic.Spec.Application
-		template.Spec.Environment = semantic.Spec.Environment
-		template.Spec.ConfigurationSource = semantic.Spec.ConfigurationSource
-		template.Spec.Parameters = semantic.Spec.Parameters
-		template.Spec.CredentialRefs = semantic.Spec.CredentialRefs
-		template.Spec.CredentialBundleRefs = semantic.Spec.CredentialBundleRefs
-		semanticRevision = semantic.Spec.Release.Revision
-		for _, flow := range semantic.Spec.Flow {
-			if strings.TrimSpace(flow.Intent) == "" {
-				return credentialParsedWorkflow{}, invalidCredentialDeclaration(errors.New("SemanticRelease flow intent is required"))
-			}
-		}
-		if err := validateSemanticServiceCatalog(root, workflowPath, semantic); err != nil {
-			return credentialParsedWorkflow{}, err
-		}
-	case identity.APIVersion == "doops.sh/v2" && identity.Kind == "DeploymentTemplate":
-		if err := strictCredentialYAMLDecode(workflowData, &template); err != nil {
-			return credentialParsedWorkflow{}, invalidCredentialDeclaration(err)
-		}
-		if strings.TrimSpace(template.Metadata.Name) == "" ||
-			strings.TrimSpace(template.Spec.Application) == "" ||
-			strings.TrimSpace(template.Spec.Environment) == "" ||
-			strings.TrimSpace(template.Spec.ConfigurationSource) == "" {
-			return credentialParsedWorkflow{}, invalidCredentialDeclaration(errors.New("invalid DeploymentTemplate identity or deployment context"))
-		}
-	case identity.APIVersion == "doops.sh/v3" && identity.Kind == "EnvironmentRegistry":
+	if identity.APIVersion == "doops.sh/v3" && identity.Kind == "EnvironmentRegistry" {
 		return parseCredentialEnvironmentRegistryV3(
 			root,
 			workflowPath,
 			workflowData,
 			inputs,
 		)
-	default:
-		return credentialParsedWorkflow{}, invalidCredentialDeclaration(
-			fmt.Errorf("unsupported workflow contract %q %q", identity.APIVersion, identity.Kind),
-		)
 	}
-	for name, parameter := range template.Spec.Parameters {
-		if parameter.Default != nil && credentialSecretLikeKey(name) {
-			return credentialParsedWorkflow{}, fmt.Errorf("%w: sensitive parameter %q must not declare a default value", ErrInlineCredentialMaterial, name)
-		}
-	}
-	return credentialParsedWorkflow{Template: template, SemanticRevision: semanticRevision}, nil
-}
-
-func validateSemanticServiceCatalog(root, workflowPath string, semantic credentialSemanticRelease) error {
-	workflowRelative, err := credentialDeclarationRelativePath(workflowPath)
-	if err != nil {
-		return err
-	}
-	workflowDirectory := filepath.Dir(workflowRelative)
-	for serviceName, entry := range semantic.Spec.ServiceCatalog {
-		if strings.TrimSpace(serviceName) == "" || strings.TrimSpace(entry.Uses) == "" {
-			return invalidCredentialDeclaration(errors.New("SemanticRelease service catalog entry is incomplete"))
-		}
-		servicePath := filepath.ToSlash(filepath.Join(workflowDirectory, filepath.FromSlash(entry.Uses)))
-		serviceData, err := readCredentialDeclarationFile(root, servicePath)
-		if err != nil {
-			return err
-		}
-		if _, err := credentialYAMLDocument(serviceData); err != nil {
-			return err
-		}
-		var service credentialServiceRelease
-		if err := strictCredentialYAMLDecode(serviceData, &service); err != nil {
-			return invalidCredentialDeclaration(err)
-		}
-		if service.APIVersion != "doops.sh/v2" || service.Kind != "ServiceRelease" ||
-			strings.TrimSpace(service.Metadata.Name) == "" ||
-			service.Spec.Service != serviceName ||
-			service.Spec.Application != semantic.Spec.Application ||
-			strings.TrimSpace(service.Spec.Source.Repository) == "" ||
-			strings.TrimSpace(service.Spec.Source.Revision) == "" ||
-			strings.TrimSpace(service.Spec.Artifact.Type) == "" ||
-			strings.TrimSpace(service.Spec.Artifact.Repository) == "" ||
-			strings.TrimSpace(service.Spec.Artifact.Version) == "" ||
-			strings.TrimSpace(service.Spec.Binding.HelmValue) == "" ||
-			strings.TrimSpace(service.Spec.Binding.Workload) == "" ||
-			strings.TrimSpace(service.Spec.Binding.Container) == "" ||
-			len(service.Spec.Intents) == 0 ||
-			len(service.Spec.Evidence.Required) == 0 {
-			return invalidCredentialDeclaration(fmt.Errorf("service catalog entry %q has an invalid ServiceRelease", serviceName))
-		}
-	}
-	return nil
+	return credentialParsedWorkflow{}, invalidCredentialDeclaration(
+		fmt.Errorf("unsupported workflow contract %q %q", identity.APIVersion, identity.Kind),
+	)
 }
 
 func validateCredentialEnvironmentDefinitionV3(

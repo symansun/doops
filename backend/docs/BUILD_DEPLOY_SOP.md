@@ -53,15 +53,15 @@ bash scripts/deploy-gateway.sh \
 
 ## 二、 Agent 标准构建工作流 (Server-Side Build)
 
-在进行任何修改后，若需要更新大模型管控组件 `doops-agent`，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA 为标签的候选镜像；候选镜像必须在下一步被解析为 registry digest。已注册的 DoOps Agent 只能通过 `deploy/environments.yaml` 中的 `doops.sh/v3 EnvironmentRegistry` 消费该 digest，并完成环境同步、Helm 收敛与验证。不得接受 v2 `DeploymentTemplate`、生成中间 workflow 或静默降级。CNB 不负责环境部署、回滚或 Helm/Kubernetes 操作；`deploy.sh` 与任何 SSH/rsync 手工发布入口均已移除。
+在进行任何修改后，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA 为标签的候选镜像。该镜像同时携带同一 revision 的 `/app/doops-agent`、`/app/doops-gateway` 和锁定版本的 `/usr/local/bin/do-agent`；不得在发布控制端重新编译 Gateway。候选镜像必须在下一步被解析为 registry digest。已注册的 DoOps Agent 只能通过 `deploy/environments.yaml` 中的 `doops.sh/v3 EnvironmentRegistry` 消费该 digest，并完成环境同步、Helm 收敛与验证。不得接受 v2 `DeploymentTemplate`、生成中间 workflow 或静默降级。CNB 不负责环境部署、回滚或 Helm/Kubernetes 操作；`deploy.sh` 与任何 SSH/rsync 手工发布入口均已移除。
 
 ### 1. 触发受控发布 (在控制端执行)
 发布者必须先将待发布提交推送到 `main`，确认 CNB CI 的候选镜像已经生成，并在无未提交文件的精确 commit checkout 中执行环境注册表。CLI 会拒绝工作区不干净、声明不完整或 source commit 无法固定的发布。运行期必须使用候选镜像的 registry digest，不得以可变 tag 作为实际部署镜像。唯一入口为 `deploy/environments.yaml`，并显式选择一个 environment 和 service；运行期目标清单由该注册表、服务声明、Helm Chart 和环境 values 定义。
 
 ```bash
-doops -session oilan-agent-bootstrap cicd run \
+doops -session doops-oilan-release cicd run \
   -f deploy/environments.yaml \
-  -target <configured-doops-target> \
+  -target gw-edu-release-runner \
   --dry-run \
   --set environment=oilan \
   --set service=doops-agent
@@ -71,6 +71,13 @@ The command synchronizes the repository, then sends one ordinary Ask to doagent
 for the `$doops-cicd` Skill. The Skill emits one JSON `DeploymentRun` as its
 final response;
 text such as `admitted` is not evidence, and dry-run mutation count must be zero.
+
+Oilan 的发布执行者固定为独立的 `doops-edu/release-runner`，其声明位于
+`deploy/environments/oilan/release-runner-values.yaml`。它与受管
+`doops-agent-live` 使用不同的 Deployment、selector 和 Agent home。首次接入或
+release runner 自恢复可以使用集群管理员上下文按该 values 引导；完成 Gateway
+注册后，后续环境发布必须由 `gw-edu-release-runner` 执行。受管 Agent 不得发布或
+替换自身。
 
 **DoOps Agent 执行顺序：**
 1. 校验工作区与 `main` 上的精确 source commit 一致。

@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/user/doops/agent/api"
 )
 
 type temporaryHeartbeatError struct{}
@@ -195,7 +194,7 @@ func TestAgentWebSocketFileReadWrite(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
 	conn := dialAgentTestWS(t, ts.URL)
@@ -358,76 +357,6 @@ func TestAgentHistoryModeWithoutSessionReturnsEmptyHistory(t *testing.T) {
 	}
 }
 
-func TestAgentPromptRejectsReplacedWorkspaceAfterCredentialPrepare(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	sessionID := "credential-workspace-binding"
-	workspace := filepath.Join(root, sessionID)
-	if err := os.MkdirAll(workspace, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	expectedCommit := strings.Repeat("a", 40)
-	if err := os.WriteFile(
-		filepath.Join(workspace, ".doops-ready"),
-		[]byte(strings.Repeat("b", 40)+"\n"),
-		0o600,
-	); err != nil {
-		t.Fatal(err)
-	}
-	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("workspace binding failure must stop before doagent: %s", r.URL.Path)
-	}))
-	defer doagent.Close()
-	t.Setenv("DO_AGENT_URL", doagent.URL)
-
-	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
-	defer ts.Close()
-	conn := dialAgentTestWS(t, ts.URL)
-	defer conn.Close()
-	initializeAgentTestWS(t, conn)
-
-	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
-		"session_id":       sessionID,
-		"instruction":      "inspect",
-		"workspace_commit": expectedCommit,
-	})
-	if !strings.Contains(fmt.Sprint(result), "workspace_commit_binding_invalid") {
-		t.Fatalf("workspace replacement result = %#v", result)
-	}
-}
-
-func TestWorkspaceCommitBindingChecksGitHead(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	sessionID := "credential-git-binding"
-	workspace := filepath.Join(root, sessionID)
-	if err := os.MkdirAll(workspace, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	runTestCommand(t, workspace, "git", "init", "-q", "-b", "main")
-	runTestCommand(t, workspace, "git", "config", "user.email", "test@example.invalid")
-	runTestCommand(t, workspace, "git", "config", "user.name", "DoOps Test")
-	if err := os.WriteFile(filepath.Join(workspace, "state.txt"), []byte("first\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runTestCommand(t, workspace, "git", "add", "state.txt")
-	runTestCommand(t, workspace, "git", "commit", "-q", "-m", "first")
-	expectedCommit := strings.TrimSpace(runTestCommand(t, workspace, "git", "rev-parse", "HEAD"))
-	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(expectedCommit+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace, "state.txt"), []byte("second\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runTestCommand(t, workspace, "git", "add", "state.txt")
-	runTestCommand(t, workspace, "git", "commit", "-q", "-m", "second")
-	if err := validateWorkspaceCommitBinding(sessionID, expectedCommit); err == nil ||
-		err.Error() != "workspace Git commit mismatch" {
-		t.Fatalf("Git workspace replacement error = %v", err)
-	}
-}
-
 func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 	prompted := make(chan struct{})
 	receivedPrompt := make(chan string, 1)
@@ -503,7 +432,7 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 	t.Setenv("DO_AGENT_URL", doagent.URL)
 
 	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 	conn := dialAgentTestWS(t, ts.URL)
 	defer conn.Close()
@@ -555,83 +484,6 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 
 	if prompt := <-receivedPrompt; strings.Contains(prompt, "deploy.sh") {
 		t.Fatalf("agent prompt must not inject a deploy.sh generation contract: %s", prompt)
-	}
-}
-
-func TestDirectAgentApplyRequiresGatewayAuthorizedReverseTunnel(t *testing.T) {
-	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
-	defer ts.Close()
-	conn := dialAgentTestWS(t, ts.URL)
-	defer conn.Close()
-	initializeAgentTestWS(t, conn)
-
-	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
-		"session_id":  "natural-apply",
-		"instruction": "deploy the selected service",
-		"operation":   "apply",
-	})
-	if !strings.Contains(fmt.Sprint(result), "credential apply requires a gateway-authorized reverse tunnel") {
-		t.Fatalf("direct apply was not rejected: %#v", result)
-	}
-}
-
-func TestGatewayAuthorizedApplyRequiresCompleteCredentialBinding(t *testing.T) {
-	prompt := api.AgentPromptParams{
-		SessionID:       "release",
-		Operation:       "apply",
-		WorkspaceCommit: strings.Repeat("a", 40),
-		Instruction: `{
-			"task":"execute-doops-cicd",
-			"skill":"$doops-cicd",
-			"executionMode":"apply",
-			"manifestPath":"deploy/environments.yaml"
-		}`,
-	}
-	if err := validateDoagentApplyInstruction(prompt); err == nil ||
-		!strings.Contains(err.Error(), "explicit doops-cicd apply instruction") {
-		t.Fatalf("incomplete credential binding was not rejected: %v", err)
-	}
-}
-
-func TestGatewayAuthorizedApplyAcceptsCompleteCredentialBinding(t *testing.T) {
-	commit := strings.Repeat("a", 40)
-	run := CredentialRun{
-		APIVersion:     "doops.sh/v2",
-		Kind:           "CredentialRun",
-		ID:             "credrun_release",
-		Mode:           "apply",
-		Cluster:        "doops",
-		Instance:       "runner",
-		Target:         "gw-runner",
-		Session:        "release",
-		SourceRevision: commit,
-		CreatedAt:      time.Now().UTC(),
-	}
-	instruction, err := json.Marshal(map[string]interface{}{
-		"task":            "execute-doops-cicd",
-		"skill":           "$doops-cicd",
-		"executionMode":   "apply",
-		"manifestPath":    "deploy/environments.yaml",
-		"workspaceCommit": commit,
-		"source": map[string]string{
-			"repository": "https://cnb.cool/l8ai/ai/doops.sh.git",
-			"branch":     "main",
-		},
-		"inputs":        map[string]string{"environment": "oilan"},
-		"credentialRun": run,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	prompt := api.AgentPromptParams{
-		SessionID:       "release",
-		Operation:       "apply",
-		WorkspaceCommit: commit,
-		Instruction:     string(instruction),
-	}
-	if err := validateDoagentApplyInstruction(prompt); err != nil {
-		t.Fatalf("complete credential binding was rejected: %v", err)
 	}
 }
 
@@ -697,7 +549,7 @@ func TestAgentSystemPromptDoesNotRequireDeploymentScripts(t *testing.T) {
 func TestShellNotificationIncludesRawKind(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
 	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 	conn := dialAgentTestWS(t, ts.URL)
 	defer conn.Close()
@@ -958,7 +810,7 @@ func TestAgentPromptReturnsAdmissionErrorImmediately(t *testing.T) {
 	t.Setenv("DO_AGENT_URL", doagent.URL)
 
 	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 	conn := dialAgentTestWS(t, ts.URL)
 	defer conn.Close()
@@ -980,7 +832,7 @@ func TestAgentPromptReturnsAdmissionErrorImmediately(t *testing.T) {
 
 func TestAgentWebSocketCancelKillsShellCommand(t *testing.T) {
 	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
 	conn := dialAgentTestWS(t, ts.URL)
@@ -1048,7 +900,7 @@ func TestAgentWebSocketCancelKillsShellCommand(t *testing.T) {
 func TestAgentWebSocketRejectsBlockedShellCommand(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
 	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
 	conn := dialAgentTestWS(t, ts.URL)
@@ -1064,10 +916,293 @@ func TestAgentWebSocketRejectsBlockedShellCommand(t *testing.T) {
 	}
 }
 
-func TestAgentWebSocketRejectsDockerNewlineInjection(t *testing.T) {
+func TestDirectAgentWebSocketRejectsCredentialApply(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
 	gw := NewGateway("0")
 	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	prompt := validDoagentApplyPrompt(t)
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id":       prompt.SessionID,
+		"instruction":      prompt.Instruction,
+		"operation":        prompt.Operation,
+		"response_format":  prompt.ResponseFormat,
+		"workspace_commit": prompt.WorkspaceCommit,
+	})
+	toolResult, _ := result["result"].(map[string]interface{})
+	if toolResult["isError"] != true ||
+		!strings.Contains(fmt.Sprint(toolResult["content"]), "gateway-authorized reverse tunnel") {
+		t.Fatalf("expected direct apply rejection, got %#v", result)
+	}
+}
+
+func TestGatewayAuthorizedWebSocketExecutesCredentialApply(t *testing.T) {
+	prompt := validDoagentApplyPrompt(t)
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	workspace := filepath.Join(root, prompt.SessionID)
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(prompt.WorkspaceCommit+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	prompted := make(chan struct{})
+	var promptedOnce sync.Once
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rpc":
+			var req map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decode rpc: %v", err)
+				return
+			}
+			switch req["method"] {
+			case "initialize":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]interface{}{
+						"agentCapabilities": map[string]interface{}{
+							"trustedReconciliationContext": map[string]interface{}{
+								"schemaVersion":            "doops.reconciliation-context/v2",
+								"callContextSchemaVersion": "doops.reconciliation-call-context/v1",
+								"mcpMetaKey":               "doops.sh/reconciliation-context",
+								"credentialRunDigest":      true,
+								"sourceWorkspaceCommit":    true,
+							},
+						},
+					},
+				})
+			case "session/new":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{"sessionId": "credential-apply"},
+				})
+			case "session/setMode":
+				params, _ := req["params"].(map[string]interface{})
+				if params["modeId"] != "build" {
+					t.Errorf("credential apply mode = %v, want build", params["modeId"])
+				}
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{},
+				})
+			case "session/prompt":
+				params, _ := req["params"].(map[string]interface{})
+				if params["response_format"] != "json" || params["responseMode"] != "stream" {
+					t.Errorf("credential apply prompt is not structured streaming: %#v", params)
+				}
+				promptedOnce.Do(func() { close(prompted) })
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]interface{}{
+						"status":   "accepted",
+						"delivery": "sse",
+						"turnId":   "turn-credential-apply",
+					},
+				})
+			default:
+				t.Errorf("unexpected rpc method: %v", req["method"])
+			}
+		case "/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			<-prompted
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_report","report":{"planDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"Converged","evidence":[],"violations":[]}}}}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","turnId":"turn-credential-apply","content":{"type":"text","text":"# Human-readable summary"}}}}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-credential-apply","status":"completed","stopReason":"end_turn"}}}`)
+			fmt.Fprintln(w)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway("0")
+	ts := newGatewayAuthorizedAgentServer(t, gw)
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	result := callTool(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id":       prompt.SessionID,
+		"instruction":      prompt.Instruction,
+		"operation":        prompt.Operation,
+		"response_format":  prompt.ResponseFormat,
+		"workspace_commit": prompt.WorkspaceCommit,
+	})
+	if !strings.Contains(result, `"planDigest":"sha256:aaaaaaaa`) || !strings.Contains(result, `"status":"Converged"`) {
+		t.Fatalf("credential apply result = %s", result)
+	}
+}
+
+func TestGatewayAuthorizedWebSocketRejectsReplacedCredentialWorkspace(t *testing.T) {
+	prompt := validDoagentApplyPrompt(t)
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	workspace := filepath.Join(root, prompt.SessionID)
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(strings.Repeat("b", 40)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DO_AGENT_URL", "http://127.0.0.1:1")
+
+	gw := NewGateway("0")
+	ts := newGatewayAuthorizedAgentServer(t, gw)
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id":       prompt.SessionID,
+		"instruction":      prompt.Instruction,
+		"operation":        prompt.Operation,
+		"response_format":  prompt.ResponseFormat,
+		"workspace_commit": prompt.WorkspaceCommit,
+	})
+	errObject, _ := result["error"].(map[string]interface{})
+	if !strings.Contains(fmt.Sprint(errObject["message"]), "workspace_commit_binding_invalid") {
+		t.Fatalf("replaced credential workspace was not rejected: %#v", result)
+	}
+}
+
+func TestDirectAgentWebSocketRejectsCICDDryRun(t *testing.T) {
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id":  "direct-cicd-dry-run",
+		"instruction": `{"task":"execute-doops-cicd"}`,
+		"operation":   "ask",
+	})
+	toolResult, _ := result["result"].(map[string]interface{})
+	if toolResult["isError"] != true ||
+		!strings.Contains(fmt.Sprint(toolResult["content"]), "gateway-authorized reverse tunnel") {
+		t.Fatalf("expected direct CI/CD dry-run rejection, got %#v", result)
+	}
+}
+
+func TestDirectAgentWebSocketRejectsCredentialControlPlaneTools(t *testing.T) {
+	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	for _, tool := range []string{"doops_credential_plan", "doops_credential_materialize", "doops_credential_cleanup"} {
+		result := callToolResult(t, conn, tool, map[string]interface{}{
+			"session_id": "direct-credential-control-plane",
+		})
+		toolResult, _ := result["result"].(map[string]interface{})
+		if toolResult["isError"] != true || !strings.Contains(fmt.Sprint(toolResult["content"]), "gateway-authorized reverse tunnel") {
+			t.Fatalf("%s direct call was not rejected: %#v", tool, result)
+		}
+	}
+}
+
+func TestDirectAgentWebSocketRejectsMutatingToolsAndOrdinaryPrompts(t *testing.T) {
+	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	cases := []struct {
+		tool string
+		args map[string]interface{}
+	}{
+		{tool: "doops_shell", args: map[string]interface{}{"session_id": "direct", "command": "true"}},
+		{tool: "doops_file_write", args: map[string]interface{}{"session_id": "direct", "path": "x", "content": "x"}},
+		{tool: "doops_workspace_begin", args: map[string]interface{}{"session_id": "direct"}},
+		{tool: "doops_agent_prompt", args: map[string]interface{}{"session_id": "direct", "instruction": "change the service"}},
+	}
+	for _, testCase := range cases {
+		result := callToolResult(t, conn, testCase.tool, testCase.args)
+		toolResult, _ := result["result"].(map[string]interface{})
+		if toolResult["isError"] != true ||
+			!strings.Contains(fmt.Sprint(toolResult["content"]), "gateway-authorized reverse tunnel") {
+			t.Fatalf("%s direct mutation was not rejected: %#v", testCase.tool, result)
+		}
+	}
+}
+
+func TestWorkspaceCommitBindingRejectsDirtyAndUntrackedContent(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	sessionID := "immutable-workspace"
+	workspace := filepath.Join(root, sessionID)
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("committed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runTestCommand(t, workspace, "git", "init", "-q")
+	runTestCommand(t, workspace, "git", "config", "user.email", "test@example.invalid")
+	runTestCommand(t, workspace, "git", "config", "user.name", "DoOps Test")
+	runTestCommand(t, workspace, "git", "add", "tracked.txt")
+	runTestCommand(t, workspace, "git", "commit", "-q", "-m", "workspace")
+	commit := strings.TrimSpace(runTestCommand(t, workspace, "git", "rev-parse", "HEAD"))
+	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(commit+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateWorkspaceCommitBinding(sessionID, commit); err != nil {
+		t.Fatalf("clean workspace binding rejected: %v", err)
+	}
+	untracked := filepath.Join(workspace, "untracked.txt")
+	if err := os.WriteFile(untracked, []byte("untrusted\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateWorkspaceCommitBinding(sessionID, commit); err == nil ||
+		!strings.Contains(err.Error(), "outside the authorized commit") {
+		t.Fatalf("untracked workspace content was not rejected: %v", err)
+	}
+	if err := os.Remove(untracked); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("modified\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateWorkspaceCommitBinding(sessionID, commit); err == nil ||
+		!strings.Contains(err.Error(), "outside the authorized commit") {
+		t.Fatalf("modified workspace content was not rejected: %v", err)
+	}
+}
+
+func TestAgentWebSocketRejectsDockerNewlineInjection(t *testing.T) {
+	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
+	gw := NewGateway("0")
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
 	conn := dialAgentTestWS(t, ts.URL)
@@ -1483,7 +1618,7 @@ func TestAgentWebSocketWorkspaceChunkUpload(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 
 	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
 	conn := dialAgentTestWS(t, ts.URL)
@@ -1705,7 +1840,7 @@ func initializeAgentTestWS(t *testing.T, conn *websocket.Conn) {
 	}
 	capabilities, _ := result["capabilities"].(map[string]interface{})
 	protocols, _ := capabilities["protocols"].(map[string]interface{})
-	if protocols["credentialPlan"] != credentialPlanProtocolV2 {
+	if !credentialPlanCapabilityCompatible(protocols["credentialPlan"]) {
 		t.Fatalf("initialize result must advertise credential plan v2: %#v", resp)
 	}
 }

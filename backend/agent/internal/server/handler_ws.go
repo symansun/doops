@@ -147,9 +147,7 @@ func (gw *Gateway) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	gw.ServeWebSocketConn(conn, r.RemoteAddr)
 }
 
-// ServeWebSocketConn serves the doops JSON-RPC protocol over an already
-// established WebSocket. It is used both by the normal inbound /ws endpoint
-// and by reverse tunnel mode, where the agent dials a public gateway first.
+// ServeWebSocketConn serves an untrusted direct-Agent WebSocket connection.
 func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
 	gw.serveWebSocketConn(conn, remoteAddr, nil, false)
 }
@@ -158,8 +156,9 @@ func (gw *Gateway) ServeWebSocketConnWithReady(conn *websocket.Conn, remoteAddr 
 	gw.serveWebSocketConn(conn, remoteAddr, onReady, false)
 }
 
-// ServeGatewayWebSocketConnWithReady serves a reverse tunnel connection whose
-// mutating requests have already passed gateway authorization.
+// ServeGatewayWebSocketConnWithReady serves the reverse tunnel after Gateway
+// authorization. Public direct-Agent WebSocket connections must use the
+// untrusted entry points above.
 func (gw *Gateway) ServeGatewayWebSocketConnWithReady(conn *websocket.Conn, remoteAddr string, onReady func()) {
 	gw.serveWebSocketConn(conn, remoteAddr, onReady, true)
 }
@@ -280,7 +279,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 					"capabilities": map[string]interface{}{
 						"tools": map[string]interface{}{},
 						"protocols": map[string]interface{}{
-							"credentialPlan": credentialPlanProtocolV2,
+							"credentialPlan": credentialPlanCapability(),
 						},
 					},
 				},
@@ -498,6 +497,11 @@ func errorNotification(text string) notificationEvent {
 
 // handleToolCallOverWS 处理具体的 MCP tool 调用（复用原有的处理逻辑，但直接向 WS 写入结果）
 func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, toolName string, argBytes json.RawMessage, gatewayAuthorized bool, writeJSON func(v interface{})) {
+	if !gatewayAuthorized && !directAgentReadOnlyTool(toolName, argBytes) {
+		writeJSON(buildToolErrorResponse(reqID, "mutating agent tools require a gateway-authorized reverse tunnel"))
+		return
+	}
+
 	var sessionID string
 	var argsMap map[string]interface{}
 	json.Unmarshal(argBytes, &argsMap)
@@ -794,6 +798,11 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		var args api.AgentPromptParams
 		json.Unmarshal(argBytes, &args)
 		operation := strings.ToLower(strings.TrimSpace(args.Operation))
+		cicdPrompt := isDoopsCICDInstruction(args.Instruction)
+		if cicdPrompt && !gatewayAuthorized {
+			writeJSON(buildErrorResponse(reqID, -32602, "doops-cicd requires a gateway-authorized reverse tunnel"))
+			return
+		}
 		if operation == "apply" {
 			if !gatewayAuthorized {
 				writeJSON(buildErrorResponse(reqID, -32602, "credential apply requires a gateway-authorized reverse tunnel"))
@@ -849,7 +858,6 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			agentPromptExecutionContext{
 				NativeMode:      nativeMode,
 				WorkspaceCommit: strings.TrimSpace(args.WorkspaceCommit),
-				Mutating:        operation == "apply",
 			},
 			pushProgress,
 			writeJSON,
@@ -948,6 +956,20 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	}
 }
 
+func directAgentReadOnlyTool(toolName string, arguments json.RawMessage) bool {
+	switch toolName {
+	case "doops_file_read", "doops_node_info", "doops_check_deployment",
+		"doops_task_status", "doops_workspace_pull_begin", "doops_workspace_pull_chunk":
+		return true
+	case "doops_agent_prompt":
+		switch strings.ToLower(extractStringArg(arguments, "mode")) {
+		case "metadata", "history":
+			return true
+		}
+	}
+	return false
+}
+
 func doagentModeForPrompt(operation, executionMode string) (string, error) {
 	operation = strings.ToLower(strings.TrimSpace(operation))
 	executionMode = strings.ToLower(strings.TrimSpace(executionMode))
@@ -995,9 +1017,9 @@ func validatedDoagentApplyInstruction(prompt api.AgentPromptParams) (map[string]
 	if envelope.Task != "execute-doops-cicd" ||
 		envelope.Skill != "$doops-cicd" ||
 		envelope.ExecutionMode != "apply" ||
-		strings.TrimSpace(envelope.ManifestPath) != "deploy/environments.yaml" ||
+		envelope.ManifestPath != "deploy/environments.yaml" ||
 		!validCredentialWorkspaceCommit(envelope.WorkspaceCommit) ||
-		strings.TrimSpace(prompt.WorkspaceCommit) != strings.TrimSpace(envelope.WorkspaceCommit) ||
+		strings.TrimSpace(prompt.WorkspaceCommit) != envelope.WorkspaceCommit ||
 		strings.TrimSpace(envelope.Source.Repository) == "" ||
 		strings.TrimSpace(envelope.Source.Branch) == "" ||
 		run.APIVersion != "doops.sh/v2" ||
@@ -1008,8 +1030,11 @@ func validatedDoagentApplyInstruction(prompt api.AgentPromptParams) (map[string]
 		strings.TrimSpace(run.Instance) == "" ||
 		strings.TrimSpace(run.Target) == "" ||
 		run.Session != strings.TrimSpace(prompt.SessionID) ||
-		run.SourceRevision != strings.TrimSpace(envelope.WorkspaceCommit) ||
+		run.SourceRevision != envelope.WorkspaceCommit ||
 		run.CreatedAt.IsZero() {
+		return nil, fmt.Errorf("apply is only supported for an explicit doops-cicd apply instruction")
+	}
+	if err := validateCredentialPlanSourceRepository(envelope.Source.Repository); err != nil {
 		return nil, fmt.Errorf("apply is only supported for an explicit doops-cicd apply instruction")
 	}
 	for key, value := range envelope.Inputs {
@@ -1036,7 +1061,6 @@ func validatedDoagentApplyInstruction(prompt api.AgentPromptParams) (map[string]
 type agentPromptExecutionContext struct {
 	NativeMode      string
 	WorkspaceCommit string
-	Mutating        bool
 }
 
 const trustedReconciliationContextProtocolV2 = "doops.reconciliation-context/v2"
@@ -1063,10 +1087,7 @@ func validateDoagentCICDCapabilities(response map[string]interface{}) error {
 }
 
 func requireDoagentCICDCapabilities(baseURL, instruction, sessionID string) error {
-	var marker struct {
-		Task string `json:"task"`
-	}
-	if json.Unmarshal([]byte(instruction), &marker) != nil || marker.Task != "execute-doops-cicd" {
+	if !isDoopsCICDInstruction(instruction) {
 		return nil
 	}
 	response, err := doagentRPC(baseURL, map[string]interface{}{
@@ -1081,13 +1102,24 @@ func requireDoagentCICDCapabilities(baseURL, instruction, sessionID string) erro
 	return validateDoagentCICDCapabilities(response)
 }
 
+func isDoopsCICDInstruction(instruction string) bool {
+	var marker struct {
+		Task string `json:"task"`
+	}
+	return json.Unmarshal([]byte(instruction), &marker) == nil &&
+		strings.TrimSpace(marker.Task) == "execute-doops-cicd"
+}
+
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
 func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, model string, responseFormat string, execution agentPromptExecutionContext, pushProgress notificationSender, writeJSON func(v interface{})) {
 	log.Printf("🤖 WS Running doagent via ACP HTTP: session=%s structured=%t model=%s",
 		doopsSessionID, responseFormat == "json", model)
-	if err := validateWorkspaceCommitBinding(doopsSessionID, execution.WorkspaceCommit); err != nil {
-		writeJSON(buildErrorResponse(reqID, -32603, "workspace_commit_binding_invalid"))
-		return
+	cicdPrompt := isDoopsCICDInstruction(instr)
+	if cicdPrompt {
+		if err := validateWorkspaceCommitBinding(doopsSessionID, execution.WorkspaceCommit); err != nil {
+			writeJSON(buildErrorResponse(reqID, -32603, "workspace_commit_binding_invalid"))
+			return
+		}
 	}
 
 	doagentURL := os.Getenv("DO_AGENT_URL")
@@ -1106,7 +1138,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	// Machine-result prompts use a fresh doagent session so their tool trace
 	// catalog and turn_finished boundary cannot include a previous turn.
 	var entry *sessionEntry
-	if responseFormat != "json" && !execution.Mutating {
+	if responseFormat != "json" {
 		gw.sessionMapMu.RLock()
 		entry = gw.sessionMap[doopsSessionID]
 		gw.sessionMapMu.RUnlock()
@@ -1126,17 +1158,6 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		if responseFormat == "json" {
 			requestedSessionID = fmt.Sprintf("%s-json-%d", doopsSessionID, time.Now().UnixNano())
 		}
-		sessionCWD := "/root/ws/" + doopsSessionID
-		if execution.Mutating && execution.WorkspaceCommit == "" {
-			var err error
-			sessionCWD, err = os.MkdirTemp("", "doops-apply-")
-			if err != nil {
-				writeJSON(buildErrorResponse(reqID, -32603, "doagent_temporary_workspace_failed"))
-				return
-			}
-			defer os.RemoveAll(sessionCWD)
-			requestedSessionID = fmt.Sprintf("%s-apply-%d", doopsSessionID, time.Now().UnixNano())
-		}
 		var systemPrompt string
 		sysPromptPaths := []string{"/app/skills/system_prompt.md", "/app/self-docs/agent/skills/system_prompt.md"}
 		for _, sp := range sysPromptPaths {
@@ -1154,7 +1175,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			"params": map[string]interface{}{
 				"sessionId":    requestedSessionID,
 				"systemPrompt": systemPrompt,
-				"cwd":          sessionCWD,
+				"cwd":          "/root/ws/" + doopsSessionID,
 			},
 		})
 		if err != nil {
@@ -1172,7 +1193,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			return
 		}
 
-		if responseFormat != "json" && !execution.Mutating {
+		if responseFormat != "json" {
 			gw.sessionMapMu.Lock()
 			gw.sessionMap[doopsSessionID] = &sessionEntry{
 				doagentSessionID: targetSessionID,
@@ -1224,7 +1245,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	sseDone := make(chan error, 1)
 	sseReady := make(chan error, 1)
 	turnIDReady := make(chan string, 1)
-	toolTraces := newDoagentToolTraceCollector()
+	toolTraces := newDoagentToolTraceCollector(cicdPrompt)
 	go func() {
 		sseDone <- subscribeDoagentSSEWithCollectorReady(
 			sseCtx,
@@ -1282,7 +1303,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		return
 	}
 	if responseFormat == "json" {
-		resultText, structuredContent, err := toolTraces.structuredResult()
+		resultText, structuredContent, err := toolTraces.structuredResult(cicdPrompt)
 		if err != nil {
 			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("read final machine result: %v", err)))
 			return
@@ -1291,19 +1312,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		return
 	}
 
-	resultText := toolTraces.finalText()
-	if execution.Mutating && len(toolTraces.completed()) == 0 {
-		if resultText == "" {
-			resultText = "agent returned without any completed tool call"
-		}
-		writeJSON(buildToolErrorResponse(reqID, "doagent_apply_no_tool_activity: "+resultText))
-		return
-	}
-	if resultText == "" {
-		writeJSON(buildToolErrorResponse(reqID, "doagent_final_result_missing"))
-		return
-	}
-	writeJSON(buildSuccessResponse(reqID, resultText))
+	writeJSON(buildSuccessResponse(reqID, "Operation complete."))
 }
 
 func (gw *Gateway) handleAgentMetadataWS(ctx context.Context, doopsSessionID string) (string, error) {

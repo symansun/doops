@@ -215,12 +215,18 @@ func runCredentialVerify(args []string, servers []Server, configErr error, stdou
 		"environment": strings.TrimSpace(environment),
 		"service":     strings.TrimSpace(service),
 	}
-	sourceRepository, sourceBranch, declaredSession, err := workflowDeclaredSource(workflowPath, inputs)
+	declaration, err := workflowDeclaredDeployment(workflowPath, inputs)
 	if err != nil {
-		return fmt.Errorf("resolve registry source: %w", err)
+		return fmt.Errorf("resolve registry deployment: %w", err)
 	}
-	if strings.TrimSpace(sessionID) != declaredSession {
-		return fmt.Errorf("session %q does not match environment target session %q", strings.TrimSpace(sessionID), declaredSession)
+	if declaration.TargetName != server.Name ||
+		declaration.TargetCluster != server.Cluster ||
+		declaration.TargetInstance != server.Instance {
+		return fmt.Errorf("configured target %q does not match declared target %q (%s/%s)",
+			server.Name, declaration.TargetName, declaration.TargetCluster, declaration.TargetInstance)
+	}
+	if strings.TrimSpace(sessionID) != declaration.TargetSession {
+		return fmt.Errorf("session %q does not match environment target session %q", strings.TrimSpace(sessionID), declaration.TargetSession)
 	}
 	gateway, token, err := resolveCredentialGateway(target, "", servers, configErr)
 	if err != nil {
@@ -236,11 +242,11 @@ func runCredentialVerify(args []string, servers []Server, configErr error, stdou
 		"instance":          strings.TrimSpace(server.Instance),
 		"target":            strings.TrimSpace(server.Name),
 		"session_id":        strings.TrimSpace(sessionID),
-		"workflow_path":     strings.TrimSpace(workflowPath),
+		"workflow_path":     relativePath,
 		"source_revision":   strings.TrimSpace(workspaceCommit),
 		"workspace_commit":  strings.TrimSpace(workspaceCommit),
-		"source_repository": sourceRepository,
-		"source_branch":     sourceBranch,
+		"source_repository": declaration.SourceRepository,
+		"source_branch":     declaration.SourceBranch,
 		"inputs":            inputs,
 	})
 	if err != nil {
