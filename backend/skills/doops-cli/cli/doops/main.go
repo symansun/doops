@@ -14,9 +14,12 @@ import (
 	"golang.org/x/term"
 )
 
+const cicdContractVersion = "doops.sh/cicd-contract/v3"
+
 func main() {
 	verbose := flag.Bool("verbose", false, "Enable verbose logging")
 	sessionName := flag.String("session", "", "Session/Task ID for isolation (REQUIRED)")
+	printContract := flag.Bool("contract", false, "Print the machine-readable CLI contract version")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `
 Doops 分布式服务器管理工具 (doops.sh CLI)
@@ -55,6 +58,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 选项:
   -verbose    启用详细日志
   -session    会话/任务ID (无默认值，涉及远程调用的命令必须提供以严格隔离工作空间)
+  -contract   输出机器可读的 CLI 契约版本
   -help       显示此帮助信息
 
 	Agent 原生声明式 CI/CD 示例:
@@ -64,6 +68,10 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 `)
 	}
 	flag.Parse()
+	if *printContract {
+		fmt.Println(cicdContractVersion)
+		return
+	}
 
 	args := flag.Args()
 	if len(args) == 0 {

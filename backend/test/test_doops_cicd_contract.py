@@ -47,6 +47,7 @@ def test_active_cicd_docs_only_describe_gateway_bound_v3_registry():
         "service",
         "doops.sh/credential-plan/v2",
         "doops.reconciliation-context/v2",
+        "doops.sh/cicd-contract/v3",
     ):
         assert required in text
 

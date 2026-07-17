@@ -102,7 +102,7 @@ sha256_file() {
 }
 
 install_cli() {
-  local platform prebuilt checksums expected actual candidate
+  local platform prebuilt checksums expected actual candidate contract
   platform="$(detect_host_platform)"
   if [[ "${platform}" == unsupported-* ]]; then
     cat >&2 <<EOF
@@ -137,10 +137,15 @@ EOF
       exit 1
     fi
     candidate="$(mktemp "$(dirname "${CLI_OUT}")/.doops-install.XXXXXX")"
-    if ! install -m 0755 "${prebuilt}" "${candidate}" ||
-      ! "${candidate}" -help >/dev/null 2>&1; then
+    if ! install -m 0755 "${prebuilt}" "${candidate}"; then
       rm -f "${candidate}"
       echo "Prebuilt CLI failed its launch self-check: ${prebuilt}" >&2
+      exit 1
+    fi
+    contract="$("${candidate}" -contract 2>/dev/null || true)"
+    if [[ "${contract}" != "doops.sh/cicd-contract/v3" ]]; then
+      rm -f "${candidate}"
+      echo "Prebuilt CLI contract mismatch: expected doops.sh/cicd-contract/v3, got ${contract:-<empty>}" >&2
       exit 1
     fi
     if ! mv -f "${candidate}" "${CLI_OUT}"; then

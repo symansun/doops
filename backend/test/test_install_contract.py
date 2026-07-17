@@ -10,5 +10,7 @@ def test_cli_install_replaces_existing_binary_atomically():
 
     assert 'candidate="$(mktemp "$(dirname "${CLI_OUT}")/.doops-install.XXXXXX")"' in text
     assert 'install -m 0755 "${prebuilt}" "${candidate}"' in text
+    assert 'contract="$("${candidate}" -contract 2>/dev/null || true)"' in text
+    assert '[[ "${contract}" != "doops.sh/cicd-contract/v3" ]]' in text
     assert 'mv -f "${candidate}" "${CLI_OUT}"' in text
     assert 'cp "${prebuilt}" "${CLI_OUT}"' not in text
