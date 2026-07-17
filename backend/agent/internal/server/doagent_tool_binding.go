@@ -431,32 +431,26 @@ func rejectSensitiveToolResult(value interface{}) error {
 	return nil
 }
 
+type deploymentRunContractBinding struct {
+	APIVersion      string
+	Workflow        string
+	RunID           string
+	WorkspaceCommit string
+	Mode            string
+	PrimaryTool     string
+}
+
 func bindDeploymentRunEvidence(
 	result map[string]interface{},
 	traces []doagentToolTrace,
-	admission *trustedReconciliationAdmission,
+	contract *deploymentRunContractBinding,
 ) (string, map[string]interface{}, error) {
-	if result["kind"] != "DeploymentRun" {
-		return "", nil, fmt.Errorf("structured result kind must be DeploymentRun")
-	}
-	status, ok := result["status"].(map[string]interface{})
-	if !ok {
-		return "", nil, fmt.Errorf("DeploymentRun.status must be an object")
+	status, err := validateDeploymentRunEnvelope(result, contract)
+	if err != nil {
+		return "", nil, err
 	}
 	if err := rejectRetainedSensitiveDeploymentRunFields(result); err != nil {
 		return "", nil, err
-	}
-	if admission != nil {
-		metadata, ok := result["metadata"].(map[string]interface{})
-		if !ok {
-			return "", nil, fmt.Errorf("DeploymentRun.metadata must be an object")
-		}
-		spec, ok := result["spec"].(map[string]interface{})
-		if !ok {
-			return "", nil, fmt.Errorf("DeploymentRun.spec must be an object")
-		}
-		metadata["workspaceCommit"] = admission.Context.Source.WorkspaceCommit
-		spec["mode"] = admission.Context.ExecutionMode
 	}
 	for field := range status {
 		switch field {
@@ -464,11 +458,6 @@ func bindDeploymentRunEvidence(
 		default:
 			return "", nil, fmt.Errorf("DeploymentRun.status field %q is not supported", field)
 		}
-	}
-	switch status["phase"] {
-	case "planned", "converged", "blocked", "failed", "outcome-unknown":
-	default:
-		return "", nil, fmt.Errorf("DeploymentRun.status.phase is invalid")
 	}
 	evidence, ok := status["evidence"].([]interface{})
 	if !ok || len(evidence) == 0 {
@@ -517,11 +506,12 @@ func bindDeploymentRunEvidence(
 		if err != nil {
 			return "", nil, fmt.Errorf("DeploymentRun evidence[%d]: %w", index, err)
 		}
-		primaryTool := primaryDeploymentEvidenceTool(admission)
-		if index == 0 && primaryTool != "" && trace.ToolName != primaryTool {
+		if index == 0 && contract != nil &&
+			contract.PrimaryTool != "" &&
+			trace.ToolName != contract.PrimaryTool {
 			return "", nil, fmt.Errorf(
 				"DeploymentRun evidence[0] must reference %s",
-				modelVisibleDoagentToolName(primaryTool),
+				modelVisibleDoagentToolName(contract.PrimaryTool),
 			)
 		}
 		runtimeInput, err := decodeDoagentJSONValue(trace.inputJSON)
@@ -545,6 +535,21 @@ func bindDeploymentRunEvidence(
 		}
 	}
 
+	if contract != nil {
+		result = map[string]interface{}{
+			"apiVersion": contract.APIVersion,
+			"kind":       "DeploymentRun",
+			"metadata": map[string]interface{}{
+				"workflow":        contract.Workflow,
+				"runId":           contract.RunID,
+				"workspaceCommit": contract.WorkspaceCommit,
+			},
+			"spec": map[string]interface{}{
+				"mode": contract.Mode,
+			},
+			"status": status,
+		}
+	}
 	if err := rejectSensitiveToolResult(result); err != nil {
 		return "", nil, err
 	}
@@ -553,6 +558,72 @@ func bindDeploymentRunEvidence(
 		return "", nil, fmt.Errorf("encode DeploymentRun: %w", err)
 	}
 	return string(payload), result, nil
+}
+
+func validateDeploymentRunEnvelope(
+	result map[string]interface{},
+	contract *deploymentRunContractBinding,
+) (map[string]interface{}, error) {
+	if result["kind"] != "DeploymentRun" {
+		return nil, fmt.Errorf("structured result kind must be DeploymentRun")
+	}
+	allowedTopLevel := map[string]bool{
+		"apiVersion": true,
+		"kind":       true,
+		"metadata":   true,
+		"spec":       true,
+		"status":     true,
+	}
+	if len(result) != len(allowedTopLevel) {
+		return nil, fmt.Errorf("DeploymentRun must contain exactly apiVersion, kind, metadata, spec, and status")
+	}
+	for field := range result {
+		if !allowedTopLevel[field] {
+			return nil, fmt.Errorf("DeploymentRun top-level field %q is not supported", field)
+		}
+	}
+	apiVersion, _ := result["apiVersion"].(string)
+	if apiVersion != "doops.sh/v2" && apiVersion != "doops.sh/v3" {
+		return nil, fmt.Errorf("DeploymentRun.apiVersion is invalid")
+	}
+	metadata, ok := result["metadata"].(map[string]interface{})
+	if !ok || len(metadata) != 3 {
+		return nil, fmt.Errorf("DeploymentRun.metadata must contain exactly workflow, runId, and workspaceCommit")
+	}
+	for _, field := range []string{"workflow", "runId", "workspaceCommit"} {
+		if strings.TrimSpace(stringField(metadata, field)) == "" {
+			return nil, fmt.Errorf("DeploymentRun.metadata.%s is required", field)
+		}
+	}
+	for field := range metadata {
+		switch field {
+		case "workflow", "runId", "workspaceCommit":
+		default:
+			return nil, fmt.Errorf("DeploymentRun.metadata field %q is not supported", field)
+		}
+	}
+	spec, ok := result["spec"].(map[string]interface{})
+	if !ok || len(spec) != 1 {
+		return nil, fmt.Errorf("DeploymentRun.spec must contain exactly mode")
+	}
+	mode, _ := spec["mode"].(string)
+	if mode != "dry-run" && mode != "apply" {
+		return nil, fmt.Errorf("DeploymentRun.spec.mode is invalid")
+	}
+	status, ok := result["status"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("DeploymentRun.status must be an object")
+	}
+	if contract != nil {
+		if apiVersion != contract.APIVersion ||
+			stringField(metadata, "workflow") != contract.Workflow ||
+			stringField(metadata, "runId") != contract.RunID ||
+			stringField(metadata, "workspaceCommit") != contract.WorkspaceCommit ||
+			mode != contract.Mode {
+			return nil, fmt.Errorf("DeploymentRun envelope does not match the trusted reconciliation instruction")
+		}
+	}
+	return status, nil
 }
 
 func rejectRetainedSensitiveDeploymentRunFields(result map[string]interface{}) error {

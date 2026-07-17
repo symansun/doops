@@ -18,6 +18,7 @@ import (
 type trustedReconciliationAdmission struct {
 	AllowedTools []string                     `json:"allowedTools"`
 	Context      trustedReconciliationContext `json:"context"`
+	Instruction  doopsCICDInstructionEnvelope `json:"-"`
 }
 
 const trustedReconciliationContextSchema = "doops.reconciliation-context/v1"
@@ -281,7 +282,11 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 	if err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
-	return trustedReconciliationAdmission{AllowedTools: tools, Context: context}, nil
+	return trustedReconciliationAdmission{
+		AllowedTools: tools,
+		Context:      context,
+		Instruction:  envelope,
+	}, nil
 }
 
 func decodeDoopsCICDInstruction(instruction string) (doopsCICDInstructionEnvelope, error) {

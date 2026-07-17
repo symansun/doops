@@ -54,9 +54,28 @@ The CLI sends a small task envelope to ordinary `doops_agent_prompt`:
   "task": "execute-doops-cicd-workflow",
   "skill": "$doops-cicd",
   "executionMode": "dry-run",
+  "runId": "<prepared run id>",
   "workflowPath": "backend/deploy/workflows/example.yaml",
   "workspaceCommit": "<pushed workspace commit>",
-  "inputs": {}
+  "inputs": {},
+  "credentialRun": {
+    "apiVersion": "doops.sh/v2",
+    "kind": "CredentialRun",
+    "id": "<credential run id>",
+    "mode": "dry-run",
+    "cluster": "<cluster>",
+    "instance": "<instance>",
+    "template": "example-release",
+    "project": "example",
+    "environment": "oilan",
+    "mutationCount": 0,
+    "materializations": []
+  },
+  "resultContract": {
+    "apiVersion": "doops.sh/v2",
+    "kind": "DeploymentRun",
+    "requireEvidence": true
+  }
 }
 ```
 
@@ -69,9 +88,11 @@ mutation-capable mode. There is no separate mutation flag.
 All ordinary prompts use the Gateway `ask` action and a session resource key.
 The Gateway does not synthesize observations or convert a text response into
 deployment evidence. It records completed ACP tool calls and rejects evidence
-that does not reference one of those calls. It also requires the evidence
-result, subject, and observation time to match the completed tool's actual JSON
-output.
+that does not reference one of those calls. It binds the evidence result and
+subject from the trusted tool trace, records the Agent-side completion time, and
+first requires the model envelope to match the validated reconciliation
+instruction exactly, then rebuilds `apiVersion`, `metadata`, and `spec` from
+that instruction.
 
 `response_format=json` remains a generic structured-result transport for callers
 that need it. The bridge accepts exactly one final JSON response from the fresh
@@ -90,6 +111,11 @@ final response:
 {
   "apiVersion": "doops.sh/v2",
   "kind": "DeploymentRun",
+  "metadata": {
+    "workflow": "backend/deploy/workflows/example.yaml",
+    "runId": "<prepared run id>",
+    "workspaceCommit": "<pushed workspace commit>"
+  },
   "spec": {
     "mode": "dry-run"
   },

@@ -88,6 +88,12 @@ review 返回一个 `DeploymentReview`；dry-run/apply 返回一个与根声明�
 Agent 先写 `toolRef`，Gateway 再绑定不可改写的 `toolCall`。普通 Bash、文件读取和
 浏览器输出不是部署证据。
 
+`DeploymentRun` 顶层只允许 `apiVersion`、`kind`、`metadata`、`spec`、`status`。
+`metadata` 只包含 `workflow`、`runId`、`workspaceCommit`，`spec` 只包含 `mode`；
+`phase`、`mutationCount`、`capabilities`、`evidence`、`failures` 必须位于
+`status`，禁止使用旧的顶层扁平结果。Gateway 从已验证 instruction 绑定
+`apiVersion`、`metadata` 和 `spec`，不信任模型提供这些权威字段。
+
 受信任 DoOps plan 工具的 `toolRef.tool` 必须使用模型可见名称
 `plan.<Tool>`，`toolRef.input` 必须是 `{}`；受信任上下文由 Gateway 在模型参数
 之外注入，不能把工具结果或声明字段伪装成调用参数。

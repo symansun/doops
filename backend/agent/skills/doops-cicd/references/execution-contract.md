@@ -40,6 +40,12 @@ Agent 发布必须由独立 control target 执行，不能让正在被替换的 
 - `spec.mode`；
 - `status.phase/mutationCount/capabilities/evidence/failures`。
 
+顶层只允许 `apiVersion`、`kind`、`metadata`、`spec`、`status`。禁止把
+`phase`、`mutationCount`、`capabilities`、`evidence`、`failures`、`runId` 或
+`workspaceCommit` 放到顶层。Gateway 从已验证 instruction 重建
+`apiVersion/metadata/spec`；模型仍必须输出完整五字段对象，且这些字段必须先与
+instruction 精确一致，任何缺失、额外字段或值漂移都直接失败。
+
 phase 只允许 `planned`、`converged`、`blocked`、`failed`、
 `outcome-unknown`。每条 evidence 必须引用当前 turn 中完成的受信任工具调用；Gateway
 只接受匹配 `turnId` 的调用，并负责把 `toolRef` 解析为不可改写的 `toolCall`。
