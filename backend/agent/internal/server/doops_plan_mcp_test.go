@@ -122,6 +122,47 @@ func TestResolveDoopsPlanImageSetUsesProvidedRegistryAuth(t *testing.T) {
 	}
 }
 
+func TestObserveDoopsPlanRuntimeImagesReportsMissingTargetDigest(t *testing.T) {
+	previousClient := doopsPlanHTTPClient
+	t.Cleanup(func() { doopsPlanHTTPClient = previousClient })
+	doopsPlanHTTPClient = &http.Client{
+		Transport: doopsPlanRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusNotFound,
+				Header:     http.Header{},
+				Body:       io.NopCloser(strings.NewReader("missing")),
+				Request:    request,
+			}, nil
+		}),
+	}
+
+	images, err := observeDoopsPlanRuntimeImages(
+		t.Context(),
+		doopsPlanRuntime{TargetRegistry: "registry.example.test/target"},
+		[]doopsPlanImage{{
+			Service: "backend", Repository: "registry.example.test/target/backend",
+			Digest: "sha256:" + strings.Repeat("a", 64),
+		}},
+		credentialConfigurationSecretRef{},
+	)
+	if err != nil {
+		t.Fatalf("observe missing target digest: %v", err)
+	}
+	if len(images) != 1 || images[0]["present"] != false {
+		t.Fatalf("target observation = %#v, want one missing image", images)
+	}
+}
+
+func TestVerifyDoopsPlanImageSetEqualityRejectsDifferentDigests(t *testing.T) {
+	err := verifyDoopsPlanImageSetEquality(
+		[]doopsPlanImage{{Service: "backend", Digest: "sha256:" + strings.Repeat("a", 64)}},
+		[]doopsPlanImage{{Service: "backend", Digest: "sha256:" + strings.Repeat("b", 64)}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "digest mismatch") {
+		t.Fatalf("image-set equality error = %v", err)
+	}
+}
+
 func TestRepositoryOilanRuntimeUsesDeclaredArtifactAndWorkloadBindings(t *testing.T) {
 	repositoryRoot := filepath.Clean(filepath.Join("..", "..", "..", ".."))
 	runtime, err := loadDoopsPlanRuntimeFromWorkspace(

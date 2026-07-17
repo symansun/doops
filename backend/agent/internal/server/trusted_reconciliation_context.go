@@ -513,7 +513,7 @@ func trustedToolEvidence(tool string) (string, string) {
 	case "ObserveSourceRegistryImageSet":
 		return "image-set", "source-image-set"
 	case "ObserveTargetRegistryImageSet":
-		return "release-manifest", "release-manifest"
+		return "image-set", "target-image-set"
 	case "RenderHelmRelease":
 		return "gitops-render", "gitops-render"
 	case "ObserveHelmRelease":

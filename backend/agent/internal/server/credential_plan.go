@@ -459,8 +459,11 @@ type credentialConfigurationSecretRef struct {
 }
 
 type credentialConfigurationArtifactSync struct {
-	SourceCredentialRef   credentialConfigurationSecretRef `yaml:"sourceCredentialRef"`
-	RegistryCredentialRef credentialConfigurationSecretRef `yaml:"registryCredentialRef"`
+	SourceCredentialRef               credentialConfigurationSecretRef `yaml:"sourceCredentialRef"`
+	RegistryCredentialRef             credentialConfigurationSecretRef `yaml:"registryCredentialRef"`
+	CopyOnlyWhenTargetDigestMissing   bool                             `yaml:"copyOnlyWhenTargetDigestMissing,omitempty"`
+	RequireSourceTargetDigestEquality bool                             `yaml:"requireSourceTargetDigestEquality,omitempty"`
+	PrePullBeforeHelm                 bool                             `yaml:"prePullBeforeHelm,omitempty"`
 }
 
 type credentialConfigurationResource struct {

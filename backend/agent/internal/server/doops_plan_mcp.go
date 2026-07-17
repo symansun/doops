@@ -101,6 +101,8 @@ type doopsPlanImage struct {
 	Digest     string `json:"digest"`
 }
 
+var errDoopsPlanRegistryManifestNotFound = errors.New("registry manifest is missing")
+
 func RunDoopsPlanMCP(input io.Reader, output io.Writer) error {
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -461,8 +463,11 @@ func loadDoopsPlanV3Runtime(
 		SourceBranch:       definition.Spec.Source.Branch,
 		RegistryCredential: secretRef(definition.Spec.Artifacts.RuntimeImagePullSecret),
 		ArtifactSync: credentialConfigurationArtifactSync{
-			SourceCredentialRef:   secretRef(definition.Spec.Artifacts.SourceCredentialRef),
-			RegistryCredentialRef: secretRef(definition.Spec.Artifacts.TargetCredentialRef),
+			SourceCredentialRef:               secretRef(definition.Spec.Artifacts.SourceCredentialRef),
+			RegistryCredentialRef:             secretRef(definition.Spec.Artifacts.TargetCredentialRef),
+			CopyOnlyWhenTargetDigestMissing:   definition.Spec.Artifacts.Migration.CopyOnlyWhenTargetDigestMissing,
+			RequireSourceTargetDigestEquality: definition.Spec.Artifacts.Migration.RequireSourceTargetDigestEquality,
+			PrePullBeforeHelm:                 definition.Spec.Artifacts.Migration.PrePullBeforeHelm,
 		},
 		VerificationProfile: definition.Spec.VerificationProfile,
 	}, nil
@@ -537,8 +542,11 @@ func doopsPlanReleaseScope(runtime doopsPlanRuntime) map[string]interface{} {
 		"targetRegistry":     runtime.TargetRegistry,
 		"registryCredential": doopsPlanSecretRefScope(runtime.RegistryCredential),
 		"artifactSync": map[string]interface{}{
-			"sourceCredentialRef":   doopsPlanSecretRefScope(runtime.ArtifactSync.SourceCredentialRef),
-			"registryCredentialRef": doopsPlanSecretRefScope(runtime.ArtifactSync.RegistryCredentialRef),
+			"sourceCredentialRef":               doopsPlanSecretRefScope(runtime.ArtifactSync.SourceCredentialRef),
+			"registryCredentialRef":             doopsPlanSecretRefScope(runtime.ArtifactSync.RegistryCredentialRef),
+			"copyOnlyWhenTargetDigestMissing":   runtime.ArtifactSync.CopyOnlyWhenTargetDigestMissing,
+			"requireSourceTargetDigestEquality": runtime.ArtifactSync.RequireSourceTargetDigestEquality,
+			"prePullBeforeHelm":                 runtime.ArtifactSync.PrePullBeforeHelm,
 		},
 		"helm": map[string]interface{}{
 			"namespace": runtime.Namespace, "release": runtime.Release,
@@ -592,7 +600,7 @@ func executeDoopsPlanTool(
 		images, err := resolveDoopsPlanRuntimeImages(ctx, runtime, runtime.SourceImages, runtime.SourceRegistry, runtime.Services, runtime.Version, runtime.ArtifactSync.SourceCredentialRef)
 		return map[string]interface{}{"registry": runtime.SourceRegistry, "version": runtime.Version, "images": images}, err
 	case "ObserveTargetRegistryImageSet":
-		images, err := resolveDoopsPlanRuntimeImages(ctx, runtime, runtime.TargetImages, runtime.TargetRegistry, runtime.Services, runtime.Version, runtime.ArtifactSync.RegistryCredentialRef)
+		images, err := observeDoopsPlanRuntimeImages(ctx, runtime, runtime.TargetImages, runtime.ArtifactSync.RegistryCredentialRef)
 		return map[string]interface{}{"registry": runtime.TargetRegistry, "version": runtime.Version, "images": images}, err
 	case "RenderHelmRelease":
 		return renderDoopsPlanHelm(ctx, runtime)
@@ -624,6 +632,9 @@ func executeDoopsPlanTool(
 	case "ReconcileHelmRelease":
 		if !callContext.Context.MutationAuthorized {
 			return nil, errors.New("Helm reconciliation is not authorized in dry-run mode")
+		}
+		if runtime.ArtifactSync.PrePullBeforeHelm {
+			return nil, errors.New("prePullBeforeHelm is declared but no verified all-schedulable-node pre-pull executor is available")
 		}
 		return reconcileDoopsPlanHelm(ctx, runtime)
 	default:
@@ -948,6 +959,41 @@ func resolveDoopsPlanRuntimeImages(
 	return images, nil
 }
 
+func observeDoopsPlanRuntimeImages(
+	ctx context.Context,
+	runtime doopsPlanRuntime,
+	declared []doopsPlanImage,
+	credential credentialConfigurationSecretRef,
+) ([]map[string]interface{}, error) {
+	if len(declared) == 0 {
+		return nil, errors.New("target image declarations are empty")
+	}
+	credential = doopsPlanEffectiveRegistryCredential(runtime, credential, runtime.TargetRegistry)
+	observed := make([]map[string]interface{}, 0, len(declared))
+	for _, image := range declared {
+		auth, err := doopsPlanRegistryAuth(ctx, runtime, credential, image.Repository)
+		if err != nil {
+			return nil, err
+		}
+		digest, err := resolveDoopsPlanRegistryDigestWithAuth(ctx, image.Repository, image.Digest, auth)
+		switch {
+		case errors.Is(err, errDoopsPlanRegistryManifestNotFound):
+			observed = append(observed, map[string]interface{}{
+				"service": image.Service, "repository": image.Repository, "digest": image.Digest, "present": false,
+			})
+		case err != nil:
+			return nil, fmt.Errorf("observe image %s@%s: %w", image.Repository, image.Digest, err)
+		case digest != image.Digest:
+			return nil, fmt.Errorf("observed image %s digest mismatch: %s != %s", image.Repository, digest, image.Digest)
+		default:
+			observed = append(observed, map[string]interface{}{
+				"service": image.Service, "repository": image.Repository, "digest": image.Digest, "present": true,
+			})
+		}
+	}
+	return observed, nil
+}
+
 func doopsPlanEffectiveRegistryCredential(
 	runtime doopsPlanRuntime,
 	reference credentialConfigurationSecretRef,
@@ -1036,6 +1082,17 @@ func syncDoopsPlanImages(ctx context.Context, runtime doopsPlanRuntime) (map[str
 	if len(runtime.SourceImages) == 0 || len(runtime.SourceImages) != len(runtime.TargetImages) {
 		return nil, errors.New("cross-registry image declarations are incomplete")
 	}
+	sourceImages, err := resolveDoopsPlanRuntimeImages(
+		ctx, runtime, runtime.SourceImages, runtime.SourceRegistry, runtime.Services, runtime.Version,
+		runtime.ArtifactSync.SourceCredentialRef,
+	)
+	if err != nil {
+		return nil, err
+	}
+	targetState, err := observeDoopsPlanRuntimeImages(ctx, runtime, runtime.TargetImages, runtime.ArtifactSync.RegistryCredentialRef)
+	if err != nil {
+		return nil, err
+	}
 	sourceAuth, err := doopsPlanRegistryAuth(ctx, runtime, runtime.ArtifactSync.SourceCredentialRef, runtime.SourceImages[0].Repository)
 	if err != nil {
 		return nil, err
@@ -1054,6 +1111,9 @@ func syncDoopsPlanImages(ctx context.Context, runtime doopsPlanRuntime) (map[str
 		runtime.SourceImages[0].Repository: sourceAuth,
 		runtime.TargetImages[0].Repository: targetAuth,
 	} {
+		if auth == nil {
+			continue
+		}
 		host, _, _ := strings.Cut(repository, "/")
 		auths[host] = map[string]string{
 			"auth": base64.StdEncoding.EncodeToString([]byte(auth.Username + ":" + auth.Password)),
@@ -1064,10 +1124,17 @@ func syncDoopsPlanImages(ctx context.Context, runtime doopsPlanRuntime) (map[str
 		return nil, err
 	}
 	changed := false
+	copiedServices := make([]string, 0, len(runtime.SourceImages))
+	skippedServices := make([]string, 0, len(runtime.SourceImages))
 	for index, source := range runtime.SourceImages {
 		target := runtime.TargetImages[index]
 		if source.Service != target.Service || source.Digest != target.Digest {
 			return nil, errors.New("source and target image declarations do not match")
+		}
+		present, _ := targetState[index]["present"].(bool)
+		if runtime.ArtifactSync.CopyOnlyWhenTargetDigestMissing && present {
+			skippedServices = append(skippedServices, source.Service)
+			continue
 		}
 		if _, err := runDoopsPlanCommandEnv(ctx, runtime.Root, []string{"DOCKER_CONFIG=" + configDir}, "nerdctl", "-n", "k8s.io", "pull", source.Repository+"@"+source.Digest); err != nil {
 			return nil, err
@@ -1080,9 +1147,35 @@ func syncDoopsPlanImages(ctx context.Context, runtime doopsPlanRuntime) (map[str
 			return nil, err
 		}
 		changed = true
+		copiedServices = append(copiedServices, source.Service)
 	}
 	images, err := resolveDoopsPlanRuntimeImages(ctx, runtime, runtime.TargetImages, runtime.TargetRegistry, runtime.Services, runtime.Version, runtime.ArtifactSync.RegistryCredentialRef)
-	return map[string]interface{}{"changed": changed, "registry": runtime.TargetRegistry, "images": images}, err
+	if err != nil {
+		return nil, err
+	}
+	if runtime.ArtifactSync.RequireSourceTargetDigestEquality {
+		if err := verifyDoopsPlanImageSetEquality(sourceImages, images); err != nil {
+			return nil, err
+		}
+	}
+	return map[string]interface{}{
+		"changed": changed, "registry": runtime.TargetRegistry, "images": images,
+		"copiedServices": copiedServices, "skippedServices": skippedServices,
+		"sourceTargetDigestEqual": runtime.ArtifactSync.RequireSourceTargetDigestEquality,
+	}, nil
+}
+
+func verifyDoopsPlanImageSetEquality(sourceImages, targetImages []doopsPlanImage) error {
+	if len(sourceImages) != len(targetImages) {
+		return errors.New("source and target image sets have different sizes")
+	}
+	for index, source := range sourceImages {
+		target := targetImages[index]
+		if source.Service != target.Service || source.Digest != target.Digest {
+			return fmt.Errorf("source and target image digest mismatch for service %q", source.Service)
+		}
+	}
+	return nil
 }
 
 func resolveDoopsPlanRegistryDigest(ctx context.Context, repository, reference string) (string, error) {
@@ -1138,6 +1231,9 @@ func resolveDoopsPlanRegistryDigestWithAuth(
 		}
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return "", errDoopsPlanRegistryManifestNotFound
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return "", fmt.Errorf("registry manifest returned HTTP %d", response.StatusCode)
 	}
