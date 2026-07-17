@@ -49,7 +49,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   clean       清理远端节点上的工作区隔离沙盒
   unlock      管理员强制释放 gateway 上卡住的 target busy 状态
   admin       gateway 管理命令，例如给用户签发 token
-  upgrade     通过 gateway 广播升级在线 doops-agent
+  upgrade     预演 doops-agent 升级；正式发布必须由外部 release runner 或 GitOps 执行
   add         添加 gateway target
   install     通过 SSH 首次自举 Agent 到新节点 (仅安装阶段使用 SSH)
   login       缓存 gateway user token
@@ -889,7 +889,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		upgradeFlag.StringVar(&workload, "workload", "", "Kubernetes workload, e.g. daemonset/doops-agent")
 		upgradeFlag.StringVar(&container, "container", "", "Container name")
 		upgradeFlag.StringVar(&upgradeSession, "session", "", "Session ID")
-		upgradeFlag.BoolVar(&dryRun, "dry-run", false, "Preview upgrade command only")
+		upgradeFlag.BoolVar(&dryRun, "dry-run", false, "Preview upgrade command; direct agent self-upgrade is prohibited")
 		upgradeFlag.Parse(cmdArgs)
 		if upgradeSession != "" && *sessionName == "" {
 			*sessionName = upgradeSession

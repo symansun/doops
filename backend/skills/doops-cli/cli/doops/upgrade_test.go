@@ -60,3 +60,12 @@ func TestResolveUpgradeScopeRejectsUnscopedGateway(t *testing.T) {
 		t.Fatalf("expected unscoped gateway error, got %v", err)
 	}
 }
+
+func TestUpgradeAgentsRejectsApplyBeforeConnecting(t *testing.T) {
+	err := UpgradeAgents(Server{}, UpgradeOptions{
+		Image: "repo.example/doops-agent@sha256:abc",
+	}, false)
+	if err == nil || !strings.Contains(err.Error(), "direct agent self-upgrade is prohibited") {
+		t.Fatalf("expected direct self-upgrade rejection, got %v", err)
+	}
+}

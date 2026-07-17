@@ -8,10 +8,11 @@ import (
 )
 
 type AgentRegistrationHandler struct {
-	registry      *AgentRegistry
-	lease         time.Duration
-	messageBudget *gatewayMessageBudget
-	acknowledge   func(*GatewayAgent) error
+	registry         *AgentRegistry
+	lease            time.Duration
+	heartbeatTimeout time.Duration
+	messageBudget    *gatewayMessageBudget
+	acknowledge      func(*GatewayAgent) error
 }
 
 func NewAgentRegistrationHandler(
@@ -20,9 +21,10 @@ func NewAgentRegistrationHandler(
 	messageBudget *gatewayMessageBudget,
 ) *AgentRegistrationHandler {
 	return &AgentRegistrationHandler{
-		registry:      registry,
-		lease:         lease,
-		messageBudget: messageBudget,
+		registry:         registry,
+		lease:            lease,
+		heartbeatTimeout: 10 * time.Second,
+		messageBudget:    messageBudget,
 		acknowledge: func(session *GatewayAgent) error {
 			return session.writeJSON(map[string]interface{}{
 				"jsonrpc": "2.0",
@@ -52,9 +54,15 @@ func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		conn,
 		h.messageBudget,
 	)
-	go session.readLoop(h.registry, h.lease)
+	go session.readLoop(h.lease)
 	if err := session.initialize(); err != nil {
 		log.Printf("[gateway] agent initialize failed: %s: %v", session.Key, err)
+		_ = conn.Close()
+		<-session.closed
+		return
+	}
+	if !waitForInitialAgentHeartbeat(session, h.heartbeatTimeout) {
+		log.Printf("[gateway] agent heartbeat preflight failed: %s", session.Key)
 		_ = conn.Close()
 		<-session.closed
 		return
@@ -79,4 +87,32 @@ func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		log.Printf("[gateway] agent offline persistence failed: %s generation=%d: %v", session.Key, session.Generation, err)
 	}
 	log.Printf("[gateway] agent offline: %s generation=%d", session.Key, session.Generation)
+}
+
+func waitForInitialAgentHeartbeat(session *GatewayAgent, timeout time.Duration) bool {
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	if !writeHeartbeatPing(session.conn, []byte("registration-preflight"), timeout) {
+		return false
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		session.stateMu.RLock()
+		heartbeatAt := session.HeartbeatAt
+		session.stateMu.RUnlock()
+		if !heartbeatAt.IsZero() {
+			return true
+		}
+		select {
+		case <-session.closed:
+			return false
+		case <-timer.C:
+			return false
+		case <-ticker.C:
+		}
+	}
 }

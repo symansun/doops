@@ -24,6 +24,9 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 	if strings.TrimSpace(opts.Image) == "" {
 		return fmt.Errorf("image is required")
 	}
+	if !opts.DryRun {
+		return fmt.Errorf("direct agent self-upgrade is prohibited; use an external release controller or GitOps")
+	}
 	gateway := firstNonEmptyLocal(opts.Gateway, base.Gateway)
 	if gateway == "" {
 		return fmt.Errorf("gateway is required")

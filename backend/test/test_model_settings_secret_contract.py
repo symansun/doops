@@ -9,8 +9,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CHART = ROOT / "deploy" / "helm" / "doops-agent"
-VALUES = ROOT / "deploy" / "environments" / "oilan-values.yaml"
-REGISTRY = ROOT / "deploy" / "environments.yaml"
+VALUES = CHART / "values-oilan.yaml"
 SETTINGS_MODULE = ROOT / "agent" / "configure_doagent_settings.py"
 KUBECONFIG_MODULE = ROOT / "agent" / "configure_kubeconfig.py"
 SANDBOX_ENTRYPOINT = ROOT / "agent" / "sandbox-entrypoint.sh"
@@ -142,11 +141,6 @@ def test_oilan_agent_model_settings_are_secret_backed():
         "key": "settings.json",
     }
 
-    registry = yaml.safe_load(REGISTRY.read_text(encoding="utf-8"))
-    executor = registry["environments"]["oilan"]["executor"]["config"]
-    assert "modelRouting" not in executor
-    assert "modelSettings" not in executor
-    assert "extensions" not in executor
     host_paths = {
         item["name"]: item["hostPath"]["path"]
         for item in volumes

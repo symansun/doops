@@ -34,6 +34,19 @@ func TestHandleAgentUpgradeDryRunK8s(t *testing.T) {
 	}
 }
 
+func TestHandleAgentUpgradeRejectsApply(t *testing.T) {
+	_, err := handleAgentUpgrade(json.RawMessage(`{
+		"mode":"k8s",
+		"image":"repo.example/doops-agent:latest",
+		"namespace":"ai",
+		"workload":"deployment/doops-agent",
+		"container":"doops-agent"
+	}`))
+	if err == nil || !strings.Contains(err.Error(), directAgentUpgradeProhibited) {
+		t.Fatalf("expected direct self-upgrade rejection, got %v", err)
+	}
+}
+
 func TestAgentDockerfileInstallsAndVerifiesKubectl(t *testing.T) {
 	dockerfile, err := os.ReadFile(filepath.Join("..", "..", "Dockerfile"))
 	if err != nil {

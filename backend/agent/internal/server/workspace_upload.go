@@ -86,6 +86,8 @@ type agentUpgradeParams struct {
 	DryRun    bool   `json:"dry_run"`
 }
 
+const directAgentUpgradeProhibited = "direct agent self-upgrade is prohibited; use an external release controller or GitOps"
+
 type workspaceUploadMeta struct {
 	SessionID string    `json:"session_id"`
 	Commit    string    `json:"commit"`
@@ -458,6 +460,9 @@ func handleAgentUpgrade(argBytes json.RawMessage) (string, error) {
 	image := strings.TrimSpace(args.Image)
 	if image == "" {
 		return "", fmt.Errorf("image is required")
+	}
+	if !args.DryRun {
+		return "", fmt.Errorf("%s", directAgentUpgradeProhibited)
 	}
 	mode := strings.TrimSpace(args.Mode)
 	if mode == "" || mode == "auto" {

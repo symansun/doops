@@ -134,7 +134,7 @@ doops targets --target unicom
 | 拉取远端工作区 | `doops -session <s> pull --target <t> --dest <dir>` |
 | 小文本读写 | `doops read/write ...` |
 | 工作区清理 | `doops -session <s> clean --target <t>` |
-| 升级在线 agent | `doops -session <s> upgrade ... --dry-run` |
+| 预演 agent 升级 | `doops -session <s> upgrade ... --dry-run` |
 | 管理员签发 token | `doops admin token create --target <t> --user <u> --name <label> --expires 720h` |
 | 管理员查看 token | `doops admin token list --target <t> [--kind user\|agent]` |
 | 管理员撤销 token | `doops admin token revoke --target <t> --id <token-id>` |
