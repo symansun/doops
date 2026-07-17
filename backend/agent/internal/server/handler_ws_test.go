@@ -1008,7 +1008,9 @@ func TestGatewayAuthorizedWebSocketExecutesCredentialApply(t *testing.T) {
 				flusher.Flush()
 			}
 			<-prompted
-			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","turnId":"turn-credential-apply","content":{"type":"text","text":"{\"kind\":\"DeploymentRun\",\"status\":\"succeeded\"}"}}}}`)
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_report","report":{"planDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"Converged","evidence":[],"violations":[]}}}}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","turnId":"turn-credential-apply","content":{"type":"text","text":"# Human-readable summary"}}}}`)
 			fmt.Fprintln(w)
 			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-credential-apply","status":"completed","stopReason":"end_turn"}}}`)
 			fmt.Fprintln(w)
@@ -1034,8 +1036,28 @@ func TestGatewayAuthorizedWebSocketExecutesCredentialApply(t *testing.T) {
 		"response_format":  prompt.ResponseFormat,
 		"workspace_commit": prompt.WorkspaceCommit,
 	})
-	if !strings.Contains(result, `"kind":"DeploymentRun"`) || !strings.Contains(result, `"status":"succeeded"`) {
+	if !strings.Contains(result, `"planDigest":"sha256:aaaaaaaa`) || !strings.Contains(result, `"status":"Converged"`) {
 		t.Fatalf("credential apply result = %s", result)
+	}
+}
+
+func TestDirectAgentWebSocketRejectsCICDDryRun(t *testing.T) {
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id":  "direct-cicd-dry-run",
+		"instruction": `{"task":"execute-doops-cicd"}`,
+		"operation":   "ask",
+	})
+	errObject, _ := result["error"].(map[string]interface{})
+	if !strings.Contains(fmt.Sprint(errObject["message"]), "gateway-authorized reverse tunnel") {
+		t.Fatalf("expected direct CI/CD dry-run rejection, got %#v", result)
 	}
 }
 

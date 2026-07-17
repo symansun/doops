@@ -91,3 +91,44 @@ func TestValidateDoagentCICDCapabilitiesRequiresExactV2Contract(t *testing.T) {
 		t.Fatal("incomplete v2 capability was accepted")
 	}
 }
+
+func TestDoagentToolTraceCollectorRejectsDuplicateCICDReport(t *testing.T) {
+	collector := newDoagentToolTraceCollector(true)
+	update := map[string]interface{}{
+		"sessionUpdate": "agent_report",
+		"report": map[string]interface{}{
+			"planDigest": "sha256:" + strings.Repeat("a", 64),
+			"status":     "Converged",
+			"evidence":   []interface{}{},
+			"violations": []interface{}{},
+		},
+	}
+	if err := collector.collect(update); err != nil {
+		t.Fatalf("collect first report: %v", err)
+	}
+	if err := collector.collect(update); err == nil || !strings.Contains(err.Error(), "multiple agent reports") {
+		t.Fatalf("duplicate report error = %v", err)
+	}
+}
+
+func TestDoagentToolTraceCollectorIgnoresReportsForGenericJSONPrompt(t *testing.T) {
+	collector := newDoagentToolTraceCollector(false)
+	for _, status := range []string{"Converged", "Failed"} {
+		if err := collector.collect(map[string]interface{}{
+			"sessionUpdate": "agent_report",
+			"report":        map[string]interface{}{"status": status},
+		}); err != nil {
+			t.Fatalf("generic prompt report must be ignored: %v", err)
+		}
+	}
+	if err := collector.collect(map[string]interface{}{
+		"sessionUpdate": "agent_message",
+		"content":       map[string]interface{}{"type": "text", "text": `{"status":"observed"}`},
+	}); err != nil {
+		t.Fatalf("collect generic JSON result: %v", err)
+	}
+	text, result, err := collector.structuredResult(false)
+	if err != nil || text != `{"status":"observed"}` || result["status"] != "observed" {
+		t.Fatalf("generic structured result text=%q result=%#v err=%v", text, result, err)
+	}
+}

@@ -798,6 +798,11 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		var args api.AgentPromptParams
 		json.Unmarshal(argBytes, &args)
 		operation := strings.ToLower(strings.TrimSpace(args.Operation))
+		cicdPrompt := isDoopsCICDInstruction(args.Instruction)
+		if cicdPrompt && !gatewayAuthorized {
+			writeJSON(buildErrorResponse(reqID, -32602, "doops-cicd requires a gateway-authorized reverse tunnel"))
+			return
+		}
 		if operation == "apply" {
 			if !gatewayAuthorized {
 				writeJSON(buildErrorResponse(reqID, -32602, "credential apply requires a gateway-authorized reverse tunnel"))
@@ -1066,10 +1071,7 @@ func validateDoagentCICDCapabilities(response map[string]interface{}) error {
 }
 
 func requireDoagentCICDCapabilities(baseURL, instruction, sessionID string) error {
-	var marker struct {
-		Task string `json:"task"`
-	}
-	if json.Unmarshal([]byte(instruction), &marker) != nil || marker.Task != "execute-doops-cicd" {
+	if !isDoopsCICDInstruction(instruction) {
 		return nil
 	}
 	response, err := doagentRPC(baseURL, map[string]interface{}{
@@ -1084,10 +1086,19 @@ func requireDoagentCICDCapabilities(baseURL, instruction, sessionID string) erro
 	return validateDoagentCICDCapabilities(response)
 }
 
+func isDoopsCICDInstruction(instruction string) bool {
+	var marker struct {
+		Task string `json:"task"`
+	}
+	return json.Unmarshal([]byte(instruction), &marker) == nil &&
+		strings.TrimSpace(marker.Task) == "execute-doops-cicd"
+}
+
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
 func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, model string, responseFormat string, execution agentPromptExecutionContext, pushProgress notificationSender, writeJSON func(v interface{})) {
 	log.Printf("🤖 WS Running doagent via ACP HTTP: session=%s structured=%t model=%s",
 		doopsSessionID, responseFormat == "json", model)
+	cicdPrompt := isDoopsCICDInstruction(instr)
 
 	doagentURL := os.Getenv("DO_AGENT_URL")
 	if doagentURL == "" {
@@ -1212,7 +1223,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	sseDone := make(chan error, 1)
 	sseReady := make(chan error, 1)
 	turnIDReady := make(chan string, 1)
-	toolTraces := newDoagentToolTraceCollector()
+	toolTraces := newDoagentToolTraceCollector(cicdPrompt)
 	go func() {
 		sseDone <- subscribeDoagentSSEWithCollectorReady(
 			sseCtx,
@@ -1270,7 +1281,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		return
 	}
 	if responseFormat == "json" {
-		resultText, structuredContent, err := toolTraces.structuredResult()
+		resultText, structuredContent, err := toolTraces.structuredResult(cicdPrompt)
 		if err != nil {
 			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("read final machine result: %v", err)))
 			return
