@@ -10,10 +10,7 @@ versioned, while every Gateway and Agent uses one credential-plan protocol.
 
 - Credential preparation and the prompt binding consume the same declaration
   source identity and immutable revision.
-- `SemanticRelease` catalog entries are resolved relative to the composition
-  document and validated as `ServiceRelease`.
-- v2 and v3 declaration roots, referenced documents, and path semantics are
-  documented and tested.
+- The v3 registry selects one explicit environment and one explicit service.
 - Agent registration advertises `doops.sh/credential-plan/v2`.
 - doagent `initialize` advertises the complete
   `doops.reconciliation-context/v2` capability.
@@ -24,35 +21,24 @@ versioned, while every Gateway and Agent uses one credential-plan protocol.
 
 ## Supported Contracts
 
-- v2 execution roots: `DeploymentTemplate` and `SemanticRelease`.
-- v2 configuration source: `EnvironmentRegistry`.
-- A v2 `EnvironmentRegistry` entry may select one strict v3
-  `EnvironmentDefinition` through its repository-relative `file` field. The
-  entry must not also declare an inline target.
-- v2 referenced release document: `ServiceRelease`.
-- v3 deployment root:
-  `deploy/environments/<environment>/environment.yaml`
-  `EnvironmentDefinition`.
-- v3 referenced documents: `EnvironmentService` and `ServiceDefinition`.
-- Gateway-Agent protocol: `doops.sh/credential-plan/v2`.
+- Deployment root: `deploy/environments.yaml`,
+  `doops.sh/v3 EnvironmentRegistry`.
+- Each request selects exactly one declared `environment` and one declared
+  `service`.
+- Gateway-Agent credential protocol: `doops.sh/credential-plan/v2`.
+- Agent-doagent reconciliation capability:
+  `doops.reconciliation-context/v2`.
 
-The v2 and v3 declaration paths are explicit public contracts, not fallback or
-silent compatibility paths. Mixed versions and v2 `EnvironmentDefinition`
-configuration sources are rejected.
+Legacy v2 workflows are not a compatibility path and are rejected.
 
 ## Repository Guarantees
 
 - Credential prepare owns the strict workflow compiler. The prompt carries only
   the resulting metadata-only `CredentialRun` and the same source identity.
-- Semantic roots load and validate every referenced `ServiceRelease`.
-- v3 roots strictly validate every referenced `EnvironmentService` and
-  `ServiceDefinition`.
 - v3 required Secret references marked undeclared block during credential
   prepare.
-- v2 configuration sources require an explicit `EnvironmentRegistry`.
-- Registry `file` entries are resolved through the same strict v3 workflow
-  compiler, including environment identity, path, service, and service
-  definition validation.
+- Registry selection and prompt binding use the same environment and service
+  inputs.
 - Agents advertise `doops.sh/credential-plan/v2`; Gateway prepare rejects
   offline targets with 503 and incompatible Agents with 426 before dispatch.
 - Apply requires `ask` and `credential:use`, a compatible Agent, and one exact

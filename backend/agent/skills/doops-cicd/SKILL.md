@@ -1,17 +1,14 @@
 ---
 name: doops-cicd
-description: 按 DoOps v3 YAML 构建或部署用户指定的单个服务。
+description: 按 DoOps v3 EnvironmentRegistry 部署用户明确指定的单个服务。
 ---
 
 # DoOps CI/CD
 
-只使用仓库中由 `cicd run -f` 明确指定的声明。支持的公开根契约是：
-
-- `doops.sh/v2` `DeploymentTemplate` 或 `SemanticRelease`
-- `doops.sh/v3` `EnvironmentDefinition`
-
-v2 与 v3 是显式契约，不是 fallback。禁止混用版本、扫描目录、推断默认环境或
-生成中间 workflow。部署请求必须给出声明要求的环境和服务范围。
+唯一发布根是仓库中的 `deploy/environments.yaml`：
+`doops.sh/v3 EnvironmentRegistry`。部署请求必须明确给出 `environment` 和
+`service`，每次只执行该服务。禁止旧 v2 workflow、扫描目录、遍历其他服务、推断
+默认环境或生成中间 workflow。
 
 Gateway 在 Ask 前必须完成 `doops.sh/credential-plan/v2` prepare，并将返回的
 `CredentialRun` 绑定到用户、target、session、声明路径、源仓库、branch、不可变

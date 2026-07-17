@@ -152,7 +152,7 @@ func TestOfflineWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.T) {
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Mode, run,
+		request.SourceRepository, request.SourceBranch, request.Inputs, request.Mode, run,
 	); err != nil {
 		t.Fatalf("offline workflow consumed credential authorization: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestRateLimitedWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Mode, run,
+		request.SourceRepository, request.SourceBranch, request.Inputs, request.Mode, run,
 	); err != nil {
 		t.Fatalf("rate-limited workflow consumed credential authorization: %v", err)
 	}
@@ -204,7 +204,7 @@ func TestCredentialPromptBindingRejectsSecretBearingInput(t *testing.T) {
 	instruction, err := json.Marshal(map[string]any{
 		"task": "execute-doops-cicd", "skill": "$doops-cicd",
 		"executionMode": request.Mode, "manifestPath": request.WorkflowPath,
-		"workspaceCommit": request.SourceRevision,
+		"workspaceCommit": credentialRunFixtureCommit,
 		"source": map[string]string{
 			"repository": request.SourceRepository,
 			"branch":     request.SourceBranch,
@@ -216,7 +216,7 @@ func TestCredentialPromptBindingRejectsSecretBearingInput(t *testing.T) {
 	}
 	arguments, err := json.Marshal(map[string]any{
 		"operation": "ask", "session_id": request.SessionID,
-		"workspace_commit": request.SourceRevision, "response_format": "json",
+		"workspace_commit": credentialRunFixtureCommit, "response_format": "json",
 		"instruction": string(instruction),
 	})
 	if err != nil {
@@ -231,8 +231,8 @@ func TestCredentialPromptBindingRejectsSecretBearingInput(t *testing.T) {
 func credentialRunAuthorizationFixture(instance, runID string) (credentialPrepareHTTPBody, CredentialRun) {
 	request := credentialPrepareHTTPBody{
 		Cluster: "doops", Instance: instance, SessionID: "release-session",
-		WorkflowPath: "deploy/release.yaml", SourceRepository: "https://example.test/repo.git",
-		SourceBranch: "main", SourceRevision: strings.Repeat("a", 40), Mode: "dry-run",
+		WorkflowPath: "deploy/environments.yaml", SourceRepository: "https://example.test/repo.git",
+		SourceBranch: "main", Inputs: map[string]string{"environment": "test", "service": "api"}, Mode: "dry-run",
 	}
 	run := CredentialRun{
 		APIVersion: "doops.sh/v2", Kind: "CredentialRun", ID: runID,
@@ -242,6 +242,8 @@ func credentialRunAuthorizationFixture(instance, runID string) (credentialPrepar
 	}
 	return request, run
 }
+
+const credentialRunFixtureCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func invokeCredentialWorkflowPrompt(
 	t *testing.T,
@@ -254,19 +256,19 @@ func invokeCredentialWorkflowPrompt(
 	instruction, err := json.Marshal(map[string]any{
 		"task": "execute-doops-cicd", "skill": "$doops-cicd",
 		"executionMode": request.Mode, "manifestPath": request.WorkflowPath,
-		"workspaceCommit": request.SourceRevision,
+		"workspaceCommit": credentialRunFixtureCommit,
 		"source": map[string]string{
 			"repository": request.SourceRepository,
 			"branch":     request.SourceBranch,
 		},
-		"inputs": map[string]string{}, "credentialRun": run,
+		"inputs": request.Inputs, "credentialRun": run,
 	})
 	if err != nil {
 		t.Fatalf("encode workflow instruction: %v", err)
 	}
 	arguments, err := json.Marshal(map[string]any{
 		"operation": "ask", "session_id": request.SessionID,
-		"workspace_commit": request.SourceRevision, "response_format": "json",
+		"workspace_commit": credentialRunFixtureCommit, "response_format": "json",
 		"instruction": string(instruction),
 	})
 	if err != nil {

@@ -125,7 +125,7 @@ func runCICDCommand(
 		WorkflowPath:     workflowPath,
 		SourceRepository: sourceRepository,
 		SourceBranch:     sourceBranch,
-		SourceRevision:   sourceRevision,
+		Inputs:           request.Inputs,
 		Mode:             executionMode,
 	})
 	if err != nil {

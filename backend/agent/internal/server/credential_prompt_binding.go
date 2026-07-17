@@ -16,6 +16,7 @@ type credentialPromptBinding struct {
 	SourceRepository string
 	SourceBranch     string
 	SourceRevision   string
+	Inputs           map[string]string
 	Mode             string
 	Run              CredentialRun
 }
@@ -97,6 +98,7 @@ func parseCredentialPromptBinding(arguments json.RawMessage, cluster, instance s
 		SourceRepository: strings.TrimSpace(envelope.Source.Repository),
 		SourceBranch:     strings.TrimSpace(envelope.Source.Branch),
 		SourceRevision:   strings.TrimSpace(envelope.WorkspaceCommit),
+		Inputs:           envelope.Inputs,
 		Mode:             mode,
 		Run:              envelope.CredentialRun,
 	}, nil
@@ -119,7 +121,7 @@ func (h *ClientService) consumeCredentialPromptBinding(
 		binding.WorkflowPath,
 		binding.SourceRepository,
 		binding.SourceBranch,
-		binding.SourceRevision,
+		binding.Inputs,
 		binding.Mode,
 		binding.Run,
 	)

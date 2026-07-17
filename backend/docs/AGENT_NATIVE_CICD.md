@@ -16,11 +16,12 @@ explicit declaration
 ## CLI Contract
 
 ```text
-doops -session <session> cicd run -f <manifest.yaml> \
+doops -session <session> cicd run -f deploy/environments.yaml \
   -target <gateway-target> [--dry-run] [--set key=value ...]
 ```
 
-`target` 和 `session` 必须显式提供。CLI 从声明解析 HTTPS 源仓库、branch 和不可变
+`target`、`session`、`environment` 和 `service` 必须显式提供。CLI 从 v3 registry
+解析 HTTPS 源仓库、branch 和不可变
 commit；没有固定 revision 时只允许通过 `git ls-remote` 将 branch 解析为一个
 commit。CLI 不把本地 Secret、token 或任意工作区快照作为发布源。
 
@@ -38,7 +39,7 @@ CI/CD instruction 的固定形状如下：
   "task": "execute-doops-cicd",
   "skill": "$doops-cicd",
   "executionMode": "dry-run",
-  "manifestPath": "deploy/release.yaml",
+  "manifestPath": "deploy/environments.yaml",
   "workspaceCommit": "<immutable commit>",
   "source": {
     "repository": "https://example.test/app.git",
@@ -86,7 +87,7 @@ resourceVersion、digest、fingerprint、过期时间、状态和错误分类。
 | Responsibility | Code |
 | :--- | :--- |
 | CLI entry and instruction | `backend/skills/doops-cli/cli/doops/workflow.go` |
-| Declared source resolution | `backend/skills/doops-cli/cli/doops/workflow_source.go` |
+| Declared source resolution | `backend/skills/doops-cli/cli/doops/workflow.go` |
 | Credential prepare client | `backend/skills/doops-cli/cli/doops/credential_prepare.go` |
 | Gateway prepare endpoint | `backend/agent/internal/server/credential_runtime.go` |
 | Single-use prompt binding | `backend/agent/internal/server/credential_prompt_binding.go` |
