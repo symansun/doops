@@ -45,24 +45,11 @@ type workflowCommand struct {
 	DryRun bool
 }
 
-type workflowRuntimeToolCall struct {
-	ID     string          `json:"id"`
-	Tool   string          `json:"tool"`
-	Input  json.RawMessage `json:"input"`
-	Result json.RawMessage `json:"result"`
-}
-
-type workflowEvidence struct {
-	Subject    string                   `json:"subject"`
-	ObservedAt string                   `json:"observedAt"`
-	ToolCall   *workflowRuntimeToolCall `json:"toolCall"`
-}
-
 type workflowAgentCaller interface {
 	CallStructured(toolName string, arguments map[string]interface{}, destination interface{}) error
 }
 
-var pushWorkflowWorkspace = pushWorkspaceSnapshot
+var resolveWorkflowSource = workflowDeclaredSource
 
 var openWorkflowAgent = func(
 	server Server,
@@ -116,7 +103,7 @@ func runCICDCommand(
 	if server == nil {
 		return fmt.Errorf("target %q not found; configure it with `doops add`", request.Target)
 	}
-	sourceDirectory, workflowPath, err := workflowPathInGitRepository(request.File)
+	_, workflowPath, err := workflowPathInGitRepository(request.File)
 	if err != nil {
 		return err
 	}
@@ -133,12 +120,9 @@ func runCICDCommand(
 	client, closeClient := openWorkflowAgent(*server, sessionStore, sessionID, verbose)
 	defer closeClient()
 
-	workspaceCommit, err := pushWorkflowWorkspace(*server, sourceDirectory, "", false, nil, sessionID)
+	sourceRepository, sourceBranch, err := resolveWorkflowSource(request.File)
 	if err != nil {
-		return fmt.Errorf("push workflow workspace: %w", err)
-	}
-	if !validWorkspaceCommit(workspaceCommit) {
-		return fmt.Errorf("push workflow workspace returned an invalid commit")
+		return fmt.Errorf("resolve workflow source: %w", err)
 	}
 
 	executionMode := "apply"
@@ -148,12 +132,13 @@ func runCICDCommand(
 		operation = "ask"
 	}
 	credentialRun, err := prepareWorkflowCredentials(ctx, *server, ResolveToken(server.Name, server.Token), credentialPrepareRequest{
-		Cluster:         server.Cluster,
-		Instance:        server.Instance,
-		SessionID:       sessionID,
-		WorkflowPath:    workflowPath,
-		WorkspaceCommit: workspaceCommit,
-		Mode:            executionMode,
+		Cluster:          server.Cluster,
+		Instance:         server.Instance,
+		SessionID:        sessionID,
+		WorkflowPath:     workflowPath,
+		SourceRepository: sourceRepository,
+		SourceBranch:     sourceBranch,
+		Mode:             executionMode,
 	})
 	if err != nil {
 		return fmt.Errorf("credential prepare: %w", err)
@@ -163,18 +148,20 @@ func runCICDCommand(
 		return fmt.Errorf("generate workflow run id: %w", err)
 	}
 	instructionEnvelope := map[string]interface{}{
-		"task":            "execute-doops-cicd-workflow",
-		"skill":           "$doops-cicd",
-		"executionMode":   executionMode,
-		"runId":           runID,
-		"workflowPath":    workflowPath,
-		"workspaceCommit": workspaceCommit,
-		"inputs":          request.Inputs,
-		"credentialRun":   credentialRun,
+		"task":          "execute-doops-cicd-workflow",
+		"skill":         "$doops-cicd",
+		"executionMode": executionMode,
+		"runId":         runID,
+		"workflowPath":  workflowPath,
+		"source": map[string]string{
+			"repository": sourceRepository,
+			"branch":     sourceBranch,
+		},
+		"inputs":        request.Inputs,
+		"credentialRun": credentialRun,
 		"resultContract": map[string]interface{}{
-			"apiVersion":      manifestAPIVersion,
-			"kind":            "DeploymentRun",
-			"requireEvidence": true,
+			"apiVersion": manifestAPIVersion,
+			"kind":       "DeploymentRun",
 		},
 	}
 	instruction, err := json.Marshal(instructionEnvelope)
@@ -183,10 +170,9 @@ func runCICDCommand(
 	}
 	var result json.RawMessage
 	callArguments := map[string]interface{}{
-		"instruction":      string(instruction),
-		"response_format":  "json",
-		"operation":        operation,
-		"workspace_commit": workspaceCommit,
+		"instruction":     string(instruction),
+		"response_format": "json",
+		"operation":       operation,
 	}
 	if model := strings.TrimSpace(request.Model); model != "" {
 		callArguments["model"] = model
@@ -195,8 +181,8 @@ func runCICDCommand(
 		return fmt.Errorf("ask doops-cicd: %w", err)
 	}
 	output := string(result)
-	if err := validateWorkflowResult(output, manifestAPIVersion, executionMode, workspaceCommit); err != nil {
-		return fmt.Errorf("doops-cicd returned invalid execution evidence: %w", err)
+	if err := validateWorkflowResult(output, manifestAPIVersion, executionMode); err != nil {
+		return fmt.Errorf("doops-cicd returned invalid result: %w", err)
 	}
 	if strings.TrimSpace(output) != "" {
 		fmt.Print(output)
@@ -205,6 +191,42 @@ func runCICDCommand(
 		}
 	}
 	return nil
+}
+
+func workflowDeclaredSource(path string) (repository, branch string, err error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", fmt.Errorf("read workflow source: %w", err)
+	}
+	var declaration struct {
+		Spec struct {
+			Source struct {
+				Repository string `yaml:"repository"`
+				Branch     string `yaml:"branch"`
+			} `yaml:"source"`
+			Release struct {
+				Source struct {
+					Repository string `yaml:"repository"`
+					Branch     string `yaml:"branch"`
+				} `yaml:"source"`
+			} `yaml:"release"`
+		} `yaml:"spec"`
+	}
+	if err := yaml.Unmarshal(data, &declaration); err != nil {
+		return "", "", fmt.Errorf("decode workflow source: %w", err)
+	}
+	repository = strings.TrimSpace(declaration.Spec.Source.Repository)
+	branch = strings.TrimSpace(declaration.Spec.Source.Branch)
+	if repository == "" {
+		repository = strings.TrimSpace(declaration.Spec.Release.Source.Repository)
+	}
+	if branch == "" {
+		branch = strings.TrimSpace(declaration.Spec.Release.Source.Branch)
+	}
+	if repository == "" || branch == "" {
+		return "", "", fmt.Errorf("workflow declaration requires source.repository and source.branch")
+	}
+	return repository, branch, nil
 }
 
 func workflowAPIVersion(path string) (string, error) {
@@ -406,23 +428,18 @@ func validWorkspaceCommit(value string) bool {
 func validateWorkflowResult(
 	output,
 	apiVersion,
-	executionMode,
-	workspaceCommit string,
+	executionMode string,
 ) error {
 	var result struct {
 		APIVersion string `json:"apiVersion"`
 		Kind       string `json:"kind"`
-		Metadata   struct {
-			WorkspaceCommit string `json:"workspaceCommit"`
-		} `json:"metadata"`
-		Spec struct {
+		Spec       struct {
 			Mode string `json:"mode"`
 		} `json:"spec"`
 		Status struct {
 			Phase         string          `json:"phase"`
 			MutationCount *int            `json:"mutationCount"`
 			Capabilities  json.RawMessage `json:"capabilities"`
-			Evidence      json.RawMessage `json:"evidence"`
 		} `json:"status"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(output))
@@ -436,9 +453,6 @@ func validateWorkflowResult(
 	}
 	if result.APIVersion != apiVersion || result.Kind != "DeploymentRun" {
 		return fmt.Errorf("result must be %s DeploymentRun", apiVersion)
-	}
-	if result.Metadata.WorkspaceCommit != workspaceCommit {
-		return fmt.Errorf("result workspaceCommit does not match pushed workspace")
 	}
 	if result.Spec.Mode != executionMode {
 		return fmt.Errorf("result mode %q does not match requested mode %q", result.Spec.Mode, executionMode)
@@ -463,39 +477,6 @@ func validateWorkflowResult(
 	}
 	if len(capabilities) == 0 {
 		return fmt.Errorf("result capabilities snapshot must not be empty")
-	}
-	if len(result.Status.Evidence) == 0 || string(result.Status.Evidence) == "null" {
-		return fmt.Errorf("result evidence is required")
-	}
-	var evidence []workflowEvidence
-	evidenceDecoder := json.NewDecoder(strings.NewReader(string(result.Status.Evidence)))
-	evidenceDecoder.DisallowUnknownFields()
-	if err := evidenceDecoder.Decode(&evidence); err != nil {
-		return fmt.Errorf("decode result evidence: %w", err)
-	}
-	var evidenceExtra interface{}
-	if err := evidenceDecoder.Decode(&evidenceExtra); err != io.EOF {
-		return fmt.Errorf("result evidence must be exactly one JSON array")
-	}
-	if len(evidence) == 0 {
-		return fmt.Errorf("result evidence must contain at least one observation or execution fact")
-	}
-	for index, item := range evidence {
-		if strings.TrimSpace(item.Subject) == "" ||
-			strings.TrimSpace(item.ObservedAt) == "" {
-			return fmt.Errorf("evidence[%d] must contain subject and observedAt", index)
-		}
-		if item.ToolCall == nil ||
-			strings.TrimSpace(item.ToolCall.ID) == "" ||
-			strings.TrimSpace(item.ToolCall.Tool) == "" {
-			return fmt.Errorf("evidence[%d] must contain a runtime toolCall", index)
-		}
-		if err := validateWorkflowJSONValue(item.ToolCall.Input); err != nil {
-			return fmt.Errorf("evidence[%d] toolCall.input: %w", index, err)
-		}
-		if err := validateWorkflowJSONValue(item.ToolCall.Result); err != nil {
-			return fmt.Errorf("evidence[%d] toolCall.result: %w", index, err)
-		}
 	}
 	return nil
 }

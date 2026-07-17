@@ -432,13 +432,12 @@ func rejectSensitiveToolResult(value interface{}) error {
 }
 
 type deploymentRunContractBinding struct {
-	APIVersion      string
-	Workflow        string
-	RunID           string
-	WorkspaceCommit string
-	Mode            string
-	PrimaryTool     string
-	RequiredTools   []string
+	APIVersion    string
+	Workflow      string
+	RunID         string
+	Mode          string
+	PrimaryTool   string
+	RequiredTools []string
 }
 
 func bindDeploymentRunEvidence(
@@ -559,9 +558,8 @@ func bindDeploymentRunEvidence(
 			"apiVersion": contract.APIVersion,
 			"kind":       "DeploymentRun",
 			"metadata": map[string]interface{}{
-				"workflow":        contract.Workflow,
-				"runId":           contract.RunID,
-				"workspaceCommit": contract.WorkspaceCommit,
+				"workflow": contract.Workflow,
+				"runId":    contract.RunID,
 			},
 			"spec": map[string]interface{}{
 				"mode": contract.Mode,
@@ -606,17 +604,17 @@ func validateDeploymentRunEnvelope(
 		return nil, fmt.Errorf("DeploymentRun.apiVersion is invalid")
 	}
 	metadata, ok := result["metadata"].(map[string]interface{})
-	if !ok || len(metadata) != 3 {
-		return nil, fmt.Errorf("DeploymentRun.metadata must contain exactly workflow, runId, and workspaceCommit")
+	if !ok || len(metadata) != 2 {
+		return nil, fmt.Errorf("DeploymentRun.metadata must contain exactly workflow and runId")
 	}
-	for _, field := range []string{"workflow", "runId", "workspaceCommit"} {
+	for _, field := range []string{"workflow", "runId"} {
 		if strings.TrimSpace(stringField(metadata, field)) == "" {
 			return nil, fmt.Errorf("DeploymentRun.metadata.%s is required", field)
 		}
 	}
 	for field := range metadata {
 		switch field {
-		case "workflow", "runId", "workspaceCommit":
+		case "workflow", "runId":
 		default:
 			return nil, fmt.Errorf("DeploymentRun.metadata field %q is not supported", field)
 		}
@@ -637,7 +635,6 @@ func validateDeploymentRunEnvelope(
 		if apiVersion != contract.APIVersion ||
 			stringField(metadata, "workflow") != contract.Workflow ||
 			stringField(metadata, "runId") != contract.RunID ||
-			stringField(metadata, "workspaceCommit") != contract.WorkspaceCommit ||
 			mode != contract.Mode {
 			return nil, fmt.Errorf("DeploymentRun envelope does not match the trusted reconciliation instruction")
 		}

@@ -37,10 +37,9 @@ type trustedReconciliationContext struct {
 }
 
 type trustedReconciliationSource struct {
-	Repository      string `json:"repository"`
-	Revision        string `json:"revision"`
-	Branch          string `json:"branch,omitempty"`
-	WorkspaceCommit string `json:"workspaceCommit"`
+	Repository string `json:"repository"`
+	Revision   string `json:"revision,omitempty"`
+	Branch     string `json:"branch,omitempty"`
 }
 
 type trustedReconciliationCapability struct {
@@ -52,18 +51,20 @@ type trustedReconciliationCapability struct {
 }
 
 type doopsCICDInstructionEnvelope struct {
-	Task            string            `json:"task"`
-	Skill           string            `json:"skill"`
-	ExecutionMode   string            `json:"executionMode"`
-	RunID           string            `json:"runId"`
-	WorkflowPath    string            `json:"workflowPath"`
-	WorkspaceCommit string            `json:"workspaceCommit"`
-	Inputs          map[string]string `json:"inputs"`
-	CredentialRun   CredentialRun     `json:"credentialRun"`
-	ResultContract  struct {
-		APIVersion      string `json:"apiVersion"`
-		Kind            string `json:"kind"`
-		RequireEvidence bool   `json:"requireEvidence"`
+	Task          string `json:"task"`
+	Skill         string `json:"skill"`
+	ExecutionMode string `json:"executionMode"`
+	RunID         string `json:"runId"`
+	WorkflowPath  string `json:"workflowPath"`
+	Source        struct {
+		Repository string `json:"repository"`
+		Branch     string `json:"branch"`
+	} `json:"source"`
+	Inputs         map[string]string `json:"inputs"`
+	CredentialRun  CredentialRun     `json:"credentialRun"`
+	ResultContract struct {
+		APIVersion string `json:"apiVersion"`
+		Kind       string `json:"kind"`
 	} `json:"resultContract"`
 }
 
@@ -116,10 +117,9 @@ func (c trustedReconciliationContext) calculatedDigest() (string, error) {
 	return digestJSON(object)
 }
 
-func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit string) (trustedReconciliationAdmission, error) {
+func buildTrustedReconciliationAdmission(sessionID, instruction string) (trustedReconciliationAdmission, error) {
 	sessionID = strings.TrimSpace(sessionID)
-	workspaceCommit = strings.TrimSpace(workspaceCommit)
-	if sessionID == "" || !validCredentialWorkspaceCommit(workspaceCommit) {
+	if sessionID == "" {
 		return trustedReconciliationAdmission{}, fmt.Errorf("trusted reconciliation identity is invalid")
 	}
 
@@ -127,7 +127,8 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 	if err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
-	if envelope.WorkspaceCommit != workspaceCommit {
+	if strings.TrimSpace(envelope.Source.Repository) == "" ||
+		strings.TrimSpace(envelope.Source.Branch) == "" {
 		return trustedReconciliationAdmission{}, fmt.Errorf("reconciliation instruction binding is invalid")
 	}
 	for key, value := range envelope.Inputs {
@@ -172,7 +173,7 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 		revisionDeclaration = parsedWorkflow.SemanticRevision
 	}
 	if strings.TrimSpace(revisionDeclaration) == "" {
-		revisionDeclaration = workspaceCommit
+		revisionDeclaration = envelope.Source.Branch
 	}
 	revision, err := resolveTrustedRevision(revisionDeclaration, envelope.Inputs)
 	if err != nil {
@@ -183,12 +184,13 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 		return trustedReconciliationAdmission{}, err
 	}
 	source := trustedReconciliationSource{
-		Repository:      selectTrustedSource(workflow.Spec.Release.Source.Repository, environment.SourceRepository),
-		Revision:        revision,
-		Branch:          selectTrustedSource(workflow.Spec.Release.Source.Branch, environment.SourceBranch),
-		WorkspaceCommit: workspaceCommit,
+		Repository: selectTrustedSource(workflow.Spec.Release.Source.Repository, environment.SourceRepository),
+		Revision:   revision,
+		Branch:     selectTrustedSource(workflow.Spec.Release.Source.Branch, environment.SourceBranch),
 	}
-	if source.Repository == "" || source.Branch == "" || !validLowerHex(source.Revision, 40) {
+	if source.Repository == "" || source.Branch == "" || source.Revision == "" ||
+		source.Repository != strings.TrimSpace(envelope.Source.Repository) ||
+		source.Branch != strings.TrimSpace(envelope.Source.Branch) {
 		return trustedReconciliationAdmission{}, fmt.Errorf("release source identity is incomplete")
 	}
 	if envelope.CredentialRun.Cluster != plan.Cluster ||
@@ -269,7 +271,7 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 
 	context := trustedReconciliationContext{
 		SchemaVersion:       trustedReconciliationContextSchema,
-		OperationID:         trustedOperationID(envelope.RunID, workspaceCommit),
+		OperationID:         trustedOperationID(envelope.RunID, source.Repository+"\n"+source.Branch),
 		ExecutionMode:       envelope.ExecutionMode,
 		MutationAuthorized:  envelope.ExecutionMode == "apply",
 		PlanDigest:          planDigest,
@@ -306,7 +308,6 @@ func decodeDoopsCICDInstruction(instruction string) (doopsCICDInstructionEnvelop
 		(envelope.ResultContract.APIVersion != "doops.sh/v2" &&
 			envelope.ResultContract.APIVersion != "doops.sh/v3") ||
 		envelope.ResultContract.Kind != "DeploymentRun" ||
-		!envelope.ResultContract.RequireEvidence ||
 		envelope.CredentialRun.APIVersion != "doops.sh/v2" ||
 		envelope.CredentialRun.Kind != "CredentialRun" ||
 		strings.TrimSpace(envelope.CredentialRun.ID) == "" ||

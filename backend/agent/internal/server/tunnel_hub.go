@@ -1080,7 +1080,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	defer releaseLimit()
-	opCtx, cancelOp := context.WithCancel(ctx)
+	operationBaseCtx := ctx
+	if waitForUpgradeReplacement {
+		operationBaseCtx = context.Background()
+	}
+	opCtx, cancelOp := context.WithCancel(operationBaseCtx)
 	defer cancelOp()
 	opID := h.registerActiveOperation(GatewayActiveOperation{
 		UserID:         auth.UserID,
@@ -1114,7 +1118,8 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			instance,
 			extractSession(params.Arguments),
 			workflowInstruction.WorkflowPath,
-			workflowInstruction.WorkspaceCommit,
+			workflowInstruction.Source.Repository,
+			workflowInstruction.Source.Branch,
 			workflowInstruction.ExecutionMode,
 			workflowInstruction.CredentialRun,
 		); err != nil {
@@ -1198,7 +1203,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		}
 		resultCh := make(chan upgradeResult, 1)
 		go func() {
-			waitCtx, cancelWait := context.WithTimeout(context.Background(), h.opts.OperationTimeout)
+			waitCtx, cancelWait := context.WithTimeout(opCtx, h.opts.OperationTimeout)
 			defer cancelWait()
 			replacement, waitErr := h.upgrades.WaitForReplacementPrepared(waitCtx, upgradeOp)
 			resultCh <- upgradeResult{replacement: replacement, err: waitErr}

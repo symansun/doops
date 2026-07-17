@@ -31,7 +31,7 @@ func (s *GatewayStore) IssueCredentialRunAuthorization(
 		 workspace_commit, mode, run_digest, state, created_at, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?)`,
 		run.ID, auth.UserID, auth.TokenID, request.Cluster, request.Instance,
-		request.SessionID, request.WorkflowPath, request.WorkspaceCommit, request.Mode,
+		request.SessionID, request.WorkflowPath, credentialSourceBinding(request.SourceRepository, request.SourceBranch), request.Mode,
 		digest, formatTime(now), formatTime(now.Add(credentialRunAuthorizationTTL)))
 	return err
 }
@@ -42,7 +42,8 @@ func (s *GatewayStore) ConsumeCredentialRunAuthorization(
 	instance string,
 	sessionID string,
 	workflowPath string,
-	workspaceCommit string,
+	sourceRepository string,
+	sourceBranch string,
 	mode string,
 	run CredentialRun,
 ) error {
@@ -64,7 +65,7 @@ func (s *GatewayStore) ConsumeCredentialRunAuthorization(
 		FROM credential_run_authorizations WHERE run_id = ?`, strings.TrimSpace(run.ID)).Scan(
 		&authorization.RunID, &authorization.UserID, &authorization.TokenID,
 		&authorization.Cluster, &authorization.Instance, &authorization.SessionID,
-		&authorization.WorkflowPath, &authorization.WorkspaceCommit, &authorization.Mode,
+		&authorization.WorkflowPath, &authorization.SourceBinding, &authorization.Mode,
 		&authorization.RunDigest, &authorization.State, &createdAt, &expiresAt, &consumedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -83,7 +84,7 @@ func (s *GatewayStore) ConsumeCredentialRunAuthorization(
 		authorization.Instance != strings.TrimSpace(instance) ||
 		authorization.SessionID != strings.TrimSpace(sessionID) ||
 		authorization.WorkflowPath != strings.TrimSpace(workflowPath) ||
-		authorization.WorkspaceCommit != strings.TrimSpace(workspaceCommit) ||
+		authorization.SourceBinding != credentialSourceBinding(sourceRepository, sourceBranch) ||
 		authorization.Mode != strings.TrimSpace(mode) || authorization.RunDigest != digest ||
 		run.Cluster != authorization.Cluster || run.Instance != authorization.Instance ||
 		run.Mode != authorization.Mode {
@@ -130,6 +131,10 @@ func (s *GatewayStore) ConsumeCredentialRunAuthorization(
 		return ErrCredentialPrepareBindingInvalid
 	}
 	return tx.Commit()
+}
+
+func credentialSourceBinding(repository, branch string) string {
+	return strings.TrimSpace(repository) + "\n" + strings.TrimSpace(branch)
 }
 
 func (s *GatewayStore) RevokeCredentialRunAuthorization(runID string) error {
