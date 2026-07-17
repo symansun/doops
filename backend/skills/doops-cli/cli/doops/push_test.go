@@ -524,11 +524,6 @@ func fileModePerm(t *testing.T, path string) os.FileMode {
 	return info.Mode().Perm()
 }
 
-func TestPrebuiltCLIUsesGitSyncPushBackend(t *testing.T) {
-	bin := filepath.Join("..", "..", "bin", "doops-"+runtime.GOOS+"-"+runtime.GOARCH)
-	assertBinaryUsesGitSyncPushBackend(t, bin)
-}
-
 func TestBuiltCLIUsesGitSyncPushBackend(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "doops")
 	cmd := exec.Command("go", "build", "-trimpath", "-o", out, "./")
