@@ -102,7 +102,9 @@ doagent emits exactly one JSON object as its final response:
   "status": {
     "phase": "planned",
     "mutationCount": 0,
-    "capabilities": {},
+    "capabilities": {
+      "source-identity": "observed"
+    },
     "evidence": [
       {
         "subject": "source-identity",

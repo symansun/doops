@@ -1727,6 +1727,7 @@ func appendDoagentStructuredResultContract(
 		"metadata contains exactly workflow, runId, and workspaceCommit; spec contains exactly mode. " +
 		"Never put phase, mutationCount, capabilities, evidence, failures, executionMode, inputs, resultContract, runId, or workspaceCommit at the top level. " +
 		"For a DeploymentRun, status may contain only phase, mutationCount, capabilities, evidence, and failures. " +
+		"status.capabilities must be a non-empty JSON object, never an array, string, number, boolean, or null. " +
 		"Do not emit plannedMutations, runtimeAttestation, resultDigest, or any other status field. " +
 		"DeploymentRun evidence must be a non-empty array: before the final response, call at least one allowed trusted DoOps plan tool and reference that completed call. " +
 		"Every DeploymentRun evidence item must reference one of the allowed trusted DoOps plan tools; " +
