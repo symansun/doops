@@ -14,6 +14,7 @@ REGISTRY = ROOT / "deploy" / "environments.yaml"
 SETTINGS_MODULE = ROOT / "agent" / "configure_doagent_settings.py"
 KUBECONFIG_MODULE = ROOT / "agent" / "configure_kubeconfig.py"
 SANDBOX_ENTRYPOINT = ROOT / "agent" / "sandbox-entrypoint.sh"
+AGENT_ENTRYPOINT = ROOT / "agent" / "agent-entrypoint.sh"
 IMAGE_DIGEST = "sha256:" + ("b" * 64)
 
 
@@ -170,6 +171,13 @@ def test_oilan_agent_model_settings_are_secret_backed():
     assert host_paths["containerd-socket"] == "/run/containerd/containerd.sock"
     assert host_paths["nerdctl-bin"] == "/usr/bin/nerdctl"
     assert host_paths["crictl-bin"] == "/usr/bin/crictl"
+
+
+def test_entrypoints_materialize_settings_at_doagent_canonical_path():
+    for entrypoint in (AGENT_ENTRYPOINT, SANDBOX_ENTRYPOINT):
+        content = entrypoint.read_text(encoding="utf-8")
+        assert 'DO_AGENT_SETTINGS:-/root/.agent/settings.json' in content
+        assert "/root/.agent/runtime-settings.json" not in content
 
 
 def test_runtime_kubeconfig_uses_in_cluster_api_without_changing_admin_identity(

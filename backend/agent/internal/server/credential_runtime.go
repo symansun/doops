@@ -699,6 +699,10 @@ func credentialPlanHTTPStatus(err error) int {
 
 func writeCredentialPrepareError(w http.ResponseWriter, status int, category string) {
 	w.Header().Set("Content-Type", "application/json")
+	if status == http.StatusUpgradeRequired && category == "agent_protocol_incompatible" {
+		w.Header().Set("Upgrade", credentialPlanProtocolV2)
+		w.Header().Set("Doops-Agent-Required-Protocol", credentialPlanProtocolV2)
+	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(credentialPrepareErrorResponse{
 		APIVersion: "doops.sh/v2",

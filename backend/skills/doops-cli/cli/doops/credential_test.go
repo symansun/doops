@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDecodeCredentialPrepareFailureRequiresExactVersionedObject(t *testing.T) {
 	valid := []byte(`{"apiVersion":"doops.sh/v2","kind":"CredentialPrepareError","category":"agent_protocol_incompatible"}`)
@@ -20,5 +23,18 @@ func TestDecodeCredentialPrepareFailureRequiresExactVersionedObject(t *testing.T
 				t.Fatal("invalid credential failure must be rejected")
 			}
 		})
+	}
+}
+
+func TestCredentialPrepareFailureIncludesRequiredProtocol(t *testing.T) {
+	err := credentialPrepareFailureError(
+		"426 Upgrade Required",
+		"agent_protocol_incompatible",
+		"doops.sh/credential-plan/v2",
+	)
+	if err == nil ||
+		!strings.Contains(err.Error(), "credential prepare failed: HTTP 426 Upgrade Required: agent_protocol_incompatible") ||
+		!strings.Contains(err.Error(), "required_protocol=doops.sh/credential-plan/v2") {
+		t.Fatalf("required protocol missing from error: %v", err)
 	}
 }
