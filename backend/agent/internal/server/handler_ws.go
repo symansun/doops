@@ -804,6 +804,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			return
 		}
 		var admission *trustedReconciliationAdmission
+		var executionInstruction *doopsCICDInstructionEnvelope
 		if args.ResponseFormat == "json" {
 			var instruction struct {
 				Task            string `json:"task"`
@@ -824,6 +825,12 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 					return
 				}
 				admission = &built
+				envelope, err := decodeDoopsCICDInstruction(args.Instruction)
+				if err != nil {
+					writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+					return
+				}
+				executionInstruction = &envelope
 			}
 		}
 		switch strings.ToLower(strings.TrimSpace(args.Mode)) {
@@ -860,8 +867,9 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			args.Model,
 			args.ResponseFormat,
 			agentPromptExecutionContext{
-				NativeMode: nativeMode,
-				Admission:  admission,
+				NativeMode:  nativeMode,
+				Admission:   admission,
+				Instruction: executionInstruction,
 			},
 			pushProgress,
 			writeJSON,
@@ -1004,8 +1012,9 @@ func validatedDoagentApplyInstruction(instruction string) (doopsCICDInstructionE
 }
 
 type agentPromptExecutionContext struct {
-	NativeMode string
-	Admission  *trustedReconciliationAdmission
+	NativeMode  string
+	Admission   *trustedReconciliationAdmission
+	Instruction *doopsCICDInstructionEnvelope
 }
 
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
@@ -1204,7 +1213,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		resultText, structuredContent, err = bindDeploymentRunEvidence(
 			structuredContent,
 			toolTraces.completed(),
-			primaryDeploymentEvidenceTool(execution.Admission),
+			deploymentRunBinding(execution),
 		)
 		if err != nil {
 			if rejections := toolTraces.rejectionSummary(); rejections != "" {
@@ -1723,6 +1732,9 @@ func appendDoagentStructuredResultContract(
 ) string {
 	contract := instruction + "\n\nMachine-readable result channel: your final response is the machine result. " +
 		"It must contain exactly one JSON object with no Markdown or surrounding text. " +
+		"A DeploymentRun object has exactly five top-level fields: apiVersion, kind, metadata, spec, and status. " +
+		"metadata contains exactly workflow, runId, and workspaceCommit; spec contains exactly mode. " +
+		"Never put phase, mutationCount, capabilities, evidence, failures, executionMode, inputs, resultContract, runId, or workspaceCommit at the top level. " +
 		"For a DeploymentRun, status may contain only phase, mutationCount, capabilities, evidence, and failures. " +
 		"Do not emit plannedMutations, runtimeAttestation, resultDigest, or any other status field. " +
 		"DeploymentRun evidence must be a non-empty array: before the final response, call at least one allowed trusted DoOps plan tool and reference that completed call. " +
@@ -1744,6 +1756,21 @@ func primaryDeploymentEvidenceTool(admission *trustedReconciliationAdmission) st
 		return sourceTool
 	}
 	return ""
+}
+
+func deploymentRunBinding(execution agentPromptExecutionContext) *deploymentRunContractBinding {
+	if execution.Admission == nil || execution.Instruction == nil {
+		return nil
+	}
+	instruction := execution.Instruction
+	return &deploymentRunContractBinding{
+		APIVersion:      instruction.ResultContract.APIVersion,
+		Workflow:        instruction.WorkflowPath,
+		RunID:           instruction.RunID,
+		WorkspaceCommit: instruction.WorkspaceCommit,
+		Mode:            instruction.ExecutionMode,
+		PrimaryTool:     primaryDeploymentEvidenceTool(execution.Admission),
+	}
 }
 
 // subscribeDoagentSSE 订阅 doagent 的 SSE 事件流，将内容实时转发到 WebSocket 客户端。

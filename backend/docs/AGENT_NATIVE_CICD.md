@@ -69,9 +69,10 @@ mutation-capable mode. There is no separate mutation flag.
 All ordinary prompts use the Gateway `ask` action and a session resource key.
 The Gateway does not synthesize observations or convert a text response into
 deployment evidence. It records completed ACP tool calls and rejects evidence
-that does not reference one of those calls. It also requires the evidence
-result, subject, and observation time to match the completed tool's actual JSON
-output.
+that does not reference one of those calls. It binds the evidence result and
+subject from the trusted tool trace, records the Agent-side completion time, and
+rebuilds `apiVersion`, `metadata`, and `spec` from the validated reconciliation
+instruction.
 
 `response_format=json` remains a generic structured-result transport for callers
 that need it. The bridge accepts exactly one final JSON response from the fresh

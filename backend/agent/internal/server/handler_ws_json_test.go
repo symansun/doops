@@ -55,6 +55,10 @@ func TestAgentPromptJSONReturnsFinalMessageInStructuredContent(t *testing.T) {
 			!strings.Contains(prompt, "Do not emit plannedMutations") {
 			t.Errorf("structured prompt must define DeploymentRun status fields: %s", prompt)
 		}
+		if !strings.Contains(prompt, "exactly five top-level fields: apiVersion, kind, metadata, spec, and status") ||
+			!strings.Contains(prompt, "Never put phase, mutationCount") {
+			t.Errorf("structured prompt must forbid the legacy flat DeploymentRun shape: %s", prompt)
+		}
 		if !strings.Contains(prompt, "allowed trusted DoOps plan tools") ||
 			!strings.Contains(prompt, "generic Bash") {
 			t.Errorf("structured prompt must restrict DeploymentRun evidence tools: %s", prompt)
@@ -240,10 +244,57 @@ func TestBindDeploymentRunEvidenceEnforcesPrimarySourceObservation(t *testing.T)
 	_, _, err := bindDeploymentRunEvidence(
 		result,
 		traces,
-		"mcp_doops_plan_ObserveWorkspaceSource",
+		&deploymentRunContractBinding{
+			PrimaryTool: "mcp_doops_plan_ObserveWorkspaceSource",
+		},
 	)
 	if err == nil || !strings.Contains(err.Error(), "evidence[0] must reference plan.ObserveWorkspaceSource") {
 		t.Fatalf("primary source observation was not enforced: %v", err)
+	}
+}
+
+func TestBindDeploymentRunEvidenceBindsTrustedEnvelope(t *testing.T) {
+	traces := completedDoagentToolTraces(t, []map[string]interface{}{
+		{
+			"sessionUpdate":   "tool_call_update",
+			"toolCallId":      "source-1",
+			"toolName":        "mcp_doops_plan_ObserveWorkspaceSource",
+			"status":          "completed",
+			"input":           map[string]interface{}{},
+			"rawOutput":       map[string]interface{}{"revision": "immutable"},
+			"evidenceSubject": "source-identity",
+		},
+	})
+	result := deploymentRunWithToolRef("plan.ObserveWorkspaceSource", map[string]interface{}{})
+	result["apiVersion"] = "spoofed"
+	result["metadata"] = map[string]interface{}{"runId": "spoofed"}
+	result["spec"] = map[string]interface{}{"mode": "apply"}
+
+	_, bound, err := bindDeploymentRunEvidence(
+		result,
+		traces,
+		&deploymentRunContractBinding{
+			APIVersion:      "doops.sh/v3",
+			Workflow:        "deploy/environments/scu/environment.yaml",
+			RunID:           "run-verified",
+			WorkspaceCommit: strings.Repeat("a", 40),
+			Mode:            "dry-run",
+			PrimaryTool:     "mcp_doops_plan_ObserveWorkspaceSource",
+		},
+	)
+	if err != nil {
+		t.Fatalf("bind trusted DeploymentRun envelope: %v", err)
+	}
+	if len(bound) != 5 || bound["apiVersion"] != "doops.sh/v3" || bound["kind"] != "DeploymentRun" {
+		t.Fatalf("trusted DeploymentRun top level was not rebuilt: %#v", bound)
+	}
+	metadata := bound["metadata"].(map[string]interface{})
+	spec := bound["spec"].(map[string]interface{})
+	if metadata["workflow"] != "deploy/environments/scu/environment.yaml" ||
+		metadata["runId"] != "run-verified" ||
+		metadata["workspaceCommit"] != strings.Repeat("a", 40) ||
+		spec["mode"] != "dry-run" {
+		t.Fatalf("trusted DeploymentRun metadata/spec mismatch: %#v", bound)
 	}
 }
 
@@ -487,7 +538,7 @@ func bindTestDeploymentRun(
 	result map[string]interface{},
 	traces []doagentToolTrace,
 ) (string, map[string]interface{}, error) {
-	return bindDeploymentRunEvidence(result, traces, "")
+	return bindDeploymentRunEvidence(result, traces, nil)
 }
 
 func TestRejectSensitiveToolResultRejectsSensitiveFieldsAndScalars(t *testing.T) {

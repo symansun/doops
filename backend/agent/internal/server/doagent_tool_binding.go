@@ -431,10 +431,19 @@ func rejectSensitiveToolResult(value interface{}) error {
 	return nil
 }
 
+type deploymentRunContractBinding struct {
+	APIVersion      string
+	Workflow        string
+	RunID           string
+	WorkspaceCommit string
+	Mode            string
+	PrimaryTool     string
+}
+
 func bindDeploymentRunEvidence(
 	result map[string]interface{},
 	traces []doagentToolTrace,
-	primaryTool string,
+	contract *deploymentRunContractBinding,
 ) (string, map[string]interface{}, error) {
 	if result["kind"] != "DeploymentRun" {
 		return "", nil, fmt.Errorf("structured result kind must be DeploymentRun")
@@ -500,10 +509,12 @@ func bindDeploymentRunEvidence(
 		if err != nil {
 			return "", nil, fmt.Errorf("DeploymentRun evidence[%d]: %w", index, err)
 		}
-		if index == 0 && primaryTool != "" && trace.ToolName != primaryTool {
+		if index == 0 && contract != nil &&
+			contract.PrimaryTool != "" &&
+			trace.ToolName != contract.PrimaryTool {
 			return "", nil, fmt.Errorf(
 				"DeploymentRun evidence[0] must reference %s",
-				modelVisibleDoagentToolName(primaryTool),
+				modelVisibleDoagentToolName(contract.PrimaryTool),
 			)
 		}
 		runtimeInput, err := decodeDoagentJSONValue(trace.inputJSON)
@@ -527,6 +538,21 @@ func bindDeploymentRunEvidence(
 		}
 	}
 
+	if contract != nil {
+		result = map[string]interface{}{
+			"apiVersion": contract.APIVersion,
+			"kind":       "DeploymentRun",
+			"metadata": map[string]interface{}{
+				"workflow":        contract.Workflow,
+				"runId":           contract.RunID,
+				"workspaceCommit": contract.WorkspaceCommit,
+			},
+			"spec": map[string]interface{}{
+				"mode": contract.Mode,
+			},
+			"status": status,
+		}
+	}
 	if err := rejectSensitiveToolResult(result); err != nil {
 		return "", nil, err
 	}
