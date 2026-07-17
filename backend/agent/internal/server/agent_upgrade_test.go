@@ -34,6 +34,18 @@ func TestHandleAgentUpgradeDryRunK8s(t *testing.T) {
 	}
 }
 
+func TestPrePullK8sImageAllowsKubeletPullWithoutNodeRuntimeCLI(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	out, err := prePullK8sImage("repo.example/doops-agent:latest")
+	if err != nil {
+		t.Fatalf("pre-pull without node runtime CLI: %v", err)
+	}
+	if !strings.Contains(out, "kubelet will pull the image during rollout") {
+		t.Fatalf("unexpected skip output: %s", out)
+	}
+}
+
 func TestAgentDockerfileInstallsAndVerifiesKubectl(t *testing.T) {
 	dockerfile, err := os.ReadFile(filepath.Join("..", "..", "Dockerfile"))
 	if err != nil {

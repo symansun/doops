@@ -527,7 +527,7 @@ func prePullK8sImage(image string) (string, error) {
 		}
 		return "", fmt.Errorf("pre-pull image with crictl failed: %v: %s", pullErr, strings.TrimSpace(string(out)))
 	}
-	return "", fmt.Errorf("pre-pull image failed: neither nerdctl nor crictl is available")
+	return "pre-pull skipped: neither nerdctl nor crictl is available; kubelet will pull the image during rollout", nil
 }
 
 func upgradeDockerContainer(args agentUpgradeParams, image string) (string, error) {
