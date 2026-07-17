@@ -1133,7 +1133,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	finalErr := ""
 	knownApplyFailure := false
 
-	operationDeadline := time.Now().Add(h.opts.OperationTimeout)
 	err = agent.relayToolCall(opCtx, params, h.opts.OperationTimeout, func(msg gatewayWSMessage) error {
 		if method, _ := msg.Parsed["method"].(string); method == "notifications/message" {
 			if p, ok := msg.Parsed["params"].(map[string]interface{}); ok {
@@ -1166,37 +1165,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		}
 		return nil
 	})
-	if errors.Is(err, errGatewayAgentDisconnected) && credentialBinding != nil {
-		recovered, recoveryErr := h.recoverCICDResult(
-			opCtx,
-			cluster,
-			instance,
-			credentialBinding.Run,
-			agent,
-			time.Until(operationDeadline),
-		)
-		if recoveryErr == nil {
-			recovered.Parsed["id"] = req.ID
-			if result, ok := recovered.Parsed["result"].(map[string]interface{}); ok {
-				if isErr, ok := result["isError"]; ok && fmt.Sprintf("%v", isErr) == "true" {
-					finalStatus = "error"
-					finalErr = resultContentText(result)
-				}
-			}
-			if rpcErr, ok := recovered.Parsed["error"]; ok && rpcErr != nil {
-				finalStatus = "error"
-				finalErr = fmt.Sprintf("%v", rpcErr)
-			}
-			raw, marshalErr := json.Marshal(recovered.Parsed)
-			if marshalErr != nil {
-				err = marshalErr
-			} else {
-				err = writeRaw(raw)
-			}
-		} else {
-			err = recoveryErr
-		}
-	}
 	if err != nil {
 		if errors.Is(err, errGatewayClientDisconnected) {
 			finalStatus = "canceled"
@@ -1248,8 +1216,7 @@ func sanitizeAgentPromptAudit(toolName, errMsg, tail string) (string, string) {
 func internalCredentialTool(tool string) bool {
 	return tool == "doops_credential_plan" ||
 		tool == "doops_credential_materialize" ||
-		tool == "doops_credential_cleanup" ||
-		tool == "doops_cicd_result"
+		tool == "doops_credential_cleanup"
 }
 
 func (h *GatewayHub) registerAgent(agent *GatewayAgent) error {
@@ -2029,7 +1996,7 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 		if sessionID := extractSession(args); sessionID != "" {
 			return "workspace:" + sessionID
 		}
-	case ActionCredentialUse:
+	case ActionCredentialUse, ActionCredentialRevoke:
 		if credentialID := extractStringArg(args, "credential_id"); credentialID != "" {
 			return "credential:" + credentialID
 		}

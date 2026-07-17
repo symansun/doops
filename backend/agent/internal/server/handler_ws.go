@@ -485,15 +485,7 @@ type activeToolCall struct {
 }
 
 func toolCallSurvivesDisconnect(params api.ToolCallParams, gatewayAuthorized bool) bool {
-	if !gatewayAuthorized || params.Name != "doops_agent_prompt" {
-		return false
-	}
-	var prompt api.AgentPromptParams
-	if json.Unmarshal(params.Arguments, &prompt) != nil {
-		return false
-	}
-	_, ok := credentialRunFromInstruction(prompt.Instruction)
-	return ok
+	return false
 }
 
 func rawNotification(text string) notificationEvent {
@@ -521,37 +513,6 @@ func errorNotification(text string) notificationEvent {
 func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, toolName string, argBytes json.RawMessage, gatewayAuthorized bool, writeJSON func(v interface{})) {
 	if !gatewayAuthorized && !directAgentReadOnlyTool(toolName, argBytes) {
 		writeJSON(buildToolErrorResponse(reqID, "mutating agent tools require a gateway-authorized reverse tunnel"))
-		return
-	}
-
-	if toolName == "doops_cicd_result" {
-		var args struct {
-			CredentialRun CredentialRun `json:"credential_run"`
-		}
-		if err := json.Unmarshal(argBytes, &args); err != nil || !validCICDRunBinding(args.CredentialRun) {
-			writeJSON(buildErrorResponse(reqID, -32602, "invalid credential run binding"))
-			return
-		}
-		result, err := gw.cicdResults.get(args.CredentialRun)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				writeJSON(buildErrorResponse(reqID, -32008, "cicd result not found"))
-				return
-			}
-			writeJSON(buildErrorResponse(reqID, -32603, "read cicd result failed"))
-			return
-		}
-		if result.State == cicdResultClaimed && result.RuntimeID != agentProcessRuntimeID {
-			writeJSON(buildErrorResponse(reqID, -32010, "cicd result unavailable after agent restart"))
-			return
-		}
-		if result.State != cicdResultCompleted {
-			writeJSON(buildErrorResponse(reqID, -32009, "cicd result pending"))
-			return
-		}
-		response := result.Response
-		response.ID = reqID
-		writeJSON(response)
 		return
 	}
 
@@ -851,18 +812,13 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		var args api.AgentPromptParams
 		json.Unmarshal(argBytes, &args)
 		operation := strings.ToLower(strings.TrimSpace(args.Operation))
-		cicdPrompt := isDoopsCICDInstruction(args.Instruction)
-		if cicdPrompt && !gatewayAuthorized {
-			writeJSON(buildErrorResponse(reqID, -32602, "doops-cicd requires a gateway-authorized reverse tunnel"))
-			return
-		}
 		if operation == "apply" {
 			if !gatewayAuthorized {
-				writeJSON(buildErrorResponse(reqID, -32602, "credential apply requires a gateway-authorized reverse tunnel"))
+				writeJSON(buildErrorResponse(reqID, -32602, "apply requires a gateway-authorized reverse tunnel"))
 				return
 			}
-			if err := validateDoagentApplyInstruction(args); err != nil {
-				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+			if strings.TrimSpace(args.Instruction) == "" {
+				writeJSON(buildErrorResponse(reqID, -32602, "apply requires a non-empty instruction"))
 				return
 			}
 		}
@@ -890,37 +846,6 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		if args.ResponseFormat != "" && args.ResponseFormat != "json" {
 			writeJSON(buildErrorResponse(reqID, -32602, `response_format must be "json" when specified`))
 			return
-		}
-		if cicdPrompt {
-			run, ok := credentialRunFromInstruction(args.Instruction)
-			if !ok {
-				writeJSON(buildErrorResponse(reqID, -32602, "invalid credential run binding"))
-				return
-			}
-			existing, created, err := gw.cicdResults.begin(run)
-			if err != nil {
-				writeJSON(buildErrorResponse(reqID, -32603, "initialize cicd result failed"))
-				return
-			}
-			if !created {
-				if existing.State == cicdResultCompleted {
-					response := existing.Response
-					response.ID = reqID
-					writeJSON(response)
-				} else {
-					writeJSON(buildErrorResponse(reqID, -32009, "cicd operation already in progress"))
-				}
-				return
-			}
-			originalWriteJSON := writeJSON
-			writeJSON = func(value interface{}) {
-				if response, ok := value.(api.JSONRPCResponse); ok {
-					if err := gw.cicdResults.complete(run, response); err != nil {
-						log.Printf("persist CICD result failed: run=%s: %v", run.ID, err)
-					}
-				}
-				originalWriteJSON(value)
-			}
 		}
 		switch strings.ToLower(strings.TrimSpace(args.Mode)) {
 		case "metadata":
@@ -1109,141 +1034,15 @@ func doagentModeForPrompt(operation, executionMode string) (string, error) {
 	}
 }
 
-func validateDoagentApplyInstruction(prompt api.AgentPromptParams) error {
-	_, err := validatedDoagentApplyInstruction(prompt)
-	return err
-}
-
-func validatedDoagentApplyInstruction(prompt api.AgentPromptParams) (map[string]interface{}, error) {
-	var envelope struct {
-		Task            string `json:"task"`
-		Skill           string `json:"skill"`
-		ExecutionMode   string `json:"executionMode"`
-		ManifestPath    string `json:"manifestPath"`
-		WorkspaceCommit string `json:"workspaceCommit"`
-		Source          struct {
-			Repository string `json:"repository"`
-			Branch     string `json:"branch"`
-		} `json:"source"`
-		Inputs        map[string]string `json:"inputs"`
-		CredentialRun CredentialRun     `json:"credentialRun"`
-	}
-	decoder := json.NewDecoder(strings.NewReader(prompt.Instruction))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&envelope); err != nil {
-		return nil, fmt.Errorf("apply requires a structured doops-cicd instruction")
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return nil, fmt.Errorf("apply requires a structured doops-cicd instruction")
-	}
-	run := envelope.CredentialRun
-	if envelope.Task != "execute-doops-cicd" ||
-		envelope.Skill != "$doops-cicd" ||
-		envelope.ExecutionMode != "apply" ||
-		envelope.ManifestPath != "deploy/environments.yaml" ||
-		!validCredentialWorkspaceCommit(envelope.WorkspaceCommit) ||
-		strings.TrimSpace(prompt.WorkspaceCommit) != envelope.WorkspaceCommit ||
-		strings.TrimSpace(envelope.Source.Repository) == "" ||
-		strings.TrimSpace(envelope.Source.Branch) == "" ||
-		run.APIVersion != "doops.sh/v2" ||
-		run.Kind != "CredentialRun" ||
-		strings.TrimSpace(run.ID) == "" ||
-		run.Mode != "apply" ||
-		strings.TrimSpace(run.Cluster) == "" ||
-		strings.TrimSpace(run.Instance) == "" ||
-		strings.TrimSpace(run.Target) == "" ||
-		run.Session != strings.TrimSpace(prompt.SessionID) ||
-		run.SourceRevision != envelope.WorkspaceCommit ||
-		run.CreatedAt.IsZero() {
-		return nil, fmt.Errorf("apply is only supported for an explicit doops-cicd apply instruction")
-	}
-	if err := validateCredentialPlanSourceRepository(envelope.Source.Repository); err != nil {
-		return nil, fmt.Errorf("apply is only supported for an explicit doops-cicd apply instruction")
-	}
-	for key, value := range envelope.Inputs {
-		if credentialSecretLikeKey(key) || credentialScalarContainsInlineMaterial(value) {
-			return nil, fmt.Errorf("sensitive workflow input is forbidden; use credentialRef")
-		}
-	}
-	for _, materialization := range run.Materializations {
-		if err := validateCredentialMaterializationMetadata(materialization); err != nil {
-			return nil, err
-		}
-	}
-	encoded, err := json.Marshal(envelope)
-	if err != nil {
-		return nil, fmt.Errorf("invalid doops-cicd credential binding")
-	}
-	var result map[string]interface{}
-	if err := json.Unmarshal(encoded, &result); err != nil {
-		return nil, fmt.Errorf("invalid doops-cicd credential binding")
-	}
-	return result, nil
-}
-
 type agentPromptExecutionContext struct {
 	NativeMode      string
 	WorkspaceCommit string
-}
-
-const trustedReconciliationContextProtocolV2 = "doops.reconciliation-context/v2"
-
-func validateDoagentCICDCapabilities(response map[string]interface{}) error {
-	result, ok := response["result"].(map[string]interface{})
-	if !ok {
-		return errors.New("doagent initialize returned no result")
-	}
-	agentCapabilities, ok := result["agentCapabilities"].(map[string]interface{})
-	if !ok {
-		return errors.New("doagent capabilities are missing")
-	}
-	capability, ok := agentCapabilities["trustedReconciliationContext"].(map[string]interface{})
-	if !ok ||
-		capability["schemaVersion"] != trustedReconciliationContextProtocolV2 ||
-		capability["callContextSchemaVersion"] != "doops.reconciliation-call-context/v1" ||
-		capability["mcpMetaKey"] != "doops.sh/reconciliation-context" ||
-		capability["credentialRunDigest"] != true ||
-		capability["sourceWorkspaceCommit"] != true {
-		return errors.New("doagent trusted reconciliation capability is incompatible")
-	}
-	return nil
-}
-
-func requireDoagentCICDCapabilities(baseURL, instruction, sessionID string) error {
-	if !isDoopsCICDInstruction(instruction) {
-		return nil
-	}
-	response, err := doagentRPC(baseURL, map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      "cicd-capability-" + sessionID,
-		"method":  "initialize",
-		"params":  map[string]interface{}{},
-	})
-	if err != nil {
-		return err
-	}
-	return validateDoagentCICDCapabilities(response)
-}
-
-func isDoopsCICDInstruction(instruction string) bool {
-	var marker struct {
-		Task string `json:"task"`
-	}
-	return json.Unmarshal([]byte(instruction), &marker) == nil &&
-		strings.TrimSpace(marker.Task) == "execute-doops-cicd"
 }
 
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
 func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, model string, responseFormat string, execution agentPromptExecutionContext, pushProgress notificationSender, writeJSON func(v interface{})) {
 	log.Printf("🤖 WS Running doagent via ACP HTTP: session=%s structured=%t model=%s",
 		doopsSessionID, responseFormat == "json", model)
-	cicdPrompt := isDoopsCICDInstruction(instr)
-	if cicdPrompt {
-		if err := validateWorkspaceCommitBinding(doopsSessionID, execution.WorkspaceCommit); err != nil {
-			writeJSON(buildErrorResponse(reqID, -32603, "workspace_commit_binding_invalid"))
-			return
-		}
-	}
 
 	doagentURL := os.Getenv("DO_AGENT_URL")
 	if doagentURL == "" {
@@ -1253,11 +1052,6 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		writeJSON(buildErrorResponse(reqID, -32603, "doagent_unavailable"))
 		return
 	}
-	if err := requireDoagentCICDCapabilities(doagentURL, instr, doopsSessionID); err != nil {
-		writeJSON(buildErrorResponse(reqID, -32603, "doagent_protocol_incompatible"))
-		return
-	}
-
 	// Machine-result prompts use a fresh doagent session so their tool trace
 	// catalog and turn_finished boundary cannot include a previous turn.
 	var entry *sessionEntry
@@ -1368,7 +1162,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	sseDone := make(chan error, 1)
 	sseReady := make(chan error, 1)
 	turnIDReady := make(chan string, 1)
-	toolTraces := newDoagentToolTraceCollector(cicdPrompt)
+	toolTraces := newDoagentToolTraceCollector(false)
 	go func() {
 		sseDone <- subscribeDoagentSSEWithCollectorReady(
 			sseCtx,
@@ -1426,7 +1220,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		return
 	}
 	if responseFormat == "json" {
-		resultText, structuredContent, err := toolTraces.structuredResult(cicdPrompt)
+		resultText, structuredContent, err := toolTraces.structuredResult(false)
 		if err != nil {
 			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("read final machine result: %v", err)))
 			return
