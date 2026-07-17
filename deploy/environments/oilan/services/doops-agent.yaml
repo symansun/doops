@@ -9,7 +9,7 @@ spec:
     source: docker.cnb.cool/l8ai/ai/doops.sh
     target: docker.cnb.cool/l8ai/ai/doops.sh
     identity: sha256-digest
-    digest: sha256:1afccd7d181658a17ecbbac61ba69686a0e8cb1d3f60cf7e15fdbbd292fd3a5f
+    digest: sha256:2adfd6de68f7362c86bf51c108d3c2fd28a4968ecfa8ff66956e39a17a065f83
   helm:
     chart: backend/deploy/helm/doops-agent
     values: deploy/environments/oilan/values.yaml
