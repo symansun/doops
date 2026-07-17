@@ -153,8 +153,15 @@ func runReverseTunnel(gw *server.Gateway, rawURL, cluster, instance string, reco
 			continue
 		}
 
+		header := http.Header{}
+		if gw != nil {
+			if token := strings.TrimSpace(gw.Token); token != "" {
+				header.Set("Authorization", "Bearer "+token)
+			}
+		}
+
 		log.Printf("🌉 connecting reverse tunnel to %s (cluster=%s instance=%s)", tunnelURL, cluster, instance)
-		conn, resp, err := reverseTunnelDial(tunnelURL, nil)
+		conn, resp, err := reverseTunnelDial(tunnelURL, header)
 		if err != nil {
 			if resp != nil {
 				log.Printf("❌ reverse tunnel dial failed: %v (HTTP %s)", err, resp.Status)

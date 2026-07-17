@@ -137,6 +137,7 @@ func TestRunReverseTunnelUpdatesReadyStateOnConnectAndDisconnect(t *testing.T) {
 	setReverseTunnelConnected(false)
 
 	var loopCount int32
+	var authorization string
 	reverseTunnelContinue = func() bool {
 		return atomic.LoadInt32(&loopCount) < 2
 	}
@@ -146,6 +147,7 @@ func TestRunReverseTunnelUpdatesReadyStateOnConnectAndDisconnect(t *testing.T) {
 			if len(rawURL) == 0 {
 				t.Fatalf("invalid dial URL: %s", rawURL)
 			}
+			authorization = header.Get("Authorization")
 			return nil, &http.Response{StatusCode: http.StatusSwitchingProtocols}, nil
 		}
 		return nil, &http.Response{StatusCode: http.StatusBadRequest}, errors.New("stopped")
@@ -163,8 +165,10 @@ func TestRunReverseTunnelUpdatesReadyStateOnConnectAndDisconnect(t *testing.T) {
 	}
 
 	done := make(chan struct{})
+	gw := server.NewGateway("0")
+	gw.Token = "synthetic-agent-token"
 	go func() {
-		runReverseTunnel(nil, "wss://gateway.example.com", "dev", "instance", 1*time.Millisecond)
+		runReverseTunnel(gw, "wss://gateway.example.com", "dev", "instance", 1*time.Millisecond)
 		close(done)
 	}()
 
@@ -181,5 +185,8 @@ func TestRunReverseTunnelUpdatesReadyStateOnConnectAndDisconnect(t *testing.T) {
 	}
 	if isReverseTunnelConnected() {
 		t.Fatal("reverse tunnel should be not ready after serve returns")
+	}
+	if want := "Bearer synthetic-agent-token"; authorization != want {
+		t.Fatalf("reverse tunnel authorization mismatch: got %q want %q", authorization, want)
 	}
 }
