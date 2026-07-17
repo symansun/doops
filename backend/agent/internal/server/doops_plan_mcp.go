@@ -1219,6 +1219,7 @@ func buildDoopsPlanAttestedResult(
 		"tool":                 name,
 		"evidenceKind":         callContext.Capability.EvidenceKind,
 		"evidenceSubject":      callContext.Capability.EvidenceSubject,
+		"observedAt":           time.Now().UTC().Format(time.RFC3339Nano),
 		"canonicalScope":       callContext.Capability.CanonicalScope,
 		"scopeDigest":          callContext.Capability.ScopeDigest,
 		"inputDigest":          inputDigest,
