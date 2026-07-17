@@ -1724,6 +1724,8 @@ func appendDoagentStructuredResultContract(
 	contract := instruction + "\n\nMachine-readable result channel: your final response is the machine result. " +
 		"It must contain exactly one JSON object with no Markdown or surrounding text. " +
 		"The top-level object must be the complete DeploymentRun envelope with apiVersion, kind, metadata, spec, and status. It must contain exactly five top-level fields: apiVersion, kind, metadata, spec, and status; kind must be \"DeploymentRun\". Never put phase, mutationCount, capabilities, evidence, or failures at the top level. Never return the status object by itself. " +
+		"metadata must contain exactly workflow, runId, and workspaceCommit; spec must contain exactly mode. " +
+		"Never put executionMode, inputs, resultContract, runId, or workspaceCommit at the top level. " +
 		"Copy required values from the request exactly: apiVersion=resultContract.apiVersion, metadata.workflow=workflowPath, metadata.runId=runId, metadata.workspaceCommit=workspaceCommit, and spec.mode=executionMode. Do not rename these output fields or put mode under metadata. " +
 		"For a DeploymentRun, status may contain only phase, mutationCount, capabilities, evidence, and failures. " +
 		"status.phase must be exactly one of planned, converged, blocked, failed, or outcome-unknown; do not use Succeeded, success, completed, or any other alias. " +

@@ -690,10 +690,7 @@ func observeDoopsPlanWorkloads(ctx context.Context, runtime doopsPlanRuntime) (m
 	services := doopsPlanWorkloadServices(runtime)
 	workloads := make([]map[string]interface{}, 0, len(services))
 	for _, service := range services {
-		workloadName := runtime.WorkloadNames[service]
-		if workloadName == "" {
-			workloadName = service
-		}
+		workloadName := doopsPlanWorkloadName(runtime, service)
 		namespace := runtime.WorkloadNamespaces[service]
 		if namespace == "" {
 			namespace = runtime.Namespace
@@ -757,6 +754,13 @@ func doopsPlanWorkloadServices(runtime doopsPlanRuntime) []string {
 	return services
 }
 
+func doopsPlanWorkloadName(runtime doopsPlanRuntime, service string) string {
+	if workloadName := strings.TrimSpace(runtime.WorkloadNames[service]); workloadName != "" {
+		return workloadName
+	}
+	return service
+}
+
 func observeDoopsPlanHTTP(ctx context.Context, runtime doopsPlanRuntime) (map[string]interface{}, error) {
 	checks := make([]map[string]interface{}, 0, len(runtime.PublicChecks))
 	for _, check := range runtime.PublicChecks {
@@ -791,13 +795,14 @@ func observeDoopsPlanLogs(ctx context.Context, runtime doopsPlanRuntime) (map[st
 	results := make([]map[string]interface{}, 0, len(services))
 	pattern := regexp.MustCompile(`(?i)(panic|fatal|exception|error)`)
 	for _, service := range services {
+		workloadName := doopsPlanWorkloadName(runtime, service)
 		namespace := runtime.WorkloadNamespaces[service]
 		if namespace == "" {
 			namespace = runtime.Namespace
 		}
 		output, err := runDoopsPlanCommand(
 			ctx, runtime.Root, "kubectl", "-n", namespace, "logs",
-			"deployment/"+service, "--tail=200", "--all-containers=true",
+			"deployment/"+workloadName, "--tail=200", "--all-containers=true",
 		)
 		if err != nil {
 			return nil, err
@@ -809,7 +814,7 @@ func observeDoopsPlanLogs(ctx context.Context, runtime doopsPlanRuntime) (map[st
 			}
 		}
 		results = append(results, map[string]interface{}{
-			"service": service, "namespace": namespace, "scannedLines": len(strings.Split(output, "\n")),
+			"service": service, "workload": workloadName, "namespace": namespace, "scannedLines": len(strings.Split(output, "\n")),
 			"errorLineCount": matches,
 		})
 	}
@@ -879,12 +884,13 @@ func resolveDoopsPlanImageSet(
 	services []string,
 	artifactNames map[string]string,
 	version string,
+	auth *doopsPlanBasicAuth,
 ) ([]doopsPlanImage, error) {
 	images := make([]doopsPlanImage, 0, len(services))
 	for _, service := range services {
 		artifactName := doopsPlanArtifactName(service, artifactNames)
 		repository := strings.TrimSuffix(registry, "/") + "/" + artifactName
-		digest, err := resolveDoopsPlanRegistryDigest(ctx, repository, version)
+		digest, err := resolveDoopsPlanRegistryDigestWithAuth(ctx, repository, version, auth)
 		if err != nil {
 			return nil, fmt.Errorf("resolve image %s:%s: %w", repository, version, err)
 		}
@@ -912,8 +918,18 @@ func resolveDoopsPlanRuntimeImages(
 	version string,
 	credential credentialConfigurationSecretRef,
 ) ([]doopsPlanImage, error) {
+	credential = doopsPlanEffectiveRegistryCredential(runtime, credential, registry)
 	if len(declared) == 0 {
-		return resolveDoopsPlanImageSet(ctx, registry, services, runtime.ArtifactNames, version)
+		if len(services) == 0 {
+			return nil, errors.New("image-set services are empty")
+		}
+		artifactName := doopsPlanArtifactName(services[0], runtime.ArtifactNames)
+		repository := strings.TrimSuffix(registry, "/") + "/" + artifactName
+		auth, err := doopsPlanRegistryAuth(ctx, runtime, credential, repository)
+		if err != nil {
+			return nil, err
+		}
+		return resolveDoopsPlanImageSet(ctx, registry, services, runtime.ArtifactNames, version, auth)
 	}
 	images := append([]doopsPlanImage(nil), declared...)
 	for _, image := range images {
@@ -932,9 +948,30 @@ func resolveDoopsPlanRuntimeImages(
 	return images, nil
 }
 
+func doopsPlanEffectiveRegistryCredential(
+	runtime doopsPlanRuntime,
+	reference credentialConfigurationSecretRef,
+	registry string,
+) credentialConfigurationSecretRef {
+	if doopsPlanSecretRefName(reference) != "" {
+		return reference
+	}
+	if registry == runtime.TargetRegistry {
+		return runtime.RegistryCredential
+	}
+	return reference
+}
+
 type doopsPlanBasicAuth struct {
 	Username string
 	Password string
+}
+
+func doopsPlanSecretRefName(reference credentialConfigurationSecretRef) string {
+	if name := strings.TrimSpace(reference.Name); name != "" {
+		return name
+	}
+	return strings.TrimSpace(reference.SecretName)
 }
 
 func doopsPlanRegistryAuth(
@@ -943,16 +980,17 @@ func doopsPlanRegistryAuth(
 	reference credentialConfigurationSecretRef,
 	repository string,
 ) (*doopsPlanBasicAuth, error) {
-	if reference.Name == "" {
+	name := doopsPlanSecretRefName(reference)
+	if name == "" {
 		return nil, nil
 	}
 	namespace := reference.Namespace
 	if namespace == "" {
 		namespace = runtime.Namespace
 	}
-	output, err := runDoopsPlanCommand(ctx, runtime.Root, "kubectl", "-n", namespace, "get", "secret", reference.Name, "-o", "json")
+	output, err := runDoopsPlanCommand(ctx, runtime.Root, "kubectl", "-n", namespace, "get", "secret", name, "-o", "json")
 	if err != nil {
-		return nil, fmt.Errorf("read registry credential %s/%s: %w", namespace, reference.Name, err)
+		return nil, fmt.Errorf("read registry credential %s/%s: %w", namespace, name, err)
 	}
 	var secret struct {
 		Data map[string]string `json:"data"`
@@ -1219,6 +1257,7 @@ func buildDoopsPlanAttestedResult(
 		"tool":                 name,
 		"evidenceKind":         callContext.Capability.EvidenceKind,
 		"evidenceSubject":      callContext.Capability.EvidenceSubject,
+		"observedAt":           time.Now().UTC().Format(time.RFC3339Nano),
 		"canonicalScope":       callContext.Capability.CanonicalScope,
 		"scopeDigest":          callContext.Capability.ScopeDigest,
 		"inputDigest":          inputDigest,

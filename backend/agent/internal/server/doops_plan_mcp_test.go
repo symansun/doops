@@ -2,7 +2,10 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +13,12 @@ import (
 	"strings"
 	"testing"
 )
+
+type doopsPlanRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn doopsPlanRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
 
 func TestDoopsPlanMCPListsOnlyReservedPlanTools(t *testing.T) {
 	input := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}` + "\n")
@@ -53,6 +62,66 @@ func TestDoopsPlanArtifactNameUsesDeclaredSourceArtifactName(t *testing.T) {
 	}
 }
 
+func TestDoopsPlanEffectiveRegistryCredentialUsesExecutorCredentialForSameRegistry(t *testing.T) {
+	executorCredential := credentialConfigurationSecretRef{
+		Namespace:  "test",
+		SecretName: "cnb-regcred",
+	}
+	runtime := doopsPlanRuntime{
+		SourceRegistry:     "registry.example.test/project",
+		TargetRegistry:     "registry.example.test/project",
+		RegistryCredential: executorCredential,
+	}
+
+	got := doopsPlanEffectiveRegistryCredential(
+		runtime,
+		credentialConfigurationSecretRef{},
+		runtime.SourceRegistry,
+	)
+
+	if !reflect.DeepEqual(got, executorCredential) {
+		t.Fatalf("credential = %#v, want %#v", got, executorCredential)
+	}
+	if name := doopsPlanSecretRefName(got); name != "cnb-regcred" {
+		t.Fatalf("credential name = %q, want cnb-regcred", name)
+	}
+}
+
+func TestResolveDoopsPlanImageSetUsesProvidedRegistryAuth(t *testing.T) {
+	previousClient := doopsPlanHTTPClient
+	t.Cleanup(func() { doopsPlanHTTPClient = previousClient })
+	const digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	doopsPlanHTTPClient = &http.Client{
+		Transport: doopsPlanRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			username, password, ok := request.BasicAuth()
+			if !ok || username != "registry-user" || password != "registry-password" {
+				t.Fatalf("registry request did not carry declared credentials")
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Docker-Content-Digest": []string{digest}},
+				Body:       io.NopCloser(strings.NewReader("{}")),
+				Request:    request,
+			}, nil
+		}),
+	}
+
+	images, err := resolveDoopsPlanImageSet(
+		t.Context(),
+		"registry.example.test/project",
+		[]string{"backend"},
+		nil,
+		"release-20260717",
+		&doopsPlanBasicAuth{Username: "registry-user", Password: "registry-password"},
+	)
+	if err != nil {
+		t.Fatalf("resolve authenticated image set: %v", err)
+	}
+	if len(images) != 1 || images[0].Digest != digest {
+		t.Fatalf("images = %#v", images)
+	}
+}
+
 func TestRepositoryOilanRuntimeUsesDeclaredArtifactAndWorkloadBindings(t *testing.T) {
 	repositoryRoot := filepath.Clean(filepath.Join("..", "..", "..", ".."))
 	runtime, err := loadDoopsPlanRuntimeFromWorkspace(
@@ -71,6 +140,34 @@ func TestRepositoryOilanRuntimeUsesDeclaredArtifactAndWorkloadBindings(t *testin
 	}
 	if runtime.WorkloadContainers["doops-agent"] != "doops-agent" {
 		t.Fatalf("container binding = %#v", runtime.WorkloadContainers)
+	}
+}
+
+func TestObserveDoopsPlanLogsUsesDeclaredWorkloadName(t *testing.T) {
+	originalCommand := doopsPlanCommand
+	t.Cleanup(func() { doopsPlanCommand = originalCommand })
+	var arguments []string
+	doopsPlanCommand = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		arguments = append([]string(nil), args...)
+		return exec.CommandContext(ctx, "sh", "-c", "printf 'healthy\\n'")
+	}
+	runtime := doopsPlanRuntime{
+		Root:          t.TempDir(),
+		Namespace:     "kz-ops",
+		Services:      []string{"doops-agent"},
+		WorkloadNames: map[string]string{"doops-agent": "doops-agent-live"},
+	}
+
+	result, err := observeDoopsPlanLogs(context.Background(), runtime)
+	if err != nil {
+		t.Fatalf("observe logs: %v", err)
+	}
+	if !containsString(arguments, "deployment/doops-agent-live") {
+		t.Fatalf("kubectl arguments = %#v", arguments)
+	}
+	logs := result["logs"].([]map[string]interface{})
+	if logs[0]["workload"] != "doops-agent-live" {
+		t.Fatalf("log evidence = %#v", logs)
 	}
 }
 
@@ -135,6 +232,9 @@ func TestBuildDoopsPlanAttestedResultBindsTrustedContext(t *testing.T) {
 		attestation["scopeDigest"] != capability.ScopeDigest ||
 		attestation["tool"] != "ObserveWorkspaceSource" {
 		t.Fatalf("attestation binding mismatch: %#v", attestation)
+	}
+	if observedAt, _ := attestation["observedAt"].(string); !validDoagentObservedAt(observedAt) {
+		t.Fatalf("attestation observedAt is invalid: %#v", attestation)
 	}
 	structured := result["structuredContent"].(map[string]interface{})
 	if _, exists := structured["_meta"]; exists {
