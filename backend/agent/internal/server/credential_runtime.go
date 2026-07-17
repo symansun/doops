@@ -33,6 +33,9 @@ type CredentialRun struct {
 	Mode             string                      `json:"mode"`
 	Cluster          string                      `json:"cluster"`
 	Instance         string                      `json:"instance"`
+	Target           string                      `json:"target"`
+	Session          string                      `json:"session"`
+	SourceRevision   string                      `json:"sourceRevision"`
 	Template         string                      `json:"template"`
 	Project          string                      `json:"project"`
 	Environment      string                      `json:"environment"`
@@ -158,10 +161,12 @@ func validCredentialErrorCategory(category string) bool {
 type credentialPrepareHTTPBody struct {
 	Cluster          string            `json:"cluster"`
 	Instance         string            `json:"instance"`
+	Target           string            `json:"target"`
 	SessionID        string            `json:"session_id"`
 	WorkflowPath     string            `json:"workflow_path"`
 	SourceRepository string            `json:"source_repository"`
 	SourceBranch     string            `json:"source_branch"`
+	SourceRevision   string            `json:"source_revision"`
 	Inputs           map[string]string `json:"inputs,omitempty"`
 	Mode             string            `json:"mode"`
 }
@@ -211,13 +216,16 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 	}
 	body.Cluster = strings.TrimSpace(body.Cluster)
 	body.Instance = strings.TrimSpace(body.Instance)
+	body.Target = strings.TrimSpace(body.Target)
 	body.SessionID = strings.TrimSpace(body.SessionID)
 	body.WorkflowPath = strings.TrimSpace(body.WorkflowPath)
 	body.SourceRepository = strings.TrimSpace(body.SourceRepository)
 	body.SourceBranch = strings.TrimSpace(body.SourceBranch)
+	body.SourceRevision = strings.TrimSpace(body.SourceRevision)
 	body.Mode = strings.ToLower(strings.TrimSpace(body.Mode))
-	if body.Cluster == "" || body.Instance == "" || body.SessionID == "" ||
+	if body.Cluster == "" || body.Instance == "" || body.Target == "" || body.SessionID == "" ||
 		body.WorkflowPath == "" || body.SourceRepository == "" || body.SourceBranch == "" ||
+		!validCredentialWorkspaceCommit(body.SourceRevision) ||
 		(body.Mode != "dry-run" && body.Mode != "apply") {
 		writeCredentialPrepareError(w, http.StatusBadRequest, "invalid_request")
 		return
@@ -310,6 +318,9 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 		Mode:             body.Mode,
 		Cluster:          plan.Cluster,
 		Instance:         plan.Instance,
+		Target:           plan.Target,
+		Session:          plan.Session,
+		SourceRevision:   body.SourceRevision,
 		Template:         plan.Template,
 		Project:          plan.Project,
 		Environment:      plan.Environment,
@@ -712,14 +723,20 @@ func (h *GatewayHub) handleCredentialVerify(
 	body.VersionID = strings.TrimSpace(body.VersionID)
 	body.Cluster = strings.TrimSpace(body.Cluster)
 	body.Instance = strings.TrimSpace(body.Instance)
+	body.Target = strings.TrimSpace(body.Target)
 	body.SessionID = strings.TrimSpace(body.SessionID)
 	body.WorkflowPath = strings.TrimSpace(body.WorkflowPath)
+	body.SourceRepository = strings.TrimSpace(body.SourceRepository)
+	body.SourceBranch = strings.TrimSpace(body.SourceBranch)
+	body.SourceRevision = strings.TrimSpace(body.SourceRevision)
 	body.WorkspaceCommit = strings.TrimSpace(body.WorkspaceCommit)
 	auditFinish.Cluster = body.Cluster
 	auditFinish.Instance = body.Instance
 	auditFinish.VersionID = body.VersionID
-	if body.VersionID == "" || body.Cluster == "" || body.Instance == "" || body.SessionID == "" ||
-		body.WorkflowPath == "" || !validCredentialWorkspaceCommit(body.WorkspaceCommit) {
+	if body.VersionID == "" || body.Cluster == "" || body.Instance == "" || body.Target == "" ||
+		body.SessionID == "" || body.WorkflowPath == "" || body.SourceRepository == "" ||
+		body.SourceBranch == "" || !validCredentialWorkspaceCommit(body.SourceRevision) ||
+		body.SourceRevision != body.WorkspaceCommit {
 		http.Error(w, "invalid credential verify request", http.StatusBadRequest)
 		return
 	}
@@ -857,6 +874,7 @@ func (h *GatewayHub) loadCredentialPlan(ctx context.Context, body credentialPrep
 		"workflow_path":     body.WorkflowPath,
 		"source_repository": body.SourceRepository,
 		"source_branch":     body.SourceBranch,
+		"source_revision":   body.SourceRevision,
 		"inputs":            body.Inputs,
 	})
 	if err != nil {
@@ -866,7 +884,8 @@ func (h *GatewayHub) loadCredentialPlan(ctx context.Context, body credentialPrep
 	if err := json.Unmarshal([]byte(strings.TrimSpace(planText)), &plan); err != nil {
 		return CredentialPlan{}, errors.New("credential_plan_invalid")
 	}
-	if plan.Cluster != body.Cluster || plan.Instance != body.Instance {
+	if plan.Target != body.Target || plan.Cluster != body.Cluster ||
+		plan.Instance != body.Instance || plan.Session != body.SessionID {
 		return CredentialPlan{}, errors.New("credential_target_mismatch")
 	}
 	return plan, nil

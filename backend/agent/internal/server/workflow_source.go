@@ -10,14 +10,15 @@ import (
 	"time"
 )
 
-func checkoutWorkflowSource(sessionID, repository, branch string) error {
+func checkoutWorkflowSource(sessionID, repository, branch, revision string) error {
 	if err := validateSession(strings.TrimSpace(sessionID)); err != nil {
 		return err
 	}
 	repository = strings.TrimSpace(repository)
 	branch = strings.TrimSpace(branch)
-	if repository == "" || branch == "" {
-		return fmt.Errorf("workflow source repository and branch are required")
+	revision = strings.TrimSpace(revision)
+	if repository == "" || branch == "" || !validCredentialWorkspaceCommit(revision) {
+		return fmt.Errorf("workflow source repository, branch, and revision are required")
 	}
 
 	destination, err := workspacePath(sessionID)
@@ -64,11 +65,24 @@ func checkoutWorkflowSource(sessionID, repository, branch string) error {
 	if err != nil {
 		return fmt.Errorf("workflow source clone failed: %s", strings.TrimSpace(string(output)))
 	}
+	if err := verifyWorkflowSourceRevision(ctx, staging, revision, command.Env); err != nil {
+		return err
+	}
 	if err := os.RemoveAll(destination); err != nil {
 		return fmt.Errorf("replace workflow workspace: %w", err)
 	}
 	if err := os.Rename(staging, destination); err != nil {
 		return fmt.Errorf("activate workflow workspace: %w", err)
+	}
+	return nil
+}
+
+func verifyWorkflowSourceRevision(ctx context.Context, workspace, revision string, environment []string) error {
+	command := exec.CommandContext(ctx, "git", "-C", workspace, "rev-parse", "HEAD")
+	command.Env = environment
+	output, err := command.Output()
+	if err != nil || strings.TrimSpace(string(output)) != strings.TrimSpace(revision) {
+		return fmt.Errorf("workflow source revision changed during checkout")
 	}
 	return nil
 }

@@ -26,7 +26,7 @@ func runTestCommand(t *testing.T, directory, name string, arguments ...string) s
 func TestAgentCredentialPlanToolParsesBoundWorkspace(t *testing.T) {
 	_, _ = createCredentialPlanWorkspaceFixture(t)
 	originalClone := cloneCredentialPlanSource
-	cloneCredentialPlanSource = func(string, string, string) error { return nil }
+	cloneCredentialPlanSource = func(string, string, string, string) error { return nil }
 	t.Cleanup(func() { cloneCredentialPlanSource = originalClone })
 
 	gw := NewGateway("0")
@@ -41,6 +41,7 @@ func TestAgentCredentialPlanToolParsesBoundWorkspace(t *testing.T) {
 		"workflow_path":     "deploy/release.yaml",
 		"source_repository": "https://example.test/app.git",
 		"source_branch":     "main",
+		"source_revision":   credentialRunFixtureCommit,
 	})
 	var plan CredentialPlan
 	if err := json.Unmarshal([]byte(result), &plan); err != nil {
@@ -107,6 +108,26 @@ environments:
 	return commit, workspace
 }
 
+func TestVerifyWorkflowSourceRevisionRejectsMovedBranch(t *testing.T) {
+	commit, workspace := createCredentialPlanWorkspaceFixture(t)
+	if err := verifyWorkflowSourceRevision(
+		context.Background(),
+		workspace,
+		commit,
+		os.Environ(),
+	); err != nil {
+		t.Fatalf("verify exact workflow revision: %v", err)
+	}
+	if err := verifyWorkflowSourceRevision(
+		context.Background(),
+		workspace,
+		strings.Repeat("b", 40),
+		os.Environ(),
+	); err == nil || err.Error() != "workflow source revision changed during checkout" {
+		t.Fatalf("moved workflow revision error = %v", err)
+	}
+}
+
 func TestAgentCredentialPlanToolRejectsUnknownFields(t *testing.T) {
 	_, err := handleCredentialPlanTool(mustJSON(t, map[string]interface{}{
 		"session_id":        "credential-plan",
@@ -126,6 +147,7 @@ func TestAgentCredentialPlanToolRejectsUnsafeSourceTransport(t *testing.T) {
 		"workflow_path":     "deploy/release.yaml",
 		"source_repository": "ext::sh -c 'id'",
 		"source_branch":     "main",
+		"source_revision":   credentialRunFixtureCommit,
 	}))
 	if err == nil || !strings.Contains(err.Error(), "must be an HTTPS URL") {
 		t.Fatalf("unsafe source transport error = %v", err)

@@ -84,10 +84,12 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	dryRun := credentialHTTPRequest(t, mux, deployerToken, http.MethodPost, "/v1/credentials/prepare", map[string]any{
 		"cluster":           "doops-edu",
 		"instance":          "edu-coder",
+		"target":            "gw-edu-coder",
 		"session_id":        "release-1",
 		"workflow_path":     "deploy/release.yaml",
 		"source_repository": "https://example.test/app.git",
 		"source_branch":     "main",
+		"source_revision":   credentialRunFixtureCommit,
 		"mode":              "dry-run",
 	})
 	if dryRun.Code != http.StatusOK {
@@ -100,10 +102,12 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	apply := credentialHTTPRequest(t, mux, deployerToken, http.MethodPost, "/v1/credentials/prepare", map[string]any{
 		"cluster":           "doops-edu",
 		"instance":          "edu-coder",
+		"target":            "gw-edu-coder",
 		"session_id":        "release-1",
 		"workflow_path":     "deploy/release.yaml",
 		"source_repository": "https://example.test/app.git",
 		"source_branch":     "main",
+		"source_revision":   credentialRunFixtureCommit,
 		"mode":              "apply",
 	})
 	if apply.Code != http.StatusOK {
@@ -150,24 +154,32 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	}
 	verify := credentialHTTPRequest(t, mux, deployerToken, http.MethodPost,
 		"/v1/credentials/"+credential.ID+"/verify", map[string]any{
-			"version_id":       staged.ID,
-			"cluster":          "doops-edu",
-			"instance":         "edu-coder",
-			"session_id":       "release-1",
-			"workflow_path":    "deploy/release.yaml",
-			"workspace_commit": strings.Repeat("a", 40),
+			"version_id":        staged.ID,
+			"cluster":           "doops-edu",
+			"instance":          "edu-coder",
+			"target":            "gw-edu-coder",
+			"session_id":        "release-1",
+			"workflow_path":     "deploy/release.yaml",
+			"source_repository": "https://example.test/app.git",
+			"source_branch":     "main",
+			"source_revision":   strings.Repeat("a", 40),
+			"workspace_commit":  strings.Repeat("a", 40),
 		})
 	if verify.Code != http.StatusForbidden {
 		t.Fatalf("deployer credential verify = HTTP %d, want 403: %s", verify.Code, verify.Body.String())
 	}
 	verify = credentialHTTPRequest(t, mux, adminToken, http.MethodPost,
 		"/v1/credentials/"+credential.ID+"/verify", map[string]any{
-			"version_id":       staged.ID,
-			"cluster":          "doops-edu",
-			"instance":         "edu-coder",
-			"session_id":       "release-1",
-			"workflow_path":    "deploy/release.yaml",
-			"workspace_commit": strings.Repeat("a", 40),
+			"version_id":        staged.ID,
+			"cluster":           "doops-edu",
+			"instance":          "edu-coder",
+			"target":            "gw-edu-coder",
+			"session_id":        "release-1",
+			"workflow_path":     "deploy/release.yaml",
+			"source_repository": "https://example.test/app.git",
+			"source_branch":     "main",
+			"source_revision":   strings.Repeat("a", 40),
+			"workspace_commit":  strings.Repeat("a", 40),
 		})
 	if verify.Code != http.StatusOK {
 		t.Fatalf("credential verify: HTTP %d: %s", verify.Code, verify.Body.String())
@@ -387,10 +399,12 @@ func TestCredentialPrepareReturnsVersionedProtocolErrors(t *testing.T) {
 			response := credentialHTTPRequest(t, mux, token, http.MethodPost, "/v1/credentials/prepare", map[string]any{
 				"cluster":           "doops-edu",
 				"instance":          "legacy",
+				"target":            "gw-legacy",
 				"session_id":        "release",
 				"workflow_path":     "deploy/release.yaml",
 				"source_repository": "https://example.test/app.git",
 				"source_branch":     "main",
+				"source_revision":   credentialRunFixtureCommit,
 				"mode":              "dry-run",
 			})
 			if response.Code != test.wantStatus {
@@ -508,10 +522,12 @@ func TestCredentialPrepareGrantDenialStopsBeforeMaterialization(t *testing.T) {
 	response := credentialHTTPRequest(t, mux, deployerToken, http.MethodPost, "/v1/credentials/prepare", map[string]any{
 		"cluster":           "doops-edu",
 		"instance":          "edu-coder",
+		"target":            "gw-edu-coder",
 		"session_id":        "release-2",
 		"workflow_path":     "deploy/release.yaml",
 		"source_repository": "https://example.test/app.git",
 		"source_branch":     "main",
+		"source_revision":   credentialRunFixtureCommit,
 		"mode":              "apply",
 	})
 	if response.Code != http.StatusForbidden {
@@ -562,6 +578,7 @@ func serveCredentialRuntimeAgent(
 					Target:      "gw-edu-coder",
 					Cluster:     "doops-edu",
 					Instance:    "edu-coder",
+					Session:     stringValue(arguments["session_id"]),
 					CredentialRefs: []CredentialPlanReference{{
 						Name:      "cnb-oci-pull",
 						Use:       CredentialUseImagePull,

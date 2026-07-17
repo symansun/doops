@@ -44,19 +44,29 @@ environments:
     source:
       repository: https://example.test/zhiyong.git
       branch: main
+    target:
+      name: gw-edu-coder
+      cluster: doops-edu
+      instance: edu-coder
+      session: zhiyong-oilan-release
     services:
       frontend: deploy/environments/oilan/services/frontend.yaml
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	repository, branch, err := workflowDeclaredSource(path, map[string]string{
+	declaration, err := workflowDeclaredDeployment(path, map[string]string{
 		"environment": "oilan",
 		"service":     "frontend",
 	})
 	if err != nil {
 		t.Fatalf("resolve declared source: %v", err)
 	}
-	if repository != "https://example.test/zhiyong.git" || branch != "main" {
-		t.Fatalf("repository=%q branch=%q", repository, branch)
+	if declaration.SourceRepository != "https://example.test/zhiyong.git" ||
+		declaration.SourceBranch != "main" ||
+		declaration.TargetName != "gw-edu-coder" ||
+		declaration.TargetCluster != "doops-edu" ||
+		declaration.TargetInstance != "edu-coder" ||
+		declaration.TargetSession != "zhiyong-oilan-release" {
+		t.Fatalf("declaration=%#v", declaration)
 	}
 }
