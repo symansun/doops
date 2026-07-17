@@ -45,20 +45,19 @@ Before credential prepare, the CLI reads the declared repository and branch. It
 uses an explicitly declared immutable revision when present; otherwise it
 resolves the remote branch to one exact commit. The Agent checks out that branch
 and rejects the run if its HEAD is not the prepared commit. The same commit is
-bound to credential prepare, the single-use credential authorization, Ask, the
-trusted reconciliation context, and the final result. A moved branch or dirty
-checkout fails closed; execution does not fall back to a pushed snapshot,
-shell, kubectl, SSH, or a manual release path.
+bound to credential prepare, the single-use credential authorization, Ask, and
+the Agent workspace. A moved branch or dirty checkout fails closed; execution
+does not fall back to a pushed snapshot, shell, kubectl, SSH, or a manual
+release path.
 
 The CLI sends a small task envelope to ordinary `doops_agent_prompt`:
 
 ```json
 {
-  "task": "execute-doops-cicd-workflow",
+  "task": "execute-doops-cicd",
   "skill": "$doops-cicd",
   "executionMode": "dry-run",
-  "runId": "<prepared run id>",
-  "workflowPath": "backend/deploy/workflows/example.yaml",
+  "manifestPath": "backend/deploy/workflows/example.yaml",
   "workspaceCommit": "<immutable declared source commit>",
   "source": {
     "repository": "https://example.test/app.git",
@@ -77,11 +76,6 @@ The CLI sends a small task envelope to ordinary `doops_agent_prompt`:
     "environment": "oilan",
     "mutationCount": 0,
     "materializations": []
-  },
-  "resultContract": {
-    "apiVersion": "doops.sh/v2",
-    "kind": "DeploymentRun",
-    "requireEvidence": true
   }
 }
 ```
@@ -89,6 +83,17 @@ The CLI sends a small task envelope to ordinary `doops_agent_prompt`:
 `--dry-run` is read-only and requires mutation count zero. Without it, the run
 is an explicit apply request and the Gateway selects the native doagent
 mutation-capable mode. There is no separate mutation flag.
+
+The CLI calls `POST /v1/credentials/prepare` before Ask. The Gateway resolves
+`credentialRef` and `credentialBundleRef`, verifies the caller's grants, and
+returns only materialization metadata in `credentialRun`. For apply, the target
+Agent creates or updates the destination resource before Ask; for dry-run it
+returns a zero-mutation plan. The Gateway issues a single-use authorization
+bound to user token, target, session, manifest path, declared source, mode, and
+the complete `credentialRun` digest. It consumes that authorization only after
+rate limiting and the target resource lock succeed, immediately before
+forwarding the prompt. Offline, busy, or rate-limited requests do not consume
+it.
 
 ## Gateway And Agent
 
@@ -172,9 +177,10 @@ Image generation and Agent delegation belong to doagent multi-agent execution,
 not to the DoOps command or module surface.
 
 The Skill owns the workflow-specific schema and evidence requirements. It must
-use existing DoOps modules and preserve credential boundaries: references and
-metadata may be used, but Secret values are not read into prompts, logs, or
-results.
+use existing DoOps modules and preserve credential boundaries: references,
+resource names, types, key names, resource versions, digests, fingerprints,
+expiry, status, and error categories may be used, but Secret values are not
+read into prompts, logs, Git, issues, remote workspaces, or results.
 
 ## Retained Surface
 

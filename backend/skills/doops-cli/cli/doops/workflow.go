@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -100,34 +102,15 @@ func runCICDCommand(
 	if err != nil {
 		return fmt.Errorf("resolve workflow source: %w", err)
 	}
+	sourceRevision, err := resolveWorkflowSourceRevision(sourceRepository, sourceBranch)
+	if err != nil {
+		return fmt.Errorf("resolve workflow source revision: %w", err)
+	}
 	if strings.TrimSpace(server.Gateway) == "" {
 		return fmt.Errorf("target %q must use a configured DoOps gateway", server.Name)
 	}
 	client, closeClient := openWorkflowAgent(*server, sessionStore, sessionID, verbose)
 	defer closeClient()
-
-	var prepared struct {
-		Cluster  string `json:"Cluster"`
-		Instance string `json:"Instance"`
-	}
-	if err := client.CallStructured("doops_credential_plan", map[string]interface{}{
-		"session_id":        sessionID,
-		"workflow_path":     workflowPath,
-		"source_repository": sourceRepository,
-		"source_branch":     sourceBranch,
-		"inputs":            request.Inputs,
-	}, &prepared); err != nil {
-		return fmt.Errorf("prepare declared workflow: %w", err)
-	}
-	if prepared.Cluster != server.Cluster || prepared.Instance != server.Instance {
-		return fmt.Errorf(
-			"declared target %s/%s does not match configured target %s/%s",
-			prepared.Cluster,
-			prepared.Instance,
-			server.Cluster,
-			server.Instance,
-		)
-	}
 
 	executionMode := "apply"
 	operation := "apply"
@@ -135,12 +118,31 @@ func runCICDCommand(
 		executionMode = "dry-run"
 		operation = "ask"
 	}
+	credentialRun, err := prepareWorkflowCredentials(ctx, *server, ResolveToken(server.Name, server.Token), credentialPrepareRequest{
+		Cluster:          server.Cluster,
+		Instance:         server.Instance,
+		SessionID:        sessionID,
+		WorkflowPath:     workflowPath,
+		SourceRepository: sourceRepository,
+		SourceBranch:     sourceBranch,
+		SourceRevision:   sourceRevision,
+		Mode:             executionMode,
+	})
+	if err != nil {
+		return fmt.Errorf("credential prepare: %w", err)
+	}
 	instructionEnvelope := map[string]interface{}{
-		"task":          "execute-doops-cicd",
-		"skill":         "$doops-cicd",
-		"executionMode": executionMode,
-		"manifestPath":  workflowPath,
+		"task":            "execute-doops-cicd",
+		"skill":           "$doops-cicd",
+		"executionMode":   executionMode,
+		"manifestPath":    workflowPath,
+		"workspaceCommit": sourceRevision,
+		"source": map[string]string{
+			"repository": sourceRepository,
+			"branch":     sourceBranch,
+		},
 		"inputs":        request.Inputs,
+		"credentialRun": credentialRun,
 	}
 	instruction, err := json.Marshal(instructionEnvelope)
 	if err != nil {
@@ -148,9 +150,10 @@ func runCICDCommand(
 	}
 	var result json.RawMessage
 	callArguments := map[string]interface{}{
-		"instruction":     string(instruction),
-		"response_format": "json",
-		"operation":       operation,
+		"instruction":      string(instruction),
+		"response_format":  "json",
+		"operation":        operation,
+		"workspace_commit": sourceRevision,
 	}
 	if model := strings.TrimSpace(request.Model); model != "" {
 		callArguments["model"] = model
@@ -213,6 +216,31 @@ func workflowDeclaredSource(path string, inputs map[string]string) (string, stri
 		return "", "", fmt.Errorf("workflow source branch is required")
 	}
 	return repository, branch, nil
+}
+
+func resolveWorkflowSourceRevision(repository, branch string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "git", "ls-remote", "--refs", "--", repository, "refs/heads/"+branch)
+	command.Env = append(
+		os.Environ(),
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_ALLOW_PROTOCOL=https",
+	)
+	output, err := command.Output()
+	if ctx.Err() == context.DeadlineExceeded {
+		return "", fmt.Errorf("workflow source revision lookup timed out")
+	}
+	if err != nil {
+		return "", fmt.Errorf("workflow source revision lookup failed: %w", err)
+	}
+	fields := strings.Fields(string(output))
+	if len(fields) != 2 || !validWorkspaceCommit(fields[0]) {
+		return "", fmt.Errorf("workflow source branch did not resolve to one immutable commit")
+	}
+	return fields[0], nil
 }
 
 func validateWorkflowInputs(inputs map[string]string) error {

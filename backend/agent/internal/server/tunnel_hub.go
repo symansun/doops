@@ -968,6 +968,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32003, "credential control-plane tools are internal only"))
 		return nil
 	}
+	var credentialBinding *credentialPromptBinding
 	if params.Name == "doops_agent_prompt" {
 		operation := extractStringArg(params.Arguments, "operation")
 		instruction := extractStringArg(params.Arguments, "instruction")
@@ -976,13 +977,10 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		}
 		_ = json.Unmarshal([]byte(instruction), &marker)
 		if marker.Task == "execute-doops-cicd" {
-			var envelope struct {
-				ExecutionMode string `json:"executionMode"`
-			}
-			if err := json.Unmarshal([]byte(instruction), &envelope); err != nil ||
-				(envelope.ExecutionMode == "apply" && operation != "apply") ||
-				(envelope.ExecutionMode == "dry-run" && operation != "ask") {
-				writeJSON(buildErrorResponse(req.ID, -32602, "cicd operation does not match execution mode"))
+			var err error
+			credentialBinding, err = parseCredentialPromptBinding(params.Arguments, cluster, instance)
+			if err != nil {
+				writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
 				return nil
 			}
 		} else if operation == "apply" {
@@ -1089,6 +1087,12 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	defer agent.releaseForAction(action, resourceKey)
+	if err := h.consumeCredentialPromptBinding(auth, cluster, instance, credentialBinding); err != nil {
+		errMsg := "credential run authorization invalid"
+		finishAudit("forbidden", errMsg, "", 0)
+		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
+		return nil
+	}
 	if waitForUpgradeReplacement {
 		var beginErr error
 		upgradeOp, beginErr = h.upgrades.Begin(cluster, instance, upgradeImage, agent.Generation, agent.RuntimeID)
