@@ -19,8 +19,7 @@ skills/doops-cli/doops
 
 # 打包发行物
 dist/*
-!skills/doops-cli/bin/
-!skills/doops-cli/bin/*
+backend/skills/doops-cli/bin/
 
 # Frontend dependencies / build output
 node_modules/

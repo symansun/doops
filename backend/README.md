@@ -158,7 +158,7 @@ CNB 非同名制品必须使用仓库下级路径，例如 `docker.cnb.cool/l8ai
 - Skill 安装目标：`<project>/.agent/skills/doops/SKILL.md`
 - CLI 唯一默认配置：`~/.agent/skills/doops/config.json`
 - CLI token 缓存：`~/.agent/skills/doops/auth.json`
-- 预构建 CLI：`skills/doops-cli/bin/doops-<os>-<arch>`
+- CLI 发布资产：CNB Release 的 `doops-<os>-<arch>` 与 `checksums.txt`
 - Agent local token：服务端 `/root/.doops/agent-token`，只用于遗留直连或本机 `/ws` 保护，不用于 gateway 注册
 
 `~/.config/doops/config.json`、`~/.doops/auth.json` 和项目 `.doops/` 是旧路径或运行痕迹，不能作为当前配置依据。`DOOPS_CONFIG=/path/to/config.json` 只用于测试和应急显式覆盖。
@@ -205,12 +205,12 @@ doops skill 的权威源码在本仓库 `skills/SKILL.md`。不要在用户项�
 ```bash
 git clone https://cnb.cool/l8ai/ai/doops.sh.git
 cd doops.sh
-bash scripts/install.sh --project /absolute/path/to/your/project
+bash scripts/install.sh --version <release-tag> --project /absolute/path/to/your/project
 ```
 
 这一步会完成：
 
-1. 把对应平台的预构建 CLI 从 doops.sh 仓库的 `skills/doops-cli/bin/doops-<os>-<arch>` 拷贝到 `~/.local/bin/doops`
+1. 从 CNB Release Assets 下载指定版本的 CLI 和 `checksums.txt`，校验后原子替换 `~/.local/bin/doops`
 2. 把 doops.sh 源码里的 `skills/SKILL.md` 安装到 `/absolute/path/to/your/project/.agent/skills/doops/SKILL.md`
 
 如果 `~/.local/bin` 还不在 `PATH`：
@@ -223,6 +223,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ```bash
 bash scripts/install.sh \
+  --version <release-tag> \
   --project /absolute/path/to/your/project \
   --target-name jm \
   --target-gateway https://gateway.example.com \
@@ -447,14 +448,14 @@ doops -session upgrade_20260511 upgrade \
 
 ## 维护者说明
 
-重新构建并提交多平台 CLI：
+发布新的多平台 CLI：
 
 ```bash
-bash scripts/build-cli.sh --all
-ls -lh skills/doops-cli/bin/
+git tag v1.2.4
+git push cnb v1.2.4
 ```
 
-预构建产物固定提交在 `skills/doops-cli/bin/`，安装脚本会从这里拷贝到 `~/.local/bin/doops`。
+CNB 的 `tag_push` 流水线会构建四个平台二进制、生成 `checksums.txt`、上传到同名 Release，并从公开下载入口回读校验。二进制不进入 Git。
 
 ## 边界
 

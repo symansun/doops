@@ -2115,7 +2115,7 @@ func TestGatewayRPCDoesNotFallbackSessionNotificationsWithoutSessionID(t *testin
 }
 
 func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
-	if got := resourceKeyForTool(ActionExec, "doops_shell", json.RawMessage(`{"session_id":"exec-a"}`), "dev", "node"); got != "session:exec-a" {
+	if got := resourceKeyForTool(ActionExec, "doops_shell", json.RawMessage(`{"session_id":"exec-a"}`), "dev", "node"); got != "workspace:exec-a" {
 		t.Fatalf("exec resource key mismatch: %q", got)
 	}
 	genericPromptArgs := json.RawMessage(`{"session_id":"ask-a","instruction":"inspect and repair the service"}`)
@@ -2129,6 +2129,12 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	if got := resourceKeyForTool(ActionAsk, "doops_agent_prompt", genericPromptArgs, "dev", "node"); got != "session:ask-a" {
 		t.Fatalf("agent prompt session resource key mismatch: %q", got)
 	}
+	boundPromptArgs := json.RawMessage(
+		`{"operation":"apply","session_id":"release-a","workspace_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+	)
+	if got := resourceKeyForTool(ActionExec, "doops_agent_prompt", boundPromptArgs, "dev", "node"); got != "workspace:release-a" {
+		t.Fatalf("bound cicd prompt resource key mismatch: %q", got)
+	}
 	metadataArgs := json.RawMessage(`{"session_id":"ask-a","mode":"metadata"}`)
 	if got := actionForTool("doops_agent_prompt", metadataArgs); got != ActionAsk {
 		t.Fatalf("metadata prompt must remain a read-only ask: %q", got)
@@ -2141,6 +2147,9 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	}
 	if got := resourceKeyForTool(ActionWrite, "doops_file_write", json.RawMessage(`{"path":"/tmp/x"}`), "dev", "node"); got != "path:/tmp/x" {
 		t.Fatalf("write resource key mismatch: %q", got)
+	}
+	if got := resourceKeyForTool(ActionWrite, "doops_file_write", json.RawMessage(`{"session_id":"write-a","path":"config.yaml"}`), "dev", "node"); got != "workspace:write-a" {
+		t.Fatalf("session write resource key mismatch: %q", got)
 	}
 	if got := resourceKeyForTool(ActionAgentUpgrade, "doops_agent_upgrade", json.RawMessage(`{}`), "dev", "node"); got != "target:dev/node" {
 		t.Fatalf("upgrade resource key mismatch: %q", got)

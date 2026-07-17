@@ -67,6 +67,19 @@ func checkoutWorkflowSource(sessionID, repository, branch, revision string) erro
 	if err := verifyWorkflowSourceRevision(ctx, staging, revision, gitEnvironment); err != nil {
 		return err
 	}
+	headCommand := exec.CommandContext(ctx, "git", "-C", staging, "rev-parse", "HEAD")
+	headCommand.Env = gitEnvironment
+	head, err := headCommand.Output()
+	if err != nil || !validWorkspaceGitCommit(strings.TrimSpace(string(head))) {
+		return fmt.Errorf("resolve workflow source revision")
+	}
+	if err := os.WriteFile(
+		filepath.Join(staging, ".doops-ready"),
+		[]byte(strings.TrimSpace(string(head))+"\n"),
+		0o600,
+	); err != nil {
+		return fmt.Errorf("write workflow source ready commit: %w", err)
+	}
 	if err := os.RemoveAll(destination); err != nil {
 		return fmt.Errorf("replace workflow workspace: %w", err)
 	}

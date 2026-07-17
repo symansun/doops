@@ -194,7 +194,7 @@ func TestAgentWebSocketFileReadWrite(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
 	conn := dialAgentTestWS(t, ts.URL)
@@ -432,7 +432,7 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 	t.Setenv("DO_AGENT_URL", doagent.URL)
 
 	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 	conn := dialAgentTestWS(t, ts.URL)
 	defer conn.Close()
@@ -549,7 +549,7 @@ func TestAgentSystemPromptDoesNotRequireDeploymentScripts(t *testing.T) {
 func TestShellNotificationIncludesRawKind(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
 	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 	conn := dialAgentTestWS(t, ts.URL)
 	defer conn.Close()
@@ -810,7 +810,7 @@ func TestAgentPromptReturnsAdmissionErrorImmediately(t *testing.T) {
 	t.Setenv("DO_AGENT_URL", doagent.URL)
 
 	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 	conn := dialAgentTestWS(t, ts.URL)
 	defer conn.Close()
@@ -832,7 +832,7 @@ func TestAgentPromptReturnsAdmissionErrorImmediately(t *testing.T) {
 
 func TestAgentWebSocketCancelKillsShellCommand(t *testing.T) {
 	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
 	conn := dialAgentTestWS(t, ts.URL)
@@ -900,7 +900,7 @@ func TestAgentWebSocketCancelKillsShellCommand(t *testing.T) {
 func TestAgentWebSocketRejectsBlockedShellCommand(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
 	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
 	conn := dialAgentTestWS(t, ts.URL)
@@ -934,14 +934,26 @@ func TestDirectAgentWebSocketRejectsCredentialApply(t *testing.T) {
 		"response_format":  prompt.ResponseFormat,
 		"workspace_commit": prompt.WorkspaceCommit,
 	})
-	errObject, _ := result["error"].(map[string]interface{})
-	if !strings.Contains(fmt.Sprint(errObject["message"]), "gateway-authorized reverse tunnel") {
+	toolResult, _ := result["result"].(map[string]interface{})
+	if toolResult["isError"] != true ||
+		!strings.Contains(fmt.Sprint(toolResult["content"]), "gateway-authorized reverse tunnel") {
 		t.Fatalf("expected direct apply rejection, got %#v", result)
 	}
 }
 
 func TestGatewayAuthorizedWebSocketExecutesCredentialApply(t *testing.T) {
 	t.Setenv("DOOPS_CICD_RESULT_DIR", t.TempDir())
+	prompt := validDoagentApplyPrompt(t)
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	workspace := filepath.Join(root, prompt.SessionID)
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(prompt.WorkspaceCommit+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	prompted := make(chan struct{})
 	var promptedOnce sync.Once
 	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1029,7 +1041,6 @@ func TestGatewayAuthorizedWebSocketExecutesCredentialApply(t *testing.T) {
 	defer conn.Close()
 	initializeAgentTestWS(t, conn)
 
-	prompt := validDoagentApplyPrompt(t)
 	result := callTool(t, conn, "doops_agent_prompt", map[string]interface{}{
 		"session_id":       prompt.SessionID,
 		"instruction":      prompt.Instruction,
@@ -1044,6 +1055,17 @@ func TestGatewayAuthorizedWebSocketExecutesCredentialApply(t *testing.T) {
 
 func TestCredentialApplyPersistsTerminalReportAfterTunnelDisconnect(t *testing.T) {
 	t.Setenv("DOOPS_CICD_RESULT_DIR", t.TempDir())
+	prompt := validDoagentApplyPrompt(t)
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	workspace := filepath.Join(root, prompt.SessionID)
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(prompt.WorkspaceCommit+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	prompted := make(chan struct{})
 	release := make(chan struct{})
 	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1102,7 +1124,6 @@ func TestCredentialApplyPersistsTerminalReportAfterTunnelDisconnect(t *testing.T
 	conn := dialAgentTestWS(t, ts.URL)
 	initializeAgentTestWS(t, conn)
 
-	prompt := validDoagentApplyPrompt(t)
 	rawArgs, _ := json.Marshal(map[string]interface{}{
 		"session_id":       prompt.SessionID,
 		"instruction":      prompt.Instruction,
@@ -1187,6 +1208,39 @@ func TestCICDResultQueryFailsExplicitlyAfterAgentRestart(t *testing.T) {
 	}
 }
 
+func TestGatewayAuthorizedWebSocketRejectsReplacedCredentialWorkspace(t *testing.T) {
+	prompt := validDoagentApplyPrompt(t)
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	workspace := filepath.Join(root, prompt.SessionID)
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(strings.Repeat("b", 40)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DO_AGENT_URL", "http://127.0.0.1:1")
+
+	gw := NewGateway("0")
+	ts := newGatewayAuthorizedAgentServer(t, gw)
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id":       prompt.SessionID,
+		"instruction":      prompt.Instruction,
+		"operation":        prompt.Operation,
+		"response_format":  prompt.ResponseFormat,
+		"workspace_commit": prompt.WorkspaceCommit,
+	})
+	errObject, _ := result["error"].(map[string]interface{})
+	if !strings.Contains(fmt.Sprint(errObject["message"]), "workspace_commit_binding_invalid") {
+		t.Fatalf("replaced credential workspace was not rejected: %#v", result)
+	}
+}
+
 func TestDirectAgentWebSocketRejectsCICDDryRun(t *testing.T) {
 	gw := NewGateway("0")
 	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
@@ -1201,8 +1255,9 @@ func TestDirectAgentWebSocketRejectsCICDDryRun(t *testing.T) {
 		"instruction": `{"task":"execute-doops-cicd"}`,
 		"operation":   "ask",
 	})
-	errObject, _ := result["error"].(map[string]interface{})
-	if !strings.Contains(fmt.Sprint(errObject["message"]), "gateway-authorized reverse tunnel") {
+	toolResult, _ := result["result"].(map[string]interface{})
+	if toolResult["isError"] != true ||
+		!strings.Contains(fmt.Sprint(toolResult["content"]), "gateway-authorized reverse tunnel") {
 		t.Fatalf("expected direct CI/CD dry-run rejection, got %#v", result)
 	}
 }
@@ -1228,10 +1283,82 @@ func TestDirectAgentWebSocketRejectsCredentialControlPlaneTools(t *testing.T) {
 	}
 }
 
-func TestAgentWebSocketRejectsDockerNewlineInjection(t *testing.T) {
+func TestDirectAgentWebSocketRejectsMutatingToolsAndOrdinaryPrompts(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
 	gw := NewGateway("0")
 	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	cases := []struct {
+		tool string
+		args map[string]interface{}
+	}{
+		{tool: "doops_shell", args: map[string]interface{}{"session_id": "direct", "command": "true"}},
+		{tool: "doops_file_write", args: map[string]interface{}{"session_id": "direct", "path": "x", "content": "x"}},
+		{tool: "doops_workspace_begin", args: map[string]interface{}{"session_id": "direct"}},
+		{tool: "doops_agent_prompt", args: map[string]interface{}{"session_id": "direct", "instruction": "change the service"}},
+	}
+	for _, testCase := range cases {
+		result := callToolResult(t, conn, testCase.tool, testCase.args)
+		toolResult, _ := result["result"].(map[string]interface{})
+		if toolResult["isError"] != true ||
+			!strings.Contains(fmt.Sprint(toolResult["content"]), "gateway-authorized reverse tunnel") {
+			t.Fatalf("%s direct mutation was not rejected: %#v", testCase.tool, result)
+		}
+	}
+}
+
+func TestWorkspaceCommitBindingRejectsDirtyAndUntrackedContent(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	sessionID := "immutable-workspace"
+	workspace := filepath.Join(root, sessionID)
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("committed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runTestCommand(t, workspace, "git", "init", "-q")
+	runTestCommand(t, workspace, "git", "config", "user.email", "test@example.invalid")
+	runTestCommand(t, workspace, "git", "config", "user.name", "DoOps Test")
+	runTestCommand(t, workspace, "git", "add", "tracked.txt")
+	runTestCommand(t, workspace, "git", "commit", "-q", "-m", "workspace")
+	commit := strings.TrimSpace(runTestCommand(t, workspace, "git", "rev-parse", "HEAD"))
+	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(commit+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateWorkspaceCommitBinding(sessionID, commit); err != nil {
+		t.Fatalf("clean workspace binding rejected: %v", err)
+	}
+	untracked := filepath.Join(workspace, "untracked.txt")
+	if err := os.WriteFile(untracked, []byte("untrusted\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateWorkspaceCommitBinding(sessionID, commit); err == nil ||
+		!strings.Contains(err.Error(), "outside the authorized commit") {
+		t.Fatalf("untracked workspace content was not rejected: %v", err)
+	}
+	if err := os.Remove(untracked); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("modified\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateWorkspaceCommitBinding(sessionID, commit); err == nil ||
+		!strings.Contains(err.Error(), "outside the authorized commit") {
+		t.Fatalf("modified workspace content was not rejected: %v", err)
+	}
+}
+
+func TestAgentWebSocketRejectsDockerNewlineInjection(t *testing.T) {
+	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
+	gw := NewGateway("0")
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
 	conn := dialAgentTestWS(t, ts.URL)
@@ -1647,7 +1774,7 @@ func TestAgentWebSocketWorkspaceChunkUpload(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 
 	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
 	conn := dialAgentTestWS(t, ts.URL)

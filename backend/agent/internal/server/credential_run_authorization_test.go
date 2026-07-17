@@ -99,7 +99,7 @@ func TestCredentialRunAuthorizationIsBoundAndSingleUse(t *testing.T) {
 		request.SourceRepository, request.SourceBranch, strings.Repeat("b", 40),
 		request.Inputs, request.Mode, run,
 	); !errors.Is(err, ErrCredentialPrepareBindingInvalid) {
-		t.Fatalf("tampered source revision error = %v, want binding invalid", err)
+		t.Fatalf("mismatched workspace commit error = %v, want binding invalid", err)
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
@@ -330,6 +330,43 @@ func TestCredentialPromptBindingAcceptsApplyMode(t *testing.T) {
 	binding, err := parseCredentialPromptBinding(arguments, request.Cluster, request.Instance)
 	if err != nil || binding == nil || binding.Mode != "apply" {
 		t.Fatalf("apply binding=%#v err=%v", binding, err)
+	}
+}
+
+func TestGatewayRejectsUnstructuredApplyBeforeTargetLookup(t *testing.T) {
+	store := openCredentialTestStore(t)
+	user, token := createCredentialRunAuthorizationUser(t, store)
+	auth := TokenAuth{UserID: user.ID, TokenID: token.ID}
+	arguments := mustJSON(t, map[string]any{
+		"operation":   "apply",
+		"session_id":  "natural-apply",
+		"instruction": "deploy the selected service",
+	})
+	params, err := json.Marshal(api.ToolCallParams{Name: "doops_agent_prompt", Arguments: arguments})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response api.JSONRPCResponse
+	if err := NewGatewayHub(store, GatewayHubOptions{}).client.handleGatewayToolCall(
+		context.Background(),
+		auth,
+		"doops",
+		"runner",
+		api.JSONRPCRequest{JSONRPC: "2.0", ID: 1, Params: params},
+		func([]byte) error { return nil },
+		func(value any) error {
+			encoded, marshalErr := json.Marshal(value)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			return json.Unmarshal(encoded, &response)
+		},
+	); err != nil {
+		t.Fatalf("handle unstructured apply: %v", err)
+	}
+	if response.Error == nil || response.Error.Code != -32602 ||
+		!strings.Contains(response.Error.Message, "structured doops-cicd") {
+		t.Fatalf("unstructured apply response = %#v", response.Error)
 	}
 }
 

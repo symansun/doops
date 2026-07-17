@@ -97,9 +97,10 @@ success.
 ## CLI Artifacts
 
 `scripts/build-cli.sh --all` builds every supported CLI artifact with
-deterministic Go build settings and writes
-`skills/doops-cli/bin/checksums.txt`.
+deterministic Go build settings and writes a temporary `dist/cli/checksums.txt`.
 
-`scripts/install.sh` verifies the selected prebuilt binary against that
-manifest before installation. `scripts/verify-cli-artifacts.sh` rebuilds and
-byte-compares every checked-in CLI artifact.
+On `tag_push`, CNB uploads the four binaries and checksum manifest to the
+same-version Release Assets, then downloads them again to verify checksums.
+`scripts/install.sh --version <tag>` downloads the selected platform asset and
+verifies it against that manifest before installation. CLI binaries are not
+checked into Git.

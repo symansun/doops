@@ -35,7 +35,7 @@ func newGatewayAuthorizedAgentServer(t *testing.T, gw *Gateway) *httptest.Server
 }
 
 func TestAgentCredentialPlanToolParsesBoundWorkspace(t *testing.T) {
-	_, _ = createCredentialPlanWorkspaceFixture(t)
+	commit, _ := createCredentialPlanWorkspaceFixture(t)
 	originalClone := cloneCredentialPlanSource
 	cloneCredentialPlanSource = func(string, string, string, string) error { return nil }
 	t.Cleanup(func() { cloneCredentialPlanSource = originalClone })
@@ -52,7 +52,7 @@ func TestAgentCredentialPlanToolParsesBoundWorkspace(t *testing.T) {
 		"workflow_path":     "deploy/environments.yaml",
 		"source_repository": "https://example.test/app.git",
 		"source_branch":     "main",
-		"source_revision":   credentialRunFixtureCommit,
+		"source_revision":   commit,
 		"inputs": map[string]string{
 			"environment": "production",
 			"service":     "api",
@@ -217,7 +217,7 @@ func TestVerifyWorkflowSourceRevisionRejectsMovedBranch(t *testing.T) {
 func TestAgentCredentialPlanToolRejectsUnknownFields(t *testing.T) {
 	_, err := handleCredentialPlanTool(mustJSON(t, map[string]interface{}{
 		"session_id":        "credential-plan",
-		"workflow_path":     "deploy/release.yaml",
+		"workflow_path":     "deploy/environments.yaml",
 		"source_repository": "https://example.test/app.git",
 		"source_branch":     "main",
 		"unexpected":        true,
@@ -230,7 +230,7 @@ func TestAgentCredentialPlanToolRejectsUnknownFields(t *testing.T) {
 func TestAgentCredentialPlanToolRejectsUnsafeSourceTransport(t *testing.T) {
 	_, err := handleCredentialPlanTool(mustJSON(t, map[string]interface{}{
 		"session_id":        "credential-plan",
-		"workflow_path":     "deploy/release.yaml",
+		"workflow_path":     "deploy/environments.yaml",
 		"source_repository": "ext::sh -c 'id'",
 		"source_branch":     "main",
 		"source_revision":   credentialRunFixtureCommit,

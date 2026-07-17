@@ -45,20 +45,21 @@ type CredentialRun struct {
 }
 
 type CredentialRunAuthorization struct {
-	RunID         string
-	UserID        string
-	TokenID       string
-	Cluster       string
-	Instance      string
-	SessionID     string
-	WorkflowPath  string
-	SourceBinding string
-	Mode          string
-	RunDigest     string
-	State         string
-	CreatedAt     time.Time
-	ExpiresAt     time.Time
-	ConsumedAt    *time.Time
+	RunID           string
+	UserID          string
+	TokenID         string
+	Cluster         string
+	Instance        string
+	SessionID       string
+	WorkflowPath    string
+	WorkspaceCommit string
+	SourceBinding   string
+	Mode            string
+	RunDigest       string
+	State           string
+	CreatedAt       time.Time
+	ExpiresAt       time.Time
+	ConsumedAt      *time.Time
 }
 
 func validateCredentialMaterializationMetadata(materialization CredentialMaterialization) error {
@@ -167,6 +168,7 @@ type credentialPrepareHTTPBody struct {
 	SourceRepository string            `json:"source_repository"`
 	SourceBranch     string            `json:"source_branch"`
 	SourceRevision   string            `json:"source_revision"`
+	WorkspaceCommit  string            `json:"workspace_commit"`
 	Inputs           map[string]string `json:"inputs,omitempty"`
 	Mode             string            `json:"mode"`
 }
@@ -179,8 +181,7 @@ type credentialPrepareErrorResponse struct {
 
 type credentialVerifyHTTPBody struct {
 	credentialPrepareHTTPBody
-	VersionID       string `json:"version_id"`
-	WorkspaceCommit string `json:"workspace_commit"`
+	VersionID string `json:"version_id"`
 }
 
 type credentialVerificationEvidence struct {
@@ -218,10 +219,13 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 	body.SourceRepository = strings.TrimSpace(body.SourceRepository)
 	body.SourceBranch = strings.TrimSpace(body.SourceBranch)
 	body.SourceRevision = strings.TrimSpace(body.SourceRevision)
+	body.WorkspaceCommit = strings.TrimSpace(body.WorkspaceCommit)
 	body.Mode = strings.ToLower(strings.TrimSpace(body.Mode))
 	if body.Cluster == "" || body.Instance == "" || body.Target == "" || body.SessionID == "" ||
 		body.WorkflowPath == "" || body.SourceRepository == "" || body.SourceBranch == "" ||
+		body.WorkflowPath != "deploy/environments.yaml" ||
 		!validCredentialWorkspaceCommit(body.SourceRevision) ||
+		body.SourceRevision != body.WorkspaceCommit ||
 		(body.Mode != "dry-run" && body.Mode != "apply") {
 		writeCredentialPrepareError(w, http.StatusBadRequest, "invalid_request")
 		return
@@ -802,8 +806,10 @@ func (h *GatewayHub) handleCredentialVerify(
 	auditFinish.Instance = body.Instance
 	auditFinish.VersionID = body.VersionID
 	if body.VersionID == "" || body.Cluster == "" || body.Instance == "" || body.Target == "" ||
-		body.SessionID == "" || body.WorkflowPath == "" || body.SourceRepository == "" ||
-		body.SourceBranch == "" || !validCredentialWorkspaceCommit(body.SourceRevision) ||
+		body.SessionID == "" ||
+		body.WorkflowPath != "deploy/environments.yaml" ||
+		body.SourceRepository == "" || body.SourceBranch == "" ||
+		!validCredentialWorkspaceCommit(body.SourceRevision) ||
 		body.SourceRevision != body.WorkspaceCommit {
 		http.Error(w, "invalid credential verify request", http.StatusBadRequest)
 		return

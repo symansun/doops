@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-RELEASE_DIR="${DOOPS_CLI_RELEASE_DIR:-${REPO_ROOT}/skills/doops-cli/bin}"
+RELEASE_DIR="${DOOPS_CLI_RELEASE_DIR:-${REPO_ROOT}/dist/cli}"
 BUILDER_IMAGE="docker.io/library/golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TEMP_DIR}"' EXIT
@@ -31,4 +31,4 @@ for artifact in doops-darwin-amd64 doops-darwin-arm64 doops-linux-amd64 doops-li
 done
 install -m 0644 "${TEMP_DIR}/release/checksums.txt" "${RELEASE_DIR}/checksums.txt"
 
-echo "Canonical CLI release artifacts installed to ${RELEASE_DIR}"
+echo "CLI release artifacts built at ${RELEASE_DIR}"

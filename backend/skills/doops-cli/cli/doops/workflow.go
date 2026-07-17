@@ -136,18 +136,21 @@ func runCICDCommand(
 		executionMode = "dry-run"
 		operation = "ask"
 	}
-	credentialRun, err := prepareWorkflowCredentials(ctx, *server, ResolveToken(server.Name, server.Token), credentialPrepareRequest{
-		Cluster:          server.Cluster,
-		Instance:         server.Instance,
-		Target:           server.Name,
-		SessionID:        sessionID,
-		WorkflowPath:     workflowPath,
-		SourceRepository: declaration.SourceRepository,
-		SourceBranch:     declaration.SourceBranch,
-		SourceRevision:   sourceRevision,
-		Inputs:           request.Inputs,
-		Mode:             executionMode,
-	})
+	prepareRequest := workflowCredentialPrepareRequest(
+		*server,
+		sessionID,
+		workflowPath,
+		declaration,
+		sourceRevision,
+		request.Inputs,
+		executionMode,
+	)
+	credentialRun, err := prepareWorkflowCredentials(
+		ctx,
+		*server,
+		ResolveToken(server.Name, server.Token),
+		prepareRequest,
+	)
 	if err != nil {
 		return fmt.Errorf("credential prepare: %w", err)
 	}
@@ -189,6 +192,30 @@ func runCICDCommand(
 		}
 	}
 	return nil
+}
+
+func workflowCredentialPrepareRequest(
+	server Server,
+	sessionID string,
+	workflowPath string,
+	declaration workflowDeclaration,
+	sourceRevision string,
+	inputs map[string]string,
+	mode string,
+) credentialPrepareRequest {
+	return credentialPrepareRequest{
+		Cluster:          server.Cluster,
+		Instance:         server.Instance,
+		Target:           server.Name,
+		SessionID:        sessionID,
+		WorkflowPath:     workflowPath,
+		SourceRepository: declaration.SourceRepository,
+		SourceBranch:     declaration.SourceBranch,
+		SourceRevision:   sourceRevision,
+		WorkspaceCommit:  sourceRevision,
+		Inputs:           inputs,
+		Mode:             mode,
+	}
 }
 
 func workflowDeclaredDeployment(path string, inputs map[string]string) (workflowDeclaration, error) {

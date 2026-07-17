@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Doops CLI 构建脚本
 # 默认：构建当前平台到仓库根目录 bin/doops
-# --all：额外产出 darwin/linux 的 amd64/arm64 发布二进制到 skills/doops-cli/bin/
+# --all：额外产出 darwin/linux 的 amd64/arm64 发布二进制到 dist/cli/
 set -euo pipefail
 
 usage() {
@@ -14,18 +14,18 @@ usage() {
   默认输出:
     bin/doops
 
-  发布产物只能由固定摘要的 Linux builder 通过 build-cli-release.sh 生成:
-    skills/doops-cli/bin/doops-darwin-amd64
-    skills/doops-cli/bin/doops-darwin-arm64
-    skills/doops-cli/bin/doops-linux-amd64
-    skills/doops-cli/bin/doops-linux-arm64
+  发布产物写入临时目录，再上传到同名版本的 CNB Release Assets:
+    dist/cli/doops-darwin-amd64
+    dist/cli/doops-darwin-arm64
+    dist/cli/doops-linux-amd64
+    dist/cli/doops-linux-arm64
 EOF
 }
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CLI_DIR="${REPO_ROOT}/skills/doops-cli"
 DEFAULT_OUT="${DOOPS_CLI_OUT:-${REPO_ROOT}/bin/doops}"
-RELEASE_DIR="${DOOPS_CLI_RELEASE_DIR:-${CLI_DIR}/bin}"
+RELEASE_DIR="${DOOPS_CLI_RELEASE_DIR:-${REPO_ROOT}/dist/cli}"
 BUILD_ALL=false
 
 while [[ $# -gt 0 ]]; do

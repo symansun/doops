@@ -449,6 +449,7 @@ func (s *GatewayStore) migrate() error {
 				session_id TEXT NOT NULL,
 				workflow_path TEXT NOT NULL,
 				workspace_commit TEXT NOT NULL,
+				source_binding TEXT NOT NULL DEFAULT '',
 				mode TEXT NOT NULL,
 				run_digest TEXT NOT NULL,
 				state TEXT NOT NULL DEFAULT 'issued',
@@ -538,6 +539,7 @@ func (s *GatewayStore) migrate() error {
 		{"credential_bundle_items", "registry_repository", "TEXT NOT NULL DEFAULT ''"},
 		{"credential_bundle_items", "registry_reference", "TEXT NOT NULL DEFAULT ''"},
 		{"credential_bundle_items", "required_keys_json", "TEXT NOT NULL DEFAULT '[]'"},
+		{"credential_run_authorizations", "source_binding", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := s.ensureColumn(column.table, column.name, column.definition); err != nil {
 			return err

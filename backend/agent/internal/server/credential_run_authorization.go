@@ -21,7 +21,7 @@ func (s *GatewayStore) IssueCredentialRunAuthorization(
 		strings.TrimSpace(auth.TokenID) == "" || run.Cluster != request.Cluster ||
 		run.Instance != request.Instance || run.Target != request.Target ||
 		run.Session != request.SessionID || run.SourceRevision != request.SourceRevision ||
-		run.Mode != request.Mode {
+		run.Mode != request.Mode || !validCredentialWorkspaceCommit(request.SourceRevision) {
 		return ErrCredentialPrepareBindingInvalid
 	}
 	digest, err := digestJSON(run)
@@ -31,10 +31,11 @@ func (s *GatewayStore) IssueCredentialRunAuthorization(
 	now := time.Now().UTC()
 	_, err = s.db.Exec(`INSERT INTO credential_run_authorizations
 		(run_id, user_id, token_id, cluster, instance, session_id, workflow_path,
-		 workspace_commit, mode, run_digest, state, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?)`,
+		 workspace_commit, source_binding, mode, run_digest, state, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?)`,
 		run.ID, auth.UserID, auth.TokenID, request.Cluster, request.Instance,
-		request.SessionID, request.WorkflowPath, credentialSourceBinding(
+		request.SessionID, request.WorkflowPath, request.SourceRevision,
+		credentialSourceBinding(
 			request.SourceRepository,
 			request.SourceBranch,
 			request.SourceRevision,
@@ -71,11 +72,11 @@ func (s *GatewayStore) ConsumeCredentialRunAuthorization(
 	var authorization CredentialRunAuthorization
 	var createdAt, expiresAt, consumedAt string
 	err = tx.QueryRow(`SELECT run_id, user_id, token_id, cluster, instance, session_id,
-			workflow_path, workspace_commit, mode, run_digest, state, created_at, expires_at, consumed_at
+			workflow_path, workspace_commit, source_binding, mode, run_digest, state, created_at, expires_at, consumed_at
 		FROM credential_run_authorizations WHERE run_id = ?`, strings.TrimSpace(run.ID)).Scan(
 		&authorization.RunID, &authorization.UserID, &authorization.TokenID,
 		&authorization.Cluster, &authorization.Instance, &authorization.SessionID,
-		&authorization.WorkflowPath, &authorization.SourceBinding, &authorization.Mode,
+		&authorization.WorkflowPath, &authorization.WorkspaceCommit, &authorization.SourceBinding, &authorization.Mode,
 		&authorization.RunDigest, &authorization.State, &createdAt, &expiresAt, &consumedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -94,6 +95,7 @@ func (s *GatewayStore) ConsumeCredentialRunAuthorization(
 		authorization.Instance != strings.TrimSpace(instance) ||
 		authorization.SessionID != strings.TrimSpace(sessionID) ||
 		authorization.WorkflowPath != strings.TrimSpace(workflowPath) ||
+		authorization.WorkspaceCommit != strings.TrimSpace(sourceRevision) ||
 		authorization.SourceBinding != credentialSourceBinding(sourceRepository, sourceBranch, sourceRevision, inputs) ||
 		authorization.Mode != strings.TrimSpace(mode) || authorization.RunDigest != digest ||
 		run.Cluster != authorization.Cluster || run.Instance != authorization.Instance ||

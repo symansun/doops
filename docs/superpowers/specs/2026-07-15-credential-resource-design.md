@@ -190,8 +190,8 @@ doops credential grant --target <target> --id <credential-id> --grantee-id <user
   --environment <environment> --template <template> --namespace <namespace> \
   --uses <comma-separated-uses>
 doops credential verify --target <target> --id <credential-id> --version-id <version-id> \
-  --session <session> --workflow-path <path> --workspace-commit <commit> \
-  --source-repository <https-repository> --source-branch <branch>
+  --session <session> --workflow-path deploy/environments.yaml --workspace-commit <commit> \
+  --environment <environment> --service <service>
 doops credential promote --target <target> --id <credential-id> --version-id <version-id>
 doops credential grant-revoke --target <target> --id <credential-id> --grant-id <grant-id>
 doops credential revoke --target <target> --id <credential-id>
@@ -308,7 +308,8 @@ cannot list, export, or repurpose credentials.
 ## Acceptance Scenarios
 
 1. Given an active platform registry credential granted to `gw-edu-coder`,
-   `oilan`, `kz-ops`, and `oilan-agent-release`, when an authorized deployer
+   `oilan`, `kz-ops`, and the compiled service identity
+   `doops-oilan-doops-agent`, when an authorized deployer
    runs the template, then DoOps materializes the generated pull Secret,
    attaches it to the selected workload, verifies its type/key set and OCI
    manifest access, and returns only status, resourceVersion, and digest.

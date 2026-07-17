@@ -996,6 +996,16 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			writeJSON(buildErrorResponse(req.ID, -32602, "unsupported agent prompt operation: "+operation))
 			return nil
 		}
+		var err error
+		credentialBinding, err = parseCredentialPromptBinding(params.Arguments, cluster, instance)
+		if err != nil {
+			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
+			return nil
+		}
+		if operation == "apply" && credentialBinding == nil {
+			writeJSON(buildErrorResponse(req.ID, -32602, "apply requires a structured doops-cicd instruction"))
+			return nil
+		}
 	}
 	action := actionForTool(params.Name, params.Arguments)
 	if action == "" {
@@ -2022,7 +2032,11 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 
 func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage, cluster, instance string) string {
 	switch action {
-	case ActionExec, ActionAsk:
+	case ActionExec:
+		if sessionID := extractSession(args); sessionID != "" {
+			return "workspace:" + sessionID
+		}
+	case ActionAsk:
 		if sessionID := extractSession(args); sessionID != "" {
 			return "session:" + sessionID
 		}
@@ -2031,6 +2045,9 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 			return "workspace:" + sessionID
 		}
 	case ActionWrite:
+		if sessionID := extractSession(args); sessionID != "" {
+			return "workspace:" + sessionID
+		}
 		if path := extractStringArg(args, "path"); path != "" {
 			return "path:" + path
 		}

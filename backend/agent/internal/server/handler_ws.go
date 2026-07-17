@@ -519,8 +519,8 @@ func errorNotification(text string) notificationEvent {
 
 // handleToolCallOverWS 处理具体的 MCP tool 调用（复用原有的处理逻辑，但直接向 WS 写入结果）
 func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, toolName string, argBytes json.RawMessage, gatewayAuthorized bool, writeJSON func(v interface{})) {
-	if internalCredentialTool(toolName) && !gatewayAuthorized {
-		writeJSON(buildToolErrorResponse(reqID, "credential control-plane tools require a gateway-authorized reverse tunnel"))
+	if !gatewayAuthorized && !directAgentReadOnlyTool(toolName, argBytes) {
+		writeJSON(buildToolErrorResponse(reqID, "mutating agent tools require a gateway-authorized reverse tunnel"))
 		return
 	}
 
@@ -940,7 +940,8 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			args.Model,
 			args.ResponseFormat,
 			agentPromptExecutionContext{
-				NativeMode: nativeMode,
+				NativeMode:      nativeMode,
+				WorkspaceCommit: strings.TrimSpace(args.WorkspaceCommit),
 			},
 			pushProgress,
 			writeJSON,
@@ -1039,6 +1040,20 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	}
 }
 
+func directAgentReadOnlyTool(toolName string, arguments json.RawMessage) bool {
+	switch toolName {
+	case "doops_file_read", "doops_node_info", "doops_check_deployment",
+		"doops_task_status", "doops_workspace_pull_begin", "doops_workspace_pull_chunk":
+		return true
+	case "doops_agent_prompt":
+		switch strings.ToLower(extractStringArg(arguments, "mode")) {
+		case "metadata", "history":
+			return true
+		}
+	}
+	return false
+}
+
 func doagentModeForPrompt(operation, executionMode string) (string, error) {
 	operation = strings.ToLower(strings.TrimSpace(operation))
 	executionMode = strings.ToLower(strings.TrimSpace(executionMode))
@@ -1128,7 +1143,8 @@ func validatedDoagentApplyInstruction(prompt api.AgentPromptParams) (map[string]
 }
 
 type agentPromptExecutionContext struct {
-	NativeMode string
+	NativeMode      string
+	WorkspaceCommit string
 }
 
 const trustedReconciliationContextProtocolV2 = "doops.reconciliation-context/v2"
@@ -1183,6 +1199,12 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	log.Printf("🤖 WS Running doagent via ACP HTTP: session=%s structured=%t model=%s",
 		doopsSessionID, responseFormat == "json", model)
 	cicdPrompt := isDoopsCICDInstruction(instr)
+	if cicdPrompt {
+		if err := validateWorkspaceCommitBinding(doopsSessionID, execution.WorkspaceCommit); err != nil {
+			writeJSON(buildErrorResponse(reqID, -32603, "workspace_commit_binding_invalid"))
+			return
+		}
+	}
 
 	doagentURL := os.Getenv("DO_AGENT_URL")
 	if doagentURL == "" {
