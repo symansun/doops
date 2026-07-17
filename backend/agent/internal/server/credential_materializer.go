@@ -26,20 +26,16 @@ import (
 )
 
 type CredentialMaterializeRequest struct {
-	SessionID          string                 `json:"session_id"`
-	Cluster            string                 `json:"cluster,omitempty"`
-	Instance           string                 `json:"instance,omitempty"`
-	CredentialID       string                 `json:"credential_id"`
-	GrantID            string                 `json:"grant_id"`
-	VersionID          string                 `json:"version_id"`
-	CredentialType     CredentialType         `json:"credential_type"`
-	Use                CredentialUse          `json:"use"`
-	Namespace          string                 `json:"namespace"`
-	Workload           CredentialPlanWorkload `json:"workload,omitempty"`
-	RegistryRepository string                 `json:"registry_repository,omitempty"`
-	RegistryReference  string                 `json:"registry_reference,omitempty"`
-	RequiredKeys       []string               `json:"required_keys,omitempty"`
-	Payload            json.RawMessage        `json:"payload"`
+	SessionID      string               `json:"session_id"`
+	Cluster        string               `json:"cluster,omitempty"`
+	Instance       string               `json:"instance,omitempty"`
+	CredentialID   string               `json:"credential_id"`
+	GrantID        string               `json:"grant_id"`
+	VersionID      string               `json:"version_id"`
+	CredentialType CredentialType       `json:"credential_type"`
+	Scope          CredentialGrantScope `json:"scope"`
+	RequiredKeys   []string             `json:"required_keys,omitempty"`
+	Payload        json.RawMessage      `json:"payload"`
 }
 
 type CredentialCleanupRequest struct {
@@ -72,8 +68,8 @@ type credentialSecretInspection struct {
 func materializeCredential(ctx context.Context, req CredentialMaterializeRequest) (CredentialMaterialization, error) {
 	if strings.TrimSpace(req.CredentialID) == "" || strings.TrimSpace(req.GrantID) == "" ||
 		strings.TrimSpace(req.VersionID) == "" ||
-		strings.TrimSpace(req.Namespace) == "" || !validCredentialType(req.CredentialType) ||
-		!validCredentialUse(req.Use) {
+		!validCredentialType(req.CredentialType) ||
+		validateCredentialGrantScope(req.Scope) != nil {
 		return CredentialMaterialization{}, errors.New("credential_request_invalid")
 	}
 	if err := validateCredentialPayload(req.CredentialType, req.Payload); err != nil {
@@ -85,7 +81,7 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 		CredentialID: req.CredentialID,
 		VersionID:    req.VersionID,
 		ResourceName: name,
-		Namespace:    req.Namespace,
+		Namespace:    req.Scope.Namespace,
 		Status:       "verified",
 	}
 
@@ -93,7 +89,7 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 	var secretData map[string]string
 	switch req.CredentialType {
 	case CredentialTypeRegistry:
-		if req.Use != CredentialUseImagePull {
+		if req.Scope.Use != CredentialUseImagePull {
 			return CredentialMaterialization{}, errors.New("credential_use_mismatch")
 		}
 		var payload struct {
@@ -114,13 +110,14 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 		}})
 		secretType = "kubernetes.io/dockerconfigjson"
 		secretData = map[string]string{".dockerconfigjson": string(dockerConfig)}
-		digest, err := verifyRegistryManifest(ctx, payload.Server, payload.Username, payload.Password, req.RegistryRepository, req.RegistryReference)
+		digest, err := verifyRegistryManifest(ctx, payload.Server, payload.Username, payload.Password,
+			req.Scope.ImageRepository, req.Scope.ImageDigest)
 		if err != nil {
 			return CredentialMaterialization{}, err
 		}
 		result.Digest = digest
 	case CredentialTypeTLS:
-		if req.Use != CredentialUseTLS {
+		if req.Scope.Use != CredentialUseTLS {
 			return CredentialMaterialization{}, errors.New("credential_use_mismatch")
 		}
 		var payload struct {
@@ -137,7 +134,7 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 		result.Fingerprint = fingerprint
 		result.ExpiresAt = certificate.NotAfter.UTC().Format(time.RFC3339)
 	case CredentialTypeOpaque:
-		if req.Use != CredentialUseOpaqueSecret {
+		if req.Scope.Use != CredentialUseOpaqueSecret {
 			return CredentialMaterialization{}, errors.New("credential_use_mismatch")
 		}
 		var payload struct {
@@ -150,7 +147,7 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 		secretType = "Opaque"
 		secretData = payload.Data
 	case CredentialTypeHelmRepository:
-		if req.Use != CredentialUseHelmPull {
+		if req.Scope.Use != CredentialUseHelmPull {
 			return CredentialMaterialization{}, errors.New("credential_use_mismatch")
 		}
 		var payload struct {
@@ -167,7 +164,7 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 		secretData = map[string]string{"url": payload.URL, "username": payload.Username, "password": payload.Password}
 		result.Digest = digest
 	case CredentialTypeGitToken:
-		if req.Use != CredentialUseGitCheckout {
+		if req.Scope.Use != CredentialUseGitCheckout {
 			return CredentialMaterialization{}, errors.New("credential_use_mismatch")
 		}
 		var payload struct {
@@ -192,32 +189,37 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 		return CredentialMaterialization{}, err
 	}
 	result.PreviousVersionID = snapshot.PreviousVersionID
-	if err := applyCredentialSecret(ctx, req, name, secretType, secretData); err != nil {
-		return CredentialMaterialization{}, err
+	applyErr := applyCredentialSecret(ctx, req, name, secretType, secretData)
+	if applyErr != nil {
+		actual, inspectErr := inspectCredentialSecret(ctx, req.Scope.Namespace, name)
+		if inspectErr != nil || !credentialSecretMatches(actual, req, secretType, secretData) {
+			clear(actual.Data)
+			if restoreErr := restoreCredentialTarget(ctx, req.Scope.Namespace, name, snapshot); restoreErr != nil {
+				return CredentialMaterialization{}, errors.New("credential_target_outcome_unknown")
+			}
+			return CredentialMaterialization{}, applyErr
+		}
+		clear(actual.Data)
 	}
-	if req.CredentialType == CredentialTypeRegistry && strings.TrimSpace(req.Workload.Name) != "" {
-		if err := patchImagePullSecret(ctx, req.Namespace, req.Workload, name); err != nil {
-			if restoreErr := restoreCredentialTarget(ctx, req.Namespace, name, snapshot); restoreErr != nil {
+	if req.CredentialType == CredentialTypeRegistry && strings.TrimSpace(req.Scope.Workload.Name) != "" {
+		if err := patchImagePullSecret(ctx, req.Scope.Namespace, req.Scope.Workload, name); err != nil {
+			if restoreErr := restoreCredentialTarget(ctx, req.Scope.Namespace, name, snapshot); restoreErr != nil {
 				return CredentialMaterialization{}, errors.New("credential_target_outcome_unknown")
 			}
 			return CredentialMaterialization{}, err
 		}
 	}
-	actual, err := inspectCredentialSecret(ctx, req.Namespace, name)
+	actual, err := inspectCredentialSecret(ctx, req.Scope.Namespace, name)
 	if err != nil {
-		if restoreErr := restoreCredentialTarget(ctx, req.Namespace, name, snapshot); restoreErr != nil {
+		if restoreErr := restoreCredentialTarget(ctx, req.Scope.Namespace, name, snapshot); restoreErr != nil {
 			return CredentialMaterialization{}, errors.New("credential_target_outcome_unknown")
 		}
 		return CredentialMaterialization{}, err
 	}
 	defer clear(actual.Data)
 	keys := mapKeys(actual.Data)
-	if actual.SecretType != secretType ||
-		actual.CredentialID != req.CredentialID ||
-		actual.GrantID != req.GrantID ||
-		actual.VersionID != req.VersionID ||
-		!sameCredentialData(secretData, actual.Data) {
-		if restoreErr := restoreCredentialTarget(ctx, req.Namespace, name, snapshot); restoreErr != nil {
+	if !credentialSecretMatches(actual, req, secretType, secretData) {
+		if restoreErr := restoreCredentialTarget(ctx, req.Scope.Namespace, name, snapshot); restoreErr != nil {
 			return CredentialMaterialization{}, errors.New("credential_target_outcome_unknown")
 		}
 		return CredentialMaterialization{}, errors.New("credential_secret_verification_failed")
@@ -230,7 +232,7 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 
 func snapshotCredentialTarget(ctx context.Context, req CredentialMaterializeRequest, name string) (credentialTargetSnapshot, error) {
 	snapshot := credentialTargetSnapshot{}
-	cmd := exec.CommandContext(ctx, "kubectl", "get", "secret", name, "-n", req.Namespace, "--ignore-not-found", "-o", "json")
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "secret", name, "-n", req.Scope.Namespace, "--ignore-not-found", "-o", "json")
 	output, err := cmd.Output()
 	if err != nil {
 		return credentialTargetSnapshot{}, errors.New("credential_secret_get_failed")
@@ -255,18 +257,18 @@ func snapshotCredentialTarget(ctx context.Context, req CredentialMaterializeRequ
 			return credentialTargetSnapshot{}, errors.New("credential_secret_ownership_conflict")
 		}
 	}
-	if req.CredentialType == CredentialTypeRegistry && strings.TrimSpace(req.Workload.Name) != "" {
-		kind := strings.ToLower(strings.TrimSpace(req.Workload.Kind))
+	if req.CredentialType == CredentialTypeRegistry && strings.TrimSpace(req.Scope.Workload.Name) != "" {
+		kind := strings.ToLower(strings.TrimSpace(req.Scope.Workload.Kind))
 		if (kind != "deployment" && kind != "statefulset" && kind != "daemonset") ||
-			!validKubernetesCredentialName(req.Workload.Name) {
+			!validKubernetesCredentialName(req.Scope.Workload.Name) {
 			return credentialTargetSnapshot{}, errors.New("credential_workload_invalid")
 		}
-		names, err := inspectImagePullSecrets(ctx, req.Namespace, kind, req.Workload.Name)
+		names, err := inspectImagePullSecrets(ctx, req.Scope.Namespace, kind, req.Scope.Workload.Name)
 		if err != nil {
 			return credentialTargetSnapshot{}, err
 		}
 		snapshot.WorkloadKind = kind
-		snapshot.WorkloadName = req.Workload.Name
+		snapshot.WorkloadName = req.Scope.Workload.Name
 		snapshot.ImagePullNames = names
 	}
 	return snapshot, nil
@@ -317,7 +319,7 @@ func applyCredentialSecret(ctx context.Context, req CredentialMaterializeRequest
 		"kind":       "Secret",
 		"metadata": map[string]any{
 			"name":      name,
-			"namespace": req.Namespace,
+			"namespace": req.Scope.Namespace,
 			"labels": map[string]string{
 				"app.kubernetes.io/managed-by": "doops",
 				"doops.sh/credential-id":       req.CredentialID,
@@ -337,10 +339,9 @@ func applyCredentialSecret(ctx context.Context, req CredentialMaterializeRequest
 }
 
 func patchImagePullSecret(ctx context.Context, namespace string, workload CredentialPlanWorkload, secretName string) error {
-	kind := strings.ToLower(strings.TrimSpace(workload.Kind))
-	if (kind != "deployment" && kind != "statefulset" && kind != "daemonset") ||
-		!validKubernetesCredentialName(workload.Name) {
-		return errors.New("credential_workload_invalid")
+	kind, err := credentialWorkloadKind(workload)
+	if err != nil {
+		return err
 	}
 	names, err := inspectImagePullSecrets(ctx, namespace, kind, workload.Name)
 	if err != nil {
@@ -349,16 +350,18 @@ func patchImagePullSecret(ctx context.Context, namespace string, workload Creden
 	if !containsString(names, secretName) {
 		names = append(names, secretName)
 	}
-	imagePullSecrets := make([]map[string]string, 0, len(names))
-	for _, name := range names {
-		imagePullSecrets = append(imagePullSecrets, map[string]string{"name": name})
+	mutationErr := patchImagePullSecrets(ctx, namespace, kind, workload.Name, names)
+	observed, inspectErr := inspectImagePullSecrets(ctx, namespace, kind, workload.Name)
+	if inspectErr != nil {
+		return errors.New("credential_target_outcome_unknown")
 	}
-	patch, _ := json.Marshal(map[string]any{
-		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{
-			"imagePullSecrets": imagePullSecrets,
-		}}},
-	})
-	return runCredentialCommand(ctx, nil, "kubectl", "patch", kind, workload.Name, "-n", namespace, "--type=merge", "--patch", string(patch))
+	if sameCredentialKeys(observed, names) {
+		return nil
+	}
+	if mutationErr != nil {
+		return mutationErr
+	}
+	return errors.New("credential_target_outcome_unknown")
 }
 
 func inspectImagePullSecrets(ctx context.Context, namespace, kind, name string) ([]string, error) {
@@ -583,6 +586,19 @@ func inspectCredentialSecret(ctx context.Context, namespace, name string) (crede
 		VersionID:       strings.TrimSpace(secret.Metadata.Annotations["doops.sh/credential-version"]),
 		Data:            data,
 	}, nil
+}
+
+func credentialSecretMatches(
+	actual credentialSecretInspection,
+	req CredentialMaterializeRequest,
+	secretType string,
+	secretData map[string]string,
+) bool {
+	return actual.SecretType == secretType &&
+		actual.CredentialID == req.CredentialID &&
+		actual.GrantID == req.GrantID &&
+		actual.VersionID == req.VersionID &&
+		sameCredentialData(secretData, actual.Data)
 }
 
 func verifyRegistryManifest(ctx context.Context, server, username, password, repository, reference string) (string, error) {

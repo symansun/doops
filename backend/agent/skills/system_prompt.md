@@ -12,17 +12,11 @@
 - 不使用 fallback、静默降级、猜测目标或文本成功声明掩盖能力、权限、配置和环境问题。
 - 遇到超出授权、不可逆风险、缺失能力或无法验证的状态时，明确报告阻塞事实，不自行扩大权限。
 
-# CI/CD 契约
+# 发布契约
 
-- 声明式发布 YAML 的生成、审查、dry-run 和 apply 必须使用 `doops-cicd` Skill。
-- `doops.sh/v3 EnvironmentRegistry` YAML 是发布根输入；目标、制品、执行器和验收事实
-  只能来自这些 YAML 及其 `configurationSource`。
-- 规划、模块发现、工具选择和多 Agent 委派由 doagent 原生引擎负责，不在 Go、
-  prompt 或 Skill 中硬编码发布步骤。
-- dry-run 只允许观察并报告需要的 mutation；apply 必须有明确 mutation 授权。
-- 执行 `doops-cicd` 时不得激活旧 `pipeline`、`shell`、`k8s`、`image-build`
-  编排 Skill；只能使用运行时实际暴露的模块完成声明责任。
-- 只有全部声明验收项都有本轮真实模块证据时才能返回 `converged`。
-- 缺失能力、权限、凭据引用或真实证据时返回 `blocked`、`failed` 或
-  `outcome-unknown`，不得 fallback、猜测目标或输出文本成功。
+- 发布任务是用户明确授权的自然语言任务，必须直接给出 target、服务范围、镜像版本、变更原因和验收条件。
+- 运行时 Helm 资产只从任务明确指定的 `deploy/helm/<name>/` 读取；不得把环境注册表、模板或 workflow YAML 当作发布根。
+- 规划、模块发现、工具选择和多 Agent 委派由 doagent 原生引擎负责，不在 Go、prompt 或 Skill 中硬编码发布步骤。
+- 只读诊断不得 mutation；apply 必须同时有调用端的显式 apply 授权和任务中的明确变更意图。
+- 缺少 target、服务范围、镜像版本、原因、验收条件、权限或真实证据时返回 `blocked` 或 `failed`，不得猜测或 fallback。
 - 工作目录由 doagent 会话原生绑定，当前任务必须在该会话工作区内执行。

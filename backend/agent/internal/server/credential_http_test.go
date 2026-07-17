@@ -101,14 +101,19 @@ func TestCredentialHTTPGrantRequiresOwnerTargetAuthority(t *testing.T) {
 		t.Fatalf("decode credential: %v", err)
 	}
 	grantBody := map[string]any{
-		"grantee_id":  deployer.ID,
-		"cluster":     "doops-edu",
-		"instance":    "edu-coder",
-		"project":     "oilan",
-		"environment": "production",
-		"template":    "oilan-agent-release",
-		"namespace":   "kz-ops",
-		"uses":        []string{"imagePull"},
+		"grantee_id": deployer.ID,
+		"scope": map[string]any{
+			"cluster":   "doops-edu",
+			"instance":  "edu-coder",
+			"namespace": "kz-ops",
+			"use":       "imagePull",
+			"workload": map[string]any{
+				"kind": "deployment",
+				"name": "doops-agent",
+			},
+			"image_repository": "l8ai/doops-agent",
+			"image_digest":     "sha256:" + strings.Repeat("a", 64),
+		},
 	}
 	denied := credentialHTTPRequest(t, mux, ownerToken, http.MethodPost,
 		"/v1/credentials/"+credential.ID+"/grants", grantBody)
