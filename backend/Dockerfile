@@ -6,13 +6,15 @@ ARG DO_AGENT_INDEX_DIGEST
 ARG DO_AGENT_PLATFORM
 ARG DO_AGENT_PLATFORM_DIGEST
 
-# Stage 1: Build doops-agent (Go gateway)
+# Stage 1: Build the Agent and Gateway from the same source revision.
 FROM golang:1.24-alpine AS builder
 USER root
 WORKDIR /app
 COPY . .
 WORKDIR /app/agent
 RUN CGO_ENABLED=0 go build -o /app/doops-agent ./cmd/agent
+WORKDIR /app/gateway
+RUN CGO_ENABLED=0 go build -o /app/doops-gateway .
 
 FROM ${DO_AGENT_IMAGE} AS doagent-runtime
 
@@ -36,6 +38,7 @@ LABEL org.l8ai.doagent.platform="${DO_AGENT_PLATFORM}"
 LABEL org.l8ai.doagent.platform.digest="${DO_AGENT_PLATFORM_DIGEST}"
 
 COPY --from=builder /app/doops-agent /app/doops-agent
+COPY --from=builder /app/doops-gateway /app/doops-gateway
 COPY --from=doagent-runtime /usr/local/bin/do-agent /usr/local/bin/do-agent
 COPY --from=builder /app/agent/skills /app/skills
 COPY --from=builder /app/agent/agent-entrypoint.sh /app/agent-entrypoint.sh
@@ -48,6 +51,7 @@ COPY --from=builder /app/docs /app/self-docs/docs
 
 RUN chmod +x /app/agent-entrypoint.sh /app/sandbox-entrypoint.sh \
     && /app/doops-agent -help >/dev/null \
+    && /app/doops-gateway -help >/dev/null \
     && test "$(/usr/local/bin/do-agent --version)" = "do-agent ${DO_AGENT_VERSION}" \
     && /usr/local/bin/do-agent --help >/dev/null \
     && buildctl --version \

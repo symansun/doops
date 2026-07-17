@@ -4,6 +4,8 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 SKILL = ROOT / "agent" / "skills" / "doops-cicd" / "SKILL.md"
 SYSTEM_PROMPT = ROOT / "agent" / "skills" / "system_prompt.md"
+DOCKERFILE = ROOT / "Dockerfile"
+CNB_PIPELINE = ROOT.parent / ".cnb.yml"
 
 
 def test_cicd_skill_uses_natural_language_v3_contract():
@@ -42,3 +44,14 @@ def test_system_prompt_matches_natural_language_v3_contract():
         "声明式发布 YAML",
     ):
         assert forbidden not in text
+
+
+def test_ci_image_contains_agent_and_gateway_from_the_same_revision():
+    dockerfile = DOCKERFILE.read_text()
+    pipeline = CNB_PIPELINE.read_text()
+
+    assert "go build -o /app/doops-agent ./cmd/agent" in dockerfile
+    assert "go build -o /app/doops-gateway ." in dockerfile
+    assert "COPY --from=builder /app/doops-gateway /app/doops-gateway" in dockerfile
+    assert "/app/doops-gateway -help" in dockerfile
+    assert "docker run --rm --entrypoint /app/doops-gateway" in pipeline

@@ -53,8 +53,10 @@ bash scripts/deploy-gateway.sh \
 
 ## 二、 Agent 标准构建工作流 (Server-Side Build)
 
-在进行任何修改后，若需要更新 `doops-agent`，先由 `main` 的 CNB CI 构建候选镜像。
-CNB 不执行环境部署、回滚或 Helm/Kubernetes 操作。
+在进行任何修改后，若需要更新 DoOps 运行时，先由 `main` 的 CNB CI 构建候选镜像。
+该镜像同时携带同一 revision 的 `/app/doops-agent`、`/app/doops-gateway` 和锁定版本的
+`/usr/local/bin/do-agent`；发布控制端不得重新编译 Gateway。CNB 不执行环境部署、
+回滚或 Helm/Kubernetes 操作。
 
 ### 1. 触发受控发布 (在控制端执行)
 DoOps v3 使用自然语言任务。任务必须明确 target、服务范围、候选镜像、变更原因、
