@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -488,98 +487,6 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 	}
 }
 
-func TestNaturalLanguageApplyRejectsNoToolActivityAndCleansTemporaryWorkspace(t *testing.T) {
-	prompted := make(chan struct{})
-	cwdSeen := make(chan string, 1)
-	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/rpc":
-			var req map[string]interface{}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode rpc: %v", err)
-			}
-			switch req["method"] {
-			case "session/new":
-				params, _ := req["params"].(map[string]interface{})
-				cwd, _ := params["cwd"].(string)
-				cwdSeen <- cwd
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      req["id"],
-					"result":  map[string]interface{}{"sessionId": "apply-no-tool"},
-				})
-			case "session/setMode":
-				params, _ := req["params"].(map[string]interface{})
-				if params["modeId"] != "build" {
-					t.Fatalf("mutating prompt must use build mode: %#v", params)
-				}
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      req["id"],
-					"result":  map[string]interface{}{},
-				})
-			case "session/prompt":
-				close(prompted)
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      req["id"],
-					"result": map[string]interface{}{
-						"status":   "accepted",
-						"delivery": "sse",
-						"turnId":   "turn-apply-no-tool",
-					},
-				})
-			default:
-				t.Fatalf("unexpected rpc method: %v", req["method"])
-			}
-		case "/events":
-			w.Header().Set("Content-Type", "text/event-stream")
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
-			}
-			<-prompted
-			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","turnId":"turn-apply-no-tool","content":{"type":"text","text":"no mutation was performed"}}}}`)
-			fmt.Fprintln(w)
-			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-apply-no-tool","status":"completed","stopReason":"end_turn"}}}`)
-			fmt.Fprintln(w)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer doagent.Close()
-	t.Setenv("DO_AGENT_URL", doagent.URL)
-
-	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
-		gw.ServeGatewayWebSocketConnWithReady(conn, r.RemoteAddr, nil)
-	}))
-	defer ts.Close()
-	conn := dialAgentTestWS(t, ts.URL)
-	defer conn.Close()
-	initializeAgentTestWS(t, conn)
-
-	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
-		"session_id":  "natural-apply",
-		"instruction": "deploy the selected service",
-		"operation":   "apply",
-	})
-	if !strings.Contains(fmt.Sprint(result), "doagent_apply_no_tool_activity") {
-		t.Fatalf("zero-tool apply must fail with the explicit category: %#v", result)
-	}
-	cwd := <-cwdSeen
-	if !strings.HasPrefix(filepath.Base(cwd), "doops-apply-") {
-		t.Fatalf("mutating prompt used non-temporary cwd: %q", cwd)
-	}
-	requireEventually(t, time.Second, func() bool {
-		_, err := os.Stat(cwd)
-		return os.IsNotExist(err)
-	})
-}
-
 func TestAgentInitializeDoesNotExposeDedicatedCICDReconciliation(t *testing.T) {
 	gw := NewGateway("0")
 	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
@@ -804,24 +711,6 @@ func TestSubscribeDoagentSSEReturnsErrorWhenStreamGoesIdle(t *testing.T) {
 	}
 }
 
-func TestDoagentProgressHeartbeatKeepsSilentPromptVisible(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	events := make(chan notificationEvent, 1)
-	go doagentProgressHeartbeat(ctx, 10*time.Millisecond, func(evt notificationEvent) {
-		events <- evt
-	})
-
-	select {
-	case evt := <-events:
-		if evt.Kind != "raw" || !strings.Contains(evt.Data, "doagent task is still running") {
-			t.Fatalf("unexpected heartbeat event: %#v", evt)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("expected doagent progress heartbeat")
-	}
-}
-
 func TestSubscribeDoagentSSEReturnsTurnFinishedError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/events" {
@@ -1027,7 +916,7 @@ func TestAgentWebSocketRejectsBlockedShellCommand(t *testing.T) {
 	}
 }
 
-func TestDirectAgentWebSocketRejectsApply(t *testing.T) {
+func TestDirectAgentWebSocketRejectsCredentialApply(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
 	gw := NewGateway("0")
 	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
@@ -1037,14 +926,137 @@ func TestDirectAgentWebSocketRejectsApply(t *testing.T) {
 	defer conn.Close()
 	initializeAgentTestWS(t, conn)
 
+	prompt := validDoagentApplyPrompt(t)
 	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
-		"session_id":  "direct-apply",
-		"instruction": "deploy service api using the requested image",
-		"operation":   "apply",
+		"session_id":       prompt.SessionID,
+		"instruction":      prompt.Instruction,
+		"operation":        prompt.Operation,
+		"response_format":  prompt.ResponseFormat,
+		"workspace_commit": prompt.WorkspaceCommit,
 	})
 	errObject, _ := result["error"].(map[string]interface{})
 	if !strings.Contains(fmt.Sprint(errObject["message"]), "gateway-authorized reverse tunnel") {
 		t.Fatalf("expected direct apply rejection, got %#v", result)
+	}
+}
+
+func TestGatewayAuthorizedWebSocketExecutesCredentialApply(t *testing.T) {
+	prompted := make(chan struct{})
+	var promptedOnce sync.Once
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rpc":
+			var req map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decode rpc: %v", err)
+				return
+			}
+			switch req["method"] {
+			case "initialize":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]interface{}{
+						"agentCapabilities": map[string]interface{}{
+							"trustedReconciliationContext": map[string]interface{}{
+								"schemaVersion":            "doops.reconciliation-context/v2",
+								"callContextSchemaVersion": "doops.reconciliation-call-context/v1",
+								"mcpMetaKey":               "doops.sh/reconciliation-context",
+								"credentialRunDigest":      true,
+								"sourceWorkspaceCommit":    true,
+							},
+						},
+					},
+				})
+			case "session/new":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{"sessionId": "credential-apply"},
+				})
+			case "session/setMode":
+				params, _ := req["params"].(map[string]interface{})
+				if params["modeId"] != "build" {
+					t.Errorf("credential apply mode = %v, want build", params["modeId"])
+				}
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{},
+				})
+			case "session/prompt":
+				params, _ := req["params"].(map[string]interface{})
+				if params["response_format"] != "json" || params["responseMode"] != "stream" {
+					t.Errorf("credential apply prompt is not structured streaming: %#v", params)
+				}
+				promptedOnce.Do(func() { close(prompted) })
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]interface{}{
+						"status":   "accepted",
+						"delivery": "sse",
+						"turnId":   "turn-credential-apply",
+					},
+				})
+			default:
+				t.Errorf("unexpected rpc method: %v", req["method"])
+			}
+		case "/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			<-prompted
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","turnId":"turn-credential-apply","content":{"type":"text","text":"{\"kind\":\"DeploymentRun\",\"status\":\"succeeded\"}"}}}}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-credential-apply","status":"completed","stopReason":"end_turn"}}}`)
+			fmt.Fprintln(w)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway("0")
+	ts := newGatewayAuthorizedAgentServer(t, gw)
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	prompt := validDoagentApplyPrompt(t)
+	result := callTool(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id":       prompt.SessionID,
+		"instruction":      prompt.Instruction,
+		"operation":        prompt.Operation,
+		"response_format":  prompt.ResponseFormat,
+		"workspace_commit": prompt.WorkspaceCommit,
+	})
+	if !strings.Contains(result, `"kind":"DeploymentRun"`) || !strings.Contains(result, `"status":"succeeded"`) {
+		t.Fatalf("credential apply result = %s", result)
+	}
+}
+
+func TestDirectAgentWebSocketRejectsCredentialControlPlaneTools(t *testing.T) {
+	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	for _, tool := range []string{"doops_credential_plan", "doops_credential_materialize", "doops_credential_cleanup"} {
+		result := callToolResult(t, conn, tool, map[string]interface{}{
+			"session_id": "direct-credential-control-plane",
+		})
+		toolResult, _ := result["result"].(map[string]interface{})
+		if toolResult["isError"] != true || !strings.Contains(fmt.Sprint(toolResult["content"]), "gateway-authorized reverse tunnel") {
+			t.Fatalf("%s direct call was not rejected: %#v", tool, result)
+		}
 	}
 }
 
@@ -1687,12 +1699,10 @@ func initializeAgentTestWS(t *testing.T, conn *websocket.Conn) {
 	if strings.TrimSpace(fmt.Sprint(result["runtimeId"])) == "" {
 		t.Fatalf("initialize result must identify the agent process: %#v", resp)
 	}
-	capabilities, ok := result["capabilities"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("initialize result must expose capabilities: %#v", resp)
-	}
-	if _, exists := capabilities["protocols"]; exists {
-		t.Fatalf("initialize result must not advertise retired release protocols: %#v", resp)
+	capabilities, _ := result["capabilities"].(map[string]interface{})
+	protocols, _ := capabilities["protocols"].(map[string]interface{})
+	if !credentialPlanCapabilityCompatible(protocols["credentialPlan"]) {
+		t.Fatalf("initialize result must advertise credential plan v2: %#v", resp)
 	}
 }
 
@@ -1867,7 +1877,7 @@ func TestSubscribeDoagentSSESanitizesAgentMessagesBeforeCollectorAndProgress(t *
 func TestSubscribeDoagentSSEDefersStructuredAgentMessage(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","content":{"type":"text","text":"{\"kind\":\"RuntimeEvidence\",\"subject\":\"https://storage.example.test/object?X-Amz-Signature=stream-canary\"}"}}}}`)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","content":{"type":"text","text":"{\"kind\":\"DeploymentRun\",\"subject\":\"https://storage.example.test/object?X-Amz-Signature=stream-canary\"}"}}}}`)
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","status":"completed","stopReason":"end_turn"}}}`)
 		fmt.Fprintln(w)
@@ -1893,7 +1903,7 @@ func TestSubscribeDoagentSSEDefersStructuredAgentMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("subscribe structured SSE: %v", err)
 	}
-	if strings.Contains(progress.String(), "RuntimeEvidence") ||
+	if strings.Contains(progress.String(), "DeploymentRun") ||
 		strings.Contains(progress.String(), "stream-canary") {
 		t.Fatalf("unvalidated structured result was forwarded: %s", progress.String())
 	}

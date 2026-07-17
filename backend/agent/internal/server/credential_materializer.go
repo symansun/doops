@@ -26,30 +26,30 @@ import (
 )
 
 type CredentialMaterializeRequest struct {
-	SessionID          string                `json:"session_id"`
-	Cluster            string                `json:"cluster,omitempty"`
-	Instance           string                `json:"instance,omitempty"`
-	CredentialID       string                `json:"credential_id"`
-	GrantID            string                `json:"grant_id"`
-	VersionID          string                `json:"version_id"`
-	CredentialType     CredentialType        `json:"credential_type"`
-	Use                CredentialUse         `json:"use"`
-	Namespace          string                `json:"namespace"`
-	Workload           CredentialWorkloadRef `json:"workload,omitempty"`
-	RegistryRepository string                `json:"registry_repository,omitempty"`
-	RegistryReference  string                `json:"registry_reference,omitempty"`
-	RequiredKeys       []string              `json:"required_keys,omitempty"`
-	Payload            json.RawMessage       `json:"payload"`
+	SessionID          string                 `json:"session_id"`
+	Cluster            string                 `json:"cluster,omitempty"`
+	Instance           string                 `json:"instance,omitempty"`
+	CredentialID       string                 `json:"credential_id"`
+	GrantID            string                 `json:"grant_id"`
+	VersionID          string                 `json:"version_id"`
+	CredentialType     CredentialType         `json:"credential_type"`
+	Use                CredentialUse          `json:"use"`
+	Namespace          string                 `json:"namespace"`
+	Workload           CredentialPlanWorkload `json:"workload,omitempty"`
+	RegistryRepository string                 `json:"registry_repository,omitempty"`
+	RegistryReference  string                 `json:"registry_reference,omitempty"`
+	RequiredKeys       []string               `json:"required_keys,omitempty"`
+	Payload            json.RawMessage        `json:"payload"`
 }
 
 type CredentialCleanupRequest struct {
-	SessionID    string                `json:"session_id"`
-	CredentialID string                `json:"credential_id"`
-	GrantID      string                `json:"grant_id"`
-	VersionID    string                `json:"version_id"`
-	AnyVersion   bool                  `json:"any_version,omitempty"`
-	Namespace    string                `json:"namespace"`
-	Workload     CredentialWorkloadRef `json:"workload,omitempty"`
+	SessionID    string                 `json:"session_id"`
+	CredentialID string                 `json:"credential_id"`
+	GrantID      string                 `json:"grant_id"`
+	VersionID    string                 `json:"version_id"`
+	AnyVersion   bool                   `json:"any_version,omitempty"`
+	Namespace    string                 `json:"namespace"`
+	Workload     CredentialPlanWorkload `json:"workload,omitempty"`
 }
 
 type credentialTargetSnapshot struct {
@@ -314,7 +314,7 @@ func applyCredentialSecret(ctx context.Context, req CredentialMaterializeRequest
 	return runCredentialCommand(ctx, manifest, "kubectl", "apply", "--server-side", "--field-manager=doops-credential", "-f", "-")
 }
 
-func patchImagePullSecret(ctx context.Context, namespace string, workload CredentialWorkloadRef, secretName string) error {
+func patchImagePullSecret(ctx context.Context, namespace string, workload CredentialPlanWorkload, secretName string) error {
 	kind := strings.ToLower(strings.TrimSpace(workload.Kind))
 	if (kind != "deployment" && kind != "statefulset" && kind != "daemonset") ||
 		!validKubernetesCredentialName(workload.Name) {
@@ -412,7 +412,7 @@ func cleanupCredential(ctx context.Context, req CredentialCleanupRequest) error 
 	return nil
 }
 
-func removeImagePullSecret(ctx context.Context, namespace string, workload CredentialWorkloadRef, secretName string) error {
+func removeImagePullSecret(ctx context.Context, namespace string, workload CredentialPlanWorkload, secretName string) error {
 	kind := strings.ToLower(strings.TrimSpace(workload.Kind))
 	if (kind != "deployment" && kind != "statefulset" && kind != "daemonset") ||
 		!validKubernetesCredentialName(workload.Name) {

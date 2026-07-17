@@ -58,7 +58,7 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 		CredentialType:     CredentialTypeRegistry,
 		Use:                CredentialUseImagePull,
 		Namespace:          "kz-ops",
-		Workload:           CredentialWorkloadRef{Kind: "Deployment", Name: "doops-agent-live"},
+		Workload:           CredentialPlanWorkload{Kind: "Deployment", Name: "doops-agent-live"},
 		RegistryRepository: "team/app",
 		RegistryReference:  "latest",
 		Payload: json.RawMessage(fmt.Sprintf(
@@ -428,7 +428,7 @@ fi
 		GrantID:      grantID,
 		VersionID:    versionID,
 		Namespace:    "apps",
-		Workload:     CredentialWorkloadRef{Kind: "Deployment", Name: "app"},
+		Workload:     CredentialPlanWorkload{Kind: "Deployment", Name: "app"},
 	}); err != nil {
 		t.Fatalf("cleanup credential: %v", err)
 	}
@@ -447,7 +447,7 @@ fi
 		GrantID:      grantID,
 		VersionID:    versionID,
 		Namespace:    "apps",
-		Workload:     CredentialWorkloadRef{Kind: "Deployment", Name: "app"},
+		Workload:     CredentialPlanWorkload{Kind: "Deployment", Name: "app"},
 	}); err != nil {
 		t.Fatalf("cleanup missing Secret workload reference: %v", err)
 	}

@@ -90,10 +90,18 @@ doops -session myproject-build push \
 
 ---
 
-### CI/CD 工作区
+### 声明式 CI/CD 的例外：受控 source checkout
 
-普通 `push/pull` 只走 Gateway Git HTTP。DoOps v3 发布不再创建独立 source
-checkout 或发布 workspace；`$doops-cicd` 只根据本次任务和目标运行时事实执行。
+普通 `push/pull` 仍只走 Gateway Git HTTP。`doops cicd run` 不属于通用工作区
+同步：它读取版本化声明中的 repository/branch，将 branch 解析为一个不可变
+commit，并要求 Agent checkout HEAD、credential prepare、单次授权、reconciliation
+和最终 `workspaceCommit` 全部匹配该 commit。任一阶段发现 branch 已移动或工作区
+变脏必须阻断。
+
+| 维度 | 评价 |
+|:---|:---|
+| 结论 | 仅允许 `cicd run` 的版本化声明源 checkout；不能作为普通文件同步替代路径 |
+| 原因 | CI/CD 通过 repository、branch、immutable commit 和 CredentialRun 联合绑定；普通 clone/pull 不具备该控制面 |
 
 ---
 
@@ -103,7 +111,7 @@ checkout 或发布 workspace；`$doops-cicd` 只根据本次任务和目标运�
 graph LR
     A["doops push"] --> B["Gateway Git HTTP"]
     B --> C["固定 session 工作区"]
-    C --> D["doops exec / ask"]
+    C --> D["doops exec / cicd run"]
 ```
 
 ### 同步并构建

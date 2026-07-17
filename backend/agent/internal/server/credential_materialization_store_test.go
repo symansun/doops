@@ -58,7 +58,7 @@ func TestCredentialMaterializationInventoryKeepsEveryWorkloadContext(t *testing.
 			CredentialID: credential.ID, VersionID: version.ID, GrantID: grant.ID,
 			CredentialType: CredentialTypeRegistry, Use: CredentialUseImagePull,
 			Namespace: "apps",
-			Workload:  CredentialWorkloadRef{Kind: "Deployment", Name: workload},
+			Workload:  CredentialPlanWorkload{Kind: "Deployment", Name: workload},
 		}
 		record, err := store.RecordCredentialMaterializationIntent(request)
 		if err != nil {
@@ -101,7 +101,7 @@ func TestCredentialMaterializationCleanupUsesNewestVersionAndClosesContext(t *te
 		CredentialID: "cred_rotate", GrantID: "credgrant_rotate",
 		CredentialType: CredentialTypeRegistry, Use: CredentialUseImagePull,
 		Namespace: "apps",
-		Workload:  CredentialWorkloadRef{Kind: "Deployment", Name: "api"},
+		Workload:  CredentialPlanWorkload{Kind: "Deployment", Name: "api"},
 	}
 	old := base
 	old.VersionID = "credver_old"
@@ -141,7 +141,7 @@ func TestCredentialMaterializationInventoryPreservesUnknownOutcomeForCleanup(t *
 		CredentialID: "cred_unknown", VersionID: "credver_unknown", GrantID: "credgrant_unknown",
 		CredentialType: CredentialTypeRegistry, Use: CredentialUseImagePull,
 		Namespace: "apps",
-		Workload:  CredentialWorkloadRef{Kind: "Deployment", Name: "api"},
+		Workload:  CredentialPlanWorkload{Kind: "Deployment", Name: "api"},
 	}
 	record, err := store.RecordCredentialMaterializationIntent(request)
 	if err != nil {
@@ -185,7 +185,7 @@ func TestCredentialToolErrorCategoryAllowsOnlyStatusCodes(t *testing.T) {
 	if got := credentialToolErrorCategory("Authorization: Bearer synthetic-canary"); got != "credential_tool_failed" {
 		t.Fatalf("secret-bearing tool error was not collapsed: %q", got)
 	}
-	if got := credentialToolErrorCategory("unexpected materialization failure"); got != "credential_tool_failed" {
-		t.Fatalf("unexpected tool error category = %q", got)
+	if got := credentialToolErrorCategory("credential declaration is invalid: unsupported root kind"); got != "credential_declaration_invalid" {
+		t.Fatalf("declaration error category = %q", got)
 	}
 }

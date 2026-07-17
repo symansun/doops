@@ -240,12 +240,6 @@ func (c *doagentToolTraceCollector) structuredResult() (string, map[string]inter
 	return text, object, nil
 }
 
-func (c *doagentToolTraceCollector) finalText() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return strings.TrimSpace(c.finalMessage)
-}
-
 func (c *doagentToolTraceCollector) completed() []doagentToolTrace {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -332,15 +326,62 @@ func (trace doagentToolTrace) effectiveResultDigest() string {
 	return trace.AttestedResultDigest
 }
 
+func rejectSensitiveToolResult(value interface{}) error {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		for key, item := range typed {
+			if credentialSecretLikeKey(key) || strings.EqualFold(strings.TrimSpace(key), "passwd") {
+				return fmt.Errorf("runtime tool result contains forbidden sensitive field %q", key)
+			}
+			if err := rejectSensitiveToolResult(item); err != nil {
+				return err
+			}
+		}
+	case []interface{}:
+		for _, item := range typed {
+			if err := rejectSensitiveToolResult(item); err != nil {
+				return err
+			}
+		}
+	case string:
+		if credentialScalarContainsInlineMaterial(typed) {
+			return fmt.Errorf("runtime tool result contains forbidden sensitive scalar")
+		}
+	}
+	return nil
+}
+
+type deploymentRunContractBinding struct {
+	APIVersion      string
+	Workflow        string
+	RunID           string
+	WorkspaceCommit string
+	Mode            string
+	PrimaryTool     string
+	RequiredTools   []string
+}
+
 func publicDoagentToolResult(trace doagentToolTrace) (interface{}, error) {
 	result, err := decodeDoagentJSONValue(trace.resultJSON)
 	if err != nil {
 		return nil, err
 	}
 	if resultObject, ok := result.(map[string]interface{}); ok {
-		if _, exists := resultObject["_meta"]; exists {
+		if metadata, exists := resultObject["_meta"]; exists {
+			attestationOnly := false
+			if meta, ok := metadata.(map[string]interface{}); ok && len(meta) == 1 {
+				_, attestationOnly = meta["doops.sh/tool-attestation"].(map[string]interface{})
+			}
+			if !attestationOnly {
+				if err := rejectSensitiveToolResult(metadata); err != nil {
+					return nil, err
+				}
+			}
 			delete(resultObject, "_meta")
 		}
+	}
+	if err := rejectSensitiveToolResult(result); err != nil {
+		return nil, err
 	}
 	return result, nil
 }

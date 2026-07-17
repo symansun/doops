@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"flag"
 	"fmt"
@@ -39,7 +40,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   write       写入文件到目标服务器
   info        获取节点系统信息 (CPU/内存/磁盘)
   k8s         受限 Kubernetes 观察与运维入口
-  credential  管理 Gateway 用户凭据
+  cicd        v3 环境注册表 CI/CD 入口 (run)
+  credential  管理 Gateway 凭据元数据与版本
   session     生成并输出一个新的唯一 Session ID
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
   pull        基于 Git 拉取远端 session 工作区到本地目录
@@ -59,8 +61,10 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   -contract   输出机器可读的 CLI 契约版本
   -help       显示此帮助信息
 
-	Agent 原生 CI/CD 示例:
-	  doops -session release ask --allow-mutate --target agent-runtime --msg '$doops-cicd 部署 frontend；镜像=<image>; 原因=<reason>; 验收=<checks>; 已授权执行变更'
+	Agent 原生声明式 CI/CD 示例:
+	  # run 固定声明源 commit，经 Gateway credential prepare 后调用 doops-cicd Skill。
+	  doops -session test_ops cicd run -f deploy/environments.yaml --target agent-runtime --dry-run --set environment=test --set service=frontend
+	  doops -session test_ops cicd run -f deploy/environments.yaml --target agent-runtime --set environment=test --set service=frontend
 `)
 	}
 	flag.Parse()
@@ -335,6 +339,12 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		}
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("k8s %s", req.Payload["operation"]))
 
+	case "cicd":
+		if err := runCICDCommand(context.Background(), cmdArgs, servers, configErr, ss, *sessionName, *verbose); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "credential":
 		if err := runCredentialCommand(cmdArgs, servers, configErr, os.Stdin, os.Stdout); err != nil {
 			fmt.Printf("Error: %v\n", err)
@@ -344,7 +354,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 	case "exec", "ask", "write", "read", "info":
 		var target, cmdStr, msgStr, path, modelStr, contentStr, fileStr string
 		var subSession string
-		var background, allowMutate bool
+		var background bool
 		subFlag := flag.NewFlagSet(command, flag.ExitOnError)
 		subFlag.StringVar(&target, "target", "", "Target server name")
 		subFlag.StringVar(&subSession, "session", "", "Session ID (can also be set before subcommand)")
@@ -356,7 +366,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		case "ask":
 			subFlag.StringVar(&msgStr, "msg", "", "Instruction")
 			subFlag.StringVar(&modelStr, "model", "", "Model to use for this instruction (optional)")
-			subFlag.BoolVar(&allowMutate, "allow-mutate", false, "Authorize the natural-language task to mutate the selected target")
 		case "write":
 			subFlag.StringVar(&path, "path", "", "Destination path")
 			subFlag.StringVar(&contentStr, "content", "", "Content to write; for multi-line content prefer --file or stdin")
@@ -469,9 +478,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		case "ask":
 			toolName = "doops_agent_prompt"
 			arguments["instruction"] = msgStr
-			if allowMutate {
-				arguments["operation"] = "apply"
-			}
 			if modelStr != "" {
 				arguments["model"] = modelStr
 			}

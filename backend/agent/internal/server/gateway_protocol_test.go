@@ -173,6 +173,47 @@ func TestGatewayAgentRegistrationDoesNotRequireToken(t *testing.T) {
 	resp.Body.Close()
 }
 
+func TestCredentialPlanCapabilityRequiresExactContract(t *testing.T) {
+	valid := credentialPlanCapability()
+	if !credentialPlanCapabilityCompatible(valid) {
+		t.Fatalf("current credential plan capability rejected: %#v", valid)
+	}
+
+	for name, capability := range map[string]interface{}{
+		"legacy string": credentialPlanProtocolV2,
+		"missing source revision": map[string]interface{}{
+			"schemaVersion":            credentialPlanProtocolV2,
+			"declarationSchemaVersion": credentialPlanDeclarationV3,
+			"targetBinding":            true,
+			"sessionBinding":           true,
+			"buildDefinition":          true,
+		},
+		"wrong declaration schema": map[string]interface{}{
+			"schemaVersion":            credentialPlanProtocolV2,
+			"declarationSchemaVersion": "doops.sh/v2",
+			"sourceRevision":           true,
+			"targetBinding":            true,
+			"sessionBinding":           true,
+			"buildDefinition":          true,
+		},
+		"unknown field": map[string]interface{}{
+			"schemaVersion":            credentialPlanProtocolV2,
+			"declarationSchemaVersion": credentialPlanDeclarationV3,
+			"sourceRevision":           true,
+			"targetBinding":            true,
+			"sessionBinding":           true,
+			"buildDefinition":          true,
+			"legacyFallback":           true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if credentialPlanCapabilityCompatible(capability) {
+				t.Fatalf("incompatible credential plan capability accepted: %#v", capability)
+			}
+		})
+	}
+}
+
 func TestGatewayAgentCandidateDoesNotReplaceReadySessionBeforeInitialize(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
@@ -309,16 +350,6 @@ func TestGatewayRejectsSupersededRuntimeReconnect(t *testing.T) {
 	replacement.RuntimeID = "runtime-new"
 	if err := registry.Register(replacement); err != nil {
 		t.Fatalf("register replacement runtime: %v", err)
-	}
-	offline, err := registry.UnregisterWithState(old)
-	if err != nil {
-		t.Fatalf("unregister superseded runtime: %v", err)
-	}
-	if offline {
-		t.Fatal("superseded runtime was reported as the current target going offline")
-	}
-	if current := registry.Get("dev", "local"); current != replacement {
-		t.Fatalf("unregistering superseded runtime removed replacement: current=%p replacement=%p", current, replacement)
 	}
 
 	reconnect := newGatewayAgentSession("dev", "local", "token", "old-reconnect", nil, nil)
@@ -1328,10 +1359,8 @@ func TestGatewayRejectsDirectAgentUpgradeWithoutDispatch(t *testing.T) {
 		"jsonrpc": "2.0", "id": 3, "method": "tools/call",
 		"params": map[string]interface{}{"name": "doops_agent_upgrade", "arguments": json.RawMessage(dryRunArgs)},
 	})
-	resp = readUntilID(t, client, 3)
-	errObj, ok = resp["error"].(map[string]interface{})
-	if !ok || !strings.Contains(fmt.Sprint(errObj["message"]), directAgentUpgradeProhibited) {
-		t.Fatalf("expected dry-run self-upgrade rejection, got %#v", resp)
+	if resp := readUntilID(t, client, 3); resp["error"] != nil {
+		t.Fatalf("dry-run upgrade should remain available: %#v", resp)
 	}
 }
 
@@ -2144,7 +2173,7 @@ func TestGatewayRPCRejectsInternalCredentialToolsFromUserClients(t *testing.T) {
 
 	client := dialGatewayRPCClient(t, server.URL, token.Plaintext, "dev", "local")
 	defer client.Close()
-	for index, tool := range []string{"doops_credential_materialize", "doops_credential_cleanup"} {
+	for index, tool := range []string{"doops_credential_plan", "doops_credential_materialize", "doops_credential_cleanup"} {
 		id := float64(index + 2)
 		writeGatewayJSON(t, client, map[string]interface{}{
 			"jsonrpc": "2.0",
@@ -2936,7 +2965,7 @@ func serveFakeAgentWithRuntimeID(t *testing.T, conn *websocket.Conn, runtimeID s
 	}
 }
 
-func serveApplyGateFakeAgent(conn *websocket.Conn, _ bool) {
+func serveApplyGateFakeAgent(conn *websocket.Conn, credentialProtocol bool) {
 	for {
 		var msg map[string]interface{}
 		if err := conn.ReadJSON(&msg); err != nil {
@@ -2946,6 +2975,13 @@ func serveApplyGateFakeAgent(conn *websocket.Conn, _ bool) {
 		case "initialize":
 			result := map[string]interface{}{
 				"protocolVersion": "2024-11-05",
+			}
+			if credentialProtocol {
+				result["capabilities"] = map[string]interface{}{
+					"protocols": map[string]interface{}{
+						"credentialPlan": credentialPlanCapability(),
+					},
+				}
 			}
 			_ = conn.WriteJSON(map[string]interface{}{
 				"jsonrpc": "2.0",

@@ -1,54 +1,97 @@
 # Semantic CI/CD
 
-DoOps v3 has one user-facing release path:
+DoOps CI/CD has one user-facing execution path:
 
 ```text
-natural-language task
-  -> explicit target
-  -> explicit --allow-mutate authorization
-  -> Agent build mode
-  -> runtime tool calls
-  -> workload and health readback
+deploy/environments.yaml (doops.sh/v3 EnvironmentRegistry)
+  -> select explicit environment and service
+  -> resolve declared HTTPS repository and branch to an immutable commit
+  -> Gateway credential prepare
+  -> metadata-only CredentialRun
+  -> Gateway-bound Ask($doops-cicd)
+  -> DeploymentRun
 ```
 
-There is no declarative deployment root, generated workflow, temporary source
-snapshot, immutable commit binding, or second orchestration RPC.
+There is no v2 `DeploymentTemplate`, generated workflow, pushed-snapshot,
+direct-Agent, SSH, or manual Helm compatibility path.
 
-## Request Contract
+## Declaration
 
-The task must state:
+`doops cicd run` accepts only `deploy/environments.yaml` with
+`apiVersion: doops.sh/v3` and `kind: EnvironmentRegistry`. The registry selects
+one environment and one service document. The selected declaration chain owns
+the source repository and branch, Gateway target, build and Helm manifests,
+credential references, and health checks.
 
-- target;
-- service scope;
-- image version or digest;
-- reason;
-- acceptance checks;
-- mutation authorization.
-
-Missing fields block execution. The Agent must not infer them from directory
-names, domains, historical releases, or legacy declarations.
+Missing, mixed-version, unknown, incomplete, duplicate, path-escaping, or
+secret-bearing declarations are rejected. Public repositories and registries
+omit credential references. A private runtime registry must declare its
+Kubernetes Secret reference; the compiler turns it into an `imagePull`
+materialization bound to the selected workload. Private source checkout and
+target registry transfer are rejected until their distinct execution uses are
+defined; they are never accepted and silently ignored.
 
 ## Execution
 
-Read-only analysis uses:
-
 ```bash
-doops -session <session> ask --target <target> --msg '<task>'
+doops -session <session> cicd run \
+  -f deploy/environments.yaml \
+  -target <gateway-target> \
+  --dry-run \
+  --set environment=<environment> \
+  --set service=<service>
 ```
 
-Authorized mutation uses:
+The command requires a clean Git workspace, an explicit Gateway target and
+session, and explicit `environment` and `service` inputs. It resolves the
+declared branch with `git ls-remote` and binds execution to one immutable 40- or
+64-character commit.
 
-```bash
-doops -session <session> ask --allow-mutate --target <target> --msg '<task>'
-```
+Before Ask, Gateway credential prepare compiles the same selected declaration
+chain and returns only metadata in a `CredentialRun`. The authorization binds
+the authenticated user, target, session, manifest, source, environment,
+service, mode, workspace commit, and complete `CredentialRun` digest. It is
+consumed once after operation limits and the target lock succeed.
 
-Mutation asks require Gateway exec permission, run in a fresh temporary working
-directory, and remove that directory after the turn. They do not create or
-reuse `/root/ws` release snapshots.
+The target Agent must advertise the exact credential-plan capability:
+
+- `schemaVersion=doops.sh/credential-plan/v2`
+- `declarationSchemaVersion=doops.sh/v3`
+- `sourceRevision=true`
+- `targetBinding=true`
+- `sessionBinding=true`
+- `buildDefinition=true`
+
+Legacy string capabilities are incompatible. Before model execution, doagent
+`initialize` must advertise the exact trusted reconciliation contract:
+
+- `schemaVersion=doops.reconciliation-context/v2`
+- `callContextSchemaVersion=doops.reconciliation-call-context/v1`
+- `mcpMetaKey=doops.sh/reconciliation-context`
+- `credentialRunDigest=true`
+- `sourceWorkspaceCommit=true`
+
+Any mismatch fails with a deterministic protocol error. It is never retried
+through an older protocol.
 
 ## Result
 
-The CLI returns the Agent's actual final message. A completed mutation turn
-with no completed tool call fails as `doagent_apply_no_tool_activity`.
-Successful release text is accepted only after tool execution and explicit
-runtime readback. Secret and token contents remain redacted.
+doagent emits exactly one JSON `DeploymentRun`. Gateway rejects missing,
+Markdown-wrapped, multiple-object, source-mismatched, mode-mismatched, or
+workspace-mismatched results. Dry-run must report zero mutations. Apply is
+accepted only for the structured instruction produced by the CLI and bound to
+the prepared authorization.
+
+Trusted capability and evidence fields come from completed, attested tool calls,
+not model-authored claims. Plain text such as `completed` or `looks healthy` is
+not deployment evidence.
+
+## CLI Artifacts
+
+`scripts/build-cli.sh --all` builds every supported CLI artifact with
+deterministic Go build settings and writes
+`skills/doops-cli/bin/checksums.txt`.
+
+`scripts/install.sh` verifies the selected prebuilt binary against that
+manifest before installation. `scripts/verify-cli-artifacts.sh` rebuilds and
+byte-compares every checked-in CLI artifact.

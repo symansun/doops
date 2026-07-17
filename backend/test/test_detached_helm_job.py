@@ -25,6 +25,10 @@ def submit_args(module, candidate_digest="a"):
             "kz-ops",
             "--release",
             "doops-agent-live",
+            "--chart",
+            "/root/ws/release-test/backend/deploy/helm/doops-agent",
+            "--values",
+            "/root/ws/release-test/deploy/environments/oilan/values.yaml",
             "--image-repository",
             "docker.cnb.cool/l8ai/ai/doops.sh",
             "--image-digest",
@@ -39,6 +43,8 @@ def submit_args(module, candidate_digest="a"):
             "192.168.0.24",
             "--kubeconfig-host-path",
             "/etc/kubernetes/admin.conf",
+            "--agent-home-host-path",
+            "/var/lib/doops-agent-home",
             "--timeout",
             "10m",
         ]
@@ -51,6 +57,8 @@ def test_detached_helm_job_is_immutable_and_independent():
         run_id="release-test",
         namespace="kz-ops",
         release="doops-agent-live",
+        chart="/root/ws/release-test/backend/deploy/helm/doops-agent",
+        values="/root/ws/release-test/deploy/environments/oilan/values.yaml",
         image_repository="docker.cnb.cool/l8ai/ai/doops.sh",
         image_digest="sha256:" + "a" * 64,
         executor_image_repository="docker.cnb.cool/l8ai/ai/doops.sh",
@@ -58,6 +66,7 @@ def test_detached_helm_job_is_immutable_and_independent():
         node_selector_key="kubernetes.io/hostname",
         node_selector_value="192.168.0.24",
         kubeconfig_host_path="/etc/kubernetes/admin.conf",
+        agent_home_host_path="/var/lib/doops-agent-home",
         timeout="10m",
     )
 
@@ -70,15 +79,12 @@ def test_detached_helm_job_is_immutable_and_independent():
     assert pod["containers"][0]["image"].endswith("@sha256:" + "b" * 64)
     assert manifest["spec"]["activeDeadlineSeconds"] == 1200
     command = pod["containers"][0]["args"][0]
-    assert "helm upgrade" in command
-    assert "--install" not in command
-    assert "--reuse-values" in command
-    assert module.AGENT_CHART in command
+    assert "helm upgrade --install" in command
     assert "--atomic" in command
     assert "--wait" in command
     assert "configure_kubeconfig.py" in command
     assert "/etc/kubernetes/admin.conf" in str(pod["volumes"])
-    assert "/root/ws" not in str(manifest)
+    assert "/var/lib/doops-agent-home" in str(pod["volumes"])
     assert "token" not in str(manifest).lower()
 
 

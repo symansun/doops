@@ -83,15 +83,10 @@ func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	go session.pingLoop(h.registry, h.lease)
 
 	<-session.closed
-	offline, err := h.registry.UnregisterWithState(session)
-	if err != nil {
+	if err := h.registry.Unregister(session); err != nil {
 		log.Printf("[gateway] agent offline persistence failed: %s generation=%d: %v", session.Key, session.Generation, err)
 	}
-	if offline {
-		log.Printf("[gateway] agent offline: %s generation=%d", session.Key, session.Generation)
-	} else {
-		log.Printf("[gateway] superseded agent connection closed: %s generation=%d", session.Key, session.Generation)
-	}
+	log.Printf("[gateway] agent offline: %s generation=%d", session.Key, session.Generation)
 }
 
 func waitForInitialAgentHeartbeat(session *GatewayAgent, timeout time.Duration) bool {

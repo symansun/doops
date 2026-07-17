@@ -72,11 +72,6 @@ const (
 	CredentialUseOpaqueSecret CredentialUse = "opaqueSecret"
 )
 
-type CredentialWorkloadRef struct {
-	Kind string `json:"kind,omitempty"`
-	Name string `json:"name,omitempty"`
-}
-
 type CredentialResource struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
@@ -131,13 +126,13 @@ type CredentialBundle struct {
 }
 
 type CredentialBundleItem struct {
-	CredentialID       string                `json:"credential_id"`
-	Use                CredentialUse         `json:"use"`
-	Namespace          string                `json:"namespace"`
-	Workload           CredentialWorkloadRef `json:"workload,omitempty"`
-	RegistryRepository string                `json:"registry_repository,omitempty"`
-	RegistryReference  string                `json:"registry_reference,omitempty"`
-	RequiredKeys       []string              `json:"required_keys,omitempty"`
+	CredentialID       string                 `json:"credential_id"`
+	Use                CredentialUse          `json:"use"`
+	Namespace          string                 `json:"namespace"`
+	Workload           CredentialPlanWorkload `json:"workload,omitempty"`
+	RegistryRepository string                 `json:"registry_repository,omitempty"`
+	RegistryReference  string                 `json:"registry_reference,omitempty"`
+	RequiredKeys       []string               `json:"required_keys,omitempty"`
 }
 
 type CredentialBundleCreateRequest struct {
@@ -1095,6 +1090,26 @@ func (s *GatewayStore) ActiveCredentialGrants(credentialID string) ([]Credential
 		grants = append(grants, grant)
 	}
 	return grants, rows.Err()
+}
+
+func (s *GatewayStore) CredentialGrantsForContext(credentialID string, ref CredentialPlanReference, plan CredentialPlan) ([]CredentialGrant, error) {
+	grants, err := s.ActiveCredentialGrants(credentialID)
+	if err != nil {
+		return nil, err
+	}
+	matches := make([]CredentialGrant, 0, len(grants))
+	for _, grant := range grants {
+		if grant.Cluster == plan.Cluster && grant.Instance == plan.Instance &&
+			grant.Project == plan.Project && grant.Environment == plan.Environment &&
+			grant.Template == plan.Template && grant.Namespace == ref.Namespace &&
+			containsCredentialUse(grant.Uses, ref.Use) {
+			matches = append(matches, grant)
+		}
+	}
+	if len(matches) == 0 {
+		return nil, ErrCredentialGrantDenied
+	}
+	return matches, nil
 }
 
 func (s *GatewayStore) BeginCredentialRevocation(credentialID, actorID string) (CredentialResource, error) {

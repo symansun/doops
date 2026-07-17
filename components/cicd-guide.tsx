@@ -80,25 +80,27 @@ export function CicdGuide({ session }: { session: Session }) {
     if (provider === "curl") {
       return {
         lang: "bash",
-        code: `# target / cluster / instance 必须指向实际部署环境
+        code: `# target / cluster / instance 必须与 deploy/environments.yaml 完全一致
 export DOOPS_GATEWAY="${gw}"
 export DOOPS_API_KEY="${keyDisplay}"
 
 doops add \\
-  --name <TARGET> \\
+  --name <ENVIRONMENT_TARGET> \\
   --gateway "$DOOPS_GATEWAY" \\
   --cluster <CLUSTER> \\
   --instance <INSTANCE> \\
   --token "$DOOPS_API_KEY"
 
-doops -session "release-$(git rev-parse --short HEAD)" ask \\
-  --target <TARGET> \\
-  --msg '$doops-cicd 只读预检服务 <SERVICE>；镜像=<IMAGE_OR_DIGEST>; 原因=<REASON>; 验收=<CHECKS>'
+doops -session "release-$(git rev-parse --short HEAD)" cicd run \\
+  -f <DEPLOYMENT_TEMPLATE> \\
+  --target <ENVIRONMENT_TARGET> \\
+  --dry-run \\
+  --set releaseId="$(git rev-parse HEAD)"
 
-doops -session "release-$(git rev-parse --short HEAD)" ask \\
-  --allow-mutate \\
-  --target <TARGET> \\
-  --msg '$doops-cicd 部署服务 <SERVICE>；镜像=<IMAGE_OR_DIGEST>; 原因=<REASON>; 验收=<CHECKS>; 已授权执行变更'`,
+doops -session "release-$(git rev-parse --short HEAD)" cicd run \\
+  -f <DEPLOYMENT_TEMPLATE> \\
+  --target <ENVIRONMENT_TARGET> \\
+  --set releaseId="$(git rev-parse HEAD)"`,
       }
     }
     if (provider === "github") {
@@ -117,19 +119,16 @@ jobs:
         env:
           DOOPS_GATEWAY: ${gw}
           DOOPS_API_KEY: \${{ secrets.DOOPS_API_KEY }}
-          DOOPS_RELEASE_TASK: >-
-            $doops-cicd 部署服务 <SERVICE>；镜像=<IMAGE_OR_DIGEST>;
-            原因=<REASON>; 验收=<CHECKS>; 已授权执行变更
         run: |
-          doops add --name <TARGET> \\
+          doops add --name <ENVIRONMENT_TARGET> \\
             --gateway "$DOOPS_GATEWAY" \\
             --cluster <CLUSTER> \\
             --instance <INSTANCE> \\
             --token "$DOOPS_API_KEY"
-          doops -session "release-\${GITHUB_SHA::12}" ask \\
-            --allow-mutate \\
-            --target <TARGET> \\
-            --msg "$DOOPS_RELEASE_TASK"`,
+          doops -session "release-\${GITHUB_SHA::12}" cicd run \\
+            -f <DEPLOYMENT_TEMPLATE> \\
+            --target <ENVIRONMENT_TARGET> \\
+            --set releaseId="$GITHUB_SHA"`,
       }
     }
     return {
@@ -139,20 +138,17 @@ jobs:
   image: curlimages/curl:latest
   variables:
     DOOPS_GATEWAY: "${gw}"
-    DOOPS_RELEASE_TASK: >-
-      $doops-cicd 部署服务 <SERVICE>；镜像=<IMAGE_OR_DIGEST>;
-      原因=<REASON>; 验收=<CHECKS>; 已授权执行变更
   script:
     - |
-      doops add --name <TARGET> \\
+      doops add --name <ENVIRONMENT_TARGET> \\
         --gateway "$DOOPS_GATEWAY" \\
         --cluster <CLUSTER> \\
         --instance <INSTANCE> \\
         --token "$DOOPS_API_KEY"
-      doops -session "release-$CI_COMMIT_SHORT_SHA" ask \\
-        --allow-mutate \\
-        --target <TARGET> \\
-        --msg "$DOOPS_RELEASE_TASK"
+      doops -session "release-$CI_COMMIT_SHORT_SHA" cicd run \\
+        -f <DEPLOYMENT_TEMPLATE> \\
+        --target <ENVIRONMENT_TARGET> \\
+        --set releaseId="$CI_COMMIT_SHA"
   only:
     - main`,
     }
@@ -168,8 +164,8 @@ jobs:
         </div>
         <h1 className="text-2xl font-semibold text-balance">将 Doops 接入 CI/CD</h1>
         <p className="mt-2 text-pretty text-sm leading-relaxed text-muted-foreground">
-          流水线只调用 DoOps v3 的自然语言 Ask 入口。目标环境由显式 target 确定，
-          doops-cicd Skill 只处理任务中明确指定的服务并返回真实运行证据。
+          流水线只调用 DoOps v2 声明式入口。目标环境由显式 target 和环境注册表确定，
+          由 doops-cicd Skill 通过 Ask 执行并产出结构化运行证据。
         </p>
       </div>
 
@@ -268,7 +264,7 @@ jobs:
           3. 在流水线中调用
         </h2>
         <p className="mb-3 text-sm text-muted-foreground">
-          选择你的平台，复制下面的示例。先执行只读预检，确认现状后再授权正式变更。
+          选择你的平台，复制下面的示例。先执行 dry-run，确认计划后再授权正式变更。
         </p>
 
         {/* 平台切换 */}
@@ -291,10 +287,11 @@ jobs:
         <CodeBlock code={snippet.code} lang={snippet.lang} />
 
         <p className="mt-2 text-xs text-muted-foreground text-pretty leading-relaxed">
-          <code className="rounded bg-muted px-1">TARGET</code>、
+          <code className="rounded bg-muted px-1">ENVIRONMENT_TARGET</code>、
           <code className="rounded bg-muted px-1">CLUSTER</code> 和
-          <code className="rounded bg-muted px-1">INSTANCE</code> 必须与 Gateway 中已注册的
-          target 一致。发布任务只写本次服务、镜像和验收条件，不读取其他服务配置。
+          <code className="rounded bg-muted px-1">INSTANCE</code> 必须从仓库环境注册表原样读取；
+          <code className="rounded bg-muted px-1">DEPLOYMENT_TEMPLATE</code> 必须指向已提交的
+          DoOps workflow。不要改成 Shell、SSH 或直接 Kubernetes 命令。
         </p>
       </section>
 
@@ -305,9 +302,9 @@ jobs:
           工作原理
         </h2>
         <ol className="ml-4 list-decimal space-y-1.5 text-sm text-muted-foreground">
-          <li>CLI 传递显式 target、用户授权和本次自然语言任务。</li>
-          <li>Gateway 校验用户权限与反向隧道；变更任务使用一次性临时目录。</li>
-          <li>doagent 执行 doops-cicd Skill，并返回实际工具调用和运行时读回证据。</li>
+          <li>CLI 校验 workflow 和显式 target，同步精确代码快照后通过 Ask 调用 doagent。</li>
+          <li>Gateway 校验权限、工作区提交和 session 资源边界。</li>
+          <li>doagent 执行 doops-cicd Skill，输出 DeploymentRun 和真实模块观察结果。</li>
         </ol>
       </section>
     </div>

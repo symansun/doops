@@ -1,7 +1,6 @@
 import importlib.util
 import json
 import subprocess
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -9,72 +8,26 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = ROOT.parent
 CHART = ROOT / "deploy" / "helm" / "doops-agent"
+VALUES = REPOSITORY_ROOT / "deploy" / "environments" / "oilan" / "values.yaml"
+RELEASE_RUNNER_VALUES = (
+    REPOSITORY_ROOT
+    / "deploy"
+    / "environments"
+    / "oilan"
+    / "release-runner-values.yaml"
+)
+REGISTRY = REPOSITORY_ROOT / "deploy" / "environments.yaml"
 SETTINGS_MODULE = ROOT / "agent" / "configure_doagent_settings.py"
 KUBECONFIG_MODULE = ROOT / "agent" / "configure_kubeconfig.py"
 SANDBOX_ENTRYPOINT = ROOT / "agent" / "sandbox-entrypoint.sh"
 IMAGE_DIGEST = "sha256:" + ("b" * 64)
-TEST_VALUES = {
-    "image": {
-        "repository": "docker.cnb.cool/l8ai/ai/doops.sh",
-        "digest": IMAGE_DIGEST,
-        "pullPolicy": "Always",
-    },
-    "workload": {"name": "doops-agent-live"},
-    "modelRouting": {"policy": "single-model"},
-    "doagentSettings": {
-        "secretName": "doagent-model-settings",
-        "key": "settings.json",
-    },
-    "imagePullSecrets": [],
-    "gateway": {
-        "url": "https://doops.l8ai.cn",
-        "cluster": "doops-edu",
-        "instance": "edu-coder",
-    },
-    "nodeSelector": {"kubernetes.io/hostname": "192.168.0.24"},
-    "volumeMounts": [
-        {"name": "kube-admin", "mountPath": "/etc/kubernetes/admin.conf", "readOnly": True},
-        {"name": "kube-admin", "mountPath": "/root/.kube/config", "readOnly": True},
-        {"name": "agent-home", "mountPath": "/root"},
-        {"name": "doagent-config", "mountPath": "/opt/doagent_config", "readOnly": True},
-        {"name": "containerd-socket", "mountPath": "/run/containerd/containerd.sock"},
-        {"name": "nerdctl-bin", "mountPath": "/usr/local/bin/nerdctl", "readOnly": True},
-        {"name": "crictl-bin", "mountPath": "/usr/bin/crictl", "readOnly": True},
-    ],
-    "volumes": [
-        {
-            "name": "kube-admin",
-            "hostPath": {"path": "/etc/kubernetes/admin.conf", "type": "File"},
-        },
-        {
-            "name": "agent-home",
-            "hostPath": {
-                "path": "/var/lib/doops-agent-home",
-                "type": "DirectoryOrCreate",
-            },
-        },
-        {
-            "name": "containerd-socket",
-            "hostPath": {"path": "/run/containerd/containerd.sock", "type": "Socket"},
-        },
-        {
-            "name": "nerdctl-bin",
-            "hostPath": {"path": "/usr/bin/nerdctl", "type": "File"},
-        },
-        {
-            "name": "crictl-bin",
-            "hostPath": {"path": "/usr/bin/crictl", "type": "File"},
-        },
-    ],
-}
 
 
-def render_agent_chart_with(*overrides):
-    with tempfile.NamedTemporaryFile("w", suffix=".yaml") as values_file:
-        yaml.safe_dump(TEST_VALUES, values_file)
-        values_file.flush()
-        command = [
+def render_oilan_chart():
+    output = subprocess.run(
+        [
             "helm",
             "template",
             "doops-agent-live",
@@ -82,17 +35,50 @@ def render_agent_chart_with(*overrides):
             "--namespace",
             "kz-ops",
             "--values",
-            values_file.name,
-        ]
-        for override in overrides:
-            command.extend(["--set-string", override])
-        return subprocess.run(command, capture_output=True, text=True)
+            str(VALUES),
+            "--set-string",
+            f"image.digest={IMAGE_DIGEST}",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return [item for item in yaml.safe_load_all(output) if item][0]
 
 
-def render_agent_chart():
-    result = render_agent_chart_with()
-    result.check_returncode()
-    return [item for item in yaml.safe_load_all(result.stdout) if item][0]
+def render_oilan_chart_with(*overrides):
+    command = [
+        "helm",
+        "template",
+        "doops-agent-live",
+        str(CHART),
+        "--namespace",
+        "kz-ops",
+        "--values",
+        str(VALUES),
+    ]
+    for override in overrides:
+        command.extend(["--set-string", override])
+    return subprocess.run(command, capture_output=True, text=True)
+
+
+def render_release_runner_chart():
+    output = subprocess.run(
+        [
+            "helm",
+            "template",
+            "doops-release-runner",
+            str(CHART),
+            "--namespace",
+            "kz-ops",
+            "--values",
+            str(RELEASE_RUNNER_VALUES),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return [item for item in yaml.safe_load_all(output) if item][0]
 
 
 def env_value(container, name: str):
@@ -121,8 +107,8 @@ def load_kubeconfig_module():
     return module
 
 
-def test_agent_chart_model_settings_are_secret_backed():
-    deployment = render_agent_chart()
+def test_oilan_agent_model_settings_are_secret_backed():
+    deployment = render_oilan_chart()
     container = deployment["spec"]["template"]["spec"]["containers"][0]
     volumes = deployment["spec"]["template"]["spec"]["volumes"]
     settings = next(item for item in volumes if item["name"] == "doagent-config")
@@ -176,11 +162,18 @@ def test_agent_chart_model_settings_are_secret_backed():
         "items": [{"key": "settings.json", "path": "settings.json"}],
     }
 
-    assert TEST_VALUES["modelRouting"] == {"policy": "single-model"}
-    assert TEST_VALUES["doagentSettings"] == {
+    values = yaml.safe_load(VALUES.read_text(encoding="utf-8"))
+    assert values["modelRouting"] == {"policy": "single-model"}
+    assert values["doagentSettings"] == {
         "secretName": "doagent-model-settings",
         "key": "settings.json",
     }
+
+    registry = yaml.safe_load(REGISTRY.read_text(encoding="utf-8"))
+    environment = registry["environments"]["oilan"]
+    assert "modelRouting" not in environment
+    assert "modelSettings" not in environment
+    assert "extensions" not in environment
     host_paths = {
         item["name"]: item["hostPath"]["path"]
         for item in volumes
@@ -191,6 +184,36 @@ def test_agent_chart_model_settings_are_secret_backed():
     assert host_paths["containerd-socket"] == "/run/containerd/containerd.sock"
     assert host_paths["nerdctl-bin"] == "/usr/bin/nerdctl"
     assert host_paths["crictl-bin"] == "/usr/bin/crictl"
+
+
+def test_oilan_release_runner_isolated_from_managed_agent():
+    deployment = render_release_runner_chart()
+    pod_spec = deployment["spec"]["template"]["spec"]
+    container = pod_spec["containers"][0]
+    volumes = {
+        item["name"]: item["hostPath"]["path"]
+        for item in pod_spec["volumes"]
+        if "hostPath" in item
+    }
+    registry = yaml.safe_load(REGISTRY.read_text(encoding="utf-8"))
+    target = registry["environments"]["oilan"]["target"]
+
+    assert deployment["metadata"]["name"] == "doops-release-runner"
+    assert deployment["spec"]["selector"]["matchLabels"] == {
+        "app": "doops-release-runner"
+    }
+    assert deployment["spec"]["template"]["metadata"]["labels"] == {
+        "app": "doops-release-runner"
+    }
+    assert env_value(container, "DOOPS_GATEWAY_CLUSTER")["value"] == "doops-edu"
+    assert env_value(container, "DOOPS_GATEWAY_INSTANCE")["value"] == "release-runner"
+    assert volumes["agent-home"] == "/var/lib/doops-release-runner-home"
+    assert target == {
+        "name": "gw-edu-release-runner",
+        "cluster": "doops-edu",
+        "instance": "release-runner",
+        "session": "doops-oilan-release",
+    }
 
 
 def test_runtime_kubeconfig_uses_in_cluster_api_without_changing_admin_identity(
@@ -248,7 +271,7 @@ def test_runtime_kubeconfig_uses_in_cluster_api_without_changing_admin_identity(
     assert destination.stat().st_mode & 0o777 == 0o600
 
 
-def test_agent_chart_rejects_invalid_image_references():
+def test_oilan_agent_chart_rejects_invalid_image_references():
     invalid_overrides = (
         ("image.digest=latest",),
         (f"image.digest={IMAGE_DIGEST}", "image.repository="),
@@ -256,7 +279,7 @@ def test_agent_chart_rejects_invalid_image_references():
     )
 
     for overrides in invalid_overrides:
-        result = render_agent_chart_with(*overrides)
+        result = render_oilan_chart_with(*overrides)
         assert result.returncode != 0, result.stdout
 
 

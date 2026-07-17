@@ -156,8 +156,9 @@ func (gw *Gateway) ServeWebSocketConnWithReady(conn *websocket.Conn, remoteAddr 
 	gw.serveWebSocketConn(conn, remoteAddr, onReady, false)
 }
 
-// ServeGatewayWebSocketConnWithReady serves a reverse tunnel that the Gateway
-// has already authorized.
+// ServeGatewayWebSocketConnWithReady serves the reverse tunnel after Gateway
+// authorization. Public direct-Agent WebSocket connections must use the
+// untrusted entry points above.
 func (gw *Gateway) ServeGatewayWebSocketConnWithReady(conn *websocket.Conn, remoteAddr string, onReady func()) {
 	gw.serveWebSocketConn(conn, remoteAddr, onReady, true)
 }
@@ -277,6 +278,9 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 					"runtimeId": agentProcessRuntimeID,
 					"capabilities": map[string]interface{}{
 						"tools": map[string]interface{}{},
+						"protocols": map[string]interface{}{
+							"credentialPlan": credentialPlanCapability(),
+						},
 					},
 				},
 			})
@@ -796,11 +800,11 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		operation := strings.ToLower(strings.TrimSpace(args.Operation))
 		if operation == "apply" {
 			if !gatewayAuthorized {
-				writeJSON(buildErrorResponse(reqID, -32602, "apply requires a gateway-authorized reverse tunnel"))
+				writeJSON(buildErrorResponse(reqID, -32602, "credential apply requires a gateway-authorized reverse tunnel"))
 				return
 			}
-			if strings.TrimSpace(args.Instruction) == "" {
-				writeJSON(buildErrorResponse(reqID, -32602, "apply instruction must not be empty"))
+			if err := validateDoagentApplyInstruction(args); err != nil {
+				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
 				return
 			}
 		}
@@ -848,11 +852,18 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			args.ResponseFormat,
 			agentPromptExecutionContext{
 				NativeMode: nativeMode,
-				Mutating:   operation == "apply",
 			},
 			pushProgress,
 			writeJSON,
 		)
+
+	case "doops_credential_plan":
+		result, err := handleCredentialPlanTool(argBytes)
+		if err != nil {
+			writeJSON(buildToolErrorResponse(reqID, err.Error()))
+		} else {
+			writeJSON(buildSuccessResponse(reqID, result))
+		}
 
 	case "doops_credential_materialize":
 		result, err := handleCredentialMaterializeTool(ctx, argBytes)
@@ -955,9 +966,122 @@ func doagentModeForPrompt(operation, executionMode string) (string, error) {
 	}
 }
 
+func validateDoagentApplyInstruction(prompt api.AgentPromptParams) error {
+	_, err := validatedDoagentApplyInstruction(prompt)
+	return err
+}
+
+func validatedDoagentApplyInstruction(prompt api.AgentPromptParams) (map[string]interface{}, error) {
+	var envelope struct {
+		Task            string `json:"task"`
+		Skill           string `json:"skill"`
+		ExecutionMode   string `json:"executionMode"`
+		ManifestPath    string `json:"manifestPath"`
+		WorkspaceCommit string `json:"workspaceCommit"`
+		Source          struct {
+			Repository string `json:"repository"`
+			Branch     string `json:"branch"`
+		} `json:"source"`
+		Inputs        map[string]string `json:"inputs"`
+		CredentialRun CredentialRun     `json:"credentialRun"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(prompt.Instruction))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&envelope); err != nil {
+		return nil, fmt.Errorf("apply requires a structured doops-cicd instruction")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, fmt.Errorf("apply requires a structured doops-cicd instruction")
+	}
+	run := envelope.CredentialRun
+	if envelope.Task != "execute-doops-cicd" ||
+		envelope.Skill != "$doops-cicd" ||
+		envelope.ExecutionMode != "apply" ||
+		envelope.ManifestPath != "deploy/environments.yaml" ||
+		!validCredentialWorkspaceCommit(envelope.WorkspaceCommit) ||
+		strings.TrimSpace(prompt.WorkspaceCommit) != envelope.WorkspaceCommit ||
+		strings.TrimSpace(envelope.Source.Repository) == "" ||
+		strings.TrimSpace(envelope.Source.Branch) == "" ||
+		run.APIVersion != "doops.sh/v2" ||
+		run.Kind != "CredentialRun" ||
+		strings.TrimSpace(run.ID) == "" ||
+		run.Mode != "apply" ||
+		strings.TrimSpace(run.Cluster) == "" ||
+		strings.TrimSpace(run.Instance) == "" ||
+		strings.TrimSpace(run.Target) == "" ||
+		run.Session != strings.TrimSpace(prompt.SessionID) ||
+		run.SourceRevision != envelope.WorkspaceCommit ||
+		run.CreatedAt.IsZero() {
+		return nil, fmt.Errorf("apply is only supported for an explicit doops-cicd apply instruction")
+	}
+	if err := validateCredentialPlanSourceRepository(envelope.Source.Repository); err != nil {
+		return nil, fmt.Errorf("apply is only supported for an explicit doops-cicd apply instruction")
+	}
+	for key, value := range envelope.Inputs {
+		if credentialSecretLikeKey(key) || credentialScalarContainsInlineMaterial(value) {
+			return nil, fmt.Errorf("sensitive workflow input is forbidden; use credentialRef")
+		}
+	}
+	for _, materialization := range run.Materializations {
+		if err := validateCredentialMaterializationMetadata(materialization); err != nil {
+			return nil, err
+		}
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, fmt.Errorf("invalid doops-cicd credential binding")
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		return nil, fmt.Errorf("invalid doops-cicd credential binding")
+	}
+	return result, nil
+}
+
 type agentPromptExecutionContext struct {
 	NativeMode string
-	Mutating   bool
+}
+
+const trustedReconciliationContextProtocolV2 = "doops.reconciliation-context/v2"
+
+func validateDoagentCICDCapabilities(response map[string]interface{}) error {
+	result, ok := response["result"].(map[string]interface{})
+	if !ok {
+		return errors.New("doagent initialize returned no result")
+	}
+	agentCapabilities, ok := result["agentCapabilities"].(map[string]interface{})
+	if !ok {
+		return errors.New("doagent capabilities are missing")
+	}
+	capability, ok := agentCapabilities["trustedReconciliationContext"].(map[string]interface{})
+	if !ok ||
+		capability["schemaVersion"] != trustedReconciliationContextProtocolV2 ||
+		capability["callContextSchemaVersion"] != "doops.reconciliation-call-context/v1" ||
+		capability["mcpMetaKey"] != "doops.sh/reconciliation-context" ||
+		capability["credentialRunDigest"] != true ||
+		capability["sourceWorkspaceCommit"] != true {
+		return errors.New("doagent trusted reconciliation capability is incompatible")
+	}
+	return nil
+}
+
+func requireDoagentCICDCapabilities(baseURL, instruction, sessionID string) error {
+	var marker struct {
+		Task string `json:"task"`
+	}
+	if json.Unmarshal([]byte(instruction), &marker) != nil || marker.Task != "execute-doops-cicd" {
+		return nil
+	}
+	response, err := doagentRPC(baseURL, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      "cicd-capability-" + sessionID,
+		"method":  "initialize",
+		"params":  map[string]interface{}{},
+	})
+	if err != nil {
+		return err
+	}
+	return validateDoagentCICDCapabilities(response)
 }
 
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
@@ -973,10 +1097,15 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		writeJSON(buildErrorResponse(reqID, -32603, "doagent_unavailable"))
 		return
 	}
+	if err := requireDoagentCICDCapabilities(doagentURL, instr, doopsSessionID); err != nil {
+		writeJSON(buildErrorResponse(reqID, -32603, "doagent_protocol_incompatible"))
+		return
+	}
+
 	// Machine-result prompts use a fresh doagent session so their tool trace
 	// catalog and turn_finished boundary cannot include a previous turn.
 	var entry *sessionEntry
-	if responseFormat != "json" && !execution.Mutating {
+	if responseFormat != "json" {
 		gw.sessionMapMu.RLock()
 		entry = gw.sessionMap[doopsSessionID]
 		gw.sessionMapMu.RUnlock()
@@ -996,17 +1125,6 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		if responseFormat == "json" {
 			requestedSessionID = fmt.Sprintf("%s-json-%d", doopsSessionID, time.Now().UnixNano())
 		}
-		sessionCWD := "/root/ws/" + doopsSessionID
-		if execution.Mutating {
-			var err error
-			sessionCWD, err = os.MkdirTemp("", "doops-apply-")
-			if err != nil {
-				writeJSON(buildErrorResponse(reqID, -32603, "doagent_temporary_workspace_failed"))
-				return
-			}
-			defer os.RemoveAll(sessionCWD)
-			requestedSessionID = fmt.Sprintf("%s-apply-%d", doopsSessionID, time.Now().UnixNano())
-		}
 		var systemPrompt string
 		sysPromptPaths := []string{"/app/skills/system_prompt.md", "/app/self-docs/agent/skills/system_prompt.md"}
 		for _, sp := range sysPromptPaths {
@@ -1024,7 +1142,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			"params": map[string]interface{}{
 				"sessionId":    requestedSessionID,
 				"systemPrompt": systemPrompt,
-				"cwd":          sessionCWD,
+				"cwd":          "/root/ws/" + doopsSessionID,
 			},
 		})
 		if err != nil {
@@ -1042,7 +1160,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			return
 		}
 
-		if responseFormat != "json" && !execution.Mutating {
+		if responseFormat != "json" {
 			gw.sessionMapMu.Lock()
 			gw.sessionMap[doopsSessionID] = &sessionEntry{
 				doagentSessionID: targetSessionID,
@@ -1112,9 +1230,6 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		writeJSON(buildErrorResponse(reqID, -32603, "doagent_sse_unavailable"))
 		return
 	}
-	progressCtx, cancelProgress := context.WithCancel(ctx)
-	defer cancelProgress()
-	go doagentProgressHeartbeat(progressCtx, 15*time.Second, pushProgress)
 
 	// session/prompt 只返回本轮 turnId；终态仍以同 turn 的 SSE turn_finished 为准。
 	promptParams := map[string]interface{}{"sessionId": targetSessionID, "prompt": instr}
@@ -1164,19 +1279,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		return
 	}
 
-	resultText := toolTraces.finalText()
-	if execution.Mutating && len(toolTraces.completed()) == 0 {
-		if resultText == "" {
-			resultText = "agent returned without any completed tool call"
-		}
-		writeJSON(buildToolErrorResponse(reqID, "doagent_apply_no_tool_activity: "+resultText))
-		return
-	}
-	if resultText == "" {
-		writeJSON(buildToolErrorResponse(reqID, "doagent_final_result_missing"))
-		return
-	}
-	writeJSON(buildSuccessResponse(reqID, resultText))
+	writeJSON(buildSuccessResponse(reqID, "Operation complete."))
 }
 
 func (gw *Gateway) handleAgentMetadataWS(ctx context.Context, doopsSessionID string) (string, error) {
@@ -1967,17 +2070,6 @@ func doagentSSEIdleTimeout() time.Duration {
 	return 5 * time.Minute
 }
 
-var inlineSecretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)\bgh[pousr]_[A-Za-z0-9]{20,255}\b`),
-	regexp.MustCompile(`(?i)\bgithub_pat_[A-Za-z0-9_]{20,255}\b`),
-	regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{20,255}\b`),
-	regexp.MustCompile(`\b(?:AKIA|ASIA)[A-Z0-9]{16}\b`),
-	regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`),
-	regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,255}\b`),
-	regexp.MustCompile(`\b(?:sk|rk)_live_[A-Za-z0-9]{16,255}\b`),
-	regexp.MustCompile(`\bnpm_[A-Za-z0-9]{36,255}\b`),
-}
-
 func sanitizeSecretText(s string) string {
 	if s == "" {
 		return ""
@@ -1996,7 +2088,7 @@ func sanitizeSecretText(s string) string {
 	for _, replacer := range replacers[1:] {
 		s = replacer.ReplaceAllString(s, "${1}...REDACTED")
 	}
-	for _, pattern := range inlineSecretPatterns {
+	for _, pattern := range credentialInlineMaterialPatterns {
 		s = pattern.ReplaceAllString(s, "...REDACTED")
 	}
 	if len(s) > 1200 {
@@ -2018,7 +2110,7 @@ func sanitizeDoagentValue(value interface{}) interface{} {
 	case map[string]interface{}:
 		sanitized := make(map[string]interface{}, len(typed))
 		for key, item := range typed {
-			if secretLikeKey(key) || strings.EqualFold(strings.TrimSpace(key), "passwd") {
+			if credentialSecretLikeKey(key) || strings.EqualFold(strings.TrimSpace(key), "passwd") {
 				sanitized[key] = "...REDACTED"
 			} else {
 				sanitized[key] = sanitizeDoagentValue(item)
@@ -2028,16 +2120,6 @@ func sanitizeDoagentValue(value interface{}) interface{} {
 	default:
 		return value
 	}
-}
-
-func secretLikeKey(value string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(value))
-	for _, part := range []string{"token", "password", "secret", "credential", "api_key", "apikey", "private_key"} {
-		if strings.Contains(normalized, part) {
-			return true
-		}
-	}
-	return false
 }
 
 func sanitizeDoagentSessionUpdate(update map[string]interface{}) map[string]interface{} {
@@ -2121,27 +2203,6 @@ func slowProgressHeartbeat(doneCh chan struct{}, pushProgress notificationSender
 		case <-ticker.C:
 			elapsed += 5
 			pushProgress(rawNotification(fmt.Sprintf("\r\033[K[agent] ⏳ 命令后台执行中... (耗时 %ds)", elapsed)))
-		}
-	}
-}
-
-func doagentProgressHeartbeat(ctx context.Context, interval time.Duration, pushProgress notificationSender) {
-	if interval <= 0 {
-		return
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	elapsed := time.Duration(0)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			elapsed += interval
-			pushProgress(rawNotification(fmt.Sprintf(
-				"\r\033[K[agent] doagent task is still running (elapsed %s)",
-				elapsed.Round(time.Second),
-			)))
 		}
 	}
 }
