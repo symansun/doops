@@ -80,7 +80,7 @@ export function CicdGuide({ session }: { session: Session }) {
     if (provider === "curl") {
       return {
         lang: "bash",
-        code: `# target / cluster / instance 必须与 deploy/environments.yaml 完全一致
+        code: `# target 必须显式指定，发布任务必须说明服务、镜像、原因和验收条件
 export DOOPS_GATEWAY="${gw}"
 export DOOPS_API_KEY="${keyDisplay}"
 
@@ -91,16 +91,13 @@ doops add \\
   --instance <INSTANCE> \\
   --token "$DOOPS_API_KEY"
 
-doops -session "release-$(git rev-parse --short HEAD)" cicd run \\
-  -f <DEPLOYMENT_TEMPLATE> \\
+doops -session "release-$(git rev-parse --short HEAD)" ask \\
   --target <ENVIRONMENT_TARGET> \\
-  --dry-run \\
-  --set releaseId="$(git rev-parse HEAD)"
+  --msg '$doops-cicd 只读检查服务=<SERVICE>；镜像=<IMAGE>；原因=<REASON>；验收=<CHECKS>'
 
-doops -session "release-$(git rev-parse --short HEAD)" cicd run \\
-  -f <DEPLOYMENT_TEMPLATE> \\
+doops -session "release-$(git rev-parse --short HEAD)" ask \\
   --target <ENVIRONMENT_TARGET> \\
-  --set releaseId="$(git rev-parse HEAD)"`,
+  --msg '$doops-cicd 部署服务=<SERVICE>；镜像=<IMAGE>；原因=<REASON>；验收=<CHECKS>；已授权执行变更'`,
       }
     }
     if (provider === "github") {
@@ -125,10 +122,9 @@ jobs:
             --cluster <CLUSTER> \\
             --instance <INSTANCE> \\
             --token "$DOOPS_API_KEY"
-          doops -session "release-\${GITHUB_SHA::12}" cicd run \\
-            -f <DEPLOYMENT_TEMPLATE> \\
+          doops -session "release-\${GITHUB_SHA::12}" ask \\
             --target <ENVIRONMENT_TARGET> \\
-            --set releaseId="$GITHUB_SHA"`,
+            --msg '$doops-cicd 部署服务=<SERVICE>；镜像=<IMAGE>；原因=<REASON>；验收=<CHECKS>；已授权执行变更'`,
       }
     }
     return {
@@ -145,10 +141,9 @@ jobs:
         --cluster <CLUSTER> \\
         --instance <INSTANCE> \\
         --token "$DOOPS_API_KEY"
-      doops -session "release-$CI_COMMIT_SHORT_SHA" cicd run \\
-        -f <DEPLOYMENT_TEMPLATE> \\
+      doops -session "release-$CI_COMMIT_SHORT_SHA" ask \\
         --target <ENVIRONMENT_TARGET> \\
-        --set releaseId="$CI_COMMIT_SHA"
+        --msg '$doops-cicd 部署服务=<SERVICE>；镜像=<IMAGE>；原因=<REASON>；验收=<CHECKS>；已授权执行变更'
   only:
     - main`,
     }
@@ -164,8 +159,8 @@ jobs:
         </div>
         <h1 className="text-2xl font-semibold text-balance">将 Doops 接入 CI/CD</h1>
         <p className="mt-2 text-pretty text-sm leading-relaxed text-muted-foreground">
-          流水线只调用 DoOps v2 声明式入口。目标环境由显式 target 和环境注册表确定，
-          由 doops-cicd Skill 通过 Ask 执行并产出结构化运行证据。
+          流水线通过 Ask 提交明确的发布任务。目标、服务、镜像、原因和验收条件必须显式给出，
+          由 doops-cicd Skill 使用本轮运行证据完成验证。
         </p>
       </div>
 

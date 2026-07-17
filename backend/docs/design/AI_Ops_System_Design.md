@@ -84,5 +84,5 @@ Skill 描述“要达到什么状态、哪些事实不能改变、什么证据�
 - `/root/ws/<session>`：会话工作区；
 - `/tmp/doops-doagent/settings.json`：由只读 Secret 物化出的模型和 provider 运行时配置。
 
-发布本身遵循 GitOps 和 Semantic CI/CD：配置进入仓库，目标由环境注册表解析，最终
-状态由外部证据验证。
+发布通过明确的自然语言任务驱动：目标、服务、镜像、原因、验收和授权由任务提供，
+最终状态由本轮外部证据验证。
