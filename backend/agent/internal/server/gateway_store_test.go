@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestGatewayStoreTokenKindIsolationAndPermissions(t *testing.T) {
+func TestGatewayStoreUserTokenPermissions(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -26,29 +26,13 @@ func TestGatewayStoreTokenKindIsolationAndPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user token: %v", err)
 	}
-	agentToken, err := store.CreateToken(CreateTokenRequest{
-		Kind:     TokenKindAgent,
+	if _, err := store.CreateToken(CreateTokenRequest{
+		Kind:     TokenKind("agent"),
 		Name:     "dev local agent",
 		Cluster:  "dev",
 		Instance: "local",
-	})
-	if err != nil {
-		t.Fatalf("create agent token: %v", err)
-	}
-
-	agentAuth, err := store.VerifyAgentToken(agentToken.Plaintext)
-	if err != nil {
-		t.Fatalf("verify agent token: %v", err)
-	}
-	if agentAuth.Cluster != "dev" || agentAuth.Instance != "local" {
-		t.Fatalf("agent token scope mismatch: %#v", agentAuth)
-	}
-
-	if _, err := store.VerifyUserToken(agentToken.Plaintext); err == nil {
-		t.Fatal("agent token must not authorize user operations")
-	}
-	if _, err := store.VerifyAgentToken(userToken.Plaintext); err == nil {
-		t.Fatal("user token must not authorize agent registration")
+	}); err == nil {
+		t.Fatal("agent registration tokens must not be issued")
 	}
 
 	if err := store.GrantUser(user.ID, ScopeGrant{

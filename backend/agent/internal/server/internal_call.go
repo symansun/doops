@@ -32,6 +32,15 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 	if action == "" {
 		return "", fmt.Errorf("unknown doops action for tool: %s", tool)
 	}
+	if action == ActionAgentUpgrade {
+		var upgrade agentUpgradeParams
+		if err := json.Unmarshal(rawArgs, &upgrade); err != nil {
+			return "", fmt.Errorf("invalid agent upgrade arguments: %w", err)
+		}
+		if !upgrade.DryRun {
+			return "", fmt.Errorf("%s", directAgentUpgradeProhibited)
+		}
+	}
 	resourceKey := resourceKeyForTool(action, tool, rawArgs, cluster, instance)
 	if err := agent.acquireForAction(ctx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout); err != nil {
 		return "", err

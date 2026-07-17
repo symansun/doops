@@ -44,7 +44,7 @@ flowchart LR
 - 边缘执行端：`agent/` 构建 `doops-agent`，负责目标机器上的 exec、push/pull、文件和 AI 任务
 - 运行安全边界：`doops-agent` 默认只启动 `doops-agent`、`do-agent`、`buildkitd`；默认不启动 SSH，不启动 WebIDE
 - 连接方式：CLI/skill 访问 gateway `42222`，gateway 通过已建立的 agent WebSocket 进入内网 agent
-- 鉴权方式：用户连接 gateway 使用 gateway user token；agent 注册 gateway 使用绑定 `cluster/instance` 的 registration token
+- 鉴权方式：用户连接 gateway 使用 gateway user token；agent 按 `cluster/instance` 注册，不使用 registration token
 - 代码同步：gateway 使用 Git HTTP；gateway 只通过已建立的 agent WebSocket 反向隧道透传 Git 请求，不再使用 tar 分块上传作为 `push/pull` 路径
 - 镜像构建：统一使用 `buildctl + buildkitd`
 
@@ -89,7 +89,7 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 - 网关二进制：`/app/doops-agent`
 - doagent AI 内核：`/usr/local/bin/do-agent`
 - 构建闸门：基础镜像和最终镜像必须确认 `/usr/local/bin/do-agent --version` 与声明的 `DO_AGENT_VERSION` 完全一致；BuildKit 必须从固定版本和 OCI manifest digest 的官方镜像复制；基础镜像还必须执行 `kubectl version --client=true`、`buildctl --version`、`python3 -c 'import yaml'`、`helm version --short`
-- 发布原则：候选镜像构建必须先校验 `doops.sh/base-light:<release>`，再构建 `doops.sh:<release>`；app 镜像 push 前必须校验 base label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --version` 与声明版本一致、`buildctl --version`、Python/PyYAML 与 Helm。环境部署仍由 `backend/deploy/workflows/` 下的 DoOps `DeploymentTemplate` 完成。
+- 发布原则：候选镜像构建必须先校验 `doops.sh/base-light:<release>`，再构建 `doops.sh:<release>`；app 镜像 push 前必须校验 base label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --version` 与声明版本一致、`buildctl --version`、Python/PyYAML 与 Helm。Agent 镜像更新必须由集群外 release runner 或 GitOps controller 执行。
 
 协议与端点：
 
@@ -256,10 +256,9 @@ Skill 会随安装同步到项目目录。标准 target 的配置必须有 `gate
 
 ### 2. 通过 gateway 添加内网集群目标
 
-gateway 由管理员维护用户、user token、agent registration token 和授权。
-agent 部署声明绑定的 `cluster/instance`，并从运行时 Secret 读取对应的
-registration token；业务侧
-CLI 配置只消费管理员发放的 user token，不直接维护 gateway 数据库。
+gateway 由管理员维护用户、user token 和授权。Agent 部署只声明
+`cluster/instance` 并主动建立反向连接，不读取或发送 registration token。
+业务侧 CLI 配置只消费管理员发放的 user token，不直接维护 gateway 数据库。
 
 gateway 支持用户名密码登录，先换取 user token 再用 token 操作：
 
@@ -270,7 +269,6 @@ doops login --target prod-master --gateway https://gateway.example.com --usernam
 内网 agent 主动连接公网 gateway：
 
 ```bash
-export DOOPS_GATEWAY_AGENT_TOKEN_PATH=/run/secrets/doops/gateway-agent-token
 doops-agent \
   -gateway-url https://gateway.example.com \
   -cluster prod \
@@ -354,7 +352,6 @@ docker run -d --name doops-agent \
   -v /root/.kube:/root/.kube:ro \
   -v /etc/kubernetes:/etc/kubernetes:ro \
   -v /path/to/doagent-model-settings.json:/opt/doagent_config/settings.json:ro \
-  -v /path/to/gateway-agent-token:/run/secrets/doops/gateway-agent-token:ro \
   docker.cnb.cool/l8ai/ai/doops.sh:v1.1 \
   -port 42222 \
   -gateway-url https://gateway.example.com \
@@ -384,7 +381,7 @@ doops install \
   --agent-token '<OPTIONAL_AGENT_TOKEN>'
 ```
 
-`--agent-token` 只服务于遗留裸进程的本机 `/ws` 保护，不是 gateway 注册凭据。自举完成后仍然要从运行时 Secret 提供 `DOOPS_GATEWAY_AGENT_TOKEN_PATH`，再用 `-gateway-url ... -cluster ... -instance ...` 接入 gateway，并在客户端配置 gateway target。
+`--agent-token` 只服务于遗留裸进程的本机 `/ws` 保护，不是 gateway 注册凭据。反向隧道只需要 `-gateway-url ... -cluster ... -instance ...`。
 
 注意：`doops install` 当前是 SSH bootstrap/兼容入口，可能把 agent 作为裸二进制或容器拉起，取决于目标机器运行时能力和参数。生产标准化建议优先使用 **方式 A K8s/DaemonSet** 或 **方式 B 容器模式**。
 
@@ -399,9 +396,11 @@ doops install \
 
 ### 方式 D：维护者发布 `doops-agent`
 
-唯一部署入口是版本化 DoOps `DeploymentTemplate`。以 Oilan 为例，提交已推送到 `main` 后，CNB 构建并推送以完整 commit SHA 为标签的不可变候选镜像；随后使用同一完整 commit SHA 作为 `releaseId` 执行 `backend/deploy/workflows/oilan-agent-bootstrap.yaml`。控制面必须将该候选解析为 registry digest，并以 `repository@digest` 更新 Deployment，随后等待 Helm release 与 Kubernetes rollout 完成。CNB 不直接操作环境或触发部署。
+提交推送到 `main` 后，CNB 构建不可变候选镜像。集群外 release runner 或
+GitOps controller 将候选解析为 registry digest，以 `repository@digest` 更新
+Deployment，并等待新 Pod 完成 Gateway 注册和首次心跳。旧 Pod 在此之前保持在线。
 
-`doops upgrade` 不是生产发布入口。`agent:upgrade` 仅允许显式授予的高权限维护场景，不能由普通 scope grant 自动获得，也不能替代 GitOps Workflow。
+`doops upgrade` 只提供 `--dry-run` 预演，不执行 Agent 自升级。
 
 ## 常用命令
 
@@ -463,8 +462,8 @@ ls -lh skills/doops-cli/bin/
 
 - `doops` 日常连接不依赖 SSH。
 - `token` 在标准 target 配置里只表示 gateway user token。
-- agent 注册必须使用绑定 `cluster/instance` 的 registration token，并从 `DOOPS_GATEWAY_AGENT_TOKEN_PATH` 指向的运行时 Secret 读取；该 token 不写入标准 target 配置。
-- 遗留本机 `/ws` token 只用于直连保护，不得复用为 gateway registration token。
+- agent 注册只使用声明的 `cluster/instance`，不签发、不读取、不发送 registration token。
+- 遗留本机 `/ws` token 只用于直连保护。
 - `doops-agent token` 只用于遗留直连或本机 `/ws` 保护。
 - `ssh_password` 只保留为 SSH bootstrap 参数。
 - `bash` 子命令仍是遗留 SSH 交互入口；推荐使用 `doops exec` 和 `doops ask`。

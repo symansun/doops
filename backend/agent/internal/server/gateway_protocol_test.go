@@ -44,15 +44,6 @@ func TestGatewayHTTPListsTargetsForGrantedUserToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user token: %v", err)
 	}
-	agentToken, err := store.CreateToken(CreateTokenRequest{
-		Kind:     TokenKindAgent,
-		Name:     "agent",
-		Cluster:  "dev",
-		Instance: "local",
-	})
-	if err != nil {
-		t.Fatalf("create agent token: %v", err)
-	}
 	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionTargetsList}}); err != nil {
 		t.Fatalf("grant targets list: %v", err)
 	}
@@ -64,7 +55,7 @@ func TestGatewayHTTPListsTargetsForGrantedUserToken(t *testing.T) {
 	defer ts.Close()
 
 	agentWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev&instance=local"
-	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer " + agentToken.Plaintext}})
+	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer stale-registration-token"}})
 	if err != nil {
 		t.Fatalf("dial agent websocket: %v", err)
 	}
@@ -97,13 +88,13 @@ func TestGatewayHTTPListsTargetsForGrantedUserToken(t *testing.T) {
 	resp.Body.Close()
 
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/targets", nil)
-	req.Header.Set("Authorization", "Bearer "+agentToken.Plaintext)
+	req.Header.Set("Authorization", "Bearer stale-registration-token")
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("get targets with agent token: %v", err)
 	}
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("agent token must not list targets, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("stale registration token must not authorize user calls, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
 
@@ -133,7 +124,9 @@ func TestGatewayAgentRegistrationDoesNotRequireToken(t *testing.T) {
 	defer ts.Close()
 
 	agentWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev&instance=local"
-	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, nil)
+	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, http.Header{
+		"Authorization": []string{"Bearer ignored-registration-token"},
+	})
 	if err != nil {
 		t.Fatalf("agent registration without token should connect: %v", err)
 	}
@@ -188,16 +181,6 @@ func TestGatewayAgentCandidateDoesNotReplaceReadySessionBeforeInitialize(t *test
 		t.Fatalf("open store: %v", err)
 	}
 	defer store.Close()
-	agentToken, err := store.CreateToken(CreateTokenRequest{
-		Kind:     TokenKindAgent,
-		Name:     "agent",
-		Cluster:  "dev",
-		Instance: "local",
-	})
-	if err != nil {
-		t.Fatalf("create agent token: %v", err)
-	}
-
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
@@ -205,8 +188,7 @@ func TestGatewayAgentCandidateDoesNotReplaceReadySessionBeforeInitialize(t *test
 	defer ts.Close()
 
 	agentWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev&instance=local"
-	headers := http.Header{"Authorization": []string{"Bearer " + agentToken.Plaintext}}
-	readyConn, _, err := websocket.DefaultDialer.Dial(agentWS, headers)
+	readyConn, _, err := websocket.DefaultDialer.Dial(agentWS, nil)
 	if err != nil {
 		t.Fatalf("dial ready agent: %v", err)
 	}
@@ -219,7 +201,7 @@ func TestGatewayAgentCandidateDoesNotReplaceReadySessionBeforeInitialize(t *test
 		return readyAgent != nil
 	})
 
-	candidateConn, _, err := websocket.DefaultDialer.Dial(agentWS, headers)
+	candidateConn, _, err := websocket.DefaultDialer.Dial(agentWS, nil)
 	if err != nil {
 		t.Fatalf("dial candidate agent: %v", err)
 	}
@@ -237,23 +219,13 @@ func TestGatewayAgentCandidateAckFailureKeepsReadySession(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	defer store.Close()
-	agentToken, err := store.CreateToken(CreateTokenRequest{
-		Kind:     TokenKindAgent,
-		Name:     "agent",
-		Cluster:  "dev",
-		Instance: "local",
-	})
-	if err != nil {
-		t.Fatalf("create agent token: %v", err)
-	}
-
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	readyConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	readyConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer readyConn.Close()
 	go serveFakeAgent(t, readyConn)
 
@@ -266,7 +238,7 @@ func TestGatewayAgentCandidateAckFailureKeepsReadySession(t *testing.T) {
 	gw.registration.acknowledge = func(*GatewayAgent) error {
 		return fmt.Errorf("forced acknowledgement failure")
 	}
-	candidateConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	candidateConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer candidateConn.Close()
 	go serveFakeAgent(t, candidateConn)
 
@@ -282,16 +254,6 @@ func TestGatewayAgentCandidateHeartbeatFailureKeepsReadySession(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	defer store.Close()
-	agentToken, err := store.CreateToken(CreateTokenRequest{
-		Kind:     TokenKindAgent,
-		Name:     "agent",
-		Cluster:  "dev",
-		Instance: "local",
-	})
-	if err != nil {
-		t.Fatalf("create agent token: %v", err)
-	}
-
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
 	gw.registration.heartbeatTimeout = 50 * time.Millisecond
 	mux := http.NewServeMux()
@@ -299,7 +261,7 @@ func TestGatewayAgentCandidateHeartbeatFailureKeepsReadySession(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	readyConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	readyConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer readyConn.Close()
 	go serveFakeAgent(t, readyConn)
 
@@ -309,7 +271,7 @@ func TestGatewayAgentCandidateHeartbeatFailureKeepsReadySession(t *testing.T) {
 		return readyAgent != nil
 	})
 
-	candidateConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	candidateConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer candidateConn.Close()
 	candidateConn.SetPingHandler(func(string) error { return nil })
 	go serveFakeAgent(t, candidateConn)
@@ -474,7 +436,6 @@ func TestGatewayGitHTTPRoutesByClusterAndInstance(t *testing.T) {
 	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionPull}}); err != nil {
 		t.Fatalf("grant pull: %v", err)
 	}
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, MaxQueuedPerTarget: -1})
 	mux := http.NewServeMux()
@@ -482,7 +443,7 @@ func TestGatewayGitHTTPRoutesByClusterAndInstance(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	requests := make(chan string, 1)
 	go serveFakeGitAgent(t, agentConn, requests)
@@ -523,7 +484,6 @@ func TestGatewayGitHTTPWaitsForShortAgentReconnect(t *testing.T) {
 	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionPull}}); err != nil {
 		t.Fatalf("grant pull: %v", err)
 	}
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, TargetReconnectGrace: 500 * time.Millisecond})
 	mux := http.NewServeMux()
@@ -544,7 +504,7 @@ func TestGatewayGitHTTPWaitsForShortAgentReconnect(t *testing.T) {
 	}()
 
 	time.Sleep(100 * time.Millisecond)
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	requests := make(chan string, 1)
 	go serveFakeGitAgent(t, agentConn, requests)
@@ -587,7 +547,6 @@ func TestGatewayGitHTTPEndToEndPushAndFetch(t *testing.T) {
 	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionPush, ActionPull}}); err != nil {
 		t.Fatalf("grant push/pull: %v", err)
 	}
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 
 	hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: 10 * time.Second, MaxQueuedPerTarget: -1})
 	mux := http.NewServeMux()
@@ -602,7 +561,7 @@ func TestGatewayGitHTTPEndToEndPushAndFetch(t *testing.T) {
 	}
 	agentGateway.gitHandler = http.StripPrefix("/git", service)
 
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	go agentGateway.ServeWebSocketConn(agentConn, "test-agent")
 	waitForGatewayAgent(t, hub, "dev", "local")
@@ -639,7 +598,7 @@ func TestGatewayGitHTTPConcurrentPushPullDifferentTargets(t *testing.T) {
 	})
 	defer ts.Close()
 	for _, target := range tokens.Targets {
-		conn := startGatewayGitTestAgent(t, hub, ts.URL, target.AgentToken, target.Cluster, target.Instance)
+		conn := startGatewayGitTestAgent(t, hub, ts.URL, target.Cluster, target.Instance)
 		defer conn.Close()
 	}
 
@@ -669,7 +628,7 @@ func TestGatewayGitHTTPConcurrentPushDifferentSessionsSameTarget(t *testing.T) {
 	})
 	defer ts.Close()
 	target := tokens.Targets[0]
-	conn := startGatewayGitTestAgent(t, hub, ts.URL, target.AgentToken, target.Cluster, target.Instance)
+	conn := startGatewayGitTestAgent(t, hub, ts.URL, target.Cluster, target.Instance)
 	defer conn.Close()
 
 	errCh := make(chan error, 2)
@@ -696,7 +655,7 @@ func TestGatewayGitHTTPLargeFilePushAndPull(t *testing.T) {
 	hub, ts, tokens := newGatewayGitE2E(t, []gatewayGitE2ETarget{{Cluster: "dev-large", Instance: "node-large"}})
 	defer ts.Close()
 	target := tokens.Targets[0]
-	conn := startGatewayGitTestAgent(t, hub, ts.URL, target.AgentToken, target.Cluster, target.Instance)
+	conn := startGatewayGitTestAgent(t, hub, ts.URL, target.Cluster, target.Instance)
 	defer conn.Close()
 
 	large := makeDeterministicBytes(24 << 20)
@@ -1089,7 +1048,6 @@ func TestGatewayRPCForwardsAllowedActionAndRejectsDeniedAction(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
@@ -1100,7 +1058,7 @@ func TestGatewayRPCForwardsAllowedActionAndRejectsDeniedAction(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	go serveFakeAgent(t, agentConn)
 
@@ -1165,7 +1123,6 @@ func TestGatewayRPCForwardsBackgroundToolsAsExec(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
@@ -1176,7 +1133,7 @@ func TestGatewayRPCForwardsBackgroundToolsAsExec(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	go serveFakeAgent(t, agentConn)
 
@@ -1239,7 +1196,6 @@ func TestGatewayRPCDoesNotAllowClientActionOverrideForShell(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionInfo}}); err != nil {
 		t.Fatalf("grant info: %v", err)
 	}
@@ -1250,7 +1206,7 @@ func TestGatewayRPCDoesNotAllowClientActionOverrideForShell(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	go serveFakeAgent(t, agentConn)
 
@@ -1300,7 +1256,6 @@ func TestGatewayRejectsDirectAgentUpgradeWithoutDispatch(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 	if err := store.GrantUser(user.ID, ScopeGrant{
 		Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionAgentUpgrade},
 	}); err != nil {
@@ -1313,7 +1268,7 @@ func TestGatewayRejectsDirectAgentUpgradeWithoutDispatch(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	go serveFakeAgentWithRuntimeID(t, agentConn, "runtime-old")
 	requireEventually(t, time.Second, func() bool { return gw.getAgent("dev", "local") != nil })
@@ -1427,7 +1382,6 @@ func TestGatewayKeepsIdleAgentAliveWithPing(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	defer store.Close()
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 
 	lease := 200 * time.Millisecond
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: lease})
@@ -1436,7 +1390,7 @@ func TestGatewayKeepsIdleAgentAliveWithPing(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	go serveFakeAgent(t, agentConn)
 
@@ -1661,7 +1615,6 @@ func TestGatewayRelayTimeoutDoesNotCloseAgentConnection(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	defer store.Close()
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: 25 * time.Millisecond})
 	mux := http.NewServeMux()
@@ -1669,7 +1622,7 @@ func TestGatewayRelayTimeoutDoesNotCloseAgentConnection(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	cancelSeen := make(chan struct{}, 1)
 	go serveTimeoutFakeAgent(t, agentConn, cancelSeen)
@@ -1863,7 +1816,6 @@ func TestGatewayRPCRejectsSecondConcurrentOperationForSameSessionAsBusy(t *testi
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
@@ -1874,7 +1826,7 @@ func TestGatewayRPCRejectsSecondConcurrentOperationForSameSessionAsBusy(t *testi
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	blockRelease := make(chan struct{})
 	go serveBlockingFakeAgent(t, agentConn, blockRelease)
@@ -1926,7 +1878,6 @@ func TestGatewayRPCAllowsConcurrentExecOperationsForDifferentSessions(t *testing
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
@@ -1937,7 +1888,7 @@ func TestGatewayRPCAllowsConcurrentExecOperationsForDifferentSessions(t *testing
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	release := make(chan struct{})
 	started := make(chan string, 2)
@@ -2001,7 +1952,6 @@ func TestGatewayRPCDoesNotFallbackSessionNotificationsWithoutSessionID(t *testin
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
@@ -2012,7 +1962,7 @@ func TestGatewayRPCDoesNotFallbackSessionNotificationsWithoutSessionID(t *testin
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	release := make(chan struct{})
 	started := make(chan string, 2)
@@ -2100,7 +2050,6 @@ func TestGatewayRPCAllowsConcurrentReadOnlyOperationsForSameTarget(t *testing.T)
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionInfo}}); err != nil {
 		t.Fatalf("grant info: %v", err)
 	}
@@ -2111,7 +2060,7 @@ func TestGatewayRPCAllowsConcurrentReadOnlyOperationsForSameTarget(t *testing.T)
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	release := make(chan struct{})
 	started := make(chan int, 2)
@@ -2162,7 +2111,6 @@ func TestGatewayRPCQueuesSecondOperationForSameTarget(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
@@ -2177,7 +2125,7 @@ func TestGatewayRPCQueuesSecondOperationForSameTarget(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	blockRelease := make(chan struct{})
 	go serveBlockingFakeAgent(t, agentConn, blockRelease)
@@ -2218,7 +2166,6 @@ func TestGatewayRPCDefaultDoesNotQueueBehindBusyTarget(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
@@ -2229,7 +2176,7 @@ func TestGatewayRPCDefaultDoesNotQueueBehindBusyTarget(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	blockRelease := make(chan struct{})
 	go serveBlockingFakeAgent(t, agentConn, blockRelease)
@@ -2270,7 +2217,6 @@ func TestGatewayRPCCancelsOperationWhenClientDisconnects(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
@@ -2281,7 +2227,7 @@ func TestGatewayRPCCancelsOperationWhenClientDisconnects(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	blockRelease := make(chan struct{})
 	go serveBlockingFakeAgent(t, agentConn, blockRelease)
@@ -2311,7 +2257,6 @@ func TestGatewayGitClientCancelReleasesTarget(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionPull}}); err != nil {
 		t.Fatalf("grant pull: %v", err)
 	}
@@ -2322,7 +2267,7 @@ func TestGatewayGitClientCancelReleasesTarget(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	requests := make(chan int, 2)
 	cancels := make(chan int, 1)
@@ -2382,7 +2327,6 @@ func TestGatewayAdminUnlockClearsBusyTarget(t *testing.T) {
 	defer store.Close()
 	admin, _ := store.CreateUser("admin")
 	adminToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: admin.ID, Name: "admin"})
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 	if err := store.GrantUser(admin.ID, ScopeGrant{Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin}}); err != nil {
 		t.Fatalf("grant admin: %v", err)
 	}
@@ -2393,7 +2337,7 @@ func TestGatewayAdminUnlockClearsBusyTarget(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
 	go serveFakeAgent(t, agentConn)
 	waitForGatewayAgent(t, gw, "dev", "local")
@@ -2430,8 +2374,6 @@ func TestGatewayRPCEnforcesPerUserConcurrencyLimitAcrossTargets(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	devToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "dev-agent", Cluster: "dev", Instance: "local"})
-	prodToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "prod-agent", Cluster: "prod", Instance: "local"})
 	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "*", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
@@ -2446,9 +2388,9 @@ func TestGatewayRPCEnforcesPerUserConcurrencyLimitAcrossTargets(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	devAgent := dialFakeGatewayAgent(t, ts.URL, devToken.Plaintext, "dev", "local")
+	devAgent := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer devAgent.Close()
-	prodAgent := dialFakeGatewayAgent(t, ts.URL, prodToken.Plaintext, "prod", "local")
+	prodAgent := dialFakeGatewayAgent(t, ts.URL, "prod", "local")
 	defer prodAgent.Close()
 	release := make(chan struct{})
 	go serveBlockingFakeAgent(t, devAgent, release)
@@ -2494,7 +2436,6 @@ func TestGatewayAdminOperationsListAndCancel(t *testing.T) {
 	if err := store.GrantUser(admin.ID, ScopeGrant{Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin, ActionExec}}); err != nil {
 		t.Fatalf("grant admin: %v", err)
 	}
-	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
 
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: time.Minute})
 	mux := http.NewServeMux()
@@ -2502,7 +2443,7 @@ func TestGatewayAdminOperationsListAndCancel(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agent := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	agent := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agent.Close()
 	release := make(chan struct{})
 	defer close(release)
@@ -2622,9 +2563,8 @@ func TestAuditTailBufferKeepsOnlyBoundedSuffix(t *testing.T) {
 	}
 }
 
-func dialFakeGatewayAgent(t *testing.T, serverURL, token, cluster, instance string) *websocket.Conn {
+func dialFakeGatewayAgent(t *testing.T, serverURL, cluster, instance string) *websocket.Conn {
 	t.Helper()
-	_ = token
 	agentWS := "ws" + strings.TrimPrefix(serverURL, "http") + "/v1/agent/connect?cluster=" + cluster + "&instance=" + instance
 	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, nil)
 	if err != nil {
@@ -2639,10 +2579,9 @@ type gatewayGitE2ETarget struct {
 }
 
 type gatewayGitE2EToken struct {
-	Cluster    string
-	Instance   string
-	UserToken  string
-	AgentToken string
+	Cluster   string
+	Instance  string
+	UserToken string
 }
 
 type gatewayGitE2ETokens struct {
@@ -2675,21 +2614,16 @@ func newGatewayGitE2E(t *testing.T, targets []gatewayGitE2ETarget) (*GatewayHub,
 		if err := store.GrantUser(user.ID, ScopeGrant{Cluster: target.Cluster, Instance: target.Instance, Actions: []GatewayAction{ActionPush, ActionPull}}); err != nil {
 			t.Fatalf("grant push/pull: %v", err)
 		}
-		agentToken, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: target.Cluster, Instance: target.Instance})
-		if err != nil {
-			t.Fatalf("create agent token: %v", err)
-		}
 		out.Targets = append(out.Targets, gatewayGitE2EToken{
-			Cluster:    target.Cluster,
-			Instance:   target.Instance,
-			UserToken:  userToken.Plaintext,
-			AgentToken: agentToken.Plaintext,
+			Cluster:   target.Cluster,
+			Instance:  target.Instance,
+			UserToken: userToken.Plaintext,
 		})
 	}
 	return hub, ts, out
 }
 
-func startGatewayGitTestAgent(t *testing.T, hub *GatewayHub, serverURL, token, cluster, instance string) *websocket.Conn {
+func startGatewayGitTestAgent(t *testing.T, hub *GatewayHub, serverURL, cluster, instance string) *websocket.Conn {
 	t.Helper()
 	agentGateway := NewGateway("0")
 	service := gitkit.New(gitkit.Config{Dir: t.TempDir(), AutoCreate: true, AutoHooks: true})
@@ -2698,7 +2632,7 @@ func startGatewayGitTestAgent(t *testing.T, hub *GatewayHub, serverURL, token, c
 	}
 	agentGateway.gitHandler = http.StripPrefix("/git", service)
 
-	conn := dialFakeGatewayAgent(t, serverURL, token, cluster, instance)
+	conn := dialFakeGatewayAgent(t, serverURL, cluster, instance)
 	go agentGateway.ServeWebSocketConn(conn, "test-agent")
 	waitForGatewayAgent(t, hub, cluster, instance)
 	return conn

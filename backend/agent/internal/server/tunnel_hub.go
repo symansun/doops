@@ -368,12 +368,9 @@ type gatewayLoginResponse struct {
 }
 
 type gatewayAdminTokenCreateRequest struct {
-	Kind     string `json:"kind,omitempty"`
-	User     string `json:"user"`
-	Name     string `json:"name,omitempty"`
-	Cluster  string `json:"cluster,omitempty"`
-	Instance string `json:"instance,omitempty"`
-	Expires  string `json:"expires,omitempty"`
+	User    string `json:"user"`
+	Name    string `json:"name,omitempty"`
+	Expires string `json:"expires,omitempty"`
 }
 
 func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
@@ -499,7 +496,7 @@ func (h *GatewayHub) HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		tokens, err := h.store.ListTokens(TokenKind(strings.TrimSpace(r.URL.Query().Get("kind"))))
+		tokens, err := h.store.ListTokens(TokenKindUser)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -551,30 +548,13 @@ func (h *GatewayHub) HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid token request", http.StatusBadRequest)
 		return
 	}
-	kind := TokenKindUser
-	if strings.EqualFold(strings.TrimSpace(req.Kind), string(TokenKindAgent)) {
-		kind = TokenKindAgent
+	user, err := h.store.FindUserByName(req.User)
+	if err != nil {
+		finishAudit("not_found", "user not found")
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
 	}
-	createReq := CreateTokenRequest{Kind: kind, Name: req.Name}
-	var username string
-	if kind == TokenKindAgent {
-		if strings.TrimSpace(req.Cluster) == "" || strings.TrimSpace(req.Instance) == "" {
-			finishAudit("error", "agent token requires cluster and instance")
-			http.Error(w, "agent token requires cluster and instance", http.StatusBadRequest)
-			return
-		}
-		createReq.Cluster = req.Cluster
-		createReq.Instance = req.Instance
-	} else {
-		user, err := h.store.FindUserByName(req.User)
-		if err != nil {
-			finishAudit("not_found", "user not found")
-			http.Error(w, "user not found", http.StatusNotFound)
-			return
-		}
-		createReq.UserID = user.ID
-		username = user.Name
-	}
+	createReq := CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: req.Name}
 	if strings.TrimSpace(req.Expires) != "" {
 		ttl, err := time.ParseDuration(strings.TrimSpace(req.Expires))
 		if err != nil {
@@ -599,8 +579,8 @@ func (h *GatewayHub) HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
 	writeJSONHTTP(w, gatewayLoginResponse{
 		Token:     token.Plaintext,
 		TokenID:   token.ID,
-		TokenType: string(kind),
-		Username:  username,
+		TokenType: string(TokenKindUser),
+		Username:  user.Name,
 	})
 }
 
@@ -1151,18 +1131,10 @@ func (h *ClientService) authenticateUser(r *http.Request) (TokenAuth, error) {
 }
 
 func (h *ClientService) writeUserAuthError(w http.ResponseWriter, r *http.Request) {
-	if _, err := h.store.VerifyAgentToken(bearerToken(r)); err == nil {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 	http.Error(w, "Unauthorized", http.StatusUnauthorized)
 }
 
 func (h *GatewayHub) writeUserAuthError(w http.ResponseWriter, r *http.Request) {
-	if _, err := h.store.VerifyAgentToken(bearerToken(r)); err == nil {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 	http.Error(w, "Unauthorized", http.StatusUnauthorized)
 }
 

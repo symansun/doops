@@ -64,8 +64,7 @@ var defaultGatewayUserActions = []GatewayAction{
 type TokenKind string
 
 const (
-	TokenKindUser  TokenKind = "user"
-	TokenKindAgent TokenKind = "agent"
+	TokenKindUser TokenKind = "user"
 )
 
 var (
@@ -579,14 +578,11 @@ func (s *GatewayStore) VerifyUserPassword(name, password string) (GatewayUser, e
 }
 
 func (s *GatewayStore) CreateToken(req CreateTokenRequest) (CreatedToken, error) {
-	if req.Kind != TokenKindUser && req.Kind != TokenKindAgent {
-		return CreatedToken{}, fmt.Errorf("unsupported token kind %q", req.Kind)
+	if req.Kind != TokenKindUser {
+		return CreatedToken{}, fmt.Errorf("only user tokens are supported")
 	}
-	if req.Kind == TokenKindUser && strings.TrimSpace(req.UserID) == "" {
+	if strings.TrimSpace(req.UserID) == "" {
 		return CreatedToken{}, fmt.Errorf("user token requires user id")
-	}
-	if req.Kind == TokenKindAgent && (strings.TrimSpace(req.Cluster) == "" || strings.TrimSpace(req.Instance) == "") {
-		return CreatedToken{}, fmt.Errorf("agent token requires cluster and instance")
 	}
 	id := "tok_" + randomHex(12)
 	prefix := "dgw_" + string(req.Kind) + "_" + randomHex(4)
@@ -617,14 +613,6 @@ func (s *GatewayStore) CreateToken(req CreateTokenRequest) (CreatedToken, error)
 
 func (s *GatewayStore) VerifyUserToken(token string) (TokenAuth, error) {
 	auth, err := s.verifyToken(token, TokenKindUser)
-	if err != nil {
-		return TokenAuth{}, err
-	}
-	return auth, nil
-}
-
-func (s *GatewayStore) VerifyAgentToken(token string) (TokenAuth, error) {
-	auth, err := s.verifyToken(token, TokenKindAgent)
 	if err != nil {
 		return TokenAuth{}, err
 	}
