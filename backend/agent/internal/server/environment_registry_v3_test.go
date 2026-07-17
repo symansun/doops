@@ -3,6 +3,7 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -26,7 +27,19 @@ func TestEnvironmentRegistryV3SelectsOneService(t *testing.T) {
 		plan.Instance != "edu-coder" {
 		t.Fatalf("unexpected v3 registry plan: %#v", plan)
 	}
-
+	if len(plan.CredentialRefs) != 1 {
+		t.Fatalf("credential refs = %#v", plan.CredentialRefs)
+	}
+	ref := plan.CredentialRefs[0]
+	if ref.Name != "target-regcred" ||
+		ref.Use != CredentialUseImagePull ||
+		ref.Namespace != "oilan" ||
+		ref.RegistryRepository != "oilan/zhiyong-frontend" ||
+		ref.RegistryReference != "sha256:"+strings.Repeat("a", 64) ||
+		ref.Workload.Kind != "deployment" ||
+		ref.Workload.Name != "zhiyong-frontend" {
+		t.Fatalf("unexpected runtime credential ref: %#v", ref)
+	}
 }
 
 func TestEnvironmentRegistryV3RequiresExplicitSelection(t *testing.T) {
@@ -37,6 +50,109 @@ func TestEnvironmentRegistryV3RequiresExplicitSelection(t *testing.T) {
 		map[string]string{"environment": "oilan"},
 	); err == nil || !strings.Contains(err.Error(), "requires environment and service inputs") {
 		t.Fatalf("missing service input error = %v", err)
+	}
+}
+
+func TestEnvironmentRegistryV3AllowsPublicRegistriesWithoutCredentials(t *testing.T) {
+	root := writeEnvironmentRegistryV3Fixture(t)
+	path := filepath.Join(root, "deploy", "environments.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.ReplaceAll(
+		string(data),
+		"      runtimeImagePullSecret: {kind: KubernetesSecret, name: target-regcred}\n",
+		"",
+	))
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseCredentialPlanForInputs(root, "deploy/environments.yaml", map[string]string{
+		"environment": "oilan",
+		"service":     "frontend",
+	}); err != nil {
+		t.Fatalf("public registry plan: %v", err)
+	}
+}
+
+func TestEnvironmentRegistryV3RejectsUnsupportedSourceAndTargetCredentials(t *testing.T) {
+	for _, field := range []string{"sourceCredentialRef", "targetCredentialRef"} {
+		t.Run(field, func(t *testing.T) {
+			root := writeEnvironmentRegistryV3Fixture(t)
+			path := filepath.Join(root, "deploy", "environments.yaml")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = []byte(strings.ReplaceAll(
+				string(data),
+				"      runtimeImagePullSecret: {kind: KubernetesSecret, name: target-regcred}\n",
+				"      "+field+": {kind: KubernetesSecret, name: registry-credential}\n"+
+					"      runtimeImagePullSecret: {kind: KubernetesSecret, name: target-regcred}\n",
+			))
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := parseCredentialPlanForInputs(root, "deploy/environments.yaml", map[string]string{
+				"environment": "oilan",
+				"service":     "frontend",
+			}); err == nil || !strings.Contains(err.Error(), field+" is not supported") {
+				t.Fatalf("unsupported credential reference error = %v", err)
+			}
+		})
+	}
+}
+
+func TestEnvironmentRegistryV3RejectsPartialCredentialReference(t *testing.T) {
+	root := writeEnvironmentRegistryV3Fixture(t)
+	path := filepath.Join(root, "deploy", "environments.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.ReplaceAll(
+		string(data),
+		"      runtimeImagePullSecret: {kind: KubernetesSecret, name: target-regcred}\n",
+		"      runtimeImagePullSecret: {kind: KubernetesSecret}\n",
+	))
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseCredentialPlanForInputs(root, "deploy/environments.yaml", map[string]string{
+		"environment": "oilan",
+		"service":     "frontend",
+	}); err == nil || !strings.Contains(err.Error(), "runtimeImagePullSecret is incomplete") {
+		t.Fatalf("partial credential reference error = %v", err)
+	}
+}
+
+func TestCredentialRegistryRepositoryAcceptsLocalRegistryPort(t *testing.T) {
+	repository, err := credentialRegistryRepository("localhost:5000/team/app")
+	if err != nil || repository != "team/app" {
+		t.Fatalf("repository=%q err=%v", repository, err)
+	}
+}
+
+func TestRepositoryEnvironmentRegistryV3CompilesOilanDoopsAgent(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve test source path")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "..", ".."))
+	plan, err := parseCredentialPlanForInputs(root, "deploy/environments.yaml", map[string]string{
+		"environment": "oilan",
+		"service":     "doops-agent",
+	})
+	if err != nil {
+		t.Fatalf("compile repository Oilan declaration: %v", err)
+	}
+	if plan.Template != "doops-oilan-doops-agent" ||
+		plan.Target != "gw-edu-coder" ||
+		plan.Cluster != "doops-edu" ||
+		plan.Instance != "edu-coder" ||
+		len(plan.CredentialRefs) != 0 {
+		t.Fatalf("unexpected repository plan: %#v", plan)
 	}
 }
 
@@ -78,8 +194,6 @@ environments:
       wait: true
     artifacts:
       targetRegistry: registry.example.test/oilan
-      sourceCredentialRef: {kind: KubernetesSecret, name: source-regcred}
-      targetCredentialRef: {kind: KubernetesSecret, name: target-regcred}
       runtimeImagePullSecret: {kind: KubernetesSecret, name: target-regcred}
     services:
       frontend: deploy/environments/oilan/services/zhiyong-frontend.yaml

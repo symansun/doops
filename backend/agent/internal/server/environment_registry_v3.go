@@ -82,6 +82,10 @@ func parseCredentialEnvironmentRegistryV3(
 	template.Spec.Environment = selection.EnvironmentName
 	template.Spec.Release.Source.Repository = selection.Environment.Source.Repository
 	template.Spec.Release.Source.Branch = selection.Environment.Source.Branch
+	template.Spec.CredentialRefs, err = credentialEnvironmentRegistryV3References(selection)
+	if err != nil {
+		return credentialParsedWorkflow{}, err
+	}
 	return credentialParsedWorkflow{
 		Template: template,
 		Environment: &credentialEnvironmentContext{
@@ -94,6 +98,54 @@ func parseCredentialEnvironmentRegistryV3(
 			SourceBranch:     selection.Environment.Source.Branch,
 		},
 	}, nil
+}
+
+func credentialEnvironmentRegistryV3References(
+	selection credentialEnvironmentRegistryV3Selection,
+) ([]credentialTemplateCredentialRef, error) {
+	environment := selection.Environment
+	if credentialEnvironmentSecretRefDeclared(environment.Artifacts.SourceCredentialRef) {
+		return nil, invalidCredentialDeclaration(
+			fmt.Errorf("environment %q sourceCredentialRef is not supported by the v3 materialization contract", selection.EnvironmentName),
+		)
+	}
+	if credentialEnvironmentSecretRefDeclared(environment.Artifacts.TargetCredentialRef) {
+		return nil, invalidCredentialDeclaration(
+			fmt.Errorf("environment %q targetCredentialRef is not supported by the v3 materialization contract", selection.EnvironmentName),
+		)
+	}
+	runtimeRef := environment.Artifacts.RuntimeImagePullSecret
+	if !credentialEnvironmentSecretRefDeclared(runtimeRef) {
+		return nil, nil
+	}
+	workloadParts := strings.SplitN(selection.Service.Spec.Helm.Workload, "/", 2)
+	repository, err := credentialRegistryRepository(selection.Service.Spec.Artifact.Target)
+	if err != nil {
+		return nil, invalidCredentialDeclaration(err)
+	}
+	return []credentialTemplateCredentialRef{{
+		Name:               runtimeRef.Name,
+		Use:                CredentialUseImagePull,
+		Namespace:          environment.Helm.Namespace,
+		RegistryRepository: repository,
+		RegistryReference:  selection.Service.Spec.Artifact.Digest,
+		Workload: credentialTemplateWorkload{
+			Kind: workloadParts[0],
+			Name: workloadParts[1],
+		},
+	}}, nil
+}
+
+func credentialRegistryRepository(reference string) (string, error) {
+	parts := strings.SplitN(strings.TrimSpace(reference), "/", 2)
+	if len(parts) != 2 ||
+		(!strings.Contains(parts[0], ".") &&
+			!strings.Contains(parts[0], ":") &&
+			parts[0] != "localhost") ||
+		strings.TrimSpace(parts[1]) == "" {
+		return "", fmt.Errorf("registry artifact %q must include registry host and repository", reference)
+	}
+	return parts[1], nil
 }
 
 func selectCredentialEnvironmentRegistryV3(
@@ -185,18 +237,8 @@ func validateCredentialEnvironmentRegistryV3Environment(
 		"targetCredentialRef":    environment.Artifacts.TargetCredentialRef,
 		"runtimeImagePullSecret": environment.Artifacts.RuntimeImagePullSecret,
 	} {
-		if strings.TrimSpace(reference.Status) == "undeclared" ||
-			reference.DeploymentBlockedUntilDeclared {
-			return invalidCredentialDeclaration(
-				fmt.Errorf("environment %q %s is undeclared", name, label),
-			)
-		}
-		if strings.TrimSpace(reference.Status) != "" ||
-			strings.TrimSpace(reference.Kind) != "KubernetesSecret" ||
-			strings.TrimSpace(reference.Name) == "" {
-			return invalidCredentialDeclaration(
-				fmt.Errorf("environment %q %s is incomplete", name, label),
-			)
+		if err := validateCredentialEnvironmentSecretRef(name, label, reference); err != nil {
+			return err
 		}
 	}
 	for index, value := range environment.HealthChecks {
