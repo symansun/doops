@@ -414,7 +414,6 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		registry: registry,
 	}
 	hub.registration = NewAgentRegistrationHandler(
-		store,
 		registry,
 		opts.AgentLease,
 		newGatewayMessageBudget(gatewayMessageBudgetMaxBytes),
@@ -969,7 +968,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32003, "credential control-plane tools are internal only"))
 		return nil
 	}
-	var workflowInstruction *doopsCICDInstructionEnvelope
 	if params.Name == "doops_agent_prompt" {
 		operation := extractStringArg(params.Arguments, "operation")
 		instruction := extractStringArg(params.Arguments, "instruction")
@@ -977,18 +975,16 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			Task string `json:"task"`
 		}
 		_ = json.Unmarshal([]byte(instruction), &marker)
-		if marker.Task == "execute-doops-cicd-workflow" {
-			envelope, err := decodeDoopsCICDInstruction(instruction)
-			if err != nil {
-				writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
-				return nil
+		if marker.Task == "execute-doops-cicd" {
+			var envelope struct {
+				ExecutionMode string `json:"executionMode"`
 			}
-			if (envelope.ExecutionMode == "apply" && operation != "apply") ||
+			if err := json.Unmarshal([]byte(instruction), &envelope); err != nil ||
+				(envelope.ExecutionMode == "apply" && operation != "apply") ||
 				(envelope.ExecutionMode == "dry-run" && operation != "ask") {
-				writeJSON(buildErrorResponse(req.ID, -32602, "credential workflow operation does not match execution mode"))
+				writeJSON(buildErrorResponse(req.ID, -32602, "cicd operation does not match execution mode"))
 				return nil
 			}
-			workflowInstruction = &envelope
 		} else if operation == "apply" {
 			writeJSON(buildErrorResponse(req.ID, -32602, "apply requires a structured doops-cicd instruction"))
 			return nil
@@ -1044,20 +1040,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32004, errMsg))
 		return nil
 	}
-	if workflowInstruction != nil {
-		if !h.store.UserCan(auth.UserID, cluster, instance, ActionCredentialUse) {
-			errMsg := fmt.Sprintf("forbidden: %s on %s/%s", ActionCredentialUse, cluster, instance)
-			finishAudit("forbidden", errMsg, "", 0)
-			writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
-			return nil
-		}
-		if agent.CredentialPlanProtocol != credentialPlanProtocolV2 {
-			errMsg := "agent_protocol_incompatible"
-			finishAudit("error", errMsg, "", 0)
-			writeJSON(buildErrorResponse(req.ID, -32008, errMsg))
-			return nil
-		}
-	}
 	var upgradeOp UpgradeOperation
 	waitForUpgradeReplacement := false
 	upgradeImage := ""
@@ -1107,23 +1089,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	defer agent.releaseForAction(action, resourceKey)
-	if workflowInstruction != nil {
-		if err := h.store.ConsumeCredentialRunAuthorization(
-			auth,
-			cluster,
-			instance,
-			extractSession(params.Arguments),
-			workflowInstruction.WorkflowPath,
-			workflowInstruction.WorkspaceCommit,
-			workflowInstruction.ExecutionMode,
-			workflowInstruction.CredentialRun,
-		); err != nil {
-			category := credentialErrorCategory(err)
-			finishAudit("forbidden", category, "", 0)
-			writeJSON(buildErrorResponse(req.ID, -32003, category))
-			return nil
-		}
-	}
 	if waitForUpgradeReplacement {
 		var beginErr error
 		upgradeOp, beginErr = h.upgrades.Begin(cluster, instance, upgradeImage, agent.Generation, agent.RuntimeID)

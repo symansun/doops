@@ -184,7 +184,7 @@ func runCredentialVerify(args []string, servers []Server, configErr error, stdou
 	flags.StringVar(&id, "id", "", "Credential ID")
 	flags.StringVar(&versionID, "version-id", "", "Staged credential version ID")
 	flags.StringVar(&sessionID, "session", "", "Bound workspace session")
-	flags.StringVar(&workflowPath, "workflow-path", "", "DeploymentTemplate path in the workspace")
+	flags.StringVar(&workflowPath, "workflow-path", "", "v3 manifest path in the workspace")
 	flags.StringVar(&workspaceCommit, "workspace-commit", "", "Immutable workspace commit")
 	if err := flags.Parse(args); err != nil {
 		return err

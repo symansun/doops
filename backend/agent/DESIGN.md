@@ -86,7 +86,7 @@ doagent 可以根据任务创建多 Agent、组合 Skill 并选择工具；DoOps
 CI/CD 复用普通 Agent-native Ask：
 
 ```text
-DeploymentTemplate -> doops push -> Ask -> doagent -> $doops-cicd -> DeploymentRun
+EnvironmentRegistry -> doops push -> doagent -> $doops-cicd
 ```
 
 CLI 只负责显式 workflow/target、工作区同步和任务信封。doops-agent 不实现

@@ -803,29 +803,6 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			writeJSON(buildErrorResponse(reqID, -32602, `response_format must be "json" when specified`))
 			return
 		}
-		var admission *trustedReconciliationAdmission
-		if args.ResponseFormat == "json" {
-			var instruction struct {
-				Task            string `json:"task"`
-				WorkflowPath    string `json:"workflowPath"`
-				WorkspaceCommit string `json:"workspaceCommit"`
-			}
-			if err := json.Unmarshal([]byte(args.Instruction), &instruction); err == nil &&
-				instruction.Task == "execute-doops-cicd-workflow" &&
-				strings.TrimSpace(instruction.WorkflowPath) != "" &&
-				strings.TrimSpace(instruction.WorkspaceCommit) != "" {
-				built, err := buildTrustedReconciliationAdmission(
-					sessionID,
-					args.Instruction,
-					args.WorkspaceCommit,
-				)
-				if err != nil {
-					writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
-					return
-				}
-				admission = &built
-			}
-		}
 		switch strings.ToLower(strings.TrimSpace(args.Mode)) {
 		case "metadata":
 			if args.ResponseFormat != "" {
@@ -861,7 +838,6 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			args.ResponseFormat,
 			agentPromptExecutionContext{
 				NativeMode: nativeMode,
-				Admission:  admission,
 			},
 			pushProgress,
 			writeJSON,
@@ -981,31 +957,29 @@ func validateDoagentApplyInstruction(instruction string) error {
 	return err
 }
 
-func validatedDoagentApplyInstruction(instruction string) (doopsCICDInstructionEnvelope, error) {
-	envelope, err := decodeDoopsCICDInstruction(instruction)
+func validatedDoagentApplyInstruction(instruction string) (map[string]interface{}, error) {
+	var envelope map[string]interface{}
+	err := json.Unmarshal([]byte(instruction), &envelope)
 	if err != nil {
-		return doopsCICDInstructionEnvelope{}, fmt.Errorf("apply requires a structured doops-cicd instruction")
+		return nil, fmt.Errorf("apply requires a structured doops-cicd instruction")
 	}
-	if envelope.Task != "execute-doops-cicd-workflow" ||
-		envelope.Skill != "$doops-cicd" ||
-		envelope.ExecutionMode != "apply" ||
-		strings.TrimSpace(envelope.RunID) == "" ||
-		strings.TrimSpace(envelope.WorkflowPath) == "" ||
-		!validCredentialWorkspaceCommit(envelope.WorkspaceCommit) ||
-		strings.TrimSpace(envelope.CredentialRun.ID) == "" ||
-		envelope.CredentialRun.Materializations == nil ||
-		(envelope.ResultContract.APIVersion != "doops.sh/v2" &&
-			envelope.ResultContract.APIVersion != "doops.sh/v3") ||
-		envelope.ResultContract.Kind != "DeploymentRun" ||
-		!envelope.ResultContract.RequireEvidence {
-		return doopsCICDInstructionEnvelope{}, fmt.Errorf("apply is only supported for an explicit prepared doops-cicd apply instruction")
+	if envelope["task"] != "execute-doops-cicd" ||
+		envelope["skill"] != "$doops-cicd" ||
+		envelope["executionMode"] != "apply" ||
+		strings.TrimSpace(doopsCICDString(envelope["manifestPath"])) == "" ||
+		!validCredentialWorkspaceCommit(doopsCICDString(envelope["workspaceCommit"])) {
+		return nil, fmt.Errorf("apply is only supported for an explicit doops-cicd apply instruction")
 	}
 	return envelope, nil
 }
 
+func doopsCICDString(value interface{}) string {
+	text, _ := value.(string)
+	return text
+}
+
 type agentPromptExecutionContext struct {
 	NativeMode string
-	Admission  *trustedReconciliationAdmission
 }
 
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
@@ -1020,10 +994,6 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	if err := ensureDoagentAvailable(doagentURL); err != nil {
 		writeJSON(buildErrorResponse(reqID, -32603, "doagent_unavailable"))
 		return
-	}
-
-	if responseFormat == "json" {
-		instr = appendDoagentStructuredResultContract(instr, execution.Admission)
 	}
 
 	// Machine-result prompts use a fresh doagent session so their tool trace
@@ -1136,7 +1106,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	sseDone := make(chan error, 1)
 	sseReady := make(chan error, 1)
 	turnIDReady := make(chan string, 1)
-	toolTraces := newDoagentToolTraceCollector(execution.Admission)
+	toolTraces := newDoagentToolTraceCollector()
 	go func() {
 		sseDone <- subscribeDoagentSSEWithCollectorReady(
 			sseCtx,
@@ -1156,12 +1126,10 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	}
 
 	// session/prompt 只返回本轮 turnId；终态仍以同 turn 的 SSE turn_finished 为准。
-	promptParams := buildDoagentPromptParams(
-		targetSessionID,
-		instr,
-		execution.Admission,
-		responseFormat == "json",
-	)
+	promptParams := map[string]interface{}{"sessionId": targetSessionID, "prompt": instr}
+	if responseFormat == "json" {
+		promptParams["response_format"] = "json"
+	}
 	promptParams["responseMode"] = "stream"
 	promptResponse, err := doagentRPC(doagentURL, map[string]interface{}{
 		"jsonrpc": "2.0",
@@ -1199,18 +1167,6 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		resultText, structuredContent, err := toolTraces.structuredResult()
 		if err != nil {
 			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("read final machine result: %v", err)))
-			return
-		}
-		resultText, structuredContent, err = bindDeploymentRunEvidence(
-			structuredContent,
-			toolTraces.completed(),
-			deploymentRunBinding(execution),
-		)
-		if err != nil {
-			if rejections := toolTraces.rejectionSummary(); rejections != "" {
-				err = fmt.Errorf("%w; trace categories: %s", err, rejections)
-			}
-			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("bind final machine result: %v", err)))
 			return
 		}
 		writeJSON(buildStructuredSuccessResponse(reqID, resultText, structuredContent))
@@ -1715,78 +1671,6 @@ func decodeDoagentJSONObject(text string) (map[string]interface{}, error) {
 		return nil, err
 	}
 	return object, nil
-}
-
-func appendDoagentStructuredResultContract(
-	instruction string,
-	admission *trustedReconciliationAdmission,
-) string {
-	contract := instruction + "\n\nMachine-readable result channel: your final response is the machine result. " +
-		"It must contain exactly one JSON object with no Markdown or surrounding text. " +
-		"The top-level object must be the complete DeploymentRun envelope with apiVersion, kind, metadata, spec, and status. It must contain exactly five top-level fields: apiVersion, kind, metadata, spec, and status; kind must be \"DeploymentRun\". Never put phase, mutationCount, capabilities, evidence, or failures at the top level. Never return the status object by itself. " +
-		"metadata must contain exactly workflow, runId, and workspaceCommit; spec must contain exactly mode. " +
-		"Never put executionMode, inputs, resultContract, runId, or workspaceCommit at the top level. " +
-		"Copy required values from the request exactly: apiVersion=resultContract.apiVersion, metadata.workflow=workflowPath, metadata.runId=runId, metadata.workspaceCommit=workspaceCommit, and spec.mode=executionMode. Do not rename these output fields or put mode under metadata. " +
-		"For a DeploymentRun, status may contain only phase, mutationCount, capabilities, evidence, and failures. " +
-		"status.capabilities must be a non-empty JSON object, never an array, string, number, boolean, or null. " +
-		"status.phase must be exactly one of planned, converged, blocked, failed, or outcome-unknown; do not use Succeeded, success, completed, or any other alias. " +
-		"Do not emit plannedMutations, runtimeAttestation, resultDigest, or any other status field. " +
-		"DeploymentRun evidence must be a non-empty array: before the final response, call at least one allowed trusted DoOps plan tool and reference that completed call. " +
-		"Every DeploymentRun evidence item must reference one of the allowed trusted DoOps plan tools; " +
-		"generic Bash, filesystem, browser, or delegation calls are not valid evidence. " +
-		"If the object is a DeploymentRun, every evidence item must contain exactly subject, observedAt, and toolRef; " +
-		"For trusted DoOps plan tools, toolRef.tool is the exact model-visible name plan.<Tool> and toolRef.input is {} because trusted context is injected outside model arguments. " +
-		"For any other allowed tool, toolRef.tool is the exact model-visible tool name and toolRef.input is the exact JSON input used for that call. " +
-		"The Gateway consumes toolRef and injects toolCall with the completed runtime call's exact id, tool, input, and result."
-	if admission != nil && containsString(admission.AllowedTools, "mcp_doops_plan_ObserveWorkspaceSource") {
-		contract += " Your first action must be calling the allowed internal tool mcp_doops_plan_ObserveWorkspaceSource with exact JSON input {}; do not emit the final response before that completed call. DeploymentRun status.evidence[0].toolRef must reference that completed call exactly as {\"tool\":\"plan.ObserveWorkspaceSource\",\"input\":{}}; never include the internal mcp_doops_plan_ prefix inside toolRef.tool. Before the final response, call and reference plan.ObserveSourceRegistryImageSet, plan.ObserveTargetRegistryImageSet, plan.ObserveAuthorizationState, plan.ObserveHelmRelease, and plan.ObserveKubernetesWorkload. A target image observation with present:false is valid evidence that synchronization is required."
-	}
-	return contract
-}
-
-func primaryDeploymentEvidenceTool(admission *trustedReconciliationAdmission) string {
-	const sourceTool = "mcp_doops_plan_ObserveWorkspaceSource"
-	if admission != nil && containsString(admission.AllowedTools, sourceTool) {
-		return sourceTool
-	}
-	return ""
-}
-
-func deploymentRunBinding(execution agentPromptExecutionContext) *deploymentRunContractBinding {
-	if execution.Admission == nil {
-		return nil
-	}
-	instruction := &execution.Admission.Instruction
-	return &deploymentRunContractBinding{
-		APIVersion:      instruction.ResultContract.APIVersion,
-		Workflow:        instruction.WorkflowPath,
-		RunID:           instruction.RunID,
-		WorkspaceCommit: instruction.WorkspaceCommit,
-		Mode:            instruction.ExecutionMode,
-		PrimaryTool:     primaryDeploymentEvidenceTool(execution.Admission),
-		RequiredTools:   requiredDeploymentEvidenceTools(execution.Admission),
-	}
-}
-
-func requiredDeploymentEvidenceTools(admission *trustedReconciliationAdmission) []string {
-	required := []string{
-		"mcp_doops_plan_ObserveWorkspaceSource",
-		"mcp_doops_plan_ObserveSourceRegistryImageSet",
-		"mcp_doops_plan_ObserveTargetRegistryImageSet",
-		"mcp_doops_plan_ObserveAuthorizationState",
-		"mcp_doops_plan_ObserveHelmRelease",
-		"mcp_doops_plan_ObserveKubernetesWorkload",
-	}
-	if admission == nil {
-		return nil
-	}
-	available := make([]string, 0, len(required))
-	for _, tool := range required {
-		if containsString(admission.AllowedTools, tool) {
-			available = append(available, tool)
-		}
-	}
-	return available
 }
 
 // subscribeDoagentSSE 订阅 doagent 的 SSE 事件流，将内容实时转发到 WebSocket 客户端。

@@ -15,8 +15,7 @@
 # CI/CD 契约
 
 - 声明式发布 YAML 的生成、审查、dry-run 和 apply 必须使用 `doops-cicd` Skill。
-- `doops.sh/v2 DeploymentTemplate` 或 `SemanticRelease` YAML 是发布根输入；
-  `SemanticRelease` 引用 `ServiceRelease`。目标、制品、执行器、验收和回滚事实
+- `doops.sh/v3 EnvironmentRegistry` YAML 是发布根输入；目标、制品、执行器和验收事实
   只能来自这些 YAML 及其 `configurationSource`。
 - 规划、模块发现、工具选择和多 Agent 委派由 doagent 原生引擎负责，不在 Go、
   prompt 或 Skill 中硬编码发布步骤。
