@@ -523,6 +523,32 @@ func (h *GatewayHub) materializeCredentialVersion(
 	grantID string,
 	ref CredentialPlanReference,
 ) (CredentialMaterialization, CredentialMaterializeRequest, error) {
+	return h.materializeCredentialVersionAttempt(
+		ctx,
+		cluster,
+		instance,
+		sessionID,
+		resource,
+		version,
+		expectedPreviousVersionID,
+		grantID,
+		ref,
+		true,
+	)
+}
+
+func (h *GatewayHub) materializeCredentialVersionAttempt(
+	ctx context.Context,
+	cluster string,
+	instance string,
+	sessionID string,
+	resource CredentialResource,
+	version CredentialVersion,
+	expectedPreviousVersionID string,
+	grantID string,
+	ref CredentialPlanReference,
+	recoverBindingFailure bool,
+) (CredentialMaterialization, CredentialMaterializeRequest, error) {
 	payload, err := h.store.ResolveCredentialPayload(resource.ID, version.ID)
 	if err != nil {
 		return CredentialMaterialization{}, CredentialMaterializeRequest{}, err
@@ -589,6 +615,19 @@ func (h *GatewayHub) materializeCredentialVersion(
 		expectedPreviousVersionID,
 	); err != nil {
 		_ = h.store.MarkCredentialMaterializationUnknown(intent.ID, err.Error())
+		if recoverBindingFailure {
+			if recoveryErr := h.recoverRejectedCredentialMaterialization(
+				ctx,
+				intentRequest,
+				resource,
+				version,
+				expectedPreviousVersionID,
+				grantID,
+				ref,
+			); recoveryErr != nil {
+				return CredentialMaterialization{}, intentRequest, errors.New("credential_materialization_outcome_unknown")
+			}
+		}
 		return CredentialMaterialization{}, intentRequest, err
 	}
 	if err := h.store.CompleteCredentialMaterialization(intent.ID, materialization); err != nil {
@@ -596,6 +635,39 @@ func (h *GatewayHub) materializeCredentialVersion(
 		return CredentialMaterialization{}, intentRequest, err
 	}
 	return materialization, intentRequest, nil
+}
+
+func (h *GatewayHub) recoverRejectedCredentialMaterialization(
+	ctx context.Context,
+	request CredentialMaterializeRequest,
+	resource CredentialResource,
+	rejectedVersion CredentialVersion,
+	expectedPreviousVersionID string,
+	grantID string,
+	ref CredentialPlanReference,
+) error {
+	if expectedPreviousVersionID == "" {
+		return h.cleanupCredentialVersion(ctx, request)
+	}
+	previous, err := h.store.CredentialVersionByID(resource.ID, expectedPreviousVersionID)
+	if err != nil {
+		return err
+	}
+	if _, _, err := h.materializeCredentialVersionAttempt(
+		ctx,
+		request.Cluster,
+		request.Instance,
+		request.SessionID,
+		resource,
+		previous,
+		rejectedVersion.ID,
+		grantID,
+		ref,
+		false,
+	); err != nil {
+		return err
+	}
+	return h.store.MarkCredentialMaterializationCleaned(request)
 }
 
 func (h *GatewayHub) validateCredentialMaterializationResult(
