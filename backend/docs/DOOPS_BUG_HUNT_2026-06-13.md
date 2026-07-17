@@ -28,7 +28,7 @@
 ## 已修复
 
 - 2026-06-13 `fix(doops-gateway): require agent auth and explicit grants`
-  - P0-1：`/v1/agent/connect` 已在 WebSocket upgrade 前校验 agent token，且 token 绑定的 `cluster/instance` 必须与 query 一致；无 token / user token 返回 401，错配 agent token 返回 403。
+  - P0-1：历史版本曾在 `/v1/agent/connect` 校验 agent token；当前架构已移除该注册鉴权，注册只绑定 query 中的 `cluster/instance`，用户操作仍由 Gateway user token 鉴权。
   - P0-2：`UserCan` / `UserHasAction` 改为无 grant 默认拒绝；`targets:list` 不再隐式授予 exec/read/write/push 等默认操作。
   - 额外修复：pull bundle 生成时 `/tmp/repos/<session>.git` 若存在但不是合法 bare repo，会删除并重建，避免坏仓库状态导致 pull 卡死。
 - 2026-06-13 `fix(doops): close bug hunt findings`
@@ -51,7 +51,7 @@
   - `agent/internal/server/tunnel_hub.go:855-857` `registerAgent` 同 key 重注册会关闭旧 agent 连接 → 接管。
 - 滥用路径：可达公网 gateway 者连 `/v1/agent/connect?cluster=doops-oilan&instance=oilan-node` 即冒充该 target，踢掉真实 agent，截获后续所有 `tools/call`（含 `doops_file_read` 内容、`doops_shell` 命令），并回传伪造结果。
 - 影响：跨租户接管、命令/文件窃取、运维结果伪造、对真实 agent 的持续 DoS。
-- 修复：`HandleAgentConnect` 入口已调用 `authenticateAgent(r)`；校验 agent token 绑定的 `cluster/instance` 与 query 一致；不匹配返回 401/403。已补回归测试断言无 token / user token / 错配 token 被拒，匹配 token 可注册。
+- 该历史修复已被当前注册模型取代；回归测试现在断言无 token 可以注册，且缺少 `cluster/instance` 仍被拒绝。
 - 兼容/回滚：可加 `--require-agent-auth`（默认开）灰度；老 agent 已具备发 token 能力，风险低。
 
 ### P0-2 `doops/gateway/permission-default-allow` — 无 grant 默认全放行 + targets:list 隐式提权

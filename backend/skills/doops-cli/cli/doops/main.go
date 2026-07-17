@@ -110,10 +110,11 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 	case "targets":
 		var gateway, token, target string
+		var targetCluster, targetInstance string
 		targetsFlag := flag.NewFlagSet("targets", flag.ExitOnError)
 		targetsFlag.StringVar(&gateway, "gateway", "", "Gateway URL")
 		targetsFlag.StringVar(&token, "token", "", "User token")
-		targetsFlag.StringVar(&target, "target", "", "Configured target whose gateway/token should be used")
+		targetsFlag.StringVar(&target, "target", "", "Configured target to query")
 		targetsFlag.Parse(cmdArgs)
 		if target != "" {
 			requireConfig(configErr)
@@ -126,6 +127,12 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			if token == "" {
 				token = ResolveToken(server.Name, server.Token)
 			}
+			targetCluster = strings.TrimSpace(server.Cluster)
+			targetInstance = strings.TrimSpace(server.Instance)
+			if targetCluster == "" || targetInstance == "" {
+				fmt.Printf("Error: target '%s' has no gateway cluster/instance route.\n", target)
+				os.Exit(1)
+			}
 		}
 		if gateway == "" {
 			fmt.Println("Error: --gateway or --target is required")
@@ -135,6 +142,13 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
+		}
+		if target != "" {
+			targets = filterGatewayTargets(targets, targetCluster, targetInstance)
+			if len(targets) == 0 {
+				fmt.Printf("Error: target offline: %s/%s\n", targetCluster, targetInstance)
+				os.Exit(1)
+			}
 		}
 		fmt.Printf("%-18s %-18s %-8s %-16s %-7s %-7s %-28s %-24s\n", "CLUSTER", "INSTANCE", "BUSY", "STATUS", "ACTIVE", "QUEUED", "RESOURCES", "LAST_SEEN")
 		fmt.Println(strings.Repeat("-", 132))
@@ -744,6 +758,10 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Printf("Error: alias/name conflict with existing target '%s'.\n", conflict)
 			os.Exit(1)
 		}
+		if conflict := findRouteConflict(servers, newServer); conflict != "" {
+			fmt.Printf("Error: gateway route %s/%s is already configured as target '%s'.\n", newServer.Cluster, newServer.Instance, conflict)
+			os.Exit(1)
+		}
 		if !updated {
 			servers = append(servers, newServer)
 		}
@@ -1006,6 +1024,26 @@ func findAliasConflict(servers []Server, candidate Server) string {
 			if serverMatchesTarget(server, name) {
 				return server.Name
 			}
+		}
+	}
+	return ""
+}
+
+func findRouteConflict(servers []Server, candidate Server) string {
+	candidateGateway := strings.TrimRight(strings.TrimSpace(candidate.Gateway), "/")
+	candidateCluster := strings.TrimSpace(candidate.Cluster)
+	candidateInstance := strings.TrimSpace(candidate.Instance)
+	if candidateGateway == "" || candidateCluster == "" || candidateInstance == "" {
+		return ""
+	}
+	for _, server := range servers {
+		if server.Name == candidate.Name {
+			continue
+		}
+		if strings.TrimRight(strings.TrimSpace(server.Gateway), "/") == candidateGateway &&
+			strings.TrimSpace(server.Cluster) == candidateCluster &&
+			strings.TrimSpace(server.Instance) == candidateInstance {
+			return server.Name
 		}
 	}
 	return ""

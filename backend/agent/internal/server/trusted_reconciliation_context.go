@@ -23,15 +23,16 @@ type trustedReconciliationAdmission struct {
 const trustedReconciliationContextSchema = "doops.reconciliation-context/v1"
 
 type trustedReconciliationContext struct {
-	SchemaVersion      string                                     `json:"schemaVersion"`
-	OperationID        string                                     `json:"operationId"`
-	ExecutionMode      string                                     `json:"executionMode"`
-	MutationAuthorized bool                                       `json:"mutationAuthorized"`
-	PlanDigest         string                                     `json:"planDigest"`
-	PlanBindingDigest  string                                     `json:"planBindingDigest"`
-	ContextDigest      string                                     `json:"contextDigest,omitempty"`
-	Source             trustedReconciliationSource                `json:"source"`
-	Capabilities       map[string]trustedReconciliationCapability `json:"capabilities"`
+	SchemaVersion       string                                     `json:"schemaVersion"`
+	OperationID         string                                     `json:"operationId"`
+	ExecutionMode       string                                     `json:"executionMode"`
+	MutationAuthorized  bool                                       `json:"mutationAuthorized"`
+	PlanDigest          string                                     `json:"planDigest"`
+	PlanBindingDigest   string                                     `json:"planBindingDigest"`
+	CredentialRunDigest string                                     `json:"credentialRunDigest"`
+	ContextDigest       string                                     `json:"contextDigest,omitempty"`
+	Source              trustedReconciliationSource                `json:"source"`
+	Capabilities        map[string]trustedReconciliationCapability `json:"capabilities"`
 }
 
 type trustedReconciliationSource struct {
@@ -266,14 +267,15 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 	}
 
 	context := trustedReconciliationContext{
-		SchemaVersion:      trustedReconciliationContextSchema,
-		OperationID:        trustedOperationID(envelope.RunID, workspaceCommit),
-		ExecutionMode:      envelope.ExecutionMode,
-		MutationAuthorized: envelope.ExecutionMode == "apply",
-		PlanDigest:         planDigest,
-		PlanBindingDigest:  planBindingDigest,
-		Source:             source,
-		Capabilities:       capabilities,
+		SchemaVersion:       trustedReconciliationContextSchema,
+		OperationID:         trustedOperationID(envelope.RunID, workspaceCommit),
+		ExecutionMode:       envelope.ExecutionMode,
+		MutationAuthorized:  envelope.ExecutionMode == "apply",
+		PlanDigest:          planDigest,
+		PlanBindingDigest:   planBindingDigest,
+		CredentialRunDigest: credentialRunDigest,
+		Source:              source,
+		Capabilities:        capabilities,
 	}
 	context.ContextDigest, err = context.calculatedDigest()
 	if err != nil {

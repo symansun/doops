@@ -46,3 +46,24 @@ func TestAliasConflictDetection(t *testing.T) {
 		t.Fatalf("updating canonical target should not conflict with itself, got %q", got)
 	}
 }
+
+func TestRouteConflictDetection(t *testing.T) {
+	servers := []Server{
+		{Name: "oilan", Gateway: "https://gateway.example.com", Cluster: "doops-oilan", Instance: "node-1"},
+	}
+
+	duplicate := Server{Name: "oilan-admin", Gateway: "https://gateway.example.com/", Cluster: "doops-oilan", Instance: "node-1"}
+	if got := findRouteConflict(servers, duplicate); got != "oilan" {
+		t.Fatalf("expected route conflict with oilan, got %q", got)
+	}
+
+	update := Server{Name: "oilan", Gateway: "https://gateway.example.com", Cluster: "doops-oilan", Instance: "node-1"}
+	if got := findRouteConflict(servers, update); got != "" {
+		t.Fatalf("updating the canonical target should not conflict, got %q", got)
+	}
+
+	otherInstance := Server{Name: "oilan-worker", Gateway: "https://gateway.example.com", Cluster: "doops-oilan", Instance: "node-2"}
+	if got := findRouteConflict(servers, otherInstance); got != "" {
+		t.Fatalf("different instance should not conflict, got %q", got)
+	}
+}

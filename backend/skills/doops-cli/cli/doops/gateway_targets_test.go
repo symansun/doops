@@ -53,3 +53,30 @@ func TestGatewayTargetUnlockURLUsesVersionedEndpoint(t *testing.T) {
 		t.Fatalf("unlock URL mismatch\nwant: %s\n got: %s", want, got)
 	}
 }
+
+func TestFilterGatewayTargetsMatchesConfiguredRoute(t *testing.T) {
+	targets := []GatewayTarget{
+		{Cluster: "prod", Instance: "node-1"},
+		{Cluster: "prod", Instance: "node-2"},
+		{Cluster: "dev", Instance: "node-1"},
+	}
+
+	got := filterGatewayTargets(targets, " prod ", " node-2 ")
+	if len(got) != 1 {
+		t.Fatalf("expected one exact target, got %#v", got)
+	}
+	if got[0].Cluster != "prod" || got[0].Instance != "node-2" {
+		t.Fatalf("unexpected target: %#v", got[0])
+	}
+}
+
+func TestFilterGatewayTargetsDoesNotReturnOtherOnlineTargets(t *testing.T) {
+	targets := []GatewayTarget{
+		{Cluster: "prod", Instance: "node-1"},
+		{Cluster: "dev", Instance: "node-2"},
+	}
+
+	if got := filterGatewayTargets(targets, "legacy", "offline"); len(got) != 0 {
+		t.Fatalf("expected no route match, got %#v", got)
+	}
+}
