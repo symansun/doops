@@ -1,0 +1,26 @@
+apiVersion: doops.sh/v3
+kind: EnvironmentService
+metadata:
+  name: doops-agent
+  environment: oilan
+spec:
+  serviceDefinition: deploy/services/doops-agent.yaml
+  artifact:
+    source: docker.cnb.cool/l8ai/ai/doops.sh
+    target: docker.cnb.cool/l8ai/ai/doops.sh
+    identity: sha256-digest
+    digest: sha256:fefb4ec9b6c49e94d684053405296d49004882f4b0548b673e40184ffd8ba24e
+  helm:
+    chart: backend/deploy/helm/doops-agent
+    values: deploy/environments/oilan/values.yaml
+    value: image
+    enabled: true
+    replicas: 1
+    workload: deployment/doops-agent-live
+    container: doops-agent
+  configuration:
+    valuesPath: image
+    files: []
+  verification:
+    minReadyReplicas: 1
+    requireEndpoints: false
