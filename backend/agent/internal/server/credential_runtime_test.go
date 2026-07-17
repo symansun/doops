@@ -82,12 +82,14 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	waitForGatewayAgent(t, hub, "doops-edu", "edu-coder")
 
 	dryRun := credentialHTTPRequest(t, mux, deployerToken, http.MethodPost, "/v1/credentials/prepare", map[string]any{
-		"cluster":          "doops-edu",
-		"instance":         "edu-coder",
-		"session_id":       "release-1",
-		"workflow_path":    "deploy/release.yaml",
-		"workspace_commit": strings.Repeat("a", 40),
-		"mode":             "dry-run",
+		"cluster":           "doops-edu",
+		"instance":          "edu-coder",
+		"session_id":        "release-1",
+		"workflow_path":     "deploy/release.yaml",
+		"source_repository": "https://example.test/app.git",
+		"source_branch":     "main",
+		"source_revision":   strings.Repeat("a", 40),
+		"mode":              "dry-run",
 	})
 	if dryRun.Code != http.StatusOK {
 		t.Fatalf("credential dry-run: HTTP %d: %s", dryRun.Code, dryRun.Body.String())
@@ -97,12 +99,14 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	}
 
 	apply := credentialHTTPRequest(t, mux, deployerToken, http.MethodPost, "/v1/credentials/prepare", map[string]any{
-		"cluster":          "doops-edu",
-		"instance":         "edu-coder",
-		"session_id":       "release-1",
-		"workflow_path":    "deploy/release.yaml",
-		"workspace_commit": strings.Repeat("a", 40),
-		"mode":             "apply",
+		"cluster":           "doops-edu",
+		"instance":          "edu-coder",
+		"session_id":        "release-1",
+		"workflow_path":     "deploy/release.yaml",
+		"source_repository": "https://example.test/app.git",
+		"source_branch":     "main",
+		"source_revision":   strings.Repeat("a", 40),
+		"mode":              "apply",
 	})
 	if apply.Code != http.StatusOK {
 		t.Fatalf("credential apply: HTTP %d: %s", apply.Code, apply.Body.String())
@@ -323,12 +327,14 @@ func TestCredentialPrepareReturnsVersionedProtocolErrors(t *testing.T) {
 			mux := http.NewServeMux()
 			hub.RegisterRoutes(mux)
 			response := credentialHTTPRequest(t, mux, token, http.MethodPost, "/v1/credentials/prepare", map[string]any{
-				"cluster":          "doops-edu",
-				"instance":         "legacy",
-				"session_id":       "release",
-				"workflow_path":    "deploy/release.yaml",
-				"workspace_commit": strings.Repeat("a", 40),
-				"mode":             "dry-run",
+				"cluster":           "doops-edu",
+				"instance":          "legacy",
+				"session_id":        "release",
+				"workflow_path":     "deploy/release.yaml",
+				"source_repository": "https://example.test/app.git",
+				"source_branch":     "main",
+				"source_revision":   strings.Repeat("a", 40),
+				"mode":              "dry-run",
 			})
 			if response.Code != test.wantStatus {
 				t.Fatalf("status = %d, want %d: %s", response.Code, test.wantStatus, response.Body.String())
@@ -443,12 +449,14 @@ func TestCredentialPrepareGrantDenialStopsBeforeMaterialization(t *testing.T) {
 	waitForGatewayAgent(t, hub, "doops-edu", "edu-coder")
 
 	response := credentialHTTPRequest(t, mux, deployerToken, http.MethodPost, "/v1/credentials/prepare", map[string]any{
-		"cluster":          "doops-edu",
-		"instance":         "edu-coder",
-		"session_id":       "release-2",
-		"workflow_path":    "deploy/release.yaml",
-		"workspace_commit": strings.Repeat("b", 40),
-		"mode":             "apply",
+		"cluster":           "doops-edu",
+		"instance":          "edu-coder",
+		"session_id":        "release-2",
+		"workflow_path":     "deploy/release.yaml",
+		"source_repository": "https://example.test/app.git",
+		"source_branch":     "main",
+		"source_revision":   strings.Repeat("b", 40),
+		"mode":              "apply",
 	})
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("ungranted credential prepare = HTTP %d, want 403: %s", response.Code, response.Body.String())

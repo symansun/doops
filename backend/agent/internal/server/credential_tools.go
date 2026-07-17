@@ -10,9 +10,11 @@ import (
 )
 
 type credentialPlanToolParams struct {
-	SessionID       string `json:"session_id"`
-	WorkflowPath    string `json:"workflow_path"`
-	WorkspaceCommit string `json:"workspace_commit"`
+	SessionID        string `json:"session_id"`
+	WorkflowPath     string `json:"workflow_path"`
+	SourceRepository string `json:"source_repository"`
+	SourceBranch     string `json:"source_branch"`
+	SourceRevision   string `json:"source_revision"`
 }
 
 func handleCredentialPlanTool(argBytes json.RawMessage) (string, error) {
@@ -27,11 +29,15 @@ func handleCredentialPlanTool(argBytes json.RawMessage) (string, error) {
 	}
 	args.SessionID = strings.TrimSpace(args.SessionID)
 	args.WorkflowPath = strings.TrimSpace(args.WorkflowPath)
-	args.WorkspaceCommit = strings.TrimSpace(args.WorkspaceCommit)
-	if args.SessionID == "" || args.WorkflowPath == "" || args.WorkspaceCommit == "" {
-		return "", fmt.Errorf("session_id, workflow_path, and workspace_commit are required")
+	args.SourceRepository = strings.TrimSpace(args.SourceRepository)
+	args.SourceBranch = strings.TrimSpace(args.SourceBranch)
+	args.SourceRevision = strings.TrimSpace(args.SourceRevision)
+	if args.SessionID == "" || args.WorkflowPath == "" ||
+		args.SourceRepository == "" || args.SourceBranch == "" ||
+		!validCredentialWorkspaceCommit(args.SourceRevision) {
+		return "", fmt.Errorf("session_id, workflow_path, source_repository, source_branch, and immutable source_revision are required")
 	}
-	if err := validateWorkspaceCommitBinding(args.SessionID, args.WorkspaceCommit); err != nil {
+	if err := checkoutWorkflowSource(args.SessionID, args.SourceRepository, args.SourceBranch, args.SourceRevision); err != nil {
 		return "", err
 	}
 	root, err := workspacePath(args.SessionID)

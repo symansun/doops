@@ -4,14 +4,16 @@ DoOps CI/CD has one user-facing execution path:
 
 ```text
 v2 DeploymentTemplate | SemanticRelease ┐
-                                        ├-> Push -> credential prepare
-v3 EnvironmentDefinition ────────────────┘        -> Ask($doops-cicd) -> DeploymentRun
+                                        ├-> resolve immutable declared source
+v3 EnvironmentDefinition ────────────────┘        -> credential prepare
+                                                 -> Ask($doops-cicd) -> DeploymentRun
 ```
 
 The repository workflow declares intent. `doops cicd run` validates the
-invocation, pushes the exact Git workspace to the selected Agent, and asks
-doagent to execute the `$doops-cicd` Skill. There is no second CI/CD RPC,
-generated shell pipeline, or hidden deployment fallback.
+invocation, resolves the declared repository and branch to one immutable commit,
+and asks doagent to execute the `$doops-cicd` Skill from that exact checkout.
+There is no second CI/CD RPC, generated shell pipeline, pushed-snapshot
+fallback, or hidden deployment path.
 
 ## Declaration
 
@@ -65,8 +67,9 @@ rejected.
 
 The command performs these steps:
 
-1. Push the repository snapshot to `/root/ws/<session>`.
-2. Capture the immutable workspace commit returned by the Agent.
+1. Read the declared source repository, branch, and optional revision.
+2. Resolve an absent revision from the remote branch and require one immutable
+   40- or 64-character commit.
 3. Ask the Gateway credential control plane to compile the same root and its
    complete referenced declaration chain.
 4. Require the target Agent to advertise
@@ -75,7 +78,9 @@ The command performs these steps:
 5. Reject v3 environments whose required source, target, or runtime Secret
    reference is undeclared.
 6. Send one structured `doops_agent_prompt` request selecting `$doops-cicd`.
-7. Bind the request to the pushed workspace commit.
+7. Require the Agent checkout HEAD, credential authorization, Ask request,
+   trusted reconciliation context, and result `workspaceCommit` to match the
+   same prepared commit.
 8. Use ordinary Ask for dry-run and the explicitly validated apply operation
    for mutation.
 9. Wait for doagent's authoritative `turn_finished` event.
@@ -103,9 +108,11 @@ doagent emits exactly one JSON object as its final response:
     "phase": "planned",
     "mutationCount": 0,
     "capabilities": {
-      "source-identity": "observed",
       "ObserveWorkspaceSource": {
-        "available": true
+        "tool": "ObserveWorkspaceSource",
+        "evidenceKind": "source-identity",
+        "evidenceSubject": "source-identity",
+        "scopeDigest": "sha256:<trusted scope digest>"
       }
     },
     "evidence": [
@@ -126,7 +133,10 @@ The Gateway rejects a missing, Markdown-wrapped, non-object, or multiple-object
 final response. Agent-authored evidence uses `toolRef` with an exact tool name
 and exact JSON input. Trusted DoOps plan references use the model-visible
 `plan.<Tool>` name and `{}` input because trusted context is injected outside
-model arguments. The Gateway rejects model-authored runtime payloads, resolves
+model arguments. For trusted reconciliation, the model must emit
+`status.capabilities` as `{}`. The Gateway replaces it with the capability
+identity and scope digest from completed, attested tool calls. The Gateway
+rejects model-authored capability claims and runtime payloads, resolves
 every reference to one completed tool call from the accepted `turnId`, and
 injects `toolCall` with the exact ID, runtime tool name, input and attested
 result after removing transport-only `_meta`.
@@ -137,7 +147,7 @@ DoOps does not expose or invoke it.
 The CLI accepts only a `DeploymentRun` whose apiVersion exactly matches the
 root declaration and whose:
 
-- workspace commit matches the pushed workspace;
+- workspace commit matches the immutable declared source checkout;
 - mode matches the requested dry-run or apply operation;
 - phase is `planned`, `converged`, `blocked`, `failed`, or `outcome-unknown`;
 - mutation count is present and non-negative;

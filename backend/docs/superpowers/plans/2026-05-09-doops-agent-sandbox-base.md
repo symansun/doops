@@ -29,7 +29,7 @@
 - [ ] Install minimum runtime additions: `tini`, `curl`, `ca-certificates`, BuildKit v0.21.1 if missing.
 - [ ] Copy doops-agent, doops skills, self-docs, do-agent, and canonical doagent skills.
 - [ ] Add build gate: `/usr/local/bin/do-agent --help >/dev/null`.
-- [ ] Entrypoint starts sandbox base service when discoverable, configures `/root/.agent/settings.json`, syncs skills, starts doagent ACP HTTP on 9000, starts buildkitd, writes registry auth, and runs `/app/doops-agent` under `tini -s`.
+- [ ] Entrypoint starts sandbox base service when discoverable, materializes `/tmp/doops-doagent/settings.json`, syncs skills, starts doagent ACP HTTP on 9000, starts buildkitd, writes registry auth, and runs `/app/doops-agent` under `tini -s`.
 
 ### Task 3: Wire Docs And Build Defaults
 

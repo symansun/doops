@@ -43,29 +43,31 @@ type CredentialRun struct {
 }
 
 type CredentialRunAuthorization struct {
-	RunID           string
-	UserID          string
-	TokenID         string
-	Cluster         string
-	Instance        string
-	SessionID       string
-	WorkflowPath    string
-	WorkspaceCommit string
-	Mode            string
-	RunDigest       string
-	State           string
-	CreatedAt       time.Time
-	ExpiresAt       time.Time
-	ConsumedAt      *time.Time
+	RunID         string
+	UserID        string
+	TokenID       string
+	Cluster       string
+	Instance      string
+	SessionID     string
+	WorkflowPath  string
+	SourceBinding string
+	Mode          string
+	RunDigest     string
+	State         string
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
+	ConsumedAt    *time.Time
 }
 
 type credentialPrepareHTTPBody struct {
-	Cluster         string `json:"cluster"`
-	Instance        string `json:"instance"`
-	SessionID       string `json:"session_id"`
-	WorkflowPath    string `json:"workflow_path"`
-	WorkspaceCommit string `json:"workspace_commit"`
-	Mode            string `json:"mode"`
+	Cluster          string `json:"cluster"`
+	Instance         string `json:"instance"`
+	SessionID        string `json:"session_id"`
+	WorkflowPath     string `json:"workflow_path"`
+	SourceRepository string `json:"source_repository"`
+	SourceBranch     string `json:"source_branch"`
+	SourceRevision   string `json:"source_revision"`
+	Mode             string `json:"mode"`
 }
 
 type credentialPrepareErrorResponse struct {
@@ -76,7 +78,8 @@ type credentialPrepareErrorResponse struct {
 
 type credentialVerifyHTTPBody struct {
 	credentialPrepareHTTPBody
-	VersionID string `json:"version_id"`
+	VersionID       string `json:"version_id"`
+	WorkspaceCommit string `json:"workspace_commit"`
 }
 
 type credentialVerificationEvidence struct {
@@ -114,10 +117,13 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 	body.Instance = strings.TrimSpace(body.Instance)
 	body.SessionID = strings.TrimSpace(body.SessionID)
 	body.WorkflowPath = strings.TrimSpace(body.WorkflowPath)
-	body.WorkspaceCommit = strings.TrimSpace(body.WorkspaceCommit)
+	body.SourceRepository = strings.TrimSpace(body.SourceRepository)
+	body.SourceBranch = strings.TrimSpace(body.SourceBranch)
+	body.SourceRevision = strings.TrimSpace(body.SourceRevision)
 	body.Mode = strings.ToLower(strings.TrimSpace(body.Mode))
 	if body.Cluster == "" || body.Instance == "" || body.SessionID == "" ||
-		body.WorkflowPath == "" || !validCredentialWorkspaceCommit(body.WorkspaceCommit) ||
+		body.WorkflowPath == "" || body.SourceRepository == "" || body.SourceBranch == "" ||
+		!validCredentialWorkspaceCommit(body.SourceRevision) ||
 		(body.Mode != "dry-run" && body.Mode != "apply") {
 		writeCredentialPrepareError(w, http.StatusBadRequest, "invalid_request")
 		return
@@ -665,9 +671,11 @@ func (h *GatewayHub) loadCredentialPlan(ctx context.Context, body credentialPrep
 		return CredentialPlan{}, errors.New("agent_protocol_incompatible")
 	}
 	planText, err := h.RunInternalToolCall(ctx, body.Cluster, body.Instance, "doops_credential_plan", map[string]any{
-		"session_id":       body.SessionID,
-		"workflow_path":    body.WorkflowPath,
-		"workspace_commit": body.WorkspaceCommit,
+		"session_id":        body.SessionID,
+		"workflow_path":     body.WorkflowPath,
+		"source_repository": body.SourceRepository,
+		"source_branch":     body.SourceBranch,
+		"source_revision":   body.SourceRevision,
 	})
 	if err != nil {
 		return CredentialPlan{}, errors.New(credentialToolErrorCategory(err.Error()))
@@ -690,7 +698,8 @@ func credentialPlanHTTPStatus(err error) int {
 		return http.StatusServiceUnavailable
 	case "credential_declaration_invalid", "inline_credential_material_forbidden":
 		return http.StatusUnprocessableEntity
-	case "credential_workspace_commit_mismatch", "credential_workspace_not_ready":
+	case "credential_workspace_commit_mismatch", "credential_workspace_not_ready",
+		"credential_source_revision_mismatch":
 		return http.StatusConflict
 	default:
 		return http.StatusBadGateway

@@ -26,9 +26,13 @@ from the exact declared image binding path
 `sourceArtifactNames` declares a different name. No repository, tag, digest,
 or values path is guessed.
 
-Agent registration is intentionally unauthenticated. The Deployment passes
-only the gateway URL, cluster, and instance; the user-authenticated Gateway
-API remains the authorization boundary for operations.
+Agent registration is authenticated independently from user operations. The
+Deployment mounts the cluster/instance-bound registration token from
+`doops-agent-runtime/token` at
+`/run/secrets/doops/gateway-agent-token`. The Agent sends it as a Bearer token,
+and the Gateway verifies both token kind and target binding before upgrading
+the WebSocket. Gateway user tokens remain the authorization boundary for
+operator actions.
 
 The Deployment uses `RollingUpdate` with `maxUnavailable: 0` and
 `maxSurge: 1`. It does not use the host network or a host port. The replacement

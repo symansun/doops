@@ -114,7 +114,6 @@ func (c *MCPClient) connect() error {
 	header := http.Header{}
 	if c.Token != "" {
 		header.Set("Authorization", "Bearer "+c.Token)
-		header.Set("X-Doops-Key", c.Token)
 	}
 
 	var conn *websocket.Conn

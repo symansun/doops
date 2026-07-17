@@ -30,7 +30,7 @@ wss://gateway.example.com
 Authorization: Bearer <DOOPS_GATEWAY_USER_TOKEN>
 ```
 
-兼容字段 `X-Doops-Key: <token>` 仍可用，但新系统应优先使用 `Authorization: Bearer`。
+`X-Doops-Key` 不属于当前协议，Gateway 不接受该字段。
 
 ## 健康检查
 

@@ -3,26 +3,95 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sosedoff/gitkit"
 )
 
+func runTestCommand(t *testing.T, directory, name string, arguments ...string) string {
+	t.Helper()
+	command := exec.Command(name, arguments...)
+	command.Dir = directory
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %v: %v\n%s", name, arguments, err, output)
+	}
+	return string(output)
+}
+
 func TestAgentCredentialPlanToolParsesBoundWorkspace(t *testing.T) {
+	commit, repository, _ := createCredentialPlanWorkspaceFixture(t)
+
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	result := callTool(t, conn, "doops_credential_plan", map[string]interface{}{
+		"session_id":        "credential-plan",
+		"workflow_path":     "deploy/release.yaml",
+		"source_repository": repository,
+		"source_branch":     "main",
+		"source_revision":   commit,
+	})
+	var plan CredentialPlan
+	if err := json.Unmarshal([]byte(result), &plan); err != nil {
+		t.Fatalf("decode credential plan: %v", err)
+	}
+	if plan.Cluster != "oilan" || plan.Instance != "prod" || len(plan.CredentialRefs) != 1 {
+		t.Fatalf("unexpected credential plan: %#v", plan)
+	}
+}
+
+func TestAgentCredentialPlanToolRejectsSourceBranchMovingAfterPrepare(t *testing.T) {
+	commit, repository, sourceRoot := createCredentialPlanWorkspaceFixture(t)
+	if err := os.WriteFile(filepath.Join(sourceRoot, "deploy", "release.yaml"), []byte(`
+apiVersion: doops.sh/v2
+kind: DeploymentTemplate
+metadata:
+  name: tampered-release
+spec:
+  application: tampered
+  environment: production
+	configurationSource: deploy/environments.yaml
+`), 0600); err != nil {
+		t.Fatalf("advance workflow source: %v", err)
+	}
+	runTestCommand(t, sourceRoot, "git", "add", "deploy/release.yaml")
+	runTestCommand(t, sourceRoot, "git", "commit", "-q", "-m", "advance workflow source")
+	runTestCommand(t, sourceRoot, "git", "push", "-q", repository, "main")
+
+	_, err := handleCredentialPlanTool(mustJSON(t, map[string]interface{}{
+		"session_id":        "credential-plan",
+		"workflow_path":     "deploy/release.yaml",
+		"source_repository": repository,
+		"source_branch":     "main",
+		"source_revision":   commit,
+	}))
+	if err == nil || !strings.Contains(err.Error(), "source revision changed") {
+		t.Fatalf("moved source branch error = %v", err)
+	}
+}
+
+func createCredentialPlanWorkspaceFixture(t *testing.T) (string, string, string) {
+	t.Helper()
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	sessionRoot := filepath.Join(root, "credential-plan")
-	if err := os.MkdirAll(filepath.Join(sessionRoot, "deploy"), 0755); err != nil {
-		t.Fatalf("create workspace: %v", err)
+	t.Setenv("DOOPS_PLAN_WORKSPACE_BASE", root)
+	sourceRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "deploy"), 0755); err != nil {
+		t.Fatalf("create source repository: %v", err)
 	}
-	commit := strings.Repeat("a", 40)
-	if err := os.WriteFile(filepath.Join(sessionRoot, ".doops-ready"), []byte(commit+"\n"), 0600); err != nil {
-		t.Fatalf("write workspace binding: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sessionRoot, "deploy", "release.yaml"), []byte(`
+	if err := os.WriteFile(filepath.Join(sourceRoot, "deploy", "release.yaml"), []byte(`
 apiVersion: doops.sh/v2
 kind: DeploymentTemplate
 metadata:
@@ -43,7 +112,7 @@ spec:
 `), 0600); err != nil {
 		t.Fatalf("write workflow: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionRoot, "deploy", "environments.yaml"), []byte(`
+	if err := os.WriteFile(filepath.Join(sourceRoot, "deploy", "environments.yaml"), []byte(`
 apiVersion: doops.sh/v2
 kind: EnvironmentRegistry
 metadata:
@@ -57,58 +126,73 @@ environments:
 `), 0600); err != nil {
 		t.Fatalf("write configuration: %v", err)
 	}
-
-	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
-	defer ts.Close()
-	conn := dialAgentTestWS(t, ts.URL)
-	defer conn.Close()
-	initializeAgentTestWS(t, conn)
-
-	result := callTool(t, conn, "doops_credential_plan", map[string]interface{}{
-		"session_id":       "credential-plan",
-		"workflow_path":    "deploy/release.yaml",
-		"workspace_commit": commit,
+	runTestCommand(t, sourceRoot, "git", "init", "-q", "-b", "main")
+	runTestCommand(t, sourceRoot, "git", "config", "user.email", "test@example.invalid")
+	runTestCommand(t, sourceRoot, "git", "config", "user.name", "DoOps Test")
+	runTestCommand(t, sourceRoot, "git", "add", "deploy/release.yaml", "deploy/environments.yaml")
+	runTestCommand(t, sourceRoot, "git", "commit", "-q", "-m", "credential plan fixture")
+	commit := strings.TrimSpace(runTestCommand(t, sourceRoot, "git", "rev-parse", "HEAD"))
+	repositoryRoot := t.TempDir()
+	repositoryPath := filepath.Join(repositoryRoot, "credential-plan.git")
+	runTestCommand(t, root, "git", "clone", "-q", "--bare", sourceRoot, repositoryPath)
+	service := gitkit.New(gitkit.Config{Dir: repositoryRoot, AutoCreate: true})
+	if err := service.Setup(); err != nil {
+		t.Fatalf("setup Git HTTPS test service: %v", err)
+	}
+	server := httptest.NewTLSServer(service)
+	t.Cleanup(server.Close)
+	certificate := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: server.Certificate().Raw,
 	})
-	var plan CredentialPlan
-	if err := json.Unmarshal([]byte(result), &plan); err != nil {
-		t.Fatalf("decode credential plan: %v", err)
+	caPath := filepath.Join(t.TempDir(), "git-test-ca.pem")
+	if err := os.WriteFile(caPath, certificate, 0o600); err != nil {
+		t.Fatalf("write Git HTTPS test CA: %v", err)
 	}
-	if plan.Cluster != "oilan" || plan.Instance != "prod" || len(plan.CredentialRefs) != 1 {
-		t.Fatalf("unexpected credential plan: %#v", plan)
-	}
+	t.Setenv("GIT_SSL_CAINFO", caPath)
+	repository := server.URL + "/" + filepath.Base(repositoryPath)
+	return commit, repository, sourceRoot
 }
 
 func TestAgentCredentialPlanToolRejectsWorkspaceCommitMismatch(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	sessionRoot := filepath.Join(root, "credential-plan")
-	if err := os.MkdirAll(sessionRoot, 0755); err != nil {
-		t.Fatalf("create workspace: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sessionRoot, ".doops-ready"), []byte(strings.Repeat("a", 40)), 0600); err != nil {
-		t.Fatalf("write workspace binding: %v", err)
-	}
+	_, repository, _ := createCredentialPlanWorkspaceFixture(t)
 
 	_, err := handleCredentialPlanTool(mustJSON(t, map[string]interface{}{
-		"session_id":       "credential-plan",
-		"workflow_path":    "deploy/release.yaml",
-		"workspace_commit": strings.Repeat("b", 40),
+		"session_id":        "credential-plan",
+		"workflow_path":     "deploy/release.yaml",
+		"source_repository": repository,
+		"source_branch":     "main",
+		"source_revision":   strings.Repeat("b", 40),
 	}))
-	if err == nil || !strings.Contains(err.Error(), "workspace commit mismatch") {
-		t.Fatalf("workspace mismatch error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "source revision changed") {
+		t.Fatalf("source revision mismatch error = %v", err)
 	}
 }
 
 func TestAgentCredentialPlanToolRejectsUnknownFields(t *testing.T) {
 	_, err := handleCredentialPlanTool(mustJSON(t, map[string]interface{}{
-		"session_id":       "credential-plan",
-		"workflow_path":    "deploy/release.yaml",
-		"workspace_commit": strings.Repeat("a", 40),
-		"unexpected":       true,
+		"session_id":        "credential-plan",
+		"workflow_path":     "deploy/release.yaml",
+		"source_repository": "https://example.test/app.git",
+		"source_branch":     "main",
+		"source_revision":   strings.Repeat("a", 40),
+		"unexpected":        true,
 	}))
 	if err == nil || err.Error() != "invalid credential plan params" {
 		t.Fatalf("unknown field error = %v, want invalid credential plan params", err)
+	}
+}
+
+func TestAgentCredentialPlanToolRejectsUnsafeSourceTransport(t *testing.T) {
+	_, err := handleCredentialPlanTool(mustJSON(t, map[string]interface{}{
+		"session_id":        "credential-plan",
+		"workflow_path":     "deploy/release.yaml",
+		"source_repository": "ext::sh -c 'id'",
+		"source_branch":     "main",
+		"source_revision":   strings.Repeat("a", 40),
+	}))
+	if err == nil || !strings.Contains(err.Error(), "must be an HTTPS URL") {
+		t.Fatalf("unsafe source transport error = %v", err)
 	}
 }
 

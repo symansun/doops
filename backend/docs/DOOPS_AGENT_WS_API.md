@@ -1,22 +1,27 @@
 # doops-agent WebSocket API 协议指南
 
-本文档说明如何通过 WebSocket API 直接与 `doops-agent` 进行交互。
+本文档说明 `doops-agent` 本地 WebSocket 协议，仅用于首次自举、Agent
+自恢复或底层协议测试。日常操作必须使用带 `-session` 的 DoOps CLI，
+通过 Gateway target 进入目标 Agent；不得把 Agent IP、端口或直连 token
+登记为标准 target，也不得把本协议当作 Gateway 的 fallback。
 
 ## 1. 基础概念
 
 doops-agent 采用 **MCP (Model Context Protocol)** 风格的 JSON-RPC 消息，通过 **WebSocket** 实现双向通信。
 
--   **鉴权**: WebSocket 握手必须包含 `X-Doops-Key` Header，其值为 `agent` 启动时配置的 token。
+-   **鉴权**: 本地调试握手必须包含 `Authorization: Bearer <token>` Header，其值从 Agent 运行时 Secret 注入，不写入命令历史或文档。
 -   **通信模型**: 客户端连接 `/ws` 后，在同一条 WebSocket 连接上发送 JSON-RPC 请求并接收流式响应。
+-   **标准远程入口**: Gateway 负责用户鉴权、cluster/instance 路由、在线状态和操作审计；调用方使用 `doops -session <s> ... --target <gateway-target>`。
 
 ## 2. 交互流程
 
 ### 步骤 1: 建立 WebSocket 连接
-连接到 `ws://[node-ip]:42222/ws`。
+仅在 Agent 所在主机或 Pod 网络命名空间内连接
+`ws://127.0.0.1:42222/ws`。禁止从日常客户端直接连接节点 IP。
 
 **请求示例**:
 ```bash
-websocat -H 'X-Doops-Key: your-token' ws://127.0.0.1:42222/ws
+websocat -H "Authorization: Bearer ${DOOPS_AGENT_TOKEN}" ws://127.0.0.1:42222/ws
 ```
 
 ### 步骤 2: 发送 JSON-RPC 请求
@@ -89,8 +94,8 @@ websocat -H 'X-Doops-Key: your-token' ws://127.0.0.1:42222/ws
 ```javascript
 import WebSocket from 'ws';
 
-const ws = new WebSocket('ws://ip:42222/ws', {
-  headers: { 'X-Doops-Key': 'your-token' },
+const ws = new WebSocket('ws://127.0.0.1:42222/ws', {
+  headers: { Authorization: `Bearer ${process.env.DOOPS_AGENT_TOKEN}` },
 });
 
 ws.on('open', () => {

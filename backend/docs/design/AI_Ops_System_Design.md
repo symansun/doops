@@ -83,7 +83,7 @@ Skill 描述“要达到什么状态、哪些事实不能改变、什么证据�
 - `/usr/local/bin/do-agent`：doagent 原生 Agent 引擎；
 - `/app/skills`：运行时安装的 Skills；
 - `/root/ws/<session>`：会话工作区；
-- `/root/.agent/settings.json`：模型和 provider 配置。
+- `/tmp/doops-doagent/settings.json`：由只读 Secret 物化出的模型和 provider 运行时配置。
 
 发布本身遵循 GitOps 和 Semantic CI/CD：配置进入仓库，目标由环境注册表解析，最终
 状态由外部证据验证。
