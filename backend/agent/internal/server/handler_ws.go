@@ -1153,6 +1153,9 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		writeJSON(buildErrorResponse(reqID, -32603, "doagent_sse_unavailable"))
 		return
 	}
+	progressCtx, cancelProgress := context.WithCancel(ctx)
+	defer cancelProgress()
+	go doagentProgressHeartbeat(progressCtx, 15*time.Second, pushProgress)
 
 	// session/prompt 只返回本轮 turnId；终态仍以同 turn 的 SSE turn_finished 为准。
 	promptParams := map[string]interface{}{"sessionId": targetSessionID, "prompt": instr}
@@ -2138,6 +2141,27 @@ func slowProgressHeartbeat(doneCh chan struct{}, pushProgress notificationSender
 		case <-ticker.C:
 			elapsed += 5
 			pushProgress(rawNotification(fmt.Sprintf("\r\033[K[agent] ⏳ 命令后台执行中... (耗时 %ds)", elapsed)))
+		}
+	}
+}
+
+func doagentProgressHeartbeat(ctx context.Context, interval time.Duration, pushProgress notificationSender) {
+	if interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	elapsed := time.Duration(0)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			elapsed += interval
+			pushProgress(rawNotification(fmt.Sprintf(
+				"\r\033[K[agent] doagent task is still running (elapsed %s)",
+				elapsed.Round(time.Second),
+			)))
 		}
 	}
 }

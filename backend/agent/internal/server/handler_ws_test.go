@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -794,6 +795,24 @@ func TestSubscribeDoagentSSEReturnsErrorWhenStreamGoesIdle(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "idle timeout") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestDoagentProgressHeartbeatKeepsSilentPromptVisible(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	events := make(chan notificationEvent, 1)
+	go doagentProgressHeartbeat(ctx, 10*time.Millisecond, func(evt notificationEvent) {
+		events <- evt
+	})
+
+	select {
+	case evt := <-events:
+		if evt.Kind != "raw" || !strings.Contains(evt.Data, "doagent task is still running") {
+			t.Fatalf("unexpected heartbeat event: %#v", evt)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected doagent progress heartbeat")
 	}
 }
 
