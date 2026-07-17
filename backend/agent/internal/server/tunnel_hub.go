@@ -1327,10 +1327,7 @@ func bearerToken(r *http.Request) string {
 	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
 		return strings.TrimSpace(token[len("bearer "):])
 	}
-	if token == "" {
-		token = strings.TrimSpace(r.Header.Get("X-Doops-Key"))
-	}
-	return token
+	return ""
 }
 
 func writeJSONHTTP(w http.ResponseWriter, v interface{}) {

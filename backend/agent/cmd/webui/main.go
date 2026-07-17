@@ -158,7 +158,6 @@ func handleRPC(w http.ResponseWriter, r *http.Request) {
 	header := http.Header{}
 	if token != "" {
 		header.Set("Authorization", "Bearer "+token)
-		header.Set("X-Doops-Key", token)
 	}
 
 	upstreamConn, resp, err := websocket.DefaultDialer.DialContext(r.Context(), target.String(), header)

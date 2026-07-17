@@ -108,9 +108,11 @@ doagent emits exactly one JSON object as its final response:
     "phase": "planned",
     "mutationCount": 0,
     "capabilities": {
-      "source-identity": "observed",
       "ObserveWorkspaceSource": {
-        "available": true
+        "tool": "ObserveWorkspaceSource",
+        "evidenceKind": "source-identity",
+        "evidenceSubject": "source-identity",
+        "scopeDigest": "sha256:<trusted scope digest>"
       }
     },
     "evidence": [
@@ -131,7 +133,10 @@ The Gateway rejects a missing, Markdown-wrapped, non-object, or multiple-object
 final response. Agent-authored evidence uses `toolRef` with an exact tool name
 and exact JSON input. Trusted DoOps plan references use the model-visible
 `plan.<Tool>` name and `{}` input because trusted context is injected outside
-model arguments. The Gateway rejects model-authored runtime payloads, resolves
+model arguments. For trusted reconciliation, the model must emit
+`status.capabilities` as `{}`. The Gateway replaces it with the capability
+identity and scope digest from completed, attested tool calls. The Gateway
+rejects model-authored capability claims and runtime payloads, resolves
 every reference to one completed tool call from the accepted `turnId`, and
 injects `toolCall` with the exact ID, runtime tool name, input and attested
 result after removing transport-only `_meta`.

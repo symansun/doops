@@ -131,7 +131,10 @@ final response:
     "mutationCount": 0,
     "capabilities": {
       "ObserveWorkspaceSource": {
-        "available": true
+        "tool": "ObserveWorkspaceSource",
+        "evidenceKind": "source-identity",
+        "evidenceSubject": "source-identity",
+        "scopeDigest": "sha256:<trusted scope digest>"
       }
     },
     "evidence": [
@@ -147,6 +150,11 @@ final response:
   }
 }
 ```
+
+The model emits `status.capabilities` as `{}` for trusted reconciliation.
+Gateway replaces it with the capability identity and scope digest from the
+completed attested tool calls. Model-authored capability names or values are
+rejected.
 
 Valid phases are `planned`, `converged`, `blocked`, `failed`, and
 `outcome-unknown`. A successful result must contain evidence from real module

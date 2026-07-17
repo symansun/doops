@@ -148,6 +148,10 @@ func buildTrustedReconciliationAdmission(sessionID, instruction string) (trusted
 	if err != nil {
 		return trustedReconciliationAdmission{}, err
 	}
+	root, err = validateDoopsPlanWorkspace(root, envelope.WorkspaceCommit)
+	if err != nil {
+		return trustedReconciliationAdmission{}, err
+	}
 	parsedWorkflow, err := parseCredentialWorkflow(root, envelope.WorkflowPath)
 	if err != nil {
 		return trustedReconciliationAdmission{}, err

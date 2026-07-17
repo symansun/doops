@@ -247,6 +247,7 @@ func TestBindDeploymentRunEvidenceEnforcesPrimarySourceObservation(t *testing.T)
 		},
 	})
 	result := deploymentRunWithToolRef("plan.ObserveHelmRelease", map[string]interface{}{})
+	result["status"].(map[string]interface{})["capabilities"] = map[string]interface{}{}
 	_, _, err := bindDeploymentRunEvidence(
 		result,
 		traces,
@@ -277,6 +278,7 @@ func TestBindDeploymentRunEvidenceRequiresTargetRegistryObservation(t *testing.T
 		},
 	})
 	result := deploymentRunWithToolRef("plan.ObserveWorkspaceSource", map[string]interface{}{})
+	result["status"].(map[string]interface{})["capabilities"] = map[string]interface{}{}
 	_, _, err := bindDeploymentRunEvidence(
 		result,
 		traces,
@@ -311,6 +313,7 @@ func TestBindDeploymentRunEvidenceBindsTrustedEnvelope(t *testing.T) {
 		},
 	})
 	result := deploymentRunWithToolRef("plan.ObserveWorkspaceSource", map[string]interface{}{})
+	result["status"].(map[string]interface{})["capabilities"] = map[string]interface{}{}
 	result["apiVersion"] = "doops.sh/v3"
 	result["metadata"] = map[string]interface{}{
 		"workflow":        "deploy/environments/scu/environment.yaml",
@@ -344,8 +347,18 @@ func TestBindDeploymentRunEvidenceBindsTrustedEnvelope(t *testing.T) {
 		spec["mode"] != "dry-run" {
 		t.Fatalf("trusted DeploymentRun metadata/spec mismatch: %#v", bound)
 	}
+	status := bound["status"].(map[string]interface{})
+	capabilities := status["capabilities"].(map[string]interface{})
+	sourceCapability, ok := capabilities["ObserveWorkspaceSource"].(map[string]interface{})
+	if !ok ||
+		sourceCapability["tool"] != "ObserveWorkspaceSource" ||
+		sourceCapability["evidenceKind"] != "source-identity" ||
+		sourceCapability["evidenceSubject"] != "source-identity" {
+		t.Fatalf("trusted capabilities were not derived from tool evidence: %#v", capabilities)
+	}
 
 	result = deploymentRunWithToolRef("plan.ObserveWorkspaceSource", map[string]interface{}{})
+	result["status"].(map[string]interface{})["capabilities"] = map[string]interface{}{}
 	result["apiVersion"] = "doops.sh/v3"
 	result["metadata"] = map[string]interface{}{
 		"workflow":        "deploy/environments/scu/environment.yaml",
@@ -366,6 +379,36 @@ func TestBindDeploymentRunEvidenceBindsTrustedEnvelope(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "does not match the trusted reconciliation instruction") {
 		t.Fatalf("spoofed trusted DeploymentRun envelope was accepted: %v", err)
+	}
+}
+
+func TestBindDeploymentRunEvidenceRejectsModelAuthoredTrustedCapabilities(t *testing.T) {
+	traces := completedDoagentToolTraces(t, []map[string]interface{}{
+		{
+			"sessionUpdate":   "tool_call_update",
+			"toolCallId":      "source-1",
+			"toolName":        "mcp_doops_plan_ObserveWorkspaceSource",
+			"status":          "completed",
+			"input":           map[string]interface{}{},
+			"rawOutput":       map[string]interface{}{"revision": "immutable"},
+			"evidenceSubject": "source-identity",
+		},
+	})
+	result := deploymentRunWithToolRef("plan.ObserveWorkspaceSource", map[string]interface{}{})
+	_, _, err := bindDeploymentRunEvidence(
+		result,
+		traces,
+		&deploymentRunContractBinding{
+			APIVersion:      "doops.sh/v2",
+			Workflow:        "deploy/release.yaml",
+			RunID:           "run-test",
+			WorkspaceCommit: strings.Repeat("a", 40),
+			Mode:            "dry-run",
+			PrimaryTool:     "mcp_doops_plan_ObserveWorkspaceSource",
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "must be empty before trusted evidence binding") {
+		t.Fatalf("model-authored trusted capabilities were accepted: %v", err)
 	}
 }
 
@@ -456,7 +499,7 @@ func TestBindDeploymentRunEvidenceRejectsModelAuthoredRuntimePayload(t *testing.
 		{name: "retired status string", mutate: func(status map[string]interface{}) { status["resultDigest"] = "sha256:" + strings.Repeat("a", 64) }, want: "is not supported"},
 		{name: "capabilities array", mutate: func(status map[string]interface{}) {
 			status["capabilities"] = []interface{}{"source-identity"}
-		}, want: "capabilities must be a non-empty JSON object"},
+		}, want: "capabilities must be a JSON object"},
 		{name: "sensitive failure field", mutate: func(status map[string]interface{}) {
 			status["failures"] = []interface{}{map[string]interface{}{"githubToken": "token-canary"}}
 		}, want: "forbidden sensitive field"},
@@ -632,6 +675,19 @@ func completedDoagentToolTraces(t *testing.T, updates []map[string]interface{}) 
 	t.Helper()
 	collector := newDoagentToolTraceCollector()
 	for _, update := range updates {
+		if toolName, _ := update["toolName"].(string); strings.HasPrefix(toolName, "mcp_doops_plan_") {
+			capabilityKey := strings.TrimPrefix(toolName, "mcp_doops_plan_")
+			evidenceKind, evidenceSubject := trustedToolEvidence(capabilityKey)
+			update["capabilityKey"] = capabilityKey
+			update["attestedTool"] = capabilityKey
+			if _, ok := update["evidenceKind"]; !ok {
+				update["evidenceKind"] = evidenceKind
+			}
+			if _, ok := update["evidenceSubject"]; !ok {
+				update["evidenceSubject"] = evidenceSubject
+			}
+			update["scopeDigest"] = "sha256:" + strings.Repeat("1", 64)
+		}
 		if rawOutput, ok := update["rawOutput"]; ok {
 			encoded, err := stableDoagentJSON(rawOutput)
 			if err != nil {

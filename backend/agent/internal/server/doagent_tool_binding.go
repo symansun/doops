@@ -454,9 +454,14 @@ func bindDeploymentRunEvidence(
 		return "", nil, err
 	}
 	capabilities, ok := status["capabilities"].(map[string]interface{})
-	if !ok || len(capabilities) == 0 {
+	if !ok || (contract == nil && len(capabilities) == 0) {
 		return "", nil, fmt.Errorf(
-			"DeploymentRun.status.capabilities must be a non-empty JSON object",
+			"DeploymentRun.status.capabilities must be a JSON object",
+		)
+	}
+	if contract != nil && len(capabilities) != 0 {
+		return "", nil, fmt.Errorf(
+			"DeploymentRun.status.capabilities must be empty before trusted evidence binding",
 		)
 	}
 	for field := range status {
@@ -477,6 +482,7 @@ func bindDeploymentRunEvidence(
 	}
 
 	observedTools := make(map[string]struct{}, len(evidence))
+	boundCapabilities := make(map[string]interface{}, len(evidence))
 	for index, item := range evidence {
 		entry, ok := item.(map[string]interface{})
 		if !ok {
@@ -536,6 +542,20 @@ func bindDeploymentRunEvidence(
 			return "", nil, fmt.Errorf("verify runtime tool result: %w", err)
 		}
 		observedTools[trace.ToolName] = struct{}{}
+		if contract != nil {
+			if strings.TrimSpace(trace.CapabilityKey) == "" {
+				return "", nil, fmt.Errorf(
+					"DeploymentRun evidence[%d] references an unbound capability",
+					index,
+				)
+			}
+			boundCapabilities[trace.CapabilityKey] = map[string]interface{}{
+				"tool":            trace.AttestedTool,
+				"evidenceKind":    trace.EvidenceKind,
+				"evidenceSubject": trace.EvidenceSubject,
+				"scopeDigest":     trace.ScopeDigest,
+			}
+		}
 		delete(entry, "toolRef")
 		if trace.EvidenceSubject != "" {
 			entry["subject"] = trace.EvidenceSubject
@@ -557,6 +577,10 @@ func bindDeploymentRunEvidence(
 				)
 			}
 		}
+		if len(boundCapabilities) == 0 {
+			return "", nil, fmt.Errorf("DeploymentRun trusted capabilities are empty")
+		}
+		status["capabilities"] = boundCapabilities
 	}
 
 	if contract != nil {

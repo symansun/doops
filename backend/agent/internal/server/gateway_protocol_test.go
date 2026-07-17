@@ -157,6 +157,14 @@ func TestGatewayAgentRegistrationRequiresMatchingToken(t *testing.T) {
 		}
 		t.Fatalf("expected HTTP 401 without token, got %d", resp.StatusCode)
 	}
+	if _, resp, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"X-Doops-Key": []string{validToken.Plaintext}}); err == nil {
+		t.Fatal("legacy X-Doops-Key agent registration should fail")
+	} else if resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		if resp == nil {
+			t.Fatalf("expected HTTP 401 with X-Doops-Key, got nil response: %v", err)
+		}
+		t.Fatalf("expected HTTP 401 with X-Doops-Key, got %d", resp.StatusCode)
+	}
 	if _, resp, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer " + userToken.Plaintext}}); err == nil {
 		t.Fatal("agent registration with user token should fail")
 	} else if resp == nil || resp.StatusCode != http.StatusUnauthorized {

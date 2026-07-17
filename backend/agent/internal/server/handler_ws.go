@@ -1736,7 +1736,6 @@ func appendDoagentStructuredResultContract(
 		"Never put executionMode, inputs, resultContract, runId, or workspaceCommit at the top level. " +
 		"Copy required values from the request exactly: apiVersion=resultContract.apiVersion, metadata.workflow=workflowPath, metadata.runId=runId, metadata.workspaceCommit=workspaceCommit, and spec.mode=executionMode. Do not rename these output fields or put mode under metadata. " +
 		"For a DeploymentRun, status may contain only phase, mutationCount, capabilities, evidence, and failures. " +
-		"status.capabilities must be a non-empty JSON object, never an array, string, number, boolean, or null. " +
 		"status.phase must be exactly one of planned, converged, blocked, failed, or outcome-unknown; do not use Succeeded, success, completed, or any other alias. " +
 		"Do not emit plannedMutations, runtimeAttestation, resultDigest, or any other status field. " +
 		"DeploymentRun evidence must be a non-empty array: before the final response, call at least one allowed trusted DoOps plan tool and reference that completed call. " +
@@ -1746,6 +1745,11 @@ func appendDoagentStructuredResultContract(
 		"For trusted DoOps plan tools, toolRef.tool is the exact model-visible name plan.<Tool> and toolRef.input is {} because trusted context is injected outside model arguments. " +
 		"For any other allowed tool, toolRef.tool is the exact model-visible tool name and toolRef.input is the exact JSON input used for that call. " +
 		"The Gateway consumes toolRef and injects toolCall with the completed runtime call's exact id, tool, input, and result."
+	if admission == nil {
+		contract += " status.capabilities must be a non-empty JSON object."
+	} else {
+		contract += " status.capabilities must be exactly {}. The Gateway replaces it with capabilities derived from completed trusted tool evidence; never author capability names or values."
+	}
 	if admission != nil && containsString(admission.AllowedTools, "mcp_doops_plan_ObserveWorkspaceSource") {
 		contract += " Your first action must be calling the allowed internal tool mcp_doops_plan_ObserveWorkspaceSource with exact JSON input {}; do not emit the final response before that completed call. DeploymentRun status.evidence[0].toolRef must reference that completed call exactly as {\"tool\":\"plan.ObserveWorkspaceSource\",\"input\":{}}; never include the internal mcp_doops_plan_ prefix inside toolRef.tool. Before the final response, call and reference plan.ObserveSourceRegistryImageSet, plan.ObserveTargetRegistryImageSet, plan.ObserveAuthorizationState, plan.ObserveHelmRelease, and plan.ObserveKubernetesWorkload. A target image observation with present:false is valid evidence that synchronization is required."
 	}

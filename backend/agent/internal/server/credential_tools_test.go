@@ -3,12 +3,15 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sosedoff/gitkit"
 )
 
 func TestAgentCredentialPlanToolParsesBoundWorkspace(t *testing.T) {
@@ -72,7 +75,6 @@ func createCredentialPlanWorkspaceFixture(t *testing.T) (string, string, string)
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 	t.Setenv("DOOPS_PLAN_WORKSPACE_BASE", root)
-	t.Setenv("DOOPS_TEST_ALLOW_LOCAL_WORKFLOW_SOURCE", "1")
 	sourceRoot := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(sourceRoot, "deploy"), 0755); err != nil {
 		t.Fatalf("create source repository: %v", err)
@@ -118,9 +120,25 @@ environments:
 	runTestCommand(t, sourceRoot, "git", "add", "deploy/release.yaml", "deploy/environments.yaml")
 	runTestCommand(t, sourceRoot, "git", "commit", "-q", "-m", "credential plan fixture")
 	commit := strings.TrimSpace(runTestCommand(t, sourceRoot, "git", "rev-parse", "HEAD"))
-	repositoryPath := filepath.Join(t.TempDir(), "credential-plan.git")
+	repositoryRoot := t.TempDir()
+	repositoryPath := filepath.Join(repositoryRoot, "credential-plan.git")
 	runTestCommand(t, root, "git", "clone", "-q", "--bare", sourceRoot, repositoryPath)
-	repository := "file://" + repositoryPath
+	service := gitkit.New(gitkit.Config{Dir: repositoryRoot, AutoCreate: true})
+	if err := service.Setup(); err != nil {
+		t.Fatalf("setup Git HTTPS test service: %v", err)
+	}
+	server := httptest.NewTLSServer(service)
+	t.Cleanup(server.Close)
+	certificate := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: server.Certificate().Raw,
+	})
+	caPath := filepath.Join(t.TempDir(), "git-test-ca.pem")
+	if err := os.WriteFile(caPath, certificate, 0o600); err != nil {
+		t.Fatalf("write Git HTTPS test CA: %v", err)
+	}
+	t.Setenv("GIT_SSL_CAINFO", caPath)
+	repository := server.URL + "/" + filepath.Base(repositoryPath)
 	return commit, repository, sourceRoot
 }
 

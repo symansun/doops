@@ -17,7 +17,6 @@ func TestBuildTrustedReconciliationAdmissionBindsWorkspacePlanAndExactTools(t *t
 	if err := os.MkdirAll(filepath.Join(workspace, "deploy"), 0o700); err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	workspaceCommit := strings.Repeat("a", 40)
 	revision := strings.Repeat("b", 40)
 	writeCredentialPlanTestFile(t, workspace, "deploy/release.yaml", `
 apiVersion: doops.sh/v2
@@ -94,6 +93,7 @@ environments:
           environmentCode: PROD
     verificationProfile: production
 `)
+	workspaceCommit := commitTrustedAdmissionWorkspace(t, workspace)
 
 	instruction := `{
 		"task":"execute-doops-cicd-workflow",
@@ -169,9 +169,9 @@ func TestBuildTrustedReconciliationAdmissionAddsExecutorsOnlyForApply(t *testing
 	if err := os.MkdirAll(filepath.Join(workspace, "deploy"), 0o700); err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	workspaceCommit := strings.Repeat("a", 40)
 	revision := strings.Repeat("b", 40)
 	writeTrustedAdmissionFixture(t, workspace)
+	workspaceCommit := commitTrustedAdmissionWorkspace(t, workspace)
 	instruction := strings.NewReplacer(
 		"${MODE}", "apply",
 		"${RUN_ID}", "apply-session-0123456789abcdef",
@@ -193,6 +193,29 @@ func TestBuildTrustedReconciliationAdmissionAddsExecutorsOnlyForApply(t *testing
 		if !containsString(admission.AllowedTools, tool) {
 			t.Fatalf("apply allowed tools missing %s: %#v", tool, admission.AllowedTools)
 		}
+	}
+}
+
+func TestBuildTrustedReconciliationAdmissionRejectsDirtyWorkspaceBeforeParsing(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	sessionID := "dirty-workspace"
+	workspace := filepath.Join(root, sessionID)
+	writeTrustedAdmissionFixture(t, workspace)
+	workspaceCommit := commitTrustedAdmissionWorkspace(t, workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "deploy", "release.yaml"), []byte("tampered\n"), 0o600); err != nil {
+		t.Fatalf("tamper trusted workspace: %v", err)
+	}
+	instruction := strings.NewReplacer(
+		"${MODE}", "dry-run",
+		"${RUN_ID}", "dirty-workspace-0123456789abcdef",
+		"${WORKSPACE_COMMIT}", workspaceCommit,
+		"${REVISION}", strings.Repeat("b", 40),
+	).Replace(trustedAdmissionInstructionFixture)
+
+	if _, err := buildTrustedReconciliationAdmission(sessionID, instruction); err == nil ||
+		!strings.Contains(err.Error(), "differs from the immutable source revision") {
+		t.Fatalf("dirty workspace admission error = %v", err)
 	}
 }
 
@@ -266,13 +289,11 @@ func TestDigestJSONMatchesJCSStringNumberAndUTF16Ordering(t *testing.T) {
 
 func TestBuildTrustedReconciliationAdmissionUsesRegistrySourceForCurrentReleaseShapes(t *testing.T) {
 	for _, test := range []struct {
-		name            string
-		workflow        string
-		inputs          string
-		template        string
-		project         string
-		wantRevision    string
-		workspaceCommit string
+		name     string
+		workflow string
+		inputs   string
+		template string
+		project  string
 	}{
 		{
 			name: "version release binds workspace commit",
@@ -291,11 +312,9 @@ spec:
   environment: test
   configurationSource: deploy/environments.yaml
 `,
-			inputs:          `"version":"release-20260716"`,
-			template:        "ecp-test-deploy",
-			project:         "ecp",
-			wantRevision:    strings.Repeat("c", 40),
-			workspaceCommit: strings.Repeat("c", 40),
+			inputs:   `"version":"release-20260716"`,
+			template: "ecp-test-deploy",
+			project:  "ecp",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -335,13 +354,14 @@ environments:
         values: deploy/values.yaml
     verificationProfile: application
 `)
+			workspaceCommit := commitTrustedAdmissionWorkspace(t, workspace)
 			instruction := `{
 				"task":"execute-doops-cicd-workflow",
 				"skill":"$doops-cicd",
 				"executionMode":"dry-run",
 				"runId":"current-release-0123456789abcdef",
 				"workflowPath":"deploy/release.yaml",
-				"workspaceCommit":"` + test.workspaceCommit + `",
+				"workspaceCommit":"` + workspaceCommit + `",
 				"source":{"repository":"https://example.test/current.git","branch":"main"},
 				"inputs":{` + test.inputs + `},
 				"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops-oilan","instance":"oilan-node","template":"` + test.template + `","project":"` + test.project + `","environment":"test","materializations":[]},
@@ -353,7 +373,7 @@ environments:
 			}
 			if admission.Context.Source.Repository != "https://example.test/current.git" ||
 				admission.Context.Source.Branch != "main" ||
-				admission.Context.Source.Revision != test.wantRevision {
+				admission.Context.Source.Revision != workspaceCommit {
 				t.Fatalf("unexpected source: %#v", admission.Context.Source)
 			}
 		})
@@ -418,7 +438,7 @@ environments:
         chart: deploy/chart
         values: deploy/values.yaml
 `)
-	commit := strings.Repeat("c", 40)
+	commit := commitTrustedAdmissionWorkspace(t, workspace)
 	instruction := `{
 		"task":"execute-doops-cicd-workflow",
 		"skill":"$doops-cicd",
@@ -446,10 +466,11 @@ func TestBuildTrustedReconciliationAdmissionRejectsSecretInputNames(t *testing.T
 		t.Fatalf("create workspace: %v", err)
 	}
 	writeTrustedAdmissionFixture(t, workspace)
+	workspaceCommit := commitTrustedAdmissionWorkspace(t, workspace)
 	instruction := strings.NewReplacer(
 		"${MODE}", "dry-run",
 		"${RUN_ID}", "secret-input-0123456789abcdef",
-		"${WORKSPACE_COMMIT}", strings.Repeat("a", 40),
+		"${WORKSPACE_COMMIT}", workspaceCommit,
 		"${REVISION}", strings.Repeat("b", 40),
 	).Replace(strings.Replace(
 		trustedAdmissionInstructionFixture,
@@ -468,7 +489,7 @@ func TestBuildTrustedReconciliationAdmissionAcceptsV3EnvironmentDefinition(t *te
 	sessionID := "v3-environment-root"
 	workspace := filepath.Join(root, sessionID)
 	writeCredentialV3EnvironmentFixture(t, workspace)
-	commit := strings.Repeat("a", 40)
+	commit := commitTrustedAdmissionWorkspace(t, workspace)
 	instruction := `{
 		"task":"execute-doops-cicd-workflow",
 		"skill":"$doops-cicd",
@@ -652,4 +673,19 @@ environments:
         authz: {appCode: APP, environmentCode: PROD}
     verificationProfile: production
 `)
+}
+
+func commitTrustedAdmissionWorkspace(t *testing.T, workspace string) string {
+	t.Helper()
+	t.Setenv("DOOPS_PLAN_WORKSPACE_BASE", filepath.Dir(workspace))
+	runTestCommand(t, workspace, "git", "init", "-q", "-b", "main")
+	runTestCommand(t, workspace, "git", "config", "user.email", "test@example.invalid")
+	runTestCommand(t, workspace, "git", "config", "user.name", "DoOps Test")
+	runTestCommand(t, workspace, "git", "add", ".")
+	runTestCommand(t, workspace, "git", "commit", "-q", "-m", "trusted admission fixture")
+	commit := strings.TrimSpace(runTestCommand(t, workspace, "git", "rev-parse", "HEAD"))
+	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(commit+"\n"), 0o600); err != nil {
+		t.Fatalf("write trusted workspace commit: %v", err)
+	}
+	return commit
 }

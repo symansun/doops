@@ -52,6 +52,9 @@ Agent 发布必须由独立 control target 执行，不能让正在被替换的 
 `workspaceCommit` 放到顶层。Gateway 从已验证 instruction 重建
 `apiVersion/metadata/spec`；模型仍必须输出完整五字段对象，且这些字段必须先与
 instruction 精确一致，任何缺失、额外字段或值漂移都直接失败。
+受信任 reconciliation 的模型输出中 `status.capabilities` 必须是 `{}`。
+Gateway 根据当前 turn 已完成且 attestation 匹配的工具调用生成最终 capabilities；
+模型提供的 capability 名称和值一律不作为事实。
 
 `workspaceCommit` 必须是 credential prepare 前解析并由 Agent checkout 验证的
 声明源 commit。repository、branch、workspaceCommit、CredentialRun 与 apply

@@ -95,6 +95,9 @@ Agent 先写 `toolRef`，Gateway 再绑定不可改写的 `toolCall`。普通 Ba
 `phase`、`mutationCount`、`capabilities`、`evidence`、`failures` 必须位于
 `status`，禁止使用旧的顶层扁平结果。Gateway 从已验证 instruction 绑定
 `apiVersion`、`metadata` 和 `spec`，不信任模型提供这些权威字段。
+受信任 reconciliation 中模型必须把 `status.capabilities` 输出为 `{}`；
+Gateway 只根据当前 turn 已完成且 attestation 校验通过的工具调用生成最终
+capabilities，拒绝模型自报能力名称或状态。
 
 受信任 DoOps plan 工具的 `toolRef.tool` 必须使用模型可见名称
 `plan.<Tool>`，`toolRef.input` 必须是 `{}`；受信任上下文由 Gateway 在模型参数

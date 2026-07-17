@@ -45,16 +45,12 @@ func checkoutWorkflowSource(sessionID, repository, branch, revision string) erro
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--single-branch", "--branch", branch, "--", repository, staging)
-	allowedProtocols := "https"
-	if os.Getenv("DOOPS_TEST_ALLOW_LOCAL_WORKFLOW_SOURCE") == "1" {
-		allowedProtocols += ":file"
-	}
 	cmd.Env = append(
 		os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_ALLOW_PROTOCOL="+allowedProtocols,
+		"GIT_ALLOW_PROTOCOL=https",
 	)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
@@ -85,10 +81,6 @@ func validateAgentWorkflowSourceRepository(repository string) error {
 	parsed, err := url.Parse(strings.TrimSpace(repository))
 	if err == nil && parsed.Scheme == "https" && parsed.Host != "" &&
 		parsed.User == nil && parsed.RawQuery == "" && parsed.Fragment == "" {
-		return nil
-	}
-	if os.Getenv("DOOPS_TEST_ALLOW_LOCAL_WORKFLOW_SOURCE") == "1" &&
-		err == nil && parsed.Scheme == "file" && parsed.Path != "" {
 		return nil
 	}
 	return fmt.Errorf("workflow source repository must be an HTTPS URL without inline credentials, query, or fragment")
