@@ -357,7 +357,8 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 			var request CredentialMaterializeRequest
 			materialization, request, err = h.materializeCredentialVersion(
 				r.Context(), body.Cluster, body.Instance, body.SessionID,
-				item.Authorized.Resource, item.Authorized.Version, item.Authorized.Grant.ID, item.Reference,
+				item.Authorized.Resource, item.Authorized.Version, item.Authorized.Version.ID,
+				item.Authorized.Grant.ID, item.Reference,
 			)
 			if err != nil {
 				category := credentialOperationErrorCategory(err)
@@ -501,6 +502,7 @@ func (h *GatewayHub) rollbackCredentialPrepare(ctx context.Context, completed []
 			request.SessionID,
 			entry.Item.Authorized.Resource,
 			previous,
+			materialization.VersionID,
 			request.GrantID,
 			entry.Item.Reference,
 		); err != nil {
@@ -517,6 +519,7 @@ func (h *GatewayHub) materializeCredentialVersion(
 	sessionID string,
 	resource CredentialResource,
 	version CredentialVersion,
+	expectedPreviousVersionID string,
 	grantID string,
 	ref CredentialPlanReference,
 ) (CredentialMaterialization, CredentialMaterializeRequest, error) {
@@ -583,6 +586,7 @@ func (h *GatewayHub) materializeCredentialVersion(
 		grantID,
 		ref,
 		requiredKeys,
+		expectedPreviousVersionID,
 	); err != nil {
 		_ = h.store.MarkCredentialMaterializationUnknown(intent.ID, err.Error())
 		return CredentialMaterialization{}, intentRequest, err
@@ -600,6 +604,7 @@ func (h *GatewayHub) validateCredentialMaterializationResult(
 	grantID string,
 	ref CredentialPlanReference,
 	requiredKeys []string,
+	expectedPreviousVersionID string,
 ) error {
 	if err := validateCredentialMaterializationMetadata(materialization); err != nil {
 		return err
@@ -647,11 +652,9 @@ func (h *GatewayHub) validateCredentialMaterializationResult(
 		}
 	}
 
-	if materialization.PreviousVersionID != "" {
-		previous, err := h.store.CredentialVersionByID(resource.ID, materialization.PreviousVersionID)
-		if err != nil || previous.State != CredentialVersionActive {
-			return errors.New("credential_materialization_metadata_invalid")
-		}
+	if materialization.PreviousVersionID != "" &&
+		materialization.PreviousVersionID != expectedPreviousVersionID {
+		return errors.New("credential_materialization_metadata_invalid")
 	}
 	return nil
 }
@@ -774,9 +777,13 @@ func (h *GatewayHub) handleCredentialVerify(
 	evidence := make([]credentialVerificationEvidence, 0, len(grants))
 	verifications := make([]CredentialVerification, 0, len(grants))
 	for _, grant := range grants {
+		expectedPreviousVersionID := ""
+		if activeErr == nil {
+			expectedPreviousVersionID = active.ID
+		}
 		observed, request, err := h.materializeCredentialVersion(
 			r.Context(), body.Cluster, body.Instance, body.SessionID,
-			resource, version, grant.ID, *reference,
+			resource, version, expectedPreviousVersionID, grant.ID, *reference,
 		)
 		if err != nil {
 			auditFinish.Error = credentialOperationErrorCategory(err)
@@ -786,7 +793,7 @@ func (h *GatewayHub) handleCredentialVerify(
 		if activeErr == nil {
 			if _, _, err := h.materializeCredentialVersion(
 				r.Context(), body.Cluster, body.Instance, body.SessionID,
-				resource, active, grant.ID, *reference,
+				resource, active, version.ID, grant.ID, *reference,
 			); err != nil {
 				http.Error(w, "credential_verification_outcome_unknown", http.StatusBadGateway)
 				return
@@ -1036,6 +1043,7 @@ func (h *GatewayHub) rollbackCredentialPromotion(
 				request.SessionID,
 				resource,
 				previous,
+				request.VersionID,
 				request.GrantID,
 				credentialReferenceFromRequest(request),
 			); err != nil {

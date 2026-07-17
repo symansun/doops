@@ -261,7 +261,7 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	}
 }
 
-func TestCredentialMaterializationRejectsNonActivePreviousVersion(t *testing.T) {
+func TestCredentialMaterializationRequiresExpectedPreviousVersion(t *testing.T) {
 	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("p", 32))
 	store := openCredentialTestStore(t)
 	admin := createCredentialTestUser(t, store, "credential-admin")
@@ -306,15 +306,14 @@ func TestCredentialMaterializationRejectsNonActivePreviousVersion(t *testing.T) 
 	hub := NewGatewayHub(store, GatewayHubOptions{})
 	ref := CredentialPlanReference{Namespace: "apps", Use: CredentialUseImagePull}
 	if err := hub.validateCredentialMaterializationResult(
-		materialization, credential, grantID, ref, []string{".dockerconfigjson"},
+		materialization, credential, grantID, ref, []string{".dockerconfigjson"}, active.ID,
 	); err == nil {
-		t.Fatal("staged previous credential version was accepted")
+		t.Fatal("unexpected previous credential version was accepted")
 	}
-	materialization.PreviousVersionID = active.ID
 	if err := hub.validateCredentialMaterializationResult(
-		materialization, credential, grantID, ref, []string{".dockerconfigjson"},
+		materialization, credential, grantID, ref, []string{".dockerconfigjson"}, staged.ID,
 	); err != nil {
-		t.Fatalf("active previous credential version rejected: %v", err)
+		t.Fatalf("expected staged previous credential version rejected: %v", err)
 	}
 }
 
@@ -531,6 +530,7 @@ func serveCredentialRuntimeAgent(
 	payloadObserved *atomic.Bool,
 ) {
 	t.Helper()
+	currentVersionID := ""
 	for {
 		var message map[string]any
 		if err := conn.ReadJSON(&message); err != nil {
@@ -574,22 +574,26 @@ func serveCredentialRuntimeAgent(
 				if strings.Contains(string(mustJSON(t, arguments)), "runtime-canary-secret") {
 					payloadObserved.Store(true)
 				}
+				versionID := stringValue(arguments["version_id"])
 				result = CredentialMaterialization{
 					CredentialID: stringValue(arguments["credential_id"]),
-					VersionID:    stringValue(arguments["version_id"]),
+					VersionID:    versionID,
 					ResourceName: credentialSecretName(
 						stringValue(arguments["credential_id"]),
 						stringValue(arguments["grant_id"]),
 					),
-					Namespace:       "kz-ops",
-					SecretType:      "kubernetes.io/dockerconfigjson",
-					Keys:            []string{".dockerconfigjson"},
-					ResourceVersion: "42",
-					Digest:          "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-					Status:          "verified",
+					Namespace:         "kz-ops",
+					SecretType:        "kubernetes.io/dockerconfigjson",
+					Keys:              []string{".dockerconfigjson"},
+					ResourceVersion:   "42",
+					Digest:            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+					Status:            "verified",
+					PreviousVersionID: currentVersionID,
 				}
+				currentVersionID = versionID
 			case "doops_credential_cleanup":
 				cleanupCalls.Add(1)
+				currentVersionID = ""
 				result = map[string]any{"status": "removed"}
 			default:
 				result = map[string]any{"error": "unexpected tool"}
