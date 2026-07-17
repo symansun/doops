@@ -101,24 +101,25 @@ type GatewayAgent struct {
 	ActiveOps              int       `json:"active_ops,omitempty"`
 	QueuedOps              int       `json:"queued_ops,omitempty"`
 
-	stateMu         sync.RWMutex
-	conn            *websocket.Conn
-	writeMu         sync.Mutex
-	lastProgressAck time.Time
-	opSlot          chan struct{}
-	queueMu         sync.Mutex
-	queued          int
-	opsMu           sync.Mutex
-	writers         int
-	readers         int
-	resources       map[string]*agentResourceSlot
-	pendingMu       sync.Mutex
-	pending         map[int64]*gatewayMessageQueue
-	active          *gatewayMessageQueue
-	activeBySession map[string]*gatewayMessageQueue
-	messageBudget   *gatewayMessageBudget
-	closed          chan struct{}
-	reqID           int64
+	stateMu          sync.RWMutex
+	conn             *websocket.Conn
+	writeMu          sync.Mutex
+	heartbeatPayload string
+	lastProgressAck  time.Time
+	opSlot           chan struct{}
+	queueMu          sync.Mutex
+	queued           int
+	opsMu            sync.Mutex
+	writers          int
+	readers          int
+	resources        map[string]*agentResourceSlot
+	pendingMu        sync.Mutex
+	pending          map[int64]*gatewayMessageQueue
+	active           *gatewayMessageQueue
+	activeBySession  map[string]*gatewayMessageQueue
+	messageBudget    *gatewayMessageBudget
+	closed           chan struct{}
+	reqID            int64
 }
 
 type agentResourceSlot struct {
@@ -371,12 +372,9 @@ type gatewayLoginResponse struct {
 }
 
 type gatewayAdminTokenCreateRequest struct {
-	Kind     string `json:"kind,omitempty"`
-	User     string `json:"user"`
-	Name     string `json:"name,omitempty"`
-	Cluster  string `json:"cluster,omitempty"`
-	Instance string `json:"instance,omitempty"`
-	Expires  string `json:"expires,omitempty"`
+	User    string `json:"user"`
+	Name    string `json:"name,omitempty"`
+	Expires string `json:"expires,omitempty"`
 }
 
 func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
@@ -419,7 +417,7 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		newGatewayMessageBudget(gatewayMessageBudgetMaxBytes),
 	)
 	hub.client = NewClientService(store, registry, opts)
-	if err := hub.client.upgrades.ResumePending(opts.OperationTimeout); err != nil {
+	if err := store.RetireRunningUpgradeOperations(directAgentUpgradeProhibited); err != nil {
 		panic(err)
 	}
 	return hub
@@ -506,7 +504,7 @@ func (h *GatewayHub) HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		tokens, err := h.store.ListTokens(TokenKind(strings.TrimSpace(r.URL.Query().Get("kind"))))
+		tokens, err := h.store.ListTokens(TokenKindUser)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -558,30 +556,13 @@ func (h *GatewayHub) HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid token request", http.StatusBadRequest)
 		return
 	}
-	kind := TokenKindUser
-	if strings.EqualFold(strings.TrimSpace(req.Kind), string(TokenKindAgent)) {
-		kind = TokenKindAgent
+	user, err := h.store.FindUserByName(req.User)
+	if err != nil {
+		finishAudit("not_found", "user not found")
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
 	}
-	createReq := CreateTokenRequest{Kind: kind, Name: req.Name}
-	var username string
-	if kind == TokenKindAgent {
-		if strings.TrimSpace(req.Cluster) == "" || strings.TrimSpace(req.Instance) == "" {
-			finishAudit("error", "agent token requires cluster and instance")
-			http.Error(w, "agent token requires cluster and instance", http.StatusBadRequest)
-			return
-		}
-		createReq.Cluster = req.Cluster
-		createReq.Instance = req.Instance
-	} else {
-		user, err := h.store.FindUserByName(req.User)
-		if err != nil {
-			finishAudit("not_found", "user not found")
-			http.Error(w, "user not found", http.StatusNotFound)
-			return
-		}
-		createReq.UserID = user.ID
-		username = user.Name
-	}
+	createReq := CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: req.Name}
 	if strings.TrimSpace(req.Expires) != "" {
 		ttl, err := time.ParseDuration(strings.TrimSpace(req.Expires))
 		if err != nil {
@@ -606,8 +587,8 @@ func (h *GatewayHub) HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
 	writeJSONHTTP(w, gatewayLoginResponse{
 		Token:     token.Plaintext,
 		TokenID:   token.ID,
-		TokenType: string(kind),
-		Username:  username,
+		TokenType: string(TokenKindUser),
+		Username:  user.Name,
 	})
 }
 
@@ -1022,9 +1003,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32004, errMsg))
 		return nil
 	}
-	var upgradeOp UpgradeOperation
-	waitForUpgradeReplacement := false
-	upgradeImage := ""
 	if action == ActionAgentUpgrade {
 		var args agentUpgradeParams
 		if err := json.Unmarshal(params.Arguments, &args); err != nil {
@@ -1033,9 +1011,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			writeJSON(buildErrorResponse(req.ID, -32602, errMsg))
 			return nil
 		}
-		mode := strings.TrimSpace(args.Mode)
-		waitForUpgradeReplacement = !args.DryRun && (mode == "" || mode == "auto" || mode == "k8s" || mode == "daemonset")
-		upgradeImage = strings.TrimSpace(args.Image)
+		if !args.DryRun {
+			finishAudit("error", directAgentUpgradeProhibited, "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32003, directAgentUpgradeProhibited))
+			return nil
+		}
 	}
 	releaseLimit, err := h.acquireOperationSlot(auth.UserID)
 	if err != nil {
@@ -1071,29 +1051,10 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	defer agent.releaseForAction(action, resourceKey)
-	if waitForUpgradeReplacement {
-		var beginErr error
-		upgradeOp, beginErr = h.upgrades.Begin(cluster, instance, upgradeImage, agent.Generation, agent.RuntimeID)
-		if beginErr != nil {
-			finishAudit("error", beginErr.Error(), "", 0)
-			writeJSON(buildErrorResponse(req.ID, -32603, beginErr.Error()))
-			return nil
-		}
-		if beginErr = h.upgrades.MarkWaiting(upgradeOp); beginErr != nil {
-			_ = h.upgrades.Fail(upgradeOp, "persistence_failed", beginErr)
-			finishAudit("error", beginErr.Error(), "", 0)
-			writeJSON(buildErrorResponse(req.ID, -32603, beginErr.Error()))
-			return nil
-		}
-	}
-
 	tail := newAuditTailBuffer(8192)
 	var bytesOut int64
 	finalStatus := "success"
 	finalErr := ""
-	upgradeAccepted := false
-	upgradeRejected := false
-	var upgradeTerminalRaw []byte
 
 	err = agent.relayToolCall(opCtx, params, h.opts.OperationTimeout, func(msg gatewayWSMessage) error {
 		if method, _ := msg.Parsed["method"].(string); method == "notifications/message" {
@@ -1110,25 +1071,12 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			if result, ok := msg.Parsed["result"].(map[string]interface{}); ok {
 				if isErr, ok := result["isError"]; ok && fmt.Sprintf("%v", isErr) == "true" {
 					finalStatus = "error"
-					upgradeRejected = waitForUpgradeReplacement
 					finalErr = resultContentText(result)
-					if waitForUpgradeReplacement {
-						upgradeTerminalRaw, _ = json.Marshal(msg.Parsed)
-						return nil
-					}
-				} else if waitForUpgradeReplacement {
-					upgradeAccepted = true
-					return nil
 				}
 			}
 			if rpcErr, ok := msg.Parsed["error"]; ok && rpcErr != nil {
 				finalStatus = "error"
 				finalErr = fmt.Sprintf("%v", rpcErr)
-				if waitForUpgradeReplacement {
-					upgradeRejected = true
-					upgradeTerminalRaw, _ = json.Marshal(msg.Parsed)
-					return nil
-				}
 			}
 			raw, _ := json.Marshal(msg.Parsed)
 			if err := writeRaw(raw); err != nil {
@@ -1138,43 +1086,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		}
 		return nil
 	})
-	if waitForUpgradeReplacement && (upgradeAccepted || errors.Is(err, errGatewayAgentDisconnected)) {
-		type upgradeResult struct {
-			replacement *GatewayAgent
-			err         error
-		}
-		resultCh := make(chan upgradeResult, 1)
-		go func() {
-			waitCtx, cancelWait := context.WithTimeout(context.Background(), h.opts.OperationTimeout)
-			defer cancelWait()
-			replacement, waitErr := h.upgrades.WaitForReplacementPrepared(waitCtx, upgradeOp)
-			resultCh <- upgradeResult{replacement: replacement, err: waitErr}
-		}()
-		result := <-resultCh
-		if result.err != nil {
-			err = result.err
-		} else {
-			err = nil
-			finalStatus = "success"
-			finalErr = ""
-			_ = writeJSON(buildSuccessResponse(req.ID, fmt.Sprintf(
-				"agent upgrade completed: %s/%s generation %d image %s",
-				cluster, instance, result.replacement.Generation, upgradeOp.Image,
-			)))
-		}
-	} else if waitForUpgradeReplacement && (err != nil || upgradeRejected) {
-		cause := err
-		phase := "request_failed"
-		if upgradeRejected {
-			phase = "request_rejected"
-			cause = fmt.Errorf("%s", firstNonEmptyString(finalErr, "agent rejected upgrade request"))
-		}
-		if persistErr := h.upgrades.Fail(upgradeOp, phase, cause); persistErr != nil {
-			err = persistErr
-		} else if len(upgradeTerminalRaw) > 0 {
-			err = writeRaw(upgradeTerminalRaw)
-		}
-	}
 	if err != nil {
 		if errors.Is(err, errGatewayClientDisconnected) {
 			finalStatus = "canceled"
@@ -1238,18 +1149,10 @@ func (h *ClientService) authenticateUser(r *http.Request) (TokenAuth, error) {
 }
 
 func (h *ClientService) writeUserAuthError(w http.ResponseWriter, r *http.Request) {
-	if _, err := h.store.VerifyAgentToken(bearerToken(r)); err == nil {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 	http.Error(w, "Unauthorized", http.StatusUnauthorized)
 }
 
 func (h *GatewayHub) writeUserAuthError(w http.ResponseWriter, r *http.Request) {
-	if _, err := h.store.VerifyAgentToken(bearerToken(r)); err == nil {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 	http.Error(w, "Unauthorized", http.StatusUnauthorized)
 }
 
@@ -1325,12 +1228,12 @@ func (a *GatewayAgent) initialize() error {
 	}
 }
 
-func (a *GatewayAgent) readLoop(registry *AgentRegistry, lease time.Duration) {
+func (a *GatewayAgent) readLoop(lease time.Duration) {
 	defer close(a.closed)
 	defer a.conn.Close()
 	a.conn.SetReadDeadline(time.Now().Add(lease))
-	a.conn.SetPongHandler(func(string) error {
-		a.heartbeat(registry)
+	a.conn.SetPongHandler(func(payload string) error {
+		a.heartbeat(payload)
 		return a.conn.SetReadDeadline(time.Now().Add(lease))
 	})
 	for {
@@ -1477,15 +1380,13 @@ func (a *GatewayAgent) touchMemory(lastSeen time.Time) {
 	a.stateMu.Unlock()
 }
 
-func (a *GatewayAgent) heartbeat(registry *AgentRegistry) {
+func (a *GatewayAgent) heartbeat(payload string) {
 	now := time.Now().UTC()
 	a.stateMu.Lock()
 	a.HeartbeatAt = now
+	a.heartbeatPayload = payload
 	a.LastSeen = now
 	a.stateMu.Unlock()
-	if registry != nil {
-		registry.NotifyHeartbeat(a)
-	}
 }
 
 func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallParams, timeout time.Duration, forward func(gatewayWSMessage) error) error {

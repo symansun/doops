@@ -44,7 +44,7 @@ flowchart LR
 - 边缘执行端：`agent/` 构建 `doops-agent`，负责目标机器上的 exec、push/pull、文件和 AI 任务
 - 运行安全边界：`doops-agent` 默认只启动 `doops-agent`、`do-agent`、`buildkitd`；默认不启动 SSH，不启动 WebIDE
 - 连接方式：CLI/skill 访问 gateway `42222`，gateway 通过已建立的 agent WebSocket 进入内网 agent
-- 鉴权方式：用户连接 gateway 使用 gateway user token；agent 注册 gateway 使用绑定 `cluster/instance` 的 registration token
+- 鉴权方式：用户连接 gateway 使用 gateway user token；agent 反向注册只声明 `cluster/instance`，不使用 token
 - 代码同步：gateway 使用 Git HTTP；gateway 只通过已建立的 agent WebSocket 反向隧道透传 Git 请求，不再使用 tar 分块上传作为 `push/pull` 路径
 - 镜像构建：统一使用 `buildctl + buildkitd`
 
@@ -109,7 +109,7 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 - 新增多用户多集群 `doops-gateway`：SQLite、user token、scope/action 权限、审计和 gateway Git HTTP 反向隧道
 - 统一 `push/pull`：gateway 使用 Git 快照语义，并按 `/v1/git/<cluster>/<instance>/<session>.git` 精确路由到目标 agent
 - 加固多人使用：user token 按 token id 单行校验，密码登录 token 默认 24 小时过期，同一 target 默认有界排队串行执行
-- 新增 gateway 主动升级：`agent:upgrade` 权限控制，CLI `upgrade` 可按 `cluster/instance` 广播通知在线 agent 更新镜像
+- 将 `agent:upgrade` 收敛为只读预览；Agent 和 Gateway 都拒绝直接修改承载 Agent 的工作负载
 
 ## Gateway 代码入口
 
@@ -256,10 +256,9 @@ Skill 会随安装同步到项目目录。标准 target 的配置必须有 `gate
 
 ### 2. 通过 gateway 添加内网集群目标
 
-gateway 由管理员维护用户、user token、agent registration token 和授权。
-agent 部署声明绑定的 `cluster/instance`，并从运行时 Secret 读取对应的
-registration token；业务侧
-CLI 配置只消费管理员发放的 user token，不直接维护 gateway 数据库。
+gateway 由管理员维护用户、user token 和授权。agent 部署只声明绑定的
+`cluster/instance`；业务侧 CLI 配置只消费管理员发放的 user token，不直接维护
+gateway 数据库。
 
 gateway 支持用户名密码登录，先换取 user token 再用 token 操作：
 
@@ -270,7 +269,6 @@ doops login --target prod-master --gateway https://gateway.example.com --usernam
 内网 agent 主动连接公网 gateway：
 
 ```bash
-export DOOPS_GATEWAY_AGENT_TOKEN_PATH=/run/secrets/doops/gateway-agent-token
 doops-agent \
   -gateway-url https://gateway.example.com \
   -cluster prod \
@@ -354,7 +352,6 @@ docker run -d --name doops-agent \
   -v /root/.kube:/root/.kube:ro \
   -v /etc/kubernetes:/etc/kubernetes:ro \
   -v /path/to/doagent-model-settings.json:/opt/doagent_config/settings.json:ro \
-  -v /path/to/gateway-agent-token:/run/secrets/doops/gateway-agent-token:ro \
   docker.cnb.cool/l8ai/ai/doops.sh:v1.1 \
   -port 42222 \
   -gateway-url https://gateway.example.com \
@@ -384,7 +381,7 @@ doops install \
   --agent-token '<OPTIONAL_AGENT_TOKEN>'
 ```
 
-`--agent-token` 只服务于遗留裸进程的本机 `/ws` 保护，不是 gateway 注册凭据。自举完成后仍然要从运行时 Secret 提供 `DOOPS_GATEWAY_AGENT_TOKEN_PATH`，再用 `-gateway-url ... -cluster ... -instance ...` 接入 gateway，并在客户端配置 gateway target。
+`--agent-token` 只服务于遗留裸进程的本机 `/ws` 保护，不是 gateway 注册凭据。自举完成后用 `-gateway-url ... -cluster ... -instance ...` 接入 gateway，并在客户端配置 gateway target。
 
 注意：`doops install` 当前是 SSH bootstrap/兼容入口，可能把 agent 作为裸二进制或容器拉起，取决于目标机器运行时能力和参数。生产标准化建议优先使用 **方式 A K8s/DaemonSet** 或 **方式 B 容器模式**。
 
@@ -401,7 +398,7 @@ doops install \
 
 唯一部署入口是业务仓库的 `deploy/environments.yaml`，类型为 `doops.sh/v3 EnvironmentRegistry`。发布者必须显式选择 environment、service 和 Gateway target；CLI 先解析不可变源 commit，再由 Gateway credential prepare、单次 `CredentialRun` 绑定和 `$doops-cicd` 执行。CNB 只构建并推送不可变候选镜像，不直接操作环境或触发部署。
 
-`doops upgrade` 不是生产发布入口。`agent:upgrade` 仅允许显式授予的高权限维护场景，不能由普通 scope grant 自动获得，也不能替代 GitOps Workflow。
+`doops upgrade` 仅用于 dry-run 预览，非 dry-run 请求会在分发前被拒绝。正式发布由目标 Agent 之外的 CI/CD 或 GitOps Workflow 执行。
 
 ## 常用命令
 
@@ -428,11 +425,11 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 | `doops read` | 查看远端小文本文件，不用于下载大文件或二进制 |
 | `doops write` | 写入远端小文本文件，支持 `--content`、`--file` 和 stdin |
 | `doops clean` | 清理远端工作区 |
-| `doops upgrade` | 通过 gateway 对在线 agent 下发镜像升级 |
+| `doops upgrade` | 预演 agent 镜像升级；不执行自身替换 |
 
-### 通过 Gateway 批量升级 Agent
+### Agent 升级预演
 
-用户必须具备 `agent:upgrade` 或 `admin` 权限。建议先 dry-run，再按集群滚动执行：
+`doops upgrade` 只接受 dry-run，用于检查外部发布控制器应执行的镜像变更：
 
 ```bash
 doops -session upgrade_20260511 upgrade \
@@ -446,7 +443,7 @@ doops -session upgrade_20260511 upgrade \
   --dry-run
 ```
 
-去掉 `--dry-run` 后会对匹配的在线 `cluster/instance` 下发升级。K8s/DaemonSet 模式会执行 `kubectl set image` 和 `rollout status`；裸二进制 agent 会明确拒绝镜像升级。gateway 会在下发前持久化升级操作，只有同一目标注册了不同进程身份并完成心跳后才判定升级完成；普通断线重连不会被误报为升级成功。
+正式发布必须由目标集群外的 release runner、CI/CD 或 GitOps controller 执行。旧 Agent 必须保持在线，直到替代实例完成 Gateway 注册和首次心跳。
 
 ## 维护者说明
 
@@ -463,8 +460,8 @@ ls -lh skills/doops-cli/bin/
 
 - `doops` 日常连接不依赖 SSH。
 - `token` 在标准 target 配置里只表示 gateway user token。
-- agent 注册必须使用绑定 `cluster/instance` 的 registration token，并从 `DOOPS_GATEWAY_AGENT_TOKEN_PATH` 指向的运行时 Secret 读取；该 token 不写入标准 target 配置。
-- 遗留本机 `/ws` token 只用于直连保护，不得复用为 gateway registration token。
+- agent 反向注册只声明 `cluster/instance`，不读取或发送注册 token。
+- 遗留本机 `/ws` token 只用于直连保护。
 - `doops-agent token` 只用于遗留直连或本机 `/ws` 保护。
 - `ssh_password` 只保留为 SSH bootstrap 参数。
 - `bash` 子命令仍是遗留 SSH 交互入口；推荐使用 `doops exec` 和 `doops ask`。

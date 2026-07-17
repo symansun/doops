@@ -15,6 +15,7 @@ type credentialPlanToolParams struct {
 	WorkflowPath     string            `json:"workflow_path"`
 	SourceRepository string            `json:"source_repository"`
 	SourceBranch     string            `json:"source_branch"`
+	SourceRevision   string            `json:"source_revision"`
 	Inputs           map[string]string `json:"inputs,omitempty"`
 }
 
@@ -34,9 +35,11 @@ func handleCredentialPlanTool(argBytes json.RawMessage) (string, error) {
 	args.WorkflowPath = strings.TrimSpace(args.WorkflowPath)
 	args.SourceRepository = strings.TrimSpace(args.SourceRepository)
 	args.SourceBranch = strings.TrimSpace(args.SourceBranch)
+	args.SourceRevision = strings.TrimSpace(args.SourceRevision)
 	if args.SessionID == "" || args.WorkflowPath == "" ||
-		args.SourceRepository == "" || args.SourceBranch == "" {
-		return "", fmt.Errorf("session_id, workflow_path, source_repository, and source_branch are required")
+		args.SourceRepository == "" || args.SourceBranch == "" ||
+		!validCredentialWorkspaceCommit(args.SourceRevision) {
+		return "", fmt.Errorf("session_id, workflow_path, source_repository, source_branch, and source_revision are required")
 	}
 	if err := validateCredentialPlanSourceRepository(args.SourceRepository); err != nil {
 		return "", err
@@ -48,7 +51,12 @@ func handleCredentialPlanTool(argBytes json.RawMessage) (string, error) {
 			return "", fmt.Errorf("invalid credential plan inputs")
 		}
 	}
-	if err := cloneCredentialPlanSource(args.SessionID, args.SourceRepository, args.SourceBranch); err != nil {
+	if err := cloneCredentialPlanSource(
+		args.SessionID,
+		args.SourceRepository,
+		args.SourceBranch,
+		args.SourceRevision,
+	); err != nil {
 		return "", err
 	}
 	root, err := workspacePath(args.SessionID)

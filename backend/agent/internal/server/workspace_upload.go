@@ -86,6 +86,8 @@ type agentUpgradeParams struct {
 	DryRun    bool   `json:"dry_run"`
 }
 
+const directAgentUpgradeProhibited = "direct agent self-upgrade is prohibited; use an external release controller or GitOps"
+
 type workspaceUploadMeta struct {
 	SessionID string    `json:"session_id"`
 	Commit    string    `json:"commit"`
@@ -459,15 +461,28 @@ func handleAgentUpgrade(argBytes json.RawMessage) (string, error) {
 	if image == "" {
 		return "", fmt.Errorf("image is required")
 	}
+	if !args.DryRun {
+		return "", fmt.Errorf("%s", directAgentUpgradeProhibited)
+	}
 	mode := strings.TrimSpace(args.Mode)
 	if mode == "" || mode == "auto" {
 		mode = detectAgentUpgradeMode()
 	}
 	switch mode {
 	case "k8s", "daemonset":
-		return upgradeK8sDaemonSet(args, image)
+		namespace := firstNonEmptyString(args.Namespace, readNamespaceFile(), "oilan-system")
+		workload := firstNonEmptyString(args.Workload, "daemonset/doops-agent")
+		container := firstNonEmptyString(args.Container, "doops-agent")
+		return fmt.Sprintf(
+			"dry-run: external release controller must update %s/%s: kubectl -n %s set image %s %s=%s",
+			namespace, workload, namespace, workload, container, image,
+		), nil
 	case "docker", "container":
-		return upgradeDockerContainer(args, image)
+		container := firstNonEmptyString(args.Container, "doops-agent")
+		return fmt.Sprintf(
+			"dry-run: external supervisor must replace container %s with image %s",
+			container, image,
+		), nil
 	case "unsupported", "bare":
 		return "", fmt.Errorf("unsupported agent upgrade mode: bare binary or unknown runtime")
 	default:
@@ -488,80 +503,6 @@ func detectAgentUpgradeMode() string {
 	return "unsupported"
 }
 
-func upgradeK8sDaemonSet(args agentUpgradeParams, image string) (string, error) {
-	namespace := firstNonEmptyString(args.Namespace, readNamespaceFile(), "oilan-system")
-	workload := firstNonEmptyString(args.Workload, "daemonset/doops-agent")
-	container := firstNonEmptyString(args.Container, "doops-agent")
-	if args.DryRun {
-		return fmt.Sprintf("dry-run: pull image before rollout: %s\nkubectl -n %s set image %s %s=%s", image, namespace, workload, container, image), nil
-	}
-	pullOut, err := prePullK8sImage(image)
-	if err != nil {
-		return "", err
-	}
-	setCmd := exec.Command("kubectl", "-n", namespace, "set", "image", workload, container+"="+image)
-	setOut, err := setCmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("kubectl set image failed: %v: %s", err, strings.TrimSpace(string(setOut)))
-	}
-	statusCmd := exec.Command("kubectl", "-n", namespace, "rollout", "status", workload, "--timeout=180s")
-	statusOut, err := statusCmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("kubectl rollout status failed: %v: %s", err, strings.TrimSpace(string(statusOut)))
-	}
-	return fmt.Sprintf("upgrade k8s ok: %s %s=%s\n%s\n%s\n%s", workload, container, image, strings.TrimSpace(pullOut), strings.TrimSpace(string(setOut)), strings.TrimSpace(string(statusOut))), nil
-}
-
-func prePullK8sImage(image string) (string, error) {
-	if path, err := exec.LookPath("nerdctl"); err == nil {
-		out, pullErr := exec.Command(path, "-n", "k8s.io", "pull", image).CombinedOutput()
-		if pullErr == nil {
-			return string(out), nil
-		}
-		return "", fmt.Errorf("pre-pull image with nerdctl failed: %v: %s", pullErr, strings.TrimSpace(string(out)))
-	}
-	if path, err := exec.LookPath("crictl"); err == nil {
-		out, pullErr := exec.Command(path, "pull", image).CombinedOutput()
-		if pullErr == nil {
-			return string(out), nil
-		}
-		return "", fmt.Errorf("pre-pull image with crictl failed: %v: %s", pullErr, strings.TrimSpace(string(out)))
-	}
-	return "pre-pull skipped: neither nerdctl nor crictl is available; kubelet will pull the image during rollout", nil
-}
-
-func upgradeDockerContainer(args agentUpgradeParams, image string) (string, error) {
-	container := firstNonEmptyString(args.Container, "doops-agent")
-	runtime := "docker"
-	if _, err := exec.LookPath("docker"); err != nil {
-		if _, err := exec.LookPath("nerdctl"); err == nil {
-			runtime = "nerdctl"
-		} else {
-			return "", fmt.Errorf("docker/nerdctl not found")
-		}
-	}
-	if args.DryRun {
-		return fmt.Sprintf("dry-run: %s pull %s && restart container %s with preserved config", runtime, image, container), nil
-	}
-	cmd := exec.Command("sh", "-c", fmt.Sprintf(`set -e
-%s pull %s
-old_id=$(%s ps -q --filter name=^/%s$ 2>/dev/null || true)
-if [ -z "$old_id" ]; then
-  old_id=$(%s ps -q --filter name=%s 2>/dev/null | head -1 || true)
-fi
-if [ -z "$old_id" ]; then
-  echo "image pulled; no running container named %s found for automatic replacement"
-  exit 0
-fi
-echo "image pulled; container replacement for $old_id must be handled by supervisor"
-`, runtime, shellEscape(image), runtime, shellEscape(container), runtime, shellEscape(container), shellEscape(container)))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("docker upgrade preparation failed: %v: %s", err, strings.TrimSpace(string(out)))
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
 func readNamespaceFile() string {
 	data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
 	if err != nil {
@@ -577,10 +518,6 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func shellEscape(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func handleWorkspaceBegin(argBytes json.RawMessage) (string, error) {

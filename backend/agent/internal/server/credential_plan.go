@@ -36,6 +36,7 @@ type CredentialPlan struct {
 	Target         string
 	Cluster        string
 	Instance       string
+	Session        string
 	CredentialRefs []CredentialPlanReference
 	BundleRefs     []string
 }
@@ -449,6 +450,7 @@ type credentialConfigurationTarget struct {
 	Name     string `yaml:"name"`
 	Cluster  string `yaml:"cluster"`
 	Instance string `yaml:"instance"`
+	Session  string `yaml:"session,omitempty"`
 }
 
 type credentialConfigurationExecutor struct {
@@ -613,6 +615,7 @@ func parseCredentialPlanForInputs(
 		Target:         target.Name,
 		Cluster:        target.Cluster,
 		Instance:       target.Instance,
+		Session:        target.Session,
 		CredentialRefs: refs,
 		BundleRefs:     bundles,
 	}, nil
@@ -790,6 +793,7 @@ func validateCredentialEnvironmentDefinitionV3(
 			Name:     deploy.Target,
 			Cluster:  deploy.Cluster,
 			Instance: deploy.Instance,
+			Session:  deploy.Session,
 		},
 		SourceRepository: definition.Spec.Source.Repository,
 		SourceBranch:     definition.Spec.Source.Branch,

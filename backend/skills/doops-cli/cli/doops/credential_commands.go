@@ -178,7 +178,7 @@ func runCredentialBundleGet(args []string, servers []Server, configErr error, st
 }
 
 func runCredentialVerify(args []string, servers []Server, configErr error, stdout io.Writer) error {
-	var target, id, versionID, sessionID, workflowPath, workspaceCommit string
+	var target, id, versionID, sessionID, workflowPath, workspaceCommit, sourceRepository, sourceBranch string
 	flags := credentialFlagSet("credential verify")
 	flags.StringVar(&target, "target", "", "Configured gateway target")
 	flags.StringVar(&id, "id", "", "Credential ID")
@@ -186,13 +186,16 @@ func runCredentialVerify(args []string, servers []Server, configErr error, stdou
 	flags.StringVar(&sessionID, "session", "", "Bound workspace session")
 	flags.StringVar(&workflowPath, "workflow-path", "", "v3 manifest path in the workspace")
 	flags.StringVar(&workspaceCommit, "workspace-commit", "", "Immutable workspace commit")
+	flags.StringVar(&sourceRepository, "source-repository", "", "Declared HTTPS source repository")
+	flags.StringVar(&sourceBranch, "source-branch", "", "Declared source branch")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 || strings.TrimSpace(target) == "" || strings.TrimSpace(id) == "" ||
 		strings.TrimSpace(versionID) == "" || strings.TrimSpace(sessionID) == "" ||
-		strings.TrimSpace(workflowPath) == "" || strings.TrimSpace(workspaceCommit) == "" {
-		return fmt.Errorf("--target, --id, --version-id, --session, --workflow-path and --workspace-commit are required")
+		strings.TrimSpace(workflowPath) == "" || strings.TrimSpace(workspaceCommit) == "" ||
+		strings.TrimSpace(sourceRepository) == "" || strings.TrimSpace(sourceBranch) == "" {
+		return fmt.Errorf("--target, --id, --version-id, --session, --workflow-path, --workspace-commit, --source-repository and --source-branch are required")
 	}
 	if configErr != nil {
 		return configErr
@@ -210,12 +213,16 @@ func runCredentialVerify(args []string, servers []Server, configErr error, stdou
 		return err
 	}
 	body, err := json.Marshal(map[string]string{
-		"version_id":       strings.TrimSpace(versionID),
-		"cluster":          strings.TrimSpace(server.Cluster),
-		"instance":         strings.TrimSpace(server.Instance),
-		"session_id":       strings.TrimSpace(sessionID),
-		"workflow_path":    strings.TrimSpace(workflowPath),
-		"workspace_commit": strings.TrimSpace(workspaceCommit),
+		"version_id":        strings.TrimSpace(versionID),
+		"cluster":           strings.TrimSpace(server.Cluster),
+		"instance":          strings.TrimSpace(server.Instance),
+		"target":            strings.TrimSpace(server.Name),
+		"session_id":        strings.TrimSpace(sessionID),
+		"workflow_path":     strings.TrimSpace(workflowPath),
+		"source_repository": strings.TrimSpace(sourceRepository),
+		"source_branch":     strings.TrimSpace(sourceBranch),
+		"source_revision":   strings.TrimSpace(workspaceCommit),
+		"workspace_commit":  strings.TrimSpace(workspaceCommit),
 	})
 	if err != nil {
 		return err

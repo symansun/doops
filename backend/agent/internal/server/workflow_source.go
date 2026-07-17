@@ -10,14 +10,15 @@ import (
 	"time"
 )
 
-func checkoutWorkflowSource(sessionID, repository, branch string) error {
+func checkoutWorkflowSource(sessionID, repository, branch, revision string) error {
 	if err := validateSession(strings.TrimSpace(sessionID)); err != nil {
 		return err
 	}
 	repository = strings.TrimSpace(repository)
 	branch = strings.TrimSpace(branch)
-	if repository == "" || branch == "" {
-		return fmt.Errorf("workflow source repository and branch are required")
+	revision = strings.TrimSpace(revision)
+	if repository == "" || branch == "" || !validCredentialWorkspaceCommit(revision) {
+		return fmt.Errorf("workflow source repository, branch, and revision are required")
 	}
 
 	destination, err := workspacePath(sessionID)
@@ -39,36 +40,48 @@ func checkoutWorkflowSource(sessionID, repository, branch string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	command := exec.CommandContext(
-		ctx,
-		"git",
-		"clone",
-		"--depth", "1",
-		"--single-branch",
-		"--branch", branch,
-		"--",
-		repository,
-		staging,
-	)
-	command.Env = append(
+	gitEnvironment := append(
 		os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_ALLOW_PROTOCOL=https",
 	)
-	output, err := command.CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		return fmt.Errorf("workflow source clone timed out")
+	commands := [][]string{
+		{"init", "-q", staging},
+		{"-C", staging, "remote", "add", "origin", repository},
+		{"-C", staging, "fetch", "--depth", "1", "--no-tags", "origin", revision},
+		{"-C", staging, "checkout", "--detach", "-q", "FETCH_HEAD"},
 	}
-	if err != nil {
-		return fmt.Errorf("workflow source clone failed: %s", strings.TrimSpace(string(output)))
+	for _, arguments := range commands {
+		command := exec.CommandContext(ctx, "git", arguments...)
+		command.Env = gitEnvironment
+		output, commandErr := command.CombinedOutput()
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("workflow source checkout timed out")
+		}
+		if commandErr != nil {
+			return fmt.Errorf("workflow source checkout failed: %s", strings.TrimSpace(string(output)))
+		}
+	}
+	if err := verifyWorkflowSourceRevision(ctx, staging, revision, gitEnvironment); err != nil {
+		return err
 	}
 	if err := os.RemoveAll(destination); err != nil {
 		return fmt.Errorf("replace workflow workspace: %w", err)
 	}
 	if err := os.Rename(staging, destination); err != nil {
 		return fmt.Errorf("activate workflow workspace: %w", err)
+	}
+	return nil
+}
+
+func verifyWorkflowSourceRevision(ctx context.Context, workspace, revision string, environment []string) error {
+	command := exec.CommandContext(ctx, "git", "-C", workspace, "rev-parse", "HEAD")
+	command.Env = environment
+	output, err := command.Output()
+	if err != nil || strings.TrimSpace(string(output)) != strings.TrimSpace(revision) {
+		return fmt.Errorf("workflow source revision changed during checkout")
 	}
 	return nil
 }

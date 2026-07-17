@@ -19,7 +19,9 @@ func (s *GatewayStore) IssueCredentialRunAuthorization(
 ) error {
 	if strings.TrimSpace(run.ID) == "" || strings.TrimSpace(auth.UserID) == "" ||
 		strings.TrimSpace(auth.TokenID) == "" || run.Cluster != request.Cluster ||
-		run.Instance != request.Instance || run.Mode != request.Mode {
+		run.Instance != request.Instance || run.Target != request.Target ||
+		run.Session != request.SessionID || run.SourceRevision != request.SourceRevision ||
+		run.Mode != request.Mode {
 		return ErrCredentialPrepareBindingInvalid
 	}
 	digest, err := digestJSON(run)
@@ -32,7 +34,12 @@ func (s *GatewayStore) IssueCredentialRunAuthorization(
 		 workspace_commit, mode, run_digest, state, created_at, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?)`,
 		run.ID, auth.UserID, auth.TokenID, request.Cluster, request.Instance,
-		request.SessionID, request.WorkflowPath, credentialSourceBinding(request.SourceRepository, request.SourceBranch, request.Inputs), request.Mode,
+		request.SessionID, request.WorkflowPath, credentialSourceBinding(
+			request.SourceRepository,
+			request.SourceBranch,
+			request.SourceRevision,
+			request.Inputs,
+		), request.Mode,
 		digest, formatTime(now), formatTime(now.Add(credentialRunAuthorizationTTL)))
 	return err
 }
@@ -45,6 +52,7 @@ func (s *GatewayStore) ConsumeCredentialRunAuthorization(
 	workflowPath string,
 	sourceRepository string,
 	sourceBranch string,
+	sourceRevision string,
 	inputs map[string]string,
 	mode string,
 	run CredentialRun,
@@ -86,10 +94,11 @@ func (s *GatewayStore) ConsumeCredentialRunAuthorization(
 		authorization.Instance != strings.TrimSpace(instance) ||
 		authorization.SessionID != strings.TrimSpace(sessionID) ||
 		authorization.WorkflowPath != strings.TrimSpace(workflowPath) ||
-		authorization.SourceBinding != credentialSourceBinding(sourceRepository, sourceBranch, inputs) ||
+		authorization.SourceBinding != credentialSourceBinding(sourceRepository, sourceBranch, sourceRevision, inputs) ||
 		authorization.Mode != strings.TrimSpace(mode) || authorization.RunDigest != digest ||
 		run.Cluster != authorization.Cluster || run.Instance != authorization.Instance ||
-		run.Mode != authorization.Mode {
+		run.SourceRevision != strings.TrimSpace(sourceRevision) ||
+		run.Session != authorization.SessionID || run.Mode != authorization.Mode {
 		return ErrCredentialPrepareBindingInvalid
 	}
 	for _, materialization := range run.Materializations {
@@ -135,9 +144,10 @@ func (s *GatewayStore) ConsumeCredentialRunAuthorization(
 	return tx.Commit()
 }
 
-func credentialSourceBinding(repository, branch string, inputs map[string]string) string {
+func credentialSourceBinding(repository, branch, revision string, inputs map[string]string) string {
 	encodedInputs, _ := json.Marshal(inputs)
-	return strings.TrimSpace(repository) + "\n" + strings.TrimSpace(branch) + "\n" + string(encodedInputs)
+	return strings.TrimSpace(repository) + "\n" + strings.TrimSpace(branch) + "\n" +
+		strings.TrimSpace(revision) + "\n" + string(encodedInputs)
 }
 
 func (s *GatewayStore) RevokeCredentialRunAuthorization(runID string) error {

@@ -96,7 +96,8 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 	run("", "credential", "grant-revoke", "--target", "gateway", "--id", "cred_123", "--grant-id", "credgrant_789")
 	run("", "credential", "verify", "--target", "gateway", "--id", "cred_123",
 		"--version-id", "credver_456", "--session", "release-1",
-		"--workflow-path", "deploy/release.yaml", "--workspace-commit", strings.Repeat("a", 40))
+		"--workflow-path", "deploy/release.yaml", "--workspace-commit", strings.Repeat("a", 40),
+		"--source-repository", "https://example.test/repo.git", "--source-branch", "main")
 	run("", "credential", "promote", "--target", "gateway", "--id", "cred_123", "--version-id", "credver_456")
 	run("", "credential", "revoke", "--target", "gateway", "--id", "cred_123")
 	run(`{"name":"release","scope":"platform","items":[{"credential_id":"cred_123","use":"imagePull","namespace":"apps","workload":{"Kind":"Deployment","Name":"api"},"registry_repository":"team/api","registry_reference":"sha256:manifest"}]}`,
@@ -149,12 +150,16 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		"grant_id": "credgrant_789",
 	})
 	assertCredentialCLIJSON(t, requests[5], http.MethodPost, "/v1/credentials/cred_123/verify", map[string]any{
-		"version_id":       "credver_456",
-		"cluster":          "doops-edu",
-		"instance":         "edu-coder",
-		"session_id":       "release-1",
-		"workflow_path":    "deploy/release.yaml",
-		"workspace_commit": strings.Repeat("a", 40),
+		"version_id":        "credver_456",
+		"cluster":           "doops-edu",
+		"instance":          "edu-coder",
+		"target":            "gateway",
+		"session_id":        "release-1",
+		"workflow_path":     "deploy/release.yaml",
+		"source_repository": "https://example.test/repo.git",
+		"source_branch":     "main",
+		"source_revision":   strings.Repeat("a", 40),
+		"workspace_commit":  strings.Repeat("a", 40),
 	})
 	assertCredentialCLIJSON(t, requests[6], http.MethodPost, "/v1/credentials/cred_123/promote", map[string]any{
 		"version_id": "credver_456",

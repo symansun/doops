@@ -59,9 +59,11 @@ func TestCredentialRunAuthorizationIsBoundAndSingleUse(t *testing.T) {
 	request := credentialPrepareHTTPBody{
 		Cluster:          "doops",
 		Instance:         "runner",
+		Target:           "gw-runner",
 		SessionID:        "release-session",
 		WorkflowPath:     "deploy/release.yaml",
-		SourceRepository: "https://example.test/repo.git", SourceBranch: "main", Inputs: map[string]string{"reason": "test"},
+		SourceRepository: "https://example.test/repo.git", SourceBranch: "main",
+		SourceRevision: credentialRunFixtureCommit, Inputs: map[string]string{"reason": "test"},
 		Mode: "dry-run",
 	}
 	run := CredentialRun{
@@ -71,6 +73,9 @@ func TestCredentialRunAuthorizationIsBoundAndSingleUse(t *testing.T) {
 		Mode:             request.Mode,
 		Cluster:          request.Cluster,
 		Instance:         request.Instance,
+		Target:           request.Target,
+		Session:          request.SessionID,
+		SourceRevision:   request.SourceRevision,
 		Template:         "release",
 		Project:          "app",
 		Environment:      "production",
@@ -85,19 +90,26 @@ func TestCredentialRunAuthorizationIsBoundAndSingleUse(t *testing.T) {
 	tampered.Environment = "staging"
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.Inputs, request.Mode, tampered,
+		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Inputs, request.Mode, tampered,
 	); !errors.Is(err, ErrCredentialPrepareBindingInvalid) {
 		t.Fatalf("tampered credential run error = %v, want grant denied", err)
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.Inputs, request.Mode, run,
+		request.SourceRepository, request.SourceBranch, strings.Repeat("b", 40),
+		request.Inputs, request.Mode, run,
+	); !errors.Is(err, ErrCredentialPrepareBindingInvalid) {
+		t.Fatalf("tampered source revision error = %v, want binding invalid", err)
+	}
+	if err := store.ConsumeCredentialRunAuthorization(
+		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
+		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Inputs, request.Mode, run,
 	); err != nil {
 		t.Fatalf("consume credential run authorization: %v", err)
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.Inputs, request.Mode, run,
+		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Inputs, request.Mode, run,
 	); !errors.Is(err, ErrCredentialPrepareBindingInvalid) {
 		t.Fatalf("replayed credential run error = %v, want grant denied", err)
 	}
@@ -108,12 +120,15 @@ func TestRevokedCredentialRunAuthorizationCannotBeConsumed(t *testing.T) {
 	user, token := createCredentialRunAuthorizationUser(t, store)
 	auth := TokenAuth{UserID: user.ID, TokenID: token.ID}
 	request := credentialPrepareHTTPBody{
-		Cluster: "doops", Instance: "runner", SessionID: "release-session",
-		WorkflowPath: "deploy/release.yaml", SourceRepository: "https://example.test/repo.git", SourceBranch: "main", Inputs: map[string]string{"reason": "test"}, Mode: "dry-run",
+		Cluster: "doops", Instance: "runner", Target: "gw-runner", SessionID: "release-session",
+		WorkflowPath: "deploy/release.yaml", SourceRepository: "https://example.test/repo.git",
+		SourceBranch: "main", SourceRevision: credentialRunFixtureCommit,
+		Inputs: map[string]string{"reason": "test"}, Mode: "dry-run",
 	}
 	run := CredentialRun{
 		APIVersion: "doops.sh/v2", Kind: "CredentialRun", ID: "credrun_revoked",
 		Mode: request.Mode, Cluster: request.Cluster, Instance: request.Instance,
+		Target: request.Target, Session: request.SessionID, SourceRevision: request.SourceRevision,
 		Template: "release", Project: "app", Environment: "production",
 		Materializations: []CredentialMaterialization{}, CreatedAt: time.Now().UTC(),
 	}
@@ -125,7 +140,7 @@ func TestRevokedCredentialRunAuthorizationCannotBeConsumed(t *testing.T) {
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.Inputs, request.Mode, run,
+		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Inputs, request.Mode, run,
 	); !errors.Is(err, ErrCredentialPrepareBindingInvalid) {
 		t.Fatalf("revoked credential run error = %v, want grant denied", err)
 	}
@@ -152,7 +167,7 @@ func TestOfflineWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.T) {
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.Inputs, request.Mode, run,
+		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Inputs, request.Mode, run,
 	); err != nil {
 		t.Fatalf("offline workflow consumed credential authorization: %v", err)
 	}
@@ -193,7 +208,7 @@ func TestRateLimitedWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.Inputs, request.Mode, run,
+		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Inputs, request.Mode, run,
 	); err != nil {
 		t.Fatalf("rate-limited workflow consumed credential authorization: %v", err)
 	}
@@ -320,13 +335,15 @@ func TestCredentialPromptBindingAcceptsApplyMode(t *testing.T) {
 
 func credentialRunAuthorizationFixture(instance, runID string) (credentialPrepareHTTPBody, CredentialRun) {
 	request := credentialPrepareHTTPBody{
-		Cluster: "doops", Instance: instance, SessionID: "release-session",
+		Cluster: "doops", Instance: instance, Target: "gw-" + instance, SessionID: "release-session",
 		WorkflowPath: "deploy/environments.yaml", SourceRepository: "https://example.test/repo.git",
-		SourceBranch: "main", Inputs: map[string]string{"environment": "test", "service": "api"}, Mode: "dry-run",
+		SourceBranch: "main", SourceRevision: credentialRunFixtureCommit,
+		Inputs: map[string]string{"environment": "test", "service": "api"}, Mode: "dry-run",
 	}
 	run := CredentialRun{
 		APIVersion: "doops.sh/v2", Kind: "CredentialRun", ID: runID,
 		Mode: request.Mode, Cluster: request.Cluster, Instance: request.Instance,
+		Target: request.Target, Session: request.SessionID, SourceRevision: request.SourceRevision,
 		Template: "release", Project: "app", Environment: "production",
 		Materializations: []CredentialMaterialization{}, CreatedAt: time.Now().UTC(),
 	}

@@ -14,7 +14,7 @@ const (
 )
 
 type Dispatcher struct {
-	blacklist    []*regexp.Regexp
+	blacklist     []*regexp.Regexp
 	naturalLangRe *regexp.Regexp
 }
 
@@ -24,6 +24,12 @@ func NewDispatcher() *Dispatcher {
 			regexp.MustCompile(`rm -rf /`),
 			regexp.MustCompile(`fdisk`),
 			regexp.MustCompile(`mkfs`),
+			regexp.MustCompile(`(?s)\b(kubectl|oc)\b.*\b(set\s+image|rollout\s+(restart|undo)|apply|delete|edit|patch|replace|scale)\b.*\bdoops-agent\b`),
+			regexp.MustCompile(`(?s)\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b.*\bdoops-agent\b`),
+			regexp.MustCompile(`(?s)\b(docker|nerdctl|podman|crictl)\b.*\b(restart|stop|rm|update|run)\b.*\bdoops-agent\b`),
+			regexp.MustCompile(`(?s)\bsystemctl\b.*\b(restart|stop)\b.*\bdoops-agent\b`),
+			regexp.MustCompile(`(?s)\bservice\b.*\bdoops-agent\b.*\b(restart|stop)\b`),
+			regexp.MustCompile(`(?s)\b(pkill|killall)\b.*\bdoops-agent\b`),
 		},
 		// Natural language heuristic: if it contains only letters and spaces and is relatively long
 		naturalLangRe: regexp.MustCompile(`^[\p{L}\s]{10,}$`),

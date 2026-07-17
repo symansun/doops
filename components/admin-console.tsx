@@ -643,11 +643,8 @@ function TokensView({ session }: { session: Session }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [showCreate, setShowCreate] = useState(false)
-  const [kind, setKind] = useState("user")
   const [userName, setUserName] = useState("")
   const [name, setName] = useState("")
-  const [cluster, setCluster] = useState("")
-  const [instance, setInstance] = useState("")
   const [busy, setBusy] = useState(false)
   const [created, setCreated] = useState("")
 
@@ -675,11 +672,8 @@ function TokensView({ session }: { session: Session }) {
     setCreated("")
     try {
       const res = await createToken(session, {
-        kind,
-        user: kind === "user" ? userName : undefined,
+        user: userName,
         name: name.trim() || undefined,
-        cluster: kind === "agent" ? cluster.trim() : undefined,
-        instance: kind === "agent" ? instance.trim() : undefined,
       })
       setCreated(res.token)
       setName("")
@@ -706,7 +700,7 @@ function TokensView({ session }: { session: Session }) {
     <div>
       <Toolbar
         title="令牌"
-        desc="用户访问令牌与 agent 注册令牌"
+        desc="用户访问令牌"
         onRefresh={load}
         loading={loading}
       >
@@ -726,43 +720,23 @@ function TokensView({ session }: { session: Session }) {
         <div className="mx-4 mt-3 flex flex-col gap-3 rounded-lg border bg-muted/40 p-3">
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-              类型
-              <select value={kind} onChange={(e) => setKind(e.target.value)} className="input w-32">
-                <option value="user">用户令牌</option>
-                <option value="agent">Agent 令牌</option>
+              所属用户
+              <select value={userName} onChange={(e) => setUserName(e.target.value)} className="input w-40">
+                <option value="">选择用户…</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.name}>
+                    {u.name}
+                  </option>
+                ))}
               </select>
             </label>
-            {kind === "user" ? (
-              <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-                所属用户
-                <select value={userName} onChange={(e) => setUserName(e.target.value)} className="input w-40">
-                  <option value="">选择用户…</option>
-                  {users.map((u) => (
-                    <option key={u.id} value={u.name}>
-                      {u.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : (
-              <>
-                <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-                  集群
-                  <input value={cluster} onChange={(e) => setCluster(e.target.value)} className="input w-32" placeholder="prod-cn" />
-                </label>
-                <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-                  实例
-                  <input value={instance} onChange={(e) => setInstance(e.target.value)} className="input w-32" placeholder="web-03" />
-                </label>
-              </>
-            )}
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               备注名
               <input value={name} onChange={(e) => setName(e.target.value)} className="input w-36" placeholder="可选" />
             </label>
             <button
               onClick={submit}
-              disabled={busy || (kind === "user" && !userName) || (kind === "agent" && (!cluster.trim() || !instance.trim()))}
+              disabled={busy || !userName}
               className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-40"
             >
               {busy ? "签发中…" : "签发"}
@@ -799,18 +773,12 @@ function TokensView({ session }: { session: Session }) {
             {rows.map((t) => (
               <tr key={t.id} className="border-b border-border/50">
                 <td className="px-3 py-2.5">
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-xs ${
-                      t.kind === "agent" ? "bg-accent/15 text-accent" : "bg-muted text-muted-foreground"
-                    }`}
-                  >
-                    {t.kind === "agent" ? "agent" : "user"}
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                    user
                   </span>
                 </td>
                 <td className="px-3 py-2.5 text-xs text-foreground">
-                  {t.kind === "agent"
-                    ? `${t.cluster || "?"}/${t.instance || "?"}`
-                    : t.user_name || t.user_id || "—"}
+                  {t.user_name || t.user_id || "—"}
                   {t.name ? <span className="text-muted-foreground"> · {t.name}</span> : null}
                 </td>
                 <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{t.prefix}…</td>
