@@ -57,6 +57,7 @@ type credentialTargetSnapshot struct {
 }
 
 type credentialSecretInspection struct {
+	UID             string
 	SecretType      string
 	ResourceVersion string
 	CredentialID    string
@@ -190,20 +191,24 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 	}
 	result.PreviousVersionID = snapshot.PreviousVersionID
 	applyErr := applyCredentialSecret(ctx, req, name, secretType, secretData)
-	if applyErr != nil {
-		actual, inspectErr := inspectCredentialSecret(ctx, req.Scope.Namespace, name)
-		if inspectErr != nil || !credentialSecretMatches(actual, req, secretType, secretData) {
-			clear(actual.Data)
-			if restoreErr := restoreCredentialTarget(ctx, req.Scope.Namespace, name, snapshot); restoreErr != nil {
-				return CredentialMaterialization{}, errors.New("credential_target_outcome_unknown")
-			}
+	applied, inspectErr := inspectCredentialSecret(ctx, req.Scope.Namespace, name)
+	if inspectErr != nil || !credentialSecretMatches(applied, req, secretType, secretData) {
+		clear(applied.Data)
+		if restoreErr := restoreCredentialTarget(ctx, req.Scope.Namespace, name, snapshot, applied); restoreErr != nil {
+			return CredentialMaterialization{}, errors.New("credential_target_outcome_unknown")
+		}
+		if applyErr != nil {
 			return CredentialMaterialization{}, applyErr
 		}
-		clear(actual.Data)
+		if inspectErr != nil {
+			return CredentialMaterialization{}, inspectErr
+		}
+		return CredentialMaterialization{}, errors.New("credential_secret_verification_failed")
 	}
+	defer clear(applied.Data)
 	if req.CredentialType == CredentialTypeRegistry && strings.TrimSpace(req.Scope.Workload.Name) != "" {
 		if err := patchImagePullSecret(ctx, req.Scope.Namespace, req.Scope.Workload, name); err != nil {
-			if restoreErr := restoreCredentialTarget(ctx, req.Scope.Namespace, name, snapshot); restoreErr != nil {
+			if restoreErr := restoreCredentialTarget(ctx, req.Scope.Namespace, name, snapshot, applied); restoreErr != nil {
 				return CredentialMaterialization{}, errors.New("credential_target_outcome_unknown")
 			}
 			return CredentialMaterialization{}, err
@@ -211,15 +216,15 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 	}
 	actual, err := inspectCredentialSecret(ctx, req.Scope.Namespace, name)
 	if err != nil {
-		if restoreErr := restoreCredentialTarget(ctx, req.Scope.Namespace, name, snapshot); restoreErr != nil {
+		if restoreErr := restoreCredentialTarget(ctx, req.Scope.Namespace, name, snapshot, applied); restoreErr != nil {
 			return CredentialMaterialization{}, errors.New("credential_target_outcome_unknown")
 		}
 		return CredentialMaterialization{}, err
 	}
 	defer clear(actual.Data)
 	keys := mapKeys(actual.Data)
-	if !credentialSecretMatches(actual, req, secretType, secretData) {
-		if restoreErr := restoreCredentialTarget(ctx, req.Scope.Namespace, name, snapshot); restoreErr != nil {
+	if actual.UID != applied.UID || !credentialSecretMatches(actual, req, secretType, secretData) {
+		if restoreErr := restoreCredentialTarget(ctx, req.Scope.Namespace, name, snapshot, applied); restoreErr != nil {
 			return CredentialMaterialization{}, errors.New("credential_target_outcome_unknown")
 		}
 		return CredentialMaterialization{}, errors.New("credential_secret_verification_failed")
@@ -274,17 +279,56 @@ func snapshotCredentialTarget(ctx context.Context, req CredentialMaterializeRequ
 	return snapshot, nil
 }
 
-func restoreCredentialTarget(ctx context.Context, namespace, name string, snapshot credentialTargetSnapshot) error {
+func restoreCredentialTarget(
+	ctx context.Context,
+	namespace string,
+	name string,
+	snapshot credentialTargetSnapshot,
+	applied credentialSecretInspection,
+) error {
 	if len(snapshot.Secret) == 0 {
-		_ = exec.CommandContext(ctx, "kubectl", "delete", "secret", name, "-n", namespace, "--ignore-not-found", "--wait=true").Run()
-		remaining, err := getCredentialSecret(ctx, namespace, name)
-		if err != nil || len(bytes.TrimSpace(remaining)) != 0 {
+		current, err := getCredentialSecret(ctx, namespace, name)
+		if err != nil {
 			return errors.New("credential_secret_restore_failed")
 		}
+		if len(bytes.TrimSpace(current)) != 0 {
+			currentIdentity, identityErr := inspectCredentialSecretIdentity(current)
+			if identityErr != nil || applied.UID == "" || currentIdentity.UID != applied.UID {
+				return errors.New("credential_secret_restore_failed")
+			}
+			deleteOptions, _ := json.Marshal(map[string]any{
+				"apiVersion": "v1",
+				"kind":       "DeleteOptions",
+				"preconditions": map[string]string{
+					"uid":             currentIdentity.UID,
+					"resourceVersion": currentIdentity.ResourceVersion,
+				},
+			})
+			_ = runCredentialCommand(ctx, deleteOptions, "kubectl", "delete",
+				"--raw", "/api/v1/namespaces/"+namespace+"/secrets/"+name, "-f", "-")
+			remaining, inspectErr := getCredentialSecret(ctx, namespace, name)
+			if inspectErr != nil || len(bytes.TrimSpace(remaining)) != 0 {
+				return errors.New("credential_secret_restore_failed")
+			}
+		}
 	} else {
-		_ = runCredentialCommand(ctx, snapshot.Secret, "kubectl", "replace", "-f", "-")
+		current, err := getCredentialSecret(ctx, namespace, name)
+		if err != nil || len(bytes.TrimSpace(current)) == 0 {
+			return errors.New("credential_secret_restore_failed")
+		}
+		currentIdentity, identityErr := inspectCredentialSecretIdentity(current)
+		if identityErr != nil || applied.UID == "" || currentIdentity.UID != applied.UID {
+			return errors.New("credential_secret_restore_failed")
+		}
+		manifest, sanitizeErr := credentialSecretRestoreManifest(snapshot.Secret, currentIdentity)
+		if sanitizeErr != nil {
+			return errors.New("credential_secret_restore_failed")
+		}
+		_ = runCredentialCommand(ctx, manifest, "kubectl", "replace", "-f", "-")
 		restored, err := getCredentialSecret(ctx, namespace, name)
-		if err != nil || !sameCredentialSecretSnapshot(snapshot.Secret, restored) {
+		restoredIdentity, identityErr := inspectCredentialSecretIdentity(restored)
+		if err != nil || identityErr != nil || restoredIdentity.UID != currentIdentity.UID ||
+			!sameCredentialSecretSnapshot(snapshot.Secret, restored) {
 			return errors.New("credential_secret_restore_failed")
 		}
 	}
@@ -361,7 +405,7 @@ func patchImagePullSecret(ctx context.Context, namespace string, workload Creden
 	if mutationErr != nil {
 		return mutationErr
 	}
-	return errors.New("credential_target_outcome_unknown")
+	return errors.New("credential_workload_verification_failed")
 }
 
 func inspectImagePullSecrets(ctx context.Context, namespace, kind, name string) ([]string, error) {
@@ -556,6 +600,7 @@ func inspectCredentialSecret(ctx context.Context, namespace, name string) (crede
 	}
 	var secret struct {
 		Metadata struct {
+			UID             string            `json:"uid"`
 			ResourceVersion string            `json:"resourceVersion"`
 			Labels          map[string]string `json:"labels"`
 			Annotations     map[string]string `json:"annotations"`
@@ -563,29 +608,78 @@ func inspectCredentialSecret(ctx context.Context, namespace, name string) (crede
 		Type string            `json:"type"`
 		Data map[string]string `json:"data"`
 	}
-	if err := json.Unmarshal(output, &secret); err != nil ||
-		strings.TrimSpace(secret.Type) == "" ||
-		strings.TrimSpace(secret.Metadata.ResourceVersion) == "" {
+	if err := json.Unmarshal(output, &secret); err != nil {
 		return credentialSecretInspection{}, errors.New("credential_secret_verification_failed")
 	}
-	data := make(map[string]string, len(secret.Data))
-	for key, encoded := range secret.Data {
-		decoded, err := base64.StdEncoding.DecodeString(encoded)
-		if err != nil {
-			clear(data)
-			return credentialSecretInspection{}, errors.New("credential_secret_verification_failed")
-		}
-		data[key] = string(decoded)
-		clear(decoded)
-	}
-	return credentialSecretInspection{
+	actual := credentialSecretInspection{
+		UID:             strings.TrimSpace(secret.Metadata.UID),
 		SecretType:      strings.TrimSpace(secret.Type),
 		ResourceVersion: strings.TrimSpace(secret.Metadata.ResourceVersion),
 		CredentialID:    strings.TrimSpace(secret.Metadata.Labels["doops.sh/credential-id"]),
 		GrantID:         strings.TrimSpace(secret.Metadata.Labels["doops.sh/credential-grant-id"]),
 		VersionID:       strings.TrimSpace(secret.Metadata.Annotations["doops.sh/credential-version"]),
-		Data:            data,
-	}, nil
+		Data:            make(map[string]string, len(secret.Data)),
+	}
+	if actual.UID == "" ||
+		strings.TrimSpace(secret.Type) == "" ||
+		strings.TrimSpace(secret.Metadata.ResourceVersion) == "" {
+		return actual, errors.New("credential_secret_verification_failed")
+	}
+	for key, encoded := range secret.Data {
+		decoded, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			clear(actual.Data)
+			actual.Data = nil
+			return actual, errors.New("credential_secret_verification_failed")
+		}
+		actual.Data[key] = string(decoded)
+		clear(decoded)
+	}
+	return actual, nil
+}
+
+func inspectCredentialSecretIdentity(raw []byte) (credentialSecretInspection, error) {
+	var secret struct {
+		Metadata struct {
+			UID             string `json:"uid"`
+			ResourceVersion string `json:"resourceVersion"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(raw, &secret); err != nil {
+		return credentialSecretInspection{}, err
+	}
+	identity := credentialSecretInspection{
+		UID:             strings.TrimSpace(secret.Metadata.UID),
+		ResourceVersion: strings.TrimSpace(secret.Metadata.ResourceVersion),
+	}
+	if identity.UID == "" || identity.ResourceVersion == "" {
+		return credentialSecretInspection{}, errors.New("credential_secret_identity_invalid")
+	}
+	return identity, nil
+}
+
+func credentialSecretRestoreManifest(
+	snapshot []byte,
+	current credentialSecretInspection,
+) ([]byte, error) {
+	var manifest map[string]any
+	if err := json.Unmarshal(snapshot, &manifest); err != nil {
+		return nil, err
+	}
+	metadata, ok := manifest["metadata"].(map[string]any)
+	if !ok {
+		return nil, errors.New("credential_secret_metadata_invalid")
+	}
+	for _, key := range []string{
+		"uid", "resourceVersion", "generation", "managedFields", "creationTimestamp",
+		"deletionTimestamp", "deletionGracePeriodSeconds", "selfLink",
+	} {
+		delete(metadata, key)
+	}
+	metadata["uid"] = current.UID
+	metadata["resourceVersion"] = current.ResourceVersion
+	delete(manifest, "status")
+	return json.Marshal(manifest)
 }
 
 func credentialSecretMatches(

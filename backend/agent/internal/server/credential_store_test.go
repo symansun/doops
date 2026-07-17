@@ -525,6 +525,19 @@ func TestCredentialAdministratorCanRecoverAnotherUsersPersonalCredential(t *test
 	}
 }
 
+func TestCredentialGrantScopeRejectsUnsupportedWorkloadKinds(t *testing.T) {
+	for _, kind := range []string{"job", "cronjob"} {
+		t.Run(kind, func(t *testing.T) {
+			scope := credentialStoreImageScope("doops-edu", "edu-coder", "kz-ops")
+			scope.Workload.Kind = kind
+			if err := validateCredentialGrantScope(scope); err == nil ||
+				err.Error() != "credential_scope_invalid" {
+				t.Fatalf("validate %s workload scope error = %v", kind, err)
+			}
+		})
+	}
+}
+
 func openCredentialTestStore(t *testing.T) *GatewayStore {
 	t.Helper()
 	store, err := OpenGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))

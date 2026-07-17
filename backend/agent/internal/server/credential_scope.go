@@ -78,7 +78,7 @@ func validateCredentialGrantScope(scope CredentialGrantScope) error {
 		return errors.New("credential_scope_invalid")
 	}
 	switch scope.Workload.Kind {
-	case "deployment", "statefulset", "daemonset", "job", "cronjob":
+	case "deployment", "statefulset", "daemonset":
 	default:
 		return errors.New("credential_scope_invalid")
 	}
@@ -257,7 +257,7 @@ func credentialSecretLikeKey(key string) bool {
 func credentialScopePlanningInstruction(instruction string, names []string) string {
 	return fmt.Sprintf(`Plan managed credential scopes for the deployment task below.
 Do not execute tools and do not make changes. Return only JSON matching:
-{"apiVersion":%q,"kind":%q,"references":[{"name":"...","scope":{"namespace":"...","use":"imagePull|gitCheckout|helmPull|tls|opaqueSecret","workload":{"kind":"Deployment|StatefulSet|DaemonSet|Job|CronJob","name":"..."},"image_repository":"...","image_digest":"sha256:...","helm_release":"...","helm_chart":"deploy/helm/...","required_keys":["..."]}}]}
+{"apiVersion":%q,"kind":%q,"references":[{"name":"...","scope":{"namespace":"...","use":"imagePull|gitCheckout|helmPull|tls|opaqueSecret","workload":{"kind":"Deployment|StatefulSet|DaemonSet","name":"..."},"image_repository":"...","image_digest":"sha256:...","helm_release":"...","helm_chart":"deploy/helm/...","required_keys":["..."]}}]}
 Return every explicit credential name exactly once and no other name. Omit fields that do not apply. Never output credential values.
 Explicit credential names: %q
 Deployment task:

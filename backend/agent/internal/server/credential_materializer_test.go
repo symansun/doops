@@ -97,15 +97,54 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 	), 0600); err != nil {
 		t.Fatalf("reset fake workload state: %v", err)
 	}
+	rotated := request
+	rotated.VersionID = "ver_registry_rotated"
 	t.Setenv("DOOPS_TEST_PATCH_MODE", "no_effect")
-	if _, err := materializeCredential(context.Background(), request); err == nil ||
-		err.Error() != "credential_target_outcome_unknown" {
+	if _, err := materializeCredential(context.Background(), rotated); err == nil ||
+		err.Error() != "credential_workload_verification_failed" {
 		t.Fatalf("unobserved workload patch error = %v", err)
+	}
+	restored := readCredentialTestFile(t, filepath.Join(bin, "secret.json"))
+	if !strings.Contains(restored, `"doops.sh/credential-version":"ver_registry"`) ||
+		strings.Contains(restored, rotated.VersionID) {
+		t.Fatalf("rollback did not restore the previous Secret version")
 	}
 
 	t.Setenv("DOOPS_TEST_PATCH_MODE", "fail_after")
-	if _, err := materializeCredential(context.Background(), request); err != nil {
+	if _, err := materializeCredential(context.Background(), rotated); err != nil {
 		t.Fatalf("materialize after observed workload patch: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(bin, "workload.json"), []byte(
+		`{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"existing-pull"}]}}}}`,
+	), 0600); err != nil {
+		t.Fatalf("reset fake workload state: %v", err)
+	}
+	t.Setenv("DOOPS_TEST_PATCH_MODE", "no_effect")
+	t.Setenv("DOOPS_TEST_REPLACE_MODE", "replace_before")
+	if _, err := materializeCredential(context.Background(), rotated); err == nil ||
+		err.Error() != "credential_target_outcome_unknown" {
+		t.Fatalf("concurrent update during rollback error = %v", err)
+	}
+	replacedDuringRollback := readCredentialTestFile(t, filepath.Join(bin, "secret.json"))
+	if !strings.Contains(replacedDuringRollback, `"uid":"uid-replacement"`) {
+		t.Fatalf("conditional rollback overwrote the concurrent Secret")
+	}
+
+	if err := os.WriteFile(filepath.Join(bin, "workload.json"), []byte(
+		`{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"existing-pull"}]}}}}`,
+	), 0600); err != nil {
+		t.Fatalf("reset fake workload state: %v", err)
+	}
+	t.Setenv("DOOPS_TEST_REPLACE_MODE", "")
+	t.Setenv("DOOPS_TEST_PATCH_MODE", "replace_secret")
+	if _, err := materializeCredential(context.Background(), rotated); err == nil ||
+		err.Error() != "credential_target_outcome_unknown" {
+		t.Fatalf("same-name Secret replacement rollback error = %v", err)
+	}
+	replacement := readCredentialTestFile(t, filepath.Join(bin, "secret.json"))
+	if !strings.Contains(replacement, `"uid":"uid-replacement"`) {
+		t.Fatalf("rollback deleted or replaced the concurrent Secret")
 	}
 }
 
@@ -471,6 +510,9 @@ func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T
 	if helmResult.Status != "verified" || helmResult.Digest == "" {
 		t.Fatalf("unexpected Helm materialization: %#v", helmResult)
 	}
+	if err := os.Remove(filepath.Join(bin, "secret.json")); err != nil {
+		t.Fatalf("reset fake Secret state between resources: %v", err)
+	}
 
 	gitResult, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
 		CredentialID:   "cred_git",
@@ -502,7 +544,7 @@ func TestRestoreCredentialTargetUsesSupportedPatchAndConfirmsState(t *testing.T)
 		WorkloadKind:   "deployment",
 		WorkloadName:   "app",
 		ImagePullNames: []string{"existing-pull"},
-	}); err != nil {
+	}, credentialSecretInspection{}); err != nil {
 		t.Fatalf("restore credential target: %v", err)
 	}
 	logged := readCredentialTestFile(t, argsLog)
@@ -818,7 +860,7 @@ case "$1" in
     if [ "$DOOPS_TEST_APPLY_MODE" = "fail_before" ]; then
       exit 1
     fi
-    sed 's/"metadata":{/"metadata":{"resourceVersion":"42",/' > "$DOOPS_TEST_SECRET_STATE"
+    sed 's/"metadata":{/"metadata":{"uid":"uid-materialized","resourceVersion":"42",/' > "$DOOPS_TEST_SECRET_STATE"
     if [ "$DOOPS_TEST_SECRET_MUTATION" = "data" ]; then
       sed 's/"API_KEY":"[^"]*"/"API_KEY":"e30="/' "$DOOPS_TEST_SECRET_STATE" > "$DOOPS_TEST_SECRET_STATE.tmp"
       mv "$DOOPS_TEST_SECRET_STATE.tmp" "$DOOPS_TEST_SECRET_STATE"
@@ -851,7 +893,11 @@ case "$1" in
     if [ "$DOOPS_TEST_PATCH_MODE" = "fail_before" ]; then
       exit 1
     fi
-    if [ "$DOOPS_TEST_PATCH_MODE" != "no_effect" ]; then
+    if [ "$DOOPS_TEST_PATCH_MODE" = "replace_secret" ]; then
+      sed 's/"uid":"uid-materialized"/"uid":"uid-replacement"/' "$DOOPS_TEST_SECRET_STATE" \
+        > "$DOOPS_TEST_SECRET_STATE.tmp"
+      mv "$DOOPS_TEST_SECRET_STATE.tmp" "$DOOPS_TEST_SECRET_STATE"
+    elif [ "$DOOPS_TEST_PATCH_MODE" != "no_effect" ]; then
       printf '%s\n' "$patch" > "$DOOPS_TEST_WORKLOAD_STATE"
     fi
     if [ "$DOOPS_TEST_PATCH_MODE" = "fail_after" ]; then
@@ -859,6 +905,13 @@ case "$1" in
     fi
     ;;
   replace)
+    if [ "$DOOPS_TEST_REPLACE_MODE" = "replace_before" ]; then
+      cat >/dev/null
+      sed 's/"uid":"uid-materialized"/"uid":"uid-replacement"/' "$DOOPS_TEST_SECRET_STATE" \
+        > "$DOOPS_TEST_SECRET_STATE.tmp"
+      mv "$DOOPS_TEST_SECRET_STATE.tmp" "$DOOPS_TEST_SECRET_STATE"
+      exit 1
+    fi
     cat > "$DOOPS_TEST_SECRET_STATE"
     ;;
   delete)
@@ -868,6 +921,9 @@ case "$1" in
     if [ "$2" = "secret" ]; then
       for arg in "$@"; do
         if [ "$arg" = "--ignore-not-found" ]; then
+          if [ -f "$DOOPS_TEST_SECRET_STATE" ]; then
+            cat "$DOOPS_TEST_SECRET_STATE"
+          fi
           exit 0
         fi
       done
