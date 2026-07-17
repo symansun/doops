@@ -2,17 +2,21 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/user/doops/agent/internal/dispatcher"
 )
 
 type ClientService struct {
 	store    *GatewayStore
 	registry *AgentRegistry
 	opts     GatewayHubOptions
+	commands *dispatcher.Dispatcher
 
 	opsMu   sync.Mutex
 	active  int
@@ -32,9 +36,21 @@ func NewClientService(
 		store:     store,
 		registry:  registry,
 		opts:      opts,
+		commands:  dispatcher.NewDispatcher(),
 		userOps:   make(map[string]int),
 		activeOps: make(map[string]*gatewayActiveOperation),
 	}
+}
+
+func (s *ClientService) validateCommand(tool string, args json.RawMessage) error {
+	if tool != "doops_shell" && tool != "doops_bg" {
+		return nil
+	}
+	command := extractStringArg(args, "command")
+	if s.commands.Classify(command) == dispatcher.PathBlocked {
+		return fmt.Errorf("blocked dangerous command")
+	}
+	return nil
 }
 
 func (s *ClientService) acquireOperationSlot(userID string) (func(), error) {
