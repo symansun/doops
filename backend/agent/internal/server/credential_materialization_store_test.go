@@ -39,13 +39,7 @@ func TestCredentialMaterializationInventoryKeepsEveryWorkloadContext(t *testing.
 	grant, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 		CredentialID: credential.ID,
 		GranteeID:    deployer.ID,
-		Cluster:      "doops",
-		Instance:     "runner",
-		Project:      "app",
-		Environment:  "production",
-		Template:     "release",
-		Namespace:    "apps",
-		Uses:         []CredentialUse{CredentialUseImagePull},
+		Scope:        testImagePullCredentialScope("api"),
 		CreatedBy:    admin.ID,
 	})
 	if err != nil {
@@ -56,9 +50,8 @@ func TestCredentialMaterializationInventoryKeepsEveryWorkloadContext(t *testing.
 		request := CredentialMaterializeRequest{
 			SessionID: "inventory-session", Cluster: "doops", Instance: "runner",
 			CredentialID: credential.ID, VersionID: version.ID, GrantID: grant.ID,
-			CredentialType: CredentialTypeRegistry, Use: CredentialUseImagePull,
-			Namespace: "apps",
-			Workload:  CredentialPlanWorkload{Kind: "Deployment", Name: workload},
+			CredentialType: CredentialTypeRegistry,
+			Scope:          testImagePullCredentialScope(workload),
 		}
 		record, err := store.RecordCredentialMaterializationIntent(request)
 		if err != nil {
@@ -75,7 +68,7 @@ func TestCredentialMaterializationInventoryKeepsEveryWorkloadContext(t *testing.
 		}
 		if err := store.RecordCredentialVerification(CredentialVerification{
 			CredentialID: credential.ID, VersionID: version.ID, GrantID: grant.ID,
-			Use: request.Use, Request: request, Evidence: evidence,
+			Use: request.Scope.Use, Request: request, Evidence: evidence,
 		}); err != nil {
 			t.Fatalf("record %s verification: %v", workload, err)
 		}
@@ -99,9 +92,8 @@ func TestCredentialMaterializationCleanupUsesNewestVersionAndClosesContext(t *te
 	base := CredentialMaterializeRequest{
 		SessionID: "rotate-session", Cluster: "doops", Instance: "runner",
 		CredentialID: "cred_rotate", GrantID: "credgrant_rotate",
-		CredentialType: CredentialTypeRegistry, Use: CredentialUseImagePull,
-		Namespace: "apps",
-		Workload:  CredentialPlanWorkload{Kind: "Deployment", Name: "api"},
+		CredentialType: CredentialTypeRegistry,
+		Scope:          testImagePullCredentialScope("api"),
 	}
 	old := base
 	old.VersionID = "credver_old"
@@ -139,9 +131,8 @@ func TestCredentialMaterializationInventoryPreservesUnknownOutcomeForCleanup(t *
 	request := CredentialMaterializeRequest{
 		SessionID: "unknown-session", Cluster: "doops", Instance: "runner",
 		CredentialID: "cred_unknown", VersionID: "credver_unknown", GrantID: "credgrant_unknown",
-		CredentialType: CredentialTypeRegistry, Use: CredentialUseImagePull,
-		Namespace: "apps",
-		Workload:  CredentialPlanWorkload{Kind: "Deployment", Name: "api"},
+		CredentialType: CredentialTypeRegistry,
+		Scope:          testImagePullCredentialScope("api"),
 	}
 	record, err := store.RecordCredentialMaterializationIntent(request)
 	if err != nil {
@@ -156,12 +147,12 @@ func TestCredentialMaterializationInventoryPreservesUnknownOutcomeForCleanup(t *
 	}
 	if len(records) != 1 || records[0].Status != "outcome_unknown" ||
 		records[0].ErrorCategory != "credential_target_outcome_unknown" ||
-		records[0].Request.Workload.Name != "api" {
+		records[0].Request.Scope.Workload.Name != "api" {
 		t.Fatalf("unknown materialization inventory lost cleanup context: %#v", records)
 	}
 	second := request
 	second.VersionID = "credver_staged"
-	second.Workload.Name = "worker"
+	second.Scope.Workload.Name = "worker"
 	secondRecord, err := store.RecordCredentialMaterializationIntent(second)
 	if err != nil {
 		t.Fatalf("record staged materialization intent: %v", err)
@@ -175,6 +166,18 @@ func TestCredentialMaterializationInventoryPreservesUnknownOutcomeForCleanup(t *
 	}
 	if len(allVersions) != 2 {
 		t.Fatalf("all-version inventory count = %d, want 2", len(allVersions))
+	}
+}
+
+func testImagePullCredentialScope(workload string) CredentialGrantScope {
+	return CredentialGrantScope{
+		Cluster: "doops", Instance: "runner", Namespace: "apps",
+		Use: CredentialUseImagePull,
+		Workload: CredentialPlanWorkload{
+			Kind: "deployment", Name: workload,
+		},
+		ImageRepository: "registry.example.test/team/app",
+		ImageDigest:     "sha256:" + strings.Repeat("a", 64),
 	}
 }
 
