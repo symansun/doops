@@ -57,6 +57,38 @@ func TestDoopsStatePathsUseCanonicalAgentSkillDirectory(t *testing.T) {
 	}
 }
 
+func TestResolveTokenPrefersConfiguredLongLivedToken(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	auth := &AuthStore{Tokens: map[string]string{
+		"gateway": "revoked-cached-login-token",
+	}}
+	if err := auth.Save(); err != nil {
+		t.Fatalf("save auth store: %v", err)
+	}
+
+	if got := ResolveToken("gateway", "configured-long-lived-token"); got != "configured-long-lived-token" {
+		t.Fatalf("configured token must be authoritative, got %q", got)
+	}
+}
+
+func TestResolveTokenUsesCachedLoginWithoutConfiguredToken(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	auth := &AuthStore{Tokens: map[string]string{
+		"gateway": "cached-login-token",
+	}}
+	if err := auth.Save(); err != nil {
+		t.Fatalf("save auth store: %v", err)
+	}
+
+	if got := ResolveToken("gateway", ""); got != "cached-login-token" {
+		t.Fatalf("expected cached login token, got %q", got)
+	}
+}
+
 func TestLoadConfigIgnoresLegacyDotConfigPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

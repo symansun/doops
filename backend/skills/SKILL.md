@@ -58,6 +58,7 @@ Doops CLI 默认只有一个配置源：
 同目录运行态文件：
 
 - `auth.json`：`doops login/logout` 管理的 token 缓存，结构必须是 `{"tokens":{"target-name":"..."}}`。
+- target 已配置 token 时以配置 token 为权威来源；`auth.json` 只用于未配置 token 的交互登录，不能覆盖长期 target token。
 - `history.jsonl`：本机命令历史。
 - `sessions.json`：本机会话缓存。
 
