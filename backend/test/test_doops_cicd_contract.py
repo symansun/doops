@@ -32,6 +32,10 @@ def test_cicd_skill_uses_gateway_bound_v3_single_service_contract():
     assert "Gateway" in text
     assert "CredentialRun" in text
     assert "doops.reconciliation-context/v2" in text
+    assert "必须且只能调用一次 `CICDReport`" in text
+    assert "^sha256:[a-f0-9]{64}$" in text
+    assert "不是 Git commit 前加 `sha256:`" in text
+    assert "成功的 dry-run 或 apply 使用 `Converged`" in text
     assert "遍历其他服务" in text
     assert "fallback" in text
     for removed in (
