@@ -58,10 +58,9 @@ func TestDoagentToolTraceCollectorRequiresMatchingTrustedAttestationForCICD(t *t
 		PlanDigest:         "sha256:" + strings.Repeat("3", 64),
 		PlanBindingDigest:  "sha256:" + strings.Repeat("4", 64),
 		Source: trustedReconciliationSource{
-			Repository:      "https://example.test/repo.git",
-			Revision:        strings.Repeat("a", 40),
-			Branch:          "main",
-			WorkspaceCommit: strings.Repeat("b", 40),
+			Repository: "https://example.test/repo.git",
+			Revision:   strings.Repeat("a", 40),
+			Branch:     "main",
 		},
 		Capabilities: map[string]trustedReconciliationCapability{
 			"source-identity": {
