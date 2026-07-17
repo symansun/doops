@@ -8,7 +8,6 @@ WORKDIR /app
 COPY . .
 WORKDIR /app/agent
 RUN CGO_ENABLED=0 go build -o /app/doops-agent ./cmd/agent
-RUN CGO_ENABLED=0 go build -o /app/doops-plan-mcp ./cmd/doops-plan-mcp
 
 # Stage 2: Lightweight app image.
 # The base image owns sandbox/doagent/buildkit/system packages. This layer only
@@ -22,7 +21,6 @@ LABEL org.opencontainers.image.base.name="${DOOPS_AGENT_BASE_IMAGE}"
 LABEL org.l8ai.doagent.version="${DO_AGENT_VERSION}"
 
 COPY --from=builder /app/doops-agent /app/doops-agent
-COPY --from=builder /app/doops-plan-mcp /app/doops-plan-mcp
 COPY --from=builder /app/agent/skills /app/skills
 COPY --from=builder /app/agent/agent-entrypoint.sh /app/agent-entrypoint.sh
 COPY --from=builder /app/agent/sandbox-entrypoint.sh /app/sandbox-entrypoint.sh
