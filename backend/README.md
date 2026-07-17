@@ -158,6 +158,7 @@ CNB 非同名制品必须使用仓库下级路径，例如 `docker.cnb.cool/l8ai
 - Skill 安装目标：`<project>/.agent/skills/doops/SKILL.md`
 - CLI 唯一默认配置：`~/.agent/skills/doops/config.json`
 - CLI token 缓存：`~/.agent/skills/doops/auth.json`
+- target 已配置 token 时以配置 token 为唯一权威来源；`auth.json` 只用于未配置 token 的交互登录，避免短期或已撤销登录缓存覆盖仍有效的长期密钥
 - CLI 发布资产：CNB Release 的 `doops-<os>-<arch>` 与 `checksums.txt`
 - Agent local token：服务端 `/root/.doops/agent-token`，只用于遗留直连或本机 `/ws` 保护，不用于 gateway 注册
 

@@ -1162,16 +1162,17 @@ func requireConfig(err error) {
 }
 
 func ResolveToken(targetName string, serverToken string) string {
-	// 1. Load from authStore (Check if logged in)
+	// A configured target token is authoritative. A cached interactive login
+	// must not shadow a still-valid long-lived token.
+	if strings.TrimSpace(serverToken) != "" {
+		return serverToken
+	}
+
 	auth, _ := LoadAuth()
 	if p := auth.Get(targetName); p != "" {
 		return p
 	}
-	// 2. If token is in config, use it
-	if serverToken != "" {
-		return serverToken
-	}
-	// 3. Prompt
+
 	fmt.Printf("Gateway user token required for %s. Enter token: ", targetName)
 	byteToken, err := term.ReadPassword(int(syscall.Stdin))
 	fmt.Println()
