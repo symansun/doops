@@ -110,6 +110,13 @@ environments:
 	if err != nil {
 		t.Fatalf("build trusted admission: %v", err)
 	}
+	decodedInstruction, err := decodeDoopsCICDInstruction(instruction)
+	if err != nil {
+		t.Fatalf("decode trusted instruction: %v", err)
+	}
+	if !reflect.DeepEqual(admission.Instruction, decodedInstruction) {
+		t.Fatalf("admission instruction differs from strict decode: %#v", admission.Instruction)
+	}
 	wantTools := []string{
 		"mcp_doops_plan_ObserveAuthorizationState",
 		"mcp_doops_plan_ObserveHTTPContract",

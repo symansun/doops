@@ -690,10 +690,7 @@ func observeDoopsPlanWorkloads(ctx context.Context, runtime doopsPlanRuntime) (m
 	services := doopsPlanWorkloadServices(runtime)
 	workloads := make([]map[string]interface{}, 0, len(services))
 	for _, service := range services {
-		workloadName := runtime.WorkloadNames[service]
-		if workloadName == "" {
-			workloadName = service
-		}
+		workloadName := doopsPlanWorkloadName(runtime, service)
 		namespace := runtime.WorkloadNamespaces[service]
 		if namespace == "" {
 			namespace = runtime.Namespace
@@ -757,6 +754,13 @@ func doopsPlanWorkloadServices(runtime doopsPlanRuntime) []string {
 	return services
 }
 
+func doopsPlanWorkloadName(runtime doopsPlanRuntime, service string) string {
+	if workloadName := strings.TrimSpace(runtime.WorkloadNames[service]); workloadName != "" {
+		return workloadName
+	}
+	return service
+}
+
 func observeDoopsPlanHTTP(ctx context.Context, runtime doopsPlanRuntime) (map[string]interface{}, error) {
 	checks := make([]map[string]interface{}, 0, len(runtime.PublicChecks))
 	for _, check := range runtime.PublicChecks {
@@ -791,13 +795,14 @@ func observeDoopsPlanLogs(ctx context.Context, runtime doopsPlanRuntime) (map[st
 	results := make([]map[string]interface{}, 0, len(services))
 	pattern := regexp.MustCompile(`(?i)(panic|fatal|exception|error)`)
 	for _, service := range services {
+		workloadName := doopsPlanWorkloadName(runtime, service)
 		namespace := runtime.WorkloadNamespaces[service]
 		if namespace == "" {
 			namespace = runtime.Namespace
 		}
 		output, err := runDoopsPlanCommand(
 			ctx, runtime.Root, "kubectl", "-n", namespace, "logs",
-			"deployment/"+service, "--tail=200", "--all-containers=true",
+			"deployment/"+workloadName, "--tail=200", "--all-containers=true",
 		)
 		if err != nil {
 			return nil, err
@@ -809,7 +814,7 @@ func observeDoopsPlanLogs(ctx context.Context, runtime doopsPlanRuntime) (map[st
 			}
 		}
 		results = append(results, map[string]interface{}{
-			"service": service, "namespace": namespace, "scannedLines": len(strings.Split(output, "\n")),
+			"service": service, "workload": workloadName, "namespace": namespace, "scannedLines": len(strings.Split(output, "\n")),
 			"errorLineCount": matches,
 		})
 	}

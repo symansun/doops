@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -139,6 +140,34 @@ func TestRepositoryOilanRuntimeUsesDeclaredArtifactAndWorkloadBindings(t *testin
 	}
 	if runtime.WorkloadContainers["doops-agent"] != "doops-agent" {
 		t.Fatalf("container binding = %#v", runtime.WorkloadContainers)
+	}
+}
+
+func TestObserveDoopsPlanLogsUsesDeclaredWorkloadName(t *testing.T) {
+	originalCommand := doopsPlanCommand
+	t.Cleanup(func() { doopsPlanCommand = originalCommand })
+	var arguments []string
+	doopsPlanCommand = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		arguments = append([]string(nil), args...)
+		return exec.CommandContext(ctx, "sh", "-c", "printf 'healthy\\n'")
+	}
+	runtime := doopsPlanRuntime{
+		Root:          t.TempDir(),
+		Namespace:     "kz-ops",
+		Services:      []string{"doops-agent"},
+		WorkloadNames: map[string]string{"doops-agent": "doops-agent-live"},
+	}
+
+	result, err := observeDoopsPlanLogs(context.Background(), runtime)
+	if err != nil {
+		t.Fatalf("observe logs: %v", err)
+	}
+	if !containsString(arguments, "deployment/doops-agent-live") {
+		t.Fatalf("kubectl arguments = %#v", arguments)
+	}
+	logs := result["logs"].([]map[string]interface{})
+	if logs[0]["workload"] != "doops-agent-live" {
+		t.Fatalf("log evidence = %#v", logs)
 	}
 }
 
