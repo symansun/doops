@@ -67,9 +67,7 @@ doops-agent 通过本地 ACP HTTP 调用 `/usr/local/bin/do-agent`：
 
 - 每个 session 使用独立工作区。
 - 文件和同步接口必须校验 session 与路径，禁止目录穿越。
-- CI/CD source checkout 固定到声明分支解析出的不可变 commit 后写入 `.doops-ready`。
-- checkout 在 workspace 锁内写入并验证 `.doops-ready`，结果由 `$doops-cicd`
-  Skill 通过真实模块证据判断，不由 Agent 网关伪造。
+- 发布任务在 workspace 锁内执行，并以真实工具证据判断结果，不由 Agent 网关伪造。
 - 大文件使用 `doops push/pull`；小文本查看使用文件工具。
 
 ## Skill 与工具
@@ -112,4 +110,4 @@ CLI 只传递显式 credential resource name、target、session 和自然语言�
 | 工作区同步与 commit 绑定 | `internal/server/workspace_upload.go` |
 | 请求类型 | `api/mcp.go` |
 | Agent 全局提示边界 | `skills/system_prompt.md` |
-| CI/CD Skill | `skills/doops-cicd/SKILL.md` |
+| 发布入口 | `doops ask --apply` |

@@ -425,27 +425,7 @@ func (s *GatewayStore) migrate() error {
 			)`,
 		`CREATE INDEX IF NOT EXISTS idx_credential_materializations_resource
 				ON credential_materializations(credential_id, version_id, grant_id, status)`,
-		`CREATE TABLE IF NOT EXISTS credential_run_authorizations (
-				run_id TEXT PRIMARY KEY,
-				user_id TEXT NOT NULL,
-				token_id TEXT NOT NULL,
-				cluster TEXT NOT NULL,
-				instance TEXT NOT NULL,
-				session_id TEXT NOT NULL,
-				workflow_path TEXT NOT NULL,
-				workspace_commit TEXT NOT NULL,
-				source_binding TEXT NOT NULL DEFAULT '',
-				mode TEXT NOT NULL,
-				run_digest TEXT NOT NULL,
-				state TEXT NOT NULL DEFAULT 'issued',
-				created_at TEXT NOT NULL,
-				expires_at TEXT NOT NULL,
-				consumed_at TEXT NOT NULL DEFAULT '',
-				FOREIGN KEY(user_id) REFERENCES users(id),
-				FOREIGN KEY(token_id) REFERENCES tokens(id)
-			)`,
-		`CREATE INDEX IF NOT EXISTS idx_credential_run_authorizations_expiry
-				ON credential_run_authorizations(state, expires_at)`,
+		`DROP TABLE IF EXISTS credential_run_authorizations`,
 		`CREATE TABLE IF NOT EXISTS credential_bundles (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
