@@ -370,8 +370,9 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 	case "exec", "ask", "write", "read", "info":
 		var target, cmdStr, msgStr, path, modelStr, contentStr, fileStr string
+		var credentialRefs stringListFlag
 		var subSession string
-		var background bool
+		var apply, background bool
 		subFlag := flag.NewFlagSet(command, flag.ExitOnError)
 		subFlag.StringVar(&target, "target", "", "Target server name")
 		subFlag.StringVar(&subSession, "session", "", "Session ID (can also be set before subcommand)")
@@ -383,6 +384,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		case "ask":
 			subFlag.StringVar(&msgStr, "msg", "", "Instruction")
 			subFlag.StringVar(&modelStr, "model", "", "Model to use for this instruction (optional)")
+			subFlag.BoolVar(&apply, "apply", false, "Allow the explicitly requested instruction to make authorized changes")
+			subFlag.Var(&credentialRefs, "credential", "Managed credential resource name (repeatable; requires --apply)")
 		case "write":
 			subFlag.StringVar(&path, "path", "", "Destination path")
 			subFlag.StringVar(&contentStr, "content", "", "Content to write; for multi-line content prefer --file or stdin")
@@ -423,6 +426,10 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		// 指令/命令校验 (支持位置参数提取后)
 		if command == "ask" && strings.TrimSpace(msgStr) == "" {
 			fmt.Println("Error: 指令内容不能为空。用法: doops ask \"你的指令\"")
+			os.Exit(1)
+		}
+		if command == "ask" && len(credentialRefs) != 0 && !apply {
+			fmt.Println("Error: --credential 仅允许与 --apply 一起使用。")
 			os.Exit(1)
 		}
 		if command == "exec" && strings.TrimSpace(cmdStr) == "" {
@@ -495,6 +502,12 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		case "ask":
 			toolName = "doops_agent_prompt"
 			arguments["instruction"] = msgStr
+			if apply {
+				arguments["operation"] = "apply"
+			}
+			if len(credentialRefs) != 0 {
+				arguments["credential_refs"] = []string(credentialRefs)
+			}
 			if modelStr != "" {
 				arguments["model"] = modelStr
 			}

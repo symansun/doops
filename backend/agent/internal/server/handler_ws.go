@@ -866,6 +866,22 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 				return
 			}
 		}
+		if len(args.CredentialRefs) != 0 {
+			writeJSON(buildErrorResponse(reqID, -32602, "credential_refs must be resolved by the gateway"))
+			return
+		}
+		if len(args.CredentialBindings) != 0 {
+			if !gatewayAuthorized || operation != "apply" {
+				writeJSON(buildErrorResponse(reqID, -32602, "credential bindings require gateway-authorized apply"))
+				return
+			}
+			bindingContext, err := credentialBindingContext(args.CredentialBindings)
+			if err != nil {
+				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+				return
+			}
+			args.Instruction += "\n\nGateway-managed credential bindings (metadata only; never read Secret values):\n" + bindingContext
+		}
 		nativeMode, err := doagentModeForPrompt(operation, "")
 		if err != nil {
 			writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
@@ -946,14 +962,6 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			pushProgress,
 			writeJSON,
 		)
-
-	case "doops_credential_plan":
-		result, err := handleCredentialPlanTool(argBytes)
-		if err != nil {
-			writeJSON(buildToolErrorResponse(reqID, err.Error()))
-		} else {
-			writeJSON(buildSuccessResponse(reqID, result))
-		}
 
 	case "doops_credential_materialize":
 		result, err := handleCredentialMaterializeTool(ctx, argBytes)
@@ -1038,6 +1046,37 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	default:
 		writeJSON(buildErrorResponse(reqID, -32601, "Unknown tool over WS: "+toolName))
 	}
+}
+
+func credentialBindingContext(bindings []api.AgentCredentialBinding) (string, error) {
+	for _, binding := range bindings {
+		if !validCredentialMetadataToken(binding.Name, 128) ||
+			!validCredentialUse(CredentialUse(binding.Use)) ||
+			!validKubernetesCredentialName(binding.Namespace) ||
+			!validKubernetesCredentialName(binding.ResourceName) ||
+			!validCredentialMetadataToken(binding.ResourceVersion, 256) ||
+			credentialScalarContainsInlineMaterial(binding.ResourceVersion) {
+			return "", errors.New("credential_binding_metadata_invalid")
+		}
+		switch binding.SecretType {
+		case "Opaque", "kubernetes.io/dockerconfigjson", "kubernetes.io/tls":
+		default:
+			return "", errors.New("credential_binding_metadata_invalid")
+		}
+		if binding.Digest != "" && !validCredentialSHA256Digest(binding.Digest) {
+			return "", errors.New("credential_binding_metadata_invalid")
+		}
+		for _, key := range binding.Keys {
+			if !validCredentialMetadataToken(key, 253) || credentialScalarContainsInlineMaterial(key) {
+				return "", errors.New("credential_binding_metadata_invalid")
+			}
+		}
+	}
+	encoded, err := json.Marshal(bindings)
+	if err != nil {
+		return "", errors.New("credential_binding_metadata_invalid")
+	}
+	return string(encoded), nil
 }
 
 func directAgentReadOnlyTool(toolName string, arguments json.RawMessage) bool {
