@@ -41,3 +41,19 @@ func TestAgentEntrypointDisablesSSHDAndWebIDEByDefault(t *testing.T) {
 		t.Fatalf("expected default SSHD disabled message")
 	}
 }
+
+func TestAgentEntrypointsMaterializeSettingsOutsideMountedAgentHome(t *testing.T) {
+	for _, path := range []string{"agent-entrypoint.sh", "sandbox-entrypoint.sh"} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		script := string(data)
+		if !strings.Contains(script, "${DO_AGENT_SETTINGS:-/tmp/doops-doagent/settings.json}") {
+			t.Fatalf("%s must default effective settings to a writable runtime path", path)
+		}
+		if strings.Contains(script, "${DO_AGENT_SETTINGS:-/root/.agent/settings.json}") {
+			t.Fatalf("%s must not overwrite a mounted or persisted settings file", path)
+		}
+	}
+}

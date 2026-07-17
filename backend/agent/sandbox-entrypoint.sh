@@ -183,7 +183,7 @@ configure_kubectl() {
 
 configure_doagent() {
     mkdir -p /root/.agent
-    local settings_file="${DO_AGENT_SETTINGS:-/root/.agent/settings.json}"
+    local settings_file="${DO_AGENT_SETTINGS:-/tmp/doops-doagent/settings.json}"
     local source=/opt/doagent_config/settings.json
     local policy="${DO_AGENT_MODEL_ROUTING_POLICY:-}"
 
