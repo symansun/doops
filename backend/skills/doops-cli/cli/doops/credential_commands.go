@@ -31,28 +31,12 @@ type credentialVersion struct {
 }
 
 type credentialGrant struct {
-	ID           string               `json:"id"`
-	CredentialID string               `json:"credential_id"`
-	GranteeID    string               `json:"grantee_id"`
-	Scope        credentialGrantScope `json:"scope"`
-}
-
-type credentialGrantScope struct {
-	Cluster         string                  `json:"cluster"`
-	Instance        string                  `json:"instance"`
-	Namespace       string                  `json:"namespace"`
-	Use             string                  `json:"use"`
-	Workload        credentialGrantWorkload `json:"workload"`
-	ImageRepository string                  `json:"image_repository,omitempty"`
-	ImageDigest     string                  `json:"image_digest,omitempty"`
-	HelmRelease     string                  `json:"helm_release,omitempty"`
-	HelmChart       string                  `json:"helm_chart,omitempty"`
-	RequiredKeys    []string                `json:"required_keys,omitempty"`
-}
-
-type credentialGrantWorkload struct {
-	Kind string `json:"kind"`
-	Name string `json:"name"`
+	ID           string   `json:"id"`
+	CredentialID string   `json:"credential_id"`
+	GranteeID    string   `json:"grantee_id"`
+	Cluster      string   `json:"cluster"`
+	Instance     string   `json:"instance"`
+	Uses         []string `json:"uses"`
 }
 
 type credentialBundle struct {
@@ -64,7 +48,7 @@ type credentialBundle struct {
 
 func runCredentialCommand(args []string, servers []Server, configErr error, stdin io.Reader, stdout io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("credential subcommand is required: create, list, put, grant, grant-revoke, promote, revoke, bundle-create, bundle-get")
+		return fmt.Errorf("credential subcommand is required: create, list, put, grant, grant-revoke, verify, promote, revoke, bundle-create, bundle-get")
 	}
 	switch args[0] {
 	case "create":
@@ -77,6 +61,8 @@ func runCredentialCommand(args []string, servers []Server, configErr error, stdi
 		return runCredentialGrant(args[1:], servers, configErr, stdout)
 	case "grant-revoke":
 		return runCredentialGrantRevoke(args[1:], servers, configErr, stdout)
+	case "verify":
+		return runCredentialVerify(args[1:], servers, configErr, stdout)
 	case "promote":
 		return runCredentialPromote(args[1:], servers, configErr, stdout)
 	case "revoke":
@@ -188,6 +174,89 @@ func runCredentialBundleGet(args []string, servers []Server, configErr error, st
 	}
 	_, err = fmt.Fprintf(stdout, "credential_bundle_id=%s name=%s scope=%s state=%s\n",
 		bundle.ID, bundle.Name, bundle.Scope, bundle.State)
+	return err
+}
+
+func runCredentialVerify(args []string, servers []Server, configErr error, stdout io.Writer) error {
+	var target, id, versionID, sessionID, workflowPath, workspaceCommit, environment, service string
+	flags := credentialFlagSet("credential verify")
+	flags.StringVar(&target, "target", "", "Configured gateway target")
+	flags.StringVar(&id, "id", "", "Credential ID")
+	flags.StringVar(&versionID, "version-id", "", "Staged credential version ID")
+	flags.StringVar(&sessionID, "session", "", "Bound workspace session")
+	flags.StringVar(&workflowPath, "workflow-path", "", "v3 manifest path in the workspace")
+	flags.StringVar(&workspaceCommit, "workspace-commit", "", "Immutable workspace commit")
+	flags.StringVar(&environment, "environment", "", "EnvironmentRegistry environment")
+	flags.StringVar(&service, "service", "", "EnvironmentRegistry service")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || strings.TrimSpace(target) == "" || strings.TrimSpace(id) == "" ||
+		strings.TrimSpace(versionID) == "" || strings.TrimSpace(sessionID) == "" ||
+		strings.TrimSpace(workflowPath) == "" || !validWorkspaceCommit(strings.TrimSpace(workspaceCommit)) ||
+		strings.TrimSpace(environment) == "" || strings.TrimSpace(service) == "" {
+		return fmt.Errorf("--target, --id, --version-id, --session, --workflow-path, --workspace-commit, --environment and --service are required")
+	}
+	if configErr != nil {
+		return configErr
+	}
+	server := findServer(servers, strings.TrimSpace(target))
+	if server == nil {
+		return fmt.Errorf("target %q not found", strings.TrimSpace(target))
+	}
+	_, relativePath, err := workflowPathInGitRepository(workflowPath)
+	if err != nil {
+		return err
+	}
+	if relativePath != "deploy/environments.yaml" {
+		return fmt.Errorf("credential verify requires deploy/environments.yaml")
+	}
+	inputs := map[string]string{
+		"environment": strings.TrimSpace(environment),
+		"service":     strings.TrimSpace(service),
+	}
+	declaration, err := workflowDeclaredDeployment(workflowPath, inputs)
+	if err != nil {
+		return fmt.Errorf("resolve registry deployment: %w", err)
+	}
+	if declaration.TargetName != server.Name ||
+		declaration.TargetCluster != server.Cluster ||
+		declaration.TargetInstance != server.Instance {
+		return fmt.Errorf("configured target %q does not match declared target %q (%s/%s)",
+			server.Name, declaration.TargetName, declaration.TargetCluster, declaration.TargetInstance)
+	}
+	if strings.TrimSpace(sessionID) != declaration.TargetSession {
+		return fmt.Errorf("session %q does not match environment target session %q", strings.TrimSpace(sessionID), declaration.TargetSession)
+	}
+	gateway, token, err := resolveCredentialGateway(target, "", servers, configErr)
+	if err != nil {
+		return err
+	}
+	endpoint, err := credentialEndpoint(id, "verify")
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(map[string]any{
+		"version_id":        strings.TrimSpace(versionID),
+		"cluster":           strings.TrimSpace(server.Cluster),
+		"instance":          strings.TrimSpace(server.Instance),
+		"target":            strings.TrimSpace(server.Name),
+		"session_id":        strings.TrimSpace(sessionID),
+		"workflow_path":     relativePath,
+		"source_revision":   strings.TrimSpace(workspaceCommit),
+		"workspace_commit":  strings.TrimSpace(workspaceCommit),
+		"source_repository": declaration.SourceRepository,
+		"source_branch":     declaration.SourceBranch,
+		"inputs":            inputs,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := gatewayCredentialRequest(http.MethodPost, gateway, token, endpoint, nil, body); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "credential_id=%s version_id=%s verified=true\n",
+		strings.TrimSpace(id), strings.TrimSpace(versionID))
 	return err
 }
 
@@ -309,9 +378,7 @@ func runCredentialPut(args []string, servers []Server, configErr error, stdin io
 }
 
 func runCredentialGrant(args []string, servers []Server, configErr error, stdout io.Writer) error {
-	var target, gateway, id, granteeID string
-	var cluster, instance, namespace, use, workloadKind, workloadName string
-	var imageRepository, imageDigest, helmRelease, helmChart, requiredKeys string
+	var target, gateway, id, granteeID, cluster, instance, project, environment, template, namespace, uses string
 	flags := credentialFlagSet("credential grant")
 	flags.StringVar(&target, "target", "", "Configured gateway target")
 	flags.StringVar(&gateway, "gateway", "", "Gateway URL")
@@ -319,24 +386,20 @@ func runCredentialGrant(args []string, servers []Server, configErr error, stdout
 	flags.StringVar(&granteeID, "grantee-id", "", "Gateway user ID receiving the grant")
 	flags.StringVar(&cluster, "cluster", "", "Target cluster")
 	flags.StringVar(&instance, "instance", "", "Target instance")
+	flags.StringVar(&project, "project", "", "Workflow project")
+	flags.StringVar(&environment, "environment", "", "Workflow environment")
+	flags.StringVar(&template, "template", "", "Workflow template")
 	flags.StringVar(&namespace, "namespace", "", "Kubernetes namespace")
-	flags.StringVar(&use, "use", "", "Credential use: imagePull, gitCheckout, helmPull, tls, or opaqueSecret")
-	flags.StringVar(&workloadKind, "workload-kind", "", "Kubernetes workload kind")
-	flags.StringVar(&workloadName, "workload-name", "", "Kubernetes workload name")
-	flags.StringVar(&imageRepository, "image-repository", "", "Authorized image repository")
-	flags.StringVar(&imageDigest, "image-digest", "", "Authorized image digest")
-	flags.StringVar(&helmRelease, "helm-release", "", "Authorized Helm release")
-	flags.StringVar(&helmChart, "helm-chart", "", "Authorized Helm chart")
-	flags.StringVar(&requiredKeys, "required-keys", "", "Comma-separated required Secret keys")
+	flags.StringVar(&uses, "uses", "", "Comma-separated credential uses")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 || strings.TrimSpace(id) == "" || strings.TrimSpace(granteeID) == "" ||
-		strings.TrimSpace(cluster) == "" || strings.TrimSpace(instance) == "" || strings.TrimSpace(namespace) == "" ||
-		strings.TrimSpace(use) == "" || strings.TrimSpace(workloadKind) == "" || strings.TrimSpace(workloadName) == "" {
-		return fmt.Errorf("--id, --grantee-id, --cluster, --instance, --namespace, --use, --workload-kind and --workload-name are required")
+		strings.TrimSpace(cluster) == "" || strings.TrimSpace(instance) == "" || strings.TrimSpace(project) == "" ||
+		strings.TrimSpace(environment) == "" || strings.TrimSpace(template) == "" || strings.TrimSpace(namespace) == "" {
+		return fmt.Errorf("--id, --grantee-id, --cluster, --instance, --project, --environment, --template and --namespace are required")
 	}
-	keyList, err := parseOptionalCredentialList(requiredKeys, "--required-keys")
+	useList, err := parseCredentialUses(uses)
 	if err != nil {
 		return err
 	}
@@ -349,22 +412,14 @@ func runCredentialGrant(args []string, servers []Server, configErr error, stdout
 		return err
 	}
 	body, err := json.Marshal(map[string]any{
-		"grantee_id": strings.TrimSpace(granteeID),
-		"scope": credentialGrantScope{
-			Cluster:   strings.TrimSpace(cluster),
-			Instance:  strings.TrimSpace(instance),
-			Namespace: strings.TrimSpace(namespace),
-			Use:       strings.TrimSpace(use),
-			Workload: credentialGrantWorkload{
-				Kind: strings.TrimSpace(workloadKind),
-				Name: strings.TrimSpace(workloadName),
-			},
-			ImageRepository: strings.TrimSpace(imageRepository),
-			ImageDigest:     strings.TrimSpace(imageDigest),
-			HelmRelease:     strings.TrimSpace(helmRelease),
-			HelmChart:       strings.TrimSpace(helmChart),
-			RequiredKeys:    keyList,
-		},
+		"grantee_id":  strings.TrimSpace(granteeID),
+		"cluster":     strings.TrimSpace(cluster),
+		"instance":    strings.TrimSpace(instance),
+		"project":     strings.TrimSpace(project),
+		"environment": strings.TrimSpace(environment),
+		"template":    strings.TrimSpace(template),
+		"namespace":   strings.TrimSpace(namespace),
+		"uses":        useList,
 	})
 	if err != nil {
 		return err
@@ -490,20 +545,20 @@ func readCredentialPayload(stdin io.Reader) ([]byte, error) {
 	return payload, nil
 }
 
-func parseOptionalCredentialList(raw, flagName string) ([]string, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, nil
-	}
+func parseCredentialUses(raw string) ([]string, error) {
 	parts := strings.Split(raw, ",")
-	values := make([]string, 0, len(parts))
+	uses := make([]string, 0, len(parts))
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if part == "" {
-			return nil, fmt.Errorf("%s must be a comma-separated non-empty list", flagName)
+			return nil, fmt.Errorf("--uses must be a comma-separated non-empty list")
 		}
-		values = append(values, part)
+		uses = append(uses, part)
 	}
-	return values, nil
+	if len(uses) == 0 {
+		return nil, fmt.Errorf("--uses is required")
+	}
+	return uses, nil
 }
 
 func credentialEndpoint(id, operation string) (string, error) {

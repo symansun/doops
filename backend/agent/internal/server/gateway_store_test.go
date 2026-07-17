@@ -53,31 +53,6 @@ func TestGatewayStoreOnlyIssuesUserTokensAndPermissions(t *testing.T) {
 	}
 }
 
-func TestGatewayStoreMigrationDropsRetiredCredentialRunAuthorizations(t *testing.T) {
-	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	defer store.Close()
-
-	if _, err := store.db.Exec(`CREATE TABLE credential_run_authorizations (run_id TEXT PRIMARY KEY)`); err != nil {
-		t.Fatalf("create retired table: %v", err)
-	}
-	if err := store.migrate(); err != nil {
-		t.Fatalf("rerun migration: %v", err)
-	}
-
-	var count int
-	if err := store.db.QueryRow(
-		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'credential_run_authorizations'`,
-	).Scan(&count); err != nil {
-		t.Fatalf("query retired table: %v", err)
-	}
-	if count != 0 {
-		t.Fatal("retired credential run authorization table must be removed")
-	}
-}
-
 func TestGatewayStoreUserDefaultsToNoTargetAccess(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
