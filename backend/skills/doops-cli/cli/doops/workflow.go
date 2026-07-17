@@ -57,23 +57,23 @@ func runCICDCommand(
 	verbose bool,
 ) error {
 	if len(args) == 0 || strings.TrimSpace(args[0]) != "run" {
-		return fmt.Errorf("only `cicd run` is supported; workflow validation and orchestration belong to doops-cicd")
+		return fmt.Errorf("only `cicd run` is supported; registry validation and orchestration belong to doops-cicd")
 	}
 	request := workflowCommand{Inputs: map[string]string{}}
 	sets := workflowSetFlags(request.Inputs)
 	flags := flag.NewFlagSet("cicd run", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	flags.StringVar(&request.File, "f", "", "workflow YAML file")
-	flags.StringVar(&request.File, "file", "", "workflow YAML file")
+	flags.StringVar(&request.File, "f", "", "doops.sh/v3 EnvironmentRegistry YAML file")
+	flags.StringVar(&request.File, "file", "", "doops.sh/v3 EnvironmentRegistry YAML file")
 	flags.StringVar(&request.Target, "target", "", "configured DoOps target")
 	flags.StringVar(&request.Model, "model", "", "model to use for trusted reconciliation")
-	flags.Var(sets, "set", "workflow input override in key=value form")
+	flags.Var(sets, "set", "registry selection in key=value form")
 	flags.BoolVar(&request.DryRun, "dry-run", false, "observe without mutation")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
 	if strings.TrimSpace(request.File) == "" {
-		return fmt.Errorf("-f workflow YAML file is required")
+		return fmt.Errorf("-f doops.sh/v3 EnvironmentRegistry YAML file is required")
 	}
 	if strings.TrimSpace(request.Target) == "" {
 		return fmt.Errorf("-target is required; the CLI must not infer a deployment target")
@@ -100,11 +100,11 @@ func runCICDCommand(
 	}
 	sourceRepository, sourceBranch, err := workflowDeclaredSource(request.File, request.Inputs)
 	if err != nil {
-		return fmt.Errorf("resolve workflow source: %w", err)
+		return fmt.Errorf("resolve registry source: %w", err)
 	}
 	sourceRevision, err := resolveWorkflowSourceRevision(sourceRepository, sourceBranch)
 	if err != nil {
-		return fmt.Errorf("resolve workflow source revision: %w", err)
+		return fmt.Errorf("resolve registry source revision: %w", err)
 	}
 	if strings.TrimSpace(server.Gateway) == "" {
 		return fmt.Errorf("target %q must use a configured DoOps gateway", server.Name)
@@ -174,7 +174,7 @@ func runCICDCommand(
 func workflowDeclaredSource(path string, inputs map[string]string) (string, string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", "", fmt.Errorf("read workflow source: %w", err)
+		return "", "", fmt.Errorf("read registry source: %w", err)
 	}
 	var registry struct {
 		APIVersion   string `yaml:"apiVersion"`
@@ -188,7 +188,7 @@ func workflowDeclaredSource(path string, inputs map[string]string) (string, stri
 		} `yaml:"environments"`
 	}
 	if err := yaml.Unmarshal(data, &registry); err != nil {
-		return "", "", fmt.Errorf("decode workflow source: %w", err)
+		return "", "", fmt.Errorf("decode registry source: %w", err)
 	}
 	if registry.APIVersion != workspaceManifestAPIVersion || registry.Kind != "EnvironmentRegistry" {
 		return "", "", fmt.Errorf("cicd run requires doops.sh/v3 EnvironmentRegistry")
@@ -210,10 +210,10 @@ func workflowDeclaredSource(path string, inputs map[string]string) (string, stri
 	parsed, err := url.Parse(repository)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" ||
 		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", "", fmt.Errorf("workflow source repository must be an HTTPS URL without inline credentials, query, or fragment")
+		return "", "", fmt.Errorf("registry source repository must be an HTTPS URL without inline credentials, query, or fragment")
 	}
 	if branch == "" {
-		return "", "", fmt.Errorf("workflow source branch is required")
+		return "", "", fmt.Errorf("registry source branch is required")
 	}
 	return repository, branch, nil
 }
@@ -231,14 +231,14 @@ func resolveWorkflowSourceRevision(repository, branch string) (string, error) {
 	)
 	output, err := command.Output()
 	if ctx.Err() == context.DeadlineExceeded {
-		return "", fmt.Errorf("workflow source revision lookup timed out")
+		return "", fmt.Errorf("registry source revision lookup timed out")
 	}
 	if err != nil {
-		return "", fmt.Errorf("workflow source revision lookup failed: %w", err)
+		return "", fmt.Errorf("registry source revision lookup failed: %w", err)
 	}
 	fields := strings.Fields(string(output))
 	if len(fields) != 2 || !validWorkspaceCommit(fields[0]) {
-		return "", fmt.Errorf("workflow source branch did not resolve to one immutable commit")
+		return "", fmt.Errorf("registry source branch did not resolve to one immutable commit")
 	}
 	return fields[0], nil
 }
@@ -247,7 +247,7 @@ func validateWorkflowInputs(inputs map[string]string) error {
 	for key, value := range inputs {
 		if strings.TrimSpace(key) == "" || strings.TrimSpace(key) != key ||
 			strings.TrimSpace(value) != value {
-			return fmt.Errorf("workflow inputs must use trimmed non-empty keys and values")
+			return fmt.Errorf("registry selections must use trimmed non-empty keys and values")
 		}
 	}
 	return nil
@@ -278,26 +278,26 @@ func (f workflowSetFlags) Set(value string) error {
 func workflowPathInGitRepository(path string) (root, relative string, err error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve workflow path: %w", err)
+		return "", "", fmt.Errorf("resolve registry path: %w", err)
 	}
 	info, err := os.Stat(absolute)
 	if err != nil {
-		return "", "", fmt.Errorf("read workflow file: %w", err)
+		return "", "", fmt.Errorf("read registry file: %w", err)
 	}
 	if info.IsDir() {
-		return "", "", fmt.Errorf("workflow path must be a file")
+		return "", "", fmt.Errorf("registry path must be a file")
 	}
 	for directory := filepath.Dir(absolute); ; directory = filepath.Dir(directory) {
 		if _, statErr := os.Stat(filepath.Join(directory, ".git")); statErr == nil {
 			relative, relErr := filepath.Rel(directory, absolute)
 			if relErr != nil || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || relative == ".." {
-				return "", "", fmt.Errorf("workflow path escapes Git repository")
+				return "", "", fmt.Errorf("registry path escapes Git repository")
 			}
 			return directory, filepath.ToSlash(relative), nil
 		}
 		parent := filepath.Dir(directory)
 		if parent == directory {
-			return "", "", fmt.Errorf("workflow file %q is not inside a Git repository", path)
+			return "", "", fmt.Errorf("registry file %q is not inside a Git repository", path)
 		}
 	}
 }

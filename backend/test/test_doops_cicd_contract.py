@@ -9,6 +9,8 @@ ACTIVE_CONTRACT_DOCS = (
     ROOT / "docs" / "BUILD_DEPLOY_SOP.md",
     ROOT / "docs" / "AGENT_NATIVE_CICD.md",
     ROOT / "docs" / "design" / "AI_Ops_System_Design.md",
+    ROOT / "skills" / "doops-cli" / "cli" / "doops" / "main.go",
+    ROOT / "skills" / "doops-cli" / "cli" / "doops" / "workflow.go",
     ROOT.parent / "docs" / "credential-plan-convergence.md",
 )
 
@@ -54,6 +56,9 @@ def test_active_cicd_docs_only_describe_gateway_bound_v3_registry():
         "deploy/workflows/oilan-agent-bootstrap",
         "configurationSource",
         "--set releaseId",
+        "-set reason=",
+        "声明式 CI/CD workflow 入口",
+        "run 先同步当前仓库",
         "DeploymentTemplate -> doops push",
     ):
         assert removed not in text

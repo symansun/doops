@@ -37,7 +37,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   write       写入文件到目标服务器
   info        获取节点系统信息 (CPU/内存/磁盘)
   k8s         受限 Kubernetes 观察与运维入口
-  cicd        声明式 CI/CD workflow 入口 (run)
+  cicd        v3 环境注册表 CI/CD 入口 (run)
   credential  管理 Gateway 凭据元数据与版本
   session     生成并输出一个新的唯一 Session ID
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
@@ -58,7 +58,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   -help       显示此帮助信息
 
 	Agent 原生声明式 CI/CD 示例:
-	  # run 先同步当前仓库，再通过 Ask 选择 doops-cicd Skill。
+	  # run 固定声明源 commit，经 Gateway credential prepare 后调用 doops-cicd Skill。
 	  doops -session test_ops cicd run -f deploy/environments.yaml --target agent-runtime --dry-run --set environment=test --set service=frontend
 	  doops -session test_ops cicd run -f deploy/environments.yaml --target agent-runtime --set environment=test --set service=frontend
 `)

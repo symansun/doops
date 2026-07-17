@@ -134,8 +134,8 @@ doops targets --target unicom
 | :--- | :--- |
 | 执行确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'` |
 | AI 自主分析 | `doops -session <s> ask --target <t> --msg '<task>'` |
-| CI/CD 只读预演 | `doops -session <s> cicd run -target <t> -f <root.yaml> -dry-run -set reason=<reason>` |
-| CI/CD 正式收敛 | `doops -session <s> cicd run -target <t> -f <root.yaml> -set reason=<reason>` |
+| CI/CD 只读预演 | `doops -session <s> cicd run -target <t> -f deploy/environments.yaml -dry-run -set environment=<env> -set service=<service>` |
+| CI/CD 正式收敛 | `doops -session <s> cicd run -target <t> -f deploy/environments.yaml -set environment=<env> -set service=<service>` |
 | 推送本地目录 | `doops -session <s> push --target <t> --src <dir>` |
 | 拉取远端工作区 | `doops -session <s> pull --target <t> --dest <dir>` |
 | 小文本读写 | `doops read/write ...` |
