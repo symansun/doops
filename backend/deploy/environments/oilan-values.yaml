@@ -17,7 +17,7 @@ gateway:
   instance: edu-coder
   agentTokenSecret:
     name: doops-agent-runtime
-    key: token
+    key: agent-token
 
 nodeSelector:
   kubernetes.io/hostname: 192.168.0.24

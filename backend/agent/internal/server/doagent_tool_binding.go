@@ -438,6 +438,7 @@ type deploymentRunContractBinding struct {
 	WorkspaceCommit string
 	Mode            string
 	PrimaryTool     string
+	RequiredTools   []string
 }
 
 func bindDeploymentRunEvidence(
@@ -475,6 +476,7 @@ func bindDeploymentRunEvidence(
 		return "", nil, fmt.Errorf("DeploymentRun evidence must be a non-empty array")
 	}
 
+	observedTools := make(map[string]struct{}, len(evidence))
 	for index, item := range evidence {
 		entry, ok := item.(map[string]interface{})
 		if !ok {
@@ -533,6 +535,7 @@ func bindDeploymentRunEvidence(
 		if err != nil {
 			return "", nil, fmt.Errorf("verify runtime tool result: %w", err)
 		}
+		observedTools[trace.ToolName] = struct{}{}
 		delete(entry, "toolRef")
 		if trace.EvidenceSubject != "" {
 			entry["subject"] = trace.EvidenceSubject
@@ -543,6 +546,16 @@ func bindDeploymentRunEvidence(
 			"tool":   trace.ToolName,
 			"input":  runtimeInput,
 			"result": runtimeResult,
+		}
+	}
+	if contract != nil {
+		for _, tool := range contract.RequiredTools {
+			if _, ok := observedTools[tool]; !ok {
+				return "", nil, fmt.Errorf(
+					"DeploymentRun evidence must reference %s",
+					modelVisibleDoagentToolName(tool),
+				)
+			}
 		}
 	}
 

@@ -1739,7 +1739,7 @@ func appendDoagentStructuredResultContract(
 		"For any other allowed tool, toolRef.tool is the exact model-visible tool name and toolRef.input is the exact JSON input used for that call. " +
 		"The Gateway consumes toolRef and injects toolCall with the completed runtime call's exact id, tool, input, and result."
 	if admission != nil && containsString(admission.AllowedTools, "mcp_doops_plan_ObserveWorkspaceSource") {
-		contract += " Your first action must be calling the allowed internal tool mcp_doops_plan_ObserveWorkspaceSource with exact JSON input {}; do not emit the final response before that completed call. DeploymentRun status.evidence[0].toolRef must reference that completed call exactly as {\"tool\":\"plan.ObserveWorkspaceSource\",\"input\":{}}; never include the internal mcp_doops_plan_ prefix inside toolRef.tool."
+		contract += " Your first action must be calling the allowed internal tool mcp_doops_plan_ObserveWorkspaceSource with exact JSON input {}; do not emit the final response before that completed call. DeploymentRun status.evidence[0].toolRef must reference that completed call exactly as {\"tool\":\"plan.ObserveWorkspaceSource\",\"input\":{}}; never include the internal mcp_doops_plan_ prefix inside toolRef.tool. Before the final response, call and reference plan.ObserveSourceRegistryImageSet, plan.ObserveTargetRegistryImageSet, plan.ObserveAuthorizationState, plan.ObserveHelmRelease, and plan.ObserveKubernetesWorkload. A target image observation with present:false is valid evidence that synchronization is required."
 	}
 	return contract
 }
@@ -1764,7 +1764,29 @@ func deploymentRunBinding(execution agentPromptExecutionContext) *deploymentRunC
 		WorkspaceCommit: instruction.WorkspaceCommit,
 		Mode:            instruction.ExecutionMode,
 		PrimaryTool:     primaryDeploymentEvidenceTool(execution.Admission),
+		RequiredTools:   requiredDeploymentEvidenceTools(execution.Admission),
 	}
+}
+
+func requiredDeploymentEvidenceTools(admission *trustedReconciliationAdmission) []string {
+	required := []string{
+		"mcp_doops_plan_ObserveWorkspaceSource",
+		"mcp_doops_plan_ObserveSourceRegistryImageSet",
+		"mcp_doops_plan_ObserveTargetRegistryImageSet",
+		"mcp_doops_plan_ObserveAuthorizationState",
+		"mcp_doops_plan_ObserveHelmRelease",
+		"mcp_doops_plan_ObserveKubernetesWorkload",
+	}
+	if admission == nil {
+		return nil
+	}
+	available := make([]string, 0, len(required))
+	for _, tool := range required {
+		if containsString(admission.AllowedTools, tool) {
+			available = append(available, tool)
+		}
+	}
+	return available
 }
 
 // subscribeDoagentSSE 订阅 doagent 的 SSE 事件流，将内容实时转发到 WebSocket 客户端。

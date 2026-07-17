@@ -245,14 +245,14 @@ Skill 会随安装同步到项目目录。标准 target 的配置必须有 `gate
 
 授权模型：
 
-- 普通 user token 默认拥有所有 target 操作能力；旧库中只授予 `targets:list` 的 scope 也按全功能 target access 兼容，避免“能看到但不能操作”。需要隔离时，再显式收窄 `cluster/instance/action`。
+- 普通 user token 必须通过显式 grant 获得对应 `cluster/instance/action` 权限；无 grant 默认拒绝，`targets:list` 不隐式授予 exec、ask、read、write、push 等操作。
 - 全局管理员需要显式授予 `admin` 权限。
 - 审计记录按 `user_id`、`token_id`、`cluster`、`instance`、`action`、`session`、`status` 可追溯。
 
 故障判断：
 
 - `401 Unauthorized`：token 无效或过期，认证失败
-- `403 Forbidden`：token 有效，但该用户被显式收窄后缺少当前 `cluster/instance/action` 权限，或缺少 gateway 管理员 `admin` 权限
+- `403 Forbidden`：token 有效，但该用户缺少当前 `cluster/instance/action` 的显式 grant，或缺少 gateway 管理员 `admin` 权限
 
 ### 2. 通过 gateway 添加内网集群目标
 
@@ -463,7 +463,8 @@ ls -lh skills/doops-cli/bin/
 
 - `doops` 日常连接不依赖 SSH。
 - `token` 在标准 target 配置里只表示 gateway user token。
-- agent 注册不使用 token；遗留本机 `/ws` token 只用于直连保护，不写入标准 target 配置。
+- agent 注册必须使用绑定 `cluster/instance` 的 registration token，并从 `DOOPS_GATEWAY_AGENT_TOKEN_PATH` 指向的运行时 Secret 读取；该 token 不写入标准 target 配置。
+- 遗留本机 `/ws` token 只用于直连保护，不得复用为 gateway registration token。
 - `doops-agent token` 只用于遗留直连或本机 `/ws` 保护。
 - `ssh_password` 只保留为 SSH bootstrap 参数。
 - `bash` 子命令仍是遗留 SSH 交互入口；推荐使用 `doops exec` 和 `doops ask`。

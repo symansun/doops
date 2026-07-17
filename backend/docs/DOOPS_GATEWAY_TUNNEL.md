@@ -139,15 +139,15 @@ doops admin token revoke --target <gateway-target> --id <token-id>
 
 - 创建/禁用用户，设置或重置密码。
 - 创建、吊销、轮换 user token。
-- 普通 user token 默认拥有所有 target 操作能力。需要隔离时，再按 `cluster/instance/action` 显式收窄；管理员能力仍使用显式 `admin` 权限。
+- 普通 user token 必须通过显式 grant 获得对应 `cluster/instance/action` 权限；无 grant 默认拒绝，`targets:list` 不隐式授予其他 target 操作。管理员能力仍使用显式 `admin` 权限。
 - 按 `user_id`、`token_id`、`cluster`、`instance`、`action`、`session`、`status` 查询审计。
 - 按保留周期清理过期审计，清理前保留可追溯导出。
 
 说明：
 
 - `401 Unauthorized`：token 无效、过期或未登录，属于认证失败
-- `403 Forbidden`：token 有效，但当前用户被显式收窄后缺少目标 `cluster/instance/action` 权限，或缺少 gateway 管理员 `admin` 权限。
-- 新 target 接入后如果 `exec/ask` 直接 403，优先检查 gateway 是否仍在跑旧版本，或该用户是否被显式收窄到其他 scope。
+- `403 Forbidden`：token 有效，但当前用户缺少目标 `cluster/instance/action` 的显式 grant，或缺少 gateway 管理员 `admin` 权限。
+- 新 target 接入后如果 `exec/ask` 直接 403，检查该用户是否已经获得对应 target/action 的显式 grant。
 
 ## Multi-User Behavior
 

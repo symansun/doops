@@ -264,6 +264,40 @@ func TestBindDeploymentRunEvidenceEnforcesPrimarySourceObservation(t *testing.T)
 	}
 }
 
+func TestBindDeploymentRunEvidenceRequiresTargetRegistryObservation(t *testing.T) {
+	traces := completedDoagentToolTraces(t, []map[string]interface{}{
+		{
+			"sessionUpdate":   "tool_call_update",
+			"toolCallId":      "source-1",
+			"toolName":        "mcp_doops_plan_ObserveWorkspaceSource",
+			"status":          "completed",
+			"input":           map[string]interface{}{},
+			"rawOutput":       map[string]interface{}{"revision": "immutable"},
+			"evidenceSubject": "source-identity",
+		},
+	})
+	result := deploymentRunWithToolRef("plan.ObserveWorkspaceSource", map[string]interface{}{})
+	_, _, err := bindDeploymentRunEvidence(
+		result,
+		traces,
+		&deploymentRunContractBinding{
+			APIVersion:      "doops.sh/v2",
+			Workflow:        "deploy/release.yaml",
+			RunID:           "run-test",
+			WorkspaceCommit: strings.Repeat("a", 40),
+			Mode:            "dry-run",
+			PrimaryTool:     "mcp_doops_plan_ObserveWorkspaceSource",
+			RequiredTools: []string{
+				"mcp_doops_plan_ObserveWorkspaceSource",
+				"mcp_doops_plan_ObserveTargetRegistryImageSet",
+			},
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "plan.ObserveTargetRegistryImageSet") {
+		t.Fatalf("target registry observation was not enforced: %v", err)
+	}
+}
+
 func TestBindDeploymentRunEvidenceBindsTrustedEnvelope(t *testing.T) {
 	traces := completedDoagentToolTraces(t, []map[string]interface{}{
 		{

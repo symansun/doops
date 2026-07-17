@@ -130,7 +130,7 @@ def test_oilan_agent_model_settings_are_secret_backed():
         "secret": {
             "secretName": "doops-agent-runtime",
             "defaultMode": 0o400,
-            "items": [{"key": "token", "path": "gateway-agent-token"}],
+            "items": [{"key": "agent-token", "path": "gateway-agent-token"}],
         },
     }
     assert "/app/configure_kubeconfig.py" in SANDBOX_ENTRYPOINT.read_text()

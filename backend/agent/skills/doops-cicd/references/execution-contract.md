@@ -10,6 +10,9 @@ doagent 根据声明发现运行时能力、委派独立 Agent，并选择受信
 - 不执行 mutation。
 - 观察源码身份、六个源/目标 digest、目标节点镜像可拉取性、Helm 基线、权限和健康检查。
 - 返回 apply 仍需执行的动作，`mutationCount: 0`。
+- `ObserveTargetRegistryImageSet` 必须执行。目标 digest 不存在时返回每个服务的
+  `present: false`，这是需要同步的计划事实，不是观察失败；认证、网络或非 404
+  registry 错误仍必须阻断。
 
 ## apply
 
@@ -28,6 +31,10 @@ doagent 根据声明发现运行时能力、委派独立 Agent，并选择受信
 任一 Helm 前置条件失败时，部署执行器调用次数必须为 0
 (zero deployment executor invocations)。mutation 后失败只能恢复
 本次观察到的 baseline，并返回回滚后的 Helm 和工作负载证据。
+
+`copyOnlyWhenTargetDigestMissing`、`requireSourceTargetDigestEquality` 和
+`prePullBeforeHelm` 是强制执行条件，不得只解析或写入文本计划后忽略。若没有可验证的
+全可调度节点预拉取执行器，`prePullBeforeHelm: true` 必须在 Helm 前阻断。
 
 v2 部分服务发布仍必须读取并保持每个 unselected service 的当前镜像身份。自托管
 Agent 发布必须由独立 control target 执行，不能让正在被替换的 Agent 控制自身升级。

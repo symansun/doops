@@ -14,7 +14,7 @@
 
 ## 结论
 
-整条链路存在一个决定信任模型的根因缺陷：**公网 gateway 不校验 agent 注册身份**，任何人可冒充/接管任意 target 并截获命令与文件内容。其次是**权限默认放行**（无 grant 即全开、`targets:list` 隐式提权），与 SKILL.md 的最小授权描述直接矛盾。再叠加隧道层的"单 op 超时断全连 + 背压丢帧"、agent 侧"session 路径穿越 / 文件无沙箱 / 安全 dispatcher 死代码"，以及 CLI 的"握手误判 + 无超时挂死"。push 既然 git-only，则 agent 的分块上传工具属于应清理的死路径，相关 SKILL 描述需改为 git 模式。
+本次排查确认的历史根因是：**公网 gateway 当时不校验 agent 注册身份**，任何人可冒充/接管任意 target 并截获命令与文件内容。其次是**权限当时默认放行**（无 grant 即全开、`targets:list` 隐式提权），与 SKILL.md 的最小授权描述直接矛盾。上述 P0 问题现已修复：Agent 注册必须使用绑定 target 的 registration token，用户操作必须具有显式 grant。其余隧道、Agent、CLI 和遗留上传路径问题见下文逐项状态。
 
 ## 状态说明
 
@@ -44,10 +44,10 @@
 
 ### P0-1 `doops/gateway/agent-connect-unauthenticated` — 任意 target 劫持 / MITM
 - 状态：fixed ｜ 维度：gateway ｜ 安全
-- 证据：
+- 修复前证据：
   - `agent/internal/server/tunnel_hub.go:373-417` `HandleAgentConnect` 仅取 query 的 `cluster/instance`，升级 WS 后直接 `registerAgent`，**全程无 token 校验**。
-  - `agent/internal/server/tunnel_hub.go:921` `authenticateAgent` 已定义但**无任何调用点**（仅 `writeUserAuthError` 用 `VerifyAgentToken` 区分 401/403）。
-  - `agent/cmd/agent/main.go:106-108` agent 实际发送了 `Authorization: Bearer` 与 `X-Doops-Key`，但被 gateway 忽略；`main.go:37` flag 注释自承"current gateways do not require it"。
+  - gateway 未在 WebSocket upgrade 前验证 agent token 类型及其 `cluster/instance` 绑定。
+  - agent 侧 registration credential 与本机 `/ws` token 的职责未被强制隔离。
   - `agent/internal/server/tunnel_hub.go:855-857` `registerAgent` 同 key 重注册会关闭旧 agent 连接 → 接管。
 - 滥用路径：可达公网 gateway 者连 `/v1/agent/connect?cluster=doops-oilan&instance=oilan-node` 即冒充该 target，踢掉真实 agent，截获后续所有 `tools/call`（含 `doops_file_read` 内容、`doops_shell` 命令），并回传伪造结果。
 - 影响：跨租户接管、命令/文件窃取、运维结果伪造、对真实 agent 的持续 DoS。

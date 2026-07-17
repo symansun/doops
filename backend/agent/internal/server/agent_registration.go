@@ -8,22 +8,22 @@ import (
 )
 
 type AgentRegistrationHandler struct {
-	registry      *AgentRegistry
 	store         *GatewayStore
+	registry      *AgentRegistry
 	lease         time.Duration
 	messageBudget *gatewayMessageBudget
 	acknowledge   func(*GatewayAgent) error
 }
 
 func NewAgentRegistrationHandler(
-	registry *AgentRegistry,
 	store *GatewayStore,
+	registry *AgentRegistry,
 	lease time.Duration,
 	messageBudget *gatewayMessageBudget,
 ) *AgentRegistrationHandler {
 	return &AgentRegistrationHandler{
-		registry:      registry,
 		store:         store,
+		registry:      registry,
 		lease:         lease,
 		messageBudget: messageBudget,
 		acknowledge: func(session *GatewayAgent) error {
