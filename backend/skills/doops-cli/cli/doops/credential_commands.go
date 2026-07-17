@@ -178,7 +178,7 @@ func runCredentialBundleGet(args []string, servers []Server, configErr error, st
 }
 
 func runCredentialVerify(args []string, servers []Server, configErr error, stdout io.Writer) error {
-	var target, id, versionID, sessionID, workflowPath, workspaceCommit string
+	var target, id, versionID, sessionID, workflowPath, workspaceCommit, environment, service string
 	flags := credentialFlagSet("credential verify")
 	flags.StringVar(&target, "target", "", "Configured gateway target")
 	flags.StringVar(&id, "id", "", "Credential ID")
@@ -186,13 +186,16 @@ func runCredentialVerify(args []string, servers []Server, configErr error, stdou
 	flags.StringVar(&sessionID, "session", "", "Bound workspace session")
 	flags.StringVar(&workflowPath, "workflow-path", "", "v3 manifest path in the workspace")
 	flags.StringVar(&workspaceCommit, "workspace-commit", "", "Immutable workspace commit")
+	flags.StringVar(&environment, "environment", "", "EnvironmentRegistry environment")
+	flags.StringVar(&service, "service", "", "EnvironmentRegistry service")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 || strings.TrimSpace(target) == "" || strings.TrimSpace(id) == "" ||
 		strings.TrimSpace(versionID) == "" || strings.TrimSpace(sessionID) == "" ||
-		strings.TrimSpace(workflowPath) == "" || strings.TrimSpace(workspaceCommit) == "" {
-		return fmt.Errorf("--target, --id, --version-id, --session, --workflow-path and --workspace-commit are required")
+		strings.TrimSpace(workflowPath) == "" || !validWorkspaceCommit(strings.TrimSpace(workspaceCommit)) ||
+		strings.TrimSpace(environment) == "" || strings.TrimSpace(service) == "" {
+		return fmt.Errorf("--target, --id, --version-id, --session, --workflow-path, --workspace-commit, --environment and --service are required")
 	}
 	if configErr != nil {
 		return configErr
@@ -200,6 +203,21 @@ func runCredentialVerify(args []string, servers []Server, configErr error, stdou
 	server := findServer(servers, strings.TrimSpace(target))
 	if server == nil {
 		return fmt.Errorf("target %q not found", strings.TrimSpace(target))
+	}
+	_, relativePath, err := workflowPathInGitRepository(workflowPath)
+	if err != nil {
+		return err
+	}
+	if relativePath != "deploy/environments.yaml" {
+		return fmt.Errorf("credential verify requires deploy/environments.yaml")
+	}
+	inputs := map[string]string{
+		"environment": strings.TrimSpace(environment),
+		"service":     strings.TrimSpace(service),
+	}
+	sourceRepository, sourceBranch, err := workflowDeclaredSource(workflowPath, inputs)
+	if err != nil {
+		return fmt.Errorf("resolve registry source: %w", err)
 	}
 	gateway, token, err := resolveCredentialGateway(target, "", servers, configErr)
 	if err != nil {
@@ -209,13 +227,16 @@ func runCredentialVerify(args []string, servers []Server, configErr error, stdou
 	if err != nil {
 		return err
 	}
-	body, err := json.Marshal(map[string]string{
-		"version_id":       strings.TrimSpace(versionID),
-		"cluster":          strings.TrimSpace(server.Cluster),
-		"instance":         strings.TrimSpace(server.Instance),
-		"session_id":       strings.TrimSpace(sessionID),
-		"workflow_path":    strings.TrimSpace(workflowPath),
-		"workspace_commit": strings.TrimSpace(workspaceCommit),
+	body, err := json.Marshal(map[string]any{
+		"version_id":        strings.TrimSpace(versionID),
+		"cluster":           strings.TrimSpace(server.Cluster),
+		"instance":          strings.TrimSpace(server.Instance),
+		"session_id":        strings.TrimSpace(sessionID),
+		"workflow_path":     strings.TrimSpace(workflowPath),
+		"workspace_commit":  strings.TrimSpace(workspaceCommit),
+		"source_repository": sourceRepository,
+		"source_branch":     sourceBranch,
+		"inputs":            inputs,
 	})
 	if err != nil {
 		return err

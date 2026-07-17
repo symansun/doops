@@ -2280,6 +2280,12 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	if got := resourceKeyForTool(ActionAsk, "doops_agent_prompt", genericPromptArgs, "dev", "node"); got != "session:ask-a" {
 		t.Fatalf("agent prompt session resource key mismatch: %q", got)
 	}
+	boundPromptArgs := json.RawMessage(
+		`{"operation":"apply","session_id":"release-a","workspace_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+	)
+	if got := resourceKeyForTool(ActionExec, "doops_agent_prompt", boundPromptArgs, "dev", "node"); got != "workspace:release-a" {
+		t.Fatalf("bound cicd prompt resource key mismatch: %q", got)
+	}
 	metadataArgs := json.RawMessage(`{"session_id":"ask-a","mode":"metadata"}`)
 	if got := actionForTool("doops_agent_prompt", metadataArgs); got != ActionAsk {
 		t.Fatalf("metadata prompt must remain a read-only ask: %q", got)

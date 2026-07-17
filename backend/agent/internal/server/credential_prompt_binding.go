@@ -121,6 +121,7 @@ func (h *ClientService) consumeCredentialPromptBinding(
 		binding.WorkflowPath,
 		binding.SourceRepository,
 		binding.SourceBranch,
+		binding.SourceRevision,
 		binding.Inputs,
 		binding.Mode,
 		binding.Run,

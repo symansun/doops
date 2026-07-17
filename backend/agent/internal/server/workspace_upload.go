@@ -858,6 +858,19 @@ func validateWorkspaceCommitBinding(sessionID, expectedCommit string) error {
 	if actualCommit != expectedCommit {
 		return fmt.Errorf("workspace commit mismatch: got %s want %s", actualCommit, expectedCommit)
 	}
+	if _, err := os.Stat(filepath.Join(workspace, ".git")); err == nil {
+		command := exec.Command("git", "-C", workspace, "rev-parse", "HEAD")
+		command.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+		head, err := command.Output()
+		if err != nil {
+			return fmt.Errorf("read workspace Git commit")
+		}
+		if strings.TrimSpace(string(head)) != expectedCommit {
+			return fmt.Errorf("workspace Git commit mismatch")
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect workspace Git metadata: %w", err)
+	}
 	return nil
 }
 

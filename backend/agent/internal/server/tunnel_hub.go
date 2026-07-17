@@ -1994,6 +1994,9 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 	switch action {
 	case ActionExec, ActionAsk:
 		if sessionID := extractSession(args); sessionID != "" {
+			if extractStringArg(args, "workspace_commit") != "" {
+				return "workspace:" + sessionID
+			}
 			return "session:" + sessionID
 		}
 	case ActionPush, ActionPull, ActionClean:

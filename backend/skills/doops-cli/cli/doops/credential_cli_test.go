@@ -57,6 +57,7 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 	defer gateway.Close()
 
 	binary := buildDoopsCLIBinary(t)
+	repositoryRoot := filepath.Clean(filepath.Join("..", "..", "..", "..", ".."))
 	config := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(config, []byte(`{"servers":[{
 		"name":"gateway",
@@ -70,6 +71,7 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 	run := func(stdin string, args ...string) string {
 		t.Helper()
 		command := exec.Command(binary, args...)
+		command.Dir = repositoryRoot
 		command.Env = append(os.Environ(),
 			"DOOPS_CONFIG="+config,
 			"DOOPS_CREDENTIAL_PAYLOAD="+payloadCanary,
@@ -96,7 +98,8 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 	run("", "credential", "grant-revoke", "--target", "gateway", "--id", "cred_123", "--grant-id", "credgrant_789")
 	run("", "credential", "verify", "--target", "gateway", "--id", "cred_123",
 		"--version-id", "credver_456", "--session", "release-1",
-		"--workflow-path", "deploy/release.yaml", "--workspace-commit", strings.Repeat("a", 40))
+		"--workflow-path", "deploy/environments.yaml", "--workspace-commit", strings.Repeat("a", 40),
+		"--environment", "oilan", "--service", "doops-agent")
 	run("", "credential", "promote", "--target", "gateway", "--id", "cred_123", "--version-id", "credver_456")
 	run("", "credential", "revoke", "--target", "gateway", "--id", "cred_123")
 	run(`{"name":"release","scope":"platform","items":[{"credential_id":"cred_123","use":"imagePull","namespace":"apps","workload":{"Kind":"Deployment","Name":"api"},"registry_repository":"team/api","registry_reference":"sha256:manifest"}]}`,
@@ -149,12 +152,18 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		"grant_id": "credgrant_789",
 	})
 	assertCredentialCLIJSON(t, requests[5], http.MethodPost, "/v1/credentials/cred_123/verify", map[string]any{
-		"version_id":       "credver_456",
-		"cluster":          "doops-edu",
-		"instance":         "edu-coder",
-		"session_id":       "release-1",
-		"workflow_path":    "deploy/release.yaml",
-		"workspace_commit": strings.Repeat("a", 40),
+		"version_id":        "credver_456",
+		"cluster":           "doops-edu",
+		"instance":          "edu-coder",
+		"session_id":        "release-1",
+		"workflow_path":     "deploy/environments.yaml",
+		"workspace_commit":  strings.Repeat("a", 40),
+		"source_repository": "https://cnb.cool/l8ai/ai/doops.sh.git",
+		"source_branch":     "main",
+		"inputs": map[string]any{
+			"environment": "oilan",
+			"service":     "doops-agent",
+		},
 	})
 	assertCredentialCLIJSON(t, requests[6], http.MethodPost, "/v1/credentials/cred_123/promote", map[string]any{
 		"version_id": "credver_456",

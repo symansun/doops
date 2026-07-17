@@ -125,6 +125,7 @@ func runCICDCommand(
 		WorkflowPath:     workflowPath,
 		SourceRepository: sourceRepository,
 		SourceBranch:     sourceBranch,
+		WorkspaceCommit:  sourceRevision,
 		Inputs:           request.Inputs,
 		Mode:             executionMode,
 	})

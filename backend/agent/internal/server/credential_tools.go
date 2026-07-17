@@ -7,7 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
+	"os/exec"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 type credentialPlanToolParams struct {
@@ -15,6 +19,7 @@ type credentialPlanToolParams struct {
 	WorkflowPath     string            `json:"workflow_path"`
 	SourceRepository string            `json:"source_repository"`
 	SourceBranch     string            `json:"source_branch"`
+	SourceRevision   string            `json:"source_revision"`
 	Inputs           map[string]string `json:"inputs,omitempty"`
 }
 
@@ -34,9 +39,12 @@ func handleCredentialPlanTool(argBytes json.RawMessage) (string, error) {
 	args.WorkflowPath = strings.TrimSpace(args.WorkflowPath)
 	args.SourceRepository = strings.TrimSpace(args.SourceRepository)
 	args.SourceBranch = strings.TrimSpace(args.SourceBranch)
+	args.SourceRevision = strings.TrimSpace(args.SourceRevision)
 	if args.SessionID == "" || args.WorkflowPath == "" ||
-		args.SourceRepository == "" || args.SourceBranch == "" {
-		return "", fmt.Errorf("session_id, workflow_path, source_repository, and source_branch are required")
+		args.SourceRepository == "" || args.SourceBranch == "" ||
+		args.WorkflowPath != "deploy/environments.yaml" ||
+		!validCredentialWorkspaceCommit(args.SourceRevision) {
+		return "", fmt.Errorf("session_id, deploy/environments.yaml, source_repository, source_branch, and source_revision are required")
 	}
 	if err := validateCredentialPlanSourceRepository(args.SourceRepository); err != nil {
 		return "", err
@@ -54,6 +62,24 @@ func handleCredentialPlanTool(argBytes json.RawMessage) (string, error) {
 	root, err := workspacePath(args.SessionID)
 	if err != nil {
 		return "", err
+	}
+	command := exec.Command("git", "-C", root, "rev-parse", "HEAD")
+	command.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+	head, err := command.Output()
+	if err != nil || strings.TrimSpace(string(head)) != args.SourceRevision {
+		return "", fmt.Errorf("workflow source revision mismatch")
+	}
+	workflowData, err := readCredentialDeclarationFile(root, args.WorkflowPath)
+	if err != nil {
+		return "", err
+	}
+	var identity credentialWorkflowIdentity
+	if err := yaml.Unmarshal(workflowData, &identity); err != nil ||
+		identity.APIVersion != "doops.sh/v3" ||
+		identity.Kind != "EnvironmentRegistry" {
+		return "", invalidCredentialDeclaration(
+			fmt.Errorf("credential plan root must be doops.sh/v3 EnvironmentRegistry"),
+		)
 	}
 	plan, err := parseCredentialPlanForInputs(root, args.WorkflowPath, args.Inputs)
 	if err != nil {

@@ -357,6 +357,76 @@ func TestAgentHistoryModeWithoutSessionReturnsEmptyHistory(t *testing.T) {
 	}
 }
 
+func TestAgentPromptRejectsReplacedWorkspaceAfterCredentialPrepare(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	sessionID := "credential-workspace-binding"
+	workspace := filepath.Join(root, sessionID)
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	expectedCommit := strings.Repeat("a", 40)
+	if err := os.WriteFile(
+		filepath.Join(workspace, ".doops-ready"),
+		[]byte(strings.Repeat("b", 40)+"\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("workspace binding failure must stop before doagent: %s", r.URL.Path)
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id":       sessionID,
+		"instruction":      "inspect",
+		"workspace_commit": expectedCommit,
+	})
+	if !strings.Contains(fmt.Sprint(result), "workspace_commit_binding_invalid") {
+		t.Fatalf("workspace replacement result = %#v", result)
+	}
+}
+
+func TestWorkspaceCommitBindingChecksGitHead(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	sessionID := "credential-git-binding"
+	workspace := filepath.Join(root, sessionID)
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runTestCommand(t, workspace, "git", "init", "-q", "-b", "main")
+	runTestCommand(t, workspace, "git", "config", "user.email", "test@example.invalid")
+	runTestCommand(t, workspace, "git", "config", "user.name", "DoOps Test")
+	if err := os.WriteFile(filepath.Join(workspace, "state.txt"), []byte("first\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runTestCommand(t, workspace, "git", "add", "state.txt")
+	runTestCommand(t, workspace, "git", "commit", "-q", "-m", "first")
+	expectedCommit := strings.TrimSpace(runTestCommand(t, workspace, "git", "rev-parse", "HEAD"))
+	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(expectedCommit+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "state.txt"), []byte("second\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runTestCommand(t, workspace, "git", "add", "state.txt")
+	runTestCommand(t, workspace, "git", "commit", "-q", "-m", "second")
+	if err := validateWorkspaceCommitBinding(sessionID, expectedCommit); err == nil ||
+		err.Error() != "workspace Git commit mismatch" {
+		t.Fatalf("Git workspace replacement error = %v", err)
+	}
+}
+
 func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 	prompted := make(chan struct{})
 	receivedPrompt := make(chan string, 1)

@@ -833,7 +833,8 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			args.Model,
 			args.ResponseFormat,
 			agentPromptExecutionContext{
-				NativeMode: nativeMode,
+				NativeMode:      nativeMode,
+				WorkspaceCommit: strings.TrimSpace(args.WorkspaceCommit),
 			},
 			pushProgress,
 			writeJSON,
@@ -974,7 +975,8 @@ func doopsCICDString(value interface{}) string {
 }
 
 type agentPromptExecutionContext struct {
-	NativeMode string
+	NativeMode      string
+	WorkspaceCommit string
 }
 
 const trustedReconciliationContextProtocolV2 = "doops.reconciliation-context/v2"
@@ -1023,6 +1025,10 @@ func requireDoagentCICDCapabilities(baseURL, instruction, sessionID string) erro
 func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, model string, responseFormat string, execution agentPromptExecutionContext, pushProgress notificationSender, writeJSON func(v interface{})) {
 	log.Printf("🤖 WS Running doagent via ACP HTTP: session=%s structured=%t model=%s",
 		doopsSessionID, responseFormat == "json", model)
+	if err := validateWorkspaceCommitBinding(doopsSessionID, execution.WorkspaceCommit); err != nil {
+		writeJSON(buildErrorResponse(reqID, -32603, "workspace_commit_binding_invalid"))
+		return
+	}
 
 	doagentURL := os.Getenv("DO_AGENT_URL")
 	if doagentURL == "" {
