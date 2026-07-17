@@ -324,7 +324,7 @@ spec:
 
 	err := runCICDCommand(
 		context.Background(),
-		[]string{"run", "-f", workflow, "-target", "agent-runtime", "--dry-run"},
+		[]string{"run", "-f", workflow, "-target", "agent-runtime", "-model", "quan2go/gpt-5-4", "--dry-run"},
 		[]Server{{Name: "agent-runtime", Gateway: gateway.URL, Cluster: "doops-edu", Instance: "edu-coder"}},
 		nil,
 		NewSessionStore(),
@@ -343,6 +343,9 @@ spec:
 	if caller.arguments["operation"] != "ask" {
 		t.Fatalf("dry-run must use ask operation: %#v", caller.arguments)
 	}
+	if caller.arguments["model"] != "quan2go/gpt-5-4" {
+		t.Fatalf("dry-run model mismatch: %#v", caller.arguments)
+	}
 }
 
 func TestRunCICDCommandStopsBeforePromptWhenCredentialPrepareFails(t *testing.T) {
@@ -351,7 +354,9 @@ func TestRunCICDCommandStopsBeforePromptWhenCredentialPrepareFails(t *testing.T)
 		t.Fatalf("create repository marker: %v", err)
 	}
 	workflow := filepath.Join(root, "release.yaml")
-	if err := os.WriteFile(workflow, []byte("kind: DeploymentTemplate\n"), 0o644); err != nil {
+	if err := os.WriteFile(workflow, []byte(
+		"apiVersion: doops.sh/v2\nkind: DeploymentTemplate\n",
+	), 0o644); err != nil {
 		t.Fatalf("write workflow: %v", err)
 	}
 
@@ -601,5 +606,64 @@ func TestWorkflowAPIVersionAcceptsV3(t *testing.T) {
 	}
 	if version != "doops.sh/v3" {
 		t.Fatalf("apiVersion = %q, want doops.sh/v3", version)
+	}
+	executionVersion, err := workflowExecutionAPIVersion(path)
+	if err != nil {
+		t.Fatalf("read v3 execution contract: %v", err)
+	}
+	if executionVersion != "doops.sh/v3" {
+		t.Fatalf("execution apiVersion = %q, want doops.sh/v3", executionVersion)
+	}
+}
+
+func TestRunCICDCommandRejectsUnsupportedWorkflowBeforePushOrAgentContact(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("create repository marker: %v", err)
+	}
+	workflow := filepath.Join(root, "environment.yaml")
+	if err := os.WriteFile(workflow, []byte(
+		"apiVersion: doops.sh/v3\nkind: EnvironmentReleaseDeclaration\n",
+	), 0o600); err != nil {
+		t.Fatalf("write v3 environment: %v", err)
+	}
+
+	originalPush := pushWorkflowWorkspace
+	originalOpen := openWorkflowAgent
+	pushes := 0
+	agentContacts := 0
+	pushWorkflowWorkspace = func(Server, string, string, bool, []string, string) (string, error) {
+		pushes++
+		return strings.Repeat("a", 40), nil
+	}
+	openWorkflowAgent = func(Server, *SessionStore, string, bool) (workflowAgentCaller, func()) {
+		agentContacts++
+		return nil, func() {}
+	}
+	t.Cleanup(func() {
+		pushWorkflowWorkspace = originalPush
+		openWorkflowAgent = originalOpen
+	})
+
+	err := runCICDCommand(
+		context.Background(),
+		[]string{"run", "-f", workflow, "-target", "agent-runtime", "--dry-run"},
+		[]Server{{
+			Name: "agent-runtime", Gateway: "https://gateway.example.com",
+			Cluster: "doops", Instance: "runner",
+		}},
+		nil,
+		NewSessionStore(),
+		"release-test",
+		false,
+	)
+	if err == nil || !strings.Contains(
+		err.Error(),
+		"requires doops.sh/v2 DeploymentTemplate or doops.sh/v3 EnvironmentDefinition",
+	) {
+		t.Fatalf("unsupported workflow error = %v", err)
+	}
+	if pushes != 0 || agentContacts != 0 {
+		t.Fatalf("unsupported workflow caused side effects: pushes=%d agentContacts=%d", pushes, agentContacts)
 	}
 }

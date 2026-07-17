@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -390,14 +391,137 @@ func TestBuildGitRemoteURLForGatewayTarget(t *testing.T) {
 		Instance: "oilan-node",
 	}
 
-	got, err := buildGitRemoteURLForServer(server, "deploy-main", "secret-token")
+	got, err := buildGitRemoteURLForServer(server, "deploy-main", true)
 	if err != nil {
 		t.Fatalf("build gateway git URL: %v", err)
 	}
-	want := "https://doops:secret-token@gateway.example.com:42222/v1/git/doops-oilan/oilan-node/deploy-main.git"
+	want := "https://doops@gateway.example.com:42222/v1/git/doops-oilan/oilan-node/deploy-main.git"
 	if got != want {
 		t.Fatalf("gateway git URL mismatch:\nwant %s\n got %s", want, got)
 	}
+}
+
+func TestBuildGitRemoteURLRejectsLegacyDirectTarget(t *testing.T) {
+	_, err := buildGitRemoteURLForServer(Server{Name: "legacy", IP: "127.0.0.1"}, "deploy-main", true)
+	if err == nil || !strings.Contains(err.Error(), "requires a gateway target") {
+		t.Fatalf("legacy direct Git transport must be rejected, got %v", err)
+	}
+}
+
+func TestWorkspaceSnapshotDirectoriesAreIsolatedPerPush(t *testing.T) {
+	first, err := createWorkspaceSnapshotDirectory("shared-session")
+	if err != nil {
+		t.Fatalf("create first snapshot directory: %v", err)
+	}
+	defer cleanupSignalDirectory(first)
+	second, err := createWorkspaceSnapshotDirectory("shared-session")
+	if err != nil {
+		t.Fatalf("create second snapshot directory: %v", err)
+	}
+	defer cleanupSignalDirectory(second)
+	if first == second {
+		t.Fatalf("concurrent pushes reused snapshot directory %s", first)
+	}
+}
+
+func TestPrepareGitAuthEnvironmentKeepsTokenOutOfArgumentsAndCleansFiles(t *testing.T) {
+	const token = "token-must-never-enter-git-argv"
+	t.Setenv("GIT_TRACE_CURL", "1")
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "credential.helper")
+	t.Setenv("GIT_CONFIG_VALUE_0", "store")
+	env, cleanup, err := prepareGitAuthEnvironment(token)
+	if err != nil {
+		t.Fatalf("prepare Git authentication: %v", err)
+	}
+
+	var askPassPath, tokenPath string
+	var disabledSystemConfig, disabledGlobalConfig bool
+	for _, entry := range env {
+		if strings.Contains(entry, token) {
+			t.Fatalf("Git environment exposed token value: %q", entry)
+		}
+		switch {
+		case strings.HasPrefix(entry, "GIT_ASKPASS="):
+			askPassPath = strings.TrimPrefix(entry, "GIT_ASKPASS=")
+		case strings.HasPrefix(entry, "DOOPS_GIT_TOKEN_FILE="):
+			tokenPath = strings.TrimPrefix(entry, "DOOPS_GIT_TOKEN_FILE=")
+		case entry == "GIT_CONFIG_NOSYSTEM=1":
+			disabledSystemConfig = true
+		case entry == "GIT_CONFIG_GLOBAL=/dev/null":
+			disabledGlobalConfig = true
+		}
+		if strings.HasPrefix(entry, "GIT_TRACE") || strings.HasPrefix(entry, "GIT_CONFIG_KEY_") ||
+			strings.HasPrefix(entry, "GIT_CONFIG_VALUE_") || strings.HasPrefix(entry, "GIT_CONFIG_COUNT=") {
+			t.Fatalf("unsafe inherited Git environment was not removed: %q", entry)
+		}
+	}
+	if askPassPath == "" || tokenPath == "" {
+		t.Fatalf("Git authentication environment is incomplete: %#v", env)
+	}
+	if !disabledSystemConfig || !disabledGlobalConfig {
+		t.Fatalf("Git system/global config was not disabled: %#v", env)
+	}
+	if mode := fileModePerm(t, askPassPath); mode != 0o700 {
+		t.Fatalf("askpass mode = %#o, want 0700", mode)
+	}
+	if mode := fileModePerm(t, tokenPath); mode != 0o600 {
+		t.Fatalf("token file mode = %#o, want 0600", mode)
+	}
+
+	cmd := exec.Command(askPassPath, "Password for https://doops@example.com")
+	cmd.Env = env
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("run askpass helper: %v", err)
+	}
+	if strings.TrimSpace(string(output)) != token {
+		t.Fatalf("askpass helper returned an unexpected token")
+	}
+
+	authDir := filepath.Dir(tokenPath)
+	cleanup()
+	if _, err := os.Stat(authDir); !os.IsNotExist(err) {
+		t.Fatalf("Git authentication directory was not removed: %v", err)
+	}
+}
+
+func TestCleanupDeadGitAuthDirectoriesUsesOwnershipLock(t *testing.T) {
+	dir := filepath.Join(os.TempDir(), "doops-git-auth-lock-test")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("create auth directory: %v", err)
+	}
+	defer os.RemoveAll(dir)
+	lockFile, err := os.OpenFile(filepath.Join(dir, "active.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("create auth lock: %v", err)
+	}
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatalf("lock auth directory: %v", err)
+	}
+	cleanupDeadGitAuthDirectories()
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("active auth directory was removed: %v", err)
+	}
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatalf("unlock auth directory: %v", err)
+	}
+	if err := lockFile.Close(); err != nil {
+		t.Fatalf("close auth lock: %v", err)
+	}
+	cleanupDeadGitAuthDirectories()
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("inactive auth directory survived lock cleanup: %v", err)
+	}
+}
+
+func fileModePerm(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	return info.Mode().Perm()
 }
 
 func TestPrebuiltCLIUsesGitSyncPushBackend(t *testing.T) {
@@ -439,7 +563,8 @@ func assertBinaryUsesGitSyncPushBackend(t *testing.T, bin string) {
 		"git push -f",
 		"doops-sync-",
 		"AutoSync",
-		"/git/%s.git",
+		"Git workspace transport requires a gateway target",
+		"credential.helper=",
 	}
 	for _, marker := range required {
 		if !strings.Contains(text, marker) {

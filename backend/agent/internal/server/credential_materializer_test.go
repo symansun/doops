@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -138,7 +140,7 @@ func TestMaterializeTLSCredentialValidatesKeyPair(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("DOOPS_TEST_SECRET_TYPE", "kubernetes.io/tls")
 	t.Setenv("DOOPS_TEST_SECRET_KEYS", "tls.crt,tls.key")
-	certificate, privateKey := credentialTestCertificate(t)
+	certificate, privateKey := credentialTestCertificate(t, "pkcs8")
 
 	result, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
 		CredentialID:   "cred_tls",
@@ -163,7 +165,17 @@ func TestMaterializeTLSCredentialValidatesKeyPair(t *testing.T) {
 	}
 	assertCredentialCanaryNotInText(t, "command arguments", readCredentialTestFile(t, argsLog), privateKey)
 
-	_, wrongKey := credentialTestCertificate(t)
+	for _, format := range []string{"pkcs1", "sec1"} {
+		format := format
+		t.Run(format, func(t *testing.T) {
+			certificate, privateKey := credentialTestCertificate(t, format)
+			if _, _, err := validateTLSCredential(certificate, privateKey); err != nil {
+				t.Fatalf("validate %s TLS private key: %v", format, err)
+			}
+		})
+	}
+
+	_, wrongKey := credentialTestCertificate(t, "pkcs8")
 	_, err = materializeCredential(context.Background(), CredentialMaterializeRequest{
 		CredentialID:   "cred_tls_bad",
 		GrantID:        "grant_tls_bad",
@@ -418,11 +430,24 @@ printf '0123456789abcdef\trefs/heads/main\n'
 	return bin, argsLog
 }
 
-func credentialTestCertificate(t *testing.T) (string, string) {
+func credentialTestCertificate(t *testing.T, format string) (string, string) {
 	t.Helper()
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate private key: %v", err)
+	var privateKey crypto.Signer
+	switch format {
+	case "pkcs1":
+		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			t.Fatalf("generate RSA private key: %v", err)
+		}
+		privateKey = key
+	case "pkcs8", "sec1":
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			t.Fatalf("generate EC private key: %v", err)
+		}
+		privateKey = key
+	default:
+		t.Fatalf("unsupported test private key format %q", format)
 	}
 	now := time.Now().UTC()
 	template := x509.Certificate{
@@ -433,16 +458,29 @@ func credentialTestCertificate(t *testing.T) (string, string) {
 		NotAfter:     now.Add(24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 	}
-	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, privateKey.Public(), privateKey)
 	if err != nil {
 		t.Fatalf("create certificate: %v", err)
 	}
-	keyDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
-	if err != nil {
-		t.Fatalf("marshal private key: %v", err)
+	var keyBlock *pem.Block
+	switch format {
+	case "pkcs1":
+		keyBlock = &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey.(*rsa.PrivateKey))}
+	case "sec1":
+		keyDER, err := x509.MarshalECPrivateKey(privateKey.(*ecdsa.PrivateKey))
+		if err != nil {
+			t.Fatalf("marshal EC private key: %v", err)
+		}
+		keyBlock = &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}
+	case "pkcs8":
+		keyDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+		if err != nil {
+			t.Fatalf("marshal PKCS#8 private key: %v", err)
+		}
+		keyBlock = &pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}
 	}
 	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	key := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	key := pem.EncodeToMemory(keyBlock)
 	return string(certificate), string(key)
 }
 

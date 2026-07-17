@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -643,12 +644,8 @@ func validateTLSCredential(certificatePEM, privateKeyPEM string) (*x509.Certific
 	if err != nil {
 		return nil, "", errors.New("tls_key_pair_invalid")
 	}
-	privateKey, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+	signer, err := parseTLSPrivateKey(keyBlock)
 	if err != nil {
-		return nil, "", errors.New("tls_key_pair_invalid")
-	}
-	signer, ok := privateKey.(crypto.Signer)
-	if !ok {
 		return nil, "", errors.New("tls_key_pair_invalid")
 	}
 	certificatePublicKey, certificateErr := x509.MarshalPKIXPublicKey(certificate.PublicKey)
@@ -658,6 +655,30 @@ func validateTLSCredential(certificatePEM, privateKeyPEM string) (*x509.Certific
 	}
 	sum := sha256.Sum256(certificate.Raw)
 	return certificate, "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func parseTLSPrivateKey(block *pem.Block) (crypto.Signer, error) {
+	if block == nil {
+		return nil, errors.New("private key is missing")
+	}
+	switch block.Type {
+	case "PRIVATE KEY":
+		privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		signer, ok := privateKey.(crypto.Signer)
+		if !ok {
+			return nil, errors.New("private key does not implement crypto.Signer")
+		}
+		return signer, nil
+	case "RSA PRIVATE KEY":
+		return x509.ParsePKCS1PrivateKey(block.Bytes)
+	case "EC PRIVATE KEY":
+		return x509.ParseECPrivateKey(block.Bytes)
+	default:
+		return nil, fmt.Errorf("unsupported private key PEM type %q", block.Type)
+	}
 }
 
 func verifyHelmRepository(ctx context.Context, repositoryURL, username, password string) (string, error) {

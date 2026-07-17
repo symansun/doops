@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -70,12 +71,14 @@ func buildDoagentPromptParams(sessionID, prompt string, admission *trustedReconc
 		"sessionId":    sessionID,
 		"prompt":       prompt,
 		"allowedTools": []string{},
+		"toolsEnabled": false,
 	}
 	if !structured || admission == nil {
 		return params
 	}
 	params["allowedTools"] = append([]string(nil), admission.AllowedTools...)
 	params["trustedReconciliationContext"] = admission.Context
+	params["toolsEnabled"] = true
 	return params
 }
 
@@ -232,13 +235,23 @@ func buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit
 			"mcp_doops_plan_ReconcileHelmRelease",
 		)
 	}
+	releaseScope, err := trustedDoopsPlanReleaseScope(root, envelope.WorkflowPath, envelope.Inputs)
+	if err != nil {
+		return trustedReconciliationAdmission{}, err
+	}
+	if releaseScope == nil {
+		return trustedReconciliationAdmission{}, errors.New("trusted native reconciliation requires a v2 DeploymentTemplate or v3 EnvironmentDefinition")
+	}
 	capabilities := make(map[string]trustedReconciliationCapability, len(tools))
 	for _, tool := range tools {
 		key := strings.TrimPrefix(tool, "mcp_doops_plan_")
 		scope := map[string]interface{}{
 			"cluster": plan.Cluster, "instance": plan.Instance, "project": plan.Project,
 			"environment": plan.Environment, "template": plan.Template, "tool": tool,
+			"workspacePath": root, "workflowPath": envelope.WorkflowPath,
+			"inputs": envelope.Inputs,
 		}
+		scope["releasePlan"] = releaseScope
 		scopeDigest, err := digestJSON(scope)
 		if err != nil {
 			return trustedReconciliationAdmission{}, err

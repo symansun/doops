@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -606,24 +607,63 @@ func TestSubscribeDoagentSSEReturnsErrorWhenStreamEndsWithoutFinalEvent(t *testi
 	}
 }
 
-func TestSubscribeDoagentSSEDoesNotForwardMalformedRawData(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprintln(w, `data: Authorization: Bearer synthetic-canary`)
-		fmt.Fprintln(w)
-	}))
-	defer ts.Close()
+func TestSubscribeDoagentSSEScopesUntaggedEventsToFreshMachineSession(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		allowUntagged bool
+		wantTypes     []string
+	}{
+		{
+			name:          "fresh machine session accepts current untagged event",
+			allowUntagged: true,
+			wantTypes:     []string{"agent_message", "turn_finished"},
+		},
+		{
+			name:          "reused session rejects untagged event",
+			allowUntagged: false,
+			wantTypes:     []string{"turn_finished"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/events" {
+					t.Fatalf("unexpected path: %s", r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","replay":true,"content":{"type":"text","text":"stale"}}}}`)
+				fmt.Fprintln(w)
+				fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","content":{"type":"text","text":"current"}}}}`)
+				fmt.Fprintln(w)
+				fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-current","status":"completed","stopReason":"end_turn"}}}`)
+				fmt.Fprintln(w)
+			}))
+			defer ts.Close()
 
-	var progress strings.Builder
-	err := subscribeDoagentSSE(t.Context(), ts.URL, "malformed-sse", func(evt notificationEvent) {
-		progress.WriteString(evt.Data)
-	})
-	if err == nil || !strings.Contains(err.Error(), "doagent_sse_protocol_invalid") {
-		t.Fatalf("malformed SSE error = %v", err)
-	}
-	if strings.Contains(progress.String(), "synthetic-canary") ||
-		!strings.Contains(progress.String(), "doagent_sse_protocol_invalid") {
-		t.Fatalf("malformed SSE raw data leaked to progress: %q", progress.String())
+			turnIDReady := make(chan string, 1)
+			turnIDReady <- "turn-current"
+			close(turnIDReady)
+			var gotTypes []string
+			err := subscribeDoagentSSEWithCollectorReady(
+				t.Context(),
+				ts.URL,
+				"scope-test",
+				func(notificationEvent) {},
+				func(update map[string]interface{}) error {
+					gotTypes = append(gotTypes, fmt.Sprint(update["sessionUpdate"]))
+					return nil
+				},
+				turnIDReady,
+				test.allowUntagged,
+				true,
+				nil,
+			)
+			if err != nil {
+				t.Fatalf("subscribe: %v", err)
+			}
+			if !reflect.DeepEqual(gotTypes, test.wantTypes) {
+				t.Fatalf("collected update types = %#v, want %#v", gotTypes, test.wantTypes)
+			}
+		})
 	}
 }
 
@@ -1515,6 +1555,11 @@ func initializeAgentTestWS(t *testing.T, conn *websocket.Conn) {
 	if strings.TrimSpace(fmt.Sprint(result["runtimeId"])) == "" {
 		t.Fatalf("initialize result must identify the agent process: %#v", resp)
 	}
+	capabilities, _ := result["capabilities"].(map[string]interface{})
+	protocols, _ := capabilities["protocols"].(map[string]interface{})
+	if protocols["credentialPlan"] != credentialPlanProtocolV2 {
+		t.Fatalf("initialize result must advertise credential plan v2: %#v", resp)
+	}
 }
 
 func callTool(t *testing.T, conn *websocket.Conn, tool string, args map[string]interface{}) string {
@@ -1615,12 +1660,14 @@ func TestSanitizeSecretTextRedactsCredentialFields(t *testing.T) {
 	raw := "authorization=Bearer synthetic cookie=session-canary dbPassword=database-canary githubToken=token-canary " +
 		"https://user:url-canary@example.test/repo.git?access_token=query-canary Basic YmFzaWMtY2FuYXJ5 " +
 		"https://storage.example.test/object?X-Goog-Signature=signature-canary&X-Amz-Security-Token=security-token-canary&githubToken=github-query-canary " +
+		"ghp_" + strings.Repeat("a", 40) + " github_pat_" + strings.Repeat("b", 82) + " AKIA" + strings.Repeat("A", 16) + " " +
 		"-----BEGIN PRIVATE KEY-----\npem-canary\n-----END PRIVATE KEY-----"
 	sanitized := sanitizeSecretText(raw)
 	for _, secret := range []string{
 		"synthetic", "session-canary", "database-canary", "token-canary",
 		"url-canary", "query-canary", "signature-canary", "security-token-canary",
 		"github-query-canary", "YmFzaWMtY2FuYXJ5", "pem-canary",
+		"ghp_", "github_pat_", "AKIA",
 	} {
 		if strings.Contains(sanitized, secret) {
 			t.Fatalf("sanitized text retained %q: %s", secret, sanitized)
@@ -1680,5 +1727,43 @@ func TestSubscribeDoagentSSESanitizesAgentMessagesBeforeCollectorAndProgress(t *
 		strings.Contains(collected, "stream-canary") ||
 		!strings.Contains(progress.String(), "REDACTED") {
 		t.Fatalf("raw agent message escaped sanitization: progress=%q collector=%q", progress.String(), collected)
+	}
+}
+
+func TestSubscribeDoagentSSEDefersStructuredAgentMessage(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","content":{"type":"text","text":"{\"kind\":\"DeploymentRun\",\"subject\":\"https://storage.example.test/object?X-Amz-Signature=stream-canary\"}"}}}}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","status":"completed","stopReason":"end_turn"}}}`)
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	var progress strings.Builder
+	var collected []string
+	err := subscribeDoagentSSEWithCollectorReady(
+		t.Context(),
+		ts.URL,
+		"structured-no-forward",
+		func(evt notificationEvent) { progress.WriteString(evt.Data) },
+		func(update map[string]interface{}) error {
+			collected = append(collected, fmt.Sprint(update["sessionUpdate"]))
+			return nil
+		},
+		nil,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("subscribe structured SSE: %v", err)
+	}
+	if strings.Contains(progress.String(), "DeploymentRun") ||
+		strings.Contains(progress.String(), "stream-canary") {
+		t.Fatalf("unvalidated structured result was forwarded: %s", progress.String())
+	}
+	if !reflect.DeepEqual(collected, []string{"agent_message", "turn_finished"}) {
+		t.Fatalf("structured updates were not collected: %#v", collected)
 	}
 }

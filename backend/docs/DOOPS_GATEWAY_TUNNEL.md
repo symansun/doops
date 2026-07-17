@@ -28,22 +28,26 @@ gateway 是统一公网控制面：
 
 当前受管 gateway 主机信息：
 
-- 公网地址：`203.0.113.10`
+- SSH 地址：`106.54.197.139`
 - SSH 用户：`ubuntu`
 - Gateway 服务端口：`42222`
-- Gateway URL：`http://203.0.113.10:42222`
+- Gateway URL：`https://doops.l8ai.cn`
 - 维护用途：发布和自恢复 `doops-gateway` 控制面，不作为普通 `doops-agent` target 使用。
 
 维护凭据不得写入仓库。需要发布 gateway 时使用：
 
 ```bash
-bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
+bash scripts/deploy-gateway.sh \
+  --host 106.54.197.139 \
+  --user ubuntu \
+  --verify-target gw-edu-coder \
+  --verify-session gateway-release-<release>
 ```
 
 第一版是 SQLite + 单活可靠部署：
 
 - SQLite WAL 数据库：用户、token、权限、审计。
-- agent 使用绑定 `cluster/instance` 的 registration token 注册 gateway；用户操作继续由 user token 和权限控制。
+- agent 注册 gateway 不使用 token，只携带声明的 `cluster/instance`；用户操作继续由 user token 和权限控制。
 - user token 只能执行授权范围内的 action。
 - gateway 转发 doops JSON-RPC 操作流量和 Git HTTP 请求，不做裸 TCP 隧道。
 - `push/pull` 在标准 gateway 路径下使用 Git 语义。gateway 对外暴露 `/v1/git/<cluster>/<instance>/<session>.git/...`，再通过目标 agent 已建立的反向 WebSocket 把 Git HTTP 请求透传给 agent 本地 `/git/<session>.git/...`。
@@ -64,8 +68,8 @@ bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
 
 ## Start Gateway
 
-用户、user token、agent registration token 和授权由管理员维护。agent
-部署从运行时 Secret 读取绑定 `cluster/instance` 的 registration token。
+用户、user token 和授权由管理员维护。agent 部署只声明绑定的
+`cluster/instance`，不读取 registration token。
 产品和 skill 的日常入口是 `doops`；gateway 内部维护命令不作为业务用户操作手册暴露。
 
 gateway 是独立发布包，不登记为 doops target，也不通过任何 target 发布自己。
@@ -73,12 +77,17 @@ gateway 是独立发布包，不登记为 doops target，也不通过任何 targ
 标准发布入口：
 
 ```bash
-bash scripts/deploy-gateway.sh --host <gateway-host> --user <ssh-user>
+bash scripts/deploy-gateway.sh \
+  --host <gateway-host> \
+  --user <ssh-user> \
+  --verify-target <configured-doops-target> \
+  --verify-session <session-name>
 ```
 
 脚本只走 SSH/SCP，并在宿主机真实 root 下校验 DB、备份二进制、替换、重启和
-校验 `/proc/<pid>/exe` hash。不要用 `doops exec/push/write` 或 base64 分片部署
-`doops-gateway`。
+校验 `/proc/<pid>/exe` hash。`--verify-target` 只用于复用本机 DoOps CLI 的认证检查
+发布前后 target 基线，不通过 target 传输或替换 Gateway。不要用
+`doops exec/push/write` 或 base64 分片部署 `doops-gateway`。
 
 手工构建入口在仓库一级目录 `gateway/`：
 
@@ -114,9 +123,16 @@ doops admin token create \
   --expires 720h
 ```
 
-`--target` 用于选择本机配置里的 gateway 地址和管理员 token；也可以显式传
-`--gateway` 和 `--token`。如需把新 token 写入本机缓存，必须显式加
+`--target` 用于选择本机配置里的 gateway 地址和管理员 token。管理员 token
+不得通过命令行参数传入。如需把新 token 写入本机缓存，必须显式加
 `--save-as <configured-target>`。
+
+轮换旧 token：
+
+```bash
+doops admin token list --target <gateway-target> --kind user
+doops admin token revoke --target <gateway-target> --id <token-id>
+```
 
 管理员能力应覆盖：
 
@@ -260,7 +276,8 @@ doops -session build push --target prod-master --src .
 - `targets:list`
 - `admin`
 
-普通 user token 默认拥有上述 target 操作能力；旧库中只授予 `targets:list` 的 scope 也按全功能 target access 兼容，避免“能看到但不能操作”。需要最小权限隔离时，再显式授予较小 action 集。
+普通 user token 默认不拥有 target 操作能力。每个 target/action 都必须显式授权；
+`targets:list` 只允许列出可见 target，不隐式授予 `exec`、`ask`、`write` 或其他操作。
 `admin` 只用于 gateway 管理，不随默认 target 权限下发。
 
 ## Gateway Broadcast Upgrade
@@ -326,14 +343,14 @@ doops -session upgrade_20260511 upgrade \
 
 这段 smoke 使用的是受控实验 gateway。doops 支持 `http` / `https` gateway；公网生产环境建议改用 `https` / `wss` gateway，但 CLI 和 agent 不会因为 gateway 是 HTTP 而拒绝连接。
 
-公网 gateway 部署在 `203.0.113.10:42222`，当前已接入：
+这段记录对应早期受控实验环境，不是当前 target 或发布配置。实验时接入：
 
 - `doops-114/vm-114`
 - `doops-jm/jm-228`
 
 已验证：
 
-- `doops targets --gateway http://203.0.113.10:42222`
+- `doops targets --gateway <historical-test-gateway>`
 - 89/114/JM 的 `exec`
 - 89/114/JM 的 `write` + `read`
 - 89/114/JM 的 gateway `push` 到 `/root/ws/$SESSION`，并校验 `.doops-ready` 和文件 sha256；传输路径为 `/v1/git/<cluster>/<instance>/<session>.git` 的 Git HTTP 反向隧道
@@ -344,10 +361,10 @@ JM 第三实例已通过 89 内网路径接入，目标标识为 `doops-jm/jm-22
 
 ## Current Managed Targets
 
-当前文档维护口径：
+当前文档维护口径只使用 Gateway 的 `cluster/instance` 身份，不维护推断或示例 IP：
 
-- `doops-oilan / oilan-node` -> `198.51.100.24`，oilan 集群，标准 k3s 部署
-- `doops-edu / edu-coder` -> `198.51.100.23`，edu-coder 集群
+- `doops-oilan / oilan-node`，oilan 集群，标准 k3s 部署
+- `doops-edu / edu-coder`，edu-coder 集群
 - `doops-jm / jm-228` -> JM 集群
 - `doops-zheyin / node-239` -> 浙音集群
 - `doops-114 / vm-114` -> 114 集群

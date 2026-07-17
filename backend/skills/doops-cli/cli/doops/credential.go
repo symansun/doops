@@ -92,9 +92,9 @@ func prepareWorkflowCredentials(
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		category := strings.TrimSpace(string(body))
-		if !validCredentialErrorCategory(category) {
-			category = "gateway_error"
+		category, err := decodeCredentialPrepareFailure(body)
+		if err != nil {
+			return credentialRun{}, fmt.Errorf("invalid credential prepare error response: HTTP %s", response.Status)
 		}
 		return credentialRun{}, fmt.Errorf("credential prepare failed: HTTP %s: %s", response.Status, category)
 	}
@@ -117,6 +117,26 @@ func prepareWorkflowCredentials(
 		run.Materializations = []credentialMaterializationMetadata{}
 	}
 	return run, nil
+}
+
+func decodeCredentialPrepareFailure(body []byte) (string, error) {
+	var failure struct {
+		APIVersion string `json:"apiVersion"`
+		Kind       string `json:"kind"`
+		Category   string `json:"category"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&failure); err != nil {
+		return "", err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF ||
+		failure.APIVersion != workspaceManifestAPIVersion ||
+		failure.Kind != "CredentialPrepareError" ||
+		!validCredentialErrorCategory(failure.Category) {
+		return "", fmt.Errorf("invalid credential prepare failure")
+	}
+	return failure.Category, nil
 }
 
 func validCredentialErrorCategory(category string) bool {

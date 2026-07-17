@@ -166,6 +166,87 @@ func TestBindDeploymentRunEvidenceUsesEligibleRuntimeCalls(t *testing.T) {
 	}
 }
 
+func TestBindDeploymentRunEvidenceUsesTrustedPlanReferenceName(t *testing.T) {
+	traces := completedDoagentToolTraces(t, []map[string]interface{}{
+		{
+			"sessionUpdate": "tool_call_update",
+			"toolCallId":    "source-1",
+			"toolName":      "mcp_doops_plan_ObserveWorkspaceSource",
+			"status":        "completed",
+			"input":         map[string]interface{}{},
+			"rawOutput":     map[string]interface{}{"revision": "immutable"},
+		},
+	})
+
+	result := deploymentRunWithToolRef(
+		"plan.ObserveWorkspaceSource",
+		map[string]interface{}{},
+	)
+	_, bound, err := bindTestDeploymentRun(result, traces)
+	if err != nil {
+		t.Fatalf("bind trusted plan reference: %v", err)
+	}
+	entry := bound["status"].(map[string]interface{})["evidence"].([]interface{})[0].(map[string]interface{})
+	toolCall := entry["toolCall"].(map[string]interface{})
+	if toolCall["id"] != "source-1" ||
+		toolCall["tool"] != "mcp_doops_plan_ObserveWorkspaceSource" {
+		t.Fatalf("unexpected trusted runtime call: %#v", entry)
+	}
+}
+
+func TestBindDeploymentRunEvidenceReplacesModelEvidenceIdentity(t *testing.T) {
+	traces := completedDoagentToolTraces(t, []map[string]interface{}{
+		{
+			"sessionUpdate":   "tool_call_update",
+			"toolCallId":      "source-1",
+			"toolName":        "mcp_doops_plan_ObserveWorkspaceSource",
+			"status":          "completed",
+			"input":           map[string]interface{}{},
+			"rawOutput":       map[string]interface{}{"revision": "immutable"},
+			"evidenceSubject": "source-identity",
+		},
+	})
+	result := deploymentRunWithToolRef("plan.ObserveWorkspaceSource", map[string]interface{}{})
+	entry := result["status"].(map[string]interface{})["evidence"].([]interface{})[0].(map[string]interface{})
+	entry["subject"] = "workspace://https://example.test/app.git@revision"
+	entry["observedAt"] = "model-authored"
+
+	_, bound, err := bindTestDeploymentRun(result, traces)
+	if err != nil {
+		t.Fatalf("bind authoritative evidence identity: %v", err)
+	}
+	entry = bound["status"].(map[string]interface{})["evidence"].([]interface{})[0].(map[string]interface{})
+	observedAt, _ := entry["observedAt"].(string)
+	if entry["subject"] != "source-identity" ||
+		observedAt == "model-authored" ||
+		!validDoagentObservedAt(observedAt) {
+		t.Fatalf("model evidence identity was not replaced: %#v", entry)
+	}
+}
+
+func TestBindDeploymentRunEvidenceEnforcesPrimarySourceObservation(t *testing.T) {
+	traces := completedDoagentToolTraces(t, []map[string]interface{}{
+		{
+			"sessionUpdate":   "tool_call_update",
+			"toolCallId":      "helm-1",
+			"toolName":        "mcp_doops_plan_ObserveHelmRelease",
+			"status":          "completed",
+			"input":           map[string]interface{}{},
+			"rawOutput":       map[string]interface{}{"status": "deployed"},
+			"evidenceSubject": "helm-release",
+		},
+	})
+	result := deploymentRunWithToolRef("plan.ObserveHelmRelease", map[string]interface{}{})
+	_, _, err := bindDeploymentRunEvidence(
+		result,
+		traces,
+		"mcp_doops_plan_ObserveWorkspaceSource",
+	)
+	if err == nil || !strings.Contains(err.Error(), "evidence[0] must reference plan.ObserveWorkspaceSource") {
+		t.Fatalf("primary source observation was not enforced: %v", err)
+	}
+}
+
 func TestBindDeploymentRunEvidenceRejectsModelAuthoredRuntimePayload(t *testing.T) {
 	traces := completedDoagentToolTraces(t, []map[string]interface{}{
 		{"sessionUpdate": "tool_call_update", "toolCallId": "read-1", "toolName": "Read", "status": "completed", "input": map[string]interface{}{"path": "state.json"}, "rawOutput": map[string]interface{}{"revision": "current"}},
@@ -406,7 +487,7 @@ func bindTestDeploymentRun(
 	result map[string]interface{},
 	traces []doagentToolTrace,
 ) (string, map[string]interface{}, error) {
-	return bindDeploymentRunEvidence(result, traces)
+	return bindDeploymentRunEvidence(result, traces, "")
 }
 
 func TestRejectSensitiveToolResultRejectsSensitiveFieldsAndScalars(t *testing.T) {

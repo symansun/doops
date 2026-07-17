@@ -1,117 +1,62 @@
-# DeploymentTemplate Contract
+# DoOps v3 拆分声明契约
 
-## Semantic Composition
+## 根类型
 
-Use `SemanticRelease` when an application has independently selectable release
-units that share an environment-level deployment boundary. A composition
-references reusable `ServiceRelease` documents:
+`doops.sh/v3` 只定义两个入口：
 
-```yaml
-apiVersion: doops.sh/v2
-kind: SemanticRelease
-metadata:
-  name: example-production-release
-spec:
-  application: example
-  environment: production
-  configurationSource: deploy/environments.yaml
-  parameters:
-    revision:
-      required: true
-    version:
-      required: true
-    reason:
-      required: true
-    services:
-      required: true
-  serviceCatalog:
-    api:
-      uses: services/api.yaml
-  flow:
-    - intent: materialize-selected-artifacts
-      forEach: selected-services
-      produces:
-        - source-artifact
-    - intent: converge-shared-release
-      requires:
-        - source-target-digest-equal
-      scope:
-        selectedImageBindings: update
-        unselectedImageBindings: preserve-observed
-```
+- `BuildDefinition`：固定路径 `deploy/deploy.yaml`。
+- `EnvironmentDefinition`：固定路径
+  `deploy/environments/<metadata.name>/environment.yaml`。
 
-Each referenced file must be `doops.sh/v2 ServiceRelease` and must declare a
-service identity, source context, artifact repository, deployment binding,
-semantic intents and required evidence.
+公共和环境服务文件是被引用声明，不能单独发起环境部署：
 
-Resolve references relative to the composition file. Reject path escape,
-duplicate keys, unknown or duplicate selections, mismatched service identity,
-missing intents and unresolved dependencies. Semantic intents describe desired
-outcomes; they must not contain commands, scripts or fixed tool names.
+- `ServiceDefinition`：`deploy/services/<metadata.name>.yaml`。
+- `EnvironmentService`：
+  `deploy/environments/<environment>/services/<metadata.name>.yaml`。
 
-## Compatible Shape
+## EnvironmentDefinition
 
-Continue to accept the existing contract:
+必须声明：
 
-```yaml
-apiVersion: doops.sh/v2
-kind: DeploymentTemplate
-metadata:
-  name: example-release
-  description: Release one declared application
-spec:
-  parameters:
-    version:
-      required: true
-    reason:
-      required: true
-  application: example
-  release:
-    source:
-      repository: https://example.invalid/org/repo.git
-      revision: ${inputs.version}
-      branch: main
-  environment: production
-  configurationSource: deploy/environments.yaml
-```
+- `metadata.name`；
+- `spec.application`；
+- `spec.source.repository/branch/buildManifest`；
+- `spec.execution.deploy.target/cluster/instance/session`；
+- `spec.helm.release/namespace/chart/values/atomic/wait/rollbackOnFailure`；
+- `spec.artifacts.targetRegistry` 和 Secret 引用元数据；
+- `spec.services` 中每个服务的明确文件路径；
+- `spec.healthChecks`、`spec.releaseProcess`、`spec.stopConditions`。
 
-The template is intentionally small. It identifies release intent and points to
-the repository-owned environment declaration. Do not expand it into an
-imperative step list.
+环境文件就是部署根，不得包含 `configurationSource` 或 `workflow`。
 
-## Validation
+## 引用闭合
 
-- Require `apiVersion: doops.sh/v2`.
-- Require `kind: DeploymentTemplate`, `SemanticRelease`, or `ServiceRelease`.
-- Require `metadata.name`.
-- For `DeploymentTemplate`, require `spec.application`, `spec.release`,
-  `spec.environment` and `spec.configurationSource`.
-- For `SemanticRelease`, require `spec.application`, `spec.release`,
-  `spec.environment`, `spec.configurationSource`, `spec.serviceCatalog` and a
-  non-empty semantic `spec.flow`.
-- For `ServiceRelease`, require `spec.application`, `spec.service`,
-  `spec.source`, `spec.artifact`, `spec.binding`, non-empty `spec.intents`, and
-  non-empty required evidence.
-- Permit existing parameter declarations with `required` and `default`.
-- Resolve placeholders only in scalar values and only with exact
-  `${inputs.<name>}` syntax.
-- Reject unknown invocation inputs, unresolved placeholders, duplicate YAML
-  keys and paths that escape the repository.
-- For `DeploymentTemplate`, require exactly one of `release.source` or
-  `release.manifest`.
-- Treat repository revision, manifest digest and image digest declarations as
-  immutable identities when present.
+对每个 `spec.services.<name>`：
 
-## Configuration Source
+1. 路径必须位于当前环境的 `services/`。
+2. 文件必须是同版本 `EnvironmentService`，且 environment 与根环境一致。
+3. `serviceDefinition` 必须位于 `deploy/services/`。
+4. 公共定义必须是同版本 `ServiceDefinition`。
+5. 服务身份、Helm value、workload 和 container 必须在两层定义中一致。
+6. 环境服务的 target repository 与 digest 必须与 Helm values 完全一致。
 
-The referenced configuration owns:
+拒绝路径逃逸、重复服务、隐式目录扫描、未知字段替代、跨环境引用和版本混用。
 
-- artifact contract and source-to-target mapping;
-- physical target identity;
-- executor type and settings;
-- credential reference metadata;
-- verification profiles;
-- rollback capability and boundaries.
+## v2 边界
 
-The Skill must not guess missing configuration from an environment name,
-hostname, previous run, current cluster context or chat history.
+`doops.sh/v2` 的 `DeploymentTemplate`、`SemanticRelease` 和 `ServiceRelease` 保持原
+契约。v3 执行器不得生成或读取 v2 workflow 作为中间产物。
+
+v2 workflow 的 `configurationSource` 只接受显式
+`doops.sh/v2 EnvironmentRegistry`。`EnvironmentDefinition` 是 v3 部署根，不是 v2
+配置源。
+
+## Credential Plan
+
+声明 apiVersion 与 Gateway-Agent credential-plan 协议是两个不同维度：
+
+- 声明编译器显式接受 v2 workflow 根和 v3 `EnvironmentDefinition` 根；
+- Gateway-Agent 控制面统一使用 `doops.sh/credential-plan/v2`；
+- credential prepare 与可信执行上下文共享同一严格编译结果；
+- v3 根必须闭合验证全部 `EnvironmentService` 和 `ServiceDefinition` 引用；
+- 未声明的 source/target/runtime Secret 引用直接阻断。

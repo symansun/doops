@@ -13,6 +13,18 @@ class SettingsConfigurationError(ValueError):
 
 
 TIER_NAMES = ("high", "default", "low")
+DOOPS_PLAN_SERVER = {
+    "name": "doops_plan",
+    "command": "/app/doops-plan-mcp",
+    "args": [],
+    "env": {},
+    "cwd": "/root/ws",
+    "status": "Unknown",
+    "capabilities": ["tools"],
+    "auto_start": True,
+    "tool_timeout_secs": 900,
+    "required": True,
+}
 
 
 def read_settings(path: Path) -> dict[str, Any]:
@@ -80,6 +92,16 @@ def configure_settings(
         raise SettingsConfigurationError(
             "tiered policy requires three distinct model identifiers"
         )
+
+    servers = settings.get("mcp_servers", [])
+    if not isinstance(servers, list):
+        raise SettingsConfigurationError("mcp_servers must be an array")
+    settings["mcp_servers"] = [
+        server
+        for server in servers
+        if not isinstance(server, dict) or server.get("name") != "doops_plan"
+    ]
+    settings["mcp_servers"].append(DOOPS_PLAN_SERVER)
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(destination.suffix + ".tmp")

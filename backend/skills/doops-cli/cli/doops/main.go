@@ -59,8 +59,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 	Agent 原生声明式 CI/CD 示例:
 	  # run 先同步当前仓库，再通过 Ask 选择 doops-cicd Skill。
-	  doops -session test_ops cicd run -f deploy/workflows/release.yaml --target agent-runtime --dry-run --set version=release-YYYYMMDD
-	  doops -session test_ops cicd run -f deploy/workflows/release.yaml --target agent-runtime --set version=release-YYYYMMDD
+	  doops -session test_ops cicd run -f deploy/environments/test/environment.yaml --target agent-runtime --dry-run --set reason=change-reference
+	  doops -session test_ops cicd run -f deploy/environments/test/environment.yaml --target agent-runtime --set reason=change-reference
 `)
 	}
 	flag.Parse()
@@ -213,6 +213,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		if len(cmdArgs) < 2 {
 			fmt.Println("Usage: doops admin token create --target <gateway-target> --kind user --user <username> [--name label] [--expires 720h] [--save-as target]")
 			fmt.Println("       doops admin token create --target <gateway-target> --kind agent --cluster <cluster> --instance <instance> [--name label] [--expires 720h]")
+			fmt.Println("       doops admin token list --target <gateway-target> [--kind user|agent]")
+			fmt.Println("       doops admin token revoke --target <gateway-target> --id <token-id>")
 			fmt.Println("       doops admin operations list --target <gateway-target>")
 			fmt.Println("       doops admin operations cancel --target <gateway-target> --id <operation-id>")
 			fmt.Println("       doops admin jobs <list|add|run|enable|disable|rm|issues> --target <gateway-target> [...]")
@@ -226,18 +228,26 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			runAdminOperationCancel(cmdArgs[2:], servers, configErr)
 			return
 		}
+		if cmdArgs[0] == "token" && cmdArgs[1] == "list" {
+			runAdminTokensList(cmdArgs[2:], servers, configErr)
+			return
+		}
+		if cmdArgs[0] == "token" && cmdArgs[1] == "revoke" {
+			runAdminTokenRevoke(cmdArgs[2:], servers, configErr)
+			return
+		}
 		if cmdArgs[0] != "token" || cmdArgs[1] != "create" {
 			fmt.Println("Usage: doops admin token create --target <gateway-target> --kind user --user <username> [--name label] [--expires 720h] [--save-as target]")
 			fmt.Println("       doops admin token create --target <gateway-target> --kind agent --cluster <cluster> --instance <instance> [--name label] [--expires 720h]")
+			fmt.Println("       doops admin token list --target <gateway-target> [--kind user|agent]")
+			fmt.Println("       doops admin token revoke --target <gateway-target> --id <token-id>")
 			fmt.Println("       doops admin operations list --target <gateway-target>")
 			fmt.Println("       doops admin operations cancel --target <gateway-target> --id <operation-id>")
 			os.Exit(1)
 		}
-		var target, gateway, token, kind, user, cluster, instance, label, expires, saveAs string
+		var target, kind, user, cluster, instance, label, expires, saveAs string
 		adminFlag := flag.NewFlagSet("admin token create", flag.ExitOnError)
 		adminFlag.StringVar(&target, "target", "", "Configured gateway target whose token/gateway should be used")
-		adminFlag.StringVar(&gateway, "gateway", "", "Gateway URL")
-		adminFlag.StringVar(&token, "token", "", "Gateway admin user token")
 		adminFlag.StringVar(&kind, "kind", "user", "Token kind: user or agent")
 		adminFlag.StringVar(&user, "user", "", "Gateway user name to issue a token for")
 		adminFlag.StringVar(&cluster, "cluster", "", "Agent token cluster")
@@ -246,25 +256,24 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		adminFlag.StringVar(&expires, "expires", "", "Optional token TTL, e.g. 720h")
 		adminFlag.StringVar(&saveAs, "save-as", "", "Optional configured target name to cache the issued token for")
 		adminFlag.Parse(cmdArgs[2:])
-		if target != "" {
-			requireConfig(configErr)
-			server := findServer(servers, target)
-			if server == nil {
-				fmt.Printf("Error: Server '%s' not found.\n", target)
-				os.Exit(1)
-			}
-			if gateway == "" {
-				gateway = server.Gateway
-			}
-			if token == "" {
-				token = ResolveToken(server.Name, server.Token)
-			}
+		if strings.TrimSpace(target) == "" {
+			fmt.Println("Error: --target is required")
+			adminFlag.Usage()
+			os.Exit(1)
 		}
+		requireConfig(configErr)
+		server := findServer(servers, target)
+		if server == nil || strings.TrimSpace(server.Gateway) == "" {
+			fmt.Printf("Error: Gateway target '%s' not found.\n", target)
+			os.Exit(1)
+		}
+		gateway := server.Gateway
+		token := ResolveToken(server.Name, server.Token)
 		kind = strings.ToLower(strings.TrimSpace(kind))
-		if gateway == "" || (kind == "user" && strings.TrimSpace(user) == "") ||
+		if (kind == "user" && strings.TrimSpace(user) == "") ||
 			(kind == "agent" && (strings.TrimSpace(cluster) == "" || strings.TrimSpace(instance) == "")) ||
 			(kind != "user" && kind != "agent") {
-			fmt.Println("Error: --gateway/--target and the selected token kind fields are required")
+			fmt.Println("Error: the selected token kind fields are required")
 			adminFlag.Usage()
 			os.Exit(1)
 		}
@@ -1068,33 +1077,76 @@ func runAdminOperationCancel(args []string, servers []Server, configErr error) {
 	fmt.Printf("Canceled operation %s\n", opID)
 }
 
+func runAdminTokensList(args []string, servers []Server, configErr error) {
+	var kind string
+	fs := flag.NewFlagSet("admin token list", flag.ExitOnError)
+	fs.StringVar(&kind, "kind", "", "Optional token kind: user or agent")
+	target := fs.String("target", "", "Configured gateway target whose token/gateway should be used")
+	fs.Parse(args)
+	if strings.TrimSpace(*target) == "" {
+		fmt.Println("Error: --target is required")
+		fs.Usage()
+		os.Exit(1)
+	}
+	requireConfig(configErr)
+	server := findServer(servers, *target)
+	if server == nil || strings.TrimSpace(server.Gateway) == "" {
+		fmt.Printf("Error: Gateway target '%s' not found.\n", *target)
+		os.Exit(1)
+	}
+	tokens, err := GatewayAdminTokensList(server.Gateway, ResolveToken(server.Name, server.Token), kind)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+	for _, token := range tokens {
+		fmt.Printf("token_id=%s kind=%s user=%s name=%s prefix=%s cluster=%s instance=%s revoked=%t expires_at=%s created_at=%s\n",
+			token.ID, token.Kind, token.UserName, token.Name, token.Prefix, token.Cluster, token.Instance,
+			token.Revoked, token.ExpiresAt, token.CreatedAt)
+	}
+}
+
+func runAdminTokenRevoke(args []string, servers []Server, configErr error) {
+	var target, id string
+	fs := flag.NewFlagSet("admin token revoke", flag.ExitOnError)
+	fs.StringVar(&target, "target", "", "Configured gateway target whose token/gateway should be used")
+	fs.StringVar(&id, "id", "", "Token id to revoke")
+	fs.Parse(args)
+	if strings.TrimSpace(target) == "" || strings.TrimSpace(id) == "" {
+		fmt.Println("Error: --target and --id are required")
+		fs.Usage()
+		os.Exit(1)
+	}
+	requireConfig(configErr)
+	server := findServer(servers, target)
+	if server == nil || strings.TrimSpace(server.Gateway) == "" {
+		fmt.Printf("Error: Gateway target '%s' not found.\n", target)
+		os.Exit(1)
+	}
+	if err := GatewayAdminTokenRevoke(server.Gateway, ResolveToken(server.Name, server.Token), id); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("token_id=%s revoked=true\n", strings.TrimSpace(id))
+}
+
 func resolveAdminGatewayFlags(name string, args []string, servers []Server, configErr error, opID *string) (string, string) {
-	var target, gateway, token string
+	var target string
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	fs.StringVar(&target, "target", "", "Configured gateway target whose token/gateway should be used")
-	fs.StringVar(&gateway, "gateway", "", "Gateway URL")
-	fs.StringVar(&token, "token", "", "Gateway admin user token")
 	if opID != nil {
 		fs.StringVar(opID, "id", "", "Active operation id")
 	}
 	fs.Parse(args)
-	if target != "" {
-		requireConfig(configErr)
-		server := findServer(servers, target)
-		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
-			os.Exit(1)
-		}
-		if gateway == "" {
-			gateway = server.Gateway
-		}
-		if token == "" {
-			token = ResolveToken(server.Name, server.Token)
-		}
-	}
-	if gateway == "" {
-		fmt.Println("Error: --gateway or --target is required")
+	if strings.TrimSpace(target) == "" {
+		fmt.Println("Error: --target is required")
 		fs.Usage()
+		os.Exit(1)
+	}
+	requireConfig(configErr)
+	server := findServer(servers, target)
+	if server == nil || strings.TrimSpace(server.Gateway) == "" {
+		fmt.Printf("Error: Gateway target '%s' not found.\n", target)
 		os.Exit(1)
 	}
 	if opID != nil && strings.TrimSpace(*opID) == "" {
@@ -1102,7 +1154,7 @@ func resolveAdminGatewayFlags(name string, args []string, servers []Server, conf
 		fs.Usage()
 		os.Exit(1)
 	}
-	return gateway, token
+	return server.Gateway, ResolveToken(server.Name, server.Token)
 }
 
 func requireConfig(err error) {

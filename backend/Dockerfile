@@ -11,6 +11,7 @@ WORKDIR /app
 COPY . .
 WORKDIR /app/agent
 RUN CGO_ENABLED=0 go build -o /app/doops-agent ./cmd/agent
+RUN CGO_ENABLED=0 go build -o /app/doops-plan-mcp ./cmd/doops-plan-mcp
 
 # Stage 2: Lightweight app image.
 # The base image owns sandbox/doagent/buildkit/system packages. This layer only
@@ -28,6 +29,7 @@ LABEL org.l8ai.doagent.platform="${DO_AGENT_PLATFORM}"
 LABEL org.l8ai.doagent.platform.digest="${DO_AGENT_PLATFORM_DIGEST}"
 
 COPY --from=builder /app/doops-agent /app/doops-agent
+COPY --from=builder /app/doops-plan-mcp /app/doops-plan-mcp
 COPY --from=builder /app/agent/skills /app/skills
 COPY --from=builder /app/agent/agent-entrypoint.sh /app/agent-entrypoint.sh
 COPY --from=builder /app/agent/sandbox-entrypoint.sh /app/sandbox-entrypoint.sh
@@ -39,6 +41,9 @@ COPY --from=builder /app/docs /app/self-docs/docs
 
 RUN chmod +x /app/agent-entrypoint.sh /app/sandbox-entrypoint.sh \
     && /app/doops-agent -help >/dev/null \
+    && printf '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}\n' \
+       | /app/doops-plan-mcp \
+       | grep -q '"ObserveWorkspaceSource"' \
     && test "$(/usr/local/bin/do-agent --version)" = "do-agent ${DO_AGENT_VERSION}" \
     && /usr/local/bin/do-agent --help >/dev/null \
     && buildctl --version \

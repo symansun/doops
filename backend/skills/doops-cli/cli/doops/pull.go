@@ -23,7 +23,7 @@ func Pull(server Server, dest, sessionID string) error {
 	}
 
 	token := ResolveToken(server.Name, server.Token)
-	gitURL, err := buildGitRemoteURLForServer(server, sessionID, token)
+	gitURL, err := buildGitRemoteURLForServer(server, sessionID, token != "")
 	if err != nil {
 		return err
 	}
@@ -43,7 +43,7 @@ func Pull(server Server, dest, sessionID string) error {
 		fmt.Printf("✅ 远端快照已生成: %s\n", firstLine(commit))
 	}
 
-	if err := pullGitWorkspace(gitURL, absDest); err != nil {
+	if err := pullGitWorkspace(gitURL, token, absDest); err != nil {
 		return err
 	}
 	fmt.Printf("✅ 已拉取远端工作区到本地: %s\n", absDest)
@@ -70,17 +70,23 @@ func buildGitWorkspaceCommitCommand(sessionID string) string {
 	}, "\n")
 }
 
-func pullGitWorkspace(gitURL, dest string) error {
+func pullGitWorkspace(gitURL, token, dest string) error {
+	gitEnv, cleanupGitAuth, err := prepareGitAuthEnvironment(token)
+	if err != nil {
+		return err
+	}
+	defer cleanupGitAuth()
+
 	if info, err := os.Stat(dest); err == nil {
 		if !info.IsDir() {
 			return fmt.Errorf("目标路径已存在且不是目录: %s", dest)
 		}
 		if _, err := os.Stat(filepath.Join(dest, ".git")); err == nil {
 			fmt.Printf("🔄 本地目录已存在，执行 Git fetch/reset: %s\n", dest)
-			if err := runGit(dest, "fetch", gitURL, "master"); err != nil {
+			if err := runGit(gitEnv, dest, "fetch", gitURL, "master"); err != nil {
 				return err
 			}
-			return runGit(dest, "reset", "--hard", "FETCH_HEAD")
+			return runGit(gitEnv, dest, "reset", "--hard", "FETCH_HEAD")
 		}
 		entries, err := os.ReadDir(dest)
 		if err != nil {
@@ -94,17 +100,19 @@ func pullGitWorkspace(gitURL, dest string) error {
 	}
 
 	fmt.Printf("⬇️  正在 Git clone 远端工作区到: %s\n", dest)
-	return runGit("", "clone", "--branch", "master", gitURL, dest)
+	return runGit(gitEnv, "", "clone", "--branch", "master", gitURL, dest)
 }
 
-func runGit(dir string, args ...string) error {
-	cmd := exec.Command("git", args...)
+func runGit(env []string, dir string, args ...string) error {
+	gitArgs := append([]string{"-c", "credential.helper="}, args...)
+	cmd := exec.Command("git", gitArgs...)
+	cmd.Env = env
 	if dir != "" {
 		cmd.Dir = dir
 	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := runIsolatedGitCommand(cmd); err != nil {
 		return fmt.Errorf("git %v failed: %v", redactGitArgs(args), err)
 	}
 	return nil

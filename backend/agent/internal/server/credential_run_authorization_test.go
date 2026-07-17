@@ -40,6 +40,18 @@ func TestAgentPromptAuditNeverStoresOutputOrRawError(t *testing.T) {
 	}
 }
 
+func TestNonPromptAuditRedactsHighConfidenceCredentialMaterial(t *testing.T) {
+	token := "github_pat_" + strings.Repeat("a", 82)
+	errMsg, tail := sanitizeAgentPromptAudit(
+		"doops_exec",
+		"command failed with "+token,
+		"stdout "+token,
+	)
+	if strings.Contains(errMsg, token) || strings.Contains(tail, token) {
+		t.Fatalf("non-prompt audit retained credential material: err=%q tail=%q", errMsg, tail)
+	}
+}
+
 func TestCredentialRunAuthorizationIsBoundAndSingleUse(t *testing.T) {
 	store := openCredentialTestStore(t)
 	user, token := createCredentialRunAuthorizationUser(t, store)

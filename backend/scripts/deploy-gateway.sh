@@ -10,7 +10,7 @@ doops target; targets are doops-agent execution contexts and can point at the
 wrong root filesystem.
 
 Usage:
-  bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
+  bash scripts/deploy-gateway.sh --host 106.54.197.139 --user ubuntu
 
 Options:
   --host HOST             Gateway host or IP. Required.
@@ -22,8 +22,12 @@ Options:
   --gateway-port PORT     Gateway listen port. Default: 42222.
   --verify-url URL        Public Gateway URL used for health and target checks.
                           Default: https://doops.l8ai.cn.
-  --verify-token-file P   File containing a Gateway user token. Required unless
-                          --dry-run is used.
+  --verify-token-file P   File containing a Gateway user token.
+  --verify-target NAME    Configured DoOps target used for authenticated target
+                          baseline checks without exporting its token.
+  --verify-session NAME   Required session name for --verify-target.
+                          Real deploys require either --verify-token-file or
+                          --verify-target with --verify-session.
   --no-build              Do not run scripts/build-gateway.sh before deploy.
   --dry-run               Print the plan and verify SSH, but do not modify remote host.
   -h, --help              Show this help.
@@ -46,6 +50,8 @@ DB_PATH="/var/lib/doops-gateway/gateway.db"
 GATEWAY_PORT="42222"
 VERIFY_URL="https://doops.l8ai.cn"
 VERIFY_TOKEN_FILE=""
+VERIFY_TARGET=""
+VERIFY_SESSION=""
 BUILD=true
 DRY_RUN=false
 
@@ -87,6 +93,14 @@ while [[ $# -gt 0 ]]; do
       VERIFY_TOKEN_FILE="${2:-}"
       shift 2
       ;;
+    --verify-target)
+      VERIFY_TARGET="${2:-}"
+      shift 2
+      ;;
+    --verify-session)
+      VERIFY_SESSION="${2:-}"
+      shift 2
+      ;;
     --no-build)
       BUILD=false
       shift
@@ -121,7 +135,11 @@ EOF
   exit 2
 fi
 
-for command in ssh scp curl jq sha256sum; do
+REQUIRED_COMMANDS=(ssh scp curl jq sha256sum)
+if [[ -n "${VERIFY_TARGET}" ]]; then
+  REQUIRED_COMMANDS+=(doops)
+fi
+for command in "${REQUIRED_COMMANDS[@]}"; do
   command -v "${command}" >/dev/null || {
     echo "Error: required local command is missing: ${command}" >&2
     exit 1
@@ -129,8 +147,20 @@ for command in ssh scp curl jq sha256sum; do
 done
 
 if [[ "${DRY_RUN}" != "true" ]]; then
-  if [[ -z "${VERIFY_TOKEN_FILE}" || ! -s "${VERIFY_TOKEN_FILE}" ]]; then
-    echo "Error: --verify-token-file is required for a real Gateway deployment" >&2
+  if [[ -n "${VERIFY_TOKEN_FILE}" && -n "${VERIFY_TARGET}" ]]; then
+    echo "Error: --verify-token-file and --verify-target are mutually exclusive" >&2
+    exit 2
+  fi
+  if [[ -n "${VERIFY_TARGET}" && -z "${VERIFY_SESSION}" ]]; then
+    echo "Error: --verify-session is required with --verify-target" >&2
+    exit 2
+  fi
+  if [[ -z "${VERIFY_TOKEN_FILE}" && -z "${VERIFY_TARGET}" ]]; then
+    echo "Error: a real Gateway deployment requires --verify-token-file or --verify-target" >&2
+    exit 2
+  fi
+  if [[ -n "${VERIFY_TOKEN_FILE}" && ! -s "${VERIFY_TOKEN_FILE}" ]]; then
+    echo "Error: --verify-token-file must reference a non-empty file" >&2
     exit 2
   fi
 fi
@@ -167,6 +197,12 @@ fi
 
 fetch_target_keys() {
   local destination="$1"
+  if [[ -n "${VERIFY_TARGET}" ]]; then
+    doops -session "${VERIFY_SESSION}" targets --target "${VERIFY_TARGET}" |
+      awk '/^-+$/ { rows = 1; next } rows && NF >= 2 { print $1 "/" $2 }' |
+      sort -u >"${destination}"
+    return
+  fi
   curl --noproxy '*' --config "${CURL_AUTH_CONFIG}" -fsS "${VERIFY_URL%/}/v1/targets" |
     jq -r '.targets[] | .cluster + "/" + .instance' |
     sort -u >"${destination}"
@@ -200,6 +236,9 @@ echo "  Remote binary: ${REMOTE_BIN}"
 echo "  Gateway DB:    ${DB_PATH}"
 echo "  Gateway port:  ${GATEWAY_PORT}"
 echo "  Verify URL:    ${VERIFY_URL}"
+if [[ -n "${VERIFY_TARGET}" ]]; then
+  echo "  Verify target: ${VERIFY_TARGET}"
+fi
 
 "${SSH[@]}" "set -e
 hostname

@@ -15,12 +15,6 @@ typed Helm executor, verification profile, and artifact contract. This document
 must not repeat that mapping, and it must not be inferred from the Oilan name, a
 domain, or a historical cluster alias.
 
-The workflow runs on the stable `doops-edu/release-runner` control Agent and
-deploys the separate `doops-edu/edu-coder` workload. Those Gateway identities
-must never be equal. The control Agent creates one immutable detached Helm Job;
-the Job remains alive while Kubernetes replaces `doops-agent-live`, so the Ask
-connection and Helm transaction are not terminated by the rollout.
-
 For an `image-set` release, the compiler resolves the declared source tag to
 the declared deployment platform manifest digest. Oilan declares
 `linux/amd64`; that child manifest digest is the only digest permitted in the
@@ -32,9 +26,9 @@ from the exact declared image binding path
 `sourceArtifactNames` declares a different name. No repository, tag, digest,
 or values path is guessed.
 
-The Deployment reads the gateway registration token from the declared
-`gateway.agentTokenSecret` reference and passes it to `doops-agent`. The token
-is bound to the declared gateway cluster and instance.
+Agent registration is intentionally unauthenticated. The Deployment passes
+only the gateway URL, cluster, and instance; the user-authenticated Gateway
+API remains the authorization boundary for operations.
 
 The Deployment uses `RollingUpdate` with `maxUnavailable: 0` and
 `maxSurge: 1`. It does not use the host network or a host port. The replacement
@@ -71,14 +65,13 @@ resulting workspace commit. The Gateway uses the normal `ActionAsk` permission
 and session resource lock.
 
 doagent is the sole Agent executor. It selects existing DoOps modules, observes
-the declared target, and writes the Gateway-designated JSON `DeploymentRun`
-result file. The Gateway binds every evidence item to a completed ACP tool call
-from the accepted `turnId`. `planned`,
-requires the evidence result, subject, and observation time to match that
-tool's actual JSON output.
+the declared target, and emits one JSON `DeploymentRun` as its final response.
+The Gateway binds every evidence item to a completed ACP tool call from the
+accepted `turnId` and requires the evidence result, subject, and observation
+time to match that tool's actual JSON output. `planned`,
 `converged`, `blocked`, `failed`, and `outcome-unknown` are valid phases.
-`admitted` text or an Agent claim without structured
-observed data is not evidence. Dry-run mutation count must be zero.
+`admitted` text or an Agent claim without structured observed data is not
+evidence. Dry-run mutation count must be zero.
 
 The bridge waits for doagent's authoritative `turn_finished` event. Apply uses
 the native mutation-capable mode selected by the explicit CI/CD operation; the

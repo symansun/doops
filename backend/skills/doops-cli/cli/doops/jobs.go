@@ -84,15 +84,13 @@ func runAdminJobs(args []string, servers []Server, configErr error) {
 }
 
 func runAdminJobAdd(args []string, servers []Server, configErr error) {
-	var target, gateway, token string
+	var target string
 	var name, repo, platform, clusterGlob, instanceGlob, scanMode string
 	var instruction, command, labels, tokenEnv, apiBase string
 	var interval, dedup string
 	var disabled bool
 	fs := flag.NewFlagSet("admin jobs add", flag.ExitOnError)
 	fs.StringVar(&target, "target", "", "Configured gateway target")
-	fs.StringVar(&gateway, "gateway", "", "Gateway URL")
-	fs.StringVar(&token, "token", "", "Gateway admin user token")
 	fs.StringVar(&name, "name", "", "Job name (required)")
 	fs.StringVar(&repo, "repo", "", "Issue repo slug, e.g. group/repo (required)")
 	fs.StringVar(&platform, "platform", "cnb", "Git platform: cnb | github")
@@ -109,9 +107,9 @@ func runAdminJobAdd(args []string, servers []Server, configErr error) {
 	fs.BoolVar(&disabled, "disabled", false, "Create the job in disabled state")
 	fs.Parse(args)
 
-	gateway, token = applyTargetDefaults(target, gateway, token, servers, configErr)
+	gateway, token := applyTargetDefaults(target, "", "", servers, configErr)
 	if gateway == "" || strings.TrimSpace(name) == "" || strings.TrimSpace(repo) == "" {
-		fmt.Println("Error: --gateway/--target, --name and --repo are required")
+		fmt.Println("Error: --target, --name and --repo are required")
 		fs.Usage()
 		os.Exit(1)
 	}
@@ -153,18 +151,16 @@ func runAdminJobAdd(args []string, servers []Server, configErr error) {
 }
 
 func runAdminJobIssues(args []string, servers []Server, configErr error) {
-	var target, gateway, token, id string
+	var target, id string
 	var limit int
 	fs := flag.NewFlagSet("admin jobs issues", flag.ExitOnError)
 	fs.StringVar(&target, "target", "", "Configured gateway target")
-	fs.StringVar(&gateway, "gateway", "", "Gateway URL")
-	fs.StringVar(&token, "token", "", "Gateway admin user token")
 	fs.StringVar(&id, "id", "", "Optional job id filter")
 	fs.IntVar(&limit, "limit", 50, "Max rows")
 	fs.Parse(args)
-	gateway, token = applyTargetDefaults(target, gateway, token, servers, configErr)
+	gateway, token := applyTargetDefaults(target, "", "", servers, configErr)
 	if gateway == "" {
-		fmt.Println("Error: --gateway or --target is required")
+		fmt.Println("Error: --target is required")
 		os.Exit(1)
 	}
 	issues, err := gatewayJobIssues(gateway, token, id, limit)

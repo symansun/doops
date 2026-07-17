@@ -15,14 +15,18 @@
 固定发布入口：
 
 ```bash
-bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
+bash scripts/deploy-gateway.sh \
+  --host 106.54.197.139 \
+  --user ubuntu \
+  --verify-target gw-edu-coder \
+  --verify-session gateway-release-<release>
 ```
 
 当前 gateway 维护主机：
 
-- 公网地址：`203.0.113.10`
+- SSH 地址：`106.54.197.139`
 - SSH 用户：`ubuntu`
-- Gateway URL：`http://203.0.113.10:42222`
+- Gateway URL：`https://doops.l8ai.cn`
 - SSH 凭据由运维密钥库或维护人保管，禁止写入仓库、日志、提交信息和文档正文。
 
 这条脚本只走 SSH/SCP，在宿主机真实 root 下完成：
@@ -33,7 +37,8 @@ bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
 4. 备份 `/usr/local/bin/doops-gateway`。
 5. 替换二进制并重启 gateway。
 6. 校验 `/proc/<pid>/exe` hash 与本地构建一致。
-7. 校验 `/v1/targets` 未认证访问返回 `401`；可选用 `--verify-token` 校验认证访问返回 `200`。
+7. 校验 `/v1/targets` 未认证访问返回 `401`，并通过 `--verify-target` 复用 DoOps 已配置认证，
+   确认发布前的全部 target 均已重新连接；不得为发布导出或新建明文 token 文件。
 
 禁止事项：
 
@@ -48,7 +53,7 @@ bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
 
 ## 二、 Agent 标准构建工作流 (Server-Side Build)
 
-在进行任何修改后，若需要更新大模型管控组件 `doops-agent`，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA 为标签的候选镜像；候选镜像必须在下一步被解析为 registry digest。已注册的 DoOps Agent 只能通过版本化 DoOps `DeploymentTemplate` 消费该 digest 并完成环境同步、Helm 收敛与验证。CNB 不负责环境部署、回滚或 Helm/Kubernetes 操作；`deploy.sh` 与任何 SSH/rsync 手工发布入口均已移除。
+在进行任何修改后，若需要更新大模型管控组件 `doops-agent`，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA 为标签的候选镜像；候选镜像必须在下一步被解析为 registry digest。已注册的 DoOps Agent 只能通过版本化 DoOps 声明消费该 digest并完成环境同步、Helm 收敛与验证。DoOps 自身的 Agent bootstrap 当前使用 v2 `DeploymentTemplate`；业务环境可以使用 v3 `EnvironmentDefinition`，不得在二者之间生成中间 workflow 或静默降级。CNB 不负责环境部署、回滚或 Helm/Kubernetes 操作；`deploy.sh` 与任何 SSH/rsync 手工发布入口均已移除。
 
 ### 1. 触发受控发布 (在控制端执行)
 发布者必须先将待发布提交推送到 `main`，确认 CNB CI 的候选镜像已经生成，并在无未提交文件的精确 commit checkout 中，以该完整 commit SHA 作为 `releaseId` 执行环境 `DeploymentTemplate`。CLI 会拒绝 HEAD 不匹配或工作区不干净的 source release。运行期必须使用该候选镜像的 registry digest，不得以可变 tag 作为实际部署镜像。Oilan 的入口为 `deploy/workflows/oilan-agent-bootstrap.yaml`，运行期目标清单由 `deploy/environments.yaml`、Helm Chart 和环境 values 定义。
@@ -57,13 +62,14 @@ bash scripts/deploy-gateway.sh --host 203.0.113.10 --user ubuntu
 doops -session oilan-agent-bootstrap cicd run \
   -f backend/deploy/workflows/oilan-agent-bootstrap.yaml \
   -target <configured-doops-target> \
+  -model <tool-capable-model> \
   --dry-run \
   --set releaseId=<main-commit-sha>
 ```
 
 The command synchronizes the repository, then sends one ordinary Ask to doagent
-for the `$doops-cicd` Skill. The Skill writes the Gateway-designated JSON
-`DeploymentRun` result file;
+for the `$doops-cicd` Skill. The Skill emits one JSON `DeploymentRun` as its
+final response;
 text such as `admitted` is not evidence, and dry-run mutation count must be zero.
 
 **DoOps Agent 执行顺序：**
@@ -72,12 +78,6 @@ text such as `admitted` is not evidence, and dry-run mutation count must be zero
 3. 在候选镜像内校验 `doops-agent`、`do-agent`、BuildKit、Python/PyYAML、Helm 与嵌入的 Helm Chart。
 4. 通过版本化 bootstrap Job 将现有 Deployment 纳入 Helm 管理，并执行 `helm upgrade --install`。
 5. 等待 Job、Helm release 和 Kubernetes rollout 均成功。
-
-Agent 自身发布必须由独立的稳定 control Agent 执行。Oilan 使用
-`doops-edu/release-runner` 运行 Ask 和 detached Helm Job，被升级对象是
-`doops-edu/edu-coder`。两者的 Gateway cluster/instance identity 不得相同；
-禁止让 `doops-agent-live` 内的 Helm 进程升级其所在 Deployment，否则新 Pod
-接管连接时会终止旧进程并留下 `pending-install`。
 
 ### 双镜像构建原则
 

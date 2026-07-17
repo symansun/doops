@@ -42,7 +42,7 @@ func TestPullGitWorkspaceClonesFromBundle(t *testing.T) {
 	runTestGit(t, src, "bundle", "create", bundle, "master")
 
 	dest := filepath.Join(root, "dest")
-	if err := pullGitWorkspace(bundle, dest); err != nil {
+	if err := pullGitWorkspace(bundle, "", dest); err != nil {
 		t.Fatalf("pull bundle: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(dest, "course.tgz"))

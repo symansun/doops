@@ -8,11 +8,14 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 )
 
@@ -25,6 +28,14 @@ type workspaceSourceManifest struct {
 }
 
 var immutableGitCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+var (
+	gitAuthCleanupOnce   sync.Once
+	gitAuthCleanupMu     sync.Mutex
+	signalCleanupDirs    = make(map[string]struct{})
+	activeGitProcesses   = make(map[int]struct{})
+	gitShutdownRequested bool
+)
 
 // 默认排除的目录/文件
 var defaultExcludes = []string{
@@ -97,20 +108,18 @@ func pushWorkspaceSnapshotWithSource(
 	}
 
 	token := ResolveToken(server.Name, server.Token)
-	gitURL, err := buildGitRemoteURLForServer(server, sessionID, token)
+	gitURL, err := buildGitRemoteURLForServer(server, sessionID, token != "")
 	if err != nil {
 		return "", err
 	}
 	workspacePath := fmt.Sprintf("/root/ws/%s", sessionID)
 
 	// 2. 建立本地幽灵沙盒
-	tmpDir := filepath.Join(os.TempDir(), "doops-sync-"+sessionID)
-	os.RemoveAll(tmpDir) // 清理上次可能由于强杀遗留的
-	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+	tmpDir, err := createWorkspaceSnapshotDirectory(sessionID)
+	if err != nil {
 		return "", fmt.Errorf("创建幽灵临时目录失败: %v", err)
 	}
-	// 进程退出时挫骨扬灰，实现真正的无痕搬运
-	defer os.RemoveAll(tmpDir)
+	defer cleanupSignalDirectory(tmpDir)
 
 	start := time.Now()
 	fmt.Printf("🧊 正在构建本地隔离快照（大型仓库首次扫描可能较慢）...\n")
@@ -147,6 +156,11 @@ func pushWorkspaceSnapshotWithSource(
 	gitCmds := [][]string{
 		{"push", "-f", gitURL, "HEAD:master"},
 	}
+	gitEnv, cleanupGitAuth, err := prepareGitAuthEnvironment(token)
+	if err != nil {
+		return "", err
+	}
+	defer cleanupGitAuth()
 	for _, gargs := range gitCmds {
 		stepLabel := describeGitStep(gargs)
 		if stepLabel != "" {
@@ -160,8 +174,10 @@ func pushWorkspaceSnapshotWithSource(
 
 		var lastErr error
 		for attempt := 1; attempt <= maxRetries; attempt++ {
-			cmd := exec.Command("git", gargs...)
+			gitArgs := append([]string{"-c", "credential.helper="}, gargs...)
+			cmd := exec.Command("git", gitArgs...)
 			cmd.Dir = tmpDir
+			cmd.Env = gitEnv
 
 			// 我们只让最后一步 push 原样输出网络传输进度给用户
 			if gargs[0] == "push" {
@@ -173,7 +189,7 @@ func pushWorkspaceSnapshotWithSource(
 				}
 			}
 
-			if err := cmd.Run(); err != nil {
+			if err := runIsolatedGitCommand(cmd); err != nil {
 				lastErr = err
 				if attempt < maxRetries && gargs[0] == "push" {
 					continue // 准备重推
@@ -209,6 +225,21 @@ func pushWorkspaceSnapshotWithSource(
 	}
 	fmt.Printf("✅ 同步完成 (%s) 🎯 远端工作区已就绪: %s @ %s\n", elapsed.Round(time.Millisecond), workspacePath, shortCommit)
 	return localCommit, nil
+}
+
+func createWorkspaceSnapshotDirectory(sessionID string) (string, error) {
+	ensureSignalCleanupHandler()
+	gitAuthCleanupMu.Lock()
+	defer gitAuthCleanupMu.Unlock()
+	if gitShutdownRequested {
+		return "", fmt.Errorf("workspace snapshot canceled by shutdown")
+	}
+	dir, err := os.MkdirTemp("", "doops-sync-"+sessionID+"-")
+	if err != nil {
+		return "", err
+	}
+	signalCleanupDirs[dir] = struct{}{}
+	return dir, nil
 }
 
 func createWorkspaceSnapshotCommit(root string, source *WorkspaceSourceIdentity) (string, error) {
@@ -344,25 +375,9 @@ func writeWorkspaceSourceManifest(root string, source *WorkspaceSourceIdentity) 
 	return workspaceSourceManifestPath, nil
 }
 
-func buildGitRemoteURL(host, port, sessionID, token string) string {
-	remote := url.URL{
-		Scheme: "http",
-		Host:   fmt.Sprintf("%s:%s", host, port),
-		Path:   fmt.Sprintf("/git/%s.git", sessionID),
-	}
-	if token != "" {
-		remote.User = url.UserPassword("doops", token)
-	}
-	return remote.String()
-}
-
-func buildGitRemoteURLForServer(server Server, sessionID, token string) (string, error) {
+func buildGitRemoteURLForServer(server Server, sessionID string, authenticated bool) (string, error) {
 	if strings.TrimSpace(server.Gateway) == "" {
-		port := server.Port
-		if port == "" {
-			port = "42222"
-		}
-		return buildGitRemoteURL(server.IP, port, sessionID, token), nil
+		return "", fmt.Errorf("Git workspace transport requires a gateway target")
 	}
 
 	rawGateway := strings.TrimSpace(server.Gateway)
@@ -385,8 +400,8 @@ func buildGitRemoteURLForServer(server Server, sessionID, token string) (string,
 	if err := enforceSecureGatewayURL(server.Gateway, u); err != nil {
 		return "", err
 	}
-	if token != "" {
-		u.User = url.UserPassword("doops", token)
+	if authenticated {
+		u.User = url.User("doops")
 	}
 	cluster := strings.TrimSpace(server.Cluster)
 	if cluster == "" {
@@ -399,6 +414,233 @@ func buildGitRemoteURLForServer(server Server, sessionID, token string) (string,
 	u.Path = path.Join(u.Path, "v1", "git", cluster, instance, sessionID+".git")
 	u.RawQuery = ""
 	return u.String(), nil
+}
+
+func prepareGitAuthEnvironment(token string) ([]string, func(), error) {
+	cleanupDeadGitAuthDirectories()
+	env := filteredEnvironment(
+		os.Environ(),
+		"GIT_ASKPASS",
+		"GIT_TERMINAL_PROMPT",
+		"GIT_CONFIG_GLOBAL",
+		"GIT_CONFIG_NOSYSTEM",
+		"GIT_CONFIG_COUNT",
+		"DOOPS_GIT_TOKEN_FILE",
+	)
+	env = filteredEnvironmentPrefixes(env, "GIT_TRACE", "GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
+	env = append(env, "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+	if token == "" {
+		return env, func() {}, nil
+	}
+
+	ensureSignalCleanupHandler()
+	gitAuthCleanupMu.Lock()
+	if gitShutdownRequested {
+		gitAuthCleanupMu.Unlock()
+		return nil, nil, fmt.Errorf("Git authentication canceled by shutdown")
+	}
+	buildingDir, err := os.MkdirTemp("", ".doops-git-auth-")
+	if err != nil {
+		gitAuthCleanupMu.Unlock()
+		return nil, nil, fmt.Errorf("create Git authentication directory: %w", err)
+	}
+	lockPath := filepath.Join(buildingDir, "active.lock")
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		_ = os.RemoveAll(buildingDir)
+		gitAuthCleanupMu.Unlock()
+		return nil, nil, fmt.Errorf("create Git authentication lock: %w", err)
+	}
+	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = lockFile.Close()
+		_ = os.RemoveAll(buildingDir)
+		gitAuthCleanupMu.Unlock()
+		return nil, nil, fmt.Errorf("lock Git authentication directory: %w", err)
+	}
+	authDir := filepath.Join(
+		filepath.Dir(buildingDir),
+		fmt.Sprintf("doops-git-auth-%d-%s", os.Getpid(), strings.TrimPrefix(filepath.Base(buildingDir), ".doops-git-auth-")),
+	)
+	if err := os.Rename(buildingDir, authDir); err != nil {
+		_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+		_ = lockFile.Close()
+		_ = os.RemoveAll(buildingDir)
+		gitAuthCleanupMu.Unlock()
+		return nil, nil, fmt.Errorf("activate Git authentication directory: %w", err)
+	}
+	signalCleanupDirs[authDir] = struct{}{}
+	gitAuthCleanupMu.Unlock()
+	cleanup := func() {
+		_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+		_ = lockFile.Close()
+		cleanupSignalDirectory(authDir)
+	}
+	tokenPath := filepath.Join(authDir, "token")
+	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("write Git authentication token: %w", err)
+	}
+	askPassPath := filepath.Join(authDir, "askpass")
+	askPass := `#!/bin/sh
+case "$1" in
+  *Username*) printf '%s\n' 'doops' ;;
+  *Password*) cat "$DOOPS_GIT_TOKEN_FILE"; printf '\n' ;;
+  *) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(askPassPath, []byte(askPass), 0o700); err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("write Git authentication helper: %w", err)
+	}
+	env = append(env, "GIT_ASKPASS="+askPassPath, "DOOPS_GIT_TOKEN_FILE="+tokenPath)
+	return env, cleanup, nil
+}
+
+func ensureSignalCleanupHandler() {
+	gitAuthCleanupOnce.Do(func() {
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+		go func() {
+			sig := <-signals
+			gitAuthCleanupMu.Lock()
+			gitShutdownRequested = true
+			dirs := make([]string, 0, len(signalCleanupDirs))
+			for dir := range signalCleanupDirs {
+				dirs = append(dirs, dir)
+			}
+			pids := make([]int, 0, len(activeGitProcesses))
+			for pid := range activeGitProcesses {
+				pids = append(pids, pid)
+			}
+			gitAuthCleanupMu.Unlock()
+			terminateGitProcessGroups(pids)
+			for _, dir := range dirs {
+				_ = os.RemoveAll(dir)
+			}
+			if value, ok := sig.(syscall.Signal); ok {
+				os.Exit(128 + int(value))
+			}
+			os.Exit(1)
+		}()
+	})
+}
+
+func runIsolatedGitCommand(cmd *exec.Cmd) error {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	gitAuthCleanupMu.Lock()
+	if gitShutdownRequested {
+		gitAuthCleanupMu.Unlock()
+		return fmt.Errorf("Git command canceled by shutdown")
+	}
+	if err := cmd.Start(); err != nil {
+		gitAuthCleanupMu.Unlock()
+		return err
+	}
+	pid := cmd.Process.Pid
+	activeGitProcesses[pid] = struct{}{}
+	gitAuthCleanupMu.Unlock()
+	err := cmd.Wait()
+	gitAuthCleanupMu.Lock()
+	delete(activeGitProcesses, pid)
+	gitAuthCleanupMu.Unlock()
+	return err
+}
+
+func terminateGitProcessGroups(pids []int) {
+	for _, pid := range pids {
+		_ = syscall.Kill(-pid, syscall.SIGTERM)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		allExited := true
+		for _, pid := range pids {
+			if processGroupIsAlive(pid) {
+				allExited = false
+				break
+			}
+		}
+		if allExited {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	for _, pid := range pids {
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+	}
+}
+
+func cleanupSignalDirectory(dir string) {
+	gitAuthCleanupMu.Lock()
+	err := os.RemoveAll(dir)
+	delete(signalCleanupDirs, dir)
+	gitAuthCleanupMu.Unlock()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: remove temporary directory: %v\n", err)
+	}
+}
+
+func cleanupDeadGitAuthDirectories() {
+	entries, err := os.ReadDir(os.TempDir())
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "doops-git-auth-") {
+			continue
+		}
+		dir := filepath.Join(os.TempDir(), entry.Name())
+		lockFile, err := os.OpenFile(filepath.Join(dir, "active.lock"), os.O_RDWR, 0)
+		if err != nil {
+			_ = os.RemoveAll(dir)
+			continue
+		}
+		if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			_ = lockFile.Close()
+			continue
+		}
+		_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+		_ = lockFile.Close()
+		_ = os.RemoveAll(dir)
+	}
+}
+
+func processGroupIsAlive(pid int) bool {
+	err := syscall.Kill(-pid, 0)
+	return err == nil || err == syscall.EPERM
+}
+
+func filteredEnvironment(env []string, keys ...string) []string {
+	blocked := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		blocked[key] = struct{}{}
+	}
+	filtered := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, found := blocked[key]; found {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
+}
+
+func filteredEnvironmentPrefixes(env []string, prefixes ...string) []string {
+	filtered := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		blocked := false
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(key, prefix) {
+				blocked = true
+				break
+			}
+		}
+		if !blocked {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
 }
 
 func redactGitArgs(args []string) []string {

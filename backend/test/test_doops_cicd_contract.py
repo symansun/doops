@@ -1,4 +1,5 @@
 import platform
+import stat
 import subprocess
 from pathlib import Path
 
@@ -8,26 +9,27 @@ import yaml
 ROOT = Path(__file__).parents[1]
 SKILL = ROOT / "agent" / "skills" / "doops-cicd"
 WORKFLOW = ROOT / "deploy" / "workflows" / "oilan-agent-bootstrap.yaml"
-RUNNER_WORKFLOW = ROOT / "deploy" / "workflows" / "oilan-release-runner-bootstrap.yaml"
 CLI_BIN = ROOT / "skills" / "doops-cli" / "bin"
 
 
 def test_doops_cicd_skill_is_generic_and_agent_native():
     text = (SKILL / "SKILL.md").read_text()
+    assert "doops.sh/v3" in text
     assert "doops.sh/v2" in text
-    assert "DeploymentTemplate" in text
-    assert "native doagent multi-agent engine" in text
-    assert "$doops-cicd" in text
+    assert "doagent 原生多 Agent 引擎" in text
+    assert "BuildDefinition" in text
+    assert "EnvironmentDefinition" in text
+    assert "ServiceDefinition" in text
+    assert "EnvironmentService" in text
     assert "DeploymentReview" in text
-    assert "exactly one `DeploymentTemplate` artifact" in text
-    assert "imperative plan" in text
     assert "SemanticRelease" in text
     assert "ServiceRelease" in text
-    assert "selected-services" in text
-    assert "preserve-observed" in text
-    assert "converge-shared-release" in text
+    assert "deploy/deploy.yaml" in text
+    assert "deploy/environments/<environment>/environment.yaml" in text
+    assert "不得把 v3 声明降级" in text
+    assert "回滚基线" in text
     assert "pipeline" in text
-    assert "`toolRef`" in text
+    assert "toolRef" in text
     for forbidden in (
         "DeploymentPlan",
         "ReconciliationResult",
@@ -37,9 +39,25 @@ def test_doops_cicd_skill_is_generic_and_agent_native():
         assert forbidden not in text
 
 
+def test_v3_split_contract_is_chinese_and_has_no_workflow_index():
+    declaration = (SKILL / "references" / "deployment-template.md").read_text()
+    execution = (SKILL / "references" / "execution-contract.md").read_text()
+    for kind in (
+        "BuildDefinition",
+        "EnvironmentDefinition",
+        "ServiceDefinition",
+        "EnvironmentService",
+    ):
+        assert kind in declaration
+    assert "deploy/environments.yaml" not in declaration
+    assert "deploy/workflows/" not in declaration
+    assert "同一 apiVersion" in (SKILL / "SKILL.md").read_text()
+    assert "只执行一次" in execution
+    assert "rollback baseline" in execution
+
+
 def test_existing_workflow_and_execution_contract_define_one_result():
     workflow = yaml.safe_load(WORKFLOW.read_text())
-    registry = yaml.safe_load((ROOT / "deploy" / "environments.yaml").read_text())
     contract = (SKILL / "references" / "execution-contract.md").read_text()
 
     assert workflow["apiVersion"] == "doops.sh/v2"
@@ -59,61 +77,6 @@ def test_existing_workflow_and_execution_contract_define_one_result():
     assert "toolCall" in contract
     assert "turnId" in contract
     assert "Gateway" in contract
-    assert registry["environments"]["oilan"]["executor"]["lifecycle"] == "detached-kubernetes-job"
-    assert "control target" in contract.lower()
-    control_target = registry["environments"]["oilan"]["target"]
-    deployment_target = registry["environments"]["oilan"]["deploymentTarget"]
-    assert control_target == {
-        "name": "gw-edu-release-runner",
-        "cluster": "doops-edu",
-        "instance": "release-runner",
-    }
-    assert deployment_target == {
-        "name": "gw-edu-coder",
-        "cluster": "doops-edu",
-        "instance": "edu-coder",
-    }
-    assert control_target["instance"] != deployment_target["instance"]
-    detached_job = registry["environments"]["oilan"]["executor"]["config"]["detachedJob"]
-    assert detached_job["agentHomeHostPath"] == "/var/lib/doops-release-runner-home"
-    assert detached_job["executorImageRepository"] == "docker.cnb.cool/l8ai/ai/doops.sh"
-    assert detached_job["executorImageDigest"].startswith("sha256:")
-    skill_text = (SKILL / "SKILL.md").read_text()
-    assert "helm_detached_job.py submit" in skill_text
-
-
-def test_release_runner_values_use_distinct_workload_and_gateway_identity():
-    values = yaml.safe_load(
-        (ROOT / "deploy" / "environments" / "oilan-release-runner-values.yaml").read_text()
-    )
-    assert values["workload"]["name"] == "doops-release-runner"
-    assert values["workload"]["selectorLabels"] == {"app": "doops-release-runner"}
-    assert values["gateway"]["instance"] == "release-runner"
-    assert values["gateway"]["agentTokenSecret"] == {
-        "name": "doops-release-runner-runtime",
-        "key": "agent-token",
-    }
-
-
-def test_release_runner_bootstrap_declares_opaque_agent_token_reference():
-    workflow = yaml.safe_load(RUNNER_WORKFLOW.read_text())
-    contract = (SKILL / "references" / "execution-contract.md").read_text()
-    assert workflow["spec"]["environment"] == "oilan-release-runner-bootstrap"
-    assert workflow["spec"]["credentialRefs"] == [
-        {
-            "name": "doops-release-runner-runtime",
-            "use": "opaqueSecret",
-            "namespace": "kz-ops",
-            "workload": {
-                "kind": "Deployment",
-                "name": "doops-release-runner",
-            },
-        }
-    ]
-    assert "Image generation" in contract
-    assert "Agent delegation" in contract
-
-
 def test_system_prompt_routes_templates_to_doops_cicd():
     prompt = (ROOT / "agent" / "skills" / "system_prompt.md").read_text()
     assert "DeploymentTemplate" in prompt
@@ -155,3 +118,67 @@ def test_prebuilt_cli_exposes_only_agent_native_cicd_run():
     retired_text = retired_result.stdout + retired_result.stderr
     assert retired_result.returncode != 0
     assert "only `cicd run` is supported" in retired_text
+
+
+def test_installer_replaces_execute_only_cli_with_launchable_mode(tmp_path):
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    tool_bin = tmp_path / "bin"
+    cli = home / ".local" / "bin" / "doops"
+    cli.parent.mkdir(parents=True)
+    project.mkdir()
+    tool_bin.mkdir()
+    sha256sum = tool_bin / "sha256sum"
+    if platform.system() == "Darwin":
+        sha256sum.write_text("#!/bin/sh\nexec /usr/bin/shasum -a 256 \"$@\"\n")
+        sha256sum.chmod(0o755)
+    else:
+        sha256sum.symlink_to("/usr/bin/sha256sum")
+    cli.write_text("stale")
+    cli.chmod(0o111)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(ROOT / "scripts" / "install.sh"),
+            "--project",
+            str(project),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={"HOME": str(home), "PATH": f"{tool_bin}:/usr/bin:/bin:/usr/sbin:/sbin"},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert stat.S_IMODE(cli.stat().st_mode) == 0o755
+    help_result = subprocess.run(
+        [str(cli), "-help"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert help_result.returncode == 0
+
+
+def test_installer_rejects_directory_cli_target(tmp_path):
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    cli = home / ".local" / "bin" / "doops"
+    cli.mkdir(parents=True)
+    project.mkdir()
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(ROOT / "scripts" / "install.sh"),
+            "--project",
+            str(project),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"},
+    )
+    assert result.returncode != 0
+    assert "CLI install path is a directory" in result.stderr
+    assert list(cli.iterdir()) == []

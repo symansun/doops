@@ -1,0 +1,24 @@
+package main
+
+import "testing"
+
+func TestDecodeCredentialPrepareFailureRequiresExactVersionedObject(t *testing.T) {
+	valid := []byte(`{"apiVersion":"doops.sh/v2","kind":"CredentialPrepareError","category":"agent_protocol_incompatible"}`)
+	category, err := decodeCredentialPrepareFailure(valid)
+	if err != nil || category != "agent_protocol_incompatible" {
+		t.Fatalf("decode valid credential failure: category=%q err=%v", category, err)
+	}
+
+	for name, body := range map[string][]byte{
+		"plain text":    []byte("agent_protocol_incompatible"),
+		"unknown field": []byte(`{"apiVersion":"doops.sh/v2","kind":"CredentialPrepareError","category":"agent_protocol_incompatible","extra":true}`),
+		"trailing JSON": []byte(`{"apiVersion":"doops.sh/v2","kind":"CredentialPrepareError","category":"agent_protocol_incompatible"} {}`),
+		"wrong version": []byte(`{"apiVersion":"doops.sh/v3","kind":"CredentialPrepareError","category":"agent_protocol_incompatible"}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := decodeCredentialPrepareFailure(body); err == nil {
+				t.Fatal("invalid credential failure must be rejected")
+			}
+		})
+	}
+}

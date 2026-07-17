@@ -44,16 +44,16 @@ flowchart LR
 - 边缘执行端：`agent/` 构建 `doops-agent`，负责目标机器上的 exec、push/pull、文件和 AI 任务
 - 运行安全边界：`doops-agent` 默认只启动 `doops-agent`、`do-agent`、`buildkitd`；默认不启动 SSH，不启动 WebIDE
 - 连接方式：CLI/skill 访问 gateway `42222`，gateway 通过已建立的 agent WebSocket 进入内网 agent
-- 鉴权方式：用户连接 gateway 使用 gateway user token；agent 使用绑定 `cluster/instance` 的 agent registration token 注册 gateway
+- 鉴权方式：用户连接 gateway 使用 gateway user token；agent 注册 gateway 不需要 token，只声明 `cluster/instance`
 - 代码同步：gateway 使用 Git HTTP；gateway 只通过已建立的 agent WebSocket 反向隧道透传 Git 请求，不再使用 tar 分块上传作为 `push/pull` 路径
 - 镜像构建：统一使用 `buildctl + buildkitd`
 
 ## 当前纳管目标
 
-当前统一命名口径：
+当前统一命名口径只使用 Gateway 的 `cluster/instance` 身份，不维护推断或示例 IP：
 
-- `doops-oilan / oilan-node` -> `198.51.100.24`，oilan 集群
-- `doops-edu / edu-coder` -> `198.51.100.23`，edu-coder 集群
+- `doops-oilan / oilan-node`，oilan 集群
+- `doops-edu / edu-coder`，edu-coder 集群
 - `doops-jm / jm-228`
 - `doops-zheyin / node-239`
 - `doops-114 / vm-114`
@@ -126,7 +126,8 @@ bash scripts/build-gateway.sh
 
 2026-05-11 gateway 验收状态（历史记录）：
 
-- 公网 gateway：生产标准应使用 TLS 域名；`203.0.113.10:42222` 仅保留作受控实验 smoke，客户端需显式允许不安全 gateway 才能连
+- 公网 gateway：当前标准入口为 `https://doops.l8ai.cn`；早期明文 HTTP
+  地址只属于历史受控实验，不得进入当前客户端配置
 - 已接入 target：`doops-114/vm-114`、`doops-jm/jm-228`
 - 已验证：`targets`、`exec`、`write/read`、`push`、高危 action 未授权拒绝、90 秒以上 heartbeat 保活
 - `ask` 链路通过 `doops-agent -> doagent ACP HTTP`；模型配置必须来自 `doagent-model-settings` Secret，Agent 镜像升级不得覆盖该 Secret
@@ -255,8 +256,8 @@ Skill 会随安装同步到项目目录。标准 target 的配置必须有 `gate
 
 ### 2. 通过 gateway 添加内网集群目标
 
-gateway 由管理员维护用户、user token、agent registration token 和授权。agent
-部署通过 Secret 消费绑定 `cluster/instance` 的 registration token；业务侧
+gateway 由管理员维护用户、user token 和授权。agent
+部署只声明绑定的 `cluster/instance`；业务侧
 CLI 配置只消费管理员发放的 user token，不直接维护 gateway 数据库。
 
 gateway 支持用户名密码登录，先换取 user token 再用 token 操作：
@@ -459,7 +460,7 @@ ls -lh skills/doops-cli/bin/
 
 - `doops` 日常连接不依赖 SSH。
 - `token` 在标准 target 配置里只表示 gateway user token。
-- agent registration token 只进入 agent 运行时 Secret，不写入标准 target 配置。
+- agent 注册不使用 token；遗留本机 `/ws` token 只用于直连保护，不写入标准 target 配置。
 - `doops-agent token` 只用于遗留直连或本机 `/ws` 保护。
 - `ssh_password` 只保留为 SSH bootstrap 参数。
 - `bash` 子命令仍是遗留 SSH 交互入口；推荐使用 `doops exec` 和 `doops ask`。

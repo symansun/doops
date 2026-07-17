@@ -414,7 +414,6 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		registry: registry,
 	}
 	hub.registration = NewAgentRegistrationHandler(
-		store,
 		registry,
 		opts.AgentLease,
 		newGatewayMessageBudget(gatewayMessageBudgetMaxBytes),
@@ -1018,6 +1017,8 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	}
 	finishAudit := func(status, errMsg, tail string, bytesOut int64) {
 		errMsg, tail = sanitizeAgentPromptAudit(params.Name, errMsg, tail)
+		errMsg = sanitizeSecretText(errMsg)
+		tail = sanitizeSecretText(tail)
 		if err := h.store.FinishAudit(auditID, AuditFinish{
 			Status:   status,
 			Error:    errMsg,
@@ -1236,8 +1237,8 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			_ = writeJSON(buildErrorResponse(req.ID, -32007, finalErr))
 		} else {
 			finalStatus = "error"
-			finalErr = err.Error()
-			_ = writeJSON(buildErrorResponse(req.ID, -32603, err.Error()))
+			finalErr = sanitizeSecretText(err.Error())
+			_ = writeJSON(buildErrorResponse(req.ID, -32603, finalErr))
 		}
 	}
 	finishAudit(finalStatus, finalErr, tail.String(), bytesOut)
@@ -1246,7 +1247,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 
 func sanitizeAgentPromptAudit(toolName, errMsg, tail string) (string, string) {
 	if toolName != "doops_agent_prompt" {
-		return errMsg, tail
+		return sanitizeSecretText(errMsg), sanitizeSecretText(tail)
 	}
 	if errMsg != "" {
 		errMsg = sanitizeCredentialCategory(errMsg)
@@ -1981,6 +1982,9 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 	case "doops_shell", "doops_bg", "doops_task_status":
 		return ActionExec
 	case "doops_agent_prompt":
+		if extractStringArg(args, "operation") == "apply" {
+			return ActionExec
+		}
 		switch extractStringArg(args, "mode") {
 		case "metadata", "history":
 			return ActionAsk

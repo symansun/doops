@@ -119,29 +119,12 @@ func TestGatewayHTTPListsTargetsForGrantedUserToken(t *testing.T) {
 	resp.Body.Close()
 }
 
-func TestGatewayAgentRegistrationRequiresMatchingToken(t *testing.T) {
+func TestGatewayAgentRegistrationDoesNotRequireToken(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	defer store.Close()
-	validToken, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
-	if err != nil {
-		t.Fatalf("create valid agent token: %v", err)
-	}
-	wrongScopeToken, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "other", Cluster: "dev", Instance: "other"})
-	if err != nil {
-		t.Fatalf("create wrong-scope agent token: %v", err)
-	}
-	user, err := store.CreateUser("alice")
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-	userToken, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err != nil {
-		t.Fatalf("create user token: %v", err)
-	}
-
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
@@ -149,34 +132,9 @@ func TestGatewayAgentRegistrationRequiresMatchingToken(t *testing.T) {
 	defer ts.Close()
 
 	agentWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev&instance=local"
-	if _, resp, err := websocket.DefaultDialer.Dial(agentWS, nil); err == nil {
-		t.Fatal("agent registration without token should fail")
-	} else if resp == nil || resp.StatusCode != http.StatusUnauthorized {
-		if resp == nil {
-			t.Fatalf("expected HTTP 401 without token, got nil response: %v", err)
-		}
-		t.Fatalf("expected HTTP 401 without token, got %d", resp.StatusCode)
-	}
-	if _, resp, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer " + userToken.Plaintext}}); err == nil {
-		t.Fatal("agent registration with user token should fail")
-	} else if resp == nil || resp.StatusCode != http.StatusUnauthorized {
-		if resp == nil {
-			t.Fatalf("expected HTTP 401 with user token, got nil response: %v", err)
-		}
-		t.Fatalf("expected HTTP 401 with user token, got %d", resp.StatusCode)
-	}
-	if _, resp, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer " + wrongScopeToken.Plaintext}}); err == nil {
-		t.Fatal("agent registration with mismatched agent token should fail")
-	} else if resp == nil || resp.StatusCode != http.StatusForbidden {
-		if resp == nil {
-			t.Fatalf("expected HTTP 403 with mismatched token, got nil response: %v", err)
-		}
-		t.Fatalf("expected HTTP 403 with mismatched token, got %d", resp.StatusCode)
-	}
-
-	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer " + validToken.Plaintext}})
+	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, nil)
 	if err != nil {
-		t.Fatalf("agent registration with matching token should connect: %v", err)
+		t.Fatalf("agent registration without token should connect: %v", err)
 	}
 	defer agentConn.Close()
 	go func() {
@@ -1163,19 +1121,19 @@ func TestGatewayRPCApplyRequiresCredentialPrepareGate(t *testing.T) {
 	}{
 		{
 			name:               "credential permission",
-			actions:            []GatewayAction{ActionAsk},
+			actions:            []GatewayAction{ActionAsk, ActionExec},
 			credentialProtocol: true,
 			wantError:          string(ActionCredentialUse),
 		},
 		{
 			name:               "agent protocol",
-			actions:            []GatewayAction{ActionAsk, ActionCredentialUse},
+			actions:            []GatewayAction{ActionAsk, ActionExec, ActionCredentialUse},
 			credentialProtocol: false,
 			wantError:          "agent_protocol_incompatible",
 		},
 		{
 			name:               "prepared run binding",
-			actions:            []GatewayAction{ActionAsk, ActionCredentialUse},
+			actions:            []GatewayAction{ActionAsk, ActionExec, ActionCredentialUse},
 			credentialProtocol: true,
 			wantError:          "credential_prepare_binding_invalid",
 		},
@@ -1293,12 +1251,20 @@ func TestGatewayRPCForwardsBackgroundToolsAsExec(t *testing.T) {
 		}
 	}
 
-	events, err := store.ListAuditFiltered(AuditFilter{Session: "release", Limit: 10})
-	if err != nil {
-		t.Fatalf("list audit: %v", err)
-	}
-	if len(events) != 2 {
-		t.Fatalf("expected two background-task audit events, got %#v", events)
+	var events []AuditEvent
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		events, err = store.ListAuditFiltered(AuditFilter{Session: "release", Limit: 10})
+		if err != nil {
+			t.Fatalf("list audit: %v", err)
+		}
+		if len(events) == 2 && events[0].Status == "success" && events[1].Status == "success" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected two completed background-task audit events, got %#v", events)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	for _, event := range events {
 		if event.Action != ActionExec || event.Status != "success" {
@@ -2396,6 +2362,10 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	if got := actionForTool("doops_agent_prompt", genericPromptArgs); got != ActionAsk {
 		t.Fatalf("agent prompt must require ask permission: %q", got)
 	}
+	applyPromptArgs := json.RawMessage(`{"operation":"apply","session_id":"apply-a"}`)
+	if got := actionForTool("doops_agent_prompt", applyPromptArgs); got != ActionExec {
+		t.Fatalf("apply agent prompt must require exec permission: %q", got)
+	}
 	if got := resourceKeyForTool(ActionAsk, "doops_agent_prompt", genericPromptArgs, "dev", "node"); got != "session:ask-a" {
 		t.Fatalf("agent prompt session resource key mismatch: %q", got)
 	}
@@ -2996,11 +2966,8 @@ func TestAuditTailBufferKeepsOnlyBoundedSuffix(t *testing.T) {
 func dialFakeGatewayAgent(t *testing.T, serverURL, token, cluster, instance string) *websocket.Conn {
 	t.Helper()
 	agentWS := "ws" + strings.TrimPrefix(serverURL, "http") + "/v1/agent/connect?cluster=" + cluster + "&instance=" + instance
-	header := http.Header{}
-	if strings.TrimSpace(token) != "" {
-		header.Set("Authorization", "Bearer "+token)
-	}
-	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, header)
+	_ = token
+	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, nil)
 	if err != nil {
 		t.Fatalf("dial agent websocket: %v", err)
 	}

@@ -164,7 +164,7 @@ func TestRunReverseTunnelUpdatesReadyStateOnConnectAndDisconnect(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runReverseTunnel(nil, "wss://gateway.example.com", "", "dev", "instance", 1*time.Millisecond)
+		runReverseTunnel(nil, "wss://gateway.example.com", "dev", "instance", 1*time.Millisecond)
 		close(done)
 	}()
 

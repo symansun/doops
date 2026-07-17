@@ -70,10 +70,6 @@ environments:
       name: control
       cluster: doops
       instance: runner
-    deploymentTarget:
-      name: workload
-      cluster: doops
-      instance: app
     executor:
       type: helm
       lifecycle: in-process
@@ -194,13 +190,12 @@ func TestBuildTrustedReconciliationAdmissionAddsExecutorsOnlyForApply(t *testing
 
 func TestTrustedReconciliationContextDigestMatchesDoagentCanonicalJSON(t *testing.T) {
 	context := trustedReconciliationContext{
-		SchemaVersion:       trustedReconciliationContextSchema,
-		OperationID:         "op_" + strings.Repeat("0", 32),
-		ExecutionMode:       "dry-run",
-		MutationAuthorized:  false,
-		PlanDigest:          "sha256:" + strings.Repeat("1", 64),
-		PlanBindingDigest:   "sha256:" + strings.Repeat("2", 64),
-		CredentialRunDigest: "sha256:" + strings.Repeat("4", 64),
+		SchemaVersion:      trustedReconciliationContextSchema,
+		OperationID:        "op_" + strings.Repeat("0", 32),
+		ExecutionMode:      "dry-run",
+		MutationAuthorized: false,
+		PlanDigest:         "sha256:" + strings.Repeat("1", 64),
+		PlanBindingDigest:  "sha256:" + strings.Repeat("2", 64),
 		Source: trustedReconciliationSource{
 			Repository:      "https://example.test/app.git",
 			Revision:        strings.Repeat("b", 40),
@@ -226,7 +221,7 @@ func TestTrustedReconciliationContextDigestMatchesDoagentCanonicalJSON(t *testin
 	if err != nil {
 		t.Fatalf("calculate context digest: %v", err)
 	}
-	const want = "sha256:4647c390906534200be402c6c213e6cc65350ad6dc2112c01db37151efc25f94"
+	const want = "sha256:1be324d22d5d173b19c54928bc7d66c330993f4fdbfe6312a9689be952c8655a"
 	if digest != want {
 		t.Fatalf("context digest = %q, want DoAgent JCS digest %q", digest, want)
 	}
@@ -294,34 +289,6 @@ spec:
 			wantRevision:    strings.Repeat("c", 40),
 			workspaceCommit: strings.Repeat("c", 40),
 		},
-		{
-			name: "semantic release binds declared revision",
-			workflow: `
-apiVersion: doops.sh/v2
-kind: SemanticRelease
-metadata:
-  name: zhiyong-test-release
-spec:
-  parameters:
-    revision:
-      required: true
-  application: zhiyong
-  release:
-    revision: ${inputs.revision}
-  environment: test
-  configurationSource: deploy/environments.yaml
-  serviceCatalog:
-    frontend:
-      uses: services/frontend.yaml
-  flow:
-    - intent: establish-release-context
-`,
-			inputs:          `"revision":"` + strings.Repeat("d", 40) + `"`,
-			template:        "zhiyong-test-release",
-			project:         "zhiyong",
-			wantRevision:    strings.Repeat("d", 40),
-			workspaceCommit: strings.Repeat("c", 40),
-		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -332,9 +299,6 @@ spec:
 				t.Fatalf("create workspace: %v", err)
 			}
 			writeCredentialPlanTestFile(t, workspace, "deploy/release.yaml", test.workflow)
-			if test.name == "semantic release binds declared revision" {
-				writeCredentialServiceReleaseFixture(t, workspace, "deploy/services/frontend.yaml", "frontend", "zhiyong")
-			}
 			writeCredentialPlanTestFile(t, workspace, "deploy/environments.yaml", `
 apiVersion: doops.sh/v2
 kind: EnvironmentRegistry
@@ -387,6 +351,82 @@ environments:
 	}
 }
 
+func TestBuildTrustedReconciliationAdmissionRejectsUnsupportedReleaseShapes(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	sessionID := "semantic-release"
+	workspace := filepath.Join(root, sessionID)
+	if err := os.MkdirAll(filepath.Join(workspace, "deploy"), 0o700); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	writeCredentialPlanTestFile(t, workspace, "deploy/release.yaml", `
+apiVersion: doops.sh/v2
+kind: SemanticRelease
+metadata:
+  name: zhiyong-test-release
+spec:
+  parameters:
+    revision:
+      required: true
+  application: zhiyong
+  release:
+    revision: ${inputs.revision}
+  environment: test
+  configurationSource: deploy/environments.yaml
+  serviceCatalog:
+    frontend:
+      uses: services/frontend.yaml
+  flow:
+    - intent: establish-release-context
+`)
+	writeCredentialServiceReleaseFixture(
+		t,
+		workspace,
+		"deploy/services/frontend.yaml",
+		"frontend",
+		"zhiyong",
+	)
+	writeCredentialPlanTestFile(t, workspace, "deploy/environments.yaml", `
+apiVersion: doops.sh/v2
+kind: EnvironmentRegistry
+metadata:
+  name: semantic-environments
+artifactContract:
+  type: image-set
+  sourceRepository: https://example.test/current.git
+  sourceBranch: main
+  sourceRegistry: registry.example.test/source
+  services: [frontend]
+environments:
+  test:
+    target: {name: gw-oilan-node, cluster: doops-oilan, instance: oilan-node}
+    executor:
+      type: helm
+      config:
+        namespace: test
+        release: app
+        registry: registry.example.test/target
+        chart: deploy/chart
+        values: deploy/values.yaml
+`)
+	commit := strings.Repeat("c", 40)
+	instruction := `{
+		"task":"execute-doops-cicd-workflow",
+		"skill":"$doops-cicd",
+		"executionMode":"dry-run",
+		"runId":"semantic-release-0123456789abcdef",
+		"workflowPath":"deploy/release.yaml",
+		"workspaceCommit":"` + commit + `",
+		"inputs":{"revision":"` + strings.Repeat("d", 40) + `"},
+		"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops-oilan","instance":"oilan-node","template":"zhiyong-test-release","project":"zhiyong","environment":"test","materializations":[]},
+		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
+	}`
+	if _, err := buildTrustedReconciliationAdmission(sessionID, instruction, commit); err == nil ||
+		!strings.Contains(err.Error(), "requires a v2 DeploymentTemplate") {
+		t.Fatalf("unsupported release error = %v", err)
+	}
+}
+
 func TestBuildTrustedReconciliationAdmissionRejectsSecretInputNames(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
@@ -416,7 +456,7 @@ func TestBuildTrustedReconciliationAdmissionRejectsSecretInputNames(t *testing.T
 	}
 }
 
-func TestBuildTrustedReconciliationAdmissionAcceptsV3EnvironmentRoot(t *testing.T) {
+func TestBuildTrustedReconciliationAdmissionAcceptsV3EnvironmentDefinition(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 	sessionID := "v3-environment-root"
@@ -436,12 +476,20 @@ func TestBuildTrustedReconciliationAdmissionAcceptsV3EnvironmentRoot(t *testing.
 	}`
 	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction, commit)
 	if err != nil {
-		t.Fatalf("build v3 trusted admission: %v", err)
+		t.Fatalf("build v3 admission: %v", err)
 	}
-	if admission.Context.Source.Repository != "https://example.test/zhiyong.git" ||
-		admission.Context.Source.Branch != "main" ||
-		admission.Context.Source.Revision != commit {
-		t.Fatalf("unexpected v3 source: %#v", admission.Context.Source)
+	if len(admission.AllowedTools) == 0 || admission.Context.Source.Repository != "https://example.test/zhiyong.git" {
+		t.Fatalf("unexpected v3 admission: %#v", admission)
+	}
+	scope := admission.Context.Capabilities["ObserveWorkspaceSource"].CanonicalScope
+	releasePlan, ok := scope["releasePlan"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("v3 release plan missing: %#v", scope)
+	}
+	targetImages, ok := releasePlan["targetImages"].([]map[string]interface{})
+	if !ok || len(targetImages) != 1 ||
+		targetImages[0]["digest"] != "sha256:"+strings.Repeat("a", 64) {
+		t.Fatalf("v3 target image binding missing: %#v", releasePlan)
 	}
 }
 
@@ -477,6 +525,25 @@ func TestBuildDoagentPromptParamsUsesExactPlanToolsAndNoGenericTools(t *testing.
 	if !reflect.DeepEqual(params["trustedReconciliationContext"], context) {
 		t.Fatalf("trusted context missing from prompt params: %#v", params)
 	}
+	if params["toolsEnabled"] != true {
+		t.Fatalf("trusted prompt must explicitly enable tools: %#v", params)
+	}
+	contract := appendDoagentStructuredResultContract("execute", &admission)
+	if !strings.Contains(contract, "status.evidence[0].toolRef must reference that completed call exactly") ||
+		!strings.Contains(contract, `{"tool":"plan.ObserveWorkspaceSource","input":{}}`) {
+		t.Fatalf("trusted prompt must pin evidence[0] to the completed source observation: %s", contract)
+	}
+	encodedContext, err := json.Marshal(params["trustedReconciliationContext"])
+	if err != nil {
+		t.Fatalf("encode trusted context: %v", err)
+	}
+	var contextFields map[string]interface{}
+	if err := json.Unmarshal(encodedContext, &contextFields); err != nil {
+		t.Fatalf("decode trusted context: %v", err)
+	}
+	if value, exists := contextFields["credentialRunDigest"]; !exists || value != "" {
+		t.Fatalf("v1 trusted context must include an empty credential run digest when unset: %#v", contextFields)
+	}
 	for _, forbidden := range []string{"Bash", "Read", "Agent", "Glob"} {
 		if containsString(allowed, forbidden) {
 			t.Fatalf("generic tool %q entered structured prompt allowlist: %#v", forbidden, allowed)
@@ -490,6 +557,9 @@ func TestBuildDoagentPromptParamsUsesExactPlanToolsAndNoGenericTools(t *testing.
 	}
 	if _, ok := plain["trustedReconciliationContext"]; ok {
 		t.Fatalf("plain JSON prompt must not carry trusted context: %#v", plain)
+	}
+	if plain["toolsEnabled"] != false {
+		t.Fatalf("plain JSON prompt must explicitly disable tools: %#v", plain)
 	}
 }
 
@@ -522,6 +592,7 @@ spec:
       repository: https://example.test/app.git
       revision: ${inputs.releaseId}
       branch: main
+    version: ${inputs.releaseId}
   environment: production
   configurationSource: deploy/environments.yaml
 `)
@@ -554,7 +625,6 @@ environments:
   production:
     deploymentPlatform: linux/amd64
     target: {name: control, cluster: doops, instance: runner}
-    deploymentTarget: {name: workload, cluster: doops, instance: app}
     executor:
       type: helm
       lifecycle: in-process

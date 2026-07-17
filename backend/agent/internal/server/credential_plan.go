@@ -850,7 +850,8 @@ func validateCredentialEnvironmentServicesV3(
 			service.Spec.Helm.Chart != definition.Spec.Helm.Chart ||
 			service.Spec.Helm.Values != definition.Spec.Helm.Values ||
 			strings.TrimSpace(service.Spec.Helm.Value) == "" ||
-			strings.TrimSpace(service.Spec.Helm.Workload) == "" ||
+			!strings.HasPrefix(service.Spec.Helm.Workload, "deployment/") ||
+			strings.TrimSpace(strings.TrimPrefix(service.Spec.Helm.Workload, "deployment/")) == "" ||
 			strings.TrimSpace(service.Spec.Helm.Container) == "" ||
 			service.Spec.Helm.Replicas < 1 ||
 			service.Spec.Verification.MinReadyReplicas < 1 ||

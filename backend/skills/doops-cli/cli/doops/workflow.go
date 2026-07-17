@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 var workflowInlineCredentialPatterns = []*regexp.Regexp{
@@ -38,6 +40,7 @@ const workspaceManifestAPIVersion = "doops.sh/v2"
 type workflowCommand struct {
 	File   string
 	Target string
+	Model  string
 	Inputs map[string]string
 	DryRun bool
 }
@@ -91,6 +94,7 @@ func runCICDCommand(
 	flags.StringVar(&request.File, "f", "", "workflow YAML file")
 	flags.StringVar(&request.File, "file", "", "workflow YAML file")
 	flags.StringVar(&request.Target, "target", "", "configured DoOps target")
+	flags.StringVar(&request.Model, "model", "", "model to use for trusted reconciliation")
 	flags.Var(sets, "set", "workflow input override in key=value form")
 	flags.BoolVar(&request.DryRun, "dry-run", false, "observe without mutation")
 	if err := flags.Parse(args[1:]); err != nil {
@@ -122,6 +126,10 @@ func runCICDCommand(
 	if strings.TrimSpace(server.Gateway) == "" {
 		return fmt.Errorf("target %q must use a configured DoOps gateway", server.Name)
 	}
+	manifestAPIVersion, err := workflowExecutionAPIVersion(request.File)
+	if err != nil {
+		return err
+	}
 	client, closeClient := openWorkflowAgent(*server, sessionStore, sessionID, verbose)
 	defer closeClient()
 
@@ -149,10 +157,6 @@ func runCICDCommand(
 	})
 	if err != nil {
 		return fmt.Errorf("credential prepare: %w", err)
-	}
-	manifestAPIVersion, err := workflowAPIVersion(request.File)
-	if err != nil {
-		return err
 	}
 	runID, err := generateWorkflowRunID(sessionID)
 	if err != nil {
@@ -184,6 +188,9 @@ func runCICDCommand(
 		"operation":        operation,
 		"workspace_commit": workspaceCommit,
 	}
+	if model := strings.TrimSpace(request.Model); model != "" {
+		callArguments["model"] = model
+	}
 	if err := client.CallStructured("doops_agent_prompt", callArguments, &result); err != nil {
 		return fmt.Errorf("ask doops-cicd: %w", err)
 	}
@@ -201,21 +208,54 @@ func runCICDCommand(
 }
 
 func workflowAPIVersion(path string) (string, error) {
+	version, _, err := workflowIdentity(path)
+	if err != nil {
+		return "", err
+	}
+	return version, nil
+}
+
+func workflowExecutionAPIVersion(path string) (string, error) {
+	version, kind, err := workflowIdentity(path)
+	if err != nil {
+		return "", err
+	}
+	if (version == workspaceManifestAPIVersion && kind == "DeploymentTemplate") ||
+		(version == "doops.sh/v3" && kind == "EnvironmentDefinition") {
+		return version, nil
+	}
+	return "", fmt.Errorf(
+		"trusted cicd execution requires %s DeploymentTemplate or doops.sh/v3 EnvironmentDefinition, got %s %s",
+		workspaceManifestAPIVersion,
+		version,
+		kind,
+	)
+}
+
+func workflowIdentity(path string) (string, string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("read workflow apiVersion: %w", err)
+		return "", "", fmt.Errorf("read workflow apiVersion: %w", err)
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		key, value, ok := strings.Cut(line, ":")
-		if ok && strings.TrimSpace(key) == "apiVersion" {
-			version := strings.TrimSpace(value)
-			if version == "doops.sh/v2" || version == "doops.sh/v3" {
-				return version, nil
-			}
-			return "", fmt.Errorf("unsupported workflow apiVersion %q", version)
+	var identity struct {
+		APIVersion string `yaml:"apiVersion"`
+		Kind       string `yaml:"kind"`
+	}
+	if err := yaml.Unmarshal(data, &identity); err != nil {
+		return "", "", fmt.Errorf("decode workflow identity: %w", err)
+	}
+	identity.APIVersion = strings.TrimSpace(identity.APIVersion)
+	identity.Kind = strings.TrimSpace(identity.Kind)
+	if identity.APIVersion != "doops.sh/v2" && identity.APIVersion != "doops.sh/v3" {
+		if identity.APIVersion == "" {
+			return "", "", fmt.Errorf("workflow apiVersion is required")
 		}
+		return "", "", fmt.Errorf("unsupported workflow apiVersion %q", identity.APIVersion)
 	}
-	return "", fmt.Errorf("workflow apiVersion is required")
+	if identity.Kind == "" {
+		return "", "", fmt.Errorf("workflow kind is required")
+	}
+	return identity.APIVersion, identity.Kind, nil
 }
 
 func generateWorkflowRunID(sessionID string) (string, error) {
