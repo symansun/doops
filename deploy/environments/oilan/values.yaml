@@ -1,6 +1,6 @@
 image:
   repository: docker.cnb.cool/l8ai/ai/doops.sh
-  digest: sha256:8d5a46bc43d6c39ac8514ab9f02dd2f1fc21a0bbe08aadae84f8d45afae12826
+  digest: sha256:f190735cc8366ce6cedbba9954efd85c142c1ca03875099e89cbd16ed76b0b6e
   pullPolicy: Always
 
 workload:
