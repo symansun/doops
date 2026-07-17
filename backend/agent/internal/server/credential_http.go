@@ -338,9 +338,13 @@ func (h *GatewayHub) handleCredentialPromote(w http.ResponseWriter, r *http.Requ
 		}
 		seen[key] = struct{}{}
 		ref := credentialReferenceFromRequest(request)
+		expectedPreviousVersionID := ""
+		if previousErr == nil {
+			expectedPreviousVersionID = previous.ID
+		}
 		evidence, refreshedRequest, err := h.materializeCredentialVersion(
 			r.Context(), request.Cluster, request.Instance, request.SessionID,
-			resource, version, request.GrantID, ref,
+			resource, version, expectedPreviousVersionID, request.GrantID, ref,
 		)
 		if err != nil {
 			if rollbackErr := h.rollbackCredentialPromotion(r.Context(), resource, previous, previousErr, applied); rollbackErr != nil {

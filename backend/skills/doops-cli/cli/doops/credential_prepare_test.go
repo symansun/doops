@@ -37,3 +37,21 @@ func TestCredentialPrepareFailureIncludesRequiredProtocol(t *testing.T) {
 		t.Fatalf("required protocol missing from error: %v", err)
 	}
 }
+
+func TestCredentialMaterializationMetadataRequiresPromptSafeProjection(t *testing.T) {
+	materialization := credentialMaterializationMetadata{
+		CredentialID: "cred_test", GrantID: "grant_test", VersionID: "version_test",
+		ResourceName: "managed-secret", Namespace: "apps", SecretType: "Opaque",
+		Keys: []string{"canary"}, ResourceVersion: "42", Status: "verified",
+	}
+	if err := validateCredentialMaterializationMetadata(materialization); err == nil {
+		t.Fatal("target evidence was accepted in prompt credential metadata")
+	}
+	materialization.ResourceName = ""
+	materialization.SecretType = ""
+	materialization.Keys = nil
+	materialization.ResourceVersion = ""
+	if err := validateCredentialMaterializationMetadata(materialization); err != nil {
+		t.Fatalf("prompt-safe credential metadata rejected: %v", err)
+	}
+}

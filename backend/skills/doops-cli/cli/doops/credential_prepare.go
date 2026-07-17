@@ -125,7 +125,71 @@ func prepareWorkflowCredentials(
 	if run.Materializations == nil {
 		run.Materializations = []credentialMaterializationMetadata{}
 	}
+	for _, materialization := range run.Materializations {
+		if err := validateCredentialMaterializationMetadata(materialization); err != nil {
+			return credentialRun{}, fmt.Errorf("invalid credential prepare response")
+		}
+	}
 	return run, nil
+}
+
+func validateCredentialMaterializationMetadata(materialization credentialMaterializationMetadata) error {
+	if !validCredentialMetadataToken(materialization.CredentialID, 128) ||
+		!validCredentialMetadataToken(materialization.GrantID, 128) ||
+		!validCredentialMetadataToken(materialization.VersionID, 128) ||
+		!validKubernetesCredentialMetadataName(materialization.Namespace) {
+		return fmt.Errorf("invalid credential materialization metadata")
+	}
+	switch materialization.Status {
+	case "planned", "verified", "outcome_unknown":
+	default:
+		return fmt.Errorf("invalid credential materialization metadata")
+	}
+	if materialization.ResourceName != "" ||
+		materialization.SecretType != "" ||
+		len(materialization.Keys) != 0 ||
+		materialization.ResourceVersion != "" ||
+		materialization.Digest != "" ||
+		materialization.Fingerprint != "" ||
+		materialization.ExpiresAt != "" ||
+		materialization.ErrorCategory != "" {
+		return fmt.Errorf("invalid credential materialization metadata")
+	}
+	return nil
+}
+
+func validKubernetesCredentialMetadataName(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 253 {
+		return false
+	}
+	for index, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') ||
+			char == '-' || char == '.' {
+			continue
+		}
+		if index == 0 || index == len(value)-1 {
+			return false
+		}
+		return false
+	}
+	return value[0] != '-' && value[0] != '.' &&
+		value[len(value)-1] != '-' && value[len(value)-1] != '.'
+}
+
+func validCredentialMetadataToken(value string, maxLength int) bool {
+	if value == "" || len(value) > maxLength || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '_' || char == '-' ||
+			char == '.' || char == ':' || char == '/' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func credentialPrepareFailureError(status, category, requiredProtocol string) error {

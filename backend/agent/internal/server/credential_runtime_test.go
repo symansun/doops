@@ -121,7 +121,11 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	}
 	if run.MutationCount != 1 || len(run.Materializations) != 1 ||
 		run.Materializations[0].CredentialID != credential.ID ||
-		run.Materializations[0].VersionID != version.ID {
+		run.Materializations[0].VersionID != version.ID ||
+		run.Materializations[0].ResourceName != "" ||
+		run.Materializations[0].ResourceVersion != "" ||
+		run.Materializations[0].Digest != "" ||
+		len(run.Materializations[0].Keys) != 0 {
 		t.Fatalf("unexpected credential run: %#v", run)
 	}
 	_, adminToken := createCredentialHTTPUser(t, store, "credential-operator", true)
@@ -178,7 +182,7 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	}
 	if !strings.Contains(verify.Body.String(), `"status":"verified"`) ||
 		!strings.Contains(verify.Body.String(), `"resourceVersion":"42"`) ||
-		!strings.Contains(verify.Body.String(), `"digest":"sha256:manifest"`) {
+		!strings.Contains(verify.Body.String(), `"digest":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"`) {
 		t.Fatalf("credential verify response omitted allowed evidence: %s", verify.Body.String())
 	}
 	stagedMaterializations, err := store.CredentialMaterializations(credential.ID, staged.ID, grant.ID)
@@ -230,7 +234,7 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 			audit.Namespace == "kz-ops" &&
 			audit.Template == "oilan-agent-release" &&
 			audit.ResourceVersion == "42" &&
-			audit.Digest == "sha256:manifest" &&
+			audit.Digest == "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" &&
 			audit.Status == "success" {
 			verifiedAudit = true
 		}
@@ -244,7 +248,7 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 			audit.Namespace == "kz-ops" &&
 			audit.Template == "oilan-agent-release" &&
 			audit.ResourceVersion == "42" &&
-			audit.Digest == "sha256:manifest" &&
+			audit.Digest == "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" &&
 			strings.HasPrefix(audit.CorrelationID, "credrun_") {
 			materializationAudit = true
 		}
@@ -254,6 +258,62 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	}
 	if !materializationAudit {
 		t.Fatalf("credential materialization audit fields missing: %#v", audits)
+	}
+}
+
+func TestCredentialMaterializationRequiresExpectedPreviousVersion(t *testing.T) {
+	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("p", 32))
+	store := openCredentialTestStore(t)
+	admin := createCredentialTestUser(t, store, "credential-admin")
+	if err := store.GrantUser(admin.ID, ScopeGrant{
+		Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin},
+	}); err != nil {
+		t.Fatalf("grant credential admin: %v", err)
+	}
+	credential, err := store.CreateCredential(CredentialCreateRequest{
+		Name: "registry", Scope: CredentialScopePlatform, Type: CredentialTypeRegistry, CreatedBy: admin.ID,
+	})
+	if err != nil {
+		t.Fatalf("create credential: %v", err)
+	}
+	active, err := store.PutCredentialVersion(CredentialVersionPutRequest{
+		CredentialID: credential.ID,
+		Payload:      json.RawMessage(`{"server":"registry.example.com","username":"deploy","password":"active-synthetic"}`),
+		CreatedBy:    admin.ID,
+		Activate:     true,
+	})
+	if err != nil {
+		t.Fatalf("put active credential version: %v", err)
+	}
+	staged, err := store.PutCredentialVersion(CredentialVersionPutRequest{
+		CredentialID: credential.ID,
+		Payload:      json.RawMessage(`{"server":"registry.example.com","username":"deploy","password":"staged-synthetic"}`),
+		CreatedBy:    admin.ID,
+	})
+	if err != nil {
+		t.Fatalf("put staged credential version: %v", err)
+	}
+
+	const grantID = "credgrant_test"
+	materialization := CredentialMaterialization{
+		CredentialID: credential.ID, GrantID: grantID, VersionID: active.ID,
+		ResourceName: credentialSecretName(credential.ID, grantID),
+		Namespace:    "apps", SecretType: "kubernetes.io/dockerconfigjson",
+		Keys: []string{".dockerconfigjson"}, ResourceVersion: "42",
+		Digest: "sha256:" + strings.Repeat("a", 64), Status: "verified",
+		PreviousVersionID: staged.ID,
+	}
+	hub := NewGatewayHub(store, GatewayHubOptions{})
+	ref := CredentialPlanReference{Namespace: "apps", Use: CredentialUseImagePull}
+	if err := hub.validateCredentialMaterializationResult(
+		materialization, credential, grantID, ref, []string{".dockerconfigjson"}, active.ID,
+	); err == nil {
+		t.Fatal("unexpected previous credential version was accepted")
+	}
+	if err := hub.validateCredentialMaterializationResult(
+		materialization, credential, grantID, ref, []string{".dockerconfigjson"}, staged.ID,
+	); err != nil {
+		t.Fatalf("expected staged previous credential version rejected: %v", err)
 	}
 }
 
@@ -470,6 +530,7 @@ func serveCredentialRuntimeAgent(
 	payloadObserved *atomic.Bool,
 ) {
 	t.Helper()
+	currentVersionID := ""
 	for {
 		var message map[string]any
 		if err := conn.ReadJSON(&message); err != nil {
@@ -513,19 +574,26 @@ func serveCredentialRuntimeAgent(
 				if strings.Contains(string(mustJSON(t, arguments)), "runtime-canary-secret") {
 					payloadObserved.Store(true)
 				}
+				versionID := stringValue(arguments["version_id"])
 				result = CredentialMaterialization{
-					CredentialID:    stringValue(arguments["credential_id"]),
-					VersionID:       stringValue(arguments["version_id"]),
-					ResourceName:    "doops-cred-test",
-					Namespace:       "kz-ops",
-					SecretType:      "kubernetes.io/dockerconfigjson",
-					Keys:            []string{".dockerconfigjson"},
-					ResourceVersion: "42",
-					Digest:          "sha256:manifest",
-					Status:          "verified",
+					CredentialID: stringValue(arguments["credential_id"]),
+					VersionID:    versionID,
+					ResourceName: credentialSecretName(
+						stringValue(arguments["credential_id"]),
+						stringValue(arguments["grant_id"]),
+					),
+					Namespace:         "kz-ops",
+					SecretType:        "kubernetes.io/dockerconfigjson",
+					Keys:              []string{".dockerconfigjson"},
+					ResourceVersion:   "42",
+					Digest:            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+					Status:            "verified",
+					PreviousVersionID: currentVersionID,
 				}
+				currentVersionID = versionID
 			case "doops_credential_cleanup":
 				cleanupCalls.Add(1)
+				currentVersionID = ""
 				result = map[string]any{"status": "removed"}
 			default:
 				result = map[string]any{"error": "unexpected tool"}

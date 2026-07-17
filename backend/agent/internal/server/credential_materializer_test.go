@@ -7,6 +7,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -31,6 +32,8 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 	t.Setenv("DOOPS_TEST_SECRET_KEYS", ".dockerconfigjson")
 	t.Setenv("DOOPS_TEST_GIT_SECRET", "")
 
+	manifest := `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json"}`
+	registryDigest := credentialTestManifestDigest(manifest)
 	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v2/team/app/manifests/latest" {
 			http.NotFound(w, r)
@@ -41,8 +44,10 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		w.Header().Set("Docker-Content-Digest", "sha256:manifest")
+		w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+		w.Header().Set("Docker-Content-Digest", registryDigest)
 		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(manifest))
 	}))
 	defer registry.Close()
 
@@ -68,7 +73,7 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 		result.SecretType != "kubernetes.io/dockerconfigjson" ||
 		len(result.Keys) != 1 || result.Keys[0] != ".dockerconfigjson" ||
 		result.ResourceVersion != "42" ||
-		result.Digest != "sha256:manifest" {
+		result.Digest != registryDigest {
 		t.Fatalf("unexpected registry materialization: %#v", result)
 	}
 	assertCredentialCanaryNotInText(t, "materializer result", string(mustJSON(t, result)), "materializer-canary-secret")
@@ -80,6 +85,8 @@ func TestVerifyRegistryManifestUsesBearerChallenge(t *testing.T) {
 	const canary = "bearer-canary-secret"
 	var tokenRequests atomic.Int64
 	var manifestRequests atomic.Int64
+	manifest := `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json"}`
+	registryDigest := credentialTestManifestDigest(manifest)
 	var registry *httptest.Server
 	registry = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -107,8 +114,10 @@ func TestVerifyRegistryManifestUsesBearerChallenge(t *testing.T) {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			w.Header().Set("Docker-Content-Digest", "sha256:bearer-manifest")
+			w.Header().Set("Content-Type", "application/vnd.oci.image.index.v1+json")
+			w.Header().Set("Docker-Content-Digest", registryDigest)
 			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(manifest))
 		default:
 			http.NotFound(w, r)
 		}
@@ -121,10 +130,99 @@ func TestVerifyRegistryManifestUsesBearerChallenge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verify registry manifest with bearer challenge: %v", err)
 	}
-	if digest != "sha256:bearer-manifest" || tokenRequests.Load() != 1 || manifestRequests.Load() != 2 {
+	if digest != registryDigest || tokenRequests.Load() != 1 || manifestRequests.Load() != 2 {
 		t.Fatalf("digest=%q tokenRequests=%d manifestRequests=%d",
 			digest, tokenRequests.Load(), manifestRequests.Load())
 	}
+}
+
+func TestVerifyRegistryManifestRejectsDigestMismatch(t *testing.T) {
+	allowCredentialPrivateEndpointsForTest(t)
+	manifest := `{"schemaVersion":2}`
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+		w.Header().Set("Docker-Content-Digest", "sha256:"+strings.Repeat("a", 64))
+		_, _ = w.Write([]byte(manifest))
+	}))
+	defer registry.Close()
+
+	if _, err := verifyRegistryManifest(
+		context.Background(), registry.URL, "deploy", "synthetic", "team/app", "latest",
+	); err == nil || err.Error() != "registry_digest_mismatch" {
+		t.Fatalf("digest mismatch error = %v", err)
+	}
+}
+
+func TestVerifyRegistryManifestRejectsReferenceDigestMismatch(t *testing.T) {
+	allowCredentialPrivateEndpointsForTest(t)
+	manifest := `{"schemaVersion":2}`
+	digest := credentialTestManifestDigest(manifest)
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.oci.image.manifest.v1+json")
+		w.Header().Set("Docker-Content-Digest", digest)
+		_, _ = w.Write([]byte(manifest))
+	}))
+	defer registry.Close()
+
+	reference := "sha256:" + strings.Repeat("b", 64)
+	if _, err := verifyRegistryManifest(
+		context.Background(), registry.URL, "deploy", "synthetic", "team/app", reference,
+	); err == nil || err.Error() != "registry_reference_digest_mismatch" {
+		t.Fatalf("reference digest mismatch error = %v", err)
+	}
+}
+
+func TestVerifyRegistryManifestRejectsUnavailableManifestRepresentations(t *testing.T) {
+	allowCredentialPrivateEndpointsForTest(t)
+	for name, response := range map[string]struct {
+		status      int
+		contentType string
+		body        string
+	}{
+		"no content": {
+			status: http.StatusNoContent,
+		},
+		"wrong media type": {
+			status:      http.StatusOK,
+			contentType: "text/plain",
+			body:        `{"schemaVersion":2}`,
+		},
+		"invalid json": {
+			status:      http.StatusOK,
+			contentType: "application/vnd.oci.image.manifest.v1+json",
+			body:        `not-json`,
+		},
+		"wrong schema": {
+			status:      http.StatusOK,
+			contentType: "application/vnd.oci.image.manifest.v1+json",
+			body:        `{"schemaVersion":1}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if response.contentType != "" {
+					w.Header().Set("Content-Type", response.contentType)
+				}
+				if response.body != "" {
+					w.Header().Set("Docker-Content-Digest", credentialTestManifestDigest(response.body))
+				}
+				w.WriteHeader(response.status)
+				_, _ = w.Write([]byte(response.body))
+			}))
+			defer registry.Close()
+
+			if _, err := verifyRegistryManifest(
+				context.Background(), registry.URL, "deploy", "synthetic", "team/app", "latest",
+			); err == nil {
+				t.Fatal("unavailable manifest representation was accepted")
+			}
+		})
+	}
+}
+
+func credentialTestManifestDigest(manifest string) string {
+	sum := sha256.Sum256([]byte(manifest))
+	return fmt.Sprintf("sha256:%x", sum)
 }
 
 func TestCredentialSecretNameIsGrantScoped(t *testing.T) {
