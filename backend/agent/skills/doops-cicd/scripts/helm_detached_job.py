@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 DNS_LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 SHA256_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+AGENT_CHART = "/app/deploy/helm/doops-agent"
 
 
 def job_name(run_id):
@@ -25,11 +26,6 @@ def require_dns_label(name, value):
         raise ValueError(f"{name} must be a Kubernetes DNS label")
 
 
-def require_workspace_path(name, value):
-    if not os.path.isabs(value) or not os.path.normpath(value).startswith("/root/ws/"):
-        raise ValueError(f"{name} must be an absolute path under /root/ws")
-
-
 def shell_join(parts):
     return " ".join(shlex.quote(part) for part in parts)
 
@@ -39,8 +35,6 @@ def build_job_manifest(
     run_id,
     namespace,
     release,
-    chart,
-    values,
     image_repository,
     image_digest,
     executor_image_repository,
@@ -48,13 +42,10 @@ def build_job_manifest(
     node_selector_key,
     node_selector_value,
     kubeconfig_host_path,
-    agent_home_host_path,
     timeout,
 ):
     require_dns_label("namespace", namespace)
     require_dns_label("release", release)
-    require_workspace_path("chart", chart)
-    require_workspace_path("values", values)
     if not SHA256_DIGEST.fullmatch(image_digest):
         raise ValueError("image_digest must be an immutable sha256 digest")
     if not image_repository or "@" in image_repository:
@@ -65,8 +56,8 @@ def build_job_manifest(
         raise ValueError("executor_image_repository must not contain a digest")
     if not node_selector_key or not node_selector_value:
         raise ValueError("node selector is required")
-    if not os.path.isabs(kubeconfig_host_path) or not os.path.isabs(agent_home_host_path):
-        raise ValueError("host paths must be absolute")
+    if not os.path.isabs(kubeconfig_host_path):
+        raise ValueError("kubeconfig host path must be absolute")
     if not re.fullmatch(r"[1-9][0-9]*[smh]", timeout):
         raise ValueError("timeout must be a positive Helm duration")
 
@@ -75,13 +66,11 @@ def build_job_manifest(
         [
             "helm",
             "upgrade",
-            "--install",
             release,
-            chart,
+            AGENT_CHART,
             "--namespace",
             namespace,
-            "--values",
-            values,
+            "--reuse-values",
             "--set-string",
             f"image.repository={image_repository}",
             "--set-string",
@@ -137,10 +126,6 @@ def build_job_manifest(
                                     "mountPath": "/root/.kube/config",
                                     "readOnly": True,
                                 },
-                                {
-                                    "name": "agent-home",
-                                    "mountPath": "/root",
-                                },
                             ],
                         }
                     ],
@@ -150,13 +135,6 @@ def build_job_manifest(
                             "hostPath": {
                                 "path": kubeconfig_host_path,
                                 "type": "File",
-                            },
-                        },
-                        {
-                            "name": "agent-home",
-                            "hostPath": {
-                                "path": agent_home_host_path,
-                                "type": "Directory",
                             },
                         },
                     ],
@@ -281,8 +259,6 @@ def parser():
         "run_id",
         "namespace",
         "release",
-        "chart",
-        "values",
         "image_repository",
         "image_digest",
         "executor_image_repository",
@@ -290,7 +266,6 @@ def parser():
         "node_selector_key",
         "node_selector_value",
         "kubeconfig_host_path",
-        "agent_home_host_path",
         "timeout",
     ):
         submit_parser.add_argument("--" + name.replace("_", "-"), required=True)

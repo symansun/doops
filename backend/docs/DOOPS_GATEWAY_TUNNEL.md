@@ -51,9 +51,7 @@ bash scripts/deploy-gateway.sh \
 - user token 只能执行授权范围内的 action。
 - gateway 转发 doops JSON-RPC 操作流量和 Git HTTP 请求，不做裸 TCP 隧道。
 - `push/pull` 在标准 gateway 路径下使用 Git 语义。gateway 对外暴露 `/v1/git/<cluster>/<instance>/<session>.git/...`，再通过目标 agent 已建立的反向 WebSocket 把 Git HTTP 请求透传给 agent 本地 `/git/<session>.git/...`。
-- `doops_workspace_*` 是低层文件传输工具；通用 CLI 的目录同步使用 Git HTTP
-  `push/pull`。这些接口不属于声明式发布协议，发布 skill 不得用文件同步替代
-  `EnvironmentRegistry` admission。
+- `doops_workspace_*` 是低层兼容工具，允许旧客户端或定制客户端继续工作；CLI、发布脚本和 skill 的标准路径必须是 Git HTTP 的 `push/pull`。看到 `512KB` 分块日志时，应优先检查调用方是否绕过了当前 CLI。
 - 密码登录签发短期 user token，默认 24 小时过期；过期 token 会在登录时顺手清理。
 - token 校验通过 token id 定位单行哈希，避免多人多 token 时全表 bcrypt 扫描。
 - 同一 `cluster/instance` 默认串行执行，并允许最多 8 个操作排队等待 2 分钟；队列满或超时会返回明确错误。
@@ -311,13 +309,9 @@ doops -session upgrade_20260511 upgrade \
 - 源码入口是仓库一级目录 `gateway/`；`agent/cmd/gateway` 仅保留为兼容 wrapper。
 - gateway 默认监听 `42222`；公网部署时云安全组/防火墙也必须放行 TCP 42222。
 - gateway 按 `cluster/instance` 和资源键隔离操作；不同 session/workspace 可并发，同一资源互斥。
-- 声明式发布只接受仓库中的 `doops.sh/v3 EnvironmentRegistry`。Gateway 先通过
-  `/v1/credentials/prepare` 创建绑定 source revision、target、session 和 build
-  definition 的单次 `CredentialRun`，再经已授权反向隧道向 Agent 发送严格的
-  `doops.reconciliation-context/v2` apply envelope；公共 Agent `/ws` 无权调用
-  credential control-plane 工具或执行 apply。目标 Agent 必须精确声明
-  `doops.sh/credential-plan/v2` 和 `doops.sh/cicd-contract/v3` 能力，否则 Gateway
-  在分发前返回 `426 Upgrade Required`。
+- `doops_agent_prompt` 的只读任务使用 `ActionAsk`；`operation=apply` 使用
+  `ActionExec`，并且只允许 Gateway 已授权的反向隧道。变更任务在一次性临时目录中
+  执行，不要求 `doops push`，也不读取发布 metadata 或 workspace admission。
 - `/v1/targets` 中 `busy=true` 只表示 target-wide 阻塞；普通 session 运行显示为 `status=active`、`busy=false`，并在 `resources` 中标出锁住的资源。
 - gateway 还维护全局/用户级并发闸门；默认全局 64 个并发操作、单用户 8 个并发操作。
 - gateway 会主动对 agent WebSocket 发 ping，agent pong 后刷新租约和 SQLite `last_seen`。

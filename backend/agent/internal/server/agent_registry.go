@@ -118,11 +118,16 @@ func appendRetiredRuntimeID(retired []string, runtimeID string) []string {
 }
 
 func (r *AgentRegistry) Unregister(agent *GatewayAgent) error {
+	_, err := r.UnregisterWithState(agent)
+	return err
+}
+
+func (r *AgentRegistry) UnregisterWithState(agent *GatewayAgent) (bool, error) {
 	r.mu.Lock()
 	current := r.sessions[agent.Key]
 	if current != agent || current.Generation != agent.Generation {
 		r.mu.Unlock()
-		return nil
+		return false, nil
 	}
 	delete(r.sessions, agent.Key)
 	r.notifyLocked(agent.Key)
@@ -132,9 +137,9 @@ func (r *AgentRegistry) Unregister(agent *GatewayAgent) error {
 	lastSeen := agent.LastSeen
 	agent.stateMu.RUnlock()
 	if err := r.store.MarkAgentOffline(agent.Cluster, agent.Instance, agent.Generation, lastSeen); err != nil {
-		return fmt.Errorf("persist agent offline: %w", err)
+		return true, fmt.Errorf("persist agent offline: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 func (r *AgentRegistry) Touch(agent *GatewayAgent, lastSeen time.Time) error {

@@ -1,28 +1,27 @@
 ---
 name: doops-cicd
-description: 按 DoOps v3 EnvironmentRegistry 部署用户明确指定的单个服务。
+description: 根据用户明确给出的自然语言发布任务执行 DoOps v3 构建、部署与验收。
 ---
 
 # DoOps CI/CD
 
-唯一发布根是仓库中的 `deploy/environments.yaml`：
-`doops.sh/v3 EnvironmentRegistry`。部署请求必须明确给出 `environment` 和
-`service`，每次只执行该服务。禁止旧 v2 workflow、扫描目录、遍历其他服务、推断
-默认环境或生成中间 workflow。
+DoOps v3 的输入是自然语言发布任务，不使用声明式发布根、workflow wrapper、
+临时源码快照或提交绑定。
 
-Gateway 在 Ask 前必须完成 `doops.sh/credential-plan/v2` prepare，并将返回的
-`CredentialRun` 绑定到用户、target、session、声明路径、源仓库、branch、不可变
-commit 和执行模式。Agent 内 doagent 必须声明
-`doops.reconciliation-context/v2` 的完整能力；不一致时必须在模型执行前阻断。
+任务必须明确给出 target、服务范围、镜像版本或 digest、变更原因、验收条件和
+mutation 授权。缺少任一项时必须阻断，不得从目录名、域名、历史版本或遗留 YAML
+推断。
 
 ## 执行
 
-1. 读取请求指定的 YAML 及其显式引用。
-2. 确认源、环境、服务、target、凭据引用、镜像、Helm 和健康检查声明存在。
-3. dry-run 只观察并报告计划，不执行变更。
-4. apply 使用声明中的 target 和工具执行该服务的变更。
-5. 验证该服务的镜像、工作负载和声明的健康检查。
+1. 使用当前 target 的运行时工具确认服务、镜像和并发发布状态。
+2. 未授权 mutation 时只观察并报告。
+3. 已授权时只执行任务明确列出的服务和变更，不扩大范围。
+4. 发布源必须来自正式仓库、正式制品库或目标已有 Helm release；不得使用临时同步的
+   源码目录作为发布源。
+5. 验证任务明确给出的工作负载、镜像和健康条件。
+6. 只有真实工具调用和线上读回证据均成立时才能报告成功；零工具调用必须失败。
 
-只使用 `CredentialRun` 中的凭据元数据和目标侧已物化资源，不读取或输出 Secret
-内容。缺少声明、能力、授权或执行失败时直接返回真实错误。不要 fallback，不生成
-中间 workflow，不运行第二套编排器，不改写 Agent 返回结果。
+凭据只使用目标侧已有引用，不读取或输出 Secret 内容。执行失败时返回真实错误。
+不要 fallback，不生成中间 workflow，不运行第二套编排器，不把文本完成声明当作
+验收证据。

@@ -253,7 +253,7 @@ func TestCredentialBundleResolvesMetadataAndNamedAuthorizationRejectsAmbiguity(t
 			CredentialID:       credentials[0].ID,
 			Use:                CredentialUseImagePull,
 			Namespace:          "apps",
-			Workload:           CredentialPlanWorkload{Kind: "Deployment", Name: "api"},
+			Workload:           CredentialWorkloadRef{Kind: "Deployment", Name: "api"},
 			RegistryRepository: "team/api",
 			RegistryReference:  "sha256:manifest",
 		}},

@@ -61,32 +61,7 @@ const (
 	gatewayAgentTouchTimeout           = 2 * time.Second
 	gatewayReadProgressAckInterval     = 5 * time.Second
 	gatewayReadProgressAckWriteTimeout = 3 * time.Second
-	credentialPlanProtocolV2           = "doops.sh/credential-plan/v2"
-	credentialPlanDeclarationV3        = "doops.sh/v3"
 )
-
-func credentialPlanCapability() map[string]interface{} {
-	return map[string]interface{}{
-		"schemaVersion":            credentialPlanProtocolV2,
-		"declarationSchemaVersion": credentialPlanDeclarationV3,
-		"sourceRevision":           true,
-		"targetBinding":            true,
-		"sessionBinding":           true,
-		"buildDefinition":          true,
-	}
-}
-
-func credentialPlanCapabilityCompatible(value interface{}) bool {
-	capability, ok := value.(map[string]interface{})
-	return ok &&
-		len(capability) == 6 &&
-		capability["schemaVersion"] == credentialPlanProtocolV2 &&
-		capability["declarationSchemaVersion"] == credentialPlanDeclarationV3 &&
-		capability["sourceRevision"] == true &&
-		capability["targetBinding"] == true &&
-		capability["sessionBinding"] == true &&
-		capability["buildDefinition"] == true
-}
 
 type GatewayActiveOperation struct {
 	ID             string        `json:"id"`
@@ -108,22 +83,21 @@ type gatewayActiveOperation struct {
 }
 
 type GatewayAgent struct {
-	Cluster                string    `json:"cluster"`
-	Instance               string    `json:"instance"`
-	Key                    string    `json:"key"`
-	Remote                 string    `json:"remote"`
-	TokenID                string    `json:"token_id,omitempty"`
-	Generation             uint64    `json:"generation"`
-	RuntimeID              string    `json:"runtime_id,omitempty"`
-	CredentialPlanProtocol string    `json:"credential_plan_protocol,omitempty"`
-	ConnectedAt            time.Time `json:"connected_at"`
-	LastSeen               time.Time `json:"last_seen"`
-	HeartbeatAt            time.Time `json:"heartbeat_at,omitempty"`
-	Busy                   bool      `json:"busy"`
-	Status                 string    `json:"status,omitempty"`
-	BusyReason             string    `json:"busy_reason,omitempty"`
-	ActiveOps              int       `json:"active_ops,omitempty"`
-	QueuedOps              int       `json:"queued_ops,omitempty"`
+	Cluster     string    `json:"cluster"`
+	Instance    string    `json:"instance"`
+	Key         string    `json:"key"`
+	Remote      string    `json:"remote"`
+	TokenID     string    `json:"token_id,omitempty"`
+	Generation  uint64    `json:"generation"`
+	RuntimeID   string    `json:"runtime_id,omitempty"`
+	ConnectedAt time.Time `json:"connected_at"`
+	LastSeen    time.Time `json:"last_seen"`
+	HeartbeatAt time.Time `json:"heartbeat_at,omitempty"`
+	Busy        bool      `json:"busy"`
+	Status      string    `json:"status,omitempty"`
+	BusyReason  string    `json:"busy_reason,omitempty"`
+	ActiveOps   int       `json:"active_ops,omitempty"`
+	QueuedOps   int       `json:"queued_ops,omitempty"`
 
 	stateMu          sync.RWMutex
 	conn             *websocket.Conn
@@ -455,7 +429,6 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/targets", h.HandleTargets)
 	mux.HandleFunc("/v1/targets/unlock", h.HandleTargetUnlock)
 	mux.HandleFunc("/v1/audit", h.HandleAudit)
-	mux.HandleFunc("/v1/credentials/prepare", h.HandleCredentialPrepare)
 	mux.HandleFunc("/v1/credential-bundles", h.HandleCredentialBundles)
 	mux.HandleFunc("/v1/credentials", h.HandleCredentials)
 	mux.HandleFunc("/v1/credentials/", h.HandleCredential)
@@ -969,32 +942,16 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32602, "invalid tools/call params"))
 		return nil
 	}
-	if internalCredentialTool(params.Name) {
-		writeJSON(buildErrorResponse(req.ID, -32003, "credential control-plane tools are internal only"))
-		return nil
-	}
-	var credentialBinding *credentialPromptBinding
 	if params.Name == "doops_agent_prompt" {
 		operation := extractStringArg(params.Arguments, "operation")
-		instruction := extractStringArg(params.Arguments, "instruction")
-		var marker struct {
-			Task string `json:"task"`
-		}
-		_ = json.Unmarshal([]byte(instruction), &marker)
-		if marker.Task == "execute-doops-cicd" {
-			var err error
-			credentialBinding, err = parseCredentialPromptBinding(params.Arguments, cluster, instance)
-			if err != nil {
-				writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
-				return nil
-			}
-		} else if operation == "apply" {
-			writeJSON(buildErrorResponse(req.ID, -32602, "apply requires a structured doops-cicd instruction"))
-			return nil
-		} else if operation != "" && operation != "ask" {
+		if operation != "" && operation != "ask" && operation != "apply" {
 			writeJSON(buildErrorResponse(req.ID, -32602, "unsupported agent prompt operation: "+operation))
 			return nil
 		}
+	}
+	if internalCredentialTool(params.Name) {
+		writeJSON(buildErrorResponse(req.ID, -32003, "credential control-plane tools are internal only"))
+		return nil
 	}
 	action := actionForTool(params.Name, params.Arguments)
 	if action == "" {
@@ -1049,18 +1006,9 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	if action == ActionAgentUpgrade {
-		var args agentUpgradeParams
-		if err := json.Unmarshal(params.Arguments, &args); err != nil {
-			errMsg := fmt.Sprintf("invalid agent upgrade params: %v", err)
-			finishAudit("error", errMsg, "", 0)
-			writeJSON(buildErrorResponse(req.ID, -32602, errMsg))
-			return nil
-		}
-		if !args.DryRun {
-			finishAudit("error", directAgentUpgradeProhibited, "", 0)
-			writeJSON(buildErrorResponse(req.ID, -32003, directAgentUpgradeProhibited))
-			return nil
-		}
+		finishAudit("error", directAgentUpgradeProhibited, "", 0)
+		writeJSON(buildErrorResponse(req.ID, -32003, directAgentUpgradeProhibited))
+		return nil
 	}
 	releaseLimit, err := h.acquireOperationSlot(auth.UserID)
 	if err != nil {
@@ -1096,12 +1044,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	defer agent.releaseForAction(action, resourceKey)
-	if err := h.consumeCredentialPromptBinding(auth, cluster, instance, credentialBinding); err != nil {
-		errMsg := "credential run authorization invalid"
-		finishAudit("forbidden", errMsg, "", 0)
-		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
-		return nil
-	}
 	tail := newAuditTailBuffer(8192)
 	var bytesOut int64
 	finalStatus := "success"
@@ -1159,16 +1101,11 @@ func sanitizeAgentPromptAudit(toolName, errMsg, tail string) (string, string) {
 	if toolName != "doops_agent_prompt" {
 		return sanitizeSecretText(errMsg), sanitizeSecretText(tail)
 	}
-	if errMsg != "" {
-		errMsg = sanitizeCredentialCategory(errMsg)
-	}
-	return errMsg, ""
+	return sanitizeSecretText(errMsg), ""
 }
 
 func internalCredentialTool(tool string) bool {
-	return tool == "doops_credential_plan" ||
-		tool == "doops_credential_materialize" ||
-		tool == "doops_credential_cleanup"
+	return tool == "doops_credential_materialize" || tool == "doops_credential_cleanup"
 }
 
 func (h *GatewayHub) registerAgent(agent *GatewayAgent) error {
@@ -1260,13 +1197,6 @@ func (a *GatewayAgent) initialize() error {
 			if result, ok := msg.Parsed["result"].(map[string]interface{}); ok {
 				a.RuntimeID, _ = result["runtimeId"].(string)
 				a.RuntimeID = strings.TrimSpace(a.RuntimeID)
-				if capabilities, ok := result["capabilities"].(map[string]interface{}); ok {
-					if protocols, ok := capabilities["protocols"].(map[string]interface{}); ok {
-						if credentialPlanCapabilityCompatible(protocols["credentialPlan"]) {
-							a.CredentialPlanProtocol = credentialPlanProtocolV2
-						}
-					}
-				}
 			}
 			return nil
 		}
@@ -1906,8 +1836,6 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 		return ActionClean
 	case "doops_agent_upgrade":
 		return ActionAgentUpgrade
-	case "doops_credential_plan":
-		return ActionCredentialMetadata
 	case "doops_credential_materialize":
 		return ActionCredentialUse
 	case "doops_credential_cleanup":
@@ -1937,10 +1865,6 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 		}
 	case ActionAgentUpgrade:
 		return "target:" + cluster + "/" + instance
-	case ActionCredentialMetadata:
-		if sessionID := extractSession(args); sessionID != "" {
-			return "workspace:" + sessionID
-		}
 	case ActionCredentialUse:
 		if credentialID := extractStringArg(args, "credential_id"); credentialID != "" {
 			return "credential:" + credentialID
