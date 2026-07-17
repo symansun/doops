@@ -26,3 +26,22 @@ commit 和执行模式。Agent 内 doagent 必须声明
 只使用 `CredentialRun` 中的凭据元数据和目标侧已物化资源，不读取或输出 Secret
 内容。缺少声明、能力、授权或执行失败时直接返回真实错误。不要 fallback，不生成
 中间 workflow，不运行第二套编排器，不改写 Agent 返回结果。
+
+## 结构化终态
+
+完成所有观察或变更后，必须且只能调用一次 `CICDReport`。禁止用 `Pending` 或
+`Reconciling` 做中间调用，也禁止失败后重试同一报告工具。
+
+`CICDReport` 参数必须严格只有以下四个字段：
+
+- `planDigest`：`sha256:` 加 64 位小写十六进制。它是发布计划 canonical JSON 的
+  SHA-256，不是 Git commit 前加 `sha256:`。canonical JSON 至少包含 source commit、
+  environment、service、target、executionMode、image digest、Helm chart 和 values。
+- `status`：成功的 dry-run 或 apply 使用 `Converged`；无法继续使用 `Blocked`；
+  已执行但失败使用 `Failed`。
+- `evidence`：实际观察到的声明、运行时和健康检查证据数组。
+- `violations`：`Converged` 时为空数组；`Blocked` 或 `Failed` 时必须包含真实错误。
+
+调用前先用确定性工具计算并检查 `planDigest` 正好匹配
+`^sha256:[a-f0-9]{64}$`。`CICDReport` 成功后不得再调用它；普通 Markdown 总结不是
+CI/CD 机器终态。
