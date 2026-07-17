@@ -100,6 +100,37 @@ func TestExternalRepositoryEnvironmentRegistryCompiles(t *testing.T) {
 	}
 }
 
+func TestRepositoryEnvironmentRegistryCompilesEveryService(t *testing.T) {
+	repositoryRoot := filepath.Clean(filepath.Join("..", "..", "..", ".."))
+	manifestPath := "deploy/environments.yaml"
+	data, err := readCredentialDeclarationFile(repositoryRoot, manifestPath)
+	if err != nil {
+		t.Fatalf("read repository environment registry: %v", err)
+	}
+	var registry credentialEnvironmentRegistryV3
+	if err := strictCredentialYAMLDecode(data, &registry); err != nil {
+		t.Fatalf("decode repository environment registry: %v", err)
+	}
+	if len(registry.Environments) == 0 {
+		t.Fatal("repository environment registry has no environments")
+	}
+	for environmentName, environment := range registry.Environments {
+		if len(environment.Services) == 0 {
+			t.Errorf("environment %q has no services", environmentName)
+		}
+		for serviceName := range environment.Services {
+			t.Run(environmentName+"/"+serviceName, func(t *testing.T) {
+				if _, err := parseCredentialPlanForInputs(repositoryRoot, manifestPath, map[string]string{
+					"environment": environmentName,
+					"service":     serviceName,
+				}); err != nil {
+					t.Fatalf("compile repository environment service: %v", err)
+				}
+			})
+		}
+	}
+}
+
 func TestParseCredentialPlanRejectsInlineSecretLikeFieldsAtAnyDepth(t *testing.T) {
 	for _, field := range []string{
 		"token", "password", "auth", "data", "stringData",
