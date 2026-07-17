@@ -33,8 +33,10 @@ description: |
 - 声明 apiVersion 与 Gateway-Agent 控制面协议是两个维度。所有保留 Agent 必须在注册时声明 `doops.sh/credential-plan/v2`；Gateway 必须在 credential prepare dispatch 前阻断离线或不兼容 Agent。
 - credential prepare、Gateway prompt binding 与受信任 reconciliation 必须绑定同一
   source、environment、service、session、workspace commit 和 metadata-only
-  `CredentialRun`。source、target 或 runtime Secret 引用未声明时必须在 prepare
-  阶段阻断。
+  `CredentialRun`。公开仓库和镜像仓库不声明 credential ref；私有 runtime registry
+  必须显式声明 Kubernetes Secret 引用并绑定所选 workload。当前协议尚未定义私有
+  source checkout 和 target registry transfer 的独立 use，遇到这两类引用必须在
+  prepare 阶段明确阻断，不能接受后忽略。
 - 长构建或发布使用 `doops -session <s> exec --bg --target <t> --cmd '<cmd>'`。不要在普通 `exec` 命令中使用 `&`、`nohup` 或 `setsid`，因为调用结束时 agent 会终止该 shell 的子进程。
 - 不要混用 token：
   - gateway CLI 操作用 gateway user token。

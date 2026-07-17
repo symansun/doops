@@ -24,8 +24,12 @@ the source repository and branch, Gateway target, build and Helm manifests,
 credential references, and health checks.
 
 Missing, mixed-version, unknown, incomplete, duplicate, path-escaping, or
-secret-bearing declarations are rejected. Required source, target, and runtime
-credential references must be declared before execution.
+secret-bearing declarations are rejected. Public repositories and registries
+omit credential references. A private runtime registry must declare its
+Kubernetes Secret reference; the compiler turns it into an `imagePull`
+materialization bound to the selected workload. Private source checkout and
+target registry transfer are rejected until their distinct execution uses are
+defined; they are never accepted and silently ignored.
 
 ## Execution
 

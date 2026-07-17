@@ -99,57 +99,82 @@ environments:
 	}
 }
 
-func TestRepositoryDeploymentWorkflowsCompileCredentialPlans(t *testing.T) {
+func TestRepositoryDoesNotContainLegacyDeploymentWorkflows(t *testing.T) {
 	repositoryRoot := filepath.Clean(filepath.Join("..", "..", "..", ".."))
 	workflowPaths, err := filepath.Glob(filepath.Join(repositoryRoot, "backend", "deploy", "workflows", "*.yaml"))
 	if err != nil {
 		t.Fatalf("list repository workflows: %v", err)
 	}
-	if len(workflowPaths) == 0 {
-		t.Fatal("repository must contain deployment workflows")
-	}
-	for _, path := range workflowPaths {
-		relative, err := filepath.Rel(repositoryRoot, path)
-		if err != nil {
-			t.Fatalf("resolve workflow path %s: %v", path, err)
-		}
-		t.Run(filepath.Base(path), func(t *testing.T) {
-			if _, err := parseCredentialPlan(repositoryRoot, filepath.ToSlash(relative)); err != nil {
-				t.Fatalf("compile repository workflow: %v", err)
-			}
-		})
+	if len(workflowPaths) != 0 {
+		t.Fatalf("legacy deployment workflows remain: %v", workflowPaths)
 	}
 }
 
-func TestExternalRepositoryDeploymentWorkflowsCompileCredentialPlans(t *testing.T) {
+func TestExternalRepositoryEnvironmentRegistryCompiles(t *testing.T) {
 	repositoryRoot := strings.TrimSpace(os.Getenv("DOOPS_CREDENTIAL_CONTRACT_ROOT"))
 	if repositoryRoot == "" {
 		t.Skip("DOOPS_CREDENTIAL_CONTRACT_ROOT is not set")
 	}
-	workflowPattern := strings.TrimSpace(os.Getenv("DOOPS_CREDENTIAL_CONTRACT_WORKFLOWS"))
-	if workflowPattern == "" {
-		workflowPattern = "deploy/workflows/*.yaml"
-	}
-	workflowPaths, err := filepath.Glob(filepath.Join(
-		repositoryRoot,
-		filepath.FromSlash(workflowPattern),
-	))
+	manifestPath := "deploy/environments.yaml"
+	data, err := readCredentialDeclarationFile(repositoryRoot, manifestPath)
 	if err != nil {
-		t.Fatalf("list external repository workflows: %v", err)
+		t.Fatalf("read external environment registry: %v", err)
 	}
-	if len(workflowPaths) == 0 {
-		t.Fatalf("external repository has no workflows matching %q", workflowPattern)
+	var registry credentialEnvironmentRegistryV3
+	if err := strictCredentialYAMLDecode(data, &registry); err != nil {
+		t.Fatalf("decode external environment registry: %v", err)
 	}
-	for _, path := range workflowPaths {
-		relative, err := filepath.Rel(repositoryRoot, path)
-		if err != nil {
-			t.Fatalf("resolve external workflow path %s: %v", path, err)
+	if registry.APIVersion != "doops.sh/v3" || registry.Kind != "EnvironmentRegistry" {
+		t.Fatalf("external repository must declare doops.sh/v3 EnvironmentRegistry")
+	}
+	for environmentName, environment := range registry.Environments {
+		for serviceName := range environment.Services {
+			t.Run(environmentName+"/"+serviceName, func(t *testing.T) {
+				if _, err := parseCredentialPlanForInputs(repositoryRoot, manifestPath, map[string]string{
+					"environment": environmentName,
+					"service":     serviceName,
+				}); err != nil {
+					t.Fatalf("compile external environment service: %v", err)
+				}
+			})
 		}
-		t.Run(filepath.Base(path), func(t *testing.T) {
-			if _, err := parseCredentialPlan(repositoryRoot, filepath.ToSlash(relative)); err != nil {
-				t.Fatalf("compile external repository workflow: %v", err)
-			}
-		})
+		if len(environment.Services) == 0 {
+			t.Errorf("environment %q has no services", environmentName)
+		}
+	}
+	if len(registry.Environments) == 0 {
+		t.Fatal("external environment registry has no environments")
+	}
+}
+
+func TestRepositoryEnvironmentRegistryCompilesEveryService(t *testing.T) {
+	repositoryRoot := filepath.Clean(filepath.Join("..", "..", "..", ".."))
+	manifestPath := "deploy/environments.yaml"
+	data, err := readCredentialDeclarationFile(repositoryRoot, manifestPath)
+	if err != nil {
+		t.Fatalf("read repository environment registry: %v", err)
+	}
+	var registry credentialEnvironmentRegistryV3
+	if err := strictCredentialYAMLDecode(data, &registry); err != nil {
+		t.Fatalf("decode repository environment registry: %v", err)
+	}
+	if len(registry.Environments) == 0 {
+		t.Fatal("repository environment registry has no environments")
+	}
+	for environmentName, environment := range registry.Environments {
+		if len(environment.Services) == 0 {
+			t.Errorf("environment %q has no services", environmentName)
+		}
+		for serviceName := range environment.Services {
+			t.Run(environmentName+"/"+serviceName, func(t *testing.T) {
+				if _, err := parseCredentialPlanForInputs(repositoryRoot, manifestPath, map[string]string{
+					"environment": environmentName,
+					"service":     serviceName,
+				}); err != nil {
+					t.Fatalf("compile repository environment service: %v", err)
+				}
+			})
+		}
 	}
 }
 

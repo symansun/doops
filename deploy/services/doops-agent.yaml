@@ -1,0 +1,16 @@
+apiVersion: doops.sh/v3
+kind: ServiceDefinition
+metadata:
+  name: doops-agent
+spec:
+  service: doops-agent
+  artifact: doops-agent
+  buildManifest: deploy/deploy.yaml
+  sourceContext: backend
+  dockerfile: backend/Dockerfile
+  helm:
+    value: image
+    workload: deployment/doops-agent-live
+    container: doops-agent
+  verification:
+    endpointRequired: false
