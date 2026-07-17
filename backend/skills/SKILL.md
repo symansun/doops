@@ -94,7 +94,7 @@ Doops CLI 默认只有一个配置源：
 ```bash
 git clone https://cnb.cool/l8ai/ai/doops.sh.git
 cd doops.sh
-bash scripts/install.sh --project /absolute/path/to/project
+bash scripts/install.sh --version <release-tag> --project /absolute/path/to/project
 ```
 
 安装结果：

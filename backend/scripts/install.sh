@@ -6,9 +6,10 @@ usage() {
 Doops 一键安装脚本
 
 用法:
-  bash scripts/install.sh --project /path/to/project
+  bash scripts/install.sh --version v1.2.3 --project /path/to/project
 
   bash scripts/install.sh \
+    --version v1.2.3 \
     --project /path/to/project \
     --target-name jm \
     --target-gateway https://gateway.example.com \
@@ -25,8 +26,8 @@ Doops 一键安装脚本
   Config: ~/.agent/skills/doops/config.json
 
 安装包来源:
-  CLI 预构建包固定提交在 doops.sh 仓库 skills/doops-cli/bin/doops-<os>-<arch>
-  普通用户安装只复制仓库里的预构建包，不在用户机器或 target 机器上编译
+  CLI 只从 CNB Release Assets 下载指定 --version 的 doops-<os>-<arch> 与 checksums.txt
+  普通用户安装不在用户机器或 target 机器上编译
 
 更新行为:
   不带 --target-* 时只更新 CLI 和 Skill，不改已有 config.json
@@ -49,6 +50,8 @@ EOF
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CLI_OUT="${HOME}/.local/bin/doops"
 PROJECT_PATH="$(pwd)"
+RELEASE_TAG=""
+CLI_TEMP_DIR=""
 TARGET_NAME=""
 TARGET_IP=""
 TARGET_GATEWAY=""
@@ -102,76 +105,75 @@ sha256_file() {
 }
 
 install_cli() {
-  local platform prebuilt checksums expected actual candidate contract
+  local platform artifact checksums expected actual candidate replacement
   platform="$(detect_host_platform)"
   if [[ "${platform}" == unsupported-* ]]; then
     cat >&2 <<EOF
   Unsupported platform: ${platform}
-  Maintainers must add a prebuilt CLI artifact under:
-    ${REPO_ROOT}/skills/doops-cli/bin/doops-<os>-<arch>
+  Maintainers must publish a CLI release asset named:
+    doops-<os>-<arch>
 EOF
     exit 1
   fi
-  prebuilt="${REPO_ROOT}/skills/doops-cli/bin/doops-${platform}"
-  checksums="${REPO_ROOT}/skills/doops-cli/bin/checksums.txt"
 
-  mkdir -p "$(dirname "${CLI_OUT}")"
-
-  if [[ -f "${prebuilt}" ]]; then
-    if [[ ! -f "${checksums}" ]]; then
-      echo "Prebuilt checksum manifest not found: ${checksums}" >&2
-      exit 1
-    fi
-    expected="$(awk -v file="$(basename "${prebuilt}")" '$2 == file { print $1 }' "${checksums}")"
-    if [[ -z "${expected}" ]]; then
-      echo "Prebuilt checksum is missing for $(basename "${prebuilt}")" >&2
-      exit 1
-    fi
-    actual="$(sha256_file "${prebuilt}")"
-    if [[ "${actual}" != "${expected}" ]]; then
-      echo "Prebuilt checksum mismatch for ${prebuilt}" >&2
-      exit 1
-    fi
-    if [[ -d "${CLI_OUT}" ]]; then
-      echo "CLI install path is a directory: ${CLI_OUT}" >&2
-      exit 1
-    fi
-    candidate="$(mktemp "$(dirname "${CLI_OUT}")/.doops-install.XXXXXX")"
-    if ! install -m 0755 "${prebuilt}" "${candidate}"; then
-      rm -f "${candidate}"
-      echo "Prebuilt CLI failed its launch self-check: ${prebuilt}" >&2
-      exit 1
-    fi
-    contract="$("${candidate}" -contract 2>/dev/null || true)"
-    if [[ "${contract}" != "doops.sh/cicd-contract/v3" ]]; then
-      rm -f "${candidate}"
-      echo "Prebuilt CLI contract mismatch: expected doops.sh/cicd-contract/v3, got ${contract:-<empty>}" >&2
-      exit 1
-    fi
-    if ! mv -f "${candidate}" "${CLI_OUT}"; then
-      rm -f "${candidate}"
-      echo "Failed to replace CLI at ${CLI_OUT}" >&2
-      exit 1
-    fi
-    echo "  CLI installed from prebuilt artifact: ${prebuilt}"
-    echo "  CLI installed to ${CLI_OUT}"
-    return
+  if [[ -z "${RELEASE_TAG}" ]]; then
+    echo "--version is required; CLI releases are immutable CNB Release Assets." >&2
+    exit 1
   fi
 
-  cat >&2 <<EOF
-  Prebuilt CLI artifact not found for ${platform}: ${prebuilt}
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "curl is required to download CLI release assets" >&2
+    exit 1
+  fi
 
-  User install does not compile doops locally.
-  Maintainers must run scripts/build-cli.sh --all and commit the generated
-  skills/doops-cli/bin/doops-${platform} artifact to the fixed doops.sh repo.
-EOF
-  exit 1
+  artifact="doops-${platform}"
+  CLI_TEMP_DIR="$(mktemp -d)"
+  trap 'rm -rf "${CLI_TEMP_DIR:-}"' EXIT
+  checksums="${CLI_TEMP_DIR}/checksums.txt"
+  candidate="${CLI_TEMP_DIR}/${artifact}"
+
+  curl --fail --location --silent --show-error \
+    --output "${checksums}" \
+    "https://cnb.cool/l8ai/ai/doops.sh/-/releases/download/${RELEASE_TAG}/checksums.txt"
+  curl --fail --location --silent --show-error \
+    --output "${candidate}" \
+    "https://cnb.cool/l8ai/ai/doops.sh/-/releases/download/${RELEASE_TAG}/${artifact}"
+
+  expected="$(awk -v file="${artifact}" '$2 == file { print $1 }' "${checksums}")"
+  if [[ -z "${expected}" ]]; then
+    echo "Release checksum is missing for ${artifact} in ${RELEASE_TAG}" >&2
+    exit 1
+  fi
+  actual="$(sha256_file "${candidate}")"
+  if [[ "${actual}" != "${expected}" ]]; then
+    echo "Release checksum mismatch for ${artifact} in ${RELEASE_TAG}" >&2
+    exit 1
+  fi
+
+  mkdir -p "$(dirname "${CLI_OUT}")"
+  if [[ -d "${CLI_OUT}" ]]; then
+    echo "CLI install path is a directory: ${CLI_OUT}" >&2
+    exit 1
+  fi
+  replacement="$(mktemp "$(dirname "${CLI_OUT}")/.doops-install.XXXXXX")"
+  install -m 0755 "${candidate}" "${replacement}"
+  if ! mv -f "${replacement}" "${CLI_OUT}"; then
+    rm -f "${replacement}"
+    echo "Failed to replace CLI at ${CLI_OUT}" >&2
+    exit 1
+  fi
+  echo "  CLI installed from CNB Release Assets: ${RELEASE_TAG}/${artifact}"
+  echo "  CLI installed to ${CLI_OUT}"
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --project)
       PROJECT_PATH="${2:-}"
+      shift 2
+      ;;
+    --version)
+      RELEASE_TAG="${2:-}"
       shift 2
       ;;
     --target-name)
