@@ -53,18 +53,18 @@ bash scripts/deploy-gateway.sh \
 
 ## 二、 Agent 标准构建工作流 (Server-Side Build)
 
-在进行任何修改后，若需要更新大模型管控组件 `doops-agent`，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA 为标签的候选镜像；候选镜像必须在下一步被解析为 registry digest。已注册的 DoOps Agent 只能通过版本化 DoOps 声明消费该 digest并完成环境同步、Helm 收敛与验证。DoOps 自身的 Agent bootstrap 当前使用 v2 `DeploymentTemplate`；业务环境可以使用 v3 `EnvironmentDefinition`，不得在二者之间生成中间 workflow 或静默降级。CNB 不负责环境部署、回滚或 Helm/Kubernetes 操作；`deploy.sh` 与任何 SSH/rsync 手工发布入口均已移除。
+在进行任何修改后，若需要更新大模型管控组件 `doops-agent`，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA 为标签的候选镜像；候选镜像必须在下一步被解析为 registry digest。已注册的 DoOps Agent 只能通过 `deploy/environments.yaml` 中的 `doops.sh/v3 EnvironmentRegistry` 消费该 digest，并完成环境同步、Helm 收敛与验证。不得接受 v2 `DeploymentTemplate`、生成中间 workflow 或静默降级。CNB 不负责环境部署、回滚或 Helm/Kubernetes 操作；`deploy.sh` 与任何 SSH/rsync 手工发布入口均已移除。
 
 ### 1. 触发受控发布 (在控制端执行)
-发布者必须先将待发布提交推送到 `main`，确认 CNB CI 的候选镜像已经生成，并在无未提交文件的精确 commit checkout 中，以该完整 commit SHA 作为 `releaseId` 执行环境 `DeploymentTemplate`。CLI 会拒绝 HEAD 不匹配或工作区不干净的 source release。运行期必须使用该候选镜像的 registry digest，不得以可变 tag 作为实际部署镜像。Oilan 的入口为 `deploy/workflows/oilan-agent-bootstrap.yaml`，运行期目标清单由 `deploy/environments.yaml`、Helm Chart 和环境 values 定义。
+发布者必须先将待发布提交推送到 `main`，确认 CNB CI 的候选镜像已经生成，并在无未提交文件的精确 commit checkout 中执行环境注册表。CLI 会拒绝工作区不干净、声明不完整或 source commit 无法固定的发布。运行期必须使用候选镜像的 registry digest，不得以可变 tag 作为实际部署镜像。唯一入口为 `deploy/environments.yaml`，并显式选择一个 environment 和 service；运行期目标清单由该注册表、服务声明、Helm Chart 和环境 values 定义。
 
 ```bash
 doops -session oilan-agent-bootstrap cicd run \
-  -f backend/deploy/workflows/oilan-agent-bootstrap.yaml \
+  -f deploy/environments.yaml \
   -target <configured-doops-target> \
-  -model <tool-capable-model> \
   --dry-run \
-  --set releaseId=<main-commit-sha>
+  --set environment=oilan \
+  --set service=doops-agent
 ```
 
 The command synchronizes the repository, then sends one ordinary Ask to doagent

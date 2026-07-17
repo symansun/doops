@@ -1,5 +1,9 @@
 # DoOps Credential Resource Design
 
+> Superseded on 2026-07-17 by `docs/credential-plan-convergence.md` and
+> `backend/docs/AGENT_NATIVE_CICD.md`. The v2 `DeploymentTemplate` references
+> below are historical and are not a supported execution path.
+
 ## Goal
 
 Make credentials a managed DoOps resource rather than hand-authored Kubernetes

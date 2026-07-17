@@ -27,10 +27,14 @@ description: |
 - `doops-gateway` 是独立发布包，必须用 `scripts/deploy-gateway.sh --host <gateway-host>` 从 SSH 宿主机上下文发布。
 - gateway 控制面不登记为 doops target，不通过任何 doops target 发布 gateway 本体。
 - 不要用 base64、tar 或手写分片传输绕过 `push`。`doops_workspace_*` 是低层兼容 JSON-RPC 工具，不是 CLI、发布脚本和 skill 的标准路径；如果看到 512KB 分块日志，说明调用方绕过了当前 `doops push/pull`。应修复 Git HTTP 反向隧道、目标 agent 版本或发布脚本。
-- `doops cicd run` 只接受显式版本化根声明：v2
-  v3 `EnvironmentRegistry`。不得生成中间 workflow 或静默降级。
+- `doops cicd run` 只接受 `deploy/environments.yaml` 中的
+  `doops.sh/v3 EnvironmentRegistry`，并要求显式选择 `environment` 和
+  `service`。不得接受 v2 `DeploymentTemplate`、生成中间 workflow 或静默降级。
 - 声明 apiVersion 与 Gateway-Agent 控制面协议是两个维度。所有保留 Agent 必须在注册时声明 `doops.sh/credential-plan/v2`；Gateway 必须在 credential prepare dispatch 前阻断离线或不兼容 Agent。
-- credential prepare 与受信任 reconciliation 必须消费同一个严格声明编译结果。v3 中 source、target 或 runtime Secret 引用未声明时必须在 prepare 阶段阻断。
+- credential prepare、Gateway prompt binding 与受信任 reconciliation 必须绑定同一
+  source、environment、service、session、workspace commit 和 metadata-only
+  `CredentialRun`。source、target 或 runtime Secret 引用未声明时必须在 prepare
+  阶段阻断。
 - 长构建或发布使用 `doops -session <s> exec --bg --target <t> --cmd '<cmd>'`。不要在普通 `exec` 命令中使用 `&`、`nohup` 或 `setsid`，因为调用结束时 agent 会终止该 shell 的子进程。
 - 不要混用 token：
   - gateway CLI 操作用 gateway user token。
