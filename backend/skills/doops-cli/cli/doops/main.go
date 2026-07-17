@@ -470,6 +470,9 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		case "ask":
 			toolName = "doops_agent_prompt"
 			arguments["instruction"] = msgStr
+			if apply {
+				arguments["operation"] = "apply"
+			}
 			if modelStr != "" {
 				arguments["model"] = modelStr
 			}
