@@ -112,7 +112,7 @@ fi
 
 # The mounted settings Secret is authoritative. Do not reuse a persisted,
 # potentially stale settings file or synthesize credentials in the container.
-SETTINGS_FILE="${DO_AGENT_SETTINGS:-/root/.agent/runtime-settings.json}"
+SETTINGS_FILE="${DO_AGENT_SETTINGS:-/root/.agent/settings.json}"
 if [ ! -f "/opt/doagent_config/settings.json" ]; then
     echo "❌ doagent config: mounted settings are required at /opt/doagent_config/settings.json"
     exit 1
