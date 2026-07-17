@@ -64,7 +64,7 @@ func (f *fakeWorkflowCaller) CallStructured(toolName string, arguments map[strin
 	return json.Unmarshal([]byte(f.output), destination)
 }
 
-func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
+func TestRunCICDCommandRoutesApplyThroughDeclaredSourceAndAsk(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("create repository marker: %v", err)
@@ -78,15 +78,15 @@ func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
 	}
 
 	caller := &fakeWorkflowCaller{output: workflowResultJSON("apply", 1)}
-	var pushedRoot string
 	var events []string
 	var prepareBody struct {
-		Cluster         string `json:"cluster"`
-		Instance        string `json:"instance"`
-		SessionID       string `json:"session_id"`
-		WorkflowPath    string `json:"workflow_path"`
-		WorkspaceCommit string `json:"workspace_commit"`
-		Mode            string `json:"mode"`
+		Cluster          string `json:"cluster"`
+		Instance         string `json:"instance"`
+		SessionID        string `json:"session_id"`
+		WorkflowPath     string `json:"workflow_path"`
+		SourceRepository string `json:"source_repository"`
+		SourceBranch     string `json:"source_branch"`
+		Mode             string `json:"mode"`
 	}
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		events = append(events, "prepare")
@@ -122,25 +122,21 @@ func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
 		}`)
 	}))
 	defer gateway.Close()
-	originalPush := pushWorkflowWorkspace
+	originalResolve := resolveWorkflowSource
 	originalOpen := openWorkflowAgent
-	pushWorkflowWorkspace = func(_ Server, src, _ string, dryRun bool, _ []string, sessionID string) (string, error) {
-		events = append(events, "push")
-		pushedRoot = src
-		if dryRun {
-			t.Fatal("workspace push must occur before the agent apply")
+	resolveWorkflowSource = func(path string) (string, string, error) {
+		events = append(events, "source")
+		if path != workflow {
+			t.Fatalf("unexpected workflow path %q", path)
 		}
-		if sessionID != "release-test" {
-			t.Fatalf("unexpected session %q", sessionID)
-		}
-		return strings.Repeat("a", 40), nil
+		return "https://example.test/app.git", "main", nil
 	}
 	openWorkflowAgent = func(_ Server, _ *SessionStore, _ string, _ bool) (workflowAgentCaller, func()) {
 		caller.onCall = func() { events = append(events, "prompt") }
 		return caller, func() {}
 	}
 	t.Cleanup(func() {
-		pushWorkflowWorkspace = originalPush
+		resolveWorkflowSource = originalResolve
 		openWorkflowAgent = originalOpen
 	})
 
@@ -167,25 +163,23 @@ func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run workflow: %v", err)
 	}
-	if pushedRoot != root {
-		t.Fatalf("workflow repository root mismatch: got %q want %q", pushedRoot, root)
-	}
-	if got, want := strings.Join(events, ","), "push,prepare,prompt"; got != want {
+	if got, want := strings.Join(events, ","), "source,prepare,prompt"; got != want {
 		t.Fatalf("workflow operation order mismatch: got %s want %s", got, want)
 	}
 	if prepareBody.Cluster != "doops-edu" ||
 		prepareBody.Instance != "edu-coder" ||
 		prepareBody.SessionID != "release-test" ||
 		prepareBody.WorkflowPath != "backend/deploy/workflows/oilan-agent-bootstrap.yaml" ||
-		prepareBody.WorkspaceCommit != strings.Repeat("a", 40) ||
+		prepareBody.SourceRepository != "https://example.test/app.git" ||
+		prepareBody.SourceBranch != "main" ||
 		prepareBody.Mode != "apply" {
 		t.Fatalf("credential prepare body mismatch: %#v", prepareBody)
 	}
 	if caller.toolName != "doops_agent_prompt" {
 		t.Fatalf("expected generic Ask tool, got %q", caller.toolName)
 	}
-	if caller.arguments["workspace_commit"] != strings.Repeat("a", 40) {
-		t.Fatalf("workspace commit not bound to Ask: %#v", caller.arguments)
+	if _, exists := caller.arguments["workspace_commit"]; exists {
+		t.Fatalf("workspace snapshot binding must not reach Ask: %#v", caller.arguments)
 	}
 	if caller.arguments["response_format"] != "json" {
 		t.Fatalf("Ask must request structured result: %#v", caller.arguments)
@@ -234,7 +228,7 @@ func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
 	resultContract := instruction["resultContract"].(map[string]interface{})
 	if resultContract["apiVersion"] != "doops.sh/v2" ||
 		resultContract["kind"] != "DeploymentRun" ||
-		resultContract["requireEvidence"] != true {
+		len(resultContract) != 2 {
 		t.Fatalf("unexpected structured result contract: %#v", resultContract)
 	}
 }
@@ -307,18 +301,16 @@ spec:
 	defer gateway.Close()
 
 	caller := &fakeWorkflowCaller{output: workflowResultJSON("dry-run", 0)}
-	originalPush := pushWorkflowWorkspace
+	originalResolve := resolveWorkflowSource
 	originalOpen := openWorkflowAgent
-	var pushDryRun bool
-	pushWorkflowWorkspace = func(_ Server, _ string, _ string, dryRun bool, _ []string, _ string) (string, error) {
-		pushDryRun = dryRun
-		return strings.Repeat("a", 40), nil
+	resolveWorkflowSource = func(string) (string, string, error) {
+		return "https://example.test/app.git", "main", nil
 	}
 	openWorkflowAgent = func(Server, *SessionStore, string, bool) (workflowAgentCaller, func()) {
 		return caller, func() {}
 	}
 	t.Cleanup(func() {
-		pushWorkflowWorkspace = originalPush
+		resolveWorkflowSource = originalResolve
 		openWorkflowAgent = originalOpen
 	})
 
@@ -337,8 +329,8 @@ spec:
 	if mode != "dry-run" {
 		t.Fatalf("credential prepare mode mismatch: got %q", mode)
 	}
-	if pushDryRun || declarationFieldsPresent {
-		t.Fatalf("dry-run must push the workspace and resolve declarations on the Agent")
+	if declarationFieldsPresent {
+		t.Fatalf("dry-run must resolve declarations from the declared source on the Agent")
 	}
 	if caller.arguments["operation"] != "ask" {
 		t.Fatalf("dry-run must use ask operation: %#v", caller.arguments)
@@ -369,16 +361,16 @@ func TestRunCICDCommandStopsBeforePromptWhenCredentialPrepareFails(t *testing.T)
 	caller := &fakeWorkflowCaller{
 		output: workflowResultJSON("apply", 1),
 	}
-	originalPush := pushWorkflowWorkspace
+	originalResolve := resolveWorkflowSource
 	originalOpen := openWorkflowAgent
-	pushWorkflowWorkspace = func(Server, string, string, bool, []string, string) (string, error) {
-		return strings.Repeat("a", 40), nil
+	resolveWorkflowSource = func(string) (string, string, error) {
+		return "https://example.test/app.git", "main", nil
 	}
 	openWorkflowAgent = func(Server, *SessionStore, string, bool) (workflowAgentCaller, func()) {
 		return caller, func() {}
 	}
 	t.Cleanup(func() {
-		pushWorkflowWorkspace = originalPush
+		resolveWorkflowSource = originalResolve
 		openWorkflowAgent = originalOpen
 	})
 
@@ -477,33 +469,12 @@ func TestValidateWorkflowResultRejectsSyntheticResultsAndDryRunMutation(t *testi
 			"spec":{"mode":"dry-run"},
 				"status":{"phase":"planned","mutationCount":0,"evidence":[]}
 			}`,
-		"evidence missing observation time": `{
-				"apiVersion":"doops.sh/v2",
-				"kind":"DeploymentRun",
-				"metadata":{"workspaceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-				"spec":{"mode":"dry-run"},
-				"status":{
-					"phase":"planned",
-					"mutationCount":0,
-					"capabilities":{"source-observer":"available"},
-					"evidence":[{
-						"subject":"source",
-						"toolCall":{
-							"id":"tool-source",
-							"tool":"doops-source-observer",
-							"input":{"scope":"source"},
-							"result":{"revision":"immutable"}
-						}
-					}]
-				}
-			}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := validateWorkflowResult(
 				result,
 				"doops.sh/v2",
 				"dry-run",
-				strings.Repeat("a", 40),
 			); err == nil {
 				t.Fatal("invalid or synthetic result must be rejected")
 			}
@@ -511,59 +482,7 @@ func TestValidateWorkflowResultRejectsSyntheticResultsAndDryRunMutation(t *testi
 	}
 }
 
-func TestValidateWorkflowResultRejectsUnboundEvidence(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		mutate func(status map[string]interface{})
-	}{
-		{
-			name: "missing tool call",
-			mutate: func(status map[string]interface{}) {
-				delete(status["evidence"].([]interface{})[0].(map[string]interface{}), "toolCall")
-			},
-		},
-		{
-			name: "unresolved tool reference",
-			mutate: func(status map[string]interface{}) {
-				status["evidence"].([]interface{})[0].(map[string]interface{})["toolRef"] =
-					map[string]interface{}{"tool": "Read", "input": map[string]interface{}{"path": "state.json"}}
-			},
-		},
-		{
-			name: "retired evidence field",
-			mutate: func(status map[string]interface{}) {
-				status["evidence"].([]interface{})[0].(map[string]interface{})["module"] = "Read"
-			},
-		},
-		{
-			name: "missing input",
-			mutate: func(status map[string]interface{}) {
-				delete(
-					status["evidence"].([]interface{})[0].(map[string]interface{})["toolCall"].(map[string]interface{}),
-					"input",
-				)
-			},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			result := mutateWorkflowResultJSON(
-				t,
-				workflowResultJSON("dry-run", 0),
-				test.mutate,
-			)
-			if err := validateWorkflowResult(
-				result,
-				"doops.sh/v2",
-				"dry-run",
-				strings.Repeat("a", 40),
-			); err == nil {
-				t.Fatal("evidence must contain an eligible runtime tool call")
-			}
-		})
-	}
-}
-
-func TestRunCICDCommandRequiresTargetBeforePush(t *testing.T) {
+func TestRunCICDCommandRequiresTargetBeforeResolvingSource(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("create repository marker: %v", err)
@@ -572,13 +491,13 @@ func TestRunCICDCommandRequiresTargetBeforePush(t *testing.T) {
 	if err := os.WriteFile(workflow, []byte("kind: DeploymentTemplate\n"), 0o644); err != nil {
 		t.Fatalf("write workflow: %v", err)
 	}
-	originalPush := pushWorkflowWorkspace
-	pushes := 0
-	pushWorkflowWorkspace = func(Server, string, string, bool, []string, string) (string, error) {
-		pushes++
-		return strings.Repeat("a", 40), nil
+	originalResolve := resolveWorkflowSource
+	resolutions := 0
+	resolveWorkflowSource = func(string) (string, string, error) {
+		resolutions++
+		return "https://example.test/app.git", "main", nil
 	}
-	t.Cleanup(func() { pushWorkflowWorkspace = originalPush })
+	t.Cleanup(func() { resolveWorkflowSource = originalResolve })
 	server := []Server{{Name: "agent-runtime", Gateway: "https://gateway.example.com"}}
 
 	for name, args := range map[string][]string{
@@ -590,8 +509,8 @@ func TestRunCICDCommandRequiresTargetBeforePush(t *testing.T) {
 			}
 		})
 	}
-	if pushes != 0 {
-		t.Fatalf("invalid invocations must not push, got %d pushes", pushes)
+	if resolutions != 0 {
+		t.Fatalf("invalid invocations must not resolve source, got %d resolutions", resolutions)
 	}
 }
 
@@ -616,7 +535,7 @@ func TestWorkflowAPIVersionAcceptsV3(t *testing.T) {
 	}
 }
 
-func TestRunCICDCommandRejectsUnsupportedWorkflowBeforePushOrAgentContact(t *testing.T) {
+func TestRunCICDCommandRejectsUnsupportedWorkflowBeforeSourceOrAgentContact(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("create repository marker: %v", err)
@@ -628,20 +547,20 @@ func TestRunCICDCommandRejectsUnsupportedWorkflowBeforePushOrAgentContact(t *tes
 		t.Fatalf("write v3 environment: %v", err)
 	}
 
-	originalPush := pushWorkflowWorkspace
+	originalResolve := resolveWorkflowSource
 	originalOpen := openWorkflowAgent
-	pushes := 0
+	resolutions := 0
 	agentContacts := 0
-	pushWorkflowWorkspace = func(Server, string, string, bool, []string, string) (string, error) {
-		pushes++
-		return strings.Repeat("a", 40), nil
+	resolveWorkflowSource = func(string) (string, string, error) {
+		resolutions++
+		return "https://example.test/app.git", "main", nil
 	}
 	openWorkflowAgent = func(Server, *SessionStore, string, bool) (workflowAgentCaller, func()) {
 		agentContacts++
 		return nil, func() {}
 	}
 	t.Cleanup(func() {
-		pushWorkflowWorkspace = originalPush
+		resolveWorkflowSource = originalResolve
 		openWorkflowAgent = originalOpen
 	})
 
@@ -663,7 +582,7 @@ func TestRunCICDCommandRejectsUnsupportedWorkflowBeforePushOrAgentContact(t *tes
 	) {
 		t.Fatalf("unsupported workflow error = %v", err)
 	}
-	if pushes != 0 || agentContacts != 0 {
-		t.Fatalf("unsupported workflow caused side effects: pushes=%d agentContacts=%d", pushes, agentContacts)
+	if resolutions != 0 || agentContacts != 0 {
+		t.Fatalf("unsupported workflow caused side effects: resolutions=%d agentContacts=%d", resolutions, agentContacts)
 	}
 }

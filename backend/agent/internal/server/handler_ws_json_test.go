@@ -14,35 +14,22 @@ import (
 func TestAgentPromptJSONReturnsFinalMessageInStructuredContent(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	workspaceCommit := strings.Repeat("a", 40)
 	workspace := filepath.Join(root, "json-prompt")
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		t.Fatalf("create workspace: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(workspaceCommit+"\n"), 0o600); err != nil {
-		t.Fatalf("write workspace commit: %v", err)
 	}
 	finalResult := `{
 		"apiVersion":"doops.sh/v2",
 		"kind":"DeploymentRun",
 		"metadata":{
 			"workflow":"deploy/release.yaml",
-			"runId":"run-json-prompt",
-			"workspaceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			"runId":"run-json-prompt"
 		},
 		"spec":{"mode":"dry-run"},
 		"status":{
 			"phase":"planned",
 			"mutationCount":0,
-			"capabilities":{"source-identity":"observed"},
-			"evidence":[{
-				"subject":"source",
-				"toolRef":{
-					"tool":"doops-source-observer",
-					"input":{"value":9007199254740993}
-				},
-				"observedAt":"2026-07-15T00:00:00Z"
-			}]
+			"capabilities":{"source-identity":"observed"}
 		}
 	}`
 	doagent := newJSONAgentPromptTestServer(t, finalResult, func(prompt string, params map[string]interface{}) {
@@ -57,26 +44,17 @@ func TestAgentPromptJSONReturnsFinalMessageInStructuredContent(t *testing.T) {
 			!strings.Contains(prompt, "exactly one JSON object with no Markdown") {
 			t.Errorf("structured prompt must declare the final response contract: %s", prompt)
 		}
-		if !strings.Contains(prompt, "status may contain only phase, mutationCount, capabilities, evidence, and failures") ||
-			!strings.Contains(prompt, "Do not emit plannedMutations") {
+		if !strings.Contains(prompt, "status may contain only phase, mutationCount, capabilities, and failures") ||
+			!strings.Contains(prompt, "Do not emit evidence") {
 			t.Errorf("structured prompt must define DeploymentRun status fields: %s", prompt)
 		}
 		if !strings.Contains(prompt, "exactly five top-level fields: apiVersion, kind, metadata, spec, and status") ||
 			!strings.Contains(prompt, "Never put phase, mutationCount") {
 			t.Errorf("structured prompt must forbid the legacy flat DeploymentRun shape: %s", prompt)
 		}
-		if !strings.Contains(prompt, "allowed trusted DoOps plan tools") ||
-			!strings.Contains(prompt, "generic Bash") {
-			t.Errorf("structured prompt must restrict DeploymentRun evidence tools: %s", prompt)
-		}
-		if !strings.Contains(prompt, "evidence must be a non-empty array") ||
-			!strings.Contains(prompt, "call at least one allowed trusted DoOps plan tool") {
-			t.Errorf("structured prompt must require runtime evidence before the final response: %s", prompt)
-		}
-		if !strings.Contains(prompt, "exactly subject, observedAt, and toolRef") ||
-			!strings.Contains(prompt, "toolRef.input") ||
-			!strings.Contains(prompt, "injects toolCall") {
-			t.Errorf("structured prompt must define one runtime tool identity: %s", prompt)
+		if !strings.Contains(prompt, "metadata must contain exactly workflow and runId") ||
+			!strings.Contains(prompt, "Do not emit evidence, workspaceCommit") {
+			t.Errorf("structured prompt must define the source-based result contract: %s", prompt)
 		}
 	})
 	defer doagent.Close()
@@ -90,10 +68,9 @@ func TestAgentPromptJSONReturnsFinalMessageInStructuredContent(t *testing.T) {
 	initializeAgentTestWS(t, conn)
 
 	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
-		"session_id":       "json-prompt",
-		"instruction":      testCICDInstructionJSON(t),
-		"response_format":  "json",
-		"workspace_commit": workspaceCommit,
+		"session_id":      "json-prompt",
+		"instruction":     testCICDInstructionJSON(t),
+		"response_format": "json",
 	})
 	if result["error"] != nil {
 		t.Fatalf("json prompt returned error: %#v", result)
@@ -113,26 +90,8 @@ func TestAgentPromptJSONReturnsFinalMessageInStructuredContent(t *testing.T) {
 	if _, exists := status["resultDigest"]; exists {
 		t.Fatalf("Gateway must not add a self-consistency digest: %#v", status)
 	}
-	evidence, _ := status["evidence"].([]interface{})
-	entry, _ := evidence[0].(map[string]interface{})
-	toolCall, _ := entry["toolCall"].(map[string]interface{})
-	if toolCall["id"] != "runtime-tool-source" ||
-		toolCall["tool"] != "doops-source-observer" {
-		t.Fatalf("Gateway must inject the resolved runtime call: %#v", entry)
-	}
-	runtimeInput, _ := toolCall["input"].(map[string]interface{})
-	if _, exists := runtimeInput["value"]; !exists {
-		t.Fatalf("Gateway must inject the runtime tool input: %#v", entry)
-	}
-	runtimeResult, _ := toolCall["result"].(map[string]interface{})
-	if runtimeResult["revision"] != "immutable" {
-		t.Fatalf("Gateway must inject the exact runtime tool result: %#v", entry)
-	}
-	if _, exists := runtimeResult["_meta"]; exists {
-		t.Fatalf("Gateway must not inject unverified MCP metadata: %#v", entry)
-	}
-	if _, exists := entry["toolRef"]; exists {
-		t.Fatalf("Gateway must consume the model-visible toolRef: %#v", entry)
+	if _, exists := status["evidence"]; exists {
+		t.Fatalf("Gateway result must not retain model-authored evidence: %#v", status)
 	}
 }
 
@@ -251,12 +210,11 @@ func TestBindDeploymentRunEvidenceEnforcesPrimarySourceObservation(t *testing.T)
 		result,
 		traces,
 		&deploymentRunContractBinding{
-			APIVersion:      "doops.sh/v2",
-			Workflow:        "deploy/release.yaml",
-			RunID:           "run-test",
-			WorkspaceCommit: strings.Repeat("a", 40),
-			Mode:            "dry-run",
-			PrimaryTool:     "mcp_doops_plan_ObserveWorkspaceSource",
+			APIVersion:  "doops.sh/v2",
+			Workflow:    "deploy/release.yaml",
+			RunID:       "run-test",
+			Mode:        "dry-run",
+			PrimaryTool: "mcp_doops_plan_ObserveWorkspaceSource",
 		},
 	)
 	if err == nil || !strings.Contains(err.Error(), "evidence[0] must reference plan.ObserveWorkspaceSource") {
@@ -281,12 +239,11 @@ func TestBindDeploymentRunEvidenceRequiresTargetRegistryObservation(t *testing.T
 		result,
 		traces,
 		&deploymentRunContractBinding{
-			APIVersion:      "doops.sh/v2",
-			Workflow:        "deploy/release.yaml",
-			RunID:           "run-test",
-			WorkspaceCommit: strings.Repeat("a", 40),
-			Mode:            "dry-run",
-			PrimaryTool:     "mcp_doops_plan_ObserveWorkspaceSource",
+			APIVersion:  "doops.sh/v2",
+			Workflow:    "deploy/release.yaml",
+			RunID:       "run-test",
+			Mode:        "dry-run",
+			PrimaryTool: "mcp_doops_plan_ObserveWorkspaceSource",
 			RequiredTools: []string{
 				"mcp_doops_plan_ObserveWorkspaceSource",
 				"mcp_doops_plan_ObserveTargetRegistryImageSet",
@@ -313,21 +270,19 @@ func TestBindDeploymentRunEvidenceBindsTrustedEnvelope(t *testing.T) {
 	result := deploymentRunWithToolRef("plan.ObserveWorkspaceSource", map[string]interface{}{})
 	result["apiVersion"] = "doops.sh/v3"
 	result["metadata"] = map[string]interface{}{
-		"workflow":        "deploy/environments/scu/environment.yaml",
-		"runId":           "run-verified",
-		"workspaceCommit": strings.Repeat("a", 40),
+		"workflow": "deploy/environments/scu/environment.yaml",
+		"runId":    "run-verified",
 	}
 
 	_, bound, err := bindDeploymentRunEvidence(
 		result,
 		traces,
 		&deploymentRunContractBinding{
-			APIVersion:      "doops.sh/v3",
-			Workflow:        "deploy/environments/scu/environment.yaml",
-			RunID:           "run-verified",
-			WorkspaceCommit: strings.Repeat("a", 40),
-			Mode:            "dry-run",
-			PrimaryTool:     "mcp_doops_plan_ObserveWorkspaceSource",
+			APIVersion:  "doops.sh/v3",
+			Workflow:    "deploy/environments/scu/environment.yaml",
+			RunID:       "run-verified",
+			Mode:        "dry-run",
+			PrimaryTool: "mcp_doops_plan_ObserveWorkspaceSource",
 		},
 	)
 	if err != nil {
@@ -340,7 +295,6 @@ func TestBindDeploymentRunEvidenceBindsTrustedEnvelope(t *testing.T) {
 	spec := bound["spec"].(map[string]interface{})
 	if metadata["workflow"] != "deploy/environments/scu/environment.yaml" ||
 		metadata["runId"] != "run-verified" ||
-		metadata["workspaceCommit"] != strings.Repeat("a", 40) ||
 		spec["mode"] != "dry-run" {
 		t.Fatalf("trusted DeploymentRun metadata/spec mismatch: %#v", bound)
 	}
@@ -348,20 +302,18 @@ func TestBindDeploymentRunEvidenceBindsTrustedEnvelope(t *testing.T) {
 	result = deploymentRunWithToolRef("plan.ObserveWorkspaceSource", map[string]interface{}{})
 	result["apiVersion"] = "doops.sh/v3"
 	result["metadata"] = map[string]interface{}{
-		"workflow":        "deploy/environments/scu/environment.yaml",
-		"runId":           "spoofed",
-		"workspaceCommit": strings.Repeat("a", 40),
+		"workflow": "deploy/environments/scu/environment.yaml",
+		"runId":    "spoofed",
 	}
 	_, _, err = bindDeploymentRunEvidence(
 		result,
 		traces,
 		&deploymentRunContractBinding{
-			APIVersion:      "doops.sh/v3",
-			Workflow:        "deploy/environments/scu/environment.yaml",
-			RunID:           "run-verified",
-			WorkspaceCommit: strings.Repeat("a", 40),
-			Mode:            "dry-run",
-			PrimaryTool:     "mcp_doops_plan_ObserveWorkspaceSource",
+			APIVersion:  "doops.sh/v3",
+			Workflow:    "deploy/environments/scu/environment.yaml",
+			RunID:       "run-verified",
+			Mode:        "dry-run",
+			PrimaryTool: "mcp_doops_plan_ObserveWorkspaceSource",
 		},
 	)
 	if err == nil || !strings.Contains(err.Error(), "does not match the trusted reconciliation instruction") {
@@ -639,9 +591,8 @@ func deploymentRunWithToolRef(tool string, input interface{}) map[string]interfa
 		"apiVersion": "doops.sh/v2",
 		"kind":       "DeploymentRun",
 		"metadata": map[string]interface{}{
-			"workflow":        "deploy/release.yaml",
-			"runId":           "run-test",
-			"workspaceCommit": strings.Repeat("a", 40),
+			"workflow": "deploy/release.yaml",
+			"runId":    "run-test",
 		},
 		"spec": map[string]interface{}{
 			"mode": "dry-run",
@@ -697,105 +648,6 @@ func testCICDInstructionJSON(t *testing.T) string {
 		t.Fatalf("encode test doops-cicd instruction: %v", err)
 	}
 	return string(data)
-}
-
-func TestAgentPromptRejectsWorkspaceCommitMismatchBeforeDoagent(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	workspace := filepath.Join(root, "workspace-mismatch")
-	if err := os.MkdirAll(workspace, 0o700); err != nil {
-		t.Fatalf("create workspace: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(strings.Repeat("b", 40)+"\n"), 0o600); err != nil {
-		t.Fatalf("write workspace commit: %v", err)
-	}
-
-	doagentRequests := 0
-	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		doagentRequests++
-		t.Fatalf("workspace mismatch must fail before contacting doagent: %s", r.URL.Path)
-	}))
-	defer doagent.Close()
-	t.Setenv("DO_AGENT_URL", doagent.URL)
-
-	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
-	defer ts.Close()
-	conn := dialAgentTestWS(t, ts.URL)
-	defer conn.Close()
-	initializeAgentTestWS(t, conn)
-
-	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
-		"session_id":       "workspace-mismatch",
-		"instruction":      "return JSON",
-		"response_format":  "json",
-		"workspace_commit": strings.Repeat("a", 40),
-	})
-	errObj, _ := result["error"].(map[string]interface{})
-	if errObj == nil {
-		t.Fatalf("workspace commit mismatch must fail: %#v", result)
-	}
-	if !strings.Contains(fmt.Sprint(errObj["message"]), "workspace commit mismatch") {
-		t.Fatalf("unexpected mismatch error: %#v", errObj)
-	}
-	if doagentRequests != 0 {
-		t.Fatalf("workspace mismatch contacted doagent %d times", doagentRequests)
-	}
-}
-
-func TestAgentPromptRejectsInstructionWorkspaceCommitMismatchBeforeDoagent(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	sessionID := "instruction-workspace-mismatch"
-	workspace := filepath.Join(root, sessionID)
-	if err := os.MkdirAll(workspace, 0o700); err != nil {
-		t.Fatalf("create workspace: %v", err)
-	}
-	workspaceCommit := strings.Repeat("a", 40)
-	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(workspaceCommit+"\n"), 0o600); err != nil {
-		t.Fatalf("write workspace commit: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(workspace, "deploy"), 0o700); err != nil {
-		t.Fatalf("create deployment directory: %v", err)
-	}
-	writeTrustedAdmissionFixture(t, workspace)
-	doagentRequests := 0
-	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		doagentRequests++
-		t.Fatalf("instruction workspace mismatch must fail before contacting doagent: %s", r.URL.Path)
-	}))
-	defer doagent.Close()
-	t.Setenv("DO_AGENT_URL", doagent.URL)
-
-	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
-	defer ts.Close()
-	conn := dialAgentTestWS(t, ts.URL)
-	defer conn.Close()
-	initializeAgentTestWS(t, conn)
-
-	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
-		"session_id": sessionID,
-		"instruction": `{
-			"task":"execute-doops-cicd-workflow",
-			"skill":"$doops-cicd",
-			"executionMode":"dry-run",
-			"runId":"instruction-workspace-mismatch-0123456789abcdef",
-			"workflowPath":"deploy/release.yaml",
-			"workspaceCommit":"` + strings.Repeat("b", 40) + `",
-			"inputs":{"releaseId":"` + strings.Repeat("c", 40) + `"},
-			"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops","instance":"runner","template":"release","project":"app","environment":"production","materializations":[]},
-			"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
-		}`,
-		"response_format":  "json",
-		"workspace_commit": workspaceCommit,
-	})
-	if result["error"] == nil {
-		t.Fatalf("instruction workspace mismatch must fail: %#v", result)
-	}
-	if doagentRequests != 0 {
-		t.Fatalf("instruction workspace mismatch contacted doagent %d times", doagentRequests)
-	}
 }
 
 func TestAgentPromptJSONRejectsMissingFinalMachineResult(t *testing.T) {

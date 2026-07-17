@@ -221,10 +221,9 @@ func TestBuildDoopsPlanAttestedResultBindsTrustedContext(t *testing.T) {
 		PlanDigest:         "sha256:" + strings.Repeat("1", 64),
 		PlanBindingDigest:  "sha256:" + strings.Repeat("2", 64),
 		Source: trustedReconciliationSource{
-			Repository:      "https://example.test/app.git",
-			Revision:        strings.Repeat("b", 40),
-			Branch:          "main",
-			WorkspaceCommit: strings.Repeat("a", 40),
+			Repository: "https://example.test/app.git",
+			Revision:   strings.Repeat("b", 40),
+			Branch:     "main",
 		},
 		Capabilities: map[string]trustedReconciliationCapability{
 			"ObserveWorkspaceSource": {
@@ -316,64 +315,27 @@ func TestDoopsPlanWorkloadServicesDoesNotMutateRuntimeServices(t *testing.T) {
 	}
 }
 
-func TestValidateDoopsPlanWorkspaceRejectsTrackedFileTampering(t *testing.T) {
+func TestValidateDoopsPlanWorkspaceAcceptsDeclaredSourceCheckout(t *testing.T) {
 	base := t.TempDir()
-	bareBase := t.TempDir()
 	workspace := filepath.Join(base, "session-a")
 	if err := os.Mkdir(workspace, 0o755); err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	runTestCommand(t, workspace, "git", "init", "-q")
-	runTestCommand(t, workspace, "git", "config", "user.email", "test@example.invalid")
-	runTestCommand(t, workspace, "git", "config", "user.name", "DoOps Test")
 	if err := os.WriteFile(filepath.Join(workspace, "deploy.yaml"), []byte("version: 1\n"), 0o644); err != nil {
-		t.Fatalf("write tracked file: %v", err)
-	}
-	runTestCommand(t, workspace, "git", "add", "deploy.yaml")
-	runTestCommand(t, workspace, "git", "commit", "-q", "-m", "fixture")
-	commit := strings.TrimSpace(runTestCommand(t, workspace, "git", "rev-parse", "HEAD"))
-	runTestCommand(t, base, "git", "clone", "-q", "--bare", workspace, filepath.Join(bareBase, "session-a.git"))
-	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(commit+"\n"), 0o644); err != nil {
-		t.Fatalf("write ready marker: %v", err)
+		t.Fatalf("write checkout file: %v", err)
 	}
 	t.Setenv("DOOPS_PLAN_WORKSPACE_BASE", base)
-	t.Setenv("DOOPS_PLAN_BARE_REPOSITORY_BASE", bareBase)
 
-	if _, err := validateDoopsPlanWorkspace(workspace, commit); err != nil {
-		t.Fatalf("validate clean workspace: %v", err)
+	resolved, err := validateDoopsPlanWorkspace(workspace)
+	if err != nil {
+		t.Fatalf("validate declared source checkout: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(workspace, ".doops-audit-log"), []byte("agent-owned\n"), 0o600); err != nil {
-		t.Fatalf("write audit log: %v", err)
+	expected, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatalf("resolve expected workspace: %v", err)
 	}
-	if _, err := validateDoopsPlanWorkspace(workspace, commit); err != nil {
-		t.Fatalf("validate workspace with agent audit log: %v", err)
-	}
-	agentRuntime := filepath.Join(workspace, ".agent", "sessions", "session-a")
-	if err := os.MkdirAll(agentRuntime, 0o700); err != nil {
-		t.Fatalf("create agent runtime: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(agentRuntime, "messages.json"), []byte("{}\n"), 0o600); err != nil {
-		t.Fatalf("write agent runtime file: %v", err)
-	}
-	if _, err := validateDoopsPlanWorkspace(workspace, commit); err != nil {
-		t.Fatalf("validate workspace with agent runtime: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace, "untracked.yaml"), []byte("unsafe: true\n"), 0o644); err != nil {
-		t.Fatalf("write untracked file: %v", err)
-	}
-	if _, err := validateDoopsPlanWorkspace(workspace, commit); err == nil ||
-		!strings.Contains(err.Error(), "outside the pushed source snapshot") {
-		t.Fatalf("untracked workspace error = %v", err)
-	}
-	if err := os.Remove(filepath.Join(workspace, "untracked.yaml")); err != nil {
-		t.Fatalf("remove untracked file: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace, "deploy.yaml"), []byte("version: 2\n"), 0o644); err != nil {
-		t.Fatalf("tamper tracked file: %v", err)
-	}
-	if _, err := validateDoopsPlanWorkspace(workspace, commit); err == nil ||
-		!strings.Contains(err.Error(), "differs from the pushed source snapshot") {
-		t.Fatalf("tampered workspace error = %v", err)
+	if resolved != expected {
+		t.Fatalf("resolved workspace = %q, want %q", resolved, expected)
 	}
 }
 

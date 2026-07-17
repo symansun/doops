@@ -14,15 +14,11 @@ import (
 func TestAgentCredentialPlanToolParsesBoundWorkspace(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	sessionRoot := filepath.Join(root, "credential-plan")
-	if err := os.MkdirAll(filepath.Join(sessionRoot, "deploy"), 0755); err != nil {
-		t.Fatalf("create workspace: %v", err)
+	sourceRoot := filepath.Join(t.TempDir(), "source")
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "deploy"), 0755); err != nil {
+		t.Fatalf("create source repository: %v", err)
 	}
-	commit := strings.Repeat("a", 40)
-	if err := os.WriteFile(filepath.Join(sessionRoot, ".doops-ready"), []byte(commit+"\n"), 0600); err != nil {
-		t.Fatalf("write workspace binding: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sessionRoot, "deploy", "release.yaml"), []byte(`
+	if err := os.WriteFile(filepath.Join(sourceRoot, "deploy", "release.yaml"), []byte(`
 apiVersion: doops.sh/v2
 kind: DeploymentTemplate
 metadata:
@@ -43,7 +39,7 @@ spec:
 `), 0600); err != nil {
 		t.Fatalf("write workflow: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionRoot, "deploy", "environments.yaml"), []byte(`
+	if err := os.WriteFile(filepath.Join(sourceRoot, "deploy", "environments.yaml"), []byte(`
 apiVersion: doops.sh/v2
 kind: EnvironmentRegistry
 metadata:
@@ -57,6 +53,11 @@ environments:
 `), 0600); err != nil {
 		t.Fatalf("write configuration: %v", err)
 	}
+	runTestCommand(t, sourceRoot, "git", "init", "-q", "-b", "main")
+	runTestCommand(t, sourceRoot, "git", "config", "user.email", "test@example.invalid")
+	runTestCommand(t, sourceRoot, "git", "config", "user.name", "DoOps Test")
+	runTestCommand(t, sourceRoot, "git", "add", ".")
+	runTestCommand(t, sourceRoot, "git", "commit", "-q", "-m", "fixture")
 
 	gw := NewGateway("0")
 	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
@@ -66,9 +67,10 @@ environments:
 	initializeAgentTestWS(t, conn)
 
 	result := callTool(t, conn, "doops_credential_plan", map[string]interface{}{
-		"session_id":       "credential-plan",
-		"workflow_path":    "deploy/release.yaml",
-		"workspace_commit": commit,
+		"session_id":        "credential-plan",
+		"workflow_path":     "deploy/release.yaml",
+		"source_repository": sourceRoot,
+		"source_branch":     "main",
 	})
 	var plan CredentialPlan
 	if err := json.Unmarshal([]byte(result), &plan); err != nil {
@@ -79,33 +81,23 @@ environments:
 	}
 }
 
-func TestAgentCredentialPlanToolRejectsWorkspaceCommitMismatch(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	sessionRoot := filepath.Join(root, "credential-plan")
-	if err := os.MkdirAll(sessionRoot, 0755); err != nil {
-		t.Fatalf("create workspace: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sessionRoot, ".doops-ready"), []byte(strings.Repeat("a", 40)), 0600); err != nil {
-		t.Fatalf("write workspace binding: %v", err)
-	}
-
+func TestAgentCredentialPlanToolRequiresDeclaredSource(t *testing.T) {
 	_, err := handleCredentialPlanTool(mustJSON(t, map[string]interface{}{
-		"session_id":       "credential-plan",
-		"workflow_path":    "deploy/release.yaml",
-		"workspace_commit": strings.Repeat("b", 40),
+		"session_id":    "credential-plan",
+		"workflow_path": "deploy/release.yaml",
 	}))
-	if err == nil || !strings.Contains(err.Error(), "workspace commit mismatch") {
-		t.Fatalf("workspace mismatch error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "source_repository") {
+		t.Fatalf("missing source error = %v", err)
 	}
 }
 
 func TestAgentCredentialPlanToolRejectsUnknownFields(t *testing.T) {
 	_, err := handleCredentialPlanTool(mustJSON(t, map[string]interface{}{
-		"session_id":       "credential-plan",
-		"workflow_path":    "deploy/release.yaml",
-		"workspace_commit": strings.Repeat("a", 40),
-		"unexpected":       true,
+		"session_id":        "credential-plan",
+		"workflow_path":     "deploy/release.yaml",
+		"source_repository": "https://example.test/app.git",
+		"source_branch":     "main",
+		"unexpected":        true,
 	}))
 	if err == nil || err.Error() != "invalid credential plan params" {
 		t.Fatalf("unknown field error = %v, want invalid credential plan params", err)

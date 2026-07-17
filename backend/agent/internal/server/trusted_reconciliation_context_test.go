@@ -17,7 +17,6 @@ func TestBuildTrustedReconciliationAdmissionBindsWorkspacePlanAndExactTools(t *t
 	if err := os.MkdirAll(filepath.Join(workspace, "deploy"), 0o700); err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	workspaceCommit := strings.Repeat("a", 40)
 	revision := strings.Repeat("b", 40)
 	writeCredentialPlanTestFile(t, workspace, "deploy/release.yaml", `
 apiVersion: doops.sh/v2
@@ -101,12 +100,12 @@ environments:
 		"executionMode":"dry-run",
 		"runId":"release-session-0123456789abcdef",
 		"workflowPath":"deploy/release.yaml",
-		"workspaceCommit":"` + workspaceCommit + `",
+		"source":{"repository":"https://example.test/app.git","branch":"main"},
 		"inputs":{"releaseId":"` + revision + `"},
 		"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops","instance":"runner","template":"release","project":"app","environment":"production","materializations":[]},
-		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
+		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun"}
 	}`
-	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit)
+	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction)
 	if err != nil {
 		t.Fatalf("build trusted admission: %v", err)
 	}
@@ -137,7 +136,6 @@ environments:
 		admission.Context.Source.Repository != "https://example.test/app.git" ||
 		admission.Context.Source.Revision != revision ||
 		admission.Context.Source.Branch != "main" ||
-		admission.Context.Source.WorkspaceCommit != workspaceCommit ||
 		!strings.HasPrefix(admission.Context.OperationID, "op_") ||
 		!validSHA256Digest(admission.Context.PlanDigest) ||
 		!validSHA256Digest(admission.Context.PlanBindingDigest) ||
@@ -168,17 +166,15 @@ func TestBuildTrustedReconciliationAdmissionAddsExecutorsOnlyForApply(t *testing
 	if err := os.MkdirAll(filepath.Join(workspace, "deploy"), 0o700); err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	workspaceCommit := strings.Repeat("a", 40)
 	revision := strings.Repeat("b", 40)
 	writeTrustedAdmissionFixture(t, workspace)
 	instruction := strings.NewReplacer(
 		"${MODE}", "apply",
 		"${RUN_ID}", "apply-session-0123456789abcdef",
-		"${WORKSPACE_COMMIT}", workspaceCommit,
 		"${REVISION}", revision,
 	).Replace(trustedAdmissionInstructionFixture)
 
-	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit)
+	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction)
 	if err != nil {
 		t.Fatalf("build apply trusted admission: %v", err)
 	}
@@ -204,10 +200,9 @@ func TestTrustedReconciliationContextDigestMatchesDoagentCanonicalJSON(t *testin
 		PlanDigest:         "sha256:" + strings.Repeat("1", 64),
 		PlanBindingDigest:  "sha256:" + strings.Repeat("2", 64),
 		Source: trustedReconciliationSource{
-			Repository:      "https://example.test/app.git",
-			Revision:        strings.Repeat("b", 40),
-			Branch:          "main",
-			WorkspaceCommit: strings.Repeat("a", 40),
+			Repository: "https://example.test/app.git",
+			Revision:   strings.Repeat("b", 40),
+			Branch:     "main",
 		},
 		Capabilities: map[string]trustedReconciliationCapability{
 			"ObserveWorkspaceSource": {
@@ -228,7 +223,7 @@ func TestTrustedReconciliationContextDigestMatchesDoagentCanonicalJSON(t *testin
 	if err != nil {
 		t.Fatalf("calculate context digest: %v", err)
 	}
-	const want = "sha256:1be324d22d5d173b19c54928bc7d66c330993f4fdbfe6312a9689be952c8655a"
+	const want = "sha256:5250145898524d4acc16711183ccc497a8a011a512b64ff8c628a460f26d11a6"
 	if digest != want {
 		t.Fatalf("context digest = %q, want DoAgent JCS digest %q", digest, want)
 	}
@@ -265,16 +260,15 @@ func TestDigestJSONMatchesJCSStringNumberAndUTF16Ordering(t *testing.T) {
 
 func TestBuildTrustedReconciliationAdmissionUsesRegistrySourceForCurrentReleaseShapes(t *testing.T) {
 	for _, test := range []struct {
-		name            string
-		workflow        string
-		inputs          string
-		template        string
-		project         string
-		wantRevision    string
-		workspaceCommit string
+		name         string
+		workflow     string
+		inputs       string
+		template     string
+		project      string
+		wantRevision string
 	}{
 		{
-			name: "version release binds workspace commit",
+			name: "version release binds declared source",
 			workflow: `
 apiVersion: doops.sh/v2
 kind: DeploymentTemplate
@@ -287,14 +281,16 @@ spec:
   application: ecp
   release:
     version: ${inputs.version}
+    source:
+      repository: https://example.test/current.git
+      branch: main
   environment: test
   configurationSource: deploy/environments.yaml
 `,
-			inputs:          `"version":"release-20260716"`,
-			template:        "ecp-test-deploy",
-			project:         "ecp",
-			wantRevision:    strings.Repeat("c", 40),
-			workspaceCommit: strings.Repeat("c", 40),
+			inputs:       `"version":"release-20260716"`,
+			template:     "ecp-test-deploy",
+			project:      "ecp",
+			wantRevision: "main",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -340,12 +336,12 @@ environments:
 				"executionMode":"dry-run",
 				"runId":"current-release-0123456789abcdef",
 				"workflowPath":"deploy/release.yaml",
-				"workspaceCommit":"` + test.workspaceCommit + `",
+				"source":{"repository":"https://example.test/current.git","branch":"main"},
 				"inputs":{` + test.inputs + `},
 				"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops-oilan","instance":"oilan-node","template":"` + test.template + `","project":"` + test.project + `","environment":"test","materializations":[]},
-				"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
+				"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun"}
 			}`
-			admission, err := buildTrustedReconciliationAdmission(sessionID, instruction, test.workspaceCommit)
+			admission, err := buildTrustedReconciliationAdmission(sessionID, instruction)
 			if err != nil {
 				t.Fatalf("build trusted admission: %v", err)
 			}
@@ -416,19 +412,18 @@ environments:
         chart: deploy/chart
         values: deploy/values.yaml
 `)
-	commit := strings.Repeat("c", 40)
 	instruction := `{
 		"task":"execute-doops-cicd-workflow",
 		"skill":"$doops-cicd",
 		"executionMode":"dry-run",
 		"runId":"semantic-release-0123456789abcdef",
 		"workflowPath":"deploy/release.yaml",
-		"workspaceCommit":"` + commit + `",
+		"source":{"repository":"https://example.test/current.git","branch":"main"},
 		"inputs":{"revision":"` + strings.Repeat("d", 40) + `"},
 		"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops-oilan","instance":"oilan-node","template":"zhiyong-test-release","project":"zhiyong","environment":"test","materializations":[]},
-		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
+		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun"}
 	}`
-	if _, err := buildTrustedReconciliationAdmission(sessionID, instruction, commit); err == nil ||
+	if _, err := buildTrustedReconciliationAdmission(sessionID, instruction); err == nil ||
 		!strings.Contains(err.Error(), "requires a v2 DeploymentTemplate") {
 		t.Fatalf("unsupported release error = %v", err)
 	}
@@ -446,7 +441,6 @@ func TestBuildTrustedReconciliationAdmissionRejectsSecretInputNames(t *testing.T
 	instruction := strings.NewReplacer(
 		"${MODE}", "dry-run",
 		"${RUN_ID}", "secret-input-0123456789abcdef",
-		"${WORKSPACE_COMMIT}", strings.Repeat("a", 40),
 		"${REVISION}", strings.Repeat("b", 40),
 	).Replace(strings.Replace(
 		trustedAdmissionInstructionFixture,
@@ -457,7 +451,6 @@ func TestBuildTrustedReconciliationAdmissionRejectsSecretInputNames(t *testing.T
 	if _, err := buildTrustedReconciliationAdmission(
 		sessionID,
 		instruction,
-		strings.Repeat("a", 40),
 	); err == nil {
 		t.Fatal("secret-like workflow input must be rejected")
 	}
@@ -469,19 +462,18 @@ func TestBuildTrustedReconciliationAdmissionAcceptsV3EnvironmentDefinition(t *te
 	sessionID := "v3-environment-root"
 	workspace := filepath.Join(root, sessionID)
 	writeCredentialV3EnvironmentFixture(t, workspace)
-	commit := strings.Repeat("a", 40)
 	instruction := `{
 		"task":"execute-doops-cicd-workflow",
 		"skill":"$doops-cicd",
 		"executionMode":"dry-run",
 		"runId":"v3-environment-root-0123456789abcdef",
 		"workflowPath":"deploy/environments/oilan/environment.yaml",
-		"workspaceCommit":"` + commit + `",
+		"source":{"repository":"https://example.test/zhiyong.git","branch":"main"},
 		"inputs":{"reason":"contract-test"},
 		"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_v3","mode":"dry-run","cluster":"doops-edu","instance":"edu-coder","template":"oilan","project":"zhiyong","environment":"oilan","materializations":[]},
-		"resultContract":{"apiVersion":"doops.sh/v3","kind":"DeploymentRun","requireEvidence":true}
+		"resultContract":{"apiVersion":"doops.sh/v3","kind":"DeploymentRun"}
 	}`
-	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction, commit)
+	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction)
 	if err != nil {
 		t.Fatalf("build v3 admission: %v", err)
 	}
@@ -509,10 +501,9 @@ func TestBuildDoagentPromptParamsUsesExactPlanToolsAndNoGenericTools(t *testing.
 		ExecutionMode:      "dry-run",
 		MutationAuthorized: false,
 		Source: trustedReconciliationSource{
-			Repository:      "https://example.test/app.git",
-			Revision:        strings.Repeat("b", 40),
-			Branch:          "main",
-			WorkspaceCommit: strings.Repeat("a", 40),
+			Repository: "https://example.test/app.git",
+			Revision:   strings.Repeat("b", 40),
+			Branch:     "main",
 		},
 		Capabilities:  map[string]trustedReconciliationCapability{},
 		ContextDigest: "sha256:" + strings.Repeat("3", 64),
@@ -536,9 +527,8 @@ func TestBuildDoagentPromptParamsUsesExactPlanToolsAndNoGenericTools(t *testing.
 		t.Fatalf("trusted prompt must explicitly enable tools: %#v", params)
 	}
 	contract := appendDoagentStructuredResultContract("execute", &admission)
-	if !strings.Contains(contract, "status.evidence[0].toolRef must reference that completed call exactly") ||
-		!strings.Contains(contract, `{"tool":"plan.ObserveWorkspaceSource","input":{}}`) {
-		t.Fatalf("trusted prompt must pin evidence[0] to the completed source observation: %s", contract)
+	if !strings.Contains(contract, "Do not emit evidence") {
+		t.Fatalf("trusted prompt must prohibit model-authored evidence: %s", contract)
 	}
 	encodedContext, err := json.Marshal(params["trustedReconciliationContext"])
 	if err != nil {
@@ -576,10 +566,10 @@ const trustedAdmissionInstructionFixture = `{
 	"executionMode":"${MODE}",
 	"runId":"${RUN_ID}",
 	"workflowPath":"deploy/release.yaml",
-	"workspaceCommit":"${WORKSPACE_COMMIT}",
+	"source":{"repository":"https://example.test/app.git","branch":"main"},
 	"inputs":{"releaseId":"${REVISION}"},
 	"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"${MODE}","cluster":"doops","instance":"runner","template":"release","project":"app","environment":"production","materializations":[]},
-	"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
+	"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun"}
 }`
 
 func writeTrustedAdmissionFixture(t *testing.T, workspace string) {
