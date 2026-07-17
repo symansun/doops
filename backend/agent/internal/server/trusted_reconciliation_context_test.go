@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestBuildTrustedReconciliationAdmissionBindsWorkspacePlanAndExactTools(t *testing.T) {
+func TestBuildTrustedReconciliationAdmissionBindsDeclaredSourcePlanAndExactTools(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 	sessionID := "release-session"
@@ -103,7 +103,7 @@ environments:
 		"source":{"repository":"https://example.test/app.git","branch":"main"},
 		"inputs":{"releaseId":"` + revision + `"},
 		"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops","instance":"runner","template":"release","project":"app","environment":"production","materializations":[]},
-		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun"}
+		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
 	}`
 	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction)
 	if err != nil {
@@ -339,7 +339,7 @@ environments:
 				"source":{"repository":"https://example.test/current.git","branch":"main"},
 				"inputs":{` + test.inputs + `},
 				"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops-oilan","instance":"oilan-node","template":"` + test.template + `","project":"` + test.project + `","environment":"test","materializations":[]},
-				"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun"}
+				"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
 			}`
 			admission, err := buildTrustedReconciliationAdmission(sessionID, instruction)
 			if err != nil {
@@ -421,7 +421,7 @@ environments:
 		"source":{"repository":"https://example.test/current.git","branch":"main"},
 		"inputs":{"revision":"` + strings.Repeat("d", 40) + `"},
 		"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops-oilan","instance":"oilan-node","template":"zhiyong-test-release","project":"zhiyong","environment":"test","materializations":[]},
-		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun"}
+		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
 	}`
 	if _, err := buildTrustedReconciliationAdmission(sessionID, instruction); err == nil ||
 		!strings.Contains(err.Error(), "requires a v2 DeploymentTemplate") {
@@ -448,10 +448,7 @@ func TestBuildTrustedReconciliationAdmissionRejectsSecretInputNames(t *testing.T
 		`"inputs":{"releaseId":"${REVISION}","registryPassword":"forbidden"}`,
 		1,
 	))
-	if _, err := buildTrustedReconciliationAdmission(
-		sessionID,
-		instruction,
-	); err == nil {
+	if _, err := buildTrustedReconciliationAdmission(sessionID, instruction); err == nil {
 		t.Fatal("secret-like workflow input must be rejected")
 	}
 }
@@ -471,7 +468,7 @@ func TestBuildTrustedReconciliationAdmissionAcceptsV3EnvironmentDefinition(t *te
 		"source":{"repository":"https://example.test/zhiyong.git","branch":"main"},
 		"inputs":{"reason":"contract-test"},
 		"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_v3","mode":"dry-run","cluster":"doops-edu","instance":"edu-coder","template":"oilan","project":"zhiyong","environment":"oilan","materializations":[]},
-		"resultContract":{"apiVersion":"doops.sh/v3","kind":"DeploymentRun"}
+		"resultContract":{"apiVersion":"doops.sh/v3","kind":"DeploymentRun","requireEvidence":true}
 	}`
 	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction)
 	if err != nil {
@@ -527,8 +524,9 @@ func TestBuildDoagentPromptParamsUsesExactPlanToolsAndNoGenericTools(t *testing.
 		t.Fatalf("trusted prompt must explicitly enable tools: %#v", params)
 	}
 	contract := appendDoagentStructuredResultContract("execute", &admission)
-	if !strings.Contains(contract, "Do not emit evidence") {
-		t.Fatalf("trusted prompt must prohibit model-authored evidence: %s", contract)
+	if !strings.Contains(contract, "status.evidence[0].toolRef must reference that completed call exactly") ||
+		!strings.Contains(contract, `{"tool":"plan.ObserveWorkspaceSource","input":{}}`) {
+		t.Fatalf("trusted prompt must pin evidence[0] to the completed source observation: %s", contract)
 	}
 	encodedContext, err := json.Marshal(params["trustedReconciliationContext"])
 	if err != nil {
@@ -569,7 +567,7 @@ const trustedAdmissionInstructionFixture = `{
 	"source":{"repository":"https://example.test/app.git","branch":"main"},
 	"inputs":{"releaseId":"${REVISION}"},
 	"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"${MODE}","cluster":"doops","instance":"runner","template":"release","project":"app","environment":"production","materializations":[]},
-	"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun"}
+	"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
 }`
 
 func writeTrustedAdmissionFixture(t *testing.T, workspace string) {

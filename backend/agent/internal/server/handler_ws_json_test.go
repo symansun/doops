@@ -29,7 +29,15 @@ func TestAgentPromptJSONReturnsFinalMessageInStructuredContent(t *testing.T) {
 		"status":{
 			"phase":"planned",
 			"mutationCount":0,
-			"capabilities":{"source-identity":"observed"}
+			"capabilities":{"source-identity":"observed"},
+			"evidence":[{
+				"subject":"source",
+				"observedAt":"2026-07-15T00:00:00Z",
+				"toolRef":{
+					"tool":"doops-source-observer",
+					"input":{"value":9007199254740993}
+				}
+			}]
 		}
 	}`
 	doagent := newJSONAgentPromptTestServer(t, finalResult, func(prompt string, params map[string]interface{}) {
@@ -44,8 +52,8 @@ func TestAgentPromptJSONReturnsFinalMessageInStructuredContent(t *testing.T) {
 			!strings.Contains(prompt, "exactly one JSON object with no Markdown") {
 			t.Errorf("structured prompt must declare the final response contract: %s", prompt)
 		}
-		if !strings.Contains(prompt, "status may contain only phase, mutationCount, capabilities, and failures") ||
-			!strings.Contains(prompt, "Do not emit evidence") {
+		if !strings.Contains(prompt, "status may contain only phase, mutationCount, capabilities, evidence, and failures") ||
+			!strings.Contains(prompt, "Do not emit plannedMutations") {
 			t.Errorf("structured prompt must define DeploymentRun status fields: %s", prompt)
 		}
 		if !strings.Contains(prompt, "exactly five top-level fields: apiVersion, kind, metadata, spec, and status") ||
@@ -53,7 +61,7 @@ func TestAgentPromptJSONReturnsFinalMessageInStructuredContent(t *testing.T) {
 			t.Errorf("structured prompt must forbid the legacy flat DeploymentRun shape: %s", prompt)
 		}
 		if !strings.Contains(prompt, "metadata must contain exactly workflow and runId") ||
-			!strings.Contains(prompt, "Do not emit evidence, workspaceCommit") {
+			!strings.Contains(prompt, "DeploymentRun evidence must be a non-empty array") {
 			t.Errorf("structured prompt must define the source-based result contract: %s", prompt)
 		}
 	})
@@ -90,8 +98,15 @@ func TestAgentPromptJSONReturnsFinalMessageInStructuredContent(t *testing.T) {
 	if _, exists := status["resultDigest"]; exists {
 		t.Fatalf("Gateway must not add a self-consistency digest: %#v", status)
 	}
-	if _, exists := status["evidence"]; exists {
-		t.Fatalf("Gateway result must not retain model-authored evidence: %#v", status)
+	evidence, _ := status["evidence"].([]interface{})
+	if len(evidence) != 1 {
+		t.Fatalf("Gateway must emit one runtime-bound evidence item: %#v", status)
+	}
+	entry, _ := evidence[0].(map[string]interface{})
+	toolCall, _ := entry["toolCall"].(map[string]interface{})
+	if toolCall["id"] != "runtime-tool-source" ||
+		toolCall["tool"] != "doops-source-observer" {
+		t.Fatalf("Gateway must inject the completed runtime call: %#v", entry)
 	}
 }
 
@@ -648,6 +663,56 @@ func testCICDInstructionJSON(t *testing.T) string {
 		t.Fatalf("encode test doops-cicd instruction: %v", err)
 	}
 	return string(data)
+}
+
+func TestAgentPromptRejectsInstructionSourceMismatchBeforeDoagent(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	sessionID := "instruction-workspace-mismatch"
+	workspace := filepath.Join(root, sessionID)
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(workspace, "deploy"), 0o700); err != nil {
+		t.Fatalf("create deployment directory: %v", err)
+	}
+	writeTrustedAdmissionFixture(t, workspace)
+	doagentRequests := 0
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		doagentRequests++
+		t.Fatalf("instruction source mismatch must fail before contacting doagent: %s", r.URL.Path)
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id": sessionID,
+		"instruction": `{
+			"task":"execute-doops-cicd-workflow",
+			"skill":"$doops-cicd",
+			"executionMode":"dry-run",
+			"runId":"instruction-workspace-mismatch-0123456789abcdef",
+			"workflowPath":"deploy/release.yaml",
+			"source":{"repository":"https://example.test/wrong.git","branch":"main"},
+			"inputs":{"releaseId":"` + strings.Repeat("c", 40) + `"},
+			"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops","instance":"runner","template":"release","project":"app","environment":"production","materializations":[]},
+			"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
+		}`,
+		"response_format": "json",
+	})
+	if result["error"] == nil {
+		t.Fatalf("instruction workspace mismatch must fail: %#v", result)
+	}
+	if doagentRequests != 0 {
+		t.Fatalf("instruction source mismatch contacted doagent %d times", doagentRequests)
+	}
 }
 
 func TestAgentPromptJSONRejectsMissingFinalMachineResult(t *testing.T) {

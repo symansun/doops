@@ -171,6 +171,7 @@ func TestOfflineWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.T) {
 	instruction.Source.Branch = request.SourceBranch
 	instruction.ResultContract.APIVersion = "doops.sh/v2"
 	instruction.ResultContract.Kind = "DeploymentRun"
+	instruction.ResultContract.RequireEvidence = true
 	instructionJSON, err := json.Marshal(instruction)
 	if err != nil {
 		t.Fatalf("encode workflow instruction: %v", err)
@@ -211,7 +212,8 @@ func TestOfflineWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.T) {
 		t.Fatalf("handle offline workflow: %v", err)
 	}
 	if response.Error == nil || response.Error.Code != -32004 {
-		t.Fatalf("offline workflow response = %#v, want target offline", response)
+		t.Fatalf("offline workflow response = code=%v message=%v, want target offline",
+			response.Error.Code, response.Error.Message)
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
@@ -259,6 +261,7 @@ func TestRateLimitedWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.
 	instruction.Source.Branch = request.SourceBranch
 	instruction.ResultContract.APIVersion = "doops.sh/v2"
 	instruction.ResultContract.Kind = "DeploymentRun"
+	instruction.ResultContract.RequireEvidence = true
 	instructionJSON, err := json.Marshal(instruction)
 	if err != nil {
 		t.Fatalf("encode workflow instruction: %v", err)
@@ -312,7 +315,8 @@ func TestRateLimitedWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.
 		t.Fatalf("handle rate-limited workflow: %v", err)
 	}
 	if response.Error == nil || response.Error.Code != -32006 {
-		t.Fatalf("rate-limited workflow response = %#v, want operation limit", response)
+		t.Fatalf("rate-limited workflow response = code=%v message=%v, want operation limit",
+			response.Error.Code, response.Error.Message)
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,

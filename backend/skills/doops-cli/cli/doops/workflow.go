@@ -45,6 +45,19 @@ type workflowCommand struct {
 	DryRun bool
 }
 
+type workflowRuntimeToolCall struct {
+	ID     string          `json:"id"`
+	Tool   string          `json:"tool"`
+	Input  json.RawMessage `json:"input"`
+	Result json.RawMessage `json:"result"`
+}
+
+type workflowEvidence struct {
+	Subject    string                   `json:"subject"`
+	ObservedAt string                   `json:"observedAt"`
+	ToolCall   *workflowRuntimeToolCall `json:"toolCall"`
+}
+
 type workflowAgentCaller interface {
 	CallStructured(toolName string, arguments map[string]interface{}, destination interface{}) error
 }
@@ -160,8 +173,9 @@ func runCICDCommand(
 		"inputs":        request.Inputs,
 		"credentialRun": credentialRun,
 		"resultContract": map[string]interface{}{
-			"apiVersion": manifestAPIVersion,
-			"kind":       "DeploymentRun",
+			"apiVersion":      manifestAPIVersion,
+			"kind":            "DeploymentRun",
+			"requireEvidence": true,
 		},
 	}
 	instruction, err := json.Marshal(instructionEnvelope)
@@ -475,6 +489,7 @@ func validateWorkflowResult(
 			Phase         string          `json:"phase"`
 			MutationCount *int            `json:"mutationCount"`
 			Capabilities  json.RawMessage `json:"capabilities"`
+			Evidence      json.RawMessage `json:"evidence"`
 		} `json:"status"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(output))
@@ -512,6 +527,39 @@ func validateWorkflowResult(
 	}
 	if len(capabilities) == 0 {
 		return fmt.Errorf("result capabilities snapshot must not be empty")
+	}
+	if len(result.Status.Evidence) == 0 || string(result.Status.Evidence) == "null" {
+		return fmt.Errorf("result evidence is required")
+	}
+	var evidence []workflowEvidence
+	evidenceDecoder := json.NewDecoder(strings.NewReader(string(result.Status.Evidence)))
+	evidenceDecoder.DisallowUnknownFields()
+	if err := evidenceDecoder.Decode(&evidence); err != nil {
+		return fmt.Errorf("decode result evidence: %w", err)
+	}
+	var evidenceExtra interface{}
+	if err := evidenceDecoder.Decode(&evidenceExtra); err != io.EOF {
+		return fmt.Errorf("result evidence must be exactly one JSON array")
+	}
+	if len(evidence) == 0 {
+		return fmt.Errorf("result evidence must contain at least one observation or execution fact")
+	}
+	for index, item := range evidence {
+		if strings.TrimSpace(item.Subject) == "" ||
+			strings.TrimSpace(item.ObservedAt) == "" {
+			return fmt.Errorf("evidence[%d] must contain subject and observedAt", index)
+		}
+		if item.ToolCall == nil ||
+			strings.TrimSpace(item.ToolCall.ID) == "" ||
+			strings.TrimSpace(item.ToolCall.Tool) == "" {
+			return fmt.Errorf("evidence[%d] must contain a runtime toolCall", index)
+		}
+		if err := validateWorkflowJSONValue(item.ToolCall.Input); err != nil {
+			return fmt.Errorf("evidence[%d] toolCall.input: %w", index, err)
+		}
+		if err := validateWorkflowJSONValue(item.ToolCall.Result); err != nil {
+			return fmt.Errorf("evidence[%d] toolCall.result: %w", index, err)
+		}
 	}
 	return nil
 }

@@ -105,7 +105,14 @@ func TestRunCICDCommandRoutesApplyThroughDeclaredSourceAndAsk(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(workflow), 0o755); err != nil {
 		t.Fatalf("create workflow directory: %v", err)
 	}
-	if err := os.WriteFile(workflow, []byte("apiVersion: doops.sh/v2\nkind: DeploymentTemplate\n"), 0o644); err != nil {
+	if err := os.WriteFile(workflow, []byte(`apiVersion: doops.sh/v2
+kind: DeploymentTemplate
+spec:
+  release:
+    source:
+      repository: https://cnb.cool/l8ai/ai/doops.sh.git
+      branch: main
+`), 0o644); err != nil {
 		t.Fatalf("write workflow: %v", err)
 	}
 
@@ -157,11 +164,11 @@ func TestRunCICDCommandRoutesApplyThroughDeclaredSourceAndAsk(t *testing.T) {
 	originalResolve := resolveWorkflowSource
 	originalOpen := openWorkflowAgent
 	resolveWorkflowSource = func(path string) (string, string, error) {
-		events = append(events, "source")
+		events = append(events, "resolve")
 		if path != workflow {
 			t.Fatalf("unexpected workflow path %q", path)
 		}
-		return "https://example.test/app.git", "main", nil
+		return "https://cnb.cool/l8ai/ai/doops.sh.git", "main", nil
 	}
 	openWorkflowAgent = func(_ Server, _ *SessionStore, _ string, _ bool) (workflowAgentCaller, func()) {
 		caller.onCall = func() { events = append(events, "prompt") }
@@ -195,14 +202,14 @@ func TestRunCICDCommandRoutesApplyThroughDeclaredSourceAndAsk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run workflow: %v", err)
 	}
-	if got, want := strings.Join(events, ","), "source,prepare,prompt"; got != want {
+	if got, want := strings.Join(events, ","), "resolve,prepare,prompt"; got != want {
 		t.Fatalf("workflow operation order mismatch: got %s want %s", got, want)
 	}
 	if prepareBody.Cluster != "doops-edu" ||
 		prepareBody.Instance != "edu-coder" ||
 		prepareBody.SessionID != "release-test" ||
 		prepareBody.WorkflowPath != "backend/deploy/workflows/oilan-agent-bootstrap.yaml" ||
-		prepareBody.SourceRepository != "https://example.test/app.git" ||
+		prepareBody.SourceRepository != "https://cnb.cool/l8ai/ai/doops.sh.git" ||
 		prepareBody.SourceBranch != "main" ||
 		prepareBody.Mode != "apply" {
 		t.Fatalf("credential prepare body mismatch: %#v", prepareBody)
@@ -211,7 +218,7 @@ func TestRunCICDCommandRoutesApplyThroughDeclaredSourceAndAsk(t *testing.T) {
 		t.Fatalf("expected generic Ask tool, got %q", caller.toolName)
 	}
 	if _, exists := caller.arguments["workspace_commit"]; exists {
-		t.Fatalf("workspace snapshot binding must not reach Ask: %#v", caller.arguments)
+		t.Fatalf("retired workspace commit must not be sent to Ask: %#v", caller.arguments)
 	}
 	if caller.arguments["response_format"] != "json" {
 		t.Fatalf("Ask must request structured result: %#v", caller.arguments)
@@ -227,6 +234,12 @@ func TestRunCICDCommandRoutesApplyThroughDeclaredSourceAndAsk(t *testing.T) {
 		instruction["executionMode"] != "apply" ||
 		instruction["workflowPath"] != "backend/deploy/workflows/oilan-agent-bootstrap.yaml" {
 		t.Fatalf("unexpected Skill instruction: %#v", instruction)
+	}
+	source, ok := instruction["source"].(map[string]interface{})
+	if !ok ||
+		source["repository"] != "https://cnb.cool/l8ai/ai/doops.sh.git" ||
+		source["branch"] != "main" {
+		t.Fatalf("declared source is not bound to instruction: %#v", instruction)
 	}
 	runID, _ := instruction["runId"].(string)
 	if !strings.HasPrefix(runID, "release-test-") || runID == "release-test" {
@@ -260,7 +273,7 @@ func TestRunCICDCommandRoutesApplyThroughDeclaredSourceAndAsk(t *testing.T) {
 	resultContract := instruction["resultContract"].(map[string]interface{})
 	if resultContract["apiVersion"] != "doops.sh/v2" ||
 		resultContract["kind"] != "DeploymentRun" ||
-		len(resultContract) != 2 {
+		resultContract["requireEvidence"] != true {
 		t.Fatalf("unexpected structured result contract: %#v", resultContract)
 	}
 }
@@ -293,6 +306,10 @@ spec:
   application: app
   environment: production
   configurationSource: environments.yaml
+  release:
+    source:
+      repository: https://cnb.cool/l8ai/ai/doops.sh.git
+      branch: main
 `), 0o644); err != nil {
 		t.Fatalf("write workflow: %v", err)
 	}
@@ -308,6 +325,8 @@ spec:
 
 	var mode string
 	var declarationFieldsPresent bool
+	var sourceRepository string
+	var sourceBranch string
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/credentials/prepare" {
 			t.Fatalf("unexpected credential prepare request: %s %s", r.Method, r.URL.Path)
@@ -317,6 +336,8 @@ spec:
 			t.Fatalf("decode credential prepare body: %v", err)
 		}
 		mode, _ = body["mode"].(string)
+		sourceRepository, _ = body["source_repository"].(string)
+		sourceBranch, _ = body["source_branch"].(string)
 		_, workflowPresent := body["workflow_yaml"]
 		_, configurationPresent := body["configuration_yaml"]
 		declarationFieldsPresent = workflowPresent || configurationPresent
@@ -335,8 +356,13 @@ spec:
 	caller := &fakeWorkflowCaller{output: workflowResultJSON("dry-run", 0)}
 	originalResolve := resolveWorkflowSource
 	originalOpen := openWorkflowAgent
-	resolveWorkflowSource = func(string) (string, string, error) {
-		return "https://example.test/app.git", "main", nil
+	resolveCalls := 0
+	resolveWorkflowSource = func(path string) (string, string, error) {
+		resolveCalls++
+		if path != workflow {
+			t.Fatalf("unexpected workflow path %q", path)
+		}
+		return "https://cnb.cool/l8ai/ai/doops.sh.git", "main", nil
 	}
 	openWorkflowAgent = func(Server, *SessionStore, string, bool) (workflowAgentCaller, func()) {
 		return caller, func() {}
@@ -361,8 +387,11 @@ spec:
 	if mode != "dry-run" {
 		t.Fatalf("credential prepare mode mismatch: got %q", mode)
 	}
-	if declarationFieldsPresent {
-		t.Fatalf("dry-run must resolve declarations from the declared source on the Agent")
+	if resolveCalls != 1 ||
+		sourceRepository != "https://cnb.cool/l8ai/ai/doops.sh.git" ||
+		sourceBranch != "main" ||
+		declarationFieldsPresent {
+		t.Fatalf("dry-run must resolve the declared source and omit declaration YAML")
 	}
 	if caller.arguments["operation"] != "ask" {
 		t.Fatalf("dry-run must use ask operation: %#v", caller.arguments)
@@ -378,9 +407,14 @@ func TestRunCICDCommandStopsBeforePromptWhenCredentialPrepareFails(t *testing.T)
 		t.Fatalf("create repository marker: %v", err)
 	}
 	workflow := filepath.Join(root, "release.yaml")
-	if err := os.WriteFile(workflow, []byte(
-		"apiVersion: doops.sh/v2\nkind: DeploymentTemplate\n",
-	), 0o644); err != nil {
+	if err := os.WriteFile(workflow, []byte(`apiVersion: doops.sh/v2
+kind: DeploymentTemplate
+spec:
+  release:
+    source:
+      repository: https://cnb.cool/l8ai/ai/doops.sh.git
+      branch: main
+`), 0o644); err != nil {
 		t.Fatalf("write workflow: %v", err)
 	}
 
@@ -396,7 +430,7 @@ func TestRunCICDCommandStopsBeforePromptWhenCredentialPrepareFails(t *testing.T)
 	originalResolve := resolveWorkflowSource
 	originalOpen := openWorkflowAgent
 	resolveWorkflowSource = func(string) (string, string, error) {
-		return "https://example.test/app.git", "main", nil
+		return "https://cnb.cool/l8ai/ai/doops.sh.git", "main", nil
 	}
 	openWorkflowAgent = func(Server, *SessionStore, string, bool) (workflowAgentCaller, func()) {
 		return caller, func() {}
@@ -431,7 +465,8 @@ func workflowResultJSON(
 		"apiVersion": workspaceManifestAPIVersion,
 		"kind":       "DeploymentRun",
 		"metadata": map[string]interface{}{
-			"workspaceCommit": strings.Repeat("a", 40),
+			"workflow": "backend/deploy/workflows/oilan-agent-bootstrap.yaml",
+			"runId":    "release-test-0123456789abcdef",
 		},
 		"spec": map[string]interface{}{"mode": mode},
 		"status": map[string]interface{}{
@@ -501,6 +536,26 @@ func TestValidateWorkflowResultRejectsSyntheticResultsAndDryRunMutation(t *testi
 			"spec":{"mode":"dry-run"},
 				"status":{"phase":"planned","mutationCount":0,"evidence":[]}
 			}`,
+		"evidence missing observation time": `{
+				"apiVersion":"doops.sh/v2",
+				"kind":"DeploymentRun",
+				"metadata":{"workflow":"release.yaml","runId":"release-test-0123456789abcdef"},
+				"spec":{"mode":"dry-run"},
+				"status":{
+					"phase":"planned",
+					"mutationCount":0,
+					"capabilities":{"source-observer":"available"},
+					"evidence":[{
+						"subject":"source",
+						"toolCall":{
+							"id":"tool-source",
+							"tool":"doops-source-observer",
+							"input":{"scope":"source"},
+							"result":{"revision":"immutable"}
+						}
+					}]
+				}
+			}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := validateWorkflowResult(
@@ -514,7 +569,58 @@ func TestValidateWorkflowResultRejectsSyntheticResultsAndDryRunMutation(t *testi
 	}
 }
 
-func TestRunCICDCommandRequiresTargetBeforeResolvingSource(t *testing.T) {
+func TestValidateWorkflowResultRejectsUnboundEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(status map[string]interface{})
+	}{
+		{
+			name: "missing tool call",
+			mutate: func(status map[string]interface{}) {
+				delete(status["evidence"].([]interface{})[0].(map[string]interface{}), "toolCall")
+			},
+		},
+		{
+			name: "unresolved tool reference",
+			mutate: func(status map[string]interface{}) {
+				status["evidence"].([]interface{})[0].(map[string]interface{})["toolRef"] =
+					map[string]interface{}{"tool": "Read", "input": map[string]interface{}{"path": "state.json"}}
+			},
+		},
+		{
+			name: "retired evidence field",
+			mutate: func(status map[string]interface{}) {
+				status["evidence"].([]interface{})[0].(map[string]interface{})["module"] = "Read"
+			},
+		},
+		{
+			name: "missing input",
+			mutate: func(status map[string]interface{}) {
+				delete(
+					status["evidence"].([]interface{})[0].(map[string]interface{})["toolCall"].(map[string]interface{}),
+					"input",
+				)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := mutateWorkflowResultJSON(
+				t,
+				workflowResultJSON("dry-run", 0),
+				test.mutate,
+			)
+			if err := validateWorkflowResult(
+				result,
+				"doops.sh/v2",
+				"dry-run",
+			); err == nil {
+				t.Fatal("evidence must contain an eligible runtime tool call")
+			}
+		})
+	}
+}
+
+func TestRunCICDCommandRequiresTargetBeforeSourceResolution(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("create repository marker: %v", err)
@@ -527,7 +633,7 @@ func TestRunCICDCommandRequiresTargetBeforeResolvingSource(t *testing.T) {
 	resolutions := 0
 	resolveWorkflowSource = func(string) (string, string, error) {
 		resolutions++
-		return "https://example.test/app.git", "main", nil
+		return "https://cnb.cool/l8ai/ai/doops.sh.git", "main", nil
 	}
 	t.Cleanup(func() { resolveWorkflowSource = originalResolve })
 	server := []Server{{Name: "agent-runtime", Gateway: "https://gateway.example.com"}}
@@ -567,7 +673,7 @@ func TestWorkflowAPIVersionAcceptsV3(t *testing.T) {
 	}
 }
 
-func TestRunCICDCommandRejectsUnsupportedWorkflowBeforeSourceOrAgentContact(t *testing.T) {
+func TestRunCICDCommandRejectsUnsupportedWorkflowBeforeSourceResolutionOrAgentContact(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("create repository marker: %v", err)
@@ -585,7 +691,7 @@ func TestRunCICDCommandRejectsUnsupportedWorkflowBeforeSourceOrAgentContact(t *t
 	agentContacts := 0
 	resolveWorkflowSource = func(string) (string, string, error) {
 		resolutions++
-		return "https://example.test/app.git", "main", nil
+		return "https://cnb.cool/l8ai/ai/doops.sh.git", "main", nil
 	}
 	openWorkflowAgent = func(Server, *SessionStore, string, bool) (workflowAgentCaller, func()) {
 		agentContacts++

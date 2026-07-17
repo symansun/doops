@@ -63,8 +63,9 @@ type doopsCICDInstructionEnvelope struct {
 	Inputs         map[string]string `json:"inputs"`
 	CredentialRun  CredentialRun     `json:"credentialRun"`
 	ResultContract struct {
-		APIVersion string `json:"apiVersion"`
-		Kind       string `json:"kind"`
+		APIVersion      string `json:"apiVersion"`
+		Kind            string `json:"kind"`
+		RequireEvidence bool   `json:"requireEvidence"`
 	} `json:"resultContract"`
 }
 
@@ -308,6 +309,7 @@ func decodeDoopsCICDInstruction(instruction string) (doopsCICDInstructionEnvelop
 		(envelope.ResultContract.APIVersion != "doops.sh/v2" &&
 			envelope.ResultContract.APIVersion != "doops.sh/v3") ||
 		envelope.ResultContract.Kind != "DeploymentRun" ||
+		!envelope.ResultContract.RequireEvidence ||
 		envelope.CredentialRun.APIVersion != "doops.sh/v2" ||
 		envelope.CredentialRun.Kind != "CredentialRun" ||
 		strings.TrimSpace(envelope.CredentialRun.ID) == "" ||

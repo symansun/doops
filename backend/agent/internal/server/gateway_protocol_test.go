@@ -1220,7 +1220,7 @@ func TestGatewayRPCApplyRequiresCredentialPrepareGate(t *testing.T) {
 				"source":{"repository":"https://example.test/app.git","branch":"main"},
 				"inputs":{},
 				"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_forged","mode":"apply","cluster":"dev","instance":"local","template":"release","project":"app","environment":"production","materializations":[]},
-				"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun"}
+				"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
 			}`
 			arguments, _ := json.Marshal(map[string]interface{}{
 				"session_id":      "release",

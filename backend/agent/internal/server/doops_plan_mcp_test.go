@@ -315,7 +315,7 @@ func TestDoopsPlanWorkloadServicesDoesNotMutateRuntimeServices(t *testing.T) {
 	}
 }
 
-func TestValidateDoopsPlanWorkspaceAcceptsDeclaredSourceCheckout(t *testing.T) {
+func TestValidateDoopsPlanWorkspaceRequiresConfiguredBase(t *testing.T) {
 	base := t.TempDir()
 	workspace := filepath.Join(base, "session-a")
 	if err := os.Mkdir(workspace, 0o755); err != nil {
@@ -328,7 +328,7 @@ func TestValidateDoopsPlanWorkspaceAcceptsDeclaredSourceCheckout(t *testing.T) {
 
 	resolved, err := validateDoopsPlanWorkspace(workspace)
 	if err != nil {
-		t.Fatalf("validate declared source checkout: %v", err)
+		t.Fatalf("validate checked-out source workspace: %v", err)
 	}
 	expected, err := filepath.EvalSymlinks(workspace)
 	if err != nil {
@@ -336,6 +336,11 @@ func TestValidateDoopsPlanWorkspaceAcceptsDeclaredSourceCheckout(t *testing.T) {
 	}
 	if resolved != expected {
 		t.Fatalf("resolved workspace = %q, want %q", resolved, expected)
+	}
+	outside := t.TempDir()
+	if _, err := validateDoopsPlanWorkspace(outside); err == nil ||
+		!strings.Contains(err.Error(), "escapes the configured workspace base") {
+		t.Fatalf("outside workspace error = %v", err)
 	}
 }
 
