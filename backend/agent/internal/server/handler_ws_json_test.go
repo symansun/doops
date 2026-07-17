@@ -51,6 +51,10 @@ func TestAgentPromptJSONReturnsFinalMessageInStructuredContent(t *testing.T) {
 			!strings.Contains(prompt, "exactly one JSON object with no Markdown") {
 			t.Errorf("structured prompt must declare the final response contract: %s", prompt)
 		}
+		if !strings.Contains(prompt, "complete DeploymentRun envelope with apiVersion, kind, metadata, spec, and status") ||
+			!strings.Contains(prompt, "Never return the status object by itself") {
+			t.Errorf("structured prompt must require the complete DeploymentRun envelope: %s", prompt)
+		}
 		if !strings.Contains(prompt, "status may contain only phase, mutationCount, capabilities, evidence, and failures") ||
 			!strings.Contains(prompt, "Do not emit plannedMutations") {
 			t.Errorf("structured prompt must define DeploymentRun status fields: %s", prompt)

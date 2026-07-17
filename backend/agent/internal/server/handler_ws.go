@@ -1723,6 +1723,7 @@ func appendDoagentStructuredResultContract(
 ) string {
 	contract := instruction + "\n\nMachine-readable result channel: your final response is the machine result. " +
 		"It must contain exactly one JSON object with no Markdown or surrounding text. " +
+		"The top-level object must be the complete DeploymentRun envelope with apiVersion, kind, metadata, spec, and status; kind must be \"DeploymentRun\", and phase, mutationCount, capabilities, evidence, and failures must be nested inside status. Never return the status object by itself. " +
 		"For a DeploymentRun, status may contain only phase, mutationCount, capabilities, evidence, and failures. " +
 		"Do not emit plannedMutations, runtimeAttestation, resultDigest, or any other status field. " +
 		"DeploymentRun evidence must be a non-empty array: before the final response, call at least one allowed trusted DoOps plan tool and reference that completed call. " +
