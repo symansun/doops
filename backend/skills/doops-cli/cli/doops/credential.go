@@ -12,12 +12,13 @@ import (
 )
 
 type credentialPrepareRequest struct {
-	Cluster         string `json:"cluster"`
-	Instance        string `json:"instance"`
-	SessionID       string `json:"session_id"`
-	WorkflowPath    string `json:"workflow_path"`
-	WorkspaceCommit string `json:"workspace_commit"`
-	Mode            string `json:"mode"`
+	Cluster          string `json:"cluster"`
+	Instance         string `json:"instance"`
+	SessionID        string `json:"session_id"`
+	WorkflowPath     string `json:"workflow_path"`
+	SourceRepository string `json:"source_repository"`
+	SourceBranch     string `json:"source_branch"`
+	Mode             string `json:"mode"`
 }
 
 type credentialRun struct {
@@ -61,10 +62,11 @@ func prepareWorkflowCredentials(
 	request.Instance = strings.TrimSpace(request.Instance)
 	request.SessionID = strings.TrimSpace(request.SessionID)
 	request.WorkflowPath = strings.TrimSpace(request.WorkflowPath)
-	request.WorkspaceCommit = strings.TrimSpace(request.WorkspaceCommit)
+	request.SourceRepository = strings.TrimSpace(request.SourceRepository)
+	request.SourceBranch = strings.TrimSpace(request.SourceBranch)
 	request.Mode = strings.TrimSpace(request.Mode)
 	if request.Cluster == "" || request.Instance == "" || request.SessionID == "" ||
-		request.WorkflowPath == "" || !validWorkspaceCommit(request.WorkspaceCommit) ||
+		request.WorkflowPath == "" || request.SourceRepository == "" || request.SourceBranch == "" ||
 		(request.Mode != "apply" && request.Mode != "dry-run") {
 		return credentialRun{}, fmt.Errorf("invalid credential prepare request")
 	}

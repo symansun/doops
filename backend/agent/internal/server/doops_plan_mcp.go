@@ -255,7 +255,7 @@ func loadDoopsPlanRuntime(callContext doopsPlanCallContext) (doopsPlanRuntime, e
 	if err != nil {
 		return doopsPlanRuntime{}, err
 	}
-	root, err = validateDoopsPlanWorkspace(root, callContext.Context.Source.WorkspaceCommit)
+	root, err = validateDoopsPlanWorkspace(root)
 	if err != nil {
 		return doopsPlanRuntime{}, err
 	}
@@ -649,11 +649,10 @@ func observeDoopsPlanWorkspace(
 ) (map[string]interface{}, error) {
 	_ = ctx
 	return map[string]interface{}{
-		"repository":      callContext.Context.Source.Repository,
-		"revision":        callContext.Context.Source.Revision,
-		"branch":          callContext.Context.Source.Branch,
-		"workspaceCommit": callContext.Context.Source.WorkspaceCommit,
-		"workflowPath":    runtime.WorkflowPath,
+		"repository":   callContext.Context.Source.Repository,
+		"revision":     callContext.Context.Source.Revision,
+		"branch":       callContext.Context.Source.Branch,
+		"workflowPath": runtime.WorkflowPath,
 	}, nil
 }
 
@@ -1366,7 +1365,7 @@ func buildDoopsPlanAttestedResult(
 	return result, nil
 }
 
-func validateDoopsPlanWorkspace(root, workspaceCommit string) (string, error) {
+func validateDoopsPlanWorkspace(root string) (string, error) {
 	absolute, err := filepath.Abs(root)
 	if err != nil {
 		return "", err
@@ -1387,75 +1386,9 @@ func validateDoopsPlanWorkspace(root, workspaceCommit string) (string, error) {
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return "", errors.New("trusted workspace escapes the configured workspace base")
 	}
-	ready, err := os.ReadFile(filepath.Join(resolved, ".doops-ready"))
-	if err != nil || strings.TrimSpace(string(ready)) != workspaceCommit {
-		return "", errors.New("trusted workspace commit marker mismatch")
-	}
 	session := filepath.Base(resolved)
 	if session == "." || session == ".." || strings.ContainsAny(session, `/\`) {
 		return "", errors.New("trusted workspace session identity is invalid")
-	}
-	bareBase := strings.TrimSpace(os.Getenv("DOOPS_PLAN_BARE_REPOSITORY_BASE"))
-	if bareBase == "" {
-		bareBase = "/tmp/repos"
-	}
-	bareRepository := filepath.Join(bareBase, session+".git")
-	if _, err := os.Stat(bareRepository); err != nil {
-		return "", errors.New("trusted workspace source repository is unavailable")
-	}
-	verifyCommit := doopsPlanCommand(
-		context.Background(),
-		"git",
-		"--git-dir="+bareRepository,
-		"cat-file",
-		"-e",
-		workspaceCommit+"^{commit}",
-	)
-	if output, err := verifyCommit.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("trusted workspace commit is unavailable: %s", strings.TrimSpace(string(output)))
-	}
-	indexPath, err := temporaryDoopsPlanIndexPath()
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(indexPath)
-	readTree := doopsPlanCommand(
-		context.Background(),
-		"git",
-		"--git-dir="+bareRepository,
-		"read-tree",
-		workspaceCommit,
-	)
-	readTree.Env = append(os.Environ(), "GIT_INDEX_FILE="+indexPath)
-	if output, err := readTree.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("trusted workspace index initialization failed: %s", strings.TrimSpace(string(output)))
-	}
-	refreshIndex := doopsPlanCommand(
-		context.Background(),
-		"git",
-		"--git-dir="+bareRepository,
-		"--work-tree="+resolved,
-		"update-index",
-		"--refresh",
-	)
-	refreshIndex.Env = append(os.Environ(), "GIT_INDEX_FILE="+indexPath)
-	_, _ = refreshIndex.CombinedOutput()
-	verifyTree := doopsPlanCommand(
-		context.Background(),
-		"git",
-		"--git-dir="+bareRepository,
-		"--work-tree="+resolved,
-		"diff-files",
-		"--quiet",
-		"--",
-		".",
-	)
-	verifyTree.Env = append(os.Environ(), "GIT_INDEX_FILE="+indexPath)
-	if err := verifyTree.Run(); err != nil {
-		return "", errors.New("trusted workspace differs from the pushed source snapshot")
-	}
-	if err := verifyDoopsPlanWorkspaceFileSet(resolved, bareRepository, workspaceCommit); err != nil {
-		return "", err
 	}
 	return resolved, nil
 }
