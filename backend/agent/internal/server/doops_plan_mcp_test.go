@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +12,12 @@ import (
 	"strings"
 	"testing"
 )
+
+type doopsPlanRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn doopsPlanRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
 
 func TestDoopsPlanMCPListsOnlyReservedPlanTools(t *testing.T) {
 	input := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}` + "\n")
@@ -50,6 +58,66 @@ func TestDoopsPlanArtifactNameUsesDeclaredSourceArtifactName(t *testing.T) {
 	}
 	if got := doopsPlanArtifactName("gateway", artifactNames); got != "gateway" {
 		t.Fatalf("undeclared artifact name = %q, want gateway", got)
+	}
+}
+
+func TestDoopsPlanEffectiveRegistryCredentialUsesExecutorCredentialForSameRegistry(t *testing.T) {
+	executorCredential := credentialConfigurationSecretRef{
+		Namespace:  "test",
+		SecretName: "cnb-regcred",
+	}
+	runtime := doopsPlanRuntime{
+		SourceRegistry:     "registry.example.test/project",
+		TargetRegistry:     "registry.example.test/project",
+		RegistryCredential: executorCredential,
+	}
+
+	got := doopsPlanEffectiveRegistryCredential(
+		runtime,
+		credentialConfigurationSecretRef{},
+		runtime.SourceRegistry,
+	)
+
+	if !reflect.DeepEqual(got, executorCredential) {
+		t.Fatalf("credential = %#v, want %#v", got, executorCredential)
+	}
+	if name := doopsPlanSecretRefName(got); name != "cnb-regcred" {
+		t.Fatalf("credential name = %q, want cnb-regcred", name)
+	}
+}
+
+func TestResolveDoopsPlanImageSetUsesProvidedRegistryAuth(t *testing.T) {
+	previousClient := doopsPlanHTTPClient
+	t.Cleanup(func() { doopsPlanHTTPClient = previousClient })
+	const digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	doopsPlanHTTPClient = &http.Client{
+		Transport: doopsPlanRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			username, password, ok := request.BasicAuth()
+			if !ok || username != "registry-user" || password != "registry-password" {
+				t.Fatalf("registry request did not carry declared credentials")
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Docker-Content-Digest": []string{digest}},
+				Body:       io.NopCloser(strings.NewReader("{}")),
+				Request:    request,
+			}, nil
+		}),
+	}
+
+	images, err := resolveDoopsPlanImageSet(
+		t.Context(),
+		"registry.example.test/project",
+		[]string{"backend"},
+		nil,
+		"release-20260717",
+		&doopsPlanBasicAuth{Username: "registry-user", Password: "registry-password"},
+	)
+	if err != nil {
+		t.Fatalf("resolve authenticated image set: %v", err)
+	}
+	if len(images) != 1 || images[0].Digest != digest {
+		t.Fatalf("images = %#v", images)
 	}
 }
 
