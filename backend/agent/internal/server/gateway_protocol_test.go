@@ -1350,18 +1350,25 @@ func TestGatewayRejectsAgentSelfMutationShellBeforeDispatch(t *testing.T) {
 
 	client := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
 	defer client.Close()
-	args, _ := json.Marshal(map[string]interface{}{
-		"command":    "kubectl -n doops-system set image deployment/doops-agent doops-agent=image:v2",
-		"session_id": "blocked-self-mutation",
-	})
-	writeGatewayJSON(t, client, map[string]interface{}{
-		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-		"params": map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(args)},
-	})
-	resp := readUntilID(t, client, 2)
-	errObj, ok := resp["error"].(map[string]interface{})
-	if !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "blocked dangerous command") {
-		t.Fatalf("expected gateway command rejection, got %#v", resp)
+	commands := []string{
+		"kubectl -n doops-system set image deployment/doops-agent doops-agent=image:v2",
+		"printf '%s' 'encoded-job' | base64 -d | kubectl apply -f -",
+	}
+	for index, command := range commands {
+		id := index + 2
+		args, _ := json.Marshal(map[string]interface{}{
+			"command":    command,
+			"session_id": fmt.Sprintf("blocked-self-mutation-%d", id),
+		})
+		writeGatewayJSON(t, client, map[string]interface{}{
+			"jsonrpc": "2.0", "id": id, "method": "tools/call",
+			"params": map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(args)},
+		})
+		resp := readUntilID(t, client, float64(id))
+		errObj, ok := resp["error"].(map[string]interface{})
+		if !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "blocked dangerous command") {
+			t.Fatalf("expected gateway command rejection for %q, got %#v", command, resp)
+		}
 	}
 	if gw.getAgent("dev", "local") == nil {
 		t.Fatal("rejected shell command disconnected the agent")

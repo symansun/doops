@@ -474,8 +474,8 @@ func handleAgentUpgrade(argBytes json.RawMessage) (string, error) {
 		workload := firstNonEmptyString(args.Workload, "daemonset/doops-agent")
 		container := firstNonEmptyString(args.Container, "doops-agent")
 		return fmt.Sprintf(
-			"dry-run: external release controller must update %s/%s: kubectl -n %s set image %s %s=%s",
-			namespace, workload, namespace, workload, container, image,
+			"dry-run: image=%s runtime=k8s namespace=%s workload=%s container=%s; external Helm/GitOps controller must reconcile the complete workload and verify readiness plus gateway heartbeat",
+			image, namespace, workload, container,
 		), nil
 	case "docker", "container":
 		container := firstNonEmptyString(args.Container, "doops-agent")

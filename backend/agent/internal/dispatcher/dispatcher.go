@@ -24,6 +24,7 @@ func NewDispatcher() *Dispatcher {
 			regexp.MustCompile(`rm -rf /`),
 			regexp.MustCompile(`fdisk`),
 			regexp.MustCompile(`mkfs`),
+			regexp.MustCompile(`(?s)\bbase64\b.*\|\s*\b(kubectl|oc)\b.*\b(apply|create|replace)\b`),
 			regexp.MustCompile(`(?s)\b(kubectl|oc)\b.*\b(set\s+image|rollout\s+(restart|undo)|apply|delete|edit|patch|replace|scale)\b.*\bdoops-agent\b`),
 			regexp.MustCompile(`(?s)\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b.*\bdoops-agent\b`),
 			regexp.MustCompile(`(?s)\b(docker|nerdctl|podman|crictl)\b.*\b(restart|stop|rm|update|run)\b.*\bdoops-agent\b`),
