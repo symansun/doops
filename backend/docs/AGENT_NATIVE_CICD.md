@@ -3,7 +3,7 @@
 DoOps 不实现 Agent 框架。DoOps keeps CI/CD on the existing Agent-native path:
 
 ```text
-SemanticRelease -> doops push -> Ask -> doagent -> $doops-cicd -> runtime tool binding
+SemanticRelease -> resolve declared source commit -> credential prepare -> Ask -> doagent -> $doops-cicd -> runtime tool binding
 ```
 
 There is one Agent-native release path. It does not introduce another controller,
@@ -13,9 +13,9 @@ private deployment API, shell adapter, or external release event.
 
 | Component | Responsibility |
 | :--- | :--- |
-| `doops` CLI | Resolve an explicit workflow file and target, push the repository snapshot, and issue one ordinary Ask |
+| `doops` CLI | Resolve an explicit workflow, target, declared repository/branch, and immutable source commit, then issue one ordinary Ask |
 | Gateway | Authenticate the target, enforce the session/resource boundary, route Ask, and bind the result to authoritative ACP tool-call events |
-| `doops-agent` | Bind the doagent session to the pushed workspace and expose ordinary DoOps primitives |
+| `doops-agent` | Check out the declared source at the exact prepared commit, bind the doagent session to it, and expose ordinary DoOps primitives |
 | `doagent` | Select the Skill, coordinate multiple agents, call available modules, and report observed facts |
 | `$doops-cicd` Skill | Read the declarative workflow, select existing DoOps modules, execute dry-run/apply within authorization, and emit one JSON `DeploymentRun` as the final response |
 
@@ -41,11 +41,14 @@ doops -session <session> cicd run -f <workflow.yaml> -target <configured-target>
 
 The CLI must receive an explicit configured target. It never infers a cluster,
 namespace, registry, release, or credentials from names or historical state.
-Before Ask it pushes the repository into the session workspace and passes the
-workspace commit to the Gateway and Skill as transport context. The Gateway
-compares that value with the session `.doops-ready` commit before contacting
-doagent; a mismatch fails closed. A failed push fails the operation; it does not
-fall back to shell, kubectl, SSH, or a manual release path.
+Before credential prepare, the CLI reads the declared repository and branch. It
+uses an explicitly declared immutable revision when present; otherwise it
+resolves the remote branch to one exact commit. The Agent checks out that branch
+and rejects the run if its HEAD is not the prepared commit. The same commit is
+bound to credential prepare, the single-use credential authorization, Ask, the
+trusted reconciliation context, and the final result. A moved branch or dirty
+checkout fails closed; execution does not fall back to a pushed snapshot,
+shell, kubectl, SSH, or a manual release path.
 
 The CLI sends a small task envelope to ordinary `doops_agent_prompt`:
 
@@ -56,7 +59,11 @@ The CLI sends a small task envelope to ordinary `doops_agent_prompt`:
   "executionMode": "dry-run",
   "runId": "<prepared run id>",
   "workflowPath": "backend/deploy/workflows/example.yaml",
-  "workspaceCommit": "<pushed workspace commit>",
+  "workspaceCommit": "<immutable declared source commit>",
+  "source": {
+    "repository": "https://example.test/app.git",
+    "branch": "main"
+  },
   "inputs": {},
   "credentialRun": {
     "apiVersion": "doops.sh/v2",
@@ -114,7 +121,7 @@ final response:
   "metadata": {
     "workflow": "backend/deploy/workflows/example.yaml",
     "runId": "<prepared run id>",
-    "workspaceCommit": "<pushed workspace commit>"
+    "workspaceCommit": "<immutable declared source commit>"
   },
   "spec": {
     "mode": "dry-run"

@@ -54,6 +54,22 @@ func TestValidateWorkflowInputsRejectsCredentialMaterial(t *testing.T) {
 	}
 }
 
+func TestValidateWorkflowSourceRepositoryRejectsUnsafeTransports(t *testing.T) {
+	if err := validateWorkflowSourceRepository("https://example.test/app.git"); err != nil {
+		t.Fatalf("valid HTTPS source rejected: %v", err)
+	}
+	for _, repository := range []string{
+		"file:///tmp/app.git",
+		"ext::sh -c 'id'",
+		"https://user:token@example.test/app.git",
+		"https://example.test/app.git?token=secret",
+	} {
+		if err := validateWorkflowSourceRepository(repository); err == nil {
+			t.Fatalf("unsafe workflow source %q was accepted", repository)
+		}
+	}
+}
+
 func (f *fakeWorkflowCaller) CallStructured(toolName string, arguments map[string]interface{}, destination interface{}) error {
 	f.calls++
 	f.toolName = toolName
@@ -78,15 +94,16 @@ func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
 	}
 
 	caller := &fakeWorkflowCaller{output: workflowResultJSON("apply", 1)}
-	var pushedRoot string
 	var events []string
 	var prepareBody struct {
-		Cluster         string `json:"cluster"`
-		Instance        string `json:"instance"`
-		SessionID       string `json:"session_id"`
-		WorkflowPath    string `json:"workflow_path"`
-		WorkspaceCommit string `json:"workspace_commit"`
-		Mode            string `json:"mode"`
+		Cluster          string `json:"cluster"`
+		Instance         string `json:"instance"`
+		SessionID        string `json:"session_id"`
+		WorkflowPath     string `json:"workflow_path"`
+		SourceRepository string `json:"source_repository"`
+		SourceBranch     string `json:"source_branch"`
+		SourceRevision   string `json:"source_revision"`
+		Mode             string `json:"mode"`
 	}
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		events = append(events, "prepare")
@@ -122,25 +139,18 @@ func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
 		}`)
 	}))
 	defer gateway.Close()
-	originalPush := pushWorkflowWorkspace
+	originalResolve := resolveWorkflowSource
 	originalOpen := openWorkflowAgent
-	pushWorkflowWorkspace = func(_ Server, src, _ string, dryRun bool, _ []string, sessionID string) (string, error) {
-		events = append(events, "push")
-		pushedRoot = src
-		if dryRun {
-			t.Fatal("workspace push must occur before the agent apply")
-		}
-		if sessionID != "release-test" {
-			t.Fatalf("unexpected session %q", sessionID)
-		}
-		return strings.Repeat("a", 40), nil
+	resolveWorkflowSource = func(string, map[string]string) (string, string, string, error) {
+		events = append(events, "resolve")
+		return "https://example.test/app.git", "main", strings.Repeat("a", 40), nil
 	}
 	openWorkflowAgent = func(_ Server, _ *SessionStore, _ string, _ bool) (workflowAgentCaller, func()) {
 		caller.onCall = func() { events = append(events, "prompt") }
 		return caller, func() {}
 	}
 	t.Cleanup(func() {
-		pushWorkflowWorkspace = originalPush
+		resolveWorkflowSource = originalResolve
 		openWorkflowAgent = originalOpen
 	})
 
@@ -167,17 +177,16 @@ func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run workflow: %v", err)
 	}
-	if pushedRoot != root {
-		t.Fatalf("workflow repository root mismatch: got %q want %q", pushedRoot, root)
-	}
-	if got, want := strings.Join(events, ","), "push,prepare,prompt"; got != want {
+	if got, want := strings.Join(events, ","), "resolve,prepare,prompt"; got != want {
 		t.Fatalf("workflow operation order mismatch: got %s want %s", got, want)
 	}
 	if prepareBody.Cluster != "doops-edu" ||
 		prepareBody.Instance != "edu-coder" ||
 		prepareBody.SessionID != "release-test" ||
 		prepareBody.WorkflowPath != "backend/deploy/workflows/oilan-agent-bootstrap.yaml" ||
-		prepareBody.WorkspaceCommit != strings.Repeat("a", 40) ||
+		prepareBody.SourceRepository != "https://example.test/app.git" ||
+		prepareBody.SourceBranch != "main" ||
+		prepareBody.SourceRevision != strings.Repeat("a", 40) ||
 		prepareBody.Mode != "apply" {
 		t.Fatalf("credential prepare body mismatch: %#v", prepareBody)
 	}
@@ -307,18 +316,18 @@ spec:
 	defer gateway.Close()
 
 	caller := &fakeWorkflowCaller{output: workflowResultJSON("dry-run", 0)}
-	originalPush := pushWorkflowWorkspace
+	originalResolve := resolveWorkflowSource
 	originalOpen := openWorkflowAgent
-	var pushDryRun bool
-	pushWorkflowWorkspace = func(_ Server, _ string, _ string, dryRun bool, _ []string, _ string) (string, error) {
-		pushDryRun = dryRun
-		return strings.Repeat("a", 40), nil
+	var sourceResolved bool
+	resolveWorkflowSource = func(string, map[string]string) (string, string, string, error) {
+		sourceResolved = true
+		return "https://example.test/app.git", "main", strings.Repeat("a", 40), nil
 	}
 	openWorkflowAgent = func(Server, *SessionStore, string, bool) (workflowAgentCaller, func()) {
 		return caller, func() {}
 	}
 	t.Cleanup(func() {
-		pushWorkflowWorkspace = originalPush
+		resolveWorkflowSource = originalResolve
 		openWorkflowAgent = originalOpen
 	})
 
@@ -337,8 +346,8 @@ spec:
 	if mode != "dry-run" {
 		t.Fatalf("credential prepare mode mismatch: got %q", mode)
 	}
-	if pushDryRun || declarationFieldsPresent {
-		t.Fatalf("dry-run must push the workspace and resolve declarations on the Agent")
+	if !sourceResolved || declarationFieldsPresent {
+		t.Fatalf("dry-run must resolve one immutable declared source without sending inline declarations")
 	}
 	if caller.arguments["operation"] != "ask" {
 		t.Fatalf("dry-run must use ask operation: %#v", caller.arguments)
@@ -369,16 +378,16 @@ func TestRunCICDCommandStopsBeforePromptWhenCredentialPrepareFails(t *testing.T)
 	caller := &fakeWorkflowCaller{
 		output: workflowResultJSON("apply", 1),
 	}
-	originalPush := pushWorkflowWorkspace
+	originalResolve := resolveWorkflowSource
 	originalOpen := openWorkflowAgent
-	pushWorkflowWorkspace = func(Server, string, string, bool, []string, string) (string, error) {
-		return strings.Repeat("a", 40), nil
+	resolveWorkflowSource = func(string, map[string]string) (string, string, string, error) {
+		return "https://example.test/app.git", "main", strings.Repeat("a", 40), nil
 	}
 	openWorkflowAgent = func(Server, *SessionStore, string, bool) (workflowAgentCaller, func()) {
 		return caller, func() {}
 	}
 	t.Cleanup(func() {
-		pushWorkflowWorkspace = originalPush
+		resolveWorkflowSource = originalResolve
 		openWorkflowAgent = originalOpen
 	})
 
@@ -563,7 +572,7 @@ func TestValidateWorkflowResultRejectsUnboundEvidence(t *testing.T) {
 	}
 }
 
-func TestRunCICDCommandRequiresTargetBeforePush(t *testing.T) {
+func TestRunCICDCommandRequiresTargetBeforeResolvingSource(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("create repository marker: %v", err)
@@ -572,13 +581,13 @@ func TestRunCICDCommandRequiresTargetBeforePush(t *testing.T) {
 	if err := os.WriteFile(workflow, []byte("kind: DeploymentTemplate\n"), 0o644); err != nil {
 		t.Fatalf("write workflow: %v", err)
 	}
-	originalPush := pushWorkflowWorkspace
-	pushes := 0
-	pushWorkflowWorkspace = func(Server, string, string, bool, []string, string) (string, error) {
-		pushes++
-		return strings.Repeat("a", 40), nil
+	originalResolve := resolveWorkflowSource
+	resolutions := 0
+	resolveWorkflowSource = func(string, map[string]string) (string, string, string, error) {
+		resolutions++
+		return "https://example.test/app.git", "main", strings.Repeat("a", 40), nil
 	}
-	t.Cleanup(func() { pushWorkflowWorkspace = originalPush })
+	t.Cleanup(func() { resolveWorkflowSource = originalResolve })
 	server := []Server{{Name: "agent-runtime", Gateway: "https://gateway.example.com"}}
 
 	for name, args := range map[string][]string{
@@ -590,8 +599,8 @@ func TestRunCICDCommandRequiresTargetBeforePush(t *testing.T) {
 			}
 		})
 	}
-	if pushes != 0 {
-		t.Fatalf("invalid invocations must not push, got %d pushes", pushes)
+	if resolutions != 0 {
+		t.Fatalf("invalid invocations must not resolve source, got %d resolutions", resolutions)
 	}
 }
 
@@ -616,7 +625,7 @@ func TestWorkflowAPIVersionAcceptsV3(t *testing.T) {
 	}
 }
 
-func TestRunCICDCommandRejectsUnsupportedWorkflowBeforePushOrAgentContact(t *testing.T) {
+func TestRunCICDCommandRejectsUnsupportedWorkflowBeforeSourceResolutionOrAgentContact(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("create repository marker: %v", err)
@@ -628,20 +637,20 @@ func TestRunCICDCommandRejectsUnsupportedWorkflowBeforePushOrAgentContact(t *tes
 		t.Fatalf("write v3 environment: %v", err)
 	}
 
-	originalPush := pushWorkflowWorkspace
+	originalResolve := resolveWorkflowSource
 	originalOpen := openWorkflowAgent
-	pushes := 0
+	resolutions := 0
 	agentContacts := 0
-	pushWorkflowWorkspace = func(Server, string, string, bool, []string, string) (string, error) {
-		pushes++
-		return strings.Repeat("a", 40), nil
+	resolveWorkflowSource = func(string, map[string]string) (string, string, string, error) {
+		resolutions++
+		return "https://example.test/app.git", "main", strings.Repeat("a", 40), nil
 	}
 	openWorkflowAgent = func(Server, *SessionStore, string, bool) (workflowAgentCaller, func()) {
 		agentContacts++
 		return nil, func() {}
 	}
 	t.Cleanup(func() {
-		pushWorkflowWorkspace = originalPush
+		resolveWorkflowSource = originalResolve
 		openWorkflowAgent = originalOpen
 	})
 
@@ -663,7 +672,7 @@ func TestRunCICDCommandRejectsUnsupportedWorkflowBeforePushOrAgentContact(t *tes
 	) {
 		t.Fatalf("unsupported workflow error = %v", err)
 	}
-	if pushes != 0 || agentContacts != 0 {
-		t.Fatalf("unsupported workflow caused side effects: pushes=%d agentContacts=%d", pushes, agentContacts)
+	if resolutions != 0 || agentContacts != 0 {
+		t.Fatalf("unsupported workflow caused side effects: resolutions=%d agentContacts=%d", resolutions, agentContacts)
 	}
 }

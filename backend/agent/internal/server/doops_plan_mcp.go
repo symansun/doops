@@ -255,7 +255,7 @@ func loadDoopsPlanRuntime(callContext doopsPlanCallContext) (doopsPlanRuntime, e
 	if err != nil {
 		return doopsPlanRuntime{}, err
 	}
-	root, err = validateDoopsPlanWorkspace(root)
+	root, err = validateDoopsPlanWorkspace(root, callContext.Context.Source.WorkspaceCommit)
 	if err != nil {
 		return doopsPlanRuntime{}, err
 	}
@@ -1365,7 +1365,7 @@ func buildDoopsPlanAttestedResult(
 	return result, nil
 }
 
-func validateDoopsPlanWorkspace(root string) (string, error) {
+func validateDoopsPlanWorkspace(root, sourceRevision string) (string, error) {
 	absolute, err := filepath.Abs(root)
 	if err != nil {
 		return "", err
@@ -1389,6 +1389,27 @@ func validateDoopsPlanWorkspace(root string) (string, error) {
 	session := filepath.Base(resolved)
 	if session == "." || session == ".." || strings.ContainsAny(session, `/\`) {
 		return "", errors.New("trusted workspace session identity is invalid")
+	}
+	sourceRevision = strings.TrimSpace(sourceRevision)
+	if !validCredentialWorkspaceCommit(sourceRevision) {
+		return "", errors.New("trusted workspace source revision is invalid")
+	}
+	head := doopsPlanCommand(context.Background(), "git", "-C", resolved, "rev-parse", "HEAD")
+	output, err := head.Output()
+	if err != nil || strings.TrimSpace(string(output)) != sourceRevision {
+		return "", errors.New("trusted workspace source revision mismatch")
+	}
+	status := doopsPlanCommand(
+		context.Background(),
+		"git", "-C", resolved, "status", "--porcelain", "--untracked-files=all", "--",
+		".", ":(exclude).doops-ready", ":(exclude).agent/**", ":(exclude).doops-audit-log",
+	)
+	output, err = status.Output()
+	if err != nil {
+		return "", errors.New("trusted workspace source status is unavailable")
+	}
+	if len(bytes.TrimSpace(output)) != 0 {
+		return "", errors.New("trusted workspace differs from the immutable source revision")
 	}
 	return resolved, nil
 }

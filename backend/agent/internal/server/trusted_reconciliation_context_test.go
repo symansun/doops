@@ -102,11 +102,12 @@ environments:
 		"runId":"release-session-0123456789abcdef",
 		"workflowPath":"deploy/release.yaml",
 		"workspaceCommit":"` + workspaceCommit + `",
+		"source":{"repository":"https://example.test/app.git","branch":"main"},
 		"inputs":{"releaseId":"` + revision + `"},
 		"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops","instance":"runner","template":"release","project":"app","environment":"production","materializations":[]},
 		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
 	}`
-	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit)
+	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction)
 	if err != nil {
 		t.Fatalf("build trusted admission: %v", err)
 	}
@@ -178,7 +179,7 @@ func TestBuildTrustedReconciliationAdmissionAddsExecutorsOnlyForApply(t *testing
 		"${REVISION}", revision,
 	).Replace(trustedAdmissionInstructionFixture)
 
-	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction, workspaceCommit)
+	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction)
 	if err != nil {
 		t.Fatalf("build apply trusted admission: %v", err)
 	}
@@ -341,11 +342,12 @@ environments:
 				"runId":"current-release-0123456789abcdef",
 				"workflowPath":"deploy/release.yaml",
 				"workspaceCommit":"` + test.workspaceCommit + `",
+				"source":{"repository":"https://example.test/current.git","branch":"main"},
 				"inputs":{` + test.inputs + `},
 				"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops-oilan","instance":"oilan-node","template":"` + test.template + `","project":"` + test.project + `","environment":"test","materializations":[]},
 				"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
 			}`
-			admission, err := buildTrustedReconciliationAdmission(sessionID, instruction, test.workspaceCommit)
+			admission, err := buildTrustedReconciliationAdmission(sessionID, instruction)
 			if err != nil {
 				t.Fatalf("build trusted admission: %v", err)
 			}
@@ -424,11 +426,12 @@ environments:
 		"runId":"semantic-release-0123456789abcdef",
 		"workflowPath":"deploy/release.yaml",
 		"workspaceCommit":"` + commit + `",
+		"source":{"repository":"https://example.test/current.git","branch":"main"},
 		"inputs":{"revision":"` + strings.Repeat("d", 40) + `"},
 		"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops-oilan","instance":"oilan-node","template":"zhiyong-test-release","project":"zhiyong","environment":"test","materializations":[]},
 		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
 	}`
-	if _, err := buildTrustedReconciliationAdmission(sessionID, instruction, commit); err == nil ||
+	if _, err := buildTrustedReconciliationAdmission(sessionID, instruction); err == nil ||
 		!strings.Contains(err.Error(), "requires a v2 DeploymentTemplate") {
 		t.Fatalf("unsupported release error = %v", err)
 	}
@@ -454,11 +457,7 @@ func TestBuildTrustedReconciliationAdmissionRejectsSecretInputNames(t *testing.T
 		`"inputs":{"releaseId":"${REVISION}","registryPassword":"forbidden"}`,
 		1,
 	))
-	if _, err := buildTrustedReconciliationAdmission(
-		sessionID,
-		instruction,
-		strings.Repeat("a", 40),
-	); err == nil {
+	if _, err := buildTrustedReconciliationAdmission(sessionID, instruction); err == nil {
 		t.Fatal("secret-like workflow input must be rejected")
 	}
 }
@@ -477,11 +476,12 @@ func TestBuildTrustedReconciliationAdmissionAcceptsV3EnvironmentDefinition(t *te
 		"runId":"v3-environment-root-0123456789abcdef",
 		"workflowPath":"deploy/environments/oilan/environment.yaml",
 		"workspaceCommit":"` + commit + `",
+		"source":{"repository":"https://example.test/zhiyong.git","branch":"main"},
 		"inputs":{"reason":"contract-test"},
 		"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_v3","mode":"dry-run","cluster":"doops-edu","instance":"edu-coder","template":"oilan","project":"zhiyong","environment":"oilan","materializations":[]},
 		"resultContract":{"apiVersion":"doops.sh/v3","kind":"DeploymentRun","requireEvidence":true}
 	}`
-	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction, commit)
+	admission, err := buildTrustedReconciliationAdmission(sessionID, instruction)
 	if err != nil {
 		t.Fatalf("build v3 admission: %v", err)
 	}
@@ -577,6 +577,7 @@ const trustedAdmissionInstructionFixture = `{
 	"runId":"${RUN_ID}",
 	"workflowPath":"deploy/release.yaml",
 	"workspaceCommit":"${WORKSPACE_COMMIT}",
+	"source":{"repository":"https://example.test/app.git","branch":"main"},
 	"inputs":{"releaseId":"${REVISION}"},
 	"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"${MODE}","cluster":"doops","instance":"runner","template":"release","project":"app","environment":"production","materializations":[]},
 	"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}

@@ -90,16 +90,18 @@ doops -session myproject-build push \
 
 ---
 
-### 不作为工作区同步：远端 Git Clone/Pull
+### 声明式 CI/CD 的例外：受控 source checkout
 
-目标工作负载可以在自身业务流程中访问 Git，但 `git clone/pull` 不能替代
-DoOps 工作区同步。CI/CD 输入必须先由 `doops push` 固定为 Gateway 已审计的
-session commit，再进入 credential prepare 和 reconciliation。
+普通 `push/pull` 仍只走 Gateway Git HTTP。`doops cicd run` 不属于通用工作区
+同步：它读取版本化声明中的 repository/branch，将 branch 解析为一个不可变
+commit，并要求 Agent checkout HEAD、credential prepare、单次授权、reconciliation
+和最终 `workspaceCommit` 全部匹配该 commit。任一阶段发现 branch 已移动或工作区
+变脏必须阻断。
 
 | 维度 | 评价 |
 |:---|:---|
-| 结论 | 禁止作为 DoOps 工作区同步路径 |
-| 原因 | 无法绑定本地工作区 commit、Gateway push 审计和 session 快照 |
+| 结论 | 仅允许 `cicd run` 的版本化声明源 checkout；不能作为普通文件同步替代路径 |
+| 原因 | CI/CD 通过 repository、branch、immutable commit 和 CredentialRun 联合绑定；普通 clone/pull 不具备该控制面 |
 
 ---
 

@@ -52,6 +52,7 @@ func TestValidateDoagentApplyInstructionRequiresCICDEnvelope(t *testing.T) {
 		"runId":"release-0123456789abcdef",
 		"workflowPath":"deploy/release.yaml",
 		"workspaceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"source":{"repository":"https://example.test/app.git","branch":"main"},
 		"inputs":{},
 		"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"apply","cluster":"doops","instance":"runner","template":"release","project":"app","environment":"production","materializations":[]},
 		"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}

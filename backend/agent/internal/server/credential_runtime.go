@@ -66,6 +66,7 @@ type credentialPrepareHTTPBody struct {
 	WorkflowPath     string `json:"workflow_path"`
 	SourceRepository string `json:"source_repository"`
 	SourceBranch     string `json:"source_branch"`
+	SourceRevision   string `json:"source_revision"`
 	Mode             string `json:"mode"`
 }
 
@@ -118,9 +119,11 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 	body.WorkflowPath = strings.TrimSpace(body.WorkflowPath)
 	body.SourceRepository = strings.TrimSpace(body.SourceRepository)
 	body.SourceBranch = strings.TrimSpace(body.SourceBranch)
+	body.SourceRevision = strings.TrimSpace(body.SourceRevision)
 	body.Mode = strings.ToLower(strings.TrimSpace(body.Mode))
 	if body.Cluster == "" || body.Instance == "" || body.SessionID == "" ||
 		body.WorkflowPath == "" || body.SourceRepository == "" || body.SourceBranch == "" ||
+		!validCredentialWorkspaceCommit(body.SourceRevision) ||
 		(body.Mode != "dry-run" && body.Mode != "apply") {
 		writeCredentialPrepareError(w, http.StatusBadRequest, "invalid_request")
 		return
@@ -672,6 +675,7 @@ func (h *GatewayHub) loadCredentialPlan(ctx context.Context, body credentialPrep
 		"workflow_path":     body.WorkflowPath,
 		"source_repository": body.SourceRepository,
 		"source_branch":     body.SourceBranch,
+		"source_revision":   body.SourceRevision,
 	})
 	if err != nil {
 		return CredentialPlan{}, errors.New(credentialToolErrorCategory(err.Error()))
@@ -694,6 +698,9 @@ func credentialPlanHTTPStatus(err error) int {
 		return http.StatusServiceUnavailable
 	case "credential_declaration_invalid", "inline_credential_material_forbidden":
 		return http.StatusUnprocessableEntity
+	case "credential_workspace_commit_mismatch", "credential_workspace_not_ready",
+		"credential_source_revision_mismatch":
+		return http.StatusConflict
 	default:
 		return http.StatusBadGateway
 	}

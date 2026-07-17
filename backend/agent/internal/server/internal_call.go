@@ -83,6 +83,9 @@ func credentialToolErrorCategory(text string) string {
 		return "credential_workspace_commit_mismatch"
 	case strings.Contains(normalized, "workspace is not ready"):
 		return "credential_workspace_not_ready"
+	case strings.Contains(normalized, "source revision") ||
+		strings.Contains(normalized, "immutable source revision"):
+		return "credential_source_revision_mismatch"
 	}
 	category := sanitizeCredentialCategory(strings.TrimSpace(text))
 	if category == "credential_operation_failed" {

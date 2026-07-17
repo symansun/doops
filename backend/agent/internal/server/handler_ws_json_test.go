@@ -808,6 +808,7 @@ func TestAgentPromptRejectsInstructionWorkspaceCommitMismatchBeforeDoagent(t *te
 			"runId":"instruction-workspace-mismatch-0123456789abcdef",
 			"workflowPath":"deploy/release.yaml",
 			"workspaceCommit":"` + strings.Repeat("b", 40) + `",
+			"source":{"repository":"https://example.test/app.git","branch":"main"},
 			"inputs":{"releaseId":"` + strings.Repeat("c", 40) + `"},
 			"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops","instance":"runner","template":"release","project":"app","environment":"production","materializations":[]},
 			"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}

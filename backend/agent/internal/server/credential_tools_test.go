@@ -12,7 +12,7 @@ import (
 )
 
 func TestAgentCredentialPlanToolParsesBoundWorkspace(t *testing.T) {
-	commit, _ := createCredentialPlanWorkspaceFixture(t)
+	commit, repository, _ := createCredentialPlanWorkspaceFixture(t)
 
 	gw := NewGateway("0")
 	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
@@ -22,9 +22,11 @@ func TestAgentCredentialPlanToolParsesBoundWorkspace(t *testing.T) {
 	initializeAgentTestWS(t, conn)
 
 	result := callTool(t, conn, "doops_credential_plan", map[string]interface{}{
-		"session_id":       "credential-plan",
-		"workflow_path":    "deploy/release.yaml",
-		"workspace_commit": commit,
+		"session_id":        "credential-plan",
+		"workflow_path":     "deploy/release.yaml",
+		"source_repository": repository,
+		"source_branch":     "main",
+		"source_revision":   commit,
 	})
 	var plan CredentialPlan
 	if err := json.Unmarshal([]byte(result), &plan); err != nil {
@@ -35,9 +37,9 @@ func TestAgentCredentialPlanToolParsesBoundWorkspace(t *testing.T) {
 	}
 }
 
-func TestAgentCredentialPlanToolRejectsTamperedWorkspaceSnapshot(t *testing.T) {
-	commit, sessionRoot := createCredentialPlanWorkspaceFixture(t)
-	if err := os.WriteFile(filepath.Join(sessionRoot, "deploy", "release.yaml"), []byte(`
+func TestAgentCredentialPlanToolRejectsSourceBranchMovingAfterPrepare(t *testing.T) {
+	commit, repository, sourceRoot := createCredentialPlanWorkspaceFixture(t)
+	if err := os.WriteFile(filepath.Join(sourceRoot, "deploy", "release.yaml"), []byte(`
 apiVersion: doops.sh/v2
 kind: DeploymentTemplate
 metadata:
@@ -45,33 +47,37 @@ metadata:
 spec:
   application: tampered
   environment: production
-  configurationSource: deploy/environments.yaml
+	configurationSource: deploy/environments.yaml
 `), 0600); err != nil {
-		t.Fatalf("tamper workflow: %v", err)
+		t.Fatalf("advance workflow source: %v", err)
 	}
+	runTestCommand(t, sourceRoot, "git", "add", "deploy/release.yaml")
+	runTestCommand(t, sourceRoot, "git", "commit", "-q", "-m", "advance workflow source")
+	runTestCommand(t, sourceRoot, "git", "push", "-q", repository, "main")
 
 	_, err := handleCredentialPlanTool(mustJSON(t, map[string]interface{}{
-		"session_id":       "credential-plan",
-		"workflow_path":    "deploy/release.yaml",
-		"workspace_commit": commit,
+		"session_id":        "credential-plan",
+		"workflow_path":     "deploy/release.yaml",
+		"source_repository": repository,
+		"source_branch":     "main",
+		"source_revision":   commit,
 	}))
-	if err == nil || !strings.Contains(err.Error(), "differs from the pushed source snapshot") {
-		t.Fatalf("tampered workspace error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "source revision changed") {
+		t.Fatalf("moved source branch error = %v", err)
 	}
 }
 
-func createCredentialPlanWorkspaceFixture(t *testing.T) (string, string) {
+func createCredentialPlanWorkspaceFixture(t *testing.T) (string, string, string) {
 	t.Helper()
 	root := t.TempDir()
-	bareRoot := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 	t.Setenv("DOOPS_PLAN_WORKSPACE_BASE", root)
-	t.Setenv("DOOPS_PLAN_BARE_REPOSITORY_BASE", bareRoot)
-	sessionRoot := filepath.Join(root, "credential-plan")
-	if err := os.MkdirAll(filepath.Join(sessionRoot, "deploy"), 0755); err != nil {
-		t.Fatalf("create workspace: %v", err)
+	t.Setenv("DOOPS_TEST_ALLOW_LOCAL_WORKFLOW_SOURCE", "1")
+	sourceRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "deploy"), 0755); err != nil {
+		t.Fatalf("create source repository: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionRoot, "deploy", "release.yaml"), []byte(`
+	if err := os.WriteFile(filepath.Join(sourceRoot, "deploy", "release.yaml"), []byte(`
 apiVersion: doops.sh/v2
 kind: DeploymentTemplate
 metadata:
@@ -92,7 +98,7 @@ spec:
 `), 0600); err != nil {
 		t.Fatalf("write workflow: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sessionRoot, "deploy", "environments.yaml"), []byte(`
+	if err := os.WriteFile(filepath.Join(sourceRoot, "deploy", "environments.yaml"), []byte(`
 apiVersion: doops.sh/v2
 kind: EnvironmentRegistry
 metadata:
@@ -106,49 +112,57 @@ environments:
 `), 0600); err != nil {
 		t.Fatalf("write configuration: %v", err)
 	}
-	runTestCommand(t, sessionRoot, "git", "init", "-q")
-	runTestCommand(t, sessionRoot, "git", "config", "user.email", "test@example.invalid")
-	runTestCommand(t, sessionRoot, "git", "config", "user.name", "DoOps Test")
-	runTestCommand(t, sessionRoot, "git", "add", "deploy/release.yaml", "deploy/environments.yaml")
-	runTestCommand(t, sessionRoot, "git", "commit", "-q", "-m", "credential plan fixture")
-	commit := strings.TrimSpace(runTestCommand(t, sessionRoot, "git", "rev-parse", "HEAD"))
-	runTestCommand(t, root, "git", "clone", "-q", "--bare", sessionRoot, filepath.Join(bareRoot, "credential-plan.git"))
-	if err := os.WriteFile(filepath.Join(sessionRoot, ".doops-ready"), []byte(commit+"\n"), 0600); err != nil {
-		t.Fatalf("write workspace binding: %v", err)
-	}
-	return commit, sessionRoot
+	runTestCommand(t, sourceRoot, "git", "init", "-q", "-b", "main")
+	runTestCommand(t, sourceRoot, "git", "config", "user.email", "test@example.invalid")
+	runTestCommand(t, sourceRoot, "git", "config", "user.name", "DoOps Test")
+	runTestCommand(t, sourceRoot, "git", "add", "deploy/release.yaml", "deploy/environments.yaml")
+	runTestCommand(t, sourceRoot, "git", "commit", "-q", "-m", "credential plan fixture")
+	commit := strings.TrimSpace(runTestCommand(t, sourceRoot, "git", "rev-parse", "HEAD"))
+	repositoryPath := filepath.Join(t.TempDir(), "credential-plan.git")
+	runTestCommand(t, root, "git", "clone", "-q", "--bare", sourceRoot, repositoryPath)
+	repository := "file://" + repositoryPath
+	return commit, repository, sourceRoot
 }
 
 func TestAgentCredentialPlanToolRejectsWorkspaceCommitMismatch(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	sessionRoot := filepath.Join(root, "credential-plan")
-	if err := os.MkdirAll(sessionRoot, 0755); err != nil {
-		t.Fatalf("create workspace: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sessionRoot, ".doops-ready"), []byte(strings.Repeat("a", 40)), 0600); err != nil {
-		t.Fatalf("write workspace binding: %v", err)
-	}
+	_, repository, _ := createCredentialPlanWorkspaceFixture(t)
 
 	_, err := handleCredentialPlanTool(mustJSON(t, map[string]interface{}{
-		"session_id":       "credential-plan",
-		"workflow_path":    "deploy/release.yaml",
-		"workspace_commit": strings.Repeat("b", 40),
+		"session_id":        "credential-plan",
+		"workflow_path":     "deploy/release.yaml",
+		"source_repository": repository,
+		"source_branch":     "main",
+		"source_revision":   strings.Repeat("b", 40),
 	}))
-	if err == nil || !strings.Contains(err.Error(), "workspace commit mismatch") {
-		t.Fatalf("workspace mismatch error = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "source revision changed") {
+		t.Fatalf("source revision mismatch error = %v", err)
 	}
 }
 
 func TestAgentCredentialPlanToolRejectsUnknownFields(t *testing.T) {
 	_, err := handleCredentialPlanTool(mustJSON(t, map[string]interface{}{
-		"session_id":       "credential-plan",
-		"workflow_path":    "deploy/release.yaml",
-		"workspace_commit": strings.Repeat("a", 40),
-		"unexpected":       true,
+		"session_id":        "credential-plan",
+		"workflow_path":     "deploy/release.yaml",
+		"source_repository": "https://example.test/app.git",
+		"source_branch":     "main",
+		"source_revision":   strings.Repeat("a", 40),
+		"unexpected":        true,
 	}))
 	if err == nil || err.Error() != "invalid credential plan params" {
 		t.Fatalf("unknown field error = %v, want invalid credential plan params", err)
+	}
+}
+
+func TestAgentCredentialPlanToolRejectsUnsafeSourceTransport(t *testing.T) {
+	_, err := handleCredentialPlanTool(mustJSON(t, map[string]interface{}{
+		"session_id":        "credential-plan",
+		"workflow_path":     "deploy/release.yaml",
+		"source_repository": "ext::sh -c 'id'",
+		"source_branch":     "main",
+		"source_revision":   strings.Repeat("a", 40),
+	}))
+	if err == nil || !strings.Contains(err.Error(), "must be an HTTPS URL") {
+		t.Fatalf("unsafe source transport error = %v", err)
 	}
 }
 

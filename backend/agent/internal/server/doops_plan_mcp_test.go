@@ -362,7 +362,7 @@ func TestValidateDoopsPlanWorkspaceRejectsTrackedFileTampering(t *testing.T) {
 		t.Fatalf("write untracked file: %v", err)
 	}
 	if _, err := validateDoopsPlanWorkspace(workspace, commit); err == nil ||
-		!strings.Contains(err.Error(), "outside the pushed source snapshot") {
+		!strings.Contains(err.Error(), "differs from the immutable source revision") {
 		t.Fatalf("untracked workspace error = %v", err)
 	}
 	if err := os.Remove(filepath.Join(workspace, "untracked.yaml")); err != nil {
@@ -372,7 +372,7 @@ func TestValidateDoopsPlanWorkspaceRejectsTrackedFileTampering(t *testing.T) {
 		t.Fatalf("tamper tracked file: %v", err)
 	}
 	if _, err := validateDoopsPlanWorkspace(workspace, commit); err == nil ||
-		!strings.Contains(err.Error(), "differs from the pushed source snapshot") {
+		!strings.Contains(err.Error(), "differs from the immutable source revision") {
 		t.Fatalf("tampered workspace error = %v", err)
 	}
 }

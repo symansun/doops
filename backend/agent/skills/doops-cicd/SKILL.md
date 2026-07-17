@@ -62,8 +62,10 @@ target、默认 registry、默认 namespace 或默认服务集合。
   `credential_plan`；协议缺失或版本不同必须在 dispatch 前阻断。
 - credential prepare 与受信任 reconciliation 必须使用同一个严格声明编译器，
   不得各自解析、推断或放宽字段。
-- apply 必须绑定当前用户、target、session、workflow、workspace commit、模式和
-  materialization digest 的短时单次 `CredentialRun`。
+- apply 必须绑定当前用户、target、session、workflow、声明仓库、branch、不可变
+  workspace commit、模式和 materialization digest 的短时单次 `CredentialRun`。
+- `workspaceCommit` 是声明源实际 checkout 的不可变 commit，不是可变 branch 名。
+  prepare 后 branch 若移动，Agent 必须在解析声明前阻断，不能执行新的 HEAD。
 - v3 中任一必需 Secret 引用标记为 `undeclared` 或
   `deploymentBlockedUntilDeclared` 时，credential prepare 必须阻断，不能返回空计划
   后继续。
@@ -84,7 +86,7 @@ target、默认 registry、默认 namespace 或默认服务集合。
 ## 结果
 
 review 返回一个 `DeploymentReview`；dry-run/apply 返回一个与根声明相同 apiVersion
-的 `DeploymentRun`。结果必须绑定 workspace commit 和当前 turn 的受信任工具证据。
+的 `DeploymentRun`。结果必须绑定声明源的不可变 workspace commit 和当前 turn 的受信任工具证据。
 Agent 先写 `toolRef`，Gateway 再绑定不可改写的 `toolCall`。普通 Bash、文件读取和
 浏览器输出不是部署证据。
 

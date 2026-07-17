@@ -18,6 +18,7 @@ type credentialPrepareRequest struct {
 	WorkflowPath     string `json:"workflow_path"`
 	SourceRepository string `json:"source_repository"`
 	SourceBranch     string `json:"source_branch"`
+	SourceRevision   string `json:"source_revision"`
 	Mode             string `json:"mode"`
 }
 
@@ -64,9 +65,11 @@ func prepareWorkflowCredentials(
 	request.WorkflowPath = strings.TrimSpace(request.WorkflowPath)
 	request.SourceRepository = strings.TrimSpace(request.SourceRepository)
 	request.SourceBranch = strings.TrimSpace(request.SourceBranch)
+	request.SourceRevision = strings.TrimSpace(request.SourceRevision)
 	request.Mode = strings.TrimSpace(request.Mode)
 	if request.Cluster == "" || request.Instance == "" || request.SessionID == "" ||
 		request.WorkflowPath == "" || request.SourceRepository == "" || request.SourceBranch == "" ||
+		!validWorkspaceCommit(request.SourceRevision) ||
 		(request.Mode != "apply" && request.Mode != "dry-run") {
 		return credentialRun{}, fmt.Errorf("invalid credential prepare request")
 	}

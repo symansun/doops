@@ -31,7 +31,7 @@ func (s *GatewayStore) IssueCredentialRunAuthorization(
 		 workspace_commit, mode, run_digest, state, created_at, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?)`,
 		run.ID, auth.UserID, auth.TokenID, request.Cluster, request.Instance,
-		request.SessionID, request.WorkflowPath, credentialSourceBinding(request.SourceRepository, request.SourceBranch), request.Mode,
+		request.SessionID, request.WorkflowPath, credentialSourceBinding(request.SourceRepository, request.SourceBranch, request.SourceRevision), request.Mode,
 		digest, formatTime(now), formatTime(now.Add(credentialRunAuthorizationTTL)))
 	return err
 }
@@ -44,6 +44,7 @@ func (s *GatewayStore) ConsumeCredentialRunAuthorization(
 	workflowPath string,
 	sourceRepository string,
 	sourceBranch string,
+	sourceRevision string,
 	mode string,
 	run CredentialRun,
 ) error {
@@ -84,7 +85,7 @@ func (s *GatewayStore) ConsumeCredentialRunAuthorization(
 		authorization.Instance != strings.TrimSpace(instance) ||
 		authorization.SessionID != strings.TrimSpace(sessionID) ||
 		authorization.WorkflowPath != strings.TrimSpace(workflowPath) ||
-		authorization.SourceBinding != credentialSourceBinding(sourceRepository, sourceBranch) ||
+		authorization.SourceBinding != credentialSourceBinding(sourceRepository, sourceBranch, sourceRevision) ||
 		authorization.Mode != strings.TrimSpace(mode) || authorization.RunDigest != digest ||
 		run.Cluster != authorization.Cluster || run.Instance != authorization.Instance ||
 		run.Mode != authorization.Mode {
@@ -133,8 +134,8 @@ func (s *GatewayStore) ConsumeCredentialRunAuthorization(
 	return tx.Commit()
 }
 
-func credentialSourceBinding(repository, branch string) string {
-	return strings.TrimSpace(repository) + "\n" + strings.TrimSpace(branch)
+func credentialSourceBinding(repository, branch, revision string) string {
+	return strings.TrimSpace(repository) + "\n" + strings.TrimSpace(branch) + "\n" + strings.TrimSpace(revision)
 }
 
 func (s *GatewayStore) RevokeCredentialRunAuthorization(runID string) error {

@@ -37,9 +37,10 @@ type trustedReconciliationContext struct {
 }
 
 type trustedReconciliationSource struct {
-	Repository string `json:"repository"`
-	Revision   string `json:"revision,omitempty"`
-	Branch     string `json:"branch,omitempty"`
+	Repository      string `json:"repository"`
+	Revision        string `json:"revision,omitempty"`
+	Branch          string `json:"branch,omitempty"`
+	WorkspaceCommit string `json:"workspaceCommit"`
 }
 
 type trustedReconciliationCapability struct {
@@ -51,20 +52,22 @@ type trustedReconciliationCapability struct {
 }
 
 type doopsCICDInstructionEnvelope struct {
-	Task          string `json:"task"`
-	Skill         string `json:"skill"`
-	ExecutionMode string `json:"executionMode"`
-	RunID         string `json:"runId"`
-	WorkflowPath  string `json:"workflowPath"`
-	Source        struct {
+	Task            string `json:"task"`
+	Skill           string `json:"skill"`
+	ExecutionMode   string `json:"executionMode"`
+	RunID           string `json:"runId"`
+	WorkflowPath    string `json:"workflowPath"`
+	WorkspaceCommit string `json:"workspaceCommit"`
+	Source          struct {
 		Repository string `json:"repository"`
 		Branch     string `json:"branch"`
 	} `json:"source"`
 	Inputs         map[string]string `json:"inputs"`
 	CredentialRun  CredentialRun     `json:"credentialRun"`
 	ResultContract struct {
-		APIVersion string `json:"apiVersion"`
-		Kind       string `json:"kind"`
+		APIVersion      string `json:"apiVersion"`
+		Kind            string `json:"kind"`
+		RequireEvidence bool   `json:"requireEvidence"`
 	} `json:"resultContract"`
 }
 
@@ -128,7 +131,8 @@ func buildTrustedReconciliationAdmission(sessionID, instruction string) (trusted
 		return trustedReconciliationAdmission{}, err
 	}
 	if strings.TrimSpace(envelope.Source.Repository) == "" ||
-		strings.TrimSpace(envelope.Source.Branch) == "" {
+		strings.TrimSpace(envelope.Source.Branch) == "" ||
+		!validCredentialWorkspaceCommit(envelope.WorkspaceCommit) {
 		return trustedReconciliationAdmission{}, fmt.Errorf("reconciliation instruction binding is invalid")
 	}
 	for key, value := range envelope.Inputs {
@@ -173,7 +177,7 @@ func buildTrustedReconciliationAdmission(sessionID, instruction string) (trusted
 		revisionDeclaration = parsedWorkflow.SemanticRevision
 	}
 	if strings.TrimSpace(revisionDeclaration) == "" {
-		revisionDeclaration = envelope.Source.Branch
+		revisionDeclaration = envelope.WorkspaceCommit
 	}
 	revision, err := resolveTrustedRevision(revisionDeclaration, envelope.Inputs)
 	if err != nil {
@@ -184,9 +188,10 @@ func buildTrustedReconciliationAdmission(sessionID, instruction string) (trusted
 		return trustedReconciliationAdmission{}, err
 	}
 	source := trustedReconciliationSource{
-		Repository: selectTrustedSource(workflow.Spec.Release.Source.Repository, environment.SourceRepository),
-		Revision:   revision,
-		Branch:     selectTrustedSource(workflow.Spec.Release.Source.Branch, environment.SourceBranch),
+		Repository:      selectTrustedSource(workflow.Spec.Release.Source.Repository, environment.SourceRepository),
+		Revision:        revision,
+		Branch:          selectTrustedSource(workflow.Spec.Release.Source.Branch, environment.SourceBranch),
+		WorkspaceCommit: envelope.WorkspaceCommit,
 	}
 	if source.Repository == "" || source.Branch == "" || source.Revision == "" ||
 		source.Repository != strings.TrimSpace(envelope.Source.Repository) ||
@@ -271,7 +276,7 @@ func buildTrustedReconciliationAdmission(sessionID, instruction string) (trusted
 
 	context := trustedReconciliationContext{
 		SchemaVersion:       trustedReconciliationContextSchema,
-		OperationID:         trustedOperationID(envelope.RunID, source.Repository+"\n"+source.Branch),
+		OperationID:         trustedOperationID(envelope.RunID, source.WorkspaceCommit),
 		ExecutionMode:       envelope.ExecutionMode,
 		MutationAuthorized:  envelope.ExecutionMode == "apply",
 		PlanDigest:          planDigest,
@@ -308,6 +313,7 @@ func decodeDoopsCICDInstruction(instruction string) (doopsCICDInstructionEnvelop
 		(envelope.ResultContract.APIVersion != "doops.sh/v2" &&
 			envelope.ResultContract.APIVersion != "doops.sh/v3") ||
 		envelope.ResultContract.Kind != "DeploymentRun" ||
+		!envelope.ResultContract.RequireEvidence ||
 		envelope.CredentialRun.APIVersion != "doops.sh/v2" ||
 		envelope.CredentialRun.Kind != "CredentialRun" ||
 		strings.TrimSpace(envelope.CredentialRun.ID) == "" ||
