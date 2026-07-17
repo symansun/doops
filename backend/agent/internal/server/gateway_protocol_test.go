@@ -611,7 +611,7 @@ func TestGatewayGitHTTPEndToEndPushAndFetch(t *testing.T) {
 
 	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
-	go agentGateway.ServeWebSocketConn(agentConn, "test-agent")
+	go agentGateway.ServeGatewayWebSocketConnWithReady(agentConn, "test-agent", nil)
 	waitForGatewayAgent(t, hub, "dev", "local")
 
 	repoURL := gatewayGitTestURL(t, ts.URL, "dev", "local", "release", userToken.Plaintext)
@@ -2783,7 +2783,7 @@ func startGatewayGitTestAgent(t *testing.T, hub *GatewayHub, serverURL, cluster,
 	agentGateway.gitHandler = http.StripPrefix("/git", service)
 
 	conn := dialFakeGatewayAgent(t, serverURL, cluster, instance)
-	go agentGateway.ServeWebSocketConn(conn, "test-agent")
+	go agentGateway.ServeGatewayWebSocketConnWithReady(conn, "test-agent", nil)
 	waitForGatewayAgent(t, hub, cluster, instance)
 	return conn
 }

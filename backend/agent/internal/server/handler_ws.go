@@ -147,14 +147,23 @@ func (gw *Gateway) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	gw.ServeWebSocketConn(conn, r.RemoteAddr)
 }
 
-// ServeWebSocketConn serves the doops JSON-RPC protocol over an already
-// established WebSocket. It is used both by the normal inbound /ws endpoint
-// and by reverse tunnel mode, where the agent dials a public gateway first.
+// ServeWebSocketConn serves an untrusted direct-Agent WebSocket connection.
 func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
-	gw.ServeWebSocketConnWithReady(conn, remoteAddr, nil)
+	gw.serveWebSocketConn(conn, remoteAddr, nil, false)
 }
 
 func (gw *Gateway) ServeWebSocketConnWithReady(conn *websocket.Conn, remoteAddr string, onReady func()) {
+	gw.serveWebSocketConn(conn, remoteAddr, onReady, false)
+}
+
+// ServeGatewayWebSocketConnWithReady serves the reverse tunnel after Gateway
+// authorization. Public direct-Agent WebSocket connections must use the
+// untrusted entry points above.
+func (gw *Gateway) ServeGatewayWebSocketConnWithReady(conn *websocket.Conn, remoteAddr string, onReady func()) {
+	gw.serveWebSocketConn(conn, remoteAddr, onReady, true)
+}
+
+func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, onReady func(), gatewayAuthorized bool) {
 	defer conn.Close()
 	conn.SetReadLimit(maxWebSocketMessageBytes())
 
@@ -430,12 +439,12 @@ func (gw *Gateway) ServeWebSocketConnWithReady(conn *websocket.Conn, remoteAddr 
 						activeToolMu.Unlock()
 						cancel()
 					}()
-					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, writeJSON)
+					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, gatewayAuthorized, writeJSON)
 				}()
 			} else {
 				go func() {
 					defer cancel()
-					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, writeJSON)
+					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, gatewayAuthorized, writeJSON)
 				}()
 			}
 		}
@@ -487,7 +496,7 @@ func errorNotification(text string) notificationEvent {
 }
 
 // handleToolCallOverWS 处理具体的 MCP tool 调用（复用原有的处理逻辑，但直接向 WS 写入结果）
-func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, toolName string, argBytes json.RawMessage, writeJSON func(v interface{})) {
+func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, toolName string, argBytes json.RawMessage, gatewayAuthorized bool, writeJSON func(v interface{})) {
 	var sessionID string
 	var argsMap map[string]interface{}
 	json.Unmarshal(argBytes, &argsMap)
@@ -785,7 +794,11 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		json.Unmarshal(argBytes, &args)
 		operation := strings.ToLower(strings.TrimSpace(args.Operation))
 		if operation == "apply" {
-			if err := validateDoagentApplyInstruction(args.Instruction); err != nil {
+			if !gatewayAuthorized {
+				writeJSON(buildErrorResponse(reqID, -32602, "credential apply requires a gateway-authorized reverse tunnel"))
+				return
+			}
+			if err := validateDoagentApplyInstruction(args); err != nil {
 				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
 				return
 			}
@@ -948,29 +961,76 @@ func doagentModeForPrompt(operation, executionMode string) (string, error) {
 	}
 }
 
-func validateDoagentApplyInstruction(instruction string) error {
-	_, err := validatedDoagentApplyInstruction(instruction)
+func validateDoagentApplyInstruction(prompt api.AgentPromptParams) error {
+	_, err := validatedDoagentApplyInstruction(prompt)
 	return err
 }
 
-func validatedDoagentApplyInstruction(instruction string) (map[string]interface{}, error) {
-	var envelope map[string]interface{}
-	err := json.Unmarshal([]byte(instruction), &envelope)
-	if err != nil {
+func validatedDoagentApplyInstruction(prompt api.AgentPromptParams) (map[string]interface{}, error) {
+	var envelope struct {
+		Task            string `json:"task"`
+		Skill           string `json:"skill"`
+		ExecutionMode   string `json:"executionMode"`
+		ManifestPath    string `json:"manifestPath"`
+		WorkspaceCommit string `json:"workspaceCommit"`
+		Source          struct {
+			Repository string `json:"repository"`
+			Branch     string `json:"branch"`
+		} `json:"source"`
+		Inputs        map[string]string `json:"inputs"`
+		CredentialRun CredentialRun     `json:"credentialRun"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(prompt.Instruction))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&envelope); err != nil {
 		return nil, fmt.Errorf("apply requires a structured doops-cicd instruction")
 	}
-	if envelope["task"] != "execute-doops-cicd" ||
-		envelope["skill"] != "$doops-cicd" ||
-		envelope["executionMode"] != "apply" ||
-		strings.TrimSpace(doopsCICDString(envelope["manifestPath"])) == "" {
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, fmt.Errorf("apply requires a structured doops-cicd instruction")
+	}
+	run := envelope.CredentialRun
+	if envelope.Task != "execute-doops-cicd" ||
+		envelope.Skill != "$doops-cicd" ||
+		envelope.ExecutionMode != "apply" ||
+		envelope.ManifestPath != "deploy/environments.yaml" ||
+		!validCredentialWorkspaceCommit(envelope.WorkspaceCommit) ||
+		strings.TrimSpace(prompt.WorkspaceCommit) != envelope.WorkspaceCommit ||
+		strings.TrimSpace(envelope.Source.Repository) == "" ||
+		strings.TrimSpace(envelope.Source.Branch) == "" ||
+		run.APIVersion != "doops.sh/v2" ||
+		run.Kind != "CredentialRun" ||
+		strings.TrimSpace(run.ID) == "" ||
+		run.Mode != "apply" ||
+		strings.TrimSpace(run.Cluster) == "" ||
+		strings.TrimSpace(run.Instance) == "" ||
+		strings.TrimSpace(run.Target) == "" ||
+		run.Session != strings.TrimSpace(prompt.SessionID) ||
+		run.SourceRevision != envelope.WorkspaceCommit ||
+		run.CreatedAt.IsZero() {
 		return nil, fmt.Errorf("apply is only supported for an explicit doops-cicd apply instruction")
 	}
-	return envelope, nil
-}
-
-func doopsCICDString(value interface{}) string {
-	text, _ := value.(string)
-	return text
+	if err := validateCredentialPlanSourceRepository(envelope.Source.Repository); err != nil {
+		return nil, fmt.Errorf("apply is only supported for an explicit doops-cicd apply instruction")
+	}
+	for key, value := range envelope.Inputs {
+		if credentialSecretLikeKey(key) || credentialScalarContainsInlineMaterial(value) {
+			return nil, fmt.Errorf("sensitive workflow input is forbidden; use credentialRef")
+		}
+	}
+	for _, materialization := range run.Materializations {
+		if err := validateCredentialMaterializationMetadata(materialization); err != nil {
+			return nil, err
+		}
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, fmt.Errorf("invalid doops-cicd credential binding")
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		return nil, fmt.Errorf("invalid doops-cicd credential binding")
+	}
+	return result, nil
 }
 
 type agentPromptExecutionContext struct {

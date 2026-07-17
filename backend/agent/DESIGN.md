@@ -67,8 +67,8 @@ doops-agent 通过本地 ACP HTTP 调用 `/usr/local/bin/do-agent`：
 
 - 每个 session 使用独立工作区。
 - 文件和同步接口必须校验 session 与路径，禁止目录穿越。
-- CI/CD push 完成后写入 `.doops-ready`。
-- CI/CD push 在 workspace 锁内写入并验证 `.doops-ready`，结果由 `$doops-cicd`
+- CI/CD source checkout 固定到声明分支解析出的不可变 commit 后写入 `.doops-ready`。
+- checkout 在 workspace 锁内写入并验证 `.doops-ready`，结果由 `$doops-cicd`
   Skill 通过真实模块证据判断，不由 Agent 网关伪造。
 - 大文件使用 `doops push/pull`；小文本查看使用文件工具。
 
@@ -83,15 +83,16 @@ doagent 可以根据任务创建多 Agent、组合 Skill 并选择工具；DoOps
 
 ## CI/CD
 
-CI/CD 复用普通 Agent-native Ask：
+CI/CD 只走 Gateway 绑定的结构化 Agent-native Ask：
 
 ```text
-EnvironmentRegistry -> doops push -> doagent -> $doops-cicd
+EnvironmentRegistry -> Gateway credential prepare -> CredentialRun-bound Ask
+  -> doagent -> $doops-cicd
 ```
 
-CLI 只负责显式 workflow/target、工作区同步和任务信封。doops-agent 不实现
-发布专用 admission、tool registry 或证据注入；Skill 通过现有 DoOps 模块执行并在
-session 工作区写入 Gateway 指定的单一 JSON 结构化结果。
+CLI 负责显式 registry/target/session、不可变 source commit 和任务信封。Gateway
+与 Agent 强制 credential authorization、严格 admission、workspace commit 绑定和
+trusted reconciliation；Skill 通过现有 DoOps 模块执行并返回单一 JSON 结构化结果。
 
 ## 安全原则
 

@@ -6,6 +6,7 @@ SKILL = ROOT / "agent" / "skills" / "doops-cicd" / "SKILL.md"
 DOCKERFILE = ROOT / "Dockerfile"
 CNB_PIPELINE = ROOT.parent / ".cnb.yml"
 ACTIVE_CONTRACT_DOCS = (
+    ROOT / "agent" / "DESIGN.md",
     ROOT / "skills" / "SKILL.md",
     ROOT / "docs" / "SEMANTIC_CICD.md",
     ROOT / "docs" / "BUILD_DEPLOY_SOP.md",
@@ -63,6 +64,8 @@ def test_active_cicd_docs_only_describe_gateway_bound_v3_registry():
         "声明式 CI/CD workflow 入口",
         "run 先同步当前仓库",
         "DeploymentTemplate -> doops push",
+        "EnvironmentRegistry -> doops push",
+        "CI/CD push 完成后",
     ):
         assert removed not in text
 

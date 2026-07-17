@@ -1,27 +1,71 @@
 package server
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/user/doops/agent/api"
 )
 
 func TestValidateDoagentApplyInstructionAcceptsV3CICD(t *testing.T) {
-	instruction := `{
-		"task":"execute-doops-cicd",
-		"skill":"$doops-cicd",
-		"executionMode":"apply",
-		"manifestPath":"deploy/environments.yaml",
-		"workspaceCommit":"` + strings.Repeat("a", 40) + `",
-		"inputs":{"environment":"oilan","service":"lab-api"}
-	}`
-	if err := validateDoagentApplyInstruction(instruction); err != nil {
+	if err := validateDoagentApplyInstruction(validDoagentApplyPrompt(t)); err != nil {
 		t.Fatalf("validate v3 apply: %v", err)
 	}
 }
 
 func TestValidateDoagentApplyInstructionRejectsImplicitApply(t *testing.T) {
-	if err := validateDoagentApplyInstruction(`{"task":"execute-doops-cicd"}`); err == nil {
+	prompt := validDoagentApplyPrompt(t)
+	prompt.Instruction = `{"task":"execute-doops-cicd"}`
+	if err := validateDoagentApplyInstruction(prompt); err == nil {
 		t.Fatal("implicit apply was accepted")
+	}
+}
+
+func validDoagentApplyPrompt(t *testing.T) api.AgentPromptParams {
+	t.Helper()
+	commit := strings.Repeat("a", 40)
+	session := "doops-oilan-release"
+	instruction, err := json.Marshal(map[string]interface{}{
+		"task":            "execute-doops-cicd",
+		"skill":           "$doops-cicd",
+		"executionMode":   "apply",
+		"manifestPath":    "deploy/environments.yaml",
+		"workspaceCommit": commit,
+		"source": map[string]string{
+			"repository": "https://example.test/doops.git",
+			"branch":     "main",
+		},
+		"inputs": map[string]string{
+			"environment": "oilan",
+			"service":     "doops-agent",
+		},
+		"credentialRun": CredentialRun{
+			APIVersion:     "doops.sh/v2",
+			Kind:           "CredentialRun",
+			ID:             "credrun_test",
+			Mode:           "apply",
+			Cluster:        "doops-edu",
+			Instance:       "release-runner",
+			Target:         "gw-edu-release-runner",
+			Session:        session,
+			SourceRevision: commit,
+			Template:       "doops-oilan-doops-agent",
+			Project:        "doops",
+			Environment:    "oilan",
+			CreatedAt:      time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC),
+		},
+	})
+	if err != nil {
+		t.Fatalf("encode apply prompt: %v", err)
+	}
+	return api.AgentPromptParams{
+		SessionID:       session,
+		Instruction:     string(instruction),
+		Operation:       "apply",
+		ResponseFormat:  "json",
+		WorkspaceCommit: commit,
 	}
 }
 

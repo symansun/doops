@@ -163,7 +163,7 @@ func TestAgentReverseTunnelReadyOnlyAfterGatewayRegistration(t *testing.T) {
 		if err != nil {
 			return
 		}
-		gw.ServeWebSocketConnWithReady(conn, r.RemoteAddr, func() {
+		gw.ServeGatewayWebSocketConnWithReady(conn, r.RemoteAddr, func() {
 			readyOnce.Do(func() { close(ready) })
 		})
 	}))
@@ -913,6 +913,30 @@ func TestAgentWebSocketRejectsBlockedShellCommand(t *testing.T) {
 	})
 	if result["error"] == nil {
 		t.Fatalf("expected blocked command error, got %#v", result)
+	}
+}
+
+func TestDirectAgentWebSocketRejectsCredentialApply(t *testing.T) {
+	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	prompt := validDoagentApplyPrompt(t)
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id":       prompt.SessionID,
+		"instruction":      prompt.Instruction,
+		"operation":        prompt.Operation,
+		"response_format":  prompt.ResponseFormat,
+		"workspace_commit": prompt.WorkspaceCommit,
+	})
+	errObject, _ := result["error"].(map[string]interface{})
+	if !strings.Contains(fmt.Sprint(errObject["message"]), "gateway-authorized reverse tunnel") {
+		t.Fatalf("expected direct apply rejection, got %#v", result)
 	}
 }
 

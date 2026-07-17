@@ -45,13 +45,7 @@ func TestDoagentModeForPromptUsesOnlyNativeAskMode(t *testing.T) {
 }
 
 func TestValidateDoagentApplyInstructionRequiresCICDEnvelope(t *testing.T) {
-	valid := `{
-		"task":"execute-doops-cicd",
-		"skill":"$doops-cicd",
-		"executionMode":"apply",
-		"manifestPath":"deploy/environments.yaml",
-		"inputs":{"environment":"oilan","service":"lab-api"}
-	}`
+	valid := validDoagentApplyPrompt(t)
 	if err := validateDoagentApplyInstruction(valid); err != nil {
 		t.Fatalf("valid apply envelope rejected: %v", err)
 	}
@@ -62,7 +56,9 @@ func TestValidateDoagentApplyInstructionRequiresCICDEnvelope(t *testing.T) {
 		"wrong mode":   `{"task":"execute-doops-cicd","skill":"$doops-cicd","executionMode":"dry-run"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := validateDoagentApplyInstruction(instruction); err == nil {
+			prompt := valid
+			prompt.Instruction = instruction
+			if err := validateDoagentApplyInstruction(prompt); err == nil {
 				t.Fatal("non-CI/CD apply envelope must be rejected")
 			}
 		})
