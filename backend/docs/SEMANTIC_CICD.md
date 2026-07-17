@@ -102,7 +102,11 @@ doagent emits exactly one JSON object as its final response:
   "status": {
     "phase": "planned",
     "mutationCount": 0,
-    "capabilities": {},
+    "capabilities": {
+      "ObserveWorkspaceSource": {
+        "available": true
+      }
+    },
     "evidence": [
       {
         "subject": "source-identity",
@@ -137,7 +141,6 @@ root declaration and whose:
 - phase is `planned`, `converged`, `blocked`, `failed`, or `outcome-unknown`;
 - mutation count is present and non-negative;
 - dry-run mutation count is zero;
-- result digest is a valid SHA-256 digest;
 - capability snapshot and evidence are present.
 
 Text such as `admitted`, `completed`, or `looks healthy` is not deployment

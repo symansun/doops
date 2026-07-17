@@ -122,16 +122,19 @@ final response:
   "status": {
     "phase": "planned",
     "mutationCount": 0,
+    "capabilities": {
+      "ObserveWorkspaceSource": {
+        "available": true
+      }
+    },
     "evidence": [
       {
-        "subject": "source",
+        "subject": "source-identity",
         "toolRef": {
-          "tool": "Read",
-          "input": {
-            "path": "release/source.json"
-          }
+          "tool": "plan.ObserveWorkspaceSource",
+          "input": {}
         },
-        "observedAt": "2026-07-15T00:00:00Z"
+        "observedAt": "2026-07-17T00:00:00Z"
       }
     ]
   }
