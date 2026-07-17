@@ -104,16 +104,15 @@ Do not publish new agent fixes under floating `v1`; use the explicit release ver
   `nerdctl run --rm ... echo direct-ok` succeeded, and a small `doops push`
   round trip succeeded.
 
-## 2026-07-17 Historical Retired CICD Terminal Result Recovery
+## 2026-07-17 CICD Terminal Result Recovery
 
 - Fixed apply operations that completed after a reverse-tunnel disconnect but
   previously returned `agent disconnected` because the unique `CICDReport`
   could no longer reach Gateway.
-- Historical implementation persisted the terminal response by the digest of
-  the retired credential-run binding before delivery. Gateway waited for target
-  reconnection and performed an internal read-only result query; it never
-  replayed the apply prompt. This path was retired with the natural-language
-  release contract.
+- Agent now persists the terminal response by the digest of the complete
+  `CredentialRun` binding before
+  delivery. Gateway waits for target reconnection and performs an internal
+  read-only result query; it never replays the apply prompt.
 - Explicit `tools/cancel` still cancels the admitted operation. Connection
   cleanup no longer cancels CICD solely because the transport disappeared.
 - The detached Helm executor now always uses `--reset-values`, preventing

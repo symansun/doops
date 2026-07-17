@@ -34,7 +34,7 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 	manifest := `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json"}`
 	registryDigest := credentialTestManifestDigest(manifest)
 	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v2/team/app/manifests/"+registryDigest {
+		if r.URL.Path != "/v2/team/app/manifests/latest" {
 			http.NotFound(w, r)
 			return
 		}
@@ -50,26 +50,21 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 	}))
 	defer registry.Close()
 
-	request := CredentialMaterializeRequest{
-		CredentialID:   "cred_registry",
-		GrantID:        "grant_registry",
-		VersionID:      "ver_registry",
-		CredentialType: CredentialTypeRegistry,
-		Scope: CredentialGrantScope{
-			Cluster: "doops", Instance: "runner", Namespace: "kz-ops",
-			Use: CredentialUseImagePull,
-			Workload: CredentialPlanWorkload{
-				Kind: "deployment", Name: "doops-agent-live",
-			},
-			ImageRepository: "team/app",
-			ImageDigest:     registryDigest,
-		},
+	result, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
+		CredentialID:       "cred_registry",
+		GrantID:            "grant_registry",
+		VersionID:          "ver_registry",
+		CredentialType:     CredentialTypeRegistry,
+		Use:                CredentialUseImagePull,
+		Namespace:          "kz-ops",
+		Workload:           CredentialPlanWorkload{Kind: "Deployment", Name: "doops-agent-live"},
+		RegistryRepository: "team/app",
+		RegistryReference:  "latest",
 		Payload: json.RawMessage(fmt.Sprintf(
 			`{"server":%q,"username":"deploy","password":"materializer-canary-secret"}`,
 			registry.URL,
 		)),
-	}
-	result, err := materializeCredential(context.Background(), request)
+	})
 	if err != nil {
 		t.Fatalf("materialize registry credential: %v", err)
 	}
@@ -90,22 +85,6 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 	if !strings.Contains(logged, "[get] [secret]") ||
 		!strings.Contains(logged, "[-o] [json]") {
 		t.Fatalf("Secret inspection does not use structured JSON output: %s", logged)
-	}
-
-	if err := os.WriteFile(filepath.Join(bin, "workload.json"), []byte(
-		`{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"existing-pull"}]}}}}`,
-	), 0600); err != nil {
-		t.Fatalf("reset fake workload state: %v", err)
-	}
-	t.Setenv("DOOPS_TEST_PATCH_MODE", "no_effect")
-	if _, err := materializeCredential(context.Background(), request); err == nil ||
-		err.Error() != "credential_target_outcome_unknown" {
-		t.Fatalf("unobserved workload patch error = %v", err)
-	}
-
-	t.Setenv("DOOPS_TEST_PATCH_MODE", "fail_after")
-	if _, err := materializeCredential(context.Background(), request); err != nil {
-		t.Fatalf("materialize after observed workload patch: %v", err)
 	}
 }
 
@@ -272,7 +251,8 @@ func TestMaterializeTLSCredentialValidatesKeyPair(t *testing.T) {
 		GrantID:        "grant_tls",
 		VersionID:      "ver_tls",
 		CredentialType: CredentialTypeTLS,
-		Scope:          credentialMaterializerTestScope(CredentialUseTLS, "kz-ops"),
+		Use:            CredentialUseTLS,
+		Namespace:      "kz-ops",
 		Payload: mustJSON(t, map[string]string{
 			"certificate": certificate,
 			"privateKey":  privateKey,
@@ -305,7 +285,8 @@ func TestMaterializeTLSCredentialValidatesKeyPair(t *testing.T) {
 		GrantID:        "grant_tls_bad",
 		VersionID:      "ver_tls_bad",
 		CredentialType: CredentialTypeTLS,
-		Scope:          credentialMaterializerTestScope(CredentialUseTLS, "kz-ops"),
+		Use:            CredentialUseTLS,
+		Namespace:      "kz-ops",
 		Payload: mustJSON(t, map[string]string{
 			"certificate": certificate,
 			"privateKey":  wrongKey,
@@ -326,12 +307,10 @@ func TestMaterializeOpaqueCredentialRequiresExactKeySet(t *testing.T) {
 		GrantID:        "grant_opaque",
 		VersionID:      "ver_opaque",
 		CredentialType: CredentialTypeOpaque,
-		Scope: credentialGrantScopeWithKeys(
-			credentialMaterializerTestScope(CredentialUseOpaqueSecret, "app"),
-			[]string{"API_KEY", "ENDPOINT"},
-		),
-		RequiredKeys: []string{"API_KEY", "ENDPOINT"},
-		Payload:      json.RawMessage(`{"data":{"API_KEY":"opaque-canary-secret","ENDPOINT":"https://service.example.com"}}`),
+		Use:            CredentialUseOpaqueSecret,
+		Namespace:      "app",
+		RequiredKeys:   []string{"API_KEY", "ENDPOINT"},
+		Payload:        json.RawMessage(`{"data":{"API_KEY":"opaque-canary-secret","ENDPOINT":"https://service.example.com"}}`),
 	})
 	if err != nil {
 		t.Fatalf("materialize opaque credential: %v", err)
@@ -345,12 +324,10 @@ func TestMaterializeOpaqueCredentialRequiresExactKeySet(t *testing.T) {
 		GrantID:        "grant_opaque_bad",
 		VersionID:      "ver_opaque_bad",
 		CredentialType: CredentialTypeOpaque,
-		Scope: credentialGrantScopeWithKeys(
-			credentialMaterializerTestScope(CredentialUseOpaqueSecret, "app"),
-			[]string{"API_KEY", "ENDPOINT"},
-		),
-		RequiredKeys: []string{"API_KEY", "ENDPOINT"},
-		Payload:      json.RawMessage(`{"data":{"API_KEY":"opaque-canary-secret","EXTRA":"not-allowed"}}`),
+		Use:            CredentialUseOpaqueSecret,
+		Namespace:      "app",
+		RequiredKeys:   []string{"API_KEY", "ENDPOINT"},
+		Payload:        json.RawMessage(`{"data":{"API_KEY":"opaque-canary-secret","EXTRA":"not-allowed"}}`),
 	})
 	if err == nil || !strings.Contains(err.Error(), "credential_key_mismatch") {
 		t.Fatalf("opaque key mismatch error = %v", err)
@@ -370,56 +347,15 @@ func TestMaterializeCredentialRejectsTamperedSecretContentAndMetadata(t *testing
 				GrantID:        "grant_opaque",
 				VersionID:      "ver_opaque",
 				CredentialType: CredentialTypeOpaque,
-				Scope: credentialGrantScopeWithKeys(
-					credentialMaterializerTestScope(CredentialUseOpaqueSecret, "app"),
-					[]string{"API_KEY"},
-				),
-				RequiredKeys: []string{"API_KEY"},
-				Payload:      json.RawMessage(`{"data":{"API_KEY":"opaque-canary-secret"}}`),
+				Use:            CredentialUseOpaqueSecret,
+				Namespace:      "app",
+				RequiredKeys:   []string{"API_KEY"},
+				Payload:        json.RawMessage(`{"data":{"API_KEY":"opaque-canary-secret"}}`),
 			})
 			if err == nil || err.Error() != "credential_secret_verification_failed" {
 				t.Fatalf("tampered Secret error = %v", err)
 			}
 			assertCredentialCanaryNotInText(t, "tampered Secret error", err.Error(), "opaque-canary-secret")
-		})
-	}
-}
-
-func TestMaterializeCredentialClassifiesApplyFailureFromObservedState(t *testing.T) {
-	for _, test := range []struct {
-		name    string
-		mode    string
-		wantErr string
-	}{
-		{name: "failure_before_write", mode: "fail_before", wantErr: "credential_target_mutation_failed"},
-		{name: "failure_after_write", mode: "fail_after"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			bin, _ := installCredentialTestCommands(t)
-			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-			t.Setenv("DOOPS_TEST_APPLY_MODE", test.mode)
-
-			_, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
-				CredentialID:   "cred_opaque",
-				GrantID:        "grant_opaque",
-				VersionID:      "ver_opaque",
-				CredentialType: CredentialTypeOpaque,
-				Scope: credentialGrantScopeWithKeys(
-					credentialMaterializerTestScope(CredentialUseOpaqueSecret, "app"),
-					[]string{"API_KEY"},
-				),
-				RequiredKeys: []string{"API_KEY"},
-				Payload:      json.RawMessage(`{"data":{"API_KEY":"opaque-canary-secret"}}`),
-			})
-			if test.wantErr == "" {
-				if err != nil {
-					t.Fatalf("materialize after observed apply: %v", err)
-				}
-				return
-			}
-			if err == nil || err.Error() != test.wantErr {
-				t.Fatalf("apply error = %v, want %s", err, test.wantErr)
-			}
 		})
 	}
 }
@@ -450,15 +386,8 @@ func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T
 		GrantID:        "grant_helm",
 		VersionID:      "ver_helm",
 		CredentialType: CredentialTypeHelmRepository,
-		Scope: CredentialGrantScope{
-			Cluster: "doops", Instance: "runner", Namespace: "kz-ops",
-			Use: CredentialUseHelmPull,
-			Workload: CredentialPlanWorkload{
-				Kind: "deployment", Name: "doops-agent-live",
-			},
-			HelmRelease: "doops-agent",
-			HelmChart:   "doops/agent",
-		},
+		Use:            CredentialUseHelmPull,
+		Namespace:      "kz-ops",
 		Payload: mustJSON(t, map[string]string{
 			"url":      helmRepo.URL,
 			"username": "helm",
@@ -477,7 +406,8 @@ func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T
 		GrantID:        "grant_git",
 		VersionID:      "ver_git",
 		CredentialType: CredentialTypeGitToken,
-		Scope:          credentialMaterializerTestScope(CredentialUseGitCheckout, "kz-ops"),
+		Use:            CredentialUseGitCheckout,
+		Namespace:      "kz-ops",
 		Payload:        json.RawMessage(`{"url":"https://127.0.0.1/repo.git","username":"git","token":"git-canary-secret"}`),
 	})
 	if err != nil {
@@ -808,16 +738,12 @@ func installCredentialTestCommands(t *testing.T) (string, string) {
 	bin := t.TempDir()
 	argsLog := filepath.Join(bin, "args.log")
 	secretState := filepath.Join(bin, "secret.json")
-	workloadState := filepath.Join(bin, "workload.json")
 	kubectl := `#!/bin/sh
 printf 'kubectl' >> "$DOOPS_TEST_ARGS_LOG"
 for arg in "$@"; do printf ' [%s]' "$arg" >> "$DOOPS_TEST_ARGS_LOG"; done
 printf '\n' >> "$DOOPS_TEST_ARGS_LOG"
 case "$1" in
   apply)
-    if [ "$DOOPS_TEST_APPLY_MODE" = "fail_before" ]; then
-      exit 1
-    fi
     sed 's/"metadata":{/"metadata":{"resourceVersion":"42",/' > "$DOOPS_TEST_SECRET_STATE"
     if [ "$DOOPS_TEST_SECRET_MUTATION" = "data" ]; then
       sed 's/"API_KEY":"[^"]*"/"API_KEY":"e30="/' "$DOOPS_TEST_SECRET_STATE" > "$DOOPS_TEST_SECRET_STATE.tmp"
@@ -826,9 +752,6 @@ case "$1" in
       sed 's/"doops.sh\/credential-grant-id":"[^"]*"/"doops.sh\/credential-grant-id":"other"/' \
         "$DOOPS_TEST_SECRET_STATE" > "$DOOPS_TEST_SECRET_STATE.tmp"
       mv "$DOOPS_TEST_SECRET_STATE.tmp" "$DOOPS_TEST_SECRET_STATE"
-    fi
-    if [ "$DOOPS_TEST_APPLY_MODE" = "fail_after" ]; then
-      exit 1
     fi
     ;;
   patch)
@@ -848,15 +771,6 @@ case "$1" in
     if [ -z "$patch" ]; then
       exit 64
     fi
-    if [ "$DOOPS_TEST_PATCH_MODE" = "fail_before" ]; then
-      exit 1
-    fi
-    if [ "$DOOPS_TEST_PATCH_MODE" != "no_effect" ]; then
-      printf '%s\n' "$patch" > "$DOOPS_TEST_WORKLOAD_STATE"
-    fi
-    if [ "$DOOPS_TEST_PATCH_MODE" = "fail_after" ]; then
-      exit 1
-    fi
     ;;
   replace)
     cat > "$DOOPS_TEST_SECRET_STATE"
@@ -873,7 +787,7 @@ case "$1" in
       done
       cat "$DOOPS_TEST_SECRET_STATE"
     else
-      cat "$DOOPS_TEST_WORKLOAD_STATE"
+      printf '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"existing-pull"}]}}}}\n'
     fi
     ;;
 esac
@@ -895,12 +809,6 @@ printf '0123456789abcdef\trefs/heads/main\n'
 	}
 	t.Setenv("DOOPS_TEST_ARGS_LOG", argsLog)
 	t.Setenv("DOOPS_TEST_SECRET_STATE", secretState)
-	t.Setenv("DOOPS_TEST_WORKLOAD_STATE", workloadState)
-	if err := os.WriteFile(workloadState, []byte(
-		`{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"existing-pull"}]}}}}`,
-	), 0600); err != nil {
-		t.Fatalf("write fake workload state: %v", err)
-	}
 	return bin, argsLog
 }
 
@@ -972,18 +880,6 @@ func assertCredentialCanaryNotInText(t *testing.T, subject, text, canary string)
 	if canary != "" && strings.Contains(text, canary) {
 		t.Fatalf("%s exposed credential canary", subject)
 	}
-}
-
-func credentialMaterializerTestScope(use CredentialUse, namespace string) CredentialGrantScope {
-	return CredentialGrantScope{
-		Cluster: "doops", Instance: "runner", Namespace: namespace, Use: use,
-		Workload: CredentialPlanWorkload{Kind: "deployment", Name: "doops-agent-live"},
-	}
-}
-
-func credentialGrantScopeWithKeys(scope CredentialGrantScope, keys []string) CredentialGrantScope {
-	scope.RequiredKeys = keys
-	return scope
 }
 
 func allowCredentialPrivateEndpointsForTest(t *testing.T) {

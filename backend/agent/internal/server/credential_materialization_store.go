@@ -30,7 +30,7 @@ func (s *GatewayStore) RecordCredentialMaterializationIntent(
 	if strings.TrimSpace(request.CredentialID) == "" ||
 		strings.TrimSpace(request.VersionID) == "" ||
 		strings.TrimSpace(request.GrantID) == "" ||
-		contextKey == "" || validateCredentialGrantScope(request.Scope) != nil {
+		contextKey == "" || !validCredentialUse(request.Use) {
 		return CredentialMaterializationRecord{}, ErrCredentialPayloadInvalid
 	}
 	requestJSON, err := json.Marshal(request)
@@ -43,7 +43,7 @@ func (s *GatewayStore) RecordCredentialMaterializationIntent(
 		CredentialID: request.CredentialID,
 		VersionID:    request.VersionID,
 		GrantID:      request.GrantID,
-		Use:          request.Scope.Use,
+		Use:          request.Use,
 		ContextKey:   contextKey,
 		Request:      request,
 		Status:       "pending",
@@ -103,7 +103,7 @@ func (s *GatewayStore) MarkCredentialMaterializationCleaned(request CredentialMa
 	_, err := s.db.Exec(`UPDATE credential_materializations
 		SET status = 'cleaned', error_category = '', updated_at = ?
 		WHERE version_id = ? AND grant_id = ? AND use = ? AND context_key = ?`,
-		formatTime(time.Now().UTC()), request.VersionID, request.GrantID, request.Scope.Use,
+		formatTime(time.Now().UTC()), request.VersionID, request.GrantID, request.Use,
 		credentialMaterializationContextKey(request))
 	return err
 }
@@ -112,7 +112,7 @@ func (s *GatewayStore) MarkCredentialMaterializationContextCleaned(request Crede
 	_, err := s.db.Exec(`UPDATE credential_materializations
 		SET status = 'cleaned', error_category = '', updated_at = ?
 		WHERE credential_id = ? AND grant_id = ? AND use = ? AND context_key = ?`,
-		formatTime(time.Now().UTC()), request.CredentialID, request.GrantID, request.Scope.Use,
+		formatTime(time.Now().UTC()), request.CredentialID, request.GrantID, request.Use,
 		credentialMaterializationContextKey(request))
 	return err
 }
