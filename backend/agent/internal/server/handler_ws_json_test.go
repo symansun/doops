@@ -376,6 +376,31 @@ func TestBindDeploymentRunEvidenceRejectsInvalidTopLevelEnvelope(t *testing.T) {
 	}
 }
 
+func TestBindDeploymentRunEvidenceRejectsInvalidPhase(t *testing.T) {
+	traces := completedDoagentToolTraces(t, []map[string]interface{}{
+		{
+			"sessionUpdate": "tool_call_update",
+			"toolCallId":    "read-1",
+			"toolName":      "Read",
+			"status":        "completed",
+			"input":         map[string]interface{}{"path": "state.json"},
+			"rawOutput":     map[string]interface{}{"revision": "current"},
+		},
+	})
+	for _, phase := range []interface{}{nil, "", "Succeeded", "completed"} {
+		result := deploymentRunWithToolRef("Read", map[string]interface{}{"path": "state.json"})
+		if phase == nil {
+			delete(result["status"].(map[string]interface{}), "phase")
+		} else {
+			result["status"].(map[string]interface{})["phase"] = phase
+		}
+		if _, _, err := bindTestDeploymentRun(result, traces); err == nil ||
+			!strings.Contains(err.Error(), "DeploymentRun.status.phase is invalid") {
+			t.Fatalf("phase %#v was accepted: %v", phase, err)
+		}
+	}
+}
+
 func TestBindDeploymentRunEvidenceRejectsModelAuthoredRuntimePayload(t *testing.T) {
 	traces := completedDoagentToolTraces(t, []map[string]interface{}{
 		{"sessionUpdate": "tool_call_update", "toolCallId": "read-1", "toolName": "Read", "status": "completed", "input": map[string]interface{}{"path": "state.json"}, "rawOutput": map[string]interface{}{"revision": "current"}},
@@ -609,6 +634,7 @@ func deploymentRunWithToolRef(tool string, input interface{}) map[string]interfa
 			"mode": "dry-run",
 		},
 		"status": map[string]interface{}{
+			"phase":         "planned",
 			"mutationCount": 0,
 			"evidence": []interface{}{
 				map[string]interface{}{

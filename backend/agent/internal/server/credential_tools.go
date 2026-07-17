@@ -38,6 +38,10 @@ func handleCredentialPlanTool(argBytes json.RawMessage) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	root, err = validateDoopsPlanWorkspace(root, args.WorkspaceCommit)
+	if err != nil {
+		return "", err
+	}
 	plan, err := parseCredentialPlan(root, args.WorkflowPath)
 	if err != nil {
 		return "", err

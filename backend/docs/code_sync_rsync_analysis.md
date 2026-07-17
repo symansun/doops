@@ -1,4 +1,12 @@
-# Agent-MCP 代码同步方案分析
+# DoOps 代码同步方案
+
+> [!IMPORTANT]
+> 本文记录代码同步方案的收敛结果，不是多路径兼容指南。标准路径只有
+> `doops -session <session> push --target <gateway-target> --src <dir>`：
+> CLI 通过 Gateway Git HTTP 隧道把工作区同步到目标 Agent 的
+> `/root/ws/<session>`。不得使用 tar/base64、`write`、自建 `/upload`
+> 端点、rsync 或日常 SSH 作为替代路径。SSH 只用于首次安装或 Agent
+> 自恢复。
 
 ## 核心问题
 
@@ -13,14 +21,16 @@
 
 | 能力 | 工具/方式 | 限制 |
 |:---|:---|:---|
-| 单文件写入 | `doops_file_write` (heredoc) | 仅文本、单文件、不适合大量源码 |
-| 小文本查看 | `doops_file_read` | 仅配置、脚本、短日志等小文本；不用于下载大文件/二进制 |
-| 管道写入 | `doops write --path xxx` | stdin 管道、二进制可能有编码问题 |
-| Shell 执行 | `doops_shell` / `doops exec` | 可执行 tar/scp 但需要手动编排 |
-| AI 构建 | `doops_agent_prompt` + image-build Skill | Skill 已描述 `git archive + SCP` 策略，但实际没有原生集成 |
+| 工作区上传 | `doops -session <s> push --target <gateway-target> --src <dir>` | 标准路径，基于 Gateway Git HTTP |
+| 工作区下载 | `doops -session <s> pull --target <gateway-target> --dest <dir>` | 标准路径，基于 Gateway Git HTTP |
+| 单文件写入 | `doops -session <s> write ...` | 仅用于小文本，不用于源码树或二进制 |
+| 小文本查看 | `doops -session <s> read ...` | 仅配置、脚本、短日志等小文本 |
+| Shell 执行 | `doops -session <s> exec ...` | 在已同步的固定 session 工作区内执行 |
 
 > [!IMPORTANT]
-> **核心差距**：没有原生的批量文件传输和增量同步工具。目前只能逐个文件写入，或者通过 shell 命令手动编排 tar/scp。
+> 批量文件传输已经由 `doops push/pull` 提供。若出现 512KB 分块、tar、
+> base64 或直连 Agent 上传，说明调用方绕过了标准路径，应修复调用方、
+> Gateway Git HTTP 隧道或目标 Agent 版本。
 
 ---
 
@@ -28,134 +38,89 @@
 
 ```mermaid
 graph TD
-    A["本地代码"] -->|"方案 A"| B["tar + doops write 管道"]
-    A -->|"方案 B"| C["新增 /upload HTTP 端点"]
-    A -->|"方案 C"| D["rsync over SSH（宿主机）"]
-    A -->|"方案 D"| E["远端 git clone/pull"]
-    B --> F["远端解压到工作目录"]
-    C --> F
-    D --> F
-    E --> F
-    F --> G["buildctl build + push"]
+    A["本地代码"] --> B["doops push"]
+    B --> C["Gateway Git HTTP 隧道"]
+    C --> D["Agent /root/ws/session"]
+    D --> E["buildctl build + push"]
 ```
 
-### 方案 A：tar + 现有管道（零改动）
+### 已淘汰：tar + write 管道
 
-```bash
-# 本地打包
-tar czf /tmp/src.tar.gz --exclude=.git --exclude=node_modules .
-
-# 传到远端
-cat /tmp/src.tar.gz | doops write --target node89 --path /tmp/src.tar.gz
-
-# 远端解压
-doops exec --target node89 --cmd "mkdir -p /opt/ws/myproj && tar xzf /tmp/src.tar.gz -C /opt/ws/myproj"
-```
+该路径把二进制数据塞进小文本接口，无法提供可靠的工作区身份、增量同步
+和 Gateway 审计，禁止使用。
 
 | 维度 | 评价 |
 |:---|:---|
-| 改动量 | ⭐⭐⭐ 零改动 |
-| 可靠性 | ⚠️ 二进制管道可能有编码问题 |
-| 效率 | ❌ 全量传输 |
-| 适用 | 小项目 (<1MB) 临时用 |
+| 结论 | 禁止 |
+| 原因 | 错用小文本通道，绕过标准工作区协议 |
 
 ---
 
-### 方案 B：新增 `doops push` + `/upload` 端点（推荐短期方案）
-
-**CLI 侧**新增 `doops push` 命令，**Agent-MCP 侧**新增 HTTP 上传端点。
+### 标准方案：`doops push` + Gateway Git HTTP
 
 ```bash
-# 一行搞定：本地打包 + HTTP 上传 + 远端解压
-doops push --target node89 --src ./myproject --dest /opt/ws/myproj
+doops -session myproject-build push \
+  --target gw-example \
+  --src ./myproject
 ```
 
 内部流程：
-1. 本地 `tar czf` 打包（自动排除 `.git`/`node_modules`）
-2. HTTP `POST /upload` multipart 上传到 agent
-3. 远端解压到 `--dest` 路径
+1. CLI 根据 `.gitignore` 和 `.doopsignore` 生成 session 工作区 Git 快照。
+2. 通过 `/v1/git/<cluster>/<instance>/<session>.git` 进入 Gateway。
+3. Gateway 把 Git HTTP 请求路由到在线且匹配的 Agent。
+4. Agent 将工作区固定到 `/root/ws/<session>`。
 
 | 维度 | 评价 |
 |:---|:---|
-| 改动量 | 🔧 CLI 新增一个命令 + agent 新增一个 HTTP 端点 |
-| 可靠性 | ⭐⭐⭐ HTTP multipart 传输成熟可靠 |
-| 效率 | ⚠️ 仍然全量（但 tar.gz 压缩后通常很小） |
-| 适用 | 多数项目，Go 项目通常 < 500KB 压缩包 |
+| 可靠性 | Gateway 身份、Agent 路由和 session 隔离均可验证 |
+| 效率 | Git 对象增量传输 |
+| 适用 | 所有标准 DoOps 工作区同步 |
 
 ---
 
-### 方案 C：rsync over SSH（推荐中期方案 ⭐）
-
-直接利用宿主机 SSH，不改 agent 代码。
-
-```bash
-doops sync --target node89 --src . --dest /opt/ws/myproj
-
-# 内部等效于：
-rsync -avz --delete --exclude=.git --exclude=node_modules \
-  -e "ssh -p 1022" ./ iict@198.51.100.24:/opt/ws/myproj/
-```
+### 已淘汰：rsync over SSH
 
 | 维度 | 评价 |
 |:---|:---|
-| 改动量 | 🔧 CLI 新增 sync 命令（调用本地 rsync） |
-| 可靠性 | ⭐⭐⭐ rsync 是业界标准 |
-| 效率 | ⭐⭐⭐ 天然增量、压缩、断点续传 |
-| 前提 | 需要宿主机 SSH 凭证（已在 config.json 中维护） |
+| 结论 | 禁止作为日常同步路径 |
+| 原因 | 绕过 Gateway 身份、审计、target 路由和 session 工作区 |
 
 > [!TIP]
-> agent 以 `hostNetwork: true` + `privileged: true` 运行，SSH 端口（22）天然可达。历史方案曾复用本地 config 中的 SSH 凭证；当前 doops CLI 默认配置源已收敛到 `~/.agent/skills/doops/config.json`，SSH 只作为安装或自恢复备用路径。
+> SSH 只允许用于首次安装或 Agent 自恢复，不进入标准 target 配置。
 
 ---
 
-### 方案 D：远端 Git Clone/Pull
+### 不作为工作区同步：远端 Git Clone/Pull
 
-```bash
-# 远端直接从 Git 仓库拉取代码
-doops exec --target node89 --cmd "cd /opt/ws && git clone https://github.com/xxx/myproj.git"
-# 后续只需 git pull
-doops exec --target node89 --cmd "cd /opt/ws/myproj && git pull"
-```
+目标工作负载可以在自身业务流程中访问 Git，但 `git clone/pull` 不能替代
+DoOps 工作区同步。CI/CD 输入必须先由 `doops push` 固定为 Gateway 已审计的
+session commit，再进入 credential prepare 和 reconciliation。
 
 | 维度 | 评价 |
 |:---|:---|
-| 改动量 | ⭐⭐⭐ 零改动 |
-| 可靠性 | ⭐⭐⭐ Git 可靠 |
-| 效率 | ⭐⭐ 增量（但首次 clone 可能慢） |
-| 前提 | 需要 Git 仓库（私有仓库需认证） |
-| 局限 | 未提交的代码无法同步 |
+| 结论 | 禁止作为 DoOps 工作区同步路径 |
+| 原因 | 无法绑定本地工作区 commit、Gateway push 审计和 session 快照 |
 
 ---
 
-## 推荐策略：分层递进
+## 推荐流程
 
 ```mermaid
 graph LR
-    A["第一层<br/>git archive + doops exec<br/>今天就能用"] --> B["第二层<br/>doops push + /upload<br/>1-2天开发"] --> C["第三层<br/>doops sync (rsync)<br/>高效增量同步"]
-    
-    style A fill:#4CAF50,color:white
-    style B fill:#2196F3,color:white
-    style C fill:#FF9800,color:white
+    A["doops push"] --> B["Gateway Git HTTP"]
+    B --> C["固定 session 工作区"]
+    C --> D["doops exec / cicd run"]
 ```
 
-### 第一层（立即可用）：git archive 组合命令
-
-无需任何代码改动，用现有工具编排：
+### 同步并构建
 
 ```bash
-# 1. 本地打包（自动排除 .git）
-git archive --format=tar.gz HEAD -o /tmp/myproj.tar.gz
+# 1. 同步到固定 session 工作区
+doops -session myproject-build push --target gw-example --src .
 
-# 2. SCP 直接传到宿主机（利用已知 SSH 凭证）
-scp -P 1022 /tmp/myproj.tar.gz iict@198.51.100.24:/tmp/
-
-# 3. 远端解压
-doops exec --target node89 --cmd \
-  "mkdir -p /opt/ws/myproj && tar xzf /tmp/myproj.tar.gz -C /opt/ws/myproj"
-
-# 4. 远端构建
-doops exec --target node89 --cmd \
-  "cd /opt/ws/myproj && buildctl --addr unix:///run/buildkit/buildkitd.sock build \
+# 2. 在同一个 session 中构建
+doops -session myproject-build exec --target gw-example --cmd \
+  "cd /root/ws/myproject-build && buildctl --addr unix:///run/buildkit/buildkitd.sock build \
      --progress=plain \
      --frontend dockerfile.v0 \
      --local context=. \
@@ -164,52 +129,33 @@ doops exec --target node89 --cmd \
      --output type=image,name=registry.example.com/oilan-system/myapp:latest,push=true,registry.insecure=true"
 ```
 
-### 第二层（短期开发）：doops push
-
-在 CLI 中封装上述流程为一条命令，用户体验极大提升。
-
-### 第三层（中期优化）：doops sync
-
-基于 rsync 的增量同步，适合频繁迭代开发。
-
----
-
 ## 构建工作目录管理
 
 > [!NOTE]
-> 建议使用持久化工作目录而非临时目录，以保留 Docker build cache。
+> 代码工作区必须使用 `/root/ws/<session>`。BuildKit 缓存由构建运行时独立
+> 管理，不能通过另建共享源码目录破坏 session 隔离。
 
 | 项目 | 路径 | 说明 |
 |:---|:---|:---|
-| 工作区根目录 | `/opt/doops/workspaces/` | 所有项目的父目录 |
-| 项目工作区 | `/opt/doops/workspaces/{project}/` | 代码解压/同步目标 |
+| 工作区根目录 | `/root/ws/` | Agent 管理的 session 工作区根目录 |
+| 项目工作区 | `/root/ws/<session>/` | `push/pull/exec/cicd` 的唯一工作区 |
 | 构建日志 | `/tmp/doops-build-{project}.log` | 构建过程日志 |
 
 ```bash
-/opt/doops/workspaces/
-├── exam-lab-api/          # 项目源码
+/root/ws/
+├── exam-lab-api-build/    # session 工作区
 │   ├── Dockerfile
 │   ├── main.go
 │   └── ...
-├── go-judge/              # 另一个项目
+├── go-judge-build/        # 另一个 session
 │   └── ...
-└── .sync-state.json       # 同步状态追踪（commit hash）
 ```
 
 ---
 
 ## 关键决策点
 
-需要你确认的几个问题：
-
-1. **传输通道优先级**：优先走 MCP HTTP 通道（方案 B），还是直接利用宿主机 SSH（方案 C）？
-   - MCP 更"纯正"但需要开发新端点
-   - SSH (rsync) 最高效但需要本地安装 rsync（macOS 自带）
-
-2. **是否需要支持未提交代码同步**？
-   - 如果只同步已提交代码，Git-based 方案最简单
-   - 如果需要同步工作区的脏文件，必须用 tar/rsync
-
-3. **是否需要将 `push/sync` 作为 MCP 工具暴露**，还是只作为 CLI 命令？
-   - AI Agent 场景下如果需要自动同步代码，应暴露为 MCP 工具
-   - 如果只是人工触发，CLI 命令即可
+1. 所有远程命令必须显式携带 `-session`。
+2. target 必须是 Gateway target，不登记直连 Agent。
+3. 工作区同步只使用 `push/pull` 的 Git HTTP 路径。
+4. 路径故障必须修复 Gateway、Agent 或调用方，不设计传输 fallback。
