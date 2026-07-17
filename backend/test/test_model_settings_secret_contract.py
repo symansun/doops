@@ -192,6 +192,14 @@ def test_oilan_agent_model_settings_are_secret_backed():
     assert host_paths["crictl-bin"] == "/usr/bin/crictl"
 
 
+def test_public_oilan_registry_does_not_declare_runtime_credentials():
+    registry = yaml.safe_load(REGISTRY.read_text())
+    artifacts = registry["environments"]["oilan"]["artifacts"]
+
+    assert artifacts["targetRegistry"] == "docker.cnb.cool/l8ai/ai"
+    assert "runtimeImagePullSecret" not in artifacts
+
+
 def test_oilan_release_runner_isolated_from_managed_agent():
     deployment = render_release_runner_chart()
     pod_spec = deployment["spec"]["template"]["spec"]

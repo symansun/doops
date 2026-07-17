@@ -22,9 +22,6 @@ environments:
       wait: true
     artifacts:
       targetRegistry: docker.cnb.cool/l8ai/ai
-      runtimeImagePullSecret:
-        kind: KubernetesSecret
-        name: cnb-oci-canary-20260717-26f97362
     services:
       doops-agent: deploy/environments/oilan/services/doops-agent.yaml
     healthChecks:
