@@ -12,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -28,8 +29,6 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 	allowCredentialPrivateEndpointsForTest(t)
 	bin, argsLog := installCredentialTestCommands(t)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("DOOPS_TEST_SECRET_TYPE", "kubernetes.io/dockerconfigjson")
-	t.Setenv("DOOPS_TEST_SECRET_KEYS", ".dockerconfigjson")
 	t.Setenv("DOOPS_TEST_GIT_SECRET", "")
 
 	manifest := `{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json"}`
@@ -51,7 +50,7 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 	}))
 	defer registry.Close()
 
-	result, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
+	request := CredentialMaterializeRequest{
 		CredentialID:   "cred_registry",
 		GrantID:        "grant_registry",
 		VersionID:      "ver_registry",
@@ -69,7 +68,8 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 			`{"server":%q,"username":"deploy","password":"materializer-canary-secret"}`,
 			registry.URL,
 		)),
-	})
+	}
+	result, err := materializeCredential(context.Background(), request)
 	if err != nil {
 		t.Fatalf("materialize registry credential: %v", err)
 	}
@@ -90,6 +90,22 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 	if !strings.Contains(logged, "[get] [secret]") ||
 		!strings.Contains(logged, "[-o] [json]") {
 		t.Fatalf("Secret inspection does not use structured JSON output: %s", logged)
+	}
+
+	if err := os.WriteFile(filepath.Join(bin, "workload.json"), []byte(
+		`{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"existing-pull"}]}}}}`,
+	), 0600); err != nil {
+		t.Fatalf("reset fake workload state: %v", err)
+	}
+	t.Setenv("DOOPS_TEST_PATCH_MODE", "no_effect")
+	if _, err := materializeCredential(context.Background(), request); err == nil ||
+		err.Error() != "credential_target_outcome_unknown" {
+		t.Fatalf("unobserved workload patch error = %v", err)
+	}
+
+	t.Setenv("DOOPS_TEST_PATCH_MODE", "fail_after")
+	if _, err := materializeCredential(context.Background(), request); err != nil {
+		t.Fatalf("materialize after observed workload patch: %v", err)
 	}
 }
 
@@ -249,8 +265,6 @@ func TestCredentialSecretNameIsGrantScoped(t *testing.T) {
 func TestMaterializeTLSCredentialValidatesKeyPair(t *testing.T) {
 	bin, argsLog := installCredentialTestCommands(t)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("DOOPS_TEST_SECRET_TYPE", "kubernetes.io/tls")
-	t.Setenv("DOOPS_TEST_SECRET_KEYS", "tls.crt,tls.key")
 	certificate, privateKey := credentialTestCertificate(t, "pkcs8")
 
 	result, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
@@ -306,8 +320,6 @@ func TestMaterializeTLSCredentialValidatesKeyPair(t *testing.T) {
 func TestMaterializeOpaqueCredentialRequiresExactKeySet(t *testing.T) {
 	bin, _ := installCredentialTestCommands(t)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("DOOPS_TEST_SECRET_TYPE", "Opaque")
-	t.Setenv("DOOPS_TEST_SECRET_KEYS", "API_KEY,ENDPOINT")
 
 	result, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
 		CredentialID:   "cred_opaque",
@@ -346,12 +358,76 @@ func TestMaterializeOpaqueCredentialRequiresExactKeySet(t *testing.T) {
 	assertCredentialCanaryNotInText(t, "opaque error", err.Error(), "opaque-canary-secret")
 }
 
+func TestMaterializeCredentialRejectsTamperedSecretContentAndMetadata(t *testing.T) {
+	for _, mutation := range []string{"data", "grant"} {
+		t.Run(mutation, func(t *testing.T) {
+			bin, _ := installCredentialTestCommands(t)
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("DOOPS_TEST_SECRET_MUTATION", mutation)
+
+			_, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
+				CredentialID:   "cred_opaque",
+				GrantID:        "grant_opaque",
+				VersionID:      "ver_opaque",
+				CredentialType: CredentialTypeOpaque,
+				Scope: credentialGrantScopeWithKeys(
+					credentialMaterializerTestScope(CredentialUseOpaqueSecret, "app"),
+					[]string{"API_KEY"},
+				),
+				RequiredKeys: []string{"API_KEY"},
+				Payload:      json.RawMessage(`{"data":{"API_KEY":"opaque-canary-secret"}}`),
+			})
+			if err == nil || err.Error() != "credential_secret_verification_failed" {
+				t.Fatalf("tampered Secret error = %v", err)
+			}
+			assertCredentialCanaryNotInText(t, "tampered Secret error", err.Error(), "opaque-canary-secret")
+		})
+	}
+}
+
+func TestMaterializeCredentialClassifiesApplyFailureFromObservedState(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		mode    string
+		wantErr string
+	}{
+		{name: "failure_before_write", mode: "fail_before", wantErr: "credential_target_mutation_failed"},
+		{name: "failure_after_write", mode: "fail_after"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			bin, _ := installCredentialTestCommands(t)
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("DOOPS_TEST_APPLY_MODE", test.mode)
+
+			_, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
+				CredentialID:   "cred_opaque",
+				GrantID:        "grant_opaque",
+				VersionID:      "ver_opaque",
+				CredentialType: CredentialTypeOpaque,
+				Scope: credentialGrantScopeWithKeys(
+					credentialMaterializerTestScope(CredentialUseOpaqueSecret, "app"),
+					[]string{"API_KEY"},
+				),
+				RequiredKeys: []string{"API_KEY"},
+				Payload:      json.RawMessage(`{"data":{"API_KEY":"opaque-canary-secret"}}`),
+			})
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatalf("materialize after observed apply: %v", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != test.wantErr {
+				t.Fatalf("apply error = %v, want %s", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T) {
 	allowCredentialPrivateEndpointsForTest(t)
 	bin, argsLog := installCredentialTestCommands(t)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("DOOPS_TEST_SECRET_TYPE", "Opaque")
-	t.Setenv("DOOPS_TEST_SECRET_KEYS", "password,url,username")
 	t.Setenv("DOOPS_TEST_GIT_SECRET", "git-canary-secret")
 
 	helmRepo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -418,17 +494,107 @@ func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T
 	assertCredentialCanaryNotInText(t, "Helm/Git command arguments", args, "git-canary-secret")
 }
 
+func TestRestoreCredentialTargetUsesSupportedPatchAndConfirmsState(t *testing.T) {
+	bin, argsLog := installCredentialTestCommands(t)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	if err := restoreCredentialTarget(context.Background(), "apps", "doops-cred-restore", credentialTargetSnapshot{
+		WorkloadKind:   "deployment",
+		WorkloadName:   "app",
+		ImagePullNames: []string{"existing-pull"},
+	}); err != nil {
+		t.Fatalf("restore credential target: %v", err)
+	}
+	logged := readCredentialTestFile(t, argsLog)
+	if strings.Contains(logged, "[--patch-file=-]") ||
+		!strings.Contains(logged, "[--type=merge] [--patch]") {
+		t.Fatalf("restore did not use a supported inline merge patch: %s", logged)
+	}
+}
+
 func TestCleanupCredentialDeletesOnlyMatchingDoOpsOwnedSecret(t *testing.T) {
 	bin := t.TempDir()
 	logPath := filepath.Join(bin, "kubectl.log")
+	secretPath := filepath.Join(bin, "secret.json")
+	workloadPath := filepath.Join(bin, "workload.json")
 	kubectl := `#!/bin/sh
 printf '%s\n' "$*" >> "$DOOPS_TEST_ARGS_LOG"
 if [ "$1" = "get" ] && [ "$2" = "secret" ]; then
-  printf '%s\n' "$DOOPS_TEST_SECRET_JSON"
+  if [ -f "$DOOPS_TEST_SECRET_STATE" ]; then
+    cat "$DOOPS_TEST_SECRET_STATE"
+  fi
 elif [ "$1" = "get" ]; then
-  printf '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"existing-pull"},{"name":"doops-cred-PLACEHOLDER"}]}}}}\n'
+  cat "$DOOPS_TEST_WORKLOAD_STATE"
 elif [ "$1" = "patch" ]; then
-  cat >/dev/null
+  for arg in "$@"; do
+    if [ "$arg" = "--patch-file=-" ]; then
+      exit 64
+    fi
+  done
+  patch=
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--patch" ]; then
+      shift
+      patch=$1
+      break
+    fi
+    shift
+  done
+  if [ -z "$patch" ]; then
+    exit 64
+  fi
+  case "$patch" in
+    *"$DOOPS_TEST_CREDENTIAL_SECRET"*)
+      action=restore
+      ;;
+    *)
+      action=remove
+      ;;
+  esac
+  if [ "$action" = "remove" ] && [ "$DOOPS_TEST_PATCH_MODE" = "fail_before_remove" ]; then
+    exit 1
+  fi
+  if [ "$action" = "restore" ] && [ "$DOOPS_TEST_PATCH_MODE" = "fail_restore" ]; then
+    exit 1
+  fi
+  if [ "$action" = "restore" ]; then
+    printf '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"existing-pull"},{"name":"%s"}]}}}}\n' \
+      "$DOOPS_TEST_CREDENTIAL_SECRET" > "$DOOPS_TEST_WORKLOAD_STATE"
+  else
+    printf '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"existing-pull"}]}}}}\n' \
+      > "$DOOPS_TEST_WORKLOAD_STATE"
+  fi
+  if [ "$action" = "remove" ] && [ "$DOOPS_TEST_PATCH_MODE" = "fail_after_remove" ]; then
+    exit 1
+  fi
+  if [ "$action" = "restore" ] && [ "$DOOPS_TEST_PATCH_MODE" = "fail_after_restore" ]; then
+    exit 1
+  fi
+elif [ "$1" = "delete" ]; then
+  delete_options=$(cat)
+  case "$delete_options" in
+    *'"uid":"uid-cleanup"'*) ;;
+    *) exit 64 ;;
+  esac
+  case "$delete_options" in
+    *'"resourceVersion":"42"'*) ;;
+    *)
+      exit 64
+      ;;
+  esac
+  if [ "$DOOPS_TEST_DELETE_MODE" = "fail_before" ]; then
+    exit 1
+  fi
+  if [ "$DOOPS_TEST_DELETE_MODE" = "replace" ]; then
+    sed 's/"uid":"uid-cleanup"/"uid":"uid-replacement"/' "$DOOPS_TEST_SECRET_STATE" \
+      > "$DOOPS_TEST_SECRET_STATE.tmp"
+    mv "$DOOPS_TEST_SECRET_STATE.tmp" "$DOOPS_TEST_SECRET_STATE"
+    exit 1
+  fi
+  rm -f "$DOOPS_TEST_SECRET_STATE"
+  if [ "$DOOPS_TEST_DELETE_MODE" = "fail_after" ]; then
+    exit 1
+  fi
 fi
 `
 	if err := os.WriteFile(filepath.Join(bin, "kubectl"), []byte(kubectl), 0755); err != nil {
@@ -436,13 +602,39 @@ fi
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("DOOPS_TEST_ARGS_LOG", logPath)
+	t.Setenv("DOOPS_TEST_SECRET_STATE", secretPath)
+	t.Setenv("DOOPS_TEST_WORKLOAD_STATE", workloadPath)
 	credentialID := "cred_cleanup"
 	grantID := "grant_cleanup"
 	versionID := "credver_cleanup"
-	t.Setenv("DOOPS_TEST_SECRET_JSON", fmt.Sprintf(
-		`{"metadata":{"labels":{"app.kubernetes.io/managed-by":"doops","doops.sh/credential-id":%q,"doops.sh/credential-grant-id":%q},"annotations":{"doops.sh/credential-version":%q}}}`,
-		credentialID, grantID, versionID,
-	))
+	secretName := credentialSecretName(credentialID, grantID)
+	t.Setenv("DOOPS_TEST_CREDENTIAL_SECRET", secretName)
+	t.Setenv("DOOPS_TEST_PATCH_MODE", "")
+	t.Setenv("DOOPS_TEST_DELETE_MODE", "")
+	writeSecret := func(version string) {
+		t.Helper()
+		if err := os.WriteFile(secretPath, []byte(fmt.Sprintf(
+			`{"metadata":{"uid":"uid-cleanup","resourceVersion":"42","labels":{"app.kubernetes.io/managed-by":"doops","doops.sh/credential-id":%q,"doops.sh/credential-grant-id":%q},"annotations":{"doops.sh/credential-version":%q}}}`,
+			credentialID, grantID, version,
+		)), 0600); err != nil {
+			t.Fatalf("write Secret state: %v", err)
+		}
+	}
+	writeWorkload := func(includeCredential bool) {
+		t.Helper()
+		names := `[{"name":"existing-pull"}]`
+		if includeCredential {
+			names = fmt.Sprintf(`[{"name":"existing-pull"},{"name":%q}]`, secretName)
+		}
+		if err := os.WriteFile(workloadPath, []byte(fmt.Sprintf(
+			`{"spec":{"template":{"spec":{"imagePullSecrets":%s}}}}`, names,
+		)), 0600); err != nil {
+			t.Fatalf("write workload state: %v", err)
+		}
+	}
+
+	writeSecret(versionID)
+	writeWorkload(true)
 	if err := cleanupCredential(context.Background(), CredentialCleanupRequest{
 		SessionID:    "cleanup-session",
 		CredentialID: credentialID,
@@ -454,14 +646,20 @@ fi
 		t.Fatalf("cleanup credential: %v", err)
 	}
 	logged := readCredentialTestFile(t, logPath)
-	if !strings.Contains(logged, "delete secret "+credentialSecretName(credentialID, grantID)) {
+	if !strings.Contains(logged, "delete --raw /api/v1/namespaces/apps/secrets/"+secretName+" -f -") {
 		t.Fatalf("cleanup did not delete the owned Secret: %s", logged)
+	}
+	if _, err := os.Stat(secretPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Secret state still exists after cleanup: %v", err)
+	}
+	if workload := readCredentialTestFile(t, workloadPath); strings.Contains(workload, secretName) {
+		t.Fatalf("workload still references cleaned Secret: %s", workload)
 	}
 
 	if err := os.WriteFile(logPath, nil, 0600); err != nil {
 		t.Fatalf("reset command log: %v", err)
 	}
-	t.Setenv("DOOPS_TEST_SECRET_JSON", "")
+	writeWorkload(true)
 	if err := cleanupCredential(context.Background(), CredentialCleanupRequest{
 		SessionID:    "cleanup-session",
 		CredentialID: credentialID,
@@ -477,10 +675,7 @@ fi
 		t.Fatalf("cleanup skipped workload reference after Secret disappeared: %s", logged)
 	}
 
-	t.Setenv("DOOPS_TEST_SECRET_JSON", fmt.Sprintf(
-		`{"metadata":{"labels":{"app.kubernetes.io/managed-by":"doops","doops.sh/credential-id":%q,"doops.sh/credential-grant-id":%q},"annotations":{"doops.sh/credential-version":"other"}}}`,
-		credentialID, grantID,
-	))
+	writeSecret("other")
 	if err := cleanupCredential(context.Background(), CredentialCleanupRequest{
 		SessionID:    "cleanup-session",
 		CredentialID: credentialID,
@@ -501,19 +696,174 @@ fi
 	}); err != nil {
 		t.Fatalf("revoke cleanup must accept the current DoOps-owned version: %v", err)
 	}
+
+	writeSecret(versionID)
+	writeWorkload(true)
+	t.Setenv("DOOPS_TEST_PATCH_MODE", "fail_before_remove")
+	if err := cleanupCredential(context.Background(), CredentialCleanupRequest{
+		SessionID:    "cleanup-session",
+		CredentialID: credentialID,
+		GrantID:      grantID,
+		VersionID:    versionID,
+		Namespace:    "apps",
+		Workload:     CredentialPlanWorkload{Kind: "Deployment", Name: "app"},
+	}); err == nil || err.Error() != "credential_target_mutation_failed" {
+		t.Fatalf("patch failure before mutation error = %v", err)
+	}
+
+	writeSecret(versionID)
+	writeWorkload(true)
+	t.Setenv("DOOPS_TEST_PATCH_MODE", "fail_after_remove")
+	if err := cleanupCredential(context.Background(), CredentialCleanupRequest{
+		SessionID:    "cleanup-session",
+		CredentialID: credentialID,
+		GrantID:      grantID,
+		VersionID:    versionID,
+		Namespace:    "apps",
+		Workload:     CredentialPlanWorkload{Kind: "Deployment", Name: "app"},
+	}); err != nil {
+		t.Fatalf("cleanup must accept a patch error after the desired state is observed: %v", err)
+	}
+
+	writeSecret(versionID)
+	writeWorkload(true)
+	t.Setenv("DOOPS_TEST_PATCH_MODE", "")
+	t.Setenv("DOOPS_TEST_DELETE_MODE", "fail_after")
+	if err := cleanupCredential(context.Background(), CredentialCleanupRequest{
+		SessionID:    "cleanup-session",
+		CredentialID: credentialID,
+		GrantID:      grantID,
+		VersionID:    versionID,
+		Namespace:    "apps",
+		Workload:     CredentialPlanWorkload{Kind: "Deployment", Name: "app"},
+	}); err != nil {
+		t.Fatalf("cleanup must accept a delete error after absence is observed: %v", err)
+	}
+
+	writeSecret(versionID)
+	writeWorkload(true)
+	t.Setenv("DOOPS_TEST_DELETE_MODE", "replace")
+	if err := cleanupCredential(context.Background(), CredentialCleanupRequest{
+		SessionID:    "cleanup-session",
+		CredentialID: credentialID,
+		GrantID:      grantID,
+		VersionID:    versionID,
+		Namespace:    "apps",
+		Workload:     CredentialPlanWorkload{Kind: "Deployment", Name: "app"},
+	}); err == nil || err.Error() != "credential_target_outcome_unknown" {
+		t.Fatalf("same-name Secret replacement error = %v", err)
+	}
+	if workload := readCredentialTestFile(t, workloadPath); strings.Contains(workload, secretName) {
+		t.Fatalf("cleanup rebound workload to a replacement Secret: %s", workload)
+	}
+
+	writeSecret(versionID)
+	writeWorkload(true)
+	t.Setenv("DOOPS_TEST_DELETE_MODE", "fail_before")
+	if err := cleanupCredential(context.Background(), CredentialCleanupRequest{
+		SessionID:    "cleanup-session",
+		CredentialID: credentialID,
+		GrantID:      grantID,
+		VersionID:    versionID,
+		Namespace:    "apps",
+		Workload:     CredentialPlanWorkload{Kind: "Deployment", Name: "app"},
+	}); err == nil || err.Error() != "credential_secret_delete_failed" {
+		t.Fatalf("delete failure with successful compensation error = %v", err)
+	}
+	if workload := readCredentialTestFile(t, workloadPath); !strings.Contains(workload, secretName) {
+		t.Fatalf("cleanup did not restore workload after confirmed delete failure: %s", workload)
+	}
+
+	writeSecret(versionID)
+	writeWorkload(true)
+	t.Setenv("DOOPS_TEST_PATCH_MODE", "fail_after_restore")
+	if err := cleanupCredential(context.Background(), CredentialCleanupRequest{
+		SessionID:    "cleanup-session",
+		CredentialID: credentialID,
+		GrantID:      grantID,
+		VersionID:    versionID,
+		Namespace:    "apps",
+		Workload:     CredentialPlanWorkload{Kind: "Deployment", Name: "app"},
+	}); err == nil || err.Error() != "credential_secret_delete_failed" {
+		t.Fatalf("restore error after observed compensation error = %v", err)
+	}
+
+	writeSecret(versionID)
+	writeWorkload(true)
+	t.Setenv("DOOPS_TEST_PATCH_MODE", "fail_restore")
+	if err := cleanupCredential(context.Background(), CredentialCleanupRequest{
+		SessionID:    "cleanup-session",
+		CredentialID: credentialID,
+		GrantID:      grantID,
+		VersionID:    versionID,
+		Namespace:    "apps",
+		Workload:     CredentialPlanWorkload{Kind: "Deployment", Name: "app"},
+	}); err == nil || err.Error() != "credential_target_outcome_unknown" {
+		t.Fatalf("failed cleanup compensation error = %v", err)
+	}
 }
 
 func installCredentialTestCommands(t *testing.T) (string, string) {
 	t.Helper()
 	bin := t.TempDir()
 	argsLog := filepath.Join(bin, "args.log")
+	secretState := filepath.Join(bin, "secret.json")
+	workloadState := filepath.Join(bin, "workload.json")
 	kubectl := `#!/bin/sh
 printf 'kubectl' >> "$DOOPS_TEST_ARGS_LOG"
 for arg in "$@"; do printf ' [%s]' "$arg" >> "$DOOPS_TEST_ARGS_LOG"; done
 printf '\n' >> "$DOOPS_TEST_ARGS_LOG"
 case "$1" in
-  apply|patch|replace) cat >/dev/null ;;
-  delete) ;;
+  apply)
+    if [ "$DOOPS_TEST_APPLY_MODE" = "fail_before" ]; then
+      exit 1
+    fi
+    sed 's/"metadata":{/"metadata":{"resourceVersion":"42",/' > "$DOOPS_TEST_SECRET_STATE"
+    if [ "$DOOPS_TEST_SECRET_MUTATION" = "data" ]; then
+      sed 's/"API_KEY":"[^"]*"/"API_KEY":"e30="/' "$DOOPS_TEST_SECRET_STATE" > "$DOOPS_TEST_SECRET_STATE.tmp"
+      mv "$DOOPS_TEST_SECRET_STATE.tmp" "$DOOPS_TEST_SECRET_STATE"
+    elif [ "$DOOPS_TEST_SECRET_MUTATION" = "grant" ]; then
+      sed 's/"doops.sh\/credential-grant-id":"[^"]*"/"doops.sh\/credential-grant-id":"other"/' \
+        "$DOOPS_TEST_SECRET_STATE" > "$DOOPS_TEST_SECRET_STATE.tmp"
+      mv "$DOOPS_TEST_SECRET_STATE.tmp" "$DOOPS_TEST_SECRET_STATE"
+    fi
+    if [ "$DOOPS_TEST_APPLY_MODE" = "fail_after" ]; then
+      exit 1
+    fi
+    ;;
+  patch)
+    patch=
+    while [ "$#" -gt 0 ]; do
+      arg=$1
+      if [ "$arg" = "--patch-file=-" ]; then
+        exit 64
+      fi
+      if [ "$arg" = "--patch" ]; then
+        shift
+        patch=$1
+        break
+      fi
+      shift
+    done
+    if [ -z "$patch" ]; then
+      exit 64
+    fi
+    if [ "$DOOPS_TEST_PATCH_MODE" = "fail_before" ]; then
+      exit 1
+    fi
+    if [ "$DOOPS_TEST_PATCH_MODE" != "no_effect" ]; then
+      printf '%s\n' "$patch" > "$DOOPS_TEST_WORKLOAD_STATE"
+    fi
+    if [ "$DOOPS_TEST_PATCH_MODE" = "fail_after" ]; then
+      exit 1
+    fi
+    ;;
+  replace)
+    cat > "$DOOPS_TEST_SECRET_STATE"
+    ;;
+  delete)
+    rm -f "$DOOPS_TEST_SECRET_STATE"
+    ;;
   get)
     if [ "$2" = "secret" ]; then
       for arg in "$@"; do
@@ -521,18 +871,9 @@ case "$1" in
           exit 0
         fi
       done
-      printf '{"metadata":{"resourceVersion":"42"},"type":"%s","data":{' "$DOOPS_TEST_SECRET_TYPE"
-      separator=
-      old_ifs=$IFS
-      IFS=,
-      for key in $DOOPS_TEST_SECRET_KEYS; do
-        printf '%s"%s":"e30="' "$separator" "$key"
-        separator=,
-      done
-      IFS=$old_ifs
-      printf '}}\n'
+      cat "$DOOPS_TEST_SECRET_STATE"
     else
-      printf '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"existing-pull"}]}}}}\n'
+      cat "$DOOPS_TEST_WORKLOAD_STATE"
     fi
     ;;
 esac
@@ -553,6 +894,13 @@ printf '0123456789abcdef\trefs/heads/main\n'
 		t.Fatalf("write fake git: %v", err)
 	}
 	t.Setenv("DOOPS_TEST_ARGS_LOG", argsLog)
+	t.Setenv("DOOPS_TEST_SECRET_STATE", secretState)
+	t.Setenv("DOOPS_TEST_WORKLOAD_STATE", workloadState)
+	if err := os.WriteFile(workloadState, []byte(
+		`{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"existing-pull"}]}}}}`,
+	), 0600); err != nil {
+		t.Fatalf("write fake workload state: %v", err)
+	}
 	return bin, argsLog
 }
 
