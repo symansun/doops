@@ -109,17 +109,30 @@ def test_oilan_agent_model_settings_are_secret_backed():
     assert env_value(container, "DOOPS_GATEWAY_INSTANCE")["value"] == "edu-coder"
     assert '-listen "0.0.0.0"' in container["command"][-1]
     assert "-agent-token" not in container["command"][-1]
-    assert all(
-        item["name"] != "DOOPS_AGENT_TOKEN_PATH" for item in container["env"]
+    assert env_value(container, "DOOPS_GATEWAY_AGENT_TOKEN_PATH")["value"] == (
+        "/run/secrets/doops/gateway-agent-token"
     )
-    assert all(
-        mount["name"] != "agent-registration-token"
+    assert next(
+        mount
         for mount in container["volumeMounts"]
-    )
-    assert all(
-        volume["name"] != "agent-registration-token"
+        if mount["name"] == "gateway-agent-registration-token"
+    ) == {
+        "name": "gateway-agent-registration-token",
+        "mountPath": "/run/secrets/doops",
+        "readOnly": True,
+    }
+    assert next(
+        volume
         for volume in deployment["spec"]["template"]["spec"]["volumes"]
-    )
+        if volume["name"] == "gateway-agent-registration-token"
+    ) == {
+        "name": "gateway-agent-registration-token",
+        "secret": {
+            "secretName": "doops-agent-runtime",
+            "defaultMode": 0o400,
+            "items": [{"key": "token", "path": "gateway-agent-token"}],
+        },
+    }
     assert "/app/configure_kubeconfig.py" in SANDBOX_ENTRYPOINT.read_text()
     probes = {
         name: container[name]["exec"]["command"][-1]

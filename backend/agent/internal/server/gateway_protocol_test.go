@@ -119,12 +119,24 @@ func TestGatewayHTTPListsTargetsForGrantedUserToken(t *testing.T) {
 	resp.Body.Close()
 }
 
-func TestGatewayAgentRegistrationDoesNotRequireToken(t *testing.T) {
+func TestGatewayAgentRegistrationRequiresBoundToken(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	defer store.Close()
+	agentToken, err := store.CreateToken(CreateTokenRequest{
+		Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local",
+	})
+	if err != nil {
+		t.Fatalf("create agent token: %v", err)
+	}
+	wrongToken, err := store.CreateToken(CreateTokenRequest{
+		Kind: TokenKindAgent, Name: "wrong-agent", Cluster: "dev", Instance: "other",
+	})
+	if err != nil {
+		t.Fatalf("create wrong agent token: %v", err)
+	}
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
@@ -132,9 +144,20 @@ func TestGatewayAgentRegistrationDoesNotRequireToken(t *testing.T) {
 	defer ts.Close()
 
 	agentWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev&instance=local"
-	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, nil)
+	_, resp, err := websocket.DefaultDialer.Dial(agentWS, nil)
+	if err == nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("agent registration without token: err=%v response=%v", err, resp)
+	}
+	_, resp, err = websocket.DefaultDialer.Dial(agentWS, http.Header{
+		"Authorization": {"Bearer " + wrongToken.Plaintext},
+	})
+	if err == nil || resp == nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("agent registration with wrong target token: err=%v response=%v", err, resp)
+	}
+	headers := http.Header{"Authorization": {"Bearer " + agentToken.Plaintext}}
+	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, headers)
 	if err != nil {
-		t.Fatalf("agent registration without token should connect: %v", err)
+		t.Fatalf("agent registration with bound token should connect: %v", err)
 	}
 	defer agentConn.Close()
 	go func() {
@@ -160,7 +183,7 @@ func TestGatewayAgentRegistrationDoesNotRequireToken(t *testing.T) {
 	})
 
 	badWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev"
-	_, resp, err := websocket.DefaultDialer.Dial(badWS, nil)
+	_, resp, err = websocket.DefaultDialer.Dial(badWS, headers)
 	if err == nil {
 		t.Fatal("agent registration without instance should fail")
 	}
@@ -2966,8 +2989,9 @@ func TestAuditTailBufferKeepsOnlyBoundedSuffix(t *testing.T) {
 func dialFakeGatewayAgent(t *testing.T, serverURL, token, cluster, instance string) *websocket.Conn {
 	t.Helper()
 	agentWS := "ws" + strings.TrimPrefix(serverURL, "http") + "/v1/agent/connect?cluster=" + cluster + "&instance=" + instance
-	_ = token
-	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, nil)
+	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, http.Header{
+		"Authorization": {"Bearer " + token},
+	})
 	if err != nil {
 		t.Fatalf("dial agent websocket: %v", err)
 	}

@@ -44,7 +44,7 @@ flowchart LR
 - 边缘执行端：`agent/` 构建 `doops-agent`，负责目标机器上的 exec、push/pull、文件和 AI 任务
 - 运行安全边界：`doops-agent` 默认只启动 `doops-agent`、`do-agent`、`buildkitd`；默认不启动 SSH，不启动 WebIDE
 - 连接方式：CLI/skill 访问 gateway `42222`，gateway 通过已建立的 agent WebSocket 进入内网 agent
-- 鉴权方式：用户连接 gateway 使用 gateway user token；agent 注册 gateway 不需要 token，只声明 `cluster/instance`
+- 鉴权方式：用户连接 gateway 使用 gateway user token；agent 注册 gateway 使用绑定 `cluster/instance` 的 registration token
 - 代码同步：gateway 使用 Git HTTP；gateway 只通过已建立的 agent WebSocket 反向隧道透传 Git 请求，不再使用 tar 分块上传作为 `push/pull` 路径
 - 镜像构建：统一使用 `buildctl + buildkitd`
 
@@ -256,8 +256,9 @@ Skill 会随安装同步到项目目录。标准 target 的配置必须有 `gate
 
 ### 2. 通过 gateway 添加内网集群目标
 
-gateway 由管理员维护用户、user token 和授权。agent
-部署只声明绑定的 `cluster/instance`；业务侧
+gateway 由管理员维护用户、user token、agent registration token 和授权。
+agent 部署声明绑定的 `cluster/instance`，并从运行时 Secret 读取对应的
+registration token；业务侧
 CLI 配置只消费管理员发放的 user token，不直接维护 gateway 数据库。
 
 gateway 支持用户名密码登录，先换取 user token 再用 token 操作：
@@ -269,6 +270,7 @@ doops login --target prod-master --gateway https://gateway.example.com --usernam
 内网 agent 主动连接公网 gateway：
 
 ```bash
+export DOOPS_GATEWAY_AGENT_TOKEN_PATH=/run/secrets/doops/gateway-agent-token
 doops-agent \
   -gateway-url https://gateway.example.com \
   -cluster prod \
@@ -352,6 +354,7 @@ docker run -d --name doops-agent \
   -v /root/.kube:/root/.kube:ro \
   -v /etc/kubernetes:/etc/kubernetes:ro \
   -v /path/to/doagent-model-settings.json:/opt/doagent_config/settings.json:ro \
+  -v /path/to/gateway-agent-token:/run/secrets/doops/gateway-agent-token:ro \
   docker.cnb.cool/l8ai/ai/doops.sh:v1.1 \
   -port 42222 \
   -gateway-url https://gateway.example.com \
@@ -381,7 +384,7 @@ doops install \
   --agent-token '<OPTIONAL_AGENT_TOKEN>'
 ```
 
-`--agent-token` 只服务于遗留裸进程的本机 `/ws` 保护，不是 gateway 注册凭据。自举完成后仍然要用 `-gateway-url ... -cluster ... -instance ...` 接入 gateway，并在客户端配置 gateway target。
+`--agent-token` 只服务于遗留裸进程的本机 `/ws` 保护，不是 gateway 注册凭据。自举完成后仍然要从运行时 Secret 提供 `DOOPS_GATEWAY_AGENT_TOKEN_PATH`，再用 `-gateway-url ... -cluster ... -instance ...` 接入 gateway，并在客户端配置 gateway target。
 
 注意：`doops install` 当前是 SSH bootstrap/兼容入口，可能把 agent 作为裸二进制或容器拉起，取决于目标机器运行时能力和参数。生产标准化建议优先使用 **方式 A K8s/DaemonSet** 或 **方式 B 容器模式**。
 

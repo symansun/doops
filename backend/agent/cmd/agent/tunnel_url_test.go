@@ -166,9 +166,8 @@ func TestRunReverseTunnelUpdatesReadyStateOnConnectAndDisconnect(t *testing.T) {
 
 	done := make(chan struct{})
 	gw := server.NewGateway("0")
-	gw.Token = "synthetic-agent-token"
 	go func() {
-		runReverseTunnel(gw, "wss://gateway.example.com", "dev", "instance", 1*time.Millisecond)
+		runReverseTunnel(gw, "synthetic-agent-token", "wss://gateway.example.com", "dev", "instance", 1*time.Millisecond)
 		close(done)
 	}()
 

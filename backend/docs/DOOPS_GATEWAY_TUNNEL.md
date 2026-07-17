@@ -68,8 +68,9 @@ bash scripts/deploy-gateway.sh \
 
 ## Start Gateway
 
-用户、user token 和授权由管理员维护。agent 部署只声明绑定的
-`cluster/instance`，不读取 registration token。
+用户、user token 和授权由管理员维护。agent 部署必须声明绑定的
+`cluster/instance`，并从运行时 Secret 注入对应的 registration token。
+Gateway 在 WebSocket upgrade 前验证 token 类型及目标绑定。
 产品和 skill 的日常入口是 `doops`；gateway 内部维护命令不作为业务用户操作手册暴露。
 
 gateway 是独立发布包，不登记为 doops target，也不通过任何 target 发布自己。
@@ -194,6 +195,7 @@ docker run -d --name doops-agent \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /root/.kube:/root/.kube:ro \
   -v /etc/kubernetes:/etc/kubernetes:ro \
+  -v /path/to/gateway-agent-token:/run/secrets/doops/gateway-agent-token:ro \
   docker.cnb.cool/l8ai/ai/doops.sh:v1.1 \
   -port 42222 \
   -gateway-url https://gateway.example.com \
@@ -202,13 +204,17 @@ docker run -d --name doops-agent \
 ```
 
 ```bash
+export DOOPS_GATEWAY_AGENT_TOKEN_PATH=/run/secrets/doops/gateway-agent-token
 doops-agent \
   -gateway-url https://gateway.example.com \
   -cluster prod \
   -instance master-1 \
 ```
 
-如果省略 `-instance`，agent 使用主机名。agent 断线后会自动重连；gateway 不会重放已中断的高危操作。
+registration token 必须由 Gateway 管理员按 cluster/instance 签发，并通过
+`DOOPS_GATEWAY_AGENT_TOKEN_PATH` 指向的只读运行时 Secret 文件注入。如果
+省略 `-instance`，agent 使用主机名。agent 断线后会自动重连；gateway
+不会重放已中断的高危操作。
 `-gateway-url` 必须填写 doops-gateway 的 base URL，或显式填写 `/v1/agent/connect`；
 不要填写 `/ws`。`/ws` 是遗留直连 agent 端点，不是 agent 注册 gateway 的反向隧道端点。
 
@@ -387,6 +393,7 @@ ssh -N \
   -L 127.0.0.1:32223:localhost:42222 \
   ubuntu@<gateway-ip>
 
+DOOPS_GATEWAY_AGENT_TOKEN_PATH=/run/secrets/doops/gateway-agent-token \
 doops-agent \
   -gateway-url http://127.0.0.1:32223 \
   -cluster prod \

@@ -415,6 +415,7 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	}
 	hub.registration = NewAgentRegistrationHandler(
 		registry,
+		store,
 		opts.AgentLease,
 		newGatewayMessageBudget(gatewayMessageBudgetMaxBytes),
 	)

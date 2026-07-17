@@ -9,6 +9,7 @@ import (
 
 type AgentRegistrationHandler struct {
 	registry      *AgentRegistry
+	store         *GatewayStore
 	lease         time.Duration
 	messageBudget *gatewayMessageBudget
 	acknowledge   func(*GatewayAgent) error
@@ -16,11 +17,13 @@ type AgentRegistrationHandler struct {
 
 func NewAgentRegistrationHandler(
 	registry *AgentRegistry,
+	store *GatewayStore,
 	lease time.Duration,
 	messageBudget *gatewayMessageBudget,
 ) *AgentRegistrationHandler {
 	return &AgentRegistrationHandler{
 		registry:      registry,
+		store:         store,
 		lease:         lease,
 		messageBudget: messageBudget,
 		acknowledge: func(session *GatewayAgent) error {
@@ -39,6 +42,15 @@ func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "cluster and instance are required", http.StatusBadRequest)
 		return
 	}
+	auth, err := h.store.VerifyAgentToken(bearerToken(r))
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if auth.Cluster != cluster || auth.Instance != instance {
+		http.Error(w, "agent token target mismatch", http.StatusForbidden)
+		return
+	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("[gateway] agent websocket upgrade failed: %v", err)
@@ -47,7 +59,7 @@ func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	session := newGatewayAgentSession(
 		cluster,
 		instance,
-		"",
+		auth.TokenID,
 		r.RemoteAddr,
 		conn,
 		h.messageBudget,
