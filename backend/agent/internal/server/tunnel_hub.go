@@ -973,36 +973,10 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32003, "credential control-plane tools are internal only"))
 		return nil
 	}
-	var credentialBinding *credentialPromptBinding
 	if params.Name == "doops_agent_prompt" {
 		operation := extractStringArg(params.Arguments, "operation")
-		instruction := extractStringArg(params.Arguments, "instruction")
-		var marker struct {
-			Task string `json:"task"`
-		}
-		_ = json.Unmarshal([]byte(instruction), &marker)
-		if marker.Task == "execute-doops-cicd" {
-			var err error
-			credentialBinding, err = parseCredentialPromptBinding(params.Arguments, cluster, instance)
-			if err != nil {
-				writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
-				return nil
-			}
-		} else if operation == "apply" {
-			writeJSON(buildErrorResponse(req.ID, -32602, "apply requires a structured doops-cicd instruction"))
-			return nil
-		} else if operation != "" && operation != "ask" {
+		if operation != "" && operation != "ask" && operation != "apply" {
 			writeJSON(buildErrorResponse(req.ID, -32602, "unsupported agent prompt operation: "+operation))
-			return nil
-		}
-		var err error
-		credentialBinding, err = parseCredentialPromptBinding(params.Arguments, cluster, instance)
-		if err != nil {
-			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
-			return nil
-		}
-		if operation == "apply" && credentialBinding == nil {
-			writeJSON(buildErrorResponse(req.ID, -32602, "apply requires a structured doops-cicd instruction"))
 			return nil
 		}
 	}
@@ -1106,18 +1080,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	defer agent.releaseForAction(action, resourceKey)
-	if err := h.consumeCredentialPromptBinding(auth, cluster, instance, credentialBinding); err != nil {
-		errMsg := "credential run authorization invalid"
-		finishAudit("forbidden", errMsg, "", 0)
-		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
-		return nil
-	}
 	tail := newAuditTailBuffer(8192)
 	var bytesOut int64
 	finalStatus := "success"
 	finalErr := ""
 
-	operationDeadline := time.Now().Add(h.opts.OperationTimeout)
 	err = agent.relayToolCall(opCtx, params, h.opts.OperationTimeout, func(msg gatewayWSMessage) error {
 		if method, _ := msg.Parsed["method"].(string); method == "notifications/message" {
 			if p, ok := msg.Parsed["params"].(map[string]interface{}); ok {
@@ -1148,37 +1115,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		}
 		return nil
 	})
-	if errors.Is(err, errGatewayAgentDisconnected) && credentialBinding != nil {
-		recovered, recoveryErr := h.recoverCICDResult(
-			opCtx,
-			cluster,
-			instance,
-			credentialBinding.Run,
-			agent,
-			time.Until(operationDeadline),
-		)
-		if recoveryErr == nil {
-			recovered.Parsed["id"] = req.ID
-			if result, ok := recovered.Parsed["result"].(map[string]interface{}); ok {
-				if isErr, ok := result["isError"]; ok && fmt.Sprintf("%v", isErr) == "true" {
-					finalStatus = "error"
-					finalErr = resultContentText(result)
-				}
-			}
-			if rpcErr, ok := recovered.Parsed["error"]; ok && rpcErr != nil {
-				finalStatus = "error"
-				finalErr = fmt.Sprintf("%v", rpcErr)
-			}
-			raw, marshalErr := json.Marshal(recovered.Parsed)
-			if marshalErr != nil {
-				err = marshalErr
-			} else {
-				err = writeRaw(raw)
-			}
-		} else {
-			err = recoveryErr
-		}
-	}
 	if err != nil {
 		if errors.Is(err, errGatewayClientDisconnected) {
 			finalStatus = "canceled"
@@ -1197,77 +1133,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	return nil
 }
 
-func (h *ClientService) recoverCICDResult(
-	ctx context.Context,
-	cluster string,
-	instance string,
-	run CredentialRun,
-	disconnected *GatewayAgent,
-	timeout time.Duration,
-) (gatewayWSMessage, error) {
-	if !validCICDRunBinding(run) {
-		return gatewayWSMessage{}, errors.New("invalid credential run binding")
-	}
-	if timeout <= 0 {
-		return gatewayWSMessage{}, errors.New("cicd result recovery timed out")
-	}
-	recoveryCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	for {
-		agent := h.registry.Wait(recoveryCtx, cluster, instance, h.opts.TargetReconnectGrace)
-		if agent == nil || agent == disconnected {
-			select {
-			case <-recoveryCtx.Done():
-				return gatewayWSMessage{}, fmt.Errorf("cicd result recovery timed out: %w", recoveryCtx.Err())
-			case <-time.After(time.Second):
-				continue
-			}
-		}
-
-		arguments, _ := json.Marshal(map[string]interface{}{"credential_run": run})
-		var response gatewayWSMessage
-		err := agent.relayToolCall(
-			recoveryCtx,
-			api.ToolCallParams{Name: "doops_cicd_result", Arguments: arguments},
-			15*time.Second,
-			func(msg gatewayWSMessage) error {
-				if _, ok := msg.Parsed["id"]; ok {
-					response = msg
-				}
-				return nil
-			},
-		)
-		if err == nil && response.Parsed != nil {
-			if rpcErr, ok := response.Parsed["error"].(map[string]interface{}); ok {
-				code, _ := numericID(rpcErr["code"])
-				if code == -32008 || code == -32009 {
-					select {
-					case <-recoveryCtx.Done():
-						return gatewayWSMessage{}, fmt.Errorf("cicd result recovery timed out: %w", recoveryCtx.Err())
-					case <-time.After(time.Second):
-						continue
-					}
-				}
-				if code == -32010 {
-					return gatewayWSMessage{}, errors.New("cicd result unavailable after agent restart")
-				}
-			}
-			return response, nil
-		}
-		if err != nil &&
-			!errors.Is(err, errGatewayAgentDisconnected) &&
-			!errors.Is(err, errGatewayMessageQueueClosed) {
-			return gatewayWSMessage{}, fmt.Errorf("recover cicd result: %w", err)
-		}
-		select {
-		case <-recoveryCtx.Done():
-			return gatewayWSMessage{}, fmt.Errorf("cicd result recovery timed out: %w", recoveryCtx.Err())
-		case <-time.After(time.Second):
-		}
-	}
-}
-
 func sanitizeAgentPromptAudit(toolName, errMsg, tail string) (string, string) {
 	if toolName != "doops_agent_prompt" {
 		return sanitizeSecretText(errMsg), sanitizeSecretText(tail)
@@ -1281,8 +1146,7 @@ func sanitizeAgentPromptAudit(toolName, errMsg, tail string) (string, string) {
 func internalCredentialTool(tool string) bool {
 	return tool == "doops_credential_plan" ||
 		tool == "doops_credential_materialize" ||
-		tool == "doops_credential_cleanup" ||
-		tool == "doops_cicd_result"
+		tool == "doops_credential_cleanup"
 }
 
 func (h *GatewayHub) registerAgent(agent *GatewayAgent) error {
@@ -2062,7 +1926,7 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 		if sessionID := extractSession(args); sessionID != "" {
 			return "workspace:" + sessionID
 		}
-	case ActionCredentialUse:
+	case ActionCredentialUse, ActionCredentialRevoke:
 		if credentialID := extractStringArg(args, "credential_id"); credentialID != "" {
 			return "credential:" + credentialID
 		}

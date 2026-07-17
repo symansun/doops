@@ -55,8 +55,6 @@ type Gateway struct {
 	sessionMap   map[string]*sessionEntry
 	sessionMapMu sync.RWMutex
 
-	cicdResults *cicdResultStore
-
 	// 容器运行时 (启动时自动检测: nerdctl > docker > podman)
 	containerRuntime string
 
@@ -67,11 +65,10 @@ type Gateway struct {
 
 func NewGateway(port string) *Gateway {
 	gw := &Gateway{
-		Dispatcher:  dispatcher.NewDispatcher(),
-		Port:        port,
-		tasks:       make(map[string]*bgTask),
-		sessionMap:  make(map[string]*sessionEntry),
-		cicdResults: newCICDResultStore(),
+		Dispatcher: dispatcher.NewDispatcher(),
+		Port:       port,
+		tasks:      make(map[string]*bgTask),
+		sessionMap: make(map[string]*sessionEntry),
 	}
 	gw.detectContainerRuntime()
 	gw.startZombieReaper()

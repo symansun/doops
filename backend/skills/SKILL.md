@@ -13,7 +13,7 @@ description: |
 - 日常使用：先看本文命令选择，再按 `docs/DOOPS_USAGE_GUIDE.md` 执行。
 - Gateway/API 细节：看 `docs/DOOPS_GATEWAY_TUNNEL.md` 和 `docs/DOOPS_API_GUIDE.md`。
 - 构建、发布、升级：看 `docs/BUILD_DEPLOY_SOP.md` 和 `docs/DOOPS_MAINTENANCE_LOG.md`。
-- Agent 原生 CI/CD：看 `docs/SEMANTIC_CICD.md`。
+- 自然语言发布：看 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
 - 模型与 ask 配置：看 `docs/MODEL_STANDARDS.md`。
 
 权威源码在 doops.sh 仓库 `skills/SKILL.md`。项目里的 `.agent/skills/doops/SKILL.md` 是安装副本；修改 skill 时必须先改 doops.sh 源码，再通过 `scripts/install.sh` 同步。
@@ -27,16 +27,8 @@ description: |
 - `doops-gateway` 是独立发布包，必须用 `scripts/deploy-gateway.sh --host <gateway-host>` 从 SSH 宿主机上下文发布。
 - gateway 控制面不登记为 doops target，不通过任何 doops target 发布 gateway 本体。
 - 不要用 base64、tar 或手写分片传输绕过 `push`。`doops_workspace_*` 是低层兼容 JSON-RPC 工具，不是 CLI、发布脚本和 skill 的标准路径；如果看到 512KB 分块日志，说明调用方绕过了当前 `doops push/pull`。应修复 Git HTTP 反向隧道、目标 agent 版本或发布脚本。
-- `doops cicd run` 只接受 `deploy/environments.yaml` 中的
-  `doops.sh/v3 EnvironmentRegistry`，并要求显式选择 `environment` 和
-  `service`。不得接受 v2 `DeploymentTemplate`、生成中间 workflow 或静默降级。
-- 声明 apiVersion 与 Gateway-Agent 控制面协议是两个维度。所有保留 Agent 必须在注册时声明严格的 credential-plan capability：`schemaVersion=doops.sh/credential-plan/v2`、`declarationSchemaVersion=doops.sh/v3`，并同时声明 `sourceRevision`、`targetBinding`、`sessionBinding`、`buildDefinition`。Gateway 必须在 credential prepare dispatch 前阻断离线、旧字符串声明或字段不完整的 Agent。
-- credential prepare、Gateway prompt binding 与受信任 reconciliation 必须绑定同一
-  source、environment、service、session、workspace commit 和 metadata-only
-  `CredentialRun`。公开仓库和镜像仓库不声明 credential ref；私有 runtime registry
-  必须显式声明 Kubernetes Secret 引用并绑定所选 workload。当前协议尚未定义私有
-  source checkout 和 target registry transfer 的独立 use，遇到这两类引用必须在
-  prepare 阶段明确阻断，不能接受后忽略。
+- 发布统一使用 `doops -session <s> ask --target <t> --apply --msg '<任务>'`。任务必须直接说明 target、服务范围、镜像版本、变更原因和验收条件；不得使用环境注册表、模板或 workflow YAML 选择发布。
+- Gateway 不得从自然语言猜测凭据引用或向 Agent 传递凭据 payload。需要凭据的发布使用调用端显式声明的 metadata-only 资源引用，并绑定本次用户、target 和 session。
 - 长构建或发布使用 `doops -session <s> exec --bg --target <t> --cmd '<cmd>'`。不要在普通 `exec` 命令中使用 `&`、`nohup` 或 `setsid`，因为调用结束时 agent 会终止该 shell 的子进程。
 - 不要混用 token：
   - gateway CLI 操作用 gateway user token。
@@ -137,8 +129,8 @@ doops targets --target unicom
 | :--- | :--- |
 | 执行确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'` |
 | AI 自主分析 | `doops -session <s> ask --target <t> --msg '<task>'` |
-| CI/CD 只读预演 | `doops -session <s> cicd run -target <t> -f deploy/environments.yaml -dry-run -set environment=<env> -set service=<service>` |
-| CI/CD 正式收敛 | `doops -session <s> cicd run -target <t> -f deploy/environments.yaml -set environment=<env> -set service=<service>` |
+| 发布前只读诊断 | `doops -session <s> ask --target <t> --msg '<target、服务范围、镜像、原因和验收条件；只读诊断>'` |
+| 正式发布 | `doops -session <s> ask --target <t> --apply --msg '<target、服务范围、镜像、原因和验收条件>'` |
 | 推送本地目录 | `doops -session <s> push --target <t> --src <dir>` |
 | 拉取远端工作区 | `doops -session <s> pull --target <t> --dest <dir>` |
 | 小文本读写 | `doops read/write ...` |

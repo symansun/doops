@@ -14,6 +14,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const credentialRunFixtureCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T) {
 	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("p", 32))
 	store := openCredentialTestStore(t)
