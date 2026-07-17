@@ -12,7 +12,7 @@ main:
       runner:
         cpus: 2
       docker:
-        image: golang:1.24-alpine
+        image: docker.io/library/golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191
       stages:
         - name: prepare tools
           script: apk add --no-cache bash git helm nodejs npm python3 py3-pytest py3-yaml
@@ -27,7 +27,7 @@ main:
       services:
         - docker
       docker:
-        image: golang:1.24-alpine
+        image: docker.io/library/golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191
       stages:
         - name: prepare tools
           script: apk add --no-cache bash docker-cli git helm nodejs npm python3 py3-pytest py3-yaml
@@ -103,7 +103,7 @@ master:
       runner:
         cpus: 2
       docker:
-        image: golang:1.24-alpine
+        image: docker.io/library/golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191
       stages:
         - name: prepare tools
           script: apk add --no-cache bash git helm nodejs npm python3 py3-pytest py3-yaml
@@ -116,7 +116,7 @@ master:
       runner:
         cpus: 2
       docker:
-        image: golang:1.24-alpine
+        image: docker.io/library/golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191
       stages:
         - name: prepare tools
           script: apk add --no-cache bash git helm nodejs npm python3 py3-pytest py3-yaml

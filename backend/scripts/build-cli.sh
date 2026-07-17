@@ -8,13 +8,13 @@ usage() {
   cat <<'EOF'
 用法:
   bash scripts/build-cli.sh
-  bash scripts/build-cli.sh --all
+  bash scripts/build-cli-release.sh
 
 说明:
   默认输出:
     bin/doops
 
-  --all 额外输出:
+  发布产物只能由固定摘要的 Linux builder 通过 build-cli-release.sh 生成:
     skills/doops-cli/bin/doops-darwin-amd64
     skills/doops-cli/bin/doops-darwin-arm64
     skills/doops-cli/bin/doops-linux-amd64
@@ -63,6 +63,16 @@ build_one() {
   size="$(du -h "${out}" | cut -f1)"
   echo "Built: ${out} (${goos}/${goarch}, ${size})"
 }
+
+if [[ "${BUILD_ALL}" == "true" ]]; then
+  actual_builder="$(go env GOOS)/$(go env GOARCH) $(go version | awk '{print $3}')"
+  expected_builder="linux/amd64 go1.24.13"
+  if [[ "${actual_builder}" != "${expected_builder}" ]]; then
+    echo "release artifacts require ${expected_builder}; got ${actual_builder}" >&2
+    echo "run scripts/build-cli-release.sh instead" >&2
+    exit 1
+  fi
+fi
 
 host_goos="$(go env GOOS)"
 host_goarch="$(go env GOARCH)"
