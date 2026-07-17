@@ -579,6 +579,20 @@ func TestShellNotificationIncludesRawKind(t *testing.T) {
 	if params["data"] != "raw-kind\n" {
 		t.Fatalf("expected shell output, got %#v", params["data"])
 	}
+
+	for {
+		var response map[string]interface{}
+		if err := conn.ReadJSON(&response); err != nil {
+			t.Fatalf("read shell response: %v", err)
+		}
+		if response["id"] != float64(43) {
+			continue
+		}
+		if errObj, ok := response["error"]; ok {
+			t.Fatalf("shell returned error: %#v", errObj)
+		}
+		break
+	}
 }
 
 func TestSubscribeDoagentSSEReturnsErrorWhenStreamEndsWithoutFinalEvent(t *testing.T) {

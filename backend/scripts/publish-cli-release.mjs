@@ -18,22 +18,22 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index];
     const value = argv[index + 1];
-    if (!["--repo", "--tag", "--commit", "--dir"].includes(key) || !value) {
+    if (!["--repo", "--tag", "--commit", "--dir", "--image"].includes(key) || !value) {
       throw new Error(
-        "usage: publish-cli-release.mjs --repo <repo> --tag <tag> --commit <sha> --dir <asset-dir>",
+        "usage: publish-cli-release.mjs --repo <repo> --tag <tag> --commit <sha> --dir <asset-dir> --image <image-ref>",
       );
     }
     values[key.slice(2)] = value;
   }
-  if (Object.keys(values).length !== 4) {
+  if (Object.keys(values).length !== 5) {
     throw new Error(
-      "usage: publish-cli-release.mjs --repo <repo> --tag <tag> --commit <sha> --dir <asset-dir>",
+      "usage: publish-cli-release.mjs --repo <repo> --tag <tag> --commit <sha> --dir <asset-dir> --image <image-ref>",
     );
   }
   return values;
 }
 
-const { repo, tag, commit, dir } = parseArgs(process.argv.slice(2));
+const { repo, tag, commit, dir, image } = parseArgs(process.argv.slice(2));
 const token = process.env.CNB_TOKEN;
 if (!token) {
   throw new Error("CNB_TOKEN is required to publish CNB Release Assets");
@@ -94,7 +94,7 @@ async function getOrCreateRelease() {
       tag_name: tag,
       target_commitish: commit,
       name: tag,
-      body: `CLI assets for ${tag} (${commit})`,
+      body: `Agent image: ${image}\n\nCLI assets for ${tag} (${commit})`,
       make_latest: "true",
     },
   });
