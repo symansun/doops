@@ -2,19 +2,21 @@
 
 ## Goal
 
-Use one strict declaration compiler for credential preparation and trusted
-CI/CD admission. Declaration schemas are explicitly versioned, while every
-Gateway and Agent uses one credential-plan control-plane protocol.
+Use one strict declaration compiler for credential preparation and one
+single-use Gateway prompt binding. Declaration schemas are explicitly
+versioned, while every Gateway and Agent uses one credential-plan protocol.
 
 ## Completion Criteria
 
-- Credential preparation and trusted reconciliation consume the same parsed
-  workflow and configuration context.
+- Credential preparation and the prompt binding consume the same declaration
+  source identity and immutable revision.
 - `SemanticRelease` catalog entries are resolved relative to the composition
   document and validated as `ServiceRelease`.
 - v2 and v3 declaration roots, referenced documents, and path semantics are
   documented and tested.
 - Agent registration advertises `doops.sh/credential-plan/v2`.
+- doagent `initialize` advertises the complete
+  `doops.reconciliation-context/v2` capability.
 - Gateway credential preparation rejects incompatible Agents before tool
   dispatch with a deterministic protocol error.
 - Repository contract tests validate every checked-in deployment root.
@@ -40,8 +42,8 @@ configuration sources are rejected.
 
 ## Repository Guarantees
 
-- Credential prepare and trusted reconciliation share one workflow compiler and
-  one environment context.
+- Credential prepare owns the strict workflow compiler. The prompt carries only
+  the resulting metadata-only `CredentialRun` and the same source identity.
 - Semantic roots load and validate every referenced `ServiceRelease`.
 - v3 roots strictly validate every referenced `EnvironmentService` and
   `ServiceDefinition`.
@@ -56,6 +58,9 @@ configuration sources are rejected.
 - Apply requires `ask` and `credential:use`, a compatible Agent, and one exact
   short-lived prepared run bound to the user, target, session, workflow and
   workspace commit. The binding is consumed once before dispatch.
+- CI/CD prompt dispatch rejects doagent before model execution unless its
+  capability includes the exact schema, call-context schema, MCP meta key,
+  credential-run digest binding, and source workspace-commit binding.
 - Credential prepare failures use a versioned JSON error object consumed
   strictly by the CLI.
 - Repository and external contract tests compile declared deployment roots.

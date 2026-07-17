@@ -55,13 +55,15 @@ main:
             RELEASE_TAG="${CNB_COMMIT}"
             source backend/runtime-versions.env
             BASE_IMAGE="${DOOPS_AGENT_BASE_IMAGE}"
+            docker pull "${DO_AGENT_IMAGE}"
+            ACTUAL_DOAGENT_VERSION="$(docker run --rm --entrypoint /usr/local/bin/do-agent "${DO_AGENT_IMAGE}" --version | awk '{print $NF}')"
+            test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"
             APP_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${RELEASE_TAG}"
             docker pull "${BASE_IMAGE}"
-            ACTUAL_DOAGENT_VERSION="$(docker run --rm --entrypoint /usr/local/bin/do-agent "${BASE_IMAGE}" --version | awk '{print $NF}')"
-            test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"
             docker build \
               --platform linux/amd64 \
               --build-arg DOOPS_AGENT_BASE_IMAGE="${BASE_IMAGE}" \
+              --build-arg DO_AGENT_IMAGE="${DO_AGENT_IMAGE}" \
               --build-arg DO_AGENT_VERSION="${DO_AGENT_VERSION}" \
               --build-arg DO_AGENT_INDEX_DIGEST="${DO_AGENT_INDEX_DIGEST}" \
               --build-arg DO_AGENT_PLATFORM="${DO_AGENT_PLATFORM}" \
@@ -73,6 +75,8 @@ main:
               backend
             ACTUAL_BASE_IMAGE="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.base.name" }}' "${APP_IMAGE}")"
             test "${ACTUAL_BASE_IMAGE}" = "${BASE_IMAGE}"
+            ACTUAL_DOAGENT_IMAGE="$(docker inspect --format '{{ index .Config.Labels "org.l8ai.doagent.image" }}' "${APP_IMAGE}")"
+            test "${ACTUAL_DOAGENT_IMAGE}" = "${DO_AGENT_IMAGE}"
             docker run --rm --entrypoint /app/doops-agent "${APP_IMAGE}" -help >/dev/null
             ACTUAL_DOAGENT_VERSION="$(docker run --rm --entrypoint /usr/local/bin/do-agent "${APP_IMAGE}" --version | awk '{print $NF}')"
             test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"

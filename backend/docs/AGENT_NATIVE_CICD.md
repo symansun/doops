@@ -1,64 +1,45 @@
 # Agent-Native CI/CD
 
-DoOps 不实现 Agent 框架。DoOps keeps CI/CD on the existing Agent-native path:
+DoOps CI/CD 只有一条运行路径：
 
 ```text
-SemanticRelease -> resolve declared source commit -> credential prepare -> Ask -> doagent -> $doops-cicd -> runtime tool binding
+explicit declaration
+  -> resolve declared repository/branch/immutable commit
+  -> Gateway credential prepare
+  -> metadata-only CredentialRun
+  -> Gateway-bound Ask
+  -> doagent $doops-cicd
 ```
 
-There is one Agent-native release path. It does not introduce another controller,
-private deployment API, shell adapter, or external release event.
-
-## Responsibilities
-
-| Component | Responsibility |
-| :--- | :--- |
-| `doops` CLI | Resolve an explicit workflow, target, declared repository/branch, and immutable source commit, then issue one ordinary Ask |
-| Gateway | Authenticate the target, enforce the session/resource boundary, route Ask, and bind the result to authoritative ACP tool-call events |
-| `doops-agent` | Check out the declared source at the exact prepared commit, bind the doagent session to it, and expose ordinary DoOps primitives |
-| `doagent` | Select the Skill, coordinate multiple agents, call available modules, and report observed facts |
-| `$doops-cicd` Skill | Read the declarative workflow, select existing DoOps modules, execute dry-run/apply within authorization, and emit one JSON `DeploymentRun` as the final response |
-
-DoOps does not implement planning, Skill routing, tool registries, retry loops,
-or recovery policy in a second control plane. The Gateway only binds completed
-runtime tool calls to declared evidence references. doagent
-retains native context, planning, 多 Agent delegation, Skill composition, and
-tool selection.
-
-When a workflow upgrades a DoOps Agent, its configured control target must be a
-different Gateway identity from the workload being replaced. The stable control
-Agent creates the declared detached Helm Job and remains connected while that
-Job updates and verifies the deployment.
+不得改走直连 Agent、SSH、手工 Helm、临时脚本或静默兼容分支。
 
 ## CLI Contract
 
-The only CI/CD entry is:
-
 ```text
-doops -session <session> cicd run -f <workflow.yaml> -target <configured-target> \
-  [--dry-run] [--set key=value ...]
+doops -session <session> cicd run -f <manifest.yaml> \
+  -target <gateway-target> [--dry-run] [--set key=value ...]
 ```
 
-The CLI must receive an explicit configured target. It never infers a cluster,
-namespace, registry, release, or credentials from names or historical state.
-Before credential prepare, the CLI reads the declared repository and branch. It
-uses an explicitly declared immutable revision when present; otherwise it
-resolves the remote branch to one exact commit. The Agent checks out that branch
-and rejects the run if its HEAD is not the prepared commit. The same commit is
-bound to credential prepare, the single-use credential authorization, Ask, and
-the Agent workspace. A moved branch or dirty checkout fails closed; execution
-does not fall back to a pushed snapshot, shell, kubectl, SSH, or a manual
-release path.
+`target` 和 `session` 必须显式提供。CLI 从声明解析 HTTPS 源仓库、branch 和不可变
+commit；没有固定 revision 时只允许通过 `git ls-remote` 将 branch 解析为一个
+commit。CLI 不把本地 Secret、token 或任意工作区快照作为发布源。
 
-The CLI sends a small task envelope to ordinary `doops_agent_prompt`:
+在 Ask 前，CLI 调用 `POST /v1/credentials/prepare`。Gateway 使用目标 Agent 的
+`doops.sh/credential-plan/v2` 编译声明、校验授权并返回不含 Secret 内容的
+`CredentialRun`。dry-run 的 mutation count 必须为 0；apply 的凭据物化发生在
+Ask 前。
+
+## Prompt Binding
+
+CI/CD instruction 的固定形状如下：
 
 ```json
 {
   "task": "execute-doops-cicd",
   "skill": "$doops-cicd",
   "executionMode": "dry-run",
-  "manifestPath": "backend/deploy/workflows/example.yaml",
-  "workspaceCommit": "<immutable declared source commit>",
+  "manifestPath": "deploy/release.yaml",
+  "workspaceCommit": "<immutable commit>",
   "source": {
     "repository": "https://example.test/app.git",
     "branch": "main"
@@ -67,134 +48,47 @@ The CLI sends a small task envelope to ordinary `doops_agent_prompt`:
   "credentialRun": {
     "apiVersion": "doops.sh/v2",
     "kind": "CredentialRun",
-    "id": "<credential run id>",
+    "id": "<run id>",
     "mode": "dry-run",
     "cluster": "<cluster>",
     "instance": "<instance>",
-    "template": "example-release",
-    "project": "example",
-    "environment": "oilan",
-    "mutationCount": 0,
     "materializations": []
   }
 }
 ```
 
-`--dry-run` is read-only and requires mutation count zero. Without it, the run
-is an explicit apply request and the Gateway selects the native doagent
-mutation-capable mode. There is no separate mutation flag.
+Gateway 对 instruction 使用严格 JSON 解码，拒绝未知字段、target/mode/source/
+workspace 不一致和敏感输入。单次授权绑定 user token、target、session、manifest、
+source、mode 与完整 `CredentialRun` digest；只有在限流和 target 资源锁成功后才
+消费，消费后才能转发 Ask。
 
-The CLI calls `POST /v1/credentials/prepare` before Ask. The Gateway resolves
-`credentialRef` and `credentialBundleRef`, verifies the caller's grants, and
-returns only materialization metadata in `credentialRun`. For apply, the target
-Agent creates or updates the destination resource before Ask; for dry-run it
-returns a zero-mutation plan. The Gateway issues a single-use authorization
-bound to user token, target, session, manifest path, declared source, mode, and
-the complete `credentialRun` digest. It consumes that authorization only after
-rate limiting and the target resource lock succeed, immediately before
-forwarding the prompt. Offline, busy, or rate-limited requests do not consume
-it.
+## Version Gates
 
-## Gateway And Agent
+外层 Agent 注册必须声明 `doops.sh/credential-plan/v2`。CI/CD prompt 调用 doagent
+前还必须通过 `initialize` 验证：
 
-All ordinary prompts use the Gateway `ask` action and a session resource key.
-The Gateway does not synthesize observations or convert a text response into
-deployment evidence. It records completed ACP tool calls and rejects evidence
-that does not reference one of those calls. It binds the evidence result and
-subject from the trusted tool trace, records the Agent-side completion time, and
-first requires the model envelope to match the validated reconciliation
-instruction exactly, then rebuilds `apiVersion`, `metadata`, and `spec` from
-that instruction.
+- `schemaVersion=doops.reconciliation-context/v2`
+- `callContextSchemaVersion=doops.reconciliation-call-context/v1`
+- `mcpMetaKey=doops.sh/reconciliation-context`
+- `credentialRunDigest=true`
+- `sourceWorkspaceCommit=true`
 
-`response_format=json` remains a generic structured-result transport for callers
-that need it. The bridge accepts exactly one final JSON response from the fresh
-doagent session, waits for the authoritative `turn_finished` event, and binds
-declared evidence to the matching completed runtime tool call.
+任一字段缺失或不同都返回 `doagent_protocol_incompatible`，不得进入模型执行。
 
-Permission requests from doagent are fail-closed. DoOps never answers a
-`permission.updated` request on behalf of the user or the Agent engine.
+## Secret Boundary
 
-## Skill Result
-
-For `response_format=json`, `$doops-cicd` emits exactly one JSON object as its
-final response:
-
-```json
-{
-  "apiVersion": "doops.sh/v2",
-  "kind": "DeploymentRun",
-  "metadata": {
-    "workflow": "backend/deploy/workflows/example.yaml",
-    "runId": "<prepared run id>",
-    "workspaceCommit": "<immutable declared source commit>"
-  },
-  "spec": {
-    "mode": "dry-run"
-  },
-  "status": {
-    "phase": "planned",
-    "mutationCount": 0,
-    "capabilities": {
-      "ObserveWorkspaceSource": {
-        "tool": "ObserveWorkspaceSource",
-        "evidenceKind": "source-identity",
-        "evidenceSubject": "source-identity",
-        "scopeDigest": "sha256:<trusted scope digest>"
-      }
-    },
-    "evidence": [
-      {
-        "subject": "source-identity",
-        "toolRef": {
-          "tool": "plan.ObserveWorkspaceSource",
-          "input": {}
-        },
-        "observedAt": "2026-07-17T00:00:00Z"
-      }
-    ]
-  }
-}
-```
-
-The model emits `status.capabilities` as `{}` for trusted reconciliation.
-Gateway replaces it with the capability identity and scope digest from the
-completed attested tool calls. Model-authored capability names or values are
-rejected.
-
-Valid phases are `planned`, `converged`, `blocked`, `failed`, and
-`outcome-unknown`. A successful result must contain evidence from real module
-outputs. The literal text `admitted`, an Agent-authored attestation, or an Agent
-claim without completed runtime tool calls is not evidence. Agent-authored
-evidence contains exactly `subject`, `observedAt`, and `toolRef`, with the exact
-model-visible tool name and JSON input. Trusted DoOps plan tools use
-`plan.<Tool>` with `{}` because the trusted context is injected outside model
-arguments. `credentialRun` is instruction-only preparation context and is not
-copied into the result. The Gateway resolves `toolRef` to one completed call
-from the accepted `turnId` and injects `toolCall` with its exact ID, runtime
-tool name, input and result. Conflicting duplicate IDs and ambiguous repeated
-calls are rejected.
-Image generation and Agent delegation belong to doagent multi-agent execution,
-not to the DoOps command or module surface.
-
-The Skill owns the workflow-specific schema and evidence requirements. It must
-use existing DoOps modules and preserve credential boundaries: references,
-resource names, types, key names, resource versions, digests, fingerprints,
-expiry, status, and error categories may be used, but Secret values are not
-read into prompts, logs, Git, issues, remote workspaces, or results.
-
-## Retained Surface
-
-The retained Go surface is ordinary Ask, workspace/session transport, generic
-structured results, target authorization, audit, and existing primitive tools.
+模型只可看到凭据 ID、grant/version ID、资源名、namespace、Secret type、key 名、
+resourceVersion、digest、fingerprint、过期时间、状态和错误分类。Secret payload
+不得进入 prompt、日志、Git、远端工作区或结果。
 
 ## Code Map
 
 | Responsibility | Code |
 | :--- | :--- |
-| Thin CI/CD CLI | `backend/skills/doops-cli/cli/doops/workflow.go` |
-| Workspace push | `backend/skills/doops-cli/cli/doops/push.go` |
-| Ask routing and ACP event forwarding | `backend/agent/internal/server/handler_ws.go` |
-| Gateway authorization and resource locking | `backend/agent/internal/server/tunnel_hub.go` |
-| Workspace upload | `backend/agent/internal/server/workspace_upload.go` |
-| Ask request types | `backend/agent/api/mcp.go` |
+| CLI entry and instruction | `backend/skills/doops-cli/cli/doops/workflow.go` |
+| Declared source resolution | `backend/skills/doops-cli/cli/doops/workflow_source.go` |
+| Credential prepare client | `backend/skills/doops-cli/cli/doops/credential_prepare.go` |
+| Gateway prepare endpoint | `backend/agent/internal/server/credential_runtime.go` |
+| Single-use prompt binding | `backend/agent/internal/server/credential_prompt_binding.go` |
+| Agent/doagent dispatch | `backend/agent/internal/server/handler_ws.go` |
 | CI/CD Skill | `backend/agent/skills/doops-cicd/SKILL.md` |

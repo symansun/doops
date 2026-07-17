@@ -1,4 +1,5 @@
 ARG DOOPS_AGENT_BASE_IMAGE=invalid.invalid/doops-agent-base-image-must-be-specified
+ARG DO_AGENT_IMAGE=invalid.invalid/doagent-image-must-be-specified
 ARG DO_AGENT_VERSION
 ARG DO_AGENT_INDEX_DIGEST
 ARG DO_AGENT_PLATFORM
@@ -12,22 +13,27 @@ COPY . .
 WORKDIR /app/agent
 RUN CGO_ENABLED=0 go build -o /app/doops-agent ./cmd/agent
 
+FROM ${DO_AGENT_IMAGE} AS doagent-runtime
+
 # Stage 2: Lightweight app image.
 # The base image owns sandbox/doagent/buildkit/system packages. This layer only
 # changes when doops code, skills, docs, or entrypoints change.
 FROM ${DOOPS_AGENT_BASE_IMAGE}
 ARG DOOPS_AGENT_BASE_IMAGE
+ARG DO_AGENT_IMAGE
 ARG DO_AGENT_VERSION
 ARG DO_AGENT_INDEX_DIGEST
 ARG DO_AGENT_PLATFORM
 ARG DO_AGENT_PLATFORM_DIGEST
 LABEL org.opencontainers.image.base.name="${DOOPS_AGENT_BASE_IMAGE}"
+LABEL org.l8ai.doagent.image="${DO_AGENT_IMAGE}"
 LABEL org.l8ai.doagent.version="${DO_AGENT_VERSION}"
 LABEL org.l8ai.doagent.index.digest="${DO_AGENT_INDEX_DIGEST}"
 LABEL org.l8ai.doagent.platform="${DO_AGENT_PLATFORM}"
 LABEL org.l8ai.doagent.platform.digest="${DO_AGENT_PLATFORM_DIGEST}"
 
 COPY --from=builder /app/doops-agent /app/doops-agent
+COPY --from=doagent-runtime /usr/local/bin/do-agent /usr/local/bin/do-agent
 COPY --from=builder /app/agent/skills /app/skills
 COPY --from=builder /app/agent/agent-entrypoint.sh /app/agent-entrypoint.sh
 COPY --from=builder /app/agent/sandbox-entrypoint.sh /app/sandbox-entrypoint.sh

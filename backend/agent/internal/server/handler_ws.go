@@ -977,6 +977,48 @@ type agentPromptExecutionContext struct {
 	NativeMode string
 }
 
+const trustedReconciliationContextProtocolV2 = "doops.reconciliation-context/v2"
+
+func validateDoagentCICDCapabilities(response map[string]interface{}) error {
+	result, ok := response["result"].(map[string]interface{})
+	if !ok {
+		return errors.New("doagent initialize returned no result")
+	}
+	agentCapabilities, ok := result["agentCapabilities"].(map[string]interface{})
+	if !ok {
+		return errors.New("doagent capabilities are missing")
+	}
+	capability, ok := agentCapabilities["trustedReconciliationContext"].(map[string]interface{})
+	if !ok ||
+		capability["schemaVersion"] != trustedReconciliationContextProtocolV2 ||
+		capability["callContextSchemaVersion"] != "doops.reconciliation-call-context/v1" ||
+		capability["mcpMetaKey"] != "doops.sh/reconciliation-context" ||
+		capability["credentialRunDigest"] != true ||
+		capability["sourceWorkspaceCommit"] != true {
+		return errors.New("doagent trusted reconciliation capability is incompatible")
+	}
+	return nil
+}
+
+func requireDoagentCICDCapabilities(baseURL, instruction, sessionID string) error {
+	var marker struct {
+		Task string `json:"task"`
+	}
+	if json.Unmarshal([]byte(instruction), &marker) != nil || marker.Task != "execute-doops-cicd" {
+		return nil
+	}
+	response, err := doagentRPC(baseURL, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      "cicd-capability-" + sessionID,
+		"method":  "initialize",
+		"params":  map[string]interface{}{},
+	})
+	if err != nil {
+		return err
+	}
+	return validateDoagentCICDCapabilities(response)
+}
+
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
 func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, model string, responseFormat string, execution agentPromptExecutionContext, pushProgress notificationSender, writeJSON func(v interface{})) {
 	log.Printf("🤖 WS Running doagent via ACP HTTP: session=%s structured=%t model=%s",
@@ -988,6 +1030,10 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	}
 	if err := ensureDoagentAvailable(doagentURL); err != nil {
 		writeJSON(buildErrorResponse(reqID, -32603, "doagent_unavailable"))
+		return
+	}
+	if err := requireDoagentCICDCapabilities(doagentURL, instr, doopsSessionID); err != nil {
+		writeJSON(buildErrorResponse(reqID, -32603, "doagent_protocol_incompatible"))
 		return
 	}
 
