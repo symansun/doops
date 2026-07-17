@@ -34,6 +34,7 @@ func TestAgentPromptJSONReturnsFinalMessageInStructuredContent(t *testing.T) {
 		"status":{
 			"phase":"planned",
 			"mutationCount":0,
+			"capabilities":{"source-identity":"observed"},
 			"evidence":[{
 				"subject":"source",
 				"toolRef":{
@@ -419,6 +420,9 @@ func TestBindDeploymentRunEvidenceRejectsModelAuthoredRuntimePayload(t *testing.
 		},
 		{name: "retired status object", mutate: func(status map[string]interface{}) { status["runtimeAttestation"] = map[string]interface{}{} }, want: "is not supported"},
 		{name: "retired status string", mutate: func(status map[string]interface{}) { status["resultDigest"] = "sha256:" + strings.Repeat("a", 64) }, want: "is not supported"},
+		{name: "capabilities array", mutate: func(status map[string]interface{}) {
+			status["capabilities"] = []interface{}{"source-identity"}
+		}, want: "capabilities must be a non-empty JSON object"},
 		{name: "sensitive failure field", mutate: func(status map[string]interface{}) {
 			status["failures"] = []interface{}{map[string]interface{}{"githubToken": "token-canary"}}
 		}, want: "forbidden sensitive field"},
@@ -636,6 +640,7 @@ func deploymentRunWithToolRef(tool string, input interface{}) map[string]interfa
 		"status": map[string]interface{}{
 			"phase":         "planned",
 			"mutationCount": 0,
+			"capabilities":  map[string]interface{}{"source-identity": "observed"},
 			"evidence": []interface{}{
 				map[string]interface{}{
 					"subject":    "source",

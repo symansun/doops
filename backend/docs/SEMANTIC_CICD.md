@@ -103,6 +103,7 @@ doagent emits exactly one JSON object as its final response:
     "phase": "planned",
     "mutationCount": 0,
     "capabilities": {
+      "source-identity": "observed",
       "ObserveWorkspaceSource": {
         "available": true
       }

@@ -452,6 +452,12 @@ func bindDeploymentRunEvidence(
 	if err := rejectRetainedSensitiveDeploymentRunFields(result); err != nil {
 		return "", nil, err
 	}
+	capabilities, ok := status["capabilities"].(map[string]interface{})
+	if !ok || len(capabilities) == 0 {
+		return "", nil, fmt.Errorf(
+			"DeploymentRun.status.capabilities must be a non-empty JSON object",
+		)
+	}
 	for field := range status {
 		switch field {
 		case "phase", "mutationCount", "capabilities", "evidence", "failures":
