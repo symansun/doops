@@ -1,62 +1,39 @@
-# DoOps v3 拆分声明契约
+# DoOps v3 声明契约
 
 ## 根类型
 
-`doops.sh/v3` 只定义两个入口：
+- `BuildDefinition`：`deploy/deploy.yaml`。
+- `EnvironmentRegistry`：`deploy/environments.yaml`。
 
-- `BuildDefinition`：固定路径 `deploy/deploy.yaml`。
-- `EnvironmentDefinition`：固定路径
-  `deploy/environments/<metadata.name>/environment.yaml`。
+`ServiceDefinition` 和 `EnvironmentService` 只能被根声明引用，不能单独作为部署入口。
 
-公共和环境服务文件是被引用声明，不能单独发起环境部署：
+## EnvironmentRegistry
 
-- `ServiceDefinition`：`deploy/services/<metadata.name>.yaml`。
-- `EnvironmentService`：
-  `deploy/environments/<environment>/services/<metadata.name>.yaml`。
+每个 `environments.<environment>` 必须声明：
 
-## EnvironmentDefinition
+- `target.name/cluster/instance/session`；
+- `source.repository/branch/build`；
+- `helm.release/namespace/chart/values/atomic/wait`；
+- `artifacts.targetRegistry` 和三个 Secret 引用；
+- `services.<service>` 的明确文件路径；
+- `healthChecks`。
 
-必须声明：
-
-- `metadata.name`；
-- `spec.application`；
-- `spec.source.repository/branch/buildManifest`；
-- `spec.execution.deploy.target/cluster/instance/session`；
-- `spec.helm.release/namespace/chart/values/atomic/wait/rollbackOnFailure`；
-- `spec.artifacts.targetRegistry` 和 Secret 引用元数据；
-- `spec.services` 中每个服务的明确文件路径；
-- `spec.healthChecks`、`spec.releaseProcess`、`spec.stopConditions`。
-
-环境文件就是部署根，不得包含 `configurationSource` 或 `workflow`。
+执行必须显式选择 `inputs.environment` 和 `inputs.service`。所选服务路径必须位于
+`deploy/environments/<environment>/services/`。
 
 ## 引用闭合
 
-对每个 `spec.services.<name>`：
+所选 `EnvironmentService` 必须：
 
-1. 路径必须位于当前环境的 `services/`。
-2. 文件必须是同版本 `EnvironmentService`，且 environment 与根环境一致。
-3. `serviceDefinition` 必须位于 `deploy/services/`。
-4. 公共定义必须是同版本 `ServiceDefinition`。
-5. 服务身份、Helm value、workload 和 container 必须在两层定义中一致。
-6. 环境服务的 target repository 与 digest 必须与 Helm values 完全一致。
+1. 与所选环境一致；
+2. 引用 `deploy/services/` 下的同版本 `ServiceDefinition`；
+3. 与公共定义保持 service、Helm value、workload 和 container 一致；
+4. 声明源/目标镜像和有效 `sha256` digest；
+5. 使用根环境声明的 Chart、values 和 target registry。
 
-拒绝路径逃逸、重复服务、隐式目录扫描、未知字段替代、跨环境引用和版本混用。
+拒绝路径逃逸、未知环境或服务、跨环境引用、版本混用、隐式目录扫描和未声明凭据。
 
 ## v2 边界
 
-`doops.sh/v2` 的 `DeploymentTemplate`、`SemanticRelease` 和 `ServiceRelease` 保持原
-契约。v3 执行器不得生成或读取 v2 workflow 作为中间产物。
-
-v2 workflow 的 `configurationSource` 只接受显式
-`doops.sh/v2 EnvironmentRegistry`。`EnvironmentDefinition` 是 v3 部署根，不是 v2
-配置源。
-
-## Credential Plan
-
-声明 apiVersion 与 Gateway-Agent credential-plan 协议是两个不同维度：
-
-- 声明编译器显式接受 v2 workflow 根和 v3 `EnvironmentDefinition` 根；
-- Gateway-Agent 控制面统一使用 `doops.sh/credential-plan/v2`；
-- credential prepare 与可信执行上下文共享同一严格编译结果；
-- v3 根必须闭合验证全部 `EnvironmentService` 和 `ServiceDefinition` 引用；
-- 未声明的 source/target/runtime Secret 引用直接阻断。
+v2 `DeploymentTemplate` 继续使用 v2 `EnvironmentRegistry` configurationSource。v3 根
+不得生成或读取 v2 workflow 作为中间声明。

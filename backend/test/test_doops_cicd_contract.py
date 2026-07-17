@@ -16,20 +16,16 @@ def test_doops_cicd_skill_is_generic_and_agent_native():
     text = (SKILL / "SKILL.md").read_text()
     assert "doops.sh/v3" in text
     assert "doops.sh/v2" in text
-    assert "doagent 原生多 Agent 引擎" in text
+    assert "doagent 原生执行" in text
     assert "BuildDefinition" in text
-    assert "EnvironmentDefinition" in text
+    assert "EnvironmentRegistry" in text
     assert "ServiceDefinition" in text
     assert "EnvironmentService" in text
-    assert "DeploymentReview" in text
-    assert "SemanticRelease" in text
-    assert "ServiceRelease" in text
     assert "deploy/deploy.yaml" in text
-    assert "deploy/environments/<environment>/environment.yaml" in text
-    assert "不得把 v3 声明降级" in text
-    assert "回滚基线" in text
-    assert "pipeline" in text
-    assert "toolRef" in text
+    assert "deploy/environments.yaml" in text
+    assert "不再是可执行入口" in text
+    assert "不上传工作区快照" in text
+    assert "workspaceCommit" in text
     for forbidden in (
         "DeploymentPlan",
         "ReconciliationResult",
@@ -44,16 +40,16 @@ def test_v3_split_contract_is_chinese_and_has_no_workflow_index():
     execution = (SKILL / "references" / "execution-contract.md").read_text()
     for kind in (
         "BuildDefinition",
-        "EnvironmentDefinition",
+        "EnvironmentRegistry",
         "ServiceDefinition",
         "EnvironmentService",
     ):
         assert kind in declaration
-    assert "deploy/environments.yaml" not in declaration
+    assert "deploy/environments.yaml" in declaration
     assert "deploy/workflows/" not in declaration
-    assert "同一 apiVersion" in (SKILL / "SKILL.md").read_text()
-    assert "只执行一次" in execution
-    assert "rollback baseline" in execution
+    assert "inputs.environment" in declaration
+    assert "--reuse-values" in execution
+    assert "不包含 `workspaceCommit` 或 `evidence`" in execution
 
 
 def test_existing_workflow_and_execution_contract_define_one_result():
@@ -69,14 +65,8 @@ def test_existing_workflow_and_execution_contract_define_one_result():
     assert "mutationCount" in contract
     assert "evidence" in contract
     assert "fallback" in contract.lower()
-    assert "exactly one shared-release convergence" in contract
-    assert "zero deployment executor" in contract
-    assert "invocations" in contract
-    assert "unselected service" in contract
-    assert "toolRef" in contract
-    assert "toolCall" in contract
-    assert "turnId" in contract
-    assert "Gateway" in contract
+    assert "--reuse-values" in contract
+    assert "不得使用全量 values 更新未选服务" in contract
 def test_system_prompt_routes_templates_to_doops_cicd():
     prompt = (ROOT / "agent" / "skills" / "system_prompt.md").read_text()
     assert "DeploymentTemplate" in prompt

@@ -1,76 +1,30 @@
-# DoOps v3 执行与证据契约
-
-## Agent 原生执行
-
-doagent 根据声明发现运行时能力、委派独立 Agent，并选择受信任 DoOps 工具。Skill
-不固定工具名称，不生成 shell 流水线。缺少所需能力时返回 blocked。
+# DoOps v3 执行契约
 
 ## dry-run
 
-- 不执行 mutation。
-- 观察源码身份、六个源/目标 digest、目标节点镜像可拉取性、Helm 基线、权限和健康检查。
-- 返回 apply 仍需执行的动作，`mutationCount: 0`。
-- `ObserveTargetRegistryImageSet` 必须执行。目标 digest 不存在时返回每个服务的
-  `present: false`，这是需要同步的计划事实，不是观察失败；认证、网络或非 404
-  registry 错误仍必须阻断。
+- 不执行 mutation，`mutationCount` 必须为 0。
+- 验证所选源镜像 digest、目标镜像状态、Helm release、工作负载和公开健康检查。
+- 目标镜像缺失是待同步事实；认证、网络或非 404 registry 错误必须阻断。
 
 ## apply
 
-顺序为：
+1. 从声明的 HTTPS repository/branch 获取部署声明。
+2. 验证所选源镜像 digest。
+3. 仅在目标 digest 缺失时同步镜像，并验证源目标 digest 相等。
+4. 观察当前共享 Helm release。
+5. 使用 `--reuse-values` 仅覆盖所选服务的 image、enabled 和 replicas。
+6. 执行一次 atomic/wait Helm 收敛。
+7. 验证所选工作负载、Endpoints、日志和公开健康检查。
 
-1. 重新验证工作区源码身份。
-2. 验证所有声明源 digest。
-3. 只迁移目标仓库缺失的精确 digest。
-4. 验证源和目标 manifest digest 相等。
-5. 在工作负载不变时预拉取目标 digest。
-6. 观察当前 Helm revision 和全部工作负载镜像，形成 rollback baseline。
-7. 汇总所有服务，只执行一次 atomic/wait 共享 Helm 收敛
-   (exactly one shared-release convergence)。
-8. 验证实际镜像、就绪副本、Endpoints、日志和公开健康检查。
-
-任一 Helm 前置条件失败时，部署执行器调用次数必须为 0
-(zero deployment executor invocations)。mutation 后失败只能恢复
-本次观察到的 baseline，并返回回滚后的 Helm 和工作负载证据。
-
-`copyOnlyWhenTargetDigestMissing`、`requireSourceTargetDigestEquality` 和
-`prePullBeforeHelm` 是强制执行条件，不得只解析或写入文本计划后忽略。若没有可验证的
-全可调度节点预拉取执行器，`prePullBeforeHelm: true` 必须在 Helm 前阻断。
-
-v2 部分服务发布仍必须读取并保持每个 unselected service 的当前镜像身份。自托管
-Agent 发布必须由独立 control target 执行，不能让正在被替换的 Agent 控制自身升级。
+不得使用全量 values 更新未选服务。缺少运行时能力、凭据、声明或目标连接时返回
+`blocked`，不得 fallback。
 
 ## DeploymentRun
 
-结果 apiVersion 必须与根声明一致，kind 为 `DeploymentRun`。必须包含：
+- `metadata`：仅 `workflow/runId`。
+- `spec`：仅 `mode`。
+- `status`：`phase/mutationCount/capabilities/failures`。
+- 不包含 `workspaceCommit` 或 `evidence`。
 
-- `metadata.workflow/runId/workspaceCommit`；
-- `spec.mode`；
-- `status.phase/mutationCount/capabilities/evidence/failures`。
-
-顶层只允许 `apiVersion`、`kind`、`metadata`、`spec`、`status`。禁止把
-`phase`、`mutationCount`、`capabilities`、`evidence`、`failures`、`runId` 或
-`workspaceCommit` 放到顶层。Gateway 从已验证 instruction 重建
-`apiVersion/metadata/spec`；模型仍必须输出完整五字段对象，且这些字段必须先与
-instruction 精确一致，任何缺失、额外字段或值漂移都直接失败。
-受信任 reconciliation 的模型输出中 `status.capabilities` 必须是 `{}`。
-Gateway 根据当前 turn 已完成且 attestation 匹配的工具调用生成最终 capabilities；
-模型提供的 capability 名称和值一律不作为事实。
-
-`workspaceCommit` 必须是 credential prepare 前解析并由 Agent checkout 验证的
-声明源 commit。repository、branch、workspaceCommit、CredentialRun 与 apply
-授权必须作为同一绑定消费；branch 在两阶段之间移动时必须失败。
-
-phase 只允许 `planned`、`converged`、`blocked`、`failed`、
-`outcome-unknown`。每条 evidence 必须引用当前 turn 中完成的受信任工具调用；Gateway
-只接受匹配 `turnId` 的调用，并负责把 `toolRef` 解析为不可改写的 `toolCall`。
-受信任 DoOps plan 工具必须用模型可见名称 `plan.<Tool>` 和精确输入 `{}` 引用；
-声明字段、观察结果或 Gateway 注入的受信任上下文都不是模型调用参数。
-
-当请求使用 `response_format=json` 时，doagent 必须把一个且仅一个 JSON object
-作为 final response；该 final response 就是机器结果，不得写结果文件或输出
-Markdown、YAML、外围文本。`toolCall.result` 只包含摘要验证通过且移除 transport
-`_meta` 后的工具结果。
-
-不得把普通 Bash、Read、浏览器、子 Agent 文本或 Secret 内容当成部署证据。
-禁止 fallback 或静默降级。Image generation 与 Agent delegation 属于 doagent，
-不属于 DoOps 部署证据工具。
+phase 只允许 `planned`、`converged`、`blocked`、`failed`、`outcome-unknown`。
+final response 必须是唯一 JSON object，不得包含 Secret。

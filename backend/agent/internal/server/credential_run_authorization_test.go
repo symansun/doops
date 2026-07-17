@@ -61,7 +61,7 @@ func TestCredentialRunAuthorizationIsBoundAndSingleUse(t *testing.T) {
 		Instance:         "runner",
 		SessionID:        "release-session",
 		WorkflowPath:     "deploy/release.yaml",
-		SourceRepository: "https://example.test/repo.git", SourceBranch: "main", SourceRevision: strings.Repeat("a", 40),
+		SourceRepository: "https://example.test/repo.git", SourceBranch: "main", Inputs: map[string]string{"reason": "test"},
 		Mode: "dry-run",
 	}
 	run := CredentialRun{
@@ -85,19 +85,19 @@ func TestCredentialRunAuthorizationIsBoundAndSingleUse(t *testing.T) {
 	tampered.Environment = "staging"
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Mode, tampered,
+		request.SourceRepository, request.SourceBranch, request.Inputs, request.Mode, tampered,
 	); !errors.Is(err, ErrCredentialPrepareBindingInvalid) {
 		t.Fatalf("tampered credential run error = %v, want grant denied", err)
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Mode, run,
+		request.SourceRepository, request.SourceBranch, request.Inputs, request.Mode, run,
 	); err != nil {
 		t.Fatalf("consume credential run authorization: %v", err)
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Mode, run,
+		request.SourceRepository, request.SourceBranch, request.Inputs, request.Mode, run,
 	); !errors.Is(err, ErrCredentialPrepareBindingInvalid) {
 		t.Fatalf("replayed credential run error = %v, want grant denied", err)
 	}
@@ -109,7 +109,7 @@ func TestRevokedCredentialRunAuthorizationCannotBeConsumed(t *testing.T) {
 	auth := TokenAuth{UserID: user.ID, TokenID: token.ID}
 	request := credentialPrepareHTTPBody{
 		Cluster: "doops", Instance: "runner", SessionID: "release-session",
-		WorkflowPath: "deploy/release.yaml", SourceRepository: "https://example.test/repo.git", SourceBranch: "main", SourceRevision: strings.Repeat("a", 40), Mode: "dry-run",
+		WorkflowPath: "deploy/release.yaml", SourceRepository: "https://example.test/repo.git", SourceBranch: "main", Inputs: map[string]string{"reason": "test"}, Mode: "dry-run",
 	}
 	run := CredentialRun{
 		APIVersion: "doops.sh/v2", Kind: "CredentialRun", ID: "credrun_revoked",
@@ -125,7 +125,7 @@ func TestRevokedCredentialRunAuthorizationCannotBeConsumed(t *testing.T) {
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Mode, run,
+		request.SourceRepository, request.SourceBranch, request.Inputs, request.Mode, run,
 	); !errors.Is(err, ErrCredentialPrepareBindingInvalid) {
 		t.Fatalf("revoked credential run error = %v, want grant denied", err)
 	}
@@ -137,7 +137,7 @@ func TestOfflineWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.T) {
 	auth := TokenAuth{UserID: user.ID, TokenID: token.ID}
 	request := credentialPrepareHTTPBody{
 		Cluster: "doops", Instance: "offline-runner", SessionID: "release-session",
-		WorkflowPath: "deploy/release.yaml", SourceRepository: "https://example.test/repo.git", SourceBranch: "main", SourceRevision: strings.Repeat("a", 40), Mode: "dry-run",
+		WorkflowPath: "deploy/release.yaml", SourceRepository: "https://example.test/repo.git", SourceBranch: "main", Inputs: map[string]string{"reason": "test"}, Mode: "dry-run",
 	}
 	run := CredentialRun{
 		APIVersion: "doops.sh/v2", Kind: "CredentialRun", ID: "credrun_offline",
@@ -156,12 +156,11 @@ func TestOfflineWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.T) {
 	}
 
 	instruction := doopsCICDInstructionEnvelope{
-		Task:            "execute-doops-cicd-workflow",
-		Skill:           "$doops-cicd",
-		ExecutionMode:   request.Mode,
-		RunID:           "run-offline",
-		WorkflowPath:    request.WorkflowPath,
-		WorkspaceCommit: request.SourceRevision,
+		Task:          "execute-doops-cicd-workflow",
+		Skill:         "$doops-cicd",
+		ExecutionMode: request.Mode,
+		RunID:         "run-offline",
+		WorkflowPath:  request.WorkflowPath,
 		Source: struct {
 			Repository string `json:"repository"`
 			Branch     string `json:"branch"`
@@ -171,7 +170,6 @@ func TestOfflineWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.T) {
 	}
 	instruction.ResultContract.APIVersion = "doops.sh/v2"
 	instruction.ResultContract.Kind = "DeploymentRun"
-	instruction.ResultContract.RequireEvidence = true
 	instructionJSON, err := json.Marshal(instruction)
 	if err != nil {
 		t.Fatalf("encode workflow instruction: %v", err)
@@ -217,7 +215,7 @@ func TestOfflineWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.T) {
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Mode, run,
+		request.SourceRepository, request.SourceBranch, request.Inputs, request.Mode, run,
 	); err != nil {
 		t.Fatalf("offline workflow consumed credential authorization: %v", err)
 	}
@@ -229,7 +227,7 @@ func TestRateLimitedWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.
 	auth := TokenAuth{UserID: user.ID, TokenID: token.ID}
 	request := credentialPrepareHTTPBody{
 		Cluster: "doops", Instance: "runner", SessionID: "release-session",
-		WorkflowPath: "deploy/release.yaml", SourceRepository: "https://example.test/repo.git", SourceBranch: "main", SourceRevision: strings.Repeat("a", 40), Mode: "dry-run",
+		WorkflowPath: "deploy/release.yaml", SourceRepository: "https://example.test/repo.git", SourceBranch: "main", Inputs: map[string]string{"reason": "test"}, Mode: "dry-run",
 	}
 	run := CredentialRun{
 		APIVersion: "doops.sh/v2", Kind: "CredentialRun", ID: "credrun_rate_limited",
@@ -248,12 +246,11 @@ func TestRateLimitedWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.
 	}
 
 	instruction := doopsCICDInstructionEnvelope{
-		Task:            "execute-doops-cicd-workflow",
-		Skill:           "$doops-cicd",
-		ExecutionMode:   request.Mode,
-		RunID:           "run-rate-limited",
-		WorkflowPath:    request.WorkflowPath,
-		WorkspaceCommit: request.SourceRevision,
+		Task:          "execute-doops-cicd-workflow",
+		Skill:         "$doops-cicd",
+		ExecutionMode: request.Mode,
+		RunID:         "run-rate-limited",
+		WorkflowPath:  request.WorkflowPath,
 		Source: struct {
 			Repository string `json:"repository"`
 			Branch     string `json:"branch"`
@@ -263,7 +260,6 @@ func TestRateLimitedWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.
 	}
 	instruction.ResultContract.APIVersion = "doops.sh/v2"
 	instruction.ResultContract.Kind = "DeploymentRun"
-	instruction.ResultContract.RequireEvidence = true
 	instructionJSON, err := json.Marshal(instruction)
 	if err != nil {
 		t.Fatalf("encode workflow instruction: %v", err)
@@ -322,7 +318,7 @@ func TestRateLimitedWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Mode, run,
+		request.SourceRepository, request.SourceBranch, request.Inputs, request.Mode, run,
 	); err != nil {
 		t.Fatalf("rate-limited workflow consumed credential authorization: %v", err)
 	}

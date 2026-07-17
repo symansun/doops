@@ -242,6 +242,19 @@ func createWorkspaceSnapshotDirectory(sessionID string) (string, error) {
 	return dir, nil
 }
 
+func validWorkspaceCommit(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 func createWorkspaceSnapshotCommit(root string, source *WorkspaceSourceIdentity) (string, error) {
 	gitCmds := [][]string{
 		{"init", "-b", "master"},

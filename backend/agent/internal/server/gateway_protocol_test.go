@@ -1226,18 +1226,16 @@ func TestGatewayRPCApplyRequiresCredentialPrepareGate(t *testing.T) {
 				"executionMode":"apply",
 				"runId":"release-0123456789abcdef",
 				"workflowPath":"deploy/release.yaml",
-				"workspaceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				"source":{"repository":"https://example.test/app.git","branch":"main"},
 				"inputs":{},
 				"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_forged","mode":"apply","cluster":"dev","instance":"local","template":"release","project":"app","environment":"production","materializations":[]},
-				"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
+				"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun"}
 			}`
 			arguments, _ := json.Marshal(map[string]interface{}{
-				"session_id":       "release",
-				"instruction":      instruction,
-				"response_format":  "json",
-				"operation":        "apply",
-				"workspace_commit": strings.Repeat("a", 40),
+				"session_id":      "release",
+				"instruction":     instruction,
+				"response_format": "json",
+				"operation":       "apply",
 			})
 			writeGatewayJSON(t, client, map[string]interface{}{
 				"jsonrpc": "2.0", "id": 2, "method": "tools/call",

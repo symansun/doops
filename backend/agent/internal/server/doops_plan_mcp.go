@@ -93,6 +93,7 @@ type doopsPlanRuntime struct {
 	RegistryCredential  credentialConfigurationSecretRef
 	ArtifactSync        credentialConfigurationArtifactSync
 	VerificationProfile string
+	ServiceScoped       bool
 }
 
 type doopsPlanImage struct {
@@ -255,10 +256,6 @@ func loadDoopsPlanRuntime(callContext doopsPlanCallContext) (doopsPlanRuntime, e
 	if err != nil {
 		return doopsPlanRuntime{}, err
 	}
-	root, err = validateDoopsPlanWorkspace(root, callContext.Context.Source.WorkspaceCommit)
-	if err != nil {
-		return doopsPlanRuntime{}, err
-	}
 	runtime, err := loadDoopsPlanRuntimeFromWorkspace(root, workflowPath, inputs)
 	if err != nil {
 		return doopsPlanRuntime{}, err
@@ -294,7 +291,7 @@ func loadDoopsPlanRuntimeFromWorkspace(
 	workflowPath string,
 	inputs map[string]string,
 ) (doopsPlanRuntime, error) {
-	plan, err := parseCredentialPlan(root, workflowPath)
+	plan, err := parseCredentialPlanForInputs(root, workflowPath, inputs)
 	if err != nil {
 		return doopsPlanRuntime{}, err
 	}
@@ -306,11 +303,11 @@ func loadDoopsPlanRuntimeFromWorkspace(
 	if err := yaml.Unmarshal(workflowData, &identity); err != nil {
 		return doopsPlanRuntime{}, invalidCredentialDeclaration(err)
 	}
-	if identity.APIVersion == "doops.sh/v3" && identity.Kind == "EnvironmentDefinition" {
-		return loadDoopsPlanV3Runtime(root, workflowPath, inputs, plan, workflowData)
+	if identity.APIVersion == "doops.sh/v3" && identity.Kind == "EnvironmentRegistry" {
+		return loadDoopsPlanV3RegistryRuntime(root, workflowPath, inputs, plan, workflowData)
 	}
 	if identity.APIVersion != "doops.sh/v2" || identity.Kind != "DeploymentTemplate" {
-		return doopsPlanRuntime{}, errors.New("doops_plan requires a v2 DeploymentTemplate or v3 EnvironmentDefinition")
+		return doopsPlanRuntime{}, errors.New("doops_plan requires a v2 DeploymentTemplate or v3 EnvironmentRegistry")
 	}
 	var workflow credentialDeploymentTemplate
 	if err := strictCredentialYAMLDecode(workflowData, &workflow); err != nil {
@@ -388,6 +385,71 @@ func loadDoopsPlanRuntimeFromWorkspace(
 		RegistryCredential:  executor.RegistryCredential,
 		ArtifactSync:        executor.ArtifactSync,
 		VerificationProfile: environment.VerificationProfile,
+	}, nil
+}
+
+func loadDoopsPlanV3RegistryRuntime(
+	root string,
+	workflowPath string,
+	inputs map[string]string,
+	plan CredentialPlan,
+	workflowData []byte,
+) (doopsPlanRuntime, error) {
+	selection, err := selectCredentialEnvironmentRegistryV3(root, workflowPath, workflowData, inputs)
+	if err != nil {
+		return doopsPlanRuntime{}, err
+	}
+	service := selection.ServiceName
+	declaration := selection.Service
+	environment := selection.Environment
+	workload := strings.TrimPrefix(declaration.Spec.Helm.Workload, "deployment/")
+	requireEndpoints := declaration.Spec.Verification.RequireEndpoints
+	publicChecks := make([]credentialConfigurationHTTPCheck, 0, len(environment.HealthChecks))
+	for index, endpoint := range environment.HealthChecks {
+		publicChecks = append(publicChecks, credentialConfigurationHTTPCheck{
+			ID:             fmt.Sprintf("%s-%d", selection.EnvironmentName, index+1),
+			URL:            endpoint,
+			ExpectedStatus: http.StatusOK,
+		})
+	}
+	secretRef := func(reference credentialEnvironmentSecretRef) credentialConfigurationSecretRef {
+		return credentialConfigurationSecretRef{
+			Kind: reference.Kind, Name: reference.Name, Namespace: environment.Helm.Namespace,
+		}
+	}
+	return doopsPlanRuntime{
+		Root: root, WorkflowPath: workflowPath, Version: "declared-digest", Plan: plan,
+		SourceRegistry: credentialRegistryParent(declaration.Spec.Artifact.Source),
+		TargetRegistry: strings.TrimSuffix(environment.Artifacts.TargetRegistry, "/"),
+		Services:       []string{service},
+		SourceImages: []doopsPlanImage{{
+			Service: service, Repository: declaration.Spec.Artifact.Source, Digest: declaration.Spec.Artifact.Digest,
+		}},
+		TargetImages: []doopsPlanImage{{
+			Service: service, Repository: declaration.Spec.Artifact.Target, Digest: declaration.Spec.Artifact.Digest,
+		}},
+		Namespace: environment.Helm.Namespace, Release: environment.Helm.Release,
+		Chart: environment.Helm.Chart, Values: environment.Helm.Values,
+		ImageBindings:      map[string]string{service: declaration.Spec.Helm.Value},
+		ServiceEnabled:     map[string]bool{service: declaration.Spec.Helm.Enabled},
+		ServiceReplicas:    map[string]int{service: declaration.Spec.Helm.Replicas},
+		WorkloadNames:      map[string]string{service: workload},
+		WorkloadContainers: map[string]string{service: declaration.Spec.Helm.Container},
+		PublicChecks:       publicChecks,
+		WorkloadChecks: []credentialConfigurationWorkloadCheck{{
+			Service: service, MinReadyReplicas: declaration.Spec.Verification.MinReadyReplicas,
+			RequireEndpoints: &requireEndpoints,
+		}},
+		SourceRepository:   environment.Source.Repository,
+		SourceBranch:       environment.Source.Branch,
+		RegistryCredential: secretRef(environment.Artifacts.RuntimeImagePullSecret),
+		ArtifactSync: credentialConfigurationArtifactSync{
+			SourceCredentialRef:               secretRef(environment.Artifacts.SourceCredentialRef),
+			RegistryCredentialRef:             secretRef(environment.Artifacts.TargetCredentialRef),
+			CopyOnlyWhenTargetDigestMissing:   true,
+			RequireSourceTargetDigestEquality: true,
+		},
+		ServiceScoped: true,
 	}, nil
 }
 
@@ -486,7 +548,7 @@ func trustedDoopsPlanReleaseScope(
 	if err := yaml.Unmarshal(workflowData, &identity); err != nil {
 		return nil, invalidCredentialDeclaration(err)
 	}
-	if identity.APIVersion == "doops.sh/v3" && identity.Kind == "EnvironmentDefinition" {
+	if identity.APIVersion == "doops.sh/v3" && identity.Kind == "EnvironmentRegistry" {
 		runtime, err := loadDoopsPlanRuntimeFromWorkspace(root, workflowPath, inputs)
 		if err != nil {
 			return nil, err
@@ -863,10 +925,13 @@ func doopsPlanHelmArgs(runtime doopsPlanRuntime, images []doopsPlanImage, apply 
 	}
 	args := []string{"template", runtime.Release, chart, "-n", runtime.Namespace, "-f", values}
 	if apply {
-		args = []string{
-			"upgrade", "--install", runtime.Release, chart, "-n", runtime.Namespace,
-			"-f", values, "--atomic", "--wait", "--timeout", "10m",
+		args = []string{"upgrade", "--install", runtime.Release, chart, "-n", runtime.Namespace}
+		if runtime.ServiceScoped {
+			args = append(args, "--reuse-values")
+		} else {
+			args = append(args, "-f", values)
 		}
+		args = append(args, "--atomic", "--wait", "--timeout", "10m")
 	}
 	for _, image := range images {
 		binding := runtime.ImageBindings[image.Service]

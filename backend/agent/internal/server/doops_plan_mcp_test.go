@@ -221,10 +221,9 @@ func TestBuildDoopsPlanAttestedResultBindsTrustedContext(t *testing.T) {
 		PlanDigest:         "sha256:" + strings.Repeat("1", 64),
 		PlanBindingDigest:  "sha256:" + strings.Repeat("2", 64),
 		Source: trustedReconciliationSource{
-			Repository:      "https://example.test/app.git",
-			Revision:        strings.Repeat("b", 40),
-			Branch:          "main",
-			WorkspaceCommit: strings.Repeat("a", 40),
+			Repository: "https://example.test/app.git",
+			Revision:   strings.Repeat("b", 40),
+			Branch:     "main",
 		},
 		Capabilities: map[string]trustedReconciliationCapability{
 			"ObserveWorkspaceSource": {

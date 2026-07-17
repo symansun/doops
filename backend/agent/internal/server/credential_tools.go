@@ -6,16 +6,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 )
 
 type credentialPlanToolParams struct {
-	SessionID        string `json:"session_id"`
-	WorkflowPath     string `json:"workflow_path"`
-	SourceRepository string `json:"source_repository"`
-	SourceBranch     string `json:"source_branch"`
-	SourceRevision   string `json:"source_revision"`
+	SessionID        string            `json:"session_id"`
+	WorkflowPath     string            `json:"workflow_path"`
+	SourceRepository string            `json:"source_repository"`
+	SourceBranch     string            `json:"source_branch"`
+	Inputs           map[string]string `json:"inputs,omitempty"`
 }
+
+var cloneCredentialPlanSource = checkoutWorkflowSource
 
 func handleCredentialPlanTool(argBytes json.RawMessage) (string, error) {
 	var args credentialPlanToolParams
@@ -31,24 +34,27 @@ func handleCredentialPlanTool(argBytes json.RawMessage) (string, error) {
 	args.WorkflowPath = strings.TrimSpace(args.WorkflowPath)
 	args.SourceRepository = strings.TrimSpace(args.SourceRepository)
 	args.SourceBranch = strings.TrimSpace(args.SourceBranch)
-	args.SourceRevision = strings.TrimSpace(args.SourceRevision)
 	if args.SessionID == "" || args.WorkflowPath == "" ||
-		args.SourceRepository == "" || args.SourceBranch == "" ||
-		!validCredentialWorkspaceCommit(args.SourceRevision) {
-		return "", fmt.Errorf("session_id, workflow_path, source_repository, source_branch, and immutable source_revision are required")
+		args.SourceRepository == "" || args.SourceBranch == "" {
+		return "", fmt.Errorf("session_id, workflow_path, source_repository, and source_branch are required")
 	}
-	if err := checkoutWorkflowSource(args.SessionID, args.SourceRepository, args.SourceBranch, args.SourceRevision); err != nil {
+	if err := validateCredentialPlanSourceRepository(args.SourceRepository); err != nil {
+		return "", err
+	}
+	for key, value := range args.Inputs {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(key) != key ||
+			credentialSecretLikeKey(key) || credentialScalarContainsInlineMaterial(value) {
+			return "", fmt.Errorf("invalid credential plan inputs")
+		}
+	}
+	if err := cloneCredentialPlanSource(args.SessionID, args.SourceRepository, args.SourceBranch); err != nil {
 		return "", err
 	}
 	root, err := workspacePath(args.SessionID)
 	if err != nil {
 		return "", err
 	}
-	root, err = validateDoopsPlanWorkspace(root, args.SourceRevision)
-	if err != nil {
-		return "", err
-	}
-	plan, err := parseCredentialPlan(root, args.WorkflowPath)
+	plan, err := parseCredentialPlanForInputs(root, args.WorkflowPath, args.Inputs)
 	if err != nil {
 		return "", err
 	}
@@ -57,6 +63,15 @@ func handleCredentialPlanTool(argBytes json.RawMessage) (string, error) {
 		return "", fmt.Errorf("encode credential plan: %w", err)
 	}
 	return string(result), nil
+}
+
+func validateCredentialPlanSourceRepository(repository string) error {
+	parsed, err := url.Parse(strings.TrimSpace(repository))
+	if err == nil && parsed.Scheme == "https" && parsed.Host != "" &&
+		parsed.User == nil && parsed.RawQuery == "" && parsed.Fragment == "" {
+		return nil
+	}
+	return fmt.Errorf("workflow source repository must be an HTTPS URL without inline credentials, query, or fragment")
 }
 
 func handleCredentialMaterializeTool(ctx context.Context, argBytes json.RawMessage) (string, error) {

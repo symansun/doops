@@ -432,13 +432,10 @@ func rejectSensitiveToolResult(value interface{}) error {
 }
 
 type deploymentRunContractBinding struct {
-	APIVersion      string
-	Workflow        string
-	RunID           string
-	WorkspaceCommit string
-	Mode            string
-	PrimaryTool     string
-	RequiredTools   []string
+	APIVersion string
+	Workflow   string
+	RunID      string
+	Mode       string
 }
 
 func bindDeploymentRunEvidence(
@@ -446,6 +443,7 @@ func bindDeploymentRunEvidence(
 	traces []doagentToolTrace,
 	contract *deploymentRunContractBinding,
 ) (string, map[string]interface{}, error) {
+	_ = traces
 	status, err := validateDeploymentRunEnvelope(result, contract)
 	if err != nil {
 		return "", nil, err
@@ -454,19 +452,14 @@ func bindDeploymentRunEvidence(
 		return "", nil, err
 	}
 	capabilities, ok := status["capabilities"].(map[string]interface{})
-	if !ok || (contract == nil && len(capabilities) == 0) {
+	if !ok || len(capabilities) == 0 {
 		return "", nil, fmt.Errorf(
-			"DeploymentRun.status.capabilities must be a JSON object",
-		)
-	}
-	if contract != nil && len(capabilities) != 0 {
-		return "", nil, fmt.Errorf(
-			"DeploymentRun.status.capabilities must be empty before trusted evidence binding",
+			"DeploymentRun.status.capabilities must be a non-empty JSON object",
 		)
 	}
 	for field := range status {
 		switch field {
-		case "phase", "mutationCount", "capabilities", "evidence", "failures":
+		case "phase", "mutationCount", "capabilities", "failures":
 		default:
 			return "", nil, fmt.Errorf("DeploymentRun.status field %q is not supported", field)
 		}
@@ -476,121 +469,14 @@ func bindDeploymentRunEvidence(
 	default:
 		return "", nil, fmt.Errorf("DeploymentRun.status.phase is invalid")
 	}
-	evidence, ok := status["evidence"].([]interface{})
-	if !ok || len(evidence) == 0 {
-		return "", nil, fmt.Errorf("DeploymentRun evidence must be a non-empty array")
-	}
-
-	observedTools := make(map[string]struct{}, len(evidence))
-	boundCapabilities := make(map[string]interface{}, len(evidence))
-	for index, item := range evidence {
-		entry, ok := item.(map[string]interface{})
-		if !ok {
-			return "", nil, fmt.Errorf("DeploymentRun evidence[%d] must be an object", index)
-		}
-		if strings.TrimSpace(stringField(entry, "subject")) == "" ||
-			strings.TrimSpace(stringField(entry, "observedAt")) == "" {
-			return "", nil, fmt.Errorf(
-				"DeploymentRun evidence[%d] must contain subject and observedAt",
-				index,
-			)
-		}
-		if len(entry) != 3 {
-			return "", nil, fmt.Errorf(
-				"DeploymentRun evidence[%d] must contain only subject, observedAt, and toolRef",
-				index,
-			)
-		}
-
-		toolRef, ok := entry["toolRef"].(map[string]interface{})
-		if !ok || len(toolRef) != 2 {
-			return "", nil, fmt.Errorf(
-				"DeploymentRun evidence[%d].toolRef must contain only tool and input",
-				index,
-			)
-		}
-		tool, _ := toolRef["tool"].(string)
-		input, hasInput := toolRef["input"]
-		if strings.TrimSpace(tool) == "" || !hasInput {
-			return "", nil, fmt.Errorf(
-				"DeploymentRun evidence[%d].toolRef must contain tool and input",
-				index,
-			)
-		}
-		inputJSON, err := stableDoagentJSON(input)
-		if err != nil {
-			return "", nil, fmt.Errorf("encode DeploymentRun evidence[%d] input: %w", index, err)
-		}
-		trace, err := resolveDoagentToolTrace(tool, inputJSON, traces)
-		if err != nil {
-			return "", nil, fmt.Errorf("DeploymentRun evidence[%d]: %w", index, err)
-		}
-		if index == 0 && contract != nil &&
-			contract.PrimaryTool != "" &&
-			trace.ToolName != contract.PrimaryTool {
-			return "", nil, fmt.Errorf(
-				"DeploymentRun evidence[0] must reference %s",
-				modelVisibleDoagentToolName(contract.PrimaryTool),
-			)
-		}
-		runtimeInput, err := decodeDoagentJSONValue(trace.inputJSON)
-		if err != nil {
-			return "", nil, fmt.Errorf("decode runtime tool input: %w", err)
-		}
-		runtimeResult, err := trace.verifiedResult()
-		if err != nil {
-			return "", nil, fmt.Errorf("verify runtime tool result: %w", err)
-		}
-		observedTools[trace.ToolName] = struct{}{}
-		if contract != nil {
-			if strings.TrimSpace(trace.CapabilityKey) == "" {
-				return "", nil, fmt.Errorf(
-					"DeploymentRun evidence[%d] references an unbound capability",
-					index,
-				)
-			}
-			boundCapabilities[trace.CapabilityKey] = map[string]interface{}{
-				"tool":            trace.AttestedTool,
-				"evidenceKind":    trace.EvidenceKind,
-				"evidenceSubject": trace.EvidenceSubject,
-				"scopeDigest":     trace.ScopeDigest,
-			}
-		}
-		delete(entry, "toolRef")
-		if trace.EvidenceSubject != "" {
-			entry["subject"] = trace.EvidenceSubject
-		}
-		entry["observedAt"] = trace.ObservedAt
-		entry["toolCall"] = map[string]interface{}{
-			"id":     trace.ToolCallID,
-			"tool":   trace.ToolName,
-			"input":  runtimeInput,
-			"result": runtimeResult,
-		}
-	}
-	if contract != nil {
-		for _, tool := range contract.RequiredTools {
-			if _, ok := observedTools[tool]; !ok {
-				return "", nil, fmt.Errorf(
-					"DeploymentRun evidence must reference %s",
-					modelVisibleDoagentToolName(tool),
-				)
-			}
-		}
-		if len(boundCapabilities) == 0 {
-			return "", nil, fmt.Errorf("DeploymentRun trusted capabilities are empty")
-		}
-		status["capabilities"] = boundCapabilities
-	}
 
 	if contract != nil {
 		result = map[string]interface{}{
 			"apiVersion": contract.APIVersion,
 			"kind":       "DeploymentRun",
 			"metadata": map[string]interface{}{
-				"workflow":        contract.Workflow,
-				"runId":           contract.RunID,
-				"workspaceCommit": contract.WorkspaceCommit,
+				"workflow": contract.Workflow,
+				"runId":    contract.RunID,
 			},
 			"spec": map[string]interface{}{
 				"mode": contract.Mode,
@@ -635,17 +521,17 @@ func validateDeploymentRunEnvelope(
 		return nil, fmt.Errorf("DeploymentRun.apiVersion is invalid")
 	}
 	metadata, ok := result["metadata"].(map[string]interface{})
-	if !ok || len(metadata) != 3 {
-		return nil, fmt.Errorf("DeploymentRun.metadata must contain exactly workflow, runId, and workspaceCommit")
+	if !ok || len(metadata) != 2 {
+		return nil, fmt.Errorf("DeploymentRun.metadata must contain exactly workflow and runId")
 	}
-	for _, field := range []string{"workflow", "runId", "workspaceCommit"} {
+	for _, field := range []string{"workflow", "runId"} {
 		if strings.TrimSpace(stringField(metadata, field)) == "" {
 			return nil, fmt.Errorf("DeploymentRun.metadata.%s is required", field)
 		}
 	}
 	for field := range metadata {
 		switch field {
-		case "workflow", "runId", "workspaceCommit":
+		case "workflow", "runId":
 		default:
 			return nil, fmt.Errorf("DeploymentRun.metadata field %q is not supported", field)
 		}
@@ -666,7 +552,6 @@ func validateDeploymentRunEnvelope(
 		if apiVersion != contract.APIVersion ||
 			stringField(metadata, "workflow") != contract.Workflow ||
 			stringField(metadata, "runId") != contract.RunID ||
-			stringField(metadata, "workspaceCommit") != contract.WorkspaceCommit ||
 			mode != contract.Mode {
 			return nil, fmt.Errorf("DeploymentRun envelope does not match the trusted reconciliation instruction")
 		}

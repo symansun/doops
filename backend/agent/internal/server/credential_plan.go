@@ -513,7 +513,14 @@ type credentialConfigurationAuthorization struct {
 }
 
 func parseCredentialPlan(root, workflowPath string) (CredentialPlan, error) {
-	workflow, err := parseCredentialWorkflow(root, workflowPath)
+	return parseCredentialPlanForInputs(root, workflowPath, nil)
+}
+
+func parseCredentialPlanForInputs(
+	root, workflowPath string,
+	inputs map[string]string,
+) (CredentialPlan, error) {
+	workflow, err := parseCredentialWorkflowForInputs(root, workflowPath, inputs)
 	if err != nil {
 		return CredentialPlan{}, err
 	}
@@ -583,6 +590,13 @@ func parseCredentialPlan(root, workflowPath string) (CredentialPlan, error) {
 }
 
 func parseCredentialWorkflow(root, workflowPath string) (credentialParsedWorkflow, error) {
+	return parseCredentialWorkflowForInputs(root, workflowPath, nil)
+}
+
+func parseCredentialWorkflowForInputs(
+	root, workflowPath string,
+	inputs map[string]string,
+) (credentialParsedWorkflow, error) {
 	workflowData, err := readCredentialDeclarationFile(root, workflowPath)
 	if err != nil {
 		return credentialParsedWorkflow{}, err
@@ -640,32 +654,13 @@ func parseCredentialWorkflow(root, workflowPath string) (credentialParsedWorkflo
 			strings.TrimSpace(template.Spec.ConfigurationSource) == "" {
 			return credentialParsedWorkflow{}, invalidCredentialDeclaration(errors.New("invalid DeploymentTemplate identity or deployment context"))
 		}
-	case identity.APIVersion == "doops.sh/v3" && identity.Kind == "EnvironmentDefinition":
-		var definition credentialEnvironmentDefinition
-		if err := strictCredentialYAMLDecode(workflowData, &definition); err != nil {
-			return credentialParsedWorkflow{}, invalidCredentialDeclaration(err)
-		}
-		environment, err := validateCredentialEnvironmentDefinitionV3(root, workflowPath, definition)
-		if err != nil {
-			return credentialParsedWorkflow{}, err
-		}
-		template.APIVersion = definition.APIVersion
-		template.Kind = definition.Kind
-		template.Metadata.Name = definition.Metadata.Name
-		template.Spec.Parameters = definition.Spec.Parameters
-		template.Spec.Application = definition.Spec.Application
-		template.Spec.Environment = definition.Metadata.Name
-		template.Spec.Release.Source.Repository = definition.Spec.Source.Repository
-		template.Spec.Release.Source.Branch = definition.Spec.Source.Branch
-		for name, parameter := range template.Spec.Parameters {
-			if parameter.Default != nil && credentialSecretLikeKey(name) {
-				return credentialParsedWorkflow{}, fmt.Errorf("%w: sensitive parameter %q must not declare a default value", ErrInlineCredentialMaterial, name)
-			}
-		}
-		return credentialParsedWorkflow{
-			Template:    template,
-			Environment: &environment,
-		}, nil
+	case identity.APIVersion == "doops.sh/v3" && identity.Kind == "EnvironmentRegistry":
+		return parseCredentialEnvironmentRegistryV3(
+			root,
+			workflowPath,
+			workflowData,
+			inputs,
+		)
 	default:
 		return credentialParsedWorkflow{}, invalidCredentialDeclaration(
 			fmt.Errorf("unsupported workflow contract %q %q", identity.APIVersion, identity.Kind),

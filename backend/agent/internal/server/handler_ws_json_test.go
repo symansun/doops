@@ -136,279 +136,34 @@ func TestAgentPromptJSONReturnsFinalMessageInStructuredContent(t *testing.T) {
 	}
 }
 
-func TestBindDeploymentRunEvidenceUsesEligibleRuntimeCalls(t *testing.T) {
-	traces := completedDoagentToolTraces(t, []map[string]interface{}{
-		{"sessionUpdate": "tool_call_update", "toolCallId": "agent-1", "toolName": "Agent", "status": "completed", "input": map[string]interface{}{"task": "inspect"}, "rawOutput": map[string]interface{}{"status": "delegated"}},
-		{"sessionUpdate": "tool_call_update", "toolCallId": "image-1", "toolName": "image_gen", "status": "completed", "input": map[string]interface{}{"prompt": "diagram"}, "rawOutput": map[string]interface{}{"path": "output/diagram.png"}},
-		{"sessionUpdate": "tool_call_update", "toolCallId": "read-target", "toolName": "Read", "status": "completed", "input": map[string]interface{}{"path": "target.json"}, "rawOutput": map[string]interface{}{"revision": "target"}},
-		{"sessionUpdate": "tool_call_update", "toolCallId": "read-source", "toolName": "Read", "status": "completed", "input": map[string]interface{}{"path": "source.json"}, "rawOutput": map[string]interface{}{"revision": "source"}},
+func TestBindDeploymentRunWithoutEvidenceBindsTrustedEnvelope(t *testing.T) {
+	result := map[string]interface{}{
+		"apiVersion": "doops.sh/v3",
+		"kind":       "DeploymentRun",
+		"metadata": map[string]interface{}{
+			"workflow": "deploy/environments.yaml",
+			"runId":    "run-verified",
+		},
+		"spec": map[string]interface{}{"mode": "dry-run"},
+		"status": map[string]interface{}{
+			"phase":         "planned",
+			"mutationCount": 0,
+			"capabilities":  map[string]interface{}{"plan": "available"},
+		},
+	}
+	_, bound, err := bindDeploymentRunEvidence(result, nil, &deploymentRunContractBinding{
+		APIVersion: "doops.sh/v3", Workflow: "deploy/environments.yaml",
+		RunID: "run-verified", Mode: "dry-run",
 	})
-
-	result := deploymentRunWithToolRef("Read", map[string]interface{}{"path": "source.json"})
-	_, bound, err := bindTestDeploymentRun(result, traces)
 	if err != nil {
-		t.Fatalf("bind exact runtime evidence: %v", err)
-	}
-	entry := bound["status"].(map[string]interface{})["evidence"].([]interface{})[0].(map[string]interface{})
-	toolCall := entry["toolCall"].(map[string]interface{})
-	if toolCall["id"] != "read-source" ||
-		toolCall["result"].(map[string]interface{})["revision"] != "source" {
-		t.Fatalf("toolRef must resolve by exact input: %#v", entry)
-	}
-	ambiguous := completedDoagentToolTraces(t, []map[string]interface{}{
-		{"sessionUpdate": "tool_call_update", "toolCallId": "read-1", "toolName": "Read", "status": "completed", "input": map[string]interface{}{"path": "same.json"}, "rawOutput": map[string]interface{}{"value": "one"}},
-		{"sessionUpdate": "tool_call_update", "toolCallId": "read-2", "toolName": "Read", "status": "completed", "input": map[string]interface{}{"path": "same.json"}, "rawOutput": map[string]interface{}{"value": "two"}},
-	})
-	for _, test := range []struct {
-		name   string
-		result map[string]interface{}
-		traces []doagentToolTrace
-		want   string
-	}{
-		{name: "ambiguous input", result: deploymentRunWithToolRef("Read", map[string]interface{}{"path": "same.json"}), traces: ambiguous, want: "ambiguous"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			_, _, err := bindTestDeploymentRun(test.result, test.traces)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("expected %q error, got %v", test.want, err)
-			}
-		})
-	}
-}
-
-func TestBindDeploymentRunEvidenceUsesTrustedPlanReferenceName(t *testing.T) {
-	traces := completedDoagentToolTraces(t, []map[string]interface{}{
-		{
-			"sessionUpdate": "tool_call_update",
-			"toolCallId":    "source-1",
-			"toolName":      "mcp_doops_plan_ObserveWorkspaceSource",
-			"status":        "completed",
-			"input":         map[string]interface{}{},
-			"rawOutput":     map[string]interface{}{"revision": "immutable"},
-		},
-	})
-
-	result := deploymentRunWithToolRef(
-		"plan.ObserveWorkspaceSource",
-		map[string]interface{}{},
-	)
-	_, bound, err := bindTestDeploymentRun(result, traces)
-	if err != nil {
-		t.Fatalf("bind trusted plan reference: %v", err)
-	}
-	entry := bound["status"].(map[string]interface{})["evidence"].([]interface{})[0].(map[string]interface{})
-	toolCall := entry["toolCall"].(map[string]interface{})
-	if toolCall["id"] != "source-1" ||
-		toolCall["tool"] != "mcp_doops_plan_ObserveWorkspaceSource" {
-		t.Fatalf("unexpected trusted runtime call: %#v", entry)
-	}
-}
-
-func TestBindDeploymentRunEvidenceReplacesModelEvidenceIdentity(t *testing.T) {
-	traces := completedDoagentToolTraces(t, []map[string]interface{}{
-		{
-			"sessionUpdate":   "tool_call_update",
-			"toolCallId":      "source-1",
-			"toolName":        "mcp_doops_plan_ObserveWorkspaceSource",
-			"status":          "completed",
-			"input":           map[string]interface{}{},
-			"rawOutput":       map[string]interface{}{"revision": "immutable"},
-			"evidenceSubject": "source-identity",
-		},
-	})
-	result := deploymentRunWithToolRef("plan.ObserveWorkspaceSource", map[string]interface{}{})
-	entry := result["status"].(map[string]interface{})["evidence"].([]interface{})[0].(map[string]interface{})
-	entry["subject"] = "workspace://https://example.test/app.git@revision"
-	entry["observedAt"] = "model-authored"
-
-	_, bound, err := bindTestDeploymentRun(result, traces)
-	if err != nil {
-		t.Fatalf("bind authoritative evidence identity: %v", err)
-	}
-	entry = bound["status"].(map[string]interface{})["evidence"].([]interface{})[0].(map[string]interface{})
-	observedAt, _ := entry["observedAt"].(string)
-	if entry["subject"] != "source-identity" ||
-		observedAt == "model-authored" ||
-		!validDoagentObservedAt(observedAt) {
-		t.Fatalf("model evidence identity was not replaced: %#v", entry)
-	}
-}
-
-func TestBindDeploymentRunEvidenceEnforcesPrimarySourceObservation(t *testing.T) {
-	traces := completedDoagentToolTraces(t, []map[string]interface{}{
-		{
-			"sessionUpdate":   "tool_call_update",
-			"toolCallId":      "helm-1",
-			"toolName":        "mcp_doops_plan_ObserveHelmRelease",
-			"status":          "completed",
-			"input":           map[string]interface{}{},
-			"rawOutput":       map[string]interface{}{"status": "deployed"},
-			"evidenceSubject": "helm-release",
-		},
-	})
-	result := deploymentRunWithToolRef("plan.ObserveHelmRelease", map[string]interface{}{})
-	result["status"].(map[string]interface{})["capabilities"] = map[string]interface{}{}
-	_, _, err := bindDeploymentRunEvidence(
-		result,
-		traces,
-		&deploymentRunContractBinding{
-			APIVersion:      "doops.sh/v2",
-			Workflow:        "deploy/release.yaml",
-			RunID:           "run-test",
-			WorkspaceCommit: strings.Repeat("a", 40),
-			Mode:            "dry-run",
-			PrimaryTool:     "mcp_doops_plan_ObserveWorkspaceSource",
-		},
-	)
-	if err == nil || !strings.Contains(err.Error(), "evidence[0] must reference plan.ObserveWorkspaceSource") {
-		t.Fatalf("primary source observation was not enforced: %v", err)
-	}
-}
-
-func TestBindDeploymentRunEvidenceRequiresTargetRegistryObservation(t *testing.T) {
-	traces := completedDoagentToolTraces(t, []map[string]interface{}{
-		{
-			"sessionUpdate":   "tool_call_update",
-			"toolCallId":      "source-1",
-			"toolName":        "mcp_doops_plan_ObserveWorkspaceSource",
-			"status":          "completed",
-			"input":           map[string]interface{}{},
-			"rawOutput":       map[string]interface{}{"revision": "immutable"},
-			"evidenceSubject": "source-identity",
-		},
-	})
-	result := deploymentRunWithToolRef("plan.ObserveWorkspaceSource", map[string]interface{}{})
-	result["status"].(map[string]interface{})["capabilities"] = map[string]interface{}{}
-	_, _, err := bindDeploymentRunEvidence(
-		result,
-		traces,
-		&deploymentRunContractBinding{
-			APIVersion:      "doops.sh/v2",
-			Workflow:        "deploy/release.yaml",
-			RunID:           "run-test",
-			WorkspaceCommit: strings.Repeat("a", 40),
-			Mode:            "dry-run",
-			PrimaryTool:     "mcp_doops_plan_ObserveWorkspaceSource",
-			RequiredTools: []string{
-				"mcp_doops_plan_ObserveWorkspaceSource",
-				"mcp_doops_plan_ObserveTargetRegistryImageSet",
-			},
-		},
-	)
-	if err == nil || !strings.Contains(err.Error(), "plan.ObserveTargetRegistryImageSet") {
-		t.Fatalf("target registry observation was not enforced: %v", err)
-	}
-}
-
-func TestBindDeploymentRunEvidenceBindsTrustedEnvelope(t *testing.T) {
-	traces := completedDoagentToolTraces(t, []map[string]interface{}{
-		{
-			"sessionUpdate":   "tool_call_update",
-			"toolCallId":      "source-1",
-			"toolName":        "mcp_doops_plan_ObserveWorkspaceSource",
-			"status":          "completed",
-			"input":           map[string]interface{}{},
-			"rawOutput":       map[string]interface{}{"revision": "immutable"},
-			"evidenceSubject": "source-identity",
-		},
-	})
-	result := deploymentRunWithToolRef("plan.ObserveWorkspaceSource", map[string]interface{}{})
-	result["status"].(map[string]interface{})["capabilities"] = map[string]interface{}{}
-	result["apiVersion"] = "doops.sh/v3"
-	result["metadata"] = map[string]interface{}{
-		"workflow":        "deploy/environments/scu/environment.yaml",
-		"runId":           "run-verified",
-		"workspaceCommit": strings.Repeat("a", 40),
-	}
-
-	_, bound, err := bindDeploymentRunEvidence(
-		result,
-		traces,
-		&deploymentRunContractBinding{
-			APIVersion:      "doops.sh/v3",
-			Workflow:        "deploy/environments/scu/environment.yaml",
-			RunID:           "run-verified",
-			WorkspaceCommit: strings.Repeat("a", 40),
-			Mode:            "dry-run",
-			PrimaryTool:     "mcp_doops_plan_ObserveWorkspaceSource",
-		},
-	)
-	if err != nil {
-		t.Fatalf("bind trusted DeploymentRun envelope: %v", err)
-	}
-	if len(bound) != 5 || bound["apiVersion"] != "doops.sh/v3" || bound["kind"] != "DeploymentRun" {
-		t.Fatalf("trusted DeploymentRun top level was not rebuilt: %#v", bound)
+		t.Fatalf("bind DeploymentRun without evidence: %v", err)
 	}
 	metadata := bound["metadata"].(map[string]interface{})
-	spec := bound["spec"].(map[string]interface{})
-	if metadata["workflow"] != "deploy/environments/scu/environment.yaml" ||
-		metadata["runId"] != "run-verified" ||
-		metadata["workspaceCommit"] != strings.Repeat("a", 40) ||
-		spec["mode"] != "dry-run" {
-		t.Fatalf("trusted DeploymentRun metadata/spec mismatch: %#v", bound)
+	if len(metadata) != 2 || metadata["workflow"] != "deploy/environments.yaml" || metadata["runId"] != "run-verified" {
+		t.Fatalf("unexpected DeploymentRun metadata: %#v", metadata)
 	}
-	status := bound["status"].(map[string]interface{})
-	capabilities := status["capabilities"].(map[string]interface{})
-	sourceCapability, ok := capabilities["ObserveWorkspaceSource"].(map[string]interface{})
-	if !ok ||
-		sourceCapability["tool"] != "ObserveWorkspaceSource" ||
-		sourceCapability["evidenceKind"] != "source-identity" ||
-		sourceCapability["evidenceSubject"] != "source-identity" {
-		t.Fatalf("trusted capabilities were not derived from tool evidence: %#v", capabilities)
-	}
-
-	result = deploymentRunWithToolRef("plan.ObserveWorkspaceSource", map[string]interface{}{})
-	result["status"].(map[string]interface{})["capabilities"] = map[string]interface{}{}
-	result["apiVersion"] = "doops.sh/v3"
-	result["metadata"] = map[string]interface{}{
-		"workflow":        "deploy/environments/scu/environment.yaml",
-		"runId":           "spoofed",
-		"workspaceCommit": strings.Repeat("a", 40),
-	}
-	_, _, err = bindDeploymentRunEvidence(
-		result,
-		traces,
-		&deploymentRunContractBinding{
-			APIVersion:      "doops.sh/v3",
-			Workflow:        "deploy/environments/scu/environment.yaml",
-			RunID:           "run-verified",
-			WorkspaceCommit: strings.Repeat("a", 40),
-			Mode:            "dry-run",
-			PrimaryTool:     "mcp_doops_plan_ObserveWorkspaceSource",
-		},
-	)
-	if err == nil || !strings.Contains(err.Error(), "does not match the trusted reconciliation instruction") {
-		t.Fatalf("spoofed trusted DeploymentRun envelope was accepted: %v", err)
-	}
-}
-
-func TestBindDeploymentRunEvidenceRejectsModelAuthoredTrustedCapabilities(t *testing.T) {
-	traces := completedDoagentToolTraces(t, []map[string]interface{}{
-		{
-			"sessionUpdate":   "tool_call_update",
-			"toolCallId":      "source-1",
-			"toolName":        "mcp_doops_plan_ObserveWorkspaceSource",
-			"status":          "completed",
-			"input":           map[string]interface{}{},
-			"rawOutput":       map[string]interface{}{"revision": "immutable"},
-			"evidenceSubject": "source-identity",
-		},
-	})
-	result := deploymentRunWithToolRef("plan.ObserveWorkspaceSource", map[string]interface{}{})
-	_, _, err := bindDeploymentRunEvidence(
-		result,
-		traces,
-		&deploymentRunContractBinding{
-			APIVersion:      "doops.sh/v2",
-			Workflow:        "deploy/release.yaml",
-			RunID:           "run-test",
-			WorkspaceCommit: strings.Repeat("a", 40),
-			Mode:            "dry-run",
-			PrimaryTool:     "mcp_doops_plan_ObserveWorkspaceSource",
-		},
-	)
-	if err == nil || !strings.Contains(err.Error(), "must be empty before trusted evidence binding") {
-		t.Fatalf("model-authored trusted capabilities were accepted: %v", err)
+	if _, exists := bound["status"].(map[string]interface{})["evidence"]; exists {
+		t.Fatalf("DeploymentRun must not contain evidence: %#v", bound)
 	}
 }
 
@@ -479,45 +234,6 @@ func TestBindDeploymentRunEvidenceRejectsInvalidPhase(t *testing.T) {
 	}
 }
 
-func TestBindDeploymentRunEvidenceRejectsModelAuthoredRuntimePayload(t *testing.T) {
-	traces := completedDoagentToolTraces(t, []map[string]interface{}{
-		{"sessionUpdate": "tool_call_update", "toolCallId": "read-1", "toolName": "Read", "status": "completed", "input": map[string]interface{}{"path": "state.json"}, "rawOutput": map[string]interface{}{"revision": "current"}},
-	})
-	for _, test := range []struct {
-		name   string
-		mutate func(status map[string]interface{})
-		want   string
-	}{
-		{
-			name: "tool call",
-			mutate: func(status map[string]interface{}) {
-				status["evidence"].([]interface{})[0].(map[string]interface{})["toolCall"] = map[string]interface{}{}
-			},
-			want: "must contain only",
-		},
-		{name: "retired status object", mutate: func(status map[string]interface{}) { status["runtimeAttestation"] = map[string]interface{}{} }, want: "is not supported"},
-		{name: "retired status string", mutate: func(status map[string]interface{}) { status["resultDigest"] = "sha256:" + strings.Repeat("a", 64) }, want: "is not supported"},
-		{name: "capabilities array", mutate: func(status map[string]interface{}) {
-			status["capabilities"] = []interface{}{"source-identity"}
-		}, want: "capabilities must be a JSON object"},
-		{name: "sensitive failure field", mutate: func(status map[string]interface{}) {
-			status["failures"] = []interface{}{map[string]interface{}{"githubToken": "token-canary"}}
-		}, want: "forbidden sensitive field"},
-		{name: "sensitive capability scalar", mutate: func(status map[string]interface{}) {
-			status["capabilities"] = []interface{}{"https://storage.example.test/object?X-Amz-Signature=signature-canary"}
-		}, want: "forbidden sensitive scalar"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			result := deploymentRunWithToolRef("Read", map[string]interface{}{"path": "state.json"})
-			test.mutate(result["status"].(map[string]interface{}))
-			_, _, err := bindTestDeploymentRun(result, traces)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("model-authored managed payload must fail: %v", err)
-			}
-		})
-	}
-}
-
 func TestBindDeploymentRunEvidenceRejectsOtherStructuredKinds(t *testing.T) {
 	_, _, err := bindTestDeploymentRun(
 		map[string]interface{}{"kind": "ArbitraryResult", "status": map[string]interface{}{}},
@@ -525,34 +241,6 @@ func TestBindDeploymentRunEvidenceRejectsOtherStructuredKinds(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "kind must be DeploymentRun") {
 		t.Fatalf("non-DeploymentRun structured result must fail closed: %v", err)
-	}
-}
-
-func TestBindDeploymentRunEvidenceRemovesRuntimeMetadata(t *testing.T) {
-	traces := completedDoagentToolTraces(t, []map[string]interface{}{
-		{
-			"sessionUpdate": "tool_call_update",
-			"toolCallId":    "read-1",
-			"toolName":      "Read",
-			"status":        "completed",
-			"input":         map[string]interface{}{"path": "state.json"},
-			"rawOutput": map[string]interface{}{
-				"revision": "current",
-				"_meta":    map[string]interface{}{"model": "test-model"},
-			},
-		},
-	})
-	_, bound, err := bindTestDeploymentRun(
-		deploymentRunWithToolRef("Read", map[string]interface{}{"path": "state.json"}),
-		traces,
-	)
-	if err != nil {
-		t.Fatalf("bind runtime evidence: %v", err)
-	}
-	entry := bound["status"].(map[string]interface{})["evidence"].([]interface{})[0].(map[string]interface{})
-	runtimeResult := entry["toolCall"].(map[string]interface{})["result"].(map[string]interface{})
-	if _, exists := runtimeResult["_meta"]; exists {
-		t.Fatalf("runtime metadata must not enter DeploymentRun: %#v", runtimeResult)
 	}
 }
 
@@ -778,106 +466,6 @@ func testCICDInstructionJSON(t *testing.T) string {
 		t.Fatalf("encode test doops-cicd instruction: %v", err)
 	}
 	return string(data)
-}
-
-func TestAgentPromptRejectsWorkspaceCommitMismatchBeforeDoagent(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	workspace := filepath.Join(root, "workspace-mismatch")
-	if err := os.MkdirAll(workspace, 0o700); err != nil {
-		t.Fatalf("create workspace: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(strings.Repeat("b", 40)+"\n"), 0o600); err != nil {
-		t.Fatalf("write workspace commit: %v", err)
-	}
-
-	doagentRequests := 0
-	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		doagentRequests++
-		t.Fatalf("workspace mismatch must fail before contacting doagent: %s", r.URL.Path)
-	}))
-	defer doagent.Close()
-	t.Setenv("DO_AGENT_URL", doagent.URL)
-
-	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
-	defer ts.Close()
-	conn := dialAgentTestWS(t, ts.URL)
-	defer conn.Close()
-	initializeAgentTestWS(t, conn)
-
-	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
-		"session_id":       "workspace-mismatch",
-		"instruction":      "return JSON",
-		"response_format":  "json",
-		"workspace_commit": strings.Repeat("a", 40),
-	})
-	errObj, _ := result["error"].(map[string]interface{})
-	if errObj == nil {
-		t.Fatalf("workspace commit mismatch must fail: %#v", result)
-	}
-	if !strings.Contains(fmt.Sprint(errObj["message"]), "workspace commit mismatch") {
-		t.Fatalf("unexpected mismatch error: %#v", errObj)
-	}
-	if doagentRequests != 0 {
-		t.Fatalf("workspace mismatch contacted doagent %d times", doagentRequests)
-	}
-}
-
-func TestAgentPromptRejectsInstructionWorkspaceCommitMismatchBeforeDoagent(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	sessionID := "instruction-workspace-mismatch"
-	workspace := filepath.Join(root, sessionID)
-	if err := os.MkdirAll(workspace, 0o700); err != nil {
-		t.Fatalf("create workspace: %v", err)
-	}
-	workspaceCommit := strings.Repeat("a", 40)
-	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(workspaceCommit+"\n"), 0o600); err != nil {
-		t.Fatalf("write workspace commit: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(workspace, "deploy"), 0o700); err != nil {
-		t.Fatalf("create deployment directory: %v", err)
-	}
-	writeTrustedAdmissionFixture(t, workspace)
-	doagentRequests := 0
-	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		doagentRequests++
-		t.Fatalf("instruction workspace mismatch must fail before contacting doagent: %s", r.URL.Path)
-	}))
-	defer doagent.Close()
-	t.Setenv("DO_AGENT_URL", doagent.URL)
-
-	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
-	defer ts.Close()
-	conn := dialAgentTestWS(t, ts.URL)
-	defer conn.Close()
-	initializeAgentTestWS(t, conn)
-
-	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
-		"session_id": sessionID,
-		"instruction": `{
-			"task":"execute-doops-cicd-workflow",
-			"skill":"$doops-cicd",
-			"executionMode":"dry-run",
-			"runId":"instruction-workspace-mismatch-0123456789abcdef",
-			"workflowPath":"deploy/release.yaml",
-			"workspaceCommit":"` + strings.Repeat("b", 40) + `",
-			"source":{"repository":"https://example.test/app.git","branch":"main"},
-			"inputs":{"releaseId":"` + strings.Repeat("c", 40) + `"},
-			"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops","instance":"runner","template":"release","project":"app","environment":"production","materializations":[]},
-			"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
-		}`,
-		"response_format":  "json",
-		"workspace_commit": workspaceCommit,
-	})
-	if result["error"] == nil {
-		t.Fatalf("instruction workspace mismatch must fail: %#v", result)
-	}
-	if doagentRequests != 0 {
-		t.Fatalf("instruction workspace mismatch contacted doagent %d times", doagentRequests)
-	}
 }
 
 func TestAgentPromptRejectsInstructionSourceMismatchBeforeDoagent(t *testing.T) {

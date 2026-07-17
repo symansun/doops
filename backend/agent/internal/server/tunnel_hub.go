@@ -1120,7 +1120,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			workflowInstruction.WorkflowPath,
 			workflowInstruction.Source.Repository,
 			workflowInstruction.Source.Branch,
-			workflowInstruction.WorkspaceCommit,
+			workflowInstruction.Inputs,
 			workflowInstruction.ExecutionMode,
 			workflowInstruction.CredentialRun,
 		); err != nil {

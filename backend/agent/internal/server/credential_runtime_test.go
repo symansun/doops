@@ -88,7 +88,6 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 		"workflow_path":     "deploy/release.yaml",
 		"source_repository": "https://example.test/app.git",
 		"source_branch":     "main",
-		"source_revision":   strings.Repeat("a", 40),
 		"mode":              "dry-run",
 	})
 	if dryRun.Code != http.StatusOK {
@@ -105,7 +104,6 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 		"workflow_path":     "deploy/release.yaml",
 		"source_repository": "https://example.test/app.git",
 		"source_branch":     "main",
-		"source_revision":   strings.Repeat("a", 40),
 		"mode":              "apply",
 	})
 	if apply.Code != http.StatusOK {
@@ -333,7 +331,6 @@ func TestCredentialPrepareReturnsVersionedProtocolErrors(t *testing.T) {
 				"workflow_path":     "deploy/release.yaml",
 				"source_repository": "https://example.test/app.git",
 				"source_branch":     "main",
-				"source_revision":   strings.Repeat("a", 40),
 				"mode":              "dry-run",
 			})
 			if response.Code != test.wantStatus {
@@ -455,7 +452,6 @@ func TestCredentialPrepareGrantDenialStopsBeforeMaterialization(t *testing.T) {
 		"workflow_path":     "deploy/release.yaml",
 		"source_repository": "https://example.test/app.git",
 		"source_branch":     "main",
-		"source_revision":   strings.Repeat("b", 40),
 		"mode":              "apply",
 	})
 	if response.Code != http.StatusForbidden {

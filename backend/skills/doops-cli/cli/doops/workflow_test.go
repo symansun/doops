@@ -89,13 +89,10 @@ func TestWorkflowDeclaredSourceUsesConfigurationSourceArtifactContract(t *testin
 	if err := os.MkdirAll(filepath.Dir(workflow), 0o755); err != nil {
 		t.Fatalf("create workflow directory: %v", err)
 	}
-	revision := strings.Repeat("a", 40)
 	if err := os.WriteFile(workflow, []byte(`apiVersion: doops.sh/v2
 kind: DeploymentTemplate
 spec:
   configurationSource: deploy/environments.yaml
-  source:
-    revision: `+revision+`
 `), 0o644); err != nil {
 		t.Fatalf("write workflow: %v", err)
 	}
@@ -106,16 +103,16 @@ spec:
 		t.Fatalf("write configuration source: %v", err)
 	}
 
-	repository, branch, gotRevision, err := workflowDeclaredSource(workflow, nil)
+	repository, branch, err := workflowDeclaredSource(workflow, nil)
 	if err != nil {
 		t.Fatalf("resolve workflow source: %v", err)
 	}
-	if repository != "https://example.test/ecp.git" || branch != "main" || gotRevision != revision {
-		t.Fatalf("unexpected source: repository=%q branch=%q revision=%q", repository, branch, gotRevision)
+	if repository != "https://example.test/ecp.git" || branch != "main" {
+		t.Fatalf("unexpected source: repository=%q branch=%q", repository, branch)
 	}
 }
 
-func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
+func TestRunCICDCommandRoutesApplyThroughDeclaredSourceAndAsk(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("create repository marker: %v", err)
@@ -131,14 +128,14 @@ func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
 	caller := &fakeWorkflowCaller{output: workflowResultJSON("apply", 1)}
 	var events []string
 	var prepareBody struct {
-		Cluster          string `json:"cluster"`
-		Instance         string `json:"instance"`
-		SessionID        string `json:"session_id"`
-		WorkflowPath     string `json:"workflow_path"`
-		SourceRepository string `json:"source_repository"`
-		SourceBranch     string `json:"source_branch"`
-		SourceRevision   string `json:"source_revision"`
-		Mode             string `json:"mode"`
+		Cluster          string            `json:"cluster"`
+		Instance         string            `json:"instance"`
+		SessionID        string            `json:"session_id"`
+		WorkflowPath     string            `json:"workflow_path"`
+		SourceRepository string            `json:"source_repository"`
+		SourceBranch     string            `json:"source_branch"`
+		Inputs           map[string]string `json:"inputs"`
+		Mode             string            `json:"mode"`
 	}
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		events = append(events, "prepare")
@@ -176,9 +173,12 @@ func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
 	defer gateway.Close()
 	originalResolve := resolveWorkflowSource
 	originalOpen := openWorkflowAgent
-	resolveWorkflowSource = func(string, map[string]string) (string, string, string, error) {
-		events = append(events, "resolve")
-		return "https://example.test/app.git", "main", strings.Repeat("a", 40), nil
+	resolveWorkflowSource = func(path string, inputs map[string]string) (string, string, error) {
+		events = append(events, "source")
+		if path != workflow || inputs["releaseId"] != strings.Repeat("b", 40) {
+			t.Fatalf("unexpected workflow source request: path=%q inputs=%#v", path, inputs)
+		}
+		return "https://example.test/app.git", "main", nil
 	}
 	openWorkflowAgent = func(_ Server, _ *SessionStore, _ string, _ bool) (workflowAgentCaller, func()) {
 		caller.onCall = func() { events = append(events, "prompt") }
@@ -212,7 +212,7 @@ func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run workflow: %v", err)
 	}
-	if got, want := strings.Join(events, ","), "resolve,prepare,prompt"; got != want {
+	if got, want := strings.Join(events, ","), "source,prepare,prompt"; got != want {
 		t.Fatalf("workflow operation order mismatch: got %s want %s", got, want)
 	}
 	if prepareBody.Cluster != "doops-edu" ||
@@ -221,15 +221,15 @@ func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
 		prepareBody.WorkflowPath != "backend/deploy/workflows/oilan-agent-bootstrap.yaml" ||
 		prepareBody.SourceRepository != "https://example.test/app.git" ||
 		prepareBody.SourceBranch != "main" ||
-		prepareBody.SourceRevision != strings.Repeat("a", 40) ||
+		prepareBody.Inputs["releaseId"] != strings.Repeat("b", 40) ||
 		prepareBody.Mode != "apply" {
 		t.Fatalf("credential prepare body mismatch: %#v", prepareBody)
 	}
 	if caller.toolName != "doops_agent_prompt" {
 		t.Fatalf("expected generic Ask tool, got %q", caller.toolName)
 	}
-	if caller.arguments["workspace_commit"] != strings.Repeat("a", 40) {
-		t.Fatalf("workspace commit not bound to Ask: %#v", caller.arguments)
+	if _, exists := caller.arguments["workspace_commit"]; exists {
+		t.Fatalf("workspace commit must not reach Ask: %#v", caller.arguments)
 	}
 	if caller.arguments["response_format"] != "json" {
 		t.Fatalf("Ask must request structured result: %#v", caller.arguments)
@@ -278,7 +278,7 @@ func TestRunCICDCommandRoutesApplyThroughPushAndAsk(t *testing.T) {
 	resultContract := instruction["resultContract"].(map[string]interface{})
 	if resultContract["apiVersion"] != "doops.sh/v2" ||
 		resultContract["kind"] != "DeploymentRun" ||
-		resultContract["requireEvidence"] != true {
+		len(resultContract) != 2 {
 		t.Fatalf("unexpected structured result contract: %#v", resultContract)
 	}
 }
@@ -354,9 +354,9 @@ spec:
 	originalResolve := resolveWorkflowSource
 	originalOpen := openWorkflowAgent
 	var sourceResolved bool
-	resolveWorkflowSource = func(string, map[string]string) (string, string, string, error) {
+	resolveWorkflowSource = func(string, map[string]string) (string, string, error) {
 		sourceResolved = true
-		return "https://example.test/app.git", "main", strings.Repeat("a", 40), nil
+		return "https://example.test/app.git", "main", nil
 	}
 	openWorkflowAgent = func(Server, *SessionStore, string, bool) (workflowAgentCaller, func()) {
 		return caller, func() {}
@@ -415,8 +415,8 @@ func TestRunCICDCommandStopsBeforePromptWhenCredentialPrepareFails(t *testing.T)
 	}
 	originalResolve := resolveWorkflowSource
 	originalOpen := openWorkflowAgent
-	resolveWorkflowSource = func(string, map[string]string) (string, string, string, error) {
-		return "https://example.test/app.git", "main", strings.Repeat("a", 40), nil
+	resolveWorkflowSource = func(string, map[string]string) (string, string, error) {
+		return "https://example.test/app.git", "main", nil
 	}
 	openWorkflowAgent = func(Server, *SessionStore, string, bool) (workflowAgentCaller, func()) {
 		return caller, func() {}
@@ -450,26 +450,12 @@ func workflowResultJSON(
 	result := map[string]interface{}{
 		"apiVersion": workspaceManifestAPIVersion,
 		"kind":       "DeploymentRun",
-		"metadata": map[string]interface{}{
-			"workspaceCommit": strings.Repeat("a", 40),
-		},
-		"spec": map[string]interface{}{"mode": mode},
+		"metadata":   map[string]interface{}{"workflow": "deploy/release.yaml", "runId": "run-1"},
+		"spec":       map[string]interface{}{"mode": mode},
 		"status": map[string]interface{}{
 			"phase":         "planned",
 			"mutationCount": mutationCount,
 			"capabilities":  map[string]interface{}{"source-observer": "available"},
-			"evidence": []interface{}{
-				map[string]interface{}{
-					"subject":    "source",
-					"observedAt": "2026-07-14T00:00:00Z",
-					"toolCall": map[string]interface{}{
-						"id":     "tool-source",
-						"tool":   "doops-source-observer",
-						"input":  map[string]interface{}{"scope": "source"},
-						"result": map[string]interface{}{"revision": "immutable"},
-					},
-				},
-			},
 		},
 	}
 	data, _ := json.Marshal(result)
@@ -501,107 +487,34 @@ func TestValidateWorkflowResultRejectsSyntheticResultsAndDryRunMutation(t *testi
 			"apiVersion":"doops.sh/v2",
 			"kind":"DeploymentRun",
 			"spec":{"mode":"dry-run"},
-			"status":{"phase":"admitted","mutationCount":0,"evidence":[]}
+			"status":{"phase":"admitted","mutationCount":0,"capabilities":{"plan":"available"}}
 		}`,
 		"dry-run mutation": `{
 			"apiVersion":"doops.sh/v2",
 			"kind":"DeploymentRun",
 			"spec":{"mode":"dry-run"},
-			"status":{"phase":"planned","mutationCount":1,"evidence":[]}
+			"status":{"phase":"planned","mutationCount":1,"capabilities":{"plan":"available"}}
 		}`,
-		"missing evidence field": `{
+		"missing capabilities": `{
 			"apiVersion":"doops.sh/v2",
 			"kind":"DeploymentRun",
 			"spec":{"mode":"dry-run"},
 			"status":{"phase":"blocked","mutationCount":0}
 		}`,
-		"empty evidence": `{
+		"empty capabilities": `{
 			"apiVersion":"doops.sh/v2",
 			"kind":"DeploymentRun",
 			"spec":{"mode":"dry-run"},
-				"status":{"phase":"planned","mutationCount":0,"evidence":[]}
-			}`,
-		"evidence missing observation time": `{
-				"apiVersion":"doops.sh/v2",
-				"kind":"DeploymentRun",
-				"metadata":{"workspaceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-				"spec":{"mode":"dry-run"},
-				"status":{
-					"phase":"planned",
-					"mutationCount":0,
-					"capabilities":{"source-observer":"available"},
-					"evidence":[{
-						"subject":"source",
-						"toolCall":{
-							"id":"tool-source",
-							"tool":"doops-source-observer",
-							"input":{"scope":"source"},
-							"result":{"revision":"immutable"}
-						}
-					}]
-				}
-			}`,
+			"status":{"phase":"planned","mutationCount":0,"capabilities":{}}
+		}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := validateWorkflowResult(
 				result,
 				"doops.sh/v2",
 				"dry-run",
-				strings.Repeat("a", 40),
 			); err == nil {
 				t.Fatal("invalid or synthetic result must be rejected")
-			}
-		})
-	}
-}
-
-func TestValidateWorkflowResultRejectsUnboundEvidence(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		mutate func(status map[string]interface{})
-	}{
-		{
-			name: "missing tool call",
-			mutate: func(status map[string]interface{}) {
-				delete(status["evidence"].([]interface{})[0].(map[string]interface{}), "toolCall")
-			},
-		},
-		{
-			name: "unresolved tool reference",
-			mutate: func(status map[string]interface{}) {
-				status["evidence"].([]interface{})[0].(map[string]interface{})["toolRef"] =
-					map[string]interface{}{"tool": "Read", "input": map[string]interface{}{"path": "state.json"}}
-			},
-		},
-		{
-			name: "retired evidence field",
-			mutate: func(status map[string]interface{}) {
-				status["evidence"].([]interface{})[0].(map[string]interface{})["module"] = "Read"
-			},
-		},
-		{
-			name: "missing input",
-			mutate: func(status map[string]interface{}) {
-				delete(
-					status["evidence"].([]interface{})[0].(map[string]interface{})["toolCall"].(map[string]interface{}),
-					"input",
-				)
-			},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			result := mutateWorkflowResultJSON(
-				t,
-				workflowResultJSON("dry-run", 0),
-				test.mutate,
-			)
-			if err := validateWorkflowResult(
-				result,
-				"doops.sh/v2",
-				"dry-run",
-				strings.Repeat("a", 40),
-			); err == nil {
-				t.Fatal("evidence must contain an eligible runtime tool call")
 			}
 		})
 	}
@@ -618,9 +531,9 @@ func TestRunCICDCommandRequiresTargetBeforeResolvingSource(t *testing.T) {
 	}
 	originalResolve := resolveWorkflowSource
 	resolutions := 0
-	resolveWorkflowSource = func(string, map[string]string) (string, string, string, error) {
+	resolveWorkflowSource = func(string, map[string]string) (string, string, error) {
 		resolutions++
-		return "https://example.test/app.git", "main", strings.Repeat("a", 40), nil
+		return "https://example.test/app.git", "main", nil
 	}
 	t.Cleanup(func() { resolveWorkflowSource = originalResolve })
 	server := []Server{{Name: "agent-runtime", Gateway: "https://gateway.example.com"}}
@@ -640,9 +553,9 @@ func TestRunCICDCommandRequiresTargetBeforeResolvingSource(t *testing.T) {
 }
 
 func TestWorkflowAPIVersionAcceptsV3(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "environment.yaml")
-	if err := os.WriteFile(path, []byte("apiVersion: doops.sh/v3\nkind: EnvironmentDefinition\n"), 0o600); err != nil {
-		t.Fatalf("write v3 environment: %v", err)
+	path := filepath.Join(t.TempDir(), "environments.yaml")
+	if err := os.WriteFile(path, []byte("apiVersion: doops.sh/v3\nkind: EnvironmentRegistry\n"), 0o600); err != nil {
+		t.Fatalf("write v3 registry: %v", err)
 	}
 	version, err := workflowAPIVersion(path)
 	if err != nil {
@@ -676,9 +589,9 @@ func TestRunCICDCommandRejectsUnsupportedWorkflowBeforeSourceResolutionOrAgentCo
 	originalOpen := openWorkflowAgent
 	resolutions := 0
 	agentContacts := 0
-	resolveWorkflowSource = func(string, map[string]string) (string, string, string, error) {
+	resolveWorkflowSource = func(string, map[string]string) (string, string, error) {
 		resolutions++
-		return "https://example.test/app.git", "main", strings.Repeat("a", 40), nil
+		return "https://example.test/app.git", "main", nil
 	}
 	openWorkflowAgent = func(Server, *SessionStore, string, bool) (workflowAgentCaller, func()) {
 		agentContacts++
@@ -703,7 +616,7 @@ func TestRunCICDCommandRejectsUnsupportedWorkflowBeforeSourceResolutionOrAgentCo
 	)
 	if err == nil || !strings.Contains(
 		err.Error(),
-		"requires doops.sh/v2 DeploymentTemplate or doops.sh/v3 EnvironmentDefinition",
+		"requires doops.sh/v2 DeploymentTemplate or doops.sh/v3 EnvironmentRegistry",
 	) {
 		t.Fatalf("unsupported workflow error = %v", err)
 	}
