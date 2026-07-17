@@ -278,8 +278,8 @@ func restoreCredentialTarget(ctx context.Context, namespace, name string, snapsh
 			"imagePullSecrets": imagePullSecrets,
 		}}},
 	})
-	if err := runCredentialCommand(ctx, patch, "kubectl", "patch", snapshot.WorkloadKind, snapshot.WorkloadName,
-		"-n", namespace, "--type=merge", "--patch-file=-"); err != nil {
+	if err := runCredentialCommand(ctx, nil, "kubectl", "patch", snapshot.WorkloadKind, snapshot.WorkloadName,
+		"-n", namespace, "--type=merge", "--patch", string(patch)); err != nil {
 		return errors.New("credential_workload_restore_failed")
 	}
 	return nil
@@ -336,7 +336,7 @@ func patchImagePullSecret(ctx context.Context, namespace string, workload Creden
 			"imagePullSecrets": imagePullSecrets,
 		}}},
 	})
-	return runCredentialCommand(ctx, patch, "kubectl", "patch", kind, workload.Name, "-n", namespace, "--type=merge", "--patch-file=-")
+	return runCredentialCommand(ctx, nil, "kubectl", "patch", kind, workload.Name, "-n", namespace, "--type=merge", "--patch", string(patch))
 }
 
 func inspectImagePullSecrets(ctx context.Context, namespace, kind, name string) ([]string, error) {
@@ -433,7 +433,7 @@ func removeImagePullSecret(ctx context.Context, namespace string, workload Crede
 			"imagePullSecrets": filtered,
 		}}},
 	})
-	return runCredentialCommand(ctx, patch, "kubectl", "patch", kind, workload.Name, "-n", namespace, "--type=merge", "--patch-file=-")
+	return runCredentialCommand(ctx, nil, "kubectl", "patch", kind, workload.Name, "-n", namespace, "--type=merge", "--patch", string(patch))
 }
 
 func containsString(values []string, want string) bool {
@@ -446,22 +446,29 @@ func containsString(values []string, want string) bool {
 }
 
 func inspectCredentialSecret(ctx context.Context, namespace, name string) (string, string, []string, error) {
-	cmd := exec.CommandContext(ctx, "kubectl", "get", "secret", name, "-n", namespace,
-		"-o", `jsonpath={.type}{"\n"}{.metadata.resourceVersion}{"\n"}{range $k,$v := .data}{$k}{","}{end}{"\n"}`)
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "secret", name, "-n", namespace, "-o", "json")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", "", nil, errors.New("credential_secret_get_failed")
 	}
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) < 3 || strings.TrimSpace(lines[0]) == "" || strings.TrimSpace(lines[1]) == "" {
+	var secret struct {
+		Metadata struct {
+			ResourceVersion string `json:"resourceVersion"`
+		} `json:"metadata"`
+		Type string            `json:"type"`
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(output, &secret); err != nil ||
+		strings.TrimSpace(secret.Type) == "" ||
+		strings.TrimSpace(secret.Metadata.ResourceVersion) == "" {
 		return "", "", nil, errors.New("credential_secret_verification_failed")
 	}
-	keys := strings.Split(strings.Trim(strings.TrimSpace(lines[2]), ","), ",")
-	if len(keys) == 1 && keys[0] == "" {
-		keys = nil
+	keys := make([]string, 0, len(secret.Data))
+	for key := range secret.Data {
+		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	return strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1]), keys, nil
+	return strings.TrimSpace(secret.Type), strings.TrimSpace(secret.Metadata.ResourceVersion), keys, nil
 }
 
 func verifyRegistryManifest(ctx context.Context, server, username, password, repository, reference string) (string, error) {

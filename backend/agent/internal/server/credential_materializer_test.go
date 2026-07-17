@@ -77,7 +77,16 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 		t.Fatalf("unexpected registry materialization: %#v", result)
 	}
 	assertCredentialCanaryNotInText(t, "materializer result", string(mustJSON(t, result)), "materializer-canary-secret")
-	assertCredentialCanaryNotInText(t, "command arguments", readCredentialTestFile(t, argsLog), "materializer-canary-secret")
+	logged := readCredentialTestFile(t, argsLog)
+	assertCredentialCanaryNotInText(t, "command arguments", logged, "materializer-canary-secret")
+	if strings.Contains(logged, "[--patch-file] [-]") ||
+		!strings.Contains(logged, "[--type=merge] [--patch]") {
+		t.Fatalf("workload patch does not use a kubectl-supported inline merge patch: %s", logged)
+	}
+	if !strings.Contains(logged, "[get] [secret]") ||
+		!strings.Contains(logged, "[-o] [json]") {
+		t.Fatalf("Secret inspection does not use structured JSON output: %s", logged)
+	}
 }
 
 func TestVerifyRegistryManifestUsesBearerChallenge(t *testing.T) {
@@ -500,9 +509,16 @@ case "$1" in
           exit 0
         fi
       done
-      printf '%s\n' "$DOOPS_TEST_SECRET_TYPE"
-      printf '42\n'
-      printf '%s\n' "$DOOPS_TEST_SECRET_KEYS"
+      printf '{"metadata":{"resourceVersion":"42"},"type":"%s","data":{' "$DOOPS_TEST_SECRET_TYPE"
+      separator=
+      old_ifs=$IFS
+      IFS=,
+      for key in $DOOPS_TEST_SECRET_KEYS; do
+        printf '%s"%s":"e30="' "$separator" "$key"
+        separator=,
+      done
+      IFS=$old_ifs
+      printf '}}\n'
     else
       printf '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"existing-pull"}]}}}}\n'
     fi
