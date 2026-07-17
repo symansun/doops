@@ -65,8 +65,17 @@ source、mode 与完整 `CredentialRun` digest；只有在限流和 target 资�
 
 ## Version Gates
 
-外层 Agent 注册必须声明 `doops.sh/credential-plan/v2`。CI/CD prompt 调用 doagent
-前还必须通过 `initialize` 验证：
+外层 Agent 注册必须声明完整 credential-plan capability：
+
+- `schemaVersion=doops.sh/credential-plan/v2`
+- `declarationSchemaVersion=doops.sh/v3`
+- `sourceRevision=true`
+- `targetBinding=true`
+- `sessionBinding=true`
+- `buildDefinition=true`
+
+旧字符串声明或任一字段缺失都不兼容。CI/CD prompt 调用 doagent 前还必须通过
+`initialize` 验证：
 
 - `schemaVersion=doops.reconciliation-context/v2`
 - `callContextSchemaVersion=doops.reconciliation-call-context/v1`

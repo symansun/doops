@@ -38,10 +38,14 @@ func TestAgentCredentialPlanToolParsesBoundWorkspace(t *testing.T) {
 
 	result := callTool(t, conn, "doops_credential_plan", map[string]interface{}{
 		"session_id":        "credential-plan",
-		"workflow_path":     "deploy/release.yaml",
+		"workflow_path":     "deploy/environments.yaml",
 		"source_repository": "https://example.test/app.git",
 		"source_branch":     "main",
 		"source_revision":   credentialRunFixtureCommit,
+		"inputs": map[string]string{
+			"environment": "production",
+			"service":     "api",
+		},
 	})
 	var plan CredentialPlan
 	if err := json.Unmarshal([]byte(result), &plan); err != nil {
@@ -58,48 +62,119 @@ func createCredentialPlanWorkspaceFixture(t *testing.T) (string, string) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 	t.Setenv("DOOPS_PLAN_WORKSPACE_BASE", root)
 	workspace := filepath.Join(root, "credential-plan")
-	if err := os.MkdirAll(filepath.Join(workspace, "deploy"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(workspace, "deploy", "environments", "production", "services"), 0755); err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(workspace, "deploy", "release.yaml"), []byte(`
-apiVersion: doops.sh/v2
-kind: DeploymentTemplate
-metadata:
-  name: oilan-release
-spec:
-  application: oilan
-  environment: production
-  configurationSource: deploy/environments.yaml
-  credentialRefs:
-    - name: cnb-registry
-      use: imagePull
-      namespace: oilan
-      registryRepository: team/app
-      registryReference: latest
-      workload:
-        kind: Deployment
-        name: oilan-api
-`), 0600); err != nil {
-		t.Fatalf("write workflow: %v", err)
+	if err := os.MkdirAll(filepath.Join(workspace, "deploy", "services"), 0755); err != nil {
+		t.Fatalf("create service directory: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(workspace, "deploy", "environments.yaml"), []byte(`
-apiVersion: doops.sh/v2
+apiVersion: doops.sh/v3
 kind: EnvironmentRegistry
 metadata:
-  name: test-environments
+  name: oilan
 environments:
   production:
     target:
       name: oilan-prod
       cluster: oilan
       instance: prod
+      session: credential-plan
+    source:
+      repository: https://example.test/app.git
+      branch: main
+      build: deploy/deploy.yaml
+    helm:
+      release: oilan-api
+      namespace: oilan
+      chart: deploy/chart
+      values: deploy/values.yaml
+      atomic: true
+      wait: true
+    artifacts:
+      targetRegistry: registry.example.test/oilan
+      runtimeImagePullSecret:
+        kind: KubernetesSecret
+        name: cnb-registry
+    services:
+      api: deploy/environments/production/services/api.yaml
+    healthChecks:
+      - https://api.example.test/healthz
 `), 0600); err != nil {
-		t.Fatalf("write configuration: %v", err)
+		t.Fatalf("write environment registry: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "deploy", "environments", "production", "services", "api.yaml"), []byte(`
+apiVersion: doops.sh/v3
+kind: EnvironmentService
+metadata:
+  name: api
+  environment: production
+spec:
+  serviceDefinition: deploy/services/api.yaml
+  artifact:
+    source: source.example.test/oilan-api
+    target: registry.example.test/oilan/team/app
+    identity: sha256-digest
+    digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  helm:
+    chart: deploy/chart
+    values: deploy/values.yaml
+    value: api
+    enabled: true
+    replicas: 1
+    workload: deployment/oilan-api
+    container: oilan-api
+  configuration:
+    valuesPath: api
+    files: []
+  verification:
+    minReadyReplicas: 1
+    requireEndpoints: true
+    publicUrl: https://api.example.test/healthz
+`), 0600); err != nil {
+		t.Fatalf("write environment service: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "deploy", "services", "api.yaml"), []byte(`
+apiVersion: doops.sh/v3
+kind: ServiceDefinition
+metadata:
+  name: api
+spec:
+  service: api
+  artifact: oilan-api
+  buildManifest: deploy/deploy.yaml
+  sourceContext: api
+  dockerfile: api/Dockerfile
+  helm:
+    value: api
+    workload: deployment/oilan-api
+    container: oilan-api
+  verification:
+    endpointRequired: true
+`), 0600); err != nil {
+		t.Fatalf("write service definition: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "deploy", "deploy.yaml"), []byte(`
+apiVersion: doops.sh/v3
+kind: BuildDefinition
+metadata:
+  name: oilan
+spec:
+  services:
+    api:
+      context: api
+      dockerfile: api/Dockerfile
+      image: source.example.test/oilan-api
+`), 0600); err != nil {
+		t.Fatalf("write build definition: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "deploy", "values.yaml"), []byte("api: {}\n"), 0600); err != nil {
+		t.Fatalf("write values: %v", err)
 	}
 	runTestCommand(t, workspace, "git", "init", "-q", "-b", "main")
 	runTestCommand(t, workspace, "git", "config", "user.email", "test@example.invalid")
 	runTestCommand(t, workspace, "git", "config", "user.name", "DoOps Test")
-	runTestCommand(t, workspace, "git", "add", "deploy/release.yaml", "deploy/environments.yaml")
+	runTestCommand(t, workspace, "git", "add", "deploy")
 	runTestCommand(t, workspace, "git", "commit", "-q", "-m", "credential plan fixture")
 	commit := strings.TrimSpace(runTestCommand(t, workspace, "git", "rev-parse", "HEAD"))
 	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(commit+"\n"), 0o600); err != nil {

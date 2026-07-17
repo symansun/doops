@@ -62,7 +62,31 @@ const (
 	gatewayReadProgressAckInterval     = 5 * time.Second
 	gatewayReadProgressAckWriteTimeout = 3 * time.Second
 	credentialPlanProtocolV2           = "doops.sh/credential-plan/v2"
+	credentialPlanDeclarationV3        = "doops.sh/v3"
 )
+
+func credentialPlanCapability() map[string]interface{} {
+	return map[string]interface{}{
+		"schemaVersion":            credentialPlanProtocolV2,
+		"declarationSchemaVersion": credentialPlanDeclarationV3,
+		"sourceRevision":           true,
+		"targetBinding":            true,
+		"sessionBinding":           true,
+		"buildDefinition":          true,
+	}
+}
+
+func credentialPlanCapabilityCompatible(value interface{}) bool {
+	capability, ok := value.(map[string]interface{})
+	return ok &&
+		len(capability) == 6 &&
+		capability["schemaVersion"] == credentialPlanProtocolV2 &&
+		capability["declarationSchemaVersion"] == credentialPlanDeclarationV3 &&
+		capability["sourceRevision"] == true &&
+		capability["targetBinding"] == true &&
+		capability["sessionBinding"] == true &&
+		capability["buildDefinition"] == true
+}
 
 type GatewayActiveOperation struct {
 	ID             string        `json:"id"`
@@ -1233,8 +1257,9 @@ func (a *GatewayAgent) initialize() error {
 				a.RuntimeID = strings.TrimSpace(a.RuntimeID)
 				if capabilities, ok := result["capabilities"].(map[string]interface{}); ok {
 					if protocols, ok := capabilities["protocols"].(map[string]interface{}); ok {
-						a.CredentialPlanProtocol, _ = protocols["credentialPlan"].(string)
-						a.CredentialPlanProtocol = strings.TrimSpace(a.CredentialPlanProtocol)
+						if credentialPlanCapabilityCompatible(protocols["credentialPlan"]) {
+							a.CredentialPlanProtocol = credentialPlanProtocolV2
+						}
 					}
 				}
 			}

@@ -11,6 +11,13 @@ ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = ROOT.parent
 CHART = ROOT / "deploy" / "helm" / "doops-agent"
 VALUES = REPOSITORY_ROOT / "deploy" / "environments" / "oilan" / "values.yaml"
+RELEASE_RUNNER_VALUES = (
+    REPOSITORY_ROOT
+    / "deploy"
+    / "environments"
+    / "oilan"
+    / "release-runner-values.yaml"
+)
 REGISTRY = REPOSITORY_ROOT / "deploy" / "environments.yaml"
 SETTINGS_MODULE = ROOT / "agent" / "configure_doagent_settings.py"
 KUBECONFIG_MODULE = ROOT / "agent" / "configure_kubeconfig.py"
@@ -53,6 +60,25 @@ def render_oilan_chart_with(*overrides):
     for override in overrides:
         command.extend(["--set-string", override])
     return subprocess.run(command, capture_output=True, text=True)
+
+
+def render_release_runner_chart():
+    output = subprocess.run(
+        [
+            "helm",
+            "template",
+            "doops-release-runner",
+            str(CHART),
+            "--namespace",
+            "kz-ops",
+            "--values",
+            str(RELEASE_RUNNER_VALUES),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return [item for item in yaml.safe_load_all(output) if item][0]
 
 
 def env_value(container, name: str):
@@ -158,6 +184,36 @@ def test_oilan_agent_model_settings_are_secret_backed():
     assert host_paths["containerd-socket"] == "/run/containerd/containerd.sock"
     assert host_paths["nerdctl-bin"] == "/usr/bin/nerdctl"
     assert host_paths["crictl-bin"] == "/usr/bin/crictl"
+
+
+def test_oilan_release_runner_isolated_from_managed_agent():
+    deployment = render_release_runner_chart()
+    pod_spec = deployment["spec"]["template"]["spec"]
+    container = pod_spec["containers"][0]
+    volumes = {
+        item["name"]: item["hostPath"]["path"]
+        for item in pod_spec["volumes"]
+        if "hostPath" in item
+    }
+    registry = yaml.safe_load(REGISTRY.read_text(encoding="utf-8"))
+    target = registry["environments"]["oilan"]["target"]
+
+    assert deployment["metadata"]["name"] == "doops-release-runner"
+    assert deployment["spec"]["selector"]["matchLabels"] == {
+        "app": "doops-release-runner"
+    }
+    assert deployment["spec"]["template"]["metadata"]["labels"] == {
+        "app": "doops-release-runner"
+    }
+    assert env_value(container, "DOOPS_GATEWAY_CLUSTER")["value"] == "doops-edu"
+    assert env_value(container, "DOOPS_GATEWAY_INSTANCE")["value"] == "release-runner"
+    assert volumes["agent-home"] == "/var/lib/doops-release-runner-home"
+    assert target == {
+        "name": "gw-edu-release-runner",
+        "cluster": "doops-edu",
+        "instance": "release-runner",
+        "session": "doops-oilan-release",
+    }
 
 
 def test_runtime_kubeconfig_uses_in_cluster_api_without_changing_admin_identity(

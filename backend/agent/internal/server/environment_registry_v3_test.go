@@ -149,9 +149,9 @@ func TestRepositoryEnvironmentRegistryV3CompilesOilanDoopsAgent(t *testing.T) {
 		t.Fatalf("compile repository Oilan declaration: %v", err)
 	}
 	if plan.Template != "doops-oilan-doops-agent" ||
-		plan.Target != "gw-edu-coder" ||
+		plan.Target != "gw-edu-release-runner" ||
 		plan.Cluster != "doops-edu" ||
-		plan.Instance != "edu-coder" ||
+		plan.Instance != "release-runner" ||
 		plan.Session != "doops-oilan-release" ||
 		len(plan.CredentialRefs) != 0 {
 		t.Fatalf("unexpected repository plan: %#v", plan)

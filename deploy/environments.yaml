@@ -5,9 +5,9 @@ metadata:
 environments:
   oilan:
     target:
-      name: gw-edu-coder
+      name: gw-edu-release-runner
       cluster: doops-edu
-      instance: edu-coder
+      instance: release-runner
       session: doops-oilan-release
     source:
       repository: https://cnb.cool/l8ai/ai/doops.sh.git

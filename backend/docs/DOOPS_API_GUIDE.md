@@ -160,7 +160,7 @@ Authorization: Bearer <USER_TOKEN>
 
 ## Git 工作区同步
 
-`push/pull` 使用 Git HTTP，不使用 stdout、base64 或 tar 分块传输。直连 agent 时访问 agent 的 `/git/<session>.git/...`；gateway 模式访问：
+`push/pull` 使用 Git HTTP，不使用 stdout、base64 或 tar 分块传输。标准公共 API 只通过 Gateway 访问：
 
 ```http
 GET/POST /v1/git/<cluster>/<instance>/<session>.git/...

@@ -270,7 +270,7 @@ func (gw *Gateway) ServeWebSocketConnWithReady(conn *websocket.Conn, remoteAddr 
 					"capabilities": map[string]interface{}{
 						"tools": map[string]interface{}{},
 						"protocols": map[string]interface{}{
-							"credentialPlan": credentialPlanProtocolV2,
+							"credentialPlan": credentialPlanCapability(),
 						},
 					},
 				},

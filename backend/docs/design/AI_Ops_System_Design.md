@@ -19,8 +19,7 @@ flowchart LR
     TARGET["Host / Kubernetes / Runtime / External API"]
 
     USER --> CLI
-    CLI -->|"直连"| EDGE
-    CLI -->|"隧道"| GW
+    CLI --> GW
     GW --> EDGE
     EDGE --> ENGINE
     EDGE -->|"确定性原子工具"| TARGET

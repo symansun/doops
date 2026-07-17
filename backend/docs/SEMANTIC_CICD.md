@@ -53,9 +53,17 @@ the authenticated user, target, session, manifest, source, environment,
 service, mode, workspace commit, and complete `CredentialRun` digest. It is
 consumed once after operation limits and the target lock succeed.
 
-The target Agent must advertise `doops.sh/credential-plan/v2`. Before model
-execution, doagent `initialize` must advertise the exact trusted
-reconciliation contract:
+The target Agent must advertise the exact credential-plan capability:
+
+- `schemaVersion=doops.sh/credential-plan/v2`
+- `declarationSchemaVersion=doops.sh/v3`
+- `sourceRevision=true`
+- `targetBinding=true`
+- `sessionBinding=true`
+- `buildDefinition=true`
+
+Legacy string capabilities are incompatible. Before model execution, doagent
+`initialize` must advertise the exact trusted reconciliation contract:
 
 - `schemaVersion=doops.reconciliation-context/v2`
 - `callContextSchemaVersion=doops.reconciliation-call-context/v1`

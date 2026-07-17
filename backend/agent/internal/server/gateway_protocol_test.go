@@ -173,6 +173,47 @@ func TestGatewayAgentRegistrationDoesNotRequireToken(t *testing.T) {
 	resp.Body.Close()
 }
 
+func TestCredentialPlanCapabilityRequiresExactContract(t *testing.T) {
+	valid := credentialPlanCapability()
+	if !credentialPlanCapabilityCompatible(valid) {
+		t.Fatalf("current credential plan capability rejected: %#v", valid)
+	}
+
+	for name, capability := range map[string]interface{}{
+		"legacy string": credentialPlanProtocolV2,
+		"missing source revision": map[string]interface{}{
+			"schemaVersion":            credentialPlanProtocolV2,
+			"declarationSchemaVersion": credentialPlanDeclarationV3,
+			"targetBinding":            true,
+			"sessionBinding":           true,
+			"buildDefinition":          true,
+		},
+		"wrong declaration schema": map[string]interface{}{
+			"schemaVersion":            credentialPlanProtocolV2,
+			"declarationSchemaVersion": "doops.sh/v2",
+			"sourceRevision":           true,
+			"targetBinding":            true,
+			"sessionBinding":           true,
+			"buildDefinition":          true,
+		},
+		"unknown field": map[string]interface{}{
+			"schemaVersion":            credentialPlanProtocolV2,
+			"declarationSchemaVersion": credentialPlanDeclarationV3,
+			"sourceRevision":           true,
+			"targetBinding":            true,
+			"sessionBinding":           true,
+			"buildDefinition":          true,
+			"legacyFallback":           true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if credentialPlanCapabilityCompatible(capability) {
+				t.Fatalf("incompatible credential plan capability accepted: %#v", capability)
+			}
+		})
+	}
+}
+
 func TestGatewayAgentCandidateDoesNotReplaceReadySessionBeforeInitialize(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
@@ -2886,7 +2927,7 @@ func serveApplyGateFakeAgent(conn *websocket.Conn, credentialProtocol bool) {
 			if credentialProtocol {
 				result["capabilities"] = map[string]interface{}{
 					"protocols": map[string]interface{}{
-						"credentialPlan": credentialPlanProtocolV2,
+						"credentialPlan": credentialPlanCapability(),
 					},
 				}
 			}

@@ -36,14 +36,14 @@ const QUICK_PROMPTS = [
 
 function releaseReadinessTemplate(sessionId: string) {
   return `请只读检查 /root/ws/${sessionId} 的发布准备状态。
-确认仓库是否存在 doops.sh/v2 DeploymentTemplate、环境注册表引用、不可变 release identity 和验收条件。
+确认仓库是否存在 deploy/environments.yaml 中的 doops.sh/v3 EnvironmentRegistry、所选环境和服务声明、BuildDefinition、不可变 release identity 和验收条件。
 不得执行部署、构建、回滚、Shell 发布脚本或 Kubernetes mutation。
 输出缺失项和应由控制端执行的 doops cicd run 命令参数。`
 }
 
 function releaseReadinessAfterCloneTemplate(sessionId: string, repo: GitRepo) {
   return `仓库「${repo.name}」已通过 doops 克隆到 /root/ws/${sessionId}/repo。
-请只读检查 repo/ 中的 doops.sh/v2 DeploymentTemplate、环境注册表引用、不可变 release identity 和验收条件。
+请只读检查 repo/deploy/environments.yaml 中的 doops.sh/v3 EnvironmentRegistry、所选环境和服务声明、BuildDefinition、不可变 release identity 和验收条件。
 不得执行部署、构建、回滚、Shell 发布脚本或 Kubernetes mutation。
 输出缺失项和应由控制端执行的 doops cicd run 命令参数。`
 }

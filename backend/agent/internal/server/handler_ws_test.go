@@ -1557,7 +1557,7 @@ func initializeAgentTestWS(t *testing.T, conn *websocket.Conn) {
 	}
 	capabilities, _ := result["capabilities"].(map[string]interface{})
 	protocols, _ := capabilities["protocols"].(map[string]interface{})
-	if protocols["credentialPlan"] != credentialPlanProtocolV2 {
+	if !credentialPlanCapabilityCompatible(protocols["credentialPlan"]) {
 		t.Fatalf("initialize result must advertise credential plan v2: %#v", resp)
 	}
 }

@@ -59,9 +59,9 @@ bash scripts/deploy-gateway.sh \
 发布者必须先将待发布提交推送到 `main`，确认 CNB CI 的候选镜像已经生成，并在无未提交文件的精确 commit checkout 中执行环境注册表。CLI 会拒绝工作区不干净、声明不完整或 source commit 无法固定的发布。运行期必须使用候选镜像的 registry digest，不得以可变 tag 作为实际部署镜像。唯一入口为 `deploy/environments.yaml`，并显式选择一个 environment 和 service；运行期目标清单由该注册表、服务声明、Helm Chart 和环境 values 定义。
 
 ```bash
-doops -session oilan-agent-bootstrap cicd run \
+doops -session doops-oilan-release cicd run \
   -f deploy/environments.yaml \
-  -target <configured-doops-target> \
+  -target gw-edu-release-runner \
   --dry-run \
   --set environment=oilan \
   --set service=doops-agent
@@ -71,6 +71,13 @@ The command synchronizes the repository, then sends one ordinary Ask to doagent
 for the `$doops-cicd` Skill. The Skill emits one JSON `DeploymentRun` as its
 final response;
 text such as `admitted` is not evidence, and dry-run mutation count must be zero.
+
+Oilan 的发布执行者固定为独立的 `doops-edu/release-runner`，其声明位于
+`deploy/environments/oilan/release-runner-values.yaml`。它与受管
+`doops-agent-live` 使用不同的 Deployment、selector 和 Agent home。首次接入或
+release runner 自恢复可以使用集群管理员上下文按该 values 引导；完成 Gateway
+注册后，后续环境发布必须由 `gw-edu-release-runner` 执行。受管 Agent 不得发布或
+替换自身。
 
 **DoOps Agent 执行顺序：**
 1. 校验工作区与 `main` 上的精确 source commit 一致。

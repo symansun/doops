@@ -631,7 +631,7 @@ func serveCredentialRuntimeAgent(
 				"result": map[string]any{
 					"protocolVersion": "2024-11-05",
 					"capabilities": map[string]any{
-						"protocols": map[string]any{"credentialPlan": credentialPlanProtocolV2},
+						"protocols": map[string]any{"credentialPlan": credentialPlanCapability()},
 					},
 				},
 			})
