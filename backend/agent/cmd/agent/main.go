@@ -49,6 +49,7 @@ func main() {
 	gatewayURL := flag.String("gateway-url", "", "Public doops-gateway URL for reverse tunnel mode")
 	cluster := flag.String("cluster", "", "Cluster name registered in reverse tunnel mode")
 	instance := flag.String("instance", "", "Agent instance name registered in reverse tunnel mode")
+	agentToken := flag.String("agent-token", "", "doops-gateway agent registration token")
 	reconnectDelay := flag.Duration("reconnect-delay", time.Second, "Reverse tunnel reconnect delay")
 	insecureGit := flag.Bool("insecure-git", false, "Allow anonymous git push/pull when no token is configured (default-deny otherwise)")
 	flag.Parse()
@@ -70,7 +71,11 @@ func main() {
 	// doagent ACP HTTP 服务由 entrypoint.sh 在容器启动时拉起（port 9000）
 
 	if strings.TrimSpace(*gatewayURL) != "" {
-		go runReverseTunnel(gw, *gatewayURL, *cluster, *instance, *reconnectDelay)
+		tunnelToken := strings.TrimSpace(*agentToken)
+		if tunnelToken == "" {
+			tunnelToken = token
+		}
+		go runReverseTunnel(gw, *gatewayURL, tunnelToken, *cluster, *instance, *reconnectDelay)
 	}
 
 	http.HandleFunc("/ws", gw.HandleWebSocket) // 新增 WebSocket 端点
@@ -126,7 +131,7 @@ func setReverseTunnelConnected(connected bool) {
 	atomic.StoreInt32(&reverseTunnelConnected, 0)
 }
 
-func runReverseTunnel(gw *server.Gateway, rawURL, cluster, instance string, reconnectDelay time.Duration) {
+func runReverseTunnel(gw *server.Gateway, rawURL, token, cluster, instance string, reconnectDelay time.Duration) {
 	setReverseTunnelConnected(false)
 	if reconnectDelay <= 0 {
 		reconnectDelay = time.Second
@@ -153,8 +158,14 @@ func runReverseTunnel(gw *server.Gateway, rawURL, cluster, instance string, reco
 			continue
 		}
 
+		header := http.Header{}
+		if token != "" {
+			header.Set("Authorization", "Bearer "+token)
+			header.Set("X-Doops-Key", token)
+		}
+
 		log.Printf("🌉 connecting reverse tunnel to %s (cluster=%s instance=%s)", tunnelURL, cluster, instance)
-		conn, resp, err := reverseTunnelDial(tunnelURL, nil)
+		conn, resp, err := reverseTunnelDial(tunnelURL, header)
 		if err != nil {
 			if resp != nil {
 				log.Printf("❌ reverse tunnel dial failed: %v (HTTP %s)", err, resp.Status)
