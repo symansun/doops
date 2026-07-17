@@ -32,6 +32,9 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 	if action == "" {
 		return "", fmt.Errorf("unknown doops action for tool: %s", tool)
 	}
+	if err := h.validateCommand(tool, rawArgs); err != nil {
+		return "", err
+	}
 	if action == ActionAgentUpgrade {
 		var upgrade agentUpgradeParams
 		if err := json.Unmarshal(rawArgs, &upgrade); err != nil {

@@ -1364,6 +1364,51 @@ func TestGatewayRejectsDirectAgentUpgradeWithoutDispatch(t *testing.T) {
 	}
 }
 
+func TestGatewayRejectsAgentSelfMutationShellBeforeDispatch(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	user, _ := store.CreateUser("alice")
+	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
+	if err := store.GrantUser(user.ID, ScopeGrant{
+		Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec},
+	}); err != nil {
+		t.Fatalf("grant exec: %v", err)
+	}
+
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	mux := http.NewServeMux()
+	gw.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
+	defer agentConn.Close()
+	go serveFakeAgent(t, agentConn)
+	requireEventually(t, time.Second, func() bool { return gw.getAgent("dev", "local") != nil })
+
+	client := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
+	defer client.Close()
+	args, _ := json.Marshal(map[string]interface{}{
+		"command":    "kubectl -n doops-system set image deployment/doops-agent doops-agent=image:v2",
+		"session_id": "blocked-self-mutation",
+	})
+	writeGatewayJSON(t, client, map[string]interface{}{
+		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+		"params": map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(args)},
+	})
+	resp := readUntilID(t, client, 2)
+	errObj, ok := resp["error"].(map[string]interface{})
+	if !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "blocked dangerous command") {
+		t.Fatalf("expected gateway command rejection, got %#v", resp)
+	}
+	if gw.getAgent("dev", "local") == nil {
+		t.Fatal("rejected shell command disconnected the agent")
+	}
+}
+
 func TestGatewayActionMappingUsesDedicatedToolsForWorkspacePull(t *testing.T) {
 	if got := actionForTool("doops_workspace_pull_begin", nil); got != ActionPull {
 		t.Fatalf("expected workspace pull begin to map to pull, got %q", got)
