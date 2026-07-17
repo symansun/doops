@@ -101,10 +101,13 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		"credential", "put", "--target", "gw-edu-release-runner", "--id", "cred_123")
 	run("", "credential", "grant", "--target", "gw-edu-release-runner", "--id", "cred_123",
 		"--grantee-id", "user_42", "--cluster", "doops-edu", "--instance", "edu-coder",
-		"--namespace", "apps", "--use", "imagePull",
-		"--workload-kind", "Deployment", "--workload-name", "api",
-		"--image-repository", "team/api", "--image-digest", "sha256:manifest")
+		"--project", "oilan", "--environment", "production", "--template", "oilan-release",
+		"--namespace", "apps", "--uses", "imagePull")
 	run("", "credential", "grant-revoke", "--target", "gw-edu-release-runner", "--id", "cred_123", "--grant-id", "credgrant_789")
+	run("", "credential", "verify", "--target", "gw-edu-release-runner", "--id", "cred_123",
+		"--version-id", "credver_456", "--session", "doops-oilan-release",
+		"--workflow-path", "deploy/environments.yaml", "--workspace-commit", strings.Repeat("a", 40),
+		"--environment", "oilan", "--service", "doops-agent")
 	run("", "credential", "promote", "--target", "gw-edu-release-runner", "--id", "cred_123", "--version-id", "credver_456")
 	run("", "credential", "revoke", "--target", "gw-edu-release-runner", "--id", "cred_123")
 	run(`{"name":"release","scope":"platform","items":[{"credential_id":"cred_123","use":"imagePull","namespace":"apps","workload":{"Kind":"Deployment","Name":"api"},"registry_repository":"team/api","registry_reference":"sha256:manifest"}]}`,
@@ -123,8 +126,8 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		t.Fatalf("credential commands must reject token argv flags, output: %s", output)
 	}
 
-	if len(requests) != 9 {
-		t.Fatalf("gateway request count mismatch: got %d want 9", len(requests))
+	if len(requests) != 10 {
+		t.Fatalf("gateway request count mismatch: got %d want 10", len(requests))
 	}
 	for _, request := range requests {
 		if request.Auth != "Bearer cli-token" {
@@ -144,32 +147,46 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		t.Fatalf("credential put must not activate through a query parameter: %#v", requests[2].Query)
 	}
 	assertCredentialCLIJSON(t, requests[3], http.MethodPost, "/v1/credentials/cred_123/grants", map[string]any{
-		"grantee_id": "user_42",
-		"scope": map[string]any{
-			"cluster":          "doops-edu",
-			"instance":         "edu-coder",
-			"namespace":        "apps",
-			"use":              "imagePull",
-			"workload":         map[string]any{"kind": "Deployment", "name": "api"},
-			"image_repository": "team/api",
-			"image_digest":     "sha256:manifest",
-		},
+		"grantee_id":  "user_42",
+		"cluster":     "doops-edu",
+		"instance":    "edu-coder",
+		"project":     "oilan",
+		"environment": "production",
+		"template":    "oilan-release",
+		"namespace":   "apps",
+		"uses":        []any{"imagePull"},
 	})
 	assertCredentialCLIJSON(t, requests[4], http.MethodDelete, "/v1/credentials/cred_123/grants", map[string]any{
 		"grant_id": "credgrant_789",
 	})
-	assertCredentialCLIJSON(t, requests[5], http.MethodPost, "/v1/credentials/cred_123/promote", map[string]any{
+	assertCredentialCLIJSON(t, requests[5], http.MethodPost, "/v1/credentials/cred_123/verify", map[string]any{
+		"version_id":        "credver_456",
+		"cluster":           "doops-edu",
+		"instance":          "release-runner",
+		"target":            "gw-edu-release-runner",
+		"session_id":        "doops-oilan-release",
+		"workflow_path":     "deploy/environments.yaml",
+		"source_revision":   strings.Repeat("a", 40),
+		"workspace_commit":  strings.Repeat("a", 40),
+		"source_repository": "https://cnb.cool/l8ai/ai/doops.sh.git",
+		"source_branch":     "main",
+		"inputs": map[string]any{
+			"environment": "oilan",
+			"service":     "doops-agent",
+		},
+	})
+	assertCredentialCLIJSON(t, requests[6], http.MethodPost, "/v1/credentials/cred_123/promote", map[string]any{
 		"version_id": "credver_456",
 	})
-	if requests[6].Method != http.MethodPost || requests[6].Path != "/v1/credentials/cred_123/revoke" || len(requests[6].Body) != 0 {
-		t.Fatalf("credential revoke request mismatch: %#v", requests[6])
+	if requests[7].Method != http.MethodPost || requests[7].Path != "/v1/credentials/cred_123/revoke" || len(requests[7].Body) != 0 {
+		t.Fatalf("credential revoke request mismatch: %#v", requests[7])
 	}
-	if requests[7].Method != http.MethodPost || requests[7].Path != "/v1/credential-bundles" {
-		t.Fatalf("credential bundle create request mismatch: %#v", requests[7])
+	if requests[8].Method != http.MethodPost || requests[8].Path != "/v1/credential-bundles" {
+		t.Fatalf("credential bundle create request mismatch: %#v", requests[8])
 	}
-	if requests[8].Method != http.MethodGet || requests[8].Path != "/v1/credential-bundles" ||
-		requests[8].Query.Get("name") != "release" {
-		t.Fatalf("credential bundle get request mismatch: %#v", requests[8])
+	if requests[9].Method != http.MethodGet || requests[9].Path != "/v1/credential-bundles" ||
+		requests[9].Query.Get("name") != "release" {
+		t.Fatalf("credential bundle get request mismatch: %#v", requests[9])
 	}
 }
 

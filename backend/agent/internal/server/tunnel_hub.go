@@ -351,28 +351,31 @@ type auditResponse struct {
 }
 
 type auditRecord struct {
-	ID              int64                 `json:"id"`
-	UserID          string                `json:"user_id"`
-	TokenID         string                `json:"token_id"`
-	Cluster         string                `json:"cluster"`
-	Instance        string                `json:"instance"`
-	CredentialID    string                `json:"credential_id,omitempty"`
-	VersionID       string                `json:"credential_version_id,omitempty"`
-	GrantID         string                `json:"credential_grant_id,omitempty"`
-	Scope           *CredentialGrantScope `json:"scope,omitempty"`
-	ResourceVersion string                `json:"resource_version,omitempty"`
-	Digest          string                `json:"digest,omitempty"`
-	CorrelationID   string                `json:"correlation_id,omitempty"`
-	Action          string                `json:"action"`
-	Session         string                `json:"session"`
-	CommandSummary  string                `json:"command_summary"`
-	Status          string                `json:"status"`
-	Error           string                `json:"error,omitempty"`
-	Tail            string                `json:"tail,omitempty"`
-	BytesIn         int64                 `json:"bytes_in"`
-	BytesOut        int64                 `json:"bytes_out"`
-	StartedAt       string                `json:"started_at"`
-	EndedAt         string                `json:"ended_at,omitempty"`
+	ID              int64  `json:"id"`
+	UserID          string `json:"user_id"`
+	TokenID         string `json:"token_id"`
+	Cluster         string `json:"cluster"`
+	Instance        string `json:"instance"`
+	CredentialID    string `json:"credential_id,omitempty"`
+	VersionID       string `json:"credential_version_id,omitempty"`
+	GrantID         string `json:"credential_grant_id,omitempty"`
+	Project         string `json:"project,omitempty"`
+	Environment     string `json:"environment,omitempty"`
+	Template        string `json:"template,omitempty"`
+	Namespace       string `json:"namespace,omitempty"`
+	ResourceVersion string `json:"resource_version,omitempty"`
+	Digest          string `json:"digest,omitempty"`
+	CorrelationID   string `json:"correlation_id,omitempty"`
+	Action          string `json:"action"`
+	Session         string `json:"session"`
+	CommandSummary  string `json:"command_summary"`
+	Status          string `json:"status"`
+	Error           string `json:"error,omitempty"`
+	Tail            string `json:"tail,omitempty"`
+	BytesIn         int64  `json:"bytes_in"`
+	BytesOut        int64  `json:"bytes_out"`
+	StartedAt       string `json:"started_at"`
+	EndedAt         string `json:"ended_at,omitempty"`
 }
 
 type auditPurgeResponse struct {
@@ -438,7 +441,6 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		newGatewayMessageBudget(gatewayMessageBudgetMaxBytes),
 	)
 	hub.client = NewClientService(store, registry, opts)
-	hub.client.hub = hub
 	if err := store.RetireRunningUpgradeOperations(directAgentUpgradeProhibited); err != nil {
 		panic(err)
 	}
@@ -453,6 +455,7 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/targets", h.HandleTargets)
 	mux.HandleFunc("/v1/targets/unlock", h.HandleTargetUnlock)
 	mux.HandleFunc("/v1/audit", h.HandleAudit)
+	mux.HandleFunc("/v1/credentials/prepare", h.HandleCredentialPrepare)
 	mux.HandleFunc("/v1/credential-bundles", h.HandleCredentialBundles)
 	mux.HandleFunc("/v1/credentials", h.HandleCredentials)
 	mux.HandleFunc("/v1/credentials/", h.HandleCredential)
@@ -796,7 +799,10 @@ func (h *GatewayHub) HandleAudit(w http.ResponseWriter, r *http.Request) {
 				CredentialID:    event.CredentialID,
 				VersionID:       event.VersionID,
 				GrantID:         event.GrantID,
-				Scope:           event.Scope,
+				Project:         event.Project,
+				Environment:     event.Environment,
+				Template:        event.Template,
+				Namespace:       event.Namespace,
 				ResourceVersion: event.ResourceVersion,
 				Digest:          event.Digest,
 				CorrelationID:   event.CorrelationID,
@@ -967,27 +973,36 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32003, "credential control-plane tools are internal only"))
 		return nil
 	}
-	var promptArgs api.AgentPromptParams
+	var credentialBinding *credentialPromptBinding
 	if params.Name == "doops_agent_prompt" {
-		if err := json.Unmarshal(params.Arguments, &promptArgs); err != nil {
-			writeJSON(buildErrorResponse(req.ID, -32602, "invalid agent prompt arguments"))
-			return nil
-		}
 		operation := extractStringArg(params.Arguments, "operation")
-		if operation != "" && operation != "ask" && operation != "apply" {
+		instruction := extractStringArg(params.Arguments, "instruction")
+		var marker struct {
+			Task string `json:"task"`
+		}
+		_ = json.Unmarshal([]byte(instruction), &marker)
+		if marker.Task == "execute-doops-cicd" {
+			var err error
+			credentialBinding, err = parseCredentialPromptBinding(params.Arguments, cluster, instance)
+			if err != nil {
+				writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
+				return nil
+			}
+		} else if operation == "apply" {
+			writeJSON(buildErrorResponse(req.ID, -32602, "apply requires a structured doops-cicd instruction"))
+			return nil
+		} else if operation != "" && operation != "ask" {
 			writeJSON(buildErrorResponse(req.ID, -32602, "unsupported agent prompt operation: "+operation))
 			return nil
 		}
-		if len(promptArgs.CredentialRefs) != 0 && operation != "apply" {
-			writeJSON(buildErrorResponse(req.ID, -32602, "credential_refs require operation=apply"))
-			return nil
-		}
-		if err := validateExplicitCredentialNames(promptArgs.CredentialRefs); err != nil {
+		var err error
+		credentialBinding, err = parseCredentialPromptBinding(params.Arguments, cluster, instance)
+		if err != nil {
 			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
 			return nil
 		}
-		if len(promptArgs.CredentialBindings) != 0 {
-			writeJSON(buildErrorResponse(req.ID, -32602, "credential_bindings are gateway-managed"))
+		if operation == "apply" && credentialBinding == nil {
+			writeJSON(buildErrorResponse(req.ID, -32602, "apply requires a structured doops-cicd instruction"))
 			return nil
 		}
 	}
@@ -1064,19 +1079,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	defer releaseLimit()
-	var authorizedCredentials []authorizedCredentialMaterialization
-	if params.Name == "doops_agent_prompt" && len(promptArgs.CredentialRefs) != 0 {
-		authorizedCredentials, err = h.hub.planExplicitCredentialApply(
-			ctx, auth, cluster, instance, promptArgs.SessionID,
-			promptArgs.Instruction, promptArgs.CredentialRefs,
-		)
-		if err != nil {
-			category := credentialErrorCategory(err)
-			finishAudit("blocked", category, "", 0)
-			writeJSON(buildErrorResponse(req.ID, -32003, category))
-			return nil
-		}
-	}
 	opCtx, cancelOp := context.WithCancel(ctx)
 	defer cancelOp()
 	opID := h.registerActiveOperation(GatewayActiveOperation{
@@ -1104,35 +1106,18 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	defer agent.releaseForAction(action, resourceKey)
-	var credentialPreparation credentialApplyPreparation
-	if len(authorizedCredentials) != 0 {
-		h.hub.credentialMutationMu.Lock()
-		defer h.hub.credentialMutationMu.Unlock()
-		credentialPreparation, err = h.hub.materializeExplicitCredentialApply(
-			opCtx, auth, promptArgs.SessionID, authorizedCredentials,
-		)
-		if err != nil {
-			category := credentialOperationErrorCategory(err)
-			finishAudit("error", category, "", 0)
-			writeJSON(buildErrorResponse(req.ID, -32603, category))
-			return nil
-		}
-		promptArgs.CredentialRefs = nil
-		promptArgs.CredentialBindings = credentialPreparation.Bindings
-		params.Arguments, err = json.Marshal(promptArgs)
-		if err != nil {
-			_ = h.hub.rollbackCredentialPrepare(opCtx, credentialPreparation.completed)
-			finishAudit("error", "credential_binding_encode_failed", "", 0)
-			writeJSON(buildErrorResponse(req.ID, -32603, "credential_binding_encode_failed"))
-			return nil
-		}
+	if err := h.consumeCredentialPromptBinding(auth, cluster, instance, credentialBinding); err != nil {
+		errMsg := "credential run authorization invalid"
+		finishAudit("forbidden", errMsg, "", 0)
+		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
+		return nil
 	}
 	tail := newAuditTailBuffer(8192)
 	var bytesOut int64
 	finalStatus := "success"
 	finalErr := ""
-	knownApplyFailure := false
 
+	operationDeadline := time.Now().Add(h.opts.OperationTimeout)
 	err = agent.relayToolCall(opCtx, params, h.opts.OperationTimeout, func(msg gatewayWSMessage) error {
 		if method, _ := msg.Parsed["method"].(string); method == "notifications/message" {
 			if p, ok := msg.Parsed["params"].(map[string]interface{}); ok {
@@ -1149,13 +1134,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 				if isErr, ok := result["isError"]; ok && fmt.Sprintf("%v", isErr) == "true" {
 					finalStatus = "error"
 					finalErr = resultContentText(result)
-					knownApplyFailure = true
 				}
 			}
 			if rpcErr, ok := msg.Parsed["error"]; ok && rpcErr != nil {
 				finalStatus = "error"
 				finalErr = fmt.Sprintf("%v", rpcErr)
-				knownApplyFailure = true
 			}
 			raw, _ := json.Marshal(msg.Parsed)
 			if err := writeRaw(raw); err != nil {
@@ -1165,6 +1148,37 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		}
 		return nil
 	})
+	if errors.Is(err, errGatewayAgentDisconnected) && credentialBinding != nil {
+		recovered, recoveryErr := h.recoverCICDResult(
+			opCtx,
+			cluster,
+			instance,
+			credentialBinding.Run,
+			agent,
+			time.Until(operationDeadline),
+		)
+		if recoveryErr == nil {
+			recovered.Parsed["id"] = req.ID
+			if result, ok := recovered.Parsed["result"].(map[string]interface{}); ok {
+				if isErr, ok := result["isError"]; ok && fmt.Sprintf("%v", isErr) == "true" {
+					finalStatus = "error"
+					finalErr = resultContentText(result)
+				}
+			}
+			if rpcErr, ok := recovered.Parsed["error"]; ok && rpcErr != nil {
+				finalStatus = "error"
+				finalErr = fmt.Sprintf("%v", rpcErr)
+			}
+			raw, marshalErr := json.Marshal(recovered.Parsed)
+			if marshalErr != nil {
+				err = marshalErr
+			} else {
+				err = writeRaw(raw)
+			}
+		} else {
+			err = recoveryErr
+		}
+	}
 	if err != nil {
 		if errors.Is(err, errGatewayClientDisconnected) {
 			finalStatus = "canceled"
@@ -1179,28 +1193,79 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			_ = writeJSON(buildErrorResponse(req.ID, -32603, finalErr))
 		}
 	}
-	if knownApplyFailure && len(credentialPreparation.completed) != 0 {
-		if rollbackErr := h.hub.rollbackCredentialPrepare(context.Background(), credentialPreparation.completed); rollbackErr != nil {
-			finalErr = "credential_apply_outcome_unknown"
-		}
-	}
 	finishAudit(finalStatus, finalErr, tail.String(), bytesOut)
 	return nil
 }
 
-func validateExplicitCredentialNames(names []string) error {
-	seen := make(map[string]struct{}, len(names))
-	for _, name := range names {
-		name = strings.TrimSpace(name)
-		if !validCredentialMetadataToken(name, 128) {
-			return errors.New("credential reference name is invalid")
-		}
-		if _, duplicate := seen[name]; duplicate {
-			return errors.New("credential reference name is duplicated")
-		}
-		seen[name] = struct{}{}
+func (h *ClientService) recoverCICDResult(
+	ctx context.Context,
+	cluster string,
+	instance string,
+	run CredentialRun,
+	disconnected *GatewayAgent,
+	timeout time.Duration,
+) (gatewayWSMessage, error) {
+	if !validCICDRunBinding(run) {
+		return gatewayWSMessage{}, errors.New("invalid credential run binding")
 	}
-	return nil
+	if timeout <= 0 {
+		return gatewayWSMessage{}, errors.New("cicd result recovery timed out")
+	}
+	recoveryCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	for {
+		agent := h.registry.Wait(recoveryCtx, cluster, instance, h.opts.TargetReconnectGrace)
+		if agent == nil || agent == disconnected {
+			select {
+			case <-recoveryCtx.Done():
+				return gatewayWSMessage{}, fmt.Errorf("cicd result recovery timed out: %w", recoveryCtx.Err())
+			case <-time.After(time.Second):
+				continue
+			}
+		}
+
+		arguments, _ := json.Marshal(map[string]interface{}{"credential_run": run})
+		var response gatewayWSMessage
+		err := agent.relayToolCall(
+			recoveryCtx,
+			api.ToolCallParams{Name: "doops_cicd_result", Arguments: arguments},
+			15*time.Second,
+			func(msg gatewayWSMessage) error {
+				if _, ok := msg.Parsed["id"]; ok {
+					response = msg
+				}
+				return nil
+			},
+		)
+		if err == nil && response.Parsed != nil {
+			if rpcErr, ok := response.Parsed["error"].(map[string]interface{}); ok {
+				code, _ := numericID(rpcErr["code"])
+				if code == -32008 || code == -32009 {
+					select {
+					case <-recoveryCtx.Done():
+						return gatewayWSMessage{}, fmt.Errorf("cicd result recovery timed out: %w", recoveryCtx.Err())
+					case <-time.After(time.Second):
+						continue
+					}
+				}
+				if code == -32010 {
+					return gatewayWSMessage{}, errors.New("cicd result unavailable after agent restart")
+				}
+			}
+			return response, nil
+		}
+		if err != nil &&
+			!errors.Is(err, errGatewayAgentDisconnected) &&
+			!errors.Is(err, errGatewayMessageQueueClosed) {
+			return gatewayWSMessage{}, fmt.Errorf("recover cicd result: %w", err)
+		}
+		select {
+		case <-recoveryCtx.Done():
+			return gatewayWSMessage{}, fmt.Errorf("cicd result recovery timed out: %w", recoveryCtx.Err())
+		case <-time.After(time.Second):
+		}
+	}
 }
 
 func sanitizeAgentPromptAudit(toolName, errMsg, tail string) (string, string) {
@@ -1214,8 +1279,10 @@ func sanitizeAgentPromptAudit(toolName, errMsg, tail string) (string, string) {
 }
 
 func internalCredentialTool(tool string) bool {
-	return tool == "doops_credential_materialize" ||
-		tool == "doops_credential_cleanup"
+	return tool == "doops_credential_plan" ||
+		tool == "doops_credential_materialize" ||
+		tool == "doops_credential_cleanup" ||
+		tool == "doops_cicd_result"
 }
 
 func (h *GatewayHub) registerAgent(agent *GatewayAgent) error {
@@ -1953,6 +2020,8 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 		return ActionClean
 	case "doops_agent_upgrade":
 		return ActionAgentUpgrade
+	case "doops_credential_plan":
+		return ActionCredentialMetadata
 	case "doops_credential_materialize":
 		return ActionCredentialUse
 	case "doops_credential_cleanup":
@@ -1993,7 +2062,7 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 		if sessionID := extractSession(args); sessionID != "" {
 			return "workspace:" + sessionID
 		}
-	case ActionCredentialUse, ActionCredentialRevoke:
+	case ActionCredentialUse:
 		if credentialID := extractStringArg(args, "credential_id"); credentialID != "" {
 			return "credential:" + credentialID
 		}
