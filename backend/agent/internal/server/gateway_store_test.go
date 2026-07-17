@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestGatewayStoreTokenKindIsolationAndPermissions(t *testing.T) {
+func TestGatewayStoreOnlyIssuesUserTokensAndPermissions(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -26,29 +26,8 @@ func TestGatewayStoreTokenKindIsolationAndPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user token: %v", err)
 	}
-	agentToken, err := store.CreateToken(CreateTokenRequest{
-		Kind:     TokenKindAgent,
-		Name:     "dev local agent",
-		Cluster:  "dev",
-		Instance: "local",
-	})
-	if err != nil {
-		t.Fatalf("create agent token: %v", err)
-	}
-
-	agentAuth, err := store.VerifyAgentToken(agentToken.Plaintext)
-	if err != nil {
-		t.Fatalf("verify agent token: %v", err)
-	}
-	if agentAuth.Cluster != "dev" || agentAuth.Instance != "local" {
-		t.Fatalf("agent token scope mismatch: %#v", agentAuth)
-	}
-
-	if _, err := store.VerifyUserToken(agentToken.Plaintext); err == nil {
-		t.Fatal("agent token must not authorize user operations")
-	}
-	if _, err := store.VerifyAgentToken(userToken.Plaintext); err == nil {
-		t.Fatal("user token must not authorize agent registration")
+	if _, err := store.CreateToken(CreateTokenRequest{Kind: TokenKind("agent")}); err == nil {
+		t.Fatal("agent registration tokens must not be issued")
 	}
 
 	if err := store.GrantUser(user.ID, ScopeGrant{
@@ -563,37 +542,30 @@ func TestGatewayStoreDoesNotLetStaleAgentTouchOverwriteLifecycle(t *testing.T) {
 	}
 }
 
-func TestGatewayStoreUpgradeOperationLifecycle(t *testing.T) {
+func TestGatewayStoreRetiresRunningUpgradeOperations(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	defer store.Close()
 
-	op, err := store.CreateUpgradeOperation(UpgradeOperation{
-		Cluster:       "dev",
-		Instance:      "local",
-		Image:         "registry.example/doops@sha256:abc",
-		OldGeneration: 3,
-		OldRuntimeID:  "runtime-old",
-	})
-	if err != nil {
-		t.Fatalf("create upgrade operation: %v", err)
+	now := formatTime(time.Now().UTC())
+	if _, err := store.db.Exec(`INSERT INTO upgrade_operations
+		(id, cluster, instance, image, old_generation, old_runtime_id, status, phase, error, started_at, updated_at)
+		VALUES ('upg_test', 'dev', 'local', 'registry.example/doops@sha256:abc', 3, 'runtime-old',
+		        'running', 'waiting_reconnect', '', ?, ?)`, now, now); err != nil {
+		t.Fatalf("seed legacy upgrade operation: %v", err)
 	}
-	if op.Status != "running" || op.Phase != "requesting" {
-		t.Fatalf("unexpected initial operation: %#v", op)
+	const reason = "direct agent self-upgrade is prohibited"
+	if err := store.RetireRunningUpgradeOperations(reason); err != nil {
+		t.Fatalf("retire running upgrades: %v", err)
 	}
-	if err := store.UpdateUpgradeOperation(op.ID, "waiting_reconnect", "running", ""); err != nil {
-		t.Fatalf("update upgrade operation: %v", err)
+	var phase, status, errorText string
+	if err := store.db.QueryRow(`SELECT phase, status, error FROM upgrade_operations WHERE id = 'upg_test'`).
+		Scan(&phase, &status, &errorText); err != nil {
+		t.Fatalf("read retired upgrade operation: %v", err)
 	}
-	got, err := store.GetUpgradeOperation(op.ID)
-	if err != nil {
-		t.Fatalf("get upgrade operation: %v", err)
-	}
-	if got.Phase != "waiting_reconnect" || got.Status != "running" {
-		t.Fatalf("unexpected updated operation: %#v", got)
-	}
-	if got.OldRuntimeID != "runtime-old" {
-		t.Fatalf("upgrade operation lost runtime identity: %#v", got)
+	if phase != "self_upgrade_retired" || status != "error" || errorText != reason {
+		t.Fatalf("unexpected retired operation: phase=%q status=%q error=%q", phase, status, errorText)
 	}
 }

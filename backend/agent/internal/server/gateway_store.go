@@ -64,8 +64,7 @@ var defaultGatewayUserActions = []GatewayAction{
 type TokenKind string
 
 const (
-	TokenKindUser  TokenKind = "user"
-	TokenKindAgent TokenKind = "agent"
+	TokenKindUser TokenKind = "user"
 )
 
 var (
@@ -156,20 +155,6 @@ type AgentStatus struct {
 	ConnectedAt time.Time
 	LastSeen    time.Time
 	UpdatedAt   time.Time
-}
-
-type UpgradeOperation struct {
-	ID            string
-	Cluster       string
-	Instance      string
-	Image         string
-	OldGeneration uint64
-	OldRuntimeID  string
-	Status        string
-	Phase         string
-	Error         string
-	StartedAt     time.Time
-	UpdatedAt     time.Time
 }
 
 type AuditFinish struct {
@@ -636,14 +621,11 @@ func (s *GatewayStore) VerifyUserPassword(name, password string) (GatewayUser, e
 }
 
 func (s *GatewayStore) CreateToken(req CreateTokenRequest) (CreatedToken, error) {
-	if req.Kind != TokenKindUser && req.Kind != TokenKindAgent {
-		return CreatedToken{}, fmt.Errorf("unsupported token kind %q", req.Kind)
+	if req.Kind != TokenKindUser {
+		return CreatedToken{}, fmt.Errorf("only user tokens are supported")
 	}
-	if req.Kind == TokenKindUser && strings.TrimSpace(req.UserID) == "" {
+	if strings.TrimSpace(req.UserID) == "" {
 		return CreatedToken{}, fmt.Errorf("user token requires user id")
-	}
-	if req.Kind == TokenKindAgent && (strings.TrimSpace(req.Cluster) == "" || strings.TrimSpace(req.Instance) == "") {
-		return CreatedToken{}, fmt.Errorf("agent token requires cluster and instance")
 	}
 	id := "tok_" + randomHex(12)
 	prefix := "dgw_" + string(req.Kind) + "_" + randomHex(4)
@@ -674,14 +656,6 @@ func (s *GatewayStore) CreateToken(req CreateTokenRequest) (CreatedToken, error)
 
 func (s *GatewayStore) VerifyUserToken(token string) (TokenAuth, error) {
 	auth, err := s.verifyToken(token, TokenKindUser)
-	if err != nil {
-		return TokenAuth{}, err
-	}
-	return auth, nil
-}
-
-func (s *GatewayStore) VerifyAgentToken(token string) (TokenAuth, error) {
-	auth, err := s.verifyToken(token, TokenKindAgent)
 	if err != nil {
 		return TokenAuth{}, err
 	}
@@ -991,77 +965,12 @@ func (s *GatewayStore) ListAgentStatus() ([]AgentStatus, error) {
 	return agents, rows.Err()
 }
 
-func (s *GatewayStore) CreateUpgradeOperation(op UpgradeOperation) (UpgradeOperation, error) {
-	if strings.TrimSpace(op.Cluster) == "" || strings.TrimSpace(op.Instance) == "" || strings.TrimSpace(op.Image) == "" {
-		return UpgradeOperation{}, fmt.Errorf("cluster, instance and image are required")
-	}
-	now := time.Now().UTC()
-	if op.ID == "" {
-		op.ID = "upg_" + randomHex(12)
-	}
-	if op.Status == "" {
-		op.Status = "running"
-	}
-	if op.Phase == "" {
-		op.Phase = "requesting"
-	}
-	if op.StartedAt.IsZero() {
-		op.StartedAt = now
-	}
-	op.UpdatedAt = now
-	_, err := s.db.Exec(`INSERT INTO upgrade_operations
-		(id, cluster, instance, image, old_generation, old_runtime_id, status, phase, error, started_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		op.ID, op.Cluster, op.Instance, op.Image, op.OldGeneration, op.OldRuntimeID, op.Status, op.Phase, op.Error,
-		formatTime(op.StartedAt), formatTime(op.UpdatedAt))
-	return op, err
-}
-
-func (s *GatewayStore) UpdateUpgradeOperation(id, phase, status, errMsg string) error {
-	if strings.TrimSpace(id) == "" || strings.TrimSpace(phase) == "" || strings.TrimSpace(status) == "" {
-		return fmt.Errorf("id, phase and status are required")
-	}
+func (s *GatewayStore) RetireRunningUpgradeOperations(errMsg string) error {
 	_, err := s.db.Exec(`UPDATE upgrade_operations
-		SET phase = ?, status = ?, error = ?, updated_at = ?
-		WHERE id = ?`,
-		phase, status, errMsg, formatTime(time.Now().UTC()), id)
+		SET phase = 'self_upgrade_retired', status = 'error', error = ?, updated_at = ?
+		WHERE status = 'running'`,
+		errMsg, formatTime(time.Now().UTC()))
 	return err
-}
-
-func (s *GatewayStore) GetUpgradeOperation(id string) (UpgradeOperation, error) {
-	var op UpgradeOperation
-	var started, updated string
-	err := s.db.QueryRow(`SELECT id, cluster, instance, image, old_generation, old_runtime_id, status, phase, error, started_at, updated_at
-		FROM upgrade_operations WHERE id = ?`, id).
-		Scan(&op.ID, &op.Cluster, &op.Instance, &op.Image, &op.OldGeneration, &op.OldRuntimeID, &op.Status, &op.Phase, &op.Error, &started, &updated)
-	if err != nil {
-		return UpgradeOperation{}, err
-	}
-	op.StartedAt, _ = parseTime(started)
-	op.UpdatedAt, _ = parseTime(updated)
-	return op, nil
-}
-
-func (s *GatewayStore) ListRunningUpgradeOperations() ([]UpgradeOperation, error) {
-	rows, err := s.db.Query(`SELECT id, cluster, instance, image, old_generation, old_runtime_id, status, phase, error, started_at, updated_at
-		FROM upgrade_operations WHERE status = 'running' ORDER BY started_at`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var operations []UpgradeOperation
-	for rows.Next() {
-		var op UpgradeOperation
-		var started, updated string
-		if err := rows.Scan(&op.ID, &op.Cluster, &op.Instance, &op.Image, &op.OldGeneration, &op.OldRuntimeID,
-			&op.Status, &op.Phase, &op.Error, &started, &updated); err != nil {
-			return nil, err
-		}
-		op.StartedAt, _ = parseTime(started)
-		op.UpdatedAt, _ = parseTime(updated)
-		operations = append(operations, op)
-	}
-	return operations, rows.Err()
 }
 
 func (s *GatewayStore) StartAudit(event AuditEvent) (int64, error) {

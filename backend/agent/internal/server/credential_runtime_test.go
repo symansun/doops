@@ -60,19 +60,13 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	if err != nil {
 		t.Fatalf("create credential grant: %v", err)
 	}
-	agentToken, err := store.CreateToken(CreateTokenRequest{
-		Kind: TokenKindAgent, Name: "agent", Cluster: "doops-edu", Instance: "edu-coder",
-	})
-	if err != nil {
-		t.Fatalf("create agent token: %v", err)
-	}
 
 	hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: time.Second})
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)
 	server := httptest.NewServer(mux)
 	defer server.Close()
-	agentConn := dialFakeGatewayAgent(t, server.URL, agentToken.Plaintext, "doops-edu", "edu-coder")
+	agentConn := dialFakeGatewayAgent(t, server.URL, "doops-edu", "edu-coder")
 	defer agentConn.Close()
 
 	var materializeCalls atomic.Int64
@@ -361,19 +355,12 @@ func TestCredentialMaterializationBindingFailureRestoresExpectedVersion(t *testi
 	if err != nil {
 		t.Fatalf("put staged credential version: %v", err)
 	}
-	agentToken, err := store.CreateToken(CreateTokenRequest{
-		Kind: TokenKindAgent, Name: "agent", Cluster: "doops-edu", Instance: "edu-coder",
-	})
-	if err != nil {
-		t.Fatalf("create agent token: %v", err)
-	}
-
 	hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: time.Second})
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)
 	server := httptest.NewServer(mux)
 	defer server.Close()
-	agentConn := dialFakeGatewayAgent(t, server.URL, agentToken.Plaintext, "doops-edu", "edu-coder")
+	agentConn := dialFakeGatewayAgent(t, server.URL, "doops-edu", "edu-coder")
 	defer agentConn.Close()
 
 	var materializeCalls atomic.Int64
@@ -584,18 +571,12 @@ func TestCredentialPrepareGrantDenialStopsBeforeMaterialization(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("grant deployer target actions: %v", err)
 	}
-	agentToken, err := store.CreateToken(CreateTokenRequest{
-		Kind: TokenKindAgent, Name: "agent", Cluster: "doops-edu", Instance: "edu-coder",
-	})
-	if err != nil {
-		t.Fatalf("create agent token: %v", err)
-	}
 	hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: time.Second})
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)
 	server := httptest.NewServer(mux)
 	defer server.Close()
-	agentConn := dialFakeGatewayAgent(t, server.URL, agentToken.Plaintext, "doops-edu", "edu-coder")
+	agentConn := dialFakeGatewayAgent(t, server.URL, "doops-edu", "edu-coder")
 	defer agentConn.Close()
 
 	var materializeCalls atomic.Int64

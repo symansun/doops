@@ -160,10 +160,10 @@ doops -session upgrade_20260519 upgrade \
 ```
 
 When `--target` is given, its configured `cluster/instance` is the default
-upgrade scope. To operate outside that target, pass both `--cluster` and
-`--instance` explicitly. Broadcasting requires the explicit pair
-`--cluster '*' --instance '*'`. Remove `--dry-run` only after reviewing the
-command. Gateway upgrade requires `agent:upgrade` or `admin`.
+preview scope. Direct Agent self-upgrade is prohibited: `upgrade` requires
+`--dry-run`. Apply the reviewed image change from an external release runner,
+CI/CD pipeline, or GitOps controller so the old Agent remains available until
+the replacement has registered and produced a heartbeat.
 
 ## BuildKit Example
 

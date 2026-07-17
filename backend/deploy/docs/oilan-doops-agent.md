@@ -18,6 +18,10 @@ CNB CI builds the DoOps image with the full source commit as its immutable tag.
 The environment service then pins the registry digest used by Helm and the
 runtime Deployment.
 
+Agent reverse registration declares only the configured cluster and instance;
+it does not mount, read, or send a registration token. Gateway user tokens
+remain the authorization boundary for operator actions.
+
 `docker.cnb.cool/l8ai/ai/doops.sh` is public, so Oilan does not declare source,
 target, or runtime registry credentials. A private runtime registry must
 declare its Kubernetes Secret reference explicitly; the compiler binds it to

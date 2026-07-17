@@ -763,19 +763,9 @@ function EmptyState({ onDeployAgent }: { onDeployAgent: () => void }) {
             联系管理员
           </span>
           <span className="text-xs leading-relaxed text-muted-foreground">
-            没有服务器权限或不确定 gateway 地址？请管理员为你接入机器并签发令牌。
+            没有服务器权限或不确定 gateway 地址与 cluster/instance？请管理员为你接入机器。
           </span>
         </div>
-      </div>
-
-      <div className="mx-auto mt-4 max-w-lg rounded-lg border bg-background p-4 text-left">
-        <div className="mb-2 text-xs font-medium text-foreground">快速安装（在你的服务器上执行）：</div>
-        <pre className="overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs text-foreground">
-          curl -fsSL https://doops.sh/install.sh | sh
-        </pre>
-        <p className="mt-2 text-xs text-muted-foreground">
-          安装脚本会引导你填写 gateway 地址与接入令牌。完成后回到此页面点击「刷新」。
-        </p>
       </div>
     </div>
   )

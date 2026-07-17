@@ -202,11 +202,7 @@ func (h *GatewayHub) HandleCredentialPrepare(w http.ResponseWriter, r *http.Requ
 	}
 	auth, err := h.authenticateUser(r)
 	if err != nil {
-		if _, agentErr := h.store.VerifyAgentToken(bearerToken(r)); agentErr == nil {
-			writeCredentialPrepareError(w, http.StatusForbidden, "forbidden")
-		} else {
-			writeCredentialPrepareError(w, http.StatusUnauthorized, "unauthorized")
-		}
+		writeCredentialPrepareError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	var body credentialPrepareHTTPBody

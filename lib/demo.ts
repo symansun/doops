@@ -516,9 +516,6 @@ const demoGrants: AdminGrant[] = [
 const demoTokens: AdminToken[] = [
   { id: "tok_a1", kind: "user", user_id: "usr_ops01", user_name: "ops-zhang", name: "笔记本", prefix: "dgw_user_3f2a", revoked: false, created_at: ago(240), expires_at: ago(-480) },
   { id: "tok_a2", kind: "user", user_id: "usr_dev01", user_name: "dev-li", name: "CLI", prefix: "dgw_user_88c1", revoked: false, created_at: ago(72) },
-  { id: "tok_g1", kind: "agent", name: "prod-cn/web-01", prefix: "dgw_agent_aa01", cluster: "prod-cn", instance: "web-01", revoked: false, created_at: ago(700) },
-  { id: "tok_g2", kind: "agent", name: "prod-cn/web-02", prefix: "dgw_agent_aa02", cluster: "prod-cn", instance: "web-02", revoked: false, created_at: ago(700) },
-  { id: "tok_g3", kind: "agent", name: "staging/db-01", prefix: "dgw_agent_bb01", cluster: "staging", instance: "db-01", revoked: true, created_at: ago(400) },
 ]
 
 const demoInstances: AdminInstance[] = [
@@ -578,27 +575,26 @@ export function demoDeleteGrant(id: number): void {
     if (u && u.grant_count > 0) u.grant_count -= 1
   }
 }
-export function demoListTokens(kind?: string): AdminToken[] {
-  const list = kind ? demoTokens.filter((t) => t.kind === kind) : demoTokens
-  return list.map((t) => ({ ...t }))
+export function demoListTokens(): AdminToken[] {
+  return demoTokens.map((t) => ({ ...t }))
 }
-export function demoCreateToken(body: { kind?: string; cluster?: string; instance?: string; name?: string }): {
+export function demoCreateToken(body: { user: string; name?: string }): {
   token: string
   token_id: string
 } {
   const id = `tok_demo${randomToken(4)}`
-  const kind = body.kind === "agent" ? "agent" : "user"
+  const user = demoUsers.find((item) => item.name === body.user)
   demoTokens.unshift({
     id,
-    kind,
-    name: body.name || (kind === "agent" ? `${body.cluster}/${body.instance}` : "新令牌"),
-    prefix: `dgw_${kind}_${randomToken(4)}`,
-    cluster: body.cluster,
-    instance: body.instance,
+    kind: "user",
+    user_id: user?.id,
+    user_name: user?.name || body.user,
+    name: body.name || "新令牌",
+    prefix: `dgw_user_${randomToken(4)}`,
     revoked: false,
     created_at: nowISO(),
   })
-  return { token: `dgw_${kind}_demo_${id}_${randomToken(32)}`, token_id: id }
+  return { token: `dgw_user_demo_${id}_${randomToken(32)}`, token_id: id }
 }
 export function demoRevokeToken(id: string): void {
   const t = demoTokens.find((x) => x.id === id)

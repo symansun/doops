@@ -40,7 +40,7 @@ description: |
 - 长构建或发布使用 `doops -session <s> exec --bg --target <t> --cmd '<cmd>'`。不要在普通 `exec` 命令中使用 `&`、`nohup` 或 `setsid`，因为调用结束时 agent 会终止该 shell 的子进程。
 - 不要混用 token：
   - gateway CLI 操作用 gateway user token。
-  - agent 注册 gateway 使用绑定 cluster/instance 的 registration token，只从运行时 Secret 注入。
+  - agent 注册 gateway 不使用 token，只声明 cluster/instance。
   - 遗留直连 agent token 只用于本机 `/ws` 保护，不写入标准 target 配置。
 - 不要在日志、终端输出、文档、提交记录里暴露完整 token。
 - 如果用户是在发账号、发 token、授权、查审计、清理审计、查看/取消 gateway active operations，要按 gateway 管理动作处理，不要混成普通 target 运维。
@@ -142,9 +142,9 @@ doops targets --target unicom
 | 拉取远端工作区 | `doops -session <s> pull --target <t> --dest <dir>` |
 | 小文本读写 | `doops read/write ...` |
 | 工作区清理 | `doops -session <s> clean --target <t>` |
-| 升级在线 agent | `doops -session <s> upgrade ... --dry-run` |
+| 预演 agent 升级 | `doops -session <s> upgrade ... --dry-run` |
 | 管理员签发 token | `doops admin token create --target <t> --user <u> --name <label> --expires 720h` |
-| 管理员查看 token | `doops admin token list --target <t> [--kind user\|agent]` |
+| 管理员查看 token | `doops admin token list --target <t>` |
 | 管理员撤销 token | `doops admin token revoke --target <t> --id <token-id>` |
 
 大文件、压缩包、数据库导出、图片、视频、课程资源包等资产，用 `pull` 拉取整个 session 工作区。不要用 `read`，也不要让 `exec` 输出 base64。
