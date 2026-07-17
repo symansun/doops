@@ -61,7 +61,6 @@ const (
 	gatewayAgentTouchTimeout           = 2 * time.Second
 	gatewayReadProgressAckInterval     = 5 * time.Second
 	gatewayReadProgressAckWriteTimeout = 3 * time.Second
-	gatewayCICDResultRecoveryTimeout   = 5 * time.Minute
 	credentialPlanProtocolV2           = "doops.sh/credential-plan/v2"
 	credentialPlanDeclarationV3        = "doops.sh/v3"
 )
@@ -1118,6 +1117,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	finalStatus := "success"
 	finalErr := ""
 
+	operationDeadline := time.Now().Add(h.opts.OperationTimeout)
 	err = agent.relayToolCall(opCtx, params, h.opts.OperationTimeout, func(msg gatewayWSMessage) error {
 		if method, _ := msg.Parsed["method"].(string); method == "notifications/message" {
 			if p, ok := msg.Parsed["params"].(map[string]interface{}); ok {
@@ -1155,6 +1155,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			instance,
 			credentialBinding.Run,
 			agent,
+			time.Until(operationDeadline),
 		)
 		if recoveryErr == nil {
 			recovered.Parsed["id"] = req.ID
@@ -1202,11 +1203,15 @@ func (h *ClientService) recoverCICDResult(
 	instance string,
 	run CredentialRun,
 	disconnected *GatewayAgent,
+	timeout time.Duration,
 ) (gatewayWSMessage, error) {
 	if !validCICDRunBinding(run) {
 		return gatewayWSMessage{}, errors.New("invalid credential run binding")
 	}
-	recoveryCtx, cancel := context.WithTimeout(ctx, gatewayCICDResultRecoveryTimeout)
+	if timeout <= 0 {
+		return gatewayWSMessage{}, errors.New("cicd result recovery timed out")
+	}
+	recoveryCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	for {
