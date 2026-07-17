@@ -1204,7 +1204,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		resultText, structuredContent, err = bindDeploymentRunEvidence(
 			structuredContent,
 			toolTraces.completed(),
-			primaryDeploymentEvidenceTool(execution.Admission),
+			execution.Admission,
 		)
 		if err != nil {
 			if rejections := toolTraces.rejectionSummary(); rejections != "" {

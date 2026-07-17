@@ -234,6 +234,42 @@ func TestBindDeploymentRunEvidenceReplacesModelEvidenceIdentity(t *testing.T) {
 	}
 }
 
+func TestBindDeploymentRunEvidenceReplacesModelRunIdentity(t *testing.T) {
+	traces := completedDoagentToolTraces(t, []map[string]interface{}{
+		{
+			"sessionUpdate":   "tool_call_update",
+			"toolCallId":      "source-1",
+			"toolName":        "mcp_doops_plan_ObserveWorkspaceSource",
+			"status":          "completed",
+			"input":           map[string]interface{}{},
+			"rawOutput":       map[string]interface{}{"revision": "immutable"},
+			"evidenceSubject": "source-identity",
+		},
+	})
+	result := deploymentRunWithToolRef("plan.ObserveWorkspaceSource", map[string]interface{}{})
+	result["metadata"] = map[string]interface{}{"workspaceCommit": strings.Repeat("f", 40)}
+	result["spec"] = map[string]interface{}{"mode": "apply"}
+	admission := &trustedReconciliationAdmission{
+		AllowedTools: []string{"mcp_doops_plan_ObserveWorkspaceSource"},
+		Context: trustedReconciliationContext{
+			ExecutionMode: "dry-run",
+			Source: trustedReconciliationSource{
+				WorkspaceCommit: strings.Repeat("a", 40),
+			},
+		},
+	}
+
+	_, bound, err := bindDeploymentRunEvidence(result, traces, admission)
+	if err != nil {
+		t.Fatalf("bind authoritative run identity: %v", err)
+	}
+	metadata := bound["metadata"].(map[string]interface{})
+	spec := bound["spec"].(map[string]interface{})
+	if metadata["workspaceCommit"] != strings.Repeat("a", 40) || spec["mode"] != "dry-run" {
+		t.Fatalf("run identity was not bound from admission: %#v", bound)
+	}
+}
+
 func TestBindDeploymentRunEvidenceEnforcesPrimarySourceObservation(t *testing.T) {
 	traces := completedDoagentToolTraces(t, []map[string]interface{}{
 		{
@@ -247,10 +283,14 @@ func TestBindDeploymentRunEvidenceEnforcesPrimarySourceObservation(t *testing.T)
 		},
 	})
 	result := deploymentRunWithToolRef("plan.ObserveHelmRelease", map[string]interface{}{})
+	result["metadata"] = map[string]interface{}{"workspaceCommit": strings.Repeat("a", 40)}
+	result["spec"] = map[string]interface{}{"mode": "dry-run"}
 	_, _, err := bindDeploymentRunEvidence(
 		result,
 		traces,
-		"mcp_doops_plan_ObserveWorkspaceSource",
+		&trustedReconciliationAdmission{
+			AllowedTools: []string{"mcp_doops_plan_ObserveWorkspaceSource"},
+		},
 	)
 	if err == nil || !strings.Contains(err.Error(), "evidence[0] must reference plan.ObserveWorkspaceSource") {
 		t.Fatalf("primary source observation was not enforced: %v", err)
@@ -497,7 +537,7 @@ func bindTestDeploymentRun(
 	result map[string]interface{},
 	traces []doagentToolTrace,
 ) (string, map[string]interface{}, error) {
-	return bindDeploymentRunEvidence(result, traces, "")
+	return bindDeploymentRunEvidence(result, traces, nil)
 }
 
 func TestRejectSensitiveToolResultRejectsSensitiveFieldsAndScalars(t *testing.T) {
