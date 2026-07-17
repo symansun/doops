@@ -3,6 +3,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 SKILL = ROOT / "agent" / "skills" / "doops-cicd" / "SKILL.md"
+DOCKERFILE = ROOT / "Dockerfile"
+CNB_PIPELINE = ROOT.parent / ".cnb.yml"
 ACTIVE_CONTRACT_DOCS = (
     ROOT / "skills" / "SKILL.md",
     ROOT / "docs" / "SEMANTIC_CICD.md",
@@ -63,3 +65,14 @@ def test_active_cicd_docs_only_describe_gateway_bound_v3_registry():
         "DeploymentTemplate -> doops push",
     ):
         assert removed not in text
+
+
+def test_ci_image_contains_agent_and_gateway_from_the_same_revision():
+    dockerfile = DOCKERFILE.read_text()
+    pipeline = CNB_PIPELINE.read_text()
+
+    assert "go build -o /app/doops-agent ./cmd/agent" in dockerfile
+    assert "go build -o /app/doops-gateway ." in dockerfile
+    assert "COPY --from=builder /app/doops-gateway /app/doops-gateway" in dockerfile
+    assert "/app/doops-gateway -help" in dockerfile
+    assert "docker run --rm --entrypoint /app/doops-gateway" in pipeline
