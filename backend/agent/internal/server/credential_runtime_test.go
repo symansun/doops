@@ -78,7 +78,7 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	var materializeCalls atomic.Int64
 	var cleanupCalls atomic.Int64
 	var payloadObserved atomic.Bool
-	go serveCredentialRuntimeAgent(t, agentConn, &materializeCalls, &cleanupCalls, &payloadObserved)
+	go serveCredentialRuntimeAgent(t, agentConn, &materializeCalls, &cleanupCalls, &payloadObserved, "", nil)
 	waitForGatewayAgent(t, hub, "doops-edu", "edu-coder")
 
 	dryRun := credentialHTTPRequest(t, mux, deployerToken, http.MethodPost, "/v1/credentials/prepare", map[string]any{
@@ -329,6 +329,91 @@ func TestCredentialMaterializationRequiresExpectedPreviousVersion(t *testing.T) 
 	}
 }
 
+func TestCredentialMaterializationBindingFailureRestoresExpectedVersion(t *testing.T) {
+	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("p", 32))
+	store := openCredentialTestStore(t)
+	admin := createCredentialTestUser(t, store, "credential-admin")
+	if err := store.GrantUser(admin.ID, ScopeGrant{
+		Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin},
+	}); err != nil {
+		t.Fatalf("grant credential admin: %v", err)
+	}
+	credential, err := store.CreateCredential(CredentialCreateRequest{
+		Name: "registry", Scope: CredentialScopePlatform, Type: CredentialTypeRegistry, CreatedBy: admin.ID,
+	})
+	if err != nil {
+		t.Fatalf("create credential: %v", err)
+	}
+	active, err := store.PutCredentialVersion(CredentialVersionPutRequest{
+		CredentialID: credential.ID,
+		Payload:      json.RawMessage(`{"server":"registry.example.com","username":"deploy","password":"active-synthetic"}`),
+		CreatedBy:    admin.ID,
+		Activate:     true,
+	})
+	if err != nil {
+		t.Fatalf("put active credential version: %v", err)
+	}
+	staged, err := store.PutCredentialVersion(CredentialVersionPutRequest{
+		CredentialID: credential.ID,
+		Payload:      json.RawMessage(`{"server":"registry.example.com","username":"deploy","password":"staged-synthetic"}`),
+		CreatedBy:    admin.ID,
+	})
+	if err != nil {
+		t.Fatalf("put staged credential version: %v", err)
+	}
+	agentToken, err := store.CreateToken(CreateTokenRequest{
+		Kind: TokenKindAgent, Name: "agent", Cluster: "doops-edu", Instance: "edu-coder",
+	})
+	if err != nil {
+		t.Fatalf("create agent token: %v", err)
+	}
+
+	hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: time.Second})
+	mux := http.NewServeMux()
+	hub.RegisterRoutes(mux)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	agentConn := dialFakeGatewayAgent(t, server.URL, agentToken.Plaintext, "doops-edu", "edu-coder")
+	defer agentConn.Close()
+
+	var materializeCalls atomic.Int64
+	var cleanupCalls atomic.Int64
+	var payloadObserved atomic.Bool
+	var currentVersion atomic.Value
+	go serveCredentialRuntimeAgent(
+		t,
+		agentConn,
+		&materializeCalls,
+		&cleanupCalls,
+		&payloadObserved,
+		"credver_"+strings.Repeat("f", 24),
+		&currentVersion,
+	)
+	waitForGatewayAgent(t, hub, "doops-edu", "edu-coder")
+
+	const grantID = "credgrant_test"
+	_, _, err = hub.materializeCredentialVersion(
+		context.Background(),
+		"doops-edu",
+		"edu-coder",
+		"binding-recovery",
+		credential,
+		staged,
+		active.ID,
+		grantID,
+		CredentialPlanReference{Namespace: "kz-ops", Use: CredentialUseImagePull},
+	)
+	if err == nil || err.Error() != "credential_materialization_metadata_invalid" {
+		t.Fatalf("binding mismatch error = %v", err)
+	}
+	if materializeCalls.Load() != 2 || cleanupCalls.Load() != 0 {
+		t.Fatalf("materialize calls=%d cleanup calls=%d", materializeCalls.Load(), cleanupCalls.Load())
+	}
+	if got, _ := currentVersion.Load().(string); got != active.ID {
+		t.Fatalf("target version after binding recovery = %q, want %q", got, active.ID)
+	}
+}
+
 func TestLoadCredentialPlanRejectsIncompatibleAgentBeforeToolDispatch(t *testing.T) {
 	store := openCredentialTestStore(t)
 	hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: time.Second})
@@ -516,7 +601,7 @@ func TestCredentialPrepareGrantDenialStopsBeforeMaterialization(t *testing.T) {
 	var materializeCalls atomic.Int64
 	var cleanupCalls atomic.Int64
 	var payloadObserved atomic.Bool
-	go serveCredentialRuntimeAgent(t, agentConn, &materializeCalls, &cleanupCalls, &payloadObserved)
+	go serveCredentialRuntimeAgent(t, agentConn, &materializeCalls, &cleanupCalls, &payloadObserved, "", nil)
 	waitForGatewayAgent(t, hub, "doops-edu", "edu-coder")
 
 	response := credentialHTTPRequest(t, mux, deployerToken, http.MethodPost, "/v1/credentials/prepare", map[string]any{
@@ -544,9 +629,14 @@ func serveCredentialRuntimeAgent(
 	materializeCalls *atomic.Int64,
 	cleanupCalls *atomic.Int64,
 	payloadObserved *atomic.Bool,
+	initialVersionID string,
+	currentVersionObserved *atomic.Value,
 ) {
 	t.Helper()
-	currentVersionID := ""
+	currentVersionID := initialVersionID
+	if currentVersionObserved != nil {
+		currentVersionObserved.Store(currentVersionID)
+	}
 	for {
 		var message map[string]any
 		if err := conn.ReadJSON(&message); err != nil {
@@ -608,9 +698,15 @@ func serveCredentialRuntimeAgent(
 					PreviousVersionID: currentVersionID,
 				}
 				currentVersionID = versionID
+				if currentVersionObserved != nil {
+					currentVersionObserved.Store(currentVersionID)
+				}
 			case "doops_credential_cleanup":
 				cleanupCalls.Add(1)
 				currentVersionID = ""
+				if currentVersionObserved != nil {
+					currentVersionObserved.Store(currentVersionID)
+				}
 				result = map[string]any{"status": "removed"}
 			default:
 				result = map[string]any{"error": "unexpected tool"}
