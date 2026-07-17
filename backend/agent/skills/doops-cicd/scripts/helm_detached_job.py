@@ -82,6 +82,7 @@ def build_job_manifest(
             namespace,
             "--values",
             values,
+            "--reset-values",
             "--set-string",
             f"image.repository={image_repository}",
             "--set-string",

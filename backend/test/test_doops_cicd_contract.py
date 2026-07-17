@@ -36,6 +36,9 @@ def test_cicd_skill_uses_gateway_bound_v3_single_service_contract():
     assert "^sha256:[a-f0-9]{64}$" in text
     assert "不是 Git commit 前加 `sha256:`" in text
     assert "成功的 dry-run 或 apply 使用 `Converged`" in text
+    assert "helm upgrade --install --reset-values" in text
+    assert "禁止继承或" in text
+    assert "复用历史 release values" in text
     assert "遍历其他服务" in text
     assert "fallback" in text
     for removed in (
@@ -61,6 +64,9 @@ def test_active_cicd_docs_only_describe_gateway_bound_v3_registry():
         "doops.sh/credential-plan/v2",
         "doops.reconciliation-context/v2",
         "doops.sh/cicd-contract/v3",
+        "CredentialRun.ID",
+        "doops_cicd_result",
+        "--reset-values",
     ):
         assert required in text
 

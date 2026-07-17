@@ -80,6 +80,8 @@ def test_detached_helm_job_is_immutable_and_independent():
     assert manifest["spec"]["activeDeadlineSeconds"] == 1200
     command = pod["containers"][0]["args"][0]
     assert "helm upgrade --install" in command
+    assert " --reset-values " in command
+    assert "--reuse-values" not in command
     assert "--atomic" in command
     assert "--wait" in command
     assert "configure_kubeconfig.py" in command

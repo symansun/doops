@@ -208,7 +208,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 	activeGitMu := sync.Mutex{}
 	activeGitCancels := make(map[int64]context.CancelFunc)
 	activeToolMu := sync.Mutex{}
-	activeToolCancels := make(map[int64]context.CancelFunc)
+	activeToolCalls := make(map[int64]activeToolCall)
 	var readyOnce sync.Once
 	closeGitBody := func(id int64) {
 		gitBodyMu.Lock()
@@ -228,11 +228,13 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 			cancel()
 		}
 		activeToolMu.Lock()
-		cancels := activeToolCancels
-		activeToolCancels = make(map[int64]context.CancelFunc)
+		calls := activeToolCalls
+		activeToolCalls = make(map[int64]activeToolCall)
 		activeToolMu.Unlock()
-		for _, cancel := range cancels {
-			cancel()
+		for _, call := range calls {
+			if !call.surviveDisconnect {
+				call.cancel()
+			}
 		}
 		gitBodyMu.Lock()
 		writers := gitBodyWriters
@@ -402,15 +404,15 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 				}
 			}
 			activeToolMu.Lock()
-			cancel := activeToolCancels[params.ID]
+			call, ok := activeToolCalls[params.ID]
 			activeToolMu.Unlock()
-			if cancel != nil {
-				cancel()
+			if ok {
+				call.cancel()
 			}
 			writeJSON(api.JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
-				Result:  map[string]interface{}{"canceled": cancel != nil},
+				Result:  map[string]interface{}{"canceled": ok},
 			})
 			continue
 		}
@@ -430,12 +432,15 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 			ctx, cancel := context.WithCancel(context.Background())
 			if id, ok := numericID(req.ID); ok {
 				activeToolMu.Lock()
-				activeToolCancels[id] = cancel
+				activeToolCalls[id] = activeToolCall{
+					cancel:            cancel,
+					surviveDisconnect: toolCallSurvivesDisconnect(params, gatewayAuthorized),
+				}
 				activeToolMu.Unlock()
 				go func() {
 					defer func() {
 						activeToolMu.Lock()
-						delete(activeToolCancels, id)
+						delete(activeToolCalls, id)
 						activeToolMu.Unlock()
 						cancel()
 					}()
@@ -474,6 +479,23 @@ type notificationEvent struct {
 	Path   string
 }
 
+type activeToolCall struct {
+	cancel            context.CancelFunc
+	surviveDisconnect bool
+}
+
+func toolCallSurvivesDisconnect(params api.ToolCallParams, gatewayAuthorized bool) bool {
+	if !gatewayAuthorized || params.Name != "doops_agent_prompt" {
+		return false
+	}
+	var prompt api.AgentPromptParams
+	if json.Unmarshal(params.Arguments, &prompt) != nil {
+		return false
+	}
+	_, ok := credentialRunFromInstruction(prompt.Instruction)
+	return ok
+}
+
 func rawNotification(text string) notificationEvent {
 	return notificationEvent{Kind: "raw", Data: text}
 }
@@ -499,6 +521,37 @@ func errorNotification(text string) notificationEvent {
 func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, toolName string, argBytes json.RawMessage, gatewayAuthorized bool, writeJSON func(v interface{})) {
 	if internalCredentialTool(toolName) && !gatewayAuthorized {
 		writeJSON(buildToolErrorResponse(reqID, "credential control-plane tools require a gateway-authorized reverse tunnel"))
+		return
+	}
+
+	if toolName == "doops_cicd_result" {
+		var args struct {
+			CredentialRun CredentialRun `json:"credential_run"`
+		}
+		if err := json.Unmarshal(argBytes, &args); err != nil || !validCICDRunBinding(args.CredentialRun) {
+			writeJSON(buildErrorResponse(reqID, -32602, "invalid credential run binding"))
+			return
+		}
+		result, err := gw.cicdResults.get(args.CredentialRun)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				writeJSON(buildErrorResponse(reqID, -32008, "cicd result not found"))
+				return
+			}
+			writeJSON(buildErrorResponse(reqID, -32603, "read cicd result failed"))
+			return
+		}
+		if result.State == cicdResultClaimed && result.RuntimeID != agentProcessRuntimeID {
+			writeJSON(buildErrorResponse(reqID, -32010, "cicd result unavailable after agent restart"))
+			return
+		}
+		if result.State != cicdResultCompleted {
+			writeJSON(buildErrorResponse(reqID, -32009, "cicd result pending"))
+			return
+		}
+		response := result.Response
+		response.ID = reqID
+		writeJSON(response)
 		return
 	}
 
@@ -821,6 +874,37 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		if args.ResponseFormat != "" && args.ResponseFormat != "json" {
 			writeJSON(buildErrorResponse(reqID, -32602, `response_format must be "json" when specified`))
 			return
+		}
+		if cicdPrompt {
+			run, ok := credentialRunFromInstruction(args.Instruction)
+			if !ok {
+				writeJSON(buildErrorResponse(reqID, -32602, "invalid credential run binding"))
+				return
+			}
+			existing, created, err := gw.cicdResults.begin(run)
+			if err != nil {
+				writeJSON(buildErrorResponse(reqID, -32603, "initialize cicd result failed"))
+				return
+			}
+			if !created {
+				if existing.State == cicdResultCompleted {
+					response := existing.Response
+					response.ID = reqID
+					writeJSON(response)
+				} else {
+					writeJSON(buildErrorResponse(reqID, -32009, "cicd operation already in progress"))
+				}
+				return
+			}
+			originalWriteJSON := writeJSON
+			writeJSON = func(value interface{}) {
+				if response, ok := value.(api.JSONRPCResponse); ok {
+					if err := gw.cicdResults.complete(run, response); err != nil {
+						log.Printf("persist CICD result failed: run=%s: %v", run.ID, err)
+					}
+				}
+				originalWriteJSON(value)
+			}
 		}
 		switch strings.ToLower(strings.TrimSpace(args.Mode)) {
 		case "metadata":

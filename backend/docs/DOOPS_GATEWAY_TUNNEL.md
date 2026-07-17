@@ -213,7 +213,9 @@ doops-agent \
 ```
 
 如果省略 `-instance`，agent 使用主机名。agent 断线后会自动重连；gateway
-不会重放已中断的高危操作。
+不会重放已中断的高危操作。对于已经 admission 的 `execute-doops-cicd`，Agent
+会先按完整 `CredentialRun` 绑定的摘要持久化唯一终态；Gateway 重连后只读取该终态，不会再次
+发送 apply prompt。普通 exec、write 或其它 mutation 仍按断线失败处理。
 `-gateway-url` 必须填写 doops-gateway 的 base URL，或显式填写 `/v1/agent/connect`；
 不要填写 `/ws`。`/ws` 是遗留直连 agent 端点，不是 agent 注册 gateway 的反向隧道端点。
 
@@ -323,6 +325,9 @@ doops -session upgrade_20260511 upgrade \
 - gateway 会主动对 agent WebSocket 发 ping，agent pong 后刷新租约和 SQLite `last_seen`。
 - agent 上下线状态写入 SQLite，在线目标由内存连接表提供，断线时立即标记 offline。
 - agent 重连替换旧连接时，旧连接的关闭不会把新连接错误标记为 offline。
+- CICD prompt admission 后发生隧道断连时，Agent 继续收集并原子保存唯一
+  `CICDReport`；Gateway 只通过内部 `doops_cicd_result` 查询恢复结果，禁止重放
+  mutation。恢复超时必须报告真实错误。
 - 审计记录包含 user、token、target、action、session、命令摘要、状态、错误和输出尾部；输出尾部使用有界缓冲，默认只保留 8 KiB 尾部摘要。
 - gateway 只转发操作流量和 Git HTTP 流量，不保存仓库快照。大文件、可恢复续传、跨用户长期共享 artifact 建议新增独立 artifact store，不把 gateway 扩展成对象存储。
 

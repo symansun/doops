@@ -23,6 +23,10 @@ commit 和执行模式。Agent 内 doagent 必须声明
 4. apply 使用声明中的 target 和工具执行该服务的变更。
 5. 验证该服务的镜像、工作负载和声明的健康检查。
 
+Helm apply 必须使用仓库提供的 detached Job 执行器，并强制
+`helm upgrade --install --reset-values`。发布只接受当前声明 values，禁止继承或
+复用历史 release values，也禁止在 schema 失败后临场改命令重试。
+
 只使用 `CredentialRun` 中的凭据元数据和目标侧已物化资源，不读取或输出 Secret
 内容。缺少声明、能力、授权或执行失败时直接返回真实错误。不要 fallback，不生成
 中间 workflow，不运行第二套编排器，不改写 Agent 返回结果。

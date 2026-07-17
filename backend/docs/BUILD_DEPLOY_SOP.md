@@ -83,7 +83,9 @@ release runner 自恢复可以使用集群管理员上下文按该 values 引导
 1. 校验工作区与 `main` 上的精确 source commit 一致。
 2. 解析 CI 候选镜像的 registry digest，并按环境声明同步到目标 registry。
 3. 在候选镜像内校验 `doops-agent`、`do-agent`、BuildKit、Python/PyYAML、Helm 与嵌入的 Helm Chart。
-4. 通过版本化 bootstrap Job 将现有 Deployment 纳入 Helm 管理，并执行 `helm upgrade --install`。
+4. 通过版本化 detached Job 执行
+   `helm upgrade --install --reset-values`。只接受当前环境 values，禁止继承历史
+   release values 或在 schema 失败后临场改命令重试。
 5. 等待 Job、Helm release 和 Kubernetes rollout 均成功。
 
 ### 双镜像构建原则

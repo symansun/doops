@@ -86,6 +86,14 @@ Trusted capability and evidence fields come from completed, attested tool calls,
 not model-authored claims. Plain text such as `completed` or `looks healthy` is
 not deployment evidence.
 
+For CICD only, the target Agent durably stores the terminal JSON-RPC response by
+the digest of the complete `CredentialRun` binding before attempting WebSocket delivery. If the reverse tunnel
+disconnects after prompt admission, Gateway waits for the same target to
+reconnect and queries that stored result through an internal read-only tool.
+Gateway never replays `doops_agent_prompt` or repeats the mutation. Missing or
+expired results remain an explicit recovery failure; they are not converted to
+success.
+
 ## CLI Artifacts
 
 `scripts/build-cli.sh --all` builds every supported CLI artifact with

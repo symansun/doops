@@ -941,6 +941,7 @@ func TestDirectAgentWebSocketRejectsCredentialApply(t *testing.T) {
 }
 
 func TestGatewayAuthorizedWebSocketExecutesCredentialApply(t *testing.T) {
+	t.Setenv("DOOPS_CICD_RESULT_DIR", t.TempDir())
 	prompted := make(chan struct{})
 	var promptedOnce sync.Once
 	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1041,6 +1042,151 @@ func TestGatewayAuthorizedWebSocketExecutesCredentialApply(t *testing.T) {
 	}
 }
 
+func TestCredentialApplyPersistsTerminalReportAfterTunnelDisconnect(t *testing.T) {
+	t.Setenv("DOOPS_CICD_RESULT_DIR", t.TempDir())
+	prompted := make(chan struct{})
+	release := make(chan struct{})
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rpc":
+			var req map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decode rpc: %v", err)
+				return
+			}
+			result := map[string]interface{}{}
+			switch req["method"] {
+			case "initialize":
+				result["agentCapabilities"] = map[string]interface{}{
+					"trustedReconciliationContext": map[string]interface{}{
+						"schemaVersion":            "doops.reconciliation-context/v2",
+						"callContextSchemaVersion": "doops.reconciliation-call-context/v1",
+						"mcpMetaKey":               "doops.sh/reconciliation-context",
+						"credentialRunDigest":      true,
+						"sourceWorkspaceCommit":    true,
+					},
+				}
+			case "session/new":
+				result["sessionId"] = "credential-disconnect"
+			case "session/prompt":
+				result["status"] = "accepted"
+				result["turnId"] = "turn-credential-disconnect"
+				close(prompted)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      req["id"],
+				"result":  result,
+			})
+		case "/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			<-prompted
+			<-release
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_report","report":{"planDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"Converged","evidence":[],"violations":[]}}}}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-credential-disconnect","status":"completed","stopReason":"end_turn"}}}`)
+			fmt.Fprintln(w)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway("0")
+	ts := newGatewayAuthorizedAgentServer(t, gw)
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	initializeAgentTestWS(t, conn)
+
+	prompt := validDoagentApplyPrompt(t)
+	rawArgs, _ := json.Marshal(map[string]interface{}{
+		"session_id":       prompt.SessionID,
+		"instruction":      prompt.Instruction,
+		"operation":        prompt.Operation,
+		"response_format":  prompt.ResponseFormat,
+		"workspace_commit": prompt.WorkspaceCommit,
+	})
+	if err := conn.WriteJSON(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      42,
+		"method":  "tools/call",
+		"params": map[string]interface{}{
+			"name":      "doops_agent_prompt",
+			"arguments": json.RawMessage(rawArgs),
+		},
+	}); err != nil {
+		t.Fatalf("send credential apply: %v", err)
+	}
+	select {
+	case <-prompted:
+	case <-time.After(time.Second):
+		t.Fatal("credential apply was not admitted")
+	}
+	_ = conn.Close()
+	close(release)
+
+	deadline := time.Now().Add(2 * time.Second)
+	run, _ := credentialRunFromInstruction(prompt.Instruction)
+	for {
+		stored, err := gw.cicdResults.get(run)
+		if err == nil && stored.State == cicdResultCompleted {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("terminal report was not persisted after disconnect: result=%#v err=%v", stored, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	reconnected := dialAgentTestWS(t, ts.URL)
+	defer reconnected.Close()
+	initializeAgentTestWS(t, reconnected)
+	response := callToolResult(t, reconnected, "doops_cicd_result", map[string]interface{}{
+		"credential_run": run,
+	})
+	result, _ := response["result"].(map[string]interface{})
+	structured, _ := result["structuredContent"].(map[string]interface{})
+	if structured["status"] != "Converged" {
+		t.Fatalf("recovered result = %#v", response)
+	}
+}
+
+func TestCICDResultQueryFailsExplicitlyAfterAgentRestart(t *testing.T) {
+	t.Setenv("DOOPS_CICD_RESULT_DIR", t.TempDir())
+	gw := NewGateway("0")
+	run := testCICDResultRun()
+	result, created, err := gw.cicdResults.begin(run)
+	if err != nil || !created {
+		t.Fatalf("begin result=%#v created=%t err=%v", result, created, err)
+	}
+	result.RuntimeID = "previous-agent-runtime"
+	gw.cicdResults.mu.Lock()
+	err = gw.cicdResults.writeLocked(result)
+	gw.cicdResults.mu.Unlock()
+	if err != nil {
+		t.Fatalf("persist previous runtime claim: %v", err)
+	}
+
+	ts := newGatewayAuthorizedAgentServer(t, gw)
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	response := callToolResult(t, conn, "doops_cicd_result", map[string]interface{}{
+		"credential_run": run,
+	})
+	errObject, _ := response["error"].(map[string]interface{})
+	if errObject["code"] != float64(-32010) ||
+		!strings.Contains(fmt.Sprint(errObject["message"]), "agent restart") {
+		t.Fatalf("restart query result = %#v", response)
+	}
+}
+
 func TestDirectAgentWebSocketRejectsCICDDryRun(t *testing.T) {
 	gw := NewGateway("0")
 	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
@@ -1071,7 +1217,7 @@ func TestDirectAgentWebSocketRejectsCredentialControlPlaneTools(t *testing.T) {
 	defer conn.Close()
 	initializeAgentTestWS(t, conn)
 
-	for _, tool := range []string{"doops_credential_plan", "doops_credential_materialize", "doops_credential_cleanup"} {
+	for _, tool := range []string{"doops_credential_plan", "doops_credential_materialize", "doops_credential_cleanup", "doops_cicd_result"} {
 		result := callToolResult(t, conn, tool, map[string]interface{}{
 			"session_id": "direct-credential-control-plane",
 		})
