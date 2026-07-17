@@ -190,7 +190,8 @@ doops credential grant --target <target> --id <credential-id> --grantee-id <user
   --environment <environment> --template <template> --namespace <namespace> \
   --uses <comma-separated-uses>
 doops credential verify --target <target> --id <credential-id> --version-id <version-id> \
-  --session <session> --workflow-path <path> --workspace-commit <commit>
+  --session <session> --workflow-path <path> --workspace-commit <commit> \
+  --source-repository <https-repository> --source-branch <branch>
 doops credential promote --target <target> --id <credential-id> --version-id <version-id>
 doops credential grant-revoke --target <target> --id <credential-id> --grant-id <grant-id>
 doops credential revoke --target <target> --id <credential-id>
