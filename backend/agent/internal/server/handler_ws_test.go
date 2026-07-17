@@ -654,6 +654,7 @@ func TestSubscribeDoagentSSEScopesUntaggedEventsToFreshMachineSession(t *testing
 				},
 				turnIDReady,
 				test.allowUntagged,
+				true,
 				nil,
 			)
 			if err != nil {
@@ -1726,5 +1727,43 @@ func TestSubscribeDoagentSSESanitizesAgentMessagesBeforeCollectorAndProgress(t *
 		strings.Contains(collected, "stream-canary") ||
 		!strings.Contains(progress.String(), "REDACTED") {
 		t.Fatalf("raw agent message escaped sanitization: progress=%q collector=%q", progress.String(), collected)
+	}
+}
+
+func TestSubscribeDoagentSSEDefersStructuredAgentMessage(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","content":{"type":"text","text":"{\"kind\":\"DeploymentRun\",\"subject\":\"https://storage.example.test/object?X-Amz-Signature=stream-canary\"}"}}}}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","status":"completed","stopReason":"end_turn"}}}`)
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	var progress strings.Builder
+	var collected []string
+	err := subscribeDoagentSSEWithCollectorReady(
+		t.Context(),
+		ts.URL,
+		"structured-no-forward",
+		func(evt notificationEvent) { progress.WriteString(evt.Data) },
+		func(update map[string]interface{}) error {
+			collected = append(collected, fmt.Sprint(update["sessionUpdate"]))
+			return nil
+		},
+		nil,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("subscribe structured SSE: %v", err)
+	}
+	if strings.Contains(progress.String(), "DeploymentRun") ||
+		strings.Contains(progress.String(), "stream-canary") {
+		t.Fatalf("unvalidated structured result was forwarded: %s", progress.String())
+	}
+	if !reflect.DeepEqual(collected, []string{"agent_message", "turn_finished"}) {
+		t.Fatalf("structured updates were not collected: %#v", collected)
 	}
 }

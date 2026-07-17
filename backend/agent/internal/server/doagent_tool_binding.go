@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 type doagentToolTrace struct {
@@ -27,6 +28,7 @@ type doagentToolTrace struct {
 	AttestedTool         string
 	EvidenceKind         string
 	EvidenceSubject      string
+	ObservedAt           string
 	CanonicalScope       map[string]interface{}
 	ScopeDigest          string
 	InputDigest          string
@@ -153,6 +155,9 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 			return fmt.Errorf("conflicting %s", field.source)
 		}
 		*field.target = text
+	}
+	if trace.Status == "completed" && trace.ObservedAt == "" {
+		trace.ObservedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	if value, exists := update["mutationAuthorized"]; exists {
 		authorized, ok := value.(bool)
@@ -287,6 +292,8 @@ func (trace doagentToolTrace) ineligibilityReason(expected *trustedReconciliatio
 		return "input_missing"
 	case len(trace.resultJSON) == 0:
 		return "raw_output_missing"
+	case !validDoagentObservedAt(trace.ObservedAt):
+		return "observed_at_invalid"
 	}
 	_, err := publicDoagentToolResult(trace)
 	if err != nil {
@@ -368,6 +375,11 @@ func (trace doagentToolTrace) ineligibilityReason(expected *trustedReconciliatio
 	return ""
 }
 
+func validDoagentObservedAt(value string) bool {
+	_, err := time.Parse(time.RFC3339Nano, value)
+	return err == nil
+}
+
 func (trace doagentToolTrace) verifiedResult() (map[string]interface{}, error) {
 	result, err := publicDoagentToolResult(trace)
 	if err != nil {
@@ -422,16 +434,17 @@ func rejectSensitiveToolResult(value interface{}) error {
 func bindDeploymentRunEvidence(
 	result map[string]interface{},
 	traces []doagentToolTrace,
+	primaryTool string,
 ) (string, map[string]interface{}, error) {
 	if result["kind"] != "DeploymentRun" {
 		return "", nil, fmt.Errorf("structured result kind must be DeploymentRun")
 	}
-	if err := rejectSensitiveToolResult(result); err != nil {
-		return "", nil, err
-	}
 	status, ok := result["status"].(map[string]interface{})
 	if !ok {
 		return "", nil, fmt.Errorf("DeploymentRun.status must be an object")
+	}
+	if err := rejectRetainedSensitiveDeploymentRunFields(result); err != nil {
+		return "", nil, err
 	}
 	for field := range status {
 		switch field {
@@ -487,6 +500,12 @@ func bindDeploymentRunEvidence(
 		if err != nil {
 			return "", nil, fmt.Errorf("DeploymentRun evidence[%d]: %w", index, err)
 		}
+		if index == 0 && primaryTool != "" && trace.ToolName != primaryTool {
+			return "", nil, fmt.Errorf(
+				"DeploymentRun evidence[0] must reference %s",
+				modelVisibleDoagentToolName(primaryTool),
+			)
+		}
 		runtimeInput, err := decodeDoagentJSONValue(trace.inputJSON)
 		if err != nil {
 			return "", nil, fmt.Errorf("decode runtime tool input: %w", err)
@@ -496,6 +515,10 @@ func bindDeploymentRunEvidence(
 			return "", nil, fmt.Errorf("verify runtime tool result: %w", err)
 		}
 		delete(entry, "toolRef")
+		if trace.EvidenceSubject != "" {
+			entry["subject"] = trace.EvidenceSubject
+		}
+		entry["observedAt"] = trace.ObservedAt
 		entry["toolCall"] = map[string]interface{}{
 			"id":     trace.ToolCallID,
 			"tool":   trace.ToolName,
@@ -512,6 +535,25 @@ func bindDeploymentRunEvidence(
 		return "", nil, fmt.Errorf("encode DeploymentRun: %w", err)
 	}
 	return string(payload), result, nil
+}
+
+func rejectRetainedSensitiveDeploymentRunFields(result map[string]interface{}) error {
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("encode DeploymentRun for sensitive-field validation: %w", err)
+	}
+	var retained map[string]interface{}
+	if err := json.Unmarshal(encoded, &retained); err != nil {
+		return fmt.Errorf("decode DeploymentRun for sensitive-field validation: %w", err)
+	}
+	status, _ := retained["status"].(map[string]interface{})
+	evidence, _ := status["evidence"].([]interface{})
+	for _, item := range evidence {
+		entry, _ := item.(map[string]interface{})
+		delete(entry, "subject")
+		delete(entry, "observedAt")
+	}
+	return rejectSensitiveToolResult(retained)
 }
 
 func publicDoagentToolResult(trace doagentToolTrace) (interface{}, error) {

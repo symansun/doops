@@ -131,6 +131,16 @@ func TestDoagentToolTraceCollectorRequiresMatchingTrustedAttestationForCICD(t *t
 	if calls := collector.completed(); len(calls) != 1 {
 		t.Fatalf("matching trusted call was not eligible: %#v", calls)
 	}
+	trace := collector.calls["call-source"]
+	trace.ObservedAt = "invalid"
+	collector.calls["call-source"] = trace
+	if summary := collector.rejectionSummary(); !strings.Contains(summary, "observed_at_invalid") {
+		t.Fatalf("invalid observation time rejection was not reported: %q", summary)
+	}
+	collector = newDoagentToolTraceCollector(admission)
+	if err := collector.collect(update); err != nil {
+		t.Fatalf("restore matching trusted call: %v", err)
+	}
 	if err := collector.collect(map[string]interface{}{
 		"sessionUpdate": "tool_call_update",
 		"toolCallId":    "call-source",

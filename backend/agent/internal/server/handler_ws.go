@@ -1146,6 +1146,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			toolTraces.collect,
 			turnIDReady,
 			responseFormat == "json",
+			responseFormat != "json",
 			sseReady,
 		)
 	}()
@@ -1203,6 +1204,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		resultText, structuredContent, err = bindDeploymentRunEvidence(
 			structuredContent,
 			toolTraces.completed(),
+			primaryDeploymentEvidenceTool(execution.Admission),
 		)
 		if err != nil {
 			if rejections := toolTraces.rejectionSummary(); rejections != "" {
@@ -1736,6 +1738,14 @@ func appendDoagentStructuredResultContract(
 	return contract
 }
 
+func primaryDeploymentEvidenceTool(admission *trustedReconciliationAdmission) string {
+	const sourceTool = "mcp_doops_plan_ObserveWorkspaceSource"
+	if admission != nil && containsString(admission.AllowedTools, sourceTool) {
+		return sourceTool
+	}
+	return ""
+}
+
 // subscribeDoagentSSE 订阅 doagent 的 SSE 事件流，将内容实时转发到 WebSocket 客户端。
 // 仅当收到权威 turn_finished 或 error 事件时返回。
 func subscribeDoagentSSE(ctx context.Context, baseURL string, sessionID string, pushProgress notificationSender) error {
@@ -1743,7 +1753,7 @@ func subscribeDoagentSSE(ctx context.Context, baseURL string, sessionID string, 
 }
 
 func subscribeDoagentSSEWithCollector(ctx context.Context, baseURL string, sessionID string, pushProgress notificationSender, collector doagentSSECollector) error {
-	return subscribeDoagentSSEWithCollectorReady(ctx, baseURL, sessionID, pushProgress, collector, nil, false, nil)
+	return subscribeDoagentSSEWithCollectorReady(ctx, baseURL, sessionID, pushProgress, collector, nil, false, true, nil)
 }
 
 func subscribeDoagentSSEWithCollectorReady(
@@ -1754,6 +1764,7 @@ func subscribeDoagentSSEWithCollectorReady(
 	collector doagentSSECollector,
 	targetTurnIDReady <-chan string,
 	allowUntaggedCurrentTurn bool,
+	forwardAgentMessages bool,
 	ready chan<- error,
 ) error {
 	ctx, cancel := context.WithCancel(ctx)
@@ -1799,7 +1810,9 @@ func subscribeDoagentSSEWithCollectorReady(
 			return
 		}
 		text := sanitizeSecretText(pendingAgentMessage.String())
-		pushProgress(assistantDeltaNotification(text))
+		if forwardAgentMessages {
+			pushProgress(assistantDeltaNotification(text))
+		}
 		pendingAgentMessage.Reset()
 	}
 	receivedEvent := false
@@ -1924,12 +1937,13 @@ func subscribeDoagentSSEWithCollectorReady(
 						pushProgress(toolNotification(toolName, status))
 					}
 				case "agent_message":
-					// 最终文本先转发，但只有后续 turn_finished 才能结束本轮。
 					text, err := doagentAgentMessageText(sessionUpdate["content"])
 					if err != nil {
 						return errors.New("doagent_sse_protocol_invalid")
 					}
-					pushProgress(assistantDeltaNotification(text))
+					if forwardAgentMessages {
+						pushProgress(assistantDeltaNotification(text))
+					}
 				case "completed", "usage_update":
 					// 非权威状态或 token 统计，继续等待 turn_finished。
 				case "turn_finished":
