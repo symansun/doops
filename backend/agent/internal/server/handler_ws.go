@@ -497,6 +497,11 @@ func errorNotification(text string) notificationEvent {
 
 // handleToolCallOverWS 处理具体的 MCP tool 调用（复用原有的处理逻辑，但直接向 WS 写入结果）
 func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, toolName string, argBytes json.RawMessage, gatewayAuthorized bool, writeJSON func(v interface{})) {
+	if internalCredentialTool(toolName) && !gatewayAuthorized {
+		writeJSON(buildToolErrorResponse(reqID, "credential control-plane tools require a gateway-authorized reverse tunnel"))
+		return
+	}
+
 	var sessionID string
 	var argsMap map[string]interface{}
 	json.Unmarshal(argBytes, &argsMap)

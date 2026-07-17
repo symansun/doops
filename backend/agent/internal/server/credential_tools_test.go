@@ -23,6 +23,17 @@ func runTestCommand(t *testing.T, directory, name string, arguments ...string) s
 	return string(output)
 }
 
+func newGatewayAuthorizedAgentServer(t *testing.T, gw *Gateway) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		gw.ServeGatewayWebSocketConnWithReady(conn, r.RemoteAddr, nil)
+	}))
+}
+
 func TestAgentCredentialPlanToolParsesBoundWorkspace(t *testing.T) {
 	_, _ = createCredentialPlanWorkspaceFixture(t)
 	originalClone := cloneCredentialPlanSource
@@ -30,7 +41,7 @@ func TestAgentCredentialPlanToolParsesBoundWorkspace(t *testing.T) {
 	t.Cleanup(func() { cloneCredentialPlanSource = originalClone })
 
 	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 	conn := dialAgentTestWS(t, ts.URL)
 	defer conn.Close()
@@ -251,5 +262,47 @@ func TestAgentCredentialMaterializeToolAcceptsBoundSession(t *testing.T) {
 	}
 	if strings.Contains(result, "session-canary-secret") {
 		t.Fatalf("materialize result exposed credential payload: %s", result)
+	}
+}
+
+func TestGatewayAuthorizedWebSocketMaterializesAndCleansCredential(t *testing.T) {
+	bin, _ := installCredentialTestCommands(t)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
+	t.Setenv("DOOPS_TEST_SECRET_TYPE", "Opaque")
+	t.Setenv("DOOPS_TEST_SECRET_KEYS", "API_KEY")
+
+	gw := NewGateway("0")
+	ts := newGatewayAuthorizedAgentServer(t, gw)
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	args := map[string]interface{}{
+		"session_id":      "credential-ws",
+		"credential_id":   "cred_ws",
+		"grant_id":        "grant_ws",
+		"version_id":      "ver_ws",
+		"credential_type": CredentialTypeOpaque,
+		"use":             CredentialUseOpaqueSecret,
+		"namespace":       "app",
+		"required_keys":   []string{"API_KEY"},
+		"payload":         map[string]interface{}{"data": map[string]string{"API_KEY": "ws-canary-secret"}},
+	}
+	materialized := callTool(t, conn, "doops_credential_materialize", args)
+	if strings.Contains(materialized, "ws-canary-secret") {
+		t.Fatalf("materialize result exposed credential payload: %s", materialized)
+	}
+
+	removed := callTool(t, conn, "doops_credential_cleanup", map[string]interface{}{
+		"session_id":    "credential-ws",
+		"credential_id": "cred_ws",
+		"grant_id":      "grant_ws",
+		"version_id":    "ver_ws",
+		"namespace":     "app",
+	})
+	if removed != `{"status":"removed"}` {
+		t.Fatalf("cleanup result = %s", removed)
 	}
 }

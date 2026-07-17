@@ -940,6 +940,126 @@ func TestDirectAgentWebSocketRejectsCredentialApply(t *testing.T) {
 	}
 }
 
+func TestGatewayAuthorizedWebSocketExecutesCredentialApply(t *testing.T) {
+	prompted := make(chan struct{})
+	var promptedOnce sync.Once
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rpc":
+			var req map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decode rpc: %v", err)
+				return
+			}
+			switch req["method"] {
+			case "initialize":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]interface{}{
+						"agentCapabilities": map[string]interface{}{
+							"trustedReconciliationContext": map[string]interface{}{
+								"schemaVersion":            "doops.reconciliation-context/v2",
+								"callContextSchemaVersion": "doops.reconciliation-call-context/v1",
+								"mcpMetaKey":               "doops.sh/reconciliation-context",
+								"credentialRunDigest":      true,
+								"sourceWorkspaceCommit":    true,
+							},
+						},
+					},
+				})
+			case "session/new":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{"sessionId": "credential-apply"},
+				})
+			case "session/setMode":
+				params, _ := req["params"].(map[string]interface{})
+				if params["modeId"] != "build" {
+					t.Errorf("credential apply mode = %v, want build", params["modeId"])
+				}
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result":  map[string]interface{}{},
+				})
+			case "session/prompt":
+				params, _ := req["params"].(map[string]interface{})
+				if params["response_format"] != "json" || params["responseMode"] != "stream" {
+					t.Errorf("credential apply prompt is not structured streaming: %#v", params)
+				}
+				promptedOnce.Do(func() { close(prompted) })
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]interface{}{
+						"status":   "accepted",
+						"delivery": "sse",
+						"turnId":   "turn-credential-apply",
+					},
+				})
+			default:
+				t.Errorf("unexpected rpc method: %v", req["method"])
+			}
+		case "/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			<-prompted
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"agent_message","turnId":"turn-credential-apply","content":{"type":"text","text":"{\"kind\":\"DeploymentRun\",\"status\":\"succeeded\"}"}}}}`)
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-credential-apply","status":"completed","stopReason":"end_turn"}}}`)
+			fmt.Fprintln(w)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway("0")
+	ts := newGatewayAuthorizedAgentServer(t, gw)
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	prompt := validDoagentApplyPrompt(t)
+	result := callTool(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id":       prompt.SessionID,
+		"instruction":      prompt.Instruction,
+		"operation":        prompt.Operation,
+		"response_format":  prompt.ResponseFormat,
+		"workspace_commit": prompt.WorkspaceCommit,
+	})
+	if !strings.Contains(result, `"kind":"DeploymentRun"`) || !strings.Contains(result, `"status":"succeeded"`) {
+		t.Fatalf("credential apply result = %s", result)
+	}
+}
+
+func TestDirectAgentWebSocketRejectsCredentialControlPlaneTools(t *testing.T) {
+	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	for _, tool := range []string{"doops_credential_plan", "doops_credential_materialize", "doops_credential_cleanup"} {
+		result := callToolResult(t, conn, tool, map[string]interface{}{
+			"session_id": "direct-credential-control-plane",
+		})
+		toolResult, _ := result["result"].(map[string]interface{})
+		if toolResult["isError"] != true || !strings.Contains(fmt.Sprint(toolResult["content"]), "gateway-authorized reverse tunnel") {
+			t.Fatalf("%s direct call was not rejected: %#v", tool, result)
+		}
+	}
+}
+
 func TestAgentWebSocketRejectsDockerNewlineInjection(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
 	gw := NewGateway("0")
