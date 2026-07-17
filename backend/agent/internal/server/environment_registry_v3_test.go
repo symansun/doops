@@ -153,8 +153,18 @@ func TestRepositoryEnvironmentRegistryV3CompilesOilanDoopsAgent(t *testing.T) {
 		plan.Cluster != "doops-edu" ||
 		plan.Instance != "release-runner" ||
 		plan.Session != "doops-oilan-release" ||
-		len(plan.CredentialRefs) != 0 {
+		len(plan.CredentialRefs) != 1 {
 		t.Fatalf("unexpected repository plan: %#v", plan)
+	}
+	ref := plan.CredentialRefs[0]
+	if ref.Name == "" ||
+		ref.Use != CredentialUseImagePull ||
+		ref.Namespace != "kz-ops" ||
+		ref.Workload.Kind != "deployment" ||
+		ref.Workload.Name != "doops-agent-live" ||
+		ref.RegistryRepository != "l8ai/ai/doops.sh" ||
+		!strings.HasPrefix(ref.RegistryReference, "sha256:") {
+		t.Fatalf("unexpected runtime credential ref: %#v", ref)
 	}
 }
 
