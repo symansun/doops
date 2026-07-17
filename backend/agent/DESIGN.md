@@ -67,9 +67,7 @@ doops-agent 通过本地 ACP HTTP 调用 `/usr/local/bin/do-agent`：
 
 - 每个 session 使用独立工作区。
 - 文件和同步接口必须校验 session 与路径，禁止目录穿越。
-- CI/CD push 完成后写入 `.doops-ready`。
-- CI/CD push 在 workspace 锁内写入并验证 `.doops-ready`，结果由 `$doops-cicd`
-  Skill 通过真实模块证据判断，不由 Agent 网关伪造。
+- 普通 `push/pull` 继续使用 session 独立工作区，但 CI/CD 不上传本地 workspace。
 - 大文件使用 `doops push/pull`；小文本查看使用文件工具。
 
 ## Skill 与工具
@@ -86,12 +84,12 @@ doagent 可以根据任务创建多 Agent、组合 Skill 并选择工具；DoOps
 CI/CD 复用普通 Agent-native Ask：
 
 ```text
-doops ask -> doagent -> $doops-cicd
+自然语言发布任务 -> doops ask -> doagent -> $doops-cicd
 ```
 
-CLI 只负责显式 target 与自然语言任务路由。doops-agent 不实现
-发布专用 admission、tool registry 或证据注入；Skill 通过现有 DoOps 模块执行并在
-session 工作区写入 Gateway 指定的单一 JSON 结构化结果。
+CLI 只负责显式 target 和自然语言任务。doops-agent 不实现发布专用 admission、
+tool registry、workspace commit 或证据注入；Skill 通过现有 DoOps 模块执行并使用
+本轮真实工具输出验收。
 
 ## 安全原则
 
@@ -107,7 +105,7 @@ session 工作区写入 Gateway 指定的单一 JSON 结构化结果。
 | :--- | :--- |
 | WebSocket/MCP 与 ACP 适配 | `internal/server/handler_ws.go` |
 | Gateway 隧道、授权和队列 | `internal/server/tunnel_hub.go` |
-| 工作区同步与 commit 绑定 | `internal/server/workspace_upload.go` |
+| 普通工作区同步 | `internal/server/workspace_upload.go` |
 | 请求类型 | `api/mcp.go` |
 | Agent 全局提示边界 | `skills/system_prompt.md` |
 | CI/CD Skill | `skills/doops-cicd/SKILL.md` |

@@ -53,31 +53,24 @@ bash scripts/deploy-gateway.sh \
 
 ## 二、 Agent 标准构建工作流 (Server-Side Build)
 
-在进行任何修改后，若需要更新大模型管控组件 `doops-agent`，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA 为标签的候选镜像；候选镜像必须在下一步被解析为 registry digest。已注册的 DoOps Agent 只能通过版本化 DoOps 声明消费该 digest并完成环境同步、Helm 收敛与验证。DoOps 自身的 Agent bootstrap 当前使用 v2 `DeploymentTemplate`；业务环境可以使用 v3 `EnvironmentDefinition`，不得在二者之间生成中间 workflow 或静默降级。CNB 不负责环境部署、回滚或 Helm/Kubernetes 操作；`deploy.sh` 与任何 SSH/rsync 手工发布入口均已移除。
+在进行任何修改后，若需要更新大模型管控组件 `doops-agent`，先由 `main` 的 CNB CI 构建并推送候选镜像。DoOps v3 的部署输入是自然语言任务，不使用版本化 Environment 或 DeploymentTemplate 声明。CNB 不负责环境部署、回滚或 Helm/Kubernetes 操作；`deploy.sh` 与任何 SSH/rsync 手工发布入口均已移除。
 
 ### 1. 触发受控发布 (在控制端执行)
-发布者必须先将待发布提交推送到 `main`，确认 CNB CI 的候选镜像已经生成，并在无未提交文件的精确 commit checkout 中，以该完整 commit SHA 作为 `releaseId` 执行环境 `DeploymentTemplate`。CLI 会拒绝 HEAD 不匹配或工作区不干净的 source release。运行期必须使用该候选镜像的 registry digest，不得以可变 tag 作为实际部署镜像。Oilan 的入口为 `deploy/workflows/oilan-agent-bootstrap.yaml`，运行期目标清单由 `deploy/environments.yaml`、Helm Chart 和环境 values 定义。
+发布者必须先将待发布提交推送到 `main`，确认候选镜像已经生成。随后在自然语言任务中明确 target、服务范围、镜像、变更原因和验收条件。
 
 ```bash
-doops -session oilan-agent-bootstrap cicd run \
-  -f backend/deploy/workflows/oilan-agent-bootstrap.yaml \
-  -target <configured-doops-target> \
-  -model <tool-capable-model> \
-  --dry-run \
-  --set releaseId=<main-commit-sha>
+doops -session oilan-agent-bootstrap ask \
+  --target <configured-doops-target> \
+  --msg '$doops-cicd 部署 doops-agent；镜像=<image-reference>；原因=<reason>；验收=<health-check>；已授权执行变更'
 ```
 
-The command synchronizes the repository, then sends one ordinary Ask to doagent
-for the `$doops-cicd` Skill. The Skill emits one JSON `DeploymentRun` as its
-final response;
-text such as `admitted` is not evidence, and dry-run mutation count must be zero.
+命令将任务交给 doagent 的 `$doops-cicd` Skill。结论必须来自本轮真实工具输出。
 
 **DoOps Agent 执行顺序：**
-1. 校验工作区与 `main` 上的精确 source commit 一致。
-2. 解析 CI 候选镜像的 registry digest，并按环境声明同步到目标 registry。
-3. 在候选镜像内校验 `doops-agent`、`do-agent`、BuildKit、Python/PyYAML、Helm 与嵌入的 Helm Chart。
-4. 通过版本化 bootstrap Job 将现有 Deployment 纳入 Helm 管理，并执行 `helm upgrade --install`。
-5. 等待 Job、Helm release 和 Kubernetes rollout 均成功。
+1. 确认授权的 target、服务范围和镜像与任务一致。
+2. 检查候选镜像和当前运行状态。
+3. 使用运行时实际可用的工具执行明确授权的变更。
+4. 验证 Helm release、Kubernetes rollout 和任务中的验收条件。
 
 ### 双镜像构建原则
 

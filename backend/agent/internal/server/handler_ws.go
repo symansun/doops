@@ -780,10 +780,6 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	case "doops_agent_prompt":
 		var args api.AgentPromptParams
 		json.Unmarshal(argBytes, &args)
-		if err := validateWorkspaceCommitBinding(sessionID, args.WorkspaceCommit); err != nil {
-			writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
-			return
-		}
 		operation := strings.ToLower(strings.TrimSpace(args.Operation))
 		nativeMode, err := doagentModeForPrompt(operation, "")
 		if err != nil {
@@ -912,8 +908,6 @@ func doagentModeForPrompt(operation, executionMode string) (string, error) {
 	switch operation {
 	case "", "ask":
 		return "auto", nil
-	case "apply":
-		return "build", nil
 	default:
 		return "", fmt.Errorf("unsupported agent prompt operation: %s", operation)
 	}

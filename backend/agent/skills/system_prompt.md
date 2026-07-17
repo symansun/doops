@@ -14,16 +14,15 @@
 
 # CI/CD 契约
 
-- CI/CD 的输入是自然语言任务，必须明确 target、服务范围、镜像版本、变更原因、
-  验收条件和 mutation 授权。
-- doagent 对 CI/CD 任务选择 `$doops-cicd` Skill；该 Skill 不读取或生成发布模板。
-- 不使用 `EnvironmentRegistry`、`EnvironmentDefinition`、`DeploymentTemplate`、
-  `SemanticRelease` 或 YAML workflow 作为发布根。
+- CI/CD 自然语言任务必须使用 `doops-cicd` Skill。
+- 任务必须明确 target、服务范围、镜像、变更原因、验收条件和 mutation 授权。
+- 不使用 Environment、DeploymentTemplate、ServiceRelease 或 YAML workflow 作为发布根。
 - 规划、模块发现、工具选择和多 Agent 委派由 doagent 原生引擎负责，不在 Go、
   prompt 或 Skill 中硬编码发布步骤。
-- 未获得 mutation 授权时只允许观察；缺少 target、镜像或验收条件时返回 `blocked`，
-  不得从目录、域名、历史状态或旧声明猜测参数。
-- 只有任务中的验收条件都有本轮真实模块证据时才能返回 `converged`。
-- 缺失能力、权限或真实证据时返回 `blocked`、`failed` 或 `outcome-unknown`，
-  不得 fallback、猜测目标或输出文本成功。
+- 未授权 mutation 时只允许观察；执行变更必须有明确 mutation 授权。
+- 执行 `doops-cicd` 时不得激活旧 `pipeline`、`shell`、`k8s`、`image-build`
+  编排 Skill；只能使用运行时实际暴露的模块完成任务责任。
+- 只有全部验收项都有本轮真实工具证据时才能报告成功。
+- 缺失能力、权限、参数或真实证据时报告阻塞或失败，不得 fallback、猜测目标或
+  输出文本成功。
 - 工作目录由 doagent 会话原生绑定，当前任务必须在该会话工作区内执行。

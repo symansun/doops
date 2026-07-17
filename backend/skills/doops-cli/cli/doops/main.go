@@ -62,8 +62,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   -help       显示此帮助信息
 
 	Agent 原生 CI/CD 示例:
-	  doops -session release-001 ask --target agent-runtime \
-	    --msg '部署 frontend：镜像=release-YYYYMMDD；原因=修复；验收=/healthz 200'
+	  doops -session release ask --target agent-runtime --msg '$doops-cicd 部署 frontend；镜像=<immutable-image>; 原因=<reason>; 验收=<checks>; 已授权执行变更'
 `)
 	}
 	flag.Parse()

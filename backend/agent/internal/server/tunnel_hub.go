@@ -959,7 +959,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	}
 	if params.Name == "doops_agent_prompt" {
 		operation := extractStringArg(params.Arguments, "operation")
-		if operation != "" && operation != "ask" && operation != "apply" {
+		if operation != "" && operation != "ask" {
 			writeJSON(buildErrorResponse(req.ID, -32602, "unsupported agent prompt operation: "+operation))
 			return nil
 		}
@@ -1907,9 +1907,6 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 	case "doops_shell", "doops_bg", "doops_task_status":
 		return ActionExec
 	case "doops_agent_prompt":
-		if extractStringArg(args, "operation") == "apply" {
-			return ActionExec
-		}
 		switch extractStringArg(args, "mode") {
 		case "metadata", "history":
 			return ActionAsk

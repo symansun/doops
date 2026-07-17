@@ -27,8 +27,8 @@ description: |
 - `doops-gateway` 是独立发布包，必须用 `scripts/deploy-gateway.sh --host <gateway-host>` 从 SSH 宿主机上下文发布。
 - gateway 控制面不登记为 doops target，不通过任何 doops target 发布 gateway 本体。
 - 不要用 base64、tar 或手写分片传输绕过 `push`。`doops_workspace_*` 是低层兼容 JSON-RPC 工具，不是 CLI、发布脚本和 skill 的标准路径；如果看到 512KB 分块日志，说明调用方绕过了当前 `doops push/pull`。应修复 Git HTTP 反向隧道、目标 agent 版本或发布脚本。
-- CI/CD 只通过 `doops ask` 交付自然语言任务。任务必须明确 target、服务范围、镜像版本、
-  变更原因和验收条件；不得以 Environment、DeploymentTemplate 或 YAML workflow 作为发布根。
+- CI/CD 通过 `doops ask` 交付自然语言任务。任务必须明确 target、服务范围、镜像、
+  变更原因、验收条件和 mutation 授权，不使用 YAML workflow 作为发布根。
 - 长构建或发布使用 `doops -session <s> exec --bg --target <t> --cmd '<cmd>'`。不要在普通 `exec` 命令中使用 `&`、`nohup` 或 `setsid`，因为调用结束时 agent 会终止该 shell 的子进程。
 - 不要混用 token：
   - gateway CLI 操作用 gateway user token。
@@ -128,8 +128,8 @@ doops targets --target unicom
 | :--- | :--- |
 | 执行确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'` |
 | AI 自主分析 | `doops -session <s> ask --target <t> --msg '<task>'` |
-| CI/CD 只读预演 | `doops -session <s> ask --target <t> --msg '只读检查发布范围、当前镜像和验收状态'` |
-| CI/CD 正式收敛 | `doops -session <s> ask --target <t> --msg '部署 <服务> 到 <目标>，使用 <镜像>；原因：<原因>；验收：<条件>'` |
+| CI/CD 只读预演 | `doops -session <s> ask --target <t> --msg '$doops-cicd 只读检查 <服务> 的镜像与验收状态'` |
+| CI/CD 正式收敛 | `doops -session <s> ask --target <t> --msg '$doops-cicd 部署 <服务>；镜像=<镜像>；原因=<原因>；验收=<条件>；已授权执行变更'` |
 | 推送本地目录 | `doops -session <s> push --target <t> --src <dir>` |
 | 拉取远端工作区 | `doops -session <s> pull --target <t> --dest <dir>` |
 | 小文本读写 | `doops read/write ...` |
