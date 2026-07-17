@@ -219,7 +219,8 @@ func workflowDeclaredSource(path string, inputs map[string]string) (repository, 
 	}
 	var declaration struct {
 		Spec struct {
-			Source struct {
+			ConfigurationSource string `yaml:"configurationSource"`
+			Source              struct {
 				Repository string `yaml:"repository"`
 				Branch     string `yaml:"branch"`
 				Revision   string `yaml:"revision"`
@@ -247,6 +248,40 @@ func workflowDeclaredSource(path string, inputs map[string]string) (repository, 
 	}
 	if revision == "" {
 		revision = strings.TrimSpace(declaration.Spec.Release.Source.Revision)
+	}
+	if repository == "" || branch == "" {
+		configurationSource := strings.TrimSpace(declaration.Spec.ConfigurationSource)
+		if configurationSource != "" {
+			root, _, pathErr := workflowPathInGitRepository(path)
+			if pathErr != nil {
+				return "", "", "", pathErr
+			}
+			configurationPath := filepath.Clean(filepath.Join(root, filepath.FromSlash(configurationSource)))
+			relative, relErr := filepath.Rel(root, configurationPath)
+			if relErr != nil || relative == "." || relative == ".." ||
+				strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+				return "", "", "", fmt.Errorf("configurationSource %q escapes Git repository", configurationSource)
+			}
+			configurationData, readErr := os.ReadFile(configurationPath)
+			if readErr != nil {
+				return "", "", "", fmt.Errorf("read workflow configurationSource %q: %w", configurationSource, readErr)
+			}
+			var configuration struct {
+				ArtifactContract struct {
+					SourceRepository string `yaml:"sourceRepository"`
+					SourceBranch     string `yaml:"sourceBranch"`
+				} `yaml:"artifactContract"`
+			}
+			if decodeErr := yaml.Unmarshal(configurationData, &configuration); decodeErr != nil {
+				return "", "", "", fmt.Errorf("decode workflow configurationSource %q: %w", configurationSource, decodeErr)
+			}
+			if repository == "" {
+				repository = strings.TrimSpace(configuration.ArtifactContract.SourceRepository)
+			}
+			if branch == "" {
+				branch = strings.TrimSpace(configuration.ArtifactContract.SourceBranch)
+			}
+		}
 	}
 	if repository == "" || branch == "" {
 		return "", "", "", fmt.Errorf("workflow declaration requires source.repository and source.branch")

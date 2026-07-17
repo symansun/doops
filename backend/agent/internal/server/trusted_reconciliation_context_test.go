@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestBuildTrustedReconciliationAdmissionBindsWorkspacePlanAndExactTools(t *testing.T) {
+func TestBuildTrustedReconciliationAdmissionBindsDeclaredSourcePlanAndExactTools(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 	sessionID := "release-session"

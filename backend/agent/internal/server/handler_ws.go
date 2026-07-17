@@ -1218,6 +1218,9 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			deploymentRunBinding(execution),
 		)
 		if err != nil {
+			if rejections := toolTraces.rejectionSummary(); rejections != "" {
+				err = fmt.Errorf("%w; trace categories: %s", err, rejections)
+			}
 			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("bind final machine result: %v", err)))
 			return
 		}
@@ -1542,7 +1545,7 @@ func doagentSettingsPath() string {
 	if path := strings.TrimSpace(os.Getenv("DO_AGENT_SETTINGS")); path != "" {
 		return path
 	}
-	return "/root/.agent/settings.json"
+	return "/tmp/doops-doagent/settings.json"
 }
 
 func ensureDoagentAvailable(baseURL string) error {

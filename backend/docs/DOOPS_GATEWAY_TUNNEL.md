@@ -177,10 +177,12 @@ doops admin operations cancel --target <gateway-target> --id <operation-id>
 
 ```bash
 ps -ef | grep 'do-agent acp-http'
-grep -n 'apiKey\|baseURL\|model' /root/.agent/settings.json
+grep -n 'apiKey\|baseURL\|model' /tmp/doops-doagent/settings.json
 ```
 
-`/root/.agent/settings.json` 必须有非空 `provider.openai.options.apiKey`，或启动容器时注入 `OPENAI_API_KEY` 让 entrypoint 生成配置；否则 doagent 会拒绝启动，`ask` 会失败。
+`/tmp/doops-doagent/settings.json` 是由挂载的 `/opt/doagent_config/settings.json`
+物化出的可写运行时配置，必须有非空 `provider.openai.options.apiKey`；否则
+doagent 会拒绝启动，`ask` 会失败。
 
 ## Start Private Agent
 

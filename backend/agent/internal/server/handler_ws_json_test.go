@@ -880,6 +880,53 @@ func TestAgentPromptRejectsInstructionWorkspaceCommitMismatchBeforeDoagent(t *te
 	}
 }
 
+func TestAgentPromptRejectsInstructionSourceMismatchBeforeDoagent(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	sessionID := "instruction-source-mismatch"
+	workspace := filepath.Join(root, sessionID)
+	writeTrustedAdmissionFixture(t, workspace)
+	workspaceCommit := commitTrustedAdmissionWorkspace(t, workspace)
+	doagentRequests := 0
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		doagentRequests++
+		t.Fatalf("instruction source mismatch must fail before contacting doagent: %s", r.URL.Path)
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id": sessionID,
+		"instruction": `{
+			"task":"execute-doops-cicd-workflow",
+			"skill":"$doops-cicd",
+			"executionMode":"dry-run",
+			"runId":"instruction-source-mismatch-0123456789abcdef",
+			"workflowPath":"deploy/release.yaml",
+			"workspaceCommit":"` + workspaceCommit + `",
+			"source":{"repository":"https://example.test/wrong.git","branch":"main"},
+			"inputs":{"releaseId":"` + strings.Repeat("c", 40) + `"},
+			"credentialRun":{"apiVersion":"doops.sh/v2","kind":"CredentialRun","id":"credrun_123","mode":"dry-run","cluster":"doops","instance":"runner","template":"release","project":"app","environment":"production","materializations":[]},
+			"resultContract":{"apiVersion":"doops.sh/v2","kind":"DeploymentRun","requireEvidence":true}
+		}`,
+		"response_format":  "json",
+		"workspace_commit": workspaceCommit,
+	})
+	if result["error"] == nil {
+		t.Fatalf("instruction source mismatch must fail: %#v", result)
+	}
+	if doagentRequests != 0 {
+		t.Fatalf("instruction source mismatch contacted doagent %d times", doagentRequests)
+	}
+}
+
 func TestAgentPromptJSONRejectsMissingFinalMachineResult(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)

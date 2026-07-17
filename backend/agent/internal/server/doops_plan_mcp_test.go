@@ -342,6 +342,11 @@ func TestValidateDoopsPlanWorkspaceRejectsTrackedFileTampering(t *testing.T) {
 	if _, err := validateDoopsPlanWorkspace(workspace, commit); err != nil {
 		t.Fatalf("validate clean workspace: %v", err)
 	}
+	outside := t.TempDir()
+	if _, err := validateDoopsPlanWorkspace(outside, commit); err == nil ||
+		!strings.Contains(err.Error(), "escapes the configured workspace base") {
+		t.Fatalf("outside workspace error = %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(workspace, ".doops-audit-log"), []byte("agent-owned\n"), 0o600); err != nil {
 		t.Fatalf("write audit log: %v", err)
 	}
