@@ -890,7 +890,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		upgradeFlag.StringVar(&workload, "workload", "", "Kubernetes workload, e.g. daemonset/doops-agent")
 		upgradeFlag.StringVar(&container, "container", "", "Container name")
 		upgradeFlag.StringVar(&upgradeSession, "session", "", "Session ID")
-		upgradeFlag.BoolVar(&dryRun, "dry-run", false, "Preview upgrade command; direct agent self-upgrade is prohibited")
+		upgradeFlag.BoolVar(&dryRun, "dry-run", false, "Preview the external reconciliation target; direct agent self-upgrade is prohibited")
 		upgradeFlag.Parse(cmdArgs)
 		if upgradeSession != "" && *sessionName == "" {
 			*sessionName = upgradeSession
