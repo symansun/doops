@@ -23,14 +23,14 @@ Agent reverse registration declares only the configured cluster and instance;
 it does not mount, read, or send a registration token. Gateway user tokens
 remain the authorization boundary for operator actions.
 
-`docker.cnb.cool/l8ai/ai/doops.sh` is public, so Oilan does not declare source,
-target, or runtime registry credentials. A private runtime registry must
-declare its Kubernetes Secret reference explicitly; the compiler binds it to
-the selected workload as an `imagePull` materialization. Private source
-checkout and target registry transfer are rejected until their separate
-credential uses are defined. Credential prepare rejects partial, unsupported,
-or explicitly undeclared references and never infers a Secret from an existing
-workload.
+Oilan declares `artifacts.runtimeImagePullSecret` in
+`deploy/environments.yaml`. Gateway credential prepare resolves that reference
+to an active registry credential with an exact `imagePull` grant and
+materializes the managed Kubernetes Secret on the selected workload. Source
+checkout and target registry transfer remain undeclared and are rejected until
+their separate credential uses are defined. Credential prepare rejects partial,
+unsupported, or explicitly undeclared references and never infers a Secret
+from an existing workload.
 
 ## Runtime Contract
 
@@ -77,4 +77,6 @@ The Helm release is `doops-agent-live` in namespace `kz-ops`. The Deployment
 uses rolling update with zero unavailable replicas and becomes ready only
 after its Gateway registration is healthy. Model provider configuration remains
 in the `doagent-model-settings/settings.json` Secret and is not duplicated in
-the environment registry.
+the environment registry. Both Oilan Agent workloads map
+`apiserver.cluster.local` to the pinned control-plane node because the mounted
+host kubeconfig uses that certificate name and cluster DNS does not publish it.

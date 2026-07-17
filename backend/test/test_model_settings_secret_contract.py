@@ -126,6 +126,12 @@ def test_oilan_agent_model_settings_are_secret_backed():
         deployment["spec"]["template"]["spec"]["nodeSelector"]["kubernetes.io/hostname"]
         == "192.168.0.24"
     )
+    assert deployment["spec"]["template"]["spec"]["hostAliases"] == [
+        {
+            "ip": "192.168.0.24",
+            "hostnames": ["apiserver.cluster.local"],
+        }
+    ]
     assert deployment["spec"]["template"]["spec"]["imagePullSecrets"] == []
     assert container["image"] == f"docker.cnb.cool/l8ai/ai/doops.sh@{IMAGE_DIGEST}"
     assert "DOOPS_ALLOW_INSECURE_GATEWAY" not in {
@@ -207,6 +213,12 @@ def test_oilan_release_runner_isolated_from_managed_agent():
     }
     assert env_value(container, "DOOPS_GATEWAY_CLUSTER")["value"] == "doops-edu"
     assert env_value(container, "DOOPS_GATEWAY_INSTANCE")["value"] == "release-runner"
+    assert pod_spec["hostAliases"] == [
+        {
+            "ip": "192.168.0.24",
+            "hostnames": ["apiserver.cluster.local"],
+        }
+    ]
     assert volumes["agent-home"] == "/var/lib/doops-release-runner-home"
     assert target == {
         "name": "gw-edu-release-runner",
