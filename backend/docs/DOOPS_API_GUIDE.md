@@ -402,7 +402,7 @@ doops -session <session> pull --target <target> --dest <dir>
 
 ```json
 {
-  "image": "docker.cnb.cool/l8ai/ai/doops.sh@sha256:e43a2b207fcf0a6e734216d6ac3cb95235a7fd13d36e7a566aadb48c9a67033c",
+  "image": "docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI>",
   "mode": "k8s",
   "namespace": "doops-system",
   "workload": "deployment/doops-agent",

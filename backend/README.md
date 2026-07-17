@@ -358,7 +358,7 @@ docker run -d --name doops-agent \
   -v /root/.kube:/root/.kube:ro \
   -v /etc/kubernetes:/etc/kubernetes:ro \
   -v /path/to/doagent-model-settings.json:/opt/doagent_config/settings.json:ro \
-  docker.cnb.cool/l8ai/ai/doops.sh@sha256:e43a2b207fcf0a6e734216d6ac3cb95235a7fd13d36e7a566aadb48c9a67033c \
+  docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI> \
   -port 42222 \
   -gateway-url https://gateway.example.com \
   -cluster prod \
@@ -425,7 +425,7 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 doops -session upgrade_20260511 upgrade \
   --target jm \
   --cluster doops-jm \
-  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:e43a2b207fcf0a6e734216d6ac3cb95235a7fd13d36e7a566aadb48c9a67033c \
+  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI> \
   --mode k8s \
   --namespace oilan-system \
   --workload daemonset/doops-agent \

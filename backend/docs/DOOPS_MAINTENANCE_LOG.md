@@ -56,10 +56,14 @@ For gateway control-plane releases, additionally verify:
 ## Current Release Line
 
 - Verified source commit: `836171d04b1230b0fc3f477a47b85a9250408184`
-- Agent image: `docker.cnb.cool/l8ai/ai/doops.sh@sha256:e43a2b207fcf0a6e734216d6ac3cb95235a7fd13d36e7a566aadb48c9a67033c`
+- Verified deployed Agent image: `docker.cnb.cool/l8ai/ai/doops.sh@sha256:e43a2b207fcf0a6e734216d6ac3cb95235a7fd13d36e7a566aadb48c9a67033c`
 - Embedded doagent version: `0.2.21`
 - Gateway binary: built from this repository and deployed with `scripts/deploy-gateway.sh`.
 - CLI binaries: published as immutable CNB Release Assets.
+
+New release candidates must use the digest printed by the successful CNB build
+for the selected commit. Do not copy this deployed baseline digest into a new
+environment declaration unless that exact image is the intended release.
 
 The earlier `v1.1` line introduced the gateway-only cleanup for:
 

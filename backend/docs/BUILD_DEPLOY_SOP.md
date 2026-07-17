@@ -152,7 +152,7 @@ agent 在线，用宿主机 namespace 或 Kubernetes 一次性特权 Pod 从宿�
 kubectl run <node>-doops-deployer \
   --restart=Never \
   --overrides '<hostPID/hostNetwork/privileged + hostPath / 的 PodSpec>' \
-  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:e43a2b207fcf0a6e734216d6ac3cb95235a7fd13d36e7a566aadb48c9a67033c -- \
+  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI> -- \
   /bin/sh -lc 'chroot /host /usr/bin/nsenter -t 1 -m -n -- nerdctl run ...'
 ```
 
@@ -160,7 +160,7 @@ kubectl run <node>-doops-deployer \
 
 ```bash
 doops -session smoke exec --target <target> --cmd 'sha256sum /app/doops-agent; nerdctl ps | grep doops-agent'
-doops -session smoke exec --target <target> --cmd 'nerdctl run --rm --net none --entrypoint /bin/sh docker.cnb.cool/l8ai/ai/doops.sh@sha256:e43a2b207fcf0a6e734216d6ac3cb95235a7fd13d36e7a566aadb48c9a67033c -lc "echo direct-ok"'
+doops -session smoke exec --target <target> --cmd 'nerdctl run --rm --net none --entrypoint /bin/sh docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI> -lc "echo direct-ok"'
 doops -session smoke push --target <target> --src <small-dir>
 ```
 

@@ -76,7 +76,7 @@ docker run -d \
   -v /var/lib/nerdctl:/var/lib/nerdctl \
   -v /root/.kube/config:/root/.kube/config:ro \
   -v /path/to/doagent-model-settings.json:/opt/doagent_config/settings.json:ro \
-  docker.cnb.cool/l8ai/ai/doops.sh@sha256:e43a2b207fcf0a6e734216d6ac3cb95235a7fd13d36e7a566aadb48c9a67033c \
+  docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI> \
   -gateway-url https://gateway.example.com \
   -cluster doops-new \
   -instance master-1
