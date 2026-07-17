@@ -1,6 +1,7 @@
 ARG DOOPS_AGENT_BASE_IMAGE=invalid.invalid/doops-agent-base-image-must-be-specified
 ARG DO_AGENT_IMAGE=invalid.invalid/doagent-image-must-be-specified
 ARG DO_AGENT_VERSION
+ARG DO_AGENT_REVISION
 
 # Stage 1: Build doops-agent (Go gateway)
 FROM golang:1.24-alpine AS builder
@@ -19,11 +20,13 @@ FROM ${DOOPS_AGENT_BASE_IMAGE}
 ARG DOOPS_AGENT_BASE_IMAGE
 ARG DO_AGENT_IMAGE
 ARG DO_AGENT_VERSION
+ARG DO_AGENT_REVISION
 ARG TARGETARCH
 ARG KUBECTL_VERSION=v1.33.1
 LABEL org.opencontainers.image.base.name="${DOOPS_AGENT_BASE_IMAGE}"
 LABEL org.l8ai.doagent.image="${DO_AGENT_IMAGE}"
 LABEL org.l8ai.doagent.version="${DO_AGENT_VERSION}"
+LABEL org.l8ai.doagent.revision="${DO_AGENT_REVISION}"
 
 COPY --from=builder /app/doops-agent /app/doops-agent
 COPY --from=doagent-runtime /usr/local/bin/do-agent /usr/local/bin/do-agent
