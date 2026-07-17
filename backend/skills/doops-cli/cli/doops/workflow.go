@@ -15,15 +15,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type WorkspaceSourceIdentity struct {
-	Repository string `json:"repository"`
-	Revision   string `json:"revision"`
-	Branch     string `json:"branch,omitempty"`
-	TreeDigest string `json:"treeDigest,omitempty"`
-}
-
-const workspaceManifestAPIVersion = "doops.sh/v3"
-
 type workflowCommand struct {
 	File   string
 	Target string
@@ -98,9 +89,12 @@ func runCICDCommand(
 	if err := validateWorkflowInputs(request.Inputs); err != nil {
 		return err
 	}
-	sourceRepository, sourceBranch, err := workflowDeclaredSource(request.File, request.Inputs)
+	sourceRepository, sourceBranch, declaredSession, err := workflowDeclaredSource(request.File, request.Inputs)
 	if err != nil {
 		return fmt.Errorf("resolve registry source: %w", err)
+	}
+	if sessionID != declaredSession {
+		return fmt.Errorf("session %q does not match environment target session %q", sessionID, declaredSession)
 	}
 	sourceRevision, err := resolveWorkflowSourceRevision(sourceRepository, sourceBranch)
 	if err != nil {
@@ -121,10 +115,12 @@ func runCICDCommand(
 	credentialRun, err := prepareWorkflowCredentials(ctx, *server, ResolveToken(server.Name, server.Token), credentialPrepareRequest{
 		Cluster:          server.Cluster,
 		Instance:         server.Instance,
+		Target:           server.Name,
 		SessionID:        sessionID,
 		WorkflowPath:     workflowPath,
 		SourceRepository: sourceRepository,
 		SourceBranch:     sourceBranch,
+		SourceRevision:   sourceRevision,
 		WorkspaceCommit:  sourceRevision,
 		Inputs:           request.Inputs,
 		Mode:             executionMode,
@@ -172,15 +168,18 @@ func runCICDCommand(
 	return nil
 }
 
-func workflowDeclaredSource(path string, inputs map[string]string) (string, string, error) {
+func workflowDeclaredSource(path string, inputs map[string]string) (string, string, string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", "", fmt.Errorf("read registry source: %w", err)
+		return "", "", "", fmt.Errorf("read registry source: %w", err)
 	}
 	var registry struct {
 		APIVersion   string `yaml:"apiVersion"`
 		Kind         string `yaml:"kind"`
 		Environments map[string]struct {
+			Target struct {
+				Session string `yaml:"session"`
+			} `yaml:"target"`
 			Source struct {
 				Repository string `yaml:"repository"`
 				Branch     string `yaml:"branch"`
@@ -189,34 +188,38 @@ func workflowDeclaredSource(path string, inputs map[string]string) (string, stri
 		} `yaml:"environments"`
 	}
 	if err := yaml.Unmarshal(data, &registry); err != nil {
-		return "", "", fmt.Errorf("decode registry source: %w", err)
+		return "", "", "", fmt.Errorf("decode registry source: %w", err)
 	}
 	if registry.APIVersion != workspaceManifestAPIVersion || registry.Kind != "EnvironmentRegistry" {
-		return "", "", fmt.Errorf("cicd run requires doops.sh/v3 EnvironmentRegistry")
+		return "", "", "", fmt.Errorf("cicd run requires doops.sh/v3 EnvironmentRegistry")
 	}
 	environmentName := strings.TrimSpace(inputs["environment"])
 	serviceName := strings.TrimSpace(inputs["service"])
 	if environmentName == "" || serviceName == "" {
-		return "", "", fmt.Errorf("environment and service inputs are required")
+		return "", "", "", fmt.Errorf("environment and service inputs are required")
 	}
 	environment, ok := registry.Environments[environmentName]
 	if !ok {
-		return "", "", fmt.Errorf("environment %q is not declared", environmentName)
+		return "", "", "", fmt.Errorf("environment %q is not declared", environmentName)
 	}
 	if servicePath, ok := environment.Services[serviceName]; !ok || strings.TrimSpace(servicePath) == "" {
-		return "", "", fmt.Errorf("service %q is not declared for environment %q", serviceName, environmentName)
+		return "", "", "", fmt.Errorf("service %q is not declared for environment %q", serviceName, environmentName)
 	}
 	repository := strings.TrimSpace(environment.Source.Repository)
 	branch := strings.TrimSpace(environment.Source.Branch)
+	session := strings.TrimSpace(environment.Target.Session)
 	parsed, err := url.Parse(repository)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" ||
 		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", "", fmt.Errorf("registry source repository must be an HTTPS URL without inline credentials, query, or fragment")
+		return "", "", "", fmt.Errorf("registry source repository must be an HTTPS URL without inline credentials, query, or fragment")
 	}
 	if branch == "" {
-		return "", "", fmt.Errorf("registry source branch is required")
+		return "", "", "", fmt.Errorf("registry source branch is required")
 	}
-	return repository, branch, nil
+	if session == "" {
+		return "", "", "", fmt.Errorf("registry target session is required")
+	}
+	return repository, branch, session, nil
 }
 
 func resolveWorkflowSourceRevision(repository, branch string) (string, error) {

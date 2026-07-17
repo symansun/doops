@@ -7,7 +7,6 @@ import {
   TerminalIcon,
   ShieldIcon,
   RocketIcon,
-  KeyIcon,
   CheckIcon,
   CopyIcon,
   HelpIcon,
@@ -77,24 +76,23 @@ const STEPS: Step[] = [
         <li>一台 Linux 服务器（支持 amd64 / arm64），可联网访问 gateway 地址</li>
         <li>具备 root 或 sudo 权限</li>
         <li>
-          向管理员索取 <span className="font-medium text-foreground">gateway 地址</span> 与一枚{" "}
-          <span className="font-medium text-foreground">Agent 接入令牌</span>
+          向管理员确认 <span className="font-medium text-foreground">gateway 地址</span>、{" "}
+          <span className="font-medium text-foreground">cluster</span> 与{" "}
+          <span className="font-medium text-foreground">instance</span>
         </li>
       </ul>
     ),
   },
   {
     n: 2,
-    icon: KeyIcon,
-    title: "获取 Agent 接入令牌",
+    icon: LayersIcon,
+    title: "确认接入标识",
     body: (
       <div className="space-y-2 text-sm text-muted-foreground">
         <p>
-          令牌由管理员在控制台「管理 → 令牌」中签发，类型选择{" "}
-          <span className="font-medium text-foreground">Agent 令牌</span>。
-        </p>
-        <p>
-          如果你不是管理员，请把目标服务器信息发给管理员，索取一枚 Agent 令牌与 gateway 地址。
+          Agent 反向注册只声明唯一的{" "}
+          <span className="font-mono text-foreground">cluster/instance</span>，不读取或发送注册令牌。
+          同一标识不能同时分配给两台机器。
         </p>
       </div>
     ),
@@ -102,18 +100,13 @@ const STEPS: Step[] = [
   {
     n: 3,
     icon: TerminalIcon,
-    title: "一键安装",
+    title: "部署 Agent",
     body: (
       <div className="space-y-2 text-sm text-muted-foreground">
-        <p>在服务器上执行安装脚本，它会自动下载 agent 并引导你完成配置：</p>
-        <Cmd>{"curl -fsSL https://doops.sh/install.sh | sh"}</Cmd>
-        <p>
-          脚本会提示填写 <span className="font-mono text-foreground">gateway 地址</span> 与{" "}
-          <span className="font-mono text-foreground">接入令牌</span>。也可用环境变量免交互安装：
-        </p>
+        <p>使用外部 CI/GitOps 发布固定 digest 的 Agent 镜像。容器模式可按下列参数启动：</p>
         <Cmd>
           {
-            "DOOPS_GATEWAY=https://gateway.example.com \\\nDOOPS_TOKEN=<你的Agent令牌> \\\nsh -c \"$(curl -fsSL https://doops.sh/install.sh)\""
+            "docker run -d --name doops-agent \\\n  --privileged --pid=host --network=host \\\n  --restart=unless-stopped \\\n  docker.cnb.cool/l8ai/ai/doops.sh@sha256:<AGENT_DIGEST> \\\n  -gateway-url https://gateway.example.com \\\n  -cluster <CLUSTER> \\\n  -instance <INSTANCE>"
           }
         </Cmd>
       </div>
@@ -122,13 +115,11 @@ const STEPS: Step[] = [
   {
     n: 4,
     icon: RocketIcon,
-    title: "启动并设为开机自启",
+    title: "检查运行状态",
     body: (
       <div className="space-y-2 text-sm text-muted-foreground">
-        <p>安装完成后，启动 agent 服务并设为开机自启：</p>
-        <Cmd>{"sudo systemctl enable --now doops-agent"}</Cmd>
-        <p>查看运行状态：</p>
-        <Cmd>{"systemctl status doops-agent --no-pager"}</Cmd>
+        <p>确认容器运行、健康检查成功，且日志中没有注册或心跳错误：</p>
+        <Cmd>{"docker ps --filter name=doops-agent\ndocker logs --tail=100 doops-agent\ncurl -fsS http://127.0.0.1:42222/health/ready"}</Cmd>
       </div>
     ),
   },
@@ -151,9 +142,9 @@ const STEPS: Step[] = [
 ]
 
 const MANUAL = [
-  { label: "下载二进制", cmd: "curl -fsSL https://doops.sh/agent-linux-amd64 -o /usr/local/bin/doops-agent && chmod +x /usr/local/bin/doops-agent" },
-  { label: "写入配置", cmd: "sudo mkdir -p /etc/doops && printf 'gateway: %s\\ntoken: %s\\n' \"$DOOPS_GATEWAY\" \"$DOOPS_TOKEN\" | sudo tee /etc/doops/agent.yaml" },
-  { label: "创建并启动服务", cmd: "sudo doops-agent install-service && sudo systemctl enable --now doops-agent" },
+  { label: "拉取固定镜像", cmd: "docker pull docker.cnb.cool/l8ai/ai/doops.sh@sha256:<AGENT_DIGEST>" },
+  { label: "启动并声明身份", cmd: "docker run -d --name doops-agent --privileged --pid=host --network=host --restart=unless-stopped docker.cnb.cool/l8ai/ai/doops.sh@sha256:<AGENT_DIGEST> -gateway-url https://gateway.example.com -cluster <CLUSTER> -instance <INSTANCE>" },
+  { label: "验证反向注册", cmd: "docker logs --tail=100 doops-agent && curl -fsS http://127.0.0.1:42222/health/ready" },
 ]
 
 const TROUBLE = [
@@ -162,8 +153,8 @@ const TROUBLE = [
     a: "确认 agent 服务在运行（systemctl status doops-agent），并检查服务器能否访问 gateway 地址（curl -I <gateway>）。确认无误后回到控制台点击刷新。",
   },
   {
-    q: "提示令牌无效或已过期",
-    a: "Agent 令牌可能已被撤销或过期，请联系管理员在「管理 → 令牌」重新签发一枚 Agent 令牌。",
+    q: "连接成功但机器仍未上线",
+    a: "检查 cluster/instance 是否与管理员分配的一致，并确认该标识没有被另一台机器占用。继续查看 Agent 日志中的初始化、注册确认和心跳错误。",
   },
   {
     q: "连接被拒绝 / 网络超时",
@@ -188,7 +179,7 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
           </span>
           <h1 className="text-2xl font-semibold text-balance">部署 Doops Agent</h1>
           <p className="mt-2 text-pretty text-sm leading-relaxed text-muted-foreground">
-            Doops 通过在你的服务器上安装一个轻量 agent 来工作。机器接入后即可远程执行命令、管理文件、用 AI 完成部署与巡检。下面先了解两种连接架构，再选择适合你的部署方式。
+            Doops 通过在你的服务器上安装一个轻量 agent 来工作。Agent 主动连接 Gateway，机器无需暴露公网端口。接入后即可远程执行命令、管理文件、用 AI 完成部署与巡检。
           </p>
         </div>
 
@@ -209,22 +200,21 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
               联系管理员
             </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              没有服务器权限或不确定 gateway 地址？联系团队管理员为你接入机器并签发令牌。
+              没有服务器权限或不确定 gateway 地址与接入标识？联系团队管理员完成接入。
             </p>
           </div>
         </div>
 
-        {/* 两种连接架构 */}
+        {/* 标准连接架构 */}
         <section className="mb-12">
           <h2 className="mb-1 flex items-center gap-2 text-lg font-semibold">
             <LayersIcon width={18} height={18} className="text-primary" />
-            两种连接架构
+            Gateway 标准架构
           </h2>
           <p className="mb-4 text-sm text-muted-foreground">
-            根据网络环境与安全要求，Doops 支持两种连接方式，部署前请先选定。
+            Agent 与客户端都主动连接 Gateway，由 Gateway 统一执行用户鉴权、授权、审计与转发。
           </p>
-          <div className="grid gap-4 md:grid-cols-2">
-            {/* 架构一：经 gateway 中转 */}
+          <div>
             <div className="flex flex-col rounded-xl border bg-card p-5">
               <div className="mb-3 flex items-center gap-2">
                 <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
@@ -232,7 +222,7 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
                 </span>
                 <div>
                   <div className="text-sm font-semibold text-foreground">经 Gateway 中转</div>
-                  <div className="text-xs text-muted-foreground">推荐 · 适合多机器 / 公网</div>
+                  <div className="text-xs text-muted-foreground">唯一标准接入方式</div>
                 </div>
               </div>
               {/* 拓扑示意 */}
@@ -270,48 +260,6 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
                 </li>
               </ul>
             </div>
-
-            {/* 架构二：Web 直连实例 */}
-            <div className="flex flex-col rounded-xl border bg-card p-5">
-              <div className="mb-3 flex items-center gap-2">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted text-foreground">
-                  <PlugIcon width={16} height={16} />
-                </span>
-                <div>
-                  <div className="text-sm font-semibold text-foreground">Web 直连实例</div>
-                  <div className="text-xs text-muted-foreground">轻量 · 适合单机 / 内网</div>
-                </div>
-              </div>
-              {/* 拓扑示意 */}
-              <div className="mb-3 flex items-center justify-center gap-2 rounded-lg border bg-background px-3 py-3 text-center text-[11px] text-muted-foreground">
-                <span className="flex flex-col items-center gap-1">
-                  <FileIcon width={15} height={15} className="text-foreground" />
-                  Web / 客户端
-                </span>
-                <ArrowFlow />
-                <span className="flex flex-col items-center gap-1">
-                  <ServerIcon width={15} height={15} className="text-foreground" />
-                  实例 Agent
-                </span>
-              </div>
-              <p className="mb-3 text-xs leading-relaxed text-muted-foreground text-pretty">
-                Web/客户端<strong className="text-foreground">直接连接实例上的 agent</strong>，不经过 gateway。链路更短、部署更简单，但实例需要可被客户端直接访问（公网或同一内网）。
-              </p>
-              <ul className="mt-auto space-y-1.5 text-xs text-muted-foreground">
-                <li className="flex gap-2">
-                  <CheckIcon width={14} height={14} className="mt-0.5 shrink-0 text-primary" />
-                  无需 gateway，部署组件最少
-                </li>
-                <li className="flex gap-2">
-                  <CheckIcon width={14} height={14} className="mt-0.5 shrink-0 text-primary" />
-                  链路最短，适合本机或单台调试
-                </li>
-                <li className="flex gap-2">
-                  <CheckIcon width={14} height={14} className="mt-0.5 shrink-0 text-primary" />
-                  实例需开放 agent 端口并自行做好访问控制
-                </li>
-              </ul>
-            </div>
           </div>
         </section>
 
@@ -325,7 +273,7 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
                 </span>
                 {s.n < STEPS.length && <span className="mt-1 w-px flex-1 bg-border" />}
               </div>
-              <div className="flex-1 pb-2">
+              <div className="min-w-0 flex-1 pb-2">
                 <h2 className="mb-2 flex items-center gap-2 text-base font-medium">
                   <span className="text-xs text-muted-foreground">步骤 {s.n}</span>
                   {s.title}

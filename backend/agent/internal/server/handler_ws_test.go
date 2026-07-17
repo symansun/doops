@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/user/doops/agent/api"
 )
 
 type temporaryHeartbeatError struct{}
@@ -163,7 +164,7 @@ func TestAgentReverseTunnelReadyOnlyAfterGatewayRegistration(t *testing.T) {
 		if err != nil {
 			return
 		}
-		gw.ServeWebSocketConnWithReady(conn, r.RemoteAddr, func() {
+		gw.ServeGatewayWebSocketConnWithReady(conn, r.RemoteAddr, func() {
 			readyOnce.Do(func() { close(ready) })
 		})
 	}))
@@ -554,6 +555,83 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 
 	if prompt := <-receivedPrompt; strings.Contains(prompt, "deploy.sh") {
 		t.Fatalf("agent prompt must not inject a deploy.sh generation contract: %s", prompt)
+	}
+}
+
+func TestDirectAgentApplyRequiresGatewayAuthorizedReverseTunnel(t *testing.T) {
+	gw := NewGateway("0")
+	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id":  "natural-apply",
+		"instruction": "deploy the selected service",
+		"operation":   "apply",
+	})
+	if !strings.Contains(fmt.Sprint(result), "credential apply requires a gateway-authorized reverse tunnel") {
+		t.Fatalf("direct apply was not rejected: %#v", result)
+	}
+}
+
+func TestGatewayAuthorizedApplyRequiresCompleteCredentialBinding(t *testing.T) {
+	prompt := api.AgentPromptParams{
+		SessionID:       "release",
+		Operation:       "apply",
+		WorkspaceCommit: strings.Repeat("a", 40),
+		Instruction: `{
+			"task":"execute-doops-cicd",
+			"skill":"$doops-cicd",
+			"executionMode":"apply",
+			"manifestPath":"deploy/environments.yaml"
+		}`,
+	}
+	if err := validateDoagentApplyInstruction(prompt); err == nil ||
+		!strings.Contains(err.Error(), "explicit doops-cicd apply instruction") {
+		t.Fatalf("incomplete credential binding was not rejected: %v", err)
+	}
+}
+
+func TestGatewayAuthorizedApplyAcceptsCompleteCredentialBinding(t *testing.T) {
+	commit := strings.Repeat("a", 40)
+	run := CredentialRun{
+		APIVersion:     "doops.sh/v2",
+		Kind:           "CredentialRun",
+		ID:             "credrun_release",
+		Mode:           "apply",
+		Cluster:        "doops",
+		Instance:       "runner",
+		Target:         "gw-runner",
+		Session:        "release",
+		SourceRevision: commit,
+		CreatedAt:      time.Now().UTC(),
+	}
+	instruction, err := json.Marshal(map[string]interface{}{
+		"task":            "execute-doops-cicd",
+		"skill":           "$doops-cicd",
+		"executionMode":   "apply",
+		"manifestPath":    "deploy/environments.yaml",
+		"workspaceCommit": commit,
+		"source": map[string]string{
+			"repository": "https://cnb.cool/l8ai/ai/doops.sh.git",
+			"branch":     "main",
+		},
+		"inputs":        map[string]string{"environment": "oilan"},
+		"credentialRun": run,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := api.AgentPromptParams{
+		SessionID:       "release",
+		Operation:       "apply",
+		WorkspaceCommit: commit,
+		Instruction:     string(instruction),
+	}
+	if err := validateDoagentApplyInstruction(prompt); err != nil {
+		t.Fatalf("complete credential binding was rejected: %v", err)
 	}
 }
 

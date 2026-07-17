@@ -16,10 +16,12 @@ const credentialRunAPIVersion = "doops.sh/v2"
 type credentialPrepareRequest struct {
 	Cluster          string            `json:"cluster"`
 	Instance         string            `json:"instance"`
+	Target           string            `json:"target"`
 	SessionID        string            `json:"session_id"`
 	WorkflowPath     string            `json:"workflow_path"`
 	SourceRepository string            `json:"source_repository"`
 	SourceBranch     string            `json:"source_branch"`
+	SourceRevision   string            `json:"source_revision"`
 	WorkspaceCommit  string            `json:"workspace_commit"`
 	Inputs           map[string]string `json:"inputs"`
 	Mode             string            `json:"mode"`
@@ -32,6 +34,9 @@ type credentialRun struct {
 	Mode             string                              `json:"mode"`
 	Cluster          string                              `json:"cluster"`
 	Instance         string                              `json:"instance"`
+	Target           string                              `json:"target"`
+	Session          string                              `json:"session"`
+	SourceRevision   string                              `json:"sourceRevision"`
 	Template         string                              `json:"template"`
 	Project          string                              `json:"project"`
 	Environment      string                              `json:"environment"`
@@ -64,15 +69,18 @@ func prepareWorkflowCredentials(
 ) (credentialRun, error) {
 	request.Cluster = strings.TrimSpace(request.Cluster)
 	request.Instance = strings.TrimSpace(request.Instance)
+	request.Target = strings.TrimSpace(request.Target)
 	request.SessionID = strings.TrimSpace(request.SessionID)
 	request.WorkflowPath = strings.TrimSpace(request.WorkflowPath)
 	request.SourceRepository = strings.TrimSpace(request.SourceRepository)
 	request.SourceBranch = strings.TrimSpace(request.SourceBranch)
+	request.SourceRevision = strings.TrimSpace(request.SourceRevision)
 	request.WorkspaceCommit = strings.TrimSpace(request.WorkspaceCommit)
 	request.Mode = strings.TrimSpace(request.Mode)
-	if request.Cluster == "" || request.Instance == "" || request.SessionID == "" ||
+	if request.Cluster == "" || request.Instance == "" || request.Target == "" || request.SessionID == "" ||
 		request.WorkflowPath == "" || request.SourceRepository == "" || request.SourceBranch == "" ||
-		!validWorkspaceCommit(request.WorkspaceCommit) ||
+		!validWorkspaceCommit(request.SourceRevision) ||
+		request.SourceRevision != request.WorkspaceCommit ||
 		(request.Mode != "apply" && request.Mode != "dry-run") {
 		return credentialRun{}, fmt.Errorf("invalid credential prepare request")
 	}
@@ -122,7 +130,9 @@ func prepareWorkflowCredentials(
 	}
 	if run.APIVersion != credentialRunAPIVersion || run.Kind != "CredentialRun" ||
 		strings.TrimSpace(run.ID) == "" || run.Mode != request.Mode ||
-		run.Cluster != request.Cluster || run.Instance != request.Instance {
+		run.Cluster != request.Cluster || run.Instance != request.Instance ||
+		run.Target != request.Target || run.Session != request.SessionID ||
+		run.SourceRevision != request.SourceRevision {
 		return credentialRun{}, fmt.Errorf("invalid credential prepare response")
 	}
 	if run.Materializations == nil {

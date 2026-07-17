@@ -27,7 +27,7 @@ func runTestCommand(t *testing.T, directory, name string, arguments ...string) s
 func TestAgentCredentialPlanToolParsesBoundWorkspace(t *testing.T) {
 	commit, sessionID := createCredentialPlanWorkspaceFixture(t)
 	originalClone := cloneCredentialPlanSource
-	cloneCredentialPlanSource = func(string, string, string) error { return nil }
+	cloneCredentialPlanSource = func(string, string, string, string) error { return nil }
 	t.Cleanup(func() { cloneCredentialPlanSource = originalClone })
 
 	gw := NewGateway("0")
@@ -91,7 +91,7 @@ metadata:
 		t.Fatal(err)
 	}
 	originalClone := cloneCredentialPlanSource
-	cloneCredentialPlanSource = func(string, string, string) error { return nil }
+	cloneCredentialPlanSource = func(string, string, string, string) error { return nil }
 	t.Cleanup(func() { cloneCredentialPlanSource = originalClone })
 
 	_, err = handleCredentialPlanTool(mustJSON(t, map[string]interface{}{
@@ -113,7 +113,7 @@ metadata:
 func TestAgentCredentialPlanToolRejectsWorkspaceRevisionMismatch(t *testing.T) {
 	_, sessionID := createCredentialPlanWorkspaceFixture(t)
 	originalClone := cloneCredentialPlanSource
-	cloneCredentialPlanSource = func(string, string, string) error { return nil }
+	cloneCredentialPlanSource = func(string, string, string, string) error { return nil }
 	t.Cleanup(func() { cloneCredentialPlanSource = originalClone })
 
 	_, err := handleCredentialPlanTool(mustJSON(t, map[string]interface{}{
@@ -129,6 +129,30 @@ func TestAgentCredentialPlanToolRejectsWorkspaceRevisionMismatch(t *testing.T) {
 	}))
 	if err == nil || err.Error() != "workflow source revision mismatch" {
 		t.Fatalf("workspace revision mismatch error = %v", err)
+	}
+}
+
+func TestVerifyWorkflowSourceRevisionRejectsMovedBranch(t *testing.T) {
+	commit, sessionID := createCredentialPlanWorkspaceFixture(t)
+	workspace, err := workspacePath(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyWorkflowSourceRevision(
+		context.Background(),
+		workspace,
+		commit,
+		os.Environ(),
+	); err != nil {
+		t.Fatalf("verify exact workflow revision: %v", err)
+	}
+	if err := verifyWorkflowSourceRevision(
+		context.Background(),
+		workspace,
+		strings.Repeat("b", 40),
+		os.Environ(),
+	); err == nil || err.Error() != "workflow source revision changed during checkout" {
+		t.Fatalf("moved workflow revision error = %v", err)
 	}
 }
 

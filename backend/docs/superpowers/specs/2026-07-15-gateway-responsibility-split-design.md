@@ -8,10 +8,10 @@ agent restart is an explicit lifecycle transition rather than a failed user RPC.
 ## Scope
 
 - Keep the existing HTTP and WebSocket endpoints unchanged.
-- Keep the existing user/agent token model unchanged.
-- Extend SQLite with agent session generations and durable upgrade operations.
+- Keep user authentication separate from tokenless agent registration.
+- Persist agent session generations and status in SQLite.
 - Move ownership out of `GatewayHub` without adding a second network service.
-- Make registration freshness observable to user-call and upgrade flows.
+- Make registration freshness observable to user-call flows.
 
 ## Component Boundaries
 
@@ -20,10 +20,10 @@ agent restart is an explicit lifecycle transition rather than a failed user RPC.
 `AgentRegistry` owns the live `cluster/instance -> AgentSession` mapping and the persisted
 agent status. It provides:
 
-- register and replacement of an initialized, authenticated agent session;
+- register and replacement of an initialized agent session;
 - unregister only when the disconnected session is still current;
 - heartbeat updates and online target snapshots;
-- lookup and bounded wait for a replacement session;
+- live-session lookup;
 - target status persistence with returned errors logged rather than discarded.
 
 The registry owns no HTTP request handling, user authorization, audit records, or WebSocket
@@ -42,11 +42,12 @@ An `AgentSession` does not access `GatewayStore` and does not decide user permis
 
 ### AgentRegistrationHandler
 
-`AgentRegistrationHandler` authenticates an agent connection, constructs an `AgentSession`,
-completes initialization and a writable registration acknowledgement, then registers it with
-`AgentRegistry` and waits for the session to close. A failed candidate acknowledgement cannot
-replace or disconnect the existing healthy session. The handler has no user-token
-authentication and does not dispatch user tool calls.
+`AgentRegistrationHandler` constructs an `AgentSession` without a registration token,
+completes initialization and an exact ping/pong heartbeat preflight, sends a writable
+registration acknowledgement, then registers it with `AgentRegistry` and waits for the
+session to close. A candidate that fails any preflight step cannot replace or disconnect the
+existing healthy session. The handler has no user-token authentication and does not dispatch
+user tool calls.
 
 ### ClientService
 
@@ -59,19 +60,10 @@ scheduler. It delegates instead of directly owning the agent map or session prot
 
 ## Upgrade Lifecycle
 
-The current agent can apply a Kubernetes image change, but it cannot synchronously return the
-rollout result after Kubernetes terminates its pod. Upgrade handling therefore has two phases:
-
-1. The gateway records a durable, restart-recoverable upgrade operation before forwarding the
-   workload image change.
-2. The operation completes only when the registry observes a replacement session for the same
-   `cluster/instance`, with a strictly newer server-side generation, a different process runtime
-   identity, and at least one heartbeat.
-
-If no replacement satisfies those conditions before the configured deadline, the operation
-fails with an explicit re-registration timeout. A normal old-session disconnect during this
-window is not itself an upgrade failure. Reconnecting the same process creates a new connection
-generation but cannot satisfy the upgrade completion condition.
+An agent must not mutate the workload that runs itself. `doops upgrade` and
+`doops_agent_upgrade` are preview-only interfaces and reject non-dry-run requests. A release
+controller or GitOps pipeline outside the target agent applies the image change, verifies the
+replacement Pod and its gateway heartbeat, and performs rollback when verification fails.
 
 The Helm readiness probe represents reverse-tunnel initialization, not merely the local agent
 TCP listener. The agent becomes ready only after it answers the gateway initialize request and
@@ -84,8 +76,7 @@ remains ready while that reverse-tunnel session is alive. Liveness remains proce
   errors are logged and surfaced to operation telemetry.
 - Agent replacement closes only the old session. A late close from the old session cannot
   mark the replacement offline.
-- Upgrade timeout identifies the missing condition: no replacement process identity, no
-  replacement registration, no heartbeat, or lost replacement session.
+- A candidate registration is accepted only after its correlated heartbeat preflight succeeds.
 
 No fallback transport or alternate target path is introduced.
 
@@ -95,12 +86,7 @@ No fallback transport or alternate target path is introduced.
 2. Session tests prove ping/pong updates and relay behavior without user authorization setup.
 3. Client-service tests prove authorization, audit, and offline behavior using a registry
    interface.
-4. An integration test starts an old fake agent, starts an upgrade operation, disconnects the
-   old agent, registers a replacement process, and verifies the operation succeeds only after
-   the new process heartbeat.
-5. A second integration test omits replacement registration and verifies the exact timeout
-   result.
-6. A reconnect test proves that a new WebSocket generation from the same process identity cannot
-   complete an upgrade.
-7. Helm rendering and a live browser-independent gateway smoke test verify that a target is not
+4. Upgrade tests prove non-dry-run requests are rejected before dispatch.
+5. A candidate test proves an unsolicited Pong cannot satisfy registration preflight.
+6. Helm rendering and a live browser-independent gateway smoke test verify that a target is not
    considered ready until it has registered through the reverse tunnel.

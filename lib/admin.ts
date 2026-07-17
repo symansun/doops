@@ -29,8 +29,6 @@ export interface AdminToken {
   user_name?: string
   name: string
   prefix: string
-  cluster?: string
-  instance?: string
   revoked: boolean
   expires_at?: string
   created_at?: string
@@ -186,20 +184,16 @@ export async function deleteGrant(s: Session, id: number): Promise<void> {
 }
 
 // ---------- 令牌 ----------
-export async function listTokens(s: Session, kind?: string): Promise<AdminToken[]> {
-  if (s.demo) return (await import("./demo")).demoListTokens(kind)
-  const qs = kind ? `?kind=${encodeURIComponent(kind)}` : ""
-  return (await req<{ tokens: AdminToken[] }>(s, `tokens${qs}`)).tokens || []
+export async function listTokens(s: Session): Promise<AdminToken[]> {
+  if (s.demo) return (await import("./demo")).demoListTokens()
+  return (await req<{ tokens: AdminToken[] }>(s, "tokens")).tokens || []
 }
 
 export async function createToken(
   s: Session,
   body: {
-    kind?: string
-    user?: string
+    user: string
     name?: string
-    cluster?: string
-    instance?: string
     expires?: string
   },
 ): Promise<{ token: string; token_id: string }> {

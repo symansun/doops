@@ -394,7 +394,7 @@ doops -session <session> pull --target <target> --dest <dir>
 
 ### `doops_agent_upgrade`
 
-要求在线 agent 通过目标编排层升级自身。
+仅预览外部发布控制器需要执行的 Agent 镜像变更。Agent 不允许修改承载自身的工作负载。
 
 参数：
 
@@ -411,12 +411,9 @@ doops -session <session> pull --target <target> --dest <dir>
 
 需要权限：`agent:upgrade`。
 
-推荐流程：
-
-1. 先使用 `"dry_run": true`。
-2. 确认 namespace、workload、container 正确。
-3. 正式执行升级。
-4. 查询 `/v1/targets`，等待目标重新上线。
+`dry_run` 必须为 `true`；非 dry-run 请求会在 Gateway 分发前被拒绝。正式升级必须由
+目标 Agent 之外的 CI/CD、GitOps 或 release controller 执行，并负责新实例心跳验证与
+失败回滚。
 
 ## 自然语言部署 API 对接模式
 

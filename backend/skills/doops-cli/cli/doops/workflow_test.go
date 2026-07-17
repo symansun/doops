@@ -41,6 +41,8 @@ apiVersion: doops.sh/v3
 kind: EnvironmentRegistry
 environments:
   oilan:
+    target:
+      session: zhiyong-oilan-release
     source:
       repository: https://example.test/zhiyong.git
       branch: main
@@ -49,14 +51,15 @@ environments:
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	repository, branch, err := workflowDeclaredSource(path, map[string]string{
+	repository, branch, session, err := workflowDeclaredSource(path, map[string]string{
 		"environment": "oilan",
 		"service":     "frontend",
 	})
 	if err != nil {
 		t.Fatalf("resolve declared source: %v", err)
 	}
-	if repository != "https://example.test/zhiyong.git" || branch != "main" {
-		t.Fatalf("repository=%q branch=%q", repository, branch)
+	if repository != "https://example.test/zhiyong.git" || branch != "main" ||
+		session != "zhiyong-oilan-release" {
+		t.Fatalf("repository=%q branch=%q session=%q", repository, branch, session)
 	}
 }

@@ -29,20 +29,21 @@ func TestHandleAgentUpgradeDryRunK8s(t *testing.T) {
 	if !strings.Contains(out, "kubectl -n ai set image daemonset/doops-agent doops-agent=repo.example/doops-agent:latest") {
 		t.Fatalf("unexpected dry-run output: %s", out)
 	}
-	if !strings.Contains(out, "pull image before rollout") {
-		t.Fatalf("dry-run should document pre-pull before rollout: %s", out)
+	if !strings.Contains(out, "external release controller must update") {
+		t.Fatalf("dry-run should require an external release controller: %s", out)
 	}
 }
 
-func TestPrePullK8sImageAllowsKubeletPullWithoutNodeRuntimeCLI(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-
-	out, err := prePullK8sImage("repo.example/doops-agent:latest")
-	if err != nil {
-		t.Fatalf("pre-pull without node runtime CLI: %v", err)
-	}
-	if !strings.Contains(out, "kubelet will pull the image during rollout") {
-		t.Fatalf("unexpected skip output: %s", out)
+func TestHandleAgentUpgradeRejectsApply(t *testing.T) {
+	_, err := handleAgentUpgrade(json.RawMessage(`{
+		"mode":"k8s",
+		"image":"repo.example/doops-agent:latest",
+		"namespace":"ai",
+		"workload":"deployment/doops-agent",
+		"container":"doops-agent"
+	}`))
+	if err == nil || !strings.Contains(err.Error(), directAgentUpgradeProhibited) {
+		t.Fatalf("expected direct self-upgrade rejection, got %v", err)
 	}
 }
 

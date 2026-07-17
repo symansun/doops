@@ -24,7 +24,8 @@ func TestEnvironmentRegistryV3SelectsOneService(t *testing.T) {
 		plan.Environment != "oilan" ||
 		plan.Target != "gw-edu-coder" ||
 		plan.Cluster != "doops-edu" ||
-		plan.Instance != "edu-coder" {
+		plan.Instance != "edu-coder" ||
+		plan.Session != "zhiyong-oilan-release" {
 		t.Fatalf("unexpected v3 registry plan: %#v", plan)
 	}
 	if len(plan.CredentialRefs) != 1 {

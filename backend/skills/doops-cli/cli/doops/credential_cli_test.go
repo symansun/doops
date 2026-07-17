@@ -97,7 +97,7 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		"--namespace", "apps", "--uses", "imagePull")
 	run("", "credential", "grant-revoke", "--target", "gateway", "--id", "cred_123", "--grant-id", "credgrant_789")
 	run("", "credential", "verify", "--target", "gateway", "--id", "cred_123",
-		"--version-id", "credver_456", "--session", "release-1",
+		"--version-id", "credver_456", "--session", "doops-oilan-release",
 		"--workflow-path", "deploy/environments.yaml", "--workspace-commit", strings.Repeat("a", 40),
 		"--environment", "oilan", "--service", "doops-agent")
 	run("", "credential", "promote", "--target", "gateway", "--id", "cred_123", "--version-id", "credver_456")
@@ -155,8 +155,10 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		"version_id":        "credver_456",
 		"cluster":           "doops-edu",
 		"instance":          "edu-coder",
-		"session_id":        "release-1",
+		"target":            "gateway",
+		"session_id":        "doops-oilan-release",
 		"workflow_path":     "deploy/environments.yaml",
+		"source_revision":   strings.Repeat("a", 40),
 		"workspace_commit":  strings.Repeat("a", 40),
 		"source_repository": "https://cnb.cool/l8ai/ai/doops.sh.git",
 		"source_branch":     "main",

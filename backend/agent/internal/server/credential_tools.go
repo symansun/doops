@@ -56,7 +56,12 @@ func handleCredentialPlanTool(argBytes json.RawMessage) (string, error) {
 			return "", fmt.Errorf("invalid credential plan inputs")
 		}
 	}
-	if err := cloneCredentialPlanSource(args.SessionID, args.SourceRepository, args.SourceBranch); err != nil {
+	if err := cloneCredentialPlanSource(
+		args.SessionID,
+		args.SourceRepository,
+		args.SourceBranch,
+		args.SourceRevision,
+	); err != nil {
 		return "", err
 	}
 	root, err := workspacePath(args.SessionID)

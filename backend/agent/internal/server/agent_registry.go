@@ -161,14 +161,6 @@ func (r *AgentRegistry) TouchContext(ctx context.Context, agent *GatewayAgent, l
 	return nil
 }
 
-func (r *AgentRegistry) NotifyHeartbeat(agent *GatewayAgent) {
-	r.mu.Lock()
-	if current := r.sessions[agent.Key]; current == agent && current.Generation == agent.Generation {
-		r.notifyLocked(agent.Key)
-	}
-	r.mu.Unlock()
-}
-
 func (r *AgentRegistry) Get(cluster, instance string) *GatewayAgent {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -199,37 +191,6 @@ func (r *AgentRegistry) Wait(ctx context.Context, cluster, instance string, grac
 		case <-ctx.Done():
 			return nil
 		case <-timer.C:
-			return nil
-		case <-ch:
-		}
-	}
-}
-
-func (r *AgentRegistry) WaitForReplacementHeartbeat(ctx context.Context, cluster, instance string, generation uint64, oldRuntimeID string) *GatewayAgent {
-	key := tunnelKey(cluster, instance)
-	for {
-		r.mu.Lock()
-		if session := r.sessions[key]; session != nil &&
-			session.Generation > generation &&
-			session.RuntimeID != "" &&
-			session.RuntimeID != oldRuntimeID {
-			session.stateMu.RLock()
-			heartbeatAt := session.HeartbeatAt
-			session.stateMu.RUnlock()
-			if !heartbeatAt.IsZero() {
-				r.mu.Unlock()
-				return session
-			}
-		}
-		ch := r.changed[key]
-		if ch == nil {
-			ch = make(chan struct{})
-			r.changed[key] = ch
-		}
-		r.mu.Unlock()
-
-		select {
-		case <-ctx.Done():
 			return nil
 		case <-ch:
 		}

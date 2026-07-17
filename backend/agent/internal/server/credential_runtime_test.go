@@ -60,19 +60,13 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	if err != nil {
 		t.Fatalf("create credential grant: %v", err)
 	}
-	agentToken, err := store.CreateToken(CreateTokenRequest{
-		Kind: TokenKindAgent, Name: "agent", Cluster: "doops-edu", Instance: "edu-coder",
-	})
-	if err != nil {
-		t.Fatalf("create agent token: %v", err)
-	}
 
 	hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: time.Second})
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)
 	server := httptest.NewServer(mux)
 	defer server.Close()
-	agentConn := dialFakeGatewayAgent(t, server.URL, agentToken.Plaintext, "doops-edu", "edu-coder")
+	agentConn := dialFakeGatewayAgent(t, server.URL, "doops-edu", "edu-coder")
 	defer agentConn.Close()
 
 	var materializeCalls atomic.Int64
@@ -84,10 +78,12 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	dryRun := credentialHTTPRequest(t, mux, deployerToken, http.MethodPost, "/v1/credentials/prepare", map[string]any{
 		"cluster":           "doops-edu",
 		"instance":          "edu-coder",
+		"target":            "gw-edu-coder",
 		"session_id":        "release-1",
 		"workflow_path":     "deploy/environments.yaml",
 		"source_repository": "https://example.test/app.git",
 		"source_branch":     "main",
+		"source_revision":   credentialRunFixtureCommit,
 		"workspace_commit":  credentialRunFixtureCommit,
 		"mode":              "dry-run",
 	})
@@ -101,10 +97,12 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 	apply := credentialHTTPRequest(t, mux, deployerToken, http.MethodPost, "/v1/credentials/prepare", map[string]any{
 		"cluster":           "doops-edu",
 		"instance":          "edu-coder",
+		"target":            "gw-edu-coder",
 		"session_id":        "release-1",
 		"workflow_path":     "deploy/environments.yaml",
 		"source_repository": "https://example.test/app.git",
 		"source_branch":     "main",
+		"source_revision":   credentialRunFixtureCommit,
 		"workspace_commit":  credentialRunFixtureCommit,
 		"mode":              "apply",
 	})
@@ -155,8 +153,10 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 			"version_id":        staged.ID,
 			"cluster":           "doops-edu",
 			"instance":          "edu-coder",
+			"target":            "gw-edu-coder",
 			"session_id":        "release-1",
 			"workflow_path":     "deploy/environments.yaml",
+			"source_revision":   strings.Repeat("a", 40),
 			"workspace_commit":  strings.Repeat("a", 40),
 			"source_repository": "https://example.test/app.git",
 			"source_branch":     "main",
@@ -173,8 +173,10 @@ func TestCredentialPrepareAuthorizesParsedPlanAndDoesNotLeakPayload(t *testing.T
 			"version_id":        staged.ID,
 			"cluster":           "doops-edu",
 			"instance":          "edu-coder",
+			"target":            "gw-edu-coder",
 			"session_id":        "release-1",
 			"workflow_path":     "deploy/environments.yaml",
+			"source_revision":   strings.Repeat("a", 40),
 			"workspace_commit":  strings.Repeat("a", 40),
 			"source_repository": "https://example.test/app.git",
 			"source_branch":     "main",
@@ -363,19 +365,12 @@ func TestCredentialMaterializationBindingFailureRestoresExpectedVersion(t *testi
 	if err != nil {
 		t.Fatalf("put staged credential version: %v", err)
 	}
-	agentToken, err := store.CreateToken(CreateTokenRequest{
-		Kind: TokenKindAgent, Name: "agent", Cluster: "doops-edu", Instance: "edu-coder",
-	})
-	if err != nil {
-		t.Fatalf("create agent token: %v", err)
-	}
-
 	hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: time.Second})
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)
 	server := httptest.NewServer(mux)
 	defer server.Close()
-	agentConn := dialFakeGatewayAgent(t, server.URL, agentToken.Plaintext, "doops-edu", "edu-coder")
+	agentConn := dialFakeGatewayAgent(t, server.URL, "doops-edu", "edu-coder")
 	defer agentConn.Close()
 
 	var materializeCalls atomic.Int64
@@ -486,10 +481,12 @@ func TestCredentialPrepareReturnsVersionedProtocolErrors(t *testing.T) {
 			response := credentialHTTPRequest(t, mux, token, http.MethodPost, "/v1/credentials/prepare", map[string]any{
 				"cluster":           "doops-edu",
 				"instance":          "legacy",
+				"target":            "gw-legacy",
 				"session_id":        "release",
 				"workflow_path":     "deploy/environments.yaml",
 				"source_repository": "https://example.test/app.git",
 				"source_branch":     "main",
+				"source_revision":   credentialRunFixtureCommit,
 				"workspace_commit":  credentialRunFixtureCommit,
 				"mode":              "dry-run",
 			})
@@ -591,10 +588,12 @@ func TestCredentialPrepareRejectsLegacyWorkflowAtGateway(t *testing.T) {
 	response := credentialHTTPRequest(t, mux, token, http.MethodPost, "/v1/credentials/prepare", map[string]any{
 		"cluster":           "doops-edu",
 		"instance":          "edu-coder",
+		"target":            "gw-edu-coder",
 		"session_id":        "legacy-release",
 		"workflow_path":     "deploy/release.yaml",
 		"source_repository": "https://example.test/app.git",
 		"source_branch":     "main",
+		"source_revision":   credentialRunFixtureCommit,
 		"workspace_commit":  credentialRunFixtureCommit,
 		"mode":              "dry-run",
 	})
@@ -613,18 +612,12 @@ func TestCredentialPrepareGrantDenialStopsBeforeMaterialization(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("grant deployer target actions: %v", err)
 	}
-	agentToken, err := store.CreateToken(CreateTokenRequest{
-		Kind: TokenKindAgent, Name: "agent", Cluster: "doops-edu", Instance: "edu-coder",
-	})
-	if err != nil {
-		t.Fatalf("create agent token: %v", err)
-	}
 	hub := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, OperationTimeout: time.Second})
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)
 	server := httptest.NewServer(mux)
 	defer server.Close()
-	agentConn := dialFakeGatewayAgent(t, server.URL, agentToken.Plaintext, "doops-edu", "edu-coder")
+	agentConn := dialFakeGatewayAgent(t, server.URL, "doops-edu", "edu-coder")
 	defer agentConn.Close()
 
 	var materializeCalls atomic.Int64
@@ -636,10 +629,12 @@ func TestCredentialPrepareGrantDenialStopsBeforeMaterialization(t *testing.T) {
 	response := credentialHTTPRequest(t, mux, deployerToken, http.MethodPost, "/v1/credentials/prepare", map[string]any{
 		"cluster":           "doops-edu",
 		"instance":          "edu-coder",
+		"target":            "gw-edu-coder",
 		"session_id":        "release-2",
 		"workflow_path":     "deploy/environments.yaml",
 		"source_repository": "https://example.test/app.git",
 		"source_branch":     "main",
+		"source_revision":   credentialRunFixtureCommit,
 		"workspace_commit":  credentialRunFixtureCommit,
 		"mode":              "apply",
 	})
@@ -696,6 +691,7 @@ func serveCredentialRuntimeAgent(
 					Target:      "gw-edu-coder",
 					Cluster:     "doops-edu",
 					Instance:    "edu-coder",
+					Session:     stringValue(arguments["session_id"]),
 					CredentialRefs: []CredentialPlanReference{{
 						Name:      "cnb-oci-pull",
 						Use:       CredentialUseImagePull,

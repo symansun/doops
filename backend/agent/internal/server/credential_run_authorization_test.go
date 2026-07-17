@@ -59,10 +59,12 @@ func TestCredentialRunAuthorizationIsBoundAndSingleUse(t *testing.T) {
 	request := credentialPrepareHTTPBody{
 		Cluster:          "doops",
 		Instance:         "runner",
+		Target:           "gw-runner",
 		SessionID:        "release-session",
 		WorkflowPath:     "deploy/release.yaml",
-		SourceRepository: "https://example.test/repo.git", SourceBranch: "main", Inputs: map[string]string{"reason": "test"},
-		WorkspaceCommit: credentialRunFixtureCommit, Mode: "dry-run",
+		SourceRepository: "https://example.test/repo.git", SourceBranch: "main",
+		SourceRevision: credentialRunFixtureCommit, Inputs: map[string]string{"reason": "test"},
+		Mode: "dry-run",
 	}
 	run := CredentialRun{
 		APIVersion:       "doops.sh/v2",
@@ -71,6 +73,9 @@ func TestCredentialRunAuthorizationIsBoundAndSingleUse(t *testing.T) {
 		Mode:             request.Mode,
 		Cluster:          request.Cluster,
 		Instance:         request.Instance,
+		Target:           request.Target,
+		Session:          request.SessionID,
+		SourceRevision:   request.SourceRevision,
 		Template:         "release",
 		Project:          "app",
 		Environment:      "production",
@@ -85,7 +90,7 @@ func TestCredentialRunAuthorizationIsBoundAndSingleUse(t *testing.T) {
 	tampered.Environment = "staging"
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.WorkspaceCommit, request.Inputs, request.Mode, tampered,
+		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Inputs, request.Mode, tampered,
 	); !errors.Is(err, ErrCredentialPrepareBindingInvalid) {
 		t.Fatalf("tampered credential run error = %v, want grant denied", err)
 	}
@@ -98,13 +103,13 @@ func TestCredentialRunAuthorizationIsBoundAndSingleUse(t *testing.T) {
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.WorkspaceCommit, request.Inputs, request.Mode, run,
+		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Inputs, request.Mode, run,
 	); err != nil {
 		t.Fatalf("consume credential run authorization: %v", err)
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.WorkspaceCommit, request.Inputs, request.Mode, run,
+		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Inputs, request.Mode, run,
 	); !errors.Is(err, ErrCredentialPrepareBindingInvalid) {
 		t.Fatalf("replayed credential run error = %v, want grant denied", err)
 	}
@@ -115,13 +120,15 @@ func TestRevokedCredentialRunAuthorizationCannotBeConsumed(t *testing.T) {
 	user, token := createCredentialRunAuthorizationUser(t, store)
 	auth := TokenAuth{UserID: user.ID, TokenID: token.ID}
 	request := credentialPrepareHTTPBody{
-		Cluster: "doops", Instance: "runner", SessionID: "release-session",
-		WorkflowPath: "deploy/release.yaml", SourceRepository: "https://example.test/repo.git", SourceBranch: "main", Inputs: map[string]string{"reason": "test"}, Mode: "dry-run",
-		WorkspaceCommit: credentialRunFixtureCommit,
+		Cluster: "doops", Instance: "runner", Target: "gw-runner", SessionID: "release-session",
+		WorkflowPath: "deploy/release.yaml", SourceRepository: "https://example.test/repo.git",
+		SourceBranch: "main", SourceRevision: credentialRunFixtureCommit,
+		Inputs: map[string]string{"reason": "test"}, Mode: "dry-run",
 	}
 	run := CredentialRun{
 		APIVersion: "doops.sh/v2", Kind: "CredentialRun", ID: "credrun_revoked",
 		Mode: request.Mode, Cluster: request.Cluster, Instance: request.Instance,
+		Target: request.Target, Session: request.SessionID, SourceRevision: request.SourceRevision,
 		Template: "release", Project: "app", Environment: "production",
 		Materializations: []CredentialMaterialization{}, CreatedAt: time.Now().UTC(),
 	}
@@ -133,7 +140,7 @@ func TestRevokedCredentialRunAuthorizationCannotBeConsumed(t *testing.T) {
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.WorkspaceCommit, request.Inputs, request.Mode, run,
+		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Inputs, request.Mode, run,
 	); !errors.Is(err, ErrCredentialPrepareBindingInvalid) {
 		t.Fatalf("revoked credential run error = %v, want grant denied", err)
 	}
@@ -160,7 +167,7 @@ func TestOfflineWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.T) {
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.WorkspaceCommit, request.Inputs, request.Mode, run,
+		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Inputs, request.Mode, run,
 	); err != nil {
 		t.Fatalf("offline workflow consumed credential authorization: %v", err)
 	}
@@ -201,7 +208,7 @@ func TestRateLimitedWorkflowDoesNotConsumeCredentialRunAuthorization(t *testing.
 	}
 	if err := store.ConsumeCredentialRunAuthorization(
 		auth, request.Cluster, request.Instance, request.SessionID, request.WorkflowPath,
-		request.SourceRepository, request.SourceBranch, request.WorkspaceCommit, request.Inputs, request.Mode, run,
+		request.SourceRepository, request.SourceBranch, request.SourceRevision, request.Inputs, request.Mode, run,
 	); err != nil {
 		t.Fatalf("rate-limited workflow consumed credential authorization: %v", err)
 	}
@@ -326,16 +333,54 @@ func TestCredentialPromptBindingAcceptsApplyMode(t *testing.T) {
 	}
 }
 
+func TestGatewayRejectsUnstructuredApplyBeforeTargetLookup(t *testing.T) {
+	store := openCredentialTestStore(t)
+	user, token := createCredentialRunAuthorizationUser(t, store)
+	auth := TokenAuth{UserID: user.ID, TokenID: token.ID}
+	arguments := mustJSON(t, map[string]any{
+		"operation":   "apply",
+		"session_id":  "natural-apply",
+		"instruction": "deploy the selected service",
+	})
+	params, err := json.Marshal(api.ToolCallParams{Name: "doops_agent_prompt", Arguments: arguments})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response api.JSONRPCResponse
+	if err := NewGatewayHub(store, GatewayHubOptions{}).client.handleGatewayToolCall(
+		context.Background(),
+		auth,
+		"doops",
+		"runner",
+		api.JSONRPCRequest{JSONRPC: "2.0", ID: 1, Params: params},
+		func([]byte) error { return nil },
+		func(value any) error {
+			encoded, marshalErr := json.Marshal(value)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			return json.Unmarshal(encoded, &response)
+		},
+	); err != nil {
+		t.Fatalf("handle unstructured apply: %v", err)
+	}
+	if response.Error == nil || response.Error.Code != -32602 ||
+		!strings.Contains(response.Error.Message, "structured doops-cicd") {
+		t.Fatalf("unstructured apply response = %#v", response.Error)
+	}
+}
+
 func credentialRunAuthorizationFixture(instance, runID string) (credentialPrepareHTTPBody, CredentialRun) {
 	request := credentialPrepareHTTPBody{
-		Cluster: "doops", Instance: instance, SessionID: "release-session",
+		Cluster: "doops", Instance: instance, Target: "gw-" + instance, SessionID: "release-session",
 		WorkflowPath: "deploy/environments.yaml", SourceRepository: "https://example.test/repo.git",
-		SourceBranch: "main", WorkspaceCommit: credentialRunFixtureCommit,
+		SourceBranch: "main", SourceRevision: credentialRunFixtureCommit,
 		Inputs: map[string]string{"environment": "test", "service": "api"}, Mode: "dry-run",
 	}
 	run := CredentialRun{
 		APIVersion: "doops.sh/v2", Kind: "CredentialRun", ID: runID,
 		Mode: request.Mode, Cluster: request.Cluster, Instance: request.Instance,
+		Target: request.Target, Session: request.SessionID, SourceRevision: request.SourceRevision,
 		Template: "release", Project: "app", Environment: "production",
 		Materializations: []CredentialMaterialization{}, CreatedAt: time.Now().UTC(),
 	}

@@ -61,6 +61,16 @@ Do not publish new agent fixes under floating `v1`; use the explicit release ver
 
 - Fixed Git-backed source snapshots to use Git's own ignore semantics, keeping
   tracked release files and respecting root-anchored patterns such as `/ecp`.
+
+## 2026-07-17 Credential-Bound V3 Deployment
+
+- Restored `doops cicd run` as the only deployment mutation path.
+- Deployment apply requires a structured v3 instruction, immutable workspace
+  commit, prepared single-use `CredentialRun`, and completed tool evidence.
+- Ordinary Ask remains read-only; direct Agent self-upgrade remains prohibited.
+- Verified the Agent server suite, CLI suite, v3 skill contract, immutable
+  workspace binding, and no-tool-activity rejection.
+
 ## 2026-05-19 Gateway And Config Cleanup
 
 - Consolidated the CLI default config source to `~/.agent/skills/doops/config.json`.

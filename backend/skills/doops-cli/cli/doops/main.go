@@ -48,7 +48,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   clean       清理远端节点上的工作区隔离沙盒
   unlock      管理员强制释放 gateway 上卡住的 target busy 状态
   admin       gateway 管理命令，例如给用户签发 token
-  upgrade     通过 gateway 广播升级在线 doops-agent
+  upgrade     预演 doops-agent 升级；正式发布必须由外部 release runner 或 GitOps 执行
   add         添加 gateway target
   install     通过 SSH 首次自举 Agent 到新节点 (仅安装阶段使用 SSH)
   login       缓存 gateway user token
@@ -62,9 +62,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   -help       显示此帮助信息
 
 	Agent 原生声明式 CI/CD 示例:
-	  # run 固定声明源 commit，经 Gateway credential prepare 后调用 doops-cicd Skill。
-	  doops -session test_ops cicd run -f deploy/environments.yaml --target agent-runtime --dry-run --set environment=test --set service=frontend
-	  doops -session test_ops cicd run -f deploy/environments.yaml --target agent-runtime --set environment=test --set service=frontend
+	  doops -session <environment-target-session> cicd run -f deploy/environments.yaml --target agent-runtime --dry-run --set environment=test --set service=frontend
+	  doops -session <environment-target-session> cicd run -f deploy/environments.yaml --target agent-runtime --set environment=test --set service=frontend
 `)
 	}
 	flag.Parse()
@@ -219,9 +218,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			return
 		}
 		if len(cmdArgs) < 2 {
-			fmt.Println("Usage: doops admin token create --target <gateway-target> --kind user --user <username> [--name label] [--expires 720h] [--save-as target]")
-			fmt.Println("       doops admin token create --target <gateway-target> --kind agent --cluster <cluster> --instance <instance> [--name label] [--expires 720h]")
-			fmt.Println("       doops admin token list --target <gateway-target> [--kind user|agent]")
+			fmt.Println("Usage: doops admin token create --target <gateway-target> --user <username> [--name label] [--expires 720h] [--save-as target]")
+			fmt.Println("       doops admin token list --target <gateway-target>")
 			fmt.Println("       doops admin token revoke --target <gateway-target> --id <token-id>")
 			fmt.Println("       doops admin operations list --target <gateway-target>")
 			fmt.Println("       doops admin operations cancel --target <gateway-target> --id <operation-id>")
@@ -245,21 +243,17 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			return
 		}
 		if cmdArgs[0] != "token" || cmdArgs[1] != "create" {
-			fmt.Println("Usage: doops admin token create --target <gateway-target> --kind user --user <username> [--name label] [--expires 720h] [--save-as target]")
-			fmt.Println("       doops admin token create --target <gateway-target> --kind agent --cluster <cluster> --instance <instance> [--name label] [--expires 720h]")
-			fmt.Println("       doops admin token list --target <gateway-target> [--kind user|agent]")
+			fmt.Println("Usage: doops admin token create --target <gateway-target> --user <username> [--name label] [--expires 720h] [--save-as target]")
+			fmt.Println("       doops admin token list --target <gateway-target>")
 			fmt.Println("       doops admin token revoke --target <gateway-target> --id <token-id>")
 			fmt.Println("       doops admin operations list --target <gateway-target>")
 			fmt.Println("       doops admin operations cancel --target <gateway-target> --id <operation-id>")
 			os.Exit(1)
 		}
-		var target, kind, user, cluster, instance, label, expires, saveAs string
+		var target, user, label, expires, saveAs string
 		adminFlag := flag.NewFlagSet("admin token create", flag.ExitOnError)
 		adminFlag.StringVar(&target, "target", "", "Configured gateway target whose token/gateway should be used")
-		adminFlag.StringVar(&kind, "kind", "user", "Token kind: user or agent")
 		adminFlag.StringVar(&user, "user", "", "Gateway user name to issue a token for")
-		adminFlag.StringVar(&cluster, "cluster", "", "Agent token cluster")
-		adminFlag.StringVar(&instance, "instance", "", "Agent token instance")
 		adminFlag.StringVar(&label, "name", "", "Token label")
 		adminFlag.StringVar(&expires, "expires", "", "Optional token TTL, e.g. 720h")
 		adminFlag.StringVar(&saveAs, "save-as", "", "Optional configured target name to cache the issued token for")
@@ -277,21 +271,15 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		}
 		gateway := server.Gateway
 		token := ResolveToken(server.Name, server.Token)
-		kind = strings.ToLower(strings.TrimSpace(kind))
-		if (kind == "user" && strings.TrimSpace(user) == "") ||
-			(kind == "agent" && (strings.TrimSpace(cluster) == "" || strings.TrimSpace(instance) == "")) ||
-			(kind != "user" && kind != "agent") {
-			fmt.Println("Error: the selected token kind fields are required")
+		if strings.TrimSpace(user) == "" {
+			fmt.Println("Error: --user is required")
 			adminFlag.Usage()
 			os.Exit(1)
 		}
 		issued, err := GatewayAdminTokenCreate(gateway, token, gatewayAdminTokenCreateRequest{
-			Kind:     kind,
-			User:     user,
-			Name:     label,
-			Cluster:  cluster,
-			Instance: instance,
-			Expires:  expires,
+			User:    user,
+			Name:    label,
+			Expires: expires,
 		})
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
@@ -907,7 +895,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		upgradeFlag.StringVar(&workload, "workload", "", "Kubernetes workload, e.g. daemonset/doops-agent")
 		upgradeFlag.StringVar(&container, "container", "", "Container name")
 		upgradeFlag.StringVar(&upgradeSession, "session", "", "Session ID")
-		upgradeFlag.BoolVar(&dryRun, "dry-run", false, "Preview upgrade command only")
+		upgradeFlag.BoolVar(&dryRun, "dry-run", false, "Preview upgrade command; direct agent self-upgrade is prohibited")
 		upgradeFlag.Parse(cmdArgs)
 		if upgradeSession != "" && *sessionName == "" {
 			*sessionName = upgradeSession
@@ -1086,9 +1074,7 @@ func runAdminOperationCancel(args []string, servers []Server, configErr error) {
 }
 
 func runAdminTokensList(args []string, servers []Server, configErr error) {
-	var kind string
 	fs := flag.NewFlagSet("admin token list", flag.ExitOnError)
-	fs.StringVar(&kind, "kind", "", "Optional token kind: user or agent")
 	target := fs.String("target", "", "Configured gateway target whose token/gateway should be used")
 	fs.Parse(args)
 	if strings.TrimSpace(*target) == "" {
@@ -1102,14 +1088,14 @@ func runAdminTokensList(args []string, servers []Server, configErr error) {
 		fmt.Printf("Error: Gateway target '%s' not found.\n", *target)
 		os.Exit(1)
 	}
-	tokens, err := GatewayAdminTokensList(server.Gateway, ResolveToken(server.Name, server.Token), kind)
+	tokens, err := GatewayAdminTokensList(server.Gateway, ResolveToken(server.Name, server.Token), "user")
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
 	for _, token := range tokens {
-		fmt.Printf("token_id=%s kind=%s user=%s name=%s prefix=%s cluster=%s instance=%s revoked=%t expires_at=%s created_at=%s\n",
-			token.ID, token.Kind, token.UserName, token.Name, token.Prefix, token.Cluster, token.Instance,
+		fmt.Printf("token_id=%s kind=%s user=%s name=%s prefix=%s revoked=%t expires_at=%s created_at=%s\n",
+			token.ID, token.Kind, token.UserName, token.Name, token.Prefix,
 			token.Revoked, token.ExpiresAt, token.CreatedAt)
 	}
 }

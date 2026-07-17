@@ -81,8 +81,11 @@ func parseCredentialPromptBinding(arguments json.RawMessage, cluster, instance s
 		envelope.CredentialRun.APIVersion != "doops.sh/v2" ||
 		envelope.CredentialRun.Kind != "CredentialRun" ||
 		strings.TrimSpace(envelope.CredentialRun.ID) == "" ||
+		strings.TrimSpace(envelope.CredentialRun.Target) == "" ||
 		envelope.CredentialRun.Cluster != strings.TrimSpace(cluster) ||
 		envelope.CredentialRun.Instance != strings.TrimSpace(instance) ||
+		envelope.CredentialRun.Session != strings.TrimSpace(prompt.SessionID) ||
+		envelope.CredentialRun.SourceRevision != strings.TrimSpace(envelope.WorkspaceCommit) ||
 		envelope.CredentialRun.Mode != mode {
 		return nil, errors.New("invalid doops-cicd credential binding")
 	}

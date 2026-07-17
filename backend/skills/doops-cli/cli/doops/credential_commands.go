@@ -215,9 +215,12 @@ func runCredentialVerify(args []string, servers []Server, configErr error, stdou
 		"environment": strings.TrimSpace(environment),
 		"service":     strings.TrimSpace(service),
 	}
-	sourceRepository, sourceBranch, err := workflowDeclaredSource(workflowPath, inputs)
+	sourceRepository, sourceBranch, declaredSession, err := workflowDeclaredSource(workflowPath, inputs)
 	if err != nil {
 		return fmt.Errorf("resolve registry source: %w", err)
+	}
+	if strings.TrimSpace(sessionID) != declaredSession {
+		return fmt.Errorf("session %q does not match environment target session %q", strings.TrimSpace(sessionID), declaredSession)
 	}
 	gateway, token, err := resolveCredentialGateway(target, "", servers, configErr)
 	if err != nil {
@@ -231,8 +234,10 @@ func runCredentialVerify(args []string, servers []Server, configErr error, stdou
 		"version_id":        strings.TrimSpace(versionID),
 		"cluster":           strings.TrimSpace(server.Cluster),
 		"instance":          strings.TrimSpace(server.Instance),
+		"target":            strings.TrimSpace(server.Name),
 		"session_id":        strings.TrimSpace(sessionID),
 		"workflow_path":     strings.TrimSpace(workflowPath),
+		"source_revision":   strings.TrimSpace(workspaceCommit),
 		"workspace_commit":  strings.TrimSpace(workspaceCommit),
 		"source_repository": sourceRepository,
 		"source_branch":     sourceBranch,

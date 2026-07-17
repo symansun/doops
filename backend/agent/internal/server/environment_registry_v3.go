@@ -93,6 +93,7 @@ func parseCredentialEnvironmentRegistryV3(
 				Name:     selection.Environment.Target.Name,
 				Cluster:  selection.Environment.Target.Cluster,
 				Instance: selection.Environment.Target.Instance,
+				Session:  selection.Environment.Target.Session,
 			},
 			SourceRepository: selection.Environment.Source.Repository,
 			SourceBranch:     selection.Environment.Source.Branch,

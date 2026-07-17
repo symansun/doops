@@ -28,7 +28,7 @@ var (
 	reverseTunnelConnected int32
 	reverseTunnelDial      = websocket.DefaultDialer.Dial
 	reverseTunnelServeConn = func(gw *server.Gateway, conn *websocket.Conn, name string, onReady func()) {
-		gw.ServeWebSocketConnWithReady(conn, name, onReady)
+		gw.ServeGatewayWebSocketConnWithReady(conn, name, onReady)
 	}
 	reverseTunnelContinue = func() bool { return true }
 )

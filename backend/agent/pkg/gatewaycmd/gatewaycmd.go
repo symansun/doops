@@ -28,8 +28,6 @@ func Run(args []string) {
 		user(args)
 	case "token":
 		userToken(args)
-	case "agent-token":
-		agentToken(args)
 	case "grant":
 		grant(args)
 	case "audit":
@@ -156,32 +154,6 @@ func userToken(args []string) {
 		log.Fatal(err)
 	}
 	fmt.Printf("token=%s\n", tok.Plaintext)
-	fmt.Println("warning=store this token now; only its hash is saved")
-}
-
-func agentToken(args []string) {
-	if len(args) == 0 || args[0] != "create" {
-		fmt.Fprintln(os.Stderr, "usage: doops-gateway agent-token create -cluster <cluster> -instance <instance> [-db path]")
-		os.Exit(2)
-	}
-	fs := flag.NewFlagSet("agent-token create", flag.ExitOnError)
-	cluster := fs.String("cluster", "", "Allowed cluster")
-	instance := fs.String("instance", "", "Allowed instance")
-	name := fs.String("name", "", "Token label")
-	dbPath := fs.String("db", defaultGatewayDB, "SQLite database path")
-	fs.Parse(args[1:])
-	store := mustStore(*dbPath)
-	defer store.Close()
-	tok, err := store.CreateToken(server.CreateTokenRequest{
-		Kind:     server.TokenKindAgent,
-		Name:     *name,
-		Cluster:  *cluster,
-		Instance: *instance,
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("agent_token=%s\n", tok.Plaintext)
 	fmt.Println("warning=store this token now; only its hash is saved")
 }
 
