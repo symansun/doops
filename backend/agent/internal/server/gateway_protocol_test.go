@@ -2273,10 +2273,6 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	if got := actionForTool("doops_agent_prompt", genericPromptArgs); got != ActionAsk {
 		t.Fatalf("agent prompt must require ask permission: %q", got)
 	}
-	applyPromptArgs := json.RawMessage(`{"operation":"apply","session_id":"apply-a"}`)
-	if got := actionForTool("doops_agent_prompt", applyPromptArgs); got != ActionExec {
-		t.Fatalf("apply agent prompt must require exec permission: %q", got)
-	}
 	if got := resourceKeyForTool(ActionAsk, "doops_agent_prompt", genericPromptArgs, "dev", "node"); got != "session:ask-a" {
 		t.Fatalf("agent prompt session resource key mismatch: %q", got)
 	}

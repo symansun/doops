@@ -784,12 +784,6 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		var args api.AgentPromptParams
 		json.Unmarshal(argBytes, &args)
 		operation := strings.ToLower(strings.TrimSpace(args.Operation))
-		if operation == "apply" {
-			if err := validateDoagentApplyInstruction(args.Instruction); err != nil {
-				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
-				return
-			}
-		}
 		nativeMode, err := doagentModeForPrompt(operation, "")
 		if err != nil {
 			writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
@@ -941,36 +935,9 @@ func doagentModeForPrompt(operation, executionMode string) (string, error) {
 	switch operation {
 	case "", "ask":
 		return "auto", nil
-	case "apply":
-		return "build", nil
 	default:
 		return "", fmt.Errorf("unsupported agent prompt operation: %s", operation)
 	}
-}
-
-func validateDoagentApplyInstruction(instruction string) error {
-	_, err := validatedDoagentApplyInstruction(instruction)
-	return err
-}
-
-func validatedDoagentApplyInstruction(instruction string) (map[string]interface{}, error) {
-	var envelope map[string]interface{}
-	err := json.Unmarshal([]byte(instruction), &envelope)
-	if err != nil {
-		return nil, fmt.Errorf("apply requires a structured doops-cicd instruction")
-	}
-	if envelope["task"] != "execute-doops-cicd" ||
-		envelope["skill"] != "$doops-cicd" ||
-		envelope["executionMode"] != "apply" ||
-		strings.TrimSpace(doopsCICDString(envelope["manifestPath"])) == "" {
-		return nil, fmt.Errorf("apply is only supported for an explicit doops-cicd apply instruction")
-	}
-	return envelope, nil
-}
-
-func doopsCICDString(value interface{}) string {
-	text, _ := value.(string)
-	return text
 }
 
 type agentPromptExecutionContext struct {

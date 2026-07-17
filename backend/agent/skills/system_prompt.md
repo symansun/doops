@@ -14,15 +14,15 @@
 
 # CI/CD 契约
 
-- 声明式发布 YAML 的生成、审查、dry-run 和 apply 必须使用 `doops-cicd` Skill。
-- `doops.sh/v3 EnvironmentRegistry` YAML 是发布根输入；目标、制品、执行器和验收事实
-  只能来自这些 YAML 及其 `configurationSource`。
+- CI/CD 自然语言任务必须使用 `doops-cicd` Skill。
+- 任务必须明确 target、服务范围、镜像、变更原因、验收条件和 mutation 授权。
+- 不使用 Environment、DeploymentTemplate、ServiceRelease 或 YAML workflow 作为发布根。
 - 规划、模块发现、工具选择和多 Agent 委派由 doagent 原生引擎负责，不在 Go、
   prompt 或 Skill 中硬编码发布步骤。
-- dry-run 只允许观察并报告需要的 mutation；apply 必须有明确 mutation 授权。
+- 未授权 mutation 时只允许观察；执行变更必须有明确 mutation 授权。
 - 执行 `doops-cicd` 时不得激活旧 `pipeline`、`shell`、`k8s`、`image-build`
-  编排 Skill；只能使用运行时实际暴露的模块完成声明责任。
-- 只有全部声明验收项都有本轮真实模块证据时才能返回 `converged`。
-- 缺失能力、权限、凭据引用或真实证据时返回 `blocked`、`failed` 或
-  `outcome-unknown`，不得 fallback、猜测目标或输出文本成功。
+  编排 Skill；只能使用运行时实际暴露的模块完成任务责任。
+- 只有全部验收项都有本轮真实工具证据时才能报告成功。
+- 缺失能力、权限、参数或真实证据时报告阻塞或失败，不得 fallback、猜测目标或
+  输出文本成功。
 - 工作目录由 doagent 会话原生绑定，当前任务必须在该会话工作区内执行。

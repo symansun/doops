@@ -20,7 +20,7 @@ func TestDoagentModeForPromptUsesOnlyNativeAskMode(t *testing.T) {
 	}{
 		{name: "general", want: "auto"},
 		{name: "ask", operation: "ask", want: "auto"},
-		{name: "apply", operation: "apply", want: "build"},
+		{name: "apply operation is obsolete", operation: "apply", wantErr: true},
 		{name: "mode is not accepted", executionMode: "apply", wantErr: true},
 		{name: "unknown operation", operation: "custom", wantErr: true},
 	}
@@ -39,31 +39,6 @@ func TestDoagentModeForPromptUsesOnlyNativeAskMode(t *testing.T) {
 			}
 			if got != test.want {
 				t.Fatalf("native mode mismatch: got %q want %q", got, test.want)
-			}
-		})
-	}
-}
-
-func TestValidateDoagentApplyInstructionRequiresCICDEnvelope(t *testing.T) {
-	valid := `{
-		"task":"execute-doops-cicd",
-		"skill":"$doops-cicd",
-		"executionMode":"apply",
-		"manifestPath":"deploy/environments.yaml",
-		"inputs":{"environment":"oilan","service":"lab-api"}
-	}`
-	if err := validateDoagentApplyInstruction(valid); err != nil {
-		t.Fatalf("valid apply envelope rejected: %v", err)
-	}
-	for name, instruction := range map[string]string{
-		"plain prompt": "deploy this",
-		"wrong task":   `{"task":"shell","skill":"$doops-cicd","executionMode":"apply"}`,
-		"wrong skill":  `{"task":"execute-doops-cicd","skill":"$shell","executionMode":"apply"}`,
-		"wrong mode":   `{"task":"execute-doops-cicd","skill":"$doops-cicd","executionMode":"dry-run"}`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			if err := validateDoagentApplyInstruction(instruction); err == nil {
-				t.Fatal("non-CI/CD apply envelope must be rejected")
 			}
 		})
 	}

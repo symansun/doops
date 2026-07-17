@@ -1,26 +1,29 @@
 ---
 name: doops-cicd
-description: 按 DoOps v3 YAML 构建或部署用户指定的单个服务。
+description: 根据用户明确给出的自然语言发布任务执行 DoOps v3 构建、部署与验收。
 ---
 
 # DoOps CI/CD
 
-只使用仓库中的 v3 声明：
+DoOps v3 的输入是自然语言发布任务，不使用声明式 YAML 发布根。
 
-- 构建：`deploy/deploy.yaml`
-- 部署：`deploy/environments.yaml`
+任务必须明确给出：
 
-部署请求必须给出 `environment` 和 `service`。读取
-`environments.<environment>.services.<service>` 指向的服务文件，只构建、迁移、
-部署和验证该服务。不得遍历其他服务，不得推断默认环境或默认服务。
+- target；
+- 服务范围；
+- 镜像版本或不可变 digest；
+- 变更原因；
+- 验收条件；
+- 是否已授权执行 mutation。
 
 ## 执行
 
-1. 读取请求指定的 YAML、环境和服务。
-2. 确认环境、服务、target、镜像、Helm 和健康检查声明存在。
-3. dry-run 只观察并报告计划，不执行变更。
-4. apply 使用声明中的 target 和工具执行该服务的变更。
-5. 验证该服务的镜像、工作负载和声明的健康检查。
+1. 使用当前会话和运行时工具确认指定 target、服务与镜像的真实状态。
+2. 未授权 mutation 时只观察并报告，不执行变更。
+3. 已授权时只执行任务明确列出的服务和变更，不扩大范围。
+4. 使用仓库现有 Helm 资产或目标运行时已有工具完成发布。
+5. 验证任务明确给出的工作负载、镜像和健康条件。
 
-缺少声明或执行失败时直接返回真实错误。不要 fallback，不生成中间 workflow，不运行
-第二套编排器，不改写 Agent 返回结果。
+缺少 target、服务、镜像、授权或验收条件时直接报告阻塞事实。不得从目录名、域名、
+历史版本或遗留 YAML 推断参数；不得 fallback，不生成中间 workflow，不运行第二套
+编排器，不把文本成功声明当作验收证据。

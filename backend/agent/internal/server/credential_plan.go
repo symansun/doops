@@ -654,13 +654,6 @@ func parseCredentialWorkflowForInputs(
 			strings.TrimSpace(template.Spec.ConfigurationSource) == "" {
 			return credentialParsedWorkflow{}, invalidCredentialDeclaration(errors.New("invalid DeploymentTemplate identity or deployment context"))
 		}
-	case identity.APIVersion == "doops.sh/v3" && identity.Kind == "EnvironmentRegistry":
-		return parseCredentialEnvironmentRegistryV3(
-			root,
-			workflowPath,
-			workflowData,
-			inputs,
-		)
 	default:
 		return credentialParsedWorkflow{}, invalidCredentialDeclaration(
 			fmt.Errorf("unsupported workflow contract %q %q", identity.APIVersion, identity.Kind),

@@ -970,25 +970,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	}
 	if params.Name == "doops_agent_prompt" {
 		operation := extractStringArg(params.Arguments, "operation")
-		instruction := extractStringArg(params.Arguments, "instruction")
-		var marker struct {
-			Task string `json:"task"`
-		}
-		_ = json.Unmarshal([]byte(instruction), &marker)
-		if marker.Task == "execute-doops-cicd" {
-			var envelope struct {
-				ExecutionMode string `json:"executionMode"`
-			}
-			if err := json.Unmarshal([]byte(instruction), &envelope); err != nil ||
-				(envelope.ExecutionMode == "apply" && operation != "apply") ||
-				(envelope.ExecutionMode == "dry-run" && operation != "ask") {
-				writeJSON(buildErrorResponse(req.ID, -32602, "cicd operation does not match execution mode"))
-				return nil
-			}
-		} else if operation == "apply" {
-			writeJSON(buildErrorResponse(req.ID, -32602, "apply requires a structured doops-cicd instruction"))
-			return nil
-		} else if operation != "" && operation != "ask" {
+		if operation != "" && operation != "ask" {
 			writeJSON(buildErrorResponse(req.ID, -32602, "unsupported agent prompt operation: "+operation))
 			return nil
 		}
@@ -1948,9 +1930,6 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 	case "doops_shell", "doops_bg", "doops_task_status":
 		return ActionExec
 	case "doops_agent_prompt":
-		if extractStringArg(args, "operation") == "apply" {
-			return ActionExec
-		}
 		switch extractStringArg(args, "mode") {
 		case "metadata", "history":
 			return ActionAsk
