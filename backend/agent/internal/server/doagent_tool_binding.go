@@ -459,6 +459,11 @@ func bindDeploymentRunEvidence(
 			return "", nil, fmt.Errorf("DeploymentRun.status field %q is not supported", field)
 		}
 	}
+	switch status["phase"] {
+	case "planned", "converged", "blocked", "failed", "outcome-unknown":
+	default:
+		return "", nil, fmt.Errorf("DeploymentRun.status.phase is invalid")
+	}
 	evidence, ok := status["evidence"].([]interface{})
 	if !ok || len(evidence) == 0 {
 		return "", nil, fmt.Errorf("DeploymentRun evidence must be a non-empty array")

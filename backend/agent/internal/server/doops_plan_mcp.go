@@ -83,6 +83,7 @@ type doopsPlanRuntime struct {
 	ImageBindings       map[string]string
 	ServiceEnabled      map[string]bool
 	ServiceReplicas     map[string]int
+	WorkloadNames       map[string]string
 	WorkloadNamespaces  map[string]string
 	WorkloadContainers  map[string]string
 	PublicChecks        []credentialConfigurationHTTPCheck
@@ -344,6 +345,23 @@ func loadDoopsPlanRuntimeFromWorkspace(
 	if executor.Namespace == "" || executor.Release == "" || executor.Chart == "" || executor.Values == "" {
 		return doopsPlanRuntime{}, errors.New("Helm executor declaration is incomplete")
 	}
+	workloadNames := make(map[string]string, len(configuration.ArtifactContract.Services))
+	workloadContainers := make(map[string]string, len(configuration.ArtifactContract.Services))
+	for _, service := range configuration.ArtifactContract.Services {
+		catalog := configuration.ServiceCatalog[service]
+		workload := catalog.Workload
+		container := catalog.Container
+		if len(configuration.ArtifactContract.Services) == 1 {
+			if workload == "" {
+				workload = executor.Workload
+			}
+			if container == "" {
+				container = executor.Container
+			}
+		}
+		workloadNames[service] = strings.TrimPrefix(workload, "deployment/")
+		workloadContainers[service] = container
+	}
 	return doopsPlanRuntime{
 		Root:                root,
 		WorkflowPath:        workflowPath,
@@ -358,7 +376,9 @@ func loadDoopsPlanRuntimeFromWorkspace(
 		Chart:               executor.Chart,
 		Values:              executor.Values,
 		ImageBindings:       executor.ImageBindings,
+		WorkloadNames:       workloadNames,
 		WorkloadNamespaces:  executor.WorkloadNamespaces,
+		WorkloadContainers:  workloadContainers,
 		PublicChecks:        executor.HealthChecks.Public,
 		WorkloadChecks:      executor.HealthChecks.Workloads,
 		SourceRepository:    configuration.ArtifactContract.SourceRepository,
@@ -526,6 +546,7 @@ func doopsPlanReleaseScope(runtime doopsPlanRuntime) map[string]interface{} {
 			"imageBindings":      runtime.ImageBindings,
 			"serviceEnabled":     runtime.ServiceEnabled,
 			"serviceReplicas":    runtime.ServiceReplicas,
+			"workloadNames":      runtime.WorkloadNames,
 			"workloadNamespaces": runtime.WorkloadNamespaces,
 			"workloadContainers": runtime.WorkloadContainers,
 		},
@@ -669,11 +690,15 @@ func observeDoopsPlanWorkloads(ctx context.Context, runtime doopsPlanRuntime) (m
 	services := doopsPlanWorkloadServices(runtime)
 	workloads := make([]map[string]interface{}, 0, len(services))
 	for _, service := range services {
+		workloadName := runtime.WorkloadNames[service]
+		if workloadName == "" {
+			workloadName = service
+		}
 		namespace := runtime.WorkloadNamespaces[service]
 		if namespace == "" {
 			namespace = runtime.Namespace
 		}
-		output, err := runDoopsPlanCommand(ctx, runtime.Root, "kubectl", "-n", namespace, "get", "deployment", service, "-o", "json")
+		output, err := runDoopsPlanCommand(ctx, runtime.Root, "kubectl", "-n", namespace, "get", "deployment", workloadName, "-o", "json")
 		if err != nil {
 			return nil, err
 		}
@@ -707,10 +732,10 @@ func observeDoopsPlanWorkloads(ctx context.Context, runtime doopsPlanRuntime) (m
 			}
 		}
 		if containerName != "" && declaredContainer == nil {
-			return nil, fmt.Errorf("declared container %q is missing from deployment %q", containerName, service)
+			return nil, fmt.Errorf("declared container %q is missing from deployment %q", containerName, workloadName)
 		}
 		workloads = append(workloads, map[string]interface{}{
-			"service": service, "namespace": namespace, "desiredReplicas": deployment.Spec.Replicas,
+			"service": service, "workload": workloadName, "namespace": namespace, "desiredReplicas": deployment.Spec.Replicas,
 			"readyReplicas":     deployment.Status.ReadyReplicas,
 			"availableReplicas": deployment.Status.AvailableReplicas,
 			"updatedReplicas":   deployment.Status.UpdatedReplicas,

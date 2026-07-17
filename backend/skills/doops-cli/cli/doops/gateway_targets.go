@@ -60,6 +60,18 @@ func fetchGatewayTargets(gateway, token string) ([]GatewayTarget, error) {
 	return parsed.Targets, nil
 }
 
+func filterGatewayTargets(targets []GatewayTarget, cluster, instance string) []GatewayTarget {
+	cluster = strings.TrimSpace(cluster)
+	instance = strings.TrimSpace(instance)
+	filtered := make([]GatewayTarget, 0, 1)
+	for _, target := range targets {
+		if target.Cluster == cluster && target.Instance == instance {
+			filtered = append(filtered, target)
+		}
+	}
+	return filtered
+}
+
 func unlockGatewayTarget(gateway, token, cluster, instance string) error {
 	unlockURL, err := gatewayTargetUnlockURL(gateway, cluster, instance)
 	if err != nil {

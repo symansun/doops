@@ -26,9 +26,9 @@ from the exact declared image binding path
 `sourceArtifactNames` declares a different name. No repository, tag, digest,
 or values path is guessed.
 
-The Deployment reads the gateway registration token from the declared
-`gateway.agentTokenSecret` reference and passes it to `doops-agent`. The token
-is bound to the declared gateway cluster and instance.
+Agent registration is intentionally unauthenticated. The Deployment passes
+only the gateway URL, cluster, and instance; the user-authenticated Gateway
+API remains the authorization boundary for operations.
 
 The Deployment uses `RollingUpdate` with `maxUnavailable: 0` and
 `maxSurge: 1`. It does not use the host network or a host port. The replacement

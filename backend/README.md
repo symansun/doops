@@ -44,7 +44,7 @@ flowchart LR
 - 边缘执行端：`agent/` 构建 `doops-agent`，负责目标机器上的 exec、push/pull、文件和 AI 任务
 - 运行安全边界：`doops-agent` 默认只启动 `doops-agent`、`do-agent`、`buildkitd`；默认不启动 SSH，不启动 WebIDE
 - 连接方式：CLI/skill 访问 gateway `42222`，gateway 通过已建立的 agent WebSocket 进入内网 agent
-- 鉴权方式：用户连接 gateway 使用 gateway user token；agent 使用绑定 `cluster/instance` 的 agent registration token 注册 gateway
+- 鉴权方式：用户连接 gateway 使用 gateway user token；agent 注册 gateway 不需要 token，只声明 `cluster/instance`
 - 代码同步：gateway 使用 Git HTTP；gateway 只通过已建立的 agent WebSocket 反向隧道透传 Git 请求，不再使用 tar 分块上传作为 `push/pull` 路径
 - 镜像构建：统一使用 `buildctl + buildkitd`
 
@@ -194,7 +194,7 @@ Doops 有两件事容易混淆，文档里必须先分开看：
 | :--- | :--- |
 | `ws(s)://<gateway>/v1/rpc` | 内网 agent 主动 `-gateway-url ... -cluster ... -instance ...` 连公网 gateway |
 
-是否“可以操作某节点”取决于该 agent 是否已经主动注册到 gateway。`doops targets --target <gateway-target>` 能看到对应 `cluster/instance` 在线，后续 `exec/ask/push/pull` 才能成功。如果某节点只是本地二进制直装且没有 `-gateway-url`，它不会自动出现在 gateway 里。
+是否“可以操作某节点”取决于该 agent 是否已经主动注册到 gateway。`doops targets --target <gateway-target>` 只查询配置中对应的 `cluster/instance`，离线时明确失败；需要列出当前凭据可见的全部在线节点时使用 `doops targets --gateway <url> --token <user-token>`。如果某节点只是本地二进制直装且没有 `-gateway-url`，它不会自动出现在 gateway 里。
 
 ## 客户端安装与连接
 
@@ -256,8 +256,8 @@ Skill 会随安装同步到项目目录。标准 target 的配置必须有 `gate
 
 ### 2. 通过 gateway 添加内网集群目标
 
-gateway 由管理员维护用户、user token、agent registration token 和授权。agent
-部署通过 Secret 消费绑定 `cluster/instance` 的 registration token；业务侧
+gateway 由管理员维护用户、user token 和授权。agent
+部署只声明绑定的 `cluster/instance`；业务侧
 CLI 配置只消费管理员发放的 user token，不直接维护 gateway 数据库。
 
 gateway 支持用户名密码登录，先换取 user token 再用 token 操作：
@@ -460,7 +460,7 @@ ls -lh skills/doops-cli/bin/
 
 - `doops` 日常连接不依赖 SSH。
 - `token` 在标准 target 配置里只表示 gateway user token。
-- agent registration token 只进入 agent 运行时 Secret，不写入标准 target 配置。
+- agent 注册不使用 token；遗留本机 `/ws` token 只用于直连保护，不写入标准 target 配置。
 - `doops-agent token` 只用于遗留直连或本机 `/ws` 保护。
 - `ssh_password` 只保留为 SSH bootstrap 参数。
 - `bash` 子命令仍是遗留 SSH 交互入口；推荐使用 `doops exec` 和 `doops ask`。

@@ -107,23 +107,17 @@ def test_oilan_agent_model_settings_are_secret_backed():
     assert env_value(container, "DOOPS_GATEWAY_URL")["value"] == "https://doops.l8ai.cn"
     assert env_value(container, "DOOPS_GATEWAY_CLUSTER")["value"] == "doops-edu"
     assert env_value(container, "DOOPS_GATEWAY_INSTANCE")["value"] == "edu-coder"
-    assert env_value(container, "DOOPS_AGENT_TOKEN_PATH")["value"] == "/run/secrets/doops/agent-token"
     assert '-listen "0.0.0.0"' in container["command"][-1]
     assert "-agent-token" not in container["command"][-1]
-    token_mount = next(
-        mount for mount in container["volumeMounts"] if mount["name"] == "agent-registration-token"
+    assert "DOOPS_AGENT_TOKEN_PATH" not in {item["name"] for item in container["env"]}
+    assert all(
+        mount["name"] != "agent-registration-token"
+        for mount in container["volumeMounts"]
     )
-    assert token_mount == {
-        "name": "agent-registration-token",
-        "mountPath": "/run/secrets/doops",
-        "readOnly": True,
-    }
-    token_volume = next(
-        volume for volume in deployment["spec"]["template"]["spec"]["volumes"]
-        if volume["name"] == "agent-registration-token"
+    assert all(
+        volume["name"] != "agent-registration-token"
+        for volume in deployment["spec"]["template"]["spec"]["volumes"]
     )
-    assert token_volume["secret"]["secretName"] == "doops-agent-runtime"
-    assert token_volume["secret"]["items"] == [{"key": "agent-token", "path": "agent-token"}]
     assert "/app/configure_kubeconfig.py" in SANDBOX_ENTRYPOINT.read_text()
     probes = {
         name: container[name]["exec"]["command"][-1]

@@ -1723,10 +1723,10 @@ func appendDoagentStructuredResultContract(
 ) string {
 	contract := instruction + "\n\nMachine-readable result channel: your final response is the machine result. " +
 		"It must contain exactly one JSON object with no Markdown or surrounding text. " +
-		"A DeploymentRun object has exactly five top-level fields: apiVersion, kind, metadata, spec, and status. " +
-		"metadata contains exactly workflow, runId, and workspaceCommit; spec contains exactly mode. " +
-		"Never put phase, mutationCount, capabilities, evidence, failures, executionMode, inputs, resultContract, runId, or workspaceCommit at the top level. " +
+		"The top-level object must be the complete DeploymentRun envelope with apiVersion, kind, metadata, spec, and status. It must contain exactly five top-level fields: apiVersion, kind, metadata, spec, and status; kind must be \"DeploymentRun\". Never put phase, mutationCount, capabilities, evidence, or failures at the top level. Never return the status object by itself. " +
+		"Copy required values from the request exactly: apiVersion=resultContract.apiVersion, metadata.workflow=workflowPath, metadata.runId=runId, metadata.workspaceCommit=workspaceCommit, and spec.mode=executionMode. Do not rename these output fields or put mode under metadata. " +
 		"For a DeploymentRun, status may contain only phase, mutationCount, capabilities, evidence, and failures. " +
+		"status.phase must be exactly one of planned, converged, blocked, failed, or outcome-unknown; do not use Succeeded, success, completed, or any other alias. " +
 		"Do not emit plannedMutations, runtimeAttestation, resultDigest, or any other status field. " +
 		"DeploymentRun evidence must be a non-empty array: before the final response, call at least one allowed trusted DoOps plan tool and reference that completed call. " +
 		"Every DeploymentRun evidence item must reference one of the allowed trusted DoOps plan tools; " +

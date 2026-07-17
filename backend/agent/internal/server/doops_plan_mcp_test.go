@@ -53,6 +53,27 @@ func TestDoopsPlanArtifactNameUsesDeclaredSourceArtifactName(t *testing.T) {
 	}
 }
 
+func TestRepositoryOilanRuntimeUsesDeclaredArtifactAndWorkloadBindings(t *testing.T) {
+	repositoryRoot := filepath.Clean(filepath.Join("..", "..", "..", ".."))
+	runtime, err := loadDoopsPlanRuntimeFromWorkspace(
+		repositoryRoot,
+		"backend/deploy/workflows/oilan-agent-bootstrap.yaml",
+		map[string]string{"releaseId": strings.Repeat("a", 40)},
+	)
+	if err != nil {
+		t.Fatalf("load Oilan runtime: %v", err)
+	}
+	if runtime.ArtifactNames["doops-agent"] != "doops.sh" {
+		t.Fatalf("artifact binding = %#v", runtime.ArtifactNames)
+	}
+	if runtime.WorkloadNames["doops-agent"] != "doops-agent-live" {
+		t.Fatalf("workload binding = %#v", runtime.WorkloadNames)
+	}
+	if runtime.WorkloadContainers["doops-agent"] != "doops-agent" {
+		t.Fatalf("container binding = %#v", runtime.WorkloadContainers)
+	}
+}
+
 func TestBuildDoopsPlanAttestedResultBindsTrustedContext(t *testing.T) {
 	context := trustedReconciliationContext{
 		SchemaVersion:      trustedReconciliationContextSchema,

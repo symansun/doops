@@ -228,7 +228,7 @@ func TestTrustedReconciliationContextDigestMatchesDoagentCanonicalJSON(t *testin
 	if err != nil {
 		t.Fatalf("calculate context digest: %v", err)
 	}
-	const want = "sha256:511ccf1c6389a50280913da368d30dffa425e9291ec403c43ca55d0a63edda0d"
+	const want = "sha256:1be324d22d5d173b19c54928bc7d66c330993f4fdbfe6312a9689be952c8655a"
 	if digest != want {
 		t.Fatalf("context digest = %q, want DoAgent JCS digest %q", digest, want)
 	}
@@ -548,8 +548,8 @@ func TestBuildDoagentPromptParamsUsesExactPlanToolsAndNoGenericTools(t *testing.
 	if err := json.Unmarshal(encodedContext, &contextFields); err != nil {
 		t.Fatalf("decode trusted context: %v", err)
 	}
-	if _, exists := contextFields["credentialRunDigest"]; exists {
-		t.Fatalf("v1 trusted context must preserve the doagent-compatible field set: %#v", contextFields)
+	if value, exists := contextFields["credentialRunDigest"]; !exists || value != "" {
+		t.Fatalf("v1 trusted context must include an empty credential run digest when unset: %#v", contextFields)
 	}
 	for _, forbidden := range []string{"Bash", "Read", "Agent", "Glob"} {
 		if containsString(allowed, forbidden) {
