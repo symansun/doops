@@ -13,6 +13,7 @@ func TestDispatcherBlocksDirectAgentSelfMutation(t *testing.T) {
 		"systemctl restart doops-agent",
 		"service doops-agent restart",
 		"kubectl apply -f doops-agent.yaml",
+		"printf '%s' 'encoded-job' | base64 -d | kubectl apply -f -",
 	}
 	for _, command := range commands {
 		if got := dispatcher.Classify(command); got != PathBlocked {
@@ -26,6 +27,7 @@ func TestDispatcherAllowsOtherServiceMutation(t *testing.T) {
 	dispatcher := NewDispatcher()
 	commands := []string{
 		"kubectl set image deployment/api api=image:v2",
+		"kubectl apply -f api.yaml",
 		"systemctl restart nginx",
 	}
 	for _, command := range commands {
