@@ -49,3 +49,27 @@ pnpm build
 Daily operations go through `doops-gateway` and registered `doops-agent`
 instances. Do not rely on SSH credentials for normal agent operations; remote
 actions should travel through doops RPC, gateway routing, and agent-side tools.
+
+## Development Credential Preflight
+
+Projects can commit a metadata-only `.agent/doops-credentials.yaml` so an Agent
+checks required managed credential references before Git, registry, Helm, TLS,
+or API development work:
+
+```yaml
+apiVersion: doops.sh/v1
+kind: DevelopmentCredentialRequirements
+target: gw-edu-coder
+credentials:
+  - credentialRef: cnb-development
+    use: gitCheckout
+```
+
+```bash
+doops -session dev-preflight credential preflight \
+  --manifest .agent/doops-credentials.yaml
+```
+
+The manifest accepts credential references and uses only. It never contains or
+returns payloads, does not grant authority, and fails for missing references,
+wrong uses, revoked grants, target conflicts, or ambiguous names.

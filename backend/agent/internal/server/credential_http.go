@@ -502,7 +502,7 @@ func (h *GatewayHub) handleCredentialList(w http.ResponseWriter, r *http.Request
 			return
 		}
 		entries, err := h.store.ListCredentialAccess(
-			auth.UserID, cluster, instance, h.store.UserIsPlatformAdmin(auth.UserID),
+			auth.UserID, cluster, instance, false,
 		)
 		if err != nil {
 			http.Error(w, "failed to list target credentials", http.StatusInternalServerError)

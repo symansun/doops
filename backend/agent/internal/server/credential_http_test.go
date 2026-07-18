@@ -315,6 +315,7 @@ func TestTargetScopedCredentialActionDoesNotGrantPlatformAdministration(t *testi
 }
 
 func TestCredentialHTTPListIsIsolatedByUserAndTarget(t *testing.T) {
+	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("l", 32))
 	store := openCredentialTestStore(t)
 	admin, adminToken := createCredentialHTTPUser(t, store, "credential-admin", true)
 	user, userToken := createCredentialHTTPUser(t, store, "target-user", false)
@@ -335,7 +336,7 @@ func TestCredentialHTTPListIsIsolatedByUserAndTarget(t *testing.T) {
 		t.Fatalf("create target A credential: %v", err)
 	}
 	targetB, err := store.CreateCredential(CredentialCreateRequest{
-		Name: "target-b-personal", Scope: CredentialScopePersonal, Type: CredentialTypeTLS,
+		Name: "target-b-personal", Scope: CredentialScopePersonal, Type: CredentialTypeRegistry,
 		OwnerID: other.ID, CreatedBy: other.ID,
 	})
 	if err != nil {
@@ -343,11 +344,29 @@ func TestCredentialHTTPListIsIsolatedByUserAndTarget(t *testing.T) {
 	}
 	for _, item := range []struct {
 		resource CredentialResource
+		actorID  string
+	}{
+		{targetA, admin.ID},
+		{targetB, other.ID},
+	} {
+		if _, err := store.PutCredentialVersion(CredentialVersionPutRequest{
+			CredentialID: item.resource.ID,
+			Payload: json.RawMessage(
+				`{"server":"registry.example.com","username":"synthetic","password":"synthetic"}`,
+			),
+			CreatedBy: item.actorID,
+			Activate:  true,
+		}); err != nil {
+			t.Fatalf("activate target credential version: %v", err)
+		}
+	}
+	for _, item := range []struct {
+		resource CredentialResource
 		scope    CredentialGrantScope
 		creator  string
 	}{
 		{targetA, credentialHTTPTestTLSOrOpaqueScope("cluster-a", "instance-a", CredentialUseImagePull), admin.ID},
-		{targetB, credentialHTTPTestTLSOrOpaqueScope("cluster-b", "instance-b", CredentialUseTLS), other.ID},
+		{targetB, credentialHTTPTestTLSOrOpaqueScope("cluster-b", "instance-b", CredentialUseImagePull), other.ID},
 	} {
 		if _, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 			CredentialID: item.resource.ID,
@@ -432,6 +451,12 @@ func TestCredentialHTTPListIsIsolatedByUserAndTarget(t *testing.T) {
 		"/v1/credentials?view=target&cluster=cluster-a&instance=instance-a", nil)
 	if otherTargetA.Code != http.StatusOK || strings.Contains(otherTargetA.Body.String(), targetA.ID) {
 		t.Fatalf("other user saw target A credential: HTTP %d: %s", otherTargetA.Code, otherTargetA.Body.String())
+	}
+	adminTargetA := credentialHTTPRequest(t, mux, adminToken, http.MethodGet,
+		"/v1/credentials?view=target&cluster=cluster-a&instance=instance-a", nil)
+	if adminTargetA.Code != http.StatusOK || strings.Contains(adminTargetA.Body.String(), targetA.ID) {
+		t.Fatalf("platform admin saw another user's target grant: HTTP %d: %s",
+			adminTargetA.Code, adminTargetA.Body.String())
 	}
 }
 

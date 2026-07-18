@@ -290,7 +290,7 @@ func (s *GatewayStore) ListCredentialAccess(
 	if actorID == "" || cluster == "" || instance == "" {
 		return nil, fmt.Errorf("credential actor, cluster, and instance are required")
 	}
-	args := []any{CredentialStateActive, CredentialStateActive}
+	args := []any{CredentialStateActive, CredentialStateActive, CredentialVersionActive}
 	granteeClause := ""
 	if !includeAllGrantees {
 		granteeClause = " AND g.grantee_id = ?"
@@ -303,7 +303,11 @@ func (s *GatewayStore) ListCredentialAccess(
 			g.created_by, g.created_at, g.revoked_at
 		FROM credentials c
 		JOIN credential_grants g ON g.credential_id = c.id
-		WHERE c.state = ? AND g.state = ?`+granteeClause+`
+		WHERE c.state = ? AND g.state = ?
+		  AND EXISTS (
+			SELECT 1 FROM credential_versions v
+			WHERE v.credential_id = c.id AND v.state = ?
+		  )`+granteeClause+`
 		ORDER BY c.created_at DESC, g.created_at DESC`, args...)
 	if err != nil {
 		return nil, err

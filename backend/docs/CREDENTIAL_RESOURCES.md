@@ -31,10 +31,50 @@ doops credential list --target <target>
 doops credential list --target <target> --view managed
 ```
 
-- 默认 `target` 视图只返回当前用户在该 target 上拥有 active grant 的 active resource。
+- 默认 `target` 视图只返回当前用户在该 target 上拥有 active grant 且存在 active version
+  的 active resource。
 - `managed` 视图返回当前用户拥有的 personal resource；platform admin 可查看平台资源。
 - target 视图不返回 owner、creator、grantee 或 payload 等管理/秘密字段。
 - 未授权详情使用 404，避免泄露资源是否存在。
+
+## 开发凭据 Preflight
+
+开发项目可在 `.agent/doops-credentials.yaml` 声明需要使用的受管凭据引用：
+
+```yaml
+apiVersion: doops.sh/v1
+kind: DevelopmentCredentialRequirements
+target: gw-114-k8s
+credentials:
+  - credentialRef: cnb-development
+    use: gitCheckout
+  - credentialRef: cnb-registry
+    use: imagePull
+```
+
+执行检查：
+
+```bash
+doops -session dev-preflight-<task> credential preflight \
+  --manifest .agent/doops-credentials.yaml
+```
+
+Given 当前用户已经登录且精确 target grant 为 active，When preflight 查询 manifest 中的
+每个 `credentialRef + use`，Then 全部匹配时返回 `credential_preflight=ready`；缺失、
+use 不匹配、revoked grant 或同名资源不唯一时返回非零。
+
+安全边界：
+
+- manifest 只能包含 `apiVersion`、`kind`、`target`、`credentials[].credentialRef`
+  和 `credentials[].use`；
+- unknown field 会被严格拒绝，因此 password、token、cookie、payload 和本地 secret
+  路径不能混入清单；
+- `credentialRef` 只接受小写字母、数字、点和连字符组成的资源名，不接受 URL、文件路径、
+  token 形态或 fallback 值；
+- manifest 可以进入 Git，但它只是需求清单，不创建 grant、不授予权限、不物化 secret；
+- preflight 不从项目名、目录、prompt 或历史命令推断 credentialRef；
+- preflight 不为本机进程或远端 workspace 注入 payload。实际使用仍走精确 grant、
+  verification、promotion 和内部 materialization。
 
 ## Scope 和权限
 
