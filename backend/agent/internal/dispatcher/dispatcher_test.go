@@ -8,7 +8,6 @@ func TestDispatcherBlocksDirectAgentSelfMutation(t *testing.T) {
 	commands := []string{
 		"kubectl -n doops-system set image deployment/doops-agent doops-agent=image:v2",
 		"kubectl rollout restart deployment/doops-agent -n doops-system",
-		"helm upgrade doops-agent ./chart -n doops-system",
 		"docker restart doops-agent",
 		"systemctl restart doops-agent",
 		"service doops-agent restart",
@@ -28,6 +27,9 @@ func TestDispatcherAllowsOtherServiceMutation(t *testing.T) {
 	commands := []string{
 		"kubectl set image deployment/api api=image:v2",
 		"kubectl apply -f api.yaml",
+		"helm upgrade --install doops-agent ./deploy/helm/doops-agent -n kz-ops",
+		"helm rollback doops-agent 2 -n kz-ops",
+		"helm uninstall doops-agent -n kz-ops",
 		"systemctl restart nginx",
 	}
 	for _, command := range commands {
