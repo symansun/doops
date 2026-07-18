@@ -117,6 +117,12 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
         "zhiyong-deploy-secrets.yml"
     ]
     assert bootstrap_pipelines[0]["imports"] == deploy_pipelines[0]["imports"]
+    deploy_script = deploy_pipelines[0]["stages"][1]["script"]
+    assert "grep -Eq" not in deploy_script
+    assert "validate_simple_name" in deploy_script
+    assert "validate_single_line" in deploy_script
+    assert 'test "${#image_digest}" -eq 64' in deploy_script
+    assert 'case "/${DOOPS_HELM_ASSET}/" in' in deploy_script
     assert '"https://doops.l8ai.cn"' in cnb
     assert '-session "${DOOPS_SESSION}" push' in cnb
     assert "--src backend" in cnb
@@ -157,6 +163,7 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert 'test "${DOOPS_RUNNER_RELEASE}" != "${DOOPS_MANAGED_RELEASE}"' in cnb
     assert 'test "${DOOPS_RUNNER_INSTANCE}" != "${DOOPS_INSTANCE}"' in cnb
     assert "helm uninstall" in cnb
+    assert "seq 1 150" in cnb
     bootstrap_script = (
         BACKEND / "scripts" / "bootstrap-release-runner.sh"
     ).read_text(encoding="utf-8")
