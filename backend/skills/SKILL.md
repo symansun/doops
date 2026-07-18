@@ -1,8 +1,7 @@
 ---
 name: doops-server
 description: |
-  用 doops 连接和操作 doops-agent 节点。doops 是 SSH 的替代入口，默认通过
-  doops-gateway 进入内网 agent；直连 agent 只作为遗留自举/排障路径。
+  用 doops 通过 doops-gateway 连接和操作主动注册的 doops-agent 节点。
 ---
 
 ## Skill 定位
@@ -21,8 +20,8 @@ description: |
 
 - 优先使用 PATH 中的 `doops`；标准安装路径是 `~/.local/bin/doops`。
 - 所有远端调用必须带 `-session <name>`。
-- 默认使用 Gateway 模式；日常 target 必须是 gateway target。
-- SSH 只用于首次安装、自恢复 agent，以及发布 `doops-gateway` 控制面；不是日常 target 操作入口。
+- CLI 只接受 Gateway target；不存在直连 target、SSH target 或按 target 保存 token 的模式。
+- SSH 只用于首次安装、自恢复 agent，以及发布 `doops-gateway` 控制面；DoOps CLI 不提供 SSH 或直连 Agent 入口。
 - `doops-gateway` 是独立发布包，必须用 `scripts/deploy-gateway.sh --host <gateway-host>` 从 SSH 宿主机上下文发布。
 - gateway 控制面不登记为 doops target，不通过任何 doops target 发布 gateway 本体。
 - 不要用 base64、tar 或手写分片传输绕过 `push`。`doops_workspace_*` 是低层兼容 JSON-RPC 工具，不是 CLI、发布脚本和 skill 的标准路径；如果看到 512KB 分块日志，说明调用方绕过了当前 `doops push/pull`。应修复 Git HTTP 反向隧道、目标 agent 版本或发布脚本。
@@ -35,7 +34,6 @@ description: |
 - 不要混用 token：
   - gateway CLI 操作用 gateway user token。
   - agent 注册 gateway 不使用 token，只声明 cluster/instance。
-  - 遗留直连 agent token 只用于本机 `/ws` 保护，不写入标准 target 配置。
 - 不要在日志、终端输出、文档、提交记录里暴露完整 token。
 - 如果用户是在发账号、发 token、授权、查审计、清理审计、查看/取消 gateway active operations，要按 gateway 管理动作处理，不要混成普通 target 运维。
 - 遇到 `user operation limit exceeded` 时，先用 `doops admin operations list --target <gateway-target>` 查占槽操作；确认 stale 后再用 `doops admin operations cancel --target <gateway-target> --id <operation-id>` 取消。升级后的 agent 会按进程组终止 shell 类命令；`ask` 需要额外核查 doagent session 是否仍在工作。
@@ -62,7 +60,7 @@ Doops CLI 默认只有一个配置源：
 - `~/.doops/auth.json`
 - 项目 `.doops/`
 
-`DOOPS_CONFIG=/path/to/config.json` 只用于测试和应急显式覆盖。
+`DOOPS_CONFIG=/path/to/config.json` 只改变配置文件位置，仍执行相同的严格 Gateway-only schema 校验。
 
 标准配置文件只放 gateway target：
 
@@ -111,7 +109,7 @@ doops add \
 doops login --target jm
 ```
 
-首次安装 agent 到新机器、K8s/DaemonSet 接入、裸二进制迁移等细节见 `docs/CLUSTER_INSTALL_GUIDE.md`。如果必须临时排查遗留直连节点，要在问题结论里明确标注它不是标准 gateway target。
+Agent 的 K8s/容器部署和 Gateway 注册见 `docs/CLUSTER_INSTALL_GUIDE.md`。CLI 只有在 Gateway heartbeat 可见后才能操作该节点。
 
 ## 使用引导
 
@@ -188,6 +186,6 @@ docs/DOOPS_MAINTENANCE_LOG.md
 - 凭据物化失败：按 Gateway 返回的错误类别定位目标或权限状态；不得重试、猜测或将 payload 放入任务。
 - target 不在线：先跑 `doops targets --target <gateway-target>`。
 - `busy=true`：表示 target-wide 阻塞；`status=active` 且 `busy=false` 表示有 session 在跑，但其它 session 仍可使用。
-- gateway `push/pull` 失败：确认 `/v1/git/<cluster>/<instance>/<session>.git` 能路由到在线 agent，并检查 agent 本地 `/git/` handler/token。
+- gateway `push/pull` 失败：确认 `/v1/git/<cluster>/<instance>/<session>.git` 能路由到在线 agent，并检查反向隧道内的 Git handler。
 
 更完整的 API、隧道和故障细节见 `docs/DOOPS_GATEWAY_TUNNEL.md`、`docs/DOOPS_API_GUIDE.md`。

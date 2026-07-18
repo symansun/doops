@@ -51,9 +51,6 @@ func (gw *Gateway) handleGitHTTPOverWS(ctx context.Context, reqID interface{}, p
 	defer req.Body.Close()
 	req.Header.Del("Authorization")
 	req.Header.Del("X-Doops-Key")
-	if gw.Token != "" {
-		req.SetBasicAuth("doops", gw.Token)
-	}
 
 	rw := newWSGitResponseWriter(reqID, writeJSON)
 	defer func() {

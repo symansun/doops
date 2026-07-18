@@ -39,13 +39,6 @@ type sessionEntry struct {
 type Gateway struct {
 	Dispatcher *dispatcher.Dispatcher
 	mu         sync.RWMutex
-	Port       string
-	Token      string
-
-	// InsecureGit allows anonymous git push/pull when no Token is configured.
-	// It must be explicitly opted into (e.g. via --insecure-git); otherwise
-	// the git endpoint default-denies when Token is empty.
-	InsecureGit bool
 
 	// 异步任务注册表
 	tasks   map[string]*bgTask
@@ -58,15 +51,13 @@ type Gateway struct {
 	// 容器运行时 (启动时自动检测: nerdctl > docker > podman)
 	containerRuntime string
 
-	// Git HTTP handler is used by both the local /git endpoint and the
-	// reverse gateway tunnel endpoint.
+	// Git HTTP handler is invoked only through the authorized reverse tunnel.
 	gitHandler http.Handler
 }
 
-func NewGateway(port string) *Gateway {
+func NewGateway() *Gateway {
 	gw := &Gateway{
 		Dispatcher: dispatcher.NewDispatcher(),
-		Port:       port,
 		tasks:      make(map[string]*bgTask),
 		sessionMap: make(map[string]*sessionEntry),
 	}
@@ -144,19 +135,11 @@ func (gw *Gateway) detectContainerRuntime() {
 
 // SetupGitHandler 配置原生的 Git HTTP 代理，并在每次收到 push 后通过钩子自动向 /root/ws/{sessionID} 释放代码
 func (gw *Gateway) SetupGitHandler() {
-	// Require authentication unless the operator explicitly opted into
-	// anonymous git via InsecureGit while no Token is configured. When a Token
-	// is set we always require auth. When no Token is set and InsecureGit is
-	// false we still enable auth so the (default-deny) AuthFunc rejects pushes.
-	requireAuth := gw.Token != "" || !gw.InsecureGit
-	if gw.Token == "" && gw.InsecureGit {
-		log.Printf("   ⚠️ Git endpoint running WITHOUT authentication (--insecure-git); anyone who can reach it may push/pull")
-	}
 	service := gitkit.New(gitkit.Config{
 		Dir:        "/tmp/repos",
 		AutoCreate: true,
 		AutoHooks:  true,
-		Auth:       requireAuth,
+		Auth:       false,
 		Hooks: &gitkit.HookScripts{
 			PostReceive: `#!/bin/bash
 set -e
@@ -190,17 +173,8 @@ echo "remote: ✅ doops-agent: Successfully deployed code to $DEST"
 		log.Fatalf("Failed to setup git service: %v", err)
 	}
 
-	service.AuthFunc = func(cred gitkit.Credential, _ *gitkit.Request) (bool, error) {
-		if gw.Token == "" {
-			// No token configured: only allow when anonymous git is explicitly enabled.
-			return gw.InsecureGit, nil
-		}
-		return secureTokenEqual(cred.Password, gw.Token), nil
-	}
-
 	gw.gitHandler = http.StripPrefix("/git", service)
-	http.Handle("/git/", gw.gitHandler)
-	log.Printf("   Git endpoint: http://127.0.0.1:%s/git/", gw.Port)
+	log.Printf("   Git handler ready for Gateway reverse-tunnel requests")
 }
 
 // --- 异步后台任务管理 ---

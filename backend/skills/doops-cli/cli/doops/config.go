@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,34 +13,12 @@ import (
 )
 
 type Server struct {
-	Name        string   `json:"name"`
-	Aliases     []string `json:"aliases,omitempty"`
-	IP          string   `json:"ip,omitempty"`
-	Port        string   `json:"port,omitempty"`
-	Use         string   `json:"use"`
-	Token       string   `json:"token,omitempty"`
-	Gateway     string   `json:"gateway,omitempty"`
-	Cluster     string   `json:"cluster,omitempty"`
-	Instance    string   `json:"instance,omitempty"`
-	SSHUser     string   `json:"ssh_user,omitempty"`
-	SSHPort     string   `json:"ssh_port,omitempty"`
-	SSHPassword string   `json:"ssh_password,omitempty"`
-}
-
-// GetSSHUser 返回 SSH 用户名，默认 root
-func (s Server) GetSSHUser() string {
-	if s.SSHUser != "" {
-		return s.SSHUser
-	}
-	return "root"
-}
-
-// GetSSHPort 返回 SSH 端口，默认 22
-func (s Server) GetSSHPort() string {
-	if s.SSHPort != "" {
-		return s.SSHPort
-	}
-	return "22"
+	Name     string   `json:"name"`
+	Aliases  []string `json:"aliases,omitempty"`
+	Use      string   `json:"use"`
+	Gateway  string   `json:"gateway"`
+	Cluster  string   `json:"cluster"`
+	Instance string   `json:"instance"`
 }
 
 type SessionInfo struct {
@@ -162,10 +142,8 @@ func LoadConfig() ([]Server, LLMConfig, error) {
 	if err != nil {
 		return nil, LLMConfig{}, err
 	}
-	if strings.TrimSpace(os.Getenv("DOOPS_CONFIG")) == "" {
-		if err := validateGatewayServers(servers); err != nil {
-			return nil, LLMConfig{}, fmt.Errorf("invalid canonical config: %w", err)
-		}
+	if err := validateGatewayServers(servers); err != nil {
+		return nil, LLMConfig{}, fmt.Errorf("invalid Gateway config: %w", err)
 	}
 	return servers, llm, nil
 }
@@ -176,24 +154,16 @@ func loadPath(path string) ([]Server, LLMConfig, error) {
 		return nil, LLMConfig{}, err
 	}
 
-	// Try New Format (Object)
 	var root RootConfig
-	if err := json.Unmarshal(data, &root); err == nil && len(root.Servers) > 0 {
-		return root.Servers, root.LLM, nil
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&root); err != nil {
+		return nil, LLMConfig{}, fmt.Errorf("failed to parse config at %s: %w", path, err)
 	}
-
-	// Try Old Format (Array)
-	var servers []Server
-	if err := json.Unmarshal(data, &servers); err == nil {
-		return servers, LLMConfig{}, nil
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, LLMConfig{}, fmt.Errorf("failed to parse config at %s: trailing JSON data", path)
 	}
-
-	// Try New Format again (maybe servers empty but LLM exists?)
-	if err := json.Unmarshal(data, &root); err == nil {
-		return root.Servers, root.LLM, nil
-	}
-
-	return nil, LLMConfig{}, fmt.Errorf("failed to parse config at %s", path)
+	return root.Servers, root.LLM, nil
 }
 
 func LoadServers() ([]Server, error) {
@@ -270,12 +240,6 @@ func validateGatewayServers(servers []Server) error {
 		name := strings.TrimSpace(server.Name)
 		if name == "" {
 			return fmt.Errorf("target name is empty")
-		}
-		if strings.TrimSpace(server.IP) != "" || strings.TrimSpace(server.Port) != "" {
-			return fmt.Errorf("target %q uses a retired direct route; migrate it to --gateway --cluster --instance", name)
-		}
-		if strings.TrimSpace(server.Token) != "" {
-			return fmt.Errorf("target %q contains a retired per-target token; migrate it to Gateway auth.json", name)
 		}
 		if strings.TrimSpace(server.Gateway) == "" || strings.TrimSpace(server.Cluster) == "" || strings.TrimSpace(server.Instance) == "" {
 			return fmt.Errorf("target %q has an incomplete Gateway route", name)

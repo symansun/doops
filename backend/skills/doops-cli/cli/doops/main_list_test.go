@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,61 +35,14 @@ func TestPrintServerListShowsGatewayRoutesOnly(t *testing.T) {
 	}
 }
 
-func TestPrintServerListRejectsRetiredTargetState(t *testing.T) {
-	tests := []struct {
-		name   string
-		server Server
-		want   string
-	}{
-		{
-			name:   "direct route",
-			server: Server{Name: "legacy", IP: "192.0.2.10", Port: "42222"},
-			want:   "retired direct route",
-		},
-		{
-			name: "per-target token",
-			server: Server{
-				Name:     "stale-token",
-				Gateway:  "https://doops.example.com",
-				Cluster:  "prod",
-				Instance: "node-1",
-				Token:    "secret",
-			},
-			want: "retired per-target token",
-		},
-		{
-			name:   "incomplete gateway route",
-			server: Server{Name: "incomplete", Gateway: "https://doops.example.com"},
-			want:   "incomplete Gateway route",
-		},
+func TestPrintServerListRejectsIncompleteGatewayRoute(t *testing.T) {
+	var out bytes.Buffer
+	err := printServerList(&out, []Server{{Name: "incomplete", Gateway: "https://doops.example.com"}})
+	if err == nil || !strings.Contains(err.Error(), "incomplete Gateway route") {
+		t.Fatalf("expected incomplete route rejection, got %v", err)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var out bytes.Buffer
-			err := printServerList(&out, []Server{tt.server})
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("expected error containing %q, got %v", tt.want, err)
-			}
-			if out.Len() != 0 {
-				t.Fatalf("invalid config produced partial list output: %q", out.String())
-			}
-		})
-	}
-}
-
-func TestValidateGatewayAddFlagsRejectsExplicitEmptyLegacyFlags(t *testing.T) {
-	for _, name := range []string{"ip", "port", "token"} {
-		t.Run(name, func(t *testing.T) {
-			flags := flag.NewFlagSet("add", flag.ContinueOnError)
-			flags.String(name, "", "")
-			if err := flags.Parse([]string{"--" + name + "="}); err != nil {
-				t.Fatalf("parse flag: %v", err)
-			}
-			if err := validateGatewayAddFlags(flags); err == nil {
-				t.Fatalf("expected explicit --%s= to be rejected", name)
-			}
-		})
+	if out.Len() != 0 {
+		t.Fatalf("invalid config produced partial list output: %q", out.String())
 	}
 }
 
@@ -212,29 +164,8 @@ func TestSaveServersDoesNotOverwriteInvalidExistingConfig(t *testing.T) {
 	}
 }
 
-func TestLoadConfigRejectsDirectTargetInCanonicalPath(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("DOOPS_CONFIG", "")
-	configDir := filepath.Join(home, ".agent", "skills", "doops")
-	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		t.Fatalf("create config dir: %v", err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(configDir, "config.json"),
-		[]byte(`{"servers":[{"name":"legacy","ip":"192.0.2.10","port":"42222"}]}`),
-		0o600,
-	); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	if _, _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), "invalid canonical config") {
-		t.Fatalf("expected canonical direct target rejection, got %v", err)
-	}
-}
-
-func TestExplicitConfigOverrideCanLoadLegacyTargetForDiagnostics(t *testing.T) {
-	configPath := filepath.Join(t.TempDir(), "legacy.json")
+func TestEveryConfigSourceRejectsRetiredTargetFields(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("DOOPS_CONFIG", configPath)
 	if err := os.WriteFile(
 		configPath,
@@ -244,24 +175,18 @@ func TestExplicitConfigOverrideCanLoadLegacyTargetForDiagnostics(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	servers, _, err := LoadConfig()
-	if err != nil {
-		t.Fatalf("load explicit diagnostic config: %v", err)
-	}
-	if len(servers) != 1 || servers[0].Name != "legacy" {
-		t.Fatalf("unexpected explicit config: %#v", servers)
+	if _, _, err := LoadConfig(); err == nil || !strings.Contains(err.Error(), `unknown field "ip"`) {
+		t.Fatalf("expected strict override config rejection, got %v", err)
 	}
 }
 
-func TestLegacyDirectServerJSONKeepsNonEmptyRouteFields(t *testing.T) {
-	data, err := json.Marshal(Server{Name: "legacy", IP: "192.0.2.10", Port: "42222"})
-	if err != nil {
-		t.Fatalf("marshal server: %v", err)
+func TestLoadConfigRejectsLegacyArrayFormat(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("DOOPS_CONFIG", configPath)
+	if err := os.WriteFile(configPath, []byte(`[{"name":"legacy"}]`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
 	}
-	got := string(data)
-	for _, want := range []string{`"ip":"192.0.2.10"`, `"port":"42222"`} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("legacy JSON missing %s: %s", want, got)
-		}
+	if _, _, err := LoadConfig(); err == nil {
+		t.Fatal("expected legacy array config to be rejected")
 	}
 }

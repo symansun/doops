@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 )
@@ -91,10 +90,9 @@ func runCredentialCommand(args []string, servers []Server, configErr error, stdi
 }
 
 func runCredentialGrantRevoke(args []string, servers []Server, configErr error, stdout io.Writer) error {
-	var target, gateway, id, grantID string
+	var target, id, grantID string
 	flags := credentialFlagSet("credential grant-revoke")
 	flags.StringVar(&target, "target", "", "Configured gateway target")
-	flags.StringVar(&gateway, "gateway", "", "Gateway URL")
 	flags.StringVar(&id, "id", "", "Credential ID")
 	flags.StringVar(&grantID, "grant-id", "", "Credential grant ID")
 	if err := flags.Parse(args); err != nil {
@@ -103,7 +101,7 @@ func runCredentialGrantRevoke(args []string, servers []Server, configErr error, 
 	if flags.NArg() != 0 || strings.TrimSpace(id) == "" || strings.TrimSpace(grantID) == "" {
 		return fmt.Errorf("--id and --grant-id are required")
 	}
-	gateway, token, err := resolveCredentialGateway(target, gateway, servers, configErr)
+	gateway, token, err := resolveCredentialGateway(target, servers, configErr)
 	if err != nil {
 		return err
 	}
@@ -124,10 +122,9 @@ func runCredentialGrantRevoke(args []string, servers []Server, configErr error, 
 }
 
 func runCredentialBundleCreate(args []string, servers []Server, configErr error, stdin io.Reader, stdout io.Writer) error {
-	var target, gateway string
+	var target string
 	flags := credentialFlagSet("credential bundle-create")
 	flags.StringVar(&target, "target", "", "Configured gateway target")
-	flags.StringVar(&gateway, "gateway", "", "Gateway URL")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -138,7 +135,7 @@ func runCredentialBundleCreate(args []string, servers []Server, configErr error,
 	if err != nil {
 		return err
 	}
-	gateway, token, err := resolveCredentialGateway(target, gateway, servers, configErr)
+	gateway, token, err := resolveCredentialGateway(target, servers, configErr)
 	if err != nil {
 		return err
 	}
@@ -159,10 +156,9 @@ func runCredentialBundleCreate(args []string, servers []Server, configErr error,
 }
 
 func runCredentialBundleGet(args []string, servers []Server, configErr error, stdout io.Writer) error {
-	var target, gateway, name string
+	var target, name string
 	flags := credentialFlagSet("credential bundle-get")
 	flags.StringVar(&target, "target", "", "Configured gateway target")
-	flags.StringVar(&gateway, "gateway", "", "Gateway URL")
 	flags.StringVar(&name, "name", "", "Credential bundle name")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -170,7 +166,7 @@ func runCredentialBundleGet(args []string, servers []Server, configErr error, st
 	if flags.NArg() != 0 || strings.TrimSpace(name) == "" {
 		return fmt.Errorf("--name is required")
 	}
-	gateway, token, err := resolveCredentialGateway(target, gateway, servers, configErr)
+	gateway, token, err := resolveCredentialGateway(target, servers, configErr)
 	if err != nil {
 		return err
 	}
@@ -192,10 +188,9 @@ func runCredentialBundleGet(args []string, servers []Server, configErr error, st
 }
 
 func runCredentialCreate(args []string, servers []Server, configErr error, stdout io.Writer) error {
-	var target, gateway, name, scope, credentialType string
+	var target, name, scope, credentialType string
 	flags := credentialFlagSet("credential create")
 	flags.StringVar(&target, "target", "", "Configured gateway target")
-	flags.StringVar(&gateway, "gateway", "", "Gateway URL")
 	flags.StringVar(&name, "name", "", "Credential name")
 	flags.StringVar(&scope, "scope", "", "Credential scope: personal or platform")
 	flags.StringVar(&credentialType, "type", "", "Credential type")
@@ -206,7 +201,7 @@ func runCredentialCreate(args []string, servers []Server, configErr error, stdou
 		return fmt.Errorf("--name, --scope and --type are required")
 	}
 	var err error
-	gateway, token, err := resolveCredentialGateway(target, gateway, servers, configErr)
+	gateway, token, err := resolveCredentialGateway(target, servers, configErr)
 	if err != nil {
 		return err
 	}
@@ -234,10 +229,9 @@ func runCredentialCreate(args []string, servers []Server, configErr error, stdou
 }
 
 func runCredentialList(args []string, servers []Server, configErr error, stdout io.Writer) error {
-	var target, gateway string
+	var target string
 	flags := credentialFlagSet("credential list")
 	flags.StringVar(&target, "target", "", "Configured gateway target")
-	flags.StringVar(&gateway, "gateway", "", "Gateway URL")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -245,7 +239,7 @@ func runCredentialList(args []string, servers []Server, configErr error, stdout 
 		return fmt.Errorf("credential list accepts no positional arguments")
 	}
 	var err error
-	gateway, token, err := resolveCredentialGateway(target, gateway, servers, configErr)
+	gateway, token, err := resolveCredentialGateway(target, servers, configErr)
 	if err != nil {
 		return err
 	}
@@ -269,10 +263,9 @@ func runCredentialList(args []string, servers []Server, configErr error, stdout 
 }
 
 func runCredentialPut(args []string, servers []Server, configErr error, stdin io.Reader, stdout io.Writer) error {
-	var target, gateway, id string
+	var target, id string
 	flags := credentialFlagSet("credential put")
 	flags.StringVar(&target, "target", "", "Configured gateway target")
-	flags.StringVar(&gateway, "gateway", "", "Gateway URL")
 	flags.StringVar(&id, "id", "", "Credential ID")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -284,7 +277,7 @@ func runCredentialPut(args []string, servers []Server, configErr error, stdin io
 	if err != nil {
 		return err
 	}
-	gateway, token, err := resolveCredentialGateway(target, gateway, servers, configErr)
+	gateway, token, err := resolveCredentialGateway(target, servers, configErr)
 	if err != nil {
 		return err
 	}
@@ -309,12 +302,11 @@ func runCredentialPut(args []string, servers []Server, configErr error, stdin io
 }
 
 func runCredentialGrant(args []string, servers []Server, configErr error, stdout io.Writer) error {
-	var target, gateway, id, granteeID string
+	var target, id, granteeID string
 	var cluster, instance, namespace, use, workloadKind, workloadName string
 	var imageRepository, imageDigest, helmRelease, helmChart, requiredKeys string
 	flags := credentialFlagSet("credential grant")
 	flags.StringVar(&target, "target", "", "Configured gateway target")
-	flags.StringVar(&gateway, "gateway", "", "Gateway URL")
 	flags.StringVar(&id, "id", "", "Credential ID")
 	flags.StringVar(&granteeID, "grantee-id", "", "Gateway user ID receiving the grant")
 	flags.StringVar(&cluster, "cluster", "", "Target cluster")
@@ -340,7 +332,7 @@ func runCredentialGrant(args []string, servers []Server, configErr error, stdout
 	if err != nil {
 		return err
 	}
-	gateway, token, err := resolveCredentialGateway(target, gateway, servers, configErr)
+	gateway, token, err := resolveCredentialGateway(target, servers, configErr)
 	if err != nil {
 		return err
 	}
@@ -385,10 +377,9 @@ func runCredentialGrant(args []string, servers []Server, configErr error, stdout
 }
 
 func runCredentialPromote(args []string, servers []Server, configErr error, stdout io.Writer) error {
-	var target, gateway, id, versionID string
+	var target, id, versionID string
 	flags := credentialFlagSet("credential promote")
 	flags.StringVar(&target, "target", "", "Configured gateway target")
-	flags.StringVar(&gateway, "gateway", "", "Gateway URL")
 	flags.StringVar(&id, "id", "", "Credential ID")
 	flags.StringVar(&versionID, "version-id", "", "Credential version ID")
 	if err := flags.Parse(args); err != nil {
@@ -397,7 +388,7 @@ func runCredentialPromote(args []string, servers []Server, configErr error, stdo
 	if flags.NArg() != 0 || strings.TrimSpace(id) == "" || strings.TrimSpace(versionID) == "" {
 		return fmt.Errorf("--id and --version-id are required")
 	}
-	gateway, token, err := resolveCredentialGateway(target, gateway, servers, configErr)
+	gateway, token, err := resolveCredentialGateway(target, servers, configErr)
 	if err != nil {
 		return err
 	}
@@ -417,10 +408,9 @@ func runCredentialPromote(args []string, servers []Server, configErr error, stdo
 }
 
 func runCredentialRevoke(args []string, servers []Server, configErr error, stdout io.Writer) error {
-	var target, gateway, id string
+	var target, id string
 	flags := credentialFlagSet("credential revoke")
 	flags.StringVar(&target, "target", "", "Configured gateway target")
-	flags.StringVar(&gateway, "gateway", "", "Gateway URL")
 	flags.StringVar(&id, "id", "", "Credential ID")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -428,7 +418,7 @@ func runCredentialRevoke(args []string, servers []Server, configErr error, stdou
 	if flags.NArg() != 0 || strings.TrimSpace(id) == "" {
 		return fmt.Errorf("--id is required")
 	}
-	gateway, token, err := resolveCredentialGateway(target, gateway, servers, configErr)
+	gateway, token, err := resolveCredentialGateway(target, servers, configErr)
 	if err != nil {
 		return err
 	}
@@ -449,31 +439,23 @@ func credentialFlagSet(name string) *flag.FlagSet {
 	return flags
 }
 
-func resolveCredentialGateway(target, gateway string, servers []Server, configErr error) (string, string, error) {
+func resolveCredentialGateway(target string, servers []Server, configErr error) (string, string, error) {
 	target = strings.TrimSpace(target)
-	gateway = strings.TrimSpace(gateway)
-	token := strings.TrimSpace(os.Getenv("DOOPS_GATEWAY_TOKEN"))
-	if target != "" {
-		if configErr != nil {
-			return "", "", configErr
-		}
-		server := findServer(servers, target)
-		if server == nil {
-			return "", "", fmt.Errorf("target %q not found", target)
-		}
-		if gateway != "" && gatewayAuthKey(gateway) != gatewayAuthKey(server.Gateway) {
-			return "", "", fmt.Errorf("target %q belongs to gateway %s, not %s",
-				target, gatewayAuthKey(server.Gateway), gatewayAuthKey(gateway))
-		}
-		gateway = strings.TrimSpace(server.Gateway)
-		if token == "" {
-			token = ResolveToken(*server)
-		}
+	if target == "" {
+		return "", "", fmt.Errorf("--target is required")
 	}
-	if gateway == "" {
-		return "", "", fmt.Errorf("--gateway or --target is required")
+	if configErr != nil {
+		return "", "", configErr
 	}
-	return gateway, token, nil
+	server := findServer(servers, target)
+	if server == nil {
+		return "", "", fmt.Errorf("target %q not found", target)
+	}
+	token, err := ResolveToken(*server)
+	if err != nil {
+		return "", "", err
+	}
+	return server.Gateway, token, nil
 }
 
 func readCredentialPayload(stdin io.Reader) ([]byte, error) {

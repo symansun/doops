@@ -2,28 +2,44 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-07-18 Remove Retired CLI Connection Paths
+
+- Removed direct target fields, SSH target fields, per-target tokens, direct WebSocket routing,
+  CLI SSH/install entry points, and the retired migration utility.
+- All config files, including `DOOPS_CONFIG` overrides, use one strict Gateway-only schema.
+- `targets`, `unlock`, `upgrade`, and credential commands require a configured target and the
+  shared Gateway login in `auth.json`; only `login` accepts a user token or username/password.
+- Missing login state fails before network access and instructs the user to run
+  `doops login --target <name>`.
+- Agent registration at `/v1/agent/connect` intentionally remains open and
+  unauthenticated. This is a control-plane design decision, not a user-token
+  compatibility path; user RPC, Git, and administrator APIs still require the
+  unified Gateway user authentication flow.
+- A future Agent workload-identity extension may bind identity to
+  `cluster/instance`, but it must remain separate from Gateway user tokens and
+  must not restore per-target CLI credentials.
+- Reserved the future enrollment contract as a short-lived, one-time
+  installation registration link. The link must be bound to one
+  `cluster/instance`, consumed atomically, and exchanged for a separate Agent
+  workload identity before registration becomes closed.
+
 ## 2026-07-17 Unified Gateway Authentication
 
 - Gateway target configuration stores routes only and no longer accepts
   per-target user tokens.
 - `auth.json` stores one token per normalized Gateway URL. Login and logout
   therefore affect every target on that Gateway.
-- Migration from an older installation:
-  `python3 backend/scripts/migrate-gateway-auth.py --target
-  <one-target-on-the-gateway>`. The selected target's current token becomes the
-  Gateway login state, and token fields are removed from all targets on that
-  Gateway.
 
 ## Maintenance Rules
 
 - Keep one default local config source: `~/.agent/skills/doops/config.json`.
 - Keep token cache in `~/.agent/skills/doops/auth.json` with the `tokens` object shape.
 - Do not use or document `~/.doops/auth.json`, `~/.config/doops/config.json`, or project `.doops/` as current config sources.
-- Gateway mode is the only normal operating path. Direct agent mode is limited
-  to explicit first-install or Agent self-recovery work and is not a daily
-  target or deployment path.
+- Gateway mode is the only DoOps operating path. First installation and Agent
+  self-recovery happen outside the DoOps CLI through the documented host or
+  Kubernetes administration boundary.
 - Do not commit runtime state: `.agents/`, `.doops/`, `auth.json`, `config.json`, `history.jsonl`, or `sessions.json`.
-- Never print complete user or agent tokens in logs, docs, commands, or commit messages.
+- Never print complete user tokens in logs, docs, commands, or commit messages.
 - Treat `/v1/targets` as connection state. Verify health with active probes for `exec`, git `push/pull`, and `ask` when release risk requires it.
 - Normal doops-agent upgrades should pull only the lightweight `doops.sh:<version>` layer. Rebuild or roll the base image only when sandbox, doagent, BuildKit, or system packages change.
 - Publish `doops-gateway` only with `scripts/deploy-gateway.sh` over SSH/SCP from the host context. Do not use a doops target, `doops exec`, `doops push`, `doops write`, base64, tar, or ad-hoc split chunks to deploy the gateway control plane.
@@ -83,12 +99,12 @@ Do not publish new agent fixes under floating `v1`; use the explicit release ver
 
 - Consolidated the CLI default config source to `~/.agent/skills/doops/config.json`.
 - Historical decision: direct agent mode remained in the config schema. This is
-  now superseded by the Gateway-only normal path; direct mode is restricted to
-  explicit first-install or Agent self-recovery work.
+  superseded by the 2026-07-18 removal of all direct CLI and Agent endpoints.
 - Clarified that `auth.json` is only a token cache and must use `{"tokens":{...}}`.
 - Removed tracked `.agents/skills/*` generated skill mirrors from the repository.
 - Added ignore rules for `.agents/`, `.doops/`, and doops runtime credential/history/session files.
-- Fixed gateway git tunneling so the agent strips external gateway auth and uses its local agent token for its internal `/git` handler.
+- Historical Git tunnel authentication was superseded by the authorized
+  Gateway reverse tunnel and the process-internal Agent Git handler.
 - Fixed gateway resource busy accounting so resource-locked operations are visible in target snapshots.
 - Verified `skills/doops-cli` tests and targeted gateway busy tests after changes.
 - Added an SSH-only gateway deployment boundary after a failed attempt showed that routing gateway deployment through a gateway-host agent can run in the agent root and create an empty gateway DB.

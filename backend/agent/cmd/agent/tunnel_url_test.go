@@ -18,6 +18,18 @@ func TestAgentDefaultsToHostNetworkCompatibleListener(t *testing.T) {
 	}
 }
 
+func TestAgentStartupRequiresGatewayIdentityAndRejectsOldTokenCommand(t *testing.T) {
+	if err := validateStartupArgs("", "", "", nil); err == nil {
+		t.Fatal("expected missing Gateway identity to fail")
+	}
+	if err := validateStartupArgs("https://gateway.example.com", "prod", "node", []string{"token"}); err == nil {
+		t.Fatal("expected retired token command to fail")
+	}
+	if err := validateStartupArgs("https://gateway.example.com", "prod", "node", nil); err != nil {
+		t.Fatalf("expected complete Gateway identity to pass: %v", err)
+	}
+}
+
 func TestBuildGatewayAgentURLUsesVersionedEndpoint(t *testing.T) {
 	got, err := buildGatewayAgentURL("https://gateway.example.com", "dev", "local")
 	if err != nil {
@@ -64,7 +76,7 @@ func TestBuildGatewayAgentURLAllowsInsecureRemoteWithOptIn(t *testing.T) {
 func TestBuildGatewayAgentURLRejectsLegacyDirectAgentWSPath(t *testing.T) {
 	t.Setenv("DOOPS_ALLOW_INSECURE_GATEWAY", "1")
 	if _, err := buildGatewayAgentURL("http://203.0.113.10:42222/ws", "dev", "local"); err == nil {
-		t.Fatal("legacy direct-agent /ws path must be rejected for gateway reverse tunnel")
+		t.Fatal("unsupported /ws path must be rejected for gateway reverse tunnel")
 	}
 }
 
@@ -165,7 +177,7 @@ func TestRunReverseTunnelUpdatesReadyStateOnConnectAndDisconnect(t *testing.T) {
 	}
 
 	done := make(chan struct{})
-	gw := server.NewGateway("0")
+	gw := server.NewGateway()
 	go func() {
 		runReverseTunnel(gw, "wss://gateway.example.com", "dev", "instance", 1*time.Millisecond)
 		close(done)

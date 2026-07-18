@@ -22,8 +22,11 @@ func Pull(server Server, dest, sessionID string) error {
 		return fmt.Errorf("解析目标路径失败: %v", err)
 	}
 
-	token := ResolveToken(server)
-	gitURL, err := buildGitRemoteURLForServer(server, sessionID, token != "")
+	token, err := ResolveToken(server)
+	if err != nil {
+		return err
+	}
+	gitURL, err := buildGitRemoteURLForServer(server, sessionID, true)
 	if err != nil {
 		return err
 	}
@@ -68,6 +71,10 @@ func buildGitWorkspaceCommitCommand(sessionID string) string {
 		"git push -f " + shellQuote(repoPath) + " HEAD:master >/dev/null",
 		"git rev-parse HEAD",
 	}, "\n")
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func pullGitWorkspace(gitURL, token, dest string) error {

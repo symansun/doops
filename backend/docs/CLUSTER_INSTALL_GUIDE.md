@@ -89,7 +89,7 @@ docker run -d \
 
 ## 安装完成后的验收标准
 
-`doops install` 直连安装入口已停用。不要以“容器起来了”或“`ps` 里有进程”
+CLI 不提供直连 Agent 安装入口。不要以“容器起来了”或“`ps` 里有进程”
 作为安装成功标准；必须从 Gateway 和真实远程调用两侧验收：
 
 - `doops targets --target <gateway-target>` 返回指定 `cluster/instance`，不是其它同

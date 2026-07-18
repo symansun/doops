@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -855,7 +854,8 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 	cluster := strings.TrimSpace(r.URL.Query().Get("cluster"))
 	instance := strings.TrimSpace(r.URL.Query().Get("instance"))
 	if cluster == "" {
-		cluster = "default"
+		http.Error(w, "missing cluster", http.StatusBadRequest)
+		return
 	}
 	if instance == "" {
 		http.Error(w, "missing instance", http.StatusBadRequest)
@@ -1254,25 +1254,12 @@ func (h *GatewayHub) writeUserAuthError(w http.ResponseWriter, r *http.Request) 
 	http.Error(w, "Unauthorized", http.StatusUnauthorized)
 }
 
-// secureTokenEqual reports whether two tokens match using a constant-time
-// comparison to avoid leaking the token through timing side channels. An empty
-// expected token never matches.
-func secureTokenEqual(provided, expected string) bool {
-	if expected == "" {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
-}
-
 func bearerToken(r *http.Request) string {
 	token := strings.TrimSpace(r.Header.Get("Authorization"))
 	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
 		return strings.TrimSpace(token[len("bearer "):])
 	}
-	if token == "" {
-		token = strings.TrimSpace(r.Header.Get("X-Doops-Key"))
-	}
-	return token
+	return ""
 }
 
 func writeJSONHTTP(w http.ResponseWriter, v interface{}) {
@@ -2116,8 +2103,5 @@ func canonicalK8SResource(resource string) string {
 func tunnelKey(cluster, instance string) string {
 	cluster = strings.TrimSpace(cluster)
 	instance = strings.TrimSpace(instance)
-	if cluster == "" {
-		cluster = "default"
-	}
 	return cluster + "/" + instance
 }

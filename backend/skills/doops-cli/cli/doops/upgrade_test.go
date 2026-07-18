@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -27,42 +30,6 @@ func TestFilterUpgradeTargets(t *testing.T) {
 	}
 }
 
-func TestResolveUpgradeScopeDefaultsToConfiguredTarget(t *testing.T) {
-	base := Server{Cluster: "doops-edu", Instance: "edu-coder"}
-
-	cluster, instance, err := resolveUpgradeScope(base, "", "")
-	if err != nil {
-		t.Fatalf("resolve configured target scope: %v", err)
-	}
-	if cluster != "doops-edu" || instance != "edu-coder" {
-		t.Fatalf("expected configured target scope, got %q/%q", cluster, instance)
-	}
-}
-
-func TestResolveUpgradeScopeRequiresCompleteExplicitScope(t *testing.T) {
-	base := Server{Cluster: "doops-edu", Instance: "edu-coder"}
-
-	_, _, err := resolveUpgradeScope(base, "*", "")
-	if err == nil || !strings.Contains(err.Error(), "together") {
-		t.Fatalf("expected incomplete explicit scope error, got %v", err)
-	}
-
-	cluster, instance, err := resolveUpgradeScope(base, "*", "*")
-	if err != nil {
-		t.Fatalf("resolve explicit broadcast scope: %v", err)
-	}
-	if cluster != "*" || instance != "*" {
-		t.Fatalf("expected explicit broadcast scope, got %q/%q", cluster, instance)
-	}
-}
-
-func TestResolveUpgradeScopeRejectsUnscopedGateway(t *testing.T) {
-	_, _, err := resolveUpgradeScope(Server{}, "", "")
-	if err == nil || !strings.Contains(err.Error(), "configured target") {
-		t.Fatalf("expected unscoped gateway error, got %v", err)
-	}
-}
-
 func TestUpgradeAgentsRejectsApplyBeforeGatewayCall(t *testing.T) {
 	err := UpgradeAgents(Server{}, UpgradeOptions{
 		Image: "registry.example/doops@sha256:abc",
@@ -72,38 +39,52 @@ func TestUpgradeAgentsRejectsApplyBeforeGatewayCall(t *testing.T) {
 	}
 }
 
-func TestUpgradeAgentsUsesExplicitTokenWithoutResolvingTargetLogin(t *testing.T) {
+func TestUpgradeAgentsUsesConfiguredGatewayLogin(t *testing.T) {
 	var gotAuth string
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		_, _ = w.Write([]byte(`{"targets":[]}`))
 	}))
 	defer gateway.Close()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	auth := AuthStore{Tokens: map[string]string{}}
+	auth.SetGateway(gateway.URL, "cached-token")
+	data, err := json.Marshal(&auth)
+	if err != nil {
+		t.Fatalf("marshal auth: %v", err)
+	}
+	authPath := filepath.Join(home, ".agent", "skills", "doops", "auth.json")
+	if err := os.MkdirAll(filepath.Dir(authPath), 0o755); err != nil {
+		t.Fatalf("create auth dir: %v", err)
+	}
+	if err := os.WriteFile(authPath, data, 0o600); err != nil {
+		t.Fatalf("write auth: %v", err)
+	}
 
-	err := UpgradeAgents(Server{}, UpgradeOptions{
+	err = UpgradeAgents(Server{
+		Name:     "configured",
 		Gateway:  gateway.URL,
-		Token:    "explicit-token",
-		Cluster:  "*",
-		Instance: "*",
-		Image:    "registry.example/doops@sha256:abc",
-		DryRun:   true,
+		Cluster:  "prod",
+		Instance: "node",
+	}, UpgradeOptions{
+		Image:  "registry.example/doops@sha256:abc",
+		DryRun: true,
 	}, false)
-	if err == nil || !strings.Contains(err.Error(), "no online targets matched") {
+	if err == nil || !strings.Contains(err.Error(), "configured target is offline") {
 		t.Fatalf("expected empty target result, got %v", err)
 	}
-	if gotAuth != "Bearer explicit-token" {
-		t.Fatalf("explicit token was not used: %q", gotAuth)
+	if gotAuth != "Bearer cached-token" {
+		t.Fatalf("cached Gateway login was not used: %q", gotAuth)
 	}
 }
 
-func TestUpgradeAgentsRejectsGatewayMismatchBeforeRequest(t *testing.T) {
-	err := UpgradeAgents(Server{Gateway: "https://trusted.example.com"}, UpgradeOptions{
-		Gateway: "https://other.example.com",
-		Token:   "explicit-token",
-		Image:   "registry.example/doops@sha256:abc",
-		DryRun:  true,
+func TestUpgradeAgentsRequiresConfiguredTarget(t *testing.T) {
+	err := UpgradeAgents(Server{}, UpgradeOptions{
+		Image:  "registry.example/doops@sha256:abc",
+		DryRun: true,
 	}, false)
-	if err == nil || !strings.Contains(err.Error(), "configured target belongs to gateway") {
-		t.Fatalf("expected gateway mismatch, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "configured Gateway target is required") {
+		t.Fatalf("expected configured target requirement, got %v", err)
 	}
 }

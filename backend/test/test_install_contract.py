@@ -1,14 +1,12 @@
 import json
 import os
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALL = ROOT / "scripts" / "install.sh"
-MIGRATE_AUTH = ROOT / "scripts" / "migrate-gateway-auth.py"
 BUILD = ROOT / "scripts" / "build-cli.sh"
 RELEASE_BUILD = ROOT / "scripts" / "build-cli-release.sh"
 PUBLISH = ROOT / "scripts" / "publish-cli-release.mjs"
@@ -30,10 +28,9 @@ def test_cli_install_downloads_named_release_asset_and_replaces_binary_atomicall
     assert 'mv -f "${replacement}" "${CLI_OUT}"' in text
     assert 'skills/doops-cli/bin' not in text
     assert '-contract' not in text
-    assert "--target-token is no longer supported" in text
     assert 'doops login --target ${TARGET_NAME:-<target-name>}' in text
-    assert text.index("--target-token is no longer supported") < text.index('echo "[1/4] Installing CLI')
-    assert "Refusing to replace the CLI while config.json still contains per-target token fields." in text
+    assert 'allowed = {"name", "aliases", "use", "gateway", "cluster", "instance"}' in text
+    assert text.index('contains unsupported fields') < text.index('echo "[1/4] Installing CLI')
 
 
 def test_cli_release_builds_to_ignored_distribution_directory():
@@ -48,7 +45,51 @@ def test_cli_release_builds_to_ignored_distribution_directory():
     assert 'RELEASE_DIR="${DOOPS_CLI_RELEASE_DIR:-${REPO_ROOT}/dist/cli}"' in release
 
 
-def test_installer_rejects_legacy_target_token_before_replacing_cli():
+def test_installer_rejects_unsupported_target_fields_before_replacing_cli():
+    with tempfile.TemporaryDirectory() as raw_home:
+        home = Path(raw_home)
+        cli = home / ".local" / "bin" / "doops"
+        cli.parent.mkdir(parents=True)
+        cli.write_text("existing-cli")
+        config = home / ".agent" / "skills" / "doops" / "config.json"
+        config.parent.mkdir(parents=True)
+        config.write_text(
+            json.dumps(
+                {
+                    "servers": [
+                        {
+                            "name": "legacy",
+                            "gateway": "https://gateway.example.com",
+                            "cluster": "prod",
+                            "instance": "node",
+                            "token": "retired",
+                        }
+                    ]
+                }
+            )
+        )
+
+        result = subprocess.run(
+            [
+                "bash",
+                str(INSTALL),
+                "--version",
+                "unused",
+                "--project",
+                str(ROOT.parent),
+            ],
+            env={**os.environ, "HOME": str(home)},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert result.returncode != 0
+        assert "contains unsupported fields: token" in result.stderr
+        assert cli.read_text() == "existing-cli"
+
+
+def test_installer_requires_complete_gateway_route_before_replacing_cli():
     with tempfile.TemporaryDirectory() as raw_home:
         home = Path(raw_home)
         cli = home / ".local" / "bin" / "doops"
@@ -63,8 +104,10 @@ def test_installer_rejects_legacy_target_token_before_replacing_cli():
                 "unused",
                 "--project",
                 str(ROOT.parent),
-                "--target-token",
-                "legacy-token",
+                "--target-name",
+                "incomplete",
+                "--target-gateway",
+                "https://gateway.example.com",
             ],
             env={**os.environ, "HOME": str(home)},
             text=True,
@@ -72,49 +115,9 @@ def test_installer_rejects_legacy_target_token_before_replacing_cli():
             check=False,
         )
 
-        assert result.returncode != 0
-        assert "--target-token is no longer supported" in result.stderr
+        assert result.returncode == 2
+        assert "requires --target-name, --target-gateway, --target-cluster, and --target-instance" in result.stderr
         assert cli.read_text() == "existing-cli"
-
-
-def test_gateway_auth_migration_uses_one_selected_target_token():
-    with tempfile.TemporaryDirectory() as raw_home:
-        root = Path(raw_home)
-        config = root / "config.json"
-        config.write_text(
-            json.dumps(
-                {
-                    "servers": [
-                        {
-                            "name": "first",
-                            "gateway": "wss://Gateway.Example.com:443/",
-                            "cluster": "a",
-                            "instance": "one",
-                            "token": "selected-token",
-                        },
-                        {
-                            "name": "second",
-                            "gateway": "https://gateway.example.com",
-                            "cluster": "b",
-                            "instance": "two",
-                            "token": "stale-token",
-                        },
-                    ]
-                }
-            )
-        )
-
-        subprocess.run(
-            [sys.executable, str(MIGRATE_AUTH), "--target", "first", "--config", str(config)],
-            check=True,
-            text=True,
-            capture_output=True,
-        )
-
-        migrated = json.loads(config.read_text())
-        assert all("token" not in server for server in migrated["servers"])
-        auth = json.loads(config.with_name("auth.json").read_text())
-        assert auth == {"tokens": {"https://gateway.example.com": "selected-token"}}
 
 
 def test_tag_pipeline_publishes_and_verifies_release_assets():

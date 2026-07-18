@@ -22,7 +22,23 @@ spec:
         imagePullPolicy: Always
         securityContext:
           privileged: true
+        command:
+        - /bin/sh
+        - -lc
+        - >-
+          exec /app/agent-entrypoint.sh
+          -gateway-url "$DOOPS_GATEWAY_URL"
+          -cluster "$DOOPS_GATEWAY_CLUSTER"
+          -instance "$DOOPS_GATEWAY_INSTANCE"
         env:
+        - name: DOOPS_GATEWAY_URL
+          value: REPLACE_WITH_GATEWAY_URL
+        - name: DOOPS_GATEWAY_CLUSTER
+          value: REPLACE_WITH_CLUSTER
+        - name: DOOPS_GATEWAY_INSTANCE
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
         - name: KUBECONFIG
           value: "/root/.kube/config"
         - name: NODE_TLS_REJECT_UNAUTHORIZED
@@ -34,6 +50,18 @@ spec:
           value: "http://127.0.0.1:9000"
         - name: DO_AGENT_MODEL_ROUTING_POLICY
           value: "single-model"
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 42222
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 42222
+          initialDelaySeconds: 15
+          periodSeconds: 10
         volumeMounts:
         - name: k3s-kubeconfig
           mountPath: /etc/rancher/k3s/k3s.yaml

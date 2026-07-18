@@ -99,12 +99,10 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 
 本轮维护已清理的技术债：
 
-- 修复 `agent-entrypoint.sh` 把 `-port/-token` 透传给 WebIDE 启动脚本导致的 `Unknown option -port`
 - 将 doagent 依赖镜像固定为公开 doAgent 的版本标签和 OCI digest，并在每层镜像中校验二进制版本
 - 将 agent 发布拆为 `doops.sh/base-light:<release>` 和 `doops.sh:<release>`，避免每次代码更新都拉取多 GiB 基础层
 - 统一发布脚本与 DaemonSet 使用 CI 产出的不可变镜像 digest
 - 关闭默认攻击面：`agent-entrypoint.sh` 改为仅在显式 `DOOPS_ENABLE_SSHD=1` / `DOOPS_ENABLE_WEBIDE=1` 时才启动 SSH 或 WebIDE
-- 将核心协议文档统一为 `/ws`
 - 将 doagent 旧叙述收敛为当前 doagent ACP HTTP 路径
 - 新增多用户多集群 `doops-gateway`：SQLite、user token、scope/action 权限、审计和 gateway Git HTTP 反向隧道
 - 统一 `push/pull`：gateway 使用 Git 快照语义，并按 `/v1/git/<cluster>/<instance>/<session>.git` 精确路由到目标 agent
@@ -162,9 +160,8 @@ CNB 非同名制品必须使用仓库下级路径，例如 `docker.cnb.cool/l8ai
 - Gateway 登录态：`~/.agent/skills/doops/auth.json`
 - Gateway target 只保存路由；同一 Gateway 的所有 target 共享按 Gateway URL 保存的一份登录态
 - CLI 发布资产：CNB Release 的 `doops-<os>-<arch>` 与 `checksums.txt`
-- Agent local token：服务端 `/root/.doops/agent-token`，只用于遗留直连或本机 `/ws` 保护，不用于 gateway 注册
 
-`~/.config/doops/config.json`、`~/.doops/auth.json` 和项目 `.doops/` 是旧路径或运行痕迹，不能作为当前配置依据。`DOOPS_CONFIG=/path/to/config.json` 只用于测试和应急显式覆盖。
+`~/.config/doops/`、`~/.doops/` 和项目 `.doops/` 不属于当前 CLI 状态目录。`DOOPS_CONFIG=/path/to/config.json` 只改变配置文件位置，不放宽 Gateway-only schema 校验。
 
 ## 安装模型先看这里
 
@@ -197,7 +194,7 @@ Doops 有两件事容易混淆，文档里必须先分开看：
 | :--- | :--- |
 | `ws(s)://<gateway>/v1/rpc` | 内网 agent 主动 `-gateway-url ... -cluster ... -instance ...` 连公网 gateway |
 
-是否“可以操作某节点”取决于该 agent 是否已经主动注册到 gateway。`doops targets --target <gateway-target>` 只查询配置中对应的 `cluster/instance`，离线时明确失败；需要列出当前凭据可见的全部在线节点时使用 `doops targets --gateway <url> --token <user-token>`。如果某节点只是本地二进制直装且没有 `-gateway-url`，它不会自动出现在 gateway 里。
+是否“可以操作某节点”取决于该 agent 是否已经主动注册到 gateway。`doops targets --target <gateway-target>` 只查询配置中对应的 `cluster/instance`，离线时明确失败。CLI 不提供绕过 target 配置的 Gateway/token 查询入口。
 
 ## 客户端安装与连接
 
@@ -268,7 +265,7 @@ gateway 数据库。
 gateway 支持用户名密码登录，先换取 user token 再用 token 操作：
 
 ```bash
-doops login --target prod-master --gateway https://gateway.example.com --username alice
+doops login --target prod-master --username alice
 ```
 
 内网 agent 主动连接公网 gateway：
@@ -375,8 +372,8 @@ curl -fsS http://127.0.0.1:42222/health
 
 ### 方式 C：首次接入与自恢复
 
-`doops install` 直连安装入口已停用，因为它只能启动本地 `/ws` Agent，不能完成
-Gateway 注册，却会制造“安装成功”的假象。
+CLI 不提供直连 Agent 安装入口。只启动未注册 Gateway 的 Agent 不能完成纳管，
+会制造“安装成功”的假象。
 
 首次接入或 Agent 自恢复时，可以用 SSH 把 **方式 A** 的 GitOps 清单或 **方式 B**
 的容器声明送到目标环境执行；运行态必须显式配置 `gateway-url`、`cluster` 和
@@ -451,7 +448,6 @@ CNB 的 `main` push 会构建并推送以 commit SHA 命名的 Agent 镜像。`t
 - `doops` 日常连接不依赖 SSH。
 - 标准 target 配置不包含 token；Gateway user token 只保存在统一 `auth.json` 登录态。
 - agent 反向注册只声明 `cluster/instance`，不读取或发送注册 token。
-- 遗留本机 `/ws` token 只用于直连保护。
-- `doops-agent token` 只用于遗留直连或本机 `/ws` 保护。
-- `ssh_password` 只保留为 SSH bootstrap 参数。
-- `bash` 子命令仍是遗留 SSH 交互入口；推荐使用 `doops exec` 和 `doops ask`。
+- CLI target schema 只有 `name/aliases/use/gateway/cluster/instance`。
+- `targets`、`unlock`、`upgrade` 和 `credential` 只接受配置 target，不接受临时 Gateway 或 user token。
+- 缺少 Gateway 登录态时远程命令直接失败，必须先执行 `doops login --target <name>`。

@@ -22,6 +22,17 @@ func TestGatewayAuthLoginURLUsesVersionedEndpoint(t *testing.T) {
 	}
 }
 
+func TestGatewayAuthLoginURLPreservesGatewayPathPrefix(t *testing.T) {
+	got, err := gatewayAuthLoginURL("https://gateway.example.com/doops")
+	if err != nil {
+		t.Fatalf("build login url: %v", err)
+	}
+	want := "https://gateway.example.com/doops/v1/auth/login"
+	if got != want {
+		t.Fatalf("login URL mismatch\nwant: %s\n got: %s", want, got)
+	}
+}
+
 func TestGatewayLoginURLRejectsExternalHTTPGatewayByDefault(t *testing.T) {
 	t.Setenv("DOOPS_ALLOW_INSECURE_GATEWAY", "")
 	if _, err := gatewayAuthLoginURL("http://203.0.113.10:42222"); err == nil {
@@ -89,7 +100,6 @@ func TestResolveTokenSharesOneGatewayLoginAcrossTargets(t *testing.T) {
 		Gateway:  "https://gateway.example.com/",
 		Cluster:  "cluster-a",
 		Instance: "node-a",
-		Token:    "stale-target-token",
 	}
 	second := Server{
 		Name:     "second",
@@ -97,18 +107,37 @@ func TestResolveTokenSharesOneGatewayLoginAcrossTargets(t *testing.T) {
 		Cluster:  "cluster-b",
 		Instance: "node-b",
 	}
-	if got := ResolveToken(first); got != "shared-gateway-token" {
+	if got, err := ResolveToken(first); err != nil || got != "shared-gateway-token" {
 		t.Fatalf("first target did not use shared gateway token: %q", got)
 	}
-	if got := ResolveToken(second); got != "shared-gateway-token" {
+	if got, err := ResolveToken(second); err != nil || got != "shared-gateway-token" {
 		t.Fatalf("second target did not use shared gateway token: %q", got)
 	}
 }
 
-func TestResolveTokenKeepsLegacyDirectTokenOutOfGatewayAuth(t *testing.T) {
-	server := Server{Name: "legacy", Token: "legacy-direct-token"}
-	if got := ResolveToken(server); got != "legacy-direct-token" {
-		t.Fatalf("expected legacy direct token, got %q", got)
+func TestResolveTokenRequiresGatewayLogin(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	server := Server{
+		Name:     "prod",
+		Gateway:  "https://gateway.example.com",
+		Cluster:  "prod",
+		Instance: "node",
+	}
+	if _, err := ResolveToken(server); err == nil || !strings.Contains(err.Error(), "doops login --target prod") {
+		t.Fatalf("expected explicit login requirement, got %v", err)
+	}
+}
+
+func TestLoadAuthRejectsMalformedStore(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := GetAuthPath()
+	if err := os.WriteFile(path, []byte(`{"tokens":`), 0o600); err != nil {
+		t.Fatalf("write malformed auth store: %v", err)
+	}
+	if _, err := LoadAuth(); err == nil || !strings.Contains(err.Error(), "parse Gateway auth store") {
+		t.Fatalf("expected malformed auth store error, got %v", err)
 	}
 }
 

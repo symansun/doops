@@ -173,21 +173,9 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 	}
 }
 
-func TestResolveCredentialGatewayRejectsTargetGatewayMismatch(t *testing.T) {
-	t.Setenv("DOOPS_GATEWAY_TOKEN", "explicit-token")
-	_, _, err := resolveCredentialGateway(
-		"gateway",
-		"https://other.example.com",
-		[]Server{{
-			Name:     "gateway",
-			Gateway:  "https://trusted.example.com",
-			Cluster:  "prod",
-			Instance: "node",
-		}},
-		nil,
-	)
-	if err == nil || !strings.Contains(err.Error(), "belongs to gateway") {
-		t.Fatalf("expected gateway mismatch, got %v", err)
+func TestResolveCredentialGatewayRequiresConfiguredTarget(t *testing.T) {
+	if _, _, err := resolveCredentialGateway("", nil, nil); err == nil || !strings.Contains(err.Error(), "--target is required") {
+		t.Fatalf("expected target requirement, got %v", err)
 	}
 }
 

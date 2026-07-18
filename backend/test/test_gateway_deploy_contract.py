@@ -33,7 +33,8 @@ def test_gateway_deploy_can_verify_with_configured_doops_target_without_exportin
     assert "--verify-target" in text
     assert "--verify-session" in text
     assert 'doops -session "${VERIFY_SESSION}" targets --target "${VERIFY_TARGET}"' in text
-    assert "--verify-token-file and --verify-target are mutually exclusive" in text
+    assert "--verify-token-file" not in text
+    assert "VERIFY_TOKEN" not in text
 
 
 def test_gateway_release_extracts_the_ci_binary_from_an_immutable_image():

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"syscall"
 	"time"
@@ -31,7 +30,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   doops [选项] <命令> [参数]
 
 可用命令:
-  bash        执行交互式 Shell (通过 SSH 转发 PTY)
   list        列出已配置的 Gateway target 路由
   targets     查看 gateway 当前在线的 cluster/instance
   exec        在目标节点工作区执行 Shell 命令 (用于确定性的日常流水线执行)
@@ -49,7 +47,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   admin       gateway 管理命令，例如给用户签发 token
   upgrade     预演 doops-agent 升级；正式发布必须由外部 release runner 或 GitOps 执行
   add         添加 gateway target
-  install     已停用的直连 Agent 安装入口
   login       缓存 gateway user token
   logout      登出远程节点
   check       检查线上服务容器配置的镜像与最新构建是否一致
@@ -106,46 +103,31 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		}
 
 	case "targets":
-		var gateway, token, target string
-		var targetCluster, targetInstance string
+		var target string
 		targetsFlag := flag.NewFlagSet("targets", flag.ExitOnError)
-		targetsFlag.StringVar(&gateway, "gateway", "", "Gateway URL")
-		targetsFlag.StringVar(&token, "token", "", "User token")
 		targetsFlag.StringVar(&target, "target", "", "Configured target to query")
 		targetsFlag.Parse(cmdArgs)
-		if target != "" {
-			requireConfig(configErr)
-			server := findServer(servers, target)
-			if server == nil {
-				fmt.Printf("Error: Server '%s' not found.\n", target)
-				os.Exit(1)
-			}
-			gateway = server.Gateway
-			if token == "" {
-				token = ResolveToken(*server)
-			}
-			targetCluster = strings.TrimSpace(server.Cluster)
-			targetInstance = strings.TrimSpace(server.Instance)
-			if targetCluster == "" || targetInstance == "" {
-				fmt.Printf("Error: target '%s' has no gateway cluster/instance route.\n", target)
-				os.Exit(1)
-			}
-		}
-		if gateway == "" {
-			fmt.Println("Error: --gateway or --target is required")
+		if target == "" {
+			fmt.Println("Error: --target is required")
+			targetsFlag.Usage()
 			os.Exit(1)
 		}
-		targets, err := fetchGatewayTargets(gateway, token)
+		requireConfig(configErr)
+		server := findServer(servers, target)
+		if server == nil {
+			fmt.Printf("Error: Server '%s' not found.\n", target)
+			os.Exit(1)
+		}
+		token := mustResolveToken(*server)
+		targets, err := fetchGatewayTargets(server.Gateway, token)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
-		if target != "" {
-			targets = filterGatewayTargets(targets, targetCluster, targetInstance)
-			if len(targets) == 0 {
-				fmt.Printf("Error: target offline: %s/%s\n", targetCluster, targetInstance)
-				os.Exit(1)
-			}
+		targets = filterGatewayTargets(targets, server.Cluster, server.Instance)
+		if len(targets) == 0 {
+			fmt.Printf("Error: target offline: %s/%s\n", server.Cluster, server.Instance)
+			os.Exit(1)
 		}
 		fmt.Printf("%-18s %-18s %-8s %-16s %-7s %-7s %-28s %-24s\n", "CLUSTER", "INSTANCE", "BUSY", "STATUS", "ACTIVE", "QUEUED", "RESOURCES", "LAST_SEEN")
 		fmt.Println(strings.Repeat("-", 132))
@@ -169,42 +151,27 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		}
 
 	case "unlock":
-		var target, gateway, token, cluster, instance string
+		var target string
 		unlockFlag := flag.NewFlagSet("unlock", flag.ExitOnError)
-		unlockFlag.StringVar(&target, "target", "", "Configured gateway target whose token/gateway should be used")
-		unlockFlag.StringVar(&gateway, "gateway", "", "Gateway URL")
-		unlockFlag.StringVar(&token, "token", "", "Gateway user token")
-		unlockFlag.StringVar(&cluster, "cluster", "", "Target cluster")
-		unlockFlag.StringVar(&instance, "instance", "", "Target instance")
+		unlockFlag.StringVar(&target, "target", "", "Configured Gateway target to unlock")
 		unlockFlag.Parse(cmdArgs)
-		if target != "" {
-			requireConfig(configErr)
-			server := findServer(servers, target)
-			if server == nil {
-				fmt.Printf("Error: Server '%s' not found.\n", target)
-				os.Exit(1)
-			}
-			if strings.TrimSpace(gateway) != "" &&
-				gatewayAuthKey(gateway) != gatewayAuthKey(server.Gateway) {
-				fmt.Printf("Error: target '%s' belongs to gateway %s, not %s.\n",
-					target, gatewayAuthKey(server.Gateway), gatewayAuthKey(gateway))
-				os.Exit(1)
-			}
-			gateway = server.Gateway
-			if token == "" {
-				token = ResolveToken(*server)
-			}
-		}
-		if gateway == "" || cluster == "" || instance == "" {
-			fmt.Println("Error: --gateway/--target, --cluster and --instance are required")
+		if target == "" {
+			fmt.Println("Error: --target is required")
 			unlockFlag.Usage()
 			os.Exit(1)
 		}
-		if err := unlockGatewayTarget(gateway, token, cluster, instance); err != nil {
+		requireConfig(configErr)
+		server := findServer(servers, target)
+		if server == nil {
+			fmt.Printf("Error: Server '%s' not found.\n", target)
+			os.Exit(1)
+		}
+		token := mustResolveToken(*server)
+		if err := unlockGatewayTarget(server.Gateway, token, server.Cluster, server.Instance); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Unlocked %s/%s\n", cluster, instance)
+		fmt.Printf("Unlocked %s/%s\n", server.Cluster, server.Instance)
 
 	case "admin":
 		if len(cmdArgs) >= 1 && cmdArgs[0] == "jobs" {
@@ -264,7 +231,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			os.Exit(1)
 		}
 		gateway := server.Gateway
-		token := ResolveToken(*server)
+		token := mustResolveToken(*server)
 		if strings.TrimSpace(user) == "" {
 			fmt.Println("Error: --user is required")
 			adminFlag.Usage()
@@ -300,7 +267,11 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		fmt.Printf("token=%s\n", issued.Token)
 		fmt.Println("warning=store this token now; gateway only keeps its hash")
 		if saveGateway != "" {
-			auth, _ := LoadAuth()
+			auth, err := LoadAuth()
+			if err != nil {
+				fmt.Printf("Error loading credentials: %v\n", err)
+				os.Exit(1)
+			}
 			auth.SetGateway(saveGateway, issued.Token)
 			if err := auth.Save(); err != nil {
 				fmt.Printf("Error saving issued token: %v\n", err)
@@ -326,11 +297,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Println("Error: -session 必传，请指定会话 ID 以隔离 K8S 运维操作")
 			os.Exit(1)
 		}
-		if strings.TrimSpace(server.Gateway) == "" && strings.TrimSpace(server.IP) == "" {
-			fmt.Printf("Error: target '%s' has neither a gateway nor an SSH IP configured.\n", req.Target)
-			os.Exit(1)
-		}
-		token := ResolveToken(*server)
+		token := mustResolveToken(*server)
 		client := NewMCPClient(*server, ss, *sessionName, *verbose)
 		client.Token = token
 		defer client.Close()
@@ -433,36 +400,13 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Printf("Error: Server '%s' not found.\n", target)
 			os.Exit(1)
 		}
-		// Gateway targets are the standard targets and route exec/ask/read/write/info
-		// over the gateway WebSocket. Only legacy direct targets need an SSH IP.
-		if strings.TrimSpace(server.Gateway) == "" && strings.TrimSpace(server.IP) == "" {
-			fmt.Printf("Error: target '%s' has neither a gateway nor an SSH IP configured.\n", target)
-			os.Exit(1)
-		}
-
-		token := ResolveToken(*server)
+		token := mustResolveToken(*server)
 
 		client := NewMCPClient(*server, ss, *sessionName, *verbose)
 		client.Token = token
 		defer client.Close() // 确保持久 WebSocket 连接在命令结束后释放
 
-		endpoint := fmt.Sprintf("%s:%s", server.IP, func() string {
-			if server.Port == "" {
-				return "42222"
-			}
-			return server.Port
-		}())
-		if server.Gateway != "" {
-			cluster := server.Cluster
-			if cluster == "" {
-				cluster = "default"
-			}
-			instance := server.Instance
-			if instance == "" {
-				instance = server.Name
-			}
-			endpoint = fmt.Sprintf("%s -> %s/%s", server.Gateway, cluster, instance)
-		}
+		endpoint := fmt.Sprintf("%s -> %s/%s", server.Gateway, server.Cluster, server.Instance)
 		fmt.Printf("\033[93m[TARGETING]\033[0m Server: %s (%s), Use: %s\n",
 			server.Name, endpoint, server.Use)
 
@@ -526,59 +470,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		}
 		RecordHistory(server.Name, *sessionName, cmdLog)
 
-	case "bash":
-		var target string
-		subFlag := flag.NewFlagSet("bash", flag.ExitOnError)
-		subFlag.StringVar(&target, "target", "", "Target server name")
-		subFlag.Parse(cmdArgs)
-
-		if target == "" {
-			subFlag.Usage()
-			os.Exit(1)
-		}
-		requireConfig(configErr)
-
-		server := findServer(servers, target)
-		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
-			os.Exit(1)
-		}
-		if strings.TrimSpace(server.Gateway) != "" {
-			fmt.Printf("Error: target '%s' is gateway-only; interactive SSH bash is not supported. Use doops -session <id> exec --target %s --cmd '<command>'.\n", target, target)
-			os.Exit(1)
-		}
-		if strings.TrimSpace(server.IP) == "" {
-			fmt.Printf("Error: target '%s' has no SSH IP configured.\n", target)
-			os.Exit(1)
-		}
-
-		fmt.Printf("\033[93m[TARGETING]\033[0m Interactive Bash on %s (%s)\n", server.Name, server.IP)
-		fmt.Println("Attempting SSH-based interactive shell...")
-
-		// 使用 Server 配置中的 SSH 参数
-		sshUser := server.GetSSHUser()
-		sshPort := server.GetSSHPort()
-		// Secure by default: accept-new records unknown host keys but refuses
-		// changed keys (MITM). DOOPS_SSH_INSECURE=1 fully disables verification.
-		strictOpt := "StrictHostKeyChecking=accept-new"
-		if strings.TrimSpace(os.Getenv("DOOPS_SSH_INSECURE")) == "1" {
-			strictOpt = "StrictHostKeyChecking=no"
-		}
-		sshCmd := exec.Command("ssh", "-o", strictOpt, "-p", sshPort, fmt.Sprintf("%s@%s", sshUser, server.IP))
-		sshCmd.Stdin = os.Stdin
-		sshCmd.Stdout = os.Stdout
-		sshCmd.Stderr = os.Stderr
-		if err := sshCmd.Run(); err != nil {
-			fmt.Printf("SSH session failed or not available: %v\n", err)
-			fmt.Println("Fallback to doops_shell is not yet fully interactive. Please use 'exec --cmd /bin/bash' for one-off commands.")
-			os.Exit(1)
-		}
-
-	case "install":
-		fmt.Println("Error: direct `doops install` is retired because it does not register an Agent with Gateway.")
-		fmt.Println("Provision the latest doops-agent through CI/GitOps, wait for its Gateway heartbeat, then add only the Gateway route with `doops add`.")
-		os.Exit(1)
-
 	case "history":
 		historyPath := historyLogPath()
 
@@ -591,35 +482,27 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		fmt.Print(string(data))
 
 	case "login":
-		var target, token, gateway, username, password, label string
+		var target, token, username, password, label string
 		loginFlag := flag.NewFlagSet("login", flag.ExitOnError)
 		loginFlag.StringVar(&target, "target", "", "Target server name")
 		loginFlag.StringVar(&token, "token", "", "Gateway user token (optional; username/password login can issue one)")
-		loginFlag.StringVar(&gateway, "gateway", "", "Gateway URL")
 		loginFlag.StringVar(&username, "username", "", "Gateway username")
 		loginFlag.StringVar(&password, "password", "", "Gateway password")
 		loginFlag.StringVar(&label, "name", "", "Token label for gateway login")
 		loginFlag.Parse(cmdArgs)
 
-		if target == "" && strings.TrimSpace(gateway) == "" {
+		if target == "" {
+			fmt.Println("Error: --target is required")
 			loginFlag.Usage()
 			os.Exit(1)
 		}
-		if target != "" {
-			requireConfig(configErr)
-			server := findServer(servers, target)
-			if server == nil || strings.TrimSpace(server.Gateway) == "" {
-				fmt.Printf("Error: Gateway target '%s' not found.\n", target)
-				os.Exit(1)
-			}
-			if strings.TrimSpace(gateway) != "" &&
-				gatewayAuthKey(gateway) != gatewayAuthKey(server.Gateway) {
-				fmt.Printf("Error: target '%s' belongs to gateway %s, not %s.\n",
-					target, gatewayAuthKey(server.Gateway), gatewayAuthKey(gateway))
-				os.Exit(1)
-			}
-			gateway = server.Gateway
+		requireConfig(configErr)
+		server := findServer(servers, target)
+		if server == nil {
+			fmt.Printf("Error: Gateway target '%s' not found.\n", target)
+			os.Exit(1)
 		}
+		gateway := server.Gateway
 		if strings.TrimSpace(token) == "" {
 			if strings.TrimSpace(username) == "" {
 				fmt.Print("Gateway username: ")
@@ -646,7 +529,11 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			token = newToken
 		}
 
-		auth, _ := LoadAuth()
+		auth, err := LoadAuth()
+		if err != nil {
+			fmt.Printf("Error loading credentials: %v\n", err)
+			os.Exit(1)
+		}
 		auth.SetGateway(gateway, token)
 		if err := auth.Save(); err != nil {
 			fmt.Printf("Error saving credentials: %v\n", err)
@@ -655,54 +542,47 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		fmt.Printf("Successfully cached gateway token for %s\n", gatewayAuthKey(gateway))
 
 	case "logout":
-		var target, gateway string
+		var target string
 		logoutFlag := flag.NewFlagSet("logout", flag.ExitOnError)
 		logoutFlag.StringVar(&target, "target", "", "Target server name")
-		logoutFlag.StringVar(&gateway, "gateway", "", "Gateway URL")
 		logoutFlag.Parse(cmdArgs)
 
-		if target == "" && strings.TrimSpace(gateway) == "" {
+		if target == "" {
+			fmt.Println("Error: --target is required")
 			logoutFlag.Usage()
 			os.Exit(1)
 		}
-
-		if target != "" {
-			requireConfig(configErr)
-			server := findServer(servers, target)
-			if server == nil || strings.TrimSpace(server.Gateway) == "" {
-				fmt.Printf("Error: Gateway target '%s' not found.\n", target)
-				os.Exit(1)
-			}
-			gateway = server.Gateway
+		requireConfig(configErr)
+		server := findServer(servers, target)
+		if server == nil {
+			fmt.Printf("Error: Gateway target '%s' not found.\n", target)
+			os.Exit(1)
 		}
-		auth, _ := LoadAuth()
-		auth.RemoveGateway(gateway)
+		auth, err := LoadAuth()
+		if err != nil {
+			fmt.Printf("Error loading credentials: %v\n", err)
+			os.Exit(1)
+		}
+		auth.RemoveGateway(server.Gateway)
 		if err := auth.Save(); err != nil {
 			fmt.Printf("Error saving credentials: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Logged out from gateway %s\n", gatewayAuthKey(gateway))
+		fmt.Printf("Logged out from gateway %s\n", gatewayAuthKey(server.Gateway))
 
 	case "add":
-		var name, aliases, ip, port, use, token, gateway, cluster, instance string
+		var name, aliases, use, gateway, cluster, instance string
 		addFlag := flag.NewFlagSet("add", flag.ExitOnError)
 		addFlag.StringVar(&name, "name", "", "Node name (required)")
 		addFlag.StringVar(&aliases, "aliases", "", "Comma separated aliases, e.g. jm,jy,oilan")
 		addFlag.StringVar(&aliases, "alias", "", "Comma separated aliases, e.g. jm,jy,oilan")
-		addFlag.StringVar(&ip, "ip", "", "Legacy direct node IP; do not use for standard gateway targets")
-		addFlag.StringVar(&port, "port", "", "Legacy direct agent port; not allowed for standard gateway targets")
 		addFlag.StringVar(&use, "use", "Manually added node", "Description")
-		addFlag.StringVar(&token, "token", "", "Gateway user token")
-		addFlag.StringVar(&gateway, "gateway", "", "Public gateway URL for reverse tunnel mode")
+		addFlag.StringVar(&gateway, "gateway", "", "Public Gateway URL")
 		addFlag.StringVar(&cluster, "cluster", "", "Gateway cluster name (required)")
 		addFlag.StringVar(&instance, "instance", "", "Gateway agent instance name (required)")
 
 		addFlag.Parse(cmdArgs)
 
-		if err := validateGatewayAddFlags(addFlag); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
-		}
 		name = strings.TrimSpace(name)
 		gateway = strings.TrimSpace(gateway)
 		cluster = strings.TrimSpace(cluster)
@@ -856,7 +736,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			os.Exit(1)
 		}
 
-		token := ResolveToken(*server)
+		token := mustResolveToken(*server)
 		client := NewMCPClient(*server, ss, *sessionName, *verbose)
 		client.Token = token
 		defer client.Close()
@@ -868,14 +748,10 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("clean workspace=%s", workspace))
 
 	case "upgrade":
-		var target, gateway, token, cluster, instance, image, mode, namespace, workload, container, upgradeSession string
+		var target, image, mode, namespace, workload, container, upgradeSession string
 		var dryRun bool
 		upgradeFlag := flag.NewFlagSet("upgrade", flag.ExitOnError)
-		upgradeFlag.StringVar(&target, "target", "", "Configured gateway target whose token/gateway should be used")
-		upgradeFlag.StringVar(&gateway, "gateway", "", "Gateway URL")
-		upgradeFlag.StringVar(&token, "token", "", "Gateway user token")
-		upgradeFlag.StringVar(&cluster, "cluster", "", "Target cluster; defaults to the configured --target")
-		upgradeFlag.StringVar(&instance, "instance", "", "Target instance; defaults to the configured --target")
+		upgradeFlag.StringVar(&target, "target", "", "Configured Gateway target")
 		upgradeFlag.StringVar(&image, "image", "", "New doops-agent image")
 		upgradeFlag.StringVar(&mode, "mode", "auto", "Upgrade mode: auto,k8s,docker")
 		upgradeFlag.StringVar(&namespace, "namespace", "", "Kubernetes namespace for DaemonSet mode")
@@ -890,28 +766,18 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		if *sessionName == "" {
 			*sessionName = fmt.Sprintf("upgrade_%d", time.Now().Unix())
 		}
-		if image == "" {
-			fmt.Println("Error: --image is required")
+		if target == "" || image == "" {
+			fmt.Println("Error: --target and --image are required")
 			upgradeFlag.Usage()
 			os.Exit(1)
 		}
-		var base Server
-		if target != "" {
-			requireConfig(configErr)
-			server := findServer(servers, target)
-			if server == nil {
-				fmt.Printf("Error: Server '%s' not found.\n", target)
-				os.Exit(1)
-			}
-			base = *server
-		} else {
-			base = Server{Name: "gateway", Gateway: gateway, Token: token}
+		requireConfig(configErr)
+		server := findServer(servers, target)
+		if server == nil {
+			fmt.Printf("Error: Server '%s' not found.\n", target)
+			os.Exit(1)
 		}
-		if err := UpgradeAgents(base, UpgradeOptions{
-			Gateway:   gateway,
-			Token:     token,
-			Cluster:   cluster,
-			Instance:  instance,
+		if err := UpgradeAgents(*server, UpgradeOptions{
 			Image:     image,
 			Mode:      mode,
 			Namespace: namespace,
@@ -954,7 +820,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			os.Exit(1)
 		}
 
-		token := ResolveToken(*server)
+		token := mustResolveToken(*server)
 		client := NewMCPClient(*server, ss, *sessionName, *verbose)
 		client.Token = token
 		defer client.Close()
@@ -988,26 +854,6 @@ func printServerList(w io.Writer, servers []Server) error {
 		)
 	}
 	return nil
-}
-
-func validateGatewayAddFlags(flags *flag.FlagSet) error {
-	var rejected string
-	flags.Visit(func(item *flag.Flag) {
-		switch item.Name {
-		case "ip", "port", "token":
-			rejected = item.Name
-		}
-	})
-	switch rejected {
-	case "ip":
-		return fmt.Errorf("--ip is retired direct mode and is not allowed; use --gateway --cluster --instance")
-	case "port":
-		return fmt.Errorf("--port is retired direct mode and is not allowed; Gateway routes do not use an agent port")
-	case "token":
-		return fmt.Errorf("--token is not valid for a Gateway target; add the route, then use `doops login --target <name>` once for the Gateway")
-	default:
-		return nil
-	}
 }
 
 func findServer(servers []Server, name string) *Server {
@@ -1113,7 +959,7 @@ func runAdminTokensList(args []string, servers []Server, configErr error) {
 		fmt.Printf("Error: Gateway target '%s' not found.\n", *target)
 		os.Exit(1)
 	}
-	tokens, err := GatewayAdminTokensList(server.Gateway, ResolveToken(*server), "user")
+	tokens, err := GatewayAdminTokensList(server.Gateway, mustResolveToken(*server), "user")
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
@@ -1142,7 +988,7 @@ func runAdminTokenRevoke(args []string, servers []Server, configErr error) {
 		fmt.Printf("Error: Gateway target '%s' not found.\n", target)
 		os.Exit(1)
 	}
-	if err := GatewayAdminTokenRevoke(server.Gateway, ResolveToken(*server), id); err != nil {
+	if err := GatewayAdminTokenRevoke(server.Gateway, mustResolveToken(*server), id); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -1173,7 +1019,7 @@ func resolveAdminGatewayFlags(name string, args []string, servers []Server, conf
 		fs.Usage()
 		os.Exit(1)
 	}
-	return server.Gateway, ResolveToken(*server)
+	return server.Gateway, mustResolveToken(*server)
 }
 
 func requireConfig(err error) {
@@ -1185,20 +1031,26 @@ func requireConfig(err error) {
 	os.Exit(1)
 }
 
-func ResolveToken(server Server) string {
+func ResolveToken(server Server) (string, error) {
 	if strings.TrimSpace(server.Gateway) == "" {
-		return strings.TrimSpace(server.Token)
+		return "", fmt.Errorf("target %q has no Gateway route", server.Name)
 	}
-	auth, _ := LoadAuth()
-	if p := auth.GetGateway(server.Gateway); p != "" {
-		return p
-	}
-
-	fmt.Printf("Gateway user token required for %s. Enter token: ", gatewayAuthKey(server.Gateway))
-	byteToken, err := term.ReadPassword(int(syscall.Stdin))
-	fmt.Println()
+	auth, err := LoadAuth()
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return string(byteToken)
+	if p := auth.GetGateway(server.Gateway); p != "" {
+		return p, nil
+	}
+	return "", fmt.Errorf("no login for Gateway %s; run `doops login --target %s`",
+		gatewayAuthKey(server.Gateway), server.Name)
+}
+
+func mustResolveToken(server Server) string {
+	token, err := ResolveToken(server)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+	return token
 }

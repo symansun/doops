@@ -107,8 +107,11 @@ func pushWorkspaceSnapshotWithSource(
 		return "", fmt.Errorf("session ID 必传：请通过 -session 指定会话 ID 以隔离工作区 (例如: doops exec -session prod ...)")
 	}
 
-	token := ResolveToken(server)
-	gitURL, err := buildGitRemoteURLForServer(server, sessionID, token != "")
+	token, err := ResolveToken(server)
+	if err != nil {
+		return "", err
+	}
+	gitURL, err := buildGitRemoteURLForServer(server, sessionID, true)
 	if err != nil {
 		return "", err
 	}
@@ -418,11 +421,11 @@ func buildGitRemoteURLForServer(server Server, sessionID string, authenticated b
 	}
 	cluster := strings.TrimSpace(server.Cluster)
 	if cluster == "" {
-		cluster = "default"
+		return "", fmt.Errorf("Git workspace transport requires target cluster")
 	}
 	instance := strings.TrimSpace(server.Instance)
 	if instance == "" {
-		instance = server.Name
+		return "", fmt.Errorf("Git workspace transport requires target instance")
 	}
 	u.Path = path.Join(u.Path, "v1", "git", cluster, instance, sessionID+".git")
 	u.RawQuery = ""

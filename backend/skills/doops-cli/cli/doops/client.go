@@ -72,7 +72,6 @@ func NewMCPClient(target Server, ss *SessionStore, sessionName string, verbose b
 		SessionStore:     ss,
 		SessionName:      sessionName,
 		Verbose:          verbose,
-		Token:            target.Token,
 		pending:          make(map[int64]chan wsEvent),
 		pendingBySession: make(map[string]chan wsEvent),
 		CallTimeout:      defaultToolCallTimeout(),
@@ -100,11 +99,7 @@ func (c *MCPClient) connect() error {
 		return nil
 	}
 
-	port := c.Target.Port
-	if port == "" {
-		port = "42222"
-	}
-	wsURL, err := c.targetWebSocketURL(port)
+	wsURL, err := c.targetWebSocketURL()
 	if err != nil {
 		return err
 	}
@@ -208,9 +203,9 @@ func isTransientWebSocketHandshakeError(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
-func (c *MCPClient) targetWebSocketURL(defaultPort string) (string, error) {
+func (c *MCPClient) targetWebSocketURL() (string, error) {
 	if strings.TrimSpace(c.Target.Gateway) == "" {
-		return fmt.Sprintf("ws://%s:%s/ws", c.Target.IP, defaultPort), nil
+		return "", fmt.Errorf("target %q has no Gateway route", c.Target.Name)
 	}
 
 	rawGateway := strings.TrimSpace(c.Target.Gateway)
@@ -237,11 +232,11 @@ func (c *MCPClient) targetWebSocketURL(defaultPort string) (string, error) {
 	q := u.Query()
 	cluster := strings.TrimSpace(c.Target.Cluster)
 	if cluster == "" {
-		cluster = "default"
+		return "", fmt.Errorf("target %q has no Gateway cluster", c.Target.Name)
 	}
 	instance := strings.TrimSpace(c.Target.Instance)
 	if instance == "" {
-		instance = c.Target.Name
+		return "", fmt.Errorf("target %q has no Gateway instance", c.Target.Name)
 	}
 	q.Set("cluster", cluster)
 	q.Set("instance", instance)
