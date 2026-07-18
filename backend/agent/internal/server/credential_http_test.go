@@ -254,6 +254,173 @@ func TestTargetScopedCredentialActionDoesNotGrantPlatformAdministration(t *testi
 	}
 }
 
+func TestCredentialHTTPListIsIsolatedByUserAndTarget(t *testing.T) {
+	store := openCredentialTestStore(t)
+	admin, adminToken := createCredentialHTTPUser(t, store, "credential-admin", true)
+	user, userToken := createCredentialHTTPUser(t, store, "target-user", false)
+	other, otherToken := createCredentialHTTPUser(t, store, "other-user", false)
+
+	owned, err := store.CreateCredential(CredentialCreateRequest{
+		Name: "owned-ungranted", Scope: CredentialScopePersonal, Type: CredentialTypeOpaque,
+		OwnerID: user.ID, CreatedBy: user.ID,
+	})
+	if err != nil {
+		t.Fatalf("create owned credential: %v", err)
+	}
+	targetA, err := store.CreateCredential(CredentialCreateRequest{
+		Name: "target-a-platform", Scope: CredentialScopePlatform, Type: CredentialTypeRegistry,
+		CreatedBy: admin.ID,
+	})
+	if err != nil {
+		t.Fatalf("create target A credential: %v", err)
+	}
+	targetB, err := store.CreateCredential(CredentialCreateRequest{
+		Name: "target-b-personal", Scope: CredentialScopePersonal, Type: CredentialTypeTLS,
+		OwnerID: other.ID, CreatedBy: other.ID,
+	})
+	if err != nil {
+		t.Fatalf("create target B credential: %v", err)
+	}
+	for _, item := range []struct {
+		resource CredentialResource
+		scope    CredentialGrantScope
+		creator  string
+	}{
+		{targetA, credentialHTTPTestTLSOrOpaqueScope("cluster-a", "instance-a", CredentialUseImagePull), admin.ID},
+		{targetB, credentialHTTPTestTLSOrOpaqueScope("cluster-b", "instance-b", CredentialUseTLS), other.ID},
+	} {
+		if _, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
+			CredentialID: item.resource.ID,
+			GranteeID:    user.ID,
+			Scope:        item.scope,
+			CreatedBy:    item.creator,
+		}); err != nil {
+			t.Fatalf("grant target credential: %v", err)
+		}
+	}
+
+	hub := NewGatewayHub(store, GatewayHubOptions{})
+	mux := http.NewServeMux()
+	hub.RegisterRoutes(mux)
+
+	targetAList := credentialHTTPRequest(t, mux, userToken, http.MethodGet,
+		"/v1/credentials?view=target&cluster=cluster-a&instance=instance-a", nil)
+	if targetAList.Code != http.StatusOK {
+		t.Fatalf("list target A credentials: HTTP %d: %s", targetAList.Code, targetAList.Body.String())
+	}
+	if !strings.Contains(targetAList.Body.String(), targetA.ID) ||
+		strings.Contains(targetAList.Body.String(), targetB.ID) ||
+		strings.Contains(targetAList.Body.String(), owned.ID) ||
+		strings.Contains(targetAList.Body.String(), admin.ID) ||
+		strings.Contains(targetAList.Body.String(), user.ID) ||
+		strings.Contains(targetAList.Body.String(), `"owner_id"`) ||
+		strings.Contains(targetAList.Body.String(), `"created_by"`) ||
+		strings.Contains(targetAList.Body.String(), `"grantee_id"`) ||
+		!strings.Contains(targetAList.Body.String(), `"grants"`) {
+		t.Fatalf("target A credential visibility mismatch: %s", targetAList.Body.String())
+	}
+	targetADetail := credentialHTTPRequest(t, mux, userToken, http.MethodGet,
+		"/v1/credentials/"+targetA.ID+"?cluster=cluster-a&instance=instance-a", nil)
+	if targetADetail.Code != http.StatusOK {
+		t.Fatalf("target A credential detail: HTTP %d: %s", targetADetail.Code, targetADetail.Body.String())
+	}
+	if strings.Contains(targetADetail.Body.String(), admin.ID) ||
+		strings.Contains(targetADetail.Body.String(), `"owner_id"`) ||
+		strings.Contains(targetADetail.Body.String(), `"created_by"`) {
+		t.Fatalf("target A credential detail exposed owner metadata: %s", targetADetail.Body.String())
+	}
+	adminDetail := credentialHTTPRequest(t, mux, adminToken, http.MethodGet,
+		"/v1/credentials/"+targetA.ID, nil)
+	if adminDetail.Code != http.StatusOK ||
+		!strings.Contains(adminDetail.Body.String(), `"created_by":"`+admin.ID+`"`) {
+		t.Fatalf("platform admin credential detail missing management metadata: HTTP %d: %s",
+			adminDetail.Code, adminDetail.Body.String())
+	}
+	unscopedDetail := credentialHTTPRequest(t, mux, userToken, http.MethodGet,
+		"/v1/credentials/"+targetA.ID, nil)
+	if unscopedDetail.Code != http.StatusNotFound {
+		t.Fatalf("unscoped granted credential detail = HTTP %d, want 404", unscopedDetail.Code)
+	}
+	wrongTargetDetail := credentialHTTPRequest(t, mux, userToken, http.MethodGet,
+		"/v1/credentials/"+targetA.ID+"?cluster=cluster-b&instance=instance-b", nil)
+	if wrongTargetDetail.Code != http.StatusNotFound {
+		t.Fatalf("wrong-target credential detail = HTTP %d, want 404", wrongTargetDetail.Code)
+	}
+
+	targetBList := credentialHTTPRequest(t, mux, userToken, http.MethodGet,
+		"/v1/credentials?view=target&cluster=cluster-b&instance=instance-b", nil)
+	if targetBList.Code != http.StatusOK {
+		t.Fatalf("list target B credentials: HTTP %d: %s", targetBList.Code, targetBList.Body.String())
+	}
+	if !strings.Contains(targetBList.Body.String(), targetB.ID) ||
+		strings.Contains(targetBList.Body.String(), targetA.ID) {
+		t.Fatalf("target B credential visibility mismatch: %s", targetBList.Body.String())
+	}
+
+	managed := credentialHTTPRequest(t, mux, userToken, http.MethodGet,
+		"/v1/credentials?view=managed", nil)
+	if managed.Code != http.StatusOK {
+		t.Fatalf("list managed credentials: HTTP %d: %s", managed.Code, managed.Body.String())
+	}
+	if !strings.Contains(managed.Body.String(), owned.ID) ||
+		strings.Contains(managed.Body.String(), targetA.ID) ||
+		strings.Contains(managed.Body.String(), targetB.ID) {
+		t.Fatalf("managed credential visibility mismatch: %s", managed.Body.String())
+	}
+
+	otherTargetA := credentialHTTPRequest(t, mux, otherToken, http.MethodGet,
+		"/v1/credentials?view=target&cluster=cluster-a&instance=instance-a", nil)
+	if otherTargetA.Code != http.StatusOK || strings.Contains(otherTargetA.Body.String(), targetA.ID) {
+		t.Fatalf("other user saw target A credential: HTTP %d: %s", otherTargetA.Code, otherTargetA.Body.String())
+	}
+}
+
+func TestCredentialHTTPSelfGrantUsesAuthenticatedUser(t *testing.T) {
+	store := openCredentialTestStore(t)
+	owner, ownerToken := createCredentialHTTPUser(t, store, "self-grant-owner", false)
+	if err := store.GrantUser(owner.ID, ScopeGrant{
+		Cluster: "cluster-a", Instance: "instance-a", Actions: []GatewayAction{ActionAsk},
+	}); err != nil {
+		t.Fatalf("grant owner target authority: %v", err)
+	}
+	resource, err := store.CreateCredential(CredentialCreateRequest{
+		Name: "self-grant", Scope: CredentialScopePersonal, Type: CredentialTypeTLS,
+		OwnerID: owner.ID, CreatedBy: owner.ID,
+	})
+	if err != nil {
+		t.Fatalf("create credential: %v", err)
+	}
+	hub := NewGatewayHub(store, GatewayHubOptions{})
+	mux := http.NewServeMux()
+	hub.RegisterRoutes(mux)
+	response := credentialHTTPRequest(t, mux, ownerToken, http.MethodPost,
+		"/v1/credentials/"+resource.ID+"/grants", map[string]any{
+			"scope": credentialHTTPTestTLSOrOpaqueScope("cluster-a", "instance-a", CredentialUseTLS),
+		})
+	if response.Code != http.StatusOK {
+		t.Fatalf("self grant: HTTP %d: %s", response.Code, response.Body.String())
+	}
+	var grant CredentialGrant
+	if err := json.Unmarshal(response.Body.Bytes(), &grant); err != nil {
+		t.Fatalf("decode self grant: %v", err)
+	}
+	if grant.GranteeID != owner.ID {
+		t.Fatalf("self grant grantee = %q, want %q", grant.GranteeID, owner.ID)
+	}
+}
+
+func credentialHTTPTestTLSOrOpaqueScope(cluster, instance string, use CredentialUse) CredentialGrantScope {
+	scope := CredentialGrantScope{
+		Cluster: cluster, Instance: instance, Namespace: "apps", Use: use,
+		Workload: CredentialPlanWorkload{Kind: "deployment", Name: "api"},
+	}
+	if use == CredentialUseImagePull {
+		scope.ImageRepository = "team/api"
+		scope.ImageDigest = "sha256:" + strings.Repeat("a", 64)
+	}
+	return scope
+}
+
 func TestTargetScopedCredentialAuditCannotReadOtherTargets(t *testing.T) {
 	store := openCredentialTestStore(t)
 	user := createCredentialTestUser(t, store, "target-auditor")

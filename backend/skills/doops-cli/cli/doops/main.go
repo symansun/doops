@@ -15,6 +15,11 @@ import (
 
 const cliContractVersion = "doops.sh/cli-contract/v3"
 
+var (
+	cliBuildVersion = "dev"
+	cliBuildCommit  = "unknown"
+)
+
 func main() {
 	verbose := flag.Bool("verbose", false, "Enable verbose logging")
 	sessionName := flag.String("session", "", "Session/Task ID for isolation (REQUIRED)")
@@ -39,6 +44,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   info        获取节点系统信息 (CPU/内存/磁盘)
   k8s         受限 Kubernetes 观察与运维入口
   credential  管理 Gateway 凭据元数据与版本
+  version     查看 CLI 发布版本、提交和协议契约
   session     生成并输出一个新的唯一 Session ID
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
   pull        基于 Git 拉取远端 session 工作区到本地目录
@@ -81,6 +87,10 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 	servers, _, configErr := LoadConfig()
 
 	switch command {
+	case "version":
+		fmt.Printf("version=%s commit=%s contract=%s\n",
+			cliBuildVersion, cliBuildCommit, cliContractVersion)
+
 	case "session":
 		b := make([]byte, 8)
 		rand.Read(b)

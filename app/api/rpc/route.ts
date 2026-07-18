@@ -1,5 +1,9 @@
 import WebSocket from "ws"
-import { readAuth, toWsBase } from "@/lib/gateway"
+import { toWsBase } from "@/lib/gateway"
+import {
+  gatewayPolicyResponse,
+  readAllowedAuth,
+} from "@/lib/gateway-policy"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -17,7 +21,13 @@ const AGENT_PROMPT_SILENCE_MS = 45_000
 // 浏览器 POST 工具调用，服务端注入 Bearer token，
 // 并把 notifications/message 与最终结果以 NDJSON 行流式回传。
 export async function POST(req: Request) {
-  const { gateway, token } = readAuth(req)
+  let gateway: string
+  let token: string
+  try {
+    ;({ gateway, token } = readAllowedAuth(req))
+  } catch (err) {
+    return gatewayPolicyResponse(err) || Response.json({ error: "gateway 策略检查失败" }, { status: 500 })
+  }
   if (!gateway || !token) {
     return Response.json({ error: "缺少 gateway 地址或 token" }, { status: 400 })
   }
@@ -87,6 +97,7 @@ export async function POST(req: Request) {
       try {
         ws = new WebSocket(wsUrl, {
           headers: { Authorization: `Bearer ${token}` },
+          followRedirects: false,
         })
       } catch (err) {
         send({ type: "error", error: `无法建立连接: ${(err as Error).message}` })

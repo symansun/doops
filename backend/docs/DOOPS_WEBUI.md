@@ -59,6 +59,11 @@ cd agent && go run ./cmd/webui -port 8088
 ## 部署建议
 
 - 生产环境使用 `Dockerfile.web` 构建的 Next.js 控制台镜像，不使用本 legacy 二进制。
+- 生产容器必须设置 `DOOPS_CONSOLE_ALLOWED_GATEWAYS`，值为允许代理的 Gateway
+  origin，多个值用英文逗号分隔，例如
+  `DOOPS_CONSOLE_ALLOWED_GATEWAYS=https://doops.example.com`。控制台只接受精确
+  origin，未配置时生产代理接口拒绝请求；除本机 loopback 外，生产 Gateway 必须使用
+  HTTPS。
 - `scripts/deploy-webui.sh` 默认禁用；只有显式设置
   `DOOPS_ALLOW_LEGACY_SSH_WEBUI_DEPLOY=1` 且确有真实 SSH 主机时才允许 legacy 维护。
 - WS 升级放开了 `CheckOrigin`，公网暴露时应由反向代理/防火墙限制来源。

@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import subprocess
 import tempfile
@@ -26,9 +27,15 @@ def test_cli_install_downloads_named_release_asset_and_replaces_binary_atomicall
     assert 'curl --fail --location --silent --show-error' in text
     assert 'install -m 0755 "${candidate}" "${replacement}"' in text
     assert 'mv -f "${replacement}" "${CLI_OUT}"' in text
+    assert 'receipt="${receipt_dir}/install.txt"' in text
+    assert "source=cnb-release-assets" in text
+    assert '"${candidate}" version' in text
+    assert "doops.sh/cli-contract/v3" in text
+    assert "${CLI_OUT} version" in text
+    assert "\n  doops list" not in text
     assert 'skills/doops-cli/bin' not in text
-    assert '-contract' not in text
-    assert 'doops login --target ${TARGET_NAME:-<target-name>}' in text
+    assert " --contract" not in text
+    assert '${CLI_OUT} login --target ${TARGET_NAME:-<target-name>}' in text
     assert 'allowed = {"name", "aliases", "use", "gateway", "cluster", "instance"}' in text
     assert text.index('contains unsupported fields') < text.index('echo "[1/4] Installing CLI')
 
@@ -43,6 +50,8 @@ def test_cli_release_builds_to_ignored_distribution_directory():
     assert "--platform linux/amd64" in release
     assert 'RELEASE_DIR="${DOOPS_CLI_RELEASE_DIR:-${REPO_ROOT}/dist/cli}"' in build
     assert 'RELEASE_DIR="${DOOPS_CLI_RELEASE_DIR:-${REPO_ROOT}/dist/cli}"' in release
+    assert '-X main.cliBuildVersion=${CLI_VERSION}' in build
+    assert '-X main.cliBuildCommit=${CLI_COMMIT}' in build
 
 
 def test_installer_rejects_unsupported_target_fields_before_replacing_cli():
@@ -120,6 +129,122 @@ def test_installer_requires_complete_gateway_route_before_replacing_cli():
         assert cli.read_text() == "existing-cli"
 
 
+def test_installer_places_release_asset_only_in_standard_cli_path():
+    with tempfile.TemporaryDirectory() as raw_root:
+        root = Path(raw_root)
+        home = root / "home"
+        fixtures = root / "fixtures"
+        fake_bin = root / "bin"
+        project = root / "project"
+        home.mkdir()
+        fixtures.mkdir()
+        fake_bin.mkdir()
+        project.mkdir()
+
+        platform = subprocess.run(
+            ["bash", "-c", "uname -s | tr '[:upper:]' '[:lower:]'; uname -m"],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.splitlines()
+        arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[
+            platform[1]
+        ]
+        artifact_name = f"doops-{platform[0]}-{arch}"
+        artifact = fixtures / artifact_name
+        release_commit = "a" * 40
+        artifact.write_text(
+            "#!/usr/bin/env bash\n"
+            "if [[ \"${1:-}\" == version ]]; then\n"
+            f"  printf 'version=v-test commit={release_commit} contract=doops.sh/cli-contract/v3\\n'\n"
+            "fi\n"
+        )
+        artifact.chmod(0o755)
+        checksum = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        (fixtures / "checksums.txt").write_text(f"{checksum}  {artifact_name}\n")
+
+        curl = fake_bin / "curl"
+        curl.write_text(
+            """#!/usr/bin/env bash
+set -euo pipefail
+out=""
+url=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output) out="$2"; shift 2 ;;
+    --*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+cp "${DOOPS_TEST_RELEASE_FIXTURES}/${url##*/}" "${out}"
+"""
+        )
+        curl.chmod(0o755)
+
+        result = subprocess.run(
+            [
+                "bash",
+                str(INSTALL),
+                "--version",
+                "v-test",
+                "--project",
+                str(project),
+            ],
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "DOOPS_TEST_RELEASE_FIXTURES": str(fixtures),
+            },
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        installed = home / ".local" / "bin" / "doops"
+        assert installed.read_bytes() == artifact.read_bytes()
+        receipt = (home / ".local" / "share" / "doops" / "install.txt").read_text()
+        assert "version=v-test" in receipt
+        assert f"artifact={artifact_name}" in receipt
+        assert f"sha256={checksum}" in receipt
+        assert f"commit={release_commit}" in receipt
+        assert "contract=doops.sh/cli-contract/v3" in receipt
+        assert f"path={installed}" in receipt
+        assert not (home / ".agent" / "skills" / "doops" / "doops-cli" / "bin").exists()
+
+        installed.write_text("keep-existing-cli")
+        artifact.write_text(
+            "#!/usr/bin/env bash\n"
+            "printf 'version=dev commit=unknown contract=doops.sh/cli-contract/v3\\n'\n"
+        )
+        artifact.chmod(0o755)
+        bad_checksum = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        (fixtures / "checksums.txt").write_text(f"{bad_checksum}  {artifact_name}\n")
+        rejected = subprocess.run(
+            [
+                "bash",
+                str(INSTALL),
+                "--version",
+                "v-test",
+                "--project",
+                str(project),
+            ],
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "DOOPS_TEST_RELEASE_FIXTURES": str(fixtures),
+            },
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert rejected.returncode != 0
+        assert "identity mismatch" in rejected.stderr
+        assert installed.read_text() == "keep-existing-cli"
+
+
 def test_tag_pipeline_publishes_and_verifies_release_assets():
     ci = CI.read_text()
     publish = PUBLISH.read_text()
@@ -132,8 +257,11 @@ def test_tag_pipeline_publishes_and_verifies_release_assets():
     assert '--repo "${CNB_REPO_SLUG_LOWERCASE}"' in ci
     assert '--repo "${CNB_REPO}"' not in ci
     assert "verify published CLI release assets" in ci
+    assert 'DOOPS_RELEASE_COMMIT="${CNB_COMMIT}"' in ci
     assert "https://api.cnb.cool" in publish
     assert "asset-upload-url" in publish
     assert 'CNB_TOKEN is required' in publish
     assert "Agent image: ${image}" in publish
     assert "https://cnb.cool/${RELEASE_REPO}/-/releases/download/${RELEASE_TAG}" in verify
+    assert "Published CLI identity mismatch" in verify
+    assert "Published CLI identity marker missing" in verify

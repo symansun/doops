@@ -2,9 +2,72 @@ package server
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestOpenGatewayStoreRestrictsPersistentFilePermissions(t *testing.T) {
+	root := t.TempDir()
+	sharedDir := filepath.Join(root, "shared")
+	if err := os.Mkdir(sharedDir, 0755); err != nil {
+		t.Fatalf("create permissive store directory: %v", err)
+	}
+	databasePath := filepath.Join(sharedDir, "gateway.db")
+	if err := os.WriteFile(databasePath, nil, 0644); err != nil {
+		t.Fatalf("create permissive database file: %v", err)
+	}
+
+	store, err := OpenGatewayStore(databasePath)
+	if err != nil {
+		t.Fatalf("open gateway store: %v", err)
+	}
+	defer store.Close()
+
+	for path, want := range map[string]os.FileMode{
+		sharedDir:    0755,
+		databasePath: 0600,
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("%s permissions = %04o, want %04o", path, got, want)
+		}
+	}
+	for _, sidecar := range []string{databasePath + "-wal", databasePath + "-shm"} {
+		info, err := os.Stat(sidecar)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			t.Fatalf("stat %s: %v", sidecar, err)
+		}
+		if got := info.Mode().Perm(); got != 0600 {
+			t.Fatalf("%s permissions = %04o, want 0600", sidecar, got)
+		}
+	}
+}
+
+func TestOpenGatewayStoreCreatesPrivateStoreDirectory(t *testing.T) {
+	storeDir := filepath.Join(t.TempDir(), "private")
+	store, err := OpenGatewayStore(filepath.Join(storeDir, "gateway.db"))
+	if err != nil {
+		t.Fatalf("open gateway store: %v", err)
+	}
+	defer store.Close()
+
+	info, err := os.Stat(storeDir)
+	if err != nil {
+		t.Fatalf("stat store directory: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0700 {
+		t.Fatalf("store directory permissions = %04o, want 0700", got)
+	}
+}
 
 func TestGatewayStoreOnlyIssuesUserTokensAndPermissions(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")

@@ -101,7 +101,8 @@ sha256_file() {
 }
 
 install_cli() {
-  local platform artifact checksums expected actual candidate replacement
+  local platform artifact checksums expected actual candidate replacement receipt_dir receipt
+  local identity version commit contract
   platform="$(detect_host_platform)"
   if [[ "${platform}" == unsupported-* ]]; then
     cat >&2 <<EOF
@@ -145,6 +146,20 @@ EOF
     echo "Release checksum mismatch for ${artifact} in ${RELEASE_TAG}" >&2
     exit 1
   fi
+  chmod 0755 "${candidate}"
+  if ! identity="$("${candidate}" version 2>/dev/null)"; then
+    echo "Release CLI identity check failed for ${artifact}" >&2
+    exit 1
+  fi
+  version="$(printf '%s\n' "${identity}" | awk '{for (i=1; i<=NF; i++) if ($i ~ /^version=/) {sub(/^version=/, "", $i); print $i}}')"
+  commit="$(printf '%s\n' "${identity}" | awk '{for (i=1; i<=NF; i++) if ($i ~ /^commit=/) {sub(/^commit=/, "", $i); print $i}}')"
+  contract="$(printf '%s\n' "${identity}" | awk '{for (i=1; i<=NF; i++) if ($i ~ /^contract=/) {sub(/^contract=/, "", $i); print $i}}')"
+  if [[ "${version}" != "${RELEASE_TAG}" ]] ||
+    ! printf '%s\n' "${commit}" | grep -Eq '^[0-9a-f]{40}$' ||
+    [[ "${contract}" != "doops.sh/cli-contract/v3" ]]; then
+    echo "Release CLI identity mismatch for ${artifact}: expected version ${RELEASE_TAG} and contract v3" >&2
+    exit 1
+  fi
 
   mkdir -p "$(dirname "${CLI_OUT}")"
   if [[ -d "${CLI_OUT}" ]]; then
@@ -158,8 +173,23 @@ EOF
     echo "Failed to replace CLI at ${CLI_OUT}" >&2
     exit 1
   fi
+  receipt_dir="${HOME}/.local/share/doops"
+  receipt="${receipt_dir}/install.txt"
+  mkdir -p "${receipt_dir}"
+  chmod 0700 "${receipt_dir}"
+  {
+    printf 'version=%s\n' "${RELEASE_TAG}"
+    printf 'artifact=%s\n' "${artifact}"
+    printf 'sha256=%s\n' "${actual}"
+    printf 'commit=%s\n' "${commit}"
+    printf 'contract=%s\n' "${contract}"
+    printf 'source=cnb-release-assets\n'
+    printf 'path=%s\n' "${CLI_OUT}"
+  } >"${receipt}"
+  chmod 0600 "${receipt}"
   echo "  CLI installed from CNB Release Assets: ${RELEASE_TAG}/${artifact}"
   echo "  CLI installed to ${CLI_OUT}"
+  echo "  Install receipt written to ${receipt}"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -293,13 +323,14 @@ If ~/.local/bin is not in PATH, run:
 
 Quick verify:
   cd "${PROJECT_PATH}"
-  doops list
-  doops login --target ${TARGET_NAME:-<target-name>}
-  doops -session smoke exec --target ${TARGET_NAME:-<target-name>} --cmd "hostname"
+  ${CLI_OUT} version
+  ${CLI_OUT} list
+  ${CLI_OUT} login --target ${TARGET_NAME:-<target-name>}
+  ${CLI_OUT} -session smoke exec --target ${TARGET_NAME:-<target-name>} --cmd "hostname"
 EOF
 
 if [[ -n "${TARGET_GATEWAY}" ]]; then
   cat <<EOF
-  doops targets --target ${TARGET_NAME:-<gateway-target-name>}
+  ${CLI_OUT} targets --target ${TARGET_NAME:-<gateway-target-name>}
 EOF
 fi

@@ -1,11 +1,20 @@
-import { readAuth, toHttpBase } from "@/lib/gateway"
+import {
+  gatewayPolicyResponse,
+  readAllowedAuth,
+} from "@/lib/gateway-policy"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 // 透传到 gateway GET /v1/audit（需要 admin 权限的 token）
 export async function GET(req: Request) {
-  const { gateway, token } = readAuth(req)
+  let gateway: string
+  let token: string
+  try {
+    ;({ gateway, token } = readAllowedAuth(req))
+  } catch (err) {
+    return gatewayPolicyResponse(err) || Response.json({ error: "gateway 策略检查失败" }, { status: 500 })
+  }
   if (!gateway || !token) {
     return Response.json({ error: "缺少 gateway 地址或 token" }, { status: 400 })
   }
@@ -18,9 +27,10 @@ export async function GET(req: Request) {
   }
 
   try {
-    const res = await fetch(`${toHttpBase(gateway)}/v1/audit?${qs.toString()}`, {
+    const res = await fetch(`${gateway}/v1/audit?${qs.toString()}`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
+      redirect: "manual",
     })
     const text = await res.text()
     if (!res.ok) {

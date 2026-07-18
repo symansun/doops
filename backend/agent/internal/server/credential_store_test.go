@@ -46,6 +46,54 @@ func TestCredentialPayloadRequiresExternalMasterKey(t *testing.T) {
 	}
 }
 
+func TestCredentialMetadataAndTargetGrantPersistAcrossGatewayRestart(t *testing.T) {
+	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("p", 32))
+	databasePath := filepath.Join(t.TempDir(), "gateway.db")
+	store, err := OpenGatewayStore(databasePath)
+	if err != nil {
+		t.Fatalf("open credential store: %v", err)
+	}
+	owner := createCredentialTestUser(t, store, "persistent-owner")
+	resource, err := store.CreateCredential(CredentialCreateRequest{
+		Name: "persistent-registry", Scope: CredentialScopePersonal, Type: CredentialTypeRegistry,
+		OwnerID: owner.ID, CreatedBy: owner.ID,
+	})
+	if err != nil {
+		t.Fatalf("create persistent credential: %v", err)
+	}
+	scope := credentialStoreImageScope("cluster-a", "instance-a", "apps")
+	if _, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
+		CredentialID: resource.ID,
+		GranteeID:    owner.ID,
+		Scope:        scope,
+		CreatedBy:    owner.ID,
+	}); err != nil {
+		t.Fatalf("create persistent credential grant: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close credential store: %v", err)
+	}
+
+	reopened, err := OpenGatewayStore(databasePath)
+	if err != nil {
+		t.Fatalf("reopen credential store: %v", err)
+	}
+	defer reopened.Close()
+	managed, err := reopened.ListCredentials(CredentialListFilter{ActorID: owner.ID})
+	if err != nil || len(managed) != 1 || managed[0].ID != resource.ID {
+		t.Fatalf("managed credentials after restart = %#v, %v", managed, err)
+	}
+	visible, err := reopened.ListCredentialAccess(owner.ID, "cluster-a", "instance-a", false)
+	if err != nil || len(visible) != 1 || visible[0].ID != resource.ID ||
+		len(visible[0].Grants) != 1 || !credentialScopeEqual(visible[0].Grants[0].Scope, scope) {
+		t.Fatalf("target credentials after restart = %#v, %v", visible, err)
+	}
+	otherTarget, err := reopened.ListCredentialAccess(owner.ID, "cluster-b", "instance-b", false)
+	if err != nil || len(otherTarget) != 0 {
+		t.Fatalf("other target credentials after restart = %#v, %v", otherTarget, err)
+	}
+}
+
 func TestCredentialPayloadSchemaIsStrictAndRedacted(t *testing.T) {
 	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("s", 32))
 	store := openCredentialTestStore(t)

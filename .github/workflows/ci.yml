@@ -48,6 +48,9 @@ jobs:
       - name: Install web dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Test gateway proxy policy
+        run: pnpm test:gateway-policy
+
       - name: Typecheck web console
         run: pnpm exec tsc --noEmit
 

@@ -14,6 +14,8 @@ command -v docker >/dev/null 2>&1 || {
 
 docker run --rm \
   --platform linux/amd64 \
+  -e DOOPS_CLI_VERSION="${DOOPS_CLI_VERSION:-dev}" \
+  -e DOOPS_CLI_COMMIT="${DOOPS_CLI_COMMIT:-unknown}" \
   -v "${REPO_ROOT}:/workspace:ro" \
   -v "${TEMP_DIR}:/out" \
   -w /workspace \
