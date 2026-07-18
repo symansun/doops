@@ -32,15 +32,22 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
 
 ## 2026-07-18 Reverse Tunnel Heartbeat Recovery
 
-- Close the reverse-tunnel WebSocket after any heartbeat control-write error,
-  including temporary write timeouts, so the existing reconnect loop can
-  establish a fresh Gateway session.
-- Root cause: treating a timed-out heartbeat write as reusable could leave an
-  Agent attached to a stale proxy socket after Gateway closed the upstream
-  connection. Gateway then reported the target offline while the Agent process
-  and Kubernetes Pod remained healthy.
+- Bound reverse-tunnel data writes with a 60-second deadline while keeping
+  control frames independent from the application data-write mutex. A control
+  timeout remains reusable only when it is both temporary and overlaps a
+  bounded data write; unexplained control failures and all data-write failures
+  close the socket so the reconnect loop can establish a fresh Gateway session.
+- Root cause: the heartbeat path reused Gorilla's temporary write-lock timeout
+  while data writes had no deadline. A data write pinned on stale transport
+  could therefore hold Gorilla's write lock indefinitely. Closing every timeout
+  would instead disconnect healthy slow writers, so the implementation records
+  data-write begin/end sequence and distinguishes temporary lock contention from
+  fatal network write timeouts.
 - Release verification must leave an idle target connected for longer than the
   configured Gateway lease and confirm that `last_seen` continues advancing.
+  It must also interrupt the Gateway/proxy during an active tunnel, confirm the
+  Agent reconnects, and confirm an overlapping data write does not cause a
+  temporary heartbeat lock timeout to close the connection.
 
 ## Maintenance Rules
 

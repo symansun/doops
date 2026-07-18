@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -81,6 +82,7 @@ const (
 	agentWSReadTimeout      = 20 * time.Second
 	agentWSPingInterval     = 5 * time.Second
 	agentWSPingWriteTimeout = 3 * time.Second
+	agentWSDataWriteTimeout = 60 * time.Second
 )
 
 type websocketControlWriter interface {
@@ -88,16 +90,67 @@ type websocketControlWriter interface {
 	Close() error
 }
 
-func writeHeartbeatControl(conn websocketControlWriter, messageType int, payload []byte, timeout time.Duration) bool {
+type websocketDataWriter interface {
+	SetWriteDeadline(deadline time.Time) error
+	WriteJSON(v interface{}) error
+	Close() error
+}
+
+type websocketDataWriteState struct {
+	sequence atomic.Uint64
+}
+
+func (s *websocketDataWriteState) begin() {
+	s.sequence.Add(1)
+}
+
+func (s *websocketDataWriteState) end() {
+	s.sequence.Add(1)
+}
+
+func (s *websocketDataWriteState) overlaps(start uint64) bool {
+	end := s.sequence.Load()
+	return start%2 == 1 || end%2 == 1 || start != end
+}
+
+func writeHeartbeatControl(conn websocketControlWriter, dataWriteState *websocketDataWriteState, messageType int, payload []byte, timeout time.Duration) bool {
+	writeSequence := dataWriteState.sequence.Load()
 	if err := conn.WriteControl(messageType, payload, time.Now().Add(timeout)); err != nil {
+		var netErr net.Error
+		if errors.As(err, &netErr) &&
+			netErr.Timeout() &&
+			netErr.Temporary() &&
+			dataWriteState.overlaps(writeSequence) {
+			return true
+		}
 		_ = conn.Close()
 		return false
 	}
 	return true
 }
 
-func writeHeartbeatPing(conn websocketControlWriter, payload []byte, timeout time.Duration) bool {
-	return writeHeartbeatControl(conn, websocket.PingMessage, payload, timeout)
+func writeHeartbeatPing(conn websocketControlWriter, dataWriteState *websocketDataWriteState, payload []byte, timeout time.Duration) bool {
+	return writeHeartbeatControl(conn, dataWriteState, websocket.PingMessage, payload, timeout)
+}
+
+func writeWebSocketJSON(conn websocketDataWriter, writeMu *sync.Mutex, dataWriteState *websocketDataWriteState, value interface{}, timeout time.Duration) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	dataWriteState.begin()
+	defer dataWriteState.end()
+	if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+		_ = conn.Close()
+		return err
+	}
+	if err := conn.WriteJSON(value); err != nil {
+		_ = conn.Close()
+		return err
+	}
+	if err := conn.SetWriteDeadline(time.Time{}); err != nil {
+		_ = conn.Close()
+		return err
+	}
+	return nil
 }
 
 func readWebSocketMessage(conn *websocket.Conn, onProgress func()) (int, []byte, error) {
@@ -136,6 +189,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 
 	// per-connection 写互斥锁（gorilla/websocket 不允许并发写）
 	var connMu sync.Mutex
+	var dataWriteState websocketDataWriteState
 
 	conn.SetReadDeadline(time.Now().Add(agentWSReadTimeout))
 	conn.SetPongHandler(func(string) error {
@@ -152,7 +206,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 			case <-pingDone:
 				return
 			case <-ticker.C:
-				if !writeHeartbeatPing(conn, nil, agentWSPingWriteTimeout) {
+				if !writeHeartbeatPing(conn, &dataWriteState, nil, agentWSPingWriteTimeout) {
 					return
 				}
 			}
@@ -163,9 +217,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 
 	// per-connection 线程安全写函数（替代全局 gw.mu）
 	writeJSON := func(v interface{}) {
-		connMu.Lock()
-		defer connMu.Unlock()
-		if err := conn.WriteJSON(v); err != nil {
+		if err := writeWebSocketJSON(conn, &connMu, &dataWriteState, v, agentWSDataWriteTimeout); err != nil {
 			log.Printf("WS WriteJSON error: %v", err)
 		}
 	}
