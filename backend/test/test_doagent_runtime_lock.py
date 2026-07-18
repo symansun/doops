@@ -21,7 +21,7 @@ def test_doagent_runtime_lock_includes_exact_source_revision():
     revision = runtime["DO_AGENT_REVISION"]
 
     assert len(revision) == 40
-    assert runtime["DO_AGENT_VERSION"] == "0.2.21"
+    assert runtime["DO_AGENT_VERSION"] == "0.2.22"
     assert runtime["DO_AGENT_IMAGE"].endswith(
         f"@{runtime['DO_AGENT_INDEX_DIGEST']}"
     )

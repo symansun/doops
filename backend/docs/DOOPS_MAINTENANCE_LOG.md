@@ -57,7 +57,7 @@ For gateway control-plane releases, additionally verify:
 
 - Verified source commit: `836171d04b1230b0fc3f477a47b85a9250408184`
 - Verified deployed Agent image: `docker.cnb.cool/l8ai/ai/doops.sh@sha256:e43a2b207fcf0a6e734216d6ac3cb95235a7fd13d36e7a566aadb48c9a67033c`
-- Embedded doagent version: `0.2.21`
+- Embedded doagent version: `0.2.22`
 - Gateway binary: extracted from the verified CNB CI image digest with
   `scripts/extract-gateway-from-image.sh`, then deployed with
   `scripts/deploy-gateway.sh --no-build`.
