@@ -149,7 +149,7 @@ jobs:
       lang: ".gitlab-ci.yml",
       code: `deploy:
   stage: deploy
-  image: alpine:3.22
+  image: alpine:3.22@sha256:<PINNED_ALPINE_DIGEST>
   variables:
     DOOPS_GATEWAY: "${gw}"
     DOOPS_VERSION: "<PINNED_DOOPS_VERSION>"
