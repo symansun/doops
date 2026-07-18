@@ -227,7 +227,13 @@ func TestCredentialBundleResolvesMetadataAndNamedAuthorizationRejectsAmbiguity(t
 		grant, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 			CredentialID: credential.ID,
 			GranteeID:    deployer.ID,
-			Scope:        credentialStoreImageScope("cluster", "instance", "apps"),
+			Cluster:      "cluster",
+			Instance:     "instance",
+			Project:      "project",
+			Environment:  "production",
+			Template:     "release",
+			Namespace:    "apps",
+			Uses:         []CredentialUse{CredentialUseImagePull},
 			CreatedBy:    grantActor,
 		})
 		if err != nil {
@@ -244,7 +250,12 @@ func TestCredentialBundleResolvesMetadataAndNamedAuthorizationRejectsAmbiguity(t
 	bundle, err := store.CreateCredentialBundle(CredentialBundleCreateRequest{
 		Name: "release-shared", Scope: CredentialScopePlatform, CreatedBy: admin.ID,
 		Items: []CredentialBundleItem{{
-			CredentialID: credentials[0].ID,
+			CredentialID:       credentials[0].ID,
+			Use:                CredentialUseImagePull,
+			Namespace:          "apps",
+			Workload:           CredentialPlanWorkload{Kind: "Deployment", Name: "api"},
+			RegistryRepository: "team/api",
+			RegistryReference:  "sha256:manifest",
 		}},
 	})
 	if err != nil {
@@ -261,8 +272,9 @@ func TestCredentialBundleResolvesMetadataAndNamedAuthorizationRejectsAmbiguity(t
 	}
 
 	request := CredentialUseRequest{
-		ActorID: deployer.ID, Credential: "registry",
-		Scope: credentialStoreImageScope("cluster", "instance", "apps"),
+		ActorID: deployer.ID, Credential: "registry", Cluster: "cluster", Instance: "instance",
+		Project: "project", Environment: "production", Template: "release", Namespace: "apps",
+		Use: CredentialUseImagePull,
 	}
 	if _, err := store.AuthorizeCredentialUse(request); !errors.Is(err, ErrCredentialAmbiguous) {
 		t.Fatalf("named authorization error = %v, want ErrCredentialAmbiguous", err)
@@ -284,7 +296,13 @@ func TestCredentialBundleResolvesMetadataAndNamedAuthorizationRejectsAmbiguity(t
 	restored, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 		CredentialID: credentials[0].ID,
 		GranteeID:    deployer.ID,
-		Scope:        credentialStoreImageScope("cluster", "instance", "apps"),
+		Cluster:      "cluster",
+		Instance:     "instance",
+		Project:      "project",
+		Environment:  "production",
+		Template:     "release",
+		Namespace:    "apps",
+		Uses:         []CredentialUse{CredentialUseImagePull},
 		CreatedBy:    admin.ID,
 	})
 	if err != nil || restored.State != CredentialStateActive {
@@ -327,7 +345,13 @@ func TestCredentialGrantMustMatchEveryDeploymentDimension(t *testing.T) {
 	grant, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 		CredentialID: credential.ID,
 		GranteeID:    deployer.ID,
-		Scope:        credentialStoreImageScope("doops-edu", "edu-coder", "kz-ops"),
+		Cluster:      "doops-edu",
+		Instance:     "edu-coder",
+		Project:      "oilan",
+		Environment:  "production",
+		Template:     "oilan-agent-release",
+		Namespace:    "kz-ops",
+		Uses:         []CredentialUse{CredentialUseImagePull},
 		CreatedBy:    owner.ID,
 	})
 	if err != nil {
@@ -335,7 +359,15 @@ func TestCredentialGrantMustMatchEveryDeploymentDimension(t *testing.T) {
 	}
 
 	request := CredentialUseRequest{
-		ActorID: deployer.ID, Credential: credential.Name, Scope: grant.Scope,
+		ActorID:     deployer.ID,
+		Credential:  credential.Name,
+		Cluster:     grant.Cluster,
+		Instance:    grant.Instance,
+		Project:     grant.Project,
+		Environment: grant.Environment,
+		Template:    grant.Template,
+		Namespace:   grant.Namespace,
+		Use:         CredentialUseImagePull,
 	}
 	resolved, err := store.AuthorizeCredentialUse(request)
 	if err != nil {
@@ -350,14 +382,13 @@ func TestCredentialGrantMustMatchEveryDeploymentDimension(t *testing.T) {
 		mutate func(*CredentialUseRequest)
 	}{
 		{name: "actor", mutate: func(r *CredentialUseRequest) { r.ActorID = owner.ID }},
-		{name: "cluster", mutate: func(r *CredentialUseRequest) { r.Scope.Cluster = "other" }},
-		{name: "instance", mutate: func(r *CredentialUseRequest) { r.Scope.Instance = "other" }},
-		{name: "namespace", mutate: func(r *CredentialUseRequest) { r.Scope.Namespace = "other" }},
-		{name: "use", mutate: func(r *CredentialUseRequest) { r.Scope.Use = CredentialUseGitCheckout }},
-		{name: "workload kind", mutate: func(r *CredentialUseRequest) { r.Scope.Workload.Kind = "job" }},
-		{name: "workload name", mutate: func(r *CredentialUseRequest) { r.Scope.Workload.Name = "other" }},
-		{name: "image repository", mutate: func(r *CredentialUseRequest) { r.Scope.ImageRepository = "team/other" }},
-		{name: "image digest", mutate: func(r *CredentialUseRequest) { r.Scope.ImageDigest = "sha256:" + strings.Repeat("b", 64) }},
+		{name: "cluster", mutate: func(r *CredentialUseRequest) { r.Cluster = "other" }},
+		{name: "instance", mutate: func(r *CredentialUseRequest) { r.Instance = "other" }},
+		{name: "project", mutate: func(r *CredentialUseRequest) { r.Project = "other" }},
+		{name: "environment", mutate: func(r *CredentialUseRequest) { r.Environment = "staging" }},
+		{name: "template", mutate: func(r *CredentialUseRequest) { r.Template = "other" }},
+		{name: "namespace", mutate: func(r *CredentialUseRequest) { r.Namespace = "other" }},
+		{name: "use", mutate: func(r *CredentialUseRequest) { r.Use = CredentialUseGitCheckout }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -469,7 +500,13 @@ func TestPlatformCredentialAdministratorCanManageResourceCreatedByAnotherAdmin(t
 	if _, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 		CredentialID: credential.ID,
 		GranteeID:    deployer.ID,
-		Scope:        credentialStoreImageScope("doops-edu", "edu-coder", "kz-ops"),
+		Cluster:      "doops-edu",
+		Instance:     "edu-coder",
+		Project:      "oilan",
+		Environment:  "production",
+		Template:     "oilan-agent-release",
+		Namespace:    "kz-ops",
+		Uses:         []CredentialUse{CredentialUseImagePull},
 		CreatedBy:    operator.ID,
 	}); err != nil {
 		t.Fatalf("operator grant platform credential: %v", err)
@@ -514,7 +551,13 @@ func TestCredentialAdministratorCanRecoverAnotherUsersPersonalCredential(t *test
 	grant, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 		CredentialID: credential.ID,
 		GranteeID:    deployer.ID,
-		Scope:        credentialStoreImageScope("doops-edu", "edu-coder", "kz-ops"),
+		Cluster:      "doops-edu",
+		Instance:     "edu-coder",
+		Project:      "oilan",
+		Environment:  "production",
+		Template:     "oilan-agent-release",
+		Namespace:    "kz-ops",
+		Uses:         []CredentialUse{CredentialUseImagePull},
 		CreatedBy:    operator.ID,
 	})
 	if err != nil || grant.State != CredentialStateActive {
@@ -522,19 +565,6 @@ func TestCredentialAdministratorCanRecoverAnotherUsersPersonalCredential(t *test
 	}
 	if err := store.RevokeCredential(credential.ID, operator.ID); err != nil {
 		t.Fatalf("operator revoke personal credential: %v", err)
-	}
-}
-
-func TestCredentialGrantScopeRejectsUnsupportedWorkloadKinds(t *testing.T) {
-	for _, kind := range []string{"job", "cronjob"} {
-		t.Run(kind, func(t *testing.T) {
-			scope := credentialStoreImageScope("doops-edu", "edu-coder", "kz-ops")
-			scope.Workload.Kind = kind
-			if err := validateCredentialGrantScope(scope); err == nil ||
-				err.Error() != "credential_scope_invalid" {
-				t.Fatalf("validate %s workload scope error = %v", kind, err)
-			}
-		})
 	}
 }
 
@@ -546,18 +576,6 @@ func openCredentialTestStore(t *testing.T) *GatewayStore {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	return store
-}
-
-func credentialStoreImageScope(cluster, instance, namespace string) CredentialGrantScope {
-	return CredentialGrantScope{
-		Cluster: cluster, Instance: instance, Namespace: namespace,
-		Use: CredentialUseImagePull,
-		Workload: CredentialPlanWorkload{
-			Kind: "deployment", Name: "api",
-		},
-		ImageRepository: "team/api",
-		ImageDigest:     "sha256:" + strings.Repeat("a", 64),
-	}
 }
 
 func createCredentialTestUser(t *testing.T, store *GatewayStore, name string) GatewayUser {

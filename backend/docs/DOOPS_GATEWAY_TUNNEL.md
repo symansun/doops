@@ -52,8 +52,8 @@ bash scripts/deploy-gateway.sh \
 - gateway 转发 doops JSON-RPC 操作流量和 Git HTTP 请求，不做裸 TCP 隧道。
 - `push/pull` 在标准 gateway 路径下使用 Git 语义。gateway 对外暴露 `/v1/git/<cluster>/<instance>/<session>.git/...`，再通过目标 agent 已建立的反向 WebSocket 把 Git HTTP 请求透传给 agent 本地 `/git/<session>.git/...`。
 - `doops_workspace_*` 是低层文件传输工具；通用 CLI 的目录同步使用 Git HTTP
-  `push/pull`。这些接口不属于发布授权协议，发布任务不得用文件同步替代明确的
-  target、范围、镜像、原因和验收条件。
+  `push/pull`。这些接口不属于声明式发布协议，发布 skill 不得用文件同步替代
+  `EnvironmentRegistry` admission。
 - 密码登录签发短期 user token，默认 24 小时过期；过期 token 会在登录时顺手清理。
 - token 校验通过 token id 定位单行哈希，避免多人多 token 时全表 bcrypt 扫描。
 - 同一 `cluster/instance` 默认串行执行，并允许最多 8 个操作排队等待 2 分钟；队列满或超时会返回明确错误。
@@ -213,8 +213,9 @@ doops-agent \
 ```
 
 如果省略 `-instance`，agent 使用主机名。agent 断线后会自动重连；gateway
-不会重放已中断的高危操作。任何中断的 mutation 都按失败处理，调用方必须检查真实终态，
-不得由 Gateway 重新发送 apply 请求。
+不会重放已中断的高危操作。对于已经 admission 的 `execute-doops-cicd`，Agent
+会先按完整 `CredentialRun` 绑定的摘要持久化唯一终态；Gateway 重连后只读取该终态，不会再次
+发送 apply prompt。普通 exec、write 或其它 mutation 仍按断线失败处理。
 `-gateway-url` 必须填写 doops-gateway 的 base URL，或显式填写 `/v1/agent/connect`；
 不要填写 `/ws`。`/ws` 是遗留直连 agent 端点，不是 agent 注册 gateway 的反向隧道端点。
 
@@ -316,10 +317,13 @@ doops -session upgrade_20260511 upgrade \
 - 源码入口是仓库一级目录 `gateway/`；`agent/cmd/gateway` 仅保留为兼容 wrapper。
 - gateway 默认监听 `42222`；公网部署时云安全组/防火墙也必须放行 TCP 42222。
 - gateway 按 `cluster/instance` 和资源键隔离操作；不同 session/workspace 可并发，同一资源互斥。
-- 发布通过 `doops ask --apply` 的明确自然语言任务进入 Gateway。任务必须给出
-  target、服务范围、镜像版本、原因和验收条件；`--credential <resource-name>` 只传递
-  metadata-only 引用。Gateway 将引用绑定用户、target 和 session，并在精确 workload、
-  image 或 Helm scope 获授权后物化；公共 Agent 不接收凭据 payload。
+- 声明式发布只接受仓库中的 `doops.sh/v3 EnvironmentRegistry`。Gateway 先通过
+  `/v1/credentials/prepare` 创建绑定 source revision、target、session 和 build
+  definition 的单次 `CredentialRun`，再经已授权反向隧道向 Agent 发送严格的
+  `doops.reconciliation-context/v2` apply envelope；公共 Agent `/ws` 无权调用
+  credential control-plane 工具或执行 apply。目标 Agent 必须精确声明
+  `doops.sh/credential-plan/v2` 和 `doops.sh/cicd-contract/v3` 能力，否则 Gateway
+  在分发前返回 `426 Upgrade Required`。
 - `/v1/targets` 中 `busy=true` 只表示 target-wide 阻塞；普通 session 运行显示为 `status=active`、`busy=false`，并在 `resources` 中标出锁住的资源。
 - gateway 还维护全局/用户级并发闸门；默认全局 64 个并发操作、单用户 8 个并发操作。
 - gateway 会主动对 agent WebSocket 发 ping，agent pong 后刷新租约和 SQLite `last_seen`。

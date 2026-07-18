@@ -126,7 +126,10 @@ type AuditEvent struct {
 	CredentialID    string
 	VersionID       string
 	GrantID         string
-	Scope           *CredentialGrantScope
+	Project         string
+	Environment     string
+	Template        string
+	Namespace       string
 	ResourceVersion string
 	Digest          string
 	CorrelationID   string
@@ -164,7 +167,10 @@ type AuditFinish struct {
 	Instance        string
 	VersionID       string
 	GrantID         string
-	Scope           *CredentialGrantScope
+	Project         string
+	Environment     string
+	Template        string
+	Namespace       string
 	ResourceVersion string
 	Digest          string
 	EndedAt         time.Time
@@ -278,7 +284,10 @@ func (s *GatewayStore) migrate() error {
 				credential_id TEXT NOT NULL DEFAULT '',
 				credential_version_id TEXT NOT NULL DEFAULT '',
 				credential_grant_id TEXT NOT NULL DEFAULT '',
-				scope_json TEXT NOT NULL DEFAULT '',
+				project TEXT NOT NULL DEFAULT '',
+				environment TEXT NOT NULL DEFAULT '',
+				template TEXT NOT NULL DEFAULT '',
+				namespace TEXT NOT NULL DEFAULT '',
 				resource_version TEXT NOT NULL DEFAULT '',
 				digest TEXT NOT NULL DEFAULT '',
 				correlation_id TEXT NOT NULL DEFAULT '',
@@ -375,18 +384,24 @@ func (s *GatewayStore) migrate() error {
 			id TEXT PRIMARY KEY,
 			credential_id TEXT NOT NULL,
 			grantee_id TEXT NOT NULL,
-			scope_json TEXT NOT NULL,
+			cluster TEXT NOT NULL,
+			instance TEXT NOT NULL,
+			project TEXT NOT NULL,
+			environment TEXT NOT NULL,
+			template TEXT NOT NULL,
+			namespace TEXT NOT NULL,
+			uses_json TEXT NOT NULL,
 			state TEXT NOT NULL DEFAULT 'active',
 			created_by TEXT NOT NULL,
 			created_at TEXT NOT NULL,
 			revoked_at TEXT NOT NULL DEFAULT '',
-			UNIQUE(credential_id, grantee_id, scope_json),
+			UNIQUE(credential_id, grantee_id, cluster, instance, project, environment, template, namespace, uses_json),
 			FOREIGN KEY(credential_id) REFERENCES credentials(id),
 			FOREIGN KEY(grantee_id) REFERENCES users(id),
 			FOREIGN KEY(created_by) REFERENCES users(id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_credential_grants_authorize
-			ON credential_grants(grantee_id, state, credential_id)`,
+			ON credential_grants(grantee_id, cluster, instance, project, environment, template, namespace, state)`,
 		`CREATE TABLE IF NOT EXISTS credential_verifications (
 				id TEXT PRIMARY KEY,
 				credential_id TEXT NOT NULL,
@@ -425,7 +440,27 @@ func (s *GatewayStore) migrate() error {
 			)`,
 		`CREATE INDEX IF NOT EXISTS idx_credential_materializations_resource
 				ON credential_materializations(credential_id, version_id, grant_id, status)`,
-		`DROP TABLE IF EXISTS credential_run_authorizations`,
+		`CREATE TABLE IF NOT EXISTS credential_run_authorizations (
+				run_id TEXT PRIMARY KEY,
+				user_id TEXT NOT NULL,
+				token_id TEXT NOT NULL,
+				cluster TEXT NOT NULL,
+				instance TEXT NOT NULL,
+				session_id TEXT NOT NULL,
+				workflow_path TEXT NOT NULL,
+				workspace_commit TEXT NOT NULL,
+				source_binding TEXT NOT NULL DEFAULT '',
+				mode TEXT NOT NULL,
+				run_digest TEXT NOT NULL,
+				state TEXT NOT NULL DEFAULT 'issued',
+				created_at TEXT NOT NULL,
+				expires_at TEXT NOT NULL,
+				consumed_at TEXT NOT NULL DEFAULT '',
+				FOREIGN KEY(user_id) REFERENCES users(id),
+				FOREIGN KEY(token_id) REFERENCES tokens(id)
+			)`,
+		`CREATE INDEX IF NOT EXISTS idx_credential_run_authorizations_expiry
+				ON credential_run_authorizations(state, expires_at)`,
 		`CREATE TABLE IF NOT EXISTS credential_bundles (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
@@ -442,7 +477,13 @@ func (s *GatewayStore) migrate() error {
 		`CREATE TABLE IF NOT EXISTS credential_bundle_items (
 			bundle_id TEXT NOT NULL,
 			credential_id TEXT NOT NULL,
-			PRIMARY KEY(bundle_id, credential_id),
+			use TEXT NOT NULL,
+			namespace TEXT NOT NULL DEFAULT '',
+			workload_json TEXT NOT NULL DEFAULT '{}',
+			registry_repository TEXT NOT NULL DEFAULT '',
+			registry_reference TEXT NOT NULL DEFAULT '',
+			required_keys_json TEXT NOT NULL DEFAULT '[]',
+			PRIMARY KEY(bundle_id, credential_id, use),
 			FOREIGN KEY(bundle_id) REFERENCES credential_bundles(id),
 			FOREIGN KEY(credential_id) REFERENCES credentials(id)
 		)`,
@@ -454,12 +495,6 @@ func (s *GatewayStore) migrate() error {
 		}
 	}
 	if err := s.migrateCredentialVerifications(); err != nil {
-		return err
-	}
-	if err := s.migrateCredentialGrantScopes(); err != nil {
-		return err
-	}
-	if err := s.migrateCredentialBundleItems(); err != nil {
 		return err
 	}
 	if err := s.ensureColumn("users", "password_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
@@ -481,7 +516,10 @@ func (s *GatewayStore) migrate() error {
 		{"credential_id", "TEXT NOT NULL DEFAULT ''"},
 		{"credential_version_id", "TEXT NOT NULL DEFAULT ''"},
 		{"credential_grant_id", "TEXT NOT NULL DEFAULT ''"},
-		{"scope_json", "TEXT NOT NULL DEFAULT ''"},
+		{"project", "TEXT NOT NULL DEFAULT ''"},
+		{"environment", "TEXT NOT NULL DEFAULT ''"},
+		{"template", "TEXT NOT NULL DEFAULT ''"},
+		{"namespace", "TEXT NOT NULL DEFAULT ''"},
 		{"resource_version", "TEXT NOT NULL DEFAULT ''"},
 		{"digest", "TEXT NOT NULL DEFAULT ''"},
 		{"correlation_id", "TEXT NOT NULL DEFAULT ''"},
@@ -496,6 +534,12 @@ func (s *GatewayStore) migrate() error {
 		definition string
 	}{
 		{"credential_bundles", "scope", "TEXT NOT NULL DEFAULT 'personal'"},
+		{"credential_bundle_items", "namespace", "TEXT NOT NULL DEFAULT ''"},
+		{"credential_bundle_items", "workload_json", "TEXT NOT NULL DEFAULT '{}'"},
+		{"credential_bundle_items", "registry_repository", "TEXT NOT NULL DEFAULT ''"},
+		{"credential_bundle_items", "registry_reference", "TEXT NOT NULL DEFAULT ''"},
+		{"credential_bundle_items", "required_keys_json", "TEXT NOT NULL DEFAULT '[]'"},
+		{"credential_run_authorizations", "source_binding", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := s.ensureColumn(column.table, column.name, column.definition); err != nil {
 			return err
@@ -935,18 +979,14 @@ func (s *GatewayStore) StartAudit(event AuditEvent) (int64, error) {
 	if event.StartedAt.IsZero() {
 		event.StartedAt = time.Now().UTC()
 	}
-	scopeJSON, err := credentialAuditScopeJSON(event.Scope)
-	if err != nil {
-		return 0, err
-	}
 	res, err := s.db.Exec(`INSERT INTO audit_events
 		(user_id, token_id, cluster, instance, credential_id, credential_version_id,
-		 credential_grant_id, scope_json, resource_version, digest, correlation_id, action,
-		 session, command_summary, status, started_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 credential_grant_id, project, environment, template, namespace, resource_version,
+		 digest, correlation_id, action, session, command_summary, status, started_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.UserID, event.TokenID, event.Cluster, event.Instance, event.CredentialID,
-		event.VersionID, event.GrantID, scopeJSON, event.ResourceVersion, event.Digest,
-		event.CorrelationID, string(event.Action),
+		event.VersionID, event.GrantID, event.Project, event.Environment, event.Template,
+		event.Namespace, event.ResourceVersion, event.Digest, event.CorrelationID, string(event.Action),
 		event.Session, event.CommandSummary, firstNonEmpty(event.Status, "running"), formatTime(event.StartedAt.UTC()))
 	if err != nil {
 		return 0, err
@@ -976,17 +1016,16 @@ func finishAuditWith(execer auditExecer, id int64, finish AuditFinish) error {
 			finish.Status = "success"
 		}
 	}
-	scopeJSON, err := credentialAuditScopeJSON(finish.Scope)
-	if err != nil {
-		return err
-	}
 	result, err := execer.Exec(`UPDATE audit_events
 		SET status = ?, error = ?, tail = ?, bytes_in = ?, bytes_out = ?,
 			cluster = CASE WHEN ? = '' THEN cluster ELSE ? END,
 			instance = CASE WHEN ? = '' THEN instance ELSE ? END,
 			credential_version_id = CASE WHEN ? = '' THEN credential_version_id ELSE ? END,
 			credential_grant_id = CASE WHEN ? = '' THEN credential_grant_id ELSE ? END,
-			scope_json = CASE WHEN ? = '' THEN scope_json ELSE ? END,
+			project = CASE WHEN ? = '' THEN project ELSE ? END,
+			environment = CASE WHEN ? = '' THEN environment ELSE ? END,
+			template = CASE WHEN ? = '' THEN template ELSE ? END,
+			namespace = CASE WHEN ? = '' THEN namespace ELSE ? END,
 			resource_version = CASE WHEN ? = '' THEN resource_version ELSE ? END,
 			digest = CASE WHEN ? = '' THEN digest ELSE ? END,
 			ended_at = ?
@@ -994,7 +1033,8 @@ func finishAuditWith(execer auditExecer, id int64, finish AuditFinish) error {
 		finish.Status, finish.Error, trimTail(finish.Tail, 8192), finish.BytesIn, finish.BytesOut,
 		finish.Cluster, finish.Cluster, finish.Instance, finish.Instance,
 		finish.VersionID, finish.VersionID, finish.GrantID, finish.GrantID,
-		scopeJSON, scopeJSON,
+		finish.Project, finish.Project, finish.Environment, finish.Environment,
+		finish.Template, finish.Template, finish.Namespace, finish.Namespace,
 		finish.ResourceVersion, finish.ResourceVersion, finish.Digest, finish.Digest,
 		formatTime(finish.EndedAt.UTC()), id)
 	if err != nil {
@@ -1045,8 +1085,8 @@ func (s *GatewayStore) ListAuditFiltered(filter AuditFilter) ([]AuditEvent, erro
 		args = append(args, v)
 	}
 	query := `SELECT id, user_id, token_id, cluster, instance, credential_id,
-			credential_version_id, credential_grant_id, scope_json,
-			resource_version, digest, correlation_id, action, session,
+			credential_version_id, credential_grant_id, project, environment, template,
+			namespace, resource_version, digest, correlation_id, action, session,
 			command_summary, status, error, tail, bytes_in, bytes_out, started_at, ended_at
 		FROM audit_events`
 	if len(conditions) > 0 {
@@ -1062,20 +1102,13 @@ func (s *GatewayStore) ListAuditFiltered(filter AuditFilter) ([]AuditEvent, erro
 	var events []AuditEvent
 	for rows.Next() {
 		var ev AuditEvent
-		var action, started, ended, scopeJSON string
+		var action, started, ended string
 		if err := rows.Scan(&ev.ID, &ev.UserID, &ev.TokenID, &ev.Cluster, &ev.Instance,
-			&ev.CredentialID, &ev.VersionID, &ev.GrantID, &scopeJSON,
-			&ev.ResourceVersion, &ev.Digest, &ev.CorrelationID,
+			&ev.CredentialID, &ev.VersionID, &ev.GrantID, &ev.Project, &ev.Environment,
+			&ev.Template, &ev.Namespace, &ev.ResourceVersion, &ev.Digest, &ev.CorrelationID,
 			&action, &ev.Session, &ev.CommandSummary, &ev.Status, &ev.Error, &ev.Tail,
 			&ev.BytesIn, &ev.BytesOut, &started, &ended); err != nil {
 			return nil, err
-		}
-		if scopeJSON != "" {
-			var scope CredentialGrantScope
-			if err := json.Unmarshal([]byte(scopeJSON), &scope); err != nil {
-				return nil, err
-			}
-			ev.Scope = &scope
 		}
 		ev.Action = GatewayAction(action)
 		ev.StartedAt, _ = parseTime(started)
@@ -1085,18 +1118,6 @@ func (s *GatewayStore) ListAuditFiltered(filter AuditFilter) ([]AuditEvent, erro
 		events = append(events, ev)
 	}
 	return events, rows.Err()
-}
-
-func credentialAuditScopeJSON(scope *CredentialGrantScope) (string, error) {
-	if scope == nil {
-		return "", nil
-	}
-	normalized := normalizeCredentialGrantScope(*scope)
-	if err := validateCredentialGrantScope(normalized); err != nil {
-		return "", err
-	}
-	encoded, err := json.Marshal(normalized)
-	return string(encoded), err
 }
 
 func (s *GatewayStore) DeleteAuditBefore(before time.Time) (int64, error) {
