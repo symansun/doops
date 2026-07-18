@@ -79,13 +79,28 @@ type K8SParams struct {
 
 // AgentPromptParams 用于 doops_agent_prompt 代理执行。
 type AgentPromptParams struct {
-	SessionID       string `json:"session_id"`
-	Instruction     string `json:"instruction"`
-	Model           string `json:"model,omitempty"`
-	Mode            string `json:"mode,omitempty"`
-	ResponseFormat  string `json:"response_format,omitempty"`
-	Operation       string `json:"operation,omitempty"`
-	WorkspaceCommit string `json:"workspace_commit,omitempty"`
+	SessionID          string                   `json:"session_id"`
+	Instruction        string                   `json:"instruction"`
+	Model              string                   `json:"model,omitempty"`
+	Mode               string                   `json:"mode,omitempty"`
+	ResponseFormat     string                   `json:"response_format,omitempty"`
+	Operation          string                   `json:"operation,omitempty"`
+	WorkspaceCommit    string                   `json:"workspace_commit,omitempty"`
+	CredentialRefs     []string                 `json:"credential_refs,omitempty"`
+	CredentialBindings []AgentCredentialBinding `json:"credential_bindings,omitempty"`
+}
+
+// AgentCredentialBinding exposes only materialization metadata to doagent.
+// Secret payloads remain inside the Gateway-to-Agent control plane.
+type AgentCredentialBinding struct {
+	Name            string   `json:"name"`
+	Use             string   `json:"use"`
+	Namespace       string   `json:"namespace"`
+	ResourceName    string   `json:"resource_name"`
+	SecretType      string   `json:"secret_type"`
+	Keys            []string `json:"keys,omitempty"`
+	ResourceVersion string   `json:"resource_version"`
+	Digest          string   `json:"digest,omitempty"`
 }
 
 // GitCloneParams clones a configured repository into a session workspace.

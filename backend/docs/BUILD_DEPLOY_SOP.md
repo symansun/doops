@@ -61,40 +61,28 @@ bash scripts/deploy-gateway.sh \
 
 ## 二、 Agent 标准构建工作流 (Server-Side Build)
 
-在进行任何修改后，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA 为标签的候选镜像。该镜像同时携带同一 revision 的 `/app/doops-agent`、`/app/doops-gateway` 和锁定版本的 `/usr/local/bin/do-agent`；不得在发布控制端重新编译 Gateway。候选镜像必须在下一步被解析为 registry digest。已注册的 DoOps Agent 只能通过 `deploy/environments.yaml` 中的 `doops.sh/v3 EnvironmentRegistry` 消费该 digest，并完成环境同步、Helm 收敛与验证。不得接受 v2 `DeploymentTemplate`、生成中间 workflow 或静默降级。CNB 不负责环境部署、回滚或 Helm/Kubernetes 操作；`deploy.sh` 与任何 SSH/rsync 手工发布入口均已移除。
+在进行任何修改后，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA 为标签的候选镜像。该镜像同时携带同一 revision 的 `/app/doops-agent`、`/app/doops-gateway` 和锁定版本的 `/usr/local/bin/do-agent`；不得在发布控制端重新编译 Gateway。候选镜像必须解析为 registry digest，正式发布只接受不可变 digest。
+
+DoOps v3 的唯一发布入口是明确授权的自然语言任务。不得使用 `EnvironmentRegistry`、`EnvironmentDefinition`、`DeploymentTemplate`、`deploy/environments.yaml`、`cicd run` 或 workflow YAML 作为发布根，也不得从目录名、环境名、业务名或历史发布记录推断目标和参数。CNB 只负责构建、校验和推送镜像，不负责环境部署、回滚或 Helm/Kubernetes 操作。
 
 ### 1. 触发受控发布 (在控制端执行)
-发布者必须先将待发布提交推送到 `main`，确认 CNB CI 的候选镜像已经生成，并在无未提交文件的精确 commit checkout 中执行环境注册表。CLI 会拒绝工作区不干净、声明不完整或 source commit 无法固定的发布。运行期必须使用候选镜像的 registry digest，不得以可变 tag 作为实际部署镜像。唯一入口为 `deploy/environments.yaml`，并显式选择一个 environment 和 service；运行期目标清单由该注册表、服务声明、Helm Chart 和环境 values 定义。
+发布者必须先将待发布提交推送到 `main`，确认 CNB CI 已为该精确 commit 生成候选镜像，并取得 registry digest。自然语言任务必须直接写明 target、服务范围、不可变镜像 digest、变更原因、允许使用的 Helm 资产和验收条件；缺少任一发布事实时必须阻塞，不得猜测或补默认值。
 
 ```bash
-doops -session doops-oilan-release cicd run \
-  -f deploy/environments.yaml \
-  -target gw-edu-release-runner \
-  --dry-run \
-  --set environment=oilan \
-  --set service=doops-agent
+doops -session release-<commit> ask \
+  --target <configured-doops-target> \
+  --apply \
+  --msg '在 <target> 发布 <service-scope>，镜像 <repository>@sha256:<digest>；仅使用 deploy/helm/<name>/ 运行资产；原因：<reason>；验收：<rollout、实际镜像、健康检查和功能路径>。'
 ```
 
-The command synchronizes the repository, then sends one ordinary Ask to doagent
-for the `$doops-cicd` Skill. The Skill emits one JSON `DeploymentRun` as its
-final response;
-text such as `admitted` is not evidence, and dry-run mutation count must be zero.
-
-Oilan 的发布执行者固定为独立的 `doops-edu/release-runner`，其声明位于
-`deploy/environments/oilan/release-runner-values.yaml`。它与受管
-`doops-agent-live` 使用不同的 Deployment、selector 和 Agent home。首次接入或
-release runner 自恢复可以使用集群管理员上下文按该 values 引导；完成 Gateway
-注册后，后续环境发布必须由 `gw-edu-release-runner` 执行。受管 Agent 不得发布或
-替换自身。
+`--apply` 是本次 mutation 的显式授权，不是兼容开关。任务返回的文本声明不能作为成功证据；验收必须来自本轮实际命令、Kubernetes 状态、健康检查和功能测试。需要凭据时只传 `--credential <resource-name>` 元数据引用，Gateway 必须按当前用户、target、session 和精确资源 scope 授权，任务和日志不得接收凭据 payload。
 
 **DoOps Agent 执行顺序：**
-1. 校验工作区与 `main` 上的精确 source commit 一致。
-2. 解析 CI 候选镜像的 registry digest，并按环境声明同步到目标 registry。
+1. 核对任务中的 target、服务范围、镜像 digest、Helm 资产、原因和验收条件完整。
+2. 验证 digest 对应 `main` 上已成功构建的精确 source commit。
 3. 在候选镜像内校验 `doops-agent`、`do-agent`、BuildKit、Python/PyYAML、Helm 与嵌入的 Helm Chart。
-4. 通过版本化 detached Job 执行
-   `helm upgrade --install --reset-values`。只接受当前环境 values，禁止继承历史
-   release values 或在 schema 失败后临场改命令重试。
-5. 等待 Job、Helm release 和 Kubernetes rollout 均成功。
+4. 按任务明确给出的运行参数执行 Helm 收敛；禁止继承已删除的历史值，也禁止在 schema 失败后临场改变目标或参数重试。
+5. 等待 Helm release 和 Kubernetes rollout 成功，并逐项执行任务中的健康与功能验收。
 
 ### 双镜像构建原则
 
@@ -125,7 +113,7 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 
 ## 三、 Agent 部署与热更新机制
 
-`doops-agent` 由 Helm 管理的 `Deployment` 托管，Chart 位于 `deploy/helm/doops-agent`；每个环境通过独立 values 文件声明镜像、目标节点、挂载、Secret 与 gateway TLS 地址。禁止直接 `kubectl set image`、`kubectl rollout restart` 或从节点 SSH 更新运行中的 Agent。
+`doops-agent` 由 Helm 管理的 `Deployment` 托管，Chart 位于 `deploy/helm/doops-agent`。该目录只保存运行时 Helm 模板、默认值和挂载定义，不保存环境注册表或部署 workflow。具体镜像、目标节点、Secret、Gateway 地址和发布参数必须由本次自然语言任务明确给出或来自任务明确授权读取的当前 Helm release；禁止直接 `kubectl set image`、`kubectl rollout restart` 或从节点 SSH 更新运行中的 Agent。
 
 `hostNetwork` 更新必须等待旧实例释放 DoAgent 和 DoOps 监听端口。容器入口使用同一个 120 秒窗口等待两个端口；Chart 的 `startupProbe` 必须覆盖至少 200 秒，并同时验证当前容器内的 DoOps 进程和本地 health，避免误连宿主网络中的旧实例。DoAgent 未启动或健康检查失败时容器必须直接失败，不能只打印警告后继续。发布验收必须确认稳定窗口后的容器重启数仍为 0。
 

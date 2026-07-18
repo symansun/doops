@@ -17,7 +17,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2165,6 +2164,13 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	if got := resourceKeyForTool(ActionExec, "doops_k8s", k8sAliasArgs, "dev", "node"); got != "k8s:kz-ops/deployment/doops-release-runner" {
 		t.Fatalf("k8s alias resource key mismatch: %q", got)
 	}
+	cleanupArgs := json.RawMessage(`{"credential_id":"cred_123","session_id":"release-a"}`)
+	if got := actionForTool("doops_credential_cleanup", cleanupArgs); got != ActionCredentialRevoke {
+		t.Fatalf("credential cleanup must require revoke permission: %q", got)
+	}
+	if got := resourceKeyForTool(ActionCredentialRevoke, "doops_credential_cleanup", cleanupArgs, "dev", "node"); got != "credential:cred_123" {
+		t.Fatalf("credential cleanup resource key mismatch: %q", got)
+	}
 }
 
 func TestGatewayRPCRejectsInternalCredentialToolsFromUserClients(t *testing.T) {
@@ -2194,7 +2200,7 @@ func TestGatewayRPCRejectsInternalCredentialToolsFromUserClients(t *testing.T) {
 
 	client := dialGatewayRPCClient(t, server.URL, token.Plaintext, "dev", "local")
 	defer client.Close()
-	for index, tool := range []string{"doops_credential_plan", "doops_credential_materialize", "doops_credential_cleanup"} {
+	for index, tool := range []string{"doops_credential_materialize", "doops_credential_cleanup"} {
 		id := float64(index + 2)
 		writeGatewayJSON(t, client, map[string]interface{}{
 			"jsonrpc": "2.0",
@@ -2819,220 +2825,6 @@ func waitForGatewayAgent(t *testing.T, hub *GatewayHub, cluster, instance string
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("gateway agent did not become online: %s/%s", cluster, instance)
-}
-
-func TestGatewayRecoversCICDResultAfterAgentReconnectWithoutReplayingPrompt(t *testing.T) {
-	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	defer store.Close()
-
-	hub := NewGatewayHub(store, GatewayHubOptions{
-		AgentLease:           time.Minute,
-		OperationTimeout:     30 * time.Second,
-		TargetReconnectGrace: 10 * time.Millisecond,
-	})
-	mux := http.NewServeMux()
-	hub.RegisterRoutes(mux)
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	user, err := store.CreateUser("alice")
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-	userToken, err := store.CreateToken(CreateTokenRequest{
-		Kind:   TokenKindUser,
-		UserID: user.ID,
-		Name:   "alice",
-	})
-	if err != nil {
-		t.Fatalf("create user token: %v", err)
-	}
-	if err := store.GrantUser(user.ID, ScopeGrant{
-		Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec},
-	}); err != nil {
-		t.Fatalf("grant exec: %v", err)
-	}
-	auth, err := store.VerifyUserToken(userToken.Plaintext)
-	if err != nil {
-		t.Fatalf("verify user token: %v", err)
-	}
-
-	run := testCICDResultRun()
-	run.ID = "credrun_reconnect_test"
-	run.Cluster = "dev"
-	run.Instance = "local"
-	run.Target = "gw-dev-local"
-	run.Session = "cicd-reconnect"
-	request := credentialPrepareHTTPBody{
-		Cluster:          run.Cluster,
-		Instance:         run.Instance,
-		Target:           run.Target,
-		SessionID:        run.Session,
-		WorkflowPath:     "deploy/environments.yaml",
-		SourceRepository: "https://example.test/doops.git",
-		SourceBranch:     "main",
-		SourceRevision:   run.SourceRevision,
-		Inputs:           map[string]string{"environment": "oilan", "service": "doops-agent"},
-		Mode:             "apply",
-	}
-	run.Mode = request.Mode
-	if err := store.IssueCredentialRunAuthorization(auth, request, run); err != nil {
-		t.Fatalf("issue credential run authorization: %v", err)
-	}
-
-	firstAgent := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
-	var promptCalls atomic.Int32
-	promptSeen := make(chan struct{})
-	go func() {
-		for {
-			var msg map[string]interface{}
-			if err := firstAgent.ReadJSON(&msg); err != nil {
-				return
-			}
-			switch msg["method"] {
-			case "initialize":
-				_ = firstAgent.WriteJSON(map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      msg["id"],
-					"result": map[string]interface{}{
-						"protocolVersion": "2024-11-05",
-						"capabilities": map[string]interface{}{
-							"protocols": map[string]interface{}{
-								"credentialPlan": credentialPlanCapability(),
-							},
-						},
-					},
-				})
-			case "tools/call":
-				params, _ := msg["params"].(map[string]interface{})
-				if params["name"] == "doops_agent_prompt" {
-					promptCalls.Add(1)
-					close(promptSeen)
-					_ = firstAgent.Close()
-				}
-			}
-		}
-	}()
-	waitForGatewayAgent(t, hub, "dev", "local")
-
-	client := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
-	defer client.Close()
-	instruction, err := json.Marshal(map[string]interface{}{
-		"task":            "execute-doops-cicd",
-		"skill":           "$doops-cicd",
-		"executionMode":   request.Mode,
-		"manifestPath":    request.WorkflowPath,
-		"workspaceCommit": request.SourceRevision,
-		"source": map[string]string{
-			"repository": request.SourceRepository,
-			"branch":     request.SourceBranch,
-		},
-		"inputs":        request.Inputs,
-		"credentialRun": run,
-	})
-	if err != nil {
-		t.Fatalf("encode instruction: %v", err)
-	}
-	arguments, err := json.Marshal(map[string]interface{}{
-		"session_id":       run.Session,
-		"instruction":      string(instruction),
-		"operation":        "apply",
-		"response_format":  "json",
-		"workspace_commit": run.SourceRevision,
-	})
-	if err != nil {
-		t.Fatalf("encode arguments: %v", err)
-	}
-	writeGatewayJSON(t, client, map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "tools/call",
-		"params": map[string]interface{}{
-			"name":      "doops_agent_prompt",
-			"arguments": json.RawMessage(arguments),
-		},
-	})
-	select {
-	case <-promptSeen:
-	case <-time.After(2 * time.Second):
-		t.Fatal("apply prompt was not dispatched to first agent")
-	}
-
-	secondAgent := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
-	defer secondAgent.Close()
-	querySeen := make(chan struct{})
-	go func() {
-		for {
-			var msg map[string]interface{}
-			if err := secondAgent.ReadJSON(&msg); err != nil {
-				return
-			}
-			switch msg["method"] {
-			case "initialize":
-				_ = secondAgent.WriteJSON(map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      msg["id"],
-					"result": map[string]interface{}{
-						"protocolVersion": "2024-11-05",
-						"capabilities": map[string]interface{}{
-							"protocols": map[string]interface{}{
-								"credentialPlan": credentialPlanCapability(),
-							},
-						},
-					},
-				})
-			case "tools/call":
-				params, _ := msg["params"].(map[string]interface{})
-				if params["name"] == "doops_agent_prompt" {
-					promptCalls.Add(1)
-					return
-				}
-				if params["name"] != "doops_cicd_result" {
-					return
-				}
-				args, _ := params["arguments"].(map[string]interface{})
-				binding, _ := args["credential_run"].(map[string]interface{})
-				if binding["id"] != run.ID ||
-					binding["target"] != run.Target ||
-					binding["session"] != run.Session ||
-					binding["sourceRevision"] != run.SourceRevision {
-					return
-				}
-				close(querySeen)
-				_ = secondAgent.WriteJSON(map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      msg["id"],
-					"result": map[string]interface{}{
-						"content": []map[string]interface{}{{"type": "text", "text": "ok"}},
-						"structuredContent": map[string]interface{}{
-							"planDigest": "sha256:" + strings.Repeat("a", 64),
-							"status":     "Converged",
-							"evidence":   []interface{}{},
-							"violations": []interface{}{},
-						},
-					},
-				})
-			}
-		}
-	}()
-	waitForGatewayAgent(t, hub, "dev", "local")
-	final := readUntilID(t, client, 2)
-	select {
-	case <-querySeen:
-	default:
-		t.Fatal("gateway did not query the reconnected agent for the terminal result")
-	}
-	if promptCalls.Load() != 1 {
-		t.Fatalf("apply prompt dispatched %d times, want exactly once", promptCalls.Load())
-	}
-	response, _ := final["result"].(map[string]interface{})
-	structured, _ := response["structuredContent"].(map[string]interface{})
-	if structured["status"] != "Converged" {
-		t.Fatalf("unexpected recovered result: %#v", final)
-	}
 }
 
 func gatewayGitTestURL(t *testing.T, serverURL, cluster, instance, session, token string) string {
