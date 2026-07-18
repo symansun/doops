@@ -819,6 +819,76 @@ func validateWorkspaceCommitBinding(sessionID, expectedCommit string) error {
 		}
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("inspect workspace Git metadata: %w", err)
+	} else {
+		repoPath := filepath.Join("/tmp/repos", sessionID+".git")
+		if err := validateBareWorkspaceCommitBinding(workspace, repoPath, expectedCommit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateBareWorkspaceCommitBinding(workspace, repoPath, expectedCommit string) error {
+	commandEnv := append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+	headCommand := exec.Command("git", "--git-dir", repoPath, "rev-parse", "HEAD")
+	headCommand.Env = commandEnv
+	head, err := headCommand.Output()
+	if err != nil {
+		return fmt.Errorf("read bare workspace Git commit")
+	}
+	if strings.TrimSpace(string(head)) != expectedCommit {
+		return fmt.Errorf("workspace Git commit mismatch")
+	}
+
+	indexDir, err := os.MkdirTemp("", "doops-workspace-index-*")
+	if err != nil {
+		return fmt.Errorf("create workspace Git index: %w", err)
+	}
+	defer os.RemoveAll(indexDir)
+	indexPath := filepath.Join(indexDir, "index")
+	commandEnv = append(commandEnv, "GIT_INDEX_FILE="+indexPath)
+
+	readTree := exec.Command("git", "--git-dir", repoPath, "read-tree", expectedCommit)
+	readTree.Env = commandEnv
+	if output, err := readTree.CombinedOutput(); err != nil {
+		return fmt.Errorf("prepare workspace Git index: %s", strings.TrimSpace(string(output)))
+	}
+	refresh := exec.Command(
+		"git",
+		"--git-dir", repoPath,
+		"--work-tree", workspace,
+		"update-index", "--refresh",
+	)
+	refresh.Env = commandEnv
+	if err := refresh.Run(); err != nil {
+		return fmt.Errorf("workspace contains changes outside the authorized commit")
+	}
+	diff := exec.Command(
+		"git",
+		"--git-dir", repoPath,
+		"--work-tree", workspace,
+		"diff-files", "--quiet", "--",
+	)
+	diff.Env = commandEnv
+	if err := diff.Run(); err != nil {
+		return fmt.Errorf("workspace contains changes outside the authorized commit")
+	}
+	untracked := exec.Command(
+		"git",
+		"--git-dir", repoPath,
+		"--work-tree", workspace,
+		"ls-files", "--others",
+	)
+	untracked.Env = commandEnv
+	output, err := untracked.Output()
+	if err != nil {
+		return fmt.Errorf("read workspace Git status")
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if line == "" || line == ".doops-ready" {
+			continue
+		}
+		return fmt.Errorf("workspace contains changes outside the authorized commit")
 	}
 	return nil
 }

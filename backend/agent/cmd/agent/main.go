@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -29,8 +31,13 @@ var (
 )
 
 func main() {
+	if err := server.InitializeMutationAuthority(); err != nil {
+		log.Fatal(err)
+	}
 	if len(os.Args) > 1 && os.Args[1] == "mcp-stdio" {
-		if err := server.ServeMCPStdio(context.Background(), os.Stdin, os.Stdout); err != nil {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := server.RunK8SMCPStdioContext(ctx, os.Stdin, os.Stdout); err != nil {
 			log.Fatal(err)
 		}
 		return

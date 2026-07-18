@@ -1,7 +1,7 @@
 # doops-agent 设计
 
-本文描述边缘 `doops-agent` 的当前职责。CI/CD 的完整 Agent 原生边界见
-[`AGENT_NATIVE_CICD.md`](../docs/AGENT_NATIVE_CICD.md)。
+本文描述边缘 `doops-agent` 的当前职责。自然语言发布的完整 Agent 原生边界见
+[`NATURAL_LANGUAGE_DEPLOYMENT.md`](../docs/NATURAL_LANGUAGE_DEPLOYMENT.md)。
 
 ## 定位
 
@@ -54,7 +54,7 @@ doops-agent 通过本地 ACP HTTP 调用 `/usr/local/bin/do-agent`：
 | 请求 | 模式 |
 | :--- | :--- |
 | 普通 Ask | `auto` |
-| CI/CD Skill | `auto` |
+| `ask --apply` | `build` |
 
 ## 权限
 
@@ -79,7 +79,7 @@ Skill 定义目标、不变量、授权和证据，不写死固定命令序列�
 doagent 可以根据任务创建多 Agent、组合 Skill 并选择工具；DoOps 只验证安全边界和
 最终证据。
 
-## CI/CD
+## 自然语言发布
 
 部署只走 Gateway 绑定的显式 Agent-native Ask：
 

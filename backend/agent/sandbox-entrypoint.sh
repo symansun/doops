@@ -197,10 +197,25 @@ configure_doagent() {
     echo "✅ doagent config: materialized from mounted settings"
 }
 
+configure_mutation_authority() {
+    if [ -z "${DO_AGENT_MUTATION_AUTHORITY_SECRET:-}" ]; then
+        DO_AGENT_MUTATION_AUTHORITY_SECRET="$(
+            python3 -c 'import secrets; print(secrets.token_hex(32))'
+        )"
+    fi
+    if ! printf '%s' "${DO_AGENT_MUTATION_AUTHORITY_SECRET}" | grep -Eq '^[a-f0-9]{64}$'; then
+        echo "❌ invalid DO_AGENT_MUTATION_AUTHORITY_SECRET" >&2
+        return 1
+    fi
+    export -n DO_AGENT_MUTATION_AUTHORITY_SECRET
+    echo "✅ doagent mutation authority: initialized"
+}
+
 start_doagent() {
     mkdir -p /root/ws
     echo "🤖 Starting doagent ACP HTTP on port ${DO_AGENT_PORT}..."
-    start_background /usr/local/bin/do-agent acp-http --port "${DO_AGENT_PORT}" --cwd /root/ws
+    start_background env DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
+        /usr/local/bin/do-agent acp-http --port "${DO_AGENT_PORT}" --cwd /root/ws
     local doagent_pid="${PIDS_TO_CLEANUP[-1]}"
     for _ in $(seq 1 30); do
         if ! kill -0 "${doagent_pid}" 2>/dev/null; then
@@ -247,6 +262,7 @@ start_sandbox_services
 configure_kubectl
 sync_skills
 configure_doagent
+configure_mutation_authority
 wait_for_tcp_ports_free 120 "0.0.0.0:${DO_AGENT_PORT}" "${DOOPS_LISTEN}:${DOOPS_PORT}"
 start_doagent
 start_buildkit
@@ -255,11 +271,13 @@ export PATH=/usr/local/bin:$PATH
 export NODE_PATH=/usr/lib/node_modules
 if command -v tini >/dev/null 2>&1; then
     echo "✅ Using tini subreaper for doops-agent"
-    tini -s -- /app/doops-agent "$@" &
+    env DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
+        tini -s -- /app/doops-agent "$@" &
     GATEWAY_PID=$!
 else
     echo "⚠️  tini not found, falling back to direct gateway"
-    /app/doops-agent "$@" &
+    env DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
+        /app/doops-agent "$@" &
     GATEWAY_PID=$!
 fi
 PIDS_TO_CLEANUP+=("${GATEWAY_PID}")

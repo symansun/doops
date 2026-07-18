@@ -5,11 +5,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 AGENT_RULES = ROOT / "AGENTS.md"
 BACKEND = ROOT / "backend"
+CNB = ROOT / ".cnb.yml"
 CLI = BACKEND / "skills" / "doops-cli" / "cli" / "doops" / "main.go"
 CREDENTIAL_CLI = BACKEND / "skills" / "doops-cli" / "cli" / "doops" / "credential_commands.go"
 SKILL = BACKEND / "skills" / "SKILL.md"
 DEPLOYMENT_DOC = BACKEND / "docs" / "NATURAL_LANGUAGE_DEPLOYMENT.md"
-CICD_DOC = BACKEND / "docs" / "AGENT_NATIVE_CICD.md"
+CICD_DOC = DEPLOYMENT_DOC
 CREDENTIAL_DOC = BACKEND / "docs" / "CREDENTIAL_RESOURCES.md"
 CI_GUIDE = ROOT / "components" / "cicd-guide.tsx"
 
@@ -37,6 +38,20 @@ def test_retired_registry_deployment_entrypoints_are_absent():
     assert 'case "cicd"' not in runtime_source
     assert "runCICDCommand" not in runtime_source
 
+    active_docs = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            BACKEND / "README.md",
+            BACKEND / "agent" / "DESIGN.md",
+            BACKEND / "docs" / "DOOPS_GATEWAY_TUNNEL.md",
+            BACKEND / "docs" / "SKILL_INTEGRATION_GUIDE.md",
+            BACKEND / "docs" / "design" / "AI_Ops_System_Design.md",
+        )
+    )
+    assert "AGENT_NATIVE_CICD.md" not in active_docs
+    assert "doops_cicd_result" not in active_docs
+    assert "目标由环境注册表解析" not in active_docs
+
 
 def test_v3_release_contract_is_explicit_natural_language_apply():
     cli = CLI.read_text(encoding="utf-8")
@@ -45,6 +60,9 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     ci_guide = CI_GUIDE.read_text(encoding="utf-8")
     system_prompt = (BACKEND / "agent" / "skills" / "system_prompt.md").read_text(encoding="utf-8")
     k8s_skill = (BACKEND / "agent" / "skills" / "k8s" / "SKILL.md").read_text(encoding="utf-8")
+    cnb = CNB.read_text(encoding="utf-8")
+    main_pipeline = cnb.split("\nmaster:", 1)[0]
+    fallback_pipeline = cnb.split("\n$:", 1)[1]
 
     assert 'cliContractVersion = "doops.sh/cli-contract/v3"' in cli
     assert 'BoolVar(&apply, "apply"' in cli
@@ -66,16 +84,42 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "image: alpine:3.22@sha256:<PINNED_ALPINE_DIGEST>" in ci_guide
     assert "backend/scripts/install.sh" in ci_guide
     assert "dry-run" not in ci_guide
-    assert "mcp_doops_k8s" in system_prompt
-    assert "set-image" in system_prompt
-    assert "运行契约完全未变" in system_prompt
-    assert "不得用 `set-image` 跳过迁移" in system_prompt
+    assert "mcp_doops_helm" in system_prompt
+    assert not re.search(r"mcp_doops_k8s(?!_read)", system_prompt)
+    assert "set-image" not in system_prompt
+    assert "包括只更新镜像" in system_prompt
     assert "shell 中的 Kubernetes" in system_prompt
     assert "不得用 shell 执行 kubectl mutation" in k8s_skill
-    assert "strategic merge" in k8s_skill
+    assert "api_trigger_deploy_agent" in main_pipeline
+    assert "api_trigger_deploy_agent" not in fallback_pipeline
+    assert '"https://doops.l8ai.cn"' in cnb
+    assert '-session "${DOOPS_SESSION}" push' in cnb
+    assert '-session "${DOOPS_SESSION}" ask' in cnb
+    assert "--apply" in cnb
+    assert "--token-stdin" in cnb
+    assert '--token "${DOOPS_GATEWAY_TOKEN}"' not in cnb
+    assert 'test "${CNB_BRANCH}" = "main"' in cnb
+    assert "DOOPS_IMAGE" in cnb
+    assert "@sha256:" in cnb
+    assert "deploy/environments.yaml" not in cnb
+    assert "doops cicd" not in cnb
+    assert "execute-doops-cicd" not in cnb
+    assert "106.54.197.139:42222" not in cnb
+    assert "不存在直接 Kubernetes 镜像 mutation 例外" in k8s_skill
+    assert "add-image-pull-secret" not in k8s_skill
     assert "command、args、env" in k8s_skill
-    assert "运行契约发生变化时必须使用任务明确授权的 Helm 资产收敛" in k8s_skill
-    assert "运行契约完全未变的纯镜像发布" in deployment_doc
+    assert "发布必须使用任务明确授权的" in k8s_skill
+    assert "Secret、ServiceAccount" in k8s_skill
+    assert "mcp_doops_helm" in deployment_doc
+    assert "attestation schema" in deployment_doc
+    assert "包括只更新镜像在内的所有发布" in deployment_doc
+    assert "workspace commit" in deployment_doc
+    assert "共享 mutation 锁" in deployment_doc
+    environment_docs = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (BACKEND / "docs" / "environments").glob("*.md")
+    )
+    assert "kubectl -n kube-system set image" not in environment_docs
 
 
 def test_ordinary_exec_does_not_block_explicit_helm_operations():
@@ -102,10 +146,10 @@ def test_cicd_and_credential_guides_match_the_runtime_contract():
     tunnel_doc = (BACKEND / "docs" / "DOOPS_GATEWAY_TUNNEL.md").read_text(encoding="utf-8")
 
     assert "doops ask --apply" in cicd_doc
-    assert "--credential <registry-credential-name>" in cicd_doc
+    assert "--credential <resource-name>" in cicd_doc
     assert "credential verify" in credential_doc
     assert "credential verify" in credential_cli
-    assert "docs/AGENT_NATIVE_CICD.md" in skill
+    assert "docs/NATURAL_LANGUAGE_DEPLOYMENT.md" in skill
     assert "docs/CREDENTIAL_RESOURCES.md" in skill
     assert "backend/skills/SKILL.md" in skill
 
@@ -128,7 +172,7 @@ def test_repository_agent_rules_guard_release_and_credential_boundaries():
     assert "The only supported installed CLI path is `~/.local/bin/doops`" in rules
     assert "backend/scripts/install.sh --version <tag>" in rules
     assert "CLI's own Go parser" in rules
-    assert "backend/docs/AGENT_NATIVE_CICD.md" in rules
+    assert "backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md" in rules
     assert "backend/docs/CREDENTIAL_RESOURCES.md" in rules
     assert "browser testing" in rules
     assert "online synthetic credential" in rules

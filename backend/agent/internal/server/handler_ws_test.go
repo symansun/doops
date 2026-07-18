@@ -504,6 +504,13 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 					},
 				})
 			case "session/new":
+				params, _ := req["params"].(map[string]interface{})
+				if params["permissionMode"] != "restricted" {
+					t.Fatalf("doagent sessions must fail closed outside apply: %#v", params)
+				}
+				if !strings.Contains(fmt.Sprint(params["systemPrompt"]), "Current DoOps session_id: kind-prompt") {
+					t.Fatalf("current DoOps session must be bound into the prompt: %#v", params)
+				}
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"jsonrpc": "2.0",
 					"id":      req["id"],
@@ -522,6 +529,10 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 			case "session/prompt":
 				params, _ := req["params"].(map[string]interface{})
 				prompt, _ := params["prompt"].(string)
+				allowed, _ := params["allowedTools"].([]interface{})
+				if strings.Join(interfaceStringValues(allowed), ",") != "Read,Glob,Grep,Skill,mcp_doops_k8s_read" {
+					t.Fatalf("ordinary prompt must have an exact read-only tool allowlist: %#v", params)
+				}
 				if params["responseMode"] != "stream" {
 					t.Fatalf("prompt must request SSE terminal delivery: %#v", params)
 				}
@@ -612,6 +623,14 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 	if prompt := <-receivedPrompt; strings.Contains(prompt, "deploy.sh") {
 		t.Fatalf("agent prompt must not inject a deploy.sh generation contract: %s", prompt)
 	}
+}
+
+func interfaceStringValues(values []interface{}) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		result = append(result, value.(string))
+	}
+	return result
 }
 
 func TestAgentInitializeDoesNotExposeDedicatedCICDReconciliation(t *testing.T) {
@@ -821,17 +840,17 @@ func TestSubscribeDoagentSSEScopesUntaggedEventsToFreshMachineSession(t *testing
 	}
 }
 
-func TestSubscribeDoagentSSECollectsLiveUntaggedToolEvidence(t *testing.T) {
+func TestSubscribeDoagentSSERejectsLiveUntaggedContentOnlyToolEvidence(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/events" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","replay":true,"toolCallId":"stale","toolName":"mcp_doops_k8s","status":"completed","input":{"operation":"set-image"},"content":[{"type":"content","content":{"type":"text","text":"stale"}}]}}}`)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","replay":true,"toolCallId":"stale","toolName":"mcp_doops_helm","status":"completed","input":{"operation":"rollback"},"content":[{"type":"content","content":{"type":"text","text":"stale"}}]}}}`)
 		fmt.Fprintln(w)
-		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"current","toolName":"mcp_doops_k8s","status":"in_progress","input":{"operation":"set-image","resource":"deployment/doops-agent"}}}}`)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"current","toolName":"mcp_doops_helm","status":"in_progress","input":{"operation":"upgrade-install","release":"doops-agent","chart":"deploy/helm/doops-agent","namespace":"kz-ops","session_id":"apply-evidence","confirm":true}}}}`)
 		fmt.Fprintln(w)
-		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"current","toolName":"mcp_doops_k8s","status":"completed","input":{"operation":"set-image","resource":"deployment/doops-agent"},"content":[{"type":"content","content":{"type":"text","text":"Kubernetes operation complete."}}]}}}`)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"current","toolName":"mcp_doops_helm","status":"completed","content":[{"type":"content","content":{"type":"text","text":"Helm operation complete."}}]}}}`)
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-current","status":"completed","stopReason":"end_turn"}}}`)
 		fmt.Fprintln(w)
@@ -856,12 +875,12 @@ func TestSubscribeDoagentSSECollectsLiveUntaggedToolEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
-	if err := collector.requireCompletedToolEvidence(); err != nil {
-		t.Fatalf("live untagged tool evidence rejected: %v", err)
+	if err := collector.requireCompletedToolEvidence(); err == nil ||
+		!strings.Contains(err.Error(), "raw_output_missing") {
+		t.Fatalf("content-only tool evidence accepted: %v", err)
 	}
-	traces := collector.completed()
-	if len(traces) != 1 || traces[0].ToolCallID != "current" {
-		t.Fatalf("completed traces = %#v", traces)
+	if traces := collector.completed(); len(traces) != 0 {
+		t.Fatalf("content-only traces accepted as completed evidence: %#v", traces)
 	}
 }
 
@@ -1154,6 +1173,72 @@ func TestWorkspaceCommitBindingRejectsDirtyAndUntrackedContent(t *testing.T) {
 	if err := validateWorkspaceCommitBinding(sessionID, commit); err == nil ||
 		!strings.Contains(err.Error(), "outside the authorized commit") {
 		t.Fatalf("modified workspace content was not rejected: %v", err)
+	}
+}
+
+func TestBareWorkspaceCommitBindingRejectsDirtyAndUntrackedContent(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	bare := filepath.Join(root, "session.git")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "tracked.txt"), []byte("committed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, ".gitignore"), []byte("ignored.yaml\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runTestCommand(t, source, "git", "init", "-q")
+	runTestCommand(t, source, "git", "config", "user.email", "test@example.invalid")
+	runTestCommand(t, source, "git", "config", "user.name", "DoOps Test")
+	runTestCommand(t, source, "git", "add", "tracked.txt", ".gitignore")
+	runTestCommand(t, source, "git", "commit", "-q", "-m", "workspace")
+	commit := strings.TrimSpace(runTestCommand(t, source, "git", "rev-parse", "HEAD"))
+	runTestCommand(t, root, "git", "clone", "--bare", source, bare)
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("committed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".gitignore"), []byte("ignored.yaml\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(commit+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := validateBareWorkspaceCommitBinding(workspace, bare, commit); err != nil {
+		t.Fatalf("clean bare workspace binding rejected: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("modified\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBareWorkspaceCommitBinding(workspace, bare, commit); err == nil ||
+		!strings.Contains(err.Error(), "outside the authorized commit") {
+		t.Fatalf("modified bare workspace content was not rejected: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("committed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "untracked.txt"), []byte("untrusted\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBareWorkspaceCommitBinding(workspace, bare, commit); err == nil ||
+		!strings.Contains(err.Error(), "outside the authorized commit") {
+		t.Fatalf("untracked bare workspace content was not rejected: %v", err)
+	}
+	if err := os.Remove(filepath.Join(workspace, "untracked.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "ignored.yaml"), []byte("untrusted\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBareWorkspaceCommitBinding(workspace, bare, commit); err == nil ||
+		!strings.Contains(err.Error(), "outside the authorized commit") {
+		t.Fatalf("ignored bare workspace content was not rejected: %v", err)
 	}
 }
 

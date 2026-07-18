@@ -1954,9 +1954,16 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 }
 
 func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage, cluster, instance string) string {
+	targetMutation := "target-mutation:" + cluster + "/" + instance
 	switch action {
 	case ActionExec:
+		if tool == "doops_agent_prompt" && extractStringArg(args, "operation") == "apply" {
+			return targetMutation
+		}
 		if tool == "doops_k8s" {
+			if gatewayK8SMutation(extractStringArg(args, "operation")) {
+				return targetMutation
+			}
 			if resource := extractStringArg(args, "resource"); resource != "" {
 				return "k8s:" + extractStringArg(args, "namespace") + "/" + canonicalK8SResource(resource)
 			}
@@ -1965,36 +1972,38 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 			}
 			return "target:" + cluster + "/" + instance
 		}
-		if sessionID := extractSession(args); sessionID != "" {
-			return "workspace:" + sessionID
-		}
+		return targetMutation
 	case ActionAsk:
 		if sessionID := extractSession(args); sessionID != "" {
 			return "session:" + sessionID
 		}
-	case ActionPush, ActionPull, ActionClean:
+	case ActionPush, ActionClean:
+		return targetMutation
+	case ActionPull:
 		if sessionID := extractSession(args); sessionID != "" {
 			return "workspace:" + sessionID
 		}
 	case ActionWrite:
-		if sessionID := extractSession(args); sessionID != "" {
-			return "workspace:" + sessionID
-		}
-		if path := extractStringArg(args, "path"); path != "" {
-			return "path:" + path
-		}
+		return targetMutation
+	case ActionCredentialUse, ActionCredentialRevoke:
+		return targetMutation
 	case ActionAgentUpgrade:
 		return "target:" + cluster + "/" + instance
 	case ActionCredentialMetadata:
 		if sessionID := extractSession(args); sessionID != "" {
 			return "workspace:" + sessionID
 		}
-	case ActionCredentialUse, ActionCredentialRevoke:
-		if credentialID := extractStringArg(args, "credential_id"); credentialID != "" {
-			return "credential:" + credentialID
-		}
 	}
 	return ""
+}
+
+func gatewayK8SMutation(operation string) bool {
+	switch operation {
+	case "rollout-restart", "scale", "cordon", "uncordon", "delete-pod":
+		return true
+	default:
+		return false
+	}
 }
 
 func extractSession(args json.RawMessage) string {

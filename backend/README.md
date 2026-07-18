@@ -16,8 +16,8 @@
 
 ## 架构图
 
-Agent 原生 CI/CD 的权威职责边界见
-[docs/AGENT_NATIVE_CICD.md](docs/AGENT_NATIVE_CICD.md)。DoOps 不实现另一套
+自然语言发布的权威职责边界见
+[docs/NATURAL_LANGUAGE_DEPLOYMENT.md](docs/NATURAL_LANGUAGE_DEPLOYMENT.md)。DoOps 不实现另一套
 Agent 框架；上下文、规划、多 Agent、Skill 和工具调用由 doagent 原生引擎负责。
 
 ```mermaid
@@ -48,18 +48,10 @@ flowchart LR
 - 代码同步：gateway 使用 Git HTTP；gateway 只通过已建立的 agent WebSocket 反向隧道透传 Git 请求，不再使用 tar 分块上传作为 `push/pull` 路径
 - 镜像构建：统一使用 `buildctl + buildkitd`
 
-## 当前纳管目标
+## Target 口径
 
-当前统一命名口径只使用 Gateway 的 `cluster/instance` 身份，不维护推断或示例 IP：
-
-- `doops-oilan / oilan-node`，oilan 集群
-- `doops-edu / edu-coder`，edu-coder 集群
-- `doops-jm / jm-228`
-- `doops-zheyin / node-239`
-- `doops-114 / vm-114`
-- `doops-235 / hdu-235`
-
-不要再把 `oilan` 和 `edu-coder` 混成同一个 cluster。历史名字 `doops-89/master-node` 只作为旧链路排障参考，不再作为当前标准纳管名。
+target 只来自本机 Gateway-only `config.json` 与 Gateway 当前在线注册状态。仓库文档不维护
+环境 target 清单，也不根据业务名、IP、历史 cluster 或旧节点别名生成 target。
 
 ## 当前镜像与协议
 
@@ -387,13 +379,14 @@ target、服务范围、不可变镜像 digest、变更原因和验收条件；�
 `--credential <resource-name>` 元数据引用声明。Gateway 绑定用户、target 和 session，
 按精确 workload/image/Helm scope 授权并在目标 doops-agent 的内部控制面物化；公开
 prompt、doagent 上下文和 metadata binding 不接收凭据 payload。完整流程见
-[docs/AGENT_NATIVE_CICD.md](docs/AGENT_NATIVE_CICD.md) 和
+[docs/NATURAL_LANGUAGE_DEPLOYMENT.md](docs/NATURAL_LANGUAGE_DEPLOYMENT.md) 和
 [docs/CREDENTIAL_RESOURCES.md](docs/CREDENTIAL_RESOURCES.md)。
 
 `doops upgrade` 仅用于 doops-agent 自身升级的 dry-run 预览，非 dry-run 请求会在分发前
 被拒绝。普通业务 workload 由 target 指向的 Agent/doagent 执行发布；承载执行者自身的
 doops-agent workload 必须由另一个隔离 Agent target 或真实存在的外部 CI/GitOps
-controller 执行。
+controller 执行。正式发布统一使用 Gateway 上的 `doops ask --apply`；CI 可以在镜像
+构建成功后调用同一自然语言入口，但不拥有另一套环境注册表或结构化发布协议。
 
 ## 常用命令
 

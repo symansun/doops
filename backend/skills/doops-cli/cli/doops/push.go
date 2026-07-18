@@ -64,8 +64,12 @@ var defaultExcludes = []string{
 
 // Push 将本地代码无感隔离投递至大模型探针服务，不落宿主机磁盘、不污染用户 Git
 func Push(server Server, src, dest string, dryRun bool, extraExcludes []string, sessionID string) error {
-	_, err := pushWorkspaceSnapshot(server, src, dest, dryRun, extraExcludes, sessionID)
+	_, err := PushWithCommit(server, src, dest, dryRun, extraExcludes, sessionID)
 	return err
+}
+
+func PushWithCommit(server Server, src, dest string, dryRun bool, extraExcludes []string, sessionID string) (string, error) {
+	return pushWorkspaceSnapshot(server, src, dest, dryRun, extraExcludes, sessionID)
 }
 
 func pushWorkspaceSnapshot(server Server, src, dest string, dryRun bool, extraExcludes []string, sessionID string) (string, error) {
@@ -752,7 +756,7 @@ func waitForWorkspaceReady(
 				} else {
 					lastErr = err.Error()
 				}
-			} else if remoteCommit, ready := cicdReadyCommit(lastOut); ready {
+			} else if remoteCommit, ready := workspaceReadyCommit(lastOut); ready {
 				if remoteCommit == expectedCommit {
 					return nil
 				}
@@ -840,7 +844,7 @@ func validateWorkspaceCheckoutProof(output, expectedCommit, expectedManifestBlob
 	return nil
 }
 
-func cicdReadyCommit(output string) (string, bool) {
+func workspaceReadyCommit(output string) (string, bool) {
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "ready:") {

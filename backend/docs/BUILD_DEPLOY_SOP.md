@@ -1,6 +1,6 @@
 # Doops 构建与部署强制规范 (SOP)
 
-普通业务 workload 的权威发布流程见 `docs/AGENT_NATIVE_CICD.md`；受管凭据的创建、授权、
+普通业务 workload 的权威发布流程见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`；受管凭据的创建、授权、
 验证、轮换和部署引用见 `docs/CREDENTIAL_RESOURCES.md`。
 
 > **核心纪律：绝对禁止在本地开发机或业务宿主机直接执行容器镜像构建。**
@@ -66,10 +66,13 @@ bash scripts/deploy-gateway.sh \
 
 在进行任何修改后，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA 为标签的候选镜像。该镜像同时携带同一 revision 的 `/app/doops-agent`、`/app/doops-gateway` 和锁定版本的 `/usr/local/bin/do-agent`；不得在发布控制端重新编译 Gateway。候选镜像必须解析为 registry digest，正式发布只接受不可变 digest。
 
-DoOps v3 的唯一发布入口是明确授权的自然语言任务。不得使用 `EnvironmentRegistry`、`EnvironmentDefinition`、`DeploymentTemplate`、`deploy/environments.yaml`、`cicd run` 或 workflow YAML 作为发布根，也不得从目录名、环境名、业务名或历史发布记录推断目标和参数。CNB 只负责构建、校验和推送镜像，不负责环境部署、回滚或 Helm/Kubernetes 操作。
+DoOps v3 的唯一发布入口是明确授权的自然语言任务。不得使用 `EnvironmentRegistry`、`EnvironmentDefinition`、`DeploymentTemplate`、`deploy/environments.yaml`、`cicd run` 或 workflow YAML 作为发布根，也不得从目录名、环境名、业务名或历史发布记录推断目标和参数。CNB 负责构建、校验和推送镜像，也可以在镜像 digest 已确定后调用同一个 `doops ask --apply` 自然语言入口；CI 不得拥有另一套发布协议。
 
-### 1. 触发受控发布 (在控制端执行)
-发布者必须先将待发布提交推送到 `main`，确认 CNB CI 已为该精确 commit 生成候选镜像，并取得 registry digest。自然语言任务必须直接写明 target、服务范围、不可变镜像 digest、变更原因、允许使用的 Helm 资产和验收条件；缺少任一发布事实时必须阻塞，不得猜测或补默认值。
+### 1. 触发受控发布
+发布者必须先将待发布提交推送到 `main`，确认 CNB CI 已为该精确 commit 生成候选镜像，并取得 registry digest。推荐调用 CNB 的 `api_trigger_deploy_agent`，由 CI 临时配置单个 Gateway route、同步当前仓库，并执行下方同一自然语言命令；人工控制端调用只用于故障诊断。自然语言任务必须直接写明 target、服务范围、不可变镜像 digest、变更原因、允许使用的 Helm 资产和验收条件；缺少任一发布事实时必须阻塞，不得猜测或补默认值。
+`api_trigger_deploy_agent` 只定义在 `main` 分支事件下，Gateway token 仅通过 stdin
+交给 main 上构建的 CLI。push 生成的 workspace commit 由 CLI 自动保存并随随后的
+`ask --apply` 提交，Agent 必须在执行前验证远端工作区仍是该精确 commit。
 
 ```bash
 doops -session release-<commit> ask \
@@ -79,6 +82,14 @@ doops -session release-<commit> ask \
 ```
 
 `--apply` 是本次 mutation 的显式授权，不是兼容开关。任务返回的文本声明不能作为成功证据；验收必须来自本轮实际命令、Kubernetes 状态、健康检查和功能测试。需要凭据时只传 `--credential <resource-name>` 元数据引用，Gateway 必须按当前用户、target、session 和精确资源 scope 授权。公开 prompt、doagent 上下文、CLI 输出和日志不得接收凭据 payload；Gateway 仅通过内部凭据物化调用向目标 Agent 短暂传递 payload。
+
+doagent 会话默认使用 `restricted` 权限，普通任务只额外放行 `mcp_doops_k8s_read`；
+该读取工具不得读取 Secret、ServiceAccount 或其它凭据载体。只有 `--apply` 对应的原生
+`build` 模式允许 `mcp_doops_helm` mutation。Agent 镜像必须把本地结构化 doops MCP
+注册为 required，并且 apply 成功只接受规范化后的 `doops_helm` 可信完成证据。MCP
+启动失败、工具缺失或仅出现其它工具调用时，发布必须失败关闭。
+该内置 MCP 必须设置 `trusted_result_attestation=true`，由 doagent 根据实际请求和
+stdio 响应在本地生成结果证明。
 
 **DoOps Agent 执行顺序：**
 1. 核对任务中的 target、服务范围、镜像 digest、Helm 资产、原因和验收条件完整。
@@ -116,7 +127,7 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 
 ## 三、 Agent 部署与热更新机制
 
-`doops-agent` 由 Helm 管理的 `Deployment` 托管，Chart 位于 `deploy/helm/doops-agent`。该目录只保存运行时 Helm 模板、默认值和挂载定义，不保存环境注册表或部署 workflow。具体镜像、目标节点、Secret、Gateway 地址和发布参数必须由本次自然语言任务明确给出或来自任务明确授权读取的当前 Helm release。发布前必须对比当前 workload 与候选 Chart 的 command、args、env、probes、volumeMounts 和 volumes。只有运行契约完全未变时，才调用结构化 `doops_k8s set-image`，由 strategic merge 只修改指定容器的镜像和 revision；删除注册参数、环境变量或其他运行契约变更必须通过明确授权的 Helm release 完整收敛。禁止通过 shell 执行 `kubectl patch`、`kubectl set image`、`kubectl apply`、`kubectl rollout restart`，也禁止从节点 SSH 更新正常运行中的 Agent。
+`doops-agent` 由 Helm 管理的 `Deployment` 托管，Chart 位于 `deploy/helm/doops-agent`。该目录只保存运行时 Helm 模板、默认值和挂载定义，不保存环境注册表或部署 workflow。具体镜像、目标节点、Secret 引用、Gateway 地址和发布参数必须由本次自然语言任务明确给出或来自任务明确授权读取的当前 Helm release。发布前必须对比当前 workload 与候选 Chart 的 command、args、env、probes、volumeMounts 和 volumes。包括只更新镜像在内的所有发布都必须调用结构化 `doops_helm upgrade-install`，从任务明确指定的 Chart、values 和非敏感 set strings 完整收敛；不存在 Kubernetes 镜像 mutation 发布旁路。自然语言 apply 禁止通过 shell 执行 kubectl 或 Helm mutation；运维人员明确给出的前台 `exec` Helm 操作合法，但 `exec --bg` Helm mutation 必须拒绝。正常运行中的 Agent 不得从节点 SSH 更新。
 
 单副本 Agent 的 home 目录包含 doagent SQLite 状态，不能让新旧 Pod 同时挂载。Chart
 必须使用 `maxSurge=0`、`maxUnavailable=1`；否则滚动窗口会产生 `database is locked`，

@@ -18,7 +18,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Read small text | `doops -session <s> read --target <t> --path <file>` | Small text only. |
 | Write small text | `doops -session <s> write --target <t> --path <file> --file <local>` | Also supports `--content` and stdin. |
 | Read system information | `doops -session <s> info --target <t>` | CPU, memory and disk metadata. |
-| Use structured Kubernetes operations | `doops -session <s> k8s --target <t> ...` | Restricted observe/set-image interface. |
+| Use structured Kubernetes operations | `doops -session <s> k8s --target <t> ...` | Restricted operational interface; publishing uses `ask --apply`. |
 | Clean workspace | `doops -session <s> clean --target <t>` | Cleans `/root/ws/<session>`. |
 | Check an image deployment | `doops check ...` | Compares configured service image with build metadata. |
 | Preview Agent upgrade | `doops -session <s> upgrade ... --dry-run` | Never replaces the current Agent. |
@@ -111,7 +111,7 @@ Use `ask` for diagnostics that require exploration. The target must have doagent
 
 普通业务 workload 的标准发布入口是 `doops ask --apply`。完整职责边界、执行顺序、
 凭据预物化、验收和自托管组件例外见
-[`AGENT_NATIVE_CICD.md`](AGENT_NATIVE_CICD.md)。
+[`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
 
 ```bash
 doops -session release-<commit> ask \

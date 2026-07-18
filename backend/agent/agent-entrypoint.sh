@@ -124,11 +124,24 @@ python3 /app/configure_doagent_settings.py \
 export DO_AGENT_SETTINGS="${SETTINGS_FILE}"
 echo "✅ doagent config: materialized from mounted settings"
 
+if [ -z "${DO_AGENT_MUTATION_AUTHORITY_SECRET:-}" ]; then
+    DO_AGENT_MUTATION_AUTHORITY_SECRET="$(
+        python3 -c 'import secrets; print(secrets.token_hex(32))'
+    )"
+fi
+if ! printf '%s' "${DO_AGENT_MUTATION_AUTHORITY_SECRET}" | grep -Eq '^[a-f0-9]{64}$'; then
+    echo "❌ invalid DO_AGENT_MUTATION_AUTHORITY_SECRET" >&2
+    exit 1
+fi
+export -n DO_AGENT_MUTATION_AUTHORITY_SECRET
+echo "✅ doagent mutation authority: initialized"
+
 # 启动 doagent ACP HTTP 服务（后台）
 DO_AGENT_PORT="${DO_AGENT_PORT:-9000}"
 export DO_AGENT_URL="${DO_AGENT_URL:-http://127.0.0.1:${DO_AGENT_PORT}}"
 echo "🤖 Starting doagent ACP HTTP on port ${DO_AGENT_PORT}..."
-/usr/local/bin/do-agent acp-http --port "${DO_AGENT_PORT}" --cwd /root/ws &
+env DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
+    /usr/local/bin/do-agent acp-http --port "${DO_AGENT_PORT}" --cwd /root/ws &
 DOAGENT_PID=$!
 PIDS_TO_CLEANUP+=("$DOAGENT_PID")
 sleep 2
@@ -156,11 +169,13 @@ export PATH=/usr/local/bin:$PATH
 export NODE_PATH=/usr/lib/node_modules
 if command -v tini &>/dev/null; then
     echo "✅ Using tini subreaper for doops-agent"
-    tini -s -- /app/doops-agent "$@" &
+    env DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
+        tini -s -- /app/doops-agent "$@" &
     GATEWAY_PID=$!
 else
     echo "⚠️  tini not found, falling back to direct exec (Go-level reaper still active)"
-    /app/doops-agent "$@" &
+    env DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
+        /app/doops-agent "$@" &
     GATEWAY_PID=$!
 fi
 PIDS_TO_CLEANUP+=("$GATEWAY_PID")

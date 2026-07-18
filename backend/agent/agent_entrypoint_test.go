@@ -57,3 +57,20 @@ func TestAgentEntrypointsMaterializeSettingsOutsideMountedAgentHome(t *testing.T
 		}
 	}
 }
+
+func TestAgentEntrypointsGenerateSharedMutationAuthority(t *testing.T) {
+	for _, path := range []string{"agent-entrypoint.sh", "sandbox-entrypoint.sh"} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		script := string(data)
+		if !strings.Contains(script, "DO_AGENT_MUTATION_AUTHORITY_SECRET") ||
+			!strings.Contains(script, "secrets.token_hex(32)") {
+			t.Fatalf("%s must generate the shared doagent mutation authority", path)
+		}
+		if strings.Contains(script, "export DO_AGENT_MUTATION_AUTHORITY_SECRET") {
+			t.Fatalf("%s must not export mutation authority to unrelated child processes", path)
+		}
+	}
+}

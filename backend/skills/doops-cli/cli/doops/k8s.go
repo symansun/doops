@@ -50,8 +50,6 @@ func buildK8SRequest(args []string) (K8SRequest, error) {
 	addCommon := func() error {
 		addString("namespace", opts["namespace"])
 		addString("container", opts["container"])
-		addString("image", opts["image"])
-		addString("revision", opts["revision"])
 		addString("output", opts["output"])
 		addString("timeout", opts["timeout"])
 		if err := addInt("tail", opts["tail"]); err != nil {
@@ -139,12 +137,6 @@ func buildK8SRequest(args []string) (K8SRequest, error) {
 		}
 		req.Payload["operation"] = "delete-pod"
 		req.Payload["name"] = positional[2]
-	case "deploy-image":
-		if len(positional) != 2 {
-			return K8SRequest{}, fmt.Errorf("deploy-image requires resource")
-		}
-		req.Payload["operation"] = "set-image"
-		req.Payload["resource"] = positional[1]
 	default:
 		return K8SRequest{}, fmt.Errorf("unsupported k8s command %q", positional[0])
 	}
@@ -159,7 +151,7 @@ func buildK8SRequest(args []string) (K8SRequest, error) {
 
 func k8sMutation(operation interface{}) bool {
 	switch operation {
-	case "rollout-restart", "scale", "cordon", "uncordon", "delete-pod", "set-image":
+	case "rollout-restart", "scale", "cordon", "uncordon", "delete-pod":
 		return true
 	default:
 		return false
@@ -181,8 +173,6 @@ func parseK8SFlags(args []string) (map[string]string, []string, error) {
 		"target":    "",
 		"namespace": "",
 		"container": "",
-		"image":     "",
-		"revision":  "",
 		"output":    "",
 		"tail":      "",
 		"replicas":  "",
@@ -194,7 +184,7 @@ func parseK8SFlags(args []string) (map[string]string, []string, error) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
-		case "--target", "--namespace", "--container", "--image", "--revision", "--output", "--tail", "--replicas", "--timeout", "--for":
+		case "--target", "--namespace", "--container", "--output", "--tail", "--replicas", "--timeout", "--for":
 			if i+1 >= len(args) {
 				return nil, nil, fmt.Errorf("%s requires a value", arg)
 			}

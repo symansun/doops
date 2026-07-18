@@ -62,21 +62,32 @@ type KubectlParams struct {
 
 // K8SParams is the structured request accepted by doops_k8s.
 type K8SParams struct {
-	SessionID  string `json:"session_id"`
-	Operation  string `json:"operation"`
-	Kind       string `json:"kind,omitempty"`
-	Name       string `json:"name,omitempty"`
-	Resource   string `json:"resource,omitempty"`
-	Namespace  string `json:"namespace,omitempty"`
-	Container  string `json:"container,omitempty"`
-	Image      string `json:"image,omitempty"`
-	PullSecret string `json:"pull_secret,omitempty"`
-	Revision   string `json:"revision,omitempty"`
-	Output     string `json:"output,omitempty"`
-	Timeout    string `json:"timeout,omitempty"`
-	Tail       int    `json:"tail,omitempty"`
-	Replicas   *int   `json:"replicas,omitempty"`
-	Confirm    bool   `json:"confirm,omitempty"`
+	SessionID string `json:"session_id"`
+	Operation string `json:"operation"`
+	Kind      string `json:"kind,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Resource  string `json:"resource,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Container string `json:"container,omitempty"`
+	Output    string `json:"output,omitempty"`
+	Timeout   string `json:"timeout,omitempty"`
+	Tail      int    `json:"tail,omitempty"`
+	Replicas  *int   `json:"replicas,omitempty"`
+	Confirm   bool   `json:"confirm,omitempty"`
+}
+
+// HelmParams is the structured request accepted by doops_helm.
+type HelmParams struct {
+	SessionID  string            `json:"session_id"`
+	Operation  string            `json:"operation"`
+	Release    string            `json:"release"`
+	Chart      string            `json:"chart,omitempty"`
+	Namespace  string            `json:"namespace"`
+	Values     []string          `json:"values,omitempty"`
+	SetStrings map[string]string `json:"set_strings,omitempty"`
+	Revision   int               `json:"revision,omitempty"`
+	Timeout    string            `json:"timeout,omitempty"`
+	Confirm    bool              `json:"confirm,omitempty"`
 }
 
 // AgentPromptParams 用于 doops_agent_prompt 代理执行。

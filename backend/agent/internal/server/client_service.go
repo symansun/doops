@@ -48,8 +48,8 @@ func (s *ClientService) validateCommand(tool string, args json.RawMessage) error
 		return nil
 	}
 	command := extractStringArg(args, "command")
-	if tool == "doops_bg" && s.commands.IsAgentHelmMutation(command) {
-		return fmt.Errorf("background doops-agent Helm mutation is prohibited; use foreground exec")
+	if tool == "doops_bg" && s.commands.IsHelmMutation(command) {
+		return fmt.Errorf("background Helm mutation is prohibited; use foreground exec")
 	}
 	if s.commands.Classify(command) == dispatcher.PathBlocked {
 		return fmt.Errorf("blocked dangerous command")

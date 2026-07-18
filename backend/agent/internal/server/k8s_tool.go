@@ -20,8 +20,41 @@ var (
 	k8sKindPattern      = regexp.MustCompile(`^[a-z][a-z0-9.-]*$`)
 	k8sContainerPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$`)
 	k8sTimeoutPattern   = regexp.MustCompile(`^[1-9][0-9]*(s|m|h)$`)
-	k8sDigestImage      = regexp.MustCompile(`^[A-Za-z0-9._/:@-]+@sha256:[a-f0-9]{64}$`)
-	k8sRevisionPattern  = regexp.MustCompile(`^[a-f0-9]{40}$`)
+	k8sReadableKinds    = map[string]bool{
+		"pod": true, "pods": true,
+		"deployment": true, "deployments": true, "deploy": true,
+		"statefulset": true, "statefulsets": true, "sts": true,
+		"daemonset": true, "daemonsets": true, "ds": true,
+		"replicaset": true, "replicasets": true, "rs": true,
+		"service": true, "services": true, "svc": true,
+		"endpoint": true, "endpoints": true,
+		"endpointslice": true, "endpointslices": true,
+		"ingress": true, "ingresses": true, "ing": true,
+		"job": true, "jobs": true,
+		"cronjob": true, "cronjobs": true,
+		"node": true, "nodes": true,
+		"namespace": true, "namespaces": true, "ns": true,
+		"event": true, "events": true,
+		"persistentvolumeclaim": true, "persistentvolumeclaims": true, "pvc": true,
+		"persistentvolume": true, "persistentvolumes": true, "pv": true,
+	}
+	k8sLoggableKinds = map[string]bool{
+		"pod": true, "pods": true,
+		"deployment": true, "deployments": true, "deploy": true,
+		"statefulset": true, "statefulsets": true, "sts": true,
+		"daemonset": true, "daemonsets": true, "ds": true,
+		"job": true, "jobs": true,
+	}
+	k8sRolloutKinds = map[string]bool{
+		"deployment": true, "deployments": true, "deploy": true,
+		"statefulset": true, "statefulsets": true, "sts": true,
+		"daemonset": true, "daemonsets": true, "ds": true,
+	}
+	k8sScalableKinds = map[string]bool{
+		"deployment": true, "deployments": true, "deploy": true,
+		"statefulset": true, "statefulsets": true, "sts": true,
+		"replicaset": true, "replicasets": true, "rs": true,
+	}
 )
 
 type k8sCommand struct {
@@ -43,18 +76,10 @@ func handleK8STool(ctx context.Context, raw json.RawMessage, push notificationSe
 	if err != nil {
 		return "", err
 	}
-	var outputs []string
 	for _, command := range commands {
-		output, err := runK8SCommand(ctx, command.args, push)
-		if err != nil {
+		if err := runK8SCommand(ctx, command.args, push); err != nil {
 			return "", err
 		}
-		if output = strings.TrimSpace(output); output != "" {
-			outputs = append(outputs, output)
-		}
-	}
-	if len(outputs) != 0 {
-		return strings.Join(outputs, "\n"), nil
 	}
 	return "Kubernetes operation complete.", nil
 }
@@ -66,9 +91,6 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 	params.Resource = strings.TrimSpace(params.Resource)
 	params.Namespace = strings.TrimSpace(params.Namespace)
 	params.Container = strings.TrimSpace(params.Container)
-	params.Image = strings.TrimSpace(params.Image)
-	params.PullSecret = strings.TrimSpace(params.PullSecret)
-	params.Revision = strings.TrimSpace(params.Revision)
 	params.Output = strings.TrimSpace(params.Output)
 	params.Timeout = strings.TrimSpace(params.Timeout)
 
@@ -89,9 +111,6 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 	}
 	if params.Container != "" && !k8sContainerPattern.MatchString(params.Container) {
 		return nil, fmt.Errorf("invalid kubernetes container")
-	}
-	if params.PullSecret != "" && !k8sNamePattern.MatchString(params.PullSecret) {
-		return nil, fmt.Errorf("invalid kubernetes pull secret")
 	}
 	if params.Resource != "" && !validK8SResource(params.Resource) {
 		return nil, fmt.Errorf("invalid kubernetes resource")
@@ -130,6 +149,9 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 		if params.Kind == "" {
 			return nil, fmt.Errorf("kind is required for get")
 		}
+		if !k8sReadableKinds[params.Kind] {
+			return nil, fmt.Errorf("kubernetes kind %q is not available through the read tool", params.Kind)
+		}
 		args := namespace([]string{"get", params.Kind})
 		if params.Name != "" {
 			args = append(args, params.Name)
@@ -145,10 +167,16 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 		if params.Kind == "" || params.Name == "" {
 			return nil, fmt.Errorf("kind and name are required for describe")
 		}
+		if !k8sReadableKinds[params.Kind] {
+			return nil, fmt.Errorf("kubernetes kind %q is not available through the read tool", params.Kind)
+		}
 		return []k8sCommand{{args: namespace([]string{"describe", params.Kind, params.Name})}}, nil
 	case "logs":
 		if params.Resource == "" {
 			return nil, fmt.Errorf("resource is required for logs")
+		}
+		if !k8sLoggableKinds[k8sResourceKind(params.Resource)] {
+			return nil, fmt.Errorf("kubernetes resource %q is not available for logs", params.Resource)
 		}
 		args := namespace([]string{"logs", params.Resource})
 		if params.Container != "" {
@@ -166,12 +194,18 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 	case "events":
 		args := namespace([]string{"events"})
 		if params.Resource != "" {
+			if !k8sReadableKinds[k8sResourceKind(params.Resource)] {
+				return nil, fmt.Errorf("kubernetes resource %q is not available for events", params.Resource)
+			}
 			args = append(args, "--for", params.Resource)
 		}
 		return []k8sCommand{{args: args}}, nil
 	case "rollout-status":
 		if params.Resource == "" {
 			return nil, fmt.Errorf("resource is required for rollout status")
+		}
+		if !k8sRolloutKinds[k8sResourceKind(params.Resource)] {
+			return nil, fmt.Errorf("kubernetes resource %q does not support rollout status", params.Resource)
 		}
 		return []k8sCommand{{args: timeout(namespace([]string{"rollout", "status", params.Resource}))}}, nil
 	case "rollout-restart":
@@ -181,6 +215,9 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 		if params.Resource == "" {
 			return nil, fmt.Errorf("resource is required for rollout restart")
 		}
+		if !k8sRolloutKinds[k8sResourceKind(params.Resource)] {
+			return nil, fmt.Errorf("kubernetes resource %q does not support rollout restart", params.Resource)
+		}
 		return []k8sCommand{{args: namespace([]string{"rollout", "restart", params.Resource})}}, nil
 	case "scale":
 		if err := requireMutation(); err != nil {
@@ -188,6 +225,9 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 		}
 		if params.Resource == "" {
 			return nil, fmt.Errorf("resource is required for scale")
+		}
+		if !k8sScalableKinds[k8sResourceKind(params.Resource)] {
+			return nil, fmt.Errorf("kubernetes resource %q does not support scale", params.Resource)
 		}
 		if params.Replicas == nil {
 			return nil, fmt.Errorf("replicas is required for scale")
@@ -209,62 +249,6 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 			return nil, fmt.Errorf("pod name is required for delete")
 		}
 		return []k8sCommand{{args: namespace([]string{"delete", "pod", params.Name})}}, nil
-	case "set-image":
-		if err := requireMutation(); err != nil {
-			return nil, err
-		}
-		if params.Resource == "" || params.Container == "" || params.Image == "" {
-			return nil, fmt.Errorf("resource, container, and image are required for set-image")
-		}
-		if !k8sDigestImage.MatchString(params.Image) {
-			return nil, fmt.Errorf("set-image requires an immutable sha256 image digest")
-		}
-		if params.Revision != "" && !k8sRevisionPattern.MatchString(params.Revision) {
-			return nil, fmt.Errorf("revision must be a full 40-character commit sha")
-		}
-		template := map[string]interface{}{
-			"spec": map[string]interface{}{
-				"containers": []map[string]string{{
-					"name":  params.Container,
-					"image": params.Image,
-				}},
-			},
-		}
-		if params.Revision != "" {
-			template["metadata"] = map[string]interface{}{
-				"annotations": map[string]string{"doops.sh/revision": params.Revision},
-			}
-		}
-		patch, err := json.Marshal(map[string]interface{}{
-			"spec": map[string]interface{}{"template": template},
-		})
-		if err != nil {
-			return nil, fmt.Errorf("encode set-image patch: %w", err)
-		}
-		setImage := namespace([]string{"patch", params.Resource, "--type", "strategic", "--patch", string(patch)})
-		rollout := timeout(namespace([]string{"rollout", "status", params.Resource}))
-		return []k8sCommand{{args: setImage}, {args: rollout}}, nil
-	case "add-image-pull-secret":
-		if err := requireMutation(); err != nil {
-			return nil, err
-		}
-		if params.Resource == "" || params.PullSecret == "" {
-			return nil, fmt.Errorf("resource and pull_secret are required for add-image-pull-secret")
-		}
-		patch, err := json.Marshal(map[string]interface{}{
-			"spec": map[string]interface{}{
-				"template": map[string]interface{}{
-					"spec": map[string]interface{}{
-						"imagePullSecrets": []map[string]string{{"name": params.PullSecret}},
-					},
-				},
-			},
-		})
-		if err != nil {
-			return nil, fmt.Errorf("encode image pull secret patch: %w", err)
-		}
-		addPullSecret := namespace([]string{"patch", params.Resource, "--type", "strategic", "--patch", string(patch)})
-		return []k8sCommand{{args: addPullSecret}}, nil
 	default:
 		return nil, fmt.Errorf("unsupported k8s operation %q", params.Operation)
 	}
@@ -277,6 +261,11 @@ func validK8SResource(resource string) bool {
 		k8sNamePattern.MatchString(parts[1])
 }
 
+func k8sResourceKind(resource string) string {
+	kind, _, _ := strings.Cut(resource, "/")
+	return kind
+}
+
 func validK8SOutput(output string) bool {
 	switch output {
 	case "json", "yaml", "wide", "name":
@@ -286,26 +275,25 @@ func validK8SOutput(output string) bool {
 	}
 }
 
-func runK8SCommand(ctx context.Context, args []string, push notificationSender) (string, error) {
+func runK8SCommand(ctx context.Context, args []string, push notificationSender) error {
 	cmd := exec.CommandContext(ctx, "kubectl", args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", fmt.Errorf("start kubectl: %w", err)
+		return fmt.Errorf("start kubectl: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return "", fmt.Errorf("start kubectl: %w", err)
+		return fmt.Errorf("start kubectl: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("start kubectl: %w", err)
+		return fmt.Errorf("start kubectl: %w", err)
 	}
 
-	var stdoutBuffer bytes.Buffer
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		streamReader(io.NopCloser(io.TeeReader(stdout, &stdoutBuffer)), push)
+		streamReader(stdout, push)
 	}()
 	go func() {
 		defer wg.Done()
@@ -313,7 +301,7 @@ func runK8SCommand(ctx context.Context, args []string, push notificationSender) 
 	}()
 	wg.Wait()
 	if err := cmd.Wait(); err != nil {
-		return "", fmt.Errorf("kubectl %s failed: %w", strings.Join(args, " "), err)
+		return fmt.Errorf("kubectl %s failed: %w", strings.Join(args, " "), err)
 	}
-	return stdoutBuffer.String(), nil
+	return nil
 }

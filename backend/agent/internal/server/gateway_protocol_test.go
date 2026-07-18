@@ -674,7 +674,7 @@ func TestGatewayGitHTTPConcurrentPushPullDifferentTargets(t *testing.T) {
 	}
 }
 
-func TestGatewayGitHTTPConcurrentPushDifferentSessionsSameTarget(t *testing.T) {
+func TestGatewayGitHTTPSerialPushDifferentSessionsSameTarget(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is required for gateway git e2e test")
 	}
@@ -687,17 +687,10 @@ func TestGatewayGitHTTPConcurrentPushDifferentSessionsSameTarget(t *testing.T) {
 	conn := startGatewayGitTestAgent(t, hub, ts.URL, target.Cluster, target.Instance)
 	defer conn.Close()
 
-	errCh := make(chan error, 2)
 	for _, session := range []string{"parallel-a", "parallel-b"} {
-		session := session
-		go func() {
-			errCh <- pushCloneAndVerifyGatewayGit(ts.URL, target.Cluster, target.Instance, session, target.UserToken, map[string][]byte{
-				"README.md": []byte("hello from " + session + "\n"),
-			})
-		}()
-	}
-	for i := 0; i < 2; i++ {
-		if err := <-errCh; err != nil {
+		if err := pushCloneAndVerifyGatewayGit(ts.URL, target.Cluster, target.Instance, session, target.UserToken, map[string][]byte{
+			"README.md": []byte("hello from " + session + "\n"),
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1981,7 +1974,7 @@ func TestGatewayRPCRejectsSecondConcurrentOperationForSameSessionAsBusy(t *testi
 	readUntilID(t, clientA, 2)
 }
 
-func TestGatewayRPCAllowsConcurrentExecOperationsForDifferentSessions(t *testing.T) {
+func TestGatewayRPCSerializesExecMutationsAcrossSessions(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -2025,33 +2018,59 @@ func TestGatewayRPCAllowsConcurrentExecOperationsForDifferentSessions(t *testing
 		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(argsB)},
 	})
 
-	seen := map[string]bool{}
-	for i := 0; i < 2; i++ {
-		select {
-		case session := <-started:
-			seen[session] = true
-		case <-time.After(2 * time.Second):
-			t.Fatal("expected both sessions to reach agent concurrently")
-		}
+	var firstSession string
+	select {
+	case firstSession = <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected one session to reach the agent")
 	}
-	if !seen["session-a"] || !seen["session-b"] {
-		t.Fatalf("expected both sessions to start, got %#v", seen)
+	select {
+	case secondSession := <-started:
+		t.Fatalf("target mutation lock allowed concurrent sessions: %s then %s", firstSession, secondSession)
+	case <-time.After(200 * time.Millisecond):
 	}
 	close(release)
 
-	msgA := readGatewayNotification(t, clientA)
-	msgB := readGatewayNotification(t, clientB)
-	if got := notificationData(msgA); !strings.Contains(got, "session-a") {
-		t.Fatalf("client A got wrong notification: %#v", msgA)
+	firstClient := clientA
+	secondClient := clientB
+	secondSession := "session-b"
+	secondArgs := argsB
+	if firstSession == "session-b" {
+		firstClient, secondClient = clientB, clientA
+		secondSession = "session-a"
+		secondArgs = argsA
 	}
-	if got := notificationData(msgB); !strings.Contains(got, "session-b") {
-		t.Fatalf("client B got wrong notification: %#v", msgB)
+	busy := readUntilID(t, secondClient, 2)
+	if errObj, ok := busy["error"].(map[string]interface{}); !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "target busy") {
+		t.Fatalf("expected target busy error for concurrent mutation, got %#v", busy)
 	}
-	if resp := readUntilID(t, clientA, 2); resp["error"] != nil {
-		t.Fatalf("client A final response failed: %#v", resp)
+	firstNotification := readGatewayNotification(t, firstClient)
+	if got := notificationData(firstNotification); !strings.Contains(got, firstSession) {
+		t.Fatalf("first client got wrong notification: %#v", firstNotification)
 	}
-	if resp := readUntilID(t, clientB, 2); resp["error"] != nil {
-		t.Fatalf("client B final response failed: %#v", resp)
+	if resp := readUntilID(t, firstClient, 2); resp["error"] != nil {
+		t.Fatalf("first client final response failed: %#v", resp)
+	}
+	writeGatewayJSON(t, secondClient, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      3,
+		"method":  "tools/call",
+		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(secondArgs)},
+	})
+	select {
+	case got := <-started:
+		if got != secondSession {
+			t.Fatalf("second session = %q, want %q", got, secondSession)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second session did not start after the target mutation lock was released")
+	}
+	secondNotification := readGatewayNotification(t, secondClient)
+	if got := notificationData(secondNotification); !strings.Contains(got, secondSession) {
+		t.Fatalf("second client got wrong notification: %#v", secondNotification)
+	}
+	if resp := readUntilID(t, secondClient, 3); resp["error"] != nil {
+		t.Fatalf("second client final response failed: %#v", resp)
 	}
 }
 
@@ -2099,21 +2118,33 @@ func TestGatewayRPCDoesNotFallbackSessionNotificationsWithoutSessionID(t *testin
 		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(argsB)},
 	})
 
-	seen := map[string]bool{}
-	for i := 0; i < 2; i++ {
-		select {
-		case session := <-started:
-			seen[session] = true
-		case <-time.After(2 * time.Second):
-			t.Fatal("expected both sessions to reach agent concurrently")
-		}
+	var firstSession string
+	select {
+	case firstSession = <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected one session to reach the agent")
 	}
-	if !seen["session-a"] || !seen["session-b"] {
-		t.Fatalf("expected both sessions to start, got %#v", seen)
+	select {
+	case secondSession := <-started:
+		t.Fatalf("target mutation lock allowed concurrent sessions: %s then %s", firstSession, secondSession)
+	case <-time.After(200 * time.Millisecond):
 	}
 	close(release)
 
-	for name, conn := range map[string]*websocket.Conn{"clientA": clientA, "clientB": clientB} {
+	firstClient := clientA
+	secondClient := clientB
+	secondSession := "session-b"
+	secondArgs := argsB
+	if firstSession == "session-b" {
+		firstClient, secondClient = clientB, clientA
+		secondSession = "session-a"
+		secondArgs = argsA
+	}
+	busy := readUntilID(t, secondClient, 2)
+	if errObj, ok := busy["error"].(map[string]interface{}); !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "target busy") {
+		t.Fatalf("expected target busy error for concurrent mutation, got %#v", busy)
+	}
+	for name, conn := range map[string]*websocket.Conn{"first client": firstClient} {
 		msg := readGatewayMessage(t, conn)
 		if method, _ := msg["method"].(string); method == "notifications/message" {
 			t.Fatalf("%s received orphan notification without session routing: %#v", name, msg)
@@ -2122,10 +2153,37 @@ func TestGatewayRPCDoesNotFallbackSessionNotificationsWithoutSessionID(t *testin
 			t.Fatalf("%s expected final response id 2, got %#v", name, msg)
 		}
 	}
+	writeGatewayJSON(t, secondClient, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      3,
+		"method":  "tools/call",
+		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(secondArgs)},
+	})
+	select {
+	case got := <-started:
+		if got != secondSession {
+			t.Fatalf("second session = %q, want %q", got, secondSession)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second session did not start after the target mutation lock was released")
+	}
+	msg := readGatewayMessage(t, secondClient)
+	if method, _ := msg["method"].(string); method == "notifications/message" {
+		t.Fatalf("second client received orphan notification without session routing: %#v", msg)
+	}
+	if id, _ := msg["id"].(float64); id != 3 {
+		t.Fatalf("second client expected final response id 3, got %#v", msg)
+	}
 }
 
 func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
-	if got := resourceKeyForTool(ActionExec, "doops_shell", json.RawMessage(`{"session_id":"exec-a"}`), "dev", "node"); got != "workspace:exec-a" {
+	if got := gitResourceKey(ActionPush, "dev", "node", "push-a"); got != "target-mutation:dev/node" {
+		t.Fatalf("git push resource key mismatch: %q", got)
+	}
+	if got := gitResourceKey(ActionPull, "dev", "node", "pull-a"); got != "workspace:pull-a" {
+		t.Fatalf("git pull resource key mismatch: %q", got)
+	}
+	if got := resourceKeyForTool(ActionExec, "doops_shell", json.RawMessage(`{"session_id":"exec-a"}`), "dev", "node"); got != "target-mutation:dev/node" {
 		t.Fatalf("exec resource key mismatch: %q", got)
 	}
 	genericPromptArgs := json.RawMessage(`{"session_id":"ask-a","instruction":"inspect and repair the service"}`)
@@ -2142,41 +2200,41 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	boundPromptArgs := json.RawMessage(
 		`{"operation":"apply","session_id":"release-a","workspace_commit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
 	)
-	if got := resourceKeyForTool(ActionExec, "doops_agent_prompt", boundPromptArgs, "dev", "node"); got != "workspace:release-a" {
-		t.Fatalf("bound cicd prompt resource key mismatch: %q", got)
+	if got := resourceKeyForTool(ActionExec, "doops_agent_prompt", boundPromptArgs, "dev", "node"); got != "target-mutation:dev/node" {
+		t.Fatalf("bound apply prompt resource key mismatch: %q", got)
 	}
 	metadataArgs := json.RawMessage(`{"session_id":"ask-a","mode":"metadata"}`)
 	if got := actionForTool("doops_agent_prompt", metadataArgs); got != ActionAsk {
 		t.Fatalf("metadata prompt must remain a read-only ask: %q", got)
 	}
-	if got := resourceKeyForTool(ActionPush, "doops_workspace_begin", json.RawMessage(`{"session_id":"push-a"}`), "dev", "node"); got != "workspace:push-a" {
+	if got := resourceKeyForTool(ActionPush, "doops_workspace_begin", json.RawMessage(`{"session_id":"push-a"}`), "dev", "node"); got != "target-mutation:dev/node" {
 		t.Fatalf("push resource key mismatch: %q", got)
 	}
 	if got := resourceKeyForTool(ActionPull, "doops_workspace_pull_begin", json.RawMessage(`{"session_id":"pull-a"}`), "dev", "node"); got != "workspace:pull-a" {
 		t.Fatalf("pull resource key mismatch: %q", got)
 	}
-	if got := resourceKeyForTool(ActionWrite, "doops_file_write", json.RawMessage(`{"path":"/tmp/x"}`), "dev", "node"); got != "path:/tmp/x" {
+	if got := resourceKeyForTool(ActionWrite, "doops_file_write", json.RawMessage(`{"path":"/tmp/x"}`), "dev", "node"); got != "target-mutation:dev/node" {
 		t.Fatalf("write resource key mismatch: %q", got)
 	}
-	if got := resourceKeyForTool(ActionWrite, "doops_file_write", json.RawMessage(`{"session_id":"write-a","path":"config.yaml"}`), "dev", "node"); got != "workspace:write-a" {
+	if got := resourceKeyForTool(ActionWrite, "doops_file_write", json.RawMessage(`{"session_id":"write-a","path":"config.yaml"}`), "dev", "node"); got != "target-mutation:dev/node" {
 		t.Fatalf("session write resource key mismatch: %q", got)
 	}
 	if got := resourceKeyForTool(ActionAgentUpgrade, "doops_agent_upgrade", json.RawMessage(`{}`), "dev", "node"); got != "target:dev/node" {
 		t.Fatalf("upgrade resource key mismatch: %q", got)
 	}
-	k8sArgs := json.RawMessage(`{"operation":"set-image","namespace":"kz-ops","resource":"deployment/doops-release-runner"}`)
+	k8sArgs := json.RawMessage(`{"operation":"rollout-status","namespace":"kz-ops","resource":"deployment/doops-release-runner"}`)
 	if got := resourceKeyForTool(ActionExec, "doops_k8s", k8sArgs, "dev", "node"); got != "k8s:kz-ops/deployment/doops-release-runner" {
 		t.Fatalf("k8s resource key mismatch: %q", got)
 	}
 	k8sAliasArgs := json.RawMessage(`{"operation":"scale","namespace":"kz-ops","resource":"deploy/doops-release-runner"}`)
-	if got := resourceKeyForTool(ActionExec, "doops_k8s", k8sAliasArgs, "dev", "node"); got != "k8s:kz-ops/deployment/doops-release-runner" {
+	if got := resourceKeyForTool(ActionExec, "doops_k8s", k8sAliasArgs, "dev", "node"); got != "target-mutation:dev/node" {
 		t.Fatalf("k8s alias resource key mismatch: %q", got)
 	}
 	cleanupArgs := json.RawMessage(`{"credential_id":"cred_123","session_id":"release-a"}`)
 	if got := actionForTool("doops_credential_cleanup", cleanupArgs); got != ActionCredentialRevoke {
 		t.Fatalf("credential cleanup must require revoke permission: %q", got)
 	}
-	if got := resourceKeyForTool(ActionCredentialRevoke, "doops_credential_cleanup", cleanupArgs, "dev", "node"); got != "credential:cred_123" {
+	if got := resourceKeyForTool(ActionCredentialRevoke, "doops_credential_cleanup", cleanupArgs, "dev", "node"); got != "target-mutation:dev/node" {
 		t.Fatalf("credential cleanup resource key mismatch: %q", got)
 	}
 }
