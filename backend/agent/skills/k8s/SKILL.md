@@ -19,10 +19,14 @@ conflicts: []
 1. 所有 Kubernetes 读取和 mutation 都调用 `doops_k8s`，不得用 shell 执行 kubectl mutation。
 2. 所有请求显式传 namespace；不得依赖 default namespace。
 3. mutation 必须有 `confirm=true`，镜像发布必须使用不可变 `@sha256:` digest。
-4. workload 镜像更新只调用 `set-image`；该操作使用 strategic merge，仅修改指定容器的
+4. 调用 `set-image` 前必须对比当前 workload 与候选 Helm 资产中的 command、args、env、
+   probes、volumeMounts 和 volumes；只有这些运行契约完全未变时，才允许只更新镜像。
+5. 纯镜像更新只调用 `set-image`；该操作使用 strategic merge，仅修改指定容器的
    image 和可选 `doops.sh/revision`，不得替换整个 containers 数组。
-5. 发布后必须读取 rollout、Pod Ready、实际 imageID、重启次数、日志和任务指定的功能路径。
-6. 结构化工具能力不足时明确返回 blocked，不得退回 shell mutation。
+6. 运行契约发生变化时必须使用任务明确授权的 Helm 资产收敛；不得用 `set-image`
+   跳过参数、环境变量、探针或挂载迁移。
+7. 发布后必须读取 rollout、Pod Ready、实际 imageID、重启次数、日志和任务指定的功能路径。
+8. 结构化工具能力不足时明确返回 blocked，不得退回 shell mutation。
 
 ## 安全合规
 - 不要在命令行明文传递 Secret

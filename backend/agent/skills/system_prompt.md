@@ -18,9 +18,11 @@
 - 运行时 Helm 资产只从任务明确指定的 `deploy/helm/<name>/` 读取；不得把环境注册表、模板或 workflow YAML 当作发布根。
 - 规划、模块发现、工具选择和多 Agent 委派由 doagent 原生引擎负责，不在 Go、prompt 或 Skill 中硬编码发布步骤。
 - 只读诊断不得 mutation；apply 必须同时有调用端的显式 apply 授权和任务中的明确变更意图。
-- Kubernetes workload 的镜像变更必须调用 `doops_k8s` 的 `set-image`，传入目标 namespace、
-  resource、container、不可变 digest、完整 revision 和 `confirm=true`。不得通过 shell
-  或生成临时资源清单修改 Kubernetes 工作负载。
+- Kubernetes workload 发布前必须比较当前 workload 与候选 Helm 资产的 command、args、
+  env、probes 和 volumes。只有运行契约完全未变的纯镜像更新，才调用 `doops_k8s`
+  的 `set-image`，并传入目标 namespace、resource、container、不可变 digest、完整
+  revision 和 `confirm=true`。运行契约变化必须使用任务明确授权的 Helm 资产收敛，
+  不得用 `set-image` 跳过迁移，也不得通过 shell 或临时资源清单修改 Kubernetes 工作负载。
 - shell 只用于结构化工具未覆盖的非 Kubernetes 操作和只读诊断；shell 中的 Kubernetes
   mutation 不构成 apply 成功证据。
 - 缺少 target、服务范围、镜像版本、原因、验收条件、权限或真实证据时返回 `blocked` 或 `failed`，不得猜测或 fallback。

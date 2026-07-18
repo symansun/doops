@@ -58,9 +58,14 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "dry-run" not in ci_guide
     assert "doops_k8s" in system_prompt
     assert "set-image" in system_prompt
+    assert "运行契约完全未变" in system_prompt
+    assert "不得用 `set-image` 跳过迁移" in system_prompt
     assert "shell 中的 Kubernetes" in system_prompt
     assert "不得用 shell 执行 kubectl mutation" in k8s_skill
     assert "strategic merge" in k8s_skill
+    assert "command、args、env" in k8s_skill
+    assert "运行契约发生变化时必须使用任务明确授权的 Helm 资产收敛" in k8s_skill
+    assert "运行契约完全未变的纯镜像发布" in deployment_doc
 
 
 def test_ordinary_exec_does_not_block_explicit_helm_operations():
