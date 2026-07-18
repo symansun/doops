@@ -59,6 +59,12 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert ci_guide.count("doops login") == 3
     assert ci_guide.count('--token "$DOOPS_API_KEY"') == 3
     assert "--apply" in ci_guide
+    assert ci_guide.count("--credential") >= 4
+    assert ci_guide.count("<IMAGE_REPOSITORY>@sha256:<IMAGE_DIGEST>") == 3
+    assert "<IMAGE_VERSION>" not in ci_guide
+    assert "curlimages/curl" not in ci_guide
+    assert "image: alpine:3.22@sha256:<PINNED_ALPINE_DIGEST>" in ci_guide
+    assert "backend/scripts/install.sh" in ci_guide
     assert "dry-run" not in ci_guide
     assert "mcp_doops_k8s" in system_prompt
     assert "set-image" in system_prompt

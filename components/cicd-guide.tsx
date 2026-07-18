@@ -80,9 +80,10 @@ export function CicdGuide({ session }: { session: Session }) {
     if (provider === "curl") {
       return {
         lang: "bash",
-        code: `# 发布任务必须直接给出 target、服务范围、镜像版本、原因和验收条件
+        code: `# 先按正式 Release 安装 doops 到 ~/.local/bin/doops；不要使用 Skill 目录中的开发态二进制
 export DOOPS_GATEWAY="${gw}"
 export DOOPS_API_KEY="${keyDisplay}"
+export DOOPS_CREDENTIAL="<CREDENTIAL_RESOURCE_NAME>"
 
 doops add \\
   --name <ENVIRONMENT_TARGET> \\
@@ -97,7 +98,8 @@ doops login \\
 doops -session "release-$(git rev-parse --short HEAD)" ask \\
   --target <ENVIRONMENT_TARGET> \\
   --apply \\
-  --msg "发布服务范围 <SERVICES>，镜像 <IMAGE_VERSION>；原因：<REASON>；验收：<ACCEPTANCE>。"`,
+  --credential "$DOOPS_CREDENTIAL" \\
+  --msg "发布服务范围 <SERVICES>，镜像 <IMAGE_REPOSITORY>@sha256:<IMAGE_DIGEST>；原因：<REASON>；验收：<ACCEPTANCE>。"`,
       }
     }
     if (provider === "github") {
@@ -111,12 +113,24 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      DOOPS_VERSION: <PINNED_DOOPS_VERSION>
     steps:
+      - uses: actions/checkout@v4
+      - name: Install released Doops CLI
+        run: |
+          git clone --depth 1 --branch "$DOOPS_VERSION" \\
+            https://cnb.cool/l8ai/ai/doops.sh.git /tmp/doops-release
+          bash /tmp/doops-release/backend/scripts/install.sh \\
+            --version "$DOOPS_VERSION" --project "$GITHUB_WORKSPACE"
       - name: Trigger Doops deploy
         env:
           DOOPS_GATEWAY: ${gw}
           DOOPS_API_KEY: \${{ secrets.DOOPS_API_KEY }}
+          DOOPS_CREDENTIAL: <CREDENTIAL_RESOURCE_NAME>
+          IMAGE_REF: <IMAGE_REPOSITORY>@sha256:<IMAGE_DIGEST>
         run: |
+          export PATH="$HOME/.local/bin:$PATH"
           doops add --name <ENVIRONMENT_TARGET> \\
             --gateway "$DOOPS_GATEWAY" \\
             --cluster <CLUSTER> \\
@@ -127,18 +141,28 @@ jobs:
           doops -session "release-\${GITHUB_SHA::12}" ask \\
             --target <ENVIRONMENT_TARGET> \\
             --apply \\
-            --msg "发布服务范围 <SERVICES>，镜像 $GITHUB_SHA；原因：<REASON>；验收：<ACCEPTANCE>。"`,
+            --credential "$DOOPS_CREDENTIAL" \\
+            --msg "发布服务范围 <SERVICES>，镜像 $IMAGE_REF；原因：<REASON>；验收：<ACCEPTANCE>。"`,
       }
     }
     return {
       lang: ".gitlab-ci.yml",
       code: `deploy:
   stage: deploy
-  image: curlimages/curl:latest
+  image: alpine:3.22@sha256:<PINNED_ALPINE_DIGEST>
   variables:
     DOOPS_GATEWAY: "${gw}"
+    DOOPS_VERSION: "<PINNED_DOOPS_VERSION>"
+    DOOPS_CREDENTIAL: "<CREDENTIAL_RESOURCE_NAME>"
+    IMAGE_REF: "<IMAGE_REPOSITORY>@sha256:<IMAGE_DIGEST>"
   script:
     - |
+      apk add --no-cache bash curl git
+      git clone --depth 1 --branch "$DOOPS_VERSION" \\
+        https://cnb.cool/l8ai/ai/doops.sh.git /tmp/doops-release
+      bash /tmp/doops-release/backend/scripts/install.sh \\
+        --version "$DOOPS_VERSION" --project "$CI_PROJECT_DIR"
+      export PATH="$HOME/.local/bin:$PATH"
       doops add --name <ENVIRONMENT_TARGET> \\
         --gateway "$DOOPS_GATEWAY" \\
         --cluster <CLUSTER> \\
@@ -149,7 +173,8 @@ jobs:
       doops -session "release-$CI_COMMIT_SHORT_SHA" ask \\
         --target <ENVIRONMENT_TARGET> \\
         --apply \\
-        --msg "发布服务范围 <SERVICES>，镜像 $CI_COMMIT_SHA；原因：<REASON>；验收：<ACCEPTANCE>。"
+        --credential "$DOOPS_CREDENTIAL" \\
+        --msg "发布服务范围 <SERVICES>，镜像 $IMAGE_REF；原因：<REASON>；验收：<ACCEPTANCE>。"
   only:
     - main`,
     }
@@ -165,7 +190,7 @@ jobs:
         </div>
         <h1 className="text-2xl font-semibold text-balance">将 Doops 接入 CI/CD</h1>
         <p className="mt-2 text-pretty text-sm leading-relaxed text-muted-foreground">
-          流水线通过明确授权的自然语言任务调用 DoOps。任务直接说明 target、服务范围、镜像版本、变更原因和验收条件。
+          流水线通过明确授权的自然语言任务调用 DoOps。任务直接说明 target、服务范围、不可变镜像 digest、变更原因和验收条件。
         </p>
       </div>
 
@@ -233,7 +258,7 @@ jobs:
           2. 在 CI 平台保存为密钥
         </h2>
         <p className="mb-3 text-sm text-muted-foreground">
-          在你的代码托管平台添加两个密钥变量，供流水线读取：
+          在你的代码托管平台保存 Gateway 地址和用户令牌，供流水线读取：
         </p>
         <ul className="space-y-2 text-sm text-muted-foreground">
           <li className="flex gap-2">
@@ -251,6 +276,12 @@ jobs:
             </span>
           </li>
         </ul>
+        <p className="mt-3 text-xs text-muted-foreground">
+          需要受管凭据时，再配置{" "}
+          <code className="rounded bg-muted px-1 font-mono text-foreground">DOOPS_CREDENTIAL</code>{" "}
+          资源名。它只是 metadata 引用，不是 secret；同一发布需要多个凭据时重复
+          <code className="mx-1 rounded bg-muted px-1">--credential</code>。
+        </p>
         <p className="mt-3 text-xs text-muted-foreground">
           GitHub：仓库 Settings → Secrets and variables → Actions；
           GitLab：Settings → CI/CD → Variables。
@@ -292,7 +323,8 @@ jobs:
           <code className="rounded bg-muted px-1">ENVIRONMENT_TARGET</code>、
           <code className="rounded bg-muted px-1">CLUSTER</code> 和
           <code className="rounded bg-muted px-1">INSTANCE</code> 必须由发布任务明确给出。
-          服务范围、镜像版本、变更原因和验收条件同样必须写入任务，不从旧声明文件推断。
+          服务范围、不可变镜像 digest、变更原因和验收条件同样必须写入任务，不从旧声明文件推断。
+          没有凭据时删除示例中的 <code className="rounded bg-muted px-1">--credential</code> 行。
         </p>
       </section>
 
