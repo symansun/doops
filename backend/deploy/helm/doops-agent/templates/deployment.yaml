@@ -73,7 +73,7 @@ spec:
                 - /bin/sh
                 - -lc
                 - >-
-                  test "$(pgrep -fc '^/app/doops-agent( |$)' || true)" = "1"
+                  test "$(pgrep -fc '^/app/doops-agent -listen( |$)' || true)" = "1"
                   && curl -fsS --max-time 1 http://127.0.0.1:42222/health/live >/dev/null
             failureThreshold: 40
             periodSeconds: 5
@@ -84,7 +84,7 @@ spec:
                 - /bin/sh
                 - -lc
                 - >-
-                  test "$(pgrep -fc '^/app/doops-agent( |$)' || true)" = "1"
+                  test "$(pgrep -fc '^/app/doops-agent -listen( |$)' || true)" = "1"
                   && curl -fsS --max-time 1 http://127.0.0.1:42222/health/ready >/dev/null
             initialDelaySeconds: 5
             periodSeconds: 5
@@ -95,7 +95,7 @@ spec:
                 - /bin/sh
                 - -lc
                 - >-
-                  test "$(pgrep -fc '^/app/doops-agent( |$)' || true)" = "1"
+                  test "$(pgrep -fc '^/app/doops-agent -listen( |$)' || true)" = "1"
                   && curl -fsS --max-time 1 http://127.0.0.1:42222/health/live >/dev/null
             initialDelaySeconds: 15
             periodSeconds: 10

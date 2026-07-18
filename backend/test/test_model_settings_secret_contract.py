@@ -278,7 +278,11 @@ def test_oilan_agent_model_settings_are_secret_backed(tmp_path):
         name: container[name]["exec"]["command"][-1]
         for name in ("startupProbe", "readinessProbe", "livenessProbe")
     }
-    assert all("pgrep -fc '^/app/doops-agent( |$)'" in probe for probe in probes.values())
+    assert all(
+        "pgrep -fc '^/app/doops-agent -listen( |$)'" in probe
+        for probe in probes.values()
+    )
+    assert all("mcp-stdio" not in probe for probe in probes.values())
     assert "/health/live" in probes["startupProbe"]
     assert "/health/ready" in probes["readinessProbe"]
     assert "/health/live" in probes["livenessProbe"]
