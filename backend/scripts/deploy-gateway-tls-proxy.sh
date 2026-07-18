@@ -114,8 +114,10 @@ sudo -n docker exec "$container" nginx -s reload
 sleep 1
 code="$(curl --noproxy '*' --resolve doops.l8ai.cn:443:127.0.0.1 -sS -o /dev/null -w '%{http_code}' --max-time 10 https://doops.l8ai.cn/v1/targets)"
 test "$code" = "401"
+web_code="$(curl --noproxy '*' --resolve doops.l8ai.cn:443:127.0.0.1 -sS -o /dev/null -w '%{http_code}' --max-time 10 https://doops.l8ai.cn/)"
+test "$web_code" = "200"
 committed=true
 trap - EXIT
 rm -f "$candidate"
-echo "Gateway TLS proxy deployed; unauthenticated /v1/targets=$code backup=$backup"
+echo "Gateway TLS proxy deployed; unauthenticated /v1/targets=$code web_root=$web_code backup=$backup"
 REMOTE

@@ -59,6 +59,10 @@ cd agent && go run ./cmd/webui -port 8088
 ## 部署建议
 
 - 生产环境使用 `Dockerfile.web` 构建的 Next.js 控制台镜像，不使用本 legacy 二进制。
+- Gateway 主机上的正式发布使用 `backend/scripts/deploy-web-console.sh`，只接受
+  immutable image digest，先在 `127.0.0.1:3001` 启动候选容器并验证，再替换
+  `doops-web`；旧容器保留为 rollback。随后用
+  `backend/scripts/deploy-gateway-tls-proxy.sh` 发布版本化 Nginx 配置。
 - 生产容器必须设置 `DOOPS_CONSOLE_ALLOWED_GATEWAYS`，值为允许代理的 Gateway
   origin，多个值用英文逗号分隔，例如
   `DOOPS_CONSOLE_ALLOWED_GATEWAYS=https://doops.example.com`。控制台只接受精确
