@@ -103,7 +103,7 @@ main:
             export HOME="${PWD}/.ci-doops-home"
             .ci-bin/doops -session "${DOOPS_SESSION}" push \
               --target "${DOOPS_TARGET}" \
-              --src .
+              --src backend
             instruction="在 ${DOOPS_TARGET} 发布 ${DOOPS_SERVICE_SCOPE}，镜像 ${DOOPS_IMAGE}；仅使用 ${DOOPS_HELM_ASSET}；原因：${DOOPS_CHANGE_REASON}；验收：${DOOPS_ACCEPTANCE}。"
             if [ -n "${DOOPS_CREDENTIAL:-}" ]; then
               .ci-bin/doops -session "${DOOPS_SESSION}" ask \
