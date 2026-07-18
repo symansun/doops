@@ -54,7 +54,11 @@ func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		conn,
 		h.messageBudget,
 	)
-	go session.readLoop(h.lease)
+	initialReadTimeout := h.lease
+	if h.heartbeatTimeout > initialReadTimeout {
+		initialReadTimeout = h.heartbeatTimeout
+	}
+	go session.readLoop(h.lease, initialReadTimeout)
 	if err := session.initialize(); err != nil {
 		log.Printf("[gateway] agent initialize failed: %s: %v", session.Key, err)
 		_ = conn.Close()
