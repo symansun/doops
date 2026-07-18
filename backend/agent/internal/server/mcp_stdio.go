@@ -105,7 +105,7 @@ func handleMCPStdioRequest(ctx context.Context, req mcpStdioRequest) interface{}
 func mcpK8SToolDefinition() map[string]interface{} {
 	return map[string]interface{}{
 		"name":        "k8s",
-		"description": "Execute constrained Kubernetes reads and confirmed mutations. Always provide namespace for namespaced resources.",
+		"description": "Execute constrained Kubernetes reads and confirmed mutations. kind must be a lowercase kubectl resource name such as deployment, pods, or services. For get, name is optional and output may be json, yaml, wide, or name. Always provide namespace for namespaced resources.",
 		"inputSchema": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -113,21 +113,32 @@ func mcpK8SToolDefinition() map[string]interface{} {
 					"type": "string",
 					"enum": []string{
 						"get", "describe", "logs", "top", "events", "rollout-status",
-						"rollout-restart", "scale", "cordon", "uncordon", "delete-pod", "set-image",
+						"rollout-restart", "scale", "cordon", "uncordon", "delete-pod",
+						"set-image", "add-image-pull-secret",
 					},
 				},
-				"kind":      map[string]string{"type": "string"},
-				"name":      map[string]string{"type": "string"},
+				"kind": map[string]string{
+					"type":        "string",
+					"description": "Lowercase kubectl resource name, for example deployment, pods, or services.",
+				},
+				"name": map[string]string{
+					"type":        "string",
+					"description": "Optional resource name for get; required for describe and delete-pod.",
+				},
 				"resource":  map[string]string{"type": "string"},
 				"namespace": map[string]string{"type": "string"},
 				"container": map[string]string{"type": "string"},
 				"image":     map[string]string{"type": "string"},
-				"revision":  map[string]string{"type": "string"},
-				"output":    map[string]string{"type": "string"},
-				"timeout":   map[string]string{"type": "string"},
-				"tail":      map[string]string{"type": "integer"},
-				"replicas":  map[string]string{"type": "integer"},
-				"confirm":   map[string]string{"type": "boolean"},
+				"pull_secret": map[string]string{
+					"type":        "string",
+					"description": "Existing imagePullSecret name to append to a workload pod template.",
+				},
+				"revision": map[string]string{"type": "string"},
+				"output":   map[string]string{"type": "string"},
+				"timeout":  map[string]string{"type": "string"},
+				"tail":     map[string]string{"type": "integer"},
+				"replicas": map[string]string{"type": "integer"},
+				"confirm":  map[string]string{"type": "boolean"},
 			},
 			"required":             []string{"operation"},
 			"additionalProperties": false,

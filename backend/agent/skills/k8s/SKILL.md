@@ -28,6 +28,16 @@ conflicts: []
 7. 发布后必须读取 rollout、Pod Ready、实际 imageID、重启次数、日志和任务指定的功能路径。
 8. 结构化工具能力不足时明确返回 blocked，不得退回 shell mutation。
 
+## 参数契约
+
+- `kind` 使用 kubectl 小写资源名，例如 `deployment`、`pods`、`services`。
+- 读取单个对象使用 `operation=get`、`kind=deployment`、`name=<name>`、
+  `namespace=<namespace>`、`output=yaml`。
+- `resource` 只用于 `deployment/<name>` 这类完整资源引用，不要传 `deployments`。
+- `output` 单独传 `json`、`yaml`、`wide` 或 `name`，不要拼进 `name`。
+- 为工作负载追加已有镜像拉取 Secret 时，使用 `operation=add-image-pull-secret`、
+  `resource=deployment/<name>`、`pull_secret=<secret-name>`、`confirm=true`。
+
 ## 安全合规
 - 不要在命令行明文传递 Secret
 - 不读取或输出 Secret payload

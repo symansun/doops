@@ -1,25 +1,68 @@
 package server
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/user/doops/agent/api"
 )
 
+func TestRunK8SCommandReturnsKubectlOutput(t *testing.T) {
+	binDir := t.TempDir()
+	kubectlPath := filepath.Join(binDir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte("#!/bin/sh\nprintf 'deployment.apps/api\\n'\n"), 0o755); err != nil {
+		t.Fatalf("write fake kubectl: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	output, err := runK8SCommand(context.Background(), []string{"get", "deployment", "api"}, func(notificationEvent) {})
+	if err != nil {
+		t.Fatalf("run kubectl: %v", err)
+	}
+	if output != "deployment.apps/api\n" {
+		t.Fatalf("unexpected kubectl output: %q", output)
+	}
+}
+
 func TestBuildK8SCommandsBuildsReadOnlyGet(t *testing.T) {
 	commands, err := buildK8SCommands(api.K8SParams{
 		SessionID: "read-only",
 		Operation: "get",
-		Kind:      "pods",
+		Kind:      "deployment",
+		Name:      "api",
 		Namespace: "kz-ops",
-		Output:    "wide",
+		Output:    "yaml",
 	})
 	if err != nil {
 		t.Fatalf("build get: %v", err)
 	}
-	if len(commands) != 1 || strings.Join(commands[0].args, " ") != "get pods --namespace kz-ops --output wide" {
+	if len(commands) != 1 || strings.Join(commands[0].args, " ") != "get deployment --namespace kz-ops api --output yaml" {
 		t.Fatalf("unexpected command: %#v", commands)
+	}
+}
+
+func TestBuildK8SCommandsAddsImagePullSecret(t *testing.T) {
+	commands, err := buildK8SCommands(api.K8SParams{
+		SessionID:  "pull-secret",
+		Operation:  "add-image-pull-secret",
+		Resource:   "deployment/flow",
+		Namespace:  "kz-ops",
+		PullSecret: "cnb-regcred",
+		Confirm:    true,
+	})
+	if err != nil {
+		t.Fatalf("build add-image-pull-secret: %v", err)
+	}
+	if len(commands) != 1 {
+		t.Fatalf("expected one patch command, got %#v", commands)
+	}
+	got := strings.Join(commands[0].args, " ")
+	if !strings.Contains(got, "patch deployment/flow --type strategic") ||
+		!strings.Contains(got, `"imagePullSecrets":[{"name":"cnb-regcred"}]`) {
+		t.Fatalf("image pull secret patch missing from command: %s", got)
 	}
 }
 

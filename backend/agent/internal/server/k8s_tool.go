@@ -43,10 +43,18 @@ func handleK8STool(ctx context.Context, raw json.RawMessage, push notificationSe
 	if err != nil {
 		return "", err
 	}
+	var outputs []string
 	for _, command := range commands {
-		if err := runK8SCommand(ctx, command.args, push); err != nil {
+		output, err := runK8SCommand(ctx, command.args, push)
+		if err != nil {
 			return "", err
 		}
+		if output = strings.TrimSpace(output); output != "" {
+			outputs = append(outputs, output)
+		}
+	}
+	if len(outputs) != 0 {
+		return strings.Join(outputs, "\n"), nil
 	}
 	return "Kubernetes operation complete.", nil
 }
@@ -59,6 +67,7 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 	params.Namespace = strings.TrimSpace(params.Namespace)
 	params.Container = strings.TrimSpace(params.Container)
 	params.Image = strings.TrimSpace(params.Image)
+	params.PullSecret = strings.TrimSpace(params.PullSecret)
 	params.Revision = strings.TrimSpace(params.Revision)
 	params.Output = strings.TrimSpace(params.Output)
 	params.Timeout = strings.TrimSpace(params.Timeout)
@@ -80,6 +89,9 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 	}
 	if params.Container != "" && !k8sContainerPattern.MatchString(params.Container) {
 		return nil, fmt.Errorf("invalid kubernetes container")
+	}
+	if params.PullSecret != "" && !k8sNamePattern.MatchString(params.PullSecret) {
+		return nil, fmt.Errorf("invalid kubernetes pull secret")
 	}
 	if params.Resource != "" && !validK8SResource(params.Resource) {
 		return nil, fmt.Errorf("invalid kubernetes resource")
@@ -119,6 +131,9 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 			return nil, fmt.Errorf("kind is required for get")
 		}
 		args := namespace([]string{"get", params.Kind})
+		if params.Name != "" {
+			args = append(args, params.Name)
+		}
 		if params.Output != "" {
 			if !validK8SOutput(params.Output) {
 				return nil, fmt.Errorf("unsupported kubernetes output")
@@ -229,6 +244,27 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 		setImage := namespace([]string{"patch", params.Resource, "--type", "strategic", "--patch", string(patch)})
 		rollout := timeout(namespace([]string{"rollout", "status", params.Resource}))
 		return []k8sCommand{{args: setImage}, {args: rollout}}, nil
+	case "add-image-pull-secret":
+		if err := requireMutation(); err != nil {
+			return nil, err
+		}
+		if params.Resource == "" || params.PullSecret == "" {
+			return nil, fmt.Errorf("resource and pull_secret are required for add-image-pull-secret")
+		}
+		patch, err := json.Marshal(map[string]interface{}{
+			"spec": map[string]interface{}{
+				"template": map[string]interface{}{
+					"spec": map[string]interface{}{
+						"imagePullSecrets": []map[string]string{{"name": params.PullSecret}},
+					},
+				},
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("encode image pull secret patch: %w", err)
+		}
+		addPullSecret := namespace([]string{"patch", params.Resource, "--type", "strategic", "--patch", string(patch)})
+		return []k8sCommand{{args: addPullSecret}}, nil
 	default:
 		return nil, fmt.Errorf("unsupported k8s operation %q", params.Operation)
 	}
@@ -250,25 +286,26 @@ func validK8SOutput(output string) bool {
 	}
 }
 
-func runK8SCommand(ctx context.Context, args []string, push notificationSender) error {
+func runK8SCommand(ctx context.Context, args []string, push notificationSender) (string, error) {
 	cmd := exec.CommandContext(ctx, "kubectl", args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("start kubectl: %w", err)
+		return "", fmt.Errorf("start kubectl: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return fmt.Errorf("start kubectl: %w", err)
+		return "", fmt.Errorf("start kubectl: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start kubectl: %w", err)
+		return "", fmt.Errorf("start kubectl: %w", err)
 	}
 
+	var stdoutBuffer bytes.Buffer
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		streamReader(stdout, push)
+		streamReader(io.NopCloser(io.TeeReader(stdout, &stdoutBuffer)), push)
 	}()
 	go func() {
 		defer wg.Done()
@@ -276,7 +313,7 @@ func runK8SCommand(ctx context.Context, args []string, push notificationSender) 
 	}()
 	wg.Wait()
 	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("kubectl %s failed: %w", strings.Join(args, " "), err)
+		return "", fmt.Errorf("kubectl %s failed: %w", strings.Join(args, " "), err)
 	}
-	return nil
+	return stdoutBuffer.String(), nil
 }
