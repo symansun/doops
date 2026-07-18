@@ -33,7 +33,7 @@ Doops 一键安装脚本
   带 --target-* 时按 name 新增或更新 canonical config 中的对应 target，保留其它 targets 和 llm 配置
 
 Skill 维护规则:
-  权威源码在 doops.sh 仓库 skills/SKILL.md
+  权威源码在 doops.sh 仓库 backend/skills/SKILL.md
   install.sh 只把源码里的 skill/docs 复制到业务项目，不从业务项目反向生成 skill
 
 连接模式:
@@ -102,7 +102,7 @@ sha256_file() {
 
 install_cli() {
   local platform artifact checksums expected actual candidate replacement receipt_dir receipt
-  local identity version commit contract
+  local identity version commit contract validation_output
   platform="$(detect_host_platform)"
   if [[ "${platform}" == unsupported-* ]]; then
     cat >&2 <<EOF
@@ -158,6 +158,13 @@ EOF
     ! printf '%s\n' "${commit}" | grep -Eq '^[0-9a-f]{40}$' ||
     [[ "${contract}" != "doops.sh/cli-contract/v3" ]]; then
     echo "Release CLI identity mismatch for ${artifact}: expected version ${RELEASE_TAG} and contract v3" >&2
+    exit 1
+  fi
+
+  if [[ -f "${CANONICAL_CONFIG_FILE}" ]] &&
+    ! validation_output="$(DOOPS_CONFIG="${CANONICAL_CONFIG_FILE}" "${candidate}" list 2>&1)"; then
+    echo "Existing doops config rejected by release CLI:" >&2
+    printf '%s\n' "${validation_output}" >&2
     exit 1
   fi
 
@@ -247,37 +254,6 @@ if [[ -n "${TARGET_GATEWAY}" || -n "${TARGET_NAME}" || -n "${TARGET_CLUSTER}" ||
     echo "Gateway target installation requires --target-name, --target-gateway, --target-cluster, and --target-instance" >&2
     exit 2
   fi
-fi
-
-if [[ -f "${CANONICAL_CONFIG_FILE}" ]]; then
-  command -v python3 >/dev/null 2>&1 || {
-    echo "python3 is required to validate existing doops config" >&2
-    exit 1
-  }
-  python3 - "${CANONICAL_CONFIG_FILE}" <<'PY'
-import json
-import sys
-
-path = sys.argv[1]
-with open(path, encoding="utf-8") as handle:
-    root = json.load(handle)
-if not isinstance(root, dict) or set(root) - {"servers", "llm"}:
-    raise SystemExit("existing config must be an object containing only servers and optional llm")
-servers = root.get("servers", [])
-if not isinstance(servers, list):
-    raise SystemExit("existing config servers must be an array")
-allowed = {"name", "aliases", "use", "gateway", "cluster", "instance"}
-required = {"name", "gateway", "cluster", "instance"}
-for index, server in enumerate(servers):
-    if not isinstance(server, dict):
-        raise SystemExit(f"existing config server[{index}] must be an object")
-    unknown = sorted(set(server) - allowed)
-    if unknown:
-        raise SystemExit(f"existing config server[{index}] contains unsupported fields: {', '.join(unknown)}")
-    missing = sorted(key for key in required if not str(server.get(key, "")).strip())
-    if missing:
-        raise SystemExit(f"existing config server[{index}] is missing Gateway fields: {', '.join(missing)}")
-PY
 fi
 
 echo "[1/4] Installing CLI to fixed path"

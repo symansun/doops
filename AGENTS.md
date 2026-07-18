@@ -57,6 +57,8 @@ DoOps architecture, security, release, and verification boundaries.
   directory are development artifacts, not supported user entrypoints.
 - Users install a checksummed, versioned CNB Release Asset through
   `backend/scripts/install.sh --version <tag> --project <absolute-project-path>`.
+- Before replacement, the installer must validate an existing config with the downloaded release
+  CLI's own Go parser. Do not maintain a second Python, Node, jq, or shell JSON schema.
 - The canonical Skill source is `backend/skills/SKILL.md`. The installer copies it and
   `backend/docs/*.md` into `<project>/.agent/skills/doops/`; do not edit installed copies first.
 - One `doops login` is shared by configured targets on the same normalized Gateway URL. Credential
