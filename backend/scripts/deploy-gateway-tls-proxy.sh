@@ -57,13 +57,14 @@ fi
 
 sha="$(sha256sum "$CONFIG" | awk '{print $1}')"
 remote_tmp="/tmp/doops-proxy-${sha:0:12}.conf"
-SSH_PREFIX=()
 if [[ -n "${SSHPASS:-}" ]]; then
   command -v sshpass >/dev/null
-  SSH_PREFIX=(sshpass -e)
+  SSH=(sshpass -e ssh -p "$SSH_PORT" "${SSH_USER}@${HOST}")
+  SCP=(sshpass -e scp -P "$SSH_PORT")
+else
+  SSH=(ssh -p "$SSH_PORT" "${SSH_USER}@${HOST}")
+  SCP=(scp -P "$SSH_PORT")
 fi
-SSH=("${SSH_PREFIX[@]}" ssh -p "$SSH_PORT" "${SSH_USER}@${HOST}")
-SCP=("${SSH_PREFIX[@]}" scp -P "$SSH_PORT")
 
 echo "Gateway TLS proxy plan"
 echo "  host: ${SSH_USER}@${HOST}:${SSH_PORT}"
