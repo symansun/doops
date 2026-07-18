@@ -24,7 +24,6 @@ import (
 )
 
 type temporaryHeartbeatError struct{}
-type fatalHeartbeatTimeoutError struct{}
 
 func runTestCommand(t *testing.T, directory, name string, arguments ...string) string {
 	t.Helper()
@@ -52,20 +51,14 @@ func (temporaryHeartbeatError) Error() string   { return "temporary heartbeat wr
 func (temporaryHeartbeatError) Timeout() bool   { return true }
 func (temporaryHeartbeatError) Temporary() bool { return true }
 
-func (fatalHeartbeatTimeoutError) Error() string   { return "fatal heartbeat network write timeout" }
-func (fatalHeartbeatTimeoutError) Timeout() bool   { return true }
-func (fatalHeartbeatTimeoutError) Temporary() bool { return false }
-
 type fakeWebSocketControlWriter struct {
 	writeErr error
 	closes   int
-	onWrite  func()
+	writes   int
 }
 
 func (f *fakeWebSocketControlWriter) WriteControl(int, []byte, time.Time) error {
-	if f.onWrite != nil {
-		f.onWrite()
-	}
+	f.writes++
 	return f.writeErr
 }
 
@@ -74,70 +67,56 @@ func (f *fakeWebSocketControlWriter) Close() error {
 	return nil
 }
 
-func TestWriteHeartbeatPingClosesConnectionAfterUnexplainedWriteFailure(t *testing.T) {
+func TestWriteHeartbeatPingSerializesWithDataWrites(t *testing.T) {
 	tests := []struct {
-		name             string
-		writeErr         error
-		dataWriteActive  bool
-		dataWriteOverlap bool
-		wantKeep         bool
-		wantCloses       int
+		name       string
+		writeErr   error
+		writeBusy  bool
+		wantKeep   bool
+		wantWrites int
+		wantCloses int
 	}{
 		{
 			name:       "temporary write timeout",
 			writeErr:   temporaryHeartbeatError{},
 			wantKeep:   false,
+			wantWrites: 1,
 			wantCloses: 1,
 		},
 		{
-			name:            "temporary write timeout during data write",
-			writeErr:        temporaryHeartbeatError{},
-			dataWriteActive: true,
-			wantKeep:        true,
-			wantCloses:      0,
-		},
-		{
-			name:             "temporary write timeout overlapping completed data write",
-			writeErr:         temporaryHeartbeatError{},
-			dataWriteOverlap: true,
-			wantKeep:         true,
-			wantCloses:       0,
-		},
-		{
-			name:             "fatal network timeout overlapping completed data write",
-			writeErr:         fatalHeartbeatTimeoutError{},
-			dataWriteOverlap: true,
-			wantKeep:         false,
-			wantCloses:       1,
+			name:       "active data write skips heartbeat",
+			writeBusy:  true,
+			wantKeep:   true,
+			wantWrites: 0,
+			wantCloses: 0,
 		},
 		{
 			name:       "permanent write failure",
 			writeErr:   fmt.Errorf("connection closed"),
 			wantKeep:   false,
+			wantWrites: 1,
 			wantCloses: 1,
 		},
 		{
 			name:       "successful heartbeat",
 			wantKeep:   true,
+			wantWrites: 1,
 			wantCloses: 0,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var dataWriteState websocketDataWriteState
-			if tt.dataWriteActive {
-				dataWriteState.begin()
-				defer dataWriteState.end()
+			var writeMu sync.Mutex
+			if tt.writeBusy {
+				writeMu.Lock()
+				defer writeMu.Unlock()
 			}
 			conn := &fakeWebSocketControlWriter{writeErr: tt.writeErr}
-			if tt.dataWriteOverlap {
-				conn.onWrite = func() {
-					dataWriteState.begin()
-					dataWriteState.end()
-				}
-			}
-			if got := writeHeartbeatPing(conn, &dataWriteState, nil, time.Second); got != tt.wantKeep {
+			if got := writeHeartbeatPing(conn, &writeMu, nil, time.Second); got != tt.wantKeep {
 				t.Fatalf("keep connection = %t, want %t", got, tt.wantKeep)
+			}
+			if conn.writes != tt.wantWrites {
+				t.Fatalf("write calls = %d, want %d", conn.writes, tt.wantWrites)
 			}
 			if conn.closes != tt.wantCloses {
 				t.Fatalf("close calls = %d, want %d", conn.closes, tt.wantCloses)
@@ -169,8 +148,7 @@ func (f *fakeWebSocketDataWriter) Close() error {
 func TestWriteWebSocketJSONBoundsBlockedWrites(t *testing.T) {
 	t.Run("successful write clears deadline", func(t *testing.T) {
 		conn := &fakeWebSocketDataWriter{}
-		var dataWriteState websocketDataWriteState
-		if err := writeWebSocketJSON(conn, &sync.Mutex{}, &dataWriteState, map[string]string{"ok": "true"}, time.Second); err != nil {
+		if err := writeWebSocketJSON(conn, &sync.Mutex{}, map[string]string{"ok": "true"}, time.Second); err != nil {
 			t.Fatalf("write JSON: %v", err)
 		}
 		if len(conn.deadlines) != 2 || conn.deadlines[0].IsZero() || !conn.deadlines[1].IsZero() {
@@ -179,15 +157,11 @@ func TestWriteWebSocketJSONBoundsBlockedWrites(t *testing.T) {
 		if conn.closes != 0 {
 			t.Fatalf("close calls = %d, want 0", conn.closes)
 		}
-		if dataWriteState.sequence.Load()%2 != 0 {
-			t.Fatal("data write state remained active after success")
-		}
 	})
 
 	t.Run("write failure closes connection", func(t *testing.T) {
 		conn := &fakeWebSocketDataWriter{writeErr: fmt.Errorf("write timeout")}
-		var dataWriteState websocketDataWriteState
-		if err := writeWebSocketJSON(conn, &sync.Mutex{}, &dataWriteState, map[string]string{"ok": "false"}, time.Second); err == nil {
+		if err := writeWebSocketJSON(conn, &sync.Mutex{}, map[string]string{"ok": "false"}, time.Second); err == nil {
 			t.Fatal("write JSON succeeded, want failure")
 		}
 		if len(conn.deadlines) != 1 || conn.deadlines[0].IsZero() {
@@ -195,9 +169,6 @@ func TestWriteWebSocketJSONBoundsBlockedWrites(t *testing.T) {
 		}
 		if conn.closes != 1 {
 			t.Fatalf("close calls = %d, want 1", conn.closes)
-		}
-		if dataWriteState.sequence.Load()%2 != 0 {
-			t.Fatal("data write state remained active after failure")
 		}
 	})
 }

@@ -127,7 +127,6 @@ type GatewayAgent struct {
 	stateMu          sync.RWMutex
 	conn             *websocket.Conn
 	writeMu          sync.Mutex
-	dataWriteState   websocketDataWriteState
 	heartbeatPayload string
 	lastProgressAck  time.Time
 	opSlot           chan struct{}
@@ -1386,7 +1385,7 @@ func (a *GatewayAgent) acknowledgeReadProgress(now time.Time) {
 	// An unsolicited Pong proves that the gateway consumed bytes before a large message finishes.
 	writeHeartbeatControl(
 		a.conn,
-		&a.dataWriteState,
+		&a.writeMu,
 		websocket.PongMessage,
 		[]byte("read-progress"),
 		gatewayReadProgressAckWriteTimeout,
@@ -1434,7 +1433,7 @@ func (a *GatewayAgent) pingLoop(registry *AgentRegistry, lease time.Duration) {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
-	if !writeHeartbeatPing(a.conn, &a.dataWriteState, []byte("ping"), 10*time.Second) {
+	if !writeHeartbeatPing(a.conn, &a.writeMu, []byte("ping"), 10*time.Second) {
 		return
 	}
 	ticker := time.NewTicker(interval)
@@ -1442,7 +1441,7 @@ func (a *GatewayAgent) pingLoop(registry *AgentRegistry, lease time.Duration) {
 	for {
 		select {
 		case <-ticker.C:
-			if !writeHeartbeatPing(a.conn, &a.dataWriteState, []byte("ping"), 10*time.Second) {
+			if !writeHeartbeatPing(a.conn, &a.writeMu, []byte("ping"), 10*time.Second) {
 				return
 			}
 			if registry != nil {
@@ -1572,7 +1571,7 @@ func (a *GatewayAgent) unregisterPending(id int64) {
 }
 
 func (a *GatewayAgent) writeJSON(v interface{}) error {
-	return writeWebSocketJSON(a.conn, &a.writeMu, &a.dataWriteState, v, agentWSDataWriteTimeout)
+	return writeWebSocketJSON(a.conn, &a.writeMu, v, agentWSDataWriteTimeout)
 }
 
 func (a *GatewayAgent) acquire(ctx context.Context, maxQueued int, wait time.Duration) error {
