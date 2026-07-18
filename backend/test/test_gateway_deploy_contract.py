@@ -40,7 +40,9 @@ def test_gateway_release_extracts_the_ci_binary_from_an_immutable_image():
     text = EXTRACT.read_text()
 
     assert '@sha256:[a-f0-9]{64}$' in text
-    assert 'docker pull "${IMAGE}"' in text
+    assert 'PLATFORM="${DOOPS_IMAGE_PLATFORM:-linux/amd64}"' in text
+    assert 'docker pull --platform "${PLATFORM}" "${IMAGE}"' in text
+    assert 'docker create --platform "${PLATFORM}" "${IMAGE}"' in text
     assert 'docker cp "${container_id}:/app/doops-gateway" "${OUTPUT}"' in text
     assert '"${OUTPUT}" -help >/dev/null' in text
 

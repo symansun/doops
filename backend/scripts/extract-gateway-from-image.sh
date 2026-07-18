@@ -15,6 +15,7 @@ EOF
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE=""
 OUTPUT="${REPO_ROOT}/bin/doops-gateway"
+PLATFORM="${DOOPS_IMAGE_PLATFORM:-linux/amd64}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -48,8 +49,8 @@ command -v docker >/dev/null || {
 }
 
 mkdir -p "$(dirname "${OUTPUT}")"
-docker pull "${IMAGE}"
-container_id="$(docker create "${IMAGE}")"
+docker pull --platform "${PLATFORM}" "${IMAGE}"
+container_id="$(docker create --platform "${PLATFORM}" "${IMAGE}")"
 trap 'docker rm -f "${container_id}" >/dev/null 2>&1 || true' EXIT
 docker cp "${container_id}:/app/doops-gateway" "${OUTPUT}"
 chmod 0755 "${OUTPUT}"
