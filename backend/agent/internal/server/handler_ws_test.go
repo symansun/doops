@@ -717,6 +717,50 @@ func TestSubscribeDoagentSSEScopesUntaggedEventsToFreshMachineSession(t *testing
 	}
 }
 
+func TestSubscribeDoagentSSECollectsLiveUntaggedToolEvidence(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/events" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","replay":true,"toolCallId":"stale","toolName":"mcp_doops_k8s","status":"completed","input":{"operation":"set-image"},"content":[{"type":"content","content":{"type":"text","text":"stale"}}]}}}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"current","toolName":"mcp_doops_k8s","status":"in_progress","input":{"operation":"set-image","resource":"deployment/doops-agent"}}}}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"current","toolName":"mcp_doops_k8s","status":"completed","input":{"operation":"set-image","resource":"deployment/doops-agent"},"content":[{"type":"content","content":{"type":"text","text":"Kubernetes operation complete."}}]}}}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-current","status":"completed","stopReason":"end_turn"}}}`)
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	turnIDReady := make(chan string, 1)
+	turnIDReady <- "turn-current"
+	close(turnIDReady)
+	collector := newDoagentToolTraceCollector(false)
+	err := subscribeDoagentSSEWithCollectorReady(
+		t.Context(),
+		ts.URL,
+		"apply-evidence",
+		func(notificationEvent) {},
+		collector.collect,
+		turnIDReady,
+		true,
+		true,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	if err := collector.requireCompletedToolEvidence(); err != nil {
+		t.Fatalf("live untagged tool evidence rejected: %v", err)
+	}
+	traces := collector.completed()
+	if len(traces) != 1 || traces[0].ToolCallID != "current" {
+		t.Fatalf("completed traces = %#v", traces)
+	}
+}
+
 func TestSubscribeDoagentSSEDoesNotForwardMalformedRawData(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

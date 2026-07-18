@@ -1130,7 +1130,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			pushProgress,
 			toolTraces.collect,
 			turnIDReady,
-			responseFormat == "json",
+			true,
 			responseFormat != "json",
 			sseReady,
 		)
