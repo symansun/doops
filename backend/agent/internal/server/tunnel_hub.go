@@ -1004,7 +1004,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		Action:         action,
 		Session:        extractSession(params.Arguments),
 		CommandSummary: summarizeToolCall(params.Name, params.Arguments),
-		Namespace:      auditNamespaceForTool(params.Name, params.Arguments),
 		StartedAt:      time.Now().UTC(),
 	})
 	if auditErr != nil {
@@ -2094,13 +2093,6 @@ func summarizeToolCall(tool string, args json.RawMessage) string {
 		return trimTail(summary, 512)
 	}
 	return tool
-}
-
-func auditNamespaceForTool(tool string, args json.RawMessage) string {
-	if tool == "doops_k8s" {
-		return extractStringArg(args, "namespace")
-	}
-	return ""
 }
 
 func canonicalK8SResource(resource string) string {

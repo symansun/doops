@@ -115,6 +115,10 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 
 `doops-agent` 由 Helm 管理的 `Deployment` 托管，Chart 位于 `deploy/helm/doops-agent`。该目录只保存运行时 Helm 模板、默认值和挂载定义，不保存环境注册表或部署 workflow。具体镜像、目标节点、Secret、Gateway 地址和发布参数必须由本次自然语言任务明确给出或来自任务明确授权读取的当前 Helm release；禁止直接 `kubectl set image`、`kubectl rollout restart` 或从节点 SSH 更新运行中的 Agent。
 
+单副本 Agent 的 home 目录包含 doagent SQLite 状态，不能让新旧 Pod 同时挂载。Chart
+必须使用 `maxSurge=0`、`maxUnavailable=1`；否则滚动窗口会产生 `database is locked`，
+并可能让新实例在旧实例退出前进入不确定状态。
+
 `hostNetwork` 更新必须等待旧实例释放 DoAgent 和 DoOps 监听端口。容器入口使用同一个 120 秒窗口等待两个端口；Chart 的 `startupProbe` 必须覆盖至少 200 秒，并同时验证当前容器内的 DoOps 进程和本地 health，避免误连宿主网络中的旧实例。DoAgent 未启动或健康检查失败时容器必须直接失败，不能只打印警告后继续。发布验收必须确认稳定窗口后的容器重启数仍为 0。
 
 ### 环境依赖注射规范 (Secret)
