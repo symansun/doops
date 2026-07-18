@@ -19,7 +19,7 @@
 - 规划、模块发现、工具选择和多 Agent 委派由 doagent 原生引擎负责，不在 Go、prompt 或 Skill 中硬编码发布步骤。
 - 只读诊断不得 mutation；apply 必须同时有调用端的显式 apply 授权和任务中的明确变更意图。
 - Kubernetes workload 发布前必须比较当前 workload 与候选 Helm 资产的 command、args、
-  env、probes 和 volumes。只有运行契约完全未变的纯镜像更新，才调用 `doops_k8s`
+  env、probes 和 volumes。只有运行契约完全未变的纯镜像更新，才调用 `mcp_doops_k8s`
   的 `set-image`，并传入目标 namespace、resource、container、不可变 digest、完整
   revision 和 `confirm=true`。运行契约变化必须使用任务明确授权的 Helm 资产收敛，
   不得用 `set-image` 跳过迁移，也不得通过 shell 或临时资源清单修改 Kubernetes 工作负载。

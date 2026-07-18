@@ -13,6 +13,20 @@ class SettingsConfigurationError(ValueError):
 
 
 TIER_NAMES = ("high", "default", "low")
+DOOPS_MCP_SERVER = {
+    "name": "doops",
+    "command": "/app/doops-agent",
+    "args": ["mcp-stdio"],
+    "env": {},
+    "cwd": None,
+    "status": "Unknown",
+    "capabilities": [],
+    "auto_start": True,
+    "tool_timeout_secs": 1800,
+    "required": True,
+}
+
+
 def read_settings(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -82,7 +96,11 @@ def configure_settings(
     servers = settings.get("mcp_servers", [])
     if not isinstance(servers, list):
         raise SettingsConfigurationError("mcp_servers must be an array")
-    settings["mcp_servers"] = servers
+    settings["mcp_servers"] = [
+        server
+        for server in servers
+        if not isinstance(server, dict) or server.get("name") != "doops"
+    ] + [DOOPS_MCP_SERVER]
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(destination.suffix + ".tmp")

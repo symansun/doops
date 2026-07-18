@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -28,6 +29,13 @@ var (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "mcp-stdio" {
+		if err := server.ServeMCPStdio(context.Background(), os.Stdin, os.Stdout); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	port := flag.String("port", "42222", "Agent port")
 	listen := flag.String("listen", defaultAgentListenAddress, "Bind address for health endpoints")
 	gatewayURL := flag.String("gateway-url", "", "Public doops-gateway URL for reverse tunnel mode")

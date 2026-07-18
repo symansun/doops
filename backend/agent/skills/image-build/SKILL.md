@@ -53,6 +53,6 @@ conflicts: []
 1. `mkdir -p /tmp/doops-build-{name} && cd /tmp/doops-build-{name}`
 2. 准备构建上下文（解压源码或写入 Dockerfile）
 3. `buildctl --addr unix:///run/buildkit/buildkitd.sock build --progress=plain --frontend dockerfile.v0 --local context=. --local dockerfile=. --opt filename=Dockerfile --output type=image,name=registry.example.com/example-system/{name}:latest,push=true,registry.insecure=true`
-4. 发布任务调用结构化 `doops_k8s set-image`，不得生成原始 kubectl mutation
+4. 发布任务调用结构化 `mcp_doops_k8s set-image`，不得生成原始 kubectl mutation
 5. 用 `kubectl describe` / `kubectl rollout status` 验证发布结果
 6. `cd / && rm -rf /tmp/doops-build-{name}` (清理)

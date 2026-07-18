@@ -56,7 +56,7 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert ci_guide.count('--token "$DOOPS_API_KEY"') == 3
     assert "--apply" in ci_guide
     assert "dry-run" not in ci_guide
-    assert "doops_k8s" in system_prompt
+    assert "mcp_doops_k8s" in system_prompt
     assert "set-image" in system_prompt
     assert "运行契约完全未变" in system_prompt
     assert "不得用 `set-image` 跳过迁移" in system_prompt

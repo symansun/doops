@@ -1,6 +1,6 @@
 ---
 name: k8s
-description: 使用 doops_k8s 执行受约束的 Kubernetes 运维与部署
+description: 使用 mcp_doops_k8s 执行受约束的 Kubernetes 运维与部署
 triggers:
   keywords: [k8s, kubernetes, kubectl, pod, deployment, service, namespace, daemonset, ingress, helm, rollout, 部署, 重启, 扩容, 缩容]
   regex: "kubectl\\s+|k8s|rollout|部署.*服务|重启.*服务"
@@ -16,7 +16,7 @@ conflicts: []
 
 ## 核心原则
 
-1. 所有 Kubernetes 读取和 mutation 都调用 `doops_k8s`，不得用 shell 执行 kubectl mutation。
+1. 所有 Kubernetes 读取和 mutation 都调用 `mcp_doops_k8s`，不得用 shell 执行 kubectl mutation。
 2. 所有请求显式传 namespace；不得依赖 default namespace。
 3. mutation 必须有 `confirm=true`，镜像发布必须使用不可变 `@sha256:` digest。
 4. 调用 `set-image` 前必须对比当前 workload 与候选 Helm 资产中的 command、args、env、

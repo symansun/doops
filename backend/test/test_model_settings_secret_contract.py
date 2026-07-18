@@ -438,7 +438,20 @@ def test_single_model_policy_preserves_mounted_settings_and_omits_duplicate_tier
         == "secret-must-be-preserved"
     )
     assert "model_tiers" not in rendered
-    assert rendered["mcp_servers"] == []
+    assert rendered["mcp_servers"] == [
+        {
+            "name": "doops",
+            "command": "/app/doops-agent",
+            "args": ["mcp-stdio"],
+            "env": {},
+            "cwd": None,
+            "status": "Unknown",
+            "capabilities": [],
+            "auto_start": True,
+            "tool_timeout_secs": 1800,
+            "required": True,
+        }
+    ]
     assert original["model_tiers"]["high"] == "quan2go/gpt-5-4"
 
 

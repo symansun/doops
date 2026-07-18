@@ -26,7 +26,7 @@ Shell 只用于结构化工具没有覆盖的文件、进程、构建和只读�
 - 镜像构建工具：BuildKit（使用 `buildctl --addr unix:///run/buildkit/buildkitd.sock build`）
 - 私有镜像仓库：`registry.example.com`（Agent 已预写 BuildKit 认证，无需额外 login）
 - Go 代理：`GOPROXY=https://proxy.golang.org,direct`（不使用 goproxy.cn，它会限流）
-- Kubernetes mutation 必须使用 `doops_k8s`；shell 中禁止 `kubectl apply`、`patch`、
+- Kubernetes mutation 必须使用 `mcp_doops_k8s`；shell 中禁止 `kubectl apply`、`patch`、
   `set image`、`rollout restart`、`scale`、`delete`、`annotate`、`label` 或 `edit`
 
 【敏感信息处理】

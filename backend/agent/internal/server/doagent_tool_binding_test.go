@@ -32,7 +32,7 @@ func TestApplyAcceptsStructuredK8sMutationEvidence(t *testing.T) {
 	collector := newDoagentToolTraceCollector(false)
 	collector.calls["call-1"] = doagentToolTrace{
 		ToolCallID: "call-1",
-		ToolName:   "doops_k8s",
+		ToolName:   "mcp_doops_k8s",
 		Status:     "completed",
 		ObservedAt: time.Now().UTC().Format(time.RFC3339Nano),
 		inputJSON:  json.RawMessage(`{"operation":"set-image","resource":"deployment/doops-agent"}`),
