@@ -30,6 +30,18 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
 - `auth.json` stores one token per normalized Gateway URL. Login and logout
   therefore affect every target on that Gateway.
 
+## 2026-07-18 Reverse Tunnel Heartbeat Recovery
+
+- Close the reverse-tunnel WebSocket after any heartbeat control-write error,
+  including temporary write timeouts, so the existing reconnect loop can
+  establish a fresh Gateway session.
+- Root cause: treating a timed-out heartbeat write as reusable could leave an
+  Agent attached to a stale proxy socket after Gateway closed the upstream
+  connection. Gateway then reported the target offline while the Agent process
+  and Kubernetes Pod remained healthy.
+- Release verification must leave an idle target connected for longer than the
+  configured Gateway lease and confirm that `last_seen` continues advancing.
+
 ## Maintenance Rules
 
 - Keep one default local config source: `~/.agent/skills/doops/config.json`.

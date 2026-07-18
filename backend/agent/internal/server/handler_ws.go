@@ -90,10 +90,6 @@ type websocketControlWriter interface {
 
 func writeHeartbeatControl(conn websocketControlWriter, messageType int, payload []byte, timeout time.Duration) bool {
 	if err := conn.WriteControl(messageType, payload, time.Now().Add(timeout)); err != nil {
-		var netErr net.Error
-		if errors.As(err, &netErr) && netErr.Timeout() && netErr.Temporary() {
-			return true
-		}
 		_ = conn.Close()
 		return false
 	}

@@ -65,7 +65,7 @@ func (f *fakeWebSocketControlWriter) Close() error {
 	return nil
 }
 
-func TestWriteHeartbeatPingDistinguishesTemporaryBackpressureFromConnectionFailure(t *testing.T) {
+func TestWriteHeartbeatPingClosesConnectionAfterAnyWriteFailure(t *testing.T) {
 	tests := []struct {
 		name       string
 		writeErr   error
@@ -75,8 +75,8 @@ func TestWriteHeartbeatPingDistinguishesTemporaryBackpressureFromConnectionFailu
 		{
 			name:       "temporary write timeout",
 			writeErr:   temporaryHeartbeatError{},
-			wantKeep:   true,
-			wantCloses: 0,
+			wantKeep:   false,
+			wantCloses: 1,
 		},
 		{
 			name:       "permanent write failure",
