@@ -64,3 +64,10 @@ CNB CI 负责测试、构建和发布不可变制品。Gateway 负责鉴权、�
 实际业务 Helm/Kubernetes mutation 由 target 指向的 Agent/doagent 在目标运行环境执行。
 `doops-agent` 自身升级是例外，必须由另一个隔离 Agent target 或真实存在的外部
 CI/GitOps controller 执行。
+
+仓库的 `api_trigger_bootstrap_release_runner` 只负责从目标集群现有 Helm release
+复制非镜像 values，并通过合法的前台 `exec` Helm 操作创建隔离 release-runner。
+它不发布受管 Agent，也不替代 `ask --apply`。runner 注册到 Gateway 后，
+`api_trigger_deploy_agent` 必须把 runner 作为 target，由 runner 对受管 Agent release
+执行自然语言 Helm 收敛。发布和验收完成后应卸载临时 runner，避免把控制器变成长期
+业务 target。

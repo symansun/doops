@@ -117,6 +117,89 @@ main:
                 --apply \
                 --msg "${instruction}"
             fi
+  api_trigger_bootstrap_release_runner:
+    - name: bootstrap isolated agent release controller
+      runner:
+        cpus: 2
+      imports:
+        - https://cnb.cool/aiedulab/zhiyong/secret/-/blob/main/zhiyong-deploy-secrets.yml
+      docker:
+        image: docker.io/library/golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191
+      stages:
+        - name: prepare managed target
+          script: |
+            set -eu
+            test "${CNB_BRANCH}" = "main"
+            apk add --no-cache bash git
+            : "${DOOPS_GATEWAY_TOKEN:?DOOPS_GATEWAY_TOKEN is required}"
+            : "${DOOPS_TARGET:?DOOPS_TARGET is required}"
+            : "${DOOPS_CLUSTER:?DOOPS_CLUSTER is required}"
+            : "${DOOPS_INSTANCE:?DOOPS_INSTANCE is required}"
+            ROOT="${PWD}"
+            export HOME="${PWD}/.ci-doops-home"
+            mkdir -p "${HOME}" .ci-bin
+            (
+              cd backend/skills/doops-cli
+              go build -o "${ROOT}/.ci-bin/doops" ./cli/doops
+            )
+            .ci-bin/doops add \
+              --name "${DOOPS_TARGET}" \
+              --gateway "https://doops.l8ai.cn" \
+              --cluster "${DOOPS_CLUSTER}" \
+              --instance "${DOOPS_INSTANCE}" \
+              --use "CNB release controller bootstrap"
+            printf '%s' "${DOOPS_GATEWAY_TOKEN}" |
+              .ci-bin/doops login --target "${DOOPS_TARGET}" --token-stdin
+            .ci-bin/doops targets --target "${DOOPS_TARGET}"
+        - name: install isolated release runner
+          script: |
+            set -eu
+            : "${DOOPS_SESSION:?DOOPS_SESSION is required}"
+            : "${DOOPS_NAMESPACE:?DOOPS_NAMESPACE is required}"
+            : "${DOOPS_MANAGED_RELEASE:?DOOPS_MANAGED_RELEASE is required}"
+            : "${DOOPS_RUNNER_TARGET:?DOOPS_RUNNER_TARGET is required}"
+            : "${DOOPS_RUNNER_RELEASE:?DOOPS_RUNNER_RELEASE is required}"
+            : "${DOOPS_RUNNER_WORKLOAD:?DOOPS_RUNNER_WORKLOAD is required}"
+            : "${DOOPS_RUNNER_INSTANCE:?DOOPS_RUNNER_INSTANCE is required}"
+            : "${DOOPS_RUNNER_HOME:?DOOPS_RUNNER_HOME is required}"
+            : "${DOOPS_IMAGE:?DOOPS_IMAGE is required}"
+            printf '%s' "${DOOPS_SESSION}" | grep -Eq '^[A-Za-z0-9._-]+$'
+            for value in \
+              "${DOOPS_NAMESPACE}" \
+              "${DOOPS_MANAGED_RELEASE}" \
+              "${DOOPS_RUNNER_RELEASE}" \
+              "${DOOPS_RUNNER_WORKLOAD}" \
+              "${DOOPS_RUNNER_INSTANCE}"; do
+              printf '%s' "${value}" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+            done
+            printf '%s' "${DOOPS_RUNNER_HOME}" | grep -Eq '^/[A-Za-z0-9._/-]+$'
+            printf '%s' "${DOOPS_IMAGE}" |
+              grep -Eq '^[A-Za-z0-9._:/-]+@sha256:[a-f0-9]{64}$'
+            test "${DOOPS_RUNNER_TARGET}" != "${DOOPS_TARGET}"
+            test "${DOOPS_RUNNER_RELEASE}" != "${DOOPS_MANAGED_RELEASE}"
+            test "${DOOPS_RUNNER_INSTANCE}" != "${DOOPS_INSTANCE}"
+            export HOME="${PWD}/.ci-doops-home"
+            .ci-bin/doops -session "${DOOPS_SESSION}" push \
+              --target "${DOOPS_TARGET}" \
+              --src backend
+            command="bash /root/ws/${DOOPS_SESSION}/scripts/bootstrap-release-runner.sh --namespace ${DOOPS_NAMESPACE} --managed-release ${DOOPS_MANAGED_RELEASE} --runner-release ${DOOPS_RUNNER_RELEASE} --runner-workload ${DOOPS_RUNNER_WORKLOAD} --runner-instance ${DOOPS_RUNNER_INSTANCE} --runner-home ${DOOPS_RUNNER_HOME} --image ${DOOPS_IMAGE}"
+            .ci-bin/doops -session "${DOOPS_SESSION}" exec \
+              --target "${DOOPS_TARGET}" \
+              --cmd "${command}"
+            .ci-bin/doops add \
+              --name "${DOOPS_RUNNER_TARGET}" \
+              --gateway "https://doops.l8ai.cn" \
+              --cluster "${DOOPS_CLUSTER}" \
+              --instance "${DOOPS_RUNNER_INSTANCE}" \
+              --use "CNB isolated release controller"
+            for attempt in $(seq 1 30); do
+              if .ci-bin/doops targets --target "${DOOPS_RUNNER_TARGET}"; then
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "release runner did not register with Gateway" >&2
+            exit 1
 
 master:
   pull_request:

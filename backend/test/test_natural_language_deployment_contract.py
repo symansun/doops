@@ -75,6 +75,9 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
         if isinstance(events, dict) and "api_trigger_deploy_agent" in events
     ]
     deploy_pipelines = cnb_config["main"]["api_trigger_deploy_agent"]
+    bootstrap_pipelines = cnb_config["main"][
+        "api_trigger_bootstrap_release_runner"
+    ]
 
     assert 'cliContractVersion = "doops.sh/cli-contract/v3"' in cli
     assert 'BoolVar(&apply, "apply"' in cli
@@ -104,12 +107,16 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "不得用 shell 执行 kubectl mutation" in k8s_skill
     assert "api_trigger_deploy_agent" in main_pipeline
     assert "api_trigger_deploy_agent" not in fallback_pipeline
+    assert "api_trigger_bootstrap_release_runner" in main_pipeline
+    assert "api_trigger_bootstrap_release_runner" not in fallback_pipeline
     assert release_branches == ["main"]
     assert len(deploy_pipelines) == 1
+    assert len(bootstrap_pipelines) == 1
     assert deploy_pipelines[0]["imports"] == [
         "https://cnb.cool/aiedulab/zhiyong/secret/-/blob/main/"
         "zhiyong-deploy-secrets.yml"
     ]
+    assert bootstrap_pipelines[0]["imports"] == deploy_pipelines[0]["imports"]
     assert '"https://doops.l8ai.cn"' in cnb
     assert '-session "${DOOPS_SESSION}" push' in cnb
     assert "--src backend" in cnb
@@ -136,6 +143,16 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "包括只更新镜像在内的所有发布" in deployment_doc
     assert "workspace commit" in deployment_doc
     assert "共享 mutation 锁" in deployment_doc
+    assert "api_trigger_bootstrap_release_runner" in deployment_doc
+    assert "它不发布受管 Agent" in deployment_doc
+    assert "bootstrap-release-runner.sh" in cnb
+    assert '-session "${DOOPS_SESSION}" exec' in cnb
+    assert "--runner-home" in cnb
+    assert "'^[A-Za-z0-9._-]+$'" in cnb
+    assert "'^[A-Za-z0-9._:/-]+@sha256:[a-f0-9]{64}$'" in cnb
+    assert 'test "${DOOPS_RUNNER_TARGET}" != "${DOOPS_TARGET}"' in cnb
+    assert 'test "${DOOPS_RUNNER_RELEASE}" != "${DOOPS_MANAGED_RELEASE}"' in cnb
+    assert 'test "${DOOPS_RUNNER_INSTANCE}" != "${DOOPS_INSTANCE}"' in cnb
     environment_docs = "\n".join(
         path.read_text(encoding="utf-8")
         for path in (BACKEND / "docs" / "environments").glob("*.md")
