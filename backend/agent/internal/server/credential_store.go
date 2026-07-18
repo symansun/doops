@@ -144,6 +144,11 @@ type CredentialListFilter struct {
 	Scope   CredentialScope
 }
 
+type CredentialListEntry struct {
+	CredentialResource
+	Grants []CredentialGrant `json:"grants"`
+}
+
 type CredentialVersionPutRequest struct {
 	CredentialID string
 	Payload      json.RawMessage
@@ -247,10 +252,8 @@ func (s *GatewayStore) ListCredentials(filter CredentialListFilter) ([]Credentia
 	args := make([]any, 0, 4)
 	where := []string{"1 = 1"}
 	if actorID := strings.TrimSpace(filter.ActorID); actorID != "" {
-		where = append(where, `(owner_id = ? OR created_by = ? OR id IN (
-			SELECT credential_id FROM credential_grants WHERE grantee_id = ? AND state = 'active'
-		))`)
-		args = append(args, actorID, actorID, actorID)
+		where = append(where, "scope = ? AND owner_id = ?")
+		args = append(args, CredentialScopePersonal, actorID)
 	}
 	if filter.Scope != "" {
 		if !validCredentialScope(filter.Scope) {
@@ -275,6 +278,83 @@ func (s *GatewayStore) ListCredentials(filter CredentialListFilter) ([]Credentia
 		resources = append(resources, resource)
 	}
 	return resources, rows.Err()
+}
+
+func (s *GatewayStore) ListCredentialAccess(
+	actorID, cluster, instance string,
+	includeAllGrantees bool,
+) ([]CredentialListEntry, error) {
+	actorID = strings.TrimSpace(actorID)
+	cluster = strings.TrimSpace(cluster)
+	instance = strings.TrimSpace(instance)
+	if actorID == "" || cluster == "" || instance == "" {
+		return nil, fmt.Errorf("credential actor, cluster, and instance are required")
+	}
+	args := []any{CredentialStateActive, CredentialStateActive}
+	granteeClause := ""
+	if !includeAllGrantees {
+		granteeClause = " AND g.grantee_id = ?"
+		args = append(args, actorID)
+	}
+	rows, err := s.db.Query(`SELECT
+			c.id, c.name, c.scope, c.owner_id, c.type, c.state, c.created_by,
+			c.created_at, c.updated_at, c.revoked_at,
+			g.id, g.credential_id, g.grantee_id, g.scope_json, g.state,
+			g.created_by, g.created_at, g.revoked_at
+		FROM credentials c
+		JOIN credential_grants g ON g.credential_id = c.id
+		WHERE c.state = ? AND g.state = ?`+granteeClause+`
+		ORDER BY c.created_at DESC, g.created_at DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	entries := make([]CredentialListEntry, 0)
+	entryByID := make(map[string]int)
+	for rows.Next() {
+		var resource CredentialResource
+		var grant CredentialGrant
+		var resourceCreatedAt, resourceUpdatedAt, resourceRevokedAt string
+		var grantScope, grantCreatedAt, grantRevokedAt string
+		if err := rows.Scan(
+			&resource.ID, &resource.Name, &resource.Scope, &resource.OwnerID, &resource.Type,
+			&resource.State, &resource.CreatedBy, &resourceCreatedAt, &resourceUpdatedAt, &resourceRevokedAt,
+			&grant.ID, &grant.CredentialID, &grant.GranteeID, &grantScope, &grant.State,
+			&grant.CreatedBy, &grantCreatedAt, &grantRevokedAt,
+		); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(grantScope), &grant.Scope); err != nil {
+			return nil, err
+		}
+		grant.Scope = normalizeCredentialGrantScope(grant.Scope)
+		if grant.Scope.Cluster != cluster || grant.Scope.Instance != instance {
+			continue
+		}
+		resource.CreatedAt, _ = parseTime(resourceCreatedAt)
+		resource.UpdatedAt, _ = parseTime(resourceUpdatedAt)
+		if resourceRevokedAt != "" {
+			parsed, _ := parseTime(resourceRevokedAt)
+			resource.RevokedAt = &parsed
+		}
+		grant.CreatedAt, _ = parseTime(grantCreatedAt)
+		if grantRevokedAt != "" {
+			parsed, _ := parseTime(grantRevokedAt)
+			grant.RevokedAt = &parsed
+		}
+		index, exists := entryByID[resource.ID]
+		if !exists {
+			index = len(entries)
+			entryByID[resource.ID] = index
+			entries = append(entries, CredentialListEntry{
+				CredentialResource: resource,
+				Grants:             []CredentialGrant{},
+			})
+		}
+		entries[index].Grants = append(entries[index].Grants, grant)
+	}
+	return entries, rows.Err()
 }
 
 func (s *GatewayStore) PutCredentialVersion(req CredentialVersionPutRequest) (CredentialVersion, error) {

@@ -27,6 +27,8 @@ CLI_DIR="${REPO_ROOT}/skills/doops-cli"
 DEFAULT_OUT="${DOOPS_CLI_OUT:-${REPO_ROOT}/bin/doops}"
 RELEASE_DIR="${DOOPS_CLI_RELEASE_DIR:-${REPO_ROOT}/dist/cli}"
 BUILD_ALL=false
+CLI_VERSION="${DOOPS_CLI_VERSION:-dev}"
+CLI_COMMIT="${DOOPS_CLI_COMMIT:-$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || printf unknown)}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -55,7 +57,9 @@ build_one() {
   (
     cd "${CLI_DIR}"
     CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
-      go build -buildvcs=false -trimpath -ldflags="-s -w" -o "${out}" ./cli/doops/
+      go build -buildvcs=false -trimpath \
+        -ldflags="-s -w -X main.cliBuildVersion=${CLI_VERSION} -X main.cliBuildCommit=${CLI_COMMIT}" \
+        -o "${out}" ./cli/doops/
   )
 
   chmod +x "${out}"

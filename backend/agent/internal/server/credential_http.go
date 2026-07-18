@@ -34,23 +34,7 @@ func (h *GatewayHub) HandleCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		if !h.store.UserHasAction(auth.UserID, ActionCredentialMetadata) {
-			http.Error(w, "Forbidden", http.StatusForbidden)
-			return
-		}
-		filter := CredentialListFilter{ActorID: auth.UserID}
-		if h.store.UserIsPlatformAdmin(auth.UserID) {
-			filter.ActorID = ""
-		}
-		resources, err := h.store.ListCredentials(filter)
-		if err != nil {
-			http.Error(w, "failed to list credentials", http.StatusInternalServerError)
-			return
-		}
-		if resources == nil {
-			resources = []CredentialResource{}
-		}
-		writeJSONHTTP(w, map[string]any{"credentials": resources})
+		h.handleCredentialList(w, r, auth)
 	case http.MethodPost:
 		if !h.store.UserHasAction(auth.UserID, ActionCredentialCreate) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
@@ -112,7 +96,12 @@ func (h *GatewayHub) HandleCredential(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !h.store.UserHasAction(auth.UserID, ActionCredentialMetadata) ||
-			!h.canViewCredential(auth.UserID, resource) {
+			!h.canViewCredential(
+				auth.UserID,
+				resource,
+				r.URL.Query().Get("cluster"),
+				r.URL.Query().Get("instance"),
+			) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -217,6 +206,10 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 	if err := decodeCredentialJSON(w, r, &body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	body.GranteeID = strings.TrimSpace(body.GranteeID)
+	if body.GranteeID == "" {
+		body.GranteeID = auth.UserID
 	}
 	if resource.Scope == CredentialScopePersonal {
 		if resource.OwnerID == auth.UserID {
@@ -412,23 +405,92 @@ func (h *GatewayHub) handleCredentialRevoke(w http.ResponseWriter, r *http.Reque
 	writeJSONHTTP(w, map[string]any{"credential_id": resource.ID, "revoked": true})
 }
 
-func (h *GatewayHub) canViewCredential(actorID string, resource CredentialResource) bool {
+func (h *GatewayHub) canViewCredential(
+	actorID string,
+	resource CredentialResource,
+	cluster string,
+	instance string,
+) bool {
 	if h.store.UserIsPlatformAdmin(actorID) {
 		return true
 	}
 	if resource.Scope == CredentialScopePersonal && resource.OwnerID == actorID {
 		return true
 	}
-	resources, err := h.store.ListCredentials(CredentialListFilter{ActorID: actorID})
+	cluster = strings.TrimSpace(cluster)
+	instance = strings.TrimSpace(instance)
+	if cluster == "" || instance == "" ||
+		!h.store.UserCan(actorID, cluster, instance, ActionCredentialMetadata) {
+		return false
+	}
+	entries, err := h.store.ListCredentialAccess(actorID, cluster, instance, false)
 	if err != nil {
 		return false
 	}
-	for _, candidate := range resources {
-		if candidate.ID == resource.ID {
+	for _, entry := range entries {
+		if entry.ID == resource.ID {
 			return true
 		}
 	}
 	return false
+}
+
+func (h *GatewayHub) handleCredentialList(w http.ResponseWriter, r *http.Request, auth TokenAuth) {
+	view := strings.TrimSpace(r.URL.Query().Get("view"))
+	cluster := strings.TrimSpace(r.URL.Query().Get("cluster"))
+	instance := strings.TrimSpace(r.URL.Query().Get("instance"))
+	if view == "target" || cluster != "" || instance != "" {
+		if view != "" && view != "target" {
+			http.Error(w, "invalid credential list view", http.StatusBadRequest)
+			return
+		}
+		if cluster == "" || instance == "" {
+			http.Error(w, "credential target list requires cluster and instance", http.StatusBadRequest)
+			return
+		}
+		if !h.store.UserCan(auth.UserID, cluster, instance, ActionCredentialMetadata) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		entries, err := h.store.ListCredentialAccess(
+			auth.UserID, cluster, instance, h.store.UserIsPlatformAdmin(auth.UserID),
+		)
+		if err != nil {
+			http.Error(w, "failed to list target credentials", http.StatusInternalServerError)
+			return
+		}
+		if entries == nil {
+			entries = []CredentialListEntry{}
+		}
+		writeJSONHTTP(w, map[string]any{
+			"view":        "target",
+			"cluster":     cluster,
+			"instance":    instance,
+			"credentials": entries,
+		})
+		return
+	}
+	if view != "" && view != "managed" {
+		http.Error(w, "invalid credential list view", http.StatusBadRequest)
+		return
+	}
+	if !h.store.UserHasAction(auth.UserID, ActionCredentialMetadata) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+	filter := CredentialListFilter{ActorID: auth.UserID}
+	if h.store.UserIsPlatformAdmin(auth.UserID) {
+		filter.ActorID = ""
+	}
+	resources, err := h.store.ListCredentials(filter)
+	if err != nil {
+		http.Error(w, "failed to list managed credentials", http.StatusInternalServerError)
+		return
+	}
+	if resources == nil {
+		resources = []CredentialResource{}
+	}
+	writeJSONHTTP(w, map[string]any{"view": "managed", "credentials": resources})
 }
 
 func (h *GatewayHub) canRotateCredential(actorID string, resource CredentialResource) bool {

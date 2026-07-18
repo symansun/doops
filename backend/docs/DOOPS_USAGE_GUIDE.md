@@ -17,6 +17,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Write small text | `doops -session <s> write --target <t> --path <file> --file <local>` | Also supports `--content` and stdin. |
 | Clean workspace | `doops -session <s> clean --target <t>` | Cleans `/root/ws/<session>`. |
 | Cache token | `doops login ...` | Gateway login can exchange username/password for user token. |
+| List target credentials | `doops credential list --target <t>` | Uses the cached gateway login and returns only metadata granted to that user on the selected cluster/instance. |
 | Issue token as admin | `doops admin token create ...` | Requires a gateway token with `admin` permission. |
 | Remove cached token | `doops logout --target <t>` | Removes local token cache. |
 
@@ -151,6 +152,58 @@ token under the normalized Gateway URL, and every configured target on that
 Gateway uses the same login state. Target configuration contains routing only;
 it must not contain a Gateway user token. Gateway permissions still come from
 the user's grants.
+
+## Credential Resources
+
+Install the released CLI at the standard path and verify its immutable build metadata:
+
+```bash
+bash scripts/install.sh --version <release-tag> --project "$PWD"
+~/.local/bin/doops version
+```
+
+The installer downloads a checksummed CNB Release Asset into `~/.local/bin/doops`
+and writes a receipt to `~/.local/share/doops/install.txt`. Skill directories contain
+instructions and docs only; they are not CLI executable locations.
+
+One `doops login` applies to every configured target on the same Gateway. Credential
+queries are still target-bound:
+
+```bash
+doops login --target gw-edu-coder --username alice
+doops credential create --target gw-edu-coder \
+  --name oilan-registry --scope personal --type registry
+doops credential list --target gw-edu-coder
+doops credential list --target gw-edu-coder --view managed
+```
+
+The default `target` view returns only active credentials with an active grant for the
+current user and the selected target's exact `cluster/instance`. The `managed` view
+returns personal credentials owned by the current user; platform administrators can
+see all managed resources. Neither view returns payload values.
+
+Payloads are accepted from stdin only and encrypted by Gateway persistence:
+
+```bash
+printf '%s' '{"server":"registry.example.com","username":"deploy","password":"..."}' |
+  doops credential put --target gw-edu-coder --id <credential-id>
+```
+
+Grant a resource to the currently logged-in user by omitting `--grantee-id`:
+
+```bash
+doops credential grant --target gw-edu-coder \
+  --id <credential-id> \
+  --cluster doops-edu --instance edu-coder \
+  --namespace apps --use imagePull \
+  --workload-kind Deployment --workload-name oilan \
+  --image-repository registry.example.com/oilan \
+  --image-digest sha256:<manifest-digest>
+```
+
+Explicit `--grantee-id` remains available to owners and platform administrators when
+granting another Gateway user. Grant scopes are exact; DoOps does not infer target,
+namespace, workload, image, or Helm scope from credential names.
 
 ## Upgrade
 

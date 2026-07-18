@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import subprocess
 import tempfile
@@ -26,6 +27,9 @@ def test_cli_install_downloads_named_release_asset_and_replaces_binary_atomicall
     assert 'curl --fail --location --silent --show-error' in text
     assert 'install -m 0755 "${candidate}" "${replacement}"' in text
     assert 'mv -f "${replacement}" "${CLI_OUT}"' in text
+    assert 'receipt="${receipt_dir}/install.txt"' in text
+    assert "source=cnb-release-assets" in text
+    assert "~/.local/bin/doops version" in text
     assert 'skills/doops-cli/bin' not in text
     assert '-contract' not in text
     assert 'doops login --target ${TARGET_NAME:-<target-name>}' in text
@@ -43,6 +47,8 @@ def test_cli_release_builds_to_ignored_distribution_directory():
     assert "--platform linux/amd64" in release
     assert 'RELEASE_DIR="${DOOPS_CLI_RELEASE_DIR:-${REPO_ROOT}/dist/cli}"' in build
     assert 'RELEASE_DIR="${DOOPS_CLI_RELEASE_DIR:-${REPO_ROOT}/dist/cli}"' in release
+    assert '-X main.cliBuildVersion=${CLI_VERSION}' in build
+    assert '-X main.cliBuildCommit=${CLI_COMMIT}' in build
 
 
 def test_installer_rejects_unsupported_target_fields_before_replacing_cli():
@@ -118,6 +124,83 @@ def test_installer_requires_complete_gateway_route_before_replacing_cli():
         assert result.returncode == 2
         assert "requires --target-name, --target-gateway, --target-cluster, and --target-instance" in result.stderr
         assert cli.read_text() == "existing-cli"
+
+
+def test_installer_places_release_asset_only_in_standard_cli_path():
+    with tempfile.TemporaryDirectory() as raw_root:
+        root = Path(raw_root)
+        home = root / "home"
+        fixtures = root / "fixtures"
+        fake_bin = root / "bin"
+        project = root / "project"
+        home.mkdir()
+        fixtures.mkdir()
+        fake_bin.mkdir()
+        project.mkdir()
+
+        platform = subprocess.run(
+            ["bash", "-c", "uname -s | tr '[:upper:]' '[:lower:]'; uname -m"],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.splitlines()
+        arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[
+            platform[1]
+        ]
+        artifact_name = f"doops-{platform[0]}-{arch}"
+        artifact = fixtures / artifact_name
+        artifact.write_text("#!/usr/bin/env bash\nprintf 'release-cli\\n'\n")
+        artifact.chmod(0o755)
+        checksum = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        (fixtures / "checksums.txt").write_text(f"{checksum}  {artifact_name}\n")
+
+        curl = fake_bin / "curl"
+        curl.write_text(
+            """#!/usr/bin/env bash
+set -euo pipefail
+out=""
+url=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --output) out="$2"; shift 2 ;;
+    --*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+cp "${DOOPS_TEST_RELEASE_FIXTURES}/${url##*/}" "${out}"
+"""
+        )
+        curl.chmod(0o755)
+
+        result = subprocess.run(
+            [
+                "bash",
+                str(INSTALL),
+                "--version",
+                "v-test",
+                "--project",
+                str(project),
+            ],
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "DOOPS_TEST_RELEASE_FIXTURES": str(fixtures),
+            },
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        installed = home / ".local" / "bin" / "doops"
+        assert installed.read_bytes() == artifact.read_bytes()
+        receipt = (home / ".local" / "share" / "doops" / "install.txt").read_text()
+        assert "version=v-test" in receipt
+        assert f"artifact={artifact_name}" in receipt
+        assert f"sha256={checksum}" in receipt
+        assert f"path={installed}" in receipt
+        assert not (home / ".agent" / "skills" / "doops" / "doops-cli" / "bin").exists()
 
 
 def test_tag_pipeline_publishes_and_verifies_release_assets():

@@ -15,11 +15,12 @@ import (
 const maxCredentialPayloadBytes = 1 << 20
 
 type credentialResource struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Scope string `json:"scope"`
-	Type  string `json:"type"`
-	State string `json:"state"`
+	ID     string            `json:"id"`
+	Name   string            `json:"name"`
+	Scope  string            `json:"scope"`
+	Type   string            `json:"type"`
+	State  string            `json:"state"`
+	Grants []credentialGrant `json:"grants,omitempty"`
 }
 
 type credentialVersion struct {
@@ -229,21 +230,35 @@ func runCredentialCreate(args []string, servers []Server, configErr error, stdou
 }
 
 func runCredentialList(args []string, servers []Server, configErr error, stdout io.Writer) error {
-	var target string
+	var target, view string
 	flags := credentialFlagSet("credential list")
 	flags.StringVar(&target, "target", "", "Configured gateway target")
+	flags.StringVar(&view, "view", "target", "Credential view: target or managed")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("credential list accepts no positional arguments")
 	}
-	var err error
-	gateway, token, err := resolveCredentialGateway(target, servers, configErr)
+	view = strings.TrimSpace(view)
+	if view != "target" && view != "managed" {
+		return fmt.Errorf("--view must be target or managed")
+	}
+	gateway, token, routeCluster, routeInstance, err := resolveCredentialListTarget(
+		target, servers, configErr,
+	)
 	if err != nil {
 		return err
 	}
-	raw, err := gatewayCredentialRequest(http.MethodGet, gateway, token, "/v1/credentials", nil, nil)
+	query := url.Values{"view": []string{view}}
+	if view == "target" {
+		if routeCluster == "" || routeInstance == "" {
+			return fmt.Errorf("target credential view requires --target or --gateway with --cluster and --instance")
+		}
+		query.Set("cluster", routeCluster)
+		query.Set("instance", routeInstance)
+	}
+	raw, err := gatewayCredentialRequest(http.MethodGet, gateway, token, "/v1/credentials", query, nil)
 	if err != nil {
 		return err
 	}
@@ -254,9 +269,19 @@ func runCredentialList(args []string, servers []Server, configErr error, stdout 
 		return fmt.Errorf("decode credential list response: %w", err)
 	}
 	for _, credential := range response.Credentials {
-		if _, err := fmt.Fprintf(stdout, "credential_id=%s name=%s scope=%s type=%s state=%s\n",
-			credential.ID, credential.Name, credential.Scope, credential.Type, credential.State); err != nil {
+		if _, err := fmt.Fprintf(stdout, "credential_id=%s name=%s scope=%s type=%s state=%s grants=%d\n",
+			credential.ID, credential.Name, credential.Scope, credential.Type, credential.State,
+			len(credential.Grants)); err != nil {
 			return err
+		}
+		for _, grant := range credential.Grants {
+			if _, err := fmt.Fprintf(stdout,
+				"  grant_id=%s cluster=%s instance=%s namespace=%s use=%s workload=%s/%s\n",
+				grant.ID, grant.Scope.Cluster, grant.Scope.Instance, grant.Scope.Namespace,
+				grant.Scope.Use, grant.Scope.Workload.Kind, grant.Scope.Workload.Name,
+			); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -323,10 +348,10 @@ func runCredentialGrant(args []string, servers []Server, configErr error, stdout
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if flags.NArg() != 0 || strings.TrimSpace(id) == "" || strings.TrimSpace(granteeID) == "" ||
+	if flags.NArg() != 0 || strings.TrimSpace(id) == "" ||
 		strings.TrimSpace(cluster) == "" || strings.TrimSpace(instance) == "" || strings.TrimSpace(namespace) == "" ||
 		strings.TrimSpace(use) == "" || strings.TrimSpace(workloadKind) == "" || strings.TrimSpace(workloadName) == "" {
-		return fmt.Errorf("--id, --grantee-id, --cluster, --instance, --namespace, --use, --workload-kind and --workload-name are required")
+		return fmt.Errorf("--id, --cluster, --instance, --namespace, --use, --workload-kind and --workload-name are required")
 	}
 	keyList, err := parseOptionalCredentialList(requiredKeys, "--required-keys")
 	if err != nil {
@@ -456,6 +481,28 @@ func resolveCredentialGateway(target string, servers []Server, configErr error) 
 		return "", "", err
 	}
 	return server.Gateway, token, nil
+}
+
+func resolveCredentialListTarget(
+	target string,
+	servers []Server,
+	configErr error,
+) (string, string, string, string, error) {
+	target = strings.TrimSpace(target)
+	resolvedGateway, token, err := resolveCredentialGateway(target, servers, configErr)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	server := findServer(servers, target)
+	if server == nil {
+		return "", "", "", "", fmt.Errorf("target %q not found", target)
+	}
+	cluster := strings.TrimSpace(server.Cluster)
+	instance := strings.TrimSpace(server.Instance)
+	if cluster == "" || instance == "" {
+		return "", "", "", "", fmt.Errorf("target %q has no gateway cluster/instance route", target)
+	}
+	return resolvedGateway, token, cluster, instance, nil
 }
 
 func readCredentialPayload(stdin io.Reader) ([]byte, error) {

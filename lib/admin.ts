@@ -114,6 +114,14 @@ export const ALL_ACTIONS = [
   "clean",
   "agent:upgrade",
   "targets:list",
+  "credential:create",
+  "credential:metadata",
+  "credential:grant",
+  "credential:use",
+  "credential:verify",
+  "credential:rotate",
+  "credential:revoke",
+  "credential:audit",
   "admin",
 ] as const
 

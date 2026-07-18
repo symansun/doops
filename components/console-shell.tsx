@@ -11,6 +11,7 @@ import { AskPanel } from "./ask-panel"
 import { FilesPanel } from "./files-panel"
 import { KnowledgeBase } from "./knowledge-base"
 import { AuditPanel } from "./audit-panel"
+import { CredentialPanel } from "./credential-panel"
 import { AdminConsole } from "./admin-console"
 import { DashboardPanel } from "./dashboard-panel"
 import { DeployGuideBody } from "./deploy-guide"
@@ -29,15 +30,17 @@ import {
   HelpIcon,
   RocketIcon,
   GitIcon,
+  KeyIcon,
 } from "./icons"
 
-type Tab = "overview" | "ask" | "files" | "kb" | "audit" | "terminal"
+type Tab = "overview" | "ask" | "files" | "kb" | "credentials" | "audit" | "terminal"
 
 const TABS: { id: Tab; label: string; icon: typeof TerminalIcon; secondary?: boolean }[] = [
   { id: "overview", label: "概览", icon: ActivityIcon },
   { id: "ask", label: "AI 助手", icon: SparkIcon },
   { id: "files", label: "文件", icon: FileIcon },
   { id: "kb", label: "知识库", icon: FileTextIcon },
+  { id: "credentials", label: "凭据", icon: KeyIcon },
   { id: "audit", label: "审计", icon: HistoryIcon },
   { id: "terminal", label: "终端", icon: TerminalIcon, secondary: true },
 ]
@@ -366,6 +369,13 @@ export function ConsoleShell() {
                     session={session}
                     target={selected}
                     sessionId={sessionId}
+                  />
+                )}
+                {tab === "credentials" && (
+                  <CredentialPanel
+                    key={`credentials-${selected.key}`}
+                    session={session}
+                    target={selected}
                   />
                 )}
               </div>

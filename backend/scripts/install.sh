@@ -101,7 +101,7 @@ sha256_file() {
 }
 
 install_cli() {
-  local platform artifact checksums expected actual candidate replacement
+  local platform artifact checksums expected actual candidate replacement receipt_dir receipt
   platform="$(detect_host_platform)"
   if [[ "${platform}" == unsupported-* ]]; then
     cat >&2 <<EOF
@@ -158,8 +158,21 @@ EOF
     echo "Failed to replace CLI at ${CLI_OUT}" >&2
     exit 1
   fi
+  receipt_dir="${HOME}/.local/share/doops"
+  receipt="${receipt_dir}/install.txt"
+  mkdir -p "${receipt_dir}"
+  chmod 0700 "${receipt_dir}"
+  {
+    printf 'version=%s\n' "${RELEASE_TAG}"
+    printf 'artifact=%s\n' "${artifact}"
+    printf 'sha256=%s\n' "${actual}"
+    printf 'source=cnb-release-assets\n'
+    printf 'path=%s\n' "${CLI_OUT}"
+  } >"${receipt}"
+  chmod 0600 "${receipt}"
   echo "  CLI installed from CNB Release Assets: ${RELEASE_TAG}/${artifact}"
   echo "  CLI installed to ${CLI_OUT}"
+  echo "  Install receipt written to ${receipt}"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -293,6 +306,7 @@ If ~/.local/bin is not in PATH, run:
 
 Quick verify:
   cd "${PROJECT_PATH}"
+  ~/.local/bin/doops version
   doops list
   doops login --target ${TARGET_NAME:-<target-name>}
   doops -session smoke exec --target ${TARGET_NAME:-<target-name>} --cmd "hostname"

@@ -138,6 +138,8 @@ $:
         - name: build CLI release assets
           script: |
             rm -rf backend/dist/cli
+            DOOPS_CLI_VERSION="${CNB_BRANCH}" \
+            DOOPS_CLI_COMMIT="${CNB_COMMIT}" \
             DOOPS_CLI_OUT="${PWD}/backend/dist/cli/doops-host" \
             DOOPS_CLI_RELEASE_DIR="${PWD}/backend/dist/cli" \
               bash backend/scripts/build-cli.sh --all

@@ -100,7 +100,7 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 	run(`{"server":"registry.example.com","username":"deploy","password":"stdin-wins"}`,
 		"credential", "put", "--target", "gw-edu-release-runner", "--id", "cred_123")
 	run("", "credential", "grant", "--target", "gw-edu-release-runner", "--id", "cred_123",
-		"--grantee-id", "user_42", "--cluster", "doops-edu", "--instance", "edu-coder",
+		"--cluster", "doops-edu", "--instance", "edu-coder",
 		"--namespace", "apps", "--use", "imagePull",
 		"--workload-kind", "Deployment", "--workload-name", "api",
 		"--image-repository", "team/api", "--image-digest", "sha256:manifest")
@@ -137,6 +137,11 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 	if requests[1].Method != http.MethodGet || requests[1].Path != "/v1/credentials" {
 		t.Fatalf("credential list request mismatch: %#v", requests[1])
 	}
+	if requests[1].Query.Get("view") != "target" ||
+		requests[1].Query.Get("cluster") != "doops-edu" ||
+		requests[1].Query.Get("instance") != "release-runner" {
+		t.Fatalf("credential list target query mismatch: %#v", requests[1].Query)
+	}
 	assertCredentialCLIJSON(t, requests[2], http.MethodPut, "/v1/credentials/cred_123/payload", map[string]any{
 		"server": "registry.example.com", "username": "deploy", "password": "stdin-wins",
 	})
@@ -144,7 +149,7 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		t.Fatalf("credential put must not activate through a query parameter: %#v", requests[2].Query)
 	}
 	assertCredentialCLIJSON(t, requests[3], http.MethodPost, "/v1/credentials/cred_123/grants", map[string]any{
-		"grantee_id": "user_42",
+		"grantee_id": "",
 		"scope": map[string]any{
 			"cluster":          "doops-edu",
 			"instance":         "edu-coder",
