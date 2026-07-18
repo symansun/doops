@@ -307,6 +307,16 @@ func (c *doagentToolTraceCollector) rejectionSummary() string {
 	return strings.Join(rejections, ",")
 }
 
+func (c *doagentToolTraceCollector) requireCompletedToolEvidence() error {
+	if len(c.completed()) != 0 {
+		return nil
+	}
+	if rejected := c.rejectionSummary(); rejected != "" {
+		return fmt.Errorf("doagent_apply_tool_evidence_missing: %s", rejected)
+	}
+	return fmt.Errorf("doagent_apply_tool_evidence_missing")
+}
+
 func (trace doagentToolTrace) eligible() bool {
 	return trace.ineligibilityReason() == ""
 }

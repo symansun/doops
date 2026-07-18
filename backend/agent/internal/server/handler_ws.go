@@ -889,8 +889,9 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			args.Model,
 			args.ResponseFormat,
 			agentPromptExecutionContext{
-				NativeMode:      nativeMode,
-				WorkspaceCommit: strings.TrimSpace(args.WorkspaceCommit),
+				NativeMode:          nativeMode,
+				WorkspaceCommit:     strings.TrimSpace(args.WorkspaceCommit),
+				RequireToolEvidence: operation == "apply",
 			},
 			pushProgress,
 			writeJSON,
@@ -1048,8 +1049,9 @@ func doagentModeForPrompt(operation, executionMode string) (string, error) {
 }
 
 type agentPromptExecutionContext struct {
-	NativeMode      string
-	WorkspaceCommit string
+	NativeMode          string
+	WorkspaceCommit     string
+	RequireToolEvidence bool
 }
 
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
@@ -1231,6 +1233,12 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	if ctx.Err() != nil {
 		writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 		return
+	}
+	if execution.RequireToolEvidence {
+		if err := toolTraces.requireCompletedToolEvidence(); err != nil {
+			writeJSON(buildToolErrorResponse(reqID, err.Error()))
+			return
+		}
 	}
 	if responseFormat == "json" {
 		resultText, structuredContent, err := toolTraces.structuredResult(false)
