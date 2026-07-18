@@ -1489,6 +1489,7 @@ func TestGatewayKeepsIdleAgentAliveWithPing(t *testing.T) {
 
 	lease := 200 * time.Millisecond
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: lease})
+	gw.registration.heartbeatTimeout = time.Second
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -1496,9 +1497,23 @@ func TestGatewayKeepsIdleAgentAliveWithPing(t *testing.T) {
 
 	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
-	go serveFakeAgent(t, agentConn)
+	pings := make(chan string, 8)
+	time.Sleep(lease * 2)
+	go serveFakeAgentObservingPings(t, agentConn, pings)
 
-	time.Sleep(lease * 4)
+	regularPings := 0
+	timeout := time.NewTimer(5 * time.Second)
+	defer timeout.Stop()
+	for regularPings < 5 {
+		select {
+		case payload := <-pings:
+			if payload == "ping" {
+				regularPings++
+			}
+		case <-timeout.C:
+			t.Fatalf("expected gateway heartbeat pings, got %d", regularPings)
+		}
+	}
 	targets := gw.ListTargets()
 	if len(targets) != 1 {
 		t.Fatalf("expected idle agent to stay online, got %d targets", len(targets))
@@ -1625,7 +1640,7 @@ func TestGatewayAgentReadLoopKeepsPongResponsiveWhenStoreIsBusy(t *testing.T) {
 		activeBySession: make(map[string]*gatewayMessageQueue),
 		closed:          make(chan struct{}),
 	}
-	go agent.readLoop(hub.opts.AgentLease)
+	go agent.readLoop(hub.opts.AgentLease, hub.opts.AgentLease)
 
 	if err := clientConn.WriteJSON(map[string]interface{}{
 		"jsonrpc": "2.0",
@@ -1694,7 +1709,7 @@ func TestGatewayAgentReadLoopAcknowledgesStreamingProgress(t *testing.T) {
 		activeBySession: make(map[string]*gatewayMessageQueue),
 		closed:          make(chan struct{}),
 	}
-	go agent.readLoop(time.Second)
+	go agent.readLoop(time.Second, time.Second)
 
 	writer, err := clientConn.NextWriter(websocket.TextMessage)
 	if err != nil {
@@ -1874,7 +1889,7 @@ func TestGatewayAgentReadLoopKeepsPingResponsiveWhenPendingConsumerStalls(t *tes
 		activeBySession: make(map[string]*gatewayMessageQueue),
 		closed:          make(chan struct{}),
 	}
-	go agent.readLoop(time.Second)
+	go agent.readLoop(time.Second, time.Second)
 	defer func() {
 		pending.close()
 		_ = clientConn.Close()
@@ -3021,6 +3036,21 @@ func dialGatewayRPCClient(t *testing.T, serverURL, token, cluster, instance stri
 
 func serveFakeAgent(t *testing.T, conn *websocket.Conn) {
 	serveFakeAgentWithRuntimeID(t, conn, "")
+}
+
+func serveFakeAgentObservingPings(t *testing.T, conn *websocket.Conn, pings chan<- string) {
+	conn.SetPingHandler(func(payload string) error {
+		select {
+		case pings <- payload:
+		default:
+		}
+		return conn.WriteControl(
+			websocket.PongMessage,
+			[]byte(payload),
+			time.Now().Add(time.Second),
+		)
+	})
+	serveFakeAgent(t, conn)
 }
 
 func serveFakeAgentWithRuntimeID(t *testing.T, conn *websocket.Conn, runtimeID string) {

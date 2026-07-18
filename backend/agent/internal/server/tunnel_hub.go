@@ -1315,10 +1315,10 @@ func (a *GatewayAgent) initialize() error {
 	}
 }
 
-func (a *GatewayAgent) readLoop(lease time.Duration) {
+func (a *GatewayAgent) readLoop(lease, initialReadTimeout time.Duration) {
 	defer close(a.closed)
 	defer a.conn.Close()
-	a.conn.SetReadDeadline(time.Now().Add(lease))
+	a.conn.SetReadDeadline(time.Now().Add(initialReadTimeout))
 	a.conn.SetPongHandler(func(payload string) error {
 		a.heartbeat(payload)
 		return a.conn.SetReadDeadline(time.Now().Add(lease))
