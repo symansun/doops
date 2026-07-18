@@ -61,6 +61,16 @@ func TestCredentialMetadataAndTargetGrantPersistAcrossGatewayRestart(t *testing.
 	if err != nil {
 		t.Fatalf("create persistent credential: %v", err)
 	}
+	if _, err := store.PutCredentialVersion(CredentialVersionPutRequest{
+		CredentialID: resource.ID,
+		Payload: json.RawMessage(
+			`{"server":"registry.example.com","username":"owner","password":"synthetic"}`,
+		),
+		CreatedBy: owner.ID,
+		Activate:  true,
+	}); err != nil {
+		t.Fatalf("activate persistent credential version: %v", err)
+	}
 	scope := credentialStoreImageScope("cluster-a", "instance-a", "apps")
 	if _, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 		CredentialID: resource.ID,
@@ -91,6 +101,58 @@ func TestCredentialMetadataAndTargetGrantPersistAcrossGatewayRestart(t *testing.
 	otherTarget, err := reopened.ListCredentialAccess(owner.ID, "cluster-b", "instance-b", false)
 	if err != nil || len(otherTarget) != 0 {
 		t.Fatalf("other target credentials after restart = %#v, %v", otherTarget, err)
+	}
+}
+
+func TestCredentialTargetListRequiresActiveVersion(t *testing.T) {
+	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("v", 32))
+	store := openCredentialTestStore(t)
+	owner := createCredentialTestUser(t, store, "version-owner")
+	resource, err := store.CreateCredential(CredentialCreateRequest{
+		Name: "version-gated", Scope: CredentialScopePersonal, Type: CredentialTypeRegistry,
+		OwnerID: owner.ID, CreatedBy: owner.ID,
+	})
+	if err != nil {
+		t.Fatalf("create credential: %v", err)
+	}
+	if _, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
+		CredentialID: resource.ID,
+		GranteeID:    owner.ID,
+		Scope:        credentialStoreImageScope("cluster-a", "instance-a", "apps"),
+		CreatedBy:    owner.ID,
+	}); err != nil {
+		t.Fatalf("create grant: %v", err)
+	}
+	visible, err := store.ListCredentialAccess(owner.ID, "cluster-a", "instance-a", false)
+	if err != nil || len(visible) != 0 {
+		t.Fatalf("credential without version was target-visible: %#v, %v", visible, err)
+	}
+	if _, err := store.PutCredentialVersion(CredentialVersionPutRequest{
+		CredentialID: resource.ID,
+		Payload: json.RawMessage(
+			`{"server":"registry.example.com","username":"owner","password":"synthetic"}`,
+		),
+		CreatedBy: owner.ID,
+	}); err != nil {
+		t.Fatalf("put staged version: %v", err)
+	}
+	visible, err = store.ListCredentialAccess(owner.ID, "cluster-a", "instance-a", false)
+	if err != nil || len(visible) != 0 {
+		t.Fatalf("credential with staged version was target-visible: %#v, %v", visible, err)
+	}
+	if _, err := store.PutCredentialVersion(CredentialVersionPutRequest{
+		CredentialID: resource.ID,
+		Payload: json.RawMessage(
+			`{"server":"registry.example.com","username":"owner","password":"synthetic-active"}`,
+		),
+		CreatedBy: owner.ID,
+		Activate:  true,
+	}); err != nil {
+		t.Fatalf("activate version: %v", err)
+	}
+	visible, err = store.ListCredentialAccess(owner.ID, "cluster-a", "instance-a", false)
+	if err != nil || len(visible) != 1 || visible[0].ID != resource.ID {
+		t.Fatalf("credential with active version not target-visible: %#v, %v", visible, err)
 	}
 }
 

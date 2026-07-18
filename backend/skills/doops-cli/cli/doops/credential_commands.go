@@ -36,6 +36,7 @@ type credentialGrant struct {
 	CredentialID string               `json:"credential_id"`
 	GranteeID    string               `json:"grantee_id"`
 	Scope        credentialGrantScope `json:"scope"`
+	State        string               `json:"state"`
 }
 
 type credentialGrantScope struct {
@@ -80,6 +81,7 @@ func runCredentialCommand(args []string, sessionName string, servers []Server, c
 		_, err := fmt.Fprint(stdout, `Usage:
   doops credential create        创建凭据元数据
   doops credential list          查询当前 target 可见或当前用户管理的凭据
+  doops credential preflight     检查项目开发所需 credentialRef 是否可用
   doops credential put           从 stdin 写入新的凭据版本
   doops credential grant         授权凭据给当前用户或指定用户的精确 target scope
   doops credential grant-revoke  吊销一条凭据授权
@@ -99,6 +101,8 @@ Use "doops credential <subcommand> -h" for command flags.
 		err = runCredentialCreate(args[1:], servers, configErr, stdout)
 	case "list":
 		err = runCredentialList(args[1:], servers, configErr, stdout)
+	case "preflight":
+		err = runCredentialPreflight(args[1:], sessionName, servers, configErr, stdout)
 	case "put":
 		err = runCredentialPut(args[1:], servers, configErr, stdin, stdout)
 	case "grant":
@@ -366,31 +370,11 @@ func runCredentialList(args []string, servers []Server, configErr error, stdout 
 	if view != "target" && view != "managed" {
 		return fmt.Errorf("--view must be target or managed")
 	}
-	gateway, token, routeCluster, routeInstance, err := resolveCredentialListTarget(
-		target, servers, configErr,
-	)
+	credentials, err := listCredentialResources(target, view, servers, configErr)
 	if err != nil {
 		return err
 	}
-	query := url.Values{"view": []string{view}}
-	if view == "target" {
-		if routeCluster == "" || routeInstance == "" {
-			return fmt.Errorf("target credential view requires --target")
-		}
-		query.Set("cluster", routeCluster)
-		query.Set("instance", routeInstance)
-	}
-	raw, err := gatewayCredentialRequest(http.MethodGet, gateway, token, "/v1/credentials", query, nil)
-	if err != nil {
-		return err
-	}
-	var response struct {
-		Credentials []credentialResource `json:"credentials"`
-	}
-	if err := json.Unmarshal(raw, &response); err != nil {
-		return fmt.Errorf("decode credential list response: %w", err)
-	}
-	for _, credential := range response.Credentials {
+	for _, credential := range credentials {
 		if _, err := fmt.Fprintf(stdout, "credential_id=%s name=%s scope=%s type=%s state=%s grants=%d\n",
 			credential.ID, credential.Name, credential.Scope, credential.Type, credential.State,
 			len(credential.Grants)); err != nil {
@@ -407,6 +391,39 @@ func runCredentialList(args []string, servers []Server, configErr error, stdout 
 		}
 	}
 	return nil
+}
+
+func listCredentialResources(
+	target string,
+	view string,
+	servers []Server,
+	configErr error,
+) ([]credentialResource, error) {
+	gateway, token, routeCluster, routeInstance, err := resolveCredentialListTarget(
+		target, servers, configErr,
+	)
+	if err != nil {
+		return nil, err
+	}
+	query := url.Values{"view": []string{view}}
+	if view == "target" {
+		if routeCluster == "" || routeInstance == "" {
+			return nil, fmt.Errorf("target credential view requires --target")
+		}
+		query.Set("cluster", routeCluster)
+		query.Set("instance", routeInstance)
+	}
+	raw, err := gatewayCredentialRequest(http.MethodGet, gateway, token, "/v1/credentials", query, nil)
+	if err != nil {
+		return nil, err
+	}
+	var response struct {
+		Credentials []credentialResource `json:"credentials"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return nil, fmt.Errorf("decode credential list response: %w", err)
+	}
+	return response.Credentials, nil
 }
 
 func runCredentialPut(args []string, servers []Server, configErr error, stdin io.Reader, stdout io.Writer) error {

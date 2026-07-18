@@ -212,6 +212,7 @@ func TestCredentialCLIHelp(t *testing.T) {
 		}
 		if !strings.Contains(output.String(), "doops credential list") ||
 			!strings.Contains(output.String(), "doops credential create") ||
+			!strings.Contains(output.String(), "doops credential preflight") ||
 			!strings.Contains(output.String(), "doops credential verify") {
 			t.Fatalf("credential help %v missing commands: %s", args, output.String())
 		}

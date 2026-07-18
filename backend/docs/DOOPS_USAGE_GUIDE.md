@@ -24,6 +24,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Preview Agent upgrade | `doops -session <s> upgrade ... --dry-run` | Never replaces the current Agent. |
 | Cache token | `doops login ...` | Gateway login can exchange username/password for user token. |
 | List target credentials | `doops credential list --target <t>` | Uses the cached gateway login and returns only metadata granted to that user on the selected cluster/instance. |
+| Preflight development credentials | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` | Fails closed unless every declared credentialRef has a matching active grant use on the selected target. |
 | Manage credential lifecycle | `doops credential <create|put|grant|verify|promote|grant-revoke|revoke>` | See `CREDENTIAL_RESOURCES.md`. |
 | Issue token as admin | `doops admin token create ...` | Requires a gateway token with `admin` permission. |
 | Inspect/cancel active operations | `doops admin operations <list|cancel> ...` | Gateway administration. |
@@ -106,6 +107,36 @@ doops -session ops ask --target jm --msg '只读检查 Kubernetes 节点状态�
 ```
 
 Use `ask` for diagnostics that require exploration. The target must have doagent/model configuration available.
+
+## Development Credential Preflight
+
+需要 Git、Registry、Helm、TLS 或 API 凭据的项目，在仓库中提交 metadata-only 清单：
+
+```yaml
+apiVersion: doops.sh/v1
+kind: DevelopmentCredentialRequirements
+target: gw-114-k8s
+credentials:
+  - credentialRef: cnb-development
+    use: gitCheckout
+  - credentialRef: cnb-registry
+    use: imagePull
+```
+
+Agent 在相关开发操作前运行：
+
+```bash
+doops -session dev-preflight-<task> credential preflight \
+  --manifest .agent/doops-credentials.yaml
+```
+
+CLI 严格解析单文档 YAML，拒绝未知字段、重复的 `credentialRef + use`、target 冲突和
+没有 `-session` 的远端检查。它只查询当前登录用户在 manifest target 上可见的 active
+resource 和 active grant，输出 `ready`、`missing`、`wrong_use` 或 `ambiguous` 元数据。
+
+清单不是授权源，也不包含 payload、secret 文件路径、默认值或本地 fallback。preflight
+不会把凭据注入本机命令或远端 workspace；实际使用仍必须经过现有精确 grant 和受控
+materialization 路径。
 
 ## CI/CD And Apply
 
@@ -215,7 +246,8 @@ doops credential list --target gw-edu-coder
 doops credential list --target gw-edu-coder --view managed
 ```
 
-默认 `target` 视图只返回当前用户在所选 target 上获得 active grant 的 active resource；
+默认 `target` 视图只返回当前用户在所选 target 上获得 active grant 且存在 active version
+的 active resource；
 `managed` 视图返回本人拥有的 personal resource，platform admin 可以管理平台资源。
 两个视图都不返回 payload。
 

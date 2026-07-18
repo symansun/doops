@@ -8,6 +8,9 @@ BACKEND = ROOT / "backend"
 CNB = ROOT / ".cnb.yml"
 CLI = BACKEND / "skills" / "doops-cli" / "cli" / "doops" / "main.go"
 CREDENTIAL_CLI = BACKEND / "skills" / "doops-cli" / "cli" / "doops" / "credential_commands.go"
+CREDENTIAL_PREFLIGHT = (
+    BACKEND / "skills" / "doops-cli" / "cli" / "doops" / "credential_preflight.go"
+)
 SKILL = BACKEND / "skills" / "SKILL.md"
 DEPLOYMENT_DOC = BACKEND / "docs" / "NATURAL_LANGUAGE_DEPLOYMENT.md"
 CICD_DOC = DEPLOYMENT_DOC
@@ -141,6 +144,7 @@ def test_ordinary_exec_does_not_block_explicit_helm_operations():
 def test_cicd_and_credential_guides_match_the_runtime_contract():
     cli = CLI.read_text(encoding="utf-8")
     credential_cli = CREDENTIAL_CLI.read_text(encoding="utf-8")
+    credential_preflight = CREDENTIAL_PREFLIGHT.read_text(encoding="utf-8")
     skill = SKILL.read_text(encoding="utf-8")
     cicd_doc = CICD_DOC.read_text(encoding="utf-8")
     credential_doc = CREDENTIAL_DOC.read_text(encoding="utf-8")
@@ -152,6 +156,12 @@ def test_cicd_and_credential_guides_match_the_runtime_contract():
     assert "credential verify" in credential_doc
     assert "credential verify" in credential_cli
     assert "docs/NATURAL_LANGUAGE_DEPLOYMENT.md" in skill
+    assert "credential preflight" in credential_cli
+    assert ".agent/doops-credentials.yaml" in credential_preflight
+    assert "DevelopmentCredentialRequirements" in credential_preflight
+    assert "KnownFields(true)" in credential_preflight
+    assert "credentialHasActiveUse" in credential_preflight
+    assert "preflight 不为本机进程或远端 workspace 注入 payload" in credential_doc
     assert "docs/CREDENTIAL_RESOURCES.md" in skill
     assert "backend/skills/SKILL.md" in skill
 
@@ -178,3 +188,5 @@ def test_repository_agent_rules_guard_release_and_credential_boundaries():
     assert "backend/docs/CREDENTIAL_RESOURCES.md" in rules
     assert "browser testing" in rules
     assert "online synthetic credential" in rules
+    assert ".agent/doops-credentials.yaml" in rules
+    assert "credential preflight" in rules

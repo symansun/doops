@@ -38,6 +38,13 @@ description: |
   image 或 Helm 的精确 scope 授权和物化。公开 prompt、doagent 上下文和 metadata
   binding 不接收 credential payload；目标 doops-agent 只在内部凭据控制面临时接收
   解密 payload 以创建或验证目标资源。
+- 开发项目可以在 `.agent/doops-credentials.yaml` 声明 metadata-only 的
+  `credentialRef + use`。Agent 在 Git、Registry、Helm、TLS 或 API 开发操作前必须运行
+  `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml`。
+  preflight 只检查当前用户在 manifest target 上是否拥有匹配 use 的 active grant，
+  且凭据存在 active version；
+  它不读取 payload、不授予权限、不物化凭据，也不允许回退到环境变量、旧登录态或
+  Skill 目录中的文件。
 - CNB CI 负责测试、构建和发布不可变制品，不选择生产 target。Gateway 负责鉴权、审计、
   资源锁和凭据预物化，实际业务 Helm/Kubernetes mutation 由目标 Agent 在其运行环境执行。
 - 当前没有 EnvironmentRegistry、`cicd run`、CICDReport 或 `doops_cicd_result` 发布链路。
@@ -151,6 +158,7 @@ doops targets --target unicom
 | 写入凭据版本 | `printf '%s' '<json>' \| doops credential put --target <t> --id <credential-id>` |
 | 查询 target 可用凭据 | `doops credential list --target <t>` |
 | 查询本人管理凭据 | `doops credential list --target <t> --view managed` |
+| 检查项目开发凭据 | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` |
 | 授权凭据 | `doops credential grant --target <t> --id <id> <exact-scope-flags>` |
 | 验证 staged 版本 | `doops -session <s> credential verify --target <t> --id <id> --version-id <version> <exact-scope-flags>` |
 | 激活凭据版本 | `doops credential promote --target <t> --id <id> --version-id <version>` |
@@ -210,6 +218,8 @@ docs/DOOPS_MAINTENANCE_LOG.md
 - `403 Forbidden`：认证通过但权限不足，或用户被显式收窄。
 - `credential_scope_invalid`：凭据引用没有匹配到完整的 cluster/instance、namespace、workload、
   image 或 Helm scope；修正显式 scope，不得放宽授权。
+- `credential preflight failed`：项目清单中的 credentialRef 缺失、use 不匹配、grant
+  已吊销或同名资源不唯一。先修复受管凭据和精确授权；不得读取本地 secret 文件兜底。
 - `credential_verification_required`：staged 版本尚未覆盖全部 active grant 的验证；对每个
   active grant 使用完全相同的 scope 执行 `credential verify`。
 - 凭据物化失败：按 Gateway 返回的错误类别定位目标或权限状态；不得重试、猜测或将 payload 放入任务。

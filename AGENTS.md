@@ -41,6 +41,14 @@ DoOps architecture, security, release, and verification boundaries.
 - Credential access is exact and persistent: user plus configured target `cluster/instance`, exact
   namespace, use, workload kind/name, and image, Helm, or required-key fields. Do not add wildcard,
   prefix, inferred, project, environment, template, or workflow-path grants.
+- A project may declare metadata-only development requirements in
+  `.agent/doops-credentials.yaml`. Before Git, registry, Helm, TLS, or API development work that
+  depends on managed credentials, run
+  `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml`.
+  The manifest is only a fail-closed checklist of `credentialRef` plus `use`; it must never contain
+  payloads, grant authority, materialization instructions, local secret paths, or fallback values.
+  Credential references must be lowercase resource names, not URLs, paths, tokens, or arbitrary
+  scalars. It does not weaken the exact target/workload grant model.
 - The lifecycle is `create -> put staged version -> grant -> verify every active grant -> promote`.
   Rotation repeats put/verify/promote. Grant or resource revocation must clean materializations
   before reaching the terminal revoked state.
@@ -83,6 +91,9 @@ Do not document intended behavior that the current CLI and Gateway do not implem
 - Credential and CI/CD changes require Given/When/Then coverage for success, denied authority,
   invalid exact scope, unavailable audit/key, verification failure, revocation, and payload
   redaction. Do not weaken expected HTTP status or output assertions to make tests pass.
+- Development credential preflight changes additionally require strict manifest parsing, missing
+  reference, wrong use, revoked grant, target mismatch, required session, and payload-field
+  rejection coverage.
 - Run Agent and CLI package tests, Python contract tests, `git diff --check`, stale-contract scans,
   and a compiled CLI help/argument smoke test.
 - Web changes require production build plus browser testing of login, target/managed credential
