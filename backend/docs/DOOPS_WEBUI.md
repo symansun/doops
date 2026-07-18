@@ -1,7 +1,7 @@
 # Doops WebUI
 
 > 当前生产控制台是仓库根目录的 Next.js Web 应用，通过 `Dockerfile.web` 和 CNB
-> `web:<tag>` 镜像交付。本文描述的是旧 Go `doops-webui`，只保留给明确审计过的
+> `<repo>/web:<tag>` 镜像交付。本文描述的是旧 Go `doops-webui`，只保留给明确审计过的
 > legacy 维护场景；日常环境不提供真实 SSH 连接时，不应使用 `scripts/deploy-webui.sh`。
 
 `doops-webui` 是一个轻量 legacy Web 控制台：在浏览器里连接 `doops-gateway`，列出在线

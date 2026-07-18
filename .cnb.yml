@@ -52,6 +52,8 @@ main:
             pnpm build
         - name: build immutable agent images
           script: DOOPS_RELEASE_TAG="${CNB_COMMIT}" bash backend/scripts/build-agent-image.sh
+        - name: build immutable web image
+          script: DOOPS_RELEASE_TAG="${CNB_COMMIT}" bash backend/scripts/build-web-image.sh
 
 master:
   pull_request:
@@ -138,6 +140,8 @@ $:
             pnpm build
         - name: build release agent image
           script: DOOPS_RELEASE_TAG="${CNB_BRANCH}" bash backend/scripts/build-agent-image.sh
+        - name: build release web image
+          script: DOOPS_RELEASE_TAG="${CNB_BRANCH}" bash backend/scripts/build-web-image.sh
         - name: build CLI release assets
           script: |
             rm -rf backend/dist/cli
