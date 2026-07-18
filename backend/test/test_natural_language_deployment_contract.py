@@ -1,6 +1,8 @@
 import re
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[2]
 AGENT_RULES = ROOT / "AGENTS.md"
@@ -64,8 +66,15 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     system_prompt = (BACKEND / "agent" / "skills" / "system_prompt.md").read_text(encoding="utf-8")
     k8s_skill = (BACKEND / "agent" / "skills" / "k8s" / "SKILL.md").read_text(encoding="utf-8")
     cnb = CNB.read_text(encoding="utf-8")
+    cnb_config = yaml.safe_load(cnb)
     main_pipeline = cnb.split("\nmaster:", 1)[0]
     fallback_pipeline = cnb.split("\n$:", 1)[1]
+    release_branches = [
+        branch
+        for branch, events in cnb_config.items()
+        if isinstance(events, dict) and "api_trigger_deploy_agent" in events
+    ]
+    deploy_pipelines = cnb_config["main"]["api_trigger_deploy_agent"]
 
     assert 'cliContractVersion = "doops.sh/cli-contract/v3"' in cli
     assert 'BoolVar(&apply, "apply"' in cli
@@ -95,6 +104,12 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "不得用 shell 执行 kubectl mutation" in k8s_skill
     assert "api_trigger_deploy_agent" in main_pipeline
     assert "api_trigger_deploy_agent" not in fallback_pipeline
+    assert release_branches == ["main"]
+    assert len(deploy_pipelines) == 1
+    assert deploy_pipelines[0]["imports"] == [
+        "https://cnb.cool/aiedulab/zhiyong/secret/-/blob/main/"
+        "zhiyong-deploy-secrets.yml"
+    ]
     assert '"https://doops.l8ai.cn"' in cnb
     assert '-session "${DOOPS_SESSION}" push' in cnb
     assert "--src backend" in cnb
@@ -103,10 +118,6 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "--apply" in cnb
     assert "--token-stdin" in cnb
     assert '--token "${DOOPS_GATEWAY_TOKEN}"' not in cnb
-    assert (
-        "https://cnb.cool/aiedulab/zhiyong/secret/-/blob/main/"
-        "zhiyong-deploy-secrets.yml"
-    ) in main_pipeline
     assert "auto-harness-secret" not in cnb
     assert 'test "${CNB_BRANCH}" = "main"' in cnb
     assert "DOOPS_IMAGE" in cnb
