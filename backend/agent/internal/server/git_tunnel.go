@@ -75,7 +75,7 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 	}, cancelOp)
 	defer h.finishActiveOperation(opID)
 
-	resourceKey := "workspace:" + session
+	resourceKey := gitResourceKey(action, cluster, instance, session)
 	if err := agent.acquireForAction(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout); err != nil {
 		if errors.Is(err, context.Canceled) {
 			http.Error(w, "operation canceled", http.StatusConflict)
@@ -129,6 +129,13 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		log.Printf("[gateway] finish git audit failed: id=%d: %v", auditID, err)
 	}
+}
+
+func gitResourceKey(action GatewayAction, cluster, instance, session string) string {
+	if action == ActionPush {
+		return "target-mutation:" + cluster + "/" + instance
+	}
+	return "workspace:" + session
 }
 
 func (h *ClientService) authenticateGitUser(r *http.Request) (TokenAuth, error) {

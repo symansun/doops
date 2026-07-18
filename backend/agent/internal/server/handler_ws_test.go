@@ -1176,6 +1176,56 @@ func TestWorkspaceCommitBindingRejectsDirtyAndUntrackedContent(t *testing.T) {
 	}
 }
 
+func TestBareWorkspaceCommitBindingRejectsDirtyAndUntrackedContent(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	bare := filepath.Join(root, "session.git")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "tracked.txt"), []byte("committed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runTestCommand(t, source, "git", "init", "-q")
+	runTestCommand(t, source, "git", "config", "user.email", "test@example.invalid")
+	runTestCommand(t, source, "git", "config", "user.name", "DoOps Test")
+	runTestCommand(t, source, "git", "add", "tracked.txt")
+	runTestCommand(t, source, "git", "commit", "-q", "-m", "workspace")
+	commit := strings.TrimSpace(runTestCommand(t, source, "git", "rev-parse", "HEAD"))
+	runTestCommand(t, root, "git", "clone", "--bare", source, bare)
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("committed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(commit+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := validateBareWorkspaceCommitBinding(workspace, bare, commit); err != nil {
+		t.Fatalf("clean bare workspace binding rejected: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("modified\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBareWorkspaceCommitBinding(workspace, bare, commit); err == nil ||
+		!strings.Contains(err.Error(), "outside the authorized commit") {
+		t.Fatalf("modified bare workspace content was not rejected: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("committed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "untracked.txt"), []byte("untrusted\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBareWorkspaceCommitBinding(workspace, bare, commit); err == nil ||
+		!strings.Contains(err.Error(), "outside the authorized commit") {
+		t.Fatalf("untracked bare workspace content was not rejected: %v", err)
+	}
+}
+
 func TestAgentWebSocketRejectsDockerNewlineInjection(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
 	gw := NewGateway()

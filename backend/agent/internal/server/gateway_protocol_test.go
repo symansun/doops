@@ -674,7 +674,7 @@ func TestGatewayGitHTTPConcurrentPushPullDifferentTargets(t *testing.T) {
 	}
 }
 
-func TestGatewayGitHTTPConcurrentPushDifferentSessionsSameTarget(t *testing.T) {
+func TestGatewayGitHTTPSerialPushDifferentSessionsSameTarget(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is required for gateway git e2e test")
 	}
@@ -687,17 +687,10 @@ func TestGatewayGitHTTPConcurrentPushDifferentSessionsSameTarget(t *testing.T) {
 	conn := startGatewayGitTestAgent(t, hub, ts.URL, target.Cluster, target.Instance)
 	defer conn.Close()
 
-	errCh := make(chan error, 2)
 	for _, session := range []string{"parallel-a", "parallel-b"} {
-		session := session
-		go func() {
-			errCh <- pushCloneAndVerifyGatewayGit(ts.URL, target.Cluster, target.Instance, session, target.UserToken, map[string][]byte{
-				"README.md": []byte("hello from " + session + "\n"),
-			})
-		}()
-	}
-	for i := 0; i < 2; i++ {
-		if err := <-errCh; err != nil {
+		if err := pushCloneAndVerifyGatewayGit(ts.URL, target.Cluster, target.Instance, session, target.UserToken, map[string][]byte{
+			"README.md": []byte("hello from " + session + "\n"),
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -2184,6 +2177,12 @@ func TestGatewayRPCDoesNotFallbackSessionNotificationsWithoutSessionID(t *testin
 }
 
 func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
+	if got := gitResourceKey(ActionPush, "dev", "node", "push-a"); got != "target-mutation:dev/node" {
+		t.Fatalf("git push resource key mismatch: %q", got)
+	}
+	if got := gitResourceKey(ActionPull, "dev", "node", "pull-a"); got != "workspace:pull-a" {
+		t.Fatalf("git pull resource key mismatch: %q", got)
+	}
 	if got := resourceKeyForTool(ActionExec, "doops_shell", json.RawMessage(`{"session_id":"exec-a"}`), "dev", "node"); got != "target-mutation:dev/node" {
 		t.Fatalf("exec resource key mismatch: %q", got)
 	}
