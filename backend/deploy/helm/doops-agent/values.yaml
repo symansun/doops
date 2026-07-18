@@ -24,6 +24,8 @@ gateway:
 
 nodeSelector: {}
 
+tolerations: []
+
 hostAliases: []
 
 volumeMounts: []

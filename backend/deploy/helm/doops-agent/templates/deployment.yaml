@@ -23,6 +23,10 @@ spec:
       dnsPolicy: ClusterFirst
       nodeSelector:
 {{ toYaml .Values.nodeSelector | indent 8 }}
+{{- with .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+{{- end }}
 {{- with .Values.hostAliases }}
       hostAliases:
 {{ toYaml . | indent 8 }}

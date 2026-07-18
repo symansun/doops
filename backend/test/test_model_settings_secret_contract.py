@@ -31,6 +31,13 @@ def deployment_values(workload_name, instance, agent_home, selector_labels=None)
             "instance": instance,
         },
         "nodeSelector": {"kubernetes.io/hostname": "192.168.0.24"},
+        "tolerations": [
+            {
+                "key": "node-role.kubernetes.io/control-plane",
+                "operator": "Exists",
+                "effect": "NoSchedule",
+            }
+        ],
         "hostAliases": [
             {
                 "ip": "192.168.0.24",
@@ -232,6 +239,13 @@ def test_oilan_agent_model_settings_are_secret_backed(tmp_path):
         deployment["spec"]["template"]["spec"]["nodeSelector"]["kubernetes.io/hostname"]
         == "192.168.0.24"
     )
+    assert deployment["spec"]["template"]["spec"]["tolerations"] == [
+        {
+            "key": "node-role.kubernetes.io/control-plane",
+            "operator": "Exists",
+            "effect": "NoSchedule",
+        }
+    ]
     assert deployment["spec"]["template"]["spec"]["hostAliases"] == [
         {
             "ip": "192.168.0.24",
