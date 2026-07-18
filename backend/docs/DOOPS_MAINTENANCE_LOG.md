@@ -32,20 +32,22 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
 
 ## 2026-07-18 Reverse Tunnel Heartbeat Recovery
 
-- Serialize reverse-tunnel control and data writes with one connection-local
-  mutex, and bound data writes with a 60-second deadline. Heartbeats skip an
-  in-progress data write instead of racing it; every actual control or data
-  write failure closes the socket so the reconnect loop can establish a fresh
-  Gateway session.
-- Root cause: the heartbeat path reused temporary write timeouts while data
-  writes had no deadline. That could pin an Agent to stale transport, while a
-  broad close-on-timeout fix could disconnect a healthy data writer. Sharing
-  the write lock removes the ambiguous overlap entirely.
+- Bound reverse-tunnel data writes with a 60-second deadline while keeping
+  control frames independent from the application data-write mutex. A control
+  timeout remains reusable only when it is both temporary and overlaps a
+  bounded data write; unexplained control failures and all data-write failures
+  close the socket so the reconnect loop can establish a fresh Gateway session.
+- Root cause: the heartbeat path reused Gorilla's temporary write-lock timeout
+  while data writes had no deadline. A data write pinned on stale transport
+  could therefore hold Gorilla's write lock indefinitely. Closing every timeout
+  would instead disconnect healthy slow writers, so the implementation records
+  data-write begin/end sequence and distinguishes temporary lock contention from
+  fatal network write timeouts.
 - Release verification must leave an idle target connected for longer than the
   configured Gateway lease and confirm that `last_seen` continues advancing.
   It must also interrupt the Gateway/proxy during an active tunnel, confirm the
-  Agent reconnects, and confirm an in-progress data write causes heartbeat to
-  skip rather than close the connection.
+  Agent reconnects, and confirm an overlapping data write does not cause a
+  temporary heartbeat lock timeout to close the connection.
 
 ## Maintenance Rules
 

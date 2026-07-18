@@ -1515,7 +1515,7 @@ func TestGatewayKeepsIdleAgentAliveWithPing(t *testing.T) {
 	}
 }
 
-func TestGatewayAgentPingSkipsActiveDataWriteAndResumes(t *testing.T) {
+func TestGatewayAgentPingDoesNotWaitForDataWriteLock(t *testing.T) {
 	serverConn := make(chan *websocket.Conn, 1)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -1562,19 +1562,14 @@ func TestGatewayAgentPingSkipsActiveDataWriteAndResumes(t *testing.T) {
 	}
 	defer agent.conn.Close()
 	agent.writeMu.Lock()
+	defer agent.writeMu.Unlock()
 	defer close(agent.closed)
 
 	go agent.pingLoop(nil, 30*time.Millisecond)
 	select {
 	case <-pingSeen:
-		t.Fatal("gateway ping raced an active data write")
-	case <-time.After(75 * time.Millisecond):
-	}
-	agent.writeMu.Unlock()
-	select {
-	case <-pingSeen:
 	case <-time.After(250 * time.Millisecond):
-		t.Fatal("gateway ping did not resume after the data write completed")
+		t.Fatal("gateway ping waited for the data write lock")
 	}
 }
 

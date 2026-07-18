@@ -94,7 +94,7 @@ func waitForInitialAgentHeartbeat(session *GatewayAgent, timeout time.Duration) 
 		timeout = 10 * time.Second
 	}
 	payload := "registration-preflight-" + randomHex(8)
-	if !writeHeartbeatPing(session.conn, &session.writeMu, []byte(payload), timeout) {
+	if !writeHeartbeatPing(session.conn, &session.dataWriteState, []byte(payload), timeout) {
 		return false
 	}
 	timer := time.NewTimer(timeout)
