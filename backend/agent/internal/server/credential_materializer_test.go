@@ -51,7 +51,7 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 	}))
 	defer registry.Close()
 
-	result, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
+	request := CredentialMaterializeRequest{
 		CredentialID:   "cred_registry",
 		GrantID:        "grant_registry",
 		VersionID:      "ver_registry",
@@ -69,7 +69,8 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 			`{"server":%q,"username":"deploy","password":"materializer-canary-secret"}`,
 			registry.URL,
 		)),
-	})
+	}
+	result, err := materializeCredential(context.Background(), request)
 	if err != nil {
 		t.Fatalf("materialize registry credential: %v", err)
 	}
@@ -90,6 +91,22 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 	if !strings.Contains(logged, "[get] [secret]") ||
 		!strings.Contains(logged, "[-o] [json]") {
 		t.Fatalf("Secret inspection does not use structured JSON output: %s", logged)
+	}
+
+	if err := os.WriteFile(filepath.Join(bin, "workload.json"), []byte(
+		`{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"existing-pull"}]}}}}`,
+	), 0600); err != nil {
+		t.Fatalf("reset fake workload state: %v", err)
+	}
+	t.Setenv("DOOPS_TEST_PATCH_MODE", "no_effect")
+	if _, err := materializeCredential(context.Background(), request); err == nil ||
+		err.Error() != "credential_target_outcome_unknown" {
+		t.Fatalf("unobserved workload patch error = %v", err)
+	}
+
+	t.Setenv("DOOPS_TEST_PATCH_MODE", "fail_after")
+	if _, err := materializeCredential(context.Background(), request); err != nil {
+		t.Fatalf("materialize after observed workload patch: %v", err)
 	}
 }
 
@@ -346,6 +363,72 @@ func TestMaterializeOpaqueCredentialRequiresExactKeySet(t *testing.T) {
 	assertCredentialCanaryNotInText(t, "opaque error", err.Error(), "opaque-canary-secret")
 }
 
+func TestMaterializeCredentialRejectsTamperedSecretContentAndMetadata(t *testing.T) {
+	for _, mutation := range []string{"data", "grant"} {
+		t.Run(mutation, func(t *testing.T) {
+			bin, _ := installCredentialTestCommands(t)
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("DOOPS_TEST_SECRET_MUTATION", mutation)
+
+			_, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
+				CredentialID:   "cred_opaque",
+				GrantID:        "grant_opaque",
+				VersionID:      "ver_opaque",
+				CredentialType: CredentialTypeOpaque,
+				Scope: credentialGrantScopeWithKeys(
+					credentialMaterializerTestScope(CredentialUseOpaqueSecret, "app"),
+					[]string{"API_KEY"},
+				),
+				RequiredKeys: []string{"API_KEY"},
+				Payload:      json.RawMessage(`{"data":{"API_KEY":"opaque-canary-secret"}}`),
+			})
+			if err == nil || err.Error() != "credential_secret_verification_failed" {
+				t.Fatalf("tampered Secret error = %v", err)
+			}
+			assertCredentialCanaryNotInText(t, "tampered Secret error", err.Error(), "opaque-canary-secret")
+		})
+	}
+}
+
+func TestMaterializeCredentialClassifiesApplyFailureFromObservedState(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		mode    string
+		wantErr string
+	}{
+		{name: "failure_before_write", mode: "fail_before", wantErr: "credential_target_mutation_failed"},
+		{name: "failure_after_write", mode: "fail_after"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			bin, _ := installCredentialTestCommands(t)
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			t.Setenv("DOOPS_TEST_APPLY_MODE", test.mode)
+
+			_, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
+				CredentialID:   "cred_opaque",
+				GrantID:        "grant_opaque",
+				VersionID:      "ver_opaque",
+				CredentialType: CredentialTypeOpaque,
+				Scope: credentialGrantScopeWithKeys(
+					credentialMaterializerTestScope(CredentialUseOpaqueSecret, "app"),
+					[]string{"API_KEY"},
+				),
+				RequiredKeys: []string{"API_KEY"},
+				Payload:      json.RawMessage(`{"data":{"API_KEY":"opaque-canary-secret"}}`),
+			})
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatalf("materialize after observed apply: %v", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != test.wantErr {
+				t.Fatalf("apply error = %v, want %s", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T) {
 	allowCredentialPrivateEndpointsForTest(t)
 	bin, argsLog := installCredentialTestCommands(t)
@@ -507,13 +590,63 @@ func installCredentialTestCommands(t *testing.T) (string, string) {
 	t.Helper()
 	bin := t.TempDir()
 	argsLog := filepath.Join(bin, "args.log")
+	secretState := filepath.Join(bin, "secret.json")
+	workloadState := filepath.Join(bin, "workload.json")
 	kubectl := `#!/bin/sh
 printf 'kubectl' >> "$DOOPS_TEST_ARGS_LOG"
 for arg in "$@"; do printf ' [%s]' "$arg" >> "$DOOPS_TEST_ARGS_LOG"; done
 printf '\n' >> "$DOOPS_TEST_ARGS_LOG"
 case "$1" in
-  apply|patch|replace) cat >/dev/null ;;
-  delete) ;;
+  apply)
+    if [ "$DOOPS_TEST_APPLY_MODE" = "fail_before" ]; then
+      exit 1
+    fi
+    sed 's/"metadata":{/"metadata":{"resourceVersion":"42",/' > "$DOOPS_TEST_SECRET_STATE"
+    if [ "$DOOPS_TEST_SECRET_MUTATION" = "data" ]; then
+      sed 's/"API_KEY":"[^"]*"/"API_KEY":"e30="/' "$DOOPS_TEST_SECRET_STATE" > "$DOOPS_TEST_SECRET_STATE.tmp"
+      mv "$DOOPS_TEST_SECRET_STATE.tmp" "$DOOPS_TEST_SECRET_STATE"
+    elif [ "$DOOPS_TEST_SECRET_MUTATION" = "grant" ]; then
+      sed 's/"doops.sh\/credential-grant-id":"[^"]*"/"doops.sh\/credential-grant-id":"other"/' \
+        "$DOOPS_TEST_SECRET_STATE" > "$DOOPS_TEST_SECRET_STATE.tmp"
+      mv "$DOOPS_TEST_SECRET_STATE.tmp" "$DOOPS_TEST_SECRET_STATE"
+    fi
+    if [ "$DOOPS_TEST_APPLY_MODE" = "fail_after" ]; then
+      exit 1
+    fi
+    ;;
+  patch)
+    patch=
+    while [ "$#" -gt 0 ]; do
+      arg=$1
+      if [ "$arg" = "--patch-file=-" ]; then
+        exit 64
+      fi
+      if [ "$arg" = "--patch" ]; then
+        shift
+        patch=$1
+        break
+      fi
+      shift
+    done
+    if [ -z "$patch" ]; then
+      exit 64
+    fi
+    if [ "$DOOPS_TEST_PATCH_MODE" = "fail_before" ]; then
+      exit 1
+    fi
+    if [ "$DOOPS_TEST_PATCH_MODE" != "no_effect" ]; then
+      printf '%s\n' "$patch" > "$DOOPS_TEST_WORKLOAD_STATE"
+    fi
+    if [ "$DOOPS_TEST_PATCH_MODE" = "fail_after" ]; then
+      exit 1
+    fi
+    ;;
+  replace)
+    cat > "$DOOPS_TEST_SECRET_STATE"
+    ;;
+  delete)
+    rm -f "$DOOPS_TEST_SECRET_STATE"
+    ;;
   get)
     if [ "$2" = "secret" ]; then
       for arg in "$@"; do
@@ -521,18 +654,9 @@ case "$1" in
           exit 0
         fi
       done
-      printf '{"metadata":{"resourceVersion":"42"},"type":"%s","data":{' "$DOOPS_TEST_SECRET_TYPE"
-      separator=
-      old_ifs=$IFS
-      IFS=,
-      for key in $DOOPS_TEST_SECRET_KEYS; do
-        printf '%s"%s":"e30="' "$separator" "$key"
-        separator=,
-      done
-      IFS=$old_ifs
-      printf '}}\n'
+      cat "$DOOPS_TEST_SECRET_STATE"
     else
-      printf '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"existing-pull"}]}}}}\n'
+      cat "$DOOPS_TEST_WORKLOAD_STATE"
     fi
     ;;
 esac
@@ -553,6 +677,13 @@ printf '0123456789abcdef\trefs/heads/main\n'
 		t.Fatalf("write fake git: %v", err)
 	}
 	t.Setenv("DOOPS_TEST_ARGS_LOG", argsLog)
+	t.Setenv("DOOPS_TEST_SECRET_STATE", secretState)
+	t.Setenv("DOOPS_TEST_WORKLOAD_STATE", workloadState)
+	if err := os.WriteFile(workloadState, []byte(
+		`{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"existing-pull"}]}}}}`,
+	), 0600); err != nil {
+		t.Fatalf("write fake workload state: %v", err)
+	}
 	return bin, argsLog
 }
 
