@@ -1289,6 +1289,9 @@ func TestGatewayActionMappingUsesDedicatedToolsForCheckAndClean(t *testing.T) {
 	if got := actionForTool("doops_clean_workspace", nil); got != ActionClean {
 		t.Fatalf("doops_clean_workspace must map to clean, got %q", got)
 	}
+	if got := actionForTool("doops_k8s", nil); got != ActionExec {
+		t.Fatalf("doops_k8s must map to exec, got %q", got)
+	}
 }
 
 func TestGatewayActionMappingUsesDedicatedToolForAgentUpgrade(t *testing.T) {
@@ -2153,6 +2156,14 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	}
 	if got := resourceKeyForTool(ActionAgentUpgrade, "doops_agent_upgrade", json.RawMessage(`{}`), "dev", "node"); got != "target:dev/node" {
 		t.Fatalf("upgrade resource key mismatch: %q", got)
+	}
+	k8sArgs := json.RawMessage(`{"operation":"set-image","namespace":"kz-ops","resource":"deployment/doops-release-runner"}`)
+	if got := resourceKeyForTool(ActionExec, "doops_k8s", k8sArgs, "dev", "node"); got != "k8s:kz-ops/deployment/doops-release-runner" {
+		t.Fatalf("k8s resource key mismatch: %q", got)
+	}
+	k8sAliasArgs := json.RawMessage(`{"operation":"scale","namespace":"kz-ops","resource":"deploy/doops-release-runner"}`)
+	if got := resourceKeyForTool(ActionExec, "doops_k8s", k8sAliasArgs, "dev", "node"); got != "k8s:kz-ops/deployment/doops-release-runner" {
+		t.Fatalf("k8s alias resource key mismatch: %q", got)
 	}
 }
 

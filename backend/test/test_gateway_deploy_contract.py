@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "scripts" / "deploy-gateway.sh"
+EXTRACT = ROOT / "scripts" / "extract-gateway-from-image.sh"
 
 
 def test_gateway_deploy_detects_systemd_unit_without_pipefail_pipeline():
@@ -33,3 +34,17 @@ def test_gateway_deploy_can_verify_with_configured_doops_target_without_exportin
     assert "--verify-session" in text
     assert 'doops -session "${VERIFY_SESSION}" targets --target "${VERIFY_TARGET}"' in text
     assert "--verify-token-file and --verify-target are mutually exclusive" in text
+
+
+def test_gateway_release_extracts_the_ci_binary_from_an_immutable_image():
+    text = EXTRACT.read_text()
+
+    assert '@sha256:[a-f0-9]{64}$' in text
+    assert 'docker pull "${IMAGE}"' in text
+    assert 'docker cp "${container_id}:/app/doops-gateway" "${OUTPUT}"' in text
+    assert '"${OUTPUT}" -help >/dev/null' in text
+
+    sop = (ROOT / "docs" / "BUILD_DEPLOY_SOP.md").read_text()
+    assert "extract-gateway-from-image.sh" in sop
+    assert "--no-build" in sop
+    assert "禁止在发布控制端重新编译" in sop

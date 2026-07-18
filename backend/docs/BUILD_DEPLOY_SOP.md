@@ -15,9 +15,14 @@
 固定发布入口：
 
 ```bash
+bash scripts/extract-gateway-from-image.sh \
+  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<verified-ci-digest>
+
 bash scripts/deploy-gateway.sh \
   --host 106.54.197.139 \
   --user ubuntu \
+  --binary bin/doops-gateway \
+  --no-build \
   --verify-target gw-edu-coder \
   --verify-session gateway-release-<release>
 ```
@@ -31,12 +36,13 @@ bash scripts/deploy-gateway.sh \
 
 这条脚本只走 SSH/SCP，在宿主机真实 root 下完成：
 
-1. 本地构建 `bin/doops-gateway`。
+1. 从 `main` 的 CNB CI 候选镜像 digest 提取同 revision 的
+   `/app/doops-gateway`；禁止在发布控制端重新编译。
 2. SSH 校验远端真实 DB `/var/lib/doops-gateway/gateway.db` 存在且非空。
 3. 上传二进制到远端 `/tmp`。
 4. 备份 `/usr/local/bin/doops-gateway`。
 5. 替换二进制并重启 gateway。
-6. 校验 `/proc/<pid>/exe` hash 与本地构建一致。
+6. 校验 `/proc/<pid>/exe` hash 与 CI 镜像提取产物一致。
 7. 校验 `/v1/targets` 未认证访问返回 `401`，并通过 `--verify-target` 复用 DoOps 已配置认证，
    确认发布前的全部 target 均已重新连接；不得为发布导出或新建明文 token 文件。
 
@@ -44,6 +50,8 @@ bash scripts/deploy-gateway.sh \
 
 - 禁止用 `doops exec` 启动或重启 `doops-gateway`。
 - 禁止用 `doops push/write/read` 给 gateway 控制面发版。
+- 禁止让 `deploy-gateway.sh` 在发布控制端执行默认本地构建；线上发布必须显式
+  使用 `--no-build` 和由 `extract-gateway-from-image.sh` 提取的不可变 CI 产物。
 - 禁止用 base64/tar/分片临时传输替代 gateway 发布脚本。
 - 不保留 gateway host agent 作为默认 target；需要主机巡检时走独立 SSH/监控流程。
 

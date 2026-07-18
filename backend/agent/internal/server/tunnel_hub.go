@@ -1019,6 +1019,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		Action:         action,
 		Session:        extractSession(params.Arguments),
 		CommandSummary: summarizeToolCall(params.Name, params.Arguments),
+		Namespace:      auditNamespaceForTool(params.Name, params.Arguments),
 		StartedAt:      time.Now().UTC(),
 	})
 	if auditErr != nil {
@@ -1994,7 +1995,7 @@ func numericID(v interface{}) (int64, bool) {
 
 func actionForTool(tool string, args json.RawMessage) GatewayAction {
 	switch tool {
-	case "doops_shell", "doops_bg", "doops_task_status":
+	case "doops_shell", "doops_bg", "doops_task_status", "doops_k8s":
 		return ActionExec
 	case "doops_agent_prompt":
 		if extractStringArg(args, "operation") == "apply" {
@@ -2038,6 +2039,15 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage, cluster, instance string) string {
 	switch action {
 	case ActionExec:
+		if tool == "doops_k8s" {
+			if resource := extractStringArg(args, "resource"); resource != "" {
+				return "k8s:" + extractStringArg(args, "namespace") + "/" + canonicalK8SResource(resource)
+			}
+			if name := extractStringArg(args, "name"); name != "" {
+				return "k8s:" + extractStringArg(args, "namespace") + "/" + extractStringArg(args, "kind") + "/" + name
+			}
+			return "target:" + cluster + "/" + instance
+		}
 		if sessionID := extractSession(args); sessionID != "" {
 			return "workspace:" + sessionID
 		}
@@ -2131,8 +2141,53 @@ func summarizeToolCall(tool string, args json.RawMessage) string {
 		if image, _ := m["image"].(string); image != "" {
 			return tool + " " + image
 		}
+	case "doops_k8s":
+		operation, _ := m["operation"].(string)
+		resource, _ := m["resource"].(string)
+		if resource == "" {
+			kind, _ := m["kind"].(string)
+			name, _ := m["name"].(string)
+			resource = strings.Trim(strings.TrimSpace(kind)+"/"+strings.TrimSpace(name), "/")
+		}
+		namespace, _ := m["namespace"].(string)
+		summary := "doops_k8s " + strings.TrimSpace(operation) + " namespace=" + strings.TrimSpace(namespace) + " resource=" + resource
+		if replicas, ok := m["replicas"]; ok {
+			summary += " replicas=" + fmt.Sprint(replicas)
+		}
+		if container, _ := m["container"].(string); container != "" {
+			summary += " container=" + container
+		}
+		if image, _ := m["image"].(string); image != "" {
+			summary += " image=" + image
+		}
+		return trimTail(summary, 512)
 	}
 	return tool
+}
+
+func auditNamespaceForTool(tool string, args json.RawMessage) string {
+	if tool == "doops_k8s" {
+		return extractStringArg(args, "namespace")
+	}
+	return ""
+}
+
+func canonicalK8SResource(resource string) string {
+	parts := strings.SplitN(strings.TrimSpace(resource), "/", 2)
+	if len(parts) != 2 {
+		return strings.TrimSpace(resource)
+	}
+	aliases := map[string]string{
+		"deploy": "deployment", "deployments": "deployment",
+		"ds": "daemonset", "daemonsets": "daemonset",
+		"sts": "statefulset", "statefulsets": "statefulset",
+		"po": "pod", "pods": "pod",
+	}
+	kind := parts[0]
+	if canonical := aliases[kind]; canonical != "" {
+		kind = canonical
+	}
+	return kind + "/" + parts[1]
 }
 
 func tunnelKey(cluster, instance string) string {

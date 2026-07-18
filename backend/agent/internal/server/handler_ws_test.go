@@ -1312,6 +1312,7 @@ func TestDirectAgentWebSocketRejectsMutatingToolsAndOrdinaryPrompts(t *testing.T
 		args map[string]interface{}
 	}{
 		{tool: "doops_shell", args: map[string]interface{}{"session_id": "direct", "command": "true"}},
+		{tool: "doops_k8s", args: map[string]interface{}{"session_id": "direct", "operation": "rollout-restart", "resource": "deployment/app", "confirm": true}},
 		{tool: "doops_file_write", args: map[string]interface{}{"session_id": "direct", "path": "x", "content": "x"}},
 		{tool: "doops_workspace_begin", args: map[string]interface{}{"session_id": "direct"}},
 		{tool: "doops_agent_prompt", args: map[string]interface{}{"session_id": "direct", "instruction": "change the service"}},

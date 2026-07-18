@@ -55,7 +55,7 @@ func TestBuildK8SRequestTopNodes(t *testing.T) {
 }
 
 func TestBuildK8SRequestRolloutRestart(t *testing.T) {
-	req, err := buildK8SRequest([]string{"rollout", "restart", "deploy/exam-api", "--target", "prod", "--namespace", "oilan-system"})
+	req, err := buildK8SRequest([]string{"rollout", "restart", "deploy/exam-api", "--target", "prod", "--namespace", "oilan-system", "--confirm"})
 	if err != nil {
 		t.Fatalf("build request: %v", err)
 	}
@@ -63,6 +63,7 @@ func TestBuildK8SRequestRolloutRestart(t *testing.T) {
 		"operation": "rollout-restart",
 		"resource":  "deploy/exam-api",
 		"namespace": "oilan-system",
+		"confirm":   true,
 	}
 	if !reflect.DeepEqual(req.Payload, want) {
 		t.Fatalf("payload mismatch:\n got: %#v\nwant: %#v", req.Payload, want)
@@ -77,6 +78,7 @@ func TestBuildK8SRequestDeployImage(t *testing.T) {
 		"--image", "registry.example.com/example/exam-api:v2",
 		"--target", "prod",
 		"--namespace", "oilan-system",
+		"--confirm",
 	})
 	if err != nil {
 		t.Fatalf("build request: %v", err)
@@ -87,9 +89,42 @@ func TestBuildK8SRequestDeployImage(t *testing.T) {
 		"container": "app",
 		"image":     "registry.example.com/example/exam-api:v2",
 		"namespace": "oilan-system",
+		"confirm":   true,
 	}
 	if !reflect.DeepEqual(req.Payload, want) {
 		t.Fatalf("payload mismatch:\n got: %#v\nwant: %#v", req.Payload, want)
+	}
+}
+
+func TestBuildK8SRequestRejectsMutationWithoutConfirm(t *testing.T) {
+	_, err := buildK8SRequest([]string{
+		"deploy-image",
+		"deploy/exam-api",
+		"--container", "app",
+		"--image", "registry.example.com/example/exam-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"--target", "prod",
+		"--namespace", "oilan-system",
+	})
+	if err == nil {
+		t.Fatal("expected mutation without --confirm to fail")
+	}
+}
+
+func TestBuildK8SRequestScaleRequiresReplicas(t *testing.T) {
+	_, err := buildK8SRequest([]string{
+		"scale", "deployment/api", "--target", "prod", "--confirm",
+	})
+	if err == nil {
+		t.Fatal("expected missing replicas to fail")
+	}
+}
+
+func TestBuildK8SRequestRejectsExtraPositionals(t *testing.T) {
+	_, err := buildK8SRequest([]string{
+		"delete", "pod", "pod-a", "pod-b", "--target", "prod", "--confirm",
+	})
+	if err == nil {
+		t.Fatal("expected extra positional argument to fail")
 	}
 }
 

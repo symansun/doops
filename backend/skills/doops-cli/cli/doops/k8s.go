@@ -67,35 +67,38 @@ func buildK8SRequest(args []string) (K8SRequest, error) {
 
 	switch positional[0] {
 	case "get":
-		if len(positional) < 2 {
+		if len(positional) != 2 {
 			return K8SRequest{}, fmt.Errorf("get requires kind")
 		}
 		req.Payload["operation"] = "get"
 		req.Payload["kind"] = positional[1]
 	case "describe":
-		if len(positional) < 3 {
+		if len(positional) != 3 {
 			return K8SRequest{}, fmt.Errorf("describe requires kind and name")
 		}
 		req.Payload["operation"] = "describe"
 		req.Payload["kind"] = positional[1]
 		req.Payload["name"] = positional[2]
 	case "logs":
-		if len(positional) < 2 {
+		if len(positional) != 2 {
 			return K8SRequest{}, fmt.Errorf("logs requires resource")
 		}
 		req.Payload["operation"] = "logs"
 		req.Payload["resource"] = positional[1]
 	case "top":
-		if len(positional) < 2 {
+		if len(positional) != 2 {
 			return K8SRequest{}, fmt.Errorf("top requires pods|nodes")
 		}
 		req.Payload["operation"] = "top"
 		req.Payload["kind"] = positional[1]
 	case "events":
+		if len(positional) != 1 {
+			return K8SRequest{}, fmt.Errorf("events does not accept positional arguments")
+		}
 		req.Payload["operation"] = "events"
 		addString("resource", opts["for"])
 	case "rollout":
-		if len(positional) < 3 {
+		if len(positional) != 3 {
 			return K8SRequest{}, fmt.Errorf("rollout requires status|restart and resource")
 		}
 		switch positional[1] {
@@ -108,13 +111,16 @@ func buildK8SRequest(args []string) (K8SRequest, error) {
 		}
 		req.Payload["resource"] = positional[2]
 	case "scale":
-		if len(positional) < 2 {
+		if len(positional) != 2 {
 			return K8SRequest{}, fmt.Errorf("scale requires resource")
+		}
+		if strings.TrimSpace(opts["replicas"]) == "" {
+			return K8SRequest{}, fmt.Errorf("scale requires --replicas")
 		}
 		req.Payload["operation"] = "scale"
 		req.Payload["resource"] = positional[1]
 	case "node":
-		if len(positional) < 3 {
+		if len(positional) != 3 {
 			return K8SRequest{}, fmt.Errorf("node requires cordon|uncordon and node name")
 		}
 		switch positional[1] {
@@ -127,13 +133,13 @@ func buildK8SRequest(args []string) (K8SRequest, error) {
 		}
 		req.Payload["name"] = positional[2]
 	case "delete":
-		if len(positional) < 3 || positional[1] != "pod" {
+		if len(positional) != 3 || positional[1] != "pod" {
 			return K8SRequest{}, fmt.Errorf("only delete pod is supported")
 		}
 		req.Payload["operation"] = "delete-pod"
 		req.Payload["name"] = positional[2]
 	case "deploy-image":
-		if len(positional) < 2 {
+		if len(positional) != 2 {
 			return K8SRequest{}, fmt.Errorf("deploy-image requires resource")
 		}
 		req.Payload["operation"] = "set-image"
@@ -144,7 +150,19 @@ func buildK8SRequest(args []string) (K8SRequest, error) {
 	if err := addCommon(); err != nil {
 		return K8SRequest{}, err
 	}
+	if k8sMutation(req.Payload["operation"]) && req.Payload["confirm"] != true {
+		return K8SRequest{}, fmt.Errorf("--confirm is required for k8s mutation %q", req.Payload["operation"])
+	}
 	return req, nil
+}
+
+func k8sMutation(operation interface{}) bool {
+	switch operation {
+	case "rollout-restart", "scale", "cordon", "uncordon", "delete-pod", "set-image":
+		return true
+	default:
+		return false
+	}
 }
 
 func runK8SRequest(caller k8sCaller, req K8SRequest) (string, error) {

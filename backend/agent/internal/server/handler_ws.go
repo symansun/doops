@@ -794,6 +794,14 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			writeJSON(buildSuccessResponse(reqID, "Operation complete."))
 		}
 
+	case "doops_k8s":
+		result, err := handleK8STool(ctx, argBytes, pushProgress)
+		if err != nil {
+			writeJSON(buildToolErrorResponse(reqID, err.Error()))
+		} else {
+			writeJSON(buildSuccessResponse(reqID, result))
+		}
+
 	case "doops_check_deployment":
 		result, err := handleCheckDeployment(argBytes)
 		if err != nil {
@@ -1045,6 +1053,11 @@ func directAgentReadOnlyTool(toolName string, arguments json.RawMessage) bool {
 	case "doops_file_read", "doops_node_info", "doops_check_deployment",
 		"doops_task_status", "doops_workspace_pull_begin", "doops_workspace_pull_chunk":
 		return true
+	case "doops_k8s":
+		switch extractStringArg(arguments, "operation") {
+		case "get", "describe", "logs", "top", "events", "rollout-status":
+			return true
+		}
 	case "doops_agent_prompt":
 		switch strings.ToLower(extractStringArg(arguments, "mode")) {
 		case "metadata", "history":

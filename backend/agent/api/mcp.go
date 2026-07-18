@@ -60,6 +60,23 @@ type KubectlParams struct {
 	Command   string `json:"command"` // kubectl subcommand, e.g. "get pods -A"
 }
 
+// K8SParams is the structured request accepted by doops_k8s.
+type K8SParams struct {
+	SessionID string `json:"session_id"`
+	Operation string `json:"operation"`
+	Kind      string `json:"kind,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Resource  string `json:"resource,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Container string `json:"container,omitempty"`
+	Image     string `json:"image,omitempty"`
+	Output    string `json:"output,omitempty"`
+	Timeout   string `json:"timeout,omitempty"`
+	Tail      int    `json:"tail,omitempty"`
+	Replicas  *int   `json:"replicas,omitempty"`
+	Confirm   bool   `json:"confirm,omitempty"`
+}
+
 // AgentPromptParams 用于 doops_agent_prompt 代理执行。
 type AgentPromptParams struct {
 	SessionID       string `json:"session_id"`
