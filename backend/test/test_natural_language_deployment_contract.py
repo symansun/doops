@@ -94,6 +94,8 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "api_trigger_deploy_agent" not in fallback_pipeline
     assert '"https://doops.l8ai.cn"' in cnb
     assert '-session "${DOOPS_SESSION}" push' in cnb
+    assert "--src backend" in cnb
+    assert "--src ." not in main_pipeline
     assert '-session "${DOOPS_SESSION}" ask' in cnb
     assert "--apply" in cnb
     assert "--token-stdin" in cnb
