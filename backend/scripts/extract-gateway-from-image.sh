@@ -54,6 +54,6 @@ container_id="$(docker create --platform "${PLATFORM}" "${IMAGE}")"
 trap 'docker rm -f "${container_id}" >/dev/null 2>&1 || true' EXIT
 docker cp "${container_id}:/app/doops-gateway" "${OUTPUT}"
 chmod 0755 "${OUTPUT}"
-"${OUTPUT}" -help >/dev/null
+docker run --rm --platform "${PLATFORM}" --entrypoint /app/doops-gateway "${IMAGE}" -help >/dev/null
 
 echo "Extracted CI Gateway binary: ${OUTPUT}"

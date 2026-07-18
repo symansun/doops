@@ -44,7 +44,7 @@ def test_gateway_release_extracts_the_ci_binary_from_an_immutable_image():
     assert 'docker pull --platform "${PLATFORM}" "${IMAGE}"' in text
     assert 'docker create --platform "${PLATFORM}" "${IMAGE}"' in text
     assert 'docker cp "${container_id}:/app/doops-gateway" "${OUTPUT}"' in text
-    assert '"${OUTPUT}" -help >/dev/null' in text
+    assert 'docker run --rm --platform "${PLATFORM}" --entrypoint /app/doops-gateway "${IMAGE}" -help >/dev/null' in text
 
     sop = (ROOT / "docs" / "BUILD_DEPLOY_SOP.md").read_text()
     assert "extract-gateway-from-image.sh" in sop
