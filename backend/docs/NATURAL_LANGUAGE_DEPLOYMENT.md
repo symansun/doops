@@ -41,7 +41,7 @@ mutation 证据时必须失败关闭，不能退回 Bash、原始 kubectl、原�
 
 内置 `doops` MCP 必须设置 `trusted_result_attestation=true`。doagent 只根据实际
 stdio 请求和响应在本地生成结果证明，完成验证后才向 ACP 暴露 `rawOutput`。Agent 必须
-逐项验证 attestation schema、tool、scope、input/result digest、当前 session_id、
+逐项验证 attestation schema、tool、scope、input/result digest、运行时 session 绑定、
 `confirm=true` 和 mutation operation；仅有 completed 状态或工具名不构成成功证据。
 一次性 mutation authority 同时绑定精确 allowedTools、自然语言任务与 workspace commit
 的 context digest，并由 doagent 原子消费；可信 attestation 必须返回同一 authority
@@ -56,9 +56,11 @@ digest。同一 target 上的 apply、push、write、clean、shell、Kubernetes 
 
 发布前必须比较当前 workload 与候选 Helm 资产中的 command、args、env、probes、
 volumeMounts 和 volumes。发布任务统一调用 `mcp_doops_helm upgrade-install`，显式
-提供当前 session、release、namespace、chart、values、非敏感 set strings 和
-`confirm=true`；镜像必须使用不可变 digest。随后执行 rollout 和功能验收。shell 中的
-kubectl 或 Helm mutation 不构成发布成功证据。
+提供 release、namespace、chart、values、非敏感 set strings 和 `confirm=true`；
+`session_id` 不属于模型参数，由 doagent 按会话工作目录启动 MCP 子进程并由 DoOps
+运行时绑定。Gateway target 只负责路由，不能作为 session 或工作区路径。镜像必须使用
+不可变 digest。随后执行 rollout 和功能验收。shell 中的 kubectl 或 Helm mutation
+不构成发布成功证据。
 
 CNB CI 负责测试、构建和发布不可变制品。Gateway 负责鉴权、审计、资源锁和凭据预物化。
 实际业务 Helm/Kubernetes mutation 由 target 指向的 Agent/doagent 在目标运行环境执行。

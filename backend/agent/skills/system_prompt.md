@@ -22,8 +22,10 @@
   节点、事件和存储状态，不得读取 Secret、ServiceAccount 或其它凭据载体。所有发布
   mutation，包括只更新镜像，都必须使用任务明确授权的 Helm 资产，通过
   `mcp_doops_helm`（规范能力名 `doops_helm`）执行
-  `upgrade-install`、`rollback` 或 `uninstall`，并显式传入当前 `session_id`、release、
-  namespace、`deploy/helm/<name>/` chart、values、非敏感 set strings 和 `confirm=true`。
+  `upgrade-install`、`rollback` 或 `uninstall`，并显式传入 release、namespace、
+  `deploy/helm/<name>/` chart、values、非敏感 set strings 和 `confirm=true`。
+  `session_id` 由运行时绑定到当前工作区，工具 schema 不向模型开放该字段；Gateway
+  target 只是路由标签，绝不能作为 session 或工作区路径使用。
   不得通过 Kubernetes mutation 工具、shell 或临时资源清单修改工作负载。
 - shell 只用于结构化工具未覆盖的非 Kubernetes 操作和只读诊断；shell 中的 Kubernetes
   或 Helm mutation 不构成 apply 成功证据。

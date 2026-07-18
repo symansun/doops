@@ -224,7 +224,7 @@ docs/DOOPS_MAINTENANCE_LOG.md
   active grant 使用完全相同的 scope 执行 `credential verify`。
 - 凭据物化失败：按 Gateway 返回的错误类别定位目标或权限状态；不得重试、猜测或将 payload 放入任务。
 - `ask --apply` 未出现可信 mutation 完成证据：检查 Agent 运行时是否注册 required
-  `mcp_doops_helm` 工具，并核对 attestation、session_id、confirm 和
+  `mcp_doops_helm` 工具，并核对 attestation 的运行时 session 绑定、confirm 和
   input/result digest；不得让 Read、Bash、普通 completed 事件或文本声明冒充发布成功。
 - target 不在线：先跑 `doops targets --target <gateway-target>`。
 - `busy=true`：表示 target-wide 阻塞；`status=active` 且 `busy=false` 表示有 session 在跑，但其它 session 仍可使用。

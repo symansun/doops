@@ -408,7 +408,17 @@ func (trace doagentToolTrace) runtimeMutationAttestationReason() string {
 	if trace.EvidenceKind != "runtime-tool-result" {
 		return "evidence_kind_invalid"
 	}
-	expectedScope := map[string]interface{}{"server": "doops", "tool": realTool}
+	if trace.expectedSessionID == "" {
+		return "session_binding_mismatch"
+	}
+	if stringField(trace.CanonicalScope, "runtimeSessionId") != trace.expectedSessionID {
+		return "session_binding_mismatch"
+	}
+	expectedScope := map[string]interface{}{
+		"runtimeSessionId": trace.expectedSessionID,
+		"server":           "doops",
+		"tool":             realTool,
+	}
 	if !reflect.DeepEqual(trace.CanonicalScope, expectedScope) {
 		return "canonical_scope_mismatch"
 	}
@@ -425,15 +435,13 @@ func (trace doagentToolTrace) runtimeMutationAttestationReason() string {
 		return "input_invalid"
 	}
 	expectedInputDigest, err := digestRuntimeAttestationJSON(map[string]interface{}{
-		"arguments": inputObject,
-		"server":    "doops",
-		"tool":      realTool,
+		"arguments":        inputObject,
+		"runtimeSessionId": trace.expectedSessionID,
+		"server":           "doops",
+		"tool":             realTool,
 	})
 	if err != nil || trace.InputDigest != expectedInputDigest {
 		return "input_digest_mismatch"
-	}
-	if trace.expectedSessionID == "" || stringField(inputObject, "session_id") != trace.expectedSessionID {
-		return "session_binding_mismatch"
 	}
 	confirm, _ := inputObject["confirm"].(bool)
 	if !confirm {

@@ -32,12 +32,16 @@ func TestK8SMCPStdioExposesReadAndHelmOnly(t *testing.T) {
 		names = append(names, name)
 		schema, _ := tool["inputSchema"].(map[string]interface{})
 		required, _ := schema["required"].([]interface{})
-		expectedRequired := "session_id,operation"
+		expectedRequired := "operation"
 		if name == "helm" {
-			expectedRequired = "session_id,operation,release,namespace,confirm"
+			expectedRequired = "operation,release,namespace,confirm"
 		}
 		if strings.Join(interfaceStrings(required), ",") != expectedRequired {
 			t.Fatalf("unexpected required fields: %#v", required)
+		}
+		properties, _ := schema["properties"].(map[string]interface{})
+		if _, exists := properties["session_id"]; exists {
+			t.Fatalf("runtime-bound session leaked into model-visible schema: %#v", properties)
 		}
 	}
 	if strings.Join(names, ",") != "k8s_read,helm" {
@@ -47,10 +51,15 @@ func TestK8SMCPStdioExposesReadAndHelmOnly(t *testing.T) {
 
 func TestK8SMCPStdioHelmToolPreservesConfirmationBoundary(t *testing.T) {
 	input := strings.NewReader(
-		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"helm","arguments":{"session_id":"apply-test","operation":"upgrade-install","release":"app","namespace":"apps","chart":"deploy/helm/app"}}}` + "\n",
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"helm","arguments":{"operation":"upgrade-install","release":"app","namespace":"apps","chart":"deploy/helm/app"}}}` + "\n",
 	)
 	var output bytes.Buffer
-	if err := RunK8SMCPStdio(input, &output); err != nil {
+	if err := runK8SMCPStdioContext(
+		t.Context(),
+		input,
+		&output,
+		func() (string, error) { return "apply-test", nil },
+	); err != nil {
 		t.Fatalf("run MCP server: %v", err)
 	}
 	if !strings.Contains(output.String(), "confirm=true is required") {
@@ -60,10 +69,15 @@ func TestK8SMCPStdioHelmToolPreservesConfirmationBoundary(t *testing.T) {
 
 func TestK8SMCPStdioRejectsRemovedK8sMutationTool(t *testing.T) {
 	input := strings.NewReader(
-		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"k8s","arguments":{"session_id":"apply-test","operation":"rollout-restart","resource":"deployment/app"}}}` + "\n",
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"k8s","arguments":{"operation":"rollout-restart","resource":"deployment/app"}}}` + "\n",
 	)
 	var output bytes.Buffer
-	if err := RunK8SMCPStdio(input, &output); err != nil {
+	if err := runK8SMCPStdioContext(
+		t.Context(),
+		input,
+		&output,
+		func() (string, error) { return "apply-test", nil },
+	); err != nil {
 		t.Fatalf("run MCP server: %v", err)
 	}
 	if !strings.Contains(output.String(), "unknown tool") {
@@ -73,14 +87,54 @@ func TestK8SMCPStdioRejectsRemovedK8sMutationTool(t *testing.T) {
 
 func TestK8SMCPStdioReadToolRejectsMutation(t *testing.T) {
 	input := strings.NewReader(
-		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"k8s_read","arguments":{"session_id":"read-test","operation":"rollout-restart","resource":"deployment/app","confirm":true}}}` + "\n",
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"k8s_read","arguments":{"operation":"rollout-restart","resource":"deployment/app","confirm":true}}}` + "\n",
 	)
 	var output bytes.Buffer
-	if err := RunK8SMCPStdio(input, &output); err != nil {
+	if err := runK8SMCPStdioContext(
+		t.Context(),
+		input,
+		&output,
+		func() (string, error) { return "read-test", nil },
+	); err != nil {
 		t.Fatalf("run MCP server: %v", err)
 	}
 	if !strings.Contains(output.String(), "read tool requires a read-only operation") {
 		t.Fatalf("read tool accepted mutation: %s", output.String())
+	}
+}
+
+func TestK8SMCPStdioRejectsModelSuppliedSession(t *testing.T) {
+	input := strings.NewReader(
+		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"helm","arguments":{"session_id":"target-alias","operation":"rollback","release":"app","namespace":"apps","revision":2,"confirm":true}}}` + "\n",
+	)
+	var output bytes.Buffer
+	if err := runK8SMCPStdioContext(
+		t.Context(),
+		input,
+		&output,
+		func() (string, error) { return "release-session", nil },
+	); err != nil {
+		t.Fatalf("run MCP server: %v", err)
+	}
+	if !strings.Contains(output.String(), "session_id is runtime-bound and must not be supplied") {
+		t.Fatalf("model-supplied session was not rejected: %s", output.String())
+	}
+}
+
+func TestBindK8SMCPSessionUsesRuntimeBinding(t *testing.T) {
+	bound, err := bindK8SMCPSession(
+		json.RawMessage(`{"operation":"get","kind":"pods"}`),
+		"release-session",
+	)
+	if err != nil {
+		t.Fatalf("bind runtime session: %v", err)
+	}
+	var input map[string]interface{}
+	if err := json.Unmarshal(bound, &input); err != nil {
+		t.Fatal(err)
+	}
+	if input["session_id"] != "release-session" {
+		t.Fatalf("runtime session was not injected: %#v", input)
 	}
 }
 

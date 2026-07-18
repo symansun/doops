@@ -46,12 +46,11 @@ func TestApplyRejectsRemovedStructuredK8sMutationEvidence(t *testing.T) {
 	collector := newDoagentToolTraceCollector(false)
 	bindApplyCollector(collector, "apply-test")
 	collector.calls["call-1"] = attestedMutationTrace(t, "mcp_doops_k8s", map[string]interface{}{
-		"session_id": "apply-test",
-		"operation":  "set-image",
-		"resource":   "deployment/doops-agent",
-		"container":  "doops-agent",
-		"image":      "repo/doops-agent@sha256:" + strings.Repeat("a", 64),
-		"confirm":    true,
+		"operation": "set-image",
+		"resource":  "deployment/doops-agent",
+		"container": "doops-agent",
+		"image":     "repo/doops-agent@sha256:" + strings.Repeat("a", 64),
+		"confirm":   true,
 	})
 	if err := collector.requireCompletedToolEvidence(); err == nil ||
 		!strings.Contains(err.Error(), "mcp_doops_k8s=structured_mutation_tool_required") {
@@ -63,12 +62,11 @@ func TestApplyAcceptsStructuredHelmMutationEvidence(t *testing.T) {
 	collector := newDoagentToolTraceCollector(false)
 	bindApplyCollector(collector, "apply-test")
 	collector.calls["call-1"] = attestedMutationTrace(t, "mcp_doops_helm", map[string]interface{}{
-		"session_id": "apply-test",
-		"operation":  "upgrade-install",
-		"release":    "doops-agent",
-		"chart":      "deploy/helm/doops-agent",
-		"namespace":  "kz-ops",
-		"confirm":    true,
+		"operation": "upgrade-install",
+		"release":   "doops-agent",
+		"chart":     "deploy/helm/doops-agent",
+		"namespace": "kz-ops",
+		"confirm":   true,
 	})
 	if err := collector.requireCompletedToolEvidence(); err != nil {
 		t.Fatalf("structured helm evidence rejected: %v", err)
@@ -119,12 +117,11 @@ func TestApplyRejectsForbiddenMutationEvenWithStructuredEvidence(t *testing.T) {
 		resultJSON: json.RawMessage(`{"exitCode":0}`),
 	}
 	collector.calls["call-2"] = attestedMutationTrace(t, "mcp_doops_helm", map[string]interface{}{
-		"session_id": "apply-test",
-		"operation":  "upgrade-install",
-		"release":    "app",
-		"chart":      "deploy/helm/app",
-		"namespace":  "apps",
-		"confirm":    true,
+		"operation": "upgrade-install",
+		"release":   "app",
+		"chart":     "deploy/helm/app",
+		"namespace": "apps",
+		"confirm":   true,
 	})
 	err := collector.requireCompletedToolEvidence()
 	if err == nil || !strings.Contains(err.Error(), "doagent_apply_forbidden_mutation: Bash") {
@@ -144,12 +141,11 @@ func TestApplyRejectsShellHelmMutationEvenWithStructuredEvidence(t *testing.T) {
 		resultJSON: json.RawMessage(`{"exitCode":0}`),
 	}
 	collector.calls["call-2"] = attestedMutationTrace(t, "mcp_doops_helm", map[string]interface{}{
-		"session_id": "apply-test",
-		"operation":  "upgrade-install",
-		"release":    "app",
-		"chart":      "deploy/helm/app",
-		"namespace":  "kz-ops",
-		"confirm":    true,
+		"operation": "upgrade-install",
+		"release":   "app",
+		"chart":     "deploy/helm/app",
+		"namespace": "kz-ops",
+		"confirm":   true,
 	})
 	err := collector.requireCompletedToolEvidence()
 	if err == nil || !strings.Contains(err.Error(), "doagent_apply_forbidden_mutation: shell") {
@@ -213,9 +209,10 @@ func TestApplyRejectsForgedOrMismatchedRuntimeAttestation(t *testing.T) {
 				trace.inputJSON, _ = json.Marshal(input)
 				realTool := strings.TrimPrefix(modelVisibleDoagentToolName(trace.ToolName), "doops_")
 				trace.InputDigest, _ = digestRuntimeAttestationJSON(map[string]interface{}{
-					"arguments": input,
-					"server":    "doops",
-					"tool":      realTool,
+					"arguments":        input,
+					"runtimeSessionId": "apply-test",
+					"server":           "doops",
+					"tool":             realTool,
 				})
 			},
 			collectorBound: "apply-test",
@@ -227,12 +224,11 @@ func TestApplyRejectsForgedOrMismatchedRuntimeAttestation(t *testing.T) {
 			collector := newDoagentToolTraceCollector(false)
 			bindApplyCollector(collector, test.collectorBound)
 			trace := attestedMutationTrace(t, "mcp_doops_helm", map[string]interface{}{
-				"session_id": "apply-test",
-				"operation":  "rollback",
-				"release":    "app",
-				"namespace":  "apps",
-				"revision":   2,
-				"confirm":    true,
+				"operation": "rollback",
+				"release":   "app",
+				"namespace": "apps",
+				"revision":  2,
+				"confirm":   true,
 			})
 			test.mutate(&trace)
 			collector.calls["call-1"] = trace
@@ -252,12 +248,11 @@ func TestApplyRejectsCompletedACPToolPublicContentWithoutRawOutput(t *testing.T)
 		"toolName":      "mcp_doops_helm",
 		"status":        "in_progress",
 		"input": map[string]interface{}{
-			"operation":  "upgrade-install",
-			"release":    "doops-agent",
-			"chart":      "deploy/helm/doops-agent",
-			"namespace":  "kz-ops",
-			"session_id": "apply-test",
-			"confirm":    true,
+			"operation": "upgrade-install",
+			"release":   "doops-agent",
+			"chart":     "deploy/helm/doops-agent",
+			"namespace": "kz-ops",
+			"confirm":   true,
 		},
 	}); err != nil {
 		t.Fatalf("collect in-progress tool update: %v", err)
@@ -389,7 +384,11 @@ func TestApplyToolEvidenceReportsRejectedTrace(t *testing.T) {
 func attestedMutationTrace(t *testing.T, runtimeTool string, input map[string]interface{}) doagentToolTrace {
 	t.Helper()
 	realTool := strings.TrimPrefix(modelVisibleDoagentToolName(runtimeTool), "doops_")
-	scope := map[string]interface{}{"server": "doops", "tool": realTool}
+	scope := map[string]interface{}{
+		"runtimeSessionId": "apply-test",
+		"server":           "doops",
+		"tool":             realTool,
+	}
 	result := map[string]interface{}{
 		"content": []interface{}{map[string]interface{}{
 			"type": "text",
@@ -410,9 +409,10 @@ func attestedMutationTrace(t *testing.T, runtimeTool string, input map[string]in
 		t.Fatal(err)
 	}
 	inputDigest, err := digestRuntimeAttestationJSON(map[string]interface{}{
-		"arguments": input,
-		"server":    "doops",
-		"tool":      realTool,
+		"arguments":        input,
+		"runtimeSessionId": "apply-test",
+		"server":           "doops",
+		"tool":             realTool,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -65,6 +65,9 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     ci_guide = CI_GUIDE.read_text(encoding="utf-8")
     system_prompt = (BACKEND / "agent" / "skills" / "system_prompt.md").read_text(encoding="utf-8")
     k8s_skill = (BACKEND / "agent" / "skills" / "k8s" / "SKILL.md").read_text(encoding="utf-8")
+    handler_ws = (BACKEND / "agent" / "internal" / "server" / "handler_ws.go").read_text(
+        encoding="utf-8"
+    )
     cnb = CNB.read_text(encoding="utf-8")
     cnb_config = yaml.safe_load(cnb)
     main_pipeline = cnb.split("\nmaster:", 1)[0]
@@ -100,6 +103,9 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "backend/scripts/install.sh" in ci_guide
     assert "dry-run" not in ci_guide
     assert "mcp_doops_helm" in system_prompt
+    assert "`session_id` 由运行时绑定" in system_prompt
+    assert "target 只是路由标签" in system_prompt
+    assert "Current DoOps session_id" not in handler_ws
     assert not re.search(r"mcp_doops_k8s(?!_read)", system_prompt)
     assert "set-image" not in system_prompt
     assert "包括只更新镜像" in system_prompt
@@ -145,6 +151,7 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "发布必须使用任务明确授权的" in k8s_skill
     assert "Secret、ServiceAccount" in k8s_skill
     assert "mcp_doops_helm" in deployment_doc
+    assert "`session_id` 不属于模型参数" in deployment_doc
     assert "attestation schema" in deployment_doc
     assert "包括只更新镜像在内的所有发布" in deployment_doc
     assert "workspace commit" in deployment_doc
