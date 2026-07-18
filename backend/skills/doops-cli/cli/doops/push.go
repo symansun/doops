@@ -752,7 +752,7 @@ func waitForWorkspaceReady(
 				} else {
 					lastErr = err.Error()
 				}
-			} else if remoteCommit, ready := cicdReadyCommit(lastOut); ready {
+			} else if remoteCommit, ready := workspaceReadyCommit(lastOut); ready {
 				if remoteCommit == expectedCommit {
 					return nil
 				}
@@ -840,7 +840,7 @@ func validateWorkspaceCheckoutProof(output, expectedCommit, expectedManifestBlob
 	return nil
 }
 
-func cicdReadyCommit(output string) (string, bool) {
+func workspaceReadyCommit(output string) (string, bool) {
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "ready:") {

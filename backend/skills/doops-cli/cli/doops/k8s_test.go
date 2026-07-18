@@ -70,40 +70,9 @@ func TestBuildK8SRequestRolloutRestart(t *testing.T) {
 	}
 }
 
-func TestBuildK8SRequestDeployImage(t *testing.T) {
-	req, err := buildK8SRequest([]string{
-		"deploy-image",
-		"deploy/exam-api",
-		"--container", "app",
-		"--image", "registry.example.com/example/exam-api:v2",
-		"--revision", "64e542ad01e3bfd8938463b685dc0583731f400e",
-		"--target", "prod",
-		"--namespace", "oilan-system",
-		"--confirm",
-	})
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
-	want := map[string]interface{}{
-		"operation": "set-image",
-		"resource":  "deploy/exam-api",
-		"container": "app",
-		"image":     "registry.example.com/example/exam-api:v2",
-		"revision":  "64e542ad01e3bfd8938463b685dc0583731f400e",
-		"namespace": "oilan-system",
-		"confirm":   true,
-	}
-	if !reflect.DeepEqual(req.Payload, want) {
-		t.Fatalf("payload mismatch:\n got: %#v\nwant: %#v", req.Payload, want)
-	}
-}
-
 func TestBuildK8SRequestRejectsMutationWithoutConfirm(t *testing.T) {
 	_, err := buildK8SRequest([]string{
-		"deploy-image",
-		"deploy/exam-api",
-		"--container", "app",
-		"--image", "registry.example.com/example/exam-api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"rollout", "restart", "deploy/exam-api",
 		"--target", "prod",
 		"--namespace", "oilan-system",
 	})

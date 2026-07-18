@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -29,8 +28,11 @@ var (
 )
 
 func main() {
+	if err := server.InitializeMutationAuthority(); err != nil {
+		log.Fatal(err)
+	}
 	if len(os.Args) > 1 && os.Args[1] == "mcp-stdio" {
-		if err := server.ServeMCPStdio(context.Background(), os.Stdin, os.Stdout); err != nil {
+		if err := server.RunK8SMCPStdio(os.Stdin, os.Stdout); err != nil {
 			log.Fatal(err)
 		}
 		return

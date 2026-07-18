@@ -1,7 +1,7 @@
 # 业务 Skill 编写与接入
 
-Agent 原生职责边界见
-[`AGENT_NATIVE_CICD.md`](AGENT_NATIVE_CICD.md)。
+Agent 原生发布职责边界见
+[`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
 
 Skill 是交给 doagent 原生 Agent 引擎的领域契约。Skill 不执行命令，也不实现 Agent
 框架；doagent 负责上下文、规划、多 Agent 委派、Skill 组合和工具调用。

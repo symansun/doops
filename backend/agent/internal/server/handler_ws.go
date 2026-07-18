@@ -804,8 +804,8 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	case "doops_bg":
 		var args api.BgExecParams
 		json.Unmarshal(argBytes, &args)
-		if gw.Dispatcher != nil && gw.Dispatcher.IsAgentHelmMutation(args.Command) {
-			writeJSON(buildErrorResponse(reqID, -32602, "background doops-agent Helm mutation is prohibited; use foreground exec"))
+		if gw.Dispatcher != nil && gw.Dispatcher.IsHelmMutation(args.Command) {
+			writeJSON(buildErrorResponse(reqID, -32602, "background Helm mutation is prohibited; use foreground exec"))
 			return
 		}
 		// 与 doops_shell 一致: 后台任务同样要经过危险命令分类过滤。
@@ -1097,9 +1097,10 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			"id":      "create-" + doopsSessionID,
 			"method":  "session/new",
 			"params": map[string]interface{}{
-				"sessionId":    requestedSessionID,
-				"systemPrompt": systemPrompt,
-				"cwd":          "/root/ws/" + doopsSessionID,
+				"sessionId":      requestedSessionID,
+				"systemPrompt":   systemPrompt + "\n\nCurrent DoOps session_id: " + doopsSessionID + "\n",
+				"cwd":            "/root/ws/" + doopsSessionID,
+				"permissionMode": "restricted",
 			},
 		})
 		if err != nil {
@@ -1170,6 +1171,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	sseReady := make(chan error, 1)
 	turnIDReady := make(chan string, 1)
 	toolTraces := newDoagentToolTraceCollector(false)
+	toolTraces.bindSession(doopsSessionID)
 	go func() {
 		sseDone <- subscribeDoagentSSEWithCollectorReady(
 			sseCtx,
@@ -1190,6 +1192,23 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 
 	// session/prompt 只返回本轮 turnId；终态仍以同 turn 的 SSE turn_finished 为准。
 	promptParams := map[string]interface{}{"sessionId": targetSessionID, "prompt": instr}
+	allowedTools := doagentAllowedTools(execution.RequireToolEvidence)
+	promptParams["allowedTools"] = allowedTools
+	promptParams["mutationAuthorized"] = execution.RequireToolEvidence
+	if execution.RequireToolEvidence {
+		authorityID, issuedAt, authorityToken, authorityDigest, authorityErr :=
+			newMutationAuthorization(targetSessionID, allowedTools, time.Now())
+		if authorityErr != nil {
+			sseCancel()
+			<-sseDone
+			writeJSON(buildErrorResponse(reqID, -32603, "doagent_mutation_authority_unavailable"))
+			return
+		}
+		promptParams["mutationAuthorizationId"] = authorityID
+		promptParams["mutationAuthorizationIssuedAt"] = issuedAt
+		promptParams["mutationAuthorizationToken"] = authorityToken
+		toolTraces.bindMutationAuthority(authorityDigest)
+	}
 	if responseFormat == "json" {
 		promptParams["response_format"] = "json"
 	}
@@ -1243,6 +1262,14 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	}
 
 	writeJSON(buildSuccessResponse(reqID, "Operation complete."))
+}
+
+func doagentAllowedTools(apply bool) []string {
+	tools := []string{"Read", "Glob", "Grep", "Skill", "mcp_doops_k8s_read"}
+	if apply {
+		tools = append(tools, "mcp_doops_helm")
+	}
+	return tools
 }
 
 func (gw *Gateway) handleAgentMetadataWS(ctx context.Context, doopsSessionID string) (string, error) {

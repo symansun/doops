@@ -13,40 +13,48 @@ import (
 	"time"
 )
 
-var rawKubectlMutationPattern = regexp.MustCompile(`(?i)\bkubectl\s+(apply|patch|replace|create|delete|set|scale|annotate|label|edit|rollout\s+restart)\b`)
+var (
+	rawKubectlMutationPattern = regexp.MustCompile(`(?i)\bkubectl\s+(apply|patch|replace|create|delete|set|scale|annotate|label|edit|rollout\s+restart)\b`)
+	rawHelmMutationPattern    = regexp.MustCompile(`(?i)\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b`)
+)
 
 type doagentToolTrace struct {
-	ToolCallID           string
-	ToolName             string
-	Status               string
-	AttestationSchema    string
-	ContextSchema        string
-	OperationID          string
-	ContextDigest        string
-	PlanDigest           string
-	PlanBindingDigest    string
-	ExecutionMode        string
-	MutationAuthorized   *bool
-	CapabilityKey        string
-	AttestedTool         string
-	EvidenceKind         string
-	EvidenceSubject      string
-	ObservedAt           string
-	CanonicalScope       map[string]interface{}
-	ScopeDigest          string
-	InputDigest          string
-	AttestedResultDigest string
-	PublicResultDigest   string
-	inputJSON            json.RawMessage
-	resultJSON           json.RawMessage
+	ToolCallID                      string
+	ToolName                        string
+	Status                          string
+	AttestationSchema               string
+	ContextSchema                   string
+	OperationID                     string
+	ContextDigest                   string
+	PlanDigest                      string
+	PlanBindingDigest               string
+	ExecutionMode                   string
+	MutationAuthorized              *bool
+	MutationAuthorityDigest         string
+	CapabilityKey                   string
+	AttestedTool                    string
+	EvidenceKind                    string
+	EvidenceSubject                 string
+	ObservedAt                      string
+	CanonicalScope                  map[string]interface{}
+	ScopeDigest                     string
+	InputDigest                     string
+	AttestedResultDigest            string
+	PublicResultDigest              string
+	inputJSON                       json.RawMessage
+	resultJSON                      json.RawMessage
+	expectedSessionID               string
+	expectedMutationAuthorityDigest string
 }
 
 type doagentToolTraceCollector struct {
-	mu                 sync.Mutex
-	calls              map[string]doagentToolTrace
-	collectAgentReport bool
-	finalMessage       string
-	finalReport        json.RawMessage
+	mu                              sync.Mutex
+	calls                           map[string]doagentToolTrace
+	collectAgentReport              bool
+	expectedSessionID               string
+	expectedMutationAuthorityDigest string
+	finalMessage                    string
+	finalReport                     json.RawMessage
 }
 
 func newDoagentToolTraceCollector(collectAgentReport bool) *doagentToolTraceCollector {
@@ -54,6 +62,18 @@ func newDoagentToolTraceCollector(collectAgentReport bool) *doagentToolTraceColl
 		calls:              make(map[string]doagentToolTrace),
 		collectAgentReport: collectAgentReport,
 	}
+}
+
+func (c *doagentToolTraceCollector) bindSession(sessionID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.expectedSessionID = strings.TrimSpace(sessionID)
+}
+
+func (c *doagentToolTraceCollector) bindMutationAuthority(digest string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.expectedMutationAuthorityDigest = strings.TrimSpace(digest)
 }
 
 func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error {
@@ -119,16 +139,13 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 		if err != nil {
 			return fmt.Errorf("encode tool call %q input: %w", toolCallID, err)
 		}
-		if !validDoagentToolInput(encoded) {
-			return fmt.Errorf("tool call %q input must be a non-empty object", toolCallID)
-		}
 		if len(trace.inputJSON) != 0 && !bytes.Equal(trace.inputJSON, encoded) {
 			return fmt.Errorf("conflicting duplicate toolCallId %q input", toolCallID)
 		}
 		trace.inputJSON = encoded
 	}
 	if status, _ := update["status"].(string); strings.TrimSpace(status) != "" {
-		if doagentTerminalToolStatus(trace.Status) && status != trace.Status {
+		if trace.Status == "completed" && status != "completed" {
 			return fmt.Errorf("conflicting duplicate toolCallId %q status", toolCallID)
 		}
 		trace.Status = status
@@ -140,19 +157,6 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 		encoded, err := stableDoagentJSON(result)
 		if err != nil {
 			return fmt.Errorf("encode tool call %q result: %w", toolCallID, err)
-		}
-		if len(trace.resultJSON) != 0 && !bytes.Equal(trace.resultJSON, encoded) {
-			return fmt.Errorf("conflicting duplicate toolCallId %q result", toolCallID)
-		}
-		trace.resultJSON = encoded
-	} else if content, ok := update["content"]; ok {
-		publicResult, err := doagentPublicToolResult(content)
-		if err != nil {
-			return fmt.Errorf("read tool call %q public result: %w", toolCallID, err)
-		}
-		encoded, err := stableDoagentJSON(publicResult)
-		if err != nil {
-			return fmt.Errorf("encode tool call %q public result: %w", toolCallID, err)
 		}
 		if len(trace.resultJSON) != 0 && !bytes.Equal(trace.resultJSON, encoded) {
 			return fmt.Errorf("conflicting duplicate toolCallId %q result", toolCallID)
@@ -170,6 +174,7 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 		{"planDigest", &trace.PlanDigest},
 		{"planBindingDigest", &trace.PlanBindingDigest},
 		{"executionMode", &trace.ExecutionMode},
+		{"mutationAuthorityDigest", &trace.MutationAuthorityDigest},
 		{"capabilityKey", &trace.CapabilityKey},
 		{"attestedTool", &trace.AttestedTool},
 		{"evidenceKind", &trace.EvidenceKind},
@@ -220,47 +225,6 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 	return nil
 }
 
-func validDoagentToolInput(encoded json.RawMessage) bool {
-	var input map[string]interface{}
-	return json.Unmarshal(encoded, &input) == nil && len(input) != 0
-}
-
-func doagentTerminalToolStatus(status string) bool {
-	switch status {
-	case "completed", "failed":
-		return true
-	default:
-		return false
-	}
-}
-
-func doagentPublicToolResult(content interface{}) (map[string]interface{}, error) {
-	blocks, ok := content.([]interface{})
-	if !ok || len(blocks) == 0 {
-		return nil, fmt.Errorf("content must be a non-empty array")
-	}
-	hasText := false
-	for _, item := range blocks {
-		block, ok := item.(map[string]interface{})
-		if !ok || block["type"] != "content" {
-			return nil, fmt.Errorf("content block is invalid")
-		}
-		body, ok := block["content"].(map[string]interface{})
-		if !ok || body["type"] != "text" {
-			return nil, fmt.Errorf("content body is invalid")
-		}
-		text, ok := body["text"].(string)
-		if !ok || strings.TrimSpace(text) == "" {
-			return nil, fmt.Errorf("content text is empty")
-		}
-		hasText = true
-	}
-	if !hasText {
-		return nil, fmt.Errorf("content text is missing")
-	}
-	return map[string]interface{}{"content": content}, nil
-}
-
 func mergeDoagentToolAttestationUpdate(update map[string]interface{}, result interface{}) error {
 	var attestations []map[string]interface{}
 	if direct, exists := update["attestation"]; exists {
@@ -278,23 +242,24 @@ func mergeDoagentToolAttestationUpdate(update map[string]interface{}, result int
 		}
 	}
 	fields := map[string]string{
-		"schemaVersion":        "attestationSchemaVersion",
-		"contextSchemaVersion": "contextSchemaVersion",
-		"operationId":          "operationId",
-		"contextDigest":        "contextDigest",
-		"planDigest":           "planDigest",
-		"planBindingDigest":    "planBindingDigest",
-		"executionMode":        "executionMode",
-		"mutationAuthorized":   "mutationAuthorized",
-		"capabilityKey":        "capabilityKey",
-		"tool":                 "attestedTool",
-		"evidenceKind":         "evidenceKind",
-		"evidenceSubject":      "evidenceSubject",
-		"canonicalScope":       "canonicalScope",
-		"scopeDigest":          "scopeDigest",
-		"inputDigest":          "inputDigest",
-		"resultDigest":         "resultDigest",
-		"publicResultDigest":   "publicResultDigest",
+		"schemaVersion":           "attestationSchemaVersion",
+		"contextSchemaVersion":    "contextSchemaVersion",
+		"operationId":             "operationId",
+		"contextDigest":           "contextDigest",
+		"planDigest":              "planDigest",
+		"planBindingDigest":       "planBindingDigest",
+		"executionMode":           "executionMode",
+		"mutationAuthorized":      "mutationAuthorized",
+		"mutationAuthorityDigest": "mutationAuthorityDigest",
+		"capabilityKey":           "capabilityKey",
+		"tool":                    "attestedTool",
+		"evidenceKind":            "evidenceKind",
+		"evidenceSubject":         "evidenceSubject",
+		"canonicalScope":          "canonicalScope",
+		"scopeDigest":             "scopeDigest",
+		"inputDigest":             "inputDigest",
+		"resultDigest":            "resultDigest",
+		"publicResultDigest":      "publicResultDigest",
 	}
 	for _, attestation := range attestations {
 		for source, target := range fields {
@@ -342,6 +307,8 @@ func (c *doagentToolTraceCollector) completed() []doagentToolTrace {
 
 	traces := make([]doagentToolTrace, 0, len(c.calls))
 	for _, trace := range c.calls {
+		trace.expectedSessionID = c.expectedSessionID
+		trace.expectedMutationAuthorityDigest = c.expectedMutationAuthorityDigest
 		if trace.eligible() {
 			traces = append(traces, trace)
 		}
@@ -355,6 +322,8 @@ func (c *doagentToolTraceCollector) rejectionSummary() string {
 
 	rejections := make([]string, 0, len(c.calls))
 	for _, trace := range c.calls {
+		trace.expectedSessionID = c.expectedSessionID
+		trace.expectedMutationAuthorityDigest = c.expectedMutationAuthorityDigest
 		if reason := trace.ineligibilityReason(); reason != "" {
 			tool := modelVisibleDoagentToolName(trace.ToolName)
 			if tool == "" {
@@ -368,6 +337,9 @@ func (c *doagentToolTraceCollector) rejectionSummary() string {
 }
 
 func (c *doagentToolTraceCollector) requireCompletedToolEvidence() error {
+	if forbidden := c.forbiddenMutationSummary(); forbidden != "" {
+		return fmt.Errorf("doagent_apply_forbidden_mutation: %s", forbidden)
+	}
 	if len(c.completed()) != 0 {
 		return nil
 	}
@@ -375,6 +347,24 @@ func (c *doagentToolTraceCollector) requireCompletedToolEvidence() error {
 		return fmt.Errorf("doagent_apply_tool_evidence_missing: %s", rejected)
 	}
 	return fmt.Errorf("doagent_apply_tool_evidence_missing")
+}
+
+func (c *doagentToolTraceCollector) forbiddenMutationSummary() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var forbidden []string
+	for _, trace := range c.calls {
+		if trace.usesRawClusterMutation() {
+			tool := modelVisibleDoagentToolName(trace.ToolName)
+			if tool == "" {
+				tool = "unknown"
+			}
+			forbidden = append(forbidden, tool)
+		}
+	}
+	sort.Strings(forbidden)
+	return strings.Join(forbidden, ",")
 }
 
 func (trace doagentToolTrace) eligible() bool {
@@ -390,31 +380,122 @@ func (trace doagentToolTrace) ineligibilityReason() string {
 	case len(trace.inputJSON) == 0:
 		return "input_missing"
 	case len(trace.resultJSON) == 0:
-		return "result_missing"
+		return "raw_output_missing"
 	case !validDoagentObservedAt(trace.ObservedAt):
 		return "observed_at_invalid"
-	case trace.usesRawKubectlMutation():
-		return "raw_kubectl_mutation_forbidden"
+	case trace.usesRawClusterMutation():
+		return "raw_cluster_mutation_forbidden"
 	}
-	_, err := publicDoagentToolResult(trace)
-	if err != nil {
-		return "public_result_invalid"
+	tool := modelVisibleDoagentToolName(trace.ToolName)
+	if tool != "doops_helm" {
+		return "structured_mutation_tool_required"
+	}
+	if reason := trace.runtimeMutationAttestationReason(); reason != "" {
+		return reason
 	}
 	return ""
 }
 
-func (trace doagentToolTrace) usesRawKubectlMutation() bool {
-	tool := strings.ToLower(strings.TrimSpace(modelVisibleDoagentToolName(trace.ToolName)))
-	if tool != "bash" && tool != "shell" && tool != "doops_shell" && tool != "mcp_doops_shell" {
+func (trace doagentToolTrace) runtimeMutationAttestationReason() string {
+	tool := modelVisibleDoagentToolName(trace.ToolName)
+	realTool := strings.TrimPrefix(tool, "doops_")
+	if trace.AttestationSchema != "doops.tool-attestation/v2" {
+		return "attestation_schema_invalid"
+	}
+	if trace.AttestedTool != realTool || trace.EvidenceSubject != realTool {
+		return "attested_tool_mismatch"
+	}
+	if trace.EvidenceKind != "runtime-tool-result" {
+		return "evidence_kind_invalid"
+	}
+	expectedScope := map[string]interface{}{"server": "doops", "tool": realTool}
+	if !reflect.DeepEqual(trace.CanonicalScope, expectedScope) {
+		return "canonical_scope_mismatch"
+	}
+	expectedScopeDigest, err := digestRuntimeAttestationJSON(expectedScope)
+	if err != nil || trace.ScopeDigest != expectedScopeDigest {
+		return "scope_digest_mismatch"
+	}
+	input, err := decodeDoagentJSONValue(trace.inputJSON)
+	if err != nil {
+		return "input_invalid"
+	}
+	inputObject, ok := input.(map[string]interface{})
+	if !ok {
+		return "input_invalid"
+	}
+	expectedInputDigest, err := digestRuntimeAttestationJSON(map[string]interface{}{
+		"arguments": inputObject,
+		"server":    "doops",
+		"tool":      realTool,
+	})
+	if err != nil || trace.InputDigest != expectedInputDigest {
+		return "input_digest_mismatch"
+	}
+	if trace.expectedSessionID == "" || stringField(inputObject, "session_id") != trace.expectedSessionID {
+		return "session_binding_mismatch"
+	}
+	confirm, _ := inputObject["confirm"].(bool)
+	if !confirm {
+		return "mutation_confirmation_missing"
+	}
+	if trace.MutationAuthorized == nil || !*trace.MutationAuthorized {
+		return "mutation_not_authorized"
+	}
+	if trace.expectedMutationAuthorityDigest == "" ||
+		trace.MutationAuthorityDigest != trace.expectedMutationAuthorityDigest {
+		return "mutation_authority_binding_mismatch"
+	}
+	if trace.ExecutionMode != "apply" {
+		return "execution_mode_invalid"
+	}
+	operation := stringField(inputObject, "operation")
+	if !stringSliceContains(helmMutationOperations, operation) {
+		return "mutation_operation_invalid"
+	}
+	result, err := trace.verifiedResult()
+	if err != nil {
+		return "public_result_invalid"
+	}
+	if isError, ok := result["isError"].(bool); !ok || isError {
+		return "tool_result_failed"
+	}
+	return ""
+}
+
+func stringSliceContains(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func (trace doagentToolTrace) usesRawClusterMutation() bool {
+	tool := modelVisibleDoagentToolName(trace.ToolName)
+	switch tool {
+	case "shell", "doops_shell", "Bash":
+		var input struct {
+			Command string `json:"command"`
+		}
+		if json.Unmarshal(trace.inputJSON, &input) != nil {
+			return false
+		}
+		command := strings.TrimSpace(input.Command)
+		return rawKubectlMutationPattern.MatchString(command) || rawHelmMutationPattern.MatchString(command)
+	case "ExecuteCode":
+		var input struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal(trace.inputJSON, &input) != nil {
+			return false
+		}
+		code := strings.TrimSpace(input.Code)
+		return rawKubectlMutationPattern.MatchString(code) || rawHelmMutationPattern.MatchString(code)
+	default:
 		return false
 	}
-	var input struct {
-		Command string `json:"command"`
-	}
-	if json.Unmarshal(trace.inputJSON, &input) != nil {
-		return false
-	}
-	return rawKubectlMutationPattern.MatchString(strings.TrimSpace(input.Command))
 }
 
 func validDoagentObservedAt(value string) bool {
@@ -431,7 +512,7 @@ func (trace doagentToolTrace) verifiedResult() (map[string]interface{}, error) {
 	if !ok {
 		return nil, fmt.Errorf("runtime tool result must be an object")
 	}
-	expectedResultDigest, err := digestJSON(resultObject)
+	expectedResultDigest, err := digestRuntimeAttestationJSON(resultObject)
 	if err != nil {
 		return nil, fmt.Errorf("digest runtime tool result: %w", err)
 	}
@@ -531,6 +612,10 @@ func resolveDoagentToolTrace(
 }
 
 func modelVisibleDoagentToolName(runtimeName string) string {
+	switch runtimeName {
+	case "mcp_doops_helm":
+		return "doops_helm"
+	}
 	return runtimeName
 }
 

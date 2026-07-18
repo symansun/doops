@@ -20,10 +20,19 @@ DOOPS_MCP_SERVER = {
     "env": {},
     "cwd": None,
     "status": "Unknown",
-    "capabilities": [],
+    "capabilities": ["tools"],
     "auto_start": True,
-    "tool_timeout_secs": 1800,
+    "tool_timeout_secs": 900,
     "required": True,
+    "trusted_result_attestation": True,
+}
+DOOPS_PERMISSIONS = {
+    "default_mode": "restricted",
+    "presets": {
+        "always_allow": ["mcp_doops_k8s_read"],
+        "always_deny": [],
+    },
+    "timeout_seconds": 30,
 }
 
 
@@ -96,11 +105,24 @@ def configure_settings(
     servers = settings.get("mcp_servers", [])
     if not isinstance(servers, list):
         raise SettingsConfigurationError("mcp_servers must be an array")
+    configured_doops = [
+        server
+        for server in servers
+        if isinstance(server, dict) and server.get("name") == DOOPS_MCP_SERVER["name"]
+    ]
+    if len(configured_doops) > 1:
+        raise SettingsConfigurationError("mcp_servers contains duplicate doops entries")
+    if configured_doops and configured_doops[0] != DOOPS_MCP_SERVER:
+        raise SettingsConfigurationError(
+            "mcp_servers.doops is runtime-owned and must match the canonical configuration"
+        )
     settings["mcp_servers"] = [
         server
         for server in servers
-        if not isinstance(server, dict) or server.get("name") != "doops"
-    ] + [DOOPS_MCP_SERVER]
+        if not (isinstance(server, dict) and server.get("name") == DOOPS_MCP_SERVER["name"])
+    ]
+    settings["mcp_servers"].append(DOOPS_MCP_SERVER)
+    settings["permissions"] = DOOPS_PERMISSIONS
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(destination.suffix + ".tmp")

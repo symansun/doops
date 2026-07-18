@@ -49,4 +49,11 @@ func TestDispatcherIdentifiesAgentHelmMutationWithoutBlockingForegroundExec(t *t
 	if !dispatcher.IsAgentHelmMutation(command) {
 		t.Fatal("agent Helm mutation must be identified for background rejection")
 	}
+	reordered := "cd deploy/helm/doops-agent && helm upgrade --install agent . -n kz-ops"
+	if !dispatcher.IsAgentHelmMutation(reordered) {
+		t.Fatal("agent Helm mutation must be detected regardless of command order")
+	}
+	if !dispatcher.IsHelmMutation("helm rollback app 2 -n apps") {
+		t.Fatal("background Helm mutation classifier did not detect rollback")
+	}
 }

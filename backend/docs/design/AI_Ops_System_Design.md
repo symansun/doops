@@ -1,7 +1,7 @@
 # doops.sh 分布式 Agent 运维系统
 
-CI/CD 的权威职责边界见
-[`AGENT_NATIVE_CICD.md`](../AGENT_NATIVE_CICD.md)。
+自然语言发布的权威职责边界见
+[`NATURAL_LANGUAGE_DEPLOYMENT.md`](../NATURAL_LANGUAGE_DEPLOYMENT.md)。
 
 `doops.sh` 把确定性控制面与 Agent 原生执行面分开：CLI、Gateway 和边缘适配器负责
 可重复验证的协议、安全和工作区边界；doagent 负责上下文、规划、多 Agent、Skill 和
@@ -63,7 +63,7 @@ DoOps 不在 Gateway 或脚本中复制 doagent 的 Agent 引擎。
 
 - session 工作区是 Agent 和确定性工具共享的任务上下文。
 - Git 工作区同步必须绑定精确 commit。
-- CI/CD 在锁内校验 `.doops-ready`，防止并发 push 替换待发布代码。
+- `ask --apply` 在锁内校验 `.doops-ready`，防止并发 push 替换待发布代码。
 - 密钥通过 Secret 或节点本地设置注入，不进入 Skill、计划、日志和仓库。
 
 ## Skill 和脚本

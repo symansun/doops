@@ -44,6 +44,33 @@ func TestDoagentModeForPromptUsesOnlyNativeAskMode(t *testing.T) {
 	}
 }
 
+func TestDoagentAllowedToolsHardLimitOrdinaryAndApplyPrompts(t *testing.T) {
+	ordinary := doagentAllowedTools(false)
+	if strings.Contains(strings.Join(ordinary, ","), "Bash") ||
+		strings.Contains(strings.Join(ordinary, ","), "ExecuteCode") ||
+		!sliceContainsString(ordinary, "mcp_doops_k8s_read") ||
+		sliceContainsString(ordinary, "mcp_doops_k8s") {
+		t.Fatalf("ordinary prompt tool boundary is unsafe: %#v", ordinary)
+	}
+
+	apply := doagentAllowedTools(true)
+	if sliceContainsString(apply, "mcp_doops_k8s") ||
+		!sliceContainsString(apply, "mcp_doops_helm") ||
+		strings.Contains(strings.Join(apply, ","), "Bash") ||
+		strings.Contains(strings.Join(apply, ","), "ExecuteCode") {
+		t.Fatalf("apply prompt tool boundary is unsafe: %#v", apply)
+	}
+}
+
+func sliceContainsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
+}
+
 func TestDoagentPermissionRequestFailsClosedWithoutReply(t *testing.T) {
 	rpcCalled := make(chan struct{}, 1)
 	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -504,6 +504,13 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 					},
 				})
 			case "session/new":
+				params, _ := req["params"].(map[string]interface{})
+				if params["permissionMode"] != "restricted" {
+					t.Fatalf("doagent sessions must fail closed outside apply: %#v", params)
+				}
+				if !strings.Contains(fmt.Sprint(params["systemPrompt"]), "Current DoOps session_id: kind-prompt") {
+					t.Fatalf("current DoOps session must be bound into the prompt: %#v", params)
+				}
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"jsonrpc": "2.0",
 					"id":      req["id"],
@@ -522,6 +529,10 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 			case "session/prompt":
 				params, _ := req["params"].(map[string]interface{})
 				prompt, _ := params["prompt"].(string)
+				allowed, _ := params["allowedTools"].([]interface{})
+				if strings.Join(interfaceStringValues(allowed), ",") != "Read,Glob,Grep,Skill,mcp_doops_k8s_read" {
+					t.Fatalf("ordinary prompt must have an exact read-only tool allowlist: %#v", params)
+				}
 				if params["responseMode"] != "stream" {
 					t.Fatalf("prompt must request SSE terminal delivery: %#v", params)
 				}
@@ -612,6 +623,14 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 	if prompt := <-receivedPrompt; strings.Contains(prompt, "deploy.sh") {
 		t.Fatalf("agent prompt must not inject a deploy.sh generation contract: %s", prompt)
 	}
+}
+
+func interfaceStringValues(values []interface{}) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		result = append(result, value.(string))
+	}
+	return result
 }
 
 func TestAgentInitializeDoesNotExposeDedicatedCICDReconciliation(t *testing.T) {

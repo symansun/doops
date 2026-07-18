@@ -31,6 +31,8 @@ description: |
 - 不要用 base64、tar 或手写分片传输绕过 `push`。`doops_workspace_*` 是低层兼容 JSON-RPC 工具，不是 CLI、发布脚本和 skill 的标准路径；如果看到 512KB 分块日志，说明调用方绕过了当前 `doops push/pull`。应修复 Git HTTP 反向隧道、目标 agent 版本或发布脚本。
 - 普通业务 workload 的标准发布入口是 `doops ask --apply`。自然语言任务必须直接给出 target、服务范围、镜像 digest、
   变更原因和验收条件；不得从文件路径、环境名、业务名或历史声明推断这些值。
+- 普通 `ask` 运行在 restricted 权限，只允许内置只读工具和 `mcp_doops_k8s_read`；
+  `--apply` 才进入原生 build 模式，并且只允许 `mcp_doops_helm` 执行发布 mutation。
 - 需要凭据时使用可重复的 `--credential <resource-name>`。该参数只传递资源名；Gateway
   将它绑定到当前用户、target 和 session，并按 cluster/instance、namespace、workload、
   image 或 Helm 的精确 scope 授权和物化。公开 prompt、doagent 上下文和 metadata
@@ -41,7 +43,11 @@ description: |
 - 当前没有 EnvironmentRegistry、`cicd run`、CICDReport 或 `doops_cicd_result` 发布链路。
 - `doops-agent` 自身升级是例外：当前 Agent 不得修改承载自身的 workload，必须由另一个
   隔离 Agent target 或真实存在的外部 CI/GitOps controller 执行。
-- 长构建或发布使用 `doops -session <s> exec --bg --target <t> --cmd '<cmd>'`。不要在普通 `exec` 命令中使用 `&`、`nohup` 或 `setsid`，因为调用结束时 agent 会终止该 shell 的子进程。
+- 长构建可以使用 `doops -session <s> exec --bg --target <t> --cmd '<cmd>'`。自然语言
+  发布中的 Helm 收敛必须使用 `mcp_doops_helm`；运维人员显式给出的前台 `exec` Helm
+  `upgrade/install/rollback/uninstall` 仍是合法的确定性操作，并保持 Gateway 串行化
+  和完整退出审计。Agent 必须拒绝后台 doops-agent Helm mutation。不要在普通 `exec`
+  命令中使用 `&`、`nohup` 或 `setsid`，因为调用结束时 agent 会终止该 shell 的子进程。
 - 不要混用 token：
   - gateway CLI 操作用 gateway user token。
   - agent 注册 gateway 不使用 token，只声明 cluster/instance。
@@ -208,6 +214,9 @@ docs/DOOPS_MAINTENANCE_LOG.md
 - `credential_verification_required`：staged 版本尚未覆盖全部 active grant 的验证；对每个
   active grant 使用完全相同的 scope 执行 `credential verify`。
 - 凭据物化失败：按 Gateway 返回的错误类别定位目标或权限状态；不得重试、猜测或将 payload 放入任务。
+- `ask --apply` 未出现可信 mutation 完成证据：检查 Agent 运行时是否注册 required
+  `mcp_doops_helm` 工具，并核对 attestation、session_id、confirm 和
+  input/result digest；不得让 Read、Bash、普通 completed 事件或文本声明冒充发布成功。
 - target 不在线：先跑 `doops targets --target <gateway-target>`。
 - `busy=true`：表示 target-wide 阻塞；`status=active` 且 `busy=false` 表示有 session 在跑，但其它 session 仍可使用。
 - gateway `push/pull` 失败：确认 `/v1/git/<cluster>/<instance>/<session>.git` 能路由到在线 agent，并检查反向隧道内的 Git handler。
