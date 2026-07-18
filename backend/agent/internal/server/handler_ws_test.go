@@ -569,6 +569,19 @@ func TestAgentSystemPromptDoesNotRequireDeploymentScripts(t *testing.T) {
 	}
 }
 
+func TestConfiguredDoagentURLUsesEntrypointPort(t *testing.T) {
+	t.Setenv("DO_AGENT_URL", "")
+	t.Setenv("DO_AGENT_PORT", "7749")
+	if got := configuredDoagentURL(); got != "http://127.0.0.1:7749" {
+		t.Fatalf("configured doagent URL = %q", got)
+	}
+
+	t.Setenv("DO_AGENT_URL", "http://127.0.0.1:9010")
+	if got := configuredDoagentURL(); got != "http://127.0.0.1:9010" {
+		t.Fatalf("explicit doagent URL = %q", got)
+	}
+}
+
 func TestShellNotificationIncludesRawKind(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
 	gw := NewGateway("0")

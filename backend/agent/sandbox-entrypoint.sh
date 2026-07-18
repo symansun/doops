@@ -239,6 +239,7 @@ start_buildkit() {
 }
 
 DO_AGENT_PORT="${DO_AGENT_PORT:-9000}"
+export DO_AGENT_URL="${DO_AGENT_URL:-http://127.0.0.1:${DO_AGENT_PORT}}"
 DOOPS_LISTEN="$(flag_value -listen 0.0.0.0 "$@")"
 DOOPS_PORT="$(flag_value -port 42222 "$@")"
 

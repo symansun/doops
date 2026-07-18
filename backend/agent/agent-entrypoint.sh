@@ -126,6 +126,7 @@ echo "✅ doagent config: materialized from mounted settings"
 
 # 启动 doagent ACP HTTP 服务（后台）
 DO_AGENT_PORT="${DO_AGENT_PORT:-9000}"
+export DO_AGENT_URL="${DO_AGENT_URL:-http://127.0.0.1:${DO_AGENT_PORT}}"
 echo "🤖 Starting doagent ACP HTTP on port ${DO_AGENT_PORT}..."
 /usr/local/bin/do-agent acp-http --port "${DO_AGENT_PORT}" --cwd /root/ws &
 DOAGENT_PID=$!

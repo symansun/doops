@@ -1059,10 +1059,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	log.Printf("🤖 WS Running doagent via ACP HTTP: session=%s structured=%t model=%s",
 		doopsSessionID, responseFormat == "json", model)
 
-	doagentURL := os.Getenv("DO_AGENT_URL")
-	if doagentURL == "" {
-		doagentURL = "http://127.0.0.1:9000"
-	}
+	doagentURL := configuredDoagentURL()
 	if err := ensureDoagentAvailable(doagentURL); err != nil {
 		writeJSON(buildErrorResponse(reqID, -32603, "doagent_unavailable"))
 		return
@@ -1254,10 +1251,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 }
 
 func (gw *Gateway) handleAgentMetadataWS(ctx context.Context, doopsSessionID string) (string, error) {
-	doagentURL := os.Getenv("DO_AGENT_URL")
-	if doagentURL == "" {
-		doagentURL = "http://127.0.0.1:9000"
-	}
+	doagentURL := configuredDoagentURL()
 	status := inspectDoagentModelChannels()
 	if status.status == "unconfigured" && status.settingsFound {
 		return marshalDoagentMetadataStatus(status)
@@ -1336,10 +1330,7 @@ func (gw *Gateway) handleAgentHistoryWS(ctx context.Context, doopsSessionID stri
 		return marshalDoagentHistory(doopsSessionID, nil)
 	}
 
-	doagentURL := os.Getenv("DO_AGENT_URL")
-	if doagentURL == "" {
-		doagentURL = "http://127.0.0.1:9000"
-	}
+	doagentURL := configuredDoagentURL()
 	if err := ensureDoagentAvailable(doagentURL); err != nil {
 		return "", errors.New("doagent_unavailable")
 	}
@@ -1568,6 +1559,17 @@ func doagentSettingsPath() string {
 		return path
 	}
 	return "/root/.agent/settings.json"
+}
+
+func configuredDoagentURL() string {
+	if baseURL := strings.TrimSpace(os.Getenv("DO_AGENT_URL")); baseURL != "" {
+		return baseURL
+	}
+	port := strings.TrimSpace(os.Getenv("DO_AGENT_PORT"))
+	if port == "" {
+		port = "9000"
+	}
+	return "http://127.0.0.1:" + port
 }
 
 func ensureDoagentAvailable(baseURL string) error {

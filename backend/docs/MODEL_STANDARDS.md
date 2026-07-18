@@ -5,7 +5,9 @@ embedded doagent runtime.
 
 ## Runtime Configuration
 
-`doops-agent` starts doagent as an ACP HTTP service on `127.0.0.1:9000`. The
+`doops-agent` starts doagent as an ACP HTTP service on `127.0.0.1:$DO_AGENT_PORT`
+(default `9000`). When `DO_AGENT_URL` is omitted, it is derived from that same
+port so the Agent never starts a second ACP HTTP process on a different port. The
 effective runtime settings are stored at:
 
 ```text
