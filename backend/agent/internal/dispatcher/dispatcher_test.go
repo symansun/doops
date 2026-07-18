@@ -38,3 +38,15 @@ func TestDispatcherAllowsOtherServiceMutation(t *testing.T) {
 		}
 	}
 }
+
+func TestDispatcherIdentifiesAgentHelmMutationWithoutBlockingForegroundExec(t *testing.T) {
+	t.Parallel()
+	dispatcher := NewDispatcher()
+	command := "helm install doops-agent ./deploy/helm/doops-agent -n kz-ops"
+	if dispatcher.Classify(command) == PathBlocked {
+		t.Fatal("foreground Helm exec must be allowed")
+	}
+	if !dispatcher.IsAgentHelmMutation(command) {
+		t.Fatal("agent Helm mutation must be identified for background rejection")
+	}
+}

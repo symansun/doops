@@ -5,6 +5,10 @@ import (
 	"strings"
 )
 
+var agentHelmMutationPattern = regexp.MustCompile(
+	`(?s)\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b.*\bdoops-agent\b`,
+)
+
 type PathType int
 
 const (
@@ -53,4 +57,8 @@ func (d *Dispatcher) Classify(command string) PathType {
 	}
 
 	return PathFast
+}
+
+func (d *Dispatcher) IsAgentHelmMutation(command string) bool {
+	return agentHelmMutationPattern.MatchString(strings.ToLower(strings.TrimSpace(command)))
 }
