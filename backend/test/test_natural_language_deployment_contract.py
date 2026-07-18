@@ -3,10 +3,14 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+AGENT_RULES = ROOT / "AGENTS.md"
 BACKEND = ROOT / "backend"
 CLI = BACKEND / "skills" / "doops-cli" / "cli" / "doops" / "main.go"
+CREDENTIAL_CLI = BACKEND / "skills" / "doops-cli" / "cli" / "doops" / "credential_commands.go"
 SKILL = BACKEND / "skills" / "SKILL.md"
 DEPLOYMENT_DOC = BACKEND / "docs" / "NATURAL_LANGUAGE_DEPLOYMENT.md"
+CICD_DOC = BACKEND / "docs" / "AGENT_NATIVE_CICD.md"
+CREDENTIAL_DOC = BACKEND / "docs" / "CREDENTIAL_RESOURCES.md"
 CI_GUIDE = ROOT / "components" / "cicd-guide.tsx"
 
 
@@ -80,3 +84,44 @@ def test_ordinary_exec_does_not_block_explicit_helm_operations():
     assert "普通前台 `exec`" in deployment_doc
     assert "不得把 Helm 误判为危险 shell 命令" in deployment_doc
     assert "后台调用必须明确拒绝" in deployment_doc
+
+
+def test_cicd_and_credential_guides_match_the_runtime_contract():
+    cli = CLI.read_text(encoding="utf-8")
+    credential_cli = CREDENTIAL_CLI.read_text(encoding="utf-8")
+    skill = SKILL.read_text(encoding="utf-8")
+    cicd_doc = CICD_DOC.read_text(encoding="utf-8")
+    credential_doc = CREDENTIAL_DOC.read_text(encoding="utf-8")
+    api_doc = (BACKEND / "docs" / "DOOPS_API_GUIDE.md").read_text(encoding="utf-8")
+    tunnel_doc = (BACKEND / "docs" / "DOOPS_GATEWAY_TUNNEL.md").read_text(encoding="utf-8")
+
+    assert "doops ask --apply" in cicd_doc
+    assert "--credential <registry-credential-name>" in cicd_doc
+    assert "credential verify" in credential_doc
+    assert "credential verify" in credential_cli
+    assert "docs/AGENT_NATIVE_CICD.md" in skill
+    assert "docs/CREDENTIAL_RESOURCES.md" in skill
+    assert "backend/skills/SKILL.md" in skill
+
+    active_contract = "\n".join((skill, cicd_doc, credential_doc, api_doc, tunnel_doc))
+    assert "目标由环境注册表解析" not in active_contract
+    assert "公共 Agent 不接收凭据 payload" not in active_contract
+    assert "凭据 payload 不进入 prompt、Agent" not in active_contract
+    assert "CICDReport；Gateway" not in active_contract
+    assert "内部凭据物化调用" in active_contract
+    assert "fingerprint/expiry" not in active_contract
+
+
+def test_repository_agent_rules_guard_release_and_credential_boundaries():
+    rules = AGENT_RULES.read_text(encoding="utf-8")
+
+    assert rules.startswith("---\nname: doops-development-contract\n")
+    assert "doops -session <s> ask --target <t> --apply" in rules
+    assert "Promotion must require at least one current active grant" in rules
+    assert "Historical or revoked grants" in rules
+    assert "The only supported installed CLI path is `~/.local/bin/doops`" in rules
+    assert "backend/scripts/install.sh --version <tag>" in rules
+    assert "backend/docs/AGENT_NATIVE_CICD.md" in rules
+    assert "backend/docs/CREDENTIAL_RESOURCES.md" in rules
+    assert "browser testing" in rules
+    assert "online synthetic credential" in rules

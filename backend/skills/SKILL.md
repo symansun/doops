@@ -11,10 +11,14 @@ description: |
 - 安装与接入：先看本文，再按 `docs/CLUSTER_INSTALL_GUIDE.md` 执行。
 - 日常使用：先看本文命令选择，再按 `docs/DOOPS_USAGE_GUIDE.md` 执行。
 - Gateway/API 细节：看 `docs/DOOPS_GATEWAY_TUNNEL.md` 和 `docs/DOOPS_API_GUIDE.md`。
-- 构建、发布、升级：看 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md` 和 `docs/DOOPS_MAINTENANCE_LOG.md`。
+- CI/CD 与发布：看 `docs/AGENT_NATIVE_CICD.md` 和 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
+- 凭据管理：看 `docs/CREDENTIAL_RESOURCES.md`。
+- 升级维护：看 `docs/BUILD_DEPLOY_SOP.md` 和 `docs/DOOPS_MAINTENANCE_LOG.md`。
 - 模型与 ask 配置：看 `docs/MODEL_STANDARDS.md`。
 
-权威源码在 doops.sh 仓库 `skills/SKILL.md`。项目里的 `.agent/skills/doops/SKILL.md` 是安装副本；修改 skill 时必须先改 doops.sh 源码，再通过 `scripts/install.sh` 同步。
+权威源码在 doops.sh 仓库 `backend/skills/SKILL.md`。项目里的
+`.agent/skills/doops/SKILL.md` 是安装副本；修改 skill 时必须先改权威源码，再通过
+`scripts/install.sh` 同步。
 
 ## 核心纪律
 
@@ -25,11 +29,18 @@ description: |
 - `doops-gateway` 是独立发布包，必须用 `scripts/deploy-gateway.sh --host <gateway-host>` 从 SSH 宿主机上下文发布。
 - gateway 控制面不登记为 doops target，不通过任何 doops target 发布 gateway 本体。
 - 不要用 base64、tar 或手写分片传输绕过 `push`。`doops_workspace_*` 是低层兼容 JSON-RPC 工具，不是 CLI、发布脚本和 skill 的标准路径；如果看到 512KB 分块日志，说明调用方绕过了当前 `doops push/pull`。应修复 Git HTTP 反向隧道、目标 agent 版本或发布脚本。
-- 发布使用 `doops ask --apply`。自然语言任务必须直接给出 target、服务范围、镜像版本、
+- 普通业务 workload 的标准发布入口是 `doops ask --apply`。自然语言任务必须直接给出 target、服务范围、镜像 digest、
   变更原因和验收条件；不得从文件路径、环境名、业务名或历史声明推断这些值。
 - 需要凭据时使用可重复的 `--credential <resource-name>`。该参数只传递资源名；Gateway
   将它绑定到当前用户、target 和 session，并按 cluster/instance、namespace、workload、
-  image 或 Helm 的精确 scope 授权和物化。Agent 和提示词不得接收 credential payload。
+  image 或 Helm 的精确 scope 授权和物化。公开 prompt、doagent 上下文和 metadata
+  binding 不接收 credential payload；目标 doops-agent 只在内部凭据控制面临时接收
+  解密 payload 以创建或验证目标资源。
+- CNB CI 负责测试、构建和发布不可变制品，不选择生产 target。Gateway 负责鉴权、审计、
+  资源锁和凭据预物化，实际业务 Helm/Kubernetes mutation 由目标 Agent 在其运行环境执行。
+- 当前没有 EnvironmentRegistry、`cicd run`、CICDReport 或 `doops_cicd_result` 发布链路。
+- `doops-agent` 自身升级是例外：当前 Agent 不得修改承载自身的 workload，必须由另一个
+  隔离 Agent target 或真实存在的外部 CI/GitOps controller 执行。
 - 长构建或发布使用 `doops -session <s> exec --bg --target <t> --cmd '<cmd>'`。不要在普通 `exec` 命令中使用 `&`、`nohup` 或 `setsid`，因为调用结束时 agent 会终止该 shell 的子进程。
 - 不要混用 token：
   - gateway CLI 操作用 gateway user token。
@@ -129,7 +140,16 @@ doops targets --target unicom
 | :--- | :--- |
 | 执行确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'` |
 | AI 自主分析 | `doops -session <s> ask --target <t> --msg '<task>'` |
-| 发布任务 | `doops -session <s> ask --target <t> --apply --credential <resource-name> --msg '<target、范围、镜像、原因、验收>'` |
+| 发布任务 | `doops -session <s> ask --target <t> --apply --credential <resource-name> --msg '<target、范围、镜像 digest、原因、验收>'` |
+| 创建凭据 | `doops credential create --target <t> --name <name> --scope personal --type <type>` |
+| 写入凭据版本 | `printf '%s' '<json>' \| doops credential put --target <t> --id <credential-id>` |
+| 查询 target 可用凭据 | `doops credential list --target <t>` |
+| 查询本人管理凭据 | `doops credential list --target <t> --view managed` |
+| 授权凭据 | `doops credential grant --target <t> --id <id> <exact-scope-flags>` |
+| 验证 staged 版本 | `doops -session <s> credential verify --target <t> --id <id> --version-id <version> <exact-scope-flags>` |
+| 激活凭据版本 | `doops credential promote --target <t> --id <id> --version-id <version>` |
+| 吊销授权 | `doops credential grant-revoke --target <t> --id <id> --grant-id <grant>` |
+| 吊销资源 | `doops credential revoke --target <t> --id <id>` |
 | 推送本地目录 | `doops -session <s> push --target <t> --src <dir>` |
 | 拉取远端工作区 | `doops -session <s> pull --target <t> --dest <dir>` |
 | 小文本读写 | `doops read/write ...` |
@@ -154,7 +174,8 @@ doops admin token create \
 `--target` 负责选择 gateway 地址和当前管理员登录态。新 token 只打印一次；如需把新 token 设为该 Gateway 的统一登录态，显式加 `--save-as <target-name>`。
 轮换时先创建并缓存新 token，再用 `admin token list` 按 ID/前缀确认旧 token，最后执行 `admin token revoke`。管理员 token 不得通过命令行参数传入。
 
-完整命令说明和示例见 `docs/DOOPS_USAGE_GUIDE.md`。
+完整命令说明见 `docs/DOOPS_USAGE_GUIDE.md`；CI/CD 见
+`docs/AGENT_NATIVE_CICD.md`；凭据完整生命周期见 `docs/CREDENTIAL_RESOURCES.md`。
 
 ## 升级引导
 
@@ -175,7 +196,8 @@ docs/DOOPS_MAINTENANCE_LOG.md
 - gateway 控制面发布走 `scripts/deploy-gateway.sh`；不要走 `doops exec/push/write`。
 - 至少对一个真实 gateway target 回归 `exec`、`push`、`pull`、`ask`、`targets` 中受影响的路径。
 
-发布和构建细节见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
+普通业务发布流程见 `docs/AGENT_NATIVE_CICD.md`；自然语言任务约束见
+`docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
 
 ## 故障入口
 
@@ -183,6 +205,8 @@ docs/DOOPS_MAINTENANCE_LOG.md
 - `403 Forbidden`：认证通过但权限不足，或用户被显式收窄。
 - `credential_scope_invalid`：凭据引用没有匹配到完整的 cluster/instance、namespace、workload、
   image 或 Helm scope；修正显式 scope，不得放宽授权。
+- `credential_verification_required`：staged 版本尚未覆盖全部 active grant 的验证；对每个
+  active grant 使用完全相同的 scope 执行 `credential verify`。
 - 凭据物化失败：按 Gateway 返回的错误类别定位目标或权限状态；不得重试、猜测或将 payload 放入任务。
 - target 不在线：先跑 `doops targets --target <gateway-target>`。
 - `busy=true`：表示 target-wide 阻塞；`status=active` 且 `busy=false` 表示有 session 在跑，但其它 session 仍可使用。

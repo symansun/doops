@@ -341,15 +341,16 @@ doops -session upgrade_20260511 upgrade \
 - 发布通过 `doops ask --apply` 的明确自然语言任务进入 Gateway。任务必须给出
   target、服务范围、镜像版本、原因和验收条件；`--credential <resource-name>` 只传递
   metadata-only 引用。Gateway 将引用绑定用户、target 和 session，并在精确 workload、
-  image 或 Helm scope 获授权后物化；公共 Agent 不接收凭据 payload。
+  image 或 Helm scope 获授权后物化。公开 prompt、doagent 上下文和 metadata binding
+  不接收凭据 payload；Gateway 仅通过内部物化调用向目标 Agent 短暂传递 payload。
 - `/v1/targets` 中 `busy=true` 只表示 target-wide 阻塞；普通 session 运行显示为 `status=active`、`busy=false`，并在 `resources` 中标出锁住的资源。
 - gateway 还维护全局/用户级并发闸门；默认全局 64 个并发操作、单用户 8 个并发操作。
 - gateway 会主动对 agent WebSocket 发 ping，agent pong 后刷新租约和 SQLite `last_seen`。
 - agent 上下线状态写入 SQLite，在线目标由内存连接表提供，断线时立即标记 offline。
 - agent 重连替换旧连接时，旧连接的关闭不会把新连接错误标记为 offline。
-- CICD prompt admission 后发生隧道断连时，Agent 继续收集并原子保存唯一
-  `CICDReport`；Gateway 只通过内部 `doops_cicd_result` 查询恢复结果，禁止重放
-  mutation。恢复超时必须报告真实错误。
+- `ask --apply` 发生客户端或隧道断连时，当前等待路径取消并保留真实审计状态。系统没有
+  CICDReport 恢复或 mutation 重放协议；实际状态不确定时必须返回 outcome unknown，并由
+  操作者核查目标资源。
 - 审计记录包含 user、token、target、action、session、命令摘要、状态、错误和输出尾部；输出尾部使用有界缓冲，默认只保留 8 KiB 尾部摘要。
 - gateway 只转发操作流量和 Git HTTP 流量，不保存仓库快照。大文件、可恢复续传、跨用户长期共享 artifact 建议新增独立 artifact store，不把 gateway 扩展成对象存储。
 

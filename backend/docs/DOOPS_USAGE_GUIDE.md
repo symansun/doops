@@ -8,17 +8,27 @@ This guide holds command-level usage details. The skill file is only the entry p
 | :--- | :--- | :--- |
 | List configured targets | `doops list` | Local config only; not live gateway state. |
 | List live gateway agents | `doops targets --target <gateway-target>` | First check for gateway troubleshooting. |
+| Add a Gateway target | `doops add --name <n> --gateway <url> --cluster <c> --instance <i>` | Stores routing only; never stores a target token. |
 | Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Best for known checks and deploy scripts. |
 | Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | Agent-managed task with status polling; required when the command outlives a normal remote shell call. |
 | Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
+| Run an authorized release | `doops -session <s> ask --target <t> --apply --credential <name> --msg '<facts>'` | Canonical business workload CI/CD entry. |
 | Push a local directory | `doops -session <s> push --target <t> --src <dir>` | Syncs into `/root/ws/<session>`. |
 | Pull a remote workspace | `doops -session <s> pull --target <t> --dest <dir>` | Use for large files and binary assets. |
 | Read small text | `doops -session <s> read --target <t> --path <file>` | Small text only. |
 | Write small text | `doops -session <s> write --target <t> --path <file> --file <local>` | Also supports `--content` and stdin. |
+| Read system information | `doops -session <s> info --target <t>` | CPU, memory and disk metadata. |
+| Use structured Kubernetes operations | `doops -session <s> k8s --target <t> ...` | Restricted observe/set-image interface. |
 | Clean workspace | `doops -session <s> clean --target <t>` | Cleans `/root/ws/<session>`. |
+| Check an image deployment | `doops check ...` | Compares configured service image with build metadata. |
+| Preview Agent upgrade | `doops -session <s> upgrade ... --dry-run` | Never replaces the current Agent. |
 | Cache token | `doops login ...` | Gateway login can exchange username/password for user token. |
 | List target credentials | `doops credential list --target <t>` | Uses the cached gateway login and returns only metadata granted to that user on the selected cluster/instance. |
+| Manage credential lifecycle | `doops credential <create|put|grant|verify|promote|grant-revoke|revoke>` | See `CREDENTIAL_RESOURCES.md`. |
 | Issue token as admin | `doops admin token create ...` | Requires a gateway token with `admin` permission. |
+| Inspect/cancel active operations | `doops admin operations <list|cancel> ...` | Gateway administration. |
+| Manage scheduled issue jobs | `doops admin jobs <list|add|run|enable|disable|rm|issues> ...` | See `DOOPS_SCHEDULED_ISSUES.md`. |
+| Force-release a target lock | `doops unlock --target <t>` | Admin recovery only; inspect operations first. |
 | Remove cached token | `doops logout --target <t>` | Removes local token cache. |
 
 ## Basic Checks
@@ -97,6 +107,31 @@ doops -session ops ask --target jm --msg '只读检查 Kubernetes 节点状态�
 
 Use `ask` for diagnostics that require exploration. The target must have doagent/model configuration available.
 
+## CI/CD And Apply
+
+普通业务 workload 的标准发布入口是 `doops ask --apply`。完整职责边界、执行顺序、
+凭据预物化、验收和自托管组件例外见
+[`AGENT_NATIVE_CICD.md`](AGENT_NATIVE_CICD.md)。
+
+```bash
+doops -session release-<commit> ask \
+  --target <configured-target> \
+  --apply \
+  --credential <resource-name> \
+  --msg '在 <target> 的 namespace <namespace> 发布 deployment/<workload>，镜像 <repository>@sha256:<digest>；允许使用 deploy/helm/<name>/；原因：<reason>；验收：Secret 类型/key、rollout、实际镜像、Service/Endpoint、健康检查和关键功能路径通过。'
+```
+
+必须明确提供 target、服务范围、不可变镜像 digest、变更原因和验收条件。需要 Helm 时还要
+明确资产目录。`--credential` 可重复，但只传 resource name，不能内联 payload。
+
+CNB CI 负责测试、构建和发布制品；Gateway 负责鉴权、审计、并发控制和凭据预物化；
+目标 Agent/doagent 在目标运行环境执行业务 mutation。当前没有 EnvironmentRegistry、
+`cicd run`、workflow 环境推断、CICDReport 或 `doops_cicd_result`。
+
+普通前台 `exec` 可以执行操作者明确给出的 Helm 命令，但不替代标准发布编排，也不能使用
+managed credential references。`doops-agent` 自身升级必须由另一个隔离 Agent target 或
+真实存在的外部 CI/GitOps controller 执行。
+
 ## Push
 
 ```bash
@@ -155,7 +190,10 @@ the user's grants.
 
 ## Credential Resources
 
-Install the released CLI at the standard path and verify its immutable build metadata:
+完整凭据模型、payload schema、权限矩阵、验证、轮换、吊销、bundle、审计和发布引用见
+[`CREDENTIAL_RESOURCES.md`](CREDENTIAL_RESOURCES.md)。
+
+安装正式 CLI 并验证不可变构建信息：
 
 ```bash
 bash scripts/install.sh --version <release-tag> --project "$PWD"
@@ -166,8 +204,8 @@ The installer downloads a checksummed CNB Release Asset into `~/.local/bin/doops
 and writes a receipt to `~/.local/share/doops/install.txt`. Skill directories contain
 instructions and docs only; they are not CLI executable locations.
 
-One `doops login` applies to every configured target on the same Gateway. Credential
-queries are still target-bound:
+同一个 Gateway 只登录一次，但查询和使用仍按用户及 configured target 的
+`cluster/instance` 隔离：
 
 ```bash
 doops login --target gw-edu-coder --username alice
@@ -177,21 +215,18 @@ doops credential list --target gw-edu-coder
 doops credential list --target gw-edu-coder --view managed
 ```
 
-The default `target` view returns only active credentials with an active grant for the
-current user and the selected target's exact `cluster/instance`. The `managed` view
-returns personal credentials owned by the current user; platform administrators can
-see all managed resources. Neither view returns payload values.
+默认 `target` 视图只返回当前用户在所选 target 上获得 active grant 的 active resource；
+`managed` 视图返回本人拥有的 personal resource，platform admin 可以管理平台资源。
+两个视图都不返回 payload。
 
-Payloads are accepted from stdin only and encrypted by Gateway persistence:
+完整 CLI 生命周期：
 
 ```bash
+# 1. 写入 staged version
 printf '%s' '{"server":"registry.example.com","username":"deploy","password":"..."}' |
   doops credential put --target gw-edu-coder --id <credential-id>
-```
 
-Grant a resource to the currently logged-in user by omitting `--grantee-id`:
-
-```bash
+# 2. 创建精确 grant
 doops credential grant --target gw-edu-coder \
   --id <credential-id> \
   --cluster doops-edu --instance edu-coder \
@@ -199,11 +234,31 @@ doops credential grant --target gw-edu-coder \
   --workload-kind Deployment --workload-name oilan \
   --image-repository registry.example.com/oilan \
   --image-digest sha256:<manifest-digest>
+
+# 3. 在相同 scope 验证 staged version
+doops -session credential-verify-<version> credential verify \
+  --target gw-edu-coder \
+  --id <credential-id> --version-id <version-id> \
+  --cluster doops-edu --instance edu-coder \
+  --namespace apps --use imagePull \
+  --workload-kind Deployment --workload-name oilan \
+  --image-repository registry.example.com/oilan \
+  --image-digest sha256:<manifest-digest>
+
+# 4. 激活已经覆盖全部 active grants 的版本
+doops credential promote \
+  --target gw-edu-coder \
+  --id <credential-id> --version-id <version-id>
+
+# 5. 吊销单条 grant 或整个 resource
+doops credential grant-revoke \
+  --target gw-edu-coder --id <credential-id> --grant-id <grant-id>
+doops credential revoke --target gw-edu-coder --id <credential-id>
 ```
 
-Explicit `--grantee-id` remains available to owners and platform administrators when
-granting another Gateway user. Grant scopes are exact; DoOps does not infer target,
-namespace, workload, image, or Helm scope from credential names.
+payload 只能从 stdin 输入并由 Gateway 加密持久化。验证输出只允许状态、
+resourceVersion、digest 和稳定错误类别。Grant scope 是全字段精确匹配，不支持通配符或
+从 credential name 推断。
 
 ## Upgrade
 
@@ -220,9 +275,9 @@ doops -session upgrade_20260519 upgrade \
 
 When `--target` is given, its configured `cluster/instance` is the default
 preview scope. Direct Agent self-upgrade is prohibited: `upgrade` requires
-`--dry-run`. Apply the reviewed image change from an external release runner,
-CI/CD pipeline, or GitOps controller so the old Agent remains available until
-the replacement has registered and produced a heartbeat.
+`--dry-run`. Apply the reviewed doops-agent image change from another isolated
+Agent target or an external CI/GitOps controller so the old Agent remains
+available until the replacement has registered and produced a heartbeat.
 
 ## BuildKit Example
 

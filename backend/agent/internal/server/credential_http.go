@@ -321,18 +321,12 @@ func (h *GatewayHub) handleCredentialPromote(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "credential_verifications_unavailable", http.StatusInternalServerError)
 		return
 	}
-	verificationCountByGrantUse := make(map[string]int, len(verifications))
-	for _, verification := range verifications {
-		verificationCountByGrantUse[verification.GrantID+"\x00"+string(verification.Use)]++
+	required, verified := activeCredentialVerifications(grants, verifications)
+	if !verified {
+		_ = h.finishCredentialAudit(auditID, "error", "credential_verification_required")
+		http.Error(w, "credential_verification_required", http.StatusConflict)
+		return
 	}
-	for _, grant := range grants {
-		if verificationCountByGrantUse[grant.ID+"\x00"+string(grant.Scope.Use)] == 0 {
-			_ = h.finishCredentialAudit(auditID, "error", "credential_verification_required")
-			http.Error(w, "credential_verification_required", http.StatusConflict)
-			return
-		}
-	}
-	required := verifications
 	previous, previousErr := h.store.CredentialVersionByState(resource.ID, CredentialVersionActive)
 	if previousErr != nil && !errors.Is(previousErr, ErrCredentialVersionNotFound) {
 		_ = h.finishCredentialAudit(auditID, "error", credentialErrorCategory(previousErr))
@@ -382,6 +376,30 @@ func (h *GatewayHub) handleCredentialPromote(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSONHTTP(w, map[string]any{"credential_id": resource.ID, "version_id": body.VersionID, "promoted": true})
+}
+
+func activeCredentialVerifications(
+	grants []CredentialGrant,
+	verifications []CredentialVerification,
+) ([]CredentialVerification, bool) {
+	if len(grants) == 0 {
+		return nil, false
+	}
+	active := make(map[string]struct{}, len(grants))
+	for _, grant := range grants {
+		active[grant.ID+"\x00"+string(grant.Scope.Use)] = struct{}{}
+	}
+	required := make([]CredentialVerification, 0, len(grants))
+	verified := make(map[string]struct{}, len(grants))
+	for _, verification := range verifications {
+		key := verification.GrantID + "\x00" + string(verification.Use)
+		if _, ok := active[key]; !ok {
+			continue
+		}
+		required = append(required, verification)
+		verified[key] = struct{}{}
+	}
+	return required, len(verified) == len(active)
 }
 
 func (h *GatewayHub) handleCredentialRevoke(w http.ResponseWriter, r *http.Request, auth TokenAuth, resource CredentialResource) {

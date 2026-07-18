@@ -41,7 +41,7 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/credentials/cred_123/grants":
 			_, _ = w.Write([]byte(`{"id":"credgrant_789","credential_id":"cred_123","state":"revoked","payload":"` + payloadCanary + `"}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/credentials/cred_123/verify":
-			_, _ = w.Write([]byte(`{"credential_id":"cred_123","version_id":"credver_456","verified":true,"payload":"` + payloadCanary + `"}`))
+			_, _ = w.Write([]byte(`{"status":"verified","evidence":[{"status":"verified","resourceVersion":"42","digest":"sha256:manifest","payload":"` + payloadCanary + `"}],"payload":"` + payloadCanary + `"}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/credentials/cred_123/promote":
 			_, _ = w.Write([]byte(`{"credential_id":"cred_123","version_id":"credver_456","promoted":true,"payload":"` + payloadCanary + `"}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/credentials/cred_123/revoke":
@@ -104,8 +104,14 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		"--namespace", "apps", "--use", "imagePull",
 		"--workload-kind", "Deployment", "--workload-name", "api",
 		"--image-repository", "team/api", "--image-digest", "sha256:manifest")
-	run("", "credential", "grant-revoke", "--target", "gw-edu-release-runner", "--id", "cred_123", "--grant-id", "credgrant_789")
+	run("", "-session", "credential-verify", "credential", "verify",
+		"--target", "gw-edu-release-runner", "--id", "cred_123", "--version-id", "credver_456",
+		"--cluster", "doops-edu", "--instance", "edu-coder",
+		"--namespace", "apps", "--use", "imagePull",
+		"--workload-kind", "Deployment", "--workload-name", "api",
+		"--image-repository", "team/api", "--image-digest", "sha256:manifest")
 	run("", "credential", "promote", "--target", "gw-edu-release-runner", "--id", "cred_123", "--version-id", "credver_456")
+	run("", "credential", "grant-revoke", "--target", "gw-edu-release-runner", "--id", "cred_123", "--grant-id", "credgrant_789")
 	run("", "credential", "revoke", "--target", "gw-edu-release-runner", "--id", "cred_123")
 	run(`{"name":"release","scope":"platform","items":[{"credential_id":"cred_123","use":"imagePull","namespace":"apps","workload":{"Kind":"Deployment","Name":"api"},"registry_repository":"team/api","registry_reference":"sha256:manifest"}]}`,
 		"credential", "bundle-create", "--target", "gw-edu-release-runner")
@@ -123,8 +129,8 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		t.Fatalf("credential commands must reject token argv flags, output: %s", output)
 	}
 
-	if len(requests) != 9 {
-		t.Fatalf("gateway request count mismatch: got %d want 9", len(requests))
+	if len(requests) != 10 {
+		t.Fatalf("gateway request count mismatch: got %d want 10", len(requests))
 	}
 	for _, request := range requests {
 		if request.Auth != "Bearer cli-token" {
@@ -160,21 +166,34 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 			"image_digest":     "sha256:manifest",
 		},
 	})
-	assertCredentialCLIJSON(t, requests[4], http.MethodDelete, "/v1/credentials/cred_123/grants", map[string]any{
-		"grant_id": "credgrant_789",
+	assertCredentialCLIJSON(t, requests[4], http.MethodPost, "/v1/credentials/cred_123/verify", map[string]any{
+		"version_id": "credver_456",
+		"session_id": "credential-verify",
+		"scope": map[string]any{
+			"cluster":          "doops-edu",
+			"instance":         "edu-coder",
+			"namespace":        "apps",
+			"use":              "imagePull",
+			"workload":         map[string]any{"kind": "Deployment", "name": "api"},
+			"image_repository": "team/api",
+			"image_digest":     "sha256:manifest",
+		},
 	})
 	assertCredentialCLIJSON(t, requests[5], http.MethodPost, "/v1/credentials/cred_123/promote", map[string]any{
 		"version_id": "credver_456",
 	})
-	if requests[6].Method != http.MethodPost || requests[6].Path != "/v1/credentials/cred_123/revoke" || len(requests[6].Body) != 0 {
-		t.Fatalf("credential revoke request mismatch: %#v", requests[6])
+	assertCredentialCLIJSON(t, requests[6], http.MethodDelete, "/v1/credentials/cred_123/grants", map[string]any{
+		"grant_id": "credgrant_789",
+	})
+	if requests[7].Method != http.MethodPost || requests[7].Path != "/v1/credentials/cred_123/revoke" || len(requests[7].Body) != 0 {
+		t.Fatalf("credential revoke request mismatch: %#v", requests[7])
 	}
-	if requests[7].Method != http.MethodPost || requests[7].Path != "/v1/credential-bundles" {
-		t.Fatalf("credential bundle create request mismatch: %#v", requests[7])
+	if requests[8].Method != http.MethodPost || requests[8].Path != "/v1/credential-bundles" {
+		t.Fatalf("credential bundle create request mismatch: %#v", requests[8])
 	}
-	if requests[8].Method != http.MethodGet || requests[8].Path != "/v1/credential-bundles" ||
-		requests[8].Query.Get("name") != "release" {
-		t.Fatalf("credential bundle get request mismatch: %#v", requests[8])
+	if requests[9].Method != http.MethodGet || requests[9].Path != "/v1/credential-bundles" ||
+		requests[9].Query.Get("name") != "release" {
+		t.Fatalf("credential bundle get request mismatch: %#v", requests[9])
 	}
 }
 
@@ -188,17 +207,18 @@ func TestCredentialCLIHelp(t *testing.T) {
 	var output bytes.Buffer
 	for _, args := range [][]string{nil, {"help"}, {"--help"}, {"-h"}} {
 		output.Reset()
-		if err := runCredentialCommand(args, nil, nil, strings.NewReader(""), &output); err != nil {
+		if err := runCredentialCommand(args, "", nil, nil, strings.NewReader(""), &output); err != nil {
 			t.Fatalf("credential help %v: %v", args, err)
 		}
 		if !strings.Contains(output.String(), "doops credential list") ||
-			!strings.Contains(output.String(), "doops credential create") {
+			!strings.Contains(output.String(), "doops credential create") ||
+			!strings.Contains(output.String(), "doops credential verify") {
 			t.Fatalf("credential help %v missing commands: %s", args, output.String())
 		}
 	}
 	output.Reset()
 	if err := runCredentialCommand(
-		[]string{"create", "-h"}, nil, nil, strings.NewReader(""), &output,
+		[]string{"create", "-h"}, "", nil, nil, strings.NewReader(""), &output,
 	); err != nil {
 		t.Fatalf("credential create help: %v", err)
 	}

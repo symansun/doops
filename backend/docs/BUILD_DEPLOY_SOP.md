@@ -1,5 +1,8 @@
 # Doops 构建与部署强制规范 (SOP)
 
+普通业务 workload 的权威发布流程见 `docs/AGENT_NATIVE_CICD.md`；受管凭据的创建、授权、
+验证、轮换和部署引用见 `docs/CREDENTIAL_RESOURCES.md`。
+
 > **核心纪律：绝对禁止在本地开发机或业务宿主机直接执行容器镜像构建。**
 >
 > 本地开发机的架构（如 Apple Silicon ARM64）、网络环境（代理/污染）以及未清理的缓存，极易导致打出的 OCI 镜像体积过大、架构错配或携带不安全的凭据。
@@ -75,7 +78,7 @@ doops -session release-<commit> ask \
   --msg '在 <target> 发布 <service-scope>，镜像 <repository>@sha256:<digest>；仅使用 deploy/helm/<name>/ 运行资产；原因：<reason>；验收：<rollout、实际镜像、健康检查和功能路径>。'
 ```
 
-`--apply` 是本次 mutation 的显式授权，不是兼容开关。任务返回的文本声明不能作为成功证据；验收必须来自本轮实际命令、Kubernetes 状态、健康检查和功能测试。需要凭据时只传 `--credential <resource-name>` 元数据引用，Gateway 必须按当前用户、target、session 和精确资源 scope 授权，任务和日志不得接收凭据 payload。
+`--apply` 是本次 mutation 的显式授权，不是兼容开关。任务返回的文本声明不能作为成功证据；验收必须来自本轮实际命令、Kubernetes 状态、健康检查和功能测试。需要凭据时只传 `--credential <resource-name>` 元数据引用，Gateway 必须按当前用户、target、session 和精确资源 scope 授权。公开 prompt、doagent 上下文、CLI 输出和日志不得接收凭据 payload；Gateway 仅通过内部凭据物化调用向目标 Agent 短暂传递 payload。
 
 **DoOps Agent 执行顺序：**
 1. 核对任务中的 target、服务范围、镜像 digest、Helm 资产、原因和验收条件完整。

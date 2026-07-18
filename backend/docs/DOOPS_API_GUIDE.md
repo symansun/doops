@@ -424,7 +424,8 @@ doops -session <session> pull --target <target> --dest <dir>
 服务范围、镜像版本、变更原因和验收条件，Gateway 不得从 prompt、路径或历史状态猜测
 这些字段。需要凭据时，调用方显式提供一个或多个 metadata-only credential resource
 name；Gateway 将引用绑定当前用户、target 和 session，Agent 返回精确 workload/image/Helm
-scope 后才授权和物化。凭据 payload 不进入 prompt、Agent、日志或审计记录。
+scope 后才授权和物化。凭据 payload 不进入公开 prompt、doagent 上下文、CLI 输出、日志或
+审计记录；Gateway 仅通过内部凭据物化调用向目标 Agent 短暂传递 payload。
 
 生产发布不能由被升级的目标 Agent 自升级。调用方必须以同一 session 的真实健康检查和
 关键业务验收作为完成证据。

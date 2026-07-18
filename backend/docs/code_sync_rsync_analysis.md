@@ -134,7 +134,7 @@ doops -session myproject-build exec --target gw-example --cmd \
 | 项目 | 路径 | 说明 |
 |:---|:---|:---|
 | 工作区根目录 | `/root/ws/` | Agent 管理的 session 工作区根目录 |
-| 项目工作区 | `/root/ws/<session>/` | `push/pull/exec/cicd` 的唯一工作区 |
+| 项目工作区 | `/root/ws/<session>/` | `push/pull/exec/ask` 的唯一工作区 |
 | 构建日志 | `/tmp/doops-build-{project}.log` | 构建过程日志 |
 
 ```bash
