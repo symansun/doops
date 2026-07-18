@@ -28,6 +28,20 @@ func TestApplyRejectsRawKubectlMutationEvidence(t *testing.T) {
 	}
 }
 
+func TestApplyRejectsAllShellMutationToolAliases(t *testing.T) {
+	for _, tool := range []string{"shell", "doops_shell", "mcp_doops_shell", "Bash", "bash"} {
+		t.Run(tool, func(t *testing.T) {
+			trace := doagentToolTrace{
+				ToolName:  tool,
+				inputJSON: json.RawMessage(`{"command":"kubectl rollout restart deployment/app"}`),
+			}
+			if !trace.usesRawClusterMutation() {
+				t.Fatalf("raw mutation was not detected for %s", tool)
+			}
+		})
+	}
+}
+
 func TestApplyRejectsRemovedStructuredK8sMutationEvidence(t *testing.T) {
 	collector := newDoagentToolTraceCollector(false)
 	bindApplyCollector(collector, "apply-test")

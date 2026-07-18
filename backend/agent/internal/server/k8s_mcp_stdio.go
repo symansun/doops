@@ -40,6 +40,10 @@ type k8sMCPToolCall struct {
 // RunK8SMCPStdio exposes the existing structured Kubernetes executor to
 // doagent without exposing shell or the Agent's network control plane.
 func RunK8SMCPStdio(input io.Reader, output io.Writer) error {
+	return RunK8SMCPStdioContext(context.Background(), input, output)
+}
+
+func RunK8SMCPStdioContext(ctx context.Context, input io.Reader, output io.Writer) error {
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
 	encoder := json.NewEncoder(output)
@@ -79,7 +83,7 @@ func RunK8SMCPStdio(input io.Reader, output io.Writer) error {
 				},
 			}
 		case "tools/call":
-			response = callK8SMCPTool(request)
+			response = callK8SMCPTool(ctx, request)
 		default:
 			response = mcpErrorResponse(request.ID, -32601, "method not found")
 		}
@@ -90,7 +94,7 @@ func RunK8SMCPStdio(input io.Reader, output io.Writer) error {
 	return scanner.Err()
 }
 
-func callK8SMCPTool(request k8sMCPRequest) api.JSONRPCResponse {
+func callK8SMCPTool(ctx context.Context, request k8sMCPRequest) api.JSONRPCResponse {
 	var call k8sMCPToolCall
 	if err := json.Unmarshal(request.Params, &call); err != nil {
 		return mcpErrorResponse(request.ID, -32602, "invalid tools/call params")
@@ -120,9 +124,9 @@ func callK8SMCPTool(request k8sMCPRequest) api.JSONRPCResponse {
 	var result string
 	var err error
 	if call.Name == helmMCPToolName {
-		result, err = handleHelmTool(context.Background(), call.Arguments, push)
+		result, err = handleHelmTool(ctx, call.Arguments, push)
 	} else {
-		result, err = handleK8STool(context.Background(), call.Arguments, push)
+		result, err = handleK8STool(ctx, call.Arguments, push)
 	}
 	if err != nil {
 		return mcpErrorResponse(request.ID, -32000, err.Error())

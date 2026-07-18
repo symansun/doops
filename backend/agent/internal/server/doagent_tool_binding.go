@@ -475,7 +475,7 @@ func stringSliceContains(values []string, expected string) bool {
 func (trace doagentToolTrace) usesRawClusterMutation() bool {
 	tool := modelVisibleDoagentToolName(trace.ToolName)
 	switch tool {
-	case "shell", "doops_shell", "Bash":
+	case "shell", "doops_shell", "mcp_doops_shell", "Bash", "bash":
 		var input struct {
 			Command string `json:"command"`
 		}
