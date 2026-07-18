@@ -119,13 +119,16 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 		if err != nil {
 			return fmt.Errorf("encode tool call %q input: %w", toolCallID, err)
 		}
+		if !validDoagentToolInput(encoded) {
+			return fmt.Errorf("tool call %q input must be a non-empty object", toolCallID)
+		}
 		if len(trace.inputJSON) != 0 && !bytes.Equal(trace.inputJSON, encoded) {
 			return fmt.Errorf("conflicting duplicate toolCallId %q input", toolCallID)
 		}
 		trace.inputJSON = encoded
 	}
 	if status, _ := update["status"].(string); strings.TrimSpace(status) != "" {
-		if trace.Status == "completed" && status != "completed" {
+		if doagentTerminalToolStatus(trace.Status) && status != trace.Status {
 			return fmt.Errorf("conflicting duplicate toolCallId %q status", toolCallID)
 		}
 		trace.Status = status
@@ -137,6 +140,19 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 		encoded, err := stableDoagentJSON(result)
 		if err != nil {
 			return fmt.Errorf("encode tool call %q result: %w", toolCallID, err)
+		}
+		if len(trace.resultJSON) != 0 && !bytes.Equal(trace.resultJSON, encoded) {
+			return fmt.Errorf("conflicting duplicate toolCallId %q result", toolCallID)
+		}
+		trace.resultJSON = encoded
+	} else if content, ok := update["content"]; ok {
+		publicResult, err := doagentPublicToolResult(content)
+		if err != nil {
+			return fmt.Errorf("read tool call %q public result: %w", toolCallID, err)
+		}
+		encoded, err := stableDoagentJSON(publicResult)
+		if err != nil {
+			return fmt.Errorf("encode tool call %q public result: %w", toolCallID, err)
 		}
 		if len(trace.resultJSON) != 0 && !bytes.Equal(trace.resultJSON, encoded) {
 			return fmt.Errorf("conflicting duplicate toolCallId %q result", toolCallID)
@@ -202,6 +218,47 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 	}
 	c.calls[toolCallID] = trace
 	return nil
+}
+
+func validDoagentToolInput(encoded json.RawMessage) bool {
+	var input map[string]interface{}
+	return json.Unmarshal(encoded, &input) == nil && len(input) != 0
+}
+
+func doagentTerminalToolStatus(status string) bool {
+	switch status {
+	case "completed", "failed":
+		return true
+	default:
+		return false
+	}
+}
+
+func doagentPublicToolResult(content interface{}) (map[string]interface{}, error) {
+	blocks, ok := content.([]interface{})
+	if !ok || len(blocks) == 0 {
+		return nil, fmt.Errorf("content must be a non-empty array")
+	}
+	hasText := false
+	for _, item := range blocks {
+		block, ok := item.(map[string]interface{})
+		if !ok || block["type"] != "content" {
+			return nil, fmt.Errorf("content block is invalid")
+		}
+		body, ok := block["content"].(map[string]interface{})
+		if !ok || body["type"] != "text" {
+			return nil, fmt.Errorf("content body is invalid")
+		}
+		text, ok := body["text"].(string)
+		if !ok || strings.TrimSpace(text) == "" {
+			return nil, fmt.Errorf("content text is empty")
+		}
+		hasText = true
+	}
+	if !hasText {
+		return nil, fmt.Errorf("content text is missing")
+	}
+	return map[string]interface{}{"content": content}, nil
 }
 
 func mergeDoagentToolAttestationUpdate(update map[string]interface{}, result interface{}) error {
@@ -333,7 +390,7 @@ func (trace doagentToolTrace) ineligibilityReason() string {
 	case len(trace.inputJSON) == 0:
 		return "input_missing"
 	case len(trace.resultJSON) == 0:
-		return "raw_output_missing"
+		return "result_missing"
 	case !validDoagentObservedAt(trace.ObservedAt):
 		return "observed_at_invalid"
 	case trace.usesRawKubectlMutation():
@@ -347,8 +404,8 @@ func (trace doagentToolTrace) ineligibilityReason() string {
 }
 
 func (trace doagentToolTrace) usesRawKubectlMutation() bool {
-	tool := modelVisibleDoagentToolName(trace.ToolName)
-	if tool != "shell" && tool != "doops_shell" {
+	tool := strings.ToLower(strings.TrimSpace(modelVisibleDoagentToolName(trace.ToolName)))
+	if tool != "bash" && tool != "shell" && tool != "doops_shell" && tool != "mcp_doops_shell" {
 		return false
 	}
 	var input struct {
