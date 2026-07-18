@@ -37,11 +37,11 @@ conflicts: []
 
 ## 目标
 
-将输入 workflow 声明的 LabelU release 协调到目标环境，并返回可复查的运行状态证据。
+将调用方明确声明的 LabelU release 协调到指定 target，并返回可复查的运行状态证据。
 
 ## 输入边界
 
-- 只接受 workflow 中已经声明的 target、artifact、desired state 和 acceptance。
+- 只接受当前任务已经声明的 target、artifact digest、desired state 和 acceptance。
 - 不根据项目名、域名、目录或历史环境补全目标。
 - 未声明的凭据、环境和 mutation 授权都视为阻塞事实。
 

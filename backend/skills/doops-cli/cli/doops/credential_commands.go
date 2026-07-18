@@ -63,7 +63,19 @@ type credentialBundle struct {
 	State string `json:"state"`
 }
 
-func runCredentialCommand(args []string, servers []Server, configErr error, stdin io.Reader, stdout io.Writer) error {
+type credentialVerificationEvidence struct {
+	Status          string `json:"status"`
+	ResourceVersion string `json:"resourceVersion"`
+	Digest          string `json:"digest"`
+	ErrorCategory   string `json:"errorCategory"`
+}
+
+type credentialVerifyResponse struct {
+	Status   string                           `json:"status"`
+	Evidence []credentialVerificationEvidence `json:"evidence"`
+}
+
+func runCredentialCommand(args []string, sessionName string, servers []Server, configErr error, stdin io.Reader, stdout io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		_, err := fmt.Fprint(stdout, `Usage:
   doops credential create        创建凭据元数据
@@ -71,6 +83,7 @@ func runCredentialCommand(args []string, servers []Server, configErr error, stdi
   doops credential put           从 stdin 写入新的凭据版本
   doops credential grant         授权凭据给当前用户或指定用户的精确 target scope
   doops credential grant-revoke  吊销一条凭据授权
+  doops credential verify        在精确 target scope 验证 staged 版本
   doops credential promote       激活已验证的凭据版本
   doops credential revoke        吊销凭据资源
   doops credential bundle-create 从 stdin 创建凭据 bundle
@@ -92,6 +105,8 @@ Use "doops credential <subcommand> -h" for command flags.
 		err = runCredentialGrant(args[1:], servers, configErr, stdout)
 	case "grant-revoke":
 		err = runCredentialGrantRevoke(args[1:], servers, configErr, stdout)
+	case "verify":
+		err = runCredentialVerify(args[1:], sessionName, servers, configErr, stdout)
 	case "promote":
 		err = runCredentialPromote(args[1:], servers, configErr, stdout)
 	case "revoke":
@@ -107,6 +122,94 @@ Use "doops credential <subcommand> -h" for command flags.
 		return nil
 	}
 	return err
+}
+
+func runCredentialVerify(args []string, sessionName string, servers []Server, configErr error, stdout io.Writer) error {
+	var target, id, versionID string
+	var cluster, instance, namespace, use, workloadKind, workloadName string
+	var imageRepository, imageDigest, helmRelease, helmChart, requiredKeys string
+	flags := credentialFlagSet("credential verify", stdout)
+	flags.StringVar(&target, "target", "", "Configured gateway target")
+	flags.StringVar(&id, "id", "", "Credential ID")
+	flags.StringVar(&versionID, "version-id", "", "Staged credential version ID")
+	flags.StringVar(&cluster, "cluster", "", "Target cluster")
+	flags.StringVar(&instance, "instance", "", "Target instance")
+	flags.StringVar(&namespace, "namespace", "", "Kubernetes namespace")
+	flags.StringVar(&use, "use", "", "Credential use: imagePull, gitCheckout, helmPull, tls, or opaqueSecret")
+	flags.StringVar(&workloadKind, "workload-kind", "", "Kubernetes workload kind")
+	flags.StringVar(&workloadName, "workload-name", "", "Kubernetes workload name")
+	flags.StringVar(&imageRepository, "image-repository", "", "Authorized image repository")
+	flags.StringVar(&imageDigest, "image-digest", "", "Authorized image digest")
+	flags.StringVar(&helmRelease, "helm-release", "", "Authorized Helm release")
+	flags.StringVar(&helmChart, "helm-chart", "", "Authorized Helm chart")
+	flags.StringVar(&requiredKeys, "required-keys", "", "Comma-separated required Secret keys")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || strings.TrimSpace(sessionName) == "" ||
+		strings.TrimSpace(id) == "" || strings.TrimSpace(versionID) == "" ||
+		strings.TrimSpace(cluster) == "" || strings.TrimSpace(instance) == "" ||
+		strings.TrimSpace(namespace) == "" || strings.TrimSpace(use) == "" ||
+		strings.TrimSpace(workloadKind) == "" || strings.TrimSpace(workloadName) == "" {
+		return fmt.Errorf("-session, --id, --version-id, --cluster, --instance, --namespace, --use, --workload-kind and --workload-name are required")
+	}
+	keyList, err := parseOptionalCredentialList(requiredKeys, "--required-keys")
+	if err != nil {
+		return err
+	}
+	gateway, token, err := resolveCredentialGateway(target, servers, configErr)
+	if err != nil {
+		return err
+	}
+	endpoint, err := credentialEndpoint(id, "verify")
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(map[string]any{
+		"version_id": strings.TrimSpace(versionID),
+		"session_id": strings.TrimSpace(sessionName),
+		"scope": credentialGrantScope{
+			Cluster:   strings.TrimSpace(cluster),
+			Instance:  strings.TrimSpace(instance),
+			Namespace: strings.TrimSpace(namespace),
+			Use:       strings.TrimSpace(use),
+			Workload: credentialGrantWorkload{
+				Kind: strings.TrimSpace(workloadKind),
+				Name: strings.TrimSpace(workloadName),
+			},
+			ImageRepository: strings.TrimSpace(imageRepository),
+			ImageDigest:     strings.TrimSpace(imageDigest),
+			HelmRelease:     strings.TrimSpace(helmRelease),
+			HelmChart:       strings.TrimSpace(helmChart),
+			RequiredKeys:    keyList,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	raw, err := gatewayCredentialRequest(http.MethodPost, gateway, token, endpoint, nil, body)
+	if err != nil {
+		return err
+	}
+	var response credentialVerifyResponse
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return fmt.Errorf("decode credential verify response: %w", err)
+	}
+	if strings.TrimSpace(response.Status) == "" {
+		return fmt.Errorf("credential verify response omitted status")
+	}
+	if _, err := fmt.Fprintf(stdout, "credential_id=%s version_id=%s status=%s evidence=%d\n",
+		strings.TrimSpace(id), strings.TrimSpace(versionID), response.Status, len(response.Evidence)); err != nil {
+		return err
+	}
+	for _, evidence := range response.Evidence {
+		if _, err := fmt.Fprintf(stdout,
+			"  status=%s resource_version=%s digest=%s error_category=%s\n",
+			evidence.Status, evidence.ResourceVersion, evidence.Digest, evidence.ErrorCategory); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func runCredentialGrantRevoke(args []string, servers []Server, configErr error, stdout io.Writer) error {

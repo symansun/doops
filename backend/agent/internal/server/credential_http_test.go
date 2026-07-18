@@ -151,6 +151,66 @@ func TestCredentialHTTPGrantRequiresOwnerTargetAuthority(t *testing.T) {
 	}
 }
 
+func TestCredentialPromotionUsesOnlyActiveGrantVerifications(t *testing.T) {
+	activeGrant := CredentialGrant{
+		ID:    "credgrant_active",
+		Scope: CredentialGrantScope{Use: CredentialUseImagePull},
+	}
+	revokedGrantVerification := CredentialVerification{
+		GrantID: "credgrant_revoked",
+		Use:     CredentialUseImagePull,
+	}
+	activeGrantVerification := CredentialVerification{
+		GrantID: activeGrant.ID,
+		Use:     activeGrant.Scope.Use,
+	}
+
+	required, ok := activeCredentialVerifications(
+		[]CredentialGrant{activeGrant},
+		[]CredentialVerification{revokedGrantVerification, activeGrantVerification},
+	)
+	if !ok || len(required) != 1 || required[0].GrantID != activeGrant.ID {
+		t.Fatalf("active verification selection = %#v, %v", required, ok)
+	}
+	if required, ok := activeCredentialVerifications(nil, []CredentialVerification{revokedGrantVerification}); ok || len(required) != 0 {
+		t.Fatalf("promotion without active grants was accepted: %#v", required)
+	}
+	if required, ok := activeCredentialVerifications([]CredentialGrant{activeGrant}, nil); ok || len(required) != 0 {
+		t.Fatalf("promotion without active grant verification was accepted: %#v", required)
+	}
+}
+
+func TestCredentialVerificationErrorFinishesAudit(t *testing.T) {
+	store := openCredentialTestStore(t)
+	auditID, err := store.StartAudit(AuditEvent{
+		UserID: "user_1", CredentialID: "cred_1", Action: ActionCredentialVerify,
+		StartedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("start audit: %v", err)
+	}
+	hub := NewGatewayHub(store, GatewayHubOptions{})
+	response := httptest.NewRecorder()
+
+	hub.writeCredentialVerificationError(
+		response, auditID, "credential_verification_outcome_unknown", http.StatusBadGateway,
+	)
+
+	if response.Code != http.StatusBadGateway ||
+		strings.TrimSpace(response.Body.String()) != "credential_verification_outcome_unknown" {
+		t.Fatalf("verification error response: HTTP %d: %s", response.Code, response.Body.String())
+	}
+	events, err := store.ListAudit(10)
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	if len(events) != 1 || events[0].Status != "error" ||
+		events[0].Error != "credential_verification_outcome_unknown" ||
+		events[0].EndedAt.IsZero() {
+		t.Fatalf("verification audit was not completed: %#v", events)
+	}
+}
+
 func TestCredentialHTTPMutationFailsClosedWhenAuditCannotStart(t *testing.T) {
 	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("f", 32))
 	store := openCredentialTestStore(t)

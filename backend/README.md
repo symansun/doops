@@ -133,7 +133,7 @@ bash scripts/build-gateway.sh
 
 ## Agent 双镜像发布
 
-正式发布由版本化 DoOps CICD Workflow 触发，同一版本会产出两类镜像：
+版本化 CNB Release Workflow 负责测试、构建并发布两类镜像：
 
 ```text
 docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>
@@ -382,9 +382,18 @@ CLI 不提供直连 Agent 安装入口。只启动未注册 Gateway 的 Agent �
 
 ### 方式 D：维护者发布 `doops-agent`
 
-发布者通过 `doops ask --apply` 提交明确授权的自然语言任务。任务必须直接给出 Gateway target、服务范围、镜像版本、变更原因和验收条件；需要凭据时仅以可重复的 `--credential <resource-name>` 元数据引用声明。Gateway 绑定用户、target 和 session，按精确 workload/image/Helm scope 授权并物化，Agent 不接收凭据 payload。
+发布者通过 `doops ask --apply` 提交明确授权的自然语言任务。任务必须直接给出 Gateway
+target、服务范围、不可变镜像 digest、变更原因和验收条件；需要凭据时仅以可重复的
+`--credential <resource-name>` 元数据引用声明。Gateway 绑定用户、target 和 session，
+按精确 workload/image/Helm scope 授权并在目标 doops-agent 的内部控制面物化；公开
+prompt、doagent 上下文和 metadata binding 不接收凭据 payload。完整流程见
+[docs/AGENT_NATIVE_CICD.md](docs/AGENT_NATIVE_CICD.md) 和
+[docs/CREDENTIAL_RESOURCES.md](docs/CREDENTIAL_RESOURCES.md)。
 
-`doops upgrade` 仅用于 dry-run 预览，非 dry-run 请求会在分发前被拒绝。正式发布由目标 Agent 之外的 CI/CD 或 GitOps Workflow 执行。
+`doops upgrade` 仅用于 doops-agent 自身升级的 dry-run 预览，非 dry-run 请求会在分发前
+被拒绝。普通业务 workload 由 target 指向的 Agent/doagent 执行发布；承载执行者自身的
+doops-agent workload 必须由另一个隔离 Agent target 或真实存在的外部 CI/GitOps
+controller 执行。
 
 ## 常用命令
 
@@ -412,6 +421,7 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 | `doops read` | 查看远端小文本文件，不用于下载大文件或二进制 |
 | `doops write` | 写入远端小文本文件，支持 `--content`、`--file` 和 stdin |
 | `doops clean` | 清理远端工作区 |
+| `doops credential` | 创建、查询、授权、验证、轮换和吊销受管凭据 |
 | `doops upgrade` | 预演 agent 镜像升级；不执行自身替换 |
 
 ### Agent 升级预演
