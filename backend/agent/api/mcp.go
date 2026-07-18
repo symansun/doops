@@ -70,6 +70,7 @@ type K8SParams struct {
 	Namespace string `json:"namespace,omitempty"`
 	Container string `json:"container,omitempty"`
 	Image     string `json:"image,omitempty"`
+	Revision  string `json:"revision,omitempty"`
 	Output    string `json:"output,omitempty"`
 	Timeout   string `json:"timeout,omitempty"`
 	Tail      int    `json:"tail,omitempty"`

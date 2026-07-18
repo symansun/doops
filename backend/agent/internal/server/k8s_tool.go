@@ -21,6 +21,7 @@ var (
 	k8sContainerPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$`)
 	k8sTimeoutPattern   = regexp.MustCompile(`^[1-9][0-9]*(s|m|h)$`)
 	k8sDigestImage      = regexp.MustCompile(`^[A-Za-z0-9._/:@-]+@sha256:[a-f0-9]{64}$`)
+	k8sRevisionPattern  = regexp.MustCompile(`^[a-f0-9]{40}$`)
 )
 
 type k8sCommand struct {
@@ -58,6 +59,7 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 	params.Namespace = strings.TrimSpace(params.Namespace)
 	params.Container = strings.TrimSpace(params.Container)
 	params.Image = strings.TrimSpace(params.Image)
+	params.Revision = strings.TrimSpace(params.Revision)
 	params.Output = strings.TrimSpace(params.Output)
 	params.Timeout = strings.TrimSpace(params.Timeout)
 
@@ -202,7 +204,29 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 		if !k8sDigestImage.MatchString(params.Image) {
 			return nil, fmt.Errorf("set-image requires an immutable sha256 image digest")
 		}
-		setImage := namespace([]string{"set", "image", params.Resource, params.Container + "=" + params.Image})
+		if params.Revision != "" && !k8sRevisionPattern.MatchString(params.Revision) {
+			return nil, fmt.Errorf("revision must be a full 40-character commit sha")
+		}
+		template := map[string]interface{}{
+			"spec": map[string]interface{}{
+				"containers": []map[string]string{{
+					"name":  params.Container,
+					"image": params.Image,
+				}},
+			},
+		}
+		if params.Revision != "" {
+			template["metadata"] = map[string]interface{}{
+				"annotations": map[string]string{"doops.sh/revision": params.Revision},
+			}
+		}
+		patch, err := json.Marshal(map[string]interface{}{
+			"spec": map[string]interface{}{"template": template},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("encode set-image patch: %w", err)
+		}
+		setImage := namespace([]string{"patch", params.Resource, "--type", "strategic", "--patch", string(patch)})
 		rollout := timeout(namespace([]string{"rollout", "status", params.Resource}))
 		return []k8sCommand{{args: setImage}, {args: rollout}}, nil
 	default:

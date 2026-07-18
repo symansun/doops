@@ -16,6 +16,7 @@ def test_retired_registry_deployment_entrypoints_are_absent():
         BACKEND / "agent" / "internal" / "server" / "environment_registry_v3.go",
         BACKEND / "skills" / "doops-cli" / "cli" / "doops" / "workflow.go",
         BACKEND / "agent" / "skills" / "doops-cicd",
+        BACKEND / "agent" / "skills" / "pipeline" / "SKILL.md",
     )
 
     assert all(not path.exists() for path in retired_paths)
@@ -38,6 +39,8 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     skill = SKILL.read_text(encoding="utf-8")
     deployment_doc = DEPLOYMENT_DOC.read_text(encoding="utf-8")
     ci_guide = CI_GUIDE.read_text(encoding="utf-8")
+    system_prompt = (BACKEND / "agent" / "skills" / "system_prompt.md").read_text(encoding="utf-8")
+    k8s_skill = (BACKEND / "agent" / "skills" / "k8s" / "SKILL.md").read_text(encoding="utf-8")
 
     assert 'cliContractVersion = "doops.sh/cli-contract/v3"' in cli
     assert 'BoolVar(&apply, "apply"' in cli
@@ -53,3 +56,8 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert ci_guide.count('--token "$DOOPS_API_KEY"') == 3
     assert "--apply" in ci_guide
     assert "dry-run" not in ci_guide
+    assert "doops_k8s" in system_prompt
+    assert "set-image" in system_prompt
+    assert "shell 中的 Kubernetes" in system_prompt
+    assert "不得用 shell 执行 kubectl mutation" in k8s_skill
+    assert "strategic merge" in k8s_skill

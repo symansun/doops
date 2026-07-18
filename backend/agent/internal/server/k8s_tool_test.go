@@ -37,6 +37,7 @@ func TestBuildK8SCommandsRejectsMutationWithoutConfirm(t *testing.T) {
 
 func TestBuildK8SCommandsRequiresImmutableImageAndRollout(t *testing.T) {
 	image := "docker.cnb.cool/l8ai/ai/doops.sh@sha256:fe2905a926e27283fdb5a5147b60b80725441d2b88a1e0cccf76616aac88df0a"
+	revision := "64e542ad01e3bfd8938463b685dc0583731f400e"
 	commands, err := buildK8SCommands(api.K8SParams{
 		SessionID: "set-image",
 		Operation: "set-image",
@@ -44,6 +45,7 @@ func TestBuildK8SCommandsRequiresImmutableImageAndRollout(t *testing.T) {
 		Namespace: "kz-ops",
 		Container: "doops-agent",
 		Image:     image,
+		Revision:  revision,
 		Timeout:   "180s",
 		Confirm:   true,
 	})
@@ -53,8 +55,11 @@ func TestBuildK8SCommandsRequiresImmutableImageAndRollout(t *testing.T) {
 	if len(commands) != 2 {
 		t.Fatalf("expected set-image and rollout status, got %#v", commands)
 	}
-	if got := strings.Join(commands[0].args, " "); !strings.Contains(got, "doops-agent="+image) {
-		t.Fatalf("immutable image missing from command: %s", got)
+	if got := strings.Join(commands[0].args, " "); !strings.Contains(got, "patch deployment/doops-release-runner --type strategic") ||
+		!strings.Contains(got, `"name":"doops-agent"`) ||
+		!strings.Contains(got, `"image":"`+image+`"`) ||
+		!strings.Contains(got, `"doops.sh/revision":"`+revision+`"`) {
+		t.Fatalf("safe strategic image patch missing from command: %s", got)
 	}
 	if got := strings.Join(commands[1].args, " "); got != "rollout status deployment/doops-release-runner --namespace kz-ops --timeout 180s" {
 		t.Fatalf("unexpected rollout command: %s", got)
@@ -70,6 +75,19 @@ func TestBuildK8SCommandsRequiresImmutableImageAndRollout(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "immutable sha256") {
 		t.Fatalf("expected mutable image rejection, got %v", err)
+	}
+
+	_, err = buildK8SCommands(api.K8SParams{
+		SessionID: "set-image",
+		Operation: "set-image",
+		Resource:  "deployment/doops-release-runner",
+		Container: "doops-agent",
+		Image:     image,
+		Revision:  "64e542a",
+		Confirm:   true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "full 40-character commit sha") {
+		t.Fatalf("expected short revision rejection, got %v", err)
 	}
 }
 

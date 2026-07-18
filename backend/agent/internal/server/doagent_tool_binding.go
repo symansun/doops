@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 )
+
+var rawKubectlMutationPattern = regexp.MustCompile(`(?i)\bkubectl\s+(apply|patch|replace|create|delete|set|scale|annotate|label|edit|rollout\s+restart)\b`)
 
 type doagentToolTrace struct {
 	ToolCallID           string
@@ -333,12 +336,28 @@ func (trace doagentToolTrace) ineligibilityReason() string {
 		return "raw_output_missing"
 	case !validDoagentObservedAt(trace.ObservedAt):
 		return "observed_at_invalid"
+	case trace.usesRawKubectlMutation():
+		return "raw_kubectl_mutation_forbidden"
 	}
 	_, err := publicDoagentToolResult(trace)
 	if err != nil {
 		return "public_result_invalid"
 	}
 	return ""
+}
+
+func (trace doagentToolTrace) usesRawKubectlMutation() bool {
+	tool := modelVisibleDoagentToolName(trace.ToolName)
+	if tool != "shell" && tool != "doops_shell" {
+		return false
+	}
+	var input struct {
+		Command string `json:"command"`
+	}
+	if json.Unmarshal(trace.inputJSON, &input) != nil {
+		return false
+	}
+	return rawKubectlMutationPattern.MatchString(strings.TrimSpace(input.Command))
 }
 
 func validDoagentObservedAt(value string) bool {
