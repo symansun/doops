@@ -88,7 +88,10 @@ doops add \\
   --name <ENVIRONMENT_TARGET> \\
   --gateway "$DOOPS_GATEWAY" \\
   --cluster <CLUSTER> \\
-  --instance <INSTANCE> \\
+  --instance <INSTANCE>
+
+doops login \\
+  --target <ENVIRONMENT_TARGET> \\
   --token "$DOOPS_API_KEY"
 
 doops -session "release-$(git rev-parse --short HEAD)" ask \\
@@ -117,7 +120,9 @@ jobs:
           doops add --name <ENVIRONMENT_TARGET> \\
             --gateway "$DOOPS_GATEWAY" \\
             --cluster <CLUSTER> \\
-            --instance <INSTANCE> \\
+            --instance <INSTANCE>
+          doops login \\
+            --target <ENVIRONMENT_TARGET> \\
             --token "$DOOPS_API_KEY"
           doops -session "release-\${GITHUB_SHA::12}" ask \\
             --target <ENVIRONMENT_TARGET> \\
@@ -137,7 +142,9 @@ jobs:
       doops add --name <ENVIRONMENT_TARGET> \\
         --gateway "$DOOPS_GATEWAY" \\
         --cluster <CLUSTER> \\
-        --instance <INSTANCE> \\
+        --instance <INSTANCE>
+      doops login \\
+        --target <ENVIRONMENT_TARGET> \\
         --token "$DOOPS_API_KEY"
       doops -session "release-$CI_COMMIT_SHORT_SHA" ask \\
         --target <ENVIRONMENT_TARGET> \\
@@ -257,7 +264,9 @@ jobs:
           3. 在流水线中调用
         </h2>
         <p className="mb-3 text-sm text-muted-foreground">
-          选择你的平台，复制下面的示例。先执行 dry-run，确认计划后再授权正式变更。
+          选择你的平台，复制下面的示例。发布前先确认不可变镜像 digest 和验收条件，再通过
+          <code className="mx-1 rounded bg-muted px-1">--apply</code>
+          明确授权本次变更。
         </p>
 
         {/* 平台切换 */}
