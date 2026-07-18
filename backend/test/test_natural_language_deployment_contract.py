@@ -103,6 +103,11 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "--apply" in cnb
     assert "--token-stdin" in cnb
     assert '--token "${DOOPS_GATEWAY_TOKEN}"' not in cnb
+    assert (
+        "https://cnb.cool/aiedulab/zhiyong/secret/-/blob/main/"
+        "zhiyong-deploy-secrets.yml"
+    ) in main_pipeline
+    assert "auto-harness-secret" not in cnb
     assert 'test "${CNB_BRANCH}" = "main"' in cnb
     assert "DOOPS_IMAGE" in cnb
     assert "@sha256:" in cnb

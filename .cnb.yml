@@ -59,7 +59,7 @@ main:
       runner:
         cpus: 2
       imports:
-        - https://cnb.cool/aiedulab/auto-harness-secret/-/blob/main/secrets.yml
+        - https://cnb.cool/aiedulab/zhiyong/secret/-/blob/main/zhiyong-deploy-secrets.yml
       docker:
         image: docker.io/library/golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191
       stages:
