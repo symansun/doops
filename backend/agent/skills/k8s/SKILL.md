@@ -17,8 +17,8 @@ conflicts: []
 ## 核心原则
 
 1. Kubernetes 读取只调用 `mcp_doops_k8s_read`；所有发布 mutation 调用
-   `mcp_doops_helm`（规范能力名 `doops_helm`）。工具必须传入系统上下文给出的当前
-   `session_id`，不得用 shell 执行 kubectl 或 Helm mutation。
+   `mcp_doops_helm`（规范能力名 `doops_helm`）。`session_id` 由运行时绑定，模型不得
+   传入 target、session 或工作区路径；不得用 shell 执行 kubectl 或 Helm mutation。
 2. 所有请求显式传 namespace；不得依赖 default namespace。
 3. mutation 必须有 `confirm=true`，镜像发布必须使用不可变 `@sha256:` digest。
 4. 发布必须使用任务明确授权的 `deploy/helm/<name>/`，通过 `mcp_doops_helm`

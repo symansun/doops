@@ -508,8 +508,8 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 				if params["permissionMode"] != "restricted" {
 					t.Fatalf("doagent sessions must fail closed outside apply: %#v", params)
 				}
-				if !strings.Contains(fmt.Sprint(params["systemPrompt"]), "Current DoOps session_id: kind-prompt") {
-					t.Fatalf("current DoOps session must be bound into the prompt: %#v", params)
+				if strings.Contains(fmt.Sprint(params["systemPrompt"]), "Current DoOps session_id") {
+					t.Fatalf("runtime session leaked into model prompt: %#v", params)
 				}
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"jsonrpc": "2.0",
@@ -848,7 +848,7 @@ func TestSubscribeDoagentSSERejectsLiveUntaggedContentOnlyToolEvidence(t *testin
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","replay":true,"toolCallId":"stale","toolName":"mcp_doops_helm","status":"completed","input":{"operation":"rollback"},"content":[{"type":"content","content":{"type":"text","text":"stale"}}]}}}`)
 		fmt.Fprintln(w)
-		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"current","toolName":"mcp_doops_helm","status":"in_progress","input":{"operation":"upgrade-install","release":"doops-agent","chart":"deploy/helm/doops-agent","namespace":"kz-ops","session_id":"apply-evidence","confirm":true}}}}`)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"current","toolName":"mcp_doops_helm","status":"in_progress","input":{"operation":"upgrade-install","release":"doops-agent","chart":"deploy/helm/doops-agent","namespace":"kz-ops","confirm":true}}}}`)
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"current","toolName":"mcp_doops_helm","status":"completed","content":[{"type":"content","content":{"type":"text","text":"Helm operation complete."}}]}}}`)
 		fmt.Fprintln(w)

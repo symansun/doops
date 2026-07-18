@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/user/doops/agent/api"
@@ -44,6 +46,15 @@ func RunK8SMCPStdio(input io.Reader, output io.Writer) error {
 }
 
 func RunK8SMCPStdioContext(ctx context.Context, input io.Reader, output io.Writer) error {
+	return runK8SMCPStdioContext(ctx, input, output, boundSessionFromWorkingDirectory)
+}
+
+func runK8SMCPStdioContext(
+	ctx context.Context,
+	input io.Reader,
+	output io.Writer,
+	resolveSession func() (string, error),
+) error {
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
 	encoder := json.NewEncoder(output)
@@ -83,7 +94,12 @@ func RunK8SMCPStdioContext(ctx context.Context, input io.Reader, output io.Write
 				},
 			}
 		case "tools/call":
-			response = callK8SMCPTool(ctx, request)
+			sessionID, err := resolveSession()
+			if err != nil {
+				response = mcpErrorResponse(request.ID, -32000, err.Error())
+				break
+			}
+			response = callK8SMCPTool(ctx, request, sessionID)
 		default:
 			response = mcpErrorResponse(request.ID, -32601, "method not found")
 		}
@@ -94,7 +110,11 @@ func RunK8SMCPStdioContext(ctx context.Context, input io.Reader, output io.Write
 	return scanner.Err()
 }
 
-func callK8SMCPTool(ctx context.Context, request k8sMCPRequest) api.JSONRPCResponse {
+func callK8SMCPTool(
+	ctx context.Context,
+	request k8sMCPRequest,
+	boundSessionID string,
+) api.JSONRPCResponse {
 	var call k8sMCPToolCall
 	if err := json.Unmarshal(request.Params, &call); err != nil {
 		return mcpErrorResponse(request.ID, -32602, "invalid tools/call params")
@@ -111,6 +131,10 @@ func callK8SMCPTool(ctx context.Context, request k8sMCPRequest) api.JSONRPCRespo
 	default:
 		return mcpErrorResponse(request.ID, -32601, "unknown tool")
 	}
+	boundArguments, err := bindK8SMCPSession(call.Arguments, boundSessionID)
+	if err != nil {
+		return mcpErrorResponse(request.ID, -32602, err.Error())
+	}
 
 	var progress strings.Builder
 	push := func(event notificationEvent) {
@@ -122,11 +146,10 @@ func callK8SMCPTool(ctx context.Context, request k8sMCPRequest) api.JSONRPCRespo
 		}
 	}
 	var result string
-	var err error
 	if call.Name == helmMCPToolName {
-		result, err = handleHelmTool(ctx, call.Arguments, push)
+		result, err = handleHelmTool(ctx, boundArguments, push)
 	} else {
-		result, err = handleK8STool(ctx, call.Arguments, push)
+		result, err = handleK8STool(ctx, boundArguments, push)
 	}
 	if err != nil {
 		return mcpErrorResponse(request.ID, -32000, err.Error())
@@ -145,6 +168,48 @@ func callK8SMCPTool(ctx context.Context, request k8sMCPRequest) api.JSONRPCRespo
 			"isError": false,
 		},
 	}
+}
+
+func boundSessionFromWorkingDirectory() (string, error) {
+	root, err := filepath.EvalSymlinks(workspaceRoot())
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace root: %w", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve MCP working directory: %w", err)
+	}
+	cwd, err = filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", fmt.Errorf("resolve MCP working directory: %w", err)
+	}
+	relative, err := filepath.Rel(root, cwd)
+	if err != nil || relative == "." || filepath.Dir(relative) != "." {
+		return "", fmt.Errorf("MCP working directory is not a bound DoOps session workspace")
+	}
+	if err := validateSession(relative); err != nil {
+		return "", fmt.Errorf("MCP working directory has invalid session binding: %w", err)
+	}
+	return relative, nil
+}
+
+func bindK8SMCPSession(arguments json.RawMessage, sessionID string) (json.RawMessage, error) {
+	if err := validateSession(sessionID); err != nil {
+		return nil, err
+	}
+	var input map[string]interface{}
+	if err := json.Unmarshal(arguments, &input); err != nil || input == nil {
+		return nil, fmt.Errorf("tool arguments must be an object")
+	}
+	if _, exists := input["session_id"]; exists {
+		return nil, fmt.Errorf("session_id is runtime-bound and must not be supplied")
+	}
+	input["session_id"] = sessionID
+	bound, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("bind runtime session: %w", err)
+	}
+	return bound, nil
 }
 
 func k8sMCPOperationAllowed(arguments json.RawMessage, allowed []string) bool {
@@ -169,9 +234,8 @@ func k8sMCPToolDefinition(name string, operations []string, description string) 
 		"inputSchema": map[string]interface{}{
 			"type":                 "object",
 			"additionalProperties": false,
-			"required":             []string{"session_id", "operation"},
+			"required":             []string{"operation"},
 			"properties": map[string]interface{}{
-				"session_id": map[string]interface{}{"type": "string"},
 				"operation": map[string]interface{}{
 					"type": "string",
 					"enum": operations,
@@ -196,9 +260,8 @@ func helmMCPToolDefinition() map[string]interface{} {
 		"inputSchema": map[string]interface{}{
 			"type":                 "object",
 			"additionalProperties": false,
-			"required":             []string{"session_id", "operation", "release", "namespace", "confirm"},
+			"required":             []string{"operation", "release", "namespace", "confirm"},
 			"properties": map[string]interface{}{
-				"session_id": map[string]interface{}{"type": "string"},
 				"operation": map[string]interface{}{
 					"type": "string",
 					"enum": helmMutationOperations,

@@ -1097,7 +1097,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			"method":  "session/new",
 			"params": map[string]interface{}{
 				"sessionId":      requestedSessionID,
-				"systemPrompt":   systemPrompt + "\n\nCurrent DoOps session_id: " + doopsSessionID + "\n",
+				"systemPrompt":   systemPrompt,
 				"cwd":            "/root/ws/" + doopsSessionID,
 				"permissionMode": "restricted",
 			},
