@@ -69,6 +69,9 @@ def test_ordinary_exec_does_not_block_explicit_helm_operations():
     )
     deployment_doc = DEPLOYMENT_DOC.read_text(encoding="utf-8")
 
-    assert r"\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b" not in dispatcher
-    assert "普通 `exec`" in deployment_doc
+    blacklist = dispatcher.split("blacklist:", 1)[1].split("naturalLangRe:", 1)[0]
+    assert r"\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b" not in blacklist
+    assert "IsAgentHelmMutation" in dispatcher
+    assert "普通前台 `exec`" in deployment_doc
     assert "不得把 Helm 误判为危险 shell 命令" in deployment_doc
+    assert "后台调用必须明确拒绝" in deployment_doc
