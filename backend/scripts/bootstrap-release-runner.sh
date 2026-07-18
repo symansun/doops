@@ -75,7 +75,8 @@ for value in "${NAMESPACE}" "${MANAGED_RELEASE}" "${RUNNER_RELEASE}" "${RUNNER_W
     exit 2
   fi
 done
-if [[ ! "${RUNNER_HOME}" =~ ^/[A-Za-z0-9._/-]+$ ]] || [[ "${RUNNER_HOME}" == *"/../"* ]]; then
+if [[ ! "${RUNNER_HOME}" =~ ^/[A-Za-z0-9._/-]+$ ]] ||
+  [[ "/${RUNNER_HOME#/}/" == *"/../"* ]]; then
   echo "Invalid runner home path" >&2
   exit 2
 fi
@@ -92,6 +93,18 @@ IMAGE_REPOSITORY="${BASH_REMATCH[1]}"
 IMAGE_DIGEST="${BASH_REMATCH[2]}"
 VALUES_FILE="$(mktemp)"
 trap 'rm -f "${VALUES_FILE}"' EXIT
+
+EXISTING_RUNNER_RELEASES="$(
+  helm list \
+    --namespace "${NAMESPACE}" \
+    --all \
+    --short \
+    --filter "^${RUNNER_RELEASE}$"
+)"
+if [[ -n "${EXISTING_RUNNER_RELEASES}" ]]; then
+  echo "Runner release already exists: ${NAMESPACE}/${RUNNER_RELEASE}" >&2
+  exit 2
+fi
 
 helm get values "${MANAGED_RELEASE}" \
   --namespace "${NAMESPACE}" \

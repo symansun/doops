@@ -8,6 +8,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "backend" / "scripts" / "bootstrap-release-runner.sh"
+CNB = ROOT / ".cnb.yml"
 
 
 def test_bootstrap_release_runner_preserves_managed_values(tmp_path):
@@ -19,6 +20,9 @@ def test_bootstrap_release_runner_preserves_managed_values(tmp_path):
     helm.write_text(
         """#!/bin/sh
 set -eu
+if [ "$1" = "list" ]; then
+  exit 0
+fi
 if [ "$1" = "get" ] && [ "$2" = "values" ]; then
   cat <<'YAML'
 image:
@@ -143,6 +147,71 @@ exit 1
     assert "ai" in args
 
 
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("DOOPS_SESSION", "valid\n; touch injected"),
+        ("DOOPS_SESSION", ".."),
+        ("DOOPS_NAMESPACE", "ai\n; touch injected"),
+        ("DOOPS_RUNNER_RELEASE", "runner\n; touch injected"),
+        ("DOOPS_RUNNER_HOME", "/var/lib/runner\n; touch injected"),
+        ("DOOPS_RUNNER_HOME", "/var/lib/runner/.."),
+        (
+            "DOOPS_IMAGE",
+            "registry.example/doops@sha256:"
+            "a" * 64
+            + "\n; touch injected",
+        ),
+    ],
+)
+def test_bootstrap_pipeline_rejects_multiline_command_inputs(tmp_path, name, value):
+    pipeline = yaml.safe_load(CNB.read_text(encoding="utf-8"))
+    script = pipeline["main"]["api_trigger_bootstrap_release_runner"][0]["stages"][1][
+        "script"
+    ]
+    fake_doops = tmp_path / ".ci-bin" / "doops"
+    fake_doops.parent.mkdir()
+    fake_doops.write_text(
+        "#!/bin/sh\ntouch \"${DOOPS_CALLED:?}\"\nexit 99\n",
+        encoding="utf-8",
+    )
+    fake_doops.chmod(0o755)
+    called = tmp_path / "doops-called"
+    env = os.environ.copy()
+    env.update(
+        {
+            "DOOPS_SESSION": "bootstrap-release-runner",
+            "DOOPS_NAMESPACE": "ai",
+            "DOOPS_MANAGED_RELEASE": "doops-agent",
+            "DOOPS_RUNNER_TARGET": "ci-hdu-release-runner",
+            "DOOPS_RUNNER_RELEASE": "doops-release-runner",
+            "DOOPS_RUNNER_WORKLOAD": "doops-release-runner",
+            "DOOPS_RUNNER_INSTANCE": "release-runner-hdu",
+            "DOOPS_RUNNER_HOME": "/var/lib/doops-release-runner-home",
+            "DOOPS_IMAGE": (
+                "docker.cnb.cool/l8ai/ai/doops.sh@sha256:"
+                "df0038d05fd8a895f3d9cf73ad7ce5b286bd19f4e7c091292a90be64de366fb5"
+            ),
+            "DOOPS_TARGET": "gw-hdu-235",
+            "DOOPS_INSTANCE": "hdu-235",
+            "DOOPS_CLUSTER": "doops-235",
+            "DOOPS_CALLED": str(called),
+        }
+    )
+    env[name] = value
+
+    result = subprocess.run(
+        ["sh", "-c", script],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 2
+    assert not called.exists()
+
+
 def test_bootstrap_release_runner_rejects_mutable_image():
     result = subprocess.run(
         [
@@ -170,6 +239,38 @@ def test_bootstrap_release_runner_rejects_mutable_image():
 
     assert result.returncode == 2
     assert "immutable repository@sha256 digest" in result.stderr
+
+
+def test_bootstrap_release_runner_rejects_parent_path_home():
+    result = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT),
+            "--namespace",
+            "ai",
+            "--managed-release",
+            "doops-agent",
+            "--runner-release",
+            "doops-release-runner",
+            "--runner-workload",
+            "doops-release-runner",
+            "--runner-instance",
+            "release-runner-hdu",
+            "--runner-home",
+            "/var/lib/doops-release-runner/..",
+            "--image",
+            (
+                "docker.cnb.cool/l8ai/ai/doops.sh@sha256:"
+                "df0038d05fd8a895f3d9cf73ad7ce5b286bd19f4e7c091292a90be64de366fb5"
+            ),
+        ],
+        cwd=ROOT / "backend",
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 2
+    assert "Invalid runner home path" in result.stderr
 
 
 def test_bootstrap_release_runner_rejects_managed_release_name():
@@ -204,6 +305,60 @@ def test_bootstrap_release_runner_rejects_managed_release_name():
     assert "must differ from the managed release" in result.stderr
 
 
+def test_bootstrap_release_runner_rejects_existing_runner_release(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    helm = fake_bin / "helm"
+    helm.write_text(
+        """#!/bin/sh
+if [ "$1" = "list" ]; then
+  echo doops-release-runner
+  exit 0
+fi
+touch "${UNEXPECTED_HELM_CALL:?}"
+exit 99
+""",
+        encoding="utf-8",
+    )
+    helm.chmod(0o755)
+    unexpected_call = tmp_path / "unexpected-helm-call"
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["UNEXPECTED_HELM_CALL"] = str(unexpected_call)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT),
+            "--namespace",
+            "ai",
+            "--managed-release",
+            "doops-agent",
+            "--runner-release",
+            "doops-release-runner",
+            "--runner-workload",
+            "doops-release-runner",
+            "--runner-instance",
+            "release-runner-hdu",
+            "--runner-home",
+            "/var/lib/doops-release-runner-home",
+            "--image",
+            (
+                "docker.cnb.cool/l8ai/ai/doops.sh@sha256:"
+                "df0038d05fd8a895f3d9cf73ad7ce5b286bd19f4e7c091292a90be64de366fb5"
+            ),
+        ],
+        cwd=ROOT / "backend",
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 2
+    assert "Runner release already exists" in result.stderr
+    assert not unexpected_call.exists()
+
+
 @pytest.mark.parametrize(
     ("runner_workload", "runner_instance", "runner_home", "error"),
     [
@@ -235,6 +390,9 @@ def test_bootstrap_release_runner_requires_distinct_identity(
     helm = fake_bin / "helm"
     helm.write_text(
         """#!/bin/sh
+if [ "$1" = "list" ]; then
+  exit 0
+fi
 if [ "$1" = "get" ] && [ "$2" = "values" ]; then
   cat <<'YAML'
 image: {repository: old.example/doops, digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
@@ -292,6 +450,9 @@ def test_bootstrap_release_runner_requires_isolated_agent_home(tmp_path):
     helm = fake_bin / "helm"
     helm.write_text(
         """#!/bin/sh
+if [ "$1" = "list" ]; then
+  exit 0
+fi
 if [ "$1" = "get" ] && [ "$2" = "values" ]; then
   cat <<'YAML'
 image: {repository: old.example/doops, digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}

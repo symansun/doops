@@ -148,11 +148,21 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "bootstrap-release-runner.sh" in cnb
     assert '-session "${DOOPS_SESSION}" exec' in cnb
     assert "--runner-home" in cnb
-    assert "'^[A-Za-z0-9._-]+$'" in cnb
-    assert "'^[A-Za-z0-9._:/-]+@sha256:[a-f0-9]{64}$'" in cnb
+    assert "validate_simple_name" in cnb
+    assert "validate_dns_name" in cnb
+    assert '*[!A-Za-z0-9._-]*' in cnb
+    assert '*[!a-z0-9-]*' in cnb
+    assert 'test "${#image_digest}" -eq 64' in cnb
     assert 'test "${DOOPS_RUNNER_TARGET}" != "${DOOPS_TARGET}"' in cnb
     assert 'test "${DOOPS_RUNNER_RELEASE}" != "${DOOPS_MANAGED_RELEASE}"' in cnb
     assert 'test "${DOOPS_RUNNER_INSTANCE}" != "${DOOPS_INSTANCE}"' in cnb
+    assert "helm uninstall" in cnb
+    bootstrap_script = (
+        BACKEND / "scripts" / "bootstrap-release-runner.sh"
+    ).read_text(encoding="utf-8")
+    assert 'helm list \\\n    --namespace "${NAMESPACE}" \\\n    --all' in bootstrap_script
+    assert "helm get values" in bootstrap_script
+    assert 'helm get values "${MANAGED_RELEASE}" \\\n  --namespace "${NAMESPACE}" \\\n  --all' not in bootstrap_script
     environment_docs = "\n".join(
         path.read_text(encoding="utf-8")
         for path in (BACKEND / "docs" / "environments").glob("*.md")
