@@ -89,7 +89,7 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 - 网关二进制：`/app/doops-agent`
 - doagent AI 内核：`/usr/local/bin/do-agent`
 - 构建闸门：独立 `DO_AGENT_IMAGE` 和最终镜像必须确认 `/usr/local/bin/do-agent --version` 与声明的 `DO_AGENT_VERSION` 完全一致；基础镜像只负责 BuildKit、kubectl、Python/PyYAML、Helm 等工具，并固定到 OCI digest
-- 发布原则：最终镜像同时固定 `DOOPS_AGENT_BASE_IMAGE` 和 `DO_AGENT_IMAGE`；app 镜像 push 前必须校验两者 label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --version` 与声明版本一致、`buildctl --version`、Python/PyYAML 与 Helm。部署由明确授权的自然语言任务进入 Gateway；任务必须给出 target、服务范围、镜像版本、变更原因和验收条件。
+- 发布原则：最终镜像同时固定 `DOOPS_AGENT_BASE_IMAGE` 和 `DO_AGENT_IMAGE`；app 镜像 push 前必须校验两者 label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --version` 与声明版本一致、`buildctl --version`、Python/PyYAML 与 Helm。环境部署只从业务仓库的 `doops.sh/v3 EnvironmentRegistry` 进入 Gateway credential prepare，不依赖本仓库中已删除的 workflow 目录。
 
 协议与端点：
 
@@ -102,7 +102,7 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 - 修复 `agent-entrypoint.sh` 把 `-port/-token` 透传给 WebIDE 启动脚本导致的 `Unknown option -port`
 - 将 doagent 依赖镜像固定为公开 doAgent 的版本标签和 OCI digest，并在每层镜像中校验二进制版本
 - 将 agent 发布拆为 `doops.sh/base-light:<release>` 和 `doops.sh:<release>`，避免每次代码更新都拉取多 GiB 基础层
-- 统一发布脚本与 DaemonSet 默认更新镜像为 `docker.cnb.cool/l8ai/ai/doops.sh:v1.1`
+- 统一发布脚本与 DaemonSet 使用 CI 产出的不可变镜像 digest
 - 关闭默认攻击面：`agent-entrypoint.sh` 改为仅在显式 `DOOPS_ENABLE_SSHD=1` / `DOOPS_ENABLE_WEBIDE=1` 时才启动 SSH 或 WebIDE
 - 将核心协议文档统一为 `/ws`
 - 将 doagent 旧叙述收敛为当前 doagent ACP HTTP 路径
@@ -147,7 +147,9 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 - `doops.sh/base-light`：doagent、BuildKit、kubectl、系统包、通用运行工具；变化频率低，拉取成本高。
 - `doops.sh`：`/app/doops-agent`、`/app/skills`、`/app/self-docs`、entrypoint；变化频率高，拉取成本低。
 
-禁止把基础 rootfs 压平成每次 release 都变化的大层。线上升级默认只替换 `doops.sh:<release>`，这样节点已缓存的基础层可以复用，避免 doops-agent 在拉镜像阶段长时间离线。
+禁止把基础 rootfs 压平成每次 release 都变化的大层。CI 可以生成 release tag
+供制品发现，但线上升级必须把选中的 `doops.sh` 解析并固定为 OCI digest；节点仍可
+复用已缓存的基础层，同时避免 tag 漂移造成不可复现发布。
 
 CNB 非同名制品必须使用仓库下级路径，例如 `docker.cnb.cool/l8ai/ai/doops.sh/base-light:v1`。不要写成 `docker.cnb.cool/l8ai/ai/doops.sh-base-light:v1`，那会发布到另一个制品名，也无法被当前 release 流水线复用。
 
@@ -356,7 +358,7 @@ docker run -d --name doops-agent \
   -v /root/.kube:/root/.kube:ro \
   -v /etc/kubernetes:/etc/kubernetes:ro \
   -v /path/to/doagent-model-settings.json:/opt/doagent_config/settings.json:ro \
-  docker.cnb.cool/l8ai/ai/doops.sh:v1.1 \
+  docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI> \
   -port 42222 \
   -gateway-url https://gateway.example.com \
   -cluster prod \
@@ -371,36 +373,19 @@ docker logs --tail=100 doops-agent
 curl -fsS http://127.0.0.1:42222/health
 ```
 
-### 方式 C：一次性 SSH 自举裸二进制
+### 方式 C：首次接入与自恢复
 
-仅在目标机器还没有 `doops-agent`、且需要 SSH 自举裸进程时使用：
+`doops install` 直连安装入口已停用，因为它只能启动本地 `/ws` Agent，不能完成
+Gateway 注册，却会制造“安装成功”的假象。
 
-```bash
-doops install \
-  --name gpu-ampere01 \
-  --ip 198.51.100.24 \
-  --ssh-user root \
-  --ssh-password '<SSH_PASSWORD>' \
-  --ssh-port 22 \
-  --agent-token '<OPTIONAL_AGENT_TOKEN>'
-```
-
-`--agent-token` 只服务于遗留裸进程的本机 `/ws` 保护，不是 gateway 注册凭据。自举完成后用 `-gateway-url ... -cluster ... -instance ...` 接入 gateway，并在客户端配置 gateway target。
-
-注意：`doops install` 当前是 SSH bootstrap/兼容入口，可能把 agent 作为裸二进制或容器拉起，取决于目标机器运行时能力和参数。生产标准化建议优先使用 **方式 A K8s/DaemonSet** 或 **方式 B 容器模式**。
-
-从当前版本开始，`doops install` 不再把“进程起来了”当作安装成功。安装完成后会主动连回新装好的 agent，执行一次能力自检，至少验证：
-
-- agent 本身能响应
-- 容器运行时可见（`nerdctl` / `docker` / `podman`）
-- `kubectl` 或 kubeconfig 是否可见
-- `buildctl` 与 `/run/buildkit/buildkitd.sock` 是否可见
-
-其中 `agent 响应` 和 `容器运行时` 是必需项，失败会直接判定安装失败；`kubectl` 与 `buildkit` 会明确显示 `OK` 或 `MISSING`，避免把半残环境误报为“已可用”。
+首次接入或 Agent 自恢复时，可以用 SSH 把 **方式 A** 的 GitOps 清单或 **方式 B**
+的容器声明送到目标环境执行；运行态必须显式配置 `gateway-url`、`cluster` 和
+`instance`。只有 Gateway 已收到 heartbeat，且客户端通过 `doops targets --target
+<gateway-target>` 验证在线后，才允许用 `doops add` 写入 Gateway 路由。
 
 ### 方式 D：维护者发布 `doops-agent`
 
-发布者通过 `doops ask --apply` 提交明确授权的自然语言任务。任务必须直接给出 Gateway target、服务范围、镜像版本、变更原因和验收条件；需要凭据时仅以可重复的 `--credential <resource-name>` 元数据引用声明。Gateway 绑定用户、target 和 session，按精确 workload/image/Helm scope 授权并物化，Agent 不接收凭据 payload。
+唯一部署入口是业务仓库的 `deploy/environments.yaml`，类型为 `doops.sh/v3 EnvironmentRegistry`。发布者必须显式选择 environment、service 和 Gateway target；CLI 先解析不可变源 commit，再由 Gateway credential prepare、单次 `CredentialRun` 绑定和 `$doops-cicd` 执行。CNB 只构建并推送不可变候选镜像，不直接操作环境或触发部署。
 
 `doops upgrade` 仅用于 dry-run 预览，非 dry-run 请求会在分发前被拒绝。正式发布由目标 Agent 之外的 CI/CD 或 GitOps Workflow 执行。
 
@@ -422,7 +407,7 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 | :--- | :--- |
 | `doops add --gateway --cluster --instance` | 添加 gateway target 路由 |
 | `doops login --target <name>` | 登录该 target 所属 Gateway |
-| `doops list` | 列出客户端已配置节点 |
+| `doops list` | 列出客户端已配置的 Gateway target 路由 |
 | `doops exec` | 在远端 agent 容器内执行确定性命令 |
 | `doops ask` | 交给远端 doagent 自主分析和执行 |
 | `doops push` | 同步本地代码到 `/root/ws/$SESSION`，尊重 `.gitignore`/`.doopsignore` |
@@ -440,7 +425,7 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 doops -session upgrade_20260511 upgrade \
   --target jm \
   --cluster doops-jm \
-  --image docker.cnb.cool/l8ai/ai/doops.sh:v1.1 \
+  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI> \
   --mode k8s \
   --namespace oilan-system \
   --workload daemonset/doops-agent \
@@ -464,7 +449,7 @@ CNB 的 `main` push 会构建并推送以 commit SHA 命名的 Agent 镜像。`t
 ## 边界
 
 - `doops` 日常连接不依赖 SSH。
-- `token` 在标准 target 配置里只表示 gateway user token。
+- 标准 target 配置不包含 token；Gateway user token 只保存在统一 `auth.json` 登录态。
 - agent 反向注册只声明 `cluster/instance`，不读取或发送注册 token。
 - 遗留本机 `/ws` token 只用于直连保护。
 - `doops-agent token` 只用于遗留直连或本机 `/ws` 保护。

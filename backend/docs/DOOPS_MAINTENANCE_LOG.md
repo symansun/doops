@@ -55,13 +55,17 @@ For gateway control-plane releases, additionally verify:
 
 ## Current Release Line
 
-- Release version: `v1.1`
-- Agent image: `docker.cnb.cool/l8ai/ai/doops.sh:v1.1`
-- Base image: `docker.cnb.cool/l8ai/ai/doops.sh/base:v1`
-- Gateway binary: built from this repository version and deployed with `scripts/deploy-gateway.sh`.
-- CLI binaries: rebuilt with `scripts/build-cli.sh --all`.
+- Verified source commit: `836171d04b1230b0fc3f477a47b85a9250408184`
+- Verified deployed Agent image: `docker.cnb.cool/l8ai/ai/doops.sh@sha256:e43a2b207fcf0a6e734216d6ac3cb95235a7fd13d36e7a566aadb48c9a67033c`
+- Embedded doagent version: `0.2.21`
+- Gateway binary: built from this repository and deployed with `scripts/deploy-gateway.sh`.
+- CLI binaries: published as immutable CNB Release Assets.
 
-`v1.1` is the gateway-only cleanup release for:
+New release candidates must use the digest printed by the successful CNB build
+for the selected commit. Do not copy this deployed baseline digest into a new
+environment declaration unless that exact image is the intended release.
+
+The earlier `v1.1` line introduced the gateway-only cleanup for:
 
 - gateway busy/status/resource accounting;
 - same-agent multi-session Git push support;
@@ -104,16 +108,15 @@ Do not publish new agent fixes under floating `v1`; use the explicit release ver
   `nerdctl run --rm ... echo direct-ok` succeeded, and a small `doops push`
   round trip succeeded.
 
-## 2026-07-17 Historical Retired CICD Terminal Result Recovery
+## 2026-07-17 CICD Terminal Result Recovery
 
 - Fixed apply operations that completed after a reverse-tunnel disconnect but
   previously returned `agent disconnected` because the unique `CICDReport`
   could no longer reach Gateway.
-- Historical implementation persisted the terminal response by the digest of
-  the retired credential-run binding before delivery. Gateway waited for target
-  reconnection and performed an internal read-only result query; it never
-  replayed the apply prompt. This path was retired with the natural-language
-  release contract.
+- Agent now persists the terminal response by the digest of the complete
+  `CredentialRun` binding before
+  delivery. Gateway waits for target reconnection and performs an internal
+  read-only result query; it never replays the apply prompt.
 - Explicit `tools/cancel` still cancels the admitted operation. Connection
   cleanup no longer cancels CICD solely because the transport disappeared.
 - The detached Helm executor now always uses `--reset-values`, preventing

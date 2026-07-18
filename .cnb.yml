@@ -144,7 +144,7 @@ $:
         - name: publish CLI release assets
           script: |
             node backend/scripts/publish-cli-release.mjs \
-              --repo "${CNB_REPO}" \
+              --repo "${CNB_REPO_SLUG_LOWERCASE}" \
               --tag "${CNB_BRANCH}" \
               --commit "${CNB_COMMIT}" \
               --dir "${PWD}/backend/dist/cli" \

@@ -103,10 +103,13 @@ doops -session build push --target jm --src .
 doops -session build exec --target jm --cmd 'ls -la /root/ws/build | head'
 ```
 
-`push` uses Git workspace sync in both direct and gateway modes:
+Standard `push` uses Git workspace sync through Gateway:
 
-- Direct agent: `/git/<session>.git`
 - Gateway: `/v1/git/<cluster>/<instance>/<session>.git`
+
+An explicit `DOOPS_CONFIG` diagnostic override may still address the retired local
+`/git/<session>.git` endpoint, but it must not be stored in canonical config or
+used as a deployment path.
 
 Do not reimplement push with tar/base64/chunk upload. `doops_workspace_*` chunk tools are low-level compatibility JSON-RPC tools, not the standard CLI/deploy path; seeing 512KB chunk logs means a script is bypassing the supported Git HTTP path. Push respects `.gitignore` and `.doopsignore`; do not hide deploy manifests or scripts behind ignore rules unless intentional.
 
@@ -155,7 +158,7 @@ the user's grants.
 ```bash
 doops -session upgrade_20260519 upgrade \
   --target unicom \
-  --image docker.cnb.cool/l8ai/ai/doops.sh:v1.1 \
+  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI> \
   --mode k8s \
   --namespace doops-system \
   --workload deployment/doops-agent \

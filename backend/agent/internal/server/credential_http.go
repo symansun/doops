@@ -18,8 +18,14 @@ type credentialCreateHTTPBody struct {
 }
 
 type credentialGrantHTTPBody struct {
-	GranteeID string               `json:"grantee_id"`
-	Scope     CredentialGrantScope `json:"scope"`
+	GranteeID   string          `json:"grantee_id"`
+	Cluster     string          `json:"cluster"`
+	Instance    string          `json:"instance"`
+	Project     string          `json:"project"`
+	Environment string          `json:"environment"`
+	Template    string          `json:"template"`
+	Namespace   string          `json:"namespace"`
+	Uses        []CredentialUse `json:"uses"`
 }
 
 type credentialGrantRevokeHTTPBody struct {
@@ -220,7 +226,7 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 	}
 	if resource.Scope == CredentialScopePersonal {
 		if resource.OwnerID == auth.UserID {
-			if !h.store.UserCan(auth.UserID, body.Scope.Cluster, body.Scope.Instance, ActionAsk) {
+			if !h.store.UserCan(auth.UserID, body.Cluster, body.Instance, ActionAsk) {
 				http.Error(w, "Forbidden", http.StatusForbidden)
 				return
 			}
@@ -233,15 +239,20 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	auditID, ok := h.requireCredentialAudit(w, auth, ActionCredentialGrant, resource.ID,
-		fmt.Sprintf("credential grant %s/%s",
-			strings.TrimSpace(body.Scope.Cluster), strings.TrimSpace(body.Scope.Instance)))
+		fmt.Sprintf("credential grant %s/%s", strings.TrimSpace(body.Cluster), strings.TrimSpace(body.Instance)))
 	if !ok {
 		return
 	}
 	grant, err := h.store.CreateCredentialGrantAudited(CredentialGrantCreateRequest{
 		CredentialID: resource.ID,
 		GranteeID:    body.GranteeID,
-		Scope:        body.Scope,
+		Cluster:      body.Cluster,
+		Instance:     body.Instance,
+		Project:      body.Project,
+		Environment:  body.Environment,
+		Template:     body.Template,
+		Namespace:    body.Namespace,
+		Uses:         body.Uses,
 		CreatedBy:    auth.UserID,
 	}, auditID)
 	if err != nil {
@@ -302,10 +313,12 @@ func (h *GatewayHub) handleCredentialPromote(w http.ResponseWriter, r *http.Requ
 		verificationCountByGrantUse[verification.GrantID+"\x00"+string(verification.Use)]++
 	}
 	for _, grant := range grants {
-		if verificationCountByGrantUse[grant.ID+"\x00"+string(grant.Scope.Use)] == 0 {
-			_ = h.finishCredentialAudit(auditID, "error", "credential_verification_required")
-			http.Error(w, "credential_verification_required", http.StatusConflict)
-			return
+		for _, use := range grant.Uses {
+			if verificationCountByGrantUse[grant.ID+"\x00"+string(use)] == 0 {
+				_ = h.finishCredentialAudit(auditID, "error", "credential_verification_required")
+				http.Error(w, "credential_verification_required", http.StatusConflict)
+				return
+			}
 		}
 	}
 	required := verifications
@@ -541,6 +554,8 @@ func credentialErrorCategory(err error) string {
 		return "credential_revoked"
 	case errors.Is(err, ErrCredentialGrantDenied):
 		return "credential_grant_denied"
+	case errors.Is(err, ErrCredentialPrepareBindingInvalid):
+		return "credential_prepare_binding_invalid"
 	case errors.Is(err, ErrCredentialForbidden):
 		return "credential_forbidden"
 	case errors.Is(err, ErrSecretKeyUnavailable):

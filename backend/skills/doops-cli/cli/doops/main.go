@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -13,7 +15,7 @@ import (
 	"golang.org/x/term"
 )
 
-const cliContractVersion = "doops.sh/cli-contract/v3"
+const cicdContractVersion = "doops.sh/cicd-contract/v3"
 
 func main() {
 	verbose := flag.Bool("verbose", false, "Enable verbose logging")
@@ -22,7 +24,7 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `
 Doops 分布式服务器管理工具 (doops.sh CLI)
-专为 AI Agent 设计的自然语言运维工具。发布任务必须显式给出 target、服务范围、镜像版本、变更原因和验收条件。
+专为 AI Agent 设计的声明式运维工具。遵循 GitOps 原则：声明目标状态，由执行器持续协调至可验证结果。
 
 配置文件路径: ~/.agent/skills/doops/config.json（唯一默认配置；DOOPS_CONFIG 可显式覆盖）
 
@@ -31,7 +33,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 可用命令:
   bash        执行交互式 Shell (通过 SSH 转发 PTY)
-  list        列出所有已知服务器 (查看名称、IP、用途)
+  list        列出已配置的 Gateway target 路由
   targets     查看 gateway 当前在线的 cluster/instance
   exec        在目标节点工作区执行 Shell 命令 (用于确定性的日常流水线执行)
   ask         发送自然语言指令 (由边缘端智能体完成受控的通用运维协作)
@@ -39,6 +41,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   write       写入文件到目标服务器
   info        获取节点系统信息 (CPU/内存/磁盘)
   k8s         受限 Kubernetes 观察与运维入口
+  cicd        v3 环境注册表 CI/CD 入口 (run)
   credential  管理 Gateway 凭据元数据与版本
   session     生成并输出一个新的唯一 Session ID
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
@@ -48,7 +51,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   admin       gateway 管理命令，例如给用户签发 token
   upgrade     预演 doops-agent 升级；正式发布必须由外部 release runner 或 GitOps 执行
   add         添加 gateway target
-  install     通过 SSH 首次自举 Agent 到新节点 (仅安装阶段使用 SSH)
+  install     已停用的直连 Agent 安装入口
   login       缓存 gateway user token
   logout      登出远程节点
   check       检查线上服务容器配置的镜像与最新构建是否一致
@@ -59,14 +62,15 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   -contract   输出机器可读的 CLI 契约版本
   -help       显示此帮助信息
 
-	自然语言发布示例:
-	  # --apply 是明确的 mutation 授权；任务本身必须给出所有发布事实。
-	  doops -session release-20260717 ask --target agent-runtime --apply --msg "在 target agent-runtime 发布服务范围 api，镜像 release-20260717；原因：修复课堂权限；验收：Deployment Ready、实际镜像、Service/Endpoint 和 /health 均通过。"
+	Agent 原生声明式 CI/CD 示例:
+	  # run 固定声明源 commit，经 Gateway credential prepare 后调用 doops-cicd Skill。
+	  doops -session test_ops cicd run -f deploy/environments.yaml --target agent-runtime --dry-run --set environment=test --set service=frontend
+	  doops -session test_ops cicd run -f deploy/environments.yaml --target agent-runtime --set environment=test --set service=frontend
 `)
 	}
 	flag.Parse()
 	if *printContract {
-		fmt.Println(cliContractVersion)
+		fmt.Println(cicdContractVersion)
 		return
 	}
 
@@ -80,7 +84,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 	cmdArgs := args[1:]
 
 	ss := NewSessionStore()
-	servers, llmConfig, configErr := LoadConfig()
+	servers, _, configErr := LoadConfig()
 
 	switch command {
 	case "session":
@@ -91,26 +95,17 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 	case "list":
 		if configErr != nil {
-			fmt.Println("No doops nodes configured.")
-			fmt.Println("Add a gateway target with: doops add --name <name> --gateway <gateway-url> --cluster <cluster> --instance <instance>")
-			return
+			if os.IsNotExist(configErr) {
+				fmt.Println("No doops nodes configured.")
+				fmt.Println("Add a gateway target with: doops add --name <name> --gateway <gateway-url> --cluster <cluster> --instance <instance>")
+				return
+			}
+			fmt.Printf("Error loading config: %v\n", configErr)
+			os.Exit(1)
 		}
-		fmt.Printf("%-15s %-18s %-15s %-6s %-22s %-20s %-30s\n", "NAME", "ALIASES", "IP", "PORT", "GATEWAY", "CLUSTER/INSTANCE", "USE")
-		fmt.Println(strings.Repeat("-", 132))
-		for _, s := range servers {
-			port := s.Port
-			if port == "" {
-				port = "42222"
-			}
-			cluster := s.Cluster
-			if cluster == "" {
-				cluster = "default"
-			}
-			instance := s.Instance
-			if instance == "" {
-				instance = s.Name
-			}
-			fmt.Printf("%-15s %-18s %-15s %-6s %-22s %-20s %-30s\n", s.Name, strings.Join(s.Aliases, ","), s.IP, port, s.Gateway, cluster+"/"+instance, s.Use)
+		if err := printServerList(os.Stdout, servers); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
 		}
 
 	case "targets":
@@ -353,6 +348,12 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		}
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("k8s %s", req.Payload["operation"]))
 
+	case "cicd":
+		if err := runCICDCommand(context.Background(), cmdArgs, servers, configErr, ss, *sessionName, *verbose); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "credential":
 		if err := runCredentialCommand(cmdArgs, servers, configErr, os.Stdin, os.Stdout); err != nil {
 			fmt.Printf("Error: %v\n", err)
@@ -361,9 +362,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 	case "exec", "ask", "write", "read", "info":
 		var target, cmdStr, msgStr, path, modelStr, contentStr, fileStr string
-		var credentialRefs stringListFlag
 		var subSession string
-		var apply, background bool
+		var background bool
 		subFlag := flag.NewFlagSet(command, flag.ExitOnError)
 		subFlag.StringVar(&target, "target", "", "Target server name")
 		subFlag.StringVar(&subSession, "session", "", "Session ID (can also be set before subcommand)")
@@ -375,8 +375,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		case "ask":
 			subFlag.StringVar(&msgStr, "msg", "", "Instruction")
 			subFlag.StringVar(&modelStr, "model", "", "Model to use for this instruction (optional)")
-			subFlag.BoolVar(&apply, "apply", false, "Allow the explicitly requested instruction to make authorized changes")
-			subFlag.Var(&credentialRefs, "credential", "Managed credential resource name (repeatable; requires --apply)")
 		case "write":
 			subFlag.StringVar(&path, "path", "", "Destination path")
 			subFlag.StringVar(&contentStr, "content", "", "Content to write; for multi-line content prefer --file or stdin")
@@ -417,10 +415,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		// 指令/命令校验 (支持位置参数提取后)
 		if command == "ask" && strings.TrimSpace(msgStr) == "" {
 			fmt.Println("Error: 指令内容不能为空。用法: doops ask \"你的指令\"")
-			os.Exit(1)
-		}
-		if command == "ask" && len(credentialRefs) != 0 && !apply {
-			fmt.Println("Error: --credential 仅允许与 --apply 一起使用。")
 			os.Exit(1)
 		}
 		if command == "exec" && strings.TrimSpace(cmdStr) == "" {
@@ -493,12 +487,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		case "ask":
 			toolName = "doops_agent_prompt"
 			arguments["instruction"] = msgStr
-			if apply {
-				arguments["operation"] = "apply"
-			}
-			if len(credentialRefs) != 0 {
-				arguments["credential_refs"] = []string(credentialRefs)
-			}
 			if modelStr != "" {
 				arguments["model"] = modelStr
 			}
@@ -583,30 +571,9 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		}
 
 	case "install":
-		var name, ip, sshUser, sshPassword, sshPort, agentPort, binaryPath, agentToken string
-		installFlag := flag.NewFlagSet("install", flag.ExitOnError)
-		installFlag.StringVar(&name, "name", "", "Node name")
-		installFlag.StringVar(&ip, "ip", "", "Node IP")
-		installFlag.StringVar(&sshUser, "ssh-user", "", "SSH user for one-time bootstrap")
-		installFlag.StringVar(&sshPassword, "ssh-password", "", "SSH password for one-time bootstrap")
-		installFlag.StringVar(&sshPort, "ssh-port", "22", "SSH port for one-time bootstrap")
-		installFlag.StringVar(&agentToken, "agent-token", "", "Legacy local /ws token for SSH bootstrap only; not a gateway credential")
-		installFlag.StringVar(&agentPort, "agent-port", "42222", "Agent port")
-		installFlag.StringVar(&binaryPath, "binary", "", "Path to agent binary (for manual deploy)")
-		localFlag := installFlag.Bool("local", false, "Run agent in local/bare-metal mode (skip nsenter docker isolation)")
-
-		installFlag.Parse(cmdArgs)
-
-		if name == "" || ip == "" || sshUser == "" || sshPassword == "" {
-			installFlag.Usage()
-			os.Exit(1)
-		}
-
-		if err := InstallAgent(name, ip, sshUser, sshPassword, sshPort, agentPort, binaryPath, *localFlag, agentToken, llmConfig); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
-		}
-		RecordHistory(name, "system", "install-agent")
+		fmt.Println("Error: direct `doops install` is retired because it does not register an Agent with Gateway.")
+		fmt.Println("Provision the latest doops-agent through CI/GitOps, wait for its Gateway heartbeat, then add only the Gateway route with `doops add`.")
+		os.Exit(1)
 
 	case "history":
 		historyPath := historyLogPath()
@@ -719,47 +686,43 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		addFlag.StringVar(&aliases, "aliases", "", "Comma separated aliases, e.g. jm,jy,oilan")
 		addFlag.StringVar(&aliases, "alias", "", "Comma separated aliases, e.g. jm,jy,oilan")
 		addFlag.StringVar(&ip, "ip", "", "Legacy direct node IP; do not use for standard gateway targets")
-		addFlag.StringVar(&port, "port", "42222", "Agent port")
+		addFlag.StringVar(&port, "port", "", "Legacy direct agent port; not allowed for standard gateway targets")
 		addFlag.StringVar(&use, "use", "Manually added node", "Description")
 		addFlag.StringVar(&token, "token", "", "Gateway user token")
 		addFlag.StringVar(&gateway, "gateway", "", "Public gateway URL for reverse tunnel mode")
-		addFlag.StringVar(&cluster, "cluster", "default", "Cluster name for reverse tunnel mode")
-		addFlag.StringVar(&instance, "instance", "", "Agent instance name for reverse tunnel mode")
+		addFlag.StringVar(&cluster, "cluster", "", "Gateway cluster name (required)")
+		addFlag.StringVar(&instance, "instance", "", "Gateway agent instance name (required)")
 
 		addFlag.Parse(cmdArgs)
 
-		if strings.TrimSpace(ip) != "" {
-			fmt.Println("Error: --ip is legacy direct mode and is not allowed for standard config. Use --gateway --cluster --instance.")
+		if err := validateGatewayAddFlags(addFlag); err != nil {
+			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
-		if name == "" || gateway == "" {
+		name = strings.TrimSpace(name)
+		gateway = strings.TrimSpace(gateway)
+		cluster = strings.TrimSpace(cluster)
+		instance = strings.TrimSpace(instance)
+		if name == "" || gateway == "" || cluster == "" || instance == "" {
+			fmt.Println("Error: --name, --gateway, --cluster, and --instance are all required and must be non-empty.")
 			addFlag.Usage()
 			os.Exit(1)
 		}
-		if strings.TrimSpace(gateway) == "" {
-			fmt.Println("Error: --gateway is required. Standard targets must use gateway mode.")
-			os.Exit(1)
-		}
-		if strings.TrimSpace(token) != "" {
-			fmt.Println("Error: --token is not valid for a gateway target. Add the route, then use `doops login --target <name>` once for the gateway.")
-			os.Exit(1)
-		}
 		if configErr != nil {
+			if !os.IsNotExist(configErr) {
+				fmt.Printf("Error loading config: %v\n", configErr)
+				os.Exit(1)
+			}
 			servers = nil
 		}
 
 		newServer := Server{
 			Name:     name,
 			Aliases:  normalizeAliases([]string{aliases}),
-			IP:       ip,
-			Port:     port,
 			Use:      use,
-			Gateway:  strings.TrimSpace(gateway),
-			Cluster:  strings.TrimSpace(cluster),
-			Instance: strings.TrimSpace(instance),
-		}
-		if newServer.Instance == "" {
-			newServer.Instance = name
+			Gateway:  gateway,
+			Cluster:  cluster,
+			Instance: instance,
 		}
 
 		updated := false
@@ -1002,6 +965,44 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		fmt.Printf("Unknown command: %s\n", command)
 		flag.Usage()
 		os.Exit(1)
+	}
+}
+
+func printServerList(w io.Writer, servers []Server) error {
+	if err := validateGatewayServers(servers); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "%-20s %-18s %-28s %-30s %-30s\n", "NAME", "ALIASES", "GATEWAY", "CLUSTER/INSTANCE", "USE")
+	fmt.Fprintln(w, strings.Repeat("-", 130))
+	for _, s := range servers {
+		fmt.Fprintf(w, "%-20s %-18s %-28s %-30s %-30s\n",
+			s.Name,
+			strings.Join(s.Aliases, ","),
+			s.Gateway,
+			strings.TrimSpace(s.Cluster)+"/"+strings.TrimSpace(s.Instance),
+			s.Use,
+		)
+	}
+	return nil
+}
+
+func validateGatewayAddFlags(flags *flag.FlagSet) error {
+	var rejected string
+	flags.Visit(func(item *flag.Flag) {
+		switch item.Name {
+		case "ip", "port", "token":
+			rejected = item.Name
+		}
+	})
+	switch rejected {
+	case "ip":
+		return fmt.Errorf("--ip is retired direct mode and is not allowed; use --gateway --cluster --instance")
+	case "port":
+		return fmt.Errorf("--port is retired direct mode and is not allowed; Gateway routes do not use an agent port")
+	case "token":
+		return fmt.Errorf("--token is not valid for a Gateway target; add the route, then use `doops login --target <name>` once for the Gateway")
+	default:
+		return nil
 	}
 }
 

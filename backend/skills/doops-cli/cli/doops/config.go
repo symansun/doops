@@ -13,8 +13,8 @@ import (
 type Server struct {
 	Name        string   `json:"name"`
 	Aliases     []string `json:"aliases,omitempty"`
-	IP          string   `json:"ip"`
-	Port        string   `json:"port"`
+	IP          string   `json:"ip,omitempty"`
+	Port        string   `json:"port,omitempty"`
 	Use         string   `json:"use"`
 	Token       string   `json:"token,omitempty"`
 	Gateway     string   `json:"gateway,omitempty"`
@@ -158,7 +158,16 @@ func doopsConfigPath() string {
 
 // LoadConfig returns Servers and LLMConfig
 func LoadConfig() ([]Server, LLMConfig, error) {
-	return loadPath(doopsConfigPath())
+	servers, llm, err := loadPath(doopsConfigPath())
+	if err != nil {
+		return nil, LLMConfig{}, err
+	}
+	if strings.TrimSpace(os.Getenv("DOOPS_CONFIG")) == "" {
+		if err := validateGatewayServers(servers); err != nil {
+			return nil, LLMConfig{}, fmt.Errorf("invalid canonical config: %w", err)
+		}
+	}
+	return servers, llm, nil
 }
 
 func loadPath(path string) ([]Server, LLMConfig, error) {
@@ -198,10 +207,21 @@ func GetLLMConfig() LLMConfig {
 }
 
 func saveServers(servers []Server) error {
-	// We need to preserve LLM config if getting passed only servers
-	_, currentLLM, _ := LoadConfig()
-
 	configPath := doopsConfigPath()
+	var currentLLM LLMConfig
+	existingServers, loadedLLM, err := loadPath(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("load existing config before save: %w", err)
+	}
+	if err == nil {
+		if err := validateGatewayServers(existingServers); err != nil {
+			return fmt.Errorf("refuse to overwrite invalid existing config: %w", err)
+		}
+		currentLLM = loadedLLM
+	}
+	if err := validateGatewayServers(servers); err != nil {
+		return fmt.Errorf("refuse invalid Gateway config: %w", err)
+	}
 
 	root := RootConfig{
 		Servers: normalizeServersForSave(servers),
@@ -243,4 +263,23 @@ func normalizeAliases(values []string) []string {
 		}
 	}
 	return out
+}
+
+func validateGatewayServers(servers []Server) error {
+	for _, server := range servers {
+		name := strings.TrimSpace(server.Name)
+		if name == "" {
+			return fmt.Errorf("target name is empty")
+		}
+		if strings.TrimSpace(server.IP) != "" || strings.TrimSpace(server.Port) != "" {
+			return fmt.Errorf("target %q uses a retired direct route; migrate it to --gateway --cluster --instance", name)
+		}
+		if strings.TrimSpace(server.Token) != "" {
+			return fmt.Errorf("target %q contains a retired per-target token; migrate it to Gateway auth.json", name)
+		}
+		if strings.TrimSpace(server.Gateway) == "" || strings.TrimSpace(server.Cluster) == "" || strings.TrimSpace(server.Instance) == "" {
+			return fmt.Errorf("target %q has an incomplete Gateway route", name)
+		}
+	}
+	return nil
 }
