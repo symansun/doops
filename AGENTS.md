@@ -71,7 +71,6 @@ update all affected authoritative surfaces in the same change:
 
 - `backend/skills/SKILL.md`
 - `backend/docs/DOOPS_USAGE_GUIDE.md`
-- `backend/docs/AGENT_NATIVE_CICD.md`
 - `backend/docs/CREDENTIAL_RESOURCES.md`
 - `backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md`
 - `backend/docs/DOOPS_API_GUIDE.md` or `backend/docs/DOOPS_GATEWAY_TUNNEL.md` when protocol changes

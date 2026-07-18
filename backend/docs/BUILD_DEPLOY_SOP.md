@@ -1,6 +1,6 @@
 # Doops 构建与部署强制规范 (SOP)
 
-普通业务 workload 的权威发布流程见 `docs/AGENT_NATIVE_CICD.md`；受管凭据的创建、授权、
+普通业务 workload 的权威发布流程见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`；受管凭据的创建、授权、
 验证、轮换和部署引用见 `docs/CREDENTIAL_RESOURCES.md`。
 
 > **核心纪律：绝对禁止在本地开发机或业务宿主机直接执行容器镜像构建。**
@@ -124,7 +124,7 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 
 ## 三、 Agent 部署与热更新机制
 
-`doops-agent` 由 Helm 管理的 `Deployment` 托管，Chart 位于 `deploy/helm/doops-agent`。该目录只保存运行时 Helm 模板、默认值和挂载定义，不保存环境注册表或部署 workflow。具体镜像、目标节点、Secret 引用、Gateway 地址和发布参数必须由本次自然语言任务明确给出或来自任务明确授权读取的当前 Helm release。发布前必须对比当前 workload 与候选 Chart 的 command、args、env、probes、volumeMounts 和 volumes。包括只更新镜像在内的所有发布都必须调用结构化 `doops_helm upgrade-install`，从任务明确指定的 Chart、values 和非敏感 set strings 完整收敛；不存在 Kubernetes `set-image` 发布旁路。自然语言 apply 禁止通过 shell 执行 kubectl 或 Helm mutation；运维人员明确给出的前台 `exec` Helm 操作合法，但 `exec --bg` Helm mutation 必须拒绝。正常运行中的 Agent 不得从节点 SSH 更新。
+`doops-agent` 由 Helm 管理的 `Deployment` 托管，Chart 位于 `deploy/helm/doops-agent`。该目录只保存运行时 Helm 模板、默认值和挂载定义，不保存环境注册表或部署 workflow。具体镜像、目标节点、Secret 引用、Gateway 地址和发布参数必须由本次自然语言任务明确给出或来自任务明确授权读取的当前 Helm release。发布前必须对比当前 workload 与候选 Chart 的 command、args、env、probes、volumeMounts 和 volumes。包括只更新镜像在内的所有发布都必须调用结构化 `doops_helm upgrade-install`，从任务明确指定的 Chart、values 和非敏感 set strings 完整收敛；不存在 Kubernetes 镜像 mutation 发布旁路。自然语言 apply 禁止通过 shell 执行 kubectl 或 Helm mutation；运维人员明确给出的前台 `exec` Helm 操作合法，但 `exec --bg` Helm mutation 必须拒绝。正常运行中的 Agent 不得从节点 SSH 更新。
 
 单副本 Agent 的 home 目录包含 doagent SQLite 状态，不能让新旧 Pod 同时挂载。Chart
 必须使用 `maxSurge=0`、`maxUnavailable=1`；否则滚动窗口会产生 `database is locked`，

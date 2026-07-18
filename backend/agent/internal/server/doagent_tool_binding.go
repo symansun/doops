@@ -145,7 +145,7 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 		trace.inputJSON = encoded
 	}
 	if status, _ := update["status"].(string); strings.TrimSpace(status) != "" {
-		if trace.Status == "completed" && status != "completed" {
+		if (trace.Status == "completed" || trace.Status == "failed") && status != trace.Status {
 			return fmt.Errorf("conflicting duplicate toolCallId %q status", toolCallID)
 		}
 		trace.Status = status

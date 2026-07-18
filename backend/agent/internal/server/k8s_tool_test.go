@@ -23,6 +23,24 @@ func TestBuildK8SCommandsBuildsReadOnlyGet(t *testing.T) {
 	}
 }
 
+func TestBuildK8SCommandsBuildsNamedReadOnlyGet(t *testing.T) {
+	commands, err := buildK8SCommands(api.K8SParams{
+		SessionID: "read-one",
+		Operation: "get",
+		Kind:      "deployment",
+		Name:      "doops-agent",
+		Namespace: "kz-ops",
+		Output:    "yaml",
+	})
+	if err != nil {
+		t.Fatalf("build named get: %v", err)
+	}
+	if len(commands) != 1 ||
+		strings.Join(commands[0].args, " ") != "get deployment --namespace kz-ops doops-agent --output yaml" {
+		t.Fatalf("unexpected command: %#v", commands)
+	}
+}
+
 func TestBuildK8SCommandsRejectsCredentialBearingKinds(t *testing.T) {
 	for _, params := range []api.K8SParams{
 		{SessionID: "read-only", Operation: "get", Kind: "secrets", Output: "yaml"},

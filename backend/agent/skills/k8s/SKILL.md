@@ -23,7 +23,7 @@ conflicts: []
 3. mutation 必须有 `confirm=true`，镜像发布必须使用不可变 `@sha256:` digest。
 4. 发布必须使用任务明确授权的 `deploy/helm/<name>/`，通过 `mcp_doops_helm`
    完整收敛明确的 release、namespace、values 和非敏感 set strings；只更新镜像也走
-   同一 Helm 路径，不存在 `set-image` 例外。
+   同一 Helm 路径，不存在直接 Kubernetes 镜像 mutation 例外。
 5. 发布前必须对比当前 workload 与候选 Helm 资产中的 command、args、env、probes、
    volumeMounts 和 volumes，避免旧运行参数被意外继承。
 6. 发布后必须读取 rollout、Pod Ready、实际 imageID、重启次数、日志和任务指定的功能路径。
@@ -35,10 +35,7 @@ conflicts: []
 - `kind` 使用 kubectl 小写资源名，例如 `deployment`、`pods`、`services`。
 - 读取单个对象使用 `operation=get`、`kind=deployment`、`name=<name>`、
   `namespace=<namespace>`、`output=yaml`。
-- `resource` 只用于 `deployment/<name>` 这类完整资源引用，不要传 `deployments`。
 - `output` 单独传 `json`、`yaml`、`wide` 或 `name`，不要拼进 `name`。
-- 为工作负载追加已有镜像拉取 Secret 时，使用 `operation=add-image-pull-secret`、
-  `resource=deployment/<name>`、`pull_secret=<secret-name>`、`confirm=true`。
 
 ## 安全合规
 - 不要在命令行明文传递 Secret

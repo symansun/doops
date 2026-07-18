@@ -11,7 +11,7 @@ description: |
 - 安装与接入：先看本文，再按 `docs/CLUSTER_INSTALL_GUIDE.md` 执行。
 - 日常使用：先看本文命令选择，再按 `docs/DOOPS_USAGE_GUIDE.md` 执行。
 - Gateway/API 细节：看 `docs/DOOPS_GATEWAY_TUNNEL.md` 和 `docs/DOOPS_API_GUIDE.md`。
-- CI/CD 与发布：看 `docs/AGENT_NATIVE_CICD.md` 和 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
+- CI/CD 与发布：看 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
 - 凭据管理：看 `docs/CREDENTIAL_RESOURCES.md`。
 - 升级维护：看 `docs/BUILD_DEPLOY_SOP.md` 和 `docs/DOOPS_MAINTENANCE_LOG.md`。
 - 模型与 ask 配置：看 `docs/MODEL_STANDARDS.md`。
@@ -180,8 +180,8 @@ doops admin token create \
 `--target` 负责选择 gateway 地址和当前管理员登录态。新 token 只打印一次；如需把新 token 设为该 Gateway 的统一登录态，显式加 `--save-as <target-name>`。
 轮换时先创建并缓存新 token，再用 `admin token list` 按 ID/前缀确认旧 token，最后执行 `admin token revoke`。管理员 token 不得通过命令行参数传入。
 
-完整命令说明见 `docs/DOOPS_USAGE_GUIDE.md`；CI/CD 见
-`docs/AGENT_NATIVE_CICD.md`；凭据完整生命周期见 `docs/CREDENTIAL_RESOURCES.md`。
+完整命令说明见 `docs/DOOPS_USAGE_GUIDE.md`；发布见
+`docs/NATURAL_LANGUAGE_DEPLOYMENT.md`；凭据完整生命周期见 `docs/CREDENTIAL_RESOURCES.md`。
 
 ## 升级引导
 
@@ -202,8 +202,7 @@ docs/DOOPS_MAINTENANCE_LOG.md
 - gateway 控制面发布走 `scripts/deploy-gateway.sh`；不要走 `doops exec/push/write`。
 - 至少对一个真实 gateway target 回归 `exec`、`push`、`pull`、`ask`、`targets` 中受影响的路径。
 
-普通业务发布流程见 `docs/AGENT_NATIVE_CICD.md`；自然语言任务约束见
-`docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
+普通业务发布流程和自然语言任务约束见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
 
 ## 故障入口
 

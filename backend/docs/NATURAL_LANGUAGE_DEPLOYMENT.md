@@ -1,10 +1,8 @@
 # Natural-Language Deployment
 
-CI/CD 的完整权威职责边界见
-[`AGENT_NATIVE_CICD.md`](AGENT_NATIVE_CICD.md)。本文只说明自然语言 apply 的输入契约。
-
 DoOps v3 普通业务 workload 的标准发布入口是明确授权的自然语言任务，而不是环境注册表、
 部署模板或 workflow YAML。
+唯一发布命令语义是 `doops ask --apply`；CI 和人工调用都使用同一入口。
 
 正式任务必须直接包含：
 

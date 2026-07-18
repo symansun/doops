@@ -840,17 +840,17 @@ func TestSubscribeDoagentSSEScopesUntaggedEventsToFreshMachineSession(t *testing
 	}
 }
 
-func TestSubscribeDoagentSSECollectsLiveUntaggedToolEvidence(t *testing.T) {
+func TestSubscribeDoagentSSERejectsLiveUntaggedContentOnlyToolEvidence(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/events" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","replay":true,"toolCallId":"stale","toolName":"mcp_doops_k8s","status":"completed","input":{"operation":"set-image"},"content":[{"type":"content","content":{"type":"text","text":"stale"}}]}}}`)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","replay":true,"toolCallId":"stale","toolName":"mcp_doops_helm","status":"completed","input":{"operation":"rollback"},"content":[{"type":"content","content":{"type":"text","text":"stale"}}]}}}`)
 		fmt.Fprintln(w)
-		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"current","toolName":"mcp_doops_k8s","status":"in_progress","input":{"operation":"set-image","resource":"deployment/doops-agent"}}}}`)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"current","toolName":"mcp_doops_helm","status":"in_progress","input":{"operation":"upgrade-install","release":"doops-agent","chart":"deploy/helm/doops-agent","namespace":"kz-ops","session_id":"apply-evidence","confirm":true}}}}`)
 		fmt.Fprintln(w)
-		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"current","toolName":"mcp_doops_k8s","status":"completed","input":{"operation":"set-image","resource":"deployment/doops-agent"},"content":[{"type":"content","content":{"type":"text","text":"Kubernetes operation complete."}}]}}}`)
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call_update","toolCallId":"current","toolName":"mcp_doops_helm","status":"completed","content":[{"type":"content","content":{"type":"text","text":"Helm operation complete."}}]}}}`)
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":"turn-current","status":"completed","stopReason":"end_turn"}}}`)
 		fmt.Fprintln(w)
@@ -875,12 +875,12 @@ func TestSubscribeDoagentSSECollectsLiveUntaggedToolEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
-	if err := collector.requireCompletedToolEvidence(); err != nil {
-		t.Fatalf("live untagged tool evidence rejected: %v", err)
+	if err := collector.requireCompletedToolEvidence(); err == nil ||
+		!strings.Contains(err.Error(), "raw_output_missing") {
+		t.Fatalf("content-only tool evidence accepted: %v", err)
 	}
-	traces := collector.completed()
-	if len(traces) != 1 || traces[0].ToolCallID != "current" {
-		t.Fatalf("completed traces = %#v", traces)
+	if traces := collector.completed(); len(traces) != 0 {
+		t.Fatalf("content-only traces accepted as completed evidence: %#v", traces)
 	}
 }
 

@@ -153,6 +153,9 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 			return nil, fmt.Errorf("kubernetes kind %q is not available through the read tool", params.Kind)
 		}
 		args := namespace([]string{"get", params.Kind})
+		if params.Name != "" {
+			args = append(args, params.Name)
+		}
 		if params.Output != "" {
 			if !validK8SOutput(params.Output) {
 				return nil, fmt.Errorf("unsupported kubernetes output")

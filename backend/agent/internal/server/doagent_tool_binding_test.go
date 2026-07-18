@@ -230,16 +230,20 @@ func TestApplyRejectsForgedOrMismatchedRuntimeAttestation(t *testing.T) {
 	}
 }
 
-func TestApplyAcceptsCompletedACPToolPublicContent(t *testing.T) {
+func TestApplyRejectsCompletedACPToolPublicContentWithoutRawOutput(t *testing.T) {
 	collector := newDoagentToolTraceCollector(false)
 	if err := collector.collect(map[string]interface{}{
 		"sessionUpdate": "tool_call_update",
 		"toolCallId":    "call-1",
-		"toolName":      "mcp_doops_k8s",
+		"toolName":      "mcp_doops_helm",
 		"status":        "in_progress",
 		"input": map[string]interface{}{
-			"operation": "set-image",
-			"resource":  "deployment/doops-agent",
+			"operation":  "upgrade-install",
+			"release":    "doops-agent",
+			"chart":      "deploy/helm/doops-agent",
+			"namespace":  "kz-ops",
+			"session_id": "apply-test",
+			"confirm":    true,
 		},
 	}); err != nil {
 		t.Fatalf("collect in-progress tool update: %v", err)
@@ -247,7 +251,7 @@ func TestApplyAcceptsCompletedACPToolPublicContent(t *testing.T) {
 	if err := collector.collect(map[string]interface{}{
 		"sessionUpdate": "tool_call_update",
 		"toolCallId":    "call-1",
-		"toolName":      "mcp_doops_k8s",
+		"toolName":      "mcp_doops_helm",
 		"status":        "completed",
 		"content": []interface{}{
 			map[string]interface{}{
@@ -261,42 +265,50 @@ func TestApplyAcceptsCompletedACPToolPublicContent(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("collect completed tool update: %v", err)
 	}
-	if err := collector.requireCompletedToolEvidence(); err != nil {
-		t.Fatalf("completed ACP tool public content rejected: %v", err)
+	if err := collector.requireCompletedToolEvidence(); err == nil ||
+		!strings.Contains(err.Error(), "raw_output_missing") {
+		t.Fatalf("content-only ACP tool evidence accepted: %v", err)
 	}
 }
 
-func TestApplyRejectsInvalidACPToolEvidence(t *testing.T) {
+func TestCollectorAcceptsPartialACPToolUpdatesButNotAsApplyEvidence(t *testing.T) {
 	tests := []struct {
 		name   string
 		update map[string]interface{}
+		reason string
 	}{
 		{
 			name: "empty input",
 			update: map[string]interface{}{
 				"sessionUpdate": "tool_call_update",
 				"toolCallId":    "call-1",
-				"toolName":      "mcp_doops_k8s",
+				"toolName":      "mcp_doops_helm",
 				"status":        "in_progress",
 				"input":         map[string]interface{}{},
 			},
+			reason: "status_not_completed",
 		},
 		{
 			name: "empty public content",
 			update: map[string]interface{}{
 				"sessionUpdate": "tool_call_update",
 				"toolCallId":    "call-1",
-				"toolName":      "mcp_doops_k8s",
+				"toolName":      "mcp_doops_helm",
 				"status":        "completed",
 				"content":       []interface{}{},
 			},
+			reason: "input_missing",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			collector := newDoagentToolTraceCollector(false)
-			if err := collector.collect(tt.update); err == nil {
-				t.Fatal("invalid tool evidence accepted")
+			if err := collector.collect(tt.update); err != nil {
+				t.Fatalf("partial update rejected: %v", err)
+			}
+			if err := collector.requireCompletedToolEvidence(); err == nil ||
+				!strings.Contains(err.Error(), tt.reason) {
+				t.Fatalf("partial update accepted as apply evidence: %v", err)
 			}
 		})
 	}
@@ -306,14 +318,14 @@ func TestApplyRejectsFailedToolTransitionToCompleted(t *testing.T) {
 	collector := newDoagentToolTraceCollector(false)
 	collector.calls["call-1"] = doagentToolTrace{
 		ToolCallID: "call-1",
-		ToolName:   "mcp_doops_k8s",
+		ToolName:   "mcp_doops_helm",
 		Status:     "failed",
-		inputJSON:  json.RawMessage(`{"operation":"set-image"}`),
+		inputJSON:  json.RawMessage(`{"operation":"upgrade-install"}`),
 	}
 	err := collector.collect(map[string]interface{}{
 		"sessionUpdate": "tool_call_update",
 		"toolCallId":    "call-1",
-		"toolName":      "mcp_doops_k8s",
+		"toolName":      "mcp_doops_helm",
 		"status":        "completed",
 		"content": []interface{}{
 			map[string]interface{}{
@@ -341,7 +353,7 @@ func TestApplyRejectsBashKubectlMutationEvidence(t *testing.T) {
 		resultJSON: json.RawMessage(`{"content":[{"type":"content","content":{"type":"text","text":"patched"}}]}`),
 	}
 	err := collector.requireCompletedToolEvidence()
-	if err == nil || !strings.Contains(err.Error(), "raw_kubectl_mutation_forbidden") {
+	if err == nil || !strings.Contains(err.Error(), "doagent_apply_forbidden_mutation: Bash") {
 		t.Fatalf("Bash kubectl mutation evidence accepted: %v", err)
 	}
 }

@@ -379,7 +379,7 @@ target、服务范围、不可变镜像 digest、变更原因和验收条件；�
 `--credential <resource-name>` 元数据引用声明。Gateway 绑定用户、target 和 session，
 按精确 workload/image/Helm scope 授权并在目标 doops-agent 的内部控制面物化；公开
 prompt、doagent 上下文和 metadata binding 不接收凭据 payload。完整流程见
-[docs/AGENT_NATIVE_CICD.md](docs/AGENT_NATIVE_CICD.md) 和
+[docs/NATURAL_LANGUAGE_DEPLOYMENT.md](docs/NATURAL_LANGUAGE_DEPLOYMENT.md) 和
 [docs/CREDENTIAL_RESOURCES.md](docs/CREDENTIAL_RESOURCES.md)。
 
 `doops upgrade` 仅用于 doops-agent 自身升级的 dry-run 预览，非 dry-run 请求会在分发前

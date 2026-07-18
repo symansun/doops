@@ -10,7 +10,7 @@ CLI = BACKEND / "skills" / "doops-cli" / "cli" / "doops" / "main.go"
 CREDENTIAL_CLI = BACKEND / "skills" / "doops-cli" / "cli" / "doops" / "credential_commands.go"
 SKILL = BACKEND / "skills" / "SKILL.md"
 DEPLOYMENT_DOC = BACKEND / "docs" / "NATURAL_LANGUAGE_DEPLOYMENT.md"
-CICD_DOC = BACKEND / "docs" / "AGENT_NATIVE_CICD.md"
+CICD_DOC = DEPLOYMENT_DOC
 CREDENTIAL_DOC = BACKEND / "docs" / "CREDENTIAL_RESOURCES.md"
 CI_GUIDE = ROOT / "components" / "cicd-guide.tsx"
 
@@ -93,7 +93,8 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "doops cicd" not in cnb
     assert "execute-doops-cicd" not in cnb
     assert "106.54.197.139:42222" not in cnb
-    assert "不存在 `set-image` 例外" in k8s_skill
+    assert "不存在直接 Kubernetes 镜像 mutation 例外" in k8s_skill
+    assert "add-image-pull-secret" not in k8s_skill
     assert "command、args、env" in k8s_skill
     assert "发布必须使用任务明确授权的" in k8s_skill
     assert "Secret、ServiceAccount" in k8s_skill
@@ -126,10 +127,10 @@ def test_cicd_and_credential_guides_match_the_runtime_contract():
     tunnel_doc = (BACKEND / "docs" / "DOOPS_GATEWAY_TUNNEL.md").read_text(encoding="utf-8")
 
     assert "doops ask --apply" in cicd_doc
-    assert "--credential <registry-credential-name>" in cicd_doc
+    assert "--credential <resource-name>" in cicd_doc
     assert "credential verify" in credential_doc
     assert "credential verify" in credential_cli
-    assert "docs/AGENT_NATIVE_CICD.md" in skill
+    assert "docs/NATURAL_LANGUAGE_DEPLOYMENT.md" in skill
     assert "docs/CREDENTIAL_RESOURCES.md" in skill
     assert "backend/skills/SKILL.md" in skill
 
@@ -152,7 +153,7 @@ def test_repository_agent_rules_guard_release_and_credential_boundaries():
     assert "The only supported installed CLI path is `~/.local/bin/doops`" in rules
     assert "backend/scripts/install.sh --version <tag>" in rules
     assert "CLI's own Go parser" in rules
-    assert "backend/docs/AGENT_NATIVE_CICD.md" in rules
+    assert "backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md" in rules
     assert "backend/docs/CREDENTIAL_RESOURCES.md" in rules
     assert "browser testing" in rules
     assert "online synthetic credential" in rules
