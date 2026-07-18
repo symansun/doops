@@ -185,7 +185,28 @@ func OpenGatewayStore(path string) (*GatewayStore, error) {
 	if path == "" {
 		path = "/var/lib/doops-gateway/gateway.db"
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	storeDir := filepath.Dir(path)
+	_, statErr := os.Stat(storeDir)
+	storeDirCreated := errors.Is(statErr, os.ErrNotExist)
+	if statErr != nil && !storeDirCreated {
+		return nil, statErr
+	}
+	if err := os.MkdirAll(storeDir, 0700); err != nil {
+		return nil, err
+	}
+	if storeDirCreated {
+		if err := os.Chmod(storeDir, 0700); err != nil {
+			return nil, err
+		}
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := file.Close(); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, 0600); err != nil {
 		return nil, err
 	}
 	db, err := sql.Open("sqlite", path)
@@ -198,7 +219,20 @@ func OpenGatewayStore(path string) (*GatewayStore, error) {
 		db.Close()
 		return nil, err
 	}
+	for _, databaseFile := range []string{path, path + "-wal", path + "-shm"} {
+		if err := chmodIfExists(databaseFile, 0600); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
 	return store, nil
+}
+
+func chmodIfExists(path string, mode os.FileMode) error {
+	if err := os.Chmod(path, mode); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func (s *GatewayStore) Close() error {

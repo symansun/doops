@@ -47,6 +47,7 @@ main:
           script: |
             npm i -g pnpm@11.7.0
             pnpm install --frozen-lockfile
+            pnpm test:gateway-policy
             pnpm exec tsc --noEmit
             pnpm build
         - name: build immutable agent images
@@ -99,6 +100,7 @@ master:
           script: |
             npm i -g pnpm@11.7.0
             pnpm install --frozen-lockfile
+            pnpm test:gateway-policy
             pnpm build
 
 $:
@@ -131,6 +133,7 @@ $:
           script: |
             npm i -g pnpm@11.7.0
             pnpm install --frozen-lockfile
+            pnpm test:gateway-policy
             pnpm exec tsc --noEmit
             pnpm build
         - name: build release agent image
@@ -152,4 +155,7 @@ $:
               --dir "${PWD}/backend/dist/cli" \
               --image "${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_BRANCH}"
         - name: verify published CLI release assets
-          script: DOOPS_RELEASE_TAG="${CNB_BRANCH}" bash backend/scripts/verify-published-cli-release.sh
+          script: |
+            DOOPS_RELEASE_TAG="${CNB_BRANCH}" \
+            DOOPS_RELEASE_COMMIT="${CNB_COMMIT}" \
+              bash backend/scripts/verify-published-cli-release.sh

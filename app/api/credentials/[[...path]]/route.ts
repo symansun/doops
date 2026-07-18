@@ -1,17 +1,26 @@
-import { readAuth, toHttpBase } from "@/lib/gateway"
+import {
+  gatewayPolicyResponse,
+  readAllowedAuth,
+} from "@/lib/gateway-policy"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 async function proxy(req: Request, ctx: { params: Promise<{ path?: string[] }> }) {
-  const { gateway, token } = readAuth(req)
+  let gateway: string
+  let token: string
+  try {
+    ;({ gateway, token } = readAllowedAuth(req))
+  } catch (err) {
+    return gatewayPolicyResponse(err) || Response.json({ error: "gateway 策略检查失败" }, { status: 500 })
+  }
   if (!gateway || !token) {
     return Response.json({ error: "缺少 gateway 地址或 token" }, { status: 400 })
   }
   const { path } = await ctx.params
   const suffix = path?.length ? `/${path.map(encodeURIComponent).join("/")}` : ""
   const incoming = new URL(req.url)
-  const target = `${toHttpBase(gateway)}/v1/credentials${suffix}${incoming.search}`
+  const target = `${gateway}/v1/credentials${suffix}${incoming.search}`
   const init: RequestInit = {
     method: req.method,
     headers: {
@@ -19,6 +28,7 @@ async function proxy(req: Request, ctx: { params: Promise<{ path?: string[] }> }
       "Content-Type": "application/json",
     },
     cache: "no-store",
+    redirect: "manual",
   }
   if (req.method !== "GET" && req.method !== "HEAD") {
     init.body = await req.text()

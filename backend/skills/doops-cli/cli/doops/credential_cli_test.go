@@ -184,6 +184,30 @@ func TestResolveCredentialGatewayRequiresConfiguredTarget(t *testing.T) {
 	}
 }
 
+func TestCredentialCLIHelp(t *testing.T) {
+	var output bytes.Buffer
+	for _, args := range [][]string{nil, {"help"}, {"--help"}, {"-h"}} {
+		output.Reset()
+		if err := runCredentialCommand(args, nil, nil, strings.NewReader(""), &output); err != nil {
+			t.Fatalf("credential help %v: %v", args, err)
+		}
+		if !strings.Contains(output.String(), "doops credential list") ||
+			!strings.Contains(output.String(), "doops credential create") {
+			t.Fatalf("credential help %v missing commands: %s", args, output.String())
+		}
+	}
+	output.Reset()
+	if err := runCredentialCommand(
+		[]string{"create", "-h"}, nil, nil, strings.NewReader(""), &output,
+	); err != nil {
+		t.Fatalf("credential create help: %v", err)
+	}
+	if !strings.Contains(output.String(), "-name string") ||
+		!strings.Contains(output.String(), "-target string") {
+		t.Fatalf("credential create help missing flags: %s", output.String())
+	}
+}
+
 type credentialCLIRequest struct {
 	Method string
 	Path   string

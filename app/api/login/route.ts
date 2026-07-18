@@ -1,4 +1,7 @@
-import { toHttpBase } from "@/lib/gateway"
+import {
+  allowedGatewayBase,
+  gatewayPolicyResponse,
+} from "@/lib/gateway-policy"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -18,10 +21,12 @@ export async function POST(req: Request) {
   }
 
   try {
-    const res = await fetch(`${toHttpBase(gateway)}/v1/auth/login`, {
+    const gatewayBase = allowedGatewayBase(gateway)
+    const res = await fetch(`${gatewayBase}/v1/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password, name: name || "doops-console" }),
+      redirect: "manual",
     })
     const text = await res.text()
     if (!res.ok) {
@@ -35,6 +40,8 @@ export async function POST(req: Request) {
       headers: { "Content-Type": "application/json" },
     })
   } catch (err) {
+    const policyResponse = gatewayPolicyResponse(err)
+    if (policyResponse) return policyResponse
     return Response.json(
       { error: `无法连接 gateway: ${(err as Error).message}` },
       { status: 502 },

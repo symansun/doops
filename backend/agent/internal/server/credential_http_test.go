@@ -311,6 +311,11 @@ func TestCredentialHTTPListIsIsolatedByUserAndTarget(t *testing.T) {
 	if !strings.Contains(targetAList.Body.String(), targetA.ID) ||
 		strings.Contains(targetAList.Body.String(), targetB.ID) ||
 		strings.Contains(targetAList.Body.String(), owned.ID) ||
+		strings.Contains(targetAList.Body.String(), admin.ID) ||
+		strings.Contains(targetAList.Body.String(), user.ID) ||
+		strings.Contains(targetAList.Body.String(), `"owner_id"`) ||
+		strings.Contains(targetAList.Body.String(), `"created_by"`) ||
+		strings.Contains(targetAList.Body.String(), `"grantee_id"`) ||
 		!strings.Contains(targetAList.Body.String(), `"grants"`) {
 		t.Fatalf("target A credential visibility mismatch: %s", targetAList.Body.String())
 	}
@@ -319,15 +324,20 @@ func TestCredentialHTTPListIsIsolatedByUserAndTarget(t *testing.T) {
 	if targetADetail.Code != http.StatusOK {
 		t.Fatalf("target A credential detail: HTTP %d: %s", targetADetail.Code, targetADetail.Body.String())
 	}
+	if strings.Contains(targetADetail.Body.String(), admin.ID) ||
+		strings.Contains(targetADetail.Body.String(), `"owner_id"`) ||
+		strings.Contains(targetADetail.Body.String(), `"created_by"`) {
+		t.Fatalf("target A credential detail exposed owner metadata: %s", targetADetail.Body.String())
+	}
 	unscopedDetail := credentialHTTPRequest(t, mux, userToken, http.MethodGet,
 		"/v1/credentials/"+targetA.ID, nil)
-	if unscopedDetail.Code != http.StatusForbidden {
-		t.Fatalf("unscoped granted credential detail = HTTP %d, want 403", unscopedDetail.Code)
+	if unscopedDetail.Code != http.StatusNotFound {
+		t.Fatalf("unscoped granted credential detail = HTTP %d, want 404", unscopedDetail.Code)
 	}
 	wrongTargetDetail := credentialHTTPRequest(t, mux, userToken, http.MethodGet,
 		"/v1/credentials/"+targetA.ID+"?cluster=cluster-b&instance=instance-b", nil)
-	if wrongTargetDetail.Code != http.StatusForbidden {
-		t.Fatalf("wrong-target credential detail = HTTP %d, want 403", wrongTargetDetail.Code)
+	if wrongTargetDetail.Code != http.StatusNotFound {
+		t.Fatalf("wrong-target credential detail = HTTP %d, want 404", wrongTargetDetail.Code)
 	}
 
 	targetBList := credentialHTTPRequest(t, mux, userToken, http.MethodGet,

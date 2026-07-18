@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -63,36 +64,54 @@ type credentialBundle struct {
 }
 
 func runCredentialCommand(args []string, servers []Server, configErr error, stdin io.Reader, stdout io.Writer) error {
-	if len(args) == 0 {
-		return fmt.Errorf("credential subcommand is required: create, list, put, grant, grant-revoke, promote, revoke, bundle-create, bundle-get")
+	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+		_, err := fmt.Fprint(stdout, `Usage:
+  doops credential create        创建凭据元数据
+  doops credential list          查询当前 target 可见或当前用户管理的凭据
+  doops credential put           从 stdin 写入新的凭据版本
+  doops credential grant         授权凭据给当前用户或指定用户的精确 target scope
+  doops credential grant-revoke  吊销一条凭据授权
+  doops credential promote       激活已验证的凭据版本
+  doops credential revoke        吊销凭据资源
+  doops credential bundle-create 从 stdin 创建凭据 bundle
+  doops credential bundle-get    按名称查询凭据 bundle
+
+Use "doops credential <subcommand> -h" for command flags.
+`)
+		return err
 	}
+	var err error
 	switch args[0] {
 	case "create":
-		return runCredentialCreate(args[1:], servers, configErr, stdout)
+		err = runCredentialCreate(args[1:], servers, configErr, stdout)
 	case "list":
-		return runCredentialList(args[1:], servers, configErr, stdout)
+		err = runCredentialList(args[1:], servers, configErr, stdout)
 	case "put":
-		return runCredentialPut(args[1:], servers, configErr, stdin, stdout)
+		err = runCredentialPut(args[1:], servers, configErr, stdin, stdout)
 	case "grant":
-		return runCredentialGrant(args[1:], servers, configErr, stdout)
+		err = runCredentialGrant(args[1:], servers, configErr, stdout)
 	case "grant-revoke":
-		return runCredentialGrantRevoke(args[1:], servers, configErr, stdout)
+		err = runCredentialGrantRevoke(args[1:], servers, configErr, stdout)
 	case "promote":
-		return runCredentialPromote(args[1:], servers, configErr, stdout)
+		err = runCredentialPromote(args[1:], servers, configErr, stdout)
 	case "revoke":
-		return runCredentialRevoke(args[1:], servers, configErr, stdout)
+		err = runCredentialRevoke(args[1:], servers, configErr, stdout)
 	case "bundle-create":
-		return runCredentialBundleCreate(args[1:], servers, configErr, stdin, stdout)
+		err = runCredentialBundleCreate(args[1:], servers, configErr, stdin, stdout)
 	case "bundle-get":
-		return runCredentialBundleGet(args[1:], servers, configErr, stdout)
+		err = runCredentialBundleGet(args[1:], servers, configErr, stdout)
 	default:
 		return fmt.Errorf("unsupported credential subcommand %q", args[0])
 	}
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
+	return err
 }
 
 func runCredentialGrantRevoke(args []string, servers []Server, configErr error, stdout io.Writer) error {
 	var target, id, grantID string
-	flags := credentialFlagSet("credential grant-revoke")
+	flags := credentialFlagSet("credential grant-revoke", stdout)
 	flags.StringVar(&target, "target", "", "Configured gateway target")
 	flags.StringVar(&id, "id", "", "Credential ID")
 	flags.StringVar(&grantID, "grant-id", "", "Credential grant ID")
@@ -124,7 +143,7 @@ func runCredentialGrantRevoke(args []string, servers []Server, configErr error, 
 
 func runCredentialBundleCreate(args []string, servers []Server, configErr error, stdin io.Reader, stdout io.Writer) error {
 	var target string
-	flags := credentialFlagSet("credential bundle-create")
+	flags := credentialFlagSet("credential bundle-create", stdout)
 	flags.StringVar(&target, "target", "", "Configured gateway target")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -158,7 +177,7 @@ func runCredentialBundleCreate(args []string, servers []Server, configErr error,
 
 func runCredentialBundleGet(args []string, servers []Server, configErr error, stdout io.Writer) error {
 	var target, name string
-	flags := credentialFlagSet("credential bundle-get")
+	flags := credentialFlagSet("credential bundle-get", stdout)
 	flags.StringVar(&target, "target", "", "Configured gateway target")
 	flags.StringVar(&name, "name", "", "Credential bundle name")
 	if err := flags.Parse(args); err != nil {
@@ -190,7 +209,7 @@ func runCredentialBundleGet(args []string, servers []Server, configErr error, st
 
 func runCredentialCreate(args []string, servers []Server, configErr error, stdout io.Writer) error {
 	var target, name, scope, credentialType string
-	flags := credentialFlagSet("credential create")
+	flags := credentialFlagSet("credential create", stdout)
 	flags.StringVar(&target, "target", "", "Configured gateway target")
 	flags.StringVar(&name, "name", "", "Credential name")
 	flags.StringVar(&scope, "scope", "", "Credential scope: personal or platform")
@@ -231,7 +250,7 @@ func runCredentialCreate(args []string, servers []Server, configErr error, stdou
 
 func runCredentialList(args []string, servers []Server, configErr error, stdout io.Writer) error {
 	var target, view string
-	flags := credentialFlagSet("credential list")
+	flags := credentialFlagSet("credential list", stdout)
 	flags.StringVar(&target, "target", "", "Configured gateway target")
 	flags.StringVar(&view, "view", "target", "Credential view: target or managed")
 	if err := flags.Parse(args); err != nil {
@@ -253,7 +272,7 @@ func runCredentialList(args []string, servers []Server, configErr error, stdout 
 	query := url.Values{"view": []string{view}}
 	if view == "target" {
 		if routeCluster == "" || routeInstance == "" {
-			return fmt.Errorf("target credential view requires --target or --gateway with --cluster and --instance")
+			return fmt.Errorf("target credential view requires --target")
 		}
 		query.Set("cluster", routeCluster)
 		query.Set("instance", routeInstance)
@@ -289,7 +308,7 @@ func runCredentialList(args []string, servers []Server, configErr error, stdout 
 
 func runCredentialPut(args []string, servers []Server, configErr error, stdin io.Reader, stdout io.Writer) error {
 	var target, id string
-	flags := credentialFlagSet("credential put")
+	flags := credentialFlagSet("credential put", stdout)
 	flags.StringVar(&target, "target", "", "Configured gateway target")
 	flags.StringVar(&id, "id", "", "Credential ID")
 	if err := flags.Parse(args); err != nil {
@@ -330,7 +349,7 @@ func runCredentialGrant(args []string, servers []Server, configErr error, stdout
 	var target, id, granteeID string
 	var cluster, instance, namespace, use, workloadKind, workloadName string
 	var imageRepository, imageDigest, helmRelease, helmChart, requiredKeys string
-	flags := credentialFlagSet("credential grant")
+	flags := credentialFlagSet("credential grant", stdout)
 	flags.StringVar(&target, "target", "", "Configured gateway target")
 	flags.StringVar(&id, "id", "", "Credential ID")
 	flags.StringVar(&granteeID, "grantee-id", "", "Gateway user ID receiving the grant")
@@ -403,7 +422,7 @@ func runCredentialGrant(args []string, servers []Server, configErr error, stdout
 
 func runCredentialPromote(args []string, servers []Server, configErr error, stdout io.Writer) error {
 	var target, id, versionID string
-	flags := credentialFlagSet("credential promote")
+	flags := credentialFlagSet("credential promote", stdout)
 	flags.StringVar(&target, "target", "", "Configured gateway target")
 	flags.StringVar(&id, "id", "", "Credential ID")
 	flags.StringVar(&versionID, "version-id", "", "Credential version ID")
@@ -434,7 +453,7 @@ func runCredentialPromote(args []string, servers []Server, configErr error, stdo
 
 func runCredentialRevoke(args []string, servers []Server, configErr error, stdout io.Writer) error {
 	var target, id string
-	flags := credentialFlagSet("credential revoke")
+	flags := credentialFlagSet("credential revoke", stdout)
 	flags.StringVar(&target, "target", "", "Configured gateway target")
 	flags.StringVar(&id, "id", "", "Credential ID")
 	if err := flags.Parse(args); err != nil {
@@ -458,9 +477,9 @@ func runCredentialRevoke(args []string, servers []Server, configErr error, stdou
 	return err
 }
 
-func credentialFlagSet(name string) *flag.FlagSet {
+func credentialFlagSet(name string, stdout io.Writer) *flag.FlagSet {
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
+	flags.SetOutput(stdout)
 	return flags
 }
 

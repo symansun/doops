@@ -1,4 +1,7 @@
-import { readAuth, toHttpBase } from "@/lib/gateway"
+import {
+  gatewayPolicyResponse,
+  readAllowedAuth,
+} from "@/lib/gateway-policy"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -6,7 +9,13 @@ export const dynamic = "force-dynamic"
 // 通用代理：把 /api/admin/<path> 透传到 gateway /v1/admin/<path>
 // 覆盖 users / grants / tokens / instances / operations 等 admin 接口。
 async function proxy(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
-  const { gateway, token } = readAuth(req)
+  let gateway: string
+  let token: string
+  try {
+    ;({ gateway, token } = readAllowedAuth(req))
+  } catch (err) {
+    return gatewayPolicyResponse(err) || Response.json({ error: "gateway 策略检查失败" }, { status: 500 })
+  }
   if (!gateway || !token) {
     return Response.json({ error: "缺少 gateway 地址或 token" }, { status: 400 })
   }
@@ -14,7 +23,7 @@ async function proxy(req: Request, ctx: { params: Promise<{ path: string[] }> })
   const sub = (path || []).join("/")
   const incoming = new URL(req.url)
   const qs = incoming.search // 含前导 ? 或为空字符串
-  const target = `${toHttpBase(gateway)}/v1/admin/${sub}${qs}`
+  const target = `${gateway}/v1/admin/${sub}${qs}`
 
   const init: RequestInit = {
     method: req.method,
@@ -23,6 +32,7 @@ async function proxy(req: Request, ctx: { params: Promise<{ path: string[] }> })
       "Content-Type": "application/json",
     },
     cache: "no-store",
+    redirect: "manual",
   }
   if (req.method !== "GET" && req.method !== "DELETE") {
     init.body = await req.text()

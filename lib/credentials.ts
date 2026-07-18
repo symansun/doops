@@ -85,7 +85,7 @@ export async function listCredentials(
         updated_at: "2026-07-17T08:00:00Z",
       },
     ]
-    if (view === "managed") return managed
+    if (view === "managed") return managed.filter((credential) => credential.scope === "personal")
     return [
       {
         ...managed[0],

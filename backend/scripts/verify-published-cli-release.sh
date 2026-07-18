@@ -2,12 +2,17 @@
 set -euo pipefail
 
 RELEASE_TAG="${DOOPS_RELEASE_TAG:-}"
+RELEASE_COMMIT="${DOOPS_RELEASE_COMMIT:-}"
 RELEASE_REPO="${DOOPS_RELEASE_REPO:-l8ai/ai/doops.sh}"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TEMP_DIR}"' EXIT
 
 if [[ -z "${RELEASE_TAG}" ]]; then
   echo "DOOPS_RELEASE_TAG is required" >&2
+  exit 1
+fi
+if ! printf '%s\n' "${RELEASE_COMMIT}" | grep -Eq '^[0-9a-f]{40}$'; then
+  echo "DOOPS_RELEASE_COMMIT must be the full release commit SHA" >&2
   exit 1
 fi
 if ! command -v curl >/dev/null 2>&1; then
@@ -40,6 +45,19 @@ for artifact in doops-darwin-amd64 doops-darwin-arm64 doops-linux-amd64 doops-li
     echo "Published CLI checksum mismatch: ${artifact}" >&2
     exit 1
   fi
+  for marker in "${RELEASE_TAG}" "${RELEASE_COMMIT}" "doops.sh/cli-contract/v3"; do
+    if ! grep -aFq "${marker}" "${TEMP_DIR}/${artifact}"; then
+      echo "Published CLI identity marker missing: ${artifact}" >&2
+      exit 1
+    fi
+  done
 done
+
+chmod 0755 "${TEMP_DIR}/doops-linux-amd64"
+identity="$("${TEMP_DIR}/doops-linux-amd64" version)"
+if [[ "${identity}" != "version=${RELEASE_TAG} commit=${RELEASE_COMMIT} contract=doops.sh/cli-contract/v3" ]]; then
+  echo "Published CLI identity mismatch for doops-linux-amd64" >&2
+  exit 1
+fi
 
 echo "CNB Release Assets verified for ${RELEASE_TAG}."

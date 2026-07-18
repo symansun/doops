@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test:gateway-policy": "node --no-warnings --test lib/gateway-policy.test.mjs"
   },
   "dependencies": {
     "next": "^16.2.9",
