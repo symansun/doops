@@ -96,4 +96,3 @@ Skill 可以引用运行时已经暴露的原子工具，但不应内嵌大段 s
 - 用一个成功场景和至少一个缺权限或缺能力场景验证行为。
 - 确认输出证据来自真实工具观察。
 - 确认 Skill 中没有具体环境坐标、凭据、固定命令序列和隐藏 fallback。
-- CI/CD Skill 还必须通过 `test/test_doops_cicd_contract.py`。

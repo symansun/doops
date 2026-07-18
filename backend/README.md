@@ -89,7 +89,7 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 - 网关二进制：`/app/doops-agent`
 - doagent AI 内核：`/usr/local/bin/do-agent`
 - 构建闸门：独立 `DO_AGENT_IMAGE` 和最终镜像必须确认 `/usr/local/bin/do-agent --version` 与声明的 `DO_AGENT_VERSION` 完全一致；基础镜像只负责 BuildKit、kubectl、Python/PyYAML、Helm 等工具，并固定到 OCI digest
-- 发布原则：最终镜像同时固定 `DOOPS_AGENT_BASE_IMAGE` 和 `DO_AGENT_IMAGE`；app 镜像 push 前必须校验两者 label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --version` 与声明版本一致、`buildctl --version`、Python/PyYAML 与 Helm。环境部署只从业务仓库的 `doops.sh/v3 EnvironmentRegistry` 进入 Gateway credential prepare，不依赖本仓库中已删除的 workflow 目录。
+- 发布原则：最终镜像同时固定 `DOOPS_AGENT_BASE_IMAGE` 和 `DO_AGENT_IMAGE`；app 镜像 push 前必须校验两者 label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --version` 与声明版本一致、`buildctl --version`、Python/PyYAML 与 Helm。部署由明确授权的自然语言任务进入 Gateway；任务必须给出 target、服务范围、镜像版本、变更原因和验收条件。
 
 协议与端点：
 
@@ -385,7 +385,7 @@ Gateway 注册，却会制造“安装成功”的假象。
 
 ### 方式 D：维护者发布 `doops-agent`
 
-唯一部署入口是业务仓库的 `deploy/environments.yaml`，类型为 `doops.sh/v3 EnvironmentRegistry`。发布者必须显式选择 environment、service 和 Gateway target；CLI 先解析不可变源 commit，再由 Gateway credential prepare、单次 `CredentialRun` 绑定和 `$doops-cicd` 执行。CNB 只构建并推送不可变候选镜像，不直接操作环境或触发部署。
+发布者通过 `doops ask --apply` 提交明确授权的自然语言任务。任务必须直接给出 Gateway target、服务范围、镜像版本、变更原因和验收条件；需要凭据时仅以可重复的 `--credential <resource-name>` 元数据引用声明。Gateway 绑定用户、target 和 session，按精确 workload/image/Helm scope 授权并物化，Agent 不接收凭据 payload。
 
 `doops upgrade` 仅用于 dry-run 预览，非 dry-run 请求会在分发前被拒绝。正式发布由目标 Agent 之外的 CI/CD 或 GitOps Workflow 执行。
 

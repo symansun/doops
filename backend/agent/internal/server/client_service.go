@@ -13,6 +13,7 @@ import (
 )
 
 type ClientService struct {
+	hub      *GatewayHub
 	store    *GatewayStore
 	registry *AgentRegistry
 	opts     GatewayHubOptions

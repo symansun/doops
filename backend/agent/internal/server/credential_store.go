@@ -97,20 +97,14 @@ type CredentialVersion struct {
 }
 
 type CredentialGrant struct {
-	ID           string          `json:"id"`
-	CredentialID string          `json:"credential_id"`
-	GranteeID    string          `json:"grantee_id"`
-	Cluster      string          `json:"cluster"`
-	Instance     string          `json:"instance"`
-	Project      string          `json:"project"`
-	Environment  string          `json:"environment"`
-	Template     string          `json:"template"`
-	Namespace    string          `json:"namespace"`
-	Uses         []CredentialUse `json:"uses"`
-	State        CredentialState `json:"state"`
-	CreatedBy    string          `json:"created_by"`
-	CreatedAt    time.Time       `json:"created_at"`
-	RevokedAt    *time.Time      `json:"revoked_at,omitempty"`
+	ID           string               `json:"id"`
+	CredentialID string               `json:"credential_id"`
+	GranteeID    string               `json:"grantee_id"`
+	Scope        CredentialGrantScope `json:"scope"`
+	State        CredentialState      `json:"state"`
+	CreatedBy    string               `json:"created_by"`
+	CreatedAt    time.Time            `json:"created_at"`
+	RevokedAt    *time.Time           `json:"revoked_at,omitempty"`
 }
 
 type CredentialBundle struct {
@@ -126,13 +120,7 @@ type CredentialBundle struct {
 }
 
 type CredentialBundleItem struct {
-	CredentialID       string                 `json:"credential_id"`
-	Use                CredentialUse          `json:"use"`
-	Namespace          string                 `json:"namespace"`
-	Workload           CredentialPlanWorkload `json:"workload,omitempty"`
-	RegistryRepository string                 `json:"registry_repository,omitempty"`
-	RegistryReference  string                 `json:"registry_reference,omitempty"`
-	RequiredKeys       []string               `json:"required_keys,omitempty"`
+	CredentialID string `json:"credential_id"`
 }
 
 type CredentialBundleCreateRequest struct {
@@ -166,13 +154,7 @@ type CredentialVersionPutRequest struct {
 type CredentialGrantCreateRequest struct {
 	CredentialID string
 	GranteeID    string
-	Cluster      string
-	Instance     string
-	Project      string
-	Environment  string
-	Template     string
-	Namespace    string
-	Uses         []CredentialUse
+	Scope        CredentialGrantScope
 	CreatedBy    string
 }
 
@@ -180,13 +162,7 @@ type CredentialUseRequest struct {
 	ActorID      string
 	CredentialID string
 	Credential   string
-	Cluster      string
-	Instance     string
-	Project      string
-	Environment  string
-	Template     string
-	Namespace    string
-	Use          CredentialUse
+	Scope        CredentialGrantScope
 }
 
 type AuthorizedCredentialUse struct {
@@ -464,22 +440,15 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 		ID:           "credgrant_" + randomHex(12),
 		CredentialID: resource.ID,
 		GranteeID:    req.GranteeID,
-		Cluster:      strings.TrimSpace(req.Cluster),
-		Instance:     strings.TrimSpace(req.Instance),
-		Project:      strings.TrimSpace(req.Project),
-		Environment:  strings.TrimSpace(req.Environment),
-		Template:     strings.TrimSpace(req.Template),
-		Namespace:    strings.TrimSpace(req.Namespace),
-		Uses:         normalizedCredentialUses(req.Uses),
+		Scope:        normalizeCredentialGrantScope(req.Scope),
 		State:        CredentialStateActive,
 		CreatedBy:    req.CreatedBy,
 		CreatedAt:    time.Now().UTC(),
 	}
-	if grant.Cluster == "" || grant.Instance == "" || grant.Project == "" || grant.Environment == "" ||
-		grant.Template == "" || grant.Namespace == "" || len(grant.Uses) == 0 {
-		return CredentialGrant{}, fmt.Errorf("credential grant requires every deployment dimension and at least one use")
+	if err := validateCredentialGrantScope(grant.Scope); err != nil {
+		return CredentialGrant{}, err
 	}
-	usesJSON, err := json.Marshal(grant.Uses)
+	scopeJSON, err := json.Marshal(grant.Scope)
 	if err != nil {
 		return CredentialGrant{}, err
 	}
@@ -489,46 +458,40 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 	}
 	defer tx.Rollback()
 	_, err = tx.Exec(`INSERT INTO credential_grants
-		(id, credential_id, grantee_id, cluster, instance, project, environment, template, namespace, uses_json, state, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(credential_id, grantee_id, cluster, instance, project, environment, template, namespace, uses_json)
+		(id, credential_id, grantee_id, scope_json, state, created_by, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(credential_id, grantee_id, scope_json)
 		DO UPDATE SET
 			state = excluded.state,
 			created_by = excluded.created_by,
 			created_at = excluded.created_at,
 			revoked_at = ''`,
-		grant.ID, grant.CredentialID, grant.GranteeID, grant.Cluster, grant.Instance, grant.Project,
-		grant.Environment, grant.Template, grant.Namespace, string(usesJSON), grant.State,
+		grant.ID, grant.CredentialID, grant.GranteeID, string(scopeJSON), grant.State,
 		grant.CreatedBy, formatTime(grant.CreatedAt))
 	if err != nil {
 		return CredentialGrant{}, err
 	}
 	var existing CredentialGrant
-	var uses, createdAt, revokedAt string
-	err = tx.QueryRow(`SELECT id, credential_id, grantee_id, cluster, instance, project, environment, template,
-			namespace, uses_json, state, created_by, created_at, revoked_at
+	var storedScope, createdAt, revokedAt string
+	err = tx.QueryRow(`SELECT id, credential_id, grantee_id, scope_json, state, created_by, created_at, revoked_at
 		FROM credential_grants
-		WHERE credential_id = ? AND grantee_id = ? AND cluster = ? AND instance = ? AND project = ?
-			AND environment = ? AND template = ? AND namespace = ? AND uses_json = ?`,
-		grant.CredentialID, grant.GranteeID, grant.Cluster, grant.Instance, grant.Project,
-		grant.Environment, grant.Template, grant.Namespace, string(usesJSON),
+		WHERE credential_id = ? AND grantee_id = ? AND scope_json = ?`,
+		grant.CredentialID, grant.GranteeID, string(scopeJSON),
 	).Scan(
-		&existing.ID, &existing.CredentialID, &existing.GranteeID, &existing.Cluster, &existing.Instance,
-		&existing.Project, &existing.Environment, &existing.Template, &existing.Namespace, &uses,
+		&existing.ID, &existing.CredentialID, &existing.GranteeID, &storedScope,
 		&existing.State, &existing.CreatedBy, &createdAt, &revokedAt,
 	)
 	if err != nil {
 		return CredentialGrant{}, err
 	}
-	if err := json.Unmarshal([]byte(uses), &existing.Uses); err != nil {
+	if err := json.Unmarshal([]byte(storedScope), &existing.Scope); err != nil {
 		return CredentialGrant{}, err
 	}
 	existing.CreatedAt, _ = parseTime(createdAt)
 	if auditID != 0 {
 		if err := finishAuditWith(tx, auditID, AuditFinish{
-			Status: "success", Cluster: existing.Cluster, Instance: existing.Instance,
-			GrantID: existing.ID, Project: existing.Project, Environment: existing.Environment,
-			Template: existing.Template, Namespace: existing.Namespace, EndedAt: time.Now().UTC(),
+			Status: "success", Cluster: existing.Scope.Cluster, Instance: existing.Scope.Instance,
+			GrantID: existing.ID, Scope: &existing.Scope, EndedAt: time.Now().UTC(),
 		}); err != nil {
 			return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 		}
@@ -599,9 +562,8 @@ func (s *GatewayStore) FinalizeCredentialGrantRevocation(
 	if grant.State == CredentialStateRevoked {
 		if auditID != 0 {
 			if err := s.FinishAudit(auditID, AuditFinish{
-				Status: "success", GrantID: grant.ID, Cluster: grant.Cluster, Instance: grant.Instance,
-				Project: grant.Project, Environment: grant.Environment, Template: grant.Template,
-				Namespace: grant.Namespace, EndedAt: time.Now().UTC(),
+				Status: "success", GrantID: grant.ID, Cluster: grant.Scope.Cluster, Instance: grant.Scope.Instance,
+				Scope: &grant.Scope, EndedAt: time.Now().UTC(),
 			}); err != nil {
 				return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 			}
@@ -633,9 +595,8 @@ func (s *GatewayStore) FinalizeCredentialGrantRevocation(
 	}
 	if auditID != 0 {
 		if err := finishAuditWith(tx, auditID, AuditFinish{
-			Status: "success", GrantID: grant.ID, Cluster: grant.Cluster, Instance: grant.Instance,
-			Project: grant.Project, Environment: grant.Environment, Template: grant.Template,
-			Namespace: grant.Namespace, EndedAt: now,
+			Status: "success", GrantID: grant.ID, Cluster: grant.Scope.Cluster, Instance: grant.Scope.Instance,
+			Scope: &grant.Scope, EndedAt: now,
 		}); err != nil {
 			return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 		}
@@ -664,14 +625,9 @@ func (s *GatewayStore) AuthorizeCredentialGrant(req CredentialUseRequest) (Crede
 	req.ActorID = strings.TrimSpace(req.ActorID)
 	req.CredentialID = strings.TrimSpace(req.CredentialID)
 	req.Credential = strings.TrimSpace(req.Credential)
-	req.Cluster = strings.TrimSpace(req.Cluster)
-	req.Instance = strings.TrimSpace(req.Instance)
-	req.Project = strings.TrimSpace(req.Project)
-	req.Environment = strings.TrimSpace(req.Environment)
-	req.Template = strings.TrimSpace(req.Template)
-	req.Namespace = strings.TrimSpace(req.Namespace)
-	if req.ActorID == "" || (req.CredentialID == "" && req.Credential == "") || req.Cluster == "" || req.Instance == "" || req.Project == "" ||
-		req.Environment == "" || req.Template == "" || req.Namespace == "" || !validCredentialUse(req.Use) {
+	req.Scope = normalizeCredentialGrantScope(req.Scope)
+	if req.ActorID == "" || (req.CredentialID == "" && req.Credential == "") ||
+		validateCredentialGrantScope(req.Scope) != nil {
 		return CredentialResource{}, CredentialGrant{}, ErrCredentialGrantDenied
 	}
 	credentialSelector := "c.name = ?"
@@ -681,13 +637,10 @@ func (s *GatewayStore) AuthorizeCredentialGrant(req CredentialUseRequest) (Crede
 		credentialValue = req.CredentialID
 	}
 	rows, err := s.db.Query(`SELECT c.id, c.name, c.scope, c.owner_id, c.type, c.state, c.created_by, c.created_at, c.updated_at, c.revoked_at,
-			g.id, g.credential_id, g.grantee_id, g.cluster, g.instance, g.project, g.environment, g.template, g.namespace,
-			g.uses_json, g.state, g.created_by, g.created_at, g.revoked_at
+			g.id, g.credential_id, g.grantee_id, g.scope_json, g.state, g.created_by, g.created_at, g.revoked_at
 		FROM credential_grants g JOIN credentials c ON c.id = g.credential_id
-		WHERE `+credentialSelector+` AND c.state = ? AND g.grantee_id = ? AND g.cluster = ? AND g.instance = ? AND g.project = ?
-			AND g.environment = ? AND g.template = ? AND g.namespace = ? AND g.state = ?`,
-		credentialValue, CredentialStateActive, req.ActorID, req.Cluster, req.Instance, req.Project,
-		req.Environment, req.Template, req.Namespace, CredentialStateActive)
+		WHERE `+credentialSelector+` AND c.state = ? AND g.grantee_id = ? AND g.state = ?`,
+		credentialValue, CredentialStateActive, req.ActorID, CredentialStateActive)
 	if err != nil {
 		return CredentialResource{}, CredentialGrant{}, err
 	}
@@ -698,7 +651,7 @@ func (s *GatewayStore) AuthorizeCredentialGrant(req CredentialUseRequest) (Crede
 		if err != nil {
 			return CredentialResource{}, CredentialGrant{}, err
 		}
-		if !containsCredentialUse(grant.Uses, req.Use) {
+		if !credentialScopeEqual(grant.Scope, req.Scope) {
 			continue
 		}
 		matches = append(matches, AuthorizedCredentialUse{Resource: resource, Grant: grant})
@@ -741,10 +694,6 @@ func (s *GatewayStore) createCredentialBundle(req CredentialBundleCreateRequest,
 	seen := make(map[string]struct{}, len(req.Items))
 	for _, item := range req.Items {
 		item.CredentialID = strings.TrimSpace(item.CredentialID)
-		item.Namespace = strings.TrimSpace(item.Namespace)
-		item.RegistryRepository = strings.TrimSpace(item.RegistryRepository)
-		item.RegistryReference = strings.TrimSpace(item.RegistryReference)
-		item.RequiredKeys = normalizedCredentialKeys(item.RequiredKeys)
 		resource, err := s.credentialByID(item.CredentialID)
 		if err != nil {
 			return CredentialBundle{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
@@ -752,14 +701,10 @@ func (s *GatewayStore) createCredentialBundle(req CredentialBundleCreateRequest,
 		if !s.canManageCredential(resource, req.CreatedBy, ActionCredentialGrant) {
 			return CredentialBundle{}, ErrCredentialForbidden
 		}
-		if err := validateCredentialBundleItem(resource.Type, item); err != nil {
-			return CredentialBundle{}, err
-		}
-		identity := item.CredentialID + "\x00" + string(item.Use)
-		if _, exists := seen[identity]; exists {
+		if _, exists := seen[item.CredentialID]; exists {
 			return CredentialBundle{}, fmt.Errorf("credential bundle contains a duplicate item")
 		}
-		seen[identity] = struct{}{}
+		seen[item.CredentialID] = struct{}{}
 		items = append(items, item)
 	}
 
@@ -781,13 +726,9 @@ func (s *GatewayStore) createCredentialBundle(req CredentialBundleCreateRequest,
 		return CredentialBundle{}, err
 	}
 	for _, item := range bundle.Items {
-		workloadJSON, _ := json.Marshal(item.Workload)
-		requiredKeysJSON, _ := json.Marshal(item.RequiredKeys)
 		if _, err := tx.Exec(`INSERT INTO credential_bundle_items
-			(bundle_id, credential_id, use, namespace, workload_json, registry_repository, registry_reference, required_keys_json)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			bundle.ID, item.CredentialID, item.Use, item.Namespace, string(workloadJSON),
-			item.RegistryRepository, item.RegistryReference, string(requiredKeysJSON)); err != nil {
+			(bundle_id, credential_id) VALUES (?, ?)`,
+			bundle.ID, item.CredentialID); err != nil {
 			return CredentialBundle{}, err
 		}
 	}
@@ -836,61 +777,20 @@ func (s *GatewayStore) ResolveCredentialBundle(actorID, name string) (Credential
 		return CredentialBundle{}, ErrCredentialAmbiguous
 	}
 	bundle := matches[0]
-	itemRows, err := s.db.Query(`SELECT credential_id, use, namespace, workload_json,
-			registry_repository, registry_reference, required_keys_json
-		FROM credential_bundle_items WHERE bundle_id = ? ORDER BY credential_id, use`, bundle.ID)
+	itemRows, err := s.db.Query(`SELECT credential_id
+		FROM credential_bundle_items WHERE bundle_id = ? ORDER BY credential_id`, bundle.ID)
 	if err != nil {
 		return CredentialBundle{}, err
 	}
 	defer itemRows.Close()
 	for itemRows.Next() {
 		var item CredentialBundleItem
-		var workloadJSON, requiredKeysJSON string
-		if err := itemRows.Scan(&item.CredentialID, &item.Use, &item.Namespace, &workloadJSON,
-			&item.RegistryRepository, &item.RegistryReference, &requiredKeysJSON); err != nil {
-			return CredentialBundle{}, err
-		}
-		if err := json.Unmarshal([]byte(workloadJSON), &item.Workload); err != nil {
-			return CredentialBundle{}, err
-		}
-		if err := json.Unmarshal([]byte(requiredKeysJSON), &item.RequiredKeys); err != nil {
+		if err := itemRows.Scan(&item.CredentialID); err != nil {
 			return CredentialBundle{}, err
 		}
 		bundle.Items = append(bundle.Items, item)
 	}
 	return bundle, itemRows.Err()
-}
-
-func validateCredentialBundleItem(credentialType CredentialType, item CredentialBundleItem) error {
-	if item.Namespace == "" || !validCredentialUse(item.Use) {
-		return fmt.Errorf("credential bundle item is incomplete")
-	}
-	switch credentialType {
-	case CredentialTypeRegistry:
-		if item.Use != CredentialUseImagePull || strings.TrimSpace(item.Workload.Kind) == "" ||
-			strings.TrimSpace(item.Workload.Name) == "" || item.RegistryRepository == "" || item.RegistryReference == "" {
-			return fmt.Errorf("registry bundle item requires imagePull materialization context")
-		}
-	case CredentialTypeTLS:
-		if item.Use != CredentialUseTLS {
-			return fmt.Errorf("TLS bundle item use is invalid")
-		}
-	case CredentialTypeOpaque:
-		if item.Use != CredentialUseOpaqueSecret || len(item.RequiredKeys) == 0 {
-			return fmt.Errorf("opaque bundle item requires exact keys")
-		}
-	case CredentialTypeHelmRepository:
-		if item.Use != CredentialUseHelmPull {
-			return fmt.Errorf("Helm bundle item use is invalid")
-		}
-	case CredentialTypeGitToken:
-		if item.Use != CredentialUseGitCheckout {
-			return fmt.Errorf("Git bundle item use is invalid")
-		}
-	default:
-		return fmt.Errorf("credential bundle item type is invalid")
-	}
-	return nil
 }
 
 func (s *GatewayStore) PromoteCredentialVersion(credentialID, versionID, actorID string) error {
@@ -1073,8 +973,7 @@ func (s *GatewayStore) CredentialVerifications(credentialID, versionID string) (
 }
 
 func (s *GatewayStore) ActiveCredentialGrants(credentialID string) ([]CredentialGrant, error) {
-	rows, err := s.db.Query(`SELECT id, credential_id, grantee_id, cluster, instance, project, environment, template, namespace,
-			uses_json, state, created_by, created_at, revoked_at
+	rows, err := s.db.Query(`SELECT id, credential_id, grantee_id, scope_json, state, created_by, created_at, revoked_at
 		FROM credential_grants WHERE credential_id = ? AND state = ? ORDER BY id`,
 		strings.TrimSpace(credentialID), CredentialStateActive)
 	if err != nil {
@@ -1092,17 +991,14 @@ func (s *GatewayStore) ActiveCredentialGrants(credentialID string) ([]Credential
 	return grants, rows.Err()
 }
 
-func (s *GatewayStore) CredentialGrantsForContext(credentialID string, ref CredentialPlanReference, plan CredentialPlan) ([]CredentialGrant, error) {
+func (s *GatewayStore) CredentialGrantsForContext(credentialID string, scope CredentialGrantScope) ([]CredentialGrant, error) {
 	grants, err := s.ActiveCredentialGrants(credentialID)
 	if err != nil {
 		return nil, err
 	}
 	matches := make([]CredentialGrant, 0, len(grants))
 	for _, grant := range grants {
-		if grant.Cluster == plan.Cluster && grant.Instance == plan.Instance &&
-			grant.Project == plan.Project && grant.Environment == plan.Environment &&
-			grant.Template == plan.Template && grant.Namespace == ref.Namespace &&
-			containsCredentialUse(grant.Uses, ref.Use) {
+		if credentialScopeEqual(grant.Scope, scope) {
 			matches = append(matches, grant)
 		}
 	}
@@ -1229,19 +1125,8 @@ func (s *GatewayStore) CredentialVersionByState(credentialID string, state Crede
 	return version, err
 }
 
-func (s *GatewayStore) credentialGrantByIdentity(grant CredentialGrant, usesJSON string) (CredentialGrant, error) {
-	row := s.db.QueryRow(`SELECT id, credential_id, grantee_id, cluster, instance, project, environment, template, namespace,
-			uses_json, state, created_by, created_at, revoked_at
-		FROM credential_grants WHERE credential_id = ? AND grantee_id = ? AND cluster = ? AND instance = ? AND project = ?
-			AND environment = ? AND template = ? AND namespace = ? AND uses_json = ?`,
-		grant.CredentialID, grant.GranteeID, grant.Cluster, grant.Instance, grant.Project, grant.Environment,
-		grant.Template, grant.Namespace, usesJSON)
-	return scanCredentialGrant(row)
-}
-
 func (s *GatewayStore) credentialGrantByID(credentialID, grantID string) (CredentialGrant, error) {
-	row := s.db.QueryRow(`SELECT id, credential_id, grantee_id, cluster, instance, project, environment, template, namespace,
-			uses_json, state, created_by, created_at, revoked_at
+	row := s.db.QueryRow(`SELECT id, credential_id, grantee_id, scope_json, state, created_by, created_at, revoked_at
 		FROM credential_grants WHERE credential_id = ? AND id = ?`, credentialID, grantID)
 	grant, err := scanCredentialGrant(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1294,12 +1179,12 @@ func scanCredentialVersion(scanner credentialScanner) (CredentialVersion, error)
 
 func scanCredentialGrant(scanner credentialScanner) (CredentialGrant, error) {
 	var grant CredentialGrant
-	var usesJSON, createdAt, revokedAt string
-	if err := scanner.Scan(&grant.ID, &grant.CredentialID, &grant.GranteeID, &grant.Cluster, &grant.Instance, &grant.Project,
-		&grant.Environment, &grant.Template, &grant.Namespace, &usesJSON, &grant.State, &grant.CreatedBy, &createdAt, &revokedAt); err != nil {
+	var scopeJSON, createdAt, revokedAt string
+	if err := scanner.Scan(&grant.ID, &grant.CredentialID, &grant.GranteeID, &scopeJSON,
+		&grant.State, &grant.CreatedBy, &createdAt, &revokedAt); err != nil {
 		return CredentialGrant{}, err
 	}
-	if err := json.Unmarshal([]byte(usesJSON), &grant.Uses); err != nil {
+	if err := json.Unmarshal([]byte(scopeJSON), &grant.Scope); err != nil {
 		return CredentialGrant{}, err
 	}
 	grant.CreatedAt, _ = parseTime(createdAt)
@@ -1314,17 +1199,16 @@ func scanCredentialGrant(scanner credentialScanner) (CredentialGrant, error) {
 func scanCredentialAuthorization(scanner credentialScanner) (CredentialResource, CredentialGrant, error) {
 	var resource CredentialResource
 	var grant CredentialGrant
-	var resourceCreatedAt, resourceUpdatedAt, resourceRevokedAt, usesJSON, grantCreatedAt, grantRevokedAt string
+	var resourceCreatedAt, resourceUpdatedAt, resourceRevokedAt, scopeJSON, grantCreatedAt, grantRevokedAt string
 	if err := scanner.Scan(
 		&resource.ID, &resource.Name, &resource.Scope, &resource.OwnerID, &resource.Type, &resource.State,
 		&resource.CreatedBy, &resourceCreatedAt, &resourceUpdatedAt, &resourceRevokedAt,
-		&grant.ID, &grant.CredentialID, &grant.GranteeID, &grant.Cluster, &grant.Instance, &grant.Project,
-		&grant.Environment, &grant.Template, &grant.Namespace, &usesJSON, &grant.State, &grant.CreatedBy,
+		&grant.ID, &grant.CredentialID, &grant.GranteeID, &scopeJSON, &grant.State, &grant.CreatedBy,
 		&grantCreatedAt, &grantRevokedAt,
 	); err != nil {
 		return CredentialResource{}, CredentialGrant{}, err
 	}
-	if err := json.Unmarshal([]byte(usesJSON), &grant.Uses); err != nil {
+	if err := json.Unmarshal([]byte(scopeJSON), &grant.Scope); err != nil {
 		return CredentialResource{}, CredentialGrant{}, err
 	}
 	resource.CreatedAt, _ = parseTime(resourceCreatedAt)
@@ -1385,24 +1269,6 @@ func normalizedCredentialUses(uses []CredentialUse) []CredentialUse {
 		out = append(out, use)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
-}
-
-func normalizedCredentialKeys(keys []string) []string {
-	seen := make(map[string]struct{}, len(keys))
-	out := make([]string, 0, len(keys))
-	for _, key := range keys {
-		key = strings.TrimSpace(key)
-		if key == "" {
-			continue
-		}
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, key)
-	}
-	sort.Strings(out)
 	return out
 }
 

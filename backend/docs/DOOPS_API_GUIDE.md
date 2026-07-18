@@ -299,8 +299,8 @@ websocat \
 
 ### `doops_agent_prompt`
 
-向目标 AI agent 下发非发布类的诊断或运维任务。生产发布不得使用该通用入口，
-必须使用后文的声明式发布协议。
+向目标 AI agent 下发诊断、运维或明确授权的发布任务。发布任务必须使用
+`operation=apply`，并在自然语言中明确 target、服务范围、镜像版本、原因和验收条件。
 
 参数：
 
@@ -314,8 +314,9 @@ websocat \
 
 需要权限：`ask`。
 
-适用于诊断、信息收集和用户明确授权的非发布运维任务。它不能替代
-`doops.sh/v3 EnvironmentRegistry`、credential prepare、发布 admission 或审计。
+适用于诊断、信息收集和用户明确授权的运维或发布任务。需要凭据时，CLI 只传递
+`--credential <resource-name>` 的 metadata-only 引用；Gateway 在绑定用户、target 和
+session 后按精确 scope 授权和物化。
 
 ### `doops_file_read`
 
@@ -417,44 +418,16 @@ doops -session <session> pull --target <target> --dest <dir>
 目标 Agent 之外的 CI/CD、GitOps 或 release controller 执行，并负责新实例心跳验证与
 失败回滚。
 
-## 声明式发布 API 对接模式
+## 自然语言发布 API 对接模式
 
-平台可以对外提供更高层的发布接口，但内部必须收敛到仓库中的
-`doops.sh/v3 EnvironmentRegistry`，不能把自然语言指令、工作区上传或直接 Agent
-工具调用作为生产发布协议。一个典型的平台接口可以是：
+平台通过 `doops ask --apply` 发送明确授权的发布任务。任务必须直接给出 target、
+服务范围、镜像版本、变更原因和验收条件，Gateway 不得从 prompt、路径或历史状态猜测
+这些字段。需要凭据时，调用方显式提供一个或多个 metadata-only credential resource
+name；Gateway 将引用绑定当前用户、target 和 session，Agent 返回精确 workload/image/Helm
+scope 后才授权和物化。凭据 payload 不进入 prompt、Agent、日志或审计记录。
 
-```http
-POST /your-platform/deployments
-Content-Type: application/json
-
-{
-  "repository": "https://cnb.cool/org/project.git",
-  "ref": "main",
-  "workflow": "deploy/environments.yaml",
-  "environment": "oilan",
-  "service": "api",
-  "dry_run": true
-}
-```
-
-平台内部必须按以下固定协议执行：
-
-1. 解析并校验指定 revision 中的 `deploy/environments.yaml`、环境和单个服务声明。
-2. 由 Gateway `/v1/credentials/prepare` 生成 metadata-only、单次使用且绑定
-   source revision、target、session 和 build definition 的 `CredentialRun`。
-3. Gateway 校验目标 Agent 精确声明
-   `doops.sh/credential-plan/v2`、`doops.sh/v3`、`doops.sh/cicd-contract/v3`
-   及全部绑定能力；不一致时返回
-   `426 Upgrade Required`，不得继续分发。
-4. Gateway 通过已授权反向隧道发送严格的
-   `doops.reconciliation-context/v2` apply envelope；Agent 公共 `/ws` 不接受
-   credential control-plane 工具或 apply。
-5. Agent 仅在当前 session 内临时物化凭据，调用 doagent 执行声明式 dry-run/apply，
-   完成后清理；Gateway 消费 `CredentialRun` 并记录审计。
-6. 返回发布状态、审计 ID、source revision、目标和健康检查结果。
-
-生产发布必须由 CI/CD、GitOps 或独立 release controller 调用该协议，不能由被升级的
-目标 Agent 自升级。
+生产发布不能由被升级的目标 Agent 自升级。调用方必须以同一 session 的真实健康检查和
+关键业务验收作为完成证据。
 
 ## 进展和可追溯性
 
