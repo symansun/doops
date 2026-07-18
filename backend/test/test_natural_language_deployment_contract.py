@@ -121,6 +121,7 @@ def test_repository_agent_rules_guard_release_and_credential_boundaries():
     assert "Historical or revoked grants" in rules
     assert "The only supported installed CLI path is `~/.local/bin/doops`" in rules
     assert "backend/scripts/install.sh --version <tag>" in rules
+    assert "CLI's own Go parser" in rules
     assert "backend/docs/AGENT_NATIVE_CICD.md" in rules
     assert "backend/docs/CREDENTIAL_RESOURCES.md" in rules
     assert "browser testing" in rules
