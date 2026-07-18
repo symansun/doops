@@ -51,6 +51,7 @@ func buildK8SRequest(args []string) (K8SRequest, error) {
 		addString("namespace", opts["namespace"])
 		addString("container", opts["container"])
 		addString("image", opts["image"])
+		addString("revision", opts["revision"])
 		addString("output", opts["output"])
 		addString("timeout", opts["timeout"])
 		if err := addInt("tail", opts["tail"]); err != nil {
@@ -181,6 +182,7 @@ func parseK8SFlags(args []string) (map[string]string, []string, error) {
 		"namespace": "",
 		"container": "",
 		"image":     "",
+		"revision":  "",
 		"output":    "",
 		"tail":      "",
 		"replicas":  "",
@@ -192,7 +194,7 @@ func parseK8SFlags(args []string) (map[string]string, []string, error) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
-		case "--target", "--namespace", "--container", "--image", "--output", "--tail", "--replicas", "--timeout", "--for":
+		case "--target", "--namespace", "--container", "--image", "--revision", "--output", "--tail", "--replicas", "--timeout", "--for":
 			if i+1 >= len(args) {
 				return nil, nil, fmt.Errorf("%s requires a value", arg)
 			}

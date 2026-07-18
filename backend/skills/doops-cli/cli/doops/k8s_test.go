@@ -76,6 +76,7 @@ func TestBuildK8SRequestDeployImage(t *testing.T) {
 		"deploy/exam-api",
 		"--container", "app",
 		"--image", "registry.example.com/example/exam-api:v2",
+		"--revision", "64e542ad01e3bfd8938463b685dc0583731f400e",
 		"--target", "prod",
 		"--namespace", "oilan-system",
 		"--confirm",
@@ -88,6 +89,7 @@ func TestBuildK8SRequestDeployImage(t *testing.T) {
 		"resource":  "deploy/exam-api",
 		"container": "app",
 		"image":     "registry.example.com/example/exam-api:v2",
+		"revision":  "64e542ad01e3bfd8938463b685dc0583731f400e",
 		"namespace": "oilan-system",
 		"confirm":   true,
 	}
