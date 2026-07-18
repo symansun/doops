@@ -3,6 +3,9 @@
 DoOps v3 普通业务 workload 的标准发布入口是明确授权的自然语言任务，而不是环境注册表、
 部署模板或 workflow YAML。
 唯一发布命令语义是 `doops ask --apply`；CI 和人工调用都使用同一入口。
+CLI 会把同 target/session 最近一次成功 `push` 的精确 workspace commit 自动绑定到
+apply；缺少本地 commit 记录、远端 commit 不一致或工作区存在额外改动时，Agent 在启动
+doagent 前失败关闭。调用方不需要也不能用自然语言覆盖该绑定。
 
 正式任务必须直接包含：
 
@@ -40,6 +43,10 @@ mutation 证据时必须失败关闭，不能退回 Bash、原始 kubectl、原�
 stdio 请求和响应在本地生成结果证明，完成验证后才向 ACP 暴露 `rawOutput`。Agent 必须
 逐项验证 attestation schema、tool、scope、input/result digest、当前 session_id、
 `confirm=true` 和 mutation operation；仅有 completed 状态或工具名不构成成功证据。
+一次性 mutation authority 同时绑定精确 allowedTools、自然语言任务与 workspace commit
+的 context digest，并由 doagent 原子消费；可信 attestation 必须返回同一 authority
+digest。同一 target 上的 apply、push、write、clean、shell、Kubernetes mutation 和凭据
+物化共享 mutation 锁，避免发布过程中工作区或 workload 被并发改写。
 
 普通前台 `exec` 可以执行明确给出的 Helm `upgrade/install/rollback/uninstall`。
 命令受 Gateway 用户 `exec` 权限、session 隔离、目标操作串行化和完整退出审计约束；

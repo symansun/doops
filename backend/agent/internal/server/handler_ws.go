@@ -1054,6 +1054,24 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	log.Printf("🤖 WS Running doagent via ACP HTTP: session=%s structured=%t model=%s",
 		doopsSessionID, responseFormat == "json", model)
 
+	var mutationContext string
+	if execution.RequireToolEvidence {
+		if strings.TrimSpace(execution.WorkspaceCommit) == "" {
+			writeJSON(buildErrorResponse(reqID, -32602, "doagent_apply_workspace_commit_required"))
+			return
+		}
+		if err := validateWorkspaceCommitBinding(doopsSessionID, execution.WorkspaceCommit); err != nil {
+			writeJSON(buildErrorResponse(reqID, -32602, "doagent_apply_workspace_commit_invalid"))
+			return
+		}
+		var err error
+		mutationContext, err = mutationContextDigest(doopsSessionID, instr, execution.WorkspaceCommit)
+		if err != nil {
+			writeJSON(buildErrorResponse(reqID, -32602, "doagent_apply_mutation_context_invalid"))
+			return
+		}
+	}
+
 	doagentURL := configuredDoagentURL()
 	if err := ensureDoagentAvailable(doagentURL); err != nil {
 		writeJSON(buildErrorResponse(reqID, -32603, "doagent_unavailable"))
@@ -1197,7 +1215,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	promptParams["mutationAuthorized"] = execution.RequireToolEvidence
 	if execution.RequireToolEvidence {
 		authorityID, issuedAt, authorityToken, authorityDigest, authorityErr :=
-			newMutationAuthorization(targetSessionID, allowedTools, time.Now())
+			newMutationAuthorization(targetSessionID, allowedTools, mutationContext, time.Now())
 		if authorityErr != nil {
 			sseCancel()
 			<-sseDone
@@ -1207,6 +1225,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		promptParams["mutationAuthorizationId"] = authorityID
 		promptParams["mutationAuthorizationIssuedAt"] = issuedAt
 		promptParams["mutationAuthorizationToken"] = authorityToken
+		promptParams["mutationContextDigest"] = mutationContext
 		toolTraces.bindMutationAuthority(authorityDigest)
 	}
 	if responseFormat == "json" {

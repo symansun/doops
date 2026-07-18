@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const mutationAuthoritySchema = "doagent.mutation-authority/v1"
+const mutationAuthoritySchema = "doagent.mutation-authority/v2"
 
 var (
 	processMutationAuthoritySecret string
@@ -40,7 +40,7 @@ func InitializeMutationAuthority() error {
 	return mutationAuthorityInitErr
 }
 
-func newMutationAuthorization(sessionID string, allowedTools []string, now time.Time) (string, int64, string, string, error) {
+func newMutationAuthorization(sessionID string, allowedTools []string, contextDigest string, now time.Time) (string, int64, string, string, error) {
 	if processMutationAuthoritySecret == "" {
 		return "", 0, "", "", fmt.Errorf("mutation authority is not configured")
 	}
@@ -56,16 +56,21 @@ func newMutationAuthorization(sessionID string, allowedTools []string, now time.
 		authorityID,
 		issuedAt,
 		allowedTools,
+		contextDigest,
 	)
 	return authorityID, issuedAt, token, digest, err
 }
 
-func signMutationAuthorization(secret, sessionID, authorityID string, issuedAt int64, allowedTools []string) (string, string, error) {
+func signMutationAuthorization(secret, sessionID, authorityID string, issuedAt int64, allowedTools []string, contextDigest string) (string, string, error) {
 	if !isLowerHex(secret, 64) {
 		return "", "", fmt.Errorf("invalid mutation authority secret")
 	}
 	if !isLowerHex(authorityID, 64) {
 		return "", "", fmt.Errorf("invalid mutation authority id")
+	}
+	if !strings.HasPrefix(contextDigest, "sha256:") ||
+		!isLowerHex(strings.TrimPrefix(contextDigest, "sha256:"), 64) {
+		return "", "", fmt.Errorf("invalid mutation context digest")
 	}
 	toolsJSON, err := json.Marshal(allowedTools)
 	if err != nil {
@@ -77,11 +82,25 @@ func signMutationAuthorization(secret, sessionID, authorityID string, issuedAt i
 	appendMutationAuthorityField(&payload, authorityID)
 	appendMutationAuthorityField(&payload, strconv.FormatInt(issuedAt, 10))
 	appendMutationAuthorityField(&payload, string(toolsJSON))
+	appendMutationAuthorityField(&payload, contextDigest)
 
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write([]byte(payload.String()))
 	binding := sha256.Sum256([]byte(payload.String()))
 	return hex.EncodeToString(mac.Sum(nil)), "sha256:" + hex.EncodeToString(binding[:]), nil
+}
+
+func mutationContextDigest(doopsSessionID, instruction, workspaceCommit string) (string, error) {
+	if strings.TrimSpace(doopsSessionID) == "" ||
+		strings.TrimSpace(instruction) == "" ||
+		!validWorkspaceGitCommit(strings.TrimSpace(workspaceCommit)) {
+		return "", fmt.Errorf("mutation context is incomplete")
+	}
+	return digestRuntimeAttestationJSON(map[string]interface{}{
+		"doopsSessionId":  strings.TrimSpace(doopsSessionID),
+		"instruction":     instruction,
+		"workspaceCommit": strings.TrimSpace(workspaceCommit),
+	})
 }
 
 func appendMutationAuthorityField(payload *strings.Builder, value string) {

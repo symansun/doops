@@ -54,6 +54,69 @@ main:
           script: DOOPS_RELEASE_TAG="${CNB_COMMIT}" bash backend/scripts/build-agent-image.sh
         - name: build immutable web image
           script: DOOPS_RELEASE_TAG="${CNB_COMMIT}" bash backend/scripts/build-web-image.sh
+  api_trigger_deploy_agent:
+    - name: deploy agent through natural-language apply
+      runner:
+        cpus: 2
+      imports:
+        - https://cnb.cool/aiedulab/auto-harness-secret/-/blob/main/secrets.yml
+      docker:
+        image: docker.io/library/golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191
+      stages:
+        - name: prepare Gateway CLI
+          script: |
+            set -eu
+            test "${CNB_BRANCH}" = "main"
+            apk add --no-cache bash git
+            : "${DOOPS_GATEWAY_TOKEN:?DOOPS_GATEWAY_TOKEN is required}"
+            : "${DOOPS_TARGET:?DOOPS_TARGET is required}"
+            : "${DOOPS_CLUSTER:?DOOPS_CLUSTER is required}"
+            : "${DOOPS_INSTANCE:?DOOPS_INSTANCE is required}"
+            ROOT="${PWD}"
+            export HOME="${PWD}/.ci-doops-home"
+            mkdir -p "${HOME}" .ci-bin
+            (
+              cd backend/skills/doops-cli
+              go build -o "${ROOT}/.ci-bin/doops" ./cli/doops
+            )
+            .ci-bin/doops add \
+              --name "${DOOPS_TARGET}" \
+              --gateway "https://doops.l8ai.cn" \
+              --cluster "${DOOPS_CLUSTER}" \
+              --instance "${DOOPS_INSTANCE}" \
+              --use "CNB natural-language release"
+            printf '%s' "${DOOPS_GATEWAY_TOKEN}" |
+              .ci-bin/doops login --target "${DOOPS_TARGET}" --token-stdin
+            .ci-bin/doops targets --target "${DOOPS_TARGET}"
+        - name: publish through Gateway
+          script: |
+            set -eu
+            : "${DOOPS_SESSION:?DOOPS_SESSION is required}"
+            : "${DOOPS_TARGET:?DOOPS_TARGET is required}"
+            : "${DOOPS_IMAGE:?DOOPS_IMAGE is required}"
+            : "${DOOPS_SERVICE_SCOPE:?DOOPS_SERVICE_SCOPE is required}"
+            : "${DOOPS_HELM_ASSET:?DOOPS_HELM_ASSET is required}"
+            : "${DOOPS_CHANGE_REASON:?DOOPS_CHANGE_REASON is required}"
+            : "${DOOPS_ACCEPTANCE:?DOOPS_ACCEPTANCE is required}"
+            printf '%s' "${DOOPS_IMAGE}" | grep -Eq '@sha256:[a-f0-9]{64}$'
+            printf '%s' "${DOOPS_HELM_ASSET}" | grep -Eq '^deploy/helm/[A-Za-z0-9._/-]+/?$'
+            export HOME="${PWD}/.ci-doops-home"
+            .ci-bin/doops -session "${DOOPS_SESSION}" push \
+              --target "${DOOPS_TARGET}" \
+              --src .
+            instruction="在 ${DOOPS_TARGET} 发布 ${DOOPS_SERVICE_SCOPE}，镜像 ${DOOPS_IMAGE}；仅使用 ${DOOPS_HELM_ASSET}；原因：${DOOPS_CHANGE_REASON}；验收：${DOOPS_ACCEPTANCE}。"
+            if [ -n "${DOOPS_CREDENTIAL:-}" ]; then
+              .ci-bin/doops -session "${DOOPS_SESSION}" ask \
+                --target "${DOOPS_TARGET}" \
+                --apply \
+                --credential "${DOOPS_CREDENTIAL}" \
+                --msg "${instruction}"
+            else
+              .ci-bin/doops -session "${DOOPS_SESSION}" ask \
+                --target "${DOOPS_TARGET}" \
+                --apply \
+                --msg "${instruction}"
+            fi
 
 master:
   pull_request:
@@ -163,64 +226,3 @@ $:
             DOOPS_RELEASE_TAG="${CNB_BRANCH}" \
             DOOPS_RELEASE_COMMIT="${CNB_COMMIT}" \
               bash backend/scripts/verify-published-cli-release.sh
-  api_trigger_deploy_agent:
-    - name: deploy agent through natural-language apply
-      runner:
-        cpus: 2
-      imports:
-        - https://cnb.cool/aiedulab/auto-harness-secret/-/blob/main/secrets.yml
-      docker:
-        image: docker.io/library/golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191
-      stages:
-        - name: prepare Gateway CLI
-          script: |
-            set -eu
-            apk add --no-cache bash git
-            : "${DOOPS_GATEWAY_TOKEN:?DOOPS_GATEWAY_TOKEN is required}"
-            : "${DOOPS_TARGET:?DOOPS_TARGET is required}"
-            : "${DOOPS_CLUSTER:?DOOPS_CLUSTER is required}"
-            : "${DOOPS_INSTANCE:?DOOPS_INSTANCE is required}"
-            ROOT="${PWD}"
-            export HOME="${PWD}/.ci-doops-home"
-            mkdir -p "${HOME}" .ci-bin
-            (
-              cd backend/skills/doops-cli
-              go build -o "${ROOT}/.ci-bin/doops" ./cli/doops
-            )
-            .ci-bin/doops add \
-              --name "${DOOPS_TARGET}" \
-              --gateway "https://doops.l8ai.cn" \
-              --cluster "${DOOPS_CLUSTER}" \
-              --instance "${DOOPS_INSTANCE}" \
-              --use "CNB natural-language release"
-            .ci-bin/doops login --target "${DOOPS_TARGET}" --token "${DOOPS_GATEWAY_TOKEN}"
-            .ci-bin/doops targets --target "${DOOPS_TARGET}"
-        - name: publish through Gateway
-          script: |
-            set -eu
-            : "${DOOPS_SESSION:?DOOPS_SESSION is required}"
-            : "${DOOPS_TARGET:?DOOPS_TARGET is required}"
-            : "${DOOPS_IMAGE:?DOOPS_IMAGE is required}"
-            : "${DOOPS_SERVICE_SCOPE:?DOOPS_SERVICE_SCOPE is required}"
-            : "${DOOPS_HELM_ASSET:?DOOPS_HELM_ASSET is required}"
-            : "${DOOPS_CHANGE_REASON:?DOOPS_CHANGE_REASON is required}"
-            : "${DOOPS_ACCEPTANCE:?DOOPS_ACCEPTANCE is required}"
-            printf '%s' "${DOOPS_IMAGE}" | grep -Eq '@sha256:[a-f0-9]{64}$'
-            printf '%s' "${DOOPS_HELM_ASSET}" | grep -Eq '^deploy/helm/[A-Za-z0-9._/-]+/?$'
-            export HOME="${PWD}/.ci-doops-home"
-            .ci-bin/doops -session "${DOOPS_SESSION}" push \
-              --target "${DOOPS_TARGET}" \
-              --src .
-            instruction="在 ${DOOPS_TARGET} 发布 ${DOOPS_SERVICE_SCOPE}，镜像 ${DOOPS_IMAGE}；仅使用 ${DOOPS_HELM_ASSET}；原因：${DOOPS_CHANGE_REASON}；验收：${DOOPS_ACCEPTANCE}。"
-            if [ -n "${DOOPS_CREDENTIAL:-}" ]; then
-              .ci-bin/doops -session "${DOOPS_SESSION}" ask \
-                --target "${DOOPS_TARGET}" \
-                --apply \
-                --credential "${DOOPS_CREDENTIAL}" \
-                --msg "${instruction}"
-            else
-              .ci-bin/doops -session "${DOOPS_SESSION}" ask \
-                --target "${DOOPS_TARGET}" \
-                --apply \
-                --msg "${instruction}"
-            fi

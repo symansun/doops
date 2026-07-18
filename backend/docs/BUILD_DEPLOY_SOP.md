@@ -70,6 +70,9 @@ DoOps v3 的唯一发布入口是明确授权的自然语言任务。不得使�
 
 ### 1. 触发受控发布
 发布者必须先将待发布提交推送到 `main`，确认 CNB CI 已为该精确 commit 生成候选镜像，并取得 registry digest。推荐调用 CNB 的 `api_trigger_deploy_agent`，由 CI 临时配置单个 Gateway route、同步当前仓库，并执行下方同一自然语言命令；人工控制端调用只用于故障诊断。自然语言任务必须直接写明 target、服务范围、不可变镜像 digest、变更原因、允许使用的 Helm 资产和验收条件；缺少任一发布事实时必须阻塞，不得猜测或补默认值。
+`api_trigger_deploy_agent` 只定义在 `main` 分支事件下，Gateway token 仅通过 stdin
+交给 main 上构建的 CLI。push 生成的 workspace commit 由 CLI 自动保存并随随后的
+`ask --apply` 提交，Agent 必须在执行前验证远端工作区仍是该精确 commit。
 
 ```bash
 doops -session release-<commit> ask \

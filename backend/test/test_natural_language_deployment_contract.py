@@ -61,6 +61,8 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     system_prompt = (BACKEND / "agent" / "skills" / "system_prompt.md").read_text(encoding="utf-8")
     k8s_skill = (BACKEND / "agent" / "skills" / "k8s" / "SKILL.md").read_text(encoding="utf-8")
     cnb = CNB.read_text(encoding="utf-8")
+    main_pipeline = cnb.split("\nmaster:", 1)[0]
+    fallback_pipeline = cnb.split("\n$:", 1)[1]
 
     assert 'cliContractVersion = "doops.sh/cli-contract/v3"' in cli
     assert 'BoolVar(&apply, "apply"' in cli
@@ -88,11 +90,15 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "包括只更新镜像" in system_prompt
     assert "shell 中的 Kubernetes" in system_prompt
     assert "不得用 shell 执行 kubectl mutation" in k8s_skill
-    assert "api_trigger_deploy_agent" in cnb
+    assert "api_trigger_deploy_agent" in main_pipeline
+    assert "api_trigger_deploy_agent" not in fallback_pipeline
     assert '"https://doops.l8ai.cn"' in cnb
     assert '-session "${DOOPS_SESSION}" push' in cnb
     assert '-session "${DOOPS_SESSION}" ask' in cnb
     assert "--apply" in cnb
+    assert "--token-stdin" in cnb
+    assert '--token "${DOOPS_GATEWAY_TOKEN}"' not in cnb
+    assert 'test "${CNB_BRANCH}" = "main"' in cnb
     assert "DOOPS_IMAGE" in cnb
     assert "@sha256:" in cnb
     assert "deploy/environments.yaml" not in cnb
@@ -107,6 +113,13 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "mcp_doops_helm" in deployment_doc
     assert "attestation schema" in deployment_doc
     assert "包括只更新镜像在内的所有发布" in deployment_doc
+    assert "workspace commit" in deployment_doc
+    assert "共享 mutation 锁" in deployment_doc
+    environment_docs = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (BACKEND / "docs" / "environments").glob("*.md")
+    )
+    assert "kubectl -n kube-system set image" not in environment_docs
 
 
 def test_ordinary_exec_does_not_block_explicit_helm_operations():

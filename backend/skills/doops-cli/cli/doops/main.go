@@ -440,7 +440,13 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			toolName = "doops_agent_prompt"
 			arguments["instruction"] = msgStr
 			if apply {
+				workspaceCommit, err := loadWorkspaceCommit(server.Name, *sessionName)
+				if err != nil {
+					fmt.Printf("Error: %v\n", err)
+					os.Exit(1)
+				}
 				arguments["operation"] = "apply"
+				arguments["workspace_commit"] = workspaceCommit
 			}
 			if len(credentialRefs) != 0 {
 				arguments["credential_refs"] = []string(credentialRefs)
@@ -493,9 +499,11 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 	case "login":
 		var target, token, username, password, label string
+		var tokenStdin bool
 		loginFlag := flag.NewFlagSet("login", flag.ExitOnError)
 		loginFlag.StringVar(&target, "target", "", "Target server name")
 		loginFlag.StringVar(&token, "token", "", "Gateway user token (optional; username/password login can issue one)")
+		loginFlag.BoolVar(&tokenStdin, "token-stdin", false, "Read the Gateway user token from stdin")
 		loginFlag.StringVar(&username, "username", "", "Gateway username")
 		loginFlag.StringVar(&password, "password", "", "Gateway password")
 		loginFlag.StringVar(&label, "name", "", "Token label for gateway login")
@@ -513,6 +521,22 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			os.Exit(1)
 		}
 		gateway := server.Gateway
+		if tokenStdin {
+			if strings.TrimSpace(token) != "" || strings.TrimSpace(username) != "" || strings.TrimSpace(password) != "" {
+				fmt.Println("Error: --token-stdin cannot be combined with token, username, or password arguments")
+				os.Exit(1)
+			}
+			data, err := io.ReadAll(io.LimitReader(os.Stdin, 16*1024))
+			if err != nil {
+				fmt.Printf("Error reading gateway token from stdin: %v\n", err)
+				os.Exit(1)
+			}
+			token = strings.TrimSpace(string(data))
+			if token == "" {
+				fmt.Println("Error: gateway token from stdin is empty")
+				os.Exit(1)
+			}
+		}
 		if strings.TrimSpace(token) == "" {
 			if strings.TrimSpace(username) == "" {
 				fmt.Print("Gateway username: ")
@@ -678,9 +702,16 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			os.Exit(1)
 		}
 
-		if err := Push(*server, src, dest, dryRun, nil, *sessionName); err != nil {
+		commit, err := PushWithCommit(*server, src, dest, dryRun, nil, *sessionName)
+		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
+		}
+		if !dryRun {
+			if err := saveWorkspaceCommit(server.Name, *sessionName, commit); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
 		}
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("push %s -> %s", src, dest))
 
