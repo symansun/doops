@@ -16,8 +16,11 @@ func TestAgentEntrypointDisablesShellHistoryAndKeepsAuditLog(t *testing.T) {
 	if !strings.Contains(text, "unset HISTFILE") {
 		t.Fatalf("expected agent-entrypoint.sh to disable shell history via unset HISTFILE")
 	}
-	if !strings.Contains(text, ".doops-audit-log") {
-		t.Fatalf("expected agent-entrypoint.sh to keep doops audit log output")
+	if !strings.Contains(text, "/root/.doops/audit") {
+		t.Fatalf("expected agent-entrypoint.sh to keep audit logs outside workspaces")
+	}
+	if strings.Contains(text, "/root/ws/${DOOPS_SESSION") {
+		t.Fatalf("agent-entrypoint.sh must not write audit logs into workspaces")
 	}
 }
 

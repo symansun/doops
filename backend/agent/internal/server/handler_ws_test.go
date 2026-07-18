@@ -1136,6 +1136,7 @@ func TestAgentWebSocketRejectsBlockedShellCommand(t *testing.T) {
 func TestWorkspaceCommitBindingRejectsDirtyAndUntrackedContent(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	auditRoot := filepath.Join(t.TempDir(), "audit")
 	sessionID := "immutable-workspace"
 	workspace := filepath.Join(root, sessionID)
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
@@ -1152,6 +1153,13 @@ func TestWorkspaceCommitBindingRejectsDirtyAndUntrackedContent(t *testing.T) {
 	commit := strings.TrimSpace(runTestCommand(t, workspace, "git", "rev-parse", "HEAD"))
 	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(commit+"\n"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	auditPath, err := appendSessionAuditLogAt(auditRoot, sessionID, "release audit\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(auditPath) == workspace {
+		t.Fatal("audit log was written into the release workspace")
 	}
 	if err := validateWorkspaceCommitBinding(sessionID, commit); err != nil {
 		t.Fatalf("clean workspace binding rejected: %v", err)

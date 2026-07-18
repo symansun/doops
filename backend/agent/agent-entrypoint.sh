@@ -69,8 +69,13 @@ _doops_audit() {
     local _cmd
     _cmd=$(HISTTIMEFORMAT='' history 1 | sed 's/^[ ]*[0-9]*[ ]*//')
     [ -z "$_cmd" ] && return
-    local _logdir="/root/ws/${DOOPS_SESSION:-.global}"
-    local _logfile="${_logdir}/.doops-audit-log"
+    local _session="${DOOPS_SESSION:-global}"
+    case "${_session}" in
+        ""|"."|".."|*[!A-Za-z0-9._-]*) return ;;
+    esac
+    local _logdir="/root/.doops/audit"
+    local _logfile="${_logdir}/${_session}.log"
+    umask 077
     mkdir -p "${_logdir}" 2>/dev/null
     printf '# [%s] exit=%d\n%s\n' "$(date +%F_%T)" "$_exit" "$_cmd" >> "$_logfile" 2>/dev/null
 }

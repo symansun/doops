@@ -612,14 +612,6 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 
 		// [全局执行审计] 无论成功失败，记录所有的 exec 审计日志
 		if sessionID != "" {
-			logDir, err := workspacePath(sessionID)
-			if err != nil {
-				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
-				return
-			}
-			os.MkdirAll(logDir, 0755)
-			logFile := filepath.Join(logDir, ".doops-audit-log")
-
 			exitCode := 0
 			if cmdErr != nil {
 				if exiterr, ok := cmdErr.(*exec.ExitError); ok {
@@ -630,23 +622,15 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			}
 
 			entry := fmt.Sprintf("# [%s] exit=%d\n%s\n", time.Now().Format("2006-01-02 15:04:05"), exitCode, args.Command)
-			if f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
-				f.WriteString(entry)
-				f.Close()
+			if logFile, err := appendSessionAuditLog(sessionID, entry); err == nil {
 				log.Printf("✅ Audit Log saved to %s", logFile)
 			} else {
-				log.Printf("❌ Failed to save Audit Log to %s: %v", logFile, err)
+				log.Printf("❌ Failed to save Audit Log for session %s: %v", sessionID, err)
 			}
 		}
 
 		// [配置快照] 检测到 kubectl apply -f 时，将目标配置文件内容追加到审计日志
 		if cmdErr == nil && sessionID != "" && strings.Contains(args.Command, "kubectl apply -f") {
-			logDir, err := workspacePath(sessionID)
-			if err != nil {
-				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
-				return
-			}
-			logFile := filepath.Join(logDir, ".doops-audit-log")
 			// 提取 -f 后面的文件路径
 			parts := strings.Split(args.Command, "-f ")
 			if len(parts) > 1 {
@@ -657,10 +641,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 					if data, err := os.ReadFile(resolved); err == nil {
 						snapshot := fmt.Sprintf("--- BEGIN %s ---\n%s\n--- END %s ---\n",
 							filepath.Base(resolved), string(data), filepath.Base(resolved))
-						if f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
-							f.WriteString(snapshot)
-							f.Close()
-						}
+						_, _ = appendSessionAuditLog(sessionID, snapshot)
 					}
 				}
 			}

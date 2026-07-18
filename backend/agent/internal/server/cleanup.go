@@ -25,16 +25,12 @@ func StartWorkspaceGC(maxAge time.Duration, interval time.Duration) {
 
 func performCleanup(maxAge time.Duration) {
 	now := time.Now()
-	cleanDirs := []struct {
-		baseDir  string
-		preserve bool
-	}{
-		{baseDir: workspaceRoot(), preserve: true},
-		{baseDir: filepath.Join(os.TempDir(), "repos"), preserve: false},
+	cleanDirs := []string{
+		workspaceRoot(),
+		filepath.Join(os.TempDir(), "repos"),
 	}
 
-	for _, target := range cleanDirs {
-		baseDir := target.baseDir
+	for _, baseDir := range cleanDirs {
 		entries, err := os.ReadDir(baseDir)
 		if err != nil {
 			if !os.IsNotExist(err) {
@@ -79,25 +75,9 @@ func performCleanup(maxAge time.Duration) {
 				log.Printf("🗑️ [GC] Removing expired workspace/repo item: %s (age: %v)",
 					dirPath, age.Round(time.Hour))
 
-				if !target.preserve {
-					if err := os.RemoveAll(dirPath); err != nil {
-						log.Printf("💥 [GC] Failed to remove %s: %v", dirPath, err)
-					}
-					continue
+				if err := os.RemoveAll(dirPath); err != nil {
+					log.Printf("💥 [GC] Failed to remove %s: %v", dirPath, err)
 				}
-				items, err := os.ReadDir(dirPath)
-				if err != nil {
-					continue
-				}
-				for _, item := range items {
-					if item.Name() != ".doops-audit-log" {
-						itemPath := filepath.Join(dirPath, item.Name())
-						if err := os.RemoveAll(itemPath); err != nil {
-							log.Printf("💥 [GC] Failed to remove %s: %v", itemPath, err)
-						}
-					}
-				}
-				log.Printf("✅ [GC] Cleaned %s (preserved .doops-audit-log if any)", dirPath)
 			}
 		}
 	}
