@@ -61,3 +61,14 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "shell 中的 Kubernetes" in system_prompt
     assert "不得用 shell 执行 kubectl mutation" in k8s_skill
     assert "strategic merge" in k8s_skill
+
+
+def test_ordinary_exec_does_not_block_explicit_helm_operations():
+    dispatcher = (BACKEND / "agent" / "internal" / "dispatcher" / "dispatcher.go").read_text(
+        encoding="utf-8"
+    )
+    deployment_doc = DEPLOYMENT_DOC.read_text(encoding="utf-8")
+
+    assert r"\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b" not in dispatcher
+    assert "普通 `exec`" in deployment_doc
+    assert "不得把 Helm 误判为危险 shell 命令" in deployment_doc
