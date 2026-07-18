@@ -214,6 +214,14 @@ func TestCredentialPlanCapabilityRequiresExactContract(t *testing.T) {
 	}
 }
 
+func TestBearerTokenRejectsRetiredXDoopsKeyHeader(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/v1/targets", nil)
+	req.Header.Set("X-Doops-Key", "retired-token")
+	if got := bearerToken(req); got != "" {
+		t.Fatalf("retired X-Doops-Key header must be ignored, got %q", got)
+	}
+}
+
 func TestGatewayAgentCandidateDoesNotReplaceReadySessionBeforeInitialize(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
@@ -602,7 +610,7 @@ func TestGatewayGitHTTPEndToEndPushAndFetch(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentGateway := NewGateway("0")
+	agentGateway := NewGateway()
 	service := gitkit.New(gitkit.Config{Dir: t.TempDir(), AutoCreate: true, AutoHooks: true})
 	if err := service.Setup(); err != nil {
 		t.Fatalf("setup gitkit service: %v", err)
@@ -2802,7 +2810,7 @@ func newGatewayGitE2E(t *testing.T, targets []gatewayGitE2ETarget) (*GatewayHub,
 
 func startGatewayGitTestAgent(t *testing.T, hub *GatewayHub, serverURL, cluster, instance string) *websocket.Conn {
 	t.Helper()
-	agentGateway := NewGateway("0")
+	agentGateway := NewGateway()
 	service := gitkit.New(gitkit.Config{Dir: t.TempDir(), AutoCreate: true, AutoHooks: true})
 	if err := service.Setup(); err != nil {
 		t.Fatalf("setup gitkit service: %v", err)

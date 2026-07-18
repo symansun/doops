@@ -402,9 +402,20 @@ func TestBuildGitRemoteURLForGatewayTarget(t *testing.T) {
 }
 
 func TestBuildGitRemoteURLRejectsLegacyDirectTarget(t *testing.T) {
-	_, err := buildGitRemoteURLForServer(Server{Name: "legacy", IP: "127.0.0.1"}, "deploy-main", true)
+	_, err := buildGitRemoteURLForServer(Server{Name: "missing-gateway"}, "deploy-main", true)
 	if err == nil || !strings.Contains(err.Error(), "requires a gateway target") {
 		t.Fatalf("legacy direct Git transport must be rejected, got %v", err)
+	}
+}
+
+func TestBuildGitRemoteURLRequiresExplicitRoute(t *testing.T) {
+	for _, server := range []Server{
+		{Name: "missing-cluster", Gateway: "https://gateway.example.com", Instance: "node"},
+		{Name: "missing-instance", Gateway: "https://gateway.example.com", Cluster: "prod"},
+	} {
+		if _, err := buildGitRemoteURLForServer(server, "deploy-main", true); err == nil {
+			t.Fatalf("target %#v must be rejected", server)
+		}
 	}
 }
 

@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -63,16 +62,7 @@ func TestCallRetriesWebSocketHandshakeEOFBeforeSendingToolCall(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	host, port, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
-	if err != nil {
-		t.Fatalf("split test server address: %v", err)
-	}
-	client := NewMCPClient(
-		Server{Name: "direct", IP: host, Port: port},
-		NewSessionStore(),
-		"handshake-eof",
-		false,
-	)
+	client := newGatewayTestClient(t, ts.URL, "handshake-eof")
 	defer client.Close()
 
 	if err := client.Call("doops_shell", map[string]interface{}{"command": "hostname"}); err != nil {
@@ -99,7 +89,7 @@ func TestCallStopsAfterWebSocketHandshakeRetryLimit(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := newDirectTestClient(t, ts.URL, "handshake-limit")
+	client := newGatewayTestClient(t, ts.URL, "handshake-limit")
 	defer client.Close()
 	if err := client.Call("doops_shell", map[string]interface{}{"command": "hostname"}); err == nil {
 		t.Fatal("expected repeated handshake EOF to fail")
@@ -117,7 +107,7 @@ func TestCallDoesNotRetryHTTPHandshakeError(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := newDirectTestClient(t, ts.URL, "handshake-http-error")
+	client := newGatewayTestClient(t, ts.URL, "handshake-http-error")
 	defer client.Close()
 	err := client.Call("doops_shell", map[string]interface{}{"command": "hostname"})
 	if err == nil || !strings.Contains(err.Error(), "HTTP 401") {
@@ -156,7 +146,7 @@ func TestCallDoesNotRetryAfterToolCallWasSent(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	client := newDirectTestClient(t, ts.URL, "tool-call-disconnect")
+	client := newGatewayTestClient(t, ts.URL, "tool-call-disconnect")
 	defer client.Close()
 	if err := client.Call("doops_shell", map[string]interface{}{"command": "hostname"}); err == nil {
 		t.Fatal("expected disconnect after tool submission to fail")
@@ -166,14 +156,15 @@ func TestCallDoesNotRetryAfterToolCallWasSent(t *testing.T) {
 	}
 }
 
-func newDirectTestClient(t *testing.T, serverURL, session string) *MCPClient {
+func newGatewayTestClient(t *testing.T, serverURL, session string) *MCPClient {
 	t.Helper()
-	host, port, err := net.SplitHostPort(strings.TrimPrefix(serverURL, "http://"))
-	if err != nil {
-		t.Fatalf("split test server address: %v", err)
-	}
 	return NewMCPClient(
-		Server{Name: "direct", IP: host, Port: port},
+		Server{
+			Name:     "test-gateway",
+			Gateway:  serverURL,
+			Cluster:  "test",
+			Instance: "node",
+		},
 		NewSessionStore(),
 		session,
 		false,
@@ -188,7 +179,7 @@ func TestGatewayTargetUsesVersionedRPCEndpoint(t *testing.T) {
 		Instance: "local",
 	}, NewSessionStore(), "smoke", false)
 
-	got, err := client.targetWebSocketURL("42222")
+	got, err := client.targetWebSocketURL()
 	if err != nil {
 		t.Fatalf("build websocket URL: %v", err)
 	}
@@ -206,7 +197,7 @@ func TestGatewayTargetPreservesGatewayPathPrefix(t *testing.T) {
 		Instance: "local",
 	}, NewSessionStore(), "smoke", false)
 
-	got, err := client.targetWebSocketURL("42222")
+	got, err := client.targetWebSocketURL()
 	if err != nil {
 		t.Fatalf("build websocket URL: %v", err)
 	}
@@ -236,7 +227,7 @@ func TestGatewayTargetRejectsInsecureHTTPGatewayByDefault(t *testing.T) {
 		Instance: "master",
 	}, NewSessionStore(), "smoke", false)
 
-	if _, err := client.targetWebSocketURL("42222"); err == nil {
+	if _, err := client.targetWebSocketURL(); err == nil {
 		t.Fatal("expected insecure non-loopback gateway to be rejected by default")
 	}
 }
@@ -250,7 +241,7 @@ func TestGatewayTargetAllowsInsecureHTTPWithOptIn(t *testing.T) {
 		Instance: "master",
 	}, NewSessionStore(), "smoke", false)
 
-	got, err := client.targetWebSocketURL("42222")
+	got, err := client.targetWebSocketURL()
 	if err != nil {
 		t.Fatalf("opt-in should allow insecure gateway: %v", err)
 	}
@@ -268,7 +259,7 @@ func TestGatewayTargetAllowsInsecureLocalhostForDevelopment(t *testing.T) {
 		Instance: "local",
 	}, NewSessionStore(), "smoke", false)
 
-	got, err := client.targetWebSocketURL("42222")
+	got, err := client.targetWebSocketURL()
 	if err != nil {
 		t.Fatalf("local insecure gateway should be allowed: %v", err)
 	}
@@ -409,12 +400,8 @@ func TestConnectRejectsInitializeNotificationFalsePositive(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 	}))
 	defer ts.Close()
-	host, port, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
-	if err != nil {
-		t.Fatalf("split test server address: %v", err)
-	}
-	client := NewMCPClient(Server{Name: "direct", IP: host, Port: port}, NewSessionStore(), "s", false)
-	err = client.connect()
+	client := newGatewayTestClient(t, ts.URL, "s")
+	err := client.connect()
 	if err == nil || !strings.Contains(err.Error(), "initialize failed") {
 		t.Fatalf("expected initialize validation error, got %v", err)
 	}
@@ -443,13 +430,9 @@ func TestCallAndCaptureTimesOutWithoutFinalResult(t *testing.T) {
 		}
 	}))
 	defer ts.Close()
-	host, port, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
-	if err != nil {
-		t.Fatalf("split test server address: %v", err)
-	}
-	client := NewMCPClient(Server{Name: "direct", IP: host, Port: port}, NewSessionStore(), "s", false)
+	client := newGatewayTestClient(t, ts.URL, "s")
 	client.CallTimeout = 30 * time.Millisecond
-	_, err = client.CallAndCapture("doops_shell", map[string]interface{}{"command": "sleep"})
+	_, err := client.CallAndCapture("doops_shell", map[string]interface{}{"command": "sleep"})
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("expected call timeout, got %v", err)
 	}
@@ -485,13 +468,9 @@ func TestCallAndCaptureRejectsEmptyFinalResult(t *testing.T) {
 		}
 	}))
 	defer ts.Close()
-	host, port, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
-	if err != nil {
-		t.Fatalf("split test server address: %v", err)
-	}
-	client := NewMCPClient(Server{Name: "direct", IP: host, Port: port}, NewSessionStore(), "s", false)
+	client := newGatewayTestClient(t, ts.URL, "s")
 	client.CallTimeout = time.Second
-	_, err = client.CallAndCapture("doops_bg", map[string]interface{}{"command": "sleep 1"})
+	_, err := client.CallAndCapture("doops_bg", map[string]interface{}{"command": "sleep 1"})
 	if err == nil || !strings.Contains(err.Error(), "no result received") {
 		t.Fatalf("expected empty final result to fail immediately, got %v", err)
 	}
@@ -532,11 +511,7 @@ func TestCallStructuredReadsStructuredContentWithoutParsingText(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	host, port, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
-	if err != nil {
-		t.Fatalf("split test server address: %v", err)
-	}
-	client := NewMCPClient(Server{Name: "direct", IP: host, Port: port}, NewSessionStore(), "structured", false)
+	client := newGatewayTestClient(t, ts.URL, "structured")
 	var result struct {
 		PlanDigest string `json:"planDigest"`
 		Status     string `json:"status"`

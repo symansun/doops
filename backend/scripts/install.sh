@@ -37,10 +37,9 @@ Skill 维护规则:
   install.sh 只把源码里的 skill/docs 复制到业务项目，不从业务项目反向生成 skill
 
 连接模式:
-  标准入口只有 Gateway 模式:
+ 标准入口只有 Gateway 模式:
     --target-gateway + --target-cluster/--target-instance
   target 配置只保存路由；安装后通过 doops login 为整个 Gateway 建立统一登录态。
-  --target-ip 是遗留直连参数，install.sh 不再用它写入标准配置。
 
 如果只是临时连受控实验 gateway，且它还没有 TLS，可以在客户端显式设置 `DOOPS_ALLOW_INSECURE_GATEWAY=1`，但不要把它当成生产标准写法。
 EOF
@@ -52,12 +51,10 @@ PROJECT_PATH="$(pwd)"
 RELEASE_TAG=""
 CLI_TEMP_DIR=""
 TARGET_NAME=""
-TARGET_IP=""
 TARGET_GATEWAY=""
-TARGET_CLUSTER="default"
+TARGET_CLUSTER=""
 TARGET_INSTANCE=""
 TARGET_ALIASES=""
-TARGET_TOKEN=""
 TARGET_USE="Doops managed node"
 
 detect_host_platform() {
@@ -179,10 +176,6 @@ while [[ $# -gt 0 ]]; do
       TARGET_NAME="${2:-}"
       shift 2
       ;;
-    --target-ip)
-      TARGET_IP="${2:-}"
-      shift 2
-      ;;
     --target-gateway|--gateway)
       TARGET_GATEWAY="${2:-}"
       shift 2
@@ -197,18 +190,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --target-aliases|--aliases|--alias)
       TARGET_ALIASES="${2:-}"
-      shift 2
-      ;;
-    --target-token)
-      TARGET_TOKEN="${2:-}"
-      shift 2
-      ;;
-    --ssh-user)
-      SSH_USER="${2:-}"
-      shift 2
-      ;;
-    --ssh-port)
-      SSH_PORT="${2:-}"
       shift 2
       ;;
     --use)
@@ -231,36 +212,42 @@ PROJECT_PATH="$(cd "${PROJECT_PATH}" && pwd)"
 SKILL_DEST="${PROJECT_PATH}/.agent/skills/doops"
 CANONICAL_CONFIG_FILE="${HOME}/.agent/skills/doops/config.json"
 
-if [[ -n "${TARGET_GATEWAY}" && -n "${TARGET_IP}" ]]; then
-  cat >&2 <<EOF
-  Refusing ambiguous config: standard config must be gateway mode only.
-EOF
-  exit 1
+if [[ -n "${TARGET_GATEWAY}" || -n "${TARGET_NAME}" || -n "${TARGET_CLUSTER}" || -n "${TARGET_INSTANCE}" ]]; then
+  if [[ -z "${TARGET_GATEWAY}" || -z "${TARGET_NAME}" || -z "${TARGET_CLUSTER}" || -z "${TARGET_INSTANCE}" ]]; then
+    echo "Gateway target installation requires --target-name, --target-gateway, --target-cluster, and --target-instance" >&2
+    exit 2
+  fi
 fi
 
-if [[ -n "${TARGET_IP}" ]]; then
-  cat >&2 <<EOF
-  Refusing legacy direct config: install.sh only writes gateway targets.
-  Use --target-gateway --target-cluster --target-instance.
-EOF
-  exit 1
-fi
+if [[ -f "${CANONICAL_CONFIG_FILE}" ]]; then
+  command -v python3 >/dev/null 2>&1 || {
+    echo "python3 is required to validate existing doops config" >&2
+    exit 1
+  }
+  python3 - "${CANONICAL_CONFIG_FILE}" <<'PY'
+import json
+import sys
 
-if [[ -n "${TARGET_TOKEN}" ]]; then
-  cat >&2 <<EOF
-  --target-token is no longer supported. Target config stores routes only.
-  Run backend/scripts/migrate-gateway-auth.py --target <name> before upgrading.
-EOF
-  exit 1
-fi
-
-if [[ -f "${CANONICAL_CONFIG_FILE}" ]] &&
-   grep -Eq '"token"[[:space:]]*:' "${CANONICAL_CONFIG_FILE}"; then
-  cat >&2 <<EOF
-  Refusing to replace the CLI while config.json still contains per-target token fields.
-  Run backend/scripts/migrate-gateway-auth.py --target <name> first.
-EOF
-  exit 1
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    root = json.load(handle)
+if not isinstance(root, dict) or set(root) - {"servers", "llm"}:
+    raise SystemExit("existing config must be an object containing only servers and optional llm")
+servers = root.get("servers", [])
+if not isinstance(servers, list):
+    raise SystemExit("existing config servers must be an array")
+allowed = {"name", "aliases", "use", "gateway", "cluster", "instance"}
+required = {"name", "gateway", "cluster", "instance"}
+for index, server in enumerate(servers):
+    if not isinstance(server, dict):
+        raise SystemExit(f"existing config server[{index}] must be an object")
+    unknown = sorted(set(server) - allowed)
+    if unknown:
+        raise SystemExit(f"existing config server[{index}] contains unsupported fields: {', '.join(unknown)}")
+    missing = sorted(key for key in required if not str(server.get(key, "")).strip())
+    if missing:
+        raise SystemExit(f"existing config server[{index}] is missing Gateway fields: {', '.join(missing)}")
+PY
 fi
 
 echo "[1/4] Installing CLI to fixed path"
@@ -277,10 +264,7 @@ echo "  Skill docs installed to ${SKILL_DEST}/docs/"
 
 echo "[3/4] Preparing canonical doops config"
 
-if [[ -n "${TARGET_GATEWAY}" && -n "${TARGET_NAME}" ]]; then
-  if [[ -z "${TARGET_INSTANCE}" ]]; then
-    TARGET_INSTANCE="${TARGET_NAME}"
-  fi
+if [[ -n "${TARGET_GATEWAY}" ]]; then
   add_args=(add --name "${TARGET_NAME}" --gateway "${TARGET_GATEWAY}" --cluster "${TARGET_CLUSTER}" --instance "${TARGET_INSTANCE}" --use "${TARGET_USE}")
   if [[ -n "${TARGET_ALIASES}" ]]; then
     add_args+=(--aliases "${TARGET_ALIASES}")

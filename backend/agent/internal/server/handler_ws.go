@@ -128,42 +128,13 @@ func readWebSocketMessage(conn *websocket.Conn, onProgress func()) (int, []byte,
 	}
 }
 
-// HandleWebSocket 处理客户端发起的 WebSocket 升级请求。
-// 承担原本的 HTTP+SSE 职责，现在是全双工单端点通信。
-func (gw *Gateway) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// 鉴权: 服务端设了 token 则客户端必须提供正确的 Key/Bearer token。
-	// 使用常量时间比较，避免计时侧信道泄露 token。
-	if gw.Token != "" && !secureTokenEqual(bearerToken(r), gw.Token) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("WS Upgrade Failed: %v", err)
-		return
-	}
-
-	gw.ServeWebSocketConn(conn, r.RemoteAddr)
-}
-
-// ServeWebSocketConn serves an untrusted direct-Agent WebSocket connection.
-func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
-	gw.serveWebSocketConn(conn, remoteAddr, nil, false)
-}
-
-func (gw *Gateway) ServeWebSocketConnWithReady(conn *websocket.Conn, remoteAddr string, onReady func()) {
-	gw.serveWebSocketConn(conn, remoteAddr, onReady, false)
-}
-
 // ServeGatewayWebSocketConnWithReady serves the reverse tunnel after Gateway
-// authorization. Public direct-Agent WebSocket connections must use the
-// untrusted entry points above.
+// authorization.
 func (gw *Gateway) ServeGatewayWebSocketConnWithReady(conn *websocket.Conn, remoteAddr string, onReady func()) {
-	gw.serveWebSocketConn(conn, remoteAddr, onReady, true)
+	gw.serveWebSocketConn(conn, remoteAddr, onReady)
 }
 
-func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, onReady func(), gatewayAuthorized bool) {
+func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, onReady func()) {
 	defer conn.Close()
 	conn.SetReadLimit(maxWebSocketMessageBytes())
 
@@ -434,7 +405,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 				activeToolMu.Lock()
 				activeToolCalls[id] = activeToolCall{
 					cancel:            cancel,
-					surviveDisconnect: toolCallSurvivesDisconnect(params, gatewayAuthorized),
+					surviveDisconnect: toolCallSurvivesDisconnect(params),
 				}
 				activeToolMu.Unlock()
 				go func() {
@@ -444,12 +415,12 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 						activeToolMu.Unlock()
 						cancel()
 					}()
-					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, gatewayAuthorized, writeJSON)
+					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, writeJSON)
 				}()
 			} else {
 				go func() {
 					defer cancel()
-					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, gatewayAuthorized, writeJSON)
+					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, writeJSON)
 				}()
 			}
 		}
@@ -484,7 +455,7 @@ type activeToolCall struct {
 	surviveDisconnect bool
 }
 
-func toolCallSurvivesDisconnect(params api.ToolCallParams, gatewayAuthorized bool) bool {
+func toolCallSurvivesDisconnect(params api.ToolCallParams) bool {
 	return false
 }
 
@@ -510,12 +481,7 @@ func errorNotification(text string) notificationEvent {
 }
 
 // handleToolCallOverWS 处理具体的 MCP tool 调用（复用原有的处理逻辑，但直接向 WS 写入结果）
-func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, toolName string, argBytes json.RawMessage, gatewayAuthorized bool, writeJSON func(v interface{})) {
-	if !gatewayAuthorized && !directAgentReadOnlyTool(toolName, argBytes) {
-		writeJSON(buildToolErrorResponse(reqID, "mutating agent tools require a gateway-authorized reverse tunnel"))
-		return
-	}
-
+func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, toolName string, argBytes json.RawMessage, writeJSON func(v interface{})) {
 	var sessionID string
 	var argsMap map[string]interface{}
 	json.Unmarshal(argBytes, &argsMap)
@@ -825,10 +791,6 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		json.Unmarshal(argBytes, &args)
 		operation := strings.ToLower(strings.TrimSpace(args.Operation))
 		if operation == "apply" {
-			if !gatewayAuthorized {
-				writeJSON(buildErrorResponse(reqID, -32602, "apply requires a gateway-authorized reverse tunnel"))
-				return
-			}
 			if strings.TrimSpace(args.Instruction) == "" {
 				writeJSON(buildErrorResponse(reqID, -32602, "apply requires a non-empty instruction"))
 				return
@@ -839,7 +801,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			return
 		}
 		if len(args.CredentialBindings) != 0 {
-			if !gatewayAuthorized || operation != "apply" {
+			if operation != "apply" {
 				writeJSON(buildErrorResponse(reqID, -32602, "credential bindings require gateway-authorized apply"))
 				return
 			}
@@ -1015,25 +977,6 @@ func credentialBindingContext(bindings []api.AgentCredentialBinding) (string, er
 		return "", errors.New("credential_binding_metadata_invalid")
 	}
 	return string(encoded), nil
-}
-
-func directAgentReadOnlyTool(toolName string, arguments json.RawMessage) bool {
-	switch toolName {
-	case "doops_file_read", "doops_node_info", "doops_check_deployment",
-		"doops_task_status", "doops_workspace_pull_begin", "doops_workspace_pull_chunk":
-		return true
-	case "doops_k8s":
-		switch extractStringArg(arguments, "operation") {
-		case "get", "describe", "logs", "top", "events", "rollout-status":
-			return true
-		}
-	case "doops_agent_prompt":
-		switch strings.ToLower(extractStringArg(arguments, "mode")) {
-		case "metadata", "history":
-			return true
-		}
-	}
-	return false
 }
 
 func doagentModeForPrompt(operation, executionMode string) (string, error) {

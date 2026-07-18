@@ -142,7 +142,8 @@ func handleRPC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cluster == "" {
-		cluster = "default"
+		http.Error(w, "missing cluster", http.StatusBadRequest)
+		return
 	}
 
 	target, err := url.Parse(base + "/v1/rpc")

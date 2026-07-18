@@ -7,10 +7,6 @@ import (
 )
 
 type UpgradeOptions struct {
-	Gateway   string
-	Token     string
-	Cluster   string
-	Instance  string
 	Image     string
 	Mode      string
 	Namespace string
@@ -27,31 +23,22 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 	if !opts.DryRun {
 		return fmt.Errorf("direct agent self-upgrade is prohibited; use an external release controller or GitOps")
 	}
-	if strings.TrimSpace(opts.Gateway) != "" && strings.TrimSpace(base.Gateway) != "" &&
-		gatewayAuthKey(opts.Gateway) != gatewayAuthKey(base.Gateway) {
-		return fmt.Errorf("configured target belongs to gateway %s, not %s",
-			gatewayAuthKey(base.Gateway), gatewayAuthKey(opts.Gateway))
+	if strings.TrimSpace(base.Gateway) == "" ||
+		strings.TrimSpace(base.Cluster) == "" ||
+		strings.TrimSpace(base.Instance) == "" {
+		return fmt.Errorf("configured Gateway target is required")
 	}
-	gateway := firstNonEmptyLocal(opts.Gateway, base.Gateway)
-	if gateway == "" {
-		return fmt.Errorf("gateway is required")
-	}
-	token := strings.TrimSpace(opts.Token)
-	if token == "" {
-		base.Gateway = gateway
-		token = ResolveToken(base)
-	}
-	targets, err := fetchGatewayTargets(gateway, token)
+	token, err := ResolveToken(base)
 	if err != nil {
 		return err
 	}
-	cluster, instance, err := resolveUpgradeScope(base, opts.Cluster, opts.Instance)
+	targets, err := fetchGatewayTargets(base.Gateway, token)
 	if err != nil {
 		return err
 	}
-	selected := filterUpgradeTargets(targets, cluster, instance)
+	selected := filterUpgradeTargets(targets, base.Cluster, base.Instance)
 	if len(selected) == 0 {
-		return fmt.Errorf("no online targets matched cluster=%q instance=%q", cluster, instance)
+		return fmt.Errorf("configured target is offline: %s/%s", base.Cluster, base.Instance)
 	}
 	session := strings.TrimSpace(opts.Session)
 	if session == "" {
@@ -61,10 +48,9 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 	for _, target := range selected {
 		server := base
 		server.Name = target.Key
-		server.Gateway = gateway
+		server.Gateway = base.Gateway
 		server.Cluster = target.Cluster
 		server.Instance = target.Instance
-		server.Token = token
 		client := NewMCPClient(server, NewSessionStore(), session, verbose)
 		client.Token = token
 		fmt.Printf("==> upgrading %s/%s image=%s\n", target.Cluster, target.Instance, opts.Image)
@@ -90,21 +76,6 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 	return nil
 }
 
-func resolveUpgradeScope(base Server, requestedCluster, requestedInstance string) (string, string, error) {
-	cluster := strings.TrimSpace(requestedCluster)
-	instance := strings.TrimSpace(requestedInstance)
-	if cluster == "" && instance == "" {
-		if strings.TrimSpace(base.Cluster) == "" || strings.TrimSpace(base.Instance) == "" {
-			return "", "", fmt.Errorf("a configured target with cluster and instance is required when --cluster and --instance are omitted")
-		}
-		return strings.TrimSpace(base.Cluster), strings.TrimSpace(base.Instance), nil
-	}
-	if cluster == "" || instance == "" {
-		return "", "", fmt.Errorf("--cluster and --instance must be specified together")
-	}
-	return cluster, instance, nil
-}
-
 func filterUpgradeTargets(targets []GatewayTarget, cluster, instance string) []GatewayTarget {
 	cluster = strings.TrimSpace(cluster)
 	instance = strings.TrimSpace(instance)
@@ -119,13 +90,4 @@ func filterUpgradeTargets(targets []GatewayTarget, cluster, instance string) []G
 		out = append(out, target)
 	}
 	return out
-}
-
-func firstNonEmptyLocal(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }

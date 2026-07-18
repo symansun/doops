@@ -25,12 +25,20 @@ func LoadAuth() (*AuthStore, error) {
 	path := GetAuthPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return &AuthStore{Tokens: make(map[string]string)}, nil
+		if os.IsNotExist(err) {
+			return &AuthStore{Tokens: make(map[string]string)}, nil
+		}
+		return nil, fmt.Errorf("read Gateway auth store %s: %w", path, err)
 	}
 
 	var store AuthStore
-	if err := json.Unmarshal(data, &store); err != nil {
-		return &AuthStore{Tokens: make(map[string]string)}, nil
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&store); err != nil {
+		return nil, fmt.Errorf("parse Gateway auth store %s: %w", path, err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, fmt.Errorf("parse Gateway auth store %s: trailing JSON data", path)
 	}
 
 	if store.Tokens == nil {
@@ -348,34 +356,7 @@ func GatewayAdminOperationCancel(gateway, adminToken, id string) error {
 }
 
 func gatewayAuthLoginURL(rawGateway string) (string, error) {
-	rawGateway = strings.TrimSpace(rawGateway)
-	if rawGateway == "" {
-		return "", fmt.Errorf("gateway URL is required")
-	}
-	if !strings.Contains(rawGateway, "://") {
-		rawGateway = "https://" + rawGateway
-	}
-	u, err := url.Parse(rawGateway)
-	if err != nil {
-		return "", err
-	}
-	switch u.Scheme {
-	case "http", "https":
-	case "ws":
-		u.Scheme = "http"
-	case "wss":
-		u.Scheme = "https"
-	default:
-		return "", fmt.Errorf("unsupported gateway scheme %q", u.Scheme)
-	}
-	if err := enforceSecureGatewayURL(rawGateway, u); err != nil {
-		return "", err
-	}
-	if u.Path == "" || u.Path == "/" {
-		u.Path = "/v1/auth/login"
-	}
-	u.RawQuery = ""
-	return u.String(), nil
+	return gatewayURLWithPath(rawGateway, "/v1/auth/login", nil)
 }
 
 func gatewayAdminTokenCreateURL(rawGateway string) (string, error) {

@@ -22,18 +22,16 @@ Options:
   --gateway-port PORT     Gateway listen port. Default: 42222.
   --verify-url URL        Public Gateway URL used for health and target checks.
                           Default: https://doops.l8ai.cn.
-  --verify-token-file P   File containing a Gateway user token.
   --verify-target NAME    Configured DoOps target used for authenticated target
                           baseline checks without exporting its token.
   --verify-session NAME   Required session name for --verify-target.
-                          Real deploys require either --verify-token-file or
-                          --verify-target with --verify-session.
+                          Real deploys require both verification options.
   --no-build              Do not run scripts/build-gateway.sh before deploy.
   --dry-run               Print the plan and verify SSH, but do not modify remote host.
   -h, --help              Show this help.
 
 Required local capabilities:
-  ssh, scp, curl, jq, sha256sum.
+  ssh, scp, curl, sha256sum.
 
 Required remote capabilities:
   sudo, systemctl, sha256sum, pgrep, curl, python3.
@@ -49,7 +47,6 @@ REMOTE_BIN="/usr/local/bin/doops-gateway"
 DB_PATH="/var/lib/doops-gateway/gateway.db"
 GATEWAY_PORT="42222"
 VERIFY_URL="https://doops.l8ai.cn"
-VERIFY_TOKEN_FILE=""
 VERIFY_TARGET=""
 VERIFY_SESSION=""
 BUILD=true
@@ -87,10 +84,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --verify-url)
       VERIFY_URL="${2:-}"
-      shift 2
-      ;;
-    --verify-token-file)
-      VERIFY_TOKEN_FILE="${2:-}"
       shift 2
       ;;
     --verify-target)
@@ -135,7 +128,7 @@ EOF
   exit 2
 fi
 
-REQUIRED_COMMANDS=(ssh scp curl jq sha256sum)
+REQUIRED_COMMANDS=(ssh scp curl sha256sum)
 if [[ -n "${VERIFY_TARGET}" ]]; then
   REQUIRED_COMMANDS+=(doops)
 fi
@@ -147,20 +140,8 @@ for command in "${REQUIRED_COMMANDS[@]}"; do
 done
 
 if [[ "${DRY_RUN}" != "true" ]]; then
-  if [[ -n "${VERIFY_TOKEN_FILE}" && -n "${VERIFY_TARGET}" ]]; then
-    echo "Error: --verify-token-file and --verify-target are mutually exclusive" >&2
-    exit 2
-  fi
-  if [[ -n "${VERIFY_TARGET}" && -z "${VERIFY_SESSION}" ]]; then
-    echo "Error: --verify-session is required with --verify-target" >&2
-    exit 2
-  fi
-  if [[ -z "${VERIFY_TOKEN_FILE}" && -z "${VERIFY_TARGET}" ]]; then
-    echo "Error: a real Gateway deployment requires --verify-token-file or --verify-target" >&2
-    exit 2
-  fi
-  if [[ -n "${VERIFY_TOKEN_FILE}" && ! -s "${VERIFY_TOKEN_FILE}" ]]; then
-    echo "Error: --verify-token-file must reference a non-empty file" >&2
+  if [[ -z "${VERIFY_TARGET}" || -z "${VERIFY_SESSION}" ]]; then
+    echo "Error: a real Gateway deployment requires --verify-target and --verify-session" >&2
     exit 2
   fi
 fi
@@ -186,25 +167,11 @@ STATE_DIR="$(mktemp -d)"
 trap 'rm -rf "${STATE_DIR}"' EXIT
 BASELINE_TARGETS="${STATE_DIR}/baseline-targets"
 CURRENT_TARGETS="${STATE_DIR}/current-targets"
-CURL_AUTH_CONFIG="${STATE_DIR}/curl-auth.conf"
-VERIFY_TOKEN=""
-if [[ -n "${VERIFY_TOKEN_FILE}" ]]; then
-  VERIFY_TOKEN="$(tr -d '\r\n' <"${VERIFY_TOKEN_FILE}")"
-  printf 'header = "Authorization: Bearer %s"\n' "${VERIFY_TOKEN}" >"${CURL_AUTH_CONFIG}"
-  chmod 0600 "${CURL_AUTH_CONFIG}"
-  VERIFY_TOKEN=""
-fi
 
 fetch_target_keys() {
   local destination="$1"
-  if [[ -n "${VERIFY_TARGET}" ]]; then
-    doops -session "${VERIFY_SESSION}" targets --target "${VERIFY_TARGET}" |
-      awk '/^-+$/ { rows = 1; next } rows && NF >= 2 { print $1 "/" $2 }' |
-      sort -u >"${destination}"
-    return
-  fi
-  curl --noproxy '*' --config "${CURL_AUTH_CONFIG}" -fsS "${VERIFY_URL%/}/v1/targets" |
-    jq -r '.targets[] | .cluster + "/" + .instance' |
+  doops -session "${VERIFY_SESSION}" targets --target "${VERIFY_TARGET}" |
+    awk '/^-+$/ { rows = 1; next } rows && NF >= 2 { print $1 "/" $2 }' |
     sort -u >"${destination}"
 }
 

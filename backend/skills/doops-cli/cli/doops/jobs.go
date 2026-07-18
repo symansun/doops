@@ -107,7 +107,7 @@ func runAdminJobAdd(args []string, servers []Server, configErr error) {
 	fs.BoolVar(&disabled, "disabled", false, "Create the job in disabled state")
 	fs.Parse(args)
 
-	gateway, token := applyTargetDefaults(target, "", "", servers, configErr)
+	gateway, token := applyTarget(target, servers, configErr)
 	if gateway == "" || strings.TrimSpace(name) == "" || strings.TrimSpace(repo) == "" {
 		fmt.Println("Error: --target, --name and --repo are required")
 		fs.Usage()
@@ -158,7 +158,7 @@ func runAdminJobIssues(args []string, servers []Server, configErr error) {
 	fs.StringVar(&id, "id", "", "Optional job id filter")
 	fs.IntVar(&limit, "limit", 50, "Max rows")
 	fs.Parse(args)
-	gateway, token := applyTargetDefaults(target, "", "", servers, configErr)
+	gateway, token := applyTarget(target, servers, configErr)
 	if gateway == "" {
 		fmt.Println("Error: --target is required")
 		os.Exit(1)
@@ -308,22 +308,18 @@ func gatewayAdminRequest(method, gateway, token, endpoint string, query url.Valu
 
 /* ---- shared helpers ---- */
 
-func applyTargetDefaults(target, gateway, token string, servers []Server, configErr error) (string, string) {
-	if target != "" {
-		requireConfig(configErr)
-		server := findServer(servers, target)
-		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
-			os.Exit(1)
-		}
-		if gateway == "" {
-			gateway = server.Gateway
-		}
-		if token == "" {
-			token = ResolveToken(*server)
-		}
+func applyTarget(target string, servers []Server, configErr error) (string, string) {
+	if strings.TrimSpace(target) == "" {
+		fmt.Println("Error: --target is required")
+		os.Exit(1)
 	}
-	return gateway, token
+	requireConfig(configErr)
+	server := findServer(servers, target)
+	if server == nil {
+		fmt.Printf("Error: Server '%s' not found.\n", target)
+		os.Exit(1)
+	}
+	return server.Gateway, mustResolveToken(*server)
 }
 
 func mustDurationSeconds(name, raw string) int64 {

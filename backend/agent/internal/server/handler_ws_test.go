@@ -178,7 +178,7 @@ func TestReadWebSocketMessageReportsProgressBeforeMessageCompletes(t *testing.T)
 }
 
 func TestAgentReverseTunnelReadyOnlyAfterGatewayRegistration(t *testing.T) {
-	gw := NewGateway("0")
+	gw := NewGateway()
 	ready := make(chan struct{})
 	var readyOnce sync.Once
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -216,7 +216,7 @@ func TestAgentReverseTunnelReadyOnlyAfterGatewayRegistration(t *testing.T) {
 func TestAgentWebSocketFileReadWrite(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	gw := NewGateway("0")
+	gw := NewGateway()
 	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
@@ -332,8 +332,8 @@ func TestAgentMetadataModeReturnsModelStatusWithoutPrompt(t *testing.T) {
 	defer doagent.Close()
 	t.Setenv("DO_AGENT_URL", doagent.URL)
 
-	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	gw := NewGateway()
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 	conn := dialAgentTestWS(t, ts.URL)
 	defer conn.Close()
@@ -359,8 +359,8 @@ func TestAgentHistoryModeWithoutSessionReturnsEmptyHistory(t *testing.T) {
 	defer doagent.Close()
 	t.Setenv("DO_AGENT_URL", doagent.URL)
 
-	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	gw := NewGateway()
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 	conn := dialAgentTestWS(t, ts.URL)
 	defer conn.Close()
@@ -454,7 +454,7 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 	defer doagent.Close()
 	t.Setenv("DO_AGENT_URL", doagent.URL)
 
-	gw := NewGateway("0")
+	gw := NewGateway()
 	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 	conn := dialAgentTestWS(t, ts.URL)
@@ -511,8 +511,8 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 }
 
 func TestAgentInitializeDoesNotExposeDedicatedCICDReconciliation(t *testing.T) {
-	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	gw := NewGateway()
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 	conn := dialAgentTestWS(t, ts.URL)
 	defer conn.Close()
@@ -584,7 +584,7 @@ func TestConfiguredDoagentURLUsesEntrypointPort(t *testing.T) {
 
 func TestShellNotificationIncludesRawKind(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
-	gw := NewGateway("0")
+	gw := NewGateway()
 	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 	conn := dialAgentTestWS(t, ts.URL)
@@ -859,7 +859,7 @@ func TestAgentPromptReturnsAdmissionErrorImmediately(t *testing.T) {
 	defer doagent.Close()
 	t.Setenv("DO_AGENT_URL", doagent.URL)
 
-	gw := NewGateway("0")
+	gw := NewGateway()
 	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 	conn := dialAgentTestWS(t, ts.URL)
@@ -881,7 +881,7 @@ func TestAgentPromptReturnsAdmissionErrorImmediately(t *testing.T) {
 }
 
 func TestAgentWebSocketCancelKillsShellCommand(t *testing.T) {
-	gw := NewGateway("0")
+	gw := NewGateway()
 	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
@@ -949,7 +949,7 @@ func TestAgentWebSocketCancelKillsShellCommand(t *testing.T) {
 
 func TestAgentWebSocketRejectsBlockedShellCommand(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
-	gw := NewGateway("0")
+	gw := NewGateway()
 	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
@@ -963,36 +963,6 @@ func TestAgentWebSocketRejectsBlockedShellCommand(t *testing.T) {
 	})
 	if result["error"] == nil {
 		t.Fatalf("expected blocked command error, got %#v", result)
-	}
-}
-
-func TestDirectAgentWebSocketRejectsMutatingToolsAndOrdinaryPrompts(t *testing.T) {
-	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
-	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
-	defer ts.Close()
-
-	conn := dialAgentTestWS(t, ts.URL)
-	defer conn.Close()
-	initializeAgentTestWS(t, conn)
-
-	cases := []struct {
-		tool string
-		args map[string]interface{}
-	}{
-		{tool: "doops_shell", args: map[string]interface{}{"session_id": "direct", "command": "true"}},
-		{tool: "doops_k8s", args: map[string]interface{}{"session_id": "direct", "operation": "rollout-restart", "resource": "deployment/app", "confirm": true}},
-		{tool: "doops_file_write", args: map[string]interface{}{"session_id": "direct", "path": "x", "content": "x"}},
-		{tool: "doops_workspace_begin", args: map[string]interface{}{"session_id": "direct"}},
-		{tool: "doops_agent_prompt", args: map[string]interface{}{"session_id": "direct", "instruction": "change the service"}},
-	}
-	for _, testCase := range cases {
-		result := callToolResult(t, conn, testCase.tool, testCase.args)
-		toolResult, _ := result["result"].(map[string]interface{})
-		if toolResult["isError"] != true ||
-			!strings.Contains(fmt.Sprint(toolResult["content"]), "gateway-authorized reverse tunnel") {
-			t.Fatalf("%s direct mutation was not rejected: %#v", testCase.tool, result)
-		}
 	}
 }
 
@@ -1041,7 +1011,7 @@ func TestWorkspaceCommitBindingRejectsDirtyAndUntrackedContent(t *testing.T) {
 
 func TestAgentWebSocketRejectsDockerNewlineInjection(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
-	gw := NewGateway("0")
+	gw := NewGateway()
 	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
@@ -1060,8 +1030,8 @@ func TestAgentWebSocketRejectsDockerNewlineInjection(t *testing.T) {
 
 func TestAgentWebSocketReadLimitRejectsOversizedFrame(t *testing.T) {
 	t.Setenv("DOOPS_MAX_WS_MESSAGE_BYTES", "128")
-	gw := NewGateway("0")
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	gw := NewGateway()
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
 	conn := dialAgentTestWS(t, ts.URL)
@@ -1095,7 +1065,7 @@ func TestAgentWebSocketReadLimitRejectsOversizedFrame(t *testing.T) {
 func TestBackgroundTaskLogPathStaysInsideWorkspace(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	gw := NewGateway("0")
+	gw := NewGateway()
 	if _, err := gw.submitBgTask("bg", "true", "/tmp/outside.log"); err == nil {
 		t.Fatal("expected absolute background log path to be rejected")
 	}
@@ -1147,7 +1117,7 @@ func TestWSGitResponseWriterFlushesSmallWritesImmediately(t *testing.T) {
 }
 
 func TestAgentWebSocketHandlesGitHTTPOverTunnel(t *testing.T) {
-	gw := NewGateway("0")
+	gw := NewGateway()
 	gw.gitHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got, want := r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery, "GET /git/release.git/info/refs?service=git-upload-pack"; got != want {
 			t.Fatalf("unexpected git request: want %s, got %s", want, got)
@@ -1156,7 +1126,7 @@ func TestAgentWebSocketHandlesGitHTTPOverTunnel(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte("git-agent-ok"))
 	})
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
 	conn := dialAgentTestWS(t, ts.URL)
@@ -1231,13 +1201,13 @@ func TestAgentWebSocketHandlesGitHTTPOverTunnel(t *testing.T) {
 func TestAgentWebSocketCancelsGitHTTPOverTunnel(t *testing.T) {
 	started := make(chan struct{})
 	canceled := make(chan struct{})
-	gw := NewGateway("0")
+	gw := NewGateway()
 	gw.gitHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(started)
 		<-r.Context().Done()
 		close(canceled)
 	})
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
 	conn := dialAgentTestWS(t, ts.URL)
@@ -1305,24 +1275,22 @@ func TestAgentWebSocketCancelsGitHTTPOverTunnel(t *testing.T) {
 	}
 }
 
-func TestAgentWebSocketGitHTTPUsesLocalGitToken(t *testing.T) {
-	gw := NewGateway("0")
-	gw.Token = "agent-local-token"
+func TestAgentWebSocketGitHTTPStripsExternalAuthorization(t *testing.T) {
+	gw := NewGateway()
 	gw.gitHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, password, ok := r.BasicAuth()
-		if !ok || password != gw.Token {
-			t.Fatalf("expected local agent git token, got authorization %q", r.Header.Get("Authorization"))
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("expected external authorization to be stripped, got %q", got)
 		}
 		if got := r.Header.Get("X-Doops-Key"); got != "" {
 			t.Fatalf("expected external gateway auth header to be stripped, got %q", got)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	ts := httptest.NewServer(http.HandlerFunc(gw.HandleWebSocket))
+	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 
 	wsURL := "ws" + ts.URL[len("http"):]
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Authorization": {"Bearer " + gw.Token}})
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("dial ws: %v", err)
 	}
@@ -1457,7 +1425,7 @@ func TestAgentWebSocketWorkspaceChunkUpload(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 
-	gw := NewGateway("0")
+	gw := NewGateway()
 	ts := newGatewayAuthorizedAgentServer(t, gw)
 	defer ts.Close()
 

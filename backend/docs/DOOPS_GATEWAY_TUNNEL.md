@@ -48,6 +48,28 @@ bash scripts/deploy-gateway.sh \
 
 - SQLite WAL 数据库：用户、token、权限、审计。
 - agent 注册 gateway 不使用 token，只携带声明的 `cluster/instance`；用户操作继续由 user token 和权限控制。
+- `/v1/agent/connect` 当前按设计开放注册。未来如增加 Agent 工作负载身份，
+  必须作为独立协议扩展并绑定 `cluster/instance`，不得复用 Gateway user token
+  或重新引入 CLI per-target token。
+
+### TODO: Installation Registration Link
+
+Future Agent enrollment should use a Gateway-issued installation registration
+link:
+
+- an administrator issues a short-lived, one-time link bound to one exact
+  `cluster/instance`;
+- the installer exchanges the link for an Agent workload identity before the
+  first `/v1/agent/connect`;
+- the link is consumed atomically, cannot be replayed, and never authorizes user
+  RPC, Git, token administration, or any other Gateway user action;
+- subsequent Agent connections prove the enrolled workload identity without
+  storing or reusing a Gateway user token;
+- acceptance requires expiry, wrong-target, replay, revoked-link, and
+  unauthenticated-registration tests.
+
+This TODO reserves the protocol boundary only. The current release intentionally
+keeps Agent registration open and does not ship a partial enrollment fallback.
 - user token 只能执行授权范围内的 action。
 - gateway 转发 doops JSON-RPC 操作流量和 Git HTTP 请求，不做裸 TCP 隧道。
 - `push/pull` 在标准 gateway 路径下使用 Git 语义。gateway 对外暴露 `/v1/git/<cluster>/<instance>/<session>.git/...`，再通过目标 agent 已建立的反向 WebSocket 把 Git HTTP 请求透传给 agent 本地 `/git/<session>.git/...`。
@@ -216,14 +238,14 @@ doops-agent \
 不会重放已中断的高危操作。任何中断的 mutation 都按失败处理，调用方必须检查真实终态，
 不得由 Gateway 重新发送 apply 请求。
 `-gateway-url` 必须填写 doops-gateway 的 base URL，或显式填写 `/v1/agent/connect`；
-不要填写 `/ws`。`/ws` 是遗留直连 agent 端点，不是 agent 注册 gateway 的反向隧道端点。
+其它 WebSocket 路径都会被拒绝。Agent 不再暴露客户端直连 WebSocket 端点。
 
 ### 裸二进制自举/排障方式
 
 如果当前机器只有 `/usr/local/bin/doops-agent -port 42222 ...` 这样的裸进程，而没有 Pod/容器，就说明还不是容器化安装。此时：
 
 - 标准做法是重新用 `-gateway-url ... -cluster ... -instance ...` 启动 agent，或迁移为容器/K8s 安装
-- 遗留直连只能用于确认本机进程是否还活着，不能作为标准 target 配置
+- 进程和健康端点只能用于本机运行状态检查；所有远程操作仍必须经过 Gateway
 
 ## Configure CLI
 
@@ -342,7 +364,7 @@ doops -session upgrade_20260511 upgrade \
 
 已验证：
 
-- `doops targets --gateway <historical-test-gateway>`
+- `doops targets --target <historical-test-target>`
 - 89/114/JM 的 `exec`
 - 89/114/JM 的 `write` + `read`
 - 89/114/JM 的 gateway `push` 到 `/root/ws/$SESSION`，并校验 `.doops-ready` 和文件 sha256；传输路径为 `/v1/git/<cluster>/<instance>/<session>.git` 的 Git HTTP 反向隧道

@@ -37,7 +37,7 @@ root。也不要用 base64/tar/分片临时传输替代发布脚本；如果 `do
 Git HTTP 反向隧道或目标 agent 版本。
 
 `--verify-target` 只复用本机 DoOps CLI 已配置的认证来读取发布前后 target 基线，不导出
-或落盘 user token。`--verify-token-file` 仅保留给已有安全 token 文件的自动化环境。
+或落盘 user token。发布脚本不接受独立 token 文件。
 
 ### TLS reverse proxy
 
