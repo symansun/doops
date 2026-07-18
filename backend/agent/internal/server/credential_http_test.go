@@ -256,7 +256,7 @@ func TestTargetScopedCredentialActionDoesNotGrantPlatformAdministration(t *testi
 
 func TestCredentialHTTPListIsIsolatedByUserAndTarget(t *testing.T) {
 	store := openCredentialTestStore(t)
-	admin, _ := createCredentialHTTPUser(t, store, "credential-admin", true)
+	admin, adminToken := createCredentialHTTPUser(t, store, "credential-admin", true)
 	user, userToken := createCredentialHTTPUser(t, store, "target-user", false)
 	other, otherToken := createCredentialHTTPUser(t, store, "other-user", false)
 
@@ -328,6 +328,13 @@ func TestCredentialHTTPListIsIsolatedByUserAndTarget(t *testing.T) {
 		strings.Contains(targetADetail.Body.String(), `"owner_id"`) ||
 		strings.Contains(targetADetail.Body.String(), `"created_by"`) {
 		t.Fatalf("target A credential detail exposed owner metadata: %s", targetADetail.Body.String())
+	}
+	adminDetail := credentialHTTPRequest(t, mux, adminToken, http.MethodGet,
+		"/v1/credentials/"+targetA.ID, nil)
+	if adminDetail.Code != http.StatusOK ||
+		!strings.Contains(adminDetail.Body.String(), `"created_by":"`+admin.ID+`"`) {
+		t.Fatalf("platform admin credential detail missing management metadata: HTTP %d: %s",
+			adminDetail.Code, adminDetail.Body.String())
 	}
 	unscopedDetail := credentialHTTPRequest(t, mux, userToken, http.MethodGet,
 		"/v1/credentials/"+targetA.ID, nil)

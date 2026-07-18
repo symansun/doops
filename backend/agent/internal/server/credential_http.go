@@ -123,8 +123,8 @@ func (h *GatewayHub) HandleCredential(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		if resource.Scope != CredentialScopePersonal ||
-			(resource.OwnerID != auth.UserID && !h.store.UserIsPlatformAdmin(auth.UserID)) {
+		if !h.store.UserIsPlatformAdmin(auth.UserID) &&
+			(resource.Scope != CredentialScopePersonal || resource.OwnerID != auth.UserID) {
 			writeJSONHTTP(w, credentialTargetListEntry{
 				ID:        resource.ID,
 				Name:      resource.Name,
