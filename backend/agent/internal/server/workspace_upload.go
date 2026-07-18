@@ -877,7 +877,7 @@ func validateBareWorkspaceCommitBinding(workspace, repoPath, expectedCommit stri
 		"git",
 		"--git-dir", repoPath,
 		"--work-tree", workspace,
-		"ls-files", "--others", "--exclude-standard",
+		"ls-files", "--others",
 	)
 	untracked.Env = commandEnv
 	output, err := untracked.Output()

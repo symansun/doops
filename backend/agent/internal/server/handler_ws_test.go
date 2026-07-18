@@ -1187,10 +1187,13 @@ func TestBareWorkspaceCommitBindingRejectsDirtyAndUntrackedContent(t *testing.T)
 	if err := os.WriteFile(filepath.Join(source, "tracked.txt"), []byte("committed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(source, ".gitignore"), []byte("ignored.yaml\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	runTestCommand(t, source, "git", "init", "-q")
 	runTestCommand(t, source, "git", "config", "user.email", "test@example.invalid")
 	runTestCommand(t, source, "git", "config", "user.name", "DoOps Test")
-	runTestCommand(t, source, "git", "add", "tracked.txt")
+	runTestCommand(t, source, "git", "add", "tracked.txt", ".gitignore")
 	runTestCommand(t, source, "git", "commit", "-q", "-m", "workspace")
 	commit := strings.TrimSpace(runTestCommand(t, source, "git", "rev-parse", "HEAD"))
 	runTestCommand(t, root, "git", "clone", "--bare", source, bare)
@@ -1198,6 +1201,9 @@ func TestBareWorkspaceCommitBindingRejectsDirtyAndUntrackedContent(t *testing.T)
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("committed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".gitignore"), []byte("ignored.yaml\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(workspace, ".doops-ready"), []byte(commit+"\n"), 0o600); err != nil {
@@ -1223,6 +1229,16 @@ func TestBareWorkspaceCommitBindingRejectsDirtyAndUntrackedContent(t *testing.T)
 	if err := validateBareWorkspaceCommitBinding(workspace, bare, commit); err == nil ||
 		!strings.Contains(err.Error(), "outside the authorized commit") {
 		t.Fatalf("untracked bare workspace content was not rejected: %v", err)
+	}
+	if err := os.Remove(filepath.Join(workspace, "untracked.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "ignored.yaml"), []byte("untrusted\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBareWorkspaceCommitBinding(workspace, bare, commit); err == nil ||
+		!strings.Contains(err.Error(), "outside the authorized commit") {
+		t.Fatalf("ignored bare workspace content was not rejected: %v", err)
 	}
 }
 
