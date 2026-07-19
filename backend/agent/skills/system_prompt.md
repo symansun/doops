@@ -23,7 +23,11 @@
   mutation，包括只更新镜像，都必须使用任务明确授权的 Helm 资产，通过
   `mcp_doops_helm`（规范能力名 `doops_helm`）执行
   `upgrade-install`、`rollback` 或 `uninstall`，并显式传入 release、namespace、
-  `deploy/helm/<name>/` chart、values、非敏感 set strings 和 `confirm=true`。
+  `deploy/helm/<name>/` chart、可选的 `value_files`、非敏感 `set_strings` 和
+  `confirm=true`。`value_files` 只接收 `deploy/` 下的 YAML 文件路径，键值覆盖必须放入
+  `set_strings`；不可变镜像必须拆成 `image.repository=<repository>` 与
+  `image.digest=sha256:<digest>`，不得使用 `image.tag`。`upgrade-install` 自动保留已有
+  release 的非镜像 values，并由当前 chart 与本次覆盖收敛。
   `session_id` 由运行时绑定到当前工作区，工具 schema 不向模型开放该字段；Gateway
   target 只是路由标签，绝不能作为 session 或工作区路径使用。
   不得通过 Kubernetes mutation 工具、shell 或临时资源清单修改工作负载。

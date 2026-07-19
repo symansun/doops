@@ -83,7 +83,7 @@ type HelmParams struct {
 	Release    string            `json:"release"`
 	Chart      string            `json:"chart,omitempty"`
 	Namespace  string            `json:"namespace"`
-	Values     []string          `json:"values,omitempty"`
+	ValueFiles []string          `json:"value_files,omitempty"`
 	SetStrings map[string]string `json:"set_strings,omitempty"`
 	Revision   int               `json:"revision,omitempty"`
 	Timeout    string            `json:"timeout,omitempty"`

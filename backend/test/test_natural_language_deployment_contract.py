@@ -68,6 +68,9 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     handler_ws = (BACKEND / "agent" / "internal" / "server" / "handler_ws.go").read_text(
         encoding="utf-8"
     )
+    helm_mcp = (
+        BACKEND / "agent" / "internal" / "server" / "k8s_mcp_stdio.go"
+    ).read_text(encoding="utf-8")
     cnb = CNB.read_text(encoding="utf-8")
     cnb_config = yaml.safe_load(cnb)
     main_pipeline = cnb.split("\nmaster:", 1)[0]
@@ -109,6 +112,10 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert not re.search(r"mcp_doops_k8s(?!_read)", system_prompt)
     assert "set-image" not in system_prompt
     assert "包括只更新镜像" in system_prompt
+    assert "`value_files`" in system_prompt
+    assert "`set_strings`" in system_prompt
+    assert '"value_files": map[string]interface{}' in helm_mcp
+    assert '"values": map[string]interface{}' not in helm_mcp
     assert "shell 中的 Kubernetes" in system_prompt
     assert "不得用 shell 执行 kubectl mutation" in k8s_skill
     assert "api_trigger_deploy_agent" in main_pipeline
