@@ -24,6 +24,7 @@ conflicts: []
 4. 发布必须使用任务明确授权的 `deploy/helm/<name>/`，通过 `mcp_doops_helm`
    完整收敛明确的 release、namespace、`value_files` 和非敏感 `set_strings`。
    `value_files` 只放 `deploy/` 下的 YAML 文件路径；键值覆盖放 `set_strings`。
+   `set_strings` 只允许标量叶子，禁止覆盖 map/list 父键。
    不可变镜像使用 `image.repository` 与 `image.digest`，不得使用 `image.tag`。
    `upgrade-install` 自动保留已有 release 的非镜像 values。只更新镜像也走同一 Helm
    路径，不存在直接 Kubernetes 镜像 mutation 例外。

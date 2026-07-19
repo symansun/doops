@@ -127,7 +127,13 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 
 ## 三、 Agent 部署与热更新机制
 
-`doops-agent` 由 Helm 管理的 `Deployment` 托管，Chart 位于 `deploy/helm/doops-agent`。该目录只保存运行时 Helm 模板、默认值和挂载定义，不保存环境注册表或部署 workflow。具体镜像、目标节点、Secret 引用、Gateway 地址和发布参数必须由本次自然语言任务明确给出或来自任务明确授权读取的当前 Helm release。发布前必须对比当前 workload 与候选 Chart 的 command、args、env、probes、volumeMounts 和 volumes。包括只更新镜像在内的所有发布都必须调用结构化 `doops_helm upgrade-install`，从任务明确指定的 Chart、`value_files` 和非敏感 `set_strings` 完整收敛；`value_files` 只放 `deploy/` 下的 YAML 文件路径，键值覆盖只放 `set_strings`。`upgrade-install` 自动保留已有 release 的非镜像 values，镜像使用 `image.repository` 和 `image.digest`。不存在 Kubernetes 镜像 mutation 发布旁路。自然语言 apply 禁止通过 shell 执行 kubectl 或 Helm mutation；运维人员明确给出的前台 `exec` Helm 操作合法，但 `exec --bg` Helm mutation 必须拒绝。正常运行中的 Agent 不得从节点 SSH 更新。
+`doops-agent` 由 Helm 管理的 `Deployment` 托管，Chart 位于 `deploy/helm/doops-agent`。该目录只保存运行时 Helm 模板、默认值和挂载定义，不保存环境注册表或部署 workflow。具体镜像、目标节点、Secret 引用、Gateway 地址和发布参数必须由本次自然语言任务明确给出或来自任务明确授权读取的当前 Helm release。发布前必须对比当前 workload 与候选 Chart 的 command、args、env、probes、volumeMounts 和 volumes。包括只更新镜像在内的所有发布都必须调用结构化 `doops_helm upgrade-install`，从任务明确指定的 Chart、`value_files` 和非敏感 `set_strings` 完整收敛；`value_files` 只放 `deploy/` 下的 YAML 文件路径，`set_strings` 只覆盖标量叶子，禁止把 map/list 父键编码成字符串。`upgrade-install` 自动保留已有 release 的非镜像 values，先用相同参数执行 Helm dry-run，再执行真实 mutation；镜像使用 `image.repository` 和 `image.digest`。不存在 Kubernetes 镜像 mutation 发布旁路。自然语言 apply 禁止通过 shell 执行 kubectl 或 Helm mutation；运维人员明确给出的前台 `exec` Helm 操作合法，但 `exec --bg` Helm mutation 必须拒绝。正常运行中的 Agent 不得从节点 SSH 更新。
+
+临时 release-runner 安装前必须确认受管 Agent rollout Ready、目标节点
+`DiskPressure=False`，且根文件系统同时满足至少 10% 和 5 GiB 可用空间。任何条件不满足
+都必须在拉取 runner 镜像前失败，避免单节点环境因临时控制器触发 Agent 驱逐。
+由于 runner 继承宿主机 kubeconfig 和 hostPath，受管 Deployment 必须显式设置
+`nodeSelector.kubernetes.io/hostname`；bootstrap 不从 affinity 或当前 Pod 调度结果猜测节点。
 
 受管 `doops-agent` 不得升级自身。升级窗口先调用
 `api_trigger_bootstrap_release_runner`，通过当前 Agent 的前台 Helm `exec` 创建同集群

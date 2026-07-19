@@ -242,6 +242,28 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 		}
 	}
 
+	if command.preserveReleaseValues {
+		// Dry-run every upgrade-install, including first installs, before Helm can create a revision.
+		preflightArgs := make([]string, len(command.args)+1)
+		copy(preflightArgs, command.args)
+		preflightArgs[len(command.args)] = "--dry-run"
+		preflight := exec.CommandContext(ctx, "helm", preflightArgs...)
+		preflight.Dir = command.cwd
+		if len(stdin) != 0 {
+			preflight.Stdin = bytes.NewReader(stdin)
+		}
+		preflight.Stdout = io.Discard
+		var preflightStderr bytes.Buffer
+		preflight.Stderr = &preflightStderr
+		if err := preflight.Run(); err != nil {
+			return fmt.Errorf(
+				"helm preflight failed: %w: %s",
+				err,
+				strings.TrimSpace(preflightStderr.String()),
+			)
+		}
+	}
+
 	cmd := exec.CommandContext(ctx, "helm", command.args...)
 	cmd.Dir = command.cwd
 	if len(stdin) != 0 {

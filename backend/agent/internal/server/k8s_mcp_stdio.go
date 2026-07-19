@@ -283,7 +283,7 @@ func helmMCPToolDefinition() map[string]interface{} {
 				},
 				"set_strings": map[string]interface{}{
 					"type":                 "object",
-					"description":          "Non-secret Helm key/value overrides. For an immutable image use image.repository and image.digest.",
+					"description":          "Non-secret scalar leaf overrides only; never pass a map or list parent key. For an immutable image use image.repository and image.digest.",
 					"additionalProperties": map[string]interface{}{"type": "string"},
 				},
 				"revision": map[string]interface{}{"type": "integer", "minimum": 1},
