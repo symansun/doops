@@ -112,7 +112,10 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 	if params.Container != "" && !k8sContainerPattern.MatchString(params.Container) {
 		return nil, fmt.Errorf("invalid kubernetes container")
 	}
-	if params.Resource != "" && !validK8SResource(params.Resource) {
+	if params.Resource != "" &&
+		(params.Operation == "logs" || params.Operation == "events" ||
+			params.Operation == "rollout-status") &&
+		!validK8SResource(params.Resource) {
 		return nil, fmt.Errorf("invalid kubernetes resource")
 	}
 	if params.Timeout != "" && !k8sTimeoutPattern.MatchString(params.Timeout) {
