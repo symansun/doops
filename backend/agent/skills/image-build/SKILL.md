@@ -54,10 +54,12 @@ conflicts: []
 2. 准备构建上下文（解压源码或写入 Dockerfile）
 3. `buildctl --addr unix:///run/buildkit/buildkitd.sock build --progress=plain --frontend dockerfile.v0 --local context=. --local dockerfile=. --opt filename=Dockerfile --output type=image,name=registry.example.com/example-system/{name}:latest,push=true,registry.insecure=true`
 4. 发布统一调用结构化 `mcp_doops_helm upgrade-install`；`value_files` 只放
-   `deploy/` 下的 YAML 文件，镜像覆盖使用 `set_strings` 的 `image.repository` 与
-   `image.digest`；`set_strings` 只允许标量叶子，不得覆盖 map/list 父键；不得生成原始
-   kubectl 或 Helm mutation。更新现有 release 时 `value_files` 可以为空，工具会自动
-   保留当前 values 并先执行相同参数的 dry-run；不得要求用户提供候选 values 文件，
-   也不得用缺少 `confirm=true` 的调用试探
+   `deploy/` 下的 YAML 文件。镜像覆盖模式使用 `set_strings` 的 `image.repository` 与
+   `image.digest`；完整 values 模式使用 values 中的 `image.repository` 与
+   `image.tag=release-YYYYMMDD`，此时 digest 必须为空且不得传 `set_strings`。
+   `set_strings` 只允许标量叶子，不得覆盖 map/list 父键；不得生成原始 kubectl 或 Helm
+   mutation。更新现有 release 时 `value_files` 可以为空，工具会自动保留当前 values
+   并先执行相同参数的 dry-run；不得要求用户提供候选 values 文件，也不得用缺少
+   `confirm=true` 的调用试探
 5. 用 `mcp_doops_k8s_read` 验证 rollout、实际 imageID 和健康状态
 6. `cd / && rm -rf /tmp/doops-build-{name}` (清理)

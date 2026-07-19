@@ -152,7 +152,9 @@ doops -session release-<commit> ask \
   --msg '在 <target> 的 namespace <namespace> 发布 deployment/<workload>，镜像 <repository>@sha256:<digest>；允许使用 deploy/helm/<name>/；原因：<reason>；验收：Secret 类型/key、rollout、实际镜像、Service/Endpoint、健康检查和关键功能路径通过。'
 ```
 
-必须明确提供 target、服务范围、不可变镜像 digest、变更原因和验收条件。需要 Helm 时还要
+必须明确提供 target、服务范围、镜像版本、变更原因和验收条件。镜像版本可以是任务中的
+不可变 digest，也可以由完整 chart values 与显式 `value_files` 收敛出的
+`image.tag=release-YYYYMMDD`；后一模式禁止 digest 和任何 `set_strings`。需要 Helm 时还要
 明确资产目录。`--credential` 可重复，但只传 resource name，不能内联 payload。
 
 CNB CI 负责测试、构建和发布制品；Gateway 负责鉴权、审计、并发控制和凭据预物化；

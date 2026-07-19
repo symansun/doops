@@ -275,7 +275,7 @@ func helmMCPToolDefinition() map[string]interface{} {
 				"namespace": map[string]interface{}{"type": "string"},
 				"value_files": map[string]interface{}{
 					"type":        "array",
-					"description": "Workspace-relative YAML value file paths under deploy/. Never put key=value overrides here.",
+					"description": "Workspace-relative YAML value file paths under deploy/. Complete values may own image.repository and image.tag=release-YYYYMMDD when set_strings is empty and image.digest is unset.",
 					"items": map[string]interface{}{
 						"type":    "string",
 						"pattern": "^deploy/.+\\.ya?ml$",
@@ -283,7 +283,7 @@ func helmMCPToolDefinition() map[string]interface{} {
 				},
 				"set_strings": map[string]interface{}{
 					"type":                 "object",
-					"description":          "Non-secret scalar leaf overrides only; never pass a map or list parent key. For an immutable image use image.repository and image.digest.",
+					"description":          "Non-secret scalar leaf overrides only; never pass a map or list parent key. Digest image mode requires image.repository and image.digest. Omit set_strings entirely for values-owned release tags.",
 					"additionalProperties": map[string]interface{}{"type": "string"},
 				},
 				"revision": map[string]interface{}{"type": "integer", "minimum": 1},

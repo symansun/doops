@@ -29,7 +29,7 @@ description: |
 - `doops-gateway` 是独立发布包，必须用 `scripts/deploy-gateway.sh --host <gateway-host>` 从 SSH 宿主机上下文发布。
 - gateway 控制面不登记为 doops target，不通过任何 doops target 发布 gateway 本体。
 - 不要用 base64、tar 或手写分片传输绕过 `push`。`doops_workspace_*` 是低层兼容 JSON-RPC 工具，不是 CLI、发布脚本和 skill 的标准路径；如果看到 512KB 分块日志，说明调用方绕过了当前 `doops push/pull`。应修复 Git HTTP 反向隧道、目标 agent 版本或发布脚本。
-- 普通业务 workload 的标准发布入口是 `doops ask --apply`。自然语言任务必须直接给出 target、服务范围、镜像 digest、
+- 普通业务 workload 的标准发布入口是 `doops ask --apply`。自然语言任务必须直接给出 target、服务范围、明确镜像版本、
   变更原因和验收条件；不得从文件路径、环境名、业务名或历史声明推断这些值。
 - 普通 `ask` 运行在 restricted 权限，只允许内置只读工具和 `mcp_doops_k8s_read`；
   `--apply` 才进入原生 build 模式，并且只允许 `mcp_doops_helm` 执行发布 mutation。
@@ -38,6 +38,10 @@ description: |
   可以为空，`set_strings` 只传 `image.repository` 和 `image.digest`；工具自动保留
   当前 values 并先 dry-run。不得要求用户补充候选 values，也不得用缺少
   `confirm=true` 的调用试探。
+- 当项目以完整 Helm values 管理业务镜像时，chart 默认 values 与显式 `value_files`
+  必须收敛出合法 `image.repository` 和 `image.tag=release-YYYYMMDD`。该模式禁止
+  `image.digest` 和任何 `set_strings`，也不得与 digest 覆盖模式混用；缺少明确 release
+  tag 时工具必须拒绝 mutation。
 - 需要凭据时使用可重复的 `--credential <resource-name>`。该参数只传递资源名；Gateway
   将它绑定到当前用户、target 和 session，并按 cluster/instance、namespace、workload、
   image 或 Helm 的精确 scope 授权和物化。公开 prompt、doagent 上下文和 metadata
@@ -158,7 +162,7 @@ doops targets --target unicom
 | :--- | :--- |
 | 执行确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'` |
 | AI 自主分析 | `doops -session <s> ask --target <t> --msg '<task>'` |
-| 发布任务 | `doops -session <s> ask --target <t> --apply --credential <resource-name> --msg '<target、范围、镜像 digest、原因、验收>'` |
+| 发布任务 | `doops -session <s> ask --target <t> --apply --credential <resource-name> --msg '<target、范围、明确镜像版本、原因、验收>'` |
 | 创建凭据 | `doops credential create --target <t> --name <name> --scope personal --type <type>` |
 | 写入凭据版本 | `printf '%s' '<json>' \| doops credential put --target <t> --id <credential-id>` |
 | 查询 target 可用凭据 | `doops credential list --target <t>` |

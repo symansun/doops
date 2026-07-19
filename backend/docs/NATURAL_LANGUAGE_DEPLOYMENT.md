@@ -58,13 +58,16 @@ digest。同一 target 上的 apply、push、write、clean、shell、Kubernetes 
 volumeMounts 和 volumes。发布任务统一调用 `mcp_doops_helm upgrade-install`，显式
 提供 release、namespace、chart、可选 `value_files`、非敏感 `set_strings` 和
 `confirm=true`。`value_files` 只接收 `deploy/` 下的 YAML 文件路径；键值覆盖必须使用
-`set_strings`，且只能覆盖标量叶子，不能把 map/list 父键编码成字符串。镜像按
-`image.repository` 和 `image.digest` 传入，不得把 digest 填入
-`image.tag`。`upgrade-install` 自动保留已有 release 的非镜像 values；
+`set_strings`，且只能覆盖标量叶子，不能把 map/list 父键编码成字符串。镜像版本使用
+两种互斥模式之一：覆盖模式通过 `image.repository` 和 `image.digest` 传入不可变镜像；
+完整 values 模式由 chart 默认 values 与显式 `value_files` 收敛出合法
+`image.repository` 和 `image.tag=release-YYYYMMDD`，此时 `image.digest` 必须为空且
+不得传 `set_strings`。缺少明确版本或混用两种模式时工具在 mutation 前拒绝。
+`upgrade-install` 自动保留已有 release 的非镜像 values；
 `session_id` 不属于模型参数，由 doagent 按会话工作目录启动 MCP 子进程并由 DoOps
-运行时绑定。Gateway target 只负责路由，不能作为 session 或工作区路径。镜像必须使用
-不可变 digest。随后执行 rollout 和功能验收。shell 中的 kubectl 或 Helm mutation
-不构成发布成功证据。
+运行时绑定。Gateway target 只负责路由，不能作为 session 或工作区路径。镜像必须满足
+上述受控版本输入之一。随后执行 rollout 和功能验收。shell 中的 kubectl 或 Helm
+mutation 不构成发布成功证据。
 
 更新现有 release 时，如果任务已经明确 release、namespace、chart 和不可变镜像，
 `value_files` 可以为空。Agent 必须直接调用一次 `mcp_doops_helm upgrade-install`，
@@ -72,6 +75,11 @@ volumeMounts 和 volumes。发布任务统一调用 `mcp_doops_helm upgrade-inst
 当前 values、候选 values 文件或是否启用 dry-run。Helm 工具会在内部读取并保留现有
 release values，并用完全相同的参数自动执行 dry-run 后再执行真实 mutation。缺少
 `confirm=true` 的调用不是预演接口，也不能作为发布证据。
+
+项目采用完整 values 管理镜像时，不使用上述 digest 覆盖路径。Agent 直接传入 chart、
+显式 `value_files` 和 `confirm=true`，不传 `set_strings`；工具按 Helm 覆盖顺序读取
+chart 默认 values 与 `value_files`，只在最终得到合法 `image.repository`、
+`image.tag=release-YYYYMMDD` 且 `image.digest` 为空时继续 dry-run 和 mutation。
 
 CNB CI 负责测试、构建和发布不可变制品。Gateway 负责鉴权、审计、资源锁和凭据预物化。
 实际业务 Helm/Kubernetes mutation 由 target 指向的 Agent/doagent 在目标运行环境执行。

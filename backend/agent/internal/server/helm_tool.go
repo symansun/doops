@@ -13,12 +13,15 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/user/doops/agent/api"
+	"gopkg.in/yaml.v3"
 )
 
 var helmValueKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$`)
 var helmImageDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var helmReleaseTagPattern = regexp.MustCompile(`^release-[0-9]{8}$`)
 var helmRegistryHostPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?$`)
 var helmRepositoryComponentPattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$`)
 
@@ -29,6 +32,12 @@ type helmCommand struct {
 	namespace             string
 	preserveReleaseValues bool
 	preserveInsertAt      int
+}
+
+type helmImageValues struct {
+	repository string
+	tag        string
+	digest     string
 }
 
 func handleHelmTool(ctx context.Context, raw json.RawMessage, push notificationSender) (string, error) {
@@ -99,27 +108,19 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 		if err != nil {
 			return helmCommand{}, err
 		}
-		imageRepository, hasImageRepository := params.SetStrings["image.repository"]
-		imageDigest, hasImageDigest := params.SetStrings["image.digest"]
-		if !hasImageRepository || !hasImageDigest {
-			return helmCommand{}, fmt.Errorf(
-				"upgrade-install requires image.repository and image.digest set_strings",
-			)
-		}
-		if !validHelmImageRepository(imageRepository) {
-			return helmCommand{}, fmt.Errorf("invalid image.repository set_string")
-		}
-		if !helmImageDigestPattern.MatchString(imageDigest) {
-			return helmCommand{}, fmt.Errorf("invalid image.digest set_string")
-		}
 		args := []string{"upgrade", params.Release, chart, "--install", "--atomic"}
 		preserveInsertAt := len(args)
+		valueFiles := make([]string, 0, len(params.ValueFiles))
 		for _, valuePath := range params.ValueFiles {
 			resolved, err := resolveHelmWorkspacePath(workspace, strings.TrimSpace(valuePath), "deploy/", false)
 			if err != nil {
 				return helmCommand{}, err
 			}
+			valueFiles = append(valueFiles, resolved)
 			args = append(args, "--values", resolved)
+		}
+		if err := validateHelmImageInput(workspace, chart, valueFiles, params.SetStrings); err != nil {
+			return helmCommand{}, err
 		}
 		keys := make([]string, 0, len(params.SetStrings))
 		for key := range params.SetStrings {
@@ -160,6 +161,129 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 	default:
 		return helmCommand{}, fmt.Errorf("unsupported helm operation %q", params.Operation)
 	}
+}
+
+func validateHelmImageInput(
+	workspace string,
+	chart string,
+	valueFiles []string,
+	setStrings map[string]string,
+) error {
+	imageRepository, hasImageRepository := setStrings["image.repository"]
+	imageDigest, hasImageDigest := setStrings["image.digest"]
+	if hasImageRepository || hasImageDigest {
+		if !hasImageRepository || !hasImageDigest {
+			return fmt.Errorf(
+				"upgrade-install requires both image.repository and image.digest set_strings",
+			)
+		}
+		if !validHelmImageRepository(imageRepository) {
+			return fmt.Errorf("invalid image.repository set_string")
+		}
+		if !helmImageDigestPattern.MatchString(imageDigest) {
+			return fmt.Errorf("invalid image.digest set_string")
+		}
+		image, err := loadHelmImageValues(workspace, chart, valueFiles)
+		if err != nil {
+			return err
+		}
+		if image.tag != "" {
+			return fmt.Errorf("digest image mode must not define image.tag in values")
+		}
+		return nil
+	}
+	if len(setStrings) != 0 {
+		return fmt.Errorf("values-owned image mode does not allow set_strings")
+	}
+
+	image, err := loadHelmImageValues(workspace, chart, valueFiles)
+	if err != nil {
+		return err
+	}
+	if !validHelmImageRepository(image.repository) {
+		return fmt.Errorf("values-owned image mode requires a valid image.repository")
+	}
+	if !validHelmReleaseTag(image.tag) {
+		return fmt.Errorf("values-owned image.tag must match release-YYYYMMDD")
+	}
+	if image.digest != "" {
+		return fmt.Errorf("values-owned image mode must not define image.digest")
+	}
+	return nil
+}
+
+func loadHelmImageValues(workspace string, chart string, valueFiles []string) (helmImageValues, error) {
+	var image helmImageValues
+	chartValues := filepath.ToSlash(filepath.Join(chart, "values.yaml"))
+	paths := make([]string, 0, len(valueFiles)+1)
+	if _, err := os.Lstat(filepath.Join(workspace, filepath.FromSlash(chartValues))); err == nil {
+		resolved, err := resolveHelmWorkspacePath(workspace, chartValues, chart+"/", false)
+		if err != nil {
+			return helmImageValues{}, err
+		}
+		paths = append(paths, resolved)
+	} else if !os.IsNotExist(err) {
+		return helmImageValues{}, fmt.Errorf("inspect helm chart values: %w", err)
+	}
+	paths = append(paths, valueFiles...)
+
+	for _, path := range paths {
+		content, err := os.ReadFile(filepath.Join(workspace, filepath.FromSlash(path)))
+		if err != nil {
+			return helmImageValues{}, fmt.Errorf("read helm values file %s: %w", path, err)
+		}
+		var values map[string]interface{}
+		if err := yaml.Unmarshal(content, &values); err != nil {
+			return helmImageValues{}, fmt.Errorf("decode helm values file %s: %w", path, err)
+		}
+		rawImage, exists := values["image"]
+		if !exists {
+			continue
+		}
+		if rawImage == nil {
+			image = helmImageValues{}
+			continue
+		}
+		imageMap, ok := rawImage.(map[string]interface{})
+		if !ok {
+			return helmImageValues{}, fmt.Errorf("helm values file %s image must be a map", path)
+		}
+		for _, field := range []struct {
+			key    string
+			target *string
+		}{
+			{key: "repository", target: &image.repository},
+			{key: "tag", target: &image.tag},
+			{key: "digest", target: &image.digest},
+		} {
+			value, exists := imageMap[field.key]
+			if !exists {
+				continue
+			}
+			if value == nil {
+				*field.target = ""
+				continue
+			}
+			text, ok := value.(string)
+			if !ok {
+				return helmImageValues{}, fmt.Errorf(
+					"helm values file %s image.%s must be a string",
+					path,
+					field.key,
+				)
+			}
+			*field.target = text
+		}
+	}
+	return image, nil
+}
+
+func validHelmReleaseTag(value string) bool {
+	if !helmReleaseTagPattern.MatchString(value) {
+		return false
+	}
+	_, err := time.Parse("20060102", strings.TrimPrefix(value, "release-"))
+	return err == nil
 }
 
 func validHelmImageRepository(value string) bool {

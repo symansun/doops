@@ -69,6 +69,140 @@ func TestBuildHelmUpgradeInstallUsesBoundWorkspaceAssets(t *testing.T) {
 	}
 }
 
+func TestBuildHelmUpgradeInstallUsesReleaseTagFromValuesWithoutSetStrings(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "release")
+	chart := filepath.Join(workspace, "deploy", "helm", "app")
+	values := filepath.Join(workspace, "deploy", "values", "production.yaml")
+	if err := os.MkdirAll(chart, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(values), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(chart, "values.yaml"),
+		[]byte("image:\n  repository: registry.example/app\n  tag: latest\n  digest: \"\"\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(values, []byte("image:\n  tag: release-20260719\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+
+	command, err := buildHelmCommand(api.HelmParams{
+		SessionID:  "release",
+		Operation:  "upgrade-install",
+		Release:    "app",
+		Chart:      "deploy/helm/app",
+		Namespace:  "apps",
+		ValueFiles: []string{"deploy/values/production.yaml"},
+		Confirm:    true,
+	})
+	if err != nil {
+		t.Fatalf("build helm command: %v", err)
+	}
+	got := strings.Join(command.args, " ")
+	if !strings.Contains(got, "--values deploy/values/production.yaml") {
+		t.Fatalf("helm command missing values file: %s", got)
+	}
+	if strings.Contains(got, "--set-string") {
+		t.Fatalf("values-only release added set_strings: %s", got)
+	}
+}
+
+func TestBuildHelmUpgradeInstallRejectsUncontrolledValuesImageInputs(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "release")
+	chart := filepath.Join(workspace, "deploy", "helm", "app")
+	values := filepath.Join(workspace, "deploy", "values", "production.yaml")
+	if err := os.MkdirAll(chart, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(values), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(chart, "values.yaml"),
+		[]byte("image:\n  repository: registry.example/app\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+
+	base := api.HelmParams{
+		SessionID:  "release",
+		Operation:  "upgrade-install",
+		Release:    "app",
+		Chart:      "deploy/helm/app",
+		Namespace:  "apps",
+		ValueFiles: []string{"deploy/values/production.yaml"},
+		Confirm:    true,
+	}
+	for _, test := range []struct {
+		name       string
+		values     string
+		setStrings map[string]string
+		wantError  string
+	}{
+		{
+			name:      "missing tag",
+			values:    "replicas: 2\n",
+			wantError: "release-YYYYMMDD",
+		},
+		{
+			name:      "mutable tag",
+			values:    "image:\n  tag: latest\n",
+			wantError: "release-YYYYMMDD",
+		},
+		{
+			name:      "whitespace-wrapped tag",
+			values:    "image:\n  tag: \" release-20260719 \"\n",
+			wantError: "release-YYYYMMDD",
+		},
+		{
+			name:      "invalid release date",
+			values:    "image:\n  tag: release-20260230\n",
+			wantError: "release-YYYYMMDD",
+		},
+		{
+			name:      "digest mixed with release tag",
+			values:    "image:\n  tag: release-20260719\n  digest: sha256:" + strings.Repeat("a", 64) + "\n",
+			wantError: "must not define image.digest",
+		},
+		{
+			name:       "runtime overrides mixed with values",
+			values:     "image:\n  tag: release-20260719\n",
+			setStrings: map[string]string{"replicaCount": "2"},
+			wantError:  "does not allow set_strings",
+		},
+		{
+			name:   "digest overrides mixed with release tag",
+			values: "image:\n  tag: release-20260719\n",
+			setStrings: map[string]string{
+				"image.repository": "registry.example/app",
+				"image.digest":     "sha256:" + strings.Repeat("a", 64),
+			},
+			wantError: "must not define image.tag",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := os.WriteFile(values, []byte(test.values), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			params := base
+			params.SetStrings = test.setStrings
+			if _, err := buildHelmCommand(params); err == nil ||
+				!strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("unsafe image input accepted: %v", err)
+			}
+		})
+	}
+}
+
 func TestBuildHelmCommandRejectsLegacyValuesField(t *testing.T) {
 	var params api.HelmParams
 	decoder := json.NewDecoder(strings.NewReader(`{
@@ -141,8 +275,8 @@ func TestBuildHelmCommandRequiresImmutableImageOverrides(t *testing.T) {
 		Confirm:   true,
 	}
 	if _, err := buildHelmCommand(base); err == nil ||
-		!strings.Contains(err.Error(), "image.repository and image.digest") {
-		t.Fatalf("missing image overrides accepted: %v", err)
+		!strings.Contains(err.Error(), "valid image.repository") {
+		t.Fatalf("missing image version accepted: %v", err)
 	}
 
 	base.SetStrings = map[string]string{
@@ -255,7 +389,18 @@ func TestRunHelmCommandStreamsExistingValuesBeforeExplicitFiles(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(explicitValues), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(explicitValues, []byte("replicas: 3\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(chart, "values.yaml"),
+		[]byte("image:\n  repository: registry.example/app\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		explicitValues,
+		[]byte("replicas: 3\nimage:\n  tag: release-20260719\n"),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 	argsFile := filepath.Join(root, "args")
@@ -288,11 +433,7 @@ cat >"${STDIN_FILE}"
 		Chart:      "deploy/helm/app",
 		Namespace:  "apps",
 		ValueFiles: []string{"deploy/values/production.yaml"},
-		SetStrings: map[string]string{
-			"image.repository": "registry.example/app",
-			"image.digest":     "sha256:" + strings.Repeat("a", 64),
-		},
-		Confirm: true,
+		Confirm:    true,
 	})
 	if err != nil {
 		t.Fatalf("build helm command: %v", err)
@@ -309,6 +450,9 @@ cat >"${STDIN_FILE}"
 	explicitIndex := slices.Index(argLines, "deploy/values/production.yaml")
 	if stdinIndex < 0 || explicitIndex < 0 || stdinIndex >= explicitIndex {
 		t.Fatalf("existing values do not precede explicit values: %q", argLines)
+	}
+	if slices.Contains(argLines, "--set-string") {
+		t.Fatalf("values-only release used runtime set_strings: %q", argLines)
 	}
 	stdin, err := os.ReadFile(stdinFile)
 	if err != nil {
@@ -401,5 +545,38 @@ func TestBuildHelmCommandRejectsSymlinkOutsideRequiredAssetPrefix(t *testing.T) 
 	})
 	if err == nil || !strings.Contains(err.Error(), "must remain under deploy/helm/") {
 		t.Fatalf("symlinked chart outside prefix accepted: %v", err)
+	}
+}
+
+func TestBuildHelmCommandRejectsChartValuesSymlinkOutsideChartAssets(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "release")
+	chart := filepath.Join(workspace, "deploy", "helm", "app")
+	if err := os.MkdirAll(chart, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outsideValues := filepath.Join(workspace, "outside-values.yaml")
+	if err := os.WriteFile(
+		outsideValues,
+		[]byte("image:\n  repository: registry.example/app\n  tag: release-20260719\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../../outside-values.yaml", filepath.Join(chart, "values.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+
+	_, err := buildHelmCommand(api.HelmParams{
+		SessionID: "release",
+		Operation: "upgrade-install",
+		Release:   "app",
+		Chart:     "deploy/helm/app",
+		Namespace: "apps",
+		Confirm:   true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "must remain under deploy/helm/app/") {
+		t.Fatalf("chart values symlink outside chart assets accepted: %v", err)
 	}
 }

@@ -20,13 +20,17 @@ conflicts: []
    `mcp_doops_helm`（规范能力名 `doops_helm`）。`session_id` 由运行时绑定，模型不得
    传入 target、session 或工作区路径；不得用 shell 执行 kubectl 或 Helm mutation。
 2. 所有请求显式传 namespace；不得依赖 default namespace。
-3. mutation 必须有 `confirm=true`，镜像发布必须使用不可变 `@sha256:` digest。
+3. mutation 必须有 `confirm=true`，镜像发布必须有明确且受控的 digest 或
+   `release-YYYYMMDD` 版本证据。
 4. 发布必须使用任务明确授权的 `deploy/helm/<name>/`，通过 `mcp_doops_helm`
    完整收敛明确的 release、namespace、chart、可选 `value_files` 和非敏感
    `set_strings`。
    `value_files` 只放 `deploy/` 下的 YAML 文件路径；键值覆盖放 `set_strings`。
    `set_strings` 只允许标量叶子，禁止覆盖 map/list 父键。
-   不可变镜像使用 `image.repository` 与 `image.digest`，不得使用 `image.tag`。
+   镜像覆盖模式使用 `image.repository` 与 `image.digest`。完整 values 模式必须由
+   chart 默认 values 与显式 `value_files` 收敛出合法 `image.repository` 和
+   `image.tag=release-YYYYMMDD`，同时保持 `image.digest` 为空且不传 `set_strings`。
+   两种模式不得混用。
    `upgrade-install` 自动保留已有 release 的非镜像 values。只更新镜像也走同一 Helm
    路径，不存在直接 Kubernetes 镜像 mutation 例外。
    对现有 release，如果任务已给出 release、namespace、chart 和不可变镜像，

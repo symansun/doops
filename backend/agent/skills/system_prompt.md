@@ -26,10 +26,12 @@
   `deploy/helm/<name>/` chart、可选的 `value_files`、非敏感 `set_strings` 和
   `confirm=true`。`value_files` 只接收 `deploy/` 下的 YAML 文件路径，键值覆盖必须放入
   `set_strings`；`set_strings` 只允许标量叶子，禁止传入
-  `workload.selectorLabels` 这类 map/list 父键。不可变镜像必须拆成
-  `image.repository=<repository>` 与
-  `image.digest=sha256:<digest>`，不得使用 `image.tag`。`upgrade-install` 自动保留已有
-  release 的非镜像 values，并由当前 chart 与本次覆盖收敛。
+  `workload.selectorLabels` 这类 map/list 父键。镜像版本必须使用以下互斥方式之一：
+  镜像覆盖模式把不可变镜像拆成 `image.repository=<repository>` 与
+  `image.digest=sha256:<digest>`；完整 values 模式由 chart 默认 values 与显式
+  `value_files` 收敛出合法 `image.repository` 和 `image.tag=release-YYYYMMDD`，此时
+  `image.digest` 必须为空且不得传 `set_strings`。不得混用两种模式。
+  `upgrade-install` 自动保留已有 release 的非镜像 values，并由当前 chart 与本次输入收敛。
   当任务已经明确现有 release、namespace、chart 和不可变镜像时，`value_files` 是可选
   参数，不是发布前置条件；必须直接调用一次 `mcp_doops_helm upgrade-install`，
   `set_strings` 只传 `image.repository` 和 `image.digest`，不得要求用户提供候选 values
