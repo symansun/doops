@@ -55,6 +55,7 @@ conflicts: []
 3. `buildctl --addr unix:///run/buildkit/buildkitd.sock build --progress=plain --frontend dockerfile.v0 --local context=. --local dockerfile=. --opt filename=Dockerfile --output type=image,name=registry.example.com/example-system/{name}:latest,push=true,registry.insecure=true`
 4. 发布统一调用结构化 `mcp_doops_helm upgrade-install`；`value_files` 只放
    `deploy/` 下的 YAML 文件，镜像覆盖使用 `set_strings` 的 `image.repository` 与
-   `image.digest`，不得生成原始 kubectl 或 Helm mutation
+   `image.digest`；`set_strings` 只允许标量叶子，不得覆盖 map/list 父键；不得生成原始
+   kubectl 或 Helm mutation
 5. 用 `mcp_doops_k8s_read` 验证 rollout、实际 imageID 和健康状态
 6. `cd / && rm -rf /tmp/doops-build-{name}` (清理)

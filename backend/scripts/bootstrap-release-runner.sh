@@ -110,6 +110,7 @@ helm get values "${MANAGED_RELEASE}" \
   --namespace "${NAMESPACE}" \
   --output yaml >"${VALUES_FILE}"
 
+MANAGED_WORKLOAD="$(
 python3 - "${VALUES_FILE}" "${RUNNER_WORKLOAD}" "${RUNNER_INSTANCE}" "${RUNNER_HOME}" "${IMAGE_REPOSITORY}" "${IMAGE_DIGEST}" <<'PY'
 import sys
 
@@ -119,7 +120,8 @@ path, workload, instance, runner_home, repository, digest = sys.argv[1:]
 with open(path, encoding="utf-8") as source:
     values = yaml.safe_load(source)
 
-if values["workload"]["name"] == workload:
+managed_workload = values["workload"]["name"]
+if managed_workload == workload:
     raise SystemExit("runner workload must differ from the managed workload")
 if values["gateway"]["instance"] == instance:
     raise SystemExit("runner instance must differ from the managed instance")
@@ -143,7 +145,46 @@ agent_home["hostPath"]["type"] = "DirectoryOrCreate"
 
 with open(path, "w", encoding="utf-8") as destination:
     yaml.safe_dump(values, destination, sort_keys=False)
+print(managed_workload)
 PY
+)"
+
+if [[ ! "${MANAGED_WORKLOAD}" =~ ${dns_name} ]]; then
+  echo "Current release has an invalid managed workload name" >&2
+  exit 1
+fi
+if ! kubectl rollout status "deployment/${MANAGED_WORKLOAD}" \
+  --namespace "${NAMESPACE}" \
+  --timeout 30s >/dev/null; then
+  echo "Managed Agent must be Ready before bootstrapping a release runner" >&2
+  exit 1
+fi
+
+NODE_NAME="$(
+  kubectl get "deployment/${MANAGED_WORKLOAD}" \
+    --namespace "${NAMESPACE}" \
+    --output jsonpath='{.spec.template.spec.nodeSelector.kubernetes\.io/hostname}'
+)"
+if [[ -z "${NODE_NAME}" ]]; then
+  echo "Managed Agent must select an explicit kubernetes.io/hostname node" >&2
+  exit 1
+fi
+DISK_PRESSURE="$(
+  kubectl get "node/${NODE_NAME}" \
+    --output jsonpath='{.status.conditions[?(@.type=="DiskPressure")].status}'
+)"
+if [[ "${DISK_PRESSURE}" != "False" ]]; then
+  echo "Release runner blocked: node ${NODE_NAME} reports DiskPressure=${DISK_PRESSURE:-unknown}" >&2
+  exit 1
+fi
+
+read -r ROOT_TOTAL_KB ROOT_AVAILABLE_KB < <(df -Pk / | awk 'NR == 2 {print $2, $4}')
+MIN_AVAILABLE_KB=$((5 * 1024 * 1024))
+if ((ROOT_AVAILABLE_KB < MIN_AVAILABLE_KB)) ||
+  ((ROOT_AVAILABLE_KB * 100 < ROOT_TOTAL_KB * 10)); then
+  echo "Release runner blocked: root filesystem requires at least 10% and 5 GiB free" >&2
+  exit 1
+fi
 
 helm upgrade "${RUNNER_RELEASE}" "${REPO_ROOT}/deploy/helm/doops-agent" \
   --install \

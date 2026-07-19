@@ -2,6 +2,27 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-07-19 Natural-Language Release Safety
+
+- CNB build `cnb-hjd-1jtruolq0` successfully published the HDU managed Agent
+  through canonical `doops ask --apply` and `mcp_doops_helm`.
+- Verified HDU Helm revision 10 with image
+  `docker.cnb.cool/l8ai/ai/doops.sh@sha256:1324804eaee115012d3b55143a3b2ef6a4711df2ff3f1a1e242ef3d1d94cef8c`,
+  Deployment `1/1` Ready, zero restarts on the current Pod, reverse-tunnel
+  reconnection, and embedded `do-agent 0.2.26`.
+- The preceding runner bootstrap pulled a 1.57 GB image while the single node
+  was near its ephemeral-storage eviction threshold. Kubelet evicted the
+  managed Agent, and the five-minute Gateway registration window incorrectly
+  reported the runner offline even though it registered after rescheduling.
+- Runner bootstrap now blocks before image pull unless the managed workload is
+  Ready, the selected node reports `DiskPressure=False`, and the root filesystem
+  has at least 10% and 5 GiB free.
+- Helm `upgrade-install` now runs the same command as a dry-run before the real
+  mutation. Invalid scalar overrides such as encoding `workload.selectorLabels`
+  as a `set_strings` value therefore fail before creating a Helm revision.
+- `set_strings` is restricted by contract to scalar leaf keys. Structured maps
+  and lists belong in chart values or explicit `value_files`.
+
 ## 2026-07-18 Remove Retired CLI Connection Paths
 
 - Removed direct target fields, SSH target fields, per-target tokens, direct WebSocket routing,
@@ -90,9 +111,10 @@ For gateway control-plane releases, additionally verify:
 
 ## Current Release Line
 
-- Verified source commit: `836171d04b1230b0fc3f477a47b85a9250408184`
-- Verified deployed Agent image: `docker.cnb.cool/l8ai/ai/doops.sh@sha256:e43a2b207fcf0a6e734216d6ac3cb95235a7fd13d36e7a566aadb48c9a67033c`
-- Embedded doagent version: `0.2.22`
+- Verified source commit: `36b1bba982f2bee54b520edd30a4aa6d84ade4ac`
+- Verified deployed Agent image: `docker.cnb.cool/l8ai/ai/doops.sh@sha256:1324804eaee115012d3b55143a3b2ef6a4711df2ff3f1a1e242ef3d1d94cef8c`
+- Embedded doagent version: `0.2.26`
+- Verified target: `doops-235/hdu-235`
 - Gateway binary: extracted from the verified CNB CI image digest with
   `scripts/extract-gateway-from-image.sh`, then deployed with
   `scripts/deploy-gateway.sh --no-build`.

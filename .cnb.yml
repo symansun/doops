@@ -315,7 +315,7 @@ main:
               --cluster "${DOOPS_CLUSTER}" \
               --instance "${DOOPS_RUNNER_INSTANCE}" \
               --use "CNB isolated release controller"
-            for attempt in $(seq 1 150); do
+            for attempt in $(seq 1 300); do
               if .ci-bin/doops targets --target "${DOOPS_RUNNER_TARGET}"; then
                 exit 0
               fi
@@ -325,10 +325,10 @@ main:
             if ! .ci-bin/doops -session "${DOOPS_SESSION}" exec \
               --target "${DOOPS_TARGET}" \
               --cmd "${cleanup_command}"; then
-              echo "release runner did not register and cleanup failed" >&2
+              echo "release runner did not register within 10 minutes; managed target is offline, so the temporary release was preserved for Agent self-recovery" >&2
               exit 1
             fi
-            echo "release runner did not register; temporary release removed" >&2
+            echo "release runner did not register within 10 minutes; temporary release removed" >&2
             exit 1
 
 master:

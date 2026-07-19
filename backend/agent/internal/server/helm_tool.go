@@ -242,6 +242,25 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 		}
 	}
 
+	if command.preserveReleaseValues {
+		preflightArgs := append(append([]string{}, command.args...), "--dry-run")
+		preflight := exec.CommandContext(ctx, "helm", preflightArgs...)
+		preflight.Dir = command.cwd
+		if len(stdin) != 0 {
+			preflight.Stdin = bytes.NewReader(stdin)
+		}
+		preflight.Stdout = io.Discard
+		var preflightStderr bytes.Buffer
+		preflight.Stderr = &preflightStderr
+		if err := preflight.Run(); err != nil {
+			return fmt.Errorf(
+				"helm preflight failed: %w: %s",
+				err,
+				strings.TrimSpace(preflightStderr.String()),
+			)
+		}
+	}
+
 	cmd := exec.CommandContext(ctx, "helm", command.args...)
 	cmd.Dir = command.cwd
 	if len(stdin) != 0 {

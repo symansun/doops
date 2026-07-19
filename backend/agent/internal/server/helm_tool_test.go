@@ -321,6 +321,60 @@ cat >"${STDIN_FILE}"
 	}
 }
 
+func TestRunHelmCommandPreflightBlocksMutation(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "release")
+	chart := filepath.Join(workspace, "deploy", "helm", "app")
+	if err := os.MkdirAll(chart, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mutationMarker := filepath.Join(root, "mutation")
+	helm := filepath.Join(root, "helm")
+	if err := os.WriteFile(helm, []byte(`#!/bin/sh
+set -eu
+if [ "$1" = "status" ]; then
+  echo 'Error: release: not found' >&2
+  exit 1
+fi
+for arg in "$@"; do
+  if [ "$arg" = "--dry-run" ]; then
+    echo 'cannot overwrite table with non table' >&2
+    exit 1
+  fi
+done
+touch "${MUTATION_MARKER}"
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("MUTATION_MARKER", mutationMarker)
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+
+	command, err := buildHelmCommand(api.HelmParams{
+		SessionID: "release",
+		Operation: "upgrade-install",
+		Release:   "app",
+		Chart:     "deploy/helm/app",
+		Namespace: "apps",
+		SetStrings: map[string]string{
+			"image.repository": "registry.example/app",
+			"image.digest":     "sha256:" + strings.Repeat("a", 64),
+		},
+		Confirm: true,
+	})
+	if err != nil {
+		t.Fatalf("build helm command: %v", err)
+	}
+	err = runHelmCommand(context.Background(), command, func(notificationEvent) {})
+	if err == nil || !strings.Contains(err.Error(), "helm preflight failed") ||
+		!strings.Contains(err.Error(), "cannot overwrite table with non table") {
+		t.Fatalf("preflight failure not returned: %v", err)
+	}
+	if _, err := os.Stat(mutationMarker); !os.IsNotExist(err) {
+		t.Fatalf("helm mutation ran after failed preflight")
+	}
+}
+
 func TestBuildHelmCommandRejectsSymlinkOutsideRequiredAssetPrefix(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "release")

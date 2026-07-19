@@ -58,7 +58,8 @@ digest。同一 target 上的 apply、push、write、clean、shell、Kubernetes 
 volumeMounts 和 volumes。发布任务统一调用 `mcp_doops_helm upgrade-install`，显式
 提供 release、namespace、chart、可选 `value_files`、非敏感 `set_strings` 和
 `confirm=true`。`value_files` 只接收 `deploy/` 下的 YAML 文件路径；键值覆盖必须使用
-`set_strings`。镜像按 `image.repository` 和 `image.digest` 传入，不得把 digest 填入
+`set_strings`，且只能覆盖标量叶子，不能把 map/list 父键编码成字符串。镜像按
+`image.repository` 和 `image.digest` 传入，不得把 digest 填入
 `image.tag`。`upgrade-install` 自动保留已有 release 的非镜像 values；
 `session_id` 不属于模型参数，由 doagent 按会话工作目录启动 MCP 子进程并由 DoOps
 运行时绑定。Gateway target 只负责路由，不能作为 session 或工作区路径。镜像必须使用
@@ -72,6 +73,8 @@ CI/GitOps controller 执行。
 
 仓库的 `api_trigger_bootstrap_release_runner` 只负责从目标集群现有 Helm release
 复制非镜像 values，并通过合法的前台 `exec` Helm 操作创建隔离 release-runner。
+bootstrap 会在安装前确认受管 Agent Ready、目标节点无 DiskPressure，且根文件系统
+至少有 10% 和 5 GiB 可用空间；不满足时直接阻塞，不拉取 runner 镜像。
 它不发布受管 Agent，也不替代 `ask --apply`。runner 注册到 Gateway 后，
 `api_trigger_deploy_agent` 必须把 runner 作为 target，由 runner 对受管 Agent release
 执行自然语言 Helm 收敛。发布和验收完成后应卸载临时 runner，避免把控制器变成长期

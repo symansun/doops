@@ -11,6 +11,40 @@ SCRIPT = ROOT / "backend" / "scripts" / "bootstrap-release-runner.sh"
 CNB = ROOT / ".cnb.yml"
 
 
+def write_fake_bootstrap_health_tools(
+    fake_bin, *, disk_pressure="False", total_kb=10_000_000, available_kb=6_000_000
+):
+    kubectl = fake_bin / "kubectl"
+    kubectl.write_text(
+        f"""#!/bin/sh
+set -eu
+if [ "$1" = "rollout" ] && [ "$2" = "status" ]; then
+  exit 0
+fi
+if [ "$1" = "get" ] && [ "$2" = "deployment/doops-agent" ]; then
+  printf node-1
+  exit 0
+fi
+if [ "$1" = "get" ] && [ "$2" = "node/node-1" ]; then
+  printf {disk_pressure}
+  exit 0
+fi
+exit 99
+""",
+        encoding="utf-8",
+    )
+    kubectl.chmod(0o755)
+    df = fake_bin / "df"
+    df.write_text(
+        f"""#!/bin/sh
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n'
+printf 'overlay {total_kb} 1 {available_kb} 1%% /\\n'
+""",
+        encoding="utf-8",
+    )
+    df.chmod(0o755)
+
+
 def test_bootstrap_release_runner_preserves_managed_values(tmp_path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -76,6 +110,7 @@ exit 1
         encoding="utf-8",
     )
     helm.chmod(0o755)
+    write_fake_bootstrap_health_tools(fake_bin)
 
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
@@ -145,6 +180,86 @@ exit 1
     assert "--atomic" in args
     assert "--namespace" in args
     assert "ai" in args
+
+
+@pytest.mark.parametrize(
+    ("disk_pressure", "total_kb", "available_kb", "error"),
+    [
+        ("True", 10_000_000, 6_000_000, "reports DiskPressure=True"),
+        ("False", 100_000_000, 6_000_000, "requires at least 10% and 5 GiB free"),
+    ],
+)
+def test_bootstrap_release_runner_blocks_unsafe_node_storage(
+    tmp_path, disk_pressure, total_kb, available_kb, error
+):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    helm_upgrade = tmp_path / "helm-upgrade"
+    helm = fake_bin / "helm"
+    helm.write_text(
+        """#!/bin/sh
+set -eu
+if [ "$1" = "list" ]; then
+  exit 0
+fi
+if [ "$1" = "get" ] && [ "$2" = "values" ]; then
+  cat <<'YAML'
+image: {repository: old.example/doops, digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
+workload: {name: doops-agent, selectorLabels: {app: doops-agent}}
+gateway: {url: https://doops.l8ai.cn, cluster: doops-235, instance: hdu-235}
+volumes:
+  - name: agent-home
+    hostPath: {path: /var/lib/doops-agent-home, type: DirectoryOrCreate}
+YAML
+  exit 0
+fi
+touch "${HELM_UPGRADE:?}"
+exit 99
+""",
+        encoding="utf-8",
+    )
+    helm.chmod(0o755)
+    write_fake_bootstrap_health_tools(
+        fake_bin,
+        disk_pressure=disk_pressure,
+        total_kb=total_kb,
+        available_kb=available_kb,
+    )
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["HELM_UPGRADE"] = str(helm_upgrade)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(SCRIPT),
+            "--namespace",
+            "ai",
+            "--managed-release",
+            "doops-agent",
+            "--runner-release",
+            "doops-release-runner",
+            "--runner-workload",
+            "doops-release-runner",
+            "--runner-instance",
+            "release-runner-hdu",
+            "--runner-home",
+            "/var/lib/doops-release-runner-home",
+            "--image",
+            (
+                "docker.cnb.cool/l8ai/ai/doops.sh@sha256:"
+                "df0038d05fd8a895f3d9cf73ad7ce5b286bd19f4e7c091292a90be64de366fb5"
+            ),
+        ],
+        cwd=ROOT / "backend",
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert error in result.stderr
+    assert not helm_upgrade.exists()
 
 
 @pytest.mark.parametrize(

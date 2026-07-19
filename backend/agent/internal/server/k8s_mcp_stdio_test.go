@@ -52,6 +52,10 @@ func TestK8SMCPStdioExposesReadAndHelmOnly(t *testing.T) {
 					t.Fatalf("helm schema missing %q: %#v", requiredProperty, properties)
 				}
 			}
+			setStrings, _ := properties["set_strings"].(map[string]interface{})
+			if !strings.Contains(setStrings["description"].(string), "scalar leaf") {
+				t.Fatalf("helm set_strings scalar contract missing: %#v", setStrings)
+			}
 		}
 	}
 	if strings.Join(names, ",") != "k8s_read,helm" {
