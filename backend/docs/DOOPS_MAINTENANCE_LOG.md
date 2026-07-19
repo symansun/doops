@@ -4,12 +4,15 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
 
 ## 2026-07-19 Natural-Language Release Safety
 
-- CNB build `cnb-hjd-1jtruolq0` successfully published the HDU managed Agent
+- CNB build `cnb-vlt-1jts11c6p` successfully published the HDU managed Agent
   through canonical `doops ask --apply` and `mcp_doops_helm`.
-- Verified HDU Helm revision 10 with image
-  `docker.cnb.cool/l8ai/ai/doops.sh@sha256:1324804eaee115012d3b55143a3b2ef6a4711df2ff3f1a1e242ef3d1d94cef8c`,
+- Verified HDU Helm revision 11 with image
+  `docker.cnb.cool/l8ai/ai/doops.sh@sha256:7f8582052367bf54f2ff052e530a8782b1e96a6e26178a4a4fc95a5c0039eb15`,
   Deployment `1/1` Ready, zero restarts on the current Pod, reverse-tunnel
   reconnection, and embedded `do-agent 0.2.26`.
+- Removed the isolated HDU release runner after the stability window and
+  confirmed its Helm release, workload, Gateway registration, and temporary
+  local target route were absent.
 - The preceding runner bootstrap pulled a 1.57 GB image while the single node
   was near its ephemeral-storage eviction threshold. Kubelet evicted the
   managed Agent, and the five-minute Gateway registration window incorrectly
@@ -111,8 +114,8 @@ For gateway control-plane releases, additionally verify:
 
 ## Current Release Line
 
-- Verified source commit: `36b1bba982f2bee54b520edd30a4aa6d84ade4ac`
-- Verified deployed Agent image: `docker.cnb.cool/l8ai/ai/doops.sh@sha256:1324804eaee115012d3b55143a3b2ef6a4711df2ff3f1a1e242ef3d1d94cef8c`
+- Verified source commit: `848abca090cbcdcd8251fa8978055e6ad822df95`
+- Verified deployed Agent image: `docker.cnb.cool/l8ai/ai/doops.sh@sha256:7f8582052367bf54f2ff052e530a8782b1e96a6e26178a4a4fc95a5c0039eb15`
 - Embedded doagent version: `0.2.26`
 - Verified target: `doops-235/hdu-235`
 - Gateway binary: extracted from the verified CNB CI image digest with
