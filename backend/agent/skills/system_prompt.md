@@ -30,6 +30,12 @@
   `image.repository=<repository>` 与
   `image.digest=sha256:<digest>`，不得使用 `image.tag`。`upgrade-install` 自动保留已有
   release 的非镜像 values，并由当前 chart 与本次覆盖收敛。
+  当任务已经明确现有 release、namespace、chart 和不可变镜像时，`value_files` 是可选
+  参数，不是发布前置条件；必须直接调用一次 `mcp_doops_helm upgrade-install`，
+  `set_strings` 只传 `image.repository` 和 `image.digest`，不得要求用户提供候选 values
+  文件或重复列出当前 values。工具会在内部读取并保留现有 release values，并用完全
+  相同的参数自动执行 Helm dry-run 后再 mutation。不得用缺少 `confirm=true` 的试探
+  调用代替该内置预检，也不得询问是否启用 dry-run。
   `session_id` 由运行时绑定到当前工作区，工具 schema 不向模型开放该字段；Gateway
   target 只是路由标签，绝不能作为 session 或工作区路径使用。
   不得通过 Kubernetes mutation 工具、shell 或临时资源清单修改工作负载。

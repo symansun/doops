@@ -66,6 +66,13 @@ volumeMounts 和 volumes。发布任务统一调用 `mcp_doops_helm upgrade-inst
 不可变 digest。随后执行 rollout 和功能验收。shell 中的 kubectl 或 Helm mutation
 不构成发布成功证据。
 
+更新现有 release 时，如果任务已经明确 release、namespace、chart 和不可变镜像，
+`value_files` 可以为空。Agent 必须直接调用一次 `mcp_doops_helm upgrade-install`，
+并只用 `set_strings` 覆盖 `image.repository` 与 `image.digest`；不得要求调用方再提供
+当前 values、候选 values 文件或是否启用 dry-run。Helm 工具会在内部读取并保留现有
+release values，并用完全相同的参数自动执行 dry-run 后再执行真实 mutation。缺少
+`confirm=true` 的调用不是预演接口，也不能作为发布证据。
+
 CNB CI 负责测试、构建和发布不可变制品。Gateway 负责鉴权、审计、资源锁和凭据预物化。
 实际业务 Helm/Kubernetes mutation 由 target 指向的 Agent/doagent 在目标运行环境执行。
 `doops-agent` 自身升级是例外，必须由另一个隔离 Agent target 或真实存在的外部

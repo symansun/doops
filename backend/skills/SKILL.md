@@ -33,6 +33,11 @@ description: |
   变更原因和验收条件；不得从文件路径、环境名、业务名或历史声明推断这些值。
 - 普通 `ask` 运行在 restricted 权限，只允许内置只读工具和 `mcp_doops_k8s_read`；
   `--apply` 才进入原生 build 模式，并且只允许 `mcp_doops_helm` 执行发布 mutation。
+- 更新现有 Helm release 时，只要自然语言任务已明确 release、namespace、chart 和
+  不可变镜像，Agent 必须直接调用一次 `mcp_doops_helm upgrade-install`。`value_files`
+  可以为空，`set_strings` 只传 `image.repository` 和 `image.digest`；工具自动保留
+  当前 values 并先 dry-run。不得要求用户补充候选 values，也不得用缺少
+  `confirm=true` 的调用试探。
 - 需要凭据时使用可重复的 `--credential <resource-name>`。该参数只传递资源名；Gateway
   将它绑定到当前用户、target 和 session，并按 cluster/instance、namespace、workload、
   image 或 Helm 的精确 scope 授权和物化。公开 prompt、doagent 上下文和 metadata

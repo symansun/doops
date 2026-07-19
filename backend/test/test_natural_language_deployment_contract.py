@@ -65,6 +65,9 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     ci_guide = CI_GUIDE.read_text(encoding="utf-8")
     system_prompt = (BACKEND / "agent" / "skills" / "system_prompt.md").read_text(encoding="utf-8")
     k8s_skill = (BACKEND / "agent" / "skills" / "k8s" / "SKILL.md").read_text(encoding="utf-8")
+    build_deploy_sop = (BACKEND / "docs" / "BUILD_DEPLOY_SOP.md").read_text(
+        encoding="utf-8"
+    )
     handler_ws = (BACKEND / "agent" / "internal" / "server" / "handler_ws.go").read_text(
         encoding="utf-8"
     )
@@ -114,6 +117,9 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "包括只更新镜像" in system_prompt
     assert "`value_files`" in system_prompt
     assert "`set_strings`" in system_prompt
+    assert "`value_files` 是可选" in system_prompt
+    assert "不得要求用户提供候选 values" in system_prompt
+    assert "不得询问是否启用 dry-run" in system_prompt
     assert '"value_files": map[string]interface{}' in helm_mcp
     assert '"values": map[string]interface{}' not in helm_mcp
     assert "shell 中的 Kubernetes" in system_prompt
@@ -156,6 +162,12 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "add-image-pull-secret" not in k8s_skill
     assert "command、args、env" in k8s_skill
     assert "发布必须使用任务明确授权的" in k8s_skill
+    assert "`value_files` 可以为空" in k8s_skill
+    assert "不得发起缺少 `confirm=true` 的试探调用" in k8s_skill
+    assert "明确的 release、namespace、`value_files`" not in k8s_skill
+    assert "Chart、`value_files` 和非敏感" not in build_deploy_sop
+    assert "Chart、可选 `value_files` 和非敏感" in build_deploy_sop
+    assert "`value_files` 可以为空" in build_deploy_sop
     assert "Secret、ServiceAccount" in k8s_skill
     assert "mcp_doops_helm" in deployment_doc
     assert "`session_id` 不属于模型参数" in deployment_doc
@@ -165,6 +177,8 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "共享 mutation 锁" in deployment_doc
     assert "api_trigger_bootstrap_release_runner" in deployment_doc
     assert "它不发布受管 Agent" in deployment_doc
+    assert "不得要求调用方再提供" in deployment_doc
+    assert "缺少\n`confirm=true` 的调用不是预演接口" in deployment_doc
     assert "bootstrap-release-runner.sh" in cnb
     assert '-session "${DOOPS_SESSION}" exec' in cnb
     assert "--runner-home" in cnb
