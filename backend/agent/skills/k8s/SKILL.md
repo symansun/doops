@@ -22,8 +22,11 @@ conflicts: []
 2. 所有请求显式传 namespace；不得依赖 default namespace。
 3. mutation 必须有 `confirm=true`，镜像发布必须使用不可变 `@sha256:` digest。
 4. 发布必须使用任务明确授权的 `deploy/helm/<name>/`，通过 `mcp_doops_helm`
-   完整收敛明确的 release、namespace、values 和非敏感 set strings；只更新镜像也走
-   同一 Helm 路径，不存在直接 Kubernetes 镜像 mutation 例外。
+   完整收敛明确的 release、namespace、`value_files` 和非敏感 `set_strings`。
+   `value_files` 只放 `deploy/` 下的 YAML 文件路径；键值覆盖放 `set_strings`。
+   不可变镜像使用 `image.repository` 与 `image.digest`，不得使用 `image.tag`。
+   `upgrade-install` 自动保留已有 release 的非镜像 values。只更新镜像也走同一 Helm
+   路径，不存在直接 Kubernetes 镜像 mutation 例外。
 5. 发布前必须对比当前 workload 与候选 Helm 资产中的 command、args、env、probes、
    volumeMounts 和 volumes，避免旧运行参数被意外继承。
 6. 发布后必须读取 rollout、Pod Ready、实际 imageID、重启次数、日志和任务指定的功能路径。

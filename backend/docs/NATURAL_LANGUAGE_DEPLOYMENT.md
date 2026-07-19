@@ -56,7 +56,10 @@ digest。同一 target 上的 apply、push、write、clean、shell、Kubernetes 
 
 发布前必须比较当前 workload 与候选 Helm 资产中的 command、args、env、probes、
 volumeMounts 和 volumes。发布任务统一调用 `mcp_doops_helm upgrade-install`，显式
-提供 release、namespace、chart、values、非敏感 set strings 和 `confirm=true`；
+提供 release、namespace、chart、可选 `value_files`、非敏感 `set_strings` 和
+`confirm=true`。`value_files` 只接收 `deploy/` 下的 YAML 文件路径；键值覆盖必须使用
+`set_strings`。镜像按 `image.repository` 和 `image.digest` 传入，不得把 digest 填入
+`image.tag`。`upgrade-install` 自动保留已有 release 的非镜像 values；
 `session_id` 不属于模型参数，由 doagent 按会话工作目录启动 MCP 子进程并由 DoOps
 运行时绑定。Gateway target 只负责路由，不能作为 session 或工作区路径。镜像必须使用
 不可变 digest。随后执行 rollout 和功能验收。shell 中的 kubectl 或 Helm mutation

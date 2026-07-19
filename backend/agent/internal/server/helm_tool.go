@@ -18,10 +18,17 @@ import (
 )
 
 var helmValueKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$`)
+var helmImageDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var helmRegistryHostPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?$`)
+var helmRepositoryComponentPattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$`)
 
 type helmCommand struct {
-	args []string
-	cwd  string
+	args                  []string
+	cwd                   string
+	release               string
+	namespace             string
+	preserveReleaseValues bool
+	preserveInsertAt      int
 }
 
 func handleHelmTool(ctx context.Context, raw json.RawMessage, push notificationSender) (string, error) {
@@ -92,8 +99,22 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 		if err != nil {
 			return helmCommand{}, err
 		}
+		imageRepository, hasImageRepository := params.SetStrings["image.repository"]
+		imageDigest, hasImageDigest := params.SetStrings["image.digest"]
+		if !hasImageRepository || !hasImageDigest {
+			return helmCommand{}, fmt.Errorf(
+				"upgrade-install requires image.repository and image.digest set_strings",
+			)
+		}
+		if !validHelmImageRepository(imageRepository) {
+			return helmCommand{}, fmt.Errorf("invalid image.repository set_string")
+		}
+		if !helmImageDigestPattern.MatchString(imageDigest) {
+			return helmCommand{}, fmt.Errorf("invalid image.digest set_string")
+		}
 		args := []string{"upgrade", params.Release, chart, "--install", "--atomic"}
-		for _, valuePath := range params.Values {
+		preserveInsertAt := len(args)
+		for _, valuePath := range params.ValueFiles {
 			resolved, err := resolveHelmWorkspacePath(workspace, strings.TrimSpace(valuePath), "deploy/", false)
 			if err != nil {
 				return helmCommand{}, err
@@ -116,7 +137,14 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 			}
 			args = append(args, "--set-string", key+"="+escapeHelmSetString(value))
 		}
-		return helmCommand{args: append(args, common...), cwd: workspace}, nil
+		return helmCommand{
+			args:                  append(args, common...),
+			cwd:                   workspace,
+			release:               params.Release,
+			namespace:             params.Namespace,
+			preserveReleaseValues: true,
+			preserveInsertAt:      preserveInsertAt,
+		}, nil
 	case "rollback":
 		if params.Revision <= 0 {
 			return helmCommand{}, fmt.Errorf("positive revision is required for helm rollback")
@@ -132,6 +160,29 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 	default:
 		return helmCommand{}, fmt.Errorf("unsupported helm operation %q", params.Operation)
 	}
+}
+
+func validHelmImageRepository(value string) bool {
+	if value == "" || strings.Contains(value, "://") || strings.Contains(value, "@") ||
+		strings.HasPrefix(value, "/") || strings.HasSuffix(value, "/") ||
+		strings.Contains(value, "//") {
+		return false
+	}
+	parts := strings.Split(value, "/")
+	pathStart := 0
+	if len(parts) > 1 &&
+		(strings.Contains(parts[0], ".") || strings.Contains(parts[0], ":") || parts[0] == "localhost") {
+		if !helmRegistryHostPattern.MatchString(parts[0]) {
+			return false
+		}
+		pathStart = 1
+	}
+	for _, part := range parts[pathStart:] {
+		if !helmRepositoryComponentPattern.MatchString(part) {
+			return false
+		}
+	}
+	return pathStart < len(parts)
 }
 
 func resolveHelmWorkspacePath(root, value, requiredPrefix string, directory bool) (string, error) {
@@ -174,8 +225,28 @@ func escapeHelmSetString(value string) string {
 }
 
 func runHelmCommand(ctx context.Context, command helmCommand, push notificationSender) error {
+	var stdin []byte
+	if command.preserveReleaseValues {
+		existingValues, found, err := prepareExistingHelmValues(ctx, command)
+		if err != nil {
+			return err
+		}
+		if found {
+			preserveArgs := []string{"--reset-values", "--values", "-"}
+			args := make([]string, 0, len(command.args)+len(preserveArgs))
+			args = append(args, command.args[:command.preserveInsertAt]...)
+			args = append(args, preserveArgs...)
+			args = append(args, command.args[command.preserveInsertAt:]...)
+			command.args = args
+			stdin = existingValues
+		}
+	}
+
 	cmd := exec.CommandContext(ctx, "helm", command.args...)
 	cmd.Dir = command.cwd
+	if len(stdin) != 0 {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("start helm: %w", err)
@@ -203,4 +274,65 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 		return fmt.Errorf("helm %s failed: %w", strings.Join(command.args, " "), err)
 	}
 	return nil
+}
+
+func prepareExistingHelmValues(ctx context.Context, command helmCommand) ([]byte, bool, error) {
+	status := exec.CommandContext(
+		ctx,
+		"helm",
+		"status",
+		command.release,
+		"--namespace",
+		command.namespace,
+	)
+	status.Dir = command.cwd
+	if output, err := status.CombinedOutput(); err != nil {
+		if strings.Contains(string(output), "release: not found") {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("inspect existing helm release: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+
+	getValues := exec.CommandContext(
+		ctx,
+		"helm",
+		"get",
+		"values",
+		command.release,
+		"--namespace",
+		command.namespace,
+		"--output",
+		"json",
+	)
+	getValues.Dir = command.cwd
+	var getValuesStderr bytes.Buffer
+	getValues.Stderr = &getValuesStderr
+	output, err := getValues.Output()
+	if err != nil {
+		return nil, false, fmt.Errorf(
+			"read existing helm values: %w: %s",
+			err,
+			strings.TrimSpace(getValuesStderr.String()),
+		)
+	}
+
+	var values map[string]interface{}
+	decoder := json.NewDecoder(bytes.NewReader(output))
+	decoder.UseNumber()
+	if err := decoder.Decode(&values); err != nil {
+		return nil, false, fmt.Errorf("decode existing helm values: %w", err)
+	}
+	if image, ok := values["image"].(map[string]interface{}); ok {
+		delete(image, "repository")
+		delete(image, "digest")
+		delete(image, "tag")
+		if len(image) == 0 {
+			delete(values, "image")
+		}
+	}
+	sanitized, err := json.Marshal(values)
+	if err != nil {
+		return nil, false, fmt.Errorf("encode existing helm values: %w", err)
+	}
+	return sanitized, true, nil
 }

@@ -266,15 +266,24 @@ func helmMCPToolDefinition() map[string]interface{} {
 					"type": "string",
 					"enum": helmMutationOperations,
 				},
-				"release":   map[string]interface{}{"type": "string"},
-				"chart":     map[string]interface{}{"type": "string"},
+				"release": map[string]interface{}{"type": "string"},
+				"chart": map[string]interface{}{
+					"type":        "string",
+					"description": "Workspace-relative chart directory under deploy/helm/, for example deploy/helm/doops-agent.",
+					"pattern":     "^deploy/helm/[^/]+(?:/[^/]+)*$",
+				},
 				"namespace": map[string]interface{}{"type": "string"},
-				"values": map[string]interface{}{
-					"type":  "array",
-					"items": map[string]interface{}{"type": "string"},
+				"value_files": map[string]interface{}{
+					"type":        "array",
+					"description": "Workspace-relative YAML value file paths under deploy/. Never put key=value overrides here.",
+					"items": map[string]interface{}{
+						"type":    "string",
+						"pattern": "^deploy/.+\\.ya?ml$",
+					},
 				},
 				"set_strings": map[string]interface{}{
 					"type":                 "object",
+					"description":          "Non-secret Helm key/value overrides. For an immutable image use image.repository and image.digest.",
 					"additionalProperties": map[string]interface{}{"type": "string"},
 				},
 				"revision": map[string]interface{}{"type": "integer", "minimum": 1},
