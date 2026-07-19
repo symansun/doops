@@ -260,6 +260,7 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 	}
 
 	var wg sync.WaitGroup
+	var stderrCapture bytes.Buffer
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
@@ -267,11 +268,22 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 	}()
 	go func() {
 		defer wg.Done()
-		streamReader(stderr, push)
+		streamReader(struct {
+			io.Reader
+			io.Closer
+		}{
+			Reader: io.TeeReader(stderr, &stderrCapture),
+			Closer: stderr,
+		}, push)
 	}()
 	wg.Wait()
 	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("helm %s failed: %w", strings.Join(command.args, " "), err)
+		return fmt.Errorf(
+			"helm %s failed: %w: %s",
+			strings.Join(command.args, " "),
+			err,
+			strings.TrimSpace(stderrCapture.String()),
+		)
 	}
 	return nil
 }

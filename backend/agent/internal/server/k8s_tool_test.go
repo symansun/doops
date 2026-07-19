@@ -87,6 +87,23 @@ func TestBuildK8SCommandsRejectsUnsupportedMutationResourceKinds(t *testing.T) {
 	}
 }
 
+func TestBuildK8SGetIgnoresRedundantResourceField(t *testing.T) {
+	commands, err := buildK8SCommands(api.K8SParams{
+		SessionID: "read-session",
+		Operation: "get",
+		Kind:      "deployment",
+		Name:      "app",
+		Resource:  "deployment",
+		Namespace: "apps",
+	})
+	if err != nil {
+		t.Fatalf("redundant resource rejected for get: %v", err)
+	}
+	if got := strings.Join(commands[0].args, " "); !strings.Contains(got, "get deployment") {
+		t.Fatalf("unexpected get command: %s", got)
+	}
+}
+
 func TestBuildK8SCommandsRejectsRemovedSetImageOperation(t *testing.T) {
 	_, err := buildK8SCommands(api.K8SParams{
 		SessionID: "set-image",
