@@ -75,6 +75,8 @@ CI/GitOps controller 执行。
 复制非镜像 values，并通过合法的前台 `exec` Helm 操作创建隔离 release-runner。
 bootstrap 会在安装前确认受管 Agent Ready、目标节点无 DiskPressure，且根文件系统
 至少有 10% 和 5 GiB 可用空间；不满足时直接阻塞，不拉取 runner 镜像。
+当前 runner 继承受管 release 的宿主机 kubeconfig 和 hostPath，因此受管 Deployment
+必须显式设置 `nodeSelector.kubernetes.io/hostname`，不从 affinity 或调度结果猜测节点。
 它不发布受管 Agent，也不替代 `ask --apply`。runner 注册到 Gateway 后，
 `api_trigger_deploy_agent` 必须把 runner 作为 target，由 runner 对受管 Agent release
 执行自然语言 Helm 收敛。发布和验收完成后应卸载临时 runner，避免把控制器变成长期

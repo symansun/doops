@@ -132,6 +132,8 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 临时 release-runner 安装前必须确认受管 Agent rollout Ready、目标节点
 `DiskPressure=False`，且根文件系统同时满足至少 10% 和 5 GiB 可用空间。任何条件不满足
 都必须在拉取 runner 镜像前失败，避免单节点环境因临时控制器触发 Agent 驱逐。
+由于 runner 继承宿主机 kubeconfig 和 hostPath，受管 Deployment 必须显式设置
+`nodeSelector.kubernetes.io/hostname`；bootstrap 不从 affinity 或当前 Pod 调度结果猜测节点。
 
 受管 `doops-agent` 不得升级自身。升级窗口先调用
 `api_trigger_bootstrap_release_runner`，通过当前 Agent 的前台 Helm `exec` 创建同集群

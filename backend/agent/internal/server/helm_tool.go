@@ -243,7 +243,10 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 	}
 
 	if command.preserveReleaseValues {
-		preflightArgs := append(append([]string{}, command.args...), "--dry-run")
+		// Dry-run every upgrade-install, including first installs, before Helm can create a revision.
+		preflightArgs := make([]string, len(command.args)+1)
+		copy(preflightArgs, command.args)
+		preflightArgs[len(command.args)] = "--dry-run"
 		preflight := exec.CommandContext(ctx, "helm", preflightArgs...)
 		preflight.Dir = command.cwd
 		if len(stdin) != 0 {
