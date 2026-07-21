@@ -41,39 +41,39 @@ cleanup() {
 }
 trap cleanup EXIT
 
-cat <<POD_MANIFEST | kubectl create -f - >/dev/null
+cat <<'POD_MANIFEST' |
 apiVersion: v1
 kind: Pod
 metadata:
-  name: ${pod}
-  namespace: ${DOSQL_MYSQL_NAMESPACE}
+  name: __POD_NAME__
+  namespace: __NAMESPACE__
   labels:
     app.kubernetes.io/managed-by: dosql
 spec:
   restartPolicy: Never
   containers:
     - name: mysql
-      image: ${client_image}
+      image: __CLIENT_IMAGE__
       env:
         - name: SPRING_DATASOURCE_URL
           valueFrom:
             secretKeyRef:
-              name: ${DOSQL_MYSQL_SECRET_NAME}
-              key: ${url_key}
+              name: __SECRET_NAME__
+              key: __URL_KEY__
         - name: SPRING_DATASOURCE_USERNAME
           valueFrom:
             secretKeyRef:
-              name: ${DOSQL_MYSQL_SECRET_NAME}
-              key: ${user_key}
+              name: __SECRET_NAME__
+              key: __USER_KEY__
         - name: SPRING_DATASOURCE_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: ${DOSQL_MYSQL_SECRET_NAME}
-              key: ${password_key}
+              name: __SECRET_NAME__
+              key: __PASSWORD_KEY__
         - name: DOSQL_DATABASE
-          value: ${DOSQL_MYSQL_DATABASE}
+          value: __DATABASE__
         - name: DOSQL_SQL_B64
-          value: ${sql_b64}
+          value: __SQL_B64__
       command: ["sh", "-ec"]
       args:
         - |
@@ -100,6 +100,17 @@ spec:
               --user "$SPRING_DATASOURCE_USERNAME" \
               "$DOSQL_DATABASE"
 POD_MANIFEST
+  sed \
+    -e "s/__POD_NAME__/${pod}/g" \
+    -e "s/__NAMESPACE__/${DOSQL_MYSQL_NAMESPACE}/g" \
+    -e "s/__CLIENT_IMAGE__/${client_image//\//\\/}/g" \
+    -e "s/__SECRET_NAME__/${DOSQL_MYSQL_SECRET_NAME}/g" \
+    -e "s/__URL_KEY__/${url_key}/g" \
+    -e "s/__USER_KEY__/${user_key}/g" \
+    -e "s/__PASSWORD_KEY__/${password_key}/g" \
+    -e "s/__DATABASE__/${DOSQL_MYSQL_DATABASE}/g" \
+    -e "s/__SQL_B64__/${sql_b64}/g" |
+  kubectl create -f - >/dev/null
 
 deadline=$((SECONDS + 180))
 phase=""
