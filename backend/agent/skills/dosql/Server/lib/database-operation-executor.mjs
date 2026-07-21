@@ -870,7 +870,7 @@ function runtimeEnvironment(baseEnv) {
   return Object.fromEntries(
     Object.entries(baseEnv).filter(
       ([name]) =>
-        ["HOME", "LANG", "LC_ALL", "PATH", "TMPDIR"].includes(name) ||
+        ["HOME", "KUBECONFIG", "LANG", "LC_ALL", "PATH", "TMPDIR"].includes(name) ||
         name.startsWith("DOSQL_"),
     ),
   );
