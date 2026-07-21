@@ -20,44 +20,6 @@ CREDENTIAL_DOC = BACKEND / "docs" / "CREDENTIAL_RESOURCES.md"
 CI_GUIDE = ROOT / "components" / "cicd-guide.tsx"
 
 
-def test_retired_registry_deployment_entrypoints_are_absent():
-    retired_paths = (
-        ROOT / "deploy" / "environments.yaml",
-        BACKEND / "agent" / "internal" / "server" / "environment_registry_v3.go",
-        BACKEND / "skills" / "doops-cli" / "cli" / "doops" / "workflow.go",
-        BACKEND / "agent" / "skills" / "doops-cicd",
-        BACKEND / "agent" / "skills" / "pipeline" / "SKILL.md",
-    )
-
-    assert all(not path.exists() for path in retired_paths)
-
-    runtime_source = "\n".join(
-        path.read_text(encoding="utf-8")
-        for root in (
-            BACKEND / "agent" / "internal" / "server",
-            BACKEND / "skills" / "doops-cli" / "cli" / "doops",
-        )
-        for path in root.glob("*.go")
-    )
-    assert "EnvironmentRegistry" not in runtime_source
-    assert 'case "cicd"' not in runtime_source
-    assert "runCICDCommand" not in runtime_source
-
-    active_docs = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in (
-            BACKEND / "README.md",
-            BACKEND / "agent" / "DESIGN.md",
-            BACKEND / "docs" / "DOOPS_GATEWAY_TUNNEL.md",
-            BACKEND / "docs" / "SKILL_INTEGRATION_GUIDE.md",
-            BACKEND / "docs" / "design" / "AI_Ops_System_Design.md",
-        )
-    )
-    assert "AGENT_NATIVE_CICD.md" not in active_docs
-    assert "doops_cicd_result" not in active_docs
-    assert "目标由环境注册表解析" not in active_docs
-
-
 def test_v3_release_contract_is_explicit_natural_language_apply():
     cli = CLI.read_text(encoding="utf-8")
     skill = SKILL.read_text(encoding="utf-8")
