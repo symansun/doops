@@ -41,6 +41,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
+sed_replacement() {
+  printf '%s' "$1" | sed -e 's/[\/&]/\\&/g'
+}
+
 cat <<'POD_MANIFEST' |
 apiVersion: v1
 kind: Pod
@@ -101,15 +105,15 @@ spec:
               "$DOSQL_DATABASE"
 POD_MANIFEST
   sed \
-    -e "s/__POD_NAME__/${pod}/g" \
-    -e "s/__NAMESPACE__/${DOSQL_MYSQL_NAMESPACE}/g" \
-    -e "s/__CLIENT_IMAGE__/${client_image//\//\\/}/g" \
-    -e "s/__SECRET_NAME__/${DOSQL_MYSQL_SECRET_NAME}/g" \
-    -e "s/__URL_KEY__/${url_key}/g" \
-    -e "s/__USER_KEY__/${user_key}/g" \
-    -e "s/__PASSWORD_KEY__/${password_key}/g" \
-    -e "s/__DATABASE__/${DOSQL_MYSQL_DATABASE}/g" \
-    -e "s/__SQL_B64__/${sql_b64}/g" |
+    -e "s/__POD_NAME__/$(sed_replacement "$pod")/g" \
+    -e "s/__NAMESPACE__/$(sed_replacement "$DOSQL_MYSQL_NAMESPACE")/g" \
+    -e "s/__CLIENT_IMAGE__/$(sed_replacement "$client_image")/g" \
+    -e "s/__SECRET_NAME__/$(sed_replacement "$DOSQL_MYSQL_SECRET_NAME")/g" \
+    -e "s/__URL_KEY__/$(sed_replacement "$url_key")/g" \
+    -e "s/__USER_KEY__/$(sed_replacement "$user_key")/g" \
+    -e "s/__PASSWORD_KEY__/$(sed_replacement "$password_key")/g" \
+    -e "s/__DATABASE__/$(sed_replacement "$DOSQL_MYSQL_DATABASE")/g" \
+    -e "s/__SQL_B64__/$(sed_replacement "$sql_b64")/g" |
   kubectl create -f - >/dev/null
 
 deadline=$((SECONDS + 180))
