@@ -166,7 +166,7 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert 'helm list \\\n    --namespace "${NAMESPACE}" \\\n    --all' in bootstrap_script
     assert "helm get values" in bootstrap_script
     assert "DiskPressure" in bootstrap_script
-    assert "ROOT_AVAILABLE_KB * 100 < ROOT_TOTAL_KB * 10" in bootstrap_script
+    assert "ROOT_AVAILABLE_KB * 100" not in bootstrap_script
     assert "5 * 1024 * 1024" in bootstrap_script
     assert 'helm get values "${MANAGED_RELEASE}" \\\n  --namespace "${NAMESPACE}" \\\n  --all' not in bootstrap_script
     environment_docs = "\n".join(

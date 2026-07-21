@@ -12,7 +12,7 @@ CNB = ROOT / ".cnb.yml"
 
 
 def write_fake_bootstrap_health_tools(
-    fake_bin, *, disk_pressure="False", total_kb=10_000_000, available_kb=6_000_000
+    fake_bin, *, disk_pressure="False", total_kb=100_000_000, available_kb=6_000_000
 ):
     kubectl = fake_bin / "kubectl"
     kubectl.write_text(
@@ -186,7 +186,7 @@ exit 1
     ("disk_pressure", "total_kb", "available_kb", "error"),
     [
         ("True", 10_000_000, 6_000_000, "reports DiskPressure=True"),
-        ("False", 100_000_000, 6_000_000, "requires at least 10% and 5 GiB free"),
+        ("False", 100_000_000, 5_000_000, "requires at least 5 GiB free"),
     ],
 )
 def test_bootstrap_release_runner_blocks_unsafe_node_storage(

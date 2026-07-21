@@ -178,11 +178,10 @@ if [[ "${DISK_PRESSURE}" != "False" ]]; then
   exit 1
 fi
 
-read -r ROOT_TOTAL_KB ROOT_AVAILABLE_KB < <(df -Pk / | awk 'NR == 2 {print $2, $4}')
+ROOT_AVAILABLE_KB="$(df -Pk / | awk 'NR == 2 {print $4}')"
 MIN_AVAILABLE_KB=$((5 * 1024 * 1024))
-if ((ROOT_AVAILABLE_KB < MIN_AVAILABLE_KB)) ||
-  ((ROOT_AVAILABLE_KB * 100 < ROOT_TOTAL_KB * 10)); then
-  echo "Release runner blocked: root filesystem requires at least 10% and 5 GiB free" >&2
+if ((ROOT_AVAILABLE_KB < MIN_AVAILABLE_KB)); then
+  echo "Release runner blocked: root filesystem requires at least 5 GiB free" >&2
   exit 1
 fi
 

@@ -2,6 +2,14 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-07-21 Remove Percentage-Based Runner Disk Guard
+
+- Removed the root-filesystem percentage threshold from release-runner bootstrap.
+- Bootstrap still requires the managed Agent to be Ready, the selected node to
+  report `DiskPressure=False`, and at least 5 GiB of root filesystem space.
+- The fixed threshold avoids blocking large disks that retain ample absolute
+  capacity while remaining below an arbitrary percentage.
+
 ## 2026-07-19 Natural-Language Release Safety
 
 - CNB build `cnb-vlt-1jts11c6p` successfully published the HDU managed Agent
