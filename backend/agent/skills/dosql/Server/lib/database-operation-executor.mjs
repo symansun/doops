@@ -1,0 +1,1026 @@
+import { spawn } from "node:child_process";
+import {
+  createHash,
+  createPublicKey,
+  verify as verifySignature,
+} from "node:crypto";
+import {
+  existsSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
+import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import {
+  classifyDatabaseOperation,
+  createDatabaseOperationRecord,
+} from "./change-policy.mjs";
+import { appendJournalEvent } from "./execution-journal.mjs";
+
+const PSQL_ARGS = ["--no-psqlrc", "--set", "ON_ERROR_STOP=1", "--no-align", "--tuples-only"];
+const MYSQL_ARGS = ["--batch", "--raw", "--skip-column-names"];
+const TRUSTED_SKILL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
+export async function executeControlledDatabaseOperation(input) {
+  input = normalizeDatabaseRequest(input);
+  const mode = requireMode(input.mode);
+  const classification = classifyDatabaseOperation(input);
+  const operation = createDatabaseOperationRecord(input);
+  const artifactRoot = await prepareArtifactRoot(input);
+  const journalPath = await prepareManagedOutputPath(
+    input.journalPath,
+    artifactRoot,
+    "journalPath",
+  );
+  const evidencePath = await prepareManagedOutputPath(
+    input.evidencePath,
+    artifactRoot,
+    "evidencePath",
+  );
+  input = { ...input, journalPath, evidencePath, artifactRoot };
+  const startedAt = input.startedAt ?? new Date().toISOString();
+  const baseEvent = createBaseEvent({ input, operation, classification });
+
+  await appendJournalEvent({
+    journalPath,
+    event: {
+      ...baseEvent,
+      eventType: "database.operation.planned",
+      status: "planned",
+      createdAt: operation.requestedAt,
+    },
+  });
+
+  let adapter;
+  let approval = null;
+  try {
+    enforceOperationPolicy({ input, mode, classification });
+    adapter = requireAdapter(input.adapter);
+    if (mode === "query" && adapter.trustedClient !== true) {
+      throw new Error("query requires a trusted database client executable");
+    }
+    if (mode === "execute") {
+      approval = await loadAndVerifyApproval({ input, operation, adapter });
+    }
+  } catch (error) {
+    const failedAt = input.finishedAt ?? new Date().toISOString();
+    await recordFailedOperation({
+      input,
+      operation,
+      classification,
+      journalPath,
+      evidencePath,
+      baseEvent,
+      error,
+      startedAt,
+      failedAt,
+      approval,
+    });
+    throw error;
+  }
+
+  if (approval) {
+    await appendJournalEvent({
+      journalPath,
+      event: {
+        ...baseEvent,
+        eventType: "database.operation.approved",
+        status: "approved",
+        approvedBy: approval.approvedBy,
+        approvedAt: approval.approvedAt,
+        approvalFingerprint: approval.approvalFingerprint,
+        createdAt: approval.approvedAt,
+      },
+    });
+  }
+
+  await appendJournalEvent({
+    journalPath,
+    event: { ...baseEvent, eventType: "database.operation.running", status: "running", createdAt: startedAt },
+  });
+
+  let executionResult;
+  try {
+    executionResult = normalizeExecutionResult(
+      await adapter.execute({
+        engine: operation.engine,
+        statement: operation.normalizedStatement,
+        databaseName: input.databaseName,
+        phase: "operation",
+        readOnly: mode === "query",
+        requireReadOnlyCredential: mode === "query" && operation.engine === "mongodb",
+        mongoOperation: input.mongoOperation,
+      }),
+    );
+  } catch (error) {
+    const failedAt = input.finishedAt ?? new Date().toISOString();
+    await recordFailedOperation({
+      input,
+      operation,
+      classification,
+      journalPath,
+      evidencePath,
+      baseEvent,
+      error,
+      startedAt,
+      failedAt,
+      approval,
+    });
+    throw error;
+  }
+
+  const finishedAt = input.finishedAt ?? new Date().toISOString();
+  await appendJournalEvent({
+    journalPath,
+    event: {
+      ...baseEvent,
+      eventType: "database.operation.succeeded",
+      status: "succeeded",
+      affectedRows: executionResult.affectedRows,
+      evidenceRef: evidencePath,
+      createdAt: finishedAt,
+    },
+  });
+
+  let verificationResult = null;
+  try {
+    if (mode === "execute") {
+      verificationResult = normalizeExecutionResult(await adapter.execute({
+        engine: operation.engine,
+        statement: verificationStatement(input),
+        databaseName: input.databaseName,
+        phase: "verification",
+        readOnly: true,
+        requireReadOnlyCredential: false,
+        mongoOperation: input.verificationMongoOperation,
+      }));
+    } else {
+      verificationResult = executionResult;
+    }
+    const verifiedAt = input.verifiedAt ?? new Date().toISOString();
+    const evidence = createEvidence({
+      input,
+      operation,
+      classification,
+      status: "verified",
+      executionResult,
+      verificationResult,
+      startedAt,
+      finishedAt,
+      verifiedAt,
+      approval,
+    });
+    await writeEvidence(evidencePath, evidence);
+    await appendJournalEvent({
+      journalPath,
+      event: {
+        ...baseEvent,
+        eventType: "database.operation.verified",
+        status: "verified",
+        evidenceRef: evidencePath,
+        createdAt: verifiedAt,
+      },
+    });
+    return evidence;
+  } catch (error) {
+    const verifiedAt = input.verifiedAt ?? new Date().toISOString();
+    const evidence = createEvidence({
+      input,
+      operation,
+      classification,
+      status: "verification_failed",
+      executionResult,
+      verificationResult: { status: "failed", errorMessage: error.message },
+      startedAt,
+      finishedAt,
+      verifiedAt,
+      approval,
+    });
+    await appendJournalEvent({
+      journalPath,
+      event: {
+        ...baseEvent,
+        eventType: "database.operation.verification_failed",
+        status: "verification_failed",
+        errorMessage: "database operation verification failed",
+        errorFingerprint: `sha256:${sha256(error.message)}`,
+        evidenceRef: evidencePath,
+        createdAt: verifiedAt,
+      },
+    });
+    await writeEvidence(evidencePath, evidence);
+    throw error;
+  }
+}
+
+async function recordFailedOperation({
+  input,
+  operation,
+  classification,
+  journalPath,
+  evidencePath,
+  baseEvent,
+  error,
+  startedAt,
+  failedAt,
+  approval,
+}) {
+  const evidence = createEvidence({
+    input,
+    operation,
+    classification,
+    status: "failed",
+    executionResult: { status: "failed", errorMessage: error.message },
+    startedAt,
+    finishedAt: failedAt,
+    approval,
+  });
+  await appendJournalEvent({
+    journalPath,
+    event: {
+      ...baseEvent,
+      eventType: "database.operation.failed",
+      status: "failed",
+      errorMessage: "database operation failed",
+      errorFingerprint: `sha256:${sha256(error.message)}`,
+      evidenceRef: evidencePath,
+      createdAt: failedAt,
+    },
+  });
+  await writeEvidence(evidencePath, evidence);
+}
+
+export function createDatabaseCliAdapter(input = {}) {
+  const type = requireText(input.type, "adapter.type");
+  const baseEnv = input.env ?? process.env;
+  const spawnFile = input.spawnFile ?? runProcess;
+  if (type === "postgres-psql") {
+    const connectionUriEnv = requireText(input.connectionUriEnv, "adapter.connectionUriEnv");
+    const client = resolveClientDescriptor({
+      configuredPath: input.psqlPath,
+      defaultName: "psql",
+      allowedWrapperNames: ["docker-db-client.sh"],
+      spawnFile,
+    });
+    return processAdapter({
+      command: client.command,
+      args: PSQL_ARGS,
+      env: () => ({
+        ...baseEnv,
+        ...postgresEnvFromUri(requireText(baseEnv[connectionUriEnv], connectionUriEnv)),
+      }),
+      sqlDialect: "postgres",
+      targetFingerprint() {
+        const pg = postgresEnvFromUri(
+          requireText(baseEnv[connectionUriEnv], connectionUriEnv),
+        );
+        return connectionFingerprint({
+          engine: "postgres",
+          host: pg.PGHOST,
+          port: pg.PGPORT,
+          user: pg.PGUSER,
+          database: pg.PGDATABASE,
+          clientFingerprint: client.fingerprint,
+        });
+      },
+      trustedClient: client.trusted,
+      spawnFile,
+    });
+  }
+  if (type === "mysql-cli") {
+    const client = resolveClientDescriptor({
+      configuredPath: input.mysqlPath,
+      defaultName: "mysql",
+      allowedWrapperNames: ["docker-db-client.sh", "doops-mysql-client.sh"],
+      spawnFile,
+    });
+    if (basename(client.command) === "doops-mysql-client.sh") {
+      const namespace = requireText(
+        baseEnv.DOSQL_MYSQL_NAMESPACE,
+        "DOSQL_MYSQL_NAMESPACE",
+      );
+      const configuredDatabase = requireText(
+        baseEnv.DOSQL_MYSQL_DATABASE,
+        "DOSQL_MYSQL_DATABASE",
+      );
+      const secretName = requireText(
+        baseEnv.DOSQL_MYSQL_SECRET_NAME,
+        "DOSQL_MYSQL_SECRET_NAME",
+      );
+      const urlKey = baseEnv.DOSQL_MYSQL_URL_KEY || "SPRING_DATASOURCE_URL";
+      const userKey = baseEnv.DOSQL_MYSQL_USER_KEY || "SPRING_DATASOURCE_USERNAME";
+      const passwordKey =
+        baseEnv.DOSQL_MYSQL_PASSWORD_KEY || "SPRING_DATASOURCE_PASSWORD";
+      const clientImage = requireText(
+        baseEnv.DOSQL_MYSQL_CLIENT_IMAGE,
+        "DOSQL_MYSQL_CLIENT_IMAGE",
+      );
+      function requireRequestedDatabase(request) {
+        const database = requireText(request.databaseName, "databaseName");
+        if (database !== configuredDatabase) {
+          throw new Error("requested database does not match DOSQL_MYSQL_DATABASE");
+        }
+        return database;
+      }
+      return {
+        trustedClient: client.trusted,
+        targetFingerprint(request) {
+          return connectionFingerprint({
+            engine: "mysql",
+            transport: "doops-agent",
+            namespace,
+            secretName,
+            urlKey,
+            userKey,
+            passwordKey,
+            clientImage,
+            database: requireRequestedDatabase(request),
+            clientFingerprint: client.fingerprint,
+          });
+        },
+        execute(request) {
+          requireRequestedDatabase(request);
+          return executeProcess({
+            command: client.command,
+            args: [],
+            stdin: formatSqlInput(request, "mysql"),
+            env: runtimeEnvironment(baseEnv),
+            spawnFile,
+          });
+        },
+      };
+    }
+    const hostEnv = requireText(input.hostEnv, "adapter.hostEnv");
+    const userEnv = requireText(input.userEnv, "adapter.userEnv");
+    const passwordEnv = requireText(input.passwordEnv, "adapter.passwordEnv");
+    return {
+      trustedClient: client.trusted,
+      targetFingerprint(request) {
+        return connectionFingerprint({
+          engine: "mysql",
+          host: requireText(baseEnv[hostEnv], hostEnv),
+          port: String(input.port ?? 3306),
+          user: requireText(baseEnv[userEnv], userEnv),
+          database: requireText(request.databaseName, "databaseName"),
+          clientFingerprint: client.fingerprint,
+        });
+      },
+      execute(request) {
+        return executeProcess({
+          command: client.command,
+          args: [
+            ...MYSQL_ARGS,
+            "--host",
+            requireText(baseEnv[hostEnv], hostEnv),
+            "--port",
+            String(input.port ?? 3306),
+            "--user",
+            requireText(baseEnv[userEnv], userEnv),
+            requireText(request.databaseName, "databaseName"),
+          ],
+          stdin: formatSqlInput(request, "mysql"),
+          env: {
+            ...baseEnv,
+            MYSQL_PWD: requireText(baseEnv[passwordEnv], passwordEnv),
+          },
+          spawnFile,
+        });
+      },
+    };
+  }
+  if (type === "mongodb-mongosh") {
+    const connectionUriEnv = requireText(input.connectionUriEnv, "adapter.connectionUriEnv");
+    const client = resolveClientDescriptor({
+      configuredPath: input.mongoshPath,
+      defaultName: "mongosh",
+      allowedWrapperNames: ["docker-db-client.sh"],
+      spawnFile,
+    });
+    return {
+      trustedClient: client.trusted,
+      targetFingerprint() {
+        return connectionFingerprint({
+          ...databaseTargetFromUri(
+            requireText(baseEnv[connectionUriEnv], connectionUriEnv),
+            "mongodb",
+          ),
+          clientFingerprint: client.fingerprint,
+        });
+      },
+      async execute(request) {
+        const mongoOperation = normalizeMongoOperation(request.mongoOperation);
+        const connectionUri = requireText(baseEnv[connectionUriEnv], connectionUriEnv);
+        return executeProcess({
+          command: client.command,
+          args: [
+            "--nodb",
+            "--quiet",
+            "--eval",
+            mongoEvalScript(),
+          ],
+          env: {
+            ...runtimeEnvironment(baseEnv),
+            DOSQL_MONGODB_URI: connectionUri,
+            DOSQL_MONGODB_OPERATION: JSON.stringify(mongoOperation),
+            DOSQL_MONGODB_REQUIRE_READ_ONLY_ROLE: request.requireReadOnlyCredential ? "1" : "0",
+          },
+          spawnFile,
+        });
+      },
+    };
+  }
+  throw new Error(`Unsupported adapter.type: ${type}`);
+}
+
+function processAdapter({
+  command,
+  args,
+  env,
+  sqlDialect,
+  targetFingerprint,
+  trustedClient,
+  spawnFile,
+}) {
+  return {
+    targetFingerprint,
+    trustedClient,
+    execute(request) {
+      return executeProcess({
+        command,
+        args,
+        stdin: formatSqlInput(request, sqlDialect),
+        env: env(),
+        spawnFile,
+      });
+    },
+  };
+}
+
+async function executeProcess({ command, args, stdin = "", env, spawnFile }) {
+  const result = await spawnFile({ command, args, stdin, env });
+  const status = Number(result.status);
+  const stdout = String(result.stdout ?? "");
+  const stderr = String(result.stderr ?? "");
+  if (status !== 0) {
+    throw new Error(`${command} exited with status ${status}: ${stderr || stdout}`.trim());
+  }
+  return {
+    status: "succeeded",
+    stdout,
+    stderr,
+    affectedRows: parseAffectedRows(stdout),
+    transactionId: `dbtx_${sha256(`${command}\u001f${args.join("\u001f")}\u001f${stdout}`).slice(0, 16)}`,
+  };
+}
+
+function enforceOperationPolicy({ input, mode, classification }) {
+  if (classification.engine === "mongodb" && !input.mongoOperation) {
+    throw new Error("mongoOperation is required; raw MongoDB JavaScript is not executable");
+  }
+  ensureSingleSqlStatement(input.engine, input.statement, "statement");
+  if (mode === "query" && classification.operationKind !== "read") {
+    throw new Error("query only accepts read-only database operations");
+  }
+  if (mode === "execute") {
+    if (!["schema_change", "data_change", "admin"].includes(classification.operationKind)) {
+      throw new Error("execute requires a recognized mutating database operation");
+    }
+    requireText(input.changeRequestId, "changeRequestId");
+    const verificationText = verificationStatement(input);
+    ensureSingleSqlStatement(input.engine, verificationText, "verificationStatement");
+    const verification = classifyDatabaseOperation({
+      engine: input.engine,
+      statement: verificationText,
+    });
+    if (verification.operationKind !== "read") {
+      throw new Error("verificationStatement must be read-only");
+    }
+  }
+}
+
+function createBaseEvent({ input, operation, classification }) {
+  return {
+    operationId: requireText(input.operationId, "operationId"),
+    changeRequestId: input.changeRequestId ? String(input.changeRequestId).trim() : "",
+    projectId: operation.projectId,
+    environmentId: operation.environmentId,
+    databaseAssetId: operation.databaseAssetId,
+    engine: operation.engine,
+    actor: operation.actor,
+    operationKind: classification.operationKind,
+    statementFingerprint: operation.statementFingerprint,
+  };
+}
+
+function createEvidence({
+  input,
+  operation,
+  classification,
+  status,
+  executionResult,
+  verificationResult,
+  startedAt,
+  finishedAt,
+  verifiedAt,
+  approval,
+}) {
+  return {
+    schema: "dosql.database-operation-evidence.v1",
+    operationId: requireText(input.operationId, "operationId"),
+    status,
+    mode: requireMode(input.mode),
+    projectId: operation.projectId,
+    databaseAssetId: operation.databaseAssetId,
+    environmentId: operation.environmentId,
+    engine: operation.engine,
+    operationKind: classification.operationKind,
+    statementFingerprint: operation.statementFingerprint,
+    changeRequestId: input.changeRequestId ? String(input.changeRequestId).trim() : "",
+    approval: approval
+      ? {
+          approvedBy: approval.approvedBy,
+          approvedAt: approval.approvedAt,
+          expiresAt: approval.expiresAt,
+          approvalFingerprint: approval.approvalFingerprint,
+          approvalArtifactPath: requireText(
+            input.approvalArtifactPath,
+            "approvalArtifactPath",
+          ),
+        }
+      : null,
+    executionResult,
+    verificationResult,
+    requestedAt: operation.requestedAt,
+    startedAt,
+    finishedAt,
+    verifiedAt,
+    evidenceFingerprint: `sha256:${sha256(
+      JSON.stringify({ operationId: input.operationId, status, executionResult, verificationResult }),
+    )}`,
+  };
+}
+
+function normalizeExecutionResult(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("adapter execution result must be an object");
+  }
+  if (value.status !== "succeeded") throw new Error("adapter execution result must succeed");
+  return {
+    status: "succeeded",
+    transactionId: requireText(value.transactionId, "result.transactionId"),
+    affectedRows: Number(value.affectedRows ?? 0),
+    stdout: String(value.stdout ?? ""),
+    stderr: String(value.stderr ?? ""),
+  };
+}
+
+async function writeEvidence(path, evidence) {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(persistableEvidence(evidence), null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  await chmod(path, 0o600);
+}
+
+function persistableEvidence(evidence) {
+  return {
+    ...evidence,
+    executionResult: summarizePersistedResult(evidence.executionResult),
+    verificationResult: evidence.verificationResult
+      ? summarizePersistedResult(evidence.verificationResult)
+      : null,
+  };
+}
+
+function summarizePersistedResult(result) {
+  if (!result || typeof result !== "object") return result;
+  const stdout = String(result.stdout ?? "");
+  const stderr = String(result.stderr ?? "");
+  const errorMessage = String(result.errorMessage ?? "");
+  return {
+    status: result.status,
+    transactionId: result.transactionId ?? "",
+    affectedRows: Number(result.affectedRows ?? 0),
+    stdoutBytes: Buffer.byteLength(stdout),
+    stdoutFingerprint: stdout ? `sha256:${sha256(stdout)}` : "",
+    stderrBytes: Buffer.byteLength(stderr),
+    stderrFingerprint: stderr ? `sha256:${sha256(stderr)}` : "",
+    errorFingerprint: errorMessage ? `sha256:${sha256(errorMessage)}` : "",
+  };
+}
+
+function requireAdapter(value) {
+  if (
+    !value ||
+    typeof value.execute !== "function" ||
+    typeof value.targetFingerprint !== "function"
+  ) {
+    throw new Error("adapter.execute and adapter.targetFingerprint are required");
+  }
+  return value;
+}
+
+function requireMode(value) {
+  if (value !== "query" && value !== "execute") throw new Error("mode must be query or execute");
+  return value;
+}
+
+function parseAffectedRows(output) {
+  const matches = [...String(output).matchAll(/(?:INSERT|UPDATE|DELETE)\s+(?:\d+\s+)?(\d+)/gi)];
+  return matches.reduce((sum, match) => sum + Number(match[1]), 0);
+}
+
+function ensureSingleSqlStatement(engine, statement, fieldName) {
+  if (engine === "mongodb") return;
+  const normalized = requireText(statement, fieldName).replace(/;+$/g, "");
+  if (normalized.includes(";")) {
+    throw new Error(`${fieldName} must contain exactly one SQL statement`);
+  }
+}
+
+async function loadAndVerifyApproval({ input, operation, adapter }) {
+  const approvalArtifactPath = await requireManagedInputPath(
+    input.approvalArtifactPath,
+    input.artifactRoot,
+    "approvalArtifactPath",
+  );
+  const publicKeyPem = await loadApprovalPublicKey(input);
+  const approval = JSON.parse(await readFile(approvalArtifactPath, "utf8"));
+  const expected = {
+    schema: "dosql.operation-approval.v1",
+    status: "approved",
+    operationId: requireText(input.operationId, "operationId"),
+    changeRequestId: requireText(input.changeRequestId, "changeRequestId"),
+    projectId: operation.projectId,
+    databaseAssetId: operation.databaseAssetId,
+    environmentId: operation.environmentId,
+    engine: operation.engine,
+    databaseName: requireText(input.databaseName, "databaseName"),
+    connectionFingerprint: adapter.targetFingerprint({
+      databaseName: input.databaseName,
+    }),
+    statementFingerprint: operation.statementFingerprint,
+    verificationFingerprint: sha256(verificationStatement(input)),
+  };
+  for (const [field, value] of Object.entries(expected)) {
+    if (approval[field] !== value) {
+      throw new Error(`approval artifact ${field} does not match the operation`);
+    }
+  }
+  const approvedBy = requireText(approval.approvedBy, "approval.approvedBy");
+  const approvedAt = requireIsoDate(approval.approvedAt, "approval.approvedAt");
+  const expiresAt = requireIsoDate(approval.expiresAt, "approval.expiresAt");
+  const now = Date.now();
+  if (Date.parse(approvedAt) > now) {
+    throw new Error("approval artifact approval time is in the future");
+  }
+  if (Date.parse(expiresAt) <= Date.parse(approvedAt)) {
+    throw new Error("approval artifact expiry must be after approval time");
+  }
+  if (Date.parse(expiresAt) <= now) {
+    throw new Error("approval artifact has expired");
+  }
+  const signature = requireText(approval.signature, "approval.signature");
+  const signedPayload = { ...approval };
+  delete signedPayload.signature;
+  const valid = verifySignature(
+    null,
+    Buffer.from(stableJson(signedPayload)),
+    createPublicKey(publicKeyPem),
+    Buffer.from(signature, "base64"),
+  );
+  if (!valid) throw new Error("approval artifact signature is invalid");
+  return {
+    approvedBy,
+    approvedAt,
+    expiresAt,
+    approvalFingerprint: `sha256:${sha256(stableJson(approval))}`,
+  };
+}
+
+async function prepareArtifactRoot(input) {
+  const requestedRoot =
+    typeof input.artifactRootProvider === "function"
+      ? await input.artifactRootProvider()
+      : resolve(process.cwd(), ".dosql");
+  const root = resolve(requireText(requestedRoot, "artifact root"));
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  const metadata = await lstat(root);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new Error("DoSql artifact root must be a real directory");
+  }
+  await chmod(root, 0o700);
+  return realpathSync(root);
+}
+
+async function prepareManagedOutputPath(value, root, fieldName) {
+  const path = managedPath(value, root, fieldName);
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const parent = realpathSync(dirname(path));
+  if (!isPathInside(parent, root)) {
+    throw new Error(`${fieldName} must stay inside the DoSql artifact root`);
+  }
+  return path;
+}
+
+async function requireManagedInputPath(value, root, fieldName) {
+  const path = managedPath(value, root, fieldName);
+  const metadata = await lstat(path);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    throw new Error(`${fieldName} must be a regular file`);
+  }
+  const parent = realpathSync(dirname(path));
+  if (!isPathInside(parent, root)) {
+    throw new Error(`${fieldName} must stay inside the DoSql artifact root`);
+  }
+  return path;
+}
+
+function managedPath(value, root, fieldName) {
+  const path = resolve(requireText(value, fieldName));
+  if (!isPathInside(path, root)) {
+    throw new Error(`${fieldName} must stay inside the DoSql artifact root`);
+  }
+  return path;
+}
+
+function isPathInside(path, root) {
+  return path === root || path.startsWith(`${root}/`);
+}
+
+async function loadApprovalPublicKey(input) {
+  if (typeof input.approvalPublicKeyProvider === "function") {
+    return requireText(
+      await input.approvalPublicKeyProvider(),
+      "approval public key",
+    );
+  }
+  const path = join(homedir(), ".config", "dosql", "approval-public-key.pem");
+  const metadata = await lstat(path);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    throw new Error("DoSql approval trust file must be a regular file");
+  }
+  if (typeof process.getuid === "function" && metadata.uid !== process.getuid()) {
+    throw new Error("DoSql approval trust file must be owned by the current user");
+  }
+  if ((metadata.mode & 0o022) !== 0) {
+    throw new Error("DoSql approval trust file must not be group- or world-writable");
+  }
+  return requireText(await readFile(path, "utf8"), "approval public key");
+}
+
+function normalizeDatabaseRequest(input) {
+  if (input.engine !== "mongodb" || !input.mongoOperation) return input;
+  const mongoOperation = normalizeMongoOperation(input.mongoOperation);
+  return {
+    ...input,
+    mongoOperation,
+    statement: renderMongoOperation(mongoOperation),
+    ...(input.verificationMongoOperation
+      ? {
+          verificationMongoOperation: normalizeMongoOperation(input.verificationMongoOperation),
+          verificationStatement: renderMongoOperation(input.verificationMongoOperation),
+        }
+      : {}),
+  };
+}
+
+function verificationStatement(input) {
+  if (input.engine === "mongodb") {
+    if (!input.verificationMongoOperation) {
+      throw new Error("verificationMongoOperation is required for MongoDB execute");
+    }
+    return renderMongoOperation(input.verificationMongoOperation);
+  }
+  return requireText(input.verificationStatement, "verificationStatement");
+}
+
+function normalizeMongoOperation(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("mongoOperation must be an object");
+  }
+  const method = requireText(value.method, "mongoOperation.method");
+  const supportedMethods = new Set([
+    "aggregate",
+    "countDocuments",
+    "createCollection",
+    "deleteMany",
+    "deleteOne",
+    "distinct",
+    "drop",
+    "estimatedDocumentCount",
+    "find",
+    "findOne",
+    "getCollectionNames",
+    "insertMany",
+    "insertOne",
+    "replaceOne",
+    "updateMany",
+    "updateOne",
+  ]);
+  if (!supportedMethods.has(method)) {
+    throw new Error(`Unsupported mongoOperation.method: ${method}`);
+  }
+  const args = value.args ?? [];
+  if (!Array.isArray(args)) throw new Error("mongoOperation.args must be an array");
+  const collection =
+    method === "getCollectionNames" || method === "createCollection"
+      ? ""
+      : requireText(value.collection, "mongoOperation.collection");
+  if (method === "createCollection" && args.length !== 1) {
+    throw new Error("createCollection requires exactly one argument");
+  }
+  return { method, collection, args: structuredClone(args) };
+}
+
+function renderMongoOperation(value) {
+  const operation = normalizeMongoOperation(value);
+  const args = operation.args.map((entry) => JSON.stringify(entry)).join(", ");
+  if (operation.method === "getCollectionNames") return "db.getCollectionNames()";
+  if (operation.method === "createCollection") return `db.createCollection(${args})`;
+  return `db.getCollection(${JSON.stringify(operation.collection)}).${operation.method}(${args})`;
+}
+
+function mongoEvalScript() {
+  return [
+    "const db = connect(process.env.DOSQL_MONGODB_URI);",
+    "const spec = JSON.parse(process.env.DOSQL_MONGODB_OPERATION);",
+    "if (process.env.DOSQL_MONGODB_REQUIRE_READ_ONLY_ROLE === '1') {",
+    "  const roles = db.runCommand({connectionStatus: 1}).authInfo.authenticatedUserRoles;",
+    "  const allowed = new Set(['read', 'readAnyDatabase', 'clusterMonitor']);",
+    "  if (!roles.length || roles.some((entry) => !allowed.has(entry.role))) throw new Error('MongoDB query requires a read-only database role');",
+    "}",
+    "const collection = spec.collection ? db.getCollection(spec.collection) : null;",
+    "let result;",
+    "switch (spec.method) {",
+    "  case 'getCollectionNames': result = db.getCollectionNames(); break;",
+    "  case 'createCollection': result = db.createCollection(...spec.args); break;",
+    "  default: result = collection[spec.method](...spec.args);",
+    "}",
+    "EJSON.stringify(result && typeof result.toArray === 'function' ? result.toArray() : result);",
+  ].join(" ");
+}
+
+function runtimeEnvironment(baseEnv) {
+  return Object.fromEntries(
+    Object.entries(baseEnv).filter(
+      ([name]) =>
+        ["HOME", "LANG", "LC_ALL", "PATH", "TMPDIR"].includes(name) ||
+        name.startsWith("DOSQL_"),
+    ),
+  );
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function requireIsoDate(value, fieldName) {
+  const text = requireText(value, fieldName);
+  if (Number.isNaN(Date.parse(text))) throw new Error(`${fieldName} must be an ISO date`);
+  return text;
+}
+
+function formatSqlInput(request, dialect) {
+  const statement = requireText(request.statement, "request.statement");
+  if (!request.readOnly) return `${statement};\n`;
+  if (dialect === "postgres") {
+    return `BEGIN READ ONLY;\n${statement};\nCOMMIT;\n`;
+  }
+  if (dialect === "mysql") {
+    return `START TRANSACTION READ ONLY;\n${statement};\nROLLBACK;\n`;
+  }
+  throw new Error(`Unsupported SQL dialect: ${dialect}`);
+}
+
+function postgresEnvFromUri(connectionUri) {
+  let parsed;
+  try {
+    parsed = new URL(connectionUri);
+  } catch (error) {
+    throw new Error(`PostgreSQL connection URI is invalid: ${error.message}`);
+  }
+  if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") {
+    throw new Error(`Unsupported PostgreSQL connection URI protocol: ${parsed.protocol}`);
+  }
+  return {
+    PGHOST: requireText(parsed.hostname, "connectionUri.hostname"),
+    PGPORT: parsed.port || "5432",
+    PGUSER: requireText(decodeURIComponent(parsed.username), "connectionUri.username"),
+    PGPASSWORD: decodeURIComponent(parsed.password),
+    PGDATABASE: requireText(decodeURIComponent(parsed.pathname.replace(/^\/+/, "")), "connectionUri.database"),
+  };
+}
+
+function databaseTargetFromUri(connectionUri, engine) {
+  let parsed;
+  try {
+    parsed = new URL(connectionUri);
+  } catch (error) {
+    throw new Error(`${engine} connection URI is invalid: ${error.message}`);
+  }
+  return {
+    engine,
+    host: requireText(parsed.hostname, "connectionUri.hostname"),
+    port: parsed.port || (engine === "mongodb" ? "27017" : "5432"),
+    user: requireText(decodeURIComponent(parsed.username), "connectionUri.username"),
+    database: requireText(
+      decodeURIComponent(parsed.pathname.replace(/^\/+/, "")),
+      "connectionUri.database",
+    ),
+  };
+}
+
+function connectionFingerprint(target) {
+  return `sha256:${sha256(stableJson(target))}`;
+}
+
+function resolveClientDescriptor({
+  configuredPath,
+  defaultName,
+  allowedWrapperNames,
+  spawnFile,
+}) {
+  if (spawnFile !== runProcess) {
+    return {
+      command: configuredPath ?? defaultName,
+      fingerprint: "sha256:injected-test-client",
+      trusted: true,
+    };
+  }
+  const candidates = configuredPath
+    ? [configuredPath]
+    : [
+        `/usr/bin/${defaultName}`,
+        `/usr/local/bin/${defaultName}`,
+        `/opt/homebrew/bin/${defaultName}`,
+      ];
+  const existing = candidates.find((path) => existsSync(path));
+  if (!existing) {
+    throw new Error(
+      `${defaultName} client is not installed at an approved absolute path`,
+    );
+  }
+  const approvedPath = resolve(existing);
+  const command = realpathSync(existing);
+  const metadata = statSync(command);
+  if (!metadata.isFile()) throw new Error(`${defaultName} client must be a file`);
+  const fileName = basename(command);
+  const trustedSystemClient =
+    basename(approvedPath) === defaultName &&
+    [
+      `/usr/bin/${defaultName}`,
+      `/usr/local/bin/${defaultName}`,
+      `/opt/homebrew/bin/${defaultName}`,
+    ].includes(approvedPath);
+  const trustedSkillWrapper =
+    command.startsWith(`${TRUSTED_SKILL_ROOT}/`) &&
+    allowedWrapperNames.includes(fileName);
+  return {
+    command,
+    fingerprint: `sha256:${sha256Bytes(readFileSync(command))}`,
+    trusted: trustedSystemClient || trustedSkillWrapper,
+  };
+}
+
+async function runProcess({ command, args, stdin, env }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { env, stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+    child.stdin.end(stdin);
+  });
+}
+
+function requireText(value, fieldName) {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    throw new Error(`${fieldName} is required`);
+  }
+  return String(value).trim();
+}
+
+function sha256(value) {
+  return createHash("sha256").update(String(value)).digest("hex");
+}
+
+function sha256Bytes(value) {
+  return createHash("sha256").update(value).digest("hex");
+}

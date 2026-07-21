@@ -1,0 +1,63 @@
+{
+  "schema": "dosuite.skill-resources.v1",
+  "product": "DoSql",
+  "updatedAt": "2026-07-07",
+  "publicConsole": "https://dosql.l8ai.cn",
+  "defaultDoopsTarget": {
+    "name": "gw-oilan-node",
+    "cluster": "doops-oilan",
+    "instance": "oilan-node"
+  },
+  "credentialPolicy": "No plaintext database credentials are stored here. Resolve logical endpoints through the selected doagent target and DoSql approval policy before execution.",
+  "resources": [
+    {
+      "id": "db-main-mysql",
+      "name": "billing-main",
+      "kind": "MySQL",
+      "logicalEndpoint": "mysql://billing-prod/main",
+      "owner": "finance-platform",
+      "status": "warning",
+      "risk": "2 pending migrations",
+      "tags": ["prod", "migration", "journal"],
+      "note": "Billing primary database. Field changes must enter a change document and pass test/stage before prod."
+    },
+    {
+      "id": "db-user-pg",
+      "name": "identity-core",
+      "kind": "PostgreSQL",
+      "logicalEndpoint": "postgres://identity/stage",
+      "owner": "platform",
+      "status": "healthy",
+      "risk": "none",
+      "tags": ["stage", "schema-diff", "rollback"],
+      "note": "Identity and permission domain. Current version is promoted to stage and waits for the production window."
+    },
+    {
+      "id": "db-log-mongo",
+      "name": "event-archive",
+      "kind": "MongoDB",
+      "logicalEndpoint": "mongodb://olap/events",
+      "owner": "data",
+      "status": "review",
+      "risk": "index review",
+      "tags": ["olap", "index", "scan"],
+      "note": "Event archive database. Focus on index growth, slow queries and collection structure drift."
+    },
+    {
+      "id": "db-crm-mysql",
+      "name": "crm-tenant",
+      "kind": "MySQL",
+      "logicalEndpoint": "mysql://crm-test/tenant",
+      "owner": "crm",
+      "status": "pending",
+      "risk": "field semantics pending",
+      "tags": ["test", "tenant", "confirm"],
+      "note": "Tenant business database. Current changes require business confirmation for naming and historical backfill."
+    }
+  ],
+  "quickPrompts": [
+    "Create a user-readable change plan for adding an external transaction id field to billing-main invoice records. Do not ask me to approve raw SQL.",
+    "Run a read-only query plan for identity-core to count role permission changes in the last 24 hours and record the journal fields.",
+    "Scan event-archive for slow queries, index health, collection sizes and recommendations that require a change document."
+  ]
+}
