@@ -42,7 +42,7 @@ flowchart LR
 - 客户端：`doops` CLI + doops skill
 - 公网控制面：`gateway/` 构建 `doops-gateway`，负责 RBAC、审计、排队和内网 agent 路由
 - 边缘执行端：`agent/` 构建 `doops-agent`，负责目标机器上的 exec、push/pull、文件和 AI 任务
-- 运行安全边界：`doops-agent` 默认只启动 `doops-agent`、`do-agent`、`buildkitd`；默认不启动 SSH，不启动 WebIDE
+- 运行安全边界：`doops-agent` 默认只启动 `doops-agent`、`do-agent`、`buildkitd`；默认不启动 `sshd`，不启动 WebIDE
 - 连接方式：CLI/skill 访问 gateway `42222`，gateway 通过已建立的 agent WebSocket 进入内网 agent
 - 鉴权方式：用户连接 gateway 使用 gateway user token；agent 反向注册只声明 `cluster/instance`，不使用 token
 - 代码同步：gateway 使用 Git HTTP；gateway 只通过已建立的 agent WebSocket 反向隧道透传 Git 请求，不再使用 tar 分块上传作为 `push/pull` 路径
@@ -71,8 +71,8 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 ```
 
 `base-light` 的目标是作为纯 `doops-agent` 运行时，不再默认继承 WebIDE 启动器或
-SSH 服务端。镜像保留 `ssh` 客户端，供用户明确授权的首次安装、自恢复和确定性
-`doops exec` 运维命令使用；它不会启动 `sshd`，也不会恢复 SSH target 或直连入口。
+SSH 服务端。镜像保留 `ssh` 客户端，已在线 Agent 可通过 `doops exec` 代理执行用户
+明确给出的任意 SSH 命令；它不会启动 `sshd`，也不会恢复 SSH target 或直连入口。
 
 镜像构成：
 
@@ -309,7 +309,9 @@ doops -session smoke ask --target prod-master --msg '用一句话说明当前机
 
 如果 `doops-agent` 已经在目标机器上运行并注册到 gateway，只需要给客户端配置 gateway target 和 gateway user token，不需要 SSH。
 
-SSH 只用于首次把 agent 装到机器上，或者 agent 完全不可用时做自恢复；它不是日常连接方式。
+从客户端直接 SSH 到 Agent 宿主机只用于首次安装或 Agent 完全不可用时的自恢复，
+不是日常 DoOps 连接方式。该限制不适用于在线 Agent 通过 `doops exec` 代理的出站
+SSH 命令；用户可以显式要求它执行任意 SSH 客户端命令。
 
 ### 安装前先判断当前形态
 

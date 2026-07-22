@@ -7,6 +7,8 @@ RUNTIME = ROOT / "runtime-versions.env"
 IMAGE_BUILD = ROOT / "scripts" / "build-agent-image.sh"
 BASE_IMAGE_BUILD = ROOT / "scripts" / "build-agent-base-image.sh"
 LIGHT_BASE = ROOT / "Dockerfile.base.light"
+SKILL = ROOT / "skills" / "SKILL.md"
+USAGE_GUIDE = ROOT / "docs" / "DOOPS_USAGE_GUIDE.md"
 DOCKERFILES = (
     ROOT / "Dockerfile",
     LIGHT_BASE,
@@ -77,3 +79,14 @@ def test_agent_runtime_keeps_ssh_client_and_rejects_ssh_server():
     assert "build-agent-base-image.sh" in ci
     assert "backend/.ci-agent-base-image" in ci
     assert "backend/runtime-versions.env" in ci
+
+
+def test_doops_exec_proxies_user_explicit_ssh_commands():
+    skill = SKILL.read_text()
+    usage = USAGE_GUIDE.read_text()
+
+    assert "代理执行用户明确给出的任意 SSH 命令" in skill
+    assert "不限于" in skill and "首次安装或自恢复" in skill
+    assert "代理用户执行任意明确给出的" in usage
+    assert "SSH 只用于首次安装、自恢复 agent" not in skill
+    assert "才可通过前台 `doops exec` 执行 SSH 恢复" not in skill

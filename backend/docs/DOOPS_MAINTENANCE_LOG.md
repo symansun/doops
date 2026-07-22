@@ -11,9 +11,9 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
 - When the base definition changes, the `main` pipeline builds and publishes the base first, passes
   its immutable digest to the final Agent build, and verifies the final image still contains the
   client. This prevents an old pinned base from producing a false-success Agent image.
-- SSH remains limited to explicit first-install or recovery commands from an already authorized
-  target. This does not restore SSH targets, direct Agent connections, an SSH daemon, or inline
-  credential handling.
+- An online Agent may proxy any user-explicit SSH client command through normal `doops exec` or
+  background exec semantics; SSH is not limited to first-install or recovery use. This does not
+  restore SSH targets, direct Agent connections, an SSH daemon, or inline credential handling.
 
 ## 2026-07-21 Remove Percentage-Based Runner Disk Guard
 
