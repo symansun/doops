@@ -99,6 +99,9 @@ doops -session ops exec --target jm --cmd 'hostname && df -h && free -h'
 ```
 
 Use `exec` for deterministic commands, read-only checks, and known deployment scripts.
+标准 Agent 镜像提供出站 `ssh` 客户端，用于用户明确授权的首次安装或自恢复操作；
+这不会创建 SSH target，也不会启动 `sshd`。SSH 目标、命令和认证材料必须来自当前
+明确任务，禁止把私钥或密码内联到命令、prompt、日志或工作区。
 
 ## Ask
 

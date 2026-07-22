@@ -107,7 +107,7 @@ docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>
 docker.cnb.cool/l8ai/ai/doops.sh:<release>
 ```
 
-`Dockerfile.base.light` 只放基础运行时：doagent、BuildKit、kubectl、Python+PyYAML、Helm、系统包。`Dockerfile` 和 `agent/Dockerfile` 只放轻更新：doops-agent、skills、docs、entrypoint。禁止把基础 rootfs 压平成每个 release 都变化的单个多 GiB layer。
+`Dockerfile.base.light` 只放基础运行时：doagent、BuildKit、kubectl、Python+PyYAML、Helm、SSH 客户端和系统包。它必须保留 `ssh` 客户端但删除 SSH 服务端。`Dockerfile` 和 `agent/Dockerfile` 只放轻更新：doops-agent、skills、docs、entrypoint。禁止把基础 rootfs 压平成每个 release 都变化的单个多 GiB layer。
 
 CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<release>` 这种仓库下级路径；不要使用 `<repo>-base-light:<release>`。
 
@@ -118,10 +118,12 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 3. `buildctl --version` 可运行。
 4. `python3 -c 'import yaml'` 可运行。
 5. `helm version --short` 可运行。
-6. `doops exec` 能读取 `hostname/date/kubectl get nodes/df/free`。
-7. `doops ask` 能通过 doagent ACP HTTP 调用工具并返回结论。
+6. `ssh -V` 可运行，且镜像中不存在 `sshd`。
+7. `doops exec` 能读取 `hostname/date/kubectl get nodes/df/free`。
+8. 用户明确授权的恢复场景中，`doops exec` 能调用 `ssh` 客户端；不得内联凭据或启动 SSH 服务端。
+9. `doops ask` 能通过 doagent ACP HTTP 调用工具并返回结论。
 
-镜像构建必须完成 base label 与前 5 项镜像内自检；第 6、7 项必须在 Agent 滚动更新后对真实 target 执行。
+镜像构建必须完成 base label 与前 6 项镜像内自检；第 7 至 9 项必须在 Agent 滚动更新后对真实 target 执行。
 
 ---
 

@@ -58,19 +58,21 @@ target 只来自本机 Gateway-only `config.json` 与 Gateway 当前在线注册
 当前维护版 agent 默认采用轻量双镜像发布：
 
 ```text
-docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>  # 基础工具：buildkit / kubectl / Python+PyYAML / Helm / git / tini / bash
+docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>  # 基础工具：buildkit / kubectl / Python+PyYAML / Helm / git / ssh client / tini / bash
 docker.cnb.cool/l8ai/ai/doops.sh:<release>             # doops-agent / 精确 doagent / skills / docs / entrypoint
 ```
 
 `Dockerfile` / `agent/Dockerfile` 不提供可用的可变基础镜像默认值；占位地址会在遗漏参数时立即失败。构建时必须显式传入本次不可变 `DOOPS_AGENT_BASE_IMAGE` 和 `DO_AGENT_VERSION`，当前运行架构固定为 `linux/amd64`。
 
 ```text
-Dockerfile.base.light                     # 轻量基础镜像：doagent / buildkit / kubectl / Python+PyYAML / Helm / git / tini / bash
+Dockerfile.base.light                     # 轻量基础镜像：doagent / buildkit / kubectl / Python+PyYAML / Helm / git / ssh client / tini / bash
 docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>
 docker.cnb.cool/l8ai/ai/doops.sh:<release>
 ```
 
-`base-light` 的目标是作为纯 `doops-agent` 运行时，不再默认继承 WebIDE 启动器，也不保留 SSH 相关默认能力。
+`base-light` 的目标是作为纯 `doops-agent` 运行时，不再默认继承 WebIDE 启动器或
+SSH 服务端。镜像保留 `ssh` 客户端，供用户明确授权的首次安装、自恢复和确定性
+`doops exec` 运维命令使用；它不会启动 `sshd`，也不会恢复 SSH target 或直连入口。
 
 镜像构成：
 
@@ -95,6 +97,7 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 - 将 agent 发布拆为 `doops.sh/base-light:<release>` 和 `doops.sh:<release>`，避免每次代码更新都拉取多 GiB 基础层
 - 统一发布脚本与 DaemonSet 使用 CI 产出的不可变镜像 digest
 - 关闭默认攻击面：`agent-entrypoint.sh` 改为仅在显式 `DOOPS_ENABLE_SSHD=1` / `DOOPS_ENABLE_WEBIDE=1` 时才启动 SSH 或 WebIDE
+- 标准运行镜像保留出站 SSH 客户端，但不安装或启动 SSH 服务端
 - 将 doagent 旧叙述收敛为当前 doagent ACP HTTP 路径
 - 新增多用户多集群 `doops-gateway`：SQLite、user token、scope/action 权限、审计和 gateway Git HTTP 反向隧道
 - 统一 `push/pull`：gateway 使用 Git 快照语义，并按 `/v1/git/<cluster>/<instance>/<session>.git` 精确路由到目标 agent

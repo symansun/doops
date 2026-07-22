@@ -2,6 +2,19 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-07-22 Agent SSH Client Runtime Contract
+
+- Root cause: `Dockerfile.base.light` explicitly removed `openssh-client` together with the
+  intentionally forbidden SSH server, so every standard Agent image lacked the `ssh` command.
+- The light base now installs the outbound SSH client, continues to remove `openssh-server`, and
+  verifies both `ssh -V` success and `sshd` absence before publication.
+- When the base definition changes, the `main` pipeline builds and publishes the base first, passes
+  its immutable digest to the final Agent build, and verifies the final image still contains the
+  client. This prevents an old pinned base from producing a false-success Agent image.
+- SSH remains limited to explicit first-install or recovery commands from an already authorized
+  target. This does not restore SSH targets, direct Agent connections, an SSH daemon, or inline
+  credential handling.
+
 ## 2026-07-21 Remove Percentage-Based Runner Disk Guard
 
 - Removed the root-filesystem percentage threshold from release-runner bootstrap.

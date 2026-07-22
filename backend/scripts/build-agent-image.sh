@@ -13,8 +13,13 @@ source "${REPO_ROOT}/runtime-versions.env"
 : "${CNB_REPO_SLUG_LOWERCASE:?CNB_REPO_SLUG_LOWERCASE is required}"
 : "${CNB_COMMIT:?CNB_COMMIT is required}"
 
-BASE_IMAGE="${DOOPS_AGENT_BASE_IMAGE}"
+BASE_IMAGE="${DOOPS_AGENT_BASE_IMAGE_OVERRIDE:-${DOOPS_AGENT_BASE_IMAGE}}"
 APP_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${DOOPS_RELEASE_TAG}"
+
+if [[ ! "${BASE_IMAGE}" =~ @sha256:[0-9a-f]{64}$ ]]; then
+  echo "DOOPS agent base image must be pinned by digest: ${BASE_IMAGE}" >&2
+  exit 1
+fi
 
 docker pull "${DO_AGENT_IMAGE}"
 ACTUAL_DOAGENT_VERSION="$(docker run --rm --entrypoint /usr/local/bin/do-agent "${DO_AGENT_IMAGE}" --version | awk '{print $NF}')"
@@ -51,6 +56,13 @@ test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"
 docker run --rm --entrypoint /usr/local/bin/buildctl "${APP_IMAGE}" --version
 docker run --rm --entrypoint /usr/bin/python3 "${APP_IMAGE}" -c 'import yaml'
 docker run --rm --entrypoint /usr/local/bin/helm "${APP_IMAGE}" version --short
+docker run --rm --entrypoint /usr/bin/ssh "${APP_IMAGE}" -V ||
+  { echo "Agent image is missing the required ssh client" >&2; exit 1; }
+if docker run --rm --entrypoint /bin/sh "${APP_IMAGE}" \
+  -c 'command -v sshd >/dev/null 2>&1'; then
+  echo "Agent image must not contain an SSH server" >&2
+  exit 1
+fi
 docker push "${APP_IMAGE}"
 
 echo "Published Agent image: ${APP_IMAGE}"

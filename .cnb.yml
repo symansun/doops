@@ -50,8 +50,24 @@ main:
             pnpm test:gateway-policy
             pnpm exec tsc --noEmit
             pnpm build
+        - name: build immutable agent base
+          ifModify:
+            - backend/Dockerfile.base.light
+            - backend/runtime-versions.env
+            - backend/scripts/build-agent-base-image.sh
+          script: |
+            DOOPS_BASE_RELEASE_TAG="${CNB_COMMIT}" \
+            DOOPS_BASE_IMAGE_OUTPUT="${PWD}/backend/.ci-agent-base-image" \
+              bash backend/scripts/build-agent-base-image.sh
         - name: build immutable agent images
-          script: DOOPS_RELEASE_TAG="${CNB_COMMIT}" bash backend/scripts/build-agent-image.sh
+          script: |
+            if [ -s backend/.ci-agent-base-image ]; then
+              export DOOPS_AGENT_BASE_IMAGE_OVERRIDE="$(
+                cat backend/.ci-agent-base-image
+              )"
+            fi
+            DOOPS_RELEASE_TAG="${CNB_COMMIT}" \
+              bash backend/scripts/build-agent-image.sh
         - name: build immutable web image
           script: DOOPS_RELEASE_TAG="${CNB_COMMIT}" bash backend/scripts/build-web-image.sh
   api_trigger_deploy_agent:
