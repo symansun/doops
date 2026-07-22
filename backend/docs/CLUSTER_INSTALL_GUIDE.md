@@ -13,7 +13,7 @@
 使用项目根目录提供的 `agent/agent.yaml`：
 - **网络**: 需要 `hostNetwork: true` 以暴露端口。
 - **特权**: 需要 `securityContext.privileged: true` 以支持底层的沙盒逃逸和硬件访问。
-- **默认最小暴露面**: `doops-agent` 默认不启动 SSH，不启动 WebIDE；只有在极少数兼容场景下，才允许显式打开 `DOOPS_ENABLE_SSHD=1` 或 `DOOPS_ENABLE_WEBIDE=1`。
+- **默认最小暴露面**: `doops-agent` 默认不启动 `sshd`，不启动 WebIDE；标准镜像仍提供出站 `ssh` 客户端。只有在极少数兼容场景下，才允许显式打开 `DOOPS_ENABLE_SSHD=1` 或 `DOOPS_ENABLE_WEBIDE=1`。
 - **运行时视图**: 只挂宿主运行时 socket 不够。容器内需要能调用宿主机运行时视图时，
   必须同时挂载 `/run/containerd`、`/var/lib/containerd`、`/var/lib/nerdctl`。
   否则会出现“`pull` 成功但 `run` 失败”的 overlay/FIFO/name-store 问题。

@@ -56,6 +56,8 @@ RUN chmod +x /app/agent-entrypoint.sh /app/sandbox-entrypoint.sh \
     && /usr/local/bin/do-agent --help >/dev/null \
     && buildctl --version \
     && python3 -c 'import yaml' \
-    && helm version --short
+    && helm version --short \
+    && ssh -V \
+    && ! command -v sshd >/dev/null 2>&1
 
 ENTRYPOINT ["/app/sandbox-entrypoint.sh"]

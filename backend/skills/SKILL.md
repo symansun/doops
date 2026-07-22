@@ -25,7 +25,13 @@ description: |
 - 优先使用 PATH 中的 `doops`；标准安装路径是 `~/.local/bin/doops`。
 - 所有远端调用必须带 `-session <name>`。
 - CLI 只接受 Gateway target；不存在直连 target、SSH target 或按 target 保存 token 的模式。
-- SSH 只用于首次安装、自恢复 agent，以及发布 `doops-gateway` 控制面；DoOps CLI 不提供 SSH 或直连 Agent 入口。
+- 从客户端直接 SSH 到 Agent 宿主机只用于首次安装、自恢复 agent，以及发布
+  `doops-gateway` 控制面；DoOps CLI 不把 SSH 主机建模为 target，也不直连 Agent。
+- 标准 Agent 镜像提供出站 `ssh` 客户端，但不安装或启动 `sshd`。已在线 target 可以
+  通过 `doops exec` 或 `doops exec --bg` 代理执行用户明确给出的任意 SSH 命令，不限于
+  首次安装或自恢复；SSH 命令遵守与其它 exec 相同的权限、排队、超时、取消和审计规则。
+  目标、参数和远端命令必须由当前任务明确给出，不得把私钥、密码或 token 内联到命令、
+  prompt、日志或工作区。
 - `doops-gateway` 是独立发布包，必须用 `scripts/deploy-gateway.sh --host <gateway-host>` 从 SSH 宿主机上下文发布。
 - gateway 控制面不登记为 doops target，不通过任何 doops target 发布 gateway 本体。
 - 不要用 base64、tar 或手写分片传输绕过 `push`。`doops_workspace_*` 是低层兼容 JSON-RPC 工具，不是 CLI、发布脚本和 skill 的标准路径；如果看到 512KB 分块日志，说明调用方绕过了当前 `doops push/pull`。应修复 Git HTTP 反向隧道、目标 agent 版本或发布脚本。

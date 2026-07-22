@@ -2,11 +2,16 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+CI = ROOT.parent / ".cnb.yml"
 RUNTIME = ROOT / "runtime-versions.env"
 IMAGE_BUILD = ROOT / "scripts" / "build-agent-image.sh"
+BASE_IMAGE_BUILD = ROOT / "scripts" / "build-agent-base-image.sh"
+LIGHT_BASE = ROOT / "Dockerfile.base.light"
+SKILL = ROOT / "skills" / "SKILL.md"
+USAGE_GUIDE = ROOT / "docs" / "DOOPS_USAGE_GUIDE.md"
 DOCKERFILES = (
     ROOT / "Dockerfile",
-    ROOT / "Dockerfile.base.light",
+    LIGHT_BASE,
     ROOT / "agent" / "Dockerfile",
     ROOT / "agent" / "Dockerfile.sandbox",
 )
@@ -40,3 +45,48 @@ def test_doagent_runtime_lock_includes_exact_source_revision():
             'LABEL org.l8ai.doagent.revision="${DO_AGENT_REVISION}"'
             in text
         )
+
+
+def test_agent_runtime_keeps_ssh_client_and_rejects_ssh_server():
+    base = LIGHT_BASE.read_text()
+
+    assert "openssh-client" in base
+    assert "openssh-server openssh-client" not in base
+    assert "ssh -V" in base
+    assert "! command -v sshd" in base
+
+    for dockerfile in (
+        ROOT / "Dockerfile",
+        ROOT / "agent" / "Dockerfile",
+        ROOT / "agent" / "Dockerfile.sandbox",
+    ):
+        text = dockerfile.read_text()
+        assert "ssh -V" in text
+        assert "! command -v sshd" in text
+
+    image_build = IMAGE_BUILD.read_text()
+    assert "--entrypoint /usr/bin/ssh" in image_build
+    assert "ssh client" in image_build
+    assert "command -v sshd" in image_build
+    assert "DOOPS_AGENT_BASE_IMAGE_OVERRIDE" in image_build
+
+    base_image_build = BASE_IMAGE_BUILD.read_text()
+    assert "--entrypoint /usr/bin/ssh" in base_image_build
+    assert "command -v sshd" in base_image_build
+    assert "DOOPS_BASE_IMAGE_OUTPUT" in base_image_build
+
+    ci = CI.read_text()
+    assert "build-agent-base-image.sh" in ci
+    assert "backend/.ci-agent-base-image" in ci
+    assert "backend/runtime-versions.env" in ci
+
+
+def test_doops_exec_proxies_user_explicit_ssh_commands():
+    skill = SKILL.read_text()
+    usage = USAGE_GUIDE.read_text()
+
+    assert "代理执行用户明确给出的任意 SSH 命令" in skill
+    assert "不限于" in skill and "首次安装或自恢复" in skill
+    assert "代理用户执行任意明确给出的" in usage
+    assert "SSH 只用于首次安装、自恢复 agent" not in skill
+    assert "才可通过前台 `doops exec` 执行 SSH 恢复" not in skill

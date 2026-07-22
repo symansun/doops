@@ -39,6 +39,21 @@ func TestDispatcherAllowsOtherServiceMutation(t *testing.T) {
 	}
 }
 
+func TestDispatcherAllowsUserExplicitSSHCommands(t *testing.T) {
+	t.Parallel()
+	dispatcher := NewDispatcher()
+	commands := []string{
+		"ssh ops@app.internal 'hostname && systemctl status api'",
+		"ssh -J bastion.example.com root@db.internal 'sudo reboot'",
+		"/usr/bin/ssh -o BatchMode=yes -L 15432:db.internal:5432 ops@bastion.example.com",
+	}
+	for _, command := range commands {
+		if got := dispatcher.Classify(command); got == PathBlocked {
+			t.Errorf("Classify(%q) = PathBlocked, want allowed SSH proxy command", command)
+		}
+	}
+}
+
 func TestDispatcherIdentifiesAgentHelmMutationWithoutBlockingForegroundExec(t *testing.T) {
 	t.Parallel()
 	dispatcher := NewDispatcher()
