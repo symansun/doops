@@ -67,7 +67,7 @@ func TestBuildK8SCommandsRejectsMutationWithoutConfirm(t *testing.T) {
 	_, err := buildK8SCommands(api.K8SParams{
 		SessionID: "mutation",
 		Operation: "rollout-restart",
-		Resource:  "deployment/doops-release-runner",
+		Resource:  "deployment/example",
 		Namespace: "kz-ops",
 	})
 	if err == nil || !strings.Contains(err.Error(), "confirm=true") {
@@ -108,7 +108,7 @@ func TestBuildK8SCommandsRejectsRemovedSetImageOperation(t *testing.T) {
 	_, err := buildK8SCommands(api.K8SParams{
 		SessionID: "set-image",
 		Operation: "set-image",
-		Resource:  "deployment/doops-release-runner",
+		Resource:  "deployment/example",
 		Confirm:   true,
 	})
 	if err == nil || !strings.Contains(err.Error(), `unsupported k8s operation "set-image"`) {

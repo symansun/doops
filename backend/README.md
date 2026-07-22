@@ -433,7 +433,7 @@ doops -session upgrade_20260511 upgrade \
   --dry-run
 ```
 
-正式发布必须由目标集群外的 release runner、CI/CD 或 GitOps controller 执行。旧 Agent 必须保持在线，直到替代实例完成 Gateway 注册和首次心跳。
+正式发布必须由目标集群外真实存在的 CI/CD 或 GitOps controller 执行。旧 Agent 必须保持在线，直到替代实例完成 Gateway 注册和首次心跳。
 
 ## 维护者说明
 

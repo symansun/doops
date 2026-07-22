@@ -317,7 +317,7 @@ doops -session build push --target prod-master --src .
 Agent 不允许修改承载自身的 Kubernetes workload 或容器。直接自升级会终止执行
 `kubectl set image` 和 `rollout status` 的 Agent，目标可能在新 Pod 启动失败后永久离线。
 
-`doops upgrade` 仅保留 `--dry-run` 预演。正式升级必须由目标集群外的 release runner、
+`doops upgrade` 仅保留 `--dry-run` 预演。正式升级必须由目标集群外真实存在的
 CI/CD 或 GitOps controller 执行，并在旧 Agent 保持在线时完成镜像拉取、替代实例启动、
 Gateway 注册和心跳验证。历史挂起的自升级 operation 会在 Gateway 启动时立即标记失败，
 不会继续占槽等待 replacement。

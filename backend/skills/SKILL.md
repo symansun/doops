@@ -57,8 +57,8 @@ description: |
 - CNB CI 负责测试、构建和发布不可变制品，不选择生产 target。Gateway 负责鉴权、审计、
   资源锁和凭据预物化，实际业务 Helm/Kubernetes mutation 由目标 Agent 在其运行环境执行。
 - 当前没有 EnvironmentRegistry、`cicd run`、CICDReport 或 `doops_cicd_result` 发布链路。
-- `doops-agent` 自身升级是例外：当前 Agent 不得修改承载自身的 workload，必须由另一个
-  隔离 Agent target 或真实存在的外部 CI/GitOps controller 执行。
+- `doops-agent` 自身升级是例外：当前 Agent 不得修改承载自身的 workload，必须由真实存在的
+  外部 CI/GitOps controller 执行；禁止创建临时 Agent、临时 target 或 release-runner。
 - 长构建可以使用 `doops -session <s> exec --bg --target <t> --cmd '<cmd>'`。自然语言
   发布中的 Helm 收敛必须使用 `mcp_doops_helm`；运维人员显式给出的前台 `exec` Helm
   `upgrade/install/rollback/uninstall` 仍是合法的确定性操作，并保持 Gateway 串行化

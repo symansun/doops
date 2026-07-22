@@ -129,18 +129,9 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 
 `doops-agent` 由 Helm 管理的 `Deployment` 托管，Chart 位于 `deploy/helm/doops-agent`。该目录只保存运行时 Helm 模板、默认值和挂载定义，不保存环境注册表或部署 workflow。具体镜像、目标节点、Secret 引用、Gateway 地址和发布参数必须由本次自然语言任务明确给出或来自任务明确授权读取的当前 Helm release。发布前必须对比当前 workload 与候选 Chart 的 command、args、env、probes、volumeMounts 和 volumes。包括只更新镜像在内的所有发布都必须调用结构化 `doops_helm upgrade-install`，从任务明确指定的 Chart、可选 `value_files` 和非敏感 `set_strings` 完整收敛；更新现有 release 且任务已给出 release、namespace、chart 和不可变镜像时，`value_files` 可以为空，工具自动保留当前 values。`value_files` 只放 `deploy/` 下的 YAML 文件路径，`set_strings` 只覆盖标量叶子，禁止把 map/list 父键编码成字符串。`upgrade-install` 先用相同参数执行 Helm dry-run，再执行真实 mutation。镜像版本使用互斥的 digest 覆盖模式，或完整 values 中 `image.repository` 加 `image.tag=release-YYYYMMDD` 的模式；后者禁止 digest 和任何 `set_strings`。不存在 Kubernetes 镜像 mutation 发布旁路。自然语言 apply 禁止通过 shell 执行 kubectl 或 Helm mutation；运维人员明确给出的前台 `exec` Helm 操作合法，但 `exec --bg` Helm mutation 必须拒绝。正常运行中的 Agent 不得从节点 SSH 更新。
 
-临时 release-runner 安装前必须确认受管 Agent rollout Ready、目标节点
-`DiskPressure=False`，且根文件系统至少有 5 GiB 可用空间。任何条件不满足
-都必须在拉取 runner 镜像前失败，避免单节点环境因临时控制器触发 Agent 驱逐。
-由于 runner 继承宿主机 kubeconfig 和 hostPath，受管 Deployment 必须显式设置
-`nodeSelector.kubernetes.io/hostname`；bootstrap 不从 affinity 或当前 Pod 调度结果猜测节点。
-
-受管 `doops-agent` 不得升级自身。升级窗口先调用
-`api_trigger_bootstrap_release_runner`，通过当前 Agent 的前台 Helm `exec` 创建同集群
-隔离 runner；该步骤只创建外部 controller，不修改受管 Agent。随后
-`api_trigger_deploy_agent` 必须连接 runner，并由 runner 使用 `ask --apply` 发布受管
-Agent。验收完成后卸载临时 runner。不得把受管 Agent 本身作为发布 target，否则连接会
-在 rollout 中断开，无法形成可信完成证据。
+受管 `doops-agent` 不得升级自身。Agent 升级必须由真实存在的外部 CI/GitOps controller
+执行，且 controller 在变更前后都要验证 Helm dry-run、rollout Ready、Gateway 注册和首次
+心跳。禁止为此创建临时 Agent、临时 target 或临时 release-runner。
 
 单副本 Agent 的 home 目录包含 doagent SQLite 状态，不能让新旧 Pod 同时挂载。Chart
 必须使用 `maxSurge=0`、`maxUnavailable=1`；否则滚动窗口会产生 `database is locked`，

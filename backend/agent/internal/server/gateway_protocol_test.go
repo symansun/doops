@@ -2237,11 +2237,11 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	if got := resourceKeyForTool(ActionAgentUpgrade, "doops_agent_upgrade", json.RawMessage(`{}`), "dev", "node"); got != "target:dev/node" {
 		t.Fatalf("upgrade resource key mismatch: %q", got)
 	}
-	k8sArgs := json.RawMessage(`{"operation":"rollout-status","namespace":"kz-ops","resource":"deployment/doops-release-runner"}`)
-	if got := resourceKeyForTool(ActionExec, "doops_k8s", k8sArgs, "dev", "node"); got != "k8s:kz-ops/deployment/doops-release-runner" {
+	k8sArgs := json.RawMessage(`{"operation":"rollout-status","namespace":"kz-ops","resource":"deployment/example"}`)
+	if got := resourceKeyForTool(ActionExec, "doops_k8s", k8sArgs, "dev", "node"); got != "k8s:kz-ops/deployment/example" {
 		t.Fatalf("k8s resource key mismatch: %q", got)
 	}
-	k8sAliasArgs := json.RawMessage(`{"operation":"scale","namespace":"kz-ops","resource":"deploy/doops-release-runner"}`)
+	k8sAliasArgs := json.RawMessage(`{"operation":"scale","namespace":"kz-ops","resource":"deploy/example"}`)
 	if got := resourceKeyForTool(ActionExec, "doops_k8s", k8sAliasArgs, "dev", "node"); got != "target-mutation:dev/node" {
 		t.Fatalf("k8s alias resource key mismatch: %q", got)
 	}
