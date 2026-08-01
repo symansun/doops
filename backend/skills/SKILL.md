@@ -182,7 +182,7 @@ doops targets --target unicom
 | 推送本地目录 | `doops -session <s> push --target <t> --src <dir>` |
 | 拉取远端工作区 | `doops -session <s> pull --target <t> --dest <dir>` |
 | 小文本读写 | `doops read/write ...` |
-| 工作区清理 | `doops -session <s> clean --target <t>` |
+| 工作区清理 | `doops -session <s> clean --target <t> --workspace <s>` |
 | 预演 agent 升级 | `doops -session <s> upgrade ... --dry-run` |
 | 管理员签发 token | `doops admin token create --target <t> --user <u> --name <label> --expires 720h` |
 | 管理员查看 token | `doops admin token list --target <t>` |
@@ -202,6 +202,29 @@ doops admin token create \
 
 `--target` 负责选择 gateway 地址和当前管理员登录态。新 token 只打印一次；如需把新 token 设为该 Gateway 的统一登录态，显式加 `--save-as <target-name>`。
 轮换时先创建并缓存新 token，再用 `admin token list` 按 ID/前缀确认旧 token，最后执行 `admin token revoke`。管理员 token 不得通过命令行参数传入。
+
+## Gateway 用户创建与目标授权
+
+创建用户、设置密码或授权 target 前，完整读取
+`docs/DOOPS_USAGE_GUIDE.md` 的“Gateway Users And Target Grants”和
+`docs/DOOPS_API_GUIDE.md` 的对应管理员 API。当前 CLI 尚未封装 user/grant 子命令；使用
+HTTPS Gateway 管理 API，不要 SSH 到 Gateway 或直接修改数据库。
+
+- 先用 `doops list` 和 `doops targets --target <t>` 确认用户请求对应的精确
+  `cluster/instance`，并确认同名用户是否已存在。已存在时不要重复创建。
+- 创建普通用户必须发送 `admin:false`。当前 `POST /v1/admin/users` 仍会自动创建一条
+  `*/*` 标准操作 grant；在删除该通配 grant 并完成复核前，不得交付账号或 token。
+- 创建后立即列出该用户的 grant，删除所有 `cluster="*"`、`instance="*"` 或包含
+  action `"*"` 的规则，再为每个允许 target 添加显式 actions。不要省略 `actions`，因为
+  空列表会展开为默认权限集合。
+- 普通机器操作使用 `targets:list,exec,ask,read,write,push,pull,info,check,clean`。
+  `credential:*`、`agent:upgrade` 和 `admin` 只有在用户明确需要时才单独授权。
+- 任一步在通配 grant 删除前失败，立即通过 `/v1/admin/users/disable` 停用新用户，然后
+  报告未完成；不要让半完成账号保持可登录状态。
+- 最终复核用户启用、密码存在、`is_admin=false`、grant 数量和精确 scope/actions，且
+  wildcard grant 数为 0。使用隔离的 `DOOPS_CONFIG` 登录新用户，验证允许 target 的只读
+  命令成功、至少一个未授权 sibling target 被拒绝；清理验证 workspace，并按 token ID
+  撤销验证登录 token，不要覆盖本机管理员登录态。
 
 完整命令说明见 `docs/DOOPS_USAGE_GUIDE.md`；发布见
 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`；凭据完整生命周期见 `docs/CREDENTIAL_RESOURCES.md`。
