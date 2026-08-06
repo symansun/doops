@@ -481,7 +481,7 @@ if [ "$1" = "status" ]; then
   exit 1
 fi
 for arg in "$@"; do
-  if [ "$arg" = "--dry-run" ]; then
+  if [ "$arg" = "--dry-run=server" ]; then
     echo 'cannot overwrite table with non table' >&2
     exit 1
   fi

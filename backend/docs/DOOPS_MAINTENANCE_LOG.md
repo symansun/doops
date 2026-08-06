@@ -2,6 +2,15 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-08-06 Server-Side Helm Preflight
+
+- Helm `upgrade-install` preflight now uses `--dry-run=server` so charts that depend on `lookup`
+  validate against the same live cluster objects used by the real mutation.
+- Client-side dry-run previously returned empty `lookup` results and falsely rejected valid
+  ConfigMap-backed releases before any mutation.
+- The preflight remains fail-closed and still runs with the exact release arguments before the
+  real Helm command.
+
 ## 2026-07-22 Agent SSH Client Runtime Contract
 
 - Root cause: `Dockerfile.base.light` explicitly removed `openssh-client` together with the
