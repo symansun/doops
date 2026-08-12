@@ -870,6 +870,11 @@ func stageSnapshot(src, tmpDir string, extraExcludes []string, dryRun bool) ([]s
 	}
 
 	allExcludes := dedupePatterns(append(append([]string{}, defaultExcludes...), extraExcludes...))
+	submoduleExcludes, err := gitSubmoduleExcludes(src)
+	if err != nil {
+		return nil, err
+	}
+	allExcludes = dedupePatterns(append(allExcludes, submoduleExcludes...))
 	candidates, err := walkSourceFiles(src, allExcludes)
 	if err != nil {
 		return nil, err
@@ -987,6 +992,59 @@ func walkSourceFiles(root string, excludes []string) ([]string, error) {
 		return nil, err
 	}
 	return files, nil
+}
+
+func gitSubmoduleExcludes(src string) ([]string, error) {
+	repoRoot, repoPrefix, ok := detectGitRepo(src)
+	if !ok {
+		return nil, nil
+	}
+
+	cmd := exec.Command("git", "-C", repoRoot, "ls-files", "-z", "--stage")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("读取 Git submodule 路径失败: %v", err)
+	}
+
+	var excludes []string
+	for _, record := range strings.Split(string(out), "\x00") {
+		if record == "" {
+			continue
+		}
+		metaAndPath := strings.SplitN(record, "\t", 2)
+		if len(metaAndPath) != 2 {
+			continue
+		}
+		fields := strings.Fields(metaAndPath[0])
+		if len(fields) == 0 || fields[0] != "160000" {
+			continue
+		}
+		rel, ok := repoPathWithinPrefix(filepath.ToSlash(metaAndPath[1]), repoPrefix)
+		if !ok || rel == "" || rel == "." {
+			continue
+		}
+		excludes = append(excludes, rel+"/")
+	}
+	return dedupePatterns(excludes), nil
+}
+
+func repoPathWithinPrefix(repoPath, repoPrefix string) (string, bool) {
+	repoPath = path.Clean(filepath.ToSlash(strings.TrimSpace(repoPath)))
+	repoPrefix = path.Clean(filepath.ToSlash(strings.TrimSpace(repoPrefix)))
+	if repoPath == "." {
+		return "", false
+	}
+	if repoPrefix == "." || repoPrefix == "" {
+		return repoPath, true
+	}
+	if repoPath == repoPrefix {
+		return ".", true
+	}
+	prefix := repoPrefix + "/"
+	if !strings.HasPrefix(repoPath, prefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(repoPath, prefix), true
 }
 
 func filterGitIgnored(src string, relPaths []string) ([]string, error) {

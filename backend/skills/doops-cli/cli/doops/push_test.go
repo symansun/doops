@@ -343,6 +343,62 @@ func TestStageSnapshotUsesGitIgnoreSemanticsAndKeepsTrackedFiles(t *testing.T) {
 	}
 }
 
+func TestStageSnapshotSkipsGitSubmodulesBeforeGitIgnoreFiltering(t *testing.T) {
+	root := t.TempDir()
+	submoduleSrc := filepath.Join(root, "submodule-src")
+	if err := os.MkdirAll(submoduleSrc, 0755); err != nil {
+		t.Fatalf("mkdir submodule source: %v", err)
+	}
+	runTestGit(t, submoduleSrc, "init", "-b", "main")
+	runTestGit(t, submoduleSrc, "config", "user.name", "doops")
+	runTestGit(t, submoduleSrc, "config", "user.email", "doops@localhost")
+	if err := os.WriteFile(filepath.Join(submoduleSrc, "nested.txt"), []byte("submodule\n"), 0644); err != nil {
+		t.Fatalf("write submodule fixture: %v", err)
+	}
+	runTestGit(t, submoduleSrc, "add", "nested.txt")
+	runTestGit(t, submoduleSrc, "commit", "-m", "submodule fixture")
+
+	src := filepath.Join(root, "src")
+	if err := os.MkdirAll(src, 0755); err != nil {
+		t.Fatalf("mkdir source: %v", err)
+	}
+	runTestGit(t, src, "init", "-b", "main")
+	runTestGit(t, src, "config", "user.name", "doops")
+	runTestGit(t, src, "config", "user.email", "doops@localhost")
+	runTestGit(t, src, "-c", "protocol.file.allow=always", "submodule", "add", submoduleSrc, "modules/vendor-lib")
+	if err := os.MkdirAll(filepath.Join(src, "modules", "ordinary-lib"), 0755); err != nil {
+		t.Fatalf("mkdir ordinary fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "modules", "ordinary-lib", "keep.txt"), []byte("ordinary\n"), 0644); err != nil {
+		t.Fatalf("write ordinary fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, ".gitignore"), []byte("ignored.txt\n"), 0644); err != nil {
+		t.Fatalf("write gitignore: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "ignored.txt"), []byte("ignored\n"), 0644); err != nil {
+		t.Fatalf("write ignored fixture: %v", err)
+	}
+	runTestGit(t, src, "add", ".gitignore", ".gitmodules", "modules/vendor-lib", "modules/ordinary-lib/keep.txt")
+	runTestGit(t, src, "commit", "-m", "fixture")
+
+	files, err := stageSnapshot(src, filepath.Join(root, "tmp"), nil, true)
+	if err != nil {
+		t.Fatalf("stage snapshot: %v", err)
+	}
+	if containsString(files, filepath.Join("modules", "vendor-lib", "nested.txt")) {
+		t.Fatalf("submodule content must not be included: %#v", files)
+	}
+	if containsString(files, filepath.Join("modules", "vendor-lib")) {
+		t.Fatalf("submodule gitlink must not be copied as a snapshot file: %#v", files)
+	}
+	if !containsString(files, filepath.Join("modules", "ordinary-lib", "keep.txt")) {
+		t.Fatalf("ordinary directory content must still be included: %#v", files)
+	}
+	if containsString(files, "ignored.txt") {
+		t.Fatalf("gitignored file must still be excluded: %#v", files)
+	}
+}
+
 func TestDetectGitRepoNormalizesTmpAliasPaths(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS /tmp -> /private/tmp alias only")
