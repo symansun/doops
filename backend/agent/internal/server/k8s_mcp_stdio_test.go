@@ -157,6 +157,21 @@ func TestBindK8SMCPSessionUsesRuntimeBinding(t *testing.T) {
 	}
 }
 
+func TestK8SMCPOperationAllowedNormalizesModelCasing(t *testing.T) {
+	for _, operation := range []string{"GET", " get ", "UPGRADE-INSTALL"} {
+		arguments, err := json.Marshal(map[string]string{"operation": operation})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !k8sMCPOperationAllowed(
+			arguments,
+			append([]string{"get"}, helmMutationOperations...),
+		) {
+			t.Fatalf("operation %q was rejected before executor normalization", operation)
+		}
+	}
+}
+
 func interfaceStrings(values []interface{}) []string {
 	result := make([]string, 0, len(values))
 	for _, value := range values {
