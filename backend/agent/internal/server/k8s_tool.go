@@ -85,10 +85,10 @@ func handleK8STool(ctx context.Context, raw json.RawMessage, push notificationSe
 }
 
 func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
-	params.Operation = strings.TrimSpace(params.Operation)
-	params.Kind = strings.TrimSpace(params.Kind)
+	params.Operation = strings.ToLower(strings.TrimSpace(params.Operation))
+	params.Kind = strings.ToLower(strings.TrimSpace(params.Kind))
 	params.Name = strings.TrimSpace(params.Name)
-	params.Resource = strings.TrimSpace(params.Resource)
+	params.Resource = normalizeK8SResource(params.Resource)
 	params.Namespace = strings.TrimSpace(params.Namespace)
 	params.Container = strings.TrimSpace(params.Container)
 	params.Output = strings.TrimSpace(params.Output)
@@ -264,9 +264,17 @@ func validK8SResource(resource string) bool {
 		k8sNamePattern.MatchString(parts[1])
 }
 
+func normalizeK8SResource(resource string) string {
+	parts := strings.Split(strings.TrimSpace(resource), "/")
+	if len(parts) != 2 {
+		return strings.TrimSpace(resource)
+	}
+	return strings.ToLower(strings.TrimSpace(parts[0])) + "/" + strings.TrimSpace(parts[1])
+}
+
 func k8sResourceKind(resource string) string {
 	kind, _, _ := strings.Cut(resource, "/")
-	return kind
+	return strings.ToLower(kind)
 }
 
 func validK8SOutput(output string) bool {

@@ -41,6 +41,35 @@ func TestBuildK8SCommandsBuildsNamedReadOnlyGet(t *testing.T) {
 	}
 }
 
+func TestBuildK8SCommandsNormalizesModelCasing(t *testing.T) {
+	commands, err := buildK8SCommands(api.K8SParams{
+		SessionID: "case-normalization",
+		Operation: "GET",
+		Kind:      "Deployment",
+		Namespace: "oilan",
+		Output:    "yaml",
+	})
+	if err != nil {
+		t.Fatalf("build uppercase k8s request: %v", err)
+	}
+	if got := strings.Join(commands[0].args, " "); got != "get deployment --namespace oilan --output yaml" {
+		t.Fatalf("normalized command = %q", got)
+	}
+
+	commands, err = buildK8SCommands(api.K8SParams{
+		SessionID: "resource-case-normalization",
+		Operation: "rollout-status",
+		Resource:  "Deployment/zhiyong",
+		Namespace: "oilan",
+	})
+	if err != nil {
+		t.Fatalf("build mixed-case resource request: %v", err)
+	}
+	if got := strings.Join(commands[0].args, " "); got != "rollout status deployment/zhiyong --namespace oilan" {
+		t.Fatalf("normalized resource command = %q", got)
+	}
+}
+
 func TestBuildK8SCommandsRejectsCredentialBearingKinds(t *testing.T) {
 	for _, params := range []api.K8SParams{
 		{SessionID: "read-only", Operation: "get", Kind: "secrets", Output: "yaml"},
