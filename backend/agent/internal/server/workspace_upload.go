@@ -812,7 +812,10 @@ func validateWorkspaceCommitBinding(sessionID, expectedCommit string) error {
 			return fmt.Errorf("read workspace Git status")
 		}
 		for _, line := range strings.Split(strings.TrimSpace(string(status)), "\n") {
-			if line == "" || line == "?? .doops-ready" {
+			if line == "" {
+				continue
+			}
+			if len(line) >= 4 && allowedWorkspaceRuntimePath(line[3:]) {
 				continue
 			}
 			return fmt.Errorf("workspace contains changes outside the authorized commit")
@@ -885,12 +888,19 @@ func validateBareWorkspaceCommitBinding(workspace, repoPath, expectedCommit stri
 		return fmt.Errorf("read workspace Git status")
 	}
 	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-		if line == "" || line == ".doops-ready" {
+		if line == "" || allowedWorkspaceRuntimePath(line) {
 			continue
 		}
 		return fmt.Errorf("workspace contains changes outside the authorized commit")
 	}
 	return nil
+}
+
+func allowedWorkspaceRuntimePath(value string) bool {
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, `"`)
+	value = filepath.ToSlash(filepath.Clean(value))
+	return value == ".doops-ready" || value == ".agent/sessions" || strings.HasPrefix(value, ".agent/sessions/")
 }
 
 func validWorkspaceGitCommit(value string) bool {

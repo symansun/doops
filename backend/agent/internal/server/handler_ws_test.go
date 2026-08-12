@@ -1164,6 +1164,27 @@ func TestWorkspaceCommitBindingRejectsDirtyAndUntrackedContent(t *testing.T) {
 	if err := validateWorkspaceCommitBinding(sessionID, commit); err != nil {
 		t.Fatalf("clean workspace binding rejected: %v", err)
 	}
+	sessionState := filepath.Join(workspace, ".agent", "sessions", "doagent-session.json")
+	if err := os.MkdirAll(filepath.Dir(sessionState), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sessionState, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateWorkspaceCommitBinding(sessionID, commit); err != nil {
+		t.Fatalf("agent runtime session state rejected: %v", err)
+	}
+	agentScratch := filepath.Join(workspace, ".agent", "scratch.json")
+	if err := os.WriteFile(agentScratch, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateWorkspaceCommitBinding(sessionID, commit); err == nil ||
+		!strings.Contains(err.Error(), "outside the authorized commit") {
+		t.Fatalf("non-session agent state was not rejected: %v", err)
+	}
+	if err := os.Remove(agentScratch); err != nil {
+		t.Fatal(err)
+	}
 	untracked := filepath.Join(workspace, "untracked.txt")
 	if err := os.WriteFile(untracked, []byte("untrusted\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -1220,6 +1241,27 @@ func TestBareWorkspaceCommitBindingRejectsDirtyAndUntrackedContent(t *testing.T)
 
 	if err := validateBareWorkspaceCommitBinding(workspace, bare, commit); err != nil {
 		t.Fatalf("clean bare workspace binding rejected: %v", err)
+	}
+	sessionState := filepath.Join(workspace, ".agent", "sessions", "doagent-session.json")
+	if err := os.MkdirAll(filepath.Dir(sessionState), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sessionState, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBareWorkspaceCommitBinding(workspace, bare, commit); err != nil {
+		t.Fatalf("agent runtime session state rejected: %v", err)
+	}
+	agentScratch := filepath.Join(workspace, ".agent", "scratch.json")
+	if err := os.WriteFile(agentScratch, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBareWorkspaceCommitBinding(workspace, bare, commit); err == nil ||
+		!strings.Contains(err.Error(), "outside the authorized commit") {
+		t.Fatalf("non-session agent state was not rejected: %v", err)
+	}
+	if err := os.Remove(agentScratch); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("modified\n"), 0o600); err != nil {
 		t.Fatal(err)
