@@ -404,6 +404,7 @@ func TestRunHelmCommandStreamsExistingValuesBeforeExplicitFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	argsFile := filepath.Join(root, "args")
+	preflightArgsFile := filepath.Join(root, "preflight-args")
 	stdinFile := filepath.Join(root, "stdin")
 	helm := filepath.Join(root, "helm")
 	if err := os.WriteFile(helm, []byte(`#!/bin/sh
@@ -416,6 +417,13 @@ if [ "$1" = "get" ] && [ "$2" = "values" ]; then
   printf '%s\n' '{"large":9007199254740993,"gateway":{"cluster":"prod"},"image":{"tag":"legacy","pullPolicy":"Always"}}'
   exit 0
 fi
+for arg in "$@"; do
+  if [ "$arg" = "--dry-run=server" ]; then
+    printf '%s\n' "$@" >"${PREFLIGHT_ARGS_FILE}"
+    cat >/dev/null
+    exit 0
+  fi
+done
 printf '%s\n' "$@" >"${ARGS_FILE}"
 cat >"${STDIN_FILE}"
 `), 0o755); err != nil {
@@ -423,6 +431,7 @@ cat >"${STDIN_FILE}"
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("ARGS_FILE", argsFile)
+	t.Setenv("PREFLIGHT_ARGS_FILE", preflightArgsFile)
 	t.Setenv("STDIN_FILE", stdinFile)
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 
@@ -444,6 +453,15 @@ cat >"${STDIN_FILE}"
 	args, err := os.ReadFile(argsFile)
 	if err != nil {
 		t.Fatal(err)
+	}
+	preflightArgs, err := os.ReadFile(preflightArgsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preflightArgLines := strings.Split(strings.TrimSpace(string(preflightArgs)), "\n")
+	if !slices.Contains(preflightArgLines, "--dry-run=server") ||
+		slices.Contains(preflightArgLines, "--dry-run") {
+		t.Fatalf("helm preflight must be server-side: %q", preflightArgLines)
 	}
 	argLines := strings.Split(strings.TrimSpace(string(args)), "\n")
 	stdinIndex := slices.Index(argLines, "-")
