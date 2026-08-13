@@ -1989,8 +1989,16 @@ func subscribeDoagentSSEWithCollectorReady(
 
 			case "error":
 				errMsg := "doagent_execution_failed"
+				if params != nil {
+					for _, key := range []string{"error", "failureReason", "message", "reason"} {
+						if value, ok := params[key].(string); ok && strings.TrimSpace(value) != "" {
+							errMsg = sanitizeSecretText(value)
+							break
+						}
+					}
+				}
 				pushProgress(errorNotification("[error] " + errMsg))
-				return errors.New(errMsg)
+				return fmt.Errorf("doagent execution failed: %s", errMsg)
 
 			default:
 				// 其他事件（session/update chunks 等）静默处理

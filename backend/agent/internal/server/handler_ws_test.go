@@ -952,6 +952,29 @@ func TestSubscribeDoagentSSEReturnsTurnFinishedError(t *testing.T) {
 	}
 }
 
+func TestSubscribeDoagentSSEPreservesErrorEventMessage(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/events" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"error","params":{"error":"error decoding response body"}}`)
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	var progress strings.Builder
+	err := subscribeDoagentSSE(t.Context(), ts.URL, "error-event", func(evt notificationEvent) {
+		progress.WriteString(evt.Data)
+	})
+	if err == nil || !strings.Contains(err.Error(), "error decoding response body") {
+		t.Fatalf("error event must preserve the original message, got %v", err)
+	}
+	if !strings.Contains(progress.String(), "error decoding response body") {
+		t.Fatalf("error progress must preserve the original message, got %q", progress.String())
+	}
+}
+
 func TestSubscribeDoagentSSEWaitsForAuthoritativeFailedTurn(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/events" {
