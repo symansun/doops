@@ -113,6 +113,38 @@ func TestBuildHelmUpgradeInstallUsesReleaseTagFromValuesWithoutSetStrings(t *tes
 	}
 }
 
+func TestBuildHelmUpgradeInstallNormalizesOperationName(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "release")
+	chart := filepath.Join(workspace, "deploy", "helm", "app")
+	if err := os.MkdirAll(chart, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(chart, "values.yaml"),
+		[]byte("image:\n  repository: registry.example/app\n  tag: release-20260719\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+
+	command, err := buildHelmCommand(api.HelmParams{
+		SessionID: "release",
+		Operation: "UPGRADE-INSTALL",
+		Release:   "app",
+		Chart:     "deploy/helm/app",
+		Namespace: "apps",
+		Confirm:   true,
+	})
+	if err != nil {
+		t.Fatalf("build normalized helm command: %v", err)
+	}
+	if !slices.Contains(command.args, "upgrade") {
+		t.Fatalf("normalized operation did not build an upgrade command: %q", command.args)
+	}
+}
+
 func TestBuildHelmUpgradeInstallRejectsUncontrolledValuesImageInputs(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "release")

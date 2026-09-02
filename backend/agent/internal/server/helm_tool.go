@@ -63,7 +63,7 @@ func handleHelmTool(ctx context.Context, raw json.RawMessage, push notificationS
 
 func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 	params.SessionID = strings.TrimSpace(params.SessionID)
-	params.Operation = strings.TrimSpace(params.Operation)
+	params.Operation = strings.ToLower(strings.TrimSpace(params.Operation))
 	params.Release = strings.TrimSpace(params.Release)
 	params.Chart = strings.TrimSpace(params.Chart)
 	params.Namespace = strings.TrimSpace(params.Namespace)
