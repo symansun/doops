@@ -43,6 +43,8 @@ const (
 	ActionCredentialRevoke   GatewayAction = "credential:revoke"
 	ActionCredentialAudit    GatewayAction = "credential:audit"
 	ActionAdmin              GatewayAction = "admin"
+	ActionEdgeAdmin          GatewayAction = "edge:admin"
+	ActionEdgeView           GatewayAction = "edge:view"
 )
 
 var defaultGatewayUserActions = []GatewayAction{
@@ -494,6 +496,9 @@ func (s *GatewayStore) migrate() error {
 		return err
 	}
 	if err := s.migrateCredentialBundleItems(); err != nil {
+		return err
+	}
+	if err := s.migrateEdge(); err != nil {
 		return err
 	}
 	if err := s.ensureColumn("users", "password_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {

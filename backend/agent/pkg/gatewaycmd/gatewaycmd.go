@@ -49,6 +49,8 @@ func serve(args []string) {
 	targetQueueTimeout := fs.Duration("target-queue-timeout", 2*time.Minute, "How long an operation waits for a busy target")
 	maxQueuedPerTarget := fs.Int("max-queued-per-target", 8, "Maximum queued operations per target; negative disables queueing")
 	schedulerTick := fs.Duration("scheduler-tick", time.Minute, "How often the issue-scheduler checks for due jobs; 0 disables the scheduler")
+	edgeListen := fs.String("edge-listen", "", "TCP listen address for Edge public traffic; empty disables it")
+	edgeProxyProtocol := fs.Bool("edge-proxy-protocol", true, "Require PROXY protocol on Edge listener (must be true behind nginx stream)")
 	fs.Parse(args)
 
 	store, err := server.OpenGatewayStore(*dbPath)
@@ -77,7 +79,16 @@ func serve(args []string) {
 	log.Printf("🌉 doops-gateway starting on :%s", *port)
 	log.Printf("   database: %s", *dbPath)
 	log.Printf("   agent endpoint: ws://127.0.0.1:%s/v1/agent/connect", *port)
+	log.Printf("   edge endpoint:  ws://127.0.0.1:%s/v1/edge/connect", *port)
 	log.Printf("   client endpoint: ws://127.0.0.1:%s/v1/rpc?cluster=<cluster>&instance=<instance>", *port)
+	if strings.TrimSpace(*edgeListen) != "" {
+		listener, err := hub.StartEdgeListener(*edgeListen, *edgeProxyProtocol)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer listener.Close()
+		log.Printf("   edge listen: %s proxy_protocol=%v", listener.Addr, *edgeProxyProtocol)
+	}
 	if err := http.ListenAndServe(":"+*port, mux); err != nil {
 		log.Fatal(err)
 	}

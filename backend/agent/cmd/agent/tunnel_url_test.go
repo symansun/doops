@@ -91,6 +91,24 @@ func TestBuildGatewayAgentURLDefaultsToSecureScheme(t *testing.T) {
 	}
 }
 
+func TestBuildGatewayEdgeURLRewritesAgentPath(t *testing.T) {
+	got, err := buildGatewayEdgeURL("https://gateway.example.com", "jm", "gw-jm")
+	if err != nil {
+		t.Fatalf("build edge url: %v", err)
+	}
+	want := "wss://gateway.example.com/v1/edge/connect?cluster=jm&instance=gw-jm"
+	if got != want {
+		t.Fatalf("edge URL mismatch\nwant: %s\n got: %s", want, got)
+	}
+	got, err = buildGatewayEdgeURL("https://gateway.example.com/v1/agent/connect", "jm", "gw-jm")
+	if err != nil {
+		t.Fatalf("rewrite agent path: %v", err)
+	}
+	if got != want {
+		t.Fatalf("rewritten edge URL mismatch\nwant: %s\n got: %s", want, got)
+	}
+}
+
 func TestBuildGatewayAgentURLAllowsInsecureLocalhostForDevelopment(t *testing.T) {
 	got, err := buildGatewayAgentURL("http://localhost:42222", "dev", "local")
 	if err != nil {

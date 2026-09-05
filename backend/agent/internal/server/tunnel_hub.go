@@ -37,6 +37,7 @@ type GatewayHub struct {
 	registry     *AgentRegistry
 	registration *AgentRegistrationHandler
 	client       *ClientService
+	edge         *EdgeRegistry
 
 	scheduler            *Scheduler
 	credentialMutationMu sync.Mutex
@@ -439,6 +440,11 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	)
 	hub.client = NewClientService(store, registry, opts)
 	hub.client.hub = hub
+	edge, err := NewEdgeRegistry(store)
+	if err != nil {
+		panic(err)
+	}
+	hub.edge = edge
 	if err := store.RetireRunningUpgradeOperations(directAgentUpgradeProhibited); err != nil {
 		panic(err)
 	}
@@ -448,6 +454,7 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/auth/login", h.HandleAuthLogin)
 	mux.HandleFunc("/v1/agent/connect", h.HandleAgentConnect)
+	mux.HandleFunc("/v1/edge/connect", h.HandleEdgeConnect)
 	mux.HandleFunc("/v1/rpc", h.HandleClientRPC)
 	mux.HandleFunc("/v1/git/", h.HandleGitHTTP)
 	mux.HandleFunc("/v1/targets", h.HandleTargets)
