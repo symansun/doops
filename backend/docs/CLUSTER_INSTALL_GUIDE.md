@@ -6,7 +6,30 @@
 
 ## 模式一：Kubernetes / K3s 集群部署 (推荐)
 
-在完整的 K8s/K3s 体系下，推荐将 Agent 作为 **DaemonSet** 运行在特权模式下，以确保每个计算节点都被接管管控，并利用集群原生认证。
+标准一键安装走 Helm chart `deploy/helm/doops-agent`。先在目标 namespace 创建
+`doagentSettings` 指向的 Secret，再给出完整 values（gateway、workload、nodeSelector、
+volumeMounts、volumes），由操作机 kubeconfig 执行：
+
+```bash
+bash scripts/install-managed-agent.sh \
+  --release doops-agent \
+  --namespace doops-system \
+  --values /path/to/complete-values.yaml \
+  --version <vX.Y.Z>
+```
+
+已有 Helm release 的升级不要用 `kubectl apply` 或 `kubectl set image`，走：
+
+```bash
+bash scripts/upgrade-managed-agent.sh \
+  --target <configured-target> \
+  --session agent-upgrade-<tag> \
+  --release doops-agent \
+  --namespace doops-system \
+  --version <vX.Y.Z>
+```
+
+在完整的 K8s/K3s 体系下，也可以将 Agent 作为 **DaemonSet** 运行在特权模式下，以确保每个计算节点都被接管管控，并利用集群原生认证。下面的 `agent.yaml` 路径只用于尚未迁到 Helm 的遗留集群。
 
 ### 1. 配置 `agent.yaml`
 

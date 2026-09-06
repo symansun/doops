@@ -133,7 +133,29 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 
 受管 `doops-agent` 不得升级自身。Agent 升级必须由真实存在的外部 CI/GitOps controller
 执行，且 controller 在变更前后都要验证 Helm dry-run、rollout Ready、Gateway 注册和首次
-心跳。禁止为此创建临时 Agent、临时 target 或临时 release-runner。
+心跳。禁止为此创建临时 Agent、临时 target 或临时 release-runner。运维笔记本电脑上的
+一键脚本是这个外部 controller：
+
+```bash
+# 已有 Helm release：由当前 agent 前台执行 helm --wait=false，笔记本等待重连
+bash scripts/upgrade-managed-agent.sh \
+  --target <configured-target> \
+  --session agent-upgrade-<tag> \
+  --release <helm-release> \
+  --namespace <namespace> \
+  --version <vX.Y.Z>
+
+# 新集群：本机 kubeconfig 上 helm --wait 安装，不经过 doops target
+bash scripts/install-managed-agent.sh \
+  --release <helm-release> \
+  --namespace <namespace> \
+  --values /path/to/complete-values.yaml \
+  --version <vX.Y.Z>
+```
+
+`upgrade-managed-agent.sh` 会拒绝自定义 entrypoint（例如 ConfigMap
+`/scripts/entrypoint.sh`）和未纳入 Helm 的 Deployment。不要用 `kubectl set image`
+或 Job 绕过这条检查。
 
 单副本 Agent 的 home 目录包含 doagent SQLite 状态，不能让新旧 Pod 同时挂载。Chart
 必须使用 `maxSurge=0`、`maxUnavailable=1`；否则滚动窗口会产生 `database is locked`，

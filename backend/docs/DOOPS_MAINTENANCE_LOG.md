@@ -2,6 +2,17 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-09-06 One-click Helm agent install and upgrade
+
+- Added `scripts/install-managed-agent.sh` for first install from an operator
+  kubeconfig, and `scripts/upgrade-managed-agent.sh` for an existing Helm release.
+- Upgrade is laptop-driven: push `deploy/helm/doops-agent`, require live
+  `sandbox-entrypoint.sh`, run foreground `helm --wait=false`, then wait for
+  Gateway reconnect. This is the external controller; it is not a release-runner
+  and it will not `kubectl set image`.
+- CLI one-click remains `scripts/install.sh --version <tag>`. Tagged releases
+  still come from `$:` `tag_push` / `publish-release`.
+
 ## 2026-08-06 Server-Side Helm Preflight
 
 - Helm `upgrade-install` preflight now uses `--dry-run=server` so charts that depend on `lookup`

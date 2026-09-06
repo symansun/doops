@@ -388,9 +388,11 @@ prompt、doagent 上下文和 metadata binding 不接收凭据 payload。完整�
 [docs/CREDENTIAL_RESOURCES.md](docs/CREDENTIAL_RESOURCES.md)。
 
 `doops upgrade` 仅用于 doops-agent 自身升级的 dry-run 预览，非 dry-run 请求会在分发前
-被拒绝。普通业务 workload 由 target 指向的 Agent/doagent 执行发布；承载执行者自身的
-doops-agent workload 必须由另一个隔离 Agent target 或真实存在的外部 CI/GitOps
-controller 执行。正式发布统一使用 Gateway 上的 `doops ask --apply`；CI 可以在镜像
+被拒绝。Helm 托管 Agent 的正式替换走笔记本一键脚本
+`scripts/upgrade-managed-agent.sh`（前台 `helm --wait=false`）或
+`scripts/install-managed-agent.sh`（新集群本机 kubeconfig）。普通业务 workload 由
+target 指向的 Agent/doagent 执行发布；不要用 Job/`kubectl set image` 改 Agent。
+正式业务发布统一使用 Gateway 上的 `doops ask --apply`；CI 可以在镜像
 构建成功后调用同一自然语言入口，但不拥有另一套环境注册表或结构化发布协议。
 
 ## 常用命令

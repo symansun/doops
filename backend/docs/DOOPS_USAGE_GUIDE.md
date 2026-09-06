@@ -407,6 +407,27 @@ resourceVersion、digest 和稳定错误类别。Grant scope 是全字段精确�
 
 ## Upgrade
 
+CLI 一键安装或更新：
+
+```bash
+bash scripts/install.sh --version <vX.Y.Z> --project "$PWD"
+```
+
+Helm 托管 Agent 的一键升级由笔记本执行。脚本会先确认现网 command 仍是
+`/app/sandbox-entrypoint.sh`，再前台 `helm upgrade --install --wait=false`，最后等待
+Gateway 重连并核验 digest：
+
+```bash
+bash scripts/upgrade-managed-agent.sh \
+  --target gw-edu-coder \
+  --session agent-upgrade-<tag> \
+  --release doops-agent-live \
+  --namespace kz-ops \
+  --version <vX.Y.Z>
+```
+
+`doops upgrade` 只做预演：
+
 ```bash
 doops -session upgrade_20260519 upgrade \
   --target unicom \
@@ -420,9 +441,9 @@ doops -session upgrade_20260519 upgrade \
 
 When `--target` is given, its configured `cluster/instance` is the default
 preview scope. Direct Agent self-upgrade is prohibited: `upgrade` requires
-`--dry-run`. Apply the reviewed doops-agent image change from another isolated
-Agent target or an external CI/GitOps controller so the old Agent remains
-available until the replacement has registered and produced a heartbeat.
+`--dry-run`. Apply the reviewed doops-agent image change with
+`scripts/upgrade-managed-agent.sh` so the old Agent remains available until the
+replacement has registered and produced a heartbeat.
 
 ## BuildKit Example
 
