@@ -236,9 +236,10 @@ if [[ ! -f deploy/helm/doops-agent/Chart.yaml ]]; then
   exit 1
 fi
 if command -v nerdctl >/dev/null 2>&1; then
-  nerdctl -n k8s.io pull $(printf '%q' "${DOOPS_IMAGE}") || nerdctl pull $(printf '%q' "${DOOPS_IMAGE}")
-elif command -v docker >/dev/null 2>&1; then
-  docker pull $(printf '%q' "${DOOPS_IMAGE}")
+  nerdctl -n k8s.io pull $(printf '%q' "${DOOPS_IMAGE}") || nerdctl pull $(printf '%q' "${DOOPS_IMAGE}") || true
+fi
+if command -v docker >/dev/null 2>&1; then
+  docker pull $(printf '%q' "${DOOPS_IMAGE}") || true
 fi
 python3 - $(printf '%q' "${RELEASE}") $(printf '%q' "${NAMESPACE}") $(printf '%q' "${DOOPS_IMAGE_REPOSITORY}") $(printf '%q' "${DOOPS_IMAGE_DIGEST}") <<'PY'
 import json, subprocess, sys

@@ -20,6 +20,8 @@ def test_managed_agent_upgrade_is_laptop_helm_with_wait_false():
     assert "kubectl set image" not in text
     assert "doops exec --bg" not in text
     assert "helm upgrade --install" in text
+    assert "nerdctl -n k8s.io pull" in text
+    assert "docker pull" in text
     assert "sandbox-entrypoint.sh" in text
     assert "refusing to replace a custom entrypoint" in text
     assert "deploy/helm/doops-agent" in text
