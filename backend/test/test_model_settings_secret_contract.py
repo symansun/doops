@@ -212,7 +212,7 @@ def test_oilan_agent_model_settings_are_secret_backed(tmp_path):
     assert deployment["metadata"]["namespace"] == "kz-ops"
     assert deployment["spec"]["strategy"] == {
         "type": "RollingUpdate",
-        "rollingUpdate": {"maxUnavailable": 1, "maxSurge": 0},
+        "rollingUpdate": {"maxUnavailable": 0, "maxSurge": 1},
     }
     assert "hostNetwork" not in deployment["spec"]["template"]["spec"]
     assert all("hostPort" not in port for port in container["ports"])

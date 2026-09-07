@@ -313,71 +313,21 @@ doops -session smoke ask --target prod-master --msg '用一句话说明当前机
 不是日常 DoOps 连接方式。该限制不适用于在线 Agent 通过 `doops exec` 代理的出站
 SSH 命令；用户可以显式要求它执行任意 SSH 客户端命令。
 
-### 安装前先判断当前形态
+Agent 的安装和升级只有一条命令，见
+[docs/CLUSTER_INSTALL_GUIDE.md](docs/CLUSTER_INSTALL_GUIDE.md)：
 
 ```bash
-kubectl get pod -A -l app=doops-agent -o wide 2>/dev/null || true
-docker ps --format '{{.Names}} {{.Image}} {{.Ports}}' 2>/dev/null | grep doops-agent || true
-nerdctl ps --format '{{.Names}} {{.Image}} {{.Ports}}' 2>/dev/null | grep doops-agent || true
-ps -ef | grep '[d]oops-agent' || true
-ss -lntp | grep ':42222' || true
+bash scripts/release-managed-agent.sh \
+  --release doops-agent \
+  --namespace doops-system \
+  --values /path/to/complete-values.yaml \
+  --version <vX.Y.Z>
 ```
 
-判断规则：
+已在线节点把 `--values` 换成 `--target` / `--session`。不要用 `agent.yaml`、
+`kubectl set image` 或 `docker run` 发版。
 
-- 有 Pod：按 K8s/DaemonSet 管理。
-- 有名为 `doops-agent` 的容器：按容器模式管理。
-- 只有 `/usr/local/bin/doops-agent -port ...` 进程：这是裸二进制直装，不是容器化安装。
-- 只有端口监听但 WebSocket EOF：通常是旧 agent、启动参数不匹配，或被错误进程占用了 42222。
-
-### 方式 A：K8s/DaemonSet 标准安装
-
-适合当前仓库默认的 K3s/containerd 布局。
-
-```bash
-kubectl create namespace doops-system --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n doops-system apply -f agent/agent-config.yaml
-kubectl -n doops-system apply -f agent/agent.yaml
-```
-
-### 方式 B：Docker/nerdctl 容器标准安装
-
-适合没有 DaemonSet、但可以在宿主机跑容器的节点。容器名必须使用标准名 `doops-agent`。
-
-```bash
-docker run -d --name doops-agent \
-  --privileged --pid=host --network=host \
-  --restart=unless-stopped \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /root/.kube:/root/.kube:ro \
-  -v /etc/kubernetes:/etc/kubernetes:ro \
-  -v /path/to/doagent-model-settings.json:/opt/doagent_config/settings.json:ro \
-  docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI> \
-  -port 42222 \
-  -gateway-url https://gateway.example.com \
-  -cluster prod \
-  -instance master-1 \
-```
-
-如果目标环境使用 containerd/nerdctl，把 `docker run` 替换为 `nerdctl run`，参数保持一致。启动后验证：
-
-```bash
-docker ps --filter name=doops-agent
-docker logs --tail=100 doops-agent
-curl -fsS http://127.0.0.1:42222/health
-```
-
-### 方式 C：首次接入与自恢复
-
-CLI 不提供直连 Agent 安装入口。只启动未注册 Gateway 的 Agent 不能完成纳管，
-会制造“安装成功”的假象。
-
-首次接入或 Agent 自恢复时，可以用 SSH 把 **方式 A** 的 GitOps 清单或 **方式 B**
-的容器声明送到目标环境执行；运行态必须显式配置 `gateway-url`、`cluster` 和
-`instance`。只有 Gateway 已收到 heartbeat，且客户端通过 `doops targets --target
-<gateway-target>` 验证在线后，才允许用 `doops add` 写入 Gateway 路由。
-
-### 方式 D：维护者发布 `doops-agent`
+### 维护者发布业务 workload
 
 发布者通过 `doops ask --apply` 提交明确授权的自然语言任务。任务必须直接给出 Gateway
 target、服务范围、不可变镜像 digest、变更原因和验收条件；需要凭据时仅以可重复的
@@ -388,11 +338,9 @@ prompt、doagent 上下文和 metadata binding 不接收凭据 payload。完整�
 [docs/CREDENTIAL_RESOURCES.md](docs/CREDENTIAL_RESOURCES.md)。
 
 `doops upgrade` 仅用于 doops-agent 自身升级的 dry-run 预览，非 dry-run 请求会在分发前
-被拒绝。Helm 托管 Agent 的正式替换走笔记本一键脚本
-`scripts/upgrade-managed-agent.sh`（前台 `helm --wait=false`）或
-`scripts/install-managed-agent.sh`（新集群本机 kubeconfig）。普通业务 workload 由
-target 指向的 Agent/doagent 执行发布；不要用 Job/`kubectl set image` 改 Agent。
-正式业务发布统一使用 Gateway 上的 `doops ask --apply`；CI 可以在镜像
+被拒绝。Helm 托管 Agent 的正式替换只走 `scripts/release-managed-agent.sh`。普通业务
+workload 由 target 指向的 Agent/doagent 执行发布；不要用 Job/`kubectl set image` 改
+Agent。正式业务发布统一使用 Gateway 上的 `doops ask --apply`；CI 可以在镜像
 构建成功后调用同一自然语言入口，但不拥有另一套环境注册表或结构化发布协议。
 
 ## 常用命令

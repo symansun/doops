@@ -1,0 +1,422 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Release a Helm-managed doops-agent. This is the only Agent install/upgrade path.
+
+Helm chart deploy/helm/doops-agent starts the replacement Pod first
+(maxSurge=1, maxUnavailable=0). The live Agent keeps serving until the new Pod
+is Ready and has replaced the Gateway session. kubectl set-image, docker
+restart, Jobs, release-runners, and doops upgrade apply are not release
+methods.
+
+Existing cluster (DoOps target already online):
+
+  bash scripts/release-managed-agent.sh \
+    --target gw-edu-coder \
+    --session agent-release-v1.3.0 \
+    --release doops-agent-live \
+    --namespace kz-ops \
+    --version v1.3.0
+
+New cluster (operator kubeconfig, complete values, no Agent yet):
+
+  bash scripts/release-managed-agent.sh \
+    --release doops-agent \
+    --namespace doops-system \
+    --values /path/to/complete-values.yaml \
+    --version v1.3.0
+
+Required:
+  --release NAME
+  --namespace NAME
+  --image REPO@sha256:<digest>   or  --version vX.Y.Z
+
+Existing cluster also requires:
+  --target NAME
+  --session NAME
+
+New cluster also requires:
+  --values FILE
+
+Options:
+  --chart-dir PATH     Default: deploy/helm/doops-agent
+  --kubeconfig PATH    For --values / new-cluster Helm. Default: $KUBECONFIG
+  --timeout DURATION   Helm wait timeout for new-cluster installs. Default: 5m
+  --handoff-timeout SEC
+                       Seconds to wait for the live image to become the digest.
+                       Default: 600.
+  --dry-run            Preflight only
+  -h, --help
+EOF
+}
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=doops-release-image.sh
+source "${SCRIPT_DIR}/doops-release-image.sh"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+TARGET=""
+SESSION=""
+RELEASE=""
+NAMESPACE=""
+VALUES=""
+VERSION=""
+IMAGE=""
+CHART_DIR="${REPO_ROOT}/deploy/helm/doops-agent"
+KUBECONFIG_PATH="${KUBECONFIG:-}"
+TIMEOUT="5m"
+HANDOFF_TIMEOUT="600"
+DRY_RUN=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --target)
+      TARGET="${2:-}"
+      shift 2
+      ;;
+    --session)
+      SESSION="${2:-}"
+      shift 2
+      ;;
+    --release)
+      RELEASE="${2:-}"
+      shift 2
+      ;;
+    --namespace)
+      NAMESPACE="${2:-}"
+      shift 2
+      ;;
+    --values)
+      VALUES="${2:-}"
+      shift 2
+      ;;
+    --version)
+      VERSION="${2:-}"
+      shift 2
+      ;;
+    --image)
+      IMAGE="${2:-}"
+      shift 2
+      ;;
+    --chart-dir)
+      CHART_DIR="${2:-}"
+      shift 2
+      ;;
+    --kubeconfig)
+      KUBECONFIG_PATH="${2:-}"
+      shift 2
+      ;;
+    --timeout)
+      TIMEOUT="${2:-}"
+      shift 2
+      ;;
+    --handoff-timeout)
+      HANDOFF_TIMEOUT="${2:-}"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+require_value() {
+  local name="$1"
+  local value="$2"
+  if [[ -z "${value}" ]]; then
+    echo "Error: ${name} is required" >&2
+    usage >&2
+    exit 2
+  fi
+}
+
+require_value "--release" "${RELEASE}"
+require_value "--namespace" "${NAMESPACE}"
+
+if [[ -n "${IMAGE}" && -n "${VERSION}" ]]; then
+  echo "Error: pass only one of --image or --version" >&2
+  exit 2
+fi
+if [[ -n "${IMAGE}" ]]; then
+  doops_parse_image_digest "${IMAGE}"
+elif [[ -n "${VERSION}" ]]; then
+  doops_resolve_release_tag "${VERSION}"
+else
+  echo "Error: --image or --version is required" >&2
+  usage >&2
+  exit 2
+fi
+
+if [[ ! "${HANDOFF_TIMEOUT}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Error: --handoff-timeout must be a positive integer" >&2
+  exit 2
+fi
+if [[ ! -f "${CHART_DIR}/Chart.yaml" || ! -f "${CHART_DIR}/templates/deployment.yaml" ]]; then
+  echo "Error: --chart-dir must be a doops-agent Helm chart" >&2
+  exit 1
+fi
+chart_template="${CHART_DIR}/templates/deployment.yaml"
+if ! grep -q '/app/sandbox-entrypoint.sh' "${chart_template}"; then
+  echo "Error: candidate chart is missing sandbox-entrypoint.sh" >&2
+  exit 1
+fi
+if ! grep -q 'maxUnavailable: 0' "${chart_template}" || ! grep -q 'maxSurge: 1' "${chart_template}"; then
+  echo "Error: candidate chart must hand off with maxUnavailable 0 and maxSurge 1" >&2
+  exit 1
+fi
+if grep -q 'hostNetwork:' "${chart_template}"; then
+  echo "Error: candidate chart must not set hostNetwork" >&2
+  exit 1
+fi
+
+echo "Release: ${RELEASE} / ${NAMESPACE}"
+echo "Image: ${DOOPS_IMAGE}"
+
+release_new_cluster() {
+  require_value "--values" "${VALUES}"
+  if [[ -n "${TARGET}" || -n "${SESSION}" ]]; then
+    echo "Error: new-cluster --values must not be mixed with --target/--session" >&2
+    exit 2
+  fi
+  if [[ ! -f "${VALUES}" ]]; then
+    echo "Error: --values file does not exist: ${VALUES}" >&2
+    exit 1
+  fi
+  command -v helm >/dev/null || {
+    echo "Error: helm is required on PATH" >&2
+    exit 1
+  }
+  command -v kubectl >/dev/null || {
+    echo "Error: kubectl is required on PATH" >&2
+    exit 1
+  }
+  export KUBECONFIG="${KUBECONFIG_PATH:-${KUBECONFIG:-}}"
+  helm_args=(
+    upgrade --install "${RELEASE}" "${CHART_DIR}"
+    --namespace "${NAMESPACE}"
+    --create-namespace
+    --values "${VALUES}"
+    --set-string "image.repository=${DOOPS_IMAGE_REPOSITORY}"
+    --set-string "image.digest=${DOOPS_IMAGE_DIGEST}"
+    --timeout "${TIMEOUT}"
+    --wait
+  )
+  echo "Values: ${VALUES}"
+  if [[ "${DRY_RUN}" == true ]]; then
+    helm "${helm_args[@]}" --dry-run=server
+    echo "Dry-run complete. Helm was not mutated."
+    exit 0
+  fi
+  helm "${helm_args[@]}"
+  workload="$(helm get values "${RELEASE}" -n "${NAMESPACE}" -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["workload"]["name"])')"
+  kubectl -n "${NAMESPACE}" rollout status "deployment/${workload}" --timeout "${TIMEOUT}"
+  echo "Release complete: ${RELEASE} -> ${DOOPS_IMAGE}"
+}
+
+release_existing_cluster() {
+  require_value "--target" "${TARGET}"
+  require_value "--session" "${SESSION}"
+  if [[ -n "${VALUES}" ]]; then
+    echo "Error: existing-cluster release reads live Helm values; do not pass --values" >&2
+    exit 2
+  fi
+  command -v doops >/dev/null || {
+    echo "Error: doops CLI is required on PATH" >&2
+    exit 1
+  }
+  command -v rsync >/dev/null || {
+    echo "Error: rsync is required to stage the Helm chart" >&2
+    exit 1
+  }
+
+  doops_cmd() {
+    doops -session "${SESSION}" "$@"
+  }
+
+  echo "Target: ${TARGET}"
+  echo "Session: ${SESSION}"
+  echo "==> checking target is online"
+  doops_cmd targets --target "${TARGET}" >/dev/null
+
+  echo "==> preflight: Helm release, sandbox-entrypoint, no hostNetwork"
+  doops_cmd exec --target "${TARGET}" --cmd "$(cat <<EOF
+set -eu
+if ! helm status $(printf '%q' "${RELEASE}") -n $(printf '%q' "${NAMESPACE}") >/dev/null; then
+  echo "Error: Helm release ${RELEASE} was not found in ${NAMESPACE}" >&2
+  echo "Adopt the workload onto deploy/helm/doops-agent before releasing." >&2
+  exit 1
+fi
+python3 - $(printf '%q' "${RELEASE}") $(printf '%q' "${NAMESPACE}") <<'PY'
+import json, subprocess, sys
+release, namespace = sys.argv[1], sys.argv[2]
+values = json.loads(subprocess.check_output(
+    ["helm", "get", "values", release, "-n", namespace, "-o", "json"],
+    text=True,
+))
+workload = ((values.get("workload") or {}).get("name") or "").strip()
+if not workload:
+    raise SystemExit("Error: Helm values are missing workload.name")
+deploy = json.loads(subprocess.check_output(
+    ["kubectl", "-n", namespace, "get", "deploy", workload, "-o", "json"],
+    text=True,
+))
+pod_spec = deploy["spec"]["template"]["spec"]
+if pod_spec.get("hostNetwork"):
+    raise SystemExit("Error: hostNetwork agents cannot hand off; refuse release")
+container = pod_spec["containers"][0]
+entry = " ".join(container.get("command") or []) + " " + " ".join(container.get("args") or [])
+if "/app/sandbox-entrypoint.sh" not in entry:
+    raise SystemExit(
+        "Error: live command is not sandbox-entrypoint.sh; refusing to replace a custom entrypoint"
+    )
+print("workload=" + workload)
+print("current_image=" + container.get("image", ""))
+PY
+EOF
+)"
+
+  if [[ "${DRY_RUN}" == true ]]; then
+    echo "Dry-run complete. No chart was pushed and Helm was not mutated."
+    exit 0
+  fi
+
+  stage="$(mktemp -d)"
+  trap 'rm -rf "${stage}"' EXIT
+  mkdir -p "${stage}/deploy/helm"
+  rsync -a "${CHART_DIR}/" "${stage}/deploy/helm/doops-agent/"
+
+  echo "==> pushing deploy/helm/doops-agent"
+  doops_cmd push --target "${TARGET}" --src "${stage}"
+
+  echo "==> pulling image, then Helm upgrade --install without waiting on the live Agent"
+  doops_cmd exec --target "${TARGET}" --cmd "$(cat <<EOF
+set -eu
+cd /root/ws/$(printf '%q' "${SESSION}")
+if [[ ! -f deploy/helm/doops-agent/Chart.yaml ]]; then
+  echo "Error: chart was not pushed to /root/ws/${SESSION}/deploy/helm/doops-agent" >&2
+  exit 1
+fi
+pulled=0
+if command -v nerdctl >/dev/null 2>&1; then
+  if nerdctl -n k8s.io pull $(printf '%q' "${DOOPS_IMAGE}") || nerdctl pull $(printf '%q' "${DOOPS_IMAGE}"); then
+    pulled=1
+  fi
+fi
+if [[ "\${pulled}" -eq 0 ]] && command -v docker >/dev/null 2>&1; then
+  if docker pull $(printf '%q' "${DOOPS_IMAGE}"); then
+    pulled=1
+  fi
+fi
+if [[ "\${pulled}" -eq 0 ]] && command -v crictl >/dev/null 2>&1; then
+  if crictl pull $(printf '%q' "${DOOPS_IMAGE}"); then
+    pulled=1
+  fi
+fi
+if [[ "\${pulled}" -eq 0 ]]; then
+  echo "Error: image pull failed; refuse to roll while the digest is not on this node" >&2
+  exit 1
+fi
+python3 - $(printf '%q' "${RELEASE}") $(printf '%q' "${NAMESPACE}") $(printf '%q' "${DOOPS_IMAGE_REPOSITORY}") $(printf '%q' "${DOOPS_IMAGE_DIGEST}") <<'PY'
+import json, subprocess, sys
+release, namespace, repository, digest = sys.argv[1:5]
+values = json.loads(subprocess.check_output(
+    ["helm", "get", "values", release, "-n", namespace, "-o", "json"],
+    text=True,
+))
+image = values.setdefault("image", {})
+image.pop("tag", None)
+image["repository"] = repository
+image["digest"] = digest
+with open("/tmp/doops-agent-release-values.json", "w", encoding="utf-8") as fh:
+    json.dump(values, fh)
+PY
+helm upgrade --install $(printf '%q' "${RELEASE}") deploy/helm/doops-agent \
+  -n $(printf '%q' "${NAMESPACE}") \
+  -f /tmp/doops-agent-release-values.json \
+  --timeout 5m \
+  --wait=false
+echo HELM_MUTATION_SUBMITTED
+EOF
+)"
+
+  echo "==> waiting for handoff; live target must keep serving"
+  deadline=$((SECONDS + HANDOFF_TIMEOUT))
+  offline_streak=0
+  while true; do
+    if (( SECONDS >= deadline )); then
+      echo "Error: live image did not become ${DOOPS_IMAGE} within ${HANDOFF_TIMEOUT}s" >&2
+      echo "The previous Agent must still be serving; inspect the new ReplicaSet." >&2
+      exit 1
+    fi
+    if ! doops -session "${SESSION}-wait" targets --target "${TARGET}" >/dev/null 2>&1; then
+      offline_streak=$((offline_streak + 5))
+      if (( offline_streak >= 30 )); then
+        echo "Error: target ${TARGET} went offline for 30s during handoff" >&2
+        exit 1
+      fi
+      sleep 5
+      continue
+    fi
+    offline_streak=0
+    if out="$(doops -session "${SESSION}-wait" exec --target "${TARGET}" --cmd "$(cat <<EOF
+python3 - $(printf '%q' "${NAMESPACE}") $(printf '%q' "${DOOPS_IMAGE}") <<'PY'
+import json, os, subprocess, sys
+namespace, expected = sys.argv[1], sys.argv[2]
+pod = os.environ.get("HOSTNAME", "")
+if not pod:
+    raise SystemExit(2)
+data = json.loads(subprocess.check_output(
+    ["kubectl", "-n", namespace, "get", "pod", pod, "-o", "json"],
+    text=True,
+))
+ready = False
+for cond in data.get("status", {}).get("conditions") or []:
+    if cond.get("type") == "Ready" and cond.get("status") == "True":
+        ready = True
+got = data["spec"]["containers"][0]["image"]
+print("pod=" + pod)
+print("pod_image=" + got)
+print("ready=" + str(ready).lower())
+if not ready or got != expected:
+    raise SystemExit(2)
+PY
+EOF
+)" 2>/dev/null)"; then
+      echo "${out}" | grep -v TARGETING || true
+      break
+    fi
+    sleep 5
+  done
+
+  echo "==> verifying replacement binary"
+  doops -session "${SESSION}-verify" exec --target "${TARGET}" --cmd "$(cat <<EOF
+set -eu
+/app/doops-agent -h >/tmp/doops-agent-help.txt 2>&1 || true
+if ! grep -q -- '-edge' /tmp/doops-agent-help.txt; then
+  echo "Error: released binary is missing -edge flags" >&2
+  exit 1
+fi
+echo "edge_flag=documented"
+hostname
+sha256sum /app/doops-agent
+EOF
+)"
+  echo "Release complete: ${TARGET} -> ${DOOPS_IMAGE}"
+}
+
+if [[ -n "${VALUES}" ]]; then
+  release_new_cluster
+else
+  release_existing_cluster
+fi

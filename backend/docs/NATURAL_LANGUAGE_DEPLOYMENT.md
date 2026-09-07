@@ -85,5 +85,4 @@ CNB CI 负责测试、构建和发布不可变制品。Gateway 负责鉴权、�
 实际业务 Helm/Kubernetes mutation 由 target 指向的 Agent/doagent 在目标运行环境执行。
 `doops-agent` 自身升级不能由自身连接执行，必须由真实存在的外部 CI/GitOps controller
 执行。DoOps 不创建临时 Agent、临时 target 或临时 release-runner。操作机上的
-`scripts/upgrade-managed-agent.sh` / `scripts/install-managed-agent.sh` 就是这条
-一键路径。
+`scripts/release-managed-agent.sh` 是唯一 Agent 发布命令。

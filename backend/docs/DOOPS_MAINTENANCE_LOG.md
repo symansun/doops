@@ -2,16 +2,20 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-09-07 Single agent handoff release
+
+- `deploy/helm/doops-agent` now uses `maxSurge=1` and `maxUnavailable=0` so the
+  live Agent keeps serving until the replacement Pod is Ready. Gateway Register
+  switches the session, then Kubernetes deletes the old replica.
+- There is one operator command: `scripts/release-managed-agent.sh`. Image pull
+  on the node must succeed before Helm. `hostNetwork` and custom entrypoints are
+  refused. `install-managed-agent.sh` and `upgrade-managed-agent.sh` are removed.
+- A 30s Gateway offline window during handoff is a release failure.
+
 ## 2026-09-06 One-click Helm agent install and upgrade
 
-- Added `scripts/install-managed-agent.sh` for first install from an operator
-  kubeconfig, and `scripts/upgrade-managed-agent.sh` for an existing Helm release.
-- Upgrade is laptop-driven: push `deploy/helm/doops-agent`, require live
-  `sandbox-entrypoint.sh`, run foreground `helm --wait=false`, then wait for
-  Gateway reconnect. This is the external controller; it is not a release-runner
-  and it will not `kubectl set image`.
-- CLI one-click remains `scripts/install.sh --version <tag>`. Tagged releases
-  still come from `$:` `tag_push` / `publish-release`.
+- Added laptop Helm scripts; superseded on 2026-09-07 by the single handoff
+  release command.
 
 ## 2026-08-06 Server-Side Helm Preflight
 

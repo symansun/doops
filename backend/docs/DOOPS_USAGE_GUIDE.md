@@ -413,14 +413,13 @@ CLI 一键安装或更新：
 bash scripts/install.sh --version <vX.Y.Z> --project "$PWD"
 ```
 
-Helm 托管 Agent 的一键升级由笔记本执行。脚本会先确认现网 command 仍是
-`/app/sandbox-entrypoint.sh`，再前台 `helm upgrade --install --wait=false`，最后等待
-Gateway 重连并核验 digest：
+Agent 只有一条发布命令。现网必须已经是 `/app/sandbox-entrypoint.sh`，脚本会先把镜像
+拉到节点，再 `helm upgrade --install`。Chart 先起新 Pod，Gateway 切换会话后才删旧副本：
 
 ```bash
-bash scripts/upgrade-managed-agent.sh \
+bash scripts/release-managed-agent.sh \
   --target gw-edu-coder \
-  --session agent-upgrade-<tag> \
+  --session agent-release-<tag> \
   --release doops-agent-live \
   --namespace kz-ops \
   --version <vX.Y.Z>
@@ -441,9 +440,7 @@ doops -session upgrade_20260519 upgrade \
 
 When `--target` is given, its configured `cluster/instance` is the default
 preview scope. Direct Agent self-upgrade is prohibited: `upgrade` requires
-`--dry-run`. Apply the reviewed doops-agent image change with
-`scripts/upgrade-managed-agent.sh` so the old Agent remains available until the
-replacement has registered and produced a heartbeat.
+`--dry-run`. Apply the reviewed image with `scripts/release-managed-agent.sh`.
 
 ## BuildKit Example
 

@@ -131,37 +131,24 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 
 `doops-agent` 由 Helm 管理的 `Deployment` 托管，Chart 位于 `deploy/helm/doops-agent`。该目录只保存运行时 Helm 模板、默认值和挂载定义，不保存环境注册表或部署 workflow。具体镜像、目标节点、Secret 引用、Gateway 地址和发布参数必须由本次自然语言任务明确给出或来自任务明确授权读取的当前 Helm release。发布前必须对比当前 workload 与候选 Chart 的 command、args、env、probes、volumeMounts 和 volumes。包括只更新镜像在内的所有发布都必须调用结构化 `doops_helm upgrade-install`，从任务明确指定的 Chart、可选 `value_files` 和非敏感 `set_strings` 完整收敛；更新现有 release 且任务已给出 release、namespace、chart 和不可变镜像时，`value_files` 可以为空，工具自动保留当前 values。`value_files` 只放 `deploy/` 下的 YAML 文件路径，`set_strings` 只覆盖标量叶子，禁止把 map/list 父键编码成字符串。`upgrade-install` 先用相同参数执行 Helm dry-run，再执行真实 mutation。镜像版本使用互斥的 digest 覆盖模式，或完整 values 中 `image.repository` 加 `image.tag=release-YYYYMMDD` 的模式；后者禁止 digest 和任何 `set_strings`。不存在 Kubernetes 镜像 mutation 发布旁路。自然语言 apply 禁止通过 shell 执行 kubectl 或 Helm mutation；运维人员明确给出的前台 `exec` Helm 操作合法，但 `exec --bg` Helm mutation 必须拒绝。用户明确给出的 SSH 命令属于普通 exec，可由在线 Agent 代理执行，并遵守相同的权限、排队、超时、取消和审计规则。
 
-受管 `doops-agent` 不得升级自身。Agent 升级必须由真实存在的外部 CI/GitOps controller
-执行，且 controller 在变更前后都要验证 Helm dry-run、rollout Ready、Gateway 注册和首次
-心跳。禁止为此创建临时 Agent、临时 target 或临时 release-runner。运维笔记本电脑上的
-一键脚本是这个外部 controller：
+受管 `doops-agent` 不得升级自身。唯一发布命令是笔记本上的
+`scripts/release-managed-agent.sh`：Helm chart `deploy/helm/doops-agent` 以
+`maxSurge=1`、`maxUnavailable=0` 先拉起新 Pod，Gateway `Register` 用新会话替换旧
+WebSocket 后再删旧副本。禁止 `kubectl set image`、Job、release-runner、Docker
+restart，以及 `doops upgrade` 的非 dry-run。
 
 ```bash
-# 已有 Helm release：由当前 agent 前台执行 helm --wait=false，笔记本等待重连
-bash scripts/upgrade-managed-agent.sh \
+bash scripts/release-managed-agent.sh \
   --target <configured-target> \
-  --session agent-upgrade-<tag> \
+  --session agent-release-<tag> \
   --release <helm-release> \
   --namespace <namespace> \
-  --version <vX.Y.Z>
-
-# 新集群：本机 kubeconfig 上 helm --wait 安装，不经过 doops target
-bash scripts/install-managed-agent.sh \
-  --release <helm-release> \
-  --namespace <namespace> \
-  --values /path/to/complete-values.yaml \
   --version <vX.Y.Z>
 ```
 
-`upgrade-managed-agent.sh` 会拒绝自定义 entrypoint（例如 ConfigMap
-`/scripts/entrypoint.sh`）和未纳入 Helm 的 Deployment。不要用 `kubectl set image`
-或 Job 绕过这条检查。
-
-单副本 Agent 的 home 目录包含 doagent SQLite 状态，不能让新旧 Pod 同时挂载。Chart
-必须使用 `maxSurge=0`、`maxUnavailable=1`；否则滚动窗口会产生 `database is locked`，
-并可能让新实例在旧实例退出前进入不确定状态。
-
-`hostNetwork` 更新必须等待旧实例释放 DoAgent 和 DoOps 监听端口。容器入口使用同一个 120 秒窗口等待两个端口；Chart 的 `startupProbe` 必须覆盖至少 200 秒，并同时验证当前容器内的 DoOps 进程和本地 health，避免误连宿主网络中的旧实例。DoAgent 未启动或健康检查失败时容器必须直接失败，不能只打印警告后继续。发布验收必须确认稳定窗口后的容器重启数仍为 0。
+新集群还没有 Agent 时，同一条命令改传完整 `--values` 和本机 kubeconfig，仍然只走
+这份 Chart 的 `helm upgrade --install`。自定义 entrypoint 或 `hostNetwork` 必须先改成
+标准 Chart，不能另开发布路径。
 
 ### 环境依赖注射规范 (Secret)
 严禁在 `agent.yaml` 中明文出现 `LLM_API_KEY=sk-xxxx` 之类的配置。此类密钥应由 Secret 提取并通过 `envFrom` 下放。
@@ -206,41 +193,7 @@ doops -session smoke exec --target <target> --cmd 'nerdctl run --rm --net none -
 doops -session smoke push --target <target> --src <small-dir>
 ```
 
-### 宿主 Docker 直装升级规则
+### 非 Helm 节点
 
-如果某个节点上的 `doops-agent` 由宿主 Docker 管理，而且容器里 `/app/doops-agent`
-被宿主二进制 bind mount 覆盖，那么镜像升级不会生效。此时必须先做架构优化：
-
-1. 保留旧 agent 在线。
-2. 拉取新镜像。
-3. 启动一个不绑定宿主 `/app/doops-agent` 的新容器，或迁移成 K3s/DaemonSet。
-4. 确认 gateway 看到新 hash。
-5. 再停旧容器。
-
-不要把“换镜像 tag”误当成“换二进制”。如果宿主文件覆盖了 `/app/doops-agent`，
-这两件事不是一回事。
-
-### Unicom 过渡节点
-
-Unicom 当前的部署形态是过渡态，不是最终标准态：它同时有 gateway 容器和
-旧宿主 Docker 容器。这个形态下，升级应该先把新标准容器/K3s 路径跑起来，
-再下线旧容器。不要继续在宿主二进制 bind mount 的容器上堆镜像升级。
-
----
-
-## 四、 特殊情况：无容器引擎的物理裸机部署
-
-如果需要将其部署到一台没有 K8s 且容器平台残缺的物理机上，**杜绝**使用本地 `docker` 打成 tar 传过去的远古做法。
-
-提供原生高效解法（零外部依赖，极速发版）：
-
-```bash
-# 1. 在本地交叉编译目标平台的干净二进制文件 (耗时 < 5秒)
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/doops-agent-new ./cmd/agent
-
-# 2. 利用 OCI 生成器直出镜像 tar
-python3 scripts/build_oci_image.py /tmp/doops-agent-new /tmp/doops-agent-amd64.tar
-
-# 3. 在目标机器用 ctr (containerd CLI) 直接导入
-ctr -n k8s.io images import /tmp/doops-agent-amd64.tar
-```
+宿主 Docker、`agent.yaml`、二进制 bind-mount 和裸机 tar 都不是发布路径。先把节点迁到
+`deploy/helm/doops-agent`，再用 `scripts/release-managed-agent.sh`。未迁完之前不得换镜像。

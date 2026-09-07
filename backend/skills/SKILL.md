@@ -248,20 +248,19 @@ docs/DOOPS_MAINTENANCE_LOG.md
 - gateway 控制面发布走 `scripts/deploy-gateway.sh`；不要走 `doops exec/push/write`。
 - 至少对一个真实 gateway target 回归 `exec`、`push`、`pull`、`ask`、`targets` 中受影响的路径。
 
-Helm 托管 Agent 的一键升级：
+Helm 托管 Agent 的唯一发布命令：
 
 ```bash
-bash scripts/upgrade-managed-agent.sh \
+bash scripts/release-managed-agent.sh \
   --target <t> \
-  --session agent-upgrade-<tag> \
+  --session agent-release-<tag> \
   --release <helm-release> \
   --namespace <ns> \
   --version <vX.Y.Z>
 ```
 
-新集群首次安装用 `scripts/install-managed-agent.sh`（本机 kubeconfig + 完整 values）。
-`doops upgrade` 只允许 `--dry-run`。自定义 entrypoint 或未纳入 Helm 的 Deployment
-不能走这两个脚本。
+新集群用同一脚本加 `--values` 和本机 kubeconfig。`doops upgrade` 只允许 `--dry-run`。
+自定义 entrypoint 或 `hostNetwork` 不能发版。
 
 普通业务发布流程和自然语言任务约束见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
 
