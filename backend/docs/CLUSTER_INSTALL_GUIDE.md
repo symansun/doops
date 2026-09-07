@@ -6,31 +6,28 @@
 
 ## Kubernetes / K3s
 
-唯一安装和升级入口是 Helm chart `deploy/helm/doops-agent`，命令只有一条：
+用户在目标集群上的安装和更新是同一条命令。当前基线 **v1.3.0**。权威脚本和清单在
+`https://cnb.cool/l8ai/dowork` 的 `doops-k8s/`，必须传入这个 Agent 的 `cluster` 和
+`instance`：
 
 ```bash
-# 新集群：本机 kubeconfig + 完整 values（Secret 必须已经存在）
-bash scripts/release-managed-agent.sh \
-  --release doops-agent \
-  --namespace doops-system \
-  --values /path/to/complete-values.yaml \
-  --version <vX.Y.Z>
-
-# 已在线的 Helm release
-bash scripts/release-managed-agent.sh \
-  --target <configured-target> \
-  --session agent-release-<tag> \
-  --release doops-agent \
-  --namespace doops-system \
-  --version <vX.Y.Z>
+curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh -s -- <cluster> <instance>
 ```
 
-不要用 `kubectl apply`、`kubectl set image`、`agent.yaml` 或 Docker `run` 作为发布路径。
-Chart 禁止 `hostNetwork`，并以 `maxSurge=1` / `maxUnavailable=0` 完成隧道交接。
+例如经贸：
 
-`doagentSettings` 指向的 Secret 必须在 `helm upgrade --install` 之前已经存在于目标
-namespace。公开仓库里的 `agent/agent-config.yaml` 只是字段模板，生产 Secret 由私有
-配置生成，不作为 Deployment 清单。
+```bash
+curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh -s -- doops-jm jm-228
+```
+
+重复执行会复用已有仓库（`./doops-k8s`、`./dowork` 或 `$HOME/dowork`），只 fetch
+`main` 再 `kubectl apply`，不会再 clone 一份。不要填已经在线的身份，后连上的会顶掉
+先连上的。镜像版本钉在 `doops-k8s/doops.yaml`，必须与 `base/doops-agent.yaml`、`values.yaml`、
+`install.sh` 注释和 README 标题同一 tag/digest。要换版本先改这几份到同一基线，再重跑
+同一条 curl。不要用 `kubectl set image` 或 Docker `run` 换镜像。
+
+本仓库的 `scripts/release-managed-agent.sh` 只给已经改用 Helm chart
+`deploy/helm/doops-agent` 的维护者节点。那条路径不是用户一键安装。
 
 ## 安装完成后的验收标准
 

@@ -313,19 +313,19 @@ doops -session smoke ask --target prod-master --msg '用一句话说明当前机
 不是日常 DoOps 连接方式。该限制不适用于在线 Agent 通过 `doops exec` 代理的出站
 SSH 命令；用户可以显式要求它执行任意 SSH 客户端命令。
 
-Agent 的安装和升级只有一条命令，见
-[docs/CLUSTER_INSTALL_GUIDE.md](docs/CLUSTER_INSTALL_GUIDE.md)：
+Agent 的安装和更新是同一条命令，在**目标集群**有 `kubectl` 的机器上执行，必须传入这个 Agent 的 `cluster` 和 `instance`。权威脚本在 `https://cnb.cool/l8ai/dowork` 的 `doops-k8s/`，见 [docs/CLUSTER_INSTALL_GUIDE.md](docs/CLUSTER_INSTALL_GUIDE.md)：
 
 ```bash
-bash scripts/release-managed-agent.sh \
-  --release doops-agent \
-  --namespace doops-system \
-  --values /path/to/complete-values.yaml \
-  --version <vX.Y.Z>
+curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh -s -- <cluster> <instance>
 ```
 
-已在线节点把 `--values` 换成 `--target` / `--session`。不要用 `agent.yaml`、
-`kubectl set image` 或 `docker run` 发版。
+当前基线 v1.3.0。例如经贸：
+
+```bash
+curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh -s -- doops-jm jm-228
+```
+
+重复执行会 fetch 更新后再 apply，不会再 clone 一份。不要填已经在线的身份。不要用 `kubectl set image` 或 `docker run` 换镜像。
 
 ### 维护者发布业务 workload
 

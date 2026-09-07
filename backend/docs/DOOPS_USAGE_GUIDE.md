@@ -413,8 +413,18 @@ CLI 一键安装或更新：
 bash scripts/install.sh --version <vX.Y.Z> --project "$PWD"
 ```
 
-Agent 只有一条发布命令。现网必须已经是 `/app/sandbox-entrypoint.sh`，脚本会先把镜像
-拉到节点，再 `helm upgrade --install`。Chart 先起新 Pod，Gateway 切换会话后才删旧副本：
+目标集群上安装或更新 Agent 是同一条命令，必须传入 cluster / instance：
+
+```bash
+curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh -s -- <cluster> <instance>
+```
+
+当前基线 v1.3.0。重跑会把 `doops-k8s/` reset 到 `main` 再 apply 这一个身份。
+
+已经改用 Helm chart `deploy/helm/doops-agent` 的维护者节点才走
+`scripts/release-managed-agent.sh`。现网必须已经是 `/app/sandbox-entrypoint.sh`，
+脚本会先把镜像拉到节点，再 `helm upgrade --install`。Chart 先起新 Pod，Gateway
+切换会话后才删旧副本：
 
 ```bash
 bash scripts/release-managed-agent.sh \
