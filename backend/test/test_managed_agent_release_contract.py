@@ -15,7 +15,10 @@ def test_agent_chart_hands_off_without_dropping_the_live_replica():
     text = CHART.read_text()
     assert "maxUnavailable: 0" in text
     assert "maxSurge: 1" in text
+    assert "terminationGracePeriodSeconds: 30" in text
+    assert "minReadySeconds: 5" in text
     assert "hostNetwork:" not in text
+    assert "hostPID:" not in text
     assert "/app/sandbox-entrypoint.sh" in text
 
 

@@ -29,6 +29,9 @@ curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh
 本仓库的 `scripts/release-managed-agent.sh` 只给已经改用 Helm chart
 `deploy/helm/doops-agent` 的维护者节点。那条路径不是用户一键安装。
 
+旧副本卡在 Terminating 超过一分钟时，强制删除该 Pod，不要对同一身份再跑一遍
+install。`hostPID` 会让 `tini -s` 收养宿主机孤儿进程，kubelet 删不掉容器。
+
 ## 安装完成后的验收标准
 
 CLI 不提供直连 Agent 安装入口。不要以“容器起来了”或“`ps` 里有进程”

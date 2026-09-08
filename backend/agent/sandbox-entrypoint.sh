@@ -7,6 +7,11 @@ cleanup() {
         [ -n "$pid" ] || continue
         kill "$pid" 2>/dev/null || true
     done
+    sleep 1
+    for pid in "${PIDS_TO_CLEANUP[@]-}"; do
+        [ -n "$pid" ] || continue
+        kill -KILL "$pid" 2>/dev/null || true
+    done
 }
 
 exit_on_signal() {
@@ -270,9 +275,9 @@ start_buildkit
 export PATH=/usr/local/bin:$PATH
 export NODE_PATH=/usr/lib/node_modules
 if command -v tini >/dev/null 2>&1; then
-    echo "✅ Using tini subreaper for doops-agent"
+    echo "✅ Using tini for doops-agent"
     env DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
-        tini -s -- /app/doops-agent "$@" &
+        tini -- /app/doops-agent "$@" &
     GATEWAY_PID=$!
 else
     echo "⚠️  tini not found, falling back to direct gateway"
