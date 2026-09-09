@@ -81,9 +81,8 @@ func main() {
 		runEdgeTunnels(edgeURL, *cluster, *instance, *edgeEnrollToken, *edgeBackendAllow, *edgeConns, *edgeMaxConns, *edgeDialTimeout, *reconnectDelay)
 	}
 
-	http.HandleFunc("/health", handleHealthLive)
-	http.HandleFunc("/health/live", handleHealthLive)
-	http.HandleFunc("/health/ready", handleHealthReady)
+	mux := http.NewServeMux()
+	registerAgentHTTP(mux)
 
 	log.Printf("🚦 health endpoints: /health/live (always 200), /health/ready (200 when tunnel connected)")
 	gw.SetupGitHandler()
@@ -93,7 +92,7 @@ func main() {
 
 	log.Printf("🚀 doops.sh agent health server starting on %s", listenAddr)
 
-	if err := http.ListenAndServe(listenAddr, nil); err != nil {
+	if err := http.ListenAndServe(listenAddr, mux); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -108,21 +107,6 @@ func validateStartupArgs(gatewayURL, cluster, instance string, args []string) er
 		return fmt.Errorf("-gateway-url, -cluster, and -instance are required")
 	}
 	return nil
-}
-
-func handleHealthLive(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("ok"))
-}
-
-func handleHealthReady(w http.ResponseWriter, r *http.Request) {
-	if isReverseTunnelConnected() {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ready"))
-		return
-	}
-	w.WriteHeader(http.StatusServiceUnavailable)
-	_, _ = w.Write([]byte("not ready"))
 }
 
 func isReverseTunnelConnected() bool {

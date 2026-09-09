@@ -130,9 +130,9 @@ func (c *MCPClient) connect() error {
 		if resp != nil {
 			body, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
-			return fmt.Errorf("failed to connect to agent WS: %v (HTTP %s: %s)", err, resp.Status, string(body))
+			return fmt.Errorf("failed to connect to gateway /v1/rpc at %s: %v (HTTP %s: %s)", wsURL, err, resp.Status, strings.TrimSpace(string(body)))
 		}
-		return fmt.Errorf("failed to connect to agent WS: %v", err)
+		return fmt.Errorf("failed to connect to gateway /v1/rpc at %s: %v", wsURL, err)
 	}
 
 	c.conn = conn

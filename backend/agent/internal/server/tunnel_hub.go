@@ -452,6 +452,7 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 }
 
 func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/ws", HandleRetiredInboundWS)
 	mux.HandleFunc("/v1/auth/login", h.HandleAuthLogin)
 	mux.HandleFunc("/v1/agent/connect", h.HandleAgentConnect)
 	mux.HandleFunc("/v1/edge/connect", h.HandleEdgeConnect)
