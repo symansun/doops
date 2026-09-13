@@ -7,6 +7,7 @@ bin/doops
 bin/doops-gateway
 bin/doops-webui
 /bin/
+backend/bin/
 skills/doops-cli/doops
 
 # Agent 二进制 (所有变体)

@@ -89,6 +89,8 @@ SSH 服务端。镜像保留 `ssh` 客户端，已在线 Agent 可通过 `doops 
 
 - CLI 到 gateway 使用 `WS /v1/rpc?cluster=<cluster>&instance=<instance>`
 - 内网 agent 到 gateway 使用 `WS /v1/agent/connect?cluster=<cluster>&instance=<instance>`
+- 公网网站代理使用请求 `Host` 匹配 Gateway 路由表，再通过同一条 Agent 反向
+  WebSocket 转发 HTTP/HTTPS；路由管理入口为 `/v1/admin/proxy-routes`
 - 模型网关地址使用 `https://api.example.com` / `https://api.example.com/v1`，不带 `:8443`
 
 本轮维护已清理的技术债：

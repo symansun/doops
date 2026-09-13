@@ -24,6 +24,62 @@ gateway 是统一公网控制面：
 - agent 主动长连接注册自己
 - gateway 负责鉴权、授权、审计、排队和目标路由
 
+## 公网网站代理关键节点
+
+第一阶段的网站代理只承载 HTTP/HTTPS 请求和流式响应，链路是：
+
+```mermaid
+sequenceDiagram
+    participant DNS as DNS
+    participant U as 浏览器
+    participant G as doops-gateway
+    participant A as 内网 doops-agent
+    participant W as Agent 所在网络的 HTTP 服务
+    DNS->>G: app.example.com -> gateway 公网 IP
+    U->>G: Host: app.example.com /path
+    G->>G: 路由表匹配 host -> cluster/instance/upstream
+    G->>A: 已建立 WS 上发送 proxy/http + proxy/body
+    A->>A: 校验 upstream hostname allowlist
+    A->>W: 发起本地出站 HTTP 请求
+    W-->>A: headers + body chunks
+    A-->>G: proxy/response + proxy/body
+    G-->>U: 原样返回状态、必要响应头和流式 body
+```
+
+关键节点与边界：
+
+1. DNS 只负责把任意业务域名解析到 Gateway；域名本身不携带 Agent 身份。
+2. Gateway 以请求 `Host` 查 `proxy_routes`，路由记录固定绑定一个
+   `cluster/instance` 和一个 HTTP(S) `upstream`。
+3. Agent 只通过主动建立的 `/v1/agent/connect` 长连接接收请求，不需要入站端口，
+   因此单向网络只要求 Agent 能出站访问 Gateway。
+4. Agent 在实际出站前再次执行精确 hostname allowlist；allowlist 为空时拒绝所有代理
+   请求，并且不跟随重定向，避免路由被上游响应带出 allowlist。
+5. Gateway 与 Agent 之间使用分帧 body，不把请求体一次性读入内存；响应收到一帧就向
+   客户端 flush，支持 SSE/分块 HTTP 这类流式响应。
+6. 第一阶段明确不支持 WebSocket Upgrade 和裸 TCP；收到 Upgrade 请求返回
+   `426 Upgrade Required`，后续如需 WebSocket 必须扩展成独立的二进制/帧协议。
+
+### 配置路由
+
+管理员使用 `POST /v1/admin/proxy-routes` 创建或更新路由，必须携带 Gateway
+管理员 token：
+
+```json
+{
+  "host": "app.example.com",
+  "cluster": "prod",
+  "instance": "node-1",
+  "upstream": "http://127.0.0.1:8080",
+  "enabled": true
+}
+```
+
+`GET /v1/admin/proxy-routes` 列出路由，`DELETE /v1/admin/proxy-routes?id=<id>`
+删除路由。Agent 侧通过 `DOOPS_PROXY_ALLOW_HOSTS` 配置精确的上游 hostname，
+例如 `DOOPS_PROXY_ALLOW_HOSTS=127.0.0.1,internal.example.com`。这个变量不是
+公网域名 allowlist，而是 Agent 所在网络允许访问的上游主机 allowlist。
+
 ## Managed Gateway Host
 
 当前受管 gateway 主机信息：
@@ -128,9 +184,9 @@ bash scripts/build-gateway.sh
   -login-token-ttl 24h \
   -operation-timeout 30m \
   -max-concurrent-operations 64 \
-  -max-concurrent-per-user 8 \
-  -max-queued-per-target 8 \
-  -target-queue-timeout 2m
+  -max-concurrent-per-user 10 \
+  -max-queued-per-target 10 \
+  -target-queue-timeout 10m
 ```
 
 Token 只打印一次，数据库里只保存哈希。
@@ -187,9 +243,10 @@ doops admin token revoke --target <gateway-target> --id <token-id>
 多人同时使用时，gateway 的原则是“全局限流、用户限流、目标串行”：
 
 - 不同 target 可以并发执行。
-- 同一 target 上的 `exec/ask/write/push/pull/clean/check/agent:upgrade` 会串行进入 agent，避免多个用户同时改同一个环境。
-- `ask` 属于慢任务，也走同一队列；如果一个用户正在 ask，后续用户会排队，超过 `-target-queue-timeout` 返回 `target queue timeout`。
-- `-max-concurrent-per-user` 控制单个 gateway 用户最多占用多少个运行中操作槽；超过时返回 `user operation limit exceeded`。
+- 同一 target 上的 target 级 mutation、无 session 的操作以及共享资源写入会串行进入 agent，避免多个用户同时改同一个环境。
+- 带 `session_id` 的普通 `exec`/`bg` shell 会话按 session 资源并发路由；明显的发布、恢复、迁移、文件写入、Helm/Kubernetes/Docker/systemd 变更仍使用 target 级 mutation 锁。
+- `ask --apply`、push、write、credential 和 target 级 mutation 命令仍走同一 target mutation 队列；超过 `-target-queue-timeout` 返回 `target queue timeout`。
+- `-max-concurrent-per-user` 控制单个 gateway 用户最多占用多少个运行中操作槽；默认至少支持 10 个会话，超过时返回 `user operation limit exceeded`。
 - `-operation-timeout` 控制单个转发操作的最长运行时间，超时会释放 gateway 操作槽。
 - `-max-queued-per-target` 控制每个 target 的等待队列长度；设置为负数可关闭排队，恢复旧的立即 `target busy` 行为。
 - `-login-token-ttl` 控制密码登录生成 token 的有效期；长期自动化应使用管理员发放的可轮换服务 token。
