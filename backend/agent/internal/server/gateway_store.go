@@ -32,6 +32,7 @@ const (
 	ActionInfo               GatewayAction = "info"
 	ActionCheck              GatewayAction = "check"
 	ActionClean              GatewayAction = "clean"
+	ActionProxy              GatewayAction = "proxy"
 	ActionAgentUpgrade       GatewayAction = "agent:upgrade"
 	ActionTargetsList        GatewayAction = "targets:list"
 	ActionCredentialCreate   GatewayAction = "credential:create"
@@ -372,6 +373,17 @@ func (s *GatewayStore) migrate() error {
 			updated_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_git_repos_created ON git_repos(created_at)`,
+		`CREATE TABLE IF NOT EXISTS proxy_routes (
+			id TEXT PRIMARY KEY,
+			host TEXT NOT NULL UNIQUE,
+			cluster TEXT NOT NULL,
+			instance TEXT NOT NULL,
+			upstream TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_proxy_routes_target ON proxy_routes(cluster, instance, enabled)`,
 		`CREATE TABLE IF NOT EXISTS credentials (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,

@@ -1989,7 +1989,7 @@ func TestGatewayRPCRejectsSecondConcurrentOperationForSameSessionAsBusy(t *testi
 	readUntilID(t, clientA, 2)
 }
 
-func TestGatewayRPCSerializesExecMutationsAcrossSessions(t *testing.T) {
+func TestGatewayRPCAllowsConcurrentShellSessionsForSameTarget(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -2018,8 +2018,77 @@ func TestGatewayRPCSerializesExecMutationsAcrossSessions(t *testing.T) {
 	clientB := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
 	defer clientB.Close()
 
-	argsA, _ := json.Marshal(map[string]interface{}{"command": "sleep", "session_id": "session-a"})
-	argsB, _ := json.Marshal(map[string]interface{}{"command": "sleep", "session_id": "session-b"})
+	argsA, _ := json.Marshal(map[string]interface{}{"command": "sleep 30", "session_id": "session-a"})
+	argsB, _ := json.Marshal(map[string]interface{}{"command": "sleep 30", "session_id": "session-b"})
+	writeGatewayJSON(t, clientA, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(argsA)},
+	})
+	writeGatewayJSON(t, clientB, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(argsB)},
+	})
+
+	seen := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		select {
+		case got := <-started:
+			seen[got] = true
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected both shell sessions to reach the agent concurrently")
+		}
+	}
+	if !seen["session-a"] || !seen["session-b"] {
+		t.Fatalf("started sessions = %#v, want both session-a and session-b", seen)
+	}
+	close(release)
+
+	for name, client := range map[string]*websocket.Conn{"client A": clientA, "client B": clientB} {
+		msg := readGatewayNotification(t, client)
+		if got := notificationData(msg); !strings.Contains(got, "session-") {
+			t.Fatalf("%s got wrong notification: %#v", name, msg)
+		}
+		if resp := readUntilID(t, client, 2); resp["error"] != nil {
+			t.Fatalf("%s final response failed: %#v", name, resp)
+		}
+	}
+}
+
+func TestGatewayRPCSerializesShellMutationsAcrossSessions(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	user, _ := store.CreateUser("alice")
+	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
+		t.Fatalf("grant exec: %v", err)
+	}
+
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	mux := http.NewServeMux()
+	gw.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
+	defer agentConn.Close()
+	release := make(chan struct{})
+	started := make(chan string, 2)
+	go serveSessionAwareBlockingFakeAgent(t, agentConn, started, release)
+
+	clientA := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
+	defer clientA.Close()
+	clientB := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
+	defer clientB.Close()
+
+	argsA, _ := json.Marshal(map[string]interface{}{"command": "kubectl apply -f app.yaml", "session_id": "session-a"})
+	argsB, _ := json.Marshal(map[string]interface{}{"command": "kubectl apply -f app.yaml", "session_id": "session-b"})
 	writeGatewayJSON(t, clientA, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      2,
@@ -2118,8 +2187,8 @@ func TestGatewayRPCDoesNotFallbackSessionNotificationsWithoutSessionID(t *testin
 	clientB := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
 	defer clientB.Close()
 
-	argsA, _ := json.Marshal(map[string]interface{}{"command": "sleep", "session_id": "session-a"})
-	argsB, _ := json.Marshal(map[string]interface{}{"command": "sleep", "session_id": "session-b"})
+	argsA, _ := json.Marshal(map[string]interface{}{"command": "kubectl apply -f app.yaml", "session_id": "session-a"})
+	argsB, _ := json.Marshal(map[string]interface{}{"command": "kubectl apply -f app.yaml", "session_id": "session-b"})
 	writeGatewayJSON(t, clientA, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      2,
@@ -2198,8 +2267,14 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	if got := gitResourceKey(ActionPull, "dev", "node", "pull-a"); got != "workspace:pull-a" {
 		t.Fatalf("git pull resource key mismatch: %q", got)
 	}
-	if got := resourceKeyForTool(ActionExec, "doops_shell", json.RawMessage(`{"session_id":"exec-a"}`), "dev", "node"); got != "target-mutation:dev/node" {
+	if got := resourceKeyForTool(ActionExec, "doops_shell", json.RawMessage(`{"session_id":"exec-a","command":"sleep 30"}`), "dev", "node"); got != "session:exec-a" {
 		t.Fatalf("exec resource key mismatch: %q", got)
+	}
+	if got := resourceKeyForTool(ActionExec, "doops_shell", json.RawMessage(`{"session_id":"exec-a","command":"kubectl apply -f app.yaml"}`), "dev", "node"); got != "target-mutation:dev/node" {
+		t.Fatalf("mutating exec resource key mismatch: %q", got)
+	}
+	if got := resourceKeyForTool(ActionExec, "doops_shell", json.RawMessage(`{"session_id":"exec-a","command":"python3 /root/ws/restore.py"}`), "dev", "node"); got != "target-mutation:dev/node" {
+		t.Fatalf("restore exec resource key mismatch: %q", got)
 	}
 	genericPromptArgs := json.RawMessage(`{"session_id":"ask-a","instruction":"inspect and repair the service"}`)
 	if got := actionForTool("doops_agent_prompt", genericPromptArgs); got != ActionAsk {

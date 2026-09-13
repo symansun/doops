@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +31,19 @@ type GatewayHubOptions struct {
 	MaxConcurrentPerUser    int
 	MaxQueuedPerTarget      int
 }
+
+var shellTargetMutationPattern = regexp.MustCompile(
+	`(?s)(` +
+		`\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b` +
+		`|\b(kubectl|oc)\b.*\b(apply|create|delete|edit|patch|replace|scale|cordon|uncordon|drain|taint)\b` +
+		`|\b(kubectl|oc)\b.*\b(set\s+image|rollout\s+(restart|undo))\b` +
+		`|\b(docker|nerdctl|podman|crictl)\b.*\b(restart|stop|rm|update|run)\b` +
+		`|\b(systemctl|service)\b.*\b(restart|stop|reload)\b` +
+		`|\b(rm|mv|cp|chmod|chown|mkdir|rmdir)\b` +
+		`|\b(restore|deploy|migrate|migration|upgrade|rollback)\b` +
+		`|>>?` +
+		`)`,
+)
 
 type GatewayHub struct {
 	store        *GatewayStore
@@ -450,6 +464,7 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/agent/connect", h.HandleAgentConnect)
 	mux.HandleFunc("/v1/rpc", h.HandleClientRPC)
 	mux.HandleFunc("/v1/git/", h.HandleGitHTTP)
+	mux.HandleFunc("/", h.HandlePublicProxy)
 	mux.HandleFunc("/v1/targets", h.HandleTargets)
 	mux.HandleFunc("/v1/targets/unlock", h.HandleTargetUnlock)
 	mux.HandleFunc("/v1/audit", h.HandleAudit)
@@ -463,6 +478,7 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/admin/grants", h.HandleAdminGrants)
 	mux.HandleFunc("/v1/admin/instances", h.HandleAdminInstances)
 	mux.HandleFunc("/v1/admin/operations", h.HandleAdminOperations)
+	mux.HandleFunc("/v1/admin/proxy-routes", h.HandleAdminProxyRoutes)
 	mux.HandleFunc("/v1/admin/repos", h.HandleAdminRepos)
 	mux.HandleFunc("/v1/admin/repos/test", h.HandleAdminRepoTest)
 	mux.HandleFunc("/v1/admin/repos/clone", h.HandleAdminRepoClone)
@@ -1768,7 +1784,7 @@ func (a *GatewayAgent) releaseResource(key string) {
 
 func isConcurrentReadOnlyAction(action GatewayAction) bool {
 	switch action {
-	case ActionRead, ActionInfo, ActionCheck:
+	case ActionRead, ActionInfo, ActionCheck, ActionProxy:
 		return true
 	default:
 		return false
@@ -1960,6 +1976,21 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 		if tool == "doops_agent_prompt" && extractStringArg(args, "operation") == "apply" {
 			return targetMutation
 		}
+		if tool == "doops_shell" || tool == "doops_bg" {
+			if shellCommandRequiresTargetMutation(extractStringArg(args, "command")) {
+				return targetMutation
+			}
+			if sessionID := extractSession(args); sessionID != "" {
+				return "session:" + sessionID
+			}
+			return targetMutation
+		}
+		if tool == "doops_task_status" {
+			if sessionID := extractSession(args); sessionID != "" {
+				return "session:" + sessionID
+			}
+			return "target:" + cluster + "/" + instance
+		}
 		if tool == "doops_k8s" {
 			if gatewayK8SMutation(extractStringArg(args, "operation")) {
 				return targetMutation
@@ -1995,6 +2026,14 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 		}
 	}
 	return ""
+}
+
+func shellCommandRequiresTargetMutation(command string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(command))
+	if normalized == "" {
+		return true
+	}
+	return shellTargetMutationPattern.MatchString(normalized)
 }
 
 func gatewayK8SMutation(operation string) bool {

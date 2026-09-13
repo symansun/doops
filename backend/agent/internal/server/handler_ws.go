@@ -226,6 +226,10 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 	gitBodyWriters := make(map[int64]*io.PipeWriter)
 	activeGitMu := sync.Mutex{}
 	activeGitCancels := make(map[int64]context.CancelFunc)
+	proxyBodyMu := sync.Mutex{}
+	proxyBodyWriters := make(map[int64]*io.PipeWriter)
+	activeProxyMu := sync.Mutex{}
+	activeProxyCancels := make(map[int64]context.CancelFunc)
 	activeToolMu := sync.Mutex{}
 	activeToolCalls := make(map[int64]activeToolCall)
 	var readyOnce sync.Once
@@ -246,6 +250,13 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 		for _, cancel := range gitCancels {
 			cancel()
 		}
+		activeProxyMu.Lock()
+		proxyCancels := activeProxyCancels
+		activeProxyCancels = make(map[int64]context.CancelFunc)
+		activeProxyMu.Unlock()
+		for _, cancel := range proxyCancels {
+			cancel()
+		}
 		activeToolMu.Lock()
 		calls := activeToolCalls
 		activeToolCalls = make(map[int64]activeToolCall)
@@ -260,6 +271,13 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 		gitBodyWriters = make(map[int64]*io.PipeWriter)
 		gitBodyMu.Unlock()
 		for _, pw := range writers {
+			_ = pw.Close()
+		}
+		proxyBodyMu.Lock()
+		proxyWriters := proxyBodyWriters
+		proxyBodyWriters = make(map[int64]*io.PipeWriter)
+		proxyBodyMu.Unlock()
+		for _, pw := range proxyWriters {
 			_ = pw.Close()
 		}
 	}()
@@ -354,6 +372,45 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 			continue
 		}
 
+		if req.Method == "proxy/http" {
+			id, ok := numericID(req.ID)
+			if !ok {
+				writeJSON(api.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID,
+					Error: &api.RPCError{Code: -32602, Message: "proxy/http requires numeric id"}})
+				continue
+			}
+			var params proxyHTTPRequestParams
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				writeJSON(api.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID,
+					Error: &api.RPCError{Code: -32602, Message: "Invalid proxy/http params"}})
+				continue
+			}
+			pr, pw := io.Pipe()
+			proxyBodyMu.Lock()
+			proxyBodyWriters[id] = pw
+			proxyBodyMu.Unlock()
+			ctx, cancel := context.WithCancel(context.Background())
+			activeProxyMu.Lock()
+			activeProxyCancels[id] = cancel
+			activeProxyMu.Unlock()
+			go func() {
+				defer func() {
+					activeProxyMu.Lock()
+					delete(activeProxyCancels, id)
+					activeProxyMu.Unlock()
+					cancel()
+				}()
+				defer func() {
+					proxyBodyMu.Lock()
+					delete(proxyBodyWriters, id)
+					proxyBodyMu.Unlock()
+					_ = pw.Close()
+				}()
+				gw.handleHTTPProxyOverWS(ctx, req.ID, params, pr, writeJSON)
+			}()
+			continue
+		}
+
 		if req.Method == "git/cancel" {
 			var params struct {
 				ID int64 `json:"id"`
@@ -376,6 +433,34 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 				ID:      req.ID,
 				Result:  map[string]interface{}{"canceled": cancel != nil},
 			})
+			continue
+		}
+
+		if req.Method == "proxy/cancel" {
+			var params struct {
+				ID int64 `json:"id"`
+			}
+			_ = json.Unmarshal(req.Params, &params)
+			if params.ID == 0 {
+				if id, ok := numericID(req.ID); ok {
+					params.ID = id
+				}
+			}
+			activeProxyMu.Lock()
+			cancel := activeProxyCancels[params.ID]
+			activeProxyMu.Unlock()
+			if cancel != nil {
+				cancel()
+			}
+			proxyBodyMu.Lock()
+			pw := proxyBodyWriters[params.ID]
+			delete(proxyBodyWriters, params.ID)
+			proxyBodyMu.Unlock()
+			if pw != nil {
+				_ = pw.Close()
+			}
+			writeJSON(api.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID,
+				Result: map[string]interface{}{"canceled": cancel != nil}})
 			continue
 		}
 
@@ -408,6 +493,40 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 			}
 			if frame.EOF {
 				closeGitBody(frame.ID)
+			}
+			continue
+		}
+
+		if req.Method == "proxy/body" {
+			var frame struct {
+				ID      int64  `json:"id"`
+				DataB64 string `json:"data_b64,omitempty"`
+				EOF     bool   `json:"eof,omitempty"`
+			}
+			if err := json.Unmarshal(req.Params, &frame); err != nil {
+				continue
+			}
+			proxyBodyMu.Lock()
+			pw := proxyBodyWriters[frame.ID]
+			proxyBodyMu.Unlock()
+			if pw == nil {
+				continue
+			}
+			if frame.DataB64 != "" {
+				data, err := base64.StdEncoding.DecodeString(frame.DataB64)
+				if err != nil {
+					_ = pw.CloseWithError(err)
+					continue
+				}
+				if _, err := pw.Write(data); err != nil {
+					continue
+				}
+			}
+			if frame.EOF {
+				proxyBodyMu.Lock()
+				delete(proxyBodyWriters, frame.ID)
+				proxyBodyMu.Unlock()
+				_ = pw.Close()
 			}
 			continue
 		}

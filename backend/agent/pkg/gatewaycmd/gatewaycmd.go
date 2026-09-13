@@ -45,9 +45,9 @@ func serve(args []string) {
 	loginTokenTTL := fs.Duration("login-token-ttl", 24*time.Hour, "Password-login token TTL")
 	operationTimeout := fs.Duration("operation-timeout", 30*time.Minute, "Maximum runtime for one forwarded operation")
 	maxConcurrentOperations := fs.Int("max-concurrent-operations", 64, "Maximum concurrent forwarded operations across all users")
-	maxConcurrentPerUser := fs.Int("max-concurrent-per-user", 8, "Maximum concurrent forwarded operations per user")
-	targetQueueTimeout := fs.Duration("target-queue-timeout", 2*time.Minute, "How long an operation waits for a busy target")
-	maxQueuedPerTarget := fs.Int("max-queued-per-target", 8, "Maximum queued operations per target; negative disables queueing")
+	maxConcurrentPerUser := fs.Int("max-concurrent-per-user", 10, "Maximum concurrent forwarded operations per user")
+	targetQueueTimeout := fs.Duration("target-queue-timeout", 10*time.Minute, "How long an operation waits for a busy target")
+	maxQueuedPerTarget := fs.Int("max-queued-per-target", 10, "Maximum queued operations per target; negative disables queueing")
 	schedulerTick := fs.Duration("scheduler-tick", time.Minute, "How often the issue-scheduler checks for due jobs; 0 disables the scheduler")
 	fs.Parse(args)
 

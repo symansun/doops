@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -53,18 +54,54 @@ type Gateway struct {
 
 	// Git HTTP handler is invoked only through the authorized reverse tunnel.
 	gitHandler http.Handler
+
+	proxyAllowHosts map[string]struct{}
 }
 
 func NewGateway() *Gateway {
 	gw := &Gateway{
-		Dispatcher: dispatcher.NewDispatcher(),
-		tasks:      make(map[string]*bgTask),
-		sessionMap: make(map[string]*sessionEntry),
+		Dispatcher:      dispatcher.NewDispatcher(),
+		tasks:           make(map[string]*bgTask),
+		sessionMap:      make(map[string]*sessionEntry),
+		proxyAllowHosts: proxyAllowlistFromEnv(),
 	}
 	gw.detectContainerRuntime()
 	gw.startZombieReaper()
 	gw.startSessionReaper()
 	return gw
+}
+
+func proxyAllowlistFromEnv() map[string]struct{} {
+	allowed := make(map[string]struct{})
+	for _, raw := range strings.Split(os.Getenv("DOOPS_PROXY_ALLOW_HOSTS"), ",") {
+		host := strings.TrimSpace(strings.ToLower(raw))
+		if host != "" {
+			allowed[host] = struct{}{}
+		}
+	}
+	return allowed
+}
+
+// SetProxyAllowlist replaces the exact upstream host allowlist used by proxy
+// requests. An empty list intentionally rejects every proxy request.
+func (gw *Gateway) SetProxyAllowlist(hosts []string) {
+	allowed := make(map[string]struct{}, len(hosts))
+	for _, host := range hosts {
+		host = strings.TrimSpace(strings.ToLower(host))
+		if host != "" {
+			allowed[host] = struct{}{}
+		}
+	}
+	gw.mu.Lock()
+	gw.proxyAllowHosts = allowed
+	gw.mu.Unlock()
+}
+
+func (gw *Gateway) proxyHostAllowed(host string) bool {
+	gw.mu.RLock()
+	defer gw.mu.RUnlock()
+	_, ok := gw.proxyAllowHosts[strings.ToLower(strings.TrimSpace(host))]
+	return ok
 }
 
 // startZombieReaper 定期回收僵尸子进程。
