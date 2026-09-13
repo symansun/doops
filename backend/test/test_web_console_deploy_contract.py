@@ -23,7 +23,8 @@ def test_web_console_host_deploy_is_immutable_and_rollback_capable():
     assert "location ^~ /v1/" in nginx
     assert "location = /health" in nginx
     assert "location / {" in nginx
-    assert nginx.count("proxy_pass http://127.0.0.1:42222;") == 2
+    assert "server_name *.l8ai.cn;" in nginx
+    assert nginx.count("proxy_pass http://127.0.0.1:42222;") == 3
     assert "proxy_pass http://127.0.0.1:3000;" in nginx
 
     assert "https://doops.l8ai.cn/v1/targets" in proxy_deploy
