@@ -438,7 +438,9 @@ bash scripts/release-managed-agent.sh \
 
 需要开放网站反代时，通过 `--proxy-allowed-hosts` 显式传入逗号分隔的精确上游
 hostname/IP；省略会保留现网值，传空字符串会恢复为拒绝全部。该参数控制 Agent
-能访问的内网上游，不是公网访问域名。
+能访问的内网上游，不是公网访问域名。URL、端口、路径、通配符和空条目会在任何
+集群变更前被拒绝；发布后会核对新 Agent 环境与 Helm release 的值。新集群省略
+`proxy.allowedHosts` 时安全地默认拒绝全部。
 
 `doops upgrade` 只做预演：
 

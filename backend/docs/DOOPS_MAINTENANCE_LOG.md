@@ -8,8 +8,9 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
   `--proxy-allowed-hosts` value for existing Helm releases and verifies the
   replacement Agent inherited the exact `DOOPS_PROXY_ALLOW_HOSTS` value.
 - Omitting the option preserves the live Helm value; an explicit empty value
-  restores deny-all. New-cluster installs continue to require this setting in
-  their complete values file.
+  restores deny-all. URL, port, path, wildcard, and empty-list entries fail
+  before mutation. New-cluster installs default to deny-all and configure
+  allowed hosts through their complete values file when needed.
 
 ## 2026-09-07 Single agent handoff release
 

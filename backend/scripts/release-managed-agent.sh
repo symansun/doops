@@ -201,7 +201,7 @@ release_new_cluster() {
     exit 2
   fi
   if [[ "${PROXY_ALLOWED_HOSTS_SET}" == true ]]; then
-    echo "Error: new-cluster --values must declare proxy.allowedHosts in the values file" >&2
+    echo "Error: new-cluster proxy.allowedHosts must be configured in the values file" >&2
     exit 2
   fi
   if [[ ! -f "${VALUES}" ]]; then
@@ -239,12 +239,60 @@ release_new_cluster() {
   echo "Release complete: ${RELEASE} -> ${DOOPS_IMAGE}"
 }
 
+normalize_proxy_allowed_hosts() {
+  python3 - "$1" <<'PY'
+import ipaddress
+import re
+import sys
+
+raw = sys.argv[1]
+if raw == "":
+    raise SystemExit(0)
+
+label_pattern = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+normalized = []
+for item in raw.split(","):
+    host = item.strip().lower()
+    if not host:
+        print("Error: --proxy-allowed-hosts contains an empty entry", file=sys.stderr)
+        raise SystemExit(1)
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        labels = host.split(".")
+        if (
+            len(host) > 253
+            or host.endswith(".")
+            or any(not label_pattern.fullmatch(label) for label in labels)
+        ):
+            print(
+                "Error: --proxy-allowed-hosts entries must be exact hostnames or IPs "
+                "without scheme, port, path, wildcard, or trailing dot",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+    if host not in normalized:
+        normalized.append(host)
+
+print(",".join(normalized), end="")
+PY
+}
+
 release_existing_cluster() {
   require_value "--target" "${TARGET}"
   require_value "--session" "${SESSION}"
   if [[ -n "${VALUES}" ]]; then
     echo "Error: existing-cluster release reads live Helm values; do not pass --values" >&2
     exit 2
+  fi
+  if [[ "${PROXY_ALLOWED_HOSTS_SET}" == true ]]; then
+    command -v python3 >/dev/null || {
+      echo "Error: python3 is required to validate --proxy-allowed-hosts" >&2
+      exit 1
+    }
+    if ! PROXY_ALLOWED_HOSTS="$(normalize_proxy_allowed_hosts "${PROXY_ALLOWED_HOSTS}")"; then
+      exit 2
+    fi
   fi
   command -v doops >/dev/null || {
     echo "Error: doops CLI is required on PATH" >&2
@@ -432,14 +480,29 @@ hostname
 sha256sum /app/doops-agent
 EOF
 )"
-  if [[ "${PROXY_ALLOWED_HOSTS_SET}" == true ]]; then
-    doops -session "${SESSION}-verify" exec --target "${TARGET}" --cmd "$(cat <<EOF
+  doops -session "${SESSION}-verify" exec --target "${TARGET}" --cmd "$(cat <<EOF
 set -eu
-test "\${DOOPS_PROXY_ALLOW_HOSTS:-}" = $(printf '%q' "${PROXY_ALLOWED_HOSTS}")
-printf 'proxy_allowed_hosts=%s\n' "\${DOOPS_PROXY_ALLOW_HOSTS:-}"
+python3 - $(printf '%q' "${RELEASE}") $(printf '%q' "${NAMESPACE}") <<'PY'
+import json
+import os
+import subprocess
+import sys
+
+release, namespace = sys.argv[1:3]
+values = json.loads(subprocess.check_output(
+    ["helm", "get", "values", release, "-n", namespace, "-o", "json"],
+    text=True,
+))
+expected = str((values.get("proxy") or {}).get("allowedHosts") or "")
+actual = os.environ.get("DOOPS_PROXY_ALLOW_HOSTS", "")
+print("proxy_allowed_hosts=" + actual)
+if actual != expected:
+    raise SystemExit(
+        "Error: replacement Agent proxy allowlist does not match live Helm values"
+    )
+PY
 EOF
 )"
-  fi
   echo "Release complete: ${TARGET} -> ${DOOPS_IMAGE}"
 }
 

@@ -149,7 +149,9 @@ bash scripts/release-managed-agent.sh \
 
 `--proxy-allowed-hosts` 只接受逗号分隔的精确上游 hostname/IP，并写入
 `proxy.allowedHosts`；省略时保留现网 Helm 值。传空字符串会显式恢复为拒绝全部。
-新集群必须在完整 `--values` 文件中声明该值，不能同时传这个参数。
+脚本会拒绝 URL、端口、路径、通配符和空条目，并在新 Pod 上对照 Helm release
+验证实际环境值。新集群省略该值时默认拒绝全部；需要开放时在完整 `--values`
+文件中声明，不能同时传这个参数。
 
 新集群还没有 Agent 时，同一条命令改传完整 `--values` 和本机 kubeconfig，仍然只走
 这份 Chart 的 `helm upgrade --install`。自定义 entrypoint 或 `hostNetwork` 必须先改成

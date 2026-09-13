@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -61,7 +62,8 @@ def test_single_managed_agent_release_script():
     assert "--values" in text
     assert "--proxy-allowed-hosts" in text
     assert 'values.setdefault("proxy", {})["allowedHosts"] = proxy_allowed_hosts' in text
-    assert 'test "\\${DOOPS_PROXY_ALLOW_HOSTS:-}"' in text
+    assert "normalize_proxy_allowed_hosts" in text
+    assert "replacement Agent proxy allowlist does not match live Helm values" in text
     assert "doops -session" in text
     assert "@sha256:" in helper
     assert "docker.cnb.cool/l8ai/ai/doops.sh" in helper
@@ -80,3 +82,63 @@ def test_docs_point_agent_release_at_one_script():
     assert "maxSurge=1" in sop
     assert "maxUnavailable=0" in sop
     assert "sandbox-entrypoint.sh" in usage
+
+
+def test_release_rejects_proxy_urls_before_contacting_a_target():
+    result = subprocess.run(
+        [
+            "bash",
+            str(RELEASE),
+            "--target",
+            "not-a-real-target",
+            "--session",
+            "proxy-validation",
+            "--release",
+            "doops-agent",
+            "--namespace",
+            "doops-system",
+            "--proxy-allowed-hosts",
+            "https://internal.example.com:8443/path",
+            "--image",
+            "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "a" * 64,
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "entries must be exact hostnames or IPs" in result.stderr
+    assert "TARGETING" not in result.stdout
+
+
+def test_release_rejects_empty_proxy_entries():
+    result = subprocess.run(
+        [
+            "bash",
+            str(RELEASE),
+            "--target",
+            "not-a-real-target",
+            "--session",
+            "proxy-validation",
+            "--release",
+            "doops-agent",
+            "--namespace",
+            "doops-system",
+            "--proxy-allowed-hosts",
+            "127.0.0.1,,internal.example.com",
+            "--image",
+            "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "a" * 64,
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "contains an empty entry" in result.stderr
+    assert "TARGETING" not in result.stdout

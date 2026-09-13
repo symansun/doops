@@ -68,7 +68,8 @@ description: |
   外部 CI/GitOps controller 执行；禁止创建临时 Agent、临时 target 或 release-runner。
 - 已有 Helm Agent 需要开放网站代理上游时，唯一发布脚本必须显式传
   `--proxy-allowed-hosts <comma-separated-exact-hosts>`；省略保留现网值，传空字符串恢复
-  为拒绝全部。该参数只控制 Agent 所在网络的上游 hostname/IP，不控制公网域名。
+  为拒绝全部。URL、端口、路径、通配符和空条目必须在 mutation 前拒绝，发布后必须核对
+  新 Agent 环境与 Helm release。该参数只控制 Agent 所在网络的上游 hostname/IP，不控制公网域名。
 - 长构建可以使用 `doops -session <s> exec --bg --target <t> --cmd '<cmd>'`。自然语言
   发布中的 Helm 收敛必须使用 `mcp_doops_helm`；运维人员显式给出的前台 `exec` Helm
   `upgrade/install/rollback/uninstall` 仍是合法的确定性操作，并保持 Gateway 串行化
