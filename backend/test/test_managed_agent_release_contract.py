@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -53,13 +54,26 @@ def test_single_managed_agent_release_script():
     assert "--reuse-values" not in text
     assert "kubectl set image" not in text
     assert "doops exec --bg" not in text
-    assert "helm upgrade --install" in text
-    assert "image pull failed; refuse to roll" in text
+    assert "doops_cmd push" not in text
+    assert "doops_cmd exec" not in text
+    assert 'upgrade --install "${RELEASE}" "${CHART_DIR}"' in text
+    assert 'helm rollback "${RELEASE}" "${previous_revision}"' in text
+    assert 'if ! helm rollback "${RELEASE}" "${previous_revision}"' in text
+    assert "Error: Helm rollback command failed" in text
+    assert "--dry-run=server" in text
+    assert "rollback_complete=true" in text
+    assert "candidate_failure_observation" in text
+    assert "trap 'exit 130' INT" in text
+    assert "trap 'exit 143' TERM" in text
     assert "hostNetwork agents cannot hand off" in text
     assert "sandbox-entrypoint.sh" in text
     assert "deploy/helm/doops-agent" in text
     assert "went offline for 30s during handoff" in text
     assert "--values" in text
+    assert "--kubeconfig" in text
+    assert "--cluster" in text
+    assert "--instance" in text
+    assert "Gateway target resolves to" in text
     assert "--proxy-allowed-hosts" in text
     assert 'values.setdefault("proxy", {})["allowedHosts"] = proxy_allowed_hosts' in text
     assert "normalize_proxy_allowed_hosts" in text
@@ -82,6 +96,41 @@ def test_docs_point_agent_release_at_one_script():
     assert "maxSurge=1" in sop
     assert "maxUnavailable=0" in sop
     assert "sandbox-entrypoint.sh" in usage
+
+
+def test_existing_release_requires_an_external_kubeconfig_before_target_contact():
+    env = os.environ.copy()
+    env.pop("KUBECONFIG", None)
+    result = subprocess.run(
+        [
+            "bash",
+            str(RELEASE),
+            "--target",
+            "not-a-real-target",
+            "--session",
+            "external-controller",
+            "--cluster",
+            "doops-test",
+            "--instance",
+            "node-1",
+            "--release",
+            "doops-agent",
+            "--namespace",
+            "doops-system",
+            "--image",
+            "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "a" * 64,
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "--kubeconfig or KUBECONFIG is required" in result.stderr
+    assert "TARGETING" not in result.stdout
 
 
 def test_release_rejects_proxy_urls_before_contacting_a_target():

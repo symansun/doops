@@ -4,6 +4,10 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
 
 ## 2026-09-13 Managed Agent proxy allowlist release
 
+- Existing Helm releases now require an operator-side kubeconfig plus the exact
+  Gateway `cluster/instance`. The script performs Helm outside the current Agent,
+  uses server-side dry-run, diagnoses candidate Pod failures, and automatically
+  rolls back to the previous Helm revision when handoff or verification fails.
 - `scripts/release-managed-agent.sh` now accepts an explicit
   `--proxy-allowed-hosts` value for existing Helm releases and verifies the
   replacement Agent inherited the exact `DOOPS_PROXY_ALLOW_HOSTS` value.
@@ -17,9 +21,10 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
 - `deploy/helm/doops-agent` now uses `maxSurge=1` and `maxUnavailable=0` so the
   live Agent keeps serving until the replacement Pod is Ready. Gateway Register
   switches the session, then Kubernetes deletes the old replica.
-- There is one operator command: `scripts/release-managed-agent.sh`. Image pull
-  on the node must succeed before Helm. `hostNetwork` and custom entrypoints are
-  refused. `install-managed-agent.sh` and `upgrade-managed-agent.sh` are removed.
+- There is one operator command: `scripts/release-managed-agent.sh`. Existing
+  releases use an operator-side kubeconfig; `hostNetwork` and custom entrypoints
+  are refused. `install-managed-agent.sh` and `upgrade-managed-agent.sh` are
+  removed.
 - A 30s Gateway offline window during handoff is a release failure.
 
 ## 2026-09-06 One-click Helm agent install and upgrade

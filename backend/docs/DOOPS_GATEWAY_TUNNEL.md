@@ -88,13 +88,17 @@ allowlist，而是 Agent 所在网络允许访问的上游主机 allowlist。
 bash scripts/release-managed-agent.sh \
   --target <target> \
   --session <session> \
+  --cluster <gateway-cluster> \
+  --instance <gateway-instance> \
   --release <release> \
   --namespace <namespace> \
+  --kubeconfig <operator-kubeconfig> \
   --proxy-allowed-hosts 127.0.0.1,internal.example.com \
   --image <repository>@sha256:<digest>
 ```
 
-省略参数会保留现网 allowlist；传空字符串会显式恢复为拒绝全部。
+操作机 kubeconfig 是已有 Agent 发布的外部控制器边界，当前 Agent 不执行自身 Helm
+mutation。省略 allowlist 参数会保留现网值；传空字符串会显式恢复为拒绝全部。
 
 ## Managed Gateway Host
 

@@ -423,15 +423,19 @@ curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh
 
 已经改用 Helm chart `deploy/helm/doops-agent` 的维护者节点才走
 `scripts/release-managed-agent.sh`。现网必须已经是 `/app/sandbox-entrypoint.sh`，
-脚本会先把镜像拉到节点，再 `helm upgrade --install`。Chart 先起新 Pod，Gateway
-切换会话后才删旧副本：
+已有集群必须提供操作机 kubeconfig；Helm mutation 由操作机执行，不能通过当前 Agent
+执行。Chart 先起新 Pod，Gateway 切换会话后才删旧副本；候选 Pod 或 Gateway 接管失败
+会自动回滚到发布前 Helm revision：
 
 ```bash
 bash scripts/release-managed-agent.sh \
   --target gw-edu-coder \
   --session agent-release-<tag> \
+  --cluster doops-edu \
+  --instance edu-coder \
   --release doops-agent-live \
   --namespace kz-ops \
+  --kubeconfig /secure/path/to/kubeconfig \
   --proxy-allowed-hosts 127.0.0.1,internal.example.com \
   --version <vX.Y.Z>
 ```

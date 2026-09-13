@@ -16,8 +16,11 @@ Existing cluster (DoOps target already online):
   bash scripts/release-managed-agent.sh \
     --target gw-edu-coder \
     --session agent-release-v1.3.0 \
+    --cluster doops-edu \
+    --instance edu-coder \
     --release doops-agent-live \
     --namespace kz-ops \
+    --kubeconfig /secure/path/to/kubeconfig \
     --proxy-allowed-hosts 127.0.0.1,internal.example.com \
     --version v1.3.0
 
@@ -37,13 +40,16 @@ Required:
 Existing cluster also requires:
   --target NAME
   --session NAME
+  --cluster NAME
+  --instance NAME
+  --kubeconfig PATH (or KUBECONFIG)
 
 New cluster also requires:
   --values FILE
 
 Options:
   --chart-dir PATH     Default: deploy/helm/doops-agent
-  --kubeconfig PATH    For --values / new-cluster Helm. Default: $KUBECONFIG
+  --kubeconfig PATH    External Helm controller config. Default: $KUBECONFIG
   --timeout DURATION   Helm wait timeout for new-cluster installs. Default: 5m
   --handoff-timeout SEC
                        Seconds to wait for the live image to become the digest.
@@ -62,6 +68,8 @@ source "${SCRIPT_DIR}/doops-release-image.sh"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TARGET=""
 SESSION=""
+CLUSTER=""
+INSTANCE=""
 RELEASE=""
 NAMESPACE=""
 VALUES=""
@@ -83,6 +91,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --session)
       SESSION="${2:-}"
+      shift 2
+      ;;
+    --cluster)
+      CLUSTER="${2:-}"
+      shift 2
+      ;;
+    --instance)
+      INSTANCE="${2:-}"
       shift 2
       ;;
     --release)
@@ -294,14 +310,26 @@ release_existing_cluster() {
       exit 2
     fi
   fi
+  require_value "--cluster" "${CLUSTER}"
+  require_value "--instance" "${INSTANCE}"
+  require_value "--kubeconfig or KUBECONFIG" "${KUBECONFIG_PATH}"
   command -v doops >/dev/null || {
     echo "Error: doops CLI is required on PATH" >&2
     exit 1
   }
-  command -v rsync >/dev/null || {
-    echo "Error: rsync is required to stage the Helm chart" >&2
+  command -v helm >/dev/null || {
+    echo "Error: helm is required on PATH" >&2
     exit 1
   }
+  command -v kubectl >/dev/null || {
+    echo "Error: kubectl is required on PATH" >&2
+    exit 1
+  }
+  if [[ ! -s "${KUBECONFIG_PATH}" ]]; then
+    echo "Error: kubeconfig does not exist or is empty: ${KUBECONFIG_PATH}" >&2
+    exit 1
+  fi
+  export KUBECONFIG="${KUBECONFIG_PATH}"
 
   doops_cmd() {
     doops -session "${SESSION}" "$@"
@@ -309,23 +337,32 @@ release_existing_cluster() {
 
   echo "Target: ${TARGET}"
   echo "Session: ${SESSION}"
+  echo "Gateway identity: ${CLUSTER}/${INSTANCE}"
+  echo "External kubeconfig: ${KUBECONFIG_PATH}"
   if [[ "${PROXY_ALLOWED_HOSTS_SET}" == true ]]; then
     echo "Proxy upstream hosts: ${PROXY_ALLOWED_HOSTS:-<deny-all>}"
   fi
   echo "==> checking target is online"
-  doops_cmd targets --target "${TARGET}" >/dev/null
+  target_status="$(doops_cmd targets --target "${TARGET}")"
+  target_identity="$(
+    printf '%s\n' "${target_status}" |
+      awk '$1 != "CLUSTER" && $1 !~ /^-+$/ && NF >= 2 {print $1 "/" $2; exit}'
+  )"
+  if [[ "${target_identity}" != "${CLUSTER}/${INSTANCE}" ]]; then
+    echo "Error: Gateway target resolves to ${target_identity:-<unknown>}, not ${CLUSTER}/${INSTANCE}" >&2
+    exit 1
+  fi
 
-  echo "==> preflight: Helm release, sandbox-entrypoint, no hostNetwork"
-  doops_cmd exec --target "${TARGET}" --cmd "$(cat <<EOF
-set -eu
-if ! helm status $(printf '%q' "${RELEASE}") -n $(printf '%q' "${NAMESPACE}") >/dev/null; then
-  echo "Error: Helm release ${RELEASE} was not found in ${NAMESPACE}" >&2
-  echo "Adopt the workload onto deploy/helm/doops-agent before releasing." >&2
-  exit 1
-fi
-python3 - $(printf '%q' "${RELEASE}") $(printf '%q' "${NAMESPACE}") <<'PY'
+  echo "==> external-controller preflight: Helm release, target identity, safe handoff"
+  if ! helm status "${RELEASE}" -n "${NAMESPACE}" >/dev/null; then
+    echo "Error: Helm release ${RELEASE} was not found in ${NAMESPACE}" >&2
+    echo "Adopt the workload onto deploy/helm/doops-agent before releasing." >&2
+    exit 1
+  fi
+  preflight="$(
+    python3 - "${RELEASE}" "${NAMESPACE}" "${CLUSTER}" "${INSTANCE}" <<'PY'
 import json, subprocess, sys
-release, namespace = sys.argv[1], sys.argv[2]
+release, namespace, expected_cluster, expected_instance = sys.argv[1:5]
 values = json.loads(subprocess.check_output(
     ["helm", "get", "values", release, "-n", namespace, "-o", "json"],
     text=True,
@@ -346,86 +383,208 @@ if "/app/sandbox-entrypoint.sh" not in entry:
     raise SystemExit(
         "Error: live command is not sandbox-entrypoint.sh; refusing to replace a custom entrypoint"
     )
+env = {
+    item.get("name"): item.get("value", "")
+    for item in container.get("env") or []
+}
+if env.get("DOOPS_GATEWAY_CLUSTER") != expected_cluster:
+    raise SystemExit("Error: kubeconfig workload cluster does not match --cluster")
+if env.get("DOOPS_GATEWAY_INSTANCE") != expected_instance:
+    raise SystemExit("Error: kubeconfig workload instance does not match --instance")
+selector_labels = ((values.get("workload") or {}).get("selectorLabels") or {})
+if not selector_labels:
+    raise SystemExit("Error: Helm values are missing workload.selectorLabels")
+selector = ",".join(f"{key}={selector_labels[key]}" for key in sorted(selector_labels))
 print("workload=" + workload)
 print("current_image=" + container.get("image", ""))
+print("selector=" + selector)
 PY
-EOF
-)"
+  )"
+  echo "${preflight}"
+  workload="$(printf '%s\n' "${preflight}" | awk -F= '$1 == "workload" {print substr($0, index($0, "=") + 1)}')"
+  current_image="$(printf '%s\n' "${preflight}" | awk -F= '$1 == "current_image" {print substr($0, index($0, "=") + 1)}')"
+  selector="$(printf '%s\n' "${preflight}" | awk -F= '$1 == "selector" {print substr($0, index($0, "=") + 1)}')"
+  require_value "live workload.name" "${workload}"
+  require_value "live workload.selectorLabels" "${selector}"
 
-  if [[ "${DRY_RUN}" == true ]]; then
-    echo "Dry-run complete. No chart was pushed and Helm was not mutated."
-    exit 0
-  fi
-
-  stage="$(mktemp -d)"
-  trap 'rm -rf "${stage}"' EXIT
-  mkdir -p "${stage}/deploy/helm"
-  rsync -a "${CHART_DIR}/" "${stage}/deploy/helm/doops-agent/"
-
-  echo "==> pushing deploy/helm/doops-agent"
-  doops_cmd push --target "${TARGET}" --src "${stage}"
-
-  echo "==> pulling image, then Helm upgrade --install without waiting on the live Agent"
-  doops_cmd exec --target "${TARGET}" --cmd "$(cat <<EOF
-set -eu
-cd /root/ws/$(printf '%q' "${SESSION}")
-if [[ ! -f deploy/helm/doops-agent/Chart.yaml ]]; then
-  echo "Error: chart was not pushed to /root/ws/${SESSION}/deploy/helm/doops-agent" >&2
-  exit 1
-fi
-pulled=0
-if command -v nerdctl >/dev/null 2>&1; then
-  if nerdctl -n k8s.io pull $(printf '%q' "${DOOPS_IMAGE}") || nerdctl pull $(printf '%q' "${DOOPS_IMAGE}"); then
-    pulled=1
-  fi
-fi
-if [[ "\${pulled}" -eq 0 ]] && command -v docker >/dev/null 2>&1; then
-  if docker pull $(printf '%q' "${DOOPS_IMAGE}"); then
-    pulled=1
-  fi
-fi
-if [[ "\${pulled}" -eq 0 ]] && command -v crictl >/dev/null 2>&1; then
-  if crictl pull $(printf '%q' "${DOOPS_IMAGE}"); then
-    pulled=1
-  fi
-fi
-if [[ "\${pulled}" -eq 0 ]]; then
-  echo "Error: image pull failed; refuse to roll while the digest is not on this node" >&2
-  exit 1
-fi
-python3 - $(printf '%q' "${RELEASE}") $(printf '%q' "${NAMESPACE}") $(printf '%q' "${DOOPS_IMAGE_REPOSITORY}") $(printf '%q' "${DOOPS_IMAGE_DIGEST}") $(printf '%q' "${PROXY_ALLOWED_HOSTS}") $(printf '%q' "${PROXY_ALLOWED_HOSTS_SET}") <<'PY'
-import json, subprocess, sys
-release, namespace, repository, digest, proxy_allowed_hosts, proxy_override = sys.argv[1:7]
-values = json.loads(subprocess.check_output(
-    ["helm", "get", "values", release, "-n", namespace, "-o", "json"],
-    text=True,
-))
+  release_tmp="$(mktemp -d)"
+  cleanup_release_tmp() {
+    rm -rf "${release_tmp}"
+  }
+  trap cleanup_release_tmp EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  release_values="${release_tmp}/values.json"
+  helm get values "${RELEASE}" -n "${NAMESPACE}" -o json >"${release_values}"
+  python3 - "${release_values}" "${DOOPS_IMAGE_REPOSITORY}" "${DOOPS_IMAGE_DIGEST}" "${PROXY_ALLOWED_HOSTS}" "${PROXY_ALLOWED_HOSTS_SET}" <<'PY'
+import json, sys
+path, repository, digest, proxy_allowed_hosts, proxy_override = sys.argv[1:6]
+with open(path, encoding="utf-8") as fh:
+    values = json.load(fh)
 image = values.setdefault("image", {})
 image.pop("tag", None)
 image["repository"] = repository
 image["digest"] = digest
 if proxy_override == "true":
     values.setdefault("proxy", {})["allowedHosts"] = proxy_allowed_hosts
-with open("/tmp/doops-agent-release-values.json", "w", encoding="utf-8") as fh:
+with open(path, "w", encoding="utf-8") as fh:
     json.dump(values, fh)
 PY
-helm upgrade --install $(printf '%q' "${RELEASE}") deploy/helm/doops-agent \
-  -n $(printf '%q' "${NAMESPACE}") \
-  -f /tmp/doops-agent-release-values.json \
-  --timeout 5m \
-  --wait=false
-echo HELM_MUTATION_SUBMITTED
-EOF
-)"
+  helm_args=(
+    upgrade --install "${RELEASE}" "${CHART_DIR}"
+    -n "${NAMESPACE}"
+    -f "${release_values}"
+    --timeout "${TIMEOUT}"
+    --wait=false
+  )
+  echo "==> server-side Helm dry-run from the external controller"
+  helm "${helm_args[@]}" --dry-run=server >/dev/null
+  if [[ "${DRY_RUN}" == true ]]; then
+    trap - EXIT INT TERM
+    cleanup_release_tmp
+    echo "Dry-run complete. The target Agent did not execute a mutation."
+    exit 0
+  fi
+
+  previous_revision="$(
+    helm history "${RELEASE}" -n "${NAMESPACE}" -o json |
+      python3 -c 'import json,sys; rows=json.load(sys.stdin); print(max(int(row["revision"]) for row in rows if row["status"] == "deployed"))'
+  )"
+  rollback_required=true
+
+  rollback_release() {
+    echo "==> rolling back ${RELEASE} to revision ${previous_revision}" >&2
+    if ! helm rollback "${RELEASE}" "${previous_revision}" -n "${NAMESPACE}" \
+      --timeout "${TIMEOUT}" --wait; then
+      echo "Error: Helm rollback command failed" >&2
+      return 1
+    fi
+    if ! kubectl -n "${NAMESPACE}" rollout status "deployment/${workload}" --timeout "${TIMEOUT}"; then
+      echo "Error: rolled-back Deployment did not become ready" >&2
+      return 1
+    fi
+    if ! doops -session "${SESSION}-rollback" targets --target "${TARGET}" >/dev/null; then
+      echo "Error: rolled-back Agent did not reconnect to Gateway" >&2
+      return 1
+    fi
+    if ! rolled_back_image="$(
+      kubectl -n "${NAMESPACE}" get deployment "${workload}" \
+        -o jsonpath='{.spec.template.spec.containers[0].image}'
+    )"; then
+      echo "Error: could not read the rolled-back image" >&2
+      return 1
+    fi
+    if [[ "${rolled_back_image}" != "${current_image}" ]]; then
+      echo "Error: rollback image mismatch: ${rolled_back_image}" >&2
+      return 1
+    fi
+    echo "rollback_complete=true" >&2
+  }
+
+  release_exit() {
+    code=$?
+    trap - EXIT INT TERM
+    if [[ "${rollback_required}" == true ]]; then
+      if ! rollback_release; then
+        echo "Error: automatic rollback failed; manual intervention is required" >&2
+        code=1
+      fi
+    fi
+    cleanup_release_tmp
+    exit "${code}"
+  }
+  trap release_exit EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  echo "==> submitting Helm handoff from the external controller"
+  helm "${helm_args[@]}"
 
   echo "==> waiting for handoff; live target must keep serving"
   deadline=$((SECONDS + HANDOFF_TIMEOUT))
   offline_streak=0
+  candidate_failure_streak=0
+  last_candidate_failure=""
   while true; do
     if (( SECONDS >= deadline )); then
+      kubectl -n "${NAMESPACE}" get deployment,replicaset,pod -l "${selector}" -o wide >&2 || true
+      kubectl -n "${NAMESPACE}" get events --sort-by=.lastTimestamp | tail -n 30 >&2 || true
       echo "Error: live image did not become ${DOOPS_IMAGE} within ${HANDOFF_TIMEOUT}s" >&2
-      echo "The previous Agent must still be serving; inspect the new ReplicaSet." >&2
       exit 1
+    fi
+    kubectl -n "${NAMESPACE}" get deployment "${workload}" -o json >"${release_tmp}/deployment.json"
+    kubectl -n "${NAMESPACE}" get pods -l "${selector}" -o json >"${release_tmp}/pods.json"
+    candidate_failure="$(
+      python3 - "${release_tmp}/deployment.json" "${release_tmp}/pods.json" "${DOOPS_IMAGE}" <<'PY'
+import json
+import sys
+
+deployment_path, pods_path, expected_image = sys.argv[1:4]
+with open(deployment_path, encoding="utf-8") as fh:
+    deployment = json.load(fh)
+with open(pods_path, encoding="utf-8") as fh:
+    pods = json.load(fh)
+
+for condition in deployment.get("status", {}).get("conditions") or []:
+    if (
+        condition.get("type") == "Progressing"
+        and condition.get("status") == "False"
+    ):
+        print(
+            "deployment:"
+            + str(condition.get("reason") or "ProgressingFalse")
+            + ":"
+            + str(condition.get("message") or "")
+        )
+        raise SystemExit(0)
+
+fatal_waiting = {
+    "CrashLoopBackOff",
+    "CreateContainerConfigError",
+    "CreateContainerError",
+    "ErrImageNeverPull",
+    "ErrImagePull",
+    "ImagePullBackOff",
+    "InvalidImageName",
+    "RunContainerError",
+}
+for pod in pods.get("items") or []:
+    containers = pod.get("spec", {}).get("containers") or []
+    if not containers or containers[0].get("image") != expected_image:
+        continue
+    name = pod.get("metadata", {}).get("name", "candidate")
+    for condition in pod.get("status", {}).get("conditions") or []:
+        if (
+            condition.get("type") == "PodScheduled"
+            and condition.get("status") == "False"
+            and condition.get("reason") == "Unschedulable"
+        ):
+            print("pod:" + name + ":Unschedulable:" + str(condition.get("message") or ""))
+            raise SystemExit(0)
+    for status in pod.get("status", {}).get("containerStatuses") or []:
+        waiting = (status.get("state") or {}).get("waiting") or {}
+        reason = str(waiting.get("reason") or "")
+        if reason in fatal_waiting:
+            print("pod:" + name + ":" + reason + ":" + str(waiting.get("message") or ""))
+            raise SystemExit(0)
+PY
+    )"
+    if [[ -n "${candidate_failure}" ]]; then
+      if [[ "${candidate_failure}" == "${last_candidate_failure}" ]]; then
+        candidate_failure_streak=$((candidate_failure_streak + 1))
+      else
+        candidate_failure_streak=1
+        last_candidate_failure="${candidate_failure}"
+      fi
+      echo "candidate_failure_observation=${candidate_failure_streak}: ${candidate_failure}" >&2
+      if (( candidate_failure_streak >= 3 )); then
+        kubectl -n "${NAMESPACE}" get pods -l "${selector}" -o wide >&2 || true
+        kubectl -n "${NAMESPACE}" get events --sort-by=.lastTimestamp | tail -n 30 >&2 || true
+        exit 1
+      fi
+    else
+      candidate_failure_streak=0
+      last_candidate_failure=""
     fi
     if ! doops -session "${SESSION}-wait" targets --target "${TARGET}" >/dev/null 2>&1; then
       offline_streak=$((offline_streak + 5))
@@ -503,6 +662,42 @@ if actual != expected:
 PY
 EOF
 )"
+  kubectl -n "${NAMESPACE}" rollout status "deployment/${workload}" --timeout "${TIMEOUT}"
+  kubectl -n "${NAMESPACE}" get pods -l "${selector}" -o json >"${release_tmp}/verified-pods.json"
+  python3 - "${release_tmp}/verified-pods.json" "${DOOPS_IMAGE}" "${DOOPS_IMAGE_DIGEST}" <<'PY'
+import json
+import sys
+
+pods_path, expected_image, expected_digest = sys.argv[1:4]
+with open(pods_path, encoding="utf-8") as fh:
+    pods = json.load(fh)
+matches = []
+for pod in pods.get("items") or []:
+    containers = pod.get("spec", {}).get("containers") or []
+    if not containers or containers[0].get("image") != expected_image:
+        continue
+    statuses = pod.get("status", {}).get("containerStatuses") or []
+    ready = any(
+        condition.get("type") == "Ready" and condition.get("status") == "True"
+        for condition in pod.get("status", {}).get("conditions") or []
+    )
+    if not ready or not statuses:
+        continue
+    status = statuses[0]
+    if int(status.get("restartCount") or 0) != 0:
+        raise SystemExit("Error: replacement Agent restarted before release completion")
+    image_id = str(status.get("imageID") or "")
+    if expected_digest not in image_id:
+        raise SystemExit("Error: replacement Agent imageID does not match requested digest")
+    matches.append((pod.get("metadata", {}).get("name", ""), image_id))
+if len(matches) != 1:
+    raise SystemExit("Error: expected exactly one Ready replacement Agent Pod")
+print("replacement_pod=" + matches[0][0])
+print("replacement_image_id=" + matches[0][1])
+PY
+  rollback_required=false
+  trap - EXIT INT TERM
+  cleanup_release_tmp
   echo "Release complete: ${TARGET} -> ${DOOPS_IMAGE}"
 }
 

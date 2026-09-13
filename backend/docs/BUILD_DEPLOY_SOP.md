@@ -132,17 +132,23 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 `doops-agent` 由 Helm 管理的 `Deployment` 托管，Chart 位于 `deploy/helm/doops-agent`。该目录只保存运行时 Helm 模板、默认值和挂载定义，不保存环境注册表或部署 workflow。具体镜像、目标节点、Secret 引用、Gateway 地址和发布参数必须由本次自然语言任务明确给出或来自任务明确授权读取的当前 Helm release。发布前必须对比当前 workload 与候选 Chart 的 command、args、env、probes、volumeMounts 和 volumes。包括只更新镜像在内的所有发布都必须调用结构化 `doops_helm upgrade-install`，从任务明确指定的 Chart、可选 `value_files` 和非敏感 `set_strings` 完整收敛；更新现有 release 且任务已给出 release、namespace、chart 和不可变镜像时，`value_files` 可以为空，工具自动保留当前 values。`value_files` 只放 `deploy/` 下的 YAML 文件路径，`set_strings` 只覆盖标量叶子，禁止把 map/list 父键编码成字符串。`upgrade-install` 先用相同参数执行 Helm dry-run，再执行真实 mutation。镜像版本使用互斥的 digest 覆盖模式，或完整 values 中 `image.repository` 加 `image.tag=release-YYYYMMDD` 的模式；后者禁止 digest 和任何 `set_strings`。不存在 Kubernetes 镜像 mutation 发布旁路。自然语言 apply 禁止通过 shell 执行 kubectl 或 Helm mutation；运维人员明确给出的前台 `exec` Helm 操作合法，但 `exec --bg` Helm mutation 必须拒绝。用户明确给出的 SSH 命令属于普通 exec，可由在线 Agent 代理执行，并遵守相同的权限、排队、超时、取消和审计规则。
 
 受管 `doops-agent` 不得升级自身。唯一发布命令是笔记本上的
-`scripts/release-managed-agent.sh`：Helm chart `deploy/helm/doops-agent` 以
-`maxSurge=1`、`maxUnavailable=0` 先拉起新 Pod，Gateway `Register` 用新会话替换旧
-WebSocket 后再删旧副本。禁止 `kubectl set image`、Job、release-runner、Docker
-restart，以及 `doops upgrade` 的非 dry-run。
+`scripts/release-managed-agent.sh`。已有集群必须显式提供操作机 kubeconfig，
+`cluster/instance` 还要与 live Deployment 环境精确匹配；脚本在操作机执行
+server-side Helm dry-run 和真实 mutation，当前 Agent 只参与 Gateway 在线与接管验证。
+Chart 以 `maxSurge=1`、`maxUnavailable=0` 先拉起新 Pod，Gateway `Register` 用新会话
+替换旧 WebSocket 后再删旧副本。镜像拉取、调度、启动、readiness 或接管失败会采集
+Pod/事件，并由同一外部控制器自动回滚到发布前 Helm revision。禁止 `kubectl set image`、
+Job、release-runner、Docker restart，以及 `doops upgrade` 的非 dry-run。
 
 ```bash
 bash scripts/release-managed-agent.sh \
   --target <configured-target> \
   --session agent-release-<tag> \
+  --cluster <gateway-cluster> \
+  --instance <gateway-instance> \
   --release <helm-release> \
   --namespace <namespace> \
+  --kubeconfig <operator-kubeconfig> \
   --proxy-allowed-hosts 127.0.0.1,internal.example.com \
   --version <vX.Y.Z>
 ```

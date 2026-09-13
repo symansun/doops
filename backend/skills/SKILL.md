@@ -66,6 +66,8 @@ description: |
 - 当前没有 EnvironmentRegistry、`cicd run`、CICDReport 或 `doops_cicd_result` 发布链路。
 - `doops-agent` 自身升级是例外：当前 Agent 不得修改承载自身的 workload，必须由真实存在的
   外部 CI/GitOps controller 执行；禁止创建临时 Agent、临时 target 或 release-runner。
+  已有 Helm release 的唯一脚本必须显式使用操作机 kubeconfig，并校验 live workload 中的
+  `cluster/instance` 与命令参数一致；Gateway target 只用于在线、接管和发布后功能验证。
 - 已有 Helm Agent 需要开放网站代理上游时，唯一发布脚本必须显式传
   `--proxy-allowed-hosts <comma-separated-exact-hosts>`；省略保留现网值，传空字符串恢复
   为拒绝全部。URL、端口、路径、通配符和空条目必须在 mutation 前拒绝，发布后必须核对
@@ -267,7 +269,9 @@ curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh
 
 例如：`... | sh -s -- doops-jm jm-228`。当前基线 v1.3.0。权威脚本在 `l8ai/dowork` 的 `doops-k8s/`。
 已经改用 Helm chart 的维护者节点才走 `scripts/release-managed-agent.sh`。
-`doops upgrade` 只允许 `--dry-run`。
+已有集群必须同时传操作机 `--kubeconfig`、精确 `--cluster` 和 `--instance`；脚本从
+Agent 进程外执行 Helm，并在候选 Pod 或 Gateway 接管失败时自动回滚。`doops upgrade`
+只允许 `--dry-run`。
 
 普通业务发布流程和自然语言任务约束见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
 

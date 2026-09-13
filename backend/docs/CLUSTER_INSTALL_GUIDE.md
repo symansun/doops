@@ -27,7 +27,8 @@ curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh
 同一条 curl。不要用 `kubectl set image` 或 Docker `run` 换镜像。
 
 本仓库的 `scripts/release-managed-agent.sh` 只给已经改用 Helm chart
-`deploy/helm/doops-agent` 的维护者节点。那条路径不是用户一键安装。
+`deploy/helm/doops-agent` 的维护者节点。已有集群必须由持有 kubeconfig 的操作机作为
+外部控制器执行，不能通过当前 Agent 修改自身 Deployment。那条路径不是用户一键安装。
 
 旧副本卡在 Terminating 超过一分钟时，强制删除该 Pod，不要对同一身份再跑一遍
 install。`hostPID` 会让 `tini -s` 收养宿主机孤儿进程，kubelet 删不掉容器。
