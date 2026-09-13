@@ -18,6 +18,7 @@ Existing cluster (DoOps target already online):
     --session agent-release-v1.3.0 \
     --release doops-agent-live \
     --namespace kz-ops \
+    --proxy-allowed-hosts 127.0.0.1,internal.example.com \
     --version v1.3.0
 
 New cluster (operator kubeconfig, complete values, no Agent yet):
@@ -47,6 +48,9 @@ Options:
   --handoff-timeout SEC
                        Seconds to wait for the live image to become the digest.
                        Default: 600.
+  --proxy-allowed-hosts HOSTS
+                       Comma-separated exact upstream hostnames/IPs. Existing
+                       clusters only; omitted preserves the live Helm value.
   --dry-run            Preflight only
   -h, --help
 EOF
@@ -67,6 +71,8 @@ CHART_DIR="${REPO_ROOT}/deploy/helm/doops-agent"
 KUBECONFIG_PATH="${KUBECONFIG:-}"
 TIMEOUT="5m"
 HANDOFF_TIMEOUT="600"
+PROXY_ALLOWED_HOSTS=""
+PROXY_ALLOWED_HOSTS_SET=false
 DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
@@ -113,6 +119,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --handoff-timeout)
       HANDOFF_TIMEOUT="${2:-}"
+      shift 2
+      ;;
+    --proxy-allowed-hosts)
+      PROXY_ALLOWED_HOSTS="${2:-}"
+      PROXY_ALLOWED_HOSTS_SET=true
       shift 2
       ;;
     --dry-run)
@@ -189,6 +200,10 @@ release_new_cluster() {
     echo "Error: new-cluster --values must not be mixed with --target/--session" >&2
     exit 2
   fi
+  if [[ "${PROXY_ALLOWED_HOSTS_SET}" == true ]]; then
+    echo "Error: new-cluster --values must declare proxy.allowedHosts in the values file" >&2
+    exit 2
+  fi
   if [[ ! -f "${VALUES}" ]]; then
     echo "Error: --values file does not exist: ${VALUES}" >&2
     exit 1
@@ -246,6 +261,9 @@ release_existing_cluster() {
 
   echo "Target: ${TARGET}"
   echo "Session: ${SESSION}"
+  if [[ "${PROXY_ALLOWED_HOSTS_SET}" == true ]]; then
+    echo "Proxy upstream hosts: ${PROXY_ALLOWED_HOSTS:-<deny-all>}"
+  fi
   echo "==> checking target is online"
   doops_cmd targets --target "${TARGET}" >/dev/null
 
@@ -327,9 +345,9 @@ if [[ "\${pulled}" -eq 0 ]]; then
   echo "Error: image pull failed; refuse to roll while the digest is not on this node" >&2
   exit 1
 fi
-python3 - $(printf '%q' "${RELEASE}") $(printf '%q' "${NAMESPACE}") $(printf '%q' "${DOOPS_IMAGE_REPOSITORY}") $(printf '%q' "${DOOPS_IMAGE_DIGEST}") <<'PY'
+python3 - $(printf '%q' "${RELEASE}") $(printf '%q' "${NAMESPACE}") $(printf '%q' "${DOOPS_IMAGE_REPOSITORY}") $(printf '%q' "${DOOPS_IMAGE_DIGEST}") $(printf '%q' "${PROXY_ALLOWED_HOSTS}") $(printf '%q' "${PROXY_ALLOWED_HOSTS_SET}") <<'PY'
 import json, subprocess, sys
-release, namespace, repository, digest = sys.argv[1:5]
+release, namespace, repository, digest, proxy_allowed_hosts, proxy_override = sys.argv[1:7]
 values = json.loads(subprocess.check_output(
     ["helm", "get", "values", release, "-n", namespace, "-o", "json"],
     text=True,
@@ -338,6 +356,8 @@ image = values.setdefault("image", {})
 image.pop("tag", None)
 image["repository"] = repository
 image["digest"] = digest
+if proxy_override == "true":
+    values.setdefault("proxy", {})["allowedHosts"] = proxy_allowed_hosts
 with open("/tmp/doops-agent-release-values.json", "w", encoding="utf-8") as fh:
     json.dump(values, fh)
 PY
@@ -412,6 +432,14 @@ hostname
 sha256sum /app/doops-agent
 EOF
 )"
+  if [[ "${PROXY_ALLOWED_HOSTS_SET}" == true ]]; then
+    doops -session "${SESSION}-verify" exec --target "${TARGET}" --cmd "$(cat <<EOF
+set -eu
+test "\${DOOPS_PROXY_ALLOW_HOSTS:-}" = $(printf '%q' "${PROXY_ALLOWED_HOSTS}")
+printf 'proxy_allowed_hosts=%s\n' "\${DOOPS_PROXY_ALLOW_HOSTS:-}"
+EOF
+)"
+  fi
   echo "Release complete: ${TARGET} -> ${DOOPS_IMAGE}"
 }
 

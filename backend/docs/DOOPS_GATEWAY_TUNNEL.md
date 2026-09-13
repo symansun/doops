@@ -82,6 +82,20 @@ sequenceDiagram
 `DOOPS_PROXY_ALLOW_HOSTS`；默认空值会拒绝所有上游。这个配置不是公网域名
 allowlist，而是 Agent 所在网络允许访问的上游主机 allowlist。
 
+升级已有 Helm Agent 时必须通过唯一发布入口显式维护该值：
+
+```bash
+bash scripts/release-managed-agent.sh \
+  --target <target> \
+  --session <session> \
+  --release <release> \
+  --namespace <namespace> \
+  --proxy-allowed-hosts 127.0.0.1,internal.example.com \
+  --image <repository>@sha256:<digest>
+```
+
+省略参数会保留现网 allowlist；传空字符串会显式恢复为拒绝全部。
+
 ## Managed Gateway Host
 
 当前受管 gateway 主机信息：

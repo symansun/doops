@@ -432,8 +432,13 @@ bash scripts/release-managed-agent.sh \
   --session agent-release-<tag> \
   --release doops-agent-live \
   --namespace kz-ops \
+  --proxy-allowed-hosts 127.0.0.1,internal.example.com \
   --version <vX.Y.Z>
 ```
+
+需要开放网站反代时，通过 `--proxy-allowed-hosts` 显式传入逗号分隔的精确上游
+hostname/IP；省略会保留现网值，传空字符串会恢复为拒绝全部。该参数控制 Agent
+能访问的内网上游，不是公网访问域名。
 
 `doops upgrade` 只做预演：
 

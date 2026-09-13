@@ -2,6 +2,15 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-09-13 Managed Agent proxy allowlist release
+
+- `scripts/release-managed-agent.sh` now accepts an explicit
+  `--proxy-allowed-hosts` value for existing Helm releases and verifies the
+  replacement Agent inherited the exact `DOOPS_PROXY_ALLOW_HOSTS` value.
+- Omitting the option preserves the live Helm value; an explicit empty value
+  restores deny-all. New-cluster installs continue to require this setting in
+  their complete values file.
+
 ## 2026-09-07 Single agent handoff release
 
 - `deploy/helm/doops-agent` now uses `maxSurge=1` and `maxUnavailable=0` so the

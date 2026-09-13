@@ -59,6 +59,9 @@ def test_single_managed_agent_release_script():
     assert "deploy/helm/doops-agent" in text
     assert "went offline for 30s during handoff" in text
     assert "--values" in text
+    assert "--proxy-allowed-hosts" in text
+    assert 'values.setdefault("proxy", {})["allowedHosts"] = proxy_allowed_hosts' in text
+    assert 'test "\\${DOOPS_PROXY_ALLOW_HOSTS:-}"' in text
     assert "doops -session" in text
     assert "@sha256:" in helper
     assert "docker.cnb.cool/l8ai/ai/doops.sh" in helper

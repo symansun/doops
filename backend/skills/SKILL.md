@@ -66,6 +66,9 @@ description: |
 - 当前没有 EnvironmentRegistry、`cicd run`、CICDReport 或 `doops_cicd_result` 发布链路。
 - `doops-agent` 自身升级是例外：当前 Agent 不得修改承载自身的 workload，必须由真实存在的
   外部 CI/GitOps controller 执行；禁止创建临时 Agent、临时 target 或 release-runner。
+- 已有 Helm Agent 需要开放网站代理上游时，唯一发布脚本必须显式传
+  `--proxy-allowed-hosts <comma-separated-exact-hosts>`；省略保留现网值，传空字符串恢复
+  为拒绝全部。该参数只控制 Agent 所在网络的上游 hostname/IP，不控制公网域名。
 - 长构建可以使用 `doops -session <s> exec --bg --target <t> --cmd '<cmd>'`。自然语言
   发布中的 Helm 收敛必须使用 `mcp_doops_helm`；运维人员显式给出的前台 `exec` Helm
   `upgrade/install/rollback/uninstall` 仍是合法的确定性操作，并保持 Gateway 串行化
