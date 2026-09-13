@@ -22,6 +22,10 @@ gateway:
   cluster: ""
   instance: ""
 
+proxy:
+  # Empty rejects every public proxy upstream until an operator explicitly allows one.
+  allowedHosts: ""
+
 nodeSelector: {}
 
 tolerations: []

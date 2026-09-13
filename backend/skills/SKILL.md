@@ -77,8 +77,9 @@ description: |
 - 物理机/宿主机/Bare-metal 接入：doops 只能执行 Agent 进程所在 OS 用户态的命令，
   看不到虚拟化层以下的硬件。三条真实路径与禁止动作见 `docs/PHYSICAL_HOST_ACCESS.md`。
 - 网站公网代理：管理员先在 Gateway 创建 `host -> cluster/instance -> upstream`
-  路由；Agent 必须配置 `DOOPS_PROXY_ALLOW_HOSTS` 精确上游 hostname。当前只支持
-  HTTP/HTTPS 流式代理，不支持 WebSocket 或裸 TCP，详见 `docs/DOOPS_GATEWAY_TUNNEL.md`。
+  路由；Agent 必须通过 Helm `proxy.allowedHosts` 配置精确上游 hostname（Chart 注入
+  `DOOPS_PROXY_ALLOW_HOSTS`，默认拒绝全部）。当前只支持 HTTP/HTTPS 流式代理，
+  不支持 WebSocket 或裸 TCP，详见 `docs/DOOPS_GATEWAY_TUNNEL.md`。
 - 不要在日志、终端输出、文档、提交记录里暴露完整 token。
 - 如果用户是在发账号、发 token、授权、查审计、清理审计、查看/取消 gateway active operations，要按 gateway 管理动作处理，不要混成普通 target 运维。
 - 遇到 `user operation limit exceeded` 时，先用 `doops admin operations list --target <gateway-target>` 查占槽操作；确认 stale 后再用 `doops admin operations cancel --target <gateway-target> --id <operation-id>` 取消。升级后的 agent 会按进程组终止 shell 类命令；`ask` 需要额外核查 doagent session 是否仍在工作。

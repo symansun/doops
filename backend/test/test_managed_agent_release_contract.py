@@ -1,10 +1,15 @@
+import json
 from pathlib import Path
+
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / "scripts" / "release-managed-agent.sh"
 IMAGE = ROOT / "scripts" / "doops-release-image.sh"
 CHART = ROOT / "deploy" / "helm" / "doops-agent" / "templates" / "deployment.yaml"
+VALUES = ROOT / "deploy" / "helm" / "doops-agent" / "values.yaml"
+SCHEMA = ROOT / "deploy" / "helm" / "doops-agent" / "values.schema.json"
 SOP = ROOT / "docs" / "BUILD_DEPLOY_SOP.md"
 GUIDE = ROOT / "docs" / "CLUSTER_INSTALL_GUIDE.md"
 USAGE = ROOT / "docs" / "DOOPS_USAGE_GUIDE.md"
@@ -20,6 +25,21 @@ def test_agent_chart_hands_off_without_dropping_the_live_replica():
     assert "hostNetwork:" not in text
     assert "hostPID:" not in text
     assert "/app/sandbox-entrypoint.sh" in text
+
+
+def test_agent_chart_requires_an_explicit_proxy_upstream_allowlist():
+    deployment = CHART.read_text()
+    values = yaml.safe_load(VALUES.read_text())
+    schema = json.loads(SCHEMA.read_text())
+
+    assert values["proxy"]["allowedHosts"] == ""
+    assert "DOOPS_PROXY_ALLOW_HOSTS" in deployment
+    assert ".Values.proxy.allowedHosts" in deployment
+    assert schema["properties"]["proxy"] == {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {"allowedHosts": {"type": "string"}},
+    }
 
 
 def test_single_managed_agent_release_script():

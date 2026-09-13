@@ -77,8 +77,10 @@ sequenceDiagram
 
 `GET /v1/admin/proxy-routes` 列出路由，`DELETE /v1/admin/proxy-routes?id=<id>`
 删除路由。Agent 侧通过 `DOOPS_PROXY_ALLOW_HOSTS` 配置精确的上游 hostname，
-例如 `DOOPS_PROXY_ALLOW_HOSTS=127.0.0.1,internal.example.com`。这个变量不是
-公网域名 allowlist，而是 Agent 所在网络允许访问的上游主机 allowlist。
+例如 Helm values 中的
+`proxy.allowedHosts: "127.0.0.1,internal.example.com"`。Chart 会把它注入为
+`DOOPS_PROXY_ALLOW_HOSTS`；默认空值会拒绝所有上游。这个配置不是公网域名
+allowlist，而是 Agent 所在网络允许访问的上游主机 allowlist。
 
 ## Managed Gateway Host
 

@@ -46,6 +46,15 @@
         }
       }
     },
+    "proxy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowedHosts": {
+          "type": "string"
+        }
+      }
+    },
     "tolerations": {
       "type": "array",
       "items": {
