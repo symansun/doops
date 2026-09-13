@@ -23,13 +23,14 @@
 - systemd 服务：`doops-gateway`
 - 运行端口：`42222`
 - 发布二进制 SHA-256：
-  `dd89008f300092eb7dac8033380d6f9daab7add3b872ba355623e6ab236ac325`
+  `aba522e29265db7a4076c10c17c06616faa9f275c99e5452618561d845aab590`
 - 运行中的 `/proc/<pid>/exe` 与发布文件 SHA-256 一致
 - 回滚备份：
-  `/usr/local/bin/doops-gateway.rollback-3bb63116246c-20260913T042142Z`
+  `/usr/local/bin/doops-gateway.rollback-dd89008f3000-20260913T072828Z`
 - 发布后 `http://127.0.0.1:42222/health`：`200`
 - 发布后未授权 `/v1/targets`：`401`
 - 公网 `https://doops.l8ai.cn/health`：`200`
+- 发布后通过 `gw-edu-coder` 执行无副作用 `printf` 命令：成功
 
 发布脚本的回滚保护已启用并验证了备份、替换、重启、进程 hash、健康检查和原有
 Agent 重连；本次验证全部通过，因此没有触发回滚。
@@ -50,6 +51,13 @@ Agent 重连；本次验证全部通过，因此没有触发回滚。
   - `stream-second`
 - 两段到达间隔：`0.804s`
 - 结果：`public_proxy_e2e=PASS`
+
+当前发布版本的再次复验使用临时 Host
+`proxy-debug-20260913.l8ai.cn` 和 Agent
+`proxy-debug-20260913/local-agent`，通过 WSS 连接到公网 Gateway；公网请求返回
+`HTTP/2 200`，上游返回头 `x-upstream: public-debug`，响应体
+`public-debug-first` / `public-debug-second` 完整返回。测试路由已删除，管理员接口复查
+为空，测试 Agent 和网站进程已清理。
 
 测试结束后：
 
