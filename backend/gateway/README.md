@@ -19,6 +19,19 @@ go build -o ../bin/doops-gateway .
   -port 42222
 ```
 
+## 本地反向代理验收
+
+在发布 Gateway 前，可以启动真实 Gateway 和 Agent 进程，并用本地网站验证
+`Gateway -> Agent 主动 WebSocket -> 内网站点`：
+
+```bash
+bash backend/scripts/smoke-proxy-tunnel.sh
+```
+
+脚本只使用临时 SQLite、临时端口和合成管理员数据；它会验证 GET 的 Host 路由、
+查询参数、响应头、POST 请求体，以及 Agent 的 `/health/ready` 状态。测试结束后会
+清理进程和临时目录。
+
 ## 发布
 
 Gateway 是独立控制面包，必须从宿主机 SSH 上下文发布：
