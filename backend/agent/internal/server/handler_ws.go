@@ -96,6 +96,12 @@ type websocketDataWriter interface {
 	Close() error
 }
 
+type websocketBinaryWriter interface {
+	SetWriteDeadline(deadline time.Time) error
+	WriteMessage(messageType int, data []byte) error
+	Close() error
+}
+
 type websocketDataWriteState struct {
 	sequence atomic.Uint64
 }
@@ -131,6 +137,26 @@ func writeHeartbeatControl(conn websocketControlWriter, dataWriteState *websocke
 
 func writeHeartbeatPing(conn websocketControlWriter, dataWriteState *websocketDataWriteState, payload []byte, timeout time.Duration) bool {
 	return writeHeartbeatControl(conn, dataWriteState, websocket.PingMessage, payload, timeout)
+}
+
+func writeWebSocketBinary(conn websocketBinaryWriter, writeMu *sync.Mutex, dataWriteState *websocketDataWriteState, payload []byte, timeout time.Duration) error {
+	writeMu.Lock()
+	defer writeMu.Unlock()
+	dataWriteState.begin()
+	defer dataWriteState.end()
+	if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+		_ = conn.Close()
+		return err
+	}
+	if err := conn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
+		_ = conn.Close()
+		return err
+	}
+	if err := conn.SetWriteDeadline(time.Time{}); err != nil {
+		_ = conn.Close()
+		return err
+	}
+	return nil
 }
 
 func writeWebSocketJSON(conn websocketDataWriter, writeMu *sync.Mutex, dataWriteState *websocketDataWriteState, value interface{}, timeout time.Duration) error {
@@ -2108,8 +2134,16 @@ func subscribeDoagentSSEWithCollectorReady(
 
 			case "error":
 				errMsg := "doagent_execution_failed"
+				if params != nil {
+					for _, key := range []string{"error", "failureReason", "message", "reason"} {
+						if value, ok := params[key].(string); ok && strings.TrimSpace(value) != "" {
+							errMsg = sanitizeSecretText(value)
+							break
+						}
+					}
+				}
 				pushProgress(errorNotification("[error] " + errMsg))
-				return errors.New(errMsg)
+				return fmt.Errorf("doagent execution failed: %s", errMsg)
 
 			default:
 				// 其他事件（session/update chunks 等）静默处理

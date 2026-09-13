@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -91,6 +92,24 @@ func TestBuildGatewayAgentURLDefaultsToSecureScheme(t *testing.T) {
 	}
 }
 
+func TestBuildGatewayEdgeURLRewritesAgentPath(t *testing.T) {
+	got, err := buildGatewayEdgeURL("https://gateway.example.com", "jm", "gw-jm")
+	if err != nil {
+		t.Fatalf("build edge url: %v", err)
+	}
+	want := "wss://gateway.example.com/v1/edge/connect?cluster=jm&instance=gw-jm"
+	if got != want {
+		t.Fatalf("edge URL mismatch\nwant: %s\n got: %s", want, got)
+	}
+	got, err = buildGatewayEdgeURL("https://gateway.example.com/v1/agent/connect", "jm", "gw-jm")
+	if err != nil {
+		t.Fatalf("rewrite agent path: %v", err)
+	}
+	if got != want {
+		t.Fatalf("rewritten edge URL mismatch\nwant: %s\n got: %s", want, got)
+	}
+}
+
 func TestBuildGatewayAgentURLAllowsInsecureLocalhostForDevelopment(t *testing.T) {
 	got, err := buildGatewayAgentURL("http://localhost:42222", "dev", "local")
 	if err != nil {
@@ -99,6 +118,34 @@ func TestBuildGatewayAgentURLAllowsInsecureLocalhostForDevelopment(t *testing.T)
 	want := "ws://localhost:42222/v1/agent/connect?cluster=dev&instance=local"
 	if got != want {
 		t.Fatalf("gateway URL mismatch\nwant: %s\n got: %s", want, got)
+	}
+}
+
+func TestAgentHealthMuxRetiresInboundWS(t *testing.T) {
+	mux := http.NewServeMux()
+	registerAgentHTTP(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ws", nil))
+	if rec.Code != http.StatusGone {
+		t.Fatalf("GET /ws status=%d want 410", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"/v1/rpc", "/v1/agent/connect"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("retired /ws body missing %q: %s", want, body)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusGone {
+		t.Fatalf("Upgrade /ws status=%d want 410 (must not switch protocols)", rec.Code)
 	}
 }
 

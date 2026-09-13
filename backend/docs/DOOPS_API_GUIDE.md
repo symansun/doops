@@ -75,6 +75,82 @@ Content-Type: application/json
 - `401 Unauthorized`：用户名或密码错误。
 - `400 Bad Request`：请求体不是合法 JSON。
 
+## 管理员创建和维护用户
+
+这些接口要求调用方持有 `admin` 权限。用户密码只允许出现在 HTTPS JSON request body，
+不得写入 URL、argv、日志或文档。
+
+列出或创建用户：
+
+```http
+GET /v1/admin/users
+Authorization: Bearer <ADMIN_USER_TOKEN>
+```
+
+```http
+POST /v1/admin/users
+Authorization: Bearer <ADMIN_USER_TOKEN>
+Content-Type: application/json
+
+{"name":"alice","password":"<PASSWORD_FROM_SECURE_INPUT>","admin":false}
+```
+
+当前 `POST /v1/admin/users` 会在创建成功后自动添加一条 `*/*` grant。普通用户创建流程
+必须在交付账号前删除该 bootstrap grant，并创建精确 `cluster/instance/actions` grant。
+如果收窄失败，立即停用用户。
+
+设置密码和启用/停用用户：
+
+```http
+POST /v1/admin/users/password
+Authorization: Bearer <ADMIN_USER_TOKEN>
+Content-Type: application/json
+
+{"user_id":"usr_xxx","password":"<PASSWORD_FROM_SECURE_INPUT>"}
+```
+
+```http
+POST /v1/admin/users/disable
+Authorization: Bearer <ADMIN_USER_TOKEN>
+Content-Type: application/json
+
+{"user_id":"usr_xxx","disabled":true}
+```
+
+## 管理员维护 Target Grants
+
+列出用户 grant 时，`user` 查询参数接收 `user_id`：
+
+```http
+GET /v1/admin/grants?user=usr_xxx
+Authorization: Bearer <ADMIN_USER_TOKEN>
+```
+
+创建精确 grant：
+
+```http
+POST /v1/admin/grants
+Authorization: Bearer <ADMIN_USER_TOKEN>
+Content-Type: application/json
+
+{
+  "user_id": "usr_xxx",
+  "cluster": "doops-oilan",
+  "instance": "oilan-node",
+  "actions": ["targets:list", "exec", "ask", "read", "write", "push", "pull", "info", "check", "clean"]
+}
+```
+
+删除 grant：
+
+```http
+DELETE /v1/admin/grants?id=<grant-id>
+Authorization: Bearer <ADMIN_USER_TOKEN>
+```
+
+`actions` 为空时会展开为 Gateway 默认 action 集；最小授权流程必须显式列出 actions。
+普通机器操作不得隐式包含 `credential:*`、`agent:upgrade`、`admin` 或 `*`。
+
 ## 管理员签发用户 Token
 
 管理员可通过 gateway API 给指定用户签发新的 user token。调用方必须使用拥有
@@ -527,7 +603,10 @@ targets:list exec ask read write push pull info check clean agent:upgrade
 admin
 ```
 
-默认 user token 拥有完整目标操作权限，除非该用户被显式配置了更窄的 grant。如果调用返回 `403`，检查该用户在具体 `cluster/instance/action` 上的授权。
+Gateway 权限判断本身是默认拒绝：用户没有匹配 grant 时不能操作 target，且
+`targets:list` 不隐式授予其它 action。需要注意，当前管理员创建用户 API 会额外写入
+一条 `*/*` 默认 action grant；管理员必须先删除该 bootstrap grant，再按明确的
+`cluster/instance/action` 收窄权限。如果调用返回 `403`，检查该用户的精确 grant。
 
 ## 操作规则
 

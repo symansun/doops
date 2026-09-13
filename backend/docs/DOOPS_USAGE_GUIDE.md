@@ -19,7 +19,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Write small text | `doops -session <s> write --target <t> --path <file> --file <local>` | Also supports `--content` and stdin. |
 | Read system information | `doops -session <s> info --target <t>` | CPU, memory and disk metadata. |
 | Use structured Kubernetes operations | `doops -session <s> k8s --target <t> ...` | Restricted operational interface; publishing uses `ask --apply`. |
-| Clean workspace | `doops -session <s> clean --target <t>` | Cleans `/root/ws/<session>`. |
+| Clean workspace | `doops -session <s> clean --target <t> --workspace <s>` | Cleans `/root/ws/<workspace>`. |
 | Check an image deployment | `doops check ...` | Compares configured service image with build metadata. |
 | Preview Agent upgrade | `doops -session <s> upgrade ... --dry-run` | Never replaces the current Agent. |
 | Cache token | `doops login ...` | Gateway login can exchange username/password for user token. |
@@ -91,6 +91,108 @@ doops admin token revoke --target jm --id <token-id>
 
 列表只返回 ID、前缀、归属和状态，不返回 token 明文。管理员凭据只从
 `--target` 对应的本地受限存储读取，不得通过命令行参数传入。
+
+## Gateway Users And Target Grants
+
+当前 CLI 尚未封装 user/grant 子命令。创建用户和 target grant 时使用 HTTPS Gateway
+管理员 API；管理员 token 只从统一 `auth.json` 读取并放入 Authorization header，不得
+出现在命令行参数、请求 URL、日志或文档中。用户密码只放在 JSON request body，禁止回显。
+
+先确认请求对应的精确路由，并检查同名用户：
+
+```bash
+doops list
+doops targets --target <allowed-target>
+```
+
+```http
+GET /v1/admin/users
+Authorization: Bearer <ADMIN_USER_TOKEN>
+```
+
+同名用户已存在时停止创建，转为核对或调整现有 grant。创建普通用户必须显式使用
+`admin:false`：
+
+```http
+POST /v1/admin/users
+Authorization: Bearer <ADMIN_USER_TOKEN>
+Content-Type: application/json
+
+{
+  "name": "alice",
+  "password": "<PASSWORD_FROM_SECURE_INPUT>",
+  "admin": false
+}
+```
+
+当前 Gateway 会随创建请求自动写入一条 `cluster="*"`、`instance="*"` 的标准操作
+grant。这是暂时的过宽 bootstrap 行为，不代表已完成授权。账号在以下收窄流程完成前
+不得交付：
+
+1. 从创建响应或用户列表取得 `user_id`。
+2. `GET /v1/admin/grants?user=<user_id>`，记录该用户全部 grant ID。
+3. 对所有 wildcard scope 或 action `"*"` 执行
+   `DELETE /v1/admin/grants?id=<grant-id>`。
+4. 为每个允许 target 分别创建精确 grant，并显式列出 actions。
+5. 重新读取用户和 grants，确认 `is_admin=false`、grant 数量符合预期且 wildcard 为 0。
+
+普通机器操作的精确 grant 示例：
+
+```http
+POST /v1/admin/grants
+Authorization: Bearer <ADMIN_USER_TOKEN>
+Content-Type: application/json
+
+{
+  "user_id": "usr_xxx",
+  "cluster": "doops-oilan",
+  "instance": "oilan-node",
+  "actions": [
+    "targets:list", "exec", "ask", "read", "write",
+    "push", "pull", "info", "check", "clean"
+  ]
+}
+```
+
+不要省略 `actions`：空列表会由 Gateway 展开为默认权限集合。`credential:*`、
+`agent:upgrade`、`admin` 和 action `"*"` 不属于普通机器操作授权，只有用户明确要求且
+风险边界清楚时才单独添加。若收窄或精确 grant 创建失败，立即停用用户再退出：
+
+```http
+POST /v1/admin/users/disable
+Authorization: Bearer <ADMIN_USER_TOKEN>
+Content-Type: application/json
+
+{"user_id":"usr_xxx","disabled":true}
+```
+
+### End-to-End Verification
+
+不要用新用户登录覆盖本机管理员的共享 Gateway 登录态。创建一个临时目录，将所需的
+routing-only targets 写入其 `config.json`，并让 `DOOPS_CONFIG` 指向该文件；其同目录
+`auth.json` 将保存隔离的验证登录态。
+
+```bash
+DOOPS_CONFIG=<temporary-dir>/config.json \
+  doops login --target <allowed-target> --username alice --name user-create-smoke
+
+DOOPS_CONFIG=<temporary-dir>/config.json \
+  doops targets --target <allowed-target>
+
+DOOPS_CONFIG=<temporary-dir>/config.json \
+  doops -session user_create_smoke exec --target <allowed-target> --cmd 'hostname'
+
+DOOPS_CONFIG=<temporary-dir>/config.json \
+  doops -session user_create_smoke_denied exec --target <denied-sibling> --cmd 'hostname'
+
+DOOPS_CONFIG=<temporary-dir>/config.json \
+  doops -session user_create_smoke clean --target <allowed-target> --workspace user_create_smoke
+```
+
+允许 target 必须成功，未授权 sibling target 必须非零退出并被 Gateway 拒绝。最后用
+`doops admin token list` 按 `user-create-smoke` 标签找到 token ID，再执行
+`doops admin token revoke`。`doops logout` 只删除本地缓存，不能替代服务端撤销。安全删除
+临时配置目录后，再交付账号。
 
 ## Exec
 
@@ -212,7 +314,7 @@ cat ./pod.yaml | doops -session ops write --target jm --path /root/ws/ops/pod.ya
 ## Clean
 
 ```bash
-doops -session build clean --target jm
+doops -session build clean --target jm --workspace build
 ```
 
 Confirm the session name before cleaning. Do not share one session across unrelated tasks.
@@ -305,6 +407,36 @@ resourceVersion、digest 和稳定错误类别。Grant scope 是全字段精确�
 
 ## Upgrade
 
+CLI 一键安装或更新：
+
+```bash
+bash scripts/install.sh --version <vX.Y.Z> --project "$PWD"
+```
+
+目标集群上安装或更新 Agent 是同一条命令，必须传入 cluster / instance：
+
+```bash
+curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh -s -- <cluster> <instance>
+```
+
+当前基线 v1.3.0。重跑会把 `doops-k8s/` reset 到 `main` 再 apply 这一个身份。
+
+已经改用 Helm chart `deploy/helm/doops-agent` 的维护者节点才走
+`scripts/release-managed-agent.sh`。现网必须已经是 `/app/sandbox-entrypoint.sh`，
+脚本会先把镜像拉到节点，再 `helm upgrade --install`。Chart 先起新 Pod，Gateway
+切换会话后才删旧副本：
+
+```bash
+bash scripts/release-managed-agent.sh \
+  --target gw-edu-coder \
+  --session agent-release-<tag> \
+  --release doops-agent-live \
+  --namespace kz-ops \
+  --version <vX.Y.Z>
+```
+
+`doops upgrade` 只做预演：
+
 ```bash
 doops -session upgrade_20260519 upgrade \
   --target unicom \
@@ -318,9 +450,7 @@ doops -session upgrade_20260519 upgrade \
 
 When `--target` is given, its configured `cluster/instance` is the default
 preview scope. Direct Agent self-upgrade is prohibited: `upgrade` requires
-`--dry-run`. Apply the reviewed doops-agent image change from another isolated
-Agent target or an external CI/GitOps controller so the old Agent remains
-available until the replacement has registered and produced a heartbeat.
+`--dry-run`. Apply the reviewed image with `scripts/release-managed-agent.sh`.
 
 ## BuildKit Example
 

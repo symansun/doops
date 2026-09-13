@@ -137,15 +137,6 @@ def oilan_values():
     )
 
 
-def release_runner_values():
-    return deployment_values(
-        "doops-release-runner",
-        "release-runner",
-        "/var/lib/doops-release-runner-home",
-        {"app": "doops-release-runner"},
-    )
-
-
 def render_chart(tmp_path, release, values, *overrides):
     values_path = tmp_path / f"{release}-values.yaml"
     values_path.write_text(yaml.safe_dump(values), encoding="utf-8")
@@ -182,16 +173,6 @@ def render_oilan_chart_with(tmp_path, *overrides):
         oilan_values(),
         *overrides,
     )
-
-
-def render_release_runner_chart(tmp_path):
-    result = render_chart(
-        tmp_path,
-        "doops-release-runner",
-        release_runner_values(),
-    )
-    result.check_returncode()
-    return [item for item in yaml.safe_load_all(result.stdout) if item][0]
 
 
 def env_value(container, name: str):
@@ -231,7 +212,7 @@ def test_oilan_agent_model_settings_are_secret_backed(tmp_path):
     assert deployment["metadata"]["namespace"] == "kz-ops"
     assert deployment["spec"]["strategy"] == {
         "type": "RollingUpdate",
-        "rollingUpdate": {"maxUnavailable": 1, "maxSurge": 0},
+        "rollingUpdate": {"maxUnavailable": 0, "maxSurge": 1},
     }
     assert "hostNetwork" not in deployment["spec"]["template"]["spec"]
     assert all("hostPort" not in port for port in container["ports"])
@@ -309,40 +290,6 @@ def test_oilan_agent_model_settings_are_secret_backed(tmp_path):
     assert host_paths["containerd-socket"] == "/run/containerd/containerd.sock"
     assert host_paths["nerdctl-bin"] == "/usr/bin/nerdctl"
     assert host_paths["crictl-bin"] == "/usr/bin/crictl"
-
-
-def test_oilan_release_runner_isolated_from_managed_agent(tmp_path):
-    deployment = render_release_runner_chart(tmp_path)
-    pod_spec = deployment["spec"]["template"]["spec"]
-    container = pod_spec["containers"][0]
-    volumes = {
-        item["name"]: item["hostPath"]["path"]
-        for item in pod_spec["volumes"]
-        if "hostPath" in item
-    }
-    values = release_runner_values()
-
-    assert deployment["metadata"]["name"] == "doops-release-runner"
-    assert deployment["spec"]["selector"]["matchLabels"] == {
-        "app": "doops-release-runner"
-    }
-    assert deployment["spec"]["template"]["metadata"]["labels"] == {
-        "app": "doops-release-runner"
-    }
-    assert env_value(container, "DOOPS_GATEWAY_CLUSTER")["value"] == "doops-edu"
-    assert env_value(container, "DOOPS_GATEWAY_INSTANCE")["value"] == "release-runner"
-    assert pod_spec["hostAliases"] == [
-        {
-            "ip": "192.168.0.24",
-            "hostnames": ["apiserver.cluster.local"],
-        }
-    ]
-    assert volumes["agent-home"] == "/var/lib/doops-release-runner-home"
-    assert values["gateway"] == {
-        "url": "https://doops.l8ai.cn",
-        "cluster": "doops-edu",
-        "instance": "release-runner",
-    }
 
 
 def test_runtime_kubeconfig_uses_in_cluster_api_without_changing_admin_identity(

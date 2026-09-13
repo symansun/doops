@@ -4,88 +4,33 @@
 
 ---
 
-## 模式一：Kubernetes / K3s 集群部署 (推荐)
+## Kubernetes / K3s
 
-在完整的 K8s/K3s 体系下，推荐将 Agent 作为 **DaemonSet** 运行在特权模式下，以确保每个计算节点都被接管管控，并利用集群原生认证。
-
-### 1. 配置 `agent.yaml`
-
-使用项目根目录提供的 `agent/agent.yaml`：
-- **网络**: 需要 `hostNetwork: true` 以暴露端口。
-- **特权**: 需要 `securityContext.privileged: true` 以支持底层的沙盒逃逸和硬件访问。
-- **默认最小暴露面**: `doops-agent` 默认不启动 `sshd`，不启动 WebIDE；标准镜像仍提供出站 `ssh` 客户端。只有在极少数兼容场景下，才允许显式打开 `DOOPS_ENABLE_SSHD=1` 或 `DOOPS_ENABLE_WEBIDE=1`。
-- **运行时视图**: 只挂宿主运行时 socket 不够。容器内需要能调用宿主机运行时视图时，
-  必须同时挂载 `/run/containerd`、`/var/lib/containerd`、`/var/lib/nerdctl`。
-  否则会出现“`pull` 成功但 `run` 失败”的 overlay/FIFO/name-store 问题。
-- **升级原则**: 镜像升级应替换容器内 `/app/doops-agent`，不要再把宿主二进制
-  bind mount 到 `/app/doops-agent`。宿主二进制覆盖镜像会让换镜像失去意义。
-- **镜像仓库认证**: 公共 Agent 镜像不得要求 `doops-registry-pull` 或
-  `doops-registry-auth` 才能启动。只有某个环境明确使用私有镜像或要求 Agent
-  构建、推送私有制品时，才在该环境声明对应的 Secret 引用；不得在 Deployment
-  中设置 `REGISTRY_URL`、`REGISTRY_USER` 或 `REGISTRY_PASS`。
-
-> [!NOTE]
-> `doops-agent` 启动时会自动检测容器引擎 (nerdctl > docker > podman) 供运行时巡检使用；镜像构建则统一走内置 BuildKit，不依赖宿主机 `nerdctl build`。
-
-### 1.1 配置 doagent 的 Secret
-
-`doops ask` 依赖 `doagent-model-settings` Secret，里面放
-`settings.json`。公开仓库里保留的是模板，生产环境应由私有仓库
-`l8ai-secret` 生成后再 apply。
+用户在目标集群上的安装和更新是同一条命令。当前基线 **v1.3.0**。权威脚本和清单在
+`https://cnb.cool/l8ai/dowork` 的 `doops-k8s/`，必须传入这个 Agent 的 `cluster` 和
+`instance`：
 
 ```bash
-kubectl -n ai apply -f agent/agent-config.yaml
+curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh -s -- <cluster> <instance>
 ```
 
-如果你已经在私有仓库里生成了正式配置，优先使用那个版本覆盖模板：
+例如经贸：
 
 ```bash
-kubectl -n ai apply -f /path/to/doagent-model-settings.yaml
+curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh -s -- doops-jm jm-228
 ```
 
-### 2. 部署到集群
+重复执行会复用已有仓库（`./doops-k8s`、`./dowork` 或 `$HOME/dowork`），只 fetch
+`main` 再 `kubectl apply`，不会再 clone 一份。不要填已经在线的身份，后连上的会顶掉
+先连上的。镜像版本钉在 `doops-k8s/doops.yaml`，必须与 `base/doops-agent.yaml`、`values.yaml`、
+`install.sh` 注释和 README 标题同一 tag/digest。要换版本先改这几份到同一基线，再重跑
+同一条 curl。不要用 `kubectl set image` 或 Docker `run` 换镜像。
 
-```bash
-# 推荐创建命名空间并部署
-kubectl create namespace doops-system
-kubectl apply -f agent/agent.yaml -n doops-system
-```
+本仓库的 `scripts/release-managed-agent.sh` 只给已经改用 Helm chart
+`deploy/helm/doops-agent` 的维护者节点。那条路径不是用户一键安装。
 
-如果是单节点单实例接入，而不是整集群所有节点都跑 DaemonSet，可以改成 Deployment，并用 `nodeSelector` 固定到一个节点。
-
----
-
-## 模式二：纯 Docker 单机环境 (快速拉起)
-
-如果你有一台全新的没有任何编排系统的裸机服务器，可以通过原生 Docker 容器的方式拉起 Agent。
-
-### 1. 环境准备
-确保机器已安装 `docker`。
-
-### 2. 极简启动命令
-
-```bash
-docker run -d \
-  --name doops-agent \
-  --net host \
-  --pid host \
-  --ipc host \
-  --privileged \
-  -v /run/containerd:/run/containerd \
-  -v /var/lib/containerd:/var/lib/containerd \
-  -v /var/lib/nerdctl:/var/lib/nerdctl \
-  -v /root/.kube/config:/root/.kube/config:ro \
-  -v /path/to/doagent-model-settings.json:/opt/doagent_config/settings.json:ro \
-  docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI> \
-  -gateway-url https://gateway.example.com \
-  -cluster doops-new \
-  -instance master-1
-```
-
-> [!TIP]
-> **原理解析**：
-> - `--net host` 等效于开放 42222 监听端口。
-> - 不要为了“图省事”再把 SSH 或 WebIDE 面暴露出来；`doops-agent` 当前安全默认值是关闭这两者。
+旧副本卡在 Terminating 超过一分钟时，强制删除该 Pod，不要对同一身份再跑一遍
+install。`hostPID` 会让 `tini -s` 收养宿主机孤儿进程，kubelet 删不掉容器。
 
 ## 安装完成后的验收标准
 
@@ -102,11 +47,10 @@ CLI 不提供直连 Agent 安装入口。不要以“容器起来了”或“`ps
 
 Gateway heartbeat、Agent 版本或容器运行时任一失败，安装都应直接视为失败；如果
 `kubectl` 或 `buildkit` 为 `MISSING`，说明目标只能做部分能力，不能被当成完整发布节点。
-> - `-v /root/.kube/config` 允许 Agent 继承宿主机的 Kube 凭证操作集群（如果不涉及 K8s 操作可略去）。
 
 ---
 
-## 3. 常见连通性验证
+## 连通性验证
 
 新节点部署并启动容器后，需要确保该 agent 已主动注册到 gateway。
 
@@ -137,35 +81,5 @@ Gateway heartbeat、Agent 版本或容器运行时任一失败，安装都应直
    doops -session dev01 exec --target new-cluster --cmd "uname -a"
    ```
 
-如果能返回新服务器的内核信息，恭喜你，新节点接入成功。
-
-### 4. 升级到标准容器/K3s 形态
-
-如果现有节点是宿主 Docker 直装，且 `/app/doops-agent` 被宿主二进制 bind mount 覆盖，
-不要继续做镜像层级的“原地升级”。正确做法是：
-
-1. 先让新镜像在节点上成功 `pull`。
-2. 启动一个新的标准容器或 DaemonSet 版本，不再绑定宿主 `/app/doops-agent`。
-3. 验证 `doops exec` 和 `doops push` 正常。
-4. 再清理旧容器。
-
-K3s / Kubernetes 场景优先走 `agent/agent.yaml` 的 DaemonSet 形态。
-
-### 5. Unicom 过渡节点
-
-Unicom 这类混合节点如果同时存在 `doops-agent-gateway` 和旧宿主 Docker `doops-agent`，
-并且旧容器把宿主二进制 bind mount 到 `/app/doops-agent`，就不要继续把它当成镜像升级
-目标。正确收口方式是：
-
-1. 先在 K3s 里起标准 `doops-agent`。
-2. 让 gateway 先看到新 `cluster/instance`。
-3. 验证 `exec/push/ask`。
-4. 再停掉旧宿主容器。
-
-Gateway 隧道模式下，应先验证：
-
-```bash
-doops targets --target <gateway-target>
-```
-
-只有能看到新的 `cluster/instance` 在线，后续 `exec/ask` 才会成功。
+如果能返回新服务器的内核信息，新节点接入成功。宿主 Docker、`agent.yaml` 和 bind-mount
+二进制都不是发布路径；迁到 `deploy/helm/doops-agent` 之前不得换镜像。

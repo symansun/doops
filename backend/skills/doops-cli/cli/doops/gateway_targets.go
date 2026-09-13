@@ -179,7 +179,7 @@ func enforceSecureGatewayURL(raw string, u *url.URL) error {
 	if strings.TrimSpace(os.Getenv("DOOPS_ALLOW_INSECURE_GATEWAY")) == "1" {
 		return nil
 	}
-	return fmt.Errorf("insecure gateway URL %q rejected: use https/wss, or set DOOPS_ALLOW_INSECURE_GATEWAY=1 to override (loopback hosts are always allowed)", strings.TrimSpace(raw))
+	return fmt.Errorf("insecure gateway URL %q rejected: use https:// or wss:// (for example https://doops.l8ai.cn), or set DOOPS_ALLOW_INSECURE_GATEWAY=1 to override (loopback hosts are always allowed)", strings.TrimSpace(raw))
 }
 
 func isLoopbackHost(host string) bool {

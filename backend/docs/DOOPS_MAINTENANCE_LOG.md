@@ -2,6 +2,30 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-09-07 Single agent handoff release
+
+- `deploy/helm/doops-agent` now uses `maxSurge=1` and `maxUnavailable=0` so the
+  live Agent keeps serving until the replacement Pod is Ready. Gateway Register
+  switches the session, then Kubernetes deletes the old replica.
+- There is one operator command: `scripts/release-managed-agent.sh`. Image pull
+  on the node must succeed before Helm. `hostNetwork` and custom entrypoints are
+  refused. `install-managed-agent.sh` and `upgrade-managed-agent.sh` are removed.
+- A 30s Gateway offline window during handoff is a release failure.
+
+## 2026-09-06 One-click Helm agent install and upgrade
+
+- Added laptop Helm scripts; superseded on 2026-09-07 by the single handoff
+  release command.
+
+## 2026-08-06 Server-Side Helm Preflight
+
+- Helm `upgrade-install` preflight now uses `--dry-run=server` so charts that depend on `lookup`
+  validate against the same live cluster objects used by the real mutation.
+- Client-side dry-run previously returned empty `lookup` results and falsely rejected valid
+  ConfigMap-backed releases before any mutation.
+- The preflight remains fail-closed and still runs with the exact release arguments before the
+  real Helm command.
+
 ## 2026-07-22 Agent SSH Client Runtime Contract
 
 - Root cause: `Dockerfile.base.light` explicitly removed `openssh-client` together with the

@@ -113,6 +113,38 @@ func TestBuildHelmUpgradeInstallUsesReleaseTagFromValuesWithoutSetStrings(t *tes
 	}
 }
 
+func TestBuildHelmUpgradeInstallNormalizesOperationName(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "release")
+	chart := filepath.Join(workspace, "deploy", "helm", "app")
+	if err := os.MkdirAll(chart, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(chart, "values.yaml"),
+		[]byte("image:\n  repository: registry.example/app\n  tag: release-20260719\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+
+	command, err := buildHelmCommand(api.HelmParams{
+		SessionID: "release",
+		Operation: "UPGRADE-INSTALL",
+		Release:   "app",
+		Chart:     "deploy/helm/app",
+		Namespace: "apps",
+		Confirm:   true,
+	})
+	if err != nil {
+		t.Fatalf("build normalized helm command: %v", err)
+	}
+	if !slices.Contains(command.args, "upgrade") {
+		t.Fatalf("normalized operation did not build an upgrade command: %q", command.args)
+	}
+}
+
 func TestBuildHelmUpgradeInstallRejectsUncontrolledValuesImageInputs(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "release")
@@ -404,6 +436,7 @@ func TestRunHelmCommandStreamsExistingValuesBeforeExplicitFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	argsFile := filepath.Join(root, "args")
+	preflightArgsFile := filepath.Join(root, "preflight-args")
 	stdinFile := filepath.Join(root, "stdin")
 	helm := filepath.Join(root, "helm")
 	if err := os.WriteFile(helm, []byte(`#!/bin/sh
@@ -416,6 +449,13 @@ if [ "$1" = "get" ] && [ "$2" = "values" ]; then
   printf '%s\n' '{"large":9007199254740993,"gateway":{"cluster":"prod"},"image":{"tag":"legacy","pullPolicy":"Always"}}'
   exit 0
 fi
+for arg in "$@"; do
+  if [ "$arg" = "--dry-run=server" ]; then
+    printf '%s\n' "$@" >"${PREFLIGHT_ARGS_FILE}"
+    cat >/dev/null
+    exit 0
+  fi
+done
 printf '%s\n' "$@" >"${ARGS_FILE}"
 cat >"${STDIN_FILE}"
 `), 0o755); err != nil {
@@ -423,6 +463,7 @@ cat >"${STDIN_FILE}"
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("ARGS_FILE", argsFile)
+	t.Setenv("PREFLIGHT_ARGS_FILE", preflightArgsFile)
 	t.Setenv("STDIN_FILE", stdinFile)
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 
@@ -444,6 +485,15 @@ cat >"${STDIN_FILE}"
 	args, err := os.ReadFile(argsFile)
 	if err != nil {
 		t.Fatal(err)
+	}
+	preflightArgs, err := os.ReadFile(preflightArgsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preflightArgLines := strings.Split(strings.TrimSpace(string(preflightArgs)), "\n")
+	if !slices.Contains(preflightArgLines, "--dry-run=server") ||
+		slices.Contains(preflightArgLines, "--dry-run") {
+		t.Fatalf("helm preflight must be server-side: %q", preflightArgLines)
 	}
 	argLines := strings.Split(strings.TrimSpace(string(args)), "\n")
 	stdinIndex := slices.Index(argLines, "-")
@@ -481,7 +531,7 @@ if [ "$1" = "status" ]; then
   exit 1
 fi
 for arg in "$@"; do
-  if [ "$arg" = "--dry-run" ]; then
+  if [ "$arg" = "--dry-run=server" ]; then
     echo 'cannot overwrite table with non table' >&2
     exit 1
   fi

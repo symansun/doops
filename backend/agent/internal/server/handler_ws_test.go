@@ -952,6 +952,29 @@ func TestSubscribeDoagentSSEReturnsTurnFinishedError(t *testing.T) {
 	}
 }
 
+func TestSubscribeDoagentSSEPreservesErrorEventMessage(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/events" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"jsonrpc":"2.0","method":"error","params":{"error":"error decoding response body"}}`)
+		fmt.Fprintln(w)
+	}))
+	defer ts.Close()
+
+	var progress strings.Builder
+	err := subscribeDoagentSSE(t.Context(), ts.URL, "error-event", func(evt notificationEvent) {
+		progress.WriteString(evt.Data)
+	})
+	if err == nil || !strings.Contains(err.Error(), "error decoding response body") {
+		t.Fatalf("error event must preserve the original message, got %v", err)
+	}
+	if !strings.Contains(progress.String(), "error decoding response body") {
+		t.Fatalf("error progress must preserve the original message, got %q", progress.String())
+	}
+}
+
 func TestSubscribeDoagentSSEWaitsForAuthoritativeFailedTurn(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/events" {
@@ -1164,6 +1187,27 @@ func TestWorkspaceCommitBindingRejectsDirtyAndUntrackedContent(t *testing.T) {
 	if err := validateWorkspaceCommitBinding(sessionID, commit); err != nil {
 		t.Fatalf("clean workspace binding rejected: %v", err)
 	}
+	sessionState := filepath.Join(workspace, ".agent", "sessions", "doagent-session.json")
+	if err := os.MkdirAll(filepath.Dir(sessionState), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sessionState, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateWorkspaceCommitBinding(sessionID, commit); err != nil {
+		t.Fatalf("agent runtime session state rejected: %v", err)
+	}
+	agentScratch := filepath.Join(workspace, ".agent", "scratch.json")
+	if err := os.WriteFile(agentScratch, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateWorkspaceCommitBinding(sessionID, commit); err == nil ||
+		!strings.Contains(err.Error(), "outside the authorized commit") {
+		t.Fatalf("non-session agent state was not rejected: %v", err)
+	}
+	if err := os.Remove(agentScratch); err != nil {
+		t.Fatal(err)
+	}
 	untracked := filepath.Join(workspace, "untracked.txt")
 	if err := os.WriteFile(untracked, []byte("untrusted\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -1220,6 +1264,27 @@ func TestBareWorkspaceCommitBindingRejectsDirtyAndUntrackedContent(t *testing.T)
 
 	if err := validateBareWorkspaceCommitBinding(workspace, bare, commit); err != nil {
 		t.Fatalf("clean bare workspace binding rejected: %v", err)
+	}
+	sessionState := filepath.Join(workspace, ".agent", "sessions", "doagent-session.json")
+	if err := os.MkdirAll(filepath.Dir(sessionState), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sessionState, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBareWorkspaceCommitBinding(workspace, bare, commit); err != nil {
+		t.Fatalf("agent runtime session state rejected: %v", err)
+	}
+	agentScratch := filepath.Join(workspace, ".agent", "scratch.json")
+	if err := os.WriteFile(agentScratch, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBareWorkspaceCommitBinding(workspace, bare, commit); err == nil ||
+		!strings.Contains(err.Error(), "outside the authorized commit") {
+		t.Fatalf("non-session agent state was not rejected: %v", err)
+	}
+	if err := os.Remove(agentScratch); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(workspace, "tracked.txt"), []byte("modified\n"), 0o600); err != nil {
 		t.Fatal(err)

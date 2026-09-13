@@ -35,8 +35,11 @@ kubectl -n doops-system apply -f agent/agent-config.yaml
 # In production, apply the environment-specific Secret from the private store.
 # kubectl -n doops-system apply -f /path/to/private/doagent-model-settings.yaml
 
-kubectl -n doops-system apply -f agent/agent.yaml
-kubectl -n doops-system rollout status ds/doops-agent --timeout=180s
+bash scripts/release-managed-agent.sh \
+  --release doops-agent \
+  --namespace doops-system \
+  --values /path/to/complete-values.yaml \
+  --version <vX.Y.Z>
 ```
 
 The Secret must provide:

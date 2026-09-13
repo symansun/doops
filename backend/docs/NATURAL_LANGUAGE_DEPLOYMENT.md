@@ -83,16 +83,6 @@ chart 默认 values 与 `value_files`，只在最终得到合法 `image.reposito
 
 CNB CI 负责测试、构建和发布不可变制品。Gateway 负责鉴权、审计、资源锁和凭据预物化。
 实际业务 Helm/Kubernetes mutation 由 target 指向的 Agent/doagent 在目标运行环境执行。
-`doops-agent` 自身升级是例外，必须由另一个隔离 Agent target 或真实存在的外部
-CI/GitOps controller 执行。
-
-仓库的 `api_trigger_bootstrap_release_runner` 只负责从目标集群现有 Helm release
-复制非镜像 values，并通过合法的前台 `exec` Helm 操作创建隔离 release-runner。
-bootstrap 会在安装前确认受管 Agent Ready、目标节点无 DiskPressure，且根文件系统
-至少有 5 GiB 可用空间；不满足时直接阻塞，不拉取 runner 镜像。
-当前 runner 继承受管 release 的宿主机 kubeconfig 和 hostPath，因此受管 Deployment
-必须显式设置 `nodeSelector.kubernetes.io/hostname`，不从 affinity 或调度结果猜测节点。
-它不发布受管 Agent，也不替代 `ask --apply`。runner 注册到 Gateway 后，
-`api_trigger_deploy_agent` 必须把 runner 作为 target，由 runner 对受管 Agent release
-执行自然语言 Helm 收敛。发布和验收完成后应卸载临时 runner，避免把控制器变成长期
-业务 target。
+`doops-agent` 自身升级不能由自身连接执行，必须由真实存在的外部 CI/GitOps controller
+执行。DoOps 不创建临时 Agent、临时 target 或临时 release-runner。操作机上的
+`scripts/release-managed-agent.sh` 是唯一 Agent 发布命令。

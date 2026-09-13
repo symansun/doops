@@ -138,8 +138,14 @@ func doopsConfigPath() string {
 
 // LoadConfig returns Servers and LLMConfig
 func LoadConfig() ([]Server, LLMConfig, error) {
-	servers, llm, err := loadPath(doopsConfigPath())
+	path := doopsConfigPath()
+	servers, llm, err := loadPath(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			if migrateErr := errIfAbandonedLegacyConfig(path); migrateErr != nil {
+				return nil, LLMConfig{}, migrateErr
+			}
+		}
 		return nil, LLMConfig{}, err
 	}
 	if err := validateGatewayServers(servers); err != nil {
@@ -158,7 +164,7 @@ func loadPath(path string) ([]Server, LLMConfig, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&root); err != nil {
-		return nil, LLMConfig{}, fmt.Errorf("failed to parse config at %s: %w", path, err)
+		return nil, LLMConfig{}, annotateRetiredTargetFields(fmt.Errorf("failed to parse config at %s: %w", path, err))
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return nil, LLMConfig{}, fmt.Errorf("failed to parse config at %s: trailing JSON data", path)

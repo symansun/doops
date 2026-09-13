@@ -49,6 +49,13 @@ func main() {
 	cluster := flag.String("cluster", "", "Cluster name registered in reverse tunnel mode")
 	instance := flag.String("instance", "", "Agent instance name registered in reverse tunnel mode")
 	reconnectDelay := flag.Duration("reconnect-delay", time.Second, "Reverse tunnel reconnect delay")
+	edge := flag.Bool("edge", false, "Enable Edge public reverse tunnel")
+	edgeGatewayURL := flag.String("edge-gateway-url", "", "Edge gateway URL; defaults to -gateway-url with /v1/edge/connect")
+	edgeEnrollToken := flag.String("edge-enroll-token", "", "Edge enrollment token")
+	edgeBackendAllow := flag.String("edge-backend-allow", "", "Comma-separated host:port or cidr:port backends the Edge tunnel may dial")
+	edgeConns := flag.Int("edge-conns", 1, "Parallel Edge WebSocket sessions")
+	edgeMaxConns := flag.Int("edge-max-conns", 512, "Maximum concurrent Edge TCP connections on this agent")
+	edgeDialTimeout := flag.Duration("edge-dial-timeout", 5*time.Second, "Timeout when dialing an Edge backend")
 	flag.Parse()
 	if err := validateStartupArgs(*gatewayURL, *cluster, *instance, flag.Args()); err != nil {
 		log.Fatal(err)
@@ -63,10 +70,19 @@ func main() {
 	// doagent ACP HTTP 服务由 entrypoint.sh 在容器启动时拉起（port 9000）
 
 	go runReverseTunnel(gw, *gatewayURL, *cluster, *instance, *reconnectDelay)
+	if *edge {
+		if strings.TrimSpace(*edgeEnrollToken) == "" || strings.TrimSpace(*edgeBackendAllow) == "" {
+			log.Fatal("-edge requires -edge-enroll-token and -edge-backend-allow")
+		}
+		edgeURL := strings.TrimSpace(*edgeGatewayURL)
+		if edgeURL == "" {
+			edgeURL = *gatewayURL
+		}
+		runEdgeTunnels(edgeURL, *cluster, *instance, *edgeEnrollToken, *edgeBackendAllow, *edgeConns, *edgeMaxConns, *edgeDialTimeout, *reconnectDelay)
+	}
 
-	http.HandleFunc("/health", handleHealthLive)
-	http.HandleFunc("/health/live", handleHealthLive)
-	http.HandleFunc("/health/ready", handleHealthReady)
+	mux := http.NewServeMux()
+	registerAgentHTTP(mux)
 
 	log.Printf("🚦 health endpoints: /health/live (always 200), /health/ready (200 when tunnel connected)")
 	gw.SetupGitHandler()
@@ -76,7 +92,7 @@ func main() {
 
 	log.Printf("🚀 doops.sh agent health server starting on %s", listenAddr)
 
-	if err := http.ListenAndServe(listenAddr, nil); err != nil {
+	if err := http.ListenAndServe(listenAddr, mux); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -91,21 +107,6 @@ func validateStartupArgs(gatewayURL, cluster, instance string, args []string) er
 		return fmt.Errorf("-gateway-url, -cluster, and -instance are required")
 	}
 	return nil
-}
-
-func handleHealthLive(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("ok"))
-}
-
-func handleHealthReady(w http.ResponseWriter, r *http.Request) {
-	if isReverseTunnelConnected() {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ready"))
-		return
-	}
-	w.WriteHeader(http.StatusServiceUnavailable)
-	_, _ = w.Write([]byte("not ready"))
 }
 
 func isReverseTunnelConnected() bool {

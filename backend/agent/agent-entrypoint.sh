@@ -173,9 +173,9 @@ fi
 export PATH=/usr/local/bin:$PATH
 export NODE_PATH=/usr/lib/node_modules
 if command -v tini &>/dev/null; then
-    echo "✅ Using tini subreaper for doops-agent"
+    echo "✅ Using tini for doops-agent"
     env DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
-        tini -s -- /app/doops-agent "$@" &
+        tini -- /app/doops-agent "$@" &
     GATEWAY_PID=$!
 else
     echo "⚠️  tini not found, falling back to direct exec (Go-level reaper still active)"

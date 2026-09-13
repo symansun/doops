@@ -51,7 +51,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   clean       清理远端节点上的工作区隔离沙盒
   unlock      管理员强制释放 gateway 上卡住的 target busy 状态
   admin       gateway 管理命令，例如给用户签发 token
-  upgrade     预演 doops-agent 自升级；正式替换由另一隔离 target 或外部 GitOps 执行
+  upgrade     预演 doops-agent 自升级；正式替换由外部 CI/GitOps 执行
   add         添加 gateway target
   login       缓存 gateway user token
   logout      登出远程节点

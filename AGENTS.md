@@ -28,7 +28,8 @@ DoOps architecture, security, release, and verification boundaries.
   credential store, target selector, or deployment authorization source.
 - A doops-agent cannot replace the workload that is currently executing it. Self-upgrade requires
   another isolated Agent target or a real external CI/GitOps controller. `doops upgrade` remains
-  dry-run only.
+  dry-run only. The only Agent install/upgrade command is
+  `backend/scripts/release-managed-agent.sh`.
 
 ## Credential Security
 

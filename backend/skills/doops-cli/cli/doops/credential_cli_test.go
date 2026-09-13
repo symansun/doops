@@ -60,10 +60,10 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 	repositoryRoot := filepath.Clean(filepath.Join("..", "..", "..", "..", ".."))
 	config := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(config, []byte(`{"servers":[{
-		"name":"gw-edu-release-runner",
+		"name":"gw-edu-coder",
 		"gateway":"`+gateway.URL+`",
 		"cluster":"doops-edu",
-		"instance":"release-runner"
+		"instance":"edu-coder"
 	}]}`), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -95,29 +95,29 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		return string(output)
 	}
 
-	run("", "credential", "create", "--target", "gw-edu-release-runner", "--name", "registry", "--scope", "personal", "--type", "registry")
-	run("", "credential", "list", "--target", "gw-edu-release-runner")
+	run("", "credential", "create", "--target", "gw-edu-coder", "--name", "registry", "--scope", "personal", "--type", "registry")
+	run("", "credential", "list", "--target", "gw-edu-coder")
 	run(`{"server":"registry.example.com","username":"deploy","password":"stdin-wins"}`,
-		"credential", "put", "--target", "gw-edu-release-runner", "--id", "cred_123")
-	run("", "credential", "grant", "--target", "gw-edu-release-runner", "--id", "cred_123",
+		"credential", "put", "--target", "gw-edu-coder", "--id", "cred_123")
+	run("", "credential", "grant", "--target", "gw-edu-coder", "--id", "cred_123",
 		"--cluster", "doops-edu", "--instance", "edu-coder",
 		"--namespace", "apps", "--use", "imagePull",
 		"--workload-kind", "Deployment", "--workload-name", "api",
 		"--image-repository", "team/api", "--image-digest", "sha256:manifest")
 	run("", "-session", "credential-verify", "credential", "verify",
-		"--target", "gw-edu-release-runner", "--id", "cred_123", "--version-id", "credver_456",
+		"--target", "gw-edu-coder", "--id", "cred_123", "--version-id", "credver_456",
 		"--cluster", "doops-edu", "--instance", "edu-coder",
 		"--namespace", "apps", "--use", "imagePull",
 		"--workload-kind", "Deployment", "--workload-name", "api",
 		"--image-repository", "team/api", "--image-digest", "sha256:manifest")
-	run("", "credential", "promote", "--target", "gw-edu-release-runner", "--id", "cred_123", "--version-id", "credver_456")
-	run("", "credential", "grant-revoke", "--target", "gw-edu-release-runner", "--id", "cred_123", "--grant-id", "credgrant_789")
-	run("", "credential", "revoke", "--target", "gw-edu-release-runner", "--id", "cred_123")
+	run("", "credential", "promote", "--target", "gw-edu-coder", "--id", "cred_123", "--version-id", "credver_456")
+	run("", "credential", "grant-revoke", "--target", "gw-edu-coder", "--id", "cred_123", "--grant-id", "credgrant_789")
+	run("", "credential", "revoke", "--target", "gw-edu-coder", "--id", "cred_123")
 	run(`{"name":"release","scope":"platform","items":[{"credential_id":"cred_123","use":"imagePull","namespace":"apps","workload":{"Kind":"Deployment","Name":"api"},"registry_repository":"team/api","registry_reference":"sha256:manifest"}]}`,
-		"credential", "bundle-create", "--target", "gw-edu-release-runner")
-	run("", "credential", "bundle-get", "--target", "gw-edu-release-runner", "--name", "release")
+		"credential", "bundle-create", "--target", "gw-edu-coder")
+	run("", "credential", "bundle-get", "--target", "gw-edu-coder", "--name", "release")
 
-	command := exec.Command(binary, "credential", "put", "--target", "gw-edu-release-runner", "--id", "cred_123", "--payload", payloadCanary)
+	command := exec.Command(binary, "credential", "put", "--target", "gw-edu-coder", "--id", "cred_123", "--payload", payloadCanary)
 	command.Env = append(os.Environ(), "DOOPS_CONFIG="+config)
 	command.Stdin = strings.NewReader(`{"password":"stdin-is-required"}`)
 	if output, err := command.CombinedOutput(); err == nil {
@@ -145,7 +145,7 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 	}
 	if requests[1].Query.Get("view") != "target" ||
 		requests[1].Query.Get("cluster") != "doops-edu" ||
-		requests[1].Query.Get("instance") != "release-runner" {
+		requests[1].Query.Get("instance") != "edu-coder" {
 		t.Fatalf("credential list target query mismatch: %#v", requests[1].Query)
 	}
 	assertCredentialCLIJSON(t, requests[2], http.MethodPut, "/v1/credentials/cred_123/payload", map[string]any{

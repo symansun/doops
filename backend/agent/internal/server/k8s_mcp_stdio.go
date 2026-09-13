@@ -219,8 +219,9 @@ func k8sMCPOperationAllowed(arguments json.RawMessage, allowed []string) bool {
 	if json.Unmarshal(arguments, &input) != nil {
 		return false
 	}
+	normalizedOperation := strings.ToLower(strings.TrimSpace(input.Operation))
 	for _, operation := range allowed {
-		if input.Operation == operation {
+		if normalizedOperation == operation {
 			return true
 		}
 	}
