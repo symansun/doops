@@ -12,6 +12,10 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
 - Replacement verification compares the Pod host aliases with the Helm release
   and resolves every requested hostname from inside the new Agent. The release
   rolls back on mismatch; there is no DNS fallback.
+- Proxy allowlist verification reads the replacement Pod spec. `doops exec`
+  runs in an isolated command environment and does not inherit the Agent
+  container environment, so it is not an authoritative source for
+  `DOOPS_PROXY_ALLOW_HOSTS`.
 
 ## 2026-09-13 Managed Agent proxy allowlist release
 

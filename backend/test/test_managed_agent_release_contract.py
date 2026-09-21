@@ -78,6 +78,8 @@ def test_single_managed_agent_release_script():
     assert 'values.setdefault("proxy", {})["allowedHosts"] = proxy_allowed_hosts' in text
     assert "normalize_proxy_allowed_hosts" in text
     assert "replacement Agent proxy allowlist does not match live Helm values" in text
+    assert 'container_env.get("DOOPS_PROXY_ALLOW_HOSTS", "")' in text
+    assert 'os.environ.get("DOOPS_PROXY_ALLOW_HOSTS", "")' not in text
     assert "--host-alias" in text
     assert 'values["hostAliases"] = entries' in text
     assert "normalize_host_aliases" in text

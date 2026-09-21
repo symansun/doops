@@ -758,12 +758,6 @@ values = json.loads(subprocess.check_output(
     text=True,
 ))
 expected = str((values.get("proxy") or {}).get("allowedHosts") or "")
-actual = os.environ.get("DOOPS_PROXY_ALLOW_HOSTS", "")
-print("proxy_allowed_hosts=" + actual)
-if actual != expected:
-    raise SystemExit(
-        "Error: replacement Agent proxy allowlist does not match live Helm values"
-    )
 pod = os.environ.get("HOSTNAME", "")
 if not pod:
     raise SystemExit("Error: replacement Agent HOSTNAME is empty")
@@ -771,6 +765,16 @@ pod_data = json.loads(subprocess.check_output(
     ["kubectl", "-n", namespace, "get", "pod", pod, "-o", "json"],
     text=True,
 ))
+container_env = {
+    item.get("name"): item.get("value", "")
+    for item in pod_data["spec"]["containers"][0].get("env") or []
+}
+actual = container_env.get("DOOPS_PROXY_ALLOW_HOSTS", "")
+print("proxy_allowed_hosts=" + actual)
+if actual != expected:
+    raise SystemExit(
+        "Error: replacement Agent proxy allowlist does not match live Helm values"
+    )
 
 def normalized_aliases(items):
     result = {}
