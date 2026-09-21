@@ -99,3 +99,50 @@ not changed by this test.
   now strips client `Forwarded` headers and sends the upstream host in both
   `Host` and `X-Forwarded-Host`, so JM tenant resolution sees
   `jm.aiedulab.cn` rather than `jm-proxy.l8ai.cn`.
+- Iteration 10: deployed Gateway commit `b06e197` to
+  `106.54.197.139`; the deployed `/proc` executable hash is
+  `89292459d04498b655670206740e36070d95ed8959c51f9dcef458e37e15f3e3`.
+  Gateway health returned `200`, unauthenticated target listing remained
+  `401`, and `doops-oilan/oilan-node` reconnected.
+- Iteration 11: verified the retained route
+  `route_e1f7a64862d429e0a05fd369` from outside the Agent network using
+  `curl --resolve jm-proxy.l8ai.cn:443:106.54.197.139`. GET returned `200`
+  with 15,441 bytes and an identical body hash to the direct upstream. POST
+  returned the same upstream `405` and 157-byte body. The tenant API returned
+  the same `404 HOST_NOT_MAPPED` through both paths.
+- Iteration 12: loaded the site in real Chrome with a host resolver mapping
+  `jm-proxy.l8ai.cn` to `106.54.197.139`. After the site's parallel asset
+  loading completed, the proxy page rendered the same tenant-config error
+  page as the direct upstream. There were no failed browser requests or
+  proxy-specific console errors; the four `404` responses were the upstream
+  tenant bootstrap endpoints.
+
+## User Verification
+
+The exact public test route is:
+
+```text
+https://jm-proxy.l8ai.cn/
+```
+
+At present both Cloudflare DoH and Google DoH resolve this name to the
+existing wildcard address `89.250.81.244`, not the current Gateway
+`106.54.197.139`. DNS was intentionally not changed. Verify the new route
+without relying on the old wildcard with:
+
+```bash
+curl --noproxy '*' \
+  --resolve jm-proxy.l8ai.cn:443:106.54.197.139 \
+  -i https://jm-proxy.l8ai.cn/
+```
+
+For a browser, add the equivalent temporary host mapping or use Chrome with:
+
+```text
+--host-resolver-rules=MAP jm-proxy.l8ai.cn 106.54.197.139
+```
+
+The remaining `HOST_NOT_MAPPED` page is an upstream Ali/JM tenant
+configuration result. It is identical when accessing
+`https://jm.aiedulab.cn` directly with the same upstream ingress, so it is
+not a Gateway or Agent transport failure.
