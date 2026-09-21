@@ -491,6 +491,8 @@ PY
   trap 'exit 130' INT
   trap 'exit 143' TERM
   release_values="${release_tmp}/values.json"
+  pre_release_pods="${release_tmp}/pre-release-pods.json"
+  kubectl -n "${NAMESPACE}" get pods -l "${selector}" -o json >"${pre_release_pods}"
   helm get values "${RELEASE}" -n "${NAMESPACE}" -o json >"${release_values}"
   python3 - "${release_values}" "${DOOPS_IMAGE_REPOSITORY}" "${DOOPS_IMAGE_DIGEST}" "${PROXY_ALLOWED_HOSTS}" "${PROXY_ALLOWED_HOSTS_SET}" "${HOST_ALIASES_JSON}" "${HOST_ALIASES_SET}" <<'PY'
 import json, sys
@@ -700,67 +702,84 @@ PY
       continue
     fi
     offline_streak=0
-    if out="$(doops -session "${SESSION}-wait" exec --target "${TARGET}" --cmd "$(cat <<EOF
-python3 - $(printf '%q' "${NAMESPACE}") $(printf '%q' "${DOOPS_IMAGE}") <<'PY'
-import json, os, subprocess, sys
-namespace, expected = sys.argv[1], sys.argv[2]
-pod = os.environ.get("HOSTNAME", "")
-if not pod:
-    raise SystemExit(2)
-data = json.loads(subprocess.check_output(
-    ["kubectl", "-n", namespace, "get", "pod", pod, "-o", "json"],
-    text=True,
-))
-ready = False
-for cond in data.get("status", {}).get("conditions") or []:
-    if cond.get("type") == "Ready" and cond.get("status") == "True":
-        ready = True
-got = data["spec"]["containers"][0]["image"]
-print("pod=" + pod)
-print("pod_image=" + got)
-print("ready=" + str(ready).lower())
-if not ready or got != expected:
-    raise SystemExit(2)
+    current_pods="${release_tmp}/current-pods.json"
+    kubectl -n "${NAMESPACE}" get pods -l "${selector}" -o json >"${current_pods}"
+    candidate_pod="$(
+      python3 - "${pre_release_pods}" "${current_pods}" "${DOOPS_IMAGE}" "${DOOPS_IMAGE_DIGEST}" <<'PY'
+import json
+import sys
+
+previous_path, current_path, expected_image, expected_digest = sys.argv[1:5]
+with open(previous_path, encoding="utf-8") as fh:
+    previous = {
+        item.get("metadata", {}).get("name")
+        for item in (json.load(fh).get("items") or [])
+    }
+with open(current_path, encoding="utf-8") as fh:
+    current = json.load(fh)
+matches = []
+for pod in current.get("items") or []:
+    name = pod.get("metadata", {}).get("name", "")
+    if not name or name in previous:
+        continue
+    containers = pod.get("spec", {}).get("containers") or []
+    if not containers or containers[0].get("image") != expected_image:
+        continue
+    ready = any(
+        condition.get("type") == "Ready" and condition.get("status") == "True"
+        for condition in pod.get("status", {}).get("conditions") or []
+    )
+    statuses = pod.get("status", {}).get("containerStatuses") or []
+    if not ready or len(statuses) != 1:
+        continue
+    if int(statuses[0].get("restartCount") or 0) != 0:
+        continue
+    if expected_digest not in str(statuses[0].get("imageID") or ""):
+        continue
+    matches.append(name)
+if len(matches) != 1:
+    raise SystemExit(1)
+print(matches[0])
 PY
-EOF
-)" 2>/dev/null)"; then
-      echo "${out}" | grep -v TARGETING || true
-      break
+    )" || candidate_pod=""
+    if [[ -n "${candidate_pod}" ]] &&
+      doops -session "${SESSION}-wait" targets --target "${TARGET}" >/dev/null 2>&1; then
+      handoff_host="$(
+        doops -session "${SESSION}-wait" exec --target "${TARGET}" \
+          --cmd hostname 2>/dev/null || true
+      )"
+      if printf '%s\n' "${handoff_host}" | grep -Fqx "${candidate_pod}"; then
+        echo "pod=${candidate_pod}"
+        echo "pod_image=${DOOPS_IMAGE}"
+        echo "ready=true"
+        replacement_pod="${candidate_pod}"
+        break
+      fi
     fi
     sleep 5
   done
 
   echo "==> verifying replacement binary"
-  doops -session "${SESSION}-verify" exec --target "${TARGET}" --cmd "$(cat <<EOF
-set -eu
-/app/doops-agent -h >/tmp/doops-agent-help.txt 2>&1 || true
-if ! grep -q -- '-edge' /tmp/doops-agent-help.txt; then
-  echo "Error: released binary is missing -edge flags" >&2
-  exit 1
-fi
-echo "edge_flag=documented"
-hostname
-sha256sum /app/doops-agent
-EOF
-)"
-  doops -session "${SESSION}-verify" exec --target "${TARGET}" --cmd "$(cat <<EOF
-set -eu
-python3 - $(printf '%q' "${RELEASE}") $(printf '%q' "${NAMESPACE}") $(printf '%q' "${HOST_ALIASES_JSON}") $(printf '%q' "${HOST_ALIASES_SET}") <<'PY'
+  replacement_help="$(
+    kubectl -n "${NAMESPACE}" exec "${replacement_pod}" -- /app/doops-agent -h 2>&1 || true
+  )"
+  if ! printf '%s\n' "${replacement_help}" | grep -q -- '-edge'; then
+    echo "Error: released binary is missing -edge flags" >&2
+    exit 1
+  fi
+  echo "edge_flag=documented"
+  kubectl -n "${NAMESPACE}" exec "${replacement_pod}" -- sha256sum /app/doops-agent
+  python3 - "${RELEASE}" "${NAMESPACE}" "${replacement_pod}" <<'PY'
 import json
-import os
-import socket
 import subprocess
 import sys
 
-release, namespace, host_aliases_json, host_aliases_override = sys.argv[1:5]
+release, namespace, pod = sys.argv[1:4]
 values = json.loads(subprocess.check_output(
     ["helm", "get", "values", release, "-n", namespace, "-o", "json"],
     text=True,
 ))
 expected = str((values.get("proxy") or {}).get("allowedHosts") or "")
-pod = os.environ.get("HOSTNAME", "")
-if not pod:
-    raise SystemExit("Error: replacement Agent HOSTNAME is empty")
 pod_data = json.loads(subprocess.check_output(
     ["kubectl", "-n", namespace, "get", "pod", pod, "-o", "json"],
     text=True,
@@ -793,53 +812,60 @@ if actual_aliases != expected_aliases:
     raise SystemExit(
         "Error: replacement Agent host aliases do not match live Helm values"
     )
-if host_aliases_override == "true":
-    requested_aliases = json.loads(host_aliases_json)
-    for host, expected_ip in requested_aliases.items():
-        resolved = sorted({
-            item[4][0]
-            for item in socket.getaddrinfo(host, None)
-        })
-        print(f"host_alias_resolution={host}:{','.join(resolved)}")
-        if expected_ip not in resolved:
-            raise SystemExit(
-                f"Error: replacement Agent did not resolve {host} to {expected_ip}"
-            )
 PY
-EOF
-)"
-  kubectl -n "${NAMESPACE}" rollout status "deployment/${workload}" --timeout "${TIMEOUT}"
-  kubectl -n "${NAMESPACE}" get pods -l "${selector}" -o json >"${release_tmp}/verified-pods.json"
-  python3 - "${release_tmp}/verified-pods.json" "${DOOPS_IMAGE}" "${DOOPS_IMAGE_DIGEST}" <<'PY'
+  requested_aliases="$(
+    python3 - "${HOST_ALIASES_JSON}" "${HOST_ALIASES_SET}" <<'PY'
 import json
 import sys
 
-pods_path, expected_image, expected_digest = sys.argv[1:4]
-with open(pods_path, encoding="utf-8") as fh:
-    pods = json.load(fh)
-matches = []
-for pod in pods.get("items") or []:
-    containers = pod.get("spec", {}).get("containers") or []
-    if not containers or containers[0].get("image") != expected_image:
-        continue
-    statuses = pod.get("status", {}).get("containerStatuses") or []
-    ready = any(
-        condition.get("type") == "Ready" and condition.get("status") == "True"
-        for condition in pod.get("status", {}).get("conditions") or []
-    )
-    if not ready or not statuses:
-        continue
-    status = statuses[0]
-    if int(status.get("restartCount") or 0) != 0:
-        raise SystemExit("Error: replacement Agent restarted before release completion")
-    image_id = str(status.get("imageID") or "")
-    if expected_digest not in image_id:
-        raise SystemExit("Error: replacement Agent imageID does not match requested digest")
-    matches.append((pod.get("metadata", {}).get("name", ""), image_id))
-if len(matches) != 1:
-    raise SystemExit("Error: expected exactly one Ready replacement Agent Pod")
-print("replacement_pod=" + matches[0][0])
-print("replacement_image_id=" + matches[0][1])
+aliases, override = sys.argv[1:3]
+if override == "true":
+    for host, ip in json.loads(aliases).items():
+        print(f"{host}={ip}")
+PY
+  )"
+  while IFS='=' read -r host expected_ip; do
+    [[ -n "${host}" ]] || continue
+    resolved="$(
+      kubectl -n "${NAMESPACE}" exec "${replacement_pod}" -- \
+        python3 -c 'import socket,sys; print(",".join(sorted({item[4][0] for item in socket.getaddrinfo(sys.argv[1], None)})))' \
+        "${host}"
+    )"
+    echo "host_alias_resolution=${host}:${resolved}"
+    if ! printf '%s\n' "${resolved}" | tr ',' '\n' | grep -Fqx "${expected_ip}"; then
+      echo "Error: replacement Agent did not resolve ${host} to ${expected_ip}" >&2
+      exit 1
+    fi
+  done <<<"${requested_aliases}"
+  kubectl -n "${NAMESPACE}" rollout status "deployment/${workload}" --timeout "${TIMEOUT}"
+  kubectl -n "${NAMESPACE}" get pod "${replacement_pod}" -o json >"${release_tmp}/verified-pod.json"
+  python3 - "${release_tmp}/verified-pod.json" "${replacement_pod}" "${DOOPS_IMAGE}" "${DOOPS_IMAGE_DIGEST}" <<'PY'
+import json
+import sys
+
+pod_path, expected_pod, expected_image, expected_digest = sys.argv[1:5]
+with open(pod_path, encoding="utf-8") as fh:
+    pod = json.load(fh)
+if pod.get("metadata", {}).get("name") != expected_pod:
+    raise SystemExit("Error: replacement Agent Pod identity changed during verification")
+containers = pod.get("spec", {}).get("containers") or []
+statuses = pod.get("status", {}).get("containerStatuses") or []
+ready = any(
+    condition.get("type") == "Ready" and condition.get("status") == "True"
+    for condition in pod.get("status", {}).get("conditions") or []
+)
+if not containers or containers[0].get("image") != expected_image:
+    raise SystemExit("Error: replacement Agent image changed during verification")
+if not ready or len(statuses) != 1:
+    raise SystemExit("Error: replacement Agent is not Ready during verification")
+status = statuses[0]
+if int(status.get("restartCount") or 0) != 0:
+    raise SystemExit("Error: replacement Agent restarted before release completion")
+image_id = str(status.get("imageID") or "")
+if expected_digest not in image_id:
+    raise SystemExit("Error: replacement Agent imageID does not match requested digest")
+print("replacement_pod=" + expected_pod)
+print("replacement_image_id=" + image_id)
 PY
   rollback_required=false
   trap - EXIT INT TERM

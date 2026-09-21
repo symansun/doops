@@ -75,8 +75,12 @@ not changed by this test.
 - Iteration 4: implementing an external-controller Agent release with
   `jm.aiedulab.cn -> 47.114.103.22` as an exact Pod host alias and
   `jm.aiedulab.cn` as the exact proxy allowlist entry.
-- Iteration 5: the first real handoff reached Helm revision 24, the replacement
-  Pod became Ready, and Gateway selected it. Verification incorrectly read the
-  allowlist from the isolated `doops exec` command environment, then
-  automatically rolled back to revision 23. No route or DNS mutation had been
-  made. The verifier is being corrected to read the replacement Pod spec.
+- Iteration 5: the first real handoff reached Helm revision 24, but the
+  release loop accepted the still-serving old Pod because the image digest was
+  unchanged. The later verifier then read the isolated old-Pod command
+  environment and automatically rolled back to revision 23. No route or DNS
+  mutation had been made.
+- Iteration 6: the release controller is being corrected to record the
+  pre-release Pod, require a different Ready Pod to be the Gateway-selected
+  hostname, and verify the candidate directly through the external Kubernetes
+  controller.

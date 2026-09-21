@@ -85,6 +85,9 @@ def test_single_managed_agent_release_script():
     assert "normalize_host_aliases" in text
     assert "replacement Agent host aliases do not match live Helm values" in text
     assert "replacement Agent did not resolve" in text
+    assert "pre-release-pods.json" in text
+    assert '--cmd hostname' in text
+    assert 'kubectl -n "${NAMESPACE}" exec "${replacement_pod}"' in text
     assert "doops -session" in text
     assert "@sha256:" in helper
     assert "docker.cnb.cool/l8ai/ai/doops.sh" in helper
