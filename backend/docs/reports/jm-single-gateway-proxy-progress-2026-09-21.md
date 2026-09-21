@@ -15,7 +15,7 @@ public client
   -> temporary *.l8ai.cn hostname
   -> existing doops.l8ai.cn Gateway
   -> selected online Agent
-  -> https://jm.aiedulab.cn (192.168.150.228:443)
+  -> https://jm.aiedulab.cn (Ali ingress 47.114.103.22:443)
 ```
 
 There is no second Gateway. The public test hostname belongs to the `l8ai.cn`
@@ -24,8 +24,8 @@ not changed by this test.
 
 ## Acceptance Criteria
 
-1. Identify an online Agent with a real TCP/TLS path to
-   `192.168.150.228:443`.
+1. Identify an online Agent with a real TCP/TLS path to the Ali ingress that
+   serves `jm.aiedulab.cn`.
 2. Confirm that the Agent permits the exact upstream hostname
    `jm.aiedulab.cn`.
 3. Create one temporary Gateway route under `*.l8ai.cn`, bound to that Agent
@@ -35,8 +35,8 @@ not changed by this test.
    evidence.
 5. Exercise the public URL in a browser and inspect the rendered page,
    console, and failed network requests.
-6. Delete the temporary route after verification unless the user asks to keep
-   it, and confirm that the route no longer exists.
+6. Keep the temporary route available for the user's verification because the
+   user asked for a test address; delete it only when the user asks.
 
 ## Guardrails
 
@@ -52,15 +52,19 @@ not changed by this test.
 
 ## Current State
 
-- Gateway: `https://doops.l8ai.cn`
-- Intended JM Agent: `doops-jm/jm-228`
-- Intended upstream: `https://jm.aiedulab.cn`
-- Resolved JM service address from prior Agent evidence:
-  `192.168.150.228:443`
-- Current blocker: `doops-jm/jm-228` is offline.
-- Next action: test the online Agents, starting with
-  `doops-oilan/oilan-node`, for direct TCP/TLS access to the JM service and
-  inspect their exact proxy allowlist.
+- Gateway: `https://doops.l8ai.cn` (`106.54.197.139`)
+- Selected Agent: `doops-oilan/oilan-node`
+- Original JM Agent: `doops-jm/jm-228` remains offline and is not used by the
+  test route.
+- Upstream: `https://jm.aiedulab.cn`, pinned for this Agent as
+  `47.114.103.22:443` with TLS SNI/Host `jm.aiedulab.cn`.
+- Agent release: Helm revision 29; exact allowlist contains
+  `jm.aiedulab.cn`; Pod host alias maps it to `47.114.103.22`.
+- Gateway route: `jm-proxy.l8ai.cn` -> `doops-oilan/oilan-node` ->
+  `https://jm.aiedulab.cn/`, enabled and retained for user verification.
+- DNS: `jm-proxy.l8ai.cn` still follows the existing wildcard to
+  `89.250.81.244`; no DNS mutation has been made. Exact testing therefore
+  uses `curl --resolve` to `106.54.197.139`.
 
 ## Iteration Log
 
@@ -84,3 +88,14 @@ not changed by this test.
   pre-release Pod, require a different Ready Pod to be the Gateway-selected
   hostname, and verify the candidate directly through the external Kubernetes
   controller.
+- Iteration 7: released the corrected Agent through the external Helm
+  controller at revision 29. The replacement Pod is Gateway-selected, has the
+  exact proxy allowlist and host alias, and resolves `jm.aiedulab.cn` to
+  `47.114.103.22` inside the Pod.
+- Iteration 8: created one route on the existing Gateway and completed real
+  public GET/POST checks. GET returned HTTP 200 with a body hash matching the
+  direct upstream; POST returned the same HTTP 405 as the upstream.
+- Iteration 9: found and fixed the remaining Host forwarding defect. The Agent
+  now strips client `Forwarded` headers and sends the upstream host in both
+  `Host` and `X-Forwarded-Host`, so JM tenant resolution sees
+  `jm.aiedulab.cn` rather than `jm-proxy.l8ai.cn`.

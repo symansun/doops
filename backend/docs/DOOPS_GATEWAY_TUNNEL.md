@@ -57,7 +57,10 @@ sequenceDiagram
    请求，并且不跟随重定向，避免路由被上游响应带出 allowlist。
 5. Gateway 与 Agent 之间使用分帧 body，不把请求体一次性读入内存；响应收到一帧就向
    客户端 flush，支持 SSE/分块 HTTP 这类流式响应。
-6. 第一阶段明确不支持 WebSocket Upgrade 和裸 TCP；收到 Upgrade 请求返回
+6. Agent 发往上游时会把 `Host` 和 `X-Forwarded-Host` 重写为路由的上游主机，
+   并丢弃客户端携带的 `Forwarded`/`X-Forwarded-Host`，避免上游租户解析误把公网
+   测试域名当成业务域名。
+7. 第一阶段明确不支持 WebSocket Upgrade 和裸 TCP；收到 Upgrade 请求返回
    `426 Upgrade Required`，后续如需 WebSocket 必须扩展成独立的二进制/帧协议。
 
 ### 配置路由
