@@ -2,6 +2,17 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-09-21 Managed Agent host alias release
+
+- Existing Helm releases can now use repeatable `--host-alias HOST=IP` arguments
+  when an Agent must reach a named HTTPS upstream through an explicit address.
+- The release script validates exact hostnames and IP addresses before target
+  contact, merges the requested mappings into the live Helm `hostAliases`, and
+  preserves unrelated mappings.
+- Replacement verification compares the Pod host aliases with the Helm release
+  and resolves every requested hostname from inside the new Agent. The release
+  rolls back on mismatch; there is no DNS fallback.
+
 ## 2026-09-13 Managed Agent proxy allowlist release
 
 - Existing Helm releases now require an operator-side kubeconfig plus the exact

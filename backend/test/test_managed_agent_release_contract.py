@@ -78,6 +78,11 @@ def test_single_managed_agent_release_script():
     assert 'values.setdefault("proxy", {})["allowedHosts"] = proxy_allowed_hosts' in text
     assert "normalize_proxy_allowed_hosts" in text
     assert "replacement Agent proxy allowlist does not match live Helm values" in text
+    assert "--host-alias" in text
+    assert 'values["hostAliases"] = entries' in text
+    assert "normalize_host_aliases" in text
+    assert "replacement Agent host aliases do not match live Helm values" in text
+    assert "replacement Agent did not resolve" in text
     assert "doops -session" in text
     assert "@sha256:" in helper
     assert "docker.cnb.cool/l8ai/ai/doops.sh" in helper
@@ -190,4 +195,66 @@ def test_release_rejects_empty_proxy_entries():
 
     assert result.returncode == 2
     assert "contains an empty entry" in result.stderr
+    assert "TARGETING" not in result.stdout
+
+
+def test_release_rejects_invalid_host_alias_before_contacting_a_target():
+    result = subprocess.run(
+        [
+            "bash",
+            str(RELEASE),
+            "--target",
+            "not-a-real-target",
+            "--session",
+            "host-alias-validation",
+            "--release",
+            "doops-agent",
+            "--namespace",
+            "doops-system",
+            "--host-alias",
+            "https://jm.aiedulab.cn=not-an-ip",
+            "--image",
+            "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "a" * 64,
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "--host-alias HOST must be an exact hostname" in result.stderr
+    assert "TARGETING" not in result.stdout
+
+
+def test_release_rejects_conflicting_host_aliases():
+    result = subprocess.run(
+        [
+            "bash",
+            str(RELEASE),
+            "--target",
+            "not-a-real-target",
+            "--session",
+            "host-alias-validation",
+            "--release",
+            "doops-agent",
+            "--namespace",
+            "doops-system",
+            "--host-alias",
+            "jm.aiedulab.cn=47.114.103.22",
+            "--host-alias",
+            "jm.aiedulab.cn=192.168.150.228",
+            "--image",
+            "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "a" * 64,
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "assigns conflicting IPs to jm.aiedulab.cn" in result.stderr
     assert "TARGETING" not in result.stdout

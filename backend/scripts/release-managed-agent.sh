@@ -22,6 +22,7 @@ Existing cluster (DoOps target already online):
     --namespace kz-ops \
     --kubeconfig /secure/path/to/kubeconfig \
     --proxy-allowed-hosts 127.0.0.1,internal.example.com \
+    --host-alias internal.example.com=10.0.0.10 \
     --version v1.3.0
 
 New cluster (operator kubeconfig, complete values, no Agent yet):
@@ -57,6 +58,10 @@ Options:
   --proxy-allowed-hosts HOSTS
                        Comma-separated exact upstream hostnames/IPs. Existing
                        clusters only; omitted preserves the live Helm value.
+  --host-alias HOST=IP
+                       Add or replace one exact Pod hostname mapping. Existing
+                       clusters only; repeat for multiple hostnames. Omitted
+                       preserves the live Helm value.
   --dry-run            Preflight only
   -h, --help
 EOF
@@ -81,6 +86,9 @@ TIMEOUT="5m"
 HANDOFF_TIMEOUT="600"
 PROXY_ALLOWED_HOSTS=""
 PROXY_ALLOWED_HOSTS_SET=false
+HOST_ALIAS_ARGS=()
+HOST_ALIASES_JSON="{}"
+HOST_ALIASES_SET=false
 DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do
@@ -140,6 +148,11 @@ while [[ $# -gt 0 ]]; do
     --proxy-allowed-hosts)
       PROXY_ALLOWED_HOSTS="${2:-}"
       PROXY_ALLOWED_HOSTS_SET=true
+      shift 2
+      ;;
+    --host-alias)
+      HOST_ALIAS_ARGS+=("${2:-}")
+      HOST_ALIASES_SET=true
       shift 2
       ;;
     --dry-run)
@@ -220,6 +233,10 @@ release_new_cluster() {
     echo "Error: new-cluster proxy.allowedHosts must be configured in the values file" >&2
     exit 2
   fi
+  if [[ "${HOST_ALIASES_SET}" == true ]]; then
+    echo "Error: new-cluster hostAliases must be configured in the values file" >&2
+    exit 2
+  fi
   if [[ ! -f "${VALUES}" ]]; then
     echo "Error: --values file does not exist: ${VALUES}" >&2
     exit 1
@@ -294,6 +311,53 @@ print(",".join(normalized), end="")
 PY
 }
 
+normalize_host_aliases() {
+  python3 - "$@" <<'PY'
+import ipaddress
+import json
+import re
+import sys
+
+label_pattern = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+aliases = {}
+for raw in sys.argv[1:]:
+    if raw.count("=") != 1:
+        print("Error: --host-alias must use HOST=IP", file=sys.stderr)
+        raise SystemExit(1)
+    raw_host, raw_ip = raw.split("=", 1)
+    host = raw_host.strip().lower()
+    ip = raw_ip.strip()
+    labels = host.split(".")
+    if (
+        not host
+        or len(host) > 253
+        or host.endswith(".")
+        or any(not label_pattern.fullmatch(label) for label in labels)
+    ):
+        print(
+            "Error: --host-alias HOST must be an exact hostname without "
+            "scheme, port, path, wildcard, or trailing dot",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    try:
+        normalized_ip = str(ipaddress.ip_address(ip))
+    except ValueError:
+        print("Error: --host-alias IP must be an IPv4 or IPv6 address", file=sys.stderr)
+        raise SystemExit(1)
+    previous = aliases.get(host)
+    if previous is not None and previous != normalized_ip:
+        print(
+            f"Error: --host-alias assigns conflicting IPs to {host}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    aliases[host] = normalized_ip
+
+print(json.dumps(aliases, separators=(",", ":"), sort_keys=True), end="")
+PY
+}
+
 release_existing_cluster() {
   require_value "--target" "${TARGET}"
   require_value "--session" "${SESSION}"
@@ -307,6 +371,15 @@ release_existing_cluster() {
       exit 1
     }
     if ! PROXY_ALLOWED_HOSTS="$(normalize_proxy_allowed_hosts "${PROXY_ALLOWED_HOSTS}")"; then
+      exit 2
+    fi
+  fi
+  if [[ "${HOST_ALIASES_SET}" == true ]]; then
+    command -v python3 >/dev/null || {
+      echo "Error: python3 is required to validate --host-alias" >&2
+      exit 1
+    }
+    if ! HOST_ALIASES_JSON="$(normalize_host_aliases "${HOST_ALIAS_ARGS[@]}")"; then
       exit 2
     fi
   fi
@@ -341,6 +414,9 @@ release_existing_cluster() {
   echo "External kubeconfig: ${KUBECONFIG_PATH}"
   if [[ "${PROXY_ALLOWED_HOSTS_SET}" == true ]]; then
     echo "Proxy upstream hosts: ${PROXY_ALLOWED_HOSTS:-<deny-all>}"
+  fi
+  if [[ "${HOST_ALIASES_SET}" == true ]]; then
+    echo "Host aliases: ${HOST_ALIASES_JSON}"
   fi
   echo "==> checking target is online"
   target_status="$(doops_cmd targets --target "${TARGET}")"
@@ -416,9 +492,17 @@ PY
   trap 'exit 143' TERM
   release_values="${release_tmp}/values.json"
   helm get values "${RELEASE}" -n "${NAMESPACE}" -o json >"${release_values}"
-  python3 - "${release_values}" "${DOOPS_IMAGE_REPOSITORY}" "${DOOPS_IMAGE_DIGEST}" "${PROXY_ALLOWED_HOSTS}" "${PROXY_ALLOWED_HOSTS_SET}" <<'PY'
+  python3 - "${release_values}" "${DOOPS_IMAGE_REPOSITORY}" "${DOOPS_IMAGE_DIGEST}" "${PROXY_ALLOWED_HOSTS}" "${PROXY_ALLOWED_HOSTS_SET}" "${HOST_ALIASES_JSON}" "${HOST_ALIASES_SET}" <<'PY'
 import json, sys
-path, repository, digest, proxy_allowed_hosts, proxy_override = sys.argv[1:6]
+(
+    path,
+    repository,
+    digest,
+    proxy_allowed_hosts,
+    proxy_override,
+    host_aliases_json,
+    host_aliases_override,
+) = sys.argv[1:8]
 with open(path, encoding="utf-8") as fh:
     values = json.load(fh)
 image = values.setdefault("image", {})
@@ -427,6 +511,26 @@ image["repository"] = repository
 image["digest"] = digest
 if proxy_override == "true":
     values.setdefault("proxy", {})["allowedHosts"] = proxy_allowed_hosts
+if host_aliases_override == "true":
+    overrides = json.loads(host_aliases_json)
+    entries = []
+    for item in values.get("hostAliases") or []:
+        ip = str(item.get("ip") or "").strip()
+        hostnames = [
+            str(host).strip().lower()
+            for host in item.get("hostnames") or []
+            if str(host).strip().lower() not in overrides
+        ]
+        if ip and hostnames:
+            entries.append({"ip": ip, "hostnames": hostnames})
+    for host, ip in overrides.items():
+        for item in entries:
+            if item["ip"] == ip:
+                item["hostnames"].append(host)
+                break
+        else:
+            entries.append({"ip": ip, "hostnames": [host]})
+    values["hostAliases"] = entries
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(values, fh)
 PY
@@ -641,13 +745,14 @@ EOF
 )"
   doops -session "${SESSION}-verify" exec --target "${TARGET}" --cmd "$(cat <<EOF
 set -eu
-python3 - $(printf '%q' "${RELEASE}") $(printf '%q' "${NAMESPACE}") <<'PY'
+python3 - $(printf '%q' "${RELEASE}") $(printf '%q' "${NAMESPACE}") $(printf '%q' "${HOST_ALIASES_JSON}") $(printf '%q' "${HOST_ALIASES_SET}") <<'PY'
 import json
 import os
+import socket
 import subprocess
 import sys
 
-release, namespace = sys.argv[1:3]
+release, namespace, host_aliases_json, host_aliases_override = sys.argv[1:5]
 values = json.loads(subprocess.check_output(
     ["helm", "get", "values", release, "-n", namespace, "-o", "json"],
     text=True,
@@ -659,6 +764,43 @@ if actual != expected:
     raise SystemExit(
         "Error: replacement Agent proxy allowlist does not match live Helm values"
     )
+pod = os.environ.get("HOSTNAME", "")
+if not pod:
+    raise SystemExit("Error: replacement Agent HOSTNAME is empty")
+pod_data = json.loads(subprocess.check_output(
+    ["kubectl", "-n", namespace, "get", "pod", pod, "-o", "json"],
+    text=True,
+))
+
+def normalized_aliases(items):
+    result = {}
+    for item in items or []:
+        ip = str(item.get("ip") or "").strip()
+        for host in item.get("hostnames") or []:
+            result[str(host).strip().lower()] = ip
+    return result
+
+expected_aliases = normalized_aliases(values.get("hostAliases"))
+actual_aliases = normalized_aliases(
+    pod_data.get("spec", {}).get("hostAliases")
+)
+print("host_aliases=" + json.dumps(actual_aliases, sort_keys=True))
+if actual_aliases != expected_aliases:
+    raise SystemExit(
+        "Error: replacement Agent host aliases do not match live Helm values"
+    )
+if host_aliases_override == "true":
+    requested_aliases = json.loads(host_aliases_json)
+    for host, expected_ip in requested_aliases.items():
+        resolved = sorted({
+            item[4][0]
+            for item in socket.getaddrinfo(host, None)
+        })
+        print(f"host_alias_resolution={host}:{','.join(resolved)}")
+        if expected_ip not in resolved:
+            raise SystemExit(
+                f"Error: replacement Agent did not resolve {host} to {expected_ip}"
+            )
 PY
 EOF
 )"

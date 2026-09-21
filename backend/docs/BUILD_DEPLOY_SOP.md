@@ -150,6 +150,7 @@ bash scripts/release-managed-agent.sh \
   --namespace <namespace> \
   --kubeconfig <operator-kubeconfig> \
   --proxy-allowed-hosts 127.0.0.1,internal.example.com \
+  --host-alias internal.example.com=10.0.0.10 \
   --version <vX.Y.Z>
 ```
 
@@ -158,6 +159,12 @@ bash scripts/release-managed-agent.sh \
 脚本会拒绝 URL、端口、路径、通配符和空条目，并在新 Pod 上对照 Helm release
 验证实际环境值。新集群省略该值时默认拒绝全部；需要开放时在完整 `--values`
 文件中声明，不能同时传这个参数。
+
+需要把命名 HTTPS 上游固定到指定地址时，重复传
+`--host-alias <hostname>=<ip>`。脚本会把请求合并进 live Helm
+`hostAliases`，拒绝 URL、端口、路径、通配符、非法 IP 和同一 hostname
+的冲突地址。新 Pod 接管后必须同时通过 Pod spec 对比和容器内 DNS
+解析验证；省略参数时保留现网 aliases，不允许解析失败时回退到其他地址。
 
 新集群还没有 Agent 时，同一条命令改传完整 `--values` 和本机 kubeconfig，仍然只走
 这份 Chart 的 `helm upgrade --install`。自定义 entrypoint 或 `hostNetwork` 必须先改成

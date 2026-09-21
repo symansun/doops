@@ -437,6 +437,7 @@ bash scripts/release-managed-agent.sh \
   --namespace kz-ops \
   --kubeconfig /secure/path/to/kubeconfig \
   --proxy-allowed-hosts 127.0.0.1,internal.example.com \
+  --host-alias internal.example.com=10.0.0.10 \
   --version <vX.Y.Z>
 ```
 
@@ -445,6 +446,12 @@ hostname/IP；省略会保留现网值，传空字符串会恢复为拒绝全部
 能访问的内网上游，不是公网访问域名。URL、端口、路径、通配符和空条目会在任何
 集群变更前被拒绝；发布后会核对新 Agent 环境与 Helm release 的值。新集群省略
 `proxy.allowedHosts` 时安全地默认拒绝全部。
+
+当上游域名必须固定到指定地址时，重复传
+`--host-alias <hostname>=<ip>`。该参数会合并到 live Helm
+`hostAliases`，同名 hostname 会被显式替换，其他映射保持不变。域名或 IP
+格式错误会在接触 target 前失败；发布后会核对 Pod 配置，并从新 Agent
+内执行真实解析验证。省略该参数会完整保留现网映射，不存在 DNS fallback。
 
 `doops upgrade` 只做预演：
 
