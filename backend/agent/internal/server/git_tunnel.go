@@ -146,8 +146,7 @@ func (h *ClientService) authenticateGitUser(r *http.Request) (TokenAuth, error) 
 }
 
 func writeGitAuthError(w http.ResponseWriter) {
-	w.Header().Set("WWW-Authenticate", `Basic realm="doops-gateway"`)
-	http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	writeGatewayAuthError(w, `Basic realm="doops-gateway"`)
 }
 
 func parseGatewayGitPath(rawPath string) (cluster, instance, session, rest string, ok bool) {

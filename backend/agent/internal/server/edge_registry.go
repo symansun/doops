@@ -102,7 +102,13 @@ func (h *GatewayHub) HandleEdgeConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	enrollment, err := h.store.VerifyEdgeEnrollment(bearerToken(r), cluster, instance)
 	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeDoopsError(w, http.StatusUnauthorized, `Bearer realm="doops-edge"`, doopsErrorResponse{
+			Error:      "unauthorized",
+			Code:       "edge_enrollment_auth_failed",
+			AuthDomain: "edge_enrollment",
+			Message:    "Edge enrollment token is missing, invalid, expired, revoked, or bound to another target",
+			NextAction: "Use the active enrollment token issued for this exact cluster and instance; do not use a Gateway user token or managed credential",
+		})
 		return
 	}
 	if h.edge.SessionCount(cluster, instance) >= defaultEdgeMaxSessionsPerTarget {

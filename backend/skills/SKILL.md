@@ -277,7 +277,13 @@ Agent 进程外执行 Helm，并在候选 Pod 或 Gateway 接管失败时自动�
 
 ## 故障入口
 
-- `401 Unauthorized`：认证失败。先确认 CLI 读的是 `~/.agent/skills/doops/config.json`，并确认统一 `auth.json` 中存在该 Gateway 的 user token；标准 target 配置不得包含 token。
+- `401 Unauthorized`：先看结构化错误字段。`code=gateway_auth_failed` 且
+  `auth_domain=gateway` 表示 Gateway user token 缺失、无效、过期或撤销；确认 CLI
+  读取 `~/.agent/skills/doops/config.json`，并确认统一 `auth.json` 中存在该 Gateway
+  的 user token。裸 `401` 不能直接归因于受管凭据；标准 target 配置不得包含 token。
+- `edge_enrollment_auth_failed` 且 `auth_domain=edge_enrollment` 表示边缘通道 enrollment
+  token 缺失、失效或与精确 `cluster/instance` 不匹配；它不等于 Gateway user token
+  失效，也不等于受管凭据错误。
 - `403 Forbidden`：认证通过但权限不足，或用户被显式收窄。
 - `credential_scope_invalid`：凭据引用没有匹配到完整的 cluster/instance、namespace、workload、
   image 或 Helm scope；修正显式 scope，不得放宽授权。

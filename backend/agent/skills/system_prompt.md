@@ -45,3 +45,21 @@
   或 Helm mutation 不构成 apply 成功证据。
 - 缺少 target、服务范围、镜像版本、原因、验收条件、权限或真实证据时返回 `blocked` 或 `failed`，不得猜测或 fallback。
 - 工作目录由 doagent 会话原生绑定，当前任务必须在该会话工作区内执行。
+
+# 认证错误诊断
+
+- 先按错误发生位置区分认证域，不得把所有 `401` 都归类为受管凭据错误：
+  - `auth_domain=gateway` 或 `code=gateway_auth_failed`：DoOps Gateway user token
+    缺失、无效、过期或撤销。应报告 Gateway 登录态问题，并要求使用 `doops login`
+    或有效 Gateway user token；不得要求轮换受管凭据或业务 API Key。
+  - `auth_domain=edge_enrollment` 或 `code=edge_enrollment_auth_failed`：边缘通道
+    enrollment token 缺失、失效或与目标的 cluster/instance 不匹配。它不是 Gateway
+    user token，也不是受管凭据。
+  - `credential_invalid`、`credential_payload_invalid`、`credential_grant_denied`
+    等：受管凭据控制面或目标 Agent 的凭据物化/验证问题。只有存在这类明确证据时，
+    才能判断 `scu-zhiyong-admin-login` 等受管凭据有问题。
+  - 目标业务服务返回的 `401`：只能在 Gateway 鉴权已经成功、且 Agent 已实际使用
+    受管凭据访问该业务服务的证据存在时，归因于业务凭据；必须说明目标 URL/服务域，
+    不能把它写成 Gateway 401。
+- 结构化错误字段优先于自然语言错误尾部。若只有裸 `401 Unauthorized`，结论必须
+  保持为“认证域未确定”，先检查 Gateway token 和请求路径，不得猜测为凭据失效。

@@ -85,6 +85,13 @@ func TestGatewayHTTPListsTargetsForGrantedUserToken(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expected 401 without token, got %d", resp.StatusCode)
 	}
+	var authError doopsErrorResponse
+	if err := json.NewDecoder(resp.Body).Decode(&authError); err != nil {
+		t.Fatalf("decode unauthenticated error: %v", err)
+	}
+	if authError.Code != "gateway_auth_failed" || authError.AuthDomain != "gateway" {
+		t.Fatalf("unexpected unauthenticated error: %#v", authError)
+	}
 	resp.Body.Close()
 
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/targets", nil)
@@ -741,6 +748,13 @@ func TestGatewayPasswordLoginIssuesUserToken(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("wrong password must be 401, got %d", resp.StatusCode)
+	}
+	var loginError doopsErrorResponse
+	if err := json.NewDecoder(resp.Body).Decode(&loginError); err != nil {
+		t.Fatalf("decode bad login error: %v", err)
+	}
+	if loginError.Code != "gateway_login_invalid_credentials" || loginError.AuthDomain != "gateway" {
+		t.Fatalf("unexpected bad login error: %#v", loginError)
 	}
 	resp.Body.Close()
 

@@ -511,7 +511,13 @@ func (h *GatewayHub) HandleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := h.store.VerifyUserPassword(req.Username, req.Password)
 	if err != nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeDoopsError(w, http.StatusUnauthorized, "", doopsErrorResponse{
+			Error:      "unauthorized",
+			Code:       "gateway_login_invalid_credentials",
+			AuthDomain: "gateway",
+			Message:    "Gateway username or password was rejected",
+			NextAction: "Verify the Gateway username/password or provide a valid Gateway user token",
+		})
 		return
 	}
 	name := strings.TrimSpace(req.Name)
@@ -1272,11 +1278,11 @@ func (h *ClientService) authenticateUser(r *http.Request) (TokenAuth, error) {
 }
 
 func (h *ClientService) writeUserAuthError(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	writeGatewayAuthError(w, `Bearer realm="doops-gateway"`)
 }
 
 func (h *GatewayHub) writeUserAuthError(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	writeGatewayAuthError(w, `Bearer realm="doops-gateway"`)
 }
 
 func bearerToken(r *http.Request) string {
@@ -1285,6 +1291,33 @@ func bearerToken(r *http.Request) string {
 		return strings.TrimSpace(token[len("bearer "):])
 	}
 	return ""
+}
+
+type doopsErrorResponse struct {
+	Error      string `json:"error"`
+	Code       string `json:"code"`
+	AuthDomain string `json:"auth_domain,omitempty"`
+	Message    string `json:"message"`
+	NextAction string `json:"next_action,omitempty"`
+}
+
+func writeGatewayAuthError(w http.ResponseWriter, challenge string) {
+	writeDoopsError(w, http.StatusUnauthorized, challenge, doopsErrorResponse{
+		Error:      "unauthorized",
+		Code:       "gateway_auth_failed",
+		AuthDomain: "gateway",
+		Message:    "Gateway user token is missing, invalid, expired, or revoked",
+		NextAction: "Run doops login for this Gateway target; do not replace the Gateway token with a managed credential or business API key",
+	})
+}
+
+func writeDoopsError(w http.ResponseWriter, status int, challenge string, response doopsErrorResponse) {
+	if challenge != "" {
+		w.Header().Set("WWW-Authenticate", challenge)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 func writeJSONHTTP(w http.ResponseWriter, v interface{}) {

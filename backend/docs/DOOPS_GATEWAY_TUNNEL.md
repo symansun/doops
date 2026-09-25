@@ -257,7 +257,10 @@ doops admin token revoke --target <gateway-target> --id <token-id>
 
 说明：
 
-- `401 Unauthorized`：token 无效、过期或未登录，属于认证失败
+- `401 Unauthorized`：先读取 JSON `code` 和 `auth_domain`。`gateway_auth_failed` /
+  `auth_domain=gateway` 表示 Gateway user token 缺失、无效、过期或撤销；
+  `edge_enrollment_auth_failed` / `auth_domain=edge_enrollment` 表示边缘通道 enrollment
+  token 缺失、无效、过期或目标绑定不匹配。裸 `401` 不足以判断受管凭据错误。
 - `403 Forbidden`：token 有效，但当前用户缺少目标 `cluster/instance/action` 的显式 grant，或缺少 gateway 管理员 `admin` 权限。
 - 新 target 接入后如果 `exec/ask` 直接 403，检查该用户是否已经获得对应 target/action 的显式 grant。
 
