@@ -68,6 +68,9 @@ def test_single_managed_agent_release_script():
     assert "trap 'exit 143' TERM" in text
     assert "hostNetwork agents cannot hand off" in text
     assert "sandbox-entrypoint.sh" in text
+    assert "not a normal workload deployment" in text
+    assert "ordinary workload releases, use:" in text
+    assert "external operator kubeconfig" in text
     assert 'deploy.get("spec")' in text
     assert '"selector", {}).get("matchLabels")' in text
     assert 'values.setdefault("workload", {})["selectorLabels"]' in text
@@ -156,7 +159,8 @@ def test_existing_release_requires_an_external_kubeconfig_before_target_contact(
     )
 
     assert result.returncode == 2
-    assert "--kubeconfig or KUBECONFIG is required" in result.stderr
+    assert "not a normal workload deployment" in result.stderr
+    assert "external operator kubeconfig is required" in result.stderr
     assert "TARGETING" not in result.stdout
 
 

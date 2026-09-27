@@ -499,10 +499,12 @@ curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh
 当前基线 v1.3.0。重跑会把 `doops-k8s/` reset 到 `main` 再 apply 这一个身份。
 
 已经改用 Helm chart `deploy/helm/doops-agent` 的维护者节点才走
-`scripts/release-managed-agent.sh`。现网必须已经是 `/app/sandbox-entrypoint.sh`，
-已有集群必须提供操作机 kubeconfig；Helm mutation 由操作机执行，不能通过当前 Agent
-执行。Chart 先起新 Pod，Gateway 切换会话后才删旧副本；候选 Pod 或 Gateway 接管失败
-会自动回滚到发布前 Helm revision：
+`scripts/release-managed-agent.sh`。这是 `doops-agent` 自升级专用路径，不是普通业务
+workload 发布；普通业务仍使用 `doops ask --apply`，不需要本机 kubeconfig。Agent 不能
+替换承载自己的 Deployment，现网还必须已经使用标准 `/app/sandbox-entrypoint.sh`。
+因此自升级必须由外部操作机提供 kubeconfig，由外部 Helm
+控制器执行 mutation 和回滚，不能通过当前 Agent 执行。Chart 先起新 Pod，Gateway
+切换会话后才删旧副本；候选 Pod 或 Gateway 接管失败会自动回滚到发布前 Helm revision：
 
 脚本会先验证 Kubernetes API 和 kubeconfig 可达性，再读取 Helm release。API 超时、
 EOF、鉴权或其它连接失败会直接报告控制器不可达，不会误报为“release 不存在”或引导

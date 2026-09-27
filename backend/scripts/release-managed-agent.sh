@@ -457,7 +457,15 @@ release_existing_cluster() {
   fi
   require_value "--cluster" "${CLUSTER}"
   require_value "--instance" "${INSTANCE}"
-  require_value "--kubeconfig or KUBECONFIG" "${KUBECONFIG_PATH}"
+  if [[ -z "${KUBECONFIG_PATH}" ]]; then
+    cat >&2 <<'EOF'
+Error: this is the managed doops-agent upgrade path, not a normal workload deployment.
+An external operator kubeconfig is required because the current Agent cannot replace its own Deployment.
+For ordinary workload releases, use:
+  doops -session <session> ask --target <target> --apply --msg '<target、服务范围、镜像版本、原因和验收条件>'
+EOF
+    exit 2
+  fi
   command -v doops >/dev/null || {
     echo "Error: doops CLI is required on PATH" >&2
     exit 1
@@ -475,7 +483,8 @@ release_existing_cluster() {
     exit 1
   }
   if [[ ! -s "${KUBECONFIG_PATH}" ]]; then
-    echo "Error: kubeconfig does not exist or is empty: ${KUBECONFIG_PATH}" >&2
+    echo "Error: external operator kubeconfig does not exist or is empty: ${KUBECONFIG_PATH}" >&2
+    echo "This kubeconfig is required only for managed doops-agent self-upgrade; ordinary workload releases use doops ask --apply." >&2
     exit 1
   fi
   export KUBECONFIG="${KUBECONFIG_PATH}"
