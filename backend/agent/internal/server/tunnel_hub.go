@@ -1971,7 +1971,7 @@ func numericID(v interface{}) (int64, bool) {
 
 func actionForTool(tool string, args json.RawMessage) GatewayAction {
 	switch tool {
-	case "doops_shell", "doops_bg", "doops_task_status", "doops_k8s":
+	case "doops_shell", "doops_ssh", "doops_bg", "doops_task_status", "doops_k8s":
 		return ActionExec
 	case "doops_agent_prompt":
 		if extractStringArg(args, "operation") == "apply" {
@@ -2015,6 +2015,9 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 	switch action {
 	case ActionExec:
 		if tool == "doops_agent_prompt" && extractStringArg(args, "operation") == "apply" {
+			return targetMutation
+		}
+		if tool == "doops_ssh" {
 			return targetMutation
 		}
 		if tool == "doops_shell" || tool == "doops_bg" {
@@ -2128,6 +2131,10 @@ func summarizeToolCall(tool string, args json.RawMessage) string {
 		if cmd, _ := m["command"].(string); cmd != "" {
 			return trimTail(cmd, 512)
 		}
+	case "doops_ssh":
+		host, _ := m["host"].(string)
+		command, _ := m["command"].([]interface{})
+		return fmt.Sprintf("doops_ssh host=%s remote_args=%d", strings.TrimSpace(host), len(command))
 	case "doops_agent_prompt":
 		operation, _ := m["operation"].(string)
 		return "doops_agent_prompt operation=" + strings.ToLower(strings.TrimSpace(operation))

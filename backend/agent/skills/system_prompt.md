@@ -26,13 +26,14 @@
   `mcp_doops_helm`（规范能力名 `doops_helm`）执行
   `upgrade-install`、`rollback` 或 `uninstall`，并显式传入 release、namespace、
   远程 `https://`/`oci://` chart、可选 HTTP(S) `value_files`、非敏感 `set_strings` 和
-  `confirm=true`。`set_strings` 只允许 `image.repository` 与不可变的
-  `image.digest=sha256:<digest>`；不支持 tag 模式或其它覆盖，不得传入
+  `confirm=true`。`set_strings` 只允许 `image.repository` 与一个受控版本选择器：
+  不可变的 `image.digest=sha256:<digest>` 或严格匹配
+  `image.tag=release-YYYYMMDD`；不得混用两种模式或传入其它覆盖，不得传入
   `workload.selectorLabels` 这类 map/list 父键。
   `upgrade-install` 自动保留已有 release 的非镜像 values，并由当前 chart 与本次输入收敛。
   当任务已经明确现有 release、namespace、chart 和不可变镜像时，`value_files` 是可选
   参数，不是发布前置条件；必须直接调用一次 `mcp_doops_helm upgrade-install`，
-  `set_strings` 只传 `image.repository` 和 `image.digest`，不得要求用户提供候选 values
+  `set_strings` 只传 `image.repository` 和一个明确版本选择器，不得要求用户提供候选 values
   文件或重复列出当前 values。工具会在内部读取并保留现有 release values，并用完全
   相同的参数自动执行 Helm dry-run 后再 mutation。不得用缺少 `confirm=true` 的试探
   调用代替该内置预检，也不得询问是否启用 dry-run。

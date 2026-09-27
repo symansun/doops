@@ -19,13 +19,15 @@
 
 ```bash
 bash scripts/extract-gateway-from-image.sh \
-  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<verified-ci-digest>
+  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<verified-ci-digest> \
+  --source-commit <verified-main-commit>
 
 bash scripts/deploy-gateway.sh \
   --host 106.54.197.139 \
   --user ubuntu \
   --binary bin/doops-gateway \
   --no-build \
+  --source-commit <verified-main-commit> \
   --verify-target gw-edu-coder \
   --verify-session gateway-release-<release>
 ```
@@ -48,6 +50,8 @@ bash scripts/deploy-gateway.sh \
 6. 校验 `/proc/<pid>/exe` hash 与 CI 镜像提取产物一致。
 7. 校验 `/v1/targets` 未认证访问返回 `401`，并通过 `--verify-target` 复用 DoOps 已配置认证，
    确认发布前的全部 target 均已重新连接；不得为发布导出或新建明文 token 文件。
+8. 校验候选二进制内嵌的 `source-commit` 与本次 CNB 构建 commit 完全一致；
+   旧的本地 `bin/doops-gateway` 或没有 provenance 的二进制会在上传前拒绝。
 
 禁止事项：
 
@@ -121,7 +125,8 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 5. `helm version --short` 可运行。
 6. `ssh -V` 可运行，且镜像中不存在 `sshd`。
 7. `doops exec` 能读取 `hostname/date/kubectl get nodes/df/free`。
-8. `doops exec` 能代理用户明确给出的任意 SSH 客户端命令；不得内联凭据或启动 SSH 服务端。
+8. `doops ssh` 能代理用户明确给出的结构化 SSH 客户端命令；不得把多层 SSH
+   拼进 `doops exec` 字符串、内联凭据或启动 SSH 服务端。
 9. `doops ask` 能通过 doagent ACP HTTP 调用工具并返回结论。
 
 镜像构建必须完成 base label 与前 6 项镜像内自检；第 7 至 9 项必须在 Agent 滚动更新后对真实 target 执行。
@@ -137,12 +142,14 @@ env、probes、volumeMounts 和 volumes。包括只更新镜像在内的所有�
 `doops_helm upgrade-install`，使用任务明确指定的远程 `https://`/`oci://` Chart、
 可选 HTTP(S) `value_files` 和非敏感 `set_strings` 完整收敛；更新现有 release 且任务已
 给出 release、namespace、chart 和不可变镜像时，`value_files` 可以为空，工具自动保留
-当前 values。`set_strings` 只允许 `image.repository` 与不可变 `image.digest`，禁止
-tag 模式和 map/list 父键。`upgrade-install` 先用相同参数执行 Helm dry-run，再执行真实
+当前 values。`set_strings` 只允许 `image.repository` 加不可变 `image.digest`，或严格的
+`image.tag=release-YYYYMMDD`，两种模式不得混用，也不能覆盖 map/list 父键。
+`upgrade-install` 先用相同参数执行 Helm dry-run，再执行真实
 mutation。不存在 Kubernetes 镜像 mutation 发布旁路。自然语言 apply 禁止通过 shell
 执行 kubectl 或 Helm mutation；运维人员明确给出的前台 `exec` Helm 操作合法，但
-`exec --bg` Helm mutation 必须拒绝。用户明确给出的 SSH 命令属于普通 exec，可由在线
-Agent 代理执行，并遵守相同的权限、排队、超时、取消和审计规则。Helm 成功后还必须以
+`exec --bg` Helm mutation 必须拒绝。用户明确给出的 SSH 命令必须通过结构化 `doops_ssh`
+入口由在线 Agent 代理执行，不能把多层 SSH 拼成普通 `doops_shell` 字符串；该入口
+遵守相同的权限、排队、超时、取消和审计规则。Helm 成功后还必须以
 最终 Deployment manifest/spec/status 为事实源，确认 generation、镜像和副本状态一致；
 只看 Helm revision 或 Pod Ready 不构成发布成功。
 
@@ -150,6 +157,8 @@ Agent 代理执行，并遵守相同的权限、排队、超时、取消和审�
 `scripts/release-managed-agent.sh`。已有集群必须显式提供操作机 kubeconfig，
 `cluster/instance` 还要与 live Deployment 环境精确匹配；脚本在操作机执行
 server-side Helm dry-run 和真实 mutation，当前 Agent 只参与 Gateway 在线与接管验证。
+脚本先验证 Kubernetes API 可达性；API 超时、EOF 或鉴权失败会在读取 Helm release
+之前停止，并报告外部控制器问题，不会误报 release 缺失或要求执行 adopt。
 Chart 以 `maxSurge=1`、`maxUnavailable=0` 先拉起新 Pod，Gateway `Register` 用新会话
 替换旧 WebSocket 后再删旧副本。镜像拉取、调度、启动、readiness 或接管失败会采集
 Pod/事件，并由同一外部控制器自动回滚到发布前 Helm revision。禁止 `kubectl set image`、

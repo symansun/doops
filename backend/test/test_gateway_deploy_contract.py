@@ -41,6 +41,9 @@ def test_gateway_release_extracts_the_ci_binary_from_an_immutable_image():
     text = EXTRACT.read_text()
 
     assert '@sha256:[a-f0-9]{64}$' in text
+    assert "--source-commit" in text
+    assert 'org.opencontainers.image.revision' in text
+    assert 'source-commit=${SOURCE_COMMIT}' in text
     assert 'PLATFORM="${DOOPS_IMAGE_PLATFORM:-linux/amd64}"' in text
     assert 'docker pull --platform "${PLATFORM}" "${IMAGE}"' in text
     assert 'docker create --platform "${PLATFORM}" "${IMAGE}"' in text
@@ -51,3 +54,13 @@ def test_gateway_release_extracts_the_ci_binary_from_an_immutable_image():
     assert "extract-gateway-from-image.sh" in sop
     assert "--no-build" in sop
     assert "禁止在发布控制端重新编译" in sop
+
+
+def test_gateway_deploy_rejects_binary_without_exact_source_commit():
+    text = DEPLOY.read_text()
+
+    assert "--source-commit SHA" in text
+    assert "a real Gateway deployment requires --source-commit" in text
+    assert 'strings -a "${LOCAL_BIN}"' in text
+    assert 'grep -Fqx "${SOURCE_COMMIT}"' in text
+    assert "Gateway binary does not contain source commit" in text

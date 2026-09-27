@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/user/doops/agent/api"
 	"gopkg.in/yaml.v3"
@@ -20,6 +21,7 @@ import (
 
 var helmValueKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$`)
 var helmImageDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var helmReleaseTagPattern = regexp.MustCompile(`^release-[0-9]{8}$`)
 var helmRegistryHostPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?$`)
 var helmRepositoryComponentPattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$`)
 
@@ -109,10 +111,10 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 			valueFiles = append(valueFiles, resolved)
 			args = append(args, "--values", resolved)
 		}
-		if err := validateHelmImageInput(params.SetStrings); err != nil {
+		expectedImage, err := validateHelmImageInput(params.SetStrings)
+		if err != nil {
 			return helmCommand{}, err
 		}
-		expectedImage := params.SetStrings["image.repository"] + "@" + params.SetStrings["image.digest"]
 		keys := make([]string, 0, len(params.SetStrings))
 		for key := range params.SetStrings {
 			keys = append(keys, key)
@@ -155,27 +157,46 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 	}
 }
 
-func validateHelmImageInput(setStrings map[string]string) error {
+func validateHelmImageInput(setStrings map[string]string) (string, error) {
 	imageRepository, hasImageRepository := setStrings["image.repository"]
 	imageDigest, hasImageDigest := setStrings["image.digest"]
-	if hasImageRepository || hasImageDigest {
-		if !hasImageRepository || !hasImageDigest {
-			return fmt.Errorf(
-				"upgrade-install requires both image.repository and image.digest set_strings",
-			)
-		}
-		if !validHelmImageRepository(imageRepository) {
-			return fmt.Errorf("invalid image.repository set_string")
-		}
-		if !helmImageDigestPattern.MatchString(imageDigest) {
-			return fmt.Errorf("invalid image.digest set_string")
-		}
-		if len(setStrings) != 2 {
-			return fmt.Errorf("direct helm apply only allows image.repository and image.digest set_strings")
-		}
-		return nil
+	imageTag, hasImageTag := setStrings["image.tag"]
+	if !hasImageRepository {
+		return "", fmt.Errorf(
+			"upgrade-install requires image.repository plus either image.digest or image.tag set_strings",
+		)
 	}
-	return fmt.Errorf("direct helm apply requires image.repository and image.digest set_strings")
+	if !validHelmImageRepository(imageRepository) {
+		return "", fmt.Errorf("invalid image.repository set_string")
+	}
+	if hasImageDigest == hasImageTag {
+		return "", fmt.Errorf(
+			"upgrade-install requires exactly one of image.digest or image.tag set_strings",
+		)
+	}
+	if len(setStrings) != 2 {
+		return "", fmt.Errorf(
+			"direct helm apply only allows image.repository plus one controlled image selector",
+		)
+	}
+	if hasImageDigest {
+		if !helmImageDigestPattern.MatchString(imageDigest) {
+			return "", fmt.Errorf("invalid image.digest set_string")
+		}
+		return imageRepository + "@" + imageDigest, nil
+	}
+	if !validHelmReleaseTag(imageTag) {
+		return "", fmt.Errorf("invalid image.tag set_string: expected release-YYYYMMDD")
+	}
+	return imageRepository + ":" + imageTag, nil
+}
+
+func validHelmReleaseTag(value string) bool {
+	if !helmReleaseTagPattern.MatchString(value) {
+		return false
+	}
+	_, err := time.Parse("20060102", strings.TrimPrefix(value, "release-"))
+	return err == nil
 }
 
 func resolveRemoteHelmChartReference(value string) (string, error) {
@@ -390,11 +411,11 @@ func verifyHelmDeploymentState(ctx context.Context, command helmCommand) (string
 		return "", fmt.Errorf("helm verification failed: final release manifest contains no Deployment")
 	}
 
-	expectedRepository := strings.SplitN(command.expectedImage, "@", 2)[0]
+	expectedRepository := imageRepository(command.expectedImage)
 	for _, expected := range deployments {
 		if !deploymentHasExpectedImage(expected, command.expectedImage, expectedRepository) {
 			return "", fmt.Errorf(
-				"helm verification failed: rendered Deployment %s/%s does not contain expected immutable image %q",
+				"helm verification failed: rendered Deployment %s/%s does not contain expected image %q",
 				command.namespace,
 				expected.Name,
 				command.expectedImage,

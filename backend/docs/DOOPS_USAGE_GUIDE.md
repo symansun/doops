@@ -10,6 +10,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | List live gateway agents | `doops targets --target <gateway-target>` | First check for gateway troubleshooting. |
 | Add a Gateway target | `doops add --name <n> --gateway <url> --cluster <c> --instance <i>` | Stores routing only; never stores a target token. |
 | Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Best for known checks and deploy scripts. |
+| Run nested SSH safely | `doops -session <s> ssh --target <t> --host <user@host> -- <command> [args...]` | Preserves remote argv across nested shells. |
 | Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | Agent-managed task with status polling; required when the command outlives a normal remote shell call. |
 | Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
 | Run an authorized release | `doops -session <s> ask --target <t> --apply --credential <name> --msg '<facts>'` | Canonical business workload CI/CD entry. |
@@ -50,6 +51,23 @@ doops -session smoke exec --target unicom --cmd 'hostname && date -u +%FT%TZ'
 - `busy=true` means the whole target is blocked by an exclusive operation or target queue, so new work may return `target busy`.
 - `status=active` with `busy=false` means one or more sessions/resources are running, but other sessions can still use the same agent.
 - `resources` shows locked resource keys such as `workspace:<session>` or `session:<session>`.
+
+Gateway 控制面发布不走 doops target。必须从 CNB 不可变 Agent 镜像提取 Gateway，
+并把同一个 `main` commit 传给发布脚本；脚本会拒绝没有该 commit provenance 的本地旧二进制：
+
+```bash
+bash scripts/extract-gateway-from-image.sh \
+  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<verified-ci-digest> \
+  --source-commit <verified-main-commit>
+bash scripts/deploy-gateway.sh \
+  --host <gateway-host> \
+  --user <ssh-user> \
+  --binary backend/bin/doops-gateway \
+  --no-build \
+  --source-commit <verified-main-commit> \
+  --verify-target <configured-doops-target> \
+  --verify-session gateway-release-<release>
+```
 
 If gateway returns `user operation limit exceeded`, list active gateway operations and cancel stale ones with an admin token:
 
@@ -248,14 +266,15 @@ doops -session ops exec --target jm --cmd 'hostname && df -h && free -h'
 ```
 
 Use `exec` for deterministic commands, read-only checks, and known deployment scripts.
-标准 Agent 镜像提供出站 `ssh` 客户端。已在线 target 可以代理用户执行任意明确给出的
-SSH 命令，不限于首次安装或自恢复；前台和 `--bg` 模式分别遵守普通 exec 的生命周期。
-这不会创建 SSH target，也不会启动 `sshd`。SSH 目标、参数、远端命令和认证材料必须
-来自当前明确任务，禁止把私钥或密码内联到命令、prompt、日志或工作区。
+标准 Agent 镜像提供出站 `ssh` 客户端。多层 SSH 必须使用结构化入口，不能把 SSH
+命令拼进 `exec --cmd` 的单个字符串；这样可在 OpenSSH 边界保留每个远端 argv，避免
+嵌套引号被远端 shell 重解析。这不会创建 SSH target，也不会启动 `sshd`。SSH 目标、
+参数、远端命令和认证材料必须来自当前明确任务，禁止把私钥或密码内联到命令、prompt、
+日志或工作区。
 
 ```bash
-doops -session ops exec --target jm --cmd \
-  "ssh -o BatchMode=yes ops@app.internal 'hostname && systemctl status api'"
+doops -session ops ssh --target jm --host ops@app.internal \
+  --option BatchMode=yes -- bash -lc 'hostname && systemctl status api'
 ```
 
 ## Ask
@@ -311,9 +330,11 @@ doops -session release-<commit> ask \
 ```
 
 必须明确提供 target、服务范围、镜像版本、变更原因和验收条件。镜像版本必须是任务中的
-不可变 digest。需要 Helm 时还要明确远程 `https://`/`oci://` chart；可选 values 只能是
-HTTP(S) URL，`set_strings` 只允许 `image.repository` 和 `image.digest`，不支持
-`image.tag` 发布模式。`--credential` 可重复，但只传 resource name，不能内联 payload。
+不可变 digest 或严格的 `release-YYYYMMDD` tag。需要 Helm 时还要明确远程
+`https://`/`oci://` chart；可选 values 只能是
+HTTP(S) URL，`set_strings` 只允许 `image.repository` 加一个受控版本选择器：
+不可变的 `image.digest` 或严格的 `image.tag=release-YYYYMMDD`，两种模式不得混用。
+`--credential` 可重复，但只传 resource name，不能内联 payload。
 
 CNB CI 负责测试、构建和发布制品；Gateway 负责鉴权、审计、并发控制和凭据预物化；
 目标 Agent/doagent 在目标运行环境执行业务 mutation。当前没有 EnvironmentRegistry、
@@ -473,6 +494,11 @@ curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh
 已有集群必须提供操作机 kubeconfig；Helm mutation 由操作机执行，不能通过当前 Agent
 执行。Chart 先起新 Pod，Gateway 切换会话后才删旧副本；候选 Pod 或 Gateway 接管失败
 会自动回滚到发布前 Helm revision：
+
+脚本会先验证 Kubernetes API 和 kubeconfig 可达性，再读取 Helm release。API 超时、
+EOF、鉴权或其它连接失败会直接报告控制器不可达，不会误报为“release 不存在”或引导
+执行 adopt；只有 API 可达且 Helm 明确返回 release 缺失时，才需要先完成
+`deploy/helm/doops-agent` 接管。
 
 ```bash
 bash scripts/release-managed-agent.sh \

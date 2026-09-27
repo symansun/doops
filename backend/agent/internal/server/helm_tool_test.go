@@ -74,6 +74,28 @@ func TestBuildHelmUpgradeInstallNormalizesOperationName(t *testing.T) {
 	}
 }
 
+func TestBuildHelmUpgradeInstallSupportsReleaseTagImage(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	params := testHelmParams()
+	params.SetStrings = map[string]string{
+		"image.repository": "registry.example/app",
+		"image.tag":        "release-20260927",
+	}
+
+	command, err := buildHelmCommand(params)
+	if err != nil {
+		t.Fatalf("build tag helm command: %v", err)
+	}
+	if command.expectedImage != "registry.example/app:release-20260927" {
+		t.Fatalf("expected tag image = %q", command.expectedImage)
+	}
+	got := strings.Join(command.args, " ")
+	if !strings.Contains(got, "--set-string image.tag=release-20260927") {
+		t.Fatalf("helm command missing release tag: %s", got)
+	}
+}
+
 func TestBuildHelmCommandRejectsLocalAssetsAndUncontrolledImages(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
@@ -102,7 +124,7 @@ func TestBuildHelmCommandRejectsLocalAssetsAndUncontrolledImages(t *testing.T) {
 			mutate: func(params *api.HelmParams) {
 				params.SetStrings = nil
 			},
-			wantError: "requires image.repository and image.digest",
+			wantError: "requires image.repository plus either image.digest or image.tag",
 		},
 		{
 			name: "mutable digest",
@@ -116,14 +138,31 @@ func TestBuildHelmCommandRejectsLocalAssetsAndUncontrolledImages(t *testing.T) {
 			mutate: func(params *api.HelmParams) {
 				params.SetStrings["replicaCount"] = "2"
 			},
-			wantError: "only allows image.repository and image.digest",
+			wantError: "only allows image.repository plus one controlled image selector",
 		},
 		{
 			name: "credential material",
 			mutate: func(params *api.HelmParams) {
 				params.SetStrings["registry.password"] = "secret-value"
 			},
-			wantError: "only allows image.repository and image.digest",
+			wantError: "only allows image.repository plus one controlled image selector",
+		},
+		{
+			name: "mutable release tag",
+			mutate: func(params *api.HelmParams) {
+				params.SetStrings = map[string]string{
+					"image.repository": "registry.example/app",
+					"image.tag":        "latest",
+				}
+			},
+			wantError: "expected release-YYYYMMDD",
+		},
+		{
+			name: "mixed image selectors",
+			mutate: func(params *api.HelmParams) {
+				params.SetStrings["image.tag"] = "release-20260927"
+			},
+			wantError: "exactly one of image.digest or image.tag",
 		},
 		{
 			name: "missing confirmation",

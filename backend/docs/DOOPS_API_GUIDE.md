@@ -361,6 +361,35 @@ websocat \
 
 适用于 CI/CD、固定部署脚本、健康检查、BuildKit 构建和 Kubernetes 命令。
 
+### `doops_ssh`
+
+通过 Agent 的出站 SSH 客户端执行结构化远端 argv。`host`、SSH `options` 和远端
+`command` 在 JSON 中分别传输；Agent 只在 OpenSSH 的远端命令边界把 `command` 的
+每个元素做 POSIX 单引号编码，避免多层 SSH 的嵌套引号被本地或远端 shell 重解析。
+
+参数：
+
+```json
+{
+  "session_id": "ops_20260927",
+  "host": "ops@app.internal",
+  "options": ["-o", "BatchMode=yes"],
+  "command": ["bash", "-lc", "hostname && systemctl status api"]
+}
+```
+
+需要权限：`exec`。
+
+CLI 对应入口：
+
+```bash
+doops -session ops ssh --target jm --host ops@app.internal \
+  --option BatchMode=yes -- bash -lc 'hostname && systemctl status api'
+```
+
+不要把嵌套 SSH 写进 `doops_shell.command`。原始 Shell 仍按单个
+`bash -c` 字符串执行，无法替结构化 SSH argv 推断用户想保留的引号层级。
+
 ### `doops_bg`
 
 提交由 agent 管理的后台任务。调用会立即返回任务 ID；使用 `doops_task_status` 查询日志和最终退出码。

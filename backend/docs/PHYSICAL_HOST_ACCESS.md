@@ -98,7 +98,8 @@
    ```
 2. 物理机必须开启 `sshd` 并允许来自该 VM 的 key 登录。
 3. 凭据通过 `doops credential create / put / grant` 注入到 VM target，不要在命令行内联密码。
-4. 后续用 `doops exec --target <vm-target> -- ssh user@<physical-ip> '<cmd>'` 跳板执行。
+4. 后续用 `doops ssh --target <vm-target> --host user@<physical-ip> -- <cmd> [args...]`
+   跳板执行；多层命令使用 `bash -lc '<script>'` 作为一个远端 argv。
 
 限制：
 

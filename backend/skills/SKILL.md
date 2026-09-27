@@ -28,12 +28,16 @@ description: |
 - CLI 只接受 Gateway target；不存在直连 target、SSH target 或按 target 保存 token 的模式。
 - 从客户端直接 SSH 到 Agent 宿主机只用于首次安装、自恢复 agent，以及发布
   `doops-gateway` 控制面；DoOps CLI 不把 SSH 主机建模为 target，也不直连 Agent。
-- 标准 Agent 镜像提供出站 `ssh` 客户端，但不安装或启动 `sshd`。已在线 target 可以
-  通过 `doops exec` 或 `doops exec --bg` 代理执行用户明确给出的任意 SSH 命令，不限于
-  首次安装或自恢复；SSH 命令遵守与其它 exec 相同的权限、排队、超时、取消和审计规则。
-  目标、参数和远端命令必须由当前任务明确给出，不得把私钥、密码或 token 内联到命令、
-  prompt、日志或工作区。
-- `doops-gateway` 是独立发布包，必须用 `scripts/deploy-gateway.sh --host <gateway-host>` 从 SSH 宿主机上下文发布。
+- 标准 Agent 镜像提供出站 `ssh` 客户端，但不安装或启动 `sshd`。已在线 target 的
+  SSH 必须通过 `doops ssh` 的结构化 `host + options[] + command[]` 入口代理；该入口
+  在 OpenSSH 边界统一编码远端 argv，避免多层 SSH 的嵌套引号被远端 shell 破坏。
+  `doops exec` 仍用于普通 Shell，不得把嵌套 SSH 拼成一个命令字符串；CLI 会明确拒绝
+  这种调用并给出结构化入口。SSH 操作遵守与其它 exec 相同的权限、排队、超时、取消
+  和审计规则。目标、参数和远端命令必须由当前任务明确给出，不得把私钥、密码或
+  token 内联到命令、prompt、日志或工作区。
+- `doops-gateway` 是独立发布包，必须从 CNB 不可变镜像提取，并用
+  `scripts/deploy-gateway.sh --host <gateway-host> --source-commit <main-commit>`
+  从 SSH 宿主机上下文发布；旧的本地二进制会被拒绝。
 - gateway 控制面不登记为 doops target，不通过任何 doops target 发布 gateway 本体。
 - 不要用 base64、tar 或手写分片传输绕过 `push`。`doops_workspace_*` 是低层兼容 JSON-RPC 工具，不是 CLI、发布脚本和 skill 的标准路径；如果看到 512KB 分块日志，说明调用方绕过了当前 `doops push/pull`。应修复 Git HTTP 反向隧道、目标 agent 版本或发布脚本。
 - 普通业务 workload 的标准发布入口是 `doops ask --apply`。自然语言任务必须直接给出 target、服务范围、明确镜像版本、
@@ -43,10 +47,10 @@ description: |
 - 更新现有 Helm release 时，只要自然语言任务已明确 release、namespace、chart 和
   不可变镜像，Agent 必须直接调用一次 `mcp_doops_helm upgrade-install`。`value_files`
   可以为空，但必须使用任务明确给出的远程 `https://`/`oci://` chart 和可选
-  HTTP(S) values URL；`set_strings` 只传 `image.repository` 和不可变的
-  `image.digest`。工具自动保留当前 values 并先 dry-run。不得读取 target 隔离 workspace、
-  不得要求用户补充本地候选 values，也不得用缺少 `confirm=true` 的调用试探。
-  不支持 `image.tag` 发布模式。
+  HTTP(S) values URL；`set_strings` 只传 `image.repository` 加一个受控版本选择器：
+  不可变的 `image.digest` 或严格的 `image.tag=release-YYYYMMDD`，不得混用。工具自动
+  保留当前 values 并先 dry-run。不得读取 target 隔离 workspace、不得要求用户补充本地
+  候选 values，也不得用缺少 `confirm=true` 的调用试探。
 - 需要凭据时使用可重复的 `--credential <resource-name>`。该参数只传递资源名；Gateway
   将它绑定到当前用户、target 和 session，并按 cluster/instance、namespace、workload、
   image 或 Helm 的精确 scope 授权和物化。公开 prompt、doagent 上下文和 metadata

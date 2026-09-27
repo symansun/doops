@@ -38,6 +38,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   list        列出已配置的 Gateway target 路由
   targets     查看 gateway 当前在线的 cluster/instance
   exec        在目标节点工作区执行 Shell 命令 (用于确定性的日常流水线执行)
+  ssh         通过结构化 argv 代理 SSH，避免多层命令引号被远端 shell 重解析
   ask         发送自然语言指令 (由边缘端智能体完成受控的通用运维协作)
   read        查看目标节点上的小文本文件（不用于下载大文件/二进制）
   write       写入文件到目标服务器
@@ -340,9 +341,10 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			os.Exit(1)
 		}
 
-	case "exec", "ask", "write", "read", "info":
-		var target, cmdStr, msgStr, path, modelStr, contentStr, fileStr string
+	case "exec", "ssh", "ask", "write", "read", "info":
+		var target, cmdStr, msgStr, path, modelStr, contentStr, fileStr, sshHost string
 		var credentialRefs stringListFlag
+		var sshOptions stringListFlag
 		var subSession string
 		var apply, background bool
 		subFlag := flag.NewFlagSet(command, flag.ExitOnError)
@@ -353,6 +355,9 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		case "exec":
 			subFlag.StringVar(&cmdStr, "cmd", "", "Command to execute")
 			subFlag.BoolVar(&background, "bg", false, "Run through the agent-managed background task service and wait for completion")
+		case "ssh":
+			subFlag.StringVar(&sshHost, "host", "", "SSH destination, for example ops@app.internal")
+			subFlag.Var(&sshOptions, "option", "SSH option passed as one argv (repeatable)")
 		case "ask":
 			subFlag.StringVar(&msgStr, "msg", "", "Instruction")
 			subFlag.StringVar(&modelStr, "model", "", "Model to use for this instruction (optional)")
@@ -408,6 +413,14 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Println("Error: 命令内容不能为空。用法: doops exec \"ls -la\"")
 			os.Exit(1)
 		}
+		if command == "exec" && looksLikeSSHCommand(cmdStr) {
+			fmt.Println("Error: 多层 SSH 必须使用结构化命令: doops ssh --host <user@host> -- <remote-command> [args...]")
+			os.Exit(1)
+		}
+		if command == "ssh" && strings.TrimSpace(sshHost) == "" {
+			fmt.Println("Error: --host 必传。用法: doops ssh --target <t> --host <user@host> -- bash -lc '...'")
+			os.Exit(1)
+		}
 		if command == "read" && strings.TrimSpace(path) == "" {
 			fmt.Println("Error: path 不能为空。doops read 只用于查看远端小文本文件。")
 			os.Exit(1)
@@ -448,6 +461,11 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		case "exec":
 			toolName = "doops_shell"
 			arguments["command"] = cmdStr
+		case "ssh":
+			toolName = "doops_ssh"
+			arguments["host"] = sshHost
+			arguments["options"] = []string(sshOptions)
+			arguments["command"] = positionalArgs
 		case "ask":
 			toolName = "doops_agent_prompt"
 			arguments["instruction"] = msgStr
@@ -708,16 +726,9 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			os.Exit(1)
 		}
 
-		commit, err := PushWithCommit(*server, src, dest, dryRun, nil, *sessionName)
-		if err != nil {
+		if err := Push(*server, src, dest, dryRun, nil, *sessionName); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
-		}
-		if !dryRun {
-			if err := saveWorkspaceCommit(server.Name, *sessionName, commit); err != nil {
-				fmt.Printf("Error: %v\n", err)
-				os.Exit(1)
-			}
 		}
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("push %s -> %s", src, dest))
 

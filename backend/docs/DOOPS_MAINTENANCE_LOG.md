@@ -2,6 +2,29 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-09-27 Structured SSH argv boundary
+
+- Root cause: `doops exec` accepted one shell command string and started it with
+  `bash -c`; a nested `ssh ... bash -lc ...` therefore crossed multiple shell
+  parsers without a typed remote argv boundary.
+- Added `doops_ssh` with separate `host`, `options[]`, and `command[]` fields. The
+  Agent quotes only the final remote argv at the OpenSSH boundary and executes the
+  local client with `exec.Command`, preserving nested quotes without a fallback path.
+- Direct `doops exec` commands beginning with `ssh` now fail with an explicit
+  migration message. Functional tests cover spaces, single quotes, dollar signs,
+  invalid boundary values, Gateway authorization mapping, and CLI guidance.
+
+## 2026-09-27 Gateway binary provenance release
+
+- Root cause: `bin/`, `backend/bin/`, and Agent binaries are ignored build outputs,
+  not repository state. A local `doops-gateway` from September 22, 2026 could
+  therefore survive across source changes while CNB built a newer Agent image.
+- The Agent image now embeds the exact source commit into Gateway, labels the
+  image with the same revision, and verifies both during the CNB build.
+- Gateway extraction and host deployment now require the exact source commit and
+  reject binaries without matching provenance. The standalone Gateway host is
+  not updated by an ordinary Agent workload release.
+
 ## 2026-09-21 Managed Agent host alias release
 
 - Existing Helm releases can now use repeatable `--host-alias HOST=IP` arguments

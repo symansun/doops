@@ -55,8 +55,9 @@ conflicts: []
 3. `buildctl --addr unix:///run/buildkit/buildkitd.sock build --progress=plain --frontend dockerfile.v0 --local context=. --local dockerfile=. --opt filename=Dockerfile --output type=image,name=registry.example.com/example-system/{name}:latest,push=true,registry.insecure=true`
 4. 发布统一调用结构化 `mcp_doops_helm upgrade-install`；chart 使用任务明确给出的
    `https://`/`oci://` 远程引用，`value_files` 只使用 HTTP(S) URL。镜像覆盖模式使用
-   `set_strings` 的 `image.repository` 与不可变 `image.digest`；不支持 tag 模式或其它
-   `set_strings`。不得生成原始 kubectl 或 Helm mutation。更新现有 release 时
+   `set_strings` 的 `image.repository` 与不可变 `image.digest`；values-owned chart 可使用
+   `image.repository` 与严格的 `image.tag=release-YYYYMMDD`，两种模式不得混用。不得生成
+   原始 kubectl 或 Helm mutation。更新现有 release 时
    `value_files` 可以为空，工具会自动保留当前 values 并先执行相同参数的 dry-run；
    不得要求用户提供候选 values 文件，也不得用缺少 `confirm=true` 的调用试探
 5. 用 `mcp_doops_k8s_read` 验证 rollout、实际 imageID 和健康状态

@@ -284,7 +284,7 @@ func helmMCPToolDefinition() map[string]interface{} {
 				},
 				"set_strings": map[string]interface{}{
 					"type":                 "object",
-					"description":          "Only image.repository and image.digest are accepted for direct apply; both are required and the digest must be immutable.",
+					"description":          "Direct apply accepts image.repository plus exactly one of immutable image.digest=sha256:<digest> or release image.tag=release-YYYYMMDD.",
 					"additionalProperties": map[string]interface{}{"type": "string"},
 				},
 				"revision": map[string]interface{}{"type": "integer", "minimum": 1},

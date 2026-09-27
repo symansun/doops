@@ -26,12 +26,14 @@ Options:
                           baseline checks without exporting its token.
   --verify-session NAME   Required session name for --verify-target.
                           Real deploys require both verification options.
+  --source-commit SHA     Exact 40-character source commit embedded in the
+                          candidate Gateway binary. Required for real deploys.
   --no-build              Do not run scripts/build-gateway.sh before deploy.
   --dry-run               Print the plan and verify SSH, but do not modify remote host.
   -h, --help              Show this help.
 
 Required local capabilities:
-  ssh, scp, curl, sha256sum.
+  ssh, scp, curl, sha256sum, strings.
 
 Required remote capabilities:
   sudo, systemctl, sha256sum, pgrep, curl, python3.
@@ -49,6 +51,7 @@ GATEWAY_PORT="42222"
 VERIFY_URL="https://doops.l8ai.cn"
 VERIFY_TARGET=""
 VERIFY_SESSION=""
+SOURCE_COMMIT=""
 BUILD=true
 DRY_RUN=false
 
@@ -94,6 +97,10 @@ while [[ $# -gt 0 ]]; do
       VERIFY_SESSION="${2:-}"
       shift 2
       ;;
+    --source-commit)
+      SOURCE_COMMIT="${2:-}"
+      shift 2
+      ;;
     --no-build)
       BUILD=false
       shift
@@ -128,7 +135,7 @@ EOF
   exit 2
 fi
 
-REQUIRED_COMMANDS=(ssh scp curl sha256sum)
+REQUIRED_COMMANDS=(ssh scp curl sha256sum strings)
 if [[ -n "${VERIFY_TARGET}" ]]; then
   REQUIRED_COMMANDS+=(doops)
 fi
@@ -144,6 +151,10 @@ if [[ "${DRY_RUN}" != "true" ]]; then
     echo "Error: a real Gateway deployment requires --verify-target and --verify-session" >&2
     exit 2
   fi
+  if [[ ! "${SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "Error: a real Gateway deployment requires --source-commit <40-character-commit-sha>" >&2
+    exit 2
+  fi
 fi
 
 if [[ "${BUILD}" == "true" ]]; then
@@ -153,6 +164,13 @@ fi
 if [[ ! -x "${LOCAL_BIN}" ]]; then
   echo "Error: local gateway binary is missing or not executable: ${LOCAL_BIN}" >&2
   exit 1
+fi
+if [[ -n "${SOURCE_COMMIT}" ]]; then
+  if ! LC_ALL=C strings -a "${LOCAL_BIN}" | grep -Fqx "${SOURCE_COMMIT}"; then
+    echo "Error: Gateway binary does not contain source commit ${SOURCE_COMMIT}" >&2
+    echo "Extract the binary from the immutable CI image for this commit; do not reuse a local build." >&2
+    exit 1
+  fi
 fi
 
 LOCAL_SHA="$(sha256sum "${LOCAL_BIN}" | awk '{print $1}')"
@@ -203,6 +221,9 @@ echo "  Remote binary: ${REMOTE_BIN}"
 echo "  Gateway DB:    ${DB_PATH}"
 echo "  Gateway port:  ${GATEWAY_PORT}"
 echo "  Verify URL:    ${VERIFY_URL}"
+if [[ -n "${SOURCE_COMMIT}" ]]; then
+  echo "  Source commit: ${SOURCE_COMMIT}"
+fi
 if [[ -n "${VERIFY_TARGET}" ]]; then
   echo "  Verify target: ${VERIFY_TARGET}"
 fi

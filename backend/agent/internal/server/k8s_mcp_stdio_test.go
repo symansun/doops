@@ -53,8 +53,10 @@ func TestK8SMCPStdioExposesReadAndHelmOnly(t *testing.T) {
 				}
 			}
 			setStrings, _ := properties["set_strings"].(map[string]interface{})
-			if !strings.Contains(setStrings["description"].(string), "image.repository") ||
-				!strings.Contains(setStrings["description"].(string), "image.digest") {
+			description := setStrings["description"].(string)
+			if !strings.Contains(description, "image.repository") ||
+				!strings.Contains(description, "image.digest") ||
+				!strings.Contains(description, "image.tag") {
 				t.Fatalf("helm set_strings scalar contract missing: %#v", setStrings)
 			}
 			valueFiles, _ := properties["value_files"].(map[string]interface{})

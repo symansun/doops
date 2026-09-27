@@ -20,18 +20,19 @@ conflicts: []
    `mcp_doops_helm`（规范能力名 `doops_helm`）。`session_id` 由运行时绑定，模型不得
    传入 target、session 或工作区路径；不得用 shell 执行 kubectl 或 Helm mutation。
 2. 所有请求显式传 namespace；不得依赖 default namespace。
-3. mutation 必须有 `confirm=true`，镜像发布必须使用明确且不可变的
-   `image.repository` 与 `image.digest=sha256:<digest>`。
+3. mutation 必须有 `confirm=true`，镜像发布必须使用明确的
+   `image.repository` 加一个受控版本选择器：不可变的
+   `image.digest=sha256:<digest>`，或严格匹配 `image.tag=release-YYYYMMDD`。
 4. 发布必须使用任务明确授权的远程 `https://`/`oci://` chart，通过 `mcp_doops_helm`
    完整收敛明确的 release、namespace、可选 HTTP(S) `value_files` 和非敏感
    `set_strings`。本地 source workspace 不属于 Helm 输入；`set_strings` 只允许
-   `image.repository`、`image.digest`，禁止覆盖 map/list 父键或混入 tag 模式。
-   不支持 `image.tag` 发布模式。
+   `image.repository` 加 `image.digest` 或 `image.tag` 其中之一，禁止覆盖 map/list
+   父键或混用两种镜像选择器。
    `upgrade-install` 自动保留已有 release 的非镜像 values。只更新镜像也走同一 Helm
    路径，不存在直接 Kubernetes 镜像 mutation 例外。
-   对现有 release，如果任务已给出 release、namespace、chart 和不可变镜像，
+   对现有 release，如果任务已给出 release、namespace、chart 和受控镜像版本，
    `value_files` 可以为空；必须直接调用一次 `mcp_doops_helm upgrade-install`，
-   `set_strings` 只覆盖 `image.repository` 和 `image.digest`。不得要求用户补充当前
+   `set_strings` 只覆盖 `image.repository` 和一个明确版本选择器。不得要求用户补充当前
    values 或候选 values 文件。工具内部会读取并保留现有 values，并自动用相同参数先
    dry-run；不得发起缺少 `confirm=true` 的试探调用，也不得询问是否启用 dry-run。
 5. 发布前必须对比当前 workload 与候选 Helm 资产中的 command、args、env、probes、

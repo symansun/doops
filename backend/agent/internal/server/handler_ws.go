@@ -799,6 +799,60 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			writeJSON(buildSuccessResponse(reqID, "Operation complete."))
 		}
 
+	case "doops_ssh":
+		var args api.SSHParams
+		if err := json.Unmarshal(argBytes, &args); err != nil {
+			writeJSON(buildErrorResponse(reqID, -32602, "invalid SSH arguments"))
+			return
+		}
+		log.Printf("🔐 WS SSH: [%s] host=%s options=%d remote_args=%d",
+			sessionID, args.Host, len(args.Options), len(args.Command))
+
+		execCtx, cancelExec := context.WithTimeout(ctx, maxToolExecutionDuration())
+		defer cancelExec()
+		cmd, stdoutPipe, stderrPipe, err := executeStructuredSSHCommand(execCtx, args)
+		if err != nil {
+			writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+			return
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); streamReader(stdoutPipe, pushProgress) }()
+		go func() { defer wg.Done(); streamReader(stderrPipe, pushProgress) }()
+
+		doneCh := make(chan struct{})
+		go slowProgressHeartbeat(doneCh, pushProgress)
+		wg.Wait()
+		cmdErr := cmd.Wait()
+		close(doneCh)
+		if execCtx.Err() != nil {
+			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
+			return
+		}
+		if sessionID != "" {
+			exitCode := 0
+			if cmdErr != nil {
+				if exitErr, ok := cmdErr.(*exec.ExitError); ok {
+					exitCode = exitErr.ExitCode()
+				} else {
+					exitCode = 1
+				}
+			}
+			entry := fmt.Sprintf("# [%s] exit=%d\n%s\n",
+				time.Now().Format("2006-01-02 15:04:05"), exitCode, sshAuditSummary(args))
+			if logFile, err := appendSessionAuditLog(sessionID, entry); err == nil {
+				log.Printf("✅ SSH audit log saved to %s", logFile)
+			} else {
+				log.Printf("❌ Failed to save SSH audit log for session %s: %v", sessionID, err)
+			}
+		}
+		if cmdErr != nil {
+			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("SSH command failed: %v", cmdErr)))
+		} else {
+			writeJSON(buildSuccessResponse(reqID, "SSH command finished."))
+		}
+
 	case "doops_docker":
 		var args api.DockerParams
 		json.Unmarshal(argBytes, &args)
@@ -2303,7 +2357,13 @@ func executeRawCommand(ctx context.Context, command string) (*exec.Cmd, io.ReadC
 	if ctx.Err() != nil {
 		return nil, nil, nil, ctx.Err()
 	}
-	cmd := exec.Command("bash", "-c", command)
+	return startRawCommand(ctx, exec.Command("bash", "-c", command))
+}
+
+func startRawCommand(ctx context.Context, cmd *exec.Cmd) (*exec.Cmd, io.ReadCloser, io.ReadCloser, error) {
+	if ctx.Err() != nil {
+		return nil, nil, nil, ctx.Err()
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	stdoutPipe, err := cmd.StdoutPipe()

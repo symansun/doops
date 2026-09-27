@@ -71,8 +71,9 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 ```
 
 `base-light` 的目标是作为纯 `doops-agent` 运行时，不再默认继承 WebIDE 启动器或
-SSH 服务端。镜像保留 `ssh` 客户端，已在线 Agent 可通过 `doops exec` 代理执行用户
-明确给出的任意 SSH 命令；它不会启动 `sshd`，也不会恢复 SSH target 或直连入口。
+SSH 服务端。镜像保留 `ssh` 客户端，已在线 Agent 可通过结构化 `doops ssh` 代理执行
+用户明确给出的 SSH 命令；它不会启动 `sshd`，也不会恢复 SSH target 或直连入口。
+多层 SSH 不得拼入 `doops exec` 字符串。
 
 镜像构成：
 
@@ -312,8 +313,8 @@ doops -session smoke ask --target prod-master --msg '用一句话说明当前机
 如果 `doops-agent` 已经在目标机器上运行并注册到 gateway，只需要给客户端配置 gateway target 和 gateway user token，不需要 SSH。
 
 从客户端直接 SSH 到 Agent 宿主机只用于首次安装或 Agent 完全不可用时的自恢复，
-不是日常 DoOps 连接方式。该限制不适用于在线 Agent 通过 `doops exec` 代理的出站
-SSH 命令；用户可以显式要求它执行任意 SSH 客户端命令。
+不是日常 DoOps 连接方式。在线 Agent 的出站 SSH 使用结构化 `doops ssh` 入口，
+保留每个远端 argv，避免多层命令引号被远端 shell 破坏。
 
 Agent 的安装和更新是同一条命令，在**目标集群**有 `kubectl` 的机器上执行，必须传入这个 Agent 的 `cluster` 和 `instance`。权威脚本在 `https://cnb.cool/l8ai/dowork` 的 `doops-k8s/`，见 [docs/CLUSTER_INSTALL_GUIDE.md](docs/CLUSTER_INSTALL_GUIDE.md)：
 
@@ -352,6 +353,7 @@ Job/`kubectl set image` 改 Agent。正式业务发布统一使用 Gateway 上�
 ```bash
 doops list
 doops -session demo exec --target gpu-ampere01 --cmd 'uptime && df -h'
+doops -session demo ssh --target gpu-ampere01 --host ops@app.internal -- bash -lc 'hostname'
 doops -session demo ask --target gpu-ampere01 --msg '检查磁盘和内存压力，给出结论'
 doops -session demo push --target gpu-ampere01 --src .
 doops -session demo pull --target gpu-ampere01 --dest ./demo-output
@@ -367,6 +369,7 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 | `doops login --target <name>` | 登录该 target 所属 Gateway |
 | `doops list` | 列出客户端已配置的 Gateway target 路由 |
 | `doops exec` | 在远端 agent 容器内执行确定性命令 |
+| `doops ssh` | 通过结构化 argv 执行出站 SSH，避免嵌套引号被远端 shell 重解析 |
 | `doops ask` | 交给远端 doagent 自主分析和执行 |
 | `doops push` | 同步本地代码到 `/root/ws/$SESSION`，尊重 `.gitignore`/`.doopsignore` |
 | `doops pull` | 基于 Git 拉取远端 `/root/ws/$SESSION` 工作区到本地 |

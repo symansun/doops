@@ -57,18 +57,18 @@ digest。同一 target 上的 apply、push、write、clean、shell、Kubernetes 
 volumeMounts 和 volumes。发布任务统一调用 `mcp_doops_helm upgrade-install`，显式
 提供 release、namespace、远程 `https://`/`oci://` chart、可选远程 HTTP(S)
 `value_files`、非敏感 `set_strings` 和 `confirm=true`。`value_files` 不从本地
-workspace 读取；`set_strings` 只允许 `image.repository` 与不可变的
-`image.digest=sha256:<digest>`，不允许 tag 模式或其它覆盖。缺少明确版本或混用输入时
-工具在 mutation 前拒绝。
+workspace 读取；`set_strings` 只允许 `image.repository` 与一个受控版本选择器：
+`image.digest=sha256:<digest>` 或严格的 `image.tag=release-YYYYMMDD`。两种模式不得混用，
+缺少明确版本或使用其它覆盖时工具在 mutation 前拒绝。
 `upgrade-install` 自动保留已有 release 的非镜像 values；
 `session_id` 不属于模型参数，由 doagent 按会话工作目录启动 MCP 子进程并由 DoOps
 运行时绑定。Gateway target 只负责路由，不能作为 session 或工作区路径。镜像必须满足
-上述不可变 digest 输入。随后执行 rollout 和功能验收。shell 中的 kubectl 或 Helm
+上述受控版本输入。随后执行 rollout 和功能验收。shell 中的 kubectl 或 Helm
 mutation 不构成发布成功证据。
 
-更新现有 release 时，如果任务已经明确 release、namespace、chart 和不可变镜像，
+更新现有 release 时，如果任务已经明确 release、namespace、chart 和受控镜像版本，
 `value_files` 可以为空。Agent 必须直接调用一次 `mcp_doops_helm upgrade-install`，
-并只用 `set_strings` 覆盖 `image.repository` 与 `image.digest`；不得要求调用方再提供
+并只用 `set_strings` 覆盖 `image.repository` 与一个明确版本选择器；不得要求调用方再提供
 当前 values、候选 values 文件或是否启用 dry-run。Helm 工具会在内部读取并保留现有
 release values，并用完全相同的参数自动执行 dry-run 后再执行真实 mutation。缺少
 `confirm=true` 的调用不是预演接口，也不能作为发布证据。

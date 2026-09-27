@@ -1297,6 +1297,9 @@ func TestGatewayActionMappingUsesDedicatedToolsForCheckAndClean(t *testing.T) {
 	if got := actionForTool("doops_shell", json.RawMessage(`{"_doops_action":"info"}`)); got != ActionExec {
 		t.Fatalf("doops_shell must map to exec regardless of client override, got %q", got)
 	}
+	if got := actionForTool("doops_ssh", nil); got != ActionExec {
+		t.Fatalf("doops_ssh must map to exec, got %q", got)
+	}
 	if got := actionForTool("doops_check_deployment", nil); got != ActionCheck {
 		t.Fatalf("doops_check_deployment must map to check, got %q", got)
 	}
@@ -2289,6 +2292,9 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	}
 	if got := resourceKeyForTool(ActionExec, "doops_shell", json.RawMessage(`{"session_id":"exec-a","command":"python3 /root/ws/restore.py"}`), "dev", "node"); got != "target-mutation:dev/node" {
 		t.Fatalf("restore exec resource key mismatch: %q", got)
+	}
+	if got := resourceKeyForTool(ActionExec, "doops_ssh", json.RawMessage(`{"session_id":"ssh-a","host":"ops@example.com","command":["bash","-lc","true"]}`), "dev", "node"); got != "target-mutation:dev/node" {
+		t.Fatalf("SSH resource key mismatch: %q", got)
 	}
 	genericPromptArgs := json.RawMessage(`{"session_id":"ask-a","instruction":"inspect and repair the service"}`)
 	if got := actionForTool("doops_agent_prompt", genericPromptArgs); got != ActionAsk {

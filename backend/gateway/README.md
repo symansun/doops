@@ -40,6 +40,7 @@ Gateway 是独立控制面包，必须从宿主机 SSH 上下文发布：
 bash scripts/deploy-gateway.sh \
   --host <gateway-host> \
   --user <ssh-user> \
+  --source-commit <verified-main-commit> \
   --verify-target <configured-doops-target> \
   --verify-session <session-name>
 ```

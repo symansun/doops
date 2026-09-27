@@ -29,6 +29,15 @@ type ShellParams struct {
 	Command   string `json:"command"`
 }
 
+// SSHParams 用于通过 argv 安全代理出站 SSH。
+// Command 中的每个元素都是远端命令的一个 argv，不能合并成一个待二次解析的字符串。
+type SSHParams struct {
+	SessionID string   `json:"session_id"`
+	Options   []string `json:"options,omitempty"`
+	Host      string   `json:"host"`
+	Command   []string `json:"command,omitempty"`
+}
+
 // ToolCallParams 用于 MCP tools/call 标准入参。
 type ToolCallParams struct {
 	Name      string          `json:"name"`

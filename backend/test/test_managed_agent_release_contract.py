@@ -90,6 +90,10 @@ def test_single_managed_agent_release_script():
     assert '--cmd hostname' in text
     assert 'kubectl -n "${NAMESPACE}" exec "${replacement_pod}"' in text
     assert "doops -session" in text
+    assert "Kubernetes API is unreachable or rejected the kubeconfig" in text
+    assert 'kubectl version --request-timeout=10s' in text
+    assert "was not found or is not readable" in text
+    assert "only when the Kubernetes API is reachable" in text
     assert "@sha256:" in helper
     assert "docker.cnb.cool/l8ai/ai/doops.sh" in helper
 

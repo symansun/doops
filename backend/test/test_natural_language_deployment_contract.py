@@ -79,8 +79,8 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "`value_files` 是可选" in system_prompt
     assert "不得要求用户提供候选 values" in system_prompt
     assert "不得询问是否启用 dry-run" in system_prompt
-    assert "不支持 tag 模式" in system_prompt
-    assert "只传 `image.repository` 和 `image.digest`" in system_prompt
+    assert "image.tag=release-YYYYMMDD" in system_prompt
+    assert "不得混用两种模式" in system_prompt
     assert '"value_files": map[string]interface{}' in helm_mcp
     assert '"values": map[string]interface{}' not in helm_mcp
     assert "shell 中的 Kubernetes" in system_prompt
@@ -123,7 +123,7 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "发布必须使用任务明确授权的" in k8s_skill
     assert "`value_files` 可以为空" in k8s_skill
     assert "不得发起缺少 `confirm=true` 的试探调用" in k8s_skill
-    assert "混入 tag 模式" in k8s_skill
+    assert "混用两种镜像选择器" in k8s_skill
     assert "明确的 release、namespace、`value_files`" not in k8s_skill
     assert "Chart、`value_files` 和非敏感" not in build_deploy_sop
     assert "可选 HTTP(S) `value_files` 和非敏感" in build_deploy_sop
@@ -138,8 +138,8 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "api_trigger_bootstrap_release_runner" not in deployment_doc
     assert "bootstrap-release-runner.sh" not in deployment_doc
     assert "不得要求调用方再提供" in deployment_doc
-    assert "不允许 tag 模式" in deployment_doc
-    assert "缺少明确版本或混用输入时" in deployment_doc
+    assert "image.tag=release-YYYYMMDD" in deployment_doc
+    assert "缺少明确版本或使用其它覆盖时" in deployment_doc
     assert "缺少\n`confirm=true` 的调用不是预演接口" in deployment_doc
     assert "validate_simple_name" in cnb
     assert '*[!A-Za-z0-9._-]*' in cnb

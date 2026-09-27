@@ -6,7 +6,7 @@
 > CLI 通过 Gateway Git HTTP 隧道把工作区同步到目标 Agent 的
 > `/root/ws/<session>`。不得使用 tar/base64、`write`、自建 `/upload`
 > 端点、rsync 或客户端直连 SSH 作为代码同步替代路径。在线 Agent 仍可通过
-> `doops exec` 代理用户明确给出的任意出站 SSH 命令；这不改变 `push/pull`
+> `doops ssh` 代理用户明确给出的出站 SSH 命令；这不改变 `push/pull`
 > 的标准工作区协议。
 
 ## 核心问题
@@ -88,7 +88,8 @@ doops -session myproject-build push \
 
 > [!TIP]
 > SSH 主机不进入标准 target 配置。需要执行 SSH 命令时，通过已有 Gateway target
-> 调用 `doops exec --cmd 'ssh ...'`，由在线 Agent 代理并接受 Gateway 审计。
+> 调用 `doops ssh --host <user@host> -- <command> [args...]`，由在线 Agent
+> 代理并接受 Gateway 审计。不要把多层 SSH 拼进 `doops exec --cmd` 字符串。
 
 ---
 

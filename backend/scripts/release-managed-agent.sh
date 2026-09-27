@@ -476,6 +476,14 @@ release_existing_cluster() {
   fi
   export KUBECONFIG="${KUBECONFIG_PATH}"
 
+  echo "==> checking Kubernetes API reachability"
+  api_check_output=""
+  if ! api_check_output="$(kubectl version --request-timeout=10s 2>&1)"; then
+    echo "Error: Kubernetes API is unreachable or rejected the kubeconfig; Helm release state was not checked." >&2
+    printf '%s\n' "${api_check_output}" >&2
+    exit 1
+  fi
+
   doops_cmd() {
     doops -session "${SESSION}" "$@"
   }
@@ -502,9 +510,11 @@ release_existing_cluster() {
   fi
 
   echo "==> external-controller preflight: Helm release, target identity, safe handoff"
-  if ! helm status "${RELEASE}" -n "${NAMESPACE}" >/dev/null; then
-    echo "Error: Helm release ${RELEASE} was not found in ${NAMESPACE}" >&2
-    echo "Adopt the workload onto deploy/helm/doops-agent before releasing." >&2
+  helm_status_output=""
+  if ! helm_status_output="$(helm status "${RELEASE}" -n "${NAMESPACE}" 2>&1)"; then
+    echo "Error: Helm release ${RELEASE} was not found or is not readable in ${NAMESPACE}." >&2
+    printf '%s\n' "${helm_status_output}" >&2
+    echo "Adopt the workload onto deploy/helm/doops-agent before releasing only when the Kubernetes API is reachable and the release is genuinely absent." >&2
     exit 1
   fi
   preflight="$(

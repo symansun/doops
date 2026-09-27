@@ -119,6 +119,7 @@ mutation。省略 allowlist 参数会保留现网值；传空字符串会显式�
 bash scripts/deploy-gateway.sh \
   --host 106.54.197.139 \
   --user ubuntu \
+  --source-commit <verified-main-commit> \
   --verify-target gw-edu-coder \
   --verify-session gateway-release-<release>
 ```
@@ -187,12 +188,14 @@ gateway 是独立发布包，不登记为 doops target，也不通过任何 targ
 bash scripts/deploy-gateway.sh \
   --host <gateway-host> \
   --user <ssh-user> \
+  --source-commit <verified-main-commit> \
   --verify-target <configured-doops-target> \
   --verify-session <session-name>
 ```
 
 脚本只走 SSH/SCP，并在宿主机真实 root 下校验 DB、备份二进制、替换、重启和
-校验 `/proc/<pid>/exe` hash。`--verify-target` 只用于复用本机 DoOps CLI 的认证检查
+校验 `/proc/<pid>/exe` hash。`--source-commit` 必须与 CNB 镜像和候选二进制的
+provenance 一致；旧的本地 `bin/doops-gateway` 会在上传前拒绝。`--verify-target` 只用于复用本机 DoOps CLI 的认证检查
 发布前后 target 基线，不通过 target 传输或替换 Gateway。不要用
 `doops exec/push/write` 或 base64 分片部署 `doops-gateway`。
 
@@ -285,7 +288,7 @@ doops admin operations cancel --target <gateway-target> --id <operation-id>
 ```
 
 `cancel` 会取消 gateway 转发并释放操作槽；升级后的 agent 收到 cancel 信号后，会对
-`doops_shell`、`doops_docker`、`doops_node_info` 这类本地命令按进程组终止。`ask`
+`doops_shell`、`doops_ssh`、`doops_docker`、`doops_node_info` 这类本地命令按进程组终止。`ask`
 依赖 doagent 异步执行，当前 cancel 只中断 doops 等待链路，不能保证 doagent 内部
 已经派生的任务全部终止；遇到这类场景仍要按 session 或进程维度做后续清理。
 

@@ -37,6 +37,7 @@ docker build \
   --build-arg DO_AGENT_INDEX_DIGEST="${DO_AGENT_INDEX_DIGEST}" \
   --build-arg DO_AGENT_PLATFORM="${DO_AGENT_PLATFORM}" \
   --build-arg DO_AGENT_PLATFORM_DIGEST="${DO_AGENT_PLATFORM_DIGEST}" \
+  --build-arg DOOPS_SOURCE_COMMIT="${CNB_COMMIT}" \
   --label org.opencontainers.image.revision="${CNB_COMMIT}" \
   --label org.opencontainers.image.version="${DOOPS_RELEASE_TAG}" \
   -f "${REPO_ROOT}/Dockerfile" \
@@ -45,12 +46,17 @@ docker build \
 
 ACTUAL_BASE_IMAGE="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.base.name" }}' "${APP_IMAGE}")"
 test "${ACTUAL_BASE_IMAGE}" = "${BASE_IMAGE}"
+ACTUAL_SOURCE_COMMIT="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${APP_IMAGE}")"
+test "${ACTUAL_SOURCE_COMMIT}" = "${CNB_COMMIT}"
 ACTUAL_DOAGENT_IMAGE="$(docker inspect --format '{{ index .Config.Labels "org.l8ai.doagent.image" }}' "${APP_IMAGE}")"
 test "${ACTUAL_DOAGENT_IMAGE}" = "${DO_AGENT_IMAGE}"
 ACTUAL_DOAGENT_REVISION="$(docker inspect --format '{{ index .Config.Labels "org.l8ai.doagent.revision" }}' "${APP_IMAGE}")"
 test "${ACTUAL_DOAGENT_REVISION}" = "${DO_AGENT_REVISION}"
 docker run --rm --entrypoint /app/doops-agent "${APP_IMAGE}" -help >/dev/null
 docker run --rm --entrypoint /app/doops-gateway "${APP_IMAGE}" -help >/dev/null
+test "$(
+  docker run --rm --entrypoint /app/doops-gateway "${APP_IMAGE}" version
+)" = "doops-gateway source-commit=${CNB_COMMIT}"
 ACTUAL_DOAGENT_VERSION="$(docker run --rm --entrypoint /usr/local/bin/do-agent "${APP_IMAGE}" --version | awk '{print $NF}')"
 test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"
 docker run --rm --entrypoint /usr/local/bin/buildctl "${APP_IMAGE}" --version
