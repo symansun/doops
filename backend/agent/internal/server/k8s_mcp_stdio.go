@@ -171,12 +171,6 @@ func callK8SMCPTool(
 }
 
 func boundSessionFromWorkingDirectory() (string, error) {
-	if sessionID := strings.TrimSpace(os.Getenv("DOOPS_RUNTIME_SESSION_ID")); sessionID != "" {
-		if err := validateSession(sessionID); err != nil {
-			return "", fmt.Errorf("invalid runtime session binding: %w", err)
-		}
-		return sessionID, nil
-	}
 	root, err := filepath.EvalSymlinks(workspaceRoot())
 	if err != nil {
 		return "", fmt.Errorf("resolve workspace root: %w", err)
