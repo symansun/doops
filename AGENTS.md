@@ -16,8 +16,8 @@ DoOps architecture, security, release, and verification boundaries.
   `doops -session <s> ask --target <t> --apply [--credential <name>...] --msg '<facts>'`.
 - The task must state target, workload/service scope, explicit image version, reason, allowed
   `deploy/helm/<name>/` assets when needed, and machine-checkable acceptance criteria. Image
-  version evidence is either an immutable digest override or a chart-owned
-  `image.tag=release-YYYYMMDD` in complete Helm values with no runtime overrides.
+  version evidence is an immutable `image.repository` plus `image.digest` override from the
+  explicit Helm request.
 - CNB CI tests, builds, scans, and publishes immutable artifacts. Gateway authenticates, audits,
   limits concurrency, locks resources, and authorizes credentials. The selected target Agent
   performs the actual Kubernetes or Helm mutation and returns live evidence.

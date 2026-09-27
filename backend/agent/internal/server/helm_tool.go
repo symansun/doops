@@ -390,12 +390,9 @@ func verifyHelmDeploymentState(ctx context.Context, command helmCommand) (string
 		return "", fmt.Errorf("helm verification failed: final release manifest contains no Deployment")
 	}
 
-	expectedRepository := ""
-	if command.expectedImage != "" {
-		expectedRepository = strings.SplitN(command.expectedImage, "@", 2)[0]
-	}
+	expectedRepository := strings.SplitN(command.expectedImage, "@", 2)[0]
 	for _, expected := range deployments {
-		if command.expectedImage != "" && !deploymentHasExpectedImage(expected, command.expectedImage, expectedRepository) {
+		if !deploymentHasExpectedImage(expected, command.expectedImage, expectedRepository) {
 			return "", fmt.Errorf(
 				"helm verification failed: rendered Deployment %s/%s does not contain expected immutable image %q",
 				command.namespace,
