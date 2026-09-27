@@ -1095,6 +1095,13 @@ func TestAgentApplySucceedsAfterVerifiedHelmWhenFinalTurnFails(t *testing.T) {
 			id := request["id"]
 			switch request["method"] {
 			case "session/new":
+				params, ok := request["params"].(map[string]interface{})
+				if !ok {
+					t.Fatalf("session/new params = %#v", request["params"])
+				}
+				if params["cwd"] != "/root/ws/"+doopsSessionID {
+					t.Fatalf("apply session must use its bound workspace cwd, got %#v", params["cwd"])
+				}
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"jsonrpc": "2.0",
 					"id":      id,

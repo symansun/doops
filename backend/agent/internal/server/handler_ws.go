@@ -1226,10 +1226,6 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			}
 		}
 
-		sessionCWD := "/root/ws/" + doopsSessionID
-		if execution.RequireToolEvidence {
-			sessionCWD = "/root/ws"
-		}
 		createResp, err := doagentRPC(doagentURL, map[string]interface{}{
 			"jsonrpc": "2.0",
 			"id":      "create-" + doopsSessionID,
@@ -1237,7 +1233,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			"params": map[string]interface{}{
 				"sessionId":      requestedSessionID,
 				"systemPrompt":   systemPrompt,
-				"cwd":            sessionCWD,
+				"cwd":            "/root/ws/" + doopsSessionID,
 				"permissionMode": "restricted",
 			},
 		})
