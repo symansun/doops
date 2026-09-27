@@ -223,6 +223,76 @@ fi
 echo "Release: ${RELEASE} / ${NAMESPACE}"
 echo "Image: ${DOOPS_IMAGE}"
 
+verify_final_deployment_state() {
+  local workload_name="$1"
+  local deployment_json
+  deployment_json="$(mktemp "${TMPDIR:-/tmp}/doops-final-deployment.XXXXXX")"
+  if ! kubectl -n "${NAMESPACE}" get deployment "${workload_name}" -o json >"${deployment_json}"; then
+    rm -f "${deployment_json}"
+    return 1
+  fi
+  local status
+  if python3 - "${deployment_json}" "${workload_name}" "${DOOPS_IMAGE}" <<'PY'
+import json
+import sys
+
+deployment_path, expected_workload, expected_image = sys.argv[1:4]
+with open(deployment_path, encoding="utf-8") as fh:
+    deployment = json.load(fh)
+
+metadata = deployment.get("metadata") or {}
+spec = deployment.get("spec") or {}
+status = deployment.get("status") or {}
+name = str(metadata.get("name") or "")
+if name != expected_workload:
+    raise SystemExit(
+        f"Error: final Deployment identity changed: {name or '<unknown>'}"
+    )
+
+generation = int(metadata.get("generation") or 0)
+observed_generation = int(status.get("observedGeneration") or 0)
+if generation <= 0 or observed_generation != generation:
+    raise SystemExit(
+        "Error: final Deployment controller has not observed the current generation"
+    )
+
+desired = int(spec.get("replicas") if spec.get("replicas") is not None else 1)
+for field in ("updatedReplicas", "readyReplicas", "availableReplicas"):
+    actual = int(status.get(field) or 0)
+    if actual != desired:
+        raise SystemExit(
+            f"Error: final Deployment {field}={actual}, desiredReplicas={desired}"
+        )
+if int(status.get("unavailableReplicas") or 0) != 0:
+    raise SystemExit("Error: final Deployment still has unavailable replicas")
+
+containers = ((spec.get("template") or {}).get("spec") or {}).get("containers") or []
+if not containers or containers[0].get("image") != expected_image:
+    actual = containers[0].get("image") if containers else "<none>"
+    raise SystemExit(
+        f"Error: final Deployment image mismatch: {actual} != {expected_image}"
+    )
+
+print(
+    "final_deployment="
+    + name
+    + " generation="
+    + str(generation)
+    + " image="
+    + expected_image
+    + " ready="
+    + str(desired)
+)
+PY
+  then
+    status=0
+  else
+    status=$?
+  fi
+  rm -f "${deployment_json}"
+  return "${status}"
+}
+
 release_new_cluster() {
   require_value "--values" "${VALUES}"
   if [[ -n "${TARGET}" || -n "${SESSION}" ]]; then
@@ -268,6 +338,7 @@ release_new_cluster() {
   fi
   helm "${helm_args[@]}"
   workload="$(helm get values "${RELEASE}" -n "${NAMESPACE}" -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["workload"]["name"])')"
+  verify_final_deployment_state "${workload}"
   kubectl -n "${NAMESPACE}" rollout status "deployment/${workload}" --timeout "${TIMEOUT}"
   echo "Release complete: ${RELEASE} -> ${DOOPS_IMAGE}"
 }
@@ -569,6 +640,10 @@ PY
       echo "Error: rolled-back Deployment did not become ready" >&2
       return 1
     fi
+    if ! verify_final_deployment_state "${workload}"; then
+      echo "Error: rolled-back Deployment final state is not verified" >&2
+      return 1
+    fi
     if ! doops -session "${SESSION}-rollback" targets --target "${TARGET}" >/dev/null; then
       echo "Error: rolled-back Agent did not reconnect to Gateway" >&2
       return 1
@@ -838,6 +913,7 @@ PY
     fi
   done <<<"${requested_aliases}"
   kubectl -n "${NAMESPACE}" rollout status "deployment/${workload}" --timeout "${TIMEOUT}"
+  verify_final_deployment_state "${workload}"
   kubectl -n "${NAMESPACE}" get pod "${replacement_pod}" -o json >"${release_tmp}/verified-pod.json"
   python3 - "${release_tmp}/verified-pod.json" "${replacement_pod}" "${DOOPS_IMAGE}" "${DOOPS_IMAGE_DIGEST}" <<'PY'
 import json

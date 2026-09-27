@@ -301,7 +301,7 @@ func gatewayAdminRequest(method, gateway, token, endpoint string, query url.Valu
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("gateway request failed: HTTP %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+		return nil, decodeGatewayHTTPError("gateway "+endpoint, resp, respBody)
 	}
 	return respBody, nil
 }

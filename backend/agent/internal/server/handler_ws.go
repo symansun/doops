@@ -1030,7 +1030,6 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			args.ResponseFormat,
 			agentPromptExecutionContext{
 				NativeMode:          nativeMode,
-				WorkspaceCommit:     strings.TrimSpace(args.WorkspaceCommit),
 				RequireToolEvidence: operation == "apply",
 			},
 			pushProgress,
@@ -1171,7 +1170,6 @@ func doagentModeForPrompt(operation, executionMode string) (string, error) {
 
 type agentPromptExecutionContext struct {
 	NativeMode          string
-	WorkspaceCommit     string
 	RequireToolEvidence bool
 }
 
@@ -1182,16 +1180,8 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 
 	var mutationContext string
 	if execution.RequireToolEvidence {
-		if strings.TrimSpace(execution.WorkspaceCommit) == "" {
-			writeJSON(buildErrorResponse(reqID, -32602, "doagent_apply_workspace_commit_required"))
-			return
-		}
-		if err := validateWorkspaceCommitBinding(doopsSessionID, execution.WorkspaceCommit); err != nil {
-			writeJSON(buildErrorResponse(reqID, -32602, "doagent_apply_workspace_commit_invalid"))
-			return
-		}
 		var err error
-		mutationContext, err = mutationContextDigest(doopsSessionID, instr, execution.WorkspaceCommit)
+		mutationContext, err = mutationContextDigest(doopsSessionID, instr)
 		if err != nil {
 			writeJSON(buildErrorResponse(reqID, -32602, "doagent_apply_mutation_context_invalid"))
 			return
@@ -1236,6 +1226,10 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			}
 		}
 
+		sessionCWD := "/root/ws/" + doopsSessionID
+		if execution.RequireToolEvidence {
+			sessionCWD = "/root/ws"
+		}
 		createResp, err := doagentRPC(doagentURL, map[string]interface{}{
 			"jsonrpc": "2.0",
 			"id":      "create-" + doopsSessionID,
@@ -1243,7 +1237,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			"params": map[string]interface{}{
 				"sessionId":      requestedSessionID,
 				"systemPrompt":   systemPrompt,
-				"cwd":            "/root/ws/" + doopsSessionID,
+				"cwd":            sessionCWD,
 				"permissionMode": "restricted",
 			},
 		})
@@ -1380,9 +1374,15 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	turnIDReady <- turnID
 	close(turnIDReady)
 
-	// 等待本轮权威 turn_finished 终态或错误。
-	if err := <-sseDone; err != nil && err != context.Canceled {
-		log.Printf("doagent execution failed: session=%s category=doagent_execution_failed", targetSessionID)
+	// 等待本轮权威 turn_finished 终态或错误。对于 apply，已经完成并验签的
+	// Helm 运行时结果是变更事实；最终模型轮失败不能把已完成的变更改判为失败。
+	sseErr := <-sseDone
+	verifiedMutation := execution.RequireToolEvidence && len(toolTraces.completed()) != 0
+	sseFailed := sseErr != nil && !errors.Is(sseErr, context.Canceled)
+	if sseFailed && !verifiedMutation {
+		log.Printf("doagent execution failed: session=%s category=doagent_execution_failed detail=%s",
+			targetSessionID, sanitizeSecretText(sseErr.Error()))
+		pushProgress(errorNotification("[error] " + sanitizeSecretText(sseErr.Error())))
 		writeJSON(buildToolErrorResponse(reqID, "doagent_execution_failed"))
 		return
 	}
@@ -1395,9 +1395,17 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			writeJSON(buildToolErrorResponse(reqID, err.Error()))
 			return
 		}
+		if sseFailed {
+			pushProgress(rawNotification("[warning] Helm mutation was verified; doagent final turn ended with " + sanitizeSecretText(sseErr.Error())))
+		}
 	}
 	if responseFormat == "json" {
 		resultText, structuredContent, err := toolTraces.structuredResult(false)
+		if err != nil {
+			if verifiedMutation {
+				resultText, structuredContent, err = toolTraces.verifiedMutationResult()
+			}
+		}
 		if err != nil {
 			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("read final machine result: %v", err)))
 			return
@@ -2121,7 +2129,6 @@ func subscribeDoagentSSEWithCollectorReady(
 					// 非权威状态或 token 统计，继续等待 turn_finished。
 				case "turn_finished":
 					if err := doagentTurnFinishedError(sessionUpdate); err != nil {
-						pushProgress(errorNotification("[error] doagent_execution_failed"))
 						return err
 					}
 					return nil
@@ -2142,7 +2149,6 @@ func subscribeDoagentSSEWithCollectorReady(
 						}
 					}
 				}
-				pushProgress(errorNotification("[error] " + errMsg))
 				return fmt.Errorf("doagent execution failed: %s", errMsg)
 
 			default:

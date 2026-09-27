@@ -189,7 +189,7 @@ func GatewayLogin(gateway, username, password, label string) (string, error) {
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("gateway login failed: HTTP %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+		return "", decodeGatewayLoginHTTPError(resp, respBody)
 	}
 	var parsed gatewayLoginResponse
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
@@ -231,7 +231,7 @@ func GatewayAdminTokenCreate(gateway, adminToken string, create gatewayAdminToke
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return gatewayAdminTokenCreateResponse{}, fmt.Errorf("gateway admin token create failed: HTTP %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+		return gatewayAdminTokenCreateResponse{}, decodeGatewayHTTPError("gateway admin token create", resp, respBody)
 	}
 	var parsed gatewayAdminTokenCreateResponse
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
@@ -262,7 +262,7 @@ func GatewayAdminTokensList(gateway, adminToken, kind string) ([]gatewayAdminTok
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("gateway admin token list failed: HTTP %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+		return nil, decodeGatewayHTTPError("gateway admin token list", resp, respBody)
 	}
 	var parsed gatewayAdminTokensResponse
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
@@ -294,7 +294,7 @@ func GatewayAdminTokenRevoke(gateway, adminToken, id string) error {
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("gateway admin token revoke failed: HTTP %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+		return decodeGatewayHTTPError("gateway admin token revoke", resp, respBody)
 	}
 	return nil
 }
@@ -318,7 +318,7 @@ func GatewayAdminOperationsList(gateway, adminToken string) ([]gatewayActiveOper
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("gateway admin operations list failed: HTTP %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+		return nil, decodeGatewayHTTPError("gateway admin operations list", resp, respBody)
 	}
 	var parsed gatewayAdminOperationsResponse
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
@@ -350,7 +350,7 @@ func GatewayAdminOperationCancel(gateway, adminToken, id string) error {
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("gateway admin operation cancel failed: HTTP %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+		return decodeGatewayHTTPError("gateway admin operation cancel", resp, respBody)
 	}
 	return nil
 }

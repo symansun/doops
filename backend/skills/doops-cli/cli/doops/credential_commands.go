@@ -714,7 +714,7 @@ func gatewayCredentialRequest(method, gateway, token, endpoint string, query url
 		return nil, fmt.Errorf("credential gateway response exceeds %d bytes", maxCredentialPayloadBytes)
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("credential gateway request failed: HTTP %s", response.Status)
+		return nil, decodeGatewayHTTPError("credential gateway "+endpoint, response, responseBody)
 	}
 	return responseBody, nil
 }

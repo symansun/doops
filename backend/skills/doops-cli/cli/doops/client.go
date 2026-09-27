@@ -130,7 +130,8 @@ func (c *MCPClient) connect() error {
 		if resp != nil {
 			body, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
-			return fmt.Errorf("failed to connect to gateway /v1/rpc at %s: %v (HTTP %s: %s)", wsURL, err, resp.Status, strings.TrimSpace(string(body)))
+			httpErr := decodeGatewayHTTPError("gateway /v1/rpc", resp, body)
+			return fmt.Errorf("failed to connect to %s: %w", wsURL, httpErr)
 		}
 		return fmt.Errorf("failed to connect to gateway /v1/rpc at %s: %v", wsURL, err)
 	}

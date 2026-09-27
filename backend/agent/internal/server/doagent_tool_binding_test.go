@@ -280,6 +280,62 @@ func TestApplyRejectsCompletedACPToolPublicContentWithoutRawOutput(t *testing.T)
 	}
 }
 
+func TestApplyAcceptsStandardACPToolCallRawInputWithRuntimeAttestation(t *testing.T) {
+	collector := newDoagentToolTraceCollector(false)
+	bindApplyCollector(collector, "apply-test")
+	input := map[string]interface{}{
+		"operation": "upgrade-install",
+		"release":   "doops-agent",
+		"chart":     "deploy/helm/doops-agent",
+		"namespace": "kz-ops",
+		"confirm":   true,
+	}
+	trace := attestedMutationTrace(t, "mcp_doops_helm", input)
+	var result interface{}
+	if err := json.Unmarshal(trace.resultJSON, &result); err != nil {
+		t.Fatalf("decode attested result: %v", err)
+	}
+	rawInput := map[string]interface{}{
+		"toolName": "mcp_doops_helm",
+		"args":     input,
+	}
+	inProgress := map[string]interface{}{
+		"sessionUpdate": "tool_call",
+		"toolCallId":    trace.ToolCallID,
+		"toolName":      trace.ToolName,
+		"status":        "in_progress",
+		"rawInput":      rawInput,
+	}
+	if err := collector.collect(inProgress); err != nil {
+		t.Fatalf("collect standard in-progress update: %v", err)
+	}
+	completed := map[string]interface{}{
+		"sessionUpdate":            "tool_call_update",
+		"toolCallId":               trace.ToolCallID,
+		"toolName":                 trace.ToolName,
+		"status":                   "completed",
+		"rawInput":                 rawInput,
+		"rawOutput":                result,
+		"attestationSchemaVersion": trace.AttestationSchema,
+		"executionMode":            trace.ExecutionMode,
+		"mutationAuthorized":       true,
+		"mutationAuthorityDigest":  trace.MutationAuthorityDigest,
+		"attestedTool":             trace.AttestedTool,
+		"evidenceKind":             trace.EvidenceKind,
+		"evidenceSubject":          trace.EvidenceSubject,
+		"canonicalScope":           trace.CanonicalScope,
+		"scopeDigest":              trace.ScopeDigest,
+		"inputDigest":              trace.InputDigest,
+		"resultDigest":             trace.AttestedResultDigest,
+	}
+	if err := collector.collect(completed); err != nil {
+		t.Fatalf("collect standard completed update: %v", err)
+	}
+	if err := collector.requireCompletedToolEvidence(); err != nil {
+		t.Fatalf("standard ACP runtime evidence rejected: %v", err)
+	}
+}
+
 func TestCollectorAcceptsPartialACPToolUpdatesButNotAsApplyEvidence(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -382,10 +438,14 @@ func TestApplyToolEvidenceReportsRejectedTrace(t *testing.T) {
 }
 
 func attestedMutationTrace(t *testing.T, runtimeTool string, input map[string]interface{}) doagentToolTrace {
+	return attestedMutationTraceForSession(t, runtimeTool, input, "apply-test", testMutationAuthorityDigest)
+}
+
+func attestedMutationTraceForSession(t *testing.T, runtimeTool string, input map[string]interface{}, sessionID, authorityDigest string) doagentToolTrace {
 	t.Helper()
 	realTool := strings.TrimPrefix(modelVisibleDoagentToolName(runtimeTool), "doops_")
 	scope := map[string]interface{}{
-		"runtimeSessionId": "apply-test",
+		"runtimeSessionId": sessionID,
 		"server":           "doops",
 		"tool":             realTool,
 	}
@@ -410,7 +470,7 @@ func attestedMutationTrace(t *testing.T, runtimeTool string, input map[string]in
 	}
 	inputDigest, err := digestRuntimeAttestationJSON(map[string]interface{}{
 		"arguments":        input,
-		"runtimeSessionId": "apply-test",
+		"runtimeSessionId": sessionID,
 		"server":           "doops",
 		"tool":             realTool,
 	})
@@ -428,7 +488,7 @@ func attestedMutationTrace(t *testing.T, runtimeTool string, input map[string]in
 		AttestationSchema:       "doops.tool-attestation/v2",
 		ExecutionMode:           "apply",
 		MutationAuthorized:      boolPointer(true),
-		MutationAuthorityDigest: testMutationAuthorityDigest,
+		MutationAuthorityDigest: authorityDigest,
 		AttestedTool:            realTool,
 		EvidenceKind:            "runtime-tool-result",
 		EvidenceSubject:         realTool,

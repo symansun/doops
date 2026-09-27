@@ -110,7 +110,8 @@ func TestCallDoesNotRetryHTTPHandshakeError(t *testing.T) {
 	client := newGatewayTestClient(t, ts.URL, "handshake-http-error")
 	defer client.Close()
 	err := client.Call("doops_shell", map[string]interface{}{"command": "hostname"})
-	if err == nil || !strings.Contains(err.Error(), "HTTP 401") {
+	if err == nil || !strings.Contains(err.Error(), "gateway_auth_failed") ||
+		!strings.Contains(err.Error(), "auth_domain=gateway") {
 		t.Fatalf("expected HTTP handshake error, got %v", err)
 	}
 	if got := connections.Load(); got != 1 {

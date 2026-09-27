@@ -111,7 +111,7 @@ main:
             : "${DOOPS_TARGET:?DOOPS_TARGET is required}"
             : "${DOOPS_IMAGE:?DOOPS_IMAGE is required}"
             : "${DOOPS_SERVICE_SCOPE:?DOOPS_SERVICE_SCOPE is required}"
-            : "${DOOPS_HELM_ASSET:?DOOPS_HELM_ASSET is required}"
+            : "${DOOPS_HELM_ASSET:?DOOPS_HELM_ASSET remote chart URL is required}"
             : "${DOOPS_CHANGE_REASON:?DOOPS_CHANGE_REASON is required}"
             : "${DOOPS_ACCEPTANCE:?DOOPS_ACCEPTANCE is required}"
             validate_simple_name() {
@@ -141,6 +141,7 @@ main:
               validate_simple_name "${DOOPS_CREDENTIAL}" "DOOPS_CREDENTIAL"
             fi
             validate_single_line "${DOOPS_SERVICE_SCOPE}" "DOOPS_SERVICE_SCOPE"
+            validate_single_line "${DOOPS_HELM_ASSET}" "DOOPS_HELM_ASSET"
             validate_single_line "${DOOPS_CHANGE_REASON}" "DOOPS_CHANGE_REASON"
             validate_single_line "${DOOPS_ACCEPTANCE}" "DOOPS_ACCEPTANCE"
             case "${DOOPS_IMAGE}" in
@@ -166,29 +167,14 @@ main:
             esac
             test "${#image_digest}" -eq 64
             case "${DOOPS_HELM_ASSET}" in
-              deploy/helm/*) ;;
+              https://*|oci://*) ;;
               *)
-                echo "invalid DOOPS_HELM_ASSET" >&2
-                exit 2
-                ;;
-            esac
-            case "${DOOPS_HELM_ASSET}" in
-              *[!A-Za-z0-9._/-]*)
-                echo "invalid DOOPS_HELM_ASSET" >&2
-                exit 2
-                ;;
-            esac
-            case "/${DOOPS_HELM_ASSET}/" in
-              */../*)
-                echo "invalid DOOPS_HELM_ASSET" >&2
+                echo "DOOPS_HELM_ASSET must be an explicit https:// or oci:// chart URL" >&2
                 exit 2
                 ;;
             esac
             export HOME="${PWD}/.ci-doops-home"
-            .ci-bin/doops -session "${DOOPS_SESSION}" push \
-              --target "${DOOPS_TARGET}" \
-              --src backend
-            instruction="在 ${DOOPS_TARGET} 发布 ${DOOPS_SERVICE_SCOPE}，镜像 ${DOOPS_IMAGE}；仅使用 ${DOOPS_HELM_ASSET}；原因：${DOOPS_CHANGE_REASON}；验收：${DOOPS_ACCEPTANCE}。"
+            instruction="在 ${DOOPS_TARGET} 发布 ${DOOPS_SERVICE_SCOPE}，镜像 ${DOOPS_IMAGE}；使用 chart ${DOOPS_HELM_ASSET}；原因：${DOOPS_CHANGE_REASON}；验收：${DOOPS_ACCEPTANCE}。"
             if [ -n "${DOOPS_CREDENTIAL:-}" ]; then
               .ci-bin/doops -session "${DOOPS_SESSION}" ask \
                 --target "${DOOPS_TARGET}" \

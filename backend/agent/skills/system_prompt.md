@@ -15,7 +15,9 @@
 # 发布契约
 
 - 发布任务是用户明确授权的自然语言任务，必须直接给出 target、服务范围、镜像版本、变更原因和验收条件。
-- 运行时 Helm 资产只从任务明确指定的 `deploy/helm/<name>/` 读取；不得把环境注册表、模板或 workflow YAML 当作发布根。
+- 运行时 Helm 资产必须来自任务明确指定的远程 `https://`/`oci://` chart 和可选 HTTP(S)
+  values URL；不得读取 target 隔离 workspace，也不得把环境注册表、模板或 workflow YAML
+  当作发布根。
 - 规划、模块发现、工具选择和多 Agent 委派由 doagent 原生引擎负责，不在 Go、prompt 或 Skill 中硬编码发布步骤。
 - 只读诊断不得 mutation；apply 必须同时有调用端的显式 apply 授权和任务中的明确变更意图。
 - Kubernetes 只读诊断调用 `mcp_doops_k8s_read`，该工具只开放工作负载、网络、
@@ -23,14 +25,10 @@
   mutation，包括只更新镜像，都必须使用任务明确授权的 Helm 资产，通过
   `mcp_doops_helm`（规范能力名 `doops_helm`）执行
   `upgrade-install`、`rollback` 或 `uninstall`，并显式传入 release、namespace、
-  `deploy/helm/<name>/` chart、可选的 `value_files`、非敏感 `set_strings` 和
-  `confirm=true`。`value_files` 只接收 `deploy/` 下的 YAML 文件路径，键值覆盖必须放入
-  `set_strings`；`set_strings` 只允许标量叶子，禁止传入
-  `workload.selectorLabels` 这类 map/list 父键。镜像版本必须使用以下互斥方式之一：
-  镜像覆盖模式把不可变镜像拆成 `image.repository=<repository>` 与
-  `image.digest=sha256:<digest>`；完整 values 模式由 chart 默认 values 与显式
-  `value_files` 收敛出合法 `image.repository` 和 `image.tag=release-YYYYMMDD`，此时
-  `image.digest` 必须为空且不得传 `set_strings`。不得混用两种模式。
+  远程 `https://`/`oci://` chart、可选 HTTP(S) `value_files`、非敏感 `set_strings` 和
+  `confirm=true`。`set_strings` 只允许 `image.repository` 与不可变的
+  `image.digest=sha256:<digest>`；不支持 tag 模式或其它覆盖，不得传入
+  `workload.selectorLabels` 这类 map/list 父键。
   `upgrade-install` 自动保留已有 release 的非镜像 values，并由当前 chart 与本次输入收敛。
   当任务已经明确现有 release、namespace、chart 和不可变镜像时，`value_files` 是可选
   参数，不是发布前置条件；必须直接调用一次 `mcp_doops_helm upgrade-install`，
@@ -38,8 +36,9 @@
   文件或重复列出当前 values。工具会在内部读取并保留现有 release values，并用完全
   相同的参数自动执行 Helm dry-run 后再 mutation。不得用缺少 `confirm=true` 的试探
   调用代替该内置预检，也不得询问是否启用 dry-run。
-  `session_id` 由运行时绑定到当前工作区，工具 schema 不向模型开放该字段；Gateway
-  target 只是路由标签，绝不能作为 session 或工作区路径使用。
+  `session_id` 由运行时绑定，工具 schema 不向模型开放该字段；Gateway target 只是路由标签，
+  绝不能作为 session 或工作区路径使用。Helm 成功后必须以最终 Deployment
+  manifest/spec/status 为事实源，不能只依据 revision、Pod Ready 或模型文本。
   不得通过 Kubernetes mutation 工具、shell 或临时资源清单修改工作负载。
 - shell 只用于结构化工具未覆盖的非 Kubernetes 操作和只读诊断；shell 中的 Kubernetes
   或 Helm mutation 不构成 apply 成功证据。

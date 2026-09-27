@@ -113,7 +113,8 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 		c.finalMessage = text
 		return nil
 	}
-	if update["sessionUpdate"] != "tool_call_update" {
+	updateType, _ := update["sessionUpdate"].(string)
+	if updateType != "tool_call" && updateType != "tool_call_update" {
 		return nil
 	}
 	toolCallID, _ := update["toolCallId"].(string)
@@ -128,13 +129,15 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 	if !exists {
 		trace.ToolCallID = toolCallID
 	}
-	if toolName, _ := update["toolName"].(string); strings.TrimSpace(toolName) != "" {
+	if toolName := doagentToolName(update); toolName != "" {
 		if trace.ToolName != "" && trace.ToolName != toolName {
 			return fmt.Errorf("conflicting duplicate toolCallId %q tool name", toolCallID)
 		}
 		trace.ToolName = toolName
 	}
-	if input, ok := update["input"]; ok {
+	if input, ok, err := doagentToolInput(update); err != nil {
+		return fmt.Errorf("read tool call %q input: %w", toolCallID, err)
+	} else if ok {
 		encoded, err := stableDoagentJSON(input)
 		if err != nil {
 			return fmt.Errorf("encode tool call %q input: %w", toolCallID, err)
@@ -225,6 +228,75 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 	return nil
 }
 
+func doagentToolName(update map[string]interface{}) string {
+	for _, field := range []string{"toolName", "name"} {
+		if value, _ := update[field].(string); strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	for _, field := range []string{"input", "args", "rawInput"} {
+		value, ok := update[field]
+		if !ok {
+			continue
+		}
+		_, toolName := normalizeDoagentToolInput(value)
+		if toolName != "" {
+			return toolName
+		}
+	}
+	return ""
+}
+
+func doagentToolInput(update map[string]interface{}) (interface{}, bool, error) {
+	var input interface{}
+	found := false
+	for _, field := range []string{"input", "args", "rawInput"} {
+		value, ok := update[field]
+		if !ok {
+			continue
+		}
+		normalized, _ := normalizeDoagentToolInput(value)
+		if found {
+			current, err := stableDoagentJSON(normalized)
+			if err != nil {
+				return nil, false, err
+			}
+			previous, err := stableDoagentJSON(input)
+			if err != nil {
+				return nil, false, err
+			}
+			if !bytes.Equal(previous, current) {
+				return nil, false, fmt.Errorf("conflicting input fields")
+			}
+			continue
+		}
+		input = normalized
+		found = true
+	}
+	return input, found, nil
+}
+
+func normalizeDoagentToolInput(value interface{}) (interface{}, string) {
+	object, ok := value.(map[string]interface{})
+	if !ok {
+		return value, ""
+	}
+	toolName, _ := object["toolName"].(string)
+	if strings.TrimSpace(toolName) == "" {
+		toolName, _ = object["name"].(string)
+	}
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
+		return value, ""
+	}
+	for _, field := range []string{"args", "arguments", "input"} {
+		if args, exists := object[field]; exists {
+			return args, toolName
+		}
+	}
+	return value, toolName
+}
+
 func mergeDoagentToolAttestationUpdate(update map[string]interface{}, result interface{}) error {
 	var attestations []map[string]interface{}
 	if direct, exists := update["attestation"]; exists {
@@ -299,6 +371,35 @@ func (c *doagentToolTraceCollector) structuredResult(requireAgentReport bool) (s
 		return "", nil, fmt.Errorf("final machine result must contain one JSON object: %w", err)
 	}
 	return text, object, nil
+}
+
+func (c *doagentToolTraceCollector) verifiedMutationResult() (string, map[string]interface{}, error) {
+	traces := c.completed()
+	if len(traces) == 0 {
+		return "", nil, fmt.Errorf("verified mutation result was not emitted")
+	}
+	mutations := make([]interface{}, 0, len(traces))
+	for _, trace := range traces {
+		result, err := trace.verifiedResult()
+		if err != nil {
+			return "", nil, fmt.Errorf("decode verified mutation result: %w", err)
+		}
+		mutations = append(mutations, map[string]interface{}{
+			"tool":         modelVisibleDoagentToolName(trace.ToolName),
+			"tool_call_id": trace.ToolCallID,
+			"result":       result,
+		})
+	}
+	report := map[string]interface{}{
+		"kind":      "doops.verified-mutation",
+		"verified":  true,
+		"mutations": mutations,
+	}
+	encoded, err := stableDoagentJSON(report)
+	if err != nil {
+		return "", nil, fmt.Errorf("encode verified mutation result: %w", err)
+	}
+	return string(encoded), report, nil
 }
 
 func (c *doagentToolTraceCollector) completed() []doagentToolTrace {
@@ -563,13 +664,12 @@ func rejectSensitiveToolResult(value interface{}) error {
 }
 
 type deploymentRunContractBinding struct {
-	APIVersion      string
-	Workflow        string
-	RunID           string
-	WorkspaceCommit string
-	Mode            string
-	PrimaryTool     string
-	RequiredTools   []string
+	APIVersion    string
+	Workflow      string
+	RunID         string
+	Mode          string
+	PrimaryTool   string
+	RequiredTools []string
 }
 
 func publicDoagentToolResult(trace doagentToolTrace) (interface{}, error) {
