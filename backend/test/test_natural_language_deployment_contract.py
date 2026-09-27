@@ -151,6 +151,24 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "kubectl -n kube-system set image" not in environment_docs
 
 
+def test_apply_does_not_depend_on_workspace_commit_evidence():
+    handler_ws = (BACKEND / "agent" / "internal" / "server" / "handler_ws.go").read_text(
+        encoding="utf-8"
+    )
+    workspace_upload = (
+        BACKEND / "agent" / "internal" / "server" / "workspace_upload.go"
+    ).read_text(encoding="utf-8")
+    cli = CLI.read_text(encoding="utf-8")
+    deployment_doc = DEPLOYMENT_DOC.read_text(encoding="utf-8")
+
+    assert "doagent_apply_workspace_commit_required" not in handler_ws
+    assert "validateWorkspaceCommitBinding" not in workspace_upload
+    assert "validateBareWorkspaceCommitBinding" not in workspace_upload
+    assert "workspace_commit" not in cli
+    assert "apply 不要求先把代码同步到 target 的隔离工作区" in deployment_doc
+    assert "不要求先把代码同步到 target 的隔离工作区" in deployment_doc
+
+
 def test_ordinary_exec_does_not_block_explicit_helm_operations():
     dispatcher = (BACKEND / "agent" / "internal" / "dispatcher" / "dispatcher.go").read_text(
         encoding="utf-8"

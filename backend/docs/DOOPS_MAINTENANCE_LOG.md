@@ -215,10 +215,10 @@ For gateway control-plane releases, additionally verify:
 
 ## Current Release Line
 
-- Verified source commit: `848abca090cbcdcd8251fa8978055e6ad822df95`
-- Verified deployed Agent image: `docker.cnb.cool/l8ai/ai/doops.sh@sha256:7f8582052367bf54f2ff052e530a8782b1e96a6e26178a4a4fc95a5c0039eb15`
+- Verified source commit: `2d937bc7ae35c4941a1453d6b2c0765f10321bf1`
+- Verified deployed Agent image: `docker.cnb.cool/l8ai/ai/doops.sh@sha256:23b34730a62ce8c2cf14a1376571766096fd5d92c4d002d86a971c93e64af80b`
 - Embedded doagent version: `0.2.26`
-- Verified target: `doops-235/hdu-235`
+- Verified target: `doops-114-k8s/master-1`
 - Gateway binary: extracted from the verified CNB CI image digest with
   `scripts/extract-gateway-from-image.sh`, then deployed with
   `scripts/deploy-gateway.sh --no-build`.
