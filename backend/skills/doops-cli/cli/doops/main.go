@@ -390,7 +390,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		}
 
 		if *sessionName == "" {
-			fmt.Println("Error: -session 必传，请指定会话 ID 以隔离工作区 (例如: doops exec -session prod -target node1 -cmd \"...\")")
+			fmt.Println("Error: -session 必传，请指定会话 ID 以隔离操作上下文 (例如: doops exec -session prod -target node1 -cmd \"...\")")
 			os.Exit(1)
 		}
 

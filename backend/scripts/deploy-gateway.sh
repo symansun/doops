@@ -166,7 +166,7 @@ if [[ ! -x "${LOCAL_BIN}" ]]; then
   exit 1
 fi
 if [[ -n "${SOURCE_COMMIT}" ]]; then
-  if ! LC_ALL=C strings -a "${LOCAL_BIN}" | grep -Fqx "${SOURCE_COMMIT}"; then
+  if ! LC_ALL=C strings -a "${LOCAL_BIN}" | grep -Fxx "${SOURCE_COMMIT}" >/dev/null; then
     echo "Error: Gateway binary does not contain source commit ${SOURCE_COMMIT}" >&2
     echo "Extract the binary from the immutable CI image for this commit; do not reuse a local build." >&2
     exit 1

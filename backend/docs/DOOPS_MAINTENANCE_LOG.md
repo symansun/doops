@@ -24,6 +24,9 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
 - Gateway extraction and host deployment now require the exact source commit and
   reject binaries without matching provenance. The standalone Gateway host is
   not updated by an ordinary Agent workload release.
+- The provenance check must consume the complete `strings` output before testing
+  the exact commit. `grep -q` under `pipefail` exits early and turns a valid
+  extracted CI binary into a false rejection through `SIGPIPE`.
 
 ## 2026-09-21 Managed Agent host alias release
 

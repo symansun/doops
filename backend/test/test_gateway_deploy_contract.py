@@ -62,5 +62,5 @@ def test_gateway_deploy_rejects_binary_without_exact_source_commit():
     assert "--source-commit SHA" in text
     assert "a real Gateway deployment requires --source-commit" in text
     assert 'strings -a "${LOCAL_BIN}"' in text
-    assert 'grep -Fqx "${SOURCE_COMMIT}"' in text
+    assert 'grep -Fxx "${SOURCE_COMMIT}" >/dev/null' in text
     assert "Gateway binary does not contain source commit" in text
