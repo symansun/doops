@@ -59,6 +59,7 @@ def test_single_managed_agent_release_script():
     assert 'upgrade --install "${RELEASE}" "${CHART_DIR}"' in text
     assert 'helm rollback "${RELEASE}" "${previous_revision}"' in text
     assert 'if ! helm rollback "${RELEASE}" "${previous_revision}"' in text
+    assert 'if ! verify_final_deployment_state "${workload}" "${current_image}"; then' in text
     assert "Error: Helm rollback command failed" in text
     assert "--dry-run=server" in text
     assert "rollback_complete=true" in text

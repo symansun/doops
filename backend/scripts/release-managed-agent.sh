@@ -225,6 +225,7 @@ echo "Image: ${DOOPS_IMAGE}"
 
 verify_final_deployment_state() {
   local workload_name="$1"
+  local expected_image="$2"
   local deployment_json
   deployment_json="$(mktemp "${TMPDIR:-/tmp}/doops-final-deployment.XXXXXX")"
   if ! kubectl -n "${NAMESPACE}" get deployment "${workload_name}" -o json >"${deployment_json}"; then
@@ -232,7 +233,7 @@ verify_final_deployment_state() {
     return 1
   fi
   local status
-  if python3 - "${deployment_json}" "${workload_name}" "${DOOPS_IMAGE}" <<'PY'
+  if python3 - "${deployment_json}" "${workload_name}" "${expected_image}" <<'PY'
 import json
 import sys
 
@@ -338,7 +339,7 @@ release_new_cluster() {
   fi
   helm "${helm_args[@]}"
   workload="$(helm get values "${RELEASE}" -n "${NAMESPACE}" -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["workload"]["name"])')"
-  verify_final_deployment_state "${workload}"
+  verify_final_deployment_state "${workload}" "${DOOPS_IMAGE}"
   kubectl -n "${NAMESPACE}" rollout status "deployment/${workload}" --timeout "${TIMEOUT}"
   echo "Release complete: ${RELEASE} -> ${DOOPS_IMAGE}"
 }
@@ -640,7 +641,7 @@ PY
       echo "Error: rolled-back Deployment did not become ready" >&2
       return 1
     fi
-    if ! verify_final_deployment_state "${workload}"; then
+    if ! verify_final_deployment_state "${workload}" "${current_image}"; then
       echo "Error: rolled-back Deployment final state is not verified" >&2
       return 1
     fi
@@ -913,7 +914,7 @@ PY
     fi
   done <<<"${requested_aliases}"
   kubectl -n "${NAMESPACE}" rollout status "deployment/${workload}" --timeout "${TIMEOUT}"
-  verify_final_deployment_state "${workload}"
+  verify_final_deployment_state "${workload}" "${DOOPS_IMAGE}"
   kubectl -n "${NAMESPACE}" get pod "${replacement_pod}" -o json >"${release_tmp}/verified-pod.json"
   python3 - "${release_tmp}/verified-pod.json" "${replacement_pod}" "${DOOPS_IMAGE}" "${DOOPS_IMAGE_DIGEST}" <<'PY'
 import json
