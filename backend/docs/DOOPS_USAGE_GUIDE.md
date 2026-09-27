@@ -283,8 +283,9 @@ doops -session ops ssh --target jm --host ops@app.internal \
   --option=BatchMode=yes -- bash -lc 'hostname && systemctl status api'
 ```
 
-`--option` 也接受完整的 OpenSSH argv（例如 `--option=-oBatchMode=yes`）；`key=value`
-简写会在 CLI 内明确转换为 `-o<key>=<value>`，不会把它当成主机或远端命令。
+`--option` 只接受 `-4`、`-6`、`-p`、`-i`，以及 `BatchMode`、`StrictHostKeyChecking`、
+`ConnectTimeout`、`IdentitiesOnly`、`IdentityFile` 和 `Port`。`key=value` 简写会转换为
+`-o<key>=<value>`。会改写目标或执行本地命令的选项会被拒绝。
 
 ## Ask
 

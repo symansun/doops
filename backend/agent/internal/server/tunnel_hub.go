@@ -91,15 +91,7 @@ func credentialPlanCapability() map[string]interface{} {
 }
 
 func credentialPlanCapabilityCompatible(value interface{}) bool {
-	capability, ok := value.(map[string]interface{})
-	return ok &&
-		len(capability) == 6 &&
-		capability["schemaVersion"] == credentialPlanProtocolV2 &&
-		capability["declarationSchemaVersion"] == credentialPlanDeclarationV3 &&
-		capability["sourceRevision"] == true &&
-		capability["targetBinding"] == true &&
-		capability["sessionBinding"] == true &&
-		capability["buildDefinition"] == true
+	return capabilityMatches(value, credentialPlanCapability())
 }
 
 type GatewayActiveOperation struct {
@@ -1372,16 +1364,7 @@ func (a *GatewayAgent) initialize() error {
 			return queueErr
 		} else if ok {
 			if result, ok := msg.Parsed["result"].(map[string]interface{}); ok {
-				a.RuntimeID, _ = result["runtimeId"].(string)
-				a.RuntimeID = strings.TrimSpace(a.RuntimeID)
-				if capabilities, ok := result["capabilities"].(map[string]interface{}); ok {
-					if protocols, ok := capabilities["protocols"].(map[string]interface{}); ok {
-						if credentialPlanCapabilityCompatible(protocols["credentialPlan"]) {
-							a.CredentialPlanProtocol = credentialPlanProtocolV2
-						}
-						a.StructuredSSH = structuredSSHCapabilityCompatible(protocols[structuredSSHProtocol])
-					}
-				}
+				a.applyInitializeResult(result)
 			}
 			return nil
 		}
@@ -1393,6 +1376,20 @@ func (a *GatewayAgent) initialize() error {
 			return fmt.Errorf("agent connection closed")
 		}
 	}
+}
+
+func (a *GatewayAgent) applyInitializeResult(result map[string]interface{}) {
+	runtimeID, _ := result["runtimeId"].(string)
+	a.RuntimeID = strings.TrimSpace(runtimeID)
+	capabilities, _ := result["capabilities"].(map[string]interface{})
+	protocols, ok := capabilities["protocols"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	if credentialPlanCapabilityCompatible(protocols["credentialPlan"]) {
+		a.CredentialPlanProtocol = credentialPlanProtocolV2
+	}
+	a.StructuredSSH = structuredSSHCapabilityCompatible(protocols[structuredSSHProtocol])
 }
 
 func (a *GatewayAgent) readLoop(lease, initialReadTimeout time.Duration) {

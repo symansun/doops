@@ -30,6 +30,7 @@ type ShellParams struct {
 }
 
 // SSHParams 用于通过 argv 安全代理出站 SSH。
+// Options 只能是连接旗标，不能携带位置参数或改写目标的配置。
 // Command 中的每个元素都是远端命令的一个 argv，不能合并成一个待二次解析的字符串。
 type SSHParams struct {
 	SessionID string   `json:"session_id"`

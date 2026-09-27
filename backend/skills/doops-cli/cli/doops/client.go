@@ -362,8 +362,7 @@ func (c *MCPClient) RequireProtocol(protocol string) error {
 		return err
 	}
 	protocols, _ := c.capabilities["protocols"].(map[string]interface{})
-	capability, ok := protocols[protocol]
-	if !ok || !protocolCapabilityCompatible(protocol, capability) {
+	if !protocolCapabilityCompatible(protocol, protocols[protocol]) {
 		return fmt.Errorf(
 			"target Agent does not advertise protocol %q; upgrade the Agent before using this operation",
 			protocol,

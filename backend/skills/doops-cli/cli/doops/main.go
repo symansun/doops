@@ -389,7 +389,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			subFlag.BoolVar(&background, "bg", false, "Run through the agent-managed background task service and wait for completion")
 		case "ssh":
 			subFlag.StringVar(&sshHost, "host", "", "SSH destination, for example ops@app.internal")
-			subFlag.Var(&sshOptions, "option", "SSH option (repeatable; raw argv or key=value, e.g. --option=BatchMode=yes)")
+			subFlag.Var(&sshOptions, "option", "Allowed SSH flag or key=value (repeatable, e.g. --option=BatchMode=yes)")
 		case "ask":
 			subFlag.StringVar(&msgStr, "msg", "", "Instruction")
 			subFlag.StringVar(&modelStr, "model", "", "Model to use for this instruction (optional)")

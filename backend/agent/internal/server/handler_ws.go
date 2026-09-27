@@ -737,43 +737,12 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			return
 		}
 
-		// 用 WaitGroup 确保管道读取完毕后再调 cmd.Wait()，防止尾部数据丢失
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() { defer wg.Done(); streamReader(stdoutPipe, pushProgress) }()
-		go func() { defer wg.Done(); streamReader(stderrPipe, pushProgress) }()
-
-		// 启动心跳提示（防止长时间静默）
-		doneCh := make(chan struct{})
-		go slowProgressHeartbeat(doneCh, pushProgress)
-
-		// 先等 reader 全部读完，再 Wait 进程退出
-		wg.Wait()
-		cmdErr := cmd.Wait()
-		close(doneCh)
+		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
 		if execCtx.Err() != nil {
 			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 			return
 		}
-
-		// [全局执行审计] 无论成功失败，记录所有的 exec 审计日志
-		if sessionID != "" {
-			exitCode := 0
-			if cmdErr != nil {
-				if exiterr, ok := cmdErr.(*exec.ExitError); ok {
-					exitCode = exiterr.ExitCode()
-				} else {
-					exitCode = 1
-				}
-			}
-
-			entry := fmt.Sprintf("# [%s] exit=%d\n%s\n", time.Now().Format("2006-01-02 15:04:05"), exitCode, args.Command)
-			if logFile, err := appendSessionAuditLog(sessionID, entry); err == nil {
-				log.Printf("✅ Audit Log saved to %s", logFile)
-			} else {
-				log.Printf("❌ Failed to save Audit Log for session %s: %v", sessionID, err)
-			}
-		}
+		writeSessionCommandAudit(sessionID, args.Command, cmdErr)
 
 		// [配置快照] 检测到 kubectl apply -f 时，将目标配置文件内容追加到审计日志
 		if cmdErr == nil && sessionID != "" && strings.Contains(args.Command, "kubectl apply -f") {
@@ -817,37 +786,12 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			return
 		}
 
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() { defer wg.Done(); streamReader(stdoutPipe, pushProgress) }()
-		go func() { defer wg.Done(); streamReader(stderrPipe, pushProgress) }()
-
-		doneCh := make(chan struct{})
-		go slowProgressHeartbeat(doneCh, pushProgress)
-		wg.Wait()
-		cmdErr := cmd.Wait()
-		close(doneCh)
+		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
 		if execCtx.Err() != nil {
 			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 			return
 		}
-		if sessionID != "" {
-			exitCode := 0
-			if cmdErr != nil {
-				if exitErr, ok := cmdErr.(*exec.ExitError); ok {
-					exitCode = exitErr.ExitCode()
-				} else {
-					exitCode = 1
-				}
-			}
-			entry := fmt.Sprintf("# [%s] exit=%d\n%s\n",
-				time.Now().Format("2006-01-02 15:04:05"), exitCode, sshAuditSummary(args))
-			if logFile, err := appendSessionAuditLog(sessionID, entry); err == nil {
-				log.Printf("✅ SSH audit log saved to %s", logFile)
-			} else {
-				log.Printf("❌ Failed to save SSH audit log for session %s: %v", sessionID, err)
-			}
-		}
+		writeSessionCommandAudit(sessionID, sshAuditSummary(args), cmdErr)
 		if cmdErr != nil {
 			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("SSH command failed: %v", cmdErr)))
 		} else {
@@ -874,17 +818,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			return
 		}
 
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() { defer wg.Done(); streamReader(stdoutPipe, pushProgress) }()
-		go func() { defer wg.Done(); streamReader(stderrPipe, pushProgress) }()
-
-		doneCh := make(chan struct{})
-		go slowProgressHeartbeat(doneCh, pushProgress)
-
-		wg.Wait()
-		cmdErr := cmd.Wait()
-		close(doneCh)
+		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
 		if execCtx.Err() != nil {
 			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 			return
@@ -897,7 +831,6 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			writeJSON(buildSuccessResponse(reqID, "Docker command finished."))
 		}
 
-	// 其他工具 (doops_kubectl, doops_node_info, doops_bg...) 可以采用完全相似的重构
 	case "doops_node_info":
 		var args api.NodeInfoParams
 		json.Unmarshal(argBytes, &args)
@@ -931,13 +864,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			return
 		}
 
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() { defer wg.Done(); streamReader(stdoutPipe, pushProgress) }()
-		go func() { defer wg.Done(); streamReader(stderrPipe, pushProgress) }()
-
-		wg.Wait()
-		cmdErr := cmd.Wait()
+		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, false)
 		if execCtx.Err() != nil {
 			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 			return
@@ -2390,6 +2317,51 @@ func startRawCommand(ctx context.Context, cmd *exec.Cmd) (*exec.Cmd, io.ReadClos
 		_ = syscall.Kill(pgid, syscall.SIGKILL)
 	}()
 	return cmd, stdoutPipe, stderrPipe, nil
+}
+
+// waitCommandStreams drains both pipes before Wait so the final output is not lost.
+func waitCommandStreams(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.ReadCloser, push notificationSender, heartbeat bool) error {
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); streamReader(stdout, push) }()
+	go func() { defer wg.Done(); streamReader(stderr, push) }()
+
+	var done chan struct{}
+	if heartbeat {
+		done = make(chan struct{})
+		go slowProgressHeartbeat(done, push)
+	}
+	wg.Wait()
+	cmdErr := cmd.Wait()
+	if done != nil {
+		close(done)
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return cmdErr
+}
+
+func commandExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return exitErr.ExitCode()
+	}
+	return 1
+}
+
+func writeSessionCommandAudit(sessionID, summary string, cmdErr error) {
+	if sessionID == "" {
+		return
+	}
+	entry := fmt.Sprintf("# [%s] exit=%d\n%s\n", time.Now().Format("2006-01-02 15:04:05"), commandExitCode(cmdErr), summary)
+	if logFile, err := appendSessionAuditLog(sessionID, entry); err == nil {
+		log.Printf("✅ Audit Log saved to %s", logFile)
+	} else {
+		log.Printf("❌ Failed to save Audit Log for session %s: %v", sessionID, err)
+	}
 }
 
 // streamReader 逐行读取 pipe 内容并推送到 WS 客户端

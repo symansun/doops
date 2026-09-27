@@ -403,8 +403,10 @@ doops -session ops ssh --target jm --host ops@app.internal \
   --option=BatchMode=yes -- bash -lc 'hostname && systemctl status api'
 ```
 
-CLI 的 `--option` 支持完整 OpenSSH argv（例如 `--option=-oBatchMode=yes`）或
-`key=value` 简写；简写会明确编码为 `-o<key>=<value>`。
+CLI 的 `--option` 只接受不会改写连接目标的旗标：`-4`、`-6`、`-p`、`-i`，以及
+`BatchMode`、`StrictHostKeyChecking`、`ConnectTimeout`、`IdentitiesOnly`、
+`IdentityFile` 和 `Port`。`key=value` 简写编码为 `-o<key>=<value>`。位置参数、
+`ProxyCommand`、`ProxyJump`、端口转发、`HostName` 和 `KnownHostsCommand` 会被拒绝。
 
 不要把嵌套 SSH 写进 `doops_shell.command`。原始 Shell 仍按单个
 `bash -c` 字符串执行，无法替结构化 SSH argv 推断用户想保留的引号层级。

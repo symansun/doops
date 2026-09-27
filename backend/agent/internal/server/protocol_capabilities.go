@@ -14,10 +14,18 @@ func structuredSSHCapability() map[string]interface{} {
 }
 
 func structuredSSHCapabilityCompatible(value interface{}) bool {
+	return capabilityMatches(value, structuredSSHCapability())
+}
+
+func capabilityMatches(value interface{}, expected map[string]interface{}) bool {
 	capability, ok := value.(map[string]interface{})
-	return ok &&
-		len(capability) == 3 &&
-		capability["schemaVersion"] == structuredSSHSchema &&
-		capability["tool"] == "doops_ssh" &&
-		capability["structuredArgv"] == true
+	if !ok || len(capability) != len(expected) {
+		return false
+	}
+	for key, want := range expected {
+		if capability[key] != want {
+			return false
+		}
+	}
+	return true
 }

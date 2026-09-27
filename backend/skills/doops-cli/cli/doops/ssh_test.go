@@ -33,6 +33,11 @@ func TestNormalizeSSHOptionsRequiresOpenSSHArgv(t *testing.T) {
 	if _, err := normalizeSSHOptions([]string{"BatchMode"}); err == nil {
 		t.Fatal("unprefixed SSH option without a value must be rejected")
 	}
+	for _, rejected := range []string{"ops@evil", "-Wlocalhost:22", "ProxyCommand=nc evil 22", "-oHostName=evil", "-Jjump.example"} {
+		if _, err := normalizeSSHOptions([]string{rejected}); err == nil {
+			t.Fatalf("SSH option %q was accepted", rejected)
+		}
+	}
 }
 
 func TestStructuredSSHCapabilityRequiresExactSchema(t *testing.T) {

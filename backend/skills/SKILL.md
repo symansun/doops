@@ -31,6 +31,8 @@ description: |
 - 标准 Agent 镜像提供出站 `ssh` 客户端，但不安装或启动 `sshd`。已在线 target 的
   SSH 必须通过 `doops ssh` 的结构化 `host + options[] + command[]` 入口代理；该入口
   在 OpenSSH 边界统一编码远端 argv，避免多层 SSH 的嵌套引号被远端 shell 破坏。
+  允许的选项只有 `-4`、`-6`、端口、身份文件，以及 `BatchMode`、`StrictHostKeyChecking`、
+  `ConnectTimeout`、`IdentitiesOnly`。会改写目标或执行本地命令的选项由 Agent 拒绝。
   `doops exec` 仍用于普通 Shell，不得把嵌套 SSH 拼成一个命令字符串；CLI 会明确拒绝
   这种调用并给出结构化入口。SSH 操作遵守与其它 exec 相同的权限、排队、超时、取消
   和审计规则。目标、参数和远端命令必须由当前任务明确给出，不得把私钥、密码或

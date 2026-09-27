@@ -2,6 +2,17 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-09-28 Structured SSH option boundary
+
+- `doops_ssh` options were copied into the OpenSSH argv after only an empty/NUL
+  check. A positional value in `options` could become the destination, and
+  `ProxyCommand`, forwarding, `HostName`, or `KnownHostsCommand` could retarget
+  the connection.
+- The Agent now accepts only `-4`, `-6`, `-p`, `-i`, and the config keywords
+  `BatchMode`, `StrictHostKeyChecking`, `ConnectTimeout`, `IdentitiesOnly`,
+  `IdentityFile`, and `Port`. The CLI applies the same allowlist before sending
+  the tool call. Rejected options never start `ssh`.
+
 ## 2026-09-28 doagent 0.2.35 runtime pin
 
 - Published `do-agent v0.2.35` from `4c1e7e8a4e7f89b917dc4cce152cd73c36c32d68`.
