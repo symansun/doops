@@ -22,8 +22,12 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
   gate received SIGTERM because Debian procps parses `kill -TERM -<pid>` as a
   short option and can issue `kill(-1, SIGTERM)`.
 - v0.2.35 signals the child process group through the raw syscall and passed the
-  CNB release gate. `runtime-versions.env` now locks that image. The next Agent
-  release must embed it before the Oilan handoff.
+  CNB release gate. `runtime-versions.env` now locks that image.
+- Oilan `doops-system/doops-agent` was handed off by the external controller to
+  DoOps v1.3.5, Helm revision 30, image
+  `docker.cnb.cool/l8ai/ai/doops.sh@sha256:d71733994bda0fa4c4288cdb8517d432abcdac2ff69147f60ae150d258d31bea`.
+  The replacement Pod was Ready, `structuredSSH` was ready, and `do-agent --version`
+  returned `0.2.35`.
 
 ## 2026-09-27 Legacy Helm selector migration
 
