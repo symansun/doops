@@ -249,8 +249,8 @@ doops admin grant delete --target <gateway-target> --id <grant-id>
 
 - 先用 `doops list` 和 `doops targets --target <t>` 确认用户请求对应的精确
   `cluster/instance`，并确认同名用户是否已存在。已存在时不要重复创建。
-- 创建普通用户必须发送 `admin:false`。当前 `POST /v1/admin/users` 仍会自动创建一条
-  `*/*` 标准操作 grant；在删除该通配 grant 并完成复核前，不得交付账号或 token。
+- 创建普通用户必须发送 `admin:false`。CLI 会在交付账号或 token 前删除并复核 Gateway
+  可能写入的 wildcard bootstrap grant；流程失败时会停用新用户，不得交付半完成账号。
 - 创建后立即列出该用户的 grant，删除所有 `cluster="*"`、`instance="*"` 或包含
   action `"*"` 的规则，再为每个允许 target 添加显式 actions。不要省略 `actions`，因为
   空列表会展开为默认权限集合。
