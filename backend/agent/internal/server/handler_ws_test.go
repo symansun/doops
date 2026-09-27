@@ -1993,6 +1993,9 @@ func initializeAgentTestWS(t *testing.T, conn *websocket.Conn) {
 	if !credentialPlanCapabilityCompatible(protocols["credentialPlan"]) {
 		t.Fatalf("initialize result must advertise credential plan v2: %#v", resp)
 	}
+	if !structuredSSHCapabilityCompatible(protocols[structuredSSHProtocol]) {
+		t.Fatalf("initialize result must advertise structured SSH: %#v", resp)
+	}
 }
 
 func callTool(t *testing.T, conn *websocket.Conn, tool string, args map[string]interface{}) string {

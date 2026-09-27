@@ -352,6 +352,7 @@ Job/`kubectl set image` 改 Agent。正式业务发布统一使用 Gateway 上�
 
 ```bash
 doops list
+doops -session demo-capabilities capabilities --target gpu-ampere01 --require structuredSSH
 doops -session demo exec --target gpu-ampere01 --cmd 'uptime && df -h'
 doops -session demo ssh --target gpu-ampere01 --host ops@app.internal -- bash -lc 'hostname'
 doops -session demo ask --target gpu-ampere01 --msg '检查磁盘和内存压力，给出结论'
@@ -368,6 +369,7 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 | `doops add --gateway --cluster --instance` | 添加 gateway target 路由 |
 | `doops login --target <name>` | 登录该 target 所属 Gateway |
 | `doops list` | 列出客户端已配置的 Gateway target 路由 |
+| `doops capabilities --require structuredSSH` | 校验在线 Agent 已声明结构化 SSH 协议；缺失时失败关闭 |
 | `doops exec` | 在远端 agent 容器内执行确定性命令 |
 | `doops ssh` | 通过结构化 argv 执行出站 SSH，避免嵌套引号被远端 shell 重解析 |
 | `doops ask` | 交给远端 doagent 自主分析和执行 |

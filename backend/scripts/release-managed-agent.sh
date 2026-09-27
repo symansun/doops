@@ -462,6 +462,10 @@ release_existing_cluster() {
     echo "Error: doops CLI is required on PATH" >&2
     exit 1
   }
+  if ! doops capabilities --help >/dev/null 2>&1; then
+    echo "Error: installed doops CLI lacks the capabilities protocol probe; install the current CLI release before mutating an Agent" >&2
+    exit 1
+  fi
   command -v helm >/dev/null || {
     echo "Error: helm is required on PATH" >&2
     exit 1
@@ -844,6 +848,13 @@ PY
     fi
     sleep 5
   done
+
+  echo "==> verifying structured SSH protocol capability"
+  if ! doops -session "${SESSION}-capabilities" capabilities \
+    --target "${TARGET}" --require structuredSSH; then
+    echo "Error: replacement Agent did not advertise structuredSSH; refusing release completion" >&2
+    exit 1
+  fi
 
   echo "==> verifying replacement binary"
   replacement_help="$(

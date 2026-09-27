@@ -367,6 +367,22 @@ websocat \
 `command` 在 JSON 中分别传输；Agent 只在 OpenSSH 的远端命令边界把 `command` 的
 每个元素做 POSIX 单引号编码，避免多层 SSH 的嵌套引号被本地或远端 shell 重解析。
 
+Agent 在 `initialize` 响应的 `capabilities.protocols.structuredSSH` 中声明
+`doops.sh/structured-ssh/v1`。Gateway 只把该能力转发给已声明的 target，并在能力
+缺失时拒绝调用；CLI 也会在发送 `tools/call` 前失败关闭。旧 Agent 不会再以
+`Unknown tool over WS: doops_ssh` 作为能力不匹配的唯一提示，必须先按受管 Agent
+升级流程替换。
+
+能力声明格式：
+
+```json
+{
+  "schemaVersion": "doops.sh/structured-ssh/v1",
+  "tool": "doops_ssh",
+  "structuredArgv": true
+}
+```
+
 参数：
 
 ```json

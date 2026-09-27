@@ -8,6 +8,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | :--- | :--- | :--- |
 | List configured targets | `doops list` | Local config only; not live gateway state. |
 | List live gateway agents | `doops targets --target <gateway-target>` | First check for gateway troubleshooting. |
+| Check Agent protocol capability | `doops -session <s> capabilities --target <t> --require structuredSSH` | Fails closed when the online Agent is too old for structured SSH. |
 | Add a Gateway target | `doops add --name <n> --gateway <url> --cluster <c> --instance <i>` | Stores routing only; never stores a target token. |
 | Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Best for known checks and deploy scripts. |
 | Run nested SSH safely | `doops -session <s> ssh --target <t> --host <user@host> -- <command> [args...]` | Preserves remote argv across nested shells. |
@@ -42,6 +43,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 doops list
 doops targets --target unicom
 doops -session smoke exec --target unicom --cmd 'hostname && date -u +%FT%TZ'
+doops -session smoke-capabilities capabilities --target unicom --require structuredSSH
 ```
 
 `doops list` reads local config. `doops targets` asks gateway for live connected agents. A target can be listed locally but unavailable in gateway because it is offline or because the logged-in user lacks the exact target grant; the CLI does not collapse these cases into a definitive offline diagnosis.
@@ -51,6 +53,10 @@ doops -session smoke exec --target unicom --cmd 'hostname && date -u +%FT%TZ'
 - `busy=true` means the whole target is blocked by an exclusive operation or target queue, so new work may return `target busy`.
 - `status=active` with `busy=false` means one or more sessions/resources are running, but other sessions can still use the same agent.
 - `resources` shows locked resource keys such as `workspace:<session>` or `session:<session>`.
+
+`capabilities --require structuredSSH` performs only the Gateway WebSocket initialize
+handshake. It succeeds only when the selected online Agent advertises the exact
+structured SSH protocol; it never falls back to `doops exec`.
 
 Gateway 控制面发布不走 doops target。必须从 CNB 不可变 Agent 镜像提取 Gateway，
 并把同一个 `main` commit 传给发布脚本；脚本会拒绝没有该 commit provenance 的本地旧二进制：

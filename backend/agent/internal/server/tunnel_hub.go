@@ -130,6 +130,7 @@ type GatewayAgent struct {
 	Generation             uint64    `json:"generation"`
 	RuntimeID              string    `json:"runtime_id,omitempty"`
 	CredentialPlanProtocol string    `json:"credential_plan_protocol,omitempty"`
+	StructuredSSH          bool      `json:"structured_ssh,omitempty"`
 	ConnectedAt            time.Time `json:"connected_at"`
 	LastSeen               time.Time `json:"last_seen"`
 	HeartbeatAt            time.Time `json:"heartbeat_at,omitempty"`
@@ -973,9 +974,7 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 						"name":    "doops-gateway",
 						"version": "1.0",
 					},
-					"capabilities": map[string]interface{}{
-						"tools": map[string]interface{}{},
-					},
+					"capabilities": clientCapabilities(h.registry.Get(cluster, instance)),
 				},
 			})
 		case "tools/call":
@@ -1072,6 +1071,15 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		errMsg := fmt.Sprintf("target offline: %s/%s", cluster, instance)
 		finishAudit("offline", errMsg, "", 0)
 		writeJSON(buildErrorResponse(req.ID, -32004, errMsg))
+		return nil
+	}
+	if params.Name == "doops_ssh" && !agent.StructuredSSH {
+		errMsg := fmt.Sprintf(
+			"target Agent does not advertise protocol %q; upgrade the Agent before using structured doops ssh",
+			structuredSSHProtocol,
+		)
+		finishAudit("blocked", errMsg, "", 0)
+		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
 		return nil
 	}
 	if action == ActionAgentUpgrade {
@@ -1219,6 +1227,20 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	return nil
 }
 
+func clientCapabilities(agent *GatewayAgent) map[string]interface{} {
+	protocols := map[string]interface{}{}
+	if agent != nil && agent.StructuredSSH {
+		protocols[structuredSSHProtocol] = structuredSSHCapability()
+	}
+	capabilities := map[string]interface{}{
+		"tools": map[string]interface{}{},
+	}
+	if len(protocols) != 0 {
+		capabilities["protocols"] = protocols
+	}
+	return capabilities
+}
+
 func validateExplicitCredentialNames(names []string) error {
 	seen := make(map[string]struct{}, len(names))
 	for _, name := range names {
@@ -1357,6 +1379,7 @@ func (a *GatewayAgent) initialize() error {
 						if credentialPlanCapabilityCompatible(protocols["credentialPlan"]) {
 							a.CredentialPlanProtocol = credentialPlanProtocolV2
 						}
+						a.StructuredSSH = structuredSSHCapabilityCompatible(protocols[structuredSSHProtocol])
 					}
 				}
 			}

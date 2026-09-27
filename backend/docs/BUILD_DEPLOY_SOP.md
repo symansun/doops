@@ -157,12 +157,18 @@ mutation。不存在 Kubernetes 镜像 mutation 发布旁路。自然语言 appl
 `scripts/release-managed-agent.sh`。已有集群必须显式提供操作机 kubeconfig，
 `cluster/instance` 还要与 live Deployment 环境精确匹配；脚本在操作机执行
 server-side Helm dry-run 和真实 mutation，当前 Agent 只参与 Gateway 在线与接管验证。
+脚本会在读取 Helm release 或执行任何 mutation 前确认操作机上的 `doops` CLI 支持
+`capabilities` 协议探针；旧 CLI 必须先通过 CNB Release Asset 安装更新，不能进入 Agent
+滚动升级。
 脚本先验证 Kubernetes API 可达性；API 超时、EOF 或鉴权失败会在读取 Helm release
 之前停止，并报告外部控制器问题，不会误报 release 缺失或要求执行 adopt。
 Chart 以 `maxSurge=1`、`maxUnavailable=0` 先拉起新 Pod，Gateway `Register` 用新会话
 替换旧 WebSocket 后再删旧副本。镜像拉取、调度、启动、readiness 或接管失败会采集
 Pod/事件，并由同一外部控制器自动回滚到发布前 Helm revision。禁止 `kubectl set image`、
 Job、release-runner、Docker restart，以及 `doops upgrade` 的非 dry-run。
+接管后脚本还必须通过 `doops -session <session>-capabilities capabilities
+--target <target> --require structuredSSH` 完成协议能力握手；能力缺失视为发布失败，
+自动回滚，不得用普通 `exec` 代替结构化 SSH。
 
 ```bash
 bash scripts/release-managed-agent.sh \

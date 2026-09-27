@@ -34,3 +34,31 @@ func TestNormalizeSSHOptionsRequiresOpenSSHArgv(t *testing.T) {
 		t.Fatal("unprefixed SSH option without a value must be rejected")
 	}
 }
+
+func TestStructuredSSHCapabilityRequiresExactSchema(t *testing.T) {
+	current := map[string]interface{}{
+		"schemaVersion":  "doops.sh/structured-ssh/v1",
+		"tool":           "doops_ssh",
+		"structuredArgv": true,
+	}
+	if !protocolCapabilityCompatible("structuredSSH", current) {
+		t.Fatal("current structured SSH capability must be accepted")
+	}
+	for _, legacy := range []interface{}{
+		nil,
+		"doops.sh/structured-ssh/v1",
+		map[string]interface{}{
+			"schemaVersion":  "doops.sh/structured-ssh/v1",
+			"tool":           "doops_shell",
+			"structuredArgv": true,
+		},
+		map[string]interface{}{
+			"schemaVersion": "doops.sh/structured-ssh/v1",
+			"tool":          "doops_ssh",
+		},
+	} {
+		if protocolCapabilityCompatible("structuredSSH", legacy) {
+			t.Fatalf("legacy or incomplete capability was accepted: %#v", legacy)
+		}
+	}
+}

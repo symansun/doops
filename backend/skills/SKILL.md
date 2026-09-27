@@ -70,6 +70,8 @@ description: |
   外部 CI/GitOps controller 执行；禁止创建临时 Agent、临时 target 或 release-runner。
   已有 Helm release 的唯一脚本必须显式使用操作机 kubeconfig，并校验 live workload 中的
   `cluster/instance` 与命令参数一致；Gateway target 只用于在线、接管和发布后功能验证。
+  Agent 接管后必须通过 `doops -session <s> capabilities --target <t> --require structuredSSH`
+  完成协议能力校验；旧 Agent 缺少该声明时必须回滚或停止，不能把 SSH 改写成普通 `exec`。
 - 已有 Helm Agent 需要开放网站代理上游时，唯一发布脚本必须显式传
   `--proxy-allowed-hosts <comma-separated-exact-hosts>`；省略保留现网值，传空字符串恢复
   为拒绝全部。URL、端口、路径、通配符和空条目必须在 mutation 前拒绝，发布后必须核对

@@ -357,6 +357,35 @@ func initializeCapabilities(evt wsEvent) map[string]interface{} {
 	return capabilities
 }
 
+func (c *MCPClient) RequireProtocol(protocol string) error {
+	if err := c.connect(); err != nil {
+		return err
+	}
+	protocols, _ := c.capabilities["protocols"].(map[string]interface{})
+	capability, ok := protocols[protocol]
+	if !ok || !protocolCapabilityCompatible(protocol, capability) {
+		return fmt.Errorf(
+			"target Agent does not advertise protocol %q; upgrade the Agent before using this operation",
+			protocol,
+		)
+	}
+	return nil
+}
+
+func protocolCapabilityCompatible(protocol string, value interface{}) bool {
+	switch protocol {
+	case "structuredSSH":
+		capability, ok := value.(map[string]interface{})
+		return ok &&
+			len(capability) == 3 &&
+			capability["schemaVersion"] == "doops.sh/structured-ssh/v1" &&
+			capability["tool"] == "doops_ssh" &&
+			capability["structuredArgv"] == true
+	default:
+		return value != nil
+	}
+}
+
 // registerPending 为指定 reqID 注册一个事件接收 channel
 func (c *MCPClient) registerPending(reqID int64) chan wsEvent {
 	ch := make(chan wsEvent, 4096) // 流式输出可能包含批量 SSH/诊断结果

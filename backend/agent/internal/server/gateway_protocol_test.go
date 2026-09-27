@@ -1311,6 +1311,52 @@ func TestGatewayActionMappingUsesDedicatedToolsForCheckAndClean(t *testing.T) {
 	}
 }
 
+func TestGatewayRejectsStructuredSSHForAgentWithoutCapability(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	user, _ := store.CreateUser("alice")
+	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
+	if err := store.GrantUser(user.ID, ScopeGrant{
+		Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec},
+	}); err != nil {
+		t.Fatalf("grant exec: %v", err)
+	}
+
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	mux := http.NewServeMux()
+	gw.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
+	defer agentConn.Close()
+	go serveFakeAgent(t, agentConn)
+	requireEventually(t, time.Second, func() bool { return gw.getAgent("dev", "local") != nil })
+
+	client := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
+	defer client.Close()
+	args, _ := json.Marshal(map[string]interface{}{
+		"session_id": "structured-ssh-old-agent",
+		"host":       "ops@example.com",
+		"command":    []string{"true"},
+	})
+	writeGatewayJSON(t, client, map[string]interface{}{
+		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+		"params": map[string]interface{}{"name": "doops_ssh", "arguments": json.RawMessage(args)},
+	})
+	resp := readUntilID(t, client, 2)
+	errObj, ok := resp["error"].(map[string]interface{})
+	if !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "does not advertise protocol") {
+		t.Fatalf("expected capability gate, got %#v", resp)
+	}
+	if !strings.Contains(fmt.Sprint(errObj["message"]), "upgrade the Agent") {
+		t.Fatalf("capability gate must direct an Agent upgrade, got %#v", resp)
+	}
+}
+
 func TestGatewayActionMappingUsesDedicatedToolForAgentUpgrade(t *testing.T) {
 	if got := actionForTool("doops_agent_upgrade", nil); got != ActionAgentUpgrade {
 		t.Fatalf("expected agent upgrade action, got %q", got)

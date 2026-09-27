@@ -2,6 +2,19 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-09-27 Agent protocol capability gate
+
+- Root cause: the v1.3.3 CLI sent structured `doops_ssh` to an older online Agent,
+  which returned `Unknown tool over WS: doops_ssh`.
+- The Agent now advertises `structuredSSH` during initialize, Gateway records and
+  exposes that capability per target, and both Gateway and CLI fail closed when it
+  is absent.
+- The managed-Agent release script now checks that the local CLI supports the
+  `capabilities` probe before reading or mutating Helm state. An older CLI cannot
+  start an Agent handoff and only fail after the new Pod is running.
+- `release-managed-agent.sh` verifies the capability after handoff and rolls back
+  before release completion if the replacement Agent is too old.
+
 ## 2026-09-27 Structured SSH argv boundary
 
 - Root cause: `doops exec` accepted one shell command string and started it with
