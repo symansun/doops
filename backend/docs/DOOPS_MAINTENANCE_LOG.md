@@ -2,6 +2,18 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-09-28 doagent 0.2.35 runtime pin
+
+- Published `do-agent v0.2.35` from `4c1e7e8a4e7f89b917dc4cce152cd73c36c32d68`.
+  Index `sha256:bfe560f24c6e679f38fe2e880b9fa3e0078fcb3cac1e2631e11d1d3093bf0b12`.
+  `linux/amd64` manifest `sha256:f1c8dc743cb5081d59566ec6cd6a241cb2a3e0f88a8c20178896e9976053ba91`.
+- v0.2.27 through v0.2.34 never received a versioned image. The v0.2.34 release
+  gate received SIGTERM because Debian procps parses `kill -TERM -<pid>` as a
+  short option and can issue `kill(-1, SIGTERM)`.
+- v0.2.35 signals the child process group through the raw syscall and passed the
+  CNB release gate. `runtime-versions.env` now locks that image. The next Agent
+  release must embed it before the Oilan handoff.
+
 ## 2026-09-27 Legacy Helm selector migration
 
 - Root cause: `release-managed-agent.sh` treated `workload.selectorLabels` from
