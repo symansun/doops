@@ -2,8 +2,27 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-09-21 Managed Agent host alias release
+
+- Existing Helm releases can now use repeatable `--host-alias HOST=IP` arguments
+  when an Agent must reach a named HTTPS upstream through an explicit address.
+- The release script validates exact hostnames and IP addresses before target
+  contact, merges the requested mappings into the live Helm `hostAliases`, and
+  preserves unrelated mappings.
+- Replacement verification records the pre-release Pod identity, requires a
+  different Ready Pod to register with Gateway, compares that Pod's host aliases
+  with the Helm release, and resolves every requested hostname inside it. The
+  release rolls back on mismatch; there is no DNS fallback.
+- Proxy allowlist verification reads the replacement Pod spec. The release
+  controller uses Kubernetes to inspect the candidate Pod because a `doops exec`
+  command may be routed to the still-serving old Pod during a handoff.
+
 ## 2026-09-13 Managed Agent proxy allowlist release
 
+- Existing Helm releases now require an operator-side kubeconfig plus the exact
+  Gateway `cluster/instance`. The script performs Helm outside the current Agent,
+  uses server-side dry-run, diagnoses candidate Pod failures, and automatically
+  rolls back to the previous Helm revision when handoff or verification fails.
 - `scripts/release-managed-agent.sh` now accepts an explicit
   `--proxy-allowed-hosts` value for existing Helm releases and verifies the
   replacement Agent inherited the exact `DOOPS_PROXY_ALLOW_HOSTS` value.
@@ -17,9 +36,10 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
 - `deploy/helm/doops-agent` now uses `maxSurge=1` and `maxUnavailable=0` so the
   live Agent keeps serving until the replacement Pod is Ready. Gateway Register
   switches the session, then Kubernetes deletes the old replica.
-- There is one operator command: `scripts/release-managed-agent.sh`. Image pull
-  on the node must succeed before Helm. `hostNetwork` and custom entrypoints are
-  refused. `install-managed-agent.sh` and `upgrade-managed-agent.sh` are removed.
+- There is one operator command: `scripts/release-managed-agent.sh`. Existing
+  releases use an operator-side kubeconfig; `hostNetwork` and custom entrypoints
+  are refused. `install-managed-agent.sh` and `upgrade-managed-agent.sh` are
+  removed.
 - A 30s Gateway offline window during handoff is a release failure.
 
 ## 2026-09-06 One-click Helm agent install and upgrade

@@ -51,7 +51,7 @@ func fetchGatewayTargets(gateway, token string) ([]GatewayTarget, error) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("gateway targets failed: HTTP %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return nil, decodeGatewayHTTPError("gateway targets", resp, body)
 	}
 	var parsed gatewayTargetsResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
@@ -91,7 +91,7 @@ func unlockGatewayTarget(gateway, token, cluster, instance string) error {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("gateway unlock failed: HTTP %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return decodeGatewayHTTPError("gateway unlock", resp, body)
 	}
 	return nil
 }

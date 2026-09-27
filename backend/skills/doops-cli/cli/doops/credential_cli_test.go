@@ -203,6 +203,27 @@ func TestResolveCredentialGatewayRequiresConfiguredTarget(t *testing.T) {
 	}
 }
 
+func TestCredentialGatewayBare401GuidesGatewayLogin(t *testing.T) {
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	}))
+	defer gateway.Close()
+
+	_, err := gatewayCredentialRequest(http.MethodGet, gateway.URL, "stale-token", "/v1/credentials", nil, nil)
+	if err == nil {
+		t.Fatal("expected credential gateway unauthorized error")
+	}
+	message := err.Error()
+	for _, want := range []string{"gateway_auth_failed", "auth_domain=gateway", "doops login --target <gateway-target>"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("error missing %q: %s", want, message)
+		}
+	}
+	if strings.Contains(message, "credential_invalid") {
+		t.Fatalf("bare Gateway 401 must not be classified as credential_invalid: %s", message)
+	}
+}
+
 func TestCredentialCLIHelp(t *testing.T) {
 	var output bytes.Buffer
 	for _, args := range [][]string{nil, {"help"}, {"--help"}, {"-h"}} {

@@ -6,14 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/user/doops/agent/api"
 	"gopkg.in/yaml.v3"
@@ -21,7 +20,6 @@ import (
 
 var helmValueKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$`)
 var helmImageDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-var helmReleaseTagPattern = regexp.MustCompile(`^release-[0-9]{8}$`)
 var helmRegistryHostPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?$`)
 var helmRepositoryComponentPattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$`)
 
@@ -32,12 +30,7 @@ type helmCommand struct {
 	namespace             string
 	preserveReleaseValues bool
 	preserveInsertAt      int
-}
-
-type helmImageValues struct {
-	repository string
-	tag        string
-	digest     string
+	expectedImage         string
 }
 
 func handleHelmTool(ctx context.Context, raw json.RawMessage, push notificationSender) (string, error) {
@@ -55,10 +48,14 @@ func handleHelmTool(ctx context.Context, raw json.RawMessage, push notificationS
 	if err != nil {
 		return "", err
 	}
-	if err := runHelmCommand(ctx, command, push); err != nil {
+	verification, err := runHelmCommand(ctx, command, push)
+	if err != nil {
 		return "", err
 	}
-	return "Helm operation complete.", nil
+	if verification == "" {
+		return "Helm operation complete.", nil
+	}
+	return "Helm operation complete: " + verification, nil
 }
 
 func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
@@ -75,17 +72,10 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 	if !params.Confirm {
 		return helmCommand{}, fmt.Errorf("confirm=true is required for helm mutation %q", params.Operation)
 	}
-	workspace, err := workspacePath(params.SessionID)
-	if err != nil {
-		return helmCommand{}, err
-	}
-	workspace, err = filepath.EvalSymlinks(workspace)
-	if err != nil {
-		return helmCommand{}, fmt.Errorf("resolve bound workspace: %w", err)
-	}
+	workspace := workspaceRoot()
 	workspaceInfo, err := os.Stat(workspace)
 	if err != nil || !workspaceInfo.IsDir() {
-		return helmCommand{}, fmt.Errorf("bound workspace is not available")
+		return helmCommand{}, fmt.Errorf("agent runtime root is not available")
 	}
 	if !k8sNamePattern.MatchString(params.Release) {
 		return helmCommand{}, fmt.Errorf("invalid helm release")
@@ -104,7 +94,7 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 
 	switch params.Operation {
 	case "upgrade-install":
-		chart, err := resolveHelmWorkspacePath(workspace, params.Chart, "deploy/helm/", true)
+		chart, err := resolveRemoteHelmChartReference(params.Chart)
 		if err != nil {
 			return helmCommand{}, err
 		}
@@ -112,16 +102,17 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 		preserveInsertAt := len(args)
 		valueFiles := make([]string, 0, len(params.ValueFiles))
 		for _, valuePath := range params.ValueFiles {
-			resolved, err := resolveHelmWorkspacePath(workspace, strings.TrimSpace(valuePath), "deploy/", false)
+			resolved, err := resolveRemoteHelmValueReference(valuePath)
 			if err != nil {
 				return helmCommand{}, err
 			}
 			valueFiles = append(valueFiles, resolved)
 			args = append(args, "--values", resolved)
 		}
-		if err := validateHelmImageInput(workspace, chart, valueFiles, params.SetStrings); err != nil {
+		if err := validateHelmImageInput(params.SetStrings); err != nil {
 			return helmCommand{}, err
 		}
+		expectedImage := params.SetStrings["image.repository"] + "@" + params.SetStrings["image.digest"]
 		keys := make([]string, 0, len(params.SetStrings))
 		for key := range params.SetStrings {
 			keys = append(keys, key)
@@ -145,6 +136,7 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 			namespace:             params.Namespace,
 			preserveReleaseValues: true,
 			preserveInsertAt:      preserveInsertAt,
+			expectedImage:         expectedImage,
 		}, nil
 	case "rollback":
 		if params.Revision <= 0 {
@@ -163,12 +155,7 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 	}
 }
 
-func validateHelmImageInput(
-	workspace string,
-	chart string,
-	valueFiles []string,
-	setStrings map[string]string,
-) error {
+func validateHelmImageInput(setStrings map[string]string) error {
 	imageRepository, hasImageRepository := setStrings["image.repository"]
 	imageDigest, hasImageDigest := setStrings["image.digest"]
 	if hasImageRepository || hasImageDigest {
@@ -183,107 +170,49 @@ func validateHelmImageInput(
 		if !helmImageDigestPattern.MatchString(imageDigest) {
 			return fmt.Errorf("invalid image.digest set_string")
 		}
-		image, err := loadHelmImageValues(workspace, chart, valueFiles)
-		if err != nil {
-			return err
-		}
-		if image.tag != "" {
-			return fmt.Errorf("digest image mode must not define image.tag in values")
+		if len(setStrings) != 2 {
+			return fmt.Errorf("direct helm apply only allows image.repository and image.digest set_strings")
 		}
 		return nil
 	}
-	if len(setStrings) != 0 {
-		return fmt.Errorf("values-owned image mode does not allow set_strings")
-	}
-
-	image, err := loadHelmImageValues(workspace, chart, valueFiles)
-	if err != nil {
-		return err
-	}
-	if !validHelmImageRepository(image.repository) {
-		return fmt.Errorf("values-owned image mode requires a valid image.repository")
-	}
-	if !validHelmReleaseTag(image.tag) {
-		return fmt.Errorf("values-owned image.tag must match release-YYYYMMDD")
-	}
-	if image.digest != "" {
-		return fmt.Errorf("values-owned image mode must not define image.digest")
-	}
-	return nil
+	return fmt.Errorf("direct helm apply requires image.repository and image.digest set_strings")
 }
 
-func loadHelmImageValues(workspace string, chart string, valueFiles []string) (helmImageValues, error) {
-	var image helmImageValues
-	chartValues := filepath.ToSlash(filepath.Join(chart, "values.yaml"))
-	paths := make([]string, 0, len(valueFiles)+1)
-	if _, err := os.Lstat(filepath.Join(workspace, filepath.FromSlash(chartValues))); err == nil {
-		resolved, err := resolveHelmWorkspacePath(workspace, chartValues, chart+"/", false)
-		if err != nil {
-			return helmImageValues{}, err
-		}
-		paths = append(paths, resolved)
-	} else if !os.IsNotExist(err) {
-		return helmImageValues{}, fmt.Errorf("inspect helm chart values: %w", err)
+func resolveRemoteHelmChartReference(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if !isRemoteHelmChartReference(value) {
+		return "", fmt.Errorf("helm chart must be an explicit https:// or oci:// reference")
 	}
-	paths = append(paths, valueFiles...)
-
-	for _, path := range paths {
-		content, err := os.ReadFile(filepath.Join(workspace, filepath.FromSlash(path)))
-		if err != nil {
-			return helmImageValues{}, fmt.Errorf("read helm values file %s: %w", path, err)
-		}
-		var values map[string]interface{}
-		if err := yaml.Unmarshal(content, &values); err != nil {
-			return helmImageValues{}, fmt.Errorf("decode helm values file %s: %w", path, err)
-		}
-		rawImage, exists := values["image"]
-		if !exists {
-			continue
-		}
-		if rawImage == nil {
-			image = helmImageValues{}
-			continue
-		}
-		imageMap, ok := rawImage.(map[string]interface{})
-		if !ok {
-			return helmImageValues{}, fmt.Errorf("helm values file %s image must be a map", path)
-		}
-		for _, field := range []struct {
-			key    string
-			target *string
-		}{
-			{key: "repository", target: &image.repository},
-			{key: "tag", target: &image.tag},
-			{key: "digest", target: &image.digest},
-		} {
-			value, exists := imageMap[field.key]
-			if !exists {
-				continue
-			}
-			if value == nil {
-				*field.target = ""
-				continue
-			}
-			text, ok := value.(string)
-			if !ok {
-				return helmImageValues{}, fmt.Errorf(
-					"helm values file %s image.%s must be a string",
-					path,
-					field.key,
-				)
-			}
-			*field.target = text
-		}
-	}
-	return image, nil
+	return value, nil
 }
 
-func validHelmReleaseTag(value string) bool {
-	if !helmReleaseTagPattern.MatchString(value) {
+func resolveRemoteHelmValueReference(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if !isRemoteHelmValueReference(value) {
+		return "", fmt.Errorf("helm value files must be explicit http(s):// references")
+	}
+	return value, nil
+}
+
+func isRemoteHelmChartReference(value string) bool {
+	return isRemoteHelmReference(value, "oci", "http", "https")
+}
+
+func isRemoteHelmValueReference(value string) bool {
+	return isRemoteHelmReference(value, "http", "https")
+}
+
+func isRemoteHelmReference(value string, schemes ...string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Host == "" || parsed.User != nil {
 		return false
 	}
-	_, err := time.Parse("20060102", strings.TrimPrefix(value, "release-"))
-	return err == nil
+	for _, scheme := range schemes {
+		if strings.EqualFold(parsed.Scheme, scheme) {
+			return true
+		}
+	}
+	return false
 }
 
 func validHelmImageRepository(value string) bool {
@@ -309,51 +238,17 @@ func validHelmImageRepository(value string) bool {
 	return pathStart < len(parts)
 }
 
-func resolveHelmWorkspacePath(root, value, requiredPrefix string, directory bool) (string, error) {
-	if value == "" || filepath.IsAbs(value) {
-		return "", fmt.Errorf("helm path must be a workspace-relative %s path", requiredPrefix)
-	}
-	clean := filepath.Clean(value)
-	slash := filepath.ToSlash(clean)
-	if slash == "." || strings.HasPrefix(slash, "../") || !strings.HasPrefix(slash, requiredPrefix) {
-		return "", fmt.Errorf("helm path must be under %s", requiredPrefix)
-	}
-	resolved, err := filepath.EvalSymlinks(filepath.Join(root, clean))
-	if err != nil {
-		return "", fmt.Errorf("resolve helm path: %w", err)
-	}
-	relative, err := filepath.Rel(root, resolved)
-	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("helm path escapes the workspace")
-	}
-	resolvedSlash := filepath.ToSlash(relative)
-	if !strings.HasPrefix(resolvedSlash, requiredPrefix) {
-		return "", fmt.Errorf("resolved helm path must remain under %s", requiredPrefix)
-	}
-	info, err := os.Stat(resolved)
-	if err != nil {
-		return "", fmt.Errorf("inspect helm path: %w", err)
-	}
-	if info.IsDir() != directory {
-		if directory {
-			return "", fmt.Errorf("helm chart path must be a directory")
-		}
-		return "", fmt.Errorf("helm values path must be a file")
-	}
-	return resolvedSlash, nil
-}
-
 func escapeHelmSetString(value string) string {
 	replacer := strings.NewReplacer(`\`, `\\`, ",", `\,`, "=", `\=`)
 	return replacer.Replace(value)
 }
 
-func runHelmCommand(ctx context.Context, command helmCommand, push notificationSender) error {
+func runHelmCommand(ctx context.Context, command helmCommand, push notificationSender) (string, error) {
 	var stdin []byte
 	if command.preserveReleaseValues {
 		existingValues, found, err := prepareExistingHelmValues(ctx, command)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if found {
 			preserveArgs := []string{"--reset-values", "--values", "-"}
@@ -380,7 +275,7 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 		var preflightStderr bytes.Buffer
 		preflight.Stderr = &preflightStderr
 		if err := preflight.Run(); err != nil {
-			return fmt.Errorf(
+			return "", fmt.Errorf(
 				"helm preflight failed: %w: %s",
 				err,
 				strings.TrimSpace(preflightStderr.String()),
@@ -395,14 +290,14 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("start helm: %w", err)
+		return "", fmt.Errorf("start helm: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return fmt.Errorf("start helm: %w", err)
+		return "", fmt.Errorf("start helm: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start helm: %w", err)
+		return "", fmt.Errorf("start helm: %w", err)
 	}
 
 	var wg sync.WaitGroup
@@ -424,14 +319,257 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 	}()
 	wg.Wait()
 	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf(
+		return "", fmt.Errorf(
 			"helm %s failed: %w: %s",
 			strings.Join(command.args, " "),
 			err,
 			strings.TrimSpace(stderrCapture.String()),
 		)
 	}
-	return nil
+	if command.operation() != "upgrade" {
+		return "", nil
+	}
+	return verifyHelmDeploymentState(ctx, command)
+}
+
+func (c helmCommand) operation() string {
+	if len(c.args) == 0 {
+		return ""
+	}
+	return c.args[0]
+}
+
+type renderedHelmDeployment struct {
+	Name       string
+	Containers []string
+}
+
+type liveDeployment struct {
+	Metadata struct {
+		Generation int64 `json:"generation"`
+	} `json:"metadata"`
+	Spec struct {
+		Replicas *int32 `json:"replicas"`
+		Template struct {
+			Spec struct {
+				Containers []struct {
+					Image string `json:"image"`
+				} `json:"containers"`
+			} `json:"spec"`
+		} `json:"template"`
+	} `json:"spec"`
+	Status struct {
+		ObservedGeneration  int64  `json:"observedGeneration"`
+		UpdatedReplicas     int32  `json:"updatedReplicas"`
+		ReadyReplicas       int32  `json:"readyReplicas"`
+		AvailableReplicas   int32  `json:"availableReplicas"`
+		UnavailableReplicas *int32 `json:"unavailableReplicas"`
+	} `json:"status"`
+}
+
+func verifyHelmDeploymentState(ctx context.Context, command helmCommand) (string, error) {
+	manifestCmd := exec.CommandContext(
+		ctx,
+		"helm",
+		"get",
+		"manifest",
+		command.release,
+		"--namespace",
+		command.namespace,
+	)
+	manifestCmd.Dir = command.cwd
+	manifest, err := manifestCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("helm verification failed: read final release manifest: %w", err)
+	}
+	deployments, err := parseRenderedHelmDeployments(manifest)
+	if err != nil {
+		return "", fmt.Errorf("helm verification failed: %w", err)
+	}
+	if len(deployments) == 0 {
+		return "", fmt.Errorf("helm verification failed: final release manifest contains no Deployment")
+	}
+
+	expectedRepository := strings.SplitN(command.expectedImage, "@", 2)[0]
+	for _, expected := range deployments {
+		if !deploymentHasExpectedImage(expected, command.expectedImage, expectedRepository) {
+			return "", fmt.Errorf(
+				"helm verification failed: rendered Deployment %s/%s does not contain expected immutable image %q",
+				command.namespace,
+				expected.Name,
+				command.expectedImage,
+			)
+		}
+
+		getCmd := exec.CommandContext(
+			ctx,
+			"kubectl",
+			"get",
+			"deployment",
+			expected.Name,
+			"--namespace",
+			command.namespace,
+			"--output",
+			"json",
+		)
+		getCmd.Dir = command.cwd
+		liveBytes, err := getCmd.Output()
+		if err != nil {
+			return "", fmt.Errorf(
+				"helm verification failed: read final Deployment %s/%s: %w",
+				command.namespace,
+				expected.Name,
+				err,
+			)
+		}
+		var live liveDeployment
+		if err := json.Unmarshal(liveBytes, &live); err != nil {
+			return "", fmt.Errorf(
+				"helm verification failed: decode final Deployment %s/%s: %w",
+				command.namespace,
+				expected.Name,
+				err,
+			)
+		}
+		if live.Metadata.Generation == 0 ||
+			live.Status.ObservedGeneration != live.Metadata.Generation {
+			return "", fmt.Errorf(
+				"helm verification failed: Deployment %s/%s observedGeneration=%d generation=%d",
+				command.namespace,
+				expected.Name,
+				live.Status.ObservedGeneration,
+				live.Metadata.Generation,
+			)
+		}
+		desiredReplicas := int32(1)
+		if live.Spec.Replicas != nil {
+			desiredReplicas = *live.Spec.Replicas
+		}
+		if live.Status.UpdatedReplicas != desiredReplicas ||
+			live.Status.ReadyReplicas != desiredReplicas ||
+			live.Status.AvailableReplicas != desiredReplicas ||
+			(live.Status.UnavailableReplicas != nil && *live.Status.UnavailableReplicas != 0) {
+			return "", fmt.Errorf(
+				"helm verification failed: Deployment %s/%s is not fully Ready (desired=%d updated=%d ready=%d available=%d unavailable=%v)",
+				command.namespace,
+				expected.Name,
+				desiredReplicas,
+				live.Status.UpdatedReplicas,
+				live.Status.ReadyReplicas,
+				live.Status.AvailableReplicas,
+				live.Status.UnavailableReplicas,
+			)
+		}
+		actualImages := make([]string, 0, len(live.Spec.Template.Spec.Containers))
+		for _, container := range live.Spec.Template.Spec.Containers {
+			actualImages = append(actualImages, strings.TrimSpace(container.Image))
+		}
+		if !sameStringList(expected.Containers, actualImages) {
+			return "", fmt.Errorf(
+				"helm verification failed: Deployment %s/%s spec images=%q rendered=%q",
+				command.namespace,
+				expected.Name,
+				actualImages,
+				expected.Containers,
+			)
+		}
+	}
+	return fmt.Sprintf("final Deployment spec verified: %d Deployment(s) observed at current generation and Ready", len(deployments)), nil
+}
+
+func parseRenderedHelmDeployments(manifest []byte) ([]renderedHelmDeployment, error) {
+	decoder := yaml.NewDecoder(strings.NewReader(string(manifest)))
+	var deployments []renderedHelmDeployment
+	seen := make(map[string]struct{})
+	for {
+		var document struct {
+			Kind     string `yaml:"kind"`
+			Metadata struct {
+				Name string `yaml:"name"`
+			} `yaml:"metadata"`
+			Spec struct {
+				Template struct {
+					Spec struct {
+						Containers []struct {
+							Image string `yaml:"image"`
+						} `yaml:"containers"`
+					} `yaml:"spec"`
+				} `yaml:"template"`
+			} `yaml:"spec"`
+		}
+		if err := decoder.Decode(&document); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("decode final release manifest: %w", err)
+		}
+		if strings.EqualFold(strings.TrimSpace(document.Kind), "List") {
+			return nil, fmt.Errorf("final release manifest uses unsupported Deployment List wrapper")
+		}
+		if !strings.EqualFold(strings.TrimSpace(document.Kind), "Deployment") {
+			continue
+		}
+		name := strings.TrimSpace(document.Metadata.Name)
+		if name == "" {
+			return nil, fmt.Errorf("final release manifest contains Deployment without metadata.name")
+		}
+		if _, exists := seen[name]; exists {
+			return nil, fmt.Errorf("final release manifest contains duplicate Deployment %q", name)
+		}
+		seen[name] = struct{}{}
+		containers := make([]string, 0, len(document.Spec.Template.Spec.Containers))
+		for _, container := range document.Spec.Template.Spec.Containers {
+			image := strings.TrimSpace(container.Image)
+			if image == "" {
+				return nil, fmt.Errorf("final release manifest Deployment %q contains an empty image", name)
+			}
+			containers = append(containers, image)
+		}
+		if len(containers) == 0 {
+			return nil, fmt.Errorf("final release manifest Deployment %q contains no containers", name)
+		}
+		deployments = append(deployments, renderedHelmDeployment{Name: name, Containers: containers})
+	}
+	return deployments, nil
+}
+
+func deploymentHasExpectedImage(deployment renderedHelmDeployment, expected, repository string) bool {
+	found := false
+	for _, image := range deployment.Containers {
+		if image == expected {
+			found = true
+			continue
+		}
+		if repository != "" && imageRepository(image) == repository {
+			return false
+		}
+	}
+	return found
+}
+
+func imageRepository(image string) string {
+	image = strings.TrimSpace(image)
+	if at := strings.IndexByte(image, '@'); at >= 0 {
+		return image[:at]
+	}
+	lastSlash := strings.LastIndexByte(image, '/')
+	lastColon := strings.LastIndexByte(image, ':')
+	if lastColon > lastSlash {
+		return image[:lastColon]
+	}
+	return image
+}
+
+func sameStringList(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func prepareExistingHelmValues(ctx context.Context, command helmCommand) ([]byte, bool, error) {

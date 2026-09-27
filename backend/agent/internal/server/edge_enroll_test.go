@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -54,8 +55,20 @@ func TestEdgeConnectRequiresEnrollmentToken(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/edge/connect?cluster=jm&instance=gw-jm"
-	if _, _, err := websocket.DefaultDialer.Dial(wsURL, nil); err == nil {
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err == nil {
 		t.Fatal("connect without a token should fail")
+	}
+	if resp == nil {
+		t.Fatal("connect without a token should return an HTTP error response")
+	}
+	var authError doopsErrorResponse
+	if err := json.NewDecoder(resp.Body).Decode(&authError); err != nil {
+		t.Fatalf("decode edge auth error: %v", err)
+	}
+	resp.Body.Close()
+	if authError.Code != "edge_enrollment_auth_failed" || authError.AuthDomain != "edge_enrollment" {
+		t.Fatalf("unexpected edge auth error: %#v", authError)
 	}
 	if _, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Authorization": []string{"Bearer nope"}}); err == nil {
 		t.Fatal("connect with a garbage token should fail")

@@ -257,7 +257,7 @@ func k8sMCPToolDefinition(name string, operations []string, description string) 
 func helmMCPToolDefinition() map[string]interface{} {
 	return map[string]interface{}{
 		"name":        helmMCPToolName,
-		"description": "Converge an explicitly named Helm release from deploy/helm assets in the bound workspace.",
+		"description": "Converge an explicitly named Helm release from an explicit remote chart reference without reading a source workspace.",
 		"inputSchema": map[string]interface{}{
 			"type":                 "object",
 			"additionalProperties": false,
@@ -270,21 +270,21 @@ func helmMCPToolDefinition() map[string]interface{} {
 				"release": map[string]interface{}{"type": "string"},
 				"chart": map[string]interface{}{
 					"type":        "string",
-					"description": "Workspace-relative chart directory under deploy/helm/, for example deploy/helm/doops-agent.",
-					"pattern":     "^deploy/helm/[^/]+(?:/[^/]+)*$",
+					"description": "Remote Helm chart reference using https:// or oci://; local source workspaces are not accepted.",
+					"pattern":     "^(?:https?|oci)://[^\\s]+$",
 				},
 				"namespace": map[string]interface{}{"type": "string"},
 				"value_files": map[string]interface{}{
 					"type":        "array",
-					"description": "Workspace-relative YAML value file paths under deploy/. Complete values may own image.repository and image.tag=release-YYYYMMDD when set_strings is empty and image.digest is unset.",
+					"description": "Optional remote YAML value file URLs using http:// or https://.",
 					"items": map[string]interface{}{
 						"type":    "string",
-						"pattern": "^deploy/.+\\.ya?ml$",
+						"pattern": "^(?:https?)://[^\\s]+\\.ya?ml(?:\\?[^\\s]*)?$",
 					},
 				},
 				"set_strings": map[string]interface{}{
 					"type":                 "object",
-					"description":          "Non-secret scalar leaf overrides only; never pass a map or list parent key. Digest image mode requires image.repository and image.digest. Omit set_strings entirely for values-owned release tags.",
+					"description":          "Only image.repository and image.digest are accepted for direct apply; both are required and the digest must be immutable.",
 					"additionalProperties": map[string]interface{}{"type": "string"},
 				},
 				"revision": map[string]interface{}{"type": "integer", "minimum": 1},

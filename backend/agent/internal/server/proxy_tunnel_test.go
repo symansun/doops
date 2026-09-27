@@ -11,7 +11,10 @@ import (
 )
 
 func TestGatewayHTTPProxyUsesAgentReverseTunnelAndStreamsResponse(t *testing.T) {
+	var upstreamHost, forwardedHost string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHost = r.Host
+		forwardedHost = r.Header.Get("X-Forwarded-Host")
 		w.Header().Set("X-Upstream", "agent-local")
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte("first"))
@@ -51,6 +54,8 @@ func TestGatewayHTTPProxyUsesAgentReverseTunnelAndStreamsResponse(t *testing.T) 
 
 	req := httptest.NewRequest(http.MethodGet, gatewayServer.URL+"/stream?x=1", nil)
 	req.Host = "app.example.test"
+	req.Header.Set("Forwarded", "host=app.example.test")
+	req.Header.Set("X-Forwarded-Host", "app.example.test")
 	recorder := httptest.NewRecorder()
 	hub.HandlePublicProxy(recorder, req)
 
@@ -62,6 +67,13 @@ func TestGatewayHTTPProxyUsesAgentReverseTunnelAndStreamsResponse(t *testing.T) 
 	}
 	if got := recorder.Body.String(); got != "first-second" {
 		t.Fatalf("proxy body = %q", got)
+	}
+	wantUpstreamHost := strings.TrimPrefix(upstream.URL, "http://")
+	if upstreamHost != wantUpstreamHost {
+		t.Fatalf("upstream Host = %q, want %q", upstreamHost, wantUpstreamHost)
+	}
+	if forwardedHost != wantUpstreamHost {
+		t.Fatalf("upstream X-Forwarded-Host = %q, want %q", forwardedHost, wantUpstreamHost)
 	}
 }
 

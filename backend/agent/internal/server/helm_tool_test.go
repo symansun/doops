@@ -12,55 +12,45 @@ import (
 	"github.com/user/doops/agent/api"
 )
 
-func TestBuildHelmUpgradeInstallUsesBoundWorkspaceAssets(t *testing.T) {
-	root := t.TempDir()
-	workspace := filepath.Join(root, "release")
-	chart := filepath.Join(workspace, "deploy", "helm", "app")
-	values := filepath.Join(workspace, "deploy", "values", "production.yaml")
-	if err := os.MkdirAll(chart, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(values), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(chart, "Chart.yaml"), []byte("apiVersion: v2\nname: app\nversion: 1.0.0\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(values, []byte("replicas: 1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+var testHelmDigest = "sha256:" + "a" + strings.Repeat("a", 63)
 
-	command, err := buildHelmCommand(api.HelmParams{
+func testHelmParams() api.HelmParams {
+	return api.HelmParams{
 		SessionID:  "release",
 		Operation:  "upgrade-install",
 		Release:    "app",
-		Chart:      "deploy/helm/app",
+		Chart:      "https://charts.example.test/app-1.0.0.tgz",
 		Namespace:  "apps",
-		ValueFiles: []string{"deploy/values/production.yaml"},
+		ValueFiles: []string{"https://config.example.test/app-production.yaml"},
 		SetStrings: map[string]string{
-			"image.digest":     "sha256:" + strings.Repeat("a", 64),
-			"image.repository": "docker.cnb.cool/team/app",
+			"image.repository": "registry.example/app",
+			"image.digest":     testHelmDigest,
 		},
 		Timeout: "180s",
 		Confirm: true,
-	})
+	}
+}
+
+func TestBuildHelmUpgradeInstallUsesRemoteAssetsAndImmutableImage(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+
+	command, err := buildHelmCommand(testHelmParams())
 	if err != nil {
 		t.Fatalf("build helm command: %v", err)
 	}
-	expectedWorkspace, err := filepath.EvalSymlinks(workspace)
-	if err != nil {
-		t.Fatal(err)
+	if command.cwd != root {
+		t.Fatalf("helm cwd = %q, want %q", command.cwd, root)
 	}
-	if command.cwd != expectedWorkspace {
-		t.Fatalf("helm cwd = %q, want %q", command.cwd, expectedWorkspace)
+	if command.expectedImage != "registry.example/app@"+testHelmDigest {
+		t.Fatalf("expected image = %q", command.expectedImage)
 	}
 	got := strings.Join(command.args, " ")
 	for _, expected := range []string{
-		"upgrade app deploy/helm/app --install --atomic",
-		"--values deploy/values/production.yaml",
-		"--set-string image.digest=sha256:" + strings.Repeat("a", 64),
-		"--set-string image.repository=docker.cnb.cool/team/app",
+		"upgrade app https://charts.example.test/app-1.0.0.tgz --install --atomic",
+		"--values https://config.example.test/app-production.yaml",
+		"--set-string image.digest=" + testHelmDigest,
+		"--set-string image.repository=registry.example/app",
 		"--namespace apps --wait --timeout 180s",
 	} {
 		if !strings.Contains(got, expected) {
@@ -69,74 +59,13 @@ func TestBuildHelmUpgradeInstallUsesBoundWorkspaceAssets(t *testing.T) {
 	}
 }
 
-func TestBuildHelmUpgradeInstallUsesReleaseTagFromValuesWithoutSetStrings(t *testing.T) {
-	root := t.TempDir()
-	workspace := filepath.Join(root, "release")
-	chart := filepath.Join(workspace, "deploy", "helm", "app")
-	values := filepath.Join(workspace, "deploy", "values", "production.yaml")
-	if err := os.MkdirAll(chart, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(values), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(chart, "values.yaml"),
-		[]byte("image:\n  repository: registry.example/app\n  tag: latest\n  digest: \"\"\n"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(values, []byte("image:\n  tag: release-20260719\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-
-	command, err := buildHelmCommand(api.HelmParams{
-		SessionID:  "release",
-		Operation:  "upgrade-install",
-		Release:    "app",
-		Chart:      "deploy/helm/app",
-		Namespace:  "apps",
-		ValueFiles: []string{"deploy/values/production.yaml"},
-		Confirm:    true,
-	})
-	if err != nil {
-		t.Fatalf("build helm command: %v", err)
-	}
-	got := strings.Join(command.args, " ")
-	if !strings.Contains(got, "--values deploy/values/production.yaml") {
-		t.Fatalf("helm command missing values file: %s", got)
-	}
-	if strings.Contains(got, "--set-string") {
-		t.Fatalf("values-only release added set_strings: %s", got)
-	}
-}
-
 func TestBuildHelmUpgradeInstallNormalizesOperationName(t *testing.T) {
 	root := t.TempDir()
-	workspace := filepath.Join(root, "release")
-	chart := filepath.Join(workspace, "deploy", "helm", "app")
-	if err := os.MkdirAll(chart, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(chart, "values.yaml"),
-		[]byte("image:\n  repository: registry.example/app\n  tag: release-20260719\n"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	params := testHelmParams()
+	params.Operation = "UPGRADE-INSTALL"
 
-	command, err := buildHelmCommand(api.HelmParams{
-		SessionID: "release",
-		Operation: "UPGRADE-INSTALL",
-		Release:   "app",
-		Chart:     "deploy/helm/app",
-		Namespace: "apps",
-		Confirm:   true,
-	})
+	command, err := buildHelmCommand(params)
 	if err != nil {
 		t.Fatalf("build normalized helm command: %v", err)
 	}
@@ -145,91 +74,72 @@ func TestBuildHelmUpgradeInstallNormalizesOperationName(t *testing.T) {
 	}
 }
 
-func TestBuildHelmUpgradeInstallRejectsUncontrolledValuesImageInputs(t *testing.T) {
+func TestBuildHelmCommandRejectsLocalAssetsAndUncontrolledImages(t *testing.T) {
 	root := t.TempDir()
-	workspace := filepath.Join(root, "release")
-	chart := filepath.Join(workspace, "deploy", "helm", "app")
-	values := filepath.Join(workspace, "deploy", "values", "production.yaml")
-	if err := os.MkdirAll(chart, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(values), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(chart, "values.yaml"),
-		[]byte("image:\n  repository: registry.example/app\n"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 
-	base := api.HelmParams{
-		SessionID:  "release",
-		Operation:  "upgrade-install",
-		Release:    "app",
-		Chart:      "deploy/helm/app",
-		Namespace:  "apps",
-		ValueFiles: []string{"deploy/values/production.yaml"},
-		Confirm:    true,
-	}
-	for _, test := range []struct {
-		name       string
-		values     string
-		setStrings map[string]string
-		wantError  string
+	tests := []struct {
+		name      string
+		mutate    func(*api.HelmParams)
+		wantError string
 	}{
 		{
-			name:      "missing tag",
-			values:    "replicas: 2\n",
-			wantError: "release-YYYYMMDD",
-		},
-		{
-			name:      "mutable tag",
-			values:    "image:\n  tag: latest\n",
-			wantError: "release-YYYYMMDD",
-		},
-		{
-			name:      "whitespace-wrapped tag",
-			values:    "image:\n  tag: \" release-20260719 \"\n",
-			wantError: "release-YYYYMMDD",
-		},
-		{
-			name:      "invalid release date",
-			values:    "image:\n  tag: release-20260230\n",
-			wantError: "release-YYYYMMDD",
-		},
-		{
-			name:      "digest mixed with release tag",
-			values:    "image:\n  tag: release-20260719\n  digest: sha256:" + strings.Repeat("a", 64) + "\n",
-			wantError: "must not define image.digest",
-		},
-		{
-			name:       "runtime overrides mixed with values",
-			values:     "image:\n  tag: release-20260719\n",
-			setStrings: map[string]string{"replicaCount": "2"},
-			wantError:  "does not allow set_strings",
-		},
-		{
-			name:   "digest overrides mixed with release tag",
-			values: "image:\n  tag: release-20260719\n",
-			setStrings: map[string]string{
-				"image.repository": "registry.example/app",
-				"image.digest":     "sha256:" + strings.Repeat("a", 64),
+			name: "local chart",
+			mutate: func(params *api.HelmParams) {
+				params.Chart = "deploy/helm/app"
 			},
-			wantError: "must not define image.tag",
+			wantError: "explicit https:// or oci://",
 		},
-	} {
+		{
+			name: "local values file",
+			mutate: func(params *api.HelmParams) {
+				params.ValueFiles = []string{"deploy/values/production.yaml"}
+			},
+			wantError: "explicit http(s)://",
+		},
+		{
+			name: "missing immutable image",
+			mutate: func(params *api.HelmParams) {
+				params.SetStrings = nil
+			},
+			wantError: "requires image.repository and image.digest",
+		},
+		{
+			name: "mutable digest",
+			mutate: func(params *api.HelmParams) {
+				params.SetStrings["image.digest"] = "latest"
+			},
+			wantError: "invalid image.digest",
+		},
+		{
+			name: "extra runtime override",
+			mutate: func(params *api.HelmParams) {
+				params.SetStrings["replicaCount"] = "2"
+			},
+			wantError: "only allows image.repository and image.digest",
+		},
+		{
+			name: "credential material",
+			mutate: func(params *api.HelmParams) {
+				params.SetStrings["registry.password"] = "secret-value"
+			},
+			wantError: "only allows image.repository and image.digest",
+		},
+		{
+			name: "missing confirmation",
+			mutate: func(params *api.HelmParams) {
+				params.Confirm = false
+			},
+			wantError: "confirm=true",
+		},
+	}
+	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if err := os.WriteFile(values, []byte(test.values), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			params := base
-			params.SetStrings = test.setStrings
+			params := testHelmParams()
+			test.mutate(&params)
 			if _, err := buildHelmCommand(params); err == nil ||
 				!strings.Contains(err.Error(), test.wantError) {
-				t.Fatalf("unsafe image input accepted: %v", err)
+				t.Fatalf("error = %v, want %q", err, test.wantError)
 			}
 		})
 	}
@@ -241,7 +151,7 @@ func TestBuildHelmCommandRejectsLegacyValuesField(t *testing.T) {
 		"session_id":"release",
 		"operation":"upgrade-install",
 		"release":"app",
-		"chart":"deploy/helm/app",
+		"chart":"https://charts.example.test/app.tgz",
 		"namespace":"apps",
 		"values":["image.repository=registry.example/app"],
 		"confirm":true
@@ -249,98 +159,6 @@ func TestBuildHelmCommandRejectsLegacyValuesField(t *testing.T) {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&params); err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("legacy values field accepted: %v", err)
-	}
-}
-
-func TestBuildHelmCommandRejectsUnsafeInputs(t *testing.T) {
-	root := t.TempDir()
-	chart := filepath.Join(root, "release", "deploy", "helm", "app")
-	if err := os.MkdirAll(chart, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-
-	base := api.HelmParams{
-		SessionID: "release",
-		Operation: "upgrade-install",
-		Release:   "app",
-		Chart:     "../chart",
-		Namespace: "apps",
-		SetStrings: map[string]string{
-			"image.digest":     "sha256:" + strings.Repeat("a", 64),
-			"image.repository": "registry.example/app",
-		},
-		Confirm: true,
-	}
-	if _, err := buildHelmCommand(base); err == nil || !strings.Contains(err.Error(), "deploy/helm") {
-		t.Fatalf("workspace escape accepted: %v", err)
-	}
-
-	base.Chart = "deploy/helm/app"
-	base.SetStrings["registry.password"] = "secret-value"
-	if _, err := buildHelmCommand(base); err == nil ||
-		!strings.Contains(err.Error(), "forbidden credential material") {
-		t.Fatalf("credential material accepted: %v", err)
-	}
-
-	base.SetStrings = nil
-	base.Confirm = false
-	if _, err := buildHelmCommand(base); err == nil || !strings.Contains(err.Error(), "confirm=true") {
-		t.Fatalf("missing confirmation accepted: %v", err)
-	}
-}
-
-func TestBuildHelmCommandRequiresImmutableImageOverrides(t *testing.T) {
-	root := t.TempDir()
-	chart := filepath.Join(root, "release", "deploy", "helm", "app")
-	if err := os.MkdirAll(chart, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-
-	base := api.HelmParams{
-		SessionID: "release",
-		Operation: "upgrade-install",
-		Release:   "app",
-		Chart:     "deploy/helm/app",
-		Namespace: "apps",
-		Confirm:   true,
-	}
-	if _, err := buildHelmCommand(base); err == nil ||
-		!strings.Contains(err.Error(), "valid image.repository") {
-		t.Fatalf("missing image version accepted: %v", err)
-	}
-
-	base.SetStrings = map[string]string{
-		"image.repository": "registry.example/app@sha256:" + strings.Repeat("a", 64),
-		"image.digest":     "sha256:" + strings.Repeat("a", 64),
-	}
-	if _, err := buildHelmCommand(base); err == nil ||
-		!strings.Contains(err.Error(), "image.repository") {
-		t.Fatalf("digest-bearing repository accepted: %v", err)
-	}
-
-	base.SetStrings["image.repository"] = "registry.example/app"
-	base.SetStrings["image.digest"] = "latest"
-	if _, err := buildHelmCommand(base); err == nil ||
-		!strings.Contains(err.Error(), "image.digest") {
-		t.Fatalf("mutable image digest accepted: %v", err)
-	}
-
-	for _, invalidRepository := range []string{
-		"/app",
-		"app/",
-		"https://registry.example/app",
-		"registry.example/app/",
-		"registry.example:bad/app",
-		"registry.example/app//api",
-	} {
-		base.SetStrings["image.repository"] = invalidRepository
-		base.SetStrings["image.digest"] = "sha256:" + strings.Repeat("a", 64)
-		if _, err := buildHelmCommand(base); err == nil ||
-			!strings.Contains(err.Error(), "image.repository") {
-			t.Fatalf("invalid repository %q accepted: %v", invalidRepository, err)
-		}
 	}
 }
 
@@ -410,43 +228,35 @@ exit 1
 	}
 }
 
-func TestRunHelmCommandStreamsExistingValuesBeforeExplicitFiles(t *testing.T) {
+func TestRunHelmCommandVerifiesFinalDeploymentState(t *testing.T) {
 	root := t.TempDir()
-	workspace := filepath.Join(root, "release")
-	chart := filepath.Join(workspace, "deploy", "helm", "app")
-	explicitValues := filepath.Join(workspace, "deploy", "values", "production.yaml")
-	if err := os.MkdirAll(chart, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(explicitValues), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(chart, "values.yaml"),
-		[]byte("image:\n  repository: registry.example/app\n"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		explicitValues,
-		[]byte("replicas: 3\nimage:\n  tag: release-20260719\n"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
 	argsFile := filepath.Join(root, "args")
 	preflightArgsFile := filepath.Join(root, "preflight-args")
 	stdinFile := filepath.Join(root, "stdin")
 	helm := filepath.Join(root, "helm")
+	kubectl := filepath.Join(root, "kubectl")
 	if err := os.WriteFile(helm, []byte(`#!/bin/sh
 set -eu
 if [ "$1" = "status" ]; then
   exit 0
 fi
 if [ "$1" = "get" ] && [ "$2" = "values" ]; then
-  echo 'warning: kubeconfig permissions are too open' >&2
   printf '%s\n' '{"large":9007199254740993,"gateway":{"cluster":"prod"},"image":{"tag":"legacy","pullPolicy":"Always"}}'
+  exit 0
+fi
+if [ "$1" = "get" ] && [ "$2" = "manifest" ]; then
+  cat <<'YAML'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: registry.example/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+YAML
   exit 0
 fi
 for arg in "$@"; do
@@ -461,30 +271,30 @@ cat >"${STDIN_FILE}"
 `), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(kubectl, []byte(`#!/bin/sh
+set -eu
+cat <<'JSON'
+{"metadata":{"generation":7},"spec":{"replicas":1,"template":{"spec":{"containers":[{"image":"registry.example/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}}},"status":{"observedGeneration":7,"updatedReplicas":1,"readyReplicas":1,"availableReplicas":1,"unavailableReplicas":0}}
+JSON
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("ARGS_FILE", argsFile)
 	t.Setenv("PREFLIGHT_ARGS_FILE", preflightArgsFile)
 	t.Setenv("STDIN_FILE", stdinFile)
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 
-	command, err := buildHelmCommand(api.HelmParams{
-		SessionID:  "release",
-		Operation:  "upgrade-install",
-		Release:    "app",
-		Chart:      "deploy/helm/app",
-		Namespace:  "apps",
-		ValueFiles: []string{"deploy/values/production.yaml"},
-		Confirm:    true,
-	})
+	command, err := buildHelmCommand(testHelmParams())
 	if err != nil {
 		t.Fatalf("build helm command: %v", err)
 	}
-	if err := runHelmCommand(context.Background(), command, func(notificationEvent) {}); err != nil {
+	verification, err := runHelmCommand(context.Background(), command, func(notificationEvent) {})
+	if err != nil {
 		t.Fatalf("run helm command: %v", err)
 	}
-	args, err := os.ReadFile(argsFile)
-	if err != nil {
-		t.Fatal(err)
+	if !strings.Contains(verification, "final Deployment spec verified") {
+		t.Fatalf("final Deployment verification missing: %q", verification)
 	}
 	preflightArgs, err := os.ReadFile(preflightArgsFile)
 	if err != nil {
@@ -495,14 +305,14 @@ cat >"${STDIN_FILE}"
 		slices.Contains(preflightArgLines, "--dry-run") {
 		t.Fatalf("helm preflight must be server-side: %q", preflightArgLines)
 	}
-	argLines := strings.Split(strings.TrimSpace(string(args)), "\n")
-	stdinIndex := slices.Index(argLines, "-")
-	explicitIndex := slices.Index(argLines, "deploy/values/production.yaml")
-	if stdinIndex < 0 || explicitIndex < 0 || stdinIndex >= explicitIndex {
-		t.Fatalf("existing values do not precede explicit values: %q", argLines)
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if slices.Contains(argLines, "--set-string") {
-		t.Fatalf("values-only release used runtime set_strings: %q", argLines)
+	argLines := strings.Split(strings.TrimSpace(string(args)), "\n")
+	if !slices.Contains(argLines, "https://charts.example.test/app-1.0.0.tgz") ||
+		!slices.Contains(argLines, "--set-string") {
+		t.Fatalf("remote chart or immutable image was not used: %q", argLines)
 	}
 	stdin, err := os.ReadFile(stdinFile)
 	if err != nil {
@@ -517,11 +327,6 @@ cat >"${STDIN_FILE}"
 
 func TestRunHelmCommandPreflightBlocksMutation(t *testing.T) {
 	root := t.TempDir()
-	workspace := filepath.Join(root, "release")
-	chart := filepath.Join(workspace, "deploy", "helm", "app")
-	if err := os.MkdirAll(chart, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	mutationMarker := filepath.Join(root, "mutation")
 	helm := filepath.Join(root, "helm")
 	if err := os.WriteFile(helm, []byte(`#!/bin/sh
@@ -544,89 +349,16 @@ touch "${MUTATION_MARKER}"
 	t.Setenv("MUTATION_MARKER", mutationMarker)
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 
-	command, err := buildHelmCommand(api.HelmParams{
-		SessionID: "release",
-		Operation: "upgrade-install",
-		Release:   "app",
-		Chart:     "deploy/helm/app",
-		Namespace: "apps",
-		SetStrings: map[string]string{
-			"image.repository": "registry.example/app",
-			"image.digest":     "sha256:" + strings.Repeat("a", 64),
-		},
-		Confirm: true,
-	})
+	command, err := buildHelmCommand(testHelmParams())
 	if err != nil {
 		t.Fatalf("build helm command: %v", err)
 	}
-	err = runHelmCommand(context.Background(), command, func(notificationEvent) {})
+	_, err = runHelmCommand(context.Background(), command, func(notificationEvent) {})
 	if err == nil || !strings.Contains(err.Error(), "helm preflight failed") ||
 		!strings.Contains(err.Error(), "cannot overwrite table with non table") {
 		t.Fatalf("preflight failure not returned: %v", err)
 	}
 	if _, err := os.Stat(mutationMarker); !os.IsNotExist(err) {
 		t.Fatalf("helm mutation ran after failed preflight")
-	}
-}
-
-func TestBuildHelmCommandRejectsSymlinkOutsideRequiredAssetPrefix(t *testing.T) {
-	root := t.TempDir()
-	workspace := filepath.Join(root, "release")
-	outsideChart := filepath.Join(workspace, "other-chart")
-	if err := os.MkdirAll(outsideChart, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	linkParent := filepath.Join(workspace, "deploy", "helm")
-	if err := os.MkdirAll(linkParent, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("../../other-chart", filepath.Join(linkParent, "app")); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-
-	_, err := buildHelmCommand(api.HelmParams{
-		SessionID: "release",
-		Operation: "upgrade-install",
-		Release:   "app",
-		Chart:     "deploy/helm/app",
-		Namespace: "apps",
-		Confirm:   true,
-	})
-	if err == nil || !strings.Contains(err.Error(), "must remain under deploy/helm/") {
-		t.Fatalf("symlinked chart outside prefix accepted: %v", err)
-	}
-}
-
-func TestBuildHelmCommandRejectsChartValuesSymlinkOutsideChartAssets(t *testing.T) {
-	root := t.TempDir()
-	workspace := filepath.Join(root, "release")
-	chart := filepath.Join(workspace, "deploy", "helm", "app")
-	if err := os.MkdirAll(chart, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	outsideValues := filepath.Join(workspace, "outside-values.yaml")
-	if err := os.WriteFile(
-		outsideValues,
-		[]byte("image:\n  repository: registry.example/app\n  tag: release-20260719\n"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("../../../outside-values.yaml", filepath.Join(chart, "values.yaml")); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-
-	_, err := buildHelmCommand(api.HelmParams{
-		SessionID: "release",
-		Operation: "upgrade-install",
-		Release:   "app",
-		Chart:     "deploy/helm/app",
-		Namespace: "apps",
-		Confirm:   true,
-	})
-	if err == nil || !strings.Contains(err.Error(), "must remain under deploy/helm/app/") {
-		t.Fatalf("chart values symlink outside chart assets accepted: %v", err)
 	}
 }

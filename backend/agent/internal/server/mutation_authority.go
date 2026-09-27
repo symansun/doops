@@ -90,16 +90,15 @@ func signMutationAuthorization(secret, sessionID, authorityID string, issuedAt i
 	return hex.EncodeToString(mac.Sum(nil)), "sha256:" + hex.EncodeToString(binding[:]), nil
 }
 
-func mutationContextDigest(doopsSessionID, instruction, workspaceCommit string) (string, error) {
+func mutationContextDigest(doopsSessionID, instruction string) (string, error) {
 	if strings.TrimSpace(doopsSessionID) == "" ||
-		strings.TrimSpace(instruction) == "" ||
-		!validWorkspaceGitCommit(strings.TrimSpace(workspaceCommit)) {
+		strings.TrimSpace(instruction) == "" {
 		return "", fmt.Errorf("mutation context is incomplete")
 	}
 	return digestRuntimeAttestationJSON(map[string]interface{}{
-		"doopsSessionId":  strings.TrimSpace(doopsSessionID),
-		"instruction":     instruction,
-		"workspaceCommit": strings.TrimSpace(workspaceCommit),
+		"doopsSessionId": strings.TrimSpace(doopsSessionID),
+		"instruction":    instruction,
+		"source":         "direct-target",
 	})
 }
 

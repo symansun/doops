@@ -26,6 +26,9 @@ This guide holds command-level usage details. The skill file is only the entry p
 | List target credentials | `doops credential list --target <t>` | Uses the cached gateway login and returns only metadata granted to that user on the selected cluster/instance. |
 | Preflight development credentials | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` | Fails closed unless every declared credentialRef has a matching active grant use on the selected target. |
 | Manage credential lifecycle | `doops credential <create|put|grant|verify|promote|grant-revoke|revoke>` | See `CREDENTIAL_RESOURCES.md`. |
+| Create Gateway user and API key | `doops admin user create --target <t> --user <u> (--password-stdin\|--generate-password)` | Removes bootstrap wildcard access and applies only explicit `--grant-target` scopes. |
+| List Gateway users | `doops admin user list --target <t>` | Returns metadata only. |
+| Manage target grants | `doops admin grant <list\|add\|delete> ...` | Grants use exact configured `cluster/instance` routes. |
 | Issue token as admin | `doops admin token create ...` | Requires a gateway token with `admin` permission. |
 | Inspect/cancel active operations | `doops admin operations <list|cancel> ...` | Gateway administration. |
 | Manage scheduled issue jobs | `doops admin jobs <list|add|run|enable|disable|rm|issues> ...` | See `DOOPS_SCHEDULED_ISSUES.md`. |
@@ -40,7 +43,7 @@ doops targets --target unicom
 doops -session smoke exec --target unicom --cmd 'hostname && date -u +%FT%TZ'
 ```
 
-`doops list` reads local config. `doops targets` asks gateway for live connected agents. A target can be listed locally but offline in gateway.
+`doops list` reads local config. `doops targets` asks gateway for live connected agents. A target can be listed locally but unavailable in gateway because it is offline or because the logged-in user lacks the exact target grant; the CLI does not collapse these cases into a definitive offline diagnosis.
 
 `doops targets` separates target-wide busy from normal per-session activity:
 
@@ -94,9 +97,53 @@ doops admin token revoke --target jm --id <token-id>
 
 ## Gateway Users And Target Grants
 
-当前 CLI 尚未封装 user/grant 子命令。创建用户和 target grant 时使用 HTTPS Gateway
-管理员 API；管理员 token 只从统一 `auth.json` 读取并放入 Authorization header，不得
-出现在命令行参数、请求 URL、日志或文档中。用户密码只放在 JSON request body，禁止回显。
+CLI 已封装用户创建、API key 签发和精确 target grant 管理。管理员 token 只从统一
+`auth.json` 读取并放入 Authorization header，不得出现在命令行参数、请求 URL、日志或
+文档中。用户密码只通过 stdin、交互式终端或 `--generate-password` 输入，禁止放入命令
+参数或自然语言 prompt。
+
+创建新用户并签发 API key：
+
+```bash
+printf '%s' '<PASSWORD_FROM_SECURE_INPUT>' | \
+  doops admin user create \
+  --target <gateway-target> \
+  --user <username> \
+  --password-stdin \
+  --grant-target <allowed-target> \
+  --name user-create \
+  --expires 720h
+```
+
+`--grant-target` 可以重复。没有指定时，CLI 会删除后端 bootstrap grant，不授予任何
+target 权限，并明确输出 warning。`--generate-password` 可替代 `--password-stdin`。
+CLI 会先查同名用户，拒绝重复创建；创建或授权、签发、最终复核任一步失败都会停用新用户，
+若 API key 已签发则同时尝试撤销，命令以失败退出。
+
+用户和授权的只读/维护命令：
+
+```bash
+doops admin user list --target <gateway-target>
+doops admin grant list --target <gateway-target> --user-id <user-id>
+doops admin grant add --target <gateway-target> \
+  --scope-target <allowed-target> --user-id <user-id>
+doops admin grant delete --target <gateway-target> --id <grant-id>
+```
+
+已有用户可以设置或轮换密码：
+
+```bash
+printf '%s' '<PASSWORD_FROM_SECURE_INPUT>' | \
+  doops admin user password --target <gateway-target> \
+  --user-id <user-id> --password-stdin
+```
+
+停用或恢复用户：
+
+```bash
+doops admin user disable --target <gateway-target> --user-id <user-id> --disabled=true
+doops admin user disable --target <gateway-target> --user-id <user-id> --disabled=false
+```
 
 先确认请求对应的精确路由，并检查同名用户：
 
@@ -260,13 +307,13 @@ doops -session release-<commit> ask \
   --target <configured-target> \
   --apply \
   --credential <resource-name> \
-  --msg '在 <target> 的 namespace <namespace> 发布 deployment/<workload>，镜像 <repository>@sha256:<digest>；允许使用 deploy/helm/<name>/；原因：<reason>；验收：Secret 类型/key、rollout、实际镜像、Service/Endpoint、健康检查和关键功能路径通过。'
+  --msg '在 <target> 的 namespace <namespace> 发布 deployment/<workload>，镜像 <repository>@sha256:<digest>；使用 chart https://charts.example/<name>.tgz；原因：<reason>；验收：Secret 类型/key、rollout、最终 Deployment spec/status、实际镜像、Service/Endpoint、健康检查和关键功能路径通过。'
 ```
 
-必须明确提供 target、服务范围、镜像版本、变更原因和验收条件。镜像版本可以是任务中的
-不可变 digest，也可以由完整 chart values 与显式 `value_files` 收敛出的
-`image.tag=release-YYYYMMDD`；后一模式禁止 digest 和任何 `set_strings`。需要 Helm 时还要
-明确资产目录。`--credential` 可重复，但只传 resource name，不能内联 payload。
+必须明确提供 target、服务范围、镜像版本、变更原因和验收条件。镜像版本必须是任务中的
+不可变 digest。需要 Helm 时还要明确远程 `https://`/`oci://` chart；可选 values 只能是
+HTTP(S) URL，`set_strings` 只允许 `image.repository` 和 `image.digest`，不支持
+`image.tag` 发布模式。`--credential` 可重复，但只传 resource name，不能内联 payload。
 
 CNB CI 负责测试、构建和发布制品；Gateway 负责鉴权、审计、并发控制和凭据预物化；
 目标 Agent/doagent 在目标运行环境执行业务 mutation。当前没有 EnvironmentRegistry、
@@ -423,16 +470,21 @@ curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh
 
 已经改用 Helm chart `deploy/helm/doops-agent` 的维护者节点才走
 `scripts/release-managed-agent.sh`。现网必须已经是 `/app/sandbox-entrypoint.sh`，
-脚本会先把镜像拉到节点，再 `helm upgrade --install`。Chart 先起新 Pod，Gateway
-切换会话后才删旧副本：
+已有集群必须提供操作机 kubeconfig；Helm mutation 由操作机执行，不能通过当前 Agent
+执行。Chart 先起新 Pod，Gateway 切换会话后才删旧副本；候选 Pod 或 Gateway 接管失败
+会自动回滚到发布前 Helm revision：
 
 ```bash
 bash scripts/release-managed-agent.sh \
   --target gw-edu-coder \
   --session agent-release-<tag> \
+  --cluster doops-edu \
+  --instance edu-coder \
   --release doops-agent-live \
   --namespace kz-ops \
+  --kubeconfig /secure/path/to/kubeconfig \
   --proxy-allowed-hosts 127.0.0.1,internal.example.com \
+  --host-alias internal.example.com=10.0.0.10 \
   --version <vX.Y.Z>
 ```
 
@@ -441,6 +493,12 @@ hostname/IP；省略会保留现网值，传空字符串会恢复为拒绝全部
 能访问的内网上游，不是公网访问域名。URL、端口、路径、通配符和空条目会在任何
 集群变更前被拒绝；发布后会核对新 Agent 环境与 Helm release 的值。新集群省略
 `proxy.allowedHosts` 时安全地默认拒绝全部。
+
+当上游域名必须固定到指定地址时，重复传
+`--host-alias <hostname>=<ip>`。该参数会合并到 live Helm
+`hostAliases`，同名 hostname 会被显式替换，其他映射保持不变。域名或 IP
+格式错误会在接触 target 前失败；发布后会核对 Pod 配置，并从新 Agent
+内执行真实解析验证。省略该参数会完整保留现网映射，不存在 DNS fallback。
 
 `doops upgrade` 只做预演：
 

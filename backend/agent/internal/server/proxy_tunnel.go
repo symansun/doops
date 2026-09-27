@@ -216,7 +216,10 @@ func cloneProxyHeader(in http.Header) map[string][]string {
 			strings.EqualFold(key, "TE"),
 			strings.EqualFold(key, "Trailer"),
 			strings.EqualFold(key, "Transfer-Encoding"),
-			strings.EqualFold(key, "Upgrade"):
+			strings.EqualFold(key, "Upgrade"),
+			strings.EqualFold(key, "Host"),
+			strings.EqualFold(key, "Forwarded"),
+			strings.EqualFold(key, "X-Forwarded-Host"):
 			continue
 		}
 		out[key] = append([]string(nil), values...)
@@ -303,6 +306,7 @@ func (gw *Gateway) handleHTTPProxyOverWS(ctx context.Context, reqID interface{},
 	req.Header = headersFromJSON(params.Header)
 	req.Header.Del("Authorization")
 	req.Host = target.Host
+	req.Header.Set("X-Forwarded-Host", target.Host)
 	req.ContentLength = params.ContentLength
 	response, err := (&http.Client{
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {

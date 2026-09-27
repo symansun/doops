@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestGatewayTargetsURLUsesVersionedEndpoint(t *testing.T) {
 	got, err := gatewayTargetsURL("https://gateway.example.com")
@@ -78,5 +81,17 @@ func TestFilterGatewayTargetsDoesNotReturnOtherOnlineTargets(t *testing.T) {
 
 	if got := filterGatewayTargets(targets, "legacy", "offline"); len(got) != 0 {
 		t.Fatalf("expected no route match, got %#v", got)
+	}
+}
+
+func TestGatewayTargetUnavailableMessageDoesNotClaimOffline(t *testing.T) {
+	message := gatewayTargetUnavailableMessage("doops-114-k8s", "master-1")
+	if strings.Contains(message, "target offline") {
+		t.Fatalf("message must not claim offline: %s", message)
+	}
+	for _, want := range []string{"target unavailable", "doops-114-k8s/master-1", "explicit target grant"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("message missing %q: %s", want, message)
+		}
 	}
 }

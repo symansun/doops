@@ -50,7 +50,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   pull        基于 Git 拉取远端 session 工作区到本地目录
   clean       清理远端节点上的工作区隔离沙盒
   unlock      管理员强制释放 gateway 上卡住的 target busy 状态
-  admin       gateway 管理命令，例如给用户签发 token
+  admin       gateway 管理命令：用户、target 授权和 API key
   upgrade     预演 doops-agent 自升级；正式替换由外部 CI/GitOps 执行
   add         添加 gateway target
   login       缓存 gateway user token
@@ -136,7 +136,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		}
 		targets = filterGatewayTargets(targets, server.Cluster, server.Instance)
 		if len(targets) == 0 {
-			fmt.Printf("Error: target offline: %s/%s\n", server.Cluster, server.Instance)
+			fmt.Println(gatewayTargetUnavailableMessage(server.Cluster, server.Instance))
 			os.Exit(1)
 		}
 		fmt.Printf("%-18s %-18s %-8s %-16s %-7s %-7s %-28s %-24s\n", "CLUSTER", "INSTANCE", "BUSY", "STATUS", "ACTIVE", "QUEUED", "RESOURCES", "LAST_SEEN")
@@ -188,7 +188,17 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			runAdminJobs(cmdArgs[1:], servers, configErr)
 			return
 		}
+		if len(cmdArgs) >= 1 && cmdArgs[0] == "user" {
+			runAdminUsers(cmdArgs[1:], servers, configErr)
+			return
+		}
+		if len(cmdArgs) >= 1 && cmdArgs[0] == "grant" {
+			runAdminGrants(cmdArgs[1:], servers, configErr)
+			return
+		}
 		if len(cmdArgs) < 2 {
+			fmt.Println("Usage: doops admin user <list|create|password|disable> ...")
+			fmt.Println("       doops admin grant <list|add|delete> ...")
 			fmt.Println("Usage: doops admin token create --target <gateway-target> --user <username> [--name label] [--expires 720h] [--save-as target]")
 			fmt.Println("       doops admin token list --target <gateway-target>")
 			fmt.Println("       doops admin token revoke --target <gateway-target> --id <token-id>")
@@ -214,6 +224,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			return
 		}
 		if cmdArgs[0] != "token" || cmdArgs[1] != "create" {
+			fmt.Println("Usage: doops admin user <list|create|password|disable> ...")
+			fmt.Println("       doops admin grant <list|add|delete> ...")
 			fmt.Println("Usage: doops admin token create --target <gateway-target> --user <username> [--name label] [--expires 720h] [--save-as target]")
 			fmt.Println("       doops admin token list --target <gateway-target>")
 			fmt.Println("       doops admin token revoke --target <gateway-target> --id <token-id>")
@@ -440,13 +452,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			toolName = "doops_agent_prompt"
 			arguments["instruction"] = msgStr
 			if apply {
-				workspaceCommit, err := loadWorkspaceCommit(server.Name, *sessionName)
-				if err != nil {
-					fmt.Printf("Error: %v\n", err)
-					os.Exit(1)
-				}
 				arguments["operation"] = "apply"
-				arguments["workspace_commit"] = workspaceCommit
 			}
 			if len(credentialRefs) != 0 {
 				arguments["credential_refs"] = []string(credentialRefs)
@@ -895,6 +901,13 @@ func printServerList(w io.Writer, servers []Server) error {
 		)
 	}
 	return nil
+}
+
+func gatewayTargetUnavailableMessage(cluster, instance string) string {
+	return fmt.Sprintf(
+		"Error: target unavailable: %s/%s is not visible through this Gateway login; it may be offline or the user may lack an explicit target grant. Check the Gateway token, exact target route, and grant before concluding the cluster is down.",
+		strings.TrimSpace(cluster), strings.TrimSpace(instance),
+	)
 }
 
 func findServer(servers []Server, name string) *Server {

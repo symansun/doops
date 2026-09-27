@@ -52,6 +52,21 @@ with a configured `provider.minimax.options.apiKey`. The image must not supply
 a second provider, infer a credential, or reset the selected model during an
 upgrade.
 
+For an existing Helm-managed Agent, use an operator-side kubeconfig and keep
+the Gateway identity explicit:
+
+```bash
+bash scripts/release-managed-agent.sh \
+  --target <gateway-target> \
+  --session <release-session> \
+  --cluster <gateway-cluster> \
+  --instance <gateway-instance> \
+  --release <release> \
+  --namespace <namespace> \
+  --kubeconfig /secure/path/to/kubeconfig \
+  --image <repository>@sha256:<digest>
+```
+
 ## Standard Endpoint
 
 ```text

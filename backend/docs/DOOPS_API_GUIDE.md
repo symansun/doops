@@ -24,11 +24,32 @@ wss://gateway.example.com
 
 内网和受控测试环境也支持 HTTP / WS。客户端不能因为 Gateway 是 HTTP 就拒绝连接；生产环境仍建议使用 TLS。
 
-所有用户侧请求都必须使用 user token 鉴权：
+所有用户侧请求都必须使用 Gateway user token 鉴权：
 
 ```http
 Authorization: Bearer <DOOPS_GATEWAY_USER_TOKEN>
 ```
+
+Gateway 鉴权失败仍返回 HTTP `401`，但响应体包含稳定错误分类，避免与目标业务服务
+或受管凭据的认证失败混淆：
+
+```json
+{
+  "error": "unauthorized",
+  "code": "gateway_auth_failed",
+  "auth_domain": "gateway",
+  "message": "Gateway user token is missing, invalid, expired, or revoked",
+  "next_action": "Run doops login for this Gateway target; do not replace the Gateway token with a managed credential or business API key"
+}
+```
+
+`gateway_auth_failed` 只表示 DoOps Gateway 登录态问题，不表示受管凭据
+`credential_invalid`。如果响应只有裸 `401 Unauthorized`，调用方必须将认证域视为
+未确定，不得直接把错误归因于受管凭据。
+
+`/v1/edge/connect` 使用独立的 enrollment token。失败时返回
+`code=edge_enrollment_auth_failed` 和 `auth_domain=edge_enrollment`，不能使用 Gateway
+user token 或受管凭据替代。
 
 `X-Doops-Key` 不属于当前协议，Gateway 不接受该字段。
 

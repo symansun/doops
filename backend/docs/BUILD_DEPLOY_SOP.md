@@ -71,14 +71,15 @@ DoOps v3 的唯一发布入口是明确授权的自然语言任务。不得使�
 ### 1. 触发受控发布
 发布者必须先将待发布提交推送到 `main`，确认 CNB CI 已为该精确 commit 生成候选镜像，并取得 registry digest。推荐调用 CNB 的 `api_trigger_deploy_agent`，由 CI 临时配置单个 Gateway route、同步当前仓库，并执行下方同一自然语言命令；人工控制端调用只用于故障诊断。自然语言任务必须直接写明 target、服务范围、不可变镜像 digest、变更原因、允许使用的 Helm 资产和验收条件；缺少任一发布事实时必须阻塞，不得猜测或补默认值。
 `api_trigger_deploy_agent` 只定义在 `main` 分支事件下，Gateway token 仅通过 stdin
-交给 main 上构建的 CLI。push 生成的 workspace commit 由 CLI 自动保存并随随后的
-`ask --apply` 提交，Agent 必须在执行前验证远端工作区仍是该精确 commit。
+交给 main 上构建的 CLI。CI secret 中的 `DOOPS_HELM_ASSET` 必须是任务明确授权的
+`https://`/`oci://` Chart URL；`ask --apply` 直接把该远程 Chart 和不可变镜像 digest
+交给目标 Agent，不同步代码到 target 隔离工作区。
 
 ```bash
 doops -session release-<commit> ask \
   --target <configured-doops-target> \
   --apply \
-  --msg '在 <target> 发布 <service-scope>，镜像 <repository>@sha256:<digest>；仅使用 deploy/helm/<name>/ 运行资产；原因：<reason>；验收：<rollout、实际镜像、健康检查和功能路径>。'
+  --msg '在 <target> 发布 <service-scope>，镜像 <repository>@sha256:<digest>；使用 chart https://charts.example/<name>.tgz；原因：<reason>；验收：<rollout、最终 Deployment spec/status、健康检查和功能路径>。'
 ```
 
 `--apply` 是本次 mutation 的显式授权，不是兼容开关。任务返回的文本声明不能作为成功证据；验收必须来自本轮实际命令、Kubernetes 状态、健康检查和功能测试。需要凭据时只传 `--credential <resource-name>` 元数据引用，Gateway 必须按当前用户、target、session 和精确资源 scope 授权。公开 prompt、doagent 上下文、CLI 输出和日志不得接收凭据 payload；Gateway 仅通过内部凭据物化调用向目标 Agent 短暂传递 payload。
@@ -129,21 +130,42 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 
 ## 三、 Agent 部署与热更新机制
 
-`doops-agent` 由 Helm 管理的 `Deployment` 托管，Chart 位于 `deploy/helm/doops-agent`。该目录只保存运行时 Helm 模板、默认值和挂载定义，不保存环境注册表或部署 workflow。具体镜像、目标节点、Secret 引用、Gateway 地址和发布参数必须由本次自然语言任务明确给出或来自任务明确授权读取的当前 Helm release。发布前必须对比当前 workload 与候选 Chart 的 command、args、env、probes、volumeMounts 和 volumes。包括只更新镜像在内的所有发布都必须调用结构化 `doops_helm upgrade-install`，从任务明确指定的 Chart、可选 `value_files` 和非敏感 `set_strings` 完整收敛；更新现有 release 且任务已给出 release、namespace、chart 和不可变镜像时，`value_files` 可以为空，工具自动保留当前 values。`value_files` 只放 `deploy/` 下的 YAML 文件路径，`set_strings` 只覆盖标量叶子，禁止把 map/list 父键编码成字符串。`upgrade-install` 先用相同参数执行 Helm dry-run，再执行真实 mutation。镜像版本使用互斥的 digest 覆盖模式，或完整 values 中 `image.repository` 加 `image.tag=release-YYYYMMDD` 的模式；后者禁止 digest 和任何 `set_strings`。不存在 Kubernetes 镜像 mutation 发布旁路。自然语言 apply 禁止通过 shell 执行 kubectl 或 Helm mutation；运维人员明确给出的前台 `exec` Helm 操作合法，但 `exec --bg` Helm mutation 必须拒绝。用户明确给出的 SSH 命令属于普通 exec，可由在线 Agent 代理执行，并遵守相同的权限、排队、超时、取消和审计规则。
+`doops-agent` 由 Helm 管理的 `Deployment` 托管。具体镜像、目标节点、Secret 引用、
+Gateway 地址、远程 Chart 和发布参数必须由本次自然语言任务明确给出或来自任务明确授权
+读取的当前 Helm release。发布前必须对比当前 workload 与候选 Chart 的 command、args、
+env、probes、volumeMounts 和 volumes。包括只更新镜像在内的所有发布都必须调用结构化
+`doops_helm upgrade-install`，使用任务明确指定的远程 `https://`/`oci://` Chart、
+可选 HTTP(S) `value_files` 和非敏感 `set_strings` 完整收敛；更新现有 release 且任务已
+给出 release、namespace、chart 和不可变镜像时，`value_files` 可以为空，工具自动保留
+当前 values。`set_strings` 只允许 `image.repository` 与不可变 `image.digest`，禁止
+tag 模式和 map/list 父键。`upgrade-install` 先用相同参数执行 Helm dry-run，再执行真实
+mutation。不存在 Kubernetes 镜像 mutation 发布旁路。自然语言 apply 禁止通过 shell
+执行 kubectl 或 Helm mutation；运维人员明确给出的前台 `exec` Helm 操作合法，但
+`exec --bg` Helm mutation 必须拒绝。用户明确给出的 SSH 命令属于普通 exec，可由在线
+Agent 代理执行，并遵守相同的权限、排队、超时、取消和审计规则。Helm 成功后还必须以
+最终 Deployment manifest/spec/status 为事实源，确认 generation、镜像和副本状态一致；
+只看 Helm revision 或 Pod Ready 不构成发布成功。
 
 受管 `doops-agent` 不得升级自身。唯一发布命令是笔记本上的
-`scripts/release-managed-agent.sh`：Helm chart `deploy/helm/doops-agent` 以
-`maxSurge=1`、`maxUnavailable=0` 先拉起新 Pod，Gateway `Register` 用新会话替换旧
-WebSocket 后再删旧副本。禁止 `kubectl set image`、Job、release-runner、Docker
-restart，以及 `doops upgrade` 的非 dry-run。
+`scripts/release-managed-agent.sh`。已有集群必须显式提供操作机 kubeconfig，
+`cluster/instance` 还要与 live Deployment 环境精确匹配；脚本在操作机执行
+server-side Helm dry-run 和真实 mutation，当前 Agent 只参与 Gateway 在线与接管验证。
+Chart 以 `maxSurge=1`、`maxUnavailable=0` 先拉起新 Pod，Gateway `Register` 用新会话
+替换旧 WebSocket 后再删旧副本。镜像拉取、调度、启动、readiness 或接管失败会采集
+Pod/事件，并由同一外部控制器自动回滚到发布前 Helm revision。禁止 `kubectl set image`、
+Job、release-runner、Docker restart，以及 `doops upgrade` 的非 dry-run。
 
 ```bash
 bash scripts/release-managed-agent.sh \
   --target <configured-target> \
   --session agent-release-<tag> \
+  --cluster <gateway-cluster> \
+  --instance <gateway-instance> \
   --release <helm-release> \
   --namespace <namespace> \
+  --kubeconfig <operator-kubeconfig> \
   --proxy-allowed-hosts 127.0.0.1,internal.example.com \
+  --host-alias internal.example.com=10.0.0.10 \
   --version <vX.Y.Z>
 ```
 
@@ -152,6 +174,12 @@ bash scripts/release-managed-agent.sh \
 脚本会拒绝 URL、端口、路径、通配符和空条目，并在新 Pod 上对照 Helm release
 验证实际环境值。新集群省略该值时默认拒绝全部；需要开放时在完整 `--values`
 文件中声明，不能同时传这个参数。
+
+需要把命名 HTTPS 上游固定到指定地址时，重复传
+`--host-alias <hostname>=<ip>`。脚本会把请求合并进 live Helm
+`hostAliases`，拒绝 URL、端口、路径、通配符、非法 IP 和同一 hostname
+的冲突地址。新 Pod 接管后必须同时通过 Pod spec 对比和容器内 DNS
+解析验证；省略参数时保留现网 aliases，不允许解析失败时回退到其他地址。
 
 新集群还没有 Agent 时，同一条命令改传完整 `--values` 和本机 kubeconfig，仍然只走
 这份 Chart 的 `helm upgrade --install`。自定义 entrypoint 或 `hostNetwork` 必须先改成

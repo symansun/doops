@@ -79,8 +79,8 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "`value_files` 是可选" in system_prompt
     assert "不得要求用户提供候选 values" in system_prompt
     assert "不得询问是否启用 dry-run" in system_prompt
-    assert "image.tag=release-YYYYMMDD" in system_prompt
-    assert "不得传 `set_strings`" in system_prompt
+    assert "不支持 tag 模式" in system_prompt
+    assert "只传 `image.repository` 和 `image.digest`" in system_prompt
     assert '"value_files": map[string]interface{}' in helm_mcp
     assert '"values": map[string]interface{}' not in helm_mcp
     assert "shell 中的 Kubernetes" in system_prompt
@@ -99,10 +99,11 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "validate_simple_name" in deploy_script
     assert "validate_single_line" in deploy_script
     assert 'test "${#image_digest}" -eq 64' in deploy_script
-    assert 'case "/${DOOPS_HELM_ASSET}/" in' in deploy_script
+    assert 'DOOPS_HELM_ASSET must be an explicit https:// or oci:// chart URL' in deploy_script
     assert '"https://doops.l8ai.cn"' in cnb
-    assert '-session "${DOOPS_SESSION}" push' in cnb
-    assert "--src backend" in cnb
+    assert '-session "${DOOPS_SESSION}" push' not in cnb
+    assert "--src backend" not in cnb
+    assert "使用 chart ${DOOPS_HELM_ASSET}" in cnb
     assert "--src ." not in main_pipeline
     assert '-session "${DOOPS_SESSION}" ask' in cnb
     assert "--apply" in cnb
@@ -122,23 +123,23 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "发布必须使用任务明确授权的" in k8s_skill
     assert "`value_files` 可以为空" in k8s_skill
     assert "不得发起缺少 `confirm=true` 的试探调用" in k8s_skill
-    assert "image.tag=release-YYYYMMDD" in k8s_skill
+    assert "混入 tag 模式" in k8s_skill
     assert "明确的 release、namespace、`value_files`" not in k8s_skill
     assert "Chart、`value_files` 和非敏感" not in build_deploy_sop
-    assert "Chart、可选 `value_files` 和非敏感" in build_deploy_sop
+    assert "可选 HTTP(S) `value_files` 和非敏感" in build_deploy_sop
     assert "`value_files` 可以为空" in build_deploy_sop
     assert "Secret、ServiceAccount" in k8s_skill
     assert "mcp_doops_helm" in deployment_doc
     assert "`session_id` 不属于模型参数" in deployment_doc
     assert "attestation schema" in deployment_doc
     assert "包括只更新镜像在内的所有发布" in deployment_doc
-    assert "workspace commit" in deployment_doc
+    assert "隔离工作区" in deployment_doc
     assert "共享 mutation 锁" in deployment_doc
     assert "api_trigger_bootstrap_release_runner" not in deployment_doc
     assert "bootstrap-release-runner.sh" not in deployment_doc
     assert "不得要求调用方再提供" in deployment_doc
-    assert "image.tag=release-YYYYMMDD" in deployment_doc
-    assert "缺少明确版本或混用两种模式" in deployment_doc
+    assert "不允许 tag 模式" in deployment_doc
+    assert "缺少明确版本或混用输入时" in deployment_doc
     assert "缺少\n`confirm=true` 的调用不是预演接口" in deployment_doc
     assert "validate_simple_name" in cnb
     assert '*[!A-Za-z0-9._-]*' in cnb

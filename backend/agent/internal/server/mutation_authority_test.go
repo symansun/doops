@@ -5,11 +5,10 @@ import (
 	"testing"
 )
 
-func TestMutationContextDigestBindsInstructionAndWorkspaceCommit(t *testing.T) {
+func TestMutationContextDigestBindsInstructionAndDirectTarget(t *testing.T) {
 	base, err := mutationContextDigest(
 		"release-session",
 		"deploy the current workspace with Helm",
-		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -17,24 +16,12 @@ func TestMutationContextDigestBindsInstructionAndWorkspaceCommit(t *testing.T) {
 	changedInstruction, err := mutationContextDigest(
 		"release-session",
 		"deploy a different release with Helm",
-		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	changedCommit, err := mutationContextDigest(
-		"release-session",
-		"deploy the current workspace with Helm",
-		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if base == changedInstruction {
 		t.Fatal("instruction was not bound into mutation context")
-	}
-	if base == changedCommit {
-		t.Fatal("workspace commit was not bound into mutation context")
 	}
 }
 

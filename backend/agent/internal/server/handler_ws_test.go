@@ -970,8 +970,8 @@ func TestSubscribeDoagentSSEPreservesErrorEventMessage(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "error decoding response body") {
 		t.Fatalf("error event must preserve the original message, got %v", err)
 	}
-	if !strings.Contains(progress.String(), "error decoding response body") {
-		t.Fatalf("error progress must preserve the original message, got %q", progress.String())
+	if progress.String() != "" {
+		t.Fatalf("terminal error must be deferred to the caller, got progress %q", progress.String())
 	}
 }
 
@@ -1067,6 +1067,201 @@ func TestAgentPromptReturnsAdmissionErrorImmediately(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("prompt admission error must not wait for SSE timeout, took %s", elapsed)
+	}
+}
+
+func TestAgentApplySucceedsAfterVerifiedHelmWhenFinalTurnFails(t *testing.T) {
+	const (
+		doopsSessionID = "apply-final-turn-error"
+		agentSessionID = "apply-final-turn-error-agent"
+		turnID         = "turn-apply-final-turn-error"
+	)
+	secret := strings.Repeat("b", 64)
+	previousSecret := processMutationAuthoritySecret
+	processMutationAuthoritySecret = secret
+	t.Cleanup(func() {
+		processMutationAuthoritySecret = previousSecret
+	})
+
+	promptParamsReady := make(chan map[string]interface{}, 1)
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rpc":
+			var request map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode rpc: %v", err)
+				return
+			}
+			id := request["id"]
+			switch request["method"] {
+			case "session/new":
+				params, ok := request["params"].(map[string]interface{})
+				if !ok {
+					t.Fatalf("session/new params = %#v", request["params"])
+				}
+				if params["cwd"] != "/root/ws/"+doopsSessionID {
+					t.Fatalf("apply session must use its bound workspace cwd, got %#v", params["cwd"])
+				}
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      id,
+					"result":  map[string]interface{}{"sessionId": agentSessionID},
+				})
+			case "session/setMode":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      id,
+					"result":  map[string]interface{}{},
+				})
+			case "session/prompt":
+				params, ok := request["params"].(map[string]interface{})
+				if !ok {
+					t.Errorf("prompt params = %#v", request["params"])
+					return
+				}
+				promptParamsReady <- params
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      id,
+					"result": map[string]interface{}{
+						"status": "accepted",
+						"turnId": turnID,
+					},
+				})
+			default:
+				t.Errorf("unexpected rpc method: %v", request["method"])
+			}
+		case "/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				t.Fatal("SSE response does not support flushing")
+			}
+			flusher.Flush()
+			promptParams := <-promptParamsReady
+			authorityID, _ := promptParams["mutationAuthorizationId"].(string)
+			issuedAt, _ := promptParams["mutationAuthorizationIssuedAt"].(float64)
+			contextDigest, _ := promptParams["mutationContextDigest"].(string)
+			_, authorityDigest, err := signMutationAuthorization(
+				secret,
+				agentSessionID,
+				authorityID,
+				int64(issuedAt),
+				doagentAllowedTools(true),
+				contextDigest,
+			)
+			if err != nil {
+				t.Errorf("sign mutation authority: %v", err)
+				return
+			}
+			input := map[string]interface{}{
+				"operation": "upgrade-install",
+				"release":   "doops-agent",
+				"chart":     "deploy/helm/doops-agent",
+				"namespace": "kz-ops",
+				"confirm":   true,
+			}
+			trace := attestedMutationTraceForSession(
+				t,
+				"mcp_doops_helm",
+				input,
+				doopsSessionID,
+				authorityDigest,
+			)
+			var rawOutput interface{}
+			if err := json.Unmarshal(trace.resultJSON, &rawOutput); err != nil {
+				t.Fatalf("decode raw output: %v", err)
+			}
+			rawInput := map[string]interface{}{
+				"toolName": trace.ToolName,
+				"args":     input,
+			}
+			writeEvent := func(update map[string]interface{}) {
+				data, err := json.Marshal(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"method":  "session/update",
+					"params":  map[string]interface{}{"update": update},
+				})
+				if err != nil {
+					t.Fatalf("encode SSE event: %v", err)
+				}
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				flusher.Flush()
+			}
+			writeEvent(map[string]interface{}{
+				"sessionUpdate": "tool_call",
+				"turnId":        turnID,
+				"toolCallId":    trace.ToolCallID,
+				"toolName":      trace.ToolName,
+				"status":        "in_progress",
+				"rawInput":      rawInput,
+			})
+			writeEvent(map[string]interface{}{
+				"sessionUpdate":            "tool_call_update",
+				"turnId":                   turnID,
+				"toolCallId":               trace.ToolCallID,
+				"toolName":                 trace.ToolName,
+				"status":                   "completed",
+				"rawInput":                 rawInput,
+				"rawOutput":                rawOutput,
+				"attestationSchemaVersion": trace.AttestationSchema,
+				"executionMode":            trace.ExecutionMode,
+				"mutationAuthorized":       true,
+				"mutationAuthorityDigest":  trace.MutationAuthorityDigest,
+				"attestedTool":             trace.AttestedTool,
+				"evidenceKind":             trace.EvidenceKind,
+				"evidenceSubject":          trace.EvidenceSubject,
+				"canonicalScope":           trace.CanonicalScope,
+				"scopeDigest":              trace.ScopeDigest,
+				"inputDigest":              trace.InputDigest,
+				"resultDigest":             trace.AttestedResultDigest,
+			})
+			writeEvent(map[string]interface{}{
+				"sessionUpdate": "turn_finished",
+				"turnId":        turnID,
+				"status":        "failed",
+				"stopReason":    "error",
+				"error":         "final model response failed after Helm completed",
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway()
+	ts := newGatewayAuthorizedAgentServer(t, gw)
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id":      doopsSessionID,
+		"instruction":     "upgrade doops-agent and verify the final Deployment",
+		"operation":       "apply",
+		"response_format": "json",
+	})
+	if result["error"] != nil {
+		t.Fatalf("verified Helm mutation was returned as RPC error: %#v", result)
+	}
+	response, ok := result["result"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing successful tool result: %#v", result)
+	}
+	if response["isError"] == true {
+		t.Fatalf("verified Helm mutation was returned as tool error: %#v", response)
+	}
+	content, _ := response["content"].([]interface{})
+	if len(content) == 0 || !strings.Contains(fmt.Sprint(content[0]), "Operation complete") {
+		if !strings.Contains(fmt.Sprint(response["structuredContent"]), "doops.verified-mutation") {
+			t.Fatalf("unexpected successful tool content: %#v", response)
+		}
+	}
+	structured, _ := response["structuredContent"].(map[string]interface{})
+	if structured["kind"] != "doops.verified-mutation" || structured["verified"] != true {
+		t.Fatalf("verified mutation structured result missing: %#v", response)
 	}
 }
 

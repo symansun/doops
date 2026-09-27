@@ -98,7 +98,6 @@ type AgentPromptParams struct {
 	Mode               string                   `json:"mode,omitempty"`
 	ResponseFormat     string                   `json:"response_format,omitempty"`
 	Operation          string                   `json:"operation,omitempty"`
-	WorkspaceCommit    string                   `json:"workspace_commit,omitempty"`
 	CredentialRefs     []string                 `json:"credential_refs,omitempty"`
 	CredentialBindings []AgentCredentialBinding `json:"credential_bindings,omitempty"`
 }

@@ -57,7 +57,10 @@ sequenceDiagram
    请求，并且不跟随重定向，避免路由被上游响应带出 allowlist。
 5. Gateway 与 Agent 之间使用分帧 body，不把请求体一次性读入内存；响应收到一帧就向
    客户端 flush，支持 SSE/分块 HTTP 这类流式响应。
-6. 第一阶段明确不支持 WebSocket Upgrade 和裸 TCP；收到 Upgrade 请求返回
+6. Agent 发往上游时会把 `Host` 和 `X-Forwarded-Host` 重写为路由的上游主机，
+   并丢弃客户端携带的 `Forwarded`/`X-Forwarded-Host`，避免上游租户解析误把公网
+   测试域名当成业务域名。
+7. 第一阶段明确不支持 WebSocket Upgrade 和裸 TCP；收到 Upgrade 请求返回
    `426 Upgrade Required`，后续如需 WebSocket 必须扩展成独立的二进制/帧协议。
 
 ### 配置路由
@@ -88,13 +91,17 @@ allowlist，而是 Agent 所在网络允许访问的上游主机 allowlist。
 bash scripts/release-managed-agent.sh \
   --target <target> \
   --session <session> \
+  --cluster <gateway-cluster> \
+  --instance <gateway-instance> \
   --release <release> \
   --namespace <namespace> \
+  --kubeconfig <operator-kubeconfig> \
   --proxy-allowed-hosts 127.0.0.1,internal.example.com \
   --image <repository>@sha256:<digest>
 ```
 
-省略参数会保留现网 allowlist；传空字符串会显式恢复为拒绝全部。
+操作机 kubeconfig 是已有 Agent 发布的外部控制器边界，当前 Agent 不执行自身 Helm
+mutation。省略 allowlist 参数会保留现网值；传空字符串会显式恢复为拒绝全部。
 
 ## Managed Gateway Host
 
@@ -250,7 +257,10 @@ doops admin token revoke --target <gateway-target> --id <token-id>
 
 说明：
 
-- `401 Unauthorized`：token 无效、过期或未登录，属于认证失败
+- `401 Unauthorized`：先读取 JSON `code` 和 `auth_domain`。`gateway_auth_failed` /
+  `auth_domain=gateway` 表示 Gateway user token 缺失、无效、过期或撤销；
+  `edge_enrollment_auth_failed` / `auth_domain=edge_enrollment` 表示边缘通道 enrollment
+  token 缺失、无效、过期或目标绑定不匹配。裸 `401` 不足以判断受管凭据错误。
 - `403 Forbidden`：token 有效，但当前用户缺少目标 `cluster/instance/action` 的显式 grant，或缺少 gateway 管理员 `admin` 权限。
 - 新 target 接入后如果 `exec/ask` 直接 403，检查该用户是否已经获得对应 target/action 的显式 grant。
 

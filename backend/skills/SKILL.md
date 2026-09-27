@@ -42,13 +42,11 @@ description: |
   `--apply` 才进入原生 build 模式，并且只允许 `mcp_doops_helm` 执行发布 mutation。
 - 更新现有 Helm release 时，只要自然语言任务已明确 release、namespace、chart 和
   不可变镜像，Agent 必须直接调用一次 `mcp_doops_helm upgrade-install`。`value_files`
-  可以为空，`set_strings` 只传 `image.repository` 和 `image.digest`；工具自动保留
-  当前 values 并先 dry-run。不得要求用户补充候选 values，也不得用缺少
-  `confirm=true` 的调用试探。
-- 当项目以完整 Helm values 管理业务镜像时，chart 默认 values 与显式 `value_files`
-  必须收敛出合法 `image.repository` 和 `image.tag=release-YYYYMMDD`。该模式禁止
-  `image.digest` 和任何 `set_strings`，也不得与 digest 覆盖模式混用；缺少明确 release
-  tag 时工具必须拒绝 mutation。
+  可以为空，但必须使用任务明确给出的远程 `https://`/`oci://` chart 和可选
+  HTTP(S) values URL；`set_strings` 只传 `image.repository` 和不可变的
+  `image.digest`。工具自动保留当前 values 并先 dry-run。不得读取 target 隔离 workspace、
+  不得要求用户补充本地候选 values，也不得用缺少 `confirm=true` 的调用试探。
+  不支持 `image.tag` 发布模式。
 - 需要凭据时使用可重复的 `--credential <resource-name>`。该参数只传递资源名；Gateway
   将它绑定到当前用户、target 和 session，并按 cluster/instance、namespace、workload、
   image 或 Helm 的精确 scope 授权和物化。公开 prompt、doagent 上下文和 metadata
@@ -66,6 +64,8 @@ description: |
 - 当前没有 EnvironmentRegistry、`cicd run`、CICDReport 或 `doops_cicd_result` 发布链路。
 - `doops-agent` 自身升级是例外：当前 Agent 不得修改承载自身的 workload，必须由真实存在的
   外部 CI/GitOps controller 执行；禁止创建临时 Agent、临时 target 或 release-runner。
+  已有 Helm release 的唯一脚本必须显式使用操作机 kubeconfig，并校验 live workload 中的
+  `cluster/instance` 与命令参数一致；Gateway target 只用于在线、接管和发布后功能验证。
 - 已有 Helm Agent 需要开放网站代理上游时，唯一发布脚本必须显式传
   `--proxy-allowed-hosts <comma-separated-exact-hosts>`；省略保留现网值，传空字符串恢复
   为拒绝全部。URL、端口、路径、通配符和空条目必须在 mutation 前拒绝，发布后必须核对
@@ -195,6 +195,9 @@ doops targets --target unicom
 | 小文本读写 | `doops read/write ...` |
 | 工作区清理 | `doops -session <s> clean --target <t> --workspace <s>` |
 | 预演 agent 升级 | `doops -session <s> upgrade ... --dry-run` |
+| 创建 Gateway 用户和 API key | `doops admin user create --target <t> --user <u> (--password-stdin\|--generate-password)` |
+| 查看 Gateway 用户 | `doops admin user list --target <t>` |
+| 管理 target grant | `doops admin grant <list\|add\|delete> ...` |
 | 管理员签发 token | `doops admin token create --target <t> --user <u> --name <label> --expires 720h` |
 | 管理员查看 token | `doops admin token list --target <t>` |
 | 管理员撤销 token | `doops admin token revoke --target <t> --id <token-id>` |
@@ -216,15 +219,39 @@ doops admin token create \
 
 ## Gateway 用户创建与目标授权
 
-创建用户、设置密码或授权 target 前，完整读取
-`docs/DOOPS_USAGE_GUIDE.md` 的“Gateway Users And Target Grants”和
-`docs/DOOPS_API_GUIDE.md` 的对应管理员 API。当前 CLI 尚未封装 user/grant 子命令；使用
-HTTPS Gateway 管理 API，不要 SSH 到 Gateway 或直接修改数据库。
+创建用户、设置密码或授权 target 使用 CLI；CLI 通过 HTTPS Gateway 管理 API 完成流程，
+不要 SSH 到 Gateway 或直接修改数据库：
+
+```bash
+doops admin user list --target <gateway-target>
+printf '%s' '<PASSWORD_FROM_SECURE_INPUT>' | \
+  doops admin user create --target <gateway-target> --user <username> \
+  --password-stdin --grant-target <allowed-target> --name user-create --expires 720h
+```
+
+也可以用 `--generate-password` 生成一次性密码。CLI 会拒绝同名用户，创建普通用户时
+固定发送 `admin:false`，删除 Gateway 自动写入的 wildcard bootstrap grant，再按
+`--grant-target` 写入精确 scope 和普通操作 actions。任何中途错误都会停用新用户；
+没有 `--grant-target` 时不会授予任何 target 权限，只创建没有操作权限的用户和 API key。
+密码和 API key 只在需要时输出一次，Gateway 只保存它们的哈希。
+
+独立查询或调整权限：
+
+```bash
+doops admin grant list --target <gateway-target> --user-id <user-id>
+doops admin grant add --target <gateway-target> --scope-target <allowed-target> \
+  --user-id <user-id>
+doops admin grant delete --target <gateway-target> --id <grant-id>
+```
+
+已有用户可以通过 `admin user password` 设置或轮换密码，通过 `admin user disable`
+停用或恢复账号；这两个命令同样不接受命令行明文密码。
 
 - 先用 `doops list` 和 `doops targets --target <t>` 确认用户请求对应的精确
   `cluster/instance`，并确认同名用户是否已存在。已存在时不要重复创建。
-- 创建普通用户必须发送 `admin:false`。当前 `POST /v1/admin/users` 仍会自动创建一条
-  `*/*` 标准操作 grant；在删除该通配 grant 并完成复核前，不得交付账号或 token。
+- 创建普通用户必须发送 `admin:false`。CLI 通过 `POST /v1/admin/users` 创建后，会在交付账号
+  或 token 前删除并复核 Gateway 可能写入的 wildcard bootstrap grant；流程失败时会停用
+  新用户，不得交付半完成账号。
 - 创建后立即列出该用户的 grant，删除所有 `cluster="*"`、`instance="*"` 或包含
   action `"*"` 的规则，再为每个允许 target 添加显式 actions。不要省略 `actions`，因为
   空列表会展开为默认权限集合。
@@ -267,13 +294,21 @@ curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh
 
 例如：`... | sh -s -- doops-jm jm-228`。当前基线 v1.3.0。权威脚本在 `l8ai/dowork` 的 `doops-k8s/`。
 已经改用 Helm chart 的维护者节点才走 `scripts/release-managed-agent.sh`。
-`doops upgrade` 只允许 `--dry-run`。
+已有集群必须同时传操作机 `--kubeconfig`、精确 `--cluster` 和 `--instance`；脚本从
+Agent 进程外执行 Helm，并在候选 Pod 或 Gateway 接管失败时自动回滚。`doops upgrade`
+只允许 `--dry-run`。
 
 普通业务发布流程和自然语言任务约束见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
 
 ## 故障入口
 
-- `401 Unauthorized`：认证失败。先确认 CLI 读的是 `~/.agent/skills/doops/config.json`，并确认统一 `auth.json` 中存在该 Gateway 的 user token；标准 target 配置不得包含 token。
+- `401 Unauthorized`：先看结构化错误字段。`code=gateway_auth_failed` 且
+  `auth_domain=gateway` 表示 Gateway user token 缺失、无效、过期或撤销；确认 CLI
+  读取 `~/.agent/skills/doops/config.json`，并确认统一 `auth.json` 中存在该 Gateway
+  的 user token。裸 `401` 不能直接归因于受管凭据；标准 target 配置不得包含 token。
+- `edge_enrollment_auth_failed` 且 `auth_domain=edge_enrollment` 表示边缘通道 enrollment
+  token 缺失、失效或与精确 `cluster/instance` 不匹配；它不等于 Gateway user token
+  失效，也不等于受管凭据错误。
 - `403 Forbidden`：认证通过但权限不足，或用户被显式收窄。
 - `credential_scope_invalid`：凭据引用没有匹配到完整的 cluster/instance、namespace、workload、
   image 或 Helm scope；修正显式 scope，不得放宽授权。
@@ -285,7 +320,7 @@ curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh
 - `ask --apply` 未出现可信 mutation 完成证据：检查 Agent 运行时是否注册 required
   `mcp_doops_helm` 工具，并核对 attestation 的运行时 session 绑定、confirm 和
   input/result digest；不得让 Read、Bash、普通 completed 事件或文本声明冒充发布成功。
-- target 不在线：先跑 `doops targets --target <gateway-target>`。
+- target 不可见：先跑 `doops targets --target <gateway-target>`；空结果只能说明该 route 对当前 Gateway 登录态不可见，可能是 target 离线，也可能是用户缺少精确 grant，不能直接断言集群宕机。
 - `busy=true`：表示 target-wide 阻塞；`status=active` 且 `busy=false` 表示有 session 在跑，但其它 session 仍可使用。
 - gateway `push/pull` 失败：确认 `/v1/git/<cluster>/<instance>/<session>.git` 能路由到在线 agent，并检查反向隧道内的 Git handler。
 

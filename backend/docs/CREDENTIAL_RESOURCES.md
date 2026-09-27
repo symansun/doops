@@ -105,7 +105,7 @@ workload kind 仅支持 `Deployment`、`StatefulSet`、`DaemonSet`。不支持 w
 | `imagePull` | `registry` | image repository、64 位 `sha256:` digest |
 | `tls` | `tls` | 无 |
 | `opaqueSecret` | `opaque` | `required_keys`，必须与 payload key 集合完全相等 |
-| `helmPull` | `helmRepository` | Helm release、`deploy/helm/...` chart |
+| `helmPull` | `helmRepository` | Helm release、明确的远程 `https://`/`oci://` chart URL |
 | `gitCheckout` | `gitToken` | 无；当前 scope 不包含 branch/ref |
 
 ## Payload schema
