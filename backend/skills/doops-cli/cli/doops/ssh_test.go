@@ -14,3 +14,23 @@ func TestLooksLikeSSHCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeSSHOptionsRequiresOpenSSHArgv(t *testing.T) {
+	got, err := normalizeSSHOptions([]string{"BatchMode=yes", "-p2222"})
+	if err != nil {
+		t.Fatalf("normalize SSH options: %v", err)
+	}
+	want := []string{"-oBatchMode=yes", "-p2222"}
+	if len(got) != len(want) {
+		t.Fatalf("normalized options = %#v, want %#v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("normalized option %d = %q, want %q", index, got[index], want[index])
+		}
+	}
+
+	if _, err := normalizeSSHOptions([]string{"BatchMode"}); err == nil {
+		t.Fatal("unprefixed SSH option without a value must be rejected")
+	}
+}

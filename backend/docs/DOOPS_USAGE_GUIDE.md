@@ -274,8 +274,11 @@ Use `exec` for deterministic commands, read-only checks, and known deployment sc
 
 ```bash
 doops -session ops ssh --target jm --host ops@app.internal \
-  --option BatchMode=yes -- bash -lc 'hostname && systemctl status api'
+  --option=BatchMode=yes -- bash -lc 'hostname && systemctl status api'
 ```
+
+`--option` 也接受完整的 OpenSSH argv（例如 `--option=-oBatchMode=yes`）；`key=value`
+简写会在 CLI 内明确转换为 `-o<key>=<value>`，不会把它当成主机或远端命令。
 
 ## Ask
 

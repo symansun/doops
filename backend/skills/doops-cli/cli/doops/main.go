@@ -357,7 +357,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			subFlag.BoolVar(&background, "bg", false, "Run through the agent-managed background task service and wait for completion")
 		case "ssh":
 			subFlag.StringVar(&sshHost, "host", "", "SSH destination, for example ops@app.internal")
-			subFlag.Var(&sshOptions, "option", "SSH option passed as one argv (repeatable)")
+			subFlag.Var(&sshOptions, "option", "SSH option (repeatable; raw argv or key=value, e.g. --option=BatchMode=yes)")
 		case "ask":
 			subFlag.StringVar(&msgStr, "msg", "", "Instruction")
 			subFlag.StringVar(&modelStr, "model", "", "Model to use for this instruction (optional)")
@@ -420,6 +420,14 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		if command == "ssh" && strings.TrimSpace(sshHost) == "" {
 			fmt.Println("Error: --host 必传。用法: doops ssh --target <t> --host <user@host> -- bash -lc '...'")
 			os.Exit(1)
+		}
+		if command == "ssh" {
+			normalizedOptions, err := normalizeSSHOptions(sshOptions)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
+			sshOptions = normalizedOptions
 		}
 		if command == "read" && strings.TrimSpace(path) == "" {
 			fmt.Println("Error: path 不能为空。doops read 只用于查看远端小文本文件。")
