@@ -68,6 +68,10 @@ def test_single_managed_agent_release_script():
     assert "trap 'exit 143' TERM" in text
     assert "hostNetwork agents cannot hand off" in text
     assert "sandbox-entrypoint.sh" in text
+    assert 'deploy.get("spec")' in text
+    assert '"selector", {}).get("matchLabels")' in text
+    assert 'values.setdefault("workload", {})["selectorLabels"]' in text
+    assert "live Deployment selector does not match template labels" in text
     assert "deploy/helm/doops-agent" in text
     assert "went offline for 30s during handoff" in text
     assert "--values" in text

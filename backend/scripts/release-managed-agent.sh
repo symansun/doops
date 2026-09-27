@@ -553,21 +553,39 @@ if env.get("DOOPS_GATEWAY_CLUSTER") != expected_cluster:
     raise SystemExit("Error: kubeconfig workload cluster does not match --cluster")
 if env.get("DOOPS_GATEWAY_INSTANCE") != expected_instance:
     raise SystemExit("Error: kubeconfig workload instance does not match --instance")
-selector_labels = ((values.get("workload") or {}).get("selectorLabels") or {})
-if not selector_labels:
-    raise SystemExit("Error: Helm values are missing workload.selectorLabels")
-selector = ",".join(f"{key}={selector_labels[key]}" for key in sorted(selector_labels))
+live_selector_labels = (
+    (deploy.get("spec") or {}).get("selector", {}).get("matchLabels") or {}
+)
+if not live_selector_labels:
+    raise SystemExit("Error: live Deployment is missing spec.selector.matchLabels")
+template_labels = ((deploy.get("spec") or {}).get("template") or {}).get(
+    "metadata", {}
+).get("labels") or {}
+for key, value in live_selector_labels.items():
+    if str(template_labels.get(key)) != str(value):
+        raise SystemExit(
+            "Error: live Deployment selector does not match template labels"
+        )
+selector = ",".join(
+    f"{key}={live_selector_labels[key]}" for key in sorted(live_selector_labels)
+)
 print("workload=" + workload)
 print("current_image=" + container.get("image", ""))
 print("selector=" + selector)
+print(
+    "selector_json="
+    + json.dumps(live_selector_labels, separators=(",", ":"), sort_keys=True)
+)
 PY
   )"
   echo "${preflight}"
   workload="$(printf '%s\n' "${preflight}" | awk -F= '$1 == "workload" {print substr($0, index($0, "=") + 1)}')"
   current_image="$(printf '%s\n' "${preflight}" | awk -F= '$1 == "current_image" {print substr($0, index($0, "=") + 1)}')"
   selector="$(printf '%s\n' "${preflight}" | awk -F= '$1 == "selector" {print substr($0, index($0, "=") + 1)}')"
+  selector_json="$(printf '%s\n' "${preflight}" | awk -F= '$1 == "selector_json" {print substr($0, index($0, "=") + 1)}')"
   require_value "live workload.name" "${workload}"
-  require_value "live workload.selectorLabels" "${selector}"
+  require_value "live Deployment selector" "${selector}"
+  require_value "live Deployment selector JSON" "${selector_json}"
 
   release_tmp="$(mktemp -d)"
   cleanup_release_tmp() {
@@ -580,7 +598,7 @@ PY
   pre_release_pods="${release_tmp}/pre-release-pods.json"
   kubectl -n "${NAMESPACE}" get pods -l "${selector}" -o json >"${pre_release_pods}"
   helm get values "${RELEASE}" -n "${NAMESPACE}" -o json >"${release_values}"
-  python3 - "${release_values}" "${DOOPS_IMAGE_REPOSITORY}" "${DOOPS_IMAGE_DIGEST}" "${PROXY_ALLOWED_HOSTS}" "${PROXY_ALLOWED_HOSTS_SET}" "${HOST_ALIASES_JSON}" "${HOST_ALIASES_SET}" <<'PY'
+  python3 - "${release_values}" "${DOOPS_IMAGE_REPOSITORY}" "${DOOPS_IMAGE_DIGEST}" "${PROXY_ALLOWED_HOSTS}" "${PROXY_ALLOWED_HOSTS_SET}" "${HOST_ALIASES_JSON}" "${HOST_ALIASES_SET}" "${selector_json}" <<'PY'
 import json, sys
 (
     path,
@@ -590,13 +608,15 @@ import json, sys
     proxy_override,
     host_aliases_json,
     host_aliases_override,
-) = sys.argv[1:8]
+    selector_json,
+) = sys.argv[1:9]
 with open(path, encoding="utf-8") as fh:
     values = json.load(fh)
 image = values.setdefault("image", {})
 image.pop("tag", None)
 image["repository"] = repository
 image["digest"] = digest
+values.setdefault("workload", {})["selectorLabels"] = json.loads(selector_json)
 if proxy_override == "true":
     values.setdefault("proxy", {})["allowedHosts"] = proxy_allowed_hosts
 if host_aliases_override == "true":

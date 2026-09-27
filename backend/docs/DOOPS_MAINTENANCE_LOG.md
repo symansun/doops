@@ -2,6 +2,17 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-09-27 Legacy Helm selector migration
+
+- Root cause: `release-managed-agent.sh` treated `workload.selectorLabels` from
+  `helm get values` as the selector source, but older live releases stored the
+  selector only in `Deployment.spec.selector.matchLabels`.
+- The external controller now reads and validates the live Deployment selector
+  against template labels, then writes that selector into the candidate values
+  before the server-side Helm dry-run and handoff.
+- Verified the `doops-edu/edu-coder` release upgraded from the legacy values
+  schema to the v1.3.4 Agent image without changing its selector.
+
 ## 2026-09-27 Agent protocol capability gate
 
 - Root cause: the v1.3.3 CLI sent structured `doops_ssh` to an older online Agent,

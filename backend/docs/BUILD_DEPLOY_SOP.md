@@ -150,8 +150,10 @@ mutation。不存在 Kubernetes 镜像 mutation 发布旁路。自然语言 appl
 `exec --bg` Helm mutation 必须拒绝。用户明确给出的 SSH 命令必须通过结构化 `doops_ssh`
 入口由在线 Agent 代理执行，不能把多层 SSH 拼成普通 `doops_shell` 字符串；该入口
 遵守相同的权限、排队、超时、取消和审计规则。Helm 成功后还必须以
-最终 Deployment manifest/spec/status 为事实源，确认 generation、镜像和副本状态一致；
-只看 Helm revision 或 Pod Ready 不构成发布成功。
+最终 Deployment manifest/spec/status 为事实源；selector 必须从 live Deployment
+`spec.selector.matchLabels` 读取并显式写入候选 values，不能要求历史 Helm values 已包含
+该字段。还要确认 generation、镜像和副本状态一致；只看 Helm revision 或 Pod Ready 不构成
+发布成功。
 
 受管 `doops-agent` 不得升级自身。唯一发布命令是笔记本上的
 `scripts/release-managed-agent.sh`。已有集群必须显式提供操作机 kubeconfig，
