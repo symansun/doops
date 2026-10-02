@@ -23,6 +23,8 @@ on the server or place them into copied CI/CD examples.
 - The audit page exposes target/session/self/global scopes and action/status
   filters. Users can read their own history; global audit requires platform admin.
   Other users' credential events retain precise `credential:audit` scope checks.
+  A platform administrator can explicitly maintain the fixed query indexes from
+  the global view. This operation is audited and preserves all history.
 - Administrator mutations are audited with actor/token IDs, resource metadata,
   HTTP result and stable errors. Credential/configuration bodies are excluded.
   Unavailable audit storage blocks a mutation.

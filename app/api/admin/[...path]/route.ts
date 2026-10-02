@@ -33,6 +33,7 @@ async function proxy(req: Request, ctx: { params: Promise<{ path: string[] }> })
     },
     cache: "no-store",
     redirect: "manual",
+    signal: req.signal,
   }
   if (req.method !== "GET" && req.method !== "DELETE") {
     init.body = await req.text()

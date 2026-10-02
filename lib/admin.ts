@@ -229,6 +229,12 @@ export async function listOperations(s: Session): Promise<AdminOperation[]> {
   return (await req<{ operations: AdminOperation[] }>(s, "operations")).operations || []
 }
 
+export async function optimizeAuditIndexes(s: Session, sessionId: string): Promise<void> {
+	if (s.demo) throw new Error("演示模式不执行索引维护")
+	const result = await req<{ optimized: boolean; definitions_verified: boolean; query_plans: string[] }>(s, "audit/optimize", { method: "POST", body: JSON.stringify({ session_id: sessionId }) })
+	if (!result.optimized || !result.definitions_verified || result.query_plans?.length !== 3) throw new Error("审计索引维护未通过验证")
+}
+
 export async function cancelOperation(s: Session, id: string): Promise<void> {
   if (s.demo) return (await import("./demo")).demoCancelOperation(id)
   await req(s, `operations?id=${encodeURIComponent(id)}`, { method: "DELETE" })

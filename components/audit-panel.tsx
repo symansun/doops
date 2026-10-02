@@ -8,6 +8,7 @@ import {
   type AuditScope,
 } from "@/lib/gateway"
 import { HistoryIcon, RefreshIcon } from "./icons"
+import { optimizeAuditIndexes } from "@/lib/admin"
 
 function fmtTime(s?: string) {
   if (!s) return "—"
@@ -33,6 +34,8 @@ export function AuditPanel({
   const [scope, setScope] = useState<AuditScope>("target")
   const [action, setAction] = useState("")
   const [status, setStatus] = useState("")
+  const [maintaining, setMaintaining] = useState(false)
+  const [maintenanceResult, setMaintenanceResult] = useState("")
   const requestId = useRef(0)
 
   const load = useCallback(async () => {
@@ -117,6 +120,13 @@ export function AuditPanel({
           </select>
         </div>
         <div className="flex items-center gap-2">
+          {scope === "global" && !session.demo && <button disabled={maintaining} onClick={async () => {
+            setMaintaining(true)
+            setMaintenanceResult("")
+            try { await optimizeAuditIndexes(session, sessionId); setMaintenanceResult("审计查询索引已维护"); await load() }
+            catch (err) { setError((err as Error).message) }
+            finally { setMaintaining(false) }
+          }} className="rounded-md border px-2 py-1 text-xs disabled:opacity-50">{maintaining ? "索引维护中…" : "维护审计索引"}</button>}
           {scope === "session" && (
             <span className="break-all font-mono text-xs text-muted-foreground">{sessionId}</span>
           )}
@@ -131,6 +141,7 @@ export function AuditPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
+        {maintenanceResult && <p role="status" className="mb-3 text-xs text-success">{maintenanceResult}</p>}
         <p className="mb-3 text-xs text-muted-foreground">
           普通用户仅查看本人记录；管理员可查看全局，凭据审计另按授权范围可见。最近 50 条。
         </p>

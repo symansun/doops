@@ -355,6 +355,10 @@ Helm 运行配置时，
 
 ## 故障入口
 
+- 审计按用户或 session 筛选超时：先检查真实 query plan；缺少索引时由平台管理员
+  显式执行 `doops -session <s> admin audit optimize --target <t>`，或在全局审计页面维护
+  索引。DDL 仅走受审计 Gateway 控制面，不在启动、CI 或宿主机直连时自动执行。
+
 - `401 Unauthorized`：先看结构化错误字段。`code=gateway_auth_failed` 且
   `auth_domain=gateway` 表示 Gateway user token 缺失、无效、过期或撤销；确认 CLI
   读取 `~/.agent/skills/doops/config.json`，并确认统一 `auth.json` 中存在该 Gateway

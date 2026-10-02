@@ -1,5 +1,21 @@
 # Doops API 对接指南
 
+## Audit Index Maintenance
+
+`POST /v1/admin/audit/optimize` accepts only `{"session_id":"<operation-session>"}`.
+It requires platform administration and writable audit storage, then directly
+executes the repository's fixed `audit_indexes.sql`. It accepts no arbitrary SQL,
+does not delete history, and records the actor/token/session and HTTP result.
+The indexes cover user history, user/session history and target history. Startup,
+application entrypoints and CI never invoke this production maintenance operation.
+The console exposes it in the administrator's global audit view; CLI entry:
+`doops -session <s> admin audit optimize --target <configured-gateway-target>`.
+Execution has a four-minute server deadline and one DDL transaction; cancellation
+or failure rolls back newly created indexes. Success includes verified column/order
+definitions and three actual EXPLAIN query plans. A preexisting incompatible index
+is a failure, not an implicit replacement. The maintenance button remains reachable
+after a query error; Gateway permission checks remain authoritative.
+
 本文档面向需要通过 API 调用 Doops 的平台、CI 系统和内部工具。推荐的公共入口是 Doops Gateway 的 HTTP / WebSocket 服务；目标集群内的 doops-agent 主动连接 Gateway，不要求调用方能直连内网节点。
 
 ## 架构
