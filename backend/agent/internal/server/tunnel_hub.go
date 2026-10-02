@@ -488,6 +488,7 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	admin("/v1/admin/jobs", h.HandleAdminJobs)
 	admin("/v1/admin/jobs/run", h.HandleAdminJobRun)
 	admin("/v1/admin/jobs/issues", h.HandleAdminJobIssues)
+	admin("/v1/admin/audit/optimize", h.HandleAdminAuditOptimize)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))

@@ -58,6 +58,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   clean       清理远端节点上的工作区隔离沙盒
   unlock      管理员强制释放 gateway 上卡住的 target busy 状态
   admin       gateway 管理命令：用户、target 授权和 API key
+              admin audit optimize：显式、受审计地维护查询索引
   upgrade     升级 doops-agent；--dry-run 只预演，正式升级由目标集群内的 Job 执行
   add         添加 gateway target
   remove      仅在 target 当前不可见时删除本机 gateway target 配置
@@ -223,6 +224,10 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		fmt.Printf("Unlocked %s/%s\n", server.Cluster, server.Instance)
 
 	case "admin":
+		if len(cmdArgs) >= 2 && cmdArgs[0] == "audit" && cmdArgs[1] == "optimize" {
+			runAdminAuditOptimize(cmdArgs[2:], servers, configErr, *sessionName)
+			return
+		}
 		if len(cmdArgs) >= 1 && cmdArgs[0] == "jobs" {
 			runAdminJobs(cmdArgs[1:], servers, configErr)
 			return

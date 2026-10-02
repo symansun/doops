@@ -1,5 +1,20 @@
 # Doops Usage Guide
 
+## Audit Query Maintenance
+
+When filtered audit queries time out because the Gateway's existing SQLite audit
+history has no query indexes, a platform administrator explicitly runs:
+
+```bash
+doops -session audit-index-maintenance admin audit optimize --target <target>
+```
+
+The selected target identifies the Gateway login, not an Agent database. The
+operation executes only the fixed repository SQL through the Gateway's audited
+control plane. It is idempotent, accepts no custom SQL and preserves every event.
+The global audit page provides the same operation. Audit unavailability or denied
+authority blocks DDL; application startup and CI do not run it automatically.
+
 This guide holds command-level usage details. The skill file is only the entry point.
 
 ## Command Choice

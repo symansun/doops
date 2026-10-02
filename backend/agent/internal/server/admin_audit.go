@@ -158,6 +158,9 @@ func (h *GatewayHub) auditAdminMutation(route string, next http.HandlerFunc) htt
 		if route == "/v1/admin/tokens" && r.Method == http.MethodPost {
 			session = "admin-token-create"
 		}
+		if route == "/v1/admin/audit/optimize" && validateSession(input.SessionID) == nil {
+			session = input.SessionID
+		}
 		id, err := h.store.startMutationAudit(AuditEvent{
 			UserID: auth.UserID, TokenID: auth.TokenID, Action: ActionAdmin,
 			Cluster: adminAuditLabel(cluster), Instance: adminAuditLabel(instance),
@@ -254,7 +257,7 @@ func (h *GatewayHub) authorizeAdminMutationTarget(userID, route string, r *http.
 	switch route {
 	case "/v1/admin/users", "/v1/admin/users/password", "/v1/admin/users/disable",
 		"/v1/admin/grants", "/v1/admin/tokens", "/v1/admin/repos", "/v1/admin/repos/test",
-		"/v1/admin/jobs":
+		"/v1/admin/jobs", "/v1/admin/audit/optimize":
 		if !h.store.UserIsPlatformAdmin(userID) {
 			return ErrUnauthorized
 		}

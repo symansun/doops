@@ -55,3 +55,14 @@ substitute for live acceptance.
 - Remaining known product gaps: the legacy model configuration center uses an old
   settings schema and browser-local API-key templates; binary/directory upload
   still depends on CLI synchronization. Do not claim all management is web-complete.
+- v1.3.7 delivered from main 9cebe892ff8513132491c0d87f3152d5610876ca:
+  main CI cnb-7ae-1k3urdqg6 and tag CI cnb-spr-1k3urtl0d both succeeded; local
+  CLI/Skill receipt commits match. Gateway process source/hash verified, baseline
+  target reconnected, Web image source commit verified and /console returned 200.
+- Live console API probes passed target/user/token/credential queries but filtered
+  audit timed out. Read-only SQLite inspection found no audit indexes and a full
+  table scan; the same user/session query exceeded 10 seconds. An unfiltered recent
+  event query took about 250 ms. Explicit audited index maintenance is the repair;
+  no history truncation, startup DDL or direct host-side mutation is permitted.
+- Gateway rollback binary: /usr/local/bin/doops-gateway.rollback-bb1e9bcd17b8-20261002T180946Z.
+  Web rollback container: doops-web-rollback-20261002T181747Z-31986.
