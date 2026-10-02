@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target } from "@/lib/client"
-import { TOOLS } from "@/lib/gateway"
-import { cloneRepoToTarget, listRepos, type GitRepo } from "@/lib/admin"
+import { TOOLS, randomSession } from "@/lib/gateway"
+import { deploymentRequest, type DeploymentInput } from "@/lib/deployment"
+import { DeploymentForm } from "./deployment-form"
 import {
   SparkIcon,
   SendIcon,
@@ -12,7 +13,7 @@ import {
   ChevronRightIcon,
   CopyIcon,
   CheckIcon,
-  GitIcon,
+  RefreshIcon,
 } from "./icons"
 import { Markdown } from "./markdown"
 
@@ -26,27 +27,11 @@ interface Turn {
   elapsed?: number
 }
 
-const SETTINGS_PATH = "/root/.agent/settings.json"
-
 const QUICK_PROMPTS = [
   "检查节点状态并给出健康巡检报告",
   "检查当前服务日志和健康探针，不执行变更",
   "分析最近一次发布失败的真实原因，不执行回滚",
 ]
-
-function releaseReadinessTemplate(sessionId: string) {
-  return `请只读检查 /root/ws/${sessionId} 的发布准备状态。
-确认任务是否已明确 target、服务范围、镜像版本、变更原因和验收条件，并确认对应的 deploy/helm/<name>/ 运行时资产存在。
-不得执行部署、构建、回滚、Shell 发布脚本或 Kubernetes mutation。
-输出缺失项和可执行的 doops ask 自然语言任务。`
-}
-
-function releaseReadinessAfterCloneTemplate(sessionId: string, repo: GitRepo) {
-  return `仓库「${repo.name}」已通过 doops 克隆到 /root/ws/${sessionId}/repo。
-请只读检查 repo/deploy/helm/<name>/ 中与任务目标相符的运行时 Helm 资产，并确认发布任务已明确 target、服务范围、镜像版本、变更原因和验收条件。
-不得执行部署、构建、回滚、Shell 发布脚本或 Kubernetes mutation。
-输出缺失项和可执行的 doops ask 自然语言任务。`
-}
 
 export function AskPanel({
   session,
@@ -66,67 +51,63 @@ export function AskPanel({
   const [running, setRunning] = useState(false)
   const [activeModel, setActiveModel] = useState<string | null>(null)
   // 连接状态：是否已为该节点配置可用大模型
-  const [modelStatus, setModelStatus] = useState<"loading" | "connected" | "unconfigured">("loading")
-  const [repos, setRepos] = useState<GitRepo[]>([])
-  const [cloningRepoId, setCloningRepoId] = useState<string | null>(null)
+  const [modelStatus, setModelStatus] = useState<"loading" | "connected" | "unconfigured" | "error">("loading")
+  const [modelError, setModelError] = useState("")
+  const [refreshModel, setRefreshModel] = useState(0)
+  const [mode, setMode] = useState<"ask" | "apply">("ask")
   const abortRef = useRef<AbortController | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
 
-  // 读取节点上配置的大模型，判断 AI 助手是否已连接可用（模型只在「管理 → 配置中心」修改）
+  // Runtime metadata is the model authority; never read credential-bearing settings.
   useEffect(() => {
     let cancelled = false
     let buf = ""
     setModelStatus("loading")
     setActiveModel(null)
+    setModelError("")
     callTool(
       session,
       {
         cluster: target.cluster,
         instance: target.instance,
-        tool: TOOLS.fileRead,
-        arguments: { session_id: sessionId, path: SETTINGS_PATH },
+        tool: TOOLS.prompt,
+        arguments: { session_id: sessionId, mode: "metadata" },
       },
       (ev) => {
-        if (ev.type === "output") buf += ev.data
-        else if (ev.type === "result") buf += extractText(ev.result)
+        if (ev.type === "result") buf = extractText(ev.result)
       },
     )
       .then(() => {
         if (cancelled) return
         try {
-          const m = JSON.parse(buf)?.model
-          if (typeof m === "string" && m) {
-            setActiveModel(m)
+          const metadata = JSON.parse(buf)
+          if (metadata.status === "connected") {
+            setActiveModel(metadata.model || null)
             setModelStatus("connected")
-          } else {
+          } else if (metadata.status === "unconfigured") {
             setModelStatus("unconfigured")
+          } else {
+            setModelStatus("error")
+            setModelError(`Agent 模型状态：${metadata.status || "无效响应"}`)
           }
-        } catch {
-          // 文件不存在 / 非 JSON：视为尚未连接大模型
-          setModelStatus("unconfigured")
+        } catch (err) {
+          setModelStatus("error")
+          setModelError(`模型元数据无效：${(err as Error).message}`)
         }
       })
-      .catch(() => {
-        if (!cancelled) setModelStatus("unconfigured")
+      .catch((err) => {
+        if (!cancelled) {
+          setModelStatus("error")
+          setModelError((err as Error).message)
+        }
       })
     return () => {
       cancelled = true
     }
-  }, [session, target.cluster, target.instance, sessionId])
+  }, [session, target.cluster, target.instance, sessionId, refreshModel])
 
-  // 加载已关联仓库，供部署时一键选用
-  useEffect(() => {
-    let cancelled = false
-    listRepos(session)
-      .then((r) => {
-        if (!cancelled) setRepos(r)
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [session])
+  useEffect(() => () => abortRef.current?.abort(), [])
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" })
@@ -149,8 +130,8 @@ export function AskPanel({
     })
   }, [])
 
-  async function run() {
-    const text = instruction.trim()
+  async function run(request?: { instruction: string; operation: string; credential_refs: string[] }) {
+    const text = (request?.instruction || instruction).trim()
     if (!text || running || modelStatus !== "connected") return
     setInstruction("")
     const turn: Turn = { id: crypto.randomUUID(), user: text, process: "", answer: "", running: true }
@@ -166,23 +147,20 @@ export function AskPanel({
           cluster: target.cluster,
           instance: target.instance,
           tool: TOOLS.prompt,
-          // 同一 session_id 让 ACP agent 维持多轮上下文；显式传当前节点 settings.json
-          // 中展示的模型，避免 UI 显示模型与 doagent 实际调用模型不一致。
-          arguments: { session_id: sessionId, instruction: text, model: activeModel || undefined },
+          arguments: { session_id: sessionId, instruction: text, operation: request?.operation || "ask", ...(request?.credential_refs.length ? { credential_refs: request.credential_refs } : {}) },
           signal: ac.signal,
         },
         (ev) => {
-          if (ev.type === "output") patchLast((t) => ({ ...t, process: t.process + ev.data }))
+          if (ev.type === "output") patchLast((t) => ev.kind === "assistant_delta" ? ({ ...t, answer: t.answer + ev.data }) : ({ ...t, process: t.process + ev.data }))
           else if (ev.type === "error") patchLast((t) => ({ ...t, error: ev.error }))
           else if (ev.type === "result") {
             const txt = extractText(ev.result)
-            if (txt) patchLast((t) => ({ ...t, answer: txt }))
+            if (txt) patchLast((t) => ({ ...t, answer: t.answer || txt }))
           }
         },
       )
     } catch (err) {
-      if ((err as Error).name !== "AbortError")
-        patchLast((t) => ({ ...t, error: (err as Error).message }))
+      patchLast((t) => ({ ...t, error: (err as Error).name === "AbortError" ? "操作已取消" : (err as Error).message }))
     } finally {
       patchLast((t) => ({ ...t, running: false, elapsed: Math.round((Date.now() - started) / 1000) }))
       setRunning(false)
@@ -194,6 +172,7 @@ export function AskPanel({
     abortRef.current?.abort()
     setTurns([])
     setInstruction("")
+    onSessionChange?.(randomSession())
     taRef.current?.focus()
   }
 
@@ -202,54 +181,8 @@ export function AskPanel({
     requestAnimationFrame(() => taRef.current?.focus())
   }
 
-  async function cloneRepo(repo: GitRepo) {
-    if (running || cloningRepoId) return
-    const turn: Turn = {
-      id: crypto.randomUUID(),
-      user: `通过 doops 克隆仓库「${repo.name}」到当前工作区`,
-      process: "",
-      answer: "",
-      running: true,
-    }
-    setTurns((p) => [...p, turn])
-    setCloningRepoId(repo.id)
-    const started = Date.now()
-    try {
-      const res = await cloneRepoToTarget(session, repo.id, {
-        cluster: target.cluster,
-        instance: target.instance,
-        session_id: sessionId,
-        directory: "repo",
-      })
-      setTurns((p) =>
-        p.map((t) =>
-          t.id === turn.id
-            ? {
-                ...t,
-                running: false,
-                elapsed: Math.round((Date.now() - started) / 1000),
-                answer: res.message,
-              }
-            : t,
-        ),
-      )
-      useQuick(releaseReadinessAfterCloneTemplate(sessionId, repo))
-    } catch (err) {
-      setTurns((p) =>
-        p.map((t) =>
-          t.id === turn.id
-            ? {
-                ...t,
-                running: false,
-                elapsed: Math.round((Date.now() - started) / 1000),
-                error: (err as Error).message,
-              }
-            : t,
-        ),
-      )
-    } finally {
-      setCloningRepoId(null)
-    }
+  async function deploy(input: DeploymentInput) {
+    await run(deploymentRequest(target, input))
   }
 
   return (
@@ -263,6 +196,7 @@ export function AskPanel({
               session
               <input
                 value={sessionId}
+                disabled={running}
                 onChange={(e) => onSessionChange(e.target.value)}
                 className="w-36 rounded-md border bg-background px-2 py-1 font-mono text-xs text-foreground outline-none focus:border-ring"
               />
@@ -296,7 +230,7 @@ export function AskPanel({
           )}
           <button
             onClick={newConversation}
-            disabled={turns.length === 0 && !instruction}
+            disabled={running}
             className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-40"
           >
             <PlusIcon width={13} height={13} /> 新会话
@@ -304,8 +238,12 @@ export function AskPanel({
         </div>
       </div>
 
-      <div ref={logRef} className="flex-1 overflow-y-auto p-4">
-        {modelStatus === "unconfigured" ? (
+      <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
+        {([ ["ask", "只读诊断"], ["apply", "部署"] ] as const).map(([value, label]) => <button key={value} aria-pressed={mode === value} disabled={running} onClick={() => setMode(value)} className={`rounded-md border px-3 py-1.5 text-xs ${mode === value ? "border-primary text-primary" : "text-muted-foreground"}`}>{label}</button>)}
+        <span className="min-w-0 truncate text-xs text-muted-foreground">{target.cluster}/{target.instance}</span>
+      </div>
+      <div ref={logRef} className="min-h-0 flex-1 overflow-y-auto p-4">
+        {modelStatus === "error" ? <div role="alert" className="space-y-3 text-sm"><p className="break-words text-destructive">{modelError}</p><button onClick={() => setRefreshModel((value) => value + 1)} className="flex items-center gap-2 rounded-md border px-3 py-2"><RefreshIcon width={14} height={14} />重新检查</button></div> : modelStatus === "unconfigured" ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center text-muted-foreground">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-destructive/10 text-destructive">
               <SparkIcon width={26} height={26} />
@@ -329,7 +267,7 @@ export function AskPanel({
             <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
             <p className="text-sm">正在检测大模型连接…</p>
           </div>
-        ) : turns.length === 0 ? (
+        ) : mode === "apply" && !running ? <DeploymentForm disabled={modelStatus !== "connected"} onDeploy={deploy} /> : turns.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
               <SparkIcon width={26} height={26} />
@@ -348,49 +286,8 @@ export function AskPanel({
                   {q}
                 </button>
               ))}
-              <button
-                onClick={() => useQuick(releaseReadinessTemplate(sessionId))}
-                className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-left text-xs text-primary transition-colors hover:bg-primary/20"
-              >
-                检查发布准备状态
-              </button>
             </div>
 
-            {repos.length > 0 && (
-              <div className="mt-3 w-full max-w-md">
-                <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-foreground">
-                  <GitIcon width={13} height={13} className="text-primary" />
-                  检查已关联仓库
-                </p>
-                <div className="flex flex-col gap-1.5">
-                  {repos.map((repo) => (
-                    <button
-                      key={repo.id}
-                      onClick={() => cloneRepo(repo)}
-                      disabled={!!cloningRepoId}
-                      className="group flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors hover:border-primary/40 hover:bg-muted"
-                    >
-                      <GitIcon width={14} height={14} className="shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-xs font-medium text-foreground">
-                          {repo.name}
-                        </span>
-                        <span className="block truncate font-mono text-[11px] text-muted-foreground">
-                          {repo.url} · {repo.branch}
-                        </span>
-                      </span>
-                      <ChevronRightIcon
-                        width={13}
-                        height={13}
-                        className={`shrink-0 text-muted-foreground transition-transform ${
-                          cloningRepoId === repo.id ? "animate-spin" : "group-hover:translate-x-0.5"
-                        }`}
-                      />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         ) : (
           <div className="mx-auto flex max-w-3xl flex-col gap-5">
@@ -401,7 +298,9 @@ export function AskPanel({
         )}
       </div>
 
-      <div className="border-t bg-card p-3">
+      {mode === "apply" && !running && turns.length > 0 && <div className="max-h-64 shrink-0 overflow-auto border-t px-4 py-3"><TurnView turn={turns[turns.length - 1]} /></div>}
+
+      {(mode === "ask" || running) && <div className="border-t bg-card p-3">
         <div className="mx-auto max-w-3xl">
           <div className="flex items-end gap-2 rounded-xl border bg-background p-2 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30">
             <textarea
@@ -417,7 +316,7 @@ export function AskPanel({
               }}
               placeholder={
                 modelStatus === "connected"
-                  ? "继续对话或下发新任务，例如：检查仓库，构建镜像并更新 deployment/app"
+                  ? "检查目标状态、日志或分析故障"
                   : "请先连接大模型后再使用 AI 助手"
               }
               rows={1}
@@ -432,7 +331,7 @@ export function AskPanel({
               </button>
             ) : (
               <button
-                onClick={run}
+                onClick={() => run()}
                 disabled={!instruction.trim() || modelStatus !== "connected"}
                 className="flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
               >
@@ -444,7 +343,7 @@ export function AskPanel({
             Enter 发送 · Shift + Enter 换行 · 同一 session 保持上下文
           </p>
         </div>
-      </div>
+      </div>}
     </div>
   )
 }

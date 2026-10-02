@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -467,25 +466,28 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/git/", h.HandleGitHTTP)
 	mux.HandleFunc("/", h.HandlePublicProxy)
 	mux.HandleFunc("/v1/targets", h.HandleTargets)
-	mux.HandleFunc("/v1/targets/unlock", h.HandleTargetUnlock)
+	mux.HandleFunc("/v1/targets/unlock", h.auditAdminMutation("/v1/targets/unlock", h.HandleTargetUnlock))
 	mux.HandleFunc("/v1/audit", h.HandleAudit)
 	mux.HandleFunc("/v1/credential-bundles", h.HandleCredentialBundles)
 	mux.HandleFunc("/v1/credentials", h.HandleCredentials)
 	mux.HandleFunc("/v1/credentials/", h.HandleCredential)
+	admin := func(path string, handler http.HandlerFunc) {
+		mux.HandleFunc(path, h.auditAdminMutation(path, handler))
+	}
 	mux.HandleFunc("/v1/admin/tokens", h.HandleAdminTokens)
-	mux.HandleFunc("/v1/admin/users", h.HandleAdminUsers)
-	mux.HandleFunc("/v1/admin/users/password", h.HandleAdminUserPassword)
-	mux.HandleFunc("/v1/admin/users/disable", h.HandleAdminUserDisable)
-	mux.HandleFunc("/v1/admin/grants", h.HandleAdminGrants)
-	mux.HandleFunc("/v1/admin/instances", h.HandleAdminInstances)
-	mux.HandleFunc("/v1/admin/operations", h.HandleAdminOperations)
-	mux.HandleFunc("/v1/admin/proxy-routes", h.HandleAdminProxyRoutes)
-	mux.HandleFunc("/v1/admin/repos", h.HandleAdminRepos)
-	mux.HandleFunc("/v1/admin/repos/test", h.HandleAdminRepoTest)
-	mux.HandleFunc("/v1/admin/repos/clone", h.HandleAdminRepoClone)
-	mux.HandleFunc("/v1/admin/jobs", h.HandleAdminJobs)
-	mux.HandleFunc("/v1/admin/jobs/run", h.HandleAdminJobRun)
-	mux.HandleFunc("/v1/admin/jobs/issues", h.HandleAdminJobIssues)
+	admin("/v1/admin/users", h.HandleAdminUsers)
+	admin("/v1/admin/users/password", h.HandleAdminUserPassword)
+	admin("/v1/admin/users/disable", h.HandleAdminUserDisable)
+	admin("/v1/admin/grants", h.HandleAdminGrants)
+	admin("/v1/admin/instances", h.HandleAdminInstances)
+	admin("/v1/admin/operations", h.HandleAdminOperations)
+	admin("/v1/admin/proxy-routes", h.HandleAdminProxyRoutes)
+	admin("/v1/admin/repos", h.HandleAdminRepos)
+	admin("/v1/admin/repos/test", h.HandleAdminRepoTest)
+	admin("/v1/admin/repos/clone", h.HandleAdminRepoClone)
+	admin("/v1/admin/jobs", h.HandleAdminJobs)
+	admin("/v1/admin/jobs/run", h.HandleAdminJobRun)
+	admin("/v1/admin/jobs/issues", h.HandleAdminJobIssues)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -537,6 +539,10 @@ func (h *GatewayHub) HandleAuthLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *GatewayHub) HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
+	h.auditAdminMutation("/v1/admin/tokens", h.handleAdminTokens)(w, r)
+}
+
+func (h *GatewayHub) handleAdminTokens(w http.ResponseWriter, r *http.Request) {
 	auth, err := h.authenticateUser(r)
 	if err != nil {
 		h.writeUserAuthError(w, r)
@@ -577,32 +583,13 @@ func (h *GatewayHub) HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	auditID, err := h.store.StartAudit(AuditEvent{
-		UserID:         auth.UserID,
-		TokenID:        auth.TokenID,
-		Cluster:        "*",
-		Instance:       "*",
-		Action:         ActionAdmin,
-		Session:        "admin-token-create",
-		CommandSummary: "admin token create",
-		StartedAt:      time.Now().UTC(),
-	})
-	finishAudit := func(status, errMsg string) {
-		_ = h.store.FinishAudit(auditID, AuditFinish{
-			Status:  status,
-			Error:   errMsg,
-			EndedAt: time.Now().UTC(),
-		})
-	}
 	var req gatewayAdminTokenCreateRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		finishAudit("error", "invalid token request")
 		http.Error(w, "invalid token request", http.StatusBadRequest)
 		return
 	}
 	user, err := h.store.FindUserByName(req.User)
 	if err != nil {
-		finishAudit("not_found", "user not found")
 		http.Error(w, "user not found", http.StatusNotFound)
 		return
 	}
@@ -610,12 +597,10 @@ func (h *GatewayHub) HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.Expires) != "" {
 		ttl, err := time.ParseDuration(strings.TrimSpace(req.Expires))
 		if err != nil {
-			finishAudit("error", "invalid expires duration")
 			http.Error(w, "invalid expires duration", http.StatusBadRequest)
 			return
 		}
 		if ttl <= 0 {
-			finishAudit("error", "expires duration must be positive")
 			http.Error(w, "expires duration must be positive", http.StatusBadRequest)
 			return
 		}
@@ -623,11 +608,9 @@ func (h *GatewayHub) HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	token, err := h.store.CreateToken(createReq)
 	if err != nil {
-		finishAudit("error", "failed to create token")
 		http.Error(w, "failed to create token", http.StatusInternalServerError)
 		return
 	}
-	finishAudit("success", "")
 	writeJSONHTTP(w, gatewayLoginResponse{
 		Token:     token.Plaintext,
 		TokenID:   token.ID,
@@ -761,55 +744,20 @@ func (h *GatewayHub) HandleAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	isAdmin := h.store.UserIsPlatformAdmin(auth.UserID)
-	canReadCredentialAudit := h.store.UserHasAction(auth.UserID, ActionCredentialAudit)
-	canReadUnscopedCredentialAudit := h.store.UserCan(auth.UserID, "", "", ActionCredentialAudit)
-	if !isAdmin && !canReadCredentialAudit {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 
 	switch r.Method {
 	case http.MethodGet:
-		query := r.URL.Query()
-		limit, _ := strconv.Atoi(strings.TrimSpace(query.Get("limit")))
-		fetchLimit := limit
-		if !isAdmin {
-			fetchLimit = 500
-		}
-		events, err := h.store.ListAuditFiltered(AuditFilter{
-			UserID:   query.Get("user_id"),
-			Cluster:  query.Get("cluster"),
-			Instance: query.Get("instance"),
-			Session:  query.Get("session"),
-			Action:   GatewayAction(query.Get("action")),
-			Status:   query.Get("status"),
-			Limit:    fetchLimit,
-		})
+		events, err := h.visibleAuditEvents(auth, r.URL.Query())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			if errors.Is(err, ErrUnauthorized) {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+			} else {
+				http.Error(w, "audit_unavailable", http.StatusServiceUnavailable)
+			}
 			return
 		}
 		records := make([]auditRecord, 0, len(events))
 		for _, event := range events {
-			if !isAdmin && !strings.HasPrefix(string(event.Action), "credential:") {
-				continue
-			}
-			if !isAdmin {
-				if event.Cluster == "" || event.Instance == "" {
-					if !canReadUnscopedCredentialAudit {
-						continue
-					}
-				} else if !h.store.UserCan(auth.UserID, event.Cluster, event.Instance, ActionCredentialAudit) {
-					continue
-				}
-			}
-			if !isAdmin && query.Get("action") != "" &&
-				string(event.Action) != strings.TrimSpace(query.Get("action")) {
-				continue
-			}
-			if limit > 0 && len(records) >= limit {
-				break
-			}
 			record := auditRecord{
 				ID:              event.ID,
 				UserID:          event.UserID,
@@ -1018,7 +966,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32601, "unknown doops action for tool: "+params.Name))
 		return nil
 	}
-	auditID, auditErr := h.store.StartAudit(AuditEvent{
+	startAudit := h.store.StartAudit
+	if params.Name == "doops_file_write" {
+		startAudit = h.store.startMutationAudit
+	}
+	auditID, auditErr := startAudit(AuditEvent{
 		UserID:         auth.UserID,
 		TokenID:        auth.TokenID,
 		Cluster:        cluster,
@@ -1029,10 +981,10 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		StartedAt:      time.Now().UTC(),
 	})
 	if auditErr != nil {
-		writeJSON(buildErrorResponse(req.ID, -32603, "start audit: "+auditErr.Error()))
+		writeJSON(buildErrorResponse(req.ID, -32603, "audit_unavailable"))
 		return nil
 	}
-	finishAudit := func(status, errMsg, tail string, bytesOut int64) {
+	finishAudit := func(status, errMsg, tail string, bytesOut int64) error {
 		errMsg, tail = sanitizeAgentPromptAudit(params.Name, errMsg, tail)
 		errMsg = sanitizeSecretText(errMsg)
 		tail = sanitizeSecretText(tail)
@@ -1044,8 +996,10 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			BytesOut: bytesOut,
 			EndedAt:  time.Now().UTC(),
 		}); err != nil {
-			log.Printf("[gateway] finish audit failed: id=%d: %v", auditID, err)
+			log.Printf("[gateway] audit_completion_failed: id=%d", auditID)
+			return err
 		}
+		return nil
 	}
 	if !h.store.UserCan(auth.UserID, cluster, instance, action) {
 		errMsg := fmt.Sprintf("forbidden: %s on %s/%s", action, cluster, instance)
@@ -1163,13 +1117,16 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	finalStatus := "success"
 	finalErr := ""
 	knownApplyFailure := false
+	var fileWriteResult []byte
 
 	err = agent.relayToolCall(opCtx, params, h.opts.OperationTimeout, func(msg gatewayWSMessage) error {
 		if method, _ := msg.Parsed["method"].(string); method == "notifications/message" {
 			if p, ok := msg.Parsed["params"].(map[string]interface{}); ok {
 				if chunk, ok := p["data"].(string); ok {
 					bytesOut += int64(len(chunk))
-					tail.WriteString(chunk)
+					if params.Name != "doops_file_write" {
+						tail.WriteString(chunk)
+					}
 				}
 			}
 			return writeRaw(msg.Raw)
@@ -1189,6 +1146,10 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 				knownApplyFailure = true
 			}
 			raw, _ := json.Marshal(msg.Parsed)
+			if params.Name == "doops_file_write" {
+				fileWriteResult = raw
+				return nil
+			}
 			if err := writeRaw(raw); err != nil {
 				return err
 			}
@@ -1215,7 +1176,15 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			finalErr = "credential_apply_outcome_unknown"
 		}
 	}
-	finishAudit(finalStatus, finalErr, tail.String(), bytesOut)
+	if err := finishAudit(finalStatus, finalErr, tail.String(), bytesOut); err != nil {
+		if params.Name == "doops_file_write" {
+			_ = writeJSON(buildErrorResponse(req.ID, -32603, "audit_completion_failed; mutation outcome requires verification"))
+		}
+		return nil
+	}
+	if len(fileWriteResult) != 0 {
+		return writeRaw(fileWriteResult)
+	}
 	return nil
 }
 
@@ -1249,6 +1218,12 @@ func validateExplicitCredentialNames(names []string) error {
 }
 
 func sanitizeAgentPromptAudit(toolName, errMsg, tail string) (string, string) {
+	if toolName == "doops_file_write" {
+		if errMsg != "" {
+			errMsg = "file_write_failed"
+		}
+		return errMsg, ""
+	}
 	if toolName != "doops_agent_prompt" {
 		return sanitizeSecretText(errMsg), sanitizeSecretText(tail)
 	}

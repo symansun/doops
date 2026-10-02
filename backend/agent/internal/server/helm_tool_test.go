@@ -419,3 +419,59 @@ touch "${MUTATION_MARKER}"
 		t.Fatalf("helm mutation ran after failed preflight")
 	}
 }
+
+func TestHelmSingleServiceReleaseVerifiesUnchangedServicesAgainstFinalSpec(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "helm"), []byte(`#!/bin/sh
+cat <<'YAML'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  template:
+    spec:
+      containers:
+        - name: api
+          image: registry.example/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  template:
+    spec:
+      containers:
+        - name: frontend
+          image: registry.example/frontend:release-20260925
+YAML
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "kubectl"), []byte(`#!/bin/sh
+set -eu
+if [ "$3" = "api" ]; then
+  image=registry.example/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+else
+  image="${FRONTEND_IMAGE}"
+fi
+printf '{"metadata":{"generation":7},"spec":{"replicas":1,"template":{"spec":{"containers":[{"image":"%s"}]}}},"status":{"observedGeneration":7,"updatedReplicas":1,"readyReplicas":1,"availableReplicas":1}}\n' "$image"
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FRONTEND_IMAGE", "registry.example/frontend:release-20260925")
+	command := helmCommand{cwd: root, release: "app", namespace: "apps", expectedImage: "registry.example/app@" + testHelmDigest}
+	if _, err := verifyHelmDeploymentState(t.Context(), command); err != nil {
+		t.Fatalf("valid single-service update rejected: %v", err)
+	}
+	t.Setenv("FRONTEND_IMAGE", "registry.example/frontend:release-20260924")
+	if _, err := verifyHelmDeploymentState(t.Context(), command); err == nil || !strings.Contains(err.Error(), "spec images") {
+		t.Fatalf("unrelated service spec drift accepted: %v", err)
+	}
+	command.expectedImage = "registry.example/missing@" + testHelmDigest
+	if _, err := verifyHelmDeploymentState(t.Context(), command); err == nil || !strings.Contains(err.Error(), "does not contain expected image") {
+		t.Fatalf("missing intended image accepted: %v", err)
+	}
+}

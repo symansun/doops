@@ -26,6 +26,7 @@ export interface AuditEvent {
   session?: string
   command_summary?: string
   status?: string
+  error?: string
   tail?: string
   bytes_in?: number
   bytes_out?: number
@@ -42,6 +43,46 @@ export interface AuditSummary {
   bytes_out: number
   status?: Record<string, number>
 }
+
+export type AuditScope = "target" | "session" | "self" | "global"
+
+export const AUDIT_ACTIONS = [
+  "exec",
+  "ask",
+  "read",
+  "write",
+  "push",
+  "pull",
+  "info",
+  "check",
+  "clean",
+  "proxy",
+  "agent:upgrade",
+  "targets:list",
+  "credential:create",
+  "credential:metadata",
+  "credential:grant",
+  "credential:use",
+  "credential:verify",
+  "credential:rotate",
+  "credential:revoke",
+  "credential:audit",
+  "admin",
+  "edge:admin",
+  "edge:view",
+] as const
+
+export const AUDIT_STATUSES = [
+  "running",
+  "success",
+  "error",
+  "forbidden",
+  "blocked",
+  "canceled",
+  "offline",
+  "busy",
+  "rate_limited",
+] as const
 
 // gateway 目标动作工具名
 export const TOOLS = {

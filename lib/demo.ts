@@ -329,6 +329,17 @@ export async function demoCallTool(
   }
 
   if (tool === "doops_agent_prompt") {
+    if (args.mode === "metadata") {
+      onEvent({ type: "result", result: { content: [{ type: "text", text: JSON.stringify({ status: "connected", model: JSON.parse(DEMO_SETTINGS).model }) }] } })
+      onEvent({ type: "done" })
+      return
+    }
+    if (args.operation === "apply") {
+      await emitChunks(["[演示] 收到发布授权；未操作真实目标。\n", "[演示工具] mcp_doops_helm upgrade-install\n"], onEvent, signal, 200)
+      onEvent({ type: "result", result: { content: [{ type: "text", text: "演示发布完成。真实发布需核对最终 Deployment spec/status、实际 imageID 和功能验收。" }] } })
+      onEvent({ type: "done" })
+      return
+    }
     const prompt = String(args.instruction || args.prompt || args.task || "")
     const p = prompt.toLowerCase()
     let chunks: string[]

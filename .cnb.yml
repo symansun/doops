@@ -48,6 +48,7 @@ main:
             npm i -g pnpm@11.7.0
             pnpm install --frozen-lockfile
             pnpm test:gateway-policy
+            pnpm test:console
             pnpm exec tsc --noEmit
             pnpm build
         - name: build immutable agent base
@@ -236,6 +237,7 @@ master:
             npm i -g pnpm@11.7.0
             pnpm install --frozen-lockfile
             pnpm test:gateway-policy
+            pnpm test:console
             pnpm build
 
 $:
@@ -269,6 +271,7 @@ $:
             npm i -g pnpm@11.7.0
             pnpm install --frozen-lockfile
             pnpm test:gateway-policy
+            pnpm test:console
             pnpm exec tsc --noEmit
             pnpm build
         - name: build release agent image

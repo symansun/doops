@@ -56,9 +56,11 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "镜像版本" in deployment_doc
     assert "变更原因" in deployment_doc
     assert "验收条件" in deployment_doc
-    assert not re.search(r"doops add(?:(?!doops login).)*--token", ci_guide, re.DOTALL)
-    assert ci_guide.count("doops login") == 3
-    assert ci_guide.count('--token "$DOOPS_API_KEY"') == 3
+    assert not re.search(r"doops add(?:(?!doops (?:-session [^\n]+ )?login).)*--token", ci_guide, re.DOTALL)
+    assert len(re.findall(r"doops -session [^\n]+ login", ci_guide)) == 3
+    assert ci_guide.count("--token-stdin") == 3
+    assert '--token "$DOOPS_API_KEY"' not in ci_guide
+    assert "session.token" not in ci_guide
     assert "--apply" in ci_guide
     assert ci_guide.count("--credential") >= 4
     assert ci_guide.count("<IMAGE_REPOSITORY>@sha256:<IMAGE_DIGEST>") == 3

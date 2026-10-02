@@ -2,17 +2,26 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import type { Session, Target } from "@/lib/client"
+import { randomSession } from "@/lib/gateway"
 import {
   createCredential,
   grantCredentialToSelf,
+  listCredentialGrants,
+  listCredentialVersions,
   listCredentials,
+  promoteCredentialVersion,
   putCredentialPayload,
+  revokeCredentialGrant,
   revokeCredential,
+  verifyCredentialVersion,
+  type CredentialGrant,
   type CredentialGrantScope,
   type CredentialResource,
   type CredentialScope,
   type CredentialType,
   type CredentialUse,
+  type CredentialVerificationResponse,
+  type CredentialVersion,
 } from "@/lib/credentials"
 import {
   BanIcon,
@@ -43,7 +52,19 @@ const TYPE_USES: Record<CredentialType, CredentialUse> = {
 type Action =
   | { kind: "payload"; credential: CredentialResource }
   | { kind: "grant"; credential: CredentialResource }
+  | { kind: "version"; credential: CredentialResource; version: CredentialVersion }
+  | {
+      kind: "verify"
+      credential: CredentialResource
+      version: CredentialVersion
+      grant: CredentialGrant
+    }
   | null
+
+interface VerificationStatus {
+  status: string
+  evidence: number
+}
 
 function fmtTime(value?: string) {
   if (!value) return "-"
@@ -59,14 +80,72 @@ export function CredentialPanel({ session, target }: { session: Session; target:
   const [notice, setNotice] = useState("")
   const [showCreate, setShowCreate] = useState(false)
   const [action, setAction] = useState<Action>(null)
+  const [versionsByCredential, setVersionsByCredential] = useState<
+    Record<string, CredentialVersion[]>
+  >({})
+  const [selectedVersionIDs, setSelectedVersionIDs] = useState<Record<string, string>>({})
+  const [verificationStatuses, setVerificationStatuses] = useState<
+    Record<string, VerificationStatus>
+  >({})
 
   const load = useCallback(async () => {
     setLoading(true)
     setError("")
     try {
-      setRows(await listCredentials(session, target, view))
+      let nextRows: CredentialResource[]
+      const versionEntries: Array<[string, CredentialVersion[]]> = []
+      if (session.demo) {
+        nextRows = await listCredentials(session, target, view)
+      } else if (view === "managed") {
+        const managedRows = await listCredentials(session, target, "managed")
+        nextRows = await Promise.all(
+          managedRows.map(async (resource) => {
+            const [versions, grants] = await Promise.all([
+              listCredentialVersions(session, resource.id),
+              listCredentialGrants(session, resource.id),
+            ])
+            versionEntries.push([resource.id, versions])
+            return { ...resource, grants }
+          }),
+        )
+      } else {
+        const [targetRows, managedRows] = await Promise.all([
+          listCredentials(session, target, "target"),
+          listCredentials(session, target, "managed"),
+        ])
+        const manageableIDs = new Set(managedRows.map((resource) => resource.id))
+        const manageableTargetRows = targetRows.filter((resource) =>
+          manageableIDs.has(resource.id),
+        )
+        const versions = await Promise.all(
+          manageableTargetRows.map(async (resource) => {
+            const resourceVersions = await listCredentialVersions(session, resource.id)
+            return [resource.id, resourceVersions] as [string, CredentialVersion[]]
+          }),
+        )
+        versionEntries.push(...versions)
+        nextRows = targetRows
+      }
+      const nextVersions = Object.fromEntries(versionEntries)
+      setRows(nextRows)
+      setVersionsByCredential(nextVersions)
+      setSelectedVersionIDs((current) => {
+        const next = { ...current }
+        for (const [credentialID, versions] of Object.entries(nextVersions)) {
+          if (!versions.some((version) => version.id === next[credentialID])) {
+            next[credentialID] =
+              versions.find((version) => version.state === "staged")?.id ??
+              versions.find((version) => version.state === "active")?.id ??
+              versions[0]?.id ??
+              ""
+          }
+        }
+        return next
+      })
     } catch (err) {
       setRows([])
+      setVersionsByCredential({})
+      setSelectedVersionIDs({})
       setError((err as Error).message)
     } finally {
       setLoading(false)
@@ -92,6 +171,69 @@ export function CredentialPanel({ session, target }: { session: Session; target:
     } catch (err) {
       setError((err as Error).message)
     }
+  }
+
+  async function revokeGrant(resource: CredentialResource, grant: CredentialGrant) {
+    if (
+      !window.confirm(
+        `确认吊销授权「${grant.scope.namespace} · ${grant.scope.workload.name}」？已物化资源将进入清理流程。`,
+      )
+    ) {
+      return
+    }
+    setError("")
+    try {
+      await revokeCredentialGrant(session, resource.id, grant.id)
+      completed(`已吊销 ${resource.name} 的一条授权`)
+      await load()
+    } catch (err) {
+      setError((err as Error).message)
+    }
+  }
+
+  async function promote(resource: CredentialResource, version: CredentialVersion) {
+    if (version.state !== "staged") return
+    if (!window.confirm(`确认激活暂存版本 ${version.id}？Gateway 会重新检查全部 active grant。`)) {
+      return
+    }
+    setError("")
+    try {
+      await promoteCredentialVersion(session, resource.id, version.id)
+      setAction(null)
+      await load()
+      completed(`已激活 ${resource.name} 的版本 ${version.id}`)
+    } catch (err) {
+      setError((err as Error).message)
+    }
+  }
+
+  function selectVersion(credentialID: string, versionID: string) {
+    setSelectedVersionIDs((current) => ({ ...current, [credentialID]: versionID }))
+  }
+
+  function rememberVersion(credentialID: string, version: CredentialVersion) {
+    setVersionsByCredential((current) => ({
+      ...current,
+      [credentialID]: [
+        version,
+        ...(current[credentialID] ?? []).filter((candidate) => candidate.id !== version.id),
+      ],
+    }))
+    selectVersion(credentialID, version.id)
+  }
+
+  function rememberVerification(
+    resource: CredentialResource,
+    version: CredentialVersion,
+    result: CredentialVerificationResponse,
+  ) {
+    setVerificationStatuses((current) => ({
+      ...current,
+      [`${resource.id}:${version.id}`]: {
+        status: result.status,
+        evidence: result.evidence.length,
+      },
+    }))
   }
 
   return (
@@ -174,12 +316,22 @@ export function CredentialPanel({ session, target }: { session: Session; target:
               <th className="px-3 py-2.5 font-medium">类型</th>
               <th className="px-3 py-2.5 font-medium">归属</th>
               <th className="px-3 py-2.5 font-medium">状态</th>
-              <th className="px-3 py-2.5 font-medium">{view === "target" ? "授权范围" : "更新时间"}</th>
+              <th className="px-3 py-2.5 font-medium">
+                {view === "target" ? "授权范围 / 版本" : "版本 / 授权范围"}
+              </th>
               <th className="px-4 py-2.5 text-right font-medium">操作</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((resource) => (
+            {rows.map((resource) => {
+              const versions = versionsByCredential[resource.id] ?? []
+              const version = versions.find(
+                (candidate) => candidate.id === selectedVersionIDs[resource.id],
+              )
+              const verification = version
+                ? verificationStatuses[`${resource.id}:${version.id}`]
+                : undefined
+              return (
               <tr key={resource.id} className="border-b border-border/60 align-top">
                 <td className="px-4 py-3">
                   <div className="font-medium text-foreground">{resource.name}</div>
@@ -201,7 +353,49 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                   </span>
                 </td>
                 <td className="max-w-md px-3 py-3 text-xs text-muted-foreground">
-                  {view === "target" ? <GrantSummary resource={resource} /> : fmtTime(resource.updated_at)}
+                  {view === "target" ? (
+                    <div className="flex flex-col gap-2">
+                      <GrantSummary
+                        resource={resource}
+                        version={version}
+                        disabled={Boolean(session.demo)}
+                        onVerify={(grant) =>
+                          version &&
+                          setAction({ kind: "verify", credential: resource, version, grant })
+                        }
+                        onRevoke={(grant) => revokeGrant(resource, grant)}
+                      />
+                      {versions.length > 0 && (
+                        <VersionSummary
+                          updatedAt={resource.updated_at}
+                          versions={versions}
+                          selectedVersion={version}
+                          verification={verification}
+                          onSelect={(versionID) => selectVersion(resource.id, versionID)}
+                        />
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <VersionSummary
+                        updatedAt={resource.updated_at}
+                        versions={versions}
+                        selectedVersion={version}
+                        verification={verification}
+                        onSelect={(versionID) => selectVersion(resource.id, versionID)}
+                      />
+                      <GrantSummary
+                        resource={resource}
+                        version={version}
+                        disabled={Boolean(session.demo)}
+                        onVerify={(grant) =>
+                          version &&
+                          setAction({ kind: "verify", credential: resource, version, grant })
+                        }
+                        onRevoke={(grant) => revokeGrant(resource, grant)}
+                      />
+                    </div>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex justify-end gap-1.5">
@@ -213,6 +407,26 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                         >
                           写入版本
                         </button>
+                        {version && (
+                          <>
+                            <button
+                              onClick={() => setAction({ kind: "version", credential: resource, version })}
+                              className="rounded-md border px-2 py-1 text-xs text-foreground hover:bg-muted"
+                            >
+                              查看版本
+                            </button>
+                            {version.state === "staged" && (
+                              <>
+                                <button
+                                  onClick={() => promote(resource, version)}
+                                  className="rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:opacity-90"
+                                >
+                                  激活
+                                </button>
+                              </>
+                            )}
+                          </>
+                        )}
                         <button
                           onClick={() => setAction({ kind: "grant", credential: resource })}
                           className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-foreground hover:bg-muted"
@@ -231,7 +445,8 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                   </div>
                 </td>
               </tr>
-            ))}
+              )
+            })}
             {!rows.length && !loading && (
               <tr>
                 <td colSpan={6} className="px-4 py-16 text-center text-sm text-muted-foreground">
@@ -250,9 +465,10 @@ export function CredentialPanel({ session, target }: { session: Session; target:
           session={session}
           credential={action.credential}
           onClose={() => setAction(null)}
-          onDone={(message) => {
+          onDone={(version) => {
+            rememberVersion(action.credential.id, version)
             setAction(null)
-            completed(message)
+            completed(`已写入暂存版本 ${version.id}`)
           }}
           onError={setError}
         />
@@ -271,20 +487,299 @@ export function CredentialPanel({ session, target }: { session: Session; target:
           onError={setError}
         />
       )}
+      {action?.kind === "version" && (
+        <VersionDialog
+          credential={action.credential}
+          version={action.version}
+          verification={verificationStatuses[`${action.credential.id}:${action.version.id}`]}
+          onClose={() => setAction(null)}
+          onPromote={() => promote(action.credential, action.version)}
+        />
+      )}
+      {action?.kind === "verify" && (
+        <VerifyDialog
+          session={session}
+          credential={action.credential}
+          version={action.version}
+          grant={action.grant}
+          onClose={() => setAction(null)}
+          onDone={(result) => {
+            rememberVerification(action.credential, action.version, result)
+            setAction(null)
+            completed(
+              `版本 ${action.version.id} 已验证，返回 ${result.evidence.length} 条 metadata evidence`,
+            )
+          }}
+          onError={setError}
+        />
+      )}
     </div>
   )
 }
 
-function GrantSummary({ resource }: { resource: CredentialResource }) {
+function VersionDialog({
+  credential,
+  version,
+  verification,
+  onClose,
+  onPromote,
+}: {
+  credential: CredentialResource
+  version: CredentialVersion
+  verification?: VerificationStatus
+  onClose: () => void
+  onPromote: () => void
+}) {
+  return (
+    <DialogFrame title={`凭据版本 · ${credential.name}`} onClose={onClose}>
+      <div className="space-y-3 p-4 text-xs">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <ReadOnlyField label="Version ID" value={version.id} />
+          <ReadOnlyField label="状态" value={version.state} />
+          <ReadOnlyField label="Payload digest" value={version.payload_digest} />
+          <ReadOnlyField label="创建时间" value={fmtTime(version.created_at)} />
+          <ReadOnlyField label="激活时间" value={fmtTime(version.promoted_at)} />
+        </div>
+        {verification && (
+          <div className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-success">
+            已验证：{verification.status} · {verification.evidence} 条 metadata evidence
+          </div>
+        )}
+        <p className="text-muted-foreground">
+          页面只保存 Gateway 返回的版本元数据；payload 不会进入页面状态、任务上下文或公开请求结果。
+        </p>
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="rounded-md border px-3 py-2 text-xs text-foreground hover:bg-muted"
+          >
+            关闭
+          </button>
+          {version.state === "staged" && (
+            <button
+              onClick={onPromote}
+              className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:opacity-90"
+            >
+              激活版本
+            </button>
+          )}
+        </div>
+      </div>
+    </DialogFrame>
+  )
+}
+
+function VerifyDialog({
+  session,
+  credential,
+  version,
+  grant,
+  onClose,
+  onDone,
+  onError,
+}: {
+  session: Session
+  credential: CredentialResource
+  version: CredentialVersion
+  grant: CredentialGrant
+  onClose: () => void
+  onDone: (result: CredentialVerificationResponse) => void
+  onError: (message: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [sessionID] = useState(() => randomSession("credential-verify"))
+  const scope = grant.scope
+
+  async function submit() {
+    setBusy(true)
+    onError("")
+    try {
+      const result = await verifyCredentialVersion(session, credential.id, {
+        version_id: version.id,
+        session_id: sessionID,
+        scope,
+      })
+      onDone(result)
+    } catch (err) {
+      onError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <DialogFrame title={`验证暂存版本 · ${credential.name}`} onClose={onClose}>
+      <div className="space-y-3 p-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <ReadOnlyField label="Version ID" value={version.id} />
+          <ReadOnlyField label="Grant ID" value={grant.id} />
+          <ReadOnlyField label="Cluster / instance" value={`${scope.cluster}/${scope.instance}`} />
+          <ReadOnlyField label="Namespace" value={scope.namespace} />
+          <ReadOnlyField label="Use" value={scope.use} />
+          <ReadOnlyField
+            label="Workload"
+            value={`${scope.workload.kind}/${scope.workload.name}`}
+          />
+          {scope.image_repository && (
+            <ReadOnlyField label="Image repository" value={scope.image_repository} />
+          )}
+          {scope.image_digest && <ReadOnlyField label="Image digest" value={scope.image_digest} />}
+          {scope.helm_release && <ReadOnlyField label="Helm release" value={scope.helm_release} />}
+          {scope.helm_chart && <ReadOnlyField label="Helm chart" value={scope.helm_chart} />}
+          {scope.required_keys?.length ? (
+            <ReadOnlyField label="Required keys" value={scope.required_keys.join(", ")} />
+          ) : null}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          将按该 grant 的完整精确 scope 验证 staged version；返回内容仅为状态和 metadata evidence。
+        </p>
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="rounded-md border px-3 py-2 text-xs text-foreground hover:bg-muted"
+          >
+            取消
+          </button>
+          <button
+            onClick={submit}
+            disabled={busy || version.state !== "staged" || grant.state !== "active"}
+            className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
+          >
+            {busy ? "验证中" : "验证完整 scope"}
+          </button>
+        </div>
+      </div>
+    </DialogFrame>
+  )
+}
+
+function GrantSummary({
+  resource,
+  version,
+  disabled,
+  onVerify,
+  onRevoke,
+}: {
+  resource: CredentialResource
+  version?: CredentialVersion
+  disabled: boolean
+  onVerify: (grant: CredentialGrant) => void
+  onRevoke: (grant: CredentialGrant) => void
+}) {
   if (!resource.grants?.length) return <span>-</span>
   return (
     <div className="flex flex-col gap-1">
       {resource.grants.map((grant) => (
-        <span key={grant.id}>
-          {grant.scope.namespace} · {grant.scope.use} · {grant.scope.workload.kind}/
-          {grant.scope.workload.name}
-        </span>
+        <div key={grant.id} className="flex flex-col gap-1.5">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="font-mono text-[11px] text-muted-foreground">{grant.id}</span>
+            <span
+              className={`rounded px-1.5 py-0.5 ${
+                grant.state === "active"
+                  ? "bg-success/15 text-success"
+                  : "bg-muted text-muted-foreground"
+              }`}
+            >
+              {grant.state}
+            </span>
+            {grant.state === "active" && !disabled && version?.state === "staged" && (
+              <button
+                onClick={() => onVerify(grant)}
+                className="rounded border px-1.5 py-0.5 text-[11px] text-foreground hover:bg-muted"
+              >
+                验证暂存
+              </button>
+            )}
+            {grant.state === "active" && !disabled && (
+              <button
+                onClick={() => onRevoke(grant)}
+                title="吊销授权"
+                className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
+              >
+                <BanIcon width={12} height={12} />
+              </button>
+            )}
+          </div>
+          <div>
+            {grant.scope.cluster}/{grant.scope.instance} · ns/{grant.scope.namespace} ·{" "}
+            {grant.scope.use}
+          </div>
+          <div>
+            workload {grant.scope.workload.kind}/{grant.scope.workload.name}
+          </div>
+          {grant.scope.image_repository && <div>image {grant.scope.image_repository}</div>}
+          {grant.scope.image_digest && (
+            <div className="font-mono text-[11px]">digest {grant.scope.image_digest}</div>
+          )}
+          {grant.scope.helm_release && <div>helm release {grant.scope.helm_release}</div>}
+          {grant.scope.helm_chart && <div>helm chart {grant.scope.helm_chart}</div>}
+          {grant.scope.required_keys?.length ? (
+            <div>required keys {grant.scope.required_keys.join(", ")}</div>
+          ) : null}
+        </div>
       ))}
+    </div>
+  )
+}
+
+function VersionSummary({
+  updatedAt,
+  versions,
+  selectedVersion,
+  verification,
+  onSelect,
+}: {
+  updatedAt?: string
+  versions: CredentialVersion[]
+  selectedVersion?: CredentialVersion
+  verification?: VerificationStatus
+  onSelect: (versionID: string) => void
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span>更新时间：{fmtTime(updatedAt)}</span>
+      {versions.length > 0 ? (
+        <>
+          <label className="flex flex-wrap items-center gap-1.5">
+            <span>版本</span>
+            <select
+              className="input min-w-48 py-1 text-[11px]"
+              value={selectedVersion?.id ?? ""}
+              onChange={(event) => onSelect(event.target.value)}
+            >
+              {versions.map((version) => (
+                <option key={version.id} value={version.id}>
+                  {version.state} · {version.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedVersion ? (
+            <>
+              <span className="flex flex-wrap items-center gap-1.5">
+                <span className="rounded bg-muted px-1.5 py-0.5 text-foreground">
+                  {selectedVersion.state}
+                </span>
+                {verification && (
+                  <span className="rounded bg-success/15 px-1.5 py-0.5 text-success">
+                    {verification.status} · {verification.evidence} 条证据
+                  </span>
+                )}
+              </span>
+              <span className="font-mono text-[11px] text-muted-foreground">
+                {selectedVersion.id}
+              </span>
+              <span className="font-mono text-[11px] text-muted-foreground">
+                digest {selectedVersion.payload_digest}
+              </span>
+            </>
+          ) : (
+            <span className="text-muted-foreground">请选择一个版本</span>
+          )}
+        </>
+      ) : (
+        <span className="text-muted-foreground">当前资源没有可见版本</span>
+      )}
     </div>
   )
 }
@@ -412,7 +907,7 @@ function PayloadDialog({
   session: Session
   credential: CredentialResource
   onClose: () => void
-  onDone: (message: string) => void
+  onDone: (version: CredentialVersion) => void
   onError: (message: string) => void
 }) {
   const [payload, setPayload] = useState("")
@@ -430,7 +925,7 @@ function PayloadDialog({
     try {
       const version = await putCredentialPayload(session, credential.id, payload)
       setPayload("")
-      onDone(`已写入暂存版本 ${version.id}`)
+      onDone(version)
     } catch (err) {
       onError((err as Error).message)
     } finally {
@@ -507,8 +1002,40 @@ function GrantDialog({
         .filter(Boolean),
     [requiredKeys],
   )
+  const scopeError = useMemo(() => {
+    if (!namespace.trim() || !workloadName.trim()) return "Namespace 和 workload name 必填"
+    if (use === "imagePull") {
+      if (!imageRepository.trim()) return "Image repository 必填"
+      if (!/^sha256:[0-9a-f]{64}$/.test(imageDigest.trim())) {
+        return "Image digest 必须是 sha256: 加 64 位小写十六进制"
+      }
+    }
+    if (use === "helmPull") {
+      if (!helmRelease.trim()) return "Helm release 必填"
+      if (!/^(https|oci):\/\/\S+$/.test(helmChart.trim())) {
+        return "Helm chart 必须是明确的 https:// 或 oci:// URL"
+      }
+    }
+    if (use === "opaqueSecret" && requiredKeyList.length === 0) {
+      return "Required keys 至少填写一项"
+    }
+    return ""
+  }, [
+    helmChart,
+    helmRelease,
+    imageDigest,
+    imageRepository,
+    namespace,
+    requiredKeyList,
+    use,
+    workloadName,
+  ])
 
   async function submit() {
+    if (scopeError) {
+      onError(scopeError)
+      return
+    }
     const scope: CredentialGrantScope = {
       cluster: target.cluster,
       instance: target.instance,
@@ -585,10 +1112,11 @@ function GrantDialog({
             placeholder="username,password"
           />
         )}
+        {scopeError && <p className="text-xs text-destructive sm:col-span-2">{scopeError}</p>}
         <div className="flex justify-end sm:col-span-2">
           <button
             onClick={submit}
-            disabled={busy || !namespace.trim() || !workloadName.trim()}
+            disabled={busy || Boolean(scopeError)}
             className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
           >
             <ShieldIcon width={14} height={14} /> {busy ? "授权中" : "确认授权"}

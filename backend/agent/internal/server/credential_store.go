@@ -1195,6 +1195,42 @@ func (s *GatewayStore) CredentialVersionByID(credentialID, versionID string) (Cr
 	return version, err
 }
 
+func (s *GatewayStore) CredentialVersions(credentialID string) ([]CredentialVersion, error) {
+	rows, err := s.db.Query(`SELECT id, credential_id, payload_digest, state, created_by, created_at, promoted_at, revoked_at
+		FROM credential_versions WHERE credential_id = ? ORDER BY created_at DESC, id DESC`, strings.TrimSpace(credentialID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	versions := make([]CredentialVersion, 0)
+	for rows.Next() {
+		version, err := scanCredentialVersion(rows)
+		if err != nil {
+			return nil, err
+		}
+		versions = append(versions, version)
+	}
+	return versions, rows.Err()
+}
+
+func (s *GatewayStore) CredentialGrants(credentialID string) ([]CredentialGrant, error) {
+	rows, err := s.db.Query(`SELECT id, credential_id, grantee_id, scope_json, state, created_by, created_at, revoked_at
+		FROM credential_grants WHERE credential_id = ? ORDER BY created_at DESC, id DESC`, strings.TrimSpace(credentialID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	grants := make([]CredentialGrant, 0)
+	for rows.Next() {
+		grant, err := scanCredentialGrant(rows)
+		if err != nil {
+			return nil, err
+		}
+		grants = append(grants, grant)
+	}
+	return grants, rows.Err()
+}
+
 func (s *GatewayStore) credentialVersionByState(credentialID string, state CredentialVersionState) (CredentialVersion, error) {
 	row := s.db.QueryRow(`SELECT id, credential_id, payload_digest, state, created_by, created_at, promoted_at, revoked_at
 		FROM credential_versions WHERE credential_id = ? AND state = ?`, credentialID, state)

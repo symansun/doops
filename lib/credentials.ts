@@ -5,6 +5,7 @@ import type { Session, Target } from "./client"
 export type CredentialType = "registry" | "tls" | "opaque" | "helmRepository" | "gitToken"
 export type CredentialScope = "personal" | "platform"
 export type CredentialUse = "imagePull" | "gitCheckout" | "helmPull" | "tls" | "opaqueSecret"
+export type CredentialVersionState = "staged" | "active" | "superseded" | "revoked"
 
 export interface CredentialGrantScope {
   cluster: string
@@ -26,6 +27,28 @@ export interface CredentialGrant {
   scope: CredentialGrantScope
   state: string
   created_at?: string
+}
+
+export interface CredentialVersion {
+  id: string
+  credential_id: string
+  payload_digest: string
+  state: CredentialVersionState
+  created_at?: string
+  promoted_at?: string
+  revoked_at?: string
+}
+
+export interface CredentialVerificationEvidence {
+  status: string
+  resourceVersion?: string
+  digest?: string
+  errorCategory?: string
+}
+
+export interface CredentialVerificationResponse {
+  status: string
+  evidence: CredentialVerificationEvidence[]
 }
 
 export interface CredentialResource {
@@ -118,6 +141,36 @@ export async function listCredentials(
   return response.credentials || []
 }
 
+export async function listCredentialVersions(
+  s: Session,
+  credentialID: string,
+): Promise<CredentialVersion[]> {
+  if (s.demo) throw new Error("演示模式不查询凭据版本")
+  const response = await request<{ versions?: unknown }>(
+    s,
+    `/${encodeURIComponent(credentialID)}/versions`,
+  )
+  if (!Array.isArray(response.versions)) {
+    throw new Error("凭据版本响应缺少 versions")
+  }
+  return response.versions as CredentialVersion[]
+}
+
+export async function listCredentialGrants(
+  s: Session,
+  credentialID: string,
+): Promise<CredentialGrant[]> {
+  if (s.demo) throw new Error("演示模式不查询凭据授权")
+  const response = await request<{ grants?: unknown }>(
+    s,
+    `/${encodeURIComponent(credentialID)}/grants`,
+  )
+  if (!Array.isArray(response.grants)) {
+    throw new Error("凭据授权响应缺少 grants")
+  }
+  return response.grants as CredentialGrant[]
+}
+
 export async function createCredential(
   s: Session,
   body: { name: string; scope: CredentialScope; type: CredentialType },
@@ -133,9 +186,9 @@ export async function putCredentialPayload(
   s: Session,
   credentialID: string,
   payload: string,
-): Promise<{ id: string; credential_id: string; state: string }> {
+): Promise<CredentialVersion> {
   if (s.demo) throw new Error("演示模式不执行凭据写操作")
-  return request(s, `/${encodeURIComponent(credentialID)}/payload`, {
+  return request<CredentialVersion>(s, `/${encodeURIComponent(credentialID)}/payload`, {
     method: "PUT",
     body: payload,
   })
@@ -147,9 +200,53 @@ export async function grantCredentialToSelf(
   scope: CredentialGrantScope,
 ): Promise<CredentialGrant> {
   if (s.demo) throw new Error("演示模式不执行凭据写操作")
-  return request(s, `/${encodeURIComponent(credentialID)}/grants`, {
+  return request<CredentialGrant>(s, `/${encodeURIComponent(credentialID)}/grants`, {
     method: "POST",
     body: JSON.stringify({ scope }),
+  })
+}
+
+export async function verifyCredentialVersion(
+  s: Session,
+  credentialID: string,
+  body: {
+    version_id: string
+    session_id: string
+    scope: CredentialGrantScope
+  },
+): Promise<CredentialVerificationResponse> {
+  if (s.demo) throw new Error("演示模式不执行凭据写操作")
+  return request<CredentialVerificationResponse>(s, `/${encodeURIComponent(credentialID)}/verify`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+}
+
+export async function promoteCredentialVersion(
+  s: Session,
+  credentialID: string,
+  versionID: string,
+): Promise<{ credential_id: string; version_id: string; promoted: boolean }> {
+  if (s.demo) throw new Error("演示模式不执行凭据写操作")
+  return request<{ credential_id: string; version_id: string; promoted: boolean }>(
+    s,
+    `/${encodeURIComponent(credentialID)}/promote`,
+    {
+      method: "POST",
+      body: JSON.stringify({ version_id: versionID }),
+    },
+  )
+}
+
+export async function revokeCredentialGrant(
+  s: Session,
+  credentialID: string,
+  grantID: string,
+): Promise<CredentialGrant> {
+  if (s.demo) throw new Error("演示模式不执行凭据写操作")
+  return request<CredentialGrant>(s, `/${encodeURIComponent(credentialID)}/grants`, {
+    method: "DELETE",
+    body: JSON.stringify({ grant_id: grantID }),
   })
 }
 

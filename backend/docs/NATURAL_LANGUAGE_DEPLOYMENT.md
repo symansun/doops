@@ -3,6 +3,10 @@
 DoOps v3 普通业务 workload 的标准发布入口是明确授权的自然语言任务，而不是环境注册表、
 部署模板或 workflow YAML。
 唯一发布命令语义是 `doops ask --apply`；CI 和人工调用都使用同一入口。
+Gateway 控制台的部署表单调用同一 `doops_agent_prompt operation=apply`，要求发布者
+明确勾选变更授权并填写 CI 来源、target、服务范围、release、namespace、远程 Chart、
+镜像、原因与验收；公开调用只携带 credential resource names，不携带 payload。
+页面的工具失败、连接中断和缺失终态不能成为成功结果，诊断模式不会授权 mutation。
 apply 不要求先把代码同步到 target 的隔离工作区；发布所需的 Chart、values URL、镜像
 版本和验收条件必须直接出现在任务中或来自任务明确授权读取的现有 release。Helm
 版本输入只能是 `image.repository` 加一个 `image.digest=sha256:<64 hex>`，或

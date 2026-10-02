@@ -6,7 +6,7 @@ import {
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-// 透传到 gateway GET /v1/audit（需要 admin 权限的 token）
+// Gateway authorizes own-user records and privileged audit scopes.
 export async function GET(req: Request) {
   let gateway: string
   let token: string
@@ -21,7 +21,7 @@ export async function GET(req: Request) {
 
   const incoming = new URL(req.url)
   const qs = new URLSearchParams()
-  for (const k of ["cluster", "instance", "session", "action", "status", "user_id", "limit"]) {
+  for (const k of ["cluster", "instance", "session", "action", "status", "user_id", "view", "limit"]) {
     const v = incoming.searchParams.get(k)
     if (v) qs.set(k, v)
   }

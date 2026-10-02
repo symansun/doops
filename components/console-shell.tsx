@@ -15,6 +15,7 @@ import { CredentialPanel } from "./credential-panel"
 import { AdminConsole } from "./admin-console"
 import { DashboardPanel } from "./dashboard-panel"
 import { DeployGuideBody } from "./deploy-guide"
+import { AgentUpgradePanel } from "./agent-upgrade-panel"
 import { CicdGuide } from "./cicd-guide"
 import { OnboardingGuide } from "./onboarding-guide"
 import {
@@ -51,7 +52,7 @@ const ONBOARD_KEY = "doops.onboarded"
 
 export function ConsoleShell() {
   const [session, setSession] = useState<Session | null>(null)
-  const [defaultGateway, setDefaultGateway] = useState("http://localhost:42222")
+  const [defaultGateway, setDefaultGateway] = useState("")
   const [targets, setTargets] = useState<Target[]>([])
   const [selected, setSelected] = useState<Target | null>(null)
   const [sessionId, setSessionId] = useState(randomSession())
@@ -67,7 +68,7 @@ export function ConsoleShell() {
   useEffect(() => {
     if (typeof window === "undefined") return
     const saved = localStorage.getItem(GW_KEY)
-    if (saved) setDefaultGateway(saved)
+    setDefaultGateway(saved || window.location.origin)
     // 自动进入演示模式：?demo=1 或上次以演示模式连接过
     const wantsDemo =
       new URLSearchParams(window.location.search).get("demo") === "1" ||
@@ -151,7 +152,7 @@ export function ConsoleShell() {
           <span className="hidden truncate text-sm font-semibold text-foreground sm:inline">
             Doops Console
           </span>
-          {view === "console" && (
+          {(view === "console" || view === "deploy") && (
             <TargetSwitcher
               targets={targets}
               selected={selected}
@@ -230,12 +231,13 @@ export function ConsoleShell() {
         <AdminConsole session={session} defaultTab={adminDefaultTab} />
       ) : view === "deploy" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <DeployGuideBody
+          {selected && <AgentUpgradePanel key={selected.key} session={session} target={selected} sessionId={sessionId} />}
+          <details className="border-t" open={!selected}><summary className="cursor-pointer px-4 py-3 text-sm font-medium">首次接入</summary><DeployGuideBody
             onEnterConsole={() => {
               setView("console")
               refresh()
             }}
-          />
+          /></details>
         </div>
       ) : view === "cicd" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">

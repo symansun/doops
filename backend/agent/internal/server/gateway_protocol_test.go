@@ -790,7 +790,7 @@ func TestGatewayPasswordLoginIssuesUserToken(t *testing.T) {
 	}
 }
 
-func TestGatewayAuditHTTPRequiresAdminAndFiltersEvents(t *testing.T) {
+func TestGatewayAuditHTTPAllowsOwnHistoryAndFiltersEvents(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -834,8 +834,15 @@ func TestGatewayAuditHTTPRequiresAdminAndFiltersEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get audit as user: %v", err)
 	}
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("expected non-admin audit read to be forbidden, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected own audit read to succeed, got %d", resp.StatusCode)
+	}
+	var own auditResponse
+	if err := json.NewDecoder(resp.Body).Decode(&own); err != nil {
+		t.Fatal(err)
+	}
+	if len(own.Events) != 1 || own.Events[0].UserID != user.ID {
+		t.Fatalf("own audit boundary failed: %#v", own.Events)
 	}
 	resp.Body.Close()
 
@@ -939,8 +946,9 @@ func TestGatewayAdminTokenCreateRequiresAdminAndIssuesUserToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list audit: %v", err)
 	}
-	if len(events) != 1 || events[0].Status != "success" || events[0].Session != "admin-token-create" {
-		t.Fatalf("expected successful admin audit event, got %#v", events)
+	if len(events) != 2 || events[0].Status != "success" || events[0].Session != "admin-token-create" ||
+		events[1].Status != "forbidden" || events[1].UserID != alice.ID {
+		t.Fatalf("expected one audit per successful/denied token mutation, got %#v", events)
 	}
 }
 

@@ -13,7 +13,7 @@ export interface Session {
 
 export type RpcEvent =
   | { type: "open" }
-  | { type: "output"; data: string; session?: string }
+  | { type: "output"; data: string; session?: string; kind?: string }
   | { type: "result"; result: unknown }
   | { type: "error"; error: string; code?: number }
   | { type: "done" }
@@ -104,6 +104,7 @@ export async function callTool(
     tool: string
     arguments: Record<string, unknown>
     signal?: AbortSignal
+    requiredProtocol?: "structuredSSH"
   },
   onEvent: (ev: RpcEvent) => void,
 ): Promise<void> {
@@ -120,6 +121,7 @@ export async function callTool(
       instance: opts.instance,
       tool: opts.tool,
       arguments: opts.arguments,
+      requiredProtocol: opts.requiredProtocol,
     }),
     signal: opts.signal,
   })
@@ -134,14 +136,34 @@ export async function callTool(
     }
     onEvent({ type: "error", error: msg })
     onEvent({ type: "done" })
-    return
+    throw new Error(msg)
   }
 
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ""
+  let terminal = false
+  let failure = ""
+  function receive(line: string) {
+    let event: RpcEvent
+    try { event = JSON.parse(line) as RpcEvent } catch { throw new Error("运维服务返回了无效事件") }
+    if (!event || !["open", "output", "result", "error", "done"].includes(event.type)) throw new Error("运维服务返回了未知事件")
+    if (event.type === "result") {
+      terminal = true
+      if ((event.result as { isError?: boolean })?.isError) {
+        failure = extractText(event.result) || "工具执行失败"
+        onEvent({ type: "error", error: failure })
+        return
+      }
+    }
+    if (event.type === "error") {
+      terminal = true
+      failure = event.error || "工具执行失败"
+    }
+    onEvent(event)
+  }
 
-  while (true) {
+  try { while (true) {
     const { done, value } = await reader.read()
     if (done) break
     buffer += decoder.decode(value, { stream: true })
@@ -150,20 +172,16 @@ export async function callTool(
       const line = buffer.slice(0, idx).trim()
       buffer = buffer.slice(idx + 1)
       if (!line) continue
-      try {
-        onEvent(JSON.parse(line) as RpcEvent)
-      } catch {
-        /* 忽略不完整行 */
-      }
+      receive(line)
     }
   }
+  buffer += decoder.decode()
   if (buffer.trim()) {
-    try {
-      onEvent(JSON.parse(buffer.trim()) as RpcEvent)
-    } catch {
-      /* noop */
-    }
+    receive(buffer.trim())
   }
+  if (!terminal) throw new Error("连接已结束，未收到工具执行结果")
+  if (failure) throw new Error(failure)
+  } finally { reader.releaseLock() }
 }
 
 // 从工具结果里提取文本内容（MCP content 数组或字符串）

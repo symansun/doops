@@ -4,8 +4,6 @@ import { useMemo, useState } from "react"
 import type { Session } from "@/lib/client"
 import {
   KeyIcon,
-  EyeIcon,
-  EyeOffIcon,
   CopyIcon,
   CheckIcon,
   GitIcon,
@@ -61,28 +59,24 @@ const PROVIDERS: { id: Provider; label: string }[] = [
   { id: "gitlab", label: "GitLab CI" },
 ]
 
-export function CicdGuide({ session }: { session: Session }) {
-  // 默认用当前会话令牌与网关地址；演示或空值时回退到占位示例
-  const sessionKey = session.token && !session.demo ? session.token : ""
-  const sessionGateway =
-    session.gateway && !session.gateway.startsWith("demo://") ? session.gateway : ""
-
-  const [apiKey, setApiKey] = useState(sessionKey)
-  const [gateway, setGateway] = useState(sessionGateway)
-  const [reveal, setReveal] = useState(false)
+export function CicdGuide(_props: { session: Session }) {
+  // 示例只使用占位符；当前 Web 会话 token 不能进入可复制的 CI/CD 代码。
+  const [gateway, setGateway] = useState("")
   const [provider, setProvider] = useState<Provider>("curl")
 
-  // 用于示例中的展示值（未填写时给占位符）
-  const gw = gateway.trim() || "https://gateway.example.com"
-  const keyDisplay = apiKey.trim() || "<DOOPS_API_KEY>"
+  const gw = gateway.trim() || "<DOOPS_GATEWAY_URL>"
 
   const snippet = useMemo(() => {
     if (provider === "curl") {
       return {
         lang: "bash",
-        code: `# 先按正式 Release 安装 doops 到 ~/.local/bin/doops；不要使用 Skill 目录中的开发态二进制
+        code: `# 安装固定 Release 的 CLI 与同一提交的 Skill；不向业务 target 同步源码
+export DOOPS_VERSION="<PINNED_DOOPS_VERSION>"
+git clone --depth 1 --branch "$DOOPS_VERSION" https://cnb.cool/l8ai/ai/doops.sh.git /tmp/doops-release
+bash /tmp/doops-release/backend/scripts/install.sh --version "$DOOPS_VERSION" --project "$PWD"
+export PATH="$HOME/.local/bin:$PATH"
 export DOOPS_GATEWAY="${gw}"
-export DOOPS_API_KEY="${keyDisplay}"
+export DOOPS_SESSION="release-<RELEASE_ID>"
 export DOOPS_CREDENTIAL="<CREDENTIAL_RESOURCE_NAME>"
 
 doops add \\
@@ -91,15 +85,15 @@ doops add \\
   --cluster <CLUSTER> \\
   --instance <INSTANCE>
 
-doops login \\
+printf '%s\\n' "$DOOPS_API_KEY" | doops -session "$DOOPS_SESSION" login \\
   --target <ENVIRONMENT_TARGET> \\
-  --token "$DOOPS_API_KEY"
+  --token-stdin
 
-doops -session "release-$(git rev-parse --short HEAD)" ask \\
+doops -session "$DOOPS_SESSION" ask \\
   --target <ENVIRONMENT_TARGET> \\
   --apply \\
   --credential "$DOOPS_CREDENTIAL" \\
-  --msg "发布服务范围 <SERVICES>，镜像 <IMAGE_REPOSITORY>@sha256:<IMAGE_DIGEST>；原因：<REASON>；验收：<ACCEPTANCE>。"`,
+  --msg "target scope: <TARGET_SCOPE>; service scope: <SERVICES>; release: <RELEASE>; namespace: <NAMESPACE>; chart: <CHART_REFERENCE>; chart digest: sha256:<CHART_DIGEST>; image: <IMAGE_REPOSITORY>@sha256:<IMAGE_DIGEST>; reason: <REASON>; acceptance: <ROLLOUT, FINAL_DEPLOYMENT_SPEC_STATUS, HEALTH_CHECK, FUNCTIONAL_PATH>。"`,
       }
     }
     if (provider === "github") {
@@ -119,30 +113,29 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install released Doops CLI
         run: |
-          git clone --depth 1 --branch "$DOOPS_VERSION" \\
-            https://cnb.cool/l8ai/ai/doops.sh.git /tmp/doops-release
-          bash /tmp/doops-release/backend/scripts/install.sh \\
-            --version "$DOOPS_VERSION" --project "$GITHUB_WORKSPACE"
+          git clone --depth 1 --branch "$DOOPS_VERSION" https://cnb.cool/l8ai/ai/doops.sh.git /tmp/doops-release
+          bash /tmp/doops-release/backend/scripts/install.sh --version "$DOOPS_VERSION" --project "$GITHUB_WORKSPACE"
       - name: Trigger Doops deploy
         env:
-          DOOPS_GATEWAY: ${gw}
+          DOOPS_GATEWAY: "${gw}"
           DOOPS_API_KEY: \${{ secrets.DOOPS_API_KEY }}
           DOOPS_CREDENTIAL: <CREDENTIAL_RESOURCE_NAME>
           IMAGE_REF: <IMAGE_REPOSITORY>@sha256:<IMAGE_DIGEST>
         run: |
           export PATH="$HOME/.local/bin:$PATH"
+          export DOOPS_SESSION="release-\${GITHUB_SHA::12}"
           doops add --name <ENVIRONMENT_TARGET> \\
             --gateway "$DOOPS_GATEWAY" \\
             --cluster <CLUSTER> \\
             --instance <INSTANCE>
-          doops login \\
+          printf '%s\\n' "$DOOPS_API_KEY" | doops -session "$DOOPS_SESSION" login \\
             --target <ENVIRONMENT_TARGET> \\
-            --token "$DOOPS_API_KEY"
+            --token-stdin
           doops -session "release-\${GITHUB_SHA::12}" ask \\
             --target <ENVIRONMENT_TARGET> \\
             --apply \\
             --credential "$DOOPS_CREDENTIAL" \\
-            --msg "发布服务范围 <SERVICES>，镜像 $IMAGE_REF；原因：<REASON>；验收：<ACCEPTANCE>。"`,
+            --msg "target scope: <TARGET_SCOPE>; service scope: <SERVICES>; release: <RELEASE>; namespace: <NAMESPACE>; chart: <CHART_REFERENCE>; chart digest: sha256:<CHART_DIGEST>; image: $IMAGE_REF; reason: <REASON>; acceptance: <ROLLOUT, FINAL_DEPLOYMENT_SPEC_STATUS, HEALTH_CHECK, FUNCTIONAL_PATH>。"`,
       }
     }
     return {
@@ -158,27 +151,26 @@ jobs:
   script:
     - |
       apk add --no-cache bash curl git
-      git clone --depth 1 --branch "$DOOPS_VERSION" \\
-        https://cnb.cool/l8ai/ai/doops.sh.git /tmp/doops-release
-      bash /tmp/doops-release/backend/scripts/install.sh \\
-        --version "$DOOPS_VERSION" --project "$CI_PROJECT_DIR"
+      git clone --depth 1 --branch "$DOOPS_VERSION" https://cnb.cool/l8ai/ai/doops.sh.git /tmp/doops-release
+      bash /tmp/doops-release/backend/scripts/install.sh --version "$DOOPS_VERSION" --project "$CI_PROJECT_DIR"
       export PATH="$HOME/.local/bin:$PATH"
+      export DOOPS_SESSION="release-$CI_COMMIT_SHORT_SHA"
       doops add --name <ENVIRONMENT_TARGET> \\
         --gateway "$DOOPS_GATEWAY" \\
         --cluster <CLUSTER> \\
         --instance <INSTANCE>
-      doops login \\
+      printf '%s\\n' "$DOOPS_API_KEY" | doops -session "$DOOPS_SESSION" login \\
         --target <ENVIRONMENT_TARGET> \\
-        --token "$DOOPS_API_KEY"
+        --token-stdin
       doops -session "release-$CI_COMMIT_SHORT_SHA" ask \\
         --target <ENVIRONMENT_TARGET> \\
         --apply \\
         --credential "$DOOPS_CREDENTIAL" \\
-        --msg "发布服务范围 <SERVICES>，镜像 $IMAGE_REF；原因：<REASON>；验收：<ACCEPTANCE>。"
+        --msg "target scope: <TARGET_SCOPE>; service scope: <SERVICES>; release: <RELEASE>; namespace: <NAMESPACE>; chart: <CHART_REFERENCE>; chart digest: sha256:<CHART_DIGEST>; image: $IMAGE_REF; reason: <REASON>; acceptance: <ROLLOUT, FINAL_DEPLOYMENT_SPEC_STATUS, HEALTH_CHECK, FUNCTIONAL_PATH>。"
   only:
     - main`,
     }
-  }, [provider, gw, keyDisplay])
+  }, [provider, gw])
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-10">
@@ -202,7 +194,7 @@ jobs:
         </h2>
         <p className="mb-4 text-sm text-muted-foreground">
           API Key 即你的<strong className="text-foreground">用户访问令牌</strong>，
-          代表你的身份与权限。下面默认填入了当前会话使用的令牌，你也可以在「管理 → 令牌」中单独签发一枚专用于 CI/CD 的令牌。
+          代表你的身份与权限。页面不会预填当前会话令牌；请在「管理 → 令牌」中单独签发一枚专用于 CI/CD 的令牌，并只保存到 CI/CD 平台的加密 Secrets。
         </p>
 
         <div className="flex flex-col gap-3 rounded-xl border bg-card p-4">
@@ -214,30 +206,6 @@ jobs:
               placeholder="https://gateway.example.com"
               className="w-full rounded-md border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none focus:border-ring"
             />
-          </label>
-
-          <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground">
-            API Key
-            <div className="flex items-center gap-2">
-              <div className="relative flex-1">
-                <input
-                  type={reveal ? "text" : "password"}
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="粘贴或签发一枚用户令牌"
-                  className="w-full rounded-md border bg-background px-3 py-2 pr-10 font-mono text-sm text-foreground outline-none focus:border-ring"
-                />
-                <button
-                  type="button"
-                  onClick={() => setReveal((v) => !v)}
-                  aria-label={reveal ? "隐藏 API Key" : "显示 API Key"}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  {reveal ? <EyeOffIcon width={16} height={16} /> : <EyeIcon width={16} height={16} />}
-                </button>
-              </div>
-              <CopyButton value={apiKey} />
-            </div>
           </label>
 
           <div className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-muted-foreground">
@@ -258,14 +226,14 @@ jobs:
           2. 在 CI 平台保存为密钥
         </h2>
         <p className="mb-3 text-sm text-muted-foreground">
-          在你的代码托管平台保存 Gateway 地址和用户令牌，供流水线读取：
+          在你的代码托管平台保存 Gateway 地址和用户令牌，供流水线通过 stdin 登录：
         </p>
         <ul className="space-y-2 text-sm text-muted-foreground">
           <li className="flex gap-2">
             <CheckIcon width={16} height={16} className="mt-0.5 shrink-0 text-primary" />
             <span>
               <code className="rounded bg-muted px-1 font-mono text-foreground">DOOPS_API_KEY</code> —
-              上方的 API Key（设为加密 / 隐藏）
+              专用于 CI/CD 的用户令牌（设为加密 / 隐藏，不在此页面输入）
             </span>
           </li>
           <li className="flex gap-2">
@@ -299,6 +267,11 @@ jobs:
           <code className="mx-1 rounded bg-muted px-1">--apply</code>
           明确授权本次变更。
         </p>
+        <p className="mb-3 text-xs text-muted-foreground">
+          必须先核验成功的 CI 构建与源提交、镜像 digest 的对应关系。在线 target 发布现有 Helm release
+          不要求本机 kubeconfig、工作区干净或先同步业务源码；Chart 填写明确的 HTTPS 或 OCI 引用。
+          Helm 镜像参数使用 image.repository 和 image.digest，不混用 image.tag；Secrets 不进入命令参数或发布描述。
+        </p>
 
         {/* 平台切换 */}
         <div className="mb-1 flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-0.5">
@@ -323,7 +296,8 @@ jobs:
           <code className="rounded bg-muted px-1">ENVIRONMENT_TARGET</code>、
           <code className="rounded bg-muted px-1">CLUSTER</code> 和
           <code className="rounded bg-muted px-1">INSTANCE</code> 必须由发布任务明确给出。
-          服务范围、不可变镜像 digest、变更原因和验收条件同样必须写入任务，不从旧声明文件推断。
+          target scope、服务范围、release、namespace、chart 及其 digest、不可变镜像 digest、变更原因和验收条件同样必须写入任务；
+          发布依据是已验证的 CI 产物，不要求把源码同步到目标主机，也不从旧声明文件推断。
           没有凭据时删除示例中的 <code className="rounded bg-muted px-1">--credential</code> 行。
         </p>
       </section>
@@ -341,34 +315,5 @@ jobs:
         </ol>
       </section>
     </div>
-  )
-}
-
-function CopyButton({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false)
-  function copy() {
-    if (!value) return
-    navigator.clipboard?.writeText(value).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    })
-  }
-  return (
-    <button
-      type="button"
-      onClick={copy}
-      disabled={!value}
-      className="flex shrink-0 items-center gap-1 rounded-md border bg-background px-2.5 py-2 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-    >
-      {copied ? (
-        <>
-          <CheckIcon width={13} height={13} className="text-primary" /> 已复制
-        </>
-      ) : (
-        <>
-          <CopyIcon width={13} height={13} /> 复制
-        </>
-      )}
-    </button>
   )
 }

@@ -37,6 +37,22 @@ doops credential list --target <target> --view managed
 - target 视图不返回 owner、creator、grantee 或 payload 等管理/秘密字段。
 - 未授权详情使用 404，避免泄露资源是否存在。
 
+## Web 控制台管理
+
+凭据页面的 `我管理的` 视图使用 `credential list --view managed` 的资源元数据，并行读取
+`GET /v1/credentials/<id>/versions` 和 `GET /v1/credentials/<id>/grants`。页面展示服务端
+返回的 staged、active 和历史版本，以及所有授权的完整 metadata scope；不会从本地状态、
+更新时间或 resource ID 推断版本。页面不会缓存、回显或把 payload 放入任务上下文。
+
+切换到 `当前目标可用` 后，页面使用该 target 返回的实际 grant 元数据展示授权状态。对
+active grant 的 staged version 执行验证时，页面原样提交该 grant 的完整
+`cluster/instance/namespace/use/workload` 及 image、Helm 或 required keys 字段；不会
+重新推断或放宽 scope。Promote 请求仍由 Gateway 检查所有 active grant 的验证状态；
+grant 吊销和 resource 吊销都沿用 Gateway 的清理流程。
+
+target 视图只对当前用户可管理的资源读取 versions；不可管理资源不读取版本历史。两个
+查询接口只返回 version、grant、scope、状态、digest 和时间等 metadata，不返回 payload。
+
 ## 开发凭据 Preflight
 
 开发项目可在 `.agent/doops-credentials.yaml` 声明需要使用的受管凭据引用：

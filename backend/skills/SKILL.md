@@ -208,6 +208,11 @@ doops -session retire-<date> remove --target <gateway-target>
 
 ## 使用引导
 
+Gateway 的 `/console` 提供用户登录、目标选择、明确授权的业务部署、运维与审计。
+页面部署与 CLI 使用同一 `operation=apply`、精确 target 和凭据资源名边界；任务所需
+Chart 与镜像来源须先核对，不要求源码同步。用户可查本人操作，平台管理员可查全局
+审计。页面行为与验收边界见 `docs/DOOPS_WEBUI.md`。
+
 先确认本地配置和 gateway 在线状态：
 
 ```bash

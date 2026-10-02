@@ -139,8 +139,14 @@ func (h *GatewayHub) HandleCredential(w http.ResponseWriter, r *http.Request) {
 		writeJSONHTTP(w, resource)
 	case "payload":
 		h.handleCredentialPayload(w, r, auth, resource)
+	case "versions":
+		h.handleCredentialHistory(w, r, auth, resource, false)
 	case "grants":
-		h.handleCredentialGrants(w, r, auth, resource)
+		if r.Method == http.MethodGet {
+			h.handleCredentialHistory(w, r, auth, resource, true)
+		} else {
+			h.handleCredentialGrants(w, r, auth, resource)
+		}
 	case "verify":
 		h.handleCredentialVerify(w, r, auth, resource)
 	case "promote":
@@ -150,6 +156,34 @@ func (h *GatewayHub) HandleCredential(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (h *GatewayHub) handleCredentialHistory(w http.ResponseWriter, r *http.Request, auth TokenAuth, resource CredentialResource, grants bool) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.store.UserHasAction(auth.UserID, ActionCredentialMetadata) ||
+		(!h.store.UserIsPlatformAdmin(auth.UserID) &&
+			(resource.Scope != CredentialScopePersonal || resource.OwnerID != auth.UserID)) {
+		http.NotFound(w, r)
+		return
+	}
+	if grants {
+		entries, err := h.store.CredentialGrants(resource.ID)
+		if err != nil {
+			http.Error(w, "credential_metadata_unavailable", http.StatusInternalServerError)
+			return
+		}
+		writeJSONHTTP(w, map[string]interface{}{"grants": entries})
+		return
+	}
+	versions, err := h.store.CredentialVersions(resource.ID)
+	if err != nil {
+		http.Error(w, "credential_metadata_unavailable", http.StatusInternalServerError)
+		return
+	}
+	writeJSONHTTP(w, map[string]interface{}{"versions": versions})
 }
 
 func (h *GatewayHub) handleCredentialPayload(w http.ResponseWriter, r *http.Request, auth TokenAuth, resource CredentialResource) {
