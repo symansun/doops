@@ -95,6 +95,10 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
         "zhiyong-deploy-secrets.yml"
     ]
     deploy_script = deploy_pipelines[0]["stages"][1]["script"]
+    prepare_script = deploy_pipelines[0]["stages"][0]["script"]
+    assert ': "${DOOPS_SESSION:?DOOPS_SESSION is required}"' in prepare_script
+    assert '-session "${DOOPS_SESSION}" login' in prepare_script
+    assert '-session "${DOOPS_SESSION}" targets' in prepare_script
     assert "grep -Eq" not in deploy_script
     assert "validate_simple_name" in deploy_script
     assert "validate_single_line" in deploy_script
@@ -149,6 +153,32 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
         for path in (BACKEND / "docs" / "environments").glob("*.md")
     )
     assert "kubectl -n kube-system set image" not in environment_docs
+
+
+def test_release_guidance_does_not_build_images_on_business_targets():
+    for path in (
+        BACKEND / "agent" / "skills" / "image-build" / "SKILL.md",
+        BACKEND / "agent" / "skills" / "shell" / "SKILL.md",
+        BACKEND / "docs" / "DOOPS_USAGE_GUIDE.md",
+        BACKEND / "docs" / "code_sync_rsync_analysis.md",
+    ):
+        text = path.read_text(encoding="utf-8")
+        assert "CI" in text, path
+        for obsolete in (
+            "git archive --format=tar.gz HEAD",
+            "SCP 传输到构建节点",
+            "buildctl --addr",
+            "latest,push=true",
+            "registry.insecure=true",
+        ):
+            assert obsolete not in text, (path, obsolete)
+
+    for name in ("image-build", "shell"):
+        text = (BACKEND / "agent" / "skills" / name / "SKILL.md").read_text()
+        metadata = yaml.safe_load(text.split("---", 2)[1])
+        assert metadata["name"] == name
+        assert metadata["description"]
+        assert metadata["requires"] == []
 
 
 def test_apply_does_not_depend_on_workspace_commit_evidence():

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -12,21 +13,43 @@ type UpgradeOptions struct {
 	Namespace string
 	Workload  string
 	Container string
+	Release   string
 	DryRun    bool
+	Rollback  bool
 	Session   string
 }
 
+var (
+	upgradePollInterval = 5 * time.Second
+	upgradeWait         = 21 * time.Minute
+	cliImageRepository  = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`)
+	cliPinnedDigest     = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+)
+
 func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
-	if strings.TrimSpace(opts.Image) == "" {
-		return fmt.Errorf("image is required")
-	}
-	if !opts.DryRun {
-		return fmt.Errorf("direct agent self-upgrade is prohibited; use an external release controller or GitOps")
+	if opts.Rollback {
+		if strings.TrimSpace(opts.Image) != "" {
+			return fmt.Errorf("rollback does not take an image")
+		}
+		if opts.DryRun {
+			return fmt.Errorf("rollback cannot be combined with --dry-run")
+		}
+	} else {
+		if strings.TrimSpace(opts.Image) == "" {
+			return fmt.Errorf("image is required")
+		}
+		if err := validatePinnedUpgradeImage(opts.Image); err != nil {
+			return err
+		}
 	}
 	if strings.TrimSpace(base.Gateway) == "" ||
 		strings.TrimSpace(base.Cluster) == "" ||
 		strings.TrimSpace(base.Instance) == "" {
 		return fmt.Errorf("configured Gateway target is required")
+	}
+	session := strings.TrimSpace(opts.Session)
+	if session == "" {
+		return fmt.Errorf("-session is required for agent upgrade")
 	}
 	token, err := ResolveToken(base)
 	if err != nil {
@@ -40,10 +63,6 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 	if len(selected) == 0 {
 		return fmt.Errorf("configured target is offline: %s/%s", base.Cluster, base.Instance)
 	}
-	session := strings.TrimSpace(opts.Session)
-	if session == "" {
-		session = fmt.Sprintf("upgrade_%d", time.Now().Unix())
-	}
 	failures := 0
 	for _, target := range selected {
 		server := base
@@ -51,27 +70,246 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 		server.Gateway = base.Gateway
 		server.Cluster = target.Cluster
 		server.Instance = target.Instance
-		client := NewMCPClient(server, NewSessionStore(), session, verbose)
-		client.Token = token
-		fmt.Printf("==> upgrading %s/%s image=%s\n", target.Cluster, target.Instance, opts.Image)
-		out, err := client.CallAndCapture("doops_agent_upgrade", map[string]interface{}{
-			"image":     opts.Image,
-			"mode":      opts.Mode,
-			"namespace": opts.Namespace,
-			"workload":  opts.Workload,
-			"container": opts.Container,
-			"dry_run":   opts.DryRun,
-		})
-		client.Close()
+		args := upgradeArguments(opts)
+		if opts.Rollback {
+			fmt.Printf("==> rolling back %s/%s\n", target.Cluster, target.Instance)
+		} else {
+			fmt.Printf("==> upgrading %s/%s image=%s\n", target.Cluster, target.Instance, opts.Image)
+		}
+		out, err := callUpgradeTool(server, token, session, verbose, args)
 		if err != nil {
 			fmt.Printf("FAIL %s/%s: %v\n", target.Cluster, target.Instance, err)
 			failures++
 			continue
 		}
-		fmt.Printf("OK %s/%s: %s\n", target.Cluster, target.Instance, strings.TrimSpace(out))
+		out = strings.TrimSpace(out)
+		if opts.DryRun {
+			if !strings.HasPrefix(out, "dry-run: ") {
+				fmt.Printf("FAIL %s/%s: invalid dry-run result: %s\n", target.Cluster, target.Instance, out)
+				failures++
+				continue
+			}
+			fmt.Printf("PREVIEW %s/%s: %s\n", target.Cluster, target.Instance, out)
+			continue
+		}
+		if _, _, _, err := parseUpgradeAcceptance(out); err != nil {
+			fmt.Printf("FAIL %s/%s: %v\n", target.Cluster, target.Instance, err)
+			failures++
+			continue
+		}
+		fmt.Printf("ACCEPTED %s/%s: %s\n", target.Cluster, target.Instance, out)
+		if err := waitForSelfUpgrade(server, token, session, verbose, out, !opts.Rollback); err != nil {
+			fmt.Printf("FAIL %s/%s: %v\n", target.Cluster, target.Instance, err)
+			failures++
+			continue
+		}
+		action := "upgrade"
+		if opts.Rollback {
+			action = "rollback"
+		}
+		fmt.Printf("OK %s/%s: %s Job and structuredSSH protocol verified\n", target.Cluster, target.Instance, action)
+		fmt.Println("Release acceptance still requires Gateway-serving Pod UID/imageID, runtime version and functional checks.")
 	}
 	if failures > 0 {
 		return fmt.Errorf("upgrade failed on %d/%d target(s)", failures, len(selected))
+	}
+	return nil
+}
+
+func upgradeArguments(opts UpgradeOptions) map[string]interface{} {
+	if opts.Rollback {
+		args := map[string]interface{}{
+			"rollback":  true,
+			"mode":      opts.Mode,
+			"namespace": opts.Namespace,
+			"workload":  opts.Workload,
+			"release":   opts.Release,
+		}
+		return args
+	}
+	return map[string]interface{}{
+		"image":     opts.Image,
+		"mode":      opts.Mode,
+		"namespace": opts.Namespace,
+		"workload":  opts.Workload,
+		"container": opts.Container,
+		"release":   opts.Release,
+		"dry_run":   opts.DryRun,
+	}
+}
+
+func callUpgradeTool(server Server, token, session string, verbose bool, args map[string]interface{}) (string, error) {
+	client := NewMCPClient(server, NewSessionStore(), session, verbose)
+	client.Token = token
+	defer client.Close()
+	return client.CallAndCapture("doops_agent_upgrade", args)
+}
+
+func waitForSelfUpgrade(server Server, token, session string, verbose bool, acceptance string, rollbackOnProbeFailure bool) error {
+	job, namespace, release, err := parseUpgradeAcceptance(acceptance)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("==> waiting for self-upgrade job %s\n", job)
+	deadline := time.Now().Add(upgradeWait)
+	for {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("self-upgrade job %s did not finish", job)
+		}
+		out, err := callUpgradeTool(server, token, session, verbose, map[string]interface{}{
+			"observe_job": job,
+			"namespace":   namespace,
+		})
+		if err == nil {
+			_, fields, parseErr := parseUpgradeResponse(out)
+			if parseErr != nil {
+				return parseErr
+			}
+			if fields["job"] != job || fields["namespace"] != namespace {
+				return fmt.Errorf("self-upgrade observation does not match job %s in namespace %s", job, namespace)
+			}
+		}
+		switch classifyUpgradeObservation(out, err) {
+		case "retry", "running":
+			time.Sleep(upgradePollInterval)
+			continue
+		case "failed":
+			return fmt.Errorf("%s", strings.TrimSpace(out))
+		case "succeeded":
+			fmt.Printf("%s\n", strings.TrimSpace(out))
+			if err := probeStructuredSSH(server, token, session, verbose); err != nil {
+				if !rollbackOnProbeFailure {
+					return fmt.Errorf("rollback Job completed but Gateway protocol verification failed: %w", err)
+				}
+				return rollbackAfterProbeFailure(server, token, session, verbose, namespace, release, err)
+			}
+			fmt.Printf("protocol=structuredSSH status=ready\n")
+			return nil
+		default:
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("unrecognized self-upgrade status: %s", strings.TrimSpace(out))
+		}
+	}
+}
+
+func rollbackAfterProbeFailure(server Server, token, session string, verbose bool, namespace, release string, probeErr error) error {
+	fmt.Printf("structuredSSH probe failed: %v\n", probeErr)
+	fmt.Println("==> starting rollback job")
+	out, err := callUpgradeTool(server, token, session, verbose, map[string]interface{}{
+		"rollback":  true,
+		"namespace": namespace,
+		"release":   release,
+	})
+	if err != nil {
+		return fmt.Errorf("structuredSSH probe failed: %v; rollback was not accepted: %w", probeErr, err)
+	}
+	fmt.Printf("%s\n", strings.TrimSpace(out))
+	if err := waitForSelfUpgrade(server, token, session, verbose, out, false); err != nil {
+		return fmt.Errorf("structuredSSH probe failed: %v; rollback failed: %w", probeErr, err)
+	}
+	return fmt.Errorf("structuredSSH probe failed and the release was rolled back: %v", probeErr)
+}
+
+func probeStructuredSSH(server Server, token, session string, verbose bool) error {
+	deadline := time.Now().Add(time.Minute)
+	var last error
+	for {
+		client := NewMCPClient(server, NewSessionStore(), session, verbose)
+		client.Token = token
+		err := client.RequireProtocol("structuredSSH")
+		client.Close()
+		if err == nil {
+			return nil
+		}
+		last = err
+		if time.Now().After(deadline) || !upgradeRetryable(err) {
+			return last
+		}
+		time.Sleep(upgradePollInterval)
+	}
+}
+
+func parseUpgradeAcceptance(out string) (string, string, string, error) {
+	status, fields, err := parseUpgradeResponse(out)
+	if err != nil {
+		return "", "", "", err
+	}
+	if status != "self-upgrade-accepted" || fields["job"] == "" || fields["namespace"] == "" || fields["release"] == "" {
+		return "", "", "", fmt.Errorf("self-upgrade acceptance was not returned")
+	}
+	return fields["job"], fields["namespace"], fields["release"], nil
+}
+
+func parseUpgradeResponse(out string) (string, map[string]string, error) {
+	line := strings.SplitN(strings.TrimSpace(out), "\n", 2)[0]
+	parts := strings.Fields(line)
+	if len(parts) < 2 {
+		return "", nil, fmt.Errorf("invalid self-upgrade response header: %s", line)
+	}
+	fields := map[string]string{}
+	for _, field := range parts[1:] {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok || key == "" || value == "" || fields[key] != "" {
+			return "", nil, fmt.Errorf("invalid self-upgrade response header: %s", line)
+		}
+		fields[key] = value
+	}
+	return parts[0], fields, nil
+}
+
+func classifyUpgradeObservation(out string, err error) string {
+	if err != nil {
+		if upgradeRetryable(err) {
+			return "retry"
+		}
+		return "error"
+	}
+	status, _, parseErr := parseUpgradeResponse(out)
+	if parseErr != nil {
+		return "error"
+	}
+	switch status {
+	case "self-upgrade-succeeded":
+		return "succeeded"
+	case "self-upgrade-failed":
+		return "failed"
+	case "self-upgrade-running":
+		return "running"
+	default:
+		return "error"
+	}
+}
+
+func upgradeRetryable(err error) bool {
+	text := strings.ToLower(err.Error())
+	for _, part := range []string{
+		"offline",
+		"connection",
+		"eof",
+		"websocket",
+		"timeout",
+		"temporarily",
+		"refused",
+	} {
+		if strings.Contains(text, part) {
+			return true
+		}
+	}
+	return false
+}
+
+func validatePinnedUpgradeImage(image string) error {
+	image = strings.TrimSpace(image)
+	at := strings.LastIndex(image, "@sha256:")
+	if at <= 0 {
+		return fmt.Errorf("agent upgrade image must be repository@sha256:<64 hex digits>")
+	}
+	repository := image[:at]
+	digest := image[at+1:]
+	if !cliPinnedDigest.MatchString(digest) || !cliImageRepository.MatchString(repository) {
+		return fmt.Errorf("agent upgrade image must be repository@sha256:<64 hex digits>")
 	}
 	return nil
 }

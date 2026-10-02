@@ -14,6 +14,11 @@ conflicts: []
 执行 Kubernetes 任务时，目标、namespace、resource、container 和镜像必须来自当前任务
 或本轮只读工具证据，不得从环境名、域名、目录名或历史记录推断。
 
+以下发布规则用于普通业务 workload。当前 Agent 自身镜像升级使用 CLI
+`doops -session <s> upgrade --target <t> --image <repository>@sha256:<digest>`，
+由集群内 Job 执行；不得在当前 Agent 进程内用 Helm 替换自身。两类路径都不以操作机
+kubeconfig 或 `doops push` 为前置条件；旧 Agent 首次启用控制器需另行完成外部受控升级。
+
 ## 核心原则
 
 1. Kubernetes 读取只调用 `mcp_doops_k8s_read`；所有发布 mutation 调用

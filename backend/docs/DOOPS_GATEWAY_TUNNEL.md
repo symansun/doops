@@ -85,7 +85,14 @@ sequenceDiagram
 `DOOPS_PROXY_ALLOW_HOSTS`；默认空值会拒绝所有上游。这个配置不是公网域名
 allowlist，而是 Agent 所在网络允许访问的上游主机 allowlist。
 
-升级已有 Helm Agent 时必须通过唯一发布入口显式维护该值：
+已有自升级控制器的 Helm Agent 用 `doops upgrade`；Job 复用 Agent 已挂载的
+kubeconfig，操作机不需要 kubeconfig。普通 workload 发布使用
+`doops ask --apply`，也不需要本机 kubeconfig。
+
+`doops upgrade` 仅更新镜像并保留现有 values，不修改代理 allowlist。新集群 bootstrap、
+已有 Helm Agent 首次启用自升级控制器，或本节显式修改运行配置时，使用
+`scripts/release-managed-agent.sh`，由外部控制器显式提供 kubeconfig。脚本不自动接管
+未受 Helm 管理的 workload；已有 target 路径要求 release 已存在：
 
 ```bash
 bash scripts/release-managed-agent.sh \
@@ -100,8 +107,7 @@ bash scripts/release-managed-agent.sh \
   --image <repository>@sha256:<digest>
 ```
 
-操作机 kubeconfig 是已有 Agent 发布的外部控制器边界，当前 Agent 不执行自身 Helm
-mutation。省略 allowlist 参数会保留现网值；传空字符串会显式恢复为拒绝全部。
+当前 Agent 进程不执行自身 Helm mutation。省略 allowlist 参数会保留现网值；传空字符串会显式恢复为拒绝全部。
 
 ## Managed Gateway Host
 
@@ -408,23 +414,31 @@ doops -session build push --target prod-master --src .
 `targets:list` 只允许列出可见 target，不隐式授予 `exec`、`ask`、`write` 或其他操作。
 `admin` 只用于 gateway 管理，不随默认 target 权限下发。
 
-## Agent Upgrade Preview
+## Agent Upgrade
 
-Agent 不允许修改承载自身的 Kubernetes workload 或容器。直接自升级会终止执行
-`kubectl set image` 和 `rollout status` 的 Agent，目标可能在新 Pod 启动失败后永久离线。
+Agent 进程不执行承载自身的 Helm mutation。直接在 Agent 里跑 `kubectl set image` 或
+`helm upgrade` 会在滚动更新时把回滚方一起杀掉，新 Pod 启动失败后目标可能永久离线。
 
-`doops upgrade` 仅保留 `--dry-run` 预演。正式升级必须由目标集群外真实存在的
-CI/CD 或 GitOps controller 执行，并在旧 Agent 保持在线时完成镜像拉取、替代实例启动、
-Gateway 注册和心跳验证。历史挂起的自升级 operation 会在 Gateway 启动时立即标记失败，
-不会继续占槽等待 replacement。
+`doops upgrade` 让 Agent 创建一个独立 Job。Job 复用 Agent 已挂载的 kubeconfig，
+按 Chart 的 `maxSurge=1`、`maxUnavailable=0` 拉起新 Pod，并在新 Pod 未持续就绪时回滚。
+镜像必须是 `repository@sha256:<64 hex>`。`--dry-run` 只预演。历史挂起的自升级 operation
+会在 Gateway 启动时立即标记失败，不会继续占槽等待 replacement。
+
+前置条件是在线 Agent 已包含控制器、标准 Helm Deployment 和精确 Gateway 身份，
+并有可供 Job 共享的 `/root/.kube` 或 `/root/.kube/config` volume，以及所需集群权限。
+缺少这些条件是目标运行配置问题，不得把普通业务发布引导成寻找操作机 kubeconfig。
+CLI 必须显式传 `-session`；Job accepted 仅代表已提交，不代表升级成功。只有 Job 完成、
+最终 Deployment 验证和协议探针通过后才能报告成功。
 
 ```bash
-doops -session upgrade_20260511 upgrade \
+doops -session agent-upgrade upgrade \
   --target prod-master \
-  --cluster doops-jm \
-  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI> \
-  --mode k8s \
+  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest> \
   --dry-run
+
+doops -session agent-upgrade upgrade \
+  --target prod-master \
+  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest>
 ```
 
 ## Reliability Notes

@@ -644,7 +644,7 @@ func TestGatewayStoreRetiresRunningUpgradeOperations(t *testing.T) {
 		        'running', 'waiting_reconnect', '', ?, ?)`, now, now); err != nil {
 		t.Fatalf("seed legacy upgrade operation: %v", err)
 	}
-	const reason = "direct agent self-upgrade is prohibited"
+	const reason = interruptedUpgradeRetiredReason
 	if err := store.RetireRunningUpgradeOperations(reason); err != nil {
 		t.Fatalf("retire running upgrades: %v", err)
 	}

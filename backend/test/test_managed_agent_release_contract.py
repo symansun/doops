@@ -123,9 +123,33 @@ def test_docs_point_agent_release_at_one_script():
         assert "release-managed-agent.sh" in text
         assert "upgrade-managed-agent.sh" not in text
         assert "install-managed-agent.sh" not in text
+        assert "/dowork/-/git/raw/main/doops-k8s/install.sh" not in text
     assert "maxSurge=1" in sop
     assert "maxUnavailable=0" in sop
     assert "sandbox-entrypoint.sh" in usage
+
+
+def test_release_guidance_does_not_route_managed_or_normal_deployments_to_local_kubeconfig():
+    skill = SKILL.read_text()
+    model_standards = (ROOT / "docs" / "MODEL_STANDARDS.md").read_text()
+    tunnel = (ROOT / "docs" / "DOOPS_GATEWAY_TUNNEL.md").read_text()
+    environment = (ROOT / "docs" / "environments" / "dev-114.md").read_text()
+
+    authoritative_docs = (skill, model_standards, tunnel, environment)
+    for text in authoritative_docs:
+        normalized = " ".join(text.split())
+        assert "ask --" in normalized
+        assert "--apply" in normalized
+        assert "upgrade" in normalized
+        assert "doops upgrade` 只允许 `--dry-run`" not in normalized
+        assert "preview-only interfaces" not in normalized
+
+    normalized_model_standards = " ".join(model_standards.split()).lower()
+    normalized_environment = " ".join(environment.split()).lower()
+    assert "ordinary workload deployments" in normalized_model_standards
+    assert "operator machine does not need a kubeconfig" in normalized_model_standards
+    assert "operator machine does not need a kubeconfig" in normalized_environment
+    assert "only if this target is being adopted" in normalized_environment
 
 
 def test_existing_release_requires_an_external_kubeconfig_before_target_contact():
@@ -161,7 +185,68 @@ def test_existing_release_requires_an_external_kubeconfig_before_target_contact(
     assert result.returncode == 2
     assert "not a normal workload deployment" in result.stderr
     assert "external operator kubeconfig is required" in result.stderr
+    assert "For a Helm-managed Agent with the self-upgrade controller" in result.stderr
+    assert "upgrade --target <target> --image <repository>@sha256:<digest>" in result.stderr
+    assert "does not require a local kubeconfig" in result.stderr
+    assert "because the current Agent cannot replace its own Deployment" not in result.stderr
     assert "TARGETING" not in result.stdout
+
+
+def test_bootstrap_requires_explicit_kubeconfig_before_running_cluster_tools():
+    env = os.environ.copy()
+    env.pop("KUBECONFIG", None)
+    result = subprocess.run(
+        [
+            "bash", str(RELEASE),
+            "--release", "doops-agent",
+            "--namespace", "doops-system",
+            "--values", "/not-a-real-values-file",
+            "--image", "registry.example/doops@sha256:" + "a" * 64,
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "--kubeconfig (or KUBECONFIG) is required" in result.stderr
+    assert "Release complete:" not in result.stdout
+
+
+def test_deployment_routes_are_explicit_in_runtime_and_authoritative_docs():
+    for path in (
+        ROOT / "agent" / "skills" / "system_prompt.md",
+        ROOT / "agent" / "skills" / "k8s" / "SKILL.md",
+        SKILL,
+        SOP,
+        USAGE,
+    ):
+        text = path.read_text()
+        assert "upgrade" in text, path
+        assert "kubeconfig" in text, path
+        assert "Job" in text, path
+    for path in (SOP, ROOT / "docs" / "NATURAL_LANGUAGE_DEPLOYMENT.md"):
+        text = path.read_text()
+        assert "临时配置单个 Gateway route、同步当前仓库" not in text, path
+        assert "同步当前仓库并提交" not in text, path
+    design = (ROOT / "docs" / "design" / "AI_Ops_System_Design.md").read_text()
+    assert "锁内校验 `.doops-ready`" not in design
+
+
+def test_deployment_guidance_does_not_reintroduce_manual_agent_replacement():
+    sop = SOP.read_text()
+    readme = (ROOT / "README.md").read_text()
+    for retired in (
+        "kubectl run <node>-doops-deployer",
+        "chroot /host /usr/bin/nsenter",
+        "再启动新 agent 或触发 DaemonSet 滚动更新",
+        "nerdctl ps | grep doops-agent",
+    ):
+        assert retired not in sop
+    assert "单机或没有 DaemonSet 的节点，推荐标准安装" not in readme
+    assert "生产环境建议升级成 K8s/DaemonSet 或容器模式" not in readme
 
 
 def test_release_rejects_proxy_urls_before_contacting_a_target():

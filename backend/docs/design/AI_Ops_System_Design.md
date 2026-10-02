@@ -62,8 +62,10 @@ DoOps 不在 Gateway 或脚本中复制 doagent 的 Agent 引擎。
 ## 工作区与状态
 
 - session 工作区是 Agent 和确定性工具共享的任务上下文。
-- Git 工作区同步必须绑定精确 commit。
-- `ask --apply` 在锁内校验 `.doops-ready`，防止并发 push 替换待发布代码。
+- 当调用方显式使用 `push/pull` 时，Git 工作区同步必须绑定精确 commit。
+- 普通 `ask --apply` 不要求先同步仓库、创建隔离 workspace 或校验 `.doops-ready`；
+  发布输入来自任务明确给出的远程 Helm 资产、镜像版本和验收条件，或来自任务明确授权
+  读取的现有 release。apply 仍与其它 target mutation 共用资源锁。
 - 密钥通过 Secret 或节点本地设置注入，不进入 Skill、计划、日志和仓库。
 
 ## Skill 和脚本
@@ -84,6 +86,17 @@ Skill 描述“要达到什么状态、哪些事实不能改变、什么证据�
 - `/root/ws/<session>`：会话工作区；
 - `/tmp/doops-doagent/settings.json`：由只读 Secret 物化出的模型和 provider 运行时配置。
 
-发布本身遵循不可变制品和 Agent 原生 CI/CD：CI 生成与 source commit 对应的镜像 digest，
-调用方显式选择 configured target 并通过 `doops ask --apply` 授权；Gateway 完成鉴权、
-审计和凭据预物化，目标 Agent/doagent 执行 mutation，最终状态由实际工具和功能证据验证。
+普通业务发布遵循 Agent 原生 `ask --apply` 路径：CI 生成制品，发布者先核对精确 source
+commit、registry digest 和构建成功证据，调用方再显式选择 configured
+target 并提交远程 Helm 资产、镜像版本和验收条件；CLI、Agent 和 Helm 工具不自动验证
+CI provenance。Gateway 完成鉴权、审计和凭据预物化，
+目标 Agent/doagent 执行 mutation，最终状态由实际工具和功能证据验证。它不依赖仓库同步
+或隔离 workspace。Gateway 本体仍通过 `extract-gateway-from-image.sh` 提取不可变制品后，
+由 `deploy-gateway.sh` 从 SSH 宿主机发布，不通过 doops target。Agent 自升级在控制器已
+存在且满足自身 namespace、标准 Deployment、已有匹配 Helm release 和
+`/root/.kube` 或 `/root/.kube/config` 共享挂载时使用 `doops upgrade`；Job 的 Kubernetes
+权限来自该挂载 kubeconfig。新集群无 Agent 或已有 Helm release 的旧 Agent 使用
+`release-managed-agent.sh`；其 `--values` 新集群模式是 bootstrap-only，只做 Helm wait
+和最终 Deployment 检查，不做 Gateway 接管或自动回滚，完成后必须继续安装验收。该脚本
+不接管没有 Helm release 的既有 workload，且 `proxy.allowedHosts`/`hostAliases` 只由该
+外部脚本显式修改。

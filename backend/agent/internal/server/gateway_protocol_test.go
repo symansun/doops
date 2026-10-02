@@ -1363,7 +1363,7 @@ func TestGatewayActionMappingUsesDedicatedToolForAgentUpgrade(t *testing.T) {
 	}
 }
 
-func TestGatewayRejectsDirectAgentUpgradeWithoutDispatch(t *testing.T) {
+func TestGatewayDispatchesPinnedAgentUpgrade(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -1391,7 +1391,7 @@ func TestGatewayRejectsDirectAgentUpgradeWithoutDispatch(t *testing.T) {
 	client := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
 	defer client.Close()
 	args, _ := json.Marshal(map[string]interface{}{
-		"image":     "registry.example/doops@sha256:abc",
+		"image":     "registry.example/doops:latest",
 		"mode":      "k8s",
 		"namespace": "doops-system",
 		"workload":  "deployment/doops-agent",
@@ -1403,8 +1403,8 @@ func TestGatewayRejectsDirectAgentUpgradeWithoutDispatch(t *testing.T) {
 	})
 	resp := readUntilID(t, client, 2)
 	errObj, ok := resp["error"].(map[string]interface{})
-	if !ok || !strings.Contains(fmt.Sprint(errObj["message"]), directAgentUpgradeProhibited) {
-		t.Fatalf("expected direct self-upgrade rejection, got %#v", resp)
+	if !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "repository@sha256") {
+		t.Fatalf("expected unpinned image rejection, got %#v", resp)
 	}
 	if gw.getAgent("dev", "local") == nil {
 		t.Fatal("rejected self-upgrade disconnected the agent")
@@ -1418,7 +1418,7 @@ func TestGatewayRejectsDirectAgentUpgradeWithoutDispatch(t *testing.T) {
 	}
 
 	dryRunArgs, _ := json.Marshal(map[string]interface{}{
-		"image":   "registry.example/doops@sha256:abc",
+		"image":   "registry.example/doops@sha256:" + strings.Repeat("a", 64),
 		"mode":    "k8s",
 		"dry_run": true,
 	})
@@ -1428,6 +1428,22 @@ func TestGatewayRejectsDirectAgentUpgradeWithoutDispatch(t *testing.T) {
 	})
 	if resp := readUntilID(t, client, 3); resp["error"] != nil {
 		t.Fatalf("dry-run upgrade should remain available: %#v", resp)
+	}
+
+	pinned, _ := json.Marshal(map[string]interface{}{
+		"image": "registry.example/doops@sha256:" + strings.Repeat("a", 64),
+		"mode":  "k8s",
+	})
+	writeGatewayJSON(t, client, map[string]interface{}{
+		"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+		"params": map[string]interface{}{"name": "doops_agent_upgrade", "arguments": json.RawMessage(pinned)},
+	})
+	dispatched := readUntilID(t, client, 4)
+	if dispatched["error"] != nil {
+		t.Fatalf("pinned self-upgrade should reach the agent: %#v", dispatched)
+	}
+	if gw.getAgent("dev", "local") == nil {
+		t.Fatal("dispatched self-upgrade disconnected the agent")
 	}
 }
 

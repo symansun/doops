@@ -11,7 +11,7 @@
 
 ## 核心问题
 
-用户希望在 agent 远端环境中进行代码构建（buildctl build → push → K8s 部署），需要解决两个关键问题：
+本文只处理用户明确要求的远端文件任务，不定义镜像构建或部署前置条件：
 
 1. **代码如何到达 agent 工作目录**
 2. **代码变更后如何高效增量同步**
@@ -26,7 +26,7 @@
 | 工作区下载 | `doops -session <s> pull --target <gateway-target> --dest <dir>` | 标准路径，基于 Gateway Git HTTP |
 | 单文件写入 | `doops -session <s> write ...` | 仅用于小文本，不用于源码树或二进制 |
 | 小文本查看 | `doops -session <s> read ...` | 仅配置、脚本、短日志等小文本 |
-| Shell 执行 | `doops -session <s> exec ...` | 在已同步的固定 session 工作区内执行 |
+| Shell 执行 | `doops -session <s> exec ...` | 使用显式 session；读取同步文件时才需要先 push |
 
 > [!IMPORTANT]
 > 批量文件传输已经由 `doops push/pull` 提供。若出现 512KB 分块、tar、
@@ -42,7 +42,7 @@ graph TD
     A["本地代码"] --> B["doops push"]
     B --> C["Gateway Git HTTP 隧道"]
     C --> D["Agent /root/ws/session"]
-    D --> E["buildctl build + push"]
+    D --> E["用户明确授权的文件任务"]
 ```
 
 ### 已淘汰：tar + write 管道
@@ -99,46 +99,41 @@ doops -session myproject-build push \
 template 或 workflow 声明；调用方通过明确授权的自然语言任务给出 target、服务范围、
 镜像版本、原因和验收条件。需要凭据时，CLI 只传递 `--credential` 的资源名，Gateway
 在用户、target 和 session 绑定后按精确 scope 授权并物化。
+发布镜像由 CNB CI 产出，发布者先核对 source commit、digest 和 CI 成功证据。
+`ask --apply` 直接使用任务授权的远程 Chart 和可选 values URL，不要求先 `push`、
+创建 Git worktree 或 target 源码快照。完整发布规范见 `NATURAL_LANGUAGE_DEPLOYMENT.md`。
 
 ---
 
-## 推荐流程
+## 文件任务流程
 
 ```mermaid
 graph LR
     A["doops push"] --> B["Gateway Git HTTP"]
     B --> C["固定 session 工作区"]
-    C --> D["doops exec / ask --apply"]
+    C --> D["明确授权的文件读取或处理"]
 ```
 
-### 同步并构建
+### 同步并核对文件
 
 ```bash
-# 1. 同步到固定 session 工作区
-doops -session myproject-build push --target gw-example --src .
+# 任务确实需要远端文件时，显式同步
+doops -session inspect-source push --target gw-example --src ./myproject
 
-# 2. 在同一个 session 中构建
-doops -session myproject-build exec --target gw-example --cmd \
-  "cd /root/ws/myproject-build && buildctl --addr unix:///run/buildkit/buildkitd.sock build \
-     --progress=plain \
-     --frontend dockerfile.v0 \
-     --local context=. \
-     --local dockerfile=. \
-     --opt filename=Dockerfile \
-     --output type=image,name=registry.example.com/oilan-system/myapp:latest,push=true,registry.insecure=true"
+# 读取本次同步文件，不触发构建或部署
+doops -session inspect-source read --target gw-example --path README.md
 ```
 
-## 构建工作目录管理
+## 文件工作目录管理
 
 > [!NOTE]
-> 代码工作区必须使用 `/root/ws/<session>`。BuildKit 缓存由构建运行时独立
-> 管理，不能通过另建共享源码目录破坏 session 隔离。
+> 文件同步的工作区使用 `/root/ws/<session>`。这是文件任务的隔离边界，不是
+> 发布输入或 CI 来源证明，不能通过另建共享源码目录破坏 session 隔离。
 
 | 项目 | 路径 | 说明 |
 |:---|:---|:---|
 | 工作区根目录 | `/root/ws/` | Agent 管理的 session 工作区根目录 |
 | 项目工作区 | `/root/ws/<session>/` | `push/pull/exec/ask` 的唯一工作区 |
-| 构建日志 | `/tmp/doops-build-{project}.log` | 构建过程日志 |
 
 ```bash
 /root/ws/

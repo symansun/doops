@@ -177,6 +177,21 @@ func LoadServers() ([]Server, error) {
 	return servers, err
 }
 
+func removeServer(servers []Server, target string) ([]Server, Server, error) {
+	target = strings.TrimSpace(target)
+	for i, server := range servers {
+		if !serverMatchesTarget(server, target) {
+			continue
+		}
+		removed := server
+		remaining := make([]Server, 0, len(servers)-1)
+		remaining = append(remaining, servers[:i]...)
+		remaining = append(remaining, servers[i+1:]...)
+		return remaining, removed, nil
+	}
+	return nil, Server{}, fmt.Errorf("target %q not found", target)
+}
+
 func GetLLMConfig() LLMConfig {
 	_, llm, _ := LoadConfig()
 	return llm

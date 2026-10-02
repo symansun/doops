@@ -17,9 +17,9 @@ func TestHandleAgentUpgradeRequiresImage(t *testing.T) {
 func TestHandleAgentUpgradeDryRunK8s(t *testing.T) {
 	out, err := handleAgentUpgrade(json.RawMessage(`{
 		"mode":"k8s",
-		"image":"repo.example/doops-agent:latest",
+		"image":"repo.example/doops-agent@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"namespace":"ai",
-		"workload":"daemonset/doops-agent",
+		"workload":"deployment/doops-agent",
 		"container":"doops-agent",
 		"dry_run":true
 	}`))
@@ -29,18 +29,41 @@ func TestHandleAgentUpgradeDryRunK8s(t *testing.T) {
 	if strings.Contains(out, "kubectl") || strings.Contains(out, "set image") {
 		t.Fatalf("dry-run must not emit an executable mutation command: %s", out)
 	}
-	if !strings.Contains(out, "image=repo.example/doops-agent:latest") ||
+	if !strings.Contains(out, "image=repo.example/doops-agent@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") ||
 		!strings.Contains(out, "namespace=ai") ||
-		!strings.Contains(out, "workload=daemonset/doops-agent") {
+		!strings.Contains(out, "workload=deployment/doops-agent") {
 		t.Fatalf("unexpected dry-run output: %s", out)
 	}
-	if !strings.Contains(out, "external Helm/GitOps controller") ||
-		!strings.Contains(out, "gateway heartbeat") {
-		t.Fatalf("dry-run should require complete external reconciliation: %s", out)
+	if !strings.Contains(out, "in-cluster Job") || !strings.Contains(out, "roll back") {
+		t.Fatalf("dry-run should describe the in-cluster Job: %s", out)
 	}
 }
 
-func TestHandleAgentUpgradeRejectsApply(t *testing.T) {
+func TestHandleAgentUpgradeDryRunRejectsUnpinnedImage(t *testing.T) {
+	_, err := handleAgentUpgrade(json.RawMessage(`{
+		"mode":"k8s",
+		"image":"repo.example/doops-agent:latest",
+		"dry_run":true
+	}`))
+	if err == nil || !strings.Contains(err.Error(), "repository@sha256") {
+		t.Fatalf("expected dry-run digest pin rejection, got %v", err)
+	}
+}
+
+func TestHandleAgentUpgradeDryRunRejectsLegacyDaemonSet(t *testing.T) {
+	_, err := handleAgentUpgrade(json.RawMessage(`{
+		"mode":"daemonset",
+		"image":"repo.example/doops-agent@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"dry_run":true
+	}`))
+	if err == nil ||
+		!strings.Contains(err.Error(), "explicit Helm migration") ||
+		!strings.Contains(err.Error(), "not automatic adoption") {
+		t.Fatalf("expected legacy Agent guidance, got %v", err)
+	}
+}
+
+func TestHandleAgentUpgradeRejectsUnpinnedApply(t *testing.T) {
 	_, err := handleAgentUpgrade(json.RawMessage(`{
 		"mode":"k8s",
 		"image":"repo.example/doops-agent:latest",
@@ -48,8 +71,8 @@ func TestHandleAgentUpgradeRejectsApply(t *testing.T) {
 		"workload":"deployment/doops-agent",
 		"container":"doops-agent"
 	}`))
-	if err == nil || !strings.Contains(err.Error(), directAgentUpgradeProhibited) {
-		t.Fatalf("expected direct self-upgrade rejection, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "repository@sha256") {
+		t.Fatalf("expected digest pin rejection, got %v", err)
 	}
 }
 

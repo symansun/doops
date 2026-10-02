@@ -544,26 +544,31 @@ doops -session <session> pull --target <target> --dest <dir>
 
 ### `doops_agent_upgrade`
 
-仅预览外部发布控制器需要执行的 Agent 镜像变更。Agent 不允许修改承载自身的工作负载。
+由目标 Agent 创建集群内 Job，升级承载自己的 Helm Deployment。Agent 进程不执行 Helm mutation。
 
 参数：
 
 ```json
 {
-  "image": "docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI>",
+  "image": "docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest>",
   "mode": "k8s",
-  "namespace": "doops-system",
-  "workload": "deployment/doops-agent",
-  "container": "doops-agent",
-  "dry_run": true
+  "release": "doops-agent-live",
+  "dry_run": false
 }
 ```
 
 需要权限：`agent:upgrade`。
 
-`dry_run` 必须为 `true`；非 dry-run 请求会在 Gateway 分发前被拒绝。正式升级必须由
-目标 Agent 之外的 CI/CD、GitOps 或 release controller 执行，并负责新实例心跳验证与
-失败回滚。
+`image` 必须是 `repository@sha256:<64 hex>`，包括 `dry_run: true` 的预演请求。
+`dry_run: true` 只返回预演。
+`observe_job` 读取 Job 状态。`rollback: true` 创建回滚 Job。namespace 必须是 Agent
+自己的 namespace。Job 使用 Agent 已挂载的 kubeconfig，不接收操作机 kubeconfig。
+新 Pod 未持续就绪时 Job 回滚；CLI 在成功后检查 `structuredSSH`，探针失败会再创建回滚 Job。
+
+Agent 必须已经包含该控制器，并挂载可共享的 `/root/.kube` 或 `/root/.kube/config`。
+`self-upgrade-accepted` 仅表示 Job 已提交；调用方继续以精确 `job + namespace`
+观察 `self-upgrade-running/failed/succeeded` 首行状态，不能从日志中的成功字样推断结果。
+CLI 的 `-session` 必传；预演不作为升级完成证据，回滚失败也必须单独报告。
 
 ## 自然语言发布 API 对接模式
 
@@ -574,8 +579,8 @@ name；Gateway 将引用绑定当前用户、target 和 session，Agent 返回�
 scope 后才授权和物化。凭据 payload 不进入公开 prompt、doagent 上下文、CLI 输出、日志或
 审计记录；Gateway 仅通过内部凭据物化调用向目标 Agent 短暂传递 payload。
 
-生产发布不能由被升级的目标 Agent 自升级。调用方必须以同一 session 的真实健康检查和
-关键业务验收作为完成证据。
+业务服务的生产发布由目标 Agent 执行。`doops-agent` 自身镜像替换不走 `ask --apply`，
+走 `doops upgrade`。调用方必须以同一 session 的真实健康检查和关键业务验收作为完成证据。
 
 ## 进展和可追溯性
 

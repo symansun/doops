@@ -2,6 +2,90 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-10-02 Deployment Contract Alignment (Local, Not Released)
+
+- Scope: reconcile ordinary workload `ask --apply`, managed Agent image-only
+  `upgrade`, external bootstrap/runtime-value changes, and independent Gateway
+  delivery. Remove the stale source-workspace prerequisite and distinguish
+  bootstrap resource readiness from Gateway acceptance.
+- CLI upgrade now requires an explicit session. A preview or a Job acceptance
+  is not a successful release; missing acceptance, mismatched observations, and
+  success words in failed Job logs must fail closed.
+- Chart references enforce the documented HTTPS/OCI boundary; value files retain
+  their separate HTTP(S) contract. External bootstrap requires an explicit
+  kubeconfig; ordinary workload apply and controller-ready Agent image upgrades
+  do not require an operator kubeconfig.
+- Live read-only checks on 2026-10-02: `gw-edu-coder` resolved to
+  `doops-edu/edu-coder`, was online/idle, and passed `structuredSSH`.
+  `do-agent --version` returned `0.2.26`, while this repository pins `0.2.35`.
+  This is version drift, not evidence that the target is offline.
+- Installed CLI was `v1.3.6`, commit
+  `c9a60d77ebce051d2443c4c6c47559f9ffaa7a87`; its upgrade help was still preview-only.
+  These working-tree changes have not been published, installed, or deployed.
+  Do not copy an unreleased local binary or Skill over the released installation
+  and call the release complete.
+- Release gate remains: reviewed commit/push, successful exact-commit CNB
+  artifacts, versioned CLI/Skill installation, explicit-target deployment,
+  live Deployment/imageID/health and affected user-path acceptance. Local
+  command tests do not replace that gate.
+- Follow-up alignment: the installer previously paired a versioned CLI with
+  Skill/docs copied from the current working tree. Stage Skill/docs from the
+  CLI's exact embedded commit before replacement, and record `skill_commit`.
+  Missing Git objects or required release files must leave the installed
+  CLI, Skill and config unchanged; never substitute uncommitted instructions.
+- Removed temporary privileged-Pod/hand-started Agent examples from the SOP
+  and legacy Docker/DaemonSet recommendations from the README. Mount changes
+  remain tracked Helm configuration changes; bootstrap, image upgrade and
+  Gateway delivery are distinct operations.
+- Documented evidence limits: `--dry-run` only previews parameters;
+  `structuredSSH` does not advertise a self-upgrade controller or prove that
+  the replacement Pod serves the Gateway. Final Pod UID/imageID/runtime
+  version and functional acceptance are still required. A CLI-triggered
+  rollback Job requires a reachable Agent, so Gateway loss is not guaranteed
+  to recover automatically.
+- Review follow-up: the Job now checks active selector-matched Pod UID,
+  readiness, spec image and imageID in addition to Deployment convergence;
+  digest comparisons follow the selected immutable platform image. Manual
+  rollback reads the expected image from the selected historical Helm manifest,
+  not from the post-rollback live Deployment. Both rollback paths recheck the
+  Gateway protocol in the CLI, and a failed recovery probe does not recursively
+  request more rollbacks. The preflight rejects a surge other than one.
+- Final guidance audit found stale image-build and shell Skills directing source
+  archive/SCP and release-image builds on a business target. Removed that route,
+  aligned the file-sync guide and CLI usage with CI artifact delivery, and made
+  bootstrap examples select an external-controller kubeconfig explicitly.
+- CLI upgrade success output now names the Job/protocol evidence it actually
+  verifies and leaves Gateway-serving Pod/version/function acceptance explicit.
+  The legacy-DaemonSet test now asserts the explicit migration/no-adoption error.
+- Verification: Agent `go test ./...`, CLI `go test ./cli/doops`, all 50 backend
+  Python contract tests, shell syntax checks, compiled CLI help/session rejection,
+  canonical Skill validation, and `git diff --check` passed. Upgrade protocol
+  scenarios exercised missing acceptance, mismatched Job/namespace, failed logs
+  containing success text, preview, success, rollback, and failed recovery probes.
+  These are local/synthetic tests, not a live upgrade acceptance.
+- Rechecked the installed CLI and `gw-edu-coder` through read-only session
+  `deploy-contract-20261002`: CLI remains v1.3.6, target is online/idle,
+  `structuredSSH` is ready, and `do-agent --version` remains 0.2.26.
+  No commit/push, installer replacement, or production mutation was performed
+  by this alignment verification.
+- Independent Skill scenario review confirmed that dirty local source and a
+  missing local kubeconfig do not block ordinary apply, and `structuredSSH`
+  alone does not establish self-upgrade readiness. Scoped the system prompt's
+  Helm-only mutation rule to ordinary workloads so it does not contradict the
+  separate Agent upgrade Job path.
+
+## 2026-09-28 In-cluster Agent self-upgrade
+
+- `doops upgrade` no longer rejects apply. A pinned `repository@sha256:<64 hex>`
+  image makes the target Agent create a Kubernetes Job. The Job reuses the
+  kubeconfig volume the Agent already mounts and runs Helm outside the Agent
+  process, so the rollout cannot kill the rollback controller.
+- The Job keeps the chart handoff at maxSurge=1 and maxUnavailable=0, preserves
+  the live selector, and rolls back unless the new Pod stays ready. The CLI then
+  requires `structuredSSH` and starts a rollback Job if that probe fails.
+- `scripts/release-managed-agent.sh` remains the bootstrap for a cluster that
+  does not yet have this controller. It still requires an operator kubeconfig.
+
 ## 2026-09-28 Structured SSH option boundary
 
 - `doops_ssh` options were copied into the OpenSSH argv after only an empty/NUL

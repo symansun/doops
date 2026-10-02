@@ -164,6 +164,28 @@ func TestSaveServersDoesNotOverwriteInvalidExistingConfig(t *testing.T) {
 	}
 }
 
+func TestRemoveServerMatchesAliasAndPreservesRemainingRoutes(t *testing.T) {
+	servers := []Server{
+		{Name: "keep", Gateway: "https://doops.example.com", Cluster: "keep", Instance: "node"},
+		{Name: "legacy", Aliases: []string{"old"}, Gateway: "https://doops.example.com", Cluster: "legacy", Instance: "node"},
+	}
+
+	remaining, removed, err := removeServer(servers, "old")
+	if err != nil {
+		t.Fatalf("remove server: %v", err)
+	}
+	if removed.Name != "legacy" || len(remaining) != 1 || remaining[0].Name != "keep" {
+		t.Fatalf("unexpected remove result: removed=%#v remaining=%#v", removed, remaining)
+	}
+}
+
+func TestRemoveServerRejectsUnknownTarget(t *testing.T) {
+	_, _, err := removeServer(nil, "missing")
+	if err == nil || !strings.Contains(err.Error(), `target "missing" not found`) {
+		t.Fatalf("expected unknown target rejection, got %v", err)
+	}
+}
+
 func TestEveryConfigSourceRejectsRetiredTargetFields(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("DOOPS_CONFIG", configPath)

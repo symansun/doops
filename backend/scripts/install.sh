@@ -34,7 +34,8 @@ Doops 一键安装脚本
 
 Skill 维护规则:
   权威源码在 doops.sh 仓库 backend/skills/SKILL.md
-  install.sh 只把源码里的 skill/docs 复制到业务项目，不从业务项目反向生成 skill
+  install.sh 从下载 CLI 内嵌 commit 的本地 Git 对象读取 skill/docs，不复制当前工作区
+  本地缺少对应提交时先获取该发布提交再重试；安装器不会自动 fetch 或混装其它版本
 
 连接模式:
  标准入口只有 Gateway 模式:
@@ -50,6 +51,7 @@ CLI_OUT="${HOME}/.local/bin/doops"
 PROJECT_PATH="$(pwd)"
 RELEASE_TAG=""
 CLI_TEMP_DIR=""
+RELEASE_SOURCE_DIR=""
 TARGET_NAME=""
 TARGET_GATEWAY=""
 TARGET_CLUSTER=""
@@ -84,6 +86,59 @@ detect_host_platform() {
   esac
 
   printf '%s-%s\n' "${os}" "${arch}"
+}
+
+stage_release_sources() {
+  local commit="$1" repository_root archive staged
+  repository_root="$(cd "${REPO_ROOT}/.." && pwd)"
+  if ! command -v git >/dev/null 2>&1; then
+    echo "git is required to stage Skill sources from the release commit" >&2
+    exit 1
+  fi
+  if ! git -C "${repository_root}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "Installer source is not inside a git worktree; cannot resolve release Skill sources" >&2
+    exit 1
+  fi
+  if ! git -C "${repository_root}" cat-file -e "${commit}^{commit}" >/dev/null 2>&1; then
+    echo "Release commit ${commit} is unavailable in local git objects" >&2
+    exit 1
+  fi
+  if ! git -C "${repository_root}" cat-file -e "${commit}:backend/skills/SKILL.md" >/dev/null 2>&1; then
+    echo "Release commit ${commit} is missing backend/skills/SKILL.md" >&2
+    exit 1
+  fi
+  if ! git -C "${repository_root}" ls-tree -r --name-only "${commit}" -- backend/docs/ |
+    awk -F/ 'NF == 3 && $1 == "backend" && $2 == "docs" && $3 ~ /\.md$/ { found=1 } END { exit found ? 0 : 1 }'; then
+    echo "Release commit ${commit} is missing backend/docs/*.md" >&2
+    exit 1
+  fi
+
+  archive="${CLI_TEMP_DIR}/release-sources.tar"
+  staged="${CLI_TEMP_DIR}/release-sources"
+  mkdir -p "${staged}"
+  if ! git -C "${repository_root}" archive \
+    --format=tar \
+    --output="${archive}" \
+    "${commit}" \
+    -- \
+    backend/skills/SKILL.md \
+    backend/docs; then
+    echo "Failed to stage Skill sources from release commit ${commit}" >&2
+    exit 1
+  fi
+  if ! tar -xf "${archive}" -C "${staged}"; then
+    echo "Failed to unpack Skill sources from release commit ${commit}" >&2
+    exit 1
+  fi
+  if [[ ! -f "${staged}/backend/skills/SKILL.md" ]]; then
+    echo "Release commit ${commit} is missing backend/skills/SKILL.md" >&2
+    exit 1
+  fi
+  if ! compgen -G "${staged}/backend/docs/*.md" >/dev/null; then
+    echo "Release commit ${commit} is missing backend/docs/*.md" >&2
+    exit 1
+  fi
+  RELEASE_SOURCE_DIR="${staged}"
 }
 
 sha256_file() {
@@ -161,6 +216,8 @@ EOF
     exit 1
   fi
 
+  stage_release_sources "${commit}"
+
   if [[ -f "${CANONICAL_CONFIG_FILE}" ]] &&
     ! validation_output="$(DOOPS_CONFIG="${CANONICAL_CONFIG_FILE}" "${candidate}" list 2>&1)"; then
     echo "Existing doops config rejected by release CLI:" >&2
@@ -189,6 +246,7 @@ EOF
     printf 'artifact=%s\n' "${artifact}"
     printf 'sha256=%s\n' "${actual}"
     printf 'commit=%s\n' "${commit}"
+    printf 'skill_commit=%s\n' "${commit}"
     printf 'contract=%s\n' "${contract}"
     printf 'source=cnb-release-assets\n'
     printf 'path=%s\n' "${CLI_OUT}"
@@ -261,10 +319,10 @@ install_cli
 
 echo "[2/4] Installing doops skill"
 mkdir -p "${SKILL_DEST}"
-cp "${REPO_ROOT}/skills/SKILL.md" "${SKILL_DEST}/SKILL.md"
+cp "${RELEASE_SOURCE_DIR}/backend/skills/SKILL.md" "${SKILL_DEST}/SKILL.md"
 rm -rf "${SKILL_DEST}/docs"
 mkdir -p "${SKILL_DEST}/docs"
-cp "${REPO_ROOT}"/docs/*.md "${SKILL_DEST}/docs/"
+cp "${RELEASE_SOURCE_DIR}"/backend/docs/*.md "${SKILL_DEST}/docs/"
 echo "  Skill installed to ${SKILL_DEST}/SKILL.md"
 echo "  Skill docs installed to ${SKILL_DEST}/docs/"
 

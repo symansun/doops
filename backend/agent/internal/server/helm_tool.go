@@ -216,7 +216,7 @@ func resolveRemoteHelmValueReference(value string) (string, error) {
 }
 
 func isRemoteHelmChartReference(value string) bool {
-	return isRemoteHelmReference(value, "oci", "http", "https")
+	return isRemoteHelmReference(value, "oci", "https")
 }
 
 func isRemoteHelmValueReference(value string) bool {

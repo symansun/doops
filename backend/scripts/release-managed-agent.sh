@@ -3,19 +3,23 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Release a Helm-managed doops-agent. This is the only Agent install/upgrade path.
+Install into a new cluster or externally reconcile an existing Helm-managed
+doops-agent. Use this script for a new cluster without an Agent, a Helm-managed
+Agent without the in-cluster self-upgrade controller, or explicit Helm runtime
+configuration changes. Managed Agents with the controller use `doops upgrade`
+for image-only changes without an operator kubeconfig. This script does not
+automatically adopt an existing unmanaged workload.
 
 Helm chart deploy/helm/doops-agent starts the replacement Pod first
 (maxSurge=1, maxUnavailable=0). The live Agent keeps serving until the new Pod
 is Ready and has replaced the Gateway session. kubectl set-image, docker
-restart, Jobs, release-runners, and doops upgrade apply are not release
-methods.
+restart, ad-hoc Jobs, and release-runners are not release methods.
 
-Existing cluster (DoOps target already online):
+Existing Helm release (DoOps target already online):
 
   bash scripts/release-managed-agent.sh \
     --target gw-edu-coder \
-    --session agent-release-v1.3.0 \
+    --session agent-release-<commit> \
     --cluster doops-edu \
     --instance edu-coder \
     --release doops-agent-live \
@@ -23,7 +27,7 @@ Existing cluster (DoOps target already online):
     --kubeconfig /secure/path/to/kubeconfig \
     --proxy-allowed-hosts 127.0.0.1,internal.example.com \
     --host-alias internal.example.com=10.0.0.10 \
-    --version v1.3.0
+    --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<verified-ci-digest>
 
 New cluster (operator kubeconfig, complete values, no Agent yet):
 
@@ -31,12 +35,16 @@ New cluster (operator kubeconfig, complete values, no Agent yet):
     --release doops-agent \
     --namespace doops-system \
     --values /path/to/complete-values.yaml \
-    --version v1.3.0
+    --kubeconfig /secure/path/to/kubeconfig \
+    --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<verified-ci-digest>
 
 Required:
   --release NAME
   --namespace NAME
   --image REPO@sha256:<digest>   or  --version vX.Y.Z
+
+The publisher must verify the exact CI commit and image digest before release.
+--version resolves a tag to a digest; it does not verify CI provenance.
 
 Existing cluster also requires:
   --target NAME
@@ -47,6 +55,7 @@ Existing cluster also requires:
 
 New cluster also requires:
   --values FILE
+  --kubeconfig PATH (or KUBECONFIG)
 
 Options:
   --chart-dir PATH     Default: deploy/helm/doops-agent
@@ -308,6 +317,11 @@ release_new_cluster() {
     echo "Error: new-cluster hostAliases must be configured in the values file" >&2
     exit 2
   fi
+  require_value "--kubeconfig (or KUBECONFIG)" "${KUBECONFIG_PATH}"
+  if [[ ! -s "${KUBECONFIG_PATH}" ]]; then
+    echo "Error: bootstrap operator kubeconfig does not exist or is empty: ${KUBECONFIG_PATH}" >&2
+    exit 1
+  fi
   if [[ ! -f "${VALUES}" ]]; then
     echo "Error: --values file does not exist: ${VALUES}" >&2
     exit 1
@@ -320,7 +334,7 @@ release_new_cluster() {
     echo "Error: kubectl is required on PATH" >&2
     exit 1
   }
-  export KUBECONFIG="${KUBECONFIG_PATH:-${KUBECONFIG:-}}"
+  export KUBECONFIG="${KUBECONFIG_PATH}"
   helm_args=(
     upgrade --install "${RELEASE}" "${CHART_DIR}"
     --namespace "${NAMESPACE}"
@@ -341,7 +355,8 @@ release_new_cluster() {
   workload="$(helm get values "${RELEASE}" -n "${NAMESPACE}" -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["workload"]["name"])')"
   verify_final_deployment_state "${workload}" "${DOOPS_IMAGE}"
   kubectl -n "${NAMESPACE}" rollout status "deployment/${workload}" --timeout "${TIMEOUT}"
-  echo "Release complete: ${RELEASE} -> ${DOOPS_IMAGE}"
+  echo "Bootstrap resources ready: ${RELEASE} -> ${DOOPS_IMAGE}"
+  echo "Gateway handoff and Agent capabilities have not been verified; complete docs/CLUSTER_INSTALL_GUIDE.md acceptance before declaring the target ready."
 }
 
 normalize_proxy_allowed_hosts() {
@@ -459,8 +474,12 @@ release_existing_cluster() {
   require_value "--instance" "${INSTANCE}"
   if [[ -z "${KUBECONFIG_PATH}" ]]; then
     cat >&2 <<'EOF'
-Error: this is the managed doops-agent upgrade path, not a normal workload deployment.
-An external operator kubeconfig is required because the current Agent cannot replace its own Deployment.
+Error: this is the external Helm controller path, not a normal workload deployment.
+An external operator kubeconfig is required for this script only.
+For a Helm-managed Agent with the self-upgrade controller, use:
+  doops -session <session> upgrade --target <target> --image <repository>@sha256:<digest>
+That image-only path runs an in-cluster Job and does not require a local kubeconfig.
+Use this external script for an Agent without that controller or explicit Helm runtime configuration changes.
 For ordinary workload releases, use:
   doops -session <session> ask --target <target> --apply --msg '<target、服务范围、镜像版本、原因和验收条件>'
 EOF
@@ -484,7 +503,7 @@ EOF
   }
   if [[ ! -s "${KUBECONFIG_PATH}" ]]; then
     echo "Error: external operator kubeconfig does not exist or is empty: ${KUBECONFIG_PATH}" >&2
-    echo "This kubeconfig is required only for managed doops-agent self-upgrade; ordinary workload releases use doops ask --apply." >&2
+    echo "This external script requires a kubeconfig; managed image-only upgrades use doops upgrade, and ordinary workload releases use doops ask --apply." >&2
     exit 1
   fi
   export KUBECONFIG="${KUBECONFIG_PATH}"

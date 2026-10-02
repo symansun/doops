@@ -7,10 +7,11 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Need | Command | Notes |
 | :--- | :--- | :--- |
 | List configured targets | `doops list` | Local config only; not live gateway state. |
-| List live gateway agents | `doops targets --target <gateway-target>` | First check for gateway troubleshooting. |
+| List live gateway agents | `doops -session <s> targets --target <gateway-target>` | First check for gateway troubleshooting. |
+| Retire an offline target | `doops -session <s> remove --target <gateway-target>` | Removes only the local route after a successful Gateway query confirms the exact route is not currently visible; online, unreachable, or unauthorized targets are refused. |
 | Check Agent protocol capability | `doops -session <s> capabilities --target <t> --require structuredSSH` | Fails closed when the online Agent is too old for structured SSH. |
 | Add a Gateway target | `doops add --name <n> --gateway <url> --cluster <c> --instance <i>` | Stores routing only; never stores a target token. |
-| Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Best for known checks and deploy scripts. |
+| Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Known checks and explicitly requested operations; standard releases use `ask --apply`. |
 | Run nested SSH safely | `doops -session <s> ssh --target <t> --host <user@host> -- <command> [args...]` | Preserves remote argv across nested shells. |
 | Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | Agent-managed task with status polling; required when the command outlives a normal remote shell call. |
 | Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
@@ -23,7 +24,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Use structured Kubernetes operations | `doops -session <s> k8s --target <t> ...` | Restricted operational interface; publishing uses `ask --apply`. |
 | Clean workspace | `doops -session <s> clean --target <t> --workspace <s>` | Cleans `/root/ws/<workspace>`. |
 | Check an image deployment | `doops check ...` | Compares configured service image with build metadata. |
-| Preview Agent upgrade | `doops -session <s> upgrade ... --dry-run` | Never replaces the current Agent. |
+| Upgrade a managed Agent | `doops -session <s> upgrade --target <t> --image <repository>@sha256:<digest>` | In-cluster Job. `--dry-run` previews. |
 | Cache token | `doops login ...` | Gateway login can exchange username/password for user token. |
 | List target credentials | `doops credential list --target <t>` | Uses the cached gateway login and returns only metadata granted to that user on the selected cluster/instance. |
 | Preflight development credentials | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` | Fails closed unless every declared credentialRef has a matching active grant use on the selected target. |
@@ -41,12 +42,15 @@ This guide holds command-level usage details. The skill file is only the entry p
 
 ```bash
 doops list
-doops targets --target unicom
-doops -session smoke exec --target unicom --cmd 'hostname && date -u +%FT%TZ'
-doops -session smoke-capabilities capabilities --target unicom --require structuredSSH
+doops version
+doops -session smoke targets --target <gateway-target>
+doops -session smoke exec --target <gateway-target> --cmd 'hostname && date -u +%FT%TZ'
+doops -session smoke-capabilities capabilities --target <gateway-target> --require structuredSSH
 ```
 
 `doops list` reads local config. `doops targets` asks gateway for live connected agents. A target can be listed locally but unavailable in gateway because it is offline or because the logged-in user lacks the exact target grant; the CLI does not collapse these cases into a definitive offline diagnosis.
+
+To remove a stale local route, use `doops -session <s> remove --target <gateway-target>`. The command first queries the configured Gateway and refuses to modify the config if the Gateway is unreachable, authentication fails, or the exact route is currently visible. It does not delete Gateway grants, audit records, proxy routes, or historical agent status.
 
 `doops targets` separates target-wide busy from normal per-session activity:
 
@@ -57,6 +61,9 @@ doops -session smoke-capabilities capabilities --target unicom --require structu
 `capabilities --require structuredSSH` performs only the Gateway WebSocket initialize
 handshake. It succeeds only when the selected online Agent advertises the exact
 structured SSH protocol; it never falls back to `doops exec`.
+It does not prove that the Agent supports in-cluster self-upgrade. Verify the
+installed CLI and target image against the selected release before choosing an
+upgrade path; source changes alone do not update either runtime.
 
 Gateway 控制面发布不走 doops target。必须从 CNB 不可变 Agent 镜像提取 Gateway，
 并把同一个 `main` commit 传给发布脚本；脚本会拒绝没有该 commit provenance 的本地旧二进制：
@@ -336,7 +343,7 @@ doops -session release-<commit> ask \
   --target <configured-target> \
   --apply \
   --credential <resource-name> \
-  --msg '在 <target> 的 namespace <namespace> 发布 deployment/<workload>，镜像 <repository>@sha256:<digest>；使用 chart https://charts.example/<name>.tgz；原因：<reason>；验收：Secret 类型/key、rollout、最终 Deployment spec/status、实际镜像、Service/Endpoint、健康检查和关键功能路径通过。'
+  --msg '在 <target> 的 namespace <namespace> 发布 deployment/<workload>，镜像 <repository>@sha256:<verified-ci-digest>；使用 chart https://charts.example/<name>.tgz；原因：<reason>；验收：Secret 类型/key、rollout、最终 Deployment spec/status、实际镜像、Service/Endpoint、健康检查和关键功能路径通过。'
 ```
 
 必须明确提供 target、服务范围、镜像版本、变更原因和验收条件。镜像版本必须是任务中的
@@ -345,14 +352,20 @@ doops -session release-<commit> ask \
 HTTP(S) URL，`set_strings` 只允许 `image.repository` 加一个受控版本选择器：
 不可变的 `image.digest` 或严格的 `image.tag=release-YYYYMMDD`，两种模式不得混用。
 `--credential` 可重复，但只传 resource name，不能内联 payload。
+发布者必须在调用前独立核对精确 CI source commit、registry digest 和构建成功证据；
+`ask --apply`、`--image`、`--version` 和 Helm 工具不自动验证 CI provenance。
 
 CNB CI 负责测试、构建和发布制品；Gateway 负责鉴权、审计、并发控制和凭据预物化；
 目标 Agent/doagent 在目标运行环境执行业务 mutation。当前没有 EnvironmentRegistry、
 `cicd run`、workflow 环境推断、CICDReport 或 `doops_cicd_result`。
 
 普通前台 `exec` 可以执行操作者明确给出的 Helm 命令，但不替代标准发布编排，也不能使用
-managed credential references。`doops-agent` 自身升级必须由另一个隔离 Agent target 或
-真实存在的外部 CI/GitOps controller 执行。
+managed credential references。`doops-agent` 自身升级使用 `doops upgrade`，但仅适用于
+Agent 自身 namespace 中的标准 Helm-managed Deployment 和已有匹配 Helm release；未给
+`--release` 时必须只有一个匹配 release，给出时按名称选择并校验。Agent Pod 必须挂载
+可由 Job 共享的 `/root/.kube` 或 `/root/.kube/config`，Job 的 Kubernetes 权限来自该
+kubeconfig，不需要操作机 kubeconfig。没有这些前置条件时才使用外部
+`scripts/release-managed-agent.sh`。
 
 ## Push
 
@@ -425,6 +438,11 @@ bash scripts/install.sh --version <release-tag> --project "$PWD"
 The installer downloads a checksummed CNB Release Asset into `~/.local/bin/doops`
 and writes a receipt to `~/.local/share/doops/install.txt`. Skill directories contain
 instructions and docs only; they are not CLI executable locations.
+Skill/docs are read from the exact Git commit embedded in that CLI, not from the
+current working tree. A missing commit or required source file stops installation
+before replacing the installed CLI or Skill. Fetch the selected release commit
+into this repository and retry; the installer does not create a worktree or fetch
+another revision automatically. The receipt records matching `commit` and `skill_commit`.
 
 同一个 Gateway 只登录一次，但查询和使用仍按用户及 configured target 的
 `cluster/instance` 隔离：
@@ -491,26 +509,29 @@ CLI 一键安装或更新：
 bash scripts/install.sh --version <vX.Y.Z> --project "$PWD"
 ```
 
-目标集群上安装或更新 Agent 是同一条命令，必须传入 cluster / instance：
+新集群首次安装、旧 Helm Agent 首次启用控制器与显式 Agent 配置变更使用本仓库
+`scripts/release-managed-agent.sh`，不能重跑外部清单安装器替代 Helm 升级。
+首次安装完整命令与验收见 `CLUSTER_INSTALL_GUIDE.md`；这条 bootstrap 路径与普通
+业务 `ask --apply` 分开。外部控制器可以位于授权管理主机或 CI，不必在开发机。
 
-```bash
-curl -fsSL https://cnb.cool/l8ai/dowork/-/git/raw/main/doops-k8s/install.sh | sh -s -- <cluster> <instance>
-```
+已经改用 Helm chart `deploy/helm/doops-agent`、并且 Agent 镜像包含自升级控制器的节点，
+用 `doops upgrade`，不需要本机 kubeconfig。普通业务仍使用 `doops ask --apply`。
+发布者须先通过只读检查确认现网采用标准 `/app/sandbox-entrypoint.sh`；
+CLI 的参数预览不替代这项检查。Agent 进程不执行这次 Helm mutation；
+集群内 Job 复用 Agent 已挂载的 kubeconfig。Chart 先起新 Pod，Gateway
+切换会话后才删旧副本；新 Pod 不持续就绪或 `structuredSSH` 探针失败会回滚。
+`doops upgrade` 只接受 Agent 镜像和 rollback 操作，不修改 `proxy.allowedHosts`、
+`hostAliases` 或其它 Agent Helm 配置。
 
-当前基线 v1.3.0。重跑会把 `doops-k8s/` reset 到 `main` 再 apply 这一个身份。
+还没有该控制器的旧 Agent，以及新集群第一次接入，仍用
+`scripts/release-managed-agent.sh` 和操作机 kubeconfig：
 
-已经改用 Helm chart `deploy/helm/doops-agent` 的维护者节点才走
-`scripts/release-managed-agent.sh`。这是 `doops-agent` 自升级专用路径，不是普通业务
-workload 发布；普通业务仍使用 `doops ask --apply`，不需要本机 kubeconfig。Agent 不能
-替换承载自己的 Deployment，现网还必须已经使用标准 `/app/sandbox-entrypoint.sh`。
-因此自升级必须由外部操作机提供 kubeconfig，由外部 Helm
-控制器执行 mutation 和回滚，不能通过当前 Agent 执行。Chart 先起新 Pod，Gateway
-切换会话后才删旧副本；候选 Pod 或 Gateway 接管失败会自动回滚到发布前 Helm revision：
-
-脚本会先验证 Kubernetes API 和 kubeconfig 可达性，再读取 Helm release。API 超时、
-EOF、鉴权或其它连接失败会直接报告控制器不可达，不会误报为“release 不存在”或引导
-执行 adopt；只有 API 可达且 Helm 明确返回 release 缺失时，才需要先完成
-`deploy/helm/doops-agent` 接管。
+脚本会先验证 Kubernetes API 和 kubeconfig 可达性，再读取 Helm release。`--values` 新集群
+模式是 bootstrap-only，只做 Helm wait 和最终 Deployment 检查，不做 Gateway 接管或自动
+回滚；完成后必须继续执行安装验收。API 超时、
+EOF、鉴权或其它连接失败会直接报告控制器不可达，不会误报为“release 不存在”。新集群
+无 Agent 时传完整 `--values` 走安装路径；已有 workload 但 Helm release 缺失时脚本会
+停止，不执行 adopt，必须先完成独立的 `deploy/helm/doops-agent` adoption。
 
 ```bash
 bash scripts/release-managed-agent.sh \
@@ -526,7 +547,9 @@ bash scripts/release-managed-agent.sh \
   --version <vX.Y.Z>
 ```
 
-需要开放网站反代时，通过 `--proxy-allowed-hosts` 显式传入逗号分隔的精确上游
+以下 `--proxy-allowed-hosts` 和 `--host-alias` 仅属于外部
+`release-managed-agent.sh` 路径；`doops upgrade` 不支持这些配置变更。需要开放网站反代时，
+通过 `--proxy-allowed-hosts` 显式传入逗号分隔的精确上游
 hostname/IP；省略会保留现网值，传空字符串会恢复为拒绝全部。该参数控制 Agent
 能访问的内网上游，不是公网访问域名。URL、端口、路径、通配符和空条目会在任何
 集群变更前被拒绝；发布后会核对新 Agent 环境与 Helm release 的值。新集群省略
@@ -538,41 +561,44 @@ hostname/IP；省略会保留现网值，传空字符串会恢复为拒绝全部
 格式错误会在接触 target 前失败；发布后会核对 Pod 配置，并从新 Agent
 内执行真实解析验证。省略该参数会完整保留现网映射，不存在 DNS fallback。
 
-`doops upgrade` 只做预演：
+`doops upgrade` 执行自升级。`--dry-run` 只预览参数，不校验现网 Helm release、挂载、
+权限或回滚可行性，不能作为发布就绪证据：
 
 ```bash
-doops -session upgrade_20260519 upgrade \
-  --target unicom \
-  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI> \
-  --mode k8s \
-  --namespace doops-system \
-  --workload deployment/doops-agent \
-  --container doops-agent \
+doops -session agent-upgrade upgrade \
+  --target gw-edu-coder \
+  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest> \
   --dry-run
+
+doops -session agent-upgrade upgrade \
+  --target gw-edu-coder \
+  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest>
 ```
 
-When `--target` is given, its configured `cluster/instance` is the default
-preview scope. Direct Agent self-upgrade is prohibited: `upgrade` requires
-`--dry-run`. Apply the reviewed image with `scripts/release-managed-agent.sh`.
+镜像必须是 `repository@sha256:<64 hex>`，包括 `--dry-run` 预演。
+`--rollback` 回到前一个成功且已被替代的 revision。
+`--target` 的 `cluster/instance` 就是升级范围。还没有自升级控制器的旧 Agent 才用
+`scripts/release-managed-agent.sh`。
+`PREVIEW` 不是已部署，`ACCEPTED` 不是已完成。Job 成功后还需核对 Gateway 实际服务
+Pod 的 UID、imageID、版本与功能路径；`structuredSSH` 只是协议声明。协议探针失败时
+CLI 尝试提交回滚 Job，但 target 不可达时不能保证回滚，必须明确报告并按恢复流程处理。
+CLI 的 `OK` 仅说明 Job 与 `structuredSSH` 已核验，输出会提醒上述发布验收仍未完成。
+Job 自动校验最终 Deployment 与 selector 匹配的非终止 Pod 的 UID、Ready、spec image
+和 imageID；使用 digest 时必须与候选平台镜像 digest 精确匹配，不能把多架构索引 digest
+当成已验证的平台 digest。回滚以历史 Helm revision 的 manifest 为期望镜像来源，并重新
+检查 Gateway 协议；这些检查仍不替代 Gateway 实际服务 Pod 关联和功能验收。
 
-## BuildKit Example
+## BuildKit Availability
+
+Release images are built by CNB CI from the exact source commit. BuildKit in an
+Agent is a runtime capability, not permission to build release images on a
+business target or to make `push` a prerequisite for `ask --apply`.
+Check availability without starting a build:
 
 ```bash
-doops -session build exec --target jm --cmd \
-  'cd /root/ws/build && buildctl --addr unix:///run/buildkit/buildkitd.sock build \
-   --progress=plain \
-   --frontend dockerfile.v0 \
-   --local context=. \
-   --local dockerfile=. \
-   --opt filename=Dockerfile \
-   --output type=image,name=repo.example.com/team/app:latest,push=true'
+doops -session buildkit-check exec --target <target> --cmd 'buildctl --version'
 ```
 
-For long builds, use the native task service:
-
-```bash
-doops -session build exec --bg --target jm --cmd \
-  'cd /root/ws/build && buildctl --addr unix:///run/buildkit/buildkitd.sock build ...'
-```
-
-Do not create a shell background process with `&`, `nohup`, or `setsid` through a normal `exec` call: the agent terminates child processes when that call ends. `--bg` submits `doops_bg` and polls `doops_task_status`, so the agent owns the process, logs, and exit status.
+Explicitly authorized long-running non-release commands use `exec --bg`, not
+`&`, `nohup`, or `setsid` inside a foreground `exec`. The native task service owns
+the process, logs and exit status; it does not grant deployment authority.

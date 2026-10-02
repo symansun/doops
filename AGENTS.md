@@ -15,21 +15,39 @@ DoOps architecture, security, release, and verification boundaries.
 - Ordinary workload delivery uses an explicit natural-language task:
   `doops -session <s> ask --target <t> --apply [--credential <name>...] --msg '<facts>'`.
 - The task must state target, workload/service scope, explicit image version, reason, allowed
-  `deploy/helm/<name>/` assets when needed, and machine-checkable acceptance criteria. Image
-  version evidence is an immutable `image.repository` plus `image.digest` override from the
-  explicit Helm request.
+  `deploy/helm/<name>/` assets when needed, and machine-checkable acceptance criteria. The
+  explicit Helm request must use `image.repository` plus exactly one controlled selector:
+  `image.digest=sha256:<64 hex>` or `image.tag=release-YYYYMMDD`; the two selectors must not
+  be mixed.
 - CNB CI tests, builds, scans, and publishes immutable artifacts. Gateway authenticates, audits,
   limits concurrency, locks resources, and authorizes credentials. The selected target Agent
   performs the actual Kubernetes or Helm mutation and returns live evidence.
+- For `--image`, `--version`, `image.digest`, and `image.tag` inputs, the publisher must establish
+  the exact CI source-commit and registry-digest provenance before invoking the command. The CLI
+  and Agent validate the allowed input form and live result; they do not verify CI origin.
 - Do not add or restore `EnvironmentRegistry`, `EnvironmentDefinition`, `DeploymentTemplate`,
   `deploy/environments.yaml`, `doops cicd run`, prompt-derived deployment scope, `CICDReport`, or
   `doops_cicd_result` as a deployment root or compatibility path.
 - `deploy/helm/<name>/` contains runtime assets only. It must not become an environment registry,
   credential store, target selector, or deployment authorization source.
-- A doops-agent cannot replace the workload that is currently executing it. Self-upgrade requires
-  another isolated Agent target or a real external CI/GitOps controller. `doops upgrade` remains
-  dry-run only. The only Agent install/upgrade command is
-  `backend/scripts/release-managed-agent.sh`.
+- A doops-agent cannot replace the workload from its own process. `doops upgrade` is available
+  only when the Agent is in its own namespace, runs as the standard Helm-managed Deployment, and
+  has an existing identity-matched managed Helm release. Without `--release` exactly one matching
+  release is required; with `--release` the named release is selected and validated. The Agent
+  Pod must expose a shared `/root/.kube` or `/root/.kube/config` volume. The in-cluster Job
+  explicitly reuses that mounted kubeconfig, so its Kubernetes permissions come from that
+  kubeconfig rather than from a local operator file. The CLI waits for the Job, verifies Gateway
+  handoff and `structuredSSH`, and starts a rollback Job when the probe fails.
+  `--dry-run` is preview-only and still requires an immutable `repository@sha256:<64 hex>` image.
+  A new cluster without an Agent and legacy Agents without the controller use
+  `backend/scripts/release-managed-agent.sh` with an operator kubeconfig. Its new-cluster
+  `--values` mode is bootstrap-only: it performs Helm wait and final Deployment checks, not
+  Gateway takeover or automatic rollback; installation acceptance must follow. Its existing
+  release mode updates an existing Helm release, stops when no Helm release exists, and does
+  not perform adoption. `doops upgrade` only changes the Agent image or rolls back a managed
+  release; `proxy.allowedHosts` and `hostAliases` remain explicit external-script configuration.
+  Do not create a temporary Agent, target, or release-runner, and do not use `kubectl set image`,
+  Docker restart, or an Agent-process Helm mutation.
 
 ## Credential Security
 
@@ -71,7 +89,10 @@ DoOps architecture, security, release, and verification boundaries.
 - Before replacement, the installer must validate an existing config with the downloaded release
   CLI's own Go parser. Do not maintain a second Python, Node, jq, or shell JSON schema.
 - The canonical Skill source is `backend/skills/SKILL.md`. The installer copies it and
-  `backend/docs/*.md` into `<project>/.agent/skills/doops/`; do not edit installed copies first.
+  `backend/docs/*.md` from the exact commit embedded in the downloaded CLI into
+  `<project>/.agent/skills/doops/`, never from the current working tree. Missing release source
+  must fail before replacement; the install receipt records `skill_commit`. Do not edit
+  installed copies first.
 - One `doops login` is shared by configured targets on the same normalized Gateway URL. Credential
   listing and use still enforce the logged-in user and selected target's exact cluster/instance.
 

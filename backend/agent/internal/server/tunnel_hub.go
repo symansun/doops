@@ -452,7 +452,7 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		panic(err)
 	}
 	hub.edge = edge
-	if err := store.RetireRunningUpgradeOperations(directAgentUpgradeProhibited); err != nil {
+	if err := store.RetireRunningUpgradeOperations(interruptedUpgradeRetiredReason); err != nil {
 		panic(err)
 	}
 	return hub
@@ -1082,9 +1082,9 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			writeJSON(buildErrorResponse(req.ID, -32602, errMsg))
 			return nil
 		}
-		if !args.DryRun {
-			finishAudit("error", directAgentUpgradeProhibited, "", 0)
-			writeJSON(buildErrorResponse(req.ID, -32003, directAgentUpgradeProhibited))
+		if err := validateAgentUpgradeDispatch(args); err != nil {
+			finishAudit("error", err.Error(), "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32003, err.Error()))
 			return nil
 		}
 	}

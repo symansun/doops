@@ -40,8 +40,8 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 		if err := json.Unmarshal(rawArgs, &upgrade); err != nil {
 			return "", fmt.Errorf("invalid agent upgrade arguments: %w", err)
 		}
-		if !upgrade.DryRun {
-			return "", fmt.Errorf("%s", directAgentUpgradeProhibited)
+		if err := validateAgentUpgradeDispatch(upgrade); err != nil {
+			return "", err
 		}
 	}
 	resourceKey := resourceKeyForTool(action, tool, rawArgs, cluster, instance)

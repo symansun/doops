@@ -29,6 +29,7 @@ def test_cli_install_downloads_named_release_asset_and_replaces_binary_atomicall
     assert 'mv -f "${replacement}" "${CLI_OUT}"' in text
     assert 'receipt="${receipt_dir}/install.txt"' in text
     assert "source=cnb-release-assets" in text
+    assert "skill_commit" in text
     assert '"${candidate}" version' in text
     assert "doops.sh/cli-contract/v3" in text
     assert "${CLI_OUT} version" in text
@@ -150,18 +151,10 @@ def test_installer_places_release_asset_only_in_standard_cli_path():
         fake_bin.mkdir()
         project.mkdir()
 
-        platform = subprocess.run(
-            ["bash", "-c", "uname -s | tr '[:upper:]' '[:lower:]'; uname -m"],
-            check=True,
-            text=True,
-            capture_output=True,
-        ).stdout.splitlines()
-        arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[
-            platform[1]
-        ]
+        platform, arch = host_platform()
         artifact_name = f"doops-{platform[0]}-{arch}"
         artifact = fixtures / artifact_name
-        release_commit = "a" * 40
+        release_commit = git_commit(ROOT.parent)
         artifact.write_text(
             "#!/usr/bin/env bash\n"
             "if [[ \"${1:-}\" == version ]]; then\n"
@@ -254,6 +247,165 @@ cp "${DOOPS_TEST_RELEASE_FIXTURES}/${url##*/}" "${out}"
         assert installed.read_text() == "keep-existing-cli"
 
 
+def test_installer_stages_skill_and_docs_from_the_release_commit():
+    with tempfile.TemporaryDirectory() as raw_root:
+        root = Path(raw_root)
+        repo, release_commit = prepare_synthetic_repo(
+            root / "source",
+            skill="release skill\n",
+            docs={"release.md": "release docs\n"},
+        )
+        home = root / "home"
+        project = root / "project"
+        home.mkdir()
+        project.mkdir()
+        fake_bin, release_env = prepare_fake_cli_release(
+            root / "release",
+            "v-test",
+            commit=release_commit,
+        )
+
+        result = run_installer(
+            repo,
+            home,
+            project,
+            fake_bin,
+            release_env,
+        )
+
+        assert result.returncode == 0, result.stderr
+        installed_skill = project / ".agent" / "skills" / "doops" / "SKILL.md"
+        installed_doc = project / ".agent" / "skills" / "doops" / "docs" / "release.md"
+        assert installed_skill.read_text() == "release skill\n"
+        assert installed_doc.read_text() == "release docs\n"
+        receipt = (home / ".local" / "share" / "doops" / "install.txt").read_text()
+        assert f"skill_commit={release_commit}" in receipt
+
+
+def test_installer_uses_release_commit_when_worktree_skill_and_docs_are_updated():
+    with tempfile.TemporaryDirectory() as raw_root:
+        root = Path(raw_root)
+        repo, release_commit = prepare_synthetic_repo(
+            root / "source",
+            skill="release skill\n",
+            docs={"release.md": "release docs\n"},
+        )
+        (repo / "backend" / "skills" / "SKILL.md").write_text("working tree skill\n")
+        (repo / "backend" / "docs" / "release.md").write_text("working tree docs\n")
+        home = root / "home"
+        project = root / "project"
+        home.mkdir()
+        project.mkdir()
+        fake_bin, release_env = prepare_fake_cli_release(
+            root / "release",
+            "v-test",
+            commit=release_commit,
+        )
+
+        result = run_installer(
+            repo,
+            home,
+            project,
+            fake_bin,
+            release_env,
+        )
+
+        assert result.returncode == 0, result.stderr
+        installed_skill = project / ".agent" / "skills" / "doops" / "SKILL.md"
+        installed_doc = project / ".agent" / "skills" / "doops" / "docs" / "release.md"
+        assert installed_skill.read_text() == "release skill\n"
+        assert installed_doc.read_text() == "release docs\n"
+
+
+def test_installer_preserves_existing_installation_when_release_commit_is_missing():
+    with tempfile.TemporaryDirectory() as raw_root:
+        root = Path(raw_root)
+        repo, _ = prepare_synthetic_repo(
+            root / "source",
+            skill="release skill\n",
+            docs={"release.md": "release docs\n"},
+        )
+        home = root / "home"
+        project = root / "project"
+        home.mkdir()
+        project.mkdir()
+        old_cli = home / ".local" / "bin" / "doops"
+        old_cli.parent.mkdir(parents=True)
+        old_cli.write_text("old cli\n")
+        skill_dest = project / ".agent" / "skills" / "doops"
+        (skill_dest / "docs").mkdir(parents=True)
+        (skill_dest / "SKILL.md").write_text("old skill\n")
+        (skill_dest / "docs" / "old.md").write_text("old docs\n")
+        config = home / ".agent" / "skills" / "doops" / "config.json"
+        config.parent.mkdir(parents=True)
+        config.write_text('{"servers":[]}\n')
+        fake_bin, release_env = prepare_fake_cli_release(
+            root / "release",
+            "v-test",
+            commit="b" * 40,
+        )
+
+        result = run_installer(
+            repo,
+            home,
+            project,
+            fake_bin,
+            release_env,
+        )
+
+        assert result.returncode != 0
+        assert "unavailable in local git objects" in result.stderr
+        assert old_cli.read_text() == "old cli\n"
+        assert (skill_dest / "SKILL.md").read_text() == "old skill\n"
+        assert (skill_dest / "docs" / "old.md").read_text() == "old docs\n"
+        assert config.read_text() == '{"servers":[]}\n'
+
+
+def test_installer_preserves_existing_installation_when_release_skill_or_docs_are_missing():
+    for missing in ("skill", "docs"):
+        with tempfile.TemporaryDirectory() as raw_root:
+            root = Path(raw_root)
+            repo, release_commit = prepare_synthetic_repo(
+                root / "source",
+                skill=None if missing == "skill" else "release skill\n",
+                docs={} if missing == "docs" else {"release.md": "release docs\n"},
+            )
+            home = root / "home"
+            project = root / "project"
+            home.mkdir()
+            project.mkdir()
+            old_cli = home / ".local" / "bin" / "doops"
+            old_cli.parent.mkdir(parents=True)
+            old_cli.write_text("old cli\n")
+            skill_dest = project / ".agent" / "skills" / "doops"
+            (skill_dest / "docs").mkdir(parents=True)
+            (skill_dest / "SKILL.md").write_text("old skill\n")
+            (skill_dest / "docs" / "old.md").write_text("old docs\n")
+            config = home / ".agent" / "skills" / "doops" / "config.json"
+            config.parent.mkdir(parents=True)
+            config.write_text('{"servers":[]}\n')
+            fake_bin, release_env = prepare_fake_cli_release(
+                root / "release",
+                "v-test",
+                commit=release_commit,
+            )
+
+            result = run_installer(
+                repo,
+                home,
+                project,
+                fake_bin,
+                release_env,
+            )
+
+            assert result.returncode != 0
+            assert "missing" in result.stderr
+            assert old_cli.read_text() == "old cli\n"
+            assert (skill_dest / "SKILL.md").read_text() == "old skill\n"
+            assert (skill_dest / "docs" / "old.md").read_text() == "old docs\n"
+            assert config.read_text() == '{"servers":[]}\n'
+
+
 def test_installer_validates_with_release_cli_when_path_python_is_broken():
     with tempfile.TemporaryDirectory() as raw_root:
         root = Path(raw_root)
@@ -334,23 +486,15 @@ def test_tag_pipeline_publishes_and_verifies_release_assets():
     assert "Published CLI identity marker missing" in verify
 
 
-def prepare_fake_cli_release(root: Path, version: str):
+def prepare_fake_cli_release(root: Path, version: str, commit: str | None = None):
     fixtures = root / "fixtures"
     fake_bin = root / "bin"
-    fixtures.mkdir(exist_ok=True)
-    fake_bin.mkdir(exist_ok=True)
-    platform = subprocess.run(
-        ["bash", "-c", "uname -s | tr '[:upper:]' '[:lower:]'; uname -m"],
-        check=True,
-        text=True,
-        capture_output=True,
-    ).stdout.splitlines()
-    arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[
-        platform[1]
-    ]
+    fixtures.mkdir(parents=True, exist_ok=True)
+    fake_bin.mkdir(parents=True, exist_ok=True)
+    platform, arch = host_platform()
     artifact_name = f"doops-{platform[0]}-{arch}"
     artifact = fixtures / artifact_name
-    release_commit = "a" * 40
+    release_commit = commit or git_commit(ROOT.parent)
     artifact.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
@@ -387,3 +531,84 @@ cp "${DOOPS_TEST_RELEASE_FIXTURES}/${url##*/}" "${out}"
     )
     curl.chmod(0o755)
     return fake_bin, {"DOOPS_TEST_RELEASE_FIXTURES": str(fixtures)}
+
+
+def host_platform():
+    platform = subprocess.run(
+        ["bash", "-c", "uname -s | tr '[:upper:]' '[:lower:]'; uname -m"],
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.splitlines()
+    arch = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[
+        platform[1]
+    ]
+    return platform, arch
+
+
+def git_commit(repo: Path):
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+
+
+def prepare_synthetic_repo(root: Path, skill: str | None, docs: dict[str, str]):
+    script = root / "backend" / "scripts" / "install.sh"
+    script.parent.mkdir(parents=True)
+    script.write_bytes(INSTALL.read_bytes())
+    script.chmod(0o755)
+    if skill is not None:
+        skill_path = root / "backend" / "skills" / "SKILL.md"
+        skill_path.parent.mkdir(parents=True, exist_ok=True)
+        skill_path.write_text(skill)
+    for name, content in docs.items():
+        doc_path = root / "backend" / "docs" / name
+        doc_path.parent.mkdir(parents=True, exist_ok=True)
+        doc_path.write_text(content)
+
+    subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.email", "test@example.com"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.name", "Install Test"],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(root), "add", "backend"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "commit", "-q", "-m", "release sources"],
+        check=True,
+    )
+    return root, git_commit(root)
+
+
+def run_installer(
+    repo: Path,
+    home: Path,
+    project: Path,
+    fake_bin: Path,
+    release_env: dict[str, str],
+):
+    return subprocess.run(
+        [
+            "bash",
+            str(repo / "backend" / "scripts" / "install.sh"),
+            "--version",
+            "v-test",
+            "--project",
+            str(project),
+        ],
+        env={
+            **os.environ,
+            **release_env,
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
