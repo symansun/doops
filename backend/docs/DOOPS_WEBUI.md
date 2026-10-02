@@ -1,5 +1,40 @@
 # Doops WebUI
 
+## Current Gateway Console
+
+The production application is the Next.js console at `/console`. Users sign in
+with their existing Gateway account or user token, select an explicit target,
+and execute operations under that identity. The console does not retain tokens
+on the server or place them into copied CI/CD examples.
+
+- AI diagnostics query Agent runtime metadata instead of reading settings or API
+  keys. Diagnostics use `operation=ask`; the deployment form requires explicit
+  authorization and sends `operation=apply` with target, release, namespace,
+  remote Chart, controlled image, CI commit/evidence, reason and acceptance.
+- Helm success must include the final live Deployment and task acceptance.
+  Native MCP `isError`, protocol errors and interrupted streams remain failures.
+- Existing managed Agents have a pinned-image upgrade/rollback form. An accepted
+  Job is not a completed release; the page observes the same Job and checks the
+  Gateway protocol. Verify the serving Pod/imageID/runtime and affected functions.
+  First installation still requires an authorized cluster administration context.
+- Credential pages manage create, staged payload, exact grants, persisted version
+  metadata, verify, promote, grant revocation and resource revocation. Payload
+  input uses the credential endpoint only and never enters an AI task.
+- The audit page exposes target/session/self/global scopes and action/status
+  filters. Users can read their own history; global audit requires platform admin.
+  Other users' credential events retain precise `credential:audit` scope checks.
+- Administrator mutations are audited with actor/token IDs, resource metadata,
+  HTTP result and stable errors. Credential/configuration bodies are excluded.
+  Unavailable audit storage blocks a mutation.
+
+Deploy Gateway and Web from matching successful CI artifacts with the canonical
+host scripts. Record the binary source commit, Web digest, health, reconnects and
+rollback artifact. Browser acceptance and current limitations are recorded in
+`reports/gateway-console-release-2026-10-02.md`; local fixtures do not establish
+live Helm or production-user acceptance.
+
+## Legacy Go WebUI
+
 > 当前生产控制台是仓库根目录的 Next.js Web 应用，通过 `Dockerfile.web` 和 CNB
 > `<repo>/web:<tag>` 镜像交付。本文描述的是旧 Go `doops-webui`，只保留给明确审计过的
 > legacy 维护场景；日常环境不提供真实 SSH 连接时，不应使用 `scripts/deploy-webui.sh`。

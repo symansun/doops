@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test:gateway-policy": "node --no-warnings --test lib/gateway-policy.test.mjs"
+    "test:gateway-policy": "node --no-warnings --test lib/gateway-policy.test.mjs",
+    "test:console": "node --no-warnings --test lib/client.test.mjs lib/deployment.test.mjs"
   },
   "dependencies": {
     "next": "^16.2.9",

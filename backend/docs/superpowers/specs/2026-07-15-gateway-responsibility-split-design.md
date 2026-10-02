@@ -60,9 +60,10 @@ scheduler. It delegates instead of directly owning the agent map or session prot
 
 ## Upgrade Lifecycle
 
-An agent must not mutate the workload that runs itself. `doops upgrade` and
-`doops_agent_upgrade` are preview-only interfaces and reject non-dry-run requests. A release
-controller or GitOps pipeline outside the target agent applies the image change, verifies the
+An agent must not mutate the workload that runs itself in its own process.
+The current `doops upgrade` and `doops_agent_upgrade` flow creates an
+in-cluster Job that reuses the Agent's mounted kubeconfig, applies the image
+change outside the Agent process, verifies the
 replacement Pod and its gateway heartbeat, and performs rollback when verification fails.
 
 The Helm readiness probe represents reverse-tunnel initialization, not merely the local agent

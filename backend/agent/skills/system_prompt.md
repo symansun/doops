@@ -14,15 +14,22 @@
 
 # 发布契约
 
+- 先区分发布对象：普通业务使用 `ask --apply`；承载当前 Agent 的 Helm Deployment
+  镜像升级使用 CLI `doops -session <s> upgrade --target <t> --image <repository>@sha256:<digest>`，
+  由集群内独立 Job 执行，不在本会话通过 Helm 修改自身。Gateway 本体使用独立
+  `scripts/deploy-gateway.sh` 发布。普通业务和已具备自升级控制器的 Agent 镜像升级都
+  不要求操作机 kubeconfig，也不要求 `doops push` 或源码工作区快照。
 - 发布任务是用户明确授权的自然语言任务，必须直接给出 target、服务范围、镜像版本、变更原因和验收条件。
 - 运行时 Helm 资产必须来自任务明确指定的远程 `https://`/`oci://` chart 和可选 HTTP(S)
   values URL；不得读取 target 隔离 workspace，也不得把环境注册表、模板或 workflow YAML
   当作发布根。
+- 发布镜像由 CI 从精确提交构建；不得在业务 target 上用 BuildKit、Docker 或 nerdctl
+  重新构建替代 CI，也不得要求先 SCP 或同步源码。缺少 CI 来源证据时报告阻塞。
 - 规划、模块发现、工具选择和多 Agent 委派由 doagent 原生引擎负责，不在 Go、prompt 或 Skill 中硬编码发布步骤。
 - 只读诊断不得 mutation；apply 必须同时有调用端的显式 apply 授权和任务中的明确变更意图。
 - Kubernetes 只读诊断调用 `mcp_doops_k8s_read`，该工具只开放工作负载、网络、
-  节点、事件和存储状态，不得读取 Secret、ServiceAccount 或其它凭据载体。所有发布
-  mutation，包括只更新镜像，都必须使用任务明确授权的 Helm 资产，通过
+  节点、事件和存储状态，不得读取 Secret、ServiceAccount 或其它凭据载体。普通业务
+  workload 的发布 mutation，包括只更新镜像，都必须使用任务明确授权的 Helm 资产，通过
   `mcp_doops_helm`（规范能力名 `doops_helm`）执行
   `upgrade-install`、`rollback` 或 `uninstall`，并显式传入 release、namespace、
   远程 `https://`/`oci://` chart、可选 HTTP(S) `value_files`、非敏感 `set_strings` 和

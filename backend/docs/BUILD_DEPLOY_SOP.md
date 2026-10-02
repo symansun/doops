@@ -3,6 +3,25 @@
 普通业务 workload 的权威发布流程见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`；受管凭据的创建、授权、
 验证、轮换和部署引用见 `docs/CREDENTIAL_RESOURCES.md`。
 
+## 发布前判定
+
+先用 `doops version`、`doops list` 和
+`doops -session <s> targets --target <t>` 核对已安装 CLI、Gateway 路由及精确
+`cluster/instance`。源码已修改不代表 CLI、Gateway 或 Agent 已更新；`structuredSSH`
+只证明 SSH 协议能力，不能证明 Agent 具有自升级控制器。
+
+| 发布对象 | 入口 | Kubernetes 访问来源 |
+| :--- | :--- | :--- |
+| 普通业务 workload | `doops -session <s> ask --target <t> --apply` | 目标 Agent 的运行环境，不读取本机 kubeconfig |
+| 已具备控制器的 Helm Agent 镜像 | `doops -session <s> upgrade --target <t> --image <repository>@sha256:<digest>` | 集群内 Job 复用 Agent 挂载，不读取本机 kubeconfig |
+| 首次安装、旧 Helm Agent 接入控制器、显式 Agent 配置变更 | `scripts/release-managed-agent.sh` | 指定外部控制器的 kubeconfig；没有 Helm release 的现有 workload 不自动接管 |
+| Gateway 控制面 | `scripts/deploy-gateway.sh --no-build` | 已核验 CI 产物，通过宿主机 SSH 发布，不通过 Agent target |
+
+`-session` 用于操作上下文和审计关联，不是要求创建 Git worktree 或先 `doops push`。
+CLI 安装必须把 Release Asset 内嵌 commit 对应的 skill/docs 一起安装；不得从当前
+未发布工作区复制规则去搭配另一个版本的 CLI。安装记录中的 `commit` 与 `skill_commit`
+必须一致。
+
 > **核心纪律：绝对禁止在本地开发机或业务宿主机直接执行容器镜像构建。**
 >
 > 本地开发机的架构（如 Apple Silicon ARM64）、网络环境（代理/污染）以及未清理的缓存，极易导致打出的 OCI 镜像体积过大、架构错配或携带不安全的凭据。
@@ -66,42 +85,62 @@ bash scripts/deploy-gateway.sh \
 
 ---
 
-## 二、 Agent 标准构建工作流 (Server-Side Build)
+## 二、普通业务 workload apply
 
-在进行任何修改后，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA 为标签的候选镜像。该镜像同时携带同一 revision 的 `/app/doops-agent`、`/app/doops-gateway` 和锁定版本的 `/usr/local/bin/do-agent`；不得在发布控制端重新编译 Gateway。候选镜像必须解析为 registry digest，正式发布只接受不可变 digest。
+普通业务 workload 的唯一运行时发布入口是明确授权的 `doops ask --apply` 自然语言任务。
+不得使用 `EnvironmentRegistry`、`EnvironmentDefinition`、`DeploymentTemplate`、
+`deploy/environments.yaml`、`cicd run` 或 workflow YAML 作为发布根，也不得从目录名、
+环境名、业务名或历史发布记录推断目标和参数。CNB 负责构建、校验和推送业务制品；
+业务 workload 的 mutation 仍由同一 `ask --apply` 入口授权和验收。
 
-DoOps v3 的唯一发布入口是明确授权的自然语言任务。不得使用 `EnvironmentRegistry`、`EnvironmentDefinition`、`DeploymentTemplate`、`deploy/environments.yaml`、`cicd run` 或 workflow YAML 作为发布根，也不得从目录名、环境名、业务名或历史发布记录推断目标和参数。CNB 负责构建、校验和推送镜像，也可以在镜像 digest 已确定后调用同一个 `doops ask --apply` 自然语言入口；CI 不得拥有另一套发布协议。
-
-### 1. 触发受控发布
-发布者必须先将待发布提交推送到 `main`，确认 CNB CI 已为该精确 commit 生成候选镜像，并取得 registry digest。推荐调用 CNB 的 `api_trigger_deploy_agent`，由 CI 临时配置单个 Gateway route、同步当前仓库，并执行下方同一自然语言命令；人工控制端调用只用于故障诊断。自然语言任务必须直接写明 target、服务范围、不可变镜像 digest、变更原因、允许使用的 Helm 资产和验收条件；缺少任一发布事实时必须阻塞，不得猜测或补默认值。
+### 1. 普通业务 workload apply
+发布者必须先取得待发布制品的受控镜像版本。若制品由 CNB CI 构建，发布者必须在调用
+前核对精确 source commit、registry digest 和构建成功证据；`ask --apply`、`--image`
+和 `--version` 不自动验证 CI provenance。推荐调用 CNB 的 `api_trigger_deploy_agent`，
+由 CI 临时配置单个 Gateway route 并提交下方同一自然语言命令；该入口不要求把仓库同步
+到 target，也不要求创建或校验 target 隔离 workspace。人工控制端与 CI 使用同一入口、
+相同的显式授权和验收要求。
+自然语言任务必须直接写明 target、服务范围、受控镜像版本、变更原因、允许使用的 Helm
+资产和验收条件；缺少任一发布事实时必须阻塞，不得猜测或补默认值。
 `api_trigger_deploy_agent` 只定义在 `main` 分支事件下，Gateway token 仅通过 stdin
 交给 main 上构建的 CLI。CI secret 中的 `DOOPS_HELM_ASSET` 必须是任务明确授权的
-`https://`/`oci://` Chart URL；`ask --apply` 直接把该远程 Chart 和不可变镜像 digest
-交给目标 Agent，不同步代码到 target 隔离工作区。
+`https://`/`oci://` Chart URL；`ask --apply` 直接把该远程 Chart 和受控镜像版本交给
+目标 Agent，不经由代码同步或隔离 workspace 传递发布输入。
 
 ```bash
 doops -session release-<commit> ask \
   --target <configured-doops-target> \
   --apply \
-  --msg '在 <target> 发布 <service-scope>，镜像 <repository>@sha256:<digest>；使用 chart https://charts.example/<name>.tgz；原因：<reason>；验收：<rollout、最终 Deployment spec/status、健康检查和功能路径>。'
+  --msg '在 <target> 发布 <service-scope>，镜像 <repository>@sha256:<verified-ci-digest>；使用 chart https://charts.example/<name>.tgz；原因：<reason>；验收：<rollout、最终 Deployment spec/status、健康检查和功能路径>。'
 ```
 
 `--apply` 是本次 mutation 的显式授权，不是兼容开关。任务返回的文本声明不能作为成功证据；验收必须来自本轮实际命令、Kubernetes 状态、健康检查和功能测试。需要凭据时只传 `--credential <resource-name>` 元数据引用，Gateway 必须按当前用户、target、session 和精确资源 scope 授权。公开 prompt、doagent 上下文、CLI 输出和日志不得接收凭据 payload；Gateway 仅通过内部凭据物化调用向目标 Agent 短暂传递 payload。
 
 doagent 会话默认使用 `restricted` 权限，普通任务只额外放行 `mcp_doops_k8s_read`；
 该读取工具不得读取 Secret、ServiceAccount 或其它凭据载体。只有 `--apply` 对应的原生
-`build` 模式允许 `mcp_doops_helm` mutation。Agent 镜像必须把本地结构化 doops MCP
-注册为 required，并且 apply 成功只接受规范化后的 `doops_helm` 可信完成证据。MCP
-启动失败、工具缺失或仅出现其它工具调用时，发布必须失败关闭。
+`build` 模式允许 `mcp_doops_helm` mutation；apply 成功只接受规范化后的
+`doops_helm` 可信完成证据。MCP 启动失败、工具缺失或仅出现其它工具调用时，发布必须
+失败关闭。
 该内置 MCP 必须设置 `trusted_result_attestation=true`，由 doagent 根据实际请求和
 stdio 响应在本地生成结果证明。
 
-**DoOps Agent 执行顺序：**
-1. 核对任务中的 target、服务范围、镜像 digest、Helm 资产、原因和验收条件完整。
-2. 验证 digest 对应 `main` 上已成功构建的精确 source commit。
-3. 在候选镜像内校验 `doops-agent`、`do-agent`、BuildKit、Python/PyYAML、Helm 与嵌入的 Helm Chart。
-4. 按任务明确给出的运行参数执行 Helm 收敛；禁止继承已删除的历史值，也禁止在 schema 失败后临场改变目标或参数重试。
-5. 等待 Helm release 和 Kubernetes rollout 成功，并逐项执行任务中的健康与功能验收。
+调用方必须在提交任务前核对 CI source commit、registry digest 和构建成功证据；这只是
+发布前置条件，不是 Agent 在本轮自动执行的 CI provenance 校验。
+**普通业务 apply 执行顺序：**
+1. 核对任务中的 target、服务范围、镜像版本、Helm 资产、原因和验收条件完整。
+2. 按任务明确给出的运行参数执行 Helm 收敛；禁止继承已删除的历史值，也禁止在 schema
+   失败后临场改变目标或参数重试。
+3. 等待 Helm release 和 Kubernetes rollout 成功，并逐项执行任务中的健康与功能验收。
+
+## 三、Agent 镜像构建工作流 (Server-Side Build)
+
+本节只负责构建、校验和发布 `doops-agent` 运行时镜像，不负责普通业务 workload。
+进行任何 Agent 运行时修改后，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA
+为标签的候选镜像。该镜像同时携带同一 revision 的 `/app/doops-agent`、
+`/app/doops-gateway` 和锁定版本的 `/usr/local/bin/do-agent`；不得在发布控制端重新编译
+Gateway。候选镜像必须解析为 registry digest，Agent 自升级只接受不可变 digest。
+发布者必须自行保留精确 source commit、registry digest 和 CI 成功证据；Agent、CLI 和
+发布脚本不会替发布者证明 CI provenance。
 
 ### 双镜像构建原则
 
@@ -133,11 +172,11 @@ CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<rele
 
 ---
 
-## 三、 Agent 部署与热更新机制
+## 四、 Agent 部署与热更新机制
 
-`doops-agent` 由 Helm 管理的 `Deployment` 托管。具体镜像、目标节点、Secret 引用、
+普通业务 workload 由 Helm 管理的 `Deployment` 托管。具体镜像、目标节点、Secret 引用、
 Gateway 地址、远程 Chart 和发布参数必须由本次自然语言任务明确给出或来自任务明确授权
-读取的当前 Helm release。发布前必须对比当前 workload 与候选 Chart 的 command、args、
+读取的当前 Helm release。发布前必须对比当前业务 workload 与候选 Chart 的 command、args、
 env、probes、volumeMounts 和 volumes。包括只更新镜像在内的所有发布都必须调用结构化
 `doops_helm upgrade-install`，使用任务明确指定的远程 `https://`/`oci://` Chart、
 可选 HTTP(S) `value_files` 和非敏感 `set_strings` 完整收敛；更新现有 release 且任务已
@@ -155,22 +194,41 @@ mutation。不存在 Kubernetes 镜像 mutation 发布旁路。自然语言 appl
 该字段。还要确认 generation、镜像和副本状态一致；只看 Helm revision 或 Pod Ready 不构成
 发布成功。
 
-受管 `doops-agent` 不得升级自身。唯一发布命令是笔记本上的
-`scripts/release-managed-agent.sh`。已有集群必须显式提供操作机 kubeconfig，
-`cluster/instance` 还要与 live Deployment 环境精确匹配；脚本在操作机执行
-server-side Helm dry-run 和真实 mutation，当前 Agent 只参与 Gateway 在线与接管验证。
-脚本会在读取 Helm release 或执行任何 mutation 前确认操作机上的 `doops` CLI 支持
-`capabilities` 协议探针；旧 CLI 必须先通过 CNB Release Asset 安装更新，不能进入 Agent
-滚动升级。
-脚本先验证 Kubernetes API 可达性；API 超时、EOF 或鉴权失败会在读取 Helm release
-之前停止，并报告外部控制器问题，不会误报 release 缺失或要求执行 adopt。
-Chart 以 `maxSurge=1`、`maxUnavailable=0` 先拉起新 Pod，Gateway `Register` 用新会话
-替换旧 WebSocket 后再删旧副本。镜像拉取、调度、启动、readiness 或接管失败会采集
-Pod/事件，并由同一外部控制器自动回滚到发布前 Helm revision。禁止 `kubectl set image`、
-Job、release-runner、Docker restart，以及 `doops upgrade` 的非 dry-run。
-接管后脚本还必须通过 `doops -session <session>-capabilities capabilities
---target <target> --require structuredSSH` 完成协议能力握手；能力缺失视为发布失败，
-自动回滚，不得用普通 `exec` 代替结构化 SSH。
+已经运行该控制器的 Helm Agent 用 `doops upgrade` 自升级，不需要操作机 kubeconfig。
+该路径要求 Agent 位于自身 namespace、运行标准 Helm-managed Deployment，并已有
+`gateway.cluster/instance` 匹配的 Helm release；未提供 `--release` 时必须只有一个匹配
+release，提供 `--release` 时按名称选择并校验该 release。Agent Pod 必须挂载可由 Job
+共享的 `/root/.kube` 或 `/root/.kube/config`；Job 显式复用该 kubeconfig，其 Kubernetes
+权限由该 kubeconfig 决定。Agent 只创建 Job，在 Agent 进程外执行 Helm upgrade，并在
+新 Pod 未持续就绪时回滚。镜像必须是 `repository@sha256:<64 hex>`。
+CLI 在 Job 成功后执行 `capabilities --require structuredSSH`，探针失败会创建回滚 Job。
+`PREVIEW` 仅表示参数预览，不检查 Helm release、挂载、权限或回滚可行性；`ACCEPTED`
+仅表示 Job 已提交。Job 完成和协议声明不是完整发布验收：还须通过同一 target 的
+`exec hostname` 确认 Gateway 当前实际服务的 Pod，并核对该 Pod 的 UID、Ready、
+imageID 与候选 digest、`do-agent --version` 和实际功能路径。
+
+还没有这个控制器的旧 Agent，以及新集群第一次接入，仍用
+`scripts/release-managed-agent.sh`。这条路径必须显式提供操作机 kubeconfig，
+`cluster/instance` 与 live Deployment 环境精确匹配。新集群无 Agent 时使用完整
+`--values` 安装；已有 Helm release 时由脚本执行 server-side Helm dry-run 和真实
+mutation。脚本会在读取 Helm release 或执行任何 mutation 前确认操作机上的 `doops` CLI
+支持 `capabilities` 协议探针；旧 CLI 必须先通过 CNB Release Asset 安装更新。脚本先
+验证 Kubernetes API 可达性；API 超时、EOF 或鉴权失败会在读取 Helm release 之前停止，
+并报告外部控制器问题。已有 workload 但没有 Helm release 时脚本会停止，不能把它当成
+自动 adoption 路径。
+
+已有 Helm release 的路径以 `maxSurge=1`、`maxUnavailable=0` 先拉起新 Pod，Gateway
+`Register` 用新会话替换旧 WebSocket 后再删旧副本。镜像拉取、调度、启动、readiness
+失败时，`doops upgrade` 的 Job 会尝试回滚；Job 成功后的协议探针失败由 CLI 请求另一个
+回滚 Job，需要 target 仍可连接，不能承诺 Gateway 完全离线时仍能自动恢复。
+`scripts/release-managed-agent.sh` 在其外部控制器中执行失败回滚。回滚失败必须明确报告，
+保留现场并停止发布；回滚命令成功后仍需核对旧镜像、最终 Deployment 和 Gateway 状态。
+新集群 `--values` 路径是 bootstrap-only，只做 Helm wait 和最终
+Deployment 检查，不做 Gateway 接管或自动回滚；完成后必须继续安装验收。
+禁止 `kubectl set image`、release-runner、Docker restart，以及 Agent 进程内直接 helm upgrade 自己。
+对于已有 Helm release 的 `scripts/release-managed-agent.sh` 路径，发布后还必须通过
+`doops -session <session>-capabilities capabilities --target <target> --require structuredSSH`
+完成协议能力握手；能力缺失视为发布失败，自动回滚，不得用普通 `exec` 代替结构化 SSH。
 
 ```bash
 bash scripts/release-managed-agent.sh \
@@ -199,8 +257,9 @@ bash scripts/release-managed-agent.sh \
 解析验证；省略参数时保留现网 aliases，不允许解析失败时回退到其他地址。
 
 新集群还没有 Agent 时，同一条命令改传完整 `--values` 和本机 kubeconfig，仍然只走
-这份 Chart 的 `helm upgrade --install`。自定义 entrypoint 或 `hostNetwork` 必须先改成
-标准 Chart，不能另开发布路径。
+这份 Chart 的 `helm upgrade --install`。已有非 Helm workload 不能由该脚本自动接管；
+必须先完成独立、明确的 Helm adoption，再按已有 Helm release 路径发布。自定义
+entrypoint 或 `hostNetwork` 必须先改成标准 Chart，不能另开发布路径。
 
 ### 环境依赖注射规范 (Secret)
 严禁在 `agent.yaml` 中明文出现 `LLM_API_KEY=sk-xxxx` 之类的配置。此类密钥应由 Secret 提取并通过 `envFrom` 下放。
@@ -212,7 +271,7 @@ bash scripts/release-managed-agent.sh \
 `/run/containerd/containerd.sock` 不够：`pull` 可能成功，但 `run` 会因为
 overlay snapshot、FIFO、`/etc/hosts` 或 nerdctl name-store 位于宿主机路径而失败。
 
-标准容器/DaemonSet 必须同时挂载：
+标准 Helm Deployment 的 Agent 容器必须同时挂载：
 
 ```text
 /run/containerd      -> /run/containerd
@@ -220,32 +279,14 @@ overlay snapshot、FIFO、`/etc/hosts` 或 nerdctl name-store 位于宿主机路
 /var/lib/nerdctl     -> /var/lib/nerdctl
 ```
 
-升级顺序必须是：
-
-1. 先在目标节点成功 `pull` 新镜像。
-2. 再启动新 agent 或触发 DaemonSet 滚动更新。
-3. 新 agent 注册 gateway 并通过 `exec` 验证后，再清理旧容器。
-
-遇到 containerd overlay/FIFO/name-store 错误时，不要强切旧 agent。优先保留旧
-agent 在线，用宿主机 namespace 或 Kubernetes 一次性特权 Pod 从宿主机视角修复：
-
-```bash
-kubectl run <node>-doops-deployer \
-  --restart=Never \
-  --overrides '<hostPID/hostNetwork/privileged + hostPath / 的 PodSpec>' \
-  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI> -- \
-  /bin/sh -lc 'chroot /host /usr/bin/nsenter -t 1 -m -n -- nerdctl run ...'
-```
-
-修复后必须验证：
-
-```bash
-doops -session smoke exec --target <target> --cmd 'sha256sum /app/doops-agent; nerdctl ps | grep doops-agent'
-doops -session smoke exec --target <target> --cmd 'nerdctl run --rm --net none --entrypoint /bin/sh docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI> -lc "echo direct-ok"'
-doops -session smoke push --target <target> --src <small-dir>
-```
+遇到 containerd overlay/FIFO/name-store 错误时，保留现有 Agent 并读取挂载、节点和
+运行时错误证据。挂载修正必须进入仓库 Chart/values，再由上述显式 Agent 配置变更
+入口收敛；不能创建临时特权 Pod、手工启动 Agent 容器或强制删除旧副本绕过发布控制器。
+Agent 完全不可用时，SSH 仅用于已明确授权的自恢复，恢复后仍须完成 Gateway、版本和
+功能验收，不能把一次主机修复当成版本发布。
 
 ### 非 Helm 节点
 
 宿主 Docker、`agent.yaml`、二进制 bind-mount 和裸机 tar 都不是发布路径。先把节点迁到
-`deploy/helm/doops-agent`，再用 `scripts/release-managed-agent.sh`。未迁完之前不得换镜像。
+`deploy/helm/doops-agent`；迁移必须有独立方案与验收，`release-managed-agent.sh`
+不会自动 adoption。迁移后按控制器能力选择上述镜像升级或外部配置变更入口。

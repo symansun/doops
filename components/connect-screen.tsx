@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { login, fetchTargets, type Session } from "@/lib/client"
 import { DEMO_TOKEN } from "@/lib/demo"
 import { PlugIcon, ServerIcon, SparkIcon } from "./icons"
@@ -19,6 +19,7 @@ export function ConnectScreen({
   const [token, setToken] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
+  useEffect(() => { setGateway(defaultGateway) }, [defaultGateway])
 
   function enterDemo() {
     onConnected({ gateway: "demo://local", token: DEMO_TOKEN, username: "演示用户", demo: true })
@@ -69,6 +70,7 @@ export function ConnectScreen({
             Gateway 地址
           </label>
           <input
+            aria-label="Gateway 地址"
             value={gateway}
             onChange={(e) => setGateway(e.target.value)}
             placeholder="http://203.0.113.10:42222"
@@ -101,6 +103,7 @@ export function ConnectScreen({
           {mode === "password" ? (
             <div className="flex flex-col gap-3">
               <input
+                aria-label="用户名"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="用户名"
@@ -108,6 +111,7 @@ export function ConnectScreen({
                 className="w-full rounded-lg border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
               />
               <input
+                aria-label="密码"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && connect()}

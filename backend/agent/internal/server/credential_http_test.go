@@ -538,7 +538,7 @@ func TestTargetScopedCredentialAuditCannotReadOtherTargets(t *testing.T) {
 		t.Fatalf("target-scoped audit read: HTTP %d: %s", response.Code, response.Body.String())
 	}
 	if !strings.Contains(response.Body.String(), "cred_allowed") ||
-		strings.Contains(response.Body.String(), "cred_own") ||
+		!strings.Contains(response.Body.String(), "cred_own") ||
 		strings.Contains(response.Body.String(), "cred_forbidden") {
 		t.Fatalf("target-scoped audit boundary failed: %s", response.Body.String())
 	}
@@ -547,6 +547,7 @@ func TestTargetScopedCredentialAuditCannotReadOtherTargets(t *testing.T) {
 func TestCredentialAuditPermissionCannotReadNonCredentialEvents(t *testing.T) {
 	store := openCredentialTestStore(t)
 	user := createCredentialTestUser(t, store, "credential-auditor")
+	other := createCredentialTestUser(t, store, "other-operator")
 	if err := store.GrantUser(user.ID, ScopeGrant{
 		Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionCredentialAudit},
 	}); err != nil {
@@ -560,7 +561,7 @@ func TestCredentialAuditPermissionCannotReadNonCredentialEvents(t *testing.T) {
 	}
 	for _, event := range []AuditEvent{
 		{UserID: user.ID, Action: ActionCredentialUse, CredentialID: "cred_visible", StartedAt: time.Now().UTC()},
-		{UserID: user.ID, Action: ActionExec, CommandSummary: "must-not-be-visible", StartedAt: time.Now().UTC()},
+		{UserID: other.ID, Action: ActionExec, CommandSummary: "must-not-be-visible", StartedAt: time.Now().UTC()},
 	} {
 		if _, err := store.StartAudit(event); err != nil {
 			t.Fatalf("seed audit event: %v", err)

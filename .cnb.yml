@@ -48,6 +48,7 @@ main:
             npm i -g pnpm@11.7.0
             pnpm install --frozen-lockfile
             pnpm test:gateway-policy
+            pnpm test:console
             pnpm exec tsc --noEmit
             pnpm build
         - name: build immutable agent base
@@ -71,7 +72,7 @@ main:
         - name: build immutable web image
           script: DOOPS_RELEASE_TAG="${CNB_COMMIT}" bash backend/scripts/build-web-image.sh
   api_trigger_deploy_agent:
-    - name: deploy agent through natural-language apply
+    - name: deploy business workload through natural-language apply
       runner:
         cpus: 2
       imports:
@@ -85,6 +86,7 @@ main:
             test "${CNB_BRANCH}" = "main"
             apk add --no-cache bash git
             : "${DOOPS_GATEWAY_TOKEN:?DOOPS_GATEWAY_TOKEN is required}"
+            : "${DOOPS_SESSION:?DOOPS_SESSION is required}"
             : "${DOOPS_TARGET:?DOOPS_TARGET is required}"
             : "${DOOPS_CLUSTER:?DOOPS_CLUSTER is required}"
             : "${DOOPS_INSTANCE:?DOOPS_INSTANCE is required}"
@@ -102,8 +104,8 @@ main:
               --instance "${DOOPS_INSTANCE}" \
               --use "CNB natural-language release"
             printf '%s' "${DOOPS_GATEWAY_TOKEN}" |
-              .ci-bin/doops login --target "${DOOPS_TARGET}" --token-stdin
-            .ci-bin/doops targets --target "${DOOPS_TARGET}"
+              .ci-bin/doops -session "${DOOPS_SESSION}" login --target "${DOOPS_TARGET}" --token-stdin
+            .ci-bin/doops -session "${DOOPS_SESSION}" targets --target "${DOOPS_TARGET}"
         - name: publish through Gateway
           script: |
             set -eu
@@ -235,6 +237,7 @@ master:
             npm i -g pnpm@11.7.0
             pnpm install --frozen-lockfile
             pnpm test:gateway-policy
+            pnpm test:console
             pnpm build
 
 $:
@@ -268,6 +271,7 @@ $:
             npm i -g pnpm@11.7.0
             pnpm install --frozen-lockfile
             pnpm test:gateway-policy
+            pnpm test:console
             pnpm exec tsc --noEmit
             pnpm build
         - name: build release agent image

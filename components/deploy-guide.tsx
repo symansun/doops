@@ -70,15 +70,15 @@ const STEPS: Step[] = [
   {
     n: 1,
     icon: ShieldIcon,
-    title: "准备工作",
+    title: "准备授权的集群管理上下文",
     body: (
       <ul className="ml-4 list-disc space-y-1 text-sm text-muted-foreground">
-        <li>一台 Linux 服务器（支持 amd64 / arm64），可联网访问 gateway 地址</li>
-        <li>具备 root 或 sudo 权限</li>
+        <li>准备可联网访问 gateway 的 Linux 服务器或已授权的 CI / 管理主机</li>
+        <li>首次接入新集群必须具备外部控制器 kubeconfig 及对应集群管理权限</li>
         <li>
           向管理员确认 <span className="font-medium text-foreground">gateway 地址</span>、{" "}
           <span className="font-medium text-foreground">cluster</span> 与{" "}
-          <span className="font-medium text-foreground">instance</span>
+          <span className="font-medium text-foreground">instance</span>，并核对 CI 镜像 digest
         </li>
       </ul>
     ),
@@ -99,32 +99,66 @@ const STEPS: Step[] = [
   },
   {
     n: 3,
-    icon: TerminalIcon,
-    title: "部署 Agent",
+    icon: RocketIcon,
+    title: "新集群使用 Helm bootstrap",
     body: (
       <div className="space-y-2 text-sm text-muted-foreground">
-        <p>使用外部 CI/GitOps 发布固定 digest 的 Agent 镜像。容器模式可按下列参数启动：</p>
+        <p>
+          新集群尚无 Agent 时，使用外部控制器执行本仓库 Helm bootstrap。
+          这是首次接入路径，需要显式提供授权 kubeconfig；当前页面不会替你申请或绕过该权限。
+        </p>
         <Cmd>
           {
-            "docker run -d --name doops-agent \\\n  --privileged --pid=host --network=host \\\n  --restart=unless-stopped \\\n  docker.cnb.cool/l8ai/ai/doops.sh@sha256:<AGENT_DIGEST> \\\n  -gateway-url https://gateway.example.com \\\n  -cluster <CLUSTER> \\\n  -instance <INSTANCE>"
+            "bash backend/scripts/release-managed-agent.sh \\\n  --release <HELM_RELEASE> \\\n  --namespace <NAMESPACE> \\\n  --values <REVIEWED_COMPLETE_VALUES.yaml> \\\n  --kubeconfig <EXTERNAL_CONTROLLER_KUBECONFIG> \\\n  --image <IMAGE_REPOSITORY>@sha256:<VERIFIED_CI_DIGEST>"
           }
         </Cmd>
+        <p className="text-xs">
+          从仓库根目录执行。--values 路径只做 bootstrap、Helm wait 和最终 Deployment 检查，不自动完成 Gateway 接管或失败回滚。
+          旧 Agent 若无自升级控制器，需管理员使用该脚本的现有 release 模式，提供 --target、--session、--cluster、--instance，
+          不传 --values，不重新 bootstrap 或手工替换容器。
+        </p>
       </div>
     ),
   },
   {
     n: 4,
-    icon: RocketIcon,
-    title: "检查运行状态",
+    icon: TerminalIcon,
+    title: "现有 controller-ready Agent 用 doops upgrade",
     body: (
       <div className="space-y-2 text-sm text-muted-foreground">
-        <p>确认容器运行、健康检查成功，且日志中没有注册或心跳错误：</p>
-        <Cmd>{"docker ps --filter name=doops-agent\ndocker logs --tail=100 doops-agent\ncurl -fsS http://127.0.0.1:42222/health/ready"}</Cmd>
+        <p>
+          已有标准 Helm-managed Agent、匹配的 Helm release 和自升级控制器时，只更新 Agent 镜像：
+          该路径由集群内 Job 复用 Agent 挂载的 kubeconfig，不需要操作机 kubeconfig。
+        </p>
+        <Cmd>
+          {"doops -session agent-upgrade-<RELEASE_ID> upgrade \\\n  --target <CONFIGURED_GATEWAY_TARGET> \\\n  --image <IMAGE_REPOSITORY>@sha256:<VERIFIED_CI_DIGEST>"}
+        </Cmd>
+        <p className="text-xs">
+          doops upgrade 只适用于 controller-ready 的现有 Helm release；structuredSSH 声明不代表具备自升级控制器。
+          显式 Helm 配置变更使用外部脚本的现有 release 模式，不重新 bootstrap。
+        </p>
       </div>
     ),
   },
   {
     n: 5,
+    icon: CheckIcon,
+    title: "完成安装验收",
+    body: (
+      <div className="space-y-2 text-sm text-muted-foreground">
+        <p>从 Gateway 和真实远程调用两侧确认精确 target、版本与协议能力：</p>
+        <Cmd>
+          {"doops -session install-verify targets --target <CONFIGURED_GATEWAY_TARGET>\ndoops -session install-verify exec --target <CONFIGURED_GATEWAY_TARGET> --cmd 'do-agent --version'\ndoops -session install-verify capabilities --target <CONFIGURED_GATEWAY_TARGET> --require structuredSSH"}
+        </Cmd>
+        <p className="text-xs">
+          还需核验最终 Deployment spec/status、实际 Pod UID/Ready/imageID、服务健康和关键功能路径；
+          target 在线或 structuredSSH 协议声明不能代替完整验收。失败时停止宣告成功，按已确认的回滚路径处理。
+        </p>
+      </div>
+    ),
+  },
+  {
+    n: 6,
     icon: ServerIcon,
     title: "回到控制台确认",
     body: (
@@ -141,28 +175,22 @@ const STEPS: Step[] = [
   },
 ]
 
-const MANUAL = [
-  { label: "拉取固定镜像", cmd: "docker pull docker.cnb.cool/l8ai/ai/doops.sh@sha256:<AGENT_DIGEST>" },
-  { label: "启动并声明身份", cmd: "docker run -d --name doops-agent --privileged --pid=host --network=host --restart=unless-stopped docker.cnb.cool/l8ai/ai/doops.sh@sha256:<AGENT_DIGEST> -gateway-url https://gateway.example.com -cluster <CLUSTER> -instance <INSTANCE>" },
-  { label: "验证反向注册", cmd: "docker logs --tail=100 doops-agent && curl -fsS http://127.0.0.1:42222/health/ready" },
-]
-
 const TROUBLE = [
   {
+    q: "首次接入被权限阻塞",
+    a: "首次接入新集群需要已授权的外部控制器 kubeconfig、完整 reviewed values 和核验过的 CI 镜像 digest。当前页面不会绕过集群管理授权。",
+  },
+  {
+    q: "已有 workload 但没有 Helm release",
+    a: "release-managed-agent.sh 会在 Helm release 缺失时停止，不执行 adoption。先完成独立、明确的 Helm adoption，再按现有 release 路径验收。",
+  },
+  {
+    q: "现有 Agent 不能使用 doops upgrade",
+    a: "确认它是标准 Helm-managed Deployment，位于自身 namespace，已有匹配 release、控制器和可由 Job 共享的 /root/.kube 或 /root/.kube/config 挂载。缺少任一条件时回到外部控制器路径。",
+  },
+  {
     q: "机器没有出现在控制台",
-    a: "确认 agent 服务在运行（systemctl status doops-agent），并检查服务器能否访问 gateway 地址（curl -I <gateway>）。确认无误后回到控制台点击刷新。",
-  },
-  {
-    q: "连接成功但机器仍未上线",
-    a: "检查 cluster/instance 是否与管理员分配的一致，并确认该标识没有被另一台机器占用。继续查看 Agent 日志中的初始化、注册确认和心跳错误。",
-  },
-  {
-    q: "连接被拒绝 / 网络超时",
-    a: "通常是防火墙或安全组拦截。请放通服务器到 gateway 的出站连接（HTTPS 443），云服务器需在安全组中配置。",
-  },
-  {
-    q: "查看 agent 日志",
-    a: "执行 journalctl -u doops-agent -n 100 --no-pager 查看最近日志，定位连接或认证问题。",
+    a: "先用 targets 查询精确 cluster/instance 是否在线，再确认 Gateway 出站网络、身份标识唯一且没有被另一台机器占用，最后回到控制台刷新。",
   },
 ]
 
@@ -191,7 +219,7 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
               自己部署
             </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              有服务器的 root/sudo 权限？按下面步骤几分钟即可接入一台机器。
+              有已授权的集群管理上下文？按下面路径完成首次接入或受控升级。
             </p>
           </div>
           <div className="rounded-xl border bg-card p-4">
@@ -200,7 +228,7 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
               联系管理员
             </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              没有服务器权限或不确定 gateway 地址与接入标识？联系团队管理员完成接入。
+              没有集群管理授权或不确定 gateway 地址与接入标识？联系团队管理员完成接入。
             </p>
           </div>
         </div>
@@ -282,24 +310,6 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
               </div>
             </div>
           ))}
-        </section>
-
-        {/* 手动安装 */}
-        <section className="mt-12">
-          <h2 className="mb-1 text-lg font-semibold">手动安装（可选）</h2>
-          <p className="mb-3 text-sm text-muted-foreground">
-            若无法使用一键脚本（如离线环境），可手动安装：
-          </p>
-          <ol className="space-y-3">
-            {MANUAL.map((m, i) => (
-              <li key={i}>
-                <div className="mb-1 text-sm font-medium text-foreground">
-                  {i + 1}. {m.label}
-                </div>
-                <Cmd>{m.cmd}</Cmd>
-              </li>
-            ))}
-          </ol>
         </section>
 
         {/* 故障排查 */}

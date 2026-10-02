@@ -790,7 +790,7 @@ func TestGatewayPasswordLoginIssuesUserToken(t *testing.T) {
 	}
 }
 
-func TestGatewayAuditHTTPRequiresAdminAndFiltersEvents(t *testing.T) {
+func TestGatewayAuditHTTPAllowsOwnHistoryAndFiltersEvents(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -834,8 +834,15 @@ func TestGatewayAuditHTTPRequiresAdminAndFiltersEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get audit as user: %v", err)
 	}
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("expected non-admin audit read to be forbidden, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected own audit read to succeed, got %d", resp.StatusCode)
+	}
+	var own auditResponse
+	if err := json.NewDecoder(resp.Body).Decode(&own); err != nil {
+		t.Fatal(err)
+	}
+	if len(own.Events) != 1 || own.Events[0].UserID != user.ID {
+		t.Fatalf("own audit boundary failed: %#v", own.Events)
 	}
 	resp.Body.Close()
 
@@ -939,8 +946,9 @@ func TestGatewayAdminTokenCreateRequiresAdminAndIssuesUserToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list audit: %v", err)
 	}
-	if len(events) != 1 || events[0].Status != "success" || events[0].Session != "admin-token-create" {
-		t.Fatalf("expected successful admin audit event, got %#v", events)
+	if len(events) != 2 || events[0].Status != "success" || events[0].Session != "admin-token-create" ||
+		events[1].Status != "forbidden" || events[1].UserID != alice.ID {
+		t.Fatalf("expected one audit per successful/denied token mutation, got %#v", events)
 	}
 }
 
@@ -1363,7 +1371,7 @@ func TestGatewayActionMappingUsesDedicatedToolForAgentUpgrade(t *testing.T) {
 	}
 }
 
-func TestGatewayRejectsDirectAgentUpgradeWithoutDispatch(t *testing.T) {
+func TestGatewayDispatchesPinnedAgentUpgrade(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -1391,7 +1399,7 @@ func TestGatewayRejectsDirectAgentUpgradeWithoutDispatch(t *testing.T) {
 	client := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
 	defer client.Close()
 	args, _ := json.Marshal(map[string]interface{}{
-		"image":     "registry.example/doops@sha256:abc",
+		"image":     "registry.example/doops:latest",
 		"mode":      "k8s",
 		"namespace": "doops-system",
 		"workload":  "deployment/doops-agent",
@@ -1403,8 +1411,8 @@ func TestGatewayRejectsDirectAgentUpgradeWithoutDispatch(t *testing.T) {
 	})
 	resp := readUntilID(t, client, 2)
 	errObj, ok := resp["error"].(map[string]interface{})
-	if !ok || !strings.Contains(fmt.Sprint(errObj["message"]), directAgentUpgradeProhibited) {
-		t.Fatalf("expected direct self-upgrade rejection, got %#v", resp)
+	if !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "repository@sha256") {
+		t.Fatalf("expected unpinned image rejection, got %#v", resp)
 	}
 	if gw.getAgent("dev", "local") == nil {
 		t.Fatal("rejected self-upgrade disconnected the agent")
@@ -1418,7 +1426,7 @@ func TestGatewayRejectsDirectAgentUpgradeWithoutDispatch(t *testing.T) {
 	}
 
 	dryRunArgs, _ := json.Marshal(map[string]interface{}{
-		"image":   "registry.example/doops@sha256:abc",
+		"image":   "registry.example/doops@sha256:" + strings.Repeat("a", 64),
 		"mode":    "k8s",
 		"dry_run": true,
 	})
@@ -1428,6 +1436,22 @@ func TestGatewayRejectsDirectAgentUpgradeWithoutDispatch(t *testing.T) {
 	})
 	if resp := readUntilID(t, client, 3); resp["error"] != nil {
 		t.Fatalf("dry-run upgrade should remain available: %#v", resp)
+	}
+
+	pinned, _ := json.Marshal(map[string]interface{}{
+		"image": "registry.example/doops@sha256:" + strings.Repeat("a", 64),
+		"mode":  "k8s",
+	})
+	writeGatewayJSON(t, client, map[string]interface{}{
+		"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+		"params": map[string]interface{}{"name": "doops_agent_upgrade", "arguments": json.RawMessage(pinned)},
+	})
+	dispatched := readUntilID(t, client, 4)
+	if dispatched["error"] != nil {
+		t.Fatalf("pinned self-upgrade should reach the agent: %#v", dispatched)
+	}
+	if gw.getAgent("dev", "local") == nil {
+		t.Fatal("dispatched self-upgrade disconnected the agent")
 	}
 }
 

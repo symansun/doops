@@ -161,6 +161,7 @@ type AuditFinish struct {
 	Status          string
 	Error           string
 	Tail            string
+	CommandSummary  string
 	BytesIn         int64
 	BytesOut        int64
 	Cluster         string
@@ -181,6 +182,7 @@ type AuditFilter struct {
 	Action   GatewayAction
 	Status   string
 	Limit    int
+	BeforeID int64
 }
 
 func OpenGatewayStore(path string) (*GatewayStore, error) {
@@ -1033,6 +1035,7 @@ func finishAuditWith(execer auditExecer, id int64, finish AuditFinish) error {
 	}
 	result, err := execer.Exec(`UPDATE audit_events
 		SET status = ?, error = ?, tail = ?, bytes_in = ?, bytes_out = ?,
+			command_summary = CASE WHEN ? = '' THEN command_summary ELSE ? END,
 			cluster = CASE WHEN ? = '' THEN cluster ELSE ? END,
 			instance = CASE WHEN ? = '' THEN instance ELSE ? END,
 			credential_version_id = CASE WHEN ? = '' THEN credential_version_id ELSE ? END,
@@ -1043,6 +1046,7 @@ func finishAuditWith(execer auditExecer, id int64, finish AuditFinish) error {
 			ended_at = ?
 		WHERE id = ?`,
 		finish.Status, finish.Error, trimTail(finish.Tail, 8192), finish.BytesIn, finish.BytesOut,
+		finish.CommandSummary, finish.CommandSummary,
 		finish.Cluster, finish.Cluster, finish.Instance, finish.Instance,
 		finish.VersionID, finish.VersionID, finish.GrantID, finish.GrantID,
 		scopeJSON, scopeJSON,
@@ -1071,6 +1075,10 @@ func (s *GatewayStore) ListAuditFiltered(filter AuditFilter) ([]AuditEvent, erro
 	}
 	conditions := make([]string, 0, 6)
 	args := make([]any, 0, 7)
+	if filter.BeforeID > 0 {
+		conditions = append(conditions, "id < ?")
+		args = append(args, filter.BeforeID)
+	}
 	if v := strings.TrimSpace(filter.UserID); v != "" {
 		conditions = append(conditions, "user_id = ?")
 		args = append(args, v)

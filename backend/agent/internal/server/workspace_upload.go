@@ -78,15 +78,16 @@ type cleanWorkspaceParams struct {
 }
 
 type agentUpgradeParams struct {
-	Image     string `json:"image"`
-	Mode      string `json:"mode"`
-	Namespace string `json:"namespace"`
-	Workload  string `json:"workload"`
-	Container string `json:"container"`
-	DryRun    bool   `json:"dry_run"`
+	Image      string `json:"image"`
+	Mode       string `json:"mode"`
+	Namespace  string `json:"namespace"`
+	Workload   string `json:"workload"`
+	Container  string `json:"container"`
+	Release    string `json:"release"`
+	DryRun     bool   `json:"dry_run"`
+	ObserveJob string `json:"observe_job"`
+	Rollback   bool   `json:"rollback"`
 }
-
-const directAgentUpgradeProhibited = "direct agent self-upgrade is prohibited; use an external release controller or GitOps"
 
 type workspaceUploadMeta struct {
 	SessionID string    `json:"session_id"`
@@ -450,44 +451,6 @@ func handleCleanWorkspace(argBytes json.RawMessage) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("Cleaned workspace and bare repo: %s", workspace), nil
-}
-
-func handleAgentUpgrade(argBytes json.RawMessage) (string, error) {
-	var args agentUpgradeParams
-	if err := json.Unmarshal(argBytes, &args); err != nil {
-		return "", fmt.Errorf("invalid agent upgrade params: %w", err)
-	}
-	image := strings.TrimSpace(args.Image)
-	if image == "" {
-		return "", fmt.Errorf("image is required")
-	}
-	if !args.DryRun {
-		return "", fmt.Errorf("%s", directAgentUpgradeProhibited)
-	}
-	mode := strings.TrimSpace(args.Mode)
-	if mode == "" || mode == "auto" {
-		mode = detectAgentUpgradeMode()
-	}
-	switch mode {
-	case "k8s", "daemonset":
-		namespace := firstNonEmptyString(args.Namespace, readNamespaceFile(), "oilan-system")
-		workload := firstNonEmptyString(args.Workload, "daemonset/doops-agent")
-		container := firstNonEmptyString(args.Container, "doops-agent")
-		return fmt.Sprintf(
-			"dry-run: image=%s runtime=k8s namespace=%s workload=%s container=%s; external Helm/GitOps controller must reconcile the complete workload and verify readiness plus gateway heartbeat",
-			image, namespace, workload, container,
-		), nil
-	case "docker", "container":
-		container := firstNonEmptyString(args.Container, "doops-agent")
-		return fmt.Sprintf(
-			"dry-run: external supervisor must replace container %s with image %s",
-			container, image,
-		), nil
-	case "unsupported", "bare":
-		return "", fmt.Errorf("unsupported agent upgrade mode: bare binary or unknown runtime")
-	default:
-		return "", fmt.Errorf("unsupported agent upgrade mode %q", mode)
-	}
 }
 
 func detectAgentUpgradeMode() string {

@@ -22,7 +22,7 @@ var (
 
 func main() {
 	verbose := flag.Bool("verbose", false, "Enable verbose logging")
-	sessionName := flag.String("session", "", "Session/Task ID for isolation (REQUIRED)")
+	sessionName := flag.String("session", "", "Session/Task ID for operation context (REQUIRED)")
 	printContract := flag.Bool("contract", false, "Print the machine-readable CLI contract version")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `
@@ -30,6 +30,11 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 专为 AI Agent 设计的自然语言运维工具。发布任务必须显式给出 target、服务范围、镜像版本、变更原因和验收条件。
 
 配置文件路径: ~/.agent/skills/doops/config.json（唯一默认配置；DOOPS_CONFIG 可显式覆盖）
+
+发布对象:
+  普通业务 workload: ask --apply，不要求本机 kubeconfig 或先执行 push
+  已具备自升级控制器的 Helm Agent 镜像: upgrade，由集群内 Job 执行
+  Gateway 控制面: scripts/deploy-gateway.sh，不通过 target 发布自身
 
 用法:
   doops [选项] <命令> [参数]
@@ -53,21 +58,22 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   clean       清理远端节点上的工作区隔离沙盒
   unlock      管理员强制释放 gateway 上卡住的 target busy 状态
   admin       gateway 管理命令：用户、target 授权和 API key
-  upgrade     预演 doops-agent 自升级；正式替换由外部 CI/GitOps 执行
+  upgrade     升级 doops-agent；--dry-run 只预演，正式升级由目标集群内的 Job 执行
   add         添加 gateway target
+  remove      仅在 target 当前不可见时删除本机 gateway target 配置
   login       缓存 gateway user token
   logout      登出远程节点
   check       检查线上服务容器配置的镜像与最新构建是否一致
 
 选项:
   -verbose    启用详细日志
-  -session    会话/任务ID (无默认值，涉及远程调用的命令必须提供以严格隔离工作空间)
+  -session    会话/任务ID (远程调用须提供；用于操作上下文，不要求先 push 或创建源码快照)
   -contract   输出机器可读的 CLI 契约版本
   -help       显示此帮助信息
 
 	自然语言发布示例:
 	  # --apply 是明确的 mutation 授权；任务本身必须给出所有发布事实。
-	  doops -session release-20260717 ask --target agent-runtime --apply --msg "在 target agent-runtime 发布服务范围 api，镜像 release-20260717；原因：修复课堂权限；验收：Deployment Ready、实际镜像、Service/Endpoint 和 /health 均通过。"
+	  doops -session release-<commit> ask --target <target> --apply --msg "在 target <target> 发布服务范围 api，release app，namespace apps，chart https://charts.example/app.tgz，镜像 <repository>@sha256:<digest>；原因：修复课堂权限；验收：最终 Deployment spec/generation/副本、实际镜像、Service/Endpoint 和 /health 均通过。"
 `)
 	}
 	flag.Parse()
@@ -742,6 +748,54 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Printf("✅ Gateway target '%s' (%s/%s via %s) added successfully.\n", name, newServer.Cluster, newServer.Instance, gateway)
 		}
 
+	case "remove", "rm":
+		var target string
+		removeFlag := flag.NewFlagSet("remove", flag.ExitOnError)
+		removeFlag.StringVar(&target, "target", "", "Configured Gateway target to remove")
+		removeFlag.Parse(cmdArgs)
+		if strings.TrimSpace(target) == "" {
+			fmt.Println("Error: --target is required")
+			removeFlag.Usage()
+			os.Exit(1)
+		}
+		if *sessionName == "" {
+			fmt.Println("Error: -session 必传，请指定会话 ID")
+			os.Exit(1)
+		}
+		requireConfig(configErr)
+		index := -1
+		for i, candidate := range servers {
+			if serverMatchesTarget(candidate, target) {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			fmt.Printf("Error: Gateway target '%s' not found.\n", target)
+			os.Exit(1)
+		}
+		server := servers[index]
+		token := mustResolveToken(server)
+		liveTargets, err := fetchGatewayTargets(server.Gateway, token)
+		if err != nil {
+			fmt.Printf("Error: cannot verify target is offline; refusing to remove '%s': %v\n", target, err)
+			os.Exit(1)
+		}
+		if len(filterGatewayTargets(liveTargets, server.Cluster, server.Instance)) > 0 {
+			fmt.Printf("Error: target %s/%s is online; refusing to remove '%s'.\n", server.Cluster, server.Instance, target)
+			os.Exit(1)
+		}
+		remaining, removed, err := removeServer(servers, target)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+		if err := saveServers(remaining); err != nil {
+			fmt.Printf("Error saving config: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Removed offline Gateway target '%s' (%s/%s).\n", removed.Name, removed.Cluster, removed.Instance)
+
 	case "push":
 		var target, src, dest string
 		var dryRun bool
@@ -852,26 +906,30 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("clean workspace=%s", workspace))
 
 	case "upgrade":
-		var target, image, mode, namespace, workload, container, upgradeSession string
-		var dryRun bool
+		var target, image, mode, namespace, workload, container, release, upgradeSession string
+		var dryRun, rollback bool
 		upgradeFlag := flag.NewFlagSet("upgrade", flag.ExitOnError)
 		upgradeFlag.StringVar(&target, "target", "", "Configured Gateway target")
-		upgradeFlag.StringVar(&image, "image", "", "New doops-agent image")
-		upgradeFlag.StringVar(&mode, "mode", "auto", "Upgrade mode: auto,k8s,docker")
-		upgradeFlag.StringVar(&namespace, "namespace", "", "Kubernetes namespace for DaemonSet mode")
-		upgradeFlag.StringVar(&workload, "workload", "", "Kubernetes workload, e.g. daemonset/doops-agent")
-		upgradeFlag.StringVar(&container, "container", "", "Container name")
+		upgradeFlag.StringVar(&image, "image", "", "Pinned doops-agent image, repository@sha256:<digest>")
+		upgradeFlag.StringVar(&mode, "mode", "auto", "Upgrade mode: auto or k8s")
+		upgradeFlag.StringVar(&namespace, "namespace", "", "Optional namespace; must match the agent namespace")
+		upgradeFlag.StringVar(&workload, "workload", "", "Optional deployment name; must match the Helm release")
+		upgradeFlag.StringVar(&container, "container", "", "Container name; managed upgrades use doops-agent")
+		upgradeFlag.StringVar(&release, "release", "", "Optional Helm release; discovered when omitted")
 		upgradeFlag.StringVar(&upgradeSession, "session", "", "Session ID")
-		upgradeFlag.BoolVar(&dryRun, "dry-run", false, "Preview the external reconciliation target; direct agent self-upgrade is prohibited")
+		upgradeFlag.BoolVar(&dryRun, "dry-run", false, "Preview parameters only; does not verify live release, mounts or permissions, or create a Job")
+		upgradeFlag.BoolVar(&rollback, "rollback", false, "Roll the managed Helm release back to the previous successful revision")
 		upgradeFlag.Parse(cmdArgs)
 		if upgradeSession != "" && *sessionName == "" {
 			*sessionName = upgradeSession
 		}
 		if *sessionName == "" {
-			*sessionName = fmt.Sprintf("upgrade_%d", time.Now().Unix())
+			fmt.Println("Error: -session is required for agent upgrade")
+			upgradeFlag.Usage()
+			os.Exit(1)
 		}
-		if target == "" || image == "" {
-			fmt.Println("Error: --target and --image are required")
+		if target == "" || (image == "" && !rollback) {
+			fmt.Println("Error: --target is required; also provide --image unless using --rollback")
 			upgradeFlag.Usage()
 			os.Exit(1)
 		}
@@ -887,7 +945,9 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			Namespace: namespace,
 			Workload:  workload,
 			Container: container,
+			Release:   release,
 			DryRun:    dryRun,
+			Rollback:  rollback,
 			Session:   *sessionName,
 		}, *verbose); err != nil {
 			fmt.Printf("Error: %v\n", err)

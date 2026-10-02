@@ -96,7 +96,9 @@ func (s *Scheduler) RunJobNow(ctx context.Context, jobID string) (string, error)
 		return "", err
 	}
 	created, err := s.runJob(ctx, job)
-	_ = s.store.TouchSchedulerJobRun(job.ID, time.Now().UTC())
+	if touchErr := s.store.TouchSchedulerJobRun(job.ID, time.Now().UTC()); touchErr != nil {
+		return "", fmt.Errorf("scheduler_run_record_failed")
+	}
 	if err != nil {
 		return "", err
 	}
@@ -138,26 +140,28 @@ func (s *Scheduler) runJob(ctx context.Context, job SchedulerJob) (int, error) {
 	for _, exc := range exceptions {
 		fp := compositeFingerprint(job.ID, exc.Cluster, exc.Instance, exc.Fingerprint, exc.Title)
 		if _, found, err := s.store.FindRecentIssue(job.RepoSlug, fp, dedupSince); err != nil {
-			log.Printf("[scheduler] dedup check failed: %v", err)
-			continue
+			return created, fmt.Errorf("scheduler_dedup_failed")
 		} else if found {
 			continue
 		}
 		title, body := renderIssue(job, exc)
 		res, err := client.CreateIssue(ctx, job.RepoSlug, IssueRequest{Title: title, Body: body, Labels: labels})
 		if err != nil {
-			log.Printf("[scheduler] create issue failed (job=%s): %v", job.ID, err)
 			// 记录为 failed，避免去重窗口内反复重试同一异常打爆平台。
-			_, _ = s.store.RecordIssue(SchedulerIssue{
+			if _, recordErr := s.store.RecordIssue(SchedulerIssue{
 				JobID: job.ID, Fingerprint: fp, RepoSlug: job.RepoSlug,
 				Cluster: exc.Cluster, Instance: exc.Instance, Title: title, Status: "failed",
-			})
-			continue
+			}); recordErr != nil {
+				return created, fmt.Errorf("scheduler_issue_record_failed")
+			}
+			return created, fmt.Errorf("scheduler_issue_create_failed")
 		}
-		_, _ = s.store.RecordIssue(SchedulerIssue{
+		if _, err := s.store.RecordIssue(SchedulerIssue{
 			JobID: job.ID, Fingerprint: fp, RepoSlug: job.RepoSlug,
 			Cluster: exc.Cluster, Instance: exc.Instance, IssueURL: res.URL, Title: title, Status: "created",
-		})
+		}); err != nil {
+			return created, fmt.Errorf("scheduler_issue_record_failed")
+		}
 		created++
 	}
 	return created, nil
@@ -194,8 +198,7 @@ func (s *Scheduler) scanAgents(ctx context.Context, job SchedulerJob, useAsk boo
 			})
 		}
 		if err != nil {
-			log.Printf("[scheduler] scan %s/%s failed: %v", t.Cluster, t.Instance, err)
-			continue
+			return nil, fmt.Errorf("scheduler_scan_failed")
 		}
 		var excs []scanException
 		if useAsk {

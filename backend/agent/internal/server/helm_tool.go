@@ -216,7 +216,7 @@ func resolveRemoteHelmValueReference(value string) (string, error) {
 }
 
 func isRemoteHelmChartReference(value string) bool {
-	return isRemoteHelmReference(value, "oci", "http", "https")
+	return isRemoteHelmReference(value, "oci", "https")
 }
 
 func isRemoteHelmValueReference(value string) bool {
@@ -412,16 +412,23 @@ func verifyHelmDeploymentState(ctx context.Context, command helmCommand) (string
 	}
 
 	expectedRepository := imageRepository(command.expectedImage)
+	expectedFound := false
 	for _, expected := range deployments {
-		if !deploymentHasExpectedImage(expected, command.expectedImage, expectedRepository) {
-			return "", fmt.Errorf(
-				"helm verification failed: rendered Deployment %s/%s does not contain expected image %q",
-				command.namespace,
-				expected.Name,
-				command.expectedImage,
-			)
+		for _, image := range expected.Containers {
+			if imageRepository(image) != expectedRepository {
+				continue
+			}
+			if !deploymentHasExpectedImage(expected, command.expectedImage, expectedRepository) {
+				return "", fmt.Errorf("helm verification failed: rendered Deployment %s/%s does not contain expected image %q", command.namespace, expected.Name, command.expectedImage)
+			}
+			expectedFound = true
 		}
+	}
+	if !expectedFound {
+		return "", fmt.Errorf("helm verification failed: final release manifest does not contain expected image %q", command.expectedImage)
+	}
 
+	for _, expected := range deployments {
 		getCmd := exec.CommandContext(
 			ctx,
 			"kubectl",

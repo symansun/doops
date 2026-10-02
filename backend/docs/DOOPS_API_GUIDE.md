@@ -544,26 +544,31 @@ doops -session <session> pull --target <target> --dest <dir>
 
 ### `doops_agent_upgrade`
 
-仅预览外部发布控制器需要执行的 Agent 镜像变更。Agent 不允许修改承载自身的工作负载。
+由目标 Agent 创建集群内 Job，升级承载自己的 Helm Deployment。Agent 进程不执行 Helm mutation。
 
 参数：
 
 ```json
 {
-  "image": "docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI>",
+  "image": "docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest>",
   "mode": "k8s",
-  "namespace": "doops-system",
-  "workload": "deployment/doops-agent",
-  "container": "doops-agent",
-  "dry_run": true
+  "release": "doops-agent-live",
+  "dry_run": false
 }
 ```
 
 需要权限：`agent:upgrade`。
 
-`dry_run` 必须为 `true`；非 dry-run 请求会在 Gateway 分发前被拒绝。正式升级必须由
-目标 Agent 之外的 CI/CD、GitOps 或 release controller 执行，并负责新实例心跳验证与
-失败回滚。
+`image` 必须是 `repository@sha256:<64 hex>`，包括 `dry_run: true` 的预演请求。
+`dry_run: true` 只返回预演。
+`observe_job` 读取 Job 状态。`rollback: true` 创建回滚 Job。namespace 必须是 Agent
+自己的 namespace。Job 使用 Agent 已挂载的 kubeconfig，不接收操作机 kubeconfig。
+新 Pod 未持续就绪时 Job 回滚；CLI 在成功后检查 `structuredSSH`，探针失败会再创建回滚 Job。
+
+Agent 必须已经包含该控制器，并挂载可共享的 `/root/.kube` 或 `/root/.kube/config`。
+`self-upgrade-accepted` 仅表示 Job 已提交；调用方继续以精确 `job + namespace`
+观察 `self-upgrade-running/failed/succeeded` 首行状态，不能从日志中的成功字样推断结果。
+CLI 的 `-session` 必传；预演不作为升级完成证据，回滚失败也必须单独报告。
 
 ## 自然语言发布 API 对接模式
 
@@ -574,8 +579,8 @@ name；Gateway 将引用绑定当前用户、target 和 session，Agent 返回�
 scope 后才授权和物化。凭据 payload 不进入公开 prompt、doagent 上下文、CLI 输出、日志或
 审计记录；Gateway 仅通过内部凭据物化调用向目标 Agent 短暂传递 payload。
 
-生产发布不能由被升级的目标 Agent 自升级。调用方必须以同一 session 的真实健康检查和
-关键业务验收作为完成证据。
+业务服务的生产发布由目标 Agent 执行。`doops-agent` 自身镜像替换不走 `ask --apply`，
+走 `doops upgrade`。调用方必须以同一 session 的真实健康检查和关键业务验收作为完成证据。
 
 ## 进展和可追溯性
 
@@ -585,12 +590,26 @@ Doops 有三层进展数据：
 - Gateway 审计库：按 user、token、target、action、session、status、命令摘要、输出尾部和时间记录持久事件。
 - 目标工作区审计：`/root/ws/<session>/.doops-audit-log` 记录该 session 内执行过的 shell 命令。
 
-管理员通过 Gateway API 查询审计：
+已登录用户通过 Gateway API 查询审计：
 
 ```http
 GET /v1/audit?cluster=doops-oilan&instance=oilan-node&session=deploy_20260514&limit=50
-Authorization: Bearer <ADMIN_USER_TOKEN>
+Authorization: Bearer <USER_TOKEN>
 ```
+
+查询权限：
+
+- 普通用户默认只返回自己的全部操作（包括 `credential:*`）；本人事件按 actor `user_id`
+  判断，不要求额外 `credential:audit`。`user_id` 可省略、等于当前用户 ID，或使用
+  `user_id=self` 显式解析为当前登录用户；普通用户指定其他用户返回 `403`。
+- 平台管理员（`*/*` 的 `admin` 或 `*` grant）可查询全部用户和动作；
+  `view=global` 显式要求平台管理员，其他角色一律 `403`，即使同时指定 `user_id=self`。
+  `view=global` 不取消其他过滤条件，平台管理员也可用 `user_id=self` 只查本人。
+- 不传 `view` 时按当前权限返回可见范围。`credential:audit` 保留独立的管理权限：
+  可查看获授权精确 target 的其他用户 `credential:*` 记录；他人无 target 的凭据事件仍要求
+  覆盖无 target 事件的授权。该权限不授予其他用户的普通操作历史，也不授予 `view=global`。
+- 过滤和权限检查在 `limit` 截断前完成；`limit` 为 1–500，省略或超范围时为 100。
+  审计存储读取失败返回 `503 audit_unavailable`，不伪装成空列表。
 
 响应：
 
@@ -623,7 +642,38 @@ Authorization: Bearer <ADMIN_USER_TOKEN>
 GET /v1/audit?action=ask&status=error&limit=100
 GET /v1/audit?user_id=usr_xxx
 GET /v1/audit?session=deploy_20260514
+GET /v1/audit?user_id=self
+GET /v1/audit?view=global
 ```
+
+管理员 mutation 审计：
+
+- 管理员 GET 接口不要求 session，也不会产生 mutation 审计；远端 RPC/CLI 仍使用显式 session。
+- `/v1/admin/` 下的用户创建、密码、启停、grant 增删、token 签发/撤销、仓库增改删/
+  测试/克隆、巡检创建/删除/启停/立即运行、操作取消、代理路由增改删，以及
+  `POST /v1/targets/unlock` 均记录调用者 `user_id + token_id`、动作和资源元数据、
+  开始/结束时间与成功、拒绝或失败结果。token 签发只有一条审计，不重复记录。
+- 此类事件的 `action=admin`；`command_summary` 是白名单 JSON 元数据，包含注册路由、
+  HTTP method/status，以及可用的资源 ID、subject user ID、授权动作或启停值。
+  请求体、密码、token 明文、仓库 URL/认证内容、配置、巡检命令、响应和原始错误均不进入
+  summary/tail；失败只记录稳定分类（如 `http_403`、`http_502`），tail 为空。
+- 全局用户创建/密码/启停、grant 增删、token 签发/撤销、仓库配置增改删/连接测试、
+  巡检任务创建/删除/启停必须通过 `UserIsPlatformAdmin`；仅有某个 target 的 `admin`
+  不得修改这些全局资源或给自己追加平台权限。此限制在 mutation 审计入口执行，
+  不改变现有管理员 GET 的权限或 session 约定。
+- 管理员身份不替代目标动作授权：仓库克隆检查目标 `pull`，操作取消/解锁/代理路由
+  检查对应目标 `admin`；立即巡检检查匹配目标的实际 `ask/exec` 权限，审计型巡检要求平台管理员。
+  普通用户查询本人审计不会获得任何 mutation 权限。
+  自动巡检沿用已保存任务的目标选择，不因本次审计改动获得新的用户或目标授权，
+  也不会伪造一个在线管理员 token 作为自动任务 actor。
+- 配置下发使用既有 `doops_file_write` RPC 和目标 `write` 权限，不新增 admin 配置接口。
+  继续使用唯一的 RPC 审计，保留 target/session/文件路径元数据，不保存文件内容、
+  下游输出或原始错误；下游 tool error 记录为失败。其他 RPC/凭据沿用其既有审计。
+- 管理 mutation 与配置写入在执行前检查审计 INSERT 和结果 UPDATE 可写性，失败返回
+  `503 audit_unavailable`（RPC 为 `-32603`），不执行 mutation。执行后才发生的审计故障
+  返回 `audit_completion_failed; mutation outcome requires verification`，不返回成功响应；
+  持久的 pending 记录保留。该错误不表示远端动作已经回滚，调用方必须先核验真实状态，
+  不能盲目重试。巡检下游扫描/Issue 创建/结果保存失败也返回失败，不以“零 Issue”冒充成功。
 
 审计清理也是管理员 API：
 

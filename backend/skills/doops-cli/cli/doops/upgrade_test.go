@@ -2,12 +2,16 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestFilterUpgradeTargets(t *testing.T) {
@@ -30,12 +34,196 @@ func TestFilterUpgradeTargets(t *testing.T) {
 	}
 }
 
-func TestUpgradeAgentsRejectsApplyBeforeGatewayCall(t *testing.T) {
+func TestUpgradeAgentsRejectsUnpinnedImage(t *testing.T) {
 	err := UpgradeAgents(Server{}, UpgradeOptions{
-		Image: "registry.example/doops@sha256:abc",
+		Image: "registry.example/doops:latest",
 	}, false)
-	if err == nil || !strings.Contains(err.Error(), "direct agent self-upgrade is prohibited") {
-		t.Fatalf("expected direct self-upgrade rejection, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "repository@sha256") {
+		t.Fatalf("expected digest pin rejection, got %v", err)
+	}
+}
+
+func TestUpgradeAgentsRejectsUnpinnedDryRunImage(t *testing.T) {
+	err := UpgradeAgents(Server{}, UpgradeOptions{
+		Image:  "registry.example/doops:latest",
+		DryRun: true,
+	}, false)
+	if err == nil || !strings.Contains(err.Error(), "repository@sha256") {
+		t.Fatalf("expected dry-run digest pin rejection, got %v", err)
+	}
+}
+
+func TestUpgradeAgentsAllowsPinnedImageToReachTargetLookup(t *testing.T) {
+	err := UpgradeAgents(Server{}, UpgradeOptions{
+		Image: "registry.example/doops@sha256:" + strings.Repeat("a", 64),
+	}, false)
+	if err == nil || !strings.Contains(err.Error(), "configured Gateway target is required") {
+		t.Fatalf("expected configured target requirement, got %v", err)
+	}
+}
+
+func TestParseUpgradeAcceptance(t *testing.T) {
+	job, namespace, release, err := parseUpgradeAcceptance(
+		"self-upgrade-accepted job=doops-self-upgrade-aaaaaaaa namespace=kz-ops release=doops-agent-live workload=doops-agent image=registry.example/doops@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job != "doops-self-upgrade-aaaaaaaa" || namespace != "kz-ops" || release != "doops-agent-live" {
+		t.Fatalf("parsed job=%s namespace=%s release=%s", job, namespace, release)
+	}
+}
+
+func TestParseUpgradeAcceptanceRejectsLogAndDuplicateFields(t *testing.T) {
+	for _, out := range []string{
+		"OK\nself-upgrade-accepted job=job namespace=ops release=agent",
+		"self-upgrade-accepted job=first job=second namespace=ops release=agent",
+		"self-upgrade-accepted job=job namespace=ops",
+	} {
+		if _, _, _, err := parseUpgradeAcceptance(out); err == nil {
+			t.Fatalf("invalid acceptance was accepted: %s", out)
+		}
+	}
+}
+
+func TestClassifyUpgradeObservation(t *testing.T) {
+	if classifyUpgradeObservation("self-upgrade-running job=doops-self-upgrade-aaaaaaaa namespace=kz-ops", nil) != "running" {
+		t.Fatal("running observation was not classified")
+	}
+	if classifyUpgradeObservation("", fmt.Errorf("target offline: doops-edu/edu-coder")) != "retry" {
+		t.Fatal("offline observation was not retried")
+	}
+	if classifyUpgradeObservation("", fmt.Errorf("agent upgrade image must be repository@sha256:<64 hex digits>")) != "error" {
+		t.Fatal("validation error was retried")
+	}
+	if classifyUpgradeObservation("self-upgrade-failed job=doops-self-upgrade-aaaaaaaa namespace=kz-ops\nlogs: self-upgrade-succeeded", nil) != "failed" {
+		t.Fatal("job logs overrode the failed status")
+	}
+	if classifyUpgradeObservation("logs mention self-upgrade-succeeded", nil) != "error" {
+		t.Fatal("unstructured text was accepted as a successful observation")
+	}
+}
+
+func TestUpgradeAgentsRequiresVerifiedResult(t *testing.T) {
+	const accepted = "self-upgrade-accepted job=doops-self-upgrade-aaaaaaaa namespace=ops release=agent"
+	for _, test := range []struct {
+		name         string
+		acceptance   string
+		observation  string
+		dryRun       bool
+		rollback     bool
+		noProtocol   bool
+		wantRollback int32
+		wantSuccess  bool
+		wantObserved int32
+	}{
+		{name: "missing acceptance", acceptance: "upgrade completed"},
+		{name: "preview", acceptance: "dry-run: image=example", dryRun: true, wantSuccess: true},
+		{name: "invalid preview", acceptance: "upgrade completed", dryRun: true},
+		{name: "wrong job", acceptance: accepted, observation: "self-upgrade-succeeded job=other namespace=ops", wantObserved: 1},
+		{name: "wrong namespace", acceptance: accepted, observation: "self-upgrade-succeeded job=doops-self-upgrade-aaaaaaaa namespace=other", wantObserved: 1},
+		{name: "failed with success in logs", acceptance: accepted, observation: "self-upgrade-failed job=doops-self-upgrade-aaaaaaaa namespace=ops\nlog: self-upgrade-succeeded", wantObserved: 1},
+		{name: "verified", acceptance: accepted, observation: "self-upgrade-succeeded job=doops-self-upgrade-aaaaaaaa namespace=ops", wantObserved: 1, wantSuccess: true},
+		{name: "rollback verified", acceptance: accepted, observation: "self-upgrade-succeeded job=doops-self-upgrade-aaaaaaaa namespace=ops", rollback: true, wantRollback: 1, wantObserved: 1, wantSuccess: true},
+		{name: "rollback protocol failure", acceptance: accepted, observation: "self-upgrade-succeeded job=doops-self-upgrade-aaaaaaaa namespace=ops", rollback: true, noProtocol: true, wantRollback: 1, wantObserved: 1},
+		{name: "recovery protocol failure", acceptance: accepted, observation: "self-upgrade-succeeded job=doops-self-upgrade-aaaaaaaa namespace=ops", noProtocol: true, wantRollback: 1, wantObserved: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("DOOPS_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+			var observed atomic.Int32
+			var rollbacks atomic.Int32
+			upgrader := websocket.Upgrader{}
+			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/targets" {
+					_, _ = w.Write([]byte(`{"targets":[{"cluster":"test","instance":"node"}]}`))
+					return
+				}
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					t.Errorf("upgrade: %v", err)
+					return
+				}
+				defer conn.Close()
+				for {
+					var req map[string]interface{}
+					if err := conn.ReadJSON(&req); err != nil {
+						return
+					}
+					result := map[string]interface{}{
+						"protocolVersion": "2024-11-05",
+						"capabilities": map[string]interface{}{
+							"protocols": map[string]interface{}{
+								"structuredSSH": map[string]interface{}{
+									"schemaVersion": "doops.sh/structured-ssh/v1",
+									"tool":          "doops_ssh", "structuredArgv": true,
+								},
+							},
+						},
+					}
+					switch req["method"] {
+					case "initialize":
+						if test.noProtocol && observed.Load() > 0 {
+							result["capabilities"] = map[string]interface{}{}
+						}
+					case "tools/call":
+						params := req["params"].(map[string]interface{})
+						args := params["arguments"].(map[string]interface{})
+						text := test.acceptance
+						if args["rollback"] == true {
+							rollbacks.Add(1)
+						}
+						if args["observe_job"] != nil {
+							observed.Add(1)
+							text = test.observation
+						}
+						result = map[string]interface{}{
+							"content": []map[string]string{{"type": "text", "text": text}},
+						}
+					default:
+						continue
+					}
+					_ = conn.WriteJSON(map[string]interface{}{"jsonrpc": "2.0", "id": req["id"], "result": result})
+				}
+			}))
+			defer gateway.Close()
+			auth := AuthStore{Tokens: map[string]string{}}
+			auth.SetGateway(gateway.URL, "synthetic-upgrade-token")
+			if err := auth.Save(); err != nil {
+				t.Fatal(err)
+			}
+			image := "registry.example/doops@sha256:" + strings.Repeat("a", 64)
+			if test.rollback {
+				image = ""
+			}
+			err := UpgradeAgents(Server{
+				Name: "test", Gateway: gateway.URL, Cluster: "test", Instance: "node",
+			}, UpgradeOptions{
+				Image: image, Session: "upgrade-contract", DryRun: test.dryRun, Rollback: test.rollback,
+			}, false)
+			if (err == nil) != test.wantSuccess {
+				t.Fatalf("upgrade result = %v, want success=%t", err, test.wantSuccess)
+			}
+			if observed.Load() != test.wantObserved {
+				t.Fatalf("Job observations = %d, want %d", observed.Load(), test.wantObserved)
+			}
+			if rollbacks.Load() != test.wantRollback {
+				t.Fatalf("rollback requests = %d, want %d", rollbacks.Load(), test.wantRollback)
+			}
+		})
+	}
+}
+
+func TestUpgradeAgentsRequiresSessionBeforeContactingGateway(t *testing.T) {
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("missing session must fail before contacting Gateway")
+	}))
+	defer gateway.Close()
+	err := UpgradeAgents(Server{
+		Name: "test", Gateway: gateway.URL, Cluster: "test", Instance: "node",
+	}, UpgradeOptions{Image: "registry.example/doops@sha256:" + strings.Repeat("a", 64)}, false)
+	if err == nil || !strings.Contains(err.Error(), "-session") {
+		t.Fatalf("expected explicit session requirement, got %v", err)
 	}
 }
 
@@ -68,8 +256,9 @@ func TestUpgradeAgentsUsesConfiguredGatewayLogin(t *testing.T) {
 		Cluster:  "prod",
 		Instance: "node",
 	}, UpgradeOptions{
-		Image:  "registry.example/doops@sha256:abc",
-		DryRun: true,
+		Image:   "registry.example/doops@sha256:" + strings.Repeat("a", 64),
+		DryRun:  true,
+		Session: "upgrade-auth",
 	}, false)
 	if err == nil || !strings.Contains(err.Error(), "configured target is offline") {
 		t.Fatalf("expected empty target result, got %v", err)
@@ -81,7 +270,7 @@ func TestUpgradeAgentsUsesConfiguredGatewayLogin(t *testing.T) {
 
 func TestUpgradeAgentsRequiresConfiguredTarget(t *testing.T) {
 	err := UpgradeAgents(Server{}, UpgradeOptions{
-		Image:  "registry.example/doops@sha256:abc",
+		Image:  "registry.example/doops@sha256:" + strings.Repeat("a", 64),
 		DryRun: true,
 	}, false)
 	if err == nil || !strings.Contains(err.Error(), "configured Gateway target is required") {
