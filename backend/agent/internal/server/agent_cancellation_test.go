@@ -348,6 +348,30 @@ func TestGatewayCleansUnknownBackgroundTasks(t *testing.T) {
 	}
 }
 
+func TestGatewayAutomaticallyReapsExpiredBackgroundTasks(t *testing.T) {
+	t.Setenv("DOOPS_COMPLETED_TASK_MAX_AGE", "100ms")
+	gw := NewGateway()
+	gw.tasksMu.Lock()
+	gw.tasks["expired-task"] = &bgTask{
+		TaskID:     "expired-task",
+		finishedAt: time.Now().Add(-time.Second),
+		err:        errExecutionOutcomeUnknown,
+	}
+	gw.tasksMu.Unlock()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		gw.tasksMu.RLock()
+		_, ok := gw.tasks["expired-task"]
+		gw.tasksMu.RUnlock()
+		if !ok {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("expired background task was not automatically reaped")
+}
+
 type cancellationDoagentMock struct {
 	prompted  chan struct{}
 	canceled  chan struct{}
