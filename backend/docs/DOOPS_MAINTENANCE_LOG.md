@@ -421,3 +421,13 @@ Do not publish new agent fixes under floating `v1`; use the explicit release ver
 - The detached Helm executor now always uses `--reset-values`, preventing
   removed fields in historical release values from violating the current chart
   schema.
+# 2026-10-03 CNB Helm Managed Authentication
+
+- Scope: verify and consume the exact authorized CNB Helm HTTPS artifact; no index probe,
+  anonymous retry, persisted plaintext login or payload in model/public tool arguments.
+- Add internal metadata-only bindings and an expiring prompt lifetime lease; match
+  session/namespace/release/chart and materialization IDs/version before consumption.
+- Add authoritative bundled-values publishing with release-tag validation, server dry-run
+  and final Deployment verification, without merging prior values or image overrides.
+- Target publication and live credential/browser acceptance are pending; see
+  `CNB_HELM_REPAIR_PROGRESS.md`. This is not a claim of production completion.

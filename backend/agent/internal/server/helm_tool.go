@@ -9,10 +9,10 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/user/doops/agent/api"
@@ -33,6 +33,8 @@ type helmCommand struct {
 	preserveReleaseValues bool
 	preserveInsertAt      int
 	expectedImage         string
+	fullChartValues       bool
+	expectedReleaseTag    string
 }
 
 func handleHelmTool(ctx context.Context, raw json.RawMessage, push notificationSender) (string, error) {
@@ -50,6 +52,11 @@ func handleHelmTool(ctx context.Context, raw json.RawMessage, push notificationS
 	if err != nil {
 		return "", err
 	}
+	cleanup, err := prepareManagedHelmChart(ctx, params, &command)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
 	verification, err := runHelmCommand(ctx, command, push)
 	if err != nil {
 		return "", err
@@ -111,9 +118,16 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 			valueFiles = append(valueFiles, resolved)
 			args = append(args, "--values", resolved)
 		}
-		expectedImage, err := validateHelmImageInput(params.SetStrings)
-		if err != nil {
-			return helmCommand{}, err
+		fullChartValues := len(params.ValueFiles) == 0 && len(params.SetStrings) == 0
+		var expectedImage string
+		if !fullChartValues {
+			var err error
+			expectedImage, err = validateHelmImageInput(params.SetStrings)
+			if err != nil {
+				return helmCommand{}, err
+			}
+		} else {
+			args = append(args, "--reset-values")
 		}
 		keys := make([]string, 0, len(params.SetStrings))
 		for key := range params.SetStrings {
@@ -136,9 +150,10 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 			cwd:                   workspace,
 			release:               params.Release,
 			namespace:             params.Namespace,
-			preserveReleaseValues: true,
+			preserveReleaseValues: !fullChartValues,
 			preserveInsertAt:      preserveInsertAt,
 			expectedImage:         expectedImage,
+			fullChartValues:       fullChartValues,
 		}, nil
 	case "rollback":
 		if params.Revision <= 0 {
@@ -155,6 +170,78 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 	default:
 		return helmCommand{}, fmt.Errorf("unsupported helm operation %q", params.Operation)
 	}
+}
+
+func prepareManagedHelmChart(ctx context.Context, params api.HelmParams, command *helmCommand) (func(), error) {
+	cleanup := func() {}
+	if command.operation() != "upgrade" {
+		return cleanup, nil
+	}
+	params.SessionID = strings.TrimSpace(params.SessionID)
+	params.Release = strings.TrimSpace(params.Release)
+	params.Namespace = strings.TrimSpace(params.Namespace)
+	params.Chart = strings.TrimSpace(params.Chart)
+	auth, expectedDigest, err := authorizedHelmCredential(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasPrefix(params.Chart, "https://") {
+		return nil, fmt.Errorf("helm_chart_requires_explicit_https_download_reference")
+	}
+	if auth != nil && (len(params.ValueFiles) != 0 || len(params.SetStrings) != 0) {
+		return nil, fmt.Errorf("managed_helm_requires_bundled_values_without_overrides")
+	}
+	if auth == nil {
+		parsed, err := url.Parse(params.Chart)
+		if err != nil {
+			return nil, fmt.Errorf("helm chart reference invalid")
+		}
+		auth = &helmRepositoryAuth{URL: parsed.Scheme + "://" + parsed.Host}
+	}
+	chart, digest, err := fetchManagedHelmChart(ctx, auth.URL, auth.Username, auth.Password, params.Chart)
+	auth.Password = ""
+	auth.Username = ""
+	if err != nil {
+		return nil, err
+	}
+	if expectedDigest != "" && digest != expectedDigest {
+		return nil, fmt.Errorf("helm_chart_digest_changed")
+	}
+	directory, err := os.MkdirTemp("", "doops-helm-chart-*")
+	if err != nil {
+		return nil, fmt.Errorf("helm_chart_staging_failed")
+	}
+	cleanup = func() { _ = os.RemoveAll(directory) }
+	path := filepath.Join(directory, "chart.tgz")
+	if os.WriteFile(path, chart, 0600) != nil {
+		cleanup()
+		return nil, fmt.Errorf("helm_chart_staging_failed")
+	}
+	command.args[2] = path
+	if command.fullChartValues {
+		valuesCmd := exec.CommandContext(ctx, "helm", "show", "values", path)
+		valuesCmd.Dir = command.cwd
+		values, err := valuesCmd.Output()
+		if err != nil {
+			cleanup()
+			return nil, fmt.Errorf("helm_chart_values_unavailable")
+		}
+		var configured struct {
+			Image struct {
+				Repository string `yaml:"repository"`
+				Tag        string `yaml:"tag"`
+				Digest     string `yaml:"digest"`
+			} `yaml:"image"`
+		}
+		if yaml.Unmarshal(values, &configured) != nil ||
+			!validHelmImageRepository(configured.Image.Repository) ||
+			!validHelmReleaseTag(configured.Image.Tag) || configured.Image.Digest != "" {
+			cleanup()
+			return nil, fmt.Errorf("full chart values require image.repository and image.tag=release-YYYYMMDD without digest")
+		}
+		command.expectedReleaseTag = configured.Image.Tag
+	}
+	return cleanup, nil
 }
 
 func validateHelmImageInput(setStrings map[string]string) (string, error) {
@@ -282,25 +369,38 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 		}
 	}
 
-	if command.preserveReleaseValues {
+	if command.operation() == "upgrade" {
 		// Server-side dry-run preserves lookup behavior before Helm creates a revision.
 		preflightArgs := make([]string, len(command.args)+1)
 		copy(preflightArgs, command.args)
 		preflightArgs[len(command.args)] = "--dry-run=server"
+		if command.fullChartValues {
+			preflightArgs = append(preflightArgs, "--output=json")
+		}
 		preflight := exec.CommandContext(ctx, "helm", preflightArgs...)
 		preflight.Dir = command.cwd
 		if len(stdin) != 0 {
 			preflight.Stdin = bytes.NewReader(stdin)
 		}
-		preflight.Stdout = io.Discard
+		var preflightOutput bytes.Buffer
+		if command.fullChartValues {
+			preflight.Stdout = &preflightOutput
+		} else {
+			preflight.Stdout = io.Discard
+		}
 		var preflightStderr bytes.Buffer
 		preflight.Stderr = &preflightStderr
 		if err := preflight.Run(); err != nil {
-			return "", fmt.Errorf(
-				"helm preflight failed: %w: %s",
-				err,
-				strings.TrimSpace(preflightStderr.String()),
-			)
+			return "", fmt.Errorf("helm_preflight_failed")
+		}
+		if command.fullChartValues {
+			var rendered struct {
+				Manifest string `json:"manifest"`
+			}
+			if json.Unmarshal(preflightOutput.Bytes(), &rendered) != nil ||
+				validateHelmReleaseTagManifest([]byte(rendered.Manifest), command.expectedReleaseTag) != nil {
+				return "", fmt.Errorf("helm preflight failed: rendered release images do not match the chart release tag")
+			}
 		}
 	}
 
@@ -309,48 +409,21 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 	if len(stdin) != 0 {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", fmt.Errorf("start helm: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return "", fmt.Errorf("start helm: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("start helm: %w", err)
-	}
-
-	var wg sync.WaitGroup
-	var stderrCapture bytes.Buffer
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		streamReader(stdout, push)
-	}()
-	go func() {
-		defer wg.Done()
-		streamReader(struct {
-			io.Reader
-			io.Closer
-		}{
-			Reader: io.TeeReader(stderr, &stderrCapture),
-			Closer: stderr,
-		}, push)
-	}()
-	wg.Wait()
-	if err := cmd.Wait(); err != nil {
-		return "", fmt.Errorf(
-			"helm %s failed: %w: %s",
-			strings.Join(command.args, " "),
-			err,
-			strings.TrimSpace(stderrCapture.String()),
-		)
+	// Templates/NOTES may contain lookup-derived values or encoded credentials.
+	// Only structured state verification, never chart-controlled output, is public.
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("helm_mutation_failed")
 	}
 	if command.operation() != "upgrade" {
 		return "", nil
 	}
-	return verifyHelmDeploymentState(ctx, command)
+	verified, err := verifyHelmDeploymentState(ctx, command)
+	if err != nil {
+		return "", fmt.Errorf("helm_verification_failed")
+	}
+	return verified, nil
 }
 
 func (c helmCommand) operation() string {
@@ -411,6 +484,11 @@ func verifyHelmDeploymentState(ctx context.Context, command helmCommand) (string
 		return "", fmt.Errorf("helm verification failed: final release manifest contains no Deployment")
 	}
 
+	if command.fullChartValues {
+		if err := validateHelmReleaseTagManifest(manifest, command.expectedReleaseTag); err != nil {
+			return "", fmt.Errorf("helm verification failed: %w", err)
+		}
+	}
 	expectedRepository := imageRepository(command.expectedImage)
 	expectedFound := false
 	for _, expected := range deployments {
@@ -424,7 +502,7 @@ func verifyHelmDeploymentState(ctx context.Context, command helmCommand) (string
 			expectedFound = true
 		}
 	}
-	if !expectedFound {
+	if !expectedFound && !command.fullChartValues {
 		return "", fmt.Errorf("helm verification failed: final release manifest does not contain expected image %q", command.expectedImage)
 	}
 
@@ -503,6 +581,37 @@ func verifyHelmDeploymentState(ctx context.Context, command helmCommand) (string
 		}
 	}
 	return fmt.Sprintf("final Deployment spec verified: %d Deployment(s) observed at current generation and Ready", len(deployments)), nil
+}
+
+func validateHelmReleaseTagManifest(manifest []byte, expectedTag string) error {
+	if !validHelmReleaseTag(expectedTag) {
+		return fmt.Errorf("invalid expected release tag")
+	}
+	deployments, err := parseRenderedHelmDeployments(manifest)
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, deployment := range deployments {
+		for _, image := range deployment.Containers {
+			separator := strings.LastIndex(image, ":")
+			if separator < strings.LastIndex(image, "/") || separator == -1 {
+				continue
+			}
+			tag := image[separator+1:]
+			if !strings.HasPrefix(tag, "release-") {
+				continue
+			}
+			if tag != expectedTag {
+				return fmt.Errorf("Deployment %s has a conflicting release image tag", deployment.Name)
+			}
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("rendered release has no image with the chart release tag")
+	}
+	return nil
 }
 
 func parseRenderedHelmDeployments(manifest []byte) ([]renderedHelmDeployment, error) {
