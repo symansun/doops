@@ -90,7 +90,7 @@ func materializeNativeHelmCredential(ctx context.Context, req CredentialMaterial
 	nativeHelmContexts.Unlock()
 	go func() { _ = record.Server.Serve(listener) }()
 	return CredentialMaterialization{
-		CredentialID: req.CredentialID, VersionID: req.VersionID,
+		CredentialID: req.CredentialID, GrantID: req.GrantID, VersionID: req.VersionID,
 		ResourceName: credentialSecretName(req.CredentialID, req.GrantID),
 		Namespace:    req.Scope.Namespace, Status: "verified", Digest: digest,
 		Keys: []string{"url", "username", "password"}, ResourceVersion: record.ResourceVer,
