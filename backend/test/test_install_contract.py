@@ -35,7 +35,7 @@ def test_cli_install_downloads_named_release_asset_and_replaces_binary_atomicall
     assert "${CLI_OUT} version" in text
     assert "\n  doops list" not in text
     assert 'skills/doops-cli/bin' not in text
-    assert " --contract" not in text
+    assert '"${candidate}" --contract' in text
     assert '${CLI_OUT} login --target ${TARGET_NAME:-<target-name>}' in text
     assert 'DOOPS_CONFIG="${CANONICAL_CONFIG_FILE}" "${candidate}" list' in text
     assert "python3 - " not in text
@@ -158,7 +158,9 @@ def test_installer_places_release_asset_only_in_standard_cli_path():
         artifact.write_text(
             "#!/usr/bin/env bash\n"
             "if [[ \"${1:-}\" == version ]]; then\n"
-            f"  printf 'version=v-test commit={release_commit} contract=doops.sh/cli-contract/v3\\n'\n"
+            f"  printf 'release=v-test commit={release_commit}\\n'\n"
+            "elif [[ \"${1:-}\" == --contract ]]; then\n"
+            "  printf 'doops.sh/cli-contract/v3\\n'\n"
             "fi\n"
         )
         artifact.chmod(0o755)
@@ -207,7 +209,7 @@ cp "${DOOPS_TEST_RELEASE_FIXTURES}/${url##*/}" "${out}"
         installed = home / ".local" / "bin" / "doops"
         assert installed.read_bytes() == artifact.read_bytes()
         receipt = (home / ".local" / "share" / "doops" / "install.txt").read_text()
-        assert "version=v-test" in receipt
+        assert "release=v-test" in receipt
         assert f"artifact={artifact_name}" in receipt
         assert f"sha256={checksum}" in receipt
         assert f"commit={release_commit}" in receipt
@@ -218,7 +220,7 @@ cp "${DOOPS_TEST_RELEASE_FIXTURES}/${url##*/}" "${out}"
         installed.write_text("keep-existing-cli")
         artifact.write_text(
             "#!/usr/bin/env bash\n"
-            "printf 'version=dev commit=unknown contract=doops.sh/cli-contract/v3\\n'\n"
+            "printf 'release=dev commit=unknown\\n'\n"
         )
         artifact.chmod(0o755)
         bad_checksum = hashlib.sha256(artifact.read_bytes()).hexdigest()
@@ -500,7 +502,10 @@ def prepare_fake_cli_release(root: Path, version: str, commit: str | None = None
         "set -euo pipefail\n"
         "case \"${1:-}\" in\n"
         "  version)\n"
-        f"    printf 'version={version} commit={release_commit} contract=doops.sh/cli-contract/v3\\n'\n"
+        f"    printf 'release={version} commit={release_commit}\\n'\n"
+        "    ;;\n"
+        "  --contract)\n"
+        "    printf 'doops.sh/cli-contract/v3\\n'\n"
         "    ;;\n"
         "  list)\n"
         "    if grep -q '\"token\"' \"${DOOPS_CONFIG}\"; then\n"

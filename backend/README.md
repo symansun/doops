@@ -81,6 +81,12 @@ SSH 服务端。镜像保留 `ssh` 客户端，已在线 Agent 可通过结构�
 - doAgent 版本基线：`runtime-versions.env`
 - 更新镜像源码：`Dockerfile` / `agent/Dockerfile`
 - doagent 来源：最终镜像直接从 `runtime-versions.env` 的不可变 `DO_AGENT_IMAGE` 复制，不依赖基础镜像内的历史二进制
+- DoOps 只有一个发布版本：CLI、Gateway 和 Agent 统一嵌入同一个发布标签，并同时报告
+  本次 CI 的完整 `CNB_COMMIT` 作为不可变 provenance；`doops targets` 的
+  `RELEASE_COMMIT` 必须与 CLI 的 commit 一致
+- `DO_AGENT_VERSION` / `DO_AGENT_REVISION` 只记录内置 doagent 依赖 provenance，不是
+  DoOps 发布版本；`cli-contract/v3` 只通过 `doops --contract` 暴露为协议兼容性检查，
+  不进入正常版本输出
 - 网关二进制：`/app/doops-agent`
 - doagent AI 内核：`/usr/local/bin/do-agent`
 - 构建闸门：独立 `DO_AGENT_IMAGE` 和最终镜像必须确认 `/usr/local/bin/do-agent --version` 与声明的 `DO_AGENT_VERSION` 完全一致；基础镜像只负责 BuildKit、kubectl、Python/PyYAML、Helm 等工具，并固定到 OCI digest

@@ -33,14 +33,22 @@ def test_doagent_runtime_lock_includes_exact_source_revision():
 
     image_build = IMAGE_BUILD.read_text()
     assert '--build-arg DO_AGENT_REVISION="${DO_AGENT_REVISION}"' in image_build
+    assert '--build-arg DOOPS_RELEASE_TAG="${DOOPS_RELEASE_TAG}"' in image_build
+    assert 'release=${DOOPS_RELEASE_TAG} commit=${CNB_COMMIT}' in image_build
     assert (
         'test "${ACTUAL_DOAGENT_REVISION}" = "${DO_AGENT_REVISION}"'
         in image_build
     )
 
-    for dockerfile in DOCKERFILES:
+    for dockerfile in (
+        ROOT / "Dockerfile",
+        ROOT / "agent" / "Dockerfile",
+        ROOT / "agent" / "Dockerfile.sandbox",
+    ):
         text = dockerfile.read_text()
         assert "ARG DO_AGENT_REVISION" in text
+        assert "ARG DOOPS_RELEASE_TAG" in text
+        assert "release.Version=${DOOPS_RELEASE_TAG}" in text
         assert (
             'LABEL org.l8ai.doagent.revision="${DO_AGENT_REVISION}"'
             in text

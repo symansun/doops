@@ -371,6 +371,25 @@ func (c *MCPClient) RequireProtocol(protocol string) error {
 	return nil
 }
 
+func (c *MCPClient) RequireAgentRelease(expected string) error {
+	if err := c.connect(); err != nil {
+		return err
+	}
+	expected = strings.TrimSpace(expected)
+	if expected == "" {
+		return fmt.Errorf("expected DoOps release commit is empty")
+	}
+	actual, _ := c.capabilities["releaseCommit"].(string)
+	actual = strings.TrimSpace(actual)
+	if actual == "" {
+		return fmt.Errorf("target Agent did not advertise a DoOps release commit")
+	}
+	if actual != expected {
+		return fmt.Errorf("target Agent release commit mismatch: got %s, want %s", actual, expected)
+	}
+	return nil
+}
+
 func protocolCapabilityCompatible(protocol string, value interface{}) bool {
 	switch protocol {
 	case "executionLifecycle":

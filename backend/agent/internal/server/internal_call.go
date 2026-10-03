@@ -104,11 +104,12 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 			return "", fmt.Errorf("credential_target_lock_changed")
 		}
 	} else if !inherited {
-		if err := agent.acquireForAction(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout); err != nil {
+		lease, err := agent.acquireActionLease(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
+		if err != nil {
 			_ = h.store.FinishAudit(auditID, AuditFinish{Status: "blocked", Error: err.Error()})
 			return "", err
 		}
-		defer agent.releaseForAction(action, resourceKey)
+		h.attachOperationLease(opID, lease)
 	}
 	dispatched := false
 	defer func() {
@@ -132,7 +133,7 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 	if err := opCtx.Err(); err != nil {
 		return "", err
 	}
-	guarded := !isConcurrentReadOnlyAction(action) && !isConcurrentQuery(action, resourceKey)
+	guarded := requiresExecutionOutcomeGuard(action, tool, rawArgs, resourceKey)
 	if guarded {
 		if err := h.checkExecutionGuard(cluster, instance); err != nil {
 			return "", err

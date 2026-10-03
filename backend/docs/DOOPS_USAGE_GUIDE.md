@@ -25,7 +25,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | List live gateway agents | `doops -session <s> targets --target <gateway-target>` | First check for gateway troubleshooting. |
 | Retire an offline target | `doops -session <s> remove --target <gateway-target>` | Removes only the local route after a successful Gateway query confirms the exact route is not currently visible; online, unreachable, or unauthorized targets are refused. |
 | Check Agent protocol capability | `doops -session <s> capabilities --target <t> --require structuredSSH` | Fails closed when the online Agent is too old for structured SSH. |
-| Check execution lifecycle capability | `doops -session <s> capabilities --target <t> --require executionLifecycle` | Requires the exact schema and all three terminal/background/prompt guarantees. |
+| Check execution lifecycle capability | `doops -session <s> capabilities --target <t> --require executionLifecycle` | Required for background execution; foreground exec/SSH/ask/apply use target scheduling and terminal evidence, so a legacy declaration does not block normal execution. |
 | Add a Gateway target | `doops add --name <n> --gateway <url> --cluster <c> --instance <i>` | Stores routing only; never stores a target token. |
 | Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Known checks and explicitly requested operations; standard releases use `ask --apply`. |
 | Run nested SSH safely | `doops -session <s> ssh --target <t> --host <user@host> -- <command> [args...]` | Preserves remote argv across nested shells. |
@@ -63,6 +63,11 @@ doops -session smoke targets --target <gateway-target>
 doops -session smoke exec --target <gateway-target> --cmd 'hostname && date -u +%FT%TZ'
 doops -session smoke-capabilities capabilities --target <gateway-target> --require structuredSSH
 ```
+
+`doops version` 的 `release` 是唯一 DoOps 发布版本，`commit` 是该版本对应的完整
+源码 provenance；`doops targets` 的 `RELEASE_COMMIT` 必须与它一致。输出中的
+`cli-contract/v3` 只通过 `doops --contract` 检查协议兼容性，不是另一个发布版本。
+Agent 未提供完整 `RELEASE_COMMIT` 时只能视为旧运行时，升级验收不会通过。
 
 `doops list` reads local config. `doops targets` asks gateway for live connected agents. A target can be listed locally but unavailable in gateway because it is offline or because the logged-in user lacks the exact target grant; the CLI does not collapse these cases into a definitive offline diagnosis.
 
@@ -121,6 +126,12 @@ not. Structured Kubernetes queries and task status remain available during a
 mutation or unknown outcome. Agent upgrades remain exclusive. Different routes to
 one release/database are not coordinated by this target-local lock; do not bypass it
 using another target. There is no safe force-preemption or automatic replay protocol.
+
+An SSH failure with an Agent structured terminal result is an ordinary failed
+operation when it has a remote exit code in `1..254`, or when the structured
+tool error has no exit code. Exit code `255`, signal termination, cancellation,
+disconnection and missing structured terminal evidence remain guarded. Command
+text never determines whether an SSH operation is safe to preempt.
 
 After an administrator independently confirms the original execution has stopped,
 record the reason and evidence explicitly:

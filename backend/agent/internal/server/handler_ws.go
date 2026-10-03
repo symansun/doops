@@ -27,6 +27,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/user/doops/agent/api"
 	"github.com/user/doops/agent/internal/dispatcher"
+	"github.com/user/doops/agent/pkg/release"
 )
 
 var upgrader = websocket.Upgrader{
@@ -338,8 +339,9 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 				Result: map[string]interface{}{
 					"protocolVersion": "2024-11-05",
 					"serverInfo": map[string]string{
-						"name":    "doops-agent",
-						"version": "2.0",
+						"name":          "doops-agent",
+						"version":       release.Version,
+						"releaseCommit": release.Commit,
 					},
 					"runtimeId": agentProcessRuntimeID,
 					"capabilities": map[string]interface{}{
@@ -803,7 +805,15 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		}
 		writeSessionCommandAudit(sessionID, sshAuditSummary(args), cmdErr)
 		if cmdErr != nil {
-			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("SSH command failed: %v", cmdErr)))
+			if exitCode, ok := sshExitCode(cmdErr); ok {
+				writeJSON(buildStructuredToolErrorResponse(
+					reqID,
+					fmt.Sprintf("SSH command failed: %v", cmdErr),
+					map[string]interface{}{"sshExitCode": exitCode},
+				))
+			} else {
+				writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("SSH command failed: %v", cmdErr)))
+			}
 		} else {
 			writeJSON(buildSuccessResponse(reqID, "SSH command finished."))
 		}
@@ -2510,6 +2520,7 @@ func startRawCommand(ctx context.Context, cmd *exec.Cmd) (*exec.Cmd, io.ReadClos
 		return nil, nil, nil, ctx.Err()
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.WaitDelay = commandPipeGracePeriod
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -2529,6 +2540,7 @@ func startRawCommand(ctx context.Context, cmd *exec.Cmd) (*exec.Cmd, io.ReadClos
 // Wait for both the command and its process group. Cancellation escalation is
 // joined here, never left running after a terminal RPC response.
 const postLeaderDescendantGracePeriod = 10 * time.Second
+const commandPipeGracePeriod = time.Second
 
 func waitProcessGroup(ctx context.Context, pid int, commandDone <-chan error) error {
 	ticker := time.NewTicker(20 * time.Millisecond)
@@ -2611,7 +2623,9 @@ func waitProcessGroup(ctx context.Context, pid int, commandDone <-chan error) er
 	}
 }
 
-// waitCommandStreams drains both pipes before Wait so the final output is not lost.
+// waitCommandStreams drains both pipes while Cmd.Wait bounds descendants that
+// keep the output descriptors open after the leader exits. The process-group
+// watchdog remains responsible for terminating those descendants.
 func waitCommandStreams(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.ReadCloser, push notificationSender, heartbeat bool) error {
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -2653,6 +2667,15 @@ func commandExitCode(err error) int {
 		return exitErr.ExitCode()
 	}
 	return 1
+}
+
+func sshExitCode(err error) (int, bool) {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return 0, false
+	}
+	code := exitErr.ExitCode()
+	return code, code >= 0 && code <= 255
 }
 
 func writeSessionCommandAudit(sessionID, summary string, cmdErr error) {
@@ -2736,17 +2759,25 @@ func buildErrorResponse(reqID interface{}, code int, message string) api.JSONRPC
 
 // buildToolErrorResponse 构建工具执行逻辑失败的响应包（退出码非 0）
 func buildToolErrorResponse(reqID interface{}, text string) api.JSONRPCResponse {
+	return buildStructuredToolErrorResponse(reqID, text, nil)
+}
+
+func buildStructuredToolErrorResponse(reqID interface{}, text string, fields map[string]interface{}) api.JSONRPCResponse {
+	result := map[string]interface{}{
+		"isError": true,
+		"content": []map[string]interface{}{
+			{
+				"type": "text",
+				"text": text,
+			},
+		},
+	}
+	for key, value := range fields {
+		result[key] = value
+	}
 	return api.JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      reqID,
-		Result: map[string]interface{}{
-			"isError": true,
-			"content": []map[string]interface{}{
-				{
-					"type": "text",
-					"text": text,
-				},
-			},
-		},
+		Result:  result,
 	}
 }

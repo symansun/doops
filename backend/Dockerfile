@@ -5,19 +5,23 @@ ARG DO_AGENT_REVISION
 ARG DO_AGENT_INDEX_DIGEST
 ARG DO_AGENT_PLATFORM
 ARG DO_AGENT_PLATFORM_DIGEST
+ARG DOOPS_RELEASE_TAG=dev
 ARG DOOPS_SOURCE_COMMIT=missing-source-commit
 
 # Stage 1: Build the Agent and Gateway from the same source revision.
 FROM golang:1.24-alpine AS builder
+ARG DOOPS_RELEASE_TAG
 ARG DOOPS_SOURCE_COMMIT
 USER root
 WORKDIR /app
 COPY . .
 WORKDIR /app/agent
-RUN CGO_ENABLED=0 go build -o /app/doops-agent ./cmd/agent
+RUN CGO_ENABLED=0 go build \
+    -ldflags "-X github.com/user/doops/agent/pkg/release.Version=${DOOPS_RELEASE_TAG} -X github.com/user/doops/agent/pkg/release.Commit=${DOOPS_SOURCE_COMMIT}" \
+    -o /app/doops-agent ./cmd/agent
 WORKDIR /app/gateway
 RUN CGO_ENABLED=0 go build \
-    -ldflags "-X github.com/user/doops/agent/pkg/gatewaycmd.BuildCommit=${DOOPS_SOURCE_COMMIT}" \
+    -ldflags "-X github.com/user/doops/agent/pkg/release.Version=${DOOPS_RELEASE_TAG} -X github.com/user/doops/agent/pkg/release.Commit=${DOOPS_SOURCE_COMMIT}" \
     -o /app/doops-gateway .
 
 FROM ${DO_AGENT_IMAGE} AS doagent-runtime
@@ -33,6 +37,7 @@ ARG DO_AGENT_REVISION
 ARG DO_AGENT_INDEX_DIGEST
 ARG DO_AGENT_PLATFORM
 ARG DO_AGENT_PLATFORM_DIGEST
+ARG DOOPS_RELEASE_TAG
 ARG DOOPS_SOURCE_COMMIT
 LABEL org.opencontainers.image.base.name="${DOOPS_AGENT_BASE_IMAGE}"
 LABEL org.l8ai.doagent.image="${DO_AGENT_IMAGE}"
@@ -56,8 +61,9 @@ COPY --from=builder /app/docs /app/self-docs/docs
 
 RUN chmod +x /app/agent-entrypoint.sh /app/sandbox-entrypoint.sh \
     && /app/doops-agent -help >/dev/null \
+    && test "$(/app/doops-agent -version)" = "release=${DOOPS_RELEASE_TAG} commit=${DOOPS_SOURCE_COMMIT}" \
     && /app/doops-gateway -help >/dev/null \
-    && test "$(/app/doops-gateway version)" = "doops-gateway source-commit=${DOOPS_SOURCE_COMMIT}" \
+    && test "$(/app/doops-gateway version)" = "release=${DOOPS_RELEASE_TAG} commit=${DOOPS_SOURCE_COMMIT}" \
     && test "$(/usr/local/bin/do-agent --version)" = "do-agent ${DO_AGENT_VERSION}" \
     && /usr/local/bin/do-agent --help >/dev/null \
     && buildctl --version \

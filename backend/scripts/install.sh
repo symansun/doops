@@ -157,7 +157,7 @@ sha256_file() {
 
 install_cli() {
   local platform artifact checksums expected actual candidate replacement receipt_dir receipt
-  local identity version commit contract validation_output
+  local identity release commit contract validation_output
   platform="$(detect_host_platform)"
   if [[ "${platform}" == unsupported-* ]]; then
     cat >&2 <<EOF
@@ -206,13 +206,16 @@ EOF
     echo "Release CLI identity check failed for ${artifact}" >&2
     exit 1
   fi
-  version="$(printf '%s\n' "${identity}" | awk '{for (i=1; i<=NF; i++) if ($i ~ /^version=/) {sub(/^version=/, "", $i); print $i}}')"
+  release="$(printf '%s\n' "${identity}" | awk '{for (i=1; i<=NF; i++) if ($i ~ /^release=/) {sub(/^release=/, "", $i); print $i}}')"
   commit="$(printf '%s\n' "${identity}" | awk '{for (i=1; i<=NF; i++) if ($i ~ /^commit=/) {sub(/^commit=/, "", $i); print $i}}')"
-  contract="$(printf '%s\n' "${identity}" | awk '{for (i=1; i<=NF; i++) if ($i ~ /^contract=/) {sub(/^contract=/, "", $i); print $i}}')"
-  if [[ "${version}" != "${RELEASE_TAG}" ]] ||
+  if ! contract="$("${candidate}" --contract 2>/dev/null)"; then
+    echo "Release CLI contract check failed for ${artifact}" >&2
+    exit 1
+  fi
+  if [[ "${release}" != "${RELEASE_TAG}" ]] ||
     ! printf '%s\n' "${commit}" | grep -Eq '^[0-9a-f]{40}$' ||
     [[ "${contract}" != "doops.sh/cli-contract/v3" ]]; then
-    echo "Release CLI identity mismatch for ${artifact}: expected version ${RELEASE_TAG} and contract v3" >&2
+    echo "Release CLI identity mismatch for ${artifact}: expected release ${RELEASE_TAG} and contract v3" >&2
     exit 1
   fi
 
@@ -242,7 +245,7 @@ EOF
   mkdir -p "${receipt_dir}"
   chmod 0700 "${receipt_dir}"
   {
-    printf 'version=%s\n' "${RELEASE_TAG}"
+    printf 'release=%s\n' "${RELEASE_TAG}"
     printf 'artifact=%s\n' "${artifact}"
     printf 'sha256=%s\n' "${actual}"
     printf 'commit=%s\n' "${commit}"

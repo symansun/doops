@@ -71,7 +71,8 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 	}, cancelOp)
 	defer h.finishActiveOperation(opID)
 
-	if err := agent.acquireForAction(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout); err != nil {
+	lease, err := agent.acquireActionLease(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
+	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			http.Error(w, "operation canceled", http.StatusConflict)
 			return
@@ -79,7 +80,7 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("%v: %s/%s", err, cluster, instance), http.StatusConflict)
 		return
 	}
-	defer agent.releaseForAction(action, resourceKey)
+	h.attachOperationLease(opID, lease)
 	if err := opCtx.Err(); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return

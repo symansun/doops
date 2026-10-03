@@ -5,11 +5,13 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,11 +19,23 @@ import (
 // 对应 git 平台提 issue，并按 fingerprint 去重。它运行在 gateway 进程内，复用
 // hub 的在线连接与目标串行语义。
 type Scheduler struct {
-	hub      *GatewayHub
-	store    *GatewayStore
-	interval time.Duration
-	stop     chan struct{}
+	hub       *GatewayHub
+	store     *GatewayStore
+	interval  time.Duration
+	ctx       context.Context
+	cancel    context.CancelFunc
+	workerID  string
+	startOnce sync.Once
+	stopOnce  sync.Once
 }
+
+const (
+	schedulerJobTimeout = 10 * time.Minute
+	schedulerJobLease   = 15 * time.Minute
+	schedulerLeaseRenew = time.Minute
+)
+
+var ErrSchedulerJobRunning = errors.New("scheduler job is already running")
 
 // scanException 是单条归一化后的异常。
 type scanException struct {
@@ -47,27 +61,37 @@ func NewScheduler(hub *GatewayHub, store *GatewayStore, interval time.Duration) 
 	if interval <= 0 {
 		interval = time.Minute
 	}
-	return &Scheduler{hub: hub, store: store, interval: interval, stop: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Scheduler{
+		hub:      hub,
+		store:    store,
+		interval: interval,
+		ctx:      ctx,
+		cancel:   cancel,
+		workerID: "scheduler-" + randomHex(10),
+	}
 }
 
 func (s *Scheduler) Start() {
-	go func() {
-		ticker := time.NewTicker(s.interval)
-		defer ticker.Stop()
-		log.Printf("[scheduler] ✅ started (tick=%s)", s.interval)
-		for {
-			select {
-			case <-ticker.C:
-				s.tick()
-			case <-s.stop:
-				return
+	s.startOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(s.interval)
+			defer ticker.Stop()
+			log.Printf("[scheduler] ✅ started (tick=%s)", s.interval)
+			for {
+				select {
+				case <-ticker.C:
+					s.tick()
+				case <-s.ctx.Done():
+					return
+				}
 			}
-		}
-	}()
+		}()
+	})
 }
 
 func (s *Scheduler) Stop() {
-	close(s.stop)
+	s.stopOnce.Do(s.cancel)
 }
 
 func (s *Scheduler) tick() {
@@ -77,15 +101,18 @@ func (s *Scheduler) tick() {
 		return
 	}
 	for _, job := range jobs {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		created, err := s.runJob(ctx, job)
-		cancel()
-		_ = s.store.TouchSchedulerJobRun(job.ID, time.Now().UTC())
+		owner := s.workerID + "-" + randomHex(8)
+		claimed, err := s.store.ClaimSchedulerJob(job.ID, owner, time.Now().UTC(), schedulerJobLease)
 		if err != nil {
-			log.Printf("[scheduler] job %s (%s) error: %v", job.ID, job.Name, err)
+			log.Printf("[scheduler] claim job %s (%s) failed: %v", job.ID, job.Name, err)
 			continue
 		}
-		log.Printf("[scheduler] job %s (%s) done, %d new issue(s)", job.ID, job.Name, created)
+		if !claimed {
+			continue
+		}
+		go func(job SchedulerJob, owner string) {
+			_, _ = s.runClaimedJob(s.ctx, job, owner)
+		}(job, owner)
 	}
 }
 
@@ -95,14 +122,112 @@ func (s *Scheduler) RunJobNow(ctx context.Context, jobID string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	created, err := s.runJob(ctx, job)
-	if touchErr := s.store.TouchSchedulerJobRun(job.ID, time.Now().UTC()); touchErr != nil {
-		return "", fmt.Errorf("scheduler_run_record_failed")
+	owner := s.workerID + "-" + randomHex(8)
+	claimed, err := s.store.ClaimSchedulerJob(job.ID, owner, time.Now().UTC(), schedulerJobLease)
+	if err != nil {
+		return "", err
 	}
+	if !claimed {
+		return "", ErrSchedulerJobRunning
+	}
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	go func() {
+		select {
+		case <-s.ctx.Done():
+			stop()
+		case <-runCtx.Done():
+		}
+	}()
+	created, err := s.runClaimedJob(runCtx, job, owner)
 	if err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("job %s 执行完成，新建 %d 个 issue", job.Name, created), nil
+}
+
+func (s *Scheduler) runClaimedJob(parent context.Context, job SchedulerJob, owner string) (int, error) {
+	ctx, cancel := context.WithTimeout(parent, schedulerJobTimeout)
+	defer cancel()
+	opID := s.registerJobOperation(job, cancel)
+	defer s.finishJobOperation(opID)
+	ctx, stopRenew := s.renewSchedulerLease(ctx, job, owner)
+	defer stopRenew()
+	defer func() {
+		if err := s.store.TouchSchedulerJobRun(job.ID, time.Now().UTC()); err != nil {
+			log.Printf("[scheduler] record job %s (%s) run failed: %v", job.ID, job.Name, err)
+		}
+		if err := s.store.ReleaseSchedulerJob(job.ID, owner); err != nil {
+			log.Printf("[scheduler] release job %s (%s) lease failed: %v", job.ID, job.Name, err)
+		}
+	}()
+	s.markJobOperationRunning(opID)
+	created, err := s.runJob(ctx, job)
+	if err != nil {
+		log.Printf("[scheduler] job %s (%s) error: %v", job.ID, job.Name, err)
+		return created, err
+	}
+	log.Printf("[scheduler] job %s (%s) done, %d new issue(s)", job.ID, job.Name, created)
+	return created, nil
+}
+
+func (s *Scheduler) registerJobOperation(job SchedulerJob, cancel context.CancelFunc) string {
+	if s.hub == nil || s.hub.client == nil {
+		return ""
+	}
+	return s.hub.client.registerActiveOperation(GatewayActiveOperation{
+		UserID:         "internal",
+		Resource:       "scheduler:" + job.ID,
+		Session:        "sched-" + job.ID,
+		CommandSummary: "scheduler job " + job.Name,
+		Kind:           "scheduler",
+	}, cancel)
+}
+
+func (s *Scheduler) markJobOperationRunning(id string) {
+	if id == "" || s.hub == nil || s.hub.client == nil {
+		return
+	}
+	s.hub.client.markOperationRunning(id)
+}
+
+func (s *Scheduler) finishJobOperation(id string) {
+	if id == "" || s.hub == nil || s.hub.client == nil {
+		return
+	}
+	s.hub.client.finishActiveOperation(id)
+}
+
+func (s *Scheduler) renewSchedulerLease(parent context.Context, job SchedulerJob, owner string) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(schedulerLeaseRenew)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				renewed, err := s.store.RenewSchedulerJob(job.ID, owner, time.Now().UTC(), schedulerJobLease)
+				if err != nil {
+					log.Printf("[scheduler] renew job %s (%s) lease failed: %v", job.ID, job.Name, err)
+					cancel()
+					return
+				}
+				if !renewed {
+					log.Printf("[scheduler] job %s (%s) lease is no longer owned", job.ID, job.Name)
+					cancel()
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return ctx, func() {
+		cancel()
+		<-done
+	}
 }
 
 func (s *Scheduler) runJob(ctx context.Context, job SchedulerJob) (int, error) {
@@ -110,7 +235,7 @@ func (s *Scheduler) runJob(ctx context.Context, job SchedulerJob) (int, error) {
 	var scanErr error
 	switch strings.ToLower(job.ScanMode) {
 	case "audit":
-		exceptions, scanErr = s.scanAudit(job)
+		exceptions, scanErr = s.scanAudit(ctx, job)
 	case "exec":
 		exceptions, scanErr = s.scanAgents(ctx, job, false)
 	case "ask", "":
@@ -198,7 +323,20 @@ func (s *Scheduler) scanAgents(ctx context.Context, job SchedulerJob, useAsk boo
 			})
 		}
 		if err != nil {
-			return nil, fmt.Errorf("scheduler_scan_failed")
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, err
+			}
+			mode := "exec"
+			if useAsk {
+				mode = "ask"
+			}
+			log.Printf("[scheduler] target %s/%s scan failed (%s): %v", t.Cluster, t.Instance, mode, err)
+			out = append(out, scopedException{
+				scanException: schedulerScanFailure(mode, err),
+				Cluster:       t.Cluster,
+				Instance:      t.Instance,
+			})
+			continue
 		}
 		var excs []scanException
 		if useAsk {
@@ -213,8 +351,44 @@ func (s *Scheduler) scanAgents(ctx context.Context, job SchedulerJob, useAsk boo
 	return out, nil
 }
 
+func schedulerScanFailure(mode string, err error) scanException {
+	category := schedulerScanErrorCategory(err)
+	message := sanitizeSecretText(strings.TrimSpace(err.Error()))
+	if message == "" {
+		message = "scan failed without an error message"
+	}
+	return scanException{
+		Title:       "scheduled scan unavailable",
+		Fingerprint: "scheduler_scan|" + mode + "|" + category,
+		Severity:    "medium",
+		Detail:      fmt.Sprintf("scan_mode=%s\nerror=%s", mode, message),
+	}
+}
+
+func schedulerScanErrorCategory(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "deadline_exceeded"
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(message, "executionlifecycle"):
+		return "agent_lifecycle_capability"
+	case strings.Contains(message, "target offline"):
+		return "target_offline"
+	case strings.Contains(message, "target busy"),
+		strings.Contains(message, "queue timeout"),
+		strings.Contains(message, "operation limit"):
+		return "target_admission"
+	default:
+		return "agent_scan_failed"
+	}
+}
+
 // scanAudit 从 gateway 审计库里抽取窗口内 status=error 的操作作为异常。
-func (s *Scheduler) scanAudit(job SchedulerJob) ([]scopedException, error) {
+func (s *Scheduler) scanAudit(ctx context.Context, job SchedulerJob) ([]scopedException, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	events, err := s.store.ListAuditFiltered(AuditFilter{Status: "error", Limit: 500})
 	if err != nil {
 		return nil, err
@@ -222,6 +396,9 @@ func (s *Scheduler) scanAudit(job SchedulerJob) ([]scopedException, error) {
 	since := time.Now().UTC().Add(-time.Duration(job.DedupWindowSec) * time.Second)
 	var out []scopedException
 	for _, ev := range events {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if ev.StartedAt.Before(since) {
 			continue
 		}

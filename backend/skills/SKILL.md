@@ -26,12 +26,19 @@ description: |
 
 - 优先使用 PATH 中的 `doops`；标准安装路径是 `~/.local/bin/doops`。
 - 所有远端调用必须带 `-session <name>`。
-- 执行生命周期版本发布必须先升级 Agent，再切换 Gateway；切换后的
-  `doops -session <s> capabilities --target <t> --require executionLifecycle`
-  必须通过精确协议校验。旧 Agent 的 shell、SSH、bg 和 prompt 会被拒绝，不能以
-  移除协议检查或静默降级恢复执行。
-- 发布前先核对 `doops version`、精确 target 和实际 Agent 版本。源码、已安装 CLI、
-  Gateway、Agent 是独立交付状态；`structuredSSH` 不能证明自升级控制器已上线。
+- 执行生命周期协议按调用语义使用，不是发布入口的总闸。只有 `exec --bg` 必须先通过
+  `doops -session <s> capabilities --target <t> --require executionLifecycle` 的精确
+  校验；结构化 `ssh` 只要求 `structuredSSH` 参数协议，普通前台 `exec`、`ssh`、`ask`
+  和 `ask --apply` 进入统一目标调度并以实际终态响应完成，旧 Agent 不应因此被整体拒绝。前台调用被取消、超时或断连时仍按终态证据处理，
+  mutation 可能写入 `outcome_unknown` 并阻止后续写入；不得删除保护或静默降级。
+- 定时巡检由 Gateway 按 job 持久 lease 单飞执行；`tick` 与 `run-now` 冲突时不重复
+  占用目标。执行结束、失败、取消或 Gateway 重启后，lease 必须通过终态 `defer` 或
+  到期自动回收；禁止要求人工 unlock 作为正常调度流程。
+- 发布前先核对 `doops version`、精确 target 和实际 Agent 的 `release_commit`。同一次
+  DoOps 只有一个发布版本标签；CLI、Gateway 和 Agent 必须回传同一个 release，并同时
+  回传同一份完整 40 位 `release_commit` 作为不可变 provenance。`cli-contract/v3` 是
+  协议兼容标识，不是第二个软件版本；
+  `doagent` 依赖版本只属于镜像构建 provenance。`structuredSSH` 不能证明自升级控制器已上线。
   `-session` 是操作上下文，不是源码同步要求；普通发布不要求 Git worktree 或先 `push`。
 - CLI 只接受 Gateway target；不存在直连 target、SSH target 或按 target 保存 token 的模式。
 - 从客户端直接 SSH 到 Agent 宿主机只用于首次安装、自恢复 agent，以及发布
@@ -46,6 +53,10 @@ description: |
   包装命令仍须由调用者遵守结构化入口要求。SSH 操作遵守与其它 exec 相同的权限、排队、超时、取消
   和审计规则。目标、参数和远端命令必须由当前任务明确给出，不得把私钥、密码或
   token 内联到命令、prompt、日志或工作区。
+- SSH 收到 Agent 结构化终态时，明确远端退出码 `1..254` 按普通失败审计，不因非零
+  退出阻断后续操作；结构化工具错误即使没有退出码也已到达终态。`255`、信号终止、
+  取消、断连或缺少结构化终态仍保留未知结果保护；不得根据命令文本猜测只读，也不得
+  把本地 SSH 进程退出当成远端工作已停止。
 - `doops-gateway` 是独立发布包，必须从 CNB 不可变镜像提取，并用
   `scripts/deploy-gateway.sh --host <gateway-host> --source-commit <main-commit>`
   从 SSH 宿主机上下文发布；旧的本地二进制会被拒绝。
@@ -66,7 +77,16 @@ description: |
   受管 `helmPull` 只按已授权 namespace/release/chart 消费 Secret，验证并钉住实际包摘要；
   CNB 使用其官方 Helm OCI 仓库的 HTTPS `.tgz` 下载接口，不读取 `index.yaml`。
   不得读取 target 隔离 workspace、不得要求用户补充本地
-  候选 values，也不得用缺少 `confirm=true` 的调用试探。
+ 候选 values，也不得用缺少 `confirm=true` 的调用试探。
+- 更新现有 Helm release 时，Agent 必须显式传入 `asset_source`，省略时默认为 `remote`。
+  workspace 模式只允许 runtime-bound session workspace 下的相对
+  `deploy/helm/<env>` Chart 与该 Chart 唯一的 `values.yaml`；路径必须是存在的 regular
+  文件或 Chart 目录，拒绝绝对路径、`..`、symlink escape 和额外 values overlay。
+  workspace 的 `set_strings` 必须为空，任务必须显式传完整 `expected_image`：
+  `repository:release-YYYYMMDD` 或 `repository@sha256:<64 hex digest>`。Helm cwd 必须是
+  精确 `/root/ws/<session>`，使用 committed values、`--reset-values` 并先执行 server
+  dry-run，不读取旧 release values。不得要求用户补充其它 values，也不得用缺少
+  `confirm=true` 的调用试探。
 - CI 的精确 source commit、镜像 digest 和构建成功证据必须由发布者在调用前核对。
   `ask --apply`、`--image`、`--version` 和 Helm 工具只校验允许的输入形态、解析结果和
   运行时证据，不自动核验镜像是否来自指定 CI。

@@ -42,6 +42,89 @@ type SchedulerIssue struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+// ClaimSchedulerJob atomically claims a job for one scheduler run. An expired
+// lease is recoverable after a gateway crash; a live lease is never stolen.
+func (s *GatewayStore) ClaimSchedulerJob(id, owner string, now time.Time, lease time.Duration) (bool, error) {
+	id = strings.TrimSpace(id)
+	owner = strings.TrimSpace(owner)
+	if id == "" || owner == "" {
+		return false, fmt.Errorf("scheduler job lease requires job and owner")
+	}
+	if lease <= 0 {
+		return false, fmt.Errorf("scheduler job lease must be positive")
+	}
+	now = now.UTC()
+	leaseUntil := now.Add(lease)
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.Exec(`INSERT OR IGNORE INTO scheduler_job_leases
+		(job_id, owner_id, lease_until, started_at) VALUES (?, ?, ?, ?)`,
+		id, owner, formatTime(leaseUntil), formatTime(now))
+	if err != nil {
+		return false, err
+	}
+	if affected, _ := result.RowsAffected(); affected == 0 {
+		result, err = tx.Exec(`UPDATE scheduler_job_leases
+			SET owner_id = ?, lease_until = ?, started_at = ?
+			WHERE job_id = ? AND lease_until <= ?`,
+			owner, formatTime(leaseUntil), formatTime(now), id, formatTime(now))
+		if err != nil {
+			return false, err
+		}
+		if affected, _ := result.RowsAffected(); affected == 0 {
+			return false, tx.Commit()
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ReleaseSchedulerJob releases only the lease owned by owner. A stale or
+// already-released lease is harmless because the next claim is time-based.
+func (s *GatewayStore) ReleaseSchedulerJob(id, owner string) error {
+	id = strings.TrimSpace(id)
+	owner = strings.TrimSpace(owner)
+	if id == "" || owner == "" {
+		return fmt.Errorf("scheduler job lease requires job and owner")
+	}
+	_, err := s.db.Exec(`DELETE FROM scheduler_job_leases
+		WHERE job_id = ? AND owner_id = ?`, id, owner)
+	return err
+}
+
+// RenewSchedulerJob extends a live lease only for its current owner. Once the
+// lease expires, the running worker must stop rather than regain ownership.
+func (s *GatewayStore) RenewSchedulerJob(id, owner string, now time.Time, lease time.Duration) (bool, error) {
+	id = strings.TrimSpace(id)
+	owner = strings.TrimSpace(owner)
+	if id == "" || owner == "" {
+		return false, fmt.Errorf("scheduler job lease requires job and owner")
+	}
+	if lease <= 0 {
+		return false, fmt.Errorf("scheduler job lease must be positive")
+	}
+	now = now.UTC()
+	result, err := s.db.Exec(`UPDATE scheduler_job_leases
+		SET lease_until = ?
+		WHERE job_id = ? AND owner_id = ? AND lease_until > ?`,
+		formatTime(now.Add(lease)), id, owner, formatTime(now))
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected == 1, nil
+}
+
 func (s *GatewayStore) CreateSchedulerJob(job SchedulerJob) (SchedulerJob, error) {
 	job.Name = strings.TrimSpace(job.Name)
 	if job.Name == "" {

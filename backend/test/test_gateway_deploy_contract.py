@@ -16,6 +16,8 @@ def test_gateway_deploy_detects_systemd_unit_without_pipefail_pipeline():
     assert "ControlMaster=auto" in text
     assert "ControlPersist=30" in text
     assert "ControlPath=${SSH_CONTROL_PATH}" in text
+    assert "wait_for_local_gateway()" in text
+    assert "wait_for_local_gateway 30" in text
 
 
 def test_gateway_deploy_bootstraps_external_key_only_without_existing_ciphertext():
@@ -43,7 +45,8 @@ def test_gateway_release_extracts_the_ci_binary_from_an_immutable_image():
     assert '@sha256:[a-f0-9]{64}$' in text
     assert "--source-commit" in text
     assert 'org.opencontainers.image.revision' in text
-    assert 'source-commit=${SOURCE_COMMIT}' in text
+    assert 'release=${RELEASE_TAG} commit=${SOURCE_COMMIT}' in text
+    assert 'org.opencontainers.image.version' in text
     assert 'PLATFORM="${DOOPS_IMAGE_PLATFORM:-linux/amd64}"' in text
     assert 'docker pull --platform "${PLATFORM}" "${IMAGE}"' in text
     assert 'docker create --platform "${PLATFORM}" "${IMAGE}"' in text

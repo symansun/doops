@@ -77,6 +77,29 @@ func TestGatewayHTTPProxyUsesAgentReverseTunnelAndStreamsResponse(t *testing.T) 
 	}
 }
 
+func TestPublicProxyUsesGlobalOperationSlot(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	hub := NewGatewayHub(store, GatewayHubOptions{MaxConcurrentOperations: 1})
+
+	release, err := hub.client.acquireGlobalOperationSlot()
+	if err != nil {
+		t.Fatalf("first global slot: %v", err)
+	}
+	if _, err := hub.client.acquireGlobalOperationSlot(); err == nil {
+		t.Fatal("second public proxy slot was accepted")
+	}
+	release()
+	if releaseAgain, err := hub.client.acquireGlobalOperationSlot(); err != nil {
+		t.Fatalf("slot was not released: %v", err)
+	} else {
+		releaseAgain()
+	}
+}
+
 func TestGatewayHTTPProxyRejectsMissingRouteAndOfflineTarget(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {

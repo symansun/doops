@@ -12,6 +12,10 @@ source "${REPO_ROOT}/runtime-versions.env"
 : "${CNB_DOCKER_REGISTRY:?CNB_DOCKER_REGISTRY is required}"
 : "${CNB_REPO_SLUG_LOWERCASE:?CNB_REPO_SLUG_LOWERCASE is required}"
 : "${CNB_COMMIT:?CNB_COMMIT is required}"
+if [[ ! "${CNB_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "CNB_COMMIT must be a full 40-character commit SHA" >&2
+  exit 1
+fi
 
 BASE_IMAGE="${DOOPS_AGENT_BASE_IMAGE_OVERRIDE:-${DOOPS_AGENT_BASE_IMAGE}}"
 APP_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${DOOPS_RELEASE_TAG}"
@@ -37,6 +41,7 @@ docker build \
   --build-arg DO_AGENT_INDEX_DIGEST="${DO_AGENT_INDEX_DIGEST}" \
   --build-arg DO_AGENT_PLATFORM="${DO_AGENT_PLATFORM}" \
   --build-arg DO_AGENT_PLATFORM_DIGEST="${DO_AGENT_PLATFORM_DIGEST}" \
+  --build-arg DOOPS_RELEASE_TAG="${DOOPS_RELEASE_TAG}" \
   --build-arg DOOPS_SOURCE_COMMIT="${CNB_COMMIT}" \
   --label org.opencontainers.image.revision="${CNB_COMMIT}" \
   --label org.opencontainers.image.version="${DOOPS_RELEASE_TAG}" \
@@ -53,10 +58,13 @@ test "${ACTUAL_DOAGENT_IMAGE}" = "${DO_AGENT_IMAGE}"
 ACTUAL_DOAGENT_REVISION="$(docker inspect --format '{{ index .Config.Labels "org.l8ai.doagent.revision" }}' "${APP_IMAGE}")"
 test "${ACTUAL_DOAGENT_REVISION}" = "${DO_AGENT_REVISION}"
 docker run --rm --entrypoint /app/doops-agent "${APP_IMAGE}" -help >/dev/null
+test "$(
+  docker run --rm --entrypoint /app/doops-agent "${APP_IMAGE}" -version
+)" = "release=${DOOPS_RELEASE_TAG} commit=${CNB_COMMIT}"
 docker run --rm --entrypoint /app/doops-gateway "${APP_IMAGE}" -help >/dev/null
 test "$(
   docker run --rm --entrypoint /app/doops-gateway "${APP_IMAGE}" version
-)" = "doops-gateway source-commit=${CNB_COMMIT}"
+)" = "release=${DOOPS_RELEASE_TAG} commit=${CNB_COMMIT}"
 ACTUAL_DOAGENT_VERSION="$(docker run --rm --entrypoint /usr/local/bin/do-agent "${APP_IMAGE}" --version | awk '{print $NF}')"
 test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"
 docker run --rm --entrypoint /usr/local/bin/buildctl "${APP_IMAGE}" --version

@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/user/doops/agent/pkg/release"
 )
 
 type temporaryHeartbeatError struct{}
@@ -1990,6 +1992,12 @@ func initializeAgentTestWS(t *testing.T, conn *websocket.Conn) {
 	if strings.TrimSpace(fmt.Sprint(result["runtimeId"])) == "" {
 		t.Fatalf("initialize result must identify the agent process: %#v", resp)
 	}
+	serverInfo, _ := result["serverInfo"].(map[string]interface{})
+	releaseCommit, _ := serverInfo["releaseCommit"].(string)
+	version, _ := serverInfo["version"].(string)
+	if version != release.Version || releaseCommit != release.Commit {
+		t.Fatalf("initialize result must expose release version=%q and commit=%q: %#v", release.Version, release.Commit, resp)
+	}
 	capabilities, _ := result["capabilities"].(map[string]interface{})
 	protocols, _ := capabilities["protocols"].(map[string]interface{})
 	if !credentialPlanCapabilityCompatible(protocols["credentialPlan"]) {
@@ -2237,5 +2245,17 @@ func TestWaitProcessGroupBoundsDetachedDescendants(t *testing.T) {
 			continue
 		}
 		t.Fatalf("detached process group survived cleanup: %q", line)
+	}
+}
+
+func TestWaitCommandStreamsPreservesExitCode(t *testing.T) {
+	cmd, stdout, stderr, err := executeRawCommand(context.Background(), "exit 42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = waitCommandStreams(context.Background(), cmd, stdout, stderr, func(notificationEvent) {}, false)
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 42 {
+		t.Fatalf("waitCommandStreams error = %v, want exit 42", err)
 	}
 }

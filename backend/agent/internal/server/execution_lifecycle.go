@@ -50,13 +50,20 @@ func executionLifecycleCapability() map[string]interface{} {
 	}
 }
 
+// requiresExecutionLifecycle reports whether the tool's contract depends on a
+// detached Agent-managed lifetime. Foreground tools use terminal evidence and
+// the execution guard; a legacy Agent may complete them normally, while an
+// interrupted mutation remains outcome-unknown and blocks later writes until
+// reconciled.
 func requiresExecutionLifecycle(tool string) bool {
-	switch tool {
-	case "doops_shell", "doops_ssh", "doops_bg", "doops_agent_prompt":
-		return true
-	default:
+	return tool == "doops_bg"
+}
+
+func requiresExecutionOutcomeGuard(action GatewayAction, tool string, args json.RawMessage, resourceKey string) bool {
+	if tool == "doops_agent_prompt" && extractStringArg(args, "operation") != "apply" {
 		return false
 	}
+	return !isConcurrentReadOnlyAction(action) && !isConcurrentQuery(action, resourceKey)
 }
 
 func interruptionNeedsReconciliation(tool string, args json.RawMessage) bool {
@@ -91,6 +98,15 @@ func remoteMutationFailed(tool string, args json.RawMessage, response map[string
 		// A structured result, including an isError tool result, proves that the
 		// remote tool reached a terminal state. Only a missing terminal result
 		// can leave a mutation outcome unknown.
+		if tool == "doops_ssh" {
+			result, _ := response["result"].(map[string]interface{})
+			isError, _ := result["isError"].(bool)
+			if !isError {
+				return false
+			}
+			exitCode, ok := numericID(result["sshExitCode"])
+			return ok && exitCode == 255
+		}
 		return false
 	}
 	rpcError, ok := response["error"].(map[string]interface{})

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -113,6 +114,20 @@ func (f *executionLifecycleFixture) operation(t *testing.T, session, state strin
 		return false
 	})
 	return found
+}
+
+func TestContextMutexAcquireHonorsCancellation(t *testing.T) {
+	mutex := newContextMutex()
+	if err := mutex.Acquire(context.Background()); err != nil {
+		t.Fatalf("initial acquire: %v", err)
+	}
+	defer mutex.Release()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := mutex.Acquire(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled acquire = %v, want context.Canceled", err)
+	}
 }
 
 type executionLifecycleCall struct {
@@ -288,9 +303,9 @@ func TestExecutionLifecycleRequiresExactCapabilityBeforeDispatch(t *testing.T) {
 			}
 			agent := f.agentWithInitialize(t, initialize)
 			client := f.client(t, f.admin)
-			lifecycleSend(t, client, 2, "doops_shell", "capability", map[string]interface{}{"command": "printf test"})
+			lifecycleSend(t, client, 2, "doops_bg", "capability", map[string]interface{}{"command": "printf test"})
 			if change == "valid" {
-				agent.complete(t, agent.call(t, "doops_shell", "capability"), "")
+				agent.complete(t, agent.call(t, "doops_bg", "capability"), "")
 				lifecycleResponse(t, client, 2, "")
 			} else {
 				lifecycleResponse(t, client, 2, "executionLifecycle")
@@ -301,6 +316,70 @@ func TestExecutionLifecycleRequiresExactCapabilityBeforeDispatch(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestExecutionLifecycleForegroundCallsUseTerminalEvidenceWithoutCapability(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		tool string
+		args map[string]interface{}
+	}{
+		{name: "shell", tool: "doops_shell", args: map[string]interface{}{"command": "printf test"}},
+		{name: "prompt", tool: "doops_agent_prompt", args: map[string]interface{}{"instruction": "return []"}},
+		{name: "apply prompt", tool: "doops_agent_prompt", args: map[string]interface{}{
+			"operation": "apply", "instruction": "perform the verified synthetic mutation",
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+			initialize := gatewayTestInitializeResult("legacy-foreground-agent")
+			protocols := initialize["capabilities"].(map[string]interface{})["protocols"].(map[string]interface{})
+			delete(protocols, "executionLifecycle")
+			agent := f.agentWithInitialize(t, initialize)
+			client := f.client(t, f.admin)
+			lifecycleSend(t, client, 2, test.tool, "legacy-foreground", test.args)
+			agent.complete(t, agent.call(t, test.tool, "legacy-foreground"), "")
+			lifecycleResponse(t, client, 2, "")
+		})
+	}
+}
+
+func TestExecutionLifecycleDoesNotGateForegroundSSH(t *testing.T) {
+	if requiresExecutionLifecycle("doops_ssh") {
+		t.Fatal("foreground structured SSH must use terminal evidence, not executionLifecycle gating")
+	}
+}
+
+func TestExecutionLifecycleInternalForegroundCallUsesTerminalEvidenceWithoutCapability(t *testing.T) {
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+	initialize := gatewayTestInitializeResult("legacy-internal-agent")
+	protocols := initialize["capabilities"].(map[string]interface{})["protocols"].(map[string]interface{})
+	delete(protocols, "executionLifecycle")
+	agent := f.agentWithInitialize(t, initialize)
+
+	result := make(chan struct {
+		output string
+		err    error
+	}, 1)
+	go func() {
+		output, err := f.hub.RunInternalToolCall(context.Background(), "dev", "local", "doops_agent_prompt", map[string]interface{}{
+			"session_id":  "legacy-internal",
+			"instruction": "return []",
+		})
+		result <- struct {
+			output string
+			err    error
+		}{output: output, err: err}
+	}()
+	agent.complete(t, agent.call(t, "doops_agent_prompt", "legacy-internal"), "")
+	select {
+	case got := <-result:
+		if got.err != nil || got.output != "completed" {
+			t.Fatalf("internal foreground call failed: output=%q err=%v", got.output, got.err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("internal foreground call did not finish")
 	}
 }
 

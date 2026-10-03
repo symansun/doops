@@ -64,15 +64,21 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 	opCtx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	opID := h.client.registerActiveOperation(GatewayActiveOperation{
-		Cluster: route.Cluster, Instance: route.Instance, Action: ActionProxy,
-		CommandSummary: r.Method + " " + r.URL.RequestURI(), Kind: "proxy",
+		Resource:       "proxy:" + route.ID,
+		UserID:         "proxy",
+		Cluster:        route.Cluster,
+		Instance:       route.Instance,
+		Action:         ActionProxy,
+		CommandSummary: r.Method + " " + r.URL.RequestURI(),
+		Kind:           "proxy",
 	}, cancel)
 	defer h.client.finishActiveOperation(opID)
-	if err := agent.acquireForAction(opCtx, ActionProxy, "proxy:"+route.ID, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout); err != nil {
+	lease, err := agent.acquireActionLease(opCtx, ActionProxy, "proxy:"+route.ID, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	defer agent.releaseForAction(ActionProxy, "proxy:"+route.ID)
+	h.client.attachOperationLease(opID, lease)
 
 	auditID, err := h.store.StartAudit(AuditEvent{
 		Cluster: route.Cluster, Instance: route.Instance, Action: ActionProxy,
@@ -82,6 +88,20 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "start audit: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	h.client.activeOpsMu.Lock()
+	if op := h.client.activeOps[opID]; op != nil {
+		op.AuditID = auditID
+	}
+	h.client.activeOpsMu.Unlock()
+	releaseLimit, err := h.client.acquireGlobalOperationSlot()
+	if err != nil {
+		_ = h.store.FinishAudit(auditID, AuditFinish{
+			Status: "rate_limited", Error: err.Error(), EndedAt: time.Now().UTC(),
+		})
+		http.Error(w, err.Error(), http.StatusTooManyRequests)
+		return
+	}
+	defer releaseLimit()
 	bytesOut, relayErr := agent.relayProxyHTTPRequest(opCtx, w, r, proxyHTTPRequestParams{
 		Method: r.Method, Path: r.URL.Path, RawQuery: r.URL.RawQuery,
 		Header: cloneProxyHeader(r.Header), ContentLength: r.ContentLength, Upstream: route.Upstream,

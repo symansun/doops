@@ -17,6 +17,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/user/doops/agent/api"
+	"github.com/user/doops/agent/pkg/release"
 )
 
 type GatewayHubOptions struct {
@@ -39,7 +40,30 @@ type GatewayHub struct {
 	edge         *EdgeRegistry
 
 	scheduler            *Scheduler
-	credentialMutationMu sync.Mutex
+	credentialMutationMu contextMutex
+}
+
+type contextMutex struct {
+	ready chan struct{}
+}
+
+func newContextMutex() contextMutex {
+	ready := make(chan struct{}, 1)
+	ready <- struct{}{}
+	return contextMutex{ready: ready}
+}
+
+func (m *contextMutex) Acquire(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-m.ready:
+		return nil
+	}
+}
+
+func (m *contextMutex) Release() {
+	m.ready <- struct{}{}
 }
 
 // AttachScheduler 注入定时巡检调度器，供 /v1/admin/jobs run-now 等接口使用。
@@ -101,6 +125,26 @@ type gatewayActiveOperation struct {
 	GatewayActiveOperation
 	cancel context.CancelFunc
 	agent  *GatewayAgent
+	lease  *operationLease
+}
+
+// operationLease binds a resource release to the operation that acquired it.
+// The release is idempotent so normal completion and operation finalization
+// can safely converge on one terminal cleanup path.
+type operationLease struct {
+	once    sync.Once
+	release func()
+}
+
+func newOperationLease(release func()) *operationLease {
+	return &operationLease{release: release}
+}
+
+func (l *operationLease) Release() {
+	if l == nil || l.release == nil {
+		return
+	}
+	l.once.Do(l.release)
 }
 
 type GatewayAgent struct {
@@ -111,6 +155,7 @@ type GatewayAgent struct {
 	TokenID                string    `json:"token_id,omitempty"`
 	Generation             uint64    `json:"generation"`
 	RuntimeID              string    `json:"runtime_id,omitempty"`
+	ReleaseCommit          string    `json:"release_commit,omitempty"`
 	CredentialPlanProtocol string    `json:"credential_plan_protocol,omitempty"`
 	StructuredSSH          bool      `json:"structured_ssh,omitempty"`
 	ExecutionLifecycle     bool      `json:"execution_lifecycle,omitempty"`
@@ -153,20 +198,21 @@ type agentResourceSlot struct {
 }
 
 type GatewayTarget struct {
-	Cluster     string    `json:"cluster"`
-	Instance    string    `json:"instance"`
-	Key         string    `json:"key"`
-	Remote      string    `json:"remote"`
-	TokenID     string    `json:"token_id,omitempty"`
-	ConnectedAt time.Time `json:"connected_at"`
-	LastSeen    time.Time `json:"last_seen"`
-	Busy        bool      `json:"busy"`
-	Status      string    `json:"status"`
-	BusyReason  string    `json:"busy_reason,omitempty"`
-	ActiveOps   int       `json:"active_ops"`
-	QueuedOps   int       `json:"queued_ops"`
-	Resources   []string  `json:"resources,omitempty"`
-	Sessions    []string  `json:"sessions,omitempty"`
+	Cluster       string    `json:"cluster"`
+	Instance      string    `json:"instance"`
+	Key           string    `json:"key"`
+	Remote        string    `json:"remote"`
+	TokenID       string    `json:"token_id,omitempty"`
+	ReleaseCommit string    `json:"release_commit,omitempty"`
+	ConnectedAt   time.Time `json:"connected_at"`
+	LastSeen      time.Time `json:"last_seen"`
+	Busy          bool      `json:"busy"`
+	Status        string    `json:"status"`
+	BusyReason    string    `json:"busy_reason,omitempty"`
+	ActiveOps     int       `json:"active_ops"`
+	QueuedOps     int       `json:"queued_ops"`
+	Resources     []string  `json:"resources,omitempty"`
+	Sessions      []string  `json:"sessions,omitempty"`
 }
 
 type gatewayWSMessage struct {
@@ -434,9 +480,10 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		opts.MaxQueuedPerTarget = 0
 	}
 	hub := &GatewayHub{
-		store:    store,
-		opts:     opts,
-		registry: registry,
+		store:                store,
+		opts:                 opts,
+		registry:             registry,
+		credentialMutationMu: newContextMutex(),
 	}
 	hub.registration = NewAgentRegistrationHandler(
 		registry,
@@ -939,8 +986,9 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 				Result: map[string]interface{}{
 					"protocolVersion": "2024-11-05",
 					"serverInfo": map[string]string{
-						"name":    "doops-gateway",
-						"version": "1.0",
+						"name":          "doops-gateway",
+						"version":       release.Version,
+						"releaseCommit": release.Commit,
 					},
 					"capabilities": clientCapabilities(h.registry.Get(cluster, instance)),
 				},
@@ -1110,10 +1158,15 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 
 	if len(authorizedCredentials) != 0 {
 		// Match verification/promotion's lock order before holding a target lease.
-		h.hub.credentialMutationMu.Lock()
-		defer h.hub.credentialMutationMu.Unlock()
+		if err := h.hub.credentialMutationMu.Acquire(opCtx); err != nil {
+			finishAudit("canceled", "operation canceled", "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled"))
+			return nil
+		}
+		defer h.hub.credentialMutationMu.Release()
 	}
-	if err := agent.acquireForAction(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout); err != nil {
+	lease, err := agent.acquireActionLease(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
+	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			finishAudit("canceled", "operation canceled", "", 0)
 			writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled"))
@@ -1124,7 +1177,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32005, errMsg))
 		return nil
 	}
-	defer agent.releaseForAction(action, resourceKey)
+	h.attachOperationLease(opID, lease)
 	opCtx = withInternalCredentialLock(opCtx, agent, resourceKey)
 	releaseLimit, err := h.acquireOperationSlot(auth.UserID)
 	if err != nil {
@@ -1138,7 +1191,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled before dispatch"))
 		return nil
 	}
-	guarded := !isConcurrentReadOnlyAction(action) && !isConcurrentQuery(action, resourceKey)
+	guarded := requiresExecutionOutcomeGuard(action, params.Name, params.Arguments, resourceKey)
 	if guarded {
 		if err := h.checkExecutionGuard(cluster, instance); err != nil {
 			finishAudit("blocked", err.Error(), "", 0)
@@ -1278,6 +1331,9 @@ func clientCapabilities(agent *GatewayAgent) map[string]interface{} {
 	}
 	capabilities := map[string]interface{}{
 		"tools": map[string]interface{}{},
+	}
+	if agent != nil && release.ValidCommit(agent.ReleaseCommit) {
+		capabilities["releaseCommit"] = agent.ReleaseCommit
 	}
 	if len(protocols) != 0 {
 		capabilities["protocols"] = protocols
@@ -1439,6 +1495,13 @@ func (a *GatewayAgent) initialize() error {
 func (a *GatewayAgent) applyInitializeResult(result map[string]interface{}) {
 	runtimeID, _ := result["runtimeId"].(string)
 	a.RuntimeID = strings.TrimSpace(runtimeID)
+	serverInfo, _ := result["serverInfo"].(map[string]interface{})
+	releaseCommit, _ := serverInfo["releaseCommit"].(string)
+	releaseCommit = strings.TrimSpace(releaseCommit)
+	if !release.ValidCommit(releaseCommit) {
+		releaseCommit = ""
+	}
+	a.ReleaseCommit = releaseCommit
 	capabilities, _ := result["capabilities"].(map[string]interface{})
 	protocols, ok := capabilities["protocols"].(map[string]interface{})
 	if !ok {
@@ -1632,6 +1695,9 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 	uncertainIfInterrupted := interruptionNeedsReconciliation(params.Name, params.Arguments)
 	cancelAndWait := func() error {
 		if err := a.waitPendingCancel(ch); err != nil {
+			if !uncertainIfInterrupted && errors.Is(err, errExecutionOutcomeUnknown) {
+				return nil
+			}
 			return err
 		}
 		// Local termination cannot fence a remote controller or detached process.
@@ -1669,7 +1735,10 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 			"arguments": params.Arguments,
 		},
 	}); err != nil {
-		return fmt.Errorf("%w: dispatch failed: %v", errExecutionOutcomeUnknown, err)
+		if uncertainIfInterrupted {
+			return fmt.Errorf("%w: dispatch failed: %v", errExecutionOutcomeUnknown, err)
+		}
+		return fmt.Errorf("%w: dispatch failed: %v", errGatewayAgentDisconnected, err)
 	}
 
 	timer := time.NewTimer(timeout)
@@ -1686,7 +1755,8 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 				continue
 			}
 			if _, ok := msg.Parsed["id"]; ok {
-				if executionResponseUnknown(msg.Parsed) || remoteMutationFailed(params.Name, params.Arguments, msg.Parsed) {
+				if (uncertainIfInterrupted && executionResponseUnknown(msg.Parsed)) ||
+					remoteMutationFailed(params.Name, params.Arguments, msg.Parsed) {
 					return errExecutionOutcomeUnknown
 				}
 				if uncertainIfInterrupted && (ctx.Err() != nil || executionResponseCanceled(msg.Parsed)) {
@@ -1722,7 +1792,8 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 		case <-a.closed:
 			select {
 			case <-ch.terminal:
-				if ch.terminalErr != nil {
+				if ch.terminalErr != nil &&
+					!(errors.Is(ch.terminalErr, errExecutionOutcomeUnknown) && !uncertainIfInterrupted) {
 					return ch.terminalErr
 				}
 				if remoteMutationFailed(params.Name, params.Arguments, ch.terminalMessage.Parsed) {
@@ -1736,6 +1807,9 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 				}
 				return forward(ch.terminalMessage)
 			default:
+				if !uncertainIfInterrupted {
+					return errGatewayAgentDisconnected
+				}
 				return errExecutionOutcomeUnknown
 			}
 		}
@@ -1812,20 +1886,43 @@ func (a *GatewayAgent) release() {
 	a.setBusy(false)
 }
 
-func (a *GatewayAgent) acquireForAction(ctx context.Context, action GatewayAction, resourceKey string, maxQueued int, wait time.Duration) error {
+func (a *GatewayAgent) acquireActionLease(ctx context.Context, action GatewayAction, resourceKey string, maxQueued int, wait time.Duration) (*operationLease, error) {
 	if isExclusiveOperation(action, resourceKey) {
-		return a.acquireExclusive(ctx, resourceKey, maxQueued, wait)
+		if err := a.acquireExclusive(ctx, resourceKey, maxQueued, wait); err != nil {
+			return nil, err
+		}
+		return newOperationLease(a.releaseExclusive), nil
 	}
 	if isConcurrentQuery(action, resourceKey) {
-		return a.acquireReadOnly()
+		if err := a.acquireReadOnly(); err != nil {
+			return nil, err
+		}
+		return newOperationLease(a.releaseReadOnly), nil
 	}
 	if resourceKey != "" {
-		return a.acquireResource(ctx, resourceKey, maxQueued, wait)
+		if err := a.acquireResource(ctx, resourceKey, maxQueued, wait); err != nil {
+			return nil, err
+		}
+		return newOperationLease(func() { a.releaseResource(resourceKey) }), nil
 	}
 	if isConcurrentReadOnlyAction(action) {
-		return a.acquireReadOnly()
+		if err := a.acquireReadOnly(); err != nil {
+			return nil, err
+		}
+		return newOperationLease(a.releaseReadOnly), nil
 	}
-	return a.acquireExclusive(ctx, resourceKey, maxQueued, wait)
+	if err := a.acquireExclusive(ctx, resourceKey, maxQueued, wait); err != nil {
+		return nil, err
+	}
+	return newOperationLease(a.releaseExclusive), nil
+}
+
+// acquireForAction is retained for low-level tests and callers that manage
+// release explicitly. Production request paths use acquireActionLease so the
+// active-operation finalizer owns cleanup.
+func (a *GatewayAgent) acquireForAction(ctx context.Context, action GatewayAction, resourceKey string, maxQueued int, wait time.Duration) error {
+	_, err := a.acquireActionLease(ctx, action, resourceKey, maxQueued, wait)
+	return err
 }
 
 func (a *GatewayAgent) releaseForAction(action GatewayAction, resourceKey string) {
@@ -2104,13 +2201,14 @@ func (a *GatewayAgent) busyState() bool {
 func (a *GatewayAgent) snapshot() GatewayTarget {
 	a.stateMu.RLock()
 	target := GatewayTarget{
-		Cluster:     a.Cluster,
-		Instance:    a.Instance,
-		Key:         a.Key,
-		Remote:      a.Remote,
-		TokenID:     a.TokenID,
-		ConnectedAt: a.ConnectedAt,
-		LastSeen:    a.LastSeen,
+		Cluster:       a.Cluster,
+		Instance:      a.Instance,
+		Key:           a.Key,
+		Remote:        a.Remote,
+		TokenID:       a.TokenID,
+		ReleaseCommit: a.ReleaseCommit,
+		ConnectedAt:   a.ConnectedAt,
+		LastSeen:      a.LastSeen,
 	}
 	a.stateMu.RUnlock()
 	state := a.runtimeState()

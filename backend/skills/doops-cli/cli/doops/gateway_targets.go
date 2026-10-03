@@ -17,19 +17,20 @@ type gatewayTargetsResponse struct {
 }
 
 type GatewayTarget struct {
-	Cluster     string    `json:"cluster"`
-	Instance    string    `json:"instance"`
-	Key         string    `json:"key"`
-	Remote      string    `json:"remote"`
-	ConnectedAt time.Time `json:"connected_at"`
-	LastSeen    time.Time `json:"last_seen"`
-	Busy        bool      `json:"busy"`
-	Status      string    `json:"status"`
-	BusyReason  string    `json:"busy_reason"`
-	ActiveOps   int       `json:"active_ops"`
-	QueuedOps   int       `json:"queued_ops"`
-	Resources   []string  `json:"resources"`
-	Sessions    []string  `json:"sessions"`
+	Cluster       string    `json:"cluster"`
+	Instance      string    `json:"instance"`
+	Key           string    `json:"key"`
+	Remote        string    `json:"remote"`
+	ReleaseCommit string    `json:"release_commit"`
+	ConnectedAt   time.Time `json:"connected_at"`
+	LastSeen      time.Time `json:"last_seen"`
+	Busy          bool      `json:"busy"`
+	Status        string    `json:"status"`
+	BusyReason    string    `json:"busy_reason"`
+	ActiveOps     int       `json:"active_ops"`
+	QueuedOps     int       `json:"queued_ops"`
+	Resources     []string  `json:"resources"`
+	Sessions      []string  `json:"sessions"`
 }
 
 func fetchGatewayTargets(gateway, token string) ([]GatewayTarget, error) {

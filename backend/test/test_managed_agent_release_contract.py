@@ -98,6 +98,7 @@ def test_single_managed_agent_release_script():
     assert 'kubectl -n "${NAMESPACE}" exec "${replacement_pod}"' in text
     assert "doops -session" in text
     assert "doops capabilities --help" in text
+    assert "installed doops CLI does not expose a full release commit" in text
     assert text.index("doops capabilities --help") < text.index(
         'helm_status_output=""'
     )
@@ -105,6 +106,7 @@ def test_single_managed_agent_release_script():
     assert 'doops -session "${SESSION}-capabilities" capabilities \\' in text
     assert '--target "${TARGET}" --require structuredSSH' in text
     assert "did not advertise structuredSSH" in text
+    assert "replacement Agent release commit mismatch" in text
     assert "Kubernetes API is unreachable or rejected the kubeconfig" in text
     assert 'kubectl version --request-timeout=10s' in text
     assert "was not found or is not readable" in text

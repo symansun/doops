@@ -213,6 +213,29 @@ wait_for_gateway_state() {
   return 1
 }
 
+wait_for_local_gateway() {
+  local deadline_seconds="$1"
+  local attempt
+  local health_code
+  local targets_code
+  for attempt in $(seq 1 "${deadline_seconds}"); do
+    health_code="$(curl -sS -o /tmp/doops-gateway-health.out -w '%{http_code}' \
+      http://127.0.0.1:${GATEWAY_PORT}/health || true)"
+    targets_code="$(curl -sS -o /tmp/doops-gateway-targets.out -w '%{http_code}' \
+      http://127.0.0.1:${GATEWAY_PORT}/v1/targets || true)"
+    if [[ "${health_code}" = "200" && "${targets_code}" = "401" ]]; then
+      echo "health_http=200"
+      echo "unauthenticated_targets_http=401"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "Gateway host-local readiness failed after ${deadline_seconds}s" >&2
+  echo "health_http=${health_code:-unknown}" >&2
+  echo "unauthenticated_targets_http=${targets_code:-unknown}" >&2
+  return 1
+}
+
 echo "Gateway deploy plan"
 echo "  SSH host:      ${SSH_USER}@${HOST}:${SSH_PORT}"
 echo "  Local binary:  ${LOCAL_BIN}"
@@ -379,12 +402,9 @@ test \"\$(sudo sha256sum /proc/\$pid/exe | awk '{print \$1}')\" = '${LOCAL_SHA}'
 
 echo "[5/6] Verifying host-local HTTP endpoint"
 "${SSH[@]}" "set -e
-code=\$(curl -sS -o /tmp/doops-gateway-health.out -w '%{http_code}' http://127.0.0.1:${GATEWAY_PORT}/health || true)
-test \"\$code\" = 200
-code=\$(curl -sS -o /tmp/doops-gateway-targets.out -w '%{http_code}' http://127.0.0.1:${GATEWAY_PORT}/v1/targets || true)
-test \"\$code\" = 401
-echo health_http=200
-echo unauthenticated_targets_http=\$code
+GATEWAY_PORT='${GATEWAY_PORT}'
+$(declare -f wait_for_local_gateway)
+wait_for_local_gateway 30
 "
 
 echo "[6/6] Waiting for every baseline Agent to reconnect"

@@ -2,14 +2,20 @@ ARG DOOPS_AGENT_BASE_IMAGE=invalid.invalid/doops-agent-base-image-must-be-specif
 ARG DO_AGENT_IMAGE=invalid.invalid/doagent-image-must-be-specified
 ARG DO_AGENT_VERSION
 ARG DO_AGENT_REVISION
+ARG DOOPS_RELEASE_TAG=dev
+ARG DOOPS_SOURCE_COMMIT=unknown
 
 # Stage 1: Build doops-agent (Go gateway)
 FROM golang:1.24-alpine AS builder
+ARG DOOPS_RELEASE_TAG
+ARG DOOPS_SOURCE_COMMIT
 USER root
 WORKDIR /app
 COPY . .
 WORKDIR /app/agent
-RUN CGO_ENABLED=0 go build -o /app/doops-agent ./cmd/agent
+RUN CGO_ENABLED=0 go build \
+    -ldflags "-X github.com/user/doops/agent/pkg/release.Version=${DOOPS_RELEASE_TAG} -X github.com/user/doops/agent/pkg/release.Commit=${DOOPS_SOURCE_COMMIT}" \
+    -o /app/doops-agent ./cmd/agent
 
 FROM ${DO_AGENT_IMAGE} AS doagent-runtime
 
@@ -21,6 +27,8 @@ ARG DOOPS_AGENT_BASE_IMAGE
 ARG DO_AGENT_IMAGE
 ARG DO_AGENT_VERSION
 ARG DO_AGENT_REVISION
+ARG DOOPS_RELEASE_TAG
+ARG DOOPS_SOURCE_COMMIT
 ARG TARGETARCH
 ARG KUBECTL_VERSION=v1.33.1
 LABEL org.opencontainers.image.base.name="${DOOPS_AGENT_BASE_IMAGE}"
@@ -53,6 +61,7 @@ RUN set -eux; \
     chmod +x /app/agent-entrypoint.sh /app/sandbox-entrypoint.sh; \
     /usr/local/bin/kubectl version --client >/dev/null \
     && /app/doops-agent -help >/dev/null \
+    && test "$(/app/doops-agent -version)" = "release=${DOOPS_RELEASE_TAG} commit=${DOOPS_SOURCE_COMMIT}" \
     && test "$(/usr/local/bin/do-agent --version)" = "do-agent ${DO_AGENT_VERSION}" \
     && /usr/local/bin/do-agent --help >/dev/null \
     && buildctl --version \

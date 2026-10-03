@@ -1,7 +1,7 @@
 ---
 title: Operation coordination remediation
 date: 2026-10-03
-status: source-verified-release-blocked
+status: final-ssh-repair-before-publication
 ---
 
 # Scope
@@ -56,11 +56,14 @@ Gateway and CLI suites, Agent go vet, 50 Python contracts, compiled CLI help and
 two repetitions of Git-focused race checks pass. Independent re-review reports
 no new source release blockers.
 
-Main merge, release tags and production deployment still require confirmed Agent
-rollout scope and completed live acceptance. Docker daemon inspection did not
-respond, so this continuation's process tests are macOS-only; Linux process
-acceptance is not claimed. No Worktree is used. Full race and browser evidence
-limits are tracked in the release report.
+The user authorized all Agents and explicitly requested main merge/publication.
+Linux Agent/Gateway/CLI and Git process race checks passed for fa1a98a in
+cnb-gr9-1k3vqigpe; the matching frontend browser recheck has 27 passes. Final
+review found ordinary SSH nonzero exits falsely causing quarantine; that repair
+must pass exact-commit CI before merge. Runtime preflight also found unmanaged
+Agents requiring a separate migration plan. Those runtime constraints block
+Gateway cutover, not reviewed source and artifact publication. No Worktree is
+used. Evidence and rollout limits are tracked in the release report.
 
 # Deferred Design
 
