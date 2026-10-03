@@ -20,10 +20,11 @@ type UpgradeOptions struct {
 }
 
 var (
-	upgradePollInterval = 5 * time.Second
-	upgradeWait         = 21 * time.Minute
-	cliImageRepository  = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`)
-	cliPinnedDigest     = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+	upgradePollInterval  = 5 * time.Second
+	upgradeWait          = 21 * time.Minute
+	cliImageRepository   = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`)
+	cliPinnedDigest      = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+	releaseCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
 func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
@@ -50,6 +51,13 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 	session := strings.TrimSpace(opts.Session)
 	if session == "" {
 		return fmt.Errorf("-session is required for agent upgrade")
+	}
+	expectedRelease := ""
+	if !opts.DryRun && !opts.Rollback {
+		expectedRelease = strings.TrimSpace(cliBuildCommit)
+		if !releaseCommitPattern.MatchString(expectedRelease) {
+			return fmt.Errorf("published CLI release commit is required for Agent upgrade")
+		}
 	}
 	token, err := ResolveToken(base)
 	if err != nil {
@@ -98,7 +106,7 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 			continue
 		}
 		fmt.Printf("ACCEPTED %s/%s: %s\n", target.Cluster, target.Instance, out)
-		if err := waitForSelfUpgrade(server, token, session, verbose, out, !opts.Rollback); err != nil {
+		if err := waitForSelfUpgrade(server, token, session, verbose, out, !opts.Rollback, expectedRelease); err != nil {
 			fmt.Printf("FAIL %s/%s: %v\n", target.Cluster, target.Instance, err)
 			failures++
 			continue
@@ -145,7 +153,7 @@ func callUpgradeTool(server Server, token, session string, verbose bool, args ma
 	return client.CallAndCapture("doops_agent_upgrade", args)
 }
 
-func waitForSelfUpgrade(server Server, token, session string, verbose bool, acceptance string, rollbackOnProbeFailure bool) error {
+func waitForSelfUpgrade(server Server, token, session string, verbose bool, acceptance string, rollbackOnProbeFailure bool, expectedRelease string) error {
 	job, namespace, release, err := parseUpgradeAcceptance(acceptance)
 	if err != nil {
 		return err
@@ -184,6 +192,15 @@ func waitForSelfUpgrade(server Server, token, session string, verbose bool, acce
 				return rollbackAfterProbeFailure(server, token, session, verbose, namespace, release, err)
 			}
 			fmt.Printf("protocol=structuredSSH status=ready\n")
+			if expectedRelease != "" {
+				if err := probeAgentRelease(server, token, session, verbose, expectedRelease); err != nil {
+					if !rollbackOnProbeFailure {
+						return fmt.Errorf("rollback Job completed but Agent release verification failed: %w", err)
+					}
+					return rollbackAfterProbeFailure(server, token, session, verbose, namespace, release, err)
+				}
+				fmt.Printf("release_commit=%s status=ready\n", expectedRelease)
+			}
 			return nil
 		default:
 			if err != nil {
@@ -206,10 +223,17 @@ func rollbackAfterProbeFailure(server Server, token, session string, verbose boo
 		return fmt.Errorf("structuredSSH probe failed: %v; rollback was not accepted: %w", probeErr, err)
 	}
 	fmt.Printf("%s\n", strings.TrimSpace(out))
-	if err := waitForSelfUpgrade(server, token, session, verbose, out, false); err != nil {
+	if err := waitForSelfUpgrade(server, token, session, verbose, out, false, ""); err != nil {
 		return fmt.Errorf("structuredSSH probe failed: %v; rollback failed: %w", probeErr, err)
 	}
 	return fmt.Errorf("structuredSSH probe failed and the release was rolled back: %v", probeErr)
+}
+
+func probeAgentRelease(server Server, token, session string, verbose bool, expected string) error {
+	client := NewMCPClient(server, NewSessionStore(), session, verbose)
+	client.Token = token
+	defer client.Close()
+	return client.RequireAgentRelease(expected)
 }
 
 func probeStructuredSSH(server Server, token, session string, verbose bool) error {

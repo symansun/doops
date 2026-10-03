@@ -2,6 +2,17 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-10-03 Unified DoOps release identity
+
+- The CLI, Gateway and Agent now share one release tag. They also report the same full
+  40-character `CNB_COMMIT` as immutable provenance; `doops targets` exposes it as
+  `RELEASE_COMMIT`, and a managed Agent upgrade fails verification when the new Agent
+  does not advertise the same commit as the published CLI.
+- `cli-contract/v3` remains a protocol compatibility marker and is checked separately
+  by `doops --contract`; it is no longer mixed into normal `doops version` output.
+- The pinned `doagent` version remains image provenance only. It is not a second DoOps
+  release version shown to operators.
+
 ## 2026-10-03 Execution Lifecycle Release Preparation
 
 - Final source review confirmed an SSH ordinary-exit regression: a remote

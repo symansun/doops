@@ -493,6 +493,14 @@ EOF
     echo "Error: installed doops CLI lacks the capabilities protocol probe; install the current CLI release before mutating an Agent" >&2
     exit 1
   fi
+  cli_release_commit="$(
+    doops version 2>/dev/null |
+      awk '{for (i=1; i<=NF; i++) if ($i ~ /^commit=/) {sub(/^commit=/, "", $i); print $i}}'
+  )"
+  if [[ ! "${cli_release_commit}" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "Error: installed doops CLI does not expose a full release commit; install the current CLI release before mutating an Agent" >&2
+    exit 1
+  fi
   command -v helm >/dev/null || {
     echo "Error: helm is required on PATH" >&2
     exit 1
@@ -903,6 +911,16 @@ PY
     echo "Error: replacement Agent did not advertise structuredSSH; refusing release completion" >&2
     exit 1
   fi
+  replacement_status="$(doops_cmd targets --target "${TARGET}")"
+  replacement_release_commit="$(
+    printf '%s\n' "${replacement_status}" |
+      awk '$1 != "CLUSTER" && $1 !~ /^-+$/ && NF >= 7 {print $7; exit}'
+  )"
+  if [[ "${replacement_release_commit}" != "${cli_release_commit}" ]]; then
+    echo "Error: replacement Agent release commit mismatch: got ${replacement_release_commit:-<unknown>}, want ${cli_release_commit}" >&2
+    exit 1
+  fi
+  echo "release_commit=${replacement_release_commit}"
 
   echo "==> verifying replacement binary"
   replacement_help="$(

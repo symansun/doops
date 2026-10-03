@@ -10,12 +10,10 @@ import (
 	"time"
 
 	"github.com/user/doops/agent/internal/server"
+	"github.com/user/doops/agent/pkg/release"
 )
 
 const defaultGatewayDB = "/var/lib/doops-gateway/gateway.db"
-
-// BuildCommit is embedded by CI and checked before a gateway binary is deployed.
-var BuildCommit = "unknown"
 
 func Run(args []string) {
 	cmd := "serve"
@@ -28,7 +26,7 @@ func Run(args []string) {
 	case "serve":
 		serve(args)
 	case "version":
-		fmt.Printf("doops-gateway source-commit=%s\n", BuildCommit)
+		fmt.Printf("release=%s commit=%s\n", release.Version, release.Commit)
 	case "user":
 		user(args)
 	case "token":

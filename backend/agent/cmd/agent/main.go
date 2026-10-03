@@ -17,6 +17,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/user/doops/agent/internal/server"
+	"github.com/user/doops/agent/pkg/release"
 )
 
 const defaultAgentListenAddress = "0.0.0.0"
@@ -56,7 +57,12 @@ func main() {
 	edgeConns := flag.Int("edge-conns", 1, "Parallel Edge WebSocket sessions")
 	edgeMaxConns := flag.Int("edge-max-conns", 512, "Maximum concurrent Edge TCP connections on this agent")
 	edgeDialTimeout := flag.Duration("edge-dial-timeout", 5*time.Second, "Timeout when dialing an Edge backend")
+	printVersion := flag.Bool("version", false, "Print the DoOps release identity")
 	flag.Parse()
+	if *printVersion {
+		fmt.Printf("release=%s commit=%s\n", release.Version, release.Commit)
+		return
+	}
 	if err := validateStartupArgs(*gatewayURL, *cluster, *instance, flag.Args()); err != nil {
 		log.Fatal(err)
 	}

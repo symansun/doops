@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/user/doops/agent/pkg/release"
 )
 
 type temporaryHeartbeatError struct{}
@@ -1990,6 +1991,12 @@ func initializeAgentTestWS(t *testing.T, conn *websocket.Conn) {
 	}
 	if strings.TrimSpace(fmt.Sprint(result["runtimeId"])) == "" {
 		t.Fatalf("initialize result must identify the agent process: %#v", resp)
+	}
+	serverInfo, _ := result["serverInfo"].(map[string]interface{})
+	releaseCommit, _ := serverInfo["releaseCommit"].(string)
+	version, _ := serverInfo["version"].(string)
+	if version != release.Version || releaseCommit != release.Commit {
+		t.Fatalf("initialize result must expose release version=%q and commit=%q: %#v", release.Version, release.Commit, resp)
 	}
 	capabilities, _ := result["capabilities"].(map[string]interface{})
 	protocols, _ := capabilities["protocols"].(map[string]interface{})

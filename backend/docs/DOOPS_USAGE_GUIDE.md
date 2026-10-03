@@ -64,6 +64,11 @@ doops -session smoke exec --target <gateway-target> --cmd 'hostname && date -u +
 doops -session smoke-capabilities capabilities --target <gateway-target> --require structuredSSH
 ```
 
+`doops version` 的 `release` 是唯一 DoOps 发布版本，`commit` 是该版本对应的完整
+源码 provenance；`doops targets` 的 `RELEASE_COMMIT` 必须与它一致。输出中的
+`cli-contract/v3` 只通过 `doops --contract` 检查协议兼容性，不是另一个发布版本。
+Agent 未提供完整 `RELEASE_COMMIT` 时只能视为旧运行时，升级验收不会通过。
+
 `doops list` reads local config. `doops targets` asks gateway for live connected agents. A target can be listed locally but unavailable in gateway because it is offline or because the logged-in user lacks the exact target grant; the CLI does not collapse these cases into a definitive offline diagnosis.
 
 To remove a stale local route, use `doops -session <s> remove --target <gateway-target>`. The command first queries the configured Gateway and refuses to modify the config if the Gateway is unreachable, authentication fails, or the exact route is currently visible. It does not delete Gateway grants, audit records, proxy routes, or historical agent status.

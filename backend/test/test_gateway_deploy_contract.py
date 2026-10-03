@@ -45,7 +45,8 @@ def test_gateway_release_extracts_the_ci_binary_from_an_immutable_image():
     assert '@sha256:[a-f0-9]{64}$' in text
     assert "--source-commit" in text
     assert 'org.opencontainers.image.revision' in text
-    assert 'source-commit=${SOURCE_COMMIT}' in text
+    assert 'release=${RELEASE_TAG} commit=${SOURCE_COMMIT}' in text
+    assert 'org.opencontainers.image.version' in text
     assert 'PLATFORM="${DOOPS_IMAGE_PLATFORM:-linux/amd64}"' in text
     assert 'docker pull --platform "${PLATFORM}" "${IMAGE}"' in text
     assert 'docker create --platform "${PLATFORM}" "${IMAGE}"' in text

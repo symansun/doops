@@ -27,6 +27,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/user/doops/agent/api"
 	"github.com/user/doops/agent/internal/dispatcher"
+	"github.com/user/doops/agent/pkg/release"
 )
 
 var upgrader = websocket.Upgrader{
@@ -338,8 +339,9 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 				Result: map[string]interface{}{
 					"protocolVersion": "2024-11-05",
 					"serverInfo": map[string]string{
-						"name":    "doops-agent",
-						"version": "2.0",
+						"name":          "doops-agent",
+						"version":       release.Version,
+						"releaseCommit": release.Commit,
 					},
 					"runtimeId": agentProcessRuntimeID,
 					"capabilities": map[string]interface{}{

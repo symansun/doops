@@ -55,7 +55,9 @@ done
 
 chmod 0755 "${TEMP_DIR}/doops-linux-amd64"
 identity="$("${TEMP_DIR}/doops-linux-amd64" version)"
-if [[ "${identity}" != "version=${RELEASE_TAG} commit=${RELEASE_COMMIT} contract=doops.sh/cli-contract/v3" ]]; then
+contract="$("${TEMP_DIR}/doops-linux-amd64" --contract)"
+if [[ "${identity}" != "release=${RELEASE_TAG} commit=${RELEASE_COMMIT}" ]] ||
+  [[ "${contract}" != "doops.sh/cli-contract/v3" ]]; then
   echo "Published CLI identity mismatch for doops-linux-amd64" >&2
   exit 1
 fi

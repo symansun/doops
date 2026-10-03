@@ -34,8 +34,11 @@ description: |
 - 定时巡检由 Gateway 按 job 持久 lease 单飞执行；`tick` 与 `run-now` 冲突时不重复
   占用目标。执行结束、失败、取消或 Gateway 重启后，lease 必须通过终态 `defer` 或
   到期自动回收；禁止要求人工 unlock 作为正常调度流程。
-- 发布前先核对 `doops version`、精确 target 和实际 Agent 版本。源码、已安装 CLI、
-  Gateway、Agent 是独立交付状态；`structuredSSH` 不能证明自升级控制器已上线。
+- 发布前先核对 `doops version`、精确 target 和实际 Agent 的 `release_commit`。同一次
+  DoOps 只有一个发布版本标签；CLI、Gateway 和 Agent 必须回传同一个 release，并同时
+  回传同一份完整 40 位 `release_commit` 作为不可变 provenance。`cli-contract/v3` 是
+  协议兼容标识，不是第二个软件版本；
+  `doagent` 依赖版本只属于镜像构建 provenance。`structuredSSH` 不能证明自升级控制器已上线。
   `-session` 是操作上下文，不是源码同步要求；普通发布不要求 Git worktree 或先 `push`。
 - CLI 只接受 Gateway target；不存在直连 target、SSH target 或按 target 保存 token 的模式。
 - 从客户端直接 SSH 到 Agent 宿主机只用于首次安装、自恢复 agent，以及发布

@@ -15,8 +15,10 @@
 
 先用 `doops version`、`doops list` 和
 `doops -session <s> targets --target <t>` 核对已安装 CLI、Gateway 路由及精确
-`cluster/instance`。源码已修改不代表 CLI、Gateway 或 Agent 已更新；`structuredSSH`
-只证明 SSH 协议能力，不能证明 Agent 具有自升级控制器。
+`cluster/instance`。`doops version` 的完整 commit 必须与 targets 的
+`RELEASE_COMMIT` 一致，`release` 标签必须来自同一个 CI 发布。源码已修改不代表 CLI、Gateway 或 Agent 已更新；
+`cli-contract/v3` 只证明协议兼容性，`structuredSSH` 只证明 SSH 协议能力，
+两者都不能证明 Agent 具有自升级控制器。
 
 | 发布对象 | 入口 | Kubernetes 访问来源 |
 | :--- | :--- | :--- |

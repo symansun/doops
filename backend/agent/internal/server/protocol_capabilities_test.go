@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestStructuredSSHCapabilityRequiresExactSchema(t *testing.T) {
 	if !structuredSSHCapabilityCompatible(structuredSSHCapability()) {
@@ -35,5 +38,22 @@ func TestClientCapabilitiesExposeOnlyAgentAdvertisedProtocols(t *testing.T) {
 	protocols, ok := current["protocols"].(map[string]interface{})
 	if !ok || !structuredSSHCapabilityCompatible(protocols[structuredSSHProtocol]) {
 		t.Fatalf("current Agent did not expose structured SSH: %#v", current)
+	}
+}
+
+func TestClientCapabilitiesExposeOnlyVerifiedReleaseCommit(t *testing.T) {
+	legacy := clientCapabilities(&GatewayAgent{ReleaseCommit: ""})
+	if _, ok := legacy["releaseCommit"]; ok {
+		t.Fatalf("legacy Agent exposed an empty release commit: %#v", legacy)
+	}
+
+	release := strings.Repeat("a", 40)
+	current := clientCapabilities(&GatewayAgent{ReleaseCommit: release})
+	if got := current["releaseCommit"]; got != release {
+		t.Fatalf("current Agent release commit = %#v", got)
+	}
+	short := clientCapabilities(&GatewayAgent{ReleaseCommit: "cc4a56843"})
+	if _, ok := short["releaseCommit"]; ok {
+		t.Fatalf("short Agent release commit was accepted: %#v", short)
 	}
 }

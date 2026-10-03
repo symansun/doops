@@ -250,6 +250,7 @@ Authorization: Bearer <USER_TOKEN>
       "cluster": "doops-oilan",
       "instance": "oilan-node",
       "key": "doops-oilan/oilan-node",
+      "release_commit": "0123456789abcdef0123456789abcdef01234567",
 	      "remote": "10.0.0.12:47128",
 	      "connected_at": "2026-05-14T12:00:00Z",
 	      "last_seen": "2026-05-14T12:00:10Z",
@@ -328,6 +329,12 @@ websocat \
 ```json
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
 ```
+
+Gateway 和 Agent 的 `serverInfo.version` 使用同一个 DoOps 发布标签，
+`serverInfo.releaseCommit` 使用该发布对应的完整 40 位源码 commit。两者是同一个发布
+身份的版本与 provenance，不能把 commit 当作版本号；旧 Agent 缺少完整
+`releaseCommit` 时不会被当作当前发布验收通过。`cli-contract/v3` 只表示 CLI 协议
+兼容性，由 `doops --contract` 单独检查。
 
 工具调用格式：
 

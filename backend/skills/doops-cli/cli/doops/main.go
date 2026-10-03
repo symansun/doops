@@ -51,7 +51,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   info        获取节点系统信息 (CPU/内存/磁盘)
   k8s         受限 Kubernetes 观察与运维入口
   credential  管理 Gateway 凭据元数据与版本
-  version     查看 CLI 发布版本、提交和协议契约
+  version     查看 DoOps 发布身份（release tag 和精确提交）
   session     生成并输出一个新的唯一 Session ID
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
   pull        基于 Git 拉取远端 session 工作区到本地目录
@@ -99,8 +99,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 	switch command {
 	case "version":
-		fmt.Printf("version=%s commit=%s contract=%s\n",
-			cliBuildVersion, cliBuildCommit, cliContractVersion)
+		fmt.Printf("release=%s commit=%s\n", cliBuildVersion, cliBuildCommit)
 
 	case "capabilities":
 		var target, required string
@@ -181,8 +180,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Println(gatewayTargetUnavailableMessage(server.Cluster, server.Instance))
 			os.Exit(1)
 		}
-		fmt.Printf("%-18s %-18s %-8s %-16s %-7s %-7s %-28s %-24s\n", "CLUSTER", "INSTANCE", "BUSY", "STATUS", "ACTIVE", "QUEUED", "RESOURCES", "LAST_SEEN")
-		fmt.Println(strings.Repeat("-", 132))
+		fmt.Printf("%-18s %-18s %-8s %-16s %-7s %-7s %-40s %-28s %-24s\n", "CLUSTER", "INSTANCE", "BUSY", "STATUS", "ACTIVE", "QUEUED", "RELEASE_COMMIT", "RESOURCES", "LAST_SEEN")
+		fmt.Println(strings.Repeat("-", 178))
 		for _, item := range targets {
 			status := item.Status
 			if status == "" {
@@ -199,7 +198,11 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			if len(resources) > 27 {
 				resources = resources[:24] + "..."
 			}
-			fmt.Printf("%-18s %-18s %-8v %-16s %-7d %-7d %-28s %-24s\n", item.Cluster, item.Instance, item.Busy, status, item.ActiveOps, item.QueuedOps, resources, item.LastSeen.Format(time.RFC3339))
+			releaseCommit := item.ReleaseCommit
+			if releaseCommit == "" {
+				releaseCommit = "<unknown>"
+			}
+			fmt.Printf("%-18s %-18s %-8v %-16s %-7d %-7d %-40s %-28s %-24s\n", item.Cluster, item.Instance, item.Busy, status, item.ActiveOps, item.QueuedOps, releaseCommit, resources, item.LastSeen.Format(time.RFC3339))
 		}
 
 	case "unlock":

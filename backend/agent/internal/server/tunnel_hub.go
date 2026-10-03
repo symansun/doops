@@ -17,6 +17,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/user/doops/agent/api"
+	"github.com/user/doops/agent/pkg/release"
 )
 
 type GatewayHubOptions struct {
@@ -154,6 +155,7 @@ type GatewayAgent struct {
 	TokenID                string    `json:"token_id,omitempty"`
 	Generation             uint64    `json:"generation"`
 	RuntimeID              string    `json:"runtime_id,omitempty"`
+	ReleaseCommit          string    `json:"release_commit,omitempty"`
 	CredentialPlanProtocol string    `json:"credential_plan_protocol,omitempty"`
 	StructuredSSH          bool      `json:"structured_ssh,omitempty"`
 	ExecutionLifecycle     bool      `json:"execution_lifecycle,omitempty"`
@@ -196,20 +198,21 @@ type agentResourceSlot struct {
 }
 
 type GatewayTarget struct {
-	Cluster     string    `json:"cluster"`
-	Instance    string    `json:"instance"`
-	Key         string    `json:"key"`
-	Remote      string    `json:"remote"`
-	TokenID     string    `json:"token_id,omitempty"`
-	ConnectedAt time.Time `json:"connected_at"`
-	LastSeen    time.Time `json:"last_seen"`
-	Busy        bool      `json:"busy"`
-	Status      string    `json:"status"`
-	BusyReason  string    `json:"busy_reason,omitempty"`
-	ActiveOps   int       `json:"active_ops"`
-	QueuedOps   int       `json:"queued_ops"`
-	Resources   []string  `json:"resources,omitempty"`
-	Sessions    []string  `json:"sessions,omitempty"`
+	Cluster       string    `json:"cluster"`
+	Instance      string    `json:"instance"`
+	Key           string    `json:"key"`
+	Remote        string    `json:"remote"`
+	TokenID       string    `json:"token_id,omitempty"`
+	ReleaseCommit string    `json:"release_commit,omitempty"`
+	ConnectedAt   time.Time `json:"connected_at"`
+	LastSeen      time.Time `json:"last_seen"`
+	Busy          bool      `json:"busy"`
+	Status        string    `json:"status"`
+	BusyReason    string    `json:"busy_reason,omitempty"`
+	ActiveOps     int       `json:"active_ops"`
+	QueuedOps     int       `json:"queued_ops"`
+	Resources     []string  `json:"resources,omitempty"`
+	Sessions      []string  `json:"sessions,omitempty"`
 }
 
 type gatewayWSMessage struct {
@@ -983,8 +986,9 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 				Result: map[string]interface{}{
 					"protocolVersion": "2024-11-05",
 					"serverInfo": map[string]string{
-						"name":    "doops-gateway",
-						"version": "1.0",
+						"name":          "doops-gateway",
+						"version":       release.Version,
+						"releaseCommit": release.Commit,
 					},
 					"capabilities": clientCapabilities(h.registry.Get(cluster, instance)),
 				},
@@ -1328,6 +1332,9 @@ func clientCapabilities(agent *GatewayAgent) map[string]interface{} {
 	capabilities := map[string]interface{}{
 		"tools": map[string]interface{}{},
 	}
+	if agent != nil && release.ValidCommit(agent.ReleaseCommit) {
+		capabilities["releaseCommit"] = agent.ReleaseCommit
+	}
 	if len(protocols) != 0 {
 		capabilities["protocols"] = protocols
 	}
@@ -1488,6 +1495,13 @@ func (a *GatewayAgent) initialize() error {
 func (a *GatewayAgent) applyInitializeResult(result map[string]interface{}) {
 	runtimeID, _ := result["runtimeId"].(string)
 	a.RuntimeID = strings.TrimSpace(runtimeID)
+	serverInfo, _ := result["serverInfo"].(map[string]interface{})
+	releaseCommit, _ := serverInfo["releaseCommit"].(string)
+	releaseCommit = strings.TrimSpace(releaseCommit)
+	if !release.ValidCommit(releaseCommit) {
+		releaseCommit = ""
+	}
+	a.ReleaseCommit = releaseCommit
 	capabilities, _ := result["capabilities"].(map[string]interface{})
 	protocols, ok := capabilities["protocols"].(map[string]interface{})
 	if !ok {
@@ -2187,13 +2201,14 @@ func (a *GatewayAgent) busyState() bool {
 func (a *GatewayAgent) snapshot() GatewayTarget {
 	a.stateMu.RLock()
 	target := GatewayTarget{
-		Cluster:     a.Cluster,
-		Instance:    a.Instance,
-		Key:         a.Key,
-		Remote:      a.Remote,
-		TokenID:     a.TokenID,
-		ConnectedAt: a.ConnectedAt,
-		LastSeen:    a.LastSeen,
+		Cluster:       a.Cluster,
+		Instance:      a.Instance,
+		Key:           a.Key,
+		Remote:        a.Remote,
+		TokenID:       a.TokenID,
+		ReleaseCommit: a.ReleaseCommit,
+		ConnectedAt:   a.ConnectedAt,
+		LastSeen:      a.LastSeen,
 	}
 	a.stateMu.RUnlock()
 	state := a.runtimeState()

@@ -106,6 +106,9 @@ func TestClassifyUpgradeObservation(t *testing.T) {
 
 func TestUpgradeAgentsRequiresVerifiedResult(t *testing.T) {
 	const accepted = "self-upgrade-accepted job=doops-self-upgrade-aaaaaaaa namespace=ops release=agent"
+	previousCommit := cliBuildCommit
+	cliBuildCommit = strings.Repeat("a", 40)
+	defer func() { cliBuildCommit = previousCommit }()
 	for _, test := range []struct {
 		name         string
 		acceptance   string
@@ -153,6 +156,7 @@ func TestUpgradeAgentsRequiresVerifiedResult(t *testing.T) {
 					result := map[string]interface{}{
 						"protocolVersion": "2024-11-05",
 						"capabilities": map[string]interface{}{
+							"releaseCommit": strings.Repeat("a", 40),
 							"protocols": map[string]interface{}{
 								"structuredSSH": map[string]interface{}{
 									"schemaVersion": "doops.sh/structured-ssh/v1",
