@@ -511,8 +511,7 @@ func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T
 	}
 	if helmResult.Status != "verified" || helmResult.Digest != fmt.Sprintf("sha256:%x", sha256.Sum256(chart)) ||
 		helmResult.SecretType != "" || helmResult.ContextKind != "helm-native" || helmResult.ContextSocket == "" ||
-		helmResult.ResourceVersion == "" ||
-		!sameCredentialKeys(helmResult.Keys, []string{"url", "username", "password"}) || chartRequests.Load() != 1 {
+		helmResult.ResourceVersion == "" || len(helmResult.Keys) != 0 || chartRequests.Load() != 1 {
 		t.Fatalf("unexpected Helm materialization: %#v", helmResult)
 	}
 	_ = os.Remove(filepath.Join(bin, "secret.json"))

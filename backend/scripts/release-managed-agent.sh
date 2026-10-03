@@ -555,14 +555,14 @@ import json, subprocess, sys
 release, namespace, expected_cluster, expected_instance = sys.argv[1:5]
 values = json.loads(subprocess.check_output(
     ["helm", "get", "values", release, "-n", namespace, "-o", "json"],
-    text=True,
+    universal_newlines=True,
 ))
 workload = ((values.get("workload") or {}).get("name") or "").strip()
 if not workload:
     raise SystemExit("Error: Helm values are missing workload.name")
 deploy = json.loads(subprocess.check_output(
     ["kubectl", "-n", namespace, "get", "deploy", workload, "-o", "json"],
-    text=True,
+    universal_newlines=True,
 ))
 pod_spec = deploy["spec"]["template"]["spec"]
 if pod_spec.get("hostNetwork"):
@@ -922,12 +922,12 @@ import sys
 release, namespace, pod = sys.argv[1:4]
 values = json.loads(subprocess.check_output(
     ["helm", "get", "values", release, "-n", namespace, "-o", "json"],
-    text=True,
+    universal_newlines=True,
 ))
 expected = str((values.get("proxy") or {}).get("allowedHosts") or "")
 pod_data = json.loads(subprocess.check_output(
     ["kubectl", "-n", namespace, "get", "pod", pod, "-o", "json"],
-    text=True,
+    universal_newlines=True,
 ))
 container_env = {
     item.get("name"): item.get("value", "")
