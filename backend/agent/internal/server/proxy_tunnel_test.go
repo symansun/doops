@@ -10,6 +10,28 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+func TestProxyResourceKeyClassifiesOnlySafeMethodsAsQueries(t *testing.T) {
+	for _, test := range []struct {
+		method string
+		want   string
+	}{
+		{method: http.MethodGet, want: "query:proxy:route-1"},
+		{method: http.MethodHead, want: "query:proxy:route-1"},
+		{method: http.MethodOptions, want: "query:proxy:route-1"},
+		{method: http.MethodTrace, want: "query:proxy:route-1"},
+		{method: http.MethodPost, want: "target-mutation:dev/local"},
+		{method: http.MethodPut, want: "target-mutation:dev/local"},
+		{method: http.MethodPatch, want: "target-mutation:dev/local"},
+		{method: http.MethodDelete, want: "target-mutation:dev/local"},
+	} {
+		t.Run(test.method, func(t *testing.T) {
+			if got := proxyResourceKey("dev", "local", "route-1", test.method); got != test.want {
+				t.Fatalf("proxy resource = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestGatewayHTTPProxyUsesAgentReverseTunnelAndStreamsResponse(t *testing.T) {
 	var upstreamHost, forwardedHost string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

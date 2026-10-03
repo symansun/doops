@@ -75,10 +75,15 @@ To remove a stale local route, use `doops -session <s> remove --target <gateway-
 
 `doops targets` separates target-wide busy from normal per-session activity:
 
-- `busy=true` means the whole target is blocked by an exclusive operation or target queue, so new work may return `target busy`.
+- `busy=true` means the whole target is blocked by an exclusive operation or target queue; when target
+  queueing is enabled, conflicting mutations wait for the current workspace/resource operation
+  instead of consuming another execution slot.
 - `status=active` with `busy=false` means one or more sessions/resources are running, but other sessions can still use the same agent.
 - `resources` shows workspace locks such as `workspace:<session>`.
   Shell/SSH/bg and apply use a target mutation lock; a session is not a sandbox.
+- Public HTTP proxy requests are classified by method: `GET/HEAD/OPTIONS/TRACE` are read-only
+  queries; other methods use the target mutation lock and retain `outcome_unknown` protection
+  when the Agent disconnects before a terminal response.
 
 `capabilities --require structuredSSH` performs only the Gateway WebSocket initialize
 handshake. It succeeds only when the selected online Agent advertises the exact

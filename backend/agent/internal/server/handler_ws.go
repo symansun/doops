@@ -2642,16 +2642,13 @@ func waitCommandStreams(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Re
 		}()
 	}
 	commandDone := make(chan error, 1)
-	go func() {
-		wg.Wait()
-		commandDone <- cmd.Wait()
-	}()
+	go func() { commandDone <- cmd.Wait() }()
 	cmdErr := waitProcessGroup(ctx, cmd.Process.Pid, commandDone)
 	if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
 		_ = stdout.Close()
 		_ = stderr.Close()
-		wg.Wait()
 	}
+	wg.Wait()
 	if done != nil {
 		close(done)
 		<-heartbeatDone

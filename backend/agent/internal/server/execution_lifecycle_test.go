@@ -451,6 +451,38 @@ func TestExecutionLifecycleTargetMutationAllowsQueries(t *testing.T) {
 	lifecycleResponse(t, holderClient, 2, "")
 }
 
+func TestExecutionLifecycleTargetMutationQueuesBehindWorkspace(t *testing.T) {
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{
+		MaxQueuedPerTarget: 1,
+		TargetQueueTimeout: 5 * time.Second,
+	})
+	agent := f.agent(t, "queued-mutation-agent")
+	holderClient, mutationClient := f.client(t, f.admin), f.client(t, f.admin)
+
+	lifecycleSend(t, holderClient, 2, "doops_file_write", "workspace-holder", map[string]interface{}{
+		"path": "config.txt", "content": "held",
+	})
+	holder := agent.call(t, "doops_file_write", "workspace-holder")
+
+	lifecycleSend(t, mutationClient, 2, "doops_shell", "queued-mutation", map[string]interface{}{
+		"command": "kubectl apply -f release.yaml",
+	})
+	queued := f.operation(t, "queued-mutation", "waiting")
+	if queued.Resource != "target-mutation:dev/local" ||
+		len(queued.BlockedBy) != 1 {
+		t.Fatalf("target mutation was not queued behind workspace lock: %#v", queued)
+	}
+
+	agent.complete(t, holder, "")
+	lifecycleResponse(t, holderClient, 2, "")
+	mutation := agent.call(t, "doops_shell", "queued-mutation")
+	agent.complete(t, mutation, "")
+	lifecycleResponse(t, mutationClient, 2, "")
+	requireEventually(t, 3*time.Second, func() bool {
+		return len(f.hub.listActiveOperations()) == 0
+	})
+}
+
 func TestExecutionLifecycleAgentUpgradeIsExclusive(t *testing.T) {
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
 	agent := f.agent(t, "upgrade-agent")

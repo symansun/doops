@@ -152,7 +152,8 @@ description: |
 - 网站公网代理：管理员先在 Gateway 创建 `host -> cluster/instance -> upstream`
   路由；Agent 必须通过 Helm `proxy.allowedHosts` 配置精确上游 hostname（Chart 注入
   `DOOPS_PROXY_ALLOW_HOSTS`，默认拒绝全部）。当前只支持 HTTP/HTTPS 流式代理，
-  不支持 WebSocket 或裸 TCP，详见 `docs/DOOPS_GATEWAY_TUNNEL.md`。
+  不支持 WebSocket 或裸 TCP；`GET/HEAD/OPTIONS/TRACE` 按只读查询处理，其它 HTTP
+  方法按 target mutation 处理，详见 `docs/DOOPS_GATEWAY_TUNNEL.md`。
 - 不要在日志、终端输出、文档、提交记录里暴露完整 token。
 - 如果用户是在发账号、发 token、授权、查审计、清理审计、查看/取消 gateway active operations，要按 gateway 管理动作处理，不要混成普通 target 运维。
 - 同一 target 的结构化 `push/write/clean/read/pull` 按 workspace 互斥，不同 workspace

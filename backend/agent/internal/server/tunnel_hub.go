@@ -178,6 +178,7 @@ type GatewayAgent struct {
 	queueMu           sync.Mutex
 	queued            int
 	opsMu             sync.Mutex
+	stateChanged      chan struct{}
 	draining          bool
 	writers           int
 	exclusiveResource string
@@ -751,6 +752,7 @@ func newGatewayAgentSession(
 		activeBySession: make(map[string]*gatewayMessageQueue),
 		messageBudget:   messageBudget,
 		closed:          make(chan struct{}),
+		stateChanged:    make(chan struct{}),
 	}
 	agent.opSlot <- struct{}{}
 	return agent
@@ -1884,6 +1886,7 @@ func (a *GatewayAgent) release() {
 	default:
 	}
 	a.setBusy(false)
+	a.signalStateChange()
 }
 
 func (a *GatewayAgent) acquireActionLease(ctx context.Context, action GatewayAction, resourceKey string, maxQueued int, wait time.Duration) (*operationLease, error) {
@@ -1946,20 +1949,78 @@ func (a *GatewayAgent) releaseForAction(action GatewayAction, resourceKey string
 }
 
 func (a *GatewayAgent) acquireExclusive(ctx context.Context, resourceKey string, maxQueued int, wait time.Duration) error {
-	if err := a.acquire(ctx, maxQueued, wait); err != nil {
-		return err
-	}
-	a.opsMu.Lock()
-	querySafeMutation := strings.HasPrefix(resourceKey, "target-mutation:")
-	if a.draining || (querySafeMutation && len(a.resources) != 0) || (!querySafeMutation && a.readers != 0) {
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	queued := false
+	defer func() {
+		if !queued {
+			return
+		}
+		a.queueMu.Lock()
+		if a.queued > 0 {
+			a.queued--
+		}
+		a.queueMu.Unlock()
+	}()
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		a.opsMu.Lock()
+		querySafeMutation := strings.HasPrefix(resourceKey, "target-mutation:")
+		admissible := !a.draining &&
+			((querySafeMutation && len(a.resources) == 0) ||
+				(!querySafeMutation && a.readers == 0))
+		if admissible {
+			select {
+			case <-a.opSlot:
+				a.writers++
+				a.exclusiveResource = resourceKey
+				a.opsMu.Unlock()
+				if queued {
+					a.queueMu.Lock()
+					if a.queued > 0 {
+						a.queued--
+					}
+					a.queueMu.Unlock()
+					queued = false
+				}
+				a.setBusy(true)
+				return nil
+			default:
+			}
+		}
+		if a.stateChanged == nil {
+			a.stateChanged = make(chan struct{})
+		}
+		changed := a.stateChanged
 		a.opsMu.Unlock()
-		a.release()
-		return fmt.Errorf("target busy")
+
+		if !queued {
+			if maxQueued <= 0 {
+				return fmt.Errorf("target busy")
+			}
+			a.queueMu.Lock()
+			if a.queued >= maxQueued {
+				a.queueMu.Unlock()
+				return fmt.Errorf("target queue full")
+			}
+			a.queued++
+			a.queueMu.Unlock()
+			queued = true
+		}
+
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-a.closed:
+			return fmt.Errorf("target offline")
+		case <-timer.C:
+			return fmt.Errorf("target queue timeout")
+		}
 	}
-	a.writers++
-	a.exclusiveResource = resourceKey
-	a.opsMu.Unlock()
-	return nil
 }
 
 func (a *GatewayAgent) releaseExclusive() {
@@ -1995,6 +2056,7 @@ func (a *GatewayAgent) releaseReadOnly() {
 	if idle {
 		a.setBusy(false)
 	}
+	a.signalStateChange()
 }
 
 func (a *GatewayAgent) acquireResource(ctx context.Context, key string, maxQueued int, wait time.Duration) error {
@@ -2089,11 +2151,23 @@ func (a *GatewayAgent) releaseResource(key string) {
 	if idle {
 		a.setBusy(false)
 	}
+	a.signalStateChange()
+}
+
+func (a *GatewayAgent) signalStateChange() {
+	a.opsMu.Lock()
+	if a.stateChanged == nil {
+		a.stateChanged = make(chan struct{})
+	}
+	previous := a.stateChanged
+	a.stateChanged = make(chan struct{})
+	a.opsMu.Unlock()
+	close(previous)
 }
 
 func isConcurrentReadOnlyAction(action GatewayAction) bool {
 	switch action {
-	case ActionRead, ActionInfo, ActionCheck, ActionProxy:
+	case ActionRead, ActionInfo, ActionCheck:
 		return true
 	default:
 		return false
