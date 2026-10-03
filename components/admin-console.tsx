@@ -821,6 +821,7 @@ function OperationsView({ session }: { session: Session }) {
   const [rows, setRows] = useState<AdminOperation[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const [canceling, setCanceling] = useState<string[]>([])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -840,14 +841,19 @@ function OperationsView({ session }: { session: Session }) {
     return () => clearInterval(id)
   }, [load])
 
-  async function cancel(id: string) {
-    if (!window.confirm("确认取消该运行中操作？")) return
+  async function cancel(op: AdminOperation) {
+    if (canceling.includes(op.id) || (op.state !== "waiting" && op.state !== "running")) return
+    if (!window.confirm("确认请求取消该操作？远端终态仍需确认。")) return
     setError("")
+    setCanceling((ids) => [...ids, op.id])
     try {
-      await cancelOperation(session, id)
+      await cancelOperation(session, op.id)
+      setRows((items) => items.map((item) => item.id === op.id ? { ...item, state: "cancel_requested" } : item))
       await load()
     } catch (e) {
       setError((e as Error).message)
+    } finally {
+      setCanceling((ids) => ids.filter((id) => id !== op.id))
     }
   }
 
@@ -855,7 +861,7 @@ function OperationsView({ session }: { session: Session }) {
     <div>
       <Toolbar
         title="运行中操作"
-        desc="当前正在各实例上执行的任务（每 5 秒刷新）"
+        desc="各实例上的操作状态（每 5 秒刷新）"
         onRefresh={load}
         loading={loading}
       />
@@ -868,6 +874,7 @@ function OperationsView({ session }: { session: Session }) {
               <th className="px-3 py-2 font-medium">用户</th>
               <th className="px-3 py-2 font-medium">动作</th>
               <th className="px-3 py-2 font-medium">摘要</th>
+              <th className="px-3 py-2 font-medium">状态</th>
               <th className="px-3 py-2 font-medium">已运行</th>
               <th className="px-3 py-2 font-medium text-right">操作</th>
             </tr>
@@ -888,14 +895,16 @@ function OperationsView({ session }: { session: Session }) {
                 <td className="px-3 py-2.5 max-w-xs truncate font-mono text-xs text-muted-foreground">
                   {o.command_summary || o.kind}
                 </td>
+                <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-muted-foreground">{o.state}</td>
                 <td className="px-3 py-2.5 text-xs text-muted-foreground">{o.age_seconds}s</td>
                 <td className="px-3 py-2.5">
                   <div className="flex justify-end">
                     <button
-                      onClick={() => cancel(o.id)}
-                      className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-destructive transition-colors hover:bg-muted"
+                      onClick={() => cancel(o)}
+                      disabled={canceling.includes(o.id) || (o.state !== "waiting" && o.state !== "running")}
+                      className="flex items-center gap-1 whitespace-nowrap rounded-md border px-2 py-1 text-xs text-destructive transition-colors enabled:hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <BanIcon width={12} height={12} /> 取消
+                      <BanIcon width={12} height={12} /> 请求取消
                     </button>
                   </div>
                 </td>
@@ -903,7 +912,7 @@ function OperationsView({ session }: { session: Session }) {
             ))}
             {!rows.length && !loading && (
               <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
                   当前无运行中操作
                 </td>
               </tr>

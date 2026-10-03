@@ -48,8 +48,8 @@ async function proxy(req: Request, ctx: { params: Promise<{ path: string[] }> })
         { status: res.status },
       )
     }
-    return new Response(text || "{}", {
-      status: 200,
+    return new Response(res.status === 204 ? null : text || "{}", {
+      status: res.status,
       headers: { "Content-Type": "application/json" },
     })
   } catch (err) {

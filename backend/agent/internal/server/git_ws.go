@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -48,6 +47,9 @@ func (gw *Gateway) handleGitHTTPOverWS(ctx context.Context, reqID interface{}, p
 		RemoteAddr:    "doops-gateway-tunnel",
 		RequestURI:    u.RequestURI(),
 	}).WithContext(ctx)
+	if closer, ok := body.(io.ReadCloser); ok {
+		req.Body = closer
+	}
 	defer req.Body.Close()
 	req.Header.Del("Authorization")
 	req.Header.Del("X-Doops-Key")
@@ -58,11 +60,17 @@ func (gw *Gateway) handleGitHTTPOverWS(ctx context.Context, reqID interface{}, p
 			writeJSON(api.JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      reqID,
-				Error:   &api.RPCError{Code: -32603, Message: fmt.Sprintf("git handler panic: %v", recovered)},
+				Error:   &api.RPCError{Code: -32008, Message: errExecutionOutcomeUnknown.Error()},
 			})
 			return
 		}
 		if ctx.Err() != nil {
+			writeJSON(api.JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      reqID,
+				// Hook side effects may outlive local process-group cancellation.
+				Error: &api.RPCError{Code: -32008, Message: errExecutionOutcomeUnknown.Error()},
+			})
 			return
 		}
 		rw.finish()
@@ -71,11 +79,13 @@ func (gw *Gateway) handleGitHTTPOverWS(ctx context.Context, reqID interface{}, p
 }
 
 type wsGitResponseWriter struct {
-	id          interface{}
-	writeJSON   func(v interface{})
-	header      http.Header
-	wroteHeader bool
-	mu          sync.Mutex
+	id           interface{}
+	writeJSON    func(v interface{})
+	header       http.Header
+	wroteHeader  bool
+	statusCode   int
+	executionErr error
+	mu           sync.Mutex
 }
 
 func newWSGitResponseWriter(id interface{}, writeJSON func(v interface{})) *wsGitResponseWriter {
@@ -123,9 +133,22 @@ func (w *wsGitResponseWriter) Write(data []byte) (int, error) {
 
 func (w *wsGitResponseWriter) Flush() {}
 
+func (w *wsGitResponseWriter) gitExecutionFailed(err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.executionErr = err
+}
+
 func (w *wsGitResponseWriter) finish() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.executionErr != nil || w.statusCode >= http.StatusInternalServerError {
+		w.writeJSON(api.JSONRPCResponse{
+			JSONRPC: "2.0", ID: w.id,
+			Error: &api.RPCError{Code: -32008, Message: errExecutionOutcomeUnknown.Error()},
+		})
+		return
+	}
 	if !w.wroteHeader {
 		w.writeHeaderLocked(http.StatusOK)
 	}
@@ -147,6 +170,7 @@ func (w *wsGitResponseWriter) writeHeaderLocked(statusCode int) {
 		return
 	}
 	w.wroteHeader = true
+	w.statusCode = statusCode
 	w.writeJSON(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      w.id,

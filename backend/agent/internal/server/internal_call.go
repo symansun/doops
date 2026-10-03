@@ -3,8 +3,10 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/user/doops/agent/api"
 )
@@ -20,6 +22,20 @@ func withInternalCredentialLock(ctx context.Context, agent *GatewayAgent, resour
 	return context.WithValue(ctx, internalCredentialLockKey{}, internalCredentialLock{agent: agent, resourceKey: resourceKey})
 }
 
+type internalAuditAuthKey struct{}
+
+func contextWithInternalAuditAuth(ctx context.Context, auth TokenAuth) context.Context {
+	if strings.TrimSpace(auth.UserID) == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, internalAuditAuthKey{}, auth)
+}
+
+func internalAuditAuthFromContext(ctx context.Context) TokenAuth {
+	auth, _ := ctx.Value(internalAuditAuthKey{}).(TokenAuth)
+	return auth
+}
+
 // RunInternalToolCall 让 gateway 内部组件（如调度器）在服务端直接对某个在线 agent
 // 发起一次 tool call，并把流式输出 + 最终结果文本聚合返回。它复用了与客户端 RPC
 // 相同的目标串行/资源锁语义（acquireForAction），因此不会和用户操作互相踩踏。
@@ -29,7 +45,7 @@ func (h *GatewayHub) RunInternalToolCall(ctx context.Context, cluster, instance,
 	return h.client.RunInternalToolCall(ctx, cluster, instance, tool, args)
 }
 
-func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instance, tool string, args map[string]interface{}) (string, error) {
+func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instance, tool string, args map[string]interface{}) (output string, finalErr error) {
 	agent := h.registry.Get(cluster, instance)
 	if agent == nil {
 		return "", fmt.Errorf("target offline: %s/%s", cluster, instance)
@@ -46,6 +62,9 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 	if err := h.validateCommand(tool, rawArgs); err != nil {
 		return "", err
 	}
+	if requiresExecutionLifecycle(tool) && !agent.ExecutionLifecycle {
+		return "", fmt.Errorf("agent executionLifecycle protocol is required")
+	}
 	if action == ActionAgentUpgrade {
 		var upgrade agentUpgradeParams
 		if err := json.Unmarshal(rawArgs, &upgrade); err != nil {
@@ -56,20 +75,87 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 		}
 	}
 	resourceKey := resourceKeyForTool(action, tool, rawArgs, cluster, instance)
+	inherited := h.inheritsExecutionOwner(ctx, agent, resourceKey)
 	held, ownsLock := ctx.Value(internalCredentialLockKey{}).(internalCredentialLock)
+	auth := internalAuditAuthFromContext(ctx)
+	operationUserID := strings.TrimSpace(auth.UserID)
+	if operationUserID == "" {
+		operationUserID = "internal"
+	}
+	auditID, err := h.store.StartAudit(AuditEvent{
+		UserID: operationUserID, TokenID: auth.TokenID,
+		Cluster: cluster, Instance: instance, Action: action, Session: extractSession(rawArgs),
+		CommandSummary: "internal " + tool,
+	})
+	if err != nil {
+		return "", fmt.Errorf("execution_audit_unavailable")
+	}
+	opCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	opID := h.registerActiveOperation(GatewayActiveOperation{
+		AuditID: auditID, UserID: operationUserID, TokenID: auth.TokenID,
+		Cluster: cluster, Instance: instance, Action: action,
+		Session: extractSession(rawArgs), Resource: resourceKey, Kind: "internal",
+		CommandSummary: "internal " + tool,
+	}, cancel)
+	defer h.finishActiveOperation(opID)
 	if ownsLock && internalCredentialTool(tool) {
 		if held.agent != agent || held.resourceKey != resourceKey {
 			return "", fmt.Errorf("credential_target_lock_changed")
 		}
-	} else {
-		if err := agent.acquireForAction(ctx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout); err != nil {
+	} else if !inherited {
+		if err := agent.acquireForAction(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout); err != nil {
+			_ = h.store.FinishAudit(auditID, AuditFinish{Status: "blocked", Error: err.Error()})
 			return "", err
 		}
 		defer agent.releaseForAction(action, resourceKey)
 	}
+	dispatched := false
+	defer func() {
+		status, errMsg := "success", ""
+		if finalErr != nil {
+			status, errMsg = "error", sanitizeSecretText(finalErr.Error())
+			if errors.Is(finalErr, context.Canceled) {
+				status = "canceled"
+			}
+			if errors.Is(finalErr, errExecutionOutcomeUnknown) {
+				status = "blocked"
+				if dispatched {
+					status = "outcome_unknown"
+				}
+			}
+		}
+		if err := h.store.FinishAudit(auditID, AuditFinish{Status: status, Error: errMsg, EndedAt: time.Now().UTC()}); err != nil {
+			finalErr = fmt.Errorf("execution_audit_completion_failed: %w", err)
+		}
+	}()
+	if err := opCtx.Err(); err != nil {
+		return "", err
+	}
+	guarded := !isConcurrentReadOnlyAction(action) && !isConcurrentQuery(action, resourceKey)
+	if guarded {
+		if err := h.checkExecutionGuard(cluster, instance); err != nil {
+			return "", err
+		}
+	}
+	if !inherited {
+		releaseLimit, err := h.acquireOperationSlot(operationUserID)
+		if err != nil {
+			return "", err
+		}
+		defer releaseLimit()
+	}
+	h.markOperationRunning(opID)
+	opCtx = h.withExecutionOwner(opCtx, agent, resourceKey, opID)
+	if guarded {
+		if err := h.beginExecution(agent, opID, auditID); err != nil {
+			return "", err
+		}
+	}
+	dispatched = true
 
 	var out strings.Builder
-	relayErr := agent.relayToolCall(ctx, api.ToolCallParams{Name: tool, Arguments: rawArgs}, h.opts.OperationTimeout, func(msg gatewayWSMessage) error {
+	relayErr := agent.relayToolCall(opCtx, api.ToolCallParams{Name: tool, Arguments: rawArgs}, h.opts.OperationTimeout, func(msg gatewayWSMessage) error {
 		if method, _ := msg.Parsed["method"].(string); method == "notifications/message" {
 			if p, ok := msg.Parsed["params"].(map[string]interface{}); ok {
 				if chunk, ok := p["data"].(string); ok {

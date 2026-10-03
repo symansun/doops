@@ -1,136 +1,101 @@
-# 物理机 / 宿主机 / Bare-metal 接入指南
+---
+name: physical-host-access
+description: 通过已授权入口查看物理机硬件，明确容器、VM、SSH 与新安装的边界。
+scope: doops-operations
+---
 
-> 这是"doops 看不到物理机硬件"的真正原因与正确路径。doops 不是缺陷，
-> 它只能执行 **Agent 进程所在 OS 用户态** 的命令；Agent 跑在 Proxmox VM 内部，
-> 就看不到宿主 GPU/PCIe 设备。要看真硬件，必须让 Agent 直接跑在物理机/宿主机用户态。
+# 物理机 / 宿主机访问与硬件检查
 
-## 1. 为什么 doops 看不到物理机硬件
+查看硬件不要求安装新 Agent。先根据已有拓扑、资产记录和明确授权，选择已有
+物理机 target 或经 VM target 发起的 SSH；用户说“已进入宿主机”不是安装授权。
 
-- doops Agent 是以 **容器** 形式运行的（详见 `docs/CLUSTER_INSTALL_GUIDE.md`）。
-  容器看到的设备 = 容器被授予的设备 + 宿主机 OS 能看到的设备。
-- 当 Agent 跑在 Proxmox/ESXi/KVM/Xen 虚拟机内时，VM 透传什么设备，
-  容器就只能看到什么：
-  - 默认 Proxmox VM 看到的是 `virtio_gpu`、虚拟 CPU、虚拟磁盘，根本没有真显卡。
-  - 即便 Proxmox 配置了 PCIe passthrough / vGPU，VM 内只会看到宿主显式分配出来的设备。
-  - 真实物理机的 GPU、NVMe、PCIe 拓扑对 VM 是不可见的。
-- doops 不替代 Proxmox API / IPMI / iLO / Redfish 等带外管理面，
-  不能"反弹出"宿主机执行命令。
+## 1. 确认目标与可见范围
 
-> 这不是 SKILL 的缺陷，而是部署形态决定的边界。请按下面三条路径之一解决。
+- 核对 Agent 容器、所在节点（VM 或物理机）、hypervisor 与目标物理机的对应关系，
+  以及已授权的地址、账号、入口和只读检查范围。target 在线不代表它就是物理机。
+- 容器看到的是其权限与设备暴露范围内的信息；VM 只能看到虚拟设备或已分配的
+  passthrough / vGPU，不能据此推断宿主机完整硬件清单。
+- `nsenter` 只能进入当前内核中有权限访问的命名空间。VM 内即使能进入 VM 节点
+  命名空间，也不能跨越 hypervisor 进入物理机；容器有特权也不等于已进入宿主。
+- 不扫描未知网段、不猜地址或密码、不尝试越权入口。缺少映射、授权或可用入口时，
+  说明缺失事实并请资产负责人补充，不以自动安装或绕过认证代替。
 
-## 2. 三条真实接入路径（按推荐顺序）
+## 2. 使用已授权入口
 
-### 路径 A：在物理机/宿主机上跑 doops Agent 容器（最简、最推荐）
+以下 `<...>` 是需替换的占位符；`--target` 使用本地已配置的 target 名称，
+不是任意拼接的 `cluster/instance`。所有远程示例显式携带 session。
 
-适用：物理机、Proxmox 宿主机、ESXi 宿主机、bare-metal 服务器。
+### 已有物理机 target
 
-核心做法：把 Agent 容器直接部署在物理机/宿主机 OS 上，而不是部署在 VM 内。
-这样容器内 `lspci`、`nvidia-smi` 看到的就是物理机的真实硬件。
-完整步骤见 `docs/CLUSTER_INSTALL_GUIDE.md` 模式二（纯 Docker 单机环境）。
+确认该 target 对应目标物理机，再执行只读命令：
 
-步骤：
+```bash
+doops -session <s> targets --target <physical-target>
+doops -session <s> exec --target <physical-target> -- hostname
+doops -session <s> exec --target <physical-target> -- uname -a
+```
 
-1. 登录到物理机/宿主机 OS 用户态（不是 VM 内部）。
-   - 物理机：本机控制台、IPMI/iLO/Redfish 远程 console，或已经能 SSH 到它。
-   - Proxmox 宿主：从 Proxmox Web UI 点 "Shell"，或 SSH 到宿主 IP。
-2. 在宿主机上安装 `docker`（必须；如果是 K8s/K3s 集群走模式一）。
-3. 准备 Agent 启动参数：
-   - `gateway-url`：Gateway 外网入口。
-   - `cluster` / `instance`：唯一标识这台物理机，例如 `cluster=edu-baremetal`、
-     `instance=host-01`。
-   - `doagent-model-settings.json`：doagent 配置文件 Secret。
-4. 启动 Agent 容器（与 `CLUSTER_INSTALL_GUIDE.md` 模式二一致）：
-   ```bash
-   docker run -d \
-     --name doops-agent \
-     --net host --pid host --ipc host --privileged \
-     -v /run/containerd:/run/containerd \
-     -v /var/lib/containerd:/var/lib/containerd \
-     -v /var/lib/nerdctl:/var/lib/nerdctl \
-     -v /root/.kube/config:/root/.kube/config:ro \
-     -v /path/to/doagent-model-settings.json:/opt/doagent_config/settings.json:ro \
-     docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI> \
-     -gateway-url https://gateway.example.com \
-     -cluster <physical-cluster> \
-     -instance <physical-host-name>
-   ```
-5. 在已登录 gateway 的机器上执行：
-   ```bash
-   doops targets --target <gateway-target>
-   ```
-   列表里会多出 `<physical-cluster>/<physical-host-name>` 一行。
-6. 验证是物理机身份（不是 VM）：
-   ```bash
-   doops -session <s> exec --target <physical-cluster/physical-host> -- hostname -I
-   doops -session <s> exec --target <physical-cluster/physical-host> -- lspci | grep -i nvidia
-   doops -session <s> exec --target <physical-cluster/physical-host> -- nvidia-smi -L
-   ```
-   - `hostname -I` 必须是物理机/宿主机的真实 IP（与 VM 内 IP 不同）。
-   - `lspci` 看到真显卡（或 `nvidia-smi` 成功）才算成功。
+`targets` 按所选配置的精确 `cluster/instance` 过滤，不是列出整个 Gateway 的资产。
+`exec` 在 Agent 执行环境中运行；若仍是容器视角，不要将其 hostname 或设备列表
+当作完整宿主证据，也不要为了检查而自动增加特权、挂载或重装。
 
-### 路径 B：把已装 Agent 的物理机注册为独立 target
+### 经已有 VM target SSH 到物理机
 
-适用：物理机在远端机房、运维人员无法直接 console/SSH，但 Agent 在启动后
-能反向连到 gateway。
+这是已授权入口，不是要求先尝试安装的降级路径。前提是 VM Agent 到已知宿主 SSH
+地址可达、宿主允许该账号登录，且 Agent 执行环境已有合法认证材料和已核验主机密钥。
 
-步骤：
+```bash
+doops -session <s> ssh --target <vm-target> --host user@<physical-host> \
+  --option=BatchMode=yes --option=StrictHostKeyChecking=yes -- hostname
+```
 
-1. 在物理机/宿主机上按路径 A 装好 Agent 容器。
-2. Agent 启动时只要 `gateway-url` 可达，container 会主动反向注册到 gateway。
-   **不要**额外写 `doops admin target register；如果 gateway 上看不到这条 target，
-   先用 `doops targets --target <gateway-target>` 排查反向隧道（见
-   `docs/DOOPS_GATEWAY_TUNNEL.md`）。**
-3. 跨网络场景（物理机在外网/无法被 gateway 直连）：
-   - 保持 Agent 主动反向连出 gateway 即可。
-   - Gateway 端需要给该 cluster/instance 签发 agent registration 凭据。
-   - 不要把凭据写到 prompt / chat。
+`--target` 选择发起 SSH 的 Agent，`--host` 才是目标物理机；`--` 后按 argv 传递
+远端命令。需要管道或复合命令时，须确认目标有对应 shell，再显式传
+`bash -lc '<script>'`，不能用 `exec -- ssh ...` 绕过结构化 SSH。
 
-### 路径 C：借已注册 VM target 跳板 SSH 到物理机（fallback，不推荐长期）
+当前 CLI 的 `ssh` 没有 `--credential`，凭据系统也没有 generic SSH credential
+injection：不能宣称创建、写入或授权托管凭据后就能自动 SSH。
+`--option=IdentityFile=<agent-side-path>` 仅引用 Agent 执行环境中已有、已授权的
+文件，不会上传本机私钥或注入托管凭据。认证或主机密钥缺失时交由授权管理员配置，
+不要把密码、私钥或 token 写进参数、prompt、日志或文档，也不要关闭主机密钥校验。
 
-适用：物理机无法直接装 Agent 容器，但和某个已注册 VM Agent 在同一内网。
+已有并获授权的 Proxmox 管理面、IPMI / iLO / Redfish 或控制台可用于核对拓扑与硬件；
+按该入口实际权限和平台工具操作，不假设 DoOps 内置这些 API，也不自动扩大到写操作。
 
-步骤：
+## 3. 判读检查结果
 
-1. 在 VM Agent 上验证确实能 SSH 到物理机：
-   ```bash
-   doops -session <s> exec --target <vm-target> -- \
-     ssh -o StrictHostKeyChecking=accept-new user@<physical-ip> hostname -I
-   ```
-2. 物理机必须开启 `sshd` 并允许来自该 VM 的 key 登录。
-3. 凭据通过 `doops credential create / put / grant` 注入到 VM target，不要在命令行内联密码。
-4. 后续用 `doops ssh --target <vm-target> --host user@<physical-ip> -- <cmd> [args...]`
-   跳板执行；多层命令使用 `bash -lc '<script>'` 作为一个远端 argv。
+先将主机身份、OS、地址及可读的资产标识与拓扑记录交叉核对；单一 IP、hostname
+或 GPU 输出都不能独立证明已到物理机。以下是经 SSH 在 Linux 宿主检查工具的示例：
 
-限制：
+```bash
+doops -session <s> ssh --target <vm-target> --host user@<physical-host> \
+  --option=BatchMode=yes --option=StrictHostKeyChecking=yes -- sh -c 'command -v lspci'
+doops -session <s> ssh --target <vm-target> --host user@<physical-host> \
+  --option=BatchMode=yes --option=StrictHostKeyChecking=yes -- lspci -nn
+doops -session <s> ssh --target <vm-target> --host user@<physical-host> \
+  --option=BatchMode=yes --option=StrictHostKeyChecking=yes -- nvidia-smi -L
+```
 
-- 物理机必须有 sshd。
-- 跳板多一跳，命令延迟和审计复杂度都增加。
-- 验收仍然要 `lspci` 看到真显卡或 `nvidia-smi` 成功。
+按需逐条执行，不把示例当作必跑脚本：先确认工具可用，再检查相应设备；
+`nvidia-smi` 仅用于有相关工具和驱动的 NVIDIA 场景。其他 OS 使用已确认支持的只读工具。
 
-## 3. 三条路径都不行时的禁止动作
+- `command not found` 或 `command -v` 非零：工具不可用，不代表 GPU 不存在；
+  安装工具需要单独授权。
+- `lspci` 未列出 GPU：只说明当前视角未枚举到，应核对宿主身份、设备暴露和平台资产，
+  不能从 VM / 容器结果推断物理机无 GPU。
+- `nvidia-smi` 报错：区分工具、驱动、权限、设备可见性和硬件状态，不统称“无 GPU”；
+  它也不用于判断非 NVIDIA GPU。
+- 验收记录入口、target / host、session、身份依据、命令退出码和实际输出；
+  访问成功与硬件结论分别报告。无 GPU 的物理机也可以访问成功，证据不足则标明未确认。
 
-- 不要让 Agent 尝试通过 Proxmox API/IPMI 直接读写宿主硬件（除非有人手动配置并授权）。
-- 不要在 chat 里发密码 / SSH 私钥 / token。
-- 不要把物理机/宿主机误解为 K8s 节点：doops 列表里的 "node" = VM/物理机 OS，
-  不是 K8s Node；K8s Node 是否能看到 GPU 是另一回事（要装 NVIDIA Device Plugin）。
+## 4. 仅在明确要求新接入时安装
 
-## 4. 验证清单（机器人/AI 必跑）
+确需长期接入且获安装授权后，按 [集群接入指南](CLUSTER_INSTALL_GUIDE.md) 的
+Kubernetes / K3s Helm 流程执行，使用仓库 `backend/scripts/release-managed-agent.sh`
+与 `backend/deploy/helm/doops-agent`，准备已审查 values、授权 kubeconfig 和已核验
+CI 镜像 digest，并完成指南中的安装验收。新集群 bootstrap 不代表已完成 Gateway
+接管验收，也不提供自动回滚。
 
-- [ ] `hostname -I` 与目标物理机/宿主 IP 一致。
-- [ ] `lspci | grep -i nvidia` 看到真显卡（或 `nvidia-smi` 成功）。
-- [ ] `nvidia-smi -L` 与 BIOS 报告的 GPU 数量一致。
-- [ ] `doops targets --target <gateway>` 列表里出现该物理机 target，且 `busy=false`。
-- [ ] 当前 session 有审计 trail（`doops admin operations list --target <gateway>`）。
-
-## 5. 对话意图硬规则
-
-- 用户说 "可以进入物理机 / 已经在宿主 / 拿到宿主机 shell / IPMI 已通" 任意一项时，
-  立刻按路径 A 给 `docker run ... doops-agent@sha256:...`，
-  **不要纠缠 SSH 凭据、不要假设已有 agent**。
-- "如何进入物理机" 类型的提问，回答固定为本文路径 A 的启动步骤；
-  路径 B/C 仅在 A 不可行（远端机房 / 物理机无法装 Agent）时再讨论。
-- 当前对话上下文（edu-coder → Proxmox → 物理机）下，目标判定为：
-  - 物理机是否已暴露 SSH/IPMI/console？若是 → 路径 A。
-  - 物理机只暴露 Proxmox Web UI 8006？→ 仍走路径 A，先在宿主 OS 用户态跑 docker。
-  - 物理机全部资产都封闭在 VM 内、宿主无法登录？→ 这是真的"doops 够不到"，
-    必须升级给运维人员处理，不要在 Agent 内自创 fallback。
+本文不提供独立 Docker 高权限安装配方，不宣称 ESXi 可以直接运行 Linux Agent 容器。
+没有符合指南的运行环境时，先确认受支持的接入方案；不能为“查看硬件”擅自安装
+Docker、K3s、驱动或新 Agent。

@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 	"github.com/user/doops/agent/api"
@@ -344,8 +345,9 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 					"capabilities": map[string]interface{}{
 						"tools": map[string]interface{}{},
 						"protocols": map[string]interface{}{
-							"credentialPlan": credentialPlanCapability(),
-							"structuredSSH":  structuredSSHCapability(),
+							"credentialPlan":     credentialPlanCapability(),
+							"structuredSSH":      structuredSSHCapability(),
+							"executionLifecycle": executionLifecycleCapability(),
 						},
 					},
 				},
@@ -738,6 +740,10 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		}
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
+		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
+			writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+			return
+		}
 		if execCtx.Err() != nil {
 			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 			return
@@ -787,6 +793,10 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		}
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
+		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
+			writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+			return
+		}
 		if execCtx.Err() != nil {
 			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 			return
@@ -819,6 +829,10 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		}
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
+		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
+			writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+			return
+		}
 		if execCtx.Err() != nil {
 			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 			return
@@ -865,6 +879,10 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		}
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, false)
+		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
+			writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+			return
+		}
 		if execCtx.Err() != nil {
 			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 			return
@@ -922,12 +940,89 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			return
 		}
 		log.Printf("🚀 WS doops_bg: %s", args.Command)
+		if ctx.Err() != nil {
+			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
+			return
+		}
 		task, err := gw.submitBgTask(sessionID, args.Command, args.LogPath)
 		if err != nil {
 			writeJSON(buildErrorResponse(reqID, -32603, "Task failed: "+err.Error()))
+			return
+		}
+		defer task.cancel()
+		stopCancellation := context.AfterFunc(ctx, task.cancel)
+		defer stopCancellation()
+		pushProgress(rawNotification(fmt.Sprintf("Task submitted.\nTaskID: %s\nPID: %d\nLog: %s\n", task.TaskID, task.PID, task.LogPath)))
+		logReader, logErr := os.Open(task.LogPath)
+		if logErr != nil {
+			task.cancel()
+			<-task.done
 		} else {
-			resultText := fmt.Sprintf("Task submitted.\nTaskID: %s\nPID: %d\nLog: %s", task.TaskID, task.PID, task.LogPath)
-			writeJSON(buildSuccessResponse(reqID, resultText))
+			defer logReader.Close()
+			buffer := make([]byte, 32<<10)
+			pendingText := make([]byte, 0, 32<<10)
+			publishLog := func(data []byte, final bool) {
+				pendingText = append(pendingText, data...)
+				complete := len(pendingText)
+				if !final {
+					complete = 0
+					for complete < len(pendingText) && utf8.FullRune(pendingText[complete:]) {
+						_, size := utf8.DecodeRune(pendingText[complete:])
+						complete += size
+					}
+				}
+				if complete != 0 {
+					pushProgress(rawNotification(string(pendingText[:complete])))
+					pendingText = append(pendingText[:0], pendingText[complete:]...)
+				}
+			}
+			readLog := func() error {
+				for {
+					n, err := logReader.Read(buffer)
+					if n != 0 {
+						publishLog(buffer[:n], false)
+					}
+					if err == io.EOF {
+						return nil
+					}
+					if err != nil {
+						return err
+					}
+				}
+			}
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
+		streamLogs:
+			for {
+				if logErr = readLog(); logErr != nil {
+					task.cancel()
+					<-task.done
+					break
+				}
+				select {
+				case <-ticker.C:
+				case <-task.done:
+					logErr = readLog()
+					break streamLogs
+				case <-ctx.Done():
+					task.cancel()
+					<-task.done
+					logErr = readLog()
+					break streamLogs
+				}
+			}
+			publishLog(nil, true)
+		}
+		if errors.Is(task.err, errExecutionOutcomeUnknown) {
+			writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+		} else if ctx.Err() != nil {
+			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
+		} else if logErr != nil {
+			writeJSON(buildToolErrorResponse(reqID, "background_log_unavailable"))
+		} else if task.err != nil {
+			writeJSON(buildToolErrorResponse(reqID, fmt.Sprintf("Task failed.\nTaskID: %s\nExitCode: %d", task.TaskID, task.ExitCode)))
+		} else {
+			writeJSON(buildSuccessResponse(reqID, fmt.Sprintf("Task complete.\nTaskID: %s\nExitCode: %d", task.TaskID, task.ExitCode)))
 		}
 
 	case "doops_task_status":
@@ -1170,6 +1265,8 @@ type agentPromptExecutionContext struct {
 
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
 func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, model string, responseFormat string, execution agentPromptExecutionContext, pushProgress notificationSender, writeJSON func(v interface{})) {
+	ctx, cancelExecution := context.WithTimeout(ctx, 30*time.Minute)
+	defer cancelExecution()
 	log.Printf("🤖 WS Running doagent via ACP HTTP: session=%s structured=%t model=%s",
 		doopsSessionID, responseFormat == "json", model)
 
@@ -1221,7 +1318,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			}
 		}
 
-		createResp, err := doagentRPC(doagentURL, map[string]interface{}{
+		createResp, err := doagentRPCContext(ctx, doagentURL, map[string]interface{}{
 			"jsonrpc": "2.0",
 			"id":      "create-" + doopsSessionID,
 			"method":  "session/new",
@@ -1264,7 +1361,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		if !strings.Contains(targetModel, "/") {
 			targetModel = "openai/" + targetModel
 		}
-		if _, err := doagentRPC(doagentURL, map[string]interface{}{
+		if _, err := doagentRPCContext(ctx, doagentURL, map[string]interface{}{
 			"jsonrpc": "2.0",
 			"id":      "setmodel-" + doopsSessionID,
 			"method":  "session/setModel",
@@ -1278,7 +1375,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		}
 	}
 
-	if _, err := doagentRPC(doagentURL, map[string]interface{}{
+	if _, err := doagentRPCContext(ctx, doagentURL, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      "setmode-" + doopsSessionID,
 		"method":  "session/setMode",
@@ -1293,29 +1390,50 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	log.Printf("🧭 Session %s using native doagent mode %s", targetSessionID, execution.NativeMode)
 
 	// 启动 SSE 事件订阅（在 prompt 之前连接，防止丢失事件）
-	sseCtx, sseCancel := context.WithTimeout(ctx, 30*time.Minute)
-	defer sseCancel()
+	// Caller cancellation must not close the terminal-evidence subscription.
+	sseCtx, sseCancel := context.WithCancel(context.WithoutCancel(ctx))
 
-	sseDone := make(chan error, 1)
+	sseDone := make(chan struct{})
+	var sseErr error
+	var terminalSeen atomic.Bool
 	sseReady := make(chan error, 1)
 	turnIDReady := make(chan string, 1)
 	toolTraces := newDoagentToolTraceCollector(false)
 	toolTraces.bindSession(doopsSessionID)
 	go func() {
-		sseDone <- subscribeDoagentSSEWithCollectorReady(
+		defer close(sseDone)
+		sseErr = subscribeDoagentSSEWithCollectorReady(
 			sseCtx,
 			doagentURL,
 			targetSessionID,
 			pushProgress,
-			toolTraces.collect,
+			func(update map[string]interface{}) error {
+				if update["sessionUpdate"] == "turn_finished" {
+					switch update["status"] {
+					case "completed", "cancelled", "failed", "interrupted":
+						terminalSeen.Store(true)
+					}
+				}
+				return toolTraces.collect(update)
+			},
 			turnIDReady,
 			true,
 			responseFormat != "json",
 			sseReady,
 		)
 	}()
-	if err := <-sseReady; err != nil {
-		writeJSON(buildErrorResponse(reqID, -32603, "doagent_sse_unavailable"))
+	defer func() {
+		sseCancel()
+		<-sseDone
+	}()
+	select {
+	case err := <-sseReady:
+		if err != nil {
+			writeJSON(buildErrorResponse(reqID, -32603, "doagent_sse_unavailable"))
+			return
+		}
+	case <-ctx.Done():
+		writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 		return
 	}
 
@@ -1343,23 +1461,31 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		promptParams["response_format"] = "json"
 	}
 	promptParams["responseMode"] = "stream"
-	promptResponse, err := doagentRPC(doagentURL, map[string]interface{}{
+	if ctx.Err() != nil {
+		writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
+		return
+	}
+	promptResponse, err := doagentRPCContext(ctx, doagentURL, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      "prompt-" + doopsSessionID,
 		"method":  "session/prompt",
 		"params":  promptParams,
 	})
 	if err != nil {
-		sseCancel()
-		<-sseDone
-		writeJSON(buildErrorResponse(reqID, -32603, "doagent_prompt_failed"))
+		if doagentPromptRejected(promptResponse) {
+			writeJSON(buildErrorResponse(reqID, -32603, "doagent_prompt_failed"))
+			return
+		}
+		// A transport failure can hide an accepted prompt. Without its turn ID
+		// even a cancel ACK cannot prove which execution has stopped.
+		_ = cancelDoagentPrompt(ctx, doagentURL, targetSessionID, nil, &terminalSeen, doagentCancellationTimeout)
+		writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
 		return
 	}
 	turnID, err := doagentPromptTurnID(promptResponse)
 	if err != nil {
-		sseCancel()
-		<-sseDone
-		writeJSON(buildErrorResponse(reqID, -32603, "doagent_prompt_admission_invalid"))
+		_ = cancelDoagentPrompt(ctx, doagentURL, targetSessionID, nil, &terminalSeen, doagentCancellationTimeout)
+		writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
 		return
 	}
 	turnIDReady <- turnID
@@ -1367,7 +1493,30 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 
 	// 等待本轮权威 turn_finished 终态或错误。对于 apply，已经完成并验签的
 	// Helm 运行时结果是变更事实；最终模型轮失败不能把已完成的变更改判为失败。
-	sseErr := <-sseDone
+	select {
+	case <-ctx.Done():
+		if err := cancelDoagentPrompt(ctx, doagentURL, targetSessionID, sseDone, &terminalSeen, doagentCancellationTimeout); err != nil {
+			writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+		} else {
+			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
+		}
+		return
+	case <-sseDone:
+	}
+	if !terminalSeen.Load() {
+		_ = cancelDoagentPrompt(ctx, doagentURL, targetSessionID, sseDone, &terminalSeen, doagentCancellationTimeout)
+		writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+		return
+	}
+	if ctx.Err() != nil {
+		_ = cancelDoagentPrompt(ctx, doagentURL, targetSessionID, sseDone, &terminalSeen, doagentCancellationTimeout)
+		writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
+		return
+	}
+	if execution.RequireToolEvidence && toolTraces.hasUnresolvedMutation() {
+		writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+		return
+	}
 	verifiedMutation := execution.RequireToolEvidence && len(toolTraces.completed()) != 0
 	sseFailed := sseErr != nil && !errors.Is(sseErr, context.Canceled)
 	if sseFailed && !verifiedMutation {
@@ -1375,10 +1524,6 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			targetSessionID, sanitizeSecretText(sseErr.Error()))
 		pushProgress(errorNotification("[error] " + sanitizeSecretText(sseErr.Error())))
 		writeJSON(buildToolErrorResponse(reqID, "doagent_execution_failed"))
-		return
-	}
-	if ctx.Err() != nil {
-		writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 		return
 	}
 	if execution.RequireToolEvidence {
@@ -1818,13 +1963,22 @@ func tailFile(path string, max int) string {
 
 // doagentRPC 向本地 doagent ACP HTTP 服务发送 JSON-RPC 请求并返回响应。
 func doagentRPC(baseURL string, payload map[string]interface{}) (map[string]interface{}, error) {
+	return doagentRPCContext(context.Background(), baseURL, payload)
+}
+
+func doagentRPCContext(ctx context.Context, baseURL string, payload map[string]interface{}) (map[string]interface{}, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
 	client := &http.Client{Timeout: 10 * time.Minute}
-	resp, err := client.Post(baseURL+"/rpc", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/rpc", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("POST /rpc: %w", err)
 	}
@@ -1843,8 +1997,55 @@ func doagentRPC(baseURL string, payload map[string]interface{}) (map[string]inte
 	if rpcErr, ok := result["error"]; ok && rpcErr != nil {
 		return result, fmt.Errorf("RPC error: %v", rpcErr)
 	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("RPC HTTP status %d", resp.StatusCode)
+	}
 
 	return result, nil
+}
+
+const doagentCancellationTimeout = 10 * time.Second
+
+func cancelDoagentPrompt(ctx context.Context, baseURL, sessionID string, done <-chan struct{}, terminalSeen *atomic.Bool, timeout time.Duration) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer cancel()
+	// session/cancel acknowledges a request, not termination. Leave SSE open
+	// until the matching turn_finished, even if the ACK says not_running.
+	_, _ = doagentRPCContext(cleanupCtx, baseURL, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      "cancel-" + sessionID,
+		"method":  "session/cancel",
+		"params":  map[string]interface{}{"sessionId": sessionID},
+	})
+	if done != nil {
+		select {
+		case <-done:
+		case <-cleanupCtx.Done():
+		}
+	}
+	if terminalSeen.Load() {
+		return nil
+	}
+	return errExecutionOutcomeUnknown
+}
+
+func doagentPromptRejected(response map[string]interface{}) bool {
+	if response["result"] != nil {
+		return false
+	}
+	rpcErr, _ := response["error"].(map[string]interface{})
+	data, _ := rpcErr["data"].(map[string]interface{})
+	if data["failureClass"] == "admission_timeout" {
+		return false
+	}
+	// These errors are emitted before admission. Internal/timeout failures
+	// are deliberately not treated as proof that a prompt never started.
+	switch rpcErr["code"] {
+	case float64(-32602), float64(-32001), float64(-32003):
+		return true
+	default:
+		return false
+	}
 }
 
 func doagentPromptTurnID(response map[string]interface{}) (string, error) {
@@ -2051,6 +2252,9 @@ func subscribeDoagentSSEWithCollectorReady(
 
 			switch method {
 			case "session/update":
+				if eventSessionID, _ := params["sessionId"].(string); eventSessionID != "" && eventSessionID != sessionID {
+					continue
+				}
 				// session/update 包含不同类型的更新
 				sessionUpdate, _ := params["update"].(map[string]interface{})
 				updateType, _ := sessionUpdate["sessionUpdate"].(string)
@@ -2319,17 +2523,92 @@ func startRawCommand(ctx context.Context, cmd *exec.Cmd) (*exec.Cmd, io.ReadClos
 	if err := cmd.Start(); err != nil {
 		return nil, nil, nil, err
 	}
-	go func() {
-		<-ctx.Done()
-		if cmd.Process == nil {
-			return
-		}
-		pgid := -cmd.Process.Pid
-		_ = syscall.Kill(pgid, syscall.SIGTERM)
-		time.Sleep(2 * time.Second)
-		_ = syscall.Kill(pgid, syscall.SIGKILL)
-	}()
 	return cmd, stdoutPipe, stderrPipe, nil
+}
+
+// Wait for both the command and its process group. Cancellation escalation is
+// joined here, never left running after a terminal RPC response.
+const postLeaderDescendantGracePeriod = 10 * time.Second
+
+func waitProcessGroup(ctx context.Context, pid int, commandDone <-chan error) error {
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	ctxDone := ctx.Done()
+	var killTimer, cleanupTimer, postLeaderTimer *time.Timer
+	var killDeadline, cleanupDeadline, postLeaderDeadline <-chan time.Time
+	forcedCleanup := false
+	defer func() {
+		if killTimer != nil {
+			killTimer.Stop()
+		}
+		if cleanupTimer != nil {
+			cleanupTimer.Stop()
+		}
+		if postLeaderTimer != nil {
+			postLeaderTimer.Stop()
+		}
+	}()
+	var commandErr error
+	for {
+		if commandDone == nil {
+			// Only reap adopted descendants after exec.Cmd.Wait owns the leader's status.
+			for {
+				var status syscall.WaitStatus
+				reaped, _ := syscall.Wait4(-pid, &status, syscall.WNOHANG, nil)
+				if reaped <= 0 {
+					break
+				}
+			}
+			err := syscall.Kill(-pid, 0)
+			if errors.Is(err, syscall.ESRCH) {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				if forcedCleanup {
+					return fmt.Errorf("%w: detached process group was terminated", errExecutionOutcomeUnknown)
+				}
+				return commandErr
+			}
+			// A canceled group remains owned until absence is observed or the
+			// cleanup deadline expires, including a temporarily denied status probe.
+			if err != nil && !(ctx.Err() != nil && errors.Is(err, syscall.EPERM)) {
+				return fmt.Errorf("%w: process group status: %v", errExecutionOutcomeUnknown, err)
+			}
+		}
+		select {
+		case commandErr = <-commandDone:
+			commandDone = nil
+			if ctx.Err() == nil {
+				postLeaderTimer = time.NewTimer(postLeaderDescendantGracePeriod)
+				postLeaderDeadline = postLeaderTimer.C
+			}
+		case <-ctxDone:
+			ctxDone = nil
+			if postLeaderTimer != nil {
+				postLeaderTimer.Stop()
+				postLeaderDeadline = nil
+			}
+			_ = syscall.Kill(-pid, syscall.SIGTERM)
+			killTimer = time.NewTimer(2 * time.Second)
+			cleanupTimer = time.NewTimer(10 * time.Second)
+			killDeadline = killTimer.C
+			cleanupDeadline = cleanupTimer.C
+		case <-killDeadline:
+			killDeadline = nil
+			_ = syscall.Kill(-pid, syscall.SIGKILL)
+		case <-cleanupDeadline:
+			return fmt.Errorf("%w: process group did not terminate", errExecutionOutcomeUnknown)
+		case <-postLeaderDeadline:
+			postLeaderDeadline = nil
+			forcedCleanup = true
+			_ = syscall.Kill(-pid, syscall.SIGTERM)
+			killTimer = time.NewTimer(2 * time.Second)
+			cleanupTimer = time.NewTimer(10 * time.Second)
+			killDeadline = killTimer.C
+			cleanupDeadline = cleanupTimer.C
+		case <-ticker.C:
+		}
+	}
 }
 
 // waitCommandStreams drains both pipes before Wait so the final output is not lost.
@@ -2339,18 +2618,29 @@ func waitCommandStreams(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Re
 	go func() { defer wg.Done(); streamReader(stdout, push) }()
 	go func() { defer wg.Done(); streamReader(stderr, push) }()
 
-	var done chan struct{}
+	var done, heartbeatDone chan struct{}
 	if heartbeat {
 		done = make(chan struct{})
-		go slowProgressHeartbeat(done, push)
+		heartbeatDone = make(chan struct{})
+		go func() {
+			defer close(heartbeatDone)
+			slowProgressHeartbeat(done, push)
+		}()
 	}
-	wg.Wait()
-	cmdErr := cmd.Wait()
+	commandDone := make(chan error, 1)
+	go func() {
+		wg.Wait()
+		commandDone <- cmd.Wait()
+	}()
+	cmdErr := waitProcessGroup(ctx, cmd.Process.Pid, commandDone)
+	if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
+		_ = stdout.Close()
+		_ = stderr.Close()
+		wg.Wait()
+	}
 	if done != nil {
 		close(done)
-	}
-	if ctx.Err() != nil {
-		return ctx.Err()
+		<-heartbeatDone
 	}
 	return cmdErr
 }

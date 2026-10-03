@@ -108,7 +108,7 @@ func (f *adminAuditFixture) agent(t *testing.T, failed bool) {
 			}
 			switch msg["method"] {
 			case "initialize":
-				_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": map[string]any{"protocolVersion": "2024-11-05"}})
+				_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": gatewayTestInitializeResult("")})
 			case "tools/call":
 				f.calls.Add(1)
 				_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "method": "notifications/message", "params": map[string]any{"data": adminAuditCanary}})
@@ -160,7 +160,7 @@ func (f *adminAuditFixture) state(t *testing.T) string {
 
 func assertAdminAudit(t *testing.T, store *GatewayStore, auth TokenAuth, route, method, status string, code int) AuditEvent {
 	t.Helper()
-	events, err := store.ListAudit(1)
+	events, err := store.ListAuditFiltered(AuditFilter{Action: ActionAdmin, Limit: 1})
 	if err != nil || len(events) != 1 {
 		t.Fatalf("audit read: %v, %#v", err, events)
 	}
@@ -298,15 +298,33 @@ func TestAdminMutationRoutesAuditAndFailClosed(t *testing.T) {
 				t.Fatal(err)
 			}
 			response := credentialHTTPRequest(t, f.mux, f.adminToken, req.method, req.path, req.body)
-			if response.Code != http.StatusOK {
+			wantCode := http.StatusOK
+			if tc.name == "operation-cancel" {
+				wantCode = http.StatusAccepted
+			}
+			if response.Code != wantCode {
 				t.Fatalf("admin success HTTP %d: %s", response.Code, response.Body.String())
 			}
-			assertAdminAudit(t, f.store, f.adminAuth, req.path, req.method, "success", http.StatusOK)
+			assertAdminAudit(t, f.store, f.adminAuth, req.path, req.method, "success", wantCode)
 			var countAfter int
 			if err := f.store.db.QueryRow("SELECT COUNT(*) FROM audit_events").Scan(&countAfter); err != nil {
 				t.Fatal(err)
 			}
-			if countAfter != countBefore+1 {
+			wantCount := countBefore + 1
+			if tc.name == "repo-clone" {
+				wantCount++
+				internal, err := f.store.ListAuditFiltered(AuditFilter{Action: ActionPull, Session: "audit-test", Limit: 1})
+				if err != nil || len(internal) != 1 || internal[0].UserID != f.adminAuth.UserID ||
+					internal[0].TokenID != f.adminAuth.TokenID || internal[0].Status != "success" ||
+					internal[0].EndedAt.IsZero() {
+					t.Fatalf("internal execution audit lost actor or outcome: %#v, %v", internal, err)
+				}
+				data, _ := json.Marshal(internal[0])
+				if strings.Contains(string(data), adminAuditCanary) || internal[0].Tail != "" {
+					t.Fatal("internal execution audit leaked payload")
+				}
+			}
+			if countAfter != wantCount {
 				t.Fatalf("duplicate/missing audit: before %d after %d", countBefore, countAfter)
 			}
 			badPath := strings.Split(req.path, "?")[0] + "?id=999999&cluster=missing&instance=missing"
@@ -507,10 +525,14 @@ func TestTargetAdminMutationsRetainExactActions(t *testing.T) {
 		{"POST", "/v1/targets/unlock?cluster=dev&instance=node", nil},
 	} {
 		response := credentialHTTPRequest(t, f.mux, f.userToken, tc.method, tc.path, tc.body)
-		if response.Code != http.StatusOK {
+		wantCode := http.StatusOK
+		if strings.HasPrefix(tc.path, "/v1/admin/operations?") {
+			wantCode = http.StatusAccepted
+		}
+		if response.Code != wantCode {
 			t.Fatalf("target authority was removed: %s HTTP %d: %s", tc.path, response.Code, response.Body.String())
 		}
-		assertAdminAudit(t, f.store, auth, tc.path, tc.method, "success", http.StatusOK)
+		assertAdminAudit(t, f.store, auth, tc.path, tc.method, "success", wantCode)
 	}
 }
 

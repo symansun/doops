@@ -47,7 +47,7 @@ func TestK8SMCPStdioExposesReadAndHelmOnly(t *testing.T) {
 			if _, exists := properties["values"]; exists {
 				t.Fatalf("ambiguous legacy values field remains exposed: %#v", properties)
 			}
-			for _, requiredProperty := range []string{"value_files", "set_strings"} {
+			for _, requiredProperty := range []string{"asset_source", "value_files", "set_strings", "expected_image"} {
 				if _, exists := properties[requiredProperty]; !exists {
 					t.Fatalf("helm schema missing %q: %#v", requiredProperty, properties)
 				}
@@ -59,9 +59,18 @@ func TestK8SMCPStdioExposesReadAndHelmOnly(t *testing.T) {
 				!strings.Contains(description, "image.tag") {
 				t.Fatalf("helm set_strings scalar contract missing: %#v", setStrings)
 			}
+			assetSource, _ := properties["asset_source"].(map[string]interface{})
+			if !strings.Contains(assetSource["description"].(string), "workspace") {
+				t.Fatalf("helm asset source contract missing: %#v", assetSource)
+			}
 			valueFiles, _ := properties["value_files"].(map[string]interface{})
-			if !strings.Contains(valueFiles["description"].(string), "http") {
-				t.Fatalf("helm remote values contract missing: %#v", valueFiles)
+			if !strings.Contains(valueFiles["description"].(string), "values.yaml") ||
+				!strings.Contains(valueFiles["description"].(string), "http") {
+				t.Fatalf("helm values source contract missing: %#v", valueFiles)
+			}
+			expectedImage, _ := properties["expected_image"].(map[string]interface{})
+			if !strings.Contains(expectedImage["description"].(string), "repository@sha256") {
+				t.Fatalf("helm expected image contract missing: %#v", expectedImage)
 			}
 		}
 	}

@@ -38,7 +38,7 @@ type adminAuditInput struct {
 	Enabled   *bool    `json:"enabled"`
 }
 
-var adminAuditIDPattern = regexp.MustCompile(`^(usr_[a-f0-9]{24}|tok_[a-f0-9]{24}|repo_[a-f0-9]{24}|route_[a-f0-9]{24}|job_[a-f0-9]{20}|op-[0-9]+|[0-9]+)$`)
+var adminAuditIDPattern = regexp.MustCompile(`^(usr_[a-f0-9]{24}|tok_[a-f0-9]{24}|repo_[a-f0-9]{24}|route_[a-f0-9]{24}|job_[a-f0-9]{20}|op-[a-f0-9]{24}|audit-[1-9][0-9]*|[0-9]+)$`)
 var adminAuditLabelPattern = regexp.MustCompile(`^[a-zA-Z0-9_.*-]{1,128}$`)
 
 func adminAuditID(value string) string {
@@ -188,6 +188,7 @@ func (h *GatewayHub) auditAdminMutation(route string, next http.HandlerFunc) htt
 			}
 			http.Error(response, http.StatusText(status), status)
 		} else {
+			r = r.WithContext(contextWithInternalAuditAuth(r.Context(), auth))
 			next(response, r)
 		}
 		if response.status == 0 {
@@ -264,6 +265,9 @@ func (h *GatewayHub) authorizeAdminMutationTarget(userID, route string, r *http.
 	case "/v1/admin/repos/clone":
 		return check(cluster, instance, ActionPull)
 	case "/v1/targets/unlock", "/v1/admin/operations":
+		if route == "/v1/admin/operations" && r.Method == http.MethodPost && !h.store.UserIsPlatformAdmin(userID) {
+			return ErrUnauthorized
+		}
 		if cluster != "" && instance != "" {
 			return check(cluster, instance, ActionAdmin)
 		}

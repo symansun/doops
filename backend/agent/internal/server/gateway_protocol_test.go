@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/sosedoff/gitkit"
 	"github.com/user/doops/agent/api"
 )
 
@@ -618,9 +617,9 @@ func TestGatewayGitHTTPEndToEndPushAndFetch(t *testing.T) {
 	defer ts.Close()
 
 	agentGateway := NewGateway()
-	service := gitkit.New(gitkit.Config{Dir: t.TempDir(), AutoCreate: true, AutoHooks: true})
-	if err := service.Setup(); err != nil {
-		t.Fatalf("setup gitkit service: %v", err)
+	service, err := newGitHTTPHandler(t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("setup Git service: %v", err)
 	}
 	agentGateway.gitHandler = http.StripPrefix("/git", service)
 
@@ -1838,8 +1837,8 @@ func TestGatewayRelayTimeoutDoesNotCloseAgentConnection(t *testing.T) {
 		Name:      "doops_shell",
 		Arguments: json.RawMessage(`{"session_id":"timeout","command":"sleep"}`),
 	}, 25*time.Millisecond, func(gatewayWSMessage) error { return nil })
-	if err == nil || !strings.Contains(err.Error(), "operation timed out") {
-		t.Fatalf("expected operation timeout, got %v", err)
+	if !errors.Is(err, errExecutionOutcomeUnknown) {
+		t.Fatalf("timed-out Shell must retain external outcome uncertainty, got %v", err)
 	}
 	select {
 	case <-cancelSeen:
@@ -2076,7 +2075,7 @@ func TestGatewayRPCRejectsSecondConcurrentOperationForSameSessionAsBusy(t *testi
 	readUntilID(t, clientA, 2)
 }
 
-func TestGatewayRPCAllowsConcurrentShellSessionsForSameTarget(t *testing.T) {
+func TestGatewayRPCAllowsConcurrentStructuredWorkspacesForSameTarget(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -2084,8 +2083,8 @@ func TestGatewayRPCAllowsConcurrentShellSessionsForSameTarget(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
-		t.Fatalf("grant exec: %v", err)
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionWrite}}); err != nil {
+		t.Fatalf("grant write: %v", err)
 	}
 
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
@@ -2105,19 +2104,19 @@ func TestGatewayRPCAllowsConcurrentShellSessionsForSameTarget(t *testing.T) {
 	clientB := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
 	defer clientB.Close()
 
-	argsA, _ := json.Marshal(map[string]interface{}{"command": "sleep 30", "session_id": "session-a"})
-	argsB, _ := json.Marshal(map[string]interface{}{"command": "sleep 30", "session_id": "session-b"})
+	argsA, _ := json.Marshal(map[string]interface{}{"path": "config.txt", "content": "a", "session_id": "session-a"})
+	argsB, _ := json.Marshal(map[string]interface{}{"path": "config.txt", "content": "b", "session_id": "session-b"})
 	writeGatewayJSON(t, clientA, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      2,
 		"method":  "tools/call",
-		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(argsA)},
+		"params":  map[string]interface{}{"name": "doops_file_write", "arguments": json.RawMessage(argsA)},
 	})
 	writeGatewayJSON(t, clientB, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      2,
 		"method":  "tools/call",
-		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(argsB)},
+		"params":  map[string]interface{}{"name": "doops_file_write", "arguments": json.RawMessage(argsB)},
 	})
 
 	seen := map[string]bool{}
@@ -2126,7 +2125,7 @@ func TestGatewayRPCAllowsConcurrentShellSessionsForSameTarget(t *testing.T) {
 		case got := <-started:
 			seen[got] = true
 		case <-time.After(2 * time.Second):
-			t.Fatal("expected both shell sessions to reach the agent concurrently")
+			t.Fatal("expected both structured workspaces to reach the agent concurrently")
 		}
 	}
 	if !seen["session-a"] || !seen["session-b"] {
@@ -2348,13 +2347,13 @@ func TestGatewayRPCDoesNotFallbackSessionNotificationsWithoutSessionID(t *testin
 }
 
 func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
-	if got := gitResourceKey(ActionPush, "dev", "node", "push-a"); got != "target-mutation:dev/node" {
+	if got := gitResourceKey(ActionPush, "dev", "node", "push-a"); got != "workspace:push-a" {
 		t.Fatalf("git push resource key mismatch: %q", got)
 	}
 	if got := gitResourceKey(ActionPull, "dev", "node", "pull-a"); got != "workspace:pull-a" {
 		t.Fatalf("git pull resource key mismatch: %q", got)
 	}
-	if got := resourceKeyForTool(ActionExec, "doops_shell", json.RawMessage(`{"session_id":"exec-a","command":"sleep 30"}`), "dev", "node"); got != "session:exec-a" {
+	if got := resourceKeyForTool(ActionExec, "doops_shell", json.RawMessage(`{"session_id":"exec-a","command":"sleep 30"}`), "dev", "node"); got != "target-mutation:dev/node" {
 		t.Fatalf("exec resource key mismatch: %q", got)
 	}
 	if got := resourceKeyForTool(ActionExec, "doops_shell", json.RawMessage(`{"session_id":"exec-a","command":"kubectl apply -f app.yaml"}`), "dev", "node"); got != "target-mutation:dev/node" {
@@ -2374,7 +2373,7 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	if got := actionForTool("doops_agent_prompt", applyPromptArgs); got != ActionExec {
 		t.Fatalf("apply agent prompt must require exec permission: %q", got)
 	}
-	if got := resourceKeyForTool(ActionAsk, "doops_agent_prompt", genericPromptArgs, "dev", "node"); got != "session:ask-a" {
+	if got := resourceKeyForTool(ActionAsk, "doops_agent_prompt", genericPromptArgs, "dev", "node"); got != "workspace:ask-a" {
 		t.Fatalf("agent prompt session resource key mismatch: %q", got)
 	}
 	boundPromptArgs := json.RawMessage(
@@ -2387,7 +2386,7 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	if got := actionForTool("doops_agent_prompt", metadataArgs); got != ActionAsk {
 		t.Fatalf("metadata prompt must remain a read-only ask: %q", got)
 	}
-	if got := resourceKeyForTool(ActionPush, "doops_workspace_begin", json.RawMessage(`{"session_id":"push-a"}`), "dev", "node"); got != "target-mutation:dev/node" {
+	if got := resourceKeyForTool(ActionPush, "doops_workspace_begin", json.RawMessage(`{"session_id":"push-a"}`), "dev", "node"); got != "workspace:push-a" {
 		t.Fatalf("push resource key mismatch: %q", got)
 	}
 	if got := resourceKeyForTool(ActionPull, "doops_workspace_pull_begin", json.RawMessage(`{"session_id":"pull-a"}`), "dev", "node"); got != "workspace:pull-a" {
@@ -2396,14 +2395,14 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	if got := resourceKeyForTool(ActionWrite, "doops_file_write", json.RawMessage(`{"path":"/tmp/x"}`), "dev", "node"); got != "target-mutation:dev/node" {
 		t.Fatalf("write resource key mismatch: %q", got)
 	}
-	if got := resourceKeyForTool(ActionWrite, "doops_file_write", json.RawMessage(`{"session_id":"write-a","path":"config.yaml"}`), "dev", "node"); got != "target-mutation:dev/node" {
+	if got := resourceKeyForTool(ActionWrite, "doops_file_write", json.RawMessage(`{"session_id":"write-a","path":"config.yaml"}`), "dev", "node"); got != "workspace:write-a" {
 		t.Fatalf("session write resource key mismatch: %q", got)
 	}
 	if got := resourceKeyForTool(ActionAgentUpgrade, "doops_agent_upgrade", json.RawMessage(`{}`), "dev", "node"); got != "target:dev/node" {
 		t.Fatalf("upgrade resource key mismatch: %q", got)
 	}
 	k8sArgs := json.RawMessage(`{"operation":"rollout-status","namespace":"kz-ops","resource":"deployment/example"}`)
-	if got := resourceKeyForTool(ActionExec, "doops_k8s", k8sArgs, "dev", "node"); got != "k8s:kz-ops/deployment/example" {
+	if got := resourceKeyForTool(ActionExec, "doops_k8s", k8sArgs, "dev", "node"); got != "query:k8s:kz-ops/deployment/example" {
 		t.Fatalf("k8s resource key mismatch: %q", got)
 	}
 	k8sAliasArgs := json.RawMessage(`{"operation":"scale","namespace":"kz-ops","resource":"deploy/example"}`)
@@ -2725,13 +2724,16 @@ func TestGatewayGitClientCancelReleasesTarget(t *testing.T) {
 		t.Fatal("gateway did not cancel the agent-side git handler")
 	}
 
-	secondURL := gatewayGitTestURL(t, ts.URL, "dev", "local", "second", userToken.Plaintext) + "/info/refs?service=git-upload-pack"
+	requireEventually(t, time.Second, func() bool {
+		return len(gw.listActiveOperations()) == 0
+	})
+	secondURL := gatewayGitTestURL(t, ts.URL, "dev", "local", "cancelled", userToken.Plaintext) + "/info/refs?service=git-upload-pack"
 	resp, err := http.Get(secondURL)
 	if err != nil {
 		t.Fatalf("second git request: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusConflict {
+	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("target remained busy after cancelled git request: %s", body)
 	}
@@ -2742,7 +2744,7 @@ func TestGatewayGitClientCancelReleasesTarget(t *testing.T) {
 	}
 }
 
-func TestGatewayAdminUnlockClearsBusyTarget(t *testing.T) {
+func TestGatewayAdminUnlockRefusesActiveAndReconnectsIdleTarget(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -2779,13 +2781,38 @@ func TestGatewayAdminUnlockClearsBusyTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unlock request: %v", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("unlock failed with %d: %s", resp.StatusCode, body)
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if agent.snapshot().Busy {
-		t.Fatal("unlock should clear busy state immediately")
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(body), "active or queued operations") {
+		t.Fatalf("active unlock must refuse ownership removal, got %d: %s", resp.StatusCode, body)
+	}
+	if !agent.snapshot().Busy || gw.getAgent("dev", "local") != agent {
+		t.Fatal("rejected unlock removed active ownership or disconnected the agent")
+	}
+	agent.release()
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/v1/targets/unlock?cluster=dev&instance=local", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken.Plaintext)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unlocked targetUnlockResponse
+	err = json.NewDecoder(resp.Body).Decode(&unlocked)
+	resp.Body.Close()
+	if err != nil || resp.StatusCode != http.StatusOK || !unlocked.Disconnected ||
+		unlocked.Cluster != "dev" || unlocked.Instance != "local" {
+		t.Fatalf("idle unlock must request reconnect: HTTP %d, %#v, %v", resp.StatusCode, unlocked, err)
+	}
+	requireEventually(t, time.Second, func() bool { return gw.getAgent("dev", "local") == nil })
+	replacement := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
+	defer replacement.Close()
+	go serveFakeAgent(t, replacement)
+	waitForGatewayAgent(t, gw, "dev", "local")
+	if current := gw.getAgent("dev", "local"); current == agent || current.snapshot().Busy {
+		t.Fatal("idle unlock did not permit a clean replacement connection")
 	}
 }
 
@@ -2870,7 +2897,8 @@ func TestGatewayAdminOperationsListAndCancel(t *testing.T) {
 	defer agent.Close()
 	release := make(chan struct{})
 	defer close(release)
-	go serveBlockingFakeAgent(t, agent, release)
+	started := make(chan int, 1)
+	go serveConcurrentBlockingFakeAgent(t, agent, started, release)
 
 	client := dialGatewayRPCClient(t, ts.URL, adminToken.Plaintext, "dev", "local")
 	defer client.Close()
@@ -2882,6 +2910,11 @@ func TestGatewayAdminOperationsListAndCancel(t *testing.T) {
 		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(args)},
 	})
 
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("operation was not dispatched before cancellation")
+	}
 	var opID string
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -2922,15 +2955,26 @@ func TestGatewayAdminOperationsListAndCancel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cancel operation: %v", err)
 	}
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected cancel to succeed, got %d", resp.StatusCode)
+	var cancellation struct {
+		ID              string `json:"id"`
+		CancelRequested bool   `json:"cancel_requested"`
+		State           string `json:"state"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&cancellation)
+	resp.Body.Close()
+	if err != nil || resp.StatusCode != http.StatusAccepted || cancellation.ID != opID ||
+		!cancellation.CancelRequested || cancellation.State != "cancel_requested" {
+		t.Fatalf("expected cancellation acceptance, got HTTP %d: %#v, %v", resp.StatusCode, cancellation, err)
 	}
 	msg := readUntilID(t, client, 2)
 	errObj, _ := msg["error"].(map[string]interface{})
-	if !strings.Contains(fmt.Sprint(errObj["message"]), "operation canceled") {
-		t.Fatalf("expected canceled client response, got %#v", msg)
+	if errObj["code"] != float64(-32008) || errObj["message"] != "execution_outcome_unknown" {
+		t.Fatalf("cancellation must not certify remote effects stopped, got %#v", msg)
 	}
+	requireEventually(t, 2*time.Second, func() bool {
+		rows, err := store.UnresolvedExecutions("dev", "local")
+		return err == nil && len(rows) == 1 && rows[0].Status == "outcome_unknown"
+	})
 }
 
 func TestGatewayStaleAgentDisconnectDoesNotMarkReplacementOffline(t *testing.T) {
@@ -3049,9 +3093,9 @@ func newGatewayGitE2E(t *testing.T, targets []gatewayGitE2ETarget) (*GatewayHub,
 func startGatewayGitTestAgent(t *testing.T, hub *GatewayHub, serverURL, cluster, instance string) *websocket.Conn {
 	t.Helper()
 	agentGateway := NewGateway()
-	service := gitkit.New(gitkit.Config{Dir: t.TempDir(), AutoCreate: true, AutoHooks: true})
-	if err := service.Setup(); err != nil {
-		t.Fatalf("setup gitkit service: %v", err)
+	service, err := newGitHTTPHandler(t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("setup Git service: %v", err)
 	}
 	agentGateway.gitHandler = http.StripPrefix("/git", service)
 
@@ -3203,6 +3247,23 @@ func serveFakeAgent(t *testing.T, conn *websocket.Conn) {
 	serveFakeAgentWithRuntimeID(t, conn, "")
 }
 
+func gatewayTestInitializeResult(runtimeID string) map[string]interface{} {
+	return map[string]interface{}{
+		"protocolVersion": "2024-11-05",
+		"runtimeId":       runtimeID,
+		"capabilities": map[string]interface{}{
+			"protocols": map[string]interface{}{
+				"executionLifecycle": map[string]interface{}{
+					"schemaVersion":      "doops.sh/execution-lifecycle/v1",
+					"terminalResponse":   true,
+					"backgroundLifetime": true,
+					"promptCancellation": true,
+				},
+			},
+		},
+	}
+}
+
 func serveFakeAgentObservingPings(t *testing.T, conn *websocket.Conn, pings chan<- string) {
 	conn.SetPingHandler(func(payload string) error {
 		select {
@@ -3230,10 +3291,7 @@ func serveFakeAgentWithRuntimeID(t *testing.T, conn *websocket.Conn, runtimeID s
 			_ = conn.WriteJSON(map[string]interface{}{
 				"jsonrpc": "2.0",
 				"id":      msg["id"],
-				"result": map[string]interface{}{
-					"protocolVersion": "2024-11-05",
-					"runtimeId":       runtimeID,
-				},
+				"result":  gatewayTestInitializeResult(runtimeID),
 			})
 		case "tools/call":
 			params, _ := msg["params"].(map[string]interface{})
@@ -3261,15 +3319,10 @@ func serveApplyGateFakeAgent(conn *websocket.Conn, credentialProtocol bool) {
 		}
 		switch msg["method"] {
 		case "initialize":
-			result := map[string]interface{}{
-				"protocolVersion": "2024-11-05",
-			}
+			result := gatewayTestInitializeResult("")
 			if credentialProtocol {
-				result["capabilities"] = map[string]interface{}{
-					"protocols": map[string]interface{}{
-						"credentialPlan": credentialPlanCapability(),
-					},
-				}
+				protocols := result["capabilities"].(map[string]interface{})["protocols"].(map[string]interface{})
+				protocols["credentialPlan"] = credentialPlanCapability()
 			}
 			_ = conn.WriteJSON(map[string]interface{}{
 				"jsonrpc": "2.0",
@@ -3300,7 +3353,7 @@ func serveFakeGitAgent(t *testing.T, conn *websocket.Conn, requests chan<- strin
 			_ = conn.WriteJSON(map[string]interface{}{
 				"jsonrpc": "2.0",
 				"id":      msg["id"],
-				"result":  map[string]interface{}{"protocolVersion": "2024-11-05"},
+				"result":  gatewayTestInitializeResult(""),
 			})
 		case "git/http":
 			params, _ := msg["params"].(map[string]interface{})
@@ -3342,7 +3395,7 @@ func serveStallingGitAgent(t *testing.T, conn *websocket.Conn, requests chan<- i
 			_ = conn.WriteJSON(map[string]interface{}{
 				"jsonrpc": "2.0",
 				"id":      msg["id"],
-				"result":  map[string]interface{}{"protocolVersion": "2024-11-05"},
+				"result":  gatewayTestInitializeResult(""),
 			})
 		case "git/http":
 			count++
@@ -3371,6 +3424,15 @@ func serveStallingGitAgent(t *testing.T, conn *websocket.Conn, requests chan<- i
 				"result":  map[string]interface{}{"ok": true},
 			})
 		case "git/cancel":
+			params, _ := msg["params"].(map[string]interface{})
+			_ = conn.WriteJSON(map[string]interface{}{
+				"jsonrpc": "2.0", "id": msg["id"],
+				"result": map[string]interface{}{"canceled": true},
+			})
+			_ = conn.WriteJSON(map[string]interface{}{
+				"jsonrpc": "2.0", "id": params["id"],
+				"error": map[string]interface{}{"code": -32800, "message": "operation canceled"},
+			})
 			cancels <- 1
 		}
 	}
@@ -3379,6 +3441,10 @@ func serveStallingGitAgent(t *testing.T, conn *websocket.Conn, requests chan<- i
 func serveConcurrentBlockingFakeAgent(t *testing.T, conn *websocket.Conn, started chan<- int, release <-chan struct{}) {
 	t.Helper()
 	var writeMu sync.Mutex
+	var pendingMu sync.Mutex
+	pending := make(map[int64]chan struct{})
+	done := make(chan struct{})
+	defer close(done)
 	writeJSON := func(msg map[string]interface{}) {
 		writeMu.Lock()
 		defer writeMu.Unlock()
@@ -3394,19 +3460,50 @@ func serveConcurrentBlockingFakeAgent(t *testing.T, conn *websocket.Conn, starte
 			writeJSON(map[string]interface{}{
 				"jsonrpc": "2.0",
 				"id":      msg["id"],
-				"result":  map[string]interface{}{"protocolVersion": "2024-11-05"},
+				"result":  gatewayTestInitializeResult(""),
 			})
 		case "tools/call":
 			reqID := msg["id"]
-			started <- 1
+			id, _ := numericID(reqID)
+			canceled := make(chan struct{})
+			pendingMu.Lock()
+			pending[id] = canceled
+			pendingMu.Unlock()
+			if started != nil {
+				started <- 1
+			}
 			go func() {
-				<-release
-				writeJSON(map[string]interface{}{
+				response := map[string]interface{}{
 					"jsonrpc": "2.0",
 					"id":      reqID,
 					"result":  map[string]interface{}{"content": []map[string]interface{}{{"type": "text", "text": "ok"}}},
-				})
+				}
+				select {
+				case <-release:
+				case <-canceled:
+					delete(response, "result")
+					response["error"] = map[string]interface{}{"code": -32800, "message": "operation canceled"}
+				case <-done:
+					return
+				}
+				pendingMu.Lock()
+				delete(pending, id)
+				pendingMu.Unlock()
+				writeJSON(response)
 			}()
+		case "tools/cancel":
+			params, _ := msg["params"].(map[string]interface{})
+			id, _ := numericID(params["id"])
+			writeJSON(map[string]interface{}{
+				"jsonrpc": "2.0", "id": msg["id"],
+				"result": map[string]interface{}{"canceled": true},
+			})
+			pendingMu.Lock()
+			if canceled := pending[id]; canceled != nil {
+				delete(pending, id)
+				close(canceled)
+			}
+			pendingMu.Unlock()
 		}
 	}
 }
@@ -3429,7 +3526,7 @@ func serveSessionAwareBlockingFakeAgent(t *testing.T, conn *websocket.Conn, star
 			writeJSON(map[string]interface{}{
 				"jsonrpc": "2.0",
 				"id":      msg["id"],
-				"result":  map[string]interface{}{"protocolVersion": "2024-11-05"},
+				"result":  gatewayTestInitializeResult(""),
 			})
 		case "tools/call":
 			reqID := msg["id"]
@@ -3472,7 +3569,7 @@ func serveSessionOrphanNotificationFakeAgent(t *testing.T, conn *websocket.Conn,
 			writeJSON(map[string]interface{}{
 				"jsonrpc": "2.0",
 				"id":      msg["id"],
-				"result":  map[string]interface{}{"protocolVersion": "2024-11-05"},
+				"result":  gatewayTestInitializeResult(""),
 			})
 		case "tools/call":
 			reqID := msg["id"]
@@ -3510,9 +3607,18 @@ func serveTimeoutFakeAgent(t *testing.T, conn *websocket.Conn, cancelSeen chan<-
 			_ = conn.WriteJSON(map[string]interface{}{
 				"jsonrpc": "2.0",
 				"id":      msg["id"],
-				"result":  map[string]interface{}{"protocolVersion": "2024-11-05"},
+				"result":  gatewayTestInitializeResult(""),
 			})
 		case "tools/cancel":
+			params, _ := msg["params"].(map[string]interface{})
+			_ = conn.WriteJSON(map[string]interface{}{
+				"jsonrpc": "2.0", "id": msg["id"],
+				"result": map[string]interface{}{"canceled": true},
+			})
+			_ = conn.WriteJSON(map[string]interface{}{
+				"jsonrpc": "2.0", "id": params["id"],
+				"error": map[string]interface{}{"code": -32800, "message": "operation canceled"},
+			})
 			select {
 			case cancelSeen <- struct{}{}:
 			default:
@@ -3523,27 +3629,7 @@ func serveTimeoutFakeAgent(t *testing.T, conn *websocket.Conn, cancelSeen chan<-
 
 func serveBlockingFakeAgent(t *testing.T, conn *websocket.Conn, release <-chan struct{}) {
 	t.Helper()
-	for {
-		var msg map[string]interface{}
-		if err := conn.ReadJSON(&msg); err != nil {
-			return
-		}
-		switch msg["method"] {
-		case "initialize":
-			_ = conn.WriteJSON(map[string]interface{}{
-				"jsonrpc": "2.0",
-				"id":      msg["id"],
-				"result":  map[string]interface{}{"protocolVersion": "2024-11-05"},
-			})
-		case "tools/call":
-			<-release
-			_ = conn.WriteJSON(map[string]interface{}{
-				"jsonrpc": "2.0",
-				"id":      msg["id"],
-				"result":  map[string]interface{}{"content": []map[string]interface{}{{"type": "text", "text": "ok"}}},
-			})
-		}
-	}
+	serveConcurrentBlockingFakeAgent(t, conn, nil, release)
 }
 
 func writeGatewayJSON(t *testing.T, conn *websocket.Conn, msg map[string]interface{}) {

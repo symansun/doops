@@ -9,7 +9,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -30,19 +29,6 @@ type GatewayHubOptions struct {
 	MaxConcurrentPerUser    int
 	MaxQueuedPerTarget      int
 }
-
-var shellTargetMutationPattern = regexp.MustCompile(
-	`(?s)(` +
-		`\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b` +
-		`|\b(kubectl|oc)\b.*\b(apply|create|delete|edit|patch|replace|scale|cordon|uncordon|drain|taint)\b` +
-		`|\b(kubectl|oc)\b.*\b(set\s+image|rollout\s+(restart|undo))\b` +
-		`|\b(docker|nerdctl|podman|crictl)\b.*\b(restart|stop|rm|update|run)\b` +
-		`|\b(systemctl|service)\b.*\b(restart|stop|reload)\b` +
-		`|\b(rm|mv|cp|chmod|chown|mkdir|rmdir)\b` +
-		`|\b(restore|deploy|migrate|migration|upgrade|rollback)\b` +
-		`|>>?` +
-		`)`,
-)
 
 type GatewayHub struct {
 	store        *GatewayStore
@@ -95,6 +81,10 @@ func credentialPlanCapabilityCompatible(value interface{}) bool {
 
 type GatewayActiveOperation struct {
 	ID             string        `json:"id"`
+	AuditID        int64         `json:"audit_id,omitempty"`
+	State          string        `json:"state"`
+	Resource       string        `json:"resource,omitempty"`
+	BlockedBy      []string      `json:"blocked_by,omitempty"`
 	UserID         string        `json:"user_id"`
 	TokenID        string        `json:"token_id,omitempty"`
 	Cluster        string        `json:"cluster"`
@@ -110,6 +100,7 @@ type GatewayActiveOperation struct {
 type gatewayActiveOperation struct {
 	GatewayActiveOperation
 	cancel context.CancelFunc
+	agent  *GatewayAgent
 }
 
 type GatewayAgent struct {
@@ -122,6 +113,7 @@ type GatewayAgent struct {
 	RuntimeID              string    `json:"runtime_id,omitempty"`
 	CredentialPlanProtocol string    `json:"credential_plan_protocol,omitempty"`
 	StructuredSSH          bool      `json:"structured_ssh,omitempty"`
+	ExecutionLifecycle     bool      `json:"execution_lifecycle,omitempty"`
 	ConnectedAt            time.Time `json:"connected_at"`
 	LastSeen               time.Time `json:"last_seen"`
 	HeartbeatAt            time.Time `json:"heartbeat_at,omitempty"`
@@ -131,26 +123,28 @@ type GatewayAgent struct {
 	ActiveOps              int       `json:"active_ops,omitempty"`
 	QueuedOps              int       `json:"queued_ops,omitempty"`
 
-	stateMu          sync.RWMutex
-	conn             *websocket.Conn
-	writeMu          sync.Mutex
-	dataWriteState   websocketDataWriteState
-	heartbeatPayload string
-	lastProgressAck  time.Time
-	opSlot           chan struct{}
-	queueMu          sync.Mutex
-	queued           int
-	opsMu            sync.Mutex
-	writers          int
-	readers          int
-	resources        map[string]*agentResourceSlot
-	pendingMu        sync.Mutex
-	pending          map[int64]*gatewayMessageQueue
-	active           *gatewayMessageQueue
-	activeBySession  map[string]*gatewayMessageQueue
-	messageBudget    *gatewayMessageBudget
-	closed           chan struct{}
-	reqID            int64
+	stateMu           sync.RWMutex
+	conn              *websocket.Conn
+	writeMu           sync.Mutex
+	dataWriteState    websocketDataWriteState
+	heartbeatPayload  string
+	lastProgressAck   time.Time
+	opSlot            chan struct{}
+	queueMu           sync.Mutex
+	queued            int
+	opsMu             sync.Mutex
+	draining          bool
+	writers           int
+	exclusiveResource string
+	readers           int
+	resources         map[string]*agentResourceSlot
+	pendingMu         sync.Mutex
+	pending           map[int64]*gatewayMessageQueue
+	active            *gatewayMessageQueue
+	activeBySession   map[string]*gatewayMessageQueue
+	messageBudget     *gatewayMessageBudget
+	closed            chan struct{}
+	reqID             int64
 }
 
 type agentResourceSlot struct {
@@ -192,18 +186,22 @@ type gatewayMessageBudget struct {
 }
 
 type gatewayMessageQueue struct {
-	mu           sync.Mutex
-	items        []gatewayQueuedMessage
-	queuedBytes  int64
-	maxBytes     int64
-	budget       *gatewayMessageBudget
-	notify       chan struct{}
-	requestID    int64
-	cancelMethod string
-	cancelOnce   sync.Once
-	cancelDone   chan struct{}
-	closed       bool
-	err          error
+	mu              sync.Mutex
+	items           []gatewayQueuedMessage
+	queuedBytes     int64
+	maxBytes        int64
+	budget          *gatewayMessageBudget
+	notify          chan struct{}
+	requestID       int64
+	cancelMethod    string
+	cancelOnce      sync.Once
+	cancelDone      chan struct{}
+	terminal        chan struct{}
+	terminalOnce    sync.Once
+	terminalErr     error
+	terminalMessage gatewayWSMessage
+	closed          bool
+	err             error
 }
 
 func newGatewayMessageBudget(maxBytes int64) *gatewayMessageBudget {
@@ -243,6 +241,7 @@ func newGatewayMessageQueue(budget *gatewayMessageBudget, maxBytes int64, reques
 		requestID:    requestID,
 		cancelMethod: cancelMethod,
 		cancelDone:   make(chan struct{}),
+		terminal:     make(chan struct{}),
 	}
 }
 
@@ -454,6 +453,9 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	if err := store.RetireRunningUpgradeOperations(interruptedUpgradeRetiredReason); err != nil {
 		panic(err)
 	}
+	if err := store.RecoverInterruptedExecutions(); err != nil {
+		panic(fmt.Errorf("recover interrupted executions: %w", err))
+	}
 	return hub
 }
 
@@ -632,7 +634,23 @@ func (h *GatewayHub) HandleAdminOperations(w http.ResponseWriter, r *http.Reques
 	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSONHTTP(w, map[string]interface{}{"operations": h.listActiveOperations()})
+		ops := h.listActiveOperations()
+		unresolved, err := h.client.unresolvedExecutions("", "")
+		if err != nil {
+			http.Error(w, "execution_guard_unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		for _, event := range unresolved {
+			ops = append(ops, GatewayActiveOperation{
+				ID: fmt.Sprintf("audit-%d", event.ID), AuditID: event.ID, State: "outcome_unknown",
+				UserID: event.UserID, Cluster: event.Cluster, Instance: event.Instance,
+				Action: event.Action, Session: event.Session, CommandSummary: event.CommandSummary,
+				Kind: "unresolved", StartedAt: event.StartedAt, AgeSeconds: int64(time.Since(event.StartedAt).Seconds()),
+			})
+		}
+		writeJSONHTTP(w, map[string]interface{}{"operations": ops})
+	case http.MethodPost:
+		h.handleExecutionReconciliation(w, r, auth)
 	case http.MethodDelete:
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		if id == "" {
@@ -643,7 +661,9 @@ func (h *GatewayHub) HandleAdminOperations(w http.ResponseWriter, r *http.Reques
 			http.Error(w, "operation not found", http.StatusNotFound)
 			return
 		}
-		writeJSONHTTP(w, map[string]interface{}{"id": id, "canceled": true})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		writeJSONHTTP(w, map[string]interface{}{"id": id, "cancel_requested": true, "state": "cancel_requested"})
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	}
@@ -734,7 +754,14 @@ func (h *GatewayHub) HandleTargetUnlock(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, fmt.Sprintf("target offline: %s/%s", cluster, instance), http.StatusNotFound)
 		return
 	}
-	agent.forceUnlock()
+	if err := h.client.checkExecutionGuard(cluster, instance); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	if err := agent.forceUnlock(); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
 	writeJSONHTTP(w, targetUnlockResponse{Cluster: cluster, Instance: instance, Disconnected: true})
 }
 
@@ -929,6 +956,7 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAuth, cluster, instance string, req api.JSONRPCRequest, writeRaw func([]byte) error, writeJSON func(interface{}) error) error {
+	ctx = contextWithInternalAuditAuth(ctx, auth)
 	var params api.ToolCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		writeJSON(buildErrorResponse(req.ID, -32602, "invalid tools/call params"))
@@ -1043,13 +1071,13 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			return nil
 		}
 	}
-	releaseLimit, err := h.acquireOperationSlot(auth.UserID)
-	if err != nil {
-		finishAudit("rate_limited", err.Error(), "", 0)
-		writeJSON(buildErrorResponse(req.ID, -32006, err.Error()))
+	if requiresExecutionLifecycle(params.Name) && !agent.ExecutionLifecycle {
+		errMsg := "agent executionLifecycle protocol is required; upgrade the Agent before executing commands"
+		finishAudit("blocked", errMsg, "", 0)
+		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
 		return nil
 	}
-	defer releaseLimit()
+	var err error
 	var authorizedCredentials []authorizedCredentialMaterialization
 	if params.Name == "doops_agent_prompt" && len(promptArgs.CredentialRefs) != 0 {
 		authorizedCredentials, err = h.hub.planExplicitCredentialApply(
@@ -1065,7 +1093,10 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	}
 	opCtx, cancelOp := context.WithCancel(ctx)
 	defer cancelOp()
+	resourceKey := resourceKeyForTool(action, params.Name, params.Arguments, cluster, instance)
 	opID := h.registerActiveOperation(GatewayActiveOperation{
+		AuditID:        auditID,
+		Resource:       resourceKey,
 		UserID:         auth.UserID,
 		TokenID:        auth.TokenID,
 		Cluster:        cluster,
@@ -1082,7 +1113,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		h.hub.credentialMutationMu.Lock()
 		defer h.hub.credentialMutationMu.Unlock()
 	}
-	resourceKey := resourceKeyForTool(action, params.Name, params.Arguments, cluster, instance)
 	if err := agent.acquireForAction(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout); err != nil {
 		if errors.Is(err, context.Canceled) {
 			finishAudit("canceled", "operation canceled", "", 0)
@@ -1096,6 +1126,35 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	}
 	defer agent.releaseForAction(action, resourceKey)
 	opCtx = withInternalCredentialLock(opCtx, agent, resourceKey)
+	releaseLimit, err := h.acquireOperationSlot(auth.UserID)
+	if err != nil {
+		finishAudit("rate_limited", err.Error(), "", 0)
+		writeJSON(buildErrorResponse(req.ID, -32006, err.Error()))
+		return nil
+	}
+	defer releaseLimit()
+	if err := opCtx.Err(); err != nil {
+		finishAudit("canceled", "operation canceled before dispatch", "", 0)
+		writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled before dispatch"))
+		return nil
+	}
+	guarded := !isConcurrentReadOnlyAction(action) && !isConcurrentQuery(action, resourceKey)
+	if guarded {
+		if err := h.checkExecutionGuard(cluster, instance); err != nil {
+			finishAudit("blocked", err.Error(), "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32005, err.Error()))
+			return nil
+		}
+	}
+	h.markOperationRunning(opID)
+	opCtx = h.withExecutionOwner(opCtx, agent, resourceKey, opID)
+	if guarded {
+		if err := h.beginExecution(agent, opID, auditID); err != nil {
+			_ = finishAudit("blocked", err.Error(), "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32005, err.Error()))
+			return nil
+		}
+	}
 	var credentialPreparation credentialApplyPreparation
 	if len(authorizedCredentials) != 0 {
 		for index := range authorizedCredentials {
@@ -1175,7 +1234,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, errGatewayClientDisconnected) {
+		if errors.Is(err, errExecutionOutcomeUnknown) {
+			finalStatus = "outcome_unknown"
+			finalErr = errExecutionOutcomeUnknown.Error()
+			_ = writeJSON(buildErrorResponse(req.ID, -32008, finalErr))
+		} else if errors.Is(err, errGatewayClientDisconnected) {
 			finalStatus = "canceled"
 			finalErr = errGatewayClientDisconnected.Error()
 		} else if errors.Is(err, context.Canceled) {
@@ -1209,6 +1272,9 @@ func clientCapabilities(agent *GatewayAgent) map[string]interface{} {
 	protocols := map[string]interface{}{}
 	if agent != nil && agent.StructuredSSH {
 		protocols[structuredSSHProtocol] = structuredSSHCapability()
+	}
+	if agent != nil && agent.ExecutionLifecycle {
+		protocols[executionLifecycleProtocol] = executionLifecycleCapability()
 	}
 	capabilities := map[string]interface{}{
 		"tools": map[string]interface{}{},
@@ -1382,6 +1448,7 @@ func (a *GatewayAgent) applyInitializeResult(result map[string]interface{}) {
 		a.CredentialPlanProtocol = credentialPlanProtocolV2
 	}
 	a.StructuredSSH = structuredSSHCapabilityCompatible(protocols[structuredSSHProtocol])
+	a.ExecutionLifecycle = capabilityMatches(protocols[executionLifecycleProtocol], executionLifecycleCapability())
 }
 
 func (a *GatewayAgent) readLoop(lease, initialReadTimeout time.Duration) {
@@ -1420,6 +1487,7 @@ func (a *GatewayAgent) readLoop(lease, initialReadTimeout time.Duration) {
 			queue := a.pending[id]
 			a.pendingMu.Unlock()
 			if queue != nil {
+				queue.observeTerminal(msg)
 				if err := queue.enqueue(msg); err != nil && !errors.Is(err, errGatewayMessageQueueClosed) {
 					log.Printf("[gateway] agent message queue failed: %s id=%d: %v", a.Key, id, err)
 					a.cancelPending(queue, true)
@@ -1471,7 +1539,7 @@ func (a *GatewayAgent) cancelPending(queue *gatewayMessageQueue, async bool) <-c
 		if err := a.writeJSON(map[string]interface{}{
 			"jsonrpc": "2.0",
 			"method":  queue.cancelMethod,
-			"id":      queue.requestID,
+			"id":      fmt.Sprintf("cancel-%d", queue.requestID),
 			"params":  map[string]interface{}{"id": queue.requestID},
 		}); err != nil {
 			log.Printf("[gateway] cancel failed: %s id=%d method=%s: %v", a.Key, queue.requestID, queue.cancelMethod, err)
@@ -1487,14 +1555,22 @@ func (a *GatewayAgent) cancelPending(queue *gatewayMessageQueue, async bool) <-c
 	return queue.cancelDone
 }
 
-func (a *GatewayAgent) waitPendingCancel(queue *gatewayMessageQueue) {
-	done := a.cancelPending(queue, false)
-	if done == nil {
-		return
-	}
+func (a *GatewayAgent) waitPendingCancel(queue *gatewayMessageQueue) error {
 	select {
-	case <-done:
+	case <-queue.terminal:
+		return queue.terminalErr
+	default:
+	}
+	a.cancelPending(queue, true)
+	timer := time.NewTimer(executionCancellationTimeout)
+	defer timer.Stop()
+	select {
+	case <-queue.terminal:
+		return queue.terminalErr
 	case <-a.closed:
+		return errExecutionOutcomeUnknown
+	case <-timer.C:
+		return errExecutionOutcomeUnknown
 	}
 }
 
@@ -1547,23 +1623,38 @@ func (a *GatewayAgent) heartbeat(payload string) {
 }
 
 func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallParams, timeout time.Duration, forward func(gatewayWSMessage) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	id := atomic.AddInt64(&a.reqID, 1)
 	ch := a.registerPending(id, "tools/cancel")
 	defer a.unregisterPending(id)
+	uncertainIfInterrupted := interruptionNeedsReconciliation(params.Name, params.Arguments)
+	cancelAndWait := func() error {
+		if err := a.waitPendingCancel(ch); err != nil {
+			return err
+		}
+		// Local termination cannot fence a remote controller or detached process.
+		if uncertainIfInterrupted {
+			return errExecutionOutcomeUnknown
+		}
+		return nil
+	}
 	sessionID := extractSession(params.Arguments)
+	routeNotifications := params.Name != "doops_task_status"
 	a.pendingMu.Lock()
-	if sessionID != "" {
+	if routeNotifications && sessionID != "" {
 		a.activeBySession[sessionID] = ch
-	} else {
+	} else if routeNotifications {
 		a.active = ch
 	}
 	a.pendingMu.Unlock()
 	defer func() {
 		a.pendingMu.Lock()
-		if sessionID == "" && a.active == ch {
+		if routeNotifications && sessionID == "" && a.active == ch {
 			a.active = nil
 		}
-		if sessionID != "" && a.activeBySession[sessionID] == ch {
+		if routeNotifications && sessionID != "" && a.activeBySession[sessionID] == ch {
 			delete(a.activeBySession, sessionID)
 		}
 		a.pendingMu.Unlock()
@@ -1578,7 +1669,7 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 			"arguments": params.Arguments,
 		},
 	}); err != nil {
-		return err
+		return fmt.Errorf("%w: dispatch failed: %v", errExecutionOutcomeUnknown, err)
 	}
 
 	timer := time.NewTimer(timeout)
@@ -1586,13 +1677,21 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 	var forwardErr error
 	for {
 		if msg, ok, queueErr := ch.dequeue(); queueErr != nil {
-			a.waitPendingCancel(ch)
+			if err := cancelAndWait(); err != nil {
+				return err
+			}
 			return queueErr
 		} else if ok {
 			if msg.Parsed == nil {
 				continue
 			}
 			if _, ok := msg.Parsed["id"]; ok {
+				if executionResponseUnknown(msg.Parsed) || remoteMutationFailed(params.Name, params.Arguments, msg.Parsed) {
+					return errExecutionOutcomeUnknown
+				}
+				if uncertainIfInterrupted && (ctx.Err() != nil || executionResponseCanceled(msg.Parsed)) {
+					return errExecutionOutcomeUnknown
+				}
 				if forwardErr == nil {
 					if err := forward(msg); err != nil {
 						forwardErr = err
@@ -1610,14 +1709,35 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 
 		select {
 		case <-ctx.Done():
-			a.waitPendingCancel(ch)
+			if err := cancelAndWait(); err != nil {
+				return err
+			}
 			return ctx.Err()
 		case <-ch.notify:
 		case <-timer.C:
-			a.waitPendingCancel(ch)
+			if err := cancelAndWait(); err != nil {
+				return err
+			}
 			return fmt.Errorf("operation timed out")
 		case <-a.closed:
-			return errGatewayAgentDisconnected
+			select {
+			case <-ch.terminal:
+				if ch.terminalErr != nil {
+					return ch.terminalErr
+				}
+				if remoteMutationFailed(params.Name, params.Arguments, ch.terminalMessage.Parsed) {
+					return errExecutionOutcomeUnknown
+				}
+				if uncertainIfInterrupted && (ctx.Err() != nil || executionResponseCanceled(ch.terminalMessage.Parsed)) {
+					return errExecutionOutcomeUnknown
+				}
+				if forwardErr != nil {
+					return forwardErr
+				}
+				return forward(ch.terminalMessage)
+			default:
+				return errExecutionOutcomeUnknown
+			}
 		}
 	}
 }
@@ -1693,17 +1813,27 @@ func (a *GatewayAgent) release() {
 }
 
 func (a *GatewayAgent) acquireForAction(ctx context.Context, action GatewayAction, resourceKey string, maxQueued int, wait time.Duration) error {
-	if isConcurrentReadOnlyAction(action) {
+	if isExclusiveOperation(action, resourceKey) {
+		return a.acquireExclusive(ctx, resourceKey, maxQueued, wait)
+	}
+	if isConcurrentQuery(action, resourceKey) {
 		return a.acquireReadOnly()
 	}
 	if resourceKey != "" {
 		return a.acquireResource(ctx, resourceKey, maxQueued, wait)
 	}
-	return a.acquireExclusive(ctx, maxQueued, wait)
+	if isConcurrentReadOnlyAction(action) {
+		return a.acquireReadOnly()
+	}
+	return a.acquireExclusive(ctx, resourceKey, maxQueued, wait)
 }
 
 func (a *GatewayAgent) releaseForAction(action GatewayAction, resourceKey string) {
-	if isConcurrentReadOnlyAction(action) {
+	if isExclusiveOperation(action, resourceKey) {
+		a.releaseExclusive()
+		return
+	}
+	if isConcurrentQuery(action, resourceKey) {
 		a.releaseReadOnly()
 		return
 	}
@@ -1711,15 +1841,26 @@ func (a *GatewayAgent) releaseForAction(action GatewayAction, resourceKey string
 		a.releaseResource(resourceKey)
 		return
 	}
+	if isConcurrentReadOnlyAction(action) {
+		a.releaseReadOnly()
+		return
+	}
 	a.releaseExclusive()
 }
 
-func (a *GatewayAgent) acquireExclusive(ctx context.Context, maxQueued int, wait time.Duration) error {
+func (a *GatewayAgent) acquireExclusive(ctx context.Context, resourceKey string, maxQueued int, wait time.Duration) error {
 	if err := a.acquire(ctx, maxQueued, wait); err != nil {
 		return err
 	}
 	a.opsMu.Lock()
+	querySafeMutation := strings.HasPrefix(resourceKey, "target-mutation:")
+	if a.draining || (querySafeMutation && len(a.resources) != 0) || (!querySafeMutation && a.readers != 0) {
+		a.opsMu.Unlock()
+		a.release()
+		return fmt.Errorf("target busy")
+	}
 	a.writers++
+	a.exclusiveResource = resourceKey
 	a.opsMu.Unlock()
 	return nil
 }
@@ -1729,13 +1870,15 @@ func (a *GatewayAgent) releaseExclusive() {
 	if a.writers > 0 {
 		a.writers--
 	}
+	a.exclusiveResource = ""
 	a.opsMu.Unlock()
 	a.release()
 }
 
 func (a *GatewayAgent) acquireReadOnly() error {
 	a.opsMu.Lock()
-	if a.writers > 0 || len(a.opSlot) == 0 {
+	querySafeMutation := strings.HasPrefix(a.exclusiveResource, "target-mutation:")
+	if a.draining || (!querySafeMutation && (a.writers > 0 || len(a.opSlot) == 0)) {
 		a.opsMu.Unlock()
 		return fmt.Errorf("target busy")
 	}
@@ -1758,8 +1901,11 @@ func (a *GatewayAgent) releaseReadOnly() {
 }
 
 func (a *GatewayAgent) acquireResource(ctx context.Context, key string, maxQueued int, wait time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	a.opsMu.Lock()
-	if a.writers > 0 || len(a.opSlot) == 0 {
+	if a.draining || a.writers > 0 || len(a.opSlot) == 0 {
 		a.opsMu.Unlock()
 		return fmt.Errorf("target busy")
 	}
@@ -1792,6 +1938,9 @@ func (a *GatewayAgent) acquireResource(ctx context.Context, key string, maxQueue
 		if slot.queued > 0 {
 			slot.queued--
 		}
+		if slot.queued == 0 && len(slot.slot) == 1 && a.resources[key] == slot {
+			delete(a.resources, key)
+		}
 		a.opsMu.Unlock()
 	}()
 
@@ -1800,6 +1949,16 @@ func (a *GatewayAgent) acquireResource(ctx context.Context, key string, maxQueue
 	select {
 	case <-slot.slot:
 		a.opsMu.Lock()
+		if err := ctx.Err(); err != nil {
+			slot.slot <- struct{}{}
+			a.opsMu.Unlock()
+			return err
+		}
+		if a.draining || a.writers > 0 || len(a.opSlot) == 0 {
+			slot.slot <- struct{}{}
+			a.opsMu.Unlock()
+			return fmt.Errorf("target busy")
+		}
 		a.readers++
 		a.opsMu.Unlock()
 		a.setBusy(true)
@@ -1844,32 +2003,29 @@ func isConcurrentReadOnlyAction(action GatewayAction) bool {
 	}
 }
 
-func (a *GatewayAgent) forceUnlock() {
-	a.pendingMu.Lock()
-	queues := make(map[*gatewayMessageQueue]struct{}, len(a.pending)+len(a.activeBySession)+1)
-	for id, queue := range a.pending {
-		queues[queue] = struct{}{}
-		delete(a.pending, id)
-	}
-	if a.active != nil {
-		queues[a.active] = struct{}{}
-	}
-	a.active = nil
-	for sessionID, queue := range a.activeBySession {
-		queues[queue] = struct{}{}
-		delete(a.activeBySession, sessionID)
-	}
-	a.pendingMu.Unlock()
-	for queue := range queues {
-		queue.close()
-	}
+func isConcurrentQuery(action GatewayAction, resourceKey string) bool {
+	return (isConcurrentReadOnlyAction(action) && action != ActionRead) ||
+		strings.HasPrefix(resourceKey, "query:")
+}
+
+func isExclusiveOperation(action GatewayAction, resourceKey string) bool {
+	return action == ActionAgentUpgrade || strings.HasPrefix(resourceKey, "target-mutation:") ||
+		(resourceKey == "" && !isConcurrentReadOnlyAction(action))
+}
+
+func (a *GatewayAgent) forceUnlock() error {
 	a.opsMu.Lock()
-	a.writers = 0
-	a.readers = 0
-	a.resources = make(map[string]*agentResourceSlot)
-	a.opsMu.Unlock()
-	a.release()
-	_ = a.conn.Close()
+	defer a.opsMu.Unlock()
+	a.queueMu.Lock()
+	defer a.queueMu.Unlock()
+	a.pendingMu.Lock()
+	defer a.pendingMu.Unlock()
+	if a.writers != 0 || a.readers != 0 || len(a.resources) != 0 ||
+		len(a.opSlot) == 0 || a.queued != 0 || len(a.pending) != 0 {
+		return fmt.Errorf("target has active or queued operations; request operation cancellation and wait for terminal evidence")
+	}
+	a.draining = true
+	return a.conn.Close()
 }
 
 func (a *GatewayAgent) setBusy(busy bool) {
@@ -2029,49 +2185,45 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 		if tool == "doops_agent_prompt" && extractStringArg(args, "operation") == "apply" {
 			return targetMutation
 		}
-		if tool == "doops_ssh" {
-			return targetMutation
-		}
-		if tool == "doops_shell" || tool == "doops_bg" {
-			if shellCommandRequiresTargetMutation(extractStringArg(args, "command")) {
-				return targetMutation
-			}
-			if sessionID := extractSession(args); sessionID != "" {
-				return "session:" + sessionID
-			}
+		if tool == "doops_shell" || tool == "doops_bg" || tool == "doops_ssh" {
+			// A session selects a workspace, not an OS or remote-resource sandbox.
 			return targetMutation
 		}
 		if tool == "doops_task_status" {
-			if sessionID := extractSession(args); sessionID != "" {
-				return "session:" + sessionID
-			}
-			return "target:" + cluster + "/" + instance
+			return "query:task:" + extractStringArg(args, "task_id")
 		}
 		if tool == "doops_k8s" {
-			if gatewayK8SMutation(extractStringArg(args, "operation")) {
+			if !gatewayK8SReadOnly(extractStringArg(args, "operation")) {
 				return targetMutation
 			}
 			if resource := extractStringArg(args, "resource"); resource != "" {
-				return "k8s:" + extractStringArg(args, "namespace") + "/" + canonicalK8SResource(resource)
+				return "query:k8s:" + extractStringArg(args, "namespace") + "/" + canonicalK8SResource(resource)
 			}
 			if name := extractStringArg(args, "name"); name != "" {
-				return "k8s:" + extractStringArg(args, "namespace") + "/" + extractStringArg(args, "kind") + "/" + name
+				return "query:k8s:" + extractStringArg(args, "namespace") + "/" + extractStringArg(args, "kind") + "/" + name
 			}
-			return "target:" + cluster + "/" + instance
+			return "query:k8s:" + cluster + "/" + instance
 		}
 		return targetMutation
 	case ActionAsk:
 		if sessionID := extractSession(args); sessionID != "" {
-			return "session:" + sessionID
+			return "workspace:" + sessionID
 		}
-	case ActionPush, ActionClean:
+	case ActionClean:
+		workspace := strings.TrimSpace(extractStringArg(args, "workspace"))
+		if validateSession(workspace) == nil {
+			return "workspace:" + workspace
+		}
 		return targetMutation
-	case ActionPull:
+	case ActionPush, ActionWrite:
 		if sessionID := extractSession(args); sessionID != "" {
 			return "workspace:" + sessionID
 		}
-	case ActionWrite:
 		return targetMutation
+	case ActionPull, ActionRead:
+		if sessionID := extractSession(args); sessionID != "" {
+			return "workspace:" + sessionID
+		}
 	case ActionCredentialUse, ActionCredentialRevoke:
 		return targetMutation
 	case ActionAgentUpgrade:
@@ -2084,17 +2236,9 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 	return ""
 }
 
-func shellCommandRequiresTargetMutation(command string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(command))
-	if normalized == "" {
-		return true
-	}
-	return shellTargetMutationPattern.MatchString(normalized)
-}
-
-func gatewayK8SMutation(operation string) bool {
-	switch operation {
-	case "rollout-restart", "scale", "cordon", "uncordon", "delete-pod":
+func gatewayK8SReadOnly(operation string) bool {
+	switch strings.ToLower(strings.TrimSpace(operation)) {
+	case "get", "describe", "logs", "top", "events", "rollout-status":
 		return true
 	default:
 		return false

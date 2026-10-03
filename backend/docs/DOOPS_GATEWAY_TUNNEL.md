@@ -164,7 +164,8 @@ keeps Agent registration open and does not ship a partial enrollment fallback.
   target、范围、镜像、原因和验收条件。
 - 密码登录签发短期 user token，默认 24 小时过期；过期 token 会在登录时顺手清理。
 - token 校验通过 token id 定位单行哈希，避免多人多 token 时全表 bcrypt 扫描。
-- 同一 `cluster/instance` 默认串行执行，并允许最多 8 个操作排队等待 2 分钟；队列满或超时会返回明确错误。
+- 同一 `cluster/instance` 按操作类型与资源互斥；独立结构化 workspace 可以并行，
+  不确定副作用的 Shell 使用 target mutation 锁，详见 Multi-User Behavior。
 
 ## Endpoints
 
@@ -275,28 +276,46 @@ doops admin token revoke --target <gateway-target> --id <token-id>
 
 ## Multi-User Behavior
 
-多人同时使用时，gateway 的原则是“全局限流、用户限流、目标串行”：
+多人同时使用时，gateway 分别控制执行额度和资源所有权：
 
 - 不同 target 可以并发执行。
 - 同一 target 上的 target 级 mutation、无 session 的操作以及共享资源写入会串行进入 agent，避免多个用户同时改同一个环境。
-- 带 `session_id` 的普通 `exec`/`bg` shell 会话按 session 资源并发路由；明显的发布、恢复、迁移、文件写入、Helm/Kubernetes/Docker/systemd 变更仍使用 target 级 mutation 锁。
-- `ask --apply`、push、write、credential 和 target 级 mutation 命令仍走同一 target mutation 队列；超过 `-target-queue-timeout` 返回 `target queue timeout`。
-- `-max-concurrent-per-user` 控制单个 gateway 用户最多占用多少个运行中操作槽；默认至少支持 10 个会话，超过时返回 `user operation limit exceeded`。
-- `-operation-timeout` 控制单个转发操作的最长运行时间，超时会释放 gateway 操作槽。
-- `-max-queued-per-target` 控制每个 target 的等待队列长度；设置为负数可关闭排队，恢复旧的立即 `target busy` 行为。
+- 普通 `exec`/`ssh`/`bg` 一律使用 target mutation 锁。session 不是 OS 或远端资源
+  沙箱，脚本和解释器可访问共享资源，不能靠命令关键词放行并发。
+- `ask --apply`、credential 和 target 级 mutation 命令走同一 target mutation 队列；独立 session 的 push/write/clean/read/pull 共享各自 workspace 锁，同一 workspace 不得重叠。超过 `-target-queue-timeout` 返回 `target queue timeout`。
+- 结构化 K8s 的 `get/describe/logs/top/events/rollout-status`、任务状态和节点信息
+  可与 target mutation 并行，结果未知时仍可诊断；Agent 自升级阻止这些查询。
+- `-max-concurrent-per-user` 控制单个 gateway 用户最多占用多少个运行中操作槽；
+  `serve` 默认 10，等待资源不计入执行额度，超过时返回 `user operation limit exceeded`。
+- `-operation-timeout` 控制单个转发操作的最长运行时间；超时请求取消并等待原始终态，缺失终态时保留持久化的不确定性阻塞，不能直接释放 mutation 权限。
+- `serve` 默认全局 64 个执行槽，每个互斥槽最多 10 个等待者、等待上限 10 分钟。
+  workspace 锁各有等待队列，不是 target 所有请求的总队列；跨层冲突可立即返回
+  `target busy`。`-max-queued-per-target` 设为负数可关闭排队。
 - `-login-token-ttl` 控制密码登录生成 token 的有效期；长期自动化应使用管理员发放的可轮换服务 token。
 
-管理员可以查看和回收正在占用 gateway 操作槽的请求：
+管理员先核对所有权；明确获准中断对应任务后才请求取消，不自动抢占其它发布：
 
 ```bash
-doops admin operations list --target <gateway-target>
-doops admin operations cancel --target <gateway-target> --id <operation-id>
+doops -session <s> admin operations list --target <gateway-target>
+doops -session <s> admin operations cancel --target <gateway-target> --id <operation-id>
 ```
 
-`cancel` 会取消 gateway 转发并释放操作槽；升级后的 agent 收到 cancel 信号后，会对
-`doops_shell`、`doops_ssh`、`doops_docker`、`doops_node_info` 这类本地命令按进程组终止。`ask`
-依赖 doagent 异步执行，当前 cancel 只中断 doops 等待链路，不能保证 doagent 内部
-已经派生的任务全部终止；遇到这类场景仍要按 session 或进程维度做后续清理。
+`cancel` 返回 HTTP `202 cancel_requested`，只确认请求已登记。原始操作的资源所有权
+保留到 terminal response；取消 ACK 不是终态。shell/SSH/bg 等本地命令等待进程组
+终止，`ask` 发起 doagent `session/cancel` 并等待匹配的 `turn_finished`。
+本地进程退出不证明远端控制器或脱离进程组的工作停止。Shell/SSH/bg、apply、K8s
+写操作等被中断时，即使收到本地取消终态也记录 `outcome_unknown`；缺失终态同样
+阻止后续目标 mutation。该阻塞在 Gateway 重启和
+Agent 重连后继续有效。管理员只能在独立确认停止后，以 `audit-N`、
+`confirm_stopped=true`、reason 和 evidence 完成人工核对，记录为
+`resolved_manually`；不自动接管或重放任务。`unlock` 只重连空闲目标。
+
+Git HTTP 的 `init`、`upload-pack`、`receive-pack` 及其 hook 也由请求拥有进程组。
+请求取消、输入/输出复制失败时先终止并回收进程组，再发原始请求终态；不能以
+handler 返回、取消 ACK 或已经发出的 HTTP 200 作为成功依据。流式响应开始后
+Git 退出失败仍返回 `execution_outcome_unknown`，不会发送成功 EOF。取消仍保留
+未知结果保护，因为 hook 可能已提交部分工作区变更或触发外部操作；本地进程停止
+不等于这些副作用已回滚。
 
 `ask` 链路是 `CLI -> gateway -> doops-agent -> doagent ACP HTTP`。如果 `exec` 成功而 `ask` 失败，优先检查目标 agent 容器内：
 
@@ -447,14 +466,17 @@ doops -session agent-upgrade upgrade \
 - 单活部署即可，K8s 使用单副本 Deployment 或 systemd 托管。
 - 源码入口是仓库一级目录 `gateway/`；`agent/cmd/gateway` 仅保留为兼容 wrapper。
 - gateway 默认监听 `42222`；公网部署时云安全组/防火墙也必须放行 TCP 42222。
-- gateway 按 `cluster/instance` 和资源键隔离操作；不同 session/workspace 可并发，同一资源互斥。
+- gateway 按 `cluster/instance` 和资源键隔离操作；独立结构化 workspace 可并发。
+  不同 target 指向同一 release/数据库时尚无统一所有权或执行器 fencing；不得用另一
+  target 绕过已有锁，也不能将当前实现描述为安全抢占或分布式 release 锁。
 - 发布通过 `doops ask --apply` 的明确自然语言任务进入 Gateway。任务必须给出
   target、服务范围、镜像版本、原因和验收条件；`--credential <resource-name>` 只传递
   metadata-only 引用。Gateway 将引用绑定用户、target 和 session，并在精确 workload、
   image 或 Helm scope 获授权后物化。公开 prompt、doagent 上下文和 metadata binding
   不接收凭据 payload；Gateway 仅通过内部物化调用向目标 Agent 短暂传递 payload。
 - `/v1/targets` 中 `busy=true` 只表示 target-wide 阻塞；普通 session 运行显示为 `status=active`、`busy=false`，并在 `resources` 中标出锁住的资源。
-- gateway 还维护全局/用户级并发闸门；默认全局 64 个并发操作、单用户 8 个并发操作。
+- gateway `serve` 默认全局 64、单用户 10 个执行槽；嵌入式 `NewGatewayHub` 的零值
+  options 是全局 64、单用户 8、无等待队列，测试默认不代表生产启动参数。
 - gateway 会主动对 agent WebSocket 发 ping，agent pong 后刷新租约和 SQLite `last_seen`。
 - agent 上下线状态写入 SQLite，在线目标由内存连接表提供，断线时立即标记 offline。
 - agent 重连替换旧连接时，旧连接的关闭不会把新连接错误标记为 offline。

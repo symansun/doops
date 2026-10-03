@@ -25,10 +25,11 @@ This guide holds command-level usage details. The skill file is only the entry p
 | List live gateway agents | `doops -session <s> targets --target <gateway-target>` | First check for gateway troubleshooting. |
 | Retire an offline target | `doops -session <s> remove --target <gateway-target>` | Removes only the local route after a successful Gateway query confirms the exact route is not currently visible; online, unreachable, or unauthorized targets are refused. |
 | Check Agent protocol capability | `doops -session <s> capabilities --target <t> --require structuredSSH` | Fails closed when the online Agent is too old for structured SSH. |
+| Check execution lifecycle capability | `doops -session <s> capabilities --target <t> --require executionLifecycle` | Requires the exact schema and all three terminal/background/prompt guarantees. |
 | Add a Gateway target | `doops add --name <n> --gateway <url> --cluster <c> --instance <i>` | Stores routing only; never stores a target token. |
 | Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Known checks and explicitly requested operations; standard releases use `ask --apply`. |
 | Run nested SSH safely | `doops -session <s> ssh --target <t> --host <user@host> -- <command> [args...]` | Preserves remote argv across nested shells. |
-| Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | Agent-managed task with status polling; required when the command outlives a normal remote shell call. |
+| Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | One Agent-managed RPC waits for process termination; no task-status polling or command retries. |
 | Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
 | Run an authorized release | `doops -session <s> ask --target <t> --apply --credential <name> --msg '<facts>'` | Canonical business workload CI/CD entry. |
 | Push a local directory | `doops -session <s> push --target <t> --src <dir>` | Syncs into `/root/ws/<session>`. |
@@ -48,9 +49,9 @@ This guide holds command-level usage details. The skill file is only the entry p
 | List Gateway users | `doops admin user list --target <t>` | Returns metadata only. |
 | Manage target grants | `doops admin grant <list\|add\|delete> ...` | Grants use exact configured `cluster/instance` routes. |
 | Issue token as admin | `doops admin token create ...` | Requires a gateway token with `admin` permission. |
-| Inspect/cancel active operations | `doops admin operations <list|cancel> ...` | Gateway administration. |
+| Inspect/cancel active operations | `doops admin operations <list|cancel|reconcile> ...` | Cancel requests termination; reconcile records human-reviewed stopped state. |
 | Manage scheduled issue jobs | `doops admin jobs <list|add|run|enable|disable|rm|issues> ...` | See `DOOPS_SCHEDULED_ISSUES.md`. |
-| Force-release a target lock | `doops unlock --target <t>` | Admin recovery only; inspect operations first. |
+| Reconnect an idle target | `doops unlock --target <t>` | Refuses active, queued or unresolved work; does not force-release operations. |
 | Remove cached token | `doops logout --target <t>` | Removes local token cache. |
 
 ## Basic Checks
@@ -71,7 +72,8 @@ To remove a stale local route, use `doops -session <s> remove --target <gateway-
 
 - `busy=true` means the whole target is blocked by an exclusive operation or target queue, so new work may return `target busy`.
 - `status=active` with `busy=false` means one or more sessions/resources are running, but other sessions can still use the same agent.
-- `resources` shows locked resource keys such as `workspace:<session>` or `session:<session>`.
+- `resources` shows workspace locks such as `workspace:<session>`.
+  Shell/SSH/bg and apply use a target mutation lock; a session is not a sandbox.
 
 `capabilities --require structuredSSH` performs only the Gateway WebSocket initialize
 handshake. It succeeds only when the selected online Agent advertises the exact
@@ -100,11 +102,38 @@ bash scripts/deploy-gateway.sh \
 If gateway returns `user operation limit exceeded`, list active gateway operations and cancel stale ones with an admin token:
 
 ```bash
-doops admin operations list --target <gateway-target>
-doops admin operations cancel --target <gateway-target> --id <operation-id>
+doops -session <s> admin operations list --target <gateway-target>
+doops -session <s> admin operations cancel --target <gateway-target> --id <operation-id>
 ```
 
-On upgraded agents, cancel terminates local shell-style commands by process group. For `ask`, treat cancel as stopping the doops waiting path first; verify the remote session if doagent already started work.
+Cancel returns HTTP `202` with `cancel_requested=true`, meaning the request was
+registered, not that the operation stopped. The operation keeps ownership until
+the original terminal response. Shell-style commands join process-group
+termination; `ask` waits for the matching doagent turn terminal event. Missing
+terminal evidence persists `outcome_unknown` and blocks later target mutations.
+Interrupted Shell/SSH/bg, apply and Kubernetes mutations also require reconciliation:
+local process or turn termination does not fence remote or detached work. The guard
+survives Gateway restart or Agent reconnection. The operation list shows
+`waiting`, `running`, `cancel_requested`, `outcome_unknown`, `audit_id`, `resource`
+and `blocked_by`. Waiting for a resource does not consume a user execution slot.
+Independent structured workspace operations run concurrently; arbitrary Shell does
+not. Structured Kubernetes queries and task status remain available during a
+mutation or unknown outcome. Agent upgrades remain exclusive. Different routes to
+one release/database are not coordinated by this target-local lock; do not bypass it
+using another target. There is no safe force-preemption or automatic replay protocol.
+
+After an administrator independently confirms the original execution has stopped,
+record the reason and evidence explicitly:
+
+```bash
+doops -session reconcile-check admin operations reconcile \
+  --target <gateway-target> --id audit-N --confirm-stopped \
+  --reason '<reason>' --evidence '<human-reviewed evidence>'
+```
+
+This records `resolved_manually`, not machine-verified success, takeover or replay.
+`unlock` reconnects only an idle target and refuses active, queued or unresolved
+operations; it does not clear these guards.
 
 ## Gateway Admin Tokens
 

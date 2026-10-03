@@ -54,15 +54,21 @@ stdio 请求和响应在本地生成结果证明，完成验证后才向 ACP 暴
 `confirm=true` 和 mutation operation；仅有 completed 状态或工具名不构成成功证据。
 一次性 mutation authority 同时绑定精确 allowedTools 与自然语言任务的 context digest，并由
 doagent 原子消费；可信 attestation 必须返回同一 authority
-digest。同一 target 上的 apply、push、write、clean、shell、Kubernetes mutation 和凭据
-物化共享 mutation 锁，避免发布过程中 target 或 workload 被并发改写。`ask --apply`
+digest。同一 target 上的 apply、shell、Kubernetes mutation 和凭据物化共享 mutation 锁，
+并排斥结构化 workspace 写入。不同 workspace 的 push/write/clean 可彼此并行；
+结构化诊断查询不受发布锁阻挡。`ask --apply`
 本身不要求先执行 `push`，也不要求发布输入存在于 session workspace。
 
 普通前台 `exec` 可以执行明确给出的 Helm `upgrade/install/rollback/uninstall`。
 命令受 Gateway 用户 `exec` 权限、session 隔离、目标操作串行化和完整退出审计约束；
 不得把 Helm 误判为危险 shell 命令。该路径是低层确定性操作，不替代标准
-`ask --apply` 发布编排，也不能使用 managed credential reference。`exec --bg` 的审计只
-覆盖任务提交，不能承载 doops-agent Helm mutation；此类后台调用必须明确拒绝。
+`ask --apply` 发布编排，也不能使用 managed credential reference。`exec --bg` 的原始 RPC
+和审计保留到进程终止，取消请求不等于终态；它不能承载 doops-agent Helm mutation，
+此类后台调用必须明确拒绝。
+
+取消 Shell/SSH/bg、apply 或 Kubernetes 写操作只请求停止；本地进程/模型轮次终止不等于
+远端变更已停止，Gateway 保留 `outcome_unknown` 等待人工核对。当前锁按 target 路由
+隔离，没有跨 target 的 release/数据库统一锁或执行器 fencing，不支持安全强制抢占。
 
 发布前必须比较当前 workload 与候选 Helm 资产中的 command、args、env、probes、
 volumeMounts 和 volumes。发布任务统一调用 `mcp_doops_helm upgrade-install`，显式
