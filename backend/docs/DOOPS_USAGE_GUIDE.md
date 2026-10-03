@@ -25,7 +25,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | List live gateway agents | `doops -session <s> targets --target <gateway-target>` | First check for gateway troubleshooting. |
 | Retire an offline target | `doops -session <s> remove --target <gateway-target>` | Removes only the local route after a successful Gateway query confirms the exact route is not currently visible; online, unreachable, or unauthorized targets are refused. |
 | Check Agent protocol capability | `doops -session <s> capabilities --target <t> --require structuredSSH` | Fails closed when the online Agent is too old for structured SSH. |
-| Check execution lifecycle capability | `doops -session <s> capabilities --target <t> --require executionLifecycle` | Requires the exact schema and all three terminal/background/prompt guarantees. |
+| Check execution lifecycle capability | `doops -session <s> capabilities --target <t> --require executionLifecycle` | Required for background execution; foreground exec/SSH/ask/apply use target scheduling and terminal evidence, so a legacy declaration does not block normal execution. |
 | Add a Gateway target | `doops add --name <n> --gateway <url> --cluster <c> --instance <i>` | Stores routing only; never stores a target token. |
 | Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Known checks and explicitly requested operations; standard releases use `ask --apply`. |
 | Run nested SSH safely | `doops -session <s> ssh --target <t> --host <user@host> -- <command> [args...]` | Preserves remote argv across nested shells. |
@@ -121,6 +121,12 @@ not. Structured Kubernetes queries and task status remain available during a
 mutation or unknown outcome. Agent upgrades remain exclusive. Different routes to
 one release/database are not coordinated by this target-local lock; do not bypass it
 using another target. There is no safe force-preemption or automatic replay protocol.
+
+An SSH failure with an Agent structured terminal result is an ordinary failed
+operation when it has a remote exit code in `1..254`, or when the structured
+tool error has no exit code. Exit code `255`, signal termination, cancellation,
+disconnection and missing structured terminal evidence remain guarded. Command
+text never determines whether an SSH operation is safe to preempt.
 
 After an administrator independently confirms the original execution has stopped,
 record the reason and evidence explicitly:

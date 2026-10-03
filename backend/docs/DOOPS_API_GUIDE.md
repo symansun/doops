@@ -678,9 +678,11 @@ GET /v1/audit?view=global
 ### 执行生命周期与人工核对
 
 `executionLifecycle` 协议采用 `doops.sh/execution-lifecycle/v1`，声明
-`terminalResponse`、`backgroundLifetime` 和 `promptCancellation`。
-Gateway 在转发 shell、结构化 SSH、后台任务或 Agent prompt 前验证该协议；
-缺失时拒绝执行，因此升级时必须先升级 Agent，再切换 Gateway。
+`terminalResponse`、`backgroundLifetime` 和 `promptCancellation`。Gateway 只对后台任务
+要求完整协议；结构化 SSH 由 `structuredSSH` 参数协议保护，前台 shell、SSH、普通 prompt 和 `ask --apply` 统一进入目标
+调度并以实际终态响应作为完成证据，不因旧 Agent 缺少能力声明而阻断正常发布。
+前台调用被取消、超时或断连时，若没有足够终态证据仍写入 `outcome_unknown`，不能把
+本地等待结束当成远端 mutation 已停止。
 
 `GET /v1/admin/operations` 返回 `audit_id`、`state`、`resource` 和 `blocked_by`。
 `DELETE /v1/admin/operations?id=<operation-id>` 返回 HTTP `202`：
@@ -701,6 +703,11 @@ Gateway 在转发 shell、结构化 SSH、后台任务或 Agent prompt 前验证
 缺失确认、reason 或 evidence 会被拒绝；仍在运行的操作不得人工核对解除。
 该动作记录人工证据，不表示机器验证成功，也不自动接管或重放操作。
 `POST /v1/targets/unlock` 仅重连空闲目标，拒绝活动、排队或未核对操作。
+
+定时巡检 job 使用 Gateway 持久 lease 单飞执行。`tick` 与 `run-now` 同时命中同一
+job 时，后到请求返回 HTTP `409`；执行期间自动续租，成功、失败、取消和超时都会在
+结束路径释放 lease，Gateway 进程异常退出后由 lease 到期自动接管，不需要人工
+unlock。每次运行都登记为可取消的 active operation。
 
 管理员 mutation 审计：
 

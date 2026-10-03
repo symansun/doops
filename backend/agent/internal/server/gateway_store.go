@@ -350,6 +350,12 @@ func (s *GatewayStore) migrate() error {
 			last_run_at TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS scheduler_job_leases (
+			job_id TEXT PRIMARY KEY,
+			owner_id TEXT NOT NULL,
+			lease_until TEXT NOT NULL,
+			started_at TEXT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS scheduler_issues (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			job_id TEXT NOT NULL,

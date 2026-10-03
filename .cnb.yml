@@ -15,7 +15,7 @@ main:
         image: docker.io/library/golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191
       stages:
         - name: prepare tools
-          script: apk add --no-cache bash build-base git helm nodejs npm python3 py3-pytest py3-yaml
+          script: apk add --no-cache bash build-base git helm nodejs npm openssh-client python3 py3-pytest py3-yaml
         - name: release contract tests
           script: python3 -m pytest backend/test -q
         - name: Linux agent execution tests
@@ -46,7 +46,7 @@ main:
         image: docker.io/library/golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191
       stages:
         - name: prepare tools
-          script: apk add --no-cache bash docker-cli git helm nodejs npm python3 py3-pytest py3-yaml
+          script: apk add --no-cache bash docker-cli git helm nodejs npm openssh-client python3 py3-pytest py3-yaml
         - name: release contract tests
           script: python3 -m pytest backend/test -q
         - name: agent tests
@@ -269,7 +269,7 @@ $:
         image: docker.io/library/golang:1.24-alpine@sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191
       stages:
         - name: prepare tools
-          script: apk add --no-cache bash curl docker-cli git helm nodejs npm python3 py3-pytest py3-yaml
+          script: apk add --no-cache bash curl docker-cli git helm nodejs npm openssh-client python3 py3-pytest py3-yaml
         - name: release contract tests
           script: python3 -m pytest backend/test -q
         - name: agent tests

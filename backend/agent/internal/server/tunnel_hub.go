@@ -39,7 +39,30 @@ type GatewayHub struct {
 	edge         *EdgeRegistry
 
 	scheduler            *Scheduler
-	credentialMutationMu sync.Mutex
+	credentialMutationMu contextMutex
+}
+
+type contextMutex struct {
+	ready chan struct{}
+}
+
+func newContextMutex() contextMutex {
+	ready := make(chan struct{}, 1)
+	ready <- struct{}{}
+	return contextMutex{ready: ready}
+}
+
+func (m *contextMutex) Acquire(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-m.ready:
+		return nil
+	}
+}
+
+func (m *contextMutex) Release() {
+	m.ready <- struct{}{}
 }
 
 // AttachScheduler 注入定时巡检调度器，供 /v1/admin/jobs run-now 等接口使用。
@@ -101,6 +124,26 @@ type gatewayActiveOperation struct {
 	GatewayActiveOperation
 	cancel context.CancelFunc
 	agent  *GatewayAgent
+	lease  *operationLease
+}
+
+// operationLease binds a resource release to the operation that acquired it.
+// The release is idempotent so normal completion and operation finalization
+// can safely converge on one terminal cleanup path.
+type operationLease struct {
+	once    sync.Once
+	release func()
+}
+
+func newOperationLease(release func()) *operationLease {
+	return &operationLease{release: release}
+}
+
+func (l *operationLease) Release() {
+	if l == nil || l.release == nil {
+		return
+	}
+	l.once.Do(l.release)
 }
 
 type GatewayAgent struct {
@@ -434,9 +477,10 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		opts.MaxQueuedPerTarget = 0
 	}
 	hub := &GatewayHub{
-		store:    store,
-		opts:     opts,
-		registry: registry,
+		store:                store,
+		opts:                 opts,
+		registry:             registry,
+		credentialMutationMu: newContextMutex(),
 	}
 	hub.registration = NewAgentRegistrationHandler(
 		registry,
@@ -1110,10 +1154,15 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 
 	if len(authorizedCredentials) != 0 {
 		// Match verification/promotion's lock order before holding a target lease.
-		h.hub.credentialMutationMu.Lock()
-		defer h.hub.credentialMutationMu.Unlock()
+		if err := h.hub.credentialMutationMu.Acquire(opCtx); err != nil {
+			finishAudit("canceled", "operation canceled", "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled"))
+			return nil
+		}
+		defer h.hub.credentialMutationMu.Release()
 	}
-	if err := agent.acquireForAction(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout); err != nil {
+	lease, err := agent.acquireActionLease(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
+	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			finishAudit("canceled", "operation canceled", "", 0)
 			writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled"))
@@ -1124,7 +1173,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32005, errMsg))
 		return nil
 	}
-	defer agent.releaseForAction(action, resourceKey)
+	h.attachOperationLease(opID, lease)
 	opCtx = withInternalCredentialLock(opCtx, agent, resourceKey)
 	releaseLimit, err := h.acquireOperationSlot(auth.UserID)
 	if err != nil {
@@ -1138,7 +1187,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled before dispatch"))
 		return nil
 	}
-	guarded := !isConcurrentReadOnlyAction(action) && !isConcurrentQuery(action, resourceKey)
+	guarded := requiresExecutionOutcomeGuard(action, params.Name, params.Arguments, resourceKey)
 	if guarded {
 		if err := h.checkExecutionGuard(cluster, instance); err != nil {
 			finishAudit("blocked", err.Error(), "", 0)
@@ -1632,6 +1681,9 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 	uncertainIfInterrupted := interruptionNeedsReconciliation(params.Name, params.Arguments)
 	cancelAndWait := func() error {
 		if err := a.waitPendingCancel(ch); err != nil {
+			if !uncertainIfInterrupted && errors.Is(err, errExecutionOutcomeUnknown) {
+				return nil
+			}
 			return err
 		}
 		// Local termination cannot fence a remote controller or detached process.
@@ -1669,7 +1721,10 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 			"arguments": params.Arguments,
 		},
 	}); err != nil {
-		return fmt.Errorf("%w: dispatch failed: %v", errExecutionOutcomeUnknown, err)
+		if uncertainIfInterrupted {
+			return fmt.Errorf("%w: dispatch failed: %v", errExecutionOutcomeUnknown, err)
+		}
+		return fmt.Errorf("%w: dispatch failed: %v", errGatewayAgentDisconnected, err)
 	}
 
 	timer := time.NewTimer(timeout)
@@ -1686,7 +1741,8 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 				continue
 			}
 			if _, ok := msg.Parsed["id"]; ok {
-				if executionResponseUnknown(msg.Parsed) || remoteMutationFailed(params.Name, params.Arguments, msg.Parsed) {
+				if (uncertainIfInterrupted && executionResponseUnknown(msg.Parsed)) ||
+					remoteMutationFailed(params.Name, params.Arguments, msg.Parsed) {
 					return errExecutionOutcomeUnknown
 				}
 				if uncertainIfInterrupted && (ctx.Err() != nil || executionResponseCanceled(msg.Parsed)) {
@@ -1722,7 +1778,8 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 		case <-a.closed:
 			select {
 			case <-ch.terminal:
-				if ch.terminalErr != nil {
+				if ch.terminalErr != nil &&
+					!(errors.Is(ch.terminalErr, errExecutionOutcomeUnknown) && !uncertainIfInterrupted) {
 					return ch.terminalErr
 				}
 				if remoteMutationFailed(params.Name, params.Arguments, ch.terminalMessage.Parsed) {
@@ -1736,6 +1793,9 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 				}
 				return forward(ch.terminalMessage)
 			default:
+				if !uncertainIfInterrupted {
+					return errGatewayAgentDisconnected
+				}
 				return errExecutionOutcomeUnknown
 			}
 		}
@@ -1812,20 +1872,43 @@ func (a *GatewayAgent) release() {
 	a.setBusy(false)
 }
 
-func (a *GatewayAgent) acquireForAction(ctx context.Context, action GatewayAction, resourceKey string, maxQueued int, wait time.Duration) error {
+func (a *GatewayAgent) acquireActionLease(ctx context.Context, action GatewayAction, resourceKey string, maxQueued int, wait time.Duration) (*operationLease, error) {
 	if isExclusiveOperation(action, resourceKey) {
-		return a.acquireExclusive(ctx, resourceKey, maxQueued, wait)
+		if err := a.acquireExclusive(ctx, resourceKey, maxQueued, wait); err != nil {
+			return nil, err
+		}
+		return newOperationLease(a.releaseExclusive), nil
 	}
 	if isConcurrentQuery(action, resourceKey) {
-		return a.acquireReadOnly()
+		if err := a.acquireReadOnly(); err != nil {
+			return nil, err
+		}
+		return newOperationLease(a.releaseReadOnly), nil
 	}
 	if resourceKey != "" {
-		return a.acquireResource(ctx, resourceKey, maxQueued, wait)
+		if err := a.acquireResource(ctx, resourceKey, maxQueued, wait); err != nil {
+			return nil, err
+		}
+		return newOperationLease(func() { a.releaseResource(resourceKey) }), nil
 	}
 	if isConcurrentReadOnlyAction(action) {
-		return a.acquireReadOnly()
+		if err := a.acquireReadOnly(); err != nil {
+			return nil, err
+		}
+		return newOperationLease(a.releaseReadOnly), nil
 	}
-	return a.acquireExclusive(ctx, resourceKey, maxQueued, wait)
+	if err := a.acquireExclusive(ctx, resourceKey, maxQueued, wait); err != nil {
+		return nil, err
+	}
+	return newOperationLease(a.releaseExclusive), nil
+}
+
+// acquireForAction is retained for low-level tests and callers that manage
+// release explicitly. Production request paths use acquireActionLease so the
+// active-operation finalizer owns cleanup.
+func (a *GatewayAgent) acquireForAction(ctx context.Context, action GatewayAction, resourceKey string, maxQueued int, wait time.Duration) error {
+	_, err := a.acquireActionLease(ctx, action, resourceKey, maxQueued, wait)
+	return err
 }
 
 func (a *GatewayAgent) releaseForAction(action GatewayAction, resourceKey string) {

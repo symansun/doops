@@ -81,6 +81,20 @@ func (s *ClientService) acquireOperationSlot(userID string) (func(), error) {
 	}, nil
 }
 
+func (s *ClientService) acquireGlobalOperationSlot() (func(), error) {
+	s.opsMu.Lock()
+	defer s.opsMu.Unlock()
+	if s.active >= s.opts.MaxConcurrentOperations {
+		return nil, fmt.Errorf("global operation limit exceeded")
+	}
+	s.active++
+	return func() {
+		s.opsMu.Lock()
+		defer s.opsMu.Unlock()
+		s.active--
+	}, nil
+}
+
 func (s *ClientService) registerActiveOperation(op GatewayActiveOperation, cancel context.CancelFunc) string {
 	id := "op-" + randomHex(12)
 	op.ID = id
@@ -101,17 +115,35 @@ func (s *ClientService) finishActiveOperation(id string) {
 	}
 	s.activeOpsMu.Lock()
 	var auditID int64
+	var lease *operationLease
 	if op := s.activeOps[id]; op != nil {
 		auditID = op.AuditID
+		lease = op.lease
 	}
 	delete(s.activeOps, id)
 	s.activeOpsMu.Unlock()
+	lease.Release()
 	if auditID == 0 {
 		return
 	}
 	if err := s.store.MarkExecutionUncertain(auditID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		log.Printf("[gateway] execution outcome could not be persisted: audit=%d: %v", auditID, err)
 	}
+}
+
+func (s *ClientService) attachOperationLease(id string, lease *operationLease) {
+	if lease == nil {
+		return
+	}
+	s.activeOpsMu.Lock()
+	op := s.activeOps[id]
+	if op != nil {
+		op.lease = lease
+		s.activeOpsMu.Unlock()
+		return
+	}
+	s.activeOpsMu.Unlock()
+	lease.Release()
 }
 
 func (s *ClientService) listActiveOperations() []GatewayActiveOperation {

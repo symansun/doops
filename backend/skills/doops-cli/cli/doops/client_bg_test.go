@@ -17,6 +17,21 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+func executionLifecycleInitializeResult() map[string]interface{} {
+	return map[string]interface{}{
+		"capabilities": map[string]interface{}{
+			"protocols": map[string]interface{}{
+				"executionLifecycle": map[string]interface{}{
+					"schemaVersion":      "doops.sh/execution-lifecycle/v1",
+					"terminalResponse":   true,
+					"backgroundLifetime": true,
+					"promptCancellation": true,
+				},
+			},
+		},
+	}
+}
+
 func TestExecBgCLIStreamsOneRPCUntilStopped(t *testing.T) {
 	stopped := make(chan struct{})
 	var stopOnce sync.Once
@@ -42,7 +57,10 @@ func TestExecBgCLIStreamsOneRPCUntilStopped(t *testing.T) {
 				return
 			}
 			if req["method"] == "initialize" {
-				_ = conn.WriteJSON(map[string]interface{}{"jsonrpc": "2.0", "id": req["id"], "result": map[string]interface{}{}})
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0", "id": req["id"],
+					"result": executionLifecycleInitializeResult(),
+				})
 				continue
 			}
 			calls.Add(1)
@@ -166,7 +184,10 @@ func TestExecBgReturnsStreamingErrorsWithoutPollingOrRetry(t *testing.T) {
 						return
 					}
 					if req["method"] == "initialize" {
-						_ = conn.WriteJSON(map[string]interface{}{"jsonrpc": "2.0", "id": req["id"], "result": map[string]interface{}{}})
+						_ = conn.WriteJSON(map[string]interface{}{
+							"jsonrpc": "2.0", "id": req["id"],
+							"result": executionLifecycleInitializeResult(),
+						})
 						continue
 					}
 					calls.Add(1)

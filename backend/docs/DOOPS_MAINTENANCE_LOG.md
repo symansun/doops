@@ -4,10 +4,28 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
 
 ## 2026-10-03 Execution Lifecycle Release Preparation
 
+- Final source review confirmed an SSH ordinary-exit regression: a remote
+  nonzero exit was classified as unknown and blocked later target mutations.
+  The repair accepts Agent structured terminal errors and remote exit codes
+  1..254 as ordinary failures; 255, interruption, disconnection and missing
+  terminal evidence remain guarded. CI installs OpenSSH for real loopback
+  client/server functional acceptance.
+- Linux Agent/Gateway/CLI and Git race acceptance passed in
+  cnb-gr9-1k3vqigpe for fa1a98a52d081459a4dcecc47f8f004662cde0df.
+  Browser recheck has 27 passes with matching frontend source hashes, including
+  cancellation confirmation and HTTP 202. These replace the earlier missing
+  Linux/browser evidence; the SSH repair needs its own exact-commit CI.
+- Runtime preflight found unmanaged Agents on JM, SCU-new and ZYJ, and no
+  usable Kubernetes upgrade entry on silicon. Full Gateway cutover remains
+  blocked until legacy Agent migration has an explicit plan and verification.
+  Source merge and immutable artifact publication do not imply runtime cutover.
 - Repair cancellation ownership, process-group and prompt termination evidence,
   persisted unknown outcomes, per-workspace admission and operator-visible states.
-- Reject command execution on Agents without executionLifecycle. Roll out Agents
-  before the Gateway; confirm the authorized scope and exact CI artifact first.
+- Scope executionLifecycle enforcement to detached background work, structured SSH
+  and apply mutation; ordinary foreground calls still require terminal evidence but
+  must not be rejected solely because a legacy Agent omits the declaration.
+- Add persistent scheduler job leases with automatic terminal-path and expiry
+  cleanup so tick/run-now cannot duplicate a job or require manual unlock.
 - Independent review found and repaired target mutation/workspace overlap,
   mismatched clean workspace locks, replacement-connection ownership and raw-output
   keyword matching. Regression scenarios now check those boundaries.

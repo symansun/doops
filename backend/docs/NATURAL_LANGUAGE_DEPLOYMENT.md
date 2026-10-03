@@ -72,15 +72,25 @@ digest。同一 target 上的 apply、shell、Kubernetes mutation 和凭据物�
 
 发布前必须比较当前 workload 与候选 Helm 资产中的 command、args、env、probes、
 volumeMounts 和 volumes。发布任务统一调用 `mcp_doops_helm upgrade-install`，显式
-提供 release、namespace、远程 `https://`/`oci://` chart、可选远程 HTTP(S)
-`value_files`、非敏感 `set_strings` 和 `confirm=true`。`value_files` 不从本地
-workspace 读取；`set_strings` 只允许 `image.repository` 与一个受控版本选择器：
+提供 release、namespace、`asset_source` 和 `confirm=true`。`asset_source` 默认是
+`remote`：chart 使用任务明确给出的远程 `https://`/`oci://` 引用，`value_files` 使用
+可选远程 HTTP(S) URL，`set_strings` 只允许 `image.repository` 与一个受控版本选择器：
 `image.digest=sha256:<digest>` 或严格的 `image.tag=release-YYYYMMDD`。两种模式不得混用，
 缺少明确版本或使用其它覆盖时工具在 mutation 前拒绝。
 显式镜像覆盖模式自动保留已有 release 的非镜像 values；完整 Chart 值模式执行
 `--reset-values`，在真实 mutation 前解析 server-side dry-run 的 manifest，拒绝缺少目标
 release tag 或混入其他 release tag 的 Deployment 镜像。受管 CNB Chart 通过官方 Helm
 HTTPS 下载接口认证读取，并核对物化时验证的包摘要；认证失败不重试匿名或旧登录态。
+
+需要使用已绑定 session workspace 中的 Helm 资产时，任务必须显式传
+`asset_source=workspace`。此模式只接受相对 session workspace 的
+`deploy/helm/<env>` chart 目录和该 chart 唯一的 `deploy/helm/<env>/values.yaml`；路径
+必须存在、chart 必须包含 regular `Chart.yaml`，values 必须是 regular 文件，绝对路径、
+`..`、symlink escape 和额外 values overlay 都会在 mutation 前拒绝。`set_strings` 必须
+为空，并且任务必须显式提供完整 `expected_image`（`repository:release-YYYYMMDD` 或
+`repository@sha256:<64 hex digest>`）。Helm 在精确 `/root/ws/<session>` cwd 中执行，
+使用 workspace 中的 committed `values.yaml`、`--reset-values` 和 server dry-run，不读取
+旧 release values；
 `session_id` 不属于模型参数，由 doagent 按会话工作目录启动 MCP 子进程并由 DoOps
 运行时绑定。Gateway target 只负责路由，不能作为 session 或工作区路径。镜像必须满足
 上述受控版本输入。随后执行 rollout 和功能验收。shell 中的 kubectl 或 Helm

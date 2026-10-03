@@ -16,6 +16,8 @@ def test_gateway_deploy_detects_systemd_unit_without_pipefail_pipeline():
     assert "ControlMaster=auto" in text
     assert "ControlPersist=30" in text
     assert "ControlPath=${SSH_CONTROL_PATH}" in text
+    assert "wait_for_local_gateway()" in text
+    assert "wait_for_local_gateway 30" in text
 
 
 def test_gateway_deploy_bootstraps_external_key_only_without_existing_ciphertext():

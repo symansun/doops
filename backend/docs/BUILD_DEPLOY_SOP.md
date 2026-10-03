@@ -5,12 +5,13 @@
 
 ## 发布前判定
 
-执行生命周期协议变更必须先升级 Agent，再切换 Gateway。候选 Agent 必须声明
-`executionLifecycle`，并验证 shell/SSH/bg 的进程组终止、doagent prompt 的匹配终态、
-`202 cancel_requested` 和持久化 `outcome_unknown`。上线新 Gateway 会拒绝旧 Agent
-的 shell、SSH、bg 和 prompt；发布者必须逐项核对 Gateway 在线 Agent 基线，不能只
-以一个 target 的上线验收代替整批协议就绪。缺少已授权升级范围时先完成源码与 CI
-制品，停止生产切换。
+执行生命周期协议变更必须先升级实际使用 detached background execution 的 Agent，再
+切换 Gateway。候选 Agent 必须声明 `executionLifecycle`，并验证 bg 的进程组终止、
+`202 cancel_requested` 和持久化 `outcome_unknown`；结构化 SSH 单独验证
+`structuredSSH`。前台 shell、SSH、普通 prompt 和 `ask --apply` 依赖目标调度与实际
+终态证据，不应因旧 Agent 没有 `executionLifecycle` 声明而整体拒绝。发布者仍须逐项
+核对 Gateway 在线 Agent 基线，不能只以一个 target 的上线验收代替实际使用场景的
+协议就绪。缺少已授权升级范围时先完成源码与 CI 制品，停止生产切换。
 
 先用 `doops version`、`doops list` 和
 `doops -session <s> targets --target <t>` 核对已安装 CLI、Gateway 路由及精确

@@ -23,7 +23,12 @@ flowchart TD
 ```
 
 调度器运行在 gateway 进程内，复用 gateway 的在线连接表与目标串行/排队语义
-（`RunInternalToolCall`），因此巡检不会和用户操作互相踩踏。
+（`RunInternalToolCall`），因此巡检不会和用户操作互相踩踏。同一个 job 使用持久
+lease 单飞；定时 tick 与 `run-now` 不会重复执行，执行期间自动续租，成功、失败、
+取消和超时都会自动释放 lease，Gateway 崩溃后由 lease 到期接管，不需要人工 unlock。
+每次 job run 都登记为可取消的 active operation，取消会传播到扫描上下文并最终回收
+lease。单个目标的扫描失败会被记录为可去重的巡检不可用异常并继续处理其它目标，
+不静默跳过。
 
 ## 扫描模式 scan_mode
 

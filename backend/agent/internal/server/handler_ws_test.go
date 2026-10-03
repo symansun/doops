@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -2237,5 +2238,17 @@ func TestWaitProcessGroupBoundsDetachedDescendants(t *testing.T) {
 			continue
 		}
 		t.Fatalf("detached process group survived cleanup: %q", line)
+	}
+}
+
+func TestWaitCommandStreamsPreservesExitCode(t *testing.T) {
+	cmd, stdout, stderr, err := executeRawCommand(context.Background(), "exit 42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = waitCommandStreams(context.Background(), cmd, stdout, stderr, func(notificationEvent) {}, false)
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 42 {
+		t.Fatalf("waitCommandStreams error = %v, want exit 42", err)
 	}
 }

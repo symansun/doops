@@ -11,15 +11,19 @@ Publish the operation lifecycle repair from a reviewed, remotely visible commit.
 Use the successful main CI Agent/Gateway artifact and a matching versioned CLI
 release. On 2026-10-03 the user authorized all components and all online Agents.
 Inventory exact identities before changing workloads or the production Gateway:
-the executionLifecycle requirement rejects shell, SSH,
-background and prompt calls to Agents without the new protocol.
+the pre-repair executionLifecycle gate incorrectly rejected shell, SSH,
+background and prompt calls to Agents without the new protocol. The repaired
+contract gates only detached background execution and preserves terminal-evidence
+guards for foreground mutations.
 
 # Completion Evidence
 
 - Agent, Gateway, CLI and contract checks pass on the final source tree.
 - Independent review finds no unresolved release-blocking defects.
 - Commit, main CI, release tag, image digest and CLI/Skill identity agree.
-- Authorized Agents advertise executionLifecycle before the Gateway switches.
+- Agents used for detached background execution advertise executionLifecycle
+  before the Gateway switches; foreground release paths do not require that
+  declaration.
 - Gateway executable hash and source commit match the verified CI artifact.
 - The registered Agent baseline reconnects and existing services stay healthy.
 - Live exec, cancellation, background lifetime, operation status and audit checks
@@ -67,23 +71,28 @@ validators or retry a production mutation whose outcome is unknown.
 
 # Release Blockers
 
-- The user authorized all online Agents. Refresh the previous 12-identity
-  inventory and record each workload, immutable image and rollback baseline.
-  Switching the Gateway before all authorized Agents support the protocol would
-  reject their shell, SSH, background and prompt operations.
-- Browser acceptance verified the production-build operations table, all four
-  states and disabled cancellation controls. The cancellation confirmation dialog
-  blocked further in-app browser automation. Native Codex-app control was denied
-  by the tool's safety policy; human dismissal is required before that UI path
-  can be completed. No successful cancellation interaction is claimed.
-- The replacement Git process path passed local macOS functional and race tests.
-  Docker daemon inspection did not respond, so Linux/container process cleanup
-  has not been verified in this continuation. The PR pipeline now includes
-  Linux Agent/Gateway/CLI tests; wait for these exact-commit stages to pass
-  before clearing the Linux verification gate.
+- Source: independent review confirmed that ordinary SSH nonzero exits are
+  incorrectly quarantined. Repair using structured exit evidence and rerun
+  exact-commit CI before merge.
+- Runtime: the user authorized all online Agents and then explicitly requested
+  main merge and publication. Refreshed inventory has 11 online identities;
+  114 is unavailable and another authorized chat is investigating DiskPressure.
+  JM, SCU-new and ZYJ have no managed Helm release; silicon has no available
+  Kubernetes upgrade endpoint. Do not adopt those workloads or bypass the
+  managed release controller without a separate migration plan.
+- Do not switch Gateway until every authorized background-execution consumer
+  supports executionLifecycle and every structured SSH consumer supports
+  structuredSSH. Source merge, release assets and runtime deployment are
+  separate acceptance states; legacy foreground-only runtime blockers do not
+  prevent reviewed source publication.
 
-Keep the source review branch out of main and do not create a release tag or
-switch production services while these release blockers remain.
+Linux Agent/Gateway/CLI and Git process race acceptance passed in
+cnb-gr9-1k3vqigpe for fa1a98a52d081459a4dcecc47f8f004662cde0df.
+The production-build browser recheck at
+/tmp/doops-frontend-recheck-20261003-yOygLt/browser-results.json reports 27 passes,
+including dismiss/accept confirmation and the HTTP 202 cancellation path.
+Current frontend hashes match its source-baseline.sha256. This is synthetic
+Gateway browser evidence, not proof of production process termination.
 
 # Additional Verification
 
@@ -148,3 +157,23 @@ switch production services while these release blockers remain.
   versioned CLI/Skill and verify actual runtime identities and affected paths.
 - Do not commit pre-existing .agent or backend/agent/.qa-console runtime files,
   use Worktrees, cancel unrelated releases, or weaken protocol checks.
+
+# Runtime Preflight On 2026-10-03
+
+All reads used session release-20261003-inventory and performed no mutation.
+
+| Target | Live workload | Release baseline | Upgrade constraint |
+| --- | --- | --- | --- |
+| gw-edu-coder | kz-ops/doops-agent-live | Helm rev 16; sha256:731e34e1127eb55ed53772026662f2c82829699e1da4243972680db3aeb7c8e2 | structuredSSH ready; controller still to verify |
+| gw-hdu-235 | ai/doops-agent | Helm rev 12; sha256:b72f26ce37d49dc5daf0413ce4136d6e9b15e7a5bfaa636ec708d1ff9ed9791a | old Agent; external controller required if upgrade tool absent |
+| doops-235/hdu-235-release-v131 | ai/doops-release-runner-v131 | Helm rev 1; sha256:0402bef2d0a7873fad33a252c89e83ef368c20e4a57fdfe168f18eb66d6ac99b | existing legacy runner, not created by this release |
+| gw-zy | default/doops-agent-239 | Helm rev 8; sha256:b72f26ce37d49dc5daf0413ce4136d6e9b15e7a5bfaa636ec708d1ff9ed9791a | old Agent; external controller required if upgrade tool absent |
+| gw-jm | doops-system/doops-agent | sha256:b72f26ce37d49dc5daf0413ce4136d6e9b15e7a5bfaa636ec708d1ff9ed9791a | no Helm release |
+| gw-scu-new | doops-system/doops-agent | sha256:0402bef2d0a7873fad33a252c89e83ef368c20e4a57fdfe168f18eb66d6ac99b | no Helm release, no Helm managed-by label |
+| gw-zyj | ai/doops-agent | sha256:7f8582052367bf54f2ff052e530a8782b1e96a6e26178a4a4fc95a5c0039eb15 | no Helm release, managed-by=bootstrap |
+| gw-silicon | hostname VM-0-15-ubuntu | not established | no service-account namespace; Kubernetes endpoint localhost:8080 refused |
+
+Other online identities still to inventory are doops-sub2api/vm-43,
+doops-yaml-probe/oilan-1 and keyi/host-10-66-3-109. No broad restart, forced
+unlock, workload adoption or production credential change is authorized by this
+inventory.

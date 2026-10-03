@@ -505,6 +505,10 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			server.Name, endpoint, server.Use)
 
 		if command == "exec" && background {
+			if err := client.RequireProtocol("executionLifecycle"); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
 			if err := client.ExecBg(cmdStr); err != nil {
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
