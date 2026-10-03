@@ -25,6 +25,11 @@ var helmReleaseTagPattern = regexp.MustCompile(`^release-[0-9]{8}$`)
 var helmRegistryHostPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?$`)
 var helmRepositoryComponentPattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$`)
 
+const (
+	helmAssetSourceRemote    = "remote"
+	helmAssetSourceWorkspace = "workspace"
+)
+
 type helmCommand struct {
 	args                  []string
 	cwd                   string
@@ -32,6 +37,7 @@ type helmCommand struct {
 	namespace             string
 	preserveReleaseValues bool
 	preserveInsertAt      int
+	preflight             bool
 	expectedImage         string
 	fullChartValues       bool
 	expectedReleaseTag    string
@@ -71,9 +77,17 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 	params.SessionID = strings.TrimSpace(params.SessionID)
 	params.Operation = strings.ToLower(strings.TrimSpace(params.Operation))
 	params.Release = strings.TrimSpace(params.Release)
+	params.AssetSource = strings.TrimSpace(params.AssetSource)
 	params.Chart = strings.TrimSpace(params.Chart)
 	params.Namespace = strings.TrimSpace(params.Namespace)
+	params.ExpectedImage = strings.TrimSpace(params.ExpectedImage)
 	params.Timeout = strings.TrimSpace(params.Timeout)
+	if params.AssetSource == "" {
+		params.AssetSource = helmAssetSourceRemote
+	}
+	if params.AssetSource != helmAssetSourceRemote && params.AssetSource != helmAssetSourceWorkspace {
+		return helmCommand{}, fmt.Errorf("invalid helm asset_source %q", params.AssetSource)
+	}
 
 	if err := validateSession(params.SessionID); err != nil {
 		return helmCommand{}, err
@@ -103,19 +117,39 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 
 	switch params.Operation {
 	case "upgrade-install":
+		if params.AssetSource == helmAssetSourceWorkspace {
+			workspace, chart, values, expectedImage, err := resolveWorkspaceHelmAssets(params)
+			if err != nil {
+				return helmCommand{}, err
+			}
+			expectedTag := expectedImage[strings.LastIndexByte(expectedImage, ':')+1:]
+			args := []string{
+				"upgrade", params.Release, chart, "--install", "--atomic",
+				"--reset-values", "--values", values,
+			}
+			return helmCommand{
+				args:               append(args, common...),
+				cwd:                workspace,
+				release:            params.Release,
+				namespace:          params.Namespace,
+				preflight:          true,
+				expectedImage:      expectedImage,
+				fullChartValues:    true,
+				expectedReleaseTag: expectedTag,
+			}, nil
+		}
+
 		chart, err := resolveRemoteHelmChartReference(params.Chart)
 		if err != nil {
 			return helmCommand{}, err
 		}
 		args := []string{"upgrade", params.Release, chart, "--install", "--atomic"}
 		preserveInsertAt := len(args)
-		valueFiles := make([]string, 0, len(params.ValueFiles))
 		for _, valuePath := range params.ValueFiles {
 			resolved, err := resolveRemoteHelmValueReference(valuePath)
 			if err != nil {
 				return helmCommand{}, err
 			}
-			valueFiles = append(valueFiles, resolved)
 			args = append(args, "--values", resolved)
 		}
 		fullChartValues := len(params.ValueFiles) == 0 && len(params.SetStrings) == 0
@@ -128,6 +162,20 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 			}
 		} else {
 			args = append(args, "--reset-values")
+		}
+		if params.ExpectedImage != "" {
+			explicitExpectedImage, err := validateExpectedHelmImage(params.ExpectedImage)
+			if err != nil {
+				return helmCommand{}, err
+			}
+			if explicitExpectedImage != expectedImage {
+				return helmCommand{}, fmt.Errorf(
+					"expected_image %q does not match image set_strings result %q",
+					explicitExpectedImage,
+					expectedImage,
+				)
+			}
+			expectedImage = explicitExpectedImage
 		}
 		keys := make([]string, 0, len(params.SetStrings))
 		for key := range params.SetStrings {
@@ -152,10 +200,14 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 			namespace:             params.Namespace,
 			preserveReleaseValues: !fullChartValues,
 			preserveInsertAt:      preserveInsertAt,
+			preflight:             true,
 			expectedImage:         expectedImage,
 			fullChartValues:       fullChartValues,
 		}, nil
 	case "rollback":
+		if params.AssetSource == helmAssetSourceWorkspace {
+			return helmCommand{}, fmt.Errorf("workspace asset_source is only supported for helm upgrade-install")
+		}
 		if params.Revision <= 0 {
 			return helmCommand{}, fmt.Errorf("positive revision is required for helm rollback")
 		}
@@ -175,6 +227,9 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 func prepareManagedHelmChart(ctx context.Context, params api.HelmParams, command *helmCommand) (func(), error) {
 	cleanup := func() {}
 	if command.operation() != "upgrade" {
+		return cleanup, nil
+	}
+	if strings.TrimSpace(params.AssetSource) == helmAssetSourceWorkspace {
 		return cleanup, nil
 	}
 	params.SessionID = strings.TrimSpace(params.SessionID)
@@ -278,6 +333,158 @@ func validateHelmImageInput(setStrings map[string]string) (string, error) {
 	return imageRepository + ":" + imageTag, nil
 }
 
+func validateExpectedHelmImage(value string) (string, error) {
+	if value == "" || strings.TrimSpace(value) != value || strings.ContainsAny(value, "\r\n") {
+		return "", fmt.Errorf("expected_image must be a complete repository:release-YYYYMMDD or repository@sha256:<digest>")
+	}
+	if at := strings.LastIndexByte(value, '@'); at > 0 {
+		repository := value[:at]
+		digest := value[at+1:]
+		if strings.Contains(digest, "@") || !validHelmImageRepository(repository) || !helmImageDigestPattern.MatchString(digest) {
+			return "", fmt.Errorf("invalid expected_image: expected repository:release-YYYYMMDD or repository@sha256:<digest>")
+		}
+		return value, nil
+	}
+	lastSlash := strings.LastIndexByte(value, '/')
+	lastColon := strings.LastIndexByte(value, ':')
+	if lastColon <= lastSlash || !validHelmReleaseTag(value[lastColon+1:]) ||
+		!validHelmImageRepository(value[:lastColon]) {
+		return "", fmt.Errorf("invalid expected_image: expected repository:release-YYYYMMDD or repository@sha256:<digest>")
+	}
+	return value, nil
+}
+
+func resolveWorkspaceHelmAssets(params api.HelmParams) (string, string, string, string, error) {
+	workspace, sessionRoot, err := resolveHelmSessionWorkspace(params.SessionID)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	if len(params.SetStrings) != 0 {
+		return "", "", "", "", fmt.Errorf("workspace asset_source requires empty set_strings")
+	}
+	expectedImage, err := validateExpectedHelmImage(params.ExpectedImage)
+	if err != nil {
+		return "", "", "", "", err
+	}
+
+	chart, err := cleanWorkspaceRelativePath(params.Chart)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("invalid workspace chart path: %w", err)
+	}
+	chartParts := strings.Split(chart, "/")
+	if len(chartParts) != 3 || chartParts[0] != "deploy" || chartParts[1] != "helm" || chartParts[2] == "" {
+		return "", "", "", "", fmt.Errorf("workspace chart must be a deploy/helm/<env> chart")
+	}
+	_, resolvedChart, err := resolveWorkspaceAsset(sessionRoot, chart, false)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	chartInfo, err := os.Stat(resolvedChart)
+	if err != nil || !chartInfo.IsDir() {
+		return "", "", "", "", fmt.Errorf("workspace chart %q must be a directory", chart)
+	}
+	chartMetadata := filepath.ToSlash(filepath.Join(filepath.FromSlash(chart), "Chart.yaml"))
+	if _, _, err := resolveWorkspaceAsset(sessionRoot, chartMetadata, true); err != nil {
+		return "", "", "", "", fmt.Errorf("workspace chart %q is invalid: %w", chart, err)
+	}
+
+	if len(params.ValueFiles) != 1 {
+		return "", "", "", "", fmt.Errorf("workspace asset_source requires exactly one value_files entry: %s/values.yaml", chart)
+	}
+	values, err := cleanWorkspaceRelativePath(params.ValueFiles[0])
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("invalid workspace values path: %w", err)
+	}
+	expectedValues := chart + "/values.yaml"
+	if values != expectedValues {
+		return "", "", "", "", fmt.Errorf("workspace value_files must contain only %q", expectedValues)
+	}
+	if _, _, err := resolveWorkspaceAsset(sessionRoot, values, true); err != nil {
+		return "", "", "", "", err
+	}
+
+	return workspace, chart, values, expectedImage, nil
+}
+
+func resolveHelmSessionWorkspace(sessionID string) (string, string, error) {
+	workspace, err := workspacePath(sessionID)
+	if err != nil {
+		return "", "", err
+	}
+	root, err := filepath.EvalSymlinks(workspaceRoot())
+	if err != nil {
+		return "", "", fmt.Errorf("resolve agent workspace root: %w", err)
+	}
+	rootInfo, err := os.Stat(root)
+	if err != nil || !rootInfo.IsDir() {
+		return "", "", fmt.Errorf("agent runtime root is not available")
+	}
+	resolved, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve session workspace: %w", err)
+	}
+	relative, err := filepath.Rel(root, resolved)
+	if err != nil || relative == "." || filepath.Dir(relative) != "." {
+		return "", "", fmt.Errorf("session workspace is not bound below the agent workspace root")
+	}
+	info, err := os.Stat(resolved)
+	if err != nil || !info.IsDir() {
+		return "", "", fmt.Errorf("session workspace is not a directory")
+	}
+	return workspace, resolved, nil
+}
+
+func cleanWorkspaceRelativePath(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || filepath.IsAbs(value) || strings.ContainsAny(value, `\`) {
+		return "", fmt.Errorf("path must be relative to the session workspace")
+	}
+	for _, part := range strings.Split(value, "/") {
+		if part == ".." {
+			return "", fmt.Errorf("path traversal is not allowed")
+		}
+	}
+	cleaned := filepath.Clean(filepath.FromSlash(value))
+	if cleaned == "." || filepath.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path must stay inside the session workspace")
+	}
+	return filepath.ToSlash(cleaned), nil
+}
+
+func resolveWorkspaceAsset(sessionRoot, relative string, requireRegular bool) (string, string, error) {
+	cleaned, err := cleanWorkspaceRelativePath(relative)
+	if err != nil {
+		return "", "", err
+	}
+	candidate := filepath.Join(sessionRoot, filepath.FromSlash(cleaned))
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", "", fmt.Errorf("workspace asset %q does not exist", cleaned)
+		}
+		return "", "", fmt.Errorf("resolve workspace asset %q: %w", cleaned, err)
+	}
+	if !pathWithin(sessionRoot, resolved) {
+		return "", "", fmt.Errorf("workspace asset %q escapes the session workspace", cleaned)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", "", fmt.Errorf("stat workspace asset %q: %w", cleaned, err)
+	}
+	if requireRegular && !info.Mode().IsRegular() {
+		return "", "", fmt.Errorf("workspace asset %q must be a regular file", cleaned)
+	}
+	return cleaned, resolved, nil
+}
+
+func pathWithin(root, target string) bool {
+	relative, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))
+}
+
 func validHelmReleaseTag(value string) bool {
 	if !helmReleaseTagPattern.MatchString(value) {
 		return false
@@ -369,7 +576,7 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 		}
 	}
 
-	if command.operation() == "upgrade" {
+	if command.operation() == "upgrade" || command.preflight {
 		// Server-side dry-run preserves lookup behavior before Helm creates a revision.
 		preflightArgs := make([]string, len(command.args)+1)
 		copy(preflightArgs, command.args)

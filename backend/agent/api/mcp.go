@@ -88,16 +88,18 @@ type K8SParams struct {
 
 // HelmParams is the structured request accepted by doops_helm.
 type HelmParams struct {
-	SessionID  string            `json:"session_id"`
-	Operation  string            `json:"operation"`
-	Release    string            `json:"release"`
-	Chart      string            `json:"chart,omitempty"`
-	Namespace  string            `json:"namespace"`
-	ValueFiles []string          `json:"value_files,omitempty"`
-	SetStrings map[string]string `json:"set_strings,omitempty"`
-	Revision   int               `json:"revision,omitempty"`
-	Timeout    string            `json:"timeout,omitempty"`
-	Confirm    bool              `json:"confirm,omitempty"`
+	SessionID     string            `json:"session_id"`
+	Operation     string            `json:"operation"`
+	Release       string            `json:"release"`
+	AssetSource   string            `json:"asset_source,omitempty"`
+	Chart         string            `json:"chart,omitempty"`
+	Namespace     string            `json:"namespace"`
+	ValueFiles    []string          `json:"value_files,omitempty"`
+	SetStrings    map[string]string `json:"set_strings,omitempty"`
+	ExpectedImage string            `json:"expected_image,omitempty"`
+	Revision      int               `json:"revision,omitempty"`
+	Timeout       string            `json:"timeout,omitempty"`
+	Confirm       bool              `json:"confirm,omitempty"`
 }
 
 // AgentPromptParams 用于 doops_agent_prompt 代理执行。

@@ -257,7 +257,7 @@ func k8sMCPToolDefinition(name string, operations []string, description string) 
 func helmMCPToolDefinition() map[string]interface{} {
 	return map[string]interface{}{
 		"name":        helmMCPToolName,
-		"description": "Converge an explicitly named Helm release from an explicit remote chart reference without reading a source workspace.",
+		"description": "Converge an explicitly named Helm release from remote assets or a runtime-bound session workspace. asset_source defaults to remote.",
 		"inputSchema": map[string]interface{}{
 			"type":                 "object",
 			"additionalProperties": false,
@@ -268,24 +268,32 @@ func helmMCPToolDefinition() map[string]interface{} {
 					"enum": helmMutationOperations,
 				},
 				"release": map[string]interface{}{"type": "string"},
+				"asset_source": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{helmAssetSourceRemote, helmAssetSourceWorkspace},
+					"default":     helmAssetSourceRemote,
+					"description": "remote uses explicit https:// or oci:// assets; workspace uses paths relative to the runtime-bound session workspace.",
+				},
 				"chart": map[string]interface{}{
 					"type":        "string",
-					"description": "Remote Helm chart reference using https:// or oci://; local source workspaces are not accepted.",
-					"pattern":     "^(?:https?|oci)://[^\\s]+$",
+					"description": "remote: explicit https:// or oci:// chart; workspace: relative deploy/helm/<env> Chart directory containing Chart.yaml. Workspace paths must not be absolute, contain .., or escape the session through symlinks.",
 				},
 				"namespace": map[string]interface{}{"type": "string"},
 				"value_files": map[string]interface{}{
 					"type":        "array",
-					"description": "Optional remote YAML value file URLs using http:// or https:// for explicit image-override mode. Leave both value_files and set_strings empty to use the HTTPS chart's bundled release values without merging existing values.",
+					"description": "remote: optional YAML value file URLs using http:// or https:// for explicit image-override mode; workspace: exactly one relative chart/values.yaml regular file, with no overlays, absolute paths, .., or symlink escape.",
 					"items": map[string]interface{}{
-						"type":    "string",
-						"pattern": "^(?:https?)://[^\\s]+\\.ya?ml(?:\\?[^\\s]*)?$",
+						"type": "string",
 					},
 				},
 				"set_strings": map[string]interface{}{
 					"type":                 "object",
-					"description":          "Explicit image overrides accept image.repository plus exactly one of immutable image.digest=sha256:<digest> or release image.tag=release-YYYYMMDD. Omit together with value_files for authoritative bundled chart values, which must contain image.repository and a valid release-YYYYMMDD image.tag.",
+					"description":          "remote: image.repository plus exactly one immutable image.digest=sha256:<digest> or image.tag=release-YYYYMMDD; omit with value_files for authoritative bundled chart values. workspace: must be empty.",
 					"additionalProperties": map[string]interface{}{"type": "string"},
+				},
+				"expected_image": map[string]interface{}{
+					"type":        "string",
+					"description": "Required for workspace: complete repository:release-YYYYMMDD or repository@sha256:<64 hex digest>, used for rendered manifest and final Deployment verification. Remote may omit it and derives the expected image from set_strings.",
 				},
 				"revision": map[string]interface{}{"type": "integer", "minimum": 1},
 				"timeout":  map[string]interface{}{"type": "string"},
