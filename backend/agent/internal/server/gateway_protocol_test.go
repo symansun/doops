@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/sosedoff/gitkit"
 	"github.com/user/doops/agent/api"
 )
 
@@ -618,9 +617,9 @@ func TestGatewayGitHTTPEndToEndPushAndFetch(t *testing.T) {
 	defer ts.Close()
 
 	agentGateway := NewGateway()
-	service := gitkit.New(gitkit.Config{Dir: t.TempDir(), AutoCreate: true, AutoHooks: true})
-	if err := service.Setup(); err != nil {
-		t.Fatalf("setup gitkit service: %v", err)
+	service, err := newGitHTTPHandler(t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("setup Git service: %v", err)
 	}
 	agentGateway.gitHandler = http.StripPrefix("/git", service)
 
@@ -3094,9 +3093,9 @@ func newGatewayGitE2E(t *testing.T, targets []gatewayGitE2ETarget) (*GatewayHub,
 func startGatewayGitTestAgent(t *testing.T, hub *GatewayHub, serverURL, cluster, instance string) *websocket.Conn {
 	t.Helper()
 	agentGateway := NewGateway()
-	service := gitkit.New(gitkit.Config{Dir: t.TempDir(), AutoCreate: true, AutoHooks: true})
-	if err := service.Setup(); err != nil {
-		t.Fatalf("setup gitkit service: %v", err)
+	service, err := newGitHTTPHandler(t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("setup Git service: %v", err)
 	}
 	agentGateway.gitHandler = http.StripPrefix("/git", service)
 

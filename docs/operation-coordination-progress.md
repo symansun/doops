@@ -1,7 +1,7 @@
 ---
 title: Operation coordination remediation
 date: 2026-10-03
-status: review-required
+status: source-verified-release-blocked
 ---
 
 # Scope
@@ -32,7 +32,7 @@ unrelated production operations or install unreleased binaries.
 - [x] Gateway cancellation, persistent uncertainty guards, safe administration.
 - [x] Agent prompt/background cancellation and lifecycle capability.
 - [x] Admission order, workspace scope, CLI operation status.
-- [ ] Documentation, protocol/process tests, independent review.
+- [x] Documentation, protocol/process tests, independent review.
 
 # Verification Bounds
 
@@ -44,10 +44,23 @@ remaining failures and evidence here; do not weaken validators to pass.
 Agent, Gateway and CLI suites, Agent go vet, 50 Python contracts, execution-guard
 scenarios and targeted race checks pass. Final independent review identified a
 release blocker in gitkit's asynchronous process cleanup on abnormal Git
-cancellation. Source review can proceed, but main merge, release tags and
-production deployment must wait for that repair, confirmed Agent rollout scope
-and completed live acceptance. Full race and browser evidence limits are tracked
-in the release report.
+cancellation. The continuation reproduced a surviving process group after an
+output-copy failure, then replaced that dependency path with request-owned Git
+HTTP execution using the existing synchronous process-group cleanup.
+Input/output failure, cancellation during initialization, failure after HTTP 200,
+and a real Gateway/Agent Git push with TERM-resistant receive-hook descendants
+pass focused functional checks. Independent review then reproduced delayed EOF
+being misclassified as failure and missing hooks after interrupted initialization;
+both were repaired and their real-Git regression scenarios pass. Final Agent,
+Gateway and CLI suites, Agent go vet, 50 Python contracts, compiled CLI help and
+two repetitions of Git-focused race checks pass. Independent re-review reports
+no new source release blockers.
+
+Main merge, release tags and production deployment still require confirmed Agent
+rollout scope and completed live acceptance. Docker daemon inspection did not
+respond, so this continuation's process tests are macOS-only; Linux process
+acceptance is not claimed. No Worktree is used. Full race and browser evidence
+limits are tracked in the release report.
 
 # Deferred Design
 

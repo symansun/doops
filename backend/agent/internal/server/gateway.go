@@ -18,7 +18,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sosedoff/gitkit"
 	"github.com/user/doops/agent/api"
 	"github.com/user/doops/agent/internal/dispatcher"
 )
@@ -177,13 +176,7 @@ func (gw *Gateway) detectContainerRuntime() {
 
 // SetupGitHandler 配置原生的 Git HTTP 代理，并在每次收到 push 后通过钩子自动向 /root/ws/{sessionID} 释放代码
 func (gw *Gateway) SetupGitHandler() {
-	service := gitkit.New(gitkit.Config{
-		Dir:        "/tmp/repos",
-		AutoCreate: true,
-		AutoHooks:  true,
-		Auth:       false,
-		Hooks: &gitkit.HookScripts{
-			PostReceive: `#!/bin/bash
+	service, err := newGitHTTPHandler("/tmp/repos", `#!/bin/bash
 set -e
 SESSION_ID=$(basename "$PWD" .git)
 case "$SESSION_ID" in
@@ -207,11 +200,8 @@ COMMIT_SHA=$(git rev-parse HEAD)
 printf "%s\n" "$COMMIT_SHA" > "$READY_FILE.tmp"
 mv "$READY_FILE.tmp" "$READY_FILE"
 echo "remote: ✅ doops-agent: Successfully deployed code to $DEST"
-`,
-		},
-	})
-
-	if err := service.Setup(); err != nil {
+`)
+	if err != nil {
 		log.Fatalf("Failed to setup git service: %v", err)
 	}
 

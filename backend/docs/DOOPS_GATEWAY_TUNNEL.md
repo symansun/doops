@@ -310,6 +310,13 @@ Agent 重连后继续有效。管理员只能在独立确认停止后，以 `aud
 `confirm_stopped=true`、reason 和 evidence 完成人工核对，记录为
 `resolved_manually`；不自动接管或重放任务。`unlock` 只重连空闲目标。
 
+Git HTTP 的 `init`、`upload-pack`、`receive-pack` 及其 hook 也由请求拥有进程组。
+请求取消、输入/输出复制失败时先终止并回收进程组，再发原始请求终态；不能以
+handler 返回、取消 ACK 或已经发出的 HTTP 200 作为成功依据。流式响应开始后
+Git 退出失败仍返回 `execution_outcome_unknown`，不会发送成功 EOF。取消仍保留
+未知结果保护，因为 hook 可能已提交部分工作区变更或触发外部操作；本地进程停止
+不等于这些副作用已回滚。
+
 `ask` 链路是 `CLI -> gateway -> doops-agent -> doagent ACP HTTP`。如果 `exec` 成功而 `ask` 失败，优先检查目标 agent 容器内：
 
 ```bash

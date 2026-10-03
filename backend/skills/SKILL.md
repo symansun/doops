@@ -41,8 +41,9 @@ description: |
   在 OpenSSH 边界统一编码远端 argv，避免多层 SSH 的嵌套引号被远端 shell 破坏。
   允许的选项只有 `-4`、`-6`、端口、身份文件，以及 `BatchMode`、`StrictHostKeyChecking`、
   `ConnectTimeout`、`IdentitiesOnly`。会改写目标或执行本地命令的选项由 Agent 拒绝。
-  `doops exec` 仍用于普通 Shell，不得把嵌套 SSH 拼成一个命令字符串；CLI 会明确拒绝
-  这种调用并给出结构化入口。SSH 操作遵守与其它 exec 相同的权限、排队、超时、取消
+  `doops exec` 仍用于普通 Shell，不得把嵌套 SSH 拼成一个命令字符串；CLI 只拦截
+  直接以 `ssh`、`/usr/bin/ssh` 或 `/bin/ssh` 开头的命令，不是完整 Shell 分析器，
+  包装命令仍须由调用者遵守结构化入口要求。SSH 操作遵守与其它 exec 相同的权限、排队、超时、取消
   和审计规则。目标、参数和远端命令必须由当前任务明确给出，不得把私钥、密码或
   token 内联到命令、prompt、日志或工作区。
 - `doops-gateway` 是独立发布包，必须从 CNB 不可变镜像提取，并用

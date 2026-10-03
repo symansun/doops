@@ -2,7 +2,7 @@
 name: operation-lifecycle-release-2026-10-03
 scope: release-and-live-acceptance
 owner: doops-maintainers
-status: review-required
+status: release-blocked
 ---
 
 # Release Objective
@@ -66,14 +66,6 @@ validators or retry a production mutation whose outcome is unknown.
 
 # Release Blockers
 
-- Actual gitkit v0.4.0 commands are not tied to request cancellation. Early body
-  or output-copy failures send SIGTERM and start an asynchronous Wait. A handler
-  return therefore does not prove its process group has stopped. The new Git
-  terminal-response fix must not ship until command ownership and synchronous
-  process-group termination are repaired against this real dependency path.
-  This is a release blocker even though ordinary Git push/fetch and custom
-  context-aware-handler cancellation tests pass. Keep the source review branch
-  out of main and do not create a release tag or switch production services.
 - Agent rollout scope remains unanswered. The recorded Gateway baseline has 12
   online identities; switching the Gateway before all authorized Agents support
   the protocol would reject their shell, SSH, background and prompt operations.
@@ -82,6 +74,14 @@ validators or retry a production mutation whose outcome is unknown.
   blocked further in-app browser automation. Native Codex-app control was denied
   by the tool's safety policy; human dismissal is required before that UI path
   can be completed. No successful cancellation interaction is claimed.
+- The replacement Git process path passed local macOS functional and race tests.
+  Docker daemon inspection did not respond, so Linux/container process cleanup
+  has not been verified in this continuation. The current PR's CI job runs
+  Python contracts, not the Go suites; do not infer Linux execution acceptance
+  from a green ci-contracts result.
+
+Keep the source review branch out of main and do not create a release tag or
+switch production services while these release blockers remain.
 
 # Additional Verification
 
@@ -108,3 +108,30 @@ validators or retry a production mutation whose outcome is unknown.
   without weakening the validator. No merge, tag or deployment
   was performed. Codex could not attach the CNB PR URL as an app artifact because
   the URL was not accepted by its artifact tool; the CNB PR itself exists.
+
+# Current Continuation
+
+- Work continues in the existing checkout on fix/session-operation-coordination;
+  no Worktree is created or used, and no production lock is canceled.
+- gitkit was removed from Agent/Gateway dependencies rather than retained as an
+  alternate execution path. Git's three supported smart-HTTP routes preserve
+  repository initialization and the existing workspace post-receive hook.
+- A real Git push starts a TERM-resistant post-receive hook and descendant.
+  Gateway cancellation preserves cancel_requested ownership until both stop,
+  records outcome_unknown, and rejects a subsequent request until reconciliation.
+- An execution failure after HTTP 200 now emits an unknown-outcome terminal
+  instead of success EOF. Input streams are closeable on command termination.
+- The Skill's SSH statement now distinguishes the CLI's direct-prefix check
+  from the caller's requirement to use structured SSH for wrapped commands.
+- Independent review reproduced two additional defects: normal upload-pack
+  could finish before the request EOF and be falsely quarantined, and init
+  cancellation could leave an otherwise valid repository without its required
+  hook. Both now have real-Git regression evidence. Normal completion waits for
+  EOF while remaining cancellable; every admitted request checks repository
+  completeness and installs the required hook before serving Git.
+- Final Agent/Gateway/CLI suites, Agent go vet, 50 Python contracts, compiled CLI
+  help and git diff --check pass. Git-focused race scenarios passed twice on the
+  final source. Independent re-review found no new source release blockers.
+- This clears the gitkit source blocker, not the deployment blockers above.
+  No production mutation, release tag, main merge or installed CLI/Skill
+  replacement occurred. Remote visibility and PR CI must be checked after push.
