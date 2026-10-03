@@ -2515,16 +2515,24 @@ func startRawCommand(ctx context.Context, cmd *exec.Cmd) (*exec.Cmd, io.ReadClos
 
 // Wait for both the command and its process group. Cancellation escalation is
 // joined here, never left running after a terminal RPC response.
+const postLeaderDescendantGracePeriod = 10 * time.Second
+
 func waitProcessGroup(ctx context.Context, pid int, commandDone <-chan error) error {
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	ctxDone := ctx.Done()
-	var killTimer, cleanupTimer *time.Timer
-	var killDeadline, cleanupDeadline <-chan time.Time
+	var killTimer, cleanupTimer, postLeaderTimer *time.Timer
+	var killDeadline, cleanupDeadline, postLeaderDeadline <-chan time.Time
+	forcedCleanup := false
 	defer func() {
 		if killTimer != nil {
 			killTimer.Stop()
+		}
+		if cleanupTimer != nil {
 			cleanupTimer.Stop()
+		}
+		if postLeaderTimer != nil {
+			postLeaderTimer.Stop()
 		}
 	}()
 	var commandErr error
@@ -2543,6 +2551,9 @@ func waitProcessGroup(ctx context.Context, pid int, commandDone <-chan error) er
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
+				if forcedCleanup {
+					return fmt.Errorf("%w: detached process group was terminated", errExecutionOutcomeUnknown)
+				}
 				return commandErr
 			}
 			// A canceled group remains owned until absence is observed or the
@@ -2554,8 +2565,16 @@ func waitProcessGroup(ctx context.Context, pid int, commandDone <-chan error) er
 		select {
 		case commandErr = <-commandDone:
 			commandDone = nil
+			if ctx.Err() == nil {
+				postLeaderTimer = time.NewTimer(postLeaderDescendantGracePeriod)
+				postLeaderDeadline = postLeaderTimer.C
+			}
 		case <-ctxDone:
 			ctxDone = nil
+			if postLeaderTimer != nil {
+				postLeaderTimer.Stop()
+				postLeaderDeadline = nil
+			}
 			_ = syscall.Kill(-pid, syscall.SIGTERM)
 			killTimer = time.NewTimer(2 * time.Second)
 			cleanupTimer = time.NewTimer(10 * time.Second)
@@ -2566,6 +2585,14 @@ func waitProcessGroup(ctx context.Context, pid int, commandDone <-chan error) er
 			_ = syscall.Kill(-pid, syscall.SIGKILL)
 		case <-cleanupDeadline:
 			return fmt.Errorf("%w: process group did not terminate", errExecutionOutcomeUnknown)
+		case <-postLeaderDeadline:
+			postLeaderDeadline = nil
+			forcedCleanup = true
+			_ = syscall.Kill(-pid, syscall.SIGTERM)
+			killTimer = time.NewTimer(2 * time.Second)
+			cleanupTimer = time.NewTimer(10 * time.Second)
+			killDeadline = killTimer.C
+			cleanupDeadline = cleanupTimer.C
 		case <-ticker.C:
 		}
 	}

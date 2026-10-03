@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -17,6 +18,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -2201,5 +2203,36 @@ func TestSubscribeDoagentSSEDefersStructuredAgentMessage(t *testing.T) {
 	}
 	if !reflect.DeepEqual(collected, []string{"agent_message", "turn_finished"}) {
 		t.Fatalf("structured updates were not collected: %#v", collected)
+	}
+}
+
+func TestWaitProcessGroupBoundsDetachedDescendants(t *testing.T) {
+	cmd := exec.Command("bash", "-c", "sleep 60 & exit 0")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	commandDone := make(chan error, 1)
+	go func() { commandDone <- cmd.Wait() }()
+
+	started := time.Now()
+	err := waitProcessGroup(context.Background(), cmd.Process.Pid, commandDone)
+	if !strings.Contains(err.Error(), errExecutionOutcomeUnknown.Error()) {
+		t.Fatalf("detached descendants did not reach bounded unknown outcome: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed < postLeaderDescendantGracePeriod || elapsed > postLeaderDescendantGracePeriod+3*time.Second {
+		t.Fatalf("detached descendant wait was not bounded: %s", elapsed)
+	}
+	processes, err := exec.Command("ps", "-axo", "pid=,pgid=,state=,command=").Output()
+	if err != nil {
+		t.Fatalf("inspect detached process group: %v", err)
+	}
+	for _, line := range strings.Split(string(processes), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || fields[1] != fmt.Sprint(cmd.Process.Pid) || strings.Contains(fields[2], "Z") {
+			continue
+		}
+		t.Fatalf("detached process group survived cleanup: %q", line)
 	}
 }

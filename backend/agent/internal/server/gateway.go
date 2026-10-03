@@ -283,9 +283,7 @@ func (gw *Gateway) submitBgTask(sessionID, command, logPath string) (*bgTask, er
 		gw.tasksMu.Lock()
 		task.err = err
 		task.Done = !errors.Is(err, errExecutionOutcomeUnknown)
-		if task.Done {
-			task.finishedAt = time.Now()
-		}
+		task.finishedAt = time.Now()
 		if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				task.ExitCode = exitErr.ExitCode()
@@ -309,7 +307,7 @@ func (gw *Gateway) cleanupCompletedTasksLocked(maxAge time.Duration) {
 	}
 	now := time.Now()
 	for id, task := range gw.tasks {
-		if task != nil && task.Done && !task.finishedAt.IsZero() && now.Sub(task.finishedAt) > maxAge {
+		if task != nil && !task.finishedAt.IsZero() && now.Sub(task.finishedAt) > maxAge {
 			delete(gw.tasks, id)
 		}
 	}

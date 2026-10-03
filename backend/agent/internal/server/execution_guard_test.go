@@ -371,8 +371,8 @@ func TestExecutionGuardRemoteFailureNeedsResultEvidence(t *testing.T) {
 	}
 	for _, tool := range []string{"doops_ssh", "doops_agent_prompt", "doops_k8s"} {
 		args := json.RawMessage(`{"operation":"apply"}`)
-		if !remoteMutationFailed(tool, args, response) {
-			t.Fatalf("%s ordinary failure was treated as remote termination evidence", tool)
+		if remoteMutationFailed(tool, args, response) {
+			t.Fatalf("%s terminal tool failure was treated as unknown outcome", tool)
 		}
 		denied := map[string]interface{}{"error": map[string]interface{}{"code": float64(-32602), "message": "invalid arguments"}}
 		if remoteMutationFailed(tool, args, denied) {
@@ -381,6 +381,10 @@ func TestExecutionGuardRemoteFailureNeedsResultEvidence(t *testing.T) {
 	}
 	if remoteMutationFailed("doops_k8s", json.RawMessage(`{"operation":"GET"}`), response) {
 		t.Fatal("read-only Kubernetes failure was treated as mutation uncertainty")
+	}
+	transportFailure := map[string]interface{}{"error": map[string]interface{}{"code": float64(-32000), "message": "agent disconnected"}}
+	if !remoteMutationFailed("doops_ssh", json.RawMessage(`{"command":["./change-production"]}`), transportFailure) {
+		t.Fatal("transport failure for a mutation was not treated as unknown outcome")
 	}
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
 	agent := f.agent(t, "lost-response")

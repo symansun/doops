@@ -331,6 +331,23 @@ func TestAgentCancellationBackgroundStillRejectsHelm(t *testing.T) {
 	}
 }
 
+func TestGatewayCleansUnknownBackgroundTasks(t *testing.T) {
+	t.Setenv("DOOPS_COMPLETED_TASK_MAX_AGE", "1s")
+	gw := NewGateway()
+	gw.tasksMu.Lock()
+	gw.tasks["unknown-task"] = &bgTask{
+		TaskID:     "unknown-task",
+		finishedAt: time.Now().Add(-2 * time.Second),
+		err:        errExecutionOutcomeUnknown,
+	}
+	gw.cleanupCompletedTasksLocked(maxCompletedTaskAge())
+	_, ok := gw.tasks["unknown-task"]
+	gw.tasksMu.Unlock()
+	if ok {
+		t.Fatal("unknown background task was retained past its cleanup age")
+	}
+}
+
 type cancellationDoagentMock struct {
 	prompted  chan struct{}
 	canceled  chan struct{}

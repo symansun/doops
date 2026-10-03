@@ -87,8 +87,11 @@ func remoteMutationFailed(tool string, args json.RawMessage, response map[string
 	if !interruptionNeedsReconciliation(tool, args) {
 		return false
 	}
-	if result, ok := response["result"].(map[string]interface{}); ok {
-		return result["isError"] == true
+	if _, ok := response["result"].(map[string]interface{}); ok {
+		// A structured result, including an isError tool result, proves that the
+		// remote tool reached a terminal state. Only a missing terminal result
+		// can leave a mutation outcome unknown.
+		return false
 	}
 	rpcError, ok := response["error"].(map[string]interface{})
 	if !ok {
