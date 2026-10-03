@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -147,21 +148,52 @@ type gatewayAdminTokensResponse struct {
 }
 
 type gatewayActiveOperation struct {
-	ID             string `json:"id"`
-	UserID         string `json:"user_id"`
-	TokenID        string `json:"token_id,omitempty"`
-	Cluster        string `json:"cluster"`
-	Instance       string `json:"instance"`
-	Action         string `json:"action"`
-	Session        string `json:"session,omitempty"`
-	CommandSummary string `json:"command_summary,omitempty"`
-	Kind           string `json:"kind"`
-	StartedAt      string `json:"started_at"`
-	AgeSeconds     int64  `json:"age_seconds"`
+	ID             string   `json:"id"`
+	AuditID        int64    `json:"audit_id,omitempty"`
+	State          string   `json:"state"`
+	Resource       string   `json:"resource,omitempty"`
+	BlockedBy      []string `json:"blocked_by,omitempty"`
+	UserID         string   `json:"user_id"`
+	TokenID        string   `json:"token_id,omitempty"`
+	Cluster        string   `json:"cluster"`
+	Instance       string   `json:"instance"`
+	Action         string   `json:"action"`
+	Session        string   `json:"session,omitempty"`
+	CommandSummary string   `json:"command_summary,omitempty"`
+	Kind           string   `json:"kind"`
+	StartedAt      string   `json:"started_at"`
+	AgeSeconds     int64    `json:"age_seconds"`
 }
 
 type gatewayAdminOperationsResponse struct {
 	Operations []gatewayActiveOperation `json:"operations"`
+}
+
+type gatewayAdminOperationReconcileRequest struct {
+	ID             string `json:"id"`
+	ConfirmStopped bool   `json:"confirm_stopped"`
+	Reason         string `json:"reason"`
+	Evidence       string `json:"evidence"`
+}
+
+func (r *gatewayAdminOperationReconcileRequest) validate() error {
+	r.ID = strings.TrimSpace(r.ID)
+	r.Reason = strings.TrimSpace(r.Reason)
+	r.Evidence = strings.TrimSpace(r.Evidence)
+	auditID, err := strconv.ParseInt(strings.TrimPrefix(r.ID, "audit-"), 10, 64)
+	if !strings.HasPrefix(r.ID, "audit-") || err != nil || auditID <= 0 {
+		return fmt.Errorf("--id must be an audit-N operation id with a positive audit number")
+	}
+	if !r.ConfirmStopped {
+		return fmt.Errorf("--confirm-stopped is required after human review confirms the operation has stopped")
+	}
+	if r.Reason == "" {
+		return fmt.Errorf("--reason is required for manual reconciliation")
+	}
+	if r.Evidence == "" {
+		return fmt.Errorf("--evidence is required for human-reviewed stopped state")
+	}
+	return nil
 }
 
 func GatewayLogin(gateway, username, password, label string) (string, error) {
@@ -348,9 +380,68 @@ func GatewayAdminOperationCancel(gateway, adminToken, id string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusAccepted {
 		return decodeGatewayHTTPError("gateway admin operation cancel", resp, respBody)
+	}
+	var parsed struct {
+		ID              string `json:"id"`
+		CancelRequested bool   `json:"cancel_requested"`
+		State           string `json:"state"`
+	}
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return fmt.Errorf("decode gateway admin operation cancel response: %w", err)
+	}
+	if parsed.ID != id || !parsed.CancelRequested || parsed.State != "cancel_requested" {
+		return fmt.Errorf("gateway admin operation cancel returned invalid acknowledgment: expected id=%s cancel_requested=true state=cancel_requested", id)
+	}
+	return nil
+}
+
+func GatewayAdminOperationReconcile(gateway, adminToken string, reconcile gatewayAdminOperationReconcileRequest) error {
+	if err := reconcile.validate(); err != nil {
+		return err
+	}
+	reconcileURL, err := gatewayAdminOperationsURL(gateway, "")
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(reconcile)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, reconcileURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if strings.TrimSpace(adminToken) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(adminToken))
+	}
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return decodeGatewayHTTPError("gateway admin operation reconcile", resp, respBody)
+	}
+	var parsed struct {
+		ID    string `json:"id"`
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return fmt.Errorf("decode gateway admin operation reconcile response: %w", err)
+	}
+	if parsed.ID != reconcile.ID || parsed.State != "resolved_manually" {
+		return fmt.Errorf("gateway admin operation reconcile returned invalid acknowledgment: expected id=%s state=resolved_manually", reconcile.ID)
 	}
 	return nil
 }

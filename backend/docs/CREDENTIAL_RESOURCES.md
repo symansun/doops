@@ -191,6 +191,14 @@ key 和 value 都不能为空。
 Helm/Git URL 必须为 HTTPS、不得包含 URL userinfo/query/fragment，并默认拒绝私网、
 loopback 和 link-local 目标。Registry 可以使用无 scheme 的 registry host。
 
+## 执行结果与资源所有权
+
+凭据物化仍使用已有用户、target、session 和精确 scope。发布内部调用继承当前执行
+所有权及 actor/token，不重复获取已持有的资源锁。取消 ACK 不表示物化或发布已停止；
+缺少原始终态，或外部物化/清理/发布已被中断而无法确认副作用时，保留
+`outcome_unknown` 并阻止后续目标 mutation；本地命令退出不证明远端状态。不得自动接管、
+重放或扩大凭据授权。人工核对必须由平台管理员独立确认停止并记录 reason/evidence。
+
 ## 创建和首次激活
 
 1. 创建 resource：

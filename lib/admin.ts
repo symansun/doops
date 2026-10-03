@@ -48,6 +48,10 @@ export interface AdminInstance {
 
 export interface AdminOperation {
   id: string
+  state: "waiting" | "running" | "cancel_requested" | "outcome_unknown"
+  audit_id?: number
+  resource?: string
+  blocked_by?: string[]
   user_id: string
   cluster: string
   instance: string
@@ -133,11 +137,14 @@ function headers(s: Session): HeadersInit {
   }
 }
 
-async function req<T>(s: Session, path: string, init?: RequestInit): Promise<T> {
+async function req<T>(s: Session, path: string, init?: RequestInit, expectedStatus?: number): Promise<T> {
   const res = await fetch(`/api/admin/${path}`, { ...init, headers: headers(s) })
   const text = await res.text()
   const data = text ? JSON.parse(text) : {}
   if (!res.ok) throw new Error(data.error || `请求失败 (${res.status})`)
+  if (expectedStatus !== undefined && res.status !== expectedStatus) {
+    throw new Error(`请求失败：预期 HTTP ${expectedStatus}，实际 HTTP ${res.status}`)
+  }
   return data as T
 }
 
@@ -237,7 +244,15 @@ export async function optimizeAuditIndexes(s: Session, sessionId: string): Promi
 
 export async function cancelOperation(s: Session, id: string): Promise<void> {
   if (s.demo) return (await import("./demo")).demoCancelOperation(id)
-  await req(s, `operations?id=${encodeURIComponent(id)}`, { method: "DELETE" })
+  const result = await req<{ id: string; cancel_requested: boolean; state: string } | null>(
+    s,
+    `operations?id=${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+    202,
+  )
+  if (!result || result.id !== id || result.cancel_requested !== true || result.state !== "cancel_requested") {
+    throw new Error("取消请求响应无效：未确认对应操作的 cancel_requested 状态")
+  }
 }
 
 // ---------- 定时巡检任务 ----------

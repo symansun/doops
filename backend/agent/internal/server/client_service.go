@@ -2,11 +2,14 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"sort"
+	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/user/doops/agent/internal/dispatcher"
@@ -25,7 +28,6 @@ type ClientService struct {
 
 	activeOpsMu sync.Mutex
 	activeOps   map[string]*gatewayActiveOperation
-	activeSeq   uint64
 }
 
 func NewClientService(
@@ -80,8 +82,9 @@ func (s *ClientService) acquireOperationSlot(userID string) (func(), error) {
 }
 
 func (s *ClientService) registerActiveOperation(op GatewayActiveOperation, cancel context.CancelFunc) string {
-	id := fmt.Sprintf("op-%d", atomic.AddUint64(&s.activeSeq, 1))
+	id := "op-" + randomHex(12)
 	op.ID = id
+	op.State = "waiting"
 	op.StartedAt = time.Now().UTC()
 	s.activeOpsMu.Lock()
 	s.activeOps[id] = &gatewayActiveOperation{
@@ -97,8 +100,18 @@ func (s *ClientService) finishActiveOperation(id string) {
 		return
 	}
 	s.activeOpsMu.Lock()
+	var auditID int64
+	if op := s.activeOps[id]; op != nil {
+		auditID = op.AuditID
+	}
 	delete(s.activeOps, id)
 	s.activeOpsMu.Unlock()
+	if auditID == 0 {
+		return
+	}
+	if err := s.store.MarkExecutionUncertain(auditID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		log.Printf("[gateway] execution outcome could not be persisted: audit=%d: %v", auditID, err)
+	}
 }
 
 func (s *ClientService) listActiveOperations() []GatewayActiveOperation {
@@ -109,6 +122,16 @@ func (s *ClientService) listActiveOperations() []GatewayActiveOperation {
 	for _, op := range s.activeOps {
 		item := op.GatewayActiveOperation
 		item.AgeSeconds = int64(now.Sub(item.StartedAt).Seconds())
+		item.BlockedBy = nil
+		if item.State == "waiting" {
+			for _, holder := range s.activeOps {
+				if holder.ID != item.ID && operationsConflict(item, holder.GatewayActiveOperation) &&
+					(holder.State == "running" || holder.State == "cancel_requested") {
+					item.BlockedBy = append(item.BlockedBy, holder.ID)
+				}
+			}
+			sort.Strings(item.BlockedBy)
+		}
 		ops = append(ops, item)
 	}
 	sort.Slice(ops, func(i, j int) bool {
@@ -120,10 +143,37 @@ func (s *ClientService) listActiveOperations() []GatewayActiveOperation {
 func (s *ClientService) cancelActiveOperation(id string) bool {
 	s.activeOpsMu.Lock()
 	op := s.activeOps[id]
+	if op != nil {
+		op.State = "cancel_requested"
+	}
 	s.activeOpsMu.Unlock()
 	if op == nil {
 		return false
 	}
 	op.cancel()
 	return true
+}
+
+func (s *ClientService) markOperationRunning(id string) {
+	s.activeOpsMu.Lock()
+	defer s.activeOpsMu.Unlock()
+	if op := s.activeOps[id]; op != nil && op.State != "cancel_requested" {
+		op.State = "running"
+	}
+}
+
+func operationsConflict(left, right GatewayActiveOperation) bool {
+	if left.Cluster != right.Cluster || left.Instance != right.Instance {
+		return false
+	}
+	if isConcurrentQuery(left.Action, left.Resource) {
+		return isExclusiveOperation(right.Action, right.Resource) && !strings.HasPrefix(right.Resource, "target-mutation:")
+	}
+	if isConcurrentQuery(right.Action, right.Resource) {
+		return isExclusiveOperation(left.Action, left.Resource) && !strings.HasPrefix(left.Resource, "target-mutation:")
+	}
+	if isExclusiveOperation(left.Action, left.Resource) || isExclusiveOperation(right.Action, right.Resource) {
+		return true
+	}
+	return left.Resource != "" && left.Resource == right.Resource
 }

@@ -4,7 +4,7 @@
  * 核心改造：MCPClient 在首次调用时建立一条持久 WebSocket 连接，
  * 后续所有 Call() 和 CallAndCapture() 复用同一个连接。
  * 这解决了旧版每次命令都新建连接导致的：
- *   1. ExecBg 每 3s 轮询创建新连接
+ *   1. 重复 tool call 创建新连接
  *   2. 短连接受 LB idle timeout 截断
  *   3. 连接握手延迟累积
  */
@@ -373,6 +373,13 @@ func (c *MCPClient) RequireProtocol(protocol string) error {
 
 func protocolCapabilityCompatible(protocol string, value interface{}) bool {
 	switch protocol {
+	case "executionLifecycle":
+		capability, ok := value.(map[string]interface{})
+		return ok && len(capability) == 4 &&
+			capability["schemaVersion"] == "doops.sh/execution-lifecycle/v1" &&
+			capability["terminalResponse"] == true &&
+			capability["backgroundLifetime"] == true &&
+			capability["promptCancellation"] == true
 	case "structuredSSH":
 		capability, ok := value.(map[string]interface{})
 		return ok &&
@@ -549,7 +556,7 @@ func (c *MCPClient) Call(toolName string, arguments map[string]interface{}) erro
 						m := item.(map[string]interface{})
 						if m["type"] == "text" {
 							text := m["text"].(string)
-							if !streamedAny || toolName == "doops_agent_prompt" || toolName == "doops_distill" {
+							if !streamedAny || toolName == "doops_agent_prompt" || toolName == "doops_distill" || toolName == "doops_bg" {
 								fmt.Println(text)
 							}
 						}
@@ -893,80 +900,11 @@ func formatAgentEvent(evt map[string]interface{}) {
 	}
 }
 
-// ExecBg 通过 doops_bg 提交后台任务，然后轮询 doops_task_status 直到完成。
-// 轮询复用持久 WebSocket 连接，不再反复新建连接。
+// ExecBg streams one doops_bg call until the Agent reports the process has stopped.
 func (c *MCPClient) ExecBg(command string) error {
-	// Step 1: 提交后台任务
-	fmt.Printf("\033[93m[BG]\033[0m Submitting: %s\n", command)
-
-	result, err := c.CallAndCapture("doops_bg", map[string]interface{}{
+	return c.Call("doops_bg", map[string]interface{}{
 		"command": command,
 	})
-	if err != nil {
-		return fmt.Errorf("failed to submit bg task: %v", err)
-	}
-
-	// 解析 TaskID
-	var taskID string
-	for _, line := range strings.Split(result, "\n") {
-		if strings.HasPrefix(line, "TaskID: ") {
-			taskID = strings.TrimPrefix(line, "TaskID: ")
-			break
-		}
-	}
-	if taskID == "" {
-		return fmt.Errorf("failed to parse TaskID from bg response: %s", result)
-	}
-
-	fmt.Printf("\033[92m[BG]\033[0m Task %s started, polling...\n", taskID)
-
-	// Step 2: 轮询 doops_task_status（复用同一个持久连接！）
-	var lastLogLen int
-	deadline := time.Now().Add(c.callTimeout())
-	for time.Now().Before(deadline) {
-		time.Sleep(3 * time.Second)
-
-		statusResult, err := c.CallAndCapture("doops_task_status", map[string]interface{}{
-			"task_id": taskID,
-			"lines":   "50",
-		})
-		if err != nil {
-			fmt.Printf("\033[91m[BG]\033[0m Poll error: %v (retrying...)\n", err)
-			continue
-		}
-
-		var status string
-		var exitCode string
-		var logTail string
-		inLog := false
-		for _, line := range strings.Split(statusResult, "\n") {
-			if strings.HasPrefix(line, "Status: ") {
-				status = strings.TrimPrefix(line, "Status: ")
-			} else if strings.HasPrefix(line, "ExitCode: ") {
-				exitCode = strings.TrimPrefix(line, "ExitCode: ")
-			} else if line == "---" {
-				inLog = true
-			} else if inLog {
-				logTail += line + "\n"
-			}
-		}
-
-		// 打印增量日志
-		if len(logTail) > lastLogLen {
-			newPart := logTail[lastLogLen:]
-			fmt.Print(newPart)
-			lastLogLen = len(logTail)
-		}
-
-		if status == "done" || status == "failed" {
-			if status == "failed" || (exitCode != "" && exitCode != "0") {
-				return fmt.Errorf("background task failed (exit code: %s)", exitCode)
-			}
-			fmt.Printf("\033[92m[BG]\033[0m Task %s completed successfully\n", taskID)
-			return nil
-		}
-	}
-	return fmt.Errorf("background task timed out after %s", c.callTimeout())
 }
 
 // postJSON 已废弃，被直接的 conn.WriteJSON 替代

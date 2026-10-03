@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -58,11 +57,17 @@ func (gw *Gateway) handleGitHTTPOverWS(ctx context.Context, reqID interface{}, p
 			writeJSON(api.JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      reqID,
-				Error:   &api.RPCError{Code: -32603, Message: fmt.Sprintf("git handler panic: %v", recovered)},
+				Error:   &api.RPCError{Code: -32008, Message: errExecutionOutcomeUnknown.Error()},
 			})
 			return
 		}
 		if ctx.Err() != nil {
+			writeJSON(api.JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      reqID,
+				// gitkit's error cleanup does not synchronously join its process.
+				Error: &api.RPCError{Code: -32008, Message: errExecutionOutcomeUnknown.Error()},
+			})
 			return
 		}
 		rw.finish()
@@ -75,6 +80,7 @@ type wsGitResponseWriter struct {
 	writeJSON   func(v interface{})
 	header      http.Header
 	wroteHeader bool
+	statusCode  int
 	mu          sync.Mutex
 }
 
@@ -126,6 +132,13 @@ func (w *wsGitResponseWriter) Flush() {}
 func (w *wsGitResponseWriter) finish() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.statusCode >= http.StatusInternalServerError {
+		w.writeJSON(api.JSONRPCResponse{
+			JSONRPC: "2.0", ID: w.id,
+			Error: &api.RPCError{Code: -32008, Message: errExecutionOutcomeUnknown.Error()},
+		})
+		return
+	}
 	if !w.wroteHeader {
 		w.writeHeaderLocked(http.StatusOK)
 	}
@@ -147,6 +160,7 @@ func (w *wsGitResponseWriter) writeHeaderLocked(statusCode int) {
 		return
 	}
 	w.wroteHeader = true
+	w.statusCode = statusCode
 	w.writeJSON(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      w.id,

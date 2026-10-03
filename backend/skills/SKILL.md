@@ -26,6 +26,10 @@ description: |
 
 - 优先使用 PATH 中的 `doops`；标准安装路径是 `~/.local/bin/doops`。
 - 所有远端调用必须带 `-session <name>`。
+- 执行生命周期版本发布必须先升级 Agent，再切换 Gateway；切换后的
+  `doops -session <s> capabilities --target <t> --require executionLifecycle`
+  必须通过精确协议校验。旧 Agent 的 shell、SSH、bg 和 prompt 会被拒绝，不能以
+  移除协议检查或静默降级恢复执行。
 - 发布前先核对 `doops version`、精确 target 和实际 Agent 版本。源码、已安装 CLI、
   Gateway、Agent 是独立交付状态；`structuredSSH` 不能证明自升级控制器已上线。
   `-session` 是操作上下文，不是源码同步要求；普通发布不要求 Git worktree 或先 `push`。
@@ -115,15 +119,29 @@ description: |
 - 不要混用 token：
   - gateway CLI 操作用 gateway user token。
   - agent 注册 gateway 不使用 token，只声明 cluster/instance。
-- 物理机/宿主机/Bare-metal 接入：doops 只能执行 Agent 进程所在 OS 用户态的命令，
-  看不到虚拟化层以下的硬件。三条真实路径与禁止动作见 `docs/PHYSICAL_HOST_ACCESS.md`。
+- 物理机硬件检查先核对现有拓扑和授权入口：已有物理机 target 可直接检查，也可经
+  已在线 target 用结构化 `doops ssh` 到明确的宿主地址。查看硬件不要求先安装 Agent；
+  VM 内的 `nsenter` 不能跨越 hypervisor。工具缺失、容器/VM 不可见不等于宿主无 GPU。
+  入口、认证前置条件与证据要求见 `docs/PHYSICAL_HOST_ACCESS.md`。
 - 网站公网代理：管理员先在 Gateway 创建 `host -> cluster/instance -> upstream`
   路由；Agent 必须通过 Helm `proxy.allowedHosts` 配置精确上游 hostname（Chart 注入
   `DOOPS_PROXY_ALLOW_HOSTS`，默认拒绝全部）。当前只支持 HTTP/HTTPS 流式代理，
   不支持 WebSocket 或裸 TCP，详见 `docs/DOOPS_GATEWAY_TUNNEL.md`。
 - 不要在日志、终端输出、文档、提交记录里暴露完整 token。
 - 如果用户是在发账号、发 token、授权、查审计、清理审计、查看/取消 gateway active operations，要按 gateway 管理动作处理，不要混成普通 target 运维。
-- 遇到 `user operation limit exceeded` 时，先用 `doops admin operations list --target <gateway-target>` 查占槽操作；确认 stale 后再用 `doops admin operations cancel --target <gateway-target> --id <operation-id>` 取消。升级后的 agent 会按进程组终止 shell 类命令；`ask` 需要额外核查 doagent session 是否仍在工作。
+- 同一 target 的结构化 `push/write/clean/read/pull` 按 workspace 互斥，不同 workspace
+  可并行；普通 Shell/SSH/bg 与 `ask --apply` 使用 target mutation 锁，session 名称
+  不能证明其副作用隔离，不按命令关键词猜测只读性。结构化 K8s 查询、任务状态和节点
+  信息可在发布期间查询；Agent 自升级仍独占 target。当前没有跨 target 的 release/
+  数据库统一锁，也没有执行器 fencing，不能宣称支持安全强制抢占发布锁。
+- 遇到并发限额或资源冲突，先用 `doops -session <s> admin operations list --target <t>`
+  核对 `state/resource/blocked_by`，等待锁不占用户执行槽。不能因本会话着急就取消其它
+  合法发布；获得明确取消授权后才用 `admin operations cancel --id <operation-id>`。
+  `202 cancel_requested` 不是停止证据。缺少终态，或 Shell/SSH/bg、apply、K8s 写操作
+  被中断而无法证明外部变更已停止时，持久化 `outcome_unknown` 并阻止新写入。
+  管理员须独立核对实际状态，再用
+  `doops -session <s> admin operations reconcile --target <t> --id audit-N --confirm-stopped --reason <reason> --evidence <evidence>`
+  记录人工确认；不得自动解锁、接管或重放。`unlock` 只重连空闲 target。
 - 给用户签发 gateway user token 时，优先使用 `doops admin token create`；不要 SSH 到 gateway 主机手工运行内部 DB 命令。
 
 ## 配置与凭据

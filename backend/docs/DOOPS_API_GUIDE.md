@@ -269,7 +269,10 @@ Authorization: Bearer <USER_TOKEN>
 - `401 Unauthorized`：token 缺失、无效、过期或已撤销。
 - `403 Forbidden`：token 有效，但无权查询目标列表。
 
-`busy` 只表示 target-wide 不可用，例如独占升级、无 session 的旧式操作或 target 队列阻塞。`status=active` 且 `busy=false` 表示有 session/resource 正在执行，但同一 agent 仍可接收其它 session 的操作。`resources` 用于说明当前被锁的 `workspace:<session>`、`session:<session>` 或 `path:<path>`。
+`busy` 表示 target 独占/变更锁或队列阻塞；target mutation 期间仍允许结构化诊断查询，
+Agent 自升级则完全独占。`status=active` 且 `busy=false` 表示有 workspace/resource
+正在执行，但独立结构化 workspace 仍可用。`resources` 列出 `workspace:<session>`。
+普通 Shell/SSH/bg 不按关键词或 session 推断副作用范围，一律使用 target mutation 锁。
 
 ## Git 工作区同步
 
@@ -429,7 +432,10 @@ CLI 的 `--option` 只接受不会改写连接目标的旗标：`-4`、`-6`、`-
 
 ### `doops_bg`
 
-提交由 agent 管理的后台任务。调用会立即返回任务 ID；使用 `doops_task_status` 查询日志和最终退出码。
+提交由 agent 管理的后台任务。进度通知先返回任务 ID、PID 和日志路径，原始 RPC
+在进程及其进程组终止后才返回最终结果；CLI 使用一次流式 RPC，不轮询或重试任务。
+`doops_task_status` 可独立查询已有任务日志；终态无法确认时返回
+`execution_outcome_unknown`，状态查询显示 `unknown`，不得把提交成功当成执行完成。
 
 参数：
 
@@ -662,6 +668,33 @@ GET /v1/audit?user_id=self
 GET /v1/audit?view=global
 ```
 
+### 执行生命周期与人工核对
+
+`executionLifecycle` 协议采用 `doops.sh/execution-lifecycle/v1`，声明
+`terminalResponse`、`backgroundLifetime` 和 `promptCancellation`。
+Gateway 在转发 shell、结构化 SSH、后台任务或 Agent prompt 前验证该协议；
+缺失时拒绝执行，因此升级时必须先升级 Agent，再切换 Gateway。
+
+`GET /v1/admin/operations` 返回 `audit_id`、`state`、`resource` 和 `blocked_by`。
+`DELETE /v1/admin/operations?id=<operation-id>` 返回 HTTP `202`：
+
+```json
+{"id":"op-example","cancel_requested":true,"state":"cancel_requested"}
+```
+
+该响应仅确认取消请求，资源所有权必须保留到原始请求终态。
+终态不确定时审计持久化为 `outcome_unknown`，并阻止后续目标 mutation。
+管理员在独立核对停止证据后可发送 `POST /v1/admin/operations`：
+
+```json
+{"id":"audit-42","confirm_stopped":true,"reason":"operator investigation","evidence":"human-reviewed stopped state"}
+```
+
+成功响应为 `{"id":"audit-42","state":"resolved_manually"}`。
+缺失确认、reason 或 evidence 会被拒绝；仍在运行的操作不得人工核对解除。
+该动作记录人工证据，不表示机器验证成功，也不自动接管或重放操作。
+`POST /v1/targets/unlock` 仅重连空闲目标，拒绝活动、排队或未核对操作。
+
 管理员 mutation 审计：
 
 - 管理员 GET 接口不要求 session，也不会产生 mutation 审计；远端 RPC/CLI 仍使用显式 session。
@@ -725,6 +758,9 @@ JSON-RPC 错误：
 - `-32004`：目标离线。
 - `-32005`：目标忙、目标队列满或等待超时。
 - `-32006`：全局或单用户并发限制超限。
+- `-32007`：操作取消；不能单凭客户端取消 ACK 推断执行停止。
+- `-32008`：`execution_outcome_unknown`，缺少终态或外部 mutation 被中断，需要人工核对；
+  持久化阻止后续写入，不能通过重连、unlock 或新 session 绕过。
 
 ## 权限
 

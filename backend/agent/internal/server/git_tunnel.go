@@ -55,15 +55,11 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	releaseLimit, err := h.acquireOperationSlot(auth.UserID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusTooManyRequests)
-		return
-	}
-	defer releaseLimit()
 	opCtx, cancelOp := context.WithCancel(r.Context())
 	defer cancelOp()
+	resourceKey := gitResourceKey(action, cluster, instance, session)
 	opID := h.registerActiveOperation(GatewayActiveOperation{
+		Resource:       resourceKey,
 		UserID:         auth.UserID,
 		TokenID:        auth.TokenID,
 		Cluster:        cluster,
@@ -75,7 +71,6 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 	}, cancelOp)
 	defer h.finishActiveOperation(opID)
 
-	resourceKey := gitResourceKey(action, cluster, instance, session)
 	if err := agent.acquireForAction(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout); err != nil {
 		if errors.Is(err, context.Canceled) {
 			http.Error(w, "operation canceled", http.StatusConflict)
@@ -85,6 +80,21 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer agent.releaseForAction(action, resourceKey)
+	if err := opCtx.Err(); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	if err := h.checkExecutionGuard(cluster, instance); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	releaseLimit, err := h.acquireOperationSlot(auth.UserID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusTooManyRequests)
+		return
+	}
+	defer releaseLimit()
+	h.markOperationRunning(opID)
 
 	auditID, err := h.store.StartAudit(AuditEvent{
 		UserID:         auth.UserID,
@@ -98,6 +108,16 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		http.Error(w, "start audit: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.activeOpsMu.Lock()
+	if op := h.activeOps[opID]; op != nil {
+		op.AuditID = auditID
+	}
+	h.activeOpsMu.Unlock()
+	if err := h.beginExecution(agent, opID, auditID); err != nil {
+		_ = h.store.FinishAudit(auditID, AuditFinish{Status: "blocked", Error: err.Error()})
+		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
 	status := "success"
@@ -116,6 +136,9 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 			status = "canceled"
 			errMsg = "operation canceled"
 		}
+		if errors.Is(relayErr, errExecutionOutcomeUnknown) {
+			status = "outcome_unknown"
+		}
 		if bytesOut == 0 {
 			http.Error(w, relayErr.Error(), http.StatusBadGateway)
 		}
@@ -132,9 +155,6 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func gitResourceKey(action GatewayAction, cluster, instance, session string) string {
-	if action == ActionPush {
-		return "target-mutation:" + cluster + "/" + instance
-	}
 	return "workspace:" + session
 }
 
@@ -200,7 +220,7 @@ func gitActionForRequest(r *http.Request) GatewayAction {
 	}
 }
 
-func (a *GatewayAgent) relayGitHTTPRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, params gitHTTPRequestParams, timeout time.Duration) (int64, error) {
+func (a *GatewayAgent) relayGitHTTPRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, params gitHTTPRequestParams, timeout time.Duration) (bytesOut int64, finalErr error) {
 	id := atomicAddGatewayRequestID(&a.reqID)
 	ch := a.registerPending(id, "git/cancel")
 	defer a.unregisterPending(id)
@@ -211,12 +231,14 @@ func (a *GatewayAgent) relayGitHTTPRequest(ctx context.Context, w http.ResponseW
 		"id":      id,
 		"params":  params,
 	}); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("%w: dispatch failed: %v", errExecutionOutcomeUnknown, err)
 	}
 	completed := false
 	defer func() {
 		if !completed {
-			a.waitPendingCancel(ch)
+			if err := a.waitPendingCancel(ch); err != nil {
+				finalErr = err
+			}
 		}
 	}()
 
@@ -232,7 +254,6 @@ func (a *GatewayAgent) relayGitHTTPRequest(ctx context.Context, w http.ResponseW
 	defer timer.Stop()
 
 	var wroteHeader bool
-	var bytesOut int64
 	for {
 		if msg, ok, queueErr := ch.dequeue(); queueErr != nil {
 			return bytesOut, queueErr
@@ -280,6 +301,10 @@ func (a *GatewayAgent) relayGitHTTPRequest(ctx context.Context, w http.ResponseW
 				continue
 			}
 			if errObj, ok := msg.Parsed["error"]; ok && errObj != nil {
+				completed = true
+				if executionResponseUnknown(msg.Parsed) {
+					return bytesOut, errExecutionOutcomeUnknown
+				}
 				return bytesOut, fmt.Errorf("%v", errObj)
 			}
 			if _, ok := msg.Parsed["result"]; ok {

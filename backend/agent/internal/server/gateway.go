@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -29,6 +31,9 @@ type bgTask struct {
 	Done       bool
 	ExitCode   int
 	finishedAt time.Time
+	done       chan struct{}
+	cancel     context.CancelFunc
+	err        error
 }
 
 // sessionEntry 存储 Doops->doagent 会话映射及最近使用时间（用于 TTL 驱逐）
@@ -261,7 +266,10 @@ func (gw *Gateway) submitBgTask(sessionID, command, logPath string) (*bgTask, er
 		PID:     cmd.Process.Pid,
 		Cmd:     cmd,
 		LogPath: logPath,
+		done:    make(chan struct{}),
 	}
+	taskCtx, cancel := context.WithCancel(context.Background())
+	task.cancel = cancel
 
 	gw.tasksMu.Lock()
 	gw.cleanupCompletedTasksLocked(maxCompletedTaskAge())
@@ -270,14 +278,24 @@ func (gw *Gateway) submitBgTask(sessionID, command, logPath string) (*bgTask, er
 
 	// 后台等待进程结束并更新状态
 	go func() {
-		err = cmd.Wait()
+		defer cancel()
+		waitDone := make(chan error, 1)
+		go func() { waitDone <- cmd.Wait() }()
+		err := waitProcessGroup(taskCtx, task.PID, waitDone)
 		if logFile != nil {
-			logFile.WriteString(fmt.Sprintf("\n========== [CMD FINISH: %s (Err: %v)] ==========\n\n", time.Now().Format(time.RFC3339), err))
+			state := "CMD FINISH"
+			if errors.Is(err, errExecutionOutcomeUnknown) {
+				state = "CMD OUTCOME UNKNOWN"
+			}
+			logFile.WriteString(fmt.Sprintf("\n========== [%s: %s (Err: %v)] ==========\n\n", state, time.Now().Format(time.RFC3339), err))
 			logFile.Close()
 		}
 		gw.tasksMu.Lock()
-		task.Done = true
-		task.finishedAt = time.Now()
+		task.err = err
+		task.Done = !errors.Is(err, errExecutionOutcomeUnknown)
+		if task.Done {
+			task.finishedAt = time.Now()
+		}
 		if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				task.ExitCode = exitErr.ExitCode()
@@ -287,7 +305,8 @@ func (gw *Gateway) submitBgTask(sessionID, command, logPath string) (*bgTask, er
 		}
 		gw.cleanupCompletedTasksLocked(maxCompletedTaskAge())
 		gw.tasksMu.Unlock()
-		log.Printf("✅ Background task %s finished (exit=%d)", taskID, task.ExitCode)
+		close(task.done)
+		log.Printf("Background task %s: done=%t exit=%d err=%v", taskID, task.Done, task.ExitCode, err)
 	}()
 
 	log.Printf("🚀 Background task submitted: id=%s pid=%d log=%s", taskID, task.PID, logPath)
@@ -310,6 +329,10 @@ func (gw *Gateway) cleanupCompletedTasksLocked(maxAge time.Duration) {
 func (gw *Gateway) getTaskStatus(taskID string, lines int) (*api.TaskInfo, error) {
 	gw.tasksMu.RLock()
 	task, ok := gw.tasks[taskID]
+	if ok {
+		snapshot := *task
+		task = &snapshot
+	}
 	gw.tasksMu.RUnlock()
 
 	if !ok {
@@ -321,7 +344,9 @@ func (gw *Gateway) getTaskStatus(taskID string, lines int) (*api.TaskInfo, error
 	}
 
 	status := "running"
-	if task.Done {
+	if errors.Is(task.err, errExecutionOutcomeUnknown) {
+		status = "unknown"
+	} else if task.Done {
 		if task.ExitCode == 0 {
 			status = "done"
 		} else {

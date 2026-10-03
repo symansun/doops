@@ -261,12 +261,9 @@ async function emitChunks(
 ) {
   onEvent({ type: "open" })
   for (const c of chunks) {
-    if (signal?.aborted) {
-      onEvent({ type: "error", error: "已中断" })
-      onEvent({ type: "done" })
-      return
-    }
+    signal?.throwIfAborted()
     await sleep(delay)
+    signal?.throwIfAborted()
     onEvent({ type: "output", data: c })
   }
 }
@@ -536,8 +533,10 @@ const demoInstances: AdminInstance[] = [
 ]
 
 const demoOps: AdminOperation[] = [
-  { id: "op_1", user_id: "usr_ops01", cluster: "prod-cn", instance: "web-01", action: "ask", kind: "doops_agent_prompt", command_summary: "巡检节点状态", started_at: ago(0.02), age_seconds: 72 },
-  { id: "op_2", user_id: "usr_ops01", cluster: "prod-cn", instance: "web-02", action: "exec", kind: "doops_shell", command_summary: "systemctl restart nginx", started_at: ago(0.01), age_seconds: 36 },
+  { id: "op_1", state: "running", audit_id: 1043, resource: "workspace:console-a1b2c3d4", user_id: "usr_ops01", cluster: "prod-cn", instance: "web-01", action: "ask", kind: "doops_agent_prompt", command_summary: "巡检节点状态", started_at: ago(0.02), age_seconds: 72 },
+  { id: "op_2", state: "waiting", audit_id: 1044, resource: "target-mutation:prod-cn/web-02", blocked_by: ["op_3"], user_id: "usr_ops01", cluster: "prod-cn", instance: "web-02", action: "exec", kind: "doops_shell", command_summary: "systemctl restart nginx", started_at: ago(0.01), age_seconds: 36 },
+  { id: "op_3", state: "cancel_requested", audit_id: 1045, resource: "target-mutation:prod-cn/web-02", user_id: "usr_ops01", cluster: "prod-cn", instance: "web-02", action: "exec", kind: "doops_shell", command_summary: "systemctl restart doops-app", started_at: ago(0.03), age_seconds: 108 },
+  { id: "op_4", state: "outcome_unknown", audit_id: 1046, resource: "target-mutation:staging/db-01", user_id: "usr_ops01", cluster: "staging", instance: "db-01", action: "exec", kind: "doops_shell", command_summary: "systemctl restart pgbouncer", started_at: ago(0.04), age_seconds: 144 },
 ]
 
 let grantSeq = 100
@@ -618,8 +617,10 @@ export function demoListOperations(): AdminOperation[] {
   return demoOps.map((o) => ({ ...o }))
 }
 export function demoCancelOperation(id: string): void {
-  const idx = demoOps.findIndex((o) => o.id === id)
-  if (idx >= 0) demoOps.splice(idx, 1)
+  const op = demoOps.find((o) => o.id === id)
+  if (!op) throw new Error("操作不存在")
+  if (op.state !== "waiting" && op.state !== "running") throw new Error("当前状态不接受取消请求")
+  op.state = "cancel_requested"
 }
 
 function randomToken(n: number): string {

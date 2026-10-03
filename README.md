@@ -41,6 +41,10 @@ pnpm build
 - GitHub uses `main` as the normalized public branch.
 - CNB CI builds, verifies, and publishes immutable agent images. Environment
   rollout and rollback execute through the registered DoOps control plane.
+- Execution lifecycle upgrades require Agent-first rollout: the Gateway refuses
+  shell, SSH, background and prompt calls without `executionLifecycle`.
+  Cancellation requests are distinct from terminal evidence. See
+  `backend/docs/DOOPS_USAGE_GUIDE.md` for operation states and manual reconciliation.
 - Do not publish local runtime directories such as `.next/`, `node_modules/`,
   `.pytest_cache/`, top-level `examples/`, or top-level `test/`.
 

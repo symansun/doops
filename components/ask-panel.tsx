@@ -160,7 +160,7 @@ export function AskPanel({
         },
       )
     } catch (err) {
-      patchLast((t) => ({ ...t, error: (err as Error).name === "AbortError" ? "操作已取消" : (err as Error).message }))
+      patchLast((t) => ({ ...t, error: (err as Error).name === "AbortError" ? "已停止等待，远端终态未确认" : (err as Error).message }))
     } finally {
       patchLast((t) => ({ ...t, running: false, elapsed: Math.round((Date.now() - started) / 1000) }))
       setRunning(false)

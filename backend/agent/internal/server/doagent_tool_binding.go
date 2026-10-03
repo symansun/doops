@@ -450,6 +450,25 @@ func (c *doagentToolTraceCollector) requireCompletedToolEvidence() error {
 	return fmt.Errorf("doagent_apply_tool_evidence_missing")
 }
 
+func (c *doagentToolTraceCollector) hasUnresolvedMutation() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, trace := range c.calls {
+		if trace.usesRawClusterMutation() {
+			return true
+		}
+		if modelVisibleDoagentToolName(trace.ToolName) != "doops_helm" {
+			continue
+		}
+		trace.expectedSessionID = c.expectedSessionID
+		trace.expectedMutationAuthorityDigest = c.expectedMutationAuthorityDigest
+		if !trace.eligible() {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *doagentToolTraceCollector) forbiddenMutationSummary() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()

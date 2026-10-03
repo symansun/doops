@@ -73,6 +73,25 @@ func TestApplyAcceptsStructuredHelmMutationEvidence(t *testing.T) {
 	}
 }
 
+func TestApplyCompletedMutationDoesNotHideUnresolvedTool(t *testing.T) {
+	for _, status := range []string{"running", "failed", "completed"} {
+		t.Run(status, func(t *testing.T) {
+			collector := newDoagentToolTraceCollector(false)
+			bindApplyCollector(collector, "apply-test")
+			collector.calls["verified"] = attestedMutationTrace(t, "mcp_doops_helm", map[string]interface{}{
+				"operation": "upgrade-install", "release": "app",
+				"chart": "deploy/helm/app", "namespace": "apps", "confirm": true,
+			})
+			if collector.hasUnresolvedMutation() {
+				t.Fatal("verified mutation should not require reconciliation")
+			}
+			collector.calls["unfinished"] = doagentToolTrace{ToolName: "mcp_doops_helm", Status: status}
+			if !collector.hasUnresolvedMutation() {
+				t.Fatal("one successful mutation hid a tool without verified completion")
+			}
+		})
+	}
+}
 func TestApplyRejectsUnrelatedCompletedToolEvidence(t *testing.T) {
 	collector := newDoagentToolTraceCollector(false)
 	collector.calls["call-1"] = doagentToolTrace{

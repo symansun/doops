@@ -56,9 +56,11 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
   pull        基于 Git 拉取远端 session 工作区到本地目录
   clean       清理远端节点上的工作区隔离沙盒
-  unlock      管理员强制释放 gateway 上卡住的 target busy 状态
+  unlock      管理员仅重连空闲 target，不强制释放活动任务
   admin       gateway 管理命令：用户、target 授权和 API key
               admin audit optimize：显式、受审计地维护查询索引
+              admin operations cancel：仅请求取消，不代表任务已停止
+              admin operations reconcile：管理员人工核对已停止状态，非自动接管
   upgrade     升级 doops-agent；--dry-run 只预演，正式升级由目标集群内的 Job 执行
   add         添加 gateway target
   remove      仅在 target 当前不可见时删除本机 gateway target 配置
@@ -104,7 +106,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		var target, required string
 		capabilitiesFlag := flag.NewFlagSet("capabilities", flag.ExitOnError)
 		capabilitiesFlag.StringVar(&target, "target", "", "Configured Gateway target")
-		capabilitiesFlag.StringVar(&required, "require", "", "Required protocol, for example structuredSSH")
+		capabilitiesFlag.StringVar(&required, "require", "", "Required protocol: structuredSSH or executionLifecycle")
 		capabilitiesFlag.Parse(cmdArgs)
 		if target == "" || required == "" {
 			fmt.Println("Error: --target and --require are required")
@@ -203,7 +205,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 	case "unlock":
 		var target string
 		unlockFlag := flag.NewFlagSet("unlock", flag.ExitOnError)
-		unlockFlag.StringVar(&target, "target", "", "Configured Gateway target to unlock")
+		unlockFlag.StringVar(&target, "target", "", "Configured Gateway target to reconnect only when idle; does not force-release active work")
 		unlockFlag.Parse(cmdArgs)
 		if target == "" {
 			fmt.Println("Error: --target is required")
@@ -221,7 +223,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Unlocked %s/%s\n", server.Cluster, server.Instance)
+		fmt.Printf("Idle target reconnect requested for %s/%s; active work is not force-released.\n", server.Cluster, server.Instance)
 
 	case "admin":
 		if len(cmdArgs) >= 2 && cmdArgs[0] == "audit" && cmdArgs[1] == "optimize" {
@@ -248,6 +250,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Println("       doops admin token revoke --target <gateway-target> --id <token-id>")
 			fmt.Println("       doops admin operations list --target <gateway-target>")
 			fmt.Println("       doops admin operations cancel --target <gateway-target> --id <operation-id>")
+			fmt.Println("       doops admin operations reconcile --target <gateway-target> --id audit-N --confirm-stopped --reason <reason> --evidence <evidence> (admin-only, human-reviewed stopped state; no automated takeover)")
 			fmt.Println("       doops admin jobs <list|add|run|enable|disable|rm|issues> --target <gateway-target> [...]")
 			os.Exit(1)
 		}
@@ -257,6 +260,10 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		}
 		if cmdArgs[0] == "operations" && cmdArgs[1] == "cancel" {
 			runAdminOperationCancel(cmdArgs[2:], servers, configErr)
+			return
+		}
+		if cmdArgs[0] == "operations" && cmdArgs[1] == "reconcile" {
+			runAdminOperationReconcile(cmdArgs[2:], servers, configErr)
 			return
 		}
 		if cmdArgs[0] == "token" && cmdArgs[1] == "list" {
@@ -275,6 +282,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Println("       doops admin token revoke --target <gateway-target> --id <token-id>")
 			fmt.Println("       doops admin operations list --target <gateway-target>")
 			fmt.Println("       doops admin operations cancel --target <gateway-target> --id <operation-id>")
+			fmt.Println("       doops admin operations reconcile --target <gateway-target> --id audit-N --confirm-stopped --reason <reason> --evidence <evidence> (admin-only, human-reviewed stopped state; no automated takeover)")
 			os.Exit(1)
 		}
 		var target, user, label, expires, saveAs string
@@ -397,7 +405,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		switch command {
 		case "exec":
 			subFlag.StringVar(&cmdStr, "cmd", "", "Command to execute")
-			subFlag.BoolVar(&background, "bg", false, "Run through the agent-managed background task service and wait for completion")
+			subFlag.BoolVar(&background, "bg", false, "Run through one streaming background task RPC until the process stops; no status polling or task retries")
 		case "ssh":
 			subFlag.StringVar(&sshHost, "host", "", "SSH destination, for example ops@app.internal")
 			subFlag.Var(&sshOptions, "option", "Allowed SSH flag or key=value (repeatable, e.g. --option=BatchMode=yes)")
@@ -1099,14 +1107,14 @@ func runAdminOperationsList(args []string, servers []Server, configErr error) {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("%-12s %-8s %-18s %-18s %-8s %-16s %-8s %-8s %s\n", "ID", "KIND", "CLUSTER", "INSTANCE", "ACTION", "SESSION", "AGE", "USER", "SUMMARY")
+	fmt.Printf("%-12s %-8s %-18s %-24s %-18s %-8s %-18s %-18s %-8s %-16s %-8s %-8s %s\n", "ID", "AUDIT_ID", "STATE", "RESOURCE", "BLOCKED_BY", "KIND", "CLUSTER", "INSTANCE", "ACTION", "SESSION", "AGE", "USER", "SUMMARY")
 	fmt.Println(strings.Repeat("-", 132))
 	for _, op := range ops {
 		summary := op.CommandSummary
 		if len(summary) > 48 {
 			summary = summary[:45] + "..."
 		}
-		fmt.Printf("%-12s %-8s %-18s %-18s %-8s %-16s %-8ds %-8s %s\n", op.ID, op.Kind, op.Cluster, op.Instance, op.Action, op.Session, op.AgeSeconds, op.UserID, summary)
+		fmt.Printf("%-12s %-8d %-18s %-24s %-18s %-8s %-18s %-18s %-8s %-16s %-8ds %-8s %s\n", op.ID, op.AuditID, op.State, op.Resource, strings.Join(op.BlockedBy, ","), op.Kind, op.Cluster, op.Instance, op.Action, op.Session, op.AgeSeconds, op.UserID, summary)
 	}
 }
 
@@ -1117,7 +1125,49 @@ func runAdminOperationCancel(args []string, servers []Server, configErr error) {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Canceled operation %s\n", opID)
+	fmt.Printf("id=%s cancel_requested=true state=cancel_requested; cancellation requested, not confirmed stopped.\n", strings.TrimSpace(opID))
+}
+
+func runAdminOperationReconcile(args []string, servers []Server, configErr error) {
+	var target string
+	var reconcile gatewayAdminOperationReconcileRequest
+	fs := flag.NewFlagSet("admin operations reconcile", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), "Admin-only manual reconciliation of human-reviewed stopped state; no automated takeover.")
+		fs.PrintDefaults()
+	}
+	fs.StringVar(&target, "target", "", "Configured Gateway target whose admin login should be used")
+	fs.StringVar(&reconcile.ID, "id", "", "Unresolved audit operation id (audit-N)")
+	fs.BoolVar(&reconcile.ConfirmStopped, "confirm-stopped", false, "Confirm a human has reviewed evidence that the operation has stopped (required)")
+	fs.StringVar(&reconcile.Reason, "reason", "", "Nonempty reason for manual reconciliation (required)")
+	fs.StringVar(&reconcile.Evidence, "evidence", "", "Nonempty human-reviewed evidence that the operation has stopped (required)")
+	fs.Parse(args)
+	if strings.TrimSpace(target) == "" {
+		fmt.Println("Error: --target is required")
+		fs.Usage()
+		os.Exit(1)
+	}
+	if err := reconcile.validate(); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		fs.Usage()
+		os.Exit(1)
+	}
+	if fs.NArg() != 0 {
+		fmt.Println("Error: unexpected positional arguments for manual reconciliation")
+		fs.Usage()
+		os.Exit(1)
+	}
+	requireConfig(configErr)
+	server := findServer(servers, target)
+	if server == nil || strings.TrimSpace(server.Gateway) == "" {
+		fmt.Printf("Error: Gateway target '%s' not found.\n", target)
+		os.Exit(1)
+	}
+	if err := GatewayAdminOperationReconcile(server.Gateway, mustResolveToken(*server), reconcile); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("id=%s state=resolved_manually; human-reviewed stopped state recorded by admin; no automated takeover.\n", reconcile.ID)
 }
 
 func runAdminTokensList(args []string, servers []Server, configErr error) {
@@ -1176,7 +1226,7 @@ func resolveAdminGatewayFlags(name string, args []string, servers []Server, conf
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	fs.StringVar(&target, "target", "", "Configured gateway target whose token/gateway should be used")
 	if opID != nil {
-		fs.StringVar(opID, "id", "", "Active operation id")
+		fs.StringVar(opID, "id", "", "Active operation id to request cancellation for; acknowledgment does not confirm it has stopped")
 	}
 	fs.Parse(args)
 	if strings.TrimSpace(target) == "" {

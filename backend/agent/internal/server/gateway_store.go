@@ -1159,7 +1159,8 @@ func credentialAuditScopeJSON(scope *CredentialGrantScope) (string, error) {
 }
 
 func (s *GatewayStore) DeleteAuditBefore(before time.Time) (int64, error) {
-	res, err := s.db.Exec(`DELETE FROM audit_events WHERE started_at < ?`, formatTime(before.UTC()))
+	res, err := s.db.Exec(`DELETE FROM audit_events WHERE started_at < ?
+		AND status NOT IN ('executing', 'outcome_unknown')`, formatTime(before.UTC()))
 	if err != nil {
 		return 0, err
 	}

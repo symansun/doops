@@ -2,6 +2,25 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-10-03 Execution Lifecycle Release Preparation
+
+- Repair cancellation ownership, process-group and prompt termination evidence,
+  persisted unknown outcomes, per-workspace admission and operator-visible states.
+- Reject command execution on Agents without executionLifecycle. Roll out Agents
+  before the Gateway; confirm the authorized scope and exact CI artifact first.
+- Independent review found and repaired target mutation/workspace overlap,
+  mismatched clean workspace locks, replacement-connection ownership and raw-output
+  keyword matching. Regression scenarios now check those boundaries.
+- Agent, Gateway and CLI package suites, Agent go vet and 50 Python contracts
+  passed; targeted race scenarios passed. Full race verification is not a final
+  release pass. This is local evidence;
+  it does not establish a live upgrade or authorize unresolved mutation retries.
+- Track source, CI, installation, rollout, rollback and live acceptance evidence in
+  reports/operation-release-2026-10-03.md.
+- Release is blocked by real gitkit abnormal-cancellation process cleanup and
+  unanswered Agent rollout scope. Do not merge/tag/deploy this review branch
+  merely because the existing local checks pass.
+
 ## 2026-10-02 Deployment Contract Alignment (Local, Not Released)
 
 - Scope: reconcile ordinary workload `ask --apply`, managed Agent image-only
