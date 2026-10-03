@@ -2,15 +2,16 @@
 name: operation-lifecycle-release-2026-10-03
 scope: release-and-live-acceptance
 owner: doops-maintainers
-status: release-blocked
+status: release-in-progress
 ---
 
 # Release Objective
 
 Publish the operation lifecycle repair from a reviewed, remotely visible commit.
 Use the successful main CI Agent/Gateway artifact and a matching versioned CLI
-release. Confirm the rollout scope before changing Agent workloads or the
-production Gateway: the executionLifecycle requirement rejects shell, SSH,
+release. On 2026-10-03 the user authorized all components and all online Agents.
+Inventory exact identities before changing workloads or the production Gateway:
+the executionLifecycle requirement rejects shell, SSH,
 background and prompt calls to Agents without the new protocol.
 
 # Completion Evidence
@@ -66,9 +67,10 @@ validators or retry a production mutation whose outcome is unknown.
 
 # Release Blockers
 
-- Agent rollout scope remains unanswered. The recorded Gateway baseline has 12
-  online identities; switching the Gateway before all authorized Agents support
-  the protocol would reject their shell, SSH, background and prompt operations.
+- The user authorized all online Agents. Refresh the previous 12-identity
+  inventory and record each workload, immutable image and rollback baseline.
+  Switching the Gateway before all authorized Agents support the protocol would
+  reject their shell, SSH, background and prompt operations.
 - Browser acceptance verified the production-build operations table, all four
   states and disabled cancellation controls. The cancellation confirmation dialog
   blocked further in-app browser automation. Native Codex-app control was denied
@@ -76,9 +78,9 @@ validators or retry a production mutation whose outcome is unknown.
   can be completed. No successful cancellation interaction is claimed.
 - The replacement Git process path passed local macOS functional and race tests.
   Docker daemon inspection did not respond, so Linux/container process cleanup
-  has not been verified in this continuation. The current PR's CI job runs
-  Python contracts, not the Go suites; do not infer Linux execution acceptance
-  from a green ci-contracts result.
+  has not been verified in this continuation. The PR pipeline now includes
+  Linux Agent/Gateway/CLI tests; wait for these exact-commit stages to pass
+  before clearing the Linux verification gate.
 
 Keep the source review branch out of main and do not create a release tag or
 switch production services while these release blockers remain.
@@ -135,3 +137,14 @@ switch production services while these release blockers remain.
 - This clears the gitkit source blocker, not the deployment blockers above.
   No production mutation, release tag, main merge or installed CLI/Skill
   replacement occurred. Remote visibility and PR CI must be checked after push.
+
+# Authorized Release Run
+
+- Start: 2026-10-03 10:24 Asia/Shanghai. Scope is all DoOps components and online
+  Agents, as explicitly authorized by the user. The 90-minute run ceiling and
+  per-failure retry limits above still apply.
+- First verify Linux execution and browser interaction, then merge and obtain
+  main CI artifacts, then upgrade Agents before the Gateway. Install the matching
+  versioned CLI/Skill and verify actual runtime identities and affected paths.
+- Do not commit pre-existing .agent or backend/agent/.qa-console runtime files,
+  use Worktrees, cancel unrelated releases, or weaken protocol checks.

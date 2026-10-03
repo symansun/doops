@@ -17,9 +17,15 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
   it does not establish a live upgrade or authorize unresolved mutation retries.
 - Track source, CI, installation, rollout, rollback and live acceptance evidence in
   reports/operation-release-2026-10-03.md.
-- Release is blocked by real gitkit abnormal-cancellation process cleanup and
-  unanswered Agent rollout scope. Do not merge/tag/deploy this review branch
-  merely because the existing local checks pass.
+- The gitkit process-cleanup blocker was repaired and independently re-reviewed
+  in 789db3db5972a6904d3c7a1cb6e7754f9f80c008, including delayed EOF and interrupted
+  hook initialization regressions.
+- On 2026-10-03 the user authorized committing and releasing all DoOps components
+  and all online Agents. Inventory exact identities and rollback baselines before
+  mutation; upgrade Agents before switching the Gateway.
+- PR checks now include Linux Agent/Gateway/CLI execution tests, not only Python
+  contracts. Linux process cleanup, browser interaction and exact-commit CI
+  artifacts remain mandatory gates, not implied by local macOS test success.
 
 ## 2026-10-02 Deployment Contract Alignment (Local, Not Released)
 
