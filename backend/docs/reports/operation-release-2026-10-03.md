@@ -94,7 +94,17 @@ validators or retry a production mutation whose outcome is unknown.
 - Full Agent, Gateway and CLI suites pass; 50 Python contracts, 5 Gateway-origin
   checks and 7 console checks pass. The four frontend files passed production
   build. These do not establish safe cancellation of gitkit's abnormal paths.
-- Concurrent local dev/build activity produced malformed generated dev types and
-  route 404s. The source tree was intact. Both local servers were stopped; the
+- Local dev generated malformed type files and returned route 404s. Trace review
+  shows build completed before dev started; concurrent build activity is not an
+  established cause, and the 404 root cause remains unresolved. The source tree
+  was intact. Both local servers were stopped; the
   generated dev tree was preserved at /tmp/doops-next-dev-20261003-0920 and
   TypeScript verification was rerun against the release build's generated types.
+- WIP source commit ea4c11aea658880e8f0cbdd3de44d28d8b808b82 was pushed and
+  remotely verified on fix/session-operation-coordination. PR 37 targets main and
+  is explicitly WIP. CNB run cnb-e8u-1k3vmkjqt reports a failed ci-contracts
+  pipeline because the required phrase "共享 mutation 锁" was split across two
+  document lines (49 passed, one failed). The wording line wrap was repaired
+  without weakening the validator. No merge, tag or deployment
+  was performed. Codex could not attach the CNB PR URL as an app artifact because
+  the URL was not accepted by its artifact tool; the CNB PR itself exists.

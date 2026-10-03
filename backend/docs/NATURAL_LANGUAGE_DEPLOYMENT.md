@@ -52,8 +52,8 @@ stdio 请求和响应在本地生成结果证明，完成验证后才向 ACP 暴
 `confirm=true` 和 mutation operation；仅有 completed 状态或工具名不构成成功证据。
 一次性 mutation authority 同时绑定精确 allowedTools 与自然语言任务的 context digest，并由
 doagent 原子消费；可信 attestation 必须返回同一 authority
-digest。同一 target 上的 apply、shell、Kubernetes mutation 和凭据物化共享 mutation
-锁，并排斥结构化 workspace 写入。不同 workspace 的 push/write/clean 可彼此并行；
+digest。同一 target 上的 apply、shell、Kubernetes mutation 和凭据物化共享 mutation 锁，
+并排斥结构化 workspace 写入。不同 workspace 的 push/write/clean 可彼此并行；
 结构化诊断查询不受发布锁阻挡。`ask --apply`
 本身不要求先执行 `push`，也不要求发布输入存在于 session workspace。
 
