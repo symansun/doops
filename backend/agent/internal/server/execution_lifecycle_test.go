@@ -351,6 +351,24 @@ func TestExecutionLifecycleDoesNotGateForegroundSSH(t *testing.T) {
 	}
 }
 
+func TestExecutionLifecycleGateMatchesOperationSemantics(t *testing.T) {
+	tests := map[string]bool{
+		"doops_bg":           true,
+		"doops_shell":        false,
+		"doops_ssh":          false,
+		"doops_agent_prompt": false,
+		"doops_k8s":          false,
+		"doops_task_status":  false,
+		"doops_file_read":    false,
+		"doops_file_write":   false,
+	}
+	for tool, want := range tests {
+		if got := requiresExecutionLifecycle(tool); got != want {
+			t.Errorf("requiresExecutionLifecycle(%q) = %t, want %t", tool, got, want)
+		}
+	}
+}
+
 func TestExecutionLifecycleInternalForegroundCallUsesTerminalEvidenceWithoutCapability(t *testing.T) {
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
 	initialize := gatewayTestInitializeResult("legacy-internal-agent")
