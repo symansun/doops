@@ -123,6 +123,13 @@ type AgentCredentialBinding struct {
 	Keys            []string `json:"keys,omitempty"`
 	ResourceVersion string   `json:"resource_version"`
 	Digest          string   `json:"digest,omitempty"`
+	CredentialID    string   `json:"credential_id,omitempty"`
+	GrantID         string   `json:"grant_id,omitempty"`
+	VersionID       string   `json:"version_id,omitempty"`
+	HelmRelease     string   `json:"helm_release,omitempty"`
+	HelmChart       string   `json:"helm_chart,omitempty"`
+	ContextKind     string   `json:"context_kind,omitempty"`
+	ContextSocket   string   `json:"context_socket,omitempty"`
 }
 
 // GitCloneParams clones a configured repository into a session workspace.

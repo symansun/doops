@@ -411,8 +411,7 @@ touch "${MUTATION_MARKER}"
 		t.Fatalf("build helm command: %v", err)
 	}
 	_, err = runHelmCommand(context.Background(), command, func(notificationEvent) {})
-	if err == nil || !strings.Contains(err.Error(), "helm preflight failed") ||
-		!strings.Contains(err.Error(), "cannot overwrite table with non table") {
+	if err == nil || err.Error() != "helm_preflight_failed" {
 		t.Fatalf("preflight failure not returned: %v", err)
 	}
 	if _, err := os.Stat(mutationMarker); !os.IsNotExist(err) {

@@ -26,6 +26,8 @@ type CredentialMaterialization struct {
 	Status            string   `json:"status"`
 	ErrorCategory     string   `json:"errorCategory,omitempty"`
 	PreviousVersionID string   `json:"previousVersionId,omitempty"`
+	ContextKind       string   `json:"contextKind,omitempty"`
+	ContextSocket     string   `json:"contextSocket,omitempty"`
 }
 
 type credentialVerifyHTTPBody struct {
@@ -97,6 +99,11 @@ func validateCredentialMaterializationMetadata(materialization CredentialMateria
 	}
 	if materialization.ExpiresAt != "" {
 		if _, err := time.Parse(time.RFC3339, materialization.ExpiresAt); err != nil {
+			return errors.New("credential_materialization_metadata_invalid")
+		}
+	}
+	if materialization.ContextKind != "" {
+		if materialization.ContextKind != "helm-native" || !validNativeHelmSocketPath(materialization.ContextSocket) || materialization.SecretType != "" {
 			return errors.New("credential_materialization_metadata_invalid")
 		}
 	}
@@ -256,6 +263,10 @@ func (h *GatewayHub) materializeExplicitCredentialApply(
 			Namespace: item.Reference.Scope.Namespace, ResourceName: materialization.ResourceName,
 			SecretType: materialization.SecretType, Keys: append([]string(nil), materialization.Keys...),
 			ResourceVersion: materialization.ResourceVersion, Digest: materialization.Digest,
+			CredentialID: item.Authorized.Resource.ID, GrantID: item.Authorized.Grant.ID,
+			VersionID: item.Authorized.Version.ID, HelmRelease: item.Reference.Scope.HelmRelease,
+			HelmChart:   item.Reference.Scope.HelmChart,
+			ContextKind: materialization.ContextKind, ContextSocket: materialization.ContextSocket,
 		})
 	}
 	return preparation, nil

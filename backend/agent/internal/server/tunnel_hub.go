@@ -1077,6 +1077,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	}, cancelOp)
 	defer h.finishActiveOperation(opID)
 
+	if len(authorizedCredentials) != 0 {
+		// Match verification/promotion's lock order before holding a target lease.
+		h.hub.credentialMutationMu.Lock()
+		defer h.hub.credentialMutationMu.Unlock()
+	}
 	resourceKey := resourceKeyForTool(action, params.Name, params.Arguments, cluster, instance)
 	if err := agent.acquireForAction(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout); err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -1090,10 +1095,21 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	defer agent.releaseForAction(action, resourceKey)
+	opCtx = withInternalCredentialLock(opCtx, agent, resourceKey)
 	var credentialPreparation credentialApplyPreparation
 	if len(authorizedCredentials) != 0 {
-		h.hub.credentialMutationMu.Lock()
-		defer h.hub.credentialMutationMu.Unlock()
+		for index := range authorizedCredentials {
+			item := &authorizedCredentials[index]
+			resolved, refreshErr := h.hub.store.AuthorizeCredentialUse(CredentialUseRequest{
+				ActorID: auth.UserID, Credential: item.Reference.Name, Scope: item.Reference.Scope,
+			})
+			if refreshErr != nil || !h.hub.store.UserCan(auth.UserID, cluster, instance, ActionCredentialUse) {
+				finishAudit("blocked", "credential_authorization_changed", "", 0)
+				writeJSON(buildErrorResponse(req.ID, -32003, "credential_authorization_changed"))
+				return nil
+			}
+			item.Authorized = resolved
+		}
 		credentialPreparation, err = h.hub.materializeExplicitCredentialApply(
 			opCtx, auth, promptArgs.SessionID, authorizedCredentials,
 		)
@@ -1173,7 +1189,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		}
 	}
 	if knownApplyFailure && len(credentialPreparation.completed) != 0 {
-		if rollbackErr := h.hub.rollbackCredentialPrepare(context.Background(), credentialPreparation.completed); rollbackErr != nil {
+		if rollbackErr := h.hub.rollbackCredentialPrepare(context.WithoutCancel(opCtx), credentialPreparation.completed); rollbackErr != nil {
 			finalErr = "credential_apply_outcome_unknown"
 		}
 	}

@@ -157,13 +157,13 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 			Password string `json:"password"`
 		}
 		_ = json.Unmarshal(req.Payload, &payload)
-		digest, err := verifyHelmRepository(ctx, payload.URL, payload.Username, payload.Password)
+		digest, err := verifyHelmRepository(ctx, payload.URL, payload.Username, payload.Password, req.Scope.HelmChart)
 		if err != nil {
 			return CredentialMaterialization{}, err
 		}
-		secretType = "Opaque"
-		secretData = map[string]string{"url": payload.URL, "username": payload.Username, "password": payload.Password}
-		result.Digest = digest
+		return materializeNativeHelmCredential(ctx, req, nativeHelmAuth{
+			URL: payload.URL, Username: payload.Username, Password: payload.Password,
+		}, digest)
 	case CredentialTypeGitToken:
 		if req.Scope.Use != CredentialUseGitCheckout {
 			return CredentialMaterialization{}, errors.New("credential_use_mismatch")
@@ -442,6 +442,11 @@ func cleanupCredential(ctx context.Context, req CredentialCleanupRequest) error 
 		(!req.AnyVersion && strings.TrimSpace(req.VersionID) == "") ||
 		!validKubernetesCredentialName(req.Namespace) {
 		return errors.New("credential_cleanup_invalid")
+	}
+	if cleaned, err := cleanupNativeHelmCredential(req); err != nil {
+		return err
+	} else if cleaned {
+		return nil
 	}
 	name := credentialSecretName(req.CredentialID, req.GrantID)
 	output, err := getCredentialSecret(ctx, req.Namespace, name)
@@ -949,26 +954,9 @@ func parseTLSPrivateKey(block *pem.Block) (crypto.Signer, error) {
 	}
 }
 
-func verifyHelmRepository(ctx context.Context, repositoryURL, username, password string) (string, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(repositoryURL, "/")+"/index.yaml", nil)
-	if err != nil {
-		return "", errors.New("helm_repository_invalid")
-	}
-	request.SetBasicAuth(username, password)
-	response, err := credentialHTTPClient(request.URL).Do(request)
-	if err != nil {
-		return "", errors.New("helm_repository_unavailable")
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", errors.New("helm_repository_unavailable")
-	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
-	if err != nil || len(body) == 0 {
-		return "", errors.New("helm_repository_invalid")
-	}
-	sum := sha256.Sum256(body)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+func verifyHelmRepository(ctx context.Context, repositoryURL, username, password, chart string) (string, error) {
+	_, digest, err := fetchManagedHelmChart(ctx, repositoryURL, username, password, chart)
+	return digest, err
 }
 
 func verifyGitRemote(ctx context.Context, repositoryURL, username, token string) (string, error) {

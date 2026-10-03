@@ -9,8 +9,10 @@ Gateway 控制台的部署表单调用同一 `doops_agent_prompt operation=apply
 页面的工具失败、连接中断和缺失终态不能成为成功结果，诊断模式不会授权 mutation。
 apply 不要求先把代码同步到 target 的隔离工作区；发布所需的 Chart、values URL、镜像
 版本和验收条件必须直接出现在任务中或来自任务明确授权读取的现有 release。Helm
-版本输入只能是 `image.repository` 加一个 `image.digest=sha256:<64 hex>`，或
-`image.tag=release-YYYYMMDD`，两者不得混用。
+显式镜像覆盖模式使用 `image.repository` 加一个 `image.digest=sha256:<64 hex>`，或
+`image.tag=release-YYYYMMDD`，两者不得混用。完整 Chart 值模式同时省略 `value_files` 和
+`set_strings`，使用 HTTPS Chart 内的唯一 `values.yaml`；它必须声明 `image.repository`
+和合法的 `image.tag=release-YYYYMMDD`，禁止 digest，并不合并历史 release 值。
 
 正式任务必须直接包含：
 
@@ -69,7 +71,10 @@ volumeMounts 和 volumes。发布任务统一调用 `mcp_doops_helm upgrade-inst
 workspace 读取；`set_strings` 只允许 `image.repository` 与一个受控版本选择器：
 `image.digest=sha256:<digest>` 或严格的 `image.tag=release-YYYYMMDD`。两种模式不得混用，
 缺少明确版本或使用其它覆盖时工具在 mutation 前拒绝。
-`upgrade-install` 自动保留已有 release 的非镜像 values；
+显式镜像覆盖模式自动保留已有 release 的非镜像 values；完整 Chart 值模式执行
+`--reset-values`，在真实 mutation 前解析 server-side dry-run 的 manifest，拒绝缺少目标
+release tag 或混入其他 release tag 的 Deployment 镜像。受管 CNB Chart 通过官方 Helm
+HTTPS 下载接口认证读取，并核对物化时验证的包摘要；认证失败不重试匿名或旧登录态。
 `session_id` 不属于模型参数，由 doagent 按会话工作目录启动 MCP 子进程并由 DoOps
 运行时绑定。Gateway target 只负责路由，不能作为 session 或工作区路径。镜像必须满足
 上述受控版本输入。随后执行 rollout 和功能验收。shell 中的 kubectl 或 Helm

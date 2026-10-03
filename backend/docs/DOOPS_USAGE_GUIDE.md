@@ -367,6 +367,11 @@ doops -session release-<commit> ask \
 HTTP(S) URL，`set_strings` 只允许 `image.repository` 加一个受控版本选择器：
 不可变的 `image.digest` 或严格的 `image.tag=release-YYYYMMDD`，两种模式不得混用。
 `--credential` 可重复，但只传 resource name，不能内联 payload。
+若项目使用完整 Chart 值而不是镜像覆盖，任务应明确要求同时省略 `value_files` 与
+`set_strings`，以已发布的 HTTPS Chart 内唯一 `values.yaml` 为权威源。其 `image.tag`
+必须为合法 `release-YYYYMMDD`，不存在历史值合并或 digest 覆盖。CNB 受管 Helm 凭据使用
+官方 Helm 仓库 HTTPS `.tgz` 下载接口；验证器读取实际授权包而非仓库 `index.yaml`，
+发布器按 session/namespace/release/chart 与物化版本校验后消费，认证失败关闭。
 发布者必须在调用前独立核对精确 CI source commit、registry digest 和构建成功证据；
 `ask --apply`、`--image`、`--version` 和 Helm 工具不自动验证 CI provenance。
 

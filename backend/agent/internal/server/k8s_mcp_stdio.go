@@ -276,7 +276,7 @@ func helmMCPToolDefinition() map[string]interface{} {
 				"namespace": map[string]interface{}{"type": "string"},
 				"value_files": map[string]interface{}{
 					"type":        "array",
-					"description": "Optional remote YAML value file URLs using http:// or https://.",
+					"description": "Optional remote YAML value file URLs using http:// or https:// for explicit image-override mode. Leave both value_files and set_strings empty to use the HTTPS chart's bundled release values without merging existing values.",
 					"items": map[string]interface{}{
 						"type":    "string",
 						"pattern": "^(?:https?)://[^\\s]+\\.ya?ml(?:\\?[^\\s]*)?$",
@@ -284,7 +284,7 @@ func helmMCPToolDefinition() map[string]interface{} {
 				},
 				"set_strings": map[string]interface{}{
 					"type":                 "object",
-					"description":          "Direct apply accepts image.repository plus exactly one of immutable image.digest=sha256:<digest> or release image.tag=release-YYYYMMDD.",
+					"description":          "Explicit image overrides accept image.repository plus exactly one of immutable image.digest=sha256:<digest> or release image.tag=release-YYYYMMDD. Omit together with value_files for authoritative bundled chart values, which must contain image.repository and a valid release-YYYYMMDD image.tag.",
 					"additionalProperties": map[string]interface{}{"type": "string"},
 				},
 				"revision": map[string]interface{}{"type": "integer", "minimum": 1},

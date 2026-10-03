@@ -9,6 +9,17 @@ import (
 	"github.com/user/doops/agent/api"
 )
 
+type internalCredentialLockKey struct{}
+
+type internalCredentialLock struct {
+	agent       *GatewayAgent
+	resourceKey string
+}
+
+func withInternalCredentialLock(ctx context.Context, agent *GatewayAgent, resourceKey string) context.Context {
+	return context.WithValue(ctx, internalCredentialLockKey{}, internalCredentialLock{agent: agent, resourceKey: resourceKey})
+}
+
 // RunInternalToolCall 让 gateway 内部组件（如调度器）在服务端直接对某个在线 agent
 // 发起一次 tool call，并把流式输出 + 最终结果文本聚合返回。它复用了与客户端 RPC
 // 相同的目标串行/资源锁语义（acquireForAction），因此不会和用户操作互相踩踏。
@@ -45,10 +56,17 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 		}
 	}
 	resourceKey := resourceKeyForTool(action, tool, rawArgs, cluster, instance)
-	if err := agent.acquireForAction(ctx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout); err != nil {
-		return "", err
+	held, ownsLock := ctx.Value(internalCredentialLockKey{}).(internalCredentialLock)
+	if ownsLock && internalCredentialTool(tool) {
+		if held.agent != agent || held.resourceKey != resourceKey {
+			return "", fmt.Errorf("credential_target_lock_changed")
+		}
+	} else {
+		if err := agent.acquireForAction(ctx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout); err != nil {
+			return "", err
+		}
+		defer agent.releaseForAction(action, resourceKey)
 	}
-	defer agent.releaseForAction(action, resourceKey)
 
 	var out strings.Builder
 	relayErr := agent.relayToolCall(ctx, api.ToolCallParams{Name: tool, Arguments: rawArgs}, h.opts.OperationTimeout, func(msg gatewayWSMessage) error {

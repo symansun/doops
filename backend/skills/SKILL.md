@@ -55,7 +55,12 @@ description: |
   可以为空，但必须使用任务明确给出的远程 `https://`/`oci://` chart 和可选
   HTTP(S) values URL；`set_strings` 只传 `image.repository` 加一个受控版本选择器：
   不可变的 `image.digest` 或严格的 `image.tag=release-YYYYMMDD`，不得混用。工具自动
-  保留当前 values 并先 dry-run。不得读取 target 隔离 workspace、不得要求用户补充本地
+  在显式镜像覆盖模式保留当前 values 并先 dry-run。完整 Chart 值模式同时省略
+  `value_files` 和 `set_strings`，从 HTTPS Chart 内唯一 `values.yaml` 校验
+  `image.repository` 与 `image.tag=release-YYYYMMDD`；不合并历史值、不覆盖镜像。
+  受管 `helmPull` 只按已授权 namespace/release/chart 消费 Secret，验证并钉住实际包摘要；
+  CNB 使用其官方 Helm OCI 仓库的 HTTPS `.tgz` 下载接口，不读取 `index.yaml`。
+  不得读取 target 隔离 workspace、不得要求用户补充本地
   候选 values，也不得用缺少 `confirm=true` 的调用试探。
 - CI 的精确 source commit、镜像 digest 和构建成功证据必须由发布者在调用前核对。
   `ask --apply`、`--image`、`--version` 和 Helm 工具只校验允许的输入形态、解析结果和
