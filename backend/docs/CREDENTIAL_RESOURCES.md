@@ -121,7 +121,7 @@ workload kind 仅支持 `Deployment`、`StatefulSet`、`DaemonSet`。不支持 w
 | `imagePull` | `registry` | image repository、64 位 `sha256:` digest |
 | `tls` | `tls` | 无 |
 | `opaqueSecret` | `opaque` | `required_keys`，必须与 payload key 集合完全相等 |
-| `helmPull` | `helmRepository` | Helm release、明确的远程 `https://`/`oci://` chart URL |
+| `helmPull` | `helmRepository` | Helm release、明确授权的 HTTPS `.tgz` Chart 下载 URL |
 | `gitCheckout` | `gitToken` | 无；当前 scope 不包含 branch/ref |
 
 ## Payload schema
@@ -174,7 +174,18 @@ key 和 value 都不能为空。
 }
 ```
 
-验证读取仓库 `index.yaml`；不验证 grant 中的指定 chart 或 release 一定存在。
+验证以 grant 中的 `helm_chart` 为唯一制品输入，带 HTTP Basic 读取真实 `.tgz`，
+校验 gzip/tar、`Chart.yaml`、`values.yaml` 并返回包摘要，不读取 `index.yaml`。
+下载 URL 必须属于 payload URL 的同源路径范围；重定向、私网地址、无效包和超限失败关闭，
+不会改为匿名请求。CNB 的 payload URL 可用 `https://helm.cnb.cool`，grant Chart 使用
+其官方 `/charts/<repo>/<name>/v/<version>.tgz` 接口。受管 OCI 引用需使用该官方 HTTPS
+下载接口；不会猜测或自动替换调用方的制品路径。
+
+发布时 Gateway 仍只发送物化元数据。Agent 为本次授权 prompt 建立临时、无 payload 的
+租约，结构化 Helm 内部匹配 session、namespace、release、chart，检查 Secret 的
+credential/grant/version/resourceVersion，再下载并检查包摘要与验证记录一致。
+租约在 prompt 结束时移除；模型和公开 MCP 参数不读取、提交或回显 Secret 值。
+受管发布使用 Chart 中完整的唯一 values，不另取未授权的远程 values 或历史 release 值。
 
 ### Git Token
 

@@ -11,6 +11,17 @@ import (
 	"github.com/user/doops/agent/api"
 )
 
+type internalCredentialLockKey struct{}
+
+type internalCredentialLock struct {
+	agent       *GatewayAgent
+	resourceKey string
+}
+
+func withInternalCredentialLock(ctx context.Context, agent *GatewayAgent, resourceKey string) context.Context {
+	return context.WithValue(ctx, internalCredentialLockKey{}, internalCredentialLock{agent: agent, resourceKey: resourceKey})
+}
+
 type internalAuditAuthKey struct{}
 
 func contextWithInternalAuditAuth(ctx context.Context, auth TokenAuth) context.Context {
@@ -65,6 +76,7 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 	}
 	resourceKey := resourceKeyForTool(action, tool, rawArgs, cluster, instance)
 	inherited := h.inheritsExecutionOwner(ctx, agent, resourceKey)
+	held, ownsLock := ctx.Value(internalCredentialLockKey{}).(internalCredentialLock)
 	auth := internalAuditAuthFromContext(ctx)
 	operationUserID := strings.TrimSpace(auth.UserID)
 	if operationUserID == "" {
@@ -87,7 +99,11 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 		CommandSummary: "internal " + tool,
 	}, cancel)
 	defer h.finishActiveOperation(opID)
-	if !inherited {
+	if ownsLock && internalCredentialTool(tool) {
+		if held.agent != agent || held.resourceKey != resourceKey {
+			return "", fmt.Errorf("credential_target_lock_changed")
+		}
+	} else if !inherited {
 		if err := agent.acquireForAction(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout); err != nil {
 			_ = h.store.FinishAudit(auditID, AuditFinish{Status: "blocked", Error: err.Error()})
 			return "", err

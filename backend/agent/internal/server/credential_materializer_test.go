@@ -469,8 +469,11 @@ func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("DOOPS_TEST_GIT_SECRET", "git-canary-secret")
 
-	helmRepo := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/index.yaml" {
+	chart := managedHelmTestArchive(t, managedHelmTestEntries())
+	var chartRequests atomic.Int64
+	helmRepo := managedHelmTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chartRequests.Add(1)
+		if r.URL.Path != "/charts/aiedulab/zhiyong/education/zhiyong/v/1.0.0.tgz" {
 			http.NotFound(w, r)
 			return
 		}
@@ -479,10 +482,9 @@ func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		w.Header().Set("Content-Type", "application/yaml")
-		_, _ = w.Write([]byte("apiVersion: v1\nentries: {}\n"))
+		w.Header().Set("Content-Type", "application/gzip")
+		_, _ = w.Write(chart)
 	}))
-	defer helmRepo.Close()
 
 	helmResult, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
 		CredentialID:   "cred_helm",
@@ -496,10 +498,10 @@ func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T
 				Kind: "deployment", Name: "doops-agent-live",
 			},
 			HelmRelease: "doops-agent",
-			HelmChart:   "doops/agent",
+			HelmChart:   helmRepo.URL + "/charts/aiedulab/zhiyong/education/zhiyong/v/1.0.0.tgz",
 		},
 		Payload: mustJSON(t, map[string]string{
-			"url":      helmRepo.URL,
+			"url":      helmRepo.URL + "/charts/aiedulab/zhiyong/education",
 			"username": "helm",
 			"password": "helm-canary-secret",
 		}),
@@ -507,12 +509,13 @@ func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T
 	if err != nil {
 		t.Fatalf("materialize Helm credential: %v", err)
 	}
-	if helmResult.Status != "verified" || helmResult.Digest == "" {
+	if helmResult.Status != "verified" || helmResult.Digest != fmt.Sprintf("sha256:%x", sha256.Sum256(chart)) ||
+		helmResult.SecretType != "" || helmResult.ContextKind != "helm-native" || helmResult.ContextSocket == "" ||
+		helmResult.ResourceVersion == "" ||
+		!sameCredentialKeys(helmResult.Keys, []string{"url", "username", "password"}) || chartRequests.Load() != 1 {
 		t.Fatalf("unexpected Helm materialization: %#v", helmResult)
 	}
-	if err := os.Remove(filepath.Join(bin, "secret.json")); err != nil {
-		t.Fatalf("reset fake Secret state between resources: %v", err)
-	}
+	_ = os.Remove(filepath.Join(bin, "secret.json"))
 
 	gitResult, err := materializeCredential(context.Background(), CredentialMaterializeRequest{
 		CredentialID:   "cred_git",

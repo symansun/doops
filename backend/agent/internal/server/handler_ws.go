@@ -1063,6 +1063,14 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			}
 			args.Instruction += "\n\nGateway-managed credential bindings (metadata only; never read Secret values):\n" + bindingContext
 		}
+		if operation == "apply" {
+			cleanup, err := bindHelmCredentialsForPrompt(sessionID, args.CredentialBindings)
+			if err != nil {
+				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+				return
+			}
+			defer cleanup()
+		}
 		nativeMode, err := doagentModeForPrompt(operation, "")
 		if err != nil {
 			writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
@@ -1209,12 +1217,17 @@ func credentialBindingContext(bindings []api.AgentCredentialBinding) (string, er
 			return "", errors.New("credential_binding_metadata_invalid")
 		}
 		switch binding.SecretType {
-		case "Opaque", "kubernetes.io/dockerconfigjson", "kubernetes.io/tls":
+		case "", "Opaque", "kubernetes.io/dockerconfigjson", "kubernetes.io/tls":
 		default:
 			return "", errors.New("credential_binding_metadata_invalid")
 		}
 		if binding.Digest != "" && !validCredentialSHA256Digest(binding.Digest) {
 			return "", errors.New("credential_binding_metadata_invalid")
+		}
+		if binding.Use == string(CredentialUseHelmPull) {
+			if binding.ContextKind != "helm-native" || !validNativeHelmSocketPath(binding.ContextSocket) || binding.SecretType != "" {
+				return "", errors.New("credential_binding_metadata_invalid")
+			}
 		}
 		for _, key := range binding.Keys {
 			if !validCredentialMetadataToken(key, 253) || credentialScalarContainsInlineMaterial(key) {

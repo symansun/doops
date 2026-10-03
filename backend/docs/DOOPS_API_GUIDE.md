@@ -601,6 +601,13 @@ name；Gateway 将引用绑定当前用户、target 和 session，Agent 返回�
 scope 后才授权和物化。凭据 payload 不进入公开 prompt、doagent 上下文、CLI 输出、日志或
 审计记录；Gateway 仅通过内部凭据物化调用向目标 Agent 短暂传递 payload。
 
+内部 Helm binding 元数据增加 `credential_id`、`grant_id`、`version_id`、`helm_release`
+与 `helm_chart`，由 Gateway 从精确授权结果填写；公开调用方不得提交 binding。
+Agent 仅在本次 prompt 存续期间建立无 payload 的绑定租约，内部 Helm 检查 exact scope
+与 Secret resourceVersion 后消费凭据。公开 MCP 不增加密码/token 参数。
+完整 Chart 值模式令 `value_files`、`set_strings` 都为空；HTTPS Chart 的 bundled values
+必须包含 `image.repository` 和合法 release tag，不合并旧值，dry-run 和最终镜像验证仍必需。
+
 业务服务的生产发布由目标 Agent 执行。`doops-agent` 自身镜像替换不走 `ask --apply`，
 走 `doops upgrade`。调用方必须以同一 session 的真实健康检查和关键业务验收作为完成证据。
 

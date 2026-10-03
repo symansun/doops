@@ -16,9 +16,11 @@ DoOps architecture, security, release, and verification boundaries.
   `doops -session <s> ask --target <t> --apply [--credential <name>...] --msg '<facts>'`.
 - The task must state target, workload/service scope, explicit image version, reason, allowed
   `deploy/helm/<name>/` assets when needed, and machine-checkable acceptance criteria. The
-  explicit Helm request must use `image.repository` plus exactly one controlled selector:
+  explicit image-override Helm request must use `image.repository` plus exactly one controlled selector:
   `image.digest=sha256:<64 hex>` or `image.tag=release-YYYYMMDD`; the two selectors must not
-  be mixed.
+  be mixed. Authoritative bundled-values releases instead leave both `value_files` and
+  `set_strings` empty, require a valid `image.repository` and `image.tag=release-YYYYMMDD`
+  in the HTTPS chart, reset rather than merge prior values, and validate rendered release tags.
 - CNB CI tests, builds, scans, and publishes immutable artifacts. Gateway authenticates, audits,
   limits concurrency, locks resources, and authorizes credentials. The selected target Agent
   performs the actual Kubernetes or Helm mutation and returns live evidence.

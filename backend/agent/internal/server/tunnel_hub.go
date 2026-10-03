@@ -1078,6 +1078,13 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	var err error
+	releaseLimit, err := h.acquireOperationSlot(auth.UserID)
+	if err != nil {
+		finishAudit("rate_limited", err.Error(), "", 0)
+		writeJSON(buildErrorResponse(req.ID, -32006, err.Error()))
+		return nil
+	}
+	defer releaseLimit()
 	var authorizedCredentials []authorizedCredentialMaterialization
 	if params.Name == "doops_agent_prompt" && len(promptArgs.CredentialRefs) != 0 {
 		authorizedCredentials, err = h.hub.planExplicitCredentialApply(
@@ -1108,6 +1115,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	}, cancelOp)
 	defer h.finishActiveOperation(opID)
 
+	if len(authorizedCredentials) != 0 {
+		// Match verification/promotion's lock order before holding a target lease.
+		h.hub.credentialMutationMu.Lock()
+		defer h.hub.credentialMutationMu.Unlock()
+	}
 	if err := agent.acquireForAction(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout); err != nil {
 		if errors.Is(err, context.Canceled) {
 			finishAudit("canceled", "operation canceled", "", 0)
@@ -1120,6 +1132,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	defer agent.releaseForAction(action, resourceKey)
+	opCtx = withInternalCredentialLock(opCtx, agent, resourceKey)
 	if err := opCtx.Err(); err != nil {
 		finishAudit("canceled", "operation canceled before dispatch", "", 0)
 		writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled before dispatch"))
@@ -1133,13 +1146,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			return nil
 		}
 	}
-	releaseLimit, err := h.acquireOperationSlot(auth.UserID)
-	if err != nil {
-		finishAudit("rate_limited", err.Error(), "", 0)
-		writeJSON(buildErrorResponse(req.ID, -32006, err.Error()))
-		return nil
-	}
-	defer releaseLimit()
 	h.markOperationRunning(opID)
 	opCtx = h.withExecutionOwner(opCtx, agent, resourceKey, opID)
 	if guarded {
@@ -1151,8 +1157,18 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	}
 	var credentialPreparation credentialApplyPreparation
 	if len(authorizedCredentials) != 0 {
-		h.hub.credentialMutationMu.Lock()
-		defer h.hub.credentialMutationMu.Unlock()
+		for index := range authorizedCredentials {
+			item := &authorizedCredentials[index]
+			resolved, refreshErr := h.hub.store.AuthorizeCredentialUse(CredentialUseRequest{
+				ActorID: auth.UserID, Credential: item.Reference.Name, Scope: item.Reference.Scope,
+			})
+			if refreshErr != nil || !h.hub.store.UserCan(auth.UserID, cluster, instance, ActionCredentialUse) {
+				finishAudit("blocked", "credential_authorization_changed", "", 0)
+				writeJSON(buildErrorResponse(req.ID, -32003, "credential_authorization_changed"))
+				return nil
+			}
+			item.Authorized = resolved
+		}
 		credentialPreparation, err = h.hub.materializeExplicitCredentialApply(
 			opCtx, auth, promptArgs.SessionID, authorizedCredentials,
 		)
@@ -1236,7 +1252,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		}
 	}
 	if knownApplyFailure && len(credentialPreparation.completed) != 0 {
-		if rollbackErr := h.hub.rollbackCredentialPrepare(opCtx, credentialPreparation.completed); rollbackErr != nil {
+		if rollbackErr := h.hub.rollbackCredentialPrepare(context.WithoutCancel(opCtx), credentialPreparation.completed); rollbackErr != nil {
 			finalErr = "credential_apply_outcome_unknown"
 		}
 	}
