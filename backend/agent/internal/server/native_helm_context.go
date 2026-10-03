@@ -93,7 +93,7 @@ func materializeNativeHelmCredential(ctx context.Context, req CredentialMaterial
 		CredentialID: req.CredentialID, GrantID: req.GrantID, VersionID: req.VersionID,
 		ResourceName: credentialSecretName(req.CredentialID, req.GrantID),
 		Namespace:    req.Scope.Namespace, Status: "verified", Digest: digest,
-		Keys: []string{"url", "username", "password"}, ResourceVersion: record.ResourceVer,
+		Keys: nil, ResourceVersion: record.ResourceVer,
 		ContextKind: "helm-native", ContextSocket: socket,
 	}, nil
 }
