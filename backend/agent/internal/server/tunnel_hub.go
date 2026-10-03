@@ -1078,13 +1078,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	var err error
-	releaseLimit, err := h.acquireOperationSlot(auth.UserID)
-	if err != nil {
-		finishAudit("rate_limited", err.Error(), "", 0)
-		writeJSON(buildErrorResponse(req.ID, -32006, err.Error()))
-		return nil
-	}
-	defer releaseLimit()
 	var authorizedCredentials []authorizedCredentialMaterialization
 	if params.Name == "doops_agent_prompt" && len(promptArgs.CredentialRefs) != 0 {
 		authorizedCredentials, err = h.hub.planExplicitCredentialApply(
@@ -1133,6 +1126,13 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	}
 	defer agent.releaseForAction(action, resourceKey)
 	opCtx = withInternalCredentialLock(opCtx, agent, resourceKey)
+	releaseLimit, err := h.acquireOperationSlot(auth.UserID)
+	if err != nil {
+		finishAudit("rate_limited", err.Error(), "", 0)
+		writeJSON(buildErrorResponse(req.ID, -32006, err.Error()))
+		return nil
+	}
+	defer releaseLimit()
 	if err := opCtx.Err(); err != nil {
 		finishAudit("canceled", "operation canceled before dispatch", "", 0)
 		writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled before dispatch"))
