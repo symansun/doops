@@ -2224,8 +2224,11 @@ func TestWaitProcessGroupBoundsDetachedDescendants(t *testing.T) {
 	if elapsed := time.Since(started); elapsed < postLeaderDescendantGracePeriod || elapsed > postLeaderDescendantGracePeriod+3*time.Second {
 		t.Fatalf("detached descendant wait was not bounded: %s", elapsed)
 	}
-	processes, err := exec.Command("ps", "-axo", "pid=,pgid=,state=,command=").Output()
-	if err != nil {
+	if _, err := exec.LookPath("ps"); err != nil {
+		t.Skipf("ps is unavailable: %v", err)
+	}
+	processes, err := exec.Command("ps", "-e", "-o", "pid=,pgid=,state=,args=").CombinedOutput()
+	if err != nil && len(processes) == 0 {
 		t.Fatalf("inspect detached process group: %v", err)
 	}
 	for _, line := range strings.Split(string(processes), "\n") {
