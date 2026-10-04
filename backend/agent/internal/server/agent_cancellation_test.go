@@ -122,8 +122,8 @@ func TestAgentCancellationUsesUnifiedTerminalContract(t *testing.T) {
 	response := awaitCancellationTestMessage(t, messages, func(m map[string]interface{}) bool { return m["id"] == float64(1) })
 	result := response["result"].(map[string]interface{})
 	protocols := result["capabilities"].(map[string]interface{})["protocols"].(map[string]interface{})
-	if _, exists := protocols["executionLifecycle"]; exists {
-		t.Fatalf("retired lifecycle capability was advertised: %#v", protocols)
+	if !executionLifecycleCapabilityCompatible(protocols[executionLifecycleProtocol]) {
+		t.Fatalf("background lifetime and cancellation capability was not advertised: %#v", protocols)
 	}
 }
 

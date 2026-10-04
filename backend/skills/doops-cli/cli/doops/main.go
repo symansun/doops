@@ -105,7 +105,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		var target, required string
 		capabilitiesFlag := flag.NewFlagSet("capabilities", flag.ExitOnError)
 		capabilitiesFlag.StringVar(&target, "target", "", "Configured Gateway target")
-		capabilitiesFlag.StringVar(&required, "require", "", "Required protocol: structuredSSH")
+		capabilitiesFlag.StringVar(&required, "require", "", "Required protocol: structuredSSH, executionLifecycle")
 		capabilitiesFlag.Parse(cmdArgs)
 		if target == "" || required == "" {
 			fmt.Println("Error: --target and --require are required")
@@ -412,7 +412,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		switch command {
 		case "exec":
 			subFlag.StringVar(&cmdStr, "cmd", "", "Command to execute")
-			subFlag.BoolVar(&background, "bg", false, "Run through one streaming background task RPC until the process stops; no status polling or task retries")
+			subFlag.BoolVar(&background, "bg", false, "Run through one streaming background task RPC until the process stops; requires executionLifecycle; no status polling or task retries")
 		case "ssh":
 			subFlag.StringVar(&sshHost, "host", "", "SSH destination, for example ops@app.internal")
 			subFlag.Var(&sshOptions, "option", "Allowed SSH flag or key=value (repeatable, e.g. --option=BatchMode=yes)")

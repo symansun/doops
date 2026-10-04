@@ -158,6 +158,7 @@ type GatewayAgent struct {
 	ReleaseCommit          string    `json:"release_commit,omitempty"`
 	CredentialPlanProtocol string    `json:"credential_plan_protocol,omitempty"`
 	StructuredSSH          bool      `json:"structured_ssh,omitempty"`
+	ExecutionLifecycle     bool      `json:"execution_lifecycle,omitempty"`
 	ConnectedAt            time.Time `json:"connected_at"`
 	LastSeen               time.Time `json:"last_seen"`
 	HeartbeatAt            time.Time `json:"heartbeat_at,omitempty"`
@@ -1106,6 +1107,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
 		return nil
 	}
+	if err := agent.requireExecutionLifecycle(params.Name); err != nil {
+		finishAudit("blocked", err.Error(), "", 0)
+		writeJSON(buildErrorResponse(req.ID, -32003, err.Error()))
+		return nil
+	}
 	if action == ActionAgentUpgrade {
 		var args agentUpgradeParams
 		if err := json.Unmarshal(params.Arguments, &args); err != nil {
@@ -1345,6 +1351,9 @@ func clientCapabilities(agent *GatewayAgent) map[string]interface{} {
 	if agent != nil && agent.StructuredSSH {
 		protocols[structuredSSHProtocol] = structuredSSHCapability()
 	}
+	if agent != nil && agent.ExecutionLifecycle {
+		protocols[executionLifecycleProtocol] = executionLifecycleCapability()
+	}
 	capabilities := map[string]interface{}{
 		"tools": map[string]interface{}{},
 	}
@@ -1520,6 +1529,7 @@ func (a *GatewayAgent) applyInitializeResult(result map[string]interface{}) {
 	a.ReleaseCommit = releaseCommit
 	capabilities, _ := result["capabilities"].(map[string]interface{})
 	protocols, ok := capabilities["protocols"].(map[string]interface{})
+	a.ExecutionLifecycle = executionLifecycleCapabilityCompatible(protocols[executionLifecycleProtocol])
 	if !ok {
 		return
 	}

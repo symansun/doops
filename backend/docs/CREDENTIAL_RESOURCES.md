@@ -211,6 +211,8 @@ loopback 和 link-local 目标。Registry 可以使用无 scheme 的 registry ho
 重放或扩大凭据授权。人工核对必须由平台管理员独立确认停止并记录 reason/evidence。
 内部子调用的终态审计失败必须传播未知结果，并继续阻止 mutation；等待持久化重试的
 子操作不是仍在执行的有效所有权，不能因为父调用释放 lease 而允许后续写入。
+`executionLifecycle` 是后台执行准入条件，不是凭据物化、清理或前台 apply 的总开关；
+这些调用继续依赖原始终态和上述未知结果保护，不因缺少后台能力而拒绝。
 
 ## 创建和首次激活
 

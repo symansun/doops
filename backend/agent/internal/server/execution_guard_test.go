@@ -135,12 +135,12 @@ func TestExecutionGuardSuccessfulContentCannotSignalUnknownOutcome(t *testing.T)
 	}
 }
 
-func TestExecutionGuardDoesNotExposeLifecycleCapability(t *testing.T) {
+func TestExecutionGuardDoesNotInventLifecycleCapability(t *testing.T) {
 	for _, agent := range []*GatewayAgent{nil, {}, {StructuredSSH: true}} {
 		capabilities := clientCapabilities(agent)
 		protocols, _ := capabilities["protocols"].(map[string]interface{})
 		if _, exists := protocols["executionLifecycle"]; exists {
-			t.Fatal("client exposed the retired lifecycle capability")
+			t.Fatal("client exposed lifecycle capability not advertised by Agent")
 		}
 	}
 }
@@ -361,6 +361,7 @@ func TestExecutionGuardCanceledMutationCannotBePreemptedAfterLocalExit(t *testin
 			initialize := gatewayTestInitializeResult("interrupted-writer")
 			protocols := initialize["capabilities"].(map[string]interface{})["protocols"].(map[string]interface{})
 			protocols[structuredSSHProtocol] = structuredSSHCapability()
+			protocols[executionLifecycleProtocol] = executionLifecycleCapability()
 			agent := f.agentWithInitialize(t, initialize)
 			client, probe := f.client(t, f.admin), f.client(t, f.admin)
 			args := map[string]interface{}{"command": "./change-production"}

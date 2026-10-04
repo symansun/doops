@@ -2,18 +2,24 @@
 name: lifecycle-release-2026-10-04
 scope: doops-release
 owner: doops-maintainers
-status: preparing
+status: implementing
 ---
 
 # Objective
 
-Retire the executionLifecycle capability without removing terminal evidence,
-cancellation, auditing or mutation protection. Publish a single reviewed release
-and restore real output and terminal results through CLI, Gateway and Agent.
+Scope executionLifecycle admission to background execution, preserving its
+terminal-response and cancellation guarantees without gating foreground
+exec/SSH/ask. Publish a single reviewed release and restore real output and
+terminal results through CLI, Gateway and Agent. This objective supersedes the
+earlier full-retirement implementation recorded below.
 No Worktree, compatibility routing, forced unlock or unrelated release cancellation.
 
 # Acceptance And Bounds
 
+- Without the capability, foreground exec/SSH/ask reach the Agent and complete;
+  background calls fail before dispatch through both public and internal paths.
+- With the exact capability, background success, failure and cancellation return
+  actual output and terminal evidence. A cancel ACK never releases an execution.
 - Local Agent/Gateway/CLI suites and Python contracts pass; exact-commit Linux CI passes.
 - Source is pushed and visible on main; immutable image and CLI assets identify that commit.
 - Released CLI and Skill are installed together.
@@ -80,3 +86,54 @@ No Worktree, compatibility routing, forced unlock or unrelated release cancellat
   An Ali foreground output canary still returns only "Operation complete.".
   No production operation was canceled, no unknown outcome was unlocked and
   no production binary was replaced during this verification.
+
+# Republication Evidence
+
+- PR 44 Linux checks passed in `cnb-d6l-1k42hpko0` for source
+  `3c286ca86c2a5274805a90a10958103f40b90f55`.
+- Main merge `592dad8ab818e4ac06fd6263a95b5b73fbc851f2` passed all stages in
+  `cnb-p74-1k42i9sqj`, including Agent/Gateway/CLI tests, web build and immutable
+  images. The merge tree matches the reviewed source tree.
+- Tag `v1.3.12` was pushed for that exact main commit. Release pipeline
+  `cnb-5e5-1k42ivh95` is running; publication and runtime cutover are not yet
+  accepted.
+- Fresh local Agent, Gateway and CLI suites passed, as did all 50 Python contracts.
+- Gateway host still reports `148a97c77c0048504c2f1d6afa486d07dbe1ba27` and an
+  active systemd service. Ali is idle on `7e605c48a848373a9992368021fdc3f7f3807a5c`;
+  Tencent is on the same old Agent commit with another user's operation running.
+  That operation is not canceled or preempted by this release.
+
+# Scoped Admission Continuation
+
+- Previous turn classification: progress. Live probes reproduced the background
+  rejection and missing foreground output, and identified the running Gateway
+  executable as `148a97c77c0048504c2f1d6afa486d07dbe1ba27`.
+- Installed CLI and Ali/Tencent Agents now identify
+  `592dad8ab818e4ac06fd6263a95b5b73fbc851f2`; this does not establish Gateway rollout.
+- The current goal explicitly retains background lifecycle capability checks.
+  Full capability retirement is not completion of that goal. Keep request-ID
+  routing, terminal-before-unlock persistence and unknown-outcome protection.
+- Implementation ownership: CLI changes are confined to the four CLI lifecycle
+  files; the lead owns Agent/Gateway admission and documentation. No Worktree.
+- Next: scoped admission and functional tests, independent review, commit/push
+  and exact-commit CI, immutable release, consumer readiness, Gateway cutover,
+  and real output/cancellation acceptance on Ali/Tencent.
+- Existing bounds remain in force. Stop a repair group after three failed
+  attempts or repeated unchanged evidence; record the blocker rather than
+  weakening a check, replaying a mutation or terminating another release.
+- Scoped admission is implemented in Agent advertisement, CLI `ExecBg`, public
+  Gateway RPC and internal dispatch. Foreground exec/SSH/ask remain ungated.
+- Local CLI suite, Agent server suite (207.689 seconds), Agent go vet and all
+  50 Python contract tests passed. Final malformed-capability matrix and
+  real CLI -> Gateway -> Agent scenarios also passed after review changes.
+- The real-process scenarios verified foreground/background stdout and stderr,
+  exit 0/17, terminal Gateway audit persistence and no leftover operations or
+  unknown-outcome blockers. macOS Agent text-audit writes still log the existing
+  hard-coded `/root` path warning; this is not evidence of Linux text-audit
+  persistence, which remains subject to exact-commit Linux CI.
+- Independent review found no confirmed runtime gate/finalization defect. Its
+  stale API paragraph was fixed, and public/internal tests now cover missing,
+  malformed, wrong-version, disabled and extra-field capabilities.
+- The earlier v1.3.12 release pipeline `cnb-5e5-1k42ivh95` is now confirmed
+  successful. It does not contain this scoped-admission correction; a new
+  exact-commit CI/release is required before any runtime replacement.

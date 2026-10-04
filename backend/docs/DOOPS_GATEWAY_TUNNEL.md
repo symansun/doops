@@ -312,6 +312,9 @@ doops -session <s> admin operations cancel --target <gateway-target> --id <opera
 `cancel` 返回 HTTP `202 cancel_requested`，只确认请求已登记。原始操作的资源所有权
 保留到 terminal response；取消 ACK 不是终态。shell/SSH/bg 等本地命令等待进程组
 终止，`ask` 发起 doagent `session/cancel` 并等待匹配的 `turn_finished`。
+`executionLifecycle` 能力只在后台 `doops_bg` 的派发前校验，要求完整终态、受控任务寿命
+和取消能力。普通前台执行不要求此声明；超时/取消仍等待原始终态，不能因为缺少声明
+而宣告停止或跳过未知结果保护。后台任务在断连时取消，不作为可脱离连接运行的任务队列。
 本地进程退出不证明远端控制器或脱离进程组的工作停止。Shell/SSH/bg、apply、K8s
 写操作等被中断时，即使收到本地取消终态也记录 `outcome_unknown`；缺失终态同样
 阻止后续目标 mutation。该阻塞在 Gateway 重启和

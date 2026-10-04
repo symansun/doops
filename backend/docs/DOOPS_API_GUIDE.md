@@ -336,8 +336,13 @@ Gateway 和 Agent 的 `serverInfo.version` 使用同一个 DoOps 发布标签，
 `releaseCommit` 时不会被当作当前发布验收通过。`cli-contract/v3` 只表示 CLI 协议
 兼容性，由 `doops --contract` 单独检查。
 
-`executionLifecycle` 不再是能力声明或执行准入参数。终态、取消和未知结果由 Gateway
-统一处理。workspace 写入等本地操作缺失终态时同样保留未知结果；受保护内部子调用
+`executionLifecycle` 只限制 `doops_bg`，不限制普通前台 shell、SSH、prompt/apply 或查询。
+Agent 在 `capabilities.protocols.executionLifecycle` 声明
+`schemaVersion=doops.sh/execution-lifecycle/v1`，且 `terminalResponse`、
+`backgroundLifetime`、`promptCancellation` 必须全部为布尔 `true`，不得缺字段或额外字段。
+CLI 和 Gateway（包括内部调度调用）在后台任务派发前校验，不满足则拒绝且不占执行锁。
+`backgroundLifetime` 表示任务受控并等待原始 RPC 终态，不承诺跨断连存活。
+终态、取消和未知结果仍由 Gateway 统一处理。workspace 写入等本地操作缺失终态时同样保留未知结果；受保护内部子调用
 审计落库失败会阻止后续 mutation，不把持久化重试当作仍在执行的有效所有权。
 
 工具调用格式：
@@ -688,8 +693,9 @@ GET /v1/audit?view=global
 
 ### 执行生命周期与人工核对
 
-Gateway 对前台、后台、SSH、prompt 和 `ask --apply` 统一维护执行生命周期，不再依赖
-Agent capability 字段决定是否允许调用。每个 `tools/call` 都必须收到对应的终态响应；
+Gateway 对前台、后台、SSH、prompt 和 `ask --apply` 统一维护执行生命周期。只有
+后台 `doops_bg` 在派发前要求 Agent 声明精确的 `executionLifecycle` 能力；前台调用不受
+该能力门禁影响。每个 `tools/call` 都必须收到对应的终态响应；
 `notifications/message` 必须在 `params.request_id` 携带本次请求 ID，Gateway 和 CLI
 按请求 ID 路由流式事件，不按 session 覆盖并发请求。取消 ACK 不是原始调用的终态；
 调用被取消、超时或断连且没有足够终态证据时写入 `outcome_unknown`，不能把本地等待

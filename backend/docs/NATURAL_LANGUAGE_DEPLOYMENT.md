@@ -65,6 +65,9 @@ digest。同一 target 上的 apply、shell、Kubernetes mutation 和凭据物�
 `ask --apply` 发布编排，也不能使用 managed credential reference。`exec --bg` 的原始 RPC
 和审计保留到进程终止，取消请求不等于终态；它不能承载 doops-agent Helm mutation，
 此类后台调用必须明确拒绝。
+只有 `exec --bg` 派发前要求完整 `executionLifecycle` 能力；普通前台 `exec`、
+结构化 `ssh`、`ask` 和 `ask --apply` 不要求该声明。缺少后台能力不能阻断前台发布，
+也不能静默改走另一条执行路径。
 
 取消 Shell/SSH/bg、apply 或 Kubernetes 写操作只请求停止；本地进程/模型轮次终止不等于
 远端变更已停止，Gateway 保留 `outcome_unknown` 等待人工核对。当前锁按 target 路由

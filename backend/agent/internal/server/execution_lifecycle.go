@@ -17,6 +17,16 @@ const executionCancellationTimeout = 30 * time.Second
 
 var errExecutionOutcomeUnknown = errors.New("execution_outcome_unknown")
 
+// requireExecutionLifecycle is intentionally narrower than the execution
+// outcome guard. Foreground calls use terminal evidence and can run on legacy
+// Agents; background calls require the Agent's lifetime/cancellation contract.
+func (a *GatewayAgent) requireExecutionLifecycle(tool string) error {
+	if tool == "doops_bg" && !a.ExecutionLifecycle {
+		return fmt.Errorf("target Agent does not advertise protocol %q; upgrade the Agent before using background execution", executionLifecycleProtocol)
+	}
+	return nil
+}
+
 type executionOwnerKey struct{}
 
 type executionOwner struct {

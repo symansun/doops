@@ -20,8 +20,86 @@ import (
 func agentInitializeResult() map[string]interface{} {
 	return map[string]interface{}{
 		"capabilities": map[string]interface{}{
-			"protocols": map[string]interface{}{},
+			"protocols": map[string]interface{}{
+				"executionLifecycle": executionLifecycleCapability(),
+			},
 		},
+	}
+}
+
+func TestExecBgRejectsInvalidLifecycleWithoutGatingForegroundCalls(t *testing.T) {
+	incomplete := executionLifecycleCapability()
+	delete(incomplete, "promptCancellation")
+	disabled := executionLifecycleCapability()
+	disabled["backgroundLifetime"] = false
+	for _, tc := range []struct {
+		name       string
+		capability interface{}
+	}{
+		{"missing", nil},
+		{"false", false},
+		{"malformed", "doops.sh/execution-lifecycle/v1"},
+		{"incomplete", incomplete},
+		{"disabled", disabled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls, connections atomic.Int32
+			upgrader := websocket.Upgrader{}
+			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				connections.Add(1)
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					t.Errorf("upgrade: %v", err)
+					return
+				}
+				defer conn.Close()
+				for {
+					var req map[string]interface{}
+					if err := conn.ReadJSON(&req); err != nil {
+						return
+					}
+					result := map[string]interface{}{
+						"content": []map[string]string{{"type": "text", "text": "foreground complete"}},
+					}
+					if req["method"] == "initialize" {
+						protocols := map[string]interface{}{}
+						if tc.capability != nil {
+							protocols["executionLifecycle"] = tc.capability
+						}
+						result = map[string]interface{}{
+							"capabilities": map[string]interface{}{"protocols": protocols},
+						}
+					} else {
+						calls.Add(1)
+						params, _ := req["params"].(map[string]interface{})
+						if req["method"] != "tools/call" || params["name"] == "doops_bg" {
+							t.Errorf("unexpected tool request: %#v", req)
+						}
+					}
+					_ = conn.WriteJSON(map[string]interface{}{
+						"jsonrpc": "2.0", "id": req["id"], "result": result,
+					})
+				}
+			}))
+			defer gateway.Close()
+			client := newGatewayTestClient(t, gateway.URL, "lifecycle-gate")
+			defer client.Close()
+			err := client.ExecBg("sleep 1")
+			if err == nil || !strings.Contains(err.Error(), `does not advertise protocol "executionLifecycle"`) {
+				t.Fatalf("invalid lifecycle capability was not rejected: %v", err)
+			}
+			if calls.Load() != 0 {
+				t.Fatalf("rejected background task sent %d tools/call requests", calls.Load())
+			}
+			for _, tool := range []string{"doops_shell", "doops_ssh", "doops_agent_prompt"} {
+				if err := client.Call(tool, map[string]interface{}{}); err != nil {
+					t.Fatalf("foreground %s must not require executionLifecycle: %v", tool, err)
+				}
+			}
+			if calls.Load() != 3 || connections.Load() != 1 {
+				t.Fatalf("unexpected foreground calls or retries: calls=%d connections=%d", calls.Load(), connections.Load())
+			}
+		})
 	}
 }
 
@@ -157,6 +235,7 @@ func TestExecBgReturnsStreamingErrorsWithoutPollingOrRetry(t *testing.T) {
 	}{
 		{"tool_error", "Task failed.\nTaskID: bg-1\nExitCode: 17"},
 		{"rpc_error", "remote error: execution_outcome_unknown"},
+		{"canceled", "remote error: operation canceled"},
 		{"disconnect", "connection lost: WS connection lost"},
 		{"timeout", "tool call timed out after 100ms"},
 	} {
@@ -204,6 +283,11 @@ func TestExecBgReturnsStreamingErrorsWithoutPollingOrRetry(t *testing.T) {
 						_ = conn.WriteJSON(map[string]interface{}{
 							"jsonrpc": "2.0", "id": req["id"],
 							"error": map[string]interface{}{"code": -32603, "message": "execution_outcome_unknown"},
+						})
+					case "canceled":
+						_ = conn.WriteJSON(map[string]interface{}{
+							"jsonrpc": "2.0", "id": req["id"],
+							"error": map[string]interface{}{"code": -32007, "message": "operation canceled"},
 						})
 					case "disconnect":
 						return
