@@ -73,7 +73,7 @@ export function ConnectScreen({
             aria-label="Gateway 地址"
             value={gateway}
             onChange={(e) => setGateway(e.target.value)}
-            placeholder="http://203.0.113.10:42222"
+            placeholder="https://doops.l8ai.cn"
             className="mb-4 w-full rounded-lg border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
           />
 
