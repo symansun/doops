@@ -49,6 +49,7 @@ const TABS: { id: Tab; label: string; icon: typeof TerminalIcon; secondary?: boo
 const GW_KEY = "doops.gateway"
 const DEMO_KEY = "doops.demo"
 const ONBOARD_KEY = "doops.onboarded"
+const DEMO_ENABLED = process.env.NODE_ENV !== "production"
 
 export function ConsoleShell() {
   const [session, setSession] = useState<Session | null>(null)
@@ -69,10 +70,14 @@ export function ConsoleShell() {
     if (typeof window === "undefined") return
     const saved = localStorage.getItem(GW_KEY)
     setDefaultGateway(resolveDefaultGateway(saved, window.location.origin))
-    // 自动进入演示模式：?demo=1 或上次以演示模式连接过
-    const wantsDemo =
+    if (!DEMO_ENABLED) {
+      localStorage.removeItem(DEMO_KEY)
+    }
+    // 演示模式只允许本地开发显式开启，生产始终读取真实 Gateway 数据。
+    const wantsDemo = DEMO_ENABLED && (
       new URLSearchParams(window.location.search).get("demo") === "1" ||
       localStorage.getItem(DEMO_KEY) === "1"
+    )
     if (wantsDemo) {
       localStorage.setItem(DEMO_KEY, "1")
       setSession({ gateway: "demo://local", token: DEMO_TOKEN, username: "演示用户", demo: true })

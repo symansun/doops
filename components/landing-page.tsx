@@ -14,6 +14,8 @@ import {
   ActivityIcon,
 } from "./icons"
 
+const DEMO_ENABLED = process.env.NODE_ENV !== "production"
+
 const FEATURES = [
   {
     icon: SparkIcon,
@@ -95,12 +97,14 @@ export function LandingPage() {
             </a>
           </nav>
           <div className="flex items-center gap-2">
-            <Link
-              href="/console?demo=1"
-              className="hidden rounded-lg border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-muted sm:inline-block"
-            >
-              在线演示
-            </Link>
+            {DEMO_ENABLED && (
+              <Link
+                href="/console?demo=1"
+                className="hidden rounded-lg border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-muted sm:inline-block"
+              >
+                在线演示
+              </Link>
+            )}
             <Link
               href="/console"
               className="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
@@ -133,13 +137,15 @@ export function LandingPage() {
               <RocketIcon width={16} height={16} />
               免费开始使用
             </Link>
-            <Link
-              href="/console?demo=1"
-              className="flex w-full items-center justify-center gap-2 rounded-lg border px-6 py-3 text-sm font-medium text-foreground transition-colors hover:bg-muted sm:w-auto"
-            >
-              <SparkIcon width={16} height={16} />
-              先看在线演示
-            </Link>
+            {DEMO_ENABLED && (
+              <Link
+                href="/console?demo=1"
+                className="flex w-full items-center justify-center gap-2 rounded-lg border px-6 py-3 text-sm font-medium text-foreground transition-colors hover:bg-muted sm:w-auto"
+              >
+                <SparkIcon width={16} height={16} />
+                先看在线演示
+              </Link>
+            )}
           </div>
           <p className="mt-4 text-xs text-muted-foreground">无需信用卡 · 演示模式无需安装任何东西</p>
         </div>
