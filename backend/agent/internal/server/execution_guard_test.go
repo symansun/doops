@@ -319,6 +319,41 @@ func TestExecutionGuardQueriesRemainAvailableDuringMutationAndUncertainty(t *tes
 	}
 }
 
+func TestExecutionGuardReadOnlyK8SDisconnectDoesNotPersistUnknown(t *testing.T) {
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+	agent := f.agent(t, "read-only-k8s")
+	client := f.client(t, f.admin)
+
+	lifecycleSend(t, client, 2, "doops_k8s", "read-only-query", map[string]interface{}{
+		"operation": "get",
+		"kind":      "pods",
+	})
+	agent.call(t, "doops_k8s", "read-only-query")
+	op := f.operation(t, "read-only-query", "running")
+	if !strings.HasPrefix(op.Resource, "query:k8s:") {
+		t.Fatalf("read-only K8s request acquired a mutation resource: %#v", op)
+	}
+
+	if err := agent.conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	response := readUntilID(t, client, 2)
+	if rpcError, ok := response["error"].(map[string]interface{}); !ok ||
+		strings.Contains(fmt.Sprint(rpcError["message"]), errExecutionOutcomeUnknown.Error()) {
+		t.Fatalf("read-only disconnect became an unknown outcome: %#v", response)
+	}
+	requireEventually(t, 3*time.Second, func() bool {
+		return len(f.hub.listActiveOperations()) == 0
+	})
+	unresolved, err := f.store.UnresolvedExecutions("dev", "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unresolved) != 0 {
+		t.Fatalf("read-only disconnect persisted mutation blockers: %#v", unresolved)
+	}
+}
+
 func TestExecutionGuardCanceledMutationCannotBePreemptedAfterLocalExit(t *testing.T) {
 	for _, tool := range []string{"doops_shell", "doops_ssh", "doops_bg", "doops_agent_prompt", "doops_k8s"} {
 		t.Run(tool, func(t *testing.T) {
