@@ -121,6 +121,10 @@ doops -session <s> admin operations list --target <gateway-target>
 doops -session <s> admin operations cancel --target <gateway-target> --id <operation-id>
 ```
 
+Both commands scope operation lookup to the target's exact `cluster/instance`.
+The CLI refuses to cancel an operation that is missing, unscoped, or belongs to
+another target on the same Gateway.
+
 Cancel returns HTTP `202` with `cancel_requested=true`, meaning the request was
 registered, not that the operation stopped. The operation keeps ownership until
 the original terminal response. Shell-style commands join process-group

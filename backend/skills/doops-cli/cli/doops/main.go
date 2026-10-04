@@ -1108,12 +1108,13 @@ func findRouteConflict(servers []Server, candidate Server) string {
 }
 
 func runAdminOperationsList(args []string, servers []Server, configErr error) {
-	gateway, token := resolveAdminGatewayFlags("admin operations list", args, servers, configErr, nil)
-	ops, err := GatewayAdminOperationsList(gateway, token)
+	server, token := resolveAdminTargetFlags("admin operations list", args, servers, configErr, nil)
+	ops, err := GatewayAdminOperationsList(server.Gateway, token)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
+	ops = filterGatewayOperations(ops, server.Cluster, server.Instance)
 	fmt.Printf("%-12s %-8s %-18s %-24s %-18s %-8s %-18s %-18s %-8s %-16s %-8s %-8s %s\n", "ID", "AUDIT_ID", "STATE", "RESOURCE", "BLOCKED_BY", "KIND", "CLUSTER", "INSTANCE", "ACTION", "SESSION", "AGE", "USER", "SUMMARY")
 	fmt.Println(strings.Repeat("-", 132))
 	for _, op := range ops {
@@ -1127,8 +1128,18 @@ func runAdminOperationsList(args []string, servers []Server, configErr error) {
 
 func runAdminOperationCancel(args []string, servers []Server, configErr error) {
 	var opID string
-	gateway, token := resolveAdminGatewayFlags("admin operations cancel", args, servers, configErr, &opID)
-	if err := GatewayAdminOperationCancel(gateway, token, opID); err != nil {
+	server, token := resolveAdminTargetFlags("admin operations cancel", args, servers, configErr, &opID)
+	ops, err := GatewayAdminOperationsList(server.Gateway, token)
+	if err != nil {
+		fmt.Printf("Error: cannot verify operation target: %v\n", err)
+		os.Exit(1)
+	}
+	if !operationBelongsToTarget(ops, opID, server.Cluster, server.Instance) {
+		fmt.Printf("Error: operation %q is not active on target %s/%s; refusing cross-target cancellation.\n",
+			strings.TrimSpace(opID), strings.TrimSpace(server.Cluster), strings.TrimSpace(server.Instance))
+		os.Exit(1)
+	}
+	if err := GatewayAdminOperationCancel(server.Gateway, token, opID); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -1228,7 +1239,7 @@ func runAdminTokenRevoke(args []string, servers []Server, configErr error) {
 	fmt.Printf("token_id=%s revoked=true\n", strings.TrimSpace(id))
 }
 
-func resolveAdminGatewayFlags(name string, args []string, servers []Server, configErr error, opID *string) (string, string) {
+func resolveAdminTargetFlags(name string, args []string, servers []Server, configErr error, opID *string) (Server, string) {
 	var target string
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	fs.StringVar(&target, "target", "", "Configured gateway target whose token/gateway should be used")
@@ -1252,7 +1263,34 @@ func resolveAdminGatewayFlags(name string, args []string, servers []Server, conf
 		fs.Usage()
 		os.Exit(1)
 	}
-	return server.Gateway, mustResolveToken(*server)
+	return *server, mustResolveToken(*server)
+}
+
+func resolveAdminGatewayFlags(name string, args []string, servers []Server, configErr error, opID *string) (string, string) {
+	server, token := resolveAdminTargetFlags(name, args, servers, configErr, opID)
+	return server.Gateway, token
+}
+
+func filterGatewayOperations(ops []gatewayActiveOperation, cluster, instance string) []gatewayActiveOperation {
+	cluster = strings.TrimSpace(cluster)
+	instance = strings.TrimSpace(instance)
+	filtered := make([]gatewayActiveOperation, 0, len(ops))
+	for _, op := range ops {
+		if strings.TrimSpace(op.Cluster) == cluster && strings.TrimSpace(op.Instance) == instance {
+			filtered = append(filtered, op)
+		}
+	}
+	return filtered
+}
+
+func operationBelongsToTarget(ops []gatewayActiveOperation, id, cluster, instance string) bool {
+	id = strings.TrimSpace(id)
+	for _, op := range filterGatewayOperations(ops, cluster, instance) {
+		if op.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func requireConfig(err error) {
