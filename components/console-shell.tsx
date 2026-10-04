@@ -48,7 +48,7 @@ const TABS: { id: Tab; label: string; icon: typeof TerminalIcon; secondary?: boo
 ]
 
 const GW_KEY = "doops.gateway"
-const DEMO_KEY = "doops.demo"
+const LEGACY_DEMO_KEY = "doops.demo"
 const ONBOARD_KEY = "doops.onboarded"
 const DEMO_ENABLED = isDemoAllowed()
 
@@ -72,15 +72,11 @@ export function ConsoleShell() {
     const saved = localStorage.getItem(GW_KEY)
     setDefaultGateway(resolveDefaultGateway(saved, window.location.origin))
     if (!DEMO_ENABLED) {
-      localStorage.removeItem(DEMO_KEY)
+      localStorage.removeItem(LEGACY_DEMO_KEY)
     }
-    // 演示模式只允许本地开发显式开启，生产始终读取真实 Gateway 数据。
-    const wantsDemo = DEMO_ENABLED && (
-      new URLSearchParams(window.location.search).get("demo") === "1" ||
-      localStorage.getItem(DEMO_KEY) === "1"
-    )
+    // 演示模式只允许本地开发通过 URL 显式开启，不持久化 mock 会话。
+    const wantsDemo = DEMO_ENABLED && new URLSearchParams(window.location.search).get("demo") === "1"
     if (wantsDemo) {
-      localStorage.setItem(DEMO_KEY, "1")
       setSession({ gateway: "demo://local", token: DEMO_TOKEN, username: "演示用户", demo: true })
       if (localStorage.getItem(ONBOARD_KEY) !== "1") setShowGuide(true)
     }
@@ -115,11 +111,9 @@ export function ConsoleShell() {
   }, [session, refresh])
 
   function handleConnected(s: Session) {
-    if (s.demo) {
-      localStorage.setItem(DEMO_KEY, "1")
-    } else {
+    if (!s.demo) {
       localStorage.setItem(GW_KEY, s.gateway)
-      localStorage.removeItem(DEMO_KEY)
+      localStorage.removeItem(LEGACY_DEMO_KEY)
     }
     setSession(s)
     if (localStorage.getItem(ONBOARD_KEY) !== "1") setShowGuide(true)
@@ -131,7 +125,7 @@ export function ConsoleShell() {
   }
 
   function logout() {
-    localStorage.removeItem(DEMO_KEY)
+    localStorage.removeItem(LEGACY_DEMO_KEY)
     setSession(null)
     setTargets([])
     setSelected(null)
