@@ -120,7 +120,11 @@ export function resolveDefaultGateway(savedGateway: string | null, currentOrigin
   try {
     const current = new URL(currentOrigin)
     const candidate = new URL(saved.includes("://") ? saved : `http://${saved}`)
-    if (current.protocol === "https:" && candidate.protocol !== "https:") {
+    if (
+      current.protocol === "https:" &&
+      candidate.protocol !== "https:" &&
+      candidate.protocol !== "wss:"
+    ) {
       return current.origin
     }
   } catch {
