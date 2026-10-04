@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { fetchTargets, type Session, type Target } from "@/lib/client"
-import { randomSession } from "@/lib/gateway"
+import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
 import { DEMO_TOKEN } from "@/lib/demo"
 import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
@@ -68,7 +68,7 @@ export function ConsoleShell() {
   useEffect(() => {
     if (typeof window === "undefined") return
     const saved = localStorage.getItem(GW_KEY)
-    setDefaultGateway(saved || window.location.origin)
+    setDefaultGateway(resolveDefaultGateway(saved, window.location.origin))
     // 自动进入演示模式：?demo=1 或上次以演示模式连接过
     const wantsDemo =
       new URLSearchParams(window.location.search).get("demo") === "1" ||

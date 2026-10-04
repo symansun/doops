@@ -113,6 +113,23 @@ export function toHttpBase(gateway: string): string {
   return "http://" + trimmed
 }
 
+export function resolveDefaultGateway(savedGateway: string | null, currentOrigin: string): string {
+  const saved = savedGateway?.trim()
+  if (!saved) return currentOrigin
+
+  try {
+    const current = new URL(currentOrigin)
+    const candidate = new URL(saved.includes("://") ? saved : `http://${saved}`)
+    if (current.protocol === "https:" && candidate.protocol !== "https:") {
+      return current.origin
+    }
+  } catch {
+    return currentOrigin
+  }
+
+  return saved
+}
+
 // 从请求头读取 gateway 地址与 token
 export function readAuth(req: Request): { gateway: string; token: string } {
   const gateway = req.headers.get("x-doops-gateway") || ""
