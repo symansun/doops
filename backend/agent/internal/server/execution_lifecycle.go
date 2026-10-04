@@ -247,7 +247,7 @@ func (s *ClientService) checkExecutionGuard(cluster, instance string) error {
 	return nil
 }
 
-func (h *GatewayHub) handleExecutionReconciliation(w http.ResponseWriter, r *http.Request, auth TokenAuth) {
+func (h *GatewayHub) handleExecutionReconciliation(w http.ResponseWriter, r *http.Request, auth TokenAuth, cluster, instance string) {
 	if !h.store.UserIsPlatformAdmin(auth.UserID) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
@@ -278,6 +278,22 @@ func (h *GatewayHub) handleExecutionReconciliation(w http.ResponseWriter, r *htt
 			http.Error(w, "operation is still active; wait for terminal evidence", http.StatusConflict)
 			return
 		}
+	}
+	events, err := h.store.UnresolvedExecutions(cluster, instance)
+	if err != nil {
+		http.Error(w, "execution_guard_unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	found := false
+	for _, event := range events {
+		if event.ID == id {
+			found = true
+			break
+		}
+	}
+	if !found {
+		http.Error(w, "operation not found on target", http.StatusNotFound)
+		return
 	}
 	if err := h.store.MarkExecutionUncertain(id); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "execution_guard_unavailable", http.StatusServiceUnavailable)

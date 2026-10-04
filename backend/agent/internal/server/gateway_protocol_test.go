@@ -3002,7 +3002,7 @@ func TestGatewayAdminOperationsListAndCancel(t *testing.T) {
 	var opID string
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/admin/operations", nil)
+		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/admin/operations?cluster=dev&instance=local", nil)
 		req.Header.Set("Authorization", "Bearer "+adminToken.Plaintext)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
@@ -3033,7 +3033,7 @@ func TestGatewayAdminOperationsListAndCancel(t *testing.T) {
 		t.Fatal("expected active operation to be listed")
 	}
 
-	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/v1/admin/operations?id="+url.QueryEscape(opID), nil)
+	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/v1/admin/operations?cluster=dev&id="+url.QueryEscape(opID)+"&instance=local", nil)
 	req.Header.Set("Authorization", "Bearer "+adminToken.Plaintext)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

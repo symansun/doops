@@ -12,22 +12,22 @@ import (
 
 const operationsListFixture = `{"operations":[
 	{"id":"op-1","audit_id":41,"state":"running","resource":"target/prod/node","blocked_by":[],"user_id":"admin","token_id":"token-1","cluster":"prod","instance":"node","action":"exec","session":"release","command_summary":"sleep 10","kind":"rpc","started_at":"2026-10-03T01:00:00Z","age_seconds":10},
-	{"id":"op-2","audit_id":42,"state":"waiting","resource":"target/prod/node","blocked_by":["op-1","op-3"]},
-	{"id":"op-3","audit_id":43,"state":"cancel_requested","resource":"target/prod/node"},
-	{"id":"audit-44","audit_id":44,"state":"outcome_unknown","resource":"target/prod/node"}
+	{"id":"op-2","audit_id":42,"state":"waiting","resource":"target/prod/node","blocked_by":["op-1","op-3"],"cluster":"prod","instance":"node"},
+	{"id":"op-3","audit_id":43,"state":"cancel_requested","resource":"target/prod/node","cluster":"prod","instance":"node"},
+	{"id":"audit-44","audit_id":44,"state":"outcome_unknown","resource":"target/prod/node","cluster":"prod","instance":"node"}
 ]}`
 
 func TestGatewayAdminOperationsListParsesLifecycleFields(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/doops/v1/admin/operations" ||
-			r.URL.RawQuery != "" || r.Header.Get("Authorization") != "Bearer admin-token" {
+			r.URL.RawQuery != "cluster=prod&instance=node" || r.Header.Get("Authorization") != "Bearer admin-token" {
 			t.Errorf("unexpected list request: %s %s auth=%q", r.Method, r.URL, r.Header.Get("Authorization"))
 		}
 		_, _ = w.Write([]byte(operationsListFixture))
 	}))
 	defer gateway.Close()
 
-	ops, err := GatewayAdminOperationsList(gateway.URL+"/doops", "admin-token")
+	ops, err := GatewayAdminOperationsList(gateway.URL+"/doops", "admin-token", "prod", "node")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,6 +47,28 @@ func TestGatewayAdminOperationsListParsesLifecycleFields(t *testing.T) {
 		ops[0].CommandSummary != "sleep 10" || ops[0].Kind != "rpc" ||
 		ops[0].StartedAt != "2026-10-03T01:00:00Z" || ops[0].AgeSeconds != 10 {
 		t.Fatalf("existing operation fields lost: %#v", ops[0])
+	}
+}
+
+func TestFilterGatewayOperationsByTarget(t *testing.T) {
+	ops := []gatewayActiveOperation{
+		{ID: "edu-op", Cluster: "doops-edu", Instance: "edu-coder"},
+		{ID: "zyj-op", Cluster: "doops-zyj", Instance: "control-plane-1"},
+		{ID: "unscoped-op"},
+	}
+
+	filtered := filterGatewayOperations(ops, " doops-edu ", " edu-coder ")
+	if len(filtered) != 1 || filtered[0].ID != "edu-op" {
+		t.Fatalf("target filter returned %#v", filtered)
+	}
+	if operationBelongsToTarget(ops, "edu-op", "doops-edu", "edu-coder") == false {
+		t.Fatal("target operation was not recognized")
+	}
+	if operationBelongsToTarget(ops, "zyj-op", "doops-edu", "edu-coder") {
+		t.Fatal("cross-target operation was accepted")
+	}
+	if operationBelongsToTarget(ops, "unscoped-op", "doops-edu", "edu-coder") {
+		t.Fatal("unscoped operation was accepted")
 	}
 }
 
@@ -74,14 +96,14 @@ func TestGatewayAdminOperationCancelRequiresNewAcknowledgment(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodDelete || r.URL.Path != "/v1/admin/operations" ||
-					r.URL.RawQuery != "id=op-1" || r.Header.Get("Authorization") != "Bearer admin-token" {
+					r.URL.RawQuery != "cluster=prod&id=op-1&instance=node" || r.Header.Get("Authorization") != "Bearer admin-token" {
 					t.Errorf("unexpected cancel request: %s %s auth=%q", r.Method, r.URL, r.Header.Get("Authorization"))
 				}
 				w.WriteHeader(tc.status)
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer gateway.Close()
-			err := GatewayAdminOperationCancel(gateway.URL, "admin-token", " op-1 ")
+			err := GatewayAdminOperationCancel(gateway.URL, "admin-token", " op-1 ", "prod", "node")
 			if (err == nil) != tc.ok {
 				t.Fatalf("cancel acknowledgment: err=%v, want success=%t", err, tc.ok)
 			}
@@ -110,7 +132,7 @@ func TestGatewayAdminOperationReconcileProtocol(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodPost || r.URL.Path != "/v1/admin/operations" ||
-					r.URL.RawQuery != "" || r.Header.Get("Authorization") != "Bearer admin-token" ||
+					r.URL.RawQuery != "cluster=prod&instance=node" || r.Header.Get("Authorization") != "Bearer admin-token" ||
 					r.Header.Get("Content-Type") != "application/json" {
 					t.Errorf("unexpected reconcile request: %s %s headers=%v", r.Method, r.URL, r.Header)
 				}
@@ -129,7 +151,7 @@ func TestGatewayAdminOperationReconcileProtocol(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer gateway.Close()
-			err := GatewayAdminOperationReconcile(gateway.URL, "admin-token", gatewayAdminOperationReconcileRequest{
+			err := GatewayAdminOperationReconcile(gateway.URL, "admin-token", "prod", "node", gatewayAdminOperationReconcileRequest{
 				ID: " audit-44 ", ConfirmStopped: true,
 				Reason: " operator investigation ", Evidence: " process absent; target inspected ",
 			})
@@ -167,7 +189,7 @@ func TestGatewayAdminOperationReconcileValidatesBeforeHTTP(t *testing.T) {
 		{"missing_evidence", "audit-44", true, "reason", " \n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := GatewayAdminOperationReconcile(gateway.URL, "admin-token", gatewayAdminOperationReconcileRequest{
+			err := GatewayAdminOperationReconcile(gateway.URL, "admin-token", "prod", "node", gatewayAdminOperationReconcileRequest{
 				ID: tc.id, ConfirmStopped: tc.confirm, Reason: tc.reason, Evidence: tc.evidence,
 			})
 			if err == nil {

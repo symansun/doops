@@ -27,6 +27,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Check Agent protocol capability | `doops -session <s> capabilities --target <t> --require structuredSSH` | Fails closed when the online Agent is too old for structured SSH. |
 | Add a Gateway target | `doops add --name <n> --gateway <url> --cluster <c> --instance <i>` | Stores routing only; never stores a target token. |
 | Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Known checks and explicitly requested operations; standard releases use `ask --apply`. |
+| Sync OCI images | `doops -session <s> registry sync --target <t> --source-registry <src> --target-registry <dst> --tag <release> --source-authfile <remote-file> --target-authfile <remote-file> --image <name>` | Generic target-side `skopeo copy --all`, bounded timeout/retry, and manifest digest verification; auth payloads never enter CLI arguments. |
 | Run nested SSH safely | `doops -session <s> ssh --target <t> --host <user@host> -- <command> [args...]` | Preserves remote argv across nested shells. |
 | Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | One RPC waits for the Agent task's terminal result; no task-status polling or command retries. |
 | Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
@@ -48,7 +49,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | List Gateway users | `doops admin user list --target <t>` | Returns metadata only. |
 | Manage target grants | `doops admin grant <list\|add\|delete> ...` | Grants use exact configured `cluster/instance` routes. |
 | Issue token as admin | `doops admin token create ...` | Requires a gateway token with `admin` permission. |
-| Inspect/cancel active operations | `doops admin operations <list|cancel|reconcile> ...` | Cancel requests termination; reconcile records human-reviewed stopped state. |
+| Inspect/cancel active operations | `doops admin operations <list|cancel|reconcile> --target <target> ...` | Gateway scopes the operation list, cancellation and reconciliation to the selected cluster/instance; cancel requests termination and reconcile records human-reviewed stopped state. |
 | Manage scheduled issue jobs | `doops admin jobs <list|add|run|enable|disable|rm|issues> ...` | See `DOOPS_SCHEDULED_ISSUES.md`. |
 | Reconnect an idle target | `doops unlock --target <t>` | Refuses active, queued or unresolved work; does not force-release operations. |
 | Remove cached token | `doops logout --target <t>` | Removes local token cache. |
@@ -120,6 +121,10 @@ If gateway returns `user operation limit exceeded`, list active gateway operatio
 doops -session <s> admin operations list --target <gateway-target>
 doops -session <s> admin operations cancel --target <gateway-target> --id <operation-id>
 ```
+
+Both commands scope operation lookup to the target's exact `cluster/instance`.
+The CLI refuses to cancel an operation that is missing, unscoped, or belongs to
+another target on the same Gateway.
 
 Cancel returns HTTP `202` with `cancel_requested=true`, meaning the request was
 registered, not that the operation stopped. The operation keeps ownership until

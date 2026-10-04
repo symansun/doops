@@ -680,10 +680,21 @@ func (h *GatewayHub) HandleAdminOperations(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
+	cluster := strings.TrimSpace(r.URL.Query().Get("cluster"))
+	instance := strings.TrimSpace(r.URL.Query().Get("instance"))
+	if (cluster == "") != (instance == "") {
+		http.Error(w, "cluster and instance must be provided together", http.StatusBadRequest)
+		return
+	}
+	targetScoped := cluster != "" && instance != ""
+	if !targetScoped {
+		http.Error(w, "cluster and instance are required", http.StatusBadRequest)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
-		ops := h.listActiveOperations()
-		unresolved, err := h.client.unresolvedExecutions("", "")
+		ops := filterActiveOperationsForTarget(h.listActiveOperations(), cluster, instance)
+		unresolved, err := h.client.unresolvedExecutions(cluster, instance)
 		if err != nil {
 			http.Error(w, "execution_guard_unavailable", http.StatusServiceUnavailable)
 			return
@@ -698,14 +709,14 @@ func (h *GatewayHub) HandleAdminOperations(w http.ResponseWriter, r *http.Reques
 		}
 		writeJSONHTTP(w, map[string]interface{}{"operations": ops})
 	case http.MethodPost:
-		h.handleExecutionReconciliation(w, r, auth)
+		h.handleExecutionReconciliation(w, r, auth, cluster, instance)
 	case http.MethodDelete:
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		if id == "" {
 			http.Error(w, "missing id", http.StatusBadRequest)
 			return
 		}
-		if !h.cancelActiveOperation(id) {
+		if !h.cancelActiveOperationForTarget(id, cluster, instance) {
 			http.Error(w, "operation not found", http.StatusNotFound)
 			return
 		}
@@ -721,8 +732,22 @@ func (h *GatewayHub) listActiveOperations() []GatewayActiveOperation {
 	return h.client.listActiveOperations()
 }
 
+func filterActiveOperationsForTarget(ops []GatewayActiveOperation, cluster, instance string) []GatewayActiveOperation {
+	filtered := make([]GatewayActiveOperation, 0, len(ops))
+	for _, op := range ops {
+		if op.Cluster == cluster && op.Instance == instance {
+			filtered = append(filtered, op)
+		}
+	}
+	return filtered
+}
+
 func (h *GatewayHub) cancelActiveOperation(id string) bool {
 	return h.client.cancelActiveOperation(id)
+}
+
+func (h *GatewayHub) cancelActiveOperationForTarget(id, cluster, instance string) bool {
+	return h.client.cancelActiveOperationForTarget(id, cluster, instance)
 }
 
 func (h *GatewayHub) HandleAgentConnect(w http.ResponseWriter, r *http.Request) {

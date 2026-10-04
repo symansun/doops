@@ -309,6 +309,9 @@ doops -session <s> admin operations list --target <gateway-target>
 doops -session <s> admin operations cancel --target <gateway-target> --id <operation-id>
 ```
 
+Gateway 把 `cluster`、`instance` 作为管理操作的强制 target 边界传递给查询、取消和
+人工核对接口；缺少或不匹配 target 时不会取消操作。
+
 `cancel` 返回 HTTP `202 cancel_requested`，只确认请求已登记。原始操作的资源所有权
 保留到 terminal response；取消 ACK 不是终态。shell/SSH/bg 等本地命令等待进程组
 终止，`ask` 发起 doagent `session/cancel` 并等待匹配的 `turn_finished`。

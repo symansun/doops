@@ -103,6 +103,87 @@ func TestExecBgRejectsInvalidLifecycleWithoutGatingForegroundCalls(t *testing.T)
 	}
 }
 
+func TestForegroundCLIExecWorksWithoutLifecycleCapability(t *testing.T) {
+	var calls atomic.Int32
+	upgrader := websocket.Upgrader{}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer conn.Close()
+		for {
+			var req map[string]interface{}
+			if err := conn.ReadJSON(&req); err != nil {
+				return
+			}
+			switch req["method"] {
+			case "initialize":
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]interface{}{
+						"capabilities": map[string]interface{}{
+							"protocols": map[string]interface{}{},
+						},
+					},
+				})
+			case "tools/call":
+				calls.Add(1)
+				params, _ := req["params"].(map[string]interface{})
+				args, _ := params["arguments"].(map[string]interface{})
+				if params["name"] != "doops_shell" ||
+					args["session_id"] != "foreground-no-lifecycle" ||
+					args["command"] != "printf foreground-ok" {
+					t.Errorf("unexpected foreground CLI call: %#v", req)
+				}
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0",
+					"id":      req["id"],
+					"result": map[string]interface{}{
+						"content": []map[string]string{{"type": "text", "text": "foreground-ok"}},
+					},
+				})
+			default:
+				t.Errorf("unexpected RPC method: %#v", req["method"])
+			}
+		}
+	}))
+	defer gateway.Close()
+
+	root := t.TempDir()
+	t.Setenv("DOOPS_CONFIG", filepath.Join(root, "config.json"))
+	if err := saveServers([]Server{{
+		Name: "test", Gateway: gateway.URL, Cluster: "prod", Instance: "node",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	auth := &AuthStore{}
+	auth.SetGateway(gateway.URL, "test-token")
+	if err := auth.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, buildDoopsCLIBinary(t),
+		"-session", "foreground-no-lifecycle",
+		"exec", "--target", "test", "--cmd", "printf foreground-ok",
+	)
+	command.Env = append(os.Environ(), "DOOPS_CONFIG="+filepath.Join(root, "config.json"))
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("foreground CLI exec failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "foreground-ok") {
+		t.Fatalf("foreground CLI output missing result: %s", output)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("foreground CLI dispatched %d calls, want 1", calls.Load())
+	}
+}
+
 func TestExecBgCLIStreamsOneRPCUntilStopped(t *testing.T) {
 	stopped := make(chan struct{})
 	var stopOnce sync.Once

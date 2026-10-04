@@ -746,6 +746,9 @@ unlock。每次运行都登记为可取消的 active operation。
   普通用户查询本人审计不会获得任何 mutation 权限。
   自动巡检沿用已保存任务的目标选择，不因本次审计改动获得新的用户或目标授权，
   也不会伪造一个在线管理员 token 作为自动任务 actor。
+- `/v1/admin/operations` 的 GET/POST/DELETE 必须按 `cluster` 与 `instance` 成对指定目标；
+  GET 只返回该目标的 active/unresolved 操作，DELETE 只允许取消该目标的操作，
+  POST 只允许核对该目标的 `outcome_unknown`。缺少或不匹配目标时拒绝请求。
 - 配置下发使用既有 `doops_file_write` RPC 和目标 `write` 权限，不新增 admin 配置接口。
   继续使用唯一的 RPC 审计，保留 target/session/文件路径元数据，不保存文件内容、
   下游输出或原始错误；下游 tool error 记录为失败。其他 RPC/凭据沿用其既有审计。

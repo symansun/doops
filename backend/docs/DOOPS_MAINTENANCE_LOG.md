@@ -2,6 +2,15 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-10-04 Target-Scoped Operation Administration And Registry Sync
+
+- Gateway admin operation list, cancellation, and manual reconciliation now require
+  an explicit `cluster`/`instance` pair and reject cross-target operation IDs.
+- CLI admin calls pass the selected target to the Gateway; client-side filtering remains
+  an additional display and cancellation guard.
+- The generic `doops registry sync` foreground command does not require the background
+  `executionLifecycle` capability. Only `exec --bg` keeps that admission requirement.
+
 ## 2026-10-04 Scoped Background Lifecycle Admission
 
 - The current goal retains the existing lifecycle capability for background

@@ -819,6 +819,8 @@ function TokensView({ session }: { session: Session }) {
 /* ============================ 运行中操作 ============================ */
 function OperationsView({ session }: { session: Session }) {
   const [rows, setRows] = useState<AdminOperation[]>([])
+  const [instances, setInstances] = useState<AdminInstance[]>([])
+  const [targetKey, setTargetKey] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [canceling, setCanceling] = useState<string[]>([])
@@ -827,13 +829,22 @@ function OperationsView({ session }: { session: Session }) {
     setLoading(true)
     setError("")
     try {
-      setRows(await listOperations(session))
+      const available = await listInstances(session)
+      setInstances(available)
+      const target = available.find((item) => `${item.cluster}/${item.instance}` === targetKey) || available[0]
+      if (!target) {
+        setTargetKey("")
+        setRows([])
+        return
+      }
+      setTargetKey(`${target.cluster}/${target.instance}`)
+      setRows(await listOperations(session, target.cluster, target.instance))
     } catch (e) {
       setError((e as Error).message)
     } finally {
       setLoading(false)
     }
-  }, [session])
+  }, [session, targetKey])
 
   useEffect(() => {
     load()
@@ -847,7 +858,7 @@ function OperationsView({ session }: { session: Session }) {
     setError("")
     setCanceling((ids) => [...ids, op.id])
     try {
-      await cancelOperation(session, op.id)
+      await cancelOperation(session, op.id, op.cluster, op.instance)
       setRows((items) => items.map((item) => item.id === op.id ? { ...item, state: "cancel_requested" } : item))
       await load()
     } catch (e) {
@@ -861,10 +872,28 @@ function OperationsView({ session }: { session: Session }) {
     <div>
       <Toolbar
         title="运行中操作"
-        desc="各实例上的操作状态（每 5 秒刷新）"
+        desc="按实例查看操作状态（每 5 秒刷新）"
         onRefresh={load}
         loading={loading}
-      />
+      >
+        <select
+          aria-label="选择操作目标"
+          value={targetKey}
+          onChange={(event) => setTargetKey(event.target.value)}
+          disabled={loading || !instances.length}
+          className="max-w-[16rem] rounded-md border bg-card px-2 py-1.5 text-xs text-foreground disabled:opacity-50"
+        >
+          {!instances.length && <option value="">暂无在线实例</option>}
+          {instances.map((item) => {
+            const key = `${item.cluster}/${item.instance}`
+            return (
+              <option key={key} value={key}>
+                {item.cluster}/{item.instance}
+              </option>
+            )
+          })}
+        </select>
+      </Toolbar>
       <ErrorBar msg={error} />
       <div className="overflow-x-auto p-4">
         <table className="w-full min-w-[720px] border-collapse text-sm">

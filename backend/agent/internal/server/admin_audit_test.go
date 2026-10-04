@@ -250,7 +250,7 @@ func TestAdminMutationRoutesAuditAndFailClosed(t *testing.T) {
 			return request{"POST", "/v1/admin/jobs/run?id=" + f.job.ID + "&enabled=false", nil}
 		}},
 		{"operation-cancel", func(t *testing.T, f *adminAuditFixture) request {
-			return request{"DELETE", "/v1/admin/operations?id=" + f.operationID, nil}
+			return request{"DELETE", "/v1/admin/operations?cluster=dev&id=" + f.operationID + "&instance=node", nil}
 		}},
 		{"proxy-upsert", func(t *testing.T, f *adminAuditFixture) request {
 			return request{"POST", "/v1/admin/proxy-routes", map[string]any{"id": f.route.ID, "host": f.route.Host, "cluster": "dev", "instance": "node", "upstream": "http://localhost:9090", "payload": adminAuditCanary}}
@@ -339,7 +339,7 @@ func TestAdminMutationRoutesAuditAndFailClosed(t *testing.T) {
 
 func TestAdminAuditReadRoutesDoNotCreateMutationEvents(t *testing.T) {
 	f := newAdminAuditFixture(t)
-	for _, path := range []string{"users", "grants", "tokens", "instances", "operations", "proxy-routes", "repos", "jobs", "jobs/issues"} {
+	for _, path := range []string{"users", "grants", "tokens", "instances", "operations?cluster=dev&instance=node", "proxy-routes", "repos", "jobs", "jobs/issues"} {
 		response := credentialHTTPRequest(t, f.mux, f.adminToken, http.MethodGet, "/v1/admin/"+path, nil)
 		if response.Code != http.StatusOK {
 			t.Fatalf("%s: HTTP %d: %s", path, response.Code, response.Body.String())
@@ -519,7 +519,7 @@ func TestTargetAdminMutationsRetainExactActions(t *testing.T) {
 	}{
 		{"POST", "/v1/admin/repos/clone?id=" + f.repo.ID, map[string]any{"cluster": "dev", "instance": "node", "session_id": "exact-admin"}},
 		{"POST", "/v1/admin/jobs/run?id=" + job.ID, nil},
-		{"DELETE", "/v1/admin/operations?id=" + f.operationID, nil},
+		{"DELETE", "/v1/admin/operations?cluster=dev&id=" + f.operationID + "&instance=node", nil},
 		{"POST", "/v1/admin/proxy-routes", map[string]any{"id": f.route.ID, "cluster": "dev", "instance": "node", "host": f.route.Host, "upstream": "http://localhost:9090"}},
 		{"DELETE", "/v1/admin/proxy-routes?id=" + f.route.ID, nil},
 		{"POST", "/v1/targets/unlock?cluster=dev&instance=node", nil},
@@ -626,8 +626,8 @@ func TestAdminAuditRejectsOtherTargetsAndRecordsRealDownstreamFailure(t *testing
 	}{
 		{"POST", "/v1/admin/repos/clone?id=" + f.repo.ID, map[string]any{"cluster": "dev", "instance": "node", "session_id": "audit-test"}},
 		{"POST", "/v1/targets/unlock?cluster=dev&instance=node", nil},
-		{"DELETE", "/v1/admin/operations?id=" + f.operationID, nil},
-		{"DELETE", "/v1/admin/operations?id=%20" + f.operationID + "%20", nil},
+		{"DELETE", "/v1/admin/operations?cluster=dev&id=" + f.operationID + "&instance=node", nil},
+		{"DELETE", "/v1/admin/operations?cluster=dev&id=%20" + f.operationID + "%20&instance=node", nil},
 		{"DELETE", "/v1/admin/proxy-routes?id=" + f.route.ID, nil},
 		{"POST", "/v1/admin/proxy-routes", map[string]any{"cluster": "dev", "instance": "node", "host": "denied.test", "upstream": "http://localhost:80"}},
 		{"POST", "/v1/admin/proxy-routes", map[string]any{"id": f.route.ID, "cluster": "elsewhere", "instance": "other", "host": f.route.Host, "upstream": "http://localhost:80"}},

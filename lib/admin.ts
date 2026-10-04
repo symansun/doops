@@ -231,9 +231,10 @@ export async function listInstances(s: Session): Promise<AdminInstance[]> {
 }
 
 // ---------- 运行中操作 ----------
-export async function listOperations(s: Session): Promise<AdminOperation[]> {
+export async function listOperations(s: Session, cluster: string, instance: string): Promise<AdminOperation[]> {
   if (s.demo) return (await import("./demo")).demoListOperations()
-  return (await req<{ operations: AdminOperation[] }>(s, "operations")).operations || []
+  const qs = new URLSearchParams({ cluster, instance })
+  return (await req<{ operations: AdminOperation[] }>(s, `operations?${qs.toString()}`)).operations || []
 }
 
 export async function optimizeAuditIndexes(s: Session, sessionId: string): Promise<void> {
@@ -242,11 +243,11 @@ export async function optimizeAuditIndexes(s: Session, sessionId: string): Promi
 	if (!result.optimized || !result.definitions_verified || result.query_plans?.length !== 3) throw new Error("审计索引维护未通过验证")
 }
 
-export async function cancelOperation(s: Session, id: string): Promise<void> {
+export async function cancelOperation(s: Session, id: string, cluster: string, instance: string): Promise<void> {
   if (s.demo) return (await import("./demo")).demoCancelOperation(id)
   const result = await req<{ id: string; cancel_requested: boolean; state: string } | null>(
     s,
-    `operations?id=${encodeURIComponent(id)}`,
+    `operations?cluster=${encodeURIComponent(cluster)}&id=${encodeURIComponent(id)}&instance=${encodeURIComponent(instance)}`,
     { method: "DELETE" },
     202,
   )
