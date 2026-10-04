@@ -280,17 +280,24 @@ doops admin token revoke --target <gateway-target> --id <token-id>
 
 - 不同 target 可以并发执行。
 - 同一 target 上的 target 级 mutation、无 session 的操作以及共享资源写入会串行进入 agent，避免多个用户同时改同一个环境。
+- 同一客户端 WebSocket 上的多个 `tools/call` 可以并行；Agent 的每条
+  `notifications/message` 必须带 `params.request_id`，Gateway 和 CLI 按请求 ID
+  路由，不得用 session 名称覆盖另一个并发请求的通知。
 - 普通 `exec`/`ssh`/`bg` 一律使用 target mutation 锁。session 不是 OS 或远端资源
   沙箱，脚本和解释器可访问共享资源，不能靠命令关键词放行并发。
 - `ask --apply`、credential 和 target 级 mutation 命令走同一 target mutation 队列；独立 session 的 push/write/clean/read/pull 共享各自 workspace 锁，同一 workspace 不得重叠。超过 `-target-queue-timeout` 返回 `target queue timeout`。
 - 结构化 K8s 的 `get/describe/logs/top/events/rollout-status`、任务状态和节点信息
   可与 target mutation 并行，结果未知时仍可诊断；Agent 自升级阻止这些查询。
+- 公网 HTTP 代理只有 `GET/HEAD/OPTIONS/TRACE` 按只读查询处理；`POST/PUT/PATCH/DELETE`
+  等其它方法进入 target mutation 锁，并在转发中断且缺少终态时保留
+  `outcome_unknown`，不能直接让后续发布接管。
 - `-max-concurrent-per-user` 控制单个 gateway 用户最多占用多少个运行中操作槽；
   `serve` 默认 10，等待资源不计入执行额度，超过时返回 `user operation limit exceeded`。
 - `-operation-timeout` 控制单个转发操作的最长运行时间；超时请求取消并等待原始终态，缺失终态时保留持久化的不确定性阻塞，不能直接释放 mutation 权限。
 - `serve` 默认全局 64 个执行槽，每个互斥槽最多 10 个等待者、等待上限 10 分钟。
-  workspace 锁各有等待队列，不是 target 所有请求的总队列；跨层冲突可立即返回
-  `target busy`。`-max-queued-per-target` 设为负数可关闭排队。
+  workspace 锁和 target mutation 都使用有界等待队列；跨层冲突在允许排队时会等待
+  reader/resource 终态，不占用户或全局运行配额，只有队列满、排队关闭或超时才返回
+  `target busy`/`target queue timeout`。`-max-queued-per-target` 设为负数可关闭排队。
 - `-login-token-ttl` 控制密码登录生成 token 的有效期；长期自动化应使用管理员发放的可轮换服务 token。
 
 管理员先核对所有权；明确获准中断对应任务后才请求取消，不自动抢占其它发布：

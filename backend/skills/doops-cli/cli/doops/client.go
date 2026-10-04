@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -50,10 +51,9 @@ type MCPClient struct {
 
 	// --- WS 消息分发 ---
 	// 所有 WS 消息通过 dispatchLoop 读取并按 request ID 分发
-	dispatching      bool
-	pendingMu        sync.RWMutex
-	pending          map[int64]chan wsEvent // reqID -> 等待响应的 channel
-	pendingBySession map[string]chan wsEvent
+	dispatching bool
+	pendingMu   sync.RWMutex
+	pending     map[int64]chan wsEvent // reqID -> 等待响应的 channel
 
 	CallTimeout time.Duration
 }
@@ -68,13 +68,12 @@ type wsEvent struct {
 // NewMCPClient 创建 MCP 客户端实例（此时不建连）
 func NewMCPClient(target Server, ss *SessionStore, sessionName string, verbose bool) *MCPClient {
 	return &MCPClient{
-		Target:           target,
-		SessionStore:     ss,
-		SessionName:      sessionName,
-		Verbose:          verbose,
-		pending:          make(map[int64]chan wsEvent),
-		pendingBySession: make(map[string]chan wsEvent),
-		CallTimeout:      defaultToolCallTimeout(),
+		Target:       target,
+		SessionStore: ss,
+		SessionName:  sessionName,
+		Verbose:      verbose,
+		pending:      make(map[int64]chan wsEvent),
+		CallTimeout:  defaultToolCallTimeout(),
 	}
 }
 
@@ -307,22 +306,16 @@ func (c *MCPClient) dispatchMessage(msg map[string]interface{}) {
 	}
 
 	if method, ok := msg["method"].(string); ok && method == "notifications/message" {
-		sessionID := sessionIDFromClientNotification(msg)
-		c.pendingMu.RLock()
-		if sessionID != "" {
-			ch := c.pendingBySession[sessionID]
-			c.pendingMu.RUnlock()
-			if ch != nil {
-				sendWSEvent(ch, evt)
-			}
+		requestID, ok := requestIDFromClientNotification(msg)
+		if !ok {
 			return
 		}
-		if len(c.pending) == 1 {
-			for _, ch := range c.pending {
-				sendWSEvent(ch, evt)
-			}
-		}
+		c.pendingMu.RLock()
+		ch := c.pending[requestID]
 		c.pendingMu.RUnlock()
+		if ch != nil {
+			sendWSEvent(ch, evt)
+		}
 	}
 }
 
@@ -392,13 +385,6 @@ func (c *MCPClient) RequireAgentRelease(expected string) error {
 
 func protocolCapabilityCompatible(protocol string, value interface{}) bool {
 	switch protocol {
-	case "executionLifecycle":
-		capability, ok := value.(map[string]interface{})
-		return ok && len(capability) == 4 &&
-			capability["schemaVersion"] == "doops.sh/execution-lifecycle/v1" &&
-			capability["terminalResponse"] == true &&
-			capability["backgroundLifetime"] == true &&
-			capability["promptCancellation"] == true
 	case "structuredSSH":
 		capability, ok := value.(map[string]interface{})
 		return ok &&
@@ -407,7 +393,7 @@ func protocolCapabilityCompatible(protocol string, value interface{}) bool {
 			capability["tool"] == "doops_ssh" &&
 			capability["structuredArgv"] == true
 	default:
-		return value != nil
+		return false
 	}
 }
 
@@ -427,41 +413,28 @@ func (c *MCPClient) unregisterPending(reqID int64) {
 	c.pendingMu.Unlock()
 }
 
-func (c *MCPClient) registerPendingSession(sessionID string, ch chan wsEvent) {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" || ch == nil {
-		return
-	}
-	c.pendingMu.Lock()
-	c.pendingBySession[sessionID] = ch
-	c.pendingMu.Unlock()
-}
-
-func (c *MCPClient) unregisterPendingSession(sessionID string, ch chan wsEvent) {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return
-	}
-	c.pendingMu.Lock()
-	if c.pendingBySession[sessionID] == ch {
-		delete(c.pendingBySession, sessionID)
-	}
-	c.pendingMu.Unlock()
-}
-
-func sessionIDFromClientNotification(msg map[string]interface{}) string {
+func requestIDFromClientNotification(msg map[string]interface{}) (int64, bool) {
 	params, _ := msg["params"].(map[string]interface{})
 	if params == nil {
-		return ""
+		return 0, false
 	}
-	for _, key := range []string{"sessionID", "session_id", "session"} {
-		if value, ok := params[key].(string); ok {
-			if trimmed := strings.TrimSpace(value); trimmed != "" {
-				return trimmed
-			}
+	requestID, ok := params["request_id"]
+	if !ok {
+		return 0, false
+	}
+	switch value := requestID.(type) {
+	case float64:
+		if value != math.Trunc(value) || value < math.MinInt64 || value > math.MaxInt64 {
+			return 0, false
 		}
+		return int64(value), true
+	case int:
+		return int64(value), true
+	case int64:
+		return value, true
+	default:
+		return 0, false
 	}
-	return ""
 }
 
 // Close 关闭持久连接，释放资源
@@ -491,9 +464,6 @@ func (c *MCPClient) Call(toolName string, arguments map[string]interface{}) erro
 	reqID := c.nextReqID()
 	ch := c.registerPending(reqID)
 	defer c.unregisterPending(reqID)
-	sessionID, _ := arguments["session_id"].(string)
-	c.registerPendingSession(sessionID, ch)
-	defer c.unregisterPendingSession(sessionID, ch)
 
 	// 发送 tool call
 	c.log("CLIENT:SEND_TOOL_CALL", fmt.Sprintf("Invoking tool %s (reqID=%d)", toolName, reqID))
@@ -622,9 +592,6 @@ func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interfa
 	reqID := c.nextReqID()
 	ch := c.registerPending(reqID)
 	defer c.unregisterPending(reqID)
-	sessionID, _ := arguments["session_id"].(string)
-	c.registerPendingSession(sessionID, ch)
-	defer c.unregisterPendingSession(sessionID, ch)
 
 	// 发送 tool call
 	c.mu.Lock()
@@ -708,9 +675,6 @@ func (c *MCPClient) CallStructured(toolName string, arguments map[string]interfa
 	reqID := c.nextReqID()
 	ch := c.registerPending(reqID)
 	defer c.unregisterPending(reqID)
-	sessionID, _ := arguments["session_id"].(string)
-	c.registerPendingSession(sessionID, ch)
-	defer c.unregisterPendingSession(sessionID, ch)
 
 	c.mu.Lock()
 	err := c.conn.WriteJSON(map[string]interface{}{

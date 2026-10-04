@@ -11,19 +11,18 @@ Publish the operation lifecycle repair from a reviewed, remotely visible commit.
 Use the successful main CI Agent/Gateway artifact and a matching versioned CLI
 release. On 2026-10-03 the user authorized all components and all online Agents.
 Inventory exact identities before changing workloads or the production Gateway:
-the pre-repair executionLifecycle gate incorrectly rejected shell, SSH,
-background and prompt calls to Agents without the new protocol. The repaired
-contract gates only detached background execution and preserves terminal-evidence
-guards for foreground mutations.
+the pre-repair lifecycle capability gate incorrectly rejected operations based on
+an Agent declaration. The repaired contract removes that capability gate and
+uses one Gateway-owned terminal state machine for foreground and background
+operations, while preserving terminal-evidence guards for mutations.
 
 # Completion Evidence
 
 - Agent, Gateway, CLI and contract checks pass on the final source tree.
 - Independent review finds no unresolved release-blocking defects.
 - Commit, main CI, release tag, image digest and CLI/Skill identity agree.
-- Agents used for detached background execution advertise executionLifecycle
-  before the Gateway switches; foreground release paths do not require that
-  declaration.
+- Agents used for release must return request-correlated terminal responses;
+  no separate lifecycle capability declaration is required.
 - Gateway executable hash and source commit match the verified CI artifact.
 - The registered Agent baseline reconnects and existing services stay healthy.
 - Live exec, cancellation, background lifetime, operation status and audit checks
@@ -80,11 +79,10 @@ validators or retry a production mutation whose outcome is unknown.
   JM, SCU-new and ZYJ have no managed Helm release; silicon has no available
   Kubernetes upgrade endpoint. Do not adopt those workloads or bypass the
   managed release controller without a separate migration plan.
-- Do not switch Gateway until every authorized background-execution consumer
-  supports executionLifecycle and every structured SSH consumer supports
-  structuredSSH. Source merge, release assets and runtime deployment are
-  separate acceptance states; legacy foreground-only runtime blockers do not
-  prevent reviewed source publication.
+- Do not switch Gateway until every authorized consumer passes terminal-response,
+  cancellation, unknown-outcome and request-correlation checks, and every structured
+  SSH consumer supports `structuredSSH`. Source merge, release assets and runtime
+  deployment are separate acceptance states.
 
 Linux Agent/Gateway/CLI and Git process race acceptance passed in
 cnb-gr9-1k3vqigpe for fa1a98a52d081459a4dcecc47f8f004662cde0df.
@@ -96,7 +94,7 @@ Gateway browser evidence, not proof of production process termination.
 
 # Additional Verification
 
-- Exact lifecycle capability forwarding and CLI schema validation pass.
+- Unified Gateway terminal-state and CLI protocol validation pass.
 - Original-error delivery during disconnection, undispatched internal rejection,
   actual background stdout/exit evidence and split UTF-8 output pass.
 - Targeted race verification for lifecycle, background and Agent Git cancellation

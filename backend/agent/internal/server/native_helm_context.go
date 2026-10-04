@@ -123,19 +123,22 @@ func handleNativeHelmRequest(w http.ResponseWriter, request *http.Request, recor
 
 func cleanupNativeHelmCredential(req CredentialCleanupRequest) (bool, error) {
 	nativeHelmContexts.Lock()
-	defer nativeHelmContexts.Unlock()
+	var records []*nativeHelmRecord
 	for socket, record := range nativeHelmContexts.bySocket {
 		if record.Namespace != req.Namespace || record.CredentialID != req.CredentialID || record.GrantID != req.GrantID ||
 			(!req.AnyVersion && record.VersionID != req.VersionID) {
 			continue
 		}
+		delete(nativeHelmContexts.bySocket, socket)
+		records = append(records, record)
+	}
+	nativeHelmContexts.Unlock()
+	for _, record := range records {
 		_ = record.Server.Close()
 		_ = record.Listener.Close()
-		delete(nativeHelmContexts.bySocket, socket)
-		_ = os.RemoveAll(filepath.Dir(socket))
-		return true, nil
+		_ = os.RemoveAll(filepath.Dir(record.Socket))
 	}
-	return false, nil
+	return len(records) != 0, nil
 }
 
 func nativeHelmContextForSocket(socket string) (*nativeHelmRecord, error) {

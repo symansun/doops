@@ -293,23 +293,20 @@ func TestCaptureToolNotificationTextPreservesJSONPayload(t *testing.T) {
 	}
 }
 
-func TestNotificationDispatchRoutesBySessionID(t *testing.T) {
+func TestNotificationDispatchRoutesByRequestID(t *testing.T) {
 	client := NewMCPClient(Server{Name: "local"}, NewSessionStore(), "session-a", false)
 	chA := client.registerPending(1)
 	chB := client.registerPending(2)
 	defer client.unregisterPending(1)
 	defer client.unregisterPending(2)
-	client.registerPendingSession("session-a", chA)
-	client.registerPendingSession("session-b", chB)
-	defer client.unregisterPendingSession("session-a", chA)
-	defer client.unregisterPendingSession("session-b", chB)
 
 	client.dispatchMessage(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  "notifications/message",
 		"params": map[string]interface{}{
-			"sessionID": "session-b",
-			"data":      "output from session-b\n",
+			"request_id": 2,
+			"sessionID":  "session-a",
+			"data":       "output from session-b\n",
 		},
 	})
 
@@ -333,8 +330,6 @@ func TestNotificationDispatchDoesNotSilentlyDropWhenPendingBufferIsFull(t *testi
 	client := NewMCPClient(Server{Name: "local"}, NewSessionStore(), "session-a", false)
 	ch := client.registerPending(1)
 	defer client.unregisterPending(1)
-	client.registerPendingSession("session-a", ch)
-	defer client.unregisterPendingSession("session-a", ch)
 
 	for i := 0; i < cap(ch); i++ {
 		ch <- wsEvent{Parsed: map[string]interface{}{"filled": i}}
@@ -346,8 +341,8 @@ func TestNotificationDispatchDoesNotSilentlyDropWhenPendingBufferIsFull(t *testi
 			"jsonrpc": "2.0",
 			"method":  "notifications/message",
 			"params": map[string]interface{}{
-				"sessionID": "session-a",
-				"data":      "must not disappear\n",
+				"request_id": 1,
+				"data":       "must not disappear\n",
 			},
 		})
 		close(done)
@@ -396,7 +391,7 @@ func TestConnectRejectsInitializeNotificationFalsePositive(t *testing.T) {
 		_ = conn.WriteJSON(map[string]interface{}{
 			"jsonrpc": "2.0",
 			"method":  "notifications/message",
-			"params":  map[string]interface{}{"data": "not init"},
+			"params":  map[string]interface{}{"request_id": req["id"], "data": "not init"},
 		})
 		time.Sleep(200 * time.Millisecond)
 	}))

@@ -28,6 +28,22 @@ type proxyHTTPRequestParams struct {
 	Upstream      string              `json:"upstream"`
 }
 
+func proxyRequestIsReadOnly(method string) bool {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return true
+	default:
+		return false
+	}
+}
+
+func proxyResourceKey(cluster, instance, routeID, method string) string {
+	if proxyRequestIsReadOnly(method) {
+		return "query:proxy:" + routeID
+	}
+	return "target-mutation:" + cluster + "/" + instance
+}
+
 func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/v1/") {
 		http.NotFound(w, r)
@@ -63,8 +79,9 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	opCtx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	resourceKey := proxyResourceKey(route.Cluster, route.Instance, route.ID, r.Method)
 	opID := h.client.registerActiveOperation(GatewayActiveOperation{
-		Resource:       "proxy:" + route.ID,
+		Resource:       resourceKey,
 		UserID:         "proxy",
 		Cluster:        route.Cluster,
 		Instance:       route.Instance,
@@ -73,7 +90,7 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 		Kind:           "proxy",
 	}, cancel)
 	defer h.client.finishActiveOperation(opID)
-	lease, err := agent.acquireActionLease(opCtx, ActionProxy, "proxy:"+route.ID, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
+	lease, err := agent.acquireActionLease(opCtx, ActionProxy, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -81,6 +98,7 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 	h.client.attachOperationLease(opID, lease)
 
 	auditID, err := h.store.StartAudit(AuditEvent{
+		UserID:  "proxy",
 		Cluster: route.Cluster, Instance: route.Instance, Action: ActionProxy,
 		CommandSummary: r.Method + " " + r.URL.RequestURI(), StartedAt: time.Now().UTC(),
 	})
@@ -102,6 +120,23 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer releaseLimit()
+	h.client.markOperationRunning(opID)
+	if !proxyRequestIsReadOnly(r.Method) {
+		if err := h.client.checkExecutionGuard(route.Cluster, route.Instance); err != nil {
+			_ = h.store.FinishAudit(auditID, AuditFinish{
+				Status: "blocked", Error: err.Error(), EndedAt: time.Now().UTC(),
+			})
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		if err := h.client.beginExecution(agent, opID, auditID); err != nil {
+			_ = h.store.FinishAudit(auditID, AuditFinish{
+				Status: "blocked", Error: err.Error(), EndedAt: time.Now().UTC(),
+			})
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+	}
 	bytesOut, relayErr := agent.relayProxyHTTPRequest(opCtx, w, r, proxyHTTPRequestParams{
 		Method: r.Method, Path: r.URL.Path, RawQuery: r.URL.RawQuery,
 		Header: cloneProxyHeader(r.Header), ContentLength: r.ContentLength, Upstream: route.Upstream,
@@ -111,6 +146,9 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 		status, errorText = "error", relayErr.Error()
 		if errors.Is(relayErr, context.Canceled) {
 			status, errorText = "canceled", "operation canceled"
+		}
+		if errors.Is(relayErr, errExecutionOutcomeUnknown) {
+			status, errorText = "outcome_unknown", errExecutionOutcomeUnknown.Error()
 		}
 		if bytesOut == 0 {
 			http.Error(w, relayErr.Error(), http.StatusBadGateway)
@@ -126,7 +164,11 @@ func (a *GatewayAgent) relayProxyHTTPRequest(ctx context.Context, w http.Respons
 	id := atomicAddGatewayRequestID(&a.reqID)
 	ch := a.registerPending(id, "proxy/cancel")
 	defer a.unregisterPending(id)
+	uncertainIfInterrupted := !proxyRequestIsReadOnly(params.Method)
 	if err := a.writeJSON(map[string]interface{}{"jsonrpc": "2.0", "method": "proxy/http", "id": id, "params": params}); err != nil {
+		if uncertainIfInterrupted {
+			return 0, fmt.Errorf("%w: proxy dispatch failed: %v", errExecutionOutcomeUnknown, err)
+		}
 		return 0, err
 	}
 	bodyErrCh := make(chan error, 1)
@@ -143,6 +185,9 @@ func (a *GatewayAgent) relayProxyHTTPRequest(ctx context.Context, w http.Respons
 	var bytesOut int64
 	for {
 		if msg, ok, queueErr := ch.dequeue(); queueErr != nil {
+			if uncertainIfInterrupted {
+				return bytesOut, errExecutionOutcomeUnknown
+			}
 			return bytesOut, queueErr
 		} else if ok {
 			method, _ := msg.Parsed["method"].(string)
@@ -181,6 +226,7 @@ func (a *GatewayAgent) relayProxyHTTPRequest(ctx context.Context, w http.Respons
 				return bytesOut, nil
 			}
 			if errObj, ok := msg.Parsed["error"]; ok && errObj != nil {
+				completed = true
 				return bytesOut, fmt.Errorf("%v", errObj)
 			}
 			continue
@@ -189,14 +235,31 @@ func (a *GatewayAgent) relayProxyHTTPRequest(ctx context.Context, w http.Respons
 		case err := <-bodyErrCh:
 			bodyErrCh = nil
 			if err != nil {
+				if uncertainIfInterrupted {
+					return bytesOut, errExecutionOutcomeUnknown
+				}
 				return bytesOut, err
 			}
 		case <-ctx.Done():
+			cancelErr := a.waitPendingCancel(ch)
+			if uncertainIfInterrupted {
+				return bytesOut, errExecutionOutcomeUnknown
+			}
+			if cancelErr != nil {
+				return bytesOut, cancelErr
+			}
 			return bytesOut, ctx.Err()
 		case <-a.closed:
+			if uncertainIfInterrupted {
+				return bytesOut, errExecutionOutcomeUnknown
+			}
 			return bytesOut, errGatewayAgentDisconnected
 		case <-ch.notify:
 		case <-timer.C:
+			_ = a.waitPendingCancel(ch)
+			if uncertainIfInterrupted {
+				return bytesOut, errExecutionOutcomeUnknown
+			}
 			return bytesOut, fmt.Errorf("proxy operation timed out")
 		}
 	}

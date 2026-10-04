@@ -224,8 +224,8 @@ if ! grep -q 'maxUnavailable: 0' "${chart_template}" || ! grep -q 'maxSurge: 1' 
   echo "Error: candidate chart must hand off with maxUnavailable 0 and maxSurge 1" >&2
   exit 1
 fi
-if grep -q 'hostNetwork:' "${chart_template}"; then
-  echo "Error: candidate chart must not set hostNetwork" >&2
+if grep -Eq '^[[:space:]]+hostNetwork:[[:space:]]+true([[:space:]]*)$' "${chart_template}"; then
+  echo "Error: candidate chart must disable hostNetwork" >&2
   exit 1
 fi
 

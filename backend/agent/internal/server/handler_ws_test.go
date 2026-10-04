@@ -2259,3 +2259,21 @@ func TestWaitCommandStreamsPreservesExitCode(t *testing.T) {
 		t.Fatalf("waitCommandStreams error = %v, want exit 42", err)
 	}
 }
+
+func TestWaitCommandStreamsBoundsDescendantHoldingOutputPipe(t *testing.T) {
+	cmd, stdout, stderr, err := executeRawCommand(context.Background(), "sleep 60 & exit 0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+
+	started := time.Now()
+	err = waitCommandStreams(context.Background(), cmd, stdout, stderr, func(notificationEvent) {}, false)
+	if err == nil || !strings.Contains(err.Error(), errExecutionOutcomeUnknown.Error()) {
+		t.Fatalf("descendant holding output pipe did not reach bounded unknown outcome: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed < postLeaderDescendantGracePeriod ||
+		elapsed > postLeaderDescendantGracePeriod+3*time.Second {
+		t.Fatalf("descendant output pipe wait was not bounded: %s", elapsed)
+	}
+}

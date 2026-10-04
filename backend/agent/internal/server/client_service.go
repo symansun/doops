@@ -114,21 +114,55 @@ func (s *ClientService) finishActiveOperation(id string) {
 		return
 	}
 	s.activeOpsMu.Lock()
-	var auditID int64
-	var lease *operationLease
-	if op := s.activeOps[id]; op != nil {
-		auditID = op.AuditID
-		lease = op.lease
+	op := s.activeOps[id]
+	s.activeOpsMu.Unlock()
+	if op == nil {
+		return
+	}
+	if op.AuditID != 0 {
+		if err := s.store.MarkExecutionUncertain(op.AuditID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("[gateway] execution outcome could not be persisted; retaining operation lease: audit=%d: %v", op.AuditID, err)
+			go s.retryFinishActiveOperation(id, op)
+			return
+		}
+	}
+	s.releaseFinishedOperation(id, op)
+}
+
+func (s *ClientService) retryFinishActiveOperation(id string, expected *gatewayActiveOperation) {
+	backoff := time.Second
+	for {
+		time.Sleep(backoff)
+		s.activeOpsMu.Lock()
+		current := s.activeOps[id]
+		s.activeOpsMu.Unlock()
+		if current != expected {
+			return
+		}
+		if err := s.store.MarkExecutionUncertain(expected.AuditID); err == nil || errors.Is(err, sql.ErrNoRows) {
+			s.releaseFinishedOperation(id, expected)
+			return
+		} else {
+			log.Printf("[gateway] retry execution outcome persistence failed; retaining operation lease: audit=%d: %v", expected.AuditID, err)
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+			if backoff > 30*time.Second {
+				backoff = 30 * time.Second
+			}
+		}
+	}
+}
+
+func (s *ClientService) releaseFinishedOperation(id string, expected *gatewayActiveOperation) {
+	s.activeOpsMu.Lock()
+	if s.activeOps[id] != expected {
+		s.activeOpsMu.Unlock()
+		return
 	}
 	delete(s.activeOps, id)
 	s.activeOpsMu.Unlock()
-	lease.Release()
-	if auditID == 0 {
-		return
-	}
-	if err := s.store.MarkExecutionUncertain(auditID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		log.Printf("[gateway] execution outcome could not be persisted: audit=%d: %v", auditID, err)
-	}
+	expected.lease.Release()
 }
 
 func (s *ClientService) attachOperationLease(id string, lease *operationLease) {

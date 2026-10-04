@@ -25,11 +25,10 @@ This guide holds command-level usage details. The skill file is only the entry p
 | List live gateway agents | `doops -session <s> targets --target <gateway-target>` | First check for gateway troubleshooting. |
 | Retire an offline target | `doops -session <s> remove --target <gateway-target>` | Removes only the local route after a successful Gateway query confirms the exact route is not currently visible; online, unreachable, or unauthorized targets are refused. |
 | Check Agent protocol capability | `doops -session <s> capabilities --target <t> --require structuredSSH` | Fails closed when the online Agent is too old for structured SSH. |
-| Check execution lifecycle capability | `doops -session <s> capabilities --target <t> --require executionLifecycle` | Required for background execution; foreground exec/SSH/ask/apply use target scheduling and terminal evidence, so a legacy declaration does not block normal execution. |
 | Add a Gateway target | `doops add --name <n> --gateway <url> --cluster <c> --instance <i>` | Stores routing only; never stores a target token. |
 | Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Known checks and explicitly requested operations; standard releases use `ask --apply`. |
 | Run nested SSH safely | `doops -session <s> ssh --target <t> --host <user@host> -- <command> [args...]` | Preserves remote argv across nested shells. |
-| Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | One Agent-managed RPC waits for process termination; no task-status polling or command retries. |
+| Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | One RPC waits for the Agent task's terminal result; no task-status polling or command retries. |
 | Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
 | Run an authorized release | `doops -session <s> ask --target <t> --apply --credential <name> --msg '<facts>'` | Canonical business workload CI/CD entry. |
 | Push a local directory | `doops -session <s> push --target <t> --src <dir>` | Syncs into `/root/ws/<session>`. |
@@ -75,10 +74,15 @@ To remove a stale local route, use `doops -session <s> remove --target <gateway-
 
 `doops targets` separates target-wide busy from normal per-session activity:
 
-- `busy=true` means the whole target is blocked by an exclusive operation or target queue, so new work may return `target busy`.
+- `busy=true` means the whole target is blocked by an exclusive operation or target queue; when target
+  queueing is enabled, conflicting mutations wait for the current workspace/resource operation
+  instead of consuming another execution slot.
 - `status=active` with `busy=false` means one or more sessions/resources are running, but other sessions can still use the same agent.
 - `resources` shows workspace locks such as `workspace:<session>`.
   Shell/SSH/bg and apply use a target mutation lock; a session is not a sandbox.
+- Public HTTP proxy requests are classified by method: `GET/HEAD/OPTIONS/TRACE` are read-only
+  queries; other methods use the target mutation lock and retain `outcome_unknown` protection
+  when the Agent disconnects before a terminal response.
 
 `capabilities --require structuredSSH` performs only the Gateway WebSocket initialize
 handshake. It succeeds only when the selected online Agent advertises the exact
@@ -116,6 +120,10 @@ registered, not that the operation stopped. The operation keeps ownership until
 the original terminal response. Shell-style commands join process-group
 termination; `ask` waits for the matching doagent turn terminal event. Missing
 terminal evidence persists `outcome_unknown` and blocks later target mutations.
+Agent progress notifications carry `params.request_id`; Gateway and CLI route them by
+request ID so concurrent calls in one session cannot overwrite one another. The Gateway
+persists the execution terminal state before releasing the resource lease and retries
+that persistence while retaining the lease if the store is temporarily unavailable.
 Interrupted Shell/SSH/bg, apply and Kubernetes mutations also require reconciliation:
 local process or turn termination does not fence remote or detached work. The guard
 survives Gateway restart or Agent reconnection. The operation list shows

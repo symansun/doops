@@ -24,6 +24,8 @@ spec:
     spec:
       terminationGracePeriodSeconds: 30
       dnsPolicy: ClusterFirst
+      hostNetwork: false
+      hostPID: false
       nodeSelector:
 {{ toYaml .Values.nodeSelector | indent 8 }}
 {{- with .Values.tolerations }}

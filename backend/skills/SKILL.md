@@ -26,11 +26,14 @@ description: |
 
 - 优先使用 PATH 中的 `doops`；标准安装路径是 `~/.local/bin/doops`。
 - 所有远端调用必须带 `-session <name>`。
-- 执行生命周期协议按调用语义使用，不是发布入口的总闸。只有 `exec --bg` 必须先通过
-  `doops -session <s> capabilities --target <t> --require executionLifecycle` 的精确
-  校验；结构化 `ssh` 只要求 `structuredSSH` 参数协议，普通前台 `exec`、`ssh`、`ask`
-  和 `ask --apply` 进入统一目标调度并以实际终态响应完成，旧 Agent 不应因此被整体拒绝。前台调用被取消、超时或断连时仍按终态证据处理，
-  mutation 可能写入 `outcome_unknown` 并阻止后续写入；不得删除保护或静默降级。
+- 执行生命周期由 Gateway 统一管理，不再通过 Agent capability 字段决定是否允许执行。
+  `exec`、`exec --bg`、`ssh`、`ask` 和 `ask --apply` 都必须等待对应 RPC 的实际终态；
+  取消 ACK 不是终态，取消、超时或断连且缺少终态证据时写入 `outcome_unknown` 并阻止后续
+  mutation。结构化 `ssh` 仍只要求 `structuredSSH` 参数协议，不得删除未知结果保护或
+  静默降级。
+- Agent 流式 `notifications/message` 必须携带 `params.request_id`；Gateway 和 CLI
+  按请求 ID 路由事件，同一 session 的并发调用不能互相覆盖。Gateway 会先持久化
+  执行终态或 `outcome_unknown`，再释放资源 lease；持久化失败时保留 lease 并自动重试。
 - 定时巡检由 Gateway 按 job 持久 lease 单飞执行；`tick` 与 `run-now` 冲突时不重复
   占用目标。执行结束、失败、取消或 Gateway 重启后，lease 必须通过终态 `defer` 或
   到期自动回收；禁止要求人工 unlock 作为正常调度流程。
@@ -152,7 +155,8 @@ description: |
 - 网站公网代理：管理员先在 Gateway 创建 `host -> cluster/instance -> upstream`
   路由；Agent 必须通过 Helm `proxy.allowedHosts` 配置精确上游 hostname（Chart 注入
   `DOOPS_PROXY_ALLOW_HOSTS`，默认拒绝全部）。当前只支持 HTTP/HTTPS 流式代理，
-  不支持 WebSocket 或裸 TCP，详见 `docs/DOOPS_GATEWAY_TUNNEL.md`。
+  不支持 WebSocket 或裸 TCP；`GET/HEAD/OPTIONS/TRACE` 按只读查询处理，其它 HTTP
+  方法按 target mutation 处理，详见 `docs/DOOPS_GATEWAY_TUNNEL.md`。
 - 不要在日志、终端输出、文档、提交记录里暴露完整 token。
 - 如果用户是在发账号、发 token、授权、查审计、清理审计、查看/取消 gateway active operations，要按 gateway 管理动作处理，不要混成普通 target 运维。
 - 同一 target 的结构化 `push/write/clean/read/pull` 按 workspace 互斥，不同 workspace

@@ -278,45 +278,13 @@ func lifecycleResponse(t *testing.T, client *websocket.Conn, id int, wantError s
 	return msg
 }
 
-func TestExecutionLifecycleRequiresExactCapabilityBeforeDispatch(t *testing.T) {
-	for _, change := range []string{"valid", "absent", "legacy string", "wrong version", "missing terminal", "no background lifetime", "no prompt cancellation", "unknown field"} {
-		t.Run(change, func(t *testing.T) {
-			f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
-			initialize := gatewayTestInitializeResult("capability-agent")
-			protocols := initialize["capabilities"].(map[string]interface{})["protocols"].(map[string]interface{})
-			capability := protocols["executionLifecycle"].(map[string]interface{})
-			switch change {
-			case "absent":
-				delete(protocols, "executionLifecycle")
-			case "legacy string":
-				protocols["executionLifecycle"] = "doops.sh/execution-lifecycle/v1"
-			case "wrong version":
-				capability["schemaVersion"] = "doops.sh/execution-lifecycle/v0"
-			case "missing terminal":
-				delete(capability, "terminalResponse")
-			case "no background lifetime":
-				capability["backgroundLifetime"] = false
-			case "no prompt cancellation":
-				capability["promptCancellation"] = false
-			case "unknown field":
-				capability["extra"] = true
-			}
-			agent := f.agentWithInitialize(t, initialize)
-			client := f.client(t, f.admin)
-			lifecycleSend(t, client, 2, "doops_bg", "capability", map[string]interface{}{"command": "printf test"})
-			if change == "valid" {
-				agent.complete(t, agent.call(t, "doops_bg", "capability"), "")
-				lifecycleResponse(t, client, 2, "")
-			} else {
-				lifecycleResponse(t, client, 2, "executionLifecycle")
-				select {
-				case call := <-agent.calls:
-					t.Fatalf("incompatible capability reached dispatch: %#v", call)
-				default:
-				}
-			}
-		})
-	}
+func TestExecutionLifecycleBackgroundCallsUseGatewayTerminalState(t *testing.T) {
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+	agent := f.agentWithInitialize(t, gatewayTestInitializeResult("background-agent"))
+	client := f.client(t, f.admin)
+	lifecycleSend(t, client, 2, "doops_bg", "background", map[string]interface{}{"command": "printf test"})
+	agent.complete(t, agent.call(t, "doops_bg", "background"), "")
+	lifecycleResponse(t, client, 2, "")
 }
 
 func TestExecutionLifecycleForegroundCallsUseTerminalEvidenceWithoutCapability(t *testing.T) {
@@ -334,8 +302,6 @@ func TestExecutionLifecycleForegroundCallsUseTerminalEvidenceWithoutCapability(t
 		t.Run(test.name, func(t *testing.T) {
 			f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
 			initialize := gatewayTestInitializeResult("legacy-foreground-agent")
-			protocols := initialize["capabilities"].(map[string]interface{})["protocols"].(map[string]interface{})
-			delete(protocols, "executionLifecycle")
 			agent := f.agentWithInitialize(t, initialize)
 			client := f.client(t, f.admin)
 			lifecycleSend(t, client, 2, test.tool, "legacy-foreground", test.args)
@@ -345,17 +311,31 @@ func TestExecutionLifecycleForegroundCallsUseTerminalEvidenceWithoutCapability(t
 	}
 }
 
-func TestExecutionLifecycleDoesNotGateForegroundSSH(t *testing.T) {
-	if requiresExecutionLifecycle("doops_ssh") {
-		t.Fatal("foreground structured SSH must use terminal evidence, not executionLifecycle gating")
+func TestExecutionLifecycleDoesNotGateForegroundTools(t *testing.T) {
+	for _, tool := range []string{"doops_shell", "doops_bg", "doops_agent_prompt"} {
+		f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+		agent := f.agentWithInitialize(t, gatewayTestInitializeResult("foreground-agent"))
+		client := f.client(t, f.admin)
+		args := map[string]interface{}{}
+		if tool == "doops_shell" || tool == "doops_bg" {
+			args["command"] = "printf test"
+		} else if tool == "doops_ssh" {
+			args["host"] = "root@example.com"
+			args["command"] = []string{"true"}
+		} else if tool == "doops_agent_prompt" {
+			args["instruction"] = "return []"
+		} else {
+			args["operation"] = "get"
+		}
+		lifecycleSend(t, client, 2, tool, "unified-"+tool, args)
+		agent.complete(t, agent.call(t, tool, "unified-"+tool), "")
+		lifecycleResponse(t, client, 2, "")
 	}
 }
 
 func TestExecutionLifecycleInternalForegroundCallUsesTerminalEvidenceWithoutCapability(t *testing.T) {
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
 	initialize := gatewayTestInitializeResult("legacy-internal-agent")
-	protocols := initialize["capabilities"].(map[string]interface{})["protocols"].(map[string]interface{})
-	delete(protocols, "executionLifecycle")
 	agent := f.agentWithInitialize(t, initialize)
 
 	result := make(chan struct {
@@ -449,6 +429,38 @@ func TestExecutionLifecycleTargetMutationAllowsQueries(t *testing.T) {
 	lifecycleResponse(t, other, 3, "")
 	agent.complete(t, mutation, "")
 	lifecycleResponse(t, holderClient, 2, "")
+}
+
+func TestExecutionLifecycleTargetMutationQueuesBehindWorkspace(t *testing.T) {
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{
+		MaxQueuedPerTarget: 1,
+		TargetQueueTimeout: 5 * time.Second,
+	})
+	agent := f.agent(t, "queued-mutation-agent")
+	holderClient, mutationClient := f.client(t, f.admin), f.client(t, f.admin)
+
+	lifecycleSend(t, holderClient, 2, "doops_file_write", "workspace-holder", map[string]interface{}{
+		"path": "config.txt", "content": "held",
+	})
+	holder := agent.call(t, "doops_file_write", "workspace-holder")
+
+	lifecycleSend(t, mutationClient, 2, "doops_shell", "queued-mutation", map[string]interface{}{
+		"command": "kubectl apply -f release.yaml",
+	})
+	queued := f.operation(t, "queued-mutation", "waiting")
+	if queued.Resource != "target-mutation:dev/local" ||
+		len(queued.BlockedBy) != 1 {
+		t.Fatalf("target mutation was not queued behind workspace lock: %#v", queued)
+	}
+
+	agent.complete(t, holder, "")
+	lifecycleResponse(t, holderClient, 2, "")
+	mutation := agent.call(t, "doops_shell", "queued-mutation")
+	agent.complete(t, mutation, "")
+	lifecycleResponse(t, mutationClient, 2, "")
+	requireEventually(t, 3*time.Second, func() bool {
+		return len(f.hub.listActiveOperations()) == 0
+	})
 }
 
 func TestExecutionLifecycleAgentUpgradeIsExclusive(t *testing.T) {
@@ -618,8 +630,9 @@ func TestExecutionLifecycleReplacementCannotInheritStillActiveOldGeneration(t *t
 		return nil
 	}
 	done := make(chan error, 1)
-	// Stall delivery of the old call's failure so its active owner and executing
-	// audit remain present after registry replacement, not just after cleanup.
+	// Stall delivery of the old call's failure so the response path is still
+	// observable after registry replacement. The audit is persisted before the
+	// lease is released, so the durable unknown outcome is the blocker.
 	go func() {
 		done <- f.hub.client.handleGatewayToolCall(context.Background(), auth, "dev", "local", api.JSONRPCRequest{
 			JSONRPC: "2.0", ID: 2, Method: "tools/call",
@@ -646,13 +659,9 @@ func TestExecutionLifecycleReplacementCannotInheritStillActiveOldGeneration(t *t
 	case <-time.After(3 * time.Second):
 		t.Fatal("replacement did not interrupt the old transport")
 	}
-	stillActive := f.operation(t, "old-owner", "running")
-	if stillActive.ID != owner.ID {
-		t.Fatal("test lost the original active owner before checking replacement")
-	}
 	events, err := f.store.UnresolvedExecutions("dev", "local")
-	if err != nil || len(events) != 1 || events[0].ID != owner.AuditID || events[0].Status != "executing" {
-		t.Fatalf("test must retain old executing audit: %#v, %v", events, err)
+	if err != nil || len(events) != 1 || events[0].ID != owner.AuditID || events[0].Status != "outcome_unknown" {
+		t.Fatalf("replacement must retain the durable unknown outcome: %#v, %v", events, err)
 	}
 	client := f.client(t, f.admin)
 	lifecycleSend(t, client, 2, "doops_file_write", "new-owner", map[string]interface{}{"path": "config.txt", "content": "blocked"})

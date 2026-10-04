@@ -72,6 +72,7 @@ func NewGateway() *Gateway {
 	gw.detectContainerRuntime()
 	gw.startZombieReaper()
 	gw.startSessionReaper()
+	gw.startTaskReaper()
 	return gw
 }
 
@@ -159,6 +160,26 @@ func (gw *Gateway) startSessionReaper() {
 		}
 	}()
 	log.Println("[session-reaper] ✅ Session reaper started (TTL=2h, interval=1h)")
+}
+
+func (gw *Gateway) startTaskReaper() {
+	interval := time.Minute
+	if maxAge := maxCompletedTaskAge(); maxAge < 2*interval {
+		interval = maxAge / 2
+		if interval < 50*time.Millisecond {
+			interval = 50 * time.Millisecond
+		}
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			gw.tasksMu.Lock()
+			gw.cleanupCompletedTasksLocked(maxCompletedTaskAge())
+			gw.tasksMu.Unlock()
+		}
+	}()
+	log.Printf("[task-reaper] started (interval=%s)", interval)
 }
 
 // detectContainerRuntime 启动时自动探测容器运行时: nerdctl > docker > podman
