@@ -145,7 +145,7 @@ export function ConsoleShell() {
   return (
     <div className="flex h-dvh flex-col">
       <header className="flex shrink-0 items-center justify-between border-b bg-card px-4 py-2.5">
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 max-w-full items-center gap-2 overflow-x-auto">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
             <ServerIcon width={16} height={16} />
           </div>

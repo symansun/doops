@@ -129,7 +129,7 @@ export function DashboardPanel({
 
   return (
     <div className="h-full overflow-auto">
-      <div className="mx-auto max-w-6xl px-5 py-6">
+      <div className="mx-auto max-w-screen-2xl px-5 py-6">
         <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold text-foreground text-balance">
