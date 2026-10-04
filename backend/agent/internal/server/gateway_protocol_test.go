@@ -2410,6 +2410,26 @@ func TestGatewayRPCDoesNotFallbackSessionNotificationsWithoutSessionID(t *testin
 	}
 }
 
+func TestGatewayNotificationRoutingRequiresRequestID(t *testing.T) {
+	for _, notification := range []map[string]interface{}{
+		{"jsonrpc": "2.0", "method": "notifications/message", "params": map[string]interface{}{"data": "missing"}},
+		{"jsonrpc": "2.0", "method": "notifications/message", "params": map[string]interface{}{"sessionID": "legacy", "data": "missing"}},
+		{"jsonrpc": "2.0", "method": "notifications/message", "params": map[string]interface{}{"request_id": "not-a-number", "data": "invalid"}},
+	} {
+		if requestID, ok := requestIDFromNotification(notification); ok || requestID != 0 {
+			t.Fatalf("invalid notification was routed: request_id=%d ok=%t notification=%#v", requestID, ok, notification)
+		}
+	}
+	valid := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  "notifications/message",
+		"params":  map[string]interface{}{"request_id": float64(42), "data": "valid"},
+	}
+	if requestID, ok := requestIDFromNotification(valid); !ok || requestID != 42 {
+		t.Fatalf("valid request-correlated notification was rejected: request_id=%d ok=%t", requestID, ok)
+	}
+}
+
 func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	if got := gitResourceKey(ActionPush, "dev", "node", "push-a"); got != "workspace:push-a" {
 		t.Fatalf("git push resource key mismatch: %q", got)

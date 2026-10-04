@@ -112,6 +112,10 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			capabilitiesFlag.Usage()
 			os.Exit(1)
 		}
+		if err := validateRequiredProtocol(required); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 		if *sessionName == "" {
 			fmt.Println("Error: -session 必传，请指定会话 ID")
 			os.Exit(1)
