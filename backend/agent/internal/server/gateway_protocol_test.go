@@ -3363,10 +3363,12 @@ func serveFakeAgentWithRuntimeID(t *testing.T, conn *websocket.Conn, runtimeID s
 		}
 		switch msg["method"] {
 		case "initialize":
+			initialize := gatewayTestInitializeResult(runtimeID)
+			initialize["capabilities"].(map[string]interface{})["protocols"].(map[string]interface{})[executionLifecycleProtocol] = executionLifecycleCapability()
 			_ = conn.WriteJSON(map[string]interface{}{
 				"jsonrpc": "2.0",
 				"id":      msg["id"],
-				"result":  gatewayTestInitializeResult(runtimeID),
+				"result":  initialize,
 			})
 		case "tools/call":
 			params, _ := msg["params"].(map[string]interface{})

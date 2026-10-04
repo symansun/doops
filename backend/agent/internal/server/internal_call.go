@@ -87,6 +87,14 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 	if err != nil {
 		return "", fmt.Errorf("execution_audit_unavailable")
 	}
+	if err := agent.requireExecutionLifecycle(tool); err != nil {
+		if auditErr := h.store.FinishAudit(auditID, AuditFinish{
+			Status: "blocked", Error: err.Error(), EndedAt: time.Now().UTC(),
+		}); auditErr != nil {
+			return "", fmt.Errorf("execution_audit_completion_failed: %w", auditErr)
+		}
+		return "", err
+	}
 	opCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	opID := h.registerActiveOperation(GatewayActiveOperation{

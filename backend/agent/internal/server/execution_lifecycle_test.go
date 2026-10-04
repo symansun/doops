@@ -145,7 +145,9 @@ type executionLifecycleAgent struct {
 
 func (f *executionLifecycleFixture) agent(t *testing.T, runtime string) *executionLifecycleAgent {
 	t.Helper()
-	return f.agentWithInitialize(t, gatewayTestInitializeResult(runtime))
+	initialize := gatewayTestInitializeResult(runtime)
+	initialize["capabilities"].(map[string]interface{})["protocols"].(map[string]interface{})[executionLifecycleProtocol] = executionLifecycleCapability()
+	return f.agentWithInitialize(t, initialize)
 }
 
 func (f *executionLifecycleFixture) agentWithInitialize(t *testing.T, initialize map[string]interface{}) *executionLifecycleAgent {
@@ -280,11 +282,46 @@ func lifecycleResponse(t *testing.T, client *websocket.Conn, id int, wantError s
 
 func TestExecutionLifecycleBackgroundCallsUseGatewayTerminalState(t *testing.T) {
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
-	agent := f.agentWithInitialize(t, gatewayTestInitializeResult("background-agent"))
+	agent := f.agent(t, "background-agent")
 	client := f.client(t, f.admin)
 	lifecycleSend(t, client, 2, "doops_bg", "background", map[string]interface{}{"command": "printf test"})
 	agent.complete(t, agent.call(t, "doops_bg", "background"), "")
 	lifecycleResponse(t, client, 2, "")
+}
+
+func TestExecutionLifecycleBackgroundRequiresCapabilityBeforeDispatch(t *testing.T) {
+	for name, capability := range invalidExecutionLifecycleCapabilities() {
+		t.Run(name, func(t *testing.T) {
+			f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+			initialize := gatewayTestInitializeResult("legacy-background-" + name)
+			if capability != nil {
+				initialize["capabilities"].(map[string]interface{})["protocols"].(map[string]interface{})[executionLifecycleProtocol] = capability
+			}
+			agent := f.agentWithInitialize(t, initialize)
+			client := f.client(t, f.admin)
+			session := "legacy-background-" + name
+			lifecycleSend(t, client, 2, "doops_bg", session, map[string]interface{}{"command": "printf test"})
+			lifecycleResponse(t, client, 2, "does not advertise protocol")
+			select {
+			case call := <-agent.calls:
+				t.Fatalf("background call reached legacy Agent: %#v", call)
+			default:
+			}
+			if operations := f.hub.listActiveOperations(); len(operations) != 0 {
+				t.Fatalf("rejected background call retained operations: %#v", operations)
+			}
+			events, err := f.store.ListAuditFiltered(AuditFilter{Session: session})
+			if err != nil || len(events) != 1 || events[0].Status != "blocked" || events[0].EndedAt.IsZero() {
+				t.Fatalf("rejected background audit = %#v, %v", events, err)
+			}
+			if events, err := f.store.UnresolvedExecutions("dev", "local"); err != nil || len(events) != 0 {
+				t.Fatalf("rejected background call created execution blocker: %#v, %v", events, err)
+			}
+			lifecycleSend(t, client, 3, "doops_shell", "after-background-rejection-"+name, map[string]interface{}{"command": "printf test"})
+			agent.complete(t, agent.call(t, "doops_shell", "after-background-rejection-"+name), "")
+			lifecycleResponse(t, client, 3, "")
+		})
+	}
 }
 
 func TestExecutionLifecycleForegroundCallsUseTerminalEvidenceWithoutCapability(t *testing.T) {
@@ -312,12 +349,14 @@ func TestExecutionLifecycleForegroundCallsUseTerminalEvidenceWithoutCapability(t
 }
 
 func TestExecutionLifecycleDoesNotGateForegroundTools(t *testing.T) {
-	for _, tool := range []string{"doops_shell", "doops_bg", "doops_agent_prompt"} {
+	for _, tool := range []string{"doops_shell", "doops_ssh", "doops_agent_prompt", "doops_k8s"} {
 		f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
-		agent := f.agentWithInitialize(t, gatewayTestInitializeResult("foreground-agent"))
+		initialize := gatewayTestInitializeResult("foreground-agent")
+		initialize["capabilities"].(map[string]interface{})["protocols"].(map[string]interface{})[structuredSSHProtocol] = structuredSSHCapability()
+		agent := f.agentWithInitialize(t, initialize)
 		client := f.client(t, f.admin)
 		args := map[string]interface{}{}
-		if tool == "doops_shell" || tool == "doops_bg" {
+		if tool == "doops_shell" {
 			args["command"] = "printf test"
 		} else if tool == "doops_ssh" {
 			args["host"] = "root@example.com"
@@ -330,6 +369,40 @@ func TestExecutionLifecycleDoesNotGateForegroundTools(t *testing.T) {
 		lifecycleSend(t, client, 2, tool, "unified-"+tool, args)
 		agent.complete(t, agent.call(t, tool, "unified-"+tool), "")
 		lifecycleResponse(t, client, 2, "")
+	}
+}
+
+func TestExecutionLifecycleInternalBackgroundRequiresCapability(t *testing.T) {
+	for name, capability := range invalidExecutionLifecycleCapabilities() {
+		t.Run(name, func(t *testing.T) {
+			f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+			initialize := gatewayTestInitializeResult("legacy-internal-background")
+			if capability != nil {
+				initialize["capabilities"].(map[string]interface{})["protocols"].(map[string]interface{})[executionLifecycleProtocol] = capability
+			}
+			agent := f.agentWithInitialize(t, initialize)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			_, err := f.hub.RunInternalToolCall(ctx, "dev", "local", "doops_bg", map[string]interface{}{
+				"session_id": "legacy-internal-background",
+				"command":    "printf test",
+			})
+			if err == nil || !strings.Contains(err.Error(), "does not advertise protocol") {
+				t.Fatalf("legacy internal background call was not rejected: %v", err)
+			}
+			select {
+			case call := <-agent.calls:
+				t.Fatalf("internal background call reached legacy Agent: %#v", call)
+			default:
+			}
+			if operations := f.hub.listActiveOperations(); len(operations) != 0 {
+				t.Fatalf("rejected internal background retained operations: %#v", operations)
+			}
+			events, err := f.store.ListAuditFiltered(AuditFilter{Session: "legacy-internal-background"})
+			if err != nil || len(events) != 1 || events[0].Status != "blocked" || events[0].EndedAt.IsZero() {
+				t.Fatalf("rejected internal background audit = %#v, %v", events, err)
+			}
+		})
 	}
 }
 

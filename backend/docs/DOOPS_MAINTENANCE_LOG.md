@@ -2,6 +2,22 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-10-04 Scoped Background Lifecycle Admission
+
+- The current goal retains the existing lifecycle capability for background
+  execution. This supersedes the full-retirement behavior in the entries below.
+- Agent advertises the exact existing four-field v1 contract. CLI `ExecBg`,
+  Gateway RPC and internal background dispatch require it; foreground
+  exec/SSH/ask/apply and queries do not.
+- Missing background capability is rejected before execution/lock acquisition,
+  with a terminal blocked audit. Cancellation ACK remains non-terminal; all
+  terminal persistence, request-ID routing and unknown-outcome protection stay.
+- Live verification found CLI and Ali/Tencent Agents on `592dad8`, but the
+  actual Gateway executable still on `148a97c`. Its old background gate and
+  notification routing reproduce rejection and missing command output.
+- Scope, bounded rollout and evidence are tracked in
+  `reports/lifecycle-release-2026-10-04.md`. Passing local tests is not release.
+
 ## 2026-10-04 Lifecycle Finalization And Rollout Repair
 
 - The real OpenSSH lifecycle fixture closes the SSH session before waiting for

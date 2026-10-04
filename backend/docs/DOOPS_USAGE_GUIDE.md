@@ -87,9 +87,12 @@ To remove a stale local route, use `doops -session <s> remove --target <gateway-
 `capabilities --require structuredSSH` performs only the Gateway WebSocket initialize
 handshake. It succeeds only when the selected online Agent advertises the exact
 structured SSH protocol; it never falls back to `doops exec`.
-Other protocol names, including the retired `executionLifecycle`, are rejected
-locally before configuration, authentication or network access. They are not
-evidence that the Agent needs upgrading.
+`capabilities --require executionLifecycle` checks background execution's exact
+terminal-response, managed-lifetime and cancellation contract. Only `exec --bg`
+requires it before dispatch; foreground exec, SSH and ask do not. Background
+execution remains one streaming RPC, not a promise to survive disconnection.
+Other protocol names are rejected locally before configuration, authentication
+or network access; those argument errors are not evidence of an outdated Agent.
 It does not prove that the Agent supports in-cluster self-upgrade. Verify the
 installed CLI and target image against the selected release before choosing an
 upgrade path; source changes alone do not update either runtime.

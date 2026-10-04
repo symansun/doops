@@ -26,13 +26,15 @@ description: |
 
 - 优先使用 PATH 中的 `doops`；标准安装路径是 `~/.local/bin/doops`。
 - 所有远端调用必须带 `-session <name>`。
-- 执行生命周期由 Gateway 统一管理，不再通过 Agent capability 字段决定是否允许执行。
+- 执行生命周期由 Gateway 统一管理。只有 `exec --bg` 要求 Agent 声明完整的
+  `executionLifecycle` 能力，CLI、公网 Gateway 和内部调度入口都在后台任务派发前校验；
+  普通前台 `exec`、`ssh`、`ask` 和 `ask --apply` 不受该能力门禁限制。
   `exec`、`exec --bg`、`ssh`、`ask` 和 `ask --apply` 都必须等待对应 RPC 的实际终态；
   取消 ACK 不是终态，取消、超时或断连且缺少终态证据时写入 `outcome_unknown` 并阻止后续
   mutation。结构化 `ssh` 仍只要求 `structuredSSH` 参数协议，不得删除未知结果保护或
   静默降级。
-- `capabilities --require` 只接受 `structuredSSH`；`executionLifecycle` 等其它名称
-  在联网前直接报参数错误，不能把它解释为 Agent 版本不足或触发重复升级。
+- `capabilities --require` 接受 `structuredSSH` 和 `executionLifecycle`；其它名称
+  在联网前直接报参数错误。后台能力覆盖实际终态、受控任务寿命及取消，不承诺任务跨断连存活。
 - Agent 流式 `notifications/message` 必须携带 `params.request_id`；Gateway 和 CLI
   按请求 ID 路由事件，同一 session 的并发调用不能互相覆盖。Gateway 会先持久化
   执行终态或 `outcome_unknown`，再释放资源 lease；持久化失败时保留 lease 并自动重试。

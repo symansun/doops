@@ -387,8 +387,8 @@ func (c *MCPClient) RequireAgentRelease(expected string) error {
 }
 
 func validateRequiredProtocol(protocol string) error {
-	if protocol != "structuredSSH" {
-		return fmt.Errorf("unsupported protocol %q; only structuredSSH is supported", protocol)
+	if protocol != "structuredSSH" && protocol != "executionLifecycle" {
+		return fmt.Errorf("unsupported protocol %q; supported protocols: structuredSSH, executionLifecycle", protocol)
 	}
 	return nil
 }
@@ -402,6 +402,14 @@ func protocolCapabilityCompatible(protocol string, value interface{}) bool {
 			capability["schemaVersion"] == "doops.sh/structured-ssh/v1" &&
 			capability["tool"] == "doops_ssh" &&
 			capability["structuredArgv"] == true
+	case "executionLifecycle":
+		capability, ok := value.(map[string]interface{})
+		return ok &&
+			len(capability) == 4 &&
+			capability["schemaVersion"] == "doops.sh/execution-lifecycle/v1" &&
+			capability["terminalResponse"] == true &&
+			capability["backgroundLifetime"] == true &&
+			capability["promptCancellation"] == true
 	default:
 		return false
 	}
@@ -895,6 +903,9 @@ func formatAgentEvent(evt map[string]interface{}) {
 
 // ExecBg streams one doops_bg call until the Agent reports the process has stopped.
 func (c *MCPClient) ExecBg(command string) error {
+	if err := c.RequireProtocol("executionLifecycle"); err != nil {
+		return err
+	}
 	return c.Call("doops_bg", map[string]interface{}{
 		"command": command,
 	})
