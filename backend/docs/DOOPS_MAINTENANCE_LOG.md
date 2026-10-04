@@ -2,6 +2,12 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-10-04 Remove Retired Lifecycle Classification
+
+- Scheduler scan failures no longer classify the retired `executionLifecycle` capability
+  as a live protocol category. The Gateway-owned terminal state machine remains the only
+  execution lifecycle contract; stale Agent errors are reported as generic scan failures.
+
 ## 2026-10-03 Unified Gateway Execution Lifecycle
 
 - Retired the `executionLifecycle` Agent capability and its CLI/Gateway admission gate.

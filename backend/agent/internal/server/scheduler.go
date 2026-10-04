@@ -371,8 +371,6 @@ func schedulerScanErrorCategory(err error) string {
 	}
 	message := strings.ToLower(strings.TrimSpace(err.Error()))
 	switch {
-	case strings.Contains(message, "executionlifecycle"):
-		return "agent_lifecycle_capability"
 	case strings.Contains(message, "target offline"):
 		return "target_offline"
 	case strings.Contains(message, "target busy"),

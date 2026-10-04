@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,12 @@ func TestScanConfigStringReadsInstruction(t *testing.T) {
 	got := scanConfigString(`{"instruction":"check disk pressure"}`, "instruction", "fallback")
 	if got != "check disk pressure" {
 		t.Fatalf("scanConfigString returned %q, want custom instruction", got)
+	}
+}
+
+func TestSchedulerScanErrorCategoryTreatsRetiredLifecycleMessageAsGenericFailure(t *testing.T) {
+	if got := schedulerScanErrorCategory(errors.New("agent executionLifecycle protocol is required")); got != "agent_scan_failed" {
+		t.Fatalf("retired lifecycle message category = %q, want agent_scan_failed", got)
 	}
 }
 
