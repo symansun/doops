@@ -158,7 +158,6 @@ type GatewayAgent struct {
 	ReleaseCommit          string    `json:"release_commit,omitempty"`
 	CredentialPlanProtocol string    `json:"credential_plan_protocol,omitempty"`
 	StructuredSSH          bool      `json:"structured_ssh,omitempty"`
-	ExecutionLifecycle     bool      `json:"execution_lifecycle,omitempty"`
 	ConnectedAt            time.Time `json:"connected_at"`
 	LastSeen               time.Time `json:"last_seen"`
 	HeartbeatAt            time.Time `json:"heartbeat_at,omitempty"`
@@ -186,8 +185,8 @@ type GatewayAgent struct {
 	resources         map[string]*agentResourceSlot
 	pendingMu         sync.Mutex
 	pending           map[int64]*gatewayMessageQueue
-	active            *gatewayMessageQueue
-	activeBySession   map[string]*gatewayMessageQueue
+	activeByRequest   map[int64]*gatewayMessageQueue
+	activeSessions    map[string]int
 	messageBudget     *gatewayMessageBudget
 	closed            chan struct{}
 	reqID             int64
@@ -748,8 +747,9 @@ func newGatewayAgentSession(
 		conn:            conn,
 		opSlot:          make(chan struct{}, 1),
 		pending:         make(map[int64]*gatewayMessageQueue),
+		activeByRequest: make(map[int64]*gatewayMessageQueue),
 		resources:       make(map[string]*agentResourceSlot),
-		activeBySession: make(map[string]*gatewayMessageQueue),
+		activeSessions:  make(map[string]int),
 		messageBudget:   messageBudget,
 		closed:          make(chan struct{}),
 		stateChanged:    make(chan struct{}),
@@ -975,6 +975,7 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 		}
 	}()
 
+	var callWG sync.WaitGroup
 	for data := range messages {
 		var req api.JSONRPCRequest
 		if err := json.Unmarshal(data, &req); err != nil {
@@ -996,13 +997,18 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 				},
 			})
 		case "tools/call":
-			if err := h.handleGatewayToolCall(connCtx, auth, cluster, instance, req, writeRaw, writeJSON); err != nil {
-				writeJSON(buildErrorResponse(req.ID, -32603, err.Error()))
-			}
+			callWG.Add(1)
+			go func(req api.JSONRPCRequest) {
+				defer callWG.Done()
+				if err := h.handleGatewayToolCall(connCtx, auth, cluster, instance, req, writeRaw, writeJSON); err != nil {
+					writeJSON(buildErrorResponse(req.ID, -32603, err.Error()))
+				}
+			}(req)
 		default:
 			writeJSON(buildErrorResponse(req.ID, -32601, "unknown method: "+req.Method))
 		}
 	}
+	callWG.Wait()
 }
 
 func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAuth, cluster, instance string, req api.JSONRPCRequest, writeRaw func([]byte) error, writeJSON func(interface{}) error) error {
@@ -1121,12 +1127,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			return nil
 		}
 	}
-	if requiresExecutionLifecycle(params.Name) && !agent.ExecutionLifecycle {
-		errMsg := "agent executionLifecycle protocol is required; upgrade the Agent before executing commands"
-		finishAudit("blocked", errMsg, "", 0)
-		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
-		return nil
-	}
 	var err error
 	var authorizedCredentials []authorizedCredentialMaterialization
 	if params.Name == "doops_agent_prompt" && len(promptArgs.CredentialRefs) != 0 {
@@ -1156,7 +1156,12 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		CommandSummary: summarizeToolCall(params.Name, params.Arguments),
 		Kind:           "rpc",
 	}, cancelOp)
-	defer h.finishActiveOperation(opID)
+	operationFinished := false
+	defer func() {
+		if !operationFinished {
+			h.finishActiveOperation(opID)
+		}
+	}()
 
 	if len(authorizedCredentials) != 0 {
 		// Match verification/promotion's lock order before holding a target lease.
@@ -1249,6 +1254,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	finalErr := ""
 	knownApplyFailure := false
 	var fileWriteResult []byte
+	var finalResponse []byte
 
 	err = agent.relayToolCall(opCtx, params, h.opts.OperationTimeout, func(msg gatewayWSMessage) error {
 		if method, _ := msg.Parsed["method"].(string); method == "notifications/message" {
@@ -1260,7 +1266,15 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 					}
 				}
 			}
-			return writeRaw(msg.Raw)
+			forwarded := msg.Parsed
+			if p, ok := forwarded["params"].(map[string]interface{}); ok {
+				p["request_id"] = req.ID
+			}
+			raw, marshalErr := json.Marshal(forwarded)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			return writeRaw(raw)
 		}
 		if id, ok := msg.Parsed["id"]; ok {
 			msg.Parsed["id"] = req.ID
@@ -1281,9 +1295,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 				fileWriteResult = raw
 				return nil
 			}
-			if err := writeRaw(raw); err != nil {
-				return err
-			}
+			finalResponse = raw
 			_ = id
 		}
 		return nil
@@ -1292,18 +1304,19 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		if errors.Is(err, errExecutionOutcomeUnknown) {
 			finalStatus = "outcome_unknown"
 			finalErr = errExecutionOutcomeUnknown.Error()
-			_ = writeJSON(buildErrorResponse(req.ID, -32008, finalErr))
+			finalResponse, _ = json.Marshal(buildErrorResponse(req.ID, -32008, finalErr))
 		} else if errors.Is(err, errGatewayClientDisconnected) {
 			finalStatus = "canceled"
 			finalErr = errGatewayClientDisconnected.Error()
+			finalResponse, _ = json.Marshal(buildErrorResponse(req.ID, -32603, finalErr))
 		} else if errors.Is(err, context.Canceled) {
 			finalStatus = "canceled"
 			finalErr = "operation canceled"
-			_ = writeJSON(buildErrorResponse(req.ID, -32007, finalErr))
+			finalResponse, _ = json.Marshal(buildErrorResponse(req.ID, -32007, finalErr))
 		} else {
 			finalStatus = "error"
 			finalErr = sanitizeSecretText(err.Error())
-			_ = writeJSON(buildErrorResponse(req.ID, -32603, finalErr))
+			finalResponse, _ = json.Marshal(buildErrorResponse(req.ID, -32603, finalErr))
 		}
 	}
 	if knownApplyFailure && len(credentialPreparation.completed) != 0 {
@@ -1312,13 +1325,24 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		}
 	}
 	if err := finishAudit(finalStatus, finalErr, tail.String(), bytesOut); err != nil {
-		if params.Name == "doops_file_write" {
-			_ = writeJSON(buildErrorResponse(req.ID, -32603, "audit_completion_failed; mutation outcome requires verification"))
-		}
-		return nil
+		h.finishActiveOperation(opID)
+		operationFinished = true
+		failure, _ := json.Marshal(buildErrorResponse(
+			req.ID,
+			-32603,
+			"audit_completion_failed; execution outcome requires verification",
+		))
+		return writeRaw(failure)
 	}
+	// Persist the terminal audit state before releasing the resource lease. The
+	// client response is sent last so a follow-up mutation cannot race cleanup.
+	h.finishActiveOperation(opID)
+	operationFinished = true
 	if len(fileWriteResult) != 0 {
 		return writeRaw(fileWriteResult)
+	}
+	if len(finalResponse) != 0 {
+		return writeRaw(finalResponse)
 	}
 	return nil
 }
@@ -1327,9 +1351,6 @@ func clientCapabilities(agent *GatewayAgent) map[string]interface{} {
 	protocols := map[string]interface{}{}
 	if agent != nil && agent.StructuredSSH {
 		protocols[structuredSSHProtocol] = structuredSSHCapability()
-	}
-	if agent != nil && agent.ExecutionLifecycle {
-		protocols[executionLifecycleProtocol] = executionLifecycleCapability()
 	}
 	capabilities := map[string]interface{}{
 		"tools": map[string]interface{}{},
@@ -1513,7 +1534,6 @@ func (a *GatewayAgent) applyInitializeResult(result map[string]interface{}) {
 		a.CredentialPlanProtocol = credentialPlanProtocolV2
 	}
 	a.StructuredSSH = structuredSSHCapabilityCompatible(protocols[structuredSSHProtocol])
-	a.ExecutionLifecycle = capabilityMatches(protocols[executionLifecycleProtocol], executionLifecycleCapability())
 }
 
 func (a *GatewayAgent) readLoop(lease, initialReadTimeout time.Duration) {
@@ -1561,18 +1581,17 @@ func (a *GatewayAgent) readLoop(lease, initialReadTimeout time.Duration) {
 			}
 		}
 		if method, _ := parsed["method"].(string); method == "notifications/message" {
-			sessionID := sessionIDFromNotification(parsed)
-			a.pendingMu.Lock()
-			var queue *gatewayMessageQueue
-			if sessionID != "" {
-				queue = a.activeBySession[sessionID]
-			} else {
-				queue = a.active
+			requestID, ok := requestIDFromNotification(parsed)
+			if !ok {
+				log.Printf("[gateway] agent protocol violation: notification missing request_id: %s", a.Key)
+				return
 			}
+			a.pendingMu.Lock()
+			queue := a.activeByRequest[requestID]
 			a.pendingMu.Unlock()
 			if queue != nil {
 				if err := queue.enqueue(msg); err != nil && !errors.Is(err, errGatewayMessageQueueClosed) {
-					log.Printf("[gateway] agent notification queue failed: %s session=%q: %v", a.Key, sessionID, err)
+					log.Printf("[gateway] agent notification queue failed: %s request_id=%d: %v", a.Key, requestID, err)
 					a.cancelPending(queue, true)
 				}
 			}
@@ -1711,19 +1730,30 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 	sessionID := extractSession(params.Arguments)
 	routeNotifications := params.Name != "doops_task_status"
 	a.pendingMu.Lock()
-	if routeNotifications && sessionID != "" {
-		a.activeBySession[sessionID] = ch
-	} else if routeNotifications {
-		a.active = ch
+	if routeNotifications {
+		if a.activeByRequest == nil {
+			a.activeByRequest = make(map[int64]*gatewayMessageQueue)
+		}
+		a.activeByRequest[id] = ch
+		if sessionID != "" {
+			if a.activeSessions == nil {
+				a.activeSessions = make(map[string]int)
+			}
+			a.activeSessions[sessionID]++
+		}
 	}
 	a.pendingMu.Unlock()
 	defer func() {
 		a.pendingMu.Lock()
-		if routeNotifications && sessionID == "" && a.active == ch {
-			a.active = nil
+		if routeNotifications && a.activeByRequest[id] == ch {
+			delete(a.activeByRequest, id)
 		}
-		if routeNotifications && sessionID != "" && a.activeBySession[sessionID] == ch {
-			delete(a.activeBySession, sessionID)
+		if routeNotifications && sessionID != "" {
+			if count := a.activeSessions[sessionID]; count <= 1 {
+				delete(a.activeSessions, sessionID)
+			} else {
+				a.activeSessions[sessionID] = count - 1
+			}
 		}
 		a.pendingMu.Unlock()
 	}()
@@ -2237,18 +2267,14 @@ func (a *GatewayAgent) runtimeState() targetRuntimeState {
 	a.queueMu.Unlock()
 
 	a.pendingMu.Lock()
-	sessions := make([]string, 0, len(a.activeBySession))
-	for sessionID := range a.activeBySession {
+	sessions := make([]string, 0, len(a.activeSessions))
+	for sessionID := range a.activeSessions {
 		sessions = append(sessions, sessionID)
 	}
-	hasLegacyActive := a.active != nil
 	a.pendingMu.Unlock()
 	sort.Strings(sessions)
 
 	state.activeOps = writers + readers
-	if hasLegacyActive && state.activeOps == 0 {
-		state.activeOps = 1
-	}
 	state.queuedOps = queued + resourceQueued
 	state.resources = resources
 	state.sessions = sessions
@@ -2439,14 +2465,16 @@ func extractStringArg(args json.RawMessage, key string) string {
 	return strings.TrimSpace(v)
 }
 
-func sessionIDFromNotification(parsed map[string]interface{}) string {
+func requestIDFromNotification(parsed map[string]interface{}) (int64, bool) {
 	params, _ := parsed["params"].(map[string]interface{})
-	for _, key := range []string{"sessionID", "session_id", "session"} {
-		if v, _ := params[key].(string); v != "" {
-			return v
-		}
+	if params == nil {
+		return 0, false
 	}
-	return ""
+	requestID, ok := params["request_id"]
+	if !ok {
+		return 0, false
+	}
+	return numericID(requestID)
 }
 
 func summarizeToolCall(tool string, args json.RawMessage) string {

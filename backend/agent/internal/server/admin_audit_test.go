@@ -111,7 +111,7 @@ func (f *adminAuditFixture) agent(t *testing.T, failed bool) {
 				_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": gatewayTestInitializeResult("")})
 			case "tools/call":
 				f.calls.Add(1)
-				_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "method": "notifications/message", "params": map[string]any{"data": adminAuditCanary}})
+				_ = conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "method": "notifications/message", "params": map[string]any{"request_id": msg["id"], "data": adminAuditCanary}})
 				_ = conn.WriteJSON(map[string]any{
 					"jsonrpc": "2.0", "id": msg["id"],
 					"result": map[string]any{"isError": failed, "content": []map[string]any{{"type": "text", "text": adminAuditCanary}}},

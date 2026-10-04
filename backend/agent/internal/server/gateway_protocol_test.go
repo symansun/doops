@@ -1718,13 +1718,13 @@ func TestGatewayAgentReadLoopKeepsPongResponsiveWhenStoreIsBusy(t *testing.T) {
 	}()
 
 	agent := &GatewayAgent{
-		Cluster:         "dev",
-		Instance:        "local",
-		Key:             "dev/local",
-		conn:            <-serverConn,
-		pending:         make(map[int64]*gatewayMessageQueue),
-		activeBySession: make(map[string]*gatewayMessageQueue),
-		closed:          make(chan struct{}),
+		Cluster:        "dev",
+		Instance:       "local",
+		Key:            "dev/local",
+		conn:           <-serverConn,
+		pending:        make(map[int64]*gatewayMessageQueue),
+		activeSessions: make(map[string]int),
+		closed:         make(chan struct{}),
 	}
 	go agent.readLoop(hub.opts.AgentLease, hub.opts.AgentLease)
 
@@ -1789,11 +1789,11 @@ func TestGatewayAgentReadLoopAcknowledgesStreamingProgress(t *testing.T) {
 	}()
 
 	agent := &GatewayAgent{
-		Key:             "dev/local",
-		conn:            <-serverConn,
-		pending:         make(map[int64]*gatewayMessageQueue),
-		activeBySession: make(map[string]*gatewayMessageQueue),
-		closed:          make(chan struct{}),
+		Key:            "dev/local",
+		conn:           <-serverConn,
+		pending:        make(map[int64]*gatewayMessageQueue),
+		activeSessions: make(map[string]int),
+		closed:         make(chan struct{}),
 	}
 	go agent.readLoop(time.Second, time.Second)
 
@@ -1970,10 +1970,10 @@ func TestGatewayAgentReadLoopKeepsPingResponsiveWhenPendingConsumerStalls(t *tes
 
 	pending := newGatewayMessageQueue(newGatewayMessageBudget(64<<10), 16<<10, 1, "tools/cancel")
 	agent := &GatewayAgent{
-		conn:            <-serverConn,
-		pending:         map[int64]*gatewayMessageQueue{1: pending},
-		activeBySession: make(map[string]*gatewayMessageQueue),
-		closed:          make(chan struct{}),
+		conn:           <-serverConn,
+		pending:        map[int64]*gatewayMessageQueue{1: pending},
+		activeSessions: make(map[string]int),
+		closed:         make(chan struct{}),
 	}
 	go agent.readLoop(time.Second, time.Second)
 	defer func() {
@@ -2141,6 +2141,70 @@ func TestGatewayRPCAllowsConcurrentStructuredWorkspacesForSameTarget(t *testing.
 		if resp := readUntilID(t, client, 2); resp["error"] != nil {
 			t.Fatalf("%s final response failed: %#v", name, resp)
 		}
+	}
+}
+
+func TestGatewayRPCAllowsConcurrentCallsOnOneClientConnection(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	user, _ := store.CreateUser("alice")
+	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionInfo}}); err != nil {
+		t.Fatalf("grant info: %v", err)
+	}
+
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	mux := http.NewServeMux()
+	gw.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
+	defer agentConn.Close()
+	release := make(chan struct{})
+	started := make(chan int, 2)
+	go serveConcurrentBlockingFakeAgent(t, agentConn, started, release)
+
+	client := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
+	defer client.Close()
+	args, _ := json.Marshal(map[string]interface{}{"session_id": "same-session"})
+	for _, id := range []int{2, 3} {
+		writeGatewayJSON(t, client, map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      id,
+			"method":  "tools/call",
+			"params":  map[string]interface{}{"name": "doops_node_info", "arguments": json.RawMessage(args)},
+		})
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatal("same client connection serialized concurrent read-only calls")
+		}
+	}
+	state := gw.registry.Get("dev", "local").snapshot()
+	if state.ActiveOps != 2 || len(state.Sessions) != 1 || state.Sessions[0] != "same-session" {
+		t.Fatalf("same-session concurrent state was not counted accurately: %#v", state)
+	}
+	close(release)
+	seen := map[float64]bool{}
+	for i := 0; i < 2; i++ {
+		response := readGatewayMessage(t, client)
+		id, ok := response["id"].(float64)
+		if !ok || (id != 2 && id != 3) {
+			t.Fatalf("unexpected response: %#v", response)
+		}
+		if response["error"] != nil {
+			t.Fatalf("request %v failed: %#v", id, response)
+		}
+		seen[id] = true
+	}
+	if !seen[2] || !seen[3] {
+		t.Fatalf("missing concurrent responses: %#v", seen)
 	}
 }
 
@@ -3251,16 +3315,7 @@ func gatewayTestInitializeResult(runtimeID string) map[string]interface{} {
 	return map[string]interface{}{
 		"protocolVersion": "2024-11-05",
 		"runtimeId":       runtimeID,
-		"capabilities": map[string]interface{}{
-			"protocols": map[string]interface{}{
-				"executionLifecycle": map[string]interface{}{
-					"schemaVersion":      "doops.sh/execution-lifecycle/v1",
-					"terminalResponse":   true,
-					"backgroundLifetime": true,
-					"promptCancellation": true,
-				},
-			},
-		},
+		"capabilities":    map[string]interface{}{"protocols": map[string]interface{}{}},
 	}
 }
 
@@ -3298,7 +3353,7 @@ func serveFakeAgentWithRuntimeID(t *testing.T, conn *websocket.Conn, runtimeID s
 			_ = conn.WriteJSON(map[string]interface{}{
 				"jsonrpc": "2.0",
 				"method":  "notifications/message",
-				"params":  map[string]interface{}{"data": "fake-agent-output\n"},
+				"params":  map[string]interface{}{"request_id": msg["id"], "data": "fake-agent-output\n"},
 			})
 			_ = conn.WriteJSON(map[string]interface{}{
 				"jsonrpc": "2.0",
@@ -3539,7 +3594,7 @@ func serveSessionAwareBlockingFakeAgent(t *testing.T, conn *websocket.Conn, star
 				writeJSON(map[string]interface{}{
 					"jsonrpc": "2.0",
 					"method":  "notifications/message",
-					"params":  map[string]interface{}{"sessionID": sessionID, "data": "output " + sessionID + "\n"},
+					"params":  map[string]interface{}{"request_id": reqID, "sessionID": sessionID, "data": "output " + sessionID + "\n"},
 				})
 				writeJSON(map[string]interface{}{
 					"jsonrpc": "2.0",
@@ -3582,7 +3637,7 @@ func serveSessionOrphanNotificationFakeAgent(t *testing.T, conn *websocket.Conn,
 				writeJSON(map[string]interface{}{
 					"jsonrpc": "2.0",
 					"method":  "notifications/message",
-					"params":  map[string]interface{}{"data": "orphan output " + sessionID + "\n"},
+					"params":  map[string]interface{}{"request_id": reqID.(float64) + 1000, "data": "orphan output " + sessionID + "\n"},
 				})
 				time.Sleep(50 * time.Millisecond)
 				writeJSON(map[string]interface{}{

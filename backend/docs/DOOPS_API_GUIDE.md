@@ -684,12 +684,12 @@ GET /v1/audit?view=global
 
 ### 执行生命周期与人工核对
 
-`executionLifecycle` 协议采用 `doops.sh/execution-lifecycle/v1`，声明
-`terminalResponse`、`backgroundLifetime` 和 `promptCancellation`。Gateway 只对后台任务
-要求完整协议；结构化 SSH 由 `structuredSSH` 参数协议保护，前台 shell、SSH、普通 prompt 和 `ask --apply` 统一进入目标
-调度并以实际终态响应作为完成证据，不因旧 Agent 缺少能力声明而阻断正常发布。
-前台调用被取消、超时或断连时，若没有足够终态证据仍写入 `outcome_unknown`，不能把
-本地等待结束当成远端 mutation 已停止。
+Gateway 对前台、后台、SSH、prompt 和 `ask --apply` 统一维护执行生命周期，不再依赖
+Agent capability 字段决定是否允许调用。每个 `tools/call` 都必须收到对应的终态响应；
+`notifications/message` 必须在 `params.request_id` 携带本次请求 ID，Gateway 和 CLI
+按请求 ID 路由流式事件，不按 session 覆盖并发请求。取消 ACK 不是原始调用的终态；
+调用被取消、超时或断连且没有足够终态证据时写入 `outcome_unknown`，不能把本地等待
+结束当成远端 mutation 已停止。结构化 SSH 仍由 `structuredSSH` 参数协议保护。
 
 `GET /v1/admin/operations` 返回 `audit_id`、`state`、`resource` 和 `blocked_by`。
 `DELETE /v1/admin/operations?id=<operation-id>` 返回 HTTP `202`：

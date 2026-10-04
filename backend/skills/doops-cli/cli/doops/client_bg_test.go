@@ -17,17 +17,10 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func executionLifecycleInitializeResult() map[string]interface{} {
+func agentInitializeResult() map[string]interface{} {
 	return map[string]interface{}{
 		"capabilities": map[string]interface{}{
-			"protocols": map[string]interface{}{
-				"executionLifecycle": map[string]interface{}{
-					"schemaVersion":      "doops.sh/execution-lifecycle/v1",
-					"terminalResponse":   true,
-					"backgroundLifetime": true,
-					"promptCancellation": true,
-				},
-			},
+			"protocols": map[string]interface{}{},
 		},
 	}
 }
@@ -59,7 +52,7 @@ func TestExecBgCLIStreamsOneRPCUntilStopped(t *testing.T) {
 			if req["method"] == "initialize" {
 				_ = conn.WriteJSON(map[string]interface{}{
 					"jsonrpc": "2.0", "id": req["id"],
-					"result": executionLifecycleInitializeResult(),
+					"result": agentInitializeResult(),
 				})
 				continue
 			}
@@ -72,7 +65,7 @@ func TestExecBgCLIStreamsOneRPCUntilStopped(t *testing.T) {
 			}
 			_ = conn.WriteJSON(map[string]interface{}{
 				"jsonrpc": "2.0", "method": "notifications/message",
-				"params": map[string]interface{}{"sessionID": "bg-stream", "data": "TaskID: bg-1\nworking\n"},
+				"params": map[string]interface{}{"request_id": req["id"], "sessionID": "bg-stream", "data": "TaskID: bg-1\nworking\n"},
 			})
 			<-stopped
 			_ = conn.WriteJSON(map[string]interface{}{
@@ -186,7 +179,7 @@ func TestExecBgReturnsStreamingErrorsWithoutPollingOrRetry(t *testing.T) {
 					if req["method"] == "initialize" {
 						_ = conn.WriteJSON(map[string]interface{}{
 							"jsonrpc": "2.0", "id": req["id"],
-							"result": executionLifecycleInitializeResult(),
+							"result": agentInitializeResult(),
 						})
 						continue
 					}
@@ -197,7 +190,7 @@ func TestExecBgReturnsStreamingErrorsWithoutPollingOrRetry(t *testing.T) {
 					}
 					_ = conn.WriteJSON(map[string]interface{}{
 						"jsonrpc": "2.0", "method": "notifications/message",
-						"params": map[string]interface{}{"sessionID": "bg-error", "data": "TaskID: bg-1\n"},
+						"params": map[string]interface{}{"request_id": req["id"], "sessionID": "bg-error", "data": "TaskID: bg-1\n"},
 					})
 					switch tc.name {
 					case "tool_error":

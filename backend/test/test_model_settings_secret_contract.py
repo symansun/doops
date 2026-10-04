@@ -214,7 +214,8 @@ def test_oilan_agent_model_settings_are_secret_backed(tmp_path):
         "type": "RollingUpdate",
         "rollingUpdate": {"maxUnavailable": 0, "maxSurge": 1},
     }
-    assert "hostNetwork" not in deployment["spec"]["template"]["spec"]
+    assert deployment["spec"]["template"]["spec"]["hostNetwork"] is False
+    assert deployment["spec"]["template"]["spec"]["hostPID"] is False
     assert all("hostPort" not in port for port in container["ports"])
     assert (
         deployment["spec"]["template"]["spec"]["nodeSelector"]["kubernetes.io/hostname"]

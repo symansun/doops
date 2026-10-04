@@ -13,7 +13,6 @@ import (
 	"time"
 )
 
-const executionLifecycleProtocol = "executionLifecycle"
 const executionCancellationTimeout = 30 * time.Second
 
 var errExecutionOutcomeUnknown = errors.New("execution_outcome_unknown")
@@ -39,24 +38,6 @@ func (s *ClientService) inheritsExecutionOwner(ctx context.Context, agent *Gatew
 	s.activeOpsMu.Lock()
 	defer s.activeOpsMu.Unlock()
 	return s.activeOps[owner.id] != nil
-}
-
-func executionLifecycleCapability() map[string]interface{} {
-	return map[string]interface{}{
-		"schemaVersion":      "doops.sh/execution-lifecycle/v1",
-		"terminalResponse":   true,
-		"backgroundLifetime": true,
-		"promptCancellation": true,
-	}
-}
-
-// requiresExecutionLifecycle reports whether the tool's contract depends on a
-// detached Agent-managed lifetime. Foreground tools use terminal evidence and
-// the execution guard; a legacy Agent may complete them normally, while an
-// interrupted mutation remains outcome-unknown and blocks later writes until
-// reconciled.
-func requiresExecutionLifecycle(tool string) bool {
-	return tool == "doops_bg"
 }
 
 func requiresExecutionOutcomeGuard(action GatewayAction, tool string, args json.RawMessage, resourceKey string) bool {

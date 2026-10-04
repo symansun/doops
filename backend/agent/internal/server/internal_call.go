@@ -62,9 +62,6 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 	if err := h.validateCommand(tool, rawArgs); err != nil {
 		return "", err
 	}
-	if requiresExecutionLifecycle(tool) && !agent.ExecutionLifecycle {
-		return "", fmt.Errorf("agent executionLifecycle protocol is required")
-	}
 	if action == ActionAgentUpgrade {
 		var upgrade agentUpgradeParams
 		if err := json.Unmarshal(rawArgs, &upgrade); err != nil {

@@ -24,8 +24,8 @@ def test_agent_chart_hands_off_without_dropping_the_live_replica():
     assert "maxSurge: 1" in text
     assert "terminationGracePeriodSeconds: 30" in text
     assert "minReadySeconds: 5" in text
-    assert "hostNetwork:" not in text
-    assert "hostPID:" not in text
+    assert "hostNetwork: false" in text
+    assert "hostPID: false" in text
     assert "/app/sandbox-entrypoint.sh" in text
 
 
@@ -67,6 +67,7 @@ def test_single_managed_agent_release_script():
     assert "trap 'exit 130' INT" in text
     assert "trap 'exit 143' TERM" in text
     assert "hostNetwork agents cannot hand off" in text
+    assert "candidate chart must disable hostNetwork" in text
     assert "sandbox-entrypoint.sh" in text
     assert "not a normal workload deployment" in text
     assert "ordinary workload releases, use:" in text

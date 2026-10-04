@@ -105,7 +105,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		var target, required string
 		capabilitiesFlag := flag.NewFlagSet("capabilities", flag.ExitOnError)
 		capabilitiesFlag.StringVar(&target, "target", "", "Configured Gateway target")
-		capabilitiesFlag.StringVar(&required, "require", "", "Required protocol: structuredSSH or executionLifecycle")
+		capabilitiesFlag.StringVar(&required, "require", "", "Required protocol: structuredSSH")
 		capabilitiesFlag.Parse(cmdArgs)
 		if target == "" || required == "" {
 			fmt.Println("Error: --target and --require are required")
@@ -508,10 +508,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			server.Name, endpoint, server.Use)
 
 		if command == "exec" && background {
-			if err := client.RequireProtocol("executionLifecycle"); err != nil {
-				fmt.Printf("Error: %v\n", err)
-				os.Exit(1)
-			}
 			if err := client.ExecBg(cmdStr); err != nil {
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)

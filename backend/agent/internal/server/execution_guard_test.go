@@ -135,18 +135,13 @@ func TestExecutionGuardSuccessfulContentCannotSignalUnknownOutcome(t *testing.T)
 	}
 }
 
-func TestExecutionGuardCapabilityIsForwardedOnlyWhenVerified(t *testing.T) {
-	for _, agent := range []*GatewayAgent{nil, {ExecutionLifecycle: false}} {
+func TestExecutionGuardDoesNotExposeLifecycleCapability(t *testing.T) {
+	for _, agent := range []*GatewayAgent{nil, {}, {StructuredSSH: true}} {
 		capabilities := clientCapabilities(agent)
 		protocols, _ := capabilities["protocols"].(map[string]interface{})
-		if _, exists := protocols[executionLifecycleProtocol]; exists {
-			t.Fatal("client received a lifecycle declaration for an unverified Agent")
+		if _, exists := protocols["executionLifecycle"]; exists {
+			t.Fatal("client exposed the retired lifecycle capability")
 		}
-	}
-	capabilities := clientCapabilities(&GatewayAgent{ExecutionLifecycle: true})
-	protocols := capabilities["protocols"].(map[string]interface{})
-	if !capabilityMatches(protocols[executionLifecycleProtocol], executionLifecycleCapability()) {
-		t.Fatalf("verified lifecycle declaration was not forwarded: %#v", capabilities)
 	}
 }
 

@@ -347,9 +347,8 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 					"capabilities": map[string]interface{}{
 						"tools": map[string]interface{}{},
 						"protocols": map[string]interface{}{
-							"credentialPlan":     credentialPlanCapability(),
-							"structuredSSH":      structuredSSHCapability(),
-							"executionLifecycle": executionLifecycleCapability(),
+							"credentialPlan": credentialPlanCapability(),
+							"structuredSSH":  structuredSSHCapability(),
 						},
 					},
 				},
@@ -699,9 +698,10 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			evt.Kind = "raw"
 		}
 		params := map[string]interface{}{
-			"sessionID": sessionID,
-			"data":      evt.Data,
-			"kind":      evt.Kind,
+			"request_id": reqID,
+			"sessionID":  sessionID,
+			"data":       evt.Data,
+			"kind":       evt.Kind,
 		}
 		if evt.Tool != "" {
 			params["tool"] = evt.Tool

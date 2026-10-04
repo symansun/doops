@@ -2,6 +2,16 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-10-03 Unified Gateway Execution Lifecycle
+
+- Retired the `executionLifecycle` Agent capability and its CLI/Gateway admission gate.
+  All tools now use the Gateway-owned terminal state machine; `doops_bg` is not a
+  separate protocol path.
+- The Gateway persists the terminal audit state before releasing the resource lease.
+  If persistence fails, the active operation remains held and retries automatically.
+- Agent notifications are correlated by `request_id`, so concurrent calls cannot
+  overwrite each other's session routing.
+
 ## 2026-10-03 Unified DoOps release identity
 
 - The CLI, Gateway and Agent now share one release tag. They also report the same full
@@ -32,9 +42,8 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
   Source merge and immutable artifact publication do not imply runtime cutover.
 - Repair cancellation ownership, process-group and prompt termination evidence,
   persisted unknown outcomes, per-workspace admission and operator-visible states.
-- Scope executionLifecycle enforcement to detached background work, structured SSH
-  and apply mutation; ordinary foreground calls still require terminal evidence but
-  must not be rejected solely because a legacy Agent omits the declaration.
+- The initial capability-gated lifecycle plan was superseded by the unified Gateway
+  state machine above; structured SSH remains the only separate argument protocol.
 - Add persistent scheduler job leases with automatic terminal-path and expiry
   cleanup so tick/run-now cannot duplicate a job or require manual unlock.
 - Independent review found and repaired target mutation/workspace overlap,

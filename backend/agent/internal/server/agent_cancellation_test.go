@@ -114,7 +114,7 @@ func awaitCancellationTestSignal(t *testing.T, signal <-chan struct{}) {
 	}
 }
 
-func TestAgentCancellationLifecycleCapability(t *testing.T) {
+func TestAgentCancellationUsesUnifiedTerminalContract(t *testing.T) {
 	_, conn, messages := cancellationTestAgent(t)
 	if err := conn.WriteJSON(map[string]interface{}{"jsonrpc": "2.0", "id": 1, "method": "initialize"}); err != nil {
 		t.Fatal(err)
@@ -122,11 +122,8 @@ func TestAgentCancellationLifecycleCapability(t *testing.T) {
 	response := awaitCancellationTestMessage(t, messages, func(m map[string]interface{}) bool { return m["id"] == float64(1) })
 	result := response["result"].(map[string]interface{})
 	protocols := result["capabilities"].(map[string]interface{})["protocols"].(map[string]interface{})
-	capability := protocols["executionLifecycle"].(map[string]interface{})
-	if capability["schemaVersion"] != "doops.sh/execution-lifecycle/v1" ||
-		capability["terminalResponse"] != true || capability["backgroundLifetime"] != true ||
-		capability["promptCancellation"] != true {
-		t.Fatalf("missing lifecycle contract: %#v", capability)
+	if _, exists := protocols["executionLifecycle"]; exists {
+		t.Fatalf("retired lifecycle capability was advertised: %#v", protocols)
 	}
 }
 

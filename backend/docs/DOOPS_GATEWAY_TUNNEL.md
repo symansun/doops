@@ -280,6 +280,9 @@ doops admin token revoke --target <gateway-target> --id <token-id>
 
 - 不同 target 可以并发执行。
 - 同一 target 上的 target 级 mutation、无 session 的操作以及共享资源写入会串行进入 agent，避免多个用户同时改同一个环境。
+- 同一客户端 WebSocket 上的多个 `tools/call` 可以并行；Agent 的每条
+  `notifications/message` 必须带 `params.request_id`，Gateway 和 CLI 按请求 ID
+  路由，不得用 session 名称覆盖另一个并发请求的通知。
 - 普通 `exec`/`ssh`/`bg` 一律使用 target mutation 锁。session 不是 OS 或远端资源
   沙箱，脚本和解释器可访问共享资源，不能靠命令关键词放行并发。
 - `ask --apply`、credential 和 target 级 mutation 命令走同一 target mutation 队列；独立 session 的 push/write/clean/read/pull 共享各自 workspace 锁，同一 workspace 不得重叠。超过 `-target-queue-timeout` 返回 `target queue timeout`。
