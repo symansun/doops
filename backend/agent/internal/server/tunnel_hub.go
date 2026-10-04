@@ -931,23 +931,16 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 	defer conn.Close()
 
 	var connMu sync.Mutex
+	var dataWriteState websocketDataWriteState
 	writeJSON := func(v interface{}) error {
-		connMu.Lock()
-		defer connMu.Unlock()
-		if err := conn.WriteJSON(v); err != nil {
+		if err := writeWebSocketJSON(conn, &connMu, &dataWriteState, v, agentWSDataWriteTimeout); err != nil {
 			log.Printf("[gateway] client write failed: %v", err)
 			return fmt.Errorf("%w: %v", errGatewayClientDisconnected, err)
 		}
 		return nil
 	}
 	writeRaw := func(raw []byte) error {
-		connMu.Lock()
-		defer connMu.Unlock()
-		if err := conn.WriteMessage(websocket.TextMessage, raw); err != nil {
-			log.Printf("[gateway] client raw write failed: %v", err)
-			return fmt.Errorf("%w: %v", errGatewayClientDisconnected, err)
-		}
-		return nil
+		return writeJSON(json.RawMessage(raw))
 	}
 
 	connCtx, cancelConn := context.WithCancel(r.Context())
@@ -1714,9 +1707,10 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 	ch := a.registerPending(id, "tools/cancel")
 	defer a.unregisterPending(id)
 	uncertainIfInterrupted := interruptionNeedsReconciliation(params.Name, params.Arguments)
+	uncertainWithoutTerminal := missingTerminalNeedsReconciliation(params.Name, params.Arguments)
 	cancelAndWait := func() error {
 		if err := a.waitPendingCancel(ch); err != nil {
-			if !uncertainIfInterrupted && errors.Is(err, errExecutionOutcomeUnknown) {
+			if !uncertainWithoutTerminal && errors.Is(err, errExecutionOutcomeUnknown) {
 				return nil
 			}
 			return err
@@ -1767,7 +1761,7 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 			"arguments": params.Arguments,
 		},
 	}); err != nil {
-		if uncertainIfInterrupted {
+		if uncertainWithoutTerminal {
 			return fmt.Errorf("%w: dispatch failed: %v", errExecutionOutcomeUnknown, err)
 		}
 		return fmt.Errorf("%w: dispatch failed: %v", errGatewayAgentDisconnected, err)
@@ -1787,7 +1781,7 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 				continue
 			}
 			if _, ok := msg.Parsed["id"]; ok {
-				if (uncertainIfInterrupted && executionResponseUnknown(msg.Parsed)) ||
+				if (uncertainWithoutTerminal && executionResponseUnknown(msg.Parsed)) ||
 					remoteMutationFailed(params.Name, params.Arguments, msg.Parsed) {
 					return errExecutionOutcomeUnknown
 				}
@@ -1825,7 +1819,7 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 			select {
 			case <-ch.terminal:
 				if ch.terminalErr != nil &&
-					!(errors.Is(ch.terminalErr, errExecutionOutcomeUnknown) && !uncertainIfInterrupted) {
+					!(errors.Is(ch.terminalErr, errExecutionOutcomeUnknown) && !uncertainWithoutTerminal) {
 					return ch.terminalErr
 				}
 				if remoteMutationFailed(params.Name, params.Arguments, ch.terminalMessage.Parsed) {
@@ -1839,7 +1833,7 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 				}
 				return forward(ch.terminalMessage)
 			default:
-				if !uncertainIfInterrupted {
+				if !uncertainWithoutTerminal {
 					return errGatewayAgentDisconnected
 				}
 				return errExecutionOutcomeUnknown

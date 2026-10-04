@@ -115,6 +115,11 @@ func (s *ClientService) finishActiveOperation(id string) {
 	}
 	s.activeOpsMu.Lock()
 	op := s.activeOps[id]
+	if op != nil {
+		// Finalization retries are not live execution. An unpersisted child
+		// outcome must block admission even after its parent releases the lease.
+		op.agent = nil
+	}
 	s.activeOpsMu.Unlock()
 	if op == nil {
 		return

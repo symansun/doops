@@ -61,6 +61,18 @@ func interruptionNeedsReconciliation(tool string, args json.RawMessage) bool {
 	}
 }
 
+// Local workspace mutations can finish safely after cancellation, but losing
+// their terminal reply is not evidence that they stopped changing the workspace.
+func missingTerminalNeedsReconciliation(tool string, args json.RawMessage) bool {
+	switch tool {
+	case "doops_file_write", "doops_clean_workspace", "doops_git_clone",
+		"doops_workspace_begin", "doops_workspace_chunk", "doops_workspace_commit":
+		return true
+	default:
+		return interruptionNeedsReconciliation(tool, args)
+	}
+}
+
 func executionResponseCanceled(response map[string]interface{}) bool {
 	rpcError, _ := response["error"].(map[string]interface{})
 	code, ok := numericID(rpcError["code"])

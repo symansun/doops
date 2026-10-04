@@ -87,6 +87,9 @@ To remove a stale local route, use `doops -session <s> remove --target <gateway-
 `capabilities --require structuredSSH` performs only the Gateway WebSocket initialize
 handshake. It succeeds only when the selected online Agent advertises the exact
 structured SSH protocol; it never falls back to `doops exec`.
+Other protocol names, including the retired `executionLifecycle`, are rejected
+locally before configuration, authentication or network access. They are not
+evidence that the Agent needs upgrading.
 It does not prove that the Agent supports in-cluster self-upgrade. Verify the
 installed CLI and target image against the selected release before choosing an
 upgrade path; source changes alone do not update either runtime.
@@ -120,6 +123,9 @@ registered, not that the operation stopped. The operation keeps ownership until
 the original terminal response. Shell-style commands join process-group
 termination; `ask` waits for the matching doagent turn terminal event. Missing
 terminal evidence persists `outcome_unknown` and blocks later target mutations.
+This includes interrupted workspace writes, cleanup and clone/commit operations
+without a terminal reply. A confirmed local completion after cancellation is
+not an unknown outcome. Read-only query failures do not quarantine the target.
 Agent progress notifications carry `params.request_id`; Gateway and CLI route them by
 request ID so concurrent calls in one session cannot overwrite one another. The Gateway
 persists the execution terminal state before releasing the resource lease and retries

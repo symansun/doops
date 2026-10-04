@@ -336,6 +336,10 @@ Gateway 和 Agent 的 `serverInfo.version` 使用同一个 DoOps 发布标签，
 `releaseCommit` 时不会被当作当前发布验收通过。`cli-contract/v3` 只表示 CLI 协议
 兼容性，由 `doops --contract` 单独检查。
 
+`executionLifecycle` 不再是能力声明或执行准入参数。终态、取消和未知结果由 Gateway
+统一处理。workspace 写入等本地操作缺失终态时同样保留未知结果；受保护内部子调用
+审计落库失败会阻止后续 mutation，不把持久化重试当作仍在执行的有效所有权。
+
 工具调用格式：
 
 ```json

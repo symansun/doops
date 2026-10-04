@@ -2,6 +2,23 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-10-04 Lifecycle Finalization And Rollout Repair
+
+- Reject retired capability names at the CLI boundary, before network access;
+  an invalid `executionLifecycle` request must not recommend upgrading the Agent.
+- Missing workspace-write terminal evidence remains unknown. A confirmed local
+  completion after cancellation is distinct from an absent terminal response.
+- A failed internal mutation audit propagates uncertainty. Finalizing operations
+  are no longer counted as live executions while persistence is retried.
+- Upstream transfer failures after proxy writes retain unknown-outcome protection;
+  downstream output errors cannot ignore the cancellation result.
+- Client WebSocket writes use the existing bounded transport writer. A stalled
+  consumer can no longer hold a mutation lease indefinitely through an unbounded write.
+- Gateway serve locks its canonical database path before opening/recovering state.
+  A second process must fail without changing live Agent or execution records.
+- Mixed running releases and rollout acceptance are recorded in
+  `reports/lifecycle-release-2026-10-04.md`; source verification is not deployment.
+
 ## 2026-10-04 Remove Retired Lifecycle Classification
 
 - Scheduler scan failures no longer classify the retired `executionLifecycle` capability

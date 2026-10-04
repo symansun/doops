@@ -31,6 +31,8 @@ description: |
   取消 ACK 不是终态，取消、超时或断连且缺少终态证据时写入 `outcome_unknown` 并阻止后续
   mutation。结构化 `ssh` 仍只要求 `structuredSSH` 参数协议，不得删除未知结果保护或
   静默降级。
+- `capabilities --require` 只接受 `structuredSSH`；`executionLifecycle` 等其它名称
+  在联网前直接报参数错误，不能把它解释为 Agent 版本不足或触发重复升级。
 - Agent 流式 `notifications/message` 必须携带 `params.request_id`；Gateway 和 CLI
   按请求 ID 路由事件，同一 session 的并发调用不能互相覆盖。Gateway 会先持久化
   执行终态或 `outcome_unknown`，再释放资源 lease；持久化失败时保留 lease 并自动重试。

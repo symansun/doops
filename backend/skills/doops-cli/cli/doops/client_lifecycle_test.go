@@ -3,6 +3,9 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -47,6 +50,10 @@ func TestAgentReleaseRequiresExactCommit(t *testing.T) {
 }
 
 func TestRetiredLifecycleProtocolIsNotAccepted(t *testing.T) {
+	if err := validateRequiredProtocol("executionLifecycle"); err == nil ||
+		!strings.Contains(err.Error(), "unsupported protocol") {
+		t.Fatalf("retired lifecycle protocol was not rejected at the CLI boundary: %v", err)
+	}
 	if protocolCapabilityCompatible("executionLifecycle", map[string]interface{}{
 		"schemaVersion":      "doops.sh/execution-lifecycle/v1",
 		"terminalResponse":   true,
@@ -54,5 +61,19 @@ func TestRetiredLifecycleProtocolIsNotAccepted(t *testing.T) {
 		"promptCancellation": true,
 	}) {
 		t.Fatal("retired execution lifecycle protocol must not be accepted")
+	}
+}
+
+func TestRetiredLifecycleCLIRejectsBeforeConfigOrNetwork(t *testing.T) {
+	command := exec.Command(buildDoopsCLIBinary(t), "-session", "retired-protocol",
+		"capabilities", "--target", "nonexistent", "--require", "executionLifecycle")
+	command.Env = append(os.Environ(), "DOOPS_CONFIG="+filepath.Join(t.TempDir(), "missing.json"))
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatal("retired protocol request succeeded")
+	}
+	if !strings.Contains(string(output), `unsupported protocol "executionLifecycle"`) ||
+		strings.Contains(string(output), "upgrade the Agent") {
+		t.Fatalf("retired protocol produced a misleading runtime error: %s", output)
 	}
 }

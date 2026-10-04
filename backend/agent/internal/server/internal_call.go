@@ -125,6 +125,9 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 		}
 		if err := h.store.FinishAudit(auditID, AuditFinish{Status: status, Error: errMsg, EndedAt: time.Now().UTC()}); err != nil {
 			finalErr = fmt.Errorf("execution_audit_completion_failed: %w", err)
+			if dispatched && requiresExecutionOutcomeGuard(action, tool, rawArgs, resourceKey) {
+				finalErr = fmt.Errorf("%w: %v", errExecutionOutcomeUnknown, finalErr)
+			}
 		}
 	}()
 	if err := opCtx.Err(); err != nil {

@@ -1,7 +1,7 @@
 ---
 title: Operation coordination remediation
 date: 2026-10-03
-status: final-ssh-repair-before-publication
+status: lifecycle-rollout-remediation
 ---
 
 # Scope
@@ -30,7 +30,7 @@ unrelated production operations or install unreleased binaries.
 # Work
 
 - [x] Gateway cancellation, persistent uncertainty guards, safe administration.
-- [x] Agent prompt/background cancellation and lifecycle capability.
+- [x] Agent prompt/background cancellation and Gateway-owned terminal state machine.
 - [x] Admission order, workspace scope, CLI operation status.
 - [x] Documentation, protocol/process tests, independent review.
 

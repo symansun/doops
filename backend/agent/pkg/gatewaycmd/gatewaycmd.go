@@ -56,7 +56,17 @@ func serve(args []string) {
 	edgeProxyProtocol := fs.Bool("edge-proxy-protocol", true, "Require PROXY protocol on Edge listener (must be true behind nginx stream)")
 	fs.Parse(args)
 
-	store, err := server.OpenGatewayStore(*dbPath)
+	resolvedDBPath, err := canonicalGatewayDBPath(*dbPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	dbLock, err := acquireGatewayDBLock(resolvedDBPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer dbLock.Close()
+
+	store, err := server.OpenGatewayStore(resolvedDBPath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -80,7 +90,7 @@ func serve(args []string) {
 	hub.RegisterRoutes(mux)
 
 	log.Printf("🌉 doops-gateway starting on :%s", *port)
-	log.Printf("   database: %s", *dbPath)
+	log.Printf("   database: %s", resolvedDBPath)
 	log.Printf("   agent endpoint: ws://127.0.0.1:%s/v1/agent/connect", *port)
 	log.Printf("   edge endpoint:  ws://127.0.0.1:%s/v1/edge/connect", *port)
 	log.Printf("   client endpoint: ws://127.0.0.1:%s/v1/rpc?cluster=<cluster>&instance=<instance>", *port)

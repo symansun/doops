@@ -160,7 +160,7 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (a *GatewayAgent) relayProxyHTTPRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, params proxyHTTPRequestParams, timeout time.Duration) (int64, error) {
+func (a *GatewayAgent) relayProxyHTTPRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, params proxyHTTPRequestParams, timeout time.Duration) (bytesOut int64, finalErr error) {
 	id := atomicAddGatewayRequestID(&a.reqID)
 	ch := a.registerPending(id, "proxy/cancel")
 	defer a.unregisterPending(id)
@@ -176,13 +176,15 @@ func (a *GatewayAgent) relayProxyHTTPRequest(ctx context.Context, w http.Respons
 	completed := false
 	defer func() {
 		if !completed {
-			a.waitPendingCancel(ch)
+			// A downstream write failure does not establish the upstream outcome.
+			if err := a.waitPendingCancel(ch); err != nil && uncertainIfInterrupted {
+				finalErr = err
+			}
 		}
 	}()
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	var wroteHeader bool
-	var bytesOut int64
 	for {
 		if msg, ok, queueErr := ch.dequeue(); queueErr != nil {
 			if uncertainIfInterrupted {
@@ -227,6 +229,9 @@ func (a *GatewayAgent) relayProxyHTTPRequest(ctx context.Context, w http.Respons
 			}
 			if errObj, ok := msg.Parsed["error"]; ok && errObj != nil {
 				completed = true
+				if uncertainIfInterrupted && executionResponseUnknown(msg.Parsed) {
+					return bytesOut, errExecutionOutcomeUnknown
+				}
 				return bytesOut, fmt.Errorf("%v", errObj)
 			}
 			continue
@@ -241,12 +246,8 @@ func (a *GatewayAgent) relayProxyHTTPRequest(ctx context.Context, w http.Respons
 				return bytesOut, err
 			}
 		case <-ctx.Done():
-			cancelErr := a.waitPendingCancel(ch)
 			if uncertainIfInterrupted {
 				return bytesOut, errExecutionOutcomeUnknown
-			}
-			if cancelErr != nil {
-				return bytesOut, cancelErr
 			}
 			return bytesOut, ctx.Err()
 		case <-a.closed:
@@ -256,7 +257,6 @@ func (a *GatewayAgent) relayProxyHTTPRequest(ctx context.Context, w http.Respons
 			return bytesOut, errGatewayAgentDisconnected
 		case <-ch.notify:
 		case <-timer.C:
-			_ = a.waitPendingCancel(ch)
 			if uncertainIfInterrupted {
 				return bytesOut, errExecutionOutcomeUnknown
 			}
@@ -391,13 +391,20 @@ func (gw *Gateway) handleHTTPProxyOverWS(ctx context.Context, reqID interface{},
 	req.Host = target.Host
 	req.Header.Set("X-Forwarded-Host", target.Host)
 	req.ContentLength = params.ContentLength
+	writeUpstreamError := func(err error) {
+		// A transport failure after Do cannot prove the upstream mutation stopped.
+		if !proxyRequestIsReadOnly(params.Method) {
+			err = fmt.Errorf("%w: %v", errExecutionOutcomeUnknown, err)
+		}
+		writeJSON(api.JSONRPCResponse{JSONRPC: "2.0", ID: reqID, Error: &api.RPCError{Code: -32004, Message: err.Error()}})
+	}
 	response, err := (&http.Client{
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}).Do(req)
 	if err != nil {
-		writeJSON(api.JSONRPCResponse{JSONRPC: "2.0", ID: reqID, Error: &api.RPCError{Code: -32004, Message: err.Error()}})
+		writeUpstreamError(err)
 		return
 	}
 	defer response.Body.Close()
@@ -405,6 +412,7 @@ func (gw *Gateway) handleHTTPProxyOverWS(ctx context.Context, reqID interface{},
 	rw.WriteHeader(response.StatusCode)
 	buf := make([]byte, proxyTunnelChunkBytes)
 	if _, err := io.CopyBuffer(rw, response.Body, buf); err != nil {
+		writeUpstreamError(err)
 		return
 	}
 	writeJSON(map[string]interface{}{"jsonrpc": "2.0", "id": reqID, "result": map[string]interface{}{"ok": true}})

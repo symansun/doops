@@ -351,6 +351,9 @@ func initializeCapabilities(evt wsEvent) map[string]interface{} {
 }
 
 func (c *MCPClient) RequireProtocol(protocol string) error {
+	if err := validateRequiredProtocol(protocol); err != nil {
+		return err
+	}
 	if err := c.connect(); err != nil {
 		return err
 	}
@@ -379,6 +382,13 @@ func (c *MCPClient) RequireAgentRelease(expected string) error {
 	}
 	if actual != expected {
 		return fmt.Errorf("target Agent release commit mismatch: got %s, want %s", actual, expected)
+	}
+	return nil
+}
+
+func validateRequiredProtocol(protocol string) error {
+	if protocol != "structuredSSH" {
+		return fmt.Errorf("unsupported protocol %q; only structuredSSH is supported", protocol)
 	}
 	return nil
 }

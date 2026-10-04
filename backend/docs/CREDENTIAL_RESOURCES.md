@@ -209,6 +209,8 @@ loopback 和 link-local 目标。Registry 可以使用无 scheme 的 registry ho
 缺少原始终态，或外部物化/清理/发布已被中断而无法确认副作用时，保留
 `outcome_unknown` 并阻止后续目标 mutation；本地命令退出不证明远端状态。不得自动接管、
 重放或扩大凭据授权。人工核对必须由平台管理员独立确认停止并记录 reason/evidence。
+内部子调用的终态审计失败必须传播未知结果，并继续阻止 mutation；等待持久化重试的
+子操作不是仍在执行的有效所有权，不能因为父调用释放 lease 而允许后续写入。
 
 ## 创建和首次激活
 

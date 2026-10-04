@@ -291,6 +291,8 @@ doops admin token revoke --target <gateway-target> --id <token-id>
 - 公网 HTTP 代理只有 `GET/HEAD/OPTIONS/TRACE` 按只读查询处理；`POST/PUT/PATCH/DELETE`
   等其它方法进入 target mutation 锁，并在转发中断且缺少终态时保留
   `outcome_unknown`，不能直接让后续发布接管。
+  上游收到写请求后的连接/响应体传输失败同样是未知结果；不能把代理返回的传输
+  错误当成业务没有执行。下游写失败必须等待取消结果后完成审计。
 - `-max-concurrent-per-user` 控制单个 gateway 用户最多占用多少个运行中操作槽；
   `serve` 默认 10，等待资源不计入执行额度，超过时返回 `user operation limit exceeded`。
 - `-operation-timeout` 控制单个转发操作的最长运行时间；超时请求取消并等待原始终态，缺失终态时保留持久化的不确定性阻塞，不能直接释放 mutation 权限。
@@ -316,6 +318,10 @@ doops -session <s> admin operations cancel --target <gateway-target> --id <opera
 Agent 重连后继续有效。管理员只能在独立确认停止后，以 `audit-N`、
 `confirm_stopped=true`、reason 和 evidence 完成人工核对，记录为
 `resolved_manually`；不自动接管或重放任务。`unlock` 只重连空闲目标。
+
+workspace 写入、清理和 clone/commit 缺失终态时同样保留未知结果；真实本地终态
+可以证明这些本地操作已经结束，不能将其与缺失终态混淆。客户端 WebSocket 使用
+已有的 60 秒写截止时间，超时关闭连接并进入取消/终态处理，不无限占用资源 lease。
 
 结构化 SSH 收到 Agent 的终态工具结果时，远端退出状态 `1..254` 或没有退出码的
 结构化工具错误都按普通失败处理，不产生未知结果隔离。退出码 `255`、信号终止、
