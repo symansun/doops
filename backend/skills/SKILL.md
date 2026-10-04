@@ -169,8 +169,9 @@ description: |
   信息可在发布期间查询；Agent 自升级仍独占 target。当前没有跨 target 的 release/
   数据库统一锁，也没有执行器 fencing，不能宣称支持安全强制抢占发布锁。
 - 遇到并发限额或资源冲突，先用 `doops -session <s> admin operations list --target <t>`
-  核对 `state/resource/blocked_by`，等待锁不占用户执行槽。不能因本会话着急就取消其它
-  合法发布；获得明确取消授权后才用 `admin operations cancel --id <operation-id>`。
+  核对 `state/resource/blocked_by`。Gateway 会按 target 的 `cluster/instance` 过滤管理操作，
+  等待锁不占用户执行槽；不能因本会话着急就取消其它合法发布。获得明确取消授权后才用
+  `admin operations cancel --target <t> --id <operation-id>`。
   `202 cancel_requested` 不是停止证据。缺少终态，或 Shell/SSH/bg、apply、K8s 写操作
   被中断而无法证明外部变更已停止时，持久化 `outcome_unknown` 并阻止新写入。
   管理员须独立核对实际状态，再用
@@ -280,6 +281,7 @@ doops -session preflight targets --target <gateway-target>
 | 需求 | 命令 |
 | :--- | :--- |
 | 执行确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'` |
+| 同步 OCI 镜像 | `doops -session <s> registry sync --target <t> --source-registry <src> --target-registry <dst> --tag <release> --source-authfile <remote-file> --target-authfile <remote-file> --image <name>` |
 | AI 自主分析 | `doops -session <s> ask --target <t> --msg '<task>'` |
 | 发布任务 | `doops -session <s> ask --target <t> --apply --credential <resource-name> --msg '<target、范围、明确镜像版本、原因、验收>'` |
 | 创建凭据 | `doops credential create --target <t> --name <name> --scope personal --type <type>` |

@@ -50,7 +50,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   write       写入文件到目标服务器
   info        获取节点系统信息 (CPU/内存/磁盘)
   k8s         受限 Kubernetes 观察与运维入口
-  credential  管理 Gateway 凭据元数据与版本
+	credential  管理 Gateway 凭据元数据与版本
+	registry    通用 OCI 镜像 registry sync（DoOps 目标机执行）
   version     查看 DoOps 发布身份（release tag 和精确提交）
   session     生成并输出一个新的唯一 Session ID
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
@@ -98,6 +99,11 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 	servers, _, configErr := LoadConfig()
 
 	switch command {
+	case "registry":
+		if err := runRegistryCommand(cmdArgs, *sessionName, servers, configErr, os.Stdout); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 	case "version":
 		fmt.Printf("release=%s commit=%s\n", cliBuildVersion, cliBuildCommit)
 
@@ -1109,7 +1115,7 @@ func findRouteConflict(servers []Server, candidate Server) string {
 
 func runAdminOperationsList(args []string, servers []Server, configErr error) {
 	server, token := resolveAdminTargetFlags("admin operations list", args, servers, configErr, nil)
-	ops, err := GatewayAdminOperationsList(server.Gateway, token)
+	ops, err := GatewayAdminOperationsList(server.Gateway, token, server.Cluster, server.Instance)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
@@ -1129,7 +1135,7 @@ func runAdminOperationsList(args []string, servers []Server, configErr error) {
 func runAdminOperationCancel(args []string, servers []Server, configErr error) {
 	var opID string
 	server, token := resolveAdminTargetFlags("admin operations cancel", args, servers, configErr, &opID)
-	ops, err := GatewayAdminOperationsList(server.Gateway, token)
+	ops, err := GatewayAdminOperationsList(server.Gateway, token, server.Cluster, server.Instance)
 	if err != nil {
 		fmt.Printf("Error: cannot verify operation target: %v\n", err)
 		os.Exit(1)
@@ -1139,7 +1145,7 @@ func runAdminOperationCancel(args []string, servers []Server, configErr error) {
 			strings.TrimSpace(opID), strings.TrimSpace(server.Cluster), strings.TrimSpace(server.Instance))
 		os.Exit(1)
 	}
-	if err := GatewayAdminOperationCancel(server.Gateway, token, opID); err != nil {
+	if err := GatewayAdminOperationCancel(server.Gateway, token, opID, server.Cluster, server.Instance); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -1181,7 +1187,7 @@ func runAdminOperationReconcile(args []string, servers []Server, configErr error
 		fmt.Printf("Error: Gateway target '%s' not found.\n", target)
 		os.Exit(1)
 	}
-	if err := GatewayAdminOperationReconcile(server.Gateway, mustResolveToken(*server), reconcile); err != nil {
+	if err := GatewayAdminOperationReconcile(server.Gateway, mustResolveToken(*server), server.Cluster, server.Instance, reconcile); err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}

@@ -31,7 +31,7 @@ func TestAdminOperationsCLI(t *testing.T) {
 		case http.MethodGet:
 			_, _ = w.Write([]byte(operationsListFixture))
 		case http.MethodDelete:
-			if r.URL.RawQuery != "id=op-1" {
+			if r.URL.RawQuery != "cluster=prod&id=op-1&instance=node" {
 				t.Errorf("unexpected cancel query: %s", r.URL)
 			}
 			w.WriteHeader(int(cancelStatus.Load()))

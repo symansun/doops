@@ -33,7 +33,7 @@ func TestWorkspaceInterruptionMissingTerminalBlocksMutation(t *testing.T) {
 				call := agent.call(t, tool, "workspace-writer")
 				op := f.operation(t, "workspace-writer", "running")
 				if interruption == "cancel_disconnect" {
-					f.http(t, f.admin, http.MethodDelete, "/v1/admin/operations?id="+op.ID, "", http.StatusAccepted)
+					f.http(t, f.admin, http.MethodDelete, "/v1/admin/operations?cluster=dev&id="+op.ID+"&instance=local", "", http.StatusAccepted)
 					select {
 					case id := <-agent.cancels:
 						if id != call.id {
@@ -117,7 +117,7 @@ func TestWorkspaceInterruptionCancelAcceptsRealLocalTerminal(t *testing.T) {
 			lifecycleSend(t, client, 2, tool, session, args)
 			call := agent.call(t, tool, session)
 			op := f.operation(t, session, "running")
-			f.http(t, f.admin, http.MethodDelete, "/v1/admin/operations?id="+op.ID, "", http.StatusAccepted)
+			f.http(t, f.admin, http.MethodDelete, "/v1/admin/operations?cluster=dev&id="+op.ID+"&instance=local", "", http.StatusAccepted)
 			select {
 			case <-agent.cancels:
 			case <-time.After(3 * time.Second):
@@ -176,7 +176,7 @@ func TestWorkspaceInterruptionCancelGraceExpiresWithoutTerminal(t *testing.T) {
 	})
 	agent.call(t, "doops_file_write", "cancel-grace")
 	op := f.operation(t, "cancel-grace", "running")
-	f.http(t, f.admin, http.MethodDelete, "/v1/admin/operations?id="+op.ID, "", http.StatusAccepted)
+	f.http(t, f.admin, http.MethodDelete, "/v1/admin/operations?cluster=dev&id="+op.ID+"&instance=local", "", http.StatusAccepted)
 	select {
 	case <-agent.cancels:
 	case <-time.After(3 * time.Second):

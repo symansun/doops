@@ -376,7 +376,7 @@ func TestExecutionGuardCanceledMutationCannotBePreemptedAfterLocalExit(t *testin
 			lifecycleSend(t, client, 2, tool, "interrupted", args)
 			call := agent.call(t, tool, "interrupted")
 			op := f.operation(t, "interrupted", "running")
-			f.http(t, f.admin, http.MethodDelete, "/v1/admin/operations?id="+op.ID, "", http.StatusAccepted)
+			f.http(t, f.admin, http.MethodDelete, "/v1/admin/operations?cluster=dev&id="+op.ID+"&instance=local", "", http.StatusAccepted)
 			select {
 			case <-agent.cancels:
 			case <-time.After(3 * time.Second):

@@ -116,6 +116,40 @@ func (f *executionLifecycleFixture) operation(t *testing.T, session, state strin
 	return found
 }
 
+func TestAdminOperationsAreScopedByTarget(t *testing.T) {
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+	sameTarget := f.hub.client.registerActiveOperation(GatewayActiveOperation{
+		Cluster: "dev", Instance: "local", Action: ActionExec, Session: "same-target",
+	}, func() {})
+	otherTarget := f.hub.client.registerActiveOperation(GatewayActiveOperation{
+		Cluster: "other", Instance: "node", Action: ActionExec, Session: "other-target",
+	}, func() {})
+	defer f.hub.client.finishActiveOperation(sameTarget)
+	defer f.hub.client.finishActiveOperation(otherTarget)
+
+	f.http(t, f.admin, http.MethodGet, "/v1/admin/operations", "", http.StatusBadRequest)
+	var listed struct {
+		Operations []GatewayActiveOperation `json:"operations"`
+	}
+	if err := json.Unmarshal(f.http(t, f.admin, http.MethodGet,
+		"/v1/admin/operations?cluster=dev&instance=local", "", http.StatusOK), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Operations) != 1 || listed.Operations[0].ID != sameTarget ||
+		listed.Operations[0].Session != "same-target" {
+		t.Fatalf("target-scoped list leaked another target: %#v", listed.Operations)
+	}
+	f.http(t, f.admin, http.MethodDelete,
+		"/v1/admin/operations?cluster=dev&id="+otherTarget+"&instance=local", "", http.StatusNotFound)
+	for _, op := range f.hub.listActiveOperations() {
+		if op.ID == otherTarget && op.State != "waiting" {
+			t.Fatalf("cross-target cancel changed operation state: %#v", op)
+		}
+	}
+	f.http(t, f.admin, http.MethodDelete,
+		"/v1/admin/operations?cluster=dev&id="+sameTarget+"&instance=local", "", http.StatusAccepted)
+}
+
 func TestContextMutexAcquireHonorsCancellation(t *testing.T) {
 	mutex := newContextMutex()
 	if err := mutex.Acquire(context.Background()); err != nil {
@@ -571,7 +605,7 @@ func TestExecutionLifecycleCancelAckRetainsOwnershipUntilOriginalTerminal(t *tes
 	lifecycleSend(t, client, 2, "doops_file_write", "cancel-owner", map[string]interface{}{"path": "config.txt", "content": "first"})
 	call := agent.call(t, "doops_file_write", "cancel-owner")
 	op := f.operation(t, "cancel-owner", "running")
-	data := f.http(t, f.admin, http.MethodDelete, "/v1/admin/operations?id="+op.ID, "", http.StatusAccepted)
+	data := f.http(t, f.admin, http.MethodDelete, "/v1/admin/operations?cluster=dev&id="+op.ID+"&instance=local", "", http.StatusAccepted)
 	var accepted map[string]interface{}
 	if err := json.Unmarshal(data, &accepted); err != nil {
 		t.Fatal(err)
@@ -602,7 +636,7 @@ func TestExecutionLifecycleCancelAckRetainsOwnershipUntilOriginalTerminal(t *tes
 	lifecycleSend(t, probe, 3, "doops_file_write", "cancel-owner", map[string]interface{}{"path": "config.txt", "content": "blocked"})
 	lifecycleResponse(t, probe, 3, "target busy")
 	f.http(t, f.admin, http.MethodPost, "/v1/targets/unlock?cluster=dev&instance=local", "", http.StatusConflict)
-	f.http(t, f.admin, http.MethodPost, "/v1/admin/operations",
+	f.http(t, f.admin, http.MethodPost, "/v1/admin/operations?cluster=dev&instance=local",
 		fmt.Sprintf(`{"id":"audit-%d","confirm_stopped":true,"reason":"external check","evidence":"operator report"}`, op.AuditID),
 		http.StatusConflict)
 	agent.complete(t, call, "operation canceled")
@@ -653,7 +687,8 @@ func TestExecutionLifecycleDisconnectPersistsAcrossReconnectAndRestart(t *testin
 	var listed struct {
 		Operations []GatewayActiveOperation `json:"operations"`
 	}
-	if err := json.Unmarshal(f.http(t, f.admin, http.MethodGet, "/v1/admin/operations", "", http.StatusOK), &listed); err != nil {
+	if err := json.Unmarshal(f.http(t, f.admin, http.MethodGet,
+		"/v1/admin/operations?cluster=dev&instance=local", "", http.StatusOK), &listed); err != nil {
 		t.Fatal(err)
 	}
 	if len(listed.Operations) != 1 || listed.Operations[0].ID != fmt.Sprintf("audit-%d", op.AuditID) ||
@@ -662,13 +697,13 @@ func TestExecutionLifecycleDisconnectPersistsAcrossReconnectAndRestart(t *testin
 	}
 	scoped := f.user(t, "target-admin", ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionAdmin}})
 	body := fmt.Sprintf(`{"id":"audit-%d","confirm_stopped":true,"reason":"operator reconciled externally","evidence":"external process inspection"}`, op.AuditID)
-	f.http(t, scoped, http.MethodPost, "/v1/admin/operations", body, http.StatusForbidden)
-	f.http(t, f.admin, http.MethodPost, "/v1/admin/operations", strings.Replace(body, `"confirm_stopped":true`, `"confirm_stopped":false`, 1), http.StatusBadRequest)
-	f.http(t, f.admin, http.MethodPost, "/v1/admin/operations", body+` {}`, http.StatusBadRequest)
-	f.http(t, f.admin, http.MethodPost, "/v1/admin/operations", body+` trailing`, http.StatusBadRequest)
+	f.http(t, scoped, http.MethodPost, "/v1/admin/operations?cluster=dev&instance=local", body, http.StatusForbidden)
+	f.http(t, f.admin, http.MethodPost, "/v1/admin/operations?cluster=dev&instance=local", strings.Replace(body, `"confirm_stopped":true`, `"confirm_stopped":false`, 1), http.StatusBadRequest)
+	f.http(t, f.admin, http.MethodPost, "/v1/admin/operations?cluster=dev&instance=local", body+` {}`, http.StatusBadRequest)
+	f.http(t, f.admin, http.MethodPost, "/v1/admin/operations?cluster=dev&instance=local", body+` trailing`, http.StatusBadRequest)
 	lifecycleSend(t, afterRestart, 3, "doops_shell", "new-workspace", map[string]interface{}{"command": "printf still-blocked"})
 	lifecycleResponse(t, afterRestart, 3, "execution_outcome_unknown")
-	f.http(t, f.admin, http.MethodPost, "/v1/admin/operations", body, http.StatusOK)
+	f.http(t, f.admin, http.MethodPost, "/v1/admin/operations?cluster=dev&instance=local", body, http.StatusOK)
 	lifecycleSend(t, afterRestart, 4, "doops_shell", "new-workspace", map[string]interface{}{"command": "printf reconciled"})
 	restarted.complete(t, restarted.call(t, "doops_shell", "new-workspace"), "")
 	lifecycleResponse(t, afterRestart, 4, "")

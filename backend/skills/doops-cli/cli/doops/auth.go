@@ -331,8 +331,8 @@ func GatewayAdminTokenRevoke(gateway, adminToken, id string) error {
 	return nil
 }
 
-func GatewayAdminOperationsList(gateway, adminToken string) ([]gatewayActiveOperation, error) {
-	opsURL, err := gatewayAdminOperationsURL(gateway, "")
+func GatewayAdminOperationsList(gateway, adminToken, cluster, instance string) ([]gatewayActiveOperation, error) {
+	opsURL, err := gatewayAdminOperationsURL(gateway, "", cluster, instance)
 	if err != nil {
 		return nil, err
 	}
@@ -359,12 +359,12 @@ func GatewayAdminOperationsList(gateway, adminToken string) ([]gatewayActiveOper
 	return parsed.Operations, nil
 }
 
-func GatewayAdminOperationCancel(gateway, adminToken, id string) error {
+func GatewayAdminOperationCancel(gateway, adminToken, id, cluster, instance string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return fmt.Errorf("operation id is required")
 	}
-	cancelURL, err := gatewayAdminOperationsURL(gateway, id)
+	cancelURL, err := gatewayAdminOperationsURL(gateway, id, cluster, instance)
 	if err != nil {
 		return err
 	}
@@ -401,11 +401,11 @@ func GatewayAdminOperationCancel(gateway, adminToken, id string) error {
 	return nil
 }
 
-func GatewayAdminOperationReconcile(gateway, adminToken string, reconcile gatewayAdminOperationReconcileRequest) error {
+func GatewayAdminOperationReconcile(gateway, adminToken, cluster, instance string, reconcile gatewayAdminOperationReconcileRequest) error {
 	if err := reconcile.validate(); err != nil {
 		return err
 	}
-	reconcileURL, err := gatewayAdminOperationsURL(gateway, "")
+	reconcileURL, err := gatewayAdminOperationsURL(gateway, "", cluster, instance)
 	if err != nil {
 		return err
 	}
@@ -465,10 +465,16 @@ func gatewayAdminTokensURL(rawGateway, kind, id string) (string, error) {
 	return gatewayURLWithPath(rawGateway, "/v1/admin/tokens", values)
 }
 
-func gatewayAdminOperationsURL(rawGateway, id string) (string, error) {
+func gatewayAdminOperationsURL(rawGateway, id, cluster, instance string) (string, error) {
 	values := url.Values{}
 	if strings.TrimSpace(id) != "" {
 		values.Set("id", strings.TrimSpace(id))
+	}
+	if strings.TrimSpace(cluster) != "" {
+		values.Set("cluster", strings.TrimSpace(cluster))
+	}
+	if strings.TrimSpace(instance) != "" {
+		values.Set("instance", strings.TrimSpace(instance))
 	}
 	return gatewayURLWithPath(rawGateway, "/v1/admin/operations", values)
 }
