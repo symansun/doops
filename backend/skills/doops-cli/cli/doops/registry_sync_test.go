@@ -5,14 +5,14 @@ import (
 	"testing"
 )
 
-func TestBuildRegistrySyncCommandUsesSkopeoAndDigestVerification(t *testing.T) {
+func TestBuildRegistrySyncCommandUsesGenericOCIFlow(t *testing.T) {
 	command := buildRegistrySyncCommand(
-		"docker.cnb.cool/l8ai/amp",
-		"repo.example:8443/oilan-system",
+		"registry.example.com/source/team",
+		"registry.example.com/mirror/team",
 		"release-20261004",
 		"/run/doops/source-auth.json",
 		"/run/doops/target-auth.json",
-		[]string{"amp-backend", "amp-gateway"},
+		[]string{"api", "worker"},
 		600,
 		true,
 	)
@@ -20,8 +20,8 @@ func TestBuildRegistrySyncCommandUsesSkopeoAndDigestVerification(t *testing.T) {
 		"skopeo copy --all --retry-times 3",
 		"/run/doops/source-auth.json",
 		"/run/doops/target-auth.json",
-		"docker://docker.cnb.cool/l8ai/amp/amp-backend:release-20261004",
-		"docker://repo.example:8443/oilan-system/amp-gateway:release-20261004",
+		"docker://registry.example.com/source/team/api:release-20261004",
+		"docker://registry.example.com/mirror/team/worker:release-20261004",
 		"skopeo inspect --raw",
 		"registry manifest digest mismatch",
 	} {
