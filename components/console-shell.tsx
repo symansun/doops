@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { fetchTargets, type Session, type Target } from "@/lib/client"
 import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
+import { isDemoAllowed } from "@/lib/demo-policy"
 import { DEMO_TOKEN } from "@/lib/demo"
 import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
@@ -49,7 +50,7 @@ const TABS: { id: Tab; label: string; icon: typeof TerminalIcon; secondary?: boo
 const GW_KEY = "doops.gateway"
 const DEMO_KEY = "doops.demo"
 const ONBOARD_KEY = "doops.onboarded"
-const DEMO_ENABLED = process.env.NODE_ENV !== "production"
+const DEMO_ENABLED = isDemoAllowed()
 
 export function ConsoleShell() {
   const [session, setSession] = useState<Session | null>(null)

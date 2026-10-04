@@ -12,8 +12,9 @@ import {
   CheckIcon,
   ChevronRightIcon,
 } from "./icons"
+import { isDemoAllowed } from "@/lib/demo-policy"
 
-const DEMO_ENABLED = process.env.NODE_ENV !== "production"
+const DEMO_ENABLED = isDemoAllowed()
 
 const METRICS = [
   { value: "92%", label: "重复运维操作被 AI 接管" },

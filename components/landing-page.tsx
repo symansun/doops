@@ -13,8 +13,9 @@ import {
   CheckIcon,
   ActivityIcon,
 } from "./icons"
+import { isDemoAllowed } from "@/lib/demo-policy"
 
-const DEMO_ENABLED = process.env.NODE_ENV !== "production"
+const DEMO_ENABLED = isDemoAllowed()
 
 const FEATURES = [
   {

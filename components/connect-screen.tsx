@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react"
 import { login, fetchTargets, type Session } from "@/lib/client"
 import { DEMO_TOKEN } from "@/lib/demo"
+import { isDemoAllowed } from "@/lib/demo-policy"
 import { PlugIcon, ServerIcon, SparkIcon } from "./icons"
 
-const DEMO_ENABLED = process.env.NODE_ENV !== "production"
+const DEMO_ENABLED = isDemoAllowed()
 
 export function ConnectScreen({
   defaultGateway,
