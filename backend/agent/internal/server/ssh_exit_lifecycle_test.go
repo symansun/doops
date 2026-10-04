@@ -102,6 +102,13 @@ func startSSHExitTestServer(t *testing.T, run func(*ssh.ServerConn, ssh.Channel,
 				}
 				_ = request.Reply(true, nil)
 				run(server, channel, payload.Command)
+				// Keep the transport alive until OpenSSH consumes exit-status
+				// and closes the session; an immediate TCP close can race it.
+				_ = channel.Close()
+				var networkErr net.Error
+				if err := server.Wait(); errors.As(err, &networkErr) && networkErr.Timeout() {
+					t.Error("loopback SSH client did not close the connection: ", err)
+				}
 				return
 			}
 		}

@@ -4,6 +4,9 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
 
 ## 2026-10-04 Lifecycle Finalization And Rollout Repair
 
+- The real OpenSSH lifecycle fixture closes the SSH session before waiting for
+  client disconnect, rather than immediately closing the transport after
+  exit-status. All remote-exit and unknown-outcome assertions remain unchanged.
 - Reject retired capability names at the CLI boundary, before network access;
   an invalid `executionLifecycle` request must not recommend upgrading the Agent.
 - Missing workspace-write terminal evidence remains unknown. A confirmed local

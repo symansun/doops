@@ -53,8 +53,30 @@ No Worktree, compatibility routing, forced unlock or unrelated release cancellat
 
 - [x] Locate mixed running releases and misleading retired-protocol CLI errors.
 - [x] Fix review-confirmed finalization, workspace, proxy and bounded-write gaps.
-- [ ] Review, test, commit and push.
+- [x] Review, test, commit and push c2937a50bd03719c88a8ece50aacb80185374f06.
 - [ ] Verify main/tag CI and immutable release assets.
 - [ ] Install release CLI/Skill and upgrade Agents with rollback evidence.
 - [ ] Deploy matching Gateway only after consumer readiness.
 - [ ] Complete live functional and health acceptance.
+
+# Continuation Evidence
+
+- PR 44 contains c2937a50bd03719c88a8ece50aacb80185374f06 and is remotely
+  visible. Its Linux CI cnb-kqq-1k42f7sm8 failed the real OpenSSH exit-1 and
+  exit-42 scenarios; the earlier PR 43 run failed exit-254. These failures
+  must be resolved, not bypassed or relabeled as successful.
+- Fresh local Agent/Gateway/CLI suites and all 50 Python contracts pass.
+  A separate review found no additional confirmed admission, notification
+  correlation or lease-finalization defect in c2937a5.
+- The loopback SSH test sent exit-status and immediately closed the underlying
+  transport. It now closes the session channel and waits for the client to
+  disconnect within the existing 10-second deadline. Exit-code and unknown-outcome
+  assertions are unchanged. The same CNB image on Linux/amd64 passes 20 repetitions;
+  macOS passes five repetitions. Independent review confirms the missing
+  transport-shutdown synchronization; exact-commit CI revalidation is pending.
+- Fresh production inventory found 12 connected, idle Agents. Ali and Tencent
+  advertise 7e605c48a848373a9992368021fdc3f7f3807a5c; the other 10 have no
+  release commit. The shared Gateway still runs 148a97c77c0048504c2f1d6afa486d07dbe1ba27.
+  An Ali foreground output canary still returns only "Operation complete.".
+  No production operation was canceled, no unknown outcome was unlocked and
+  no production binary was replaced during this verification.
