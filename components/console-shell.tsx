@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { fetchTargets, type Session, type Target } from "@/lib/client"
 import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
+import { isDemoAllowed } from "@/lib/demo-policy"
 import { DEMO_TOKEN } from "@/lib/demo"
 import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
@@ -47,8 +48,9 @@ const TABS: { id: Tab; label: string; icon: typeof TerminalIcon; secondary?: boo
 ]
 
 const GW_KEY = "doops.gateway"
-const DEMO_KEY = "doops.demo"
+const LEGACY_DEMO_KEY = "doops.demo"
 const ONBOARD_KEY = "doops.onboarded"
+const DEMO_ENABLED = isDemoAllowed()
 
 export function ConsoleShell() {
   const [session, setSession] = useState<Session | null>(null)
@@ -69,12 +71,12 @@ export function ConsoleShell() {
     if (typeof window === "undefined") return
     const saved = localStorage.getItem(GW_KEY)
     setDefaultGateway(resolveDefaultGateway(saved, window.location.origin))
-    // 自动进入演示模式：?demo=1 或上次以演示模式连接过
-    const wantsDemo =
-      new URLSearchParams(window.location.search).get("demo") === "1" ||
-      localStorage.getItem(DEMO_KEY) === "1"
+    if (!DEMO_ENABLED) {
+      localStorage.removeItem(LEGACY_DEMO_KEY)
+    }
+    // 演示模式只允许本地开发通过 URL 显式开启，不持久化 mock 会话。
+    const wantsDemo = DEMO_ENABLED && new URLSearchParams(window.location.search).get("demo") === "1"
     if (wantsDemo) {
-      localStorage.setItem(DEMO_KEY, "1")
       setSession({ gateway: "demo://local", token: DEMO_TOKEN, username: "演示用户", demo: true })
       if (localStorage.getItem(ONBOARD_KEY) !== "1") setShowGuide(true)
     }
@@ -109,11 +111,9 @@ export function ConsoleShell() {
   }, [session, refresh])
 
   function handleConnected(s: Session) {
-    if (s.demo) {
-      localStorage.setItem(DEMO_KEY, "1")
-    } else {
+    if (!s.demo) {
       localStorage.setItem(GW_KEY, s.gateway)
-      localStorage.removeItem(DEMO_KEY)
+      localStorage.removeItem(LEGACY_DEMO_KEY)
     }
     setSession(s)
     if (localStorage.getItem(ONBOARD_KEY) !== "1") setShowGuide(true)
@@ -125,7 +125,7 @@ export function ConsoleShell() {
   }
 
   function logout() {
-    localStorage.removeItem(DEMO_KEY)
+    localStorage.removeItem(LEGACY_DEMO_KEY)
     setSession(null)
     setTargets([])
     setSelected(null)

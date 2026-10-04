@@ -12,6 +12,9 @@ import {
   CheckIcon,
   ChevronRightIcon,
 } from "./icons"
+import { isDemoAllowed } from "@/lib/demo-policy"
+
+const DEMO_ENABLED = isDemoAllowed()
 
 const METRICS = [
   { value: "92%", label: "重复运维操作被 AI 接管" },
@@ -123,12 +126,14 @@ export function CasesPage() {
             </Link>
           </nav>
           <div className="flex items-center gap-2">
-            <Link
-              href="/console?demo=1"
-              className="hidden rounded-lg border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-muted sm:inline-block"
-            >
-              在线演示
-            </Link>
+            {DEMO_ENABLED && (
+              <Link
+                href="/console?demo=1"
+                className="hidden rounded-lg border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-muted sm:inline-block"
+              >
+                在线演示
+              </Link>
+            )}
             <Link
               href="/console"
               className="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
@@ -154,13 +159,15 @@ export function CasesPage() {
             重新定义了日常运维。看看他们遇到的问题、用了哪些能力，以及最终拿到的结果。
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <Link
-              href="/console?demo=1"
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 sm:w-auto"
-            >
-              <SparkIcon width={16} height={16} />
-              体验同款在线演示
-            </Link>
+            {DEMO_ENABLED && (
+              <Link
+                href="/console?demo=1"
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 sm:w-auto"
+              >
+                <SparkIcon width={16} height={16} />
+                体验同款在线演示
+              </Link>
+            )}
             <Link
               href="/#features"
               className="flex w-full items-center justify-center gap-2 rounded-lg border px-6 py-3 text-sm font-medium text-foreground transition-colors hover:bg-muted sm:w-auto"
@@ -321,13 +328,15 @@ export function CasesPage() {
               <RocketIcon width={16} height={16} />
               进入控制台
             </Link>
-            <Link
-              href="/console?demo=1"
-              className="flex w-full items-center justify-center gap-2 rounded-lg border px-6 py-3 text-sm font-medium text-foreground transition-colors hover:bg-muted sm:w-auto"
-            >
-              先看在线演示
-              <ChevronRightIcon width={15} height={15} />
-            </Link>
+            {DEMO_ENABLED && (
+              <Link
+                href="/console?demo=1"
+                className="flex w-full items-center justify-center gap-2 rounded-lg border px-6 py-3 text-sm font-medium text-foreground transition-colors hover:bg-muted sm:w-auto"
+              >
+                先看在线演示
+                <ChevronRightIcon width={15} height={15} />
+              </Link>
+            )}
           </div>
         </div>
       </section>

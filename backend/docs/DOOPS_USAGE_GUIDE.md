@@ -54,6 +54,12 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Reconnect an idle target | `doops unlock --target <t>` | Refuses active, queued or unresolved work; does not force-release operations. |
 | Remove cached token | `doops logout --target <t>` | Removes local token cache. |
 
+`registry sync` is a native, generic DoOps operation. It replaces one-off application
+image-sync scripts: the target performs the equivalent pull/copy/push flow for each
+explicit image, then compares source and destination manifest digests. It has no AMP
+specific path. Use `--install-skopeo` only when the target is explicitly allowed to
+install the package; an unavailable package manager is a hard failure.
+
 ## Basic Checks
 
 ```bash

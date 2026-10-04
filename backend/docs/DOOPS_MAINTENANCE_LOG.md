@@ -10,6 +10,8 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
   an additional display and cancellation guard.
 - The generic `doops registry sync` foreground command does not require the background
   `executionLifecycle` capability. Only `exec --bg` keeps that admission requirement.
+- Registry sync remains a DoOps-owned generic OCI flow; AMP-specific image names and
+  sync scripts are not part of the implementation or release surface.
 
 ## 2026-10-04 Scoped Background Lifecycle Admission
 

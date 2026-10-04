@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react"
 import { login, fetchTargets, type Session } from "@/lib/client"
 import { DEMO_TOKEN } from "@/lib/demo"
+import { isDemoAllowed } from "@/lib/demo-policy"
 import { PlugIcon, ServerIcon, SparkIcon } from "./icons"
+
+const DEMO_ENABLED = isDemoAllowed()
 
 export function ConnectScreen({
   defaultGateway,
@@ -152,13 +155,15 @@ export function ConnectScreen({
             <span className="h-px flex-1 bg-border" />
           </div>
 
-          <button
-            onClick={enterDemo}
-            className="flex w-full items-center justify-center gap-2 rounded-lg border border-primary/40 bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary transition-colors hover:bg-primary/20"
-          >
-            <SparkIcon width={16} height={16} />
-            进入演示模式（无需连接 gateway）
-          </button>
+          {DEMO_ENABLED && (
+            <button
+              onClick={enterDemo}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-primary/40 bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary transition-colors hover:bg-primary/20"
+            >
+              <SparkIcon width={16} height={16} />
+              进入演示模式（无需连接 gateway）
+            </button>
+          )}
         </div>
 
         <p className="mt-4 text-center text-xs text-muted-foreground">

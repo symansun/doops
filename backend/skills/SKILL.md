@@ -307,6 +307,11 @@ doops -session preflight targets --target <gateway-target>
 | 管理员查看 token | `doops admin token list --target <t>` |
 | 管理员撤销 token | `doops admin token revoke --target <t> --id <token-id>` |
 
+`registry sync` 是 DoOps 自带的通用能力，直接在选定 target 上完成 OCI 镜像复制和
+源/目标 manifest digest 校验；它不依赖 AMP 专用脚本、Job 或外部镜像。目标机没有
+`skopeo` 时，可显式加 `--install-skopeo` 由 DoOps 按目标系统包管理器安装，失败则直
+接报告，不做静默降级。
+
 大文件、压缩包、数据库导出、图片、视频、课程资源包等资产，用 `pull` 拉取整个 session 工作区。不要用 `read`，也不要让 `exec` 输出 base64。
 
 Gateway 管理员签发 token 示例：
