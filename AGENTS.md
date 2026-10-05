@@ -14,17 +14,21 @@ DoOps architecture, security, release, and verification boundaries.
 
 - Ordinary workload delivery uses an explicit natural-language task:
   `doops -session <s> ask --target <t> --apply [--credential <name>...] --msg '<facts>'`.
-- The task must state target, workload/service scope, explicit image version, reason, allowed
-  `deploy/helm/<name>/` assets when needed, and machine-checkable acceptance criteria. The
-  explicit image-override Helm request must use `image.repository` plus exactly one controlled selector:
-  `image.digest=sha256:<64 hex>` or `image.tag=release-YYYYMMDD`; the two selectors must not
-  be mixed. Authoritative bundled-values releases instead leave both `value_files` and
-  `set_strings` empty, require a valid `image.repository` and `image.tag=release-YYYYMMDD`
-  in the HTTPS chart, reset rather than merge prior values, and validate rendered release tags.
+- The task must state target, workload/service scope, reason, authorized Helm assets, and
+  machine-checkable acceptance criteria. Business image versions must come from the task or
+  read-only evidence from its explicitly authorized repository, Chart, values, or existing release;
+  never guess them or require facts already in those assets to be pasted into the prompt.
+  Do not impose business-specific image keys, tag formats, CORS, repository, or directory gates.
+- Ordinary `upgrade-install` uses `--reset-values` with explicit Chart defaults, ordered optional
+  values overlays, and non-sensitive Chart-specific string overrides, never implicit historical
+  values inheritance. Keep managed Helm authentication, exact scope, package digest pinning,
+  session path isolation, and dry-run/final Deployment verification intact. Full asset, optional
+  `expected_image`, and migration contracts belong in
+  [NATURAL_LANGUAGE_DEPLOYMENT.md](backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md).
 - CNB CI tests, builds, scans, and publishes immutable artifacts. Gateway authenticates, audits,
   limits concurrency, locks resources, and authorizes credentials. The selected target Agent
   performs the actual Kubernetes or Helm mutation and returns live evidence.
-- For `--image`, `--version`, `image.digest`, and `image.tag` inputs, the publisher must establish
+- For image/version inputs, the publisher must establish
   the exact CI source-commit and registry-digest provenance before invoking the command. The CLI
   and Agent validate the allowed input form and live result; they do not verify CI origin.
 - Do not add or restore `EnvironmentRegistry`, `EnvironmentDefinition`, `DeploymentTemplate`,

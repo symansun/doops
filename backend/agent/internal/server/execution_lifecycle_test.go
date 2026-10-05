@@ -659,15 +659,17 @@ func TestExecutionLifecycleDisconnectPersistsAcrossReconnectAndRestart(t *testin
 	_ = agent.conn.Close()
 	lifecycleResponse(t, client, 2, "execution_outcome_unknown")
 	requireEventually(t, 3*time.Second, func() bool { return len(f.hub.listActiveOperations()) == 0 })
+	unknownBefore := executionAuditTestEvent(t, f.store, op.AuditID)
 	replacement := f.agent(t, "replacement-agent")
 	reconnected := f.client(t, f.admin)
-	lifecycleSend(t, reconnected, 2, "doops_file_write", "different-workspace", map[string]interface{}{"path": "config.txt", "content": "blocked"})
-	lifecycleResponse(t, reconnected, 2, "execution_outcome_unknown")
-	f.http(t, f.admin, http.MethodPost, "/v1/targets/unlock?cluster=dev&instance=local", "", http.StatusConflict)
+	lifecycleSend(t, reconnected, 2, "doops_file_write", "different-workspace", map[string]interface{}{"path": "config.txt", "content": "recovered"})
+	replacement.complete(t, replacement.call(t, "doops_file_write", "different-workspace"), "")
+	lifecycleResponse(t, reconnected, 2, "")
 	lifecycleSend(t, reconnected, 3, "doops_node_info", "safe-query", map[string]interface{}{})
 	replacement.complete(t, replacement.call(t, "doops_node_info", "safe-query"), "")
 	lifecycleResponse(t, reconnected, 3, "")
 	requireEventually(t, 3*time.Second, func() bool { return len(f.hub.listActiveOperations()) == 0 })
+	f.http(t, f.admin, http.MethodPost, "/v1/targets/unlock?cluster=dev&instance=local", "", http.StatusOK)
 	_ = client.Close()
 	_ = reconnected.Close()
 	_ = replacement.conn.Close()
@@ -679,11 +681,15 @@ func TestExecutionLifecycleDisconnectPersistsAcrossReconnectAndRestart(t *testin
 	f.open(t)
 	restarted := f.agent(t, "restart-agent")
 	afterRestart := f.client(t, f.admin)
-	lifecycleSend(t, afterRestart, 2, "doops_shell", "new-workspace", map[string]interface{}{"command": "printf blocked"})
-	lifecycleResponse(t, afterRestart, 2, "execution_outcome_unknown")
+	lifecycleSend(t, afterRestart, 2, "doops_shell", "new-workspace", map[string]interface{}{"command": "printf recovered"})
+	restarted.complete(t, restarted.call(t, "doops_shell", "new-workspace"), "")
+	lifecycleResponse(t, afterRestart, 2, "")
 	events, err := f.store.UnresolvedExecutions("dev", "local")
 	if err != nil || len(events) != 1 || events[0].ID != op.AuditID || events[0].Status != "outcome_unknown" || events[0].EndedAt.IsZero() {
 		t.Fatalf("unknown outcome did not survive restart: %#v, %v", events, err)
+	}
+	if got := executionAuditTestEvent(t, f.store, op.AuditID); !reflect.DeepEqual(got, unknownBefore) {
+		t.Fatalf("reconnect, restart or follow-up execution rewrote unknown audit: %#v", got)
 	}
 	var listed struct {
 		Operations []GatewayActiveOperation `json:"operations"`
@@ -694,7 +700,7 @@ func TestExecutionLifecycleDisconnectPersistsAcrossReconnectAndRestart(t *testin
 	}
 	if len(listed.Operations) != 1 || listed.Operations[0].ID != fmt.Sprintf("audit-%d", op.AuditID) ||
 		listed.Operations[0].State != "outcome_unknown" || listed.Operations[0].Session != "lost-owner" {
-		t.Fatalf("persistent blocker missing from admin display: %#v", listed)
+		t.Fatalf("historical unknown missing from admin display: %#v", listed)
 	}
 	scoped := f.user(t, "target-admin", ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionAdmin}})
 	body := fmt.Sprintf(`{"id":"audit-%d","confirm_stopped":true,"reason":"operator reconciled externally; password=reason-canary","evidence":"external process inspection; Bearer evidence-canary"}`, op.AuditID)
@@ -717,8 +723,9 @@ func TestExecutionLifecycleDisconnectPersistsAcrossReconnectAndRestart(t *testin
 	}
 	denied := f.user(t, "query-only", ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionInfo}})
 	f.http(t, denied, http.MethodPost, "/v1/admin/operations?cluster=dev&instance=local", body, http.StatusForbidden)
-	lifecycleSend(t, afterRestart, 3, "doops_shell", "new-workspace", map[string]interface{}{"command": "printf still-blocked"})
-	lifecycleResponse(t, afterRestart, 3, "machine terminal evidence required")
+	lifecycleSend(t, afterRestart, 3, "doops_shell", "new-workspace", map[string]interface{}{"command": "printf next"})
+	restarted.complete(t, restarted.call(t, "doops_shell", "new-workspace"), "")
+	lifecycleResponse(t, afterRestart, 3, "")
 	lifecycleSend(t, afterRestart, 4, "doops_node_info", "safe-query", map[string]interface{}{})
 	restarted.complete(t, restarted.call(t, "doops_node_info", "safe-query"), "")
 	lifecycleResponse(t, afterRestart, 4, "")
@@ -728,7 +735,7 @@ func TestExecutionLifecycleDisconnectPersistsAcrossReconnectAndRestart(t *testin
 	}
 }
 
-func TestExecutionLifecycleReplacementCannotInheritStillActiveOldGeneration(t *testing.T) {
+func TestExecutionLifecycleReplacementDoesNotInheritUnknownOutcome(t *testing.T) {
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
 	old := f.agent(t, "old-generation")
 	oldGeneration := f.hub.getAgent("dev", "local").Generation
@@ -747,8 +754,8 @@ func TestExecutionLifecycleReplacementCannotInheritStillActiveOldGeneration(t *t
 	}
 	done := make(chan error, 1)
 	// Stall delivery of the old call's failure so the response path is still
-	// observable after registry replacement. The audit is persisted before the
-	// lease is released, so the durable unknown outcome is the blocker.
+	// observable after registry replacement. The persisted unknown outcome must
+	// not block admission on the replacement Agent after resource cleanup.
 	go func() {
 		done <- f.hub.client.handleGatewayToolCall(context.Background(), auth, "dev", "local", api.JSONRPCRequest{
 			JSONRPC: "2.0", ID: 2, Method: "tools/call",
@@ -779,14 +786,11 @@ func TestExecutionLifecycleReplacementCannotInheritStillActiveOldGeneration(t *t
 	if err != nil || len(events) != 1 || events[0].ID != owner.AuditID || events[0].Status != "outcome_unknown" {
 		t.Fatalf("replacement must retain the durable unknown outcome: %#v, %v", events, err)
 	}
+	before := executionAuditTestEvent(t, f.store, owner.AuditID)
 	client := f.client(t, f.admin)
-	lifecycleSend(t, client, 2, "doops_file_write", "new-owner", map[string]interface{}{"path": "config.txt", "content": "blocked"})
-	lifecycleResponse(t, client, 2, "execution_outcome_unknown")
-	select {
-	case call := <-replacement.calls:
-		t.Fatalf("new generation bypassed old active ownership: %#v", call)
-	default:
-	}
+	lifecycleSend(t, client, 2, "doops_file_write", "new-owner", map[string]interface{}{"path": "config.txt", "content": "recovered"})
+	replacement.complete(t, replacement.call(t, "doops_file_write", "new-owner"), "")
+	lifecycleResponse(t, client, 2, "")
 	releaseOnce.Do(func() { close(releaseResponse) })
 	select {
 	case err := <-done:
@@ -797,6 +801,10 @@ func TestExecutionLifecycleReplacementCannotInheritStillActiveOldGeneration(t *t
 		t.Fatal("old operation failed to leave after response was released")
 	}
 	requireEventually(t, 3*time.Second, func() bool { return len(f.hub.listActiveOperations()) == 0 })
-	lifecycleSend(t, client, 3, "doops_file_write", "new-owner", map[string]interface{}{"path": "config.txt", "content": "still-blocked"})
-	lifecycleResponse(t, client, 3, "execution_outcome_unknown")
+	lifecycleSend(t, client, 3, "doops_file_write", "new-owner", map[string]interface{}{"path": "config.txt", "content": "next"})
+	replacement.complete(t, replacement.call(t, "doops_file_write", "new-owner"), "")
+	lifecycleResponse(t, client, 3, "")
+	if got := executionAuditTestEvent(t, f.store, owner.AuditID); !reflect.DeepEqual(got, before) {
+		t.Fatalf("replacement execution rewrote old generation uncertainty: %#v", got)
+	}
 }

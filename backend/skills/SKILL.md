@@ -30,9 +30,9 @@ description: |
   `executionLifecycle` 能力，CLI、公网 Gateway 和内部调度入口都在后台任务派发前校验；
   普通前台 `exec`、`ssh`、`ask` 和 `ask --apply` 不受该能力门禁限制。
   `exec`、`exec --bg`、`ssh`、`ask` 和 `ask --apply` 都必须等待对应 RPC 的实际终态；
-  取消 ACK 不是终态，取消、超时或断连且缺少终态证据时写入 `outcome_unknown` 并阻止后续
-  mutation。结构化 `ssh` 仍只要求 `structuredSSH` 参数协议，不得删除未知结果保护或
-  静默降级。
+  取消 ACK 不是终态，取消、超时或断连且缺少终态证据时如实写入 `outcome_unknown` 并报告失败，
+  不自动重放 mutation；历史未知审计不参与新任务准入。结构化 `ssh` 仍只要求
+  `structuredSSH` 参数协议，不得把未知结果宣称为成功或静默降级。
 - `capabilities --require` 接受 `structuredSSH` 和 `executionLifecycle`；其它名称
   在联网前直接报参数错误。后台能力覆盖实际终态、受控任务寿命及取消，不承诺任务跨断连存活。
 - Agent 流式 `notifications/message` 必须携带 `params.request_id`；Gateway 和 CLI
@@ -62,38 +62,27 @@ description: |
   token 内联到命令、prompt、日志或工作区。
 - SSH 收到 Agent 结构化终态时，明确远端退出码 `1..254` 按普通失败审计，不因非零
   退出阻断后续操作；结构化工具错误即使没有退出码也已到达终态。`255`、信号终止、
-  取消、断连或缺少结构化终态仍保留未知结果保护；不得根据命令文本猜测只读，也不得
+  取消、断连或缺少结构化终态仍报告未知结果；不得根据命令文本猜测只读，也不得
   把本地 SSH 进程退出当成远端工作已停止。
 - `doops-gateway` 是独立发布包，必须从 CNB 不可变镜像提取，并用
   `scripts/deploy-gateway.sh --host <gateway-host> --source-commit <main-commit>`
   从 SSH 宿主机上下文发布；旧的本地二进制会被拒绝。
 - gateway 控制面不登记为 doops target，不通过任何 doops target 发布 gateway 本体。
 - 不要用 base64、tar 或手写分片传输绕过 `push`。`doops_workspace_*` 是低层兼容 JSON-RPC 工具，不是 CLI、发布脚本和 skill 的标准路径；如果看到 512KB 分块日志，说明调用方绕过了当前 `doops push/pull`。应修复 Git HTTP 反向隧道、目标 agent 版本或发布脚本。
-- 普通业务 workload 的标准发布入口是 `doops ask --apply`。自然语言任务必须直接给出 target、服务范围、明确镜像版本、
-  变更原因和验收条件；不得从文件路径、环境名、业务名或历史声明推断这些值。
+- 普通业务 workload 的标准发布入口是 `doops ask --apply`。自然语言任务必须明确 target、服务范围、
+  变更原因、允许使用的资产和验收条件。业务镜像版本必须来自任务或其明确授权的仓库、
+  Chart、values、现有 release 的只读证据；不得猜测，也不得要求已明确资产中的事实再粘贴到 prompt。
+  不把业务镜像键、版本格式、CORS Origin、仓库名或项目目录作为全局前置闸门。
 - 普通 `ask` 运行在 restricted 权限，只允许内置只读工具和 `mcp_doops_k8s_read`；
   `--apply` 才进入原生 build 模式，并且只允许 `mcp_doops_helm` 执行发布 mutation。
-- 更新现有 Helm release 时，只要自然语言任务已明确 release、namespace、chart 和
-  不可变镜像，Agent 必须直接调用一次 `mcp_doops_helm upgrade-install`。`value_files`
-  可以为空，但必须使用任务明确给出的远程 `https://`/`oci://` chart 和可选
-  HTTP(S) values URL；`set_strings` 只传 `image.repository` 加一个受控版本选择器：
-  不可变的 `image.digest` 或严格的 `image.tag=release-YYYYMMDD`，不得混用。工具自动
-  在显式镜像覆盖模式保留当前 values 并先 dry-run。完整 Chart 值模式同时省略
-  `value_files` 和 `set_strings`，从 HTTPS Chart 内唯一 `values.yaml` 校验
-  `image.repository` 与 `image.tag=release-YYYYMMDD`；不合并历史值、不覆盖镜像。
-  受管 `helmPull` 只按已授权 namespace/release/chart 消费 Secret，验证并钉住实际包摘要；
-  CNB 使用其官方 Helm OCI 仓库的 HTTPS `.tgz` 下载接口，不读取 `index.yaml`。
-  不得读取 target 隔离 workspace、不得要求用户补充本地
- 候选 values，也不得用缺少 `confirm=true` 的调用试探。
-- 更新现有 Helm release 时，Agent 必须显式传入 `asset_source`，省略时默认为 `remote`。
-  workspace 模式只允许 runtime-bound session workspace 下的相对
-  `deploy/helm/<env>` Chart 与该 Chart 唯一的 `values.yaml`；路径必须是存在的 regular
-  文件或 Chart 目录，拒绝绝对路径、`..`、symlink escape 和额外 values overlay。
-  workspace 的 `set_strings` 必须为空，任务必须显式传完整 `expected_image`：
-  `repository:release-YYYYMMDD` 或 `repository@sha256:<64 hex digest>`。Helm cwd 必须是
-  精确 `/root/ws/<session>`，使用 committed values、`--reset-values` 并先执行 server
-  dry-run，不读取旧 release values。不得要求用户补充其它 values，也不得用缺少
-  `confirm=true` 的调用试探。
+- 发布事实齐备后，Agent 调用 `mcp_doops_helm upgrade-install`，显式提供 release、
+  namespace、chart 和 `confirm=true`。`value_files` 可选，覆盖遵循 Chart schema；普通升级
+  统一 `--reset-values`，不隐式继承历史 values。工具自动先执行同输入的 server dry-run，
+  不得询问是否启用 dry-run，不得用缺少 `confirm=true` 的调用试探。
+  保留受管 Helm 认证、精确 scope、包 digest 钉住和最终 Deployment generation/spec/status
+  校验，不以 shell、revision 或 Pod Ready 宣称发布成功。资产路径、可选 `expected_image`
+  和完整迁移说明见 [自然语言发布契约](docs/NATURAL_LANGUAGE_DEPLOYMENT.md)；
+  remote 当前支持 HTTPS `.tgz`，不支持 `oci://`。
 - CI 的精确 source commit、镜像 digest 和构建成功证据必须由发布者在调用前核对。
   `ask --apply`、`--image`、`--version` 和 Helm 工具只校验允许的输入形态、解析结果和
   运行时证据，不自动核验镜像是否来自指定 CI。
@@ -173,10 +162,10 @@ description: |
   等待锁不占用户执行槽；不能因本会话着急就取消其它合法发布。获得明确取消授权后才用
   `admin operations cancel --target <t> --id <operation-id>`。
   `202 cancel_requested` 不是停止证据。缺少终态，或 Shell/SSH/bg、apply、K8s 写操作
-  被中断而无法证明外部变更已停止时，持久化 `outcome_unknown` 并阻止新写入。
+  被中断而无法证明外部变更已停止时，持久化 `outcome_unknown` 并报告失败，不自动重放。
   可信 Helm 工具的明确失败是已结束的失败，不写入 `outcome_unknown`；一次成功工具调用
-  也不能掩盖同轮其它工具的明确失败。人工声明不能解除执行守卫，历史审计不改写。
-  `unlock` 只重连空闲且没有未决执行的 target，不自动接管或重放。
+  也不能掩盖同轮其它工具的明确失败。历史未知审计不阻断新任务，也不改为 success 或删除；
+  活跃任务仍按资源锁串行。`unlock` 只重连空闲 target，不强制释放活动 lease 或重放。
   受管凭据按资源 ID 互斥；不同凭据可并行，同一凭据的发布、授权、轮换和吊销仍串行。
 - 给用户签发 gateway user token 时，优先使用 `doops admin token create`；不要 SSH 到 gateway 主机手工运行内部 DB 命令。
 

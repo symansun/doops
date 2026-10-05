@@ -826,10 +826,6 @@ func (h *GatewayHub) HandleTargetUnlock(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, fmt.Sprintf("target offline: %s/%s", cluster, instance), http.StatusNotFound)
 		return
 	}
-	if err := h.client.checkExecutionGuard(cluster, instance); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
-		return
-	}
 	if err := agent.forceUnlock(); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -1230,13 +1226,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	guarded := requiresExecutionOutcomeGuard(action, params.Name, params.Arguments, resourceKey)
-	if guarded {
-		if err := h.checkExecutionGuard(cluster, instance); err != nil {
-			finishAudit("blocked", err.Error(), "", 0)
-			writeJSON(buildErrorResponse(req.ID, -32005, err.Error()))
-			return nil
-		}
-	}
 	h.markOperationRunning(opID)
 	opCtx = h.withExecutionOwner(opCtx, agent, resourceKey, opID)
 	if guarded {

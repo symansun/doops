@@ -12,7 +12,8 @@ conflicts: []
 ---
 
 执行 Kubernetes 任务时，目标、namespace、resource、container 和镜像必须来自当前任务
-或本轮只读工具证据，不得从环境名、域名、目录名或历史记录推断。
+或任务明确授权的仓库、Chart、values、现有 release 的本轮只读证据，不得从环境名、
+域名、目录名或历史记录猜测，也不得要求将已明确资产中的事实重新粘贴到 prompt。
 
 以下发布规则用于普通业务 workload。当前 Agent 自身镜像升级使用 CLI
 `doops -session <s> upgrade --target <t> --image <repository>@sha256:<digest>`，
@@ -23,23 +24,19 @@ kubeconfig 或 `doops push` 为前置条件；旧 Agent 首次启用控制器需
 
 1. Kubernetes 读取只调用 `mcp_doops_k8s_read`；所有发布 mutation 调用
    `mcp_doops_helm`（规范能力名 `doops_helm`）。`session_id` 由运行时绑定，模型不得
-   传入 target、session 或工作区路径；不得用 shell 执行 kubectl 或 Helm mutation。
+   传入 target、session 或工作区根路径；chart/values 可使用授权的 session 相对路径。
+   不得用 shell 执行 kubectl 或 Helm mutation。
 2. 所有请求显式传 namespace；不得依赖 default namespace。
-3. mutation 必须有 `confirm=true`，镜像发布必须使用明确的
-   `image.repository` 加一个受控版本选择器：不可变的
-   `image.digest=sha256:<digest>`，或严格匹配 `image.tag=release-YYYYMMDD`。
-4. 发布必须使用任务明确授权的远程 `https://`/`oci://` chart，通过 `mcp_doops_helm`
-   完整收敛明确的 release、namespace、可选 HTTP(S) `value_files` 和非敏感
-   `set_strings`。本地 source workspace 不属于 Helm 输入；`set_strings` 只允许
-   `image.repository` 加 `image.digest` 或 `image.tag` 其中之一，禁止覆盖 map/list
-   父键或混用两种镜像选择器。
-   `upgrade-install` 自动保留已有 release 的非镜像 values。只更新镜像也走同一 Helm
-   路径，不存在直接 Kubernetes 镜像 mutation 例外。
-   对现有 release，如果任务已给出 release、namespace、chart 和受控镜像版本，
-   `value_files` 可以为空；必须直接调用一次 `mcp_doops_helm upgrade-install`，
-   `set_strings` 只覆盖 `image.repository` 和一个明确版本选择器。不得要求用户补充当前
-   values 或候选 values 文件。工具内部会读取并保留现有 values，并自动用相同参数先
-   dry-run；不得发起缺少 `confirm=true` 的试探调用，也不得询问是否启用 dry-run。
+3. mutation 必须有 `confirm=true`；业务镜像键、版本格式和配置由授权 Chart 定义，
+   不作为 DoOps 全局前置闸门。
+4. 通过 `mcp_doops_helm` 完整收敛明确的 release、namespace 和授权 chart。
+   `value_files` 可选，覆盖遵循 Chart schema；普通升级统一 `--reset-values`，不隐式
+   继承历史 values。只更新镜像也走同一 Helm 路径，不存在直接 Kubernetes 镜像 mutation 例外。
+   工具自动以相同输入先执行 server dry-run；不得用缺少 `confirm=true` 的调用试探，
+   不得询问是否启用 dry-run。保留受管 Helm 认证、精确 scope、包 digest 钉住和 session
+   路径隔离；可选 `expected_image` 只接受显式输入，不从 values 推导。
+   资产与完整迁移契约见 [自然语言发布文档](../../../docs/NATURAL_LANGUAGE_DEPLOYMENT.md)；
+   remote 支持 HTTPS `.tgz`，当前不支持 `oci://`。
 5. 发布前必须对比当前 workload 与候选 Helm 资产中的 command、args、env、probes、
    volumeMounts 和 volumes，避免旧运行参数被意外继承。
 6. 发布后必须读取 rollout、最终 Deployment generation/spec/status、Pod Ready、实际

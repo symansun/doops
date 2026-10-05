@@ -122,13 +122,6 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 	defer releaseLimit()
 	h.client.markOperationRunning(opID)
 	if !proxyRequestIsReadOnly(r.Method) {
-		if err := h.client.checkExecutionGuard(route.Cluster, route.Instance); err != nil {
-			_ = h.store.FinishAudit(auditID, AuditFinish{
-				Status: "blocked", Error: err.Error(), EndedAt: time.Now().UTC(),
-			})
-			http.Error(w, err.Error(), http.StatusConflict)
-			return
-		}
 		if err := h.client.beginExecution(agent, opID, auditID); err != nil {
 			_ = h.store.FinishAudit(auditID, AuditFinish{
 				Status: "blocked", Error: err.Error(), EndedAt: time.Now().UTC(),

@@ -55,12 +55,14 @@ Git worktree 或 target 源码快照。只有任务明确需要文件同步时�
 发布者须提供精确提交的 CI 成功与镜像 digest 证据；Agent/Helm 工具不自动证明 CI 来源。
 缺少证据时报告阻塞，不在 target 上重新构建。
 
-普通业务发布统一调用结构化 `mcp_doops_helm upgrade-install`；chart 使用任务明确给出的
-`https://`/`oci://` 远程引用，`value_files` 只使用 HTTP(S) URL。`set_strings` 使用
-`image.repository` 加不可变 `image.digest`，或严格的 `image.tag=release-YYYYMMDD`，
-两种模式不得混用。不得生成原始 kubectl 或 Helm mutation。更新现有 release 时
-`value_files` 可以为空，工具会自动保留当前 values 并先执行相同参数的 dry-run；
-不得要求用户提供候选 values 文件，也不得用缺少 `confirm=true` 的调用试探。
+普通业务发布统一调用结构化 `mcp_doops_helm upgrade-install`。业务镜像版本来自任务或
+其明确授权的仓库、Chart、values、现有 release 的只读证据，不猜测，也不要求把已明确
+资产中的事实再粘贴到 prompt。覆盖遵循 Chart schema，不设全局业务镜像键、版本格式或
+目录闸门。普通升级统一 `--reset-values`，`value_files` 可选，不隐式继承历史 values；
+工具自动先执行相同输入的 server dry-run。不得生成原始 kubectl 或 Helm mutation，
+不得用缺少 `confirm=true` 的调用试探，不得询问是否启用 dry-run。
+资产和完整迁移契约见 [自然语言发布文档](../../../docs/NATURAL_LANGUAGE_DEPLOYMENT.md)；
+remote 支持 HTTPS `.tgz`，当前不支持 `oci://`。
 
 验收读取最终 Deployment generation/spec/status、实际 Pod imageID 和健康、功能路径，
 不能只依据 Helm revision 或 Pod Ready。当前 Agent 自身升级使用 CLI `doops upgrade`

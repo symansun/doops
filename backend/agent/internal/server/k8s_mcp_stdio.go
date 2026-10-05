@@ -281,24 +281,24 @@ func helmMCPToolDefinition() map[string]interface{} {
 				},
 				"chart": map[string]interface{}{
 					"type":        "string",
-					"description": "remote: explicit https:// or oci:// chart; workspace: relative deploy/helm/<env> Chart directory containing Chart.yaml. Workspace paths must not be absolute, contain .., or escape the session through symlinks.",
+					"description": "remote: explicit HTTPS chart download; workspace: relative Chart directory containing Chart.yaml. Workspace paths must not be absolute, contain .., or escape the session through symlinks.",
 				},
 				"namespace": map[string]interface{}{"type": "string"},
 				"value_files": map[string]interface{}{
 					"type":        "array",
-					"description": "remote: optional YAML value file URLs using http:// or https:// for explicit image-override mode; workspace: exactly one relative chart/values.yaml regular file, with no overlays, absolute paths, .., or symlink escape.",
+					"description": "Optional ordered YAML values overlays. remote: HTTP(S) URLs; workspace: regular files relative to the session, with no absolute paths, .., or symlink escape.",
 					"items": map[string]interface{}{
 						"type": "string",
 					},
 				},
 				"set_strings": map[string]interface{}{
 					"type":                 "object",
-					"description":          "remote: image.repository plus exactly one immutable image.digest=sha256:<digest> or image.tag=release-YYYYMMDD; omit with value_files for authoritative bundled chart values. workspace: must be empty.",
+					"description":          "Optional non-sensitive chart-specific string overrides. No credential payloads. Chart schema determines valid business keys, including image and CORS configuration.",
 					"additionalProperties": map[string]interface{}{"type": "string"},
 				},
 				"expected_image": map[string]interface{}{
 					"type":        "string",
-					"description": "Required for workspace: complete repository:release-YYYYMMDD or repository@sha256:<64 hex digest>, used for rendered manifest and final Deployment verification. Remote may omit it and derives the expected image from set_strings.",
+					"description": "Optional explicit complete repository:tag or repository@sha256:<64 hex digest>, checked against dry-run and final Deployment manifests. Image fields are not inferred from chart values.",
 				},
 				"revision": map[string]interface{}{"type": "integer", "minimum": 1},
 				"timeout":  map[string]interface{}{"type": "string"},

@@ -342,8 +342,8 @@ Agent 在 `capabilities.protocols.executionLifecycle` 声明
 `backgroundLifetime`、`promptCancellation` 必须全部为布尔 `true`，不得缺字段或额外字段。
 CLI 和 Gateway（包括内部调度调用）在后台任务派发前校验，不满足则拒绝且不占执行锁。
 `backgroundLifetime` 表示任务受控并等待原始 RPC 终态，不承诺跨断连存活。
-终态、取消和未知结果仍由 Gateway 统一处理。workspace 写入等本地操作缺失终态时同样保留未知结果；受保护内部子调用
-审计落库失败会阻止后续 mutation，不把持久化重试当作仍在执行的有效所有权。
+终态、取消和未知结果仍由 Gateway 统一处理。workspace 写入等本地操作缺失终态时同样
+如实保留未知结果；活动任务完成审计持久化后才释放 lease，历史未知审计不参与新任务准入。
 
 工具调用格式：
 
@@ -485,7 +485,9 @@ CLI 的 `--option` 只接受不会改写连接目标的旗标：`-4`、`-6`、`-
 ### `doops_agent_prompt`
 
 向目标 AI agent 下发诊断、运维或明确授权的发布任务。发布任务必须使用
-`operation=apply`，并在自然语言中明确 target、服务范围、镜像版本、原因和验收条件。
+`operation=apply`，并在自然语言中明确 target、服务范围、原因、授权资产和验收条件。
+业务镜像版本来自任务或其明确授权的仓库、Chart、values、现有 release 的只读证据，
+不得猜测，也不要求已明确资产中的事实再粘贴到 prompt。
 
 参数：
 
@@ -610,9 +612,10 @@ CLI 的 `-session` 必传；预演不作为升级完成证据，回滚失败也�
 
 ## 自然语言发布 API 对接模式
 
-平台通过 `doops ask --apply` 发送明确授权的发布任务。任务必须直接给出 target、
-服务范围、镜像版本、变更原因和验收条件，Gateway 不得从 prompt、路径或历史状态猜测
-这些字段。需要凭据时，调用方显式提供一个或多个 metadata-only credential resource
+平台通过 `doops ask --apply` 发送明确授权的发布任务。任务必须明确 target、
+服务范围、变更原因、授权资产和验收条件；业务镜像版本必须来自任务或其明确授权的
+仓库、Chart、values、现有 release 的只读证据，不猜测，也不要求重复粘贴已明确资产中的事实。
+需要凭据时，调用方显式提供一个或多个 metadata-only credential resource
 name；Gateway 将引用绑定当前用户、target 和 session，Agent 返回精确 workload/image/Helm
 scope 后才授权和物化。凭据 payload 不进入公开 prompt、doagent 上下文、CLI 输出、日志或
 审计记录；Gateway 仅通过内部凭据物化调用向目标 Agent 短暂传递 payload。
@@ -621,8 +624,16 @@ scope 后才授权和物化。凭据 payload 不进入公开 prompt、doagent �
 与 `helm_chart`，由 Gateway 从精确授权结果填写；公开调用方不得提交 binding。
 Agent 仅在本次 prompt 存续期间建立无 payload 的绑定租约，内部 Helm 检查 exact scope
 与 Secret resourceVersion 后消费凭据。公开 MCP 不增加密码/token 参数。
-完整 Chart 值模式令 `value_files`、`set_strings` 都为空；HTTPS Chart 的 bundled values
-必须包含 `image.repository` 和合法 release tag，不合并旧值，dry-run 和最终镜像验证仍必需。
+受管 Helm 发布允许明确授权的 `value_files` 和非敏感 `set_strings`，不强制 bundled-only，
+认证、精确 scope 和验证时的包 digest 钉住保持不变；失败不改走匿名或旧登录态。
+
+`mcp_doops_helm upgrade-install` 显式提供 `release`、`namespace`、`chart` 和 `confirm=true`；
+`session_id` 由运行时绑定。`asset_source` 默认 `remote`（HTTPS `.tgz`，当前不支持 OCI），
+也可显式使用 `workspace`。`value_files` 是可选有序列表，`set_strings` 是非敏感
+Chart-specific 字符串覆盖；`expected_image` 可选且只接受显式输入，不从 values 推导。
+普通升级统一 `--reset-values`，取消隐式保留历史 values，自动执行 server dry-run 和最终
+Deployment 校验。完整参数、安全边界与迁移说明见
+[`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
 
 业务服务的生产发布由目标 Agent 执行。`doops-agent` 自身镜像替换不走 `ask --apply`，
 走 `doops upgrade`。调用方必须以同一 session 的真实健康检查和关键业务验收作为完成证据。
@@ -709,12 +720,14 @@ Gateway 对前台、后台、SSH、prompt 和 `ask --apply` 统一维护执行�
 ```
 
 该响应仅确认取消请求，资源所有权必须保留到原始请求终态。
-终态不确定时审计持久化为 `outcome_unknown`，并阻止后续目标 mutation。
+终态不确定时审计持久化为 `outcome_unknown`，仍报告失败，不自动重放 mutation。
+历史未知审计不参与新任务准入，不改为 success，也不删除；活动任务仍受资源锁、排队和
+取消机制约束，完成审计持久化后才释放 lease。
 已验签的 Helm 工具明确失败按失败终态处理，不封锁后续操作；同轮任何明确失败
 不得被另一条成功调用掩盖。工具请求错误与执行失败保持区分，执行失败返回 MCP
 `result.isError=true`，取消或缺失终态不转换成普通失败。
 `POST /v1/admin/operations` 不再支持人工声明解锁，返回 `405`。历史审计保留原记录。
-`POST /v1/targets/unlock` 仅重连空闲目标，拒绝活动、排队或未核对操作。
+`POST /v1/targets/unlock` 仅重连空闲目标，拒绝活动或排队操作，不强制释放活动 lease。
 
 定时巡检 job 使用 Gateway 持久 lease 单飞执行。`tick` 与 `run-now` 同时命中同一
 job 时，后到请求返回 HTTP `409`；执行期间自动续租，成功、失败、取消和超时都会在
@@ -788,8 +801,8 @@ JSON-RPC 错误：
 - `-32005`：目标忙、目标队列满或等待超时。
 - `-32006`：全局或单用户并发限制超限。
 - `-32007`：操作取消；不能单凭客户端取消 ACK 推断执行停止。
-- `-32008`：`execution_outcome_unknown`，缺少可信终态或外部 mutation 被中断，不能以人工声明解除；
-  持久化阻止后续写入，不能通过重连、unlock 或新 session 绕过。
+- `-32008`：`execution_outcome_unknown`，本次调用缺少可信终态或外部 mutation 被中断，
+  不代表成功，不自动重放；历史未知审计不阻断新任务，活动任务仍受实际资源锁约束。
 
 ## 权限
 

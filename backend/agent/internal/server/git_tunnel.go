@@ -85,10 +85,6 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-	if err := h.checkExecutionGuard(cluster, instance); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
-		return
-	}
 	releaseLimit, err := h.acquireOperationSlot(auth.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusTooManyRequests)

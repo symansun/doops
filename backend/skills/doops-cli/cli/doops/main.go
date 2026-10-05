@@ -27,7 +27,7 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `
 Doops 分布式服务器管理工具 (doops.sh CLI)
-专为 AI Agent 设计的自然语言运维工具。发布任务必须显式给出 target、服务范围、镜像版本、变更原因和验收条件。
+专为 AI Agent 设计的自然语言运维工具。发布任务须明确 target、范围、原因和验收；镜像与 Chart 参数可从任务明确授权的资产读取。
 
 配置文件路径: ~/.agent/skills/doops/config.json（唯一默认配置；DOOPS_CONFIG 可显式覆盖）
 

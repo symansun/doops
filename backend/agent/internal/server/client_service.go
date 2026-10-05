@@ -116,9 +116,9 @@ func (s *ClientService) finishActiveOperation(id string) {
 	s.activeOpsMu.Lock()
 	op := s.activeOps[id]
 	if op != nil {
-		// Finalization retries are not live execution. An unpersisted child
-		// outcome must block admission even after its parent releases the lease.
+		// Keep failed audit finalization as a live operation, not a historical lock.
 		op.agent = nil
+		op.State = "finalizing"
 	}
 	s.activeOpsMu.Unlock()
 	if op == nil {
