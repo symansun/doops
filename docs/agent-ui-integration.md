@@ -69,6 +69,8 @@ Run `pnpm test:console`, `pnpm test:gateway-policy`, `pnpm exec tsc --noEmit`,
 `pnpm build`, and `git diff --check`. Browser verification must exercise the
 scenarios above through the console and `/api/rpc`, then perform a read-only
 two-turn doagent check against an existing authorized Gateway target.
+The main-targeted CNB pull-request pipeline also installs the frozen dependency
+lock, runs both console test groups, typechecks, and builds the web application.
 
 Source delivery, package publication, and production rollout are separate evidence.
 Do not infer a deployed web version from a local build or an npm package release.
