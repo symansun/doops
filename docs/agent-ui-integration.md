@@ -2,7 +2,7 @@
 name: doops-agent-ui-integration
 scope: console-ai-assistant
 owner: doops-maintainers
-status: accepted
+status: implemented-ci-policy-pending
 ---
 
 # Agent Cloud Component Integration
@@ -91,3 +91,23 @@ Do not infer a deployed web version from a local build or an npm package release
 - Local production build, TypeScript, console tests, Gateway policy tests, and
   independent review passed. The web deployment itself is not covered by the
   local-console evidence.
+
+## Delivery Gates
+
+Production standalone rendering also passed the 18 browser scenarios and the
+real two-turn Gateway conversation. Source is pushed to the CNB DoOps branch
+`feat/agent-ui-embed` (PR 57); Agent Cloud is pushed to `feat/doops-composer-slot`
+(PR 65). Neither main branch nor the production web service has been updated.
+
+The web CI stage exposed pnpm 11's 24-hour publication cooldown. The third-party
+`package-manager-detector` lock is corrected to compatible version `1.8.0`,
+published on 2026-07-21. An isolated pnpm 11 frozen-install check now rejects only
+the newly published first-party `@agent-cloud/agent-ui@0.1.3`.
+
+No cooldown exception is enabled. The pending decision is whether to allow this
+exact first-party version based on the source commit, passing release CI and
+registry integrity, or wait until 2026-10-07 01:47:42 Asia/Shanghai. Third-party
+cooldown checks must remain enabled.
+
+GitHub rejected the mirror push because the active account's email is not
+verified. CNB source visibility is confirmed; GitHub visibility is not claimed.
