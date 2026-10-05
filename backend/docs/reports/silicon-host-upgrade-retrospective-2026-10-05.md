@@ -2,7 +2,7 @@
 name: silicon-host-upgrade-retrospective
 scope: standalone-docker-agent-recovery
 owner: doops-maintainers
-status: controller-verification
+status: upgraded-output-verification
 ---
 
 # Confirmed Failures
@@ -60,5 +60,15 @@ status: controller-verification
   v1.3.20 image/source; the old container remained running.
 - Focused controller transaction, preservation, credential-canary redaction,
   preflight-denial, rollback and ownership tests are machine-checked.
-- Publication and production replacement are pending exact-source CI and final
-  independent review. Do not claim a successful upgrade from preflight alone.
+- Controller source 4af6f8512fd48da22b3705e7f78675ad5fccea63 passed PR CI
+  cnb-btj-1k45bueu6 and merged as 1354fdf67b8b4f5cf11be1b44892a4bc2ac3ca7b.
+- Production replacement completed. Original container remains stopped as
+  doops-agent-rollback-silicon-v1320-20261005. The same Gateway identity now
+  advertises v1.3.20 source ecd60945; node-info and streaming/background RPCs work.
+- Host networking, privileges, restart policy and mounts were preserved.
+  Sub2API instances retained their original running state and health.
+- Final verification also found an existing raw-execution race: Cmd.Wait closed
+  StdoutPipe/StderrPipe readers before fast-command output was consumed.
+  This is repaired by explicit reader ownership and bounded drain, not a sleep
+  workaround. Publish and test the fixed immutable Agent before calling this
+  additional output verification complete.

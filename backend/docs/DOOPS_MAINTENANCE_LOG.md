@@ -2,6 +2,18 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-10-05 Preserve Fast Command Output
+
+- Live Silicon recovery exposed short-command stdout loss: the RPC could finish
+  successfully before its output readers consumed the bytes.
+- Raw execution now owns its pipe readers independently of Cmd.Wait. Parent
+  write descriptors close after process start; output is drained before the
+  terminal response, without command sleeps or protocol fallback.
+- Keep the existing process-group cancellation/watchdog and bounded pipe grace.
+  Read failures and escaped writers are reported honestly, never as success.
+- Verify fast stdout/stderr, delayed readers, large output, signal exits,
+  foreground RPC ordering, background completion and cancellation before release.
+
 ## 2026-10-05 Remove Audit Admission And Business Helm Policy
 
 - Remove historical unresolved-audit queries from mutation admission. Preserve
