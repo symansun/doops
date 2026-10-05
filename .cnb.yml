@@ -36,6 +36,15 @@ main:
           script: |
             cd backend/agent
             go test -race ./internal/server -run 'TestGitHTTP|TestAgentGitCancellation|TestExecutionGuard|TestExecutionLifecycle|TestBackgroundRPC' -count=1 -timeout=10m
+        - name: web acceptance checks
+          timeout: 10m
+          script: |
+            npm i -g pnpm@11.7.0
+            pnpm install --frozen-lockfile
+            pnpm test:gateway-policy
+            pnpm test:console
+            pnpm exec tsc --noEmit
+            pnpm build
   push:
     - name: ci
       runner:
