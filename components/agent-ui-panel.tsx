@@ -1,12 +1,12 @@
 "use client"
 
-import { AgentWorkspace, type AgentSessionSnapshot } from "@agent-cloud/agent-ui"
+import { AgentWorkspace, type AgentSessionRuntime, type AgentSessionSnapshot } from "@agent-cloud/agent-ui"
 import { Plus, RefreshCw, Settings2, Square } from "lucide-react"
 import { useCallback, useState, useSyncExternalStore } from "react"
 import { deploymentRequest, type DeploymentInput } from "@/lib/deployment"
 import { randomSession } from "@/lib/gateway"
-import type { DoopsAgentUiRuntime } from "@/lib/agent-ui-runtime"
 import type { Target } from "@/lib/client"
+import { isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { DeploymentForm } from "./deployment-form"
 
 export function AgentUiPanel({
@@ -16,7 +16,7 @@ export function AgentUiPanel({
   onConfigureModel,
   onSessionChange,
 }: {
-  runtime: DoopsAgentUiRuntime
+  runtime: AgentSessionRuntime
   target: Target
   sessionId: string
   onConfigureModel?: () => void
@@ -31,12 +31,13 @@ export function AgentUiPanel({
     [runtime, sessionId],
   )
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+  const busy = isDoopsAgentSessionBusy(snapshot)
   const [operation, setOperation] = useState<"ask" | "apply">("ask")
 
   const startNewSession = useCallback(() => {
-    if (snapshot.status === "running") return
+    if (busy) return
     onSessionChange?.(randomSession("console"))
-  }, [onSessionChange, snapshot.status])
+  }, [busy, onSessionChange])
 
   return (
     <AgentWorkspace
@@ -60,8 +61,13 @@ export function AgentUiPanel({
           <button
             aria-label="重新检查连接"
             className="flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
-            disabled={snapshot.status === "running" || snapshot.connection === "connecting"}
-            onClick={() => void runtime.open(sessionId)}
+            disabled={busy || snapshot.connection === "connecting"}
+            onClick={() => {
+              runtime.close(sessionId)
+              void runtime.open(sessionId).catch(() => {
+                // The shared runtime publishes connection failures in its snapshot.
+              })
+            }}
             title="重新检查连接"
             type="button"
           ><RefreshCw aria-hidden="true" className="size-3.5" /></button>
@@ -69,7 +75,7 @@ export function AgentUiPanel({
             <button
               aria-label="配置模型"
               className="flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-              disabled={snapshot.status === "running"}
+              disabled={busy}
               onClick={onConfigureModel}
               title="配置该节点的大模型"
               type="button"
@@ -81,7 +87,7 @@ export function AgentUiPanel({
           <button
             aria-label="新会话"
             className="flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={snapshot.status === "running" || !onSessionChange}
+            disabled={busy || !onSessionChange}
             onClick={startNewSession}
             title="新会话"
             type="button"
@@ -129,7 +135,7 @@ function DoopsAgentContextPanel({
               <input
                 aria-label="操作 session"
                 className="w-36 rounded-md border border-input bg-background px-2 py-1 font-mono text-[11px] text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={snapshot.status === "running"}
+                disabled={isDoopsAgentSessionBusy(snapshot)}
                 defaultValue={sessionId}
                 key={sessionId}
                 maxLength={128}
@@ -151,7 +157,7 @@ function DoopsAgentContextPanel({
               <button
                 aria-pressed={operation === value}
                 className={`rounded px-2 py-1 text-xs transition-colors ${operation === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                disabled={snapshot.status === "running"}
+                disabled={isDoopsAgentSessionBusy(snapshot)}
                 key={value}
                 onClick={() => onOperationChange(value)}
                 type="button"
@@ -166,23 +172,32 @@ function DoopsAgentContextPanel({
 }
 
 function DoopsDeploymentComposer({ runtime, sessionId, snapshot, target }: {
-  runtime: DoopsAgentUiRuntime
+  runtime: AgentSessionRuntime
   sessionId: string
   snapshot: AgentSessionSnapshot
   target: Target
 }) {
-  const running = snapshot.status === "running"
+  const running = isDoopsAgentSessionBusy(snapshot)
+  const canDeploy = snapshot.connection === "connected" && !!runtime.executeExtension && snapshot.capabilities.extensions.some(
+    (capability) => capability.namespace === "doops.operations" && capability.semanticType === "apply" && capability.schemaVersion === "1",
+  )
   return (
     <div className="max-h-[min(52dvh,36rem)] shrink-0 overflow-y-auto border-t border-border px-4 py-3">
       <div className="mx-auto mb-3 flex max-w-3xl items-center justify-between text-xs font-medium text-muted-foreground">
         <span>发布任务</span>
-        {running && <button aria-label="停止智能体" title="停止智能体" type="button" className="flex size-8 items-center justify-center rounded-md border border-destructive/50 text-destructive" onClick={() => void runtime.interrupt(sessionId, crypto.randomUUID())}><Square aria-hidden="true" className="size-3.5" /></button>}
+        {running && snapshot.capabilities.interrupt && <button aria-label="停止智能体" title="停止智能体" type="button" disabled={snapshot.connection !== "connected"} className="flex size-8 items-center justify-center rounded-md border border-destructive/50 text-destructive disabled:opacity-40" onClick={() => void runtime.interrupt(sessionId, crypto.randomUUID())}><Square aria-hidden="true" className="size-3.5" /></button>}
       </div>
       <DeploymentForm
-        disabled={!snapshot.capabilities.sendMessage || running}
+        disabled={!canDeploy || running}
         onDeploy={async (input: DeploymentInput) => {
-          const request = deploymentRequest(target, input)
-          await runtime.sendPrompt(sessionId, crypto.randomUUID(), { ...request, operation: "apply" })
+          if (!runtime.executeExtension) throw new Error("当前智能体不支持部署变更")
+          deploymentRequest(target, input)
+          await runtime.executeExtension(sessionId, crypto.randomUUID(), {
+            namespace: "doops.operations",
+            semanticType: "apply",
+            schemaVersion: "1",
+            payload: { input, confirmed: true },
+          })
         }}
       />
     </div>

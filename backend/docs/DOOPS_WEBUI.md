@@ -7,6 +7,12 @@ with their existing Gateway account or user token, select an explicit target,
 and execute operations under that identity. The console does not retain tokens
 on the server or place them into copied CI/CD examples.
 
+- AI conversation uses the shared Agent Cloud `AgentWorkspace`, v2 runtime,
+  queue and store. The host supplies only Gateway transport, target/session
+  routing and authorized deployment forms. The session API requires the Agent's
+  explicit structured ACP event capability and never downgrades to the old chat
+  engine. This source change needs a new shared package publication and matching
+  Agent/Web rollout; local fixture evidence is not production acceptance.
 - AI diagnostics query Agent runtime metadata instead of reading settings or API
   keys. Diagnostics use `operation=ask`; the deployment form requires explicit
   authorization and sends `operation=apply` with target, release, namespace,

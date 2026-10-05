@@ -1091,6 +1091,10 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			writeJSON(buildErrorResponse(reqID, -32602, `response_format must be "json" when specified`))
 			return
 		}
+		if args.EventFormat != "" && args.EventFormat != "acp" {
+			writeJSON(buildErrorResponse(reqID, -32602, `event_format must be "acp" when specified`))
+			return
+		}
 		switch strings.ToLower(strings.TrimSpace(args.Mode)) {
 		case "metadata":
 			if args.ResponseFormat != "" {
@@ -1127,6 +1131,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			agentPromptExecutionContext{
 				NativeMode:          nativeMode,
 				RequireToolEvidence: operation == "apply",
+				StructuredEvents:   args.EventFormat == "acp",
 			},
 			pushProgress,
 			writeJSON,
@@ -1272,6 +1277,7 @@ func doagentModeForPrompt(operation, executionMode string) (string, error) {
 type agentPromptExecutionContext struct {
 	NativeMode          string
 	RequireToolEvidence bool
+	StructuredEvents   bool
 }
 
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
@@ -1431,6 +1437,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			true,
 			responseFormat != "json",
 			sseReady,
+			execution.StructuredEvents,
 		)
 	}()
 	defer func() {
@@ -1543,7 +1550,14 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			return
 		}
 		if sseFailed {
-			pushProgress(rawNotification("[warning] Helm mutation was verified; doagent final turn ended with " + sanitizeSecretText(sseErr.Error())))
+			warning := "[warning] Helm mutation was verified; doagent final turn ended with " + sanitizeSecretText(sseErr.Error())
+			if execution.StructuredEvents {
+				pushProgress(publicDoagentUINotification(map[string]interface{}{
+					"sessionUpdate": "doops_notice", "content": map[string]interface{}{"type": "text", "text": warning},
+				}))
+			} else {
+				pushProgress(rawNotification(warning))
+			}
 		}
 	}
 	if responseFormat == "json" {
@@ -1628,6 +1642,8 @@ func (gw *Gateway) handleAgentMetadataWS(ctx context.Context, doopsSessionID str
 	})
 	data, err := json.Marshal(map[string]interface{}{
 		"source":         "doagent",
+		"event_formats":  []string{"acp"},
+		"event_schema":   "doops.sh/acp-events/v1",
 		"status":         status.status,
 		"provider":       status.provider,
 		"model":          status.model,
@@ -2150,6 +2166,7 @@ func subscribeDoagentSSEWithCollectorReady(
 	allowUntaggedCurrentTurn bool,
 	forwardAgentMessages bool,
 	ready chan<- error,
+	structuredFormats ...bool,
 ) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -2189,18 +2206,25 @@ func subscribeDoagentSSEWithCollectorReady(
 
 	var eventData strings.Builder
 	var pendingAgentMessage strings.Builder
+	targetTurnID := ""
+	structuredEvents := len(structuredFormats) == 1 && structuredFormats[0]
 	flushPendingAgentMessage := func() {
 		if pendingAgentMessage.Len() == 0 {
 			return
 		}
 		text := sanitizeSecretText(pendingAgentMessage.String())
-		if forwardAgentMessages {
+		if forwardAgentMessages && !structuredEvents {
 			pushProgress(assistantDeltaNotification(text))
+		}
+		if structuredEvents {
+			pushProgress(publicDoagentUINotification(map[string]interface{}{
+				"sessionUpdate": "agent_message", "turnId": targetTurnID,
+				"content": map[string]interface{}{"type": "text", "text": pendingAgentMessage.String()},
+			}))
 		}
 		pendingAgentMessage.Reset()
 	}
 	receivedEvent := false
-	targetTurnID := ""
 	idleTimeout := doagentSSEIdleTimeout()
 	idleTimer := time.NewTimer(idleTimeout)
 	idleDone := make(chan struct{})
@@ -2313,6 +2337,13 @@ func subscribeDoagentSSEWithCollectorReady(
 					if err := collector(sessionUpdate); err != nil {
 						return err
 					}
+				}
+				if structuredEvents {
+					pushProgress(publicDoagentUINotification(sessionUpdate))
+					if updateType == "turn_finished" {
+						return doagentTurnFinishedError(sessionUpdate)
+					}
+					continue
 				}
 				sessionUpdate = sanitizeDoagentSessionUpdate(sessionUpdate)
 				switch updateType {
