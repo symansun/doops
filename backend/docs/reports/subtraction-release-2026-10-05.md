@@ -41,14 +41,22 @@ project-specific policy from the generic Helm executor.
 - Real Helm rendering and managed Chart scope/digest checks pass.
 - Cancellation, live serialization, unknown-audit persistence and follow-up
   WebSocket execution checks pass. Targeted integration suite passes.
-- Python contract suite: 50 passed. CLI package suite passed before final help edit;
-  full Agent/Gateway/CLI recheck is running.
+- Python contract suite: 50 passed. Full Agent/Gateway/CLI suites pass.
+- Concurrency/Helm/unknown-audit race tests pass. Cancellation cannot overwrite
+  a live finalization state; a persistence fault still prevents dispatch until
+  the existing finalization retry completes.
 - Independent review identified remote values double-fetch and same-repository
   version coupling; both are removed before release.
 - No Worktree; unrelated untracked .agent and .qa-console content is excluded.
 
 # Rollout
 
-Pending source commit, main merge, immutable v1.3.19 CI, installation, Gateway
-cutover, managed Agent upgrades and live post-cutover evidence. Source tests do
-not prove that the online chain has recovered.
+- PR 52 / source 019a786 merged as 524471b on main. Full validation then found
+  remaining old permanent-quarantine expectations in Git/SSH/workspace fixtures.
+  The obsolete v1.3.19 candidate builds were stopped before artifact publication;
+  the tag remains historical and has never been deployed.
+- Updated fixtures retain the original unknown response, process cleanup,
+  cancellation and immutable audit assertions while completing follow-up requests.
+- Pending final source/main CI and immutable v1.3.20 release, installation,
+  Gateway cutover, managed Agent upgrades and live post-cutover evidence.
+  Source tests do not prove that the online chain has recovered.

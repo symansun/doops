@@ -685,7 +685,6 @@ func TestAgentSystemPromptDoesNotRequireDeploymentScripts(t *testing.T) {
 		"deploy.sh",
 		"build.sh",
 		"buildctl --addr",
-		"kubectl",
 		"Harbor",
 		"registry.example.com",
 		"last known good Helm",
@@ -693,6 +692,9 @@ func TestAgentSystemPromptDoesNotRequireDeploymentScripts(t *testing.T) {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("system prompt must not hard-code orchestration detail %q: %s", forbidden, text)
 		}
+	}
+	if !strings.Contains(text, "不得通过 Kubernetes mutation 工具、shell") {
+		t.Fatal("system prompt must preserve the structured mutation boundary")
 	}
 }
 

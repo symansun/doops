@@ -214,7 +214,7 @@ func (s *ClientService) listActiveOperations() []GatewayActiveOperation {
 func (s *ClientService) cancelActiveOperation(id string) bool {
 	s.activeOpsMu.Lock()
 	op := s.activeOps[id]
-	if op != nil {
+	if op != nil && op.State != "finalizing" {
 		op.State = "cancel_requested"
 	}
 	s.activeOpsMu.Unlock()
@@ -232,7 +232,9 @@ func (s *ClientService) cancelActiveOperationForTarget(id, cluster, instance str
 		s.activeOpsMu.Unlock()
 		return false
 	}
-	op.State = "cancel_requested"
+	if op.State != "finalizing" {
+		op.State = "cancel_requested"
+	}
 	cancel := op.cancel
 	s.activeOpsMu.Unlock()
 	cancel()

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -195,10 +196,17 @@ func TestSSHExitLifecycleOpenSSH(t *testing.T) {
 			if err != nil || len(audits) != 1 || audits[0].Status != wantStatus {
 				t.Fatalf("SSH audit = %#v, %v; want %s", audits, err, wantStatus)
 			}
+			originalAudits := audits
 			lifecycleSend(t, client, 3, "doops_shell", "after-ssh", map[string]interface{}{"command": "true"})
-			next := lifecycleResponse(t, client, 3, wantError)
-			if wantError == "" && next["result"].(map[string]interface{})["isError"] == true {
+			next := lifecycleResponse(t, client, 3, "")
+			if next["result"].(map[string]interface{})["isError"] == true {
 				t.Fatalf("exec after SSH nonzero failed: %#v", next)
+			}
+			requireEventually(t, 3*time.Second, func() bool { return len(f.hub.listActiveOperations()) == 0 })
+			audits, err = f.store.ListAudit(10)
+			if err != nil || len(audits) != len(originalAudits)+1 || audits[0].Status != "success" ||
+				!reflect.DeepEqual(audits[1:], originalAudits) {
+				t.Fatalf("independent command did not add exactly one success audit while preserving original SSH audit: before=%#v, after=%#v, %v", originalAudits, audits, err)
 			}
 		})
 	}

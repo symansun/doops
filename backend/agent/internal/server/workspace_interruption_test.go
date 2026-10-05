@@ -56,10 +56,10 @@ func TestWorkspaceInterruptionMissingTerminalBlocksMutation(t *testing.T) {
 				replacement := f.agent(t, "replacement-workspace-writer")
 				probe := f.client(t, f.admin)
 				lifecycleSend(t, probe, 2, "doops_file_write", "different-workspace", map[string]interface{}{
-					"path": "config.txt", "content": "must not dispatch",
+					"path": "config.txt", "content": "recovered",
 				})
-				lifecycleResponse(t, probe, 2, errExecutionOutcomeUnknown.Error())
-				// The query is a dispatch barrier: the blocked mutation must not reach Agent.
+				replacement.complete(t, replacement.call(t, "doops_file_write", "different-workspace"), "")
+				lifecycleResponse(t, probe, 2, "")
 				lifecycleSend(t, probe, 3, "doops_k8s", "diagnostics", map[string]interface{}{"operation": "GET", "kind": "pods"})
 				replacement.complete(t, replacement.call(t, "doops_k8s", "diagnostics"), "")
 				lifecycleResponse(t, probe, 3, "")
@@ -197,12 +197,14 @@ func TestWorkspaceInterruptionCancelGraceExpiresWithoutTerminal(t *testing.T) {
 	if event := executionAuditTestEvent(t, f.store, op.AuditID); event.Status != "outcome_unknown" {
 		t.Fatalf("grace expiry audit = %#v", event)
 	}
+	replacement := f.agent(t, "after-cancel-grace")
 	lifecycleSend(t, client, 3, "doops_file_write", "after-grace", map[string]interface{}{
-		"path": "config.txt", "content": "must not dispatch",
+		"path": "config.txt", "content": "recovered",
 	})
-	lifecycleResponse(t, client, 3, errExecutionOutcomeUnknown.Error())
+	replacement.complete(t, replacement.call(t, "doops_file_write", "after-grace"), "")
+	lifecycleResponse(t, client, 3, "")
 	lifecycleSend(t, client, 4, "doops_node_info", "grace-query", map[string]interface{}{})
-	agent.complete(t, agent.call(t, "doops_node_info", "grace-query"), "")
+	replacement.complete(t, replacement.call(t, "doops_node_info", "grace-query"), "")
 	lifecycleResponse(t, client, 4, "")
 }
 
@@ -331,12 +333,13 @@ func TestWorkspaceInterruptionClientWriteDeadlineClosesConnection(t *testing.T) 
 			if event := executionAuditTestEvent(t, f.store, op.AuditID); event.Status != "outcome_unknown" {
 				t.Fatalf("write timeout lost mutation uncertainty: %#v", event)
 			}
-			f.agent(t, "after-slow-client")
+			replacement := f.agent(t, "after-slow-client")
 			probe := f.client(t, f.admin)
 			lifecycleSend(t, probe, 2, "doops_file_write", "after-timeout", map[string]interface{}{
-				"path": "config.txt", "content": "must remain blocked",
+				"path": "config.txt", "content": "recovered",
 			})
-			lifecycleResponse(t, probe, 2, errExecutionOutcomeUnknown.Error())
+			replacement.complete(t, replacement.call(t, "doops_file_write", "after-timeout"), "")
+			lifecycleResponse(t, probe, 2, "")
 		})
 	}
 }
