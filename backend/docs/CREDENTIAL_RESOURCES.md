@@ -178,14 +178,17 @@ key 和 value 都不能为空。
 校验 gzip/tar、`Chart.yaml`、`values.yaml` 并返回包摘要，不读取 `index.yaml`。
 下载 URL 必须属于 payload URL 的同源路径范围；重定向、私网地址、无效包和超限失败关闭，
 不会改为匿名请求。CNB 的 payload URL 可用 `https://helm.cnb.cool`，grant Chart 使用
-其官方 `/charts/<repo>/<name>/v/<version>.tgz` 接口。受管 OCI 引用需使用该官方 HTTPS
-下载接口；不会猜测或自动替换调用方的制品路径。
+其官方 `/charts/<repo>/<name>/v/<version>.tgz` 接口。当前 remote 仅支持 HTTPS `.tgz`
+下载，不支持 `oci://`；调用方须明确授权 HTTPS 制品引用，不会猜测、自动替换路径或 fallback。
 
 发布时 Gateway 仍只发送物化元数据。Agent 为本次授权 prompt 建立临时、无 payload 的
 租约，结构化 Helm 内部匹配 session、namespace、release、chart，检查 Secret 的
 credential/grant/version/resourceVersion，再下载并检查包摘要与验证记录一致。
 租约在 prompt 结束时移除；模型和公开 MCP 参数不读取、提交或回显 Secret 值。
-受管发布使用 Chart 中完整的唯一 values，不另取未授权的远程 values 或历史 release 值。
+受管发布保留认证、精确 scope 与包 digest 钉住，允许明确授权的零或多个有序
+`value_files` 和非敏感 Chart-specific `set_strings`，不强制 bundled-only；覆盖资产不扩大
+凭据授权，未授权的远程 values 不可使用。普通升级不再隐式保留历史 values；完整迁移和
+发布校验契约见 [`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
 
 ### Git Token
 
@@ -207,14 +210,14 @@ loopback 和 link-local 目标。Registry 可以使用无 scheme 的 registry ho
 凭据物化仍使用已有用户、target、session 和精确 scope。发布内部调用继承当前执行
 所有权及 actor/token，不重复获取已持有的资源锁。取消 ACK 不表示物化或发布已停止；
 缺少原始终态，或外部物化/清理/发布已被中断而无法确认副作用时，保留
-`outcome_unknown` 并阻止后续目标 mutation；本地命令退出不证明远端状态。不得自动接管、
-重放或扩大凭据授权，人工声明不得解除执行守卫。凭据锁按资源 ID 获取；多凭据按 ID
+`outcome_unknown` 并报告失败；本地命令退出不证明远端状态。不得自动接管、
+重放或扩大凭据授权，人工声明不得改写审计或强制释放活动 lease。凭据锁按资源 ID 获取；多凭据按 ID
 排序取得锁，等待取消时释放已取得的锁。不同凭据可并行，同一凭据的发布、授权、
 轮换和吊销保持串行，避免执行期间权限或版本被改变。
-内部子调用的终态审计失败必须传播未知结果，并继续阻止 mutation；等待持久化重试的
-子操作不是仍在执行的有效所有权，不能因为父调用释放 lease 而允许后续写入。
+内部子调用的终态审计失败必须传播未知结果；活动任务完成审计持久化后才释放 lease。
+历史未知审计不参与新任务准入，不改为 success，也不删除；实际活动任务仍按资源锁串行。
 `executionLifecycle` 是后台执行准入条件，不是凭据物化、清理或前台 apply 的总开关；
-这些调用继续依赖原始终态和上述未知结果保护，不因缺少后台能力而拒绝。
+这些调用继续要求真实终态并如实报告未知结果，不因缺少后台能力而拒绝。
 
 ## 创建和首次激活
 
@@ -357,8 +360,9 @@ doops -session release-<commit> ask \
   --msg '在 <target> 的 namespace <namespace> 发布 deployment/<workload>，镜像 <repository>@sha256:<digest>；原因：<reason>；验收：Secret 类型/key、rollout、实际镜像、健康检查和功能路径通过。'
 ```
 
-Gateway 不从 resource name 推断 scope。任务必须提供完整 workload/image/Helm 事实，且必须
-与 grant 精确一致。
+Gateway 不从 resource name 推断 scope。完整 workload/image/Helm 事实必须来自任务或
+其明确授权的仓库、Chart、values、现有 release 的只读证据，并与 grant 精确一致；
+不得猜测或要求将已明确资产中的事实再粘贴到 prompt；事实读取不能扩大 scope。
 
 ## 状态和可见输出
 

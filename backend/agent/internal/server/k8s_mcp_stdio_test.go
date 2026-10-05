@@ -57,9 +57,9 @@ func TestK8SMCPStdioExposesReadAndHelmOnly(t *testing.T) {
 			}
 			setStrings, _ := properties["set_strings"].(map[string]interface{})
 			description := setStrings["description"].(string)
-			if !strings.Contains(description, "image.repository") ||
-				!strings.Contains(description, "image.digest") ||
-				!strings.Contains(description, "image.tag") {
+			if !strings.Contains(description, "chart-specific") ||
+				!strings.Contains(description, "No credential payloads") ||
+				strings.Contains(description, "release-YYYYMMDD") {
 				t.Fatalf("helm set_strings scalar contract missing: %#v", setStrings)
 			}
 			assetSource, _ := properties["asset_source"].(map[string]interface{})
@@ -67,8 +67,8 @@ func TestK8SMCPStdioExposesReadAndHelmOnly(t *testing.T) {
 				t.Fatalf("helm asset source contract missing: %#v", assetSource)
 			}
 			valueFiles, _ := properties["value_files"].(map[string]interface{})
-			if !strings.Contains(valueFiles["description"].(string), "values.yaml") ||
-				!strings.Contains(valueFiles["description"].(string), "http") {
+			if !strings.Contains(valueFiles["description"].(string), "ordered") ||
+				!strings.Contains(valueFiles["description"].(string), "HTTP(S)") {
 				t.Fatalf("helm values source contract missing: %#v", valueFiles)
 			}
 			expectedImage, _ := properties["expected_image"].(map[string]interface{})

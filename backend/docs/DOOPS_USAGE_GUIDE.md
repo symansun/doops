@@ -51,7 +51,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Issue token as admin | `doops admin token create ...` | Requires a gateway token with `admin` permission. |
 | Inspect/cancel active operations | `doops admin operations <list|cancel> --target <target> ...` | Gateway scopes the operation list and cancellation to the selected cluster/instance; cancellation requests termination, not confirmation that work stopped. |
 | Manage scheduled issue jobs | `doops admin jobs <list|add|run|enable|disable|rm|issues> ...` | See `DOOPS_SCHEDULED_ISSUES.md`. |
-| Reconnect an idle target | `doops unlock --target <t>` | Refuses active, queued or unresolved work; does not force-release operations. |
+| Reconnect an idle target | `doops unlock --target <t>` | Refuses active or queued work; does not force-release operations. |
 | Remove cached token | `doops logout --target <t>` | Removes local token cache. |
 
 `registry sync` is a native, generic DoOps operation. It replaces one-off application
@@ -88,7 +88,7 @@ To remove a stale local route, use `doops -session <s> remove --target <gateway-
 - `resources` shows workspace locks such as `workspace:<session>`.
   Shell/SSH/bg and apply use a target mutation lock; a session is not a sandbox.
 - Public HTTP proxy requests are classified by method: `GET/HEAD/OPTIONS/TRACE` are read-only
-  queries; other methods use the target mutation lock and retain `outcome_unknown` protection
+  queries; other methods use the target mutation lock and record `outcome_unknown`
   when the Agent disconnects before a terminal response.
 
 `capabilities --require structuredSSH` performs only the Gateway WebSocket initialize
@@ -136,7 +136,7 @@ Cancel returns HTTP `202` with `cancel_requested=true`, meaning the request was
 registered, not that the operation stopped. The operation keeps ownership until
 the original terminal response. Shell-style commands join process-group
 termination; `ask` waits for the matching doagent turn terminal event. Missing
-terminal evidence persists `outcome_unknown` and blocks later target mutations.
+terminal evidence persists `outcome_unknown` and is reported as failure, not success.
 This includes interrupted workspace writes, cleanup and clone/commit operations
 without a terminal reply. A confirmed local completion after cancellation is
 not an unknown outcome. Read-only query failures do not quarantine the target.
@@ -145,8 +145,10 @@ request ID so concurrent calls in one session cannot overwrite one another. The 
 persists the execution terminal state before releasing the resource lease and retries
 that persistence while retaining the lease if the store is temporarily unavailable.
 Interrupted Shell/SSH/bg, apply and Kubernetes mutations also require reconciliation:
-local process or turn termination does not fence remote or detached work. The guard
-survives Gateway restart or Agent reconnection. The operation list shows
+local process or turn termination does not fence remote or detached work. Historical
+unknown audits do not participate in new-task admission; they are neither deleted nor
+changed to success. Active work still uses resource locks, queueing and cancellation,
+and its audit must be persisted before releasing its lease. The operation list shows
 `waiting`, `running`, `cancel_requested`, `outcome_unknown`, `audit_id`, `resource`
 and `blocked_by`. Waiting for a resource does not consume a user execution slot.
 Independent structured workspace operations run concurrently; arbitrary Shell does
@@ -158,7 +160,7 @@ using another target. There is no safe force-preemption or automatic replay prot
 An SSH failure with an Agent structured terminal result is an ordinary failed
 operation when it has a remote exit code in `1..254`, or when the structured
 tool error has no exit code. Exit code `255`, signal termination, cancellation,
-disconnection and missing structured terminal evidence remain guarded. Command
+disconnection and missing structured terminal evidence still report unknown outcomes. Command
 text never determines whether an SSH operation is safe to preempt.
 
 Verified terminal Helm tool errors are failed operations, not unknown outcomes.
@@ -166,10 +168,10 @@ One successful tool cannot hide another failed tool in the same apply. Credentia
 operations lock their exact resource IDs, allowing unrelated credentials to run
 concurrently while preserving serialization for the same credential.
 Manual execution reconciliation is no longer available: operator declarations
-must not rewrite an audit or release an execution guard. Historical records remain
-readable. Missing or unverified terminal evidence still blocks mutation.
-`unlock` reconnects only an idle target and refuses active, queued or unresolved
-operations; it does not clear these guards.
+must not rewrite an audit or force-release an active lease. Historical unknown results
+remain readable without blocking the whole target. Failure or uncertainty never
+authorizes automatic mutation replay. `unlock` only reconnects an idle target and
+refuses active or queued operations.
 
 ## Gateway Admin Tokens
 
@@ -426,17 +428,15 @@ doops -session release-<commit> ask \
   --msg '在 <target> 的 namespace <namespace> 发布 deployment/<workload>，镜像 <repository>@sha256:<verified-ci-digest>；使用 chart https://charts.example/<name>.tgz；原因：<reason>；验收：Secret 类型/key、rollout、最终 Deployment spec/status、实际镜像、Service/Endpoint、健康检查和关键功能路径通过。'
 ```
 
-必须明确提供 target、服务范围、镜像版本、变更原因和验收条件。镜像版本必须是任务中的
-不可变 digest 或严格的 `release-YYYYMMDD` tag。需要 Helm 时还要明确远程
-`https://`/`oci://` chart；可选 values 只能是
-HTTP(S) URL，`set_strings` 只允许 `image.repository` 加一个受控版本选择器：
-不可变的 `image.digest` 或严格的 `image.tag=release-YYYYMMDD`，两种模式不得混用。
-`--credential` 可重复，但只传 resource name，不能内联 payload。
-若项目使用完整 Chart 值而不是镜像覆盖，任务应明确要求同时省略 `value_files` 与
-`set_strings`，以已发布的 HTTPS Chart 内唯一 `values.yaml` 为权威源。其 `image.tag`
-必须为合法 `release-YYYYMMDD`，不存在历史值合并或 digest 覆盖。CNB 受管 Helm 凭据使用
-官方 Helm 仓库 HTTPS `.tgz` 下载接口；验证器读取实际授权包而非仓库 `index.yaml`，
-发布器按 session/namespace/release/chart 与物化版本校验后消费，认证失败关闭。
+必须明确提供 target、服务范围、变更原因、授权资产和验收条件。业务镜像版本必须来自
+任务或其明确授权的仓库、Chart、values、现有 release 的只读证据，不猜测，也不要求
+将已明确资产中的事实再粘贴到 prompt。覆盖遵循 Chart schema，不固定业务镜像键或版本格式。
+普通升级使用 `--reset-values`，不再自动保留现有非镜像 values；需要保留的值须显式作为
+资产授权。`asset_source` 默认 remote，当前支持 HTTPS `.tgz`，不支持 `oci://`。
+完整资产参数、可选 `expected_image` 和迁移说明见
+[`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
+`--credential` 可重复，但只传 resource name，不能内联 payload；受管 Helm 认证、
+精确 scope 与包 digest 钉住不变，允许授权的 values overlay 和字符串覆盖。
 发布者必须在调用前独立核对精确 CI source commit、registry digest 和构建成功证据；
 `ask --apply`、`--image`、`--version` 和 Helm 工具不自动验证 CI provenance。
 

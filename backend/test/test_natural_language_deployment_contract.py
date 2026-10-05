@@ -77,12 +77,11 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "set-image" not in system_prompt
     assert "包括只更新镜像" in system_prompt
     assert "`value_files`" in system_prompt
-    assert "`set_strings`" in system_prompt
     assert "`value_files` 是可选" in system_prompt
-    assert "不得要求用户提供候选 values" in system_prompt
+    assert "已明确资产中的事实再粘贴到 prompt" in system_prompt
     assert "不得询问是否启用 dry-run" in system_prompt
-    assert "image.tag=release-YYYYMMDD" in system_prompt
-    assert "不得混用两种模式" in system_prompt
+    assert "Chart schema" in system_prompt
+    assert "image.tag=release-YYYYMMDD" not in system_prompt
     assert '"value_files": map[string]interface{}' in helm_mcp
     assert '"values": map[string]interface{}' not in helm_mcp
     assert "shell 中的 Kubernetes" in system_prompt
@@ -126,14 +125,14 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "不存在直接 Kubernetes 镜像 mutation 例外" in k8s_skill
     assert "add-image-pull-secret" not in k8s_skill
     assert "command、args、env" in k8s_skill
-    assert "发布必须使用任务明确授权的" in k8s_skill
-    assert "`value_files` 可以为空" in k8s_skill
-    assert "不得发起缺少 `confirm=true` 的试探调用" in k8s_skill
-    assert "混用两种镜像选择器" in k8s_skill
+    assert "授权 chart" in k8s_skill
+    assert "`value_files` 可选" in k8s_skill
+    assert "缺少 `confirm=true` 的调用试探" in k8s_skill
+    assert "image.tag=release-YYYYMMDD" not in k8s_skill
     assert "明确的 release、namespace、`value_files`" not in k8s_skill
     assert "Chart、`value_files` 和非敏感" not in build_deploy_sop
-    assert "可选 HTTP(S) `value_files` 和非敏感" in build_deploy_sop
-    assert "`value_files` 可以为空" in build_deploy_sop
+    assert "按 Chart schema 使用明确授权的资产" in build_deploy_sop
+    assert "取消自动保留现有非镜像 values" in build_deploy_sop
     assert "Secret、ServiceAccount" in k8s_skill
     assert "mcp_doops_helm" in deployment_doc
     assert "`session_id` 不属于模型参数" in deployment_doc
@@ -143,10 +142,12 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "共享 mutation 锁" in deployment_doc
     assert "api_trigger_bootstrap_release_runner" not in deployment_doc
     assert "bootstrap-release-runner.sh" not in deployment_doc
-    assert "不得要求调用方再提供" in deployment_doc
-    assert "image.tag=release-YYYYMMDD" in deployment_doc
-    assert "缺少明确版本或使用其它覆盖时" in deployment_doc
-    assert "缺少\n`confirm=true` 的调用不是预演接口" in deployment_doc
+    assert "不要求用户重复粘贴已明确资产中的" in deployment_doc
+    assert "image.tag=release-YYYYMMDD" not in deployment_doc
+    assert "覆盖键及类型由 Chart schema 决定" in deployment_doc
+    assert "缺少 `confirm=true` 的调用不是预演接口" in deployment_doc
+    assert "历史未知审计不参与新任务准入" in deployment_doc
+    assert "不自动重放 mutation" in deployment_doc
     assert "validate_simple_name" in cnb
     assert '*[!A-Za-z0-9._-]*' in cnb
     assert 'test "${#image_digest}" -eq 64' in cnb

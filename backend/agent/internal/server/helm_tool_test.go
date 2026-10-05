@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -26,8 +27,9 @@ func testHelmParams() api.HelmParams {
 			"image.repository": "registry.example/app",
 			"image.digest":     testHelmDigest,
 		},
-		Timeout: "180s",
-		Confirm: true,
+		ExpectedImage: "registry.example/app@" + testHelmDigest,
+		Timeout:       "180s",
+		Confirm:       true,
 	}
 }
 
@@ -76,11 +78,8 @@ func TestBuildHelmUpgradeInstallUsesBoundWorkspaceAssets(t *testing.T) {
 	if command.expectedImage != "registry.example/app@"+testHelmDigest {
 		t.Fatalf("expected image = %q", command.expectedImage)
 	}
-	if command.preserveReleaseValues {
-		t.Fatal("workspace assets must not preserve old release values")
-	}
-	if !command.preflight {
-		t.Fatal("workspace upgrade must use server preflight")
+	if !slices.Contains(command.args, "--reset-values") {
+		t.Fatal("workspace assets must reset old release values")
 	}
 	wantArgs := []string{
 		"upgrade", "app", "deploy/helm/prod", "--install", "--atomic",
@@ -115,7 +114,7 @@ func TestBuildHelmCommandRejectsWorkspaceAssetContractViolations(t *testing.T) {
 			wantError: "path traversal",
 		},
 		{
-			name: "value overlay",
+			name: "missing value overlay",
 			mutate: func(params api.HelmParams, _ string) api.HelmParams {
 				params.ValueFiles = []string{
 					"deploy/helm/prod/values.yaml",
@@ -123,23 +122,23 @@ func TestBuildHelmCommandRejectsWorkspaceAssetContractViolations(t *testing.T) {
 				}
 				return params
 			},
-			wantError: "exactly one value_files",
+			wantError: "does not exist",
 		},
 		{
-			name: "missing expected image",
+			name: "invalid expected image",
 			mutate: func(params api.HelmParams, _ string) api.HelmParams {
-				params.ExpectedImage = ""
+				params.ExpectedImage = "invalid-image"
 				return params
 			},
 			wantError: "expected_image",
 		},
 		{
-			name: "set strings override",
+			name: "credential override",
 			mutate: func(params api.HelmParams, _ string) api.HelmParams {
-				params.SetStrings = map[string]string{"image.repository": "registry.example/app"}
+				params.SetStrings = map[string]string{"registry.password": "synthetic-secret"}
 				return params
 			},
-			wantError: "empty set_strings",
+			wantError: "forbidden credential material",
 		},
 	}
 	for _, test := range tests {
@@ -248,19 +247,96 @@ func TestBuildHelmUpgradeInstallSupportsReleaseTagImage(t *testing.T) {
 	params := testHelmParams()
 	params.SetStrings = map[string]string{
 		"image.repository": "registry.example/app",
-		"image.tag":        "release-20260927",
+		"image.tag":        "v2.3.1",
 	}
+	params.ExpectedImage = "registry.example/app:v2.3.1"
 
 	command, err := buildHelmCommand(params)
 	if err != nil {
 		t.Fatalf("build tag helm command: %v", err)
 	}
-	if command.expectedImage != "registry.example/app:release-20260927" {
+	if command.expectedImage != "registry.example/app:v2.3.1" {
 		t.Fatalf("expected tag image = %q", command.expectedImage)
 	}
 	got := strings.Join(command.args, " ")
-	if !strings.Contains(got, "--set-string image.tag=release-20260927") {
+	if !strings.Contains(got, "--set-string image.tag=v2.3.1") {
 		t.Fatalf("helm command missing release tag: %s", got)
+	}
+}
+
+func TestHelmChartSpecificInputsRenderWithRealHelm(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	workspace := filepath.Join(root, "release")
+	chart := "charts/platform"
+	files := map[string]string{
+		chart + "/Chart.yaml":  "apiVersion: v2\nname: platform\nversion: 1.0.0\n",
+		chart + "/values.yaml": "services:\n  api:\n    image: registry.example/api:v1\n  web:\n    image: registry.example/web:v1\ncors:\n  origins: https://default.example\n",
+		"config/base.yaml":     "services:\n  api:\n    image: registry.example/api@" + testHelmDigest + "\n",
+		"config/prod.yaml":     "services:\n  web:\n    image: registry.example/web:git-b87ab17\n",
+		chart + "/templates/deployments.yaml": `{{- range $name, $service := .Values.services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+spec:
+  template:
+    spec:
+      containers:
+        - name: {{ $name }}
+          image: {{ $service.image | quote }}
+          env:
+            - name: CORS_ORIGINS
+              value: {{ $.Values.cors.origins | quote }}
+{{- end }}
+`,
+	}
+	for path, body := range files {
+		fullPath := filepath.Join(workspace, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(fullPath, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	params := testWorkspaceHelmParams()
+	params.Chart = chart
+	params.ValueFiles = []string{"config/base.yaml", "config/prod.yaml"}
+	params.ExpectedImage = "registry.example/api@" + testHelmDigest
+	params.SetStrings = map[string]string{"cors.origins": "https://hdu.example,https://unicom.example"}
+	command, err := buildHelmCommand(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"template", command.release, command.args[2], "--namespace", command.namespace}
+	for index := 3; index < len(command.args); index++ {
+		if command.args[index] == "--values" || command.args[index] == "--set-string" {
+			args = append(args, command.args[index], command.args[index+1])
+			index++
+		}
+	}
+	render := exec.CommandContext(t.Context(), "helm", args...)
+	render.Dir = command.cwd
+	manifest, err := render.CombinedOutput()
+	if err != nil {
+		t.Fatalf("real Helm rendering failed: %v: %s", err, manifest)
+	}
+	deployments, err := validateHelmRenderedImages(manifest, command.expectedImage)
+	if err != nil || len(deployments) != 2 ||
+		!strings.Contains(string(manifest), "registry.example/web:git-b87ab17") ||
+		!strings.Contains(string(manifest), "https://hdu.example,https://unicom.example") {
+		t.Fatalf("chart-specific inputs did not render faithfully: %v\n%s", err, manifest)
+	}
+	if _, err := validateHelmRenderedImages(manifest, "registry.example/api:v2"); err == nil {
+		t.Fatal("wrong explicit image expectation accepted")
+	}
+	params.ExpectedImage = ""
+	params.ValueFiles = nil
+	params.SetStrings = nil
+	if _, err := buildHelmCommand(params); err != nil {
+		t.Fatalf("chart defaults require no extra business fields: %v", err)
 	}
 }
 
@@ -295,49 +371,41 @@ func TestBuildHelmCommandRejectsLocalAssetsAndUncontrolledImages(t *testing.T) {
 			wantError: "explicit http(s)://",
 		},
 		{
-			name: "missing immutable image",
+			name: "invalid expected digest",
 			mutate: func(params *api.HelmParams) {
-				params.SetStrings = nil
+				params.ExpectedImage = "registry.example/app@latest"
 			},
-			wantError: "requires image.repository plus either image.digest or image.tag",
+			wantError: "invalid expected_image",
 		},
 		{
-			name: "mutable digest",
+			name: "invalid override key",
 			mutate: func(params *api.HelmParams) {
-				params.SetStrings["image.digest"] = "latest"
+				params.SetStrings["name=argument"] = "arbitrary"
 			},
-			wantError: "invalid image.digest",
-		},
-		{
-			name: "extra runtime override",
-			mutate: func(params *api.HelmParams) {
-				params.SetStrings["replicaCount"] = "2"
-			},
-			wantError: "only allows image.repository plus one controlled image selector",
+			wantError: "invalid helm set_strings key",
 		},
 		{
 			name: "credential material",
 			mutate: func(params *api.HelmParams) {
 				params.SetStrings["registry.password"] = "secret-value"
 			},
-			wantError: "only allows image.repository plus one controlled image selector",
+			wantError: "forbidden credential material",
 		},
 		{
-			name: "mutable release tag",
+			name: "credential URL",
 			mutate: func(params *api.HelmParams) {
 				params.SetStrings = map[string]string{
-					"image.repository": "registry.example/app",
-					"image.tag":        "latest",
+					"upstream.url": "https://user:secret@example.test/api",
 				}
 			},
-			wantError: "expected release-YYYYMMDD",
+			wantError: "forbidden credential material",
 		},
 		{
-			name: "mixed image selectors",
+			name: "newline override",
 			mutate: func(params *api.HelmParams) {
-				params.SetStrings["image.tag"] = "release-20260927"
+				params.SetStrings["cors.origins"] = "https://one.example\nhttps://two.example"
 			},
-			wantError: "exactly one of image.digest or image.tag",
+			wantError: "forbidden credential material",
 		},
 		{
 			name: "missing confirmation",
@@ -387,72 +455,6 @@ func TestBuildHelmCommandRejectsLegacyValuesField(t *testing.T) {
 	}
 }
 
-func TestPrepareExistingHelmValuesRemovesLegacyImageSelectors(t *testing.T) {
-	root := t.TempDir()
-	helm := filepath.Join(root, "helm")
-	if err := os.WriteFile(helm, []byte(`#!/bin/sh
-set -eu
-if [ "$1" = "status" ]; then
-  exit 0
-fi
-if [ "$1" = "get" ] && [ "$2" = "values" ]; then
-  printf '%s\n' '{"gateway":{"cluster":"prod"},"image":{"repository":"old.example/app","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","tag":"legacy","pullPolicy":"Always"}}'
-  exit 0
-fi
-exit 1
-`), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	sanitized, found, err := prepareExistingHelmValues(context.Background(), helmCommand{
-		cwd:       root,
-		release:   "app",
-		namespace: "apps",
-	})
-	if err != nil {
-		t.Fatalf("prepare existing values: %v", err)
-	}
-	if !found {
-		t.Fatal("existing release values were not found")
-	}
-	var values map[string]interface{}
-	if err := json.Unmarshal(sanitized, &values); err != nil {
-		t.Fatal(err)
-	}
-	image, _ := values["image"].(map[string]interface{})
-	if len(image) != 1 || image["pullPolicy"] != "Always" {
-		t.Fatalf("legacy image selectors were not removed: %#v", image)
-	}
-	if _, ok := values["gateway"]; !ok {
-		t.Fatalf("non-image values were not preserved: %#v", values)
-	}
-}
-
-func TestPrepareExistingHelmValuesAllowsFirstInstall(t *testing.T) {
-	root := t.TempDir()
-	helm := filepath.Join(root, "helm")
-	if err := os.WriteFile(helm, []byte(`#!/bin/sh
-echo 'Error: release: not found' >&2
-exit 1
-`), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	sanitized, found, err := prepareExistingHelmValues(context.Background(), helmCommand{
-		cwd:       root,
-		release:   "app",
-		namespace: "apps",
-	})
-	if err != nil {
-		t.Fatalf("first install rejected: %v", err)
-	}
-	if found || sanitized != nil {
-		t.Fatalf("first install unexpectedly produced existing values: %s", sanitized)
-	}
-}
-
 func TestRunHelmCommandVerifiesFinalDeploymentState(t *testing.T) {
 	root := t.TempDir()
 	argsFile := filepath.Join(root, "args")
@@ -462,13 +464,6 @@ func TestRunHelmCommandVerifiesFinalDeploymentState(t *testing.T) {
 	kubectl := filepath.Join(root, "kubectl")
 	if err := os.WriteFile(helm, []byte(`#!/bin/sh
 set -eu
-if [ "$1" = "status" ]; then
-  exit 0
-fi
-if [ "$1" = "get" ] && [ "$2" = "values" ]; then
-  printf '%s\n' '{"large":9007199254740993,"gateway":{"cluster":"prod"},"image":{"tag":"legacy","pullPolicy":"Always"}}'
-  exit 0
-fi
 if [ "$1" = "get" ] && [ "$2" = "manifest" ]; then
   cat <<'YAML'
 apiVersion: apps/v1
@@ -487,6 +482,7 @@ fi
 for arg in "$@"; do
   if [ "$arg" = "--dry-run=server" ]; then
     printf '%s\n' "$@" >"${PREFLIGHT_ARGS_FILE}"
+    printf '%s\n' '{"manifest":"kind: Deployment\nmetadata:\n  name: app\nspec:\n  template:\n    spec:\n      containers:\n        - image: registry.example/app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"}'
     cat >/dev/null
     exit 0
   fi
@@ -543,10 +539,8 @@ JSON
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(stdin), `"tag"`) ||
-		!strings.Contains(string(stdin), `"large":9007199254740993`) ||
-		!strings.Contains(string(stdin), `"pullPolicy":"Always"`) {
-		t.Fatalf("sanitized values stream is incorrect: %s", stdin)
+	if len(stdin) != 0 || !slices.Contains(argLines, "--reset-values") || slices.Contains(argLines, "-") {
+		t.Fatalf("mutation must only use explicitly supplied values, args=%q stdin=%s", argLines, stdin)
 	}
 }
 
@@ -584,6 +578,36 @@ touch "${MUTATION_MARKER}"
 	}
 	if _, err := os.Stat(mutationMarker); !os.IsNotExist(err) {
 		t.Fatalf("helm mutation ran after failed preflight")
+	}
+}
+
+func TestRunHelmCommandImageExpectationBlocksMutation(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(root, "mutation")
+	if err := os.WriteFile(filepath.Join(root, "helm"), []byte(`#!/bin/sh
+set -eu
+for arg in "$@"; do
+  if [ "$arg" = "--dry-run=server" ]; then
+    printf '%s\n' '{"manifest":"kind: Deployment\nmetadata:\n  name: app\nspec:\n  template:\n    spec:\n      containers:\n        - image: registry.example/app:wrong-version\n"}'
+    exit 0
+  fi
+done
+touch "${MUTATION_MARKER}"
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("MUTATION_MARKER", marker)
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	command, err := buildHelmCommand(testHelmParams())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runHelmCommand(t.Context(), command, nil); err == nil || err.Error() != "helm_preflight_image_mismatch" {
+		t.Fatalf("wrong rendered image did not fail preflight: %v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("mutation executed after image mismatch")
 	}
 }
 

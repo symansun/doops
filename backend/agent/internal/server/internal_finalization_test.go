@@ -75,7 +75,7 @@ func TestInternalFinalizationFailureBlocksAfterParentLeaseRelease(t *testing.T) 
 	lifecycleSend(t, client, 2, "doops_shell", "next", map[string]interface{}{"command": "true"})
 	response := readUntilID(t, client, 2)
 	rpcError, ok := response["error"].(map[string]interface{})
-	if !ok || !strings.Contains(rpcError["message"].(string), "execution_guard_unavailable") {
+	if !ok || !strings.Contains(rpcError["message"].(string), "audit_completion_pending") {
 		t.Fatalf("mutation admitted while child persistence fails: %#v", response)
 	}
 	select {

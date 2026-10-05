@@ -19,10 +19,14 @@
   由集群内独立 Job 执行，不在本会话通过 Helm 修改自身。Gateway 本体使用独立
   `scripts/deploy-gateway.sh` 发布。普通业务和已具备自升级控制器的 Agent 镜像升级都
   不要求操作机 kubeconfig，也不要求 `doops push` 或源码工作区快照。
-- 发布任务是用户明确授权的自然语言任务，必须直接给出 target、服务范围、镜像版本、变更原因和验收条件。
-- 运行时 Helm 资产必须来自任务明确指定的远程 `https://`/`oci://` chart 和可选 HTTP(S)
-  values URL；不得读取 target 隔离 workspace，也不得把环境注册表、模板或 workflow YAML
-  当作发布根。
+- 发布任务必须明确授权 target、服务范围、变更原因、资产和验收条件。业务镜像版本必须来自
+  任务或其明确授权的仓库、Chart、values、现有 release 的只读证据；不得猜测，也不得要求
+  已明确资产中的事实再粘贴到 prompt。不把业务镜像键、版本格式、CORS Origin、仓库名或
+  项目目录作为全局前置闸门。
+- 仅使用明确授权的 Helm 资产，不把环境注册表、模板或 workflow YAML 当作发布根。
+  资产与迁移契约见 [自然语言发布文档](../../docs/NATURAL_LANGUAGE_DEPLOYMENT.md)，
+  运行时文档为 `/app/self-docs/docs/NATURAL_LANGUAGE_DEPLOYMENT.md`；remote 支持 HTTPS
+  `.tgz`，当前不支持 `oci://`。
 - 发布镜像由 CI 从精确提交构建；不得在业务 target 上用 BuildKit、Docker 或 nerdctl
   重新构建替代 CI，也不得要求先 SCP 或同步源码。缺少 CI 来源证据时报告阻塞。
 - 规划、模块发现、工具选择和多 Agent 委派由 doagent 原生引擎负责，不在 Go、prompt 或 Skill 中硬编码发布步骤。
@@ -31,19 +35,13 @@
   节点、事件和存储状态，不得读取 Secret、ServiceAccount 或其它凭据载体。普通业务
   workload 的发布 mutation，包括只更新镜像，都必须使用任务明确授权的 Helm 资产，通过
   `mcp_doops_helm`（规范能力名 `doops_helm`）执行
-  `upgrade-install`、`rollback` 或 `uninstall`，并显式传入 release、namespace、
-  远程 `https://`/`oci://` chart、可选 HTTP(S) `value_files`、非敏感 `set_strings` 和
-  `confirm=true`。`set_strings` 只允许 `image.repository` 与一个受控版本选择器：
-  不可变的 `image.digest=sha256:<digest>` 或严格匹配
-  `image.tag=release-YYYYMMDD`；不得混用两种模式或传入其它覆盖，不得传入
-  `workload.selectorLabels` 这类 map/list 父键。
-  `upgrade-install` 自动保留已有 release 的非镜像 values，并由当前 chart 与本次输入收敛。
-  当任务已经明确现有 release、namespace、chart 和不可变镜像时，`value_files` 是可选
-  参数，不是发布前置条件；必须直接调用一次 `mcp_doops_helm upgrade-install`，
-  `set_strings` 只传 `image.repository` 和一个明确版本选择器，不得要求用户提供候选 values
-  文件或重复列出当前 values。工具会在内部读取并保留现有 release values，并用完全
-  相同的参数自动执行 Helm dry-run 后再 mutation。不得用缺少 `confirm=true` 的试探
-  调用代替该内置预检，也不得询问是否启用 dry-run。
+  `upgrade-install`、`rollback` 或 `uninstall`，并显式传入 release、namespace 和
+  `confirm=true`。`upgrade-install` 的 `value_files` 是可选参数，覆盖遵循 Chart schema；
+  普通升级统一 `--reset-values`，仅使用显式授权输入，不隐式继承历史 values。
+  事实齐备后调用工具，工具以相同输入自动先执行 server dry-run 再 mutation；不得用
+  缺少 `confirm=true` 的试探调用代替预检，也不得询问是否启用 dry-run。
+  保留受管 Helm 认证、精确 scope、包 digest 钉住和 Chart 渲染、最终 Deployment
+  generation/spec/status 校验；可选 `expected_image` 只接受显式输入，不从 values 推导。
   `session_id` 由运行时绑定，工具 schema 不向模型开放该字段；Gateway target 只是路由标签，
   绝不能作为 session 或工作区路径使用。Helm 成功后必须以最终 Deployment
   manifest/spec/status 为事实源，不能只依据 revision、Pod Ready 或模型文本。
@@ -64,7 +62,7 @@
     user token，也不是受管凭据。
   - `credential_invalid`、`credential_payload_invalid`、`credential_grant_denied`
     等：受管凭据控制面或目标 Agent 的凭据物化/验证问题。只有存在这类明确证据时，
-    才能判断 `scu-zhiyong-admin-login` 等受管凭据有问题。
+    才能判断对应受管凭据有问题。
   - 目标业务服务返回的 `401`：只能在 Gateway 鉴权已经成功、且 Agent 已实际使用
     受管凭据访问该业务服务的证据存在时，归因于业务凭据；必须说明目标 URL/服务域，
     不能把它写成 Gateway 401。

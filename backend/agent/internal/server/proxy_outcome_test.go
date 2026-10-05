@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func TestProxyPOSTUpstreamDisconnectPersistsUnknownAndBlocksNextMutation(t *testing.T) {
+func TestProxyPOSTUpstreamDisconnectPreservesUnknownWithoutBlockingNextRequest(t *testing.T) {
 	firstReceived := make(chan struct{})
 	var requests atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,11 +75,11 @@ func TestProxyPOSTUpstreamDisconnectPersistsUnknownAndBlocksNextMutation(t *test
 	second.Host = "mutate.example.test"
 	secondRecorder := httptest.NewRecorder()
 	hub.HandlePublicProxy(secondRecorder, second)
-	if secondRecorder.Code != http.StatusConflict {
-		t.Fatalf("second POST status = %d, body=%s; mutation protection was released", secondRecorder.Code, secondRecorder.Body.String())
+	if secondRecorder.Code != http.StatusOK {
+		t.Fatalf("historical unknown audit blocked second POST: status=%d body=%s", secondRecorder.Code, secondRecorder.Body.String())
 	}
-	if got := requests.Load(); got != 1 {
-		t.Fatalf("second POST reached upstream: request count=%d", got)
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("new explicit POST request count=%d, want 2", got)
 	}
 }
 
@@ -146,14 +146,6 @@ func TestProxyUpstreamOutcomeClassification(t *testing.T) {
 			events, err := store.ListAuditFiltered(AuditFilter{Action: ActionProxy, Limit: 10})
 			if err != nil || len(events) != 1 || events[0].Status != test.wantAudit {
 				t.Fatalf("proxy audit=%#v, error=%v, want %s", events, err, test.wantAudit)
-			}
-			guardErr := hub.client.checkExecutionGuard("dev", "local")
-			if test.wantAudit == "outcome_unknown" {
-				if !errors.Is(guardErr, errExecutionOutcomeUnknown) {
-					t.Fatalf("unknown mutation did not block target: %v", guardErr)
-				}
-			} else if guardErr != nil {
-				t.Fatalf("ordinary outcome blocked target: %v", guardErr)
 			}
 		})
 	}
@@ -238,14 +230,6 @@ func TestProxyDownstreamWriteFailureUsesCancelOutcome(t *testing.T) {
 				if err != nil || len(events) != 1 || events[0].Status != wantStatus || events[0].Error != wantError {
 					t.Fatalf("downstream failure audit=%#v, error=%v, want %s: %s", events, err, wantStatus, wantError)
 				}
-				guardErr := hub.client.checkExecutionGuard("dev", "local")
-				if wantStatus == "outcome_unknown" {
-					if !errors.Is(guardErr, errExecutionOutcomeUnknown) {
-						t.Fatalf("unknown downstream outcome released target protection: %v", guardErr)
-					}
-				} else if guardErr != nil {
-					t.Fatalf("ordinary downstream failure blocked target: %v", guardErr)
-				}
 				if terminal != "disconnect" {
 					releaseUpstream()
 					next := httptest.NewRequest(http.MethodPost, "http://gateway.test/next", nil)
@@ -253,9 +237,6 @@ func TestProxyDownstreamWriteFailureUsesCancelOutcome(t *testing.T) {
 					recorder := httptest.NewRecorder()
 					hub.HandlePublicProxy(recorder, next)
 					wantHTTP, wantCalls := http.StatusOK, int32(2)
-					if wantStatus == "outcome_unknown" {
-						wantHTTP, wantCalls = http.StatusConflict, 1
-					}
 					if recorder.Code != wantHTTP || requests.Load() != wantCalls {
 						t.Fatalf("next POST status=%d calls=%d, want %d calls=%d: %s",
 							recorder.Code, requests.Load(), wantHTTP, wantCalls, recorder.Body.String())

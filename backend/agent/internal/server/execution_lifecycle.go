@@ -213,33 +213,20 @@ func (s *ClientService) beginExecution(agent *GatewayAgent, operationID string, 
 		return errGatewayAgentDisconnected
 	default:
 	}
-	events, err := s.unresolvedExecutionsLocked(agent.Cluster, agent.Instance)
-	if err != nil {
-		return fmt.Errorf("execution_guard_unavailable: %w", err)
-	}
-	if len(events) != 0 {
-		return fmt.Errorf("%w: audit-%d; machine terminal evidence required", errExecutionOutcomeUnknown, events[0].ID)
-	}
 	s.activeOpsMu.Lock()
 	defer s.activeOpsMu.Unlock()
 	op := s.activeOps[operationID]
 	if op == nil || op.State == "cancel_requested" {
 		return context.Canceled
 	}
+	for id, current := range s.activeOps {
+		if id != operationID && current.State == "finalizing" && operationsConflict(op.GatewayActiveOperation, current.GatewayActiveOperation) {
+			return fmt.Errorf("audit_completion_pending: %s", id)
+		}
+	}
 	if err := s.store.MarkExecutionDispatched(auditID); err != nil {
 		return fmt.Errorf("execution_audit_unavailable: %w", err)
 	}
 	op.agent = agent
-	return nil
-}
-
-func (s *ClientService) checkExecutionGuard(cluster, instance string) error {
-	events, err := s.unresolvedExecutions(cluster, instance)
-	if err != nil {
-		return fmt.Errorf("execution_guard_unavailable: %w", err)
-	}
-	if len(events) != 0 {
-		return fmt.Errorf("%w: audit-%d; machine terminal evidence required", errExecutionOutcomeUnknown, events[0].ID)
-	}
 	return nil
 }

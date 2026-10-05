@@ -142,11 +142,6 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 		return "", err
 	}
 	guarded := requiresExecutionOutcomeGuard(action, tool, rawArgs, resourceKey)
-	if guarded {
-		if err := h.checkExecutionGuard(cluster, instance); err != nil {
-			return "", err
-		}
-	}
 	if !inherited {
 		releaseLimit, err := h.acquireOperationSlot(operationUserID)
 		if err != nil {

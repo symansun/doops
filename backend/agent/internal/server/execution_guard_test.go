@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -89,21 +90,31 @@ func TestExecutionGuardReplacementCannotInheritLiveExecution(t *testing.T) {
 	if err := hub.client.beginExecution(oldAgent, opID, id); err != nil {
 		t.Fatal(err)
 	}
-	if err := hub.client.checkExecutionGuard("dev", "node"); err != nil {
-		t.Fatalf("live original owner incorrectly blocked: %v", err)
+	if events, err := hub.client.unresolvedExecutions("dev", "node"); err != nil || len(events) != 0 {
+		t.Fatalf("live original owner incorrectly reported as unknown: %#v, %v", events, err)
 	}
 	newConn := dialFakeGatewayAgent(t, server.URL, "dev", "node")
 	defer newConn.Close()
 	go serveFakeAgentWithRuntimeID(t, newConn, "replacement")
 	requireEventually(t, time.Second, func() bool { return hub.getAgent("dev", "node") != oldAgent })
-	if err := hub.client.checkExecutionGuard("dev", "node"); !errors.Is(err, errExecutionOutcomeUnknown) {
-		t.Fatalf("replacement inherited original executing audit: %v", err)
+	if events, err := hub.client.unresolvedExecutions("dev", "node"); err != nil || len(events) != 1 || events[0].ID != id || events[0].Status != "outcome_unknown" {
+		t.Fatalf("replacement inherited original executing audit: %#v, %v", events, err)
 	}
-	if err := store.FinishAudit(id, AuditFinish{Status: "canceled", EndedAt: time.Now().UTC()}); err != nil {
-		t.Fatal(err)
+	if err := hub.client.beginExecution(oldAgent, opID, id); !errors.Is(err, errGatewayAgentDisconnected) {
+		t.Fatalf("stale Agent retained dispatch ownership: %v", err)
 	}
-	if err := hub.client.checkExecutionGuard("dev", "node"); err != nil {
-		t.Fatalf("terminal evidence did not release guard: %v", err)
+	nextID := startExecutionAuditTestEvent(t, store, AuditEvent{
+		Cluster: "dev", Instance: "node", Action: ActionExec, Session: "replacement",
+	})
+	nextOp := hub.client.registerActiveOperation(GatewayActiveOperation{
+		AuditID: nextID, Cluster: "dev", Instance: "node", Action: ActionExec, Session: "replacement",
+	}, func() {})
+	defer hub.client.finishActiveOperation(nextOp)
+	if err := hub.client.beginExecution(hub.getAgent("dev", "node"), nextOp, nextID); err != nil {
+		t.Fatalf("historical unknown blocked replacement dispatch: %v", err)
+	}
+	if got := executionAuditTestEvent(t, store, id); got.Status != "outcome_unknown" || got.EndedAt.IsZero() {
+		t.Fatalf("replacement dispatch cleared original uncertainty: %#v", got)
 	}
 }
 
@@ -145,26 +156,35 @@ func TestExecutionGuardDoesNotInventLifecycleCapability(t *testing.T) {
 	}
 }
 
-func TestExecutionGuardUndispatchedInternalCallDoesNotCreateUnknown(t *testing.T) {
+func TestExecutionGuardHistoricalUnknownDoesNotBlockInternalCall(t *testing.T) {
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
 	agent := f.agent(t, "guarded-internal")
 	id := startExecutionAuditTestEvent(t, f.store, AuditEvent{
 		Cluster: "dev", Instance: "local", Action: ActionExec, Status: "outcome_unknown",
 	})
-	_, err := f.hub.RunInternalToolCall(context.Background(), "dev", "local", "doops_shell", map[string]interface{}{
-		"session_id": "blocked-internal", "command": "true",
-	})
-	if !errors.Is(err, errExecutionOutcomeUnknown) {
-		t.Fatalf("internal call bypassed an unresolved execution: %v", err)
+	before := executionAuditTestEvent(t, f.store, id)
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.hub.RunInternalToolCall(context.Background(), "dev", "local", "doops_shell", map[string]interface{}{
+			"session_id": "next-internal", "command": "true",
+		})
+		done <- err
+	}()
+	agent.complete(t, agent.call(t, "doops_shell", "next-internal"), "")
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("historical unknown blocked internal execution: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("internal execution did not finish")
 	}
 	unresolved, err := f.store.UnresolvedExecutions("dev", "local")
 	if err != nil || len(unresolved) != 1 || unresolved[0].ID != id {
-		t.Fatalf("undispatched rejection created a new unknown execution: %#v, %v", unresolved, err)
+		t.Fatalf("internal execution changed historical uncertainty: %#v, %v", unresolved, err)
 	}
-	select {
-	case call := <-agent.calls:
-		t.Fatalf("blocked internal call reached Agent: %#v", call)
-	default:
+	if got := executionAuditTestEvent(t, f.store, id); !reflect.DeepEqual(got, before) {
+		t.Fatalf("internal execution rewrote unknown audit: %#v", got)
 	}
 }
 
@@ -354,7 +374,7 @@ func TestExecutionGuardReadOnlyK8SDisconnectDoesNotPersistUnknown(t *testing.T) 
 	}
 }
 
-func TestExecutionGuardCanceledMutationCannotBePreemptedAfterLocalExit(t *testing.T) {
+func TestExecutionGuardCanceledMutationRetainsUnknownWithoutBlockingNextCall(t *testing.T) {
 	for _, tool := range []string{"doops_shell", "doops_ssh", "doops_bg", "doops_agent_prompt", "doops_k8s"} {
 		t.Run(tool, func(t *testing.T) {
 			f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
@@ -382,6 +402,11 @@ func TestExecutionGuardCanceledMutationCannotBePreemptedAfterLocalExit(t *testin
 			case <-time.After(3 * time.Second):
 				t.Fatal("Agent did not receive the cancellation request")
 			}
+			lifecycleSend(t, probe, 2, "doops_shell", "takeover", map[string]interface{}{"command": "./next-change"})
+			lifecycleResponse(t, probe, 2, "target busy")
+			if owned := f.operation(t, "interrupted", "cancel_requested"); owned.ID != op.ID || owned.AuditID != op.AuditID {
+				t.Fatalf("cancel ACK released original ownership: %#v", owned)
+			}
 			agent.complete(t, call, "operation canceled")
 			lifecycleResponse(t, client, 2, "execution_outcome_unknown")
 			requireEventually(t, 3*time.Second, func() bool { return len(f.hub.listActiveOperations()) == 0 })
@@ -389,9 +414,14 @@ func TestExecutionGuardCanceledMutationCannotBePreemptedAfterLocalExit(t *testin
 			if err != nil || len(unresolved) != 1 || unresolved[0].ID != op.AuditID {
 				t.Fatalf("local exit cleared remote uncertainty: %#v, %v", unresolved, err)
 			}
-			lifecycleSend(t, probe, 2, "doops_shell", "takeover", map[string]interface{}{"command": "./next-change"})
-			lifecycleResponse(t, probe, 2, "execution_outcome_unknown")
-			f.http(t, f.admin, http.MethodPost, "/v1/targets/unlock?cluster=dev&instance=local", "", http.StatusConflict)
+			before := executionAuditTestEvent(t, f.store, op.AuditID)
+			lifecycleSend(t, probe, 3, "doops_shell", "takeover", map[string]interface{}{"command": "./next-change"})
+			agent.complete(t, agent.call(t, "doops_shell", "takeover"), "")
+			lifecycleResponse(t, probe, 3, "")
+			if got := executionAuditTestEvent(t, f.store, op.AuditID); !reflect.DeepEqual(got, before) {
+				t.Fatalf("follow-up execution rewrote unknown audit: %#v", got)
+			}
+			f.http(t, f.admin, http.MethodPost, "/v1/targets/unlock?cluster=dev&instance=local", "", http.StatusOK)
 		})
 	}
 }

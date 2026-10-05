@@ -2,6 +2,21 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-10-05 Remove Audit Admission And Business Helm Policy
+
+- Remove historical unresolved-audit queries from mutation admission. Preserve
+  `outcome_unknown` records and failure responses; do not replay mutations or
+  declare an uncertain result successful. Live operations, resource leases,
+  cancellation and audit-persistence failure protection remain authoritative.
+- No TTL, extra protocol, configuration flag or manual reconciliation mechanism.
+- Remove fixed image values keys, date-based tags, bundled-only managed Charts,
+  project-directory assumptions and implicit historical values rewriting.
+  Chart/values define business configuration; remote values are staged once for
+  both preflight and mutation. Authentication, exact scope, artifact digest,
+  session isolation, dry-run and final Deployment verification remain enforced.
+- Restore Gateway and the affected ZYJ/edu Agents from one immutable CI release.
+  Evidence and rollback bounds: `reports/subtraction-release-2026-10-05.md`.
+
 ## 2026-10-05 Minimal Concurrency Repair
 
 - Reuse the existing MCP tool-error response for execution failures. RPC request

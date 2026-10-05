@@ -1,8 +1,12 @@
 package server
 
 import (
+	"archive/tar"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +19,7 @@ func testManagedHelmBinding() api.AgentCredentialBinding {
 	return api.AgentCredentialBinding{
 		Name: "helm-test", Use: "helmPull", Namespace: "apps", ContextKind: "helm-native",
 		ContextSocket: filepath.Join(os.TempDir(), "doops-native-helm-test", "broker.sock"),
-		ResourceName: "doops-credential-test", ResourceVersion: "10",
+		ResourceName:  "doops-credential-test", ResourceVersion: "10",
 		CredentialID: "cred_" + strings.Repeat("a", 24), GrantID: "credgrant_" + strings.Repeat("b", 24),
 		VersionID: "credver_" + strings.Repeat("c", 24), Digest: "sha256:" + strings.Repeat("d", 64),
 		HelmRelease: "app", HelmChart: "https://charts.example.test/charts/app.tgz",
@@ -67,17 +71,17 @@ func TestHelmFullChartValuesDoNotMergeExistingRelease(t *testing.T) {
 	params := testHelmParams()
 	params.SetStrings = nil
 	params.ValueFiles = nil
+	params.ExpectedImage = ""
 	command, err := buildHelmCommand(params)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !command.fullChartValues || command.preserveReleaseValues ||
-		!strings.Contains(strings.Join(command.args, " "), "--reset-values") || command.expectedImage != "" {
+	if !strings.Contains(strings.Join(command.args, " "), "--reset-values") || command.expectedImage != "" {
 		t.Fatalf("full values command merged prior state or image overrides: %#v", command)
 	}
 }
 
-func TestHelmFullValuesRejectMixedReleaseTagsBeforeMutation(t *testing.T) {
+func TestHelmRenderedImagesSupportIndependentVersionsAndExplicitExpectation(t *testing.T) {
 	manifest := `apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -91,16 +95,105 @@ spec:
         - name: proxy
           image: nginx:1.25
 `
-	if err := validateHelmReleaseTagManifest([]byte(manifest), "release-20261003"); err != nil {
+	if _, err := validateHelmRenderedImages([]byte(manifest), "registry.example/app:release-20261003"); err != nil {
 		t.Fatal(err)
+	}
+	multiService := strings.ReplaceAll(manifest, "nginx:1.25", "registry.example/app:release-20261002")
+	if _, err := validateHelmRenderedImages([]byte(multiService), "registry.example/app:release-20261003"); err != nil {
+		t.Fatalf("independently versioned service rejected: %v", err)
+	}
+	if _, err := validateHelmRenderedImages([]byte(multiService), ""); err != nil {
+		t.Fatalf("chart-provided images rejected: %v", err)
 	}
 	for _, invalid := range []string{
 		strings.ReplaceAll(manifest, "release-20261003", "release-20261002"),
-		strings.ReplaceAll(manifest, "nginx:1.25", "registry.example/other:release-20261002"),
 		strings.ReplaceAll(manifest, "release-20261003", "latest"),
 	} {
-		if err := validateHelmReleaseTagManifest([]byte(invalid), "release-20261003"); err == nil {
+		if _, err := validateHelmRenderedImages([]byte(invalid), "registry.example/app:release-20261003"); err == nil {
 			t.Fatal("invalid release images accepted")
 		}
+	}
+}
+
+func TestManagedHelmChartAllowsOverridesWithoutRelaxingCredentialScope(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "workspaces")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	chart := managedHelmTestArchive(t, managedHelmTestEntries())
+	var valueRequests int
+	server := managedHelmTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/values.yaml" {
+			valueRequests++
+			fmt.Fprintf(w, "replicaCount: %d\n", valueRequests)
+			return
+		}
+		user, password, ok := r.BasicAuth()
+		if !ok || user != "helm" || password != "synthetic-helm-canary" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write(chart)
+	}))
+	params := testHelmParams()
+	params.Chart = server.URL + "/charts/app.tgz"
+	params.ValueFiles = []string{server.URL + "/values.yaml"}
+	params.SetStrings["cors.origins"] = "https://app.example"
+	binding := testManagedHelmBinding()
+	binding.HelmChart = params.Chart
+	materialized, err := materializeNativeHelmCredential(t.Context(), CredentialMaterializeRequest{
+		SessionID: params.SessionID, CredentialID: binding.CredentialID, GrantID: binding.GrantID,
+		VersionID: binding.VersionID, Scope: CredentialGrantScope{
+			Use: CredentialUseHelmPull, Namespace: params.Namespace,
+			HelmRelease: params.Release, HelmChart: params.Chart,
+		},
+	}, nativeHelmAuth{URL: server.URL, Username: "helm", Password: "synthetic-helm-canary"}, fmt.Sprintf("sha256:%x", sha256.Sum256(chart)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = cleanupNativeHelmCredential(CredentialCleanupRequest{
+			Namespace: params.Namespace, CredentialID: binding.CredentialID, GrantID: binding.GrantID, AnyVersion: true,
+		})
+	})
+	binding.ContextSocket = materialized.ContextSocket
+	binding.ResourceVersion = materialized.ResourceVersion
+	binding.Digest = materialized.Digest
+	cleanupLease, err := bindHelmCredentialsForPrompt(params.SessionID, []api.AgentCredentialBinding{binding})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanupLease()
+	command, err := buildHelmCommand(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupChart, err := prepareManagedHelmChart(t.Context(), params, &command)
+	if err != nil {
+		t.Fatalf("authorized chart with business overrides rejected: %v", err)
+	}
+	defer cleanupChart()
+	if command.args[2] == params.Chart {
+		t.Fatal("authorized chart was not staged")
+	}
+	for index, arg := range command.args {
+		if arg == "--values" {
+			body, err := os.ReadFile(command.args[index+1])
+			if err != nil || string(body) != "replicaCount: 1\n" || valueRequests != 1 {
+				t.Fatalf("values not staged once: %q requests=%d err=%v", body, valueRequests, err)
+			}
+		}
+	}
+	params.Release = "other"
+	if _, _, err := authorizedHelmCredential(t.Context(), params); err == nil || err.Error() != "helm_credential_scope_mismatch" {
+		t.Fatalf("overrides must not widen credential scope: %v", err)
+	}
+	params.Release = "app"
+	chart = managedHelmTestArchive(t, append(managedHelmTestEntries(), managedHelmTestEntry{
+		header: tar.Header{Name: "zhiyong/README.md"}, body: []byte("changed chart"),
+	}))
+	if _, err := prepareManagedHelmChart(t.Context(), params, &command); err == nil || err.Error() != "helm_chart_digest_changed" {
+		t.Fatalf("changed authorized artifact accepted: %v", err)
 	}
 }
