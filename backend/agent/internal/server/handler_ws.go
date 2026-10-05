@@ -2523,16 +2523,27 @@ func startRawCommand(ctx context.Context, cmd *exec.Cmd) (*exec.Cmd, io.ReadClos
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = commandPipeGracePeriod
 
-	stdoutPipe, err := cmd.StdoutPipe()
+	if cmd.Stdout != nil || cmd.Stderr != nil {
+		return nil, nil, nil, errors.New("command output already set")
+	}
+	stdoutPipe, stdoutWriter, err := os.Pipe()
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	stderrPipe, err := cmd.StderrPipe()
+	defer stdoutWriter.Close()
+	stderrPipe, stderrWriter, err := os.Pipe()
 	if err != nil {
+		_ = stdoutPipe.Close()
 		return nil, nil, nil, err
 	}
+	defer stderrWriter.Close()
+	// Wait must not own the read ends; fast commands can exit before readers run.
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
 
 	if err := cmd.Start(); err != nil {
+		_ = stdoutPipe.Close()
+		_ = stderrPipe.Close()
 		return nil, nil, nil, err
 	}
 	return cmd, stdoutPipe, stderrPipe, nil
@@ -2624,14 +2635,23 @@ func waitProcessGroup(ctx context.Context, pid int, commandDone <-chan error) er
 	}
 }
 
-// waitCommandStreams drains both pipes while Cmd.Wait bounds descendants that
-// keep the output descriptors open after the leader exits. The process-group
-// watchdog remains responsible for terminating those descendants.
+// waitCommandStreams owns the read ends independently of Cmd.Wait. Bound the
+// final drain because writers can escape the process-group watchdog.
 func waitCommandStreams(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.ReadCloser, push notificationSender, heartbeat bool) error {
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() { defer wg.Done(); streamReader(stdout, push) }()
-	go func() { defer wg.Done(); streamReader(stderr, push) }()
+	streamDone := make(chan error, 2)
+	readStream := func(pipe io.ReadCloser) {
+		scanner := bufio.NewScanner(pipe)
+		defer func() {
+			_ = pipe.Close()
+			streamDone <- scanner.Err()
+		}()
+		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+		for scanner.Scan() {
+			push(rawNotification(scanner.Text() + "\n"))
+		}
+	}
+	go readStream(stdout)
+	go readStream(stderr)
 
 	var done, heartbeatDone chan struct{}
 	if heartbeat {
@@ -2649,7 +2669,23 @@ func waitCommandStreams(ctx context.Context, cmd *exec.Cmd, stdout, stderr io.Re
 		_ = stdout.Close()
 		_ = stderr.Close()
 	}
-	wg.Wait()
+	drainTimer := time.NewTimer(commandPipeGracePeriod)
+	defer drainTimer.Stop()
+	drainDeadline := drainTimer.C
+	for remaining := 2; remaining > 0; {
+		select {
+		case readErr := <-streamDone:
+			remaining--
+			if readErr != nil && !errors.Is(cmdErr, errExecutionOutcomeUnknown) {
+				cmdErr = fmt.Errorf("%w: command output read: %w", errExecutionOutcomeUnknown, readErr)
+			}
+		case <-drainDeadline:
+			drainDeadline = nil
+			_ = stdout.Close()
+			_ = stderr.Close()
+			cmdErr = fmt.Errorf("%w: command output drain timed out", errExecutionOutcomeUnknown)
+		}
+	}
 	if done != nil {
 		close(done)
 		<-heartbeatDone
