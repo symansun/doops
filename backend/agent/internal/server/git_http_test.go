@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"syscall"
@@ -351,13 +352,21 @@ wait
 	if !found {
 		t.Fatalf("interrupted receive hook lost uncertainty guard: %#v", audits)
 	}
+	originalAudits := audits
 	response, err := http.Get(repoURL + "/info/refs?service=git-upload-pack")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(response.Body)
-	if err != nil || response.StatusCode != http.StatusConflict || !strings.Contains(string(body), "execution_outcome_unknown") {
-		t.Fatalf("Gateway allowed work before hook reconciliation: HTTP %d %q, %v", response.StatusCode, body, err)
+	if err != nil || response.StatusCode != http.StatusOK ||
+		!strings.HasPrefix(string(body), "001e# service=git-upload-pack\n0000") || !strings.Contains(string(body), "refs/heads/master") {
+		t.Fatalf("independent Git request after hook cancellation failed: HTTP %d %q, %v", response.StatusCode, body, err)
+	}
+	requireEventually(t, time.Second, func() bool { return len(hub.listActiveOperations()) == 0 })
+	audits, err = hub.store.ListAudit(10)
+	if err != nil || len(audits) != len(originalAudits)+1 || audits[0].Status != "success" ||
+		!reflect.DeepEqual(audits[1:], originalAudits) {
+		t.Fatalf("independent Git request did not add exactly one success audit while preserving original audits: before=%#v, after=%#v, %v", originalAudits, audits, err)
 	}
 }

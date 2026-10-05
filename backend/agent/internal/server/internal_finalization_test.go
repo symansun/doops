@@ -71,6 +71,21 @@ func TestInternalFinalizationFailureBlocksAfterParentLeaseRelease(t *testing.T) 
 		t.Fatal(err)
 	}
 	service.finishActiveOperation(parent)
+	for _, operation := range service.listActiveOperations() {
+		if operation.Session != "child" {
+			continue
+		}
+		if !service.cancelActiveOperation(operation.ID) ||
+			!service.cancelActiveOperationForTarget(operation.ID, "dev", "local") {
+			t.Fatal("finalizing operation must remain addressable for cancellation")
+		}
+		service.activeOpsMu.Lock()
+		state := service.activeOps[operation.ID].State
+		service.activeOpsMu.Unlock()
+		if state != "finalizing" {
+			t.Fatalf("cancellation discarded pending audit finalization: %s", state)
+		}
+	}
 	client := f.client(t, f.admin)
 	lifecycleSend(t, client, 2, "doops_shell", "next", map[string]interface{}{"command": "true"})
 	response := readUntilID(t, client, 2)
@@ -83,4 +98,11 @@ func TestInternalFinalizationFailureBlocksAfterParentLeaseRelease(t *testing.T) 
 		t.Fatalf("unexpected mutation reached Agent: %#v", call)
 	default:
 	}
+	if _, err := f.store.db.Exec("DROP TRIGGER fail_child_finalization"); err != nil {
+		t.Fatal(err)
+	}
+	requireEventually(t, 3*time.Second, func() bool { return len(service.listActiveOperations()) == 0 })
+	lifecycleSend(t, client, 3, "doops_shell", "after-finalization", map[string]interface{}{"command": "true"})
+	remote.complete(t, remote.call(t, "doops_shell", "after-finalization"), "")
+	lifecycleResponse(t, client, 3, "")
 }
