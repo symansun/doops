@@ -61,7 +61,7 @@ hash="$(sha256sum "$source" | awk '{print $1}')"
 
 host_release() {
   "${SSH[@]}" "if [ \"\$(id -u)\" = 0 ]; then executor=python3; else executor='sudo -n python3'; fi
-\$executor '$remote/release-host-agent.py' --container '$CONTAINER' --session '$SESSION' --cluster '$CLUSTER' --instance '$INSTANCE' --image '$IMAGE' --source-commit '$SOURCE_COMMIT' --release '$RELEASE' $*"
+\$executor '$remote/release-host-agent.py' --controller-id '${remote##*/}' --container '$CONTAINER' --session '$SESSION' --cluster '$CLUSTER' --instance '$INSTANCE' --image '$IMAGE' --source-commit '$SOURCE_COMMIT' --release '$RELEASE' $*"
 }
 cleanup() { "${SSH[@]}" "rm -f '$remote/release-host-agent.py'; rmdir '$remote'" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
@@ -69,7 +69,6 @@ if [[ "$DRY_RUN" == true ]]; then
   host_release --dry-run
   exit 0
 fi
-host_release
 verified=false
 rollback_on_failure() {
   if [[ "$verified" != true ]]; then
@@ -77,16 +76,45 @@ rollback_on_failure() {
     host_release --rollback || { echo 'Host rollback failed; external intervention required' >&2; return 1; }
   fi
 }
-trap 'rollback_on_failure; cleanup' EXIT
+trap 'status=$?; rollback_on_failure || status=1; cleanup; exit "$status"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+host_release
+
+verify_rpc() (
+  export DOOPS_CLI_CALL_TIMEOUT=15s
+  local output stdout_marker stderr_marker bg_marker
+  doops -session "$SESSION" capabilities --target "$TARGET" --require structuredSSH >/dev/null || return 1
+  doops -session "$SESSION" capabilities --target "$TARGET" --require executionLifecycle >/dev/null || return 1
+  output="$(doops -session "$SESSION" exec --target "$TARGET" --cmd '/app/doops-agent -version')" || return 1
+  grep -Fx "release=$RELEASE commit=$SOURCE_COMMIT" <<< "$output" >/dev/null || return 1
+  stdout_marker="host-release-$SESSION-stdout"
+  stderr_marker="host-release-$SESSION-stderr"
+  output="$(doops -session "$SESSION" exec --target "$TARGET" --cmd "printf '%s\\n' '$stdout_marker'; printf '%s\\n' '$stderr_marker' >&2")" || return 1
+  grep -Fx "$stdout_marker" <<< "$output" >/dev/null || return 1
+  grep -Fx "$stderr_marker" <<< "$output" >/dev/null || return 1
+  bg_marker="host-release-$SESSION-background"
+  output="$(doops -session "$SESSION" exec --bg --target "$TARGET" --cmd "printf '%s\\n' '$bg_marker'")" || return 1
+  grep -Fx "$bg_marker" <<< "$output" >/dev/null || return 1
+  grep -Fx 'ExitCode: 0' <<< "$output" >/dev/null || return 1
+  # Exercise structured argv without passing host credentials into the Agent.
+  if output="$(doops -session "$SESSION" ssh --target "$TARGET" --host root@127.0.0.1 --option=Port=1 --option=BatchMode=yes --option=StrictHostKeyChecking=yes --option=ConnectTimeout=3 -- printf "$stdout_marker" 2>&1)"; then
+    return 1
+  fi
+  grep -F 'connect to host 127.0.0.1 port 1: Connection refused' <<< "$output" >/dev/null || return 1
+  grep -F 'Error: remote error: execution_outcome_unknown' <<< "$output" >/dev/null || return 1
+  output="$(doops -session "$SESSION" exec --target "$TARGET" --cmd "printf '%s\\n' '$stdout_marker'")" || return 1
+  grep -Fx "$stdout_marker" <<< "$output" >/dev/null
+)
+
 deadline=$((SECONDS + 120))
 while (( SECONDS < deadline )); do
   target_state="$(doops -session "$SESSION" targets --target "$TARGET" 2>/dev/null || true)"
   if printf '%s\n' "$target_state" | awk -v cluster="$CLUSTER" -v instance="$INSTANCE" -v commit="$SOURCE_COMMIT" '$1==cluster && $2==instance {for(i=3;i<=NF;i++) if($i==commit) found=1} END {exit !found}'; then
-    if doops -session "$SESSION" capabilities --target "$TARGET" --require structuredSSH >/dev/null &&
-       doops -session "$SESSION" exec --target "$TARGET" --cmd '/app/doops-agent -version' | grep -Fx "release=$RELEASE commit=$SOURCE_COMMIT" >/dev/null; then
+    if verify_rpc; then
       verified=true
-      break
     fi
+    break
   fi
   sleep 2
 done

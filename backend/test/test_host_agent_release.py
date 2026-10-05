@@ -35,6 +35,7 @@ def args():
         image=IMAGE,
         source_commit=SOURCE,
         release=VERSION,
+        controller_id="host-controller-test",
         dry_run=False,
         rollback=False,
     )
@@ -169,8 +170,10 @@ class FakeDocker:
         parts = parsed.path.strip("/").split("/")
         assert len(parts) >= 2 and parts[0] == "containers", (method, path)
         reference = unquote(parts[1])
-        container = next(item for item in self.containers.values()
-                         if reference in (item["Id"], item["Name"].lstrip("/")))
+        container = next((item for item in self.containers.values()
+                          if reference in (item["Id"], item["Name"].lstrip("/"))), None)
+        if container is None:
+            raise self.controller.DockerAPIError(method, path, 404)
         if method == "GET" and parts[2:] == ["json"]:
             return copy.deepcopy(container)
         if method == "DELETE":
@@ -187,11 +190,15 @@ class FakeDocker:
             }
             container["State"]["Running"] = False
         elif action == "rename":
+            if container["Id"] == OLD_ID and self.fault == "rollback_rename":
+                raise self.controller.DockerAPIError(method, path, 500)
             name = "/" + parse_qs(parsed.query)["name"][0]
             assert not any(item["Id"] != container["Id"] and item["Name"] == name
                            for item in self.containers.values())
             container["Name"] = name
         elif action == "start":
+            if container["Id"] == OLD_ID and self.fault == "rollback_start":
+                raise self.controller.DockerAPIError(method, path, 500)
             if container["Id"] == NEW_ID:
                 self.old_running_at_new_start = self.old["State"]["Running"]
                 if self.fault == "startup":
@@ -262,7 +269,7 @@ def test_preflight_mismatch_fails_before_replacement_or_old_stop(
     assert not docker.mutations
     assert docker.old["State"]["Running"]
     assert docker.old["Name"] == "/" + args.container
-    assert not receipt_path(controller, args).exists()
+    assert json.loads(receipt_path(controller, args).read_text())["phase"] == "preflight"
     assert_private_receipts(controller, capsys.readouterr())
 
 
@@ -290,7 +297,7 @@ def test_missing_authoritative_settings_source_fails_before_pull_create_or_stop(
         controller.release(args)
     assert docker.events == [("api", "GET", "/containers/%s/json" % args.container)]
     assert docker.old["State"]["Running"]
-    assert not receipt_path(controller, args).exists()
+    assert json.loads(receipt_path(controller, args).read_text())["phase"] == "preflight"
     assert_private_receipts(controller, capsys.readouterr())
 
 
@@ -400,6 +407,7 @@ def test_transaction_preserves_opaque_config_retains_old_and_records_new_ready(
     assert state["image"] == IMAGE and state["source_commit"] == SOURCE
     assert stat.S_IMODE(state_path.stat().st_mode) == 0o600
     assert stat.S_IMODE(state_path.parent.stat().st_mode) == 0o700
+    assert {path.name for path in state_path.parent.iterdir()} == {"state.json"}
     assert not any(event[1] == "DELETE" for event in docker.mutations)
     captured = capsys.readouterr()
     assert "host_upgrade_ready" in captured.out and NEW_ID in captured.out
@@ -443,9 +451,262 @@ def test_failed_replacement_restores_original_id_and_never_marks_success(
 
 def python_argv(args):
     result = [str(CONTROLLER)]
-    for name in ("container", "session", "cluster", "instance", "image", "source_commit", "release"):
+    for name in ("container", "session", "cluster", "instance", "image", "source_commit", "release", "controller_id"):
         result.extend(["--" + name.replace("_", "-"), getattr(args, name)])
     return result
+
+
+@pytest.mark.parametrize("fault", ["rollback_rename", "rollback_start"])
+def test_partial_rollback_retries_exact_ids_after_new_delete(
+    controller, args, docker, monkeypatch, capsys, fault,
+):
+    controller.release(args)
+    capsys.readouterr()
+    docker.fault = fault
+    monkeypatch.setattr(sys, "argv", python_argv(args) + ["--rollback"])
+    assert controller.main() == 1
+    assert NEW_ID not in docker.containers
+    assert not docker.old["State"]["Running"]
+    state = json.loads(receipt_path(controller, args).read_text())
+    assert state["old_id"] == OLD_ID and state["new_id"] == NEW_ID
+    assert state["new_removal_started"] is True and state["phase"] != "rolled_back"
+    captured = capsys.readouterr()
+    assert "HTTP 500" in captured.err
+    assert "host_rollback_restored" not in captured.out
+    docker.fault = None
+    docker.events.clear()
+    assert controller.main() == 0
+    assert docker.containers == {OLD_ID: docker.original}
+    assert not any(event[1] == "DELETE" for event in docker.mutations)
+    assert all(OLD_ID in event[2] for event in docker.mutations)
+    assert json.loads(receipt_path(controller, args).read_text())["phase"] == "rolled_back"
+    assert_private_receipts(controller, capsys.readouterr())
+    docker.events.clear()
+    assert controller.main() == 0
+    assert not docker.mutations
+
+
+@pytest.mark.parametrize("change", ["name", "same_name_different_id"])
+def test_partial_rollback_retry_refuses_changed_old_owner(
+    controller, args, docker, monkeypatch, capsys, change,
+):
+    controller.release(args)
+    docker.fault = "rollback_rename"
+    monkeypatch.setattr(sys, "argv", python_argv(args) + ["--rollback"])
+    assert controller.main() == 1
+    capsys.readouterr()
+    docker.fault = None
+    if change == "name":
+        docker.old["Name"] = "/owned-by-another-release"
+        error = "old_container_ownership_changed"
+    else:
+        foreign = docker.containers.pop(OLD_ID)
+        foreign["Id"] = "9" * 64
+        docker.containers[foreign["Id"]] = foreign
+        error = "HTTP 404"
+    before = copy.deepcopy(docker.containers)
+    receipt_before = receipt_path(controller, args).read_text()
+    docker.events.clear()
+    assert controller.main() == 1
+    assert error in capsys.readouterr().err
+    assert not docker.mutations and docker.containers == before
+    assert receipt_path(controller, args).read_text() == receipt_before
+
+
+@pytest.mark.parametrize("status", [403, 404, 500])
+def test_rollback_does_not_ignore_unproven_absence_or_other_inspect_errors(
+    controller, args, docker, monkeypatch, status,
+):
+    controller.release(args)
+    state_path = receipt_path(controller, args)
+    if status != 404:
+        state = json.loads(state_path.read_text())
+        state["new_removal_started"] = True
+        controller.save_state(state_path.parent, state)
+    receipt_before = state_path.read_text()
+    before = copy.deepcopy(docker.containers)
+    original_api = docker.api
+
+    def failed_inspect(method, path, body=None):
+        if method == "GET" and path == "/containers/%s/json" % NEW_ID:
+            raise controller.DockerAPIError(method, path, status)
+        return original_api(method, path, body)
+
+    monkeypatch.setattr(controller, "docker_api", failed_inspect)
+    args.rollback = True
+    docker.events.clear()
+    with pytest.raises(controller.DockerAPIError) as error:
+        controller.release(args)
+    assert error.value.status == status
+    assert not docker.mutations and docker.containers == before
+    assert state_path.read_text() == receipt_before
+
+
+@pytest.mark.parametrize("status", [403, 404, 500])
+def test_rollback_delete_errors_remain_failures_without_restoring_old(
+    controller, args, docker, monkeypatch, status,
+):
+    controller.release(args)
+    original_api = docker.api
+
+    def failed_delete(method, path, body=None):
+        if method == "DELETE":
+            raise controller.DockerAPIError(method, path, status)
+        return original_api(method, path, body)
+
+    monkeypatch.setattr(controller, "docker_api", failed_delete)
+    args.rollback = True
+    before = copy.deepcopy(docker.containers)
+    docker.events.clear()
+    with pytest.raises(controller.DockerAPIError) as error:
+        controller.release(args)
+    assert error.value.status == status
+    assert not docker.mutations and docker.containers == before
+    state = json.loads(receipt_path(controller, args).read_text())
+    assert state["new_removal_started"] is True and state["phase"] != "rolled_back"
+
+
+def test_rollback_persists_removal_intent_before_any_delete(
+    controller, args, docker, monkeypatch,
+):
+    controller.release(args)
+    receipt_before = receipt_path(controller, args).read_text()
+
+    def failed_save(*_args):
+        raise OSError("synthetic_removal_intent_write_failure")
+
+    monkeypatch.setattr(controller, "save_state", failed_save)
+    args.rollback = True
+    before = copy.deepcopy(docker.containers)
+    docker.events.clear()
+    with pytest.raises(OSError, match="synthetic_removal_intent_write_failure"):
+        controller.release(args)
+    assert not docker.mutations and docker.containers == before
+    assert receipt_path(controller, args).read_text() == receipt_before
+
+
+def test_rollback_never_deletes_old_id_as_replacement(controller, args, docker):
+    controller.release(args)
+    state_path = receipt_path(controller, args)
+    state = json.loads(state_path.read_text())
+    state["new_id"] = OLD_ID
+    controller.save_state(state_path.parent, state)
+    args.rollback = True
+    docker.events.clear()
+    with pytest.raises(RuntimeError, match="replacement_identity_matches_old"):
+        controller.release(args)
+    assert not docker.events
+
+
+@pytest.mark.parametrize("changed_id", [OLD_ID, NEW_ID])
+def test_rollback_refuses_inspect_id_mismatch_before_mutation(
+    controller, args, docker, monkeypatch, changed_id,
+):
+    controller.release(args)
+    original_api = docker.api
+
+    def changed_inspect(method, path, body=None):
+        result = original_api(method, path, body)
+        if method == "GET" and path == "/containers/%s/json" % changed_id:
+            result["Id"] = "9" * 64
+        return result
+
+    monkeypatch.setattr(controller, "docker_api", changed_inspect)
+    args.rollback = True
+    docker.events.clear()
+    receipt_before = receipt_path(controller, args).read_text()
+    with pytest.raises(RuntimeError, match="ownership_changed"):
+        controller.release(args)
+    assert not docker.mutations
+    assert receipt_path(controller, args).read_text() == receipt_before
+
+
+@pytest.mark.parametrize("failure", ["inspect", "binary", "prepared_receipt"])
+def test_preflight_receipt_is_the_only_noop_evidence(
+    controller, args, docker, monkeypatch, capsys, failure,
+):
+    if failure == "inspect":
+        def failed_inspect(*_args):
+            assert json.loads(receipt_path(controller, args).read_text())["phase"] == "preflight"
+            raise RuntimeError("synthetic_preflight_inspect_failure")
+        monkeypatch.setattr(controller, "docker_api", failed_inspect)
+        error = RuntimeError
+    elif failure == "binary":
+        docker.binary_version = "wrong"
+        error = RuntimeError
+    else:
+        real_save = controller.save_state
+
+        def failed_save(directory, state):
+            if state["phase"] == "prepared":
+                raise OSError("synthetic_prepared_receipt_write_failure")
+            real_save(directory, state)
+        monkeypatch.setattr(controller, "save_state", failed_save)
+        error = OSError
+    with pytest.raises(error):
+        controller.release(args)
+    state_path = receipt_path(controller, args)
+    receipt_before = state_path.read_text()
+    assert json.loads(receipt_before) == {"phase": "preflight", "controller_id": args.controller_id,
+                                         "image": IMAGE, "source_commit": SOURCE}
+    assert {path.name for path in state_path.parent.iterdir()} == {"state.json"}
+    assert not docker.mutations
+    docker.events.clear()
+    monkeypatch.setattr(sys, "argv", python_argv(args) + ["--rollback"])
+    assert controller.main() == 0
+    assert not docker.events and docker.containers == {OLD_ID: docker.original}
+    assert state_path.read_text() == receipt_before
+    captured = capsys.readouterr()
+    assert "host_rollback_not_started" in captured.out and "phase=preflight" in captured.out
+    assert "host_rollback_restored" not in captured.out
+    assert_private_receipts(controller, captured)
+
+
+@pytest.mark.parametrize("missing", ["receipt", "directory", "first_receipt", "never_invoked"])
+def test_rollback_without_receipt_and_without_noop_proof_fails_closed(
+    controller, args, docker, monkeypatch, capsys, missing,
+):
+    if missing == "first_receipt":
+        def failed_save(*_args):
+            raise OSError("synthetic_first_receipt_write_failure")
+        monkeypatch.setattr(controller, "save_state", failed_save)
+        with pytest.raises(OSError, match="synthetic_first_receipt_write_failure"):
+            controller.release(args)
+        assert not docker.events and not receipt_path(controller, args).exists()
+    elif missing != "never_invoked":
+        controller.release(args)
+        if missing == "receipt":
+            receipt_path(controller, args).unlink()
+        else:
+            shutil.rmtree(receipt_path(controller, args).parent)
+    capsys.readouterr()
+    before = copy.deepcopy(docker.containers)
+    docker.events.clear()
+    monkeypatch.setattr(sys, "argv", python_argv(args) + ["--rollback"])
+    assert controller.main() == 1
+    assert not docker.events and docker.containers == before
+    captured = capsys.readouterr()
+    assert "rollback_receipt_missing" in captured.err
+    assert "host_rollback_not_started" not in captured.out
+    assert "host_rollback_restored" not in captured.out
+
+
+def test_duplicate_session_never_rolls_back_previous_attempt(
+    controller, args, docker, capsys,
+):
+    controller.release(args)
+    capsys.readouterr()
+    before = copy.deepcopy(docker.containers)
+    receipt_before = receipt_path(controller, args).read_text()
+    args.controller_id = "different-host-controller"
+    docker.events.clear()
+    with pytest.raises(FileExistsError):
+        controller.release(args)
+    args.rollback = True
+    with pytest.raises(RuntimeError, match="rollback_controller_mismatch"):
+        controller.release(args)
+    assert not docker.events and docker.containers == before
+    assert receipt_path(controller, args).read_text() == receipt_before
 
 
 @pytest.mark.parametrize("changed_id", [NEW_ID, OLD_ID], ids=["replacement-owner", "old-owner"])

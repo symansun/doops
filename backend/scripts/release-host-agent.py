@@ -20,6 +20,12 @@ STATE_ROOT = Path("/var/lib/doops-host-releases")
 LOCK_ROOT = Path("/run/lock")
 
 
+class DockerAPIError(RuntimeError):
+    def __init__(self, method, path, status):
+        self.status = status
+        super().__init__("docker_api_failed: %s %s HTTP %s" % (method, path.split("?")[0], status))
+
+
 class DockerConnection(http.client.HTTPConnection):
     def connect(self):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -36,7 +42,7 @@ def docker_api(method, path, body=None):
         data = response.read()
         if response.status >= 400:
             # Docker errors can echo configuration. Do not publish their bodies.
-            raise RuntimeError("docker_api_failed: %s %s HTTP %s" % (method, path.split("?")[0], response.status))
+            raise DockerAPIError(method, path, response.status)
         return json.loads(data) if data else None
     finally:
         connection.close()
@@ -101,15 +107,26 @@ def save_state(directory, state):
     temporary.replace(directory / "state.json")
 
 
-def restore(state, container):
+def restore(state, container, directory):
+    if state.get("new_id") == state["old_id"]:
+        raise RuntimeError("replacement_identity_matches_old")
     old = inspect_container(state["old_id"])
-    if old["Name"] not in ("/" + container, "/" + state["backup"]):
+    if old["Id"] != state["old_id"] or old["Name"] not in ("/" + container, "/" + state["backup"]):
         raise RuntimeError("old_container_ownership_changed")
     if state.get("new_id"):
-        current = inspect_container(state["new_id"])
-        if current["Name"] not in ("/" + container, "/" + state["replacement"]):
-            raise RuntimeError("replacement_ownership_changed")
-        docker_api("DELETE", "/containers/%s?force=1" % state["new_id"])
+        try:
+            current = inspect_container(state["new_id"])
+        except DockerAPIError as error:
+            if error.status != 404 or state.get("new_removal_started") is not True:
+                raise
+            current = None
+        if current is not None:
+            if current["Id"] != state["new_id"] or current["Name"] not in ("/" + container, "/" + state["replacement"]):
+                raise RuntimeError("replacement_ownership_changed")
+            # Persist intent before DELETE, including an interruption before its reply.
+            state["new_removal_started"] = True
+            save_state(directory, state)
+            docker_api("DELETE", "/containers/%s?force=1" % state["new_id"])
     if old["Name"] != "/" + container:
         docker_api("POST", "/containers/%s/rename?name=%s" % (old["Id"], quote(container, safe="")))
     if not old["State"]["Running"]:
@@ -125,7 +142,7 @@ def release(args):
         raise RuntimeError("host_root_required")
     if Path("/.dockerenv").exists() or os.environ.get("KUBERNETES_SERVICE_HOST"):
         raise RuntimeError("external_host_controller_required")
-    for value in (args.container, args.session, args.cluster, args.instance):
+    for value in (args.container, args.session, args.cluster, args.instance, args.controller_id):
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", value):
             raise RuntimeError("invalid_release_identity")
     if not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", args.image):
@@ -136,12 +153,25 @@ def release(args):
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     directory = STATE_ROOT / args.container / args.session
     if args.rollback:
-        state = json.loads((directory / "state.json").read_text())
-        restore(state, args.container)
+        try:
+            state = json.loads((directory / "state.json").read_text())
+        except FileNotFoundError:
+            raise RuntimeError("rollback_receipt_missing; external intervention required") from None
+        if state.get("controller_id") != args.controller_id:
+            raise RuntimeError("rollback_controller_mismatch; refusing another release attempt")
+        if state.get("phase") == "preflight":
+            print("host_rollback_not_started container=%s phase=preflight" % args.container)
+            return
+        restore(state, args.container, directory)
         state["phase"] = "rolled_back"
         save_state(directory, state)
         print("host_rollback_restored old_id=%s" % state["old_id"])
         return
+    if not args.dry_run:
+        directory.mkdir(parents=True, mode=0o700, exist_ok=False)
+        os.chmod(directory, 0o700)
+        save_state(directory, {"phase": "preflight", "controller_id": args.controller_id,
+                               "image": args.image, "source_commit": args.source_commit})
     original = inspect_container(args.container)
     if not original["State"]["Running"] or original["HostConfig"].get("AutoRemove"):
         raise RuntimeError("running_recoverable_container_required")
@@ -176,11 +206,11 @@ def release(args):
     if args.dry_run:
         print("preflight_ready container=%s identity=%s/%s source=%s" % (args.container, args.cluster, args.instance, args.source_commit))
         return
-    directory.mkdir(parents=True, mode=0o700, exist_ok=False)
-    os.chmod(directory, 0o700)
     backup = args.container + "-rollback-" + args.session
     replacement = args.container + "-replacement-" + args.session
-    state = {"old_id": original["Id"], "backup": backup, "replacement": replacement, "image": args.image, "source_commit": args.source_commit, "phase": "prepared"}
+    state = {"old_id": original["Id"], "backup": backup, "replacement": replacement,
+             "image": args.image, "source_commit": args.source_commit, "phase": "prepared",
+             "controller_id": args.controller_id}
     save_state(directory, state)
     new_id = None
     try:
@@ -214,7 +244,7 @@ def release(args):
         raise RuntimeError("gateway_handoff_or_functional_probe_failed")
     except BaseException:
         try:
-            restore(state, args.container)
+            restore(state, args.container, directory)
             state["phase"] = "rolled_back"
             save_state(directory, state)
             print("host_rollback_restored old_id=%s" % original["Id"], file=sys.stderr)
@@ -225,7 +255,7 @@ def release(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("container", "session", "cluster", "instance", "image", "source-commit", "release"):
+    for name in ("container", "session", "cluster", "instance", "image", "source-commit", "release", "controller-id"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--rollback", action="store_true")
