@@ -2,7 +2,7 @@
 name: silicon-host-upgrade-retrospective
 scope: standalone-docker-agent-recovery
 owner: doops-maintainers
-status: upgraded-output-verification
+status: runtime-verified
 ---
 
 # Confirmed Failures
@@ -20,6 +20,9 @@ status: upgraded-output-verification
    cannot install that controller through the same broken interface. The former
    prohibition on host Docker publishing incorrectly forced Kubernetes migration
    as an unrelated prerequisite to Agent recovery.
+4. Fast-command execution used Cmd.StdoutPipe/StderrPipe while Cmd.Wait ran in
+   parallel. Wait could close the read ends before their readers consumed stdout,
+   yielding a successful terminal result with missing output.
 
 # Actual Deployment
 
@@ -27,6 +30,9 @@ status: upgraded-output-verification
   SSH user ubuntu, port 2022, hostname VM-0-15-ubuntu.
 - The second supplied host 43.173.87.215 / VM-0-6-ubuntu was accessed read-only;
   no Agent replacement on that host is included without scope confirmation.
+  It is a separate online identity doops-sub2api/vm-43, image v1.2.16 / source
+  784bc7ea3f198f7ec88806ff40f43342163421af, not gw-silicon/vm-49. The local
+  target inventory had omitted it. Its management port is also 2022.
 - Existing container: doops-agent, Docker network host, privileged=true,
   restart unless-stopped, no Compose management labels and no kubectl/helm.
 - Existing command uses loopback 127.0.0.1, Agent health port 42223 and the
@@ -50,6 +56,14 @@ status: upgraded-output-verification
   Old/new ownership changes fail before rollback mutations. Dry-run plus rollback
   is rejected before any operation. A rollback to an old broken protocol is not
   declared a successful new-version upgrade.
+- Independent review reproduced two additional recovery defects: the shell
+  installed its rollback trap after replacement, and interrupted rollback could
+  delete the replacement then fail permanently on its missing container.
+  Arm recovery before replacement; persist removal intent in the existing receipt
+  and continue only the proven exact-ID removal. Do not swallow other Docker errors.
+- Automate foreground double-stream, background output/exit, structured SSH argv
+  dispatch and expected failure, and successful follow-up probes. A version and
+  capabilities declaration alone must not complete the host release.
 - Keep request_id validation and credential/permission boundaries intact. No
   temporary Agent identity, release-runner or Kubernetes installation is introduced.
 
@@ -70,5 +84,36 @@ status: upgraded-output-verification
 - Final verification also found an existing raw-execution race: Cmd.Wait closed
   StdoutPipe/StderrPipe readers before fast-command output was consumed.
   This is repaired by explicit reader ownership and bounded drain, not a sleep
-  workaround. Publish and test the fixed immutable Agent before calling this
-  additional output verification complete.
+  workaround.
+
+## Fixed Runtime Acceptance
+
+- PR 55 merged as a935905ab63e2b08e370df06898906b7765a7031 on main;
+  v1.3.21 Agent digest is
+  bcfee296a6d76cb8e6a8d25bfe0544283c5ccaf5d7d2c9f9a11a5cffdf1fd5a3.
+  Main CI cnb-th1-1k45e86eh and release CI cnb-e7g-1k45eafjt both succeeded.
+- On 2026-10-05 the real host container
+  003940bb14f62595090bd31e7eaab317b74566be300c9aab36eb7dab1573a546,
+  its image labels, Agent binary and Gateway release_commit agree on that source.
+  Command, entrypoint, environment, user, working directory, HostConfig and mounts
+  were compared with the retained old container and match. Mount order is irrelevant.
+- Exact production RPC tests passed 40 fast stdout/stderr calls, same-session
+  concurrent output isolation, foreground and background terminal handling.
+  All 89 streaming notifications matched each call's Root RequestID; 46 terminal
+  frames were observed. Structured SSH dispatched real argv and reported the
+  expected connection failure, not successful destination authentication.
+- Cancellation of the task owned by this acceptance returned failure/unknown,
+  not a false success. Its observed process disappeared and subsequent exec passed.
+  Gateway ended idle with active/queued 0. Old unresolved audits remain readable
+  but do not participate in admission; no records were deleted or rewritten.
+- Browser Console selected vm-49, executed fast stdout/stderr plus binary version
+  in session browser-silicon-final-20261005, rendered both streams and the exact
+  v1.3.21 source, and displayed Operation complete. No console error/warn was observed.
+- Original and v1.3.20 rollback containers remain stopped and available. Business
+  Sub2API containers retained their original IDs, start times and healthy state.
+- The revised controller's read-only host preflight and its exact live functional
+  probe passed on vm-49; 100 local contracts passed, including lost SSH reply,
+  incomplete functional acceptance, interrupted rollback retry and ownership denial.
+  Controller changes require their own pushed-source CI before another replacement;
+  they do not require a new Agent image or protocol version. vm-43 upgrade scope
+  remains an explicit question.

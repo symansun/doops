@@ -336,8 +336,13 @@ bash scripts/release-host-agent.sh \
    structuredSSH 验证协议握手、`host + options[] + command[]` argv 派发及预期失败终态，
    同样核对 Root RequestID；不以能力声明或普通 exec 代替。该验收不宣称目的地主机
    成功认证；外部管理 SSH 的成功访问另记入口、身份和结果，不作为 Agent SSH 认证证据。
+   外层脚本自动检查前台双流输出、后台真实输出与零退出终态、结构化 SSH argv 的
+   预期连接失败和随后命令可执行。CLI 按每次 Root RequestID 接收通知；能力声明和
+   version 返回不能代替这些探针。探针失败立即回滚，不反复重放未知执行。
 4. 任一替换或验收失败，由外部控制器停止新容器并恢复旧容器，复核原镜像、配置和
    Gateway 接管；不调用旧 Agent 自升级，不删除旧容器。回滚失败必须明确报告并保留现场。
+   外层回滚保护必须在首次宿主替换调用前安装，覆盖 SSH 返回状态丢失；部分回滚
+   失败后可从持久阶段重试，不能因已删除新容器而永久卡死，也不能放宽容器所有权校验。
 
 禁止临时 Agent/target/runner、`kubectl set image`、跳过 `request_id` 验证或手工换镜像
 冒充该正式入口。本次宿主入口和只读授权边界见 [宿主访问说明](PHYSICAL_HOST_ACCESS.md)。

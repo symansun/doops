@@ -114,6 +114,8 @@ description: |
   [主 SOP](docs/BUILD_DEPLOY_SOP.md#独立-dockerhost-发布)。发布须验证实际容器/镜像/版本、
   Gateway 精确身份与 `release_commit`、structuredSSH 协议/argv 派发/预期失败终态、
   foreground/bg 的真实 RPC 流与 Root RequestID；不宣称 SSH 目的地主机认证成功。
+  替换调用前即启用外部回滚保护，SSH 返回状态丢失仍请求回滚；部分回滚失败允许
+  按持久阶段继续，不放宽旧/新容器所有权检查。脚本自动执行功能探针，失败不重放。
   外部 bootstrap 密码只走 stdin，不给 Agent；不能只看 heartbeat 或把 SSH 改写成普通 `exec`。
 - 禁止临时 Agent、临时 target、release-runner、`kubectl set image`，以及通过旧 Agent
   `exec`、Docker restart 或进程内 Helm mutation 升级其自身。

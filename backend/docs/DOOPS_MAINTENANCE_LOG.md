@@ -2,6 +2,19 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-10-05 External Host Release Failure Recovery
+
+- Install the external rollback trap before the first host replacement call,
+  including SSH transport failures whose remote outcome is unknown.
+- Resume partial rollback from persisted progress while preserving exact old/new
+  container ownership checks. A removed replacement must not strand the old Agent.
+- Acceptance requires real foreground stdout/stderr, background output and exit,
+  structured SSH argv/failure and follow-up execution. Version and capability
+  declarations alone cannot complete a release; do not replay a failed probe.
+- Live v1.3.21 Silicon acceptance passed 40 fast dual-stream calls, same-session
+  concurrent routing, 89 correctly correlated notifications, background execution
+  and post-cancellation execution. Its old containers remain stopped and available.
+
 ## 2026-10-05 Preserve Fast Command Output
 
 - Live Silicon recovery exposed short-command stdout loss: the RPC could finish
