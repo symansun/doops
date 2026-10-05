@@ -49,7 +49,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | List Gateway users | `doops admin user list --target <t>` | Returns metadata only. |
 | Manage target grants | `doops admin grant <list\|add\|delete> ...` | Grants use exact configured `cluster/instance` routes. |
 | Issue token as admin | `doops admin token create ...` | Requires a gateway token with `admin` permission. |
-| Inspect/cancel active operations | `doops admin operations <list|cancel|reconcile> --target <target> ...` | Gateway scopes the operation list, cancellation and reconciliation to the selected cluster/instance; cancel requests termination and reconcile records human-reviewed stopped state. |
+| Inspect/cancel active operations | `doops admin operations <list|cancel> --target <target> ...` | Gateway scopes the operation list and cancellation to the selected cluster/instance; cancellation requests termination, not confirmation that work stopped. |
 | Manage scheduled issue jobs | `doops admin jobs <list|add|run|enable|disable|rm|issues> ...` | See `DOOPS_SCHEDULED_ISSUES.md`. |
 | Reconnect an idle target | `doops unlock --target <t>` | Refuses active, queued or unresolved work; does not force-release operations. |
 | Remove cached token | `doops logout --target <t>` | Removes local token cache. |
@@ -161,16 +161,13 @@ tool error has no exit code. Exit code `255`, signal termination, cancellation,
 disconnection and missing structured terminal evidence remain guarded. Command
 text never determines whether an SSH operation is safe to preempt.
 
-After an administrator independently confirms the original execution has stopped,
-record the reason and evidence explicitly:
-
-```bash
-doops -session reconcile-check admin operations reconcile \
-  --target <gateway-target> --id audit-N --confirm-stopped \
-  --reason '<reason>' --evidence '<human-reviewed evidence>'
-```
-
-This records `resolved_manually`, not machine-verified success, takeover or replay.
+Verified terminal Helm tool errors are failed operations, not unknown outcomes.
+One successful tool cannot hide another failed tool in the same apply. Credential
+operations lock their exact resource IDs, allowing unrelated credentials to run
+concurrently while preserving serialization for the same credential.
+Manual execution reconciliation is no longer available: operator declarations
+must not rewrite an audit or release an execution guard. Historical records remain
+readable. Missing or unverified terminal evidence still blocks mutation.
 `unlock` reconnects only an idle target and refuses active, queued or unresolved
 operations; it does not clear these guards.
 

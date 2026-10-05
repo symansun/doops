@@ -174,9 +174,10 @@ description: |
   `admin operations cancel --target <t> --id <operation-id>`。
   `202 cancel_requested` 不是停止证据。缺少终态，或 Shell/SSH/bg、apply、K8s 写操作
   被中断而无法证明外部变更已停止时，持久化 `outcome_unknown` 并阻止新写入。
-  管理员须独立核对实际状态，再用
-  `doops -session <s> admin operations reconcile --target <t> --id audit-N --confirm-stopped --reason <reason> --evidence <evidence>`
-  记录人工确认；不得自动解锁、接管或重放。`unlock` 只重连空闲 target。
+  可信 Helm 工具的明确失败是已结束的失败，不写入 `outcome_unknown`；一次成功工具调用
+  也不能掩盖同轮其它工具的明确失败。人工声明不能解除执行守卫，历史审计不改写。
+  `unlock` 只重连空闲且没有未决执行的 target，不自动接管或重放。
+  受管凭据按资源 ID 互斥；不同凭据可并行，同一凭据的发布、授权、轮换和吊销仍串行。
 - 给用户签发 gateway user token 时，优先使用 `doops admin token create`；不要 SSH 到 gateway 主机手工运行内部 DB 命令。
 
 ## 配置与凭据

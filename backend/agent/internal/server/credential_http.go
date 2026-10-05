@@ -226,11 +226,12 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if err := h.credentialMutationMu.Acquire(r.Context()); err != nil {
+	releaseCredentialLocks, err := h.acquireCredentialMutationLocks(r.Context(), []string{resource.ID})
+	if err != nil {
 		http.Error(w, "operation canceled", http.StatusConflict)
 		return
 	}
-	defer h.credentialMutationMu.Release()
+	defer releaseCredentialLocks()
 	if r.Method == http.MethodDelete {
 		var body credentialGrantRevokeHTTPBody
 		if err := decodeCredentialJSON(w, r, &body); err != nil || strings.TrimSpace(body.GrantID) == "" {
@@ -322,11 +323,12 @@ func (h *GatewayHub) handleCredentialPromote(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	if err := h.credentialMutationMu.Acquire(r.Context()); err != nil {
+	releaseCredentialLocks, err := h.acquireCredentialMutationLocks(r.Context(), []string{resource.ID})
+	if err != nil {
 		http.Error(w, "operation canceled", http.StatusConflict)
 		return
 	}
-	defer h.credentialMutationMu.Release()
+	defer releaseCredentialLocks()
 	var body struct {
 		VersionID string `json:"version_id"`
 	}
@@ -456,11 +458,12 @@ func (h *GatewayHub) handleCredentialRevoke(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	if err := h.credentialMutationMu.Acquire(r.Context()); err != nil {
+	releaseCredentialLocks, err := h.acquireCredentialMutationLocks(r.Context(), []string{resource.ID})
+	if err != nil {
 		http.Error(w, "operation canceled", http.StatusConflict)
 		return
 	}
-	defer h.credentialMutationMu.Release()
+	defer releaseCredentialLocks()
 	auditID, ok := h.requireCredentialAudit(w, auth, ActionCredentialRevoke, resource.ID, "credential revoke")
 	if !ok {
 		return

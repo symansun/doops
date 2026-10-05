@@ -2,6 +2,21 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-10-05 Minimal Concurrency Repair
+
+- Reuse the existing MCP tool-error response for execution failures. RPC request
+  errors, canceled execution and missing terminal evidence remain distinct.
+- Validate terminal failed Helm evidence with the same runtime/session/digest and
+  authorization bindings as successful results; failed apply releases ownership
+  without becoming success or an unresolved execution.
+- Replace the global credential mutex with sorted credential-resource-ID locks.
+  Unrelated credentials can proceed; shared credential rotation and revocation
+  remain serialized with apply.
+- Remove manual operation reconciliation from CLI, HTTP and audit mutation code.
+  Historical records stay readable; operator claims cannot clear unknown outcomes.
+- No new protocol, configuration switch or time-based unlock. Source, verification
+  and release progress are tracked in `../../docs/concurrency-remediation-2026-10-05.md`.
+
 ## 2026-10-04 Target-Scoped Operation Administration And Registry Sync
 
 - Gateway admin operation list, cancellation, and manual reconciliation now require

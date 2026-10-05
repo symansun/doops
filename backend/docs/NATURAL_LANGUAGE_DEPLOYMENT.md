@@ -70,7 +70,9 @@ digest。同一 target 上的 apply、shell、Kubernetes mutation 和凭据物�
 也不能静默改走另一条执行路径。
 
 取消 Shell/SSH/bg、apply 或 Kubernetes 写操作只请求停止；本地进程/模型轮次终止不等于
-远端变更已停止，Gateway 保留 `outcome_unknown` 等待人工核对。当前锁按 target 路由
+远端变更已停止，Gateway 保留 `outcome_unknown`；人工声明不能替代机器终态证据。
+已验签的 Helm 工具明确失败按失败结束，不归为未知结果；同轮另一工具成功不能掩盖失败。
+当前锁按 target 路由
 隔离，没有跨 target 的 release/数据库统一锁或执行器 fencing，不支持安全强制抢占。
 
 发布前必须比较当前 workload 与候选 Helm 资产中的 command、args、env、probes、

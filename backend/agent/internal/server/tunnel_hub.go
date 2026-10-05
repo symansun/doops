@@ -39,8 +39,8 @@ type GatewayHub struct {
 	client       *ClientService
 	edge         *EdgeRegistry
 
-	scheduler            *Scheduler
-	credentialMutationMu contextMutex
+	scheduler               *Scheduler
+	credentialMutationLocks sync.Map
 }
 
 type contextMutex struct {
@@ -481,10 +481,9 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		opts.MaxQueuedPerTarget = 0
 	}
 	hub := &GatewayHub{
-		store:                store,
-		opts:                 opts,
-		registry:             registry,
-		credentialMutationMu: newContextMutex(),
+		store:    store,
+		opts:     opts,
+		registry: registry,
 	}
 	hub.registration = NewAgentRegistrationHandler(
 		registry,
@@ -708,8 +707,6 @@ func (h *GatewayHub) HandleAdminOperations(w http.ResponseWriter, r *http.Reques
 			})
 		}
 		writeJSONHTTP(w, map[string]interface{}{"operations": ops})
-	case http.MethodPost:
-		h.handleExecutionReconciliation(w, r, auth, cluster, instance)
 	case http.MethodDelete:
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		if id == "" {
@@ -1188,13 +1185,23 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	}()
 
 	if len(authorizedCredentials) != 0 {
+		credentialIDs := make([]string, 0, len(authorizedCredentials))
+		for _, item := range authorizedCredentials {
+			credentialIDs = append(credentialIDs, item.Authorized.Resource.ID)
+		}
 		// Match verification/promotion's lock order before holding a target lease.
-		if err := h.hub.credentialMutationMu.Acquire(opCtx); err != nil {
-			finishAudit("canceled", "operation canceled", "", 0)
-			writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled"))
+		releaseCredentialLocks, err := h.hub.acquireCredentialMutationLocks(opCtx, credentialIDs)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				finishAudit("canceled", "operation canceled", "", 0)
+				writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled"))
+				return nil
+			}
+			finishAudit("error", "credential_mutation_lock_failed", "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32603, "credential_mutation_lock_failed"))
 			return nil
 		}
-		defer h.hub.credentialMutationMu.Release()
+		defer releaseCredentialLocks()
 	}
 	lease, err := agent.acquireActionLease(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
 	if err != nil {

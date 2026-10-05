@@ -201,7 +201,7 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 		}
 		*field.target = text
 	}
-	if trace.Status == "completed" && trace.ObservedAt == "" {
+	if (trace.Status == "completed" || trace.Status == "failed") && trace.ObservedAt == "" {
 		trace.ObservedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	if value, exists := update["mutationAuthorized"]; exists {
@@ -441,6 +441,16 @@ func (c *doagentToolTraceCollector) requireCompletedToolEvidence() error {
 	if forbidden := c.forbiddenMutationSummary(); forbidden != "" {
 		return fmt.Errorf("doagent_apply_forbidden_mutation: %s", forbidden)
 	}
+	c.mu.Lock()
+	for _, trace := range c.calls {
+		trace.expectedSessionID = c.expectedSessionID
+		trace.expectedMutationAuthorityDigest = c.expectedMutationAuthorityDigest
+		if trace.terminalMutationReason() == "tool_result_failed" {
+			c.mu.Unlock()
+			return fmt.Errorf("doagent_apply_tool_failed")
+		}
+	}
+	c.mu.Unlock()
 	if len(c.completed()) != 0 {
 		return nil
 	}
@@ -462,7 +472,7 @@ func (c *doagentToolTraceCollector) hasUnresolvedMutation() bool {
 		}
 		trace.expectedSessionID = c.expectedSessionID
 		trace.expectedMutationAuthorityDigest = c.expectedMutationAuthorityDigest
-		if !trace.eligible() {
+		if reason := trace.terminalMutationReason(); reason != "" && reason != "tool_result_failed" {
 			return true
 		}
 	}
@@ -492,8 +502,16 @@ func (trace doagentToolTrace) eligible() bool {
 }
 
 func (trace doagentToolTrace) ineligibilityReason() string {
+	if trace.Status != "completed" {
+		return "status_not_completed"
+	}
+	return trace.terminalMutationReason()
+}
+
+// A verified failed tool result is terminal evidence, not successful deployment.
+func (trace doagentToolTrace) terminalMutationReason() string {
 	switch {
-	case trace.Status != "completed":
+	case trace.Status != "completed" && trace.Status != "failed":
 		return "status_not_completed"
 	case trace.ToolName == "":
 		return "tool_name_missing"
@@ -585,8 +603,15 @@ func (trace doagentToolTrace) runtimeMutationAttestationReason() string {
 	if err != nil {
 		return "public_result_invalid"
 	}
-	if isError, ok := result["isError"].(bool); !ok || isError {
+	isError, ok := result["isError"].(bool)
+	if !ok {
+		return "tool_result_invalid"
+	}
+	if isError {
 		return "tool_result_failed"
+	}
+	if trace.Status != "completed" {
+		return "status_result_mismatch"
 	}
 	return ""
 }

@@ -1075,6 +1075,17 @@ func TestAgentPromptReturnsAdmissionErrorImmediately(t *testing.T) {
 }
 
 func TestAgentApplySucceedsAfterVerifiedHelmWhenFinalTurnFails(t *testing.T) {
+	testAgentApplyTerminalHelmResult(t, false)
+}
+
+func TestAgentApplyKnownHelmFailureDoesNotBecomeUnknown(t *testing.T) {
+	testAgentApplyTerminalHelmResult(t, true)
+}
+
+func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed bool) {
+	t.Helper()
+	workspace := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", workspace)
 	const (
 		doopsSessionID = "apply-final-turn-error"
 		agentSessionID = "apply-final-turn-error-agent"
@@ -1172,6 +1183,18 @@ func TestAgentApplySucceedsAfterVerifiedHelmWhenFinalTurnFails(t *testing.T) {
 				doopsSessionID,
 				authorityDigest,
 			)
+			toolStatus, turnStatus := "completed", "failed"
+			stopReason, turnError := "error", "final model response failed after Helm completed"
+			if toolFailed {
+				toolStatus, turnStatus = "failed", "completed"
+				stopReason, turnError = "end_turn", ""
+				failedResult := map[string]interface{}{
+					"isError": true,
+					"content": []interface{}{map[string]interface{}{"type": "text", "text": "helm_verification_failed"}},
+				}
+				trace.resultJSON, _ = json.Marshal(failedResult)
+				trace.AttestedResultDigest, _ = digestRuntimeAttestationJSON(failedResult)
+			}
 			var rawOutput interface{}
 			if err := json.Unmarshal(trace.resultJSON, &rawOutput); err != nil {
 				t.Fatalf("decode raw output: %v", err)
@@ -1205,7 +1228,7 @@ func TestAgentApplySucceedsAfterVerifiedHelmWhenFinalTurnFails(t *testing.T) {
 				"turnId":                   turnID,
 				"toolCallId":               trace.ToolCallID,
 				"toolName":                 trace.ToolName,
-				"status":                   "completed",
+				"status":                   toolStatus,
 				"rawInput":                 rawInput,
 				"rawOutput":                rawOutput,
 				"attestationSchemaVersion": trace.AttestationSchema,
@@ -1223,9 +1246,9 @@ func TestAgentApplySucceedsAfterVerifiedHelmWhenFinalTurnFails(t *testing.T) {
 			writeEvent(map[string]interface{}{
 				"sessionUpdate": "turn_finished",
 				"turnId":        turnID,
-				"status":        "failed",
-				"stopReason":    "error",
-				"error":         "final model response failed after Helm completed",
+				"status":        turnStatus,
+				"stopReason":    stopReason,
+				"error":         turnError,
 			})
 		default:
 			http.NotFound(w, r)
@@ -1253,6 +1276,21 @@ func TestAgentApplySucceedsAfterVerifiedHelmWhenFinalTurnFails(t *testing.T) {
 	response, ok := result["result"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("missing successful tool result: %#v", result)
+	}
+	if toolFailed {
+		if response["isError"] != true || !strings.Contains(fmt.Sprint(response), "doagent_apply_tool_failed") {
+			t.Fatalf("known Helm failure must remain a failed terminal result: %#v", response)
+		}
+		if strings.Contains(fmt.Sprint(result), "execution_outcome_unknown") {
+			t.Fatalf("known Helm failure quarantined the target: %#v", result)
+		}
+		followup := callToolResult(t, conn, "doops_shell", map[string]interface{}{
+			"session_id": doopsSessionID, "command": "printf followup-ok",
+		})
+		if followup["error"] != nil {
+			t.Fatalf("follow-up command failed after terminal tool failure: %#v", followup)
+		}
+		return
 	}
 	if response["isError"] == true {
 		t.Fatalf("verified Helm mutation was returned as tool error: %#v", response)
