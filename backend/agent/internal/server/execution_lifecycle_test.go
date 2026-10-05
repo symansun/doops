@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -638,7 +639,7 @@ func TestExecutionLifecycleCancelAckRetainsOwnershipUntilOriginalTerminal(t *tes
 	f.http(t, f.admin, http.MethodPost, "/v1/targets/unlock?cluster=dev&instance=local", "", http.StatusConflict)
 	f.http(t, f.admin, http.MethodPost, "/v1/admin/operations?cluster=dev&instance=local",
 		fmt.Sprintf(`{"id":"audit-%d","confirm_stopped":true,"reason":"external check","evidence":"operator report"}`, op.AuditID),
-		http.StatusConflict)
+		http.StatusMethodNotAllowed)
 	agent.complete(t, call, "operation canceled")
 	lifecycleResponse(t, client, 2, "operation canceled")
 	requireEventually(t, 3*time.Second, func() bool { return len(f.hub.listActiveOperations()) == 0 })
@@ -696,27 +697,34 @@ func TestExecutionLifecycleDisconnectPersistsAcrossReconnectAndRestart(t *testin
 		t.Fatalf("persistent blocker missing from admin display: %#v", listed)
 	}
 	scoped := f.user(t, "target-admin", ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionAdmin}})
-	body := fmt.Sprintf(`{"id":"audit-%d","confirm_stopped":true,"reason":"operator reconciled externally","evidence":"external process inspection"}`, op.AuditID)
-	f.http(t, scoped, http.MethodPost, "/v1/admin/operations?cluster=dev&instance=local", body, http.StatusForbidden)
-	f.http(t, f.admin, http.MethodPost, "/v1/admin/operations?cluster=dev&instance=local", strings.Replace(body, `"confirm_stopped":true`, `"confirm_stopped":false`, 1), http.StatusBadRequest)
-	f.http(t, f.admin, http.MethodPost, "/v1/admin/operations?cluster=dev&instance=local", body+` {}`, http.StatusBadRequest)
-	f.http(t, f.admin, http.MethodPost, "/v1/admin/operations?cluster=dev&instance=local", body+` trailing`, http.StatusBadRequest)
+	body := fmt.Sprintf(`{"id":"audit-%d","confirm_stopped":true,"reason":"operator reconciled externally; password=reason-canary","evidence":"external process inspection; Bearer evidence-canary"}`, op.AuditID)
+	before := executionAuditTestEvent(t, f.store, op.AuditID)
+	for _, tc := range []struct {
+		token  CreatedToken
+		status int
+	}{{scoped, http.StatusForbidden}, {f.admin, http.StatusMethodNotAllowed}} {
+		for _, declaration := range []string{body, strings.Replace(body, `"confirm_stopped":true`, `"confirm_stopped":false`, 1), body + ` {}`, body + ` trailing`} {
+			response := f.http(t, tc.token, http.MethodPost, "/v1/admin/operations?cluster=dev&instance=local", declaration, tc.status)
+			for _, secret := range []string{"reason-canary", "evidence-canary"} {
+				if strings.Contains(string(response), secret) {
+					t.Fatalf("rejected declaration leaked synthetic credential %q", secret)
+				}
+			}
+			if got := executionAuditTestEvent(t, f.store, op.AuditID); !reflect.DeepEqual(got, before) {
+				t.Fatalf("human declaration changed unknown audit: %#v", got)
+			}
+		}
+	}
+	denied := f.user(t, "query-only", ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionInfo}})
+	f.http(t, denied, http.MethodPost, "/v1/admin/operations?cluster=dev&instance=local", body, http.StatusForbidden)
 	lifecycleSend(t, afterRestart, 3, "doops_shell", "new-workspace", map[string]interface{}{"command": "printf still-blocked"})
-	lifecycleResponse(t, afterRestart, 3, "execution_outcome_unknown")
-	f.http(t, f.admin, http.MethodPost, "/v1/admin/operations?cluster=dev&instance=local", body, http.StatusOK)
-	lifecycleSend(t, afterRestart, 4, "doops_shell", "new-workspace", map[string]interface{}{"command": "printf reconciled"})
-	restarted.complete(t, restarted.call(t, "doops_shell", "new-workspace"), "")
+	lifecycleResponse(t, afterRestart, 3, "machine terminal evidence required")
+	lifecycleSend(t, afterRestart, 4, "doops_node_info", "safe-query", map[string]interface{}{})
+	restarted.complete(t, restarted.call(t, "doops_node_info", "safe-query"), "")
 	lifecycleResponse(t, afterRestart, 4, "")
 	resolutions, err := f.store.ListAuditFiltered(AuditFilter{Action: GatewayAction("execution:resolve"), Limit: 10})
-	if err != nil || len(resolutions) != 1 {
-		t.Fatalf("manual reconciliation audit missing: %#v, %v", resolutions, err)
-	}
-	var metadata map[string]interface{}
-	if err := json.Unmarshal([]byte(resolutions[0].CommandSummary), &metadata); err != nil {
-		t.Fatal(err)
-	}
-	if metadata["machine_verified"] != false || metadata["attestation"] != "administrator_external_reconciliation" {
-		t.Fatalf("manual reconciliation claimed machine verification: %#v", metadata)
+	if err != nil || len(resolutions) != 0 {
+		t.Fatalf("human declaration appended a resolution audit: %#v, %v", resolutions, err)
 	}
 }
 

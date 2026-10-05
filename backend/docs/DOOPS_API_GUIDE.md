@@ -691,7 +691,7 @@ GET /v1/audit?user_id=self
 GET /v1/audit?view=global
 ```
 
-### 执行生命周期与人工核对
+### 执行生命周期
 
 Gateway 对前台、后台、SSH、prompt 和 `ask --apply` 统一维护执行生命周期。只有
 后台 `doops_bg` 在派发前要求 Agent 声明精确的 `executionLifecycle` 能力；前台调用不受
@@ -710,15 +710,10 @@ Gateway 对前台、后台、SSH、prompt 和 `ask --apply` 统一维护执行�
 
 该响应仅确认取消请求，资源所有权必须保留到原始请求终态。
 终态不确定时审计持久化为 `outcome_unknown`，并阻止后续目标 mutation。
-管理员在独立核对停止证据后可发送 `POST /v1/admin/operations`：
-
-```json
-{"id":"audit-42","confirm_stopped":true,"reason":"operator investigation","evidence":"human-reviewed stopped state"}
-```
-
-成功响应为 `{"id":"audit-42","state":"resolved_manually"}`。
-缺失确认、reason 或 evidence 会被拒绝；仍在运行的操作不得人工核对解除。
-该动作记录人工证据，不表示机器验证成功，也不自动接管或重放操作。
+已验签的 Helm 工具明确失败按失败终态处理，不封锁后续操作；同轮任何明确失败
+不得被另一条成功调用掩盖。工具请求错误与执行失败保持区分，执行失败返回 MCP
+`result.isError=true`，取消或缺失终态不转换成普通失败。
+`POST /v1/admin/operations` 不再支持人工声明解锁，返回 `405`。历史审计保留原记录。
 `POST /v1/targets/unlock` 仅重连空闲目标，拒绝活动、排队或未核对操作。
 
 定时巡检 job 使用 Gateway 持久 lease 单飞执行。`tick` 与 `run-now` 同时命中同一
@@ -746,9 +741,9 @@ unlock。每次运行都登记为可取消的 active operation。
   普通用户查询本人审计不会获得任何 mutation 权限。
   自动巡检沿用已保存任务的目标选择，不因本次审计改动获得新的用户或目标授权，
   也不会伪造一个在线管理员 token 作为自动任务 actor。
-- `/v1/admin/operations` 的 GET/POST/DELETE 必须按 `cluster` 与 `instance` 成对指定目标；
+- `/v1/admin/operations` 的 GET/DELETE 必须按 `cluster` 与 `instance` 成对指定目标；
   GET 只返回该目标的 active/unresolved 操作，DELETE 只允许取消该目标的操作，
-  POST 只允许核对该目标的 `outcome_unknown`。缺少或不匹配目标时拒绝请求。
+  缺少或不匹配目标时拒绝请求；人工审计改写入口已删除。
 - 配置下发使用既有 `doops_file_write` RPC 和目标 `write` 权限，不新增 admin 配置接口。
   继续使用唯一的 RPC 审计，保留 target/session/文件路径元数据，不保存文件内容、
   下游输出或原始错误；下游 tool error 记录为失败。其他 RPC/凭据沿用其既有审计。
@@ -793,7 +788,7 @@ JSON-RPC 错误：
 - `-32005`：目标忙、目标队列满或等待超时。
 - `-32006`：全局或单用户并发限制超限。
 - `-32007`：操作取消；不能单凭客户端取消 ACK 推断执行停止。
-- `-32008`：`execution_outcome_unknown`，缺少终态或外部 mutation 被中断，需要人工核对；
+- `-32008`：`execution_outcome_unknown`，缺少可信终态或外部 mutation 被中断，不能以人工声明解除；
   持久化阻止后续写入，不能通过重连、unlock 或新 session 绕过。
 
 ## 权限

@@ -6,9 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -221,7 +218,7 @@ func (s *ClientService) beginExecution(agent *GatewayAgent, operationID string, 
 		return fmt.Errorf("execution_guard_unavailable: %w", err)
 	}
 	if len(events) != 0 {
-		return fmt.Errorf("%w: audit-%d requires administrator reconciliation", errExecutionOutcomeUnknown, events[0].ID)
+		return fmt.Errorf("%w: audit-%d; machine terminal evidence required", errExecutionOutcomeUnknown, events[0].ID)
 	}
 	s.activeOpsMu.Lock()
 	defer s.activeOpsMu.Unlock()
@@ -242,66 +239,7 @@ func (s *ClientService) checkExecutionGuard(cluster, instance string) error {
 		return fmt.Errorf("execution_guard_unavailable: %w", err)
 	}
 	if len(events) != 0 {
-		return fmt.Errorf("%w: audit-%d requires administrator reconciliation", errExecutionOutcomeUnknown, events[0].ID)
+		return fmt.Errorf("%w: audit-%d; machine terminal evidence required", errExecutionOutcomeUnknown, events[0].ID)
 	}
 	return nil
-}
-
-func (h *GatewayHub) handleExecutionReconciliation(w http.ResponseWriter, r *http.Request, auth TokenAuth, cluster, instance string) {
-	if !h.store.UserIsPlatformAdmin(auth.UserID) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-	var request struct {
-		ID             string `json:"id"`
-		ConfirmStopped bool   `json:"confirm_stopped"`
-		Reason         string `json:"reason"`
-		Evidence       string `json:"evidence"`
-	}
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil || !request.ConfirmStopped || !strings.HasPrefix(request.ID, "audit-") {
-		http.Error(w, "id, confirm_stopped, reason and evidence are required for manual reconciliation", http.StatusBadRequest)
-		return
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		http.Error(w, "invalid trailing request data", http.StatusBadRequest)
-		return
-	}
-	id, err := strconv.ParseInt(strings.TrimPrefix(request.ID, "audit-"), 10, 64)
-	if err != nil || id <= 0 {
-		http.Error(w, "invalid audit operation id", http.StatusBadRequest)
-		return
-	}
-	for _, op := range h.listActiveOperations() {
-		if op.AuditID == id {
-			http.Error(w, "operation is still active; wait for terminal evidence", http.StatusConflict)
-			return
-		}
-	}
-	events, err := h.store.UnresolvedExecutions(cluster, instance)
-	if err != nil {
-		http.Error(w, "execution_guard_unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	found := false
-	for _, event := range events {
-		if event.ID == id {
-			found = true
-			break
-		}
-	}
-	if !found {
-		http.Error(w, "operation not found on target", http.StatusNotFound)
-		return
-	}
-	if err := h.store.MarkExecutionUncertain(id); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		http.Error(w, "execution_guard_unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	if err := h.store.ResolveExecutionOutcome(id, auth.UserID, request.Reason, request.Evidence); err != nil {
-		http.Error(w, sanitizeSecretText(err.Error()), http.StatusConflict)
-		return
-	}
-	writeJSONHTTP(w, map[string]interface{}{"id": request.ID, "state": "resolved_manually"})
 }

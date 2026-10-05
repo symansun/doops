@@ -309,8 +309,8 @@ doops -session <s> admin operations list --target <gateway-target>
 doops -session <s> admin operations cancel --target <gateway-target> --id <operation-id>
 ```
 
-Gateway 把 `cluster`、`instance` 作为管理操作的强制 target 边界传递给查询、取消和
-人工核对接口；缺少或不匹配 target 时不会取消操作。
+Gateway 把 `cluster`、`instance` 作为管理操作查询和取消的强制 target 边界；
+缺少或不匹配 target 时不会取消操作。
 
 `cancel` 返回 HTTP `202 cancel_requested`，只确认请求已登记。原始操作的资源所有权
 保留到 terminal response；取消 ACK 不是终态。shell/SSH/bg 等本地命令等待进程组
@@ -321,9 +321,10 @@ Gateway 把 `cluster`、`instance` 作为管理操作的强制 target 边界传�
 本地进程退出不证明远端控制器或脱离进程组的工作停止。Shell/SSH/bg、apply、K8s
 写操作等被中断时，即使收到本地取消终态也记录 `outcome_unknown`；缺失终态同样
 阻止后续目标 mutation。该阻塞在 Gateway 重启和
-Agent 重连后继续有效。管理员只能在独立确认停止后，以 `audit-N`、
-`confirm_stopped=true`、reason 和 evidence 完成人工核对，记录为
-`resolved_manually`；不自动接管或重放任务。`unlock` 只重连空闲目标。
+Agent 重连后继续有效。人工声明不能改写审计或解除执行守卫；历史记录仍可读取。
+已验证的 Helm 工具失败属于明确失败，不是未知结果，按正常终态释放运行锁。
+受管凭据只锁本次使用的资源 ID，不再跨不同凭据串行化整个 Gateway。
+`unlock` 只重连空闲且没有未决执行的目标，不自动接管或重放任务。
 
 workspace 写入、清理和 clone/commit 缺失终态时同样保留未知结果；真实本地终态
 可以证明这些本地操作已经结束，不能将其与缺失终态混淆。客户端 WebSocket 使用

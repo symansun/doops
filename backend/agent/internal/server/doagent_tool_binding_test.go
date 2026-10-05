@@ -92,6 +92,41 @@ func TestApplyCompletedMutationDoesNotHideUnresolvedTool(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyVerifiedToolFailureIsTerminalButNeverSuccessful(t *testing.T) {
+	for _, status := range []string{"completed", "failed"} {
+		t.Run(status, func(t *testing.T) {
+			collector := newDoagentToolTraceCollector(false)
+			bindApplyCollector(collector, "apply-test")
+			input := map[string]interface{}{
+				"operation": "upgrade-install", "release": "app",
+				"chart": "deploy/helm/app", "namespace": "apps", "confirm": true,
+			}
+			trace := attestedMutationTrace(t, "mcp_doops_helm", input)
+			trace.Status = status
+			result := map[string]interface{}{
+				"isError": true,
+				"content": []interface{}{map[string]interface{}{"type": "text", "text": "helm_verification_failed"}},
+			}
+			trace.resultJSON, _ = json.Marshal(result)
+			trace.AttestedResultDigest, _ = digestRuntimeAttestationJSON(result)
+			collector.calls["failed"] = trace
+			collector.calls["success"] = attestedMutationTrace(t, "mcp_doops_helm", input)
+			if collector.hasUnresolvedMutation() {
+				t.Fatal("verified terminal failure became unknown")
+			}
+			if err := collector.requireCompletedToolEvidence(); err == nil || err.Error() != "doagent_apply_tool_failed" {
+				t.Fatalf("successful tool hid a failed mutation: %v", err)
+			}
+			trace.AttestedResultDigest = "sha256:" + strings.Repeat("0", 64)
+			collector.calls["failed"] = trace
+			if !collector.hasUnresolvedMutation() {
+				t.Fatal("unverified failure was accepted as terminal evidence")
+			}
+		})
+	}
+}
+
 func TestApplyRejectsUnrelatedCompletedToolEvidence(t *testing.T) {
 	collector := newDoagentToolTraceCollector(false)
 	collector.calls["call-1"] = doagentToolTrace{

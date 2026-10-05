@@ -2,7 +2,10 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -133,6 +136,139 @@ func TestK8SMCPStdioReadToolRejectsMutation(t *testing.T) {
 	}
 }
 
+func TestK8SMCPStdioK8SExecutionFailureIsToolError(t *testing.T) {
+	bin := t.TempDir()
+	writeK8SMCPExecutable(t, bin, "kubectl", `#!/bin/sh
+printf 'password=stdio-k8s-canary\n' >&2
+exit 7
+`)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	input := strings.NewReader(
+		`{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"k8s_read","arguments":{"operation":"get","kind":"pods"}}}` + "\n",
+	)
+	var output bytes.Buffer
+	if err := runK8SMCPStdioContext(
+		t.Context(),
+		input,
+		&output,
+		func() (string, error) { return "stdio-k8s", nil },
+	); err != nil {
+		t.Fatalf("run MCP server: %v", err)
+	}
+	response := decodeK8SMCPResponse(t, output.Bytes())
+	if _, exists := response["error"]; exists {
+		t.Fatalf("execution failure used JSON-RPC error: %#v", response)
+	}
+	result, _ := response["result"].(map[string]interface{})
+	if result["isError"] != true {
+		t.Fatalf("execution failure did not set result.isError: %#v", response)
+	}
+	content, _ := result["content"].([]interface{})
+	text := content[0].(map[string]interface{})["text"].(string)
+	if text != "kubectl get pods failed: exit status 7" {
+		t.Fatalf("unexpected stable execution error: %q", text)
+	}
+	if strings.Contains(output.String(), "stdio-k8s-canary") {
+		t.Fatalf("execution error leaked secret output: %s", output.String())
+	}
+}
+
+func TestK8SMCPStdioHelmExecutionFailureIsToolError(t *testing.T) {
+	bin := t.TempDir()
+	writeK8SMCPExecutable(t, bin, "helm", `#!/bin/sh
+printf 'token=stdio-helm-canary\n' >&2
+exit 9
+`)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
+
+	input := strings.NewReader(
+		`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"helm","arguments":{"operation":"rollback","release":"app","namespace":"apps","revision":2,"confirm":true}}}` + "\n",
+	)
+	var output bytes.Buffer
+	if err := runK8SMCPStdioContext(
+		t.Context(),
+		input,
+		&output,
+		func() (string, error) { return "stdio-helm", nil },
+	); err != nil {
+		t.Fatalf("run MCP server: %v", err)
+	}
+	response := decodeK8SMCPResponse(t, output.Bytes())
+	if _, exists := response["error"]; exists {
+		t.Fatalf("execution failure used JSON-RPC error: %#v", response)
+	}
+	result, _ := response["result"].(map[string]interface{})
+	if result["isError"] != true {
+		t.Fatalf("execution failure did not set result.isError: %#v", response)
+	}
+	content, _ := result["content"].([]interface{})
+	text := content[0].(map[string]interface{})["text"].(string)
+	if text != "helm_mutation_failed" {
+		t.Fatalf("unexpected stable execution error: %q", text)
+	}
+	if strings.Contains(output.String(), "stdio-helm-canary") {
+		t.Fatalf("execution error leaked secret output: %s", output.String())
+	}
+}
+
+func TestK8SMCPStdioCancellationPreservesUnknownOutcome(t *testing.T) {
+	bin := t.TempDir()
+	writeK8SMCPExecutable(t, bin, "kubectl", `#!/bin/sh
+sleep 10
+`)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	input := strings.NewReader(
+		`{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"k8s_read","arguments":{"operation":"get","kind":"pods"}}}` + "\n",
+	)
+	var output bytes.Buffer
+	if err := runK8SMCPStdioContext(
+		ctx,
+		input,
+		&output,
+		func() (string, error) { return "stdio-cancel", nil },
+	); err != nil {
+		t.Fatalf("run MCP server: %v", err)
+	}
+	response := decodeK8SMCPResponse(t, output.Bytes())
+	errorResponse, _ := response["error"].(map[string]interface{})
+	if errorResponse["code"] != float64(-32008) ||
+		!strings.Contains(errorResponse["message"].(string), errExecutionOutcomeUnknown.Error()) {
+		t.Fatalf("cancellation lost unknown outcome classification: %#v", response)
+	}
+	if _, exists := response["result"]; exists {
+		t.Fatalf("cancellation was converted to a tool result: %#v", response)
+	}
+}
+
+func TestK8SMCPStdioMalformedCallRemainsJSONRPCError(t *testing.T) {
+	input := strings.NewReader(
+		`{"jsonrpc":"2.0","id":9,"method":"tools/call","params":"malformed"}` + "\n",
+	)
+	var output bytes.Buffer
+	if err := runK8SMCPStdioContext(
+		t.Context(),
+		input,
+		&output,
+		func() (string, error) { return "stdio-invalid", nil },
+	); err != nil {
+		t.Fatalf("run MCP server: %v", err)
+	}
+	response := decodeK8SMCPResponse(t, output.Bytes())
+	errorResponse, _ := response["error"].(map[string]interface{})
+	if errorResponse["code"] != float64(-32602) ||
+		!strings.Contains(errorResponse["message"].(string), "invalid tools/call params") {
+		t.Fatalf("invalid arguments were not kept as JSON-RPC error: %#v", response)
+	}
+	if _, exists := response["result"]; exists {
+		t.Fatalf("invalid arguments were converted to a tool result: %#v", response)
+	}
+}
+
 func TestK8SMCPStdioRejectsModelSuppliedSession(t *testing.T) {
 	input := strings.NewReader(
 		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"helm","arguments":{"session_id":"target-alias","operation":"rollback","release":"app","namespace":"apps","revision":2,"confirm":true}}}` + "\n",
@@ -189,4 +325,20 @@ func interfaceStrings(values []interface{}) []string {
 		result = append(result, value.(string))
 	}
 	return result
+}
+
+func writeK8SMCPExecutable(t *testing.T, dir, name, script string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+}
+
+func decodeK8SMCPResponse(t *testing.T, raw []byte) map[string]interface{} {
+	t.Helper()
+	var response map[string]interface{}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatalf("decode MCP response: %v; raw=%s", err, raw)
+	}
+	return response
 }

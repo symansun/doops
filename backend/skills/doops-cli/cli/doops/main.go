@@ -61,7 +61,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   admin       gateway 管理命令：用户、target 授权和 API key
               admin audit optimize：显式、受审计地维护查询索引
               admin operations cancel：仅请求取消，不代表任务已停止
-              admin operations reconcile：管理员人工核对已停止状态，非自动接管
   upgrade     升级 doops-agent；--dry-run 只预演，正式升级由目标集群内的 Job 执行
   add         添加 gateway target
   remove      仅在 target 当前不可见时删除本机 gateway target 配置
@@ -263,7 +262,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Println("       doops admin token revoke --target <gateway-target> --id <token-id>")
 			fmt.Println("       doops admin operations list --target <gateway-target>")
 			fmt.Println("       doops admin operations cancel --target <gateway-target> --id <operation-id>")
-			fmt.Println("       doops admin operations reconcile --target <gateway-target> --id audit-N --confirm-stopped --reason <reason> --evidence <evidence> (admin-only, human-reviewed stopped state; no automated takeover)")
 			fmt.Println("       doops admin jobs <list|add|run|enable|disable|rm|issues> --target <gateway-target> [...]")
 			os.Exit(1)
 		}
@@ -273,10 +271,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		}
 		if cmdArgs[0] == "operations" && cmdArgs[1] == "cancel" {
 			runAdminOperationCancel(cmdArgs[2:], servers, configErr)
-			return
-		}
-		if cmdArgs[0] == "operations" && cmdArgs[1] == "reconcile" {
-			runAdminOperationReconcile(cmdArgs[2:], servers, configErr)
 			return
 		}
 		if cmdArgs[0] == "token" && cmdArgs[1] == "list" {
@@ -295,7 +289,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Println("       doops admin token revoke --target <gateway-target> --id <token-id>")
 			fmt.Println("       doops admin operations list --target <gateway-target>")
 			fmt.Println("       doops admin operations cancel --target <gateway-target> --id <operation-id>")
-			fmt.Println("       doops admin operations reconcile --target <gateway-target> --id audit-N --confirm-stopped --reason <reason> --evidence <evidence> (admin-only, human-reviewed stopped state; no automated takeover)")
 			os.Exit(1)
 		}
 		var target, user, label, expires, saveAs string
@@ -1150,48 +1143,6 @@ func runAdminOperationCancel(args []string, servers []Server, configErr error) {
 		os.Exit(1)
 	}
 	fmt.Printf("id=%s cancel_requested=true state=cancel_requested; cancellation requested, not confirmed stopped.\n", strings.TrimSpace(opID))
-}
-
-func runAdminOperationReconcile(args []string, servers []Server, configErr error) {
-	var target string
-	var reconcile gatewayAdminOperationReconcileRequest
-	fs := flag.NewFlagSet("admin operations reconcile", flag.ExitOnError)
-	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "Admin-only manual reconciliation of human-reviewed stopped state; no automated takeover.")
-		fs.PrintDefaults()
-	}
-	fs.StringVar(&target, "target", "", "Configured Gateway target whose admin login should be used")
-	fs.StringVar(&reconcile.ID, "id", "", "Unresolved audit operation id (audit-N)")
-	fs.BoolVar(&reconcile.ConfirmStopped, "confirm-stopped", false, "Confirm a human has reviewed evidence that the operation has stopped (required)")
-	fs.StringVar(&reconcile.Reason, "reason", "", "Nonempty reason for manual reconciliation (required)")
-	fs.StringVar(&reconcile.Evidence, "evidence", "", "Nonempty human-reviewed evidence that the operation has stopped (required)")
-	fs.Parse(args)
-	if strings.TrimSpace(target) == "" {
-		fmt.Println("Error: --target is required")
-		fs.Usage()
-		os.Exit(1)
-	}
-	if err := reconcile.validate(); err != nil {
-		fmt.Printf("Error: %v\n", err)
-		fs.Usage()
-		os.Exit(1)
-	}
-	if fs.NArg() != 0 {
-		fmt.Println("Error: unexpected positional arguments for manual reconciliation")
-		fs.Usage()
-		os.Exit(1)
-	}
-	requireConfig(configErr)
-	server := findServer(servers, target)
-	if server == nil || strings.TrimSpace(server.Gateway) == "" {
-		fmt.Printf("Error: Gateway target '%s' not found.\n", target)
-		os.Exit(1)
-	}
-	if err := GatewayAdminOperationReconcile(server.Gateway, mustResolveToken(*server), server.Cluster, server.Instance, reconcile); err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("id=%s state=resolved_manually; human-reviewed stopped state recorded by admin; no automated takeover.\n", reconcile.ID)
 }
 
 func runAdminTokensList(args []string, servers []Server, configErr error) {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -152,7 +153,11 @@ func callK8SMCPTool(
 		result, err = handleK8STool(ctx, boundArguments, push)
 	}
 	if err != nil {
-		return mcpErrorResponse(request.ID, -32000, err.Error())
+		if ctx.Err() != nil || errors.Is(err, errExecutionOutcomeUnknown) ||
+			errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return mcpErrorResponse(request.ID, -32008, errExecutionOutcomeUnknown.Error())
+		}
+		return buildToolErrorResponse(request.ID, sanitizeSecretText(err.Error()))
 	}
 	if progress.Len() != 0 {
 		progress.WriteByte('\n')
