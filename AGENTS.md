@@ -45,15 +45,32 @@ DoOps architecture, security, release, and verification boundaries.
   kubeconfig rather than from a local operator file. The CLI waits for the Job, verifies Gateway
   handoff and `structuredSSH`, and starts a rollback Job when the probe fails.
   `--dry-run` is preview-only and still requires an immutable `repository@sha256:<64 hex>` image.
-  A new cluster without an Agent and legacy Agents without the controller use
+  A new Kubernetes cluster without an Agent and legacy Helm Agents without the controller use
   `backend/scripts/release-managed-agent.sh` with an operator kubeconfig. Its new-cluster
   `--values` mode is bootstrap-only: it performs Helm wait and final Deployment checks, not
   Gateway takeover or automatic rollback; installation acceptance must follow. Its existing
   release mode updates an existing Helm release, stops when no Helm release exists, and does
   not perform adoption. `doops upgrade` only changes the Agent image or rolls back a managed
   release; `proxy.allowedHosts` and `hostAliases` remain explicit external-script configuration.
-  Do not create a temporary Agent, target, or release-runner, and do not use `kubectl set image`,
-  Docker restart, or an Agent-process Helm mutation.
+  Do not create a temporary Agent, target, or release-runner, and do not use `kubectl set image`
+  or an Agent-process Helm mutation.
+- Existing standalone Docker Agents use the explicit external DockerHost controller
+  `backend/scripts/release-host-agent.sh` and its Python implementation, not `doops upgrade`,
+  automatic fallback, or a mandatory Kubernetes migration. Require explicit target, session,
+  host, user, port (never default to 22), container, cluster, instance, immutable image digest,
+  CI source commit, and release. SSH must verify host keys; an optional private authenticated
+  control socket is a reference only, never password/token input. Prepare the immutable image
+  externally before read-only inspection; dry-run must not pull or create containers and must
+  fail explicitly for a missing local artifact. Hold a host-side release lock during mutation,
+  preserve the existing container configuration and stopped old container, and roll back
+  externally on failure.
+  Verify the actual replacement container/image/version, Gateway identity and release commit,
+  structuredSSH protocol, argv dispatch and expected failure terminal result, plus real
+  foreground/background exec RPC streams with each call's Root RequestID. Successful external
+  management SSH is separate evidence, not Agent authentication to the destination; host
+  passwords remain external-bootstrap stdin only and must never reach the Agent. Never ask the
+  current Agent to exec its own replacement or delete the old container. Full procedure belongs in
+  [BUILD_DEPLOY_SOP.md](backend/docs/BUILD_DEPLOY_SOP.md#独立-dockerhost-发布).
 
 ## Credential Security
 

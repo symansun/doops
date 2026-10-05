@@ -126,15 +126,20 @@ Helm revision 或 Pod Ready 不构成发布成功。
 CNB CI 负责测试、构建和发布制品。Gateway 负责鉴权、审计、资源锁和凭据预物化。
 实际业务 Helm/Kubernetes mutation 由 target 指向的 Agent/doagent 在目标运行环境执行；
 普通业务发布与 Agent 镜像构建是两条独立路径。
-`doops-agent` 自身升级走 `doops upgrade`：仅适用于 Agent 自身 namespace 中的标准
+标准 Helm `doops-agent` 自身升级走 `doops upgrade`：仅适用于 Agent 自身 namespace 中的标准
 Helm-managed Deployment 和已有匹配 Helm release；未给 `--release` 时必须只有一个匹配
 release，给出时按名称选择并校验。Agent Pod 必须有可由 Job 共享的 `/root/.kube` 或
 `/root/.kube/config` 挂载，Job 的 Kubernetes 权限来自该 kubeconfig，不需要操作机
 kubeconfig。Agent 进程不修改承载自己的 Deployment。
-DoOps 不创建临时 Agent、临时 target 或临时 release-runner。还没有该控制器的旧 Agent
-和新集群第一次接入仍用 `scripts/release-managed-agent.sh`，这条路径需要操作机 kubeconfig；
+DoOps 不创建临时 Agent、临时 target 或临时 release-runner。还没有该控制器的旧 Helm Agent
+和 K8S 新集群第一次接入仍用 `scripts/release-managed-agent.sh`，这条路径需要操作机 kubeconfig；
 其 `--values` 新集群模式是 bootstrap-only，只做 Helm wait 和最终 Deployment 检查，不做
 Gateway 接管或自动回滚，完成后必须继续安装验收；已有 workload 但没有 Helm release 时，
 该脚本会停止，不执行 adoption。`doops upgrade`
 只修改 Agent 镜像或执行 rollback，不修改 `proxy.allowedHosts`、`hostAliases` 或其它
 Agent Helm 配置；这些变更仍由外部脚本显式完成。
+
+已有独立 Docker Agent 保持运行方式，由正式外部 `scripts/release-host-agent.sh` 发布，
+不走 `ask --apply` 或旧 Agent 自行替换，不依赖 `doops_agent_upgrade` / `managedHelm`，
+不要求先迁 K8S。制品准备、只读预检、版本检测、回滚及协议/RPC 流验收见
+[主 SOP](BUILD_DEPLOY_SOP.md#独立-dockerhost-发布)；不扩展凭据 API 或 Agent 的 SSH 认证能力。
