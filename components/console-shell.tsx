@@ -1,6 +1,7 @@
 "use client"
 
 import dynamic from "next/dynamic"
+import type { AgentSessionRuntime } from "@agent-cloud/agent-ui"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { fetchTargets, type Session, type Target } from "@/lib/client"
 import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
@@ -9,7 +10,7 @@ import { DEMO_TOKEN } from "@/lib/demo"
 import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
 import { TerminalPanel } from "./terminal-panel"
-import { DoopsAgentUiRuntime } from "@/lib/agent-ui-runtime"
+import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { FilesPanel } from "./files-panel"
 import { KnowledgeBase } from "./knowledge-base"
 import { AuditPanel } from "./audit-panel"
@@ -70,9 +71,9 @@ export function ConsoleShell() {
   const [showGuide, setShowGuide] = useState(false)
   const agentRuntime = useMemo(() => {
     if (!session || !selected) return null
-    return new DoopsAgentUiRuntime({ session, target: selected, sessionId })
+    return createDoopsAgentUiRuntime({ session, target: selected, sessionId })
   }, [session, selected?.cluster, selected?.instance, sessionId])
-  const [openedAgentRuntime, setOpenedAgentRuntime] = useState<DoopsAgentUiRuntime | null>(null)
+  const [openedAgentRuntime, setOpenedAgentRuntime] = useState<AgentSessionRuntime | null>(null)
   useEffect(() => {
     if (!agentRuntime || (view === "console" && tab === "ask")) setOpenedAgentRuntime(agentRuntime)
   }, [agentRuntime, tab, view])
@@ -145,6 +146,10 @@ export function ConsoleShell() {
   }
 
   function selectTarget(t: Target) {
+    if (agentRuntime && isDoopsAgentSessionBusy(agentRuntime.getSnapshot(sessionId))) {
+      setError("请先停止当前 AI 任务，再切换目标")
+      return
+    }
     setSelected(t)
     setSessionId(randomSession())
     // AI 优先：切换机器后，默认进入 AI 助手而非终端
@@ -240,6 +245,7 @@ export function ConsoleShell() {
 
       {showGuide && <OnboardingGuide onClose={closeGuide} />}
 
+      {error && <div role="alert" className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>}
       {view === "admin" ? (
         <AdminConsole session={session} defaultTab={adminDefaultTab} />
       ) : view === "deploy" ? (
