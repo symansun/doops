@@ -39,8 +39,16 @@ pnpm build
 
 - GitHub and CNB should receive the same commit SHA for the normalized source branch.
 - GitHub uses `main` as the normalized public branch.
-- CNB CI builds, verifies, and publishes immutable agent images. Environment
+- CNB CI builds, verifies, and publishes immutable agent images. Business workload
   rollout and rollback execute through the registered DoOps control plane.
+- Managed Helm Agents keep the `doops upgrade` in-cluster Job path. Existing
+  standalone Docker Agents use the explicit external DockerHost controller
+  `backend/scripts/release-host-agent.sh`, not an automatic fallback or a required
+  Kubernetes migration. It requires an explicit SSH port, immutable digest, CI source
+  commit and release, performs real read-only preflight, preserves container configuration
+  and the stopped old container, and rolls back externally on failure. It never accepts
+  passwords/tokens; host keys must be verified. Procedure and functional acceptance:
+  [Build And Deploy SOP](backend/docs/BUILD_DEPLOY_SOP.md#独立-dockerhost-发布).
 - The Gateway owns one execution lifecycle state machine for foreground, background,
   SSH, prompt, and `ask --apply` operations. It persists terminal state before releasing
   the resource lease; cancellation acknowledgements are not terminal evidence, and
@@ -55,6 +63,9 @@ pnpm build
 Daily operations go through `doops-gateway` and registered `doops-agent`
 instances. Do not rely on SSH credentials for normal agent operations; remote
 actions should travel through doops RPC, gateway routing, and agent-side tools.
+An Agent must not replace itself through its own exec or Helm process. Authorized
+external DockerHost publication controls the host independently of the old Agent;
+it does not introduce direct CLI targets or change credential APIs.
 
 ## Development Credential Preflight
 

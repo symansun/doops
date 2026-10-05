@@ -34,6 +34,11 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 发布对象:
   普通业务 workload: ask --apply，不要求本机 kubeconfig 或先执行 push
   已具备自升级控制器的 Helm Agent 镜像: upgrade，由集群内 Job 执行
+  旧 Helm Agent/K8S 首次接入: scripts/release-managed-agent.sh，外部 kubeconfig
+  已有独立 Docker Agent: backend/scripts/release-host-agent.sh，正式外部宿主控制，不是 upgrade fallback，不要求迁 K8S
+    必须显式提供 SSH --port、不可变镜像 digest、CI source commit 和 release；脚本 --dry-run 是真实只读预检
+    严格校验主机密钥；可引用已认证私有 SSH socket，不接收密码/token；保留配置和旧容器，失败外部回滚
+    完整参数与验收: backend/docs/BUILD_DEPLOY_SOP.md；禁止当前 Agent exec/Helm 替换自己
   Gateway 控制面: scripts/deploy-gateway.sh，不通过 target 发布自身
 
 用法:
@@ -61,7 +66,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   admin       gateway 管理命令：用户、target 授权和 API key
               admin audit optimize：显式、受审计地维护查询索引
               admin operations cancel：仅请求取消，不代表任务已停止
-  upgrade     升级 doops-agent；--dry-run 只预演，正式升级由目标集群内的 Job 执行
+  upgrade     仅升级标准 Helm doops-agent；--dry-run 只预览参数，正式升级由目标集群内 Job 执行
   add         添加 gateway target
   remove      仅在 target 当前不可见时删除本机 gateway target 配置
   login       缓存 gateway user token
@@ -930,7 +935,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		upgradeFlag := flag.NewFlagSet("upgrade", flag.ExitOnError)
 		upgradeFlag.StringVar(&target, "target", "", "Configured Gateway target")
 		upgradeFlag.StringVar(&image, "image", "", "Pinned doops-agent image, repository@sha256:<digest>")
-		upgradeFlag.StringVar(&mode, "mode", "auto", "Upgrade mode: auto or k8s")
+		upgradeFlag.StringVar(&mode, "mode", "auto", "Managed Helm Job mode: auto or k8s; standalone Docker uses backend/scripts/release-host-agent.sh")
 		upgradeFlag.StringVar(&namespace, "namespace", "", "Optional namespace; must match the agent namespace")
 		upgradeFlag.StringVar(&workload, "workload", "", "Optional deployment name; must match the Helm release")
 		upgradeFlag.StringVar(&container, "container", "", "Container name; managed upgrades use doops-agent")

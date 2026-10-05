@@ -23,7 +23,7 @@ bash scripts/release-managed-agent.sh \
 Agent 自恢复可以通过 SSH 到该主机执行受控流程；日常业务仍通过明确 target 的
 `ask --apply`，不以本机 kubeconfig 或 `push` 为前提。
 新身份必须确认没有同 `cluster/instance` 的在线实例。外部清单安装器不作为本仓库的
-第二条标准升级路径；不要通过 `kubectl set image`、Docker `run` 或重跑旧清单换镜像。
+第二条标准 Helm 升级路径；不要通过 `kubectl set image`、手工 Docker `run` 或重跑旧清单换镜像。
 
 本仓库的 `scripts/release-managed-agent.sh` 用于新集群安装、旧 Helm Agent 首次启用
 自升级控制器，以及显式 Agent Helm 配置变更。新集群的 `--values` 模式
@@ -40,6 +40,15 @@ Agent 自恢复可以通过 SSH 到该主机执行受控流程；日常业务仍
 节点运行时；不能仅凭一分钟超时就强制删除，也不要对同一身份再跑一次安装器。
 非标准 `hostPID` 配置必须在独立迁移中处理，不能通过临时容器绕过。
 
+## 已有独立 Docker 节点
+
+已有独立 Docker Agent 保持现网运行方式，通过正式外部
+`backend/scripts/release-host-agent.sh` 发布；不要求迁 K8S，不使用 `doops upgrade`
+或旧 Agent `exec` 替换自己。脚本不是无 Agent 主机的安装配方，不自动迁 Compose/Helm。
+显式 target/session、SSH 地址/用户/端口、原容器、cluster/instance 和 CI 制品参数、
+真实只读预检、宿主锁、配置保留与外部回滚见
+[主 SOP](BUILD_DEPLOY_SOP.md#独立-dockerhost-发布)。新接入方案须另行确认授权，不能为检查硬件擅自安装。
+
 ## 安装完成后的验收标准
 
 CLI 不提供直连 Agent 安装入口。不要以“容器起来了”或“`ps` 里有进程”
@@ -50,11 +59,13 @@ CLI 不提供直连 Agent 安装入口。不要以“容器起来了”或“`ps
 - `doops -session install-verify exec --target <gateway-target> --cmd 'do-agent --version'`
   返回当前发布版本。
 - 容器运行时可见（`nerdctl` / `docker` / `podman`）。
-- 目标 Agent 内的 `kubectl` 和 Kubernetes 身份来源明确，不是查找开发机 kubeconfig。
-- `buildctl` 与 `/run/buildkit/buildkitd.sock` 可见。
+- K8S 节点的 `kubectl` 和 Kubernetes 身份来源明确，不是查找开发机 kubeconfig；独立 Docker 不要求 K8S。
+- 声明 BuildKit 能力的节点须验证 `buildctl` 与 `/run/buildkit/buildkitd.sock` 可见。
+- 独立 Docker 发布还须完成主 SOP 的实际容器/镜像/版本、Gateway `release_commit`、structuredSSH 协议/argv/预期失败终态、foreground/bg RPC 流与 Root RequestID 验收；不宣称 SSH 目的地主机成功认证。
 
 Gateway heartbeat、Agent 版本或容器运行时任一失败，安装都应直接视为失败；如果
-`kubectl` 或 `buildkit` 为 `MISSING`，说明目标只能做部分能力，不能被当成完整发布节点。
+节点所需的 `kubectl` 或 `buildkit` 为 `MISSING`，不能被当成具备相应能力的发布节点；
+独立 Docker 未部署 K8S 本身不是升级失败。
 
 ---
 
@@ -90,5 +101,5 @@ Gateway heartbeat、Agent 版本或容器运行时任一失败，安装都应直
    ```
 
 返回内核信息只证明远程命令通道可用；完成上节全部验收后才能宣布节点接入成功。
-宿主 Docker、`agent.yaml` 和 bind-mount
-二进制都不是发布路径；迁到 `deploy/helm/doops-agent` 之前不得换镜像。
+独立 Docker Agent 使用上述正式外部入口；非 Helm K8S 清单或 bind-mount 二进制不能
+借此手工换镜像，也不能让当前 Agent 自行替换自己。

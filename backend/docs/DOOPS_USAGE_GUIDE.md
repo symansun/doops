@@ -40,7 +40,8 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Use structured Kubernetes operations | `doops -session <s> k8s --target <t> ...` | Restricted operational interface; publishing uses `ask --apply`. |
 | Clean workspace | `doops -session <s> clean --target <t> --workspace <s>` | Cleans `/root/ws/<workspace>`. |
 | Check an image deployment | `doops check ...` | Compares configured service image with build metadata. |
-| Upgrade a managed Agent | `doops -session <s> upgrade --target <t> --image <repository>@sha256:<digest>` | In-cluster Job. `--dry-run` previews. |
+| Upgrade a managed Helm Agent | `doops -session <s> upgrade --target <t> --image <repository>@sha256:<digest>` | In-cluster Job only. `--dry-run` previews parameters. |
+| Release an existing standalone Docker Agent | External `scripts/release-host-agent.sh` | Explicit DockerHost controller, not CLI fallback; real read-only `--dry-run`. See [SOP](BUILD_DEPLOY_SOP.md#独立-dockerhost-发布). |
 | Cache token | `doops login ...` | Gateway login can exchange username/password for user token. |
 | List target credentials | `doops credential list --target <t>` | Uses the cached gateway login and returns only metadata granted to that user on the selected cluster/instance. |
 | Preflight development credentials | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` | Fails closed unless every declared credentialRef has a matching active grant use on the selected target. |
@@ -445,12 +446,13 @@ CNB CI 负责测试、构建和发布制品；Gateway 负责鉴权、审计、�
 `cicd run`、workflow 环境推断、CICDReport 或 `doops_cicd_result`。
 
 普通前台 `exec` 可以执行操作者明确给出的 Helm 命令，但不替代标准发布编排，也不能使用
-managed credential references。`doops-agent` 自身升级使用 `doops upgrade`，但仅适用于
+managed credential references。标准 Helm `doops-agent` 自身升级使用 `doops upgrade`，仅适用于
 Agent 自身 namespace 中的标准 Helm-managed Deployment 和已有匹配 Helm release；未给
 `--release` 时必须只有一个匹配 release，给出时按名称选择并校验。Agent Pod 必须挂载
 可由 Job 共享的 `/root/.kube` 或 `/root/.kube/config`，Job 的 Kubernetes 权限来自该
-kubeconfig，不需要操作机 kubeconfig。没有这些前置条件时才使用外部
-`scripts/release-managed-agent.sh`。
+kubeconfig，不需要操作机 kubeconfig。旧 Helm Agent 使用外部
+`scripts/release-managed-agent.sh`；已有独立 Docker 使用外部
+`scripts/release-host-agent.sh`，不要求先迁 K8S，不通过旧 Agent `exec` 升级自己。
 
 ## Push
 
@@ -594,10 +596,24 @@ CLI 一键安装或更新：
 bash scripts/install.sh --version <vX.Y.Z> --project "$PWD"
 ```
 
-新集群首次安装、旧 Helm Agent 首次启用控制器与显式 Agent 配置变更使用本仓库
+K8S 新集群首次安装、旧 Helm Agent 首次启用控制器与显式 Helm 配置变更使用本仓库
 `scripts/release-managed-agent.sh`，不能重跑外部清单安装器替代 Helm 升级。
 首次安装完整命令与验收见 `CLUSTER_INSTALL_GUIDE.md`；这条 bootstrap 路径与普通
 业务 `ask --apply` 分开。外部控制器可以位于授权管理主机或 CI，不必在开发机。
+
+已有独立 Docker Agent 用 `backend/scripts/release-host-agent.sh` 和同目录 Python
+实现，由外部宿主控制器发布并保持原配置。必须显式指定 SSH 端口，核验主机密钥；
+可引用已认证私有 SSH socket，不接收密码/token。完整必填参数、真实只读 `--dry-run`、
+宿主锁、停止后保留旧容器、外部回滚以及实际容器/镜像/版本、Gateway
+`release_commit`、structuredSSH 协议/argv 派发/预期失败终态、foreground/bg 真实 RPC
+流与 Root RequestID 验收见
+[主 SOP](BUILD_DEPLOY_SOP.md#独立-dockerhost-发布)。这不是 `doops upgrade` 的 Docker
+模式或自动 fallback，也不是无 Agent 主机的 bootstrap，不依赖旧 Agent 的
+`doops_agent_upgrade` / `managedHelm`。
+候选镜像先由外部准备，dry-run 仅只读检查已有制品，缺失明确失败；候选二进制静态
+`--version` 检测仅在正式发布停止旧容器前执行，不启动 Agent 或新 target。
+外部 bootstrap 密码只走 stdin，不传给 Agent；外部管理 SSH 成功另记，不能据此宣称
+Agent 已成功认证 SSH 目的地主机。
 
 已经改用 Helm chart `deploy/helm/doops-agent`、并且 Agent 镜像包含自升级控制器的节点，
 用 `doops upgrade`，不需要本机 kubeconfig。普通业务仍使用 `doops ask --apply`。
@@ -608,7 +624,7 @@ CLI 的参数预览不替代这项检查。Agent 进程不执行这次 Helm muta
 `doops upgrade` 只接受 Agent 镜像和 rollback 操作，不修改 `proxy.allowedHosts`、
 `hostAliases` 或其它 Agent Helm 配置。
 
-还没有该控制器的旧 Agent，以及新集群第一次接入，仍用
+还没有该控制器的旧 Helm Agent，以及 K8S 新集群第一次接入，仍用
 `scripts/release-managed-agent.sh` 和操作机 kubeconfig：
 
 脚本会先验证 Kubernetes API 和 kubeconfig 可达性，再读取 Helm release。`--values` 新集群
@@ -662,7 +678,7 @@ doops -session agent-upgrade upgrade \
 
 镜像必须是 `repository@sha256:<64 hex>`，包括 `--dry-run` 预演。
 `--rollback` 回到前一个成功且已被替代的 revision。
-`--target` 的 `cluster/instance` 就是升级范围。还没有自升级控制器的旧 Agent 才用
+`--target` 的 `cluster/instance` 就是升级范围。还没有自升级控制器的旧 Helm Agent 用
 `scripts/release-managed-agent.sh`。
 `PREVIEW` 不是已部署，`ACCEPTED` 不是已完成。Job 成功后还需核对 Gateway 实际服务
 Pod 的 UID、imageID、版本与功能路径；`structuredSSH` 只是协议声明。协议探针失败时

@@ -20,6 +20,20 @@ scope: doops-operations
 - 不扫描未知网段、不猜地址或密码、不尝试越权入口。缺少映射、授权或可用入口时，
   说明缺失事实并请资产负责人补充，不以自动安装或绕过认证代替。
 
+### 本次已确认入口（2026-10-05）
+
+- `49.51.244.8`：SSH 用户 `ubuntu`、端口 `2022`，已登录；已有
+  `known_hosts` 的 `[49.51.244.8]:2022` 记录需核对。其 `doops-agent` 是独立 Docker
+  容器，`network=host`、`privileged=true`，无 Compose labels，也无 K8S；发布须保持这些配置。
+- `43.173.87.215`：另一个主机入口，独立 Docker、无 K8S；目前仅授权只读检查，
+  不是前一地址的别名，不得对其停止容器、换镜像或发布。端口和账号须按其独立证据确认。
+
+上一轮检查 22 且未核对已有 2022 主机密钥记录，不能据此宣称 SSH 未登录或主机不可达。
+后续必须先核对地址、用户、显式端口和已有认证状态；密码不得写入任何文件、示例或日志。
+用户提供的 43/49 密码仅经外部 bootstrap stdin 建立管理 SSH 认证，不传给 Agent。
+外部管理 SSH 成功与 Agent structuredSSH 验收分别记录；后者验证协议、argv 派发与
+预期失败终态，不宣称目的地主机成功认证。真实访问仍须 Agent 内已有授权 SSH 认证材料。
+
 ## 2. 使用已授权入口
 
 以下 `<...>` 是需替换的占位符；`--target` 使用本地已配置的 target 名称，
@@ -46,6 +60,7 @@ doops -session <s> exec --target <physical-target> -- uname -a
 
 ```bash
 doops -session <s> ssh --target <vm-target> --host user@<physical-host> \
+  --option=Port=<verified-ssh-port> \
   --option=BatchMode=yes --option=StrictHostKeyChecking=yes -- hostname
 ```
 
@@ -59,6 +74,14 @@ injection：不能宣称创建、写入或授权托管凭据后就能自动 SSH�
 文件，不会上传本机私钥或注入托管凭据。认证或主机密钥缺失时交由授权管理员配置，
 不要把密码、私钥或 token 写进参数、prompt、日志或文档，也不要关闭主机密钥校验。
 
+### 外部宿主发布控制器
+
+已有独立 Docker Agent 的正式发布由授权外部控制器执行
+`backend/scripts/release-host-agent.sh`，不是日常 SSH target，也不由旧 Agent 升级自己。
+显式端口、真实只读预检、可选本机已认证私有 `--ssh-control-path`、宿主锁、配置保留、
+旧容器保留、外部回滚及功能验收见 [主 SOP](BUILD_DEPLOY_SOP.md#独立-dockerhost-发布)。
+不接收密码/token，不改变凭据 API；只读入口不能因脚本存在而获得发布授权。
+
 已有并获授权的 Proxmox 管理面、IPMI / iLO / Redfish 或控制台可用于核对拓扑与硬件；
 按该入口实际权限和平台工具操作，不假设 DoOps 内置这些 API，也不自动扩大到写操作。
 
@@ -69,10 +92,13 @@ injection：不能宣称创建、写入或授权托管凭据后就能自动 SSH�
 
 ```bash
 doops -session <s> ssh --target <vm-target> --host user@<physical-host> \
+  --option=Port=<verified-ssh-port> \
   --option=BatchMode=yes --option=StrictHostKeyChecking=yes -- sh -c 'command -v lspci'
 doops -session <s> ssh --target <vm-target> --host user@<physical-host> \
+  --option=Port=<verified-ssh-port> \
   --option=BatchMode=yes --option=StrictHostKeyChecking=yes -- lspci -nn
 doops -session <s> ssh --target <vm-target> --host user@<physical-host> \
+  --option=Port=<verified-ssh-port> \
   --option=BatchMode=yes --option=StrictHostKeyChecking=yes -- nvidia-smi -L
 ```
 
@@ -96,6 +122,7 @@ Kubernetes / K3s Helm 流程执行，使用仓库 `backend/scripts/release-manag
 CI 镜像 digest，并完成指南中的安装验收。新集群 bootstrap 不代表已完成 Gateway
 接管验收，也不提供自动回滚。
 
-本文不提供独立 Docker 高权限安装配方，不宣称 ESXi 可以直接运行 Linux Agent 容器。
+上述安装流程不替代已有独立 Docker Agent 的正式外部发布；后者不要求先迁 K8S。
+本文不提供无 Agent 主机的独立 Docker 高权限安装配方，不宣称 ESXi 可以直接运行 Linux Agent 容器。
 没有符合指南的运行环境时，先确认受支持的接入方案；不能为“查看硬件”擅自安装
 Docker、K3s、驱动或新 Agent。
