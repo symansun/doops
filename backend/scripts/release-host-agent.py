@@ -142,7 +142,7 @@ def release(args):
         raise RuntimeError("host_root_required")
     if Path("/.dockerenv").exists() or os.environ.get("KUBERNETES_SERVICE_HOST"):
         raise RuntimeError("external_host_controller_required")
-    for value in (args.container, args.session, args.cluster, args.instance):
+    for value in (args.container, args.session, args.cluster, args.instance, args.controller_id):
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", value):
             raise RuntimeError("invalid_release_identity")
     if not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", args.image):
@@ -157,6 +157,8 @@ def release(args):
             state = json.loads((directory / "state.json").read_text())
         except FileNotFoundError:
             raise RuntimeError("rollback_receipt_missing; external intervention required") from None
+        if state.get("controller_id") != args.controller_id:
+            raise RuntimeError("rollback_controller_mismatch; refusing another release attempt")
         if state.get("phase") == "preflight":
             print("host_rollback_not_started container=%s phase=preflight" % args.container)
             return
@@ -168,7 +170,8 @@ def release(args):
     if not args.dry_run:
         directory.mkdir(parents=True, mode=0o700, exist_ok=False)
         os.chmod(directory, 0o700)
-        save_state(directory, {"phase": "preflight", "image": args.image, "source_commit": args.source_commit})
+        save_state(directory, {"phase": "preflight", "controller_id": args.controller_id,
+                               "image": args.image, "source_commit": args.source_commit})
     original = inspect_container(args.container)
     if not original["State"]["Running"] or original["HostConfig"].get("AutoRemove"):
         raise RuntimeError("running_recoverable_container_required")
@@ -205,7 +208,9 @@ def release(args):
         return
     backup = args.container + "-rollback-" + args.session
     replacement = args.container + "-replacement-" + args.session
-    state = {"old_id": original["Id"], "backup": backup, "replacement": replacement, "image": args.image, "source_commit": args.source_commit, "phase": "prepared"}
+    state = {"old_id": original["Id"], "backup": backup, "replacement": replacement,
+             "image": args.image, "source_commit": args.source_commit, "phase": "prepared",
+             "controller_id": args.controller_id}
     save_state(directory, state)
     new_id = None
     try:
@@ -250,7 +255,7 @@ def release(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("container", "session", "cluster", "instance", "image", "source-commit", "release"):
+    for name in ("container", "session", "cluster", "instance", "image", "source-commit", "release", "controller-id"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--rollback", action="store_true")

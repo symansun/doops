@@ -8,6 +8,8 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
   including SSH transport failures whose remote outcome is unknown.
 - Resume partial rollback from persisted progress while preserving exact old/new
   container ownership checks. A removed replacement must not strand the old Agent.
+- Bind automatic rollback to the current SSH staging ID in that same receipt;
+  a rejected duplicate session must not undo a previous successful release.
 - Acceptance requires real foreground stdout/stderr, background output and exit,
   structured SSH argv/failure and follow-up execution. Version and capability
   declarations alone cannot complete a release; do not replay a failed probe.

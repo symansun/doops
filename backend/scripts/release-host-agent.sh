@@ -61,7 +61,7 @@ hash="$(sha256sum "$source" | awk '{print $1}')"
 
 host_release() {
   "${SSH[@]}" "if [ \"\$(id -u)\" = 0 ]; then executor=python3; else executor='sudo -n python3'; fi
-\$executor '$remote/release-host-agent.py' --container '$CONTAINER' --session '$SESSION' --cluster '$CLUSTER' --instance '$INSTANCE' --image '$IMAGE' --source-commit '$SOURCE_COMMIT' --release '$RELEASE' $*"
+\$executor '$remote/release-host-agent.py' --controller-id '${remote##*/}' --container '$CONTAINER' --session '$SESSION' --cluster '$CLUSTER' --instance '$INSTANCE' --image '$IMAGE' --source-commit '$SOURCE_COMMIT' --release '$RELEASE' $*"
 }
 cleanup() { "${SSH[@]}" "rm -f '$remote/release-host-agent.py'; rmdir '$remote'" >/dev/null 2>&1 || true; }
 trap cleanup EXIT

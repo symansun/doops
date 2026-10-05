@@ -35,6 +35,7 @@ def args():
         image=IMAGE,
         source_commit=SOURCE,
         release=VERSION,
+        controller_id="host-controller-test",
         dry_run=False,
         rollback=False,
     )
@@ -450,7 +451,7 @@ def test_failed_replacement_restores_original_id_and_never_marks_success(
 
 def python_argv(args):
     result = [str(CONTROLLER)]
-    for name in ("container", "session", "cluster", "instance", "image", "source_commit", "release"):
+    for name in ("container", "session", "cluster", "instance", "image", "source_commit", "release", "controller_id"):
         result.extend(["--" + name.replace("_", "-"), getattr(args, name)])
     return result
 
@@ -646,7 +647,8 @@ def test_preflight_receipt_is_the_only_noop_evidence(
         controller.release(args)
     state_path = receipt_path(controller, args)
     receipt_before = state_path.read_text()
-    assert json.loads(receipt_before) == {"phase": "preflight", "image": IMAGE, "source_commit": SOURCE}
+    assert json.loads(receipt_before) == {"phase": "preflight", "controller_id": args.controller_id,
+                                         "image": IMAGE, "source_commit": SOURCE}
     assert {path.name for path in state_path.parent.iterdir()} == {"state.json"}
     assert not docker.mutations
     docker.events.clear()
@@ -687,6 +689,24 @@ def test_rollback_without_receipt_and_without_noop_proof_fails_closed(
     assert "rollback_receipt_missing" in captured.err
     assert "host_rollback_not_started" not in captured.out
     assert "host_rollback_restored" not in captured.out
+
+
+def test_duplicate_session_never_rolls_back_previous_attempt(
+    controller, args, docker, capsys,
+):
+    controller.release(args)
+    capsys.readouterr()
+    before = copy.deepcopy(docker.containers)
+    receipt_before = receipt_path(controller, args).read_text()
+    args.controller_id = "different-host-controller"
+    docker.events.clear()
+    with pytest.raises(FileExistsError):
+        controller.release(args)
+    args.rollback = True
+    with pytest.raises(RuntimeError, match="rollback_controller_mismatch"):
+        controller.release(args)
+    assert not docker.events and docker.containers == before
+    assert receipt_path(controller, args).read_text() == receipt_before
 
 
 @pytest.mark.parametrize("changed_id", [NEW_ID, OLD_ID], ids=["replacement-owner", "old-owner"])

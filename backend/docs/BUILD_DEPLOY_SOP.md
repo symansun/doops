@@ -343,6 +343,8 @@ bash scripts/release-host-agent.sh \
    Gateway 接管；不调用旧 Agent 自升级，不删除旧容器。回滚失败必须明确报告并保留现场。
    外层回滚保护必须在首次宿主替换调用前安装，覆盖 SSH 返回状态丢失；部分回滚
    失败后可从持久阶段重试，不能因已删除新容器而永久卡死，也不能放宽容器所有权校验。
+   每次调用复用其唯一 SSH staging ID 绑定 receipt；重复 session 被拒绝后，自动回滚
+   不得操作上一次发布的 receipt。该 ID 由脚本内部生成，不新增用户配置或版本门禁。
 
 禁止临时 Agent/target/runner、`kubectl set image`、跳过 `request_id` 验证或手工换镜像
 冒充该正式入口。本次宿主入口和只读授权边界见 [宿主访问说明](PHYSICAL_HOST_ACCESS.md)。
