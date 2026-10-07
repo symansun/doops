@@ -26,7 +26,8 @@ kubeconfig 或 `doops push` 为前置条件；旧 Agent 首次启用控制器需
    `mcp_doops_helm`（规范能力名 `doops_helm`）。`session_id` 由运行时绑定，模型不得
    传入 target、session 或工作区根路径；chart/values 可使用授权的 session 相对路径。
    不得用 shell 执行 kubectl 或 Helm mutation。
-2. 所有请求显式传 namespace；不得依赖 default namespace。
+2. 所有 namespaced 请求显式传 namespace；cluster-scoped 资源（例如 nodes）不传 namespace，
+   不得依赖 namespaced 请求的 default namespace。
 3. mutation 必须有 `confirm=true`；业务镜像键、版本格式和配置由授权 Chart 定义，
    不作为 DoOps 全局前置闸门。
 4. 通过 `mcp_doops_helm` 完整收敛明确的 release、namespace 和授权 chart。
@@ -50,6 +51,13 @@ kubeconfig 或 `doops push` 为前置条件；旧 Agent 首次启用控制器需
 - `kind` 使用 kubectl 小写资源名，例如 `deployment`、`pods`、`services`。
 - 读取单个对象使用 `operation=get`、`kind=deployment`、`name=<name>`、
   `namespace=<namespace>`、`output=yaml`。
+- 集群健康排查直接执行以下结构化读取，不要求用户粘贴 kubectl 输出，也不调用 Bash：
+  1. `operation=get`、`kind=nodes`、`output=wide`；Node 是集群级资源，不传 namespace。
+  2. `operation=get`、`kind=pods`、`namespace=<明确 namespace>`、`output=wide`。
+  3. `operation=events`、`namespace=<明确 namespace>`；查询 namespace 的全部事件时省略 `resource`。
+- `operation=events` 的 `resource` 只有在按对象过滤时才填写，格式必须是
+  `<kind>/<name>`，例如 `pod/node-debugger-0`；不得把 namespace、`events` 或裸名称放进
+  `resource`。如果事件读取报参数错误，修正结构化参数并重试一次，禁止改用 Bash/kubectl。
 - `output` 单独传 `json`、`yaml`、`wide` 或 `name`，不要拼进 `name`。
 
 ## 安全合规

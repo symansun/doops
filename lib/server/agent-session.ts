@@ -6,6 +6,7 @@ import {
   SessionStatus, TimelineItemStatus, AgentEventSchema, type CommandEnvelope, type CommandReceipt,
 } from "@agent-cloud/agent-ui/protocol"
 import { deploymentRequest, type DeploymentInput } from "../deployment"
+import { consumeAgentAttachment } from "./agent-attachments"
 import { AgentGatewayError, agentGatewayCall, type AgentGatewayContext } from "./agent-gateway-rpc"
 import { DoopsAgentEventProjection } from "./agent-event-projection"
 
@@ -78,7 +79,7 @@ export async function executeAgentCommand(hosted: HostedSession, context: AgentG
       return receipt
     }
     if (hosted.active) throw new AgentGatewayError(hosted.active.uncertain ? "远端结果未确认，不能复用此会话；请先核对远端状态" : "当前会话仍有运行中的任务", 409)
-    const args = promptArguments(context, owned)
+    const args = await promptArguments(context, owned)
     const controller = new AbortController()
     let complete!: () => void
     const done = new Promise<void>((resolve) => { complete = resolve })
@@ -92,7 +93,7 @@ export async function executeAgentCommand(hosted: HostedSession, context: AgentG
         { itemId: `user:${owned.commandId}`, turnId: owned.commandId, causationCommandId: owned.commandId,
           event: create(AgentEventSchema, { event: { case: "timelineItemAppended", value: { content: { content: { case: "message", value: {
             role: MessageRole.USER, status: TimelineItemStatus.COMPLETED,
-            content: [{ contentId: "text", content: { case: "text", value: { text: args.instruction as string } } }],
+            content: userMessageContent(owned, args.instruction as string),
           } } } } } }).event },
       ], owned.streamEpoch)
     } catch (error) { hosted.active = undefined; complete(); throw error }
@@ -165,13 +166,36 @@ async function runOperation(hosted: HostedSession, context: AgentGatewayContext,
   ], command.streamEpoch)
 }
 
-function promptArguments(context: AgentGatewayContext, command: CommandEnvelope): Record<string, unknown> {
+async function promptArguments(context: AgentGatewayContext, command: CommandEnvelope): Promise<Record<string, unknown>> {
   const payload = command.command
   if (payload.case === "sendPrompt") {
-    if (!payload.value.text.trim() || payload.value.text.length > 64_000 || payload.value.attachments.length) {
-      throw new AgentGatewayError("需要有效文本，当前接口不支持对话附件", 400)
+    if (payload.value.text.length > 64_000) {
+      throw new AgentGatewayError("对话文本不能超过 64 KiB", 400)
     }
-    return { instruction: payload.value.text, operation: "ask" }
+    if (!payload.value.text.trim() && payload.value.attachments.length === 0) {
+      throw new AgentGatewayError("需要文本或附件", 400)
+    }
+    if (payload.value.attachments.length > 4) {
+      throw new AgentGatewayError("一次最多上传 4 个附件", 400)
+    }
+    const attachments = []
+    for (const attachment of payload.value.attachments) {
+      if (attachment.content.case !== "file" || !attachment.content.value.artifactId) {
+        throw new AgentGatewayError("对话附件协议无效", 400)
+      }
+      const uploaded = await consumeAgentAttachment(
+        { gateway: context.gateway, token: context.token, cluster: context.cluster, instance: context.instance, sessionId: context.sessionId },
+        attachment.content.value.artifactId,
+      ).catch((error) => {
+        throw new AgentGatewayError(error instanceof Error ? error.message : "附件不存在或已过期", 410)
+      })
+      attachments.push({
+        filename: uploaded.name,
+        media_type: uploaded.mediaType,
+        base64_data: uploaded.base64Data,
+      })
+    }
+    return { instruction: payload.value.text, operation: "ask", attachments }
   }
   if (payload.case !== "extension" || payload.value.namespace !== "doops.operations" || payload.value.semanticType !== "apply" || payload.value.schemaVersion !== "1") {
     throw new AgentGatewayError("不支持该会话命令", 400)
@@ -197,6 +221,11 @@ function promptArguments(context: AgentGatewayContext, command: CommandEnvelope)
   try {
     return deploymentRequest({ cluster: context.cluster, instance: context.instance, key: `${context.cluster}/${context.instance}` }, record as unknown as DeploymentInput)
   } catch (error) { throw new AgentGatewayError(error instanceof Error ? error.message : "部署表单无效", 400) }
+}
+
+function userMessageContent(command: CommandEnvelope, instruction: string) {
+  const content = instruction ? [{ contentId: "text", content: { case: "text" as const, value: { text: instruction } } }] : []
+  return command.command.case === "sendPrompt" ? [...content, ...command.command.value.attachments] : content
 }
 
 function commandReceipt(command: CommandEnvelope, state: CommandReceiptState, failure?: string) {

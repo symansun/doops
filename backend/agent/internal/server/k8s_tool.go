@@ -116,6 +116,9 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 		(params.Operation == "logs" || params.Operation == "events" ||
 			params.Operation == "rollout-status") &&
 		!validK8SResource(params.Resource) {
+		if params.Operation == "events" {
+			return nil, fmt.Errorf("invalid kubernetes resource for events; omit resource for namespace-wide events or use kind/name")
+		}
 		return nil, fmt.Errorf("invalid kubernetes resource")
 	}
 	if params.Timeout != "" && !k8sTimeoutPattern.MatchString(params.Timeout) {
@@ -198,7 +201,7 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 		args := namespace([]string{"events"})
 		if params.Resource != "" {
 			if !k8sReadableKinds[k8sResourceKind(params.Resource)] {
-				return nil, fmt.Errorf("kubernetes resource %q is not available for events", params.Resource)
+				return nil, fmt.Errorf("kubernetes resource %q is not available for events; use kind/name or omit resource", params.Resource)
 			}
 			args = append(args, "--for", params.Resource)
 		}

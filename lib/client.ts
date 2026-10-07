@@ -6,7 +6,7 @@ export type { Target, AuditEvent, AuditSummary }
 
 export interface Session {
   gateway: string
-  token: string
+  token?: string
   username?: string
   demo?: boolean
 }
@@ -19,18 +19,15 @@ export type RpcEvent =
   | { type: "done" }
 
 function authHeaders(s: Session): HeadersInit {
-  return {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${s.token}`,
-    "x-doops-gateway": s.gateway,
-  }
+  void s
+  return { "Content-Type": "application/json" }
 }
 
 export async function login(
   gateway: string,
   username: string,
   password: string,
-): Promise<{ token: string; username: string }> {
+): Promise<{ gateway: string; username: string }> {
   const res = await fetch("/api/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -38,7 +35,40 @@ export async function login(
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || "登录失败")
-  return { token: data.token, username: data.username || username }
+  return { gateway: data.gateway || gateway, username: data.username || username }
+}
+
+export async function restoreServerSession(): Promise<Session | null> {
+  const res = await fetch("/api/session", { cache: "no-store" })
+  const data = await res.json()
+  if (!res.ok || !data.session?.gateway) return null
+  return {
+    gateway: data.session.gateway,
+    username: data.session.username || undefined,
+  }
+}
+
+export async function persistTokenSession(
+  gateway: string,
+  token: string,
+  username?: string,
+): Promise<Session> {
+  const res = await fetch("/api/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ gateway, token, username: username || "" }),
+  })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || "保存会话失败")
+  return { gateway: data.gateway || gateway, username: data.username || username }
+}
+
+export async function clearServerSession(): Promise<void> {
+  const res = await fetch("/api/session", { method: "DELETE" })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data.error || `断开连接失败 (${res.status})`)
+  }
 }
 
 export async function fetchTargets(s: Session): Promise<Target[]> {

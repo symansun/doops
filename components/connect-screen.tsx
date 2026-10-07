@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { login, fetchTargets, type Session } from "@/lib/client"
+import { fetchTargets, login, persistTokenSession, type Session } from "@/lib/client"
 import { DEMO_TOKEN } from "@/lib/demo"
 import { isDemoAllowed } from "@/lib/demo-policy"
 import { PlugIcon, ServerIcon, SparkIcon } from "./icons"
@@ -40,10 +40,10 @@ export function ConnectScreen({
       if (mode === "password") {
         if (!username || !password) throw new Error("请填写用户名和密码")
         const r = await login(gateway, username, password)
-        session = { gateway, token: r.token, username: r.username }
+        session = { gateway: r.gateway, username: r.username }
       } else {
         if (!token.trim()) throw new Error("请粘贴 user token")
-        session = { gateway, token: token.trim() }
+        session = await persistTokenSession(gateway, token.trim())
       }
       // 验证 token 有效性
       await fetchTargets(session)
@@ -167,7 +167,7 @@ export function ConnectScreen({
         </div>
 
         <p className="mt-4 text-center text-xs text-muted-foreground">
-          Token 仅保存在浏览器内存与本机；后端只做请求转发，不落盘。
+          登录会话由当前工作台的 HttpOnly Cookie 保存，业务请求统一经过 Gateway 授权。
         </p>
       </div>
     </main>

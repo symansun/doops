@@ -89,7 +89,7 @@ func runK8SMCPStdioContext(
 				ID:      request.ID,
 				Result: map[string]interface{}{
 					"tools": []interface{}{
-						k8sMCPToolDefinition(k8sReadMCPToolName, k8sReadOperations, "Read Kubernetes state through the canonical doops_k8s contract."),
+						k8sMCPToolDefinition(k8sReadMCPToolName, k8sReadOperations, "Read Kubernetes state through the canonical doops_k8s contract. For operation=events, omit resource for namespace-wide events; an object filter must be kind/name. Never use Bash or kubectl as a fallback."),
 						helmMCPToolDefinition(),
 					},
 				},
@@ -243,13 +243,20 @@ func k8sMCPToolDefinition(name string, operations []string, description string) 
 			"required":             []string{"operation"},
 			"properties": map[string]interface{}{
 				"operation": map[string]interface{}{
-					"type": "string",
-					"enum": operations,
+					"type":        "string",
+					"enum":        operations,
+					"description": "Use get, describe, logs, top, events, or rollout-status. For health checks use get nodes, get pods, then events.",
 				},
-				"kind":      map[string]interface{}{"type": "string"},
-				"name":      map[string]interface{}{"type": "string"},
-				"resource":  map[string]interface{}{"type": "string"},
-				"namespace": map[string]interface{}{"type": "string"},
+				"kind": map[string]interface{}{"type": "string"},
+				"name": map[string]interface{}{"type": "string"},
+				"resource": map[string]interface{}{
+					"type":        "string",
+					"description": "Only for logs, rollout-status, or object-filtered events. Events must use kind/name; omit for namespace-wide events. Do not pass a namespace here.",
+				},
+				"namespace": map[string]interface{}{
+					"type":        "string",
+					"description": "Explicit Kubernetes namespace. Required for namespaced health reads; never place it in resource.",
+				},
 				"container": map[string]interface{}{"type": "string"},
 				"output":    map[string]interface{}{"type": "string"},
 				"timeout":   map[string]interface{}{"type": "string"},

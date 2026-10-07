@@ -130,10 +130,9 @@ export const ALL_ACTIONS = [
 ] as const
 
 function headers(s: Session): HeadersInit {
+  void s
   return {
     "Content-Type": "application/json",
-    Authorization: `Bearer ${s.token}`,
-    "x-doops-gateway": s.gateway,
   }
 }
 

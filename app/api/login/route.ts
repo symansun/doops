@@ -1,6 +1,7 @@
 import {
   allowedGatewayBase,
   gatewayPolicyResponse,
+  setGatewaySession,
 } from "@/lib/gateway-policy"
 
 export const runtime = "nodejs"
@@ -35,9 +36,19 @@ export async function POST(req: Request) {
         { status: res.status },
       )
     }
-    return new Response(text, {
+    let parsed: { token?: string; username?: string }
+    try {
+      parsed = JSON.parse(text) as { token?: string; username?: string }
+    } catch {
+      return Response.json({ error: "gateway 登录响应不是合法 JSON" }, { status: 502 })
+    }
+    if (!parsed.token) return Response.json({ error: "gateway 登录响应缺少 token" }, { status: 502 })
+    const usernameValue = parsed.username || username
+    const headers = new Headers({ "Content-Type": "application/json" })
+    setGatewaySession(headers, { gateway: gatewayBase, token: parsed.token, username: usernameValue })
+    return new Response(JSON.stringify({ authenticated: true, gateway: gatewayBase, username: usernameValue }), {
       status: 200,
-      headers: { "Content-Type": "application/json" },
+      headers,
     })
   } catch (err) {
     const policyResponse = gatewayPolicyResponse(err)

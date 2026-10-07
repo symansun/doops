@@ -12,7 +12,7 @@ import {
 } from "@agent-cloud/agent-ui/protocol"
 import type { Session, Target } from "./client"
 
-export function createDoopsAgentSessionTransport({ session, target, sessionId }: {
+export function createDoopsAgentSessionTransport({ target, sessionId }: {
   session: Session
   target: Target
   sessionId: string
@@ -26,8 +26,6 @@ export function createDoopsAgentSessionTransport({ session, target, sessionId }:
         cache: "no-store",
         headers: {
           ...init.headers,
-          Authorization: `Bearer ${session.token}`,
-          "x-doops-gateway": session.gateway,
         },
       })
       if (!response.ok) {
