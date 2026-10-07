@@ -151,6 +151,27 @@ func TestGatewayClientWSTokenLifecycleAdmission(t *testing.T) {
 	}
 }
 
+func TestGatewayClientWSStoreFailureDoesNotForward(t *testing.T) {
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+	token := f.user(t, "store-failure-operator", ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}})
+	agent, client := f.agent(t, "store-failure"), f.client(t, token)
+	response, forwarded := tokenLifecycleShellCall(t, client, agent, 2, "store-failure-before")
+	if !forwarded || response["error"] != nil || response["result"] == nil {
+		t.Fatalf("valid call before store failure failed: %#v", response)
+	}
+	if err := f.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	response, forwarded = tokenLifecycleShellCall(t, client, agent, 3, "store-failure-after")
+	rpcError, ok := response["error"].(map[string]interface{})
+	if forwarded || !ok || rpcError["code"] != float64(-32603) || rpcError["message"] != "gateway_auth_unavailable" {
+		t.Fatalf("store failure was exposed or forwarded: forwarded=%t response=%#v", forwarded, response)
+	}
+	if len(f.hub.listActiveOperations()) != 0 {
+		t.Fatalf("store failure created an active operation: %#v", f.hub.listActiveOperations())
+	}
+}
+
 // Answer an incorrectly forwarded call too, so an admission bug fails without a timeout.
 func tokenLifecycleShellCall(t *testing.T, client *websocket.Conn, agent *executionLifecycleAgent, id int, session string) (map[string]interface{}, bool) {
 	t.Helper()

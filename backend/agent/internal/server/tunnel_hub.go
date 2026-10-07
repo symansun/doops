@@ -1024,7 +1024,10 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 
 func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAuth, cluster, instance string, req api.JSONRPCRequest, writeRaw func([]byte) error, writeJSON func(interface{}) error) error {
 	if err := h.store.validateUserTokenAuth(auth); err != nil {
-		return writeJSON(buildErrorResponse(req.ID, -32001, "gateway_auth_failed"))
+		if errors.Is(err, ErrUnauthorized) {
+			return writeJSON(buildErrorResponse(req.ID, -32001, "gateway_auth_failed"))
+		}
+		return writeJSON(buildErrorResponse(req.ID, -32603, "gateway_auth_unavailable"))
 	}
 	ctx = contextWithInternalAuditAuth(ctx, auth)
 	var params api.ToolCallParams
