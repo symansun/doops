@@ -22,13 +22,17 @@ export function DatabasePanel({
   session,
   target,
   sessionId,
+  onRunningChange,
 }: {
   session: Session
   target: Target
   sessionId: string
+  onRunningChange: (running: boolean) => void
 }) {
   const [mode, setMode] = useState<DatabaseMode>("query")
   const [request, setRequest] = useState("")
+  const [databaseHint, setDatabaseHint] = useState("")
+  const [credentials, setCredentials] = useState("")
   const [confirmed, setConfirmed] = useState(false)
   const [lines, setLines] = useState<DatabaseLine[]>([])
   const [running, setRunning] = useState(false)
@@ -46,9 +50,15 @@ export function DatabasePanel({
       setError("执行变更前请确认已阅读变更说明，并由 DoSql 提供匹配的审批证据")
       return
     }
+    const credentialRefs = credentials.split(/[\s,]+/).filter(Boolean)
+    if (credentialRefs.some((value) => !/^[a-z0-9][a-z0-9.-]*$/.test(value))) {
+      setError("受管凭据只能填写资源名")
+      return
+    }
     setError("")
     setLines([])
     setRunning(true)
+    onRunningChange(true)
     const controller = new AbortController()
     setAbortController(controller)
     const operation = mode === "apply" ? "apply" : "ask"
@@ -59,6 +69,7 @@ export function DatabasePanel({
       mode === "apply"
         ? "只有在 Gateway managed credential、目标范围和匹配的 DoSql 签名审批证据都存在时才执行；缺少任一条件就明确失败。"
         : "",
+      databaseHint.trim() ? `数据库提示：${databaseHint.trim()}` : "",
       `用户需求：${text}`,
     ].filter(Boolean).join("\n")
     push({ kind: "info", text: `目标 ${target.cluster}/${target.instance} · ${modeLabel(mode)}` })
@@ -69,7 +80,13 @@ export function DatabasePanel({
           cluster: target.cluster,
           instance: target.instance,
           tool: TOOLS.prompt,
-          arguments: { session_id: sessionId, operation, skill: "dosql", instruction },
+          arguments: {
+            session_id: sessionId,
+            operation,
+            skill: "dosql",
+            instruction,
+            ...(credentialRefs.length ? { credential_refs: credentialRefs } : {}),
+          },
           signal: controller.signal,
         },
         (event) => {
@@ -89,6 +106,7 @@ export function DatabasePanel({
       }
     } finally {
       setRunning(false)
+      onRunningChange(false)
       setAbortController(null)
     }
   }
@@ -145,6 +163,35 @@ export function DatabasePanel({
               {item.label}
             </button>
           ))}
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-2">
+          <label className="flex min-w-0 flex-col gap-1.5">
+            <span className="text-xs font-medium text-foreground">数据库提示</span>
+            <input
+              value={databaseHint}
+              onChange={(event) => {
+                setDatabaseHint(event.target.value)
+                setConfirmed(false)
+              }}
+              disabled={running}
+              placeholder="数据库名称或资产提示（可选）"
+              className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring disabled:opacity-60"
+            />
+          </label>
+          <label className="flex min-w-0 flex-col gap-1.5">
+            <span className="text-xs font-medium text-foreground">受管凭据</span>
+            <input
+              value={credentials}
+              onChange={(event) => {
+                setCredentials(event.target.value)
+                setConfirmed(false)
+              }}
+              disabled={running}
+              placeholder="资源名，多个用空格或逗号分隔（可选）"
+              className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring disabled:opacity-60"
+            />
+          </label>
         </div>
 
         <label className="flex min-h-32 flex-1 flex-col gap-1.5">

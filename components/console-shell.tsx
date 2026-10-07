@@ -166,7 +166,7 @@ export function ConsoleShell() {
   }
 
   function logout() {
-    if (skillRunning) { setError("请先等待网站操作结束，再退出登录"); return }
+    if (skillRunning) { setError("请先等待当前操作结束，再退出登录"); return }
     const current = session
     void (async () => {
       try {
@@ -183,7 +183,7 @@ export function ConsoleShell() {
   }
 
   function selectTarget(t: Target) {
-    if (skillRunning) { setError("请先等待网站操作结束，再切换目标"); return }
+    if (skillRunning) { setError("请先等待当前操作结束，再切换目标"); return }
     if (agentRuntime && isDoopsAgentSessionBusy(agentRuntime.getSnapshot(sessionId))) {
       setError("请先停止当前 AI 任务，再切换目标")
       return
@@ -403,6 +403,7 @@ export function ConsoleShell() {
                     session={session}
                     target={selected}
                     sessionId={sessionId}
+                    onRunningChange={setSkillRunning}
                   />
                 )}
                 {tab === "website" && (

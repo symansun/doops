@@ -45,8 +45,9 @@ Agent 必须把 doagent 会话创建为 `restricted`。普通 `ask` 只允许内
 `mcp_doops_k8s_read` 和 `mcp_doops_web_read`；K8s 读取工具明确拒绝 Secret、ServiceAccount 和其它凭据载体。
 显式 `--apply` 才切换到 doagent 原生 `build` 模式。Kubernetes workload mutation 只允许
 `mcp_doops_helm`；目标本地 Nginx 站点变更使用 `mcp_doops_web`，详细契约见
-[DOWEB_INTEGRATION.md](DOWEB_INTEGRATION.md)。Kubernetes 镜像发布都从任务明确授权的
-Helm chart 完整收敛 release。工具缺失、启动失败或没有本轮完成的可信
+[DOWEB_INTEGRATION.md](DOWEB_INTEGRATION.md)。对于 Kubernetes 业务 workload，
+包括只更新镜像在内的所有发布，都从任务明确授权的 Helm chart 完整收敛 release。
+工具缺失、启动失败或没有本轮完成的可信
 mutation 证据时必须失败关闭，不能退回 Bash、原始 kubectl、原始 Helm 或文本成功声明。
 
 内置 `doops` MCP 必须设置 `trusted_result_attestation=true`。doagent 只根据实际
