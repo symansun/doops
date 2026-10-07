@@ -523,23 +523,25 @@ func TestExecutionLifecycleStructuredWorkspacesExcludeSameAndAllowDifferent(t *t
 	}
 }
 
-func TestExecutionLifecycleTargetMutationAllowsQueries(t *testing.T) {
+func TestExecutionLifecycleTargetMutationAllowsConcurrentSessionsAndQueries(t *testing.T) {
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
 	agent := f.agent(t, "exclusive-agent")
 	holderClient, other := f.client(t, f.admin), f.client(t, f.admin)
 	lifecycleSend(t, holderClient, 2, "doops_shell", "mutation", map[string]interface{}{"command": "kubectl apply -f test.yaml"})
 	mutation := agent.call(t, "doops_shell", "mutation")
 	lifecycleSend(t, other, 2, "doops_shell", "other-mutation", map[string]interface{}{"command": "kubectl apply -f other.yaml"})
-	lifecycleResponse(t, other, 2, "target busy")
+	otherMutation := agent.call(t, "doops_shell", "other-mutation")
 	lifecycleSend(t, other, 3, "doops_node_info", "query", map[string]interface{}{})
 	query := agent.call(t, "doops_node_info", "query")
 	agent.complete(t, query, "")
 	lifecycleResponse(t, other, 3, "")
+	agent.complete(t, otherMutation, "")
+	lifecycleResponse(t, other, 2, "")
 	agent.complete(t, mutation, "")
 	lifecycleResponse(t, holderClient, 2, "")
 }
 
-func TestExecutionLifecycleTargetMutationQueuesBehindWorkspace(t *testing.T) {
+func TestExecutionLifecycleTargetMutationDoesNotQueueBehindDifferentSessionWorkspace(t *testing.T) {
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{
 		MaxQueuedPerTarget: 1,
 		TargetQueueTimeout: 5 * time.Second,
@@ -555,17 +557,15 @@ func TestExecutionLifecycleTargetMutationQueuesBehindWorkspace(t *testing.T) {
 	lifecycleSend(t, mutationClient, 2, "doops_shell", "queued-mutation", map[string]interface{}{
 		"command": "kubectl apply -f release.yaml",
 	})
-	queued := f.operation(t, "queued-mutation", "waiting")
-	if queued.Resource != "target-mutation:dev/local" ||
-		len(queued.BlockedBy) != 1 {
-		t.Fatalf("target mutation was not queued behind workspace lock: %#v", queued)
+	mutation := agent.call(t, "doops_shell", "queued-mutation")
+	if state := f.hub.getAgent("dev", "local").snapshot(); state.ActiveOps != 2 {
+		t.Fatalf("different session target mutation unexpectedly blocked by workspace: %#v", state)
 	}
 
-	agent.complete(t, holder, "")
-	lifecycleResponse(t, holderClient, 2, "")
-	mutation := agent.call(t, "doops_shell", "queued-mutation")
 	agent.complete(t, mutation, "")
 	lifecycleResponse(t, mutationClient, 2, "")
+	agent.complete(t, holder, "")
+	lifecycleResponse(t, holderClient, 2, "")
 	requireEventually(t, 3*time.Second, func() bool {
 		return len(f.hub.listActiveOperations()) == 0
 	})

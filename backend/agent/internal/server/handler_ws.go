@@ -916,6 +916,16 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			writeJSON(buildSuccessResponse(reqID, result))
 		}
 
+	case "doops_web":
+		result, err := handleWebTool(ctx, argBytes, pushProgress)
+		if errors.Is(err, errExecutionOutcomeUnknown) {
+			writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+		} else if err != nil {
+			writeJSON(buildToolErrorResponse(reqID, err.Error()))
+		} else {
+			writeJSON(buildSuccessResponse(reqID, result))
+		}
+
 	case "doops_check_deployment":
 		result, err := handleCheckDeployment(argBytes)
 		if err != nil {
@@ -1065,8 +1075,12 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			return
 		}
 		if len(args.CredentialBindings) != 0 {
-			if operation != "apply" {
-				writeJSON(buildErrorResponse(reqID, -32602, "credential bindings require gateway-authorized apply"))
+			if operation != "" && operation != "ask" && operation != "apply" {
+				writeJSON(buildErrorResponse(reqID, -32602, "credential bindings require an ask or apply operation"))
+				return
+			}
+			if err := validatePromptCredentialAccess(operation, args.Skill, true); err != nil {
+				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
 				return
 			}
 			bindingContext, err := credentialBindingContext(args.CredentialBindings)
@@ -1075,14 +1089,18 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 				return
 			}
 			args.Instruction += "\n\nGateway-managed credential bindings (metadata only; never read Secret values):\n" + bindingContext
-		}
-		if operation == "apply" {
-			cleanup, err := bindHelmCredentialsForPrompt(sessionID, args.CredentialBindings)
-			if err != nil {
-				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
-				return
+			if hasHelmCredentialBinding(args.CredentialBindings) {
+				if operation != "apply" {
+					writeJSON(buildErrorResponse(reqID, -32602, "Helm credential bindings require apply"))
+					return
+				}
+				cleanup, err := bindHelmCredentialsForPrompt(sessionID, args.CredentialBindings)
+				if err != nil {
+					writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+					return
+				}
+				defer cleanup()
 			}
-			defer cleanup()
 		}
 		nativeMode, err := doagentModeForPrompt(operation, "")
 		if err != nil {
@@ -1267,6 +1285,15 @@ func credentialBindingContext(bindings []api.AgentCredentialBinding) (string, er
 		return "", errors.New("credential_binding_metadata_invalid")
 	}
 	return string(encoded), nil
+}
+
+func hasHelmCredentialBinding(bindings []api.AgentCredentialBinding) bool {
+	for _, binding := range bindings {
+		if binding.Use == string(CredentialUseHelmPull) || binding.ContextKind == "helm-native" {
+			return true
+		}
+	}
+	return false
 }
 
 func doagentModeForPrompt(operation, executionMode string) (string, error) {
@@ -1694,9 +1721,9 @@ func (gw *Gateway) uploadAgentPromptAttachments(ctx context.Context, doagentURL,
 }
 
 func doagentAllowedTools(apply bool) []string {
-	tools := []string{"Read", "Glob", "Grep", "Skill", "mcp_doops_k8s_read"}
+	tools := []string{"Read", "Glob", "Grep", "Skill", "mcp_doops_k8s_read", "mcp_doops_web_read"}
 	if apply {
-		tools = append(tools, "mcp_doops_helm")
+		tools = append(tools, "mcp_doops_helm", "mcp_doops_web")
 	}
 	return tools
 }

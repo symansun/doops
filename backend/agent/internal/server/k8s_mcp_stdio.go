@@ -17,6 +17,7 @@ import (
 const (
 	k8sReadMCPToolName = "k8s_read"
 	helmMCPToolName    = "helm"
+	webReadMCPToolName = "web_read"
 )
 
 var (
@@ -91,6 +92,8 @@ func runK8SMCPStdioContext(
 					"tools": []interface{}{
 						k8sMCPToolDefinition(k8sReadMCPToolName, k8sReadOperations, "Read Kubernetes state through the canonical doops_k8s contract. For operation=events, omit resource for namespace-wide events; an object filter must be kind/name. Never use Bash or kubectl as a fallback."),
 						helmMCPToolDefinition(),
+						webMCPToolDefinition(webReadMCPToolName, webReadOperations, "Read a target-local DoWeb site, Nginx or health state without mutation."),
+						webMCPToolDefinition(webMCPToolName, webMutationOperations, "Mutate a target-local DoWeb site through SiteSpec, validation, health and rollback evidence. Requires confirm=true."),
 					},
 				},
 			}
@@ -129,6 +132,14 @@ func callK8SMCPTool(
 		if !k8sMCPOperationAllowed(call.Arguments, helmMutationOperations) {
 			return mcpErrorResponse(request.ID, -32602, "helm tool requires a supported mutating operation")
 		}
+	case webMCPToolName:
+		if !k8sMCPOperationAllowed(call.Arguments, webMutationOperations) {
+			return webMCPErrorResponse(request.ID, -32602, "web tool requires a supported mutation")
+		}
+	case webReadMCPToolName:
+		if !k8sMCPOperationAllowed(call.Arguments, webReadOperations) {
+			return webMCPErrorResponse(request.ID, -32602, "web_read tool requires a supported read operation")
+		}
 	default:
 		return mcpErrorResponse(request.ID, -32601, "unknown tool")
 	}
@@ -149,6 +160,8 @@ func callK8SMCPTool(
 	var result string
 	if call.Name == helmMCPToolName {
 		result, err = handleHelmTool(ctx, boundArguments, push)
+	} else if call.Name == webMCPToolName || call.Name == webReadMCPToolName {
+		result, err = handleWebTool(ctx, boundArguments, push)
 	} else {
 		result, err = handleK8STool(ctx, boundArguments, push)
 	}
@@ -171,6 +184,40 @@ func callK8SMCPTool(
 				map[string]interface{}{"type": "text", "text": progress.String()},
 			},
 			"isError": false,
+		},
+	}
+}
+
+func webMCPToolDefinition(name string, operations []string, description string) map[string]interface{} {
+	return map[string]interface{}{
+		"name":        name,
+		"description": description,
+		"inputSchema": map[string]interface{}{
+			"type":                 "object",
+			"additionalProperties": false,
+			"required":             []string{"operation"},
+			"properties": map[string]interface{}{
+				"operation":    map[string]interface{}{"type": "string", "enum": operations},
+				"confirm":      map[string]interface{}{"type": "boolean"},
+				"runtime_mode": map[string]interface{}{"type": "string", "enum": []string{"host", "docker"}},
+				"site_id":      map[string]interface{}{"type": "string"},
+				"domain":       map[string]interface{}{"type": "string"},
+				"domain_base":  map[string]interface{}{"type": "string"},
+				"host_ip":      map[string]interface{}{"type": "string"},
+				"provider":     map[string]interface{}{"type": "string"},
+				"dist":         map[string]interface{}{"type": "string", "description": "Path relative to the bound DoOps session workspace."},
+				"config_file":  map[string]interface{}{"type": "string", "description": "Candidate config path relative to the bound DoOps session workspace."},
+				"config":       map[string]interface{}{"type": "string", "description": "Candidate Nginx config text for config-set; mutually exclusive with config_file."},
+				"snippet_file": map[string]interface{}{"type": "string", "description": "Snippet path relative to the bound DoOps session workspace."},
+				"snippet":      map[string]interface{}{"type": "string", "description": "Candidate snippet text for snippet-set; mutually exclusive with snippet_file."},
+				"snippet_name": map[string]interface{}{"type": "string"},
+				"tls_cert":     map[string]interface{}{"type": "string"},
+				"tls_key":      map[string]interface{}{"type": "string"},
+				"health_urls":  map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+				"proxies":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+				"upstreams":    map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+				"wildcard":     map[string]interface{}{"type": "boolean"},
+			},
 		},
 	}
 }
@@ -320,5 +367,13 @@ func mcpErrorResponse(id interface{}, code int, message string) api.JSONRPCRespo
 		JSONRPC: "2.0",
 		ID:      id,
 		Error:   &api.RPCError{Code: code, Message: fmt.Sprintf("doops_k8s: %s", message)},
+	}
+}
+
+func webMCPErrorResponse(id interface{}, code int, message string) api.JSONRPCResponse {
+	return api.JSONRPCResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error:   &api.RPCError{Code: code, Message: fmt.Sprintf("doops_web: %s", message)},
 	}
 }

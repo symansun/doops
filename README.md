@@ -28,6 +28,12 @@ through a DoOps Gateway runtime adapter. Diagnosis, deployment authorization,
 target/session isolation, and acceptance scenarios are documented in
 [Agent UI Integration](docs/agent-ui-integration.md).
 
+The same Console and CLI host DoSql and DoWeb skills. `doops sql` and
+`doops web` reuse the existing Gateway login, target routes and audit. The
+website panel operates through structured read/change tools and returns Nginx
+validation, health and rollback evidence. Target prerequisites and functional
+acceptance are documented in [DoWeb Integration](backend/docs/DOWEB_INTEGRATION.md).
+
 ## Development Checks
 
 Run the same checks before publishing source:

@@ -32,6 +32,12 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | One RPC waits for the Agent task's terminal result; no task-status polling or command retries. |
 | Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
 | Run an authorized release | `doops -session <s> ask --target <t> --apply --credential <name> --msg '<facts>'` | Canonical business workload CI/CD entry. |
+| DoSql read-only query or scan | `doops -session <s> ask --target <t> --msg 'Use DoSql for a read-only database check: <request>'` | Uses the selected Gateway target and Agent skill; no local connection file is read. |
+| DoSql change plan | `doops -session <s> ask --target <t> --msg 'Use DoSql to produce a change plan for <request>; do not execute'` | Returns business summary, risk and verification evidence without mutation. |
+| DoSql controlled mutation | `doops -session <s> ask --target <t> --apply --credential <database-resource> --msg 'Use DoSql for approved change <request>'` | Requires Gateway action/credential scope and DoSql change evidence. |
+| DoWeb read-only inspection | `doops -session <s> web --target <t> --mode check --request '<site/Nginx/TLS/health request>'` | Uses the selected Gateway target and DoWeb evidence path. |
+| DoWeb site plan | `doops -session <s> web --target <t> --mode plan --request '<site publish request>'` | Produces SiteSpec, Nginx plan, checks and rollback without mutation. |
+| DoWeb controlled publish | `doops -session <s> web --target <t> --mode apply --credential <web-resource> --request '<site, dist, domain, proxy, acceptance>'` | Requires Gateway mutation authority and `nginx -t`/reload/health evidence. |
 | Push a local directory | `doops -session <s> push --target <t> --src <dir>` | Syncs into `/root/ws/<session>`. |
 | Pull a remote workspace | `doops -session <s> pull --target <t> --dest <dir>` | Use for large files and binary assets. |
 | Read small text | `doops -session <s> read --target <t> --path <file>` | Small text only. |
@@ -82,15 +88,19 @@ To remove a stale local route, use `doops -session <s> remove --target <gateway-
 
 `doops targets` separates target-wide busy from normal per-session activity:
 
-- `busy=true` means the whole target is blocked by an exclusive operation or target queue; when target
-  queueing is enabled, conflicting mutations wait for the current workspace/resource operation
-  instead of consuming another execution slot.
-- `status=active` with `busy=false` means one or more sessions/resources are running, but other sessions can still use the same agent.
+- `busy=true` means an Agent self-upgrade holds the target-wide exclusive lease. Ordinary mutations and waiting sessions do not set target-wide busy.
+- `status=active` with `busy=false` means one or more sessions/resources are running; ordinary Shell/SSH/bg/apply operations are serialized only within the same target + session, while different sessions can use the same Agent concurrently.
 - `resources` shows workspace locks such as `workspace:<session>`.
-  Shell/SSH/bg and apply use a target mutation lock; a session is not a sandbox.
+  Shell/SSH/bg and apply use a session-scoped mutation lease; a session is an ownership key, not an OS or remote-resource sandbox.
 - Public HTTP proxy requests are classified by method: `GET/HEAD/OPTIONS/TRACE` are read-only
-  queries; other methods use the target mutation lock and record `outcome_unknown`
+  queries; other methods use a route-scoped resource lock and record `outcome_unknown`
   when the Agent disconnects before a terminal response.
+
+Cancellation and audit finalization use the same session/resource conflict rules as
+admission. An unrelated session remains available while another session is being
+canceled or its outcome is being persisted. Missing-session mutations are rejected,
+not silently turned into target-wide operations. A session is not a sandbox: callers
+must not concurrently mutate the same release or database from independent sessions.
 
 `capabilities --require structuredSSH` performs only the Gateway WebSocket initialize
 handshake. It succeeds only when the selected online Agent advertises the exact

@@ -164,8 +164,8 @@ keeps Agent registration open and does not ship a partial enrollment fallback.
   target、范围、镜像、原因和验收条件。
 - 密码登录签发短期 user token，默认 24 小时过期；过期 token 会在登录时顺手清理。
 - token 校验通过 token id 定位单行哈希，避免多人多 token 时全表 bcrypt 扫描。
-- 同一 `cluster/instance` 按操作类型与资源互斥；独立结构化 workspace 可以并行，
-  不确定副作用的 Shell 使用 target mutation 锁，详见 Multi-User Behavior。
+- 同一 `cluster/instance` 按 session 与明确资源互斥；普通 Shell 使用 session mutation
+  lease，不同 session 可以并行，详见 Multi-User Behavior。
 
 ## Endpoints
 
@@ -279,25 +279,31 @@ doops admin token revoke --target <gateway-target> --id <token-id>
 多人同时使用时，gateway 分别控制执行额度和资源所有权：
 
 - 不同 target 可以并发执行。
-- 同一 target 上的 target 级 mutation、无 session 的操作以及共享资源写入会串行进入 agent，避免多个用户同时改同一个环境。
+- 同一 target 上普通 mutation 按 session 串行，不同 session 可以并行。普通 mutation
+  缺少有效 session 时直接拒绝，不退回 target 级独占；只有 Agent 自升级独占 target。
 - 同一客户端 WebSocket 上的多个 `tools/call` 可以并行；Agent 的每条
   `notifications/message` 必须带 `params.request_id`，Gateway 和 CLI 按请求 ID
   路由，不得用 session 名称覆盖另一个并发请求的通知。
-- 普通 `exec`/`ssh`/`bg` 一律使用 target mutation 锁。session 不是 OS 或远端资源
-  沙箱，脚本和解释器可访问共享资源，不能靠命令关键词放行并发。
-- `ask --apply`、credential 和 target 级 mutation 命令走同一 target mutation 队列；独立 session 的 push/write/clean/read/pull 共享各自 workspace 锁，同一 workspace 不得重叠。超过 `-target-queue-timeout` 返回 `target queue timeout`。
+- 普通 `exec`/`ssh`/`bg`、`ask --apply`、Kubernetes mutation 和凭据物化使用
+  `target + session` lease；同 session 的 workspace 操作与 mutation 不得重叠。
+  session 不是 OS 或远端资源沙箱，不同 session 不得同时修改同一 Helm release 或数据库。
+- 独立 session 的 push/write/clean/read/pull 按实际 workspace 互斥；清理其它 workspace
+  时锁定被清理的 workspace，不是调用者的 session。排队超时返回 `target queue timeout`。
 - 结构化 K8s 的 `get/describe/logs/top/events/rollout-status`、任务状态和节点信息
   可与 target mutation 并行，结果未知时仍可诊断；Agent 自升级阻止这些查询。
 - 公网 HTTP 代理只有 `GET/HEAD/OPTIONS/TRACE` 按只读查询处理；`POST/PUT/PATCH/DELETE`
-  等其它方法进入 target mutation 锁，并在转发中断且缺少终态时保留
-  `outcome_unknown`，不能直接让后续发布接管。
+  等其它方法按精确代理 route 互斥，不阻塞其它 route 或普通 session。转发中断且
+  缺少终态时保留 `outcome_unknown`，不宣称业务没有执行或自动重放。
   上游收到写请求后的连接/响应体传输失败同样是未知结果；不能把代理返回的传输
   错误当成业务没有执行。下游写失败必须等待取消结果后完成审计。
 - `-max-concurrent-per-user` 控制单个 gateway 用户最多占用多少个运行中操作槽；
   `serve` 默认 10，等待资源不计入执行额度，超过时返回 `user operation limit exceeded`。
-- `-operation-timeout` 控制单个转发操作的最长运行时间；超时请求取消并等待原始终态，缺失终态时保留持久化的不确定性阻塞，不能直接释放 mutation 权限。
+- `-operation-timeout` 控制单个转发操作的最长运行时间；超时请求取消并等待原始终态。
+  取消 ACK 不是终态；缺失终态时持久化 `outcome_unknown` 后释放本次 lease，不自动重放。
+  历史未知审计不参与准入。取消中或审计收尾中的活跃操作只阻挡同 session/资源的冲突请求；
+  审计持久化失败保留该 lease 并自动重试，不扩展为整台 target 的屏障。
 - `serve` 默认全局 64 个执行槽，每个互斥槽最多 10 个等待者、等待上限 10 分钟。
-  workspace 锁和 target mutation 都使用有界等待队列；跨层冲突在允许排队时会等待
+  workspace 锁和 session mutation 都使用有界等待队列；同 session 冲突在允许排队时会等待
   reader/resource 终态，不占用户或全局运行配额，只有队列满、排队关闭或超时才返回
   `target busy`/`target queue timeout`。`-max-queued-per-target` 设为负数可关闭排队。
 - `-login-token-ttl` 控制密码登录生成 token 的有效期；长期自动化应使用管理员发放的可轮换服务 token。

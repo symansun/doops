@@ -467,7 +467,8 @@ func (c *doagentToolTraceCollector) hasUnresolvedMutation() bool {
 		if trace.usesRawClusterMutation() {
 			return true
 		}
-		if modelVisibleDoagentToolName(trace.ToolName) != "doops_helm" {
+		tool := modelVisibleDoagentToolName(trace.ToolName)
+		if tool != "doops_helm" && tool != "doops_web" {
 			continue
 		}
 		trace.expectedSessionID = c.expectedSessionID
@@ -525,7 +526,7 @@ func (trace doagentToolTrace) terminalMutationReason() string {
 		return "raw_cluster_mutation_forbidden"
 	}
 	tool := modelVisibleDoagentToolName(trace.ToolName)
-	if tool != "doops_helm" {
+	if tool != "doops_helm" && tool != "doops_web" {
 		return "structured_mutation_tool_required"
 	}
 	if reason := trace.runtimeMutationAttestationReason(); reason != "" {
@@ -596,7 +597,11 @@ func (trace doagentToolTrace) runtimeMutationAttestationReason() string {
 		return "execution_mode_invalid"
 	}
 	operation := stringField(inputObject, "operation")
-	if !stringSliceContains(helmMutationOperations, operation) {
+	allowedOperations := helmMutationOperations
+	if tool == "doops_web" {
+		allowedOperations = webMutationOperations
+	}
+	if !stringSliceContains(allowedOperations, operation) {
 		return "mutation_operation_invalid"
 	}
 	result, err := trace.verifiedResult()
@@ -767,6 +772,8 @@ func modelVisibleDoagentToolName(runtimeName string) string {
 	switch runtimeName {
 	case "mcp_doops_helm":
 		return "doops_helm"
+	case "mcp_doops_web":
+		return "doops_web"
 	}
 	return runtimeName
 }

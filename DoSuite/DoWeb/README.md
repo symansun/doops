@@ -1,5 +1,10 @@
 # DoWeb
 
+The canonical runtime is now `backend/agent/skills/doweb/` in this repository.
+Use the unified `doops web` command and the Console website panel. Historical
+MVP examples below describe the original prototype and are not supported
+installation or authentication entrypoints for the unified runtime.
+
 DoWeb is the frontend deployment and Nginx operations product.
 
 The first implementation focuses on deployment only. The customer builds the

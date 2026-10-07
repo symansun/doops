@@ -35,6 +35,9 @@ credential resolution, cancellation, and audit ownership.
 - Metadata must advertise `doops.sh/acp-events/v1` and the `acp` format.
   Unsupported Agents fail explicitly; there is no old-runtime compatibility path.
 - Free-text messages use `operation=ask`.
+- The unified database workbench uses `doops_agent_prompt` with `skill=dosql`; a read-only
+  database request may carry an exact managed credential reference only with this explicit
+  skill marker. Generic free-text `ask` cannot attach database credentials.
 - Deployments use the validated form, explicit confirmation, `operation=apply`,
   and metadata-only `credential_refs`. The deployment input is never sent as
   a free-text `ask` message.

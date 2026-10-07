@@ -176,6 +176,10 @@ docker.cnb.cool/l8ai/ai/doops.sh:<release>
 
 CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<release>` 这种仓库下级路径；不要使用 `<repo>-base-light:<release>`。
 
+正式 tag 流水线先从同一提交构建并校验 base-light，把其不可变 digest 作为 Agent
+构建输入。基础运行时变更（例如 DoWeb 所需 Node）不能只进入 main 构建、却在正式
+tag 构建中继续引用旧 base digest；没有本轮基础镜像产物时直接失败，不回退。
+
 发布后必须验证：
 
 1. `/app/doops-agent -help` 可运行。

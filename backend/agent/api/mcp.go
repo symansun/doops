@@ -102,6 +102,31 @@ type HelmParams struct {
 	Confirm       bool              `json:"confirm,omitempty"`
 }
 
+// WebParams is the structured request accepted by doops_web.
+type WebParams struct {
+	SessionID   string   `json:"session_id"`
+	Operation   string   `json:"operation"`
+	Confirm     bool     `json:"confirm,omitempty"`
+	RuntimeMode string   `json:"runtime_mode,omitempty"`
+	SiteID      string   `json:"site_id,omitempty"`
+	Domain      string   `json:"domain,omitempty"`
+	DomainBase  string   `json:"domain_base,omitempty"`
+	HostIP      string   `json:"host_ip,omitempty"`
+	Provider    string   `json:"provider,omitempty"`
+	Dist        string   `json:"dist,omitempty"`
+	ConfigFile  string   `json:"config_file,omitempty"`
+	Config      string   `json:"config,omitempty"`
+	SnippetFile string   `json:"snippet_file,omitempty"`
+	Snippet     string   `json:"snippet,omitempty"`
+	SnippetName string   `json:"snippet_name,omitempty"`
+	TLSCert     string   `json:"tls_cert,omitempty"`
+	TLSKey      string   `json:"tls_key,omitempty"`
+	HealthURLs  []string `json:"health_urls,omitempty"`
+	Proxies     []string `json:"proxies,omitempty"`
+	Upstreams   []string `json:"upstreams,omitempty"`
+	Wildcard    *bool    `json:"wildcard,omitempty"`
+}
+
 // AgentPromptParams 用于 doops_agent_prompt 代理执行。
 type AgentPromptParams struct {
 	SessionID          string                   `json:"session_id"`
@@ -112,6 +137,7 @@ type AgentPromptParams struct {
 	ResponseFormat     string                   `json:"response_format,omitempty"`
 	EventFormat        string                   `json:"event_format,omitempty"` // Empty or "acp"; validated by the prompt bridge.
 	Operation          string                   `json:"operation,omitempty"`
+	Skill              string                   `json:"skill,omitempty"`
 	CredentialRefs     []string                 `json:"credential_refs,omitempty"`
 	CredentialBindings []AgentCredentialBinding `json:"credential_bindings,omitempty"`
 }
