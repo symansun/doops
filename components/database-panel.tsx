@@ -194,7 +194,7 @@ export function DatabasePanel({
           </label>
         </div>
 
-        <label className="flex min-h-32 flex-1 flex-col gap-1.5">
+        <label className="flex min-h-32 grow shrink-0 flex-col gap-1.5">
           <span className="text-xs font-medium text-foreground">操作需求</span>
           <textarea
             value={request}

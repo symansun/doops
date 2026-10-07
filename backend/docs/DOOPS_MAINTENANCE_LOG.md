@@ -2,6 +2,18 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-10-07 DoWeb Recovery Evidence
+
+- Restore the site release index together with the prior activation when a
+  deployment or its evidence persistence fails.
+- Enforce explicitly supplied HTTP health checks for snippet changes as well
+  as full site/config changes, and retain failure after restoring the snippet.
+- Report failed recovery validation/reload as `executionOutcome=unknown`,
+  `retryable=false`, through the existing Agent/Gateway lifecycle.
+- Disposable real Nginx verification covers evidence write failure, release
+  index restoration, snippet health failure and failed recovery reload. This
+  source verification is not a production deployment claim.
+
 ## 2026-10-07 Session-Scoped Target Mutation Leases
 
 - Ordinary Shell/SSH/background/apply mutations no longer share one target-wide

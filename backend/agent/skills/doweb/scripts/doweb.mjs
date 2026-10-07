@@ -439,7 +439,7 @@ function restoreAfterFailure(sitePaths, previous, error, operation) {
     validateNginx(sitePaths)
     reloadNginx(sitePaths)
   } catch (recoveryError) {
-    throw new Error(`${operation} failed: ${error.message}; rollback failed: ${recoveryError.message}; outcome requires inspection`)
+    throw Object.assign(new Error(`${operation} failed: ${error.message}; rollback failed: ${recoveryError.message}; outcome requires inspection`), { executionOutcome: "unknown" })
   }
   throw new Error(`${operation} failed: ${error.message}; previous activation validated and reloaded`)
 }
@@ -474,12 +474,15 @@ function restoreActivation(sitePaths, previous) {
   } else {
     replaceSymlink(sitePaths.currentLink, previous.current)
   }
+  if (previous.state === null) rmSync(sitePaths.statePath, { force: true })
+  else atomicWrite(sitePaths.statePath, previous.state)
 }
 
 function activationSnapshot(sitePaths) {
   return {
     config: existsSync(sitePaths.configPath) ? readFileSync(sitePaths.configPath, "utf8") : null,
     current: readCurrentSymlink(sitePaths.currentLink),
+    state: existsSync(sitePaths.statePath) ? readFileSync(sitePaths.statePath, "utf8") : null,
   }
 }
 
@@ -804,7 +807,8 @@ async function commandSnippetSet(options) {
     atomicWrite(target, snippet)
     const validation = validateNginx(sitePaths)
     const reload = reloadNginx(sitePaths)
-    process.stdout.write(JSON.stringify({ status: "snippet_configured", site_id: siteID, snippet: target, validation, reload }, null, 2))
+    const health = options["health-url"] ? await checkHealth(options["health-url"]) : []
+    process.stdout.write(JSON.stringify({ status: "snippet_configured", site_id: siteID, snippet: target, validation, reload, health }, null, 2))
     process.stdout.write("\n")
   } catch (error) {
     if (previous === null) rmSync(target, { force: true })
@@ -813,7 +817,7 @@ async function commandSnippetSet(options) {
       validateNginx(sitePaths)
       reloadNginx(sitePaths)
     } catch (recoveryError) {
-      throw new Error(`snippet-set failed: ${error.message}; rollback failed: ${recoveryError.message}`)
+      throw Object.assign(new Error(`snippet-set failed: ${error.message}; rollback failed: ${recoveryError.message}; outcome requires inspection`), { executionOutcome: "unknown" })
     }
     throw new Error(`snippet-set failed: ${error.message}; previous snippet validated and reloaded`)
   }
@@ -855,6 +859,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  process.stderr.write(`${JSON.stringify({ status: "failed", error: error.message }, null, 2)}\n`)
+  process.stderr.write(`${JSON.stringify({ status: "failed", executionOutcome: error.executionOutcome || "failed", retryable: false, error: error.message }, null, 2)}\n`)
   process.exit(1)
 })

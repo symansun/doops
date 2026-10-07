@@ -89,6 +89,10 @@ the script in a local source checkout; images use
 5. A snippet can supply candidate text without Bash/file-write privileges.
 6. The Console supports runtime selection, confirmation invalidation after
    edits, disabled controls while running, failure states and target isolation.
+7. Failed evidence persistence restores both the previous activation and
+   release-state index. Supplied snippet health checks are enforced. Failure
+   to validate/reload the restored activation produces an unknown outcome,
+   not an ordinary completed failure that can be replayed.
 
 The real-Nginx test is `backend/agent/internal/server/web_tool_test.go`.
 Local verification is separate from production rollout. Deploy immutable CI
