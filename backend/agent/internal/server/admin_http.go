@@ -196,9 +196,15 @@ func (h *GatewayHub) HandleAdminGrants(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// HandleAdminInstances 列出全部已知实例（在线/离线），合并实时连接状态。
+// HandleAdminInstances 列出授权范围内已知实例（在线/离线），合并实时连接状态。
 func (h *GatewayHub) HandleAdminInstances(w http.ResponseWriter, r *http.Request) {
-	if !h.requireAdmin(w, r) {
+	auth, err := h.authenticateUser(r)
+	if err != nil {
+		h.writeUserAuthError(w, r)
+		return
+	}
+	if !h.store.UserHasAction(auth.UserID, ActionAdmin) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	statuses, err := h.store.ListAgentStatus()
@@ -223,7 +229,11 @@ func (h *GatewayHub) HandleAdminInstances(w http.ResponseWriter, r *http.Request
 		LastSeen    time.Time `json:"last_seen,omitempty"`
 	}
 	out := make([]instanceInfo, 0, len(statuses))
+	platformAdmin := h.store.UserIsPlatformAdmin(auth.UserID)
 	for _, st := range statuses {
+		if !platformAdmin && !h.store.UserCan(auth.UserID, st.Cluster, st.Instance, ActionAdmin) {
+			continue
+		}
 		info := instanceInfo{
 			Cluster:     st.Cluster,
 			Instance:    st.Instance,

@@ -45,6 +45,12 @@ Workbench session、附件上传。缺少 session 时统一返回未建立 Gatew
 
 ## DoSql 边界
 
+当前源码已统一入口和认证，但尚未实现受限的数据库 MCP 执行工具与 Gateway 受管凭据到
+数据库 adapter 的内部绑定。`doops sql` 的 prompt 转发成功、页面返回文本或本地离线
+DoSql 测试通过，都不能证明远端数据库已经查询或变更成功。此链路属于整合验收阻塞项，
+不得开放 Bash、读取本地连接文件或将密码放入 prompt 来掩盖缺失实现。进度和待确认的
+数据库资源/授权契约见 `UNIFIED_WORKBENCH_PROGRESS.md`。
+
 DoSql 通过 `doops_agent_prompt` 进入 Agent runtime。数据库目标来自当前 Gateway target 的
 探测结果；`config/resources.json` 只能放标签和示例，不能选择 target、保存权限或保存密码。
 数据库凭据只以 DoOps managed credential 的资源名进入任务，payload 由 Gateway 内部物化，
@@ -60,7 +66,9 @@ DoWeb 运行在选定 target 上，接收客户已经构建好的 `dist/`，通�
 或第二套 token；首次主机安装也必须进入明确授权的 target bootstrap 流程。
 
 DoWeb 巡检使用 `mcp_doops_web_read`，变更使用 `mcp_doops_web` 并返回本轮 runtime
-attestation。`doops sql/web` 共用 CLI prompt 客户端。Nginx 是 target 上的共享资源，
+attestation。只有精确的 `skill=doweb` apply 才获得网站写工具，普通 apply 不能取得
+Web mutation 工具，网站 apply 也不会取得 Helm mutation 工具。`doops sql/web` 共用
+CLI prompt 客户端。Nginx 是 target 上的共享资源，
 网站 mutation 按 `nginx:<cluster>/<instance>` 精确资源互斥，并记录调用 session；同一
 session 的其它 mutation/workspace 操作不得重叠，但其它 session 的非 Nginx 操作可以
 并行。Nginx reload 不独占整个 target，session 名称也不是 Nginx 隔离边界。

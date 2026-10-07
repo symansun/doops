@@ -1023,6 +1023,9 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAuth, cluster, instance string, req api.JSONRPCRequest, writeRaw func([]byte) error, writeJSON func(interface{}) error) error {
+	if err := h.store.validateUserTokenAuth(auth); err != nil {
+		return writeJSON(buildErrorResponse(req.ID, -32001, "gateway_auth_failed"))
+	}
 	ctx = contextWithInternalAuditAuth(ctx, auth)
 	var params api.ToolCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -1325,6 +1328,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		}
 		return nil
 	})
+	if knownApplyFailure && len(credentialPreparation.completed) != 0 {
+		if rollbackErr := h.hub.rollbackCredentialPrepare(context.WithoutCancel(opCtx), credentialPreparation.completed); rollbackErr != nil {
+			err = fmt.Errorf("%w: credential_apply_outcome_unknown", errExecutionOutcomeUnknown)
+		}
+	}
 	if err != nil {
 		if errors.Is(err, errExecutionOutcomeUnknown) {
 			finalStatus = "outcome_unknown"
@@ -1342,11 +1350,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			finalStatus = "error"
 			finalErr = sanitizeSecretText(err.Error())
 			finalResponse, _ = json.Marshal(buildErrorResponse(req.ID, -32603, finalErr))
-		}
-	}
-	if knownApplyFailure && len(credentialPreparation.completed) != 0 {
-		if rollbackErr := h.hub.rollbackCredentialPrepare(context.WithoutCancel(opCtx), credentialPreparation.completed); rollbackErr != nil {
-			finalErr = "credential_apply_outcome_unknown"
 		}
 	}
 	if err := finishAudit(finalStatus, finalErr, tail.String(), bytesOut); err != nil {

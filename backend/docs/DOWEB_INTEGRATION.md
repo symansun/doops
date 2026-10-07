@@ -47,9 +47,12 @@ or execution path. Nginx bootstrap requires an explicit runtime mode.
 
 `confirm=true` records the intended change, not a second user grant. The MCP
 session is bound by the runtime and excluded from the model-visible schema.
+Prompt mutations require the exact `skill=doweb` marker so the Gateway acquires
+the shared Nginx resource lease. Generic apply exposes Helm, not website
+mutation tools; DoWeb apply exposes website, not Helm mutation tools.
 Config/snippet text can be supplied to the structured tool; files are limited
-to the current session, including symlink resolution. Target-wide website
-mutation serialization protects shared Nginx activation/reload.
+to the current session, including symlink resolution. The exact Nginx resource
+lease protects shared activation/reload without excluding other target sessions.
 
 The website tool uses already mounted TLS certificate/key paths. It does not
 download credential payloads, read Kubernetes Secret values or turn a workload

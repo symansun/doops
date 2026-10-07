@@ -43,29 +43,68 @@ isolation, audit or execution-outcome evidence.
 
 ## October 7, 2026 State
 
+- Current round: 5 of 6. Status: authentication hardening and final verification.
+
 - Source already contains shared CLI prompt transport, DoSql/DoWeb Console
   panels, the bundled DoWeb script and restricted read/mutation MCP tools.
-- Real Nginx functional verification passed in this run: deployment A/B,
-  rollback, failing health/config recovery and structured snippet update.
+- Real Nginx functional verification passed: deployment A/B/C, repeated
+  rollback C -> B -> A, refusal to roll back beyond A, failing health/config
+  recovery, evidence-write failure with release-index restoration, effective
+  snippet inclusion, snippet-health failure and recovery-reload unknown outcome.
 - Session/workspace escape and read-tool mutation checks passed.
-- DoSql still lacks a restricted database execution tool and a implemented
+- DoSql still lacks a restricted database execution tool and an implemented
   managed-credential-to-database adapter path. This is a release blocker, not
   a reason to permit Bash, local connection files or secret-bearing prompts.
-- Database panel credential selection and in-flight navigation protection are
-  being aligned with the existing website panel.
-- Independent reviewers are checking Gateway authorization and DoWeb failure
-  handling. CLI tests and production Console build are running.
+- Database panel credential selection and in-flight navigation protection now
+  match the website panel. Both panels invalidate confirmation after edits.
+- Browser verification passed login rejection/success, shared session,
+  HttpOnly-token isolation, both domain request paths, wrong credential
+  references, in-flight disabled navigation and logout -> protected API 401.
+  The Gateway is real; the browser fixture Agent replies are synthetic and
+  never count as real SQL/Nginx execution evidence.
+- Desktop and 390px mobile screenshots exposed overlapping form controls;
+  non-shrinking content sizing fixed the overlap and geometric checks passed.
+- Ordinary apply no longer exposes website mutation tools. Only the exact
+  `skill=doweb` path gets Web mutation authority and its shared Nginx lease;
+  website requests do not inherit Helm mutation tools. No new user grants.
+- Independent review confirmed stale disabled/revoked-token admission,
+  anonymous attachment persistence and target-admin global read exposure.
+  Scoped patches and real Store/HTTP/WebSocket checks are in progress.
 - The user authorized all source changes to be committed and pushed together by
   the session-concurrency task. DoSql signed change approval and real database
   execution remain separate verification decisions; Gateway concurrency rollout
   does not authorize database mutations or claim unfinished DoSql paths work.
 - No production deployment or production mutation performed in this run.
 
+## Pending Architecture Decisions
+
+- Database-resource credential binding and read/write scope in the Gateway;
+  the restricted Agent database executor must not read local secrets as a
+  substitute. Existing signed DoSql change approval remains unchanged.
+- Anonymous Agent registration currently permits identity replacement by
+  `cluster/instance`; the repository explicitly retains this design. Closing
+  it requires a versioned target-bound enrollment/workload-identity rollout.
+- Legacy Agent session IDs are not user-owned. Default owner isolation and
+  explicit sharing require an agreed history/migration policy.
+- These unresolved boundaries prevent reporting the entire suite as a
+  completed secure production merge.
+
 ## Evidence
 
-- `go test ./internal/server -run 'TestWeb|TestApplyWeb|TestPromptCredential|Test.*Session.*Concurrency' -count=1 -v -timeout 120s`
-  passed the four matched DoWeb checks, including real local Nginx. The pattern
-  matched no separate prompt/concurrency test; those need explicit/full checks.
+- Baseline full Agent and CLI `go test ./...` passed before the final safety
+  patches. Full final verification must run again after hardening is integrated.
+- `go test ./internal/server -run 'TestWeb|TestApplyWeb|TestDoagentAllowedTools|TestNginxLease' -count=1 -v -timeout 120s`
+  passed real Nginx and exact domain capability/resource-lease checks.
+- Targeted `-race` checks passed before the final token/attachment/admin patches.
+- Console production build passed after the form-layout fix. `test:console`
+  passed 22 checks; `test:gateway-policy` passed 5 checks before attachment hardening.
+- A compiled CLI with an isolated config performed one real Gateway login,
+  both domain transport requests, denied credential use and logout rejection.
+  The fixture Agent is synthetic; no database-execution claim follows.
+- Browser screenshots are outside the repository under `/tmp/doops-unified-*`.
+  In-app browser invocation failed with `Transport closed`; installed local
+  Playwright was used explicitly. Expected 401/403 responses are recorded;
+  no unrelated JavaScript runtime failure was observed on the tested panels.
 
 ## Next Round
 

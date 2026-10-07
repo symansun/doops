@@ -35,7 +35,7 @@ assignment. It does not change public DNS records.
 node /app/skills/doweb/scripts/doweb.mjs deploy \
   --site-id vibe-demo \
   --domain-base aihub.org.cn \
-  --dist /path/to/dist \
+  --dist dist \
   --health-url http://vibe-demo.aihub.org.cn/
 ```
 
@@ -55,7 +55,7 @@ may route the request to another gateway.
 node /app/skills/doweb/scripts/doweb.mjs deploy \
   --site-id proxy-106 \
   --domain proxy-106.aihub.org.cn \
-  --dist /path/to/dist \
+  --dist dist \
   --proxy /=http://106.54.197.139/
 ```
 
