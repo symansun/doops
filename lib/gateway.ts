@@ -134,14 +134,6 @@ export function resolveDefaultGateway(savedGateway: string | null, currentOrigin
   return saved
 }
 
-// 从请求头读取 gateway 地址与 token
-export function readAuth(req: Request): { gateway: string; token: string } {
-  const gateway = req.headers.get("x-doops-gateway") || ""
-  const auth = req.headers.get("authorization") || ""
-  const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : auth.trim()
-  return { gateway, token }
-}
-
 // 生成一个随机 session id
 export function randomSession(prefix = "console"): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`

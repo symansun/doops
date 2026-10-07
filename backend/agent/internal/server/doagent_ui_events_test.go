@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -76,11 +77,14 @@ func decodeDoagentUIEvent(t *testing.T, update map[string]interface{}) map[strin
 
 func TestAgentPromptParamsEventFormatJSON(t *testing.T) {
 	var params api.AgentPromptParams
-	if err := json.Unmarshal([]byte(`{"session_id":"ui-session","event_format":"acp","operation":"ask"}`), &params); err != nil {
+	if err := json.Unmarshal([]byte(`{"session_id":"ui-session","event_format":"acp","operation":"ask","attachments":[{"filename":"report.pdf","media_type":"application/pdf","base64_data":"cGRm"}]}`), &params); err != nil {
 		t.Fatal(err)
 	}
 	if params.EventFormat != "acp" || params.SessionID != "ui-session" || params.Operation != "ask" {
 		t.Fatalf("protocol fields did not survive decoding: %#v", params)
+	}
+	if len(params.Attachments) != 1 || params.Attachments[0].Filename != "report.pdf" || params.Attachments[0].Base64Data != "cGRm" {
+		t.Fatalf("attachment fields did not survive decoding: %#v", params.Attachments)
 	}
 	encoded, err := json.Marshal(params)
 	if err != nil || !strings.Contains(string(encoded), `"event_format":"acp"`) {
@@ -90,6 +94,28 @@ func TestAgentPromptParamsEventFormatJSON(t *testing.T) {
 	encoded, err = json.Marshal(params)
 	if err != nil || strings.Contains(string(encoded), "event_format") {
 		t.Fatalf("default event format must be omitted: %s, %v", encoded, err)
+	}
+}
+
+func TestValidateAgentPromptAttachments(t *testing.T) {
+	valid := api.AgentPromptAttachment{
+		Filename:   "report.pdf",
+		MediaType:  "application/pdf",
+		Base64Data: base64.StdEncoding.EncodeToString([]byte("pdf")),
+	}
+	if err := validateAgentPromptAttachments([]api.AgentPromptAttachment{valid}); err != nil {
+		t.Fatalf("valid attachment rejected: %v", err)
+	}
+	for name, attachment := range map[string]api.AgentPromptAttachment{
+		"path traversal": {Filename: "../report.pdf", MediaType: "application/pdf", Base64Data: valid.Base64Data},
+		"invalid base64": {Filename: "report.pdf", MediaType: "application/pdf", Base64Data: "%%%"},
+		"empty payload":  {Filename: "report.pdf", MediaType: "application/pdf", Base64Data: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateAgentPromptAttachments([]api.AgentPromptAttachment{attachment}); err == nil {
+				t.Fatal("invalid attachment was accepted")
+			}
+		})
 	}
 }
 

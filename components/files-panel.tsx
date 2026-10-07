@@ -102,14 +102,15 @@ export function FilesPanel({
           },
           (ev) => {
             if (ev.type === "output") buf += ev.data
-            else if (ev.type === "result") buf += extractText(ev.result)
+            // doops_shell streams stdout as output; the final result is only a
+            // generic completion receipt and must not become a directory entry.
             else if (ev.type === "error") setListErr(ev.error)
           },
         )
         const lines = buf
           .split("\n")
           .map((l) => l.trim())
-          .filter((l) => l && !l.startsWith("exit code") && !l.startsWith("$"))
+          .filter((l) => l && l !== "Operation complete." && !l.startsWith("exit code") && !l.startsWith("$"))
         if (lines.some((l) => l.includes("No such file") || l.includes("没有那个文件"))) {
           setListErr(lines.join(" "))
           setEntries([])

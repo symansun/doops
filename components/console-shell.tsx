@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic"
 import type { AgentSessionRuntime } from "@agent-cloud/agent-ui"
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { fetchTargets, type Session, type Target } from "@/lib/client"
+import { clearServerSession, fetchTargets, restoreServerSession, type Session, type Target } from "@/lib/client"
 import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
 import { isDemoAllowed } from "@/lib/demo-policy"
 import { DEMO_TOKEN } from "@/lib/demo"
@@ -66,6 +66,7 @@ export function ConsoleShell() {
   const [sessionId, setSessionId] = useState(randomSession())
   const [tab, setTab] = useState<Tab>("overview")
   const [view, setView] = useState<"console" | "deploy" | "cicd" | "admin">("console")
+  const [authLoading, setAuthLoading] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [showGuide, setShowGuide] = useState(false)
@@ -93,6 +94,26 @@ export function ConsoleShell() {
     if (wantsDemo) {
       setSession({ gateway: "demo://local", token: DEMO_TOKEN, username: "演示用户", demo: true })
       if (localStorage.getItem(ONBOARD_KEY) !== "1") setShowGuide(true)
+      setAuthLoading(false)
+      return
+    }
+
+    let active = true
+    void restoreServerSession()
+      .then((restored) => {
+        if (!active || !restored) return
+        localStorage.setItem(GW_KEY, restored.gateway)
+        setDefaultGateway(restored.gateway)
+        setSession(restored)
+      })
+      .catch(() => {
+        // A missing or expired session is represented by the connect screen.
+      })
+      .finally(() => {
+        if (active) setAuthLoading(false)
+      })
+    return () => {
+      active = false
     }
   }, [])
 
@@ -139,10 +160,19 @@ export function ConsoleShell() {
   }
 
   function logout() {
-    localStorage.removeItem(LEGACY_DEMO_KEY)
-    setSession(null)
-    setTargets([])
-    setSelected(null)
+    const current = session
+    void (async () => {
+      try {
+        if (!current?.demo) await clearServerSession()
+      } catch (err) {
+        setError((err as Error).message)
+      } finally {
+        localStorage.removeItem(LEGACY_DEMO_KEY)
+        setSession(null)
+        setTargets([])
+        setSelected(null)
+      }
+    })()
   }
 
   function selectTarget(t: Target) {
@@ -154,6 +184,10 @@ export function ConsoleShell() {
     setSessionId(randomSession())
     // AI 优先：切换机器后，默认进入 AI 助手而非终端
     setTab((cur) => (cur === "overview" || cur === "terminal" ? "ask" : cur))
+  }
+
+  if (authLoading) {
+    return <main className="flex min-h-dvh items-center justify-center text-sm text-muted-foreground">正在恢复登录会话...</main>
   }
 
   if (!session) {
