@@ -66,8 +66,9 @@ func TestSelfUpgradeScriptStaysOutsideTheAgentProcess(t *testing.T) {
 	if !strings.Contains(selfUpgradeRollbackScript, "helm rollback") {
 		t.Fatal("rollback script missing helm rollback")
 	}
-	if !strings.Contains(selfUpgradeRollbackScript, `row["status"]=="superseded"`) {
-		t.Fatal("rollback script must select a successful superseded revision")
+	if !strings.Contains(selfUpgradeRollbackScript, `row["status"] == "superseded"`) ||
+		!strings.Contains(selfUpgradeRollbackScript, "DOOPS_UPGRADE_REVISION") {
+		t.Fatal("rollback script must recheck the admitted superseded revision")
 	}
 }
 
@@ -104,8 +105,8 @@ func TestSelfUpgradeApplyScriptVerifiesCompleteDeploymentTwice(t *testing.T) {
 	if dryRunLine < 0 || mutationLine < 0 || dryRunLine >= mutationLine {
 		t.Fatalf("expected server-side dry-run before mutation, calls:\n%s", log)
 	}
-	if deploymentGets != 4 {
-		t.Fatalf("expected strategy, selector, and two complete verification reads, got %d:\n%s", deploymentGets, log)
+	if deploymentGets != 5 {
+		t.Fatalf("expected strategy, selector, baseline, and two complete verification reads, got %d:\n%s", deploymentGets, log)
 	}
 	if strings.Contains(log, "jsonpath=") {
 		t.Fatalf("script used partial jsonpath evidence:\n%s", log)
@@ -145,6 +146,146 @@ func TestSelfUpgradeApplyScriptRejectsIncompleteDeploymentEvidence(t *testing.T)
 				t.Fatalf("rollback revision was not the previous deployed revision:\n%s", logBytes)
 			}
 		})
+	}
+}
+
+func TestSelfUpgradeVerifiesRuntimeIdentityFromPinnedController(t *testing.T) {
+	env := selfUpgradeScriptEnv(filepath.Join(t.TempDir(), "calls.log"))
+	env["RUNTIME_DIGEST"] = "sha256:" + strings.Repeat("c", 64)
+	out, err := runSelfUpgradeScript(t, selfUpgradeApplyScript, selfUpgradeFakeCommands(), env)
+	if err != nil || !strings.Contains(out, "self-upgrade complete image="+testPinnedImage()) {
+		t.Fatalf("a shared runtime imageID must be proven by the independently pinned controller: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, env["RUNTIME_DIGEST"]) {
+		t.Fatalf("runtime imageID evidence is missing: %s", out)
+	}
+}
+
+func TestSelfUpgradeRejectsUnverifiedControllerIdentity(t *testing.T) {
+	for _, field := range []string{"image", "imageID", "node", "ready"} {
+		t.Run(field, func(t *testing.T) {
+			env := selfUpgradeScriptEnv(filepath.Join(t.TempDir(), "calls.log"))
+			env["BAD_CONTROLLER_FIELD"] = field
+			out, err := runSelfUpgradeScript(t, selfUpgradeApplyScript, selfUpgradeFakeCommands(), env)
+			if err == nil || strings.Contains(out, "self-upgrade complete") {
+				t.Fatalf("invalid controller %s was accepted: %v\n%s", field, err, out)
+			}
+			if !strings.Contains(out, "automatic rollback complete") {
+				t.Fatalf("invalid controller must retain verified rollback: %s", out)
+			}
+		})
+	}
+}
+
+func TestSelfUpgradeRejectsDifferentNodeRuntime(t *testing.T) {
+	env := selfUpgradeScriptEnv(filepath.Join(t.TempDir(), "calls.log"))
+	env["AGENT_NODE"] = "node-b"
+	out, err := runSelfUpgradeScript(t, selfUpgradeApplyScript, selfUpgradeFakeCommands(), env)
+	if err == nil || !strings.Contains(out, "same node runtime") || strings.Contains(out, "self-upgrade complete") {
+		t.Fatalf("cross-node runtime identity was not rejected: %v\n%s", err, out)
+	}
+}
+
+func TestSelfUpgradeAutomaticRollbackUsesCapturedRuntimeIdentity(t *testing.T) {
+	env := selfUpgradeScriptEnv(filepath.Join(t.TempDir(), "calls.log"))
+	env["OLD_IMAGE"] = "registry.example/doops@sha256:" + strings.Repeat("b", 64)
+	env["OLD_RUNTIME_DIGEST"] = "sha256:" + strings.Repeat("d", 64)
+	env["RUNTIME_DIGEST"] = "sha256:" + strings.Repeat("c", 64)
+	env["BAD_FIELD"] = "readyReplicas"
+	out, err := runSelfUpgradeScript(t, selfUpgradeApplyScript, selfUpgradeFakeCommands(), env)
+	if err == nil || !strings.Contains(out, "automatic rollback complete revision=5") {
+		t.Fatalf("failed update must restore the captured artifact identity: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, env["OLD_RUNTIME_DIGEST"]) {
+		t.Fatalf("captured rollback runtime identity was not verified: %s", out)
+	}
+}
+
+func TestSelfUpgradeManualRollbackUsesHistoricalControllerIdentity(t *testing.T) {
+	env := selfUpgradeScriptEnv(filepath.Join(t.TempDir(), "calls.log"))
+	env["OLD_IMAGE"] = "registry.example/doops@sha256:" + strings.Repeat("b", 64)
+	env["DOOPS_UPGRADE_IMAGE"] = env["OLD_IMAGE"]
+	env["OLD_RUNTIME_DIGEST"] = "sha256:" + strings.Repeat("c", 64)
+	env["RUNTIME_DIGEST"] = env["OLD_RUNTIME_DIGEST"]
+	out, err := runSelfUpgradeScript(t, selfUpgradeRollbackScript, selfUpgradeFakeCommands(), env)
+	if err != nil || !strings.Contains(out, "self-upgrade rolled back to 4") {
+		t.Fatalf("historical manifest/index identity must remain verifiable: %v\n%s", err, out)
+	}
+}
+
+func TestSelfUpgradeRollbackImageIsPinnedToSuccessfulHistory(t *testing.T) {
+	wanted := "registry.example/doops@sha256:" + strings.Repeat("b", 64)
+	manifest := `kind: Deployment
+metadata: {name: doops-agent, namespace: kz-ops}
+spec:
+  template:
+    spec:
+      containers:
+        - {name: doops-agent, image: "` + wanted + `"}
+`
+	for _, tc := range []struct {
+		name     string
+		manifest string
+		wantErr  bool
+	}{
+		{"pinned", manifest, false},
+		{"mutable", strings.ReplaceAll(manifest, wanted, "registry.example/doops:old"), true},
+		{"wrong namespace", strings.ReplaceAll(manifest, "namespace: kz-ops", "namespace: other"), true},
+		{"duplicate workload", manifest + "---\n" + manifest, true},
+		{"missing evidence", manifest, true},
+		{"evidence image mismatch", manifest, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := upgradeProcess{run: func(ctx context.Context, stdin, name string, args ...string) ([]byte, error) {
+				joined := strings.Join(args, " ")
+				if name == "kubectl" && joined == "-n kz-ops get configmap doops-upgrade-verified-doops-agent-live --ignore-not-found -o json" {
+					if tc.name == "missing evidence" {
+						return nil, nil
+					}
+					image := wanted
+					if tc.name == "evidence image mismatch" {
+						image = testPinnedImage()
+					}
+					evidence, _ := json.Marshal(map[string]interface{}{
+						"schemaVersion": 1, "release": "doops-agent-live", "workload": "doops-agent",
+						"revisions": map[string]interface{}{"7": map[string]string{"image": image}},
+					})
+					raw, _ := json.Marshal(map[string]interface{}{"data": map[string]string{"evidence.json": string(evidence)}})
+					return raw, nil
+				}
+				if name != "helm" {
+					t.Fatalf("unexpected mutation or command: %s %s", name, joined)
+				}
+				if strings.HasPrefix(joined, "history ") {
+					return []byte(`[{"revision":7,"status":"superseded"},{"revision":8,"status":"deployed"},{"revision":9,"status":"failed"}]`), nil
+				}
+				if joined != "get manifest doops-agent-live -n kz-ops --revision 7" {
+					t.Fatalf("rollback selected the wrong revision: %s", joined)
+				}
+				return []byte(tc.manifest), nil
+			}}
+			got, revision, err := p.rollbackImage(t.Context(), "kz-ops", "doops-agent-live", "doops-agent")
+			if (err != nil) != tc.wantErr || (!tc.wantErr && (got != wanted || revision != 7)) {
+				t.Fatalf("rollback artifact = %q, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestSelfUpgradeReceiptFailurePreventsMutation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "calls.log")
+	env := selfUpgradeScriptEnv(path)
+	env["RECEIPT_FAIL"] = "1"
+	out, err := runSelfUpgradeScript(t, selfUpgradeApplyScript, selfUpgradeFakeCommands(), env)
+	if err == nil || !strings.Contains(out, "verification receipt persistence failed") {
+		t.Fatalf("missing durable baseline must fail: %v\n%s", err, out)
+	}
+	log, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(log), "helm upgrade") || strings.Contains(string(log), "helm rollback") {
+		t.Fatalf("mutation dispatched without baseline receipt: %s", log)
 	}
 }
 
@@ -271,6 +412,7 @@ func TestSelfUpgradeRejectsNonstandardSurgeBeforeMutation(t *testing.T) {
 
 func TestSelfUpgradeRollbackRejectsDriftAfterHelmSuccess(t *testing.T) {
 	env := selfUpgradeScriptEnv(filepath.Join(t.TempDir(), "calls.log"))
+	env["DOOPS_UPGRADE_IMAGE"] = "registry.example/doops:old"
 	env["ROLLBACK_VERIFY_FAIL"] = "1"
 	out, err := runSelfUpgradeScript(t, selfUpgradeRollbackScript, selfUpgradeFakeCommands(), env)
 	if err == nil || strings.Contains(out, "self-upgrade rolled back to") {
@@ -284,6 +426,8 @@ func TestSelfUpgradeRollbackRejectsDriftAfterHelmSuccess(t *testing.T) {
 func TestSelfUpgradeRollbackUsesSuccessfulSupersededRevision(t *testing.T) {
 	callLog := filepath.Join(t.TempDir(), "calls.log")
 	env := selfUpgradeScriptEnv(callLog)
+	env["DOOPS_UPGRADE_IMAGE"] = "registry.example/doops:old"
+	env["DOOPS_UPGRADE_REVISION"] = "7"
 	commands := selfUpgradeFakeCommands()
 	commands["helm"] = `#!/bin/sh
 set -eu
@@ -326,6 +470,9 @@ esac
 
 func selfUpgradeScriptEnv(callLog string) map[string]string {
 	return map[string]string{
+		"DOOPS_UPGRADE_REVISION":   "4",
+		"RECEIPT_FILE":             callLog + ".receipt",
+		"HOSTNAME":                 "upgrade-controller",
 		"CALL_LOG":                 callLog,
 		"KUBECTL_CALLS":            callLog + ".kubectl",
 		"DATE_CALLS":               callLog + ".date",
@@ -397,7 +544,7 @@ case "${1:-}" in
     ;;
   get)
     if [ "${2:-}" = "manifest" ]; then
-      printf '%s\n' '{"kind":"Deployment","metadata":{"name":"doops-agent"},"spec":{"template":{"spec":{"containers":[{"name":"doops-agent","image":"registry.example/doops:old"}]}}}}'
+      printf '{"kind":"Deployment","metadata":{"name":"doops-agent"},"spec":{"template":{"spec":{"containers":[{"name":"doops-agent","image":"%s"}]}}}}\n' "${OLD_IMAGE:-registry.example/doops:old}"
     else
       printf '%s\n' '{"image":{"repository":"registry.example/doops","tag":"old"},"workload":{"name":"doops-agent"}}'
     fi
@@ -430,6 +577,13 @@ esac
 set -eu
 printf 'kubectl %s\n' "$*" >> "$CALL_LOG"
 case "$*" in
+  *"get configmap"*)
+    if [ -f "$RECEIPT_FILE" ]; then cat "$RECEIPT_FILE"; fi
+    ;;
+  *"apply -f -"*)
+    if [ "${RECEIPT_FAIL:-0}" = "1" ]; then echo "verification receipt persistence failed" >&2; exit 17; fi
+    cat >"$RECEIPT_FILE"
+    ;;
   *"-o jsonpath="*)
     echo "jsonpath is forbidden in this test" >&2
     exit 91
@@ -437,13 +591,29 @@ case "$*" in
   *"rollout status"*)
     exit 0
     ;;
+  *"get pod upgrade-controller"*)
+    image="$DOOPS_UPGRADE_IMAGE"
+    image_id="registry.example/doops@${RUNTIME_DIGEST:-$DOOPS_UPGRADE_DIGEST}"
+    node="node-a"
+    ready=true
+    case "${BAD_CONTROLLER_FIELD:-}" in
+      image) image="registry.example/doops:old" ;;
+      imageID) image_id="" ;;
+      node) node="" ;;
+      ready) ready=false ;;
+    esac
+    printf '{"metadata":{"name":"upgrade-controller","uid":"controller-uid"},"spec":{"nodeName":"%s","containers":[{"name":"controller","image":"%s"}]},"status":{"phase":"Running","containerStatuses":[{"name":"controller","ready":%s,"imageID":"%s"}]}}\n' "$node" "$image" "$ready" "$image_id"
+    ;;
   *"get pods"*)
     image="$DOOPS_UPGRADE_IMAGE"
-    image_id="registry.example/doops@$DOOPS_UPGRADE_DIGEST"
+    image_id="registry.example/doops@${RUNTIME_DIGEST:-$DOOPS_UPGRADE_DIGEST}"
     uid="candidate-pod"
     ready=true
-    if [ -f "$ROLLBACK_MARKER" ]; then
-      image="registry.example/doops:old"
+    calls=0
+    if [ -f "$KUBECTL_CALLS" ]; then calls="$(cat "$KUBECTL_CALLS")"; fi
+    if [ -f "$ROLLBACK_MARKER" ] || [ "$calls" -lt 4 ]; then
+      image="${OLD_IMAGE:-registry.example/doops:old}"
+      image_id="registry.example/doops@${OLD_RUNTIME_DIGEST:-$DOOPS_UPGRADE_DIGEST}"
       uid="restored-pod"
     else
       case "${BAD_POD_FIELD:-}" in
@@ -455,7 +625,7 @@ case "$*" in
         digest) image_id="registry.example/doops@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" ;;
       esac
     fi
-    printf '{"items":[{"metadata":{"name":"agent-pod","uid":"%s"},"spec":{"containers":[{"name":"doops-agent","image":"%s"}]},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"name":"doops-agent","ready":%s,"imageID":"%s"}]}}]}\n' "$uid" "$image" "$ready" "$image_id"
+    printf '{"items":[{"metadata":{"name":"agent-pod","uid":"%s"},"spec":{"nodeName":"%s","containers":[{"name":"doops-agent","image":"%s"}]},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"name":"doops-agent","ready":%s,"imageID":"%s"}]}}]}\n' "$uid" "${AGENT_NODE:-node-a}" "$image" "$ready" "$image_id"
     ;;
   *"get deployment"*)
     calls=0
@@ -464,14 +634,14 @@ case "$*" in
     fi
     calls=$((calls + 1))
     printf '%s\n' "$calls" >"$KUBECTL_CALLS"
-    image="registry.example/doops:old"
-    if [ ! -f "$ROLLBACK_MARKER" ] && [ "$calls" -ge 3 ]; then
+    image="${OLD_IMAGE:-registry.example/doops:old}"
+    if [ ! -f "$ROLLBACK_MARKER" ] && [ "$calls" -ge 4 ]; then
       image="$DOOPS_UPGRADE_IMAGE"
     fi
-    if [ ! -f "$ROLLBACK_MARKER" ] && [ "${BAD_FIELD:-}" = "image" ] && [ "$calls" -ge 3 ]; then
+    if [ ! -f "$ROLLBACK_MARKER" ] && [ "${BAD_FIELD:-}" = "image" ] && [ "$calls" -ge 4 ]; then
       image="registry.example/doops@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     fi
-    if [ ! -f "$ROLLBACK_MARKER" ] && [ "${DRIFT_ON_SECOND_VERIFY:-0}" = "1" ] && [ "$calls" -ge 4 ]; then
+    if [ ! -f "$ROLLBACK_MARKER" ] && [ "${DRIFT_ON_SECOND_VERIFY:-0}" = "1" ] && [ "$calls" -ge 5 ]; then
       image="registry.example/doops@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     fi
     generation=2
@@ -482,7 +652,7 @@ case "$*" in
     ready=1
     available=1
     unavailable=0
-    if [ ! -f "$ROLLBACK_MARKER" ]; then
+    if [ ! -f "$ROLLBACK_MARKER" ] && [ "$calls" -ge 4 ]; then
       case "${BAD_FIELD:-}" in
         observedGeneration) observed=1 ;;
         replicas) replicas=2 ;;
@@ -502,7 +672,7 @@ case "$*" in
       unavailable=0
     fi
     if [ -f "$ROLLBACK_MARKER" ] && [ "${ROLLBACK_VERIFY_FAIL:-0}" = "1" ]; then
-      image="$DOOPS_UPGRADE_IMAGE"
+      image="registry.example/doops@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     fi
     printf '{"metadata":{"name":"doops-agent","generation":%s},"spec":{"replicas":%s,"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxUnavailable":0,"maxSurge":%s}},"selector":{"matchLabels":{"app":"doops"}},"template":{"spec":{"containers":[{"name":"sidecar","image":"registry.example/sidecar:old"},{"name":"doops-agent","image":"%s"}]}}},"status":{"observedGeneration":%s,"replicas":%s,"updatedReplicas":%s,"readyReplicas":%s,"availableReplicas":%s,"unavailableReplicas":%s}}\n' "$generation" "$replicas" "${MAX_SURGE:-1}" "$image" "$observed" "$status_replicas" "$updated" "$ready" "$available" "$unavailable"
     ;;
@@ -518,7 +688,9 @@ esac
 func TestSelfUpgradeJobUsesSharedKubeconfigVolume(t *testing.T) {
 	pod := selfUpgradePod{
 		image:              "registry.example/doops:old",
+		nodeName:           "node-a",
 		serviceAccountName: "default",
+		runtimeClassName:   "verified-runtime",
 		imagePullSecrets:   []string{"cnb"},
 		mount:              jobVolumeMount{Name: "kube", MountPath: "/root/.kube", ReadOnly: true},
 		volume:             json.RawMessage(`{"name":"kube","secret":{"secretName":"cluster-admin"}}`),
@@ -556,8 +728,11 @@ func TestSelfUpgradeJobUsesSharedKubeconfigVolume(t *testing.T) {
 	if podSpec["restartPolicy"] != "Never" {
 		t.Fatalf("restartPolicy = %v", podSpec["restartPolicy"])
 	}
-	if _, ok := podSpec["nodeName"]; ok {
-		t.Fatal("secret kubeconfig must not pin the Job to a node")
+	if podSpec["nodeName"] != "node-a" {
+		t.Fatal("the controller must use the Agent node runtime even with a Secret kubeconfig")
+	}
+	if podSpec["runtimeClassName"] != "verified-runtime" {
+		t.Fatal("the controller must retain the Agent runtime class")
 	}
 	volumes := podSpec["volumes"].([]interface{})
 	if len(volumes) != 1 {

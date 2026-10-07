@@ -622,6 +622,15 @@ Agent 必须已经包含该控制器，并挂载可共享的 `/root/.kube` 或 `
 观察 `self-upgrade-running/failed/succeeded` 首行状态，不能从日志中的成功字样推断结果。
 CLI 的 `-session` 必传；预演不作为升级完成证据，回滚失败也必须单独报告。
 
+Controller Job 固定在当前 Agent 节点并保留 runtime class，仍为非特权且只共享
+kubeconfig。Deployment/Pod 的 spec 镜像必须精确匹配请求的不可变引用；实际 imageID
+与同一 pin 的 controller 运行身份比较，不假设 CRI 返回 registry manifest digest。
+自动回滚核对升级前捕获的运行身份。完整验证后持久化 revision/image/Pod UID/runtime
+证据到自身 namespace 的 `doops-upgrade-verified-<release>` ConfigMap；写入失败不报告成功。
+手动回滚只选有该证据且仍 superseded 的具体 revision，不推断所有 superseded 都成功。
+Job 使用选定 revision 镜像并复核 revision、namespace 和镜像；无证据的旧 release
+必须经授权外部控制器回滚，不能在新控制器里跳过验证。
+
 ## 自然语言发布 API 对接模式
 
 平台通过 `doops ask --apply` 发送明确授权的发布任务。任务必须明确 target、

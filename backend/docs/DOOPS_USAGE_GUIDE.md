@@ -105,6 +105,15 @@ It does not prove that the Agent supports in-cluster self-upgrade. Verify the
 installed CLI and target image against the selected release before choosing an
 upgrade path; source changes alone do not update either runtime.
 
+Managed update controllers use the Agent node and runtime class. The requested
+immutable image remains an exact Deployment/Pod spec requirement; runtime imageID
+is independently checked against the controller pinned to that image. Automatic
+rollback checks the pre-update runtime identity. Successful complete verification
+persists revision/image/runtime evidence in `doops-upgrade-verified-<release>`.
+Manual rollback selects only an evidenced superseded revision with a pinned image
+and rechecks the admitted revision before mutation; missing evidence fails closed.
+Legacy releases without that evidence need an authorized external rollback.
+
 Gateway 控制面发布不走 doops target。必须从 CNB 不可变 Agent 镜像提取 Gateway，
 并把同一个 `main` commit 传给发布脚本；脚本会拒绝没有该 commit provenance 的本地旧二进制：
 
