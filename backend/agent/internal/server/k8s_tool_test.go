@@ -133,6 +133,47 @@ func TestBuildK8SGetIgnoresRedundantResourceField(t *testing.T) {
 	}
 }
 
+func TestBuildK8SCommandsBuildsNamespaceWideEventsWithoutResource(t *testing.T) {
+	commands, err := buildK8SCommands(api.K8SParams{
+		SessionID: "events-session",
+		Operation: "events",
+		Namespace: "kube-system",
+	})
+	if err != nil {
+		t.Fatalf("build namespace-wide events: %v", err)
+	}
+	if got := strings.Join(commands[0].args, " "); got != "events --namespace kube-system" {
+		t.Fatalf("events command = %q", got)
+	}
+}
+
+func TestBuildK8SCommandsExplainsEventsResourceContract(t *testing.T) {
+	_, err := buildK8SCommands(api.K8SParams{
+		SessionID: "events-session",
+		Operation: "events",
+		Namespace: "kube-system",
+		Resource:  "kube-system",
+	})
+	if err == nil || !strings.Contains(err.Error(), "omit resource") || !strings.Contains(err.Error(), "kind/name") {
+		t.Fatalf("events contract error = %v", err)
+	}
+}
+
+func TestBuildK8SCommandsBuildsObjectFilteredEvents(t *testing.T) {
+	commands, err := buildK8SCommands(api.K8SParams{
+		SessionID: "events-session",
+		Operation: "events",
+		Namespace: "kube-system",
+		Resource:  "pod/node-debugger",
+	})
+	if err != nil {
+		t.Fatalf("build object-filtered events: %v", err)
+	}
+	if got := strings.Join(commands[0].args, " "); got != "events --namespace kube-system --for pod/node-debugger" {
+		t.Fatalf("events command = %q", got)
+	}
+}
+
 func TestBuildK8SCommandsRejectsRemovedSetImageOperation(t *testing.T) {
 	_, err := buildK8SCommands(api.K8SParams{
 		SessionID: "set-image",

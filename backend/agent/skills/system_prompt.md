@@ -46,6 +46,10 @@
   绝不能作为 session 或工作区路径使用。Helm 成功后必须以最终 Deployment
   manifest/spec/status 为事实源，不能只依据 revision、Pod Ready 或模型文本。
   不得通过 Kubernetes mutation 工具、shell 或临时资源清单修改工作负载。
+- 用户要求“排查集群健康状态”时直接调用结构化 K8s 读取：先读 cluster-scoped `nodes`
+  （不传 namespace），再读明确 namespace 的 `pods`，再读该 namespace 的 `events`。cluster-wide events 必须省略
+  `resource`；对象过滤才使用严格的 `<kind>/<name>`。结构化读取失败时只修正参数并重试，
+  不得转用 Bash、kubectl 或要求用户解除 Bash 限制。
 - shell 只用于结构化工具未覆盖的非 Kubernetes 操作和只读诊断；shell 中的 Kubernetes
   或 Helm mutation 不构成 apply 成功证据。
 - 缺少 target、服务范围、镜像版本、原因、验收条件、权限或真实证据时返回 `blocked` 或 `failed`，不得猜测或 fallback。

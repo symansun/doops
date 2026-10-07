@@ -106,6 +106,7 @@ type HelmParams struct {
 type AgentPromptParams struct {
 	SessionID          string                   `json:"session_id"`
 	Instruction        string                   `json:"instruction"`
+	Attachments        []AgentPromptAttachment  `json:"attachments,omitempty"`
 	Model              string                   `json:"model,omitempty"`
 	Mode               string                   `json:"mode,omitempty"`
 	ResponseFormat     string                   `json:"response_format,omitempty"`
@@ -113,6 +114,15 @@ type AgentPromptParams struct {
 	Operation          string                   `json:"operation,omitempty"`
 	CredentialRefs     []string                 `json:"credential_refs,omitempty"`
 	CredentialBindings []AgentCredentialBinding `json:"credential_bindings,omitempty"`
+}
+
+// AgentPromptAttachment is a browser-uploaded conversation document. The
+// Gateway forwards it to doagent's native attachment/upload RPC before the
+// prompt is admitted; the public tool never exposes a workspace path.
+type AgentPromptAttachment struct {
+	Filename   string `json:"filename"`
+	MediaType  string `json:"media_type"`
+	Base64Data string `json:"base64_data"`
 }
 
 // AgentCredentialBinding exposes only materialization metadata to doagent.

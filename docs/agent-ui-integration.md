@@ -55,10 +55,15 @@ credential resolution, cancellation, and audit ownership.
   navigation, so active execution and the current transcript remain available.
   A new operation session or a target change creates a new runtime.
 
-DoOps does not currently expose historical transcript reads, interactive
-permission prompts, or chat attachments. These capabilities are not advertised;
-file upload remains available through the Files page. This change does not add
-server-side history persistence or browser storage of conversation contents.
+DoOps does not currently expose historical transcript reads or interactive
+permission prompts. Conversation attachments are supported by the shared Agent
+UI composer for read-only messages: up to four files, each no larger than 25 MiB.
+The web server keeps each upload in a target/session-scoped temporary file until
+the next prompt, then the Gateway stores it through DoAgent's native
+`attachment/upload` RPC and sends an ACP attachment block. Deployment mode keeps
+the controlled form and rejects attachments. Temporary uploads expire after 30
+minutes; no document bytes are stored in browser storage or public audit output.
+This change does not add server-side history persistence.
 The normalized session source is process-local to the existing single-container
 Web deployment. Restarting Web loses that display history; remote audit and
 DoAgent state remain authoritative. Inactive, unsubscribed sessions expire after
@@ -75,11 +80,15 @@ be enabled; this change does not introduce distributed session storage.
    the error is explicit and message submission stays disabled.
 4. Given a failed or interrupted task, the failure remains in its transcript;
    a later successful task clears the stale error banner.
-5. Given deployment mode, only the authorized form is present; submission includes
+5. Given a read-only conversation, selecting a PDF/DOCX/XLSX/TXT file shows the
+   Agent UI attachment chip, and sending the prompt delivers the document through
+   DoAgent's native attachment protocol. Empty, oversized, cross-session, and
+   malformed uploads are rejected explicitly.
+6. Given deployment mode, only the authorized form is present; submission includes
    `operation=apply` and credential resource names. A missing confirmation blocks it.
-6. Given navigation away and back, the current transcript remains. Changing the
+7. Given navigation away and back, the current transcript remains. Changing the
    target or starting a new session clears it and cannot accept old request events.
-7. Given desktop and mobile viewports, the composer and target/session controls
+8. Given desktop and mobile viewports, the composer and target/session controls
    remain visible without horizontal page overflow or framework/console errors.
 
 ## Checks

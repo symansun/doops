@@ -1,5 +1,16 @@
 export class GatewayPolicyError extends Error {}
 
+export interface GatewaySession {
+  gateway: string
+  token: string
+  username?: string
+}
+
+const SESSION_MAX_AGE = 60 * 60 * 24 * 7
+const SESSION_GATEWAY_COOKIE = "doops_session_gateway"
+const SESSION_TOKEN_COOKIE = "doops_session_token"
+const SESSION_USERNAME_COOKIE = "doops_session_username"
+
 type GatewayEnvironment = {
   NODE_ENV?: string
   DOOPS_CONSOLE_ALLOWED_GATEWAYS?: string
@@ -72,10 +83,55 @@ export function allowedGatewayBase(
 }
 
 export function readAllowedAuth(req: Request): { gateway: string; token: string } {
-  const gateway = allowedGatewayBase(req.headers.get("x-doops-gateway") || "")
-  const auth = req.headers.get("authorization") || ""
-  const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : auth.trim()
-  return { gateway, token }
+  const session = readGatewaySession(req)
+  if (!session) return { gateway: "", token: "" }
+  return {
+    gateway: allowedGatewayBase(session.gateway),
+    token: session.token,
+  }
+}
+
+export function readGatewaySession(req: Request): GatewaySession | null {
+  const cookies = parseCookieHeader(req.headers.get("cookie"))
+  const gateway = (cookies[SESSION_GATEWAY_COOKIE] || "").trim()
+  const token = (cookies[SESSION_TOKEN_COOKIE] || "").trim()
+  if (!gateway || !token) return null
+  const username = (cookies[SESSION_USERNAME_COOKIE] || "").trim()
+  return { gateway, token, username: username || undefined }
+}
+
+export function setGatewaySession(headers: Headers, session: GatewaySession): void {
+  headers.append("Set-Cookie", sessionCookie(SESSION_GATEWAY_COOKIE, session.gateway, SESSION_MAX_AGE))
+  headers.append("Set-Cookie", sessionCookie(SESSION_TOKEN_COOKIE, session.token, SESSION_MAX_AGE))
+  headers.append("Set-Cookie", sessionCookie(SESSION_USERNAME_COOKIE, session.username || "", SESSION_MAX_AGE))
+}
+
+export function clearGatewaySession(headers: Headers): void {
+  headers.append("Set-Cookie", sessionCookie(SESSION_GATEWAY_COOKIE, "", 0))
+  headers.append("Set-Cookie", sessionCookie(SESSION_TOKEN_COOKIE, "", 0))
+  headers.append("Set-Cookie", sessionCookie(SESSION_USERNAME_COOKIE, "", 0))
+}
+
+function parseCookieHeader(header: string | null): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const part of (header || "").split(";")) {
+    const idx = part.indexOf("=")
+    if (idx <= 0) continue
+    const key = part.slice(0, idx).trim()
+    const value = part.slice(idx + 1).trim()
+    if (!key) continue
+    try {
+      out[key] = decodeURIComponent(value)
+    } catch {
+      out[key] = value
+    }
+  }
+  return out
+}
+
+function sessionCookie(name: string, value: string, maxAge: number): string {
+  const secure = process.env.NODE_ENV === "production" ? "; Secure" : ""
+  return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`
 }
 
 export function gatewayPolicyResponse(err: unknown): Response | null {
