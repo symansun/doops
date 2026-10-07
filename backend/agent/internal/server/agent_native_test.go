@@ -49,6 +49,7 @@ func TestDoagentAllowedToolsHardLimitOrdinaryAndApplyPrompts(t *testing.T) {
 	if strings.Contains(strings.Join(ordinary, ","), "Bash") ||
 		strings.Contains(strings.Join(ordinary, ","), "ExecuteCode") ||
 		!sliceContainsString(ordinary, "mcp_doops_k8s_read") ||
+		!sliceContainsString(ordinary, "mcp_doops_web_read") ||
 		sliceContainsString(ordinary, "mcp_doops_k8s") {
 		t.Fatalf("ordinary prompt tool boundary is unsafe: %#v", ordinary)
 	}
@@ -56,6 +57,7 @@ func TestDoagentAllowedToolsHardLimitOrdinaryAndApplyPrompts(t *testing.T) {
 	apply := doagentAllowedTools(true)
 	if sliceContainsString(apply, "mcp_doops_k8s") ||
 		!sliceContainsString(apply, "mcp_doops_helm") ||
+		!sliceContainsString(apply, "mcp_doops_web") ||
 		strings.Contains(strings.Join(apply, ","), "Bash") ||
 		strings.Contains(strings.Join(apply, ","), "ExecuteCode") {
 		t.Fatalf("apply prompt tool boundary is unsafe: %#v", apply)

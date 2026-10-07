@@ -66,6 +66,7 @@ RUN set -eux; \
     && /usr/local/bin/do-agent --help >/dev/null \
     && buildctl --version \
     && python3 -c 'import yaml' \
+    && node --check /app/skills/doweb/scripts/doweb.mjs \
     && helm version --short \
     && ssh -V \
     && ! command -v sshd >/dev/null 2>&1

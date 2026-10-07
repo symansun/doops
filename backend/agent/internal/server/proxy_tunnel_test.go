@@ -19,13 +19,13 @@ func TestProxyResourceKeyClassifiesOnlySafeMethodsAsQueries(t *testing.T) {
 		{method: http.MethodHead, want: "query:proxy:route-1"},
 		{method: http.MethodOptions, want: "query:proxy:route-1"},
 		{method: http.MethodTrace, want: "query:proxy:route-1"},
-		{method: http.MethodPost, want: "target-mutation:dev/local"},
-		{method: http.MethodPut, want: "target-mutation:dev/local"},
-		{method: http.MethodPatch, want: "target-mutation:dev/local"},
-		{method: http.MethodDelete, want: "target-mutation:dev/local"},
+		{method: http.MethodPost, want: "proxy:route-1"},
+		{method: http.MethodPut, want: "proxy:route-1"},
+		{method: http.MethodPatch, want: "proxy:route-1"},
+		{method: http.MethodDelete, want: "proxy:route-1"},
 	} {
 		t.Run(test.method, func(t *testing.T) {
-			if got := proxyResourceKey("dev", "local", "route-1", test.method); got != test.want {
+			if got := proxyResourceKey("route-1", test.method); got != test.want {
 				t.Fatalf("proxy resource = %q, want %q", got, test.want)
 			}
 		})

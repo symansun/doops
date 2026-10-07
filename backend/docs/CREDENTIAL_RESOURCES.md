@@ -2,6 +2,10 @@
 
 本文说明受管凭据资源的 CLI、权限、持久化、验证、轮换、吊销和发布引用方式。
 
+凭据资源 ID 的互斥与操作 session 的互斥是不同边界：同一凭据的变更仍串行；不同
+session 的目标执行可以并行。取消或审计收尾不得把其中一个 session 的状态扩展为
+整个 target 的发布屏障。精确用户/target/workload/use 授权不因并发范围调整而放宽。
+
 ## 对象模型
 
 | 对象 | 含义 |
@@ -25,6 +29,10 @@ doops login --target <target> --username <user>
 
 登录态按规范化 Gateway URL 保存。同一 Gateway 下所有 configured target 共用一次登录，
 但凭据查询和使用仍按当前用户及 target 的 `cluster/instance` 隔离。
+
+Web 控制台和 CLI 共享 Gateway 身份与授权模型：Web 使用 HttpOnly session cookie，CLI
+使用 `doops` 的 Gateway token 缓存。两者都只能提交 credential resource name；DoSql
+数据库 skill 不读取本地连接文件，也不把数据库密码放进 prompt、浏览器状态或审计文本。
 
 ```bash
 doops credential list --target <target>

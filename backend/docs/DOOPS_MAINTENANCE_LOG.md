@@ -2,6 +2,27 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-10-07 Session-Scoped Target Mutation Leases
+
+- Ordinary Shell/SSH/background/apply mutations no longer share one target-wide
+  exclusive slot. Their lease is keyed by the target and session: same-session
+  mutations remain serialized, while different sessions can run concurrently on
+  the same Agent.
+- Workspace/resource locks still protect the same workspace or resource. Agent
+  self-upgrade remains target-wide because two live Agent replacements cannot be
+  safely concurrent.
+- The operation classification `target-mutation:<cluster>/<instance>` does not
+  acquire a target-wide lease; the runtime holder is session-scoped. Missing-session
+  mutation requests fail explicitly. Historical audits do not acquire new leases.
+- Cancellation, waiting-operation ownership and audit finalization use the same
+  session/resource conflict rule. Public proxy writes lock their exact route only.
+- DoWeb protects the exact shared Nginx resource and its calling session, not the
+  whole target. Sessionless mutations never acquire a global substitute lease.
+- Removed the unused global operation slot and duplicate per-session channels;
+  one writer inventory under the operations mutex is the lease authority.
+- Added coverage for same-session serialization, cross-session concurrency,
+  request-ID routing, target queries during mutations, and race detection.
+
 ## 2026-10-05 External Host Release Failure Recovery
 
 - Install the external rollback trap before the first host replacement call,

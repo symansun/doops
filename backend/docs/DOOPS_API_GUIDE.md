@@ -270,10 +270,13 @@ Authorization: Bearer <USER_TOKEN>
 - `401 Unauthorized`：token 缺失、无效、过期或已撤销。
 - `403 Forbidden`：token 有效，但无权查询目标列表。
 
-`busy` 表示 target 独占/变更锁或队列阻塞；target mutation 期间仍允许结构化诊断查询，
-Agent 自升级则完全独占。`status=active` 且 `busy=false` 表示有 workspace/resource
-正在执行，但独立结构化 workspace 仍可用。`resources` 列出 `workspace:<session>`。
-普通 Shell/SSH/bg 不按关键词或 session 推断副作用范围，一律使用 target mutation 锁。
+`busy` 只表示 Agent 自升级持有 target 级独占 lease；普通变更和排队 session 使用
+`target + session` 作用域的 mutation lease。同一 session 内的 Shell/SSH/bg/apply 仍串行，
+不同 session 在同一 target 可以并行。`status=active` 且 `busy=false` 表示有
+workspace/resource 正在执行，但其他 session 仍可使用同一 Agent。`resources` 列出
+`workspace:<session>` 等资源锁；session 是并发归属，不是操作系统沙箱。
+取消和审计收尾复用同一冲突规则，不阻塞其它 session；普通 mutation 缺少有效 session
+时直接拒绝，不回退到 target 独占。历史 `outcome_unknown` 只保留事实，不参与新任务准入。
 
 ## Git 工作区同步
 
@@ -484,6 +487,14 @@ CLI 的 `--option` 只接受不会改写连接目标的旗标：`-4`、`-6`、`-
 
 ### `doops_agent_prompt`
 
+The unified DoWeb domain uses `skill=doweb` and the same target/session and
+Gateway account. `mcp_doops_web_read` accepts only `render`, `check`,
+`config-get` and `domain-list`. The mutating `mcp_doops_web` requires
+`confirm=true` and a runtime-authorized apply. A read tool cannot stand in for
+mutation evidence. The deterministic `doops_web` RPC maps reads to `ask` and
+mutations to `exec`; website writes hold a target-wide lease because Nginx
+activation/reload is shared. See `DOWEB_INTEGRATION.md` for parameters and mounts.
+
 向目标 AI agent 下发诊断、运维或明确授权的发布任务。发布任务必须使用
 `operation=apply`，并在自然语言中明确 target、服务范围、原因、授权资产和验收条件。
 业务镜像版本来自任务或其明确授权的仓库、Chart、values、现有 release 的只读证据，
@@ -495,6 +506,7 @@ CLI 的 `--option` 只接受不会改写连接目标的旗标：`-4`、`-6`、`-
 {
   "session_id": "diagnose_20260514",
   "instruction": "检查目标节点磁盘和容器运行时状态，只返回诊断结果，不修改资源。",
+  "skill": "doweb",
   "model": "openai/gpt-5.4"
 }
 ```
@@ -503,7 +515,9 @@ CLI 的 `--option` 只接受不会改写连接目标的旗标：`-4`、`-6`、`-
 
 适用于诊断、信息收集和用户明确授权的运维或发布任务。需要凭据时，CLI 只传递
 `--credential <resource-name>` 的 metadata-only 引用；Gateway 在绑定用户、target 和
-session 后按精确 scope 授权和物化。
+session 后按精确 scope 授权和物化。普通发布使用 `operation=apply`；DoSql 只读查询或
+计划可以使用 `operation=ask` 搭配 `skill=dosql` 和精确 credential reference，通用
+`ask` 不能附带数据库凭据。payload 永远不进入 prompt、日志或返回事件。
 
 组件对话的结构化事件消费者先发送 `mode=metadata`。支持本协议的 Agent 返回
 `event_schema=doops.sh/acp-events/v1` 和 `event_formats=["acp"]`。

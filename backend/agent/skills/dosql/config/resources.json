@@ -2,13 +2,7 @@
   "schema": "dosuite.skill-resources.v1",
   "product": "DoSql",
   "updatedAt": "2026-07-07",
-  "publicConsole": "https://dosql.l8ai.cn",
-  "defaultDoopsTarget": {
-    "name": "gw-oilan-node",
-    "cluster": "doops-oilan",
-    "instance": "oilan-node"
-  },
-  "credentialPolicy": "No plaintext database credentials are stored here. Resolve logical endpoints through the selected doagent target and DoSql approval policy before execution.",
+  "credentialPolicy": "No plaintext database credentials are stored here. Resolve logical endpoints through the selected DoOps Gateway target and managed credential scope before execution.",
   "resources": [
     {
       "id": "db-main-mysql",

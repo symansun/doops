@@ -25,8 +25,8 @@ func TestK8SMCPStdioExposesReadAndHelmOnly(t *testing.T) {
 	}
 	result, _ := response["result"].(map[string]interface{})
 	tools, _ := result["tools"].([]interface{})
-	if len(tools) != 2 {
-		t.Fatalf("expected read and helm tools, got %#v", tools)
+	if len(tools) != 4 {
+		t.Fatalf("expected read, helm, web_read and web tools, got %#v", tools)
 	}
 	names := make([]string, 0, len(tools))
 	for _, value := range tools {
@@ -84,7 +84,7 @@ func TestK8SMCPStdioExposesReadAndHelmOnly(t *testing.T) {
 			}
 		}
 	}
-	if strings.Join(names, ",") != "k8s_read,helm" {
+	if strings.Join(names, ",") != "k8s_read,helm,web_read,web" {
 		t.Fatalf("unexpected tools: %#v", names)
 	}
 }

@@ -301,8 +301,15 @@ $:
             pnpm test:console
             pnpm exec tsc --noEmit
             pnpm build
+        - name: build release agent base
+          script: |
+            DOOPS_BASE_RELEASE_TAG="${CNB_BRANCH}" \
+            DOOPS_BASE_IMAGE_OUTPUT="${PWD}/backend/.ci-agent-base-image" \
+              bash backend/scripts/build-agent-base-image.sh
         - name: build release agent image
-          script: DOOPS_RELEASE_TAG="${CNB_BRANCH}" bash backend/scripts/build-agent-image.sh
+          script: |
+            export DOOPS_AGENT_BASE_IMAGE_OVERRIDE="$(cat backend/.ci-agent-base-image)"
+            DOOPS_RELEASE_TAG="${CNB_BRANCH}" bash backend/scripts/build-agent-image.sh
         - name: build release web image
           script: DOOPS_RELEASE_TAG="${CNB_BRANCH}" bash backend/scripts/build-web-image.sh
         - name: build CLI release assets

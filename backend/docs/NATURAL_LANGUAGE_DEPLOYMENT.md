@@ -41,10 +41,11 @@ CI provenance。仓库提供的
 `api_trigger_deploy_agent` 只负责准备临时 Gateway 登录并提交这条自然语言任务；它不
 同步当前仓库、不创建 target 隔离 workspace，也不是独立部署协议，不读取环境注册表。
 
-Agent 必须把 doagent 会话创建为 `restricted`。普通 `ask` 只允许内置只读工具和
-`mcp_doops_k8s_read`；该读取工具明确拒绝 Secret、ServiceAccount 和其它凭据载体。
-显式 `--apply` 才切换到 doagent 原生 `build` 模式，并且只允许 `mcp_doops_helm`
-执行发布 mutation。包括只更新镜像在内的所有发布，都从任务明确授权的
+Agent 必须把 doagent 会话创建为 `restricted`。普通 `ask` 只允许内置只读工具、
+`mcp_doops_k8s_read` 和 `mcp_doops_web_read`；K8s 读取工具明确拒绝 Secret、ServiceAccount 和其它凭据载体。
+显式 `--apply` 才切换到 doagent 原生 `build` 模式。Kubernetes workload mutation 只允许
+`mcp_doops_helm`；目标本地 Nginx 站点变更使用 `mcp_doops_web`，详细契约见
+[DOWEB_INTEGRATION.md](DOWEB_INTEGRATION.md)。Kubernetes 镜像发布都从任务明确授权的
 Helm chart 完整收敛 release。工具缺失、启动失败或没有本轮完成的可信
 mutation 证据时必须失败关闭，不能退回 Bash、原始 kubectl、原始 Helm 或文本成功声明。
 
@@ -54,13 +55,15 @@ stdio 请求和响应在本地生成结果证明，完成验证后才向 ACP 暴
 `confirm=true` 和 mutation operation；仅有 completed 状态或工具名不构成成功证据。
 一次性 mutation authority 同时绑定精确 allowedTools 与自然语言任务的 context digest，并由
 doagent 原子消费；可信 attestation 必须返回同一 authority
-digest。同一 target 上的 apply、shell、Kubernetes mutation 和凭据物化共享 mutation 锁，
-并排斥结构化 workspace 写入。不同 workspace 的 push/write/clean 可彼此并行；
+digest。同一 target 上的 apply、shell、Kubernetes mutation 和凭据物化在同一 session
+内共享 mutation 锁，
+并排斥同 session 的结构化 workspace 操作。不同 session/workspace 可以并行；session
+不是资源沙箱，不得用不同 session 同时修改同一 Helm release 或数据库。
 结构化诊断查询不受发布锁阻挡。`ask --apply`
 本身不要求先执行 `push`，也不要求发布输入存在于 session workspace。
 
 普通前台 `exec` 可以执行明确给出的 Helm `upgrade/install/rollback/uninstall`。
-命令受 Gateway 用户 `exec` 权限、session 隔离、目标操作串行化和完整退出审计约束；
+命令受 Gateway 用户 `exec` 权限、session 隔离、同 session 的目标操作串行化和完整退出审计约束；
 不得把 Helm 误判为危险 shell 命令。该路径是低层确定性操作，不替代标准
 `ask --apply` 发布编排，也不能使用 managed credential reference。`exec --bg` 的原始 RPC
 和审计保留到进程终止，取消请求不等于终态；它不能承载 doops-agent Helm mutation，

@@ -46,6 +46,12 @@
   绝不能作为 session 或工作区路径使用。Helm 成功后必须以最终 Deployment
   manifest/spec/status 为事实源，不能只依据 revision、Pod Ready 或模型文本。
   不得通过 Kubernetes mutation 工具、shell 或临时资源清单修改工作负载。
+- DoWeb 网站发布、Nginx 配置、健康检查和回滚必须使用结构化 `mcp_doops_web_read`
+  或 `mcp_doops_web` 工具。普通网站巡检使用 `mcp_doops_web_read` 的 `operation=check|render|config-get|domain-list`，
+  计划使用自然语言和 DoWeb skill；网站 mutation 使用 `mcp_doops_web` 的
+  `operation=deploy|rollback|config-set|snippet-set|install-nginx|domain-set`
+  并显式传入 `confirm=true`。不要使用 Bash、Shell 或 SSH 绕过 DoWeb 的 SiteSpec、
+  `nginx -t`、reload、健康检查和回滚证据。
 - 用户要求“排查集群健康状态”时直接调用结构化 K8s 读取：先读 cluster-scoped `nodes`
   （不传 namespace），再读明确 namespace 的 `pods`，再读该 namespace 的 `events`。cluster-wide events 必须省略
   `resource`；对象过滤才使用严格的 `<kind>/<name>`。结构化读取失败时只修正参数并重试，

@@ -51,6 +51,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   exec        在目标节点工作区执行 Shell 命令 (用于确定性的日常流水线执行)
   ssh         通过结构化 argv 代理 SSH，避免多层命令引号被远端 shell 重解析
   ask         发送自然语言指令 (由边缘端智能体完成受控的通用运维协作)
+  sql         通过统一 Gateway/Agent 入口使用 DoSql 数据库 skill
+  web         通过统一 Gateway/Agent 入口使用 DoWeb 网站 skill
   read        查看目标节点上的小文本文件（不用于下载大文件/二进制）
   write       写入文件到目标服务器
   info        获取节点系统信息 (CPU/内存/磁盘)
@@ -399,6 +401,18 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 	case "credential":
 		if err := runCredentialCommand(cmdArgs, *sessionName, servers, configErr, os.Stdin, os.Stdout); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "sql":
+		if err := runSQLCommand(cmdArgs, *sessionName, servers, configErr, ss, *verbose); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "web":
+		if err := runWebCommand(cmdArgs, *sessionName, servers, configErr, ss, *verbose); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
