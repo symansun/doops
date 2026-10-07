@@ -67,6 +67,8 @@ Supported commands:
 - `snippet-set`: write a site-level snippet included inside the server block.
 - `check`: run `nginx -t` and optional HTTP checks.
 - `rollback`: restore the previous release and its rendered config.
+  Repeated rollback stops at the oldest release; it never selects a newer
+  release because no earlier version exists.
 
 ## Intended Capabilities
 
@@ -134,7 +136,9 @@ by silently switching to a different path or skipping validation.
   SiteSpec, state JSON, prompts or logs.
 - `skill=doweb` is the explicit marker for unified website requests. A read-only
   health or config inspection does not need a second login. Website mutation
-  requires `operation=apply` or an explicitly authorized deterministic tool.
+  requires `operation=apply` with this exact skill marker, or an explicitly
+  authorized deterministic tool. Ordinary apply cannot call website mutation
+  tools without the Nginx resource lease, and website apply cannot call Helm.
 - DoWeb evidence includes SiteSpec, candidate config, `nginx -t`, reload, health
   and rollback status. Gateway mutation authorization and DoWeb validation
   evidence are separate concerns.

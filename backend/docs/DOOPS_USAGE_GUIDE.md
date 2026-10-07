@@ -102,6 +102,13 @@ canceled or its outcome is being persisted. Missing-session mutations are reject
 not silently turned into target-wide operations. A session is not a sandbox: callers
 must not concurrently mutate the same release or database from independent sessions.
 
+Existing WebSocket connections recheck their token identity for each new operation.
+Disabled accounts and revoked/expired tokens cannot start new work; this does not
+add a manual approval step. Target administrators see only their authorized target
+operations, instances and proxy routes. Global user/grant/token/repository/job lists
+remain platform-admin resources. Attachment uploads verify the live target and ask
+scope before storing bytes.
+
 `capabilities --require structuredSSH` performs only the Gateway WebSocket initialize
 handshake. It succeeds only when the selected online Agent advertises the exact
 structured SSH protocol; it never falls back to `doops exec`.

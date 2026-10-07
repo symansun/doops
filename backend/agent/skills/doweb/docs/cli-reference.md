@@ -19,6 +19,10 @@ The CLI exits non-zero and prints JSON to stderr on failure:
 
 ## Common Path Flags
 
+Structured tools require `dist`, `config_file` and `snippet_file` to be relative
+to the current DoOps session workspace. Absolute paths and paths escaping that
+workspace are rejected; the examples below use workspace-relative inputs.
+
 Use these when running against a non-default layout or a host-mode install:
 
 ```bash
@@ -89,7 +93,7 @@ Render a candidate Nginx config without writing it.
 node /app/skills/doweb/scripts/doweb.mjs render \
   --site-id demo \
   --domain demo.example.com \
-  --dist /path/to/dist \
+  --dist dist \
   --proxy /api/=https://api.example.com
 ```
 
@@ -105,7 +109,7 @@ Static frontend:
 node /app/skills/doweb/scripts/doweb.mjs deploy \
   --site-id vibe-demo \
   --domain-base aihub.org.cn \
-  --dist /path/to/dist \
+  --dist dist \
   --health-url http://vibe-demo.aihub.org.cn/
 ```
 
@@ -115,7 +119,7 @@ Root reverse proxy:
 node /app/skills/doweb/scripts/doweb.mjs deploy \
   --site-id proxy-106 \
   --domain proxy-106.aihub.org.cn \
-  --dist /path/to/dist \
+  --dist dist \
   --proxy /=http://106.54.197.139/ \
   --health-url http://proxy-106.aihub.org.cn/
 ```
@@ -126,7 +130,7 @@ Load-balanced proxy:
 node /app/skills/doweb/scripts/doweb.mjs deploy \
   --site-id api-demo \
   --domain api-demo.example.com \
-  --dist /path/to/dist \
+  --dist dist \
   --upstream app=http://127.0.0.1:3001,http://127.0.0.1:3002 \
   --proxy /api/=upstream:app
 ```
@@ -137,7 +141,7 @@ TLS by explicit paths:
 node /app/skills/doweb/scripts/doweb.mjs deploy \
   --site-id secure-demo \
   --domain secure.example.com \
-  --dist /path/to/dist \
+  --dist dist \
   --tls-cert /etc/letsencrypt/live/secure.example.com/fullchain.pem \
   --tls-key /etc/letsencrypt/live/secure.example.com/privkey.pem
 ```
@@ -179,7 +183,7 @@ node /app/skills/doweb/scripts/doweb.mjs config-get \
 
 node /app/skills/doweb/scripts/doweb.mjs config-set \
   --site-id demo \
-  --config-file /path/to/candidate.conf
+  --config-file candidate.conf
 ```
 
 `config-set` must contain an Nginx `server {}` block. It writes the candidate,
@@ -199,7 +203,7 @@ Write a named server-block snippet.
 node /app/skills/doweb/scripts/doweb.mjs snippet-set \
   --site-id demo \
   --name headers \
-  --snippet-file /path/to/headers.conf
+  --snippet-file headers.conf
 ```
 
 Snippets are included inside the generated `server` block. They must not contain

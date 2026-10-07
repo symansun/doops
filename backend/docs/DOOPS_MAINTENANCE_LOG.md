@@ -2,6 +2,16 @@
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
+## 2026-10-07 Existing Authorization Scope Enforcement
+
+- Revalidate the stored token identity for each new WebSocket operation; deny
+  disabled users and revoked, expired, malformed-expiry or reassigned tokens.
+- Global admin collections remain platform-only; target admin collections filter
+  exact authorized targets. Read checks do not create mutation audit events.
+- Validate live target visibility and Agent ask authority before attachment bytes
+  reach persistent storage. Include the real Gateway HTTP attachment checks in CI.
+- No user grants, production credentials or running mutation outcomes are rewritten.
+
 ## 2026-10-07 DoWeb Recovery Evidence
 
 - Restore the site release index together with the prior activation when a
