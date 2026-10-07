@@ -45,20 +45,33 @@ func TestDoagentModeForPromptUsesOnlyNativeAskMode(t *testing.T) {
 }
 
 func TestDoagentAllowedToolsHardLimitOrdinaryAndApplyPrompts(t *testing.T) {
-	ordinary := doagentAllowedTools(false)
+	ordinary := doagentAllowedTools(false, "")
 	if strings.Contains(strings.Join(ordinary, ","), "Bash") ||
 		strings.Contains(strings.Join(ordinary, ","), "ExecuteCode") ||
 		!sliceContainsString(ordinary, "mcp_doops_k8s_read") ||
+		!sliceContainsString(ordinary, "mcp_doops_web_read") ||
 		sliceContainsString(ordinary, "mcp_doops_k8s") {
 		t.Fatalf("ordinary prompt tool boundary is unsafe: %#v", ordinary)
 	}
 
-	apply := doagentAllowedTools(true)
+	apply := doagentAllowedTools(true, "")
 	if sliceContainsString(apply, "mcp_doops_k8s") ||
 		!sliceContainsString(apply, "mcp_doops_helm") ||
+		sliceContainsString(apply, "mcp_doops_web") ||
 		strings.Contains(strings.Join(apply, ","), "Bash") ||
 		strings.Contains(strings.Join(apply, ","), "ExecuteCode") {
 		t.Fatalf("apply prompt tool boundary is unsafe: %#v", apply)
+	}
+	website := doagentAllowedTools(true, "doweb")
+	if !sliceContainsString(website, "mcp_doops_web") || sliceContainsString(website, "mcp_doops_helm") {
+		t.Fatalf("website prompt did not retain its domain boundary: %#v", website)
+	}
+	for _, skill := range []string{"dosql", "unknown", " doweb "} {
+		for _, tool := range []string{"mcp_doops_web", "mcp_doops_helm"} {
+			if sliceContainsString(doagentAllowedTools(true, skill), tool) {
+				t.Fatalf("skill %q gained unrelated mutation tool %q", skill, tool)
+			}
+		}
 	}
 }
 

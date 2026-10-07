@@ -249,18 +249,39 @@ func (s *ClientService) markOperationRunning(id string) {
 	}
 }
 
+func (s *ClientService) hasCancellationBarrier(candidate GatewayActiveOperation) bool {
+	s.activeOpsMu.Lock()
+	defer s.activeOpsMu.Unlock()
+	for _, holder := range s.activeOps {
+		if holder.State != "cancel_requested" {
+			continue
+		}
+		if operationsConflict(candidate, holder.GatewayActiveOperation) {
+			return true
+		}
+	}
+	return false
+}
+
 func operationsConflict(left, right GatewayActiveOperation) bool {
 	if left.Cluster != right.Cluster || left.Instance != right.Instance {
 		return false
 	}
-	if isConcurrentQuery(left.Action, left.Resource) {
-		return isExclusiveOperation(right.Action, right.Resource) && !strings.HasPrefix(right.Resource, "target-mutation:")
-	}
-	if isConcurrentQuery(right.Action, right.Resource) {
-		return isExclusiveOperation(left.Action, left.Resource) && !strings.HasPrefix(left.Resource, "target-mutation:")
-	}
-	if isExclusiveOperation(left.Action, left.Resource) || isExclusiveOperation(right.Action, right.Resource) {
+	if left.Action == ActionAgentUpgrade || right.Action == ActionAgentUpgrade ||
+		strings.HasPrefix(left.Resource, "target:") || strings.HasPrefix(right.Resource, "target:") {
 		return true
 	}
-	return left.Resource != "" && left.Resource == right.Resource
+	if isConcurrentQuery(left.Action, left.Resource) || isConcurrentQuery(right.Action, right.Resource) {
+		return false
+	}
+	if left.Resource != "" && left.Resource == right.Resource && !strings.HasPrefix(left.Resource, "target-mutation:") {
+		return true
+	}
+	if left.Session != "" && left.Session == right.Session {
+		return true
+	}
+	leftWorkspace := sessionForResourceKey(left.Resource)
+	rightWorkspace := sessionForResourceKey(right.Resource)
+	return (leftWorkspace != "" && leftWorkspace == right.Session) ||
+		(rightWorkspace != "" && rightWorkspace == left.Session)
 }

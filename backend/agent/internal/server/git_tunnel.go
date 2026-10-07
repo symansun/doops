@@ -71,7 +71,7 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 	}, cancelOp)
 	defer h.finishActiveOperation(opID)
 
-	lease, err := agent.acquireActionLease(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
+	lease, err := agent.acquireActionLeaseForSession(opCtx, action, resourceKey, session, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			http.Error(w, "operation canceled", http.StatusConflict)

@@ -104,18 +104,34 @@ func (w *adminAuditResponse) Write(data []byte) (int, error) {
 
 func (h *GatewayHub) auditAdminMutation(route string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
-		default:
-			next(w, r)
-			return
-		}
 		auth, err := h.authenticateUser(r)
 		if err != nil {
 			h.writeUserAuthError(w, r)
 			return
 		}
 		isAdmin := h.store.UserHasAction(auth.UserID, ActionAdmin)
+		switch r.Method {
+		case http.MethodGet, http.MethodHead:
+			if !isAdmin {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+			if err := h.authorizeAdminMutationTarget(auth.UserID, route, r, adminAuditInput{},
+				r.URL.Query().Get("cluster"), r.URL.Query().Get("instance")); err != nil {
+				status := http.StatusInternalServerError
+				if errors.Is(err, ErrUnauthorized) {
+					status = http.StatusForbidden
+				}
+				http.Error(w, http.StatusText(status), status)
+				return
+			}
+			next(w, r)
+			return
+		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		default:
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		var input adminAuditInput
 		payload, bodyErr := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 		r.Body = io.NopCloser(bytes.NewReader(payload))
@@ -246,7 +262,7 @@ func (h *GatewayHub) auditAdminMutation(route string, next http.HandlerFunc) htt
 	}
 }
 
-// Global control-plane writes require platform admin; target operations retain
+// Global control-plane access requires platform admin; target operations retain
 // their own action grants. An admin grant on one target cannot elevate a user.
 func (h *GatewayHub) authorizeAdminMutationTarget(userID, route string, r *http.Request, input adminAuditInput, cluster, instance string) error {
 	check := func(cluster, instance string, action GatewayAction) error {
@@ -258,13 +274,16 @@ func (h *GatewayHub) authorizeAdminMutationTarget(userID, route string, r *http.
 	switch route {
 	case "/v1/admin/users", "/v1/admin/users/password", "/v1/admin/users/disable",
 		"/v1/admin/grants", "/v1/admin/tokens", "/v1/admin/repos", "/v1/admin/repos/test",
-		"/v1/admin/jobs", "/v1/admin/audit/optimize":
+		"/v1/admin/jobs", "/v1/admin/jobs/issues", "/v1/admin/audit/optimize":
 		if !h.store.UserIsPlatformAdmin(userID) {
 			return ErrUnauthorized
 		}
 	case "/v1/admin/repos/clone":
 		return check(cluster, instance, ActionPull)
 	case "/v1/targets/unlock", "/v1/admin/operations":
+		if route == "/v1/admin/operations" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			return check(cluster, instance, ActionAdmin)
+		}
 		if route == "/v1/admin/operations" && r.Method == http.MethodPost && !h.store.UserIsPlatformAdmin(userID) {
 			return ErrUnauthorized
 		}

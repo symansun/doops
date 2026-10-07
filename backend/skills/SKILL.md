@@ -74,7 +74,9 @@ description: |
   Chart、values、现有 release 的只读证据；不得猜测，也不得要求已明确资产中的事实再粘贴到 prompt。
   不把业务镜像键、版本格式、CORS Origin、仓库名或项目目录作为全局前置闸门。
 - 普通 `ask` 运行在 restricted 权限，只允许内置只读工具和 `mcp_doops_k8s_read`；
-  `--apply` 才进入原生 build 模式，并且只允许 `mcp_doops_helm` 执行发布 mutation。
+  `--apply` 才进入原生 build 模式。Kubernetes workload mutation 只允许
+  `mcp_doops_helm`；目标本地 Nginx 网站变更使用 `mcp_doops_web`。两者均要求
+  本轮 runtime attestation，不能用 Shell 或模型成功文本替代执行证据。
 - 发布事实齐备后，Agent 调用 `mcp_doops_helm upgrade-install`，显式提供 release、
   namespace、chart 和 `confirm=true`。`value_files` 可选，覆盖遵循 Chart schema；普通升级
   统一 `--reset-values`，不隐式继承历史 values。工具自动先执行同输入的 server dry-run，
@@ -139,13 +141,16 @@ description: |
   路由；Agent 必须通过 Helm `proxy.allowedHosts` 配置精确上游 hostname（Chart 注入
   `DOOPS_PROXY_ALLOW_HOSTS`，默认拒绝全部）。当前只支持 HTTP/HTTPS 流式代理，
   不支持 WebSocket 或裸 TCP；`GET/HEAD/OPTIONS/TRACE` 按只读查询处理，其它 HTTP
-  方法按 target mutation 处理，详见 `docs/DOOPS_GATEWAY_TUNNEL.md`。
+  方法按精确代理 route 互斥，不独占 target，详见 `docs/DOOPS_GATEWAY_TUNNEL.md`。
 - 不要在日志、终端输出、文档、提交记录里暴露完整 token。
 - 如果用户是在发账号、发 token、授权、查审计、清理审计、查看/取消 gateway active operations，要按 gateway 管理动作处理，不要混成普通 target 运维。
 - 同一 target 的结构化 `push/write/clean/read/pull` 按 workspace 互斥，不同 workspace
-  可并行；普通 Shell/SSH/bg 与 `ask --apply` 使用 target mutation 锁，session 名称
-  不能证明其副作用隔离，不按命令关键词猜测只读性。结构化 K8s 查询、任务状态和节点
-  信息可在发布期间查询；Agent 自升级仍独占 target。当前没有跨 target 的 release/
+  可并行；普通 Shell/SSH/bg 与 `ask --apply` 使用 `target + session` mutation lease，
+  同一 session 串行，不同 session 可并行。session 只表示并发归属，不是 OS 或远端资源
+  隔离。结构化 K8s 查询、任务状态和节点信息可在发布期间查询；Agent 自升级仍独占 target。
+  取消和审计收尾遵守同一 session/资源作用域，不阻挡无关 session；普通 mutation 缺少
+  有效 session 时拒绝，不退回 target 独占。不同 session 不得同时修改同一 release 或数据库。
+  当前没有跨 target 的 release/
   数据库统一锁，也没有执行器 fencing，不能宣称支持安全强制抢占发布锁。
 - 遇到并发限额或资源冲突，先用 `doops -session <s> admin operations list --target <t>`
   核对 `state/resource/blocked_by`。Gateway 会按 target 的 `cluster/instance` 过滤管理操作，
@@ -246,6 +251,12 @@ Gateway 的 `/console` 提供用户登录、目标选择、明确授权的业务
 Chart 与镜像来源须先核对，不要求源码同步。用户可查本人操作，平台管理员可查全局
 审计。页面行为与验收边界见 `docs/DOOPS_WEBUI.md`。
 
+统一工作台还承载 DoSql、DoWeb、DoDNS、DoSecurity 等 Agent skill。用户只使用这一套
+Gateway 登录态和 `doops` CLI；skill 只负责自己的业务规则、执行证据和结果解释，不再
+各自实现登录、target 选择、Gateway token 解析或 target grant。DoSql 的签名审批属于
+数据库变更证据，不替代 Gateway 的用户/target/action 授权。边界和授权矩阵见
+`docs/UNIFIED_OPERATIONS_WORKBENCH.md`。
+
 先确认本地配置和 gateway 在线状态：
 
 ```bash
@@ -264,6 +275,12 @@ doops -session preflight targets --target <gateway-target>
 | 同步 OCI 镜像 | `doops -session <s> registry sync --target <t> --source-registry <src> --target-registry <dst> --tag <release> --source-authfile <remote-file> --target-authfile <remote-file> --image <name>` |
 | AI 自主分析 | `doops -session <s> ask --target <t> --msg '<task>'` |
 | 发布任务 | `doops -session <s> ask --target <t> --apply --credential <resource-name> --msg '<target、范围、明确镜像版本、原因、验收>'` |
+| DoSql 只读查询/巡检 | `doops -session <s> ask --target <t> --msg '使用 DoSql skill，只读检查 <数据库目标和问题>'` |
+| DoSql 变更计划 | `doops -session <s> ask --target <t> --msg '使用 DoSql skill，生成 <数据库变更> 的计划、风险和验证，不执行'` |
+| DoSql 受控变更 | `doops -session <s> ask --target <t> --apply --credential <database-resource> --msg '使用 DoSql skill，按已批准的 <变更请求> 执行并返回 journal/evidence'` |
+| DoWeb 只读巡检 | `doops -session <s> web --target <t> --mode check --request '<站点、Nginx、TLS 或健康检查需求>'` |
+| DoWeb 发布计划 | `doops -session <s> web --target <t> --mode plan --request '<站点发布需求>'` |
+| DoWeb 受控发布 | `doops -session <s> web --target <t> --mode apply --credential <web-resource> --request '<站点、dist、域名、代理、验收>'` |
 | 创建凭据 | `doops credential create --target <t> --name <name> --scope personal --type <type>` |
 | 写入凭据版本 | `printf '%s' '<json>' \| doops credential put --target <t> --id <credential-id>` |
 | 查询 target 可用凭据 | `doops credential list --target <t>` |

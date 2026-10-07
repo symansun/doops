@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto"
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
+import { AgentGatewayError } from "./agent-gateway-rpc"
 
 export const MAX_AGENT_ATTACHMENT_BYTES = 25 * 1024 * 1024
 const ATTACHMENT_TTL_MS = 30 * 60 * 1000
@@ -31,6 +32,30 @@ interface StoredAgentAttachment extends AgentAttachmentReference {
 }
 
 const attachments = new Map<string, StoredAgentAttachment>()
+
+export async function requireVisibleAgentAttachmentTarget(scope: AgentAttachmentScope, signal: AbortSignal): Promise<void> {
+  if (!scope.gateway || !scope.token) throw new AgentGatewayError("未建立 Gateway 会话", 401)
+  let response: Response
+  try {
+    response = await fetch(`${scope.gateway}/v1/targets`, {
+      headers: { Authorization: `Bearer ${scope.token}` },
+      cache: "no-store", redirect: "manual", signal,
+    })
+  } catch {
+    throw new AgentGatewayError("无法验证 Gateway 目标访问权限", 502)
+  }
+  if (!response.ok) {
+    throw new AgentGatewayError("Gateway 拒绝附件上传", response.status === 401 || response.status === 403 ? response.status : 502)
+  }
+  let data: unknown
+  try { data = await response.json() } catch { throw new AgentGatewayError("Gateway 目标列表无效", 502) }
+  if (!data || typeof data !== "object" || !("targets" in data) || !Array.isArray(data.targets)) {
+    throw new AgentGatewayError("Gateway 目标列表无效", 502)
+  }
+  if (!data.targets.some((target) => target?.cluster === scope.cluster && target?.instance === scope.instance)) {
+    throw new AgentGatewayError("无权访问该附件目标", 403)
+  }
+}
 
 export function agentAttachmentScopeKey(scope: AgentAttachmentScope): string {
   const tokenDigest = createHash("sha256").update(scope.token).digest("hex")

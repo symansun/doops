@@ -5,13 +5,18 @@ database execution path.
 
 ## Current Implementation
 
-The first local CLI wrapper is:
+The bundled Agent CLI wrapper is:
 
 ```bash
-node DoSuite/DoSql/Skill/scripts/dosql-agent.mjs <command> \
+node backend/agent/skills/dosql/scripts/dosql-agent.mjs <command> \
   --input request.json \
   --output response.json
 ```
+
+Users normally reach this wrapper through `doops sql`. The wrapper is an
+internal deterministic executor, not a second login or target authorization
+entrypoint. Gateway identity, target scope and managed credential scope are
+already established before the Agent invokes it.
 
 Implemented commands:
 
@@ -28,6 +33,8 @@ Implemented commands:
 - `resolve-database`
 - `scan`
 - `record-execution`
+- `inspect-journal`
+- `migrate-journal`
 - `replay-timeline`
 - `resolve-timeline-at`
 - `render-timepoint-state-query`

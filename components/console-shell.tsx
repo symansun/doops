@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic"
 import type { AgentSessionRuntime } from "@agent-cloud/agent-ui"
+import { Database, Globe2 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { clearServerSession, fetchTargets, restoreServerSession, type Session, type Target } from "@/lib/client"
 import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
@@ -13,6 +14,8 @@ import { TerminalPanel } from "./terminal-panel"
 import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { FilesPanel } from "./files-panel"
 import { KnowledgeBase } from "./knowledge-base"
+import { DatabasePanel } from "./database-panel"
+import { WebsitePanel } from "./website-panel"
 import { AuditPanel } from "./audit-panel"
 import { CredentialPanel } from "./credential-panel"
 import { AdminConsole } from "./admin-console"
@@ -41,11 +44,13 @@ const AgentUiPanel = dynamic(() => import("./agent-ui-panel").then((module) => m
   loading: () => <div role="status" className="flex h-full items-center justify-center text-sm text-muted-foreground">正在加载 AI 助手...</div>,
 })
 
-type Tab = "overview" | "ask" | "files" | "kb" | "credentials" | "audit" | "terminal"
+type Tab = "overview" | "ask" | "database" | "website" | "files" | "kb" | "credentials" | "audit" | "terminal"
 
-const TABS: { id: Tab; label: string; icon: typeof TerminalIcon; secondary?: boolean }[] = [
+const TABS: { id: Tab; label: string; icon: typeof TerminalIcon | typeof Database | typeof Globe2; secondary?: boolean }[] = [
   { id: "overview", label: "概览", icon: ActivityIcon },
   { id: "ask", label: "AI 助手", icon: SparkIcon },
+  { id: "database", label: "数据库", icon: Database },
+  { id: "website", label: "网站", icon: Globe2 },
   { id: "files", label: "文件", icon: FileIcon },
   { id: "kb", label: "知识库", icon: FileTextIcon },
   { id: "credentials", label: "凭据", icon: KeyIcon },
@@ -67,6 +72,7 @@ export function ConsoleShell() {
   const [tab, setTab] = useState<Tab>("overview")
   const [view, setView] = useState<"console" | "deploy" | "cicd" | "admin">("console")
   const [authLoading, setAuthLoading] = useState(true)
+  const [skillRunning, setSkillRunning] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [showGuide, setShowGuide] = useState(false)
@@ -106,8 +112,8 @@ export function ConsoleShell() {
         setDefaultGateway(restored.gateway)
         setSession(restored)
       })
-      .catch(() => {
-        // A missing or expired session is represented by the connect screen.
+      .catch((err) => {
+        if (active) setError(`登录会话恢复失败，请重新连接 Gateway：${(err as Error).message}`)
       })
       .finally(() => {
         if (active) setAuthLoading(false)
@@ -160,6 +166,7 @@ export function ConsoleShell() {
   }
 
   function logout() {
+    if (skillRunning) { setError("请先等待当前操作结束，再退出登录"); return }
     const current = session
     void (async () => {
       try {
@@ -176,6 +183,7 @@ export function ConsoleShell() {
   }
 
   function selectTarget(t: Target) {
+    if (skillRunning) { setError("请先等待当前操作结束，再切换目标"); return }
     if (agentRuntime && isDoopsAgentSessionBusy(agentRuntime.getSnapshot(sessionId))) {
       setError("请先停止当前 AI 任务，再切换目标")
       return
@@ -191,7 +199,7 @@ export function ConsoleShell() {
   }
 
   if (!session) {
-    return <ConnectScreen defaultGateway={defaultGateway} onConnected={handleConnected} />
+    return <ConnectScreen defaultGateway={defaultGateway} initialError={error} onConnected={handleConnected} />
   }
 
   return (
@@ -215,6 +223,7 @@ export function ConsoleShell() {
           )}
           <div className="ml-1 flex shrink-0 items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5 sm:ml-2">
             <button
+              disabled={skillRunning}
               onClick={() => setView("console")}
               className={`whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                 view === "console"
@@ -225,6 +234,7 @@ export function ConsoleShell() {
               控制台
             </button>
             <button
+              disabled={skillRunning}
               onClick={() => setView("deploy")}
               className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                 view === "deploy"
@@ -235,6 +245,7 @@ export function ConsoleShell() {
               <RocketIcon width={13} height={13} /> 部署 Agent
             </button>
             <button
+              disabled={skillRunning}
               onClick={() => setView("cicd")}
               className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                 view === "cicd"
@@ -245,6 +256,7 @@ export function ConsoleShell() {
               <GitIcon width={13} height={13} /> CI/CD
             </button>
             <button
+              disabled={skillRunning}
               onClick={() => setView("admin")}
               className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                 view === "admin"
@@ -307,6 +319,7 @@ export function ConsoleShell() {
                 <button
                   key={t.id}
                   onClick={() => setTab(t.id)}
+                  disabled={skillRunning}
                   title={t.secondary ? "高级：直接执行 shell 命令" : undefined}
                   className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm transition-colors ${
                     t.secondary ? "ml-auto" : ""
@@ -375,6 +388,7 @@ export function ConsoleShell() {
                     session
                     <input
                       value={sessionId}
+                      disabled={skillRunning}
                       onChange={(e) => setSessionId(e.target.value)}
                       className="w-44 rounded-md border bg-background px-2 py-1 font-mono text-xs text-foreground outline-none focus:border-ring"
                     />
@@ -383,6 +397,24 @@ export function ConsoleShell() {
               )}
 
               <div className="min-h-0 flex-1">
+                {tab === "database" && (
+                  <DatabasePanel
+                    key={`database-${selected.key}-${sessionId}`}
+                    session={session}
+                    target={selected}
+                    sessionId={sessionId}
+                    onRunningChange={setSkillRunning}
+                  />
+                )}
+                {tab === "website" && (
+                  <WebsitePanel
+                    key={`website-${selected.key}-${sessionId}`}
+                    session={session}
+                    target={selected}
+                    sessionId={sessionId}
+                    onRunningChange={setSkillRunning}
+                  />
+                )}
                 {tab === "terminal" && (
                   <TerminalPanel
                     key={`term-${selected.key}-${sessionId}`}

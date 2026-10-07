@@ -4,8 +4,9 @@
 
 The production application is the Next.js console at `/console`. Users sign in
 with their existing Gateway account or user token, select an explicit target,
-and execute operations under that identity. The console does not retain tokens
-on the server or place them into copied CI/CD examples.
+and execute operations under that identity. The console stores the Gateway
+session in an HttpOnly cookie, restores and clears it through `/api/session`,
+and does not expose the token to React state, localStorage or copied examples.
 
 - AI conversation uses the shared Agent Cloud `AgentWorkspace`, v2 runtime,
   queue and store. The host supplies only Gateway transport, target/session
@@ -31,9 +32,19 @@ on the server or place them into copied CI/CD examples.
   Other users' credential events retain precise `credential:audit` scope checks.
   A platform administrator can explicitly maintain the fixed query indexes from
   the global view. This operation is audited and preserves all history.
+- The database page routes through the same `doops_agent_prompt` Gateway RPC and
+  invokes the bundled DoSql skill. It reuses the selected target, session and
+  Gateway audit; database connections and credentials are never stored in the
+  browser. DoSql's signed approval is change evidence, not a second login path.
+- The website page routes through the same `doops_agent_prompt` Gateway RPC and
+  invokes the bundled DoWeb skill. It reuses the selected target and Gateway
+  audit for SiteSpec, Nginx validation, reload, health and rollback evidence.
 - Administrator mutations are audited with actor/token IDs, resource metadata,
   HTTP result and stable errors. Credential/configuration bodies are excluded.
   Unavailable audit storage blocks a mutation.
+
+The complete Web/CLI/skill boundary and authorization matrix is documented in
+`UNIFIED_OPERATIONS_WORKBENCH.md`.
 
 Deploy Gateway and Web from matching successful CI artifacts with the canonical
 host scripts. Record the binary source commit, Web digest, health, reconnects and

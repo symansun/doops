@@ -168,34 +168,34 @@ type GatewayAgent struct {
 	ActiveOps              int       `json:"active_ops,omitempty"`
 	QueuedOps              int       `json:"queued_ops,omitempty"`
 
-	stateMu           sync.RWMutex
-	conn              *websocket.Conn
-	writeMu           sync.Mutex
-	dataWriteState    websocketDataWriteState
-	heartbeatPayload  string
-	lastProgressAck   time.Time
-	opSlot            chan struct{}
-	queueMu           sync.Mutex
-	queued            int
-	opsMu             sync.Mutex
-	stateChanged      chan struct{}
-	draining          bool
-	writers           int
-	exclusiveResource string
-	readers           int
-	resources         map[string]*agentResourceSlot
-	pendingMu         sync.Mutex
-	pending           map[int64]*gatewayMessageQueue
-	activeByRequest   map[int64]*gatewayMessageQueue
-	activeSessions    map[string]int
-	messageBudget     *gatewayMessageBudget
-	closed            chan struct{}
-	reqID             int64
+	stateMu          sync.RWMutex
+	conn             *websocket.Conn
+	writeMu          sync.Mutex
+	dataWriteState   websocketDataWriteState
+	heartbeatPayload string
+	lastProgressAck  time.Time
+	queueMu          sync.Mutex
+	queued           int
+	opsMu            sync.Mutex
+	stateChanged     chan struct{}
+	draining         bool
+	writers          int
+	sessionWriters   map[string]int
+	readers          int
+	resources        map[string]*agentResourceSlot
+	pendingMu        sync.Mutex
+	pending          map[int64]*gatewayMessageQueue
+	activeByRequest  map[int64]*gatewayMessageQueue
+	activeSessions   map[string]int
+	messageBudget    *gatewayMessageBudget
+	closed           chan struct{}
+	reqID            int64
 }
 
 type agentResourceSlot struct {
-	slot   chan struct{}
-	queued int
+	slot    chan struct{}
+	queued  int
+	session string
 }
 
 type GatewayTarget struct {
@@ -768,16 +768,15 @@ func newGatewayAgentSession(
 		ConnectedAt:     time.Now().UTC(),
 		LastSeen:        time.Now().UTC(),
 		conn:            conn,
-		opSlot:          make(chan struct{}, 1),
 		pending:         make(map[int64]*gatewayMessageQueue),
 		activeByRequest: make(map[int64]*gatewayMessageQueue),
 		resources:       make(map[string]*agentResourceSlot),
+		sessionWriters:  make(map[string]int),
 		activeSessions:  make(map[string]int),
 		messageBudget:   messageBudget,
 		closed:          make(chan struct{}),
 		stateChanged:    make(chan struct{}),
 	}
-	agent.opSlot <- struct{}{}
 	return agent
 }
 
@@ -1024,6 +1023,12 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAuth, cluster, instance string, req api.JSONRPCRequest, writeRaw func([]byte) error, writeJSON func(interface{}) error) error {
+	if err := h.store.validateUserTokenAuth(auth); err != nil {
+		if errors.Is(err, ErrUnauthorized) {
+			return writeJSON(buildErrorResponse(req.ID, -32001, "gateway_auth_failed"))
+		}
+		return writeJSON(buildErrorResponse(req.ID, -32603, "gateway_auth_unavailable"))
+	}
 	ctx = contextWithInternalAuditAuth(ctx, auth)
 	var params api.ToolCallParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -1045,11 +1050,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			writeJSON(buildErrorResponse(req.ID, -32602, "unsupported agent prompt operation: "+operation))
 			return nil
 		}
-		if len(promptArgs.CredentialRefs) != 0 && operation != "apply" {
-			writeJSON(buildErrorResponse(req.ID, -32602, "credential_refs require operation=apply"))
+		if err := validateExplicitCredentialNames(promptArgs.CredentialRefs); err != nil {
+			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
 			return nil
 		}
-		if err := validateExplicitCredentialNames(promptArgs.CredentialRefs); err != nil {
+		if err := validatePromptCredentialAccess(operation, promptArgs.Skill, len(promptArgs.CredentialRefs) != 0); err != nil {
 			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
 			return nil
 		}
@@ -1161,7 +1166,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	opCtx, cancelOp := context.WithCancel(ctx)
 	defer cancelOp()
 	resourceKey := resourceKeyForTool(action, params.Name, params.Arguments, cluster, instance)
-	opID := h.registerActiveOperation(GatewayActiveOperation{
+	operation := GatewayActiveOperation{
 		AuditID:        auditID,
 		Resource:       resourceKey,
 		UserID:         auth.UserID,
@@ -1172,7 +1177,13 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		Session:        extractSession(params.Arguments),
 		CommandSummary: summarizeToolCall(params.Name, params.Arguments),
 		Kind:           "rpc",
-	}, cancelOp)
+	}
+	if h.hasCancellationBarrier(operation) {
+		finishAudit("busy", "target has a cancellation pending; wait for terminal evidence", "", 0)
+		writeJSON(buildErrorResponse(req.ID, -32005, "target busy: cancellation pending"))
+		return nil
+	}
+	opID := h.registerActiveOperation(operation, cancelOp)
 	operationFinished := false
 	defer func() {
 		if !operationFinished {
@@ -1199,7 +1210,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		}
 		defer releaseCredentialLocks()
 	}
-	lease, err := agent.acquireActionLease(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
+	lease, err := agent.acquireActionLeaseForSession(opCtx, action, resourceKey, extractSession(params.Arguments), h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			finishAudit("canceled", "operation canceled", "", 0)
@@ -1320,6 +1331,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		}
 		return nil
 	})
+	if knownApplyFailure && len(credentialPreparation.completed) != 0 {
+		if rollbackErr := h.hub.rollbackCredentialPrepare(context.WithoutCancel(opCtx), credentialPreparation.completed); rollbackErr != nil {
+			err = fmt.Errorf("%w: credential_apply_outcome_unknown", errExecutionOutcomeUnknown)
+		}
+	}
 	if err != nil {
 		if errors.Is(err, errExecutionOutcomeUnknown) {
 			finalStatus = "outcome_unknown"
@@ -1337,11 +1353,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			finalStatus = "error"
 			finalErr = sanitizeSecretText(err.Error())
 			finalResponse, _ = json.Marshal(buildErrorResponse(req.ID, -32603, finalErr))
-		}
-	}
-	if knownApplyFailure && len(credentialPreparation.completed) != 0 {
-		if rollbackErr := h.hub.rollbackCredentialPrepare(context.WithoutCancel(opCtx), credentialPreparation.completed); rollbackErr != nil {
-			finalErr = "credential_apply_outcome_unknown"
 		}
 	}
 	if err := finishAudit(finalStatus, finalErr, tail.String(), bytesOut); err != nil {
@@ -1895,61 +1906,95 @@ func (a *GatewayAgent) writeJSON(v interface{}) error {
 	return writeWebSocketJSON(a.conn, &a.writeMu, &a.dataWriteState, v, agentWSDataWriteTimeout)
 }
 
-func (a *GatewayAgent) acquire(ctx context.Context, maxQueued int, wait time.Duration) error {
-	select {
-	case <-a.opSlot:
-		a.setBusy(true)
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-	}
-	if maxQueued <= 0 {
-		return fmt.Errorf("target busy")
-	}
-	a.queueMu.Lock()
-	if a.queued >= maxQueued {
-		a.queueMu.Unlock()
-		return fmt.Errorf("target queue full")
-	}
-	a.queued++
-	a.queueMu.Unlock()
-	defer func() {
-		a.queueMu.Lock()
-		a.queued--
-		a.queueMu.Unlock()
-	}()
-
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	select {
-	case <-a.opSlot:
-		a.setBusy(true)
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return fmt.Errorf("target queue timeout")
-	case <-a.closed:
-		return fmt.Errorf("target offline")
-	}
-}
-
-func (a *GatewayAgent) release() {
-	select {
-	case a.opSlot <- struct{}{}:
-	default:
-	}
-	a.setBusy(false)
-	a.signalStateChange()
-}
-
 func (a *GatewayAgent) acquireActionLease(ctx context.Context, action GatewayAction, resourceKey string, maxQueued int, wait time.Duration) (*operationLease, error) {
+	return a.acquireActionLeaseForSession(ctx, action, resourceKey, "", maxQueued, wait)
+}
+
+func exclusiveLockKey(resourceKey, session string) string {
+	if strings.HasPrefix(resourceKey, "target-mutation:") && strings.TrimSpace(session) != "" {
+		return "session-mutation:" + strings.TrimPrefix(resourceKey, "target-mutation:") + "/" + strings.TrimSpace(session)
+	}
+	return resourceKey
+}
+
+func sessionForResourceKey(resourceKey string) string {
+	for _, prefix := range []string{"session-mutation:", "workspace:"} {
+		if strings.HasPrefix(resourceKey, prefix) {
+			value := strings.TrimPrefix(resourceKey, prefix)
+			if prefix == "session-mutation:" {
+				if index := strings.LastIndexByte(value, '/'); index >= 0 {
+					return value[index+1:]
+				}
+			}
+			return value
+		}
+	}
+	return ""
+}
+
+func (a *GatewayAgent) sessionResourceHeldLocked(lockKey string) bool {
+	if strings.HasPrefix(lockKey, "target:") {
+		return a.writers > 0 || a.readers > 0 || len(a.resources) != 0
+	}
+	session := sessionForResourceKey(lockKey)
+	if session == "" {
+		return false
+	}
+	for key, count := range a.sessionWriters {
+		if count == 0 {
+			continue
+		}
+		if strings.HasPrefix(key, "target:") {
+			return true
+		}
+		if sessionForResourceKey(key) == session {
+			return true
+		}
+	}
+	for key, slot := range a.resources {
+		if slot != nil && len(slot.slot) == 0 && (sessionForResourceKey(key) == session || slot.session == session) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *GatewayAgent) sessionWriterHeldLocked(resourceKey, session string) bool {
+	for key, count := range a.sessionWriters {
+		if count > 0 && strings.HasPrefix(key, "target:") {
+			return true
+		}
+	}
+	if strings.HasPrefix(resourceKey, "target:") {
+		return a.writers > 0
+	}
+	workspace := sessionForResourceKey(resourceKey)
+	for key, count := range a.sessionWriters {
+		holder := sessionForResourceKey(key)
+		if count > 0 && ((session != "" && holder == session) || (workspace != "" && holder == workspace)) {
+			return true
+		}
+	}
+	for key, slot := range a.resources {
+		if key != resourceKey && slot != nil && len(slot.slot) == 0 &&
+			((session != "" && (slot.session == session || sessionForResourceKey(key) == session)) ||
+				(workspace != "" && slot.session == workspace)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *GatewayAgent) acquireActionLeaseForSession(ctx context.Context, action GatewayAction, resourceKey, session string, maxQueued int, wait time.Duration) (*operationLease, error) {
+	if (strings.HasPrefix(resourceKey, "target-mutation:") || strings.HasPrefix(resourceKey, "nginx:")) && validateSession(strings.TrimSpace(session)) != nil {
+		return nil, fmt.Errorf("a valid session is required for mutation")
+	}
 	if isExclusiveOperation(action, resourceKey) {
-		if err := a.acquireExclusive(ctx, resourceKey, maxQueued, wait); err != nil {
+		lockKey := exclusiveLockKey(resourceKey, session)
+		if err := a.acquireExclusive(ctx, lockKey, maxQueued, wait); err != nil {
 			return nil, err
 		}
-		return newOperationLease(a.releaseExclusive), nil
+		return newOperationLease(func() { a.releaseExclusive(lockKey) }), nil
 	}
 	if isConcurrentQuery(action, resourceKey) {
 		if err := a.acquireReadOnly(); err != nil {
@@ -1958,7 +2003,7 @@ func (a *GatewayAgent) acquireActionLease(ctx context.Context, action GatewayAct
 		return newOperationLease(a.releaseReadOnly), nil
 	}
 	if resourceKey != "" {
-		if err := a.acquireResource(ctx, resourceKey, maxQueued, wait); err != nil {
+		if err := a.acquireResource(ctx, resourceKey, session, maxQueued, wait); err != nil {
 			return nil, err
 		}
 		return newOperationLease(func() { a.releaseResource(resourceKey) }), nil
@@ -1969,41 +2014,17 @@ func (a *GatewayAgent) acquireActionLease(ctx context.Context, action GatewayAct
 		}
 		return newOperationLease(a.releaseReadOnly), nil
 	}
-	if err := a.acquireExclusive(ctx, resourceKey, maxQueued, wait); err != nil {
+	lockKey := exclusiveLockKey(resourceKey, session)
+	if err := a.acquireExclusive(ctx, lockKey, maxQueued, wait); err != nil {
 		return nil, err
 	}
-	return newOperationLease(a.releaseExclusive), nil
+	return newOperationLease(func() { a.releaseExclusive(lockKey) }), nil
 }
 
-// acquireForAction is retained for low-level tests and callers that manage
-// release explicitly. Production request paths use acquireActionLease so the
-// active-operation finalizer owns cleanup.
-func (a *GatewayAgent) acquireForAction(ctx context.Context, action GatewayAction, resourceKey string, maxQueued int, wait time.Duration) error {
-	_, err := a.acquireActionLease(ctx, action, resourceKey, maxQueued, wait)
-	return err
-}
-
-func (a *GatewayAgent) releaseForAction(action GatewayAction, resourceKey string) {
-	if isExclusiveOperation(action, resourceKey) {
-		a.releaseExclusive()
-		return
+func (a *GatewayAgent) acquireExclusive(ctx context.Context, lockKey string, maxQueued int, wait time.Duration) error {
+	if strings.TrimSpace(lockKey) == "" {
+		return fmt.Errorf("operation resource is required")
 	}
-	if isConcurrentQuery(action, resourceKey) {
-		a.releaseReadOnly()
-		return
-	}
-	if resourceKey != "" {
-		a.releaseResource(resourceKey)
-		return
-	}
-	if isConcurrentReadOnlyAction(action) {
-		a.releaseReadOnly()
-		return
-	}
-	a.releaseExclusive()
-}
-
-func (a *GatewayAgent) acquireExclusive(ctx context.Context, resourceKey string, maxQueued int, wait time.Duration) error {
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	queued := false
@@ -2023,28 +2044,16 @@ func (a *GatewayAgent) acquireExclusive(ctx context.Context, resourceKey string,
 			return err
 		}
 		a.opsMu.Lock()
-		querySafeMutation := strings.HasPrefix(resourceKey, "target-mutation:")
-		admissible := !a.draining &&
-			((querySafeMutation && len(a.resources) == 0) ||
-				(!querySafeMutation && a.readers == 0))
+		admissible := !a.draining && !a.sessionResourceHeldLocked(lockKey)
 		if admissible {
-			select {
-			case <-a.opSlot:
-				a.writers++
-				a.exclusiveResource = resourceKey
-				a.opsMu.Unlock()
-				if queued {
-					a.queueMu.Lock()
-					if a.queued > 0 {
-						a.queued--
-					}
-					a.queueMu.Unlock()
-					queued = false
-				}
-				a.setBusy(true)
-				return nil
-			default:
+			a.writers++
+			if a.sessionWriters == nil {
+				a.sessionWriters = make(map[string]int)
 			}
+			a.sessionWriters[lockKey]++
+			a.opsMu.Unlock()
+			a.setBusy(true)
+			return nil
 		}
 		if a.stateChanged == nil {
 			a.stateChanged = make(chan struct{})
@@ -2078,27 +2087,38 @@ func (a *GatewayAgent) acquireExclusive(ctx context.Context, resourceKey string,
 	}
 }
 
-func (a *GatewayAgent) releaseExclusive() {
+func (a *GatewayAgent) releaseExclusive(lockKey string) {
 	a.opsMu.Lock()
-	if a.writers > 0 {
-		a.writers--
+	if a.sessionWriters[lockKey] == 0 {
+		a.opsMu.Unlock()
+		return
 	}
-	a.exclusiveResource = ""
+	a.writers--
+	delete(a.sessionWriters, lockKey)
 	a.opsMu.Unlock()
-	a.release()
+	a.setBusy(false)
+	a.signalStateChange()
 }
 
 func (a *GatewayAgent) acquireReadOnly() error {
 	a.opsMu.Lock()
-	querySafeMutation := strings.HasPrefix(a.exclusiveResource, "target-mutation:")
-	if a.draining || (!querySafeMutation && (a.writers > 0 || len(a.opSlot) == 0)) {
+	if a.draining || a.targetExclusiveHeldLocked() {
 		a.opsMu.Unlock()
 		return fmt.Errorf("target busy")
 	}
 	a.readers++
 	a.opsMu.Unlock()
-	a.setBusy(true)
+	a.setBusy(false)
 	return nil
+}
+
+func (a *GatewayAgent) targetExclusiveHeldLocked() bool {
+	for key, count := range a.sessionWriters {
+		if count > 0 && strings.HasPrefix(key, "target:") {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *GatewayAgent) releaseReadOnly() {
@@ -2106,7 +2126,7 @@ func (a *GatewayAgent) releaseReadOnly() {
 	if a.readers > 0 {
 		a.readers--
 	}
-	idle := a.readers == 0 && a.writers == 0 && len(a.opSlot) > 0
+	idle := a.readers == 0 && a.writers == 0
 	a.opsMu.Unlock()
 	if idle {
 		a.setBusy(false)
@@ -2114,23 +2134,27 @@ func (a *GatewayAgent) releaseReadOnly() {
 	a.signalStateChange()
 }
 
-func (a *GatewayAgent) acquireResource(ctx context.Context, key string, maxQueued int, wait time.Duration) error {
+func (a *GatewayAgent) acquireResource(ctx context.Context, key, session string, maxQueued int, wait time.Duration) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	a.opsMu.Lock()
-	if a.draining || a.writers > 0 || len(a.opSlot) == 0 {
+	if a.draining || a.sessionWriterHeldLocked(key, session) {
 		a.opsMu.Unlock()
 		return fmt.Errorf("target busy")
 	}
 	slot := a.resources[key]
 	if slot == nil {
+		if a.resources == nil {
+			a.resources = make(map[string]*agentResourceSlot)
+		}
 		slot = &agentResourceSlot{slot: make(chan struct{}, 1)}
 		slot.slot <- struct{}{}
 		a.resources[key] = slot
 	}
 	select {
 	case <-slot.slot:
+		slot.session = session
 		a.readers++
 		a.opsMu.Unlock()
 		a.setBusy(true)
@@ -2168,11 +2192,12 @@ func (a *GatewayAgent) acquireResource(ctx context.Context, key string, maxQueue
 			a.opsMu.Unlock()
 			return err
 		}
-		if a.draining || a.writers > 0 || len(a.opSlot) == 0 {
+		if a.draining || a.sessionWriterHeldLocked(key, session) {
 			slot.slot <- struct{}{}
 			a.opsMu.Unlock()
 			return fmt.Errorf("target busy")
 		}
+		slot.session = session
 		a.readers++
 		a.opsMu.Unlock()
 		a.setBusy(true)
@@ -2201,7 +2226,7 @@ func (a *GatewayAgent) releaseResource(key string) {
 	if a.readers > 0 {
 		a.readers--
 	}
-	idle := a.readers == 0 && a.writers == 0 && len(a.opSlot) > 0
+	idle := a.readers == 0 && a.writers == 0
 	a.opsMu.Unlock()
 	if idle {
 		a.setBusy(false)
@@ -2235,7 +2260,7 @@ func isConcurrentQuery(action GatewayAction, resourceKey string) bool {
 }
 
 func isExclusiveOperation(action GatewayAction, resourceKey string) bool {
-	return action == ActionAgentUpgrade || strings.HasPrefix(resourceKey, "target-mutation:") ||
+	return action == ActionAgentUpgrade || strings.HasPrefix(resourceKey, "target:") || strings.HasPrefix(resourceKey, "target-mutation:") ||
 		(resourceKey == "" && !isConcurrentReadOnlyAction(action))
 }
 
@@ -2247,7 +2272,7 @@ func (a *GatewayAgent) forceUnlock() error {
 	a.pendingMu.Lock()
 	defer a.pendingMu.Unlock()
 	if a.writers != 0 || a.readers != 0 || len(a.resources) != 0 ||
-		len(a.opSlot) == 0 || a.queued != 0 || len(a.pending) != 0 {
+		len(a.sessionWriters) != 0 || a.queued != 0 || len(a.pending) != 0 {
 		return fmt.Errorf("target has active or queued operations; request operation cancellation and wait for terminal evidence")
 	}
 	a.draining = true
@@ -2275,7 +2300,13 @@ func (a *GatewayAgent) runtimeState() targetRuntimeState {
 	a.opsMu.Lock()
 	writers := a.writers
 	readers := a.readers
-	opSlotLocked := len(a.opSlot) == 0
+	targetExclusive := false
+	for lockKey, count := range a.sessionWriters {
+		if count > 0 && strings.HasPrefix(lockKey, "target:") {
+			targetExclusive = true
+			break
+		}
+	}
 	resources := make([]string, 0, len(a.resources))
 	resourceQueued := 0
 	for key, slot := range a.resources {
@@ -2305,14 +2336,10 @@ func (a *GatewayAgent) runtimeState() targetRuntimeState {
 	state.sessions = sessions
 
 	switch {
-	case writers > 0 || opSlotLocked:
+	case targetExclusive:
 		state.busy = true
 		state.status = "busy"
 		state.reason = "exclusive_operation"
-	case queued > 0:
-		state.busy = true
-		state.status = "busy"
-		state.reason = "target_queue"
 	case state.activeOps > 0 || len(resources) > 0 || state.queuedOps > 0:
 		state.status = "active"
 	}
@@ -2362,6 +2389,15 @@ func numericID(v interface{}) (int64, bool) {
 
 func actionForTool(tool string, args json.RawMessage) GatewayAction {
 	switch tool {
+	case "doops_web":
+		operation := strings.ToLower(strings.TrimSpace(extractStringArg(args, "operation")))
+		if containsWebString(webReadOperations, operation) {
+			return ActionAsk
+		}
+		if containsWebString(webMutationOperations, operation) {
+			return ActionExec
+		}
+		return ""
 	case "doops_shell", "doops_ssh", "doops_bg", "doops_task_status", "doops_k8s":
 		return ActionExec
 	case "doops_agent_prompt":
@@ -2403,6 +2439,15 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 
 func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage, cluster, instance string) string {
 	targetMutation := "target-mutation:" + cluster + "/" + instance
+	if tool == "doops_web" || (tool == "doops_agent_prompt" && extractStringArg(args, "skill") == "doweb") {
+		if action == ActionExec {
+			// Nginx activation and reload are shared across website sessions.
+			return "nginx:" + cluster + "/" + instance
+		}
+		if tool == "doops_web" {
+			return "query:web:" + cluster + "/" + instance
+		}
+	}
 	switch action {
 	case ActionExec:
 		if tool == "doops_agent_prompt" && extractStringArg(args, "operation") == "apply" {
@@ -2518,7 +2563,13 @@ func summarizeToolCall(tool string, args json.RawMessage) string {
 		return fmt.Sprintf("doops_ssh host=%s remote_args=%d", strings.TrimSpace(host), len(command))
 	case "doops_agent_prompt":
 		operation, _ := m["operation"].(string)
-		return "doops_agent_prompt operation=" + strings.ToLower(strings.TrimSpace(operation))
+		summary := "doops_agent_prompt operation=" + strings.ToLower(strings.TrimSpace(operation))
+		if skill, _ := m["skill"].(string); skill == "doweb" || skill == "dosql" {
+			summary += " skill=" + skill
+		}
+		return summary
+	case "doops_web":
+		return trimTail("doops_web "+extractStringArg(args, "operation")+" site="+extractStringArg(args, "site_id"), 512)
 	case "doops_git_clone":
 		repoURL, _ := m["url"].(string)
 		branch, _ := m["branch"].(string)

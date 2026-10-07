@@ -24,6 +24,8 @@ import {
 import {
   appendJournalEvent,
   createSqlExecutionEvents,
+  inspectJournal,
+  migrateLegacyJournal,
   readJournalEvents,
   replayEnvironmentTimeline,
 } from "../Server/lib/execution-journal.mjs";
@@ -86,10 +88,12 @@ const READ_ONLY_COMMANDS = new Set([
   "resolve-timeline-at",
   "execute-timepoint-state-query",
   "replay-timeline",
+  "inspect-journal",
   "scan",
 ]);
 
 const EVIDENCE_WRITE_COMMANDS = new Set([
+  "migrate-journal",
   "execute-restore-checks",
   "record-execution",
   "record-metadata-commit-execution",
@@ -172,6 +176,10 @@ async function runCommand(command, input) {
       return importDrift(input);
     case "record-execution":
       return recordExecution(input);
+    case "inspect-journal":
+      return inspectJournal({ journalPath: input.journalPath });
+    case "migrate-journal":
+      return migrateJournal(input);
     case "record-metadata-commit-execution":
       return recordMetadataCommitExecution(input);
     case "execute-metadata-commit":
@@ -374,6 +382,17 @@ async function recordExecution(input) {
     eventTypes: events.map((event) => event.eventType),
     timeline: replayEnvironmentTimeline(events),
   };
+}
+
+async function migrateJournal(input) {
+  return migrateLegacyJournal({
+    sourceJournalPath: input.sourceJournalPath,
+    journalPath: input.journalPath,
+    operationId: input.operationId,
+    actor: input.actor,
+    createdAt: input.createdAt,
+    artifactRoot: input.artifactRoot,
+  });
 }
 
 async function executeDatabaseCommand(input, mode) {

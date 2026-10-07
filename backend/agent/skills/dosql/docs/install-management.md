@@ -1,115 +1,64 @@
 # Install And Management
 
-DoSql is an executable Skill and must be installed in a trusted user-level
-doagent Skill root. Project-local Skills remain available as prompt content but
-cannot execute local runtimes.
+DoSql is bundled inside the DoOps Agent runtime. Users install and authenticate
+one product, `doops`; they do not install a second database gateway, target
+registry or token store.
 
-## Current Manual Install
+## User Installation
 
-Install DoOps first so the project has `doops` and a gateway target:
+Install the versioned DoOps CLI and skill through the DoOps release installer:
 
 ```bash
 bash backend/scripts/install.sh \
-  --project /path/to/business-project \
-  --target-name <target-name> \
-  --target-gateway <gateway-url> \
-  --target-cluster <cluster> \
-  --target-instance <instance> \
-  --target-token '<gateway-user-token>' \
-  --use '<database-capable target>'
+  --version <release-tag> \
+  --project /absolute/path/to/business-project
 ```
 
-Then install DoSql:
+Then configure a Gateway target and log in once:
 
 ```bash
-mkdir -p ~/.codex/skills/dosql
-cp -R DoSuite/DoSql/Skill/. ~/.codex/skills/dosql/
+doops add --name <target> --gateway <gateway-url> \
+  --cluster <cluster> --instance <instance> --use '<target purpose>'
+doops -session setup login --target <target>
 ```
 
-Validate:
+The target route and Gateway login are the only user-facing connection
+configuration. DoSql does not read `~/.config/dosql/connections.json`, a skill
+local default target, or credentials passed through command-line arguments.
+
+## Unified Entry Points
+
+Use the same `doops` CLI for all skills:
 
 ```bash
-doagent skills validate \
-  ~/.codex/skills/dosql
+doops -session db-read sql --target <target> --mode query \
+  --database <logical-database> \
+  --request '统计最近 24 小时的失败订单，只读执行'
+
+doops -session db-plan sql --target <target> --mode plan \
+  --request '为订单表增加 external_id 生成变更计划，不执行'
+
+doops -session db-change sql --target <target> --mode apply \
+  --credential <database-resource> \
+  --request '按已批准的变更请求执行并返回 journal/evidence'
 ```
 
-`SKILL.md` declares the `node` runtime and
-`scripts/dosql-agent.mjs` entrypoint. When the Skill is installed in a
-directory discovered by doagent, execute commands through doagent:
+`sql --mode query` and `sql --mode plan` use Gateway `ask` and declare
+`skill=dosql`. `sql --mode apply` uses Gateway `apply`. Gateway authenticates
+the user, checks the exact target/action/credential scope and materializes only
+metadata bindings. DoSql then applies database classification, journal,
+verification and signed change approval rules.
 
-```bash
-doagent skills execute dosql-agent \
-  classify \
-  --input request.json \
-  --output response.json
+## Agent Runtime
+
+The bundled executable skill lives at:
+
+```text
+backend/agent/skills/dosql/
 ```
 
-The primary onboarding flow should then discover candidates, ask the user to
-confirm names, and register the confirmed assets:
-
-```bash
-doagent skills execute dosql-agent \
-  discover-databases \
-  --input discovery-request.json \
-  --output discovery.json
-doagent skills execute dosql-agent \
-  register-database \
-  --input database.json \
-  --output registration.json
-```
-
-## Target One-Click Install
-
-The intended management interface is:
-
-```bash
-doops skill install \
-  --project /path/to/business-project \
-  --product DoSql
-```
-
-The installer should copy the Skill, install or verify the `dosql-agent` CLI,
-and check that the target gateway can reach the selected database-capable
-doagent node.
-
-## Target One-Click Database Registration
-
-The intended database registration interface is:
-
-```bash
-doagent skills execute dosql-agent \
-  discover-databases \
-  --input discovery-request.json \
-  --output discovery.json
-doagent skills execute dosql-agent \
-  register-database \
-  --input database.json \
-  --output registration.json
-```
-
-Registration should create:
-
-- project and environment mapping;
-- database assets;
-- user-visible display names and aliases;
-- connection or secret references;
-- initial version baseline;
-- structure snapshot;
-- maintenance checklist;
-- audit event.
-
-Registration must be read-only against the target database. Mutating operations
-belong to the change lifecycle and require user confirmation.
-
-Before query, scan or change planning, the Agent should resolve the database
-name from the user sentence:
-
-```bash
-doagent skills execute dosql-agent \
-  resolve-database \
-  --input resolve-request.json \
-  --output resolved-database.json
-```
-
-If resolution returns `ambiguous`, the Agent must ask the user to choose the
-environment or database asset.
+Its entrypoint is `scripts/dosql-agent.mjs`. The Agent may call it for
+deterministic database operations, but all user-facing admission still comes
+through the authenticated DoOps Gateway operation. Direct execution against a
+business database without a Gateway target and DoSql operation record is not a
+supported path.

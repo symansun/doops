@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestInternalFinalizationFailureBlocksAfterParentLeaseRelease(t *testing.T) {
+func TestInternalFinalizationFailureBlocksSameSessionAfterParentLeaseRelease(t *testing.T) {
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
 	remote := f.agent(t, "internal-finalization")
 	service := f.hub.client
@@ -26,7 +26,7 @@ func TestInternalFinalizationFailureBlocksAfterParentLeaseRelease(t *testing.T) 
 		Session: "parent", Resource: resource,
 	}, func() {})
 	defer service.finishActiveOperation(parent)
-	lease, err := agent.acquireActionLease(context.Background(), ActionExec, resource, 0, 0)
+	lease, err := agent.acquireActionLeaseForSession(context.Background(), ActionExec, resource, "parent", 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,11 +87,14 @@ func TestInternalFinalizationFailureBlocksAfterParentLeaseRelease(t *testing.T) 
 		}
 	}
 	client := f.client(t, f.admin)
-	lifecycleSend(t, client, 2, "doops_shell", "next", map[string]interface{}{"command": "true"})
+	lifecycleSend(t, client, 4, "doops_shell", "independent", map[string]interface{}{"command": "true"})
+	remote.complete(t, remote.call(t, "doops_shell", "independent"), "")
+	lifecycleResponse(t, client, 4, "")
+	lifecycleSend(t, client, 2, "doops_shell", "child", map[string]interface{}{"command": "true"})
 	response := readUntilID(t, client, 2)
 	rpcError, ok := response["error"].(map[string]interface{})
 	if !ok || !strings.Contains(rpcError["message"].(string), "audit_completion_pending") {
-		t.Fatalf("mutation admitted while child persistence fails: %#v", response)
+		t.Fatalf("same-session mutation admitted while child persistence fails: %#v", response)
 	}
 	select {
 	case call := <-remote.calls:

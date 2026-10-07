@@ -37,11 +37,11 @@ func proxyRequestIsReadOnly(method string) bool {
 	}
 }
 
-func proxyResourceKey(cluster, instance, routeID, method string) string {
+func proxyResourceKey(routeID, method string) string {
 	if proxyRequestIsReadOnly(method) {
 		return "query:proxy:" + routeID
 	}
-	return "target-mutation:" + cluster + "/" + instance
+	return "proxy:" + routeID
 }
 
 func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +79,7 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	opCtx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	resourceKey := proxyResourceKey(route.Cluster, route.Instance, route.ID, r.Method)
+	resourceKey := proxyResourceKey(route.ID, r.Method)
 	opID := h.client.registerActiveOperation(GatewayActiveOperation{
 		Resource:       resourceKey,
 		UserID:         "proxy",
