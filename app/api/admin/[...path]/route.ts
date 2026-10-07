@@ -1,7 +1,5 @@
-import {
-  gatewayPolicyResponse,
-  readAllowedAuth,
-} from "@/lib/gateway-policy"
+import { gatewayPolicyResponse } from "@/lib/gateway-policy"
+import { proxyGatewayRequest } from "@/lib/server/gateway-proxy"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -9,54 +7,13 @@ export const dynamic = "force-dynamic"
 // 通用代理：把 /api/admin/<path> 透传到 gateway /v1/admin/<path>
 // 覆盖 users / grants / tokens / instances / operations 等 admin 接口。
 async function proxy(req: Request, ctx: { params: Promise<{ path: string[] }> }) {
-  let gateway: string
-  let token: string
   try {
-    ;({ gateway, token } = readAllowedAuth(req))
+    const { path } = await ctx.params
+    const sub = (path || []).map(encodeURIComponent).join("/")
+    const incoming = new URL(req.url)
+    return await proxyGatewayRequest(req, `/v1/admin/${sub}${incoming.search}`, { errorLabel: "管理请求" })
   } catch (err) {
     return gatewayPolicyResponse(err) || Response.json({ error: "gateway 策略检查失败" }, { status: 500 })
-  }
-  if (!gateway || !token) {
-    return Response.json({ error: "缺少 gateway 地址或 token" }, { status: 400 })
-  }
-  const { path } = await ctx.params
-  const sub = (path || []).join("/")
-  const incoming = new URL(req.url)
-  const qs = incoming.search // 含前导 ? 或为空字符串
-  const target = `${gateway}/v1/admin/${sub}${qs}`
-
-  const init: RequestInit = {
-    method: req.method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    cache: "no-store",
-    redirect: "manual",
-    signal: req.signal,
-  }
-  if (req.method !== "GET" && req.method !== "DELETE") {
-    init.body = await req.text()
-  }
-
-  try {
-    const res = await fetch(target, init)
-    const text = await res.text()
-    if (!res.ok) {
-      return Response.json(
-        { error: text || `请求失败 (${res.status})`, status: res.status },
-        { status: res.status },
-      )
-    }
-    return new Response(res.status === 204 ? null : text || "{}", {
-      status: res.status,
-      headers: { "Content-Type": "application/json" },
-    })
-  } catch (err) {
-    return Response.json(
-      { error: `无法连接 gateway: ${(err as Error).message}` },
-      { status: 502 },
-    )
   }
 }
 

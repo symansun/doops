@@ -46,6 +46,13 @@ func TestK8SMCPStdioExposesReadAndHelmOnly(t *testing.T) {
 		if _, exists := properties["session_id"]; exists {
 			t.Fatalf("runtime-bound session leaked into model-visible schema: %#v", properties)
 		}
+		if name == "k8s_read" {
+			resource, _ := properties["resource"].(map[string]interface{})
+			description, _ := resource["description"].(string)
+			if !strings.Contains(description, "omit for namespace-wide events") || !strings.Contains(description, "kind/name") {
+				t.Fatalf("k8s resource contract missing: %#v", resource)
+			}
+		}
 		if name == "helm" {
 			if _, exists := properties["values"]; exists {
 				t.Fatalf("ambiguous legacy values field remains exposed: %#v", properties)

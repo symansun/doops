@@ -81,10 +81,12 @@ func hostOnly(hostport string) string {
 }
 
 const (
-	agentWSReadTimeout      = 20 * time.Second
-	agentWSPingInterval     = 5 * time.Second
-	agentWSPingWriteTimeout = 3 * time.Second
-	agentWSDataWriteTimeout = 60 * time.Second
+	agentWSReadTimeout            = 20 * time.Second
+	agentWSPingInterval           = 5 * time.Second
+	agentWSPingWriteTimeout       = 3 * time.Second
+	agentWSDataWriteTimeout       = 60 * time.Second
+	maxAgentPromptAttachments     = 4
+	maxAgentPromptAttachmentBytes = 25 * 1024 * 1024
 )
 
 type websocketControlWriter interface {
@@ -1095,6 +1097,14 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			writeJSON(buildErrorResponse(reqID, -32602, `event_format must be "acp" when specified`))
 			return
 		}
+		if operation == "apply" && len(args.Attachments) > 0 {
+			writeJSON(buildErrorResponse(reqID, -32602, "deployment form does not accept conversation attachments"))
+			return
+		}
+		if err := validateAgentPromptAttachments(args.Attachments); err != nil {
+			writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+			return
+		}
 		switch strings.ToLower(strings.TrimSpace(args.Mode)) {
 		case "metadata":
 			if args.ResponseFormat != "" {
@@ -1126,12 +1136,13 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			reqID,
 			sessionID,
 			args.Instruction,
+			args.Attachments,
 			args.Model,
 			args.ResponseFormat,
 			agentPromptExecutionContext{
 				NativeMode:          nativeMode,
 				RequireToolEvidence: operation == "apply",
-				StructuredEvents:   args.EventFormat == "acp",
+				StructuredEvents:    args.EventFormat == "acp",
 			},
 			pushProgress,
 			writeJSON,
@@ -1277,11 +1288,11 @@ func doagentModeForPrompt(operation, executionMode string) (string, error) {
 type agentPromptExecutionContext struct {
 	NativeMode          string
 	RequireToolEvidence bool
-	StructuredEvents   bool
+	StructuredEvents    bool
 }
 
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
-func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, model string, responseFormat string, execution agentPromptExecutionContext, pushProgress notificationSender, writeJSON func(v interface{})) {
+func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, attachments []api.AgentPromptAttachment, model string, responseFormat string, execution agentPromptExecutionContext, pushProgress notificationSender, writeJSON func(v interface{})) {
 	ctx, cancelExecution := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancelExecution()
 	log.Printf("🤖 WS Running doagent via ACP HTTP: session=%s structured=%t model=%s",
@@ -1406,6 +1417,16 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	}
 	log.Printf("🧭 Session %s using native doagent mode %s", targetSessionID, execution.NativeMode)
 
+	var promptAttachments []map[string]interface{}
+	if len(attachments) > 0 {
+		var uploadErr error
+		promptAttachments, uploadErr = gw.uploadAgentPromptAttachments(ctx, doagentURL, doopsSessionID, attachments)
+		if uploadErr != nil {
+			writeJSON(buildErrorResponse(reqID, -32603, "doagent_attachment_upload_failed"))
+			return
+		}
+	}
+
 	// 启动 SSE 事件订阅（在 prompt 之前连接，防止丢失事件）
 	// Caller cancellation must not close the terminal-evidence subscription.
 	sseCtx, sseCancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -1456,7 +1477,18 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	}
 
 	// session/prompt 只返回本轮 turnId；终态仍以同 turn 的 SSE turn_finished 为准。
-	promptParams := map[string]interface{}{"sessionId": targetSessionID, "prompt": instr}
+	promptValue := interface{}(instr)
+	if len(promptAttachments) > 0 {
+		content := make([]interface{}, 0, len(promptAttachments)+1)
+		if instr != "" {
+			content = append(content, map[string]interface{}{"type": "text", "text": instr})
+		}
+		for _, attachment := range promptAttachments {
+			content = append(content, attachment)
+		}
+		promptValue = content
+	}
+	promptParams := map[string]interface{}{"sessionId": targetSessionID, "prompt": promptValue}
 	allowedTools := doagentAllowedTools(execution.RequireToolEvidence)
 	promptParams["allowedTools"] = allowedTools
 	promptParams["mutationAuthorized"] = execution.RequireToolEvidence
@@ -1576,6 +1608,89 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	}
 
 	writeJSON(buildSuccessResponse(reqID, "Operation complete."))
+}
+
+func validateAgentPromptAttachments(attachments []api.AgentPromptAttachment) error {
+	if len(attachments) > maxAgentPromptAttachments {
+		return fmt.Errorf("一次最多上传 %d 个附件", maxAgentPromptAttachments)
+	}
+	for _, attachment := range attachments {
+		if strings.TrimSpace(attachment.Filename) == "" || strings.ContainsAny(attachment.Filename, `/\\`) || strings.ContainsAny(attachment.Filename, "\x00\r\n") {
+			return fmt.Errorf("附件文件名无效")
+		}
+		if strings.TrimSpace(attachment.MediaType) == "" || strings.ContainsAny(attachment.MediaType, "\x00\r\n") {
+			return fmt.Errorf("附件媒体类型无效")
+		}
+		decoded, err := base64.StdEncoding.DecodeString(attachment.Base64Data)
+		if err != nil {
+			return fmt.Errorf("附件编码无效")
+		}
+		if len(decoded) == 0 {
+			return fmt.Errorf("附件不能为空")
+		}
+		if len(decoded) > maxAgentPromptAttachmentBytes {
+			return fmt.Errorf("附件超过 25 MiB 限制")
+		}
+	}
+	return nil
+}
+
+func (gw *Gateway) uploadAgentPromptAttachments(ctx context.Context, doagentURL, doopsSessionID string, attachments []api.AgentPromptAttachment) ([]map[string]interface{}, error) {
+	if len(attachments) == 0 {
+		return nil, nil
+	}
+	if filepath.Base(doopsSessionID) != doopsSessionID || strings.Contains(doopsSessionID, "..") {
+		return nil, fmt.Errorf("invalid agent session id")
+	}
+	workspaceResp, err := doagentRPCContext(ctx, doagentURL, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      "workspace-" + doopsSessionID,
+		"method":  "workspace/open",
+		"params":  map[string]interface{}{"path": filepath.Join("/root/ws", doopsSessionID)},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("open doagent workspace: %w", err)
+	}
+	workspaceResult, ok := workspaceResp["result"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("doagent workspace response is invalid")
+	}
+	workspaceID, _ := workspaceResult["id"].(string)
+	if strings.TrimSpace(workspaceID) == "" {
+		return nil, fmt.Errorf("doagent workspace id is missing")
+	}
+
+	blocks := make([]map[string]interface{}, 0, len(attachments))
+	for index, attachment := range attachments {
+		response, uploadErr := doagentRPCContext(ctx, doagentURL, map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      fmt.Sprintf("attachment-%s-%d", doopsSessionID, index),
+			"method":  "attachment/upload",
+			"params": map[string]interface{}{
+				"workspaceId": workspaceID,
+				"filename":    attachment.Filename,
+				"mediaType":   attachment.MediaType,
+				"base64Data":  attachment.Base64Data,
+			},
+		})
+		if uploadErr != nil {
+			return nil, fmt.Errorf("upload attachment %q: %w", attachment.Filename, uploadErr)
+		}
+		result, ok := response["result"].(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("attachment upload response is invalid")
+		}
+		attachmentID, _ := result["attachment_id"].(string)
+		if strings.TrimSpace(attachmentID) == "" {
+			return nil, fmt.Errorf("attachment upload id is missing")
+		}
+		blocks = append(blocks, map[string]interface{}{
+			"type":          "attachment",
+			"attachment_id": attachmentID,
+			"workspaceId":   workspaceID,
+		})
+	}
+	return blocks, nil
 }
 
 func doagentAllowedTools(apply bool) []string {
