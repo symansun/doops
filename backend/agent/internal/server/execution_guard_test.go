@@ -16,7 +16,7 @@ import (
 	"github.com/user/doops/agent/api"
 )
 
-func TestExecutionGuardTargetMutationBlocksWorkspaceChanges(t *testing.T) {
+func TestExecutionGuardSessionMutationBlocksSameWorkspaceChanges(t *testing.T) {
 	store := openExecutionAuditTestStore(t, t.TempDir()+"/gateway.db")
 	hub := NewGatewayHub(store, GatewayHubOptions{})
 	mux := http.NewServeMux()
@@ -29,16 +29,18 @@ func TestExecutionGuardTargetMutationBlocksWorkspaceChanges(t *testing.T) {
 	waitForGatewayAgent(t, hub, "dev", "node")
 	agent := hub.getAgent("dev", "node")
 	mutation := "target-mutation:dev/node"
-	if err := agent.acquireForAction(context.Background(), ActionExec, mutation, 0, 0); err != nil {
+	lease, err := agent.acquireActionLeaseForSession(context.Background(), ActionExec, mutation, "release", 0, 0)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer lease.Release()
 	for _, action := range []GatewayAction{ActionPush, ActionWrite, ActionClean} {
 		if err := agent.acquireForAction(context.Background(), action, "workspace:release", 0, 0); err == nil {
 			agent.releaseForAction(action, "workspace:release")
 			t.Fatalf("%s acquired workspace while target mutation owned it", action)
 		}
 	}
-	agent.releaseForAction(ActionExec, mutation)
+	lease.Release()
 	if err := agent.acquireForAction(context.Background(), ActionWrite, "workspace:release", 0, 0); err != nil {
 		t.Fatalf("workspace remained blocked after mutation terminal release: %v", err)
 	}
@@ -52,10 +54,9 @@ func TestExecutionGuardCleanLocksDeletedWorkspace(t *testing.T) {
 		t.Fatalf("clean locked caller instead of deleted workspace: %q", resource)
 	}
 	agent := &GatewayAgent{
-		opSlot: make(chan struct{}, 1), closed: make(chan struct{}),
+		closed:    make(chan struct{}),
 		resources: make(map[string]*agentResourceSlot),
 	}
-	agent.opSlot <- struct{}{}
 	if err := agent.acquireForAction(context.Background(), ActionExec, "workspace:build", 0, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -402,8 +403,11 @@ func TestExecutionGuardCanceledMutationRetainsUnknownWithoutBlockingNextCall(t *
 			case <-time.After(3 * time.Second):
 				t.Fatal("Agent did not receive the cancellation request")
 			}
-			lifecycleSend(t, probe, 2, "doops_shell", "takeover", map[string]interface{}{"command": "./next-change"})
+			lifecycleSend(t, probe, 2, "doops_shell", "interrupted", map[string]interface{}{"command": "./next-change"})
 			lifecycleResponse(t, probe, 2, "target busy")
+			lifecycleSend(t, probe, 4, "doops_shell", "independent", map[string]interface{}{"command": "./independent-change"})
+			agent.complete(t, agent.call(t, "doops_shell", "independent"), "")
+			lifecycleResponse(t, probe, 4, "")
 			if owned := f.operation(t, "interrupted", "cancel_requested"); owned.ID != op.ID || owned.AuditID != op.AuditID {
 				t.Fatalf("cancel ACK released original ownership: %#v", owned)
 			}

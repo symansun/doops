@@ -109,7 +109,7 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 			return "", fmt.Errorf("credential_target_lock_changed")
 		}
 	} else if !inherited {
-		lease, err := agent.acquireActionLease(opCtx, action, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
+		lease, err := agent.acquireActionLeaseForSession(opCtx, action, resourceKey, extractSession(rawArgs), h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
 		if err != nil {
 			_ = h.store.FinishAudit(auditID, AuditFinish{Status: "blocked", Error: err.Error()})
 			return "", err

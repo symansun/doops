@@ -35,6 +35,7 @@ func TestSignMutationAuthorizationMatchesDoagentProtocol(t *testing.T) {
 		"Skill",
 		"mcp_doops_k8s_read",
 		"mcp_doops_helm",
+		"mcp_doops_web",
 	}
 	contextDigest := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
@@ -49,10 +50,10 @@ func TestSignMutationAuthorizationMatchesDoagentProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if token != "28d6500373b1a0262e72fa3a7f5c8f75fe459b0e1703a64f0439ad87f8f629bd" {
+	if token != "044840f7fc90ad122fa7a86636d7f49eec02fd946afbfc317901bb5b8e1c62e1" {
 		t.Fatalf("token = %s", token)
 	}
-	if digest != "sha256:2df62012da35b1cb3d4961dc7c989a674cdc6514652be49de097013c24574e96" {
+	if digest != "sha256:489043a76d614c14fd712b47324f344bf8cb4bb48d8c89d8981bebfacacf612a" {
 		t.Fatalf("digest = %s", digest)
 	}
 

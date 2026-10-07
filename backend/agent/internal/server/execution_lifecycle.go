@@ -63,6 +63,8 @@ func interruptionNeedsReconciliation(tool string, args json.RawMessage) bool {
 		return extractStringArg(args, "operation") == "apply"
 	case "doops_k8s":
 		return !gatewayK8SReadOnly(extractStringArg(args, "operation"))
+	case "doops_web":
+		return !containsWebString(webReadOperations, strings.ToLower(strings.TrimSpace(extractStringArg(args, "operation"))))
 	default:
 		return false
 	}
@@ -87,7 +89,7 @@ func executionResponseCanceled(response map[string]interface{}) bool {
 }
 
 func remoteMutationFailed(tool string, args json.RawMessage, response map[string]interface{}) bool {
-	if tool != "doops_ssh" && tool != "doops_agent_prompt" && tool != "doops_k8s" &&
+	if tool != "doops_ssh" && tool != "doops_agent_prompt" && tool != "doops_k8s" && tool != "doops_web" &&
 		tool != "doops_credential_materialize" && tool != "doops_credential_cleanup" {
 		return false
 	}
@@ -222,6 +224,9 @@ func (s *ClientService) beginExecution(agent *GatewayAgent, operationID string, 
 	for id, current := range s.activeOps {
 		if id != operationID && current.State == "finalizing" && operationsConflict(op.GatewayActiveOperation, current.GatewayActiveOperation) {
 			return fmt.Errorf("audit_completion_pending: %s", id)
+		}
+		if id != operationID && current.State == "cancel_requested" && operationsConflict(op.GatewayActiveOperation, current.GatewayActiveOperation) {
+			return fmt.Errorf("target busy: cancellation pending")
 		}
 	}
 	if err := s.store.MarkExecutionDispatched(auditID); err != nil {

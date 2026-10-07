@@ -916,6 +916,16 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			writeJSON(buildSuccessResponse(reqID, result))
 		}
 
+	case "doops_web":
+		result, err := handleWebTool(ctx, argBytes, pushProgress)
+		if errors.Is(err, errExecutionOutcomeUnknown) {
+			writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+		} else if err != nil {
+			writeJSON(buildToolErrorResponse(reqID, err.Error()))
+		} else {
+			writeJSON(buildSuccessResponse(reqID, result))
+		}
+
 	case "doops_check_deployment":
 		result, err := handleCheckDeployment(argBytes)
 		if err != nil {
@@ -1065,8 +1075,12 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			return
 		}
 		if len(args.CredentialBindings) != 0 {
-			if operation != "apply" {
-				writeJSON(buildErrorResponse(reqID, -32602, "credential bindings require gateway-authorized apply"))
+			if operation != "" && operation != "ask" && operation != "apply" {
+				writeJSON(buildErrorResponse(reqID, -32602, "credential bindings require an ask or apply operation"))
+				return
+			}
+			if err := validatePromptCredentialAccess(operation, args.Skill, true); err != nil {
+				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
 				return
 			}
 			bindingContext, err := credentialBindingContext(args.CredentialBindings)
@@ -1075,14 +1089,18 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 				return
 			}
 			args.Instruction += "\n\nGateway-managed credential bindings (metadata only; never read Secret values):\n" + bindingContext
-		}
-		if operation == "apply" {
-			cleanup, err := bindHelmCredentialsForPrompt(sessionID, args.CredentialBindings)
-			if err != nil {
-				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
-				return
+			if hasHelmCredentialBinding(args.CredentialBindings) {
+				if operation != "apply" {
+					writeJSON(buildErrorResponse(reqID, -32602, "Helm credential bindings require apply"))
+					return
+				}
+				cleanup, err := bindHelmCredentialsForPrompt(sessionID, args.CredentialBindings)
+				if err != nil {
+					writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+					return
+				}
+				defer cleanup()
 			}
-			defer cleanup()
 		}
 		nativeMode, err := doagentModeForPrompt(operation, "")
 		if err != nil {
@@ -1143,6 +1161,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 				NativeMode:          nativeMode,
 				RequireToolEvidence: operation == "apply",
 				StructuredEvents:    args.EventFormat == "acp",
+				Skill:               args.Skill,
 			},
 			pushProgress,
 			writeJSON,
@@ -1269,6 +1288,15 @@ func credentialBindingContext(bindings []api.AgentCredentialBinding) (string, er
 	return string(encoded), nil
 }
 
+func hasHelmCredentialBinding(bindings []api.AgentCredentialBinding) bool {
+	for _, binding := range bindings {
+		if binding.Use == string(CredentialUseHelmPull) || binding.ContextKind == "helm-native" {
+			return true
+		}
+	}
+	return false
+}
+
 func doagentModeForPrompt(operation, executionMode string) (string, error) {
 	operation = strings.ToLower(strings.TrimSpace(operation))
 	executionMode = strings.ToLower(strings.TrimSpace(executionMode))
@@ -1289,6 +1317,7 @@ type agentPromptExecutionContext struct {
 	NativeMode          string
 	RequireToolEvidence bool
 	StructuredEvents    bool
+	Skill               string
 }
 
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
@@ -1489,7 +1518,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		promptValue = content
 	}
 	promptParams := map[string]interface{}{"sessionId": targetSessionID, "prompt": promptValue}
-	allowedTools := doagentAllowedTools(execution.RequireToolEvidence)
+	allowedTools := doagentAllowedTools(execution.RequireToolEvidence, execution.Skill)
 	promptParams["allowedTools"] = allowedTools
 	promptParams["mutationAuthorized"] = execution.RequireToolEvidence
 	if execution.RequireToolEvidence {
@@ -1693,10 +1722,15 @@ func (gw *Gateway) uploadAgentPromptAttachments(ctx context.Context, doagentURL,
 	return blocks, nil
 }
 
-func doagentAllowedTools(apply bool) []string {
-	tools := []string{"Read", "Glob", "Grep", "Skill", "mcp_doops_k8s_read"}
+func doagentAllowedTools(apply bool, skill string) []string {
+	tools := []string{"Read", "Glob", "Grep", "Skill", "mcp_doops_k8s_read", "mcp_doops_web_read"}
 	if apply {
-		tools = append(tools, "mcp_doops_helm")
+		switch skill {
+		case "":
+			tools = append(tools, "mcp_doops_helm")
+		case "doweb":
+			tools = append(tools, "mcp_doops_web")
+		}
 	}
 	return tools
 }

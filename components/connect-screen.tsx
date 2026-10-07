@@ -10,9 +10,11 @@ const DEMO_ENABLED = isDemoAllowed()
 
 export function ConnectScreen({
   defaultGateway,
+  initialError = "",
   onConnected,
 }: {
   defaultGateway: string
+  initialError?: string
   onConnected: (s: Session) => void
 }) {
   const [gateway, setGateway] = useState(defaultGateway)
@@ -21,8 +23,9 @@ export function ConnectScreen({
   const [password, setPassword] = useState("")
   const [token, setToken] = useState("")
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState("")
+  const [error, setError] = useState(initialError)
   useEffect(() => { setGateway(defaultGateway) }, [defaultGateway])
+  useEffect(() => { if (initialError) setError(initialError) }, [initialError])
 
   function enterDemo() {
     onConnected({ gateway: "demo://local", token: DEMO_TOKEN, username: "演示用户", demo: true })

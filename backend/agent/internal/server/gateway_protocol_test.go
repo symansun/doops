@@ -1515,32 +1515,55 @@ func TestGatewayActionMappingUsesDedicatedToolsForWorkspacePull(t *testing.T) {
 	}
 }
 
-func TestGatewayTargetBusySnapshotUsesOperationSlot(t *testing.T) {
+func TestGatewayTargetBusySnapshotUsesTargetScopedUpgradeSlot(t *testing.T) {
 	agent := &GatewayAgent{
-		Cluster:   "dev",
-		Instance:  "local",
-		Key:       "dev/local",
-		opSlot:    make(chan struct{}, 1),
-		pending:   make(map[int64]*gatewayMessageQueue),
-		resources: make(map[string]*agentResourceSlot),
+		Cluster:        "dev",
+		Instance:       "local",
+		Key:            "dev/local",
+		pending:        make(map[int64]*gatewayMessageQueue),
+		resources:      make(map[string]*agentResourceSlot),
+		sessionWriters: make(map[string]int),
 	}
-	agent.opSlot <- struct{}{}
 
 	agent.setBusy(true)
 	if got := agent.snapshot(); got.Busy {
 		t.Fatalf("stale busy flag must not mark an idle target busy: %#v", got)
 	}
 
-	if err := agent.acquire(context.Background(), 0, time.Second); err != nil {
+	if err := agent.acquireForAction(context.Background(), ActionAgentUpgrade, "target:dev/local", 0, time.Second); err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
 	if got := agent.snapshot(); !got.Busy || got.Status != "busy" || got.BusyReason != "exclusive_operation" {
 		t.Fatalf("acquired target should be busy: %#v", got)
 	}
-	agent.release()
+	agent.releaseForAction(ActionAgentUpgrade, "target:dev/local")
 	if got := agent.snapshot(); got.Busy || got.Status != "idle" {
 		t.Fatalf("released target should be idle: %#v", got)
 	}
+}
+
+func TestGatewaySessionMutationLocksArePerSession(t *testing.T) {
+	agent := &GatewayAgent{
+		Cluster:        "dev",
+		Instance:       "local",
+		Key:            "dev/local",
+		pending:        make(map[int64]*gatewayMessageQueue),
+		resources:      make(map[string]*agentResourceSlot),
+		sessionWriters: make(map[string]int),
+	}
+	first, err := agent.acquireActionLeaseForSession(context.Background(), ActionExec, "target-mutation:dev/local", "session-a", 0, time.Second)
+	if err != nil {
+		t.Fatalf("first session acquire: %v", err)
+	}
+	defer first.Release()
+	if _, err := agent.acquireActionLeaseForSession(context.Background(), ActionExec, "target-mutation:dev/local", "session-a", 0, time.Second); err == nil || !strings.Contains(err.Error(), "target busy") {
+		t.Fatalf("same session must remain serialized, got %v", err)
+	}
+	second, err := agent.acquireActionLeaseForSession(context.Background(), ActionExec, "target-mutation:dev/local", "session-b", 0, time.Second)
+	if err != nil {
+		t.Fatalf("different session must not be blocked by target lock: %v", err)
+	}
+	second.Release()
 }
 
 func TestGatewayTargetBusySnapshotUsesResourceLocks(t *testing.T) {
@@ -1548,11 +1571,9 @@ func TestGatewayTargetBusySnapshotUsesResourceLocks(t *testing.T) {
 		Cluster:   "dev",
 		Instance:  "local",
 		Key:       "dev/local",
-		opSlot:    make(chan struct{}, 1),
 		pending:   make(map[int64]*gatewayMessageQueue),
 		resources: make(map[string]*agentResourceSlot),
 	}
-	agent.opSlot <- struct{}{}
 
 	if err := agent.acquireForAction(context.Background(), ActionPush, "workspace:release", 0, time.Second); err != nil {
 		t.Fatalf("acquire resource: %v", err)
@@ -2208,7 +2229,7 @@ func TestGatewayRPCAllowsConcurrentCallsOnOneClientConnection(t *testing.T) {
 	}
 }
 
-func TestGatewayRPCSerializesShellMutationsAcrossSessions(t *testing.T) {
+func TestGatewayRPCAllowsShellMutationsAcrossSessions(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -2252,59 +2273,27 @@ func TestGatewayRPCSerializesShellMutationsAcrossSessions(t *testing.T) {
 		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(argsB)},
 	})
 
-	var firstSession string
-	select {
-	case firstSession = <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("expected one session to reach the agent")
+	startedSessions := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		select {
+		case session := <-started:
+			startedSessions[session] = true
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected both sessions to reach the agent concurrently")
+		}
 	}
-	select {
-	case secondSession := <-started:
-		t.Fatalf("target mutation lock allowed concurrent sessions: %s then %s", firstSession, secondSession)
-	case <-time.After(200 * time.Millisecond):
+	if !startedSessions["session-a"] || !startedSessions["session-b"] {
+		t.Fatalf("unexpected started sessions: %#v", startedSessions)
 	}
 	close(release)
-
-	firstClient := clientA
-	secondClient := clientB
-	secondSession := "session-b"
-	secondArgs := argsB
-	if firstSession == "session-b" {
-		firstClient, secondClient = clientB, clientA
-		secondSession = "session-a"
-		secondArgs = argsA
-	}
-	busy := readUntilID(t, secondClient, 2)
-	if errObj, ok := busy["error"].(map[string]interface{}); !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "target busy") {
-		t.Fatalf("expected target busy error for concurrent mutation, got %#v", busy)
-	}
-	firstNotification := readGatewayNotification(t, firstClient)
-	if got := notificationData(firstNotification); !strings.Contains(got, firstSession) {
-		t.Fatalf("first client got wrong notification: %#v", firstNotification)
-	}
-	if resp := readUntilID(t, firstClient, 2); resp["error"] != nil {
-		t.Fatalf("first client final response failed: %#v", resp)
-	}
-	writeGatewayJSON(t, secondClient, map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      3,
-		"method":  "tools/call",
-		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(secondArgs)},
-	})
-	select {
-	case got := <-started:
-		if got != secondSession {
-			t.Fatalf("second session = %q, want %q", got, secondSession)
+	for name, client := range map[string]*websocket.Conn{"session-a": clientA, "session-b": clientB} {
+		notification := readGatewayNotification(t, client)
+		if got := notificationData(notification); !strings.Contains(got, name) {
+			t.Fatalf("%s client got wrong notification: %#v", name, notification)
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("second session did not start after the target mutation lock was released")
-	}
-	secondNotification := readGatewayNotification(t, secondClient)
-	if got := notificationData(secondNotification); !strings.Contains(got, secondSession) {
-		t.Fatalf("second client got wrong notification: %#v", secondNotification)
-	}
-	if resp := readUntilID(t, secondClient, 3); resp["error"] != nil {
-		t.Fatalf("second client final response failed: %#v", resp)
+		if resp := readUntilID(t, client, 2); resp["error"] != nil {
+			t.Fatalf("%s client final response failed: %#v", name, resp)
+		}
 	}
 }
 
@@ -2352,33 +2341,20 @@ func TestGatewayRPCDoesNotFallbackSessionNotificationsWithoutSessionID(t *testin
 		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(argsB)},
 	})
 
-	var firstSession string
-	select {
-	case firstSession = <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("expected one session to reach the agent")
+	startedSessions := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		select {
+		case session := <-started:
+			startedSessions[session] = true
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected both sessions to reach the agent concurrently")
+		}
 	}
-	select {
-	case secondSession := <-started:
-		t.Fatalf("target mutation lock allowed concurrent sessions: %s then %s", firstSession, secondSession)
-	case <-time.After(200 * time.Millisecond):
+	if !startedSessions["session-a"] || !startedSessions["session-b"] {
+		t.Fatalf("unexpected started sessions: %#v", startedSessions)
 	}
 	close(release)
-
-	firstClient := clientA
-	secondClient := clientB
-	secondSession := "session-b"
-	secondArgs := argsB
-	if firstSession == "session-b" {
-		firstClient, secondClient = clientB, clientA
-		secondSession = "session-a"
-		secondArgs = argsA
-	}
-	busy := readUntilID(t, secondClient, 2)
-	if errObj, ok := busy["error"].(map[string]interface{}); !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "target busy") {
-		t.Fatalf("expected target busy error for concurrent mutation, got %#v", busy)
-	}
-	for name, conn := range map[string]*websocket.Conn{"first client": firstClient} {
+	for name, conn := range map[string]*websocket.Conn{"session-a": clientA, "session-b": clientB} {
 		msg := readGatewayMessage(t, conn)
 		if method, _ := msg["method"].(string); method == "notifications/message" {
 			t.Fatalf("%s received orphan notification without session routing: %#v", name, msg)
@@ -2386,27 +2362,6 @@ func TestGatewayRPCDoesNotFallbackSessionNotificationsWithoutSessionID(t *testin
 		if id, _ := msg["id"].(float64); id != 2 {
 			t.Fatalf("%s expected final response id 2, got %#v", name, msg)
 		}
-	}
-	writeGatewayJSON(t, secondClient, map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      3,
-		"method":  "tools/call",
-		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(secondArgs)},
-	})
-	select {
-	case got := <-started:
-		if got != secondSession {
-			t.Fatalf("second session = %q, want %q", got, secondSession)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("second session did not start after the target mutation lock was released")
-	}
-	msg := readGatewayMessage(t, secondClient)
-	if method, _ := msg["method"].(string); method == "notifications/message" {
-		t.Fatalf("second client received orphan notification without session routing: %#v", msg)
-	}
-	if id, _ := msg["id"].(float64); id != 3 {
-		t.Fatalf("second client expected final response id 3, got %#v", msg)
 	}
 }
 
@@ -2852,7 +2807,7 @@ func TestGatewayAdminUnlockRefusesActiveAndReconnectsIdleTarget(t *testing.T) {
 	waitForGatewayAgent(t, gw, "dev", "local")
 
 	agent := gw.getAgent("dev", "local")
-	if err := agent.acquire(context.Background(), 0, 0); err != nil {
+	if err := agent.acquireForAction(context.Background(), ActionAgentUpgrade, "target:dev/local", 0, 0); err != nil {
 		t.Fatalf("acquire target slot: %v", err)
 	}
 	if !agent.snapshot().Busy {
@@ -2876,7 +2831,7 @@ func TestGatewayAdminUnlockRefusesActiveAndReconnectsIdleTarget(t *testing.T) {
 	if !agent.snapshot().Busy || gw.getAgent("dev", "local") != agent {
 		t.Fatal("rejected unlock removed active ownership or disconnected the agent")
 	}
-	agent.release()
+	agent.releaseForAction(ActionAgentUpgrade, "target:dev/local")
 	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/v1/targets/unlock?cluster=dev&instance=local", nil)
 	req.Header.Set("Authorization", "Bearer "+adminToken.Plaintext)
 	resp, err = http.DefaultClient.Do(req)

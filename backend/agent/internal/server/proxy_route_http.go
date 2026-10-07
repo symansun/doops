@@ -34,7 +34,14 @@ func (h *GatewayHub) HandleAdminProxyRoutes(w http.ResponseWriter, r *http.Reque
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSONHTTP(w, map[string]interface{}{"routes": routes})
+		filtered := routes[:0]
+		platformAdmin := h.store.UserIsPlatformAdmin(auth.UserID)
+		for _, route := range routes {
+			if platformAdmin || h.store.UserCan(auth.UserID, route.Cluster, route.Instance, ActionAdmin) {
+				filtered = append(filtered, route)
+			}
+		}
+		writeJSONHTTP(w, map[string]interface{}{"routes": filtered})
 	case http.MethodPost:
 		var body proxyRouteHTTPBody
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {

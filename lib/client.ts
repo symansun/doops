@@ -41,7 +41,9 @@ export async function login(
 export async function restoreServerSession(): Promise<Session | null> {
   const res = await fetch("/api/session", { cache: "no-store" })
   const data = await res.json()
-  if (!res.ok || !data.session?.gateway) return null
+  if (!res.ok) throw new Error(data.error || `恢复会话失败 (${res.status})`)
+  if (data.session === null) return null
+  if (!data.session?.gateway) throw new Error("Gateway 会话响应无效")
   return {
     gateway: data.session.gateway,
     username: data.session.username || undefined,

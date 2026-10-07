@@ -9,8 +9,10 @@ metadata:
 
 # DoSql Agent
 
-DoSql follows the DoOps interaction model: connect to gateway, select a target,
-then ask doagent to operate databases through a controlled CLI.
+DoSql is a skill inside the DoOps Agent runtime. The user authenticates once to
+the DoOps Gateway, selects a Gateway target, and then asks doagent to route the
+database task here. DoSql does not implement login, target grants, Gateway
+token parsing or a second user authorization system.
 
 The core rule is simple: do not bypass the DoSql proxy path. Every database
 query, DDL, DML and MongoDB command must create an operation record before it is
@@ -31,6 +33,7 @@ executed.
   `compare-databases`, `derive-change-plan-from-comparison`,
   `render-forward-change-artifacts`, `execute-forward-artifacts`,
   `render-forward-evidence-metadata-commit`, `scan`, `record-execution`,
+  `inspect-journal`, `migrate-journal`,
   `replay-timeline`, timeline lookup, rollback planning,
   restore-node baseline derivation and `propose-confirmation`.
 - Record SQL/MongoDB execution lifecycle into append-only JSONL journals before
@@ -49,8 +52,9 @@ executed.
 - A user may explicitly include a read-only query in a change document.
 - A user may not exclude a mutating operation from a change document.
 - Production execution requires an approved change request and execution
-  evidence. Approval is a signed artifact bound to the exact operation and
-  verification fingerprints; a request boolean is not authorization.
+  evidence. The signed approval is change-control evidence bound to the exact
+  operation and verification fingerprints; it is not a second login or a
+  replacement for Gateway target/action authorization.
 - MongoDB commands must use structured `mongoOperation` documents. Raw
   JavaScript is never executed, and queries require a database read-only role.
 - Scanning modules are read-only and must still produce operation records and
@@ -63,17 +67,27 @@ executed.
   environment or database. Do not guess.
 - 不允许用兼容分支或静默降级掩盖真实失败。
 
-## Local Resource Bootstrap
+## Target And Credential Boundary
 
-- Before resolving a database request, read `config/resources.json` for the
-  local logical database assets and default doops target.
-- The resource file contains no plaintext credentials. Resolve real connections
-  only through the selected doagent target and DoSql approval policy.
+- The selected `cluster/instance` comes from the DoOps Gateway target selected
+  by the user. Do not read a skill-local default target or invent one from a
+  product URL.
+- Discover database assets from the selected target and require an explicit
+  choice when more than one asset matches. `config/resources.json` is optional
+  metadata for labels and examples; it is not a target registry or permission
+  source.
+- Database credentials are DoOps managed credentials. Pass only credential
+  resource names to the Gateway; never put payloads, connection strings or
+  passwords in prompts, artifacts or logs.
+- Gateway target/action checks happen before the skill runs. DoSql's operation
+  journal and signed approval checks protect database change evidence after
+  admission and must not duplicate Gateway authentication.
 
 ## Detailed Contract
 
 - `docs/install-management.md`
 - `docs/agent-cli-contract.md`
+- `docs/journal-recovery.md`
 - `docs/user-confirmation.md`
 - `docs/scanning.md`
 - `docs/mysql.md`

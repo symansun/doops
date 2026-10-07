@@ -534,7 +534,7 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 				params, _ := req["params"].(map[string]interface{})
 				prompt, _ := params["prompt"].(string)
 				allowed, _ := params["allowedTools"].([]interface{})
-				if strings.Join(interfaceStringValues(allowed), ",") != "Read,Glob,Grep,Skill,mcp_doops_k8s_read" {
+				if strings.Join(interfaceStringValues(allowed), ",") != "Read,Glob,Grep,Skill,mcp_doops_k8s_read,mcp_doops_web_read" {
 					t.Fatalf("ordinary prompt must have an exact read-only tool allowlist: %#v", params)
 				}
 				if params["responseMode"] != "stream" {
@@ -1164,7 +1164,7 @@ func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed bool) {
 				agentSessionID,
 				authorityID,
 				int64(issuedAt),
-				doagentAllowedTools(true),
+				doagentAllowedTools(true, ""),
 				contextDigest,
 			)
 			if err != nil {
