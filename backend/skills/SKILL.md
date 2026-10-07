@@ -107,6 +107,12 @@ description: |
   保留集群内 Job、匹配 Helm release 和共享 kubeconfig 的前置条件；其 `--dry-run`
   仍只预览参数。旧 Helm Agent、K8S 首次接入或显式 Helm 配置变更用外部
   `scripts/release-managed-agent.sh`，不自动 adoption。
+- 自升级与回滚 Job 固定到当前 Agent 节点并保留 runtime class；新镜像必须与独立
+  controller Pod 的不可变 spec 引用及同运行时 imageID 同时匹配。CRI imageID 不能与
+  registry manifest digest 直接等同。自动回滚使用升级前捕获的运行身份；手动回滚
+  controller 使用已记录成功验收证据的具体历史 revision 镜像。证据保存在自身 namespace 的
+  `doops-upgrade-verified-<release>` ConfigMap；不以 Helm superseded 状态推断成功。
+  revision/镜像/namespace 变化、证据缺失或写入失败时明确失败。
 - 已有独立 Docker Agent 用正式外部 `scripts/release-host-agent.sh`，保持原运行方式，
   不要求先迁 K8S，也不是 `upgrade` 失败后的自动 fallback。必须显式指定 SSH 端口，
   严格校验主机密钥；可引用已认证私有 SSH socket，不接收密码/token。真实只读预检、

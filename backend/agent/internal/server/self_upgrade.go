@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Self-upgrade is a Kubernetes Job, not a Helm command in the agent process.
@@ -208,14 +211,25 @@ func (p upgradeProcess) startRollbackJob(ctx context.Context, args agentUpgradeP
 		return "", err
 	}
 	jobName := "doops-self-upgrade-rb-" + randomHex(4)
+	rollbackImage, revision, err := p.rollbackImage(ctx, namespace, release, workload)
+	if err != nil {
+		return "", err
+	}
+	repository, digest, err := parsePinnedImage(rollbackImage)
+	if err != nil {
+		return "", err
+	}
 	if err := p.replaceFinishedJob(ctx, namespace, jobName); err != nil {
 		return "", err
 	}
 	manifest, err := selfUpgradeJobManifest(jobName, namespace, pod, selfUpgradePlan{
-		image:    pod.image,
-		release:  release,
-		workload: workload,
-		script:   selfUpgradeRollbackScript,
+		image:      rollbackImage,
+		repository: repository,
+		digest:     digest,
+		release:    release,
+		workload:   workload,
+		revision:   revision,
+		script:     selfUpgradeRollbackScript,
 	})
 	if err != nil {
 		return "", err
@@ -227,6 +241,104 @@ func (p upgradeProcess) startRollbackJob(ctx context.Context, args agentUpgradeP
 		"self-upgrade-accepted job=%s namespace=%s release=%s workload=%s image=rollback",
 		jobName, namespace, release, workload,
 	), nil
+}
+
+func (p upgradeProcess) rollbackImage(ctx context.Context, namespace, release, workload string) (string, int, error) {
+	out, err := p.command(ctx, "", "helm", "history", release, "-n", namespace, "-o", "json")
+	if err != nil {
+		return "", 0, commandError("read rollback history", out, err)
+	}
+	var history []struct {
+		Revision int    `json:"revision"`
+		Status   string `json:"status"`
+	}
+	if err := json.Unmarshal(out, &history); err != nil {
+		return "", 0, fmt.Errorf("parse rollback history: %w", err)
+	}
+	out, err = p.command(ctx, "", "kubectl", "-n", namespace, "get", "configmap", "doops-upgrade-verified-"+release, "--ignore-not-found", "-o", "json")
+	if err != nil {
+		return "", 0, commandError("read verified rollback evidence", out, err)
+	}
+	var stored struct {
+		Data map[string]string `json:"data"`
+	}
+	var evidence struct {
+		SchemaVersion int    `json:"schemaVersion"`
+		Release       string `json:"release"`
+		Workload      string `json:"workload"`
+		Revisions     map[string]struct {
+			Image string `json:"image"`
+		} `json:"revisions"`
+	}
+	if json.Unmarshal(out, &stored) != nil || json.Unmarshal([]byte(stored.Data["evidence.json"]), &evidence) != nil ||
+		evidence.SchemaVersion != 1 || evidence.Release != release || evidence.Workload != workload {
+		return "", 0, fmt.Errorf("verified rollback evidence is missing or invalid; use the authorized external controller")
+	}
+	current, previous := 0, 0
+	for _, row := range history {
+		if row.Status == "deployed" && row.Revision > current {
+			current = row.Revision
+		}
+	}
+	for _, row := range history {
+		if row.Status == "superseded" && row.Revision < current && row.Revision > previous && evidence.Revisions[fmt.Sprint(row.Revision)].Image != "" {
+			previous = row.Revision
+		}
+	}
+	if previous == 0 {
+		return "", 0, fmt.Errorf("no previously verified superseded revision")
+	}
+	out, err = p.command(ctx, "", "helm", "get", "manifest", release, "-n", namespace, "--revision", fmt.Sprint(previous))
+	if err != nil {
+		return "", 0, commandError("read rollback manifest", out, err)
+	}
+	decoder := yaml.NewDecoder(strings.NewReader(string(out)))
+	var images []string
+	for {
+		var doc struct {
+			Kind     string `yaml:"kind"`
+			Metadata struct {
+				Name      string `yaml:"name"`
+				Namespace string `yaml:"namespace"`
+			} `yaml:"metadata"`
+			Spec struct {
+				Template struct {
+					Spec struct {
+						Containers []struct {
+							Name  string `yaml:"name"`
+							Image string `yaml:"image"`
+						} `yaml:"containers"`
+					} `yaml:"spec"`
+				} `yaml:"template"`
+			} `yaml:"spec"`
+		}
+		if err := decoder.Decode(&doc); err == io.EOF {
+			break
+		} else if err != nil {
+			return "", 0, fmt.Errorf("parse rollback manifest: %w", err)
+		}
+		if doc.Kind != "Deployment" || doc.Metadata.Name != workload {
+			continue
+		}
+		if doc.Metadata.Namespace != "" && doc.Metadata.Namespace != namespace {
+			return "", 0, fmt.Errorf("rollback workload namespace mismatch")
+		}
+		for _, container := range doc.Spec.Template.Spec.Containers {
+			if container.Name == selfUpgradeContainer {
+				images = append(images, container.Image)
+			}
+		}
+	}
+	if len(images) != 1 {
+		return "", 0, fmt.Errorf("rollback manifest must contain exactly one Agent image")
+	}
+	if _, _, err := parsePinnedImage(images[0]); err != nil {
+		return "", 0, fmt.Errorf("rollback requires an immutable historical image: %w", err)
+	}
+	if evidence.Revisions[fmt.Sprint(previous)].Image != images[0] {
+		return "", 0, fmt.Errorf("rollback manifest does not match verified evidence")
+	}
+	return images[0], previous, nil
 }
 
 func (p upgradeProcess) observeSelfUpgrade(ctx context.Context, args agentUpgradeParams) (string, error) {
@@ -357,6 +469,7 @@ func workloadMatches(requested, live string) error {
 type selfUpgradePod struct {
 	image              string
 	serviceAccountName string
+	runtimeClassName   string
 	nodeName           string
 	imagePullSecrets   []string
 	mount              jobVolumeMount
@@ -378,6 +491,7 @@ func (p upgradeProcess) podSpec(ctx context.Context, namespace string) (selfUpgr
 		Spec struct {
 			NodeName           string `json:"nodeName"`
 			ServiceAccountName string `json:"serviceAccountName"`
+			RuntimeClassName   string `json:"runtimeClassName"`
 			ImagePullSecrets   []struct {
 				Name string `json:"name"`
 			} `json:"imagePullSecrets"`
@@ -431,9 +545,12 @@ func (p upgradeProcess) podSpec(ctx context.Context, namespace string) (selfUpgr
 	if err != nil {
 		return selfUpgradePod{}, err
 	}
-	nodeName, err := nodeNameForVolume(volume, pod.Spec.NodeName)
+	_, err = nodeNameForVolume(volume, pod.Spec.NodeName)
 	if err != nil {
 		return selfUpgradePod{}, err
+	}
+	if strings.TrimSpace(pod.Spec.NodeName) == "" {
+		return selfUpgradePod{}, fmt.Errorf("self-upgrade requires the agent pod node name")
 	}
 	secrets := make([]string, 0, len(pod.Spec.ImagePullSecrets))
 	for _, secret := range pod.Spec.ImagePullSecrets {
@@ -444,7 +561,8 @@ func (p upgradeProcess) podSpec(ctx context.Context, namespace string) (selfUpgr
 	return selfUpgradePod{
 		image:              containerImage,
 		serviceAccountName: pod.Spec.ServiceAccountName,
-		nodeName:           nodeName,
+		runtimeClassName:   pod.Spec.RuntimeClassName,
+		nodeName:           pod.Spec.NodeName,
 		imagePullSecrets:   secrets,
 		mount:              selectedMount,
 		volume:             volume,
@@ -588,6 +706,7 @@ type selfUpgradePlan struct {
 	digest     string
 	release    string
 	workload   string
+	revision   int
 	script     string
 }
 
@@ -610,6 +729,9 @@ func selfUpgradeJobManifest(jobName, namespace string, pod selfUpgradePod, plan 
 		{"name": "DOOPS_UPGRADE_NAMESPACE", "value": namespace},
 		{"name": "DOOPS_UPGRADE_RELEASE", "value": plan.release},
 		{"name": "DOOPS_UPGRADE_WORKLOAD", "value": plan.workload},
+	}
+	if plan.revision != 0 {
+		env = append(env, map[string]string{"name": "DOOPS_UPGRADE_REVISION", "value": fmt.Sprint(plan.revision)})
 	}
 	if plan.repository != "" {
 		env = append(env,
@@ -639,6 +761,9 @@ func selfUpgradeJobManifest(jobName, namespace string, pod selfUpgradePod, plan 
 	}
 	if pod.serviceAccountName != "" {
 		podSpec["serviceAccountName"] = pod.serviceAccountName
+	}
+	if pod.runtimeClassName != "" {
+		podSpec["runtimeClassName"] = pod.runtimeClassName
 	}
 	if len(pullSecrets) > 0 {
 		podSpec["imagePullSecrets"] = pullSecrets
@@ -745,13 +870,14 @@ workload="$DOOPS_UPGRADE_WORKLOAD"
 `
 
 const selfUpgradeDeploymentVerifier = `verify_deployment() {
-  python3 - "$ns" "$workload" "$1" <<'PY'
+  python3 - "$ns" "$workload" "$1" "${2:-controller}" "${3:-}" <<'PY'
 import json
+import os
 import re
 import subprocess
 import sys
 
-namespace, expected_workload, expected_image = sys.argv[1:4]
+namespace, expected_workload, expected_image, identity_source, record = sys.argv[1:6]
 deployment = json.loads(subprocess.check_output(
     ["kubectl", "-n", namespace, "get", "deployment", expected_workload, "-o", "json"],
     timeout=30,
@@ -806,6 +932,40 @@ pods = [pod for pod in pods if not (pod.get("metadata") or {}).get("deletionTime
 if len(pods) != desired:
     raise SystemExit(f"Active Agent Pods={len(pods)}, desiredReplicas={desired}")
 expected_digest = expected_image.rsplit("@", 1)[1] if "@sha256:" in expected_image else ""
+controller_node = ""
+runtime_class = ""
+if identity_source == "baseline":
+    baseline = json.loads(os.environ["DOOPS_UPGRADE_BASELINE"])
+    if expected_image != baseline.get("image"):
+        raise SystemExit("Rollback image does not match the captured baseline")
+    expected_digest = baseline.get("digest") or ""
+    controller_node = baseline.get("node") or ""
+    runtime_class = baseline.get("runtime_class") or ""
+    if not controller_node or not re.fullmatch(r"sha256:[0-9a-f]{64}", expected_digest):
+        raise SystemExit("Rollback baseline runtime identity is missing")
+elif identity_source == "controller":
+    if expected_image != os.environ.get("DOOPS_UPGRADE_IMAGE"):
+        raise SystemExit("Controller image does not match the requested immutable image")
+    controller = json.loads(subprocess.check_output(
+        ["kubectl", "-n", namespace, "get", "pod", os.environ["HOSTNAME"], "-o", "json"],
+        timeout=30,
+    ))
+    controller_spec = controller.get("spec") or {}
+    controller_node = controller_spec.get("nodeName") or ""
+    runtime_class = controller_spec.get("runtimeClassName") or ""
+    pinned = next((item for item in controller_spec.get("containers") or []
+                   if item.get("name") == "controller"), None)
+    running = next((item for item in (controller.get("status") or {}).get("containerStatuses") or []
+                    if item.get("name") == "controller"), None)
+    if not controller_node or not pinned or pinned.get("image") != expected_image:
+        raise SystemExit("Controller Pod does not match the pinned image and node")
+    if not running or not running.get("ready"):
+        raise SystemExit("Controller container is not Ready")
+    expected_digest = str(running.get("imageID") or "").split("://")[-1].rsplit("@", 1)[-1]
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", expected_digest):
+        raise SystemExit("Controller Pod imageID has no valid sha256 digest")
+else:
+    raise SystemExit("Unknown runtime identity source")
 for pod in pods:
     metadata = pod.get("metadata") or {}
     uid = str(metadata.get("uid") or "")
@@ -821,6 +981,10 @@ for pod in pods:
     container = next((item for item in containers if item.get("name") == "doops-agent"), None)
     if not container or container.get("image") != expected_image:
         raise SystemExit("Agent Pod spec image does not match the expected image")
+    if controller_node and (pod.get("spec") or {}).get("nodeName") != controller_node:
+        raise SystemExit("Agent and Controller Pods must use the same node runtime")
+    if ((pod.get("spec") or {}).get("runtimeClassName") or "") != runtime_class:
+        raise SystemExit("Agent and Controller Pods must use the same runtime class")
     statuses = status.get("containerStatuses") or []
     agent = next((item for item in statuses if item.get("name") == "doops-agent"), None)
     if not agent or not agent.get("ready"):
@@ -833,6 +997,33 @@ for pod in pods:
         raise SystemExit("Agent Pod imageID does not match the expected digest")
     print("pod_verified uid=" + uid + " imageID=" + image_id)
 print("deployment_verified=" + name + " generation=" + str(generation))
+if record == "record":
+    release = os.environ["DOOPS_UPGRADE_RELEASE"]
+    rows = json.loads(subprocess.check_output(
+        ["helm", "history", release, "-n", namespace, "-o", "json"], timeout=30,
+    ))
+    deployed = [int(row["revision"]) for row in rows if row["status"] == "deployed"]
+    if len(deployed) != 1:
+        raise SystemExit("Cannot bind verification to one deployed Helm revision")
+    receipt_name = "doops-upgrade-verified-" + release
+    raw = subprocess.check_output(
+        ["kubectl", "-n", namespace, "get", "configmap", receipt_name, "--ignore-not-found", "-o", "json"], timeout=30,
+    ).strip()
+    receipt = json.loads(json.loads(raw)["data"]["evidence.json"]) if raw else {
+        "schemaVersion": 1, "release": release, "workload": expected_workload, "revisions": {},
+    }
+    if receipt.get("schemaVersion") != 1 or receipt.get("release") != release or receipt.get("workload") != expected_workload:
+        raise SystemExit("Verified revision evidence scope mismatch")
+    revisions = receipt["revisions"]
+    revisions[str(deployed[0])] = {"image": expected_image, "runtimeDigest": expected_digest,
+                                  "podUID": uid, "node": controller_node, "runtimeClass": runtime_class}
+    retained = {str(row["revision"]) for row in rows}
+    receipt["revisions"] = {key: value for key, value in revisions.items() if key in retained}
+    manifest = {"apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": receipt_name, "namespace": namespace},
+                "data": {"evidence.json": json.dumps(receipt, sort_keys=True)}}
+    subprocess.run(["kubectl", "-n", namespace, "apply", "-f", "-"],
+                   input=json.dumps(manifest).encode(), check=True, timeout=30)
 PY
 }
 `
@@ -867,6 +1058,31 @@ PY
 )"
 previous="$(helm history "$release" -n "$ns" -o json | python3 -c 'import json,sys; rows=json.load(sys.stdin); print(max(int(row["revision"]) for row in rows if row["status"]=="deployed"))')"
 selector_json="$(kubectl -n "$ns" get deployment "$workload" -o json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d["spec"]["selector"]["matchLabels"], separators=(",", ":"), sort_keys=True))')"
+baseline="$(python3 - "$ns" "$previous_image" "$selector_json" <<'PY'
+import json, re, subprocess, sys
+ns, image, labels = sys.argv[1:4]
+selector = ",".join(f"{key}={value}" for key, value in sorted(json.loads(labels).items()))
+pods = json.loads(subprocess.check_output(
+    ["kubectl", "-n", ns, "get", "pods", "-l", selector, "-o", "json"], timeout=30,
+)).get("items") or []
+pods = [pod for pod in pods if not (pod.get("metadata") or {}).get("deletionTimestamp")]
+if len(pods) != 1:
+    raise SystemExit("Rollback baseline requires one active Agent Pod")
+pod = pods[0]
+spec = pod.get("spec") or {}
+container = next((item for item in spec.get("containers") or [] if item.get("name") == "doops-agent"), None)
+status = next((item for item in (pod.get("status") or {}).get("containerStatuses") or [] if item.get("name") == "doops-agent"), None)
+if not (pod.get("metadata") or {}).get("uid") or not spec.get("nodeName") or not container or container.get("image") != image or not status or not status.get("ready"):
+    raise SystemExit("Rollback baseline Pod identity is not verified")
+digest = str(status.get("imageID") or "").split("://")[-1].rsplit("@", 1)[-1]
+if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+    raise SystemExit("Rollback baseline runtime digest is invalid")
+print(json.dumps({"image": image, "digest": digest, "node": spec["nodeName"],
+                 "runtime_class": spec.get("runtimeClassName") or ""}))
+PY
+)"
+export DOOPS_UPGRADE_BASELINE="$baseline"
+verify_deployment "$previous_image" baseline record
 values="${TMPDIR:-/tmp}/doops-upgrade-values.json"
 helm get values "$release" -n "$ns" -o json >"$values"
 python3 - "$values" "$repository" "$digest" "$selector_json" <<'PY'
@@ -893,7 +1109,7 @@ rollback_release() {
     echo "Error: automatic rollback failed: rolled-back Deployment did not become ready" >&2
     return 1
   fi
-  if ! verify_deployment "$previous_image"; then
+  if ! verify_deployment "$previous_image" baseline record; then
     echo "Error: automatic rollback failed: rolled-back Deployment final state is not verified" >&2
     return 1
   fi
@@ -918,7 +1134,7 @@ deadline=$(( $(date +%s) + 600 ))
 while [ "$(date +%s)" -lt "$deadline" ]; do
   if verify_deployment "$target"; then
     sleep 15
-    if verify_deployment "$target"; then
+    if verify_deployment "$target" controller record; then
       echo "self-upgrade complete image=${target}"
       exit 0
     fi
@@ -929,7 +1145,15 @@ echo "new deployment did not stay ready" >&2
 exit 1
 `
 
-const selfUpgradeRollbackScript = selfUpgradeKubeconfigPrelude + selfUpgradeDeploymentVerifier + `previous="$(helm history "$release" -n "$ns" -o json | python3 -c 'import json,sys; rows=json.load(sys.stdin); current=max(int(row["revision"]) for row in rows if row["status"]=="deployed"); earlier=[int(row["revision"]) for row in rows if int(row["revision"]) < current and row["status"]=="superseded"]; print(max(earlier)) if earlier else sys.exit("no previous successful superseded revision")')"
+const selfUpgradeRollbackScript = selfUpgradeKubeconfigPrelude + selfUpgradeDeploymentVerifier + `previous="$DOOPS_UPGRADE_REVISION"
+python3 - "$ns" "$release" "$previous" <<'PY'
+import json, subprocess, sys
+ns, release, revision = sys.argv[1:4]
+rows = json.loads(subprocess.check_output(["helm", "history", release, "-n", ns, "-o", "json"], timeout=30))
+current = [int(row["revision"]) for row in rows if row["status"] == "deployed"]
+if len(current) != 1 or not any(int(row["revision"]) == int(revision) < current[0] and row["status"] == "superseded" for row in rows):
+    raise SystemExit("admitted rollback revision is no longer eligible")
+PY
 expected="$(python3 - "$release" "$ns" "$previous" "$workload" <<'PY'
 import subprocess, sys, yaml
 release, namespace, revision, workload = sys.argv[1:5]
@@ -941,6 +1165,7 @@ images = [
     container["image"]
     for doc in yaml.safe_load_all(manifest) if doc and doc.get("kind") == "Deployment"
     and (doc.get("metadata") or {}).get("name") == workload
+    and (doc.get("metadata") or {}).get("namespace", namespace) == namespace
     for container in doc["spec"]["template"]["spec"]["containers"]
     if container.get("name") == "doops-agent"
 ]
@@ -949,8 +1174,9 @@ if len(images) != 1 or not images[0]:
 print(images[0])
 PY
 )"
+test "$expected" = "$DOOPS_UPGRADE_IMAGE" || { echo "rollback revision image changed after admission" >&2; exit 1; }
 helm rollback "$release" "$previous" -n "$ns" --timeout 300s --wait
 kubectl -n "$ns" rollout status "deployment/${workload}" --timeout 300s
-verify_deployment "$expected"
+verify_deployment "$expected" controller record
 echo "self-upgrade rolled back to ${previous}"
 `
