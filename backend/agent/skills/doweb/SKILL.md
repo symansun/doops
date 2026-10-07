@@ -39,9 +39,13 @@ node /app/skills/doweb/scripts/doweb.mjs domain-set \
 node /app/skills/doweb/scripts/doweb.mjs deploy \
   --site-id demo \
   --domain-base aihub.org.cn \
-  --dist /path/to/dist \
+  --dist dist \
   --proxy /api/=https://api.example.com
 ```
+
+`dist` is relative to the current DoOps session workspace. Push or otherwise
+prepare that workspace before publishing; absolute paths and paths escaping the
+workspace are rejected.
 
 Supported commands:
 

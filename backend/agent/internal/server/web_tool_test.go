@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -95,7 +96,8 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	wrapper := filepath.Join(root, "nginx-wrapper")
-	if err := os.WriteFile(wrapper, []byte(fmt.Sprintf("#!/bin/sh\nexec '%s' -p '%s' -c '%s' \"$@\"\n", nginx, root, config)), 0700); err != nil {
+	reloadFailure := filepath.Join(root, "reject-reload")
+	if err := os.WriteFile(wrapper, []byte(fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = '-s' ] && [ -f '%s' ]; then exit 7; fi\nexec '%s' -p '%s' -c '%s' \"$@\"\n", reloadFailure, nginx, root, config)), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if output, err := exec.Command(wrapper).CombinedOutput(); err != nil {
@@ -170,6 +172,32 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 	}
 	assertBody("release-a")
 	writeDist("dist-b", "release-b")
+	statePath := filepath.Join(root, "state", "state", "demo.json")
+	previousState, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidenceDir := filepath.Join(root, "state", "evidence", "demo")
+	if err := os.Rename(evidenceDir, evidenceDir+".saved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(evidenceDir, []byte("synthetic evidence write failure"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := call(api.WebParams{Operation: "deploy", Confirm: true, SiteID: "demo", Domain: "localhost", Dist: "dist-b", HealthURLs: []string{url}}); err == nil {
+		t.Fatal("evidence persistence failure became success")
+	}
+	assertBody("release-a")
+	restoredState, err := os.ReadFile(statePath)
+	if err != nil || string(restoredState) != string(previousState) {
+		t.Fatalf("failed publication changed the release index: %s: %v", restoredState, err)
+	}
+	if err := os.Remove(evidenceDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(evidenceDir+".saved", evidenceDir); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := call(api.WebParams{Operation: "deploy", Confirm: true, SiteID: "demo", Domain: "localhost", Dist: "dist-b", HealthURLs: []string{url}}); err != nil {
 		t.Fatal(err)
 	}
@@ -197,13 +225,34 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 	if _, err := call(api.WebParams{Operation: "check", SiteID: "demo", HealthURLs: []string{url}}); err != nil {
 		t.Fatalf("site did not recover: %v", err)
 	}
-	if _, err := call(api.WebParams{Operation: "snippet-set", Confirm: true, SiteID: "demo", SnippetName: "upload", Snippet: "client_max_body_size 20m;"}); err != nil {
+	if _, err := call(api.WebParams{Operation: "snippet-set", Confirm: true, SiteID: "demo", SnippetName: "upload", Snippet: "client_max_body_size 20m;", HealthURLs: []string{url}}); err != nil {
 		t.Fatalf("natural-language snippet could not be written: %v", err)
 	}
 	snippetBody, err := os.ReadFile(filepath.Join(snippets, "demo", "upload.conf"))
 	if err != nil || string(snippetBody) != "client_max_body_size 20m;" {
 		t.Fatalf("candidate snippet was not persisted: %s: %v", snippetBody, err)
 	}
+	if _, err := call(api.WebParams{Operation: "snippet-set", Confirm: true, SiteID: "demo", SnippetName: "upload", Snippet: "client_max_body_size 50m;", HealthURLs: []string{failedHealth.URL}}); err == nil {
+		t.Fatal("snippet update ignored failed HTTP health")
+	}
+	snippetBody, err = os.ReadFile(filepath.Join(snippets, "demo", "upload.conf"))
+	if err != nil || string(snippetBody) != "client_max_body_size 20m;" {
+		t.Fatalf("failed snippet update was not restored: %s: %v", snippetBody, err)
+	}
+	if err := os.WriteFile(reloadFailure, []byte("synthetic reload failure"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = call(api.WebParams{Operation: "deploy", Confirm: true, SiteID: "demo", Domain: "localhost", Dist: "dist-b", HealthURLs: []string{url}})
+	if !errors.Is(err, errExecutionOutcomeUnknown) {
+		t.Fatalf("failed recovery did not report unknown outcome: %v", err)
+	}
+	if err := os.Remove(reloadFailure); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(wrapper, "-s", "reload").CombinedOutput(); err != nil {
+		t.Fatalf("restore disposable runtime after failure injection: %v: %s", err, output)
+	}
+	assertBody("release-a")
 }
 
 func TestApplyWebUsesSignedToolEvidenceAndCannotHideFailure(t *testing.T) {

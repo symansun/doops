@@ -151,7 +151,7 @@ export function WebsitePanel({
           <input aria-label="dist 路径" value={dist} onChange={(event) => { setDist(event.target.value); setConfirmed(false) }} disabled={running} placeholder="当前 session 的 dist 路径" className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-ring" />
         </div>
         <label className="flex items-center gap-2 text-xs text-muted-foreground">Nginx<select aria-label="Nginx 运行方式" value={runtimeMode} disabled={running} onChange={(event) => { setRuntimeMode(event.target.value as "host" | "docker"); setConfirmed(false) }} className="rounded-md border bg-background px-2 py-1.5 text-foreground"><option value="host">Host</option><option value="docker">Docker</option></select></label>
-        <label className="flex min-h-28 flex-1 flex-col gap-1.5">
+        <label className="flex min-h-28 grow shrink-0 flex-col gap-1.5">
           <span className="text-xs font-medium text-foreground">操作需求</span>
           <textarea aria-label="操作需求" value={request} onChange={(event) => { setRequest(event.target.value); setConfirmed(false) }} disabled={running} placeholder="描述站点、域名、dist、代理、TLS 或巡检目标。" className="min-h-28 flex-1 resize-y rounded-md border bg-background px-3 py-2 text-sm leading-6 outline-none focus:border-ring focus:ring-2 focus:ring-ring/20 disabled:opacity-60" />
         </label>

@@ -92,6 +92,12 @@ func handleWebTool(ctx context.Context, raw json.RawMessage, push notificationSe
 		if detail == "" {
 			detail = err.Error()
 		}
+		var failure struct {
+			ExecutionOutcome string `json:"executionOutcome"`
+		}
+		if json.Unmarshal([]byte(detail), &failure) == nil && failure.ExecutionOutcome == "unknown" {
+			return "", fmt.Errorf("%w: %s", errExecutionOutcomeUnknown, sanitizeSecretText(detail))
+		}
 		return "", fmt.Errorf("doweb execution failed: %s", sanitizeSecretText(detail))
 	}
 	return strings.TrimSpace(result.String()), nil

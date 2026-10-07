@@ -55,7 +55,8 @@ methods in the MVP.
 - `config-set` replaces the managed site config with a complete server block.
 - `snippet-set` writes a named snippet included inside that site's server block.
 - Both commands must run `nginx -t` and reload before reporting success.
-- If validation or reload fails, the previous file is restored.
+- Both commands run any explicitly supplied HTTP/HTTPS health checks, and a
+  failed health check also restores the previous file before returning failure.
 
 ## Failure Policy
 
@@ -66,6 +67,14 @@ route, rewrite the user's domain, or deploy to a different site id.
 
 After restoring a failed activation, run `nginx -t` and reload the restored
 configuration. Restoring files alone is not recovery of the serving process.
+Restore the release-state index with the activation snapshot, including when
+publication evidence cannot be persisted. Otherwise a later rollback could
+select a release that never completed.
+
+If restoration, validation or reload of the previous activation fails, the
+executor reports `executionOutcome=unknown` and `retryable=false`. The Agent
+preserves the Gateway unknown-outcome lifecycle; do not replay the mutation or
+claim that the serving process has recovered.
 
 ## Natural-Language Guardrails
 
