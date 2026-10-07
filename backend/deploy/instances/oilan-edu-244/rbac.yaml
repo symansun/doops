@@ -1,0 +1,160 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: doops-oilan
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: doops-oilan-agent
+  namespace: doops-oilan
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: doops-oilan-agent-read
+rules:
+  - apiGroups: [""]
+    resources: [configmaps, endpoints, events, namespaces, nodes, persistentvolumeclaims, persistentvolumes, pods, pods/log, replicationcontrollers, resourcequotas, services, serviceaccounts]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [daemonsets, deployments, replicasets, statefulsets, controllerrevisions]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [cronjobs, jobs]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - apiGroups: [events.k8s.io]
+    resources: [events]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, ingressclasses, networkpolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch]
+  - apiGroups: [storage.k8s.io]
+    resources: [csidrivers, csinodes, storageclasses, volumeattachments]
+    verbs: [get, list, watch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterrolebindings, clusterroles, rolebindings, roles]
+    verbs: [get, list, watch]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list, watch]
+  - nonResourceURLs: ["/api", "/api/*", "/apis", "/apis/*", "/version"]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: doops-oilan-agent-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: doops-oilan-agent-read
+subjects:
+  - kind: ServiceAccount
+    name: doops-oilan-agent
+    namespace: doops-oilan
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: doops-oilan-agent-write
+  namespace: doops-oilan
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: doops-oilan-agent-write
+  namespace: doops-oilan
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: doops-oilan-agent-write
+subjects:
+  - kind: ServiceAccount
+    name: doops-oilan-agent
+    namespace: doops-oilan
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: doops-oilan-agent-write
+  namespace: oilan
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: doops-oilan-agent-write
+  namespace: oilan
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: doops-oilan-agent-write
+subjects:
+  - kind: ServiceAccount
+    name: doops-oilan-agent
+    namespace: doops-oilan
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: doops-oilan-agent-write
+  namespace: oilan-middleware
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: doops-oilan-agent-write
+  namespace: oilan-middleware
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: doops-oilan-agent-write
+subjects:
+  - kind: ServiceAccount
+    name: doops-oilan-agent
+    namespace: doops-oilan
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: doops-oilan-agent-write
+  namespace: ecp
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: doops-oilan-agent-write
+  namespace: ecp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: doops-oilan-agent-write
+subjects:
+  - kind: ServiceAccount
+    name: doops-oilan-agent
+    namespace: doops-oilan
