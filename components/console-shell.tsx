@@ -1,6 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import dynamic from "next/dynamic"
+import type { AgentSessionRuntime } from "@agent-cloud/agent-ui"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { fetchTargets, type Session, type Target } from "@/lib/client"
 import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
 import { isDemoAllowed } from "@/lib/demo-policy"
@@ -8,7 +10,7 @@ import { DEMO_TOKEN } from "@/lib/demo"
 import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
 import { TerminalPanel } from "./terminal-panel"
-import { AskPanel } from "./ask-panel"
+import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { FilesPanel } from "./files-panel"
 import { KnowledgeBase } from "./knowledge-base"
 import { AuditPanel } from "./audit-panel"
@@ -34,6 +36,10 @@ import {
   GitIcon,
   KeyIcon,
 } from "./icons"
+
+const AgentUiPanel = dynamic(() => import("./agent-ui-panel").then((module) => module.AgentUiPanel), {
+  loading: () => <div role="status" className="flex h-full items-center justify-center text-sm text-muted-foreground">正在加载 AI 助手...</div>,
+})
 
 type Tab = "overview" | "ask" | "files" | "kb" | "credentials" | "audit" | "terminal"
 
@@ -63,6 +69,14 @@ export function ConsoleShell() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [showGuide, setShowGuide] = useState(false)
+  const agentRuntime = useMemo(() => {
+    if (!session || !selected) return null
+    return createDoopsAgentUiRuntime({ session, target: selected, sessionId })
+  }, [session, selected?.cluster, selected?.instance, sessionId])
+  const [openedAgentRuntime, setOpenedAgentRuntime] = useState<AgentSessionRuntime | null>(null)
+  useEffect(() => {
+    if (!agentRuntime || (view === "console" && tab === "ask")) setOpenedAgentRuntime(agentRuntime)
+  }, [agentRuntime, tab, view])
   const [adminDefaultTab, setAdminDefaultTab] = useState<
     "instances" | "config" | "repos" | "jobs" | "users" | "grants" | "tokens" | "operations"
   >("instances")
@@ -132,6 +146,10 @@ export function ConsoleShell() {
   }
 
   function selectTarget(t: Target) {
+    if (agentRuntime && isDoopsAgentSessionBusy(agentRuntime.getSnapshot(sessionId))) {
+      setError("请先停止当前 AI 任务，再切换目标")
+      return
+    }
     setSelected(t)
     setSessionId(randomSession())
     // AI 优先：切换机器后，默认进入 AI 助手而非终端
@@ -227,6 +245,7 @@ export function ConsoleShell() {
 
       {showGuide && <OnboardingGuide onClose={closeGuide} />}
 
+      {error && <div role="alert" className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>}
       {view === "admin" ? (
         <AdminConsole session={session} defaultTab={adminDefaultTab} />
       ) : view === "deploy" ? (
@@ -244,7 +263,7 @@ export function ConsoleShell() {
           <CicdGuide session={session} />
         </div>
       ) : (
-      <div className="flex min-h-0 flex-1">
+      <div className={tab === "ask" && selected ? "flex shrink-0" : "flex min-h-0 flex-1"}>
         <main className="flex min-w-0 flex-1 flex-col">
           <nav className="flex shrink-0 gap-1 overflow-x-auto border-b bg-card px-2">
             {TABS.map((t) => {
@@ -313,10 +332,10 @@ export function ConsoleShell() {
                 </button>
               </div>
             </div>
-          ) : (
+          ) : tab === "ask" ? null : (
             <>
               {/* files / ask / kb 面板自带头部，避免重复占一行 */}
-              {tab !== "files" && tab !== "ask" && tab !== "kb" && (
+              {tab !== "files" && tab !== "kb" && (
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-b bg-card px-4 py-1.5">
                   <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     session
@@ -336,16 +355,6 @@ export function ConsoleShell() {
                     session={session}
                     target={selected}
                     sessionId={sessionId}
-                  />
-                )}
-                {tab === "ask" && (
-                  <AskPanel
-                    key={`ask-${selected.key}-${sessionId}`}
-                    session={session}
-                    target={selected}
-                    sessionId={sessionId}
-                    onConfigureModel={() => setView("admin")}
-                    onSessionChange={setSessionId}
                   />
                 )}
                 {tab === "files" && (
@@ -385,6 +394,21 @@ export function ConsoleShell() {
           )}
         </main>
       </div>
+      )}
+      {selected && agentRuntime && openedAgentRuntime === agentRuntime && (
+        <div hidden={view !== "console" || tab !== "ask"} className="min-h-0 flex-1">
+          <AgentUiPanel
+            key={`ask-${selected.key}-${sessionId}`}
+            runtime={agentRuntime}
+            target={selected}
+            sessionId={sessionId}
+            onConfigureModel={() => {
+              setAdminDefaultTab("config")
+              setView("admin")
+            }}
+            onSessionChange={setSessionId}
+          />
+        </div>
       )}
     </div>
   )

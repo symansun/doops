@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next"
 import "./globals.css"
+import "@agent-cloud/agent-ui/styles.css"
 
 export const metadata: Metadata = {
   title: "Doops Console — 智能运维控制台",

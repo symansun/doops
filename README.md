@@ -23,6 +23,11 @@ The current standard source layout keeps frontend code at the repository root
 and all Go services under `backend/`. Older CNB branches may still have Go
 sources at the repository root; new work should use the layout above.
 
+The AI Assistant embeds Agent Cloud's `@agent-cloud/agent-ui` React workspace
+through a DoOps Gateway runtime adapter. Diagnosis, deployment authorization,
+target/session isolation, and acceptance scenarios are documented in
+[Agent UI Integration](docs/agent-ui-integration.md).
+
 ## Development Checks
 
 Run the same checks before publishing source:
