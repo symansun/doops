@@ -73,7 +73,7 @@ importers:
 packages:
 
   '@agent-cloud/agent-ui@0.1.4':
-    resolution: {integrity: sha512-hJaJ6pFP8D8YNWaX0KMxtqHe+yn6S6jB2+frnmpinXj8vJcTH8PYOFZhRv2JHKHTvv+ATeklEHA3wfYy2WWKMA==, tarball: https://npm.cnb.cool/l8ai/npm-common/-/packages/@agent-cloud/agent-ui/-/@agent-cloud/agent-ui-0.1.4.tgz}
+    resolution: {integrity: sha512-hJaJ6pFP8D8YNWaX0KMxtqHe+yn6S6jB2+frnmpinXj8vJcTH8PYOFZhRv2JHKHTvv+ATeklEHA3wfYy2WWKMA==}
     peerDependencies:
       '@xterm/addon-fit': '*'
       '@xterm/xterm': '*'
