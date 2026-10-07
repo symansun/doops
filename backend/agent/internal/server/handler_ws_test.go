@@ -1164,7 +1164,7 @@ func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed bool) {
 				agentSessionID,
 				authorityID,
 				int64(issuedAt),
-				doagentAllowedTools(true),
+				doagentAllowedTools(true, ""),
 				contextDigest,
 			)
 			if err != nil {

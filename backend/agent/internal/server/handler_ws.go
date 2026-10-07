@@ -1161,6 +1161,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 				NativeMode:          nativeMode,
 				RequireToolEvidence: operation == "apply",
 				StructuredEvents:    args.EventFormat == "acp",
+				Skill:               args.Skill,
 			},
 			pushProgress,
 			writeJSON,
@@ -1316,6 +1317,7 @@ type agentPromptExecutionContext struct {
 	NativeMode          string
 	RequireToolEvidence bool
 	StructuredEvents    bool
+	Skill               string
 }
 
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
@@ -1516,7 +1518,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		promptValue = content
 	}
 	promptParams := map[string]interface{}{"sessionId": targetSessionID, "prompt": promptValue}
-	allowedTools := doagentAllowedTools(execution.RequireToolEvidence)
+	allowedTools := doagentAllowedTools(execution.RequireToolEvidence, execution.Skill)
 	promptParams["allowedTools"] = allowedTools
 	promptParams["mutationAuthorized"] = execution.RequireToolEvidence
 	if execution.RequireToolEvidence {
@@ -1720,10 +1722,15 @@ func (gw *Gateway) uploadAgentPromptAttachments(ctx context.Context, doagentURL,
 	return blocks, nil
 }
 
-func doagentAllowedTools(apply bool) []string {
+func doagentAllowedTools(apply bool, skill string) []string {
 	tools := []string{"Read", "Glob", "Grep", "Skill", "mcp_doops_k8s_read", "mcp_doops_web_read"}
 	if apply {
-		tools = append(tools, "mcp_doops_helm", "mcp_doops_web")
+		switch skill {
+		case "":
+			tools = append(tools, "mcp_doops_helm")
+		case "doweb":
+			tools = append(tools, "mcp_doops_web")
+		}
 	}
 	return tools
 }

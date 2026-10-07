@@ -202,8 +202,21 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertBody("release-b")
+	writeDist("dist-c", "release-c")
+	if _, err := call(api.WebParams{Operation: "deploy", Confirm: true, SiteID: "demo", Domain: "localhost", Dist: "dist-c", HealthURLs: []string{url}}); err != nil {
+		t.Fatal(err)
+	}
+	assertBody("release-c")
 	if _, err := call(api.WebParams{Operation: "rollback", Confirm: true, SiteID: "demo", HealthURLs: []string{url}}); err != nil {
 		t.Fatal(err)
+	}
+	assertBody("release-b")
+	if _, err := call(api.WebParams{Operation: "rollback", Confirm: true, SiteID: "demo", HealthURLs: []string{url}}); err != nil {
+		t.Fatal(err)
+	}
+	assertBody("release-a")
+	if _, err := call(api.WebParams{Operation: "rollback", Confirm: true, SiteID: "demo", HealthURLs: []string{url}}); err == nil {
+		t.Fatal("rollback from oldest release selected a newer release")
 	}
 	assertBody("release-a")
 	failedHealth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -239,6 +252,25 @@ func TestWebExecutionUsesRealNginxValidationHealthAndRollback(t *testing.T) {
 	if err != nil || string(snippetBody) != "client_max_body_size 20m;" {
 		t.Fatalf("failed snippet update was not restored: %s: %v", snippetBody, err)
 	}
+	activeConfig, err := os.ReadFile(filepath.Join(available, "doweb-demo.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	include := "  include " + filepath.Join(snippets, "demo", "*.conf") + ";\n"
+	withoutSnippets := strings.Replace(string(activeConfig), include, "", 1)
+	if withoutSnippets == string(activeConfig) {
+		t.Fatal("managed snippet include missing from functional fixture")
+	}
+	if _, err := call(api.WebParams{Operation: "config-set", Confirm: true, SiteID: "demo", Config: withoutSnippets, HealthURLs: []string{url}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := call(api.WebParams{Operation: "snippet-set", Confirm: true, SiteID: "demo", SnippetName: "upload", Snippet: "client_max_body_size 50m;", HealthURLs: []string{url}}); err == nil || !strings.Contains(err.Error(), "does not include the managed snippet") {
+		t.Fatalf("unreferenced snippet reported success: %v", err)
+	}
+	if _, err := call(api.WebParams{Operation: "config-set", Confirm: true, SiteID: "demo", Config: string(activeConfig), HealthURLs: []string{url}}); err != nil {
+		t.Fatal(err)
+	}
+	assertBody("release-a")
 	if err := os.WriteFile(reloadFailure, []byte("synthetic reload failure"), 0600); err != nil {
 		t.Fatal(err)
 	}

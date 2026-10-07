@@ -10,6 +10,11 @@ DoWeb runs inside `doops.sh/backend/agent/skills/doweb`. Users use the existing
 Gateway account, Console, target routes and `doops` executable. DoWeb does not
 have its own login, user store, token cache or target registry.
 
+Mutation tools are scoped by the explicit skill: ordinary workload apply may use
+Helm, while `skill=doweb` may use the website tool, not Helm. DoSql and unrecognized
+skills do not inherit either mutation tool. This does not make the unfinished
+restricted DoSql database execution path available.
+
 ```bash
 doops -session website-check web --target <target> --mode check --runtime host \
   --site demo --request '检查站点的 Nginx 配置和 HTTP 状态'
@@ -93,6 +98,9 @@ the script in a local source checkout; images use
    release-state index. Supplied snippet health checks are enforced. Failure
    to validate/reload the restored activation produces an unknown outcome,
    not an ordinary completed failure that can be replayed.
+8. Rollback follows only the recorded previous release and stops at the oldest
+   release. Snippet activation checks Nginx's loaded configuration, not just a
+   successful write of an unused file.
 
 The real-Nginx test is `backend/agent/internal/server/web_tool_test.go`.
 Local verification is separate from production rollout. Deploy immutable CI
