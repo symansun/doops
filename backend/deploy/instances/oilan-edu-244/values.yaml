@@ -1,0 +1,94 @@
+image:
+  repository: docker.cnb.cool/l8ai/ai/doops.sh
+  digest: sha256:7b3e213db1cdb4e4576e2f985b3edef2a8c12fb4ce773840e8e67d4df5ea096b
+  pullPolicy: Always
+
+workload:
+  name: oilan-agent
+  selectorLabels:
+    app: doops-agent-oilan
+
+modelRouting:
+  policy: single-model
+
+doagentSettings:
+  secretName: doagent-model-settings
+  key: settings.json
+
+imagePullSecrets: []
+
+gateway:
+  url: https://doops.l8ai.cn
+  cluster: doops-oilan
+  instance: oilan-node
+
+proxy:
+  allowedHosts: ""
+
+nodeSelector:
+  kubernetes.io/hostname: gpu-ampere01
+
+tolerations: []
+hostAliases: []
+
+volumeMounts:
+  - name: doagent-config
+    mountPath: /opt/doagent_config
+    readOnly: true
+  - name: kubeconfig
+    mountPath: /root/.kube/config
+    subPath: config
+    readOnly: true
+  - name: agent-home
+    mountPath: /root
+  - name: containerd-run
+    mountPath: /run/containerd
+  - name: containerd-lib
+    mountPath: /var/lib/containerd
+  - name: nerdctl-lib
+    mountPath: /var/lib/nerdctl
+  - name: nerdctl-bin
+    mountPath: /usr/local/bin/nerdctl
+    readOnly: true
+  - name: nerdctl-real-bin
+    mountPath: /usr/local/bin/nerdctl.real
+    readOnly: true
+  - name: crictl-bin
+    mountPath: /usr/bin/crictl
+    readOnly: true
+
+volumes:
+  - name: kubeconfig
+    secret:
+      secretName: doops-oilan-kubeconfig
+      items:
+        - key: config
+          path: config
+  - name: agent-home
+    hostPath:
+      path: /var/lib/doops-oilan-agent-home
+      type: DirectoryOrCreate
+  - name: containerd-run
+    hostPath:
+      path: /run/containerd
+      type: Directory
+  - name: containerd-lib
+    hostPath:
+      path: /var/lib/containerd
+      type: Directory
+  - name: nerdctl-lib
+    hostPath:
+      path: /var/lib/nerdctl
+      type: DirectoryOrCreate
+  - name: nerdctl-bin
+    hostPath:
+      path: /usr/local/bin/nerdctl
+      type: File
+  - name: nerdctl-real-bin
+    hostPath:
+      path: /usr/local/bin/nerdctl.real
+      type: File
+  - name: crictl-bin
+    hostPath:
+      path: /usr/bin/crictl
+      type: File
