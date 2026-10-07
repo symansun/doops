@@ -247,6 +247,14 @@ mutation。脚本会在读取 Helm release 或执行任何 mutation 前确认操
 回滚 Job，需要 target 仍可连接，不能承诺 Gateway 完全离线时仍能自动恢复。
 `scripts/release-managed-agent.sh` 在其外部控制器中执行失败回滚。回滚失败必须明确报告，
 保留现场并停止发布；回滚命令成功后仍需核对旧镜像、最终 Deployment 和 Gateway 状态。
+自升级 Job 固定到 Agent 节点并保留 runtime class。新 Pod 的不可变 spec pin 不变，
+imageID 以同节点、同 pin 的 controller 运行身份为基准；不能把 OCI manifest/index
+digest 与 CRI imageID 直接比较。自动回滚使用升级前捕获的身份，手动回滚 controller
+使用已记录验收证据的具体历史 revision 镜像。验证证据保存在
+`doops-upgrade-verified-<release>` ConfigMap，绑定 workload/revision/image；
+superseded 本身不是成功证据。写入失败或证据缺失必须报告，旧版 release 的手动回滚
+仍需授权外部控制器，不能跳过校验。旧 Agent 生成的是旧版 Job 脚本，因此更新后
+还必须再次通过该 Agent 执行升级/回滚验收，不能仅凭新镜像已构建就宣称控制器已生效。
 新集群 `--values` 路径是 bootstrap-only，只做 Helm wait 和最终
 Deployment 检查，不做 Gateway 接管或自动回滚；完成后必须继续安装验收。
 禁止临时 Agent、临时 target、`kubectl set image`、release-runner，以及通过旧 Agent
