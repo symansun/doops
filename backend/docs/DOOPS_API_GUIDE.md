@@ -505,6 +505,18 @@ CLI 的 `--option` 只接受不会改写连接目标的旗标：`-4`、`-6`、`-
 `--credential <resource-name>` 的 metadata-only 引用；Gateway 在绑定用户、target 和
 session 后按精确 scope 授权和物化。
 
+组件对话的结构化事件消费者先发送 `mode=metadata`。支持本协议的 Agent 返回
+`event_schema=doops.sh/acp-events/v1` 和 `event_formats=["acp"]`。
+消费者显式发送 `event_format=acp` 时，`notifications/message` 的
+`kind=acp_update`，`data` 是已投影并脱敏的原生 ACP JSON；通知保留匹配的
+`sessionID` 和 Gateway 根请求 `request_id`。任意其他非空 event format 被拒绝。
+显示事件不携带凭据 payload、mutation proof 或执行授权。`turn_finished` 不替代
+Gateway 最终 RPC 结果及既有 Helm 证据验签；组件只在两者均满足时显示完成。
+验签后的 Helm 成功若伴随模型收尾失败，桥接以 `sessionUpdate=doops_notice`
+发送结构化警告，并保留 Gateway 已验签的成功结果，不把旧格式警告混入 ACP 流。
+未声明该协议的 Agent 必须升级，组件不自动转回旧事件消费者。未请求此格式的
+CLI 保持原有输出契约，不能以该路径绕过组件的版本检查。
+
 ### `doops_file_read`
 
 查看小文本文件。

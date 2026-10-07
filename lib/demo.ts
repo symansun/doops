@@ -333,7 +333,8 @@ export async function demoCallTool(
     }
     if (args.operation === "apply") {
       await emitChunks(["[演示] 收到发布授权；未操作真实目标。\n", "[演示工具] mcp_doops_helm upgrade-install\n"], onEvent, signal, 200)
-      onEvent({ type: "result", result: { content: [{ type: "text", text: "演示发布完成。真实发布需核对最终 Deployment spec/status、实际 imageID 和功能验收。" }] } })
+      onEvent({ type: "output", kind: "assistant_delta", data: "演示发布完成。真实发布需核对最终 Deployment spec/status、实际 imageID 和功能验收。" })
+      onEvent({ type: "result", result: { content: [{ type: "text", text: "Operation complete." }] } })
       onEvent({ type: "done" })
       return
     }
@@ -423,7 +424,8 @@ nginx -s reload
     }
 
     await emitChunks(chunks, onEvent, signal, 340)
-    onEvent({ type: "result", result: { content: [{ type: "text", text: summary }] } })
+    onEvent({ type: "output", kind: "assistant_delta", data: summary })
+    onEvent({ type: "result", result: { content: [{ type: "text", text: "Operation complete." }] } })
     onEvent({ type: "done" })
     return
   }
