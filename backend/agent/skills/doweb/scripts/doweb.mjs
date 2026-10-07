@@ -737,7 +737,7 @@ async function commandRollback(options) {
   const sitePaths = paths(options, siteID)
   const state = readState(sitePaths.statePath)
   const releases = state.releases || []
-  const targetRelease = state.previous_release || releases[releases.length - 2]
+  const targetRelease = state.previous_release
   if (!targetRelease) throw new Error(`site has no previous release: ${siteID}`)
   const releaseDir = join(sitePaths.releasesDir, targetRelease)
   const releaseSpecPath = join(releaseDir, ".doweb-site.json")
@@ -806,6 +806,10 @@ async function commandSnippetSet(options) {
   try {
     atomicWrite(target, snippet)
     const validation = validateNginx(sitePaths)
+    const effectiveConfig = runNginx(sitePaths.nginxBin, ["-T"])
+    if (!effectiveConfig.split("\n").includes(`# configuration file ${target}:`)) {
+      throw new Error(`site configuration does not include the managed snippet: ${target}`)
+    }
     const reload = reloadNginx(sitePaths)
     const health = options["health-url"] ? await checkHealth(options["health-url"]) : []
     process.stdout.write(JSON.stringify({ status: "snippet_configured", site_id: siteID, snippet: target, validation, reload, health }, null, 2))
