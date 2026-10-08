@@ -354,14 +354,14 @@ func TestBuildHelmCommandRejectsLocalAssetsAndUncontrolledImages(t *testing.T) {
 			mutate: func(params *api.HelmParams) {
 				params.Chart = "deploy/helm/app"
 			},
-			wantError: "explicit https:// or oci://",
+			wantError: "explicit https://",
 		},
 		{
 			name: "unencrypted chart",
 			mutate: func(params *api.HelmParams) {
 				params.Chart = "http://charts.example.test/app-1.0.0.tgz"
 			},
-			wantError: "explicit https:// or oci://",
+			wantError: "explicit https://",
 		},
 		{
 			name: "local values file",
@@ -428,10 +428,13 @@ func TestBuildHelmCommandRejectsLocalAssetsAndUncontrolledImages(t *testing.T) {
 }
 
 func TestHelmRemoteReferenceSchemes(t *testing.T) {
-	for _, chart := range []string{"https://charts.example.test/app.tgz", "oci://registry.example.test/charts/app"} {
+	for _, chart := range []string{"https://charts.example.test/app.tgz"} {
 		if _, err := resolveRemoteHelmChartReference(chart); err != nil {
 			t.Fatalf("allowed chart %s: %v", chart, err)
 		}
+	}
+	if _, err := resolveRemoteHelmChartReference("oci://registry.example.test/charts/app"); err == nil || !strings.Contains(err.Error(), "explicit https://") {
+		t.Fatalf("OCI chart was not rejected at the input boundary: %v", err)
 	}
 	if _, err := resolveRemoteHelmValueReference("http://config.example.test/values.yaml"); err != nil {
 		t.Fatalf("values must retain their separate HTTP(S) contract: %v", err)

@@ -12,6 +12,7 @@ const (
 	sqlModeQuery sqlMode = "query"
 	sqlModePlan  sqlMode = "plan"
 	sqlModeApply sqlMode = "apply"
+	sqlModeDiscover sqlMode = "discover"
 )
 
 func runSQLCommand(args []string, sessionName string, servers []Server, configErr error, ss *SessionStore, verbose bool) error {
@@ -19,11 +20,15 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 	flags.SetOutput(nil)
 	target := flags.String("target", "", "Configured Gateway target")
 	request := flags.String("request", "", "Database request in natural language")
-	mode := flags.String("mode", string(sqlModeQuery), "DoSql mode: query, plan, or apply")
+	mode := flags.String("mode", string(sqlModeQuery), "DoSql mode: query, plan, apply, or discover")
 	database := flags.String("database", "", "Optional logical database or asset hint")
 	subSession := flags.String("session", "", "Session ID (can also be set before subcommand)")
 	var credentialRefs stringListFlag
+	var databaseRefs stringListFlag
+	var repositoryRefs stringListFlag
 	flags.Var(&credentialRefs, "credential", "Managed credential resource name; repeatable")
+	flags.Var(&databaseRefs, "database-ref", "Database asset reference for the conversation; repeatable")
+	flags.Var(&repositoryRefs, "repo-ref", "Code repository reference, optionally ID@branch; repeatable")
 	if err := flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
@@ -52,7 +57,14 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 	if err != nil {
 		return err
 	}
-	return runSkillPrompt("dosql", sqlGatewayOperation(parsedMode), *target, sessionName, buildSQLInstruction(parsedMode, *database, *request), []string(credentialRefs), servers, configErr, ss, verbose)
+	if (parsedMode == sqlModeQuery || parsedMode == sqlModeApply) && len(credentialRefs) == 0 {
+		return fmt.Errorf("--credential 至少需要一个 Gateway 受管数据库凭据资源名")
+	}
+	instruction, err := appendConversationReferences(buildSQLInstruction(parsedMode, *database, *request), []string(databaseRefs), []string(repositoryRefs))
+	if err != nil {
+		return err
+	}
+	return runSkillPrompt("dosql", sqlGatewayOperation(parsedMode), *target, sessionName, instruction, []string(credentialRefs), servers, configErr, ss, verbose)
 }
 
 func parseSQLMode(value string) (sqlMode, error) {
@@ -63,8 +75,10 @@ func parseSQLMode(value string) (sqlMode, error) {
 		return sqlModePlan, nil
 	case sqlModeApply:
 		return sqlModeApply, nil
+	case sqlModeDiscover:
+		return sqlModeDiscover, nil
 	default:
-		return "", fmt.Errorf("unsupported --mode %q; use query, plan, or apply", value)
+		return "", fmt.Errorf("unsupported --mode %q; use query, plan, apply, or discover", value)
 	}
 }
 
@@ -80,6 +94,8 @@ func buildSQLInstruction(mode sqlMode, databaseHint, request string) string {
 	switch mode {
 	case sqlModeQuery:
 		purpose = "只读查询或巡检，不执行数据库变更。"
+	case sqlModeDiscover:
+		purpose = "扫描当前 Gateway target 的 Kubernetes 非 Secret 元数据，发现数据库实例和可识别数据库，不读取 Secret 值，不执行数据库连接或变更。"
 	case sqlModePlan:
 		purpose = "只生成可读的变更计划、风险、影响和验证步骤，不执行数据库变更。"
 	case sqlModeApply:

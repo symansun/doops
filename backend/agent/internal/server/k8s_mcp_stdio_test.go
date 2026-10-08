@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestK8SMCPStdioExposesReadAndHelmOnly(t *testing.T) {
+func TestK8SMCPStdioExposesBoundedDomainTools(t *testing.T) {
 	input := strings.NewReader(
 		`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}` + "\n",
 	)
@@ -26,7 +26,7 @@ func TestK8SMCPStdioExposesReadAndHelmOnly(t *testing.T) {
 	result, _ := response["result"].(map[string]interface{})
 	tools, _ := result["tools"].([]interface{})
 	if len(tools) != 4 {
-		t.Fatalf("expected read, helm, web_read and web tools, got %#v", tools)
+		t.Fatalf("expected read, helm and web tools, got %#v", tools)
 	}
 	names := make([]string, 0, len(tools))
 	for _, value := range tools {
@@ -70,7 +70,7 @@ func TestK8SMCPStdioExposesReadAndHelmOnly(t *testing.T) {
 				t.Fatalf("helm set_strings scalar contract missing: %#v", setStrings)
 			}
 			assetSource, _ := properties["asset_source"].(map[string]interface{})
-			if !strings.Contains(assetSource["description"].(string), "workspace") {
+			if !strings.Contains(assetSource["description"].(string), "workspace") || strings.Contains(assetSource["description"].(string), "oci://") {
 				t.Fatalf("helm asset source contract missing: %#v", assetSource)
 			}
 			valueFiles, _ := properties["value_files"].(map[string]interface{})
@@ -86,6 +86,30 @@ func TestK8SMCPStdioExposesReadAndHelmOnly(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "k8s_read,helm,web_read,web" {
 		t.Fatalf("unexpected tools: %#v", names)
+	}
+}
+
+func TestK8SMCPStdioExposesIndependentDoSQLTools(t *testing.T) {
+	input := strings.NewReader(
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}` + "\n",
+	)
+	var output bytes.Buffer
+	if err := RunK8SMCPStdioDomainContext(t.Context(), input, &output, mcpDomainDoSQL); err != nil {
+		t.Fatalf("run DoSQL MCP server: %v", err)
+	}
+	var response map[string]interface{}
+	if err := json.Unmarshal(output.Bytes(), &response); err != nil {
+		t.Fatalf("decode MCP response: %v", err)
+	}
+	result, _ := response["result"].(map[string]interface{})
+	tools, _ := result["tools"].([]interface{})
+	names := make([]string, 0, len(tools))
+	for _, value := range tools {
+		tool, _ := value.(map[string]interface{})
+		names = append(names, tool["name"].(string))
+	}
+	if strings.Join(names, ",") != "read,execute" {
+		t.Fatalf("unexpected DoSQL tools: %#v", names)
 	}
 }
 

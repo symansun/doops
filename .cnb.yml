@@ -196,9 +196,9 @@ main:
             esac
             test "${#image_digest}" -eq 64
             case "${DOOPS_HELM_ASSET}" in
-              https://*|oci://*) ;;
+              https://*) ;;
               *)
-                echo "DOOPS_HELM_ASSET must be an explicit https:// or oci:// chart URL" >&2
+                echo "DOOPS_HELM_ASSET must be an explicit https:// chart URL" >&2
                 exit 2
                 ;;
             esac

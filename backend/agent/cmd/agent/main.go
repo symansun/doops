@@ -38,7 +38,15 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "mcp-stdio" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		if err := server.RunK8SMCPStdioContext(ctx, os.Stdin, os.Stdout); err != nil {
+		mcpFlags := flag.NewFlagSet("mcp-stdio", flag.ContinueOnError)
+		domain := mcpFlags.String("domain", "doops", "MCP domain: doops or dosql")
+		if err := mcpFlags.Parse(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		if mcpFlags.NArg() != 0 {
+			log.Fatalf("unexpected mcp-stdio arguments: %s", strings.Join(mcpFlags.Args(), " "))
+		}
+		if err := server.RunK8SMCPStdioDomainContext(ctx, os.Stdin, os.Stdout, *domain); err != nil {
 			log.Fatal(err)
 		}
 		return

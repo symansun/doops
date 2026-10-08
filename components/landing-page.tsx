@@ -20,51 +20,51 @@ const DEMO_ENABLED = isDemoAllowed()
 const FEATURES = [
   {
     icon: SparkIcon,
-    title: "自然语言运维",
-    desc: "用中文描述你的需求，AI 智能体自动规划并在你的机器上执行，无需记忆复杂命令。",
+    title: "智能驱动运维",
+    desc: "用自然语言描述目标，智能体负责理解、规划、执行和反馈，减少重复操作与命令记忆。",
   },
   {
     icon: TerminalIcon,
-    title: "远程终端",
-    desc: "浏览器里直接连到你的服务器执行命令，实时输出，无需 SSH 客户端。",
+    title: "控制台与 CLI 双入口",
+    desc: "浏览器工作台适合协作和审查，doops CLI 适合脚本、批量任务和日常快速操作。",
   },
   {
-    icon: ActivityIcon,
-    title: "定时巡检 · 自动提单",
-    desc: "周期扫描机器异常，自动归类并提交 issue 到 GitHub / Gitee，无人值守也安心。",
+    icon: ServerIcon,
+    title: "服务器与 Kubernetes",
+    desc: "统一管理节点、工作负载、部署、终端、文件和运行状态，让基础设施操作集中在一个入口。",
   },
   {
     icon: LayersIcon,
-    title: "配置模板 · 一键下发",
-    desc: "在浏览器保存常用大模型与配置文件模板，通过 doops 发布到指定节点。",
+    title: "网站与数据库技能",
+    desc: "按领域加载独立 skill，覆盖网站发布、Nginx、健康检查、数据库巡检和受控变更流程。",
   },
   {
     icon: FileIcon,
-    title: "文件管理 · 整目录上传",
-    desc: "在线浏览、编辑、上传文件与文件夹，也支持极速 CLI 同步大目录。",
+    title: "配置、文件与自动化",
+    desc: "从配置模板、文件同步到定时巡检，把高频运维动作沉淀成可复用的工作流。",
   },
   {
     icon: ShieldIcon,
-    title: "权限与审计",
-    desc: "按用户、集群、动作精细授权，所有操作留痕可追溯，团队协作更放心。",
+    title: "统一认证与可验证审计",
+    desc: "一套 Gateway 登录贯通控制台、CLI 和各个 skill，精确授权、操作留痕、结果可核验。",
   },
 ]
 
 const STEPS = [
   {
     n: "1",
-    title: "在机器上安装 Agent",
-    desc: "复制一行安装命令到你的服务器执行，节点会自动注册到网关。",
+    title: "接入运维目标",
+    desc: "在服务器或 Kubernetes 节点安装 Agent，让目标通过 Gateway 安全接入统一工作台。",
   },
   {
     n: "2",
-    title: "连接控制台",
-    desc: "用账号密码或 Token 登录控制台，即可看到你的所有在线机器。",
+    title: "选择最合适的入口",
+    desc: "登录一次即可使用 Web 控制台或 doops CLI，并按任务选择对应的领域 skill。",
   },
   {
     n: "3",
-    title: "开始运维",
-    desc: "用自然语言下达任务，或打开终端执行命令，运维从此变简单。",
+    title: "执行、验证并留痕",
+    desc: "智能体和确定性工具协同执行，权限、审计、健康检查和回滚证据贯穿全过程。",
   },
 ]
 
@@ -121,14 +121,14 @@ export function LandingPage() {
         <div className="mx-auto max-w-6xl px-4 py-20 text-center md:py-28">
           <div className="mx-auto mb-5 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary">
             <SparkIcon width={13} height={13} />
-            AI 驱动的智能运维平台
+            智能驱动 · 全方位运维工具
           </div>
           <h1 className="mx-auto max-w-3xl text-balance text-4xl font-semibold leading-tight tracking-tight md:text-6xl">
-            让运维像聊天一样简单
+            全方位的智能运维工具
           </h1>
           <p className="mx-auto mt-5 max-w-2xl text-pretty text-base leading-relaxed text-muted-foreground md:text-lg">
-            Doops 把你的服务器接入一个智能控制台。用自然语言下达任务，AI
-            自动执行；定时巡检、配置下发、团队权限一应俱全。哪怕只有一台机器，也能轻松管好。
+            Doops 把智能体、统一控制台、CLI 和多个领域 skill 组合成一套运维工具。
+            从服务器、Kubernetes 到网站、数据库、文件和巡检，用同一套认证、授权与审计完成日常运维。
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <Link
@@ -136,7 +136,7 @@ export function LandingPage() {
               className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 sm:w-auto"
             >
               <RocketIcon width={16} height={16} />
-              免费开始使用
+              开始使用 Doops
             </Link>
             {DEMO_ENABLED && (
               <Link
@@ -148,7 +148,7 @@ export function LandingPage() {
               </Link>
             )}
           </div>
-          <p className="mt-4 text-xs text-muted-foreground">无需信用卡 · 演示模式无需安装任何东西</p>
+          <p className="mt-4 text-xs text-muted-foreground">统一入口 · 多领域 skill · 可验证执行</p>
         </div>
       </section>
 
@@ -156,9 +156,9 @@ export function LandingPage() {
       <section id="features" className="border-t border-border/60 py-20">
         <div className="mx-auto max-w-6xl px-4">
           <div className="mx-auto mb-12 max-w-2xl text-center">
-            <h2 className="text-balance text-3xl font-semibold tracking-tight">一个平台，搞定日常运维</h2>
+            <h2 className="text-balance text-3xl font-semibold tracking-tight">一套工具，覆盖运维全流程</h2>
             <p className="mt-3 text-pretty text-muted-foreground">
-              从执行命令到无人值守巡检，Doops 覆盖你每天都要做的运维工作。
+              从发现问题、执行操作到验证结果，Doops 把不同运维场景放进同一套工作台。
             </p>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -185,9 +185,9 @@ export function LandingPage() {
       <section id="how" className="border-t border-border/60 bg-card/30 py-20">
         <div className="mx-auto max-w-6xl px-4">
           <div className="mx-auto mb-12 max-w-2xl text-center">
-            <h2 className="text-balance text-3xl font-semibold tracking-tight">三步即可上手</h2>
+            <h2 className="text-balance text-3xl font-semibold tracking-tight">三步建立统一运维入口</h2>
             <p className="mt-3 text-pretty text-muted-foreground">
-              不懂复杂运维也没关系，跟着三步就能开始。
+              接入目标、选择入口、开始执行，复杂能力由 Gateway 和领域 skill 负责组织。
             </p>
           </div>
           <div className="grid gap-6 md:grid-cols-3">
@@ -227,20 +227,20 @@ export function LandingPage() {
           <div className="flex flex-col gap-5">
             {[
               {
-                q: "我只有一台服务器，适合用吗？",
-                a: "完全适合。Doops 从单机到集群都能用，单台机器也能享受自然语言运维、定时巡检和文件管理。",
+                q: "Doops 适合什么规模的运维？",
+                a: "从单台服务器到多节点 Kubernetes 环境都可以使用。你可以先接入一个目标，也可以逐步扩展到团队统一运维。",
               },
               {
-                q: "我不太懂运维命令，能用起来吗？",
-                a: "可以。你只需用中文描述想做什么，AI 智能体会帮你规划并执行；控制台也有引导带你一步步操作。",
+                q: "控制台和 CLI 有什么区别？",
+                a: "控制台适合可视化操作、协作和审计，CLI 适合脚本化、批量处理和自动化任务；两者共享同一套 Gateway 认证和授权。",
               },
               {
-                q: "我的密钥和数据安全吗？",
-                a: "Token 仅保存在你的浏览器与本机，后端只做请求转发、不落盘。所有操作都有审计记录可追溯。",
+                q: "不同运维能力如何协同？",
+                a: "Doops 通过领域 skill 组织不同能力。服务器、网站、数据库等 skill 独立执行，同时复用统一的目标选择、认证、授权和审计逻辑。",
               },
               {
-                q: "不想安装可以先体验吗？",
-                a: "可以，点击「在线演示」即可进入内置演示数据的完整控制台，无需连接任何真实服务器。",
+                q: "运维操作如何被控制和追踪？",
+                a: "Gateway 负责用户身份、目标和动作授权；执行过程保留审计与结果证据，变更场景还会经过确认、健康检查和回滚保护。",
               },
             ].map((item) => (
               <div key={item.q} className="rounded-xl border bg-card p-5">
@@ -259,9 +259,9 @@ export function LandingPage() {
       <section className="border-t border-border/60 bg-card/30 py-16">
         <div className="mx-auto max-w-3xl px-4 text-center">
           <h2 className="text-balance text-2xl font-semibold tracking-tight md:text-3xl">
-            准备好让运维变简单了吗？
+            准备好建立统一的智能运维入口了吗？
           </h2>
-          <p className="mt-3 text-pretty text-muted-foreground">现在就进入控制台，几分钟内接入你的第一台机器。</p>
+          <p className="mt-3 text-pretty text-muted-foreground">从一个目标开始，把日常运维逐步交给 Doops 统一管理。</p>
           <Link
             href="/console"
             className="mt-6 inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
@@ -278,7 +278,7 @@ export function LandingPage() {
             <div className="flex h-6 w-6 items-center justify-center rounded-md bg-primary/15 text-primary">
               <ServerIcon width={14} height={14} />
             </div>
-            <span>Doops · 智能运维控制台</span>
+            <span>Doops · 全方位智能运维工具</span>
           </div>
           <div className="flex items-center gap-4">
             <Link href="/console" className="transition-colors hover:text-foreground">

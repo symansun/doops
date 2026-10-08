@@ -5,7 +5,7 @@ import { useState } from "react"
 import { callTool, extractText, type Session, type Target } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
 
-type DatabaseMode = "query" | "plan" | "apply"
+type DatabaseMode = "query" | "discover" | "plan" | "apply"
 
 interface DatabaseLine {
   kind: "out" | "err" | "info"
@@ -13,6 +13,7 @@ interface DatabaseLine {
 }
 
 const QUICK_REQUESTS: Array<{ label: string; mode: DatabaseMode; request: string }> = [
+  { label: "扫描数据库实例", mode: "discover", request: "扫描当前目标集群中的数据库实例和可识别数据库，返回 database_asset_id、引擎、命名空间、服务、端口、数据库名和需要补充的凭据，不读取 Secret 值。" },
   { label: "数据库巡检", mode: "query", request: "检查当前目标上的数据库健康、连接可用性、慢查询和明显结构风险，只读执行并返回证据。" },
   { label: "生成变更计划", mode: "plan", request: "根据我的需求解析数据库资产，生成可读的变更计划、影响范围、风险和验证步骤，不执行变更。" },
   { label: "回放执行证据", mode: "query", request: "检查最近一次 DoSql 操作的 journal 和 evidence，说明执行结果、验证状态和是否存在未知结果。" },
@@ -46,11 +47,15 @@ export function DatabasePanel({
   async function run() {
     const text = request.trim()
     if (!text || running) return
+    const credentialRefs = credentials.split(/[\s,]+/).filter(Boolean)
+    if ((mode === "query" || mode === "apply") && credentialRefs.length === 0) {
+      setError("只读查询和受控执行都需要 Gateway 受管数据库凭据")
+      return
+    }
     if (mode === "apply" && !confirmed) {
       setError("执行变更前请确认已阅读变更说明，并由 DoSql 提供匹配的审批证据")
       return
     }
-    const credentialRefs = credentials.split(/[\s,]+/).filter(Boolean)
     if (credentialRefs.some((value) => !/^[a-z0-9][a-z0-9.-]*$/.test(value))) {
       setError("受管凭据只能填写资源名")
       return
@@ -64,7 +69,7 @@ export function DatabasePanel({
     const operation = mode === "apply" ? "apply" : "ask"
     const instruction = [
       `使用 DoSql skill 处理目标 ${target.cluster}/${target.instance}。`,
-      mode === "query" ? "保持只读，不执行数据库变更。" : "先输出结构化、可读的结果。",
+      mode === "discover" ? "只扫描当前目标集群的非 Secret Kubernetes 元数据，返回数据库实例候选，不读取凭据或 Secret 值。" : mode === "query" ? "保持只读，不执行数据库变更。" : "先输出结构化、可读的结果。",
       mode === "plan" ? "只生成变更计划，不执行 SQL 或 MongoDB 变更。" : "",
       mode === "apply"
         ? "只有在 Gateway managed credential、目标范围和匹配的 DoSql 签名审批证据都存在时才执行；缺少任一条件就明确失败。"
@@ -127,7 +132,7 @@ export function DatabasePanel({
           </div>
         </div>
         <div className="flex items-center gap-1 rounded-md border bg-background p-0.5" role="group" aria-label="数据库操作模式">
-          {(["query", "plan", "apply"] as const).map((value) => (
+          {(["query", "discover", "plan", "apply"] as const).map((value) => (
             <button
               key={value}
               type="button"
@@ -257,6 +262,7 @@ export function DatabasePanel({
 
 function modeLabel(mode: DatabaseMode): string {
   if (mode === "query") return "只读查询"
+  if (mode === "discover") return "扫描发现"
   if (mode === "plan") return "变更计划"
   return "受控执行"
 }

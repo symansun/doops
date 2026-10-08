@@ -12,10 +12,16 @@ import {
 } from "@agent-cloud/agent-ui/protocol"
 import type { Session, Target } from "./client"
 
-export function createDoopsAgentSessionTransport({ target, sessionId }: {
+export interface DoopsConversationReferences {
+  databaseRefs: string[]
+  repositoryRefs: string[]
+}
+
+export function createDoopsAgentSessionTransport({ target, sessionId, references }: {
   session: Session
   target: Target
   sessionId: string
+  references?: { current: DoopsConversationReferences }
 }): AgentWorkbenchSessionTransport {
   const scope = { cluster: target.cluster, instance: target.instance, session_id: sessionId }
 
@@ -52,6 +58,21 @@ export function createDoopsAgentSessionTransport({ target, sessionId }: {
 
   return {
     async execute(command, signal) {
+      if (references && command.command.case === "sendPrompt") {
+        const databaseRefs = references.current.databaseRefs
+        const repositoryRefs = references.current.repositoryRefs
+        if (databaseRefs.length || repositoryRefs.length) {
+          const cloned = fromJson(CommandEnvelopeSchema, toJson(CommandEnvelopeSchema, command))
+          const context = [
+            databaseRefs.length ? `数据库引用：${databaseRefs.join(", ")}` : "",
+            repositoryRefs.length ? `代码仓库引用：${repositoryRefs.join(", ")}` : "",
+          ].filter(Boolean).join("\n")
+          if (cloned.command.case === "sendPrompt") {
+            cloned.command.value.text = `[DoOps 任务引用]\n${context}\n\n用户任务：\n${cloned.command.value.text}`
+            command = cloned
+          }
+        }
+      }
       const response = await request("/api/agent-sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

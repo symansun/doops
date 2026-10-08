@@ -45,6 +45,10 @@ type CredentialGrantScope struct {
 	Namespace       string                 `json:"namespace"`
 	Use             CredentialUse          `json:"use"`
 	Workload        CredentialPlanWorkload `json:"workload"`
+	DatabaseAssetID string                 `json:"database_asset_id,omitempty"`
+	EnvironmentID   string                 `json:"environment_id,omitempty"`
+	DatabaseEngine  string                 `json:"database_engine,omitempty"`
+	DatabaseName    string                 `json:"database_name,omitempty"`
 	ImageRepository string                 `json:"image_repository,omitempty"`
 	ImageDigest     string                 `json:"image_digest,omitempty"`
 	HelmRelease     string                 `json:"helm_release,omitempty"`
@@ -63,6 +67,10 @@ func normalizeCredentialGrantScope(scope CredentialGrantScope) CredentialGrantSc
 	scope.Namespace = strings.TrimSpace(scope.Namespace)
 	scope.Workload.Kind = strings.ToLower(strings.TrimSpace(scope.Workload.Kind))
 	scope.Workload.Name = strings.TrimSpace(scope.Workload.Name)
+	scope.DatabaseAssetID = strings.TrimSpace(scope.DatabaseAssetID)
+	scope.EnvironmentID = strings.TrimSpace(scope.EnvironmentID)
+	scope.DatabaseEngine = strings.ToLower(strings.TrimSpace(scope.DatabaseEngine))
+	scope.DatabaseName = strings.TrimSpace(scope.DatabaseName)
 	scope.ImageRepository = strings.Trim(strings.TrimSpace(scope.ImageRepository), "/")
 	scope.ImageDigest = strings.TrimSpace(scope.ImageDigest)
 	scope.HelmRelease = strings.TrimSpace(scope.HelmRelease)
@@ -101,6 +109,17 @@ func validateCredentialGrantScope(scope CredentialGrantScope) error {
 			scope.HelmRelease != "" || scope.HelmChart != "" {
 			return errors.New("credential_scope_invalid")
 		}
+	case CredentialUseDatabase:
+		if scope.DatabaseAssetID == "" || scope.EnvironmentID == "" ||
+			!validCredentialMetadataToken(scope.DatabaseAssetID, 128) ||
+			!validCredentialMetadataToken(scope.EnvironmentID, 128) ||
+			scope.DatabaseName == "" || !validDatabaseName(scope.DatabaseName) ||
+			(scope.DatabaseEngine != "mysql" && scope.DatabaseEngine != "postgres" && scope.DatabaseEngine != "mongodb") ||
+			scope.ImageRepository != "" || scope.ImageDigest != "" ||
+			scope.HelmRelease != "" || scope.HelmChart != "" ||
+			!validDatabaseCredentialKeys(scope.DatabaseEngine, scope.RequiredKeys) {
+			return errors.New("credential_scope_invalid")
+		}
 	case CredentialUseGitCheckout, CredentialUseTLS:
 		if scope.ImageRepository != "" || scope.ImageDigest != "" ||
 			scope.HelmRelease != "" || scope.HelmChart != "" || len(scope.RequiredKeys) != 0 {
@@ -133,7 +152,9 @@ func credentialScopeEqual(left, right CredentialGrantScope) bool {
 	right = normalizeCredentialGrantScope(right)
 	if left.Cluster != right.Cluster || left.Instance != right.Instance ||
 		left.Namespace != right.Namespace || left.Use != right.Use ||
-		left.Workload != right.Workload || left.ImageRepository != right.ImageRepository ||
+		left.Workload != right.Workload || left.DatabaseAssetID != right.DatabaseAssetID ||
+		left.EnvironmentID != right.EnvironmentID || left.DatabaseEngine != right.DatabaseEngine ||
+		left.DatabaseName != right.DatabaseName || left.ImageRepository != right.ImageRepository ||
 		left.ImageDigest != right.ImageDigest || left.HelmRelease != right.HelmRelease ||
 		left.HelmChart != right.HelmChart || len(left.RequiredKeys) != len(right.RequiredKeys) {
 		return false
@@ -150,6 +171,41 @@ func validCredentialSHA256Digest(value string) bool {
 	const prefix = "sha256:"
 	value = strings.TrimSpace(value)
 	return strings.HasPrefix(value, prefix) && validLowerHex(strings.TrimPrefix(value, prefix), 64)
+}
+
+func validDatabaseName(value string) bool {
+	if len(value) == 0 || len(value) > 128 {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '_' || char == '-' || char == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validDatabaseCredentialKeys(engine string, keys []string) bool {
+	want := map[string]struct{}{}
+	switch engine {
+	case "mysql":
+		want = map[string]struct{}{"SPRING_DATASOURCE_URL": {}, "SPRING_DATASOURCE_USERNAME": {}, "SPRING_DATASOURCE_PASSWORD": {}}
+	case "postgres", "mongodb":
+		want = map[string]struct{}{"connection_uri": {}}
+	default:
+		return false
+	}
+	if len(keys) != len(want) {
+		return false
+	}
+	for _, key := range keys {
+		if _, ok := want[key]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func validateCredentialScopePlan(plan CredentialScopePlan, explicitNames []string, cluster, instance string) error {
@@ -257,7 +313,7 @@ func credentialSecretLikeKey(key string) bool {
 func credentialScopePlanningInstruction(instruction string, names []string) string {
 	return fmt.Sprintf(`Plan managed credential scopes for the deployment task below.
 Do not execute tools and do not make changes. Return only JSON matching:
-{"apiVersion":%q,"kind":%q,"references":[{"name":"...","scope":{"namespace":"...","use":"imagePull|gitCheckout|helmPull|tls|opaqueSecret","workload":{"kind":"Deployment|StatefulSet|DaemonSet","name":"..."},"image_repository":"...","image_digest":"sha256:...","helm_release":"...","helm_chart":"https://charts.example/... or oci://registry.example/...","required_keys":["..."]}}]}
+{"apiVersion":%q,"kind":%q,"references":[{"name":"...","scope":{"namespace":"...","use":"imagePull|gitCheckout|helmPull|tls|opaqueSecret|database","workload":{"kind":"Deployment|StatefulSet|DaemonSet","name":"..."},"database_asset_id":"...","environment_id":"...","database_engine":"mysql|postgres|mongodb","database_name":"...","image_repository":"...","image_digest":"sha256:...","helm_release":"...","helm_chart":"https://charts.example/...","required_keys":["..."]}}]}
 Return every explicit credential name exactly once and no other name. Omit fields that do not apply. Never output credential values.
 Explicit credential names: %q
 Deployment task:

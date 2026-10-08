@@ -135,7 +135,7 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 		result.Fingerprint = fingerprint
 		result.ExpiresAt = certificate.NotAfter.UTC().Format(time.RFC3339)
 	case CredentialTypeOpaque:
-		if req.Scope.Use != CredentialUseOpaqueSecret {
+		if req.Scope.Use != CredentialUseOpaqueSecret && req.Scope.Use != CredentialUseDatabase {
 			return CredentialMaterialization{}, errors.New("credential_use_mismatch")
 		}
 		var payload struct {

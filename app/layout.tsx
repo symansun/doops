@@ -3,9 +3,9 @@ import "./globals.css"
 import "@agent-cloud/agent-ui/styles.css"
 
 export const metadata: Metadata = {
-  title: "Doops Console — 智能运维控制台",
+  title: "Doops · 全方位智能运维工具",
   description:
-    "连接 doops-gateway，通过 doops agent 执行命令、自然语言运维与自动化部署的智能运维控制台。",
+    "Doops 是一个全方位的智能运维工具，统一提供 Web 控制台、CLI 和多领域 skill，覆盖服务器、Kubernetes、网站、数据库、文件与自动化巡检。",
 }
 
 export const viewport: Viewport = {

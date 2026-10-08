@@ -404,7 +404,7 @@ def test_single_model_policy_preserves_mounted_settings_and_omits_duplicate_tier
         == "secret-must-be-preserved"
     )
     assert "model_tiers" not in rendered
-    assert rendered["mcp_servers"] == [module.DOOPS_MCP_SERVER]
+    assert rendered["mcp_servers"] == [module.DOOPS_MCP_SERVER, module.DOSQL_MCP_SERVER]
     assert rendered["permissions"] == module.DOOPS_PERMISSIONS
     assert original["model_tiers"]["high"] == "quan2go/gpt-5-4"
 
@@ -423,6 +423,24 @@ def test_runtime_settings_reject_conflicting_doops_mcp_server(tmp_path):
                         "command": "/tmp/other-server",
                     }
                 ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.SettingsConfigurationError, match="runtime-owned"):
+        module.configure_settings(source, destination, "single-model")
+
+
+def test_runtime_settings_reject_conflicting_dosql_mcp_server(tmp_path):
+    module = load_settings_module()
+    source = tmp_path / "mounted-settings.json"
+    destination = tmp_path / "runtime-settings.json"
+    source.write_text(
+        json.dumps(
+            {
+                "model": "quan2go/gpt-5-4",
+                "mcp_servers": [{"name": "dosql", "command": "/tmp/other-server"}],
             }
         ),
         encoding="utf-8",

@@ -15,7 +15,7 @@ export function DeploymentForm({ disabled, onDeploy }: { disabled: boolean; onDe
   }
   const fields: { key: Exclude<keyof DeploymentInput, "selector" | "reason" | "acceptance">; label: string; optional?: boolean; placeholder?: string }[] = [
     { key: "services", label: "服务范围" }, { key: "release", label: "Helm release" }, { key: "namespace", label: "Namespace" },
-    { key: "chart", label: "Chart", placeholder: "https://… 或 oci://…" }, { key: "values", label: "Values URL", optional: true },
+    { key: "chart", label: "Chart", placeholder: "https://…/*.tgz" }, { key: "values", label: "Values URL", optional: true },
     { key: "repository", label: "镜像仓库" }, { key: "version", label: input.selector === "digest" ? "镜像 digest" : "镜像 tag", placeholder: input.selector === "digest" ? "sha256:…" : "release-YYYYMMDD" },
     { key: "commit", label: "来源提交 SHA" }, { key: "ci", label: "成功 CI 记录 URL" }, { key: "credentials", label: "凭据资源名", optional: true },
   ]

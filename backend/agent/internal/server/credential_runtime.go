@@ -261,6 +261,8 @@ func (h *GatewayHub) materializeExplicitCredentialApply(
 		preparation.Bindings = append(preparation.Bindings, api.AgentCredentialBinding{
 			Name: referenceName(item.Reference), Use: string(item.Reference.Scope.Use),
 			Namespace: item.Reference.Scope.Namespace, ResourceName: materialization.ResourceName,
+			DatabaseAssetID: item.Reference.Scope.DatabaseAssetID, EnvironmentID: item.Reference.Scope.EnvironmentID,
+			DatabaseEngine: item.Reference.Scope.DatabaseEngine, DatabaseName: item.Reference.Scope.DatabaseName,
 			SecretType: materialization.SecretType, Keys: append([]string(nil), materialization.Keys...),
 			ResourceVersion: materialization.ResourceVersion, Digest: materialization.Digest,
 			CredentialID: item.Authorized.Resource.ID, GrantID: item.Authorized.Grant.ID,
@@ -279,7 +281,7 @@ func referenceName(reference CredentialPlanReference) string {
 func credentialTypeAllowsUse(credentialType CredentialType, use CredentialUse) error {
 	valid := (credentialType == CredentialTypeRegistry && use == CredentialUseImagePull) ||
 		(credentialType == CredentialTypeTLS && use == CredentialUseTLS) ||
-		(credentialType == CredentialTypeOpaque && use == CredentialUseOpaqueSecret) ||
+		(credentialType == CredentialTypeOpaque && (use == CredentialUseOpaqueSecret || use == CredentialUseDatabase)) ||
 		(credentialType == CredentialTypeHelmRepository && use == CredentialUseHelmPull) ||
 		(credentialType == CredentialTypeGitToken && use == CredentialUseGitCheckout)
 	if !valid {

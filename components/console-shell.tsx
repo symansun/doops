@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic"
 import type { AgentSessionRuntime } from "@agent-cloud/agent-ui"
 import { Database, Globe2 } from "lucide-react"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { clearServerSession, fetchTargets, restoreServerSession, type Session, type Target } from "@/lib/client"
 import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
 import { isDemoAllowed } from "@/lib/demo-policy"
@@ -12,6 +12,7 @@ import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
 import { TerminalPanel } from "./terminal-panel"
 import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
+import type { DoopsConversationReferences } from "@/lib/agent-session-transport"
 import { FilesPanel } from "./files-panel"
 import { KnowledgeBase } from "./knowledge-base"
 import { DatabasePanel } from "./database-panel"
@@ -76,9 +77,10 @@ export function ConsoleShell() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [showGuide, setShowGuide] = useState(false)
+  const conversationReferences = useRef<DoopsConversationReferences>({ databaseRefs: [], repositoryRefs: [] })
   const agentRuntime = useMemo(() => {
     if (!session || !selected) return null
-    return createDoopsAgentUiRuntime({ session, target: selected, sessionId })
+    return createDoopsAgentUiRuntime({ session, target: selected, sessionId, references: conversationReferences })
   }, [session, selected?.cluster, selected?.instance, sessionId])
   const [openedAgentRuntime, setOpenedAgentRuntime] = useState<AgentSessionRuntime | null>(null)
   useEffect(() => {
@@ -190,6 +192,7 @@ export function ConsoleShell() {
     }
     setSelected(t)
     setSessionId(randomSession())
+    conversationReferences.current = { databaseRefs: [], repositoryRefs: [] }
     // AI 优先：切换机器后，默认进入 AI 助手而非终端
     setTab((cur) => (cur === "overview" || cur === "terminal" ? "ask" : cur))
   }
@@ -473,6 +476,8 @@ export function ConsoleShell() {
               setView("admin")
             }}
             onSessionChange={setSessionId}
+            references={conversationReferences.current}
+            onReferencesChange={(next) => { conversationReferences.current = next }}
           />
         </div>
       )}
