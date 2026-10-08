@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -71,6 +72,30 @@ func filterGatewayTargets(targets []GatewayTarget, cluster, instance string) []G
 		}
 	}
 	return filtered
+}
+
+func probeGatewayTarget(server Server, token, session string) (bool, error) {
+	// The removal audit must use the explicit session, not a cached Agent session.
+	client := NewMCPClient(server, &SessionStore{}, session, false)
+	client.Token = token
+	defer client.Close()
+
+	_, err := client.CallAndCapture("doops_node_info", map[string]interface{}{})
+	if err == nil {
+		return true, nil
+	}
+	var rpcErr *gatewayRPCError
+	offline := fmt.Sprintf(
+		"target offline: %s/%s",
+		strings.TrimSpace(server.Cluster),
+		strings.TrimSpace(server.Instance),
+	)
+	// Gateway checks exact target/action authorization before returning -32004.
+	if errors.As(err, &rpcErr) && rpcErr.Code == -32004 &&
+		rpcErr.Message == offline {
+		return false, nil
+	}
+	return false, err
 }
 
 func unlockGatewayTarget(gateway, token, cluster, instance string) error {

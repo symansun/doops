@@ -4,6 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
 import {
+  joinWorkspacePath,
+  workspaceRelativePath,
+  workspaceRootPath,
+} from "@/lib/workspace-path"
+import {
   FileIcon,
   FolderIcon,
   SaveIcon,
@@ -29,10 +34,6 @@ interface UploadProgress {
   current: string
   failed: number
   active: boolean
-}
-
-function joinPath(dir: string, name: string) {
-  return dir.replace(/\/+$/, "") + "/" + name
 }
 
 function parentDir(dir: string) {
@@ -68,7 +69,8 @@ export function FilesPanel({
   sessionId: string
   onSessionChange?: (id: string) => void
 }) {
-  const [cwd, setCwd] = useState(`/root/ws/${sessionId}`)
+  const [cwd, setCwd] = useState(() => workspaceRootPath(sessionId) || "")
+  const workspaceRoot = workspaceRootPath(sessionId)
   const [entries, setEntries] = useState<Entry[]>([])
   const [listBusy, setListBusy] = useState(false)
   const [listErr, setListErr] = useState("")
@@ -92,13 +94,21 @@ export function FilesPanel({
       setListErr("")
       let buf = ""
       try {
+        const safeDir = workspaceRelativePath(sessionId, dir)
+        const safeRoot = workspaceRootPath(sessionId)
+        if (safeDir === null || !safeRoot) {
+          setEntries([])
+          setListErr("工作区路径无效")
+          return
+        }
+        const remoteDir = safeDir ? `${safeRoot}/${safeDir}` : safeRoot
         await callTool(
           session,
           {
             cluster: target.cluster,
             instance: target.instance,
             tool: TOOLS.shell,
-            arguments: { session_id: sessionId, command: `ls -1Ap "${dir}"` },
+            arguments: { session_id: sessionId, command: `ls -1Ap ${shq(remoteDir)}` },
           },
           (ev) => {
             if (ev.type === "output") buf += ev.data
@@ -109,8 +119,7 @@ export function FilesPanel({
         )
         const lines = buf
           .split("\n")
-          .map((l) => l.trim())
-          .filter((l) => l && l !== "Operation complete." && !l.startsWith("exit code") && !l.startsWith("$"))
+          .filter((l) => l.length > 0)
         if (lines.some((l) => l.includes("No such file") || l.includes("没有那个文件"))) {
           setListErr(lines.join(" "))
           setEntries([])
@@ -122,7 +131,7 @@ export function FilesPanel({
           parsed.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1))
           setEntries(parsed)
         }
-        setCwd(dir)
+        setCwd(remoteDir)
       } catch (err) {
         setListErr((err as Error).message)
       } finally {
@@ -133,7 +142,7 @@ export function FilesPanel({
   )
 
   useEffect(() => {
-    list(`/root/ws/${sessionId}`)
+    list(workspaceRoot || "")
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
@@ -142,13 +151,18 @@ export function FilesPanel({
     setStatus(null)
     let buf = ""
     try {
+      const relativePath = workspaceRelativePath(sessionId, path)
+      if (relativePath === null || !relativePath) {
+        setStatus({ kind: "err", text: "文件路径必须位于当前工作区内" })
+        return
+      }
       await callTool(
         session,
         {
           cluster: target.cluster,
           instance: target.instance,
           tool: TOOLS.fileRead,
-          arguments: { session_id: sessionId, path },
+          arguments: { session_id: sessionId, path: relativePath },
         },
         (ev) => {
           if (ev.type === "output") buf += ev.data
@@ -171,13 +185,18 @@ export function FilesPanel({
     setBusy(true)
     setStatus(null)
     try {
+      const relativePath = workspaceRelativePath(sessionId, openPath)
+      if (relativePath === null || !relativePath) {
+        setStatus({ kind: "err", text: "文件路径必须位于当前工作区内" })
+        return
+      }
       await callTool(
         session,
         {
           cluster: target.cluster,
           instance: target.instance,
           tool: TOOLS.fileWrite,
-          arguments: { session_id: sessionId, path: openPath, content },
+          arguments: { session_id: sessionId, path: relativePath, content },
         },
         (ev) => {
           if (ev.type === "error") setStatus({ kind: "err", text: ev.error })
@@ -197,7 +216,12 @@ export function FilesPanel({
   function newFile() {
     const name = prompt("新建文件名（相对当前目录）")
     if (!name) return
-    setOpenPath(joinPath(cwd, name))
+    const path = joinWorkspacePath(sessionId, cwd, name)
+    if (!path) {
+      setStatus({ kind: "err", text: "文件名必须位于当前工作区内" })
+      return
+    }
+    setOpenPath(path)
     setContent("")
     setDirty(true)
     setStatus({ kind: "ok", text: "输入内容后点击保存即可创建" })
@@ -239,6 +263,8 @@ export function FilesPanel({
 
   // 通过 doops_file_write 逐个写入文件，子目录先 mkdir -p
   async function writeRemoteFile(path: string, text: string) {
+    const relativePath = workspaceRelativePath(sessionId, path)
+    if (relativePath === null || !relativePath) throw new Error("上传路径必须位于当前工作区内")
     let err: string | null = null
     await callTool(
       session,
@@ -246,7 +272,7 @@ export function FilesPanel({
         cluster: target.cluster,
         instance: target.instance,
         tool: TOOLS.fileWrite,
-        arguments: { session_id: sessionId, path, content: text },
+        arguments: { session_id: sessionId, path: relativePath, content: text },
       },
       (ev) => {
         if (ev.type === "error") err = ev.error
@@ -256,13 +282,17 @@ export function FilesPanel({
   }
 
   async function mkdirRemote(dir: string) {
+    const safeDir = workspaceRelativePath(sessionId, dir)
+    const safeRoot = workspaceRootPath(sessionId)
+    if (safeDir === null || !safeRoot) throw new Error("上传目录必须位于当前工作区内")
+    const remoteDir = safeDir ? `${safeRoot}/${safeDir}` : safeRoot
     await callTool(
       session,
       {
         cluster: target.cluster,
         instance: target.instance,
         tool: TOOLS.shell,
-        arguments: { session_id: sessionId, command: `mkdir -p ${shq(dir)}` },
+        arguments: { session_id: sessionId, command: `mkdir -p ${shq(remoteDir)}` },
       },
       () => {},
     )
@@ -274,12 +304,25 @@ export function FilesPanel({
     const files = Array.from(fileList)
     const skipped: string[] = []
     const dirsToMake = new Set<string>()
+    const destinations = files.map((file) => {
+      const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
+      return { file, rel, path: joinWorkspacePath(sessionId, cwd, rel) }
+    })
+    if (destinations.some((item) => !item.path)) {
+      setStatus({ kind: "err", text: "上传路径必须位于当前工作区内" })
+      if (fileInputRef.current) fileInputRef.current.value = ""
+      if (dirInputRef.current) dirInputRef.current.value = ""
+      return
+    }
+    const safeDestinations = destinations as Array<{ file: File; rel: string; path: string }>
 
     // 预先计算需要创建的子目录（文件夹上传时 webkitRelativePath 带路径）
-    for (const f of files) {
-      const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name
+    for (const { rel } of safeDestinations) {
       const slash = rel.lastIndexOf("/")
-      if (slash > 0) dirsToMake.add(joinPath(cwd, rel.slice(0, slash)))
+      if (slash > 0) {
+        const dir = joinWorkspacePath(sessionId, cwd, rel.slice(0, slash))
+        if (dir) dirsToMake.add(dir)
+      }
     }
 
     setStatus(null)
@@ -296,9 +339,7 @@ export function FilesPanel({
 
     let done = 0
     let failed = 0
-    for (const f of files) {
-      const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name
-      const dest = joinPath(cwd, rel)
+    for (const { file: f, rel, path: dest } of safeDestinations) {
       setUpload((p) => (p ? { ...p, current: rel } : p))
       if (!looksTextual(f)) {
         skipped.push(rel)
@@ -350,7 +391,7 @@ export function FilesPanel({
     }
   }
 
-  const crumbs = cwd.split("/").filter(Boolean)
+  const crumbs = (workspaceRelativePath(sessionId, cwd) || "").split("/").filter(Boolean)
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -523,24 +564,24 @@ export function FilesPanel({
           </div>
 
           <div className="flex items-center gap-0.5 overflow-x-auto border-b px-2 py-1.5 text-xs text-muted-foreground">
-            <button onClick={() => list("/")} className="shrink-0 hover:text-foreground">
-              /
+            <button onClick={() => list(workspaceRoot || "")} className="shrink-0 hover:text-foreground">
+              {sessionId}
             </button>
             {crumbs.map((c, i) => {
-              const path = "/" + crumbs.slice(0, i + 1).join("/")
+              const path = `${workspaceRoot}/${crumbs.slice(0, i + 1).join("/")}`
               return (
                 <span key={path} className="flex shrink-0 items-center">
+                  <span className="px-0.5">/</span>
                   <button onClick={() => list(path)} className="hover:text-foreground">
                     {c}
                   </button>
-                  {i < crumbs.length - 1 && <span className="px-0.5">/</span>}
                 </span>
               )
             })}
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-1">
-            {cwd !== "/" && (
+            {workspaceRoot && cwd !== workspaceRoot && (
               <button
                 onClick={() => list(parentDir(cwd))}
                 className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted"
@@ -553,7 +594,8 @@ export function FilesPanel({
               <p className="px-2 py-2 text-xs text-muted-foreground">空目录</p>
             )}
             {entries.map((e) => {
-              const full = joinPath(cwd, e.name)
+              const full = joinWorkspacePath(sessionId, cwd, e.name)
+              if (!full) return null
               const active = openPath === full
               return (
                 <button

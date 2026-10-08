@@ -2,11 +2,13 @@ package server
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
 
 const interruptedExecutionError = "gateway restarted before execution completion was recorded; outcome unknown; machine terminal evidence required"
+const interruptedAdmissionError = "gateway operation ended without a persisted terminal result"
 
 // MarkExecutionDispatched must succeed before sending an operation to an agent.
 func (s *GatewayStore) MarkExecutionDispatched(id int64) error {
@@ -46,18 +48,62 @@ func (s *GatewayStore) MarkExecutionUncertain(id int64) error {
 	return nil
 }
 
+// FinalizeExecution closes an operation that still owns a lease after the
+// normal audit write failed. A dispatched operation is conservatively unknown;
+// an undispatched admission record is a definitive failure.
+func (s *GatewayStore) FinalizeExecution(id int64) error {
+	if err := s.MarkExecutionUncertain(id); err == nil {
+		return nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
+	result, err := s.db.Exec(`UPDATE audit_events
+		SET status = 'error',
+			error = CASE WHEN error = '' THEN ? ELSE error || '; ' || ? END,
+			ended_at = ?
+		WHERE id = ? AND status = 'running'`,
+		interruptedAdmissionError, interruptedAdmissionError, formatTime(time.Now().UTC()), id)
+	if err != nil {
+		return err
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return err
+	} else if affected == 1 {
+		return nil
+	}
+
+	var status string
+	if err := s.db.QueryRow("SELECT status FROM audit_events WHERE id = ?", id).Scan(&status); err != nil {
+		return err
+	}
+	if status == "running" || status == "executing" {
+		return fmt.Errorf("execution audit %d remains %s", id, status)
+	}
+	return nil
+}
+
 // RecoverInterruptedExecutions runs at hub construction, before accepting work.
 func (s *GatewayStore) RecoverInterruptedExecutions() error {
-	_, err := s.db.Exec(`UPDATE audit_events
+	if _, err := s.db.Exec(`UPDATE audit_events
 		SET status = 'outcome_unknown',
 			error = CASE WHEN error = '' THEN ? ELSE error || '; ' || ? END,
 			ended_at = ?
 		WHERE status = 'executing'`,
-		interruptedExecutionError, interruptedExecutionError, formatTime(time.Now().UTC()))
+		interruptedExecutionError, interruptedExecutionError, formatTime(time.Now().UTC())); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE audit_events
+		SET status = 'error',
+			error = CASE WHEN error = '' THEN ? ELSE error || '; ' || ? END,
+			ended_at = ?
+		WHERE status = 'running'`,
+		interruptedAdmissionError, interruptedAdmissionError, formatTime(time.Now().UTC()))
 	return err
 }
 
-// UnresolvedExecutions includes executing rows even when no live operation remains.
+// UnresolvedExecutions includes dispatched executions without terminal evidence
+// and historical unknown outcomes. Admission rows are not remote executions.
 // Only a complete target pair narrows the query; blockers are never limited.
 func (s *GatewayStore) UnresolvedExecutions(cluster, instance string) ([]AuditEvent, error) {
 	query := `SELECT id, user_id, token_id, cluster, instance, action, session,

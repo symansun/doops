@@ -55,12 +55,6 @@ func decodeGatewayHTTPError(operation string, resp *http.Response, body []byte) 
 
 	var payload gatewayErrorResponse
 	_ = json.Unmarshal(body, &payload)
-	if resp.StatusCode == http.StatusUnauthorized && strings.TrimSpace(payload.Code) == "" {
-		payload.Code = "gateway_auth_failed"
-		payload.AuthDomain = "gateway"
-		payload.Message = "Gateway rejected the cached user token; target online state was not checked"
-		payload.NextAction = "Run `doops login --target <gateway-target>`; targets using this Gateway share the refreshed login state"
-	}
 	if strings.TrimSpace(payload.Message) == "" {
 		trimmed := strings.TrimSpace(string(body))
 		if trimmed != "" && trimmed != "Unauthorized" {
@@ -69,34 +63,6 @@ func decodeGatewayHTTPError(operation string, resp *http.Response, body []byte) 
 	}
 	return &gatewayHTTPError{
 		Operation:  operation,
-		Status:     resp.Status,
-		Code:       payload.Code,
-		AuthDomain: payload.AuthDomain,
-		Message:    payload.Message,
-		NextAction: payload.NextAction,
-	}
-}
-
-func decodeGatewayLoginHTTPError(resp *http.Response, body []byte) error {
-	if resp == nil {
-		return fmt.Errorf("gateway login failed: gateway returned no HTTP response")
-	}
-	var payload gatewayErrorResponse
-	_ = json.Unmarshal(body, &payload)
-	if resp.StatusCode == http.StatusUnauthorized && strings.TrimSpace(payload.Code) == "" {
-		payload.Code = "gateway_login_invalid_credentials"
-		payload.AuthDomain = "gateway"
-		payload.Message = "Gateway username or password was rejected"
-		payload.NextAction = "Verify the Gateway username/password or provide a valid Gateway user token"
-	}
-	if strings.TrimSpace(payload.Message) == "" {
-		trimmed := strings.TrimSpace(string(body))
-		if trimmed != "" && trimmed != "Unauthorized" {
-			payload.Message = trimmed
-		}
-	}
-	return &gatewayHTTPError{
-		Operation:  "gateway login",
 		Status:     resp.Status,
 		Code:       payload.Code,
 		AuthDomain: payload.AuthDomain,

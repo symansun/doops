@@ -59,7 +59,9 @@ cancelled or force-unlocked for this release.
   metadata, request/session ownership, public ACP projection, Gateway final
   results and authorized deployment forms are enforced.
 - Browser exposed and fixed missing interrupt capability/grants, sending before
-  readiness, and unfinished tools blocking follow-up after an unknown outcome.
+  readiness, and uncertain commands blocking all follow-up after an unknown
+  outcome. The same command ID cannot be replayed, while a new command remains
+  usable after the failure is published.
 - Shared source/capability/release: 16 checks passed. Console/policy: 25 checks passed.
   HTTP: 7 checks passed, including verified apply with a structured warning.
   Real Go SSE bridge tests verify structured tool/message/terminal delivery and

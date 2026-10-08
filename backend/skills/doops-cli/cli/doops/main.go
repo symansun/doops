@@ -48,7 +48,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   list        列出已配置的 Gateway target 路由
   targets     查看 gateway 当前在线的 cluster/instance
   capabilities 检查 target Agent 的协议能力
-  exec        在目标节点工作区执行 Shell 命令 (用于确定性的日常流水线执行)
+  exec        在目标 Agent 进程目录执行 Shell 命令；工作目录请显式 cd
   ssh         通过结构化 argv 代理 SSH，避免多层命令引号被远端 shell 重解析
   ask         发送自然语言指令 (由边缘端智能体完成受控的通用运维协作)
   sql         通过统一 Gateway/Agent 入口使用 DoSql 数据库 skill
@@ -71,7 +71,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
               admin operations cancel：仅请求取消，不代表任务已停止
   upgrade     仅升级标准 Helm doops-agent；--dry-run 只预览参数，正式升级由目标集群内 Job 执行
   add         添加 gateway target
-  remove      仅在 target 当前不可见时删除本机 gateway target 配置
+  remove      仅在 target 确认离线时删除本机 gateway target 配置
   login       缓存 gateway user token
   logout      登出远程节点
   check       检查线上服务容器配置的镜像与最新构建是否一致
@@ -812,7 +812,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			removeFlag.Usage()
 			os.Exit(1)
 		}
-		if *sessionName == "" {
+		if strings.TrimSpace(*sessionName) == "" {
 			fmt.Println("Error: -session 必传，请指定会话 ID")
 			os.Exit(1)
 		}
@@ -830,12 +830,12 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		}
 		server := servers[index]
 		token := mustResolveToken(server)
-		liveTargets, err := fetchGatewayTargets(server.Gateway, token)
+		online, err := probeGatewayTarget(server, token, *sessionName)
 		if err != nil {
 			fmt.Printf("Error: cannot verify target is offline; refusing to remove '%s': %v\n", target, err)
 			os.Exit(1)
 		}
-		if len(filterGatewayTargets(liveTargets, server.Cluster, server.Instance)) > 0 {
+		if online {
 			fmt.Printf("Error: target %s/%s is online; refusing to remove '%s'.\n", server.Cluster, server.Instance, target)
 			os.Exit(1)
 		}
@@ -1149,14 +1149,22 @@ func runAdminOperationsList(args []string, servers []Server, configErr error) {
 		os.Exit(1)
 	}
 	ops = filterGatewayOperations(ops, server.Cluster, server.Instance)
-	fmt.Printf("%-12s %-8s %-18s %-24s %-18s %-8s %-18s %-18s %-8s %-16s %-8s %-8s %s\n", "ID", "AUDIT_ID", "STATE", "RESOURCE", "BLOCKED_BY", "KIND", "CLUSTER", "INSTANCE", "ACTION", "SESSION", "AGE", "USER", "SUMMARY")
-	fmt.Println(strings.Repeat("-", 132))
+	fmt.Printf("%-12s %-8s %-18s %-24s %-30s %-18s %-8s %-16s %-8s %-8s %s\n", "ID", "AUDIT_ID", "STATE", "REQUESTED_RESOURCE", "EFFECTIVE_LOCK", "BLOCKED_BY", "ACTION", "SESSION", "AGE", "USER", "SUMMARY")
+	fmt.Println(strings.Repeat("-", 170))
 	for _, op := range ops {
 		summary := op.CommandSummary
 		if len(summary) > 48 {
 			summary = summary[:45] + "..."
 		}
-		fmt.Printf("%-12s %-8d %-18s %-24s %-18s %-8s %-18s %-18s %-8s %-16s %-8ds %-8s %s\n", op.ID, op.AuditID, op.State, op.Resource, strings.Join(op.BlockedBy, ","), op.Kind, op.Cluster, op.Instance, op.Action, op.Session, op.AgeSeconds, op.UserID, summary)
+		requested := op.RequestedResource
+		if requested == "" {
+			requested = "-"
+		}
+		effective := op.EffectiveLock
+		if effective == "" {
+			effective = "-"
+		}
+		fmt.Printf("%-12s %-8d %-18s %-24s %-30s %-18s %-8s %-16s %-8ds %-8s %s\n", op.ID, op.AuditID, op.State, requested, effective, strings.Join(op.BlockedBy, ","), op.Action, op.Session, op.AgeSeconds, op.UserID, summary)
 	}
 }
 

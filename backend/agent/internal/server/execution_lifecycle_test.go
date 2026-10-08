@@ -324,6 +324,30 @@ func TestExecutionLifecycleBackgroundCallsUseGatewayTerminalState(t *testing.T) 
 	lifecycleResponse(t, client, 2, "")
 }
 
+func TestExecutionLifecycleRPCReconnectFenceBlocksReplacementDispatch(t *testing.T) {
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+	oldAgent := f.agent(t, "reconnect-rpc-old")
+	oldOperation := f.hub.client.registerActiveOperation(GatewayActiveOperation{
+		Cluster: "dev", Instance: "local", Action: ActionExec,
+		Session: "reconnect-rpc", Resource: "target-mutation:dev/local",
+	}, func() {})
+	f.hub.client.markOperationRunning(oldOperation)
+
+	replacement := f.agent(t, "reconnect-rpc-new")
+	client := f.client(t, f.admin)
+	lifecycleSend(t, client, 2, "doops_shell", "reconnect-rpc", map[string]interface{}{"command": "true"})
+	lifecycleResponse(t, client, 2, "active operation")
+	select {
+	case call := <-replacement.calls:
+		t.Fatalf("replacement Agent received fenced dispatch: %#v", call)
+	default:
+	}
+	if oldAgent == replacement {
+		t.Fatal("replacement fixture did not create a new Agent connection")
+	}
+	f.hub.client.finishActiveOperation(oldOperation)
+}
+
 func TestExecutionLifecycleBackgroundRequiresCapabilityBeforeDispatch(t *testing.T) {
 	for name, capability := range invalidExecutionLifecycleCapabilities() {
 		t.Run(name, func(t *testing.T) {
@@ -356,6 +380,45 @@ func TestExecutionLifecycleBackgroundRequiresCapabilityBeforeDispatch(t *testing
 			agent.complete(t, agent.call(t, "doops_shell", "after-background-rejection-"+name), "")
 			lifecycleResponse(t, client, 3, "")
 		})
+	}
+}
+
+func TestExecutionLifecycleInternalCapabilityRejectionRetriesAuditWithoutOwnerGap(t *testing.T) {
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+	agent := f.agentWithInitialize(t, gatewayTestInitializeResult("legacy-internal-retry"))
+	if _, err := f.store.db.Exec(`CREATE TRIGGER fail_internal_capability_audit
+		BEFORE UPDATE ON audit_events
+		WHEN OLD.session = 'legacy-internal-retry' AND NEW.status = 'blocked'
+		BEGIN SELECT RAISE(FAIL, 'synthetic blocked audit outage'); END`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = f.store.db.Exec("DROP TRIGGER IF EXISTS fail_internal_capability_audit")
+		requireEventually(t, 4*time.Second, func() bool { return len(f.hub.listActiveOperations()) == 0 })
+	})
+
+	_, err := f.hub.RunInternalToolCall(context.Background(), "dev", "local", "doops_bg", map[string]interface{}{
+		"session_id": "legacy-internal-retry", "command": "printf test",
+	})
+	if err == nil || !strings.Contains(err.Error(), "execution_audit_completion_failed") {
+		t.Fatalf("capability rejection did not surface audit failure: %v", err)
+	}
+	select {
+	case call := <-agent.calls:
+		t.Fatalf("rejected internal background reached legacy Agent: %#v", call)
+	default:
+	}
+	requireEventually(t, time.Second, func() bool {
+		operations := f.hub.listActiveOperations()
+		return len(operations) == 1 && operations[0].State == "finalizing"
+	})
+	if _, err := f.store.db.Exec("DROP TRIGGER fail_internal_capability_audit"); err != nil {
+		t.Fatal(err)
+	}
+	requireEventually(t, 4*time.Second, func() bool { return len(f.hub.listActiveOperations()) == 0 })
+	events, err := f.store.ListAuditFiltered(AuditFilter{Session: "legacy-internal-retry"})
+	if err != nil || len(events) != 1 || events[0].Status != "blocked" || events[0].EndedAt.IsZero() {
+		t.Fatalf("capability rejection audit was not recovered: %#v, %v", events, err)
 	}
 }
 

@@ -61,11 +61,14 @@ pnpm build
   passwords/tokens; host keys must be verified. Procedure and functional acceptance:
   [Build And Deploy SOP](backend/docs/BUILD_DEPLOY_SOP.md#独立-dockerhost-发布).
 - The Gateway owns one execution lifecycle state machine for foreground, background,
-  SSH, prompt, and `ask --apply` operations. It persists terminal state before releasing
+  SSH, prompt, and `ask --apply` operations. It observes execution cleanup before releasing
   the resource lease; cancellation acknowledgements are not terminal evidence, and
-  missing terminal evidence records `outcome_unknown` to block later mutations. Only
-  structured SSH has a separate `structuredSSH` argument protocol. See
-  `backend/docs/DOOPS_USAGE_GUIDE.md` for operation states and reconciliation.
+  missing terminal evidence records `outcome_unknown` without blocking new tasks
+  through historical audits or replaying the uncertain mutation. Active operations
+  retain session/resource ownership until execution ends. Audit persistence failures
+  are reported and retried without retaining execution locks. Background execution checks
+  `executionLifecycle`; structured SSH checks `structuredSSH`. See
+  `backend/docs/DOOPS_USAGE_GUIDE.md` for operation states and concurrency.
 - Do not publish local runtime directories such as `.next/`, `node_modules/`,
   `.pytest_cache/`, top-level `examples/`, or top-level `test/`.
 

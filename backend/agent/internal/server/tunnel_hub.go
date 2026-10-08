@@ -104,21 +104,23 @@ func credentialPlanCapabilityCompatible(value interface{}) bool {
 }
 
 type GatewayActiveOperation struct {
-	ID             string        `json:"id"`
-	AuditID        int64         `json:"audit_id,omitempty"`
-	State          string        `json:"state"`
-	Resource       string        `json:"resource,omitempty"`
-	BlockedBy      []string      `json:"blocked_by,omitempty"`
-	UserID         string        `json:"user_id"`
-	TokenID        string        `json:"token_id,omitempty"`
-	Cluster        string        `json:"cluster"`
-	Instance       string        `json:"instance"`
-	Action         GatewayAction `json:"action"`
-	Session        string        `json:"session,omitempty"`
-	CommandSummary string        `json:"command_summary,omitempty"`
-	Kind           string        `json:"kind"`
-	StartedAt      time.Time     `json:"started_at"`
-	AgeSeconds     int64         `json:"age_seconds"`
+	ID                string        `json:"id"`
+	AuditID           int64         `json:"audit_id,omitempty"`
+	State             string        `json:"state"`
+	Resource          string        `json:"resource,omitempty"`
+	RequestedResource string        `json:"requested_resource,omitempty"`
+	EffectiveLock     string        `json:"effective_lock,omitempty"`
+	BlockedBy         []string      `json:"blocked_by,omitempty"`
+	UserID            string        `json:"user_id"`
+	TokenID           string        `json:"token_id,omitempty"`
+	Cluster           string        `json:"cluster"`
+	Instance          string        `json:"instance"`
+	Action            GatewayAction `json:"action"`
+	Session           string        `json:"session,omitempty"`
+	CommandSummary    string        `json:"command_summary,omitempty"`
+	Kind              string        `json:"kind"`
+	StartedAt         time.Time     `json:"started_at"`
+	AgeSeconds        int64         `json:"age_seconds"`
 }
 
 type gatewayActiveOperation struct {
@@ -126,6 +128,7 @@ type gatewayActiveOperation struct {
 	cancel context.CancelFunc
 	agent  *GatewayAgent
 	lease  *operationLease
+	finish *AuditFinish
 }
 
 // operationLease binds a resource release to the operation that acquired it.
@@ -987,6 +990,8 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 	}()
 
 	var callWG sync.WaitGroup
+	var callsMu sync.Mutex
+	calls := make(map[string]context.CancelFunc)
 	for data := range messages {
 		var req api.JSONRPCRequest
 		if err := json.Unmarshal(data, &req); err != nil {
@@ -1008,18 +1013,71 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 				},
 			})
 		case "tools/call":
+			key, ok := clientRPCRequestKey(req.ID)
+			if !ok {
+				writeJSON(buildErrorResponse(req.ID, -32600, "tools/call requires a string or numeric request id"))
+				continue
+			}
+			callsMu.Lock()
+			if _, exists := calls[key]; exists {
+				callsMu.Unlock()
+				writeJSON(buildErrorResponse(req.ID, -32600, "request id is already active"))
+				continue
+			}
+			callCtx, cancelCall := context.WithCancel(connCtx)
+			calls[key] = cancelCall
+			callsMu.Unlock()
 			callWG.Add(1)
 			go func(req api.JSONRPCRequest) {
 				defer callWG.Done()
-				if err := h.handleGatewayToolCall(connCtx, auth, cluster, instance, req, writeRaw, writeJSON); err != nil {
+				defer func() {
+					cancelCall()
+					callsMu.Lock()
+					delete(calls, key)
+					callsMu.Unlock()
+				}()
+				if err := h.handleGatewayToolCall(callCtx, auth, cluster, instance, req, writeRaw, writeJSON); err != nil {
 					writeJSON(buildErrorResponse(req.ID, -32603, err.Error()))
 				}
 			}(req)
+		case "tools/cancel":
+			var params struct {
+				ID interface{} `json:"id"`
+			}
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				writeJSON(buildErrorResponse(req.ID, -32602, "invalid tools/cancel params"))
+				continue
+			}
+			key, ok := clientRPCRequestKey(params.ID)
+			if !ok {
+				writeJSON(buildErrorResponse(req.ID, -32602, "tools/cancel requires the original request id"))
+				continue
+			}
+			callsMu.Lock()
+			cancel := calls[key]
+			callsMu.Unlock()
+			if cancel != nil {
+				cancel()
+			}
+			writeJSON(api.JSONRPCResponse{
+				JSONRPC: "2.0", ID: req.ID,
+				Result: map[string]interface{}{"canceled": cancel != nil},
+			})
 		default:
 			writeJSON(buildErrorResponse(req.ID, -32601, "unknown method: "+req.Method))
 		}
 	}
 	callWG.Wait()
+}
+
+func clientRPCRequestKey(id interface{}) (string, bool) {
+	switch id.(type) {
+	case string, float64:
+		encoded, err := json.Marshal(id)
+		return string(encoded), err == nil
+	default:
+		return "", false
+	}
 }
 
 func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAuth, cluster, instance string, req api.JSONRPCRequest, writeRaw func([]byte) error, writeJSON func(interface{}) error) error {
@@ -1086,18 +1144,36 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32603, "audit_unavailable"))
 		return nil
 	}
+	var opID string
+	var pendingFinish *AuditFinish
+	defer func() {
+		if opID != "" || pendingFinish == nil {
+			return
+		}
+		// Rejected admission has no execution lease, but still owns its audit.
+		id := h.registerActiveOperation(GatewayActiveOperation{
+			AuditID: auditID, UserID: auth.UserID, TokenID: auth.TokenID,
+			Cluster: cluster, Instance: instance, Action: action,
+			Session: extractSession(params.Arguments), Kind: "rpc",
+			CommandSummary: summarizeToolCall(params.Name, params.Arguments),
+		}, func() {})
+		_ = h.finishExecutionAudit(auditID, *pendingFinish)
+		h.finishActiveOperation(id)
+	}()
 	finishAudit := func(status, errMsg, tail string, bytesOut int64) error {
 		errMsg, tail = sanitizeAgentPromptAudit(params.Name, errMsg, tail)
 		errMsg = sanitizeSecretText(errMsg)
 		tail = sanitizeSecretText(tail)
-		if err := h.store.FinishAudit(auditID, AuditFinish{
+		finish := AuditFinish{
 			Status:   status,
 			Error:    errMsg,
 			Tail:     tail,
 			BytesIn:  int64(len(params.Arguments)),
 			BytesOut: bytesOut,
 			EndedAt:  time.Now().UTC(),
-		}); err != nil {
+		}
+		if err := h.finishExecutionAudit(auditID, finish); err != nil {
+			pendingFinish = &finish
 			log.Printf("[gateway] audit_completion_failed: id=%d", auditID)
 			return err
 		}
@@ -1183,13 +1259,20 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32005, "target busy: cancellation pending"))
 		return nil
 	}
-	opID := h.registerActiveOperation(operation, cancelOp)
+	var holderID string
+	opID, holderID = h.registerActiveOperationForAgent(operation, cancelOp, agent)
 	operationFinished := false
 	defer func() {
 		if !operationFinished {
 			h.finishActiveOperation(opID)
 		}
 	}()
+	if holderID != "" {
+		errMsg := "session has an active operation; wait for terminal evidence: " + holderID
+		finishAudit("busy", errMsg, "", 0)
+		writeJSON(buildErrorResponse(req.ID, -32005, errMsg))
+		return nil
+	}
 
 	if len(authorizedCredentials) != 0 {
 		credentialIDs := make([]string, 0, len(authorizedCredentials))
@@ -1812,6 +1895,32 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	var forwardErr error
+	forwardMessage := func(msg gatewayWSMessage) (bool, error) {
+		if msg.Parsed == nil {
+			return false, nil
+		}
+		if _, ok := msg.Parsed["id"]; ok {
+			if (uncertainWithoutTerminal && executionResponseUnknown(msg.Parsed)) ||
+				remoteMutationFailed(params.Name, params.Arguments, msg.Parsed) {
+				return true, errExecutionOutcomeUnknown
+			}
+			if uncertainIfInterrupted && (ctx.Err() != nil || executionResponseCanceled(msg.Parsed)) {
+				return true, errExecutionOutcomeUnknown
+			}
+			if forwardErr == nil {
+				if err := forward(msg); err != nil {
+					forwardErr = err
+				}
+			}
+			return true, forwardErr
+		}
+		if forwardErr == nil {
+			if err := forward(msg); err != nil {
+				forwardErr = err
+			}
+		}
+		return false, nil
+	}
 	for {
 		if msg, ok, queueErr := ch.dequeue(); queueErr != nil {
 			if err := cancelAndWait(); err != nil {
@@ -1819,28 +1928,8 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 			}
 			return queueErr
 		} else if ok {
-			if msg.Parsed == nil {
-				continue
-			}
-			if _, ok := msg.Parsed["id"]; ok {
-				if (uncertainWithoutTerminal && executionResponseUnknown(msg.Parsed)) ||
-					remoteMutationFailed(params.Name, params.Arguments, msg.Parsed) {
-					return errExecutionOutcomeUnknown
-				}
-				if uncertainIfInterrupted && (ctx.Err() != nil || executionResponseCanceled(msg.Parsed)) {
-					return errExecutionOutcomeUnknown
-				}
-				if forwardErr == nil {
-					if err := forward(msg); err != nil {
-						forwardErr = err
-					}
-				}
-				return forwardErr
-			}
-			if forwardErr == nil {
-				if err := forward(msg); err != nil {
-					forwardErr = err
-				}
+			if done, err := forwardMessage(msg); done {
+				return err
 			}
 			continue
 		}
@@ -1858,6 +1947,21 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 			}
 			return fmt.Errorf("operation timed out")
 		case <-a.closed:
+			for {
+				msg, ok, queueErr := ch.dequeue()
+				if queueErr != nil {
+					if err := cancelAndWait(); err != nil {
+						return err
+					}
+					return queueErr
+				}
+				if !ok {
+					break
+				}
+				if done, err := forwardMessage(msg); done {
+					return err
+				}
+			}
 			select {
 			case <-ch.terminal:
 				if ch.terminalErr != nil &&

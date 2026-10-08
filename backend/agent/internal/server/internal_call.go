@@ -87,23 +87,32 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 	if err != nil {
 		return "", fmt.Errorf("execution_audit_unavailable")
 	}
+	opCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	opID, holderID := h.registerActiveOperationForAgent(GatewayActiveOperation{
+		AuditID: auditID, UserID: operationUserID, TokenID: auth.TokenID,
+		Cluster: cluster, Instance: instance, Action: action,
+		Session: extractSession(rawArgs), Resource: resourceKey, Kind: "internal",
+		CommandSummary: "internal " + tool,
+	}, cancel, agent)
+	defer h.finishActiveOperation(opID)
 	if err := agent.requireExecutionLifecycle(tool); err != nil {
-		if auditErr := h.store.FinishAudit(auditID, AuditFinish{
+		if auditErr := h.finishExecutionAudit(auditID, AuditFinish{
 			Status: "blocked", Error: err.Error(), EndedAt: time.Now().UTC(),
 		}); auditErr != nil {
 			return "", fmt.Errorf("execution_audit_completion_failed: %w", auditErr)
 		}
 		return "", err
 	}
-	opCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	opID := h.registerActiveOperation(GatewayActiveOperation{
-		AuditID: auditID, UserID: operationUserID, TokenID: auth.TokenID,
-		Cluster: cluster, Instance: instance, Action: action,
-		Session: extractSession(rawArgs), Resource: resourceKey, Kind: "internal",
-		CommandSummary: "internal " + tool,
-	}, cancel)
-	defer h.finishActiveOperation(opID)
+	if holderID != "" {
+		err := fmt.Errorf("target busy: active operation %s", holderID)
+		if auditErr := h.finishExecutionAudit(auditID, AuditFinish{
+			Status: "blocked", Error: err.Error(), EndedAt: time.Now().UTC(),
+		}); auditErr != nil {
+			return "", fmt.Errorf("execution_audit_completion_failed: %w", auditErr)
+		}
+		return "", err
+	}
 	if ownsLock && internalCredentialTool(tool) {
 		if held.agent != agent || held.resourceKey != resourceKey {
 			return "", fmt.Errorf("credential_target_lock_changed")
@@ -111,7 +120,9 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 	} else if !inherited {
 		lease, err := agent.acquireActionLeaseForSession(opCtx, action, resourceKey, extractSession(rawArgs), h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
 		if err != nil {
-			_ = h.store.FinishAudit(auditID, AuditFinish{Status: "blocked", Error: err.Error()})
+			if auditErr := h.finishExecutionAudit(auditID, AuditFinish{Status: "blocked", Error: err.Error()}); auditErr != nil {
+				return "", fmt.Errorf("execution_audit_completion_failed: %w", auditErr)
+			}
 			return "", err
 		}
 		h.attachOperationLease(opID, lease)
@@ -131,7 +142,7 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 				}
 			}
 		}
-		if err := h.store.FinishAudit(auditID, AuditFinish{Status: status, Error: errMsg, EndedAt: time.Now().UTC()}); err != nil {
+		if err := h.finishExecutionAudit(auditID, AuditFinish{Status: status, Error: errMsg, EndedAt: time.Now().UTC()}); err != nil {
 			finalErr = fmt.Errorf("execution_audit_completion_failed: %w", err)
 			if dispatched && requiresExecutionOutcomeGuard(action, tool, rawArgs, resourceKey) {
 				finalErr = fmt.Errorf("%w: %v", errExecutionOutcomeUnknown, finalErr)

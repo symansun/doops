@@ -81,13 +81,80 @@ func TestBuildHelmUpgradeInstallUsesBoundWorkspaceAssets(t *testing.T) {
 	if !slices.Contains(command.args, "--reset-values") {
 		t.Fatal("workspace assets must reset old release values")
 	}
-	wantArgs := []string{
-		"upgrade", "app", "deploy/helm/prod", "--install", "--atomic",
-		"--reset-values", "--values", "deploy/helm/prod/values.yaml",
-		"--namespace", "apps", "--wait", "--timeout", "180s",
+	for _, want := range []string{"upgrade", "app", "deploy/helm/prod", "--install", "--atomic", "--reset-values", "--values", "deploy/helm/prod/values.yaml", "--namespace", "apps", "--wait", "--timeout", "180s", "--description"} {
+		if !slices.Contains(command.args, want) {
+			t.Fatalf("helm args missing %q: %#v", want, command.args)
+		}
 	}
-	if !slices.Equal(command.args, wantArgs) {
-		t.Fatalf("helm args = %#v, want %#v", command.args, wantArgs)
+	if command.mutationID == "" {
+		t.Fatal("workspace upgrade must bind a mutation identity")
+	}
+}
+
+func TestBuildHelmRollbackUsesSupportedHelmFlags(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	params := testHelmParams()
+	params.Operation = "rollback"
+	params.Revision = 2
+	params.ValueFiles = nil
+	params.SetStrings = nil
+	params.ExpectedImage = ""
+
+	command, err := buildHelmCommand(params)
+	if err != nil {
+		t.Fatalf("build rollback command: %v", err)
+	}
+	want := []string{"rollback", "app", "2", "--namespace", "apps", "--wait", "--timeout", "180s"}
+	if !slices.Equal(command.args, want) {
+		t.Fatalf("rollback args = %#v, want %#v", command.args, want)
+	}
+	if slices.Contains(command.args, "--atomic") {
+		t.Fatal("rollback command must not use the unsupported --atomic flag")
+	}
+}
+
+func TestBuildHelmRollbackIsAcceptedByRealHelmParser(t *testing.T) {
+	helmPath, err := exec.LookPath("helm")
+	if err != nil {
+		t.Skipf("helm is not available: %v", err)
+	}
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	params := testHelmParams()
+	params.Operation = "rollback"
+	params.Revision = 2
+	params.ValueFiles = nil
+	params.SetStrings = nil
+	params.ExpectedImage = ""
+
+	command, err := buildHelmCommand(params)
+	if err != nil {
+		t.Fatalf("build helm command: %v", err)
+	}
+	args := append(append([]string(nil), command.args...), "--help")
+	if output, err := exec.Command(helmPath, args...).CombinedOutput(); err != nil {
+		t.Fatalf("real Helm rejected rollback command: %v\n%s", err, output)
+	}
+}
+
+func TestParseHelmReleaseOutputBindsRevisionAndDescription(t *testing.T) {
+	const description = "doops:session-a:123"
+	revision, err := parseHelmReleaseOutput(
+		[]byte(`{"version":7,"info":{"description":"doops:session-a:123","notes":"chart-output-canary"}}`),
+		description,
+	)
+	if err != nil || revision != 7 {
+		t.Fatalf("parse release output = %d, %v; want revision 7", revision, err)
+	}
+	for _, output := range []string{
+		`{"version":0,"info":{"description":"doops:session-a:123"}}`,
+		`{"version":7,"info":{"description":"doops:session-b:123"}}`,
+		`not-json`,
+	} {
+		if _, err := parseHelmReleaseOutput([]byte(output), description); err == nil {
+			t.Fatalf("invalid release output accepted: %s", output)
+		}
 	}
 }
 
@@ -461,6 +528,7 @@ func TestBuildHelmCommandRejectsLegacyValuesField(t *testing.T) {
 func TestRunHelmCommandVerifiesFinalDeploymentState(t *testing.T) {
 	root := t.TempDir()
 	argsFile := filepath.Join(root, "args")
+	manifestArgsFile := filepath.Join(root, "manifest-args")
 	preflightArgsFile := filepath.Join(root, "preflight-args")
 	stdinFile := filepath.Join(root, "stdin")
 	helm := filepath.Join(root, "helm")
@@ -468,6 +536,7 @@ func TestRunHelmCommandVerifiesFinalDeploymentState(t *testing.T) {
 	if err := os.WriteFile(helm, []byte(`#!/bin/sh
 set -eu
 if [ "$1" = "get" ] && [ "$2" = "manifest" ]; then
+  printf '%s\n' "$@" >"${MANIFEST_ARGS_FILE}"
   cat <<'YAML'
 apiVersion: apps/v1
 kind: Deployment
@@ -482,6 +551,12 @@ spec:
 YAML
   exit 0
 fi
+if [ "$1" = "status" ]; then
+  desc=""
+  if [ -f "${DESCRIPTION_FILE}" ]; then desc="$(cat "${DESCRIPTION_FILE}")"; fi
+  printf '{"version":1,"info":{"description":"%s"}}\n' "$desc"
+  exit 0
+fi
 for arg in "$@"; do
   if [ "$arg" = "--dry-run=server" ]; then
     printf '%s\n' "$@" >"${PREFLIGHT_ARGS_FILE}"
@@ -491,7 +566,14 @@ for arg in "$@"; do
   fi
 done
 printf '%s\n' "$@" >"${ARGS_FILE}"
+previous=""
+for arg in "$@"; do
+  if [ "$previous" = "--description" ]; then printf '%s' "$arg" >"${DESCRIPTION_FILE}"; fi
+  previous="$arg"
+done
 cat >"${STDIN_FILE}"
+desc="$(cat "${DESCRIPTION_FILE}")"
+printf '{"version":1,"info":{"description":"%s","notes":"chart-output-canary"}}\n' "$desc"
 `), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -505,8 +587,10 @@ JSON
 	}
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("ARGS_FILE", argsFile)
+	t.Setenv("MANIFEST_ARGS_FILE", manifestArgsFile)
 	t.Setenv("PREFLIGHT_ARGS_FILE", preflightArgsFile)
 	t.Setenv("STDIN_FILE", stdinFile)
+	t.Setenv("DESCRIPTION_FILE", filepath.Join(root, "description"))
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
 
 	command, err := buildHelmCommand(testHelmParams())
@@ -519,6 +603,9 @@ JSON
 	}
 	if !strings.Contains(verification, "final Deployment spec verified") {
 		t.Fatalf("final Deployment verification missing: %q", verification)
+	}
+	if strings.Contains(verification, "chart-output-canary") {
+		t.Fatalf("chart output crossed the user-facing verification boundary: %q", verification)
 	}
 	preflightArgs, err := os.ReadFile(preflightArgsFile)
 	if err != nil {
@@ -535,8 +622,17 @@ JSON
 	}
 	argLines := strings.Split(strings.TrimSpace(string(args)), "\n")
 	if !slices.Contains(argLines, "https://charts.example.test/app-1.0.0.tgz") ||
-		!slices.Contains(argLines, "--set-string") {
+		!slices.Contains(argLines, "--set-string") ||
+		!slices.Contains(argLines, "--output=json") {
 		t.Fatalf("remote chart or immutable image was not used: %q", argLines)
+	}
+	manifestArgs, err := os.ReadFile(manifestArgsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestArgLines := strings.Split(strings.TrimSpace(string(manifestArgs)), "\n")
+	if !slices.Contains(manifestArgLines, "--revision") || !slices.Contains(manifestArgLines, "1") {
+		t.Fatalf("manifest was not pinned to the mutation revision: %q", manifestArgLines)
 	}
 	stdin, err := os.ReadFile(stdinFile)
 	if err != nil {

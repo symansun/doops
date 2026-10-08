@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { callTool, extractText, type Session, type Target } from "@/lib/client"
+import { callTool, extractText, type Session, type Target, type ToolCancel } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
 import { TerminalIcon, SendIcon, StopIcon } from "./icons"
 
@@ -22,9 +22,10 @@ export function TerminalPanel({
   const [command, setCommand] = useState("")
   const [lines, setLines] = useState<Line[]>([])
   const [running, setRunning] = useState(false)
+  const [stopPending, setStopPending] = useState(false)
   const [history, setHistory] = useState<string[]>([])
   const [histIdx, setHistIdx] = useState(-1)
-  const abortRef = useRef<AbortController | null>(null)
+  const cancelRef = useRef<ToolCancel | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -35,14 +36,14 @@ export function TerminalPanel({
 
   async function run() {
     const cmd = command.trim()
-    if (!cmd || running) return
+    if (!cmd || running || stopPending) return
     setHistory((h) => [...h, cmd])
     setHistIdx(-1)
     setCommand("")
     push({ kind: "cmd", text: cmd })
     setRunning(true)
-    const ac = new AbortController()
-    abortRef.current = ac
+    setStopPending(false)
+    cancelRef.current = null
     try {
       await callTool(
         session,
@@ -51,11 +52,10 @@ export function TerminalPanel({
           instance: target.instance,
           tool: TOOLS.shell,
           arguments: { session_id: sessionId, command: cmd },
-          signal: ac.signal,
+          onCancelReady: (cancel) => { cancelRef.current = cancel },
         },
         (ev) => {
           if (ev.type === "output") push({ kind: "out", text: ev.data })
-          else if (ev.type === "error") push({ kind: "err", text: ev.error })
           else if (ev.type === "result") {
             const txt = extractText(ev.result)
             if (txt) push({ kind: "out", text: txt })
@@ -66,13 +66,19 @@ export function TerminalPanel({
       if ((err as Error).name !== "AbortError") push({ kind: "err", text: (err as Error).message })
     } finally {
       setRunning(false)
-      abortRef.current = null
+      setStopPending(false)
+      cancelRef.current = null
     }
   }
 
   function stop() {
-    abortRef.current?.abort()
-    push({ kind: "info", text: "— 已中断 —" })
+    if (!cancelRef.current || stopPending) return
+    setStopPending(true)
+    push({ kind: "info", text: "— 已请求停止，等待远端终态；请勿立即重试 —" })
+    void cancelRef.current().catch((err) => {
+      setStopPending(false)
+      push({ kind: "err", text: `停止请求失败：${(err as Error).message}` })
+    })
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -151,12 +157,13 @@ export function TerminalPanel({
             rows={1}
             className="max-h-32 min-h-9 flex-1 resize-none rounded-lg border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
           />
-          {running ? (
+          {running || stopPending ? (
             <button
               onClick={stop}
-              className="flex items-center gap-1.5 rounded-lg bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground transition-opacity hover:opacity-90"
+              disabled={stopPending}
+              className="flex items-center gap-1.5 rounded-lg bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
             >
-              <StopIcon width={16} height={16} /> 停止
+              <StopIcon width={16} height={16} /> {stopPending ? "停止中…" : "停止"}
             </button>
           ) : (
             <button

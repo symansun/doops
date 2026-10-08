@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -70,7 +69,6 @@ func NewGateway() *Gateway {
 		proxyAllowHosts: proxyAllowlistFromEnv(),
 	}
 	gw.detectContainerRuntime()
-	gw.startZombieReaper()
 	gw.startSessionReaper()
 	gw.startTaskReaper()
 	return gw
@@ -107,36 +105,6 @@ func (gw *Gateway) proxyHostAllowed(host string) bool {
 	defer gw.mu.RUnlock()
 	_, ok := gw.proxyAllowHosts[strings.ToLower(strings.TrimSpace(host))]
 	return ok
-}
-
-// startZombieReaper 定期回收僵尸子进程。
-// 在容器环境中 doops-agent 通常作为 PID 1 运行，
-// Linux 内核要求 PID 1 承担 subreaper 角色回收所有孤儿进程的退出状态。
-// Go runtime 不会自动做这件事，因此需要显式的 Wait4 循环。
-func (gw *Gateway) startZombieReaper() {
-	var reaperTotal int64
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			reaped := 0
-			for {
-				var ws syscall.WaitStatus
-				pid, err := syscall.Wait4(-1, &ws, syscall.WNOHANG, nil)
-				if pid <= 0 || err != nil {
-					break
-				}
-				reaped++
-				atomic.AddInt64(&reaperTotal, 1)
-				log.Printf("[reaper] 回收僵尸进程 PID=%d exit=%d (累计: %d)",
-					pid, ws.ExitStatus(), atomic.LoadInt64(&reaperTotal))
-			}
-			if reaped > 0 {
-				log.Printf("[reaper] 本轮回收 %d 个僵尸进程", reaped)
-			}
-		}
-	}()
-	log.Println("[reaper] ✅ Zombie reaper started (interval=30s)")
 }
 
 // startSessionReaper 定期驱逐超过 2 小时未使用的 doops->doagent 会话映射，防止 sessionMap 无限增长。

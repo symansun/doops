@@ -76,7 +76,8 @@ digest。同一 target 上的 apply、shell、Kubernetes mutation 和凭据物�
 取消 Shell/SSH/bg、apply 或 Kubernetes 写操作只请求停止；本地进程/模型轮次终止不等于
 远端变更已停止，Gateway 如实保留 `outcome_unknown`，仍报告失败，不自动重放 mutation。
 历史未知审计不参与新任务准入，不改为 success，也不删除；活动任务仍由实际资源锁、
-排队和取消机制串行，完成审计持久化后才释放 lease。人工声明不能替代真实终态或强制释放活动 lease。
+排队和取消机制串行，执行结束及清理完成后释放 lease；审计落盘失败返回错误并独立重试原始证据，
+不再保留执行锁。人工声明不能替代真实终态或强制释放活动 lease。
 已验签的 Helm 工具明确失败按失败结束，不归为未知结果；同轮另一工具成功不能掩盖失败。
 当前锁按 target 路由
 隔离，没有跨 target 的 release/数据库统一锁或执行器 fencing，不支持安全强制抢占。
@@ -122,7 +123,13 @@ mutation 不构成发布成功证据。
 校验 dry-run 和最终 manifest；未指定时仍以 Chart 渲染及最终 Deployment
 generation/spec/status、镜像和副本状态证明收敛，不把不同服务版本强制统一。
 
-Helm mutation 成功后，工具还必须读取 release manifest 和最终 Deployment 对象，确认
+不同 session 的 Helm 调用不额外获取 DoOps release 独占锁。每次 upgrade-install 写入唯一
+description，从本次 Helm JSON 结果取得 revision，并按该 revision 读取 manifest；
+最终验收还要求当前 release revision/description 与本次 mutation 一致。被并发发布覆盖时
+明确返回 `helm_verification_failed`，不借用另一任务的结果，也不自动重放。
+结构化 rollback 使用 Helm 支持的 wait/timeout 参数，不传不支持的 `--atomic`。
+
+Helm mutation 成功后，工具还必须读取本次 revision 的 release manifest 和最终 Deployment 对象，确认
 Deployment 当前 generation 已被 controller 观察、spec 中的容器镜像与渲染结果一致，
 updated/ready/available replicas 全部达到 desired 且没有 unavailable replicas；只满足
 Helm revision 或 Pod Ready 不构成发布成功。

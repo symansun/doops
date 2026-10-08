@@ -99,3 +99,13 @@ def test_doops_ssh_uses_structured_ssh_commands():
     assert "必须使用结构化入口" in usage
     assert "SSH 只用于首次安装、自恢复 agent" not in skill
     assert "才可通过前台 `doops exec` 执行 SSH 恢复" not in skill
+
+
+def test_only_init_reaps_orphan_processes():
+    gateway = (ROOT / "agent/internal/server/gateway.go").read_text()
+    assert "Wait4(" not in gateway
+    for name in ("agent-entrypoint.sh", "sandbox-entrypoint.sh"):
+        entrypoint = (ROOT / "agent" / name).read_text()
+        assert 'tini -s -- /app/doops-agent "$@"' in entrypoint
+        assert "tini is required for process cleanup" in entrypoint
+        assert "falling back to direct" not in entrypoint

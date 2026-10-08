@@ -216,6 +216,7 @@ func (gw *Gateway) ServeGatewayWebSocketConnWithReady(conn *websocket.Conn, remo
 func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, onReady func()) {
 	defer conn.Close()
 	conn.SetReadLimit(maxWebSocketMessageBytes())
+	connectionCtx, cancelConnection := context.WithCancel(context.Background())
 
 	// per-connection 写互斥锁（gorilla/websocket 不允许并发写）
 	var connMu sync.Mutex
@@ -262,6 +263,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 	activeProxyCancels := make(map[int64]context.CancelFunc)
 	activeToolMu := sync.Mutex{}
 	activeToolCalls := make(map[int64]activeToolCall)
+	var executionWG sync.WaitGroup
 	var readyOnce sync.Once
 	closeGitBody := func(id int64) {
 		gitBodyMu.Lock()
@@ -273,29 +275,8 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 		}
 	}
 	defer func() {
-		activeGitMu.Lock()
-		gitCancels := activeGitCancels
-		activeGitCancels = make(map[int64]context.CancelFunc)
-		activeGitMu.Unlock()
-		for _, cancel := range gitCancels {
-			cancel()
-		}
-		activeProxyMu.Lock()
-		proxyCancels := activeProxyCancels
-		activeProxyCancels = make(map[int64]context.CancelFunc)
-		activeProxyMu.Unlock()
-		for _, cancel := range proxyCancels {
-			cancel()
-		}
-		activeToolMu.Lock()
-		calls := activeToolCalls
-		activeToolCalls = make(map[int64]activeToolCall)
-		activeToolMu.Unlock()
-		for _, call := range calls {
-			if !call.surviveDisconnect {
-				call.cancel()
-			}
-		}
+		_ = conn.Close()
+		cancelConnection()
 		gitBodyMu.Lock()
 		writers := gitBodyWriters
 		gitBodyWriters = make(map[int64]*io.PipeWriter)
@@ -310,6 +291,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 		for _, pw := range proxyWriters {
 			_ = pw.Close()
 		}
+		executionWG.Wait()
 	}()
 
 	// 主读取循环
@@ -388,11 +370,13 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 			gitBodyMu.Lock()
 			gitBodyWriters[id] = pw
 			gitBodyMu.Unlock()
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(connectionCtx)
 			activeGitMu.Lock()
 			activeGitCancels[id] = cancel
 			activeGitMu.Unlock()
+			executionWG.Add(1)
 			go func() {
+				defer executionWG.Done()
 				defer func() {
 					activeGitMu.Lock()
 					delete(activeGitCancels, id)
@@ -422,11 +406,13 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 			proxyBodyMu.Lock()
 			proxyBodyWriters[id] = pw
 			proxyBodyMu.Unlock()
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(connectionCtx)
 			activeProxyMu.Lock()
 			activeProxyCancels[id] = cancel
 			activeProxyMu.Unlock()
+			executionWG.Add(1)
 			go func() {
+				defer executionWG.Done()
 				defer func() {
 					activeProxyMu.Lock()
 					delete(activeProxyCancels, id)
@@ -600,15 +586,16 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 			}
 
 			// 异步处理实际的 tool 执行
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(connectionCtx)
 			if id, ok := numericID(req.ID); ok {
 				activeToolMu.Lock()
 				activeToolCalls[id] = activeToolCall{
-					cancel:            cancel,
-					surviveDisconnect: toolCallSurvivesDisconnect(params),
+					cancel: cancel,
 				}
 				activeToolMu.Unlock()
+				executionWG.Add(1)
 				go func() {
+					defer executionWG.Done()
 					defer func() {
 						activeToolMu.Lock()
 						delete(activeToolCalls, id)
@@ -618,7 +605,9 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, writeJSON)
 				}()
 			} else {
+				executionWG.Add(1)
 				go func() {
+					defer executionWG.Done()
 					defer cancel()
 					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, writeJSON)
 				}()
@@ -651,12 +640,7 @@ type notificationEvent struct {
 }
 
 type activeToolCall struct {
-	cancel            context.CancelFunc
-	surviveDisconnect bool
-}
-
-func toolCallSurvivesDisconnect(params api.ToolCallParams) bool {
-	return false
+	cancel context.CancelFunc
 }
 
 func rawNotification(text string) notificationEvent {
@@ -754,24 +738,6 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			return
 		}
 		writeSessionCommandAudit(sessionID, args.Command, cmdErr)
-
-		// [配置快照] 检测到 kubectl apply -f 时，将目标配置文件内容追加到审计日志
-		if cmdErr == nil && sessionID != "" && strings.Contains(args.Command, "kubectl apply -f") {
-			// 提取 -f 后面的文件路径
-			parts := strings.Split(args.Command, "-f ")
-			if len(parts) > 1 {
-				cfgPath := strings.Fields(parts[1])[0]
-				// 仅快照位于会话工作区内的配置文件，拒绝绝对路径与 ".."，
-				// 避免审计快照读取任意路径（如 /etc/shadow）。
-				if resolved, err := resolveWorkspaceFilePath(sessionID, cfgPath); err == nil {
-					if data, err := os.ReadFile(resolved); err == nil {
-						snapshot := fmt.Sprintf("--- BEGIN %s ---\n%s\n--- END %s ---\n",
-							filepath.Base(resolved), string(data), filepath.Base(resolved))
-						_, _ = appendSessionAuditLog(sessionID, snapshot)
-					}
-				}
-			}
-		}
 
 		if cmdErr != nil {
 			finalText := fmt.Sprintf("Command failed with error: %v", cmdErr)
@@ -911,7 +877,9 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 
 	case "doops_k8s":
 		result, err := handleK8STool(ctx, argBytes, pushProgress)
-		if err != nil {
+		if errors.Is(err, errExecutionOutcomeUnknown) {
+			writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+		} else if err != nil {
 			writeJSON(buildToolErrorResponse(reqID, err.Error()))
 		} else {
 			writeJSON(buildSuccessResponse(reqID, result))
@@ -1575,7 +1543,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	})
 	if err != nil {
 		if doagentPromptRejected(promptResponse) {
-			writeJSON(buildErrorResponse(reqID, -32603, "doagent_prompt_failed"))
+			writeJSON(buildErrorResponse(reqID, -32003, "doagent_prompt_rejected"))
 			return
 		}
 		// A transport failure can hide an accepted prompt. Without its turn ID

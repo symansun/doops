@@ -31,6 +31,7 @@ import (
 const (
 	websocketHandshakeAttempts   = 3
 	websocketHandshakeRetryDelay = 50 * time.Millisecond
+	executionCancellationTimeout = 30 * time.Second
 )
 
 // MCPClient 是 doops CLI 的 MCP 客户端。
@@ -63,6 +64,19 @@ type wsEvent struct {
 	Raw     string                 // 原始 JSON 字符串
 	Parsed  map[string]interface{} // 解析后的 JSON 对象
 	IsError bool                   // 是否为错误
+}
+
+type gatewayRPCError struct {
+	Code    float64
+	Message string
+}
+
+func (e *gatewayRPCError) Error() string {
+	return fmt.Sprintf("remote error: %s", e.Message)
+}
+
+func executionOutcomeUnknownError() error {
+	return &gatewayRPCError{Code: -32008, Message: "execution_outcome_unknown"}
 }
 
 // NewMCPClient 创建 MCP 客户端实例（此时不建连）
@@ -431,6 +445,20 @@ func (c *MCPClient) unregisterPending(reqID int64) {
 	c.pendingMu.Unlock()
 }
 
+func (c *MCPClient) requestCancellation(reqID int64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.connected || c.conn == nil {
+		return errors.New("connection is not available for cancellation")
+	}
+	return c.conn.WriteJSON(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  "tools/cancel",
+		"id":      fmt.Sprintf("cancel-%d", reqID),
+		"params":  map[string]interface{}{"id": reqID},
+	})
+}
+
 func requestIDFromClientNotification(msg map[string]interface{}) (int64, bool) {
 	params, _ := msg["params"].(map[string]interface{})
 	if params == nil {
@@ -505,51 +533,25 @@ func (c *MCPClient) Call(toolName string, arguments map[string]interface{}) erro
 	streamedAny := false
 	timeout := time.NewTimer(c.callTimeout())
 	defer timeout.Stop()
+	timedOut := false
 	for {
 		select {
 		case evt := <-ch:
 			if evt.IsError {
+				if timedOut {
+					return executionOutcomeUnknownError()
+				}
 				return fmt.Errorf("connection lost: %s", evt.Raw)
 			}
 
 			msg := evt.Parsed
 
-			// Handle progress notifications（流式 PTY 输出）
+			// Notification data is output, not a content-sniffed event protocol.
 			if method, ok := msg["method"].(string); ok && method == "notifications/message" {
 				if params, ok := msg["params"].(map[string]interface{}); ok {
 					if chunk, ok := params["data"].(string); ok {
-						lines := strings.Split(chunk, "\n")
-						for i, l := range lines {
-							trimmed := strings.TrimSpace(l)
-							var contentToPrint string = trimmed
-							var jsonPart string
-
-							if idx := strings.Index(trimmed, "{"); idx != -1 {
-								jsonPart = trimmed[idx:]
-								contentToPrint = trimmed[:idx]
-							}
-
-							if jsonPart != "" {
-								var agentEvt map[string]interface{}
-								if err := json.Unmarshal([]byte(jsonPart), &agentEvt); err == nil {
-									if contentToPrint != "" {
-										fmt.Print(contentToPrint)
-									}
-									formatAgentEvent(agentEvt)
-									streamedAny = true
-									continue
-								}
-							}
-
-							if i == len(lines)-1 && len(chunk) > 0 && chunk[len(chunk)-1] != '\n' {
-								fmt.Print(l)
-							} else if i < len(lines)-1 || (len(chunk) > 0 && chunk[len(chunk)-1] == '\n') {
-								if len(l) > 0 {
-									fmt.Println(l)
-								}
-							}
-							streamedAny = true
-						}
+						fmt.Print(chunk)
+						streamedAny = streamedAny || chunk != ""
 					}
 				}
 				continue
@@ -587,7 +589,14 @@ func (c *MCPClient) Call(toolName string, arguments map[string]interface{}) erro
 				return nil // 收到最终结果，完成
 			}
 		case <-timeout.C:
-			return fmt.Errorf("tool call timed out after %s", c.callTimeout())
+			if timedOut {
+				return executionOutcomeUnknownError()
+			}
+			timedOut = true
+			if err := c.requestCancellation(reqID); err != nil {
+				return executionOutcomeUnknownError()
+			}
+			timeout.Reset(executionCancellationTimeout)
 		}
 	}
 }
@@ -632,11 +641,15 @@ func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interfa
 	// 等待最终结果
 	timeout := time.NewTimer(c.callTimeout())
 	defer timeout.Stop()
+	timedOut := false
 	for {
 		select {
 		case evt := <-ch:
 			if evt.IsError {
-				return "", fmt.Errorf("connection lost: %s", evt.Raw)
+				if timedOut {
+					return capturedOutput.String(), executionOutcomeUnknownError()
+				}
+				return capturedOutput.String(), fmt.Errorf("connection lost: %s", evt.Raw)
 			}
 
 			msg := evt.Parsed
@@ -645,7 +658,7 @@ func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interfa
 			if method, ok := msg["method"].(string); ok && method == "notifications/message" {
 				if params, ok := msg["params"].(map[string]interface{}); ok {
 					if chunk, ok := params["data"].(string); ok {
-						capturedOutput.WriteString(captureToolNotificationText(chunk))
+						capturedOutput.WriteString(chunk)
 					}
 				}
 				continue
@@ -658,7 +671,7 @@ func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interfa
 			if id, ok := msg["id"].(float64); ok && int64(id) == reqID {
 				if result, ok := msg["result"].(map[string]interface{}); ok {
 					if toolResultIsError(result) {
-						return "", fmt.Errorf("%s", toolResultText(result, "tool returned an error"))
+						return capturedOutput.String(), fmt.Errorf("%s", toolResultText(result, "tool returned an error"))
 					}
 					if text := toolResultText(result, ""); text != "" {
 						capturedOutput.WriteString(text)
@@ -667,13 +680,21 @@ func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interfa
 						return capturedOutput.String(), nil
 					}
 				} else if rpcErr, ok := msg["error"].(map[string]interface{}); ok {
-					return "", fmt.Errorf("remote error: %v", rpcErr["message"])
+					code, _ := rpcErr["code"].(float64)
+					return capturedOutput.String(), &gatewayRPCError{Code: code, Message: fmt.Sprint(rpcErr["message"])}
 				}
 
-				return "", fmt.Errorf("no result received")
+				return capturedOutput.String(), fmt.Errorf("no result received")
 			}
 		case <-timeout.C:
-			return "", fmt.Errorf("tool call timed out after %s", c.callTimeout())
+			if timedOut {
+				return capturedOutput.String(), executionOutcomeUnknownError()
+			}
+			timedOut = true
+			if err := c.requestCancellation(reqID); err != nil {
+				return capturedOutput.String(), executionOutcomeUnknownError()
+			}
+			timeout.Reset(executionCancellationTimeout)
 		}
 	}
 }
@@ -752,28 +773,6 @@ func (c *MCPClient) CallStructured(toolName string, arguments map[string]interfa
 	}
 }
 
-func captureToolNotificationText(chunk string) string {
-	var captured strings.Builder
-	for _, line := range strings.Split(chunk, "\n") {
-		content := line
-		trimmed := strings.TrimSpace(line)
-		if idx := strings.Index(trimmed, "{"); idx != -1 {
-			jsonPart := trimmed[idx:]
-			var event map[string]interface{}
-			if json.Unmarshal([]byte(jsonPart), &event) == nil {
-				if _, ok := event["type"].(string); ok {
-					content = line[:strings.Index(line, "{")]
-				}
-			}
-		}
-		if content != "" {
-			captured.WriteString(content)
-			captured.WriteByte('\n')
-		}
-	}
-	return captured.String()
-}
-
 func (c *MCPClient) callTimeout() time.Duration {
 	if c.CallTimeout > 0 {
 		return c.CallTimeout
@@ -811,94 +810,6 @@ func toolResultText(result map[string]interface{}, fallback string) string {
 		}
 	}
 	return fallback
-}
-
-// formatAgentEvent 将 doagent 的 JSON 事件格式化为人类可读的终端输出。
-// 支持 step_start、tool_use、text、step_finish 四种核心事件类型。
-func formatAgentEvent(evt map[string]interface{}) {
-	evtType, _ := evt["type"].(string)
-
-	switch evtType {
-	case "step_start":
-		fmt.Println("\n\033[96m🚀 开始新步骤...\033[0m")
-
-	case "tool_use":
-		part, _ := evt["part"].(map[string]interface{})
-		if part == nil {
-			return
-		}
-		toolName, _ := part["tool"].(string)
-		state, _ := part["state"].(map[string]interface{})
-		if state == nil {
-			return
-		}
-
-		input, _ := state["input"].(map[string]interface{})
-		cmd, _ := input["command"].(string)
-		desc, _ := input["description"].(string)
-
-		if cmd != "" {
-			fmt.Printf("\033[93m🔧 [%s]\033[0m %s\n", toolName, cmd)
-		} else if desc != "" {
-			fmt.Printf("\033[93m🔧 [%s]\033[0m %s\n", toolName, desc)
-		} else {
-			title, _ := state["title"].(string)
-			if title != "" {
-				fmt.Printf("\033[93m📋 [%s]\033[0m %s\n", toolName, title)
-			}
-		}
-
-		output, _ := state["output"].(string)
-		errorMsg, _ := state["error"].(string)
-
-		if errorMsg != "" {
-			lines := strings.Split(strings.TrimSpace(errorMsg), "\n")
-			for _, l := range lines {
-				fmt.Printf("  \033[91m│\033[0m %s\n", l)
-			}
-		} else if output != "" {
-			lines := strings.Split(strings.TrimSpace(output), "\n")
-			maxLines := 15
-			if len(lines) <= maxLines {
-				for _, l := range lines {
-					fmt.Printf("  \033[90m│\033[0m %s\n", l)
-				}
-			} else {
-				for _, l := range lines[:5] {
-					fmt.Printf("  \033[90m│\033[0m %s\n", l)
-				}
-				fmt.Printf("  \033[90m│ ... (%d lines omitted)\033[0m\n", len(lines)-10)
-				for _, l := range lines[len(lines)-5:] {
-					fmt.Printf("  \033[90m│\033[0m %s\n", l)
-				}
-			}
-		}
-
-	case "text":
-		part, _ := evt["part"].(map[string]interface{})
-		if part == nil {
-			return
-		}
-		text, _ := part["text"].(string)
-		if text != "" {
-			fmt.Printf("\n\033[92m💬 AI:\033[0m %s\n", text)
-		}
-
-	case "step_finish":
-		part, _ := evt["part"].(map[string]interface{})
-		if part == nil {
-			return
-		}
-		reason, _ := part["reason"].(string)
-		switch reason {
-		case "end-turn", "stop":
-			fmt.Println("\033[92m✅ 任务完成\033[0m")
-		case "tool-calls":
-			fmt.Println("\033[90m   ↳ 继续执行下一步...\033[0m")
-		default:
-			fmt.Printf("\033[90m   ↳ 步骤结束 (reason: %s)\033[0m\n", reason)
-		}
-	}
 }
 
 // ExecBg streams one doops_bg call until the Agent reports the process has stopped.
