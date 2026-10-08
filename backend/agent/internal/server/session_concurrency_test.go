@@ -163,6 +163,34 @@ func TestActiveOperationRegistrationBindsConnectionForQueueAndFence(t *testing.T
 	}
 }
 
+func TestActiveOperationConflictReportsOldestOwnerDeterministically(t *testing.T) {
+	oldAgent, current := &GatewayAgent{}, &GatewayAgent{}
+	candidate := GatewayActiveOperation{
+		Cluster: "dev", Instance: "node", Action: ActionExec,
+		Session: "same-session", Resource: "target-mutation:dev/node",
+	}
+	service := &ClientService{activeOps: map[string]*gatewayActiveOperation{}}
+	for id, started := range map[string]int64{"a-new": 2, "b-old": 1, "c-old": 1, "finalized": 0, "current": 0} {
+		holder := &gatewayActiveOperation{GatewayActiveOperation: candidate, agent: oldAgent}
+		holder.StartedAt = time.Unix(started, 0)
+		if id == "finalized" {
+			holder.State = "finalizing"
+		}
+		if id == "current" {
+			holder.agent = current
+		}
+		service.activeOps[id] = holder
+	}
+	for range 100 {
+		if got := service.activeOperationConflict(candidate, current); got != "b-old" {
+			t.Fatalf("oldest conflicting owner = %q, want b-old", got)
+		}
+		if got := service.activeOperationConflictLocked(candidate, current, "b-old"); got != "c-old" {
+			t.Fatalf("oldest non-skipped owner = %q, want c-old", got)
+		}
+	}
+}
+
 func TestNginxLeaseProtectsItsResourceAndSessionWithoutTargetExclusion(t *testing.T) {
 	agent := &GatewayAgent{}
 	website, err := agent.acquireActionLeaseForSession(context.Background(), ActionExec, "nginx:dev/node", "website", 0, time.Second)

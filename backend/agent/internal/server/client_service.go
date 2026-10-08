@@ -343,16 +343,20 @@ func (s *ClientService) activeOperationConflict(candidate GatewayActiveOperation
 }
 
 func (s *ClientService) activeOperationConflictLocked(candidate GatewayActiveOperation, current *GatewayAgent, skipID string) string {
+	var oldest *gatewayActiveOperation
+	holderID := ""
 	for id, holder := range s.activeOps {
 		// Same-connection work already has a single lease queue.
 		if id == skipID || (current != nil && holder.agent == current) {
 			continue
 		}
-		if operationsConflict(candidate, holder.GatewayActiveOperation) {
-			return id
+		if operationsConflict(candidate, holder.GatewayActiveOperation) &&
+			(oldest == nil || holder.StartedAt.Before(oldest.StartedAt) ||
+				(holder.StartedAt.Equal(oldest.StartedAt) && id < holderID)) {
+			oldest, holderID = holder, id
 		}
 	}
-	return ""
+	return holderID
 }
 
 func operationsConflict(left, right GatewayActiveOperation) bool {
