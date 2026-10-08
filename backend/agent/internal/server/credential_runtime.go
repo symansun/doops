@@ -691,6 +691,20 @@ func credentialOperationErrorCategory(err error) string {
 	if err == nil {
 		return ""
 	}
+	switch {
+	case errors.Is(err, ErrCredentialVersionNotFound):
+		return "credential_version_not_found"
+	case errors.Is(err, ErrCredentialGrantDenied):
+		return "credential_grant_denied"
+	case errors.Is(err, ErrCredentialForbidden):
+		return "credential_forbidden"
+	case errors.Is(err, ErrCredentialRevoked):
+		return "credential_revoked"
+	case errors.Is(err, ErrCredentialPayloadInvalid):
+		return "credential_payload_invalid"
+	case errors.Is(err, ErrCredentialAuditUnavailable):
+		return "credential_audit_unavailable"
+	}
 	category := sanitizeCredentialCategory(err.Error())
 	if category != "credential_operation_failed" {
 		return category

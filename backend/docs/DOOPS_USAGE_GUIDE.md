@@ -63,6 +63,10 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Reconnect an idle target | `doops unlock --target <t>` | Refuses active or queued work; does not force-release operations. |
 | Remove cached token | `doops logout --target <t>` | Removes local token cache. |
 
+DoSql 必须使用 `doops sql` 入口。普通 `doops ask --msg '使用 DoSql'` 不保证注入
+`mcp_dosql_read/execute`，也不能替代 DoSql 的 target discovery、credential scope 或
+journal/evidence 链。
+
 `registry sync` is a native, generic DoOps operation. It replaces one-off application
 image-sync scripts: the target performs the equivalent pull/copy/push flow for each
 explicit image, then compares source and destination manifest digests. It has no AMP
@@ -573,7 +577,9 @@ doops credential list --target gw-edu-coder --view managed
 默认 `target` 视图只返回当前用户在所选 target 上获得 active grant 且存在 active version
 的 active resource；
 `managed` 视图返回本人拥有的 personal resource，platform admin 可以管理平台资源。
-两个视图都不返回 payload。
+两个视图都不返回 payload。`managed` 视图只返回 resource metadata，不加载 grant 详情；
+CLI 会显示 `grants=not_loaded`，不能把它解释为没有 grant。target 视图也只有在 resource、
+active version 和 active grant 同时存在时才返回凭据。
 
 完整 CLI 生命周期：
 
@@ -633,6 +639,11 @@ doops credential revoke --target gw-edu-coder --id <credential-id>
 payload 只能从 stdin 输入并由 Gateway 加密持久化。验证输出只允许状态、
 resourceVersion、digest 和稳定错误类别。Grant scope 是全字段精确匹配，不支持通配符或
 从 credential name 推断。
+
+数据库凭据的 resource `state=active` 只表示 resource 未吊销，不表示已有可执行版本。
+数据库执行前必须完成 `put -> grant -> verify -> promote`；缺少 active version 或精确
+grant 时，Gateway 会在物化阶段拒绝执行。遇到 `credential_invalid`，先检查生命周期和
+scope，不要换用普通 `opaqueSecret` 或绕过 Gateway。
 
 ## Upgrade
 
