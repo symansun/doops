@@ -32,10 +32,7 @@ export function deploymentRequest(target: Target, input: DeploymentInput) {
   if (!/^[a-z0-9][a-z0-9._:/-]*$/.test(input.repository) || input.repository.includes("//") || input.repository.endsWith("/")) throw new Error("请填写镜像仓库，不包含 tag 或 digest")
   if (input.selector === "digest" && !/^sha256:[a-f0-9]{64}$/.test(input.version)) throw new Error("镜像 digest 必须为 sha256 和 64 位十六进制")
   if (input.selector === "tag") {
-    if (!/^release-[0-9]{8}$/.test(input.version)) throw new Error("镜像 tag 必须为 release-YYYYMMDD")
-    const date = input.version.slice(8)
-    const parsed = new Date(`${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}T00:00:00Z`)
-    if (Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10).replaceAll("-", "") !== date) throw new Error("镜像 tag 日期无效")
+    if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(input.version)) throw new Error("镜像 tag 格式无效")
   }
   if (!/^[a-f0-9]{40}$/.test(input.commit)) throw new Error("来源提交必须为完整 40 位 SHA")
   const ci = new URL(input.ci)

@@ -17,10 +17,13 @@ unrelated production operations or install unreleased binaries.
 
 - Cancellation retains ownership until the original execution reaches a terminal
   response. Cancellation acknowledgement alone is not completion.
-- Missing terminal evidence is persisted as outcome_unknown and blocks subsequent
-  target mutations, including after Gateway restart or Agent reconnection.
-- unlock refuses active, queued, or unresolved work. Explicit administrator
-  reconciliation records confirmation, reason, and evidence as manual evidence.
+- Missing terminal evidence is persisted as outcome_unknown and keeps the live
+  operation fenced until finalization. Historical outcome_unknown records do not
+  block subsequent target mutations, including after Gateway restart or Agent
+  reconnection.
+- unlock refuses active or queued work; historical unknown audits do not block it.
+  Manual declarations cannot rewrite terminal evidence or release an active lease.
+- Audit persistence retries retain the original evidence without an execution lock.
 - Waiting for a resource does not consume a user execution slot.
 - Independent structured workspaces can write/synchronize concurrently; operations
   on the same workspace cannot overlap. Unknown shell effects stay conservative.

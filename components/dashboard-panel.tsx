@@ -56,6 +56,7 @@ export function DashboardPanel({
   targets,
   selected,
   loading,
+  refreshVersion,
   onRefresh,
   onOpenTab,
   onOpenJobs,
@@ -65,6 +66,7 @@ export function DashboardPanel({
   targets: Target[]
   selected: Target | null
   loading: boolean
+  refreshVersion: number
   onRefresh: () => void
   onOpenTab: (tab: QuickTab, target?: Target) => void
   onOpenJobs: () => void
@@ -75,27 +77,51 @@ export function DashboardPanel({
   const [jobs, setJobs] = useState<SchedulerJob[]>([])
   const [managed, setManaged] = useState<ManagedScope | null>(null)
   const [auditDenied, setAuditDenied] = useState(false)
+  const [auditError, setAuditError] = useState("")
+  const [jobsError, setJobsError] = useState("")
+  const [managedError, setManagedError] = useState("")
 
   useEffect(() => {
     let alive = true
-    Promise.all([
+    setAuditError("")
+    setJobsError("")
+    setManagedError("")
+    Promise.allSettled([
       fetchAudit(session, { limit: "12" }),
-      listJobs(session).catch(() => [] as SchedulerJob[]),
-      listInstances(session).catch(() => null),
-    ])
-      .then(([auditRes, jobList, instances]) => {
+      listJobs(session),
+      listInstances(session),
+    ]).then(([auditResult, jobsResult, instancesResult]) => {
         if (!alive) return
-        if (auditRes.error && auditRes.status === 403) {
+        if (auditResult.status === "rejected") {
+          setAuditError(auditResult.reason instanceof Error ? auditResult.reason.message : "查询审计失败")
+          setAuditDenied(false)
+          setAudit([])
+          setAuditSummary(null)
+        } else if (auditResult.value.error && auditResult.value.status === 403) {
           setAuditDenied(true)
+          setAudit([])
+          setAuditSummary(null)
+        } else if (auditResult.value.error) {
+          setAuditDenied(false)
+          setAuditError(auditResult.value.error)
           setAudit([])
           setAuditSummary(null)
         } else {
           setAuditDenied(false)
-          setAudit((auditRes.events || []).slice(0, 12))
-          setAuditSummary(auditRes.summary || null)
+          setAudit((auditResult.value.events || []).slice(0, 12))
+          setAuditSummary(auditResult.value.summary || null)
         }
-        setJobs(jobList)
-        if (instances) {
+        if (jobsResult.status === "rejected") {
+          setJobsError(jobsResult.reason instanceof Error ? jobsResult.reason.message : "查询定时任务失败")
+          setJobs([])
+        } else {
+          setJobs(jobsResult.value)
+        }
+        if (instancesResult.status === "rejected") {
+          setManagedError(instancesResult.reason instanceof Error ? instancesResult.reason.message : "查询实例状态失败")
+          setManaged(null)
+        } else {
+          const instances = instancesResult.value
           const online = instances.filter((row) => row.status === "online").length
           setManaged({
             total: instances.length,
@@ -103,15 +129,12 @@ export function DashboardPanel({
             offline: instances.length - online,
             isAdmin: true,
           })
-        } else {
-          setManaged(null)
         }
       })
-      .catch(() => {})
     return () => {
       alive = false
     }
-  }, [session, targets.length])
+  }, [session, refreshVersion])
 
   const metrics = useMemo(() => computeTargetMetrics(targets), [targets])
   const clusters = metrics.clusters
@@ -119,7 +142,9 @@ export function DashboardPanel({
   const enabledJobs = jobs.filter((j) => j.enabled).length
   const recentRuns = auditSummary?.total ?? audit.length
   const recentFailed = auditSummary?.failed ?? audit.filter(isFailedEvent).length
-  const managedHint = managed
+  const managedHint = managedError
+    ? "实例状态不可用"
+    : managed
     ? `${managed.online} 在线 · ${managed.offline} 离线`
     : `${metrics.agentConnections} 台当前可见`
 
@@ -191,11 +216,13 @@ export function DashboardPanel({
               />
               <StatCard
                 label="定时任务"
-                value={enabledJobs}
+                value={jobsError ? "—" : enabledJobs}
                 icon={ActivityIcon}
-                tone={enabledJobs > 0 ? "primary" : "muted"}
+                tone={jobsError ? "warning" : enabledJobs > 0 ? "primary" : "muted"}
                 hint={
-                  jobs.length > 0
+                  jobsError
+                    ? jobsError
+                    : jobs.length > 0
                     ? `共 ${jobs.length} 个`
                     : auditDenied
                       ? "需管理员权限"
@@ -216,10 +243,11 @@ export function DashboardPanel({
             </div>
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-              <ScheduledJobsSection jobs={jobs} onOpenJobs={onOpenJobs} />
+              <ScheduledJobsSection jobs={jobs} error={jobsError} onOpenJobs={onOpenJobs} />
               <RecentActivitySection
                 audit={audit}
                 denied={auditDenied}
+                error={auditError}
                 summary={auditSummary}
                 failedCount={recentFailed}
               />
@@ -293,7 +321,7 @@ function CurrentMachineSection({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-base font-semibold text-foreground">{selected.instance}</h3>
-            <StatusPill busy={selected.busy} status={selected.status} />
+            <StatusPill busy={selected.busy} activeOps={selected.active_ops} status={selected.status} />
           </div>
           <p className="mt-0.5 font-mono text-xs text-muted-foreground">{selected.cluster}</p>
           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -383,7 +411,7 @@ function ClusterOverviewSection({ clusters }: { clusters: ClusterSummary[] }) {
               <span className="truncate font-mono text-sm font-medium text-foreground">
                 {cluster.name}
               </span>
-              <ClusterHealthBadge connections={cluster.connections} busy={cluster.busy} />
+              <ClusterHealthBadge connections={cluster.connections} busy={cluster.busy} activeOps={cluster.activeOps} queuedOps={cluster.queuedOps} />
             </div>
             <div className="grid grid-cols-2 gap-2 text-xs">
               <Metric label="在线连接" value={`${cluster.connections}`} tone="primary" />
@@ -408,9 +436,11 @@ function ClusterOverviewSection({ clusters }: { clusters: ClusterSummary[] }) {
 
 function ScheduledJobsSection({
   jobs,
+  error,
   onOpenJobs,
 }: {
   jobs: SchedulerJob[]
+  error: string
   onOpenJobs: () => void
 }) {
   const preview = jobs.slice(0, 5)
@@ -428,7 +458,11 @@ function ScheduledJobsSection({
         </button>
       </div>
 
-      {jobs.length === 0 ? (
+      {error ? (
+        <p className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-8 text-center text-sm text-warning">
+          定时任务暂时不可用：{error}
+        </p>
+      ) : jobs.length === 0 ? (
         <div className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
           还没有定时巡检任务。
           <button onClick={onOpenJobs} className="ml-1 text-primary transition-opacity hover:opacity-80">
@@ -472,18 +506,24 @@ function ScheduledJobsSection({
 function RecentActivitySection({
   audit,
   denied,
+  error,
   summary,
   failedCount,
 }: {
   audit: AuditEvent[]
   denied: boolean
+  error: string
   summary: AuditSummary | null
   failedCount: number
 }) {
   return (
     <section className="rounded-xl border bg-card p-5">
       <SectionTitle icon={HistoryIcon} title="近期活动" />
-      {denied ? (
+      {error ? (
+        <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-8 text-center text-sm text-destructive">
+          审计数据暂时不可用：{error}
+        </p>
+      ) : denied ? (
         <p className="py-8 text-center text-sm text-muted-foreground">
           审计日志需要管理员权限。普通用户可在各机器的 AI 助手 / 终端中查看自己的操作记录。
         </p>
@@ -557,15 +597,14 @@ function Metric({
   )
 }
 
-function ClusterHealthBadge({ connections, busy }: { connections: number; busy: number }) {
-  const healthy = connections - busy
+function ClusterHealthBadge({ connections, busy, activeOps, queuedOps }: { connections: number; busy: number; activeOps: number; queuedOps: number }) {
   const tone =
     busy === 0
       ? "bg-primary/15 text-primary"
       : busy < connections
         ? "bg-warning/20 text-warning"
         : "bg-destructive/15 text-destructive"
-  const label = busy === 0 ? "全部空闲" : `${healthy}/${connections} 空闲`
+  const label = busy > 0 ? `${busy}/${connections} 独占` : activeOps > 0 ? `${activeOps} 执行中` : queuedOps > 0 ? `${queuedOps} 排队中` : "全部空闲"
   return <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${tone}`}>{label}</span>
 }
 
@@ -577,7 +616,7 @@ function StatCard({
   hint,
 }: {
   label: string
-  value: number
+  value: number | string
   icon: typeof ServerIcon
   tone: "primary" | "warning" | "muted"
   hint?: string
@@ -634,13 +673,13 @@ function QuickAction({
   )
 }
 
-function StatusPill({ busy, status }: { busy?: boolean; status?: string }) {
+function StatusPill({ busy, activeOps = 0, status }: { busy?: boolean; activeOps?: number; status?: string }) {
   if (busy) {
     return (
       <span className="rounded-full bg-warning/20 px-2 py-0.5 text-[11px] text-warning">忙碌</span>
     )
   }
-  if (status === "active") {
+  if (status === "active" || activeOps > 0) {
     return (
       <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] text-primary">活动</span>
     )
@@ -687,7 +726,7 @@ function StatusTag({ status }: { status?: string }) {
 }
 
 function isFailedStatus(status: string): boolean {
-  return status === "error" || status === "failed"
+  return status === "error" || status === "failed" || status === "outcome_unknown"
 }
 
 function isFailedEvent(event: AuditEvent): boolean {

@@ -168,7 +168,7 @@ export function AuditPanel({
                   className={`rounded-md px-2 py-1 text-sm font-medium ${
                     e.status === "success"
                       ? "bg-success/15 text-success"
-                      : e.status === "running"
+                      : e.status === "running" || e.status === "executing"
                         ? "bg-warning/15 text-warning"
                         : "bg-destructive/15 text-destructive"
                   }`}

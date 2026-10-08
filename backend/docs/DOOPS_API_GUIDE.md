@@ -38,7 +38,8 @@ https://gateway.example.com
 wss://gateway.example.com
 ```
 
-内网和受控测试环境也支持 HTTP / WS。客户端不能因为 Gateway 是 HTTP 就拒绝连接；生产环境仍建议使用 TLS。
+生产 Gateway 使用 HTTPS / WSS。CLI 默认仅允许 loopback HTTP / WS；受控内网测试须显式
+设置 `DOOPS_ALLOW_INSECURE_GATEWAY=1`，该选项不应作为生产 TLS 故障的绕过方式。
 
 所有用户侧请求都必须使用 Gateway user token 鉴权：
 
@@ -346,7 +347,8 @@ Agent 在 `capabilities.protocols.executionLifecycle` 声明
 CLI 和 Gateway（包括内部调度调用）在后台任务派发前校验，不满足则拒绝且不占执行锁。
 `backgroundLifetime` 表示任务受控并等待原始 RPC 终态，不承诺跨断连存活。
 终态、取消和未知结果仍由 Gateway 统一处理。workspace 写入等本地操作缺失终态时同样
-如实保留未知结果；活动任务完成审计持久化后才释放 lease，历史未知审计不参与新任务准入。
+如实保留未知结果；执行结束及连接清理后释放 lease。审计持久化失败报告
+`audit_completion_failed` 并独立重试原始终态，不保留执行锁；历史未知审计不参与新任务准入。
 
 工具调用格式：
 
@@ -511,7 +513,10 @@ activation/reload is shared. See `DOWEB_INTEGRATION.md` for parameters and mount
 }
 ```
 
-需要权限：`ask`。
+需要权限：
+
+- 普通诊断或只读任务：`ask`。
+- `operation=apply` 的发布或变更任务：`exec`。
 
 适用于诊断、信息收集和用户明确授权的运维或发布任务。需要凭据时，CLI 只传递
 `--credential <resource-name>` 的 metadata-only 引用；Gateway 在绑定用户、target 和
@@ -539,7 +544,7 @@ CLI 保持原有输出契约，不能以该路径绕过组件的版本检查。
 参数：
 
 ```json
-{"path": "/root/ws/deploy_20260514/deploy.sh"}
+{"session_id": "deploy_20260514", "path": "deploy.sh"}
 ```
 
 需要权限：`read`。
@@ -554,7 +559,8 @@ CLI 保持原有输出契约，不能以该路径绕过组件的版本检查。
 
 ```json
 {
-  "path": "/root/ws/deploy_20260514/pod.yaml",
+  "session_id": "deploy_20260514",
+  "path": "pod.yaml",
   "content": "apiVersion: v1\nkind: Pod\n..."
 }
 ```
@@ -751,7 +757,21 @@ Gateway 对前台、后台、SSH、prompt 和 `ask --apply` 统一维护执行�
 调用被取消、超时或断连且没有足够终态证据时写入 `outcome_unknown`，不能把本地等待
 结束当成远端 mutation 已停止。结构化 SSH 仍由 `structuredSSH` 参数协议保护。
 
-`GET /v1/admin/operations` 返回 `audit_id`、`state`、`resource` 和 `blocked_by`。
+`GET /v1/admin/operations` 返回 `audit_id`、`state`、`resource` 和 `blocked_by`，并同时返回
+`requested_resource` 与 `effective_lock`。`requested_resource` 是调用方请求的资源，
+`effective_lock` 是 Gateway 实际用于冲突判断的锁；例如带 session 的 target mutation
+会显示为 `session-mutation:<target>/<session>`，不代表整个 target 被独占。
+
+CLI/Web 可在原 `/v1/rpc` WebSocket 上取消自己的请求，不需要管理员权限：
+
+```json
+{"jsonrpc":"2.0","id":"cancel-2","method":"tools/cancel","params":{"id":2}}
+```
+
+`params.id` 必须是该连接尚未结束的原始请求 ID，不能取消另一连接的任务。
+返回 `result.canceled=true` 仅表示已请求取消；原请求仍通过其原 ID 返回实际终态。
+连接内重复的活动请求 ID 会被拒绝，不允许覆盖已有执行的所有权。
+
 `DELETE /v1/admin/operations?id=<operation-id>` 返回 HTTP `202`：
 
 ```json
@@ -760,8 +780,12 @@ Gateway 对前台、后台、SSH、prompt 和 `ask --apply` 统一维护执行�
 
 该响应仅确认取消请求，资源所有权必须保留到原始请求终态。
 终态不确定时审计持久化为 `outcome_unknown`，仍报告失败，不自动重放 mutation。
+`running` 包含准入等待及无需变更结果保护的只读执行，不能据此认定请求尚未派发。
+Gateway 重启时遗留的 `running` 落为 `error`；已派发且需要变更结果保护的 `executing`
+在失去终态证据时落为 `outcome_unknown`。终态落盘失败重试原始结果，不用推测结果替换。
 历史未知审计不参与新任务准入，不改为 success，也不删除；活动任务仍受资源锁、排队和
-取消机制约束，完成审计持久化后才释放 lease。
+取消机制约束，执行结束及清理完成后释放 lease。`finalizing` 仅表示审计待落盘，
+不参与锁冲突；持久化失败不能把已结束任务变成永久阻塞。
 已验签的 Helm 工具明确失败按失败终态处理，不封锁后续操作；同轮任何明确失败
 不得被另一条成功调用掩盖。工具请求错误与执行失败保持区分，执行失败返回 MCP
 `result.isError=true`，取消或缺失终态不转换成普通失败。

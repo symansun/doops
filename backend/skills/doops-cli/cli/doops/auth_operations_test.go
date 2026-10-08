@@ -8,9 +8,9 @@ import (
 )
 
 const operationsListFixture = `{"operations":[
-	{"id":"op-1","audit_id":41,"state":"running","resource":"target/prod/node","blocked_by":[],"user_id":"admin","token_id":"token-1","cluster":"prod","instance":"node","action":"exec","session":"release","command_summary":"sleep 10","kind":"rpc","started_at":"2026-10-03T01:00:00Z","age_seconds":10},
+	{"id":"op-1","audit_id":41,"state":"running","resource":"target-mutation:prod/node","requested_resource":"target-mutation:prod/node","effective_lock":"session-mutation:prod/node/release","blocked_by":[],"user_id":"admin","token_id":"token-1","cluster":"prod","instance":"node","action":"exec","session":"release","command_summary":"sleep 10","kind":"rpc","started_at":"2026-10-03T01:00:00Z","age_seconds":10},
 	{"id":"op-2","audit_id":42,"state":"waiting","resource":"target/prod/node","blocked_by":["op-1","op-3"],"cluster":"prod","instance":"node"},
-	{"id":"op-3","audit_id":43,"state":"cancel_requested","resource":"target/prod/node","cluster":"prod","instance":"node"},
+	{"id":"op-3","audit_id":43,"state":"cancel_requested","resource":"target/prod/node","requested_resource":"target-mutation:prod/node","cluster":"prod","instance":"node"},
 	{"id":"audit-44","audit_id":44,"state":"outcome_unknown","resource":"target/prod/node","cluster":"prod","instance":"node"}
 ]}`
 
@@ -32,7 +32,11 @@ func TestGatewayAdminOperationsListParsesLifecycleFields(t *testing.T) {
 		t.Fatalf("expected four operation states, got %#v", ops)
 	}
 	for i, state := range []string{"running", "waiting", "cancel_requested", "outcome_unknown"} {
-		if ops[i].State != state || ops[i].AuditID != int64(41+i) || ops[i].Resource != "target/prod/node" {
+		wantResource := "target/prod/node"
+		if i == 0 {
+			wantResource = "target-mutation:prod/node"
+		}
+		if ops[i].State != state || ops[i].AuditID != int64(41+i) || ops[i].Resource != wantResource {
 			t.Fatalf("lifecycle fields lost: %#v", ops[i])
 		}
 	}
@@ -44,6 +48,9 @@ func TestGatewayAdminOperationsListParsesLifecycleFields(t *testing.T) {
 		ops[0].CommandSummary != "sleep 10" || ops[0].Kind != "rpc" ||
 		ops[0].StartedAt != "2026-10-03T01:00:00Z" || ops[0].AgeSeconds != 10 {
 		t.Fatalf("existing operation fields lost: %#v", ops[0])
+	}
+	if ops[0].RequestedResource != "target-mutation:prod/node" || ops[0].EffectiveLock != "session-mutation:prod/node/release" {
+		t.Fatalf("operation lock scope lost: %#v", ops[0])
 	}
 }
 

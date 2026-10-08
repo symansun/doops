@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/user/doops/agent/api"
 	"gopkg.in/yaml.v3"
@@ -36,6 +37,8 @@ type helmCommand struct {
 	release       string
 	namespace     string
 	expectedImage string
+	mutationID    string
+	revision      int
 }
 
 func handleHelmTool(ctx context.Context, raw json.RawMessage, push notificationSender) (string, error) {
@@ -138,7 +141,8 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 		if err != nil {
 			return helmCommand{}, err
 		}
-		args := []string{"upgrade", params.Release, chart, "--install", "--atomic", "--reset-values"}
+		mutationID := fmt.Sprintf("doops:%s:%d", params.SessionID, time.Now().UnixNano())
+		args := []string{"upgrade", params.Release, chart, "--install", "--atomic", "--reset-values", "--description", mutationID}
 		for _, valuePath := range values {
 			args = append(args, "--values", valuePath)
 		}
@@ -160,7 +164,7 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 		}
 		return helmCommand{
 			args: append(args, common...), cwd: workspace,
-			release: params.Release, namespace: params.Namespace, expectedImage: expectedImage,
+			release: params.Release, namespace: params.Namespace, expectedImage: expectedImage, mutationID: mutationID,
 		}, nil
 	case "rollback":
 		if params.AssetSource == helmAssetSourceWorkspace {
@@ -169,7 +173,7 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 		if params.Revision <= 0 {
 			return helmCommand{}, fmt.Errorf("positive revision is required for helm rollback")
 		}
-		args := []string{"rollback", params.Release, fmt.Sprintf("%d", params.Revision), "--atomic"}
+		args := []string{"rollback", params.Release, fmt.Sprintf("%d", params.Revision)}
 		return helmCommand{args: append(args, common...), cwd: workspace}, nil
 	case "uninstall":
 		if params.Revision != 0 {
@@ -504,11 +508,16 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, "helm", command.args...)
+	mutationArgs := append([]string(nil), command.args...)
+	if command.operation() == "upgrade" {
+		mutationArgs = append(mutationArgs, "--output=json")
+	}
+	cmd := exec.CommandContext(ctx, "helm", mutationArgs...)
 	cmd.Dir = command.cwd
 	// Templates/NOTES may contain lookup-derived values or encoded credentials.
 	// Only structured state verification, never chart-controlled output, is public.
-	cmd.Stdout = io.Discard
+	var mutationOutput bytes.Buffer
+	cmd.Stdout = &mutationOutput
 	cmd.Stderr = io.Discard
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("helm_mutation_failed")
@@ -516,6 +525,11 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 	if command.operation() != "upgrade" {
 		return "", nil
 	}
+	revision, err := parseHelmReleaseOutput(mutationOutput.Bytes(), command.mutationID)
+	if err != nil {
+		return "", fmt.Errorf("helm_mutation_invalid_result")
+	}
+	command.revision = revision
 	verified, err := verifyHelmDeploymentState(ctx, command)
 	if err != nil {
 		return "", fmt.Errorf("helm_verification_failed")
@@ -528,6 +542,25 @@ func (c helmCommand) operation() string {
 		return ""
 	}
 	return c.args[0]
+}
+
+func parseHelmReleaseOutput(output []byte, expectedDescription string) (int, error) {
+	var release struct {
+		Version int `json:"version"`
+		Info    struct {
+			Description string `json:"description"`
+		} `json:"info"`
+	}
+	if err := json.Unmarshal(output, &release); err != nil {
+		return 0, err
+	}
+	if release.Version <= 0 {
+		return 0, fmt.Errorf("helm release output has no positive revision")
+	}
+	if release.Info.Description != expectedDescription {
+		return 0, fmt.Errorf("helm release output description does not match mutation")
+	}
+	return release.Version, nil
 }
 
 type renderedHelmDeployment struct {
@@ -559,14 +592,23 @@ type liveDeployment struct {
 }
 
 func verifyHelmDeploymentState(ctx context.Context, command helmCommand) (string, error) {
-	manifestCmd := exec.CommandContext(
-		ctx,
-		"helm",
+	if command.mutationID != "" && command.revision <= 0 {
+		return "", fmt.Errorf("helm verification failed: mutation revision is unavailable")
+	}
+	manifestArgs := []string{
 		"get",
 		"manifest",
 		command.release,
 		"--namespace",
 		command.namespace,
+	}
+	if command.revision > 0 {
+		manifestArgs = append(manifestArgs, "--revision", fmt.Sprintf("%d", command.revision))
+	}
+	manifestCmd := exec.CommandContext(
+		ctx,
+		"helm",
+		manifestArgs...,
 	)
 	manifestCmd.Dir = command.cwd
 	manifest, err := manifestCmd.Output()
@@ -650,6 +692,18 @@ func verifyHelmDeploymentState(ctx context.Context, command helmCommand) (string
 				actualImages,
 				expected.Containers,
 			)
+		}
+	}
+	if command.mutationID != "" {
+		statusCmd := exec.CommandContext(ctx, "helm", "status", command.release, "--namespace", command.namespace, "--output", "json")
+		statusCmd.Dir = command.cwd
+		statusBytes, err := statusCmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("helm verification failed: read current release status: %w", err)
+		}
+		currentRevision, err := parseHelmReleaseOutput(statusBytes, command.mutationID)
+		if err != nil || currentRevision != command.revision {
+			return "", fmt.Errorf("helm verification failed: release was changed by another mutation")
 		}
 	}
 	return fmt.Sprintf("final Deployment spec verified: %d Deployment(s) observed at current generation and Ready", len(deployments)), nil

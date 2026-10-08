@@ -1,8 +1,8 @@
 "use client"
 
 import { Globe2, Send, Square } from "lucide-react"
-import { useState } from "react"
-import { callTool, extractText, type Session, type Target } from "@/lib/client"
+import { useRef, useState } from "react"
+import { callTool, extractText, type Session, type Target, type ToolCancel } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
 
 type WebsiteMode = "check" | "plan" | "apply"
@@ -39,8 +39,9 @@ export function WebsitePanel({
   const [confirmed, setConfirmed] = useState(false)
   const [lines, setLines] = useState<WebsiteLine[]>([])
   const [running, setRunning] = useState(false)
+  const [stopPending, setStopPending] = useState(false)
   const [error, setError] = useState("")
-  const [abortController, setAbortController] = useState<AbortController | null>(null)
+  const cancelRef = useRef<ToolCancel | null>(null)
 
   function push(line: WebsiteLine) {
     setLines((current) => [...current, line])
@@ -48,7 +49,7 @@ export function WebsitePanel({
 
   async function run() {
     const text = request.trim()
-    if (!text || running) return
+    if (!text || running || stopPending) return
     if (mode === "apply" && !confirmed) {
       setError("执行网站变更前请确认已阅读 SiteSpec、验证和回滚范围")
       return
@@ -61,9 +62,9 @@ export function WebsitePanel({
     setError("")
     setLines([])
     setRunning(true)
+    setStopPending(false)
     onRunningChange(true)
-    const controller = new AbortController()
-    setAbortController(controller)
+    cancelRef.current = null
     const instruction = [
       `使用 DoWeb skill 处理目标 ${target.cluster}/${target.instance}。`,
       `Nginx runtime_mode=${runtimeMode}`,
@@ -90,11 +91,10 @@ export function WebsitePanel({
             instruction,
             ...(credentialRefs.length ? { credential_refs: credentialRefs } : {}),
           },
-          signal: controller.signal,
+          onCancelReady: (cancel) => { cancelRef.current = cancel },
         },
         (event) => {
           if (event.type === "output") push({ kind: "out", text: event.data })
-          if (event.type === "error") push({ kind: "err", text: event.error })
           if (event.type === "result") {
             const result = extractText(event.result)
             if (result) push({ kind: "out", text: result })
@@ -109,14 +109,20 @@ export function WebsitePanel({
       }
     } finally {
       setRunning(false)
+      setStopPending(false)
       onRunningChange(false)
-      setAbortController(null)
+      cancelRef.current = null
     }
   }
 
   function stop() {
-    abortController?.abort()
-    push({ kind: "info", text: "已请求停止，等待 Gateway 返回终态" })
+    if (!cancelRef.current || stopPending) return
+    setStopPending(true)
+    push({ kind: "info", text: "已请求停止，等待远端终态；请勿立即重试" })
+    void cancelRef.current().catch((err) => {
+      setStopPending(false)
+      push({ kind: "err", text: `停止请求失败：${(err as Error).message}` })
+    })
   }
 
   return (
@@ -164,7 +170,7 @@ export function WebsitePanel({
         </>}
         {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
         <div className="flex items-center justify-end gap-2">
-          {running ? <button type="button" onClick={stop} className="flex items-center gap-1.5 rounded-md border border-destructive/50 px-3 py-2 text-sm text-destructive hover:bg-destructive/10"><Square aria-hidden="true" className="size-3.5" /> 停止</button> : <button type="button" onClick={() => void run()} disabled={!request.trim()} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"><Send aria-hidden="true" className="size-3.5" /> {mode === "apply" ? "提交受控变更" : "运行 DoWeb"}</button>}
+          {running || stopPending ? <button type="button" onClick={stop} disabled={stopPending} className="flex items-center gap-1.5 rounded-md border border-destructive/50 px-3 py-2 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-60"><Square aria-hidden="true" className="size-3.5" /> {stopPending ? "停止中…" : "停止"}</button> : <button type="button" onClick={() => void run()} disabled={!request.trim()} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"><Send aria-hidden="true" className="size-3.5" /> {mode === "apply" ? "提交受控变更" : "运行 DoWeb"}</button>}
         </div>
         <section className="min-h-40 rounded-md border bg-background/60 p-3" aria-live="polite">
           {lines.length === 0 ? <div className="flex min-h-32 items-center justify-center text-center text-xs text-muted-foreground">SiteSpec、nginx -t、reload、健康检查和回滚证据会由目标 Agent 返回，并进入统一 Gateway 审计。</div> : <div className="space-y-2 font-mono text-xs leading-5">{lines.map((line, index) => <pre key={`${index}-${line.text.slice(0, 12)}`} className={`whitespace-pre-wrap break-words ${line.kind === "err" ? "text-destructive" : line.kind === "info" ? "text-muted-foreground" : "text-foreground/90"}`}>{line.text}</pre>)}</div>}

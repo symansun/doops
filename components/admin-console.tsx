@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import type { Session } from "@/lib/client"
 import {
   listUsers,
@@ -758,7 +758,7 @@ function TokensView({ session }: { session: Session }) {
       )}
 
       <div className="overflow-x-auto p-4">
-        <table className="w-full min-w-[720px] border-collapse text-sm">
+        <table className="w-full min-w-[900px] border-collapse text-sm">
           <thead>
             <tr className="border-b text-left text-xs text-muted-foreground">
               <th className="px-3 py-2 font-medium">类型</th>
@@ -824,12 +824,15 @@ function OperationsView({ session }: { session: Session }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [canceling, setCanceling] = useState<string[]>([])
+  const loadSequence = useRef(0)
 
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current
     setLoading(true)
     setError("")
     try {
       const available = await listInstances(session)
+      if (sequence !== loadSequence.current) return
       setInstances(available)
       const target = available.find((item) => `${item.cluster}/${item.instance}` === targetKey) || available[0]
       if (!target) {
@@ -838,18 +841,22 @@ function OperationsView({ session }: { session: Session }) {
         return
       }
       setTargetKey(`${target.cluster}/${target.instance}`)
-      setRows(await listOperations(session, target.cluster, target.instance))
+      const operations = await listOperations(session, target.cluster, target.instance)
+      if (sequence === loadSequence.current) setRows(operations)
     } catch (e) {
-      setError((e as Error).message)
+      if (sequence === loadSequence.current) setError((e as Error).message)
     } finally {
-      setLoading(false)
+      if (sequence === loadSequence.current) setLoading(false)
     }
   }, [session, targetKey])
 
   useEffect(() => {
     load()
     const id = setInterval(load, 5000)
-    return () => clearInterval(id)
+    return () => {
+      clearInterval(id)
+      loadSequence.current++
+    }
   }, [load])
 
   async function cancel(op: AdminOperation) {
@@ -902,6 +909,7 @@ function OperationsView({ session }: { session: Session }) {
               <th className="px-3 py-2 font-medium">目标</th>
               <th className="px-3 py-2 font-medium">用户</th>
               <th className="px-3 py-2 font-medium">动作</th>
+              <th className="px-3 py-2 font-medium">实际锁</th>
               <th className="px-3 py-2 font-medium">摘要</th>
               <th className="px-3 py-2 font-medium">状态</th>
               <th className="px-3 py-2 font-medium">已运行</th>
@@ -920,6 +928,16 @@ function OperationsView({ session }: { session: Session }) {
                   <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
                     {o.action}
                   </span>
+                </td>
+                <td className="max-w-xs px-3 py-2.5 text-xs">
+                  <div className="truncate font-mono text-foreground" title={o.effective_lock || "—"}>
+                    {o.effective_lock || "—"}
+                  </div>
+                  {o.requested_resource && o.requested_resource !== o.effective_lock && (
+                    <div className="truncate font-mono text-[10px] text-muted-foreground" title={o.requested_resource}>
+                      requested: {o.requested_resource}
+                    </div>
+                  )}
                 </td>
                 <td className="px-3 py-2.5 max-w-xs truncate font-mono text-xs text-muted-foreground">
                   {o.command_summary || o.kind}
@@ -941,7 +959,7 @@ function OperationsView({ session }: { session: Session }) {
             ))}
             {!rows.length && !loading && (
               <tr>
-                <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                <td colSpan={8} className="px-3 py-8 text-center text-sm text-muted-foreground">
                   当前无运行中操作
                 </td>
               </tr>

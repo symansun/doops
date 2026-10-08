@@ -167,12 +167,11 @@ func (s *ClientService) unresolvedExecutionsLocked(cluster, instance string) ([]
 	s.activeOpsMu.Lock()
 	live := make(map[int64]bool, len(s.activeOps))
 	for _, op := range s.activeOps {
-		if op.agent != nil && s.registry.sessions[op.agent.Key] == op.agent {
-			select {
-			case <-op.agent.closed:
-			default:
-				live[op.AuditID] = true
-			}
+		if op.AuditID != 0 {
+			// The Gateway operation remains the owner across Agent connection
+			// generations. A replacement connection must not convert an
+			// operation that is still draining or finalizing into history.
+			live[op.AuditID] = true
 		}
 	}
 	s.activeOpsMu.Unlock()
@@ -221,10 +220,10 @@ func (s *ClientService) beginExecution(agent *GatewayAgent, operationID string, 
 	if op == nil || op.State == "cancel_requested" {
 		return context.Canceled
 	}
+	if holderID := s.activeOperationConflictLocked(op.GatewayActiveOperation, agent, operationID); holderID != "" {
+		return fmt.Errorf("target busy: active operation %s", holderID)
+	}
 	for id, current := range s.activeOps {
-		if id != operationID && current.State == "finalizing" && operationsConflict(op.GatewayActiveOperation, current.GatewayActiveOperation) {
-			return fmt.Errorf("audit_completion_pending: %s", id)
-		}
 		if id != operationID && current.State == "cancel_requested" && operationsConflict(op.GatewayActiveOperation, current.GatewayActiveOperation) {
 			return fmt.Errorf("target busy: cancellation pending")
 		}

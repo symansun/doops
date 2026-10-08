@@ -46,11 +46,12 @@ credential resolution, cancellation, and audit ownership.
   completion requires the existing RPC terminal evidence check. Tool failures
   remain visible in the transcript.
 - Stopping requests upstream cancellation and waits for the original RPC's
-  terminal result; a cancel ACK does not release the session. Confirmed cancel
-  produces a cancelled task receipt. A disconnect, timeout or authoritative
-  `execution_outcome_unknown` disables prompt/apply in that exact session and
-  retains its unresolved active context. A new session is isolated from it;
-  uncertain mutations are never automatically replayed.
+  terminal result; a cancel ACK does not release the active operation. Confirmed
+  cancel produces a cancelled task receipt. A disconnect, timeout or authoritative
+  `execution_outcome_unknown` marks that command as uncertain, rejects replay of
+  the same command ID, and releases the active slot after the terminal failure is
+  published. A new command in the same session remains usable; uncertain
+  mutations are never automatically replayed.
 - Stop the current task before switching targets. Session editing and new-session
   creation are disabled during execution. Unfinished tools are shown as
   unconfirmed after a lost terminal outcome, so they cannot leave the UI queue stuck.

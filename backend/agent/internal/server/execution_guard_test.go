@@ -98,11 +98,15 @@ func TestExecutionGuardReplacementCannotInheritLiveExecution(t *testing.T) {
 	defer newConn.Close()
 	go serveFakeAgentWithRuntimeID(t, newConn, "replacement")
 	requireEventually(t, time.Second, func() bool { return hub.getAgent("dev", "node") != oldAgent })
-	if events, err := hub.client.unresolvedExecutions("dev", "node"); err != nil || len(events) != 1 || events[0].ID != id || events[0].Status != "outcome_unknown" {
-		t.Fatalf("replacement inherited original executing audit: %#v, %v", events, err)
+	if events, err := hub.client.unresolvedExecutions("dev", "node"); err != nil || len(events) != 0 {
+		t.Fatalf("replacement converted the still-owned execution to history: %#v, %v", events, err)
 	}
 	if err := hub.client.beginExecution(oldAgent, opID, id); !errors.Is(err, errGatewayAgentDisconnected) {
 		t.Fatalf("stale Agent retained dispatch ownership: %v", err)
+	}
+	hub.client.finishActiveOperation(opID)
+	if events, err := hub.client.unresolvedExecutions("dev", "node"); err != nil || len(events) != 1 || events[0].ID != id || events[0].Status != "outcome_unknown" {
+		t.Fatalf("released stale execution was not reconciled as unknown: %#v, %v", events, err)
 	}
 	nextID := startExecutionAuditTestEvent(t, store, AuditEvent{
 		Cluster: "dev", Instance: "node", Action: ActionExec, Session: "replacement",
@@ -353,6 +357,9 @@ func TestExecutionGuardReadOnlyK8SDisconnectDoesNotPersistUnknown(t *testing.T) 
 	op := f.operation(t, "read-only-query", "running")
 	if !strings.HasPrefix(op.Resource, "query:k8s:") {
 		t.Fatalf("read-only K8s request acquired a mutation resource: %#v", op)
+	}
+	if events, err := f.hub.client.unresolvedExecutions("dev", "local"); err != nil || len(events) != 0 {
+		t.Fatalf("active read-only request was exposed as an unresolved execution: %#v, %v", events, err)
 	}
 
 	if err := agent.conn.Close(); err != nil {
