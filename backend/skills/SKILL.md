@@ -36,8 +36,13 @@ description: |
 - `capabilities --require` 接受 `structuredSSH` 和 `executionLifecycle`；其它名称
   在联网前直接报参数错误。后台能力覆盖实际终态、受控任务寿命及取消，不承诺任务跨断连存活。
 - Agent 流式 `notifications/message` 必须携带 `params.request_id`；Gateway 和 CLI
-  按请求 ID 路由事件，同一 session 的并发调用不能互相覆盖。Gateway 会先持久化
-  执行终态或 `outcome_unknown`，再释放资源 lease；持久化失败时保留 lease 并自动重试。
+  按请求 ID 路由事件，同一 session 的并发调用不能互相覆盖。Gateway 在执行结束及
+  连接清理后释放资源 lease；终态持久化失败会报告错误并自动重试原始证据，
+  `finalizing` 仅表示审计待落盘，不持有执行锁、不阻断后续任务。
+  CLI 原样保留输出文本及分块边界，不按业务 JSON 的 `type` 字段猜测事件或任务完成。
+  CLI/Web 取消使用原 Gateway RPC 连接的 `tools/cancel`，只能操作该连接自己的请求；
+  CLI 超时后等待原请求终态，不丢弃失败前输出、不自动重试 mutation。
+  Agent 断连后先等待连接所属执行清理完成，再重新注册，避免旧进程与新请求重叠。
 - 定时巡检由 Gateway 按 job 持久 lease 单飞执行；`tick` 与 `run-now` 冲突时不重复
   占用目标。执行结束、失败、取消或 Gateway 重启后，lease 必须通过终态 `defer` 或
   到期自动回收；禁止要求人工 unlock 作为正常调度流程。
@@ -85,6 +90,8 @@ description: |
   校验，不以 shell、revision 或 Pod Ready 宣称发布成功。资产路径、可选 `expected_image`
   和完整迁移说明见 [自然语言发布契约](docs/NATURAL_LANGUAGE_DEPLOYMENT.md)；
   remote 当前支持 HTTPS `.tgz`，不支持 `oci://`。
+  Helm 不额外加 release 独占锁；upgrade-install 的验收绑定本次命令返回的 revision
+  与唯一 description，发现并发覆盖则失败，不拿另一发布结果作为成功证据。
 - CI 的精确 source commit、镜像 digest 和构建成功证据必须由发布者在调用前核对。
   `ask --apply`、`--image`、`--version` 和 Helm 工具只校验允许的输入形态、解析结果和
   运行时证据，不自动核验镜像是否来自指定 CI。

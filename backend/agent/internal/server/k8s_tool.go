@@ -77,7 +77,7 @@ func handleK8STool(ctx context.Context, raw json.RawMessage, push notificationSe
 		return "", err
 	}
 	for _, command := range commands {
-		if err := runK8SCommand(ctx, command.args, push); err != nil {
+		if err := runK8SCommand(ctx, command.args, push, !gatewayK8SReadOnly(params.Operation)); err != nil {
 			return "", err
 		}
 	}
@@ -289,7 +289,7 @@ func validK8SOutput(output string) bool {
 	}
 }
 
-func runK8SCommand(ctx context.Context, args []string, push notificationSender) error {
+func runK8SCommand(ctx context.Context, args []string, push notificationSender, mutation bool) error {
 	cmd := exec.CommandContext(ctx, "kubectl", args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -315,6 +315,10 @@ func runK8SCommand(ctx context.Context, args []string, push notificationSender) 
 	}()
 	wg.Wait()
 	if err := cmd.Wait(); err != nil {
+		if mutation {
+			// Once kubectl starts, a failed write cannot prove that no change landed.
+			return errExecutionOutcomeUnknown
+		}
 		return fmt.Errorf("kubectl %s failed: %w", strings.Join(args, " "), err)
 	}
 	return nil

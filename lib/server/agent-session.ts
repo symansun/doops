@@ -11,7 +11,13 @@ import { AgentGatewayError, agentGatewayCall, type AgentGatewayContext } from ".
 import { DoopsAgentEventProjection } from "./agent-event-projection"
 
 type ActiveOperation = { command: CommandEnvelope; controller: AbortController; done: Promise<void>; uncertain: boolean }
-type HostedSession = { source: AgentWorkbenchSessionSource; touchedAt: number; subscribers: number; active?: ActiveOperation }
+type HostedSession = {
+  source: AgentWorkbenchSessionSource
+  touchedAt: number
+  subscribers: number
+  active?: ActiveOperation
+  uncertainCommandIds: Set<string>
+}
 const sessions = new Map<string, HostedSession>()
 
 export async function authorizedAgentSession(context: AgentGatewayContext, signal: AbortSignal): Promise<HostedSession> {
@@ -33,7 +39,7 @@ export async function authorizedAgentSession(context: AgentGatewayContext, signa
   let hosted = sessions.get(key)
   if (!hosted) {
     if (sessions.size >= 100) throw new AgentGatewayError("控制台会话容量已满", 429)
-    hosted = { touchedAt: now, subscribers: 0, source: new AgentWorkbenchSessionSource({ snapshot: create(SessionSnapshotSchema, {
+    hosted = { touchedAt: now, subscribers: 0, uncertainCommandIds: new Set(), source: new AgentWorkbenchSessionSource({ snapshot: create(SessionSnapshotSchema, {
       sessionId: context.sessionId, streamEpoch: randomUUID(), status: SessionStatus.IDLE,
       configuration: { model: metadata.model },
       // Metadata was authorized by Gateway for this caller; interruption is limited to this hosted operation.
@@ -63,6 +69,9 @@ export async function authorizedAgentSession(context: AgentGatewayContext, signa
 
 export async function executeAgentCommand(hosted: HostedSession, context: AgentGatewayContext, command: CommandEnvelope): Promise<CommandReceipt> {
   return hosted.source.execute(command, async (owned) => {
+    if (hosted.uncertainCommandIds.has(owned.commandId)) {
+      throw new AgentGatewayError("该命令结果未确认，禁止重放", 409)
+    }
     if (owned.command.case === "interrupt") {
       const active = hosted.active
       if (!active) throw new AgentGatewayError("当前没有运行中的任务", 409)
@@ -79,11 +88,31 @@ export async function executeAgentCommand(hosted: HostedSession, context: AgentG
       return receipt
     }
     if (hosted.active) throw new AgentGatewayError(hosted.active.uncertain ? "远端结果未确认，不能复用此会话；请先核对远端状态" : "当前会话仍有运行中的任务", 409)
-    const args = await promptArguments(context, owned)
     const controller = new AbortController()
     let complete!: () => void
     const done = new Promise<void>((resolve) => { complete = resolve })
     hosted.active = { command: owned, controller, done, uncertain: false }
+    let args: Record<string, unknown>
+    try {
+      args = await promptArguments(context, owned, controller.signal)
+      if (controller.signal.aborted) {
+        throw new AgentGatewayError("请求派发前已停止", 499, "not_dispatched", true)
+      }
+    } catch (error) {
+      if (error instanceof AgentGatewayError && error.canceled) {
+        const canceled = commandReceipt(owned, CommandReceiptState.CANCELLED, error.message)
+        try {
+          await hosted.source.emit([receiptEvent(canceled)], owned.streamEpoch)
+          return canceled
+        } finally {
+          if (hosted.active?.command.commandId === owned.commandId) hosted.active = undefined
+          complete()
+        }
+      }
+      if (hosted.active?.command.commandId === owned.commandId) hosted.active = undefined
+      complete()
+      throw error
+    }
     const receipt = commandReceipt(owned, CommandReceiptState.ACCEPTED)
     try {
       await hosted.source.emit([
@@ -99,12 +128,15 @@ export async function executeAgentCommand(hosted: HostedSession, context: AgentG
     } catch (error) { hosted.active = undefined; complete(); throw error }
     void runOperation(hosted, context, owned, args, controller.signal).catch(async () => {
       controller.abort()
-      if (hosted.active?.command.commandId === owned.commandId) hosted.active.uncertain = true
+      if (hosted.active?.command.commandId === owned.commandId) {
+        hosted.active.uncertain = true
+        hosted.uncertainCommandIds.add(owned.commandId)
+      }
       const failed = commandReceipt(owned, CommandReceiptState.FAILED, "会话状态发布失败，远端结果未确认")
       await hosted.source.emit([receiptEvent(failed), { itemId: `status:${owned.commandId}`, turnId: owned.commandId,
         event: create(AgentEventSchema, { event: { case: "sessionStatusChanged", value: { status: SessionStatus.FAILED, error: failed.error } } }).event }], owned.streamEpoch)
     }).finally(() => {
-      if (hosted.active?.command.commandId === owned.commandId && !hosted.active.uncertain) hosted.active = undefined
+      if (hosted.active?.command.commandId === owned.commandId) hosted.active = undefined
       hosted.touchedAt = Date.now()
       complete()
     }).catch(() => {
@@ -149,13 +181,7 @@ async function runOperation(hosted: HostedSession, context: AgentGatewayContext,
   if (hosted.active?.command.commandId === command.commandId) hosted.active.uncertain = uncertain
   const status = failure ? SessionStatus.FAILED : SessionStatus.COMPLETED
   const receipt = commandReceipt(command, canceled ? CommandReceiptState.CANCELLED : failure ? CommandReceiptState.FAILED : CommandReceiptState.SUCCEEDED, failure)
-  if (uncertain) {
-    const capabilities = hosted.source.getSnapshot().capabilities
-    if (!capabilities) throw new AgentGatewayError("会话缺少协议能力", 500)
-    capabilities.commandSchemas = []
-    capabilities.extensions = []
-    terminalEvents.push({ itemId: "capabilities", event: create(AgentEventSchema, { event: { case: "capabilitiesChanged", value: { capabilities } } }).event })
-  }
+  if (uncertain) hosted.uncertainCommandIds.add(command.commandId)
   await hosted.source.emit([
     ...terminalEvents,
     receiptEvent(receipt),
@@ -166,9 +192,10 @@ async function runOperation(hosted: HostedSession, context: AgentGatewayContext,
   ], command.streamEpoch)
 }
 
-async function promptArguments(context: AgentGatewayContext, command: CommandEnvelope): Promise<Record<string, unknown>> {
+async function promptArguments(context: AgentGatewayContext, command: CommandEnvelope, signal: AbortSignal): Promise<Record<string, unknown>> {
   const payload = command.command
   if (payload.case === "sendPrompt") {
+    if (signal.aborted) throw new AgentGatewayError("请求派发前已停止", 499, "not_dispatched", true)
     if (payload.value.text.length > 64_000) {
       throw new AgentGatewayError("对话文本不能超过 64 KiB", 400)
     }
@@ -180,6 +207,7 @@ async function promptArguments(context: AgentGatewayContext, command: CommandEnv
     }
     const attachments = []
     for (const attachment of payload.value.attachments) {
+      if (signal.aborted) throw new AgentGatewayError("请求派发前已停止", 499, "not_dispatched", true)
       if (attachment.content.case !== "file" || !attachment.content.value.artifactId) {
         throw new AgentGatewayError("对话附件协议无效", 400)
       }
@@ -189,6 +217,7 @@ async function promptArguments(context: AgentGatewayContext, command: CommandEnv
       ).catch((error) => {
         throw new AgentGatewayError(error instanceof Error ? error.message : "附件不存在或已过期", 410)
       })
+      if (signal.aborted) throw new AgentGatewayError("请求派发前已停止", 499, "not_dispatched", true)
       attachments.push({
         filename: uploaded.name,
         media_type: uploaded.mediaType,

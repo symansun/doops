@@ -96,9 +96,11 @@ func TestGatewayAdminUserAndGrantRequests(t *testing.T) {
 	}
 }
 
-func TestGatewayAdminUserRequestsMapBare401ToGatewayAuthFailure(t *testing.T) {
+func TestGatewayAdminUserPreservesStructuredGatewayAuthFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized","code":"gateway_auth_failed","auth_domain":"gateway","message":"Gateway user token is missing or invalid","next_action":"Run doops login"}`))
 	}))
 	defer server.Close()
 
@@ -109,7 +111,7 @@ func TestGatewayAdminUserRequestsMapBare401ToGatewayAuthFailure(t *testing.T) {
 	message := err.Error()
 	if !strings.Contains(message, "gateway_auth_failed") ||
 		!strings.Contains(message, "auth_domain=gateway") ||
-		!strings.Contains(message, "target online state was not checked") {
+		!strings.Contains(message, "Run doops login") {
 		t.Fatalf("unexpected error guidance: %v", err)
 	}
 }

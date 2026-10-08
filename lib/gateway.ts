@@ -74,6 +74,8 @@ export const AUDIT_ACTIONS = [
 
 export const AUDIT_STATUSES = [
   "running",
+  "executing",
+  "outcome_unknown",
   "success",
   "error",
   "forbidden",

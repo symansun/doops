@@ -119,7 +119,8 @@ func TestExecutionAuditDispatchAndRecoverySurviveReopen(t *testing.T) {
 	if !reflect.DeepEqual(recovered, before) {
 		t.Fatalf("recovery changed original evidence: %#v", recovered)
 	}
-	if got := executionAuditTestEvent(t, store, running); got.Status != "running" {
+	if got := executionAuditTestEvent(t, store, running); got.Status != "error" ||
+		got.Error != interruptedAdmissionError || got.EndedAt.IsZero() {
 		t.Fatalf("undispatched audit changed: %#v", got)
 	}
 	if got := executionAuditTestEvent(t, store, completed); got.Status != "success" {
@@ -156,12 +157,20 @@ func TestExecutionAuditRejectsInvalidTransitions(t *testing.T) {
 					t.Fatalf("dispatch %s error = %v", status, err)
 				}
 			}
-			if status != "executing" {
+			if status == "executing" {
+				if err := store.MarkExecutionUncertain(id); err != nil {
+					t.Fatalf("mark uncertain %s error = %v", status, err)
+				}
+			} else {
 				if err := store.MarkExecutionUncertain(id); !errors.Is(err, sql.ErrNoRows) {
 					t.Fatalf("mark uncertain %s error = %v", status, err)
 				}
 			}
-			if got := executionAuditTestEvent(t, store, id); got.Status != status {
+			wantStatus := status
+			if status == "executing" {
+				wantStatus = "outcome_unknown"
+			}
+			if got := executionAuditTestEvent(t, store, id); got.Status != wantStatus {
 				t.Fatalf("rejected transition changed audit: %#v", got)
 			}
 			if executionAuditTestCount(t, store) != 1 {
@@ -202,10 +211,13 @@ func TestExecutionAuditUnresolvedIncludesAllUnsafeStatesAndExactTargetPairs(t *t
 	started := time.Now().UTC().Add(-time.Hour)
 	ended := started.Add(time.Minute)
 	quotedID := startExecutionAuditTestEvent(t, store, AuditEvent{
-		Status: "outcome_unknown", Cluster: "cluster' OR 1=1 --", Instance: "agent'quoted",
+		Cluster: "cluster' OR 1=1 --", Instance: "agent'quoted",
 		UserID: "operator", TokenID: "operator-token", Action: ActionAsk, Session: "session-1",
 		CommandSummary: "inspect workload", StartedAt: started,
 	})
+	if err := store.MarkExecutionDispatched(quotedID); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.FinishAudit(quotedID, AuditFinish{Status: "outcome_unknown", Error: "completion unavailable", EndedAt: ended}); err != nil {
 		t.Fatal(err)
 	}
@@ -325,6 +337,63 @@ func TestExecutionAuditFailedCompletionRemainsBlockingAndUnprunable(t *testing.T
 	}
 }
 
+func TestFinalizeExecutionDistinguishesAdmissionAndDispatch(t *testing.T) {
+	store := openExecutionAuditTestStore(t, filepath.Join(t.TempDir(), "gateway.db"))
+	admission := startExecutionAuditTestEvent(t, store, AuditEvent{Cluster: "cluster-a", Instance: "agent-a"})
+	if err := store.FinalizeExecution(admission); err != nil {
+		t.Fatal(err)
+	}
+	if got := executionAuditTestEvent(t, store, admission); got.Status != "error" ||
+		got.Error != interruptedAdmissionError || got.EndedAt.IsZero() {
+		t.Fatalf("admission audit was not finalized as a definitive error: %#v", got)
+	}
+
+	dispatched := startExecutionAuditTestEvent(t, store, AuditEvent{Cluster: "cluster-a", Instance: "agent-a"})
+	if err := store.MarkExecutionDispatched(dispatched); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinalizeExecution(dispatched); err != nil {
+		t.Fatal(err)
+	}
+	if got := executionAuditTestEvent(t, store, dispatched); got.Status != "outcome_unknown" ||
+		got.EndedAt.IsZero() {
+		t.Fatalf("dispatched audit was not finalized conservatively: %#v", got)
+	}
+
+	completed := startExecutionAuditTestEvent(t, store, AuditEvent{Status: "success"})
+	if err := store.FinalizeExecution(completed); err != nil {
+		t.Fatal(err)
+	}
+	if got := executionAuditTestEvent(t, store, completed); got.Status != "success" {
+		t.Fatalf("terminal audit was changed: %#v", got)
+	}
+}
+
+func TestFinishAuditDoesNotOverwriteTerminalUncertainty(t *testing.T) {
+	store := openExecutionAuditTestStore(t, filepath.Join(t.TempDir(), "gateway.db"))
+	id := startExecutionAuditTestEvent(t, store, AuditEvent{Cluster: "cluster-a", Instance: "agent-a"})
+	if err := store.MarkExecutionDispatched(id); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkExecutionUncertain(id); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.FinishAudit(id, AuditFinish{Status: "success", Tail: "late terminal evidence"}); !errors.Is(err, errAuditTerminalConflict) {
+		t.Fatalf("late terminal evidence error = %v, want terminal conflict", err)
+	}
+	got := executionAuditTestEvent(t, store, id)
+	if got.Status != "outcome_unknown" || got.Tail == "late terminal evidence" {
+		t.Fatalf("late terminal evidence overwrote uncertainty: %#v", got)
+	}
+	if err := store.FinishAudit(id, AuditFinish{Status: "outcome_unknown", Tail: "late duplicate"}); err != nil {
+		t.Fatalf("idempotent uncertainty write failed: %v", err)
+	}
+	got = executionAuditTestEvent(t, store, id)
+	if got.Tail == "late duplicate" {
+		t.Fatal("idempotent terminal write changed existing evidence")
+	}
+}
+
 func TestExecutionAuditPruningNeverDeletesUnsafeStates(t *testing.T) {
 	store := openExecutionAuditTestStore(t, filepath.Join(t.TempDir(), "gateway.db"))
 	old := time.Now().Add(-48 * time.Hour)
@@ -332,8 +401,8 @@ func TestExecutionAuditPruningNeverDeletesUnsafeStates(t *testing.T) {
 		startExecutionAuditTestEvent(t, store, AuditEvent{Status: status, StartedAt: old})
 	}
 	recent := startExecutionAuditTestEvent(t, store, AuditEvent{Status: "success"})
-	if count, err := store.DeleteAuditBefore(old.Add(time.Hour)); err != nil || count != 4 {
-		t.Fatalf("pruning count=%d, error=%v, want 4 safe old events", count, err)
+	if count, err := store.DeleteAuditBefore(old.Add(time.Hour)); err != nil || count != 3 {
+		t.Fatalf("pruning count=%d, error=%v, want 3 safe old events", count, err)
 	}
 	events, err := store.UnresolvedExecutions("", "")
 	if err != nil || len(events) != 2 || events[0].Status != "outcome_unknown" || events[1].Status != "executing" {
@@ -342,7 +411,7 @@ func TestExecutionAuditPruningNeverDeletesUnsafeStates(t *testing.T) {
 	if got := executionAuditTestEvent(t, store, recent); got.Status != "success" {
 		t.Fatalf("recent safe audit changed: %#v", got)
 	}
-	if executionAuditTestCount(t, store) != 3 {
+	if executionAuditTestCount(t, store) != 4 {
 		t.Fatal("pruning removed the wrong records")
 	}
 }

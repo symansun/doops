@@ -92,6 +92,105 @@ func TestSessionConflictPolicyMatchesMutationAndWorkspaceLeases(t *testing.T) {
 	}
 }
 
+func TestActiveOperationConflictFencesSameSessionAcrossConnections(t *testing.T) {
+	service := &ClientService{activeOps: map[string]*gatewayActiveOperation{}}
+	oldAgent := &GatewayAgent{}
+	newAgent := &GatewayAgent{}
+	holder := GatewayActiveOperation{
+		ID:       "old-operation",
+		Cluster:  "dev",
+		Instance: "node",
+		Action:   ActionExec,
+		Session:  "reconnect-session",
+		Resource: "target-mutation:dev/node",
+		State:    "running",
+	}
+	service.activeOps[holder.ID] = &gatewayActiveOperation{GatewayActiveOperation: holder, agent: oldAgent}
+
+	if got := service.activeOperationConflict(GatewayActiveOperation{
+		Cluster: "dev", Instance: "node", Action: ActionExec,
+		Session: "reconnect-session", Resource: "target-mutation:dev/node",
+	}, newAgent); got != holder.ID {
+		t.Fatalf("same-session reconnect was not fenced: got %q", got)
+	}
+	if got := service.activeOperationConflict(GatewayActiveOperation{
+		Cluster: "dev", Instance: "node", Action: ActionExec,
+		Session: "reconnect-session", Resource: "target-mutation:dev/node",
+	}, oldAgent); got != "" {
+		t.Fatalf("same-connection operation was incorrectly fenced: %q", got)
+	}
+	if got := service.activeOperationConflict(GatewayActiveOperation{
+		Cluster: "dev", Instance: "node", Action: ActionExec,
+		Session: "other-session", Resource: "target-mutation:dev/node",
+	}, newAgent); got != "" {
+		t.Fatalf("different session was incorrectly fenced: %q", got)
+	}
+	service.activeOps[holder.ID].State = "finalizing"
+	if got := service.activeOperationConflict(GatewayActiveOperation{
+		Cluster: "dev", Instance: "node", Action: ActionExec,
+		Session: "reconnect-session", Resource: "target-mutation:dev/node",
+	}, newAgent); got != "" {
+		t.Fatalf("pending audit blocked a finished execution: got %q", got)
+	}
+}
+
+func TestActiveOperationRegistrationBindsConnectionForQueueAndFence(t *testing.T) {
+	service := &ClientService{activeOps: map[string]*gatewayActiveOperation{}}
+	oldAgent := &GatewayAgent{}
+	newAgent := &GatewayAgent{}
+	candidate := GatewayActiveOperation{
+		Cluster: "dev", Instance: "node", Action: ActionExec,
+		Session: "same-session", Resource: "target-mutation:dev/node",
+	}
+
+	first, holderID := service.registerActiveOperationForAgent(candidate, func() {}, oldAgent)
+	if holderID != "" {
+		t.Fatalf("first operation unexpectedly conflicted: %q", holderID)
+	}
+	second, holderID := service.registerActiveOperationForAgent(candidate, func() {}, oldAgent)
+	if holderID != "" {
+		t.Fatalf("same-connection waiting operation was rejected: %q", holderID)
+	}
+	third, holderID := service.registerActiveOperationForAgent(candidate, func() {}, newAgent)
+	if holderID != first {
+		t.Fatalf("replacement connection holder = %q, want %q", holderID, first)
+	}
+	service.finishActiveOperation(third)
+	service.finishActiveOperation(second)
+	service.finishActiveOperation(first)
+	if got := len(service.listActiveOperations()); got != 0 {
+		t.Fatalf("operation registration test left active operations: %d", got)
+	}
+}
+
+func TestActiveOperationConflictReportsOldestOwnerDeterministically(t *testing.T) {
+	oldAgent, current := &GatewayAgent{}, &GatewayAgent{}
+	candidate := GatewayActiveOperation{
+		Cluster: "dev", Instance: "node", Action: ActionExec,
+		Session: "same-session", Resource: "target-mutation:dev/node",
+	}
+	service := &ClientService{activeOps: map[string]*gatewayActiveOperation{}}
+	for id, started := range map[string]int64{"a-new": 2, "b-old": 1, "c-old": 1, "finalized": 0, "current": 0} {
+		holder := &gatewayActiveOperation{GatewayActiveOperation: candidate, agent: oldAgent}
+		holder.StartedAt = time.Unix(started, 0)
+		if id == "finalized" {
+			holder.State = "finalizing"
+		}
+		if id == "current" {
+			holder.agent = current
+		}
+		service.activeOps[id] = holder
+	}
+	for range 100 {
+		if got := service.activeOperationConflict(candidate, current); got != "b-old" {
+			t.Fatalf("oldest conflicting owner = %q, want b-old", got)
+		}
+		if got := service.activeOperationConflictLocked(candidate, current, "b-old"); got != "c-old" {
+			t.Fatalf("oldest non-skipped owner = %q, want c-old", got)
+		}
+	}
+}
+
 func TestNginxLeaseProtectsItsResourceAndSessionWithoutTargetExclusion(t *testing.T) {
 	agent := &GatewayAgent{}
 	website, err := agent.acquireActionLeaseForSession(context.Background(), ActionExec, "nginx:dev/node", "website", 0, time.Second)

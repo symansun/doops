@@ -253,9 +253,11 @@ func TestResolveCredentialGatewayRequiresConfiguredTarget(t *testing.T) {
 	}
 }
 
-func TestCredentialGatewayBare401GuidesGatewayLogin(t *testing.T) {
+func TestCredentialGatewayStructured401GuidesGatewayLogin(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized","code":"gateway_auth_failed","auth_domain":"gateway","message":"Gateway user token is missing or invalid","next_action":"Run doops login --target <gateway-target>"}`))
 	}))
 	defer gateway.Close()
 
@@ -270,7 +272,7 @@ func TestCredentialGatewayBare401GuidesGatewayLogin(t *testing.T) {
 		}
 	}
 	if strings.Contains(message, "credential_invalid") {
-		t.Fatalf("bare Gateway 401 must not be classified as credential_invalid: %s", message)
+		t.Fatalf("structured Gateway auth failure must not be classified as credential_invalid: %s", message)
 	}
 }
 

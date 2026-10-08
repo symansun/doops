@@ -185,6 +185,8 @@ type AuditFilter struct {
 	BeforeID int64
 }
 
+var errAuditTerminalConflict = errors.New("audit terminal state conflict")
+
 func OpenGatewayStore(path string) (*GatewayStore, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -1077,7 +1079,7 @@ func finishAuditWith(execer auditExecer, id int64, finish AuditFinish) error {
 			resource_version = CASE WHEN ? = '' THEN resource_version ELSE ? END,
 			digest = CASE WHEN ? = '' THEN digest ELSE ? END,
 			ended_at = ?
-		WHERE id = ?`,
+		WHERE id = ? AND status IN ('running', 'executing')`,
 		finish.Status, finish.Error, trimTail(finish.Tail, 8192), finish.BytesIn, finish.BytesOut,
 		finish.CommandSummary, finish.CommandSummary,
 		finish.Cluster, finish.Cluster, finish.Instance, finish.Instance,
@@ -1093,7 +1095,24 @@ func finishAuditWith(execer auditExecer, id int64, finish AuditFinish) error {
 		return err
 	}
 	if affected != 1 {
-		return sql.ErrNoRows
+		// Terminal audit state is immutable. A late completion may race with
+		// recovery or an uncertainty transition, but must not overwrite it.
+		querier, ok := execer.(interface {
+			QueryRow(string, ...any) *sql.Row
+		})
+		if !ok {
+			return sql.ErrNoRows
+		}
+		var status string
+		if err := querier.QueryRow("SELECT status FROM audit_events WHERE id = ?", id).Scan(&status); err != nil {
+			return err
+		}
+		if status == "running" || status == "executing" {
+			return sql.ErrNoRows
+		}
+		if status != finish.Status {
+			return fmt.Errorf("%w: audit-%d is %s, requested %s", errAuditTerminalConflict, id, status, finish.Status)
+		}
 	}
 	return nil
 }
@@ -1193,7 +1212,7 @@ func credentialAuditScopeJSON(scope *CredentialGrantScope) (string, error) {
 
 func (s *GatewayStore) DeleteAuditBefore(before time.Time) (int64, error) {
 	res, err := s.db.Exec(`DELETE FROM audit_events WHERE started_at < ?
-		AND status NOT IN ('executing', 'outcome_unknown')`, formatTime(before.UTC()))
+		AND status NOT IN ('running', 'executing', 'outcome_unknown')`, formatTime(before.UTC()))
 	if err != nil {
 		return 0, err
 	}

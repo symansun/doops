@@ -80,23 +80,6 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 	opCtx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	resourceKey := proxyResourceKey(route.ID, r.Method)
-	opID := h.client.registerActiveOperation(GatewayActiveOperation{
-		Resource:       resourceKey,
-		UserID:         "proxy",
-		Cluster:        route.Cluster,
-		Instance:       route.Instance,
-		Action:         ActionProxy,
-		CommandSummary: r.Method + " " + r.URL.RequestURI(),
-		Kind:           "proxy",
-	}, cancel)
-	defer h.client.finishActiveOperation(opID)
-	lease, err := agent.acquireActionLease(opCtx, ActionProxy, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadGateway)
-		return
-	}
-	h.client.attachOperationLease(opID, lease)
-
 	auditID, err := h.store.StartAudit(AuditEvent{
 		UserID:  "proxy",
 		Cluster: route.Cluster, Instance: route.Instance, Action: ActionProxy,
@@ -106,14 +89,37 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "start audit: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	h.client.activeOpsMu.Lock()
-	if op := h.client.activeOps[opID]; op != nil {
-		op.AuditID = auditID
+	opID, holderID := h.client.registerActiveOperationForAgent(GatewayActiveOperation{
+		AuditID:        auditID,
+		Resource:       resourceKey,
+		UserID:         "proxy",
+		Cluster:        route.Cluster,
+		Instance:       route.Instance,
+		Action:         ActionProxy,
+		CommandSummary: r.Method + " " + r.URL.RequestURI(),
+		Kind:           "proxy",
+	}, cancel, agent)
+	defer h.client.finishActiveOperation(opID)
+	if holderID != "" {
+		errMsg := "target busy: active operation " + holderID
+		_ = h.client.finishExecutionAudit(auditID, AuditFinish{
+			Status: "blocked", Error: errMsg, EndedAt: time.Now().UTC(),
+		})
+		http.Error(w, errMsg, http.StatusConflict)
+		return
 	}
-	h.client.activeOpsMu.Unlock()
+	lease, err := agent.acquireActionLease(opCtx, ActionProxy, resourceKey, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
+	if err != nil {
+		_ = h.client.finishExecutionAudit(auditID, AuditFinish{
+			Status: "blocked", Error: err.Error(), EndedAt: time.Now().UTC(),
+		})
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	h.client.attachOperationLease(opID, lease)
 	releaseLimit, err := h.client.acquireGlobalOperationSlot()
 	if err != nil {
-		_ = h.store.FinishAudit(auditID, AuditFinish{
+		_ = h.client.finishExecutionAudit(auditID, AuditFinish{
 			Status: "rate_limited", Error: err.Error(), EndedAt: time.Now().UTC(),
 		})
 		http.Error(w, err.Error(), http.StatusTooManyRequests)
@@ -123,7 +129,7 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 	h.client.markOperationRunning(opID)
 	if !proxyRequestIsReadOnly(r.Method) {
 		if err := h.client.beginExecution(agent, opID, auditID); err != nil {
-			_ = h.store.FinishAudit(auditID, AuditFinish{
+			_ = h.client.finishExecutionAudit(auditID, AuditFinish{
 				Status: "blocked", Error: err.Error(), EndedAt: time.Now().UTC(),
 			})
 			http.Error(w, err.Error(), http.StatusConflict)
@@ -147,7 +153,7 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, relayErr.Error(), http.StatusBadGateway)
 		}
 	}
-	_ = h.store.FinishAudit(auditID, AuditFinish{
+	_ = h.client.finishExecutionAudit(auditID, AuditFinish{
 		Status: status, Error: errorText, BytesIn: r.ContentLength, BytesOut: bytesOut,
 		EndedAt: time.Now().UTC(),
 	})

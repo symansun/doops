@@ -274,16 +274,10 @@ start_buildkit
 
 export PATH=/usr/local/bin:$PATH
 export NODE_PATH=/usr/lib/node_modules
-if command -v tini >/dev/null 2>&1; then
-    echo "✅ Using tini for doops-agent"
-    env DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
-        tini -- /app/doops-agent "$@" &
-    GATEWAY_PID=$!
-else
-    echo "⚠️  tini not found, falling back to direct gateway"
-    env DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
-        /app/doops-agent "$@" &
-    GATEWAY_PID=$!
-fi
+# The entrypoint shell is PID 1; tini must explicitly adopt orphan descendants.
+command -v tini >/dev/null 2>&1 || { echo "tini is required for process cleanup" >&2; exit 1; }
+env DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
+    tini -s -- /app/doops-agent "$@" &
+GATEWAY_PID=$!
 PIDS_TO_CLEANUP+=("${GATEWAY_PID}")
 wait "${GATEWAY_PID}"

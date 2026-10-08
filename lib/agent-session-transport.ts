@@ -2,7 +2,7 @@
 
 import { fromJson, toJson, type DescMessage, type JsonValue, type MessageShape } from "@bufbuild/protobuf"
 import { Code, ConnectError } from "@connectrpc/connect"
-import type { AgentWorkbenchSessionTransport } from "@agent-cloud/agent-ui/runtime"
+import { createAgentCommandEnvelope, type AgentWorkbenchSessionTransport } from "@agent-cloud/agent-ui/runtime"
 import {
   CommandEnvelopeSchema,
   CommandReceiptSchema,
@@ -24,6 +24,15 @@ export function createDoopsAgentSessionTransport({ target, sessionId, references
   references?: { current: DoopsConversationReferences }
 }): AgentWorkbenchSessionTransport {
   const scope = { cluster: target.cluster, instance: target.instance, session_id: sessionId }
+  const preparedPrompts = new Map<string, {
+    originalText: string
+    preparedText: string
+    payloadDigest: string
+    sessionId: string
+    streamEpoch: string
+    issuedAt: string
+    expectedRevision?: bigint
+  }>()
 
   async function request(url: string, init: RequestInit): Promise<Response> {
     try {
@@ -58,19 +67,51 @@ export function createDoopsAgentSessionTransport({ target, sessionId, references
 
   return {
     async execute(command, signal) {
-      if (references && command.command.case === "sendPrompt") {
-        const databaseRefs = references.current.databaseRefs
-        const repositoryRefs = references.current.repositoryRefs
-        if (databaseRefs.length || repositoryRefs.length) {
-          const cloned = fromJson(CommandEnvelopeSchema, toJson(CommandEnvelopeSchema, command))
+      if (command.command.case === "sendPrompt") {
+        const key = `${command.sessionId}:${command.streamEpoch}:${command.commandId}`
+        const currentText = command.command.value.text
+        const prepared = preparedPrompts.get(key)
+        if (prepared) {
+          if (command.sessionId !== prepared.sessionId ||
+              command.streamEpoch !== prepared.streamEpoch ||
+              command.issuedAt !== prepared.issuedAt ||
+              command.expectedRevision !== prepared.expectedRevision ||
+              (currentText !== prepared.originalText && currentText !== prepared.preparedText)) {
+            throw new Error("agent_workbench_command_id_reused")
+          }
+          command.command.value.text = prepared.preparedText
+          command.payloadDigest = prepared.payloadDigest
+        } else {
+          const databaseRefs = references?.current.databaseRefs || []
+          const repositoryRefs = references?.current.repositoryRefs || []
           const context = [
             databaseRefs.length ? `数据库引用：${databaseRefs.join(", ")}` : "",
             repositoryRefs.length ? `代码仓库引用：${repositoryRefs.join(", ")}` : "",
           ].filter(Boolean).join("\n")
-          if (cloned.command.case === "sendPrompt") {
-            cloned.command.value.text = `[DoOps 任务引用]\n${context}\n\n用户任务：\n${cloned.command.value.text}`
-            command = cloned
+          const preparedText = context
+            ? `[DoOps 任务引用]\n${context}\n\n用户任务：\n${currentText}`
+            : currentText
+          if (preparedText !== currentText) {
+            command.command.value.text = preparedText
+            const canonical = await createAgentCommandEnvelope({
+              command: command.command,
+              commandId: command.commandId,
+              expectedRevision: command.expectedRevision,
+              issuedAt: command.issuedAt,
+              sessionId: command.sessionId,
+              streamEpoch: command.streamEpoch,
+            })
+            Object.assign(command, canonical)
           }
+          preparedPrompts.set(key, {
+            originalText: currentText,
+            preparedText,
+            payloadDigest: command.payloadDigest,
+            sessionId: command.sessionId,
+            streamEpoch: command.streamEpoch,
+            issuedAt: command.issuedAt,
+            expectedRevision: command.expectedRevision,
+          })
         }
       }
       const response = await request("/api/agent-sessions", {

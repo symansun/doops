@@ -169,19 +169,12 @@ else
     echo "⚠️  buildkitd/buildctl not found, image build will not work"
 fi
 
-# 使用 tini 作为 PID 1 init，自动回收所有僵尸子进程
+# The entrypoint shell is PID 1; tini must explicitly adopt orphan descendants.
 export PATH=/usr/local/bin:$PATH
 export NODE_PATH=/usr/lib/node_modules
-if command -v tini &>/dev/null; then
-    echo "✅ Using tini for doops-agent"
-    env DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
-        tini -- /app/doops-agent "$@" &
-    GATEWAY_PID=$!
-else
-    echo "⚠️  tini not found, falling back to direct exec (Go-level reaper still active)"
-    env DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
-        /app/doops-agent "$@" &
-    GATEWAY_PID=$!
-fi
+command -v tini >/dev/null 2>&1 || { echo "tini is required for process cleanup" >&2; exit 1; }
+env DO_AGENT_MUTATION_AUTHORITY_SECRET="${DO_AGENT_MUTATION_AUTHORITY_SECRET}" \
+    tini -s -- /app/doops-agent "$@" &
+GATEWAY_PID=$!
 PIDS_TO_CLEANUP+=("$GATEWAY_PID")
 wait "$GATEWAY_PID"

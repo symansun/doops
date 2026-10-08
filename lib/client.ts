@@ -18,6 +18,8 @@ export type RpcEvent =
   | { type: "error"; error: string; code?: number }
   | { type: "done" }
 
+export type ToolCancel = () => Promise<void>
+
 function authHeaders(s: Session): HeadersInit {
   void s
   return { "Content-Type": "application/json" }
@@ -137,15 +139,52 @@ export async function callTool(
     arguments: Record<string, unknown>
     signal?: AbortSignal
     requiredProtocol?: "structuredSSH"
+    onCancelReady?: (cancel: ToolCancel) => void
   },
   onEvent: (ev: RpcEvent) => void,
 ): Promise<void> {
   if (s.demo) {
     const { demoCallTool } = await import("./demo")
-    await demoCallTool({ tool: opts.tool, arguments: opts.arguments, signal: opts.signal }, onEvent)
+    const demoController = new AbortController()
+    opts.onCancelReady?.(async () => {
+      demoController.abort()
+    })
+    await demoCallTool({ tool: opts.tool, arguments: opts.arguments, signal: opts.signal || demoController.signal }, onEvent)
     return
   }
-  const res = await fetch("/api/rpc", {
+  const requestId = globalThis.crypto.randomUUID()
+  let cancelPromise: Promise<void> | undefined
+  const cancel: ToolCancel = async () => {
+    if (!cancelPromise) {
+      cancelPromise = (async () => {
+        // The server registers the request before returning its response.
+        // A stop click must not overtake the initial operation request.
+        const started = await response
+        if (!started.ok) throw new Error("原请求未被接受，无法请求停止")
+        const cancelResponse = await fetch("/api/rpc", {
+          method: "POST",
+          headers: authHeaders(s),
+          body: JSON.stringify({
+            cluster: opts.cluster,
+            instance: opts.instance,
+            arguments: { session_id: opts.arguments.session_id },
+            cancelRequestId: requestId,
+          }),
+        })
+        let detail: { error?: string; request_id?: string; cancel_requested?: boolean } = {}
+        try { detail = await cancelResponse.json() } catch { /* noop */ }
+        if (!cancelResponse.ok) throw new Error(detail.error || `停止请求失败 (${cancelResponse.status})`)
+        if (detail.request_id !== requestId || detail.cancel_requested !== true) {
+          throw new Error("停止请求返回了无效确认")
+        }
+      })().catch((error) => {
+        cancelPromise = undefined
+        throw error
+      })
+    }
+    return cancelPromise
+  }
+  const response = fetch("/api/rpc", {
     method: "POST",
     headers: authHeaders(s),
     body: JSON.stringify({
@@ -154,9 +193,12 @@ export async function callTool(
       tool: opts.tool,
       arguments: opts.arguments,
       requiredProtocol: opts.requiredProtocol,
+      requestId,
     }),
     signal: opts.signal,
   })
+  opts.onCancelReady?.(cancel)
+  const res = await response
 
   if (!res.ok || !res.body) {
     let msg = `请求失败 (${res.status})`

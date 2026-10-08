@@ -318,7 +318,7 @@ func TestExecBgReturnsStreamingErrorsWithoutPollingOrRetry(t *testing.T) {
 		{"rpc_error", "remote error: execution_outcome_unknown"},
 		{"canceled", "remote error: operation canceled"},
 		{"disconnect", "connection lost: WS connection lost"},
-		{"timeout", "tool call timed out after 100ms"},
+		{"timeout", "remote error: execution_outcome_unknown"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls, connections atomic.Int32
@@ -343,9 +343,25 @@ func TestExecBgReturnsStreamingErrorsWithoutPollingOrRetry(t *testing.T) {
 						})
 						continue
 					}
+					if req["method"] == "tools/cancel" {
+						if tc.name != "timeout" {
+							t.Errorf("unexpected cancellation request: %#v", req)
+							return
+						}
+						params, _ := req["params"].(map[string]interface{})
+						_ = conn.WriteJSON(map[string]interface{}{
+							"jsonrpc": "2.0", "id": req["id"],
+							"result": map[string]interface{}{"canceled": true},
+						})
+						_ = conn.WriteJSON(map[string]interface{}{
+							"jsonrpc": "2.0", "id": params["id"],
+							"error": map[string]interface{}{"code": -32008, "message": "execution_outcome_unknown"},
+						})
+						continue
+					}
 					calls.Add(1)
 					params, _ := req["params"].(map[string]interface{})
-					if params["name"] != "doops_bg" {
+					if req["method"] != "tools/call" || params["name"] != "doops_bg" {
 						t.Errorf("unexpected polling call: %#v", params)
 					}
 					_ = conn.WriteJSON(map[string]interface{}{

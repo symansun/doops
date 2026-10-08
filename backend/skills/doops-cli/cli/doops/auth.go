@@ -147,21 +147,23 @@ type gatewayAdminTokensResponse struct {
 }
 
 type gatewayActiveOperation struct {
-	ID             string   `json:"id"`
-	AuditID        int64    `json:"audit_id,omitempty"`
-	State          string   `json:"state"`
-	Resource       string   `json:"resource,omitempty"`
-	BlockedBy      []string `json:"blocked_by,omitempty"`
-	UserID         string   `json:"user_id"`
-	TokenID        string   `json:"token_id,omitempty"`
-	Cluster        string   `json:"cluster"`
-	Instance       string   `json:"instance"`
-	Action         string   `json:"action"`
-	Session        string   `json:"session,omitempty"`
-	CommandSummary string   `json:"command_summary,omitempty"`
-	Kind           string   `json:"kind"`
-	StartedAt      string   `json:"started_at"`
-	AgeSeconds     int64    `json:"age_seconds"`
+	ID                string   `json:"id"`
+	AuditID           int64    `json:"audit_id,omitempty"`
+	State             string   `json:"state"`
+	Resource          string   `json:"resource,omitempty"`
+	RequestedResource string   `json:"requested_resource,omitempty"`
+	EffectiveLock     string   `json:"effective_lock,omitempty"`
+	BlockedBy         []string `json:"blocked_by,omitempty"`
+	UserID            string   `json:"user_id"`
+	TokenID           string   `json:"token_id,omitempty"`
+	Cluster           string   `json:"cluster"`
+	Instance          string   `json:"instance"`
+	Action            string   `json:"action"`
+	Session           string   `json:"session,omitempty"`
+	CommandSummary    string   `json:"command_summary,omitempty"`
+	Kind              string   `json:"kind"`
+	StartedAt         string   `json:"started_at"`
+	AgeSeconds        int64    `json:"age_seconds"`
 }
 
 type gatewayAdminOperationsResponse struct {
@@ -193,7 +195,7 @@ func GatewayLogin(gateway, username, password, label string) (string, error) {
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return "", decodeGatewayLoginHTTPError(resp, respBody)
+		return "", decodeGatewayHTTPError("gateway login", resp, respBody)
 	}
 	var parsed gatewayLoginResponse
 	if err := json.Unmarshal(respBody, &parsed); err != nil {

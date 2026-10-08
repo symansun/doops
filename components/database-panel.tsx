@@ -1,8 +1,8 @@
 "use client"
 
 import { Database, Send, Square } from "lucide-react"
-import { useState } from "react"
-import { callTool, extractText, type Session, type Target } from "@/lib/client"
+import { useRef, useState } from "react"
+import { callTool, extractText, type Session, type Target, type ToolCancel } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
 
 type DatabaseMode = "query" | "discover" | "plan" | "apply"
@@ -37,8 +37,9 @@ export function DatabasePanel({
   const [confirmed, setConfirmed] = useState(false)
   const [lines, setLines] = useState<DatabaseLine[]>([])
   const [running, setRunning] = useState(false)
+  const [stopPending, setStopPending] = useState(false)
   const [error, setError] = useState("")
-  const [abortController, setAbortController] = useState<AbortController | null>(null)
+  const cancelRef = useRef<ToolCancel | null>(null)
 
   function push(line: DatabaseLine) {
     setLines((current) => [...current, line])
@@ -46,7 +47,7 @@ export function DatabasePanel({
 
   async function run() {
     const text = request.trim()
-    if (!text || running) return
+    if (!text || running || stopPending) return
     const credentialRefs = credentials.split(/[\s,]+/).filter(Boolean)
     if ((mode === "query" || mode === "apply") && credentialRefs.length === 0) {
       setError("只读查询和受控执行都需要 Gateway 受管数据库凭据")
@@ -63,9 +64,9 @@ export function DatabasePanel({
     setError("")
     setLines([])
     setRunning(true)
+    setStopPending(false)
     onRunningChange(true)
-    const controller = new AbortController()
-    setAbortController(controller)
+    cancelRef.current = null
     const operation = mode === "apply" ? "apply" : "ask"
     const instruction = [
       `使用 DoSql skill 处理目标 ${target.cluster}/${target.instance}。`,
@@ -92,11 +93,10 @@ export function DatabasePanel({
             instruction,
             ...(credentialRefs.length ? { credential_refs: credentialRefs } : {}),
           },
-          signal: controller.signal,
+          onCancelReady: (cancel) => { cancelRef.current = cancel },
         },
         (event) => {
           if (event.type === "output") push({ kind: "out", text: event.data })
-          if (event.type === "error") push({ kind: "err", text: event.error })
           if (event.type === "result") {
             const result = extractText(event.result)
             if (result) push({ kind: "out", text: result })
@@ -111,14 +111,20 @@ export function DatabasePanel({
       }
     } finally {
       setRunning(false)
+      setStopPending(false)
       onRunningChange(false)
-      setAbortController(null)
+      cancelRef.current = null
     }
   }
 
   function stop() {
-    abortController?.abort()
-    push({ kind: "info", text: "已请求停止，等待 Gateway 返回终态" })
+    if (!cancelRef.current || stopPending) return
+    setStopPending(true)
+    push({ kind: "info", text: "已请求停止，等待远端终态；请勿立即重试" })
+    void cancelRef.current().catch((err) => {
+      setStopPending(false)
+      push({ kind: "err", text: `停止请求失败：${(err as Error).message}` })
+    })
   }
 
   return (
@@ -229,9 +235,9 @@ export function DatabasePanel({
         {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
 
         <div className="flex items-center justify-end gap-2">
-          {running ? (
-            <button type="button" onClick={stop} className="flex items-center gap-1.5 rounded-md border border-destructive/50 px-3 py-2 text-sm text-destructive hover:bg-destructive/10">
-              <Square aria-hidden="true" className="size-3.5" /> 停止
+          {running || stopPending ? (
+            <button type="button" onClick={stop} disabled={stopPending} className="flex items-center gap-1.5 rounded-md border border-destructive/50 px-3 py-2 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-60">
+              <Square aria-hidden="true" className="size-3.5" /> {stopPending ? "停止中…" : "停止"}
             </button>
           ) : (
             <button type="button" onClick={() => void run()} disabled={!request.trim()} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50">

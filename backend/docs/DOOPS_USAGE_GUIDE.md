@@ -112,13 +112,17 @@ To remove a stale local route, use `doops -session <s> remove --target <gateway-
 - `status=active` with `busy=false` means one or more sessions/resources are running; ordinary Shell/SSH/bg/apply operations are serialized only within the same target + session, while different sessions can use the same Agent concurrently.
 - `resources` shows workspace locks such as `workspace:<session>`.
   Shell/SSH/bg and apply use a session-scoped mutation lease; a session is an ownership key, not an OS or remote-resource sandbox.
+- The admin operation view shows both the requested resource and the effective lock. A
+  `target-mutation:<target>` request with a session is actually fenced as
+  `session-mutation:<target>/<session>`; do not infer target-wide exclusivity from the
+  requested resource label.
 - Public HTTP proxy requests are classified by method: `GET/HEAD/OPTIONS/TRACE` are read-only
   queries; other methods use a route-scoped resource lock and record `outcome_unknown`
   when the Agent disconnects before a terminal response.
 
-Cancellation and audit finalization use the same session/resource conflict rules as
-admission. An unrelated session remains available while another session is being
-canceled or its outcome is being persisted. Missing-session mutations are rejected,
+Cancellation uses the same session/resource conflict rules as admission. Audit-only
+finalization retries retain evidence, not execution leases; even the same session can
+start new work after execution cleanup. Missing-session mutations are rejected,
 not silently turned into target-wide operations. A session is not a sandbox: callers
 must not concurrently mutate the same release or database from independent sessions.
 
@@ -189,20 +193,38 @@ without a terminal reply. A confirmed local completion after cancellation is
 not an unknown outcome. Read-only query failures do not quarantine the target.
 Agent progress notifications carry `params.request_id`; Gateway and CLI route them by
 request ID so concurrent calls in one session cannot overwrite one another. The Gateway
-persists the execution terminal state before releasing the resource lease and retries
-that persistence while retaining the lease if the store is temporarily unavailable.
+attempts terminal persistence before returning success. If that write fails, it reports
+`audit_completion_failed` and retries the original evidence independently of execution
+ownership. Completed execution cleanup releases the lease even while the audit retries.
 Interrupted Shell/SSH/bg, apply and Kubernetes mutations also require reconciliation:
 local process or turn termination does not fence remote or detached work. Historical
 unknown audits do not participate in new-task admission; they are neither deleted nor
-changed to success. Active work still uses resource locks, queueing and cancellation,
-and its audit must be persisted before releasing its lease. The operation list shows
-`waiting`, `running`, `cancel_requested`, `outcome_unknown`, `audit_id`, `resource`
-and `blocked_by`. Waiting for a resource does not consume a user execution slot.
-Independent structured workspace operations run concurrently; arbitrary Shell does
-not. Structured Kubernetes queries and task status remain available during a
+changed to success. Active work still uses resource locks, queueing and cancellation;
+an audit storage outage is not an execution lock. The operation list shows
+`waiting`, `running`, `cancel_requested`, `finalizing`, `outcome_unknown`, `audit_id`,
+`resource`, `requested_resource`, `effective_lock` and `blocked_by`. `running` is the admission
+state for admission and unguarded reads; it does not prove that no Agent call was sent.
+Interrupted `running` rows become terminal `error` after restart. `executing` identifies a
+dispatched guarded operation and becomes `outcome_unknown` if its owner is lost. A failed
+terminal audit write retries the original status, error, timestamp and output evidence,
+not an inferred replacement result. Waiting for a resource
+does not consume a user execution slot.
+Different sessions can run Shell/SSH/bg/apply concurrently; operations sharing one
+session or an explicit shared resource remain serialized. Structured Kubernetes queries and task status remain available during a
 mutation or unknown outcome. Agent upgrades remain exclusive. Different routes to
 one release/database are not coordinated by this target-local lock; do not bypass it
 using another target. There is no safe force-preemption or automatic replay protocol.
+
+CLI streaming and captured output preserve notification text exactly, including JSON,
+blank lines and partial chunks. Business output cannot declare an Agent event or task
+completion. Shell commands start in the Agent process directory; use an explicit `cd`
+when a command needs a session workspace. Agent reconnection waits for old
+connection-owned executions to finish cleanup before registering again.
+CLI timeouts request cancellation and continue observing the original RPC. Missing
+terminal evidence reports `execution_outcome_unknown`; no automatic retry is made.
+Captured output is retained on failures for diagnosis.
+Shell audit records the actual command and output; it no longer guesses file paths
+from `kubectl apply -f` text or reads incidental files into the audit.
 
 An SSH failure with an Agent structured terminal result is an ordinary failed
 operation when it has a remote exit code in `1..254`, or when the structured
@@ -527,11 +549,15 @@ Use `pull` for large files, archives, SQL dumps, images, videos, and generated a
 ## Read And Write
 
 ```bash
-doops -session ops read --target jm --path /root/ws/ops/deploy.sh
-doops -session ops write --target jm --path /root/ws/ops/notes.txt --content 'hello'
-doops -session ops write --target jm --path /root/ws/ops/pod.yaml --file ./pod.yaml
-cat ./pod.yaml | doops -session ops write --target jm --path /root/ws/ops/pod.yaml
+doops -session ops read --target jm --path deploy.sh
+doops -session ops write --target jm --path notes.txt --content 'hello'
+doops -session ops write --target jm --path pod.yaml --file ./pod.yaml
+cat ./pod.yaml | doops -session ops write --target jm --path pod.yaml
 ```
+
+File API paths are relative to the named session workspace. The Web file browser
+uses the same paths for open, save, new-file and upload, and its navigation stays
+inside that workspace. Use explicit authorized Shell operations for host paths.
 
 `read` and `write` are for small text files and short scripts. Use `push/pull` for directories and binary assets.
 
