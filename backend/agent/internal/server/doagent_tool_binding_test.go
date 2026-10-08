@@ -510,10 +510,14 @@ func attestedMutationTrace(t *testing.T, runtimeTool string, input map[string]in
 
 func attestedMutationTraceForSession(t *testing.T, runtimeTool string, input map[string]interface{}, sessionID, authorityDigest string) doagentToolTrace {
 	t.Helper()
-	realTool := strings.TrimPrefix(modelVisibleDoagentToolName(runtimeTool), "doops_")
+	binding := runtimeToolBinding(modelVisibleDoagentToolName(runtimeTool))
+	if binding.Server == "" {
+		t.Fatalf("unknown runtime tool binding for %q", runtimeTool)
+	}
+	realTool := binding.Tool
 	scope := map[string]interface{}{
 		"runtimeSessionId": sessionID,
-		"server":           "doops",
+		"server":           binding.Server,
 		"tool":             realTool,
 	}
 	result := map[string]interface{}{
@@ -538,7 +542,7 @@ func attestedMutationTraceForSession(t *testing.T, runtimeTool string, input map
 	inputDigest, err := digestRuntimeAttestationJSON(map[string]interface{}{
 		"arguments":        input,
 		"runtimeSessionId": sessionID,
-		"server":           "doops",
+		"server":           binding.Server,
 		"tool":             realTool,
 	})
 	if err != nil {
