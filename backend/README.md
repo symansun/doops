@@ -46,7 +46,7 @@ flowchart LR
 - 连接方式：CLI/skill 访问 gateway `42222`，gateway 通过已建立的 agent WebSocket 进入内网 agent
 - 鉴权方式：用户连接 gateway 使用 gateway user token；agent 反向注册只声明 `cluster/instance`，不使用 token
 - 代码同步：gateway 使用 Git HTTP；gateway 只通过已建立的 agent WebSocket 反向隧道透传 Git 请求，不再使用 tar 分块上传作为 `push/pull` 路径
-- 镜像构建：统一使用 `buildctl + buildkitd`
+- 镜像构建与操作：统一使用 `buildctl + buildkitd` 构建、`skopeo` 做 OCI copy/inspect；Agent 镜像内置这两套命令。
 
 ## Target 口径
 
