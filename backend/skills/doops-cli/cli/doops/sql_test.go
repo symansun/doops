@@ -45,3 +45,9 @@ func TestSQLGatewayOperation(t *testing.T) {
 		t.Fatalf("discover operation = %q, want ask", got)
 	}
 }
+
+func TestDiscoverModeAllowsLocalResourceScanWithoutRequest(t *testing.T) {
+	if mode, err := parseSQLMode("discover"); err != nil || mode != sqlModeDiscover {
+		t.Fatalf("discover mode = %q, err = %v", mode, err)
+	}
+}
