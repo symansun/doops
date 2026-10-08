@@ -581,7 +581,10 @@ doops -session <session> pull --target <target> --dest <dir>
 
 ### `doops_node_info`
 
-返回节点基础信息。
+返回节点基础信息和通用镜像工具链状态，包括 `buildctl`、`skopeo` 和 BuildKit
+socket。镜像构建使用 CLI 的通用 `image build`，高级场景仍可通过 `doops exec` 调用
+明确授权的 `buildctl` 命令；OCI 镜像复制和 manifest 校验使用 `image copy` 或
+`registry sync`，不依赖业务项目脚本。
 
 参数：
 

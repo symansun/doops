@@ -28,6 +28,8 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Add a Gateway target | `doops add --name <n> --gateway <url> --cluster <c> --instance <i>` | Stores routing only; never stores a target token. |
 | Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Known checks and explicitly requested operations; standard releases use `ask --apply`. |
 | Sync OCI images | `doops -session <s> registry sync --target <t> --source-registry <src> --target-registry <dst> --tag <release> --source-authfile <remote-file> --target-authfile <remote-file> --image <name>` | Generic target-side `skopeo copy --all`, bounded timeout/retry, and manifest digest verification; auth payloads never enter CLI arguments. |
+| Build an OCI image | `doops -session <s> image build --target <t> --context <remote-dir> --output oci --output-path <remote-file>` | Generic BuildKit build; supports `--platform` and `--output image --image <ref> --push` for an explicitly authorized registry push. |
+| Copy an OCI image | `doops -session <s> image copy --target <t> --source <ref> --destination <ref>` | Generic Skopeo transport-to-transport copy with optional authfiles and raw manifest digest verification. |
 | Run nested SSH safely | `doops -session <s> ssh --target <t> --host <user@host> -- <command> [args...]` | Preserves remote argv across nested shells. |
 | Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | One RPC waits for the Agent task's terminal result; no task-status polling or command retries. |
 | Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
@@ -74,6 +76,12 @@ it has no AMP-specific path and never installs a missing tool at runtime. If the
 does not advertise `skopeo`, the operation fails with a missing-tool error; upgrade the
 DoOps Agent image or use an explicitly authorized target that already provides it.
 
+`image build` and `image copy` are thin generic wrappers over the same audited exec path.
+They use standard BuildKit and Skopeo transports, so the command does not depend on Docker,
+nerdctl, Harbor, AMP image names, or a project-specific script. For private Registry output,
+the target must have an authorized remote authfile; credentials are never accepted inline in
+the command arguments.
+
 ## Basic Checks
 
 ```bash
@@ -82,7 +90,12 @@ doops version
 doops -session smoke targets --target <gateway-target>
 doops -session smoke exec --target <gateway-target> --cmd 'hostname && date -u +%FT%TZ'
 doops -session smoke-capabilities capabilities --target <gateway-target> --require structuredSSH
+doops -session image-toolchain-check info --target <gateway-target>
 ```
+
+`info` 输出中的 `buildctl: OK`、`skopeo: OK` 和 `buildkit-sock: OK` 表示目标具备
+DoOps 通用镜像工具链。镜像构建使用明确授权的 `exec` 命令调用 `buildctl`；镜像复制
+和源/目标 manifest 校验使用 `image copy` 或 `registry sync`。两者都不需要 AMP 专用脚本或外置同步 Job。
 
 `doops version` 的 `release` 是唯一 DoOps 发布版本，`commit` 是该版本对应的完整
 源码 provenance；`doops targets` 的 `RELEASE_COMMIT` 必须与它一致。输出中的
