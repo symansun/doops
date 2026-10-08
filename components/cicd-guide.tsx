@@ -269,7 +269,7 @@ jobs:
         </p>
         <p className="mb-3 text-xs text-muted-foreground">
           必须先核验成功的 CI 构建与源提交、镜像 digest 的对应关系。在线 target 发布现有 Helm release
-          不要求本机 kubeconfig、工作区干净或先同步业务源码；Chart 填写明确的 HTTPS 或 OCI 引用。
+          不要求本机 kubeconfig、工作区干净或先同步业务源码；Chart 填写明确的 HTTPS `.tgz` 引用。
           Helm 镜像参数使用 image.repository 和 image.digest，不混用 image.tag；Secrets 不进入命令参数或发布描述。
         </p>
 

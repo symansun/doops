@@ -1101,6 +1101,14 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 				}
 				defer cleanup()
 			}
+			if hasDatabaseCredentialBinding(args.CredentialBindings) {
+				cleanup, err := bindDoSQLCredentialsForPrompt(sessionID, args.CredentialBindings)
+				if err != nil {
+					writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+					return
+				}
+				defer cleanup()
+			}
 		}
 		nativeMode, err := doagentModeForPrompt(operation, "")
 		if err != nil {
@@ -1270,6 +1278,15 @@ func credentialBindingContext(bindings []api.AgentCredentialBinding) (string, er
 		if binding.Digest != "" && !validCredentialSHA256Digest(binding.Digest) {
 			return "", errors.New("credential_binding_metadata_invalid")
 		}
+		if binding.Use == string(CredentialUseDatabase) {
+			if !validCredentialMetadataToken(binding.DatabaseAssetID, 128) ||
+				!validCredentialMetadataToken(binding.EnvironmentID, 128) ||
+				(binding.DatabaseEngine != "mysql" && binding.DatabaseEngine != "postgres" && binding.DatabaseEngine != "mongodb") ||
+				!validDatabaseName(binding.DatabaseName) ||
+				!validDatabaseCredentialKeys(binding.DatabaseEngine, binding.Keys) {
+				return "", errors.New("credential_binding_metadata_invalid")
+			}
+		}
 		if binding.Use == string(CredentialUseHelmPull) {
 			if binding.ContextKind != "helm-native" || !validNativeHelmSocketPath(binding.ContextSocket) || binding.SecretType != "" {
 				return "", errors.New("credential_binding_metadata_invalid")
@@ -1291,6 +1308,15 @@ func credentialBindingContext(bindings []api.AgentCredentialBinding) (string, er
 func hasHelmCredentialBinding(bindings []api.AgentCredentialBinding) bool {
 	for _, binding := range bindings {
 		if binding.Use == string(CredentialUseHelmPull) || binding.ContextKind == "helm-native" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDatabaseCredentialBinding(bindings []api.AgentCredentialBinding) bool {
+	for _, binding := range bindings {
+		if binding.Use == string(CredentialUseDatabase) {
 			return true
 		}
 	}
@@ -1724,12 +1750,17 @@ func (gw *Gateway) uploadAgentPromptAttachments(ctx context.Context, doagentURL,
 
 func doagentAllowedTools(apply bool, skill string) []string {
 	tools := []string{"Read", "Glob", "Grep", "Skill", "mcp_doops_k8s_read", "mcp_doops_web_read"}
+	if strings.TrimSpace(skill) == "dosql" {
+		tools = append(tools, "mcp_dosql_read")
+	}
 	if apply {
 		switch skill {
 		case "":
 			tools = append(tools, "mcp_doops_helm")
 		case "doweb":
 			tools = append(tools, "mcp_doops_web")
+		case "dosql":
+			tools = append(tools, "mcp_dosql_execute")
 		}
 	}
 	return tools

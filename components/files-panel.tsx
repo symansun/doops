@@ -336,10 +336,8 @@ export function FilesPanel({
     if (dirInputRef.current) dirInputRef.current.value = ""
   }
 
-  const pushCommand = `doops push \\
-  --cluster ${target.cluster} \\
-  --instance ${target.instance} \\
-  -session ${sessionId} \\
+  const pushCommand = `doops -session ${sessionId} push \\
+  --target <configured-target> \\
   --src ./your-folder`
 
   async function copyCommand() {

@@ -77,7 +77,11 @@ func TestDomainCLIsShareGatewayLoginAndPropagateFailure(t *testing.T) {
 			if failed {
 				request = "synthetic-failure"
 			}
-			command := exec.Command(binary, "-session", "domain-functional", domain, "--target", "domain", "--request", request)
+			args := []string{"-session", "domain-functional", domain, "--target", "domain", "--request", request}
+			if domain == "sql" {
+				args = append(args, "--credential", "synthetic-db")
+			}
+			command := exec.Command(binary, args...)
 			command.Env = os.Environ()
 			output, err := command.CombinedOutput()
 			if (err != nil) != failed {

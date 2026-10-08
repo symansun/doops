@@ -76,6 +76,19 @@ executed.
   choice when more than one asset matches. `config/resources.json` is optional
   metadata for labels and examples; it is not a target registry or permission
   source.
+- `mcp_dosql_read operation=discover` scans non-secret Kubernetes metadata
+  (Pods, Services, Deployments and StatefulSets) and returns database
+  candidates with a stable `database_asset_id`, engine, namespace, service,
+  port and any database name visible in non-Secret configuration. It never
+  reads Secret values. Candidates without a database name remain unresolved
+  until the user selects the asset and provides an exact database credential.
+- During a conversation, a user may reference selected database assets and
+  code repositories by metadata-only IDs or `repo_id@branch` references. The
+  references are task context, not authorization; Gateway target/action and
+  credential scope checks remain authoritative.
+- `mcp_dosql_execute` is the only structured mutation executor. It requires
+  `confirm=true`, an approved change request, exact database credential scope,
+  verification input and the DoSql journal/evidence chain.
 - Database credentials are DoOps managed credentials. Pass only credential
   resource names to the Gateway; never put payloads, connection strings or
   passwords in prompts, artifacts or logs.

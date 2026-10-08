@@ -16,7 +16,7 @@ TIER_NAMES = ("high", "default", "low")
 DOOPS_MCP_SERVER = {
     "name": "doops",
     "command": "/app/doops-agent",
-    "args": ["mcp-stdio"],
+    "args": ["mcp-stdio", "--domain", "doops"],
     "env": {},
     "cwd": None,
     "status": "Unknown",
@@ -26,10 +26,24 @@ DOOPS_MCP_SERVER = {
     "required": True,
     "trusted_result_attestation": True,
 }
+DOSQL_MCP_SERVER = {
+    "name": "dosql",
+    "command": "/app/doops-agent",
+    "args": ["mcp-stdio", "--domain", "dosql"],
+    "env": {},
+    "cwd": None,
+    "status": "Unknown",
+    "capabilities": ["tools"],
+    "auto_start": True,
+    "tool_timeout_secs": 900,
+    "required": True,
+    "trusted_result_attestation": True,
+}
+RUNTIME_MCP_SERVERS = (DOOPS_MCP_SERVER, DOSQL_MCP_SERVER)
 DOOPS_PERMISSIONS = {
     "default_mode": "restricted",
     "presets": {
-        "always_allow": ["mcp_doops_k8s_read"],
+        "always_allow": ["mcp_doops_k8s_read", "mcp_dosql_read"],
         "always_deny": [],
     },
     "timeout_seconds": 30,
@@ -105,23 +119,25 @@ def configure_settings(
     servers = settings.get("mcp_servers", [])
     if not isinstance(servers, list):
         raise SettingsConfigurationError("mcp_servers must be an array")
-    configured_doops = [
-        server
-        for server in servers
-        if isinstance(server, dict) and server.get("name") == DOOPS_MCP_SERVER["name"]
-    ]
-    if len(configured_doops) > 1:
-        raise SettingsConfigurationError("mcp_servers contains duplicate doops entries")
-    if configured_doops and configured_doops[0] != DOOPS_MCP_SERVER:
-        raise SettingsConfigurationError(
-            "mcp_servers.doops is runtime-owned and must match the canonical configuration"
-        )
+    for runtime_server in RUNTIME_MCP_SERVERS:
+        configured = [
+            server
+            for server in servers
+            if isinstance(server, dict) and server.get("name") == runtime_server["name"]
+        ]
+        if len(configured) > 1:
+            raise SettingsConfigurationError(f"mcp_servers contains duplicate {runtime_server['name']} entries")
+        if configured and configured[0] != runtime_server:
+            raise SettingsConfigurationError(
+                f"mcp_servers.{runtime_server['name']} is runtime-owned and must match the canonical configuration"
+            )
+    runtime_names = {item["name"] for item in RUNTIME_MCP_SERVERS}
     settings["mcp_servers"] = [
         server
         for server in servers
-        if not (isinstance(server, dict) and server.get("name") == DOOPS_MCP_SERVER["name"])
+        if not (isinstance(server, dict) and server.get("name") in runtime_names)
     ]
-    settings["mcp_servers"].append(DOOPS_MCP_SERVER)
+    settings["mcp_servers"].extend(RUNTIME_MCP_SERVERS)
     settings["permissions"] = DOOPS_PERMISSIONS
 
     destination.parent.mkdir(parents=True, exist_ok=True)
