@@ -19,12 +19,14 @@ func TestDoSQLReadUsesBoundCredentialMetadataAndReturnsEvidenceSummary(t *testin
 		t.Fatal(err)
 	}
 	t.Setenv("DOOPS_WORKSPACE_ROOT", workspaceRoot)
+	t.Setenv("DOOPS_GATEWAY_CLUSTER", "cluster-a")
+	t.Setenv("DOOPS_GATEWAY_INSTANCE", "node-a")
 
 	binding := api.AgentCredentialBinding{
 		Name: "orders-db", Use: string(CredentialUseDatabase), Namespace: "apps", ResourceName: "cred-secret",
 		SecretType: "Opaque", Keys: []string{"connection_uri"}, ResourceVersion: "7",
 		CredentialID: "cred_123456789012345678901234", GrantID: "credgrant_123456789012345678901234", VersionID: "credver_123456789012345678901234",
-		DatabaseAssetID: "db_orders", EnvironmentID: "prod", DatabaseEngine: "postgres", DatabaseName: "orders",
+		DatabaseAssetID: "dbscan_cluster-a_node-a_apps_orders-postgres_postgres", EnvironmentID: "prod", DatabaseEngine: "postgres", DatabaseName: "orders",
 	}
 	leasePath := dosqlCredentialLeasePath(session)
 	if err := os.MkdirAll(filepath.Dir(leasePath), 0700); err != nil {
@@ -38,14 +40,14 @@ func TestDoSQLReadUsesBoundCredentialMetadataAndReturnsEvidenceSummary(t *testin
 	bin := t.TempDir()
 	kubectl := filepath.Join(bin, "kubectl")
 	secretJSON := `{"metadata":{"resourceVersion":"7","labels":{"doops.sh/credential-id":"cred_123456789012345678901234","doops.sh/credential-grant-id":"credgrant_123456789012345678901234"},"annotations":{"doops.sh/credential-version":"credver_123456789012345678901234"}},"data":{"connection_uri":"` + base64.StdEncoding.EncodeToString([]byte("postgres://db-user:db-secret@db/orders")) + `"}}`
-	writeExecutable(t, kubectl, "#!/bin/sh\nprintf '%s' '"+secretJSON+"'\n")
+	writeExecutable(t, kubectl, "#!/bin/sh\ncase \"$*\" in *pods,services*) printf '%s' '{\"items\":[{\"kind\":\"StatefulSet\",\"metadata\":{\"namespace\":\"apps\",\"name\":\"orders-postgres\"},\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"image\":\"postgres:16\",\"env\":[{\"name\":\"POSTGRES_DB\",\"value\":\"orders\"}]}]}}}}]}';; *) printf '%s' '"+secretJSON+"';; esac\n")
 	node := filepath.Join(bin, "node")
 	writeExecutable(t, node, "#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ \"$1\" = \"--output\" ]; then out=\"$2\"; fi; shift; done\nprintf '%s' '{\"status\":\"succeeded\",\"result\":{\"status\":\"verified\",\"executionResult\":{\"affectedRows\":1,\"transactionId\":\"dbtx_test\"}}}' > \"$out\"\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("DOSQL_NODE", node)
 
 	request := map[string]interface{}{
-		"session_id": session, "operation": "query", "credential_ref": "orders-db", "database_asset_id": "db_orders",
+		"session_id": session, "operation": "query", "credential_ref": "orders-db", "database_asset_id": "dbscan_cluster-a_node-a_apps_orders-postgres_postgres",
 		"environment_id": "prod", "project_id": "ops", "engine": "postgres", "database_name": "orders",
 		"statement": "select count(*) from orders",
 	}
@@ -70,12 +72,14 @@ func TestDoSQLMutationUsesBoundCredentialAndReturnsEvidenceSummary(t *testing.T)
 		t.Fatal(err)
 	}
 	t.Setenv("DOOPS_WORKSPACE_ROOT", workspaceRoot)
+	t.Setenv("DOOPS_GATEWAY_CLUSTER", "cluster-a")
+	t.Setenv("DOOPS_GATEWAY_INSTANCE", "node-a")
 
 	binding := api.AgentCredentialBinding{
 		Name: "orders-db", Use: string(CredentialUseDatabase), Namespace: "apps", ResourceName: "cred-secret",
 		SecretType: "Opaque", Keys: []string{"connection_uri"}, ResourceVersion: "7",
 		CredentialID: "cred_123456789012345678901234", GrantID: "credgrant_123456789012345678901234", VersionID: "credver_123456789012345678901234",
-		DatabaseAssetID: "db_orders", EnvironmentID: "test", DatabaseEngine: "postgres", DatabaseName: "orders",
+		DatabaseAssetID: "dbscan_cluster-a_node-a_apps_orders-postgres_postgres", EnvironmentID: "test", DatabaseEngine: "postgres", DatabaseName: "orders",
 	}
 	leasePath := dosqlCredentialLeasePath(session)
 	if err := os.MkdirAll(filepath.Dir(leasePath), 0700); err != nil {
@@ -89,7 +93,7 @@ func TestDoSQLMutationUsesBoundCredentialAndReturnsEvidenceSummary(t *testing.T)
 	bin := t.TempDir()
 	kubectl := filepath.Join(bin, "kubectl")
 	secretJSON := `{"metadata":{"resourceVersion":"7","labels":{"doops.sh/credential-id":"cred_123456789012345678901234","doops.sh/credential-grant-id":"credgrant_123456789012345678901234"},"annotations":{"doops.sh/credential-version":"credver_123456789012345678901234"}},"data":{"connection_uri":"` + base64.StdEncoding.EncodeToString([]byte("postgres://db-user:db-secret@db/orders")) + `"}}`
-	writeExecutable(t, kubectl, "#!/bin/sh\nprintf '%s' '"+secretJSON+"'\n")
+	writeExecutable(t, kubectl, "#!/bin/sh\ncase \"$*\" in *pods,services*) printf '%s' '{\"items\":[{\"kind\":\"StatefulSet\",\"metadata\":{\"namespace\":\"apps\",\"name\":\"orders-postgres\"},\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"image\":\"postgres:16\",\"env\":[{\"name\":\"POSTGRES_DB\",\"value\":\"orders\"}]}]}}}}]}';; *) printf '%s' '"+secretJSON+"';; esac\n")
 	node := filepath.Join(bin, "node")
 	writeExecutable(t, node, "#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ \"$1\" = \"--output\" ]; then out=\"$2\"; fi; shift; done\nprintf '%s' '{\"status\":\"succeeded\",\"result\":{\"status\":\"verified\",\"executionResult\":{\"affectedRows\":1,\"transactionId\":\"dbtx_mutation_test\"}}}' > \"$out\"\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -97,7 +101,7 @@ func TestDoSQLMutationUsesBoundCredentialAndReturnsEvidenceSummary(t *testing.T)
 
 	request := map[string]interface{}{
 		"session_id": session, "operation": "execute", "confirm": true, "credential_ref": "orders-db",
-		"database_asset_id": "db_orders", "environment_id": "test", "project_id": "ops",
+		"database_asset_id": "dbscan_cluster-a_node-a_apps_orders-postgres_postgres", "environment_id": "test", "project_id": "ops",
 		"engine": "postgres", "database_name": "orders", "statement": "alter table orders add column external_id text",
 		"verification_statement": "select count(*) from orders", "change_request_id": "chg_orders_001",
 		"approval_artifact_path": ".dosql/operations/dbop_test.approval.json",
@@ -115,7 +119,7 @@ func TestDoSQLMutationUsesBoundCredentialAndReturnsEvidenceSummary(t *testing.T)
 	}
 }
 
-func TestDoSQLRejectsCredentialScopeMismatchBeforeExecutor(t *testing.T) {
+func TestDoSQLRejectsDatabaseAssetMismatchAtAgentBoundary(t *testing.T) {
 	root := t.TempDir()
 	workspaceRoot := filepath.Join(root, "ws")
 	session := "sql-denied"
@@ -132,9 +136,19 @@ func TestDoSQLRejectsCredentialScopeMismatchBeforeExecutor(t *testing.T) {
 	if err := os.WriteFile(leasePath, append(leaseJSON, '\n'), 0600); err != nil {
 		t.Fatal(err)
 	}
+	bin := t.TempDir()
+	kubectl := filepath.Join(bin, "kubectl")
+	writeExecutable(t, kubectl, `#!/bin/sh
+cat <<'JSON'
+{"items":[{"kind":"Service","metadata":{"namespace":"data","name":"orders-postgres"},"spec":{"ports":[{"port":5432}]}},{"kind":"StatefulSet","metadata":{"namespace":"data","name":"orders-postgres"},"spec":{"template":{"spec":{"containers":[{"name":"postgres","image":"postgres:16","env":[{"name":"POSTGRES_DB","value":"orders"}]}]}}}}]}
+JSON
+`)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("DOOPS_GATEWAY_CLUSTER", "cluster-a")
+	t.Setenv("DOOPS_GATEWAY_INSTANCE", "node-a")
 	request, _ := json.Marshal(map[string]interface{}{"session_id": session, "operation": "query", "credential_ref": "orders-db", "database_asset_id": "db_other", "environment_id": "prod", "project_id": "ops", "engine": "postgres", "database_name": "orders", "statement": "select 1"})
-	if _, err := handleDoSQLTool(t.Context(), request, false); err == nil || !strings.Contains(err.Error(), "scope_mismatch") {
-		t.Fatalf("scope mismatch was not rejected: %v", err)
+	if _, err := handleDoSQLTool(t.Context(), request, false); err == nil || !strings.Contains(err.Error(), "database_asset_not_found") {
+		t.Fatalf("database asset boundary was not enforced: %v", err)
 	}
 }
 

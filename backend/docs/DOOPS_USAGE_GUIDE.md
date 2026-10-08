@@ -67,11 +67,12 @@ DoSql 必须使用 `doops sql` 入口。普通 `doops ask --msg '使用 DoSql'` 
 `mcp_dosql_read/execute`，也不能替代 DoSql 的 target discovery、credential scope 或
 journal/evidence 链。
 
-`registry sync` is a native, generic DoOps operation. It replaces one-off application
-image-sync scripts: the target performs the equivalent pull/copy/push flow for each
-explicit image, then compares source and destination manifest digests. It has no AMP
-specific path. Use `--install-skopeo` only when the target is explicitly allowed to
-install the package; an unavailable package manager is a hard failure.
+`registry sync` is a thin generic wrapper over the target Agent's audited exec path. The
+standard DoOps Agent image provides `buildctl` for image builds and `skopeo` for OCI
+copy/inspect. The command performs copy and source/destination manifest digest checks;
+it has no AMP-specific path and never installs a missing tool at runtime. If the target
+does not advertise `skopeo`, the operation fails with a missing-tool error; upgrade the
+DoOps Agent image or use an explicitly authorized target that already provides it.
 
 ## Basic Checks
 
@@ -597,14 +598,12 @@ doops credential grant --target gw-edu-coder \
   --image-repository registry.example.com/oilan \
   --image-digest sha256:<manifest-digest>
 
-# DoSql database grant: all four database fields come from target discovery
+# DoSql database grant: Gateway binds target + credential usability only;
+# DoSql/Agent validates asset, environment, engine and database name at execution time
 doops credential grant --target gw-edu-coder \
   --id <credential-id> \
   --cluster doops-edu --instance edu-coder \
   --namespace agents --use database \
-  --workload-kind Deployment --workload-name postgres \
-  --database-asset-id dbscan_doops-edu_edu-coder_agents_postgres_postgres \
-  --environment-id edu --database-engine postgres --database-name agentcloud \
   --required-keys connection_uri
 
 # 3. 在相同 scope 验证 staged version
@@ -620,9 +619,6 @@ doops -session credential-verify-<version> credential verify \
 doops -session credential-verify-db-<version> credential verify \
   --target gw-edu-coder --id <credential-id> --version-id <version-id> \
   --cluster doops-edu --instance edu-coder --namespace agents --use database \
-  --workload-kind Deployment --workload-name postgres \
-  --database-asset-id dbscan_doops-edu_edu-coder_agents_postgres_postgres \
-  --environment-id edu --database-engine postgres --database-name agentcloud \
   --required-keys connection_uri
 
 # 4. 激活已经覆盖全部 active grants 的版本

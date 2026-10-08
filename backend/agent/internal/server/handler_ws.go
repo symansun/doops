@@ -1279,11 +1279,7 @@ func credentialBindingContext(bindings []api.AgentCredentialBinding) (string, er
 			return "", errors.New("credential_binding_metadata_invalid")
 		}
 		if binding.Use == string(CredentialUseDatabase) {
-			if !validCredentialMetadataToken(binding.DatabaseAssetID, 128) ||
-				!validCredentialMetadataToken(binding.EnvironmentID, 128) ||
-				(binding.DatabaseEngine != "mysql" && binding.DatabaseEngine != "postgres" && binding.DatabaseEngine != "mongodb") ||
-				!validDatabaseName(binding.DatabaseName) ||
-				!validDatabaseCredentialKeys(binding.DatabaseEngine, binding.Keys) {
+			if len(binding.Keys) == 0 {
 				return "", errors.New("credential_binding_metadata_invalid")
 			}
 		}

@@ -76,22 +76,37 @@ func normalizeCredentialGrantScope(scope CredentialGrantScope) CredentialGrantSc
 	scope.HelmRelease = strings.TrimSpace(scope.HelmRelease)
 	scope.HelmChart = strings.TrimSpace(scope.HelmChart)
 	scope.RequiredKeys = normalizedCredentialKeys(scope.RequiredKeys)
+	if scope.Use == CredentialUseDatabase {
+		// Database assets and execution semantics belong to DoSql. Gateway only
+		// grants target-scoped use of the opaque credential and its staging namespace.
+		scope.Workload = CredentialPlanWorkload{}
+		scope.DatabaseAssetID = ""
+		scope.EnvironmentID = ""
+		scope.DatabaseEngine = ""
+		scope.DatabaseName = ""
+		scope.RequiredKeys = nil
+	}
 	return scope
 }
 
 func validateCredentialGrantScope(scope CredentialGrantScope) error {
 	scope = normalizeCredentialGrantScope(scope)
 	if scope.Cluster == "" || scope.Instance == "" || !validKubernetesCredentialName(scope.Namespace) ||
-		!validCredentialUse(scope.Use) || scope.Workload.Kind == "" || scope.Workload.Name == "" {
+		!validCredentialUse(scope.Use) {
 		return errors.New("credential_scope_invalid")
 	}
-	switch scope.Workload.Kind {
-	case "deployment", "statefulset", "daemonset":
-	default:
-		return errors.New("credential_scope_invalid")
-	}
-	if !validKubernetesCredentialName(scope.Workload.Name) {
-		return errors.New("credential_scope_invalid")
+	if scope.Use != CredentialUseDatabase {
+		if scope.Workload.Kind == "" || scope.Workload.Name == "" {
+			return errors.New("credential_scope_invalid")
+		}
+		switch scope.Workload.Kind {
+		case "deployment", "statefulset", "daemonset":
+		default:
+			return errors.New("credential_scope_invalid")
+		}
+		if !validKubernetesCredentialName(scope.Workload.Name) {
+			return errors.New("credential_scope_invalid")
+		}
 	}
 	switch scope.Use {
 	case CredentialUseImagePull:
@@ -110,14 +125,8 @@ func validateCredentialGrantScope(scope CredentialGrantScope) error {
 			return errors.New("credential_scope_invalid")
 		}
 	case CredentialUseDatabase:
-		if scope.DatabaseAssetID == "" || scope.EnvironmentID == "" ||
-			!validCredentialMetadataToken(scope.DatabaseAssetID, 128) ||
-			!validCredentialMetadataToken(scope.EnvironmentID, 128) ||
-			scope.DatabaseName == "" || !validDatabaseName(scope.DatabaseName) ||
-			(scope.DatabaseEngine != "mysql" && scope.DatabaseEngine != "postgres" && scope.DatabaseEngine != "mongodb") ||
-			scope.ImageRepository != "" || scope.ImageDigest != "" ||
-			scope.HelmRelease != "" || scope.HelmChart != "" ||
-			!validDatabaseCredentialKeys(scope.DatabaseEngine, scope.RequiredKeys) {
+		if scope.ImageRepository != "" || scope.ImageDigest != "" ||
+			scope.HelmRelease != "" || scope.HelmChart != "" {
 			return errors.New("credential_scope_invalid")
 		}
 	case CredentialUseGitCheckout, CredentialUseTLS:
@@ -150,6 +159,10 @@ func normalizedCredentialKeys(values []string) []string {
 func credentialScopeEqual(left, right CredentialGrantScope) bool {
 	left = normalizeCredentialGrantScope(left)
 	right = normalizeCredentialGrantScope(right)
+	if left.Use == CredentialUseDatabase && right.Use == CredentialUseDatabase {
+		return left.Cluster == right.Cluster && left.Instance == right.Instance &&
+			left.Namespace == right.Namespace && left.Use == right.Use
+	}
 	if left.Cluster != right.Cluster || left.Instance != right.Instance ||
 		left.Namespace != right.Namespace || left.Use != right.Use ||
 		left.Workload != right.Workload || left.DatabaseAssetID != right.DatabaseAssetID ||
@@ -313,7 +326,10 @@ func credentialSecretLikeKey(key string) bool {
 func credentialScopePlanningInstruction(instruction string, names []string) string {
 	return fmt.Sprintf(`Plan managed credential scopes for the deployment task below.
 Do not execute tools and do not make changes. Return only JSON matching:
-{"apiVersion":%q,"kind":%q,"references":[{"name":"...","scope":{"namespace":"...","use":"imagePull|gitCheckout|helmPull|tls|opaqueSecret|database","workload":{"kind":"Deployment|StatefulSet|DaemonSet","name":"..."},"database_asset_id":"...","environment_id":"...","database_engine":"mysql|postgres|mongodb","database_name":"...","image_repository":"...","image_digest":"sha256:...","helm_release":"...","helm_chart":"https://charts.example/...","required_keys":["..."]}}]}
+{"apiVersion":%q,"kind":%q,"references":[{"name":"...","scope":{"namespace":"...","use":"imagePull|gitCheckout|helmPull|tls|opaqueSecret|database","workload":{"kind":"Deployment|StatefulSet|DaemonSet","name":"..."},"image_repository":"...","image_digest":"sha256:...","helm_release":"...","helm_chart":"https://charts.example/...","required_keys":["..."]}}]}
+For use=database, only provide the target staging namespace and use=database. Do not bind
+database asset, environment, engine, database name or workload in the Gateway scope; those
+are DoSql execution context.
 Return every explicit credential name exactly once and no other name. Omit fields that do not apply. Never output credential values.
 Explicit credential names: %q
 Deployment task:

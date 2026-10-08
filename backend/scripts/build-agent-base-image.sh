@@ -44,6 +44,7 @@ docker build \
 
 docker run --rm --entrypoint /usr/local/bin/do-agent "${BASE_IMAGE}" --version
 docker run --rm --entrypoint /usr/local/bin/buildctl "${BASE_IMAGE}" --version
+docker run --rm --entrypoint /usr/bin/skopeo "${BASE_IMAGE}" --version
 docker run --rm --entrypoint /usr/local/bin/kubectl "${BASE_IMAGE}" version --client=true
 docker run --rm --entrypoint /usr/bin/python3 "${BASE_IMAGE}" -c 'import yaml'
 docker run --rm --entrypoint /usr/local/bin/helm "${BASE_IMAGE}" version --short

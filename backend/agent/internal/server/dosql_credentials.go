@@ -65,7 +65,7 @@ func bindDoSQLCredentialsForPrompt(session string, bindings []api.AgentCredentia
 	return cleanup, nil
 }
 
-func authorizedDoSQLCredential(session, name, engine, databaseAssetID, environmentID, databaseName string) (api.AgentCredentialBinding, error) {
+func authorizedDoSQLCredential(session, name string) (api.AgentCredentialBinding, error) {
 	if validateSession(session) != nil || strings.TrimSpace(name) == "" {
 		return api.AgentCredentialBinding{}, errors.New("dosql_credential_scope_invalid")
 	}
@@ -88,9 +88,7 @@ func authorizedDoSQLCredential(session, name, engine, databaseAssetID, environme
 	var matched *api.AgentCredentialBinding
 	for index := range lease.Bindings {
 		binding := &lease.Bindings[index]
-		if binding.Name != name || binding.DatabaseEngine != engine ||
-			binding.DatabaseAssetID != databaseAssetID || binding.EnvironmentID != environmentID ||
-			binding.DatabaseName != databaseName {
+		if binding.Name != name || binding.Use != string(CredentialUseDatabase) {
 			continue
 		}
 		if matched != nil {
@@ -112,11 +110,7 @@ func validateDoSQLBinding(binding api.AgentCredentialBinding) error {
 		!validCredentialMetadataToken(binding.CredentialID, 128) ||
 		!validCredentialMetadataToken(binding.GrantID, 128) ||
 		!validCredentialMetadataToken(binding.VersionID, 128) ||
-		!validCredentialMetadataToken(binding.DatabaseAssetID, 128) ||
-		!validCredentialMetadataToken(binding.EnvironmentID, 128) ||
-		(binding.DatabaseEngine != "mysql" && binding.DatabaseEngine != "postgres" && binding.DatabaseEngine != "mongodb") ||
-		!validDatabaseName(binding.DatabaseName) ||
-		!validDatabaseCredentialKeys(binding.DatabaseEngine, binding.Keys) {
+		len(binding.Keys) == 0 {
 		return errors.New("dosql_credential_binding_invalid")
 	}
 	if binding.SecretType != "Opaque" || binding.ResourceVersion == "" {

@@ -68,6 +68,7 @@ test "$(
 ACTUAL_DOAGENT_VERSION="$(docker run --rm --entrypoint /usr/local/bin/do-agent "${APP_IMAGE}" --version | awk '{print $NF}')"
 test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"
 docker run --rm --entrypoint /usr/local/bin/buildctl "${APP_IMAGE}" --version
+docker run --rm --entrypoint /usr/bin/skopeo "${APP_IMAGE}" --version
 docker run --rm --entrypoint /usr/bin/python3 "${APP_IMAGE}" -c 'import yaml'
 docker run --rm --entrypoint /usr/local/bin/helm "${APP_IMAGE}" version --short
 docker run --rm --entrypoint /usr/bin/ssh "${APP_IMAGE}" -V ||

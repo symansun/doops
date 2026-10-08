@@ -26,7 +26,6 @@ func runRegistryCommand(args []string, sessionName string, servers []Server, con
 	registryFlags.SetOutput(os.Stdout)
 	var target, sourceRegistry, targetRegistry, tag, sourceAuthfile, targetAuthfile string
 	var timeoutSeconds int
-	var installSkopeo bool
 	var images stringListFlag
 	registryFlags.StringVar(&target, "target", "", "Configured Gateway target")
 	registryFlags.StringVar(&sourceRegistry, "source-registry", "", "Source registry/repository prefix")
@@ -35,7 +34,6 @@ func runRegistryCommand(args []string, sessionName string, servers []Server, con
 	registryFlags.StringVar(&sourceAuthfile, "source-authfile", "", "Remote source registry authfile path")
 	registryFlags.StringVar(&targetAuthfile, "target-authfile", "", "Remote target registry authfile path")
 	registryFlags.IntVar(&timeoutSeconds, "timeout", 600, "Timeout per copy/inspect operation in seconds")
-	registryFlags.BoolVar(&installSkopeo, "install-skopeo", false, "Install skopeo with the target package manager when missing")
 	registryFlags.Var(&images, "image", "Image name without registry/tag (repeatable)")
 	if err := registryFlags.Parse(args[1:]); err != nil {
 		if err == flag.ErrHelp {
@@ -72,7 +70,7 @@ func runRegistryCommand(args []string, sessionName string, servers []Server, con
 	client.Token = mustResolveToken(*server)
 	defer client.Close()
 
-	command := buildRegistrySyncCommand(sourceRegistry, targetRegistry, tag, sourceAuthfile, targetAuthfile, images, timeoutSeconds, installSkopeo)
+	command := buildRegistrySyncCommand(sourceRegistry, targetRegistry, tag, sourceAuthfile, targetAuthfile, images, timeoutSeconds)
 	if err := client.Call("doops_shell", map[string]interface{}{"command": command}); err != nil {
 		return err
 	}
@@ -80,13 +78,8 @@ func runRegistryCommand(args []string, sessionName string, servers []Server, con
 	return nil
 }
 
-func buildRegistrySyncCommand(sourceRegistry, targetRegistry, tag, sourceAuthfile, targetAuthfile string, images []string, timeoutSeconds int, installSkopeo bool) string {
-	parts := []string{"set -eu", "command -v timeout >/dev/null 2>&1", "command -v sha256sum >/dev/null 2>&1"}
-	if installSkopeo {
-		parts = append(parts, `if ! command -v skopeo >/dev/null 2>&1; then if command -v dnf >/dev/null 2>&1; then sudo -n dnf install -y skopeo; elif command -v apt-get >/dev/null 2>&1; then sudo -n apt-get update && sudo -n apt-get install -y skopeo; elif command -v apk >/dev/null 2>&1; then sudo -n apk add --no-cache skopeo; else echo 'skopeo installation is unsupported on this target' >&2; exit 1; fi; fi`)
-	} else {
-		parts = append(parts, "command -v skopeo >/dev/null 2>&1")
-	}
+func buildRegistrySyncCommand(sourceRegistry, targetRegistry, tag, sourceAuthfile, targetAuthfile string, images []string, timeoutSeconds int) string {
+	parts := []string{"set -eu", "command -v timeout >/dev/null 2>&1", "command -v sha256sum >/dev/null 2>&1", "command -v skopeo >/dev/null 2>&1"}
 	for _, image := range images {
 		sourceRef := sourceRegistry + "/" + image + ":" + tag
 		targetRef := targetRegistry + "/" + image + ":" + tag
