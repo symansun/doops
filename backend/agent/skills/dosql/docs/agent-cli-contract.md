@@ -24,6 +24,7 @@ Implemented commands:
 - `query`
 - `execute`
 - `discover-databases`
+- `discover-resources`
 - `register-database`
 - `compare-databases`
 - `derive-change-plan-from-comparison`
@@ -92,6 +93,7 @@ execution.
 | `inspect-schema` | Target | Return current schema or collection metadata. |
 | `classify` | Implemented | Classify a statement before execution. Server policy remains final. |
 | `discover-databases` | Implemented | Convert supplied service probe output into database candidates and naming prompts. |
+| `discover-resources` | Implemented | Scan authorized repository text/config metadata and explicit target hints for database assets, then persist a metadata-only inventory without secret payloads. |
 | `register-database` | Implemented | Convert database probe output into assets, baseline versions, snapshots and checklist items. |
 | `compare-databases` | Implemented | Compare structure snapshots against a reference database and write a difference artifact. |
 | `derive-change-plan-from-comparison` | Implemented | Derive additive change descriptors and manual review items from a database comparison artifact. |

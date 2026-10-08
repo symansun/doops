@@ -17,6 +17,7 @@ import {
   resolveDatabaseReference,
 } from "../Server/lib/database-discovery.mjs";
 import { runDatabaseScan } from "../Server/lib/database-scanner.mjs";
+import { discoverAndPersistResources } from "../Server/lib/resource-discovery.mjs";
 import {
   createDatabaseCliAdapter,
   executeControlledDatabaseOperation,
@@ -80,6 +81,7 @@ const READ_ONLY_COMMANDS = new Set([
   "check-head-drift",
   "classify",
   "discover-databases",
+  "discover-resources",
   "plan-rollback",
   "plan-rollback-at",
   "query",
@@ -170,6 +172,8 @@ async function runCommand(command, input) {
       return deriveInitialBaselineFromStructureSnapshot(input);
     case "discover-databases":
       return buildDatabaseDiscovery(input);
+    case "discover-resources":
+      return discoverAndPersistResources(input);
     case "register-database":
       return registerDatabase(input);
     case "import-drift":

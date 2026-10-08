@@ -135,7 +135,7 @@ isolation, audit or execution-outcome evidence.
   `hoj`, `oilan-system` and `shenben`, including service ports 5432, 27017 and
   3306. This was collected with `doops -session ... exec` using metadata-only
   `kubectl get`; no Secret values or database mutations were read. The new
-  `mcp_doops_sql_read operation=discover` is local source only and still needs
+  `mcp_dosql_read operation=discover` is local source only and still needs
   an immutable Agent rollout before the same scan can be claimed through MCP.
 - Production Console build passed after adding conversation reference controls.
 - Full DoSql standalone CLI suite passed 58 tests; full Gateway suite passed.
