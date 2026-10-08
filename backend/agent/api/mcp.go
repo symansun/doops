@@ -169,6 +169,10 @@ type AgentCredentialBinding struct {
 	HelmChart       string   `json:"helm_chart,omitempty"`
 	ContextKind     string   `json:"context_kind,omitempty"`
 	ContextSocket   string   `json:"context_socket,omitempty"`
+	DatabaseAssetID string   `json:"database_asset_id,omitempty"`
+	EnvironmentID   string   `json:"environment_id,omitempty"`
+	DatabaseEngine  string   `json:"database_engine,omitempty"`
+	DatabaseName    string   `json:"database_name,omitempty"`
 }
 
 // GitCloneParams clones a configured repository into a session workspace.

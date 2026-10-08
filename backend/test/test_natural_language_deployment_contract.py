@@ -104,7 +104,7 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "validate_simple_name" in deploy_script
     assert "validate_single_line" in deploy_script
     assert 'test "${#image_digest}" -eq 64' in deploy_script
-    assert 'DOOPS_HELM_ASSET must be an explicit https:// or oci:// chart URL' in deploy_script
+    assert 'DOOPS_HELM_ASSET must be an explicit https:// chart URL' in deploy_script
     assert '"https://doops.l8ai.cn"' in cnb
     assert '-session "${DOOPS_SESSION}" push' not in cnb
     assert "--src backend" not in cnb

@@ -468,7 +468,7 @@ func (c *doagentToolTraceCollector) hasUnresolvedMutation() bool {
 			return true
 		}
 		tool := modelVisibleDoagentToolName(trace.ToolName)
-		if tool != "doops_helm" && tool != "doops_web" {
+		if tool != "doops_helm" && tool != "doops_web" && tool != "dosql_execute" {
 			continue
 		}
 		trace.expectedSessionID = c.expectedSessionID
@@ -526,7 +526,7 @@ func (trace doagentToolTrace) terminalMutationReason() string {
 		return "raw_cluster_mutation_forbidden"
 	}
 	tool := modelVisibleDoagentToolName(trace.ToolName)
-	if tool != "doops_helm" && tool != "doops_web" {
+	if tool != "doops_helm" && tool != "doops_web" && tool != "dosql_execute" {
 		return "structured_mutation_tool_required"
 	}
 	if reason := trace.runtimeMutationAttestationReason(); reason != "" {
@@ -537,7 +537,11 @@ func (trace doagentToolTrace) terminalMutationReason() string {
 
 func (trace doagentToolTrace) runtimeMutationAttestationReason() string {
 	tool := modelVisibleDoagentToolName(trace.ToolName)
-	realTool := strings.TrimPrefix(tool, "doops_")
+	binding := runtimeToolBinding(tool)
+	if binding.Server == "" {
+		return "structured_mutation_tool_required"
+	}
+	realTool := binding.Tool
 	if trace.AttestationSchema != "doops.tool-attestation/v2" {
 		return "attestation_schema_invalid"
 	}
@@ -555,7 +559,7 @@ func (trace doagentToolTrace) runtimeMutationAttestationReason() string {
 	}
 	expectedScope := map[string]interface{}{
 		"runtimeSessionId": trace.expectedSessionID,
-		"server":           "doops",
+		"server":           binding.Server,
 		"tool":             realTool,
 	}
 	if !reflect.DeepEqual(trace.CanonicalScope, expectedScope) {
@@ -576,7 +580,7 @@ func (trace doagentToolTrace) runtimeMutationAttestationReason() string {
 	expectedInputDigest, err := digestRuntimeAttestationJSON(map[string]interface{}{
 		"arguments":        inputObject,
 		"runtimeSessionId": trace.expectedSessionID,
-		"server":           "doops",
+		"server":           binding.Server,
 		"tool":             realTool,
 	})
 	if err != nil || trace.InputDigest != expectedInputDigest {
@@ -600,6 +604,8 @@ func (trace doagentToolTrace) runtimeMutationAttestationReason() string {
 	allowedOperations := helmMutationOperations
 	if tool == "doops_web" {
 		allowedOperations = webMutationOperations
+	} else if tool == "dosql_execute" {
+		allowedOperations = doSQLMutationOperations
 	}
 	if !stringSliceContains(allowedOperations, operation) {
 		return "mutation_operation_invalid"
@@ -774,8 +780,28 @@ func modelVisibleDoagentToolName(runtimeName string) string {
 		return "doops_helm"
 	case "mcp_doops_web":
 		return "doops_web"
+	case "mcp_dosql_execute":
+		return "dosql_execute"
 	}
 	return runtimeName
+}
+
+type doagentRuntimeToolBinding struct {
+	Server string
+	Tool   string
+}
+
+func runtimeToolBinding(modelTool string) doagentRuntimeToolBinding {
+	switch modelTool {
+	case "doops_helm":
+		return doagentRuntimeToolBinding{Server: "doops", Tool: "helm"}
+	case "doops_web":
+		return doagentRuntimeToolBinding{Server: "doops", Tool: "web"}
+	case "dosql_execute":
+		return doagentRuntimeToolBinding{Server: "dosql", Tool: "execute"}
+	default:
+		return doagentRuntimeToolBinding{}
+	}
 }
 
 func stableDoagentJSON(value interface{}) (json.RawMessage, error) {

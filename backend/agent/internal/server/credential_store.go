@@ -70,6 +70,7 @@ const (
 	CredentialUseHelmPull     CredentialUse = "helmPull"
 	CredentialUseTLS          CredentialUse = "tls"
 	CredentialUseOpaqueSecret CredentialUse = "opaqueSecret"
+	CredentialUseDatabase     CredentialUse = "database"
 )
 
 type CredentialResource struct {
@@ -1368,7 +1369,7 @@ func validCredentialType(credentialType CredentialType) bool {
 
 func validCredentialUse(use CredentialUse) bool {
 	switch use {
-	case CredentialUseImagePull, CredentialUseGitCheckout, CredentialUseHelmPull, CredentialUseTLS, CredentialUseOpaqueSecret:
+	case CredentialUseImagePull, CredentialUseGitCheckout, CredentialUseHelmPull, CredentialUseTLS, CredentialUseOpaqueSecret, CredentialUseDatabase:
 		return true
 	default:
 		return false

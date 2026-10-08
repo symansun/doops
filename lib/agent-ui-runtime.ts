@@ -8,6 +8,7 @@ import type { AgentAttachmentReference } from "@agent-cloud/agent-ui"
 import type { Session, Target } from "./client"
 import type { AgentSessionSnapshot } from "@agent-cloud/agent-ui"
 import { createDoopsAgentSessionTransport } from "./agent-session-transport"
+import type { DoopsConversationReferences } from "./agent-session-transport"
 
 export function isDoopsAgentSessionBusy(snapshot: AgentSessionSnapshot): boolean {
   return snapshot.status === "running" ||
@@ -19,6 +20,7 @@ export function createDoopsAgentUiRuntime(options: {
   session: Session
   target: Target
   sessionId: string
+  references?: { current: DoopsConversationReferences }
 }): AgentSessionRuntimeV2 {
   return createAgentWorkbenchRuntime({
     sessionId: options.sessionId,

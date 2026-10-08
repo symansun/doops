@@ -984,7 +984,8 @@ function GrantDialog({
   onDone: (message: string) => void
   onError: (message: string) => void
 }) {
-  const use = TYPE_USES[credential.type]
+  const [selectedUse, setSelectedUse] = useState<CredentialUse>(TYPE_USES[credential.type])
+  const use = selectedUse
   const [namespace, setNamespace] = useState("default")
   const [workloadKind, setWorkloadKind] = useState("deployment")
   const [workloadName, setWorkloadName] = useState("")
@@ -993,6 +994,10 @@ function GrantDialog({
   const [helmRelease, setHelmRelease] = useState("")
   const [helmChart, setHelmChart] = useState("")
   const [requiredKeys, setRequiredKeys] = useState("")
+  const [databaseAssetID, setDatabaseAssetID] = useState("")
+  const [environmentID, setEnvironmentID] = useState("")
+  const [databaseEngine, setDatabaseEngine] = useState<"mysql" | "postgres" | "mongodb">("postgres")
+  const [databaseName, setDatabaseName] = useState("")
   const [busy, setBusy] = useState(false)
   const requiredKeyList = useMemo(
     () =>
@@ -1012,12 +1017,17 @@ function GrantDialog({
     }
     if (use === "helmPull") {
       if (!helmRelease.trim()) return "Helm release 必填"
-      if (!/^(https|oci):\/\/\S+$/.test(helmChart.trim())) {
-        return "Helm chart 必须是明确的 https:// 或 oci:// URL"
+      if (!/^https:\/\/\S+$/.test(helmChart.trim())) {
+        return "Helm chart 必须是明确的 HTTPS URL"
       }
     }
     if (use === "opaqueSecret" && requiredKeyList.length === 0) {
       return "Required keys 至少填写一项"
+    }
+    if (use === "database") {
+      if (!databaseAssetID.trim() || !environmentID.trim() || !databaseName.trim()) {
+        return "数据库资产、环境和数据库名必填"
+      }
     }
     return ""
   }, [
@@ -1027,6 +1037,9 @@ function GrantDialog({
     imageRepository,
     namespace,
     requiredKeyList,
+    databaseAssetID,
+    databaseName,
+    environmentID,
     use,
     workloadName,
   ])
@@ -1043,6 +1056,9 @@ function GrantDialog({
       use,
       workload: { kind: workloadKind, name: workloadName.trim() },
     }
+    if (credential.type === "opaque") {
+      scope.use = use
+    }
     if (use === "imagePull") {
       scope.image_repository = imageRepository.trim()
       scope.image_digest = imageDigest.trim()
@@ -1051,6 +1067,14 @@ function GrantDialog({
       scope.helm_chart = helmChart.trim()
     } else if (use === "opaqueSecret") {
       scope.required_keys = requiredKeyList
+    } else if (use === "database") {
+      scope.database_asset_id = databaseAssetID.trim()
+      scope.environment_id = environmentID.trim()
+      scope.database_engine = databaseEngine
+      scope.database_name = databaseName.trim()
+      scope.required_keys = databaseEngine === "mysql"
+        ? ["SPRING_DATASOURCE_URL", "SPRING_DATASOURCE_USERNAME", "SPRING_DATASOURCE_PASSWORD"]
+        : ["connection_uri"]
     }
     setBusy(true)
     onError("")
@@ -1068,7 +1092,15 @@ function GrantDialog({
     <DialogFrame title={`授权当前目标 · ${credential.name}`} onClose={onClose}>
       <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
         <ReadOnlyField label="目标" value={`${target.cluster}/${target.instance}`} />
-        <ReadOnlyField label="用途" value={use} />
+        {credential.type === "opaque" ? (
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            用途
+            <select className="input" value={use} onChange={(event) => setSelectedUse(event.target.value as CredentialUse)}>
+              <option value="opaqueSecret">Opaque Secret</option>
+              <option value="database">数据库连接</option>
+            </select>
+          </label>
+        ) : <ReadOnlyField label="用途" value={use} />}
         <TextField label="Namespace" value={namespace} onChange={setNamespace} />
         <label className="flex flex-col gap-1 text-xs text-muted-foreground">
           Workload kind
@@ -1111,6 +1143,24 @@ function GrantDialog({
             onChange={setRequiredKeys}
             placeholder="username,password"
           />
+        )}
+        {use === "database" && (
+          <>
+            <TextField label="数据库资产 ID" value={databaseAssetID} onChange={setDatabaseAssetID} />
+            <TextField label="环境 ID" value={environmentID} onChange={setEnvironmentID} />
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              数据库引擎
+              <select className="input" value={databaseEngine} onChange={(event) => setDatabaseEngine(event.target.value as typeof databaseEngine)}>
+                <option value="postgres">PostgreSQL</option>
+                <option value="mysql">MySQL</option>
+                <option value="mongodb">MongoDB</option>
+              </select>
+            </label>
+            <TextField label="数据库名" value={databaseName} onChange={setDatabaseName} />
+            <p className="text-xs text-muted-foreground sm:col-span-2">
+              受管凭据 payload 的 keys：{databaseEngine === "mysql" ? "SPRING_DATASOURCE_URL、SPRING_DATASOURCE_USERNAME、SPRING_DATASOURCE_PASSWORD" : "connection_uri"}
+            </p>
+          </>
         )}
         {scopeError && <p className="text-xs text-destructive sm:col-span-2">{scopeError}</p>}
         <div className="flex justify-end sm:col-span-2">

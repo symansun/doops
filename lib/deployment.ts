@@ -23,7 +23,7 @@ export function deploymentRequest(target: Target, input: DeploymentInput) {
   const name = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/
   if (!name.test(input.release) || !name.test(input.namespace)) throw new Error("Release 和 namespace 必须为有效 Kubernetes 名称")
   const chart = new URL(input.chart)
-  if (!["https:", "oci:"].includes(chart.protocol) || !chart.hostname || chart.username || chart.password) throw new Error("Chart 必须为无凭据的 HTTPS 或 OCI 地址")
+  if (chart.protocol !== "https:" || !chart.hostname || chart.username || chart.password) throw new Error("Chart 必须为无凭据的 HTTPS 地址")
   const values = input.values.split(/\s+/).filter(Boolean)
   for (const value of values) {
     const url = new URL(value)

@@ -416,7 +416,7 @@ func pathWithin(root, target string) bool {
 func resolveRemoteHelmChartReference(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if !isRemoteHelmChartReference(value) {
-		return "", fmt.Errorf("helm chart must be an explicit https:// or oci:// reference")
+		return "", fmt.Errorf("helm chart must be an explicit https:// reference")
 	}
 	return value, nil
 }
@@ -430,7 +430,7 @@ func resolveRemoteHelmValueReference(value string) (string, error) {
 }
 
 func isRemoteHelmChartReference(value string) bool {
-	return isRemoteHelmReference(value, "oci", "https")
+	return isRemoteHelmReference(value, "https")
 }
 
 func isRemoteHelmValueReference(value string) bool {

@@ -32,9 +32,11 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | One RPC waits for the Agent task's terminal result; no task-status polling or command retries. |
 | Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
 | Run an authorized release | `doops -session <s> ask --target <t> --apply --credential <name> --msg '<facts>'` | Canonical business workload CI/CD entry. |
-| DoSql read-only query or scan | `doops -session <s> ask --target <t> --msg 'Use DoSql for a read-only database check: <request>'` | Uses the selected Gateway target and Agent skill; no local connection file is read. |
-| DoSql change plan | `doops -session <s> ask --target <t> --msg 'Use DoSql to produce a change plan for <request>; do not execute'` | Returns business summary, risk and verification evidence without mutation. |
-| DoSql controlled mutation | `doops -session <s> ask --target <t> --apply --credential <database-resource> --msg 'Use DoSql for approved change <request>'` | Requires Gateway action/credential scope and DoSql change evidence. |
+| DoSql read-only query or scan | `doops -session <s> sql --target <t> --mode query --credential <database-resource> --request '<request>'` | Uses the selected Gateway target and Agent skill; no local connection file is read. |
+| DoSql change plan | `doops -session <s> sql --target <t> --mode plan --request '<request>'` | Returns business summary, risk and verification evidence without mutation. |
+| DoSql controlled mutation | `doops -session <s> sql --target <t> --mode apply --credential <database-resource> --request '<approved change>'` | Requires Gateway action/credential scope and DoSql change evidence. |
+| DoSql target discovery | `doops -session <s> sql --target <t> --mode discover --request '<request>'` | Uses `mcp_dosql_read` to scan non-Secret target metadata; it never stores connection secrets. |
+| DoSql repository/resource discovery | `doops -session <s> sql --target <t> --mode discover --root <authorized-repo> --resources-file <assets.json> --project <id> --environment <id> --dosql-script <path>/dosql-agent.mjs` | Scans authorized code/config metadata and persists a metadata-only database inventory. |
 | DoWeb read-only inspection | `doops -session <s> web --target <t> --mode check --request '<site/Nginx/TLS/health request>'` | Uses the selected Gateway target and DoWeb evidence path. |
 | DoWeb site plan | `doops -session <s> web --target <t> --mode plan --request '<site publish request>'` | Produces SiteSpec, Nginx plan, checks and rollback without mutation. |
 | DoWeb controlled publish | `doops -session <s> web --target <t> --mode apply --credential <web-resource> --request '<site, dist, domain, proxy, acceptance>'` | Requires Gateway mutation authority and `nginx -t`/reload/health evidence. |
@@ -589,6 +591,16 @@ doops credential grant --target gw-edu-coder \
   --image-repository registry.example.com/oilan \
   --image-digest sha256:<manifest-digest>
 
+# DoSql database grant: all four database fields come from target discovery
+doops credential grant --target gw-edu-coder \
+  --id <credential-id> \
+  --cluster doops-edu --instance edu-coder \
+  --namespace agents --use database \
+  --workload-kind Deployment --workload-name postgres \
+  --database-asset-id dbscan_doops-edu_edu-coder_agents_postgres_postgres \
+  --environment-id edu --database-engine postgres --database-name agentcloud \
+  --required-keys connection_uri
+
 # 3. 在相同 scope 验证 staged version
 doops -session credential-verify-<version> credential verify \
   --target gw-edu-coder \
@@ -598,6 +610,14 @@ doops -session credential-verify-<version> credential verify \
   --workload-kind Deployment --workload-name oilan \
   --image-repository registry.example.com/oilan \
   --image-digest sha256:<manifest-digest>
+
+doops -session credential-verify-db-<version> credential verify \
+  --target gw-edu-coder --id <credential-id> --version-id <version-id> \
+  --cluster doops-edu --instance edu-coder --namespace agents --use database \
+  --workload-kind Deployment --workload-name postgres \
+  --database-asset-id dbscan_doops-edu_edu-coder_agents_postgres_postgres \
+  --environment-id edu --database-engine postgres --database-name agentcloud \
+  --required-keys connection_uri
 
 # 4. 激活已经覆盖全部 active grants 的版本
 doops credential promote \

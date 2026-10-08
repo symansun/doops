@@ -24,6 +24,7 @@ Implemented commands:
 - `query`
 - `execute`
 - `discover-databases`
+- `discover-resources`
 - `register-database`
 - `compare-databases`
 - `derive-change-plan-from-comparison`
@@ -92,6 +93,7 @@ execution.
 | `inspect-schema` | Target | Return current schema or collection metadata. |
 | `classify` | Implemented | Classify a statement before execution. Server policy remains final. |
 | `discover-databases` | Implemented | Convert supplied service probe output into database candidates and naming prompts. |
+| `discover-resources` | Implemented | Scan authorized code, connection references, Helm values and Kubernetes manifests, merge PostgreSQL/MySQL/MongoDB assets with explicit target hints, preserve Gateway canonical asset IDs, deduplicate by database identity, and persist metadata-only inventory/display resources without secret payloads. |
 | `register-database` | Implemented | Convert database probe output into assets, baseline versions, snapshots and checklist items. |
 | `compare-databases` | Implemented | Compare structure snapshots against a reference database and write a difference artifact. |
 | `derive-change-plan-from-comparison` | Implemented | Derive additive change descriptors and manual review items from a database comparison artifact. |

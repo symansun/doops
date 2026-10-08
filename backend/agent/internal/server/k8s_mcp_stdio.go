@@ -18,6 +18,8 @@ const (
 	k8sReadMCPToolName = "k8s_read"
 	helmMCPToolName    = "helm"
 	webReadMCPToolName = "web_read"
+	mcpDomainDoops     = "doops"
+	mcpDomainDoSQL     = "dosql"
 )
 
 var (
@@ -48,7 +50,14 @@ func RunK8SMCPStdio(input io.Reader, output io.Writer) error {
 }
 
 func RunK8SMCPStdioContext(ctx context.Context, input io.Reader, output io.Writer) error {
-	return runK8SMCPStdioContext(ctx, input, output, boundSessionFromWorkingDirectory)
+	return RunK8SMCPStdioDomainContext(ctx, input, output, mcpDomainDoops)
+}
+
+func RunK8SMCPStdioDomainContext(ctx context.Context, input io.Reader, output io.Writer, domain string) error {
+	if domain != mcpDomainDoops && domain != mcpDomainDoSQL {
+		return fmt.Errorf("unsupported MCP domain %q", domain)
+	}
+	return runK8SMCPStdioDomainContext(ctx, input, output, boundSessionFromWorkingDirectory, domain)
 }
 
 func runK8SMCPStdioContext(
@@ -56,6 +65,16 @@ func runK8SMCPStdioContext(
 	input io.Reader,
 	output io.Writer,
 	resolveSession func() (string, error),
+) error {
+	return runK8SMCPStdioDomainContext(ctx, input, output, resolveSession, mcpDomainDoops)
+}
+
+func runK8SMCPStdioDomainContext(
+	ctx context.Context,
+	input io.Reader,
+	output io.Writer,
+	resolveSession func() (string, error),
+	domain string,
 ) error {
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
@@ -85,16 +104,16 @@ func runK8SMCPStdioContext(
 		case "notifications/initialized":
 			continue
 		case "tools/list":
+			tools, err := mcpToolsForDomain(domain)
+			if err != nil {
+				response = mcpErrorResponse(request.ID, -32602, err.Error())
+				break
+			}
 			response = api.JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      request.ID,
 				Result: map[string]interface{}{
-					"tools": []interface{}{
-						k8sMCPToolDefinition(k8sReadMCPToolName, k8sReadOperations, "Read Kubernetes state through the canonical doops_k8s contract. For operation=events, omit resource for namespace-wide events; an object filter must be kind/name. Never use Bash or kubectl as a fallback."),
-						helmMCPToolDefinition(),
-						webMCPToolDefinition(webReadMCPToolName, webReadOperations, "Read a target-local DoWeb site, Nginx or health state without mutation."),
-						webMCPToolDefinition(webMCPToolName, webMutationOperations, "Mutate a target-local DoWeb site through SiteSpec, validation, health and rollback evidence. Requires confirm=true."),
-					},
+					"tools": tools,
 				},
 			}
 		case "tools/call":
@@ -103,7 +122,7 @@ func runK8SMCPStdioContext(
 				response = mcpErrorResponse(request.ID, -32000, err.Error())
 				break
 			}
-			response = callK8SMCPTool(ctx, request, sessionID)
+			response = callK8SMCPToolDomain(ctx, request, sessionID, domain)
 		default:
 			response = mcpErrorResponse(request.ID, -32601, "method not found")
 		}
@@ -114,14 +133,45 @@ func runK8SMCPStdioContext(
 	return scanner.Err()
 }
 
+func mcpToolsForDomain(domain string) ([]interface{}, error) {
+	switch domain {
+	case mcpDomainDoops:
+		return []interface{}{
+			k8sMCPToolDefinition(k8sReadMCPToolName, k8sReadOperations, "Read Kubernetes state through the canonical doops_k8s contract. For operation=events, omit resource for namespace-wide events; an object filter must be kind/name. Never use Bash or kubectl as a fallback."),
+			helmMCPToolDefinition(),
+			webMCPToolDefinition(webReadMCPToolName, webReadOperations, "Read a target-local DoWeb site, Nginx or health state without mutation."),
+			webMCPToolDefinition(webMCPToolName, webMutationOperations, "Mutate a target-local DoWeb site through SiteSpec, validation, health and rollback evidence. Requires confirm=true."),
+		}, nil
+	case mcpDomainDoSQL:
+		return []interface{}{
+			doSQLMCPToolDefinition(doSQLReadMCPToolName, doSQLReadOperations, "Run a Gateway-authorized, read-only DoSql query through the target database credential. Returns bounded execution evidence, never secret payloads."),
+			doSQLMCPToolDefinition(doSQLMCPToolName, doSQLMutationOperations, "Run a Gateway-authorized DoSql mutation with signed approval, verification and journal/evidence. Requires confirm=true."),
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported MCP domain %q", domain)
+	}
+}
+
 func callK8SMCPTool(
 	ctx context.Context,
 	request k8sMCPRequest,
 	boundSessionID string,
 ) api.JSONRPCResponse {
+	return callK8SMCPToolDomain(ctx, request, boundSessionID, mcpDomainDoops)
+}
+
+func callK8SMCPToolDomain(
+	ctx context.Context,
+	request k8sMCPRequest,
+	boundSessionID string,
+	domain string,
+) api.JSONRPCResponse {
 	var call k8sMCPToolCall
 	if err := json.Unmarshal(request.Params, &call); err != nil {
 		return mcpErrorResponse(request.ID, -32602, "invalid tools/call params")
+	}
+	if !mcpToolBelongsToDomain(call.Name, domain) {
+		return mcpErrorResponse(request.ID, -32601, "unknown tool")
 	}
 	switch call.Name {
 	case k8sReadMCPToolName:
@@ -139,6 +189,14 @@ func callK8SMCPTool(
 	case webReadMCPToolName:
 		if !k8sMCPOperationAllowed(call.Arguments, webReadOperations) {
 			return webMCPErrorResponse(request.ID, -32602, "web_read tool requires a supported read operation")
+		}
+	case doSQLReadMCPToolName:
+		if !k8sMCPOperationAllowed(call.Arguments, doSQLReadOperations) {
+			return doSQLMCPErrorResponse(request.ID, -32602, "sql_read tool requires a supported read operation")
+		}
+	case doSQLMCPToolName:
+		if !k8sMCPOperationAllowed(call.Arguments, doSQLMutationOperations) {
+			return doSQLMCPErrorResponse(request.ID, -32602, "sql tool requires a supported mutation")
 		}
 	default:
 		return mcpErrorResponse(request.ID, -32601, "unknown tool")
@@ -162,6 +220,9 @@ func callK8SMCPTool(
 		result, err = handleHelmTool(ctx, boundArguments, push)
 	} else if call.Name == webMCPToolName || call.Name == webReadMCPToolName {
 		result, err = handleWebTool(ctx, boundArguments, push)
+	} else if call.Name == doSQLMCPToolName || call.Name == doSQLReadMCPToolName {
+		response := callDoSQLTool(ctx, request, boundSessionID, call.Name == doSQLMCPToolName)
+		return response
 	} else {
 		result, err = handleK8STool(ctx, boundArguments, push)
 	}
@@ -186,6 +247,13 @@ func callK8SMCPTool(
 			"isError": false,
 		},
 	}
+}
+
+func mcpToolBelongsToDomain(name, domain string) bool {
+	if domain == mcpDomainDoSQL {
+		return name == doSQLReadMCPToolName || name == doSQLMCPToolName
+	}
+	return name == k8sReadMCPToolName || name == helmMCPToolName || name == webReadMCPToolName || name == webMCPToolName
 }
 
 func webMCPToolDefinition(name string, operations []string, description string) map[string]interface{} {
@@ -331,7 +399,7 @@ func helmMCPToolDefinition() map[string]interface{} {
 					"type":        "string",
 					"enum":        []string{helmAssetSourceRemote, helmAssetSourceWorkspace},
 					"default":     helmAssetSourceRemote,
-					"description": "remote uses explicit https:// or oci:// assets; workspace uses paths relative to the runtime-bound session workspace.",
+					"description": "remote uses an explicit HTTPS Chart download; workspace uses paths relative to the runtime-bound session workspace.",
 				},
 				"chart": map[string]interface{}{
 					"type":        "string",
