@@ -182,6 +182,7 @@ func TestCredentialPromotionUsesOnlyActiveGrantVerifications(t *testing.T) {
 
 func TestCredentialVerificationErrorFinishesAudit(t *testing.T) {
 	store := openCredentialTestStore(t)
+	hub := NewGatewayHub(store, GatewayHubOptions{})
 	auditID, err := store.StartAudit(AuditEvent{
 		UserID: "user_1", CredentialID: "cred_1", Action: ActionCredentialVerify,
 		StartedAt: time.Now().UTC(),
@@ -189,7 +190,6 @@ func TestCredentialVerificationErrorFinishesAudit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start audit: %v", err)
 	}
-	hub := NewGatewayHub(store, GatewayHubOptions{})
 	response := httptest.NewRecorder()
 
 	hub.writeCredentialVerificationError(

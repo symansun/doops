@@ -367,6 +367,29 @@ func TestAgentWebSocketFileToolsRejectWorkspaceEscape(t *testing.T) {
 	}
 }
 
+func TestAgentWebSocketShellSnapshotNoOpDoesNotPanic(t *testing.T) {
+	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
+	gw := NewGateway()
+	ts := newGatewayAuthorizedAgentServer(t, gw)
+	defer ts.Close()
+
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	for _, command := range []string{
+		": # kubectl apply -f -f x",
+		"kubectl() { return 0; }; kubectl apply -f ",
+		"printf 'independent command completed\\n'",
+	} {
+		result := callToolResult(t, conn, "doops_shell", map[string]interface{}{
+			"session_id": "snapshot-noop", "command": command,
+		})
+		if result["error"] != nil || result["result"] == nil ||
+			result["result"].(map[string]interface{})["isError"] == true {
+			t.Fatalf("no-op or subsequent command failed: %q: %#v", command, result)
+		}
+	}
+}
+
 func TestGitCloneToolClonesIntoWorkspace(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
@@ -1067,7 +1090,7 @@ func TestAgentPromptReturnsAdmissionErrorImmediately(t *testing.T) {
 		"session_id":  "admission-error",
 		"instruction": "inspect",
 	})
-	if !strings.Contains(fmt.Sprint(result), "doagent_prompt_failed") ||
+	if !strings.Contains(fmt.Sprint(result), "doagent_prompt_rejected") ||
 		strings.Contains(fmt.Sprint(result), "queue full") {
 		t.Fatalf("prompt admission error must return only a stable category: %#v", result)
 	}

@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -103,7 +106,9 @@ func TestCallDoesNotRetryHTTPHandshakeError(t *testing.T) {
 	var connections atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		connections.Add(1)
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized","code":"gateway_auth_failed","auth_domain":"gateway","message":"Gateway user token is missing or invalid"}`))
 	}))
 	defer ts.Close()
 
@@ -285,11 +290,69 @@ func TestToolResultErrorTextIsDetectedBeforeCapture(t *testing.T) {
 	}
 }
 
-func TestCaptureToolNotificationTextPreservesJSONPayload(t *testing.T) {
-	payload := `{"releaseId":"beb92de1f8c7c6517dd87b4b34f2dffa061661c0","branch":"main"}`
-	got := strings.TrimSpace(captureToolNotificationText(payload + "\n"))
-	if got != payload {
-		t.Fatalf("captured JSON payload changed:\nwant=%s\n got=%s", payload, got)
+func TestRPCOutputPreservesRawJSONAndChunkBoundaries(t *testing.T) {
+	chunks := []string{
+		"  {\"ok\":true}\n\n",
+		"prefix {\"type\":\"step_finish\",\"part\":{\"reason\":\"stop\"}}\n",
+		"{\"type\":\"tool_", "use\",\"business\":true}\n",
+		" \tno trailing newline",
+	}
+	want := strings.Join(chunks, "")
+	upgrader := websocket.Upgrader{}
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		for {
+			var req map[string]interface{}
+			if err := conn.ReadJSON(&req); err != nil {
+				return
+			}
+			if req["method"] == "initialize" {
+				_ = conn.WriteJSON(map[string]interface{}{"jsonrpc": "2.0", "id": req["id"], "result": agentInitializeResult()})
+				continue
+			}
+			for _, chunk := range chunks {
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0", "method": "notifications/message",
+					"params": map[string]interface{}{
+						"request_id": req["id"], "sessionID": "raw-output", "kind": "raw", "data": chunk,
+					},
+				})
+			}
+			_ = conn.WriteJSON(map[string]interface{}{
+				"jsonrpc": "2.0", "id": req["id"],
+				"result": map[string]interface{}{"content": []interface{}{}},
+			})
+		}
+	}))
+	defer gateway.Close()
+
+	client := newGatewayTestClient(t, gateway.URL, "raw-output")
+	defer client.Close()
+	got, err := client.CallAndCapture("doops_shell", map[string]interface{}{"command": "synthetic-output"})
+	if err != nil || got != want {
+		t.Fatalf("captured stream = %q, %v; want %q", got, err, want)
+	}
+	t.Setenv("DOOPS_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	if err := saveServers([]Server{{Name: "test", Gateway: gateway.URL, Cluster: "test", Instance: "node"}}); err != nil {
+		t.Fatal(err)
+	}
+	auth := &AuthStore{}
+	auth.SetGateway(gateway.URL, "synthetic-token")
+	if err := auth.Save(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, buildDoopsCLIBinary(t), "-session", "raw-output",
+		"exec", "--target", "test", "--cmd", "synthetic-output").Output()
+	targetLine, body, found := strings.Cut(string(output), "\n")
+	if err != nil || !found || !strings.Contains(targetLine, "[TARGETING]") || body != want {
+		t.Fatalf("CLI stream = %q, %v; want %q", output, err, want)
 	}
 }
 
@@ -405,6 +468,8 @@ func TestConnectRejectsInitializeNotificationFalsePositive(t *testing.T) {
 
 func TestCallAndCaptureTimesOutWithoutFinalResult(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	cancelSeen := make(chan struct{}, 1)
+	var toolCalls atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -422,15 +487,98 @@ func TestCallAndCaptureTimesOutWithoutFinalResult(t *testing.T) {
 					"id":      req["id"],
 					"result":  map[string]interface{}{"protocolVersion": "2024-11-05"},
 				})
+				continue
+			}
+			switch req["method"] {
+			case "tools/call":
+				toolCalls.Add(1)
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0", "method": "notifications/message",
+					"params": map[string]interface{}{
+						"request_id": req["id"], "sessionID": "s", "data": "partial output\n",
+					},
+				})
+			case "tools/cancel":
+				params, _ := req["params"].(map[string]interface{})
+				if fmt.Sprint(params["id"]) == fmt.Sprint(float64(2)) {
+					select {
+					case cancelSeen <- struct{}{}:
+					default:
+					}
+				}
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0", "id": req["id"],
+					"result": map[string]interface{}{"canceled": true},
+				})
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0", "id": params["id"],
+					"error": map[string]interface{}{"code": -32008, "message": "execution_outcome_unknown"},
+				})
 			}
 		}
 	}))
 	defer ts.Close()
 	client := newGatewayTestClient(t, ts.URL, "s")
 	client.CallTimeout = 30 * time.Millisecond
-	_, err := client.CallAndCapture("doops_shell", map[string]interface{}{"command": "sleep"})
-	if err == nil || !strings.Contains(err.Error(), "timed out") {
-		t.Fatalf("expected call timeout, got %v", err)
+	got, err := client.CallAndCapture("doops_shell", map[string]interface{}{"command": "sleep"})
+	if err == nil || err.Error() != "remote error: execution_outcome_unknown" {
+		t.Fatalf("expected unknown execution outcome, got %v", err)
+	}
+	if got != "partial output\n" {
+		t.Fatalf("partial output was lost: %q", got)
+	}
+	select {
+	case <-cancelSeen:
+	case <-time.After(time.Second):
+		t.Fatal("timeout did not request cancellation")
+	}
+	if toolCalls.Load() != 1 {
+		t.Fatalf("timed-out call was replayed: %d tool calls", toolCalls.Load())
+	}
+}
+
+func TestCallAndCaptureFailurePreservesStreamedOutput(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("upgrade: %v", err)
+		}
+		defer conn.Close()
+		for {
+			var req map[string]interface{}
+			if err := conn.ReadJSON(&req); err != nil {
+				return
+			}
+			switch req["method"] {
+			case "initialize":
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0", "id": req["id"],
+					"result": map[string]interface{}{"protocolVersion": "2024-11-05"},
+				})
+			case "tools/call":
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0", "method": "notifications/message",
+					"params": map[string]interface{}{
+						"request_id": req["id"], "sessionID": "s", "data": "before failure\n",
+					},
+				})
+				_ = conn.WriteJSON(map[string]interface{}{
+					"jsonrpc": "2.0", "id": req["id"],
+					"error": map[string]interface{}{"code": -32603, "message": "synthetic failure"},
+				})
+			}
+		}
+	}))
+	defer ts.Close()
+
+	client := newGatewayTestClient(t, ts.URL, "s")
+	got, err := client.CallAndCapture("doops_shell", map[string]interface{}{"command": "fail"})
+	if err == nil || err.Error() != "remote error: synthetic failure" {
+		t.Fatalf("expected remote failure, got %v", err)
+	}
+	if got != "before failure\n" {
+		t.Fatalf("captured output was lost on failure: %q", got)
 	}
 }
 

@@ -114,10 +114,31 @@ func TestAdminOperationsCLI(t *testing.T) {
 		if err != nil {
 			t.Fatalf("list: %v\n%s", err, output)
 		}
-		for _, want := range []string{"AUDIT_ID", "STATE", "RESOURCE", "BLOCKED_BY", "waiting", "running", "cancel_requested", "outcome_unknown", "target/prod/node", "op-1,op-3", "audit-44"} {
+		for _, want := range []string{"AUDIT_ID", "STATE", "REQUESTED_RESOURCE", "EFFECTIVE_LOCK", "BLOCKED_BY", "waiting", "running", "cancel_requested", "outcome_unknown", "op-1,op-3", "audit-44"} {
 			if !strings.Contains(output, want) {
 				t.Errorf("list missing %q:\n%s", want, output)
 			}
+		}
+		wantLocks := map[string][2]string{
+			"op-1":     {"target-mutation:prod/node", "session-mutation:prod/node/release"},
+			"op-2":     {"-", "-"},
+			"op-3":     {"target-mutation:prod/node", "-"},
+			"audit-44": {"-", "-"},
+		}
+		for _, line := range strings.Split(output, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 5 {
+				continue
+			}
+			if want, ok := wantLocks[fields[0]]; ok {
+				if fields[3] != want[0] || fields[4] != want[1] {
+					t.Errorf("%s requested/effective = %q/%q, want %q/%q", fields[0], fields[3], fields[4], want[0], want[1])
+				}
+				delete(wantLocks, fields[0])
+			}
+		}
+		if len(wantLocks) != 0 {
+			t.Errorf("missing operation rows: %v", wantLocks)
 		}
 	})
 

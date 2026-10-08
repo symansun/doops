@@ -164,6 +164,7 @@ function openRPC() {
   ws.onmessage = (ev) => handleMessage(ev.data);
   ws.onerror = () => setWsState("error", "连接错误");
   ws.onclose = () => {
+    state.busy = false;
     setWsState("idle", "已断开");
     setComposerEnabled(false);
   };

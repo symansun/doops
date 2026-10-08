@@ -317,6 +317,50 @@ func TestAgentCancellationBackgroundDisconnectJoinsTask(t *testing.T) {
 	}
 }
 
+func TestAgentCancellationDisconnectJoinsTermResistantToolBeforeServeReturns(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	gw := NewGateway()
+	serveDone := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		gw.ServeGatewayWebSocketConnWithReady(conn, r.RemoteAddr, nil)
+		close(serveDone)
+	}))
+	t.Cleanup(server.Close)
+
+	conn := dialAgentTestWS(t, server.URL)
+	pidFile := filepath.Join(root, "child.pid")
+	if err := conn.WriteJSON(map[string]interface{}{
+		"jsonrpc": "2.0", "id": "term-resistant", "method": "tools/call",
+		"params": map[string]interface{}{
+			"name": "doops_shell",
+			"arguments": map[string]interface{}{
+				"session_id": "disconnect-join",
+				"command":    cancellationTestResistantCommand(pidFile),
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, group := awaitCancellationTestPID(t, pidFile)
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close WebSocket: %v", err)
+	}
+
+	select {
+	case <-serveDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ServeGatewayWebSocketConnWithReady did not return after disconnect cleanup")
+	}
+	if err := syscall.Kill(-group, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("ServeGatewayWebSocketConnWithReady returned with the old process group alive: %v", err)
+	}
+}
+
 func TestAgentCancellationBackgroundStillRejectsHelm(t *testing.T) {
 	_, conn, messages := cancellationTestAgent(t)
 	sendCancellationTestTool(t, conn, "doops_bg", map[string]interface{}{

@@ -22,6 +22,32 @@ func TestGatewayAuthLoginURLUsesVersionedEndpoint(t *testing.T) {
 	}
 }
 
+func TestGatewayLoginPreservesErrorAuthority(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"bare proxy response", "Unauthorized\n", "http_401"},
+		{"structured login rejection", `{"code":"gateway_login_invalid_credentials","auth_domain":"gateway","message":"credentials rejected"}`, "gateway_login_invalid_credentials"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer gateway.Close()
+			_, err := GatewayLogin(gateway.URL, "synthetic-user", "synthetic-password", "auth-error-test")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("login error = %v, want %q", err, tc.want)
+			}
+			if tc.want == "http_401" && (strings.Contains(err.Error(), "gateway_login_invalid_credentials") || strings.Contains(err.Error(), "auth_domain=gateway")) {
+				t.Fatalf("bare HTTP rejection invented Gateway authority: %v", err)
+			}
+		})
+	}
+}
+
 func TestGatewayAuthLoginURLPreservesGatewayPathPrefix(t *testing.T) {
 	got, err := gatewayAuthLoginURL("https://gateway.example.com/doops")
 	if err != nil {

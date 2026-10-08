@@ -48,9 +48,11 @@ export interface AdminInstance {
 
 export interface AdminOperation {
   id: string
-  state: "waiting" | "running" | "cancel_requested" | "outcome_unknown"
+  state: "waiting" | "running" | "cancel_requested" | "finalizing" | "outcome_unknown"
   audit_id?: number
   resource?: string
+  requested_resource?: string
+  effective_lock?: string
   blocked_by?: string[]
   user_id: string
   cluster: string

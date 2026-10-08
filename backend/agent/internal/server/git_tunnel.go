@@ -58,7 +58,22 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 	opCtx, cancelOp := context.WithCancel(r.Context())
 	defer cancelOp()
 	resourceKey := gitResourceKey(action, cluster, instance, session)
-	opID := h.registerActiveOperation(GatewayActiveOperation{
+	auditID, err := h.store.StartAudit(AuditEvent{
+		UserID:         auth.UserID,
+		TokenID:        auth.TokenID,
+		Cluster:        cluster,
+		Instance:       instance,
+		Action:         action,
+		Session:        session,
+		CommandSummary: r.Method + " " + r.URL.RequestURI(),
+		StartedAt:      time.Now().UTC(),
+	})
+	if err != nil {
+		http.Error(w, "start audit: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	opID, holderID := h.registerActiveOperationForAgent(GatewayActiveOperation{
+		AuditID:        auditID,
 		Resource:       resourceKey,
 		UserID:         auth.UserID,
 		TokenID:        auth.TokenID,
@@ -68,11 +83,18 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 		Session:        session,
 		CommandSummary: r.Method + " " + r.URL.RequestURI(),
 		Kind:           "git",
-	}, cancelOp)
+	}, cancelOp, agent)
 	defer h.finishActiveOperation(opID)
+	if holderID != "" {
+		errMsg := "target busy: active operation " + holderID
+		_ = h.finishExecutionAudit(auditID, AuditFinish{Status: "blocked", Error: errMsg})
+		http.Error(w, errMsg, http.StatusConflict)
+		return
+	}
 
 	lease, err := agent.acquireActionLeaseForSession(opCtx, action, resourceKey, session, h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
 	if err != nil {
+		_ = h.finishExecutionAudit(auditID, AuditFinish{Status: "blocked", Error: err.Error()})
 		if errors.Is(err, context.Canceled) {
 			http.Error(w, "operation canceled", http.StatusConflict)
 			return
@@ -92,28 +114,8 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer releaseLimit()
 	h.markOperationRunning(opID)
-
-	auditID, err := h.store.StartAudit(AuditEvent{
-		UserID:         auth.UserID,
-		TokenID:        auth.TokenID,
-		Cluster:        cluster,
-		Instance:       instance,
-		Action:         action,
-		Session:        session,
-		CommandSummary: r.Method + " " + r.URL.RequestURI(),
-		StartedAt:      time.Now().UTC(),
-	})
-	if err != nil {
-		http.Error(w, "start audit: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.activeOpsMu.Lock()
-	if op := h.activeOps[opID]; op != nil {
-		op.AuditID = auditID
-	}
-	h.activeOpsMu.Unlock()
 	if err := h.beginExecution(agent, opID, auditID); err != nil {
-		_ = h.store.FinishAudit(auditID, AuditFinish{Status: "blocked", Error: err.Error()})
+		_ = h.finishExecutionAudit(auditID, AuditFinish{Status: "blocked", Error: err.Error()})
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
@@ -140,7 +142,7 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, relayErr.Error(), http.StatusBadGateway)
 		}
 	}
-	if err := h.store.FinishAudit(auditID, AuditFinish{
+	if err := h.finishExecutionAudit(auditID, AuditFinish{
 		Status:   status,
 		Error:    errMsg,
 		BytesIn:  r.ContentLength,

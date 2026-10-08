@@ -75,6 +75,7 @@ export function ConsoleShell() {
   const [authLoading, setAuthLoading] = useState(true)
   const [skillRunning, setSkillRunning] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [refreshVersion, setRefreshVersion] = useState(0)
   const [error, setError] = useState("")
   const [showGuide, setShowGuide] = useState(false)
   const conversationReferences = useRef<DoopsConversationReferences>({ databaseRefs: [], repositoryRefs: [] })
@@ -132,10 +133,11 @@ export function ConsoleShell() {
     try {
       const t = await fetchTargets(session)
       setTargets(t)
+      setRefreshVersion((version) => version + 1)
       setSelected((cur) => {
         if (cur) {
           const still = t.find((x) => x.key === cur.key)
-          return still || cur
+          return still || t[0] || null
         }
         return t[0] || null
       })
@@ -352,6 +354,7 @@ export function ConsoleShell() {
               targets={targets}
               selected={selected}
               loading={loading}
+              refreshVersion={refreshVersion}
               onRefresh={refresh}
               onDeployAgent={() => setView("deploy")}
               onOpenJobs={() => {
