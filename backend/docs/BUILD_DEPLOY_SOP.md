@@ -172,7 +172,7 @@ docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>
 docker.cnb.cool/l8ai/ai/doops.sh:<release>
 ```
 
-`Dockerfile.base.light` 只放基础运行时：doagent、BuildKit、kubectl、Python+PyYAML、Helm、SSH 客户端和系统包。它必须保留 `ssh` 客户端但删除 SSH 服务端。`Dockerfile` 和 `agent/Dockerfile` 只放轻更新：doops-agent、skills、docs、entrypoint。禁止把基础 rootfs 压平成每个 release 都变化的单个多 GiB layer。
+`Dockerfile.base.light` 只放基础运行时：doagent、BuildKit、`buildctl`、`skopeo`、kubectl、Python+PyYAML、Helm、SSH 客户端和系统包。`buildctl` 是标准镜像构建入口，`skopeo` 是标准 OCI 复制/检查入口。它必须保留 `ssh` 客户端但删除 SSH 服务端。`Dockerfile` 和 `agent/Dockerfile` 只放轻更新：doops-agent、skills、docs、entrypoint。禁止把基础 rootfs 压平成每个 release 都变化的单个多 GiB layer。
 
 CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<release>` 这种仓库下级路径；不要使用 `<repo>-base-light:<release>`。
 
@@ -184,7 +184,7 @@ tag 构建中继续引用旧 base digest；没有本轮基础镜像产物时直�
 
 1. `/app/doops-agent -help` 可运行。
 2. `/usr/local/bin/do-agent --version` 与发布声明的 doAgent 版本完全一致。
-3. `buildctl --version` 可运行。
+3. `buildctl --version` 和 `skopeo --version` 可运行。
 4. `python3 -c 'import yaml'` 可运行。
 5. `helm version --short` 可运行。
 6. `ssh -V` 可运行，且镜像中不存在 `sshd`。

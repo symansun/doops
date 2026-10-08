@@ -2,21 +2,18 @@ package server
 
 import "testing"
 
-func TestDatabaseCredentialScopeRequiresExactAssetAndCanonicalKeys(t *testing.T) {
+func TestDatabaseCredentialScopeOnlyBindsTargetAndMaterializationNamespace(t *testing.T) {
 	base := CredentialGrantScope{
-		Cluster: "cluster-a", Instance: "instance-a", Namespace: "apps",
-		Use: CredentialUseDatabase, Workload: CredentialPlanWorkload{Kind: "deployment", Name: "orders"},
-		DatabaseAssetID: "db_orders", EnvironmentID: "prod", DatabaseEngine: "postgres", DatabaseName: "orders",
-		RequiredKeys: []string{"connection_uri"},
+		Cluster: "cluster-a", Instance: "instance-a", Namespace: "apps", Use: CredentialUseDatabase,
 	}
 	if err := validateCredentialGrantScope(base); err != nil {
 		t.Fatalf("valid database scope rejected: %v", err)
 	}
 	for name, mutate := range map[string]func(*CredentialGrantScope){
-		"missing asset":   func(scope *CredentialGrantScope) { scope.DatabaseAssetID = "" },
-		"wrong engine":    func(scope *CredentialGrantScope) { scope.DatabaseEngine = "sqlite" },
-		"unsafe database": func(scope *CredentialGrantScope) { scope.DatabaseName = "orders;drop" },
-		"wrong keys":      func(scope *CredentialGrantScope) { scope.RequiredKeys = []string{"password"} },
+		"missing cluster":   func(scope *CredentialGrantScope) { scope.Cluster = "" },
+		"missing instance":  func(scope *CredentialGrantScope) { scope.Instance = "" },
+		"missing namespace": func(scope *CredentialGrantScope) { scope.Namespace = "" },
+		"wrong use":         func(scope *CredentialGrantScope) { scope.Use = CredentialUseImagePull },
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := base
@@ -26,6 +23,20 @@ func TestDatabaseCredentialScopeRequiresExactAssetAndCanonicalKeys(t *testing.T)
 				t.Fatal("invalid database scope was accepted")
 			}
 		})
+	}
+}
+
+func TestDatabaseCredentialScopeIgnoresDoSQLExecutionContext(t *testing.T) {
+	minimal := CredentialGrantScope{Cluster: "cluster-a", Instance: "instance-a", Namespace: "apps", Use: CredentialUseDatabase}
+	withContext := minimal
+	withContext.Workload = CredentialPlanWorkload{Kind: "deployment", Name: "orders"}
+	withContext.DatabaseAssetID = "db_orders"
+	withContext.EnvironmentID = "prod"
+	withContext.DatabaseEngine = "postgres"
+	withContext.DatabaseName = "orders"
+	withContext.RequiredKeys = []string{"connection_uri"}
+	if !credentialScopeEqual(minimal, withContext) {
+		t.Fatal("database grant equality must ignore DoSql execution context")
 	}
 }
 

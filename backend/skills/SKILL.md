@@ -91,8 +91,9 @@ description: |
   发布镜像只由 CI 构建；Agent 内存在 BuildKit 不代表允许在业务 target 上重新构建，
   也不能把工作区同步或 SCP 源码传输作为普通发布的前置步骤。
 - 需要凭据时使用可重复的 `--credential <resource-name>`。该参数只传递资源名；Gateway
-  将它绑定到当前用户、target 和 session，并按 cluster/instance、namespace、workload、
-  image 或 Helm 的精确 scope 授权和物化。公开 prompt、doagent 上下文和 metadata
+  将它绑定到当前用户、target 和 session，并按对应 credential use 授权和物化。对 database
+  use，Gateway 只管理用户/平台归属、cluster/instance、物化 namespace 和凭据可用性；数据库
+  asset、environment、engine、database name 与 SQL 变更授权由 DoSql/目标 Agent 负责。公开 prompt、doagent 上下文和 metadata
   binding 不接收 credential payload；目标 doops-agent 只在内部凭据控制面临时接收
   解密 payload 以创建或验证目标资源。
 - 开发项目可以在 `.agent/doops-credentials.yaml` 声明 metadata-only 的
@@ -316,10 +317,11 @@ DoSql 必须从 `doops sql` 入口进入。普通 `doops ask --msg '使用 DoSql
 | 管理员查看 token | `doops admin token list --target <t>` |
 | 管理员撤销 token | `doops admin token revoke --target <t> --id <token-id>` |
 
-`registry sync` 是 DoOps 自带的通用能力，直接在选定 target 上完成 OCI 镜像复制和
-源/目标 manifest digest 校验；它不依赖 AMP 专用脚本、Job 或外部镜像。目标机没有
-`skopeo` 时，可显式加 `--install-skopeo` 由 DoOps 按目标系统包管理器安装，失败则直
-接报告，不做静默降级。
+`registry sync` 是 DoOps 自带的通用能力，实际通过目标 Agent 的受审计 exec 执行
+`skopeo copy/inspect`，完成 OCI 镜像复制和源/目标 manifest digest 校验；它不依赖
+AMP 专用脚本、Job 或外部镜像。标准 DoOps Agent 镜像必须同时提供 `buildctl`（构建）
+和 `skopeo`（复制/检查）。目标缺少 `skopeo` 时直接报告工具缺失，不在线安装、不静默
+切换到其它工具。
 
 大文件、压缩包、数据库导出、图片、视频、课程资源包等资产，用 `pull` 拉取整个 session 工作区。不要用 `read`，也不要让 `exec` 输出 base64。
 
@@ -428,8 +430,9 @@ docs/DOOPS_MAINTENANCE_LOG.md
   token 缺失、失效或与精确 `cluster/instance` 不匹配；它不等于 Gateway user token
   失效，也不等于受管凭据错误。
 - `403 Forbidden`：认证通过但权限不足，或用户被显式收窄。
-- `credential_scope_invalid`：凭据引用没有匹配到完整的 cluster/instance、namespace、workload、
-  image 或 Helm scope；修正显式 scope，不得放宽授权。
+- `credential_scope_invalid`：凭据引用没有匹配到对应 use 所需的 Gateway scope；database use
+  只要求 target、物化 namespace 和 credential usability，数据库资产与 SQL 规则由 DoSql/Agent
+  校验，不要把业务数据库字段重新塞回 Gateway grant。
 - `credential preflight failed`：项目清单中的 credentialRef 缺失、use 不匹配、grant
   已吊销或同名资源不唯一。先修复受管凭据和精确授权；不得读取本地 secret 文件兜底。
 - `credential_verification_required`：staged 版本尚未覆盖全部 active grant 的验证；对每个

@@ -14,7 +14,6 @@ func TestBuildRegistrySyncCommandUsesGenericOCIFlow(t *testing.T) {
 		"/run/doops/target-auth.json",
 		[]string{"api", "worker"},
 		600,
-		true,
 	)
 	for _, want := range []string{
 		"skopeo copy --all --retry-times 3",

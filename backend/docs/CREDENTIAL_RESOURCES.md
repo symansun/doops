@@ -12,7 +12,7 @@ session 的目标执行可以并行。取消或审计收尾不得把其中一个
 | :--- | :--- |
 | Credential Resource | 稳定名称、personal/platform 归属、类型和资源状态 |
 | Credential Version | 加密 payload 的不可变版本，保存 payload digest，不返回 payload |
-| Credential Grant | 某个用户对精确 target/workload/use scope 的持久授权 |
+| Credential Grant | 某个用户对精确 target/use scope 的持久授权；database grant 的数据库资产规则由 DoSql/Agent 负责 |
 | Credential Verification | staged 版本在某个 grant scope 上的实际物化和验证证据 |
 | Credential Bundle | 一组 credential ID 的静态元数据集合，当前不参与 `ask --apply` 展开 |
 | Materialization | 目标环境中的 Kubernetes Secret 或临时 Helm/Git 凭据上下文 |
@@ -132,16 +132,18 @@ workload kind 仅支持 `Deployment`、`StatefulSet`、`DaemonSet`。不支持 w
 | `imagePull` | `registry` | image repository、64 位 `sha256:` digest |
 | `tls` | `tls` | 无 |
 | `opaqueSecret` | `opaque` | `required_keys`，必须与 payload key 集合完全相等 |
-| `database` | `opaque` | `database_asset_id`、`environment_id`、`database_engine`、`database_name` 和数据库引擎规定的 `required_keys` |
+| `database` | `opaque` | 目标 `cluster/instance`、物化 `namespace` 和 `use=database`；数据库资产、环境、引擎、数据库名由 DoSql/Agent 校验 |
 | `helmPull` | `helmRepository` | Helm release、明确授权的 HTTPS `.tgz` Chart 下载 URL |
 | `gitCheckout` | `gitToken` | 无；当前 scope 不包含 branch/ref |
 
-数据库 grant 还必须绑定目标 Agent 的精确 workload scope。PostgreSQL 和 MongoDB 使用
-`required_keys=connection_uri`；MySQL 使用
+数据库 grant 不绑定数据库资产、环境、引擎、数据库名或 workload；这些是 DoSql 的执行上下文，
+Agent 会根据当前 target 的非 Secret discovery 校验。PostgreSQL 和 MongoDB 使用
+`connection_uri`；MySQL 使用
 `required_keys=SPRING_DATASOURCE_URL,SPRING_DATASOURCE_USERNAME,SPRING_DATASOURCE_PASSWORD`。
 `database_asset_id` 必须来自 DoSql 的 target discovery 或授权代码资产，不能由 CLI 根据
-数据库名猜测。`credential grant` 和 `credential verify` 使用相同的四个数据库字段，
-`credential list` 会回显这些 metadata 以便审计核对，但不会回显 payload。
+数据库名猜测；它不再进入 Gateway grant equality。`credential grant`/`verify` 只验证
+Gateway target、credential ownership、materialization namespace 和 payload usability；DoSql
+query/apply 继续验证资产、引擎、数据库名、SQL policy、approval 和 evidence。
 
 ## Payload schema
 
@@ -396,7 +398,7 @@ Gateway-to-Agent 凭据控制面会把解密 payload 临时传给目标 doops-ag
 payload 不进入公开 prompt、doagent 上下文或 metadata binding。
 
 注意：Resource `state=active` 不等于存在 active Version。数据库执行必须同时满足：
-active resource、active version、当前用户在精确 target scope 上的 active database grant，
+active resource、active version、当前用户在 target/use/namespace scope 上的 active database grant，
 以及该 version 在所有 active grant 上完成 verification。标准顺序是
 `credential put -> credential grant -> credential verify -> credential promote`。
 缺少 active version 时，target credential list 会隐藏该 resource，DoSql 执行会被 Gateway
