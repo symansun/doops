@@ -388,9 +388,12 @@ func runCredentialList(args []string, servers []Server, configErr error, stdout 
 		return err
 	}
 	for _, credential := range credentials {
-		if _, err := fmt.Fprintf(stdout, "credential_id=%s name=%s scope=%s type=%s state=%s grants=%d\n",
-			credential.ID, credential.Name, credential.Scope, credential.Type, credential.State,
-			len(credential.Grants)); err != nil {
+		grantSummary := fmt.Sprintf("%d", len(credential.Grants))
+		if view == "managed" {
+			grantSummary = "not_loaded"
+		}
+		if _, err := fmt.Fprintf(stdout, "credential_id=%s name=%s scope=%s type=%s state=%s grants=%s\n",
+			credential.ID, credential.Name, credential.Scope, credential.Type, credential.State, grantSummary); err != nil {
 			return err
 		}
 		for _, grant := range credential.Grants {
