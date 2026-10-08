@@ -83,6 +83,11 @@ isolation, audit or execution-outcome evidence.
   repository references (`repo_id@branch`) from the Web context panel or CLI
   `--database-ref` / `--repo-ref`. References provide task context only; they
   do not grant access or carry credentials.
+- 2026-10-08: `config/assets.json` and the display projection in
+  `config/resources.json` contain the discovered ZYJ PostgreSQL asset
+  `db_zhiyong_zyj_agents_postgres_agentcloud` for
+  `gw-zyj/doops-zyj/control-plane-1/agents/postgres/agentcloud`. This registers
+  metadata only; no Secret, psql connection or schema mutation was performed.
 - Independent review confirmed and fixed stale disabled/revoked-token admission,
   anonymous attachment persistence and target-admin global read exposure.
   Store/HTTP/WebSocket checks pass in the local synthetic Gateway.

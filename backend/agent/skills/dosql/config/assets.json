@@ -1,0 +1,41 @@
+{
+  "schema": "dosql.database-asset-inventory.v1",
+  "projectId": "zhiyong",
+  "updatedAt": "2026-10-08T00:43:45.147Z",
+  "assets": [
+    {
+      "databaseAssetId": "db_zhiyong_zyj_agents_postgres_agentcloud",
+      "projectId": "zhiyong",
+      "environmentId": "zyj",
+      "engine": "postgres",
+      "logicalName": "agentcloud",
+      "displayName": "zyj agentcloud",
+      "aliases": [
+        "agentcloud",
+        "postgres",
+        "zyj postgres",
+        "postgresql"
+      ],
+      "namespace": "agents",
+      "serviceName": "postgres",
+      "host": "postgres.agents.svc.cluster.local",
+      "port": 5432,
+      "databaseName": "agentcloud",
+      "connectionRef": "k8s://doops-zyj/control-plane-1/agents/service/postgres:5432#db=agentcloud",
+      "version": {
+        "current": 0,
+        "label": "dosql_000000"
+      },
+      "status": "discovered",
+      "source": {
+        "kind": "target-discovery",
+        "ref": "target metadata discovery 2026-10-08",
+        "target": {
+          "name": "gw-zyj",
+          "cluster": "doops-zyj",
+          "instance": "control-plane-1"
+        }
+      }
+    }
+  ]
+}
