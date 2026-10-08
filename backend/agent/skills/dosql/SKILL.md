@@ -90,9 +90,12 @@ executed.
   references are task context, not authorization; Gateway target/action and
   credential scope checks remain authoritative.
 - `discover-resources` may scan an explicitly authorized repository workspace
-  and merge non-secret database metadata into the DoSql inventory. It ignores
-  credential-like filenames and never persists URI userinfo, passwords, tokens
-  or other secret payloads.
+  including application code, connection references, Helm values and Kubernetes
+  manifests. It merges PostgreSQL, MySQL and MongoDB metadata into the DoSql
+  inventory, adopts an explicit Gateway `database_asset_id` from target
+  discovery, deduplicates by database identity, and can project the same asset
+  into `config/resources.json`. It ignores credential-like filenames and never
+  persists URI userinfo, passwords, tokens or other secret payloads.
 - `mcp_dosql_execute` is the only structured mutation executor. It requires
   `confirm=true`, an approved change request, exact database credential scope,
   verification input and the DoSql journal/evidence chain.

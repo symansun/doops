@@ -1,10 +1,10 @@
 {
   "schema": "dosql.database-asset-inventory.v1",
   "projectId": "zhiyong",
-  "updatedAt": "2026-10-08T00:43:45.147Z",
+  "updatedAt": "2026-10-08T02:49:09.190Z",
   "assets": [
     {
-      "databaseAssetId": "db_zhiyong_zyj_agents_postgres_agentcloud",
+      "databaseAssetId": "dbscan_doops-zyj_control-plane-1_agents_postgres_postgres",
       "projectId": "zhiyong",
       "environmentId": "zyj",
       "engine": "postgres",
@@ -34,7 +34,11 @@
           "name": "gw-zyj",
           "cluster": "doops-zyj",
           "instance": "control-plane-1"
-        }
+        },
+        "refs": [
+          "target metadata discovery 2026-10-08",
+          "gw-zyj mcp_dosql_read operation=discover"
+        ]
       }
     }
   ]
