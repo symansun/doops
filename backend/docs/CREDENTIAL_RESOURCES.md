@@ -42,6 +42,9 @@ doops credential list --target <target> --view managed
 - 默认 `target` 视图只返回当前用户在该 target 上拥有 active grant 且存在 active version
   的 active resource。
 - `managed` 视图返回当前用户拥有的 personal resource；platform admin 可查看平台资源。
+- `managed` 视图只返回 resource metadata，不加载 grant 详情；CLI 的 `grants=not_loaded`
+  不是“没有 grant”。检查 target 可用性应使用 `credential list --target <target>`，但它同样
+  只显示已有 active version 的 active grant。
 - target 视图不返回 owner、creator、grantee 或 payload 等管理/秘密字段。
 - 未授权详情使用 404，避免泄露资源是否存在。
 
@@ -391,6 +394,13 @@ Grant：`active -> revoking -> revoked`。
 任何 CLI、Web、audit、verification 或 Agent 输出都不得出现 payload value。内部
 Gateway-to-Agent 凭据控制面会把解密 payload 临时传给目标 doops-agent 物化工具；
 payload 不进入公开 prompt、doagent 上下文或 metadata binding。
+
+注意：Resource `state=active` 不等于存在 active Version。数据库执行必须同时满足：
+active resource、active version、当前用户在精确 target scope 上的 active database grant，
+以及该 version 在所有 active grant 上完成 verification。标准顺序是
+`credential put -> credential grant -> credential verify -> credential promote`。
+缺少 active version 时，target credential list 会隐藏该 resource，DoSql 执行会被 Gateway
+拒绝；缺少 grant 时同样不会进入 Agent 的 `mcp_dosql_*` 执行器。
 
 ## 审计
 

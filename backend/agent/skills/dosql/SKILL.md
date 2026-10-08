@@ -14,6 +14,12 @@ the DoOps Gateway, selects a Gateway target, and then asks doagent to route the
 database task here. DoSql does not implement login, target grants, Gateway
 token parsing or a second user authorization system.
 
+The supported CLI entrypoint is `doops sql`. A generic `doops ask` prompt that
+mentions DoSql does not guarantee the `dosql` skill or `mcp_dosql_*` tools are
+bound. If the target is not upgraded/configured for DoSql, fail explicitly;
+never replace it with `mcp_doops_k8s_read`, `kubectl`, `psql`, or a local
+connection file.
+
 The core rule is simple: do not bypass the DoSql proxy path. Every database
 query, DDL, DML and MongoDB command must create an operation record before it is
 executed.
@@ -102,6 +108,16 @@ executed.
 - Database credentials are DoOps managed credentials. Pass only credential
   resource names to the Gateway; never put payloads, connection strings or
   passwords in prompts, artifacts or logs.
+- `state=active` on a credential resource does not mean it has an active
+  credential version or an active target grant. The required lifecycle is
+  `create -> put (staged) -> grant -> verify -> promote`. Query/execute is
+  admitted only after all four are complete. The payload for PostgreSQL and
+  MongoDB is opaque JSON with `data.connection_uri`; MySQL uses the exact
+  datasource keys in `CREDENTIAL_RESOURCES.md`.
+- `credential list --view managed` reports resource metadata only and does not
+  load grant details. Its grant field must not be interpreted as proof that a
+  target grant is absent; use the target view after an active version exists or
+  inspect the explicit grant response.
 - Gateway target/action checks happen before the skill runs. DoSql's operation
   journal and signed approval checks protect database change evidence after
   admission and must not duplicate Gateway authentication.

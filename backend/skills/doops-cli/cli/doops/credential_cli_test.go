@@ -97,6 +97,10 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 
 	run("", "credential", "create", "--target", "gw-edu-coder", "--name", "registry", "--scope", "personal", "--type", "registry")
 	run("", "credential", "list", "--target", "gw-edu-coder")
+	managedOutput := run("", "credential", "list", "--target", "gw-edu-coder", "--view", "managed")
+	if !strings.Contains(managedOutput, "grants=not_loaded") || strings.Contains(managedOutput, "grants=0") {
+		t.Fatalf("managed credential list must disclose that grants are not loaded: %s", managedOutput)
+	}
 	run(`{"server":"registry.example.com","username":"deploy","password":"stdin-wins"}`,
 		"credential", "put", "--target", "gw-edu-coder", "--id", "cred_123")
 	run("", "credential", "grant", "--target", "gw-edu-coder", "--id", "cred_123",
@@ -144,8 +148,8 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		t.Fatalf("credential commands must reject token argv flags, output: %s", output)
 	}
 
-	if len(requests) != 12 {
-		t.Fatalf("gateway request count mismatch: got %d want 12", len(requests))
+	if len(requests) != 13 {
+		t.Fatalf("gateway request count mismatch: got %d want 13", len(requests))
 	}
 	for _, request := range requests {
 		if request.Auth != "Bearer cli-token" {
@@ -163,13 +167,13 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		requests[1].Query.Get("instance") != "edu-coder" {
 		t.Fatalf("credential list target query mismatch: %#v", requests[1].Query)
 	}
-	assertCredentialCLIJSON(t, requests[2], http.MethodPut, "/v1/credentials/cred_123/payload", map[string]any{
+	assertCredentialCLIJSON(t, requests[3], http.MethodPut, "/v1/credentials/cred_123/payload", map[string]any{
 		"server": "registry.example.com", "username": "deploy", "password": "stdin-wins",
 	})
-	if len(requests[2].Query) != 0 {
-		t.Fatalf("credential put must not activate through a query parameter: %#v", requests[2].Query)
+	if len(requests[3].Query) != 0 {
+		t.Fatalf("credential put must not activate through a query parameter: %#v", requests[3].Query)
 	}
-	assertCredentialCLIJSON(t, requests[3], http.MethodPost, "/v1/credentials/cred_123/grants", map[string]any{
+	assertCredentialCLIJSON(t, requests[4], http.MethodPost, "/v1/credentials/cred_123/grants", map[string]any{
 		"grantee_id": "",
 		"scope": map[string]any{
 			"cluster":          "doops-edu",
@@ -181,7 +185,7 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 			"image_digest":     "sha256:manifest",
 		},
 	})
-	assertCredentialCLIJSON(t, requests[4], http.MethodPost, "/v1/credentials/cred_123/grants", map[string]any{
+	assertCredentialCLIJSON(t, requests[5], http.MethodPost, "/v1/credentials/cred_123/grants", map[string]any{
 		"grantee_id": "",
 		"scope": map[string]any{
 			"cluster":           "doops-edu",
@@ -196,7 +200,7 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 			"required_keys":     []any{"connection_uri"},
 		},
 	})
-	assertCredentialCLIJSON(t, requests[5], http.MethodPost, "/v1/credentials/cred_123/verify", map[string]any{
+	assertCredentialCLIJSON(t, requests[6], http.MethodPost, "/v1/credentials/cred_123/verify", map[string]any{
 		"version_id": "credver_456",
 		"session_id": "credential-verify",
 		"scope": map[string]any{
@@ -209,7 +213,7 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 			"image_digest":     "sha256:manifest",
 		},
 	})
-	assertCredentialCLIJSON(t, requests[6], http.MethodPost, "/v1/credentials/cred_123/verify", map[string]any{
+	assertCredentialCLIJSON(t, requests[7], http.MethodPost, "/v1/credentials/cred_123/verify", map[string]any{
 		"version_id": "credver_456",
 		"session_id": "credential-verify-database",
 		"scope": map[string]any{
@@ -225,21 +229,21 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 			"required_keys":     []any{"connection_uri"},
 		},
 	})
-	assertCredentialCLIJSON(t, requests[7], http.MethodPost, "/v1/credentials/cred_123/promote", map[string]any{
+	assertCredentialCLIJSON(t, requests[8], http.MethodPost, "/v1/credentials/cred_123/promote", map[string]any{
 		"version_id": "credver_456",
 	})
-	assertCredentialCLIJSON(t, requests[8], http.MethodDelete, "/v1/credentials/cred_123/grants", map[string]any{
+	assertCredentialCLIJSON(t, requests[9], http.MethodDelete, "/v1/credentials/cred_123/grants", map[string]any{
 		"grant_id": "credgrant_789",
 	})
-	if requests[9].Method != http.MethodPost || requests[9].Path != "/v1/credentials/cred_123/revoke" || len(requests[9].Body) != 0 {
-		t.Fatalf("credential revoke request mismatch: %#v", requests[9])
+	if requests[10].Method != http.MethodPost || requests[10].Path != "/v1/credentials/cred_123/revoke" || len(requests[10].Body) != 0 {
+		t.Fatalf("credential revoke request mismatch: %#v", requests[10])
 	}
-	if requests[10].Method != http.MethodPost || requests[10].Path != "/v1/credential-bundles" {
-		t.Fatalf("credential bundle create request mismatch: %#v", requests[10])
+	if requests[11].Method != http.MethodPost || requests[11].Path != "/v1/credential-bundles" {
+		t.Fatalf("credential bundle create request mismatch: %#v", requests[11])
 	}
-	if requests[11].Method != http.MethodGet || requests[11].Path != "/v1/credential-bundles" ||
-		requests[11].Query.Get("name") != "release" {
-		t.Fatalf("credential bundle get request mismatch: %#v", requests[11])
+	if requests[12].Method != http.MethodGet || requests[12].Path != "/v1/credential-bundles" ||
+		requests[12].Query.Get("name") != "release" {
+		t.Fatalf("credential bundle get request mismatch: %#v", requests[12])
 	}
 }
 
