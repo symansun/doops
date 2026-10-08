@@ -1,7 +1,7 @@
 {
   "schema": "dosuite.skill-resources.v1",
   "product": "DoSql",
-  "updatedAt": "2026-10-08T00:43:45.149Z",
+  "updatedAt": "2026-10-08T02:49:09.193Z",
   "credentialPolicy": "No plaintext database credentials are stored here. Resolve logical endpoints through the selected DoOps Gateway target and managed credential scope before execution.",
   "resources": [
     {
@@ -63,6 +63,22 @@
         "rollback"
       ],
       "note": "Identity and permission domain. Current version is promoted to stage and waits for the production window."
+    },
+    {
+      "id": "dbscan_doops-zyj_control-plane-1_agents_postgres_postgres",
+      "name": "zyj agentcloud",
+      "kind": "PostgreSQL",
+      "logicalEndpoint": "postgresql://postgres.agents.svc.cluster.local:5432/agentcloud",
+      "owner": "auto-discovered",
+      "status": "discovered",
+      "risk": "credential scope required",
+      "tags": [
+        "zyj",
+        "agents",
+        "postgres",
+        "auto-discovered"
+      ],
+      "note": "Metadata-only projection from assets.json; credentials and target authorization remain in DoOps managed scope."
     }
   ],
   "quickPrompts": [
