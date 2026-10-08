@@ -45,6 +45,10 @@ type credentialGrantScope struct {
 	Namespace       string                  `json:"namespace"`
 	Use             string                  `json:"use"`
 	Workload        credentialGrantWorkload `json:"workload"`
+	DatabaseAssetID string                  `json:"database_asset_id,omitempty"`
+	EnvironmentID   string                  `json:"environment_id,omitempty"`
+	DatabaseEngine  string                  `json:"database_engine,omitempty"`
+	DatabaseName    string                  `json:"database_name,omitempty"`
 	ImageRepository string                  `json:"image_repository,omitempty"`
 	ImageDigest     string                  `json:"image_digest,omitempty"`
 	HelmRelease     string                  `json:"helm_release,omitempty"`
@@ -131,6 +135,7 @@ Use "doops credential <subcommand> -h" for command flags.
 func runCredentialVerify(args []string, sessionName string, servers []Server, configErr error, stdout io.Writer) error {
 	var target, id, versionID string
 	var cluster, instance, namespace, use, workloadKind, workloadName string
+	var databaseAssetID, environmentID, databaseEngine, databaseName string
 	var imageRepository, imageDigest, helmRelease, helmChart, requiredKeys string
 	flags := credentialFlagSet("credential verify", stdout)
 	flags.StringVar(&target, "target", "", "Configured gateway target")
@@ -139,9 +144,13 @@ func runCredentialVerify(args []string, sessionName string, servers []Server, co
 	flags.StringVar(&cluster, "cluster", "", "Target cluster")
 	flags.StringVar(&instance, "instance", "", "Target instance")
 	flags.StringVar(&namespace, "namespace", "", "Kubernetes namespace")
-	flags.StringVar(&use, "use", "", "Credential use: imagePull, gitCheckout, helmPull, tls, or opaqueSecret")
+	flags.StringVar(&use, "use", "", "Credential use: imagePull, gitCheckout, helmPull, tls, opaqueSecret, or database")
 	flags.StringVar(&workloadKind, "workload-kind", "", "Kubernetes workload kind")
 	flags.StringVar(&workloadName, "workload-name", "", "Kubernetes workload name")
+	flags.StringVar(&databaseAssetID, "database-asset-id", "", "Authorized database asset ID")
+	flags.StringVar(&environmentID, "environment-id", "", "Authorized database environment ID")
+	flags.StringVar(&databaseEngine, "database-engine", "", "Authorized database engine: mysql, postgres, or mongodb")
+	flags.StringVar(&databaseName, "database-name", "", "Authorized database name")
 	flags.StringVar(&imageRepository, "image-repository", "", "Authorized image repository")
 	flags.StringVar(&imageDigest, "image-digest", "", "Authorized image digest")
 	flags.StringVar(&helmRelease, "helm-release", "", "Authorized Helm release")
@@ -181,6 +190,10 @@ func runCredentialVerify(args []string, sessionName string, servers []Server, co
 				Kind: strings.TrimSpace(workloadKind),
 				Name: strings.TrimSpace(workloadName),
 			},
+			DatabaseAssetID: strings.TrimSpace(databaseAssetID),
+			EnvironmentID:   strings.TrimSpace(environmentID),
+			DatabaseEngine:  strings.TrimSpace(databaseEngine),
+			DatabaseName:    strings.TrimSpace(databaseName),
 			ImageRepository: strings.TrimSpace(imageRepository),
 			ImageDigest:     strings.TrimSpace(imageDigest),
 			HelmRelease:     strings.TrimSpace(helmRelease),
@@ -382,9 +395,10 @@ func runCredentialList(args []string, servers []Server, configErr error, stdout 
 		}
 		for _, grant := range credential.Grants {
 			if _, err := fmt.Fprintf(stdout,
-				"  grant_id=%s cluster=%s instance=%s namespace=%s use=%s workload=%s/%s\n",
+				"  grant_id=%s cluster=%s instance=%s namespace=%s use=%s workload=%s/%s database_asset_id=%s environment_id=%s database_engine=%s database_name=%s\n",
 				grant.ID, grant.Scope.Cluster, grant.Scope.Instance, grant.Scope.Namespace,
 				grant.Scope.Use, grant.Scope.Workload.Kind, grant.Scope.Workload.Name,
+				grant.Scope.DatabaseAssetID, grant.Scope.EnvironmentID, grant.Scope.DatabaseEngine, grant.Scope.DatabaseName,
 			); err != nil {
 				return err
 			}
@@ -468,6 +482,7 @@ func runCredentialPut(args []string, servers []Server, configErr error, stdin io
 func runCredentialGrant(args []string, servers []Server, configErr error, stdout io.Writer) error {
 	var target, id, granteeID string
 	var cluster, instance, namespace, use, workloadKind, workloadName string
+	var databaseAssetID, environmentID, databaseEngine, databaseName string
 	var imageRepository, imageDigest, helmRelease, helmChart, requiredKeys string
 	flags := credentialFlagSet("credential grant", stdout)
 	flags.StringVar(&target, "target", "", "Configured gateway target")
@@ -476,9 +491,13 @@ func runCredentialGrant(args []string, servers []Server, configErr error, stdout
 	flags.StringVar(&cluster, "cluster", "", "Target cluster")
 	flags.StringVar(&instance, "instance", "", "Target instance")
 	flags.StringVar(&namespace, "namespace", "", "Kubernetes namespace")
-	flags.StringVar(&use, "use", "", "Credential use: imagePull, gitCheckout, helmPull, tls, or opaqueSecret")
+	flags.StringVar(&use, "use", "", "Credential use: imagePull, gitCheckout, helmPull, tls, opaqueSecret, or database")
 	flags.StringVar(&workloadKind, "workload-kind", "", "Kubernetes workload kind")
 	flags.StringVar(&workloadName, "workload-name", "", "Kubernetes workload name")
+	flags.StringVar(&databaseAssetID, "database-asset-id", "", "Authorized database asset ID")
+	flags.StringVar(&environmentID, "environment-id", "", "Authorized database environment ID")
+	flags.StringVar(&databaseEngine, "database-engine", "", "Authorized database engine: mysql, postgres, or mongodb")
+	flags.StringVar(&databaseName, "database-name", "", "Authorized database name")
 	flags.StringVar(&imageRepository, "image-repository", "", "Authorized image repository")
 	flags.StringVar(&imageDigest, "image-digest", "", "Authorized image digest")
 	flags.StringVar(&helmRelease, "helm-release", "", "Authorized Helm release")
@@ -515,6 +534,10 @@ func runCredentialGrant(args []string, servers []Server, configErr error, stdout
 				Kind: strings.TrimSpace(workloadKind),
 				Name: strings.TrimSpace(workloadName),
 			},
+			DatabaseAssetID: strings.TrimSpace(databaseAssetID),
+			EnvironmentID:   strings.TrimSpace(environmentID),
+			DatabaseEngine:  strings.TrimSpace(databaseEngine),
+			DatabaseName:    strings.TrimSpace(databaseName),
 			ImageRepository: strings.TrimSpace(imageRepository),
 			ImageDigest:     strings.TrimSpace(imageDigest),
 			HelmRelease:     strings.TrimSpace(helmRelease),

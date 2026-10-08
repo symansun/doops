@@ -104,12 +104,27 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		"--namespace", "apps", "--use", "imagePull",
 		"--workload-kind", "Deployment", "--workload-name", "api",
 		"--image-repository", "team/api", "--image-digest", "sha256:manifest")
+	run("", "credential", "grant", "--target", "gw-edu-coder", "--id", "cred_123",
+		"--cluster", "doops-edu", "--instance", "edu-coder",
+		"--namespace", "agents", "--use", "database",
+		"--workload-kind", "Deployment", "--workload-name", "postgres",
+		"--database-asset-id", "dbscan_doops-edu_edu-coder_agents_postgres_postgres",
+		"--environment-id", "edu", "--database-engine", "postgres", "--database-name", "agentcloud",
+		"--required-keys", "connection_uri")
 	run("", "-session", "credential-verify", "credential", "verify",
 		"--target", "gw-edu-coder", "--id", "cred_123", "--version-id", "credver_456",
 		"--cluster", "doops-edu", "--instance", "edu-coder",
 		"--namespace", "apps", "--use", "imagePull",
 		"--workload-kind", "Deployment", "--workload-name", "api",
 		"--image-repository", "team/api", "--image-digest", "sha256:manifest")
+	run("", "-session", "credential-verify-database", "credential", "verify",
+		"--target", "gw-edu-coder", "--id", "cred_123", "--version-id", "credver_456",
+		"--cluster", "doops-edu", "--instance", "edu-coder",
+		"--namespace", "agents", "--use", "database",
+		"--workload-kind", "Deployment", "--workload-name", "postgres",
+		"--database-asset-id", "dbscan_doops-edu_edu-coder_agents_postgres_postgres",
+		"--environment-id", "edu", "--database-engine", "postgres", "--database-name", "agentcloud",
+		"--required-keys", "connection_uri")
 	run("", "credential", "promote", "--target", "gw-edu-coder", "--id", "cred_123", "--version-id", "credver_456")
 	run("", "credential", "grant-revoke", "--target", "gw-edu-coder", "--id", "cred_123", "--grant-id", "credgrant_789")
 	run("", "credential", "revoke", "--target", "gw-edu-coder", "--id", "cred_123")
@@ -129,8 +144,8 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		t.Fatalf("credential commands must reject token argv flags, output: %s", output)
 	}
 
-	if len(requests) != 10 {
-		t.Fatalf("gateway request count mismatch: got %d want 10", len(requests))
+	if len(requests) != 12 {
+		t.Fatalf("gateway request count mismatch: got %d want 12", len(requests))
 	}
 	for _, request := range requests {
 		if request.Auth != "Bearer cli-token" {
@@ -166,7 +181,22 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 			"image_digest":     "sha256:manifest",
 		},
 	})
-	assertCredentialCLIJSON(t, requests[4], http.MethodPost, "/v1/credentials/cred_123/verify", map[string]any{
+	assertCredentialCLIJSON(t, requests[4], http.MethodPost, "/v1/credentials/cred_123/grants", map[string]any{
+		"grantee_id": "",
+		"scope": map[string]any{
+			"cluster":           "doops-edu",
+			"instance":          "edu-coder",
+			"namespace":         "agents",
+			"use":               "database",
+			"workload":          map[string]any{"kind": "Deployment", "name": "postgres"},
+			"database_asset_id": "dbscan_doops-edu_edu-coder_agents_postgres_postgres",
+			"environment_id":    "edu",
+			"database_engine":   "postgres",
+			"database_name":     "agentcloud",
+			"required_keys":     []any{"connection_uri"},
+		},
+	})
+	assertCredentialCLIJSON(t, requests[5], http.MethodPost, "/v1/credentials/cred_123/verify", map[string]any{
 		"version_id": "credver_456",
 		"session_id": "credential-verify",
 		"scope": map[string]any{
@@ -179,21 +209,37 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 			"image_digest":     "sha256:manifest",
 		},
 	})
-	assertCredentialCLIJSON(t, requests[5], http.MethodPost, "/v1/credentials/cred_123/promote", map[string]any{
+	assertCredentialCLIJSON(t, requests[6], http.MethodPost, "/v1/credentials/cred_123/verify", map[string]any{
+		"version_id": "credver_456",
+		"session_id": "credential-verify-database",
+		"scope": map[string]any{
+			"cluster":           "doops-edu",
+			"instance":          "edu-coder",
+			"namespace":         "agents",
+			"use":               "database",
+			"workload":          map[string]any{"kind": "Deployment", "name": "postgres"},
+			"database_asset_id": "dbscan_doops-edu_edu-coder_agents_postgres_postgres",
+			"environment_id":    "edu",
+			"database_engine":   "postgres",
+			"database_name":     "agentcloud",
+			"required_keys":     []any{"connection_uri"},
+		},
+	})
+	assertCredentialCLIJSON(t, requests[7], http.MethodPost, "/v1/credentials/cred_123/promote", map[string]any{
 		"version_id": "credver_456",
 	})
-	assertCredentialCLIJSON(t, requests[6], http.MethodDelete, "/v1/credentials/cred_123/grants", map[string]any{
+	assertCredentialCLIJSON(t, requests[8], http.MethodDelete, "/v1/credentials/cred_123/grants", map[string]any{
 		"grant_id": "credgrant_789",
 	})
-	if requests[7].Method != http.MethodPost || requests[7].Path != "/v1/credentials/cred_123/revoke" || len(requests[7].Body) != 0 {
-		t.Fatalf("credential revoke request mismatch: %#v", requests[7])
+	if requests[9].Method != http.MethodPost || requests[9].Path != "/v1/credentials/cred_123/revoke" || len(requests[9].Body) != 0 {
+		t.Fatalf("credential revoke request mismatch: %#v", requests[9])
 	}
-	if requests[8].Method != http.MethodPost || requests[8].Path != "/v1/credential-bundles" {
-		t.Fatalf("credential bundle create request mismatch: %#v", requests[8])
+	if requests[10].Method != http.MethodPost || requests[10].Path != "/v1/credential-bundles" {
+		t.Fatalf("credential bundle create request mismatch: %#v", requests[10])
 	}
-	if requests[9].Method != http.MethodGet || requests[9].Path != "/v1/credential-bundles" ||
-		requests[9].Query.Get("name") != "release" {
-		t.Fatalf("credential bundle get request mismatch: %#v", requests[9])
+	if requests[11].Method != http.MethodGet || requests[11].Path != "/v1/credential-bundles" ||
+		requests[11].Query.Get("name") != "release" {
+		t.Fatalf("credential bundle get request mismatch: %#v", requests[11])
 	}
 }
 

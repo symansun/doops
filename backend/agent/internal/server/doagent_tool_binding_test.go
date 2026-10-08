@@ -73,6 +73,19 @@ func TestApplyAcceptsStructuredHelmMutationEvidence(t *testing.T) {
 	}
 }
 
+func TestApplyAcceptsStructuredDoSQLMutationEvidence(t *testing.T) {
+	collector := newDoagentToolTraceCollector(false)
+	bindApplyCollector(collector, "apply-test")
+	collector.calls["call-1"] = attestedMutationTrace(t, "mcp_dosql_execute", map[string]interface{}{
+		"operation": "execute", "credential_ref": "orders-db", "database_asset_id": "db_orders",
+		"environment_id": "prod", "project_id": "ops", "engine": "postgres", "database_name": "orders",
+		"confirm": true,
+	})
+	if err := collector.requireCompletedToolEvidence(); err != nil {
+		t.Fatalf("structured DoSQL evidence rejected: %v", err)
+	}
+}
+
 func TestApplyCompletedMutationDoesNotHideUnresolvedTool(t *testing.T) {
 	for _, status := range []string{"running", "failed", "completed"} {
 		t.Run(status, func(t *testing.T) {
@@ -497,10 +510,18 @@ func attestedMutationTrace(t *testing.T, runtimeTool string, input map[string]in
 
 func attestedMutationTraceForSession(t *testing.T, runtimeTool string, input map[string]interface{}, sessionID, authorityDigest string) doagentToolTrace {
 	t.Helper()
-	realTool := strings.TrimPrefix(modelVisibleDoagentToolName(runtimeTool), "doops_")
+	binding := runtimeToolBinding(modelVisibleDoagentToolName(runtimeTool))
+	realTool := binding.Tool
+	server := binding.Server
+	if server == "" {
+		// Keep malformed-tool fixtures constructible so the production validator
+		// can exercise its unknown-binding rejection path.
+		server = "doops"
+		realTool = strings.TrimPrefix(modelVisibleDoagentToolName(runtimeTool), "doops_")
+	}
 	scope := map[string]interface{}{
 		"runtimeSessionId": sessionID,
-		"server":           "doops",
+		"server":           server,
 		"tool":             realTool,
 	}
 	result := map[string]interface{}{
@@ -525,7 +546,7 @@ func attestedMutationTraceForSession(t *testing.T, runtimeTool string, input map
 	inputDigest, err := digestRuntimeAttestationJSON(map[string]interface{}{
 		"arguments":        input,
 		"runtimeSessionId": sessionID,
-		"server":           "doops",
+		"server":           server,
 		"tool":             realTool,
 	})
 	if err != nil {

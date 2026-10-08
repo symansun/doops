@@ -4,7 +4,7 @@ import type { Session, Target } from "./client"
 
 export type CredentialType = "registry" | "tls" | "opaque" | "helmRepository" | "gitToken"
 export type CredentialScope = "personal" | "platform"
-export type CredentialUse = "imagePull" | "gitCheckout" | "helmPull" | "tls" | "opaqueSecret"
+export type CredentialUse = "imagePull" | "gitCheckout" | "helmPull" | "tls" | "opaqueSecret" | "database"
 export type CredentialVersionState = "staged" | "active" | "superseded" | "revoked"
 
 export interface CredentialGrantScope {
@@ -13,6 +13,10 @@ export interface CredentialGrantScope {
   namespace: string
   use: CredentialUse
   workload: { kind: string; name: string }
+  database_asset_id?: string
+  environment_id?: string
+  database_engine?: "mysql" | "postgres" | "mongodb"
+  database_name?: string
   image_repository?: string
   image_digest?: string
   helm_release?: string

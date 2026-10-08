@@ -6,7 +6,7 @@ import (
 )
 
 func TestParseSQLMode(t *testing.T) {
-	for _, value := range []string{"query", "plan", "apply", " APPLY "} {
+	for _, value := range []string{"query", "plan", "apply", "discover", " APPLY "} {
 		if _, err := parseSQLMode(value); err != nil {
 			t.Fatalf("parseSQLMode(%q): %v", value, err)
 		}
@@ -40,5 +40,14 @@ func TestSQLGatewayOperation(t *testing.T) {
 	}
 	if got := sqlGatewayOperation(sqlModeApply); got != "apply" {
 		t.Fatalf("apply operation = %q, want apply", got)
+	}
+	if got := sqlGatewayOperation(sqlModeDiscover); got != "ask" {
+		t.Fatalf("discover operation = %q, want ask", got)
+	}
+}
+
+func TestDiscoverModeAllowsLocalResourceScanWithoutRequest(t *testing.T) {
+	if mode, err := parseSQLMode("discover"); err != nil || mode != sqlModeDiscover {
+		t.Fatalf("discover mode = %q, err = %v", mode, err)
 	}
 }

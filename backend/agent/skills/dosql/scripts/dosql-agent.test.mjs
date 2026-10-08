@@ -29,6 +29,36 @@ test("classify command returns operation policy as JSON", async () => {
   assert.equal(result.result.approvalRequired, true);
 });
 
+test("classify command covers every supported SQL DDL and DML family", async () => {
+  const cases = [
+    ["alter", "alter table items add column extra text", "schema_change"],
+    ["comment", "comment on table items is 'test table'", "schema_change"],
+    ["create", "create table items (id integer)", "schema_change"],
+    ["drop", "drop table items", "schema_change"],
+    ["rename", "rename table items to archived_items", "schema_change"],
+    ["truncate", "truncate table items", "schema_change"],
+    ["delete", "delete from items where id = 1", "data_change"],
+    ["insert", "insert into items (id) values (1)", "data_change"],
+    ["merge", "merge into items using source_items on items.id = source_items.id when matched then update set id = source_items.id", "data_change"],
+    ["replace", "replace into items (id) values (1)", "data_change"],
+    ["update", "update items set id = 2 where id = 1", "data_change"],
+    ["with-update", "with changed as (select 1) update items set id = 2 where id = 1", "data_change"],
+  ];
+
+  for (const [name, statement, operationKind] of cases) {
+    const result = await runCli("classify", {
+      operationId: `dbop_classify_${name}`,
+      engine: "postgres",
+      environment: "test",
+      statement,
+    });
+    assert.equal(result.status, "succeeded", name);
+    assert.equal(result.result.operationKind, operationKind, name);
+    assert.equal(result.result.includeInChangeDocument, true, name);
+    assert.equal(result.result.approvalRequired, true, name);
+  }
+});
+
 for (const engine of ["mysql", "postgres", "mongodb"]) {
   test(`query command rejects an untrusted ${engine} client executable`, async () => {
     const dir = await mkdtemp(join(tmpdir(), `dosql-cli-query-${engine}-`));
@@ -67,7 +97,7 @@ for (const engine of ["mysql", "postgres", "mongodb"]) {
     }
   });
 
-  test(`execute command runs approved ${engine} create, insert, update and delete operations`, async () => {
+  test(`execute command runs approved ${engine} DDL and DML operations`, async () => {
     const dir = await mkdtemp(join(tmpdir(), `dosql-cli-execute-${engine}-`));
     try {
       const clientPath = await createFakeDatabaseClient(dir);
@@ -79,12 +109,29 @@ for (const engine of ["mysql", "postgres", "mongodb"]) {
               ["update", { collection: "items", method: "updateOne", args: [{ _id: 1 }, { $set: { value: 2 } }] }, { collection: "items", method: "findOne", args: [{ _id: 1 }] }, "data_change"],
               ["delete", { collection: "items", method: "deleteOne", args: [{ _id: 1 }] }, { collection: "items", method: "countDocuments", args: [{}] }, "data_change"],
             ]
-          : [
-              ["create", "create table items (id integer primary key, value integer)", "select count(*) from items", "schema_change"],
-              ["insert", "insert into items (id, value) values (1, 1)", "select value from items where id = 1", "data_change"],
-              ["update", "update items set value = 2 where id = 1", "select value from items where id = 1", "data_change"],
-              ["delete", "delete from items where id = 1", "select count(*) from items", "data_change"],
-            ];
+          : engine === "postgres"
+            ? [
+                ["create", "create table items (id integer primary key, value integer)", "select count(*) from items", "schema_change"],
+                ["alter", "alter table items add column extra text", "select count(*) from items", "schema_change"],
+                ["comment", "comment on table items is 'test table'", "select count(*) from items", "schema_change"],
+                ["truncate", "truncate table items", "select count(*) from items", "schema_change"],
+                ["insert", "insert into items (id, value) values (1, 1)", "select value from items where id = 1", "data_change"],
+                ["update", "update items set value = 2 where id = 1", "select value from items where id = 1", "data_change"],
+                ["delete", "delete from items where id = 1", "select count(*) from items", "data_change"],
+                ["merge", "merge into items using items source on items.id = source.id when matched then update set value = source.value", "select count(*) from items", "data_change"],
+                ["drop", "drop table items", "select 1", "schema_change"],
+              ]
+            : [
+                ["create", "create table items (id integer primary key, value integer)", "select count(*) from items", "schema_change"],
+                ["alter", "alter table items add column extra text", "select count(*) from items", "schema_change"],
+                ["rename", "rename table items to archived_items", "select count(*) from archived_items", "schema_change"],
+                ["truncate", "truncate table archived_items", "select count(*) from archived_items", "schema_change"],
+                ["insert", "insert into archived_items (id, value) values (1, 1)", "select value from archived_items where id = 1", "data_change"],
+                ["replace", "replace into archived_items (id, value) values (1, 2)", "select value from archived_items where id = 1", "data_change"],
+                ["update", "update archived_items set value = 3 where id = 1", "select value from archived_items where id = 1", "data_change"],
+                ["delete", "delete from archived_items where id = 1", "select count(*) from archived_items", "data_change"],
+                ["drop", "drop table archived_items", "select 1", "schema_change"],
+              ];
 
       for (const [action, statement, verificationStatement, operationKind] of operations) {
         const payload = {
@@ -118,6 +165,17 @@ for (const engine of ["mysql", "postgres", "mongodb"]) {
         assert.equal(result.mode, "database_write");
         assert.equal(result.result.status, "verified");
         assert.equal(result.result.operationKind, operationKind);
+      }
+      const statuses = await journalStatuses(join(dir, ".dosql", "journal.jsonl"));
+      assert.equal(statuses.length, operations.length * 5);
+      for (let index = 0; index < operations.length; index += 1) {
+        assert.deepEqual(statuses.slice(index * 5, index * 5 + 5), [
+          "planned",
+          "approved",
+          "running",
+          "succeeded",
+          "verified",
+        ]);
       }
     } finally {
       await rm(dir, { recursive: true, force: true });

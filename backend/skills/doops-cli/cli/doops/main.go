@@ -420,6 +420,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 	case "exec", "ssh", "ask", "write", "read", "info":
 		var target, cmdStr, msgStr, path, modelStr, contentStr, fileStr, sshHost string
 		var credentialRefs stringListFlag
+		var databaseRefs stringListFlag
+		var repositoryRefs stringListFlag
 		var sshOptions stringListFlag
 		var subSession string
 		var apply, background bool
@@ -439,6 +441,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			subFlag.StringVar(&modelStr, "model", "", "Model to use for this instruction (optional)")
 			subFlag.BoolVar(&apply, "apply", false, "Allow the explicitly requested instruction to make authorized changes")
 			subFlag.Var(&credentialRefs, "credential", "Managed credential resource name (repeatable; requires --apply)")
+			subFlag.Var(&databaseRefs, "database-ref", "Database asset reference for the conversation (repeatable)")
+			subFlag.Var(&repositoryRefs, "repo-ref", "Code repository reference, optionally ID@branch (repeatable)")
 		case "write":
 			subFlag.StringVar(&path, "path", "", "Destination path")
 			subFlag.StringVar(&contentStr, "content", "", "Content to write; for multi-line content prefer --file or stdin")
@@ -552,7 +556,12 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			arguments["command"] = positionalArgs
 		case "ask":
 			toolName = "doops_agent_prompt"
-			arguments["instruction"] = msgStr
+			instruction, err := appendConversationReferences(msgStr, []string(databaseRefs), []string(repositoryRefs))
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
+			arguments["instruction"] = instruction
 			if apply {
 				arguments["operation"] = "apply"
 			}

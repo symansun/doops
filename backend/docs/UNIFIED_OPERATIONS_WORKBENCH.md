@@ -45,11 +45,11 @@ Workbench session、附件上传。缺少 session 时统一返回未建立 Gatew
 
 ## DoSql 边界
 
-当前源码已统一入口和认证，但尚未实现受限的数据库 MCP 执行工具与 Gateway 受管凭据到
-数据库 adapter 的内部绑定。`doops sql` 的 prompt 转发成功、页面返回文本或本地离线
-DoSql 测试通过，都不能证明远端数据库已经查询或变更成功。此链路属于整合验收阻塞项，
-不得开放 Bash、读取本地连接文件或将密码放入 prompt 来掩盖缺失实现。进度和待确认的
-数据库资源/授权契约见 `UNIFIED_WORKBENCH_PROGRESS.md`。
+DoSql 已接入受限的数据库 MCP 工具和 Gateway 受管凭据到数据库 adapter 的内部绑定。
+`doops sql`、控制台数据库页和 DoSql skill 共用 Gateway 登录、target/action 授权、
+审计和 session；skill 不实现第二套认证，也不能通过 Bash、本地连接文件、环境变量或
+密码 prompt 绕过授权。只读查询和变更都会进入 DoSql 的 journal/evidence 生命周期，
+变更还必须携带精确的数据库凭据、签名审批和执行后验证。
 
 DoSql 通过 `doops_agent_prompt` 进入 Agent runtime。数据库目标来自当前 Gateway target 的
 探测结果；`config/resources.json` 只能放标签和示例，不能选择 target、保存权限或保存密码。
@@ -60,6 +60,12 @@ DoSql 通过 `doops_agent_prompt` 进入 Agent runtime。数据库目标来自�
 DoSql 的签名审批是变更控制证据，必须绑定 operation、change request、数据库资产、语句和
 验证指纹。它不能绕过 Gateway grant，也不应被当作另一种用户登录。只读查询也必须写入
 journal/evidence；写操作的未知结果必须阻止同一 operation 重放，直到人工核对。
+
+数据库发现使用 `mcp_dosql_read operation=discover`，只扫描 Kubernetes 非 Secret 元数据，
+从 Pod、Service、Deployment 和 StatefulSet 识别数据库实例、引擎、端口以及非 Secret 配置
+中可见的数据库名，并返回稳定的 `database_asset_id`。缺少数据库名的候选必须由用户补充
+精确选择和数据库凭据，不能猜测或扩大 scope。对话任务可以同时携带数据库资产引用和
+代码仓库引用；它们只提供任务上下文，不替代 Gateway 授权、仓库权限或 database grant。
 
 DoWeb 运行在选定 target 上，接收客户已经构建好的 `dist/`，通过 SiteSpec 渲染 Nginx，
 执行 `nginx -t`、reload、健康检查并保留回滚状态。正常入口不接受 SSH host、用户名、密码

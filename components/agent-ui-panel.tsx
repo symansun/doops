@@ -6,6 +6,7 @@ import { useCallback, useState, useSyncExternalStore } from "react"
 import { deploymentRequest, type DeploymentInput } from "@/lib/deployment"
 import { randomSession } from "@/lib/gateway"
 import type { Target } from "@/lib/client"
+import type { DoopsConversationReferences } from "@/lib/agent-session-transport"
 import { isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { DeploymentForm } from "./deployment-form"
 
@@ -15,12 +16,16 @@ export function AgentUiPanel({
   sessionId,
   onConfigureModel,
   onSessionChange,
+  references: referencesProp,
+  onReferencesChange,
 }: {
   runtime: AgentSessionRuntime
   target: Target
   sessionId: string
   onConfigureModel?: () => void
   onSessionChange?: (id: string) => void
+  references?: DoopsConversationReferences
+  onReferencesChange?: (references: DoopsConversationReferences) => void
 }) {
   const subscribe = useCallback(
     (listener: () => void) => runtime.subscribe(sessionId, listener),
@@ -33,6 +38,7 @@ export function AgentUiPanel({
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
   const busy = isDoopsAgentSessionBusy(snapshot)
   const [operation, setOperation] = useState<"ask" | "apply">("ask")
+  const [references, setReferences] = useState<DoopsConversationReferences>(referencesProp ?? { databaseRefs: [], repositoryRefs: [] })
 
   const startNewSession = useCallback(() => {
     if (busy) return
@@ -54,6 +60,8 @@ export function AgentUiPanel({
           sessionId={sessionId}
           snapshot={snapshot}
           target={target}
+          references={references}
+          onReferencesChange={(next) => { setReferences(next); onReferencesChange?.(next) }}
         />
       }
       headerActions={
@@ -114,6 +122,8 @@ function DoopsAgentContextPanel({
   sessionId,
   snapshot,
   target,
+  references,
+  onReferencesChange,
 }: {
   onOperationChange: (operation: "ask" | "apply") => void
   onSessionChange?: (id: string) => void
@@ -121,7 +131,14 @@ function DoopsAgentContextPanel({
   sessionId: string
   snapshot: AgentSessionSnapshot
   target: Target
+  references: DoopsConversationReferences
+  onReferencesChange: (references: DoopsConversationReferences) => void
 }) {
+  const [databaseRefs, setDatabaseRefs] = useState(references.databaseRefs.join(", "))
+  const [repositoryRefs, setRepositoryRefs] = useState(references.repositoryRefs.join(", "))
+  const parseRefs = (value: string) => value.split(",").map((item) => item.trim()).filter(Boolean).filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$/.test(item))
+  const updateDatabaseRefs = (value: string) => { setDatabaseRefs(value); onReferencesChange({ databaseRefs: parseRefs(value), repositoryRefs: parseRefs(repositoryRefs) }) }
+  const updateRepositoryRefs = (value: string) => { setRepositoryRefs(value); onReferencesChange({ databaseRefs: parseRefs(databaseRefs), repositoryRefs: parseRefs(value) }) }
   return (
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-card/60 px-4 py-2">
         <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
@@ -149,6 +166,14 @@ function DoopsAgentContextPanel({
               />
             </label>
           )}
+          <label className="flex items-center gap-1.5">
+            数据库
+            <input aria-label="数据库引用" className="w-40 rounded-md border border-input bg-background px-2 py-1 text-[11px] text-foreground outline-none focus:border-ring" value={databaseRefs} onChange={(event) => updateDatabaseRefs(event.target.value)} placeholder="db_asset_id" />
+          </label>
+          <label className="flex items-center gap-1.5">
+            仓库
+            <input aria-label="代码仓库引用" className="w-40 rounded-md border border-input bg-background px-2 py-1 text-[11px] text-foreground outline-none focus:border-ring" value={repositoryRefs} onChange={(event) => updateRepositoryRefs(event.target.value)} placeholder="repo_id@branch" />
+          </label>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">模式</span>

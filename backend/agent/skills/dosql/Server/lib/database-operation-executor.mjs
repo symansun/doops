@@ -259,13 +259,31 @@ export function createDatabaseCliAdapter(input = {}) {
   const baseEnv = input.env ?? process.env;
   const spawnFile = input.spawnFile ?? runProcess;
   if (type === "postgres-psql") {
-    const connectionUriEnv = requireText(input.connectionUriEnv, "adapter.connectionUriEnv");
     const client = resolveClientDescriptor({
       configuredPath: input.psqlPath,
       defaultName: "psql",
-      allowedWrapperNames: ["docker-db-client.sh"],
+      allowedWrapperNames: ["docker-db-client.sh", "doops-postgres-client.sh"],
       spawnFile,
     });
+    if (basename(client.command) === "doops-postgres-client.sh") {
+      const namespace = requireText(baseEnv.DOSQL_POSTGRES_NAMESPACE, "DOSQL_POSTGRES_NAMESPACE");
+      const database = requireText(baseEnv.DOSQL_POSTGRES_DATABASE, "DOSQL_POSTGRES_DATABASE");
+      const secretName = requireText(baseEnv.DOSQL_POSTGRES_SECRET_NAME, "DOSQL_POSTGRES_SECRET_NAME");
+      return {
+        trustedClient: client.trusted,
+        targetFingerprint() {
+          return connectionFingerprint({
+            engine: "postgres", transport: "doops-agent", namespace, database, secretName,
+            uriKey: baseEnv.DOSQL_POSTGRES_URI_KEY || "connection_uri", clientFingerprint: client.fingerprint,
+          });
+        },
+        execute(request) {
+          if (request.databaseName !== database) throw new Error("requested database does not match DOSQL_POSTGRES_DATABASE");
+          return executeProcess({ command: client.command, args: PSQL_ARGS, stdin: formatSqlInput(request, "postgres"), env: runtimeEnvironment(baseEnv), spawnFile });
+        },
+      };
+    }
+    const connectionUriEnv = requireText(input.connectionUriEnv, "adapter.connectionUriEnv");
     return processAdapter({
       command: client.command,
       args: PSQL_ARGS,
@@ -393,13 +411,42 @@ export function createDatabaseCliAdapter(input = {}) {
     };
   }
   if (type === "mongodb-mongosh") {
-    const connectionUriEnv = requireText(input.connectionUriEnv, "adapter.connectionUriEnv");
     const client = resolveClientDescriptor({
       configuredPath: input.mongoshPath,
       defaultName: "mongosh",
-      allowedWrapperNames: ["docker-db-client.sh"],
+      allowedWrapperNames: ["docker-db-client.sh", "doops-mongodb-client.sh"],
       spawnFile,
     });
+    if (basename(client.command) === "doops-mongodb-client.sh") {
+      const namespace = requireText(baseEnv.DOSQL_MONGODB_NAMESPACE, "DOSQL_MONGODB_NAMESPACE");
+      const database = requireText(baseEnv.DOSQL_MONGODB_DATABASE, "DOSQL_MONGODB_DATABASE");
+      const secretName = requireText(baseEnv.DOSQL_MONGODB_SECRET_NAME, "DOSQL_MONGODB_SECRET_NAME");
+      return {
+        trustedClient: client.trusted,
+        targetFingerprint() {
+          return connectionFingerprint({
+            engine: "mongodb", transport: "doops-agent", namespace, database, secretName,
+            uriKey: baseEnv.DOSQL_MONGODB_URI_KEY || "connection_uri", clientFingerprint: client.fingerprint,
+          });
+        },
+        execute(request) {
+          if (request.databaseName !== database) throw new Error("requested database does not match DOSQL_MONGODB_DATABASE");
+          const mongoOperation = normalizeMongoOperation(request.mongoOperation);
+          return executeProcess({
+            command: client.command,
+            args: ["--nodb", "--quiet", "--eval", mongoEvalScript()],
+            env: {
+              ...runtimeEnvironment(baseEnv),
+              DOSQL_MONGODB_OPERATION: JSON.stringify(mongoOperation),
+              DOSQL_MONGODB_REQUIRE_READ_ONLY_ROLE: request.requireReadOnlyCredential ? "1" : "0",
+              DOSQL_MONGODB_DATABASE: database,
+            },
+            spawnFile,
+          });
+        },
+      };
+    }
+    const connectionUriEnv = requireText(input.connectionUriEnv, "adapter.connectionUriEnv");
     return {
       trustedClient: client.trusted,
       targetFingerprint() {
@@ -849,6 +896,7 @@ function renderMongoOperation(value) {
 function mongoEvalScript() {
   return [
     "const db = connect(process.env.DOSQL_MONGODB_URI);",
+    "if (process.env.DOSQL_MONGODB_DATABASE && db.getName() !== process.env.DOSQL_MONGODB_DATABASE) throw new Error('MongoDB database does not match the authorized asset');",
     "const spec = JSON.parse(process.env.DOSQL_MONGODB_OPERATION);",
     "if (process.env.DOSQL_MONGODB_REQUIRE_READ_ONLY_ROLE === '1') {",
     "  const roles = db.runCommand({connectionStatus: 1}).authInfo.authenticatedUserRoles;",
