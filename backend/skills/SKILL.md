@@ -278,6 +278,7 @@ doops -session preflight targets --target <gateway-target>
 | DoSql 只读查询/巡检 | `doops -session <s> ask --target <t> --msg '使用 DoSql skill，只读检查 <数据库目标和问题>'` |
 | DoSql 变更计划 | `doops -session <s> ask --target <t> --msg '使用 DoSql skill，生成 <数据库变更> 的计划、风险和验证，不执行'` |
 | DoSql 受控变更 | `doops -session <s> ask --target <t> --apply --credential <database-resource> --msg '使用 DoSql skill，按已批准的 <变更请求> 执行并返回 journal/evidence'` |
+| DoSql 发现数据库资产 | `doops -session <s> sql --target <t> --mode discover --root <authorized-repo> --resources-file <assets.json> --project <id> --environment <id> --dosql-script <path>/dosql-agent.mjs` | 扫描授权代码/配置和显式目标提示，写入 metadata-only 资产清单；不读取或保存凭据。 |
 | DoWeb 只读巡检 | `doops -session <s> web --target <t> --mode check --request '<站点、Nginx、TLS 或健康检查需求>'` |
 | DoWeb 发布计划 | `doops -session <s> web --target <t> --mode plan --request '<站点发布需求>'` |
 | DoWeb 受控发布 | `doops -session <s> web --target <t> --mode apply --credential <web-resource> --request '<站点、dist、域名、代理、验收>'` |
