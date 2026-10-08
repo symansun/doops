@@ -54,8 +54,9 @@ DoSql 已接入受限的数据库 MCP 工具和 Gateway 受管凭据到数据库
 DoSql 通过 `doops_agent_prompt` 进入 Agent runtime。数据库目标来自当前 Gateway target 的
 探测结果；`config/resources.json` 只能放标签和示例，不能选择 target、保存权限或保存密码。
 数据库凭据只以 DoOps managed credential 的资源名进入任务，payload 由 Gateway 内部物化，
-不进入 prompt、日志或 Web state。只读请求携带 credential reference 时必须显式声明
-`skill=dosql`；普通只读 prompt 不能附带数据库凭据。
+不进入 prompt、日志或 Web state。Gateway 只判断目标和凭据是否可用；数据库资产、环境、
+引擎、数据库名由 DoSql/目标 Agent 根据 target discovery 和任务上下文校验。只读请求携带
+credential reference 时必须显式声明 `skill=dosql`；普通只读 prompt 不能附带数据库凭据。
 
 DoSql 的签名审批是变更控制证据，必须绑定 operation、change request、数据库资产、语句和
 验证指纹。它不能绕过 Gateway grant，也不应被当作另一种用户登录。只读查询也必须写入

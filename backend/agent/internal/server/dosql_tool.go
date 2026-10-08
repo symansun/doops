@@ -154,6 +154,9 @@ func handleDoSQLTool(ctx context.Context, raw json.RawMessage, mutation bool) (s
 	if params.Engine != "mysql" && params.Engine != "postgres" && params.Engine != "mongodb" {
 		return "", errors.New("dosql_engine_invalid")
 	}
+	if err := authorizeDoSQLDatabaseAsset(ctx, params); err != nil {
+		return "", err
+	}
 	if mutation {
 		if params.Operation != "execute" || !params.Confirm || params.ChangeRequestID == "" || params.ApprovalArtifactPath == "" {
 			return "", errors.New("dosql_mutation_confirmation_required")
@@ -161,9 +164,12 @@ func handleDoSQLTool(ctx context.Context, raw json.RawMessage, mutation bool) (s
 	} else if params.Operation != "query" {
 		return "", errors.New("dosql_read_operation_invalid")
 	}
-	binding, err := authorizedDoSQLCredential(params.SessionID, params.CredentialRef, params.Engine, params.DatabaseAssetID, params.EnvironmentID, params.DatabaseName)
+	binding, err := authorizedDoSQLCredential(params.SessionID, params.CredentialRef)
 	if err != nil {
 		return "", err
+	}
+	if !validDatabaseCredentialKeys(params.Engine, binding.Keys) {
+		return "", errors.New("dosql_credential_keys_invalid")
 	}
 	if err := validateDoSQLSecretBinding(ctx, binding); err != nil {
 		return "", err
@@ -237,37 +243,38 @@ func handleDoSQLTool(ctx context.Context, raw json.RawMessage, mutation bool) (s
 	return doSQLResultSummary(response.Result, operationID, journalPath, evidencePath), nil
 }
 
-// discoverDatabaseCandidates inspects only non-secret Kubernetes metadata. It
-// never reads Secret values; credentials are required for an actual database
-// connection after the user selects a candidate.
-func discoverDatabaseCandidates(ctx context.Context) (string, error) {
+type doSQLDatabaseCandidate struct {
+	DatabaseAssetID string `json:"database_asset_id"`
+	Cluster         string `json:"cluster,omitempty"`
+	Instance        string `json:"instance,omitempty"`
+	Namespace       string `json:"namespace"`
+	Service         string `json:"service"`
+	Engine          string `json:"engine"`
+	Host            string `json:"host"`
+	Port            int    `json:"port,omitempty"`
+	DatabaseName    string `json:"database_name,omitempty"`
+	Status          string `json:"status"`
+	Source          string `json:"source"`
+}
+
+// discoverDatabaseCandidateList inspects only non-secret Kubernetes metadata.
+// It never reads Secret values; credentials are required for an actual
+// database connection after the user selects a candidate.
+func discoverDatabaseCandidateList(ctx context.Context) (string, string, []doSQLDatabaseCandidate, error) {
 	command := exec.CommandContext(ctx, "kubectl", "get", "pods,services,deployments,statefulsets", "--all-namespaces", "--output", "json")
 	output, err := command.Output()
 	if err != nil {
-		return "", errors.New("dosql_discovery_unavailable")
+		return "", "", nil, errors.New("dosql_discovery_unavailable")
 	}
 	var list struct {
 		Items []map[string]interface{} `json:"items"`
 	}
 	if err := json.Unmarshal(output, &list); err != nil {
-		return "", errors.New("dosql_discovery_invalid")
+		return "", "", nil, errors.New("dosql_discovery_invalid")
 	}
 	cluster := strings.TrimSpace(os.Getenv("DOOPS_GATEWAY_CLUSTER"))
 	instance := strings.TrimSpace(os.Getenv("DOOPS_GATEWAY_INSTANCE"))
-	type candidate struct {
-		DatabaseAssetID string `json:"database_asset_id"`
-		Cluster         string `json:"cluster,omitempty"`
-		Instance        string `json:"instance,omitempty"`
-		Namespace       string `json:"namespace"`
-		Service         string `json:"service"`
-		Engine          string `json:"engine"`
-		Host            string `json:"host"`
-		Port            int    `json:"port,omitempty"`
-		DatabaseName    string `json:"database_name,omitempty"`
-		Status          string `json:"status"`
-		Source          string `json:"source"`
-	}
-	seen := map[string]candidate{}
+	seen := map[string]doSQLDatabaseCandidate{}
 	for _, item := range list.Items {
 		metadata, _ := item["metadata"].(map[string]interface{})
 		namespace, _ := metadata["namespace"].(string)
@@ -286,20 +293,28 @@ func discoverDatabaseCandidates(ctx context.Context) (string, error) {
 		if databaseName == "" {
 			status = "needs_database_name_or_credential"
 		}
-		seen[key] = candidate{
+		seen[key] = doSQLDatabaseCandidate{
 			DatabaseAssetID: databaseAssetID(cluster, instance, namespace, name, engine),
 			Cluster:         cluster, Instance: instance, Namespace: namespace, Service: name,
 			Engine: engine, Host: name + "." + namespace + ".svc", Port: port,
 			DatabaseName: databaseName, Status: status, Source: stringValue(item["kind"]),
 		}
 	}
-	items := make([]candidate, 0, len(seen))
+	items := make([]doSQLDatabaseCandidate, 0, len(seen))
 	for _, value := range seen {
 		items = append(items, value)
 	}
 	sort.Slice(items, func(i, j int) bool {
 		return strings.Join([]string{items[i].Namespace, items[i].Service, items[i].Engine}, "/") < strings.Join([]string{items[j].Namespace, items[j].Service, items[j].Engine}, "/")
 	})
+	return cluster, instance, items, nil
+}
+
+func discoverDatabaseCandidates(ctx context.Context) (string, error) {
+	cluster, instance, items, err := discoverDatabaseCandidateList(ctx)
+	if err != nil {
+		return "", err
+	}
 	result := map[string]interface{}{
 		"status": "discovered", "cluster": cluster, "instance": instance,
 		"candidates": items,
@@ -307,6 +322,26 @@ func discoverDatabaseCandidates(ctx context.Context) (string, error) {
 	}
 	encoded, _ := json.Marshal(result)
 	return string(encoded), nil
+}
+
+func authorizeDoSQLDatabaseAsset(ctx context.Context, params doSQLParams) error {
+	cluster, instance, candidates, err := discoverDatabaseCandidateList(ctx)
+	if err != nil {
+		return err
+	}
+	for _, candidate := range candidates {
+		if candidate.DatabaseAssetID != params.DatabaseAssetID {
+			continue
+		}
+		if candidate.Cluster != cluster || candidate.Instance != instance || candidate.Engine != params.Engine {
+			return errors.New("dosql_database_asset_mismatch")
+		}
+		if candidate.DatabaseName != "" && candidate.DatabaseName != params.DatabaseName {
+			return errors.New("dosql_database_name_mismatch")
+		}
+		return nil
+	}
+	return errors.New("dosql_database_asset_not_found")
 }
 
 func databaseAssetID(cluster, instance, namespace, name, engine string) string {
