@@ -82,8 +82,12 @@ Do not claim production rollout from local fixtures or a source merge.
   blockers after removing lock-label and bare-401 authority guesses. The final
   build passed; cancellation/finalization functional scenarios also passed five
   repetitions.
-- Non-blocking limits: some Git pre-dispatch failures still receive a generic
-  error audit category; persistent audit outages retain evidence/retry goroutines
+- Follow-up for PR #69: reproduced Git pre-dispatch cancellation and global/user
+  execution-limit rejection receiving a generic error instead of their known
+  cause. Both early returns now persist canceled/rate_limited through the existing
+  terminal writer. Regression scenarios verify the HTTP result, final audit,
+  no Agent dispatch, and no remaining lease or active owner.
+- Non-blocking limits: persistent audit outages retain evidence/retry goroutines
   without execution leases. Live Kubernetes rollback and rollout of these changes
   are not claimed.
 - Source verification is complete. CNB required CI and main merge are recorded
