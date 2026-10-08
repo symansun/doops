@@ -82,9 +82,13 @@ DoOps architecture, security, release, and verification boundaries.
   the explicitly authorized target Agent. Public prompt and metadata bindings contain names,
   scopes, Secret names/types/key sets, resource versions, digests, status, and stable error
   categories only.
-- Credential access is exact and persistent: user plus configured target `cluster/instance`, exact
-  namespace, use, workload kind/name, and image, Helm, or required-key fields. Do not add wildcard,
-  prefix, inferred, project, environment, template, or workflow-path grants.
+- Credential access is exact and persistent for workload, image, Helm, Git and TLS uses: user plus
+  configured target `cluster/instance`, exact namespace, use, workload kind/name, and relevant
+  asset fields. Database credential grants are the explicit exception: Gateway binds the credential
+  owner/grantee, target `cluster/instance`, use and Secret materialization namespace; DoSql/Agent
+  owns database asset, environment, engine, database name and SQL authorization. Do not add
+  wildcard, prefix, inferred, project, environment, template, or workflow-path grants to the
+  Gateway layer.
 - A project may declare metadata-only development requirements in
   `.agent/doops-credentials.yaml`. Before Git, registry, Helm, TLS, or API development work that
   depends on managed credentials, run

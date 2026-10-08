@@ -597,14 +597,12 @@ doops credential grant --target gw-edu-coder \
   --image-repository registry.example.com/oilan \
   --image-digest sha256:<manifest-digest>
 
-# DoSql database grant: all four database fields come from target discovery
+# DoSql database grant: Gateway binds target + credential usability only;
+# DoSql/Agent validates asset, environment, engine and database name at execution time
 doops credential grant --target gw-edu-coder \
   --id <credential-id> \
   --cluster doops-edu --instance edu-coder \
   --namespace agents --use database \
-  --workload-kind Deployment --workload-name postgres \
-  --database-asset-id dbscan_doops-edu_edu-coder_agents_postgres_postgres \
-  --environment-id edu --database-engine postgres --database-name agentcloud \
   --required-keys connection_uri
 
 # 3. 在相同 scope 验证 staged version
@@ -620,9 +618,6 @@ doops -session credential-verify-<version> credential verify \
 doops -session credential-verify-db-<version> credential verify \
   --target gw-edu-coder --id <credential-id> --version-id <version-id> \
   --cluster doops-edu --instance edu-coder --namespace agents --use database \
-  --workload-kind Deployment --workload-name postgres \
-  --database-asset-id dbscan_doops-edu_edu-coder_agents_postgres_postgres \
-  --environment-id edu --database-engine postgres --database-name agentcloud \
   --required-keys connection_uri
 
 # 4. 激活已经覆盖全部 active grants 的版本
