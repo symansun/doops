@@ -129,8 +129,16 @@ workload kind 仅支持 `Deployment`、`StatefulSet`、`DaemonSet`。不支持 w
 | `imagePull` | `registry` | image repository、64 位 `sha256:` digest |
 | `tls` | `tls` | 无 |
 | `opaqueSecret` | `opaque` | `required_keys`，必须与 payload key 集合完全相等 |
+| `database` | `opaque` | `database_asset_id`、`environment_id`、`database_engine`、`database_name` 和数据库引擎规定的 `required_keys` |
 | `helmPull` | `helmRepository` | Helm release、明确授权的 HTTPS `.tgz` Chart 下载 URL |
 | `gitCheckout` | `gitToken` | 无；当前 scope 不包含 branch/ref |
+
+数据库 grant 还必须绑定目标 Agent 的精确 workload scope。PostgreSQL 和 MongoDB 使用
+`required_keys=connection_uri`；MySQL 使用
+`required_keys=SPRING_DATASOURCE_URL,SPRING_DATASOURCE_USERNAME,SPRING_DATASOURCE_PASSWORD`。
+`database_asset_id` 必须来自 DoSql 的 target discovery 或授权代码资产，不能由 CLI 根据
+数据库名猜测。`credential grant` 和 `credential verify` 使用相同的四个数据库字段，
+`credential list` 会回显这些 metadata 以便审计核对，但不会回显 payload。
 
 ## Payload schema
 
