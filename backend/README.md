@@ -377,6 +377,8 @@ doops -session demo ssh --target gpu-ampere01 --host ops@app.internal -- bash -l
 doops -session demo ask --target gpu-ampere01 --msg '检查磁盘和内存压力，给出结论'
 doops -session demo push --target gpu-ampere01 --src .
 doops -session demo pull --target gpu-ampere01 --dest ./demo-output
+doops -session demo image build --target gpu-ampere01 --context /root/ws/demo --output oci --output-path /tmp/demo.oci
+doops -session demo image copy --target gpu-ampere01 --source oci-archive:/tmp/demo.oci --destination docker://registry.example.com/team/demo:release
 doops -session demo write --target gpu-ampere01 --path /root/ws/demo/pod.yaml --file ./pod.yaml
 doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 ```
@@ -391,6 +393,8 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 | `doops list` | 列出客户端已配置的 Gateway target 路由 |
 | `doops capabilities --require structuredSSH` | 校验在线 Agent 已声明结构化 SSH 协议；缺失时失败关闭 |
 | `doops exec` | 在远端 agent 容器内执行确定性命令 |
+| `doops image build` | 通过标准 BuildKit 构建 OCI 镜像，支持平台选择和 Registry 输出 |
+| `doops image copy` | 通过标准 Skopeo 在 Registry、OCI archive、目录等 transport 之间复制并校验镜像 |
 | `doops ssh` | 通过结构化 argv 执行出站 SSH，避免嵌套引号被远端 shell 重解析 |
 | `doops ask` | 交给远端 doagent 自主分析和执行 |
 | `doops push` | 同步本地代码到 `/root/ws/$SESSION`，尊重 `.gitignore`/`.doopsignore` |

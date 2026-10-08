@@ -53,6 +53,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   ask         发送自然语言指令 (由边缘端智能体完成受控的通用运维协作)
   sql         通过统一 Gateway/Agent 入口使用 DoSql 数据库 skill
   web         通过统一 Gateway/Agent 入口使用 DoWeb 网站 skill
+  image       通用 OCI 镜像构建与复制（目标 Agent 执行）
   read        查看目标节点上的小文本文件（不用于下载大文件/二进制）
   write       写入文件到目标服务器
   info        获取节点系统信息 (CPU/内存/磁盘)
@@ -413,6 +414,12 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 	case "web":
 		if err := runWebCommand(cmdArgs, *sessionName, servers, configErr, ss, *verbose); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "image":
+		if err := runImageCommand(cmdArgs, *sessionName, servers, configErr, os.Stdout); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}

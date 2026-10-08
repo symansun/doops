@@ -279,6 +279,8 @@ doops -session preflight targets --target <gateway-target>
 | 需求 | 命令 |
 | :--- | :--- |
 | 执行确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'` |
+| 构建 OCI 镜像 | `doops -session <s> image build --target <t> --context <remote-dir> --output oci --output-path <remote-file>` |
+| 复制 OCI 镜像 | `doops -session <s> image copy --target <t> --source <ref> --destination <ref>` |
 | 同步 OCI 镜像 | `doops -session <s> registry sync --target <t> --source-registry <src> --target-registry <dst> --tag <release> --source-authfile <remote-file> --target-authfile <remote-file> --image <name>` |
 | AI 自主分析 | `doops -session <s> ask --target <t> --msg '<task>'` |
 | 发布任务 | `doops -session <s> ask --target <t> --apply --credential <resource-name> --msg '<target、范围、明确镜像版本、原因、验收>'` |
@@ -322,6 +324,11 @@ DoSql 必须从 `doops sql` 入口进入。普通 `doops ask --msg '使用 DoSql
 AMP 专用脚本、Job 或外部镜像。标准 DoOps Agent 镜像必须同时提供 `buildctl`（构建）
 和 `skopeo`（复制/检查）。目标缺少 `skopeo` 时直接报告工具缺失，不在线安装、不静默
 切换到其它工具。
+
+`image build` 是通用 BuildKit 构建入口，默认输出 OCI archive，也支持明确指定
+`--output image --image <ref> --push` 推送到 Registry；`image copy` 支持 Skopeo 的
+标准 transport。两者都通过受审计的 `doops_shell` 执行，不绑定 Docker、nerdctl、AMP
+或某个项目脚本。私有 Registry 凭据只能引用目标上的受控 authfile，禁止写入命令参数。
 
 大文件、压缩包、数据库导出、图片、视频、课程资源包等资产，用 `pull` 拉取整个 session 工作区。不要用 `read`，也不要让 `exec` 输出 base64。
 
