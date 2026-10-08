@@ -62,6 +62,59 @@ func TestDoSQLReadUsesBoundCredentialMetadataAndReturnsEvidenceSummary(t *testin
 	}
 }
 
+func TestDoSQLMutationUsesBoundCredentialAndReturnsEvidenceSummary(t *testing.T) {
+	root := t.TempDir()
+	workspaceRoot := filepath.Join(root, "ws")
+	session := "sql-mutation"
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, session), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOOPS_WORKSPACE_ROOT", workspaceRoot)
+
+	binding := api.AgentCredentialBinding{
+		Name: "orders-db", Use: string(CredentialUseDatabase), Namespace: "apps", ResourceName: "cred-secret",
+		SecretType: "Opaque", Keys: []string{"connection_uri"}, ResourceVersion: "7",
+		CredentialID: "cred_123456789012345678901234", GrantID: "credgrant_123456789012345678901234", VersionID: "credver_123456789012345678901234",
+		DatabaseAssetID: "db_orders", EnvironmentID: "test", DatabaseEngine: "postgres", DatabaseName: "orders",
+	}
+	leasePath := dosqlCredentialLeasePath(session)
+	if err := os.MkdirAll(filepath.Dir(leasePath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	leaseJSON, _ := json.Marshal(dosqlCredentialLease{SessionID: session, Bindings: []api.AgentCredentialBinding{binding}})
+	if err := os.WriteFile(leasePath, append(leaseJSON, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := t.TempDir()
+	kubectl := filepath.Join(bin, "kubectl")
+	secretJSON := `{"metadata":{"resourceVersion":"7","labels":{"doops.sh/credential-id":"cred_123456789012345678901234","doops.sh/credential-grant-id":"credgrant_123456789012345678901234"},"annotations":{"doops.sh/credential-version":"credver_123456789012345678901234"}},"data":{"connection_uri":"` + base64.StdEncoding.EncodeToString([]byte("postgres://db-user:db-secret@db/orders")) + `"}}`
+	writeExecutable(t, kubectl, "#!/bin/sh\nprintf '%s' '"+secretJSON+"'\n")
+	node := filepath.Join(bin, "node")
+	writeExecutable(t, node, "#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ \"$1\" = \"--output\" ]; then out=\"$2\"; fi; shift; done\nprintf '%s' '{\"status\":\"succeeded\",\"result\":{\"status\":\"verified\",\"executionResult\":{\"affectedRows\":1,\"transactionId\":\"dbtx_mutation_test\"}}}' > \"$out\"\n")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("DOSQL_NODE", node)
+
+	request := map[string]interface{}{
+		"session_id": session, "operation": "execute", "confirm": true, "credential_ref": "orders-db",
+		"database_asset_id": "db_orders", "environment_id": "test", "project_id": "ops",
+		"engine": "postgres", "database_name": "orders", "statement": "alter table orders add column external_id text",
+		"verification_statement": "select count(*) from orders", "change_request_id": "chg_orders_001",
+		"approval_artifact_path": ".dosql/operations/dbop_test.approval.json",
+	}
+	encoded, _ := json.Marshal(request)
+	result, err := handleDoSQLTool(t.Context(), encoded, true)
+	if err != nil {
+		t.Fatalf("mutation execute: %v", err)
+	}
+	if !strings.Contains(result, `"status":"verified"`) || !strings.Contains(result, "dbtx_mutation_test") {
+		t.Fatalf("unexpected bounded mutation result: %s", result)
+	}
+	if strings.Contains(result, "db-secret") || strings.Contains(result, "postgres://") {
+		t.Fatalf("credential payload leaked into mutation result: %s", result)
+	}
+}
+
 func TestDoSQLRejectsCredentialScopeMismatchBeforeExecutor(t *testing.T) {
 	root := t.TempDir()
 	workspaceRoot := filepath.Join(root, "ws")
