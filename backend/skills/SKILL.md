@@ -288,6 +288,7 @@ doops -session preflight targets --target <gateway-target>
 | DoWeb 只读巡检 | `doops -session <s> web --target <t> --mode check --request '<站点、Nginx、TLS 或健康检查需求>'` |
 | DoWeb 发布计划 | `doops -session <s> web --target <t> --mode plan --request '<站点发布需求>'` |
 | DoWeb 受控发布 | `doops -session <s> web --target <t> --mode apply --credential <web-resource> --request '<站点、dist、域名、代理、验收>'` |
+
 | 创建凭据 | `doops credential create --target <t> --name <name> --scope personal --type <type>` |
 | 写入凭据版本 | `printf '%s' '<json>' \| doops credential put --target <t> --id <credential-id>` |
 | 查询 target 可用凭据 | `doops credential list --target <t>` |
@@ -298,6 +299,9 @@ doops -session preflight targets --target <gateway-target>
 | 激活凭据版本 | `doops credential promote --target <t> --id <id> --version-id <version>` |
 | 吊销授权 | `doops credential grant-revoke --target <t> --id <id> --grant-id <grant>` |
 | 吊销资源 | `doops credential revoke --target <t> --id <id>` |
+
+DoSql 必须从 `doops sql` 入口进入。普通 `doops ask --msg '使用 DoSql'` 是通用 Agent
+对话，不保证注入 `mcp_dosql_read/execute`，也不能用来判断目标是否支持 DoSql。
 | 推送本地目录 | `doops -session <s> push --target <t> --src <dir>` |
 | 拉取远端工作区 | `doops -session <s> pull --target <t> --dest <dir>` |
 | 小文本读写 | `doops read/write ...` |

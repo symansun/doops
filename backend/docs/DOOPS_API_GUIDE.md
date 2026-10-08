@@ -516,8 +516,9 @@ activation/reload is shared. See `DOWEB_INTEGRATION.md` for parameters and mount
 适用于诊断、信息收集和用户明确授权的运维或发布任务。需要凭据时，CLI 只传递
 `--credential <resource-name>` 的 metadata-only 引用；Gateway 在绑定用户、target 和
 session 后按精确 scope 授权和物化。普通发布使用 `operation=apply`；DoSql 只读查询或
-计划可以使用 `operation=ask` 搭配 `skill=dosql` 和精确 credential reference，通用
-`ask` 不能附带数据库凭据。payload 永远不进入 prompt、日志或返回事件。
+计划可以使用 `operation=ask` 搭配 `skill=dosql` 和精确 credential reference；CLI
+用户应优先使用 `doops sql`，它会设置正确的 DoSql skill/tool boundary。通用
+`ask` 不会自动注入 DoSql 工具，也不能附带数据库凭据。payload 永远不进入 prompt、日志或返回事件。
 
 组件对话的结构化事件消费者先发送 `mode=metadata`。支持本协议的 Agent 返回
 `event_schema=doops.sh/acp-events/v1` 和 `event_formats=["acp"]`。
