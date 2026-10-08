@@ -87,6 +87,12 @@ Do not claim production rollout from local fixtures or a source merge.
   cause. Both early returns now persist canceled/rate_limited through the existing
   terminal writer. Regression scenarios verify the HTTP result, final audit,
   no Agent dispatch, and no remaining lease or active owner.
+- Required Linux CI exposed nondeterministic conflict-owner reporting: iterating
+  the active-operation map could report a later waiter instead of the oldest
+  conflicting owner. The failure reproduced locally over repeated runs. Selection
+  now uses registration time and an ID tie-break, without changing conflict
+  eligibility; regression coverage retains the original oldest-owner assertion
+  and covers tied timestamps, same-connection owners, finalization, and skipped IDs.
 - Non-blocking limits: persistent audit outages retain evidence/retry goroutines
   without execution leases. Live Kubernetes rollback and rollout of these changes
   are not claimed.
