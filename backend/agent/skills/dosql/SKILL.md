@@ -29,7 +29,7 @@ executed.
 - Generate MongoDB migration scripts or controlled command documents.
 - Execute read queries and migrations through the DoSql CLI.
 - Use `scripts/dosql-agent.mjs` for the first implemented Agent commands:
-  `classify`, `query`, `execute`, `discover-databases`, `register-database`, `resolve-database`,
+  `classify`, `query`, `execute`, `discover-databases`, `discover-resources`, `register-database`, `resolve-database`,
   `compare-databases`, `derive-change-plan-from-comparison`,
   `render-forward-change-artifacts`, `execute-forward-artifacts`,
   `render-forward-evidence-metadata-commit`, `scan`, `record-execution`,
@@ -86,6 +86,10 @@ executed.
   code repositories by metadata-only IDs or `repo_id@branch` references. The
   references are task context, not authorization; Gateway target/action and
   credential scope checks remain authoritative.
+- `discover-resources` may scan an explicitly authorized repository workspace
+  and merge non-secret database metadata into the DoSql inventory. It ignores
+  credential-like filenames and never persists URI userinfo, passwords, tokens
+  or other secret payloads.
 - `mcp_dosql_execute` is the only structured mutation executor. It requires
   `confirm=true`, an approved change request, exact database credential scope,
   verification input and the DoSql journal/evidence chain.
