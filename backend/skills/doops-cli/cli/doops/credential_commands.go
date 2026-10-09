@@ -84,6 +84,7 @@ func runCredentialCommand(args []string, sessionName string, servers []Server, c
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		_, err := fmt.Fprint(stdout, `Usage:
   doops credential create        创建凭据元数据
+  doops credential configure     一次完成受管凭据写入、精确授权、验证和激活
   doops credential list          查询当前 target 可见或当前用户管理的凭据
   doops credential preflight     检查项目开发所需 credentialRef 是否可用
   doops credential put           从 stdin 写入新的凭据版本
@@ -103,6 +104,8 @@ Use "doops credential <subcommand> -h" for command flags.
 	switch args[0] {
 	case "create":
 		err = runCredentialCreate(args[1:], servers, configErr, stdout)
+	case "configure":
+		err = runCredentialConfigure(args[1:], sessionName, servers, configErr, stdin, stdout)
 	case "list":
 		err = runCredentialList(args[1:], servers, configErr, stdout)
 	case "preflight":
@@ -145,8 +148,8 @@ func runCredentialVerify(args []string, sessionName string, servers []Server, co
 	flags.StringVar(&instance, "instance", "", "Target instance")
 	flags.StringVar(&namespace, "namespace", "", "Kubernetes namespace")
 	flags.StringVar(&use, "use", "", "Credential use: imagePull, gitCheckout, helmPull, tls, opaqueSecret, or database")
-	flags.StringVar(&workloadKind, "workload-kind", "", "Kubernetes workload kind")
-	flags.StringVar(&workloadName, "workload-name", "", "Kubernetes workload name")
+	flags.StringVar(&workloadKind, "workload-kind", "", "Kubernetes workload kind (required except for database)")
+	flags.StringVar(&workloadName, "workload-name", "", "Kubernetes workload name (required except for database)")
 	flags.StringVar(&databaseAssetID, "database-asset-id", "", "Authorized database asset ID")
 	flags.StringVar(&environmentID, "environment-id", "", "Authorized database environment ID")
 	flags.StringVar(&databaseEngine, "database-engine", "", "Authorized database engine: mysql, postgres, or mongodb")
@@ -162,9 +165,12 @@ func runCredentialVerify(args []string, sessionName string, servers []Server, co
 	if flags.NArg() != 0 || strings.TrimSpace(sessionName) == "" ||
 		strings.TrimSpace(id) == "" || strings.TrimSpace(versionID) == "" ||
 		strings.TrimSpace(cluster) == "" || strings.TrimSpace(instance) == "" ||
-		strings.TrimSpace(namespace) == "" || strings.TrimSpace(use) == "" ||
-		strings.TrimSpace(workloadKind) == "" || strings.TrimSpace(workloadName) == "" {
-		return fmt.Errorf("-session, --id, --version-id, --cluster, --instance, --namespace, --use, --workload-kind and --workload-name are required")
+		strings.TrimSpace(namespace) == "" || strings.TrimSpace(use) == "" {
+		return fmt.Errorf("-session, --id, --version-id, --cluster, --instance, --namespace and --use are required")
+	}
+	if strings.TrimSpace(use) != "database" &&
+		(strings.TrimSpace(workloadKind) == "" || strings.TrimSpace(workloadName) == "") {
+		return fmt.Errorf("--workload-kind and --workload-name are required except for --use database")
 	}
 	keyList, err := parseOptionalCredentialList(requiredKeys, "--required-keys")
 	if err != nil {
@@ -495,8 +501,8 @@ func runCredentialGrant(args []string, servers []Server, configErr error, stdout
 	flags.StringVar(&instance, "instance", "", "Target instance")
 	flags.StringVar(&namespace, "namespace", "", "Kubernetes namespace")
 	flags.StringVar(&use, "use", "", "Credential use: imagePull, gitCheckout, helmPull, tls, opaqueSecret, or database")
-	flags.StringVar(&workloadKind, "workload-kind", "", "Kubernetes workload kind")
-	flags.StringVar(&workloadName, "workload-name", "", "Kubernetes workload name")
+	flags.StringVar(&workloadKind, "workload-kind", "", "Kubernetes workload kind (required except for database)")
+	flags.StringVar(&workloadName, "workload-name", "", "Kubernetes workload name (required except for database)")
 	flags.StringVar(&databaseAssetID, "database-asset-id", "", "Authorized database asset ID")
 	flags.StringVar(&environmentID, "environment-id", "", "Authorized database environment ID")
 	flags.StringVar(&databaseEngine, "database-engine", "", "Authorized database engine: mysql, postgres, or mongodb")
@@ -511,8 +517,12 @@ func runCredentialGrant(args []string, servers []Server, configErr error, stdout
 	}
 	if flags.NArg() != 0 || strings.TrimSpace(id) == "" ||
 		strings.TrimSpace(cluster) == "" || strings.TrimSpace(instance) == "" || strings.TrimSpace(namespace) == "" ||
-		strings.TrimSpace(use) == "" || strings.TrimSpace(workloadKind) == "" || strings.TrimSpace(workloadName) == "" {
-		return fmt.Errorf("--id, --cluster, --instance, --namespace, --use, --workload-kind and --workload-name are required")
+		strings.TrimSpace(use) == "" {
+		return fmt.Errorf("--id, --cluster, --instance, --namespace and --use are required")
+	}
+	if strings.TrimSpace(use) != "database" &&
+		(strings.TrimSpace(workloadKind) == "" || strings.TrimSpace(workloadName) == "") {
+		return fmt.Errorf("--workload-kind and --workload-name are required except for --use database")
 	}
 	keyList, err := parseOptionalCredentialList(requiredKeys, "--required-keys")
 	if err != nil {

@@ -103,6 +103,11 @@ description: |
   asset、environment、engine、database name 与 SQL 变更授权由 DoSql/目标 Agent 负责。公开 prompt、doagent 上下文和 metadata
   binding 不接收 credential payload；目标 doops-agent 只在内部凭据控制面临时接收
   解密 payload 以创建或验证目标资源。
+- DoOps 已有完整凭据管理。首次配置优先用 `credential configure`，复用现有资源并自动
+  完成写入、本人精确授权、全部 active scope 验证和激活，不让用户手动串联内部步骤。
+  已存在的目标 Secret 可由 platform admin 用 `--from-secret <name> --keys <keys>` 导入；
+  值只在 Agent/Gateway 内部流转，禁止通过 `exec` 输出密码再要求用户粘贴。数据库 grant
+  不要求 workload；指定密码字段组合连接 URI 的方式见 `docs/CREDENTIAL_RESOURCES.md`。
 - 开发项目可以在 `.agent/doops-credentials.yaml` 声明 metadata-only 的
   `credentialRef + use`。Agent 在 Git、Registry、Helm、TLS 或 API 开发操作前必须运行
   `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml`。
@@ -299,7 +304,8 @@ doops -session preflight targets --target <gateway-target>
 | DoWeb 发布计划 | `doops -session <s> web --target <t> --mode plan --request '<站点发布需求>'` |
 | DoWeb 受控发布 | `doops -session <s> web --target <t> --mode apply --credential <web-resource> --request '<站点、dist、域名、代理、验收>'` |
 
-| 创建凭据 | `doops credential create --target <t> --name <name> --scope personal --type <type>` |
+| 一次配置凭据 | `doops -session <s> credential configure --target <t> --id <id> --namespace <ns> --use <use> <source-and-scope-flags>` |
+| 创建凭据元数据（分步管理） | `doops credential create --target <t> --name <name> --scope personal --type <type>` |
 | 写入凭据版本 | `printf '%s' '<json>' \| doops credential put --target <t> --id <credential-id>` |
 | 查询 target 可用凭据 | `doops credential list --target <t>` |
 | 查询本人管理凭据 | `doops credential list --target <t> --view managed` |

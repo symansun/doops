@@ -83,6 +83,15 @@ it does not introduce direct CLI targets or change credential APIs.
 
 ## Development Credential Preflight
 
+For first-time managed credential setup, `doops -session <s> credential configure`
+reuses the existing resource/version/grant lifecycle in one invocation. It accepts
+stdin payloads or a platform-admin-authorized `--from-secret <name> --keys <keys>`
+reference on the selected target. Existing resources are reused by ID or unique
+name and scope. It grants the current user an exact scope, verifies all active
+scopes, and promotes only on success. Secret values never enter CLI output.
+See [Credential Resources](backend/docs/CREDENTIAL_RESOURCES.md) for flags and
+failure semantics; database connectivity is a separate DoSql acceptance step.
+
 Projects can commit a metadata-only `.agent/doops-credentials.yaml` so an Agent
 checks required managed credential references before Git, registry, Helm, TLS,
 or API development work:

@@ -1513,7 +1513,7 @@ func sanitizeAgentPromptAudit(toolName, errMsg, tail string) (string, string) {
 }
 
 func internalCredentialTool(tool string) bool {
-	return tool == "doops_credential_materialize" ||
+	return tool == "doops_credential_import" || tool == "doops_credential_materialize" ||
 		tool == "doops_credential_cleanup"
 }
 
@@ -2530,6 +2530,8 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 		return ActionAgentUpgrade
 	case "doops_credential_materialize":
 		return ActionCredentialUse
+	case "doops_credential_import":
+		return ActionCredentialRotate
 	case "doops_credential_cleanup":
 		return ActionCredentialRevoke
 	case "doops_workspace_begin", "doops_workspace_chunk", "doops_workspace_commit":
@@ -2543,6 +2545,10 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 
 func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage, cluster, instance string) string {
 	targetMutation := "target-mutation:" + cluster + "/" + instance
+	if tool == "doops_credential_import" {
+		return "query:credential:" + cluster + "/" + instance + "/" +
+			extractStringArg(args, "namespace") + "/" + extractStringArg(args, "secret_name")
+	}
 	if tool == "doops_web" || (tool == "doops_agent_prompt" && extractStringArg(args, "skill") == "doweb") {
 		if action == ActionExec {
 			// Nginx activation and reload are shared across website sessions.

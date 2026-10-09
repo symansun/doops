@@ -18,6 +18,34 @@ after a query error; Gateway permission checks remain authoritative.
 
 本文档面向需要通过 API 调用 Doops 的平台、CI 系统和内部工具。推荐的公共入口是 Doops Gateway 的 HTTP / WebSocket 服务；目标集群内的 doops-agent 主动连接 Gateway，不要求调用方能直连内网节点。
 
+## 受管凭据配置
+
+CLI `credential configure` 顺序调用既有的 managed list/create、payload/import-secret、
+grants、verify 和 promote；不增加另一套凭据资源或提升权限的 API。
+新增 `POST /v1/credentials/<id>/import-secret` 接受 metadata-only JSON：
+
+```json
+{
+  "session_id": "credential-setup",
+  "cluster": "exact-cluster",
+  "instance": "exact-instance",
+  "namespace": "apps",
+  "secret_name": "database",
+  "keys": ["DB_PASSWORD"],
+  "connection_uri": "postgresql://app@database:5432/app",
+  "password_key": "DB_PASSWORD"
+}
+```
+
+`connection_uri` 和 `password_key` 一起使用或一起省略。URI 不得含密码、query 或 fragment，
+必须是含用户名、host、数据库路径的 postgres/postgresql/mongodb URI；组合时只允许选中密码 key。
+该 endpoint 要求 platform admin 和可管理的 active opaque resource，沿用凭据资源锁、
+加密主密钥和审计。它只在当前精确 target 内读取指定 Opaque Secret，不修改源 Secret。
+Agent 通过内部 `doops_credential_import` 控制通道返回选中 payload，Gateway 加密为 staged
+version 后只向 HTTP 返回版本元数据。公开 RPC 禁止调用该工具，流式通知不会进入导入结果。
+错误只返回稳定类别；无权限、无加密主密钥或审计不可用时不读取 Secret。
+导入本身不建立 grant 或激活；configure 继续走既有 grant/verify/promote。
+
 ## 架构
 
 ```text

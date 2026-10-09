@@ -55,6 +55,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Cache token | `doops login ...` | Gateway login can exchange username/password for user token. |
 | List target credentials | `doops credential list --target <t>` | Uses the cached gateway login and returns only metadata granted to that user on the selected cluster/instance. |
 | Preflight development credentials | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` | Fails closed unless every declared credentialRef has a matching active grant use on the selected target. |
+| Configure a credential once | `doops -session <s> credential configure --target <t> --id <id> --namespace <ns> --use <use> <source-and-scope-flags>` | Reuses managed storage, stages, grants to the current user, verifies every active scope and promotes. See `CREDENTIAL_RESOURCES.md`. |
 | Manage credential lifecycle | `doops credential <create|put|grant|verify|promote|grant-revoke|revoke>` | See `CREDENTIAL_RESOURCES.md`. |
 | Create Gateway user and API key | `doops admin user create --target <t> --user <u> (--password-stdin\|--generate-password)` | Removes bootstrap wildcard access and applies only explicit `--grant-target` scopes. |
 | List Gateway users | `doops admin user list --target <t>` | Returns metadata only. |
@@ -586,6 +587,11 @@ the user's grants.
 
 完整凭据模型、payload schema、权限矩阵、验证、轮换、吊销、bundle、审计和发布引用见
 [`CREDENTIAL_RESOURCES.md`](CREDENTIAL_RESOURCES.md)。
+
+首次配置优先使用 `credential configure`，不要求用户逐步执行 create/put/grant/verify/promote。
+已有资源传 `--id`，避免重复创建；`--from-secret <name> --keys <keys>` 让 platform admin
+在 Agent 内导入指定 Secret，无须回传密码。不指定 Secret 时沿用 stdin payload。
+数据库 use 不要求 workload；配置失败不会报告成功，后续仍只通过 `--credential <name>` 引用。
 
 安装正式 CLI 并验证不可变构建信息：
 

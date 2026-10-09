@@ -32,6 +32,8 @@ doops -session release-<commit> ask --target <target> --apply \
 `--apply` 是调用端的 mutation 授权。缺少上述任何发布事实时，Agent 必须返回真实阻塞
 原因，不得猜测 target、镜像、Helm 参数或凭据引用；可先读取明确授权资产取得事实。
 运行时 Helm 资产仅使用明确授权的远程 Chart/values 或本 session workspace 资产。
+首次配置用 `doops -session <s> credential configure` 复用受管凭据系统完成写入、精确授权、
+验证和激活；已有资源用 ID 复用，不把配置步骤或秘密塞入发布 prompt。
 `--credential` 只传 resource name，完整生命周期见
 [`CREDENTIAL_RESOURCES.md`](CREDENTIAL_RESOURCES.md)。
 
