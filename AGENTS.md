@@ -78,6 +78,9 @@ DoOps architecture, security, release, and verification boundaries.
   and remote workspaces must never contain credential payloads.
 - CLI payload input is stdin-only. Gateway encrypts payloads at rest and must fail closed when its
   configured master key or credential audit persistence is unavailable.
+- `credential configure` orchestrates the existing lifecycle; do not create a second store or
+  bypass grant/verify/promote. Platform-admin Secret import accepts exact references only and
+  transfers selected values from Agent to Gateway on the private control channel, never via exec.
 - Gateway may send decrypted payload only through the internal credential materialization call to
   the explicitly authorized target Agent. Public prompt and metadata bindings contain names,
   scopes, Secret names/types/key sets, resource versions, digests, status, and stable error

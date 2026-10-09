@@ -2484,7 +2484,7 @@ func TestGatewayRPCRejectsInternalCredentialToolsFromUserClients(t *testing.T) {
 
 	client := dialGatewayRPCClient(t, server.URL, token.Plaintext, "dev", "local")
 	defer client.Close()
-	for index, tool := range []string{"doops_credential_materialize", "doops_credential_cleanup"} {
+	for index, tool := range []string{"doops_credential_import", "doops_credential_materialize", "doops_credential_cleanup"} {
 		id := float64(index + 2)
 		writeGatewayJSON(t, client, map[string]interface{}{
 			"jsonrpc": "2.0",

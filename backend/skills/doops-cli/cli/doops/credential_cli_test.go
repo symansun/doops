@@ -111,9 +111,6 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 	run("", "credential", "grant", "--target", "gw-edu-coder", "--id", "cred_123",
 		"--cluster", "doops-edu", "--instance", "edu-coder",
 		"--namespace", "agents", "--use", "database",
-		"--workload-kind", "Deployment", "--workload-name", "postgres",
-		"--database-asset-id", "dbscan_doops-edu_edu-coder_agents_postgres_postgres",
-		"--environment-id", "edu", "--database-engine", "postgres", "--database-name", "agentcloud",
 		"--required-keys", "connection_uri")
 	run("", "-session", "credential-verify", "credential", "verify",
 		"--target", "gw-edu-coder", "--id", "cred_123", "--version-id", "credver_456",
@@ -125,9 +122,6 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		"--target", "gw-edu-coder", "--id", "cred_123", "--version-id", "credver_456",
 		"--cluster", "doops-edu", "--instance", "edu-coder",
 		"--namespace", "agents", "--use", "database",
-		"--workload-kind", "Deployment", "--workload-name", "postgres",
-		"--database-asset-id", "dbscan_doops-edu_edu-coder_agents_postgres_postgres",
-		"--environment-id", "edu", "--database-engine", "postgres", "--database-name", "agentcloud",
 		"--required-keys", "connection_uri")
 	run("", "credential", "promote", "--target", "gw-edu-coder", "--id", "cred_123", "--version-id", "credver_456")
 	run("", "credential", "grant-revoke", "--target", "gw-edu-coder", "--id", "cred_123", "--grant-id", "credgrant_789")
@@ -188,16 +182,12 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 	assertCredentialCLIJSON(t, requests[5], http.MethodPost, "/v1/credentials/cred_123/grants", map[string]any{
 		"grantee_id": "",
 		"scope": map[string]any{
-			"cluster":           "doops-edu",
-			"instance":          "edu-coder",
-			"namespace":         "agents",
-			"use":               "database",
-			"workload":          map[string]any{"kind": "Deployment", "name": "postgres"},
-			"database_asset_id": "dbscan_doops-edu_edu-coder_agents_postgres_postgres",
-			"environment_id":    "edu",
-			"database_engine":   "postgres",
-			"database_name":     "agentcloud",
-			"required_keys":     []any{"connection_uri"},
+			"cluster":       "doops-edu",
+			"instance":      "edu-coder",
+			"namespace":     "agents",
+			"use":           "database",
+			"workload":      map[string]any{"kind": "", "name": ""},
+			"required_keys": []any{"connection_uri"},
 		},
 	})
 	assertCredentialCLIJSON(t, requests[6], http.MethodPost, "/v1/credentials/cred_123/verify", map[string]any{
@@ -217,16 +207,12 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		"version_id": "credver_456",
 		"session_id": "credential-verify-database",
 		"scope": map[string]any{
-			"cluster":           "doops-edu",
-			"instance":          "edu-coder",
-			"namespace":         "agents",
-			"use":               "database",
-			"workload":          map[string]any{"kind": "Deployment", "name": "postgres"},
-			"database_asset_id": "dbscan_doops-edu_edu-coder_agents_postgres_postgres",
-			"environment_id":    "edu",
-			"database_engine":   "postgres",
-			"database_name":     "agentcloud",
-			"required_keys":     []any{"connection_uri"},
+			"cluster":       "doops-edu",
+			"instance":      "edu-coder",
+			"namespace":     "agents",
+			"use":           "database",
+			"workload":      map[string]any{"kind": "", "name": ""},
+			"required_keys": []any{"connection_uri"},
 		},
 	})
 	assertCredentialCLIJSON(t, requests[8], http.MethodPost, "/v1/credentials/cred_123/promote", map[string]any{
@@ -285,6 +271,7 @@ func TestCredentialCLIHelp(t *testing.T) {
 		}
 		if !strings.Contains(output.String(), "doops credential list") ||
 			!strings.Contains(output.String(), "doops credential create") ||
+			!strings.Contains(output.String(), "doops credential configure") ||
 			!strings.Contains(output.String(), "doops credential preflight") ||
 			!strings.Contains(output.String(), "doops credential verify") {
 			t.Fatalf("credential help %v missing commands: %s", args, output.String())

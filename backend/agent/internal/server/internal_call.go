@@ -172,6 +172,9 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 	var out strings.Builder
 	relayErr := agent.relayToolCall(opCtx, api.ToolCallParams{Name: tool, Arguments: rawArgs}, h.opts.OperationTimeout, func(msg gatewayWSMessage) error {
 		if method, _ := msg.Parsed["method"].(string); method == "notifications/message" {
+			if tool == "doops_credential_import" {
+				return nil
+			}
 			if p, ok := msg.Parsed["params"].(map[string]interface{}); ok {
 				if chunk, ok := p["data"].(string); ok {
 					out.WriteString(chunk)
@@ -195,6 +198,9 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 					return fmt.Errorf("tool returned an error")
 				}
 			} else if rpcErr, ok := msg.Parsed["error"]; ok && rpcErr != nil {
+				if tool == "doops_credential_import" {
+					return errors.New("credential_import_failed")
+				}
 				return fmt.Errorf("%v", rpcErr)
 			}
 		}

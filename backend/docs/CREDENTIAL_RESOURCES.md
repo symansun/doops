@@ -241,7 +241,53 @@ loopback 和 link-local 目标。Registry 可以使用无 scheme 的 registry ho
 `executionLifecycle` 是后台执行准入条件，不是凭据物化、清理或前台 apply 的总开关；
 这些调用继续要求真实终态并如实报告未知结果，不因缺少后台能力而拒绝。
 
-## 创建和首次激活
+## 一次配置（推荐）
+
+`credential configure` 复用本文已有的 resource/version/grant/verification/promotion，
+不是另一套凭据存储或授权系统。已有资源用 `--id`；新资源用
+`--name <name> --scope <personal|platform> --type <type>`，名称和归属唯一匹配时复用，
+不重复创建。同一 Gateway 沿用当前登录用户；`--target` 提供精确 cluster/instance。
+
+已有目标 Kubernetes Secret 时，无须读取并粘贴密码：
+
+```bash
+doops -session db-setup credential configure \
+  --target <target> --id <existing-credential-id> \
+  --namespace <namespace> --use database \
+  --from-secret <source-secret> --keys connection_uri
+```
+
+如果源 Secret 只有密码字段，可传不含密码的连接事实，由 Agent 内部组合：
+
+```bash
+doops -session db-setup credential configure \
+  --target <target> --id <existing-credential-id> \
+  --namespace <namespace> --use database \
+  --from-secret <source-secret> --keys DB_PASSWORD --password-key DB_PASSWORD \
+  --connection-uri 'postgresql://<user>@<host>:5432/<database>'
+```
+
+边界：
+
+- `--from-secret` 仅用于 `opaque`，要求 platform admin、精确 target/namespace/Secret 和
+  明确的 key 集合；源 Secret namespace 与本次物化 namespace 相同，不修改源 Secret。
+- URI 仅支持 postgres/postgresql/mongodb，必须含用户名、host 和数据库路径，不允许密码、
+  query 或 fragment；`--password-key` 必须是唯一选中的 key，输出 payload 只有 `connection_uri`。
+  需要其它连接形式时由安全输入端通过 stdin 提交完整 payload，不自动改写或降级。
+- 不带 `--from-secret` 时只读 stdin，格式与 `credential put` 相同；Secret 模式不读 stdin。
+  导入值经内部 Agent 控制通道进入 Gateway 加密存储，不进入公开 RPC、prompt 或 CLI 输出。
+- 自动为当前用户建立精确 grant，读取并验证该资源全部 active scope 后才 promote。
+  Database use 无需 workload 或数据库资产参数；其它 use 仍需原有 workload 和精确授权字段。
+- 任一步失败即非零退出，不宣称就绪、不自动重试或清理已有资源。重跑会产生新的 staged version。
+  该流程不是跨请求事务；失败前已完成的资源/版本/授权保留，输出仅含阶段 ID 和元数据。
+- `phase=promoted` 表示受管凭据已激活；opaque/database 验证的是 Secret 物化与内容一致性，
+  不是数据库登录或 SQL 执行成功。业务验收仍通过 DoSql 完成。
+
+后续执行只引用稳定资源名：`doops -session <s> sql --target <t> --credential <name> ...`。
+旧的分步命令保留给轮换、权限维护和故障诊断；Web 的版本/授权管理仍使用相同底层 API。
+Secret 导入需要 Gateway 和目标 Agent 都发布此能力；旧端报错时应升级，不绕过到 shell 取密。
+
+## 分步创建和首次激活
 
 1. 创建 resource：
 

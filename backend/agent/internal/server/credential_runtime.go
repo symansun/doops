@@ -545,6 +545,18 @@ func (h *GatewayHub) handleCredentialVerify(
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
+	unlock, err := h.acquireCredentialMutationLocks(r.Context(), []string{resource.ID})
+	if err != nil {
+		http.Error(w, "operation canceled", http.StatusConflict)
+		return
+	}
+	defer unlock()
+	if h.store.validateUserTokenAuth(auth) != nil || !h.canVerifyCredential(auth.UserID, resource) ||
+		!h.store.UserCan(auth.UserID, body.Scope.Cluster, body.Scope.Instance, ActionAsk) ||
+		!h.store.UserCan(auth.UserID, body.Scope.Cluster, body.Scope.Instance, ActionCredentialUse) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
 	version, err := h.store.CredentialVersionByID(resource.ID, body.VersionID)
 	if err != nil {
 		http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))

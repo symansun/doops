@@ -97,6 +97,7 @@ func (h *GatewayHub) HandleCredential(w http.ResponseWriter, r *http.Request) {
 		h.writeUserAuthError(w, r)
 		return
 	}
+	r = r.WithContext(contextWithInternalAuditAuth(r.Context(), auth))
 	id, operation, ok := credentialPath(r.URL.Path)
 	if !ok {
 		http.NotFound(w, r)
@@ -139,6 +140,8 @@ func (h *GatewayHub) HandleCredential(w http.ResponseWriter, r *http.Request) {
 		writeJSONHTTP(w, resource)
 	case "payload":
 		h.handleCredentialPayload(w, r, auth, resource)
+	case "import-secret":
+		h.handleCredentialSecretImport(w, r, auth, resource)
 	case "versions":
 		h.handleCredentialHistory(w, r, auth, resource, false)
 	case "grants":
@@ -200,8 +203,19 @@ func (h *GatewayHub) handleCredentialPayload(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	payload, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	defer clear(payload)
 	if err != nil || !json.Valid(payload) {
 		http.Error(w, "credential payload must be valid JSON", http.StatusBadRequest)
+		return
+	}
+	unlock, err := h.acquireCredentialMutationLocks(r.Context(), []string{resource.ID})
+	if err != nil {
+		http.Error(w, "operation canceled", http.StatusConflict)
+		return
+	}
+	defer unlock()
+	if h.store.validateUserTokenAuth(auth) != nil || !h.canRotateCredential(auth.UserID, resource) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	auditID, ok := h.requireCredentialAudit(w, auth, ActionCredentialRotate, resource.ID, "credential payload put")
