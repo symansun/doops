@@ -31,8 +31,8 @@ func runCredentialConfigure(args []string, sessionName string, servers []Server,
 	flags.StringVar(&resourceScope, "scope", "", "Credential scope: personal or platform (required with --name)")
 	flags.StringVar(&scope.Namespace, "namespace", "", "Exact Secret materialization namespace")
 	flags.StringVar(&scope.Use, "use", "", "Credential use: imagePull, gitCheckout, helmPull, tls, opaqueSecret, or database")
-	flags.StringVar(&scope.Workload.Kind, "workload-kind", "", "Workload kind (required except for database)")
-	flags.StringVar(&scope.Workload.Name, "workload-name", "", "Workload name (required except for database)")
+	flags.StringVar(&scope.Workload.Kind, "workload-kind", "", "Workload kind (required except for database and helmPull)")
+	flags.StringVar(&scope.Workload.Name, "workload-name", "", "Workload name (required except for database and helmPull)")
 	flags.StringVar(&scope.ImageRepository, "image-repository", "", "Authorized image repository")
 	flags.StringVar(&scope.ImageDigest, "image-digest", "", "Authorized image sha256 digest")
 	flags.StringVar(&scope.HelmRelease, "helm-release", "", "Authorized Helm release")
@@ -58,7 +58,8 @@ Reuses a unique managed resource or creates it, stages a version, grants the exa
 scope to the current user, GETs all grants, verifies every unique active scope,
 then promotes. Stops on the first failure, without retries or automatic cleanup.
 Only phase IDs and metadata are printed. Re-running stages a new version.
-Database grants require no workload, database asset, environment or database name.
+Database and Helm grants require no workload; database grants also require no database
+asset, environment or database name.
 
 Example (no stdin read):
   doops -session setup credential configure --target db --namespace apps --use database \
@@ -322,14 +323,14 @@ func validateConfigureCredentialScope(scope credentialGrantScope) error {
 	if !validConfigureCredentialName(scope.Namespace) {
 		return fmt.Errorf("--namespace must be a valid Kubernetes name")
 	}
-	if scope.Use != "database" {
+	if scope.Use != "database" && scope.Use != "helmPull" {
 		switch strings.ToLower(scope.Workload.Kind) {
 		case "deployment", "statefulset", "daemonset":
 		default:
-			return fmt.Errorf("--workload-kind must be Deployment, StatefulSet or DaemonSet except for database")
+			return fmt.Errorf("--workload-kind must be Deployment, StatefulSet or DaemonSet except for database and helmPull")
 		}
 		if !validConfigureCredentialName(scope.Workload.Name) {
-			return fmt.Errorf("--workload-name is required and must be valid except for database")
+			return fmt.Errorf("--workload-name is required and must be valid except for database and helmPull")
 		}
 	}
 	image := scope.ImageRepository != "" || scope.ImageDigest != ""
@@ -341,7 +342,7 @@ func validateConfigureCredentialScope(scope credentialGrantScope) error {
 			return nil
 		}
 	case "helmPull":
-		if scope.HelmRelease != "" && scope.HelmChart != "" && !image && !keys {
+		if !image && !keys {
 			return nil
 		}
 	case "opaqueSecret":
@@ -377,29 +378,13 @@ func normalizeConfigureCredentialScope(scope credentialGrantScope) credentialGra
 
 func configureCredentialScopeKey(scope credentialGrantScope) string {
 	if scope.Use == "helmPull" {
-		scope.HelmChart = configureHelmChartIdentity(scope.HelmChart)
+		scope.Namespace = ""
+		scope.Workload = credentialGrantWorkload{}
+		scope.HelmRelease = ""
+		scope.HelmChart = ""
 	}
 	data, _ := json.Marshal(normalizeConfigureCredentialScope(scope))
 	return string(data)
-}
-
-func configureHelmChartIdentity(raw string) string {
-	value := strings.TrimSpace(raw)
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil ||
-		parsed.RawQuery != "" || parsed.Fragment != "" {
-		return value
-	}
-	path := parsed.EscapedPath()
-	marker := strings.LastIndex(path, "/v/")
-	if marker <= 0 || !strings.HasSuffix(path, ".tgz") {
-		return value
-	}
-	versionPath := path[marker+len("/v/"):]
-	if versionPath == "" || strings.Contains(versionPath, "/") {
-		return value
-	}
-	return strings.ToLower(parsed.Scheme) + "://" + strings.ToLower(parsed.Host) + path[:marker]
 }
 
 func validateConfigureConnectionURI(raw string) error {
