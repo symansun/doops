@@ -403,11 +403,15 @@ func runCredentialList(args []string, servers []Server, configErr error, stdout 
 			return err
 		}
 		for _, grant := range credential.Grants {
+			extra := ""
+			if grant.Scope.Use == "helmPull" {
+				extra = fmt.Sprintf(" helm_release=%s helm_chart=%s", grant.Scope.HelmRelease, grant.Scope.HelmChart)
+			}
 			if _, err := fmt.Fprintf(stdout,
-				"  grant_id=%s cluster=%s instance=%s namespace=%s use=%s workload=%s/%s database_asset_id=%s environment_id=%s database_engine=%s database_name=%s\n",
+				"  grant_id=%s cluster=%s instance=%s namespace=%s use=%s workload=%s/%s database_asset_id=%s environment_id=%s database_engine=%s database_name=%s%s\n",
 				grant.ID, grant.Scope.Cluster, grant.Scope.Instance, grant.Scope.Namespace,
 				grant.Scope.Use, grant.Scope.Workload.Kind, grant.Scope.Workload.Name,
-				grant.Scope.DatabaseAssetID, grant.Scope.EnvironmentID, grant.Scope.DatabaseEngine, grant.Scope.DatabaseName,
+				grant.Scope.DatabaseAssetID, grant.Scope.EnvironmentID, grant.Scope.DatabaseEngine, grant.Scope.DatabaseName, extra,
 			); err != nil {
 				return err
 			}

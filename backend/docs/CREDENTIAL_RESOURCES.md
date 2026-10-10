@@ -195,12 +195,16 @@ key 和 value 都不能为空。
 }
 ```
 
-验证以 grant 中的 `helm_chart` 为唯一制品输入，带 HTTP Basic 读取真实 `.tgz`，
+验证以 grant 中的 `helm_chart` 为 Chart 身份边界，带 HTTP Basic 读取本次请求的真实 `.tgz`，
 校验 gzip/tar、`Chart.yaml`、`values.yaml` 并返回包摘要，不读取 `index.yaml`。
 下载 URL 必须属于 payload URL 的同源路径范围；重定向、私网地址、无效包和超限失败关闭，
 不会改为匿名请求。CNB 的 payload URL 可用 `https://helm.cnb.cool`，grant Chart 使用
 其官方 `/charts/<repo>/<name>/v/<version>.tgz` 接口。当前 remote 仅支持 HTTPS `.tgz`
-下载，不支持 `oci://`；调用方须明确授权 HTTPS 制品引用，不会猜测、自动替换路径或 fallback。
+下载，不支持 `oci://`；调用方须明确授权 HTTPS Chart 身份，不会猜测、自动替换仓库路径或 fallback。
+
+对于 CNB 规范的 /v/<version>.tgz 地址，同一 host、仓库路径和 Chart 名的版本滚动
+仍属于同一精确 Chart 身份；host、仓库路径、release、namespace 和 target 必须完全匹配。
+本次请求的完整 .tgz 地址仍会下载并校验包摘要，不能借此访问其它 Chart。
 
 发布时 Gateway 仍只发送物化元数据。Agent 为本次授权 prompt 建立临时、无 payload 的
 租约，结构化 Helm 内部匹配 session、namespace、release、chart，检查 Secret 的

@@ -376,8 +376,30 @@ func normalizeConfigureCredentialScope(scope credentialGrantScope) credentialGra
 }
 
 func configureCredentialScopeKey(scope credentialGrantScope) string {
+	if scope.Use == "helmPull" {
+		scope.HelmChart = configureHelmChartIdentity(scope.HelmChart)
+	}
 	data, _ := json.Marshal(normalizeConfigureCredentialScope(scope))
 	return string(data)
+}
+
+func configureHelmChartIdentity(raw string) string {
+	value := strings.TrimSpace(raw)
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil ||
+		parsed.RawQuery != "" || parsed.Fragment != "" {
+		return value
+	}
+	path := parsed.EscapedPath()
+	marker := strings.LastIndex(path, "/v/")
+	if marker <= 0 || !strings.HasSuffix(path, ".tgz") {
+		return value
+	}
+	versionPath := path[marker+len("/v/"):]
+	if versionPath == "" || strings.Contains(versionPath, "/") {
+		return value
+	}
+	return strings.ToLower(parsed.Scheme) + "://" + strings.ToLower(parsed.Host) + path[:marker]
 }
 
 func validateConfigureConnectionURI(raw string) error {
