@@ -584,3 +584,17 @@ func TestCredentialNonDatabaseRequiresWorkloadBeforeNetwork(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigureCredentialScopeKeyAllowsHelmVersionRotation(t *testing.T) {
+	oldScope := credentialGrantScope{
+		Cluster: "cluster-a", Instance: "instance-a", Namespace: "apps", Use: "helmPull",
+		Workload:    credentialGrantWorkload{Kind: "Deployment", Name: "frontend"},
+		HelmRelease: "zhiyong",
+		HelmChart:   "https://helm.cnb.cool/charts/team/app/v/0.1.0-zyj.gold.tgz",
+	}
+	newScope := oldScope
+	newScope.HelmChart = "https://helm.cnb.cool/charts/team/app/v/0.1.0-zyj.gnew.tgz"
+	if configureCredentialScopeKey(oldScope) != configureCredentialScopeKey(newScope) {
+		t.Fatal("configure did not treat same Chart path with a new version as one scope")
+	}
+}

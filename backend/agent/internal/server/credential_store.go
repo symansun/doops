@@ -542,6 +542,46 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 		return CredentialGrant{}, err
 	}
 	defer tx.Rollback()
+	rows, err := tx.Query(`SELECT id, credential_id, grantee_id, scope_json, state, created_by, created_at, revoked_at
+		FROM credential_grants WHERE credential_id = ? AND grantee_id = ? AND state = ?`,
+		grant.CredentialID, grant.GranteeID, CredentialStateActive)
+	if err != nil {
+		return CredentialGrant{}, err
+	}
+	var semanticMatches []CredentialGrant
+	for rows.Next() {
+		existing, scanErr := scanCredentialGrant(rows)
+		if scanErr != nil {
+			rows.Close()
+			return CredentialGrant{}, scanErr
+		}
+		if credentialScopeEqual(existing.Scope, grant.Scope) {
+			semanticMatches = append(semanticMatches, existing)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return CredentialGrant{}, err
+	}
+	rows.Close()
+	if len(semanticMatches) > 1 {
+		return CredentialGrant{}, ErrCredentialAmbiguous
+	}
+	if len(semanticMatches) == 1 {
+		existing := semanticMatches[0]
+		if auditID != 0 {
+			if err := finishAuditWith(tx, auditID, AuditFinish{
+				Status: "success", Cluster: existing.Scope.Cluster, Instance: existing.Scope.Instance,
+				GrantID: existing.ID, Scope: &existing.Scope, EndedAt: time.Now().UTC(),
+			}); err != nil {
+				return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return CredentialGrant{}, err
+		}
+		return existing, nil
+	}
 	_, err = tx.Exec(`INSERT INTO credential_grants
 		(id, credential_id, grantee_id, scope_json, state, created_by, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)

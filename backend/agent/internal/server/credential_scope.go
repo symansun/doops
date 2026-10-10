@@ -169,7 +169,7 @@ func credentialScopeEqual(left, right CredentialGrantScope) bool {
 		left.EnvironmentID != right.EnvironmentID || left.DatabaseEngine != right.DatabaseEngine ||
 		left.DatabaseName != right.DatabaseName || left.ImageRepository != right.ImageRepository ||
 		left.ImageDigest != right.ImageDigest || left.HelmRelease != right.HelmRelease ||
-		left.HelmChart != right.HelmChart || len(left.RequiredKeys) != len(right.RequiredKeys) {
+		!helmChartScopeEqual(left.HelmChart, right.HelmChart) || len(left.RequiredKeys) != len(right.RequiredKeys) {
 		return false
 	}
 	for index := range left.RequiredKeys {
@@ -178,6 +178,33 @@ func credentialScopeEqual(left, right CredentialGrantScope) bool {
 		}
 	}
 	return true
+}
+
+// CNB Helm artifact URLs keep the immutable chart identity before /v/ and put
+// the build version in the final .tgz path segment. Authorization follows that
+// identity; the requested artifact remains the full URL and is digest-checked
+// during materialization.
+func helmChartScopeEqual(left, right string) bool {
+	return helmChartScopeIdentity(left) == helmChartScopeIdentity(right)
+}
+
+func helmChartScopeIdentity(raw string) string {
+	value := strings.TrimSpace(raw)
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil ||
+		parsed.RawQuery != "" || parsed.Fragment != "" {
+		return value
+	}
+	path := parsed.EscapedPath()
+	marker := strings.LastIndex(path, "/v/")
+	if marker <= 0 || !strings.HasSuffix(path, ".tgz") {
+		return value
+	}
+	versionPath := path[marker+len("/v/"):]
+	if versionPath == "" || strings.Contains(versionPath, "/") {
+		return value
+	}
+	return strings.ToLower(parsed.Scheme) + "://" + strings.ToLower(parsed.Host) + path[:marker]
 }
 
 func validCredentialSHA256Digest(value string) bool {
