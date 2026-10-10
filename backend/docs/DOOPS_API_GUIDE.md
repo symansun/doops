@@ -695,8 +695,8 @@ scope 后才授权和物化。凭据 payload 不进入公开 prompt、doagent �
 
 内部 Helm binding 元数据增加 `credential_id`、`grant_id`、`version_id`、`helm_release`
 与 `helm_chart`，由 Gateway 从精确授权结果填写；公开调用方不得提交 binding。
-Helm 授权身份精确到 target、namespace、workload、release 和 Chart 仓库路径；CNB
-版本化 /v/<version>.tgz 可以在同一 Chart 身份内滚动，实际请求包仍检查 digest。
+Helm grant 只绑定 target 的 cluster/instance 和 use=helmPull；namespace、workload、release
+和 Chart URL 不再参与 Gateway 授权匹配。实际请求仍受凭据仓库同源路径和 Chart digest 校验保护。
 Agent 仅在本次 prompt 存续期间建立无 payload 的绑定租约，内部 Helm 检查 scope
 与 Secret resourceVersion 后消费凭据。公开 MCP 不增加密码/token 参数。
 受管 Helm 发布允许明确授权的 `value_files` 和非敏感 `set_strings`，不强制 bundled-only，

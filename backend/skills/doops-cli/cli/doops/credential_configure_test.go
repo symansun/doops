@@ -499,7 +499,6 @@ func TestCredentialConfigureCLI(t *testing.T) {
 			{"unknown_use", append(append([]string(nil), base...), "--use", "unknown"), `{}`},
 			{"non_db_missing_workload", append(append([]string(nil), base...), "--use", "tls"), `{}`},
 			{"image_missing_scope", append(append([]string(nil), base...), "--use", "imagePull", "--workload-kind", "Deployment", "--workload-name", "api"), `{}`},
-			{"helm_missing_scope", append(append([]string(nil), base...), "--use", "helmPull", "--workload-kind", "Deployment", "--workload-name", "api"), `{}`},
 			{"opaque_missing_keys", append(append([]string(nil), base...), "--use", "opaqueSecret", "--workload-kind", "Deployment", "--workload-name", "api"), `{}`},
 			{"duplicate_route_flag", append(append([]string(nil), base...), "--cluster", "other"), `{}`},
 			{"token_flag", append(append([]string(nil), base...), "--token", configureCanary), `{}`},
@@ -558,7 +557,7 @@ func TestCredentialConfigureCLI(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, text := range []string{"-session", "mutually exclusive", "never reads stdin", "--password-key", "Database grants require no workload", "every unique active scope",
+		for _, text := range []string{"-session", "mutually exclusive", "never reads stdin", "--password-key", "Database and Helm grants require no workload", "every unique active scope",
 			"concrete database path", "no query (including an empty ?) or fragment"} {
 			if !strings.Contains(output, text) {
 				t.Errorf("help missing %q", text)
@@ -570,7 +569,7 @@ func TestCredentialConfigureCLI(t *testing.T) {
 
 func TestCredentialNonDatabaseRequiresWorkloadBeforeNetwork(t *testing.T) {
 	for _, command := range []string{"grant", "verify"} {
-		for _, use := range []string{"imagePull", "gitCheckout", "helmPull", "tls", "opaqueSecret"} {
+		for _, use := range []string{"imagePull", "gitCheckout", "tls", "opaqueSecret"} {
 			args := []string{command, "--target", "db", "--id", "cred_1", "--cluster", "a", "--instance", "b",
 				"--namespace", "apps", "--use", use}
 			if command == "verify" {
@@ -585,7 +584,7 @@ func TestCredentialNonDatabaseRequiresWorkloadBeforeNetwork(t *testing.T) {
 	}
 }
 
-func TestConfigureCredentialScopeKeyAllowsHelmVersionRotation(t *testing.T) {
+func TestConfigureCredentialScopeKeyIgnoresHelmRuntimeScope(t *testing.T) {
 	oldScope := credentialGrantScope{
 		Cluster: "cluster-a", Instance: "instance-a", Namespace: "apps", Use: "helmPull",
 		Workload:    credentialGrantWorkload{Kind: "Deployment", Name: "frontend"},
@@ -593,7 +592,10 @@ func TestConfigureCredentialScopeKeyAllowsHelmVersionRotation(t *testing.T) {
 		HelmChart:   "https://helm.cnb.cool/charts/team/app/v/0.1.0-zyj.gold.tgz",
 	}
 	newScope := oldScope
-	newScope.HelmChart = "https://helm.cnb.cool/charts/team/app/v/0.1.0-zyj.gnew.tgz"
+	newScope.Namespace = "other"
+	newScope.Workload = credentialGrantWorkload{Kind: "StatefulSet", Name: "other"}
+	newScope.HelmRelease = "other"
+	newScope.HelmChart = "https://other.example/charts/other/v/1.0.0.tgz"
 	if configureCredentialScopeKey(oldScope) != configureCredentialScopeKey(newScope) {
 		t.Fatal("configure did not treat same Chart path with a new version as one scope")
 	}

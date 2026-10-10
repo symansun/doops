@@ -148,8 +148,8 @@ func runCredentialVerify(args []string, sessionName string, servers []Server, co
 	flags.StringVar(&instance, "instance", "", "Target instance")
 	flags.StringVar(&namespace, "namespace", "", "Kubernetes namespace")
 	flags.StringVar(&use, "use", "", "Credential use: imagePull, gitCheckout, helmPull, tls, opaqueSecret, or database")
-	flags.StringVar(&workloadKind, "workload-kind", "", "Kubernetes workload kind (required except for database)")
-	flags.StringVar(&workloadName, "workload-name", "", "Kubernetes workload name (required except for database)")
+	flags.StringVar(&workloadKind, "workload-kind", "", "Kubernetes workload kind (required except for database and helmPull)")
+	flags.StringVar(&workloadName, "workload-name", "", "Kubernetes workload name (required except for database and helmPull)")
 	flags.StringVar(&databaseAssetID, "database-asset-id", "", "Authorized database asset ID")
 	flags.StringVar(&environmentID, "environment-id", "", "Authorized database environment ID")
 	flags.StringVar(&databaseEngine, "database-engine", "", "Authorized database engine: mysql, postgres, or mongodb")
@@ -168,9 +168,9 @@ func runCredentialVerify(args []string, sessionName string, servers []Server, co
 		strings.TrimSpace(namespace) == "" || strings.TrimSpace(use) == "" {
 		return fmt.Errorf("-session, --id, --version-id, --cluster, --instance, --namespace and --use are required")
 	}
-	if strings.TrimSpace(use) != "database" &&
+	if strings.TrimSpace(use) != "database" && strings.TrimSpace(use) != "helmPull" &&
 		(strings.TrimSpace(workloadKind) == "" || strings.TrimSpace(workloadName) == "") {
-		return fmt.Errorf("--workload-kind and --workload-name are required except for --use database")
+		return fmt.Errorf("--workload-kind and --workload-name are required except for --use database or helmPull")
 	}
 	keyList, err := parseOptionalCredentialList(requiredKeys, "--required-keys")
 	if err != nil {
@@ -505,8 +505,8 @@ func runCredentialGrant(args []string, servers []Server, configErr error, stdout
 	flags.StringVar(&instance, "instance", "", "Target instance")
 	flags.StringVar(&namespace, "namespace", "", "Kubernetes namespace")
 	flags.StringVar(&use, "use", "", "Credential use: imagePull, gitCheckout, helmPull, tls, opaqueSecret, or database")
-	flags.StringVar(&workloadKind, "workload-kind", "", "Kubernetes workload kind (required except for database)")
-	flags.StringVar(&workloadName, "workload-name", "", "Kubernetes workload name (required except for database)")
+	flags.StringVar(&workloadKind, "workload-kind", "", "Kubernetes workload kind (required except for database and helmPull)")
+	flags.StringVar(&workloadName, "workload-name", "", "Kubernetes workload name (required except for database and helmPull)")
 	flags.StringVar(&databaseAssetID, "database-asset-id", "", "Authorized database asset ID")
 	flags.StringVar(&environmentID, "environment-id", "", "Authorized database environment ID")
 	flags.StringVar(&databaseEngine, "database-engine", "", "Authorized database engine: mysql, postgres, or mongodb")
@@ -524,9 +524,9 @@ func runCredentialGrant(args []string, servers []Server, configErr error, stdout
 		strings.TrimSpace(use) == "" {
 		return fmt.Errorf("--id, --cluster, --instance, --namespace and --use are required")
 	}
-	if strings.TrimSpace(use) != "database" &&
+	if strings.TrimSpace(use) != "database" && strings.TrimSpace(use) != "helmPull" &&
 		(strings.TrimSpace(workloadKind) == "" || strings.TrimSpace(workloadName) == "") {
-		return fmt.Errorf("--workload-kind and --workload-name are required except for --use database")
+		return fmt.Errorf("--workload-kind and --workload-name are required except for --use database or helmPull")
 	}
 	keyList, err := parseOptionalCredentialList(requiredKeys, "--required-keys")
 	if err != nil {

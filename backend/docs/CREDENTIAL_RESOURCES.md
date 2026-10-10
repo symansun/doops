@@ -133,7 +133,7 @@ workload kind 仅支持 `Deployment`、`StatefulSet`、`DaemonSet`。不支持 w
 | `tls` | `tls` | 无 |
 | `opaqueSecret` | `opaque` | `required_keys`，必须与 payload key 集合完全相等 |
 | `database` | `opaque` | 目标 `cluster/instance`、物化 `namespace` 和 `use=database`；数据库资产、环境、引擎、数据库名由 DoSql/Agent 校验 |
-| `helmPull` | `helmRepository` | Helm release、明确授权的 HTTPS `.tgz` Chart 下载 URL |
+| `helmPull` | `helmRepository` | target 上可用的 Helm 仓库凭据；实际 Chart 由任务和仓库来源决定 |
 | `gitCheckout` | `gitToken` | 无；当前 scope 不包含 branch/ref |
 
 数据库 grant 不绑定数据库资产、环境、引擎、数据库名或 workload；这些是 DoSql 的执行上下文，
@@ -195,16 +195,17 @@ key 和 value 都不能为空。
 }
 ```
 
-验证以 grant 中的 `helm_chart` 为 Chart 身份边界，带 HTTP Basic 读取本次请求的真实 `.tgz`，
+验证以本次请求的 Chart URL 和受管 payload 仓库 URL 为下载边界，带 HTTP Basic 读取真实 `.tgz`，
 校验 gzip/tar、`Chart.yaml`、`values.yaml` 并返回包摘要，不读取 `index.yaml`。
 下载 URL 必须属于 payload URL 的同源路径范围；重定向、私网地址、无效包和超限失败关闭，
-不会改为匿名请求。CNB 的 payload URL 可用 `https://helm.cnb.cool`，grant Chart 使用
-其官方 `/charts/<repo>/<name>/v/<version>.tgz` 接口。当前 remote 仅支持 HTTPS `.tgz`
+不会改为匿名请求。CNB 的 payload URL 可用 `https://helm.cnb.cool`，Chart 使用其官方
+`/charts/<repo>/<name>/v/<version>.tgz` 接口。当前 remote 仅支持 HTTPS `.tgz`
 下载，不支持 `oci://`；调用方须明确授权 HTTPS Chart 身份，不会猜测、自动替换仓库路径或 fallback。
 
-对于 CNB 规范的 /v/<version>.tgz 地址，同一 host、仓库路径和 Chart 名的版本滚动
-仍属于同一精确 Chart 身份；host、仓库路径、release、namespace 和 target 必须完全匹配。
-本次请求的完整 .tgz 地址仍会下载并校验包摘要，不能借此访问其它 Chart。
+Helm grant 只绑定 target 的 cluster/instance 和 use=helmPull，不再把 namespace、workload、
+release 或 Chart URL 写成 Gateway 授权条件。实际请求仍必须从受管凭据 payload 的仓库 URL
+同源路径下载，并通过 Chart 内容校验和包 digest 校验；这保证凭据不会被发往无关 host，
+同时允许同一 target 使用多个 namespace、release 和 Chart。
 
 发布时 Gateway 仍只发送物化元数据。Agent 为本次授权 prompt 建立临时、无 payload 的
 租约，结构化 Helm 内部匹配 session、namespace、release、chart，检查 Secret 的

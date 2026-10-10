@@ -2,40 +2,42 @@ package server
 
 import "testing"
 
-func TestHelmCredentialScopeAllowsVersionRotationWithinExactChartPath(t *testing.T) {
-	base := CredentialGrantScope{
-		Cluster: "cluster-a", Instance: "instance-a", Namespace: "apps", Use: CredentialUseHelmPull,
-		Workload: CredentialPlanWorkload{Kind: "deployment", Name: "frontend"}, HelmRelease: "zhiyong",
-	}
-	oldScope := base
-	oldScope.HelmChart = "https://helm.cnb.cool/charts/team/app/v/0.1.0-zyj.gold.tgz"
-	newScope := base
-	newScope.HelmChart = "https://helm.cnb.cool/charts/team/app/v/0.1.0-zyj.gnew.tgz"
-	if !credentialScopeEqual(oldScope, newScope) {
-		t.Fatal("version rotation within one chart path was rejected")
-	}
-	if got := helmChartScopeIdentity(oldScope.HelmChart); got != "https://helm.cnb.cool/charts/team/app" {
-		t.Fatalf("unexpected chart identity: %s", got)
-	}
-}
-
-func TestHelmCredentialScopeKeepsReleaseAndChartPathExact(t *testing.T) {
+func TestHelmCredentialScopeOnlyBindsTargetAndUse(t *testing.T) {
 	base := CredentialGrantScope{
 		Cluster: "cluster-a", Instance: "instance-a", Namespace: "apps", Use: CredentialUseHelmPull,
 		Workload: CredentialPlanWorkload{Kind: "deployment", Name: "frontend"}, HelmRelease: "zhiyong",
 		HelmChart: "https://helm.cnb.cool/charts/team/app/v/0.1.0-zyj.gold.tgz",
 	}
 	for name, mutate := range map[string]func(*CredentialGrantScope){
+		"namespace": func(scope *CredentialGrantScope) { scope.Namespace = "other" },
+		"workload": func(scope *CredentialGrantScope) {
+			scope.Workload = CredentialPlanWorkload{Kind: "statefulset", Name: "other"}
+		},
 		"release": func(scope *CredentialGrantScope) { scope.HelmRelease = "other" },
-		"repository path": func(scope *CredentialGrantScope) {
-			scope.HelmChart = "https://helm.cnb.cool/charts/team/other/v/0.1.0-zyj.gnew.tgz"
+		"chart": func(scope *CredentialGrantScope) {
+			scope.HelmChart = "https://other.example/charts/other/v/1.0.0.tgz"
 		},
-		"host": func(scope *CredentialGrantScope) {
-			scope.HelmChart = "https://other.example/charts/team/app/v/0.1.0-zyj.gnew.tgz"
-		},
-		"non-versioned artifact": func(scope *CredentialGrantScope) {
-			scope.HelmChart = "https://helm.cnb.cool/charts/team/app/0.1.0-zyj.gnew.tgz"
-		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := base
+			mutate(&changed)
+			if !credentialScopeEqual(base, changed) {
+				t.Fatal("unrelated Helm scope field blocked target-scoped credential use")
+			}
+		})
+	}
+}
+
+func TestHelmCredentialScopeKeepsTargetExact(t *testing.T) {
+	base := CredentialGrantScope{
+		Cluster: "cluster-a", Instance: "instance-a", Namespace: "apps", Use: CredentialUseHelmPull,
+		Workload: CredentialPlanWorkload{Kind: "deployment", Name: "frontend"}, HelmRelease: "zhiyong",
+		HelmChart: "https://helm.cnb.cool/charts/team/app/v/0.1.0-zyj.gold.tgz",
+	}
+	for name, mutate := range map[string]func(*CredentialGrantScope){
+		"cluster":  func(scope *CredentialGrantScope) { scope.Cluster = "cluster-b" },
+		"instance": func(scope *CredentialGrantScope) { scope.Instance = "instance-b" },
+		"use":      func(scope *CredentialGrantScope) { scope.Use = CredentialUseOpaqueSecret },
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := base
@@ -75,7 +77,10 @@ func TestHelmCredentialGrantRotationReusesOneActiveGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	rotated := base
-	rotated.HelmChart = "https://helm.cnb.cool/charts/team/app/v/0.1.0-zyj.gnew.tgz"
+	rotated.Namespace = "other"
+	rotated.Workload = CredentialPlanWorkload{Kind: "statefulset", Name: "other"}
+	rotated.HelmRelease = "other"
+	rotated.HelmChart = "https://other.example/charts/other/v/1.0.0.tgz"
 	second, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 		CredentialID: resource.ID, GranteeID: owner.ID, Scope: rotated, CreatedBy: owner.ID,
 	})

@@ -103,8 +103,8 @@ description: |
   asset、environment、engine、database name 与 SQL 变更授权由 DoSql/目标 Agent 负责。公开 prompt、doagent 上下文和 metadata
   binding 不接收 credential payload；目标 doops-agent 只在内部凭据控制面临时接收
   解密 payload 以创建或验证目标资源。
-- Helm grant 精确绑定 target、namespace、workload、release 和 Chart 仓库身份；CNB
-  /v/<version>.tgz 的制品版本可以在同一 Chart 身份内滚动，实际包仍须通过 digest 校验。
+- Helm grant 只绑定 target 的 cluster/instance 和 use=helmPull；namespace、workload、release
+  和 Chart URL 不再参与 Gateway 授权匹配。实际包仍须通过凭据仓库同源路径和 digest 校验。
 - DoOps 已有完整凭据管理。首次配置优先用 `credential configure`，复用现有资源并自动
   完成写入、本人精确授权、全部 active scope 验证和激活，不让用户手动串联内部步骤。
   已存在的目标 Secret 可由 platform admin 用 `--from-secret <name> --keys <keys>` 导入；

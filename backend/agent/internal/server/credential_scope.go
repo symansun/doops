@@ -95,7 +95,7 @@ func validateCredentialGrantScope(scope CredentialGrantScope) error {
 		!validCredentialUse(scope.Use) {
 		return errors.New("credential_scope_invalid")
 	}
-	if scope.Use != CredentialUseDatabase {
+	if scope.Use != CredentialUseDatabase && scope.Use != CredentialUseHelmPull {
 		if scope.Workload.Kind == "" || scope.Workload.Name == "" {
 			return errors.New("credential_scope_invalid")
 		}
@@ -115,8 +115,7 @@ func validateCredentialGrantScope(scope CredentialGrantScope) error {
 			return errors.New("credential_scope_invalid")
 		}
 	case CredentialUseHelmPull:
-		if scope.HelmRelease == "" || scope.HelmChart == "" ||
-			scope.ImageRepository != "" || scope.ImageDigest != "" || len(scope.RequiredKeys) != 0 {
+		if scope.ImageRepository != "" || scope.ImageDigest != "" || len(scope.RequiredKeys) != 0 {
 			return errors.New("credential_scope_invalid")
 		}
 	case CredentialUseOpaqueSecret:
@@ -163,13 +162,17 @@ func credentialScopeEqual(left, right CredentialGrantScope) bool {
 		return left.Cluster == right.Cluster && left.Instance == right.Instance &&
 			left.Namespace == right.Namespace && left.Use == right.Use
 	}
+	if left.Use == CredentialUseHelmPull && right.Use == CredentialUseHelmPull {
+		return left.Cluster == right.Cluster && left.Instance == right.Instance &&
+			left.Use == right.Use
+	}
 	if left.Cluster != right.Cluster || left.Instance != right.Instance ||
 		left.Namespace != right.Namespace || left.Use != right.Use ||
 		left.Workload != right.Workload || left.DatabaseAssetID != right.DatabaseAssetID ||
 		left.EnvironmentID != right.EnvironmentID || left.DatabaseEngine != right.DatabaseEngine ||
 		left.DatabaseName != right.DatabaseName || left.ImageRepository != right.ImageRepository ||
 		left.ImageDigest != right.ImageDigest || left.HelmRelease != right.HelmRelease ||
-		!helmChartScopeEqual(left.HelmChart, right.HelmChart) || len(left.RequiredKeys) != len(right.RequiredKeys) {
+		left.HelmChart != right.HelmChart || len(left.RequiredKeys) != len(right.RequiredKeys) {
 		return false
 	}
 	for index := range left.RequiredKeys {
@@ -178,33 +181,6 @@ func credentialScopeEqual(left, right CredentialGrantScope) bool {
 		}
 	}
 	return true
-}
-
-// CNB Helm artifact URLs keep the immutable chart identity before /v/ and put
-// the build version in the final .tgz path segment. Authorization follows that
-// identity; the requested artifact remains the full URL and is digest-checked
-// during materialization.
-func helmChartScopeEqual(left, right string) bool {
-	return helmChartScopeIdentity(left) == helmChartScopeIdentity(right)
-}
-
-func helmChartScopeIdentity(raw string) string {
-	value := strings.TrimSpace(raw)
-	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil ||
-		parsed.RawQuery != "" || parsed.Fragment != "" {
-		return value
-	}
-	path := parsed.EscapedPath()
-	marker := strings.LastIndex(path, "/v/")
-	if marker <= 0 || !strings.HasSuffix(path, ".tgz") {
-		return value
-	}
-	versionPath := path[marker+len("/v/"):]
-	if versionPath == "" || strings.Contains(versionPath, "/") {
-		return value
-	}
-	return strings.ToLower(parsed.Scheme) + "://" + strings.ToLower(parsed.Host) + path[:marker]
 }
 
 func validCredentialSHA256Digest(value string) bool {
