@@ -572,11 +572,20 @@ func TestExecutionLifecycleStructuredWorkspacesExcludeSameAndAllowDifferent(t *t
 			lifecycleSend(t, holderClient, 2, "doops_file_write", "workspace-a", map[string]interface{}{"path": "config.txt", "content": "a"})
 			holder := agent.call(t, "doops_file_write", "workspace-a")
 			lifecycleSend(t, contender, 2, contenderTool, "workspace-a", map[string]interface{}{"path": "config.txt", "content": "b"})
-			lifecycleResponse(t, contender, 2, "target busy")
+			resourceCount := 2
+			if contenderTool == "doops_file_read" {
+				read := agent.call(t, contenderTool, "workspace-a")
+				agent.complete(t, read, "")
+				lifecycleResponse(t, contender, 2, "")
+				resourceCount = 1
+				requireEventually(t, 3*time.Second, func() bool { return f.hub.getAgent("dev", "local").snapshot().ActiveOps == 1 })
+			} else {
+				lifecycleResponse(t, contender, 2, "target busy")
+			}
 			lifecycleSend(t, contender, 3, contenderTool, "workspace-b", map[string]interface{}{"path": "config.txt", "content": "b"})
 			parallel := agent.call(t, contenderTool, "workspace-b")
-			if state := f.hub.getAgent("dev", "local").snapshot(); state.ActiveOps != 2 || len(state.Resources) != 2 {
-				t.Fatalf("different workspaces did not own independent locks: %#v", state)
+			if state := f.hub.getAgent("dev", "local").snapshot(); state.ActiveOps != 2 || len(state.Resources) != resourceCount {
+				t.Fatalf("workspace mutation/shared-read ownership is incorrect: %#v", state)
 			}
 			agent.complete(t, parallel, "")
 			lifecycleResponse(t, contender, 3, "")
