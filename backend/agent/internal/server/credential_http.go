@@ -114,13 +114,12 @@ func (h *GatewayHub) HandleCredential(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if !h.store.UserHasAction(auth.UserID, ActionCredentialMetadata) ||
-			!h.canViewCredential(
-				auth.UserID,
-				resource,
-				r.URL.Query().Get("cluster"),
-				r.URL.Query().Get("instance"),
-			) {
+		if !h.canViewCredential(
+			auth.UserID,
+			resource,
+			r.URL.Query().Get("cluster"),
+			r.URL.Query().Get("instance"),
+		) {
 			http.NotFound(w, r)
 			return
 		}
@@ -246,6 +245,10 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	defer releaseCredentialLocks()
+	if h.store.validateUserTokenAuth(auth) != nil {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
 	if r.Method == http.MethodDelete {
 		var body credentialGrantRevokeHTTPBody
 		if err := decodeCredentialJSON(w, r, &body); err != nil || strings.TrimSpace(body.GrantID) == "" {
@@ -343,6 +346,10 @@ func (h *GatewayHub) handleCredentialPromote(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	defer releaseCredentialLocks()
+	if h.store.validateUserTokenAuth(auth) != nil || !h.canRotateCredential(auth.UserID, resource) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
 	var body struct {
 		VersionID string `json:"version_id"`
 	}
@@ -478,6 +485,10 @@ func (h *GatewayHub) handleCredentialRevoke(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	defer releaseCredentialLocks()
+	if h.store.validateUserTokenAuth(auth) != nil {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
 	auditID, ok := h.requireCredentialAudit(w, auth, ActionCredentialRevoke, resource.ID, "credential revoke")
 	if !ok {
 		return
@@ -529,7 +540,8 @@ func (h *GatewayHub) canViewCredential(
 	cluster = strings.TrimSpace(cluster)
 	instance = strings.TrimSpace(instance)
 	if cluster == "" || instance == "" ||
-		!h.store.UserCan(actorID, cluster, instance, ActionCredentialMetadata) {
+		(!h.store.CanUseTargetCredentials(actorID, cluster, instance) &&
+			!h.store.UserCan(actorID, cluster, instance, ActionCredentialMetadata)) {
 		return false
 	}
 	entries, err := h.store.ListCredentialAccess(actorID, cluster, instance, false)
@@ -557,7 +569,8 @@ func (h *GatewayHub) handleCredentialList(w http.ResponseWriter, r *http.Request
 			http.Error(w, "credential target list requires cluster and instance", http.StatusBadRequest)
 			return
 		}
-		if !h.store.UserCan(auth.UserID, cluster, instance, ActionCredentialMetadata) {
+		if !h.store.CanUseTargetCredentials(auth.UserID, cluster, instance) &&
+			!h.store.UserCan(auth.UserID, cluster, instance, ActionCredentialMetadata) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
@@ -743,7 +756,7 @@ func credentialErrorCategory(err error) string {
 	case errors.Is(err, ErrCredentialAuditUnavailable):
 		return "credential_audit_unavailable"
 	default:
-		return "credential_invalid"
+		return credentialOperationErrorCategory(err)
 	}
 }
 

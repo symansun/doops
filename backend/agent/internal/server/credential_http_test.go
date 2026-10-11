@@ -454,8 +454,8 @@ func TestCredentialHTTPListIsIsolatedByUserAndTarget(t *testing.T) {
 	}
 	adminTargetA := credentialHTTPRequest(t, mux, adminToken, http.MethodGet,
 		"/v1/credentials?view=target&cluster=cluster-a&instance=instance-a", nil)
-	if adminTargetA.Code != http.StatusOK || strings.Contains(adminTargetA.Body.String(), targetA.ID) {
-		t.Fatalf("platform admin saw another user's target grant: HTTP %d: %s",
+	if adminTargetA.Code != http.StatusOK || !strings.Contains(adminTargetA.Body.String(), targetA.ID) {
+		t.Fatalf("platform admin could not use the target's credential: HTTP %d: %s",
 			adminTargetA.Code, adminTargetA.Body.String())
 	}
 }

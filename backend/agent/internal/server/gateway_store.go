@@ -835,6 +835,11 @@ func (s *GatewayStore) UserCan(userID, cluster, instance string, action GatewayA
 	return false
 }
 
+func (s *GatewayStore) CanUseTargetCredentials(userID, cluster, instance string) bool {
+	return s.UserCan(userID, cluster, instance, ActionAsk) ||
+		s.UserCan(userID, cluster, instance, ActionExec)
+}
+
 func (s *GatewayStore) UserHasAction(userID string, action GatewayAction) bool {
 	if userID == "" || action == "" {
 		return false

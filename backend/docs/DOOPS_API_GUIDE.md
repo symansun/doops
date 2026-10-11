@@ -20,6 +20,11 @@ after a query error; Gateway permission checks remain authoritative.
 
 ## 受管凭据配置
 
+运行时引用凭据继承本次目标操作的 `ask`/`exec` 权限，不要求额外 `credential:use` 或逐用户 grant。
+目标视图也继承操作权限；返回无 payload 的目标绑定元数据。创建、轮换、吊销仍检查 owner/admin。
+`skill=dosql` 请求直接用服务器保存的 database 绑定解析 namespace/version，不运行 scope 规划 prompt。
+缺少版本、目标绑定、格式不合法或目标离线分别返回真实错误类别，不合并为 `credential_invalid`。
+
 CLI `credential configure` 顺序调用既有的 managed list/create、payload/import-secret、
 grants、verify 和 promote；不增加另一套凭据资源或提升权限的 API。
 新增 `POST /v1/credentials/<id>/import-secret` 接受 metadata-only JSON：

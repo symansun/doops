@@ -299,6 +299,11 @@ func TestCredentialBundleResolvesMetadataAndNamedAuthorizationRejectsAmbiguity(t
 	store := openCredentialTestStore(t)
 	admin := createCredentialTestUser(t, store, "admin")
 	deployer := createCredentialTestUser(t, store, "deployer")
+	if err := store.GrantUser(deployer.ID, ScopeGrant{
+		Cluster: "cluster", Instance: "instance", Actions: []GatewayAction{ActionExec},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.GrantUser(admin.ID, ScopeGrant{
 		Cluster: "*", Instance: "*",
 		Actions: []GatewayAction{ActionAdmin},
@@ -410,6 +415,12 @@ func TestCredentialGrantMustMatchEveryDeploymentDimension(t *testing.T) {
 	store := openCredentialTestStore(t)
 	owner := createCredentialTestUser(t, store, "owner")
 	deployer := createCredentialTestUser(t, store, "deployer")
+	if err := store.GrantUser(deployer.ID, ScopeGrant{
+		Cluster: "doops-edu", Instance: "edu-coder", Actions: []GatewayAction{ActionExec},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	outsider := createCredentialTestUser(t, store, "outsider")
 	if err := store.GrantUser(owner.ID, ScopeGrant{
 		Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin},
 	}); err != nil {
@@ -459,7 +470,7 @@ func TestCredentialGrantMustMatchEveryDeploymentDimension(t *testing.T) {
 		name   string
 		mutate func(*CredentialUseRequest)
 	}{
-		{name: "actor", mutate: func(r *CredentialUseRequest) { r.ActorID = owner.ID }},
+		{name: "actor", mutate: func(r *CredentialUseRequest) { r.ActorID = outsider.ID }},
 		{name: "cluster", mutate: func(r *CredentialUseRequest) { r.Scope.Cluster = "other" }},
 		{name: "instance", mutate: func(r *CredentialUseRequest) { r.Scope.Instance = "other" }},
 		{name: "namespace", mutate: func(r *CredentialUseRequest) { r.Scope.Namespace = "other" }},
@@ -473,8 +484,12 @@ func TestCredentialGrantMustMatchEveryDeploymentDimension(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			changed := request
 			test.mutate(&changed)
-			if _, err := store.AuthorizeCredentialUse(changed); !errors.Is(err, ErrCredentialGrantDenied) {
-				t.Fatalf("mismatched %s error = %v, want ErrCredentialGrantDenied", test.name, err)
+			wantErr := ErrCredentialGrantDenied
+			if test.name == "actor" || test.name == "cluster" || test.name == "instance" {
+				wantErr = ErrCredentialForbidden
+			}
+			if _, err := store.AuthorizeCredentialUse(changed); !errors.Is(err, wantErr) {
+				t.Fatalf("mismatched %s error = %v, want %v", test.name, err, wantErr)
 			}
 		})
 	}

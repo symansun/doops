@@ -70,6 +70,10 @@ DoSql 必须使用 `doops sql` 入口。普通 `doops ask --msg '使用 DoSql'` 
 `mcp_dosql_read/execute`，也不能替代 DoSql 的 target discovery、credential scope 或
 journal/evidence 链。
 
+DoSql 的凭据使用继承本次目标 `ask`/`exec` 权限，不再要求额外 `credential:use` 或逐操作员 grant。
+Gateway 直接解析保存的 target/database 绑定和 active version，不让模型生成凭据 scope。
+不存在 active version 时先用 `credential configure` 安全导入；该错误明确为 `credential_version_not_found`。
+
 `registry sync` is a thin generic wrapper over the target Agent's audited exec path. The
 standard DoOps Agent image provides `buildctl` for image builds and `skopeo` for OCI
 copy/inspect. The command performs copy and source/destination manifest digest checks;
@@ -620,7 +624,7 @@ doops credential list --target gw-edu-coder
 doops credential list --target gw-edu-coder --view managed
 ```
 
-默认 `target` 视图只返回当前用户在所选 target 上获得 active grant 且存在 active version
+默认 `target` 视图在当前用户能操作该 target 时返回目标绑定且存在 active version
 的 active resource；
 `managed` 视图返回本人拥有的 personal resource，platform admin 可以管理平台资源。
 两个视图都不返回 payload。`managed` 视图只返回 resource metadata，不加载 grant 详情；

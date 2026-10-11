@@ -1191,7 +1191,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	agent := h.registry.Get(cluster, instance)
-	if agent == nil {
+	if agent == nil || agent.Cluster != cluster || agent.Instance != instance {
 		errMsg := fmt.Sprintf("target offline: %s/%s", cluster, instance)
 		finishAudit("offline", errMsg, "", 0)
 		writeJSON(buildErrorResponse(req.ID, -32004, errMsg))
@@ -1230,7 +1230,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	if params.Name == "doops_agent_prompt" && len(promptArgs.CredentialRefs) != 0 {
 		authorizedCredentials, err = h.hub.planExplicitCredentialApply(
 			ctx, auth, cluster, instance, promptArgs.SessionID,
-			promptArgs.Instruction, promptArgs.CredentialRefs,
+			promptArgs.Instruction, promptArgs.CredentialRefs, action, promptArgs.Skill,
 		)
 		if err != nil {
 			category := credentialErrorCategory(err)
@@ -1334,9 +1334,12 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		for index := range authorizedCredentials {
 			item := &authorizedCredentials[index]
 			resolved, refreshErr := h.hub.store.AuthorizeCredentialUse(CredentialUseRequest{
-				ActorID: auth.UserID, Credential: item.Reference.Name, Scope: item.Reference.Scope,
+				ActorID: auth.UserID, CredentialID: item.Authorized.Resource.ID, Scope: item.Reference.Scope,
 			})
-			if refreshErr != nil || !h.hub.store.UserCan(auth.UserID, cluster, instance, ActionCredentialUse) {
+			if refreshErr != nil || h.store.validateUserTokenAuth(auth) != nil ||
+				!h.store.UserCan(auth.UserID, cluster, instance, action) ||
+				resolved.Grant.ID != item.Authorized.Grant.ID ||
+				!credentialScopeEqual(resolved.Grant.Scope, item.Authorized.Grant.Scope) {
 				finishAudit("blocked", "credential_authorization_changed", "", 0)
 				writeJSON(buildErrorResponse(req.ID, -32003, "credential_authorization_changed"))
 				return nil
@@ -1353,6 +1356,17 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			return nil
 		}
 		promptArgs.CredentialRefs = nil
+		if h.store.validateUserTokenAuth(auth) != nil || !h.store.UserCan(auth.UserID, cluster, instance, action) {
+			if cleanupErr := h.hub.rollbackCredentialPrepare(opCtx, credentialPreparation.completed); cleanupErr != nil {
+				category := credentialOperationErrorCategory(cleanupErr)
+				finishAudit("error", category, "", 0)
+				writeJSON(buildErrorResponse(req.ID, -32603, category))
+				return nil
+			}
+			finishAudit("blocked", "credential_authorization_changed", "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32003, "credential_authorization_changed"))
+			return nil
+		}
 		promptArgs.CredentialBindings = credentialPreparation.Bindings
 		params.Arguments, err = json.Marshal(promptArgs)
 		if err != nil {
@@ -2548,6 +2562,13 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 	if tool == "doops_credential_import" {
 		return "query:credential:" + cluster + "/" + instance + "/" +
 			extractStringArg(args, "namespace") + "/" + extractStringArg(args, "secret_name")
+	}
+	if tool == "doops_agent_prompt" {
+		var prompt api.AgentPromptParams
+		if json.Unmarshal(args, &prompt) == nil &&
+			(len(prompt.CredentialRefs) != 0 || len(prompt.CredentialBindings) != 0) {
+			return targetMutation
+		}
 	}
 	if tool == "doops_web" || (tool == "doops_agent_prompt" && extractStringArg(args, "skill") == "doweb") {
 		if action == ActionExec {

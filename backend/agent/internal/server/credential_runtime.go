@@ -158,15 +158,37 @@ func (h *GatewayHub) planExplicitCredentialApply(
 	sessionID string,
 	instruction string,
 	names []string,
+	action GatewayAction,
+	skill string,
 ) ([]authorizedCredentialMaterialization, error) {
 	if len(names) == 0 {
 		return nil, nil
 	}
-	if !h.store.UserCan(auth.UserID, cluster, instance, ActionCredentialUse) {
+	if !h.store.UserCan(auth.UserID, cluster, instance, action) {
 		return nil, ErrCredentialForbidden
 	}
 	if credentialScalarContainsInlineMaterial(instruction) {
 		return nil, ErrInlineCredentialMaterial
+	}
+	if skill == "dosql" {
+		authorized := make([]authorizedCredentialMaterialization, 0, len(names))
+		for _, name := range names {
+			resolved, err := h.store.AuthorizeCredentialUse(CredentialUseRequest{
+				ActorID: auth.UserID, Credential: name,
+				Scope: CredentialGrantScope{Cluster: cluster, Instance: instance, Use: CredentialUseDatabase},
+			})
+			if err != nil {
+				return nil, err
+			}
+			if err := credentialTypeAllowsUse(resolved.Resource.Type, CredentialUseDatabase); err != nil {
+				return nil, err
+			}
+			authorized = append(authorized, authorizedCredentialMaterialization{
+				Reference:  CredentialPlanReference{Name: name, Scope: normalizeCredentialGrantScope(resolved.Grant.Scope)},
+				Authorized: resolved,
+			})
+		}
+		return authorized, nil
 	}
 	planText, err := h.RunInternalToolCall(ctx, cluster, instance, "doops_agent_prompt", map[string]any{
 		"session_id":      sessionID,
@@ -195,6 +217,9 @@ func (h *GatewayHub) planExplicitCredentialApply(
 		}
 		if err := credentialTypeAllowsUse(resolved.Resource.Type, reference.Scope.Use); err != nil {
 			return nil, err
+		}
+		if reference.Scope.Use == CredentialUseDatabase {
+			reference.Scope = normalizeCredentialGrantScope(resolved.Grant.Scope)
 		}
 		authorized = append(authorized, authorizedCredentialMaterialization{
 			Reference: reference, Authorized: resolved,
@@ -540,8 +565,7 @@ func (h *GatewayHub) handleCredentialVerify(
 		http.Error(w, "invalid credential verify request", http.StatusBadRequest)
 		return
 	}
-	if !h.store.UserCan(auth.UserID, body.Scope.Cluster, body.Scope.Instance, ActionAsk) ||
-		!h.store.UserCan(auth.UserID, body.Scope.Cluster, body.Scope.Instance, ActionCredentialUse) {
+	if !h.store.CanUseTargetCredentials(auth.UserID, body.Scope.Cluster, body.Scope.Instance) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -552,8 +576,7 @@ func (h *GatewayHub) handleCredentialVerify(
 	}
 	defer unlock()
 	if h.store.validateUserTokenAuth(auth) != nil || !h.canVerifyCredential(auth.UserID, resource) ||
-		!h.store.UserCan(auth.UserID, body.Scope.Cluster, body.Scope.Instance, ActionAsk) ||
-		!h.store.UserCan(auth.UserID, body.Scope.Cluster, body.Scope.Instance, ActionCredentialUse) {
+		!h.store.CanUseTargetCredentials(auth.UserID, body.Scope.Cluster, body.Scope.Instance) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
