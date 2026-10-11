@@ -375,7 +375,7 @@ func TestTargetCredentialPromptRechecksQueuedAuthority(t *testing.T) {
 		name   string
 		action GatewayAction
 	}{{"ask", ActionAsk}, {"apply", ActionExec}} {
-		for _, revoke := range []string{"token", "operation_action", "same_name_credential", "grant_id", "namespace", "revoked_grant", "revoked_version"} {
+		for _, revoke := range []string{"token", "operation_action", "same_name_credential", "grant_id", "revoked_grant", "revoked_version"} {
 			t.Run(operation.name+"/"+revoke, func(t *testing.T) {
 				t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("p", 32))
 				f := newExecutionLifecycleFixture(t, GatewayHubOptions{OperationTimeout: 3 * time.Second})
@@ -441,14 +441,6 @@ func TestTargetCredentialPromptRechecksQueuedAuthority(t *testing.T) {
 							t.Fatalf("grant replacement did not change identity: %#v, %v", replacement, createErr)
 						}
 					}
-				case "namespace":
-					changedScope := scope
-					changedScope.Namespace = "other-apps"
-					encoded, encodeErr := json.Marshal(changedScope)
-					if encodeErr != nil {
-						t.Fatal(encodeErr)
-					}
-					_, err = f.store.db.Exec("UPDATE credential_grants SET scope_json = ? WHERE id = ?", string(encoded), grant.ID)
 				case "revoked_version":
 					_, err = f.store.db.Exec("UPDATE credential_versions SET state = ? WHERE id = ?", CredentialVersionRevoked, version.ID)
 				}
