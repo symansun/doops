@@ -60,3 +60,7 @@ namespace drift and token revalidation issues. No business DDL has been replayed
   Gateway suite, 103 Python contracts and 63 DoSql Node tests pass. Mac full Agent
   run hit an unrelated SQLite BUSY lifecycle fixture; that test passed three isolated
   repeats. Exact-commit Linux CI remains a release requirement.
+- Final independent review found a native Helm metadata gap: missing native kind/socket
+  could be verified/promoted before the prompt rejected it. Helm now requires the
+  complete native context, other types reject context fields, and malformed-result
+  regressions cover these cases. v1.3.36 is superseded before deployment; publish v1.3.37.
