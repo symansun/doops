@@ -942,12 +942,16 @@ if generation <= 0 or observed_generation != generation:
 desired = int(spec.get("replicas") if spec.get("replicas") is not None else 1)
 if desired <= 0:
     raise SystemExit(f"Deployment desiredReplicas={desired} must be positive")
-for field in ("replicas", "updatedReplicas", "readyReplicas", "availableReplicas"):
+for field in ("updatedReplicas", "readyReplicas", "availableReplicas"):
     actual = int(status.get(field) or 0)
-    if actual != desired:
+    if actual < desired:
         raise SystemExit(
             f"Deployment {field}={actual}, desiredReplicas={desired}"
         )
+if int(status.get("replicas") or 0) < desired:
+    raise SystemExit(
+        f"Deployment replicas={int(status.get('replicas') or 0)}, desiredReplicas={desired}"
+    )
 if int(status.get("unavailableReplicas") or 0) != 0:
     raise SystemExit("Deployment still has unavailable replicas")
 
@@ -971,8 +975,22 @@ pods = json.loads(subprocess.check_output(
     timeout=30,
 )).get("items") or []
 pods = [pod for pod in pods if not (pod.get("metadata") or {}).get("deletionTimestamp")]
-if len(pods) != desired:
-    raise SystemExit(f"Active Agent Pods={len(pods)}, desiredReplicas={desired}")
+matching_pods = []
+for pod in pods:
+    containers = (pod.get("spec") or {}).get("containers") or []
+    container = next((item for item in containers if item.get("name") == "doops-agent"), None)
+    if not container or container.get("image") != expected_image:
+        ready = any(
+            condition.get("type") == "Ready" and condition.get("status") == "True"
+            for condition in (pod.get("status") or {}).get("conditions") or []
+        )
+        if ready:
+            raise SystemExit("Active Ready Agent Pod still uses a different image")
+        continue
+    matching_pods.append(pod)
+if len(matching_pods) < desired:
+    raise SystemExit(f"Active Agent Pods={len(matching_pods)}, desiredReplicas={desired}")
+pods = matching_pods
 expected_digest = expected_image.rsplit("@", 1)[1] if "@sha256:" in expected_image else ""
 controller_node = ""
 runtime_class = ""

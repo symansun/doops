@@ -160,6 +160,18 @@ func TestSelfUpgradeApplyScriptVerifiesCompleteDeploymentTwice(t *testing.T) {
 	}
 }
 
+func TestSelfUpgradeApplyAllowsRollingUpdateSurge(t *testing.T) {
+	env := selfUpgradeScriptEnv(filepath.Join(t.TempDir(), "calls.log"))
+	env["SURGE_REPLICAS"] = "1"
+	out, err := runSelfUpgradeScript(t, selfUpgradeApplyScript, selfUpgradeFakeCommands(), env)
+	if err != nil {
+		t.Fatalf("rolling update surge was rejected: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "self-upgrade complete image="+testPinnedImage()) {
+		t.Fatalf("rolling update surge lost success evidence: %s", out)
+	}
+}
+
 func TestSelfUpgradeApplyScriptRejectsIncompleteDeploymentEvidence(t *testing.T) {
 	for _, field := range []string{
 		"observedGeneration",
@@ -718,6 +730,9 @@ case "$*" in
       available=1
       unavailable=0
     fi
+	if [ "${SURGE_REPLICAS:-0}" = "1" ] && [ ! -f "$ROLLBACK_MARKER" ] && [ "$calls" -ge 4 ]; then
+		status_replicas=2
+	fi
     if [ -f "$ROLLBACK_MARKER" ] && [ "${ROLLBACK_VERIFY_FAIL:-0}" = "1" ]; then
       image="registry.example/doops@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     fi
