@@ -476,6 +476,7 @@ export function ConsoleShell() {
             runtime={agentRuntime}
             sessionId={sessionId}
             codeWorkspace={codeWorkspace}
+            active={view === "console" && tab === "ask"}
             onConfigureModel={() => {
               setAdminDefaultTab("config")
               setView("admin")

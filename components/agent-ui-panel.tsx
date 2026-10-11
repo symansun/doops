@@ -11,12 +11,14 @@ export function AgentUiPanel({
   runtime,
   sessionId,
   codeWorkspace,
+  active,
   onConfigureModel,
   onSessionChange,
 }: {
   runtime: AgentSessionRuntime
   sessionId: string
   codeWorkspace: CodeWorkspaceSource
+  active: boolean
   onConfigureModel?: () => void
   onSessionChange?: (id: string) => void
 }) {
@@ -35,6 +37,7 @@ export function AgentUiPanel({
   const workspaceSourceId = useMemo(() => `workspace:${codeWorkspace.workspaceKey}/${sessionId}`, [codeWorkspace.workspaceKey, sessionId])
 
   useEffect(() => {
+    if (!active) return
     const controller = new AbortController()
     setWorkspaceError("")
     void codeWorkspace.changes(sessionId, controller.signal)
@@ -48,7 +51,7 @@ export function AgentUiPanel({
         }
       })
     return () => controller.abort()
-  }, [codeWorkspace, sessionId, snapshot.status, snapshot.latestUserCommandId, workspaceSourceId])
+  }, [active, codeWorkspace, sessionId, snapshot.status, snapshot.latestUserCommandId, workspaceSourceId])
 
   const startNewSession = useCallback(() => {
     if (busy) return
@@ -65,9 +68,9 @@ export function AgentUiPanel({
           <button
             aria-label="重新检查连接"
             className="flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
-            disabled={busy || snapshot.connection === "connecting"}
+            disabled={snapshot.connection === "connecting" || snapshot.connection === "reconnecting" || (busy && snapshot.connection !== "disconnected")}
             onClick={() => {
-              runtime.close(sessionId)
+              if (snapshot.connection !== "disconnected") runtime.close(sessionId)
               void runtime.open(sessionId).catch(() => {
                 // The shared runtime publishes connection failures in its snapshot.
               })

@@ -117,6 +117,10 @@ remain unresolved; neither authorizes weakening checks or credential bypass.
 - Next: commit/push this repair on main, publish v1.3.40 from the same source,
   verify CI/digests, roll out through the release controllers and test the real
   browser conversation/code/results workflow.
+- Independent review also found stale-running disconnects disabling manual
+  resynchronization and retained panels failing to refresh after Files edits.
+  Reconnect remains available after disconnect without clearing/replaying tasks;
+  returning to the AI panel refreshes workspace-backed results.
 - Bounds: at most three repairs of the same failure, 20 minutes per CI build
   observation and 10 minutes per target rollout. Preserve unrelated sessions;
   never force-unlock, bypass checks or report a pending rollout as complete.
