@@ -611,6 +611,12 @@ CLI 保持原有输出契约，不能以该路径绕过组件的版本检查。
 
 `operation` 支持 `list`、`read`、`changes`、`diff`、`search`、`git-summary` 和 `git-log`；
 `path`、`query`、`ref` 按操作使用。成果面板中的工作区产物仍通过 session-scoped `read` 边界加载。
+读取以当前 session 目录为文件系统根，拒绝越界符号链接。尚未创建的会话工作区显示为空；
+没有 Git 仓库时仍返回实际文件供成果查看，并明确标记 `gitStatus=no_repository`。
+`read` 返回 `content`、`encoding`（`utf-8` 或 `base64`）、`contentType`、`bytes` 和 `binary`；
+预览沿用 `DOOPS_MAX_FILE_READ_BYTES` 上限（默认 1 MiB），大资产仍使用 `doops pull`。
+搜索直接遍历当前工作区，不依赖宿主机 grep；跳过 `.git`、`node_modules`、符号链接和二进制，
+遇到超过预览上限的文件返回 `truncated=true`，实际读取错误明确失败。
 
 ### Workspace 同步协议
 

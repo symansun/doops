@@ -2,7 +2,7 @@
 name: doops-agent-ui-integration
 scope: console-ai-assistant
 owner: doops-maintainers
-status: source-delivery-ci-cooldown-pending
+status: release-verification
 ---
 
 # Agent Cloud Component Integration
@@ -53,6 +53,10 @@ credential resolution, cancellation, and audit ownership.
   or grant write access. Changed files under `output/`, `artifacts/` and
   `deliverables/` are exposed through Agent UI's Results pane and loaded through
   the same session-scoped workspace read boundary.
+  Workspace reads preserve binary bytes for image/PDF previews, enforce the
+  existing 1 MiB preview limit, and reject symlinks outside the session. New
+  sessions show an empty workspace; actual files remain discoverable without
+  a Git repository. Read failures are visible rather than displayed as no results.
 - Stopping requests upstream cancellation and waits for the original RPC's
   terminal result; a cancel ACK does not release the active operation. Confirmed
   cancel produces a cancelled task receipt. A disconnect, timeout or authoritative
@@ -165,6 +169,21 @@ Do not infer a deployed web version from a local build or an npm package release
   local-console evidence.
 
 ## Delivery Gates
+
+### October 11, 2026 Native Workspace Release
+
+The native developer composer and removal of the ask/apply and database/repository
+binding bars are on main at `9cc20373fb58bde2d531c09520837b15f7216b58`.
+Production still serves v1.3.39, source `03a2062348e9528051ac2ca9ed4e8535e20343da`.
+Main build `cnb-jvc-1k4lfeu6t` failed its workspace-search functional check:
+the new grep arguments were incompatible with the Alpine runtime. The repair
+uses Go filesystem traversal, preserves binary previews, handles non-Git results
+and literal filenames, and corrects Git history revision arguments.
+
+Release v1.3.40 requires passing exact-source CNB CI, immutable image provenance,
+the CLI/Skill, Gateway/Web and core Ali/Tencent/edu Agent rollout, then live
+conversation, code/search/history and result-preview browser checks. The older
+cooldown and previous component-only records below are historical evidence.
 
 Production standalone rendering also passed the 18 browser scenarios and the
 real two-turn Gateway conversation. Source is pushed to the CNB DoOps branch

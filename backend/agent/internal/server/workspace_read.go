@@ -1,13 +1,19 @@
 package server
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/fs"
+	"mime"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/user/doops/agent/api"
 )
@@ -32,17 +38,46 @@ func handleWorkspaceRead(argBytes json.RawMessage) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	base, err := os.OpenRoot(workspaceRoot())
+	if err != nil {
+		return "", err
+	}
+	defer base.Close()
+	info, err := base.Lstat(args.SessionID)
+	if os.IsNotExist(err) {
+		switch args.Operation {
+		case "list", "search":
+			return workspaceReadJSON(map[string]interface{}{"entries": []interface{}{}, "truncated": false})
+		case "changes":
+			return workspaceReadJSON(map[string]interface{}{"gitStatus": "no_repository", "gitAvailable": false, "changes": []workspaceReadChange{}})
+		case "git-summary":
+			return workspaceReadJSON(map[string]interface{}{"branch": nil, "clean": true, "detached": false, "head": nil, "refs": []interface{}{}, "status": "no_repository"})
+		case "git-log":
+			return workspaceReadJSON(map[string]interface{}{"commits": []interface{}{}, "cursor": nil, "ref": args.Ref, "truncated": false})
+		}
+	}
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("workspace session cannot be a symbolic link")
+	}
+	scoped, err := base.OpenRoot(args.SessionID)
+	if err != nil {
+		return "", err
+	}
+	defer scoped.Close()
 	switch strings.ToLower(strings.TrimSpace(args.Operation)) {
 	case "list":
-		return workspaceReadList(root, args.Path)
+		return workspaceReadList(scoped, args.Path)
 	case "read":
-		return workspaceReadFile(args.SessionID, args.Path)
+		return workspaceReadFile(scoped, args.Path)
 	case "changes":
-		return workspaceReadChanges(root)
+		return workspaceReadChanges(root, scoped)
 	case "diff":
-		return workspaceReadDiff(root, args.Path)
+		return workspaceReadDiff(root, scoped, args.Path)
 	case "search":
-		return workspaceReadSearch(root, args.Query)
+		return workspaceReadSearch(scoped, args.Query)
 	case "git-summary":
 		return workspaceReadGitSummary(root)
 	case "git-log":
@@ -52,25 +87,28 @@ func handleWorkspaceRead(argBytes json.RawMessage) (string, error) {
 	}
 }
 
-func workspaceReadList(root, rawDir string) (string, error) {
-	dir, err := workspaceReadPath(root, rawDir, true)
+func workspaceReadList(root *os.Root, rawDir string) (string, error) {
+	dir, err := workspaceReadRelativePath(rawDir)
+	if rawDir == "" || rawDir == "." {
+		dir, err = ".", nil
+	}
 	if err != nil {
 		return "", err
 	}
-	entries, err := os.ReadDir(dir)
+	entries, err := fs.ReadDir(root.FS(), dir)
 	if err != nil {
 		return "", err
 	}
 	result := make([]map[string]interface{}, 0, len(entries))
 	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
 		info, infoErr := entry.Info()
 		if infoErr != nil {
 			return "", infoErr
 		}
-		relative, relErr := filepath.Rel(root, filepath.Join(dir, entry.Name()))
-		if relErr != nil {
-			return "", relErr
-		}
+		relative := filepath.Join(dir, entry.Name())
 		item := map[string]interface{}{
 			"name": entry.Name(), "path": filepath.ToSlash(relative),
 			"type": map[bool]string{true: "directory", false: "file"}[entry.IsDir()],
@@ -92,37 +130,50 @@ func workspaceReadList(root, rawDir string) (string, error) {
 	return workspaceReadJSON(map[string]interface{}{"entries": result})
 }
 
-func workspaceReadFile(sessionID, path string) (string, error) {
-	result, err := handleFileRead(mustWorkspaceFileReadArgs(sessionID, path))
+func workspaceReadFile(root *os.Root, path string) (string, error) {
+	data, err := workspaceReadBytes(root, path)
 	if err != nil {
 		return "", err
 	}
+	content, encoding, binary := workspaceFileContent(data)
 	return workspaceReadJSON(map[string]interface{}{
-		"path": path, "content": result, "encoding": "utf-8", "contentType": workspaceContentType(path),
-		"bytes": len(result), "truncated": false, "binary": false,
+		"path": path, "content": content, "encoding": encoding, "contentType": workspaceContentType(path),
+		"bytes": len(data), "truncated": false, "binary": binary,
 	})
 }
 
-func mustWorkspaceFileReadArgs(sessionID, path string) json.RawMessage {
-	data, _ := json.Marshal(api.FileReadParams{SessionID: sessionID, Path: path})
-	return data
-}
-
-func workspaceReadChanges(root string) (string, error) {
+func workspaceReadChanges(root string, scoped *os.Root) (string, error) {
 	if !workspaceIsGit(root) {
-		return workspaceReadJSON(map[string]interface{}{"gitStatus": "no_repository", "gitAvailable": false, "changes": []workspaceReadChange{}})
+		changes := make([]workspaceReadChange, 0)
+		err := fs.WalkDir(scoped.FS(), ".", func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() && (entry.Name() == ".git" || entry.Name() == "node_modules") {
+				return fs.SkipDir
+			}
+			if entry.Type().IsRegular() {
+				changes = append(changes, workspaceReadChange{Name: entry.Name(), Path: path, Status: "created"})
+			}
+			return nil
+		})
+		if err != nil {
+			return "", err
+		}
+		return workspaceReadJSON(map[string]interface{}{"gitStatus": "no_repository", "gitAvailable": false, "changes": changes})
 	}
-	out, err := workspaceGitOutput(root, "status", "--short", "--untracked-files=all")
+	out, err := workspaceGitOutput(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
 		return "", err
 	}
 	changes := make([]workspaceReadChange, 0)
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimRight(line, "\r")
+	lines := strings.Split(out, "\x00")
+	for index := 0; index < len(lines); index++ {
+		line := lines[index]
 		if len(line) < 4 {
 			continue
 		}
-		code, raw := line[:2], strings.TrimSpace(line[3:])
+		code, raw := line[:2], line[3:]
 		if raw == "" {
 			continue
 		}
@@ -131,16 +182,16 @@ func workspaceReadChanges(root string) (string, error) {
 			change.Status = "created"
 		} else if strings.Contains(code, "D") {
 			change.Status = "deleted"
-		} else if strings.Contains(code, "R") && strings.Contains(raw, " -> ") {
-			parts := strings.SplitN(raw, " -> ", 2)
-			change.Status, change.OldPath, change.NewPath, change.Path, change.Name = "renamed", parts[0], parts[1], parts[1], filepath.Base(parts[1])
+		} else if strings.Contains(code, "R") && index+1 < len(lines) {
+			index++
+			change.Status, change.OldPath, change.NewPath = "renamed", lines[index], raw
 		}
 		changes = append(changes, change)
 	}
 	return workspaceReadJSON(map[string]interface{}{"gitStatus": "ready", "gitAvailable": true, "changes": changes})
 }
 
-func workspaceReadDiff(root, rawPath string) (string, error) {
+func workspaceReadDiff(root string, scoped *os.Root, rawPath string) (string, error) {
 	path, err := workspaceReadRelativePath(rawPath)
 	if err != nil {
 		return "", err
@@ -150,41 +201,57 @@ func workspaceReadDiff(root, rawPath string) (string, error) {
 			"before": map[string]interface{}{"present": false, "content": "", "encoding": "utf-8", "truncated": false},
 			"after":  map[string]interface{}{"present": false, "content": "", "encoding": "utf-8", "truncated": false}})
 	}
-	before, _ := workspaceGitOutput(root, "show", "HEAD:"+path)
-	after, afterErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+	before, beforeErr := workspaceGitOutput(root, "show", "HEAD:"+path)
+	after, afterErr := workspaceReadBytes(scoped, path)
+	if afterErr != nil && !os.IsNotExist(afterErr) {
+		return "", afterErr
+	}
+	beforeContent, beforeEncoding, _ := workspaceFileContent([]byte(before))
+	afterContent, afterEncoding, _ := workspaceFileContent(after)
 	head, _ := workspaceGitOutput(root, "rev-parse", "HEAD")
 	return workspaceReadJSON(map[string]interface{}{"path": path, "baseline": strings.TrimSpace(head), "gitStatus": "ready", "stale": false,
-		"before": map[string]interface{}{"present": before != "", "content": before, "encoding": "utf-8", "truncated": false},
-		"after":  map[string]interface{}{"present": afterErr == nil, "content": string(after), "encoding": "utf-8", "truncated": false}})
+		"before": map[string]interface{}{"present": beforeErr == nil, "content": beforeContent, "encoding": beforeEncoding, "truncated": false},
+		"after":  map[string]interface{}{"present": afterErr == nil, "content": afterContent, "encoding": afterEncoding, "truncated": false}})
 }
 
-func workspaceReadSearch(root, query string) (string, error) {
+func workspaceReadSearch(root *os.Root, query string) (string, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return workspaceReadJSON(map[string]interface{}{"entries": []interface{}{}, "truncated": false})
 	}
-	cmd := exec.Command("grep", "-RFil", "--exclude-dir=.git", "--exclude-dir=node_modules", "--", query, root)
-	output, err := cmd.Output()
-	if err != nil {
-		if _, ok := err.(*exec.ExitError); ok {
-			return workspaceReadJSON(map[string]interface{}{"entries": []interface{}{}, "truncated": false})
+	entries := make([]map[string]interface{}, 0)
+	truncated := false
+	err := fs.WalkDir(root.FS(), ".", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
+		if entry.IsDir() && (entry.Name() == ".git" || entry.Name() == "node_modules") {
+			return fs.SkipDir
+		}
+		if !entry.Type().IsRegular() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Size() > maxFileReadBytes() {
+			truncated = true
+			return nil
+		}
+		data, err := workspaceReadBytes(root, path)
+		if err != nil {
+			return err
+		}
+		if looksLikeText(data) && bytes.Contains(bytes.ToLower(data), []byte(strings.ToLower(query))) {
+			entries = append(entries, map[string]interface{}{"name": entry.Name(), "path": path, "type": "file"})
+		}
+		return nil
+	})
+	if err != nil {
 		return "", err
 	}
-	entries := make([]map[string]interface{}, 0)
-	for _, line := range strings.Split(string(output), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		relative, relErr := filepath.Rel(root, line)
-		if relErr != nil || relative == "." || strings.HasPrefix(relative, "..") {
-			continue
-		}
-		relative = filepath.ToSlash(relative)
-		entries = append(entries, map[string]interface{}{"name": filepath.Base(relative), "path": relative, "type": "file"})
-	}
-	return workspaceReadJSON(map[string]interface{}{"entries": entries, "truncated": false})
+	return workspaceReadJSON(map[string]interface{}{"entries": entries, "truncated": truncated})
 }
 
 func workspaceReadGitSummary(root string) (string, error) {
@@ -206,7 +273,11 @@ func workspaceReadGitLog(root, ref string) (string, error) {
 	if ref == "" {
 		ref = "HEAD"
 	}
-	out, err := workspaceGitOutput(root, "log", "-n", "50", "--format=%H%x09%aI%x09%an%x09%s", "--", ref)
+	commit, err := workspaceGitOutput(root, "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
+	if err != nil {
+		return "", err
+	}
+	out, err := workspaceGitOutput(root, "log", "-n", "50", "--format=%H%x09%aI%x09%an%x09%s", strings.TrimSpace(commit), "--")
 	if err != nil {
 		return "", err
 	}
@@ -220,20 +291,39 @@ func workspaceReadGitLog(root, ref string) (string, error) {
 	return workspaceReadJSON(map[string]interface{}{"commits": commits, "cursor": nil, "ref": ref, "truncated": false})
 }
 
-func workspaceReadPath(root, raw string, allowRoot bool) (string, error) {
-	if strings.TrimSpace(raw) == "" && allowRoot {
-		return root, nil
-	}
+func workspaceReadBytes(root *os.Root, raw string) ([]byte, error) {
 	path, err := workspaceReadRelativePath(raw)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return filepath.Join(root, filepath.FromSlash(path)), nil
+	file, err := root.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxFileReadBytes() {
+		return nil, fmt.Errorf("workspace preview requires a regular file no larger than %d bytes", maxFileReadBytes())
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxFileReadBytes()+1))
+	if err == nil && int64(len(data)) > maxFileReadBytes() {
+		err = fmt.Errorf("workspace preview exceeds %d bytes", maxFileReadBytes())
+	}
+	return data, err
+}
+
+func workspaceFileContent(data []byte) (string, string, bool) {
+	if !looksLikeText(data) || !utf8.Valid(data) {
+		return base64.StdEncoding.EncodeToString(data), "base64", true
+	}
+	return string(data), "utf-8", false
 }
 
 func workspaceReadRelativePath(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || raw == "." || filepath.IsAbs(raw) || strings.Contains(raw, "\x00") {
+	if raw == "" || raw == "." || raw != strings.TrimSpace(raw) || filepath.IsAbs(raw) || strings.Contains(raw, "\x00") {
 		return "", fmt.Errorf("workspace path is required and must be relative")
 	}
 	clean := filepath.Clean(raw)
@@ -253,7 +343,9 @@ func workspaceGitOutput(root string, args ...string) (string, error) {
 }
 
 func workspaceIsGit(root string) bool {
-	return exec.Command("git", "-C", root, "rev-parse", "--is-inside-work-tree").Run() == nil
+	top, err := workspaceGitOutput(root, "rev-parse", "--show-toplevel")
+	resolved, pathErr := filepath.EvalSymlinks(root)
+	return err == nil && pathErr == nil && filepath.Clean(strings.TrimSpace(top)) == filepath.Clean(resolved)
 }
 
 func workspaceReadJSON(value interface{}) (string, error) {
@@ -282,6 +374,9 @@ func workspaceContentType(path string) string {
 	case ".js", ".ts", ".tsx":
 		return "text/typescript"
 	default:
+		if mediaType := mime.TypeByExtension(filepath.Ext(path)); mediaType != "" {
+			return mediaType
+		}
 		return "text/plain"
 	}
 }
