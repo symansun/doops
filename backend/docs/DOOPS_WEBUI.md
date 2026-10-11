@@ -20,7 +20,7 @@ and does not expose the token to React state, localStorage or copied examples.
   remote Chart, controlled image, CI commit/evidence, reason and acceptance.
 - Helm success must include the final live Deployment and task acceptance.
   Native MCP `isError`, protocol errors and interrupted streams remain failures.
-- Existing managed Agents have a pinned-image upgrade/rollback form. An accepted
+- Existing managed Agents have an image-reference upgrade/rollback form. An accepted
   Job is not a completed release; the page observes the same Job and checks the
   Gateway protocol. Verify the serving Pod/imageID/runtime and affected functions.
   First installation still requires an authorized cluster administration context.

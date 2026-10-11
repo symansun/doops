@@ -159,8 +159,9 @@ stdio 响应在本地生成结果证明。
 进行任何 Agent 运行时修改后，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA
 为标签的候选镜像。该镜像同时携带同一 revision 的 `/app/doops-agent`、
 `/app/doops-gateway` 和锁定版本的 `/usr/local/bin/do-agent`；不得在发布控制端重新编译
-Gateway。候选镜像必须解析为 registry digest，Agent 自升级只接受不可变 digest。
-发布者必须自行保留精确 source commit、registry digest 和 CI 成功证据；Agent、CLI 和
+Gateway。生产候选镜像必须解析为 registry digest；`doops upgrade` 也接受明确的
+`repository:tag`，并在运行时校验实际 `imageID`。发布者必须自行保留精确 source commit、
+registry digest 和 CI 成功证据；Agent、CLI 和
 发布脚本不会替发布者证明 CI provenance。
 
 ### 双镜像构建原则
@@ -224,7 +225,8 @@ mutation。不存在 Kubernetes 镜像 mutation 发布旁路。自然语言 appl
 release，提供 `--release` 时按名称选择并校验该 release。Agent Pod 必须挂载可由 Job
 共享的 `/root/.kube` 或 `/root/.kube/config`；Job 显式复用该 kubeconfig，其 Kubernetes
 权限由该 kubeconfig 决定。Agent 只创建 Job，在 Agent 进程外执行 Helm upgrade，并在
-新 Pod 未持续就绪时回滚。镜像必须是 `repository@sha256:<64 hex>`。
+新 Pod 未持续就绪时回滚。镜像可以是 `repository:tag` 或 `repository@sha256:<64 hex>`；
+tag 使用 `Always` 拉取，回滚只接受历史已验证的 digest。
 CLI 在 Job 成功后执行 `capabilities --require structuredSSH`，探针失败会创建回滚 Job。
 `PREVIEW` 仅表示参数预览，不检查 Helm release、挂载、权限或回滚可行性；`ACCEPTED`
 仅表示 Job 已提交。Job 完成和协议声明不是完整发布验收：还须通过同一 target 的

@@ -543,7 +543,7 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 	}
 	defer tx.Rollback()
 	rows, err := tx.Query(`SELECT id, credential_id, grantee_id, scope_json, state, created_by, created_at, revoked_at
-		FROM credential_grants WHERE credential_id = ? AND grantee_id = ? AND state = ?`,
+		FROM credential_grants WHERE credential_id = ? AND grantee_id = ? AND state = ? ORDER BY id`,
 		grant.CredentialID, grant.GranteeID, CredentialStateActive)
 	if err != nil {
 		return CredentialGrant{}, err
@@ -564,11 +564,44 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 		return CredentialGrant{}, err
 	}
 	rows.Close()
-	if len(semanticMatches) > 1 {
-		return CredentialGrant{}, ErrCredentialAmbiguous
-	}
 	if len(semanticMatches) == 1 {
 		existing := semanticMatches[0]
+		if existingScopeJSON, marshalErr := json.Marshal(existing.Scope); marshalErr != nil {
+			return CredentialGrant{}, marshalErr
+		} else if string(existingScopeJSON) != string(scopeJSON) {
+			if _, updateErr := tx.Exec(`UPDATE credential_grants SET scope_json = ?, created_by = ?, created_at = ?, revoked_at = '' WHERE id = ?`,
+				string(scopeJSON), grant.CreatedBy, formatTime(grant.CreatedAt), existing.ID); updateErr != nil {
+				return CredentialGrant{}, updateErr
+			}
+			existing.Scope = grant.Scope
+			existing.CreatedBy = grant.CreatedBy
+			existing.CreatedAt = grant.CreatedAt
+		}
+		if auditID != 0 {
+			if err := finishAuditWith(tx, auditID, AuditFinish{
+				Status: "success", Cluster: existing.Scope.Cluster, Instance: existing.Scope.Instance,
+				GrantID: existing.ID, Scope: &existing.Scope, EndedAt: time.Now().UTC(),
+			}); err != nil {
+				return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return CredentialGrant{}, err
+		}
+		return existing, nil
+	}
+	if len(semanticMatches) > 1 {
+		// Legacy rows may contain several execution-metadata variants for one
+		// target/use authorization. Keep the stable first grant and refresh its
+		// metadata instead of turning equivalent grants into an authorization block.
+		existing := semanticMatches[0]
+		if _, updateErr := tx.Exec(`UPDATE credential_grants SET scope_json = ?, created_by = ?, created_at = ?, revoked_at = '' WHERE id = ?`,
+			string(scopeJSON), grant.CreatedBy, formatTime(grant.CreatedAt), existing.ID); updateErr != nil {
+			return CredentialGrant{}, updateErr
+		}
+		existing.Scope = grant.Scope
+		existing.CreatedBy = grant.CreatedBy
+		existing.CreatedAt = grant.CreatedAt
 		if auditID != 0 {
 			if err := finishAuditWith(tx, auditID, AuditFinish{
 				Status: "success", Cluster: existing.Scope.Cluster, Instance: existing.Scope.Instance,

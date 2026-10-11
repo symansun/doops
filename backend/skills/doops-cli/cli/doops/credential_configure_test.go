@@ -497,9 +497,6 @@ func TestCredentialConfigureCLI(t *testing.T) {
 			{"wrong_type", configureArgs("--name", "database", "--scope", "personal", "--type", "registry"), `{}`},
 			{"invalid_scope", configureArgs("--name", "database", "--scope", "*", "--type", "opaque"), `{}`},
 			{"unknown_use", append(append([]string(nil), base...), "--use", "unknown"), `{}`},
-			{"non_db_missing_workload", append(append([]string(nil), base...), "--use", "tls"), `{}`},
-			{"image_missing_scope", append(append([]string(nil), base...), "--use", "imagePull", "--workload-kind", "Deployment", "--workload-name", "api"), `{}`},
-			{"opaque_missing_keys", append(append([]string(nil), base...), "--use", "opaqueSecret", "--workload-kind", "Deployment", "--workload-name", "api"), `{}`},
 			{"duplicate_route_flag", append(append([]string(nil), base...), "--cluster", "other"), `{}`},
 			{"token_flag", append(append([]string(nil), base...), "--token", configureCanary), `{}`},
 			{"grantee_flag", append(append([]string(nil), base...), "--grantee-id", "other"), `{}`},
@@ -557,7 +554,7 @@ func TestCredentialConfigureCLI(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, text := range []string{"-session", "mutually exclusive", "never reads stdin", "--password-key", "Database and Helm grants require no workload", "every unique active scope",
+		for _, text := range []string{"-session", "mutually exclusive", "never reads stdin", "--password-key", "Database and Helm grants require no workload", "every unique active target/use authorization scope",
 			"concrete database path", "no query (including an empty ?) or fragment"} {
 			if !strings.Contains(output, text) {
 				t.Errorf("help missing %q", text)
@@ -567,7 +564,30 @@ func TestCredentialConfigureCLI(t *testing.T) {
 	})
 }
 
-func TestCredentialNonDatabaseRequiresWorkloadBeforeNetwork(t *testing.T) {
+func TestParseConfigureCredentialKeyMap(t *testing.T) {
+	got, err := parseConfigureCredentialKeyMap("SOURCE_URL=SPRING_DATASOURCE_URL,SOURCE_USER=SPRING_DATASOURCE_USERNAME")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"SOURCE_URL":  "SPRING_DATASOURCE_URL",
+		"SOURCE_USER": "SPRING_DATASOURCE_USERNAME",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("key map = %#v, want %#v", got, want)
+	}
+	for _, raw := range []string{
+		"SOURCE_URL",
+		"SOURCE_URL=SPRING_DATASOURCE_URL,SOURCE_URL=OTHER",
+		"SOURCE_URL=SPRING_DATASOURCE_URL,OTHER=SPRING_DATASOURCE_URL",
+	} {
+		if _, err := parseConfigureCredentialKeyMap(raw); err == nil {
+			t.Fatalf("invalid key map accepted: %q", raw)
+		}
+	}
+}
+
+func TestCredentialCommandsDoNotRequireWorkloadBeforeNetwork(t *testing.T) {
 	for _, command := range []string{"grant", "verify"} {
 		for _, use := range []string{"imagePull", "gitCheckout", "tls", "opaqueSecret"} {
 			args := []string{command, "--target", "db", "--id", "cred_1", "--cluster", "a", "--instance", "b",
@@ -577,8 +597,8 @@ func TestCredentialNonDatabaseRequiresWorkloadBeforeNetwork(t *testing.T) {
 			}
 			var output bytes.Buffer
 			err := runCredentialCommand(args, "test", nil, nil, strings.NewReader(""), &output)
-			if err == nil || !strings.Contains(err.Error(), "--workload-kind and --workload-name") {
-				t.Fatalf("%s %s must reject missing workload before resolving target: %v", command, use, err)
+			if err == nil || strings.Contains(err.Error(), "--workload-kind and --workload-name") {
+				t.Fatalf("%s %s still applies a workload authorization gate: %v", command, use, err)
 			}
 		}
 	}

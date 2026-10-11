@@ -13,7 +13,7 @@ func TestDatabaseCredentialScopeOnlyBindsTargetAndMaterializationNamespace(t *te
 		"missing cluster":   func(scope *CredentialGrantScope) { scope.Cluster = "" },
 		"missing instance":  func(scope *CredentialGrantScope) { scope.Instance = "" },
 		"missing namespace": func(scope *CredentialGrantScope) { scope.Namespace = "" },
-		"wrong use":         func(scope *CredentialGrantScope) { scope.Use = CredentialUseImagePull },
+		"invalid use":        func(scope *CredentialGrantScope) { scope.Use = CredentialUse("invalid") },
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := base

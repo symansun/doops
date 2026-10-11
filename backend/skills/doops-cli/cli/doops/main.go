@@ -964,7 +964,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		var dryRun, rollback bool
 		upgradeFlag := flag.NewFlagSet("upgrade", flag.ExitOnError)
 		upgradeFlag.StringVar(&target, "target", "", "Configured Gateway target")
-		upgradeFlag.StringVar(&image, "image", "", "Pinned doops-agent image, repository@sha256:<digest>")
+		upgradeFlag.StringVar(&image, "image", "", "doops-agent image, repository:tag or repository@sha256:<digest>")
 		upgradeFlag.StringVar(&mode, "mode", "auto", "Managed Helm Job mode: auto or k8s; standalone Docker uses backend/scripts/release-host-agent.sh")
 		upgradeFlag.StringVar(&namespace, "namespace", "", "Optional namespace; must match the agent namespace")
 		upgradeFlag.StringVar(&workload, "workload", "", "Optional deployment name; must match the Helm release")

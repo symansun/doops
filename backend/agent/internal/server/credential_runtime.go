@@ -492,7 +492,14 @@ func (h *GatewayHub) validateCredentialMaterializationResult(
 	}
 	switch resource.Type {
 	case CredentialTypeRegistry, CredentialTypeHelmRepository, CredentialTypeGitToken:
-		if materialization.Digest == "" || materialization.Fingerprint != "" || materialization.ExpiresAt != "" {
+		if resource.Type != CredentialTypeRegistry && materialization.Digest == "" {
+			return errors.New("credential_materialization_metadata_invalid")
+		}
+		if resource.Type == CredentialTypeRegistry &&
+			(ref.Scope.ImageRepository != "" || ref.Scope.ImageDigest != "") && materialization.Digest == "" {
+			return errors.New("credential_materialization_metadata_invalid")
+		}
+		if materialization.Fingerprint != "" || materialization.ExpiresAt != "" {
 			return errors.New("credential_materialization_metadata_invalid")
 		}
 	case CredentialTypeTLS:

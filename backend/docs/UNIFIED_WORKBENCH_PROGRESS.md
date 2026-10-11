@@ -106,7 +106,7 @@ isolation, audit or execution-outcome evidence.
   database query or mutation.
 - The production Agent image must include the DoSql skill and retain `kubectl`
   permissions to create only the short-lived, Secret-bound database Jobs for
-  exact database scopes. PostgreSQL/MongoDB client image pulls and target RBAC
+  target/use-authorized database credentials. PostgreSQL/MongoDB client image pulls and target RBAC
   must be verified through GitOps/CI before rollout.
 - Anonymous Agent registration currently permits identity replacement by
   `cluster/instance`; the repository explicitly retains this design. Closing

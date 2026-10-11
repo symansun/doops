@@ -83,10 +83,7 @@ func validateCredentialGrantScope(scope CredentialGrantScope) error {
 		!validCredentialUse(scope.Use) {
 		return errors.New("credential_scope_invalid")
 	}
-	if scope.Use != CredentialUseDatabase && scope.Use != CredentialUseHelmPull {
-		if scope.Workload.Kind == "" || scope.Workload.Name == "" {
-			return errors.New("credential_scope_invalid")
-		}
+	if scope.Workload.Kind != "" || scope.Workload.Name != "" {
 		switch scope.Workload.Kind {
 		case "deployment", "statefulset", "daemonset":
 		default:
@@ -96,29 +93,13 @@ func validateCredentialGrantScope(scope CredentialGrantScope) error {
 			return errors.New("credential_scope_invalid")
 		}
 	}
-	switch scope.Use {
-	case CredentialUseImagePull:
-		if scope.ImageRepository == "" || !validCredentialSHA256Digest(scope.ImageDigest) ||
-			scope.HelmRelease != "" || scope.HelmChart != "" || len(scope.RequiredKeys) != 0 {
+	if scope.ImageRepository != "" || scope.ImageDigest != "" {
+		if scope.ImageRepository == "" || !validCredentialSHA256Digest(scope.ImageDigest) {
 			return errors.New("credential_scope_invalid")
 		}
-	case CredentialUseHelmPull:
-		if scope.ImageRepository != "" || scope.ImageDigest != "" || len(scope.RequiredKeys) != 0 {
-			return errors.New("credential_scope_invalid")
-		}
-	case CredentialUseOpaqueSecret:
-		if len(scope.RequiredKeys) == 0 || scope.ImageRepository != "" || scope.ImageDigest != "" ||
-			scope.HelmRelease != "" || scope.HelmChart != "" {
-			return errors.New("credential_scope_invalid")
-		}
-	case CredentialUseDatabase:
-		if scope.ImageRepository != "" || scope.ImageDigest != "" ||
-			scope.HelmRelease != "" || scope.HelmChart != "" {
-			return errors.New("credential_scope_invalid")
-		}
-	case CredentialUseGitCheckout, CredentialUseTLS:
-		if scope.ImageRepository != "" || scope.ImageDigest != "" ||
-			scope.HelmRelease != "" || scope.HelmChart != "" || len(scope.RequiredKeys) != 0 {
+	}
+	for _, key := range scope.RequiredKeys {
+		if !validCredentialMetadataToken(key, 253) {
 			return errors.New("credential_scope_invalid")
 		}
 	}
@@ -146,28 +127,7 @@ func normalizedCredentialKeys(values []string) []string {
 func credentialScopeEqual(left, right CredentialGrantScope) bool {
 	left = normalizeCredentialGrantScope(left)
 	right = normalizeCredentialGrantScope(right)
-	if left.Use == CredentialUseDatabase && right.Use == CredentialUseDatabase {
-		return left.Cluster == right.Cluster && left.Instance == right.Instance &&
-			left.Namespace == right.Namespace && left.Use == right.Use
-	}
-	if left.Use == CredentialUseHelmPull && right.Use == CredentialUseHelmPull {
-		return left.Cluster == right.Cluster && left.Instance == right.Instance && left.Use == right.Use
-	}
-	if left.Cluster != right.Cluster || left.Instance != right.Instance ||
-		left.Namespace != right.Namespace || left.Use != right.Use || left.Workload != right.Workload ||
-		left.DatabaseAssetID != right.DatabaseAssetID || left.EnvironmentID != right.EnvironmentID ||
-		left.DatabaseEngine != right.DatabaseEngine || left.DatabaseName != right.DatabaseName ||
-		left.ImageRepository != right.ImageRepository || left.ImageDigest != right.ImageDigest ||
-		left.HelmRelease != right.HelmRelease || left.HelmChart != right.HelmChart ||
-		len(left.RequiredKeys) != len(right.RequiredKeys) {
-		return false
-	}
-	for index := range left.RequiredKeys {
-		if left.RequiredKeys[index] != right.RequiredKeys[index] {
-			return false
-		}
-	}
-	return true
+	return left.Cluster == right.Cluster && left.Instance == right.Instance && left.Use == right.Use
 }
 
 func validCredentialSHA256Digest(value string) bool {

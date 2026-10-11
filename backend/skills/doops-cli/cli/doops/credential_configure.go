@@ -21,7 +21,7 @@ var (
 
 func runCredentialConfigure(args []string, sessionName string, servers []Server, configErr error, stdin io.Reader, stdout io.Writer) error {
 	var target, id, name, resourceScope, credentialType, requiredKeys string
-	var fromSecret, keys, connectionURI, passwordKey string
+	var fromSecret, keys, keyMap, connectionURI, passwordKey string
 	var scope credentialGrantScope
 	flags := credentialFlagSet("credential configure", stdout)
 	flags.StringVar(&target, "target", "", "Configured Gateway target; supplies cluster and instance")
@@ -31,15 +31,16 @@ func runCredentialConfigure(args []string, sessionName string, servers []Server,
 	flags.StringVar(&resourceScope, "scope", "", "Credential scope: personal or platform (required with --name)")
 	flags.StringVar(&scope.Namespace, "namespace", "", "Secret materialization namespace (runtime metadata)")
 	flags.StringVar(&scope.Use, "use", "", "Credential use: imagePull, gitCheckout, helmPull, tls, opaqueSecret, or database")
-	flags.StringVar(&scope.Workload.Kind, "workload-kind", "", "Workload kind (required except for database and helmPull)")
-	flags.StringVar(&scope.Workload.Name, "workload-name", "", "Workload name (required except for database and helmPull)")
-	flags.StringVar(&scope.ImageRepository, "image-repository", "", "Authorized image repository")
-	flags.StringVar(&scope.ImageDigest, "image-digest", "", "Authorized image sha256 digest")
-	flags.StringVar(&scope.HelmRelease, "helm-release", "", "Authorized Helm release")
-	flags.StringVar(&scope.HelmChart, "helm-chart", "", "Authorized Helm chart")
-	flags.StringVar(&requiredKeys, "required-keys", "", "Comma-separated required Secret keys for opaqueSecret")
+	flags.StringVar(&scope.Workload.Kind, "workload-kind", "", "Optional workload metadata for imagePull materialization")
+	flags.StringVar(&scope.Workload.Name, "workload-name", "", "Optional workload metadata for imagePull materialization")
+	flags.StringVar(&scope.ImageRepository, "image-repository", "", "Optional image verification repository")
+	flags.StringVar(&scope.ImageDigest, "image-digest", "", "Optional image verification sha256 digest")
+	flags.StringVar(&scope.HelmRelease, "helm-release", "", "Optional Helm execution metadata")
+	flags.StringVar(&scope.HelmChart, "helm-chart", "", "Optional Helm execution metadata")
+	flags.StringVar(&requiredKeys, "required-keys", "", "Optional Secret keys; payload keys are inferred when omitted")
 	flags.StringVar(&fromSecret, "from-secret", "", "Import selected keys from this target Secret (opaque only); never reads stdin")
 	flags.StringVar(&keys, "keys", "", "Explicit comma-separated source Secret keys (required with --from-secret)")
+	flags.StringVar(&keyMap, "key-map", "", "Optional source=runtime Secret key mappings for --from-secret")
 	flags.StringVar(&connectionURI, "connection-uri", "", "Passwordless postgres/postgresql/mongodb URL with a concrete database path; no query (including an empty ?) or fragment")
 	flags.StringVar(&passwordKey, "password-key", "", "Source password key; must be the sole selected --keys entry with --connection-uri")
 	flags.Usage = func() {
@@ -56,7 +57,7 @@ The URL requires a concrete database path, with no query (including an empty ?) 
 
 Reuses a unique managed resource or creates it, stages a version, configures the
 target binding, GETs all bindings, verifies every unique active materialization,
-then promotes. It verifies every unique active scope; target operators inherit
+then promotes. It verifies every unique active target/use authorization scope; target operators inherit
 credential use without a second grant.
 Stops on the first failure, without retries or automatic cleanup.
 Only phase IDs and metadata are printed. Re-running stages a new version.
@@ -75,7 +76,7 @@ Flags:
 		return err
 	}
 	for _, value := range []*string{&sessionName, &target, &id, &name, &resourceScope, &credentialType,
-		&fromSecret, &keys, &connectionURI, &passwordKey, &scope.Namespace, &scope.Use,
+		&fromSecret, &keys, &keyMap, &connectionURI, &passwordKey, &scope.Namespace, &scope.Use,
 		&scope.Workload.Kind, &scope.Workload.Name, &scope.ImageRepository, &scope.ImageDigest,
 		&scope.HelmRelease, &scope.HelmChart} {
 		*value = strings.TrimSpace(*value)
@@ -112,9 +113,13 @@ Flags:
 	if err != nil {
 		return err
 	}
+	selectedKeyMap, err := parseConfigureCredentialKeyMap(keyMap)
+	if err != nil {
+		return err
+	}
 	if fromSecret == "" {
-		if keys != "" || connectionURI != "" || passwordKey != "" {
-			return fmt.Errorf("--keys, --connection-uri and --password-key require --from-secret")
+		if keys != "" || keyMap != "" || connectionURI != "" || passwordKey != "" {
+			return fmt.Errorf("--keys, --key-map, --connection-uri and --password-key require --from-secret")
 		}
 	} else {
 		if wantType != "opaque" || !validConfigureCredentialName(fromSecret) || len(selectedKeys) == 0 {
@@ -127,7 +132,15 @@ Flags:
 			}
 			seen[key] = true
 		}
+		for source := range selectedKeyMap {
+			if !seen[source] {
+				return fmt.Errorf("--key-map source %q must be included in --keys", source)
+			}
+		}
 		if connectionURI != "" {
+			if keyMap != "" {
+				return fmt.Errorf("--key-map cannot be combined with --connection-uri")
+			}
 			if passwordKey == "" || len(selectedKeys) != 1 || selectedKeys[0] != passwordKey {
 				return fmt.Errorf("--connection-uri requires exactly --password-key selected in --keys")
 			}
@@ -223,6 +236,9 @@ Flags:
 			"session_id": sessionName, "cluster": cluster, "instance": instance,
 			"namespace": scope.Namespace, "secret_name": fromSecret, "keys": selectedKeys,
 		}
+		if len(selectedKeyMap) != 0 {
+			body["key_map"] = selectedKeyMap
+		}
 		if connectionURI != "" {
 			body["connection_uri"], body["password_key"] = connectionURI, passwordKey
 		}
@@ -291,7 +307,8 @@ Flags:
 		if verified.Status != "verified" || len(verified.Evidence) != counts[configureCredentialScopeKey(activeScope)] {
 			return fmt.Errorf("credential configure: verification failed or evidence incomplete (scope %d)", index+1)
 		}
-		requiresDigest := activeScope.Use == "imagePull" || activeScope.Use == "gitCheckout" || activeScope.Use == "helmPull"
+		requiresDigest := (activeScope.Use == "imagePull" && activeScope.ImageRepository != "" && activeScope.ImageDigest != "") ||
+			activeScope.Use == "gitCheckout" || activeScope.Use == "helmPull"
 		for _, evidence := range verified.Evidence {
 			if evidence.Status != "verified" || evidence.ErrorCategory != "" || evidence.ResourceVersion == "" ||
 				(requiresDigest && evidence.Digest == "") {
@@ -317,6 +334,33 @@ Flags:
 	return err
 }
 
+func parseConfigureCredentialKeyMap(raw string) (map[string]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	result := make(map[string]string)
+	destinations := make(map[string]string)
+	for _, item := range strings.Split(raw, ",") {
+		parts := strings.SplitN(strings.TrimSpace(item), "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("--key-map must be a comma-separated source=runtime list")
+		}
+		source, destination := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		if !configureCredentialKeyPattern.MatchString(source) || !configureCredentialKeyPattern.MatchString(destination) {
+			return nil, fmt.Errorf("--key-map contains an invalid Secret key")
+		}
+		if _, exists := result[source]; exists {
+			return nil, fmt.Errorf("--key-map contains duplicate source key %q", source)
+		}
+		if previous, exists := destinations[destination]; exists && previous != source {
+			return nil, fmt.Errorf("--key-map contains duplicate runtime key %q", destination)
+		}
+		result[source] = destination
+		destinations[destination] = source
+	}
+	return result, nil
+}
+
 func validConfigureCredentialName(value string) bool {
 	return len(value) <= 253 && configureCredentialNamePattern.MatchString(value)
 }
@@ -325,14 +369,14 @@ func validateConfigureCredentialScope(scope credentialGrantScope) error {
 	if !validConfigureCredentialName(scope.Namespace) {
 		return fmt.Errorf("--namespace must be a valid Kubernetes name")
 	}
-	if scope.Use != "database" && scope.Use != "helmPull" {
+	if scope.Workload.Kind != "" || scope.Workload.Name != "" {
 		switch strings.ToLower(scope.Workload.Kind) {
 		case "deployment", "statefulset", "daemonset":
 		default:
-			return fmt.Errorf("--workload-kind must be Deployment, StatefulSet or DaemonSet except for database and helmPull")
+			return fmt.Errorf("--workload-kind must be Deployment, StatefulSet or DaemonSet when provided")
 		}
 		if !validConfigureCredentialName(scope.Workload.Name) {
-			return fmt.Errorf("--workload-name is required and must be valid except for database and helmPull")
+			return fmt.Errorf("--workload-name must be valid when provided")
 		}
 	}
 	image := scope.ImageRepository != "" || scope.ImageDigest != ""
@@ -340,7 +384,7 @@ func validateConfigureCredentialScope(scope credentialGrantScope) error {
 	keys := len(scope.RequiredKeys) != 0
 	switch scope.Use {
 	case "imagePull":
-		if strings.Trim(scope.ImageRepository, "/") != "" && configureCredentialDigestPattern.MatchString(scope.ImageDigest) && !helm && !keys {
+		if !helm && !keys && (!image || (strings.Trim(scope.ImageRepository, "/") != "" && configureCredentialDigestPattern.MatchString(scope.ImageDigest))) {
 			return nil
 		}
 	case "helmPull":
@@ -348,7 +392,10 @@ func validateConfigureCredentialScope(scope credentialGrantScope) error {
 			return nil
 		}
 	case "opaqueSecret":
-		if keys && !image && !helm {
+		if !image && !helm {
+			if !keys {
+				return nil
+			}
 			for _, key := range scope.RequiredKeys {
 				if !configureCredentialKeyPattern.MatchString(key) || len(key) > 253 {
 					return fmt.Errorf("--required-keys must contain valid Secret keys")
@@ -361,7 +408,7 @@ func validateConfigureCredentialScope(scope credentialGrantScope) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("invalid --use or missing/conflicting image, Helm or required-key scope flags")
+	return fmt.Errorf("invalid optional execution metadata for --use")
 }
 
 func normalizeConfigureCredentialScope(scope credentialGrantScope) credentialGrantScope {
@@ -379,13 +426,13 @@ func normalizeConfigureCredentialScope(scope credentialGrantScope) credentialGra
 }
 
 func configureCredentialScopeKey(scope credentialGrantScope) string {
-	if scope.Use == "helmPull" {
-		scope.Namespace = ""
-		scope.Workload = credentialGrantWorkload{}
-		scope.HelmRelease = ""
-		scope.HelmChart = ""
-	}
-	data, _ := json.Marshal(normalizeConfigureCredentialScope(scope))
+	scope = normalizeConfigureCredentialScope(scope)
+	scope.Namespace = ""
+	scope.Workload = credentialGrantWorkload{}
+	scope.DatabaseAssetID, scope.EnvironmentID, scope.DatabaseEngine, scope.DatabaseName = "", "", "", ""
+	scope.ImageRepository, scope.ImageDigest, scope.HelmRelease, scope.HelmChart = "", "", "", ""
+	scope.RequiredKeys = nil
+	data, _ := json.Marshal(scope)
 	return string(data)
 }
 
