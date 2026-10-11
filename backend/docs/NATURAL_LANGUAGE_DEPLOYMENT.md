@@ -37,6 +37,9 @@ doops -session release-<commit> ask --target <target> --apply \
 `--credential` 只传 resource name，完整生命周期见
 [`CREDENTIAL_RESOURCES.md`](CREDENTIAL_RESOURCES.md)。
 
+凭据运行时使用继承本次 target 操作的 `ask`/`exec` 权限；已有目标绑定不需逐操作员重授权。
+数据库绑定直接读取保存的 metadata，凭据 namespace 由配置决定，不依赖模型规划。
+
 CNB CI 可以在镜像版本已确定后调用同一命令。发布者必须在调用前独立核对精确 CI
 source commit、registry digest 和构建成功证据；CLI、Agent 和 Helm 工具不自动验证
 CI provenance。仓库提供的

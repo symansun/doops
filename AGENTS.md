@@ -85,11 +85,12 @@ DoOps architecture, security, release, and verification boundaries.
   the explicitly authorized target Agent. Public prompt and metadata bindings contain names,
   scopes, Secret names/types/key sets, resource versions, digests, status, and stable error
   categories only.
-- Credential access is exact and persistent for workload, image, Helm, Git and TLS uses: user plus
-  configured target `cluster/instance`, exact namespace, use, workload kind/name, and relevant
-  asset fields. Database credential grants are the explicit exception: Gateway binds the credential
-  owner/grantee, target `cluster/instance`, use and Secret materialization namespace; DoSql/Agent
-  owns database asset, environment, engine, database name and SQL authorization. Do not add
+- Runtime credential use inherits the current target operation's `ask`/`exec` authority. Do not
+  require a second `credential:use` action or a per-operator credential grant. Active grants identify
+  which target/use owns a credential; management still belongs to its owner or platform admin.
+  Database bindings resolve directly from stored target metadata, without a model-generated scope;
+  the saved namespace is used for materialization. DoSql/Agent owns database assets and SQL policy.
+  Workload/image/Git/TLS asset scope and Helm source/digest validation remain enforced. Do not add
   wildcard, prefix, inferred, project, environment, template, or workflow-path grants to the
   Gateway layer.
 - A project may declare metadata-only development requirements in
@@ -123,8 +124,8 @@ DoOps architecture, security, release, and verification boundaries.
   `<project>/.agent/skills/doops/`, never from the current working tree. Missing release source
   must fail before replacement; the install receipt records `skill_commit`. Do not edit
   installed copies first.
-- One `doops login` is shared by configured targets on the same normalized Gateway URL. Credential
-  listing and use still enforce the logged-in user and selected target's exact cluster/instance.
+- One `doops login` is shared by configured targets on the same normalized Gateway URL. Target
+  credential listing and use inherit target operation authority; management enforces ownership.
 
 ## Required Documentation
 

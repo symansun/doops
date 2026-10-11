@@ -28,7 +28,7 @@ doops login --target <target> --username <user>
 ```
 
 登录态按规范化 Gateway URL 保存。同一 Gateway 下所有 configured target 共用一次登录，
-但凭据查询和使用仍按当前用户及 target 的 `cluster/instance` 隔离。
+凭据使用继承当前用户的 target 操作权限，按 target 的 `cluster/instance` 隔离；凭据管理仍检查归属。
 
 Web 控制台和 CLI 共享 Gateway 身份与授权模型：Web 使用 HttpOnly session cookie，CLI
 使用 `doops` 的 Gateway token 缓存。两者都只能提交 credential resource name；DoSql
@@ -39,8 +39,8 @@ doops credential list --target <target>
 doops credential list --target <target> --view managed
 ```
 
-- 默认 `target` 视图只返回当前用户在该 target 上拥有 active grant 且存在 active version
-  的 active resource。
+- 有 target 的 `ask` 或 `exec` 权限时，默认 `target` 视图返回绑定该 target 且存在 active version
+  的 active resource，不再要求给每个操作员重复授予凭据权限。
 - `managed` 视图返回当前用户拥有的 personal resource；platform admin 可查看平台资源。
 - `managed` 视图只返回 resource metadata，不加载 grant 详情；CLI 的 `grants=not_loaded`
   不是“没有 grant”。检查 target 可用性应使用 `credential list --target <target>`，但它同样
@@ -111,8 +111,8 @@ use 不匹配、revoked grant 或同名资源不唯一时返回非零。
 - `platform`：只有 platform admin 可以创建、管理、授权、轮换和吊销。
 - platform admin 需要 Gateway 全局 `admin` 或 `*` 权限，不由某个 target action 推导。
 
-personal owner 给 target 创建 grant 前，还必须拥有该 target 的 `ask` 权限。执行
-verification 还需要该 target 的 `ask` 和 `credential:use` 权限。
+personal owner 给 target 创建绑定前必须能操作该 target。运行时使用和验证继承已有
+`ask`/`exec` 权限，不再检查独立 `credential:use`；验证、轮换、吊销的资源管理权限仍检查 owner/admin。
 
 ### Grant scope
 
@@ -137,6 +137,7 @@ workload kind 仅支持 `Deployment`、`StatefulSet`、`DaemonSet`。不支持 w
 | `gitCheckout` | `gitToken` | 无；当前 scope 不包含 branch/ref |
 
 数据库 grant 不绑定数据库资产、环境、引擎、数据库名或 workload；这些是 DoSql 的执行上下文，
+DoSql 请求直接由 Gateway 读取保存的 target/database 绑定，物化使用绑定的 namespace；不调用模型生成凭据 scope。
 Agent 会根据当前 target 的非 Secret discovery 校验。PostgreSQL 和 MongoDB 使用
 `connection_uri`；MySQL 使用
 `required_keys=SPRING_DATASOURCE_URL,SPRING_DATASOURCE_USERNAME,SPRING_DATASOURCE_PASSWORD`。
@@ -450,11 +451,11 @@ Gateway-to-Agent 凭据控制面会把解密 payload 临时传给目标 doops-ag
 payload 不进入公开 prompt、doagent 上下文或 metadata binding。
 
 注意：Resource `state=active` 不等于存在 active Version。数据库执行必须同时满足：
-active resource、active version、当前用户在 target/use/namespace scope 上的 active database grant，
+active resource、active version、目标上的 active database 绑定和当前用户的目标操作权限，
 以及该 version 在所有 active grant 上完成 verification。标准顺序是
 `credential put -> credential grant -> credential verify -> credential promote`。
 缺少 active version 时，target credential list 会隐藏该 resource，DoSql 执行会被 Gateway
-拒绝；缺少 grant 时同样不会进入 Agent 的 `mcp_dosql_*` 执行器。
+返回 `credential_version_not_found`；缺少目标绑定返回 `credential_grant_denied`，不把缺少配置说成 `credential_invalid`。
 
 ## 审计
 

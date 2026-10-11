@@ -98,11 +98,14 @@ description: |
   发布镜像只由 CI 构建；Agent 内存在 BuildKit 不代表允许在业务 target 上重新构建，
   也不能把工作区同步或 SCP 源码传输作为普通发布的前置步骤。
 - 需要凭据时使用可重复的 `--credential <resource-name>`。该参数只传递资源名；Gateway
-  将它绑定到当前用户、target 和 session，并按对应 credential use 授权和物化。对 database
+  使用当前 target 操作的 `ask`/`exec` 权限，不要求额外 `credential:use` 或给每个操作员重复 grant。
+  凭据必须已绑定该 target/use 且存在 active version，管理/轮换仍检查 owner/admin。对 database
   use，Gateway 只管理用户/平台归属、cluster/instance、物化 namespace 和凭据可用性；数据库
   asset、environment、engine、database name 与 SQL 变更授权由 DoSql/目标 Agent 负责。公开 prompt、doagent 上下文和 metadata
   binding 不接收 credential payload；目标 doops-agent 只在内部凭据控制面临时接收
   解密 payload 以创建或验证目标资源。
+- DoSql 凭据绑定由 Gateway 直接读取已保存的 target/database 元数据，不让模型生成授权 scope。
+  初始化缺少版本时用 `credential configure` 内部导入并验证；不能只给空资源补 grant。
 - Helm grant 只绑定 target 的 cluster/instance 和 use=helmPull；namespace、workload、release
   和 Chart URL 不再参与 Gateway 授权匹配。实际包仍须通过凭据仓库同源路径和 digest 校验。
 - DoOps 已有完整凭据管理。首次配置优先用 `credential configure`，复用现有资源并自动
@@ -113,7 +116,7 @@ description: |
 - 开发项目可以在 `.agent/doops-credentials.yaml` 声明 metadata-only 的
   `credentialRef + use`。Agent 在 Git、Registry、Helm、TLS 或 API 开发操作前必须运行
   `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml`。
-  preflight 只检查当前用户在 manifest target 上是否拥有匹配 use 的 active grant，
+  preflight 检查当前用户能操作 manifest target，且该 target 存在匹配 use 的 active 绑定，
   且凭据存在 active version；
   它不读取 payload、不授予权限、不物化凭据，也不允许回退到环境变量、旧登录态或
   Skill 目录中的文件。

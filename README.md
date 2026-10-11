@@ -74,6 +74,12 @@ pnpm build
 
 ## Runtime Boundary
 
+Target `ask`/`exec` authority includes using credentials already bound to that
+target. Operators do not need a second credential permission or individual grant.
+Credential management remains restricted to the owner or platform administrator.
+DoSql resolves database bindings directly from stored metadata instead of asking
+the model to generate credential authorization scopes.
+
 Daily operations go through `doops-gateway` and registered `doops-agent`
 instances. Do not rely on SSH credentials for normal agent operations; remote
 actions should travel through doops RPC, gateway routing, and agent-side tools.
