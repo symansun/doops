@@ -111,12 +111,14 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 		}})
 		secretType = "kubernetes.io/dockerconfigjson"
 		secretData = map[string]string{".dockerconfigjson": string(dockerConfig)}
-		digest, err := verifyRegistryManifest(ctx, payload.Server, payload.Username, payload.Password,
-			req.Scope.ImageRepository, req.Scope.ImageDigest)
-		if err != nil {
-			return CredentialMaterialization{}, err
+		if req.Scope.ImageRepository != "" || req.Scope.ImageDigest != "" {
+			digest, err := verifyRegistryManifest(ctx, payload.Server, payload.Username, payload.Password,
+				req.Scope.ImageRepository, req.Scope.ImageDigest)
+			if err != nil {
+				return CredentialMaterialization{}, err
+			}
+			result.Digest = digest
 		}
-		result.Digest = digest
 	case CredentialTypeTLS:
 		if req.Scope.Use != CredentialUseTLS {
 			return CredentialMaterialization{}, errors.New("credential_use_mismatch")

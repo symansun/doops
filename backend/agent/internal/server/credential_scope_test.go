@@ -87,7 +87,7 @@ func TestHelmCredentialGrantRotationReusesOneActiveGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.ID != first.ID || second.Scope.HelmChart != base.HelmChart {
+	if second.ID != first.ID || second.Scope.HelmChart != rotated.HelmChart || second.Scope.Namespace != rotated.Namespace {
 		t.Fatalf("Helm grant rotation created a new grant: first=%#v second=%#v", first, second)
 	}
 	grants, err := store.ActiveCredentialGrants(resource.ID)

@@ -352,7 +352,7 @@ def test_oilan_agent_chart_rejects_invalid_image_references(tmp_path):
     invalid_overrides = (
         ("image.digest=latest",),
         (f"image.digest={IMAGE_DIGEST}", "image.repository="),
-        ("image.tag=" + ("a" * 40),),
+        ("image.tag=" + ("a" * 129),),
     )
 
     for overrides in invalid_overrides:

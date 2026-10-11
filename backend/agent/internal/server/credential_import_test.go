@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -56,8 +57,11 @@ func credentialImportFixture(t *testing.T) (*executionLifecycleFixture, string) 
 		"metadata": map[string]string{"uid": "source-uid", "resourceVersion": "7"},
 		"type":     "Opaque",
 		"data": map[string]string{
-			"DB_PASSWORD": base64.StdEncoding.EncodeToString([]byte(importCanary)),
-			"UNSELECTED":  base64.StdEncoding.EncodeToString([]byte("never-import-this")),
+			"DB_PASSWORD":    base64.StdEncoding.EncodeToString([]byte(importCanary)),
+			"SOURCE_URL":     base64.StdEncoding.EncodeToString([]byte("jdbc:mysql://mysql.test:3306/test")),
+			"SOURCE_USERNAME": base64.StdEncoding.EncodeToString([]byte("test-user")),
+			"SOURCE_PASSWORD": base64.StdEncoding.EncodeToString([]byte(importCanary)),
+			"UNSELECTED":      base64.StdEncoding.EncodeToString([]byte("never-import-this")),
 		},
 	})
 	if err != nil {
@@ -104,6 +108,52 @@ fi
 	})
 	waitForGatewayAgent(t, f.hub, "dev", "local")
 	return f, argsLog
+}
+
+func TestCredentialImportKeyMapTransformsRuntimeKeys(t *testing.T) {
+	f, argsLog := credentialImportFixture(t)
+	var resource CredentialResource
+	json.Unmarshal(f.http(t, f.admin, http.MethodPost, "/v1/credentials",
+		`{"name":"mapped-db","scope":"personal","type":"opaque"}`, http.StatusOK), &resource)
+	body := map[string]any{
+		"session_id": "mapped-import", "cluster": "dev", "instance": "local",
+		"namespace": "apps", "secret_name": "source-db",
+		"keys": []string{"SOURCE_URL", "SOURCE_USERNAME", "SOURCE_PASSWORD"},
+		"key_map": map[string]string{
+			"SOURCE_URL":      "SPRING_DATASOURCE_URL",
+			"SOURCE_USERNAME": "SPRING_DATASOURCE_USERNAME",
+			"SOURCE_PASSWORD": "SPRING_DATASOURCE_PASSWORD",
+		},
+	}
+	encoded, _ := json.Marshal(body)
+	f.http(t, f.admin, http.MethodPost, "/v1/credentials/"+resource.ID+"/import-secret",
+		string(encoded), http.StatusOK)
+	versions, err := f.store.CredentialVersions(resource.ID)
+	if err != nil || len(versions) != 1 {
+		t.Fatalf("mapped import did not stage one version: %v %#v", err, versions)
+	}
+	payload, err := f.store.ResolveCredentialPayload(resource.ID, versions[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(payload)
+	var decoded struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"SPRING_DATASOURCE_URL":      "jdbc:mysql://mysql.test:3306/test",
+		"SPRING_DATASOURCE_USERNAME": "test-user",
+		"SPRING_DATASOURCE_PASSWORD": importCanary,
+	}
+	if !reflect.DeepEqual(decoded.Data, want) {
+		t.Fatalf("mapped payload = %#v, want %#v", decoded.Data, want)
+	}
+	if logged, _ := os.ReadFile(argsLog); !strings.Contains(string(logged), "read source-db") {
+		t.Fatal("mapped import did not read the source Secret through the Agent")
+	}
 }
 
 func TestCredentialImportHTTPThroughRealAgent(t *testing.T) {

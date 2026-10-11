@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,6 +33,8 @@ const (
 
 var (
 	imageRepositoryPattern  = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`)
+	imageTagPattern         = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
+	imageDigestPattern      = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 	selfUpgradeJobPattern   = regexp.MustCompile(`^doops-self-upgrade-[a-f0-9]{8}$`)
 	selfUpgradeRBJobPattern = regexp.MustCompile(`^doops-self-upgrade-rb-[a-f0-9]{8}$`)
 )
@@ -89,7 +93,7 @@ func validateAgentUpgradeDispatch(args agentUpgradeParams) error {
 	if strings.TrimSpace(args.ObserveJob) != "" || args.Rollback {
 		return nil
 	}
-	_, _, err := parsePinnedImage(args.Image)
+	_, _, _, err := parseUpgradeImage(args.Image)
 	return err
 }
 
@@ -117,7 +121,7 @@ func dryRunAgentUpgrade(args agentUpgradeParams) (string, error) {
 	if image == "" {
 		return "", fmt.Errorf("image is required")
 	}
-	if _, _, err := parsePinnedImage(image); err != nil {
+	if _, _, _, err := parseUpgradeImage(image); err != nil {
 		return "", err
 	}
 	mode := strings.TrimSpace(args.Mode)
@@ -151,7 +155,7 @@ func (p upgradeProcess) startSelfUpgradeJob(ctx context.Context, args agentUpgra
 	if mode != "k8s" {
 		return "", fmt.Errorf("unsupported agent upgrade mode %q", mode)
 	}
-	repository, digest, err := parsePinnedImage(args.Image)
+	repository, tag, digest, err := parseUpgradeImage(args.Image)
 	if err != nil {
 		return "", err
 	}
@@ -170,13 +174,14 @@ func (p upgradeProcess) startSelfUpgradeJob(ctx context.Context, args agentUpgra
 	if err != nil {
 		return "", err
 	}
-	jobName := "doops-self-upgrade-" + strings.TrimPrefix(digest, "sha256:")[:8]
+	jobName := "doops-self-upgrade-" + upgradeImageID(args.Image)
 	if err := p.replaceFinishedJob(ctx, namespace, jobName); err != nil {
 		return "", err
 	}
 	manifest, err := selfUpgradeJobManifest(jobName, namespace, pod, selfUpgradePlan{
-		image:      repository + "@" + digest,
+		image:      strings.TrimSpace(args.Image),
 		repository: repository,
+		tag:        tag,
 		digest:     digest,
 		release:    release,
 		workload:   workload,
@@ -189,8 +194,8 @@ func (p upgradeProcess) startSelfUpgradeJob(ctx context.Context, args agentUpgra
 		return "", err
 	}
 	return fmt.Sprintf(
-		"self-upgrade-accepted job=%s namespace=%s release=%s workload=%s image=%s@%s",
-		jobName, namespace, release, workload, repository, digest,
+		"self-upgrade-accepted job=%s namespace=%s release=%s workload=%s image=%s",
+		jobName, namespace, release, workload, strings.TrimSpace(args.Image),
 	), nil
 }
 
@@ -703,6 +708,7 @@ func (p upgradeProcess) applyJob(ctx context.Context, namespace string, manifest
 type selfUpgradePlan struct {
 	image      string
 	repository string
+	tag        string
 	digest     string
 	release    string
 	workload   string
@@ -734,11 +740,18 @@ func selfUpgradeJobManifest(jobName, namespace string, pod selfUpgradePod, plan 
 		env = append(env, map[string]string{"name": "DOOPS_UPGRADE_REVISION", "value": fmt.Sprint(plan.revision)})
 	}
 	if plan.repository != "" {
-		env = append(env,
-			map[string]string{"name": "DOOPS_UPGRADE_REPOSITORY", "value": plan.repository},
-			map[string]string{"name": "DOOPS_UPGRADE_DIGEST", "value": plan.digest},
-			map[string]string{"name": "DOOPS_UPGRADE_IMAGE", "value": plan.repository + "@" + plan.digest},
-		)
+		env = append(env, map[string]string{"name": "DOOPS_UPGRADE_REPOSITORY", "value": plan.repository})
+		if plan.tag != "" {
+			env = append(env, map[string]string{"name": "DOOPS_UPGRADE_TAG", "value": plan.tag})
+		}
+		if plan.digest != "" {
+			env = append(env, map[string]string{"name": "DOOPS_UPGRADE_DIGEST", "value": plan.digest})
+		}
+		env = append(env, map[string]string{"name": "DOOPS_UPGRADE_IMAGE", "value": plan.image})
+	}
+	pullPolicy := "Always"
+	if plan.digest != "" {
+		pullPolicy = "IfNotPresent"
 	}
 	pullSecrets := make([]map[string]string, 0, len(pod.imagePullSecrets))
 	for _, name := range pod.imagePullSecrets {
@@ -750,7 +763,7 @@ func selfUpgradeJobManifest(jobName, namespace string, pod selfUpgradePod, plan 
 			{
 				"name":            "controller",
 				"image":           image,
-				"imagePullPolicy": "IfNotPresent",
+				"imagePullPolicy": pullPolicy,
 				"command":         []string{"/bin/sh", "-c", plan.script},
 				"env":             env,
 				"securityContext": map[string]bool{"privileged": false},
@@ -802,21 +815,50 @@ func selfUpgradeJobManifest(jobName, namespace string, pod selfUpgradePod, plan 
 	return json.Marshal(manifest)
 }
 
-func parsePinnedImage(image string) (string, string, error) {
+func parseUpgradeImage(image string) (string, string, string, error) {
 	image = strings.TrimSpace(image)
 	at := strings.LastIndex(image, "@sha256:")
-	if at <= 0 {
-		return "", "", fmt.Errorf("agent upgrade image must be repository@sha256:<64 hex digits>")
+	if at > 0 {
+		repository := image[:at]
+		digest := image[at+1:]
+		if !imageDigestPattern.MatchString(digest) {
+			return "", "", "", fmt.Errorf("agent upgrade image must be repository:tag or repository@sha256:<64 hex digits>")
+		}
+		if !imageRepositoryPattern.MatchString(repository) {
+			return "", "", "", fmt.Errorf("agent upgrade image repository is invalid")
+		}
+		return repository, "", digest, nil
 	}
-	repository := image[:at]
-	digest := image[at+1:]
-	if !regexp.MustCompile(`^sha256:[a-f0-9]{64}$`).MatchString(digest) {
-		return "", "", fmt.Errorf("agent upgrade image must be repository@sha256:<64 hex digits>")
+	colon := strings.LastIndex(image, ":")
+	slash := strings.LastIndex(image, "/")
+	if colon <= slash {
+		return "", "", "", fmt.Errorf("agent upgrade image must be repository:tag or repository@sha256:<64 hex digits>")
 	}
+	repository := image[:colon]
+	tag := image[colon+1:]
 	if !imageRepositoryPattern.MatchString(repository) {
-		return "", "", fmt.Errorf("agent upgrade image repository is invalid")
+		return "", "", "", fmt.Errorf("agent upgrade image repository is invalid")
+	}
+	if !imageTagPattern.MatchString(tag) {
+		return "", "", "", fmt.Errorf("agent upgrade image tag is invalid")
+	}
+	return repository, tag, "", nil
+}
+
+func parsePinnedImage(image string) (string, string, error) {
+	repository, _, digest, err := parseUpgradeImage(image)
+	if err != nil {
+		return "", "", err
+	}
+	if digest == "" {
+		return "", "", fmt.Errorf("rollback requires an immutable historical image")
 	}
 	return repository, digest, nil
+}
+
+func upgradeImageID(image string) string {
+	digest := sha256.Sum256([]byte(strings.TrimSpace(image)))
+	return hex.EncodeToString(digest[:])[:8]
 }
 
 func validateK8sName(kind, name string, max int) error {
@@ -945,7 +987,7 @@ if identity_source == "baseline":
         raise SystemExit("Rollback baseline runtime identity is missing")
 elif identity_source == "controller":
     if expected_image != os.environ.get("DOOPS_UPGRADE_IMAGE"):
-        raise SystemExit("Controller image does not match the requested immutable image")
+        raise SystemExit("Controller image does not match the requested image")
     controller = json.loads(subprocess.check_output(
         ["kubectl", "-n", namespace, "get", "pod", os.environ["HOSTNAME"], "-o", "json"],
         timeout=30,
@@ -958,7 +1000,7 @@ elif identity_source == "controller":
     running = next((item for item in (controller.get("status") or {}).get("containerStatuses") or []
                     if item.get("name") == "controller"), None)
     if not controller_node or not pinned or pinned.get("image") != expected_image:
-        raise SystemExit("Controller Pod does not match the pinned image and node")
+        raise SystemExit("Controller Pod does not match the requested image and node")
     if not running or not running.get("ready"):
         raise SystemExit("Controller container is not Ready")
     expected_digest = str(running.get("imageID") or "").split("://")[-1].rsplit("@", 1)[-1]
@@ -1029,7 +1071,8 @@ PY
 `
 
 const selfUpgradeApplyScript = selfUpgradeKubeconfigPrelude + selfUpgradeDeploymentVerifier + `repository="$DOOPS_UPGRADE_REPOSITORY"
-digest="$DOOPS_UPGRADE_DIGEST"
+tag="${DOOPS_UPGRADE_TAG:-}"
+digest="${DOOPS_UPGRADE_DIGEST:-}"
 target="$DOOPS_UPGRADE_IMAGE"
 chart=` + selfUpgradeChartPath + `
 previous_image="$(python3 - "$ns" "$workload" <<'PY'
@@ -1085,15 +1128,19 @@ export DOOPS_UPGRADE_BASELINE="$baseline"
 verify_deployment "$previous_image" baseline record
 values="${TMPDIR:-/tmp}/doops-upgrade-values.json"
 helm get values "$release" -n "$ns" -o json >"$values"
-python3 - "$values" "$repository" "$digest" "$selector_json" <<'PY'
+python3 - "$values" "$repository" "$tag" "$digest" "$selector_json" <<'PY'
 import json, sys
-path, repository, digest, selector_json = sys.argv[1:5]
+path, repository, tag, digest, selector_json = sys.argv[1:6]
 with open(path, encoding="utf-8") as fh:
     values = json.load(fh)
 image = values.setdefault("image", {})
 image.pop("tag", None)
 image["repository"] = repository
-image["digest"] = digest
+image.pop("digest", None)
+if digest:
+    image["digest"] = digest
+else:
+    image["tag"] = tag
 values.setdefault("workload", {})["selectorLabels"] = json.loads(selector_json)
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(values, fh)

@@ -57,7 +57,7 @@ DoOps 不在 Gateway 或脚本中复制 doagent 的 Agent 引擎。
 - Skill 选择和多 Agent 调度由 doagent 完成。
 - system prompt 和 Skill 不写死环境命令、target 坐标或固定回滚实现。
 - 部署使用明确授权的自然语言任务；任务直接给出 target、服务范围、镜像版本、原因和验收条件。
-- 凭据只通过 `doops ask --apply --credential <resource-name>` 的 metadata-only 引用进入 Gateway；Gateway 绑定用户、target 和 session 后按精确 scope 授权和物化。
+- 凭据只通过 `doops ask --apply --credential <resource-name>` 的 metadata-only 引用进入 Gateway；Gateway 绑定用户、target 和 session 后按 `cluster/instance/use` 授权和物化，执行元数据由 Skill/Agent 校验。
 
 ## 工作区与状态
 

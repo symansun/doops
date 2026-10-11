@@ -23,7 +23,8 @@ var (
 	upgradePollInterval  = 5 * time.Second
 	upgradeWait          = 21 * time.Minute
 	cliImageRepository   = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`)
-	cliPinnedDigest      = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+	cliImageTag          = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
+	cliImageDigest       = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 	releaseCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
@@ -39,7 +40,7 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 		if strings.TrimSpace(opts.Image) == "" {
 			return fmt.Errorf("image is required")
 		}
-		if err := validatePinnedUpgradeImage(opts.Image); err != nil {
+		if err := validateUpgradeImage(opts.Image); err != nil {
 			return err
 		}
 	}
@@ -324,16 +325,21 @@ func upgradeRetryable(err error) bool {
 	return false
 }
 
-func validatePinnedUpgradeImage(image string) error {
+func validateUpgradeImage(image string) error {
 	image = strings.TrimSpace(image)
 	at := strings.LastIndex(image, "@sha256:")
-	if at <= 0 {
-		return fmt.Errorf("agent upgrade image must be repository@sha256:<64 hex digits>")
+	if at > 0 {
+		repository := image[:at]
+		digest := image[at+1:]
+		if !cliImageDigest.MatchString(digest) || !cliImageRepository.MatchString(repository) {
+			return fmt.Errorf("agent upgrade image must be repository:tag or repository@sha256:<64 hex digits>")
+		}
+		return nil
 	}
-	repository := image[:at]
-	digest := image[at+1:]
-	if !cliPinnedDigest.MatchString(digest) || !cliImageRepository.MatchString(repository) {
-		return fmt.Errorf("agent upgrade image must be repository@sha256:<64 hex digits>")
+	colon := strings.LastIndex(image, ":")
+	slash := strings.LastIndex(image, "/")
+	if colon <= slash || !cliImageRepository.MatchString(image[:colon]) || !cliImageTag.MatchString(image[colon+1:]) {
+		return fmt.Errorf("agent upgrade image must be repository:tag or repository@sha256:<64 hex digits>")
 	}
 	return nil
 }

@@ -105,19 +105,23 @@ description: |
 - 需要凭据时使用可重复的 `--credential <resource-name>`。该参数只传递资源名；Gateway
   使用当前 target 操作的 `ask`/`exec` 权限，不要求额外 `credential:use` 或给每个操作员重复 grant。
   凭据必须已绑定该 target/use 且存在 active version，管理/轮换仍检查 owner/admin。对 database
-  use，Gateway 只管理用户/平台归属、cluster/instance、物化 namespace 和凭据可用性；数据库
+  use，Gateway 只管理用户/平台归属、cluster/instance/use 和凭据可用性；namespace 仅是物化
+  位置元数据；数据库
   asset、environment、engine、database name 与 SQL 变更授权由 DoSql/目标 Agent 负责。公开 prompt、doagent 上下文和 metadata
   binding 不接收 credential payload；目标 doops-agent 只在内部凭据控制面临时接收
   解密 payload 以创建或验证目标资源。
 - 所有凭据绑定由 Gateway 直接读取已保存的 target/use 元数据，不让模型生成授权 scope。
   初始化缺少版本时用 `credential configure` 内部导入并验证；不能只给空资源补 grant。
-- Helm grant 只绑定 target 的 cluster/instance 和 use=helmPull；namespace、workload、release
-  和 Chart URL 不再参与 Gateway 或 Agent 的凭据授权匹配。实际包按本次操作的 URL 下载；
+- 所有凭据 grant 的授权匹配只绑定 target 的 cluster/instance 和 use；namespace 只作为
+  Secret 物化位置元数据，workload、image、release、Chart URL 和 required keys 都是可选的
+  执行元数据，不参与 Gateway 授权匹配。实际包按本次操作的 URL 下载；
   只向凭据配置的 HTTPS origin 发送认证，允许其不同仓库路径和版本。下载包验证后一次
   staging，dry-run 与实际 Helm 操作使用相同文件，不比较旧版本 Chart 摘要。
 - DoOps 已有完整凭据管理。首次配置优先用 `credential configure`，复用现有资源并自动
   完成写入、目标绑定、全部 active 物化验证和激活，不让用户手动串联内部步骤。
   已存在的目标 Secret 可由有该 target exec 权限的 owner/admin 用 `--from-secret <name> --keys <keys>` 导入；
+  当源 Secret key 与运行时契约不同，可显式传 `--key-map source=runtime`，只转换 key 名称，
+  不读取或输出 payload；
   值只在 Agent/Gateway 内部流转，禁止通过 `exec` 输出密码再要求用户粘贴。数据库 grant
   不要求 workload；指定密码字段组合连接 URI 的方式见 `docs/CREDENTIAL_RESOURCES.md`。
 - 开发项目可以在 `.agent/doops-credentials.yaml` 声明 metadata-only 的
@@ -334,7 +338,7 @@ DoSql 必须从 `doops sql` 入口进入。普通 `doops ask --msg '使用 DoSql
 | 拉取远端工作区 | `doops -session <s> pull --target <t> --dest <dir>` |
 | 小文本读写 | `doops read/write ...` |
 | 工作区清理 | `doops -session <s> clean --target <t> --workspace <s>` |
-| 升级标准 Helm Agent | `doops -session <s> upgrade --target <t> --image <repository>@sha256:<digest>` |
+| 升级标准 Helm Agent | `doops -session <s> upgrade --target <t> --image <repository:tag 或 repository@sha256:<digest>` |
 | 预览 Helm Agent 升级参数 | `doops -session <s> upgrade ... --dry-run` |
 | 发布已有独立 Docker Agent | 外部 `scripts/release-host-agent.sh`；参数与只读预检见主 SOP |
 | 创建 Gateway 用户和 API key | `doops admin user create --target <t> --user <u> (--password-stdin\|--generate-password)` |

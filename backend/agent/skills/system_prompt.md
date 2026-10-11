@@ -15,7 +15,7 @@
 # 发布契约
 
 - 先区分发布对象：普通业务使用 `ask --apply`；承载当前 Agent 的 Helm Deployment
-  镜像升级使用 CLI `doops -session <s> upgrade --target <t> --image <repository>@sha256:<digest>`，
+  镜像升级使用 CLI `doops -session <s> upgrade --target <t> --image <repository:tag 或 repository@sha256:<digest>`，
   由集群内独立 Job 执行，不在本会话通过 Helm 修改自身。Gateway 本体使用独立
   `scripts/deploy-gateway.sh` 发布。普通业务和已具备自升级控制器的 Agent 镜像升级都
   不要求操作机 kubeconfig，也不要求 `doops push` 或源码工作区快照。

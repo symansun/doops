@@ -34,22 +34,31 @@ func TestFilterUpgradeTargets(t *testing.T) {
 	}
 }
 
-func TestUpgradeAgentsRejectsUnpinnedImage(t *testing.T) {
+func TestUpgradeAgentsRejectsInvalidImage(t *testing.T) {
 	err := UpgradeAgents(Server{}, UpgradeOptions{
-		Image: "registry.example/doops:latest",
+		Image: "not-an-image",
 	}, false)
-	if err == nil || !strings.Contains(err.Error(), "repository@sha256") {
-		t.Fatalf("expected digest pin rejection, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "repository:tag") {
+		t.Fatalf("expected invalid image rejection, got %v", err)
 	}
 }
 
-func TestUpgradeAgentsRejectsUnpinnedDryRunImage(t *testing.T) {
+func TestUpgradeAgentsRejectsInvalidDryRunImage(t *testing.T) {
 	err := UpgradeAgents(Server{}, UpgradeOptions{
-		Image:  "registry.example/doops:latest",
+		Image:  "not-an-image",
 		DryRun: true,
 	}, false)
-	if err == nil || !strings.Contains(err.Error(), "repository@sha256") {
-		t.Fatalf("expected dry-run digest pin rejection, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "repository:tag") {
+		t.Fatalf("expected invalid dry-run image rejection, got %v", err)
+	}
+}
+
+func TestUpgradeAgentsAllowsTaggedImageToReachTargetLookup(t *testing.T) {
+	err := UpgradeAgents(Server{}, UpgradeOptions{
+		Image: "registry.example/doops:v1.3.40",
+	}, false)
+	if err == nil || !strings.Contains(err.Error(), "configured Gateway target is required") {
+		t.Fatalf("expected configured target requirement, got %v", err)
 	}
 }
 
@@ -93,7 +102,7 @@ func TestClassifyUpgradeObservation(t *testing.T) {
 	if classifyUpgradeObservation("", fmt.Errorf("target offline: doops-edu/edu-coder")) != "retry" {
 		t.Fatal("offline observation was not retried")
 	}
-	if classifyUpgradeObservation("", fmt.Errorf("agent upgrade image must be repository@sha256:<64 hex digits>")) != "error" {
+	if classifyUpgradeObservation("", fmt.Errorf("agent upgrade image must be repository:tag or repository@sha256:<64 hex digits>")) != "error" {
 		t.Fatal("validation error was retried")
 	}
 	if classifyUpgradeObservation("self-upgrade-failed job=doops-self-upgrade-aaaaaaaa namespace=kz-ops\nlogs: self-upgrade-succeeded", nil) != "failed" {

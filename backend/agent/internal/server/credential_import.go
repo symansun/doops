@@ -14,14 +14,15 @@ import (
 // This request contains references only. Secret values travel on the private
 // Agent control channel, never through a public tool result or shell stream.
 type credentialSecretImportRequest struct {
-	SessionID     string   `json:"session_id"`
-	Cluster       string   `json:"cluster"`
-	Instance      string   `json:"instance"`
-	Namespace     string   `json:"namespace"`
-	SecretName    string   `json:"secret_name"`
-	Keys          []string `json:"keys"`
-	ConnectionURI string   `json:"connection_uri,omitempty"`
-	PasswordKey   string   `json:"password_key,omitempty"`
+	SessionID     string            `json:"session_id"`
+	Cluster       string            `json:"cluster"`
+	Instance      string            `json:"instance"`
+	Namespace     string            `json:"namespace"`
+	SecretName    string            `json:"secret_name"`
+	Keys          []string          `json:"keys"`
+	KeyMap        map[string]string `json:"key_map,omitempty"`
+	ConnectionURI string            `json:"connection_uri,omitempty"`
+	PasswordKey   string            `json:"password_key,omitempty"`
 }
 
 type credentialSecretImportResult struct {
@@ -48,6 +49,19 @@ func validateCredentialSecretImport(req credentialSecretImportRequest) error {
 			}
 		}
 		seen[key] = true
+	}
+	destinations := make(map[string]string, len(req.KeyMap))
+	for source, destination := range req.KeyMap {
+		if !seen[source] || !validCredentialMetadataToken(destination, 253) {
+			return errors.New("credential_import_key_map_invalid")
+		}
+		if previous, exists := destinations[destination]; exists && previous != source {
+			return errors.New("credential_import_key_map_invalid")
+		}
+		destinations[destination] = source
+	}
+	if req.ConnectionURI != "" && len(req.KeyMap) != 0 {
+		return errors.New("credential_import_key_map_invalid")
 	}
 	if req.ConnectionURI == "" && req.PasswordKey == "" {
 		return nil
@@ -88,7 +102,11 @@ func handleCredentialSecretImportTool(ctx context.Context, raw json.RawMessage) 
 		if !exists || value == "" {
 			return "", errors.New("credential_import_key_missing")
 		}
-		data[key] = value
+		destination := key
+		if mapped, ok := req.KeyMap[key]; ok {
+			destination = mapped
+		}
+		data[destination] = value
 	}
 	if req.ConnectionURI != "" {
 		u, _ := url.Parse(req.ConnectionURI)
@@ -190,7 +208,7 @@ func (h *GatewayHub) handleCredentialSecretImport(w http.ResponseWriter, r *http
 	}
 	_ = json.Unmarshal(imported.Payload, &payload)
 	defer clear(payload.Data)
-	expectedKeys := req.Keys
+	expectedKeys := credentialImportOutputKeys(req)
 	if req.ConnectionURI != "" {
 		expectedKeys = []string{"connection_uri"}
 	}
@@ -211,4 +229,16 @@ func (h *GatewayHub) handleCredentialSecretImport(w http.ResponseWriter, r *http
 		return
 	}
 	writeJSONHTTP(w, version)
+}
+
+func credentialImportOutputKeys(req credentialSecretImportRequest) []string {
+	keys := make([]string, 0, len(req.Keys))
+	for _, source := range req.Keys {
+		if destination, ok := req.KeyMap[source]; ok {
+			keys = append(keys, destination)
+		} else {
+			keys = append(keys, source)
+		}
+	}
+	return keys
 }

@@ -1112,7 +1112,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
 			return nil
 		}
-		if err := validatePromptCredentialAccess(operation, promptArgs.Skill, len(promptArgs.CredentialRefs) != 0); err != nil {
+		if err := validatePromptCredentialAccess(operation, len(promptArgs.CredentialRefs) != 0); err != nil {
 			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
 			return nil
 		}

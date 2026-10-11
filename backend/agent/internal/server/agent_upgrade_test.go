@@ -39,14 +39,28 @@ func TestHandleAgentUpgradeDryRunK8s(t *testing.T) {
 	}
 }
 
-func TestHandleAgentUpgradeDryRunRejectsUnpinnedImage(t *testing.T) {
-	_, err := handleAgentUpgrade(json.RawMessage(`{
+func TestHandleAgentUpgradeDryRunAllowsTaggedImage(t *testing.T) {
+	out, err := handleAgentUpgrade(json.RawMessage(`{
 		"mode":"k8s",
-		"image":"repo.example/doops-agent:latest",
+		"image":"repo.example/doops-agent:v1.3.40",
 		"dry_run":true
 	}`))
-	if err == nil || !strings.Contains(err.Error(), "repository@sha256") {
-		t.Fatalf("expected dry-run digest pin rejection, got %v", err)
+	if err != nil {
+		t.Fatalf("tagged image dry-run: %v", err)
+	}
+	if !strings.Contains(out, "image=repo.example/doops-agent:v1.3.40") {
+		t.Fatalf("tagged image was not preserved: %s", out)
+	}
+}
+
+func TestHandleAgentUpgradeDryRunRejectsInvalidImage(t *testing.T) {
+	_, err := handleAgentUpgrade(json.RawMessage(`{
+		"mode":"k8s",
+		"image":"not-an-image",
+		"dry_run":true
+	}`))
+	if err == nil || !strings.Contains(err.Error(), "repository:tag") {
+		t.Fatalf("expected invalid image rejection, got %v", err)
 	}
 }
 
@@ -63,16 +77,16 @@ func TestHandleAgentUpgradeDryRunRejectsLegacyDaemonSet(t *testing.T) {
 	}
 }
 
-func TestHandleAgentUpgradeRejectsUnpinnedApply(t *testing.T) {
+func TestHandleAgentUpgradeRejectsInvalidApplyImage(t *testing.T) {
 	_, err := handleAgentUpgrade(json.RawMessage(`{
 		"mode":"k8s",
-		"image":"repo.example/doops-agent:latest",
+		"image":"not-an-image",
 		"namespace":"ai",
 		"workload":"deployment/doops-agent",
 		"container":"doops-agent"
 	}`))
-	if err == nil || !strings.Contains(err.Error(), "repository@sha256") {
-		t.Fatalf("expected digest pin rejection, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "repository:tag") {
+		t.Fatalf("expected invalid image rejection, got %v", err)
 	}
 }
 

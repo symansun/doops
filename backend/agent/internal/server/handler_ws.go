@@ -1048,7 +1048,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 				writeJSON(buildErrorResponse(reqID, -32602, "credential bindings require an ask or apply operation"))
 				return
 			}
-			if err := validatePromptCredentialAccess(operation, args.Skill, true); err != nil {
+			if err := validatePromptCredentialAccess(operation, true); err != nil {
 				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
 				return
 			}

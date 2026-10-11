@@ -98,7 +98,7 @@ doops -session myproject-build push \
 普通 `push/pull` 仍只走 Gateway Git HTTP。发布不解析仓库中的 environment、
 template 或 workflow 声明；调用方通过明确授权的自然语言任务给出 target、服务范围、
 镜像版本、原因和验收条件。需要凭据时，CLI 只传递 `--credential` 的资源名，Gateway
-在用户、target 和 session 绑定后按精确 scope 授权并物化。
+在用户、target 和 session 绑定后按 `cluster/instance/use` 授权并物化，执行元数据由目标 Skill/Agent 校验。
 发布镜像由 CNB CI 产出，发布者先核对 source commit、digest 和 CI 成功证据。
 `ask --apply` 直接使用任务授权的远程 Chart 和可选 values URL，不要求先 `push`、
 创建 Git worktree 或 target 源码快照。完整发布规范见 `NATURAL_LANGUAGE_DEPLOYMENT.md`。

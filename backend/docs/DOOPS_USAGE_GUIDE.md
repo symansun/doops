@@ -51,7 +51,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Use structured Kubernetes operations | `doops -session <s> k8s --target <t> ...` | Restricted operational interface; publishing uses `ask --apply`. |
 | Clean workspace | `doops -session <s> clean --target <t> --workspace <s>` | Cleans `/root/ws/<workspace>`. |
 | Check an image deployment | `doops check ...` | Compares configured service image with build metadata. |
-| Upgrade a managed Helm Agent | `doops -session <s> upgrade --target <t> --image <repository>@sha256:<digest>` | In-cluster Job only. `--dry-run` previews parameters. |
+| Upgrade a managed Helm Agent | `doops -session <s> upgrade --target <t> --image <repository:tag 或 repository@sha256:<digest>` | In-cluster Job only. `--dry-run` previews parameters. |
 | Release an existing standalone Docker Agent | External `scripts/release-host-agent.sh` | Explicit DockerHost controller, not CLI fallback; real read-only `--dry-run`. See [SOP](BUILD_DEPLOY_SOP.md#独立-dockerhost-发布). |
 | Cache token | `doops login ...` | Gateway login can exchange username/password for user token. |
 | List target credentials | `doops credential list --target <t>` | Uses the cached gateway login and returns only metadata granted to that user on the selected cluster/instance. |
@@ -153,8 +153,9 @@ installed CLI and target image against the selected release before choosing an
 upgrade path; source changes alone do not update either runtime.
 
 Managed update controllers use the Agent node and runtime class. The requested
-immutable image remains an exact Deployment/Pod spec requirement; runtime imageID
-is independently checked against the controller pinned to that image. Automatic
+image reference remains an exact Deployment/Pod spec requirement; tag references use
+`Always` pulling, while runtime imageID is independently checked against the controller
+requested image. Automatic
 rollback checks the pre-update runtime identity. Successful complete verification
 persists revision/image/runtime evidence in `doops-upgrade-verified-<release>`.
 Manual rollback selects only an evidenced superseded revision with a pinned image
@@ -596,7 +597,8 @@ the user's grants.
 
 首次配置优先使用 `credential configure`，不要求用户逐步执行 create/put/grant/verify/promote。
 已有资源传 `--id`，避免重复创建；`--from-secret <name> --keys <keys>` 让 platform admin
-在 Agent 内导入指定 Secret，无须回传密码。不指定 Secret 时沿用 stdin payload。
+在 Agent 内导入指定 Secret，无须回传密码；源 Secret key 与运行时契约不一致时可增加
+`--key-map source=runtime`。不指定 Secret 时沿用 stdin payload。
 数据库 use 不要求 workload；配置失败不会报告成功，后续仍只通过 `--credential <name>` 引用。
 
 安装正式 CLI 并验证不可变构建信息：
@@ -780,7 +782,8 @@ doops -session agent-upgrade upgrade \
   --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest>
 ```
 
-镜像必须是 `repository@sha256:<64 hex>`，包括 `--dry-run` 预演。
+镜像可以是 `repository:tag` 或 `repository@sha256:<64 hex>`，包括 `--dry-run` 预演。
+tag 使用 `Always` 拉取并校验实际 `imageID`；回滚仍只接受历史已验证的 digest 镜像。
 `--rollback` 回到前一个成功且已被替代的 revision。
 `--target` 的 `cluster/instance` 就是升级范围。还没有自升级控制器的旧 Helm Agent 用
 `scripts/release-managed-agent.sh`。

@@ -473,7 +473,8 @@ Agent 进程不执行承载自身的 Helm mutation。直接在 Agent 里跑 `kub
 
 `doops upgrade` 让 Agent 创建一个独立 Job。Job 复用 Agent 已挂载的 kubeconfig，
 按 Chart 的 `maxSurge=1`、`maxUnavailable=0` 拉起新 Pod，并在新 Pod 未持续就绪时回滚。
-镜像必须是 `repository@sha256:<64 hex>`。`--dry-run` 只预演。历史挂起的自升级 operation
+镜像可以是 `repository:tag` 或 `repository@sha256:<64 hex>`。tag 使用 `Always` 拉取，
+并校验 Deployment 镜像规格、Pod Ready 和实际 `imageID`；`--dry-run` 只预演。历史挂起的自升级 operation
 会在 Gateway 启动时立即标记失败，不会继续占槽等待 replacement。
 
 前置条件是在线 Agent 已包含控制器、标准 Helm Deployment 和精确 Gateway 身份，

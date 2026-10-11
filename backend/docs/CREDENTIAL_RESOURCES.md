@@ -56,9 +56,9 @@ doops credential list --target <target> --view managed
 更新时间或 resource ID 推断版本。页面不会缓存、回显或把 payload 放入任务上下文。
 
 切换到 `当前目标可用` 后，页面使用该 target 返回的实际 grant 元数据展示授权状态。对
-active grant 的 staged version 执行验证时，页面原样提交该 grant 的完整
-`cluster/instance/namespace/use/workload` 及 image、Helm 或 required keys 字段；不会
-重新推断或放宽 scope。Promote 请求仍由 Gateway 检查所有 active grant 的验证状态；
+active grant 的 staged version 执行验证时，页面提交 target/use 和物化 namespace；
+workload、image、Helm 或 required keys 只在本次执行确实需要时作为可选元数据传入，不作为
+Gateway 授权条件。Promote 请求仍由 Gateway 检查所有 active grant 的验证状态；
 grant 吊销和 resource 吊销都沿用 Gateway 的清理流程。
 
 target 视图只读取 target 接口，不并行请求 managed 列表或 versions；管理接口的权限状态
@@ -117,20 +117,25 @@ personal owner 给 target 创建绑定前必须能操作该 target。运行时�
 
 ### Grant scope
 
-每条 grant 精确匹配：
+Gateway 授权匹配只使用：
 
 - `cluster`、`instance`；
-- Kubernetes `namespace`；
 - `use`；
-- workload kind 和 name；
-- image repository/digest、Helm release/chart 或 required keys。
+
+以下字段是物化或执行元数据，不是凭据授权条件：
+
+- Kubernetes `namespace`；
+- workload kind/name；
+- image repository/digest；
+- Helm release/chart；
+- required Secret keys。
 
 workload kind 仅支持 `Deployment`、`StatefulSet`、`DaemonSet`。不支持 wildcard、前缀、
 继承、Pod、Job 或 CronJob。grant 不绑定 session；session 只绑定一次运行和物化记录。
 
 | use | Credential type | 额外必填字段 |
 | :--- | :--- | :--- |
-| `imagePull` | `registry` | image repository、64 位 `sha256:` digest |
+| `imagePull` | `registry` | 可选 image repository 和 64 位 `sha256:` digest，用于运行时镜像校验 |
 | `tls` | `tls` | 无 |
 | `opaqueSecret` | `opaque` | `required_keys`，必须与 payload key 集合完全相等 |
 | `database` | `opaque` | 目标 `cluster/instance`、物化 `namespace` 和 `use=database`；数据库资产、环境、引擎、数据库名由 DoSql/Agent 校验 |
@@ -279,6 +284,10 @@ doops -session db-setup credential configure \
 
 - `--from-secret` 仅用于 `opaque`，要求对应 target exec 权限、可管理资源、明确 namespace/Secret 和
   明确的 key 集合；源 Secret namespace 与本次物化 namespace 相同，不修改源 Secret。
+- `--key-map source=runtime` 可将源 Secret key 映射为运行时 key；每个 source 必须同时出现在
+  `--keys` 中，runtime key 不能重复。映射只改 key 名称，值仍通过 Agent 私有控制通道传输。
+  例如 Test MySQL 将 `EXAM_MYSQL_JDBC_URL`、`EXAM_MYSQL_USERNAME`、`EXAM_MYSQL_PASSWORD`
+  映射为 `SPRING_DATASOURCE_URL`、`SPRING_DATASOURCE_USERNAME`、`SPRING_DATASOURCE_PASSWORD`。
 - URI 仅支持 postgres/postgresql/mongodb，必须含用户名、host 和数据库路径，不允许密码、
   query 或 fragment；`--password-key` 必须是唯一选中的 key，输出 payload 只有 `connection_uri`。
   需要其它连接形式时由安全输入端通过 stdin 提交完整 payload，不自动改写或降级。
@@ -465,7 +474,7 @@ active resource、active version、目标上的 active database 绑定和当前�
 
 - user/token ID；
 - credential/version/grant ID；
-- target、session 和精确 scope；
+- target、session、`cluster/instance/use` authorization scope 和执行元数据；
 - action、时间、状态；
 - resourceVersion、digest 或稳定错误类别。
 

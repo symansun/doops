@@ -37,12 +37,14 @@ grants、verify 和 promote；不增加另一套凭据资源或提升权限的 A
   "namespace": "apps",
   "secret_name": "database",
   "keys": ["DB_PASSWORD"],
+  "key_map": {"DB_PASSWORD": "SPRING_DATASOURCE_PASSWORD"},
   "connection_uri": "postgresql://app@database:5432/app",
   "password_key": "DB_PASSWORD"
 }
 ```
 
-`connection_uri` 和 `password_key` 一起使用或一起省略。URI 不得含密码、query 或 fragment，
+`key_map` 可将 source Secret key 映射为运行时 key；每个 source 必须出现在 `keys` 中，
+runtime key 不能重复。未映射的 key 原样保留。`connection_uri` 和 `password_key` 一起使用或一起省略。URI 不得含密码、query 或 fragment，
 必须是含用户名、host、数据库路径的 postgres/postgresql/mongodb URI；组合时只允许选中密码 key。
 该 endpoint 要求对应 target 的 exec 权限和可管理的 active opaque resource，沿用凭据资源锁、
 加密主密钥和审计。它只在当前精确 target 内读取指定 Opaque Secret，不修改源 Secret。
@@ -553,7 +555,8 @@ activation/reload is shared. See `DOWEB_INTEGRATION.md` for parameters and mount
 
 适用于诊断、信息收集和用户明确授权的运维或发布任务。需要凭据时，CLI 只传递
 `--credential <resource-name>` 的 metadata-only 引用；Gateway 在绑定用户、target 和
-session 后按精确 scope 授权和物化。普通发布使用 `operation=apply`；DoSql 只读查询或
+session 后按 `cluster/instance/use` 授权和物化，namespace、workload、image、Helm 和
+required keys 只作为执行元数据。普通发布使用 `operation=apply`；DoSql 只读查询或
 计划可以使用 `operation=ask` 搭配 `skill=dosql` 和精确 credential reference；CLI
 用户应优先使用 `doops sql`，它会设置正确的 DoSql skill/tool boundary。通用
 `ask` 不会自动注入 DoSql 工具，也不能附带数据库凭据。payload 永远不进入 prompt、日志或返回事件。
@@ -688,7 +691,8 @@ socket。镜像构建使用 CLI 的通用 `image build`，高级场景仍可通�
 
 需要权限：`agent:upgrade`。
 
-`image` 必须是 `repository@sha256:<64 hex>`，包括 `dry_run: true` 的预演请求。
+`image` 接受 `repository:tag` 或 `repository@sha256:<64 hex>`，包括 `dry_run: true` 的预演请求。
+tag 使用 `Always` 拉取并校验实际 `imageID`；回滚仍只接受历史已验证的 digest 镜像。
 `dry_run: true` 只返回预演。
 `observe_job` 读取 Job 状态。`rollback: true` 创建回滚 Job。namespace 必须是 Agent
 自己的 namespace。Job 使用 Agent 已挂载的 kubeconfig，不接收操作机 kubeconfig。

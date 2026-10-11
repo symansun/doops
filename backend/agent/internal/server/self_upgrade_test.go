@@ -72,6 +72,53 @@ func TestSelfUpgradeScriptStaysOutsideTheAgentProcess(t *testing.T) {
 	}
 }
 
+func TestSelfUpgradeJobManifestPreservesReleaseTag(t *testing.T) {
+	pod := selfUpgradePod{
+		image:              "registry.example/doops:old",
+		nodeName:           "node-a",
+		serviceAccountName: "default",
+		mount:              jobVolumeMount{Name: "kube", MountPath: "/root/.kube", ReadOnly: true},
+		volume:             json.RawMessage(`{"name":"kube","secret":{"secretName":"cluster-admin"}}`),
+	}
+	manifest, err := selfUpgradeJobManifest("doops-self-upgrade-aaaaaaaa", "kz-ops", pod, selfUpgradePlan{
+		image:      "registry.example/doops:v1.3.40",
+		repository: "registry.example/doops",
+		tag:        "v1.3.40",
+		release:    "doops-agent-live",
+		workload:   "doops-agent",
+		script:     selfUpgradeApplyScript,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Image           string              `json:"image"`
+						ImagePullPolicy string              `json:"imagePullPolicy"`
+						Env             []map[string]string `json:"env"`
+					} `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(manifest, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	container := decoded.Spec.Template.Spec.Containers[0]
+	if container.Image != "registry.example/doops:v1.3.40" || container.ImagePullPolicy != "Always" {
+		t.Fatalf("tagged upgrade container = %#v", container)
+	}
+	for _, env := range container.Env {
+		if env["name"] == "DOOPS_UPGRADE_TAG" && env["value"] == "v1.3.40" {
+			return
+		}
+	}
+	t.Fatal("tagged upgrade Job did not preserve DOOPS_UPGRADE_TAG")
+}
+
 func TestSelfUpgradeApplyScriptVerifiesCompleteDeploymentTwice(t *testing.T) {
 	callLog := filepath.Join(t.TempDir(), "calls.log")
 	env := selfUpgradeScriptEnv(callLog)
