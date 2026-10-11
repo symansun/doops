@@ -1373,7 +1373,7 @@ func TestGatewayActionMappingUsesDedicatedToolForAgentUpgrade(t *testing.T) {
 	}
 }
 
-func TestGatewayDispatchesPinnedAgentUpgrade(t *testing.T) {
+func TestGatewayDispatchesTaggedAndPinnedAgentUpgrade(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -1412,19 +1412,18 @@ func TestGatewayDispatchesPinnedAgentUpgrade(t *testing.T) {
 		"params": map[string]interface{}{"name": "doops_agent_upgrade", "arguments": json.RawMessage(args)},
 	})
 	resp := readUntilID(t, client, 2)
-	errObj, ok := resp["error"].(map[string]interface{})
-	if !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "repository@sha256") {
-		t.Fatalf("expected unpinned image rejection, got %#v", resp)
+	if resp["error"] != nil {
+		t.Fatalf("tagged self-upgrade should reach the agent: %#v", resp)
 	}
 	if gw.getAgent("dev", "local") == nil {
-		t.Fatal("rejected self-upgrade disconnected the agent")
+		t.Fatal("tagged self-upgrade disconnected the agent")
 	}
 	var running int
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM upgrade_operations WHERE status = 'running'`).Scan(&running); err != nil {
 		t.Fatalf("count running upgrade operations: %v", err)
 	}
 	if running != 0 {
-		t.Fatalf("rejected self-upgrade left %d running operations", running)
+		t.Fatalf("tagged self-upgrade left %d running operations", running)
 	}
 
 	dryRunArgs, _ := json.Marshal(map[string]interface{}{
