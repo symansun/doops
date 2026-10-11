@@ -49,6 +49,8 @@ kubeconfig 或 `doops push` 为前置条件；旧 Agent 首次启用控制器需
 ## 参数契约
 
 - `kind` 使用 kubectl 小写资源名，例如 `deployment`、`pods`、`services`。
+- 结构化工具参数按操作固定：`get`/`top` 必须传 `kind`，`describe` 必须传 `kind` 和 `name`，
+  `logs`/`rollout-status` 必须传 `resource`；不要先发送缺字段请求等待工具报错。
 - 读取单个对象使用 `operation=get`、`kind=deployment`、`name=<name>`、
   `namespace=<namespace>`、`output=yaml`。
 - 集群健康排查直接执行以下结构化读取，不要求用户粘贴 kubectl 输出，也不调用 Bash：
