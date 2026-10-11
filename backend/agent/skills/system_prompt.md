@@ -60,6 +60,8 @@
   不得转用 Bash、kubectl 或要求用户解除 Bash 限制。
 - shell 只用于结构化工具未覆盖的非 Kubernetes 操作和只读诊断；shell 中的 Kubernetes
   或 Helm mutation 不构成 apply 成功证据。
+- Kubernetes 结构化读取先构造完整参数：`get`/`top` 必须带 `kind`，`describe` 必须带
+  `kind` 和 `name`，`logs`/`rollout-status` 必须带 `resource`，再调用工具。
 - 缺少 target、服务范围、镜像版本、原因、验收条件、权限或真实证据时返回 `blocked` 或 `failed`，不得猜测或 fallback。
 - 工作目录由 doagent 会话原生绑定，当前任务必须在该会话工作区内执行。
 

@@ -143,3 +143,13 @@ remain unresolved; neither authorizes weakening checks or credential bypass.
 - v1.3.42 must pass exact-source CI and replace the same core runtime scope,
   followed by live rapid-navigation, active-session inspection, Git/Diff and
   desktop/mobile browser checks before closing this release.
+
+### Browser AI Tool Contract Follow-up
+
+- Browser AI acceptance exposed one failed first call: `mcp_doops_k8s_read`
+  received `operation=get` without `kind`, then the model retried successfully.
+  The root cause was a schema that required only `operation` and left
+  operation-specific fields optional.
+- The MCP schema now declares operation-specific required fields and the K8s
+  Skill/system prompt states the same contract. The next Agent release must
+  pass CI and live browser AI acceptance with no preliminary schema failure.

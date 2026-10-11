@@ -349,35 +349,61 @@ func k8sMCPOperationAllowed(arguments json.RawMessage, allowed []string) bool {
 }
 
 func k8sMCPToolDefinition(name string, operations []string, description string) map[string]interface{} {
+	inputSchema := map[string]interface{}{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"operation"},
+		"properties": map[string]interface{}{
+			"operation": map[string]interface{}{
+				"type":        "string",
+				"enum":        operations,
+				"description": "Use get, describe, logs, top, events, or rollout-status. get/top require kind; describe requires kind and name; logs/rollout-status require resource.",
+			},
+			"kind": map[string]interface{}{
+				"type":        "string",
+				"description": "Required for get, top and describe. Use the lowercase Kubernetes resource kind, for example nodes, pods or deployments.",
+			},
+			"name": map[string]interface{}{"type": "string"},
+			"resource": map[string]interface{}{
+				"type":        "string",
+				"description": "Required for logs and rollout-status. Only for object-filtered events use kind/name; omit for namespace-wide events. Do not pass a namespace here.",
+			},
+			"namespace": map[string]interface{}{
+				"type":        "string",
+				"description": "Explicit Kubernetes namespace. Required for namespaced health reads; never place it in resource.",
+			},
+			"container": map[string]interface{}{"type": "string"},
+			"output":    map[string]interface{}{"type": "string"},
+			"timeout":   map[string]interface{}{"type": "string"},
+			"tail":      map[string]interface{}{"type": "integer"},
+		},
+		"oneOf": []interface{}{
+			map[string]interface{}{
+				"properties": map[string]interface{}{"operation": map[string]interface{}{"enum": []string{"get"}}},
+				"required":   []string{"operation", "kind"},
+			},
+			map[string]interface{}{
+				"properties": map[string]interface{}{"operation": map[string]interface{}{"enum": []string{"top"}}},
+				"required":   []string{"operation", "kind"},
+			},
+			map[string]interface{}{
+				"properties": map[string]interface{}{"operation": map[string]interface{}{"enum": []string{"describe"}}},
+				"required":   []string{"operation", "kind", "name"},
+			},
+			map[string]interface{}{
+				"properties": map[string]interface{}{"operation": map[string]interface{}{"enum": []string{"logs", "rollout-status"}}},
+				"required":   []string{"operation", "resource"},
+			},
+			map[string]interface{}{
+				"properties": map[string]interface{}{"operation": map[string]interface{}{"enum": []string{"events"}}},
+				"required":   []string{"operation"},
+			},
+		},
+	}
 	return map[string]interface{}{
 		"name":        name,
 		"description": description,
-		"inputSchema": map[string]interface{}{
-			"type":                 "object",
-			"additionalProperties": false,
-			"required":             []string{"operation"},
-			"properties": map[string]interface{}{
-				"operation": map[string]interface{}{
-					"type":        "string",
-					"enum":        operations,
-					"description": "Use get, describe, logs, top, events, or rollout-status. For health checks use get nodes, get pods, then events.",
-				},
-				"kind": map[string]interface{}{"type": "string"},
-				"name": map[string]interface{}{"type": "string"},
-				"resource": map[string]interface{}{
-					"type":        "string",
-					"description": "Only for logs, rollout-status, or object-filtered events. Events must use kind/name; omit for namespace-wide events. Do not pass a namespace here.",
-				},
-				"namespace": map[string]interface{}{
-					"type":        "string",
-					"description": "Explicit Kubernetes namespace. Required for namespaced health reads; never place it in resource.",
-				},
-				"container": map[string]interface{}{"type": "string"},
-				"output":    map[string]interface{}{"type": "string"},
-				"timeout":   map[string]interface{}{"type": "string"},
-				"tail":      map[string]interface{}{"type": "integer"},
-			},
-		},
+		"inputSchema": inputSchema,
 	}
 }
 

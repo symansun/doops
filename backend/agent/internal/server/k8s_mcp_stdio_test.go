@@ -47,10 +47,18 @@ func TestK8SMCPStdioExposesBoundedDomainTools(t *testing.T) {
 			t.Fatalf("runtime-bound session leaked into model-visible schema: %#v", properties)
 		}
 		if name == "k8s_read" {
+			oneOf, _ := schema["oneOf"].([]interface{})
+			if len(oneOf) != 5 {
+				t.Fatalf("k8s operation conditional schema missing: %#v", schema)
+			}
 			resource, _ := properties["resource"].(map[string]interface{})
 			description, _ := resource["description"].(string)
-			if !strings.Contains(description, "omit for namespace-wide events") || !strings.Contains(description, "kind/name") {
+			if !strings.Contains(description, "Required for logs") || !strings.Contains(description, "omit for namespace-wide events") || !strings.Contains(description, "kind/name") {
 				t.Fatalf("k8s resource contract missing: %#v", resource)
+			}
+			kind, _ := properties["kind"].(map[string]interface{})
+			if !strings.Contains(kind["description"].(string), "Required for get, top and describe") {
+				t.Fatalf("k8s kind contract missing: %#v", kind)
 			}
 		}
 		if name == "helm" {
