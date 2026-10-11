@@ -1,6 +1,6 @@
 "use client"
 
-import { AgentWorkspace, type AgentArtifactItem, type AgentSessionRuntime, type AgentSessionSnapshot, type CodeWorkspaceSource } from "@agent-cloud/agent-ui"
+import { AgentWorkspace, type AgentArtifactItem, type AgentSessionRuntime, type CodeWorkspaceSource } from "@agent-cloud/agent-ui"
 import { Plus, RefreshCw, Settings2 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react"
 import { randomSession } from "@/lib/gateway"
@@ -31,14 +31,21 @@ export function AgentUiPanel({
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
   const busy = isDoopsAgentSessionBusy(snapshot)
   const [workspaceArtifacts, setWorkspaceArtifacts] = useState<AgentArtifactItem[]>([])
+  const [workspaceError, setWorkspaceError] = useState("")
   const workspaceSourceId = useMemo(() => `workspace:${codeWorkspace.workspaceKey}/${sessionId}`, [codeWorkspace.workspaceKey, sessionId])
 
   useEffect(() => {
     const controller = new AbortController()
+    setWorkspaceError("")
     void codeWorkspace.changes(sessionId, controller.signal)
-      .then((changes) => setWorkspaceArtifacts(workspaceArtifactsFromChanges(workspaceSourceId, changes)))
-      .catch(() => {
-        if (!controller.signal.aborted) setWorkspaceArtifacts([])
+      .then((changes) => {
+        if (!controller.signal.aborted) setWorkspaceArtifacts(workspaceArtifactsFromChanges(workspaceSourceId, changes))
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setWorkspaceArtifacts([])
+          setWorkspaceError(error instanceof Error ? error.message : String(error))
+        }
       })
     return () => controller.abort()
   }, [codeWorkspace, sessionId, snapshot.status, snapshot.latestUserCommandId, workspaceSourceId])
@@ -54,6 +61,7 @@ export function AgentUiPanel({
       clientLabel="doops-console"
       headerActions={
         <div className="flex shrink-0 items-center gap-1">
+          {workspaceError && <span role="alert" className="max-w-40 truncate text-xs text-destructive" title={workspaceError}>成果读取失败</span>}
           <button
             aria-label="重新检查连接"
             className="flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"

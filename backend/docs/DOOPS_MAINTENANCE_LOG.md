@@ -637,6 +637,17 @@ Do not publish new agent fixes under floating `v1`; use the explicit release ver
 - The detached Helm executor now always uses `--reset-values`, preventing
   removed fields in historical release values from violating the current chart
   schema.
+# 2026-10-11 Native Agent UI Release Preparation
+
+- Release scope: CLI/Skill, Gateway/Web and core Ali/Tencent/edu Agents.
+- Remove Console-specific operation modes and database/repository binding bars;
+  use Agent UI's developer composer and native Code/Work surfaces.
+- Repair Alpine file search, Git history revision arguments and literal filenames.
+  Discover real deliverables without Git and preserve binary preview bytes.
+- Confine workspace reads to the selected session and show read errors explicitly.
+- Production upgrade and browser acceptance are pending immutable v1.3.40 CI artifacts;
+  source changes and local passing checks are not a deployed-version claim.
+
 # 2026-10-03 CNB Helm Managed Authentication
 
 - Scope: verify and consume the exact authorized CNB Helm HTTPS artifact; no index probe,

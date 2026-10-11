@@ -85,13 +85,16 @@ async function readFile(options: CodeWorkspaceOptions, path: string, signal: Abo
   const relative = normalizeCodePath(path)
   if (relative === null || !relative) throw new Error("代码工作区路径无效")
   const value = await workspaceRead(options, { operation: "read", path: relative }, signal)
-  const content = typeof value.content === "string" ? value.content : ""
+  if (typeof value.content !== "string" || !["utf-8", "base64"].includes(String(value.encoding)) ||
+      typeof value.contentType !== "string" || typeof value.bytes !== "number" || typeof value.binary !== "boolean") {
+    throw new Error("工作区文件返回了无效协议")
+  }
   return {
-    binary: false,
-    bytes: new TextEncoder().encode(content).byteLength,
-    content,
-    contentType: contentType(relative),
-    encoding: "utf-8",
+    binary: value.binary,
+    bytes: value.bytes,
+    content: value.content,
+    contentType: value.contentType,
+    encoding: value.encoding as "utf-8" | "base64",
     path: relative,
     truncated: false,
   }
@@ -160,6 +163,10 @@ export async function loadDoopsWorkspaceArtifact(source: CodeWorkspaceSource, se
   if (!artifactId.startsWith(prefix)) throw new Error("不支持的成果引用")
   const path = artifactId.slice(prefix.length)
   const file = await source.read(sessionId, path, new AbortController().signal)
+  if (file.encoding === "base64") {
+    const bytes = Uint8Array.from(atob(file.content), (character) => character.charCodeAt(0))
+    return new Blob([bytes], { type: file.contentType })
+  }
   return new Blob([file.content], { type: file.contentType })
 }
 

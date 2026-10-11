@@ -2,7 +2,7 @@
 name: agent-ui-runtime-convergence
 scope: ai-conversation
 owner: doops-maintainers
-status: source-delivery-ci-cooldown-pending
+status: release-verification
 ---
 
 # Shared Agent UI Runtime
@@ -100,3 +100,23 @@ The previous component-only implementation is on `feat/agent-ui-embed`.
 Agent Cloud worktree: `/tmp/agentcloud-doops-ui-20261006`.
 The package release cooldown decision and GitHub email-verification restriction
 remain unresolved; neither authorizes weakening checks or credential bypass.
+
+## October 11, 2026 Release
+
+- Scope: the native AI workspace on main, CLI/Skill and Gateway/Web, with core
+  Agent targets `gw-114-k8s`, `gw-zyj` and `gw-edu-coder`. No Worktree.
+- Existing UI convergence source: `9cc20373fb58bde2d531c09520837b15f7216b58`.
+- Production before release: v1.3.39 / `03a2062348e9528051ac2ca9ed4e8535e20343da`.
+- Main CI `cnb-jvc-1k4lfeu6t` failed workspace search on Alpine. The root repair
+  removes grep from this API, corrects Git history and literal filenames, exposes
+  actual non-Git deliverables, and preserves binary preview bytes with session
+  filesystem confinement. Workspace errors are visible in the native header.
+- Local console/policy tests, TypeScript, production build and workspace
+  filesystem checks passed. Independent review and live browser verification
+  remain required before completion.
+- Next: commit/push this repair on main, publish v1.3.40 from the same source,
+  verify CI/digests, roll out through the release controllers and test the real
+  browser conversation/code/results workflow.
+- Bounds: at most three repairs of the same failure, 20 minutes per CI build
+  observation and 10 minutes per target rollout. Preserve unrelated sessions;
+  never force-unlock, bypass checks or report a pending rollout as complete.
