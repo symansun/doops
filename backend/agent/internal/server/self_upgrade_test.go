@@ -837,7 +837,7 @@ func TestStartSelfUpgradeCreatesJobWithoutHelmMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "self-upgrade-accepted job=doops-self-upgrade-aaaaaaaa namespace=kz-ops release=doops-agent-live") {
+	if !strings.Contains(out, "self-upgrade-accepted job=doops-self-upgrade-"+upgradeImageID(testPinnedImage())+" namespace=kz-ops release=doops-agent-live") {
 		t.Fatalf("acceptance = %s", out)
 	}
 	if !strings.Contains(applied, "helm rollback") || strings.Contains(applied, "set image") {
