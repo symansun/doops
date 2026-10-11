@@ -587,3 +587,24 @@ func bindApplyCollector(collector *doagentToolTraceCollector, sessionID string) 
 func boolPointer(value bool) *bool {
 	return &value
 }
+
+func TestSQLReadToolFailureCannotBecomeSuccessfulPrompt(t *testing.T) {
+	for _, test := range []struct {
+		name, status, result string
+		failed               bool
+	}{
+		{"failed tool", "failed", `{}`, true},
+		{"error result", "completed", `{"isError":true}`, true},
+		{"verified query", "completed", `{"isError":false,"content":[{"type":"text","text":"{\"status\":\"verified\",\"output\":\"1\"}"}]}`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			collector := newDoagentToolTraceCollector(false)
+			collector.calls["sql"] = doagentToolTrace{
+				ToolName: "mcp_dosql_read", Status: test.status, resultJSON: json.RawMessage(test.result),
+			}
+			if collector.hasFailedSQLRead() != test.failed {
+				t.Fatalf("SQL tool failure state was lost: status=%s result=%s", test.status, test.result)
+			}
+		})
+	}
+}

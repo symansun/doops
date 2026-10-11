@@ -255,14 +255,6 @@ func TestGatewayCredentialRecoveryOutcome(t *testing.T) {
 			lifecycleSend(t, client, 2, "doops_agent_prompt", session, map[string]interface{}{
 				"operation": "apply", "instruction": "synthetic credential-bound apply", "credential_refs": []string{resource.Name},
 			})
-			plan, err := json.Marshal(CredentialScopePlan{
-				APIVersion: credentialScopePlanAPIVersion, Kind: credentialScopePlanKind,
-				References: []CredentialPlanReference{{Name: resource.Name, Scope: scope}},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			tokenLifecycleReplyText(t, agent, agent.call(t, "doops_agent_prompt", session), string(plan), false)
 			materialization, err := json.Marshal(CredentialMaterialization{
 				CredentialID: resource.ID, GrantID: grant.ID, VersionID: version.ID,
 				ResourceName: credentialSecretName(resource.ID, grant.ID), Namespace: scope.Namespace,

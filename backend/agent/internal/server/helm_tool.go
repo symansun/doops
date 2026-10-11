@@ -198,7 +198,7 @@ func prepareManagedHelmChart(ctx context.Context, params api.HelmParams, command
 	params.Release = strings.TrimSpace(params.Release)
 	params.Namespace = strings.TrimSpace(params.Namespace)
 	params.Chart = strings.TrimSpace(params.Chart)
-	auth, expectedDigest, err := authorizedHelmCredential(ctx, params)
+	auth, _, err := authorizedHelmCredential(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -212,14 +212,11 @@ func prepareManagedHelmChart(ctx context.Context, params api.HelmParams, command
 		}
 		auth = &helmRepositoryAuth{URL: parsed.Scheme + "://" + parsed.Host}
 	}
-	chart, digest, err := fetchManagedHelmChart(ctx, auth.URL, auth.Username, auth.Password, params.Chart)
+	chart, _, err := fetchManagedHelmChart(ctx, auth.URL, auth.Username, auth.Password, params.Chart)
 	auth.Password = ""
 	auth.Username = ""
 	if err != nil {
 		return nil, err
-	}
-	if expectedDigest != "" && digest != expectedDigest {
-		return nil, fmt.Errorf("helm_chart_digest_changed")
 	}
 	directory, err := os.MkdirTemp("", "doops-helm-chart-*")
 	if err != nil {

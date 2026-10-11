@@ -460,6 +460,24 @@ func (c *doagentToolTraceCollector) requireCompletedToolEvidence() error {
 	return fmt.Errorf("doagent_apply_tool_evidence_missing")
 }
 
+func (c *doagentToolTraceCollector) hasFailedSQLRead() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, trace := range c.calls {
+		if trace.ToolName != "mcp_dosql_read" && trace.ToolName != "dosql_read" {
+			continue
+		}
+		if trace.Status == "failed" {
+			return true
+		}
+		var result map[string]interface{}
+		if json.Unmarshal(trace.resultJSON, &result) == nil && result["isError"] == true {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *doagentToolTraceCollector) hasUnresolvedMutation() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()

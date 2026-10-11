@@ -758,7 +758,7 @@ func (s *GatewayStore) AuthorizeCredentialGrant(req CredentialUseRequest) (Crede
 	if !s.CanUseTargetCredentials(req.ActorID, req.Scope.Cluster, req.Scope.Instance) {
 		return CredentialResource{}, CredentialGrant{}, ErrCredentialForbidden
 	}
-	if req.Scope.Use != CredentialUseDatabase && validateCredentialGrantScope(req.Scope) != nil {
+	if req.Scope.Use != "" && !validCredentialUse(req.Scope.Use) {
 		return CredentialResource{}, CredentialGrant{}, ErrCredentialGrantDenied
 	}
 	credentialSelector := "c.name = ?"
@@ -782,12 +782,8 @@ func (s *GatewayStore) AuthorizeCredentialGrant(req CredentialUseRequest) (Crede
 		if err != nil {
 			return CredentialResource{}, CredentialGrant{}, err
 		}
-		if req.Scope.Use == CredentialUseDatabase {
-			if grant.Scope.Use != CredentialUseDatabase || grant.Scope.Cluster != req.Scope.Cluster ||
-				grant.Scope.Instance != req.Scope.Instance || validateCredentialGrantScope(grant.Scope) != nil {
-				continue
-			}
-		} else if !credentialScopeEqual(grant.Scope, req.Scope) {
+		if grant.Scope.Cluster != req.Scope.Cluster || grant.Scope.Instance != req.Scope.Instance ||
+			(req.Scope.Use != "" && grant.Scope.Use != req.Scope.Use) || validateCredentialGrantScope(grant.Scope) != nil {
 			continue
 		}
 		if len(matches) != 0 && matches[len(matches)-1].Resource.ID == resource.ID &&

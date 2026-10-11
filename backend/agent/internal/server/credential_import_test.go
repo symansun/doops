@@ -350,15 +350,21 @@ func TestCredentialConfigureCLIThroughGatewayAndRealAgent(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v\n%s", err, output)
 	}
-	for _, scenario := range []string{"import", "stdin", "verify-failed"} {
+	for _, scenario := range []string{"import", "stdin", "verify-failed", "target-exec-import"} {
 		t.Run(scenario, func(t *testing.T) {
 			f, argsLog := credentialImportFixture(t)
+			actor := f.admin
+			if scenario == "target-exec-import" {
+				actor = f.user(t, "configure-target-exec", ScopeGrant{
+					Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec},
+				})
+			}
 			configRoot := t.TempDir()
 			for name, value := range map[string]any{
 				"config.json": map[string]any{"servers": []map[string]string{{
 					"name": "functional", "gateway": f.server.URL, "cluster": "dev", "instance": "local",
 				}}},
-				"auth.json": map[string]any{"tokens": map[string]string{f.server.URL: f.admin.Plaintext}},
+				"auth.json": map[string]any{"tokens": map[string]string{f.server.URL: actor.Plaintext}},
 			} {
 				data, _ := json.Marshal(value)
 				if err := os.WriteFile(filepath.Join(configRoot, name), data, 0600); err != nil {

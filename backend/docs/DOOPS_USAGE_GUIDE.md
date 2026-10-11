@@ -35,6 +35,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
 | Run an authorized release | `doops -session <s> ask --target <t> --apply --credential <name> --msg '<facts>'` | Canonical business workload CI/CD entry. |
 | DoSql read-only query or scan | `doops -session <s> sql --target <t> --mode query --credential <database-resource> --request '<request>'` | Uses the selected Gateway target and Agent skill; no local connection file is read. |
+| DoSql live schema inspection | `doops -session <s> sql --target <t> --mode query --credential <database-resource> --request '读取指定 database_asset_id 的表、列或索引结构'` | Uses one read-only engine catalog/information-schema query. `discover` only finds Kubernetes database assets; it does not inspect live tables. |
 | DoSql change plan | `doops -session <s> sql --target <t> --mode plan --request '<request>'` | Returns business summary, risk and verification evidence without mutation. |
 | DoSql controlled mutation | `doops -session <s> sql --target <t> --mode apply --credential <database-resource> --request '<approved change>'` | Requires Gateway action/credential scope and DoSql change evidence. |
 | DoSql target discovery | `doops -session <s> sql --target <t> --mode discover --request '<request>'` | Uses `mcp_dosql_read` to scan non-Secret target metadata; it never stores connection secrets. |
@@ -510,7 +511,8 @@ doops -session release-<commit> ask \
 完整资产参数、可选 `expected_image` 和迁移说明见
 [`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
 `--credential` 可重复，但只传 resource name，不能内联 payload；受管 Helm 认证、
-精确 scope 与包 digest 钉住不变，允许授权的 values overlay 和字符串覆盖。
+凭据权限继承 target 操作权限；当前包校验后一次 staging，dry-run 与 Helm 共用下载文件。
+允许授权的 values overlay 和字符串覆盖，namespace、workload、release 和仓库路径不是凭据权限条件。
 发布者必须在调用前独立核对精确 CI source commit、registry digest 和构建成功证据；
 `ask --apply`、`--image`、`--version` 和 Helm 工具不自动验证 CI provenance。
 

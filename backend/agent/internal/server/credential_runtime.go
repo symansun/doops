@@ -150,12 +150,10 @@ func validCredentialErrorCategory(category string) bool {
 	return true
 }
 
-func (h *GatewayHub) planExplicitCredentialApply(
-	ctx context.Context,
+func (h *GatewayHub) resolveExplicitCredentials(
 	auth TokenAuth,
 	cluster string,
 	instance string,
-	sessionID string,
 	instruction string,
 	names []string,
 	action GatewayAction,
@@ -170,59 +168,25 @@ func (h *GatewayHub) planExplicitCredentialApply(
 	if credentialScalarContainsInlineMaterial(instruction) {
 		return nil, ErrInlineCredentialMaterial
 	}
+	use := CredentialUse("")
 	if skill == "dosql" {
-		authorized := make([]authorizedCredentialMaterialization, 0, len(names))
-		for _, name := range names {
-			resolved, err := h.store.AuthorizeCredentialUse(CredentialUseRequest{
-				ActorID: auth.UserID, Credential: name,
-				Scope: CredentialGrantScope{Cluster: cluster, Instance: instance, Use: CredentialUseDatabase},
-			})
-			if err != nil {
-				return nil, err
-			}
-			if err := credentialTypeAllowsUse(resolved.Resource.Type, CredentialUseDatabase); err != nil {
-				return nil, err
-			}
-			authorized = append(authorized, authorizedCredentialMaterialization{
-				Reference:  CredentialPlanReference{Name: name, Scope: normalizeCredentialGrantScope(resolved.Grant.Scope)},
-				Authorized: resolved,
-			})
-		}
-		return authorized, nil
+		use = CredentialUseDatabase
 	}
-	planText, err := h.RunInternalToolCall(ctx, cluster, instance, "doops_agent_prompt", map[string]any{
-		"session_id":      sessionID,
-		"instruction":     credentialScopePlanningInstruction(instruction, names),
-		"operation":       "ask",
-		"response_format": "json",
-	})
-	if err != nil {
-		return nil, errors.New("credential_scope_plan_failed")
-	}
-	var plan CredentialScopePlan
-	if err := json.Unmarshal([]byte(strings.TrimSpace(planText)), &plan); err != nil {
-		return nil, errors.New("credential_scope_plan_invalid")
-	}
-	if err := validateCredentialScopePlan(plan, names, cluster, instance); err != nil {
-		return nil, err
-	}
-
-	authorized := make([]authorizedCredentialMaterialization, 0, len(plan.References))
-	for _, reference := range plan.References {
+	authorized := make([]authorizedCredentialMaterialization, 0, len(names))
+	for _, name := range names {
 		resolved, err := h.store.AuthorizeCredentialUse(CredentialUseRequest{
-			ActorID: auth.UserID, Credential: reference.Name, Scope: reference.Scope,
+			ActorID: auth.UserID, Credential: name,
+			Scope: CredentialGrantScope{Cluster: cluster, Instance: instance, Use: use},
 		})
 		if err != nil {
 			return nil, err
 		}
-		if err := credentialTypeAllowsUse(resolved.Resource.Type, reference.Scope.Use); err != nil {
+		if err := credentialTypeAllowsUse(resolved.Resource.Type, resolved.Grant.Scope.Use); err != nil {
 			return nil, err
 		}
-		if reference.Scope.Use == CredentialUseDatabase {
-			reference.Scope = normalizeCredentialGrantScope(resolved.Grant.Scope)
-		}
 		authorized = append(authorized, authorizedCredentialMaterialization{
-			Reference: reference, Authorized: resolved,
+			Reference:  CredentialPlanReference{Name: name, Scope: normalizeCredentialGrantScope(resolved.Grant.Scope)},
+			Authorized: resolved,
 		})
 	}
 	return authorized, nil
@@ -498,7 +462,9 @@ func (h *GatewayHub) validateCredentialMaterializationResult(
 		expectedSecretType = "kubernetes.io/dockerconfigjson"
 	case CredentialTypeTLS:
 		expectedSecretType = "kubernetes.io/tls"
-	case CredentialTypeOpaque, CredentialTypeHelmRepository, CredentialTypeGitToken:
+	case CredentialTypeHelmRepository:
+		expectedSecretType = ""
+	case CredentialTypeOpaque, CredentialTypeGitToken:
 	default:
 		return errors.New("credential_materialization_metadata_invalid")
 	}
@@ -789,7 +755,7 @@ func credentialRequiredKeys(credentialType CredentialType, payload json.RawMessa
 	case CredentialTypeTLS:
 		return []string{"tls.crt", "tls.key"}, nil
 	case CredentialTypeHelmRepository:
-		return []string{"password", "url", "username"}, nil
+		return nil, nil
 	case CredentialTypeGitToken:
 		return []string{"password", "url", "username"}, nil
 	case CredentialTypeOpaque:

@@ -32,6 +32,17 @@ var (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "database-runner" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if len(os.Args) != 2 {
+			log.Fatal("database-runner does not accept positional arguments")
+		}
+		if err := server.RunDatabaseRunnerContext(ctx, os.Stdin, os.Stdout, os.Stderr); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if err := server.InitializeMutationAuthority(); err != nil {
 		log.Fatal(err)
 	}

@@ -2,7 +2,6 @@ package server
 
 import (
 	"errors"
-	"fmt"
 	"net/url"
 	"regexp"
 	"sort"
@@ -22,17 +21,6 @@ var (
 		regexp.MustCompile(`\bnpm_[A-Za-z0-9]{36,255}\b`),
 	}
 )
-
-const (
-	credentialScopePlanAPIVersion = "doops.sh/credential-scope-plan/v1"
-	credentialScopePlanKind       = "CredentialScopePlan"
-)
-
-type CredentialScopePlan struct {
-	APIVersion string                    `json:"apiVersion"`
-	Kind       string                    `json:"kind"`
-	References []CredentialPlanReference `json:"references"`
-}
 
 type CredentialPlanReference struct {
 	Name  string               `json:"name"`
@@ -163,16 +151,15 @@ func credentialScopeEqual(left, right CredentialGrantScope) bool {
 			left.Namespace == right.Namespace && left.Use == right.Use
 	}
 	if left.Use == CredentialUseHelmPull && right.Use == CredentialUseHelmPull {
-		return left.Cluster == right.Cluster && left.Instance == right.Instance &&
-			left.Use == right.Use
+		return left.Cluster == right.Cluster && left.Instance == right.Instance && left.Use == right.Use
 	}
 	if left.Cluster != right.Cluster || left.Instance != right.Instance ||
-		left.Namespace != right.Namespace || left.Use != right.Use ||
-		left.Workload != right.Workload || left.DatabaseAssetID != right.DatabaseAssetID ||
-		left.EnvironmentID != right.EnvironmentID || left.DatabaseEngine != right.DatabaseEngine ||
-		left.DatabaseName != right.DatabaseName || left.ImageRepository != right.ImageRepository ||
-		left.ImageDigest != right.ImageDigest || left.HelmRelease != right.HelmRelease ||
-		left.HelmChart != right.HelmChart || len(left.RequiredKeys) != len(right.RequiredKeys) {
+		left.Namespace != right.Namespace || left.Use != right.Use || left.Workload != right.Workload ||
+		left.DatabaseAssetID != right.DatabaseAssetID || left.EnvironmentID != right.EnvironmentID ||
+		left.DatabaseEngine != right.DatabaseEngine || left.DatabaseName != right.DatabaseName ||
+		left.ImageRepository != right.ImageRepository || left.ImageDigest != right.ImageDigest ||
+		left.HelmRelease != right.HelmRelease || left.HelmChart != right.HelmChart ||
+		len(left.RequiredKeys) != len(right.RequiredKeys) {
 		return false
 	}
 	for index := range left.RequiredKeys {
@@ -222,42 +209,6 @@ func validDatabaseCredentialKeys(engine string, keys []string) bool {
 		}
 	}
 	return true
-}
-
-func validateCredentialScopePlan(plan CredentialScopePlan, explicitNames []string, cluster, instance string) error {
-	if plan.APIVersion != credentialScopePlanAPIVersion || plan.Kind != credentialScopePlanKind ||
-		len(plan.References) != len(explicitNames) {
-		return errors.New("credential_scope_plan_invalid")
-	}
-	expected := make(map[string]struct{}, len(explicitNames))
-	for _, name := range explicitNames {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			return errors.New("credential_scope_plan_invalid")
-		}
-		if _, duplicate := expected[name]; duplicate {
-			return errors.New("credential_scope_plan_invalid")
-		}
-		expected[name] = struct{}{}
-	}
-	for index := range plan.References {
-		reference := &plan.References[index]
-		reference.Name = strings.TrimSpace(reference.Name)
-		if _, ok := expected[reference.Name]; !ok {
-			return errors.New("credential_scope_plan_invalid")
-		}
-		delete(expected, reference.Name)
-		reference.Scope.Cluster = cluster
-		reference.Scope.Instance = instance
-		reference.Scope = normalizeCredentialGrantScope(reference.Scope)
-		if err := validateCredentialGrantScope(reference.Scope); err != nil {
-			return err
-		}
-	}
-	if len(expected) != 0 {
-		return errors.New("credential_scope_plan_invalid")
-	}
-	return nil
 }
 
 func credentialScalarContainsInlineMaterial(value string) bool {
@@ -324,17 +275,4 @@ func credentialSecretLikeKey(key string) bool {
 		}
 	}
 	return false
-}
-
-func credentialScopePlanningInstruction(instruction string, names []string) string {
-	return fmt.Sprintf(`Plan managed credential scopes for the deployment task below.
-Do not execute tools and do not make changes. Return only JSON matching:
-{"apiVersion":%q,"kind":%q,"references":[{"name":"...","scope":{"namespace":"...","use":"imagePull|gitCheckout|helmPull|tls|opaqueSecret|database","workload":{"kind":"Deployment|StatefulSet|DaemonSet","name":"..."},"image_repository":"...","image_digest":"sha256:...","helm_release":"...","helm_chart":"https://charts.example/...","required_keys":["..."]}}]}
-For use=database, only provide the target staging namespace and use=database. Do not bind
-database asset, environment, engine, database name or workload in the Gateway scope; those
-are DoSql execution context.
-Return every explicit credential name exactly once and no other name. Omit fields that do not apply. Never output credential values.
-Explicit credential names: %q
-Deployment task:
-%s`, credentialScopePlanAPIVersion, credentialScopePlanKind, names, instruction)
 }

@@ -86,7 +86,7 @@ description: |
   namespace、chart 和 `confirm=true`。`value_files` 可选，覆盖遵循 Chart schema；普通升级
   统一 `--reset-values`，不隐式继承历史 values。工具自动先执行同输入的 server dry-run，
   不得询问是否启用 dry-run，不得用缺少 `confirm=true` 的调用试探。
-  保留受管 Helm 认证、精确 scope、包 digest 钉住和最终 Deployment generation/spec/status
+  保留受管 Helm 认证、目标权限、下载包的单次 staging 和最终 Deployment generation/spec/status
   校验，不以 shell、revision 或 Pod Ready 宣称发布成功。资产路径、可选 `expected_image`
   和完整迁移说明见 [自然语言发布契约](docs/NATURAL_LANGUAGE_DEPLOYMENT.md)；
   remote 当前支持 HTTPS `.tgz`，不支持 `oci://`。
@@ -104,13 +104,15 @@ description: |
   asset、environment、engine、database name 与 SQL 变更授权由 DoSql/目标 Agent 负责。公开 prompt、doagent 上下文和 metadata
   binding 不接收 credential payload；目标 doops-agent 只在内部凭据控制面临时接收
   解密 payload 以创建或验证目标资源。
-- DoSql 凭据绑定由 Gateway 直接读取已保存的 target/database 元数据，不让模型生成授权 scope。
+- 所有凭据绑定由 Gateway 直接读取已保存的 target/use 元数据，不让模型生成授权 scope。
   初始化缺少版本时用 `credential configure` 内部导入并验证；不能只给空资源补 grant。
 - Helm grant 只绑定 target 的 cluster/instance 和 use=helmPull；namespace、workload、release
-  和 Chart URL 不再参与 Gateway 授权匹配。实际包仍须通过凭据仓库同源路径和 digest 校验。
+  和 Chart URL 不再参与 Gateway 或 Agent 的凭据授权匹配。实际包按本次操作的 URL 下载；
+  只向凭据配置的 HTTPS origin 发送认证，允许其不同仓库路径和版本。下载包验证后一次
+  staging，dry-run 与实际 Helm 操作使用相同文件，不比较旧版本 Chart 摘要。
 - DoOps 已有完整凭据管理。首次配置优先用 `credential configure`，复用现有资源并自动
-  完成写入、本人精确授权、全部 active scope 验证和激活，不让用户手动串联内部步骤。
-  已存在的目标 Secret 可由 platform admin 用 `--from-secret <name> --keys <keys>` 导入；
+  完成写入、目标绑定、全部 active 物化验证和激活，不让用户手动串联内部步骤。
+  已存在的目标 Secret 可由有该 target exec 权限的 owner/admin 用 `--from-secret <name> --keys <keys>` 导入；
   值只在 Agent/Gateway 内部流转，禁止通过 `exec` 输出密码再要求用户粘贴。数据库 grant
   不要求 workload；指定密码字段组合连接 URI 的方式见 `docs/CREDENTIAL_RESOURCES.md`。
 - 开发项目可以在 `.agent/doops-credentials.yaml` 声明 metadata-only 的

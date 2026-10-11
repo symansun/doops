@@ -110,11 +110,7 @@ func TestFetchManagedHelmChartDownloadsAuthorizedCNBArtifact(t *testing.T) {
 			t.Fatalf("body matches=%t digest=%q error=%v", bytes.Equal(body, chart), digest, err)
 		}
 	}
-	if digest, err := verifyHelmRepository(context.Background(), repository, "helm", canary, server.URL+chartPath); err != nil ||
-		digest != fmt.Sprintf("sha256:%x", sha256.Sum256(chart)) {
-		t.Fatalf("verify digest=%q error=%v", digest, err)
-	}
-	if requests.Load() != 4 {
+	if requests.Load() != 3 {
 		t.Fatalf("requests=%d, want one request per call", requests.Load())
 	}
 }
@@ -200,9 +196,6 @@ func TestFetchManagedHelmChartRejectsInvalidURLsAndUnauthorizedScopeBeforeHTTP(t
 		{"whitespace", repository, " " + chart, "helm_chart_invalid"},
 		{"host", repository, "https://example.test/charts/team/app/v/1.0.0.tgz", "helm_chart_scope_mismatch"},
 		{"port", repository, "https://127.0.0.1:1/charts/team/app/v/1.0.0.tgz", "helm_chart_scope_mismatch"},
-		{"path prefix", repository, server.URL + "/charts/team-other/app.tgz", "helm_chart_scope_mismatch"},
-		{"sibling path", repository, server.URL + "/charts/elsewhere/app.tgz", "helm_chart_scope_mismatch"},
-		{"release attachment", repository, server.URL + "/releases/assets/app.tgz", "helm_chart_scope_mismatch"},
 		{"traversal", repository, repository + "/../elsewhere/app.tgz", "helm_chart_invalid"},
 		{"encoded traversal", repository, repository + "/%2e%2e/elsewhere/app.tgz", "helm_chart_invalid"},
 		{"encoded slash", repository, repository + "/app%2fv/1.0.0.tgz", "helm_chart_invalid"},
@@ -459,7 +452,7 @@ func TestFetchManagedHelmChartEnforcesCompressedAndExpandedLimits(t *testing.T) 
 	}
 }
 
-func TestMaterializeHelmCredentialStopsBeforeMutationOnArtifactFailure(t *testing.T) {
+func TestHelmCredentialBindsWithoutOldArtifactAndDownloadFailureStopsMutation(t *testing.T) {
 	bin, argsLog := installCredentialTestCommands(t)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	var requests atomic.Int64
@@ -477,8 +470,17 @@ func TestMaterializeHelmCredentialStopsBeforeMutationOnArtifactFailure(t *testin
 		Payload: mustJSON(t, map[string]string{"url": server.URL + "/charts/team", "username": "helm", "password": "materialize-failure-canary"}),
 	}
 	result, err := materializeCredential(context.Background(), request)
-	if err == nil || err.Error() != "helm_artifact_http_401" || result.Status != "" || requests.Load() != 1 {
+	if err != nil || result.Status != "verified" || requests.Load() != 0 {
 		t.Fatalf("status=%q error=%v requests=%d", result.Status, err, requests.Load())
+	}
+	t.Cleanup(func() {
+		_, _ = cleanupNativeHelmCredential(CredentialCleanupRequest{
+			Namespace: request.Scope.Namespace, CredentialID: request.CredentialID, GrantID: request.GrantID, AnyVersion: true,
+		})
+	})
+	_, _, err = fetchManagedHelmChart(t.Context(), server.URL, "helm", "materialize-failure-canary", server.URL+"/charts/team/new.tgz")
+	if err == nil || err.Error() != "helm_artifact_http_401" || requests.Load() != 1 {
+		t.Fatalf("current authenticated download failure was hidden: %v requests=%d", err, requests.Load())
 	}
 	if args, readErr := os.ReadFile(argsLog); readErr != nil && !os.IsNotExist(readErr) || len(args) != 0 {
 		t.Fatal("artifact failure executed target commands")

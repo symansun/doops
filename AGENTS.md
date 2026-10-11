@@ -21,7 +21,7 @@ DoOps architecture, security, release, and verification boundaries.
   Do not impose business-specific image keys, tag formats, CORS, repository, or directory gates.
 - Ordinary `upgrade-install` uses `--reset-values` with explicit Chart defaults, ordered optional
   values overlays, and non-sensitive Chart-specific string overrides, never implicit historical
-  values inheritance. Keep managed Helm authentication, exact scope, package digest pinning,
+  values inheritance. Keep managed Helm authentication, target authority, staged package identity,
   session path isolation, and dry-run/final Deployment verification intact. Full asset, optional
   `expected_image`, and migration contracts belong in
   [NATURAL_LANGUAGE_DEPLOYMENT.md](backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md).
@@ -90,7 +90,11 @@ DoOps architecture, security, release, and verification boundaries.
   which target/use owns a credential; management still belongs to its owner or platform admin.
   Database bindings resolve directly from stored target metadata, without a model-generated scope;
   the saved namespace is used for materialization. DoSql/Agent owns database assets and SQL policy.
-  Workload/image/Git/TLS asset scope and Helm source/digest validation remain enforced. Do not add
+  Namespace, workload, release, image and repository paths are execution metadata, not credential
+  permission dimensions. Resolve explicit names directly from stored target bindings, without a
+  model scope-planning request. Credential management uses owner/admin; personal credential APIs
+  do not require separate credential actions. Target Secret import requires target exec authority.
+  Keep HTTPS origin protection, package validation and immutable staging for Helm. Do not add
   wildcard, prefix, inferred, project, environment, template, or workflow-path grants to the
   Gateway layer.
 - A project may declare metadata-only development requirements in
@@ -144,7 +148,7 @@ Do not document intended behavior that the current CLI and Gateway do not implem
 ## Verification And Delivery
 
 - Credential and CI/CD changes require Given/When/Then coverage for success, denied authority,
-  invalid exact scope, unavailable audit/key, verification failure, revocation, and payload
+  unavailable/wrong target, unavailable audit/key, verification failure, revocation, and payload
   redaction. Do not weaken expected HTTP status or output assertions to make tests pass.
 - Development credential preflight changes additionally require strict manifest parsing, missing
   reference, wrong use, revoked grant, target mismatch, required session, and payload-field

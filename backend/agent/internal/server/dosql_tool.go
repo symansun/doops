@@ -55,7 +55,7 @@ type doSQLSecret struct {
 }
 
 func doSQLMCPToolDefinition(name string, operations []string, description string) map[string]interface{} {
-	queryRequired := []string{"operation", "credential_ref", "database_asset_id", "environment_id", "project_id", "engine", "database_name"}
+	queryRequired := []string{"operation", "credential_ref", "engine", "database_name"}
 	required := queryRequired
 	if name == doSQLReadMCPToolName && containsDoSQLString(operations, "discover") {
 		required = []string{"operation"}
@@ -146,16 +146,12 @@ func handleDoSQLTool(ctx context.Context, raw json.RawMessage, mutation bool) (s
 	if !mutation && params.Operation == "discover" {
 		return discoverDatabaseCandidates(ctx)
 	}
-	if params.CredentialRef == "" || params.DatabaseAssetID == "" || params.EnvironmentID == "" || params.ProjectID == "" ||
-		params.DatabaseName == "" || !validDatabaseName(params.DatabaseName) {
+	if params.CredentialRef == "" || params.DatabaseName == "" || !validDatabaseName(params.DatabaseName) {
 		return "", errors.New("dosql_request_invalid")
 	}
 	params.Engine = strings.ToLower(strings.TrimSpace(params.Engine))
 	if params.Engine != "mysql" && params.Engine != "postgres" && params.Engine != "mongodb" {
 		return "", errors.New("dosql_engine_invalid")
-	}
-	if err := authorizeDoSQLDatabaseAsset(ctx, params); err != nil {
-		return "", err
 	}
 	if mutation {
 		if params.Operation != "execute" || !params.Confirm || params.ChangeRequestID == "" || params.ApprovalArtifactPath == "" {
@@ -170,6 +166,17 @@ func handleDoSQLTool(ctx context.Context, raw json.RawMessage, mutation bool) (s
 	}
 	if !validDatabaseCredentialKeys(params.Engine, binding.Keys) {
 		return "", errors.New("dosql_credential_keys_invalid")
+	}
+	candidate, err := authorizeDoSQLDatabaseAsset(ctx, params, binding.Namespace)
+	if err != nil {
+		return "", err
+	}
+	params.DatabaseAssetID = candidate.DatabaseAssetID
+	if strings.TrimSpace(params.EnvironmentID) == "" {
+		params.EnvironmentID = strings.TrimSpace(os.Getenv("DOOPS_GATEWAY_CLUSTER"))
+	}
+	if strings.TrimSpace(params.ProjectID) == "" {
+		params.ProjectID = strings.TrimSpace(os.Getenv("DOOPS_GATEWAY_INSTANCE"))
 	}
 	if err := validateDoSQLSecretBinding(ctx, binding); err != nil {
 		return "", err
@@ -324,24 +331,38 @@ func discoverDatabaseCandidates(ctx context.Context) (string, error) {
 	return string(encoded), nil
 }
 
-func authorizeDoSQLDatabaseAsset(ctx context.Context, params doSQLParams) error {
+func authorizeDoSQLDatabaseAsset(ctx context.Context, params doSQLParams, namespace string) (doSQLDatabaseCandidate, error) {
 	cluster, instance, candidates, err := discoverDatabaseCandidateList(ctx)
 	if err != nil {
-		return err
+		return doSQLDatabaseCandidate{}, err
 	}
+	var matches []doSQLDatabaseCandidate
 	for _, candidate := range candidates {
-		if candidate.DatabaseAssetID != params.DatabaseAssetID {
+		if candidate.Cluster != cluster || candidate.Instance != instance || candidate.Engine != params.Engine ||
+			(candidate.Namespace != "" && candidate.Namespace != namespace) {
 			continue
 		}
-		if candidate.Cluster != cluster || candidate.Instance != instance || candidate.Engine != params.Engine {
-			return errors.New("dosql_database_asset_mismatch")
+		if params.DatabaseAssetID != "" {
+			if candidate.DatabaseAssetID != params.DatabaseAssetID {
+				continue
+			}
+			if candidate.DatabaseName != "" && candidate.DatabaseName != params.DatabaseName {
+				return doSQLDatabaseCandidate{}, errors.New("dosql_database_name_mismatch")
+			}
+			return candidate, nil
 		}
-		if candidate.DatabaseName != "" && candidate.DatabaseName != params.DatabaseName {
-			return errors.New("dosql_database_name_mismatch")
+		if candidate.DatabaseName == params.DatabaseName &&
+			(candidate.Source == "Deployment" || candidate.Source == "StatefulSet") {
+			matches = append(matches, candidate)
 		}
-		return nil
 	}
-	return errors.New("dosql_database_asset_not_found")
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 {
+		return doSQLDatabaseCandidate{}, errors.New("dosql_database_asset_ambiguous")
+	}
+	return doSQLDatabaseCandidate{}, errors.New("dosql_database_asset_not_found")
 }
 
 func databaseAssetID(cluster, instance, namespace, name, engine string) string {
@@ -532,43 +553,37 @@ func buildDoSQLExecutionRequest(params doSQLParams, binding api.AgentCredentialB
 	}
 	env := []string{}
 	if params.Engine == "mysql" {
-		request["adapter"] = map[string]interface{}{"type": "mysql-cli", "mysqlPath": "/app/skills/dosql/Server/scripts/doops-mysql-client.sh"}
-		env = append(env,
-			"DOSQL_MYSQL_NAMESPACE="+binding.Namespace,
-			"DOSQL_MYSQL_DATABASE="+params.DatabaseName,
-			"DOSQL_MYSQL_SECRET_NAME="+binding.ResourceName,
-			"DOSQL_MYSQL_CLIENT_IMAGE="+doSQLClientImage(),
-			"DOSQL_MYSQL_URL_KEY=SPRING_DATASOURCE_URL",
-			"DOSQL_MYSQL_USER_KEY=SPRING_DATASOURCE_USERNAME",
-			"DOSQL_MYSQL_PASSWORD_KEY=SPRING_DATASOURCE_PASSWORD",
-		)
+		request["adapter"] = map[string]interface{}{
+			"type": "doops-go", "engine": params.Engine, "runnerPath": "/app/doops-agent",
+			"namespace": binding.Namespace, "database": params.DatabaseName, "secretName": binding.ResourceName,
+			"clientImage": doSQLClientImage(params.Engine), "urlKey": "SPRING_DATASOURCE_URL",
+			"userKey": "SPRING_DATASOURCE_USERNAME", "passwordKey": "SPRING_DATASOURCE_PASSWORD",
+		}
 	} else if params.Engine == "postgres" {
-		request["adapter"] = map[string]interface{}{"type": "postgres-psql", "psqlPath": "/app/skills/dosql/Server/scripts/doops-postgres-client.sh", "connectionUriEnv": "DOSQL_POSTGRES_URI"}
-		env = append(env,
-			"DOSQL_POSTGRES_URI="+"", // populated by the target-side Secret wrapper
-			"DOSQL_POSTGRES_NAMESPACE="+binding.Namespace,
-			"DOSQL_POSTGRES_DATABASE="+params.DatabaseName,
-			"DOSQL_POSTGRES_SECRET_NAME="+binding.ResourceName,
-			"DOSQL_POSTGRES_URI_KEY=connection_uri",
-		)
+		request["adapter"] = map[string]interface{}{
+			"type": "doops-go", "engine": params.Engine, "runnerPath": "/app/doops-agent",
+			"namespace": binding.Namespace, "database": params.DatabaseName, "secretName": binding.ResourceName,
+			"clientImage": doSQLClientImage(params.Engine), "uriKey": "connection_uri",
+		}
 	} else {
-		request["adapter"] = map[string]interface{}{"type": "mongodb-mongosh", "mongoshPath": "/app/skills/dosql/Server/scripts/doops-mongodb-client.sh", "connectionUriEnv": "DOSQL_MONGODB_URI"}
-		env = append(env,
-			"DOSQL_MONGODB_URI="+"", // populated by the target-side Secret wrapper
-			"DOSQL_MONGODB_NAMESPACE="+binding.Namespace,
-			"DOSQL_MONGODB_DATABASE="+params.DatabaseName,
-			"DOSQL_MONGODB_SECRET_NAME="+binding.ResourceName,
-			"DOSQL_MONGODB_URI_KEY=connection_uri",
-		)
+		request["adapter"] = map[string]interface{}{
+			"type": "doops-go", "engine": params.Engine, "runnerPath": "/app/doops-agent",
+			"namespace": binding.Namespace, "database": params.DatabaseName, "secretName": binding.ResourceName,
+			"clientImage": doSQLClientImage(params.Engine), "uriKey": "connection_uri",
+		}
 	}
 	return request, env, nil
 }
 
-func doSQLClientImage() string {
-	if value := strings.TrimSpace(os.Getenv("DOSQL_CLIENT_IMAGE")); value != "" {
-		return value
+func doSQLClientImage(engine string) string {
+	switch engine {
+	case "postgres":
+		return "postgres:16"
+	case "mongodb":
+		return "mongo:7"
+	default:
+		return "mysql:8.4"
 	}
-	return "mysql:8.4"
 }
 
 func doSQLResultSummary(result map[string]interface{}, operationID, journalPath, evidencePath string) string {
@@ -578,6 +593,14 @@ func doSQLResultSummary(result map[string]interface{}, operationID, journalPath,
 			if value, exists := execution[key]; exists {
 				summary[key] = value
 			}
+		}
+		if stdout, ok := execution["stdout"].(string); ok {
+			const limit = 32 << 10
+			summary["output_truncated"] = len(stdout) > limit
+			if len(stdout) > limit {
+				stdout = stdout[:limit]
+			}
+			summary["output"] = sanitizeSecretText(stdout)
 		}
 	}
 	encoded, _ := json.Marshal(summary)

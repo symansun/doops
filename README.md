@@ -91,10 +91,11 @@ it does not introduce direct CLI targets or change credential APIs.
 
 For first-time managed credential setup, `doops -session <s> credential configure`
 reuses the existing resource/version/grant lifecycle in one invocation. It accepts
-stdin payloads or a platform-admin-authorized `--from-secret <name> --keys <keys>`
+stdin payloads or a target-exec-authorized `--from-secret <name> --keys <keys>`
 reference on the selected target. Existing resources are reused by ID or unique
-name and scope. It grants the current user an exact scope, verifies all active
-scopes, and promotes only on success. Secret values never enter CLI output.
+name and scope. It configures the target binding, verifies active materializations,
+and promotes only on success. Operators inherit credential use from target ask/exec
+authority; no extra per-user grant or model-generated scope is needed. Secret values never enter CLI output.
 See [Credential Resources](backend/docs/CREDENTIAL_RESOURCES.md) for flags and
 failure semantics; database connectivity is a separate DoSql acceptance step.
 

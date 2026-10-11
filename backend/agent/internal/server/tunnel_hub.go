@@ -1228,8 +1228,8 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	var err error
 	var authorizedCredentials []authorizedCredentialMaterialization
 	if params.Name == "doops_agent_prompt" && len(promptArgs.CredentialRefs) != 0 {
-		authorizedCredentials, err = h.hub.planExplicitCredentialApply(
-			ctx, auth, cluster, instance, promptArgs.SessionID,
+		authorizedCredentials, err = h.hub.resolveExplicitCredentials(
+			auth, cluster, instance,
 			promptArgs.Instruction, promptArgs.CredentialRefs, action, promptArgs.Skill,
 		)
 		if err != nil {

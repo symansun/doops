@@ -64,6 +64,43 @@ func TestDoSQLReadUsesBoundCredentialMetadataAndReturnsEvidenceSummary(t *testin
 	}
 }
 
+func TestDoSQLExecutionRequestUsesIntegratedGoRunner(t *testing.T) {
+	binding := api.AgentCredentialBinding{
+		Use: string(CredentialUseDatabase), Namespace: "apps", ResourceName: "database-secret",
+		Keys: []string{"connection_uri"}, SecretType: "Opaque", ResourceVersion: "7",
+	}
+	params := doSQLParams{Engine: "postgres", DatabaseName: "orders", Statement: "SELECT 1"}
+	request, env, err := buildDoSQLExecutionRequest(params, binding, "dbop_test", "/tmp/journal", "/tmp/evidence", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter, ok := request["adapter"].(map[string]interface{})
+	if !ok || adapter["type"] != "doops-go" || adapter["runnerPath"] != "/app/doops-agent" {
+		t.Fatalf("unexpected integrated adapter: %#v", request["adapter"])
+	}
+	if len(env) != 0 {
+		t.Fatalf("Go runner must not receive credential payload env: %#v", env)
+	}
+	if adapter["clientImage"] != "postgres:16" {
+		t.Fatalf("PostgreSQL must use a PostgreSQL client image: %#v", adapter)
+	}
+}
+
+func TestDoSQLReadReturnsBoundedQueryOutput(t *testing.T) {
+	result := doSQLResultSummary(map[string]interface{}{
+		"executionResult": map[string]interface{}{"stdout": "1\n", "transactionId": "dbtx_query"},
+	}, "dbop_query", "/tmp/journal", "/tmp/evidence")
+	if !strings.Contains(result, `"output":"1\n"`) || !strings.Contains(result, `"status":"verified"`) {
+		t.Fatalf("verified SQL output is missing: %s", result)
+	}
+	result = doSQLResultSummary(map[string]interface{}{
+		"executionResult": map[string]interface{}{"stdout": strings.Repeat("a", 40<<10)},
+	}, "dbop_query", "/tmp/journal", "/tmp/evidence")
+	if !strings.Contains(result, `"output_truncated":true`) || len(result) > 34<<10 {
+		t.Fatal("SQL output is not bounded")
+	}
+}
+
 func TestDoSQLMutationUsesBoundCredentialAndReturnsEvidenceSummary(t *testing.T) {
 	root := t.TempDir()
 	workspaceRoot := filepath.Join(root, "ws")
