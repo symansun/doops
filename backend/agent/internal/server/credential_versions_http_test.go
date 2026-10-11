@@ -57,7 +57,7 @@ func TestCredentialVersionAndGrantHistoryIsMetadataOnlyAndOwnerScoped(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Explicitly remove the fixture helper's metadata grant before asserting denial.
+	// Ownership is sufficient for metadata; no second credential action is required.
 	grants, err := store.ListGrants(deniedUser.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -73,7 +73,7 @@ func TestCredentialVersionAndGrantHistoryIsMetadataOnlyAndOwnerScoped(t *testing
 		}
 	}
 	response := credentialHTTPRequest(t, mux, deniedToken, http.MethodGet, "/v1/credentials/"+resourceWithoutMetadata.ID+"/versions", nil)
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("owner without metadata authority returned %d", response.Code)
+	if response.Code != http.StatusOK {
+		t.Fatalf("owner metadata must inherit ownership without extra authority: %d", response.Code)
 	}
 }

@@ -410,7 +410,7 @@ func TestCredentialBundleResolvesMetadataAndNamedAuthorizationRejectsAmbiguity(t
 	}
 }
 
-func TestCredentialGrantMustMatchEveryDeploymentDimension(t *testing.T) {
+func TestCredentialUseInheritsTargetAuthorityWithoutDeploymentScope(t *testing.T) {
 	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("g", 32))
 	store := openCredentialTestStore(t)
 	owner := createCredentialTestUser(t, store, "owner")
@@ -488,10 +488,17 @@ func TestCredentialGrantMustMatchEveryDeploymentDimension(t *testing.T) {
 			if test.name == "actor" || test.name == "cluster" || test.name == "instance" {
 				wantErr = ErrCredentialForbidden
 			}
+			if test.name != "actor" && test.name != "cluster" && test.name != "instance" && test.name != "use" {
+				wantErr = nil
+			}
 			if _, err := store.AuthorizeCredentialUse(changed); !errors.Is(err, wantErr) {
 				t.Fatalf("mismatched %s error = %v, want %v", test.name, err, wantErr)
 			}
 		})
+	}
+	request.Scope = CredentialGrantScope{Cluster: "doops-edu", Instance: "edu-coder", Use: CredentialUseImagePull}
+	if _, err := store.AuthorizeCredentialUse(request); err != nil {
+		t.Fatalf("target/use alone must resolve the configured credential: %v", err)
 	}
 }
 

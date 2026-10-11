@@ -19,10 +19,6 @@ func (h *GatewayHub) HandleCredentialBundles(w http.ResponseWriter, r *http.Requ
 	}
 	switch r.Method {
 	case http.MethodGet:
-		if !h.store.UserHasAction(auth.UserID, ActionCredentialMetadata) {
-			http.Error(w, "Forbidden", http.StatusForbidden)
-			return
-		}
 		name := strings.TrimSpace(r.URL.Query().Get("name"))
 		if name == "" {
 			http.Error(w, "credential bundle name is required", http.StatusBadRequest)
@@ -39,10 +35,6 @@ func (h *GatewayHub) HandleCredentialBundles(w http.ResponseWriter, r *http.Requ
 		}
 		writeJSONHTTP(w, bundle)
 	case http.MethodPost:
-		if !h.store.UserHasAction(auth.UserID, ActionCredentialCreate) {
-			http.Error(w, "Forbidden", http.StatusForbidden)
-			return
-		}
 		var body credentialBundleHTTPBody
 		if err := decodeCredentialJSON(w, r, &body); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)

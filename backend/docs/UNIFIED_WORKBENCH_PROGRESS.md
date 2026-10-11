@@ -77,8 +77,9 @@ isolation, audit or execution-outcome evidence.
   existing encrypted Opaque Secret lifecycle. Scope binds target, database
   asset, environment, engine, database name and canonical Secret keys.
 - DoSql execution reuses the existing journal/evidence/signed-approval CLI
-  executor. Target-local MySQL, PostgreSQL and MongoDB wrappers validate the
-  DoOps-owned Secret metadata before creating an ephemeral client Pod.
+  executor. The integrated Agent Go database runner validates the DoOps-owned
+  Secret metadata, creates a short-lived structured Job and runs the native
+  MySQL, PostgreSQL or MongoDB client without a shell-generated manifest.
 - Conversation context can carry metadata-only database asset references and
   repository references (`repo_id@branch`) from the Web context panel or CLI
   `--database-ref` / `--repo-ref`. References provide task context only; they
@@ -104,7 +105,7 @@ isolation, audit or execution-outcome evidence.
   The wrappers and fake-kubectl tests pass, but this is not evidence of a live
   database query or mutation.
 - The production Agent image must include the DoSql skill and retain `kubectl`
-  permissions to create only the short-lived, Secret-bound client Pods for
+  permissions to create only the short-lived, Secret-bound database Jobs for
   exact database scopes. PostgreSQL/MongoDB client image pulls and target RBAC
   must be verified through GitOps/CI before rollout.
 - Anonymous Agent registration currently permits identity replacement by
@@ -158,8 +159,8 @@ isolation, audit or execution-outcome evidence.
   `release=v1.3.24` with commit
   `6ac87c9b4a16081cd824cfeb5b15424d27c7b06d`.
 - A metadata-only remote check confirmed that this live Agent does not yet
-  contain `/app/skills/dosql/scripts/dosql-agent.mjs` or the target database
-  client wrappers. This is evidence that the immutable DoSql-enabled Agent
+  contain `/app/skills/dosql/scripts/dosql-agent.mjs` or the integrated Go
+  database runner. This is evidence that the immutable DoSql-enabled Agent
   image has not been rolled out to the target, not permission to use the old
   Agent path as a compatibility route.
 - A read-only `kubectl get pods,services,deployments,statefulsets --all-namespaces

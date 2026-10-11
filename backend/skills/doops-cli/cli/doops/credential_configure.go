@@ -29,7 +29,7 @@ func runCredentialConfigure(args []string, sessionName string, servers []Server,
 	flags.StringVar(&name, "name", "", "Unique managed credential name to reuse or create")
 	flags.StringVar(&credentialType, "type", "", "Credential type (required with --name)")
 	flags.StringVar(&resourceScope, "scope", "", "Credential scope: personal or platform (required with --name)")
-	flags.StringVar(&scope.Namespace, "namespace", "", "Exact Secret materialization namespace")
+	flags.StringVar(&scope.Namespace, "namespace", "", "Secret materialization namespace (runtime metadata)")
 	flags.StringVar(&scope.Use, "use", "", "Credential use: imagePull, gitCheckout, helmPull, tls, opaqueSecret, or database")
 	flags.StringVar(&scope.Workload.Kind, "workload-kind", "", "Workload kind (required except for database and helmPull)")
 	flags.StringVar(&scope.Workload.Name, "workload-name", "", "Workload name (required except for database and helmPull)")
@@ -54,9 +54,11 @@ With --connection-uri, select exactly --password-key in --keys; the Agent builds
 data.connection_uri without returning the source password. Never put passwords in a URL.
 The URL requires a concrete database path, with no query (including an empty ?) or fragment.
 
-Reuses a unique managed resource or creates it, stages a version, grants the exact
-scope to the current user, GETs all grants, verifies every unique active scope,
-then promotes. Stops on the first failure, without retries or automatic cleanup.
+Reuses a unique managed resource or creates it, stages a version, configures the
+target binding, GETs all bindings, verifies every unique active materialization,
+then promotes. It verifies every unique active scope; target operators inherit
+credential use without a second grant.
+Stops on the first failure, without retries or automatic cleanup.
 Only phase IDs and metadata are printed. Re-running stages a new version.
 Database and Helm grants require no workload; database grants also require no database
 asset, environment or database name.

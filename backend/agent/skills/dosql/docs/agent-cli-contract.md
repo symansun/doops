@@ -90,7 +90,7 @@ execution.
 
 | Command | Status | Purpose |
 |---|---|---|
-| `inspect-schema` | Target | Return current schema or collection metadata. |
+| `inspect-schema` | Not exposed | Live schema inspection is routed through `query` with one read-only engine-catalog/information-schema statement; supplied structure snapshots are not live inspection. |
 | `classify` | Implemented | Classify a statement before execution. Server policy remains final. |
 | `discover-databases` | Implemented | Convert supplied service probe output into database candidates and naming prompts. |
 | `discover-resources` | Implemented | Scan authorized code, connection references, Helm values and Kubernetes manifests, merge PostgreSQL/MySQL/MongoDB assets with explicit target hints, preserve Gateway canonical asset IDs, deduplicate by database identity, and persist metadata-only inventory/display resources without secret payloads. |
@@ -101,7 +101,7 @@ execution.
 | `execute-forward-artifacts` | Implemented | Execute derived forward SQL artifacts through the configured adapter and record verified evidence. |
 | `render-forward-evidence-metadata-commit` | Implemented | Render one metadata transaction for verified forward execution evidence. |
 | `resolve-database` | Implemented | Resolve a natural-language database reference to one registered asset, or return ambiguity. |
-| `query` | Implemented | Execute an audited read-only operation through a configured MySQL, PostgreSQL or MongoDB adapter. |
+| `query` | Implemented | Execute one audited read-only MySQL/PostgreSQL statement or structured MongoDB operation. Use this route for both business-data reads and live schema reads. |
 | `scan` | Implemented | Run health, SQL log and security inspection modules from supplied evidence. |
 | `record-execution` | Implemented | Append SQL/MongoDB lifecycle events plus optional timeline baseline evidence to a JSONL execution journal. |
 | `replay-timeline` | Implemented | Read JSONL journal events and return latest environment/change status. |
@@ -141,7 +141,7 @@ execution.
 | `propose-confirmation` | Implemented | Return human-readable confirmation for a mutating change. |
 | `render-script` | Target | Render engine-specific migration script. |
 | `dry-run` | Target | Validate script without changing target when engine supports it. |
-| `execute` | Implemented | Execute an approved schema, data or admin operation and a mandatory read-only verification operation. |
+| `execute` | Implemented | Execute an approved schema, data or admin operation and a mandatory read-only verification operation. Public users reach it through `doops sql --mode apply` or `mcp_dosql_execute operation=execute`. |
 | `verify` | Target | Run post-change verification. |
 
 ## Request Envelope

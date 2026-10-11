@@ -4,7 +4,7 @@
 
 凭据资源 ID 的互斥与操作 session 的互斥是不同边界：同一凭据的变更仍串行；不同
 session 的目标执行可以并行。取消或审计收尾不得把其中一个 session 的状态扩展为
-整个 target 的发布屏障。精确用户/target/workload/use 授权不因并发范围调整而放宽。
+整个 target 的发布屏障。凭据使用继承 target ask/exec 权限；workload 不是独立权限维度。
 
 ## 对象模型
 
@@ -12,7 +12,7 @@ session 的目标执行可以并行。取消或审计收尾不得把其中一个
 | :--- | :--- |
 | Credential Resource | 稳定名称、personal/platform 归属、类型和资源状态 |
 | Credential Version | 加密 payload 的不可变版本，保存 payload digest，不返回 payload |
-| Credential Grant | 某个用户对精确 target/use scope 的持久授权；database grant 的数据库资产规则由 DoSql/Agent 负责 |
+| Credential Grant | 凭据的 target/use 绑定及运行位置元数据；不要求每个操作员重复授权 |
 | Credential Verification | staged 版本在某个 grant scope 上的实际物化和验证证据 |
 | Credential Bundle | 一组 credential ID 的静态元数据集合，当前不参与 `ask --apply` 展开 |
 | Materialization | 目标环境中的 Kubernetes Secret 或临时 Helm/Git 凭据上下文 |
@@ -61,8 +61,9 @@ active grant 的 staged version 执行验证时，页面原样提交该 grant �
 重新推断或放宽 scope。Promote 请求仍由 Gateway 检查所有 active grant 的验证状态；
 grant 吊销和 resource 吊销都沿用 Gateway 的清理流程。
 
-target 视图只对当前用户可管理的资源读取 versions；不可管理资源不读取版本历史。两个
-查询接口只返回 version、grant、scope、状态、digest 和时间等 metadata，不返回 payload。
+target 视图只读取 target 接口，不并行请求 managed 列表或 versions；管理接口的权限状态
+不能清空成功返回的目标凭据。该视图仅展示可用凭据与目标绑定，管理操作在 `我管理的`
+视图执行。查询接口只返回 metadata，不返回 payload。
 
 ## 开发凭据 Preflight
 
@@ -198,21 +199,22 @@ key 和 value 都不能为空。
 
 验证以本次请求的 Chart URL 和受管 payload 仓库 URL 为下载边界，带 HTTP Basic 读取真实 `.tgz`，
 校验 gzip/tar、`Chart.yaml`、`values.yaml` 并返回包摘要，不读取 `index.yaml`。
-下载 URL 必须属于 payload URL 的同源路径范围；重定向、私网地址、无效包和超限失败关闭，
+下载 URL 必须属于 payload URL 的 HTTPS origin；仓库路径不参与权限匹配。重定向、私网地址、无效包和超限失败关闭，
 不会改为匿名请求。CNB 的 payload URL 可用 `https://helm.cnb.cool`，Chart 使用其官方
 `/charts/<repo>/<name>/v/<version>.tgz` 接口。当前 remote 仅支持 HTTPS `.tgz`
 下载，不支持 `oci://`；调用方须明确授权 HTTPS Chart 身份，不会猜测、自动替换仓库路径或 fallback。
 
 Helm grant 只绑定 target 的 cluster/instance 和 use=helmPull，不再把 namespace、workload、
 release 或 Chart URL 写成 Gateway 授权条件。实际请求仍必须从受管凭据 payload 的仓库 URL
-同源路径下载，并通过 Chart 内容校验和包 digest 校验；这保证凭据不会被发往无关 host，
+同源下载，并通过 Chart 内容校验；这保证凭据不会被发往无关 host，
 同时允许同一 target 使用多个 namespace、release 和 Chart。
 
 发布时 Gateway 仍只发送物化元数据。Agent 为本次授权 prompt 建立临时、无 payload 的
-租约，结构化 Helm 内部匹配 session、namespace、release、chart，检查 Secret 的
-credential/grant/version/resourceVersion，再下载并检查包摘要与验证记录一致。
+租约，结构化 Helm 内部匹配 session 与 credential/grant/version/resourceVersion；
+namespace、release、Chart 不是授权条件。凭据物化不下载历史 Chart。实际发布下载当前
+Chart 并验证后一次 staging，dry-run 与 Helm mutation 使用同一个文件。
 租约在 prompt 结束时移除；模型和公开 MCP 参数不读取、提交或回显 Secret 值。
-受管发布保留认证、精确 scope 与包 digest 钉住，允许明确授权的零或多个有序
+受管发布保留认证、target 权限与固定下载文件，允许明确授权的零或多个有序
 `value_files` 和非敏感 Chart-specific `set_strings`，不强制 bundled-only；覆盖资产不扩大
 凭据授权，未授权的远程 values 不可使用。普通升级不再隐式保留历史 values；完整迁移和
 发布校验契约见 [`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
@@ -234,7 +236,7 @@ loopback 和 link-local 目标。Registry 可以使用无 scheme 的 registry ho
 
 ## 执行结果与资源所有权
 
-凭据物化仍使用已有用户、target、session 和精确 scope。发布内部调用继承当前执行
+凭据物化使用已有用户、target、session 和运行位置元数据。发布内部调用继承当前执行
 所有权及 actor/token，不重复获取已持有的资源锁。取消 ACK 不表示物化或发布已停止；
 缺少原始终态，或外部物化/清理/发布已被中断而无法确认副作用时，保留
 `outcome_unknown` 并报告失败；本地命令退出不证明远端状态。不得自动接管、

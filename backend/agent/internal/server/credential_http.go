@@ -54,10 +54,6 @@ func (h *GatewayHub) HandleCredentials(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		h.handleCredentialList(w, r, auth)
 	case http.MethodPost:
-		if !h.store.UserHasAction(auth.UserID, ActionCredentialCreate) {
-			http.Error(w, "Forbidden", http.StatusForbidden)
-			return
-		}
 		var body credentialCreateHTTPBody
 		if err := decodeCredentialJSON(w, r, &body); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -165,9 +161,8 @@ func (h *GatewayHub) handleCredentialHistory(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !h.store.UserHasAction(auth.UserID, ActionCredentialMetadata) ||
-		(!h.store.UserIsPlatformAdmin(auth.UserID) &&
-			(resource.Scope != CredentialScopePersonal || resource.OwnerID != auth.UserID)) {
+	if !h.store.UserIsPlatformAdmin(auth.UserID) &&
+		(resource.Scope != CredentialScopePersonal || resource.OwnerID != auth.UserID) {
 		http.NotFound(w, r)
 		return
 	}
@@ -299,7 +294,7 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 	}
 	if resource.Scope == CredentialScopePersonal {
 		if resource.OwnerID == auth.UserID {
-			if !h.store.UserCan(auth.UserID, body.Scope.Cluster, body.Scope.Instance, ActionAsk) {
+			if !h.store.CanUseTargetCredentials(auth.UserID, body.Scope.Cluster, body.Scope.Instance) {
 				http.Error(w, "Forbidden", http.StatusForbidden)
 				return
 			}
@@ -616,10 +611,6 @@ func (h *GatewayHub) handleCredentialList(w http.ResponseWriter, r *http.Request
 	}
 	if view != "" && view != "managed" {
 		http.Error(w, "invalid credential list view", http.StatusBadRequest)
-		return
-	}
-	if !h.store.UserHasAction(auth.UserID, ActionCredentialMetadata) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
 	filter := CredentialListFilter{ActorID: auth.UserID}

@@ -32,7 +32,7 @@ doops -session release-<commit> ask --target <target> --apply \
 `--apply` 是调用端的 mutation 授权。缺少上述任何发布事实时，Agent 必须返回真实阻塞
 原因，不得猜测 target、镜像、Helm 参数或凭据引用；可先读取明确授权资产取得事实。
 运行时 Helm 资产仅使用明确授权的远程 Chart/values 或本 session workspace 资产。
-首次配置用 `doops -session <s> credential configure` 复用受管凭据系统完成写入、精确授权、
+首次配置用 `doops -session <s> credential configure` 复用受管凭据系统完成写入、目标绑定、
 验证和激活；已有资源用 ID 复用，不把配置步骤或秘密塞入发布 prompt。
 `--credential` 只传 resource name，完整生命周期见
 [`CREDENTIAL_RESOURCES.md`](CREDENTIAL_RESOURCES.md)。
@@ -97,8 +97,9 @@ volumeMounts 和 volumes。发布任务统一调用 `mcp_doops_helm upgrade-inst
 普通升级统一执行 `--reset-values`，输入顺序为 Chart 默认值、按顺序零或多个明确授权的
 `value_files`、非敏感 Chart-specific `set_strings`；覆盖键及类型由 Chart schema 决定。
 真实 mutation 前使用相同输入执行 server-side dry-run 并校验渲染 manifest。
-受管 CNB Chart 通过官方 Helm HTTPS 下载接口认证读取，保留精确 scope 与物化时验证的
-包 digest 钉住；允许明确授权的 `value_files` 和 `set_strings`，不再强制 bundled-only。
+受管 CNB Chart 通过官方 Helm HTTPS 下载接口认证读取。凭据权限继承目标操作权限，
+不逐项匹配 namespace、workload、release、Chart 版本和仓库路径；当前包校验后一次
+staging，dry-run 与实际 Helm 使用相同文件。允许明确授权的 `value_files` 和 `set_strings`。
 这些覆盖不扩大凭据授权；认证或摘要失败不重试匿名、旧登录态或其它资产。
 
 需要使用已绑定 session workspace 中的 Helm 资产时，任务必须显式传

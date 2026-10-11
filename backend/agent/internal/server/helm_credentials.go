@@ -40,8 +40,7 @@ func bindHelmCredentialsForPrompt(session string, bindings []api.AgentCredential
 		if binding.Use != string(CredentialUseHelmPull) {
 			continue
 		}
-		if !k8sNamePattern.MatchString(binding.HelmRelease) || !isRemoteHelmChartReference(binding.HelmChart) ||
-			credentialScalarContainsInlineMaterial(binding.HelmChart) || binding.SecretType != "" ||
+		if binding.SecretType != "" ||
 			binding.ContextKind != "helm-native" || !validNativeHelmSocketPath(binding.ContextSocket) ||
 			!validCredentialSHA256Digest(binding.Digest) ||
 			!strings.HasPrefix(binding.CredentialID, "cred_") ||
@@ -108,18 +107,12 @@ func authorizedHelmCredential(ctx context.Context, params api.HelmParams) (*helm
 	var matched *api.AgentCredentialBinding
 	for index := range lease.Bindings {
 		binding := &lease.Bindings[index]
-		if binding.Namespace != params.Namespace || binding.HelmRelease != params.Release || binding.HelmChart != params.Chart {
-			continue
-		}
 		if matched != nil {
 			return nil, "", errors.New("helm_credential_binding_ambiguous")
 		}
 		matched = binding
 	}
 	if matched == nil {
-		if len(lease.Bindings) != 0 {
-			return nil, "", errors.New("helm_credential_scope_mismatch")
-		}
 		return nil, "", nil
 	}
 	requestBody, err := json.Marshal(map[string]interface{}{

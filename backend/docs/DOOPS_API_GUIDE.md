@@ -694,18 +694,18 @@ Job 使用选定 revision 镜像并复核 revision、namespace 和镜像；无�
 服务范围、变更原因、授权资产和验收条件；业务镜像版本必须来自任务或其明确授权的
 仓库、Chart、values、现有 release 的只读证据，不猜测，也不要求重复粘贴已明确资产中的事实。
 需要凭据时，调用方显式提供一个或多个 metadata-only credential resource
-name；Gateway 将引用绑定当前用户、target 和 session，Agent 返回精确 workload/image/Helm
-scope 后才授权和物化。凭据 payload 不进入公开 prompt、doagent 上下文、CLI 输出、日志或
+name；Gateway 根据当前操作的 ask/exec 权限直接读取 target/use 绑定并物化，
+不调用模型生成授权 scope。凭据 payload 不进入公开 prompt、doagent 上下文、CLI 输出、日志或
 审计记录；Gateway 仅通过内部凭据物化调用向目标 Agent 短暂传递 payload。
 
 内部 Helm binding 元数据增加 `credential_id`、`grant_id`、`version_id`、`helm_release`
-与 `helm_chart`，由 Gateway 从精确授权结果填写；公开调用方不得提交 binding。
+与 `helm_chart`，由 Gateway 从运行位置元数据填写；公开调用方不得提交 binding。
 Helm grant 只绑定 target 的 cluster/instance 和 use=helmPull；namespace、workload、release
-和 Chart URL 不再参与 Gateway 授权匹配。实际请求仍受凭据仓库同源路径和 Chart digest 校验保护。
-Agent 仅在本次 prompt 存续期间建立无 payload 的绑定租约，内部 Helm 检查 scope
-与 Secret resourceVersion 后消费凭据。公开 MCP 不增加密码/token 参数。
+和 Chart URL 不再参与 Gateway 或 Agent 授权匹配。认证只发送给配置的 HTTPS origin，
+仓库路径不作权限条件。Agent 仅在本次 prompt 存续期间建立无 payload 的绑定租约，
+检查 session、凭据身份与 resourceVersion 后消费凭据。公开 MCP 不增加密码/token 参数。
 受管 Helm 发布允许明确授权的 `value_files` 和非敏感 `set_strings`，不强制 bundled-only，
-认证、精确 scope 和验证时的包 digest 钉住保持不变；失败不改走匿名或旧登录态。
+认证、target 权限、包校验与单次 staging 保留；失败不改走匿名或旧登录态。
 
 `mcp_doops_helm upgrade-install` 显式提供 `release`、`namespace`、`chart` 和 `confirm=true`；
 `session_id` 由运行时绑定。`asset_source` 默认 `remote`（HTTPS `.tgz`，当前不支持 OCI），

@@ -107,13 +107,11 @@ func handleNativeHelmRequest(w http.ResponseWriter, request *http.Request, recor
 	decoder := json.NewDecoder(io.LimitReader(request.Body, 1<<20))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&input) != nil || decoder.Decode(&struct{}{}) != io.EOF ||
-		input.SessionID != record.SessionID || input.Namespace != record.Namespace ||
-		input.Release != record.Release || input.Chart != record.Chart ||
+		input.SessionID != record.SessionID ||
 		input.Binding.ContextKind != "helm-native" || input.Binding.ContextSocket != record.Socket ||
 		input.Binding.CredentialID != record.CredentialID || input.Binding.GrantID != record.GrantID ||
 		input.Binding.VersionID != record.VersionID || input.Binding.ResourceVersion != record.ResourceVer ||
-		input.Binding.Digest != record.Digest || input.Binding.HelmRelease != record.Release ||
-		input.Binding.HelmChart != record.Chart {
+		input.Binding.Digest != record.Digest {
 		http.Error(w, "native_helm_context_unavailable", http.StatusForbidden)
 		return
 	}

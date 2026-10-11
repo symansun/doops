@@ -29,6 +29,19 @@ func testManagedHelmBinding() api.AgentCredentialBinding {
 func TestHelmCredentialLeaseIsScopedMetadataAndExpiresWithPrompt(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", filepath.Join(t.TempDir(), "workspaces"))
 	binding := testManagedHelmBinding()
+	materialized, err := materializeNativeHelmCredential(t.Context(), CredentialMaterializeRequest{
+		SessionID: "release", CredentialID: binding.CredentialID, GrantID: binding.GrantID,
+		VersionID: binding.VersionID, Scope: CredentialGrantScope{Use: CredentialUseHelmPull, Namespace: "apps"},
+	}, nativeHelmAuth{URL: "https://charts.example.test", Username: "helm", Password: "synthetic-helm-canary"}, binding.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = cleanupNativeHelmCredential(CredentialCleanupRequest{
+			Namespace: "apps", CredentialID: binding.CredentialID, GrantID: binding.GrantID, AnyVersion: true,
+		})
+	})
+	binding.ContextSocket, binding.ResourceVersion = materialized.ContextSocket, materialized.ResourceVersion
 	cleanup, err := bindHelmCredentialsForPrompt("release", []api.AgentCredentialBinding{binding})
 	if err != nil {
 		t.Fatal(err)
@@ -50,8 +63,8 @@ func TestHelmCredentialLeaseIsScopedMetadataAndExpiresWithPrompt(t *testing.T) {
 	} {
 		params := api.HelmParams{SessionID: "release", Namespace: "apps", Release: "app", Chart: binding.HelmChart}
 		mutate(&params)
-		if _, _, err := authorizedHelmCredential(context.Background(), params); err == nil || err.Error() != "helm_credential_scope_mismatch" {
-			t.Fatalf("cross-scope credential access: %v", err)
+		if _, _, err := authorizedHelmCredential(context.Background(), params); err != nil {
+			t.Fatalf("release metadata must not become credential authorization: %v", err)
 		}
 	}
 	if _, err := bindHelmCredentialsForPrompt("release", nil); err == nil {
@@ -115,7 +128,7 @@ spec:
 	}
 }
 
-func TestManagedHelmChartAllowsOverridesWithoutRelaxingCredentialScope(t *testing.T) {
+func TestManagedHelmChartAllowsNewReleaseAndChartVersions(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "workspaces")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
@@ -186,14 +199,26 @@ func TestManagedHelmChartAllowsOverridesWithoutRelaxingCredentialScope(t *testin
 		}
 	}
 	params.Release = "other"
-	if _, _, err := authorizedHelmCredential(t.Context(), params); err == nil || err.Error() != "helm_credential_scope_mismatch" {
-		t.Fatalf("overrides must not widen credential scope: %v", err)
+	params.Namespace = "other-apps"
+	params.Chart = server.URL + "/releases/assets/app-v2.tgz"
+	if _, _, err := authorizedHelmCredential(t.Context(), params); err != nil {
+		t.Fatalf("target-scoped credential must allow new deployment metadata: %v", err)
 	}
 	params.Release = "app"
 	chart = managedHelmTestArchive(t, append(managedHelmTestEntries(), managedHelmTestEntry{
 		header: tar.Header{Name: "zhiyong/README.md"}, body: []byte("changed chart"),
 	}))
-	if _, err := prepareManagedHelmChart(t.Context(), params, &command); err == nil || err.Error() != "helm_chart_digest_changed" {
-		t.Fatalf("changed authorized artifact accepted: %v", err)
+	command, err = buildHelmCommand(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupNewChart, err := prepareManagedHelmChart(t.Context(), params, &command)
+	if err != nil {
+		t.Fatalf("new Chart version was blocked by an old credential binding: %v", err)
+	}
+	defer cleanupNewChart()
+	staged, err := os.ReadFile(command.args[2])
+	if err != nil || string(staged) != string(chart) {
+		t.Fatalf("new artifact bytes must be staged for dry-run and apply: %v", err)
 	}
 }

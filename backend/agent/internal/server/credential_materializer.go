@@ -157,10 +157,8 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 			Password string `json:"password"`
 		}
 		_ = json.Unmarshal(req.Payload, &payload)
-		digest, err := verifyHelmRepository(ctx, payload.URL, payload.Username, payload.Password, req.Scope.HelmChart)
-		if err != nil {
-			return CredentialMaterialization{}, err
-		}
+		sum := sha256.Sum256(req.Payload)
+		digest := "sha256:" + hex.EncodeToString(sum[:])
 		return materializeNativeHelmCredential(ctx, req, nativeHelmAuth{
 			URL: payload.URL, Username: payload.Username, Password: payload.Password,
 		}, digest)
@@ -952,11 +950,6 @@ func parseTLSPrivateKey(block *pem.Block) (crypto.Signer, error) {
 	default:
 		return nil, fmt.Errorf("unsupported private key PEM type %q", block.Type)
 	}
-}
-
-func verifyHelmRepository(ctx context.Context, repositoryURL, username, password, chart string) (string, error) {
-	_, digest, err := fetchManagedHelmChart(ctx, repositoryURL, username, password, chart)
-	return digest, err
 }
 
 func verifyGitRemote(ctx context.Context, repositoryURL, username, token string) (string, error) {

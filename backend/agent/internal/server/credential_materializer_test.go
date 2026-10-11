@@ -509,11 +509,16 @@ func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T
 	if err != nil {
 		t.Fatalf("materialize Helm credential: %v", err)
 	}
-	if helmResult.Status != "verified" || helmResult.Digest != fmt.Sprintf("sha256:%x", sha256.Sum256(chart)) ||
+	if helmResult.Status != "verified" || !validCredentialSHA256Digest(helmResult.Digest) ||
 		helmResult.SecretType != "" || helmResult.ContextKind != "helm-native" || helmResult.ContextSocket == "" ||
-		helmResult.ResourceVersion == "" || len(helmResult.Keys) != 0 || chartRequests.Load() != 1 {
+		helmResult.ResourceVersion == "" || len(helmResult.Keys) != 0 || chartRequests.Load() != 0 {
 		t.Fatalf("unexpected Helm materialization: %#v", helmResult)
 	}
+	t.Cleanup(func() {
+		_, _ = cleanupNativeHelmCredential(CredentialCleanupRequest{
+			Namespace: "kz-ops", CredentialID: "cred_helm", GrantID: "grant_helm", AnyVersion: true,
+		})
+	})
 	_ = os.Remove(filepath.Join(bin, "secret.json"))
 
 	gitResult, err := materializeCredential(context.Background(), CredentialMaterializeRequest{

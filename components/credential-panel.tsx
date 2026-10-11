@@ -109,22 +109,10 @@ export function CredentialPanel({ session, target }: { session: Session; target:
           }),
         )
       } else {
-        const [targetRows, managedRows] = await Promise.all([
-          listCredentials(session, target, "target"),
-          listCredentials(session, target, "managed"),
-        ])
-        const manageableIDs = new Set(managedRows.map((resource) => resource.id))
-        const manageableTargetRows = targetRows.filter((resource) =>
-          manageableIDs.has(resource.id),
-        )
-        const versions = await Promise.all(
-          manageableTargetRows.map(async (resource) => {
-            const resourceVersions = await listCredentialVersions(session, resource.id)
-            return [resource.id, resourceVersions] as [string, CredentialVersion[]]
-          }),
-        )
-        versionEntries.push(...versions)
-        nextRows = targetRows
+        // Target visibility is authoritative for operators. Do not load the
+        // management view here: its owner/admin boundary is independent and
+        // must not erase a successful target credential response.
+        nextRows = await listCredentials(session, target, "target")
       }
       const nextVersions = Object.fromEntries(versionEntries)
       setRows(nextRows)
@@ -245,7 +233,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
             <h2 className="text-sm font-semibold text-foreground">凭据资源</h2>
           </div>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {target.cluster}/{target.instance} · 仅显示元数据与授权范围
+            {target.cluster}/{target.instance} · 操作权限包含凭据使用权限
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -317,7 +305,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
               <th className="px-3 py-2.5 font-medium">归属</th>
               <th className="px-3 py-2.5 font-medium">状态</th>
               <th className="px-3 py-2.5 font-medium">
-                {view === "target" ? "授权范围 / 版本" : "版本 / 授权范围"}
+                {view === "target" ? "目标绑定" : "版本 / 目标绑定"}
               </th>
               <th className="px-4 py-2.5 text-right font-medium">操作</th>
             </tr>
@@ -358,7 +346,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                       <GrantSummary
                         resource={resource}
                         version={version}
-                        disabled={Boolean(session.demo)}
+                        disabled
                         onVerify={(grant) =>
                           version &&
                           setAction({ kind: "verify", credential: resource, version, grant })
@@ -450,8 +438,10 @@ export function CredentialPanel({ session, target }: { session: Session; target:
             {!rows.length && !loading && (
               <tr>
                 <td colSpan={6} className="px-4 py-16 text-center text-sm text-muted-foreground">
-                  {view === "target"
-                    ? "当前用户在该目标上没有已授权凭据"
+                  {error
+                    ? "凭据加载失败，请查看错误并刷新"
+                    : view === "target"
+                    ? "当前目标没有已配置的可用凭据"
                     : "当前账号没有可管理的凭据"}
                 </td>
               </tr>

@@ -40,10 +40,8 @@ func fetchManagedHelmChart(ctx context.Context, repositoryURL, username, passwor
 	if err != nil || !strings.HasSuffix(endpoint.Path, ".tgz") {
 		return nil, "", errors.New("helm_chart_invalid")
 	}
-	repositoryPath := strings.TrimSuffix(repository.Path, "/")
 	if !strings.EqualFold(repository.Hostname(), endpoint.Hostname()) ||
-		managedHelmPort(repository) != managedHelmPort(endpoint) ||
-		(endpoint.Path != repositoryPath && !strings.HasPrefix(endpoint.Path, repositoryPath+"/")) {
+		managedHelmPort(repository) != managedHelmPort(endpoint) {
 		return nil, "", errors.New("helm_chart_scope_mismatch")
 	}
 	if (username == "") != (password == "") {

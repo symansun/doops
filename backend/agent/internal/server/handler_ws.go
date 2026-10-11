@@ -1604,6 +1604,10 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		writeJSON(buildToolErrorResponse(reqID, "doagent_execution_failed"))
 		return
 	}
+	if execution.Skill == "dosql" && !execution.RequireToolEvidence && toolTraces.hasFailedSQLRead() {
+		writeJSON(buildToolErrorResponse(reqID, "dosql_query_failed"))
+		return
+	}
 	if execution.RequireToolEvidence {
 		if err := toolTraces.requireCompletedToolEvidence(); err != nil {
 			writeJSON(buildToolErrorResponse(reqID, err.Error()))

@@ -108,6 +108,7 @@ export async function executeControlledDatabaseOperation(input) {
     executionResult = normalizeExecutionResult(
       await adapter.execute({
         engine: operation.engine,
+        operationId: operation.operationId,
         statement: operation.normalizedStatement,
         databaseName: input.databaseName,
         phase: "operation",
@@ -151,6 +152,7 @@ export async function executeControlledDatabaseOperation(input) {
     if (mode === "execute") {
       verificationResult = normalizeExecutionResult(await adapter.execute({
         engine: operation.engine,
+        operationId: operation.operationId,
         statement: verificationStatement(input),
         databaseName: input.databaseName,
         phase: "verification",
@@ -258,31 +260,55 @@ export function createDatabaseCliAdapter(input = {}) {
   const type = requireText(input.type, "adapter.type");
   const baseEnv = input.env ?? process.env;
   const spawnFile = input.spawnFile ?? runProcess;
+  if (type === "doops-go") {
+    const engine = requireText(input.engine, "adapter.engine");
+    const runnerPath = requireText(input.runnerPath ?? "/app/doops-agent", "adapter.runnerPath");
+    const namespace = requireText(input.namespace, "adapter.namespace");
+    const database = requireText(input.database, "adapter.database");
+    const secretName = requireText(input.secretName, "adapter.secretName");
+    return {
+      trustedClient: true,
+      targetFingerprint() {
+        return connectionFingerprint({
+          engine, transport: "doops-agent-go", namespace, database, secretName,
+          clientFingerprint: input.clientFingerprint ?? "go-database-runner-v1",
+        });
+      },
+      execute(request) {
+        const runnerRequest = {
+          operation_id: request.operationId,
+          phase: request.phase,
+          engine,
+          namespace,
+          database_name: database,
+          secret_name: secretName,
+          client_image: input.clientImage,
+          uri_key: input.uriKey,
+          url_key: input.urlKey,
+          user_key: input.userKey,
+          password_key: input.passwordKey,
+          read_only: request.readOnly === true,
+          statement: request.statement,
+          mongo_operation: request.mongoOperation,
+          mongo_script: engine === "mongodb" ? mongoEvalScript() : undefined,
+        };
+        return executeProcess({
+          command: runnerPath,
+          args: ["database-runner"],
+          stdin: `${JSON.stringify(runnerRequest)}\n`,
+          env: runtimeEnvironment(baseEnv),
+          spawnFile,
+        });
+      },
+    };
+  }
   if (type === "postgres-psql") {
     const client = resolveClientDescriptor({
       configuredPath: input.psqlPath,
       defaultName: "psql",
-      allowedWrapperNames: ["docker-db-client.sh", "doops-postgres-client.sh"],
+      allowedWrapperNames: ["docker-db-client.sh"],
       spawnFile,
     });
-    if (basename(client.command) === "doops-postgres-client.sh") {
-      const namespace = requireText(baseEnv.DOSQL_POSTGRES_NAMESPACE, "DOSQL_POSTGRES_NAMESPACE");
-      const database = requireText(baseEnv.DOSQL_POSTGRES_DATABASE, "DOSQL_POSTGRES_DATABASE");
-      const secretName = requireText(baseEnv.DOSQL_POSTGRES_SECRET_NAME, "DOSQL_POSTGRES_SECRET_NAME");
-      return {
-        trustedClient: client.trusted,
-        targetFingerprint() {
-          return connectionFingerprint({
-            engine: "postgres", transport: "doops-agent", namespace, database, secretName,
-            uriKey: baseEnv.DOSQL_POSTGRES_URI_KEY || "connection_uri", clientFingerprint: client.fingerprint,
-          });
-        },
-        execute(request) {
-          if (request.databaseName !== database) throw new Error("requested database does not match DOSQL_POSTGRES_DATABASE");
-          return executeProcess({ command: client.command, args: PSQL_ARGS, stdin: formatSqlInput(request, "postgres"), env: runtimeEnvironment(baseEnv), spawnFile });
-        },
-      };
-    }
     const connectionUriEnv = requireText(input.connectionUriEnv, "adapter.connectionUriEnv");
     return processAdapter({
       command: client.command,
@@ -313,65 +339,9 @@ export function createDatabaseCliAdapter(input = {}) {
     const client = resolveClientDescriptor({
       configuredPath: input.mysqlPath,
       defaultName: "mysql",
-      allowedWrapperNames: ["docker-db-client.sh", "doops-mysql-client.sh"],
+      allowedWrapperNames: ["docker-db-client.sh"],
       spawnFile,
     });
-    if (basename(client.command) === "doops-mysql-client.sh") {
-      const namespace = requireText(
-        baseEnv.DOSQL_MYSQL_NAMESPACE,
-        "DOSQL_MYSQL_NAMESPACE",
-      );
-      const configuredDatabase = requireText(
-        baseEnv.DOSQL_MYSQL_DATABASE,
-        "DOSQL_MYSQL_DATABASE",
-      );
-      const secretName = requireText(
-        baseEnv.DOSQL_MYSQL_SECRET_NAME,
-        "DOSQL_MYSQL_SECRET_NAME",
-      );
-      const urlKey = baseEnv.DOSQL_MYSQL_URL_KEY || "SPRING_DATASOURCE_URL";
-      const userKey = baseEnv.DOSQL_MYSQL_USER_KEY || "SPRING_DATASOURCE_USERNAME";
-      const passwordKey =
-        baseEnv.DOSQL_MYSQL_PASSWORD_KEY || "SPRING_DATASOURCE_PASSWORD";
-      const clientImage = requireText(
-        baseEnv.DOSQL_MYSQL_CLIENT_IMAGE,
-        "DOSQL_MYSQL_CLIENT_IMAGE",
-      );
-      function requireRequestedDatabase(request) {
-        const database = requireText(request.databaseName, "databaseName");
-        if (database !== configuredDatabase) {
-          throw new Error("requested database does not match DOSQL_MYSQL_DATABASE");
-        }
-        return database;
-      }
-      return {
-        trustedClient: client.trusted,
-        targetFingerprint(request) {
-          return connectionFingerprint({
-            engine: "mysql",
-            transport: "doops-agent",
-            namespace,
-            secretName,
-            urlKey,
-            userKey,
-            passwordKey,
-            clientImage,
-            database: requireRequestedDatabase(request),
-            clientFingerprint: client.fingerprint,
-          });
-        },
-        execute(request) {
-          requireRequestedDatabase(request);
-          return executeProcess({
-            command: client.command,
-            args: [],
-            stdin: formatSqlInput(request, "mysql"),
-            env: runtimeEnvironment(baseEnv),
-            spawnFile,
-          });
-        },
-      };
-    }
     const hostEnv = requireText(input.hostEnv, "adapter.hostEnv");
     const userEnv = requireText(input.userEnv, "adapter.userEnv");
     const passwordEnv = requireText(input.passwordEnv, "adapter.passwordEnv");
@@ -414,38 +384,9 @@ export function createDatabaseCliAdapter(input = {}) {
     const client = resolveClientDescriptor({
       configuredPath: input.mongoshPath,
       defaultName: "mongosh",
-      allowedWrapperNames: ["docker-db-client.sh", "doops-mongodb-client.sh"],
+      allowedWrapperNames: ["docker-db-client.sh"],
       spawnFile,
     });
-    if (basename(client.command) === "doops-mongodb-client.sh") {
-      const namespace = requireText(baseEnv.DOSQL_MONGODB_NAMESPACE, "DOSQL_MONGODB_NAMESPACE");
-      const database = requireText(baseEnv.DOSQL_MONGODB_DATABASE, "DOSQL_MONGODB_DATABASE");
-      const secretName = requireText(baseEnv.DOSQL_MONGODB_SECRET_NAME, "DOSQL_MONGODB_SECRET_NAME");
-      return {
-        trustedClient: client.trusted,
-        targetFingerprint() {
-          return connectionFingerprint({
-            engine: "mongodb", transport: "doops-agent", namespace, database, secretName,
-            uriKey: baseEnv.DOSQL_MONGODB_URI_KEY || "connection_uri", clientFingerprint: client.fingerprint,
-          });
-        },
-        execute(request) {
-          if (request.databaseName !== database) throw new Error("requested database does not match DOSQL_MONGODB_DATABASE");
-          const mongoOperation = normalizeMongoOperation(request.mongoOperation);
-          return executeProcess({
-            command: client.command,
-            args: ["--nodb", "--quiet", "--eval", mongoEvalScript()],
-            env: {
-              ...runtimeEnvironment(baseEnv),
-              DOSQL_MONGODB_OPERATION: JSON.stringify(mongoOperation),
-              DOSQL_MONGODB_REQUIRE_READ_ONLY_ROLE: request.requireReadOnlyCredential ? "1" : "0",
-              DOSQL_MONGODB_DATABASE: database,
-            },
-            spawnFile,
-          });
-        },
-      };
-    }
     const connectionUriEnv = requireText(input.connectionUriEnv, "adapter.connectionUriEnv");
     return {
       trustedClient: client.trusted,

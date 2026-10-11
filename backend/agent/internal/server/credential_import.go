@@ -116,12 +116,6 @@ func (h *GatewayHub) handleCredentialSecretImport(w http.ResponseWriter, r *http
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// Managing a personal credential does not authorize reading arbitrary
-	// Kubernetes Secrets with the Agent's service identity.
-	if !h.store.UserIsPlatformAdmin(auth.UserID) {
-		http.Error(w, "credential_import_forbidden", http.StatusForbidden)
-		return
-	}
 	var req credentialSecretImportRequest
 	if decodeCredentialJSON(w, r, &req) != nil || validateCredentialSecretImport(req) != nil {
 		http.Error(w, "credential_import_request_invalid", http.StatusBadRequest)
@@ -131,13 +125,18 @@ func (h *GatewayHub) handleCredentialSecretImport(w http.ResponseWriter, r *http
 		http.Error(w, "credential_import_type_invalid", http.StatusBadRequest)
 		return
 	}
+	if !h.canRotateCredential(auth.UserID, resource) || !h.store.UserCan(auth.UserID, req.Cluster, req.Instance, ActionExec) {
+		http.Error(w, "credential_import_forbidden", http.StatusForbidden)
+		return
+	}
 	unlock, err := h.acquireCredentialMutationLocks(r.Context(), []string{resource.ID})
 	if err != nil {
 		http.Error(w, "operation canceled", http.StatusConflict)
 		return
 	}
 	defer unlock()
-	if h.store.validateUserTokenAuth(auth) != nil || !h.store.UserIsPlatformAdmin(auth.UserID) {
+	if h.store.validateUserTokenAuth(auth) != nil || !h.canRotateCredential(auth.UserID, resource) ||
+		!h.store.UserCan(auth.UserID, req.Cluster, req.Instance, ActionExec) {
 		http.Error(w, "credential_import_forbidden", http.StatusForbidden)
 		return
 	}
@@ -199,7 +198,8 @@ func (h *GatewayHub) handleCredentialSecretImport(w http.ResponseWriter, r *http
 		fail("credential_import_keys_invalid", http.StatusBadGateway)
 		return
 	}
-	if h.store.validateUserTokenAuth(auth) != nil || !h.store.UserIsPlatformAdmin(auth.UserID) {
+	if h.store.validateUserTokenAuth(auth) != nil || !h.canRotateCredential(auth.UserID, resource) ||
+		!h.store.UserCan(auth.UserID, req.Cluster, req.Instance, ActionExec) {
 		fail("credential_import_forbidden", http.StatusForbidden)
 		return
 	}
