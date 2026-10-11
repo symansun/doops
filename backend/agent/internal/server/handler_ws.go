@@ -1057,7 +1057,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
 				return
 			}
-			args.Instruction += "\n\nGateway-managed credential bindings (metadata only; never read Secret values):\n" + bindingContext
+			args.Instruction += "\n\nGateway-managed credential bindings (metadata only; never read Secret values). Use name or credential_id as credential_ref; grant_id and version_id are audit metadata:\n" + bindingContext
 			if hasHelmCredentialBinding(args.CredentialBindings) {
 				if operation != "apply" {
 					writeJSON(buildErrorResponse(reqID, -32602, "Helm credential bindings require apply"))

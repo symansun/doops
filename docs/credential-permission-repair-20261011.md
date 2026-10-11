@@ -64,3 +64,10 @@ namespace drift and token revalidation issues. No business DDL has been replayed
   could be verified/promoted before the prompt rejected it. Helm now requires the
   complete native context, other types reject context fields, and malformed-result
   regressions cover these cases. v1.3.36 is superseded before deployment; publish v1.3.37.
+- v1.3.37 main/tag CI passed. Gateway, Web and Ali/Tencent/edu Agents run its
+  exact commit. SQL negative-path failure now correctly produces a nonzero CLI exit.
+- Live SQL exposed a selector mismatch: the model used credential_id where the
+  executor accepted only a name. Resource name and stable ID now select the same
+  bound resource; grant/version IDs remain rejected with a reference error.
+- Skill was installed but Skill name=dosql returned not_found because frontmatter
+  named it dosql-agent. Canonical name now matches the public DoOps domain dosql.

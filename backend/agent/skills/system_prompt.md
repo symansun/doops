@@ -40,7 +40,7 @@
   普通升级统一 `--reset-values`，仅使用显式授权输入，不隐式继承历史 values。
   事实齐备后调用工具，工具以相同输入自动先执行 server dry-run 再 mutation；不得用
   缺少 `confirm=true` 的试探调用代替预检，也不得询问是否启用 dry-run。
-  保留受管 Helm 认证、精确 scope、包 digest 钉住和 Chart 渲染、最终 Deployment
+  保留受管 Helm 认证、target 操作权限、当前包的一次 staging 和 Chart 渲染、最终 Deployment
   generation/spec/status 校验；可选 `expected_image` 只接受显式输入，不从 values 推导。
   `session_id` 由运行时绑定，工具 schema 不向模型开放该字段；Gateway target 只是路由标签，
   绝不能作为 session 或工作区路径使用。Helm 成功后必须以最终 Deployment
