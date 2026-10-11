@@ -58,6 +58,14 @@ type FileReadParams struct {
 	Path      string `json:"path"`
 }
 
+type WorkspaceReadParams struct {
+	SessionID string `json:"session_id"`
+	Operation string `json:"operation"`
+	Path      string `json:"path,omitempty"`
+	Query     string `json:"query,omitempty"`
+	Ref       string `json:"ref,omitempty"`
+}
+
 // DockerParams 用于 doops_docker 容器管理。
 type DockerParams struct {
 	SessionID string `json:"session_id"`

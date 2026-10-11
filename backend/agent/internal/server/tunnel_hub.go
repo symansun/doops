@@ -2532,6 +2532,8 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 		return ActionPull
 	case "doops_file_read":
 		return ActionRead
+	case "doops_workspace_read":
+		return ActionRead
 	case "doops_file_write":
 		return ActionWrite
 	case "doops_node_info":

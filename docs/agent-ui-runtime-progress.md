@@ -55,6 +55,13 @@ cancelled or force-unlocked for this release.
 
 - `lib/agent-ui-runtime.ts` imports the shared factory; the previous custom
   runtime class is removed. Transport uses protobuf JSON and strict NDJSON.
+- DoOps now supplies Agent UI's native `codeWorkspace` and workspace-backed
+  deliverables. The Code pane reads the current session workspace through the
+  existing Gateway file boundary; the Work pane previews changed files under
+  `output/`, `artifacts/` and `deliverables/`.
+- The DoOps host uses Agent UI's native developer composer. Custom ask/apply
+  mode controls and database/repository prompt bindings were removed; deployment
+  forms remain in the separate deployment surface.
 - The server source uses the shared store, not a DoOps reducer. Protocol
   metadata, request/session ownership, public ACP projection, Gateway final
   results and authorized deployment forms are enforced.

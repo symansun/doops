@@ -44,8 +44,10 @@ flowchart LR
 
 doops-agent 通过本地 ACP HTTP 调用 `/usr/local/bin/do-agent`：
 
-1. 首次请求调用 `session/new`，将 cwd 绑定到当前 session 工作区。
-2. 每次 prompt 调用 `session/setMode`，避免复用会话时继承旧权限语义。
+1. 首次请求调用 `session/new`，将 cwd 绑定到当前 session 工作区，并设置
+   `permissionMode=auto`；DoOps 的每轮 `allowedTools` 才是工具边界。
+2. 复用旧会话时再次调用 `session/new` 刷新 `permissionMode=auto`，每次 prompt
+   再调用 `session/setMode`，避免历史会话继承交互式权限语义。
 3. 调用 `session/prompt`，并通过 SSE 转发 Agent 消息和工具进度。
 4. 结构化请求只接受一个 JSON 对象作为终态结果。
 
@@ -58,7 +60,8 @@ doops-agent 通过本地 ACP HTTP 调用 `/usr/local/bin/do-agent`：
 
 ## 权限
 
-- doagent 原生模式和运行时配置决定工具权限。
+- DoOps 使用 doagent 的 `auto` 权限模式，按每轮显式 `allowedTools` 限制可见工具；
+  apply 仍额外要求一次性 mutation authority 和结构化工具证据。
 - doops-agent 不调用 `permission/reply`。
 - 收到 `permission.updated` 时操作失败并回传权限详情。
 - target 授权、workspace 锁和审计由 DoOps 控制面负责，不能交给提示词判断。
@@ -67,6 +70,8 @@ doops-agent 通过本地 ACP HTTP 调用 `/usr/local/bin/do-agent`：
 
 - 每个 session 使用独立工作区。
 - 文件和同步接口必须校验 session 与路径，禁止目录穿越。
+- Agent UI 的代码工作区通过 `doops_workspace_read` 获取文件树、源码、变更、Diff、搜索和 Git 元数据；
+  该入口只需要目标 `read` 权限，不执行 shell。
 - 发布任务在 workspace 锁内执行，并以真实工具证据判断结果，不由 Agent 网关伪造。
 - 大文件使用 `doops push/pull`；小文本查看使用文件工具。
 

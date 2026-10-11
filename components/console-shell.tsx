@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic"
 import type { AgentSessionRuntime } from "@agent-cloud/agent-ui"
 import { Database, Globe2 } from "lucide-react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { clearServerSession, fetchTargets, restoreServerSession, type Session, type Target } from "@/lib/client"
 import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
 import { isDemoAllowed } from "@/lib/demo-policy"
@@ -12,7 +12,7 @@ import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
 import { TerminalPanel } from "./terminal-panel"
 import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
-import type { DoopsConversationReferences } from "@/lib/agent-session-transport"
+import { createDoopsCodeWorkspace } from "@/lib/agent-code-workspace"
 import { FilesPanel } from "./files-panel"
 import { KnowledgeBase } from "./knowledge-base"
 import { DatabasePanel } from "./database-panel"
@@ -78,11 +78,14 @@ export function ConsoleShell() {
   const [refreshVersion, setRefreshVersion] = useState(0)
   const [error, setError] = useState("")
   const [showGuide, setShowGuide] = useState(false)
-  const conversationReferences = useRef<DoopsConversationReferences>({ databaseRefs: [], repositoryRefs: [] })
-  const agentRuntime = useMemo(() => {
+  const codeWorkspace = useMemo(() => {
     if (!session || !selected) return null
-    return createDoopsAgentUiRuntime({ session, target: selected, sessionId, references: conversationReferences })
+    return createDoopsCodeWorkspace({ session, target: selected, sessionId })
   }, [session, selected?.cluster, selected?.instance, sessionId])
+  const agentRuntime = useMemo(() => {
+    if (!session || !selected || !codeWorkspace) return null
+    return createDoopsAgentUiRuntime({ session, target: selected, sessionId, codeWorkspace })
+  }, [session, selected?.cluster, selected?.instance, sessionId, codeWorkspace])
   const [openedAgentRuntime, setOpenedAgentRuntime] = useState<AgentSessionRuntime | null>(null)
   useEffect(() => {
     if (!agentRuntime || (view === "console" && tab === "ask")) setOpenedAgentRuntime(agentRuntime)
@@ -194,7 +197,6 @@ export function ConsoleShell() {
     }
     setSelected(t)
     setSessionId(randomSession())
-    conversationReferences.current = { databaseRefs: [], repositoryRefs: [] }
     // AI 优先：切换机器后，默认进入 AI 助手而非终端
     setTab((cur) => (cur === "overview" || cur === "terminal" ? "ask" : cur))
   }
@@ -467,20 +469,18 @@ export function ConsoleShell() {
         </main>
       </div>
       )}
-      {selected && agentRuntime && openedAgentRuntime === agentRuntime && (
+      {selected && codeWorkspace && agentRuntime && openedAgentRuntime === agentRuntime && (
         <div hidden={view !== "console" || tab !== "ask"} className="min-h-0 flex-1">
           <AgentUiPanel
             key={`ask-${selected.key}-${sessionId}`}
             runtime={agentRuntime}
-            target={selected}
             sessionId={sessionId}
+            codeWorkspace={codeWorkspace}
             onConfigureModel={() => {
               setAdminDefaultTab("config")
               setView("admin")
             }}
             onSessionChange={setSessionId}
-            references={conversationReferences.current}
-            onReferencesChange={(next) => { conversationReferences.current = next }}
           />
         </div>
       )}

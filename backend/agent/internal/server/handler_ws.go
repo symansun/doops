@@ -1192,6 +1192,14 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			writeJSON(buildSuccessResponse(reqID, result))
 		}
 
+	case "doops_workspace_read":
+		result, err := handleWorkspaceRead(argBytes)
+		if err != nil {
+			writeJSON(buildToolErrorResponse(reqID, err.Error()))
+		} else {
+			writeJSON(buildSuccessResponse(reqID, result))
+		}
+
 	case "doops_workspace_begin":
 		result, err := handleWorkspaceBegin(argBytes)
 		if err != nil {
@@ -1382,7 +1390,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 				"sessionId":      requestedSessionID,
 				"systemPrompt":   systemPrompt,
 				"cwd":            "/root/ws/" + doopsSessionID,
-				"permissionMode": "restricted",
+				"permissionMode": "auto",
 			},
 		})
 		if err != nil {
@@ -1409,6 +1417,22 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			gw.sessionMapMu.Unlock()
 		}
 		log.Printf("🔗 Bound Doops Session %s -> doagent Session %s", doopsSessionID, targetSessionID)
+	} else {
+		// DoOps owns the per-prompt allowlist and never exposes an interactive
+		// permission UI. Refresh reused sessions so older sessions created with
+		// restricted mode cannot emit permission.updated for an allowed tool.
+		if _, err := doagentRPCContext(ctx, doagentURL, map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      "refresh-permission-" + doopsSessionID,
+			"method":  "session/new",
+			"params": map[string]interface{}{
+				"sessionId":      targetSessionID,
+				"permissionMode": "auto",
+			},
+		}); err != nil {
+			writeJSON(buildErrorResponse(reqID, -32603, "doagent_permission_mode_configuration_failed"))
+			return
+		}
 	}
 
 	// 仅当调用方显式指定时覆盖模型，并在复用会话时同样生效。

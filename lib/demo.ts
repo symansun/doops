@@ -277,6 +277,25 @@ function shellOutput(cmd: string): string[] {
     const dir = lsMatch[1] || lsMatch[2] || lsMatch[3] || "/"
     return demoListing(dir)
   }
+  if (/find .* -printf/.test(c)) {
+    return ["d\tartifacts\n", "f\tREADME.md\n", "f\toutput.md\n"]
+  }
+  if (/git -C .* rev-parse --is-inside-work-tree/.test(c)) {
+    return ["git\tready\n", " M output.md\n", "?? artifacts/result.md\n"]
+  }
+  if (/git -C .* show HEAD:/.test(c)) {
+    return ["# Previous result\n\nThe previous workspace result is available here.\n"]
+  }
+  if (/git -C .* rev-parse HEAD/.test(c)) {
+    return ["branch\tmain\n", "head\t0123456789abcdef0123456789abcdef01234567\n"]
+  }
+  if (/git -C .* log -n/.test(c)) {
+    return ["0123456789abcdef0123456789abcdef01234567\t2026-10-11T08:00:00Z\tdoops\tCreate workspace result\n"]
+  }
+  if (/grep -RFil/.test(c)) {
+    const root = c.match(/\/root\/ws\/[A-Za-z0-9._-]+/)?.[0] || "/root/ws/demo-session"
+    return [`${root}/output.md\n`, `${root}/artifacts/result.md\n`]
+  }
   if (/uptime|^top|load/.test(c))
     return [" 09:14:32 up 6 days,  3:21,  2 users,  load average: 0.18, 0.12, 0.09\n"]
   if (/df(\s|$)/.test(c))
@@ -438,6 +457,27 @@ nginx -s reload
       type: "result",
       result: { content: [{ type: "text", text: demoFileContent(path) }] },
     })
+    onEvent({ type: "done" })
+    return
+  }
+
+  if (tool === "doops_workspace_read") {
+    const operation = String(args.operation || "")
+    const path = String(args.path || "")
+    const result = operation === "list"
+      ? { entries: [{ name: "artifacts", path: "artifacts", type: "directory" }, { name: "README.md", path: "README.md", type: "file" }, { name: "output.md", path: "output.md", type: "file" }] }
+      : operation === "changes"
+        ? { gitStatus: "ready", gitAvailable: true, changes: [{ name: "output.md", path: "output.md", status: "modified" }, { name: "result.md", path: "artifacts/result.md", status: "created" }] }
+        : operation === "search"
+          ? { entries: [{ name: "output.md", path: "output.md", type: "file" }, { name: "result.md", path: "artifacts/result.md", type: "file" }], truncated: false }
+          : operation === "diff"
+            ? { path, baseline: "0123456789abcdef0123456789abcdef01234567", gitStatus: "ready", stale: false, before: { present: true, content: "# Previous result\n\nThe previous workspace result is available here.\n", encoding: "utf-8", truncated: false }, after: { present: true, content: demoFileContent(path), encoding: "utf-8", truncated: false } }
+            : operation === "git-summary"
+              ? { branch: "main", clean: false, detached: false, head: "0123456789abcdef0123456789abcdef01234567", refs: [], status: "ready" }
+              : operation === "git-log"
+                ? { commits: [{ oid: "0123456789abcdef0123456789abcdef01234567", authoredAt: "2026-10-11T08:00:00Z", author: "doops", subject: "Create workspace result", parents: [] }], cursor: null, ref: String(args.ref || "HEAD"), truncated: false }
+                : { path, content: demoFileContent(path), encoding: "utf-8", contentType: "text/markdown", bytes: demoFileContent(path).length, truncated: false, binary: false }
+    onEvent({ type: "result", result: { content: [{ type: "text", text: JSON.stringify(result) }] } })
     onEvent({ type: "done" })
     return
   }
