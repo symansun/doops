@@ -2507,6 +2507,22 @@ func TestGatewayRPCRejectsInternalCredentialToolsFromUserClients(t *testing.T) {
 }
 
 func TestGatewayRPCAllowsConcurrentReadOnlyOperationsForSameTarget(t *testing.T) {
+	for _, request := range []struct {
+		action GatewayAction
+		tool   string
+	}{
+		{ActionInfo, "doops_node_info"},
+		{ActionRead, "doops_file_read"},
+		{ActionRead, "doops_workspace_read"},
+	} {
+		t.Run(request.tool, func(t *testing.T) {
+			testGatewayConcurrentReadOnlyRPC(t, request.action, request.tool)
+		})
+	}
+}
+
+func testGatewayConcurrentReadOnlyRPC(t *testing.T, action GatewayAction, tool string) {
+	t.Helper()
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -2514,8 +2530,8 @@ func TestGatewayRPCAllowsConcurrentReadOnlyOperationsForSameTarget(t *testing.T)
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionInfo}}); err != nil {
-		t.Fatalf("grant info: %v", err)
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{action}}); err != nil {
+		t.Fatalf("grant %s: %v", action, err)
 	}
 
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
@@ -2535,18 +2551,18 @@ func TestGatewayRPCAllowsConcurrentReadOnlyOperationsForSameTarget(t *testing.T)
 	clientB := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
 	defer clientB.Close()
 
-	args, _ := json.Marshal(map[string]interface{}{"session_id": "info"})
+	args, _ := json.Marshal(map[string]interface{}{"session_id": "info", "operation": "list", "path": "report.md"})
 	writeGatewayJSON(t, clientA, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      2,
 		"method":  "tools/call",
-		"params":  map[string]interface{}{"name": "doops_node_info", "arguments": json.RawMessage(args)},
+		"params":  map[string]interface{}{"name": tool, "arguments": json.RawMessage(args)},
 	})
 	writeGatewayJSON(t, clientB, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      2,
 		"method":  "tools/call",
-		"params":  map[string]interface{}{"name": "doops_node_info", "arguments": json.RawMessage(args)},
+		"params":  map[string]interface{}{"name": tool, "arguments": json.RawMessage(args)},
 	})
 
 	for i := 0; i < 2; i++ {

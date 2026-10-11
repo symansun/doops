@@ -41,6 +41,7 @@ func TestSessionLeaseCannotEnterDuringAgentUpgrade(t *testing.T) {
 		{ActionExec, "target-mutation:dev/node"},
 		{ActionWrite, "workspace:release"},
 		{ActionInfo, "query:node"},
+		{ActionRead, "workspace:release"},
 	} {
 		lease, err := agent.acquireActionLeaseForSession(context.Background(), request.action, request.resource, "release", 0, time.Second)
 		if err == nil {
@@ -76,6 +77,7 @@ func TestSessionConflictPolicyMatchesMutationAndWorkspaceLeases(t *testing.T) {
 		{"different session nginx", ActionExec, "nginx:dev/node", "website", false},
 		{"clean held workspace", ActionClean, "workspace:release", "maintenance", true},
 		{"read-only query", ActionInfo, "query:node", "release", false},
+		{"same workspace read", ActionRead, "workspace:release", "release", false},
 		{"upgrade", ActionAgentUpgrade, "target:dev/node", "upgrade", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,6 +91,26 @@ func TestSessionConflictPolicyMatchesMutationAndWorkspaceLeases(t *testing.T) {
 				t.Fatalf("cancellation conflict = %t, want %t", got, tc.conflict)
 			}
 		})
+	}
+}
+
+func TestWorkspaceReadsCanInspectAnExecutingSession(t *testing.T) {
+	agent := &GatewayAgent{}
+	writer, err := agent.acquireActionLeaseForSession(context.Background(), ActionExec, "target-mutation:dev/node", "release", 0, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Release()
+	for index := 0; index < 2; index++ {
+		reader, err := agent.acquireActionLeaseForSession(context.Background(), ActionRead, "workspace:release", "release", 0, time.Second)
+		if err != nil {
+			t.Fatalf("workspace read was blocked by session execution: %v", err)
+		}
+		defer reader.Release()
+	}
+	if write, err := agent.acquireActionLeaseForSession(context.Background(), ActionWrite, "workspace:release", "release", 0, time.Second); err == nil {
+		write.Release()
+		t.Fatal("workspace write entered an executing session")
 	}
 }
 

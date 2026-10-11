@@ -604,6 +604,8 @@ CLI 保持原有输出契约，不能以该路径绕过组件的版本检查。
 
 为 Agent UI 代码工作台提供当前 session 工作区的只读文件树、源码、变更、Diff、搜索和 Git 信息。
 该工具只需要目标 `read` 权限，不执行 shell，也不修改工作区。
+结构化文件与工作区 `read` 使用并发只读通道；同一 session 的多个读取可同时执行，
+也可查看正在执行的 session。写入/执行仍互斥，Agent 升级期间的维护隔离仍生效。
 
 ```json
 {"session_id":"console_abc123","operation":"list","path":"src"}
