@@ -67,7 +67,8 @@ namespace drift and token revalidation issues. No business DDL has been replayed
 - v1.3.37 main/tag CI passed. Gateway, Web and Ali/Tencent/edu Agents run its
   exact commit. SQL negative-path failure now correctly produces a nonzero CLI exit.
 - Live SQL exposed a selector mismatch: the model used credential_id where the
-  executor accepted only a name. Resource name and stable ID now select the same
-  bound resource; grant/version IDs remain rejected with a reference error.
+  executor accepted only a name. Gateway now resolves stable resource IDs before
+  materialization and emits the canonical resource name in bindings; grant/version
+  IDs remain rejected with a reference error.
 - Skill was installed but Skill name=dosql returned not_found because frontmatter
   named it dosql-agent. Canonical name now matches the public DoOps domain dosql.

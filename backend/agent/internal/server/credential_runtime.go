@@ -174,10 +174,17 @@ func (h *GatewayHub) resolveExplicitCredentials(
 	}
 	authorized := make([]authorizedCredentialMaterialization, 0, len(names))
 	for _, name := range names {
-		resolved, err := h.store.AuthorizeCredentialUse(CredentialUseRequest{
-			ActorID: auth.UserID, Credential: name,
-			Scope: CredentialGrantScope{Cluster: cluster, Instance: instance, Use: use},
-		})
+		name = strings.TrimSpace(name)
+		request := CredentialUseRequest{
+			ActorID: auth.UserID,
+			Scope:   CredentialGrantScope{Cluster: cluster, Instance: instance, Use: use},
+		}
+		if isCredentialResourceIDReference(name) {
+			request.CredentialID = name
+		} else {
+			request.Credential = name
+		}
+		resolved, err := h.store.AuthorizeCredentialUse(request)
 		if err != nil {
 			return nil, err
 		}
@@ -185,11 +192,16 @@ func (h *GatewayHub) resolveExplicitCredentials(
 			return nil, err
 		}
 		authorized = append(authorized, authorizedCredentialMaterialization{
-			Reference:  CredentialPlanReference{Name: name, Scope: normalizeCredentialGrantScope(resolved.Grant.Scope)},
+			Reference:  CredentialPlanReference{Name: resolved.Resource.Name, Scope: normalizeCredentialGrantScope(resolved.Grant.Scope)},
 			Authorized: resolved,
 		})
 	}
 	return authorized, nil
+}
+
+func isCredentialResourceIDReference(value string) bool {
+	const prefix = "cred_"
+	return strings.HasPrefix(value, prefix) && validLowerHex(strings.TrimPrefix(value, prefix), 24)
 }
 
 func (h *GatewayHub) materializeExplicitCredentialApply(
