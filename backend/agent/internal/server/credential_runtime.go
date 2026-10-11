@@ -471,6 +471,13 @@ func (h *GatewayHub) validateCredentialMaterializationResult(
 	if materialization.SecretType != expectedSecretType {
 		return errors.New("credential_materialization_metadata_invalid")
 	}
+	if resource.Type == CredentialTypeHelmRepository {
+		if materialization.ContextKind != "helm-native" || !validNativeHelmSocketPath(materialization.ContextSocket) {
+			return errors.New("credential_materialization_metadata_invalid")
+		}
+	} else if materialization.ContextKind != "" || materialization.ContextSocket != "" {
+		return errors.New("credential_materialization_metadata_invalid")
+	}
 	switch resource.Type {
 	case CredentialTypeRegistry, CredentialTypeHelmRepository, CredentialTypeGitToken:
 		if materialization.Digest == "" || materialization.Fingerprint != "" || materialization.ExpiresAt != "" {
