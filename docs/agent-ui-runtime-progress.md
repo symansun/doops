@@ -137,6 +137,9 @@ remain unresolved; neither authorizes weakening checks or credential bypass.
   into the session mutation channel. The exception is removed; explicit
   target/action authorization, session write/exec exclusion, maintenance
   isolation and Git pull's snapshot lock remain unchanged.
-- v1.3.41 must pass exact-source CI and replace the same core runtime scope,
+- v1.3.41 CI exposed an outdated lifecycle test that required same-session
+  reads to fail. The read case now requires real forwarding and a terminal
+  success; the write-denial assertion and resource ownership checks remain.
+- v1.3.42 must pass exact-source CI and replace the same core runtime scope,
   followed by live rapid-navigation, active-session inspection, Git/Diff and
   desktop/mobile browser checks before closing this release.

@@ -658,7 +658,9 @@ Do not publish new agent fixes under floating `v1`; use the explicit release ver
   workspace reads can share a session with other reads and running tasks.
 - Preserve read authorization, session mutation exclusion, Agent maintenance
   exclusion and Git pull's snapshot lease. Concurrent RPC and lease checks pass.
-- v1.3.41 publication and the same-scope live regression check remain pending.
+- v1.3.41 CI exposed the old same-session read-denial assertion. The test now
+  verifies forwarded read success while preserving write-denial and lease
+  ownership checks. v1.3.42 publication and live regression remain pending.
 
 # 2026-10-03 CNB Helm Managed Authentication
 
