@@ -600,6 +600,18 @@ CLI 保持原有输出契约，不能以该路径绕过组件的版本检查。
 
 需要权限：`write`。
 
+### `doops_workspace_read`
+
+为 Agent UI 代码工作台提供当前 session 工作区的只读文件树、源码、变更、Diff、搜索和 Git 信息。
+该工具只需要目标 `read` 权限，不执行 shell，也不修改工作区。
+
+```json
+{"session_id":"console_abc123","operation":"list","path":"src"}
+```
+
+`operation` 支持 `list`、`read`、`changes`、`diff`、`search`、`git-summary` 和 `git-log`；
+`path`、`query`、`ref` 按操作使用。成果面板中的工作区产物仍通过 session-scoped `read` 边界加载。
+
 ### Workspace 同步协议
 
 通用文件同步 CLI 使用 Git HTTP：

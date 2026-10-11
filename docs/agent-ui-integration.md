@@ -41,10 +41,18 @@ credential resolution, cancellation, and audit ownership.
 - Deployments use the validated form, explicit confirmation, `operation=apply`,
   and metadata-only `credential_refs`. The deployment input is never sent as
   a free-text `ask` message.
-- Assistant deltas and tool output are displayed separately. The terminal result
-  is a transport receipt (`Operation complete.`), not replacement answer text;
-  completion requires the existing RPC terminal evidence check. Tool failures
-  remain visible in the transcript.
+- The console uses Agent UI's native `developer` presentation so the composer,
+  Agent label, model selector, attachments, work/code modes and execution
+  surfaces match Agent UI. DoOps does not add a second operation-mode selector,
+  database/repository binding bar or prompt prefix. The terminal result is a
+  transport receipt (`Operation complete.`), not replacement answer text;
+  Gateway audit and execution evidence remain authoritative.
+- The console passes Agent UI's `codeWorkspace` for the current DoOps session
+  workspace. Code view uses read-only workspace metadata, file reads, search,
+  Git changes/Diff and Git history; it does not replace the existing Files panel
+  or grant write access. Changed files under `output/`, `artifacts/` and
+  `deliverables/` are exposed through Agent UI's Results pane and loaded through
+  the same session-scoped workspace read boundary.
 - Stopping requests upstream cancellation and waits for the original RPC's
   terminal result; a cancel ACK does not release the active operation. Confirmed
   cancel produces a cancelled task receipt. A disconnect, timeout or authoritative
@@ -78,21 +86,25 @@ be enabled; this change does not introduce distributed session storage.
 
 1. Given an authenticated user and configured target, opening AI Assistant reads
    metadata, enables the composer, and two messages reach the same target/session.
-2. Given a stream of tool output and assistant deltas, the UI renders both and
-   preserves the streamed answer after the separate terminal receipt arrives.
-3. Given an unconfigured model, invalid metadata, or denied ask permission,
+2. Given a stream of tool output and assistant deltas, the user presentation
+   preserves the streamed answer and terminal status without exposing the
+   internal execution trace.
+3. Given a session workspace with source files and deliverables, Agent UI
+   exposes Code and Work views; Code supports file inspection and changes/Diff,
+   while Work exposes previewable/downloadable deliverables.
+4. Given an unconfigured model, invalid metadata, or denied ask permission,
    the error is explicit and message submission stays disabled.
-4. Given a failed or interrupted task, the failure remains in its transcript;
+5. Given a failed or interrupted task, the failure remains in its transcript;
    a later successful task clears the stale error banner.
-5. Given a read-only conversation, selecting a PDF/DOCX/XLSX/TXT file shows the
+6. Given a read-only conversation, selecting a PDF/DOCX/XLSX/TXT file shows the
    Agent UI attachment chip, and sending the prompt delivers the document through
    DoAgent's native attachment protocol. Empty, oversized, cross-session, and
    malformed uploads are rejected explicitly.
-6. Given deployment mode, only the authorized form is present; submission includes
+7. Given deployment mode, only the authorized form is present; submission includes
    `operation=apply` and credential resource names. A missing confirmation blocks it.
-7. Given navigation away and back, the current transcript remains. Changing the
+8. Given navigation away and back, the current transcript remains. Changing the
    target or starting a new session clears it and cannot accept old request events.
-8. Given desktop and mobile viewports, the composer and target/session controls
+9. Given desktop and mobile viewports, the composer and target/session controls
    remain visible without horizontal page overflow or framework/console errors.
 
 ## Checks

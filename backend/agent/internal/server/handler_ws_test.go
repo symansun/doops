@@ -532,8 +532,8 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 				})
 			case "session/new":
 				params, _ := req["params"].(map[string]interface{})
-				if params["permissionMode"] != "restricted" {
-					t.Fatalf("doagent sessions must fail closed outside apply: %#v", params)
+				if params["permissionMode"] != "auto" {
+					t.Fatalf("doagent sessions must use native auto mode with DoOps tool boundaries: %#v", params)
 				}
 				if strings.Contains(fmt.Sprint(params["systemPrompt"]), "Current DoOps session_id") {
 					t.Fatalf("runtime session leaked into model prompt: %#v", params)
@@ -649,6 +649,92 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 
 	if prompt := <-receivedPrompt; strings.Contains(prompt, "deploy.sh") {
 		t.Fatalf("agent prompt must not inject a deploy.sh generation contract: %s", prompt)
+	}
+}
+
+func TestAgentPromptRefreshesPermissionModeForReusedSession(t *testing.T) {
+	var mu sync.Mutex
+	permissionRefreshes := 0
+	promptCount := 0
+	prompted := make(chan string, 2)
+	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rpc":
+			var req map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("decode rpc: %v", err)
+				return
+			}
+			id := req["id"]
+			switch req["method"] {
+			case "initialize":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0", "id": id,
+					"result": map[string]interface{}{"capabilities": map[string]interface{}{}},
+				})
+			case "session/new":
+				params, _ := req["params"].(map[string]interface{})
+				if params["permissionMode"] != "auto" {
+					t.Fatalf("DoOps must always establish auto permission mode: %#v", params)
+				}
+				if _, hasCwd := params["cwd"]; !hasCwd {
+					mu.Lock()
+					permissionRefreshes++
+					mu.Unlock()
+				}
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0", "id": id,
+					"result": map[string]interface{}{"sessionId": "reused-agent-session"},
+				})
+			case "session/setMode":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0", "id": id, "result": map[string]interface{}{},
+				})
+			case "session/prompt":
+				mu.Lock()
+				promptCount++
+				turnID := fmt.Sprintf("reused-turn-%d", promptCount)
+				mu.Unlock()
+				prompted <- turnID
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0", "id": id,
+					"result": map[string]interface{}{"status": "accepted", "turnId": turnID},
+				})
+			default:
+				t.Errorf("unexpected rpc method: %v", req["method"])
+			}
+		case "/events":
+			w.Header().Set("Content-Type", "text/event-stream")
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			turnID := <-prompted
+			fmt.Fprintf(w, "data: %s\n\n", fmt.Sprintf(`{"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","turnId":%q,"status":"completed","stopReason":"end_turn"}}}`, turnID))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer doagent.Close()
+	t.Setenv("DO_AGENT_URL", doagent.URL)
+
+	gw := NewGateway()
+	ts := newGatewayAuthorizedAgentServer(t, gw)
+	defer ts.Close()
+	conn := dialAgentTestWS(t, ts.URL)
+	defer conn.Close()
+	initializeAgentTestWS(t, conn)
+
+	args := map[string]interface{}{"session_id": "reused-permission", "instruction": "inspect"}
+	for range 2 {
+		result := callToolResult(t, conn, "doops_agent_prompt", args)
+		if _, ok := result["error"]; ok {
+			t.Fatalf("reused prompt failed: %#v", result)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if permissionRefreshes != 1 {
+		t.Fatalf("expected exactly one permission refresh for the reused session, got %d", permissionRefreshes)
 	}
 }
 

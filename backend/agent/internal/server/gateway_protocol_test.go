@@ -1313,6 +1313,9 @@ func TestGatewayActionMappingUsesDedicatedToolsForCheckAndClean(t *testing.T) {
 	if got := actionForTool("doops_clean_workspace", nil); got != ActionClean {
 		t.Fatalf("doops_clean_workspace must map to clean, got %q", got)
 	}
+	if got := actionForTool("doops_workspace_read", nil); got != ActionRead {
+		t.Fatalf("doops_workspace_read must map to read, got %q", got)
+	}
 	if got := actionForTool("doops_k8s", nil); got != ActionExec {
 		t.Fatalf("doops_k8s must map to exec, got %q", got)
 	}

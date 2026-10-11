@@ -1,31 +1,24 @@
 "use client"
 
-import { AgentWorkspace, type AgentSessionRuntime, type AgentSessionSnapshot } from "@agent-cloud/agent-ui"
-import { Plus, RefreshCw, Settings2, Square } from "lucide-react"
-import { useCallback, useState, useSyncExternalStore } from "react"
-import { deploymentRequest, type DeploymentInput } from "@/lib/deployment"
+import { AgentWorkspace, type AgentArtifactItem, type AgentSessionRuntime, type AgentSessionSnapshot, type CodeWorkspaceSource } from "@agent-cloud/agent-ui"
+import { Plus, RefreshCw, Settings2 } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react"
 import { randomSession } from "@/lib/gateway"
-import type { Target } from "@/lib/client"
-import type { DoopsConversationReferences } from "@/lib/agent-session-transport"
 import { isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
-import { DeploymentForm } from "./deployment-form"
+import { workspaceArtifactsFromChanges } from "@/lib/agent-code-workspace"
 
 export function AgentUiPanel({
   runtime,
-  target,
   sessionId,
+  codeWorkspace,
   onConfigureModel,
   onSessionChange,
-  references: referencesProp,
-  onReferencesChange,
 }: {
   runtime: AgentSessionRuntime
-  target: Target
   sessionId: string
+  codeWorkspace: CodeWorkspaceSource
   onConfigureModel?: () => void
   onSessionChange?: (id: string) => void
-  references?: DoopsConversationReferences
-  onReferencesChange?: (references: DoopsConversationReferences) => void
 }) {
   const subscribe = useCallback(
     (listener: () => void) => runtime.subscribe(sessionId, listener),
@@ -37,8 +30,18 @@ export function AgentUiPanel({
   )
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
   const busy = isDoopsAgentSessionBusy(snapshot)
-  const [operation, setOperation] = useState<"ask" | "apply">("ask")
-  const [references, setReferences] = useState<DoopsConversationReferences>(referencesProp ?? { databaseRefs: [], repositoryRefs: [] })
+  const [workspaceArtifacts, setWorkspaceArtifacts] = useState<AgentArtifactItem[]>([])
+  const workspaceSourceId = useMemo(() => `workspace:${codeWorkspace.workspaceKey}/${sessionId}`, [codeWorkspace.workspaceKey, sessionId])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    void codeWorkspace.changes(sessionId, controller.signal)
+      .then((changes) => setWorkspaceArtifacts(workspaceArtifactsFromChanges(workspaceSourceId, changes)))
+      .catch(() => {
+        if (!controller.signal.aborted) setWorkspaceArtifacts([])
+      })
+    return () => controller.abort()
+  }, [codeWorkspace, sessionId, snapshot.status, snapshot.latestUserCommandId, workspaceSourceId])
 
   const startNewSession = useCallback(() => {
     if (busy) return
@@ -49,21 +52,6 @@ export function AgentUiPanel({
     <AgentWorkspace
       className="agent-ui h-full min-h-0"
       clientLabel="doops-console"
-      composer={operation === "apply" ? (
-        <DoopsDeploymentComposer runtime={runtime} sessionId={sessionId} snapshot={snapshot} target={target} />
-      ) : undefined}
-      domainPanel={
-        <DoopsAgentContextPanel
-          onOperationChange={setOperation}
-          onSessionChange={onSessionChange}
-          operation={operation}
-          sessionId={sessionId}
-          snapshot={snapshot}
-          target={target}
-          references={references}
-          onReferencesChange={(next) => { setReferences(next); onReferencesChange?.(next) }}
-        />
-      }
       headerActions={
         <div className="flex shrink-0 items-center gap-1">
           <button
@@ -110,121 +98,10 @@ export function AgentUiPanel({
       presentation="developer"
       runtime={runtime}
       sessionId={sessionId}
+      codeWorkspace={codeWorkspace}
+      defaultWorkbenchMode="work"
+      workspaceArtifacts={workspaceArtifacts}
       showFullscreen={false}
     />
-  )
-}
-
-function DoopsAgentContextPanel({
-  onOperationChange,
-  onSessionChange,
-  operation,
-  sessionId,
-  snapshot,
-  target,
-  references,
-  onReferencesChange,
-}: {
-  onOperationChange: (operation: "ask" | "apply") => void
-  onSessionChange?: (id: string) => void
-  operation: "ask" | "apply"
-  sessionId: string
-  snapshot: AgentSessionSnapshot
-  target: Target
-  references: DoopsConversationReferences
-  onReferencesChange: (references: DoopsConversationReferences) => void
-}) {
-  const [databaseRefs, setDatabaseRefs] = useState(references.databaseRefs.join(", "))
-  const [repositoryRefs, setRepositoryRefs] = useState(references.repositoryRefs.join(", "))
-  const parseRefs = (value: string) => value.split(",").map((item) => item.trim()).filter(Boolean).filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,255}$/.test(item))
-  const updateDatabaseRefs = (value: string) => { setDatabaseRefs(value); onReferencesChange({ databaseRefs: parseRefs(value), repositoryRefs: parseRefs(repositoryRefs) }) }
-  const updateRepositoryRefs = (value: string) => { setRepositoryRefs(value); onReferencesChange({ databaseRefs: parseRefs(databaseRefs), repositoryRefs: parseRefs(value) }) }
-  return (
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-card/60 px-4 py-2">
-        <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">目标</span>
-          <code className="truncate rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">
-            {target.cluster}/{target.instance}
-          </code>
-          {onSessionChange && (
-            <label className="flex items-center gap-1.5">
-              session
-              <input
-                aria-label="操作 session"
-                className="w-36 rounded-md border border-input bg-background px-2 py-1 font-mono text-[11px] text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={isDoopsAgentSessionBusy(snapshot)}
-                defaultValue={sessionId}
-                key={sessionId}
-                maxLength={128}
-                onBlur={(event) => {
-                  if (event.currentTarget.checkValidity()) onSessionChange(event.target.value)
-                  else event.currentTarget.reportValidity()
-                }}
-                onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur() }}
-                pattern={String.raw`(?!.*\.\.)[A-Za-z0-9][A-Za-z0-9._\-]{0,127}`}
-                required
-              />
-            </label>
-          )}
-          <label className="flex items-center gap-1.5">
-            数据库
-            <input aria-label="数据库引用" className="w-40 rounded-md border border-input bg-background px-2 py-1 text-[11px] text-foreground outline-none focus:border-ring" value={databaseRefs} onChange={(event) => updateDatabaseRefs(event.target.value)} placeholder="db_asset_id" />
-          </label>
-          <label className="flex items-center gap-1.5">
-            仓库
-            <input aria-label="代码仓库引用" className="w-40 rounded-md border border-input bg-background px-2 py-1 text-[11px] text-foreground outline-none focus:border-ring" value={repositoryRefs} onChange={(event) => updateRepositoryRefs(event.target.value)} placeholder="repo_id@branch" />
-          </label>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">模式</span>
-          <div className="flex items-center gap-0.5 rounded-md border border-border bg-background p-0.5" role="group" aria-label="智能体操作模式">
-            {(["ask", "apply"] as const).map((value) => (
-              <button
-                aria-pressed={operation === value}
-                className={`rounded px-2 py-1 text-xs transition-colors ${operation === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                disabled={isDoopsAgentSessionBusy(snapshot)}
-                key={value}
-                onClick={() => onOperationChange(value)}
-                type="button"
-              >
-                {value === "ask" ? "只读诊断" : "部署变更"}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-  )
-}
-
-function DoopsDeploymentComposer({ runtime, sessionId, snapshot, target }: {
-  runtime: AgentSessionRuntime
-  sessionId: string
-  snapshot: AgentSessionSnapshot
-  target: Target
-}) {
-  const running = isDoopsAgentSessionBusy(snapshot)
-  const canDeploy = snapshot.connection === "connected" && !!runtime.executeExtension && snapshot.capabilities.extensions.some(
-    (capability) => capability.namespace === "doops.operations" && capability.semanticType === "apply" && capability.schemaVersion === "1",
-  )
-  return (
-    <div className="max-h-[min(52dvh,36rem)] shrink-0 overflow-y-auto border-t border-border px-4 py-3">
-      <div className="mx-auto mb-3 flex max-w-3xl items-center justify-between text-xs font-medium text-muted-foreground">
-        <span>发布任务</span>
-        {running && snapshot.capabilities.interrupt && <button aria-label="停止智能体" title="停止智能体" type="button" disabled={snapshot.connection !== "connected"} className="flex size-8 items-center justify-center rounded-md border border-destructive/50 text-destructive disabled:opacity-40" onClick={() => void runtime.interrupt(sessionId, crypto.randomUUID())}><Square aria-hidden="true" className="size-3.5" /></button>}
-      </div>
-      <DeploymentForm
-        disabled={!canDeploy || running}
-        onDeploy={async (input: DeploymentInput) => {
-          if (!runtime.executeExtension) throw new Error("当前智能体不支持部署变更")
-          deploymentRequest(target, input)
-          await runtime.executeExtension(sessionId, crypto.randomUUID(), {
-            namespace: "doops.operations",
-            semanticType: "apply",
-            schemaVersion: "1",
-            payload: { input, confirmed: true },
-          })
-        }}
-      />
-    </div>
   )
 }

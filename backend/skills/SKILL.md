@@ -78,10 +78,14 @@ description: |
   变更原因、允许使用的资产和验收条件。业务镜像版本必须来自任务或其明确授权的仓库、
   Chart、values、现有 release 的只读证据；不得猜测，也不得要求已明确资产中的事实再粘贴到 prompt。
   不把业务镜像键、版本格式、CORS Origin、仓库名或项目目录作为全局前置闸门。
-- 普通 `ask` 运行在 restricted 权限，只允许内置只读工具和 `mcp_doops_k8s_read`；
-  `--apply` 才进入原生 build 模式。Kubernetes workload mutation 只允许
+- 普通 `ask` 使用 doagent 原生 `auto` 模式，但每轮只暴露精确的只读工具 allowlist，
+  包括 `mcp_doops_k8s_read` 和 `mcp_doops_web_read`；DoOps 不提供交互式
+  `permission/reply`，也不应因合法工具触发 `permission.updated`。`--apply` 才进入原生 build 模式。
+  Kubernetes workload mutation 只允许
   `mcp_doops_helm`；目标本地 Nginx 网站变更使用 `mcp_doops_web`。两者均要求
   本轮 runtime attestation，不能用 Shell 或模型成功文本替代执行证据。
+- Agent UI 代码工作台使用 `doops_workspace_read` 的只读操作读取 session 工作区、变更、Diff、搜索和 Git 信息；
+  不通过 `doops_shell` 代替结构化读取，也不因此获得写权限。
 - 发布事实齐备后，Agent 调用 `mcp_doops_helm upgrade-install`，显式提供 release、
   namespace、chart 和 `confirm=true`。`value_files` 可选，覆盖遵循 Chart schema；普通升级
   统一 `--reset-values`，不隐式继承历史 values。工具自动先执行同输入的 server dry-run，
