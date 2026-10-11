@@ -64,9 +64,11 @@ func doSQLMCPToolDefinition(name string, operations []string, description string
 		required = append(required, "confirm", "change_request_id", "approval_artifact_path")
 	}
 	properties := map[string]interface{}{
-		"operation":                    map[string]interface{}{"type": "string", "enum": operations},
-		"confirm":                      map[string]interface{}{"type": "boolean"},
-		"credential_ref":               map[string]interface{}{"type": "string"},
+		"operation": map[string]interface{}{"type": "string", "enum": operations},
+		"confirm":   map[string]interface{}{"type": "boolean"},
+		"credential_ref": map[string]interface{}{
+			"type": "string", "description": "Use the bound credential resource name or credential_id. grant_id and version_id are audit metadata and must not be used here.",
+		},
 		"database_asset_id":            map[string]interface{}{"type": "string"},
 		"environment_id":               map[string]interface{}{"type": "string"},
 		"project_id":                   map[string]interface{}{"type": "string"},

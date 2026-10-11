@@ -277,7 +277,7 @@ doops -session db-setup credential configure \
 
 边界：
 
-- `--from-secret` 仅用于 `opaque`，要求 platform admin、精确 target/namespace/Secret 和
+- `--from-secret` 仅用于 `opaque`，要求对应 target exec 权限、可管理资源、明确 namespace/Secret 和
   明确的 key 集合；源 Secret namespace 与本次物化 namespace 相同，不修改源 Secret。
 - URI 仅支持 postgres/postgresql/mongodb，必须含用户名、host 和数据库路径，不允许密码、
   query 或 fragment；`--password-key` 必须是唯一选中的 key，输出 payload 只有 `connection_uri`。

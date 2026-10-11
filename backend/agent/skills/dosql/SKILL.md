@@ -1,5 +1,5 @@
 ---
-name: dosql-agent
+name: dosql
 description: DoSql 数据库变更控制助手。用于通过 doagent/CLI 对 MySQL、PostgreSQL、MongoDB 执行受控查询、变更计划、迁移脚本生成、多环境迁移和审计留痕。
 metadata:
   family: executable
@@ -13,6 +13,10 @@ DoSql is a skill inside the DoOps Agent runtime. The user authenticates once to
 the DoOps Gateway, selects a Gateway target, and then asks doagent to route the
 database task here. DoSql does not implement login, target grants, Gateway
 token parsing or a second user authorization system.
+
+The canonical skill name and DoOps domain are both `dosql`. Load `Skill name=dosql`.
+Use the bound resource name or `credential_id` as `credential_ref`; `grant_id` and
+`version_id` are audit metadata, not credential selectors.
 
 The supported CLI entrypoint is `doops sql`. A generic `doops ask` prompt that
 mentions DoSql does not guarantee the `dosql` skill or `mcp_dosql_*` tools are
@@ -34,7 +38,7 @@ Use exactly one route for each database task. Do not silently switch routes:
 | Inspect live tables/columns/indexes/schema | `doops sql --mode query` or `mcp_dosql_read operation=query` | Runs one explicitly read-only, asset-bound schema query through the database client. `discover` is not a schema query. |
 | Read business data | `doops sql --mode query` or `mcp_dosql_read operation=query` | Runs one read-only statement and records bounded result/evidence. |
 | Plan a change | `doops sql --mode plan` | Produces a human-readable change plan, impact, risk and verification steps; it must not connect for mutation. |
-| Change data/schema/admin state | `doops sql --mode apply` or `mcp_dosql_execute operation=execute` | Requires explicit confirmation, exact credential scope, signed approval, one recognized mutation and a mandatory read-only verification. |
+| Change data/schema/admin state | `doops sql --mode apply` or `mcp_dosql_execute operation=execute` | Requires target exec authority, its bound credential, explicit confirmation, signed approval, one recognized mutation and a mandatory read-only verification. |
 
 `register-database`, `discover-resources`, `compare-databases` and structure
 snapshot commands consume supplied probe/snapshot/repository metadata. They are
@@ -115,7 +119,7 @@ generic `doops ask`, Bash, `psql`, or a local connection file.
   candidates with a stable `database_asset_id`, engine, namespace, service,
   port and any database name visible in non-Secret configuration. It never
   reads Secret values. Candidates without a database name remain unresolved
-  until the user selects the asset and provides an exact database credential.
+  until the user selects the asset and provides its bound database credential.
 - During a conversation, a user may reference selected database assets and
   code repositories by metadata-only IDs or `repo_id@branch` references. The
   references are task context, not authorization; Gateway target/action and
@@ -128,7 +132,7 @@ generic `doops ask`, Bash, `psql`, or a local connection file.
   into `config/resources.json`. It ignores credential-like filenames and never
   persists URI userinfo, passwords, tokens or other secret payloads.
 - `mcp_dosql_execute` is the only structured mutation executor. It requires
-  `confirm=true`, an approved change request, exact database credential scope,
+  `confirm=true`, an approved change request, a Gateway-bound database credential,
   verification input and the DoSql journal/evidence chain.
 - Database credentials are DoOps managed credentials. Pass only credential
   resource names to the Gateway; never put payloads, connection strings or

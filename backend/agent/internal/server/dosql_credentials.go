@@ -88,7 +88,7 @@ func authorizedDoSQLCredential(session, name string) (api.AgentCredentialBinding
 	var matched *api.AgentCredentialBinding
 	for index := range lease.Bindings {
 		binding := &lease.Bindings[index]
-		if binding.Name != name || binding.Use != string(CredentialUseDatabase) {
+		if (binding.Name != name && binding.CredentialID != name) || binding.Use != string(CredentialUseDatabase) {
 			continue
 		}
 		if matched != nil {
@@ -97,7 +97,7 @@ func authorizedDoSQLCredential(session, name string) (api.AgentCredentialBinding
 		matched = binding
 	}
 	if matched == nil {
-		return api.AgentCredentialBinding{}, fmt.Errorf("dosql_credential_scope_mismatch")
+		return api.AgentCredentialBinding{}, fmt.Errorf("dosql_credential_reference_not_bound")
 	}
 	return *matched, nil
 }

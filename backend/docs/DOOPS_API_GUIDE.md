@@ -44,7 +44,7 @@ grants、verify 和 promote；不增加另一套凭据资源或提升权限的 A
 
 `connection_uri` 和 `password_key` 一起使用或一起省略。URI 不得含密码、query 或 fragment，
 必须是含用户名、host、数据库路径的 postgres/postgresql/mongodb URI；组合时只允许选中密码 key。
-该 endpoint 要求 platform admin 和可管理的 active opaque resource，沿用凭据资源锁、
+该 endpoint 要求对应 target 的 exec 权限和可管理的 active opaque resource，沿用凭据资源锁、
 加密主密钥和审计。它只在当前精确 target 内读取指定 Opaque Secret，不修改源 Secret。
 Agent 通过内部 `doops_credential_import` 控制通道返回选中 payload，Gateway 加密为 staged
 version 后只向 HTTP 返回版本元数据。公开 RPC 禁止调用该工具，流式通知不会进入导入结果。
