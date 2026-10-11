@@ -86,6 +86,7 @@ description: |
   本轮 runtime attestation，不能用 Shell 或模型成功文本替代执行证据。
 - Agent UI 代码工作台使用 `doops_workspace_read` 的只读操作读取 session 工作区、变更、Diff、搜索和 Git 信息；
   不通过 `doops_shell` 代替结构化读取，也不因此获得写权限。
+  结构化文件和工作区 read 可并发，也可查看执行中的 session；写入/执行仍按 session 互斥。
 - 发布事实齐备后，Agent 调用 `mcp_doops_helm upgrade-install`，显式提供 release、
   namespace、chart 和 `confirm=true`。`value_files` 可选，覆盖遵循 Chart schema；普通升级
   统一 `--reset-values`，不隐式继承历史 values。工具自动先执行同输入的 server dry-run，

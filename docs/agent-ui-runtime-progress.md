@@ -124,3 +124,19 @@ remain unresolved; neither authorizes weakening checks or credential bypass.
 - Bounds: at most three repairs of the same failure, 20 minutes per CI build
   observation and 10 minutes per target rollout. Preserve unrelated sessions;
   never force-unlock, bypass checks or report a pending rollout as complete.
+
+### Live Acceptance Follow-up
+
+- v1.3.40 main/tag CI passed. CLI/Skill, Gateway/Web and Ali/Tencent/edu
+  were rolled out from source `b2ce4f01697953cebf74bfa51744457e721d2502`.
+- Live browser passed two-turn conversation, removed mode/binding controls,
+  real code file reads, non-Git Markdown results, PNG rendering and download
+  byte verification, authorized login and explicit 401/403 failures.
+- Rapid page switching exposed the shared root cause of intermittent read
+  refusal: `isConcurrentQuery` excluded ActionRead, placing workspace viewers
+  into the session mutation channel. The exception is removed; explicit
+  target/action authorization, session write/exec exclusion, maintenance
+  isolation and Git pull's snapshot lock remain unchanged.
+- v1.3.41 must pass exact-source CI and replace the same core runtime scope,
+  followed by live rapid-navigation, active-session inspection, Git/Diff and
+  desktop/mobile browser checks before closing this release.

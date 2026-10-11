@@ -2373,7 +2373,7 @@ func isConcurrentReadOnlyAction(action GatewayAction) bool {
 }
 
 func isConcurrentQuery(action GatewayAction, resourceKey string) bool {
-	return (isConcurrentReadOnlyAction(action) && action != ActionRead) ||
+	return isConcurrentReadOnlyAction(action) ||
 		strings.HasPrefix(resourceKey, "query:")
 }
 

@@ -648,6 +648,18 @@ Do not publish new agent fixes under floating `v1`; use the explicit release ver
 - Production upgrade and browser acceptance are pending immutable v1.3.40 CI artifacts;
   source changes and local passing checks are not a deployed-version claim.
 
+## v1.3.41 Live Workspace Read Correction
+
+- v1.3.40 was deployed to CLI/Skill, Gateway/Web and core Ali/Tencent/edu.
+  Live browser checks verified two-turn chat, code reads, real Markdown/PNG
+  previews and download byte integrity.
+- Rapid page switching reproduced read refusal caused by the ActionRead
+  exception in the shared query classifier. Remove that exception so pure
+  workspace reads can share a session with other reads and running tasks.
+- Preserve read authorization, session mutation exclusion, Agent maintenance
+  exclusion and Git pull's snapshot lease. Concurrent RPC and lease checks pass.
+- v1.3.41 publication and the same-scope live regression check remain pending.
+
 # 2026-10-03 CNB Helm Managed Authentication
 
 - Scope: verify and consume the exact authorized CNB Helm HTTPS artifact; no index probe,
