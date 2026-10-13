@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Doops 一键安装脚本
+Doops CLI / Skill 安装脚本（不部署或升级 Agent）
 
 用法:
   bash scripts/install.sh --version v1.2.3 --project /path/to/project
@@ -221,8 +221,7 @@ EOF
 
   stage_release_sources "${commit}"
 
-  if [[ -f "${CANONICAL_CONFIG_FILE}" ]] &&
-    ! validation_output="$(DOOPS_CONFIG="${CANONICAL_CONFIG_FILE}" "${candidate}" list 2>&1)"; then
+  if ! validation_output="$(DOOPS_CONFIG= "${candidate}" list 2>&1)"; then
     echo "Existing doops config rejected by release CLI:" >&2
     printf '%s\n' "${validation_output}" >&2
     exit 1
@@ -336,7 +335,7 @@ if [[ -n "${TARGET_GATEWAY}" ]]; then
   if [[ -n "${TARGET_ALIASES}" ]]; then
     add_args+=(--aliases "${TARGET_ALIASES}")
   fi
-  (cd "${PROJECT_PATH}" && "${CLI_OUT}" "${add_args[@]}")
+  (cd "${PROJECT_PATH}" && DOOPS_CONFIG= "${CLI_OUT}" "${add_args[@]}")
   echo "  Gateway config upserted in ${CANONICAL_CONFIG_FILE}"
 else
   cat <<EOF
@@ -355,6 +354,10 @@ Installed paths:
   Docs:   ${SKILL_DEST}/docs/
   Config: ${CANONICAL_CONFIG_FILE}
 
+Agent deployment was not changed. See:
+  ${SKILL_DEST}/docs/CLUSTER_INSTALL_GUIDE.md
+This installer uses the canonical config; DOOPS_CONFIG overrides are not used.
+
 If ~/.local/bin is not in PATH, run:
   export PATH="\$HOME/.local/bin:\$PATH"
 
@@ -362,12 +365,12 @@ Quick verify:
   cd "${PROJECT_PATH}"
   ${CLI_OUT} version
   ${CLI_OUT} list
-  ${CLI_OUT} login --target ${TARGET_NAME:-<target-name>}
+  ${CLI_OUT} -session setup login --target ${TARGET_NAME:-<target-name>}
   ${CLI_OUT} -session smoke exec --target ${TARGET_NAME:-<target-name>} --cmd "hostname"
 EOF
 
 if [[ -n "${TARGET_GATEWAY}" ]]; then
   cat <<EOF
-  ${CLI_OUT} targets --target ${TARGET_NAME:-<gateway-target-name>}
+  ${CLI_OUT} -session setup targets --target ${TARGET_NAME:-<gateway-target-name>}
 EOF
 fi
