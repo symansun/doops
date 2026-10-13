@@ -8,7 +8,9 @@ description: |
 
 本 skill 是 doops 的入口导航和操作纪律，不承载所有功能细节。
 
-- 安装与接入：先看本文，再按 `docs/CLUSTER_INSTALL_GUIDE.md` 执行。
+- 安装与接入：入口选择、命令和前提统一见 `docs/CLUSTER_INSTALL_GUIDE.md`。
+  `install.sh` 只安装 CLI/Skill，不部署 Agent；Agent 免 token 注册不代表操作员免登录。
+  复用管理机现有 Gateway 登录，不为升级默认创建隔离配置；心跳在线不代表命令通道可用。
 - 日常使用：先看本文命令选择，再按 `docs/DOOPS_USAGE_GUIDE.md` 执行。
 - Gateway/API 细节：看 `docs/DOOPS_GATEWAY_TUNNEL.md` 和 `docs/DOOPS_API_GUIDE.md`。
 - CI/CD 与发布：看 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
@@ -138,6 +140,10 @@ description: |
   保留集群内 Job、匹配 Helm release 和共享 kubeconfig 的前置条件；其 `--dry-run`
   仍只预览参数。旧 Helm Agent、K8S 首次接入或显式 Helm 配置变更用外部
   `scripts/release-managed-agent.sh`，不自动 adoption。
+- 空 Ubuntu/Debian 服务器首次 Docker 安装使用 `scripts/bootstrap-host-agent.sh`，
+  明确 version、Gateway、唯一 cluster/instance 和私有 settings 文件。脚本安装 Docker、
+  保存 Compose、等待隧道健康；不覆盖已有容器，不要求安装机 Gateway operator token。
+  它不自动授予宿主或 Kubernetes 访问权；完整命令验收仍在管理机执行。见集群接入指南。
 - 自升级与回滚 Job 固定到当前 Agent 节点并保留 runtime class；新镜像必须与独立
   controller Pod 的不可变 spec 引用及同运行时 imageID 同时匹配。CRI imageID 不能与
   registry manifest digest 直接等同。自动回滚使用升级前捕获的运行身份；手动回滚

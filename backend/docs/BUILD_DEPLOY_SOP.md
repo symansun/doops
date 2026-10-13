@@ -5,6 +5,11 @@
 
 ## 发布前判定
 
+安装、正常升级和旧 Agent 恢复的入口统一见
+[集群接入指南](CLUSTER_INSTALL_GUIDE.md#先选部署对象)。`install.sh` 只更新客户端和
+Skill。已有 release 的外部脚本仍要求 Gateway 登录；它不是仅凭 kubeconfig 的免登录
+恢复工具。其当前镜像身份验收限制见同文 HDU 记录，不得把示例命令作为已验证部署证据。
+
 执行生命周期变更必须先验证 Gateway 的统一终态状态机，再切换 Gateway。候选
 Agent 不再需要声明独立的生命周期 capability；必须验证前台和后台 RPC 的原始终态、
 进程组终止、`202 cancel_requested`、持久化 `outcome_unknown` 以及按
@@ -14,8 +19,9 @@ Agent 不再需要声明独立的生命周期 capability；必须验证前台和
 
 先用 `doops version`、`doops list` 和
 `doops -session <s> targets --target <t>` 核对已安装 CLI、Gateway 路由及精确
-`cluster/instance`。`doops version` 的完整 commit 必须与 targets 的
-`RELEASE_COMMIT` 一致，`release` 标签必须来自同一个 CI 发布。源码已修改不代表 CLI、Gateway 或 Agent 已更新；
+`cluster/instance`。升级前分别记录 CLI 和 Agent 的完整 commit，允许旧 Agent 与新 CLI
+版本不同；不能要求升级前已经同版。升级后按选定 CI 制品验收。当前外部脚本以 CLI
+commit 校验候选 Agent，因此使用该脚本时 CLI 必须与候选制品同版。源码已修改不代表 CLI、Gateway 或 Agent 已更新；
 `cli-contract/v3` 只证明协议兼容性，`structuredSSH` 只证明 SSH 协议能力，
 两者都不能证明 Agent 具有自升级控制器。
 
@@ -25,6 +31,7 @@ Agent 不再需要声明独立的生命周期 capability；必须验证前台和
 | 已具备控制器的 Helm Agent 镜像 | `doops -session <s> upgrade --target <t> --image <repository>@sha256:<digest>` | 集群内 Job 复用 Agent 挂载，不读取本机 kubeconfig |
 | K8S 首次安装、旧 Helm Agent 接入控制器、显式 Helm 配置变更 | `scripts/release-managed-agent.sh` | 指定外部控制器的 kubeconfig；没有 Helm release 的现有 workload 不自动接管 |
 | 已有独立 Docker Agent | `scripts/release-host-agent.sh` | 已授权外部宿主 SSH；不依赖旧 Agent、K8S 或 Helm |
+| 空 Ubuntu/Debian 服务器 | `scripts/bootstrap-host-agent.sh` | 外部 root；安装 Docker/Compose，必须提供模型 settings；不覆盖已有 Agent |
 | Gateway 控制面 | `scripts/deploy-gateway.sh --no-build` | 已核验 CI 产物，通过宿主机 SSH 发布，不通过 Agent target |
 
 `-session` 用于操作上下文和审计关联，不是要求创建 Git worktree 或先 `doops push`。
@@ -237,8 +244,9 @@ imageID 与候选 digest、`do-agent --version` 和实际功能路径。
 `scripts/release-managed-agent.sh`。这条路径必须显式提供操作机 kubeconfig，
 `cluster/instance` 与 live Deployment 环境精确匹配。新集群无 Agent 时使用完整
 `--values` 安装；已有 Helm release 时由脚本执行 server-side Helm dry-run 和真实
-mutation。脚本会在读取 Helm release 或执行任何 mutation 前确认操作机上的 `doops` CLI
-支持 `capabilities` 协议探针；旧 CLI 必须先通过 CNB Release Asset 安装更新。脚本先
+mutation。已有 release 模式会在读取 Helm release 或执行任何 mutation 前确认操作机上的 `doops` CLI
+支持 `capabilities` 协议探针；旧 CLI 必须先通过 CNB Release Asset 安装更新。
+新集群 `--values` 模式不要求本机 CLI 或已有 Gateway 登录，安装后另做接入验收。已有 release 模式先
 验证 Kubernetes API 可达性；API 超时、EOF 或鉴权失败会在读取 Helm release 之前停止，
 并报告外部控制器问题。已有 workload 但没有 Helm release 时脚本会停止，不能把它当成
 自动 adoption 路径。
@@ -274,10 +282,11 @@ bash scripts/release-managed-agent.sh \
   --release <helm-release> \
   --namespace <namespace> \
   --kubeconfig <operator-kubeconfig> \
-  --proxy-allowed-hosts 127.0.0.1,internal.example.com \
-  --host-alias internal.example.com=10.0.0.10 \
-  --version <vX.Y.Z>
+  --image <repository>@sha256:<verified-ci-digest>
 ```
+
+上述命令从 `backend/` 执行。`--version` 当前需要操作机 Docker 拉取解析镜像；
+K3s/containerd 操作机优先传入已核验 digest。仅更换镜像时不传下面的配置变更参数。
 
 `--proxy-allowed-hosts` 只接受逗号分隔的精确上游 hostname/IP，并写入
 `proxy.allowedHosts`；省略时保留现网 Helm 值。传空字符串会显式恢复为拒绝全部。

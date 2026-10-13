@@ -36,8 +36,8 @@ def test_cli_install_downloads_named_release_asset_and_replaces_binary_atomicall
     assert "\n  doops list" not in text
     assert 'skills/doops-cli/bin' not in text
     assert '"${candidate}" --contract' in text
-    assert '${CLI_OUT} login --target ${TARGET_NAME:-<target-name>}' in text
-    assert 'DOOPS_CONFIG="${CANONICAL_CONFIG_FILE}" "${candidate}" list' in text
+    assert '${CLI_OUT} -session setup login --target ${TARGET_NAME:-<target-name>}' in text
+    assert 'DOOPS_CONFIG= "${candidate}" list' in text
     assert "python3 - " not in text
     assert text.index('Existing doops config rejected by release CLI') < text.index(
         'install -m 0755 "${candidate}" "${replacement}"'
@@ -137,6 +137,32 @@ def test_installer_requires_complete_gateway_route_before_replacing_cli():
         assert result.returncode == 2
         assert "requires --target-name, --target-gateway, --target-cluster, and --target-instance" in result.stderr
         assert cli.read_text() == "existing-cli"
+
+
+def test_installer_rejects_legacy_only_config_before_replacing_any_artifact(tmp_path):
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    project.mkdir()
+    old_cli = home / ".local/bin/doops"
+    old_cli.parent.mkdir(parents=True)
+    old_cli.write_text("existing-cli")
+    old_skill = project / ".agent/skills/doops/SKILL.md"
+    old_skill.parent.mkdir(parents=True)
+    old_skill.write_text("existing-skill")
+    legacy = home / ".config/doops/config.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text('{"servers":[{"name":"legacy","ip":"192.0.2.1"}]}')
+    fake_bin, release_env = prepare_fake_cli_release(tmp_path, "v-test")
+    result = run_installer(
+        ROOT.parent, home, project, fake_bin,
+        {**release_env, "DOOPS_CONFIG": str(tmp_path / "isolated/config.json")},
+    )
+    assert result.returncode != 0
+    assert "retired" in result.stderr
+    assert old_cli.read_text() == "existing-cli"
+    assert old_skill.read_text() == "existing-skill"
+    assert not (home / ".local/share/doops/install.txt").exists()
+    assert not (home / ".agent/skills/doops/config.json").exists()
 
 
 def test_installer_places_release_asset_only_in_standard_cli_path():
@@ -508,7 +534,12 @@ def prepare_fake_cli_release(root: Path, version: str, commit: str | None = None
         "    printf 'doops.sh/cli-contract/v3\\n'\n"
         "    ;;\n"
         "  list)\n"
-        "    if grep -q '\"token\"' \"${DOOPS_CONFIG}\"; then\n"
+        "    config=\"${DOOPS_CONFIG:-${HOME}/.agent/skills/doops/config.json}\"\n"
+        "    if [[ -z \"${DOOPS_CONFIG:-}\" && ! -f \"$config\" && -f \"${HOME}/.config/doops/config.json\" ]]; then\n"
+        "      printf 'legacy config is retired\\n' >&2\n"
+        "      exit 1\n"
+        "    fi\n"
+        "    if [[ -f \"$config\" ]] && grep -q '\"token\"' \"$config\"; then\n"
         "      printf 'Error loading config: json: unknown field \"token\"\\n' >&2\n"
         "      exit 1\n"
         "    fi\n"

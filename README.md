@@ -48,6 +48,12 @@ pnpm build
 
 ## Publishing Model
 
+Agent deployment entry points, prerequisites and commands are maintained in
+[Cluster Install Guide](backend/docs/CLUSTER_INSTALL_GUIDE.md).
+`scripts/install.sh` installs the CLI and Skill only; it does not upgrade an Agent.
+Empty Ubuntu/Debian hosts use `backend/scripts/bootstrap-host-agent.sh` to install
+Docker and start the Agent from a pinned release with private model settings.
+
 - GitHub and CNB should receive the same commit SHA for the normalized source branch.
 - GitHub uses `main` as the normalized public branch.
 - CNB CI builds, verifies, and publishes immutable agent images. Business workload

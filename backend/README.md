@@ -111,7 +111,7 @@ SSH 服务端。镜像保留 `ssh` 客户端，已在线 Agent 可通过结构�
 - 新增多用户多集群 `doops-gateway`：SQLite、user token、scope/action 权限、审计和 gateway Git HTTP 反向隧道
 - 统一 `push/pull`：gateway 使用 Git 快照语义，并按 `/v1/git/<cluster>/<instance>/<session>.git` 精确路由到目标 agent
 - 加固多人使用：user token 按 token id 单行校验，密码登录 token 默认 24 小时过期，同一 target 默认有界排队串行执行
-- 将 `agent:upgrade` 收敛为只读预览；Agent 和 Gateway 都拒绝直接修改承载 Agent 的工作负载
+- `doops upgrade` 通过集群内 Job 升级标准 Helm Agent；只有 `--dry-run` 是参数预览，Agent 进程不能直接替换自身工作负载
 
 ## Gateway 代码入口
 
@@ -179,7 +179,8 @@ Doops 有两件事容易混淆，文档里必须先分开看：
 | 形态 | 怎么识别 | 适用场景 | 是否容器化 |
 | :--- | :--- | :--- | :--- |
 | Helm-managed Deployment | 目标集群中存在身份匹配的 Helm release 与 Deployment | 标准升级路径，见 `docs/BUILD_DEPLOY_SOP.md` | 是 |
-| DaemonSet、Docker/nerdctl 容器 | 目标运行时中可见旧 Agent Pod 或容器 | 遗留部署识别，不是当前标准发布路径；升级前明确迁移方案 | 是 |
+| 独立 Docker 容器 | 宿主 Docker 中存在 Agent 容器 | 使用 `scripts/release-host-agent.sh`，无需迁移 Helm | 是 |
+| DaemonSet、nerdctl 容器 | 目标运行时中可见旧 Agent Pod 或容器 | 升级前明确迁移方案，不自动套用 Docker/Helm 脚本 | 是 |
 | 裸二进制/systemd | 有 Agent 进程而没有对应 Pod/容器 | 遗留部署识别，不支持直接替换二进制发版 | 否 |
 
 例如某台机器上看到：
@@ -189,8 +190,8 @@ Doops 有两件事容易混淆，文档里必须先分开看：
 ```
 
 仅凭进程路径不能判断它是否在容器中；应从目标集群的 workload 与宿主机运行时核对。
-裸二进制不会自动获得镜像里的 doagent、BuildKit 和 skills。遗留节点须先完成独立的
-Helm 迁移及验收，再按控制器能力选择升级入口，不能用手工启动容器替代迁移。
+裸二进制不会自动获得镜像里的 doagent、BuildKit 和 skills。非标准节点须先明确迁移
+方案并验收；已有独立 Docker Agent 直接走 DockerHost 发布，无须迁 Helm。
 
 ### Gateway 连接
 
@@ -358,8 +359,9 @@ prompt、doagent 上下文和 metadata binding 不接收凭据 payload。完整�
 [docs/CREDENTIAL_RESOURCES.md](docs/CREDENTIAL_RESOURCES.md)。
 
 `doops upgrade` 升级 Helm 托管的 doops-agent。Agent 创建集群内 Job，复用自己已经挂载的
-kubeconfig，不需要操作机 kubeconfig。Agent 进程不修改自身 workload。镜像必须是
-`repository@sha256:<64 hex>`。还没有该控制器的旧 Agent 和新集群第一次接入仍走
+kubeconfig，不需要操作机 kubeconfig。Agent 进程不修改自身 workload。镜像支持
+`repository:tag` 或 `repository@sha256:<64 hex>`，发布优先使用已核验的 digest。
+还没有该控制器的旧 Agent 和新集群第一次接入仍走
 外部 `scripts/release-managed-agent.sh` 路径；已有 target 必须已有 Helm release，
 脚本不自动接管未受管 workload。显式修改 Helm 运行配置也走该外部路径。
 普通业务 workload 由 target 指向的 Agent/doagent
@@ -422,7 +424,7 @@ doops -session agent-upgrade upgrade \
   --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest>
 ```
 
-镜像必须是 `repository@sha256:<64 hex>`。Job 在 Agent 进程外执行 Helm，新 Pod 未持续就绪或 `structuredSSH` 探针失败会回滚。还没有该控制器的旧 Agent 仍用 `scripts/release-managed-agent.sh`。
+镜像支持 tag 或不可变 digest。Job 在 Agent 进程外执行 Helm；Job 内失败会尝试回滚，Job 成功后协议探针失败的回滚仍依赖 target 可连接。还没有该控制器的旧 Agent 仍用 `scripts/release-managed-agent.sh`。入口及前提统一见 [集群接入指南](docs/CLUSTER_INSTALL_GUIDE.md)。
 
 `-session` 必传；`PREVIEW` 仅表示预演，`ACCEPTED` 仅表示 Job 已提交。升级只有在
 Job、最终 Deployment 状态和能力检查通过后才报告 `OK`。新集群 bootstrap 的资源就绪

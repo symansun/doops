@@ -696,11 +696,21 @@ scope，不要换用普通 `opaqueSecret` 或绕过 Gateway。
 
 ## Upgrade
 
-CLI 一键安装或更新：
+空 Ubuntu/Debian 服务器的 Docker 首装使用 `scripts/bootstrap-host-agent.sh`，
+不使用本节的 CLI 安装器或已有 Agent 升级器。脚本安装 Docker/Compose、拉取指定版本、
+保存配置并等待 Gateway 隧道健康；参数和 Unicom 示例见
+[空服务器 Docker 首装](CLUSTER_INSTALL_GUIDE.md#空服务器-docker-首装)。
+
+CLI / Skill 安装或更新（不会部署或升级 Agent）：
 
 ```bash
 bash scripts/install.sh --version <vX.Y.Z> --project "$PWD"
 ```
+
+安装器只使用 canonical 配置，忽略 `DOOPS_CONFIG` 覆盖；在替换 CLI/Skill 前用
+候选 CLI 检查配置，包括仅有旧配置的情况。迁移报错时修正路由配置，不用临时配置
+绕过问题。Agent 入口选择和 HDU 升级限制统一见
+[集群接入指南](CLUSTER_INSTALL_GUIDE.md#先选部署对象)。
 
 K8S 新集群首次安装、旧 Helm Agent 首次启用控制器与显式 Helm 配置变更使用本仓库
 `scripts/release-managed-agent.sh`，不能重跑外部清单安装器替代 Helm 升级。
@@ -749,10 +759,11 @@ bash scripts/release-managed-agent.sh \
   --release doops-agent-live \
   --namespace kz-ops \
   --kubeconfig /secure/path/to/kubeconfig \
-  --proxy-allowed-hosts 127.0.0.1,internal.example.com \
-  --host-alias internal.example.com=10.0.0.10 \
-  --version <vX.Y.Z>
+  --image <repository>@sha256:<verified-ci-digest>
 ```
+
+脚本命令从 `backend/` 执行。已有 release 模式要求管理机 Gateway 登录；
+`--version` 当前依赖 Docker 拉取镜像，K3s/containerd 本身不提供该依赖。
 
 以下 `--proxy-allowed-hosts` 和 `--host-alias` 仅属于外部
 `release-managed-agent.sh` 路径；`doops upgrade` 不支持这些配置变更。需要开放网站反代时，
@@ -790,10 +801,12 @@ tag 使用 `Always` 拉取并校验实际 `imageID`；回滚仍只接受历史�
 `PREVIEW` 不是已部署，`ACCEPTED` 不是已完成。Job 成功后还需核对 Gateway 实际服务
 Pod 的 UID、imageID、版本与功能路径；`structuredSSH` 只是协议声明。协议探针失败时
 CLI 尝试提交回滚 Job，但 target 不可达时不能保证回滚，必须明确报告并按恢复流程处理。
-CLI 的 `OK` 仅说明 Job 与 `structuredSSH` 已核验，输出会提醒上述发布验收仍未完成。
+CLI 的 `OK` 表示 Job、`structuredSSH`，以及普通升级时与本机 CLI 对照的
+`release_commit` 已核验，仍不替代 Gateway 实际服务 Pod 与功能验收。
 Job 自动校验最终 Deployment 与 selector 匹配的非终止 Pod 的 UID、Ready、spec image
-和 imageID；使用 digest 时必须与候选平台镜像 digest 精确匹配，不能把多架构索引 digest
-当成已验证的平台 digest。回滚以历史 Helm revision 的 manifest 为期望镜像来源，并重新
+和 imageID；当前控制器以同节点、同一不可变镜像引用的 controller Pod 运行身份作比较，
+不把 OCI index/manifest digest 直接当成 CRI imageID。旧 Agent 生成的 Job 仍是旧逻辑，
+不能以新源码替代旧 Agent 的实际验收。回滚以历史已验收证据和 Helm revision 为依据，并重新
 检查 Gateway 协议；这些检查仍不替代 Gateway 实际服务 Pod 关联和功能验收。
 
 ## BuildKit Availability
