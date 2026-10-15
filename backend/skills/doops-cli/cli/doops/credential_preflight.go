@@ -95,10 +95,19 @@ func runCredentialPreflight(
 			}
 		default:
 			credential := matches[0]
+			if !credentialSupportsUse(credential.Type, requirement.Use) {
+				failures++
+				if _, err := fmt.Fprintf(stdout,
+					"credential_ref=%s use=%s credential_id=%s status=wrong_use credential_type=%s\n",
+					requirement.CredentialRef, requirement.Use, credential.ID, credential.Type); err != nil {
+					return err
+				}
+				continue
+			}
 			if !credentialHasActiveTarget(credential) {
 				failures++
 				if _, err := fmt.Fprintf(stdout,
-					"credential_ref=%s use=%s credential_id=%s status=no_active_target_grant\n",
+					"credential_ref=%s use=%s credential_id=%s status=no_active_target_binding\n",
 					requirement.CredentialRef, requirement.Use, credential.ID); err != nil {
 					return err
 				}
@@ -126,6 +135,23 @@ func credentialHasActiveTarget(credential credentialResource) bool {
 		}
 	}
 	return false
+}
+
+func credentialSupportsUse(credentialType, use string) bool {
+	switch use {
+	case "imagePull":
+		return credentialType == "registry"
+	case "gitCheckout":
+		return credentialType == "gitToken"
+	case "helmPull":
+		return credentialType == "helmRepository"
+	case "tls":
+		return credentialType == "tls"
+	case "opaqueSecret", "database":
+		return credentialType == "opaque"
+	default:
+		return false
+	}
 }
 
 func readDevelopmentCredentialManifest(path string) (developmentCredentialManifest, error) {
@@ -212,7 +238,7 @@ func validateDevelopmentCredentialManifest(manifest *developmentCredentialManife
 
 func validDevelopmentCredentialUse(use string) bool {
 	switch use {
-	case "imagePull", "gitCheckout", "helmPull", "tls", "opaqueSecret":
+	case "imagePull", "gitCheckout", "helmPull", "tls", "opaqueSecret", "database":
 		return true
 	default:
 		return false

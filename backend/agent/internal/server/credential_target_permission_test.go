@@ -133,7 +133,7 @@ func credentialTargetPermissionResource(t *testing.T, f *executionLifecycleFixtu
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := json.Marshal(map[string]interface{}{"grantee_id": resource.OwnerID, "scope": scope})
+	encoded, err := json.Marshal(map[string]interface{}{"scope": scope})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,8 +206,8 @@ func TestTargetCredentialPromptUsesOperationAction(t *testing.T) {
 			}
 			scope := CredentialGrantScope{Cluster: "dev", Instance: "local", Namespace: "apps", Use: CredentialUseDatabase}
 			resource, version, grant := credentialTargetPermissionResource(t, f, f.admin, scope)
-			if resource.OwnerID == auth.UserID || grant.GranteeID == auth.UserID {
-				t.Fatal("runtime fixture must use another user's credential and grant")
+			if resource.OwnerID == auth.UserID {
+				t.Fatal("runtime fixture must use another user's credential")
 			}
 			agent, client := newCredentialTargetPermissionAgent(t, f), f.client(t, user)
 			session := "database-" + operation.name
@@ -435,7 +435,7 @@ func TestTargetCredentialPromptRechecksQueuedAuthority(t *testing.T) {
 						replacementScope := scope
 						replacementScope.Namespace = "new-namespace"
 						replacement, createErr := f.store.CreateCredentialGrant(CredentialGrantCreateRequest{
-							CredentialID: resource.ID, GranteeID: resource.OwnerID, CreatedBy: resource.OwnerID, Scope: replacementScope,
+							CredentialID: resource.ID, CreatedBy: resource.OwnerID, Scope: replacementScope,
 						})
 						if createErr != nil || replacement.ID == grant.ID || replacement.Scope.Namespace != "new-namespace" {
 							t.Fatalf("grant replacement did not change identity: %#v, %v", replacement, createErr)

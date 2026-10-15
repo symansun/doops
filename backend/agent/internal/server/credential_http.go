@@ -18,8 +18,7 @@ type credentialCreateHTTPBody struct {
 }
 
 type credentialGrantHTTPBody struct {
-	GranteeID string               `json:"grantee_id"`
-	Scope     CredentialGrantScope `json:"scope"`
+	Scope CredentialGrantScope `json:"scope"`
 }
 
 type credentialGrantRevokeHTTPBody struct {
@@ -288,10 +287,6 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	body.GranteeID = strings.TrimSpace(body.GranteeID)
-	if body.GranteeID == "" {
-		body.GranteeID = auth.UserID
-	}
 	if resource.Scope == CredentialScopePersonal {
 		if resource.OwnerID == auth.UserID {
 			if !h.store.CanUseTargetCredentials(auth.UserID, body.Scope.Cluster, body.Scope.Instance) {
@@ -314,7 +309,6 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 	}
 	grant, err := h.store.CreateCredentialGrantAudited(CredentialGrantCreateRequest{
 		CredentialID: resource.ID,
-		GranteeID:    body.GranteeID,
 		Scope:        body.Scope,
 		CreatedBy:    auth.UserID,
 	}, auditID)
@@ -539,7 +533,7 @@ func (h *GatewayHub) canViewCredential(
 			!h.store.UserCan(actorID, cluster, instance, ActionCredentialMetadata)) {
 		return false
 	}
-	entries, err := h.store.ListCredentialAccess(actorID, cluster, instance, false)
+	entries, err := h.store.ListCredentialAccess(actorID, cluster, instance)
 	if err != nil {
 		return false
 	}
@@ -569,9 +563,7 @@ func (h *GatewayHub) handleCredentialList(w http.ResponseWriter, r *http.Request
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}
-		entries, err := h.store.ListCredentialAccess(
-			auth.UserID, cluster, instance, false,
-		)
+		entries, err := h.store.ListCredentialAccess(auth.UserID, cluster, instance)
 		if err != nil {
 			http.Error(w, "failed to list target credentials", http.StatusInternalServerError)
 			return

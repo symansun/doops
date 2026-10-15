@@ -70,7 +70,7 @@ func TestHelmCredentialGrantRotationReusesOneActiveGrant(t *testing.T) {
 		HelmChart: "https://helm.cnb.cool/charts/team/app/v/0.1.0-zyj.gold.tgz",
 	}
 	first, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
-		CredentialID: resource.ID, GranteeID: owner.ID, Scope: base, CreatedBy: owner.ID,
+		CredentialID: resource.ID, Scope: base, CreatedBy: owner.ID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestHelmCredentialGrantRotationReusesOneActiveGrant(t *testing.T) {
 	rotated.HelmRelease = "other"
 	rotated.HelmChart = "https://other.example/charts/other/v/1.0.0.tgz"
 	second, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
-		CredentialID: resource.ID, GranteeID: owner.ID, Scope: rotated, CreatedBy: owner.ID,
+		CredentialID: resource.ID, Scope: rotated, CreatedBy: owner.ID,
 	})
 	if err != nil {
 		t.Fatal(err)
