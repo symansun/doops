@@ -210,7 +210,7 @@ Content-Type: application/json
   "user_id": "usr_xxx",
   "cluster": "doops-oilan",
   "instance": "oilan-node",
-  "actions": ["targets:list", "exec", "ask", "read", "write", "push", "pull", "info", "check", "clean"]
+  "actions": ["target:use"]
 }
 ```
 
@@ -221,8 +221,8 @@ DELETE /v1/admin/grants?id=<grant-id>
 Authorization: Bearer <ADMIN_USER_TOKEN>
 ```
 
-`actions` 为空时会展开为 Gateway 默认 action 集；最小授权流程必须显式列出 actions。
-普通机器操作不得隐式包含 `credential:*`、`agent:upgrade`、`admin` 或 `*`。
+普通 target 授权使用 `target:use`；它包含标准日常操作和受管凭据使用。
+`credential:*`、`agent:upgrade`、`admin` 和 `*` 仍不包含在内。
 
 ## 管理员签发用户 Token
 
@@ -931,7 +931,7 @@ JSON-RPC 错误：
 目标动作：
 
 ```text
-targets:list exec ask read write push pull info check clean agent:upgrade
+target:use agent:upgrade
 ```
 
 管理员动作：
@@ -941,9 +941,9 @@ admin
 ```
 
 Gateway 权限判断本身是默认拒绝：用户没有匹配 grant 时不能操作 target，且
-`targets:list` 不隐式授予其它 action。需要注意，当前管理员创建用户 API 会额外写入
+`target:use` 才是普通 target 使用权。需要注意，当前管理员创建用户 API 会额外写入
 一条 `*/*` 默认 action grant；管理员必须先删除该 bootstrap grant，再按明确的
-`cluster/instance/action` 收窄权限。如果调用返回 `403`，检查该用户的精确 grant。
+`cluster/instance` 创建精确 `target:use` grant。如果调用返回 `403`，检查该用户的 target grant。
 
 ## 操作规则
 

@@ -175,6 +175,40 @@ func TestGatewayStoreUserDefaultsToNoTargetAccess(t *testing.T) {
 	}
 }
 
+func TestGatewayStoreTargetUseGrantsStandardTargetAccessOnly(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	user, err := store.CreateUser("target-user")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := store.GrantUser(user.ID, ScopeGrant{
+		Cluster: "edu", Instance: "coder", Actions: []GatewayAction{ActionTargetUse},
+	}); err != nil {
+		t.Fatalf("grant target: %v", err)
+	}
+	for _, action := range []GatewayAction{
+		ActionTargetsList, ActionExec, ActionAsk, ActionRead, ActionWrite,
+		ActionPush, ActionPull, ActionInfo, ActionCheck, ActionClean,
+		ActionCredentialUse,
+	} {
+		if !store.UserCan(user.ID, "edu", "coder", action) {
+			t.Fatalf("target use must allow %q", action)
+		}
+	}
+	for _, action := range []GatewayAction{ActionAdmin, ActionAgentUpgrade, ActionCredentialGrant} {
+		if store.UserCan(user.ID, "edu", "coder", action) {
+			t.Fatalf("target use must not allow %q", action)
+		}
+	}
+	if store.UserCan(user.ID, "prod", "coder", ActionExec) {
+		t.Fatal("target use must remain scoped to its target")
+	}
+}
+
 func TestGatewayStoreImplicitGrantExcludesAgentUpgrade(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {

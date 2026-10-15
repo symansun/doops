@@ -447,6 +447,7 @@ func (h *GatewayHub) resolveUserID(userID, userName string) (string, error) {
 
 var knownActions = map[string]GatewayAction{
 	"*":                   ActionAll,
+	"target:use":          ActionTargetUse,
 	"admin":               ActionAdmin,
 	"exec":                ActionExec,
 	"ask":                 ActionAsk,

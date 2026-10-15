@@ -29,8 +29,8 @@ func runCredentialConfigure(args []string, sessionName string, servers []Server,
 	flags.StringVar(&name, "name", "", "Unique managed credential name to reuse or create")
 	flags.StringVar(&credentialType, "type", "", "Credential type (required with --name)")
 	flags.StringVar(&resourceScope, "scope", "", "Credential scope: personal or platform (required with --name)")
-	flags.StringVar(&scope.Namespace, "namespace", "", "Secret materialization namespace (runtime metadata)")
-	flags.StringVar(&scope.Use, "use", "", "Credential use: imagePull, gitCheckout, helmPull, tls, opaqueSecret, or database")
+	flags.StringVar(&scope.Namespace, "namespace", "default", "Secret materialization namespace (default: default)")
+	flags.StringVar(&scope.Use, "use", "", "Optional credential use; inferred from credential type when omitted")
 	flags.StringVar(&scope.Workload.Kind, "workload-kind", "", "Optional workload metadata for imagePull materialization")
 	flags.StringVar(&scope.Workload.Name, "workload-name", "", "Optional workload metadata for imagePull materialization")
 	flags.StringVar(&scope.ImageRepository, "image-repository", "", "Optional image verification repository")
@@ -45,7 +45,7 @@ func runCredentialConfigure(args []string, sessionName string, servers []Server,
 	flags.StringVar(&passwordKey, "password-key", "", "Source password key; must be the sole selected --keys entry with --connection-uri")
 	flags.Usage = func() {
 		fmt.Fprint(stdout, `Usage:
-  doops -session <s> credential configure --target <t> --namespace <ns> --use <use>
+  doops -session <s> credential configure --target <t> [--namespace <ns>] [--use <use>]
     (--id <id> | --name <name> --type <type> --scope <personal|platform>) [scope flags]
 
 Default source: stdin JSON, using the existing credential put payload format.
@@ -56,13 +56,11 @@ data.connection_uri without returning the source password. Never put passwords i
 The URL requires a concrete database path, with no query (including an empty ?) or fragment.
 
 Reuses a unique managed resource or creates it, stages a version, configures the
-target binding, GETs all bindings, verifies every unique active materialization,
-then promotes. It verifies every unique active target/use authorization scope; target operators inherit
-credential use without a second grant.
+target binding, GETs all bindings, verifies every unique active target, then promotes.
+Target operators inherit credential use without a second grant.
 Stops on the first failure, without retries or automatic cleanup.
 Only phase IDs and metadata are printed. Re-running stages a new version.
-Database and Helm grants require no workload; database grants also require no database
-asset, environment or database name.
+No workload, repository, release or database asset fields are required for target authorization.
 
 Example (no stdin read):
   doops -session setup credential configure --target db --namespace apps --use database \
@@ -81,8 +79,8 @@ Flags:
 		&scope.HelmRelease, &scope.HelmChart} {
 		*value = strings.TrimSpace(*value)
 	}
-	if flags.NArg() != 0 || sessionName == "" || target == "" || scope.Namespace == "" || scope.Use == "" {
-		return fmt.Errorf("-session, --target, --namespace and --use are required; no positional arguments")
+	if flags.NArg() != 0 || sessionName == "" || target == "" {
+		return fmt.Errorf("-session and --target are required; no positional arguments")
 	}
 	if sessionName == "." || strings.Contains(sessionName, "..") || strings.ContainsAny(sessionName, `/\`) {
 		return fmt.Errorf("invalid -session")
@@ -93,6 +91,9 @@ Flags:
 		}
 	} else if name == "" || credentialType == "" || (resourceScope != "personal" && resourceScope != "platform") {
 		return fmt.Errorf("provide --id OR --name, --type and --scope (personal or platform)")
+	}
+	if scope.Use == "" && credentialType != "" {
+		scope.Use = configureUseForType(credentialType)
 	}
 	var err error
 	scope.RequiredKeys, err = parseOptionalCredentialList(requiredKeys, "--required-keys")
@@ -221,9 +222,19 @@ Flags:
 		}
 	}
 	if !configureCredentialIDPattern.MatchString(resource.ID) || resource.State != "active" ||
-		resource.Type != wantType || (id != "" && resource.ID != id) ||
+		(id != "" && resource.ID != id) ||
 		(id == "" && (resource.Name != name || resource.Scope != resourceScope)) {
 		return fmt.Errorf("credential configure: managed resource metadata, type or state mismatch")
+	}
+	if scope.Use == "" {
+		scope.Use = configureUseForType(resource.Type)
+	}
+	wantType = map[string]string{
+		"imagePull": "registry", "gitCheckout": "gitToken", "helmPull": "helmRepository",
+		"tls": "tls", "opaqueSecret": "opaque", "database": "opaque",
+	}[scope.Use]
+	if wantType == "" || resource.Type != wantType || validateConfigureCredentialScope(scope) != nil {
+		return fmt.Errorf("credential configure: managed resource type or scope mismatch")
 	}
 	id = resource.ID
 	if _, err := fmt.Fprintf(stdout, "phase=resource credential_id=%s\n", id); err != nil {
@@ -369,6 +380,9 @@ func validateConfigureCredentialScope(scope credentialGrantScope) error {
 	if !validConfigureCredentialName(scope.Namespace) {
 		return fmt.Errorf("--namespace must be a valid Kubernetes name")
 	}
+	if scope.Use == "" {
+		return nil
+	}
 	if scope.Workload.Kind != "" || scope.Workload.Name != "" {
 		switch strings.ToLower(scope.Workload.Kind) {
 		case "deployment", "statefulset", "daemonset":
@@ -409,6 +423,23 @@ func validateConfigureCredentialScope(scope credentialGrantScope) error {
 		}
 	}
 	return fmt.Errorf("invalid optional execution metadata for --use")
+}
+
+func configureUseForType(credentialType string) string {
+	switch credentialType {
+	case "registry":
+		return "imagePull"
+	case "gitToken":
+		return "gitCheckout"
+	case "helmRepository":
+		return "helmPull"
+	case "tls":
+		return "tls"
+	case "opaque":
+		return "opaqueSecret"
+	default:
+		return ""
+	}
 }
 
 func normalizeConfigureCredentialScope(scope credentialGrantScope) credentialGrantScope {

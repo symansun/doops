@@ -95,10 +95,10 @@ func runCredentialPreflight(
 			}
 		default:
 			credential := matches[0]
-			if !credentialHasActiveUse(credential, requirement.Use) {
+			if !credentialHasActiveTarget(credential) {
 				failures++
 				if _, err := fmt.Fprintf(stdout,
-					"credential_ref=%s use=%s credential_id=%s status=wrong_use\n",
+					"credential_ref=%s use=%s credential_id=%s status=no_active_target_grant\n",
 					requirement.CredentialRef, requirement.Use, credential.ID); err != nil {
 					return err
 				}
@@ -119,9 +119,9 @@ func runCredentialPreflight(
 	return err
 }
 
-func credentialHasActiveUse(credential credentialResource, use string) bool {
+func credentialHasActiveTarget(credential credentialResource) bool {
 	for _, grant := range credential.Grants {
-		if grant.State == "active" && grant.Scope.Use == use {
+		if grant.State == "active" {
 			return true
 		}
 	}

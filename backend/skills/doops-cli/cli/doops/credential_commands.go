@@ -88,9 +88,9 @@ func runCredentialCommand(args []string, sessionName string, servers []Server, c
   doops credential list          查询当前 target 可见或当前用户管理的凭据
   doops credential preflight     检查项目开发所需 credentialRef 是否可用
   doops credential put           从 stdin 写入新的凭据版本
-  doops credential grant         授权凭据给当前用户或指定用户的精确 target scope
+  doops credential grant         授权凭据给当前用户或指定用户使用一个 target
   doops credential grant-revoke  吊销一条凭据授权
-  doops credential verify        在精确 target scope 验证 staged 版本
+  doops credential verify        在 target 上验证 staged 版本
   doops credential promote       激活已验证的凭据版本
   doops credential revoke        吊销凭据资源
   doops credential bundle-create 从 stdin 创建凭据 bundle
@@ -146,8 +146,8 @@ func runCredentialVerify(args []string, sessionName string, servers []Server, co
 	flags.StringVar(&versionID, "version-id", "", "Staged credential version ID")
 	flags.StringVar(&cluster, "cluster", "", "Target cluster")
 	flags.StringVar(&instance, "instance", "", "Target instance")
-	flags.StringVar(&namespace, "namespace", "", "Kubernetes namespace")
-	flags.StringVar(&use, "use", "", "Credential use: imagePull, gitCheckout, helmPull, tls, opaqueSecret, or database")
+	flags.StringVar(&namespace, "namespace", "default", "Secret materialization namespace (default: default)")
+	flags.StringVar(&use, "use", "", "Optional credential use; inferred from credential type when omitted")
 	flags.StringVar(&workloadKind, "workload-kind", "", "Optional workload metadata for imagePull materialization")
 	flags.StringVar(&workloadName, "workload-name", "", "Optional workload metadata for imagePull materialization")
 	flags.StringVar(&databaseAssetID, "database-asset-id", "", "Authorized database asset ID")
@@ -164,9 +164,8 @@ func runCredentialVerify(args []string, sessionName string, servers []Server, co
 	}
 	if flags.NArg() != 0 || strings.TrimSpace(sessionName) == "" ||
 		strings.TrimSpace(id) == "" || strings.TrimSpace(versionID) == "" ||
-		strings.TrimSpace(cluster) == "" || strings.TrimSpace(instance) == "" ||
-		strings.TrimSpace(namespace) == "" || strings.TrimSpace(use) == "" {
-		return fmt.Errorf("-session, --id, --version-id, --cluster, --instance, --namespace and --use are required")
+		strings.TrimSpace(cluster) == "" || strings.TrimSpace(instance) == "" {
+		return fmt.Errorf("-session, --id, --version-id, --cluster and --instance are required")
 	}
 	keyList, err := parseOptionalCredentialList(requiredKeys, "--required-keys")
 	if err != nil {
@@ -499,8 +498,8 @@ func runCredentialGrant(args []string, servers []Server, configErr error, stdout
 	flags.StringVar(&granteeID, "grantee-id", "", "Gateway user ID receiving the grant")
 	flags.StringVar(&cluster, "cluster", "", "Target cluster")
 	flags.StringVar(&instance, "instance", "", "Target instance")
-	flags.StringVar(&namespace, "namespace", "", "Kubernetes namespace")
-	flags.StringVar(&use, "use", "", "Credential use: imagePull, gitCheckout, helmPull, tls, opaqueSecret, or database")
+	flags.StringVar(&namespace, "namespace", "default", "Secret materialization namespace (default: default)")
+	flags.StringVar(&use, "use", "", "Optional credential use; inferred from credential type when omitted")
 	flags.StringVar(&workloadKind, "workload-kind", "", "Optional workload metadata for imagePull materialization")
 	flags.StringVar(&workloadName, "workload-name", "", "Optional workload metadata for imagePull materialization")
 	flags.StringVar(&databaseAssetID, "database-asset-id", "", "Authorized database asset ID")
@@ -516,9 +515,8 @@ func runCredentialGrant(args []string, servers []Server, configErr error, stdout
 		return err
 	}
 	if flags.NArg() != 0 || strings.TrimSpace(id) == "" ||
-		strings.TrimSpace(cluster) == "" || strings.TrimSpace(instance) == "" || strings.TrimSpace(namespace) == "" ||
-		strings.TrimSpace(use) == "" {
-		return fmt.Errorf("--id, --cluster, --instance, --namespace and --use are required")
+		strings.TrimSpace(cluster) == "" || strings.TrimSpace(instance) == "" {
+		return fmt.Errorf("--id, --cluster and --instance are required")
 	}
 	keyList, err := parseOptionalCredentialList(requiredKeys, "--required-keys")
 	if err != nil {

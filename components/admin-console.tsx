@@ -16,7 +16,6 @@ import {
   listInstances,
   listOperations,
   cancelOperation,
-  ALL_ACTIONS,
   type AdminUser,
   type AdminGrant,
   type AdminToken,
@@ -452,7 +451,6 @@ function GrantsView({ session }: { session: Session }) {
   const [userId, setUserId] = useState("")
   const [cluster, setCluster] = useState("*")
   const [instance, setInstance] = useState("*")
-  const [actions, setActions] = useState<string[]>(["exec", "ask", "read"])
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
@@ -473,18 +471,13 @@ function GrantsView({ session }: { session: Session }) {
     load()
   }, [load])
 
-  function toggleAction(a: string) {
-    setActions((prev) => (prev.includes(a) ? prev.filter((x) => x !== a) : [...prev, a]))
-  }
-
   async function submit() {
     if (!userId) return
     setBusy(true)
     setError("")
     try {
-      await createGrant(session, { user_id: userId, cluster, instance, actions })
+      await createGrant(session, { user_id: userId, cluster, instance, actions: ["target:use"] })
       setShowCreate(false)
-      setActions(["exec", "ask", "read"])
       await load()
     } catch (e) {
       setError((e as Error).message)
@@ -544,27 +537,9 @@ function GrantsView({ session }: { session: Session }) {
               <input value={instance} onChange={(e) => setInstance(e.target.value)} className="input w-32" placeholder="* 或 web-01" />
             </label>
           </div>
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs text-muted-foreground">动作</span>
-            <div className="flex flex-wrap gap-1.5">
-              {ALL_ACTIONS.map((a) => {
-                const on = actions.includes(a)
-                return (
-                  <button
-                    key={a}
-                    onClick={() => toggleAction(a)}
-                    className={`rounded-md border px-2 py-1 font-mono text-xs transition-colors ${
-                      on
-                        ? "border-primary bg-primary/15 text-primary"
-                        : "text-muted-foreground hover:bg-muted"
-                    }`}
-                  >
-                    {a}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
+          <p className="text-xs text-muted-foreground">
+            授权后用户可使用该 target 的标准运维能力；管理员、凭据管理和 Agent 升级需单独授权。
+          </p>
           <div>
             <button
               onClick={submit}

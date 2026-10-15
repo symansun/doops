@@ -255,14 +255,14 @@ doops admin token revoke --target <gateway-target> --id <token-id>
 
 - 创建/禁用用户，设置或重置密码。
 - 创建、吊销、轮换 user token。
-- 普通 user token 必须通过显式 grant 获得对应 `cluster/instance/action` 权限；无 grant 默认拒绝，`targets:list` 不隐式授予其他 target 操作。管理员能力仍使用显式 `admin` 权限。
+- 普通 user token 只按精确 target 授权；`target:use` grant 自动包含标准日常操作和受管凭据使用。管理员、凭据管理和 Agent 升级仍使用独立高危权限。
 - 按 `user_id`、`token_id`、`cluster`、`instance`、`action`、`session`、`status` 查询审计。
 - 按保留周期清理过期审计，清理前保留可追溯导出。
 
 当前实现有一个必须显式处理的 bootstrap 行为：`POST /v1/admin/users` 创建普通用户时
-会自动添加 `cluster="*"`、`instance="*"` 的标准操作 grant。权限判断仍然是无 grant
+会自动添加 `cluster="*"`、`instance="*"` 的 bootstrap grant。权限判断仍然是无 grant
 默认拒绝，但管理员创建流程必须在交付账号前删除这条通配 grant，再按每个目标的精确
-`cluster/instance/actions` 建立授权。收窄失败时立即停用新用户，不能把半完成账号留在
+`cluster/instance` 建立 `target:use` 授权。收窄失败时立即停用新用户，不能把半完成账号留在
 启用状态。完整操作顺序见 `DOOPS_USAGE_GUIDE.md`。
 
 说明：
