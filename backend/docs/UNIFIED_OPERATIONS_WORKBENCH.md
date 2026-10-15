@@ -33,7 +33,7 @@ Gateway `/v1/auth/login`、`/v1/targets`、`/v1/rpc` 和凭据 API。
 | 用户认证 | Gateway user/password 或 user token | 身份、有效期、撤销 | 否 |
 | Target 可见性 | Gateway `targets:list` + `UserCan` | `cluster/instance` 精确匹配 | 否 |
 | 普通工具 | Gateway `actionForTool` + target grant | `ask`、`exec`、读写、push/pull 等 | 否 |
-| Managed credential | Gateway credential resource/grant/scope | 资源名、精确 target/workload/use、物化和清理 | 否 |
+| Managed credential | Gateway credential resource/target binding | 资源名、target 绑定、物化和清理 | 否 |
 | 数据库变更控制 | DoSql operation journal + signed approval | 变更说明、指纹、验证、未知结果证据 | 是领域规则，不是登录授权 |
 | 网站变更控制 | DoWeb SiteSpec + Nginx validation/reload/health evidence | 站点范围、配置验证、回滚和健康状态 | 是领域规则，不是登录授权 |
 | Web 会话 | DoOps Web `/api/session` | HttpOnly cookie 的建立、恢复、清理 | 否 |

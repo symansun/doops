@@ -34,7 +34,9 @@ func TestCredentialPreflightChecksProjectRequirementsWithoutExposingPayload(t *t
 			 "grants":[{"id":"grant_git","state":"active","scope":{"use":"gitCheckout"}}],
 			 "payload":"` + payloadCanary + `"},
 			{"id":"cred_registry","name":"cnb-registry","scope":"platform","type":"registry","state":"active",
-			 "grants":[{"id":"grant_registry","state":"active","scope":{"use":"imagePull"}}]}
+			 "grants":[{"id":"grant_registry","state":"active","scope":{"use":"imagePull"}}]},
+			{"id":"cred_database","name":"cnb-database","scope":"personal","type":"opaque","state":"active",
+			 "grants":[{"id":"grant_database","state":"active","scope":{"use":"database"}}]}
 		]}`))
 	}))
 	defer gateway.Close()
@@ -49,6 +51,8 @@ credentials:
     use: gitCheckout
   - credentialRef: cnb-registry
     use: imagePull
+  - credentialRef: cnb-database
+    use: database
 `)
 	command := exec.Command(binary, "-session", "dev-preflight", "credential", "preflight", "--manifest", manifest)
 	command.Env = append(os.Environ(), "DOOPS_CONFIG="+config)
@@ -63,7 +67,8 @@ credentials:
 	for _, expected := range []string{
 		"credential_ref=cnb-development use=gitCheckout credential_id=cred_git status=ready",
 		"credential_ref=cnb-registry use=imagePull credential_id=cred_registry status=ready",
-		"credential_preflight=ready target=gw-dev requirements=2",
+		"credential_ref=cnb-database use=database credential_id=cred_database status=ready",
+		"credential_preflight=ready target=gw-dev requirements=3",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("preflight output missing %q: %s", expected, text)
@@ -80,13 +85,13 @@ credentials:
 func TestCredentialPreflightFailsForMissingAndUnavailableTargetGrant(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"credentials":[
-			{"id":"cred_git","name":"wrong-use","state":"active",
+			{"id":"cred_git","name":"wrong-use","type":"gitToken","state":"active",
 			 "grants":[{"id":"grant_git","state":"active","scope":{"use":"gitCheckout"}}]},
-			{"id":"cred_revoked","name":"revoked-grant","state":"active",
+			{"id":"cred_revoked","name":"revoked-grant","type":"registry","state":"active",
 			 "grants":[{"id":"grant_revoked","state":"revoked","scope":{"use":"imagePull"}}]},
-			{"id":"cred_ambiguous_1","name":"ambiguous","state":"active",
+			{"id":"cred_ambiguous_1","name":"ambiguous","type":"tls","state":"active",
 			 "grants":[{"id":"grant_ambiguous_1","state":"active","scope":{"use":"tls"}}]},
-			{"id":"cred_ambiguous_2","name":"ambiguous","state":"active",
+			{"id":"cred_ambiguous_2","name":"ambiguous","type":"tls","state":"active",
 			 "grants":[{"id":"grant_ambiguous_2","state":"active","scope":{"use":"tls"}}]}
 		]}`))
 	}))
@@ -116,10 +121,10 @@ credentials:
 	text := string(output)
 	for _, expected := range []string{
 		"credential_ref=missing use=gitCheckout status=missing",
-		"credential_ref=wrong-use use=imagePull credential_id=cred_git status=ready",
-		"credential_ref=revoked-grant use=imagePull credential_id=cred_revoked status=no_active_target_grant",
+		"credential_ref=wrong-use use=imagePull credential_id=cred_git status=wrong_use credential_type=gitToken",
+		"credential_ref=revoked-grant use=imagePull credential_id=cred_revoked status=no_active_target_binding",
 		"credential_ref=ambiguous use=tls status=ambiguous matches=2",
-		"credential preflight failed: 3 requirement(s) unavailable",
+		"credential preflight failed: 4 requirement(s) unavailable",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("preflight failure output missing %q: %s", expected, text)

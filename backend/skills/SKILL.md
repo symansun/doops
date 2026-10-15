@@ -105,7 +105,7 @@ description: |
   发布镜像只由 CI 构建；Agent 内存在 BuildKit 不代表允许在业务 target 上重新构建，
   也不能把工作区同步或 SCP 源码传输作为普通发布的前置步骤。
 - 需要凭据时使用可重复的 `--credential <resource-name>`。该参数只传递资源名；Gateway
-  使用当前 target 操作的 `ask`/`exec` 权限，不要求额外 `credential:use` 或给每个操作员重复 grant。
+  使用当前 target 操作的 `ask`/`exec` 权限，不要求额外 `credential:use` 或给每个操作员重复绑定。
   凭据必须已绑定该 target 且存在 active version，管理/轮换仍检查 owner/admin。对 database
   use，Gateway 只管理用户/平台归属、cluster/instance/use 和凭据可用性；namespace 仅是物化
   位置元数据；数据库
@@ -114,7 +114,7 @@ description: |
   解密 payload 以创建或验证目标资源。
 - 所有凭据绑定由 Gateway 直接读取已保存的 target 元数据，不让模型生成授权 scope。
   初始化缺少版本时用 `credential configure` 内部导入并验证；不能只给空资源补 grant。
-- 所有凭据 grant 的授权匹配只绑定 target 的 cluster/instance；use 只作为
+- 所有凭据 target binding 的授权匹配只绑定 target 的 cluster/instance；use 只作为
   凭据类型和物化用途元数据，namespace 只作为
   Secret 物化位置元数据，workload、image、release、Chart URL 和 required keys 都是可选的
   执行元数据，不参与 Gateway 授权匹配。实际包按本次操作的 URL 下载；
@@ -333,8 +333,8 @@ doops -session preflight targets --target <gateway-target>
 | 查询 target 可用凭据 | `doops credential list --target <t>` |
 | 查询本人管理凭据 | `doops credential list --target <t> --view managed` |
 | 检查项目开发凭据 | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` |
-| 授权凭据 | `doops credential grant --target <t> --id <id> --cluster <cluster> --instance <instance>` |
-| 验证 staged 版本 | `doops -session <s> credential verify --target <t> --id <id> --version-id <version> --cluster <cluster> --instance <instance>` |
+| 绑定凭据到目标 | `doops credential grant --target <t> --id <id> [--namespace <ns>] [运行元数据]` |
+| 验证 staged 版本 | `doops -session <s> credential verify --target <t> --id <id> --version-id <version> [运行元数据]` |
 | 激活凭据版本 | `doops credential promote --target <t> --id <id> --version-id <version>` |
 | 吊销授权 | `doops credential grant-revoke --target <t> --id <id> --grant-id <grant>` |
 | 吊销资源 | `doops credential revoke --target <t> --id <id>` |

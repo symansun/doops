@@ -24,7 +24,7 @@ and does not expose the token to React state, localStorage or copied examples.
   Job is not a completed release; the page observes the same Job and checks the
   Gateway protocol. Verify the serving Pod/imageID/runtime and affected functions.
   First installation still requires an authorized cluster administration context.
-- Credential pages manage create, staged payload, exact grants, persisted version
+- Credential pages manage create, staged payload, target bindings, persisted version
   metadata, verify, promote, grant revocation and resource revocation. Payload
   input uses the credential endpoint only and never enters an AI task.
 - The audit page exposes target/session/self/global scopes and action/status

@@ -55,8 +55,8 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Release an existing standalone Docker Agent | External `scripts/release-host-agent.sh` | Explicit DockerHost controller, not CLI fallback; real read-only `--dry-run`. See [SOP](BUILD_DEPLOY_SOP.md#独立-dockerhost-发布). |
 | Cache token | `doops login ...` | Gateway login can exchange username/password for user token. |
 | List target credentials | `doops credential list --target <t>` | Uses the cached gateway login and returns only metadata granted to that user on the selected cluster/instance. |
-| Preflight development credentials | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` | Fails closed unless every declared credentialRef has an active grant on the selected target. The manifest `use` describes the requested operation and does not create a second permission. |
-| Configure a credential once | `doops -session <s> credential configure --target <t> --id <id> [--namespace <ns>] [--use <use>] <source-and-scope-flags>` | Reuses managed storage, stages, grants to the current user for that target, verifies and promotes. See `CREDENTIAL_RESOURCES.md`. |
+| Preflight development credentials | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` | Fails closed unless every declared credentialRef is active and bound to the selected target. The manifest `use` describes the requested operation and does not create a second permission. |
+| Configure a credential once | `doops -session <s> credential configure --target <t> --id <id> [--namespace <ns>] [--use <use>] <source-and-scope-flags>` | Reuses managed storage, stages, binds to the target, verifies and promotes. See `CREDENTIAL_RESOURCES.md`. |
 | Manage credential lifecycle | `doops credential <create|put|grant|verify|promote|grant-revoke|revoke>` | See `CREDENTIAL_RESOURCES.md`. |
 | Create Gateway user and API key | `doops admin user create --target <t> --user <u> (--password-stdin\|--generate-password)` | Removes bootstrap wildcard access and applies only explicit `--grant-target` scopes. |
 | List Gateway users | `doops admin user list --target <t>` | Returns metadata only. |
@@ -71,7 +71,7 @@ DoSql 必须使用 `doops sql` 入口。普通 `doops ask --msg '使用 DoSql'` 
 `mcp_dosql_read/execute`，也不能替代 DoSql 的 target discovery、credential scope 或
 journal/evidence 链。
 
-DoSql 的凭据使用继承本次目标 `ask`/`exec` 权限，不再要求额外 `credential:use` 或逐操作员 grant。
+DoSql 的凭据使用继承本次目标 `ask`/`exec` 权限，不再要求额外 `credential:use` 或逐操作员绑定。
 Gateway 直接解析保存的 target/database 绑定和 active version，不让模型生成凭据 scope。
 不存在 active version 时先用 `credential configure` 安全导入；该错误明确为 `credential_version_not_found`。
 
@@ -481,10 +481,10 @@ doops -session dev-preflight-<task> credential preflight \
 
 CLI 严格解析单文档 YAML，拒绝未知字段、重复的 `credentialRef + use`、target 冲突和
 没有 `-session` 的远端检查。它只查询当前登录用户在 manifest target 上可见的 active
-resource 和 active grant，输出 `ready`、`missing`、`wrong_use` 或 `ambiguous` 元数据。
+resource 和 target binding，输出 `ready`、`missing`、`wrong_use` 或 `ambiguous` 元数据。
 
 清单不是授权源，也不包含 payload、secret 文件路径、默认值或本地 fallback。preflight
-不会把凭据注入本机命令或远端 workspace；实际使用仍必须经过现有精确 grant 和受控
+不会把凭据注入本机命令或远端 workspace；实际使用仍必须经过 target binding 和受控
 materialization 路径。
 
 ## CI/CD And Apply
@@ -629,8 +629,7 @@ doops credential list --target gw-edu-coder --view managed
 的 active resource；
 `managed` 视图返回本人拥有的 personal resource，platform admin 可以管理平台资源。
 两个视图都不返回 payload。`managed` 视图只返回 resource metadata，不加载 grant 详情；
-CLI 会显示 `grants=not_loaded`，不能把它解释为没有 grant。target 视图也只有在 resource、
-active version 和 active grant 同时存在时才返回凭据。
+target 视图只在 resource、active version 和 active target binding 同时存在时返回凭据。
 
 完整 CLI 生命周期：
 
@@ -639,10 +638,9 @@ active version 和 active grant 同时存在时才返回凭据。
 printf '%s' '{"server":"registry.example.com","username":"deploy","password":"..."}' |
   doops credential put --target gw-edu-coder --id <credential-id>
 
-# 2. 创建精确 grant
+# 2. 绑定到 target
 doops credential grant --target gw-edu-coder \
   --id <credential-id> \
-  --cluster doops-edu --instance edu-coder \
   --namespace apps --use imagePull \
   --workload-kind Deployment --workload-name oilan \
   --image-repository registry.example.com/oilan \
@@ -652,7 +650,6 @@ doops credential grant --target gw-edu-coder \
 # DoSql/Agent validates asset, environment, engine and database name at execution time
 doops credential grant --target gw-edu-coder \
   --id <credential-id> \
-  --cluster doops-edu --instance edu-coder \
   --namespace agents --use database \
   --required-keys connection_uri
 
@@ -660,7 +657,6 @@ doops credential grant --target gw-edu-coder \
 doops -session credential-verify-<version> credential verify \
   --target gw-edu-coder \
   --id <credential-id> --version-id <version-id> \
-  --cluster doops-edu --instance edu-coder \
   --namespace apps --use imagePull \
   --workload-kind Deployment --workload-name oilan \
   --image-repository registry.example.com/oilan \
@@ -668,10 +664,10 @@ doops -session credential-verify-<version> credential verify \
 
 doops -session credential-verify-db-<version> credential verify \
   --target gw-edu-coder --id <credential-id> --version-id <version-id> \
-  --cluster doops-edu --instance edu-coder --namespace agents --use database \
+  --namespace agents --use database \
   --required-keys connection_uri
 
-# 4. 激活已经覆盖全部 active grants 的版本
+# 4. 激活已经覆盖全部 active target bindings 的版本
 doops credential promote \
   --target gw-edu-coder \
   --id <credential-id> --version-id <version-id>
@@ -683,13 +679,13 @@ doops credential revoke --target gw-edu-coder --id <credential-id>
 ```
 
 payload 只能从 stdin 输入并由 Gateway 加密持久化。验证输出只允许状态、
-resourceVersion、digest 和稳定错误类别。Grant scope 只匹配用户和 target 的
+resourceVersion、digest 和稳定错误类别。Target binding 只匹配 target 的
 `cluster/instance`；namespace、workload、release、仓库路径和 database asset 都是执行元数据，
 不参与授权。
 
 数据库凭据的 resource `state=active` 只表示 resource 未吊销，不表示已有可执行版本。
-数据库执行前必须完成 `put -> grant -> verify -> promote`；缺少 active version 或精确
-grant 时，Gateway 会在物化阶段拒绝执行。遇到 `credential_invalid`，先检查生命周期和
+数据库执行前必须完成 `put -> target binding -> verify -> promote`；缺少 active version
+或 target binding 时，Gateway 会在物化阶段拒绝执行。遇到 `credential_invalid`，先检查生命周期和
 scope，不要换用普通 `opaqueSecret` 或绕过 Gateway。
 
 ## Upgrade

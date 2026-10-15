@@ -7,7 +7,7 @@ export type CredentialScope = "personal" | "platform"
 export type CredentialUse = "imagePull" | "gitCheckout" | "helmPull" | "tls" | "opaqueSecret" | "database"
 export type CredentialVersionState = "staged" | "active" | "superseded" | "revoked"
 
-export interface CredentialGrantScope {
+export interface CredentialBindingScope {
   cluster: string
   instance: string
   namespace: string
@@ -24,11 +24,10 @@ export interface CredentialGrantScope {
   required_keys?: string[]
 }
 
-export interface CredentialGrant {
+export interface CredentialBinding {
   id: string
   credential_id: string
-  grantee_id: string
-  scope: CredentialGrantScope
+  scope: CredentialBindingScope
   state: string
   created_at?: string
 }
@@ -64,7 +63,7 @@ export interface CredentialResource {
   state: string
   created_at?: string
   updated_at?: string
-  grants?: CredentialGrant[]
+  bindings?: CredentialBinding[]
 }
 
 function headers(s: Session): HeadersInit {
@@ -115,11 +114,10 @@ export async function listCredentials(
     return [
       {
         ...managed[0],
-        grants: [
+        bindings: [
           {
             id: "credgrant_demo_registry",
             credential_id: managed[0].id,
-            grantee_id: "user_demo",
             state: "active",
             scope: {
               cluster: target.cluster,
@@ -140,8 +138,11 @@ export async function listCredentials(
     qs.set("cluster", target.cluster)
     qs.set("instance", target.instance)
   }
-  const response = await request<{ credentials: CredentialResource[] }>(s, `?${qs}`)
-  return response.credentials || []
+  const response = await request<{ credentials: Array<CredentialResource & { grants?: CredentialBinding[] }> }>(s, `?${qs}`)
+  return (response.credentials || []).map(({ grants, ...credential }) => ({
+    ...credential,
+    ...(grants ? { bindings: grants } : {}),
+  }))
 }
 
 export async function listCredentialVersions(
@@ -159,19 +160,19 @@ export async function listCredentialVersions(
   return response.versions as CredentialVersion[]
 }
 
-export async function listCredentialGrants(
+export async function listCredentialBindings(
   s: Session,
   credentialID: string,
-): Promise<CredentialGrant[]> {
-  if (s.demo) throw new Error("演示模式不查询凭据授权")
+): Promise<CredentialBinding[]> {
+  if (s.demo) throw new Error("演示模式不查询凭据绑定")
   const response = await request<{ grants?: unknown }>(
     s,
     `/${encodeURIComponent(credentialID)}/grants`,
   )
   if (!Array.isArray(response.grants)) {
-    throw new Error("凭据授权响应缺少 grants")
+    throw new Error("凭据绑定响应缺少 grants")
   }
-  return response.grants as CredentialGrant[]
+  return response.grants as CredentialBinding[]
 }
 
 export async function createCredential(
@@ -197,13 +198,13 @@ export async function putCredentialPayload(
   })
 }
 
-export async function grantCredentialToSelf(
+export async function bindCredentialToTarget(
   s: Session,
   credentialID: string,
-  scope: CredentialGrantScope,
-): Promise<CredentialGrant> {
+  scope: CredentialBindingScope,
+): Promise<CredentialBinding> {
   if (s.demo) throw new Error("演示模式不执行凭据写操作")
-  return request<CredentialGrant>(s, `/${encodeURIComponent(credentialID)}/grants`, {
+  return request<CredentialBinding>(s, `/${encodeURIComponent(credentialID)}/grants`, {
     method: "POST",
     body: JSON.stringify({ scope }),
   })
@@ -215,7 +216,7 @@ export async function verifyCredentialVersion(
   body: {
     version_id: string
     session_id: string
-    scope: CredentialGrantScope
+    scope: CredentialBindingScope
   },
 ): Promise<CredentialVerificationResponse> {
   if (s.demo) throw new Error("演示模式不执行凭据写操作")
@@ -241,15 +242,15 @@ export async function promoteCredentialVersion(
   )
 }
 
-export async function revokeCredentialGrant(
+export async function revokeCredentialBinding(
   s: Session,
   credentialID: string,
-  grantID: string,
-): Promise<CredentialGrant> {
+  bindingID: string,
+): Promise<CredentialBinding> {
   if (s.demo) throw new Error("演示模式不执行凭据写操作")
-  return request<CredentialGrant>(s, `/${encodeURIComponent(credentialID)}/grants`, {
+  return request<CredentialBinding>(s, `/${encodeURIComponent(credentialID)}/grants`, {
     method: "DELETE",
-    body: JSON.stringify({ grant_id: grantID }),
+    body: JSON.stringify({ grant_id: bindingID }),
   })
 }
 

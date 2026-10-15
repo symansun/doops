@@ -34,7 +34,6 @@ type credentialVersion struct {
 type credentialGrant struct {
 	ID           string               `json:"id"`
 	CredentialID string               `json:"credential_id"`
-	GranteeID    string               `json:"grantee_id"`
 	Scope        credentialGrantScope `json:"scope"`
 	State        string               `json:"state"`
 }
@@ -84,12 +83,12 @@ func runCredentialCommand(args []string, sessionName string, servers []Server, c
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		_, err := fmt.Fprint(stdout, `Usage:
   doops credential create        创建凭据元数据
-  doops credential configure     一次完成受管凭据写入、精确授权、验证和激活
+  doops credential configure     一次完成受管凭据写入、目标绑定、验证和激活
   doops credential list          查询当前 target 可见或当前用户管理的凭据
   doops credential preflight     检查项目开发所需 credentialRef 是否可用
   doops credential put           从 stdin 写入新的凭据版本
-  doops credential grant         授权凭据给当前用户或指定用户使用一个 target
-  doops credential grant-revoke  吊销一条凭据授权
+  doops credential grant         将凭据绑定到一个 target
+  doops credential grant-revoke  解除一个 target 上的凭据绑定
   doops credential verify        在 target 上验证 staged 版本
   doops credential promote       激活已验证的凭据版本
   doops credential revoke        吊销凭据资源
@@ -144,8 +143,6 @@ func runCredentialVerify(args []string, sessionName string, servers []Server, co
 	flags.StringVar(&target, "target", "", "Configured gateway target")
 	flags.StringVar(&id, "id", "", "Credential ID")
 	flags.StringVar(&versionID, "version-id", "", "Staged credential version ID")
-	flags.StringVar(&cluster, "cluster", "", "Target cluster")
-	flags.StringVar(&instance, "instance", "", "Target instance")
 	flags.StringVar(&namespace, "namespace", "default", "Secret materialization namespace (default: default)")
 	flags.StringVar(&use, "use", "", "Optional credential use; inferred from credential type when omitted")
 	flags.StringVar(&workloadKind, "workload-kind", "", "Optional workload metadata for imagePull materialization")
@@ -163,17 +160,19 @@ func runCredentialVerify(args []string, sessionName string, servers []Server, co
 		return err
 	}
 	if flags.NArg() != 0 || strings.TrimSpace(sessionName) == "" ||
-		strings.TrimSpace(id) == "" || strings.TrimSpace(versionID) == "" ||
-		strings.TrimSpace(cluster) == "" || strings.TrimSpace(instance) == "" {
-		return fmt.Errorf("-session, --id, --version-id, --cluster and --instance are required")
+		strings.TrimSpace(target) == "" || strings.TrimSpace(id) == "" || strings.TrimSpace(versionID) == "" {
+		return fmt.Errorf("-session, --target, --id and --version-id are required")
 	}
 	keyList, err := parseOptionalCredentialList(requiredKeys, "--required-keys")
 	if err != nil {
 		return err
 	}
-	gateway, token, err := resolveCredentialGateway(target, servers, configErr)
+	gateway, token, cluster, instance, err := resolveCredentialListTarget(target, servers, configErr)
 	if err != nil {
 		return err
+	}
+	if strings.ContainsAny(cluster+instance, "*?") {
+		return fmt.Errorf("--target must resolve an exact cluster/instance")
 	}
 	endpoint, err := credentialEndpoint(id, "verify")
 	if err != nil {
@@ -257,7 +256,7 @@ func runCredentialGrantRevoke(args []string, servers []Server, configErr error, 
 	if _, err := gatewayCredentialRequest(http.MethodDelete, gateway, token, endpoint, nil, body); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(stdout, "credential_id=%s credential_grant_id=%s revoked=true\n",
+	_, err = fmt.Fprintf(stdout, "credential_id=%s credential_binding_id=%s revoked=true\n",
 		strings.TrimSpace(id), strings.TrimSpace(grantID))
 	return err
 }
@@ -389,12 +388,12 @@ func runCredentialList(args []string, servers []Server, configErr error, stdout 
 		return err
 	}
 	for _, credential := range credentials {
-		grantSummary := fmt.Sprintf("%d", len(credential.Grants))
+		bindingSummary := fmt.Sprintf("%d", len(credential.Grants))
 		if view == "managed" {
-			grantSummary = "not_loaded"
+			bindingSummary = "not_loaded"
 		}
-		if _, err := fmt.Fprintf(stdout, "credential_id=%s name=%s scope=%s type=%s state=%s grants=%s\n",
-			credential.ID, credential.Name, credential.Scope, credential.Type, credential.State, grantSummary); err != nil {
+		if _, err := fmt.Fprintf(stdout, "credential_id=%s name=%s scope=%s type=%s state=%s bindings=%s\n",
+			credential.ID, credential.Name, credential.Scope, credential.Type, credential.State, bindingSummary); err != nil {
 			return err
 		}
 		for _, grant := range credential.Grants {
@@ -403,7 +402,7 @@ func runCredentialList(args []string, servers []Server, configErr error, stdout 
 				extra = fmt.Sprintf(" helm_release=%s helm_chart=%s", grant.Scope.HelmRelease, grant.Scope.HelmChart)
 			}
 			if _, err := fmt.Fprintf(stdout,
-				"  grant_id=%s cluster=%s instance=%s namespace=%s use=%s workload=%s/%s database_asset_id=%s environment_id=%s database_engine=%s database_name=%s%s\n",
+				"  binding_id=%s cluster=%s instance=%s namespace=%s use=%s workload=%s/%s database_asset_id=%s environment_id=%s database_engine=%s database_name=%s%s\n",
 				grant.ID, grant.Scope.Cluster, grant.Scope.Instance, grant.Scope.Namespace,
 				grant.Scope.Use, grant.Scope.Workload.Kind, grant.Scope.Workload.Name,
 				grant.Scope.DatabaseAssetID, grant.Scope.EnvironmentID, grant.Scope.DatabaseEngine, grant.Scope.DatabaseName, extra,
@@ -488,16 +487,13 @@ func runCredentialPut(args []string, servers []Server, configErr error, stdin io
 }
 
 func runCredentialGrant(args []string, servers []Server, configErr error, stdout io.Writer) error {
-	var target, id, granteeID string
+	var target, id string
 	var cluster, instance, namespace, use, workloadKind, workloadName string
 	var databaseAssetID, environmentID, databaseEngine, databaseName string
 	var imageRepository, imageDigest, helmRelease, helmChart, requiredKeys string
 	flags := credentialFlagSet("credential grant", stdout)
 	flags.StringVar(&target, "target", "", "Configured gateway target")
 	flags.StringVar(&id, "id", "", "Credential ID")
-	flags.StringVar(&granteeID, "grantee-id", "", "Gateway user ID receiving the grant")
-	flags.StringVar(&cluster, "cluster", "", "Target cluster")
-	flags.StringVar(&instance, "instance", "", "Target instance")
 	flags.StringVar(&namespace, "namespace", "default", "Secret materialization namespace (default: default)")
 	flags.StringVar(&use, "use", "", "Optional credential use; inferred from credential type when omitted")
 	flags.StringVar(&workloadKind, "workload-kind", "", "Optional workload metadata for imagePull materialization")
@@ -514,24 +510,25 @@ func runCredentialGrant(args []string, servers []Server, configErr error, stdout
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if flags.NArg() != 0 || strings.TrimSpace(id) == "" ||
-		strings.TrimSpace(cluster) == "" || strings.TrimSpace(instance) == "" {
-		return fmt.Errorf("--id, --cluster and --instance are required")
+	if flags.NArg() != 0 || strings.TrimSpace(target) == "" || strings.TrimSpace(id) == "" {
+		return fmt.Errorf("--target and --id are required")
 	}
 	keyList, err := parseOptionalCredentialList(requiredKeys, "--required-keys")
 	if err != nil {
 		return err
 	}
-	gateway, token, err := resolveCredentialGateway(target, servers, configErr)
+	gateway, token, cluster, instance, err := resolveCredentialListTarget(target, servers, configErr)
 	if err != nil {
 		return err
+	}
+	if strings.ContainsAny(cluster+instance, "*?") {
+		return fmt.Errorf("--target must resolve an exact cluster/instance")
 	}
 	endpoint, err := credentialEndpoint(id, "grants")
 	if err != nil {
 		return err
 	}
 	body, err := json.Marshal(map[string]any{
-		"grantee_id": strings.TrimSpace(granteeID),
 		"scope": credentialGrantScope{
 			Cluster:   strings.TrimSpace(cluster),
 			Instance:  strings.TrimSpace(instance),
@@ -566,7 +563,8 @@ func runCredentialGrant(args []string, servers []Server, configErr error, stdout
 	if strings.TrimSpace(grant.ID) == "" {
 		return fmt.Errorf("credential grant response omitted id")
 	}
-	_, err = fmt.Fprintf(stdout, "credential_grant_id=%s credential_id=%s grantee_id=%s\n", grant.ID, grant.CredentialID, grant.GranteeID)
+	_, err = fmt.Fprintf(stdout, "credential_binding_id=%s credential_id=%s target=%s/%s\n",
+		grant.ID, grant.CredentialID, grant.Scope.Cluster, grant.Scope.Instance)
 	return err
 }
 

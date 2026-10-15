@@ -37,7 +37,7 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/credentials/cred_123/payload":
 			_, _ = w.Write([]byte(`{"id":"credver_456","credential_id":"cred_123","payload_digest":"sha256:abc","state":"staged","payload":"` + payloadCanary + `"}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/credentials/cred_123/grants":
-			_, _ = w.Write([]byte(`{"id":"credgrant_789","credential_id":"cred_123","grantee_id":"user_42","cluster":"doops-edu","instance":"edu-coder","uses":["imagePull"],"payload":"` + payloadCanary + `"}`))
+			_, _ = w.Write([]byte(`{"id":"credgrant_789","credential_id":"cred_123","scope":{"cluster":"doops-edu","instance":"edu-coder","use":"imagePull"},"payload":"` + payloadCanary + `"}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/credentials/cred_123/grants":
 			_, _ = w.Write([]byte(`{"id":"credgrant_789","credential_id":"cred_123","state":"revoked","payload":"` + payloadCanary + `"}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/credentials/cred_123/verify":
@@ -98,29 +98,25 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 	run("", "credential", "create", "--target", "gw-edu-coder", "--name", "registry", "--scope", "personal", "--type", "registry")
 	run("", "credential", "list", "--target", "gw-edu-coder")
 	managedOutput := run("", "credential", "list", "--target", "gw-edu-coder", "--view", "managed")
-	if !strings.Contains(managedOutput, "grants=not_loaded") || strings.Contains(managedOutput, "grants=0") {
-		t.Fatalf("managed credential list must disclose that grants are not loaded: %s", managedOutput)
+	if !strings.Contains(managedOutput, "bindings=not_loaded") || strings.Contains(managedOutput, "bindings=0") {
+		t.Fatalf("managed credential list must disclose that bindings are not loaded: %s", managedOutput)
 	}
 	run(`{"server":"registry.example.com","username":"deploy","password":"stdin-wins"}`,
 		"credential", "put", "--target", "gw-edu-coder", "--id", "cred_123")
 	run("", "credential", "grant", "--target", "gw-edu-coder", "--id", "cred_123",
-		"--cluster", "doops-edu", "--instance", "edu-coder",
 		"--namespace", "apps", "--use", "imagePull",
 		"--workload-kind", "Deployment", "--workload-name", "api",
 		"--image-repository", "team/api", "--image-digest", "sha256:manifest")
 	run("", "credential", "grant", "--target", "gw-edu-coder", "--id", "cred_123",
-		"--cluster", "doops-edu", "--instance", "edu-coder",
 		"--namespace", "agents", "--use", "database",
 		"--required-keys", "connection_uri")
 	run("", "-session", "credential-verify", "credential", "verify",
 		"--target", "gw-edu-coder", "--id", "cred_123", "--version-id", "credver_456",
-		"--cluster", "doops-edu", "--instance", "edu-coder",
 		"--namespace", "apps", "--use", "imagePull",
 		"--workload-kind", "Deployment", "--workload-name", "api",
 		"--image-repository", "team/api", "--image-digest", "sha256:manifest")
 	run("", "-session", "credential-verify-database", "credential", "verify",
 		"--target", "gw-edu-coder", "--id", "cred_123", "--version-id", "credver_456",
-		"--cluster", "doops-edu", "--instance", "edu-coder",
 		"--namespace", "agents", "--use", "database",
 		"--required-keys", "connection_uri")
 	run("", "credential", "promote", "--target", "gw-edu-coder", "--id", "cred_123", "--version-id", "credver_456")
@@ -168,7 +164,6 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		t.Fatalf("credential put must not activate through a query parameter: %#v", requests[3].Query)
 	}
 	assertCredentialCLIJSON(t, requests[4], http.MethodPost, "/v1/credentials/cred_123/grants", map[string]any{
-		"grantee_id": "",
 		"scope": map[string]any{
 			"cluster":          "doops-edu",
 			"instance":         "edu-coder",
@@ -180,7 +175,6 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		},
 	})
 	assertCredentialCLIJSON(t, requests[5], http.MethodPost, "/v1/credentials/cred_123/grants", map[string]any{
-		"grantee_id": "",
 		"scope": map[string]any{
 			"cluster":       "doops-edu",
 			"instance":      "edu-coder",
@@ -236,6 +230,26 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 func TestResolveCredentialGatewayRequiresConfiguredTarget(t *testing.T) {
 	if _, _, err := resolveCredentialGateway("", nil, nil); err == nil || !strings.Contains(err.Error(), "--target is required") {
 		t.Fatalf("expected target requirement, got %v", err)
+	}
+}
+
+func TestCredentialCommandsRejectDuplicateTargetRouteFlags(t *testing.T) {
+	servers := []Server{{Name: "target", Gateway: "https://gateway.example.com", Cluster: "cluster-a", Instance: "node-a"}}
+	for _, args := range [][]string{
+		{"--target", "target", "--id", "cred_123", "--cluster", "other"},
+		{"--target", "target", "--id", "cred_123", "--instance", "other"},
+	} {
+		if err := runCredentialGrant(args, servers, nil, io.Discard); err == nil {
+			t.Fatalf("credential grant accepted duplicate route flag: %v", args)
+		}
+	}
+	for _, args := range [][]string{
+		{"--target", "target", "--id", "cred_123", "--version-id", "credver_456", "--cluster", "other"},
+		{"--target", "target", "--id", "cred_123", "--version-id", "credver_456", "--instance", "other"},
+	} {
+		if err := runCredentialVerify(args, "verify", servers, nil, io.Discard); err == nil {
+			t.Fatalf("credential verify accepted duplicate route flag: %v", args)
+		}
 	}
 }
 

@@ -20,7 +20,7 @@ after a query error; Gateway permission checks remain authoritative.
 
 ## 受管凭据配置
 
-运行时引用凭据继承本次目标操作的 `ask`/`exec` 权限，不要求额外 `credential:use` 或逐用户 grant。
+运行时引用凭据继承本次目标操作的 `ask`/`exec` 权限，不要求额外 `credential:use` 或逐用户绑定。
 目标视图也继承操作权限；返回无 payload 的目标绑定元数据。创建、轮换、吊销仍检查 owner/admin。
 `skill=dosql` 请求直接用服务器保存的 database 绑定解析 namespace/version，不运行 scope 规划 prompt。
 缺少版本、目标绑定、格式不合法或目标离线分别返回真实错误类别，不合并为 `credential_invalid`。
@@ -724,7 +724,7 @@ name；Gateway 根据当前操作的 ask/exec 权限直接读取 target/use 绑�
 
 内部 Helm binding 元数据增加 `credential_id`、`grant_id`、`version_id`、`helm_release`
 与 `helm_chart`，由 Gateway 从运行位置元数据填写；公开调用方不得提交 binding。
-Helm grant 只绑定 target 的 cluster/instance 和 use=helmPull；namespace、workload、release
+Helm target binding 只绑定 target 的 cluster/instance 和 use=helmPull；namespace、workload、release
 和 Chart URL 不再参与 Gateway 或 Agent 授权匹配。认证只发送给配置的 HTTPS origin，
 仓库路径不作权限条件。Agent 仅在本次 prompt 存续期间建立无 payload 的绑定租约，
 检查 session、凭据身份与 resourceVersion 后消费凭据。公开 MCP 不增加密码/token 参数。
