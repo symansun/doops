@@ -268,6 +268,30 @@ master:
             pnpm build
 
 $:
+  vscode:
+    - name: vscode codex dev env
+      runner:
+        cpus: 8
+      services:
+        - vscode
+        - docker
+      docker:
+        image: docker.cnb.cool/l8ai/agentcloud/webide-codex:git-f3f43aa51d033d975b89fcfeec8c0a3abc8066e2
+      imports:
+        - https://cnb.cool/aiedulab/zhiyong/secret/-/blob/main/codex-dev-env.yml
+      env:
+        CODEX_HOME: /home/coder/.codex
+        CODEX_BASE_URL: https://token.aiedulab.cn
+        CODEX_MODEL: gpt-5.5
+        CNB_WELCOME_CMD: codex-dev-init && codex --version
+      stages:
+        - name: 写入 Codex 凭据
+          script: |
+            codex-dev-init
+            go version
+            node --version
+        - name: 打开 VS Code
+          type: vscode:go
   tag_push:
     - name: publish-release
       runner:
