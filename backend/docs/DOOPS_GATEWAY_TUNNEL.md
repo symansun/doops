@@ -505,8 +505,9 @@ doops -session agent-upgrade upgrade \
   target 绕过已有锁，也不能将当前实现描述为安全抢占或分布式 release 锁。
 - 发布通过 `doops ask --apply` 的明确自然语言任务进入 Gateway。任务必须给出
   target、服务范围、镜像版本、原因和验收条件；`--credential <resource-name>` 只传递
-  metadata-only 引用。Gateway 将引用绑定用户、target 和 session，并在精确 workload、
-  image 或 Helm scope 获授权后物化。公开 prompt、doagent 上下文和 metadata binding
+  metadata-only 引用。Gateway 将引用绑定用户、target 和 session；凭据使用继承 target
+  的 ask/exec 权限，凭据本身按 target binding/use 解析。workload、image 和 Helm scope
+  是本次执行事实，不是凭据授权条件。公开 prompt、doagent 上下文和 metadata binding
   不接收凭据 payload；Gateway 仅通过内部物化调用向目标 Agent 短暂传递 payload。
 - `/v1/targets` 中 `busy=true` 只表示 target-wide 阻塞；普通 session 运行显示为 `status=active`、`busy=false`，并在 `resources` 中标出锁住的资源。
 - gateway `serve` 默认全局 64、单用户 10 个执行槽；嵌入式 `NewGatewayHub` 的零值
