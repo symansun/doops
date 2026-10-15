@@ -79,10 +79,6 @@ main:
             pnpm exec tsc --noEmit
             pnpm build
         - name: build immutable agent base
-          ifModify:
-            - backend/Dockerfile.base.light
-            - backend/runtime-versions.env
-            - backend/scripts/build-agent-base-image.sh
           script: |
             DOOPS_BASE_RELEASE_TAG="${CNB_COMMIT}" \
             DOOPS_BASE_IMAGE_OUTPUT="${PWD}/backend/.ci-agent-base-image" \
