@@ -106,15 +106,16 @@ description: |
   也不能把工作区同步或 SCP 源码传输作为普通发布的前置步骤。
 - 需要凭据时使用可重复的 `--credential <resource-name>`。该参数只传递资源名；Gateway
   使用当前 target 操作的 `ask`/`exec` 权限，不要求额外 `credential:use` 或给每个操作员重复 grant。
-  凭据必须已绑定该 target/use 且存在 active version，管理/轮换仍检查 owner/admin。对 database
+  凭据必须已绑定该 target 且存在 active version，管理/轮换仍检查 owner/admin。对 database
   use，Gateway 只管理用户/平台归属、cluster/instance/use 和凭据可用性；namespace 仅是物化
   位置元数据；数据库
   asset、environment、engine、database name 与 SQL 变更授权由 DoSql/目标 Agent 负责。公开 prompt、doagent 上下文和 metadata
   binding 不接收 credential payload；目标 doops-agent 只在内部凭据控制面临时接收
   解密 payload 以创建或验证目标资源。
-- 所有凭据绑定由 Gateway 直接读取已保存的 target/use 元数据，不让模型生成授权 scope。
+- 所有凭据绑定由 Gateway 直接读取已保存的 target 元数据，不让模型生成授权 scope。
   初始化缺少版本时用 `credential configure` 内部导入并验证；不能只给空资源补 grant。
-- 所有凭据 grant 的授权匹配只绑定 target 的 cluster/instance 和 use；namespace 只作为
+- 所有凭据 grant 的授权匹配只绑定 target 的 cluster/instance；use 只作为
+  凭据类型和物化用途元数据，namespace 只作为
   Secret 物化位置元数据，workload、image、release、Chart URL 和 required keys 都是可选的
   执行元数据，不参与 Gateway 授权匹配。实际包按本次操作的 URL 下载；
   只向凭据配置的 HTTPS origin 发送认证，允许其不同仓库路径和版本。下载包验证后一次
@@ -326,14 +327,14 @@ doops -session preflight targets --target <gateway-target>
 | DoWeb 发布计划 | `doops -session <s> web --target <t> --mode plan --request '<站点发布需求>'` |
 | DoWeb 受控发布 | `doops -session <s> web --target <t> --mode apply --credential <web-resource> --request '<站点、dist、域名、代理、验收>'` |
 
-| 一次配置凭据 | `doops -session <s> credential configure --target <t> --id <id> --namespace <ns> --use <use> <source-and-scope-flags>` |
+| 一次配置凭据 | `doops -session <s> credential configure --target <t> --id <id> [--namespace <ns>] [--use <use>] <source-and-scope-flags>` |
 | 创建凭据元数据（分步管理） | `doops credential create --target <t> --name <name> --scope personal --type <type>` |
 | 写入凭据版本 | `printf '%s' '<json>' \| doops credential put --target <t> --id <credential-id>` |
 | 查询 target 可用凭据 | `doops credential list --target <t>` |
 | 查询本人管理凭据 | `doops credential list --target <t> --view managed` |
 | 检查项目开发凭据 | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` |
-| 授权凭据 | `doops credential grant --target <t> --id <id> <exact-scope-flags>` |
-| 验证 staged 版本 | `doops -session <s> credential verify --target <t> --id <id> --version-id <version> <exact-scope-flags>` |
+| 授权凭据 | `doops credential grant --target <t> --id <id> --cluster <cluster> --instance <instance>` |
+| 验证 staged 版本 | `doops -session <s> credential verify --target <t> --id <id> --version-id <version> --cluster <cluster> --instance <instance>` |
 | 激活凭据版本 | `doops credential promote --target <t> --id <id> --version-id <version>` |
 | 吊销授权 | `doops credential grant-revoke --target <t> --id <id> --grant-id <grant>` |
 | 吊销资源 | `doops credential revoke --target <t> --id <id>` |
@@ -394,7 +395,7 @@ printf '%s' '<PASSWORD_FROM_SECURE_INPUT>' | \
 
 也可以用 `--generate-password` 生成一次性密码。CLI 会拒绝同名用户，创建普通用户时
 固定发送 `admin:false`，删除 Gateway 自动写入的 wildcard bootstrap grant，再按
-`--grant-target` 写入精确 scope 和普通操作 actions。任何中途错误都会停用新用户；
+`--grant-target` 写入精确 scope 的 `target:use` grant。任何中途错误都会停用新用户；
 没有 `--grant-target` 时不会授予任何 target 权限，只创建没有操作权限的用户和 API key。
 密码和 API key 只在需要时输出一次，Gateway 只保存它们的哈希。
 
@@ -415,11 +416,9 @@ doops admin grant delete --target <gateway-target> --id <grant-id>
 - 创建普通用户必须发送 `admin:false`。CLI 通过 `POST /v1/admin/users` 创建后，会在交付账号
   或 token 前删除并复核 Gateway 可能写入的 wildcard bootstrap grant；流程失败时会停用
   新用户，不得交付半完成账号。
-- 创建后立即列出该用户的 grant，删除所有 `cluster="*"`、`instance="*"` 或包含
-  action `"*"` 的规则，再为每个允许 target 添加显式 actions。不要省略 `actions`，因为
-  空列表会展开为默认权限集合。
-- 普通机器操作使用 `targets:list,exec,ask,read,write,push,pull,info,check,clean`。
-  `credential:*`、`agent:upgrade` 和 `admin` 只有在用户明确需要时才单独授权。
+- 创建后立即列出该用户的 grant，删除所有 wildcard scope 或 action `"*"` 规则，再为每个允许
+  target 添加一个 `target:use` grant。它自动包含标准日常操作和受管凭据使用；
+  `credential:*`、`agent:upgrade` 和 `admin` 仍需单独授权。
 - 任一步在通配 grant 删除前失败，立即通过 `/v1/admin/users/disable` 停用新用户，然后
   报告未完成；不要让半完成账号保持可登录状态。
 - 最终复核用户启用、密码存在、`is_admin=false`、grant 数量和精确 scope/actions，且
@@ -472,13 +471,13 @@ docs/DOOPS_MAINTENANCE_LOG.md
   token 缺失、失效或与精确 `cluster/instance` 不匹配；它不等于 Gateway user token
   失效，也不等于受管凭据错误。
 - `403 Forbidden`：认证通过但权限不足，或用户被显式收窄。
-- `credential_scope_invalid`：凭据引用没有匹配到对应 use 所需的 Gateway scope；database use
-  只要求 target、物化 namespace 和 credential usability，数据库资产与 SQL 规则由 DoSql/Agent
+- `credential_scope_invalid`：凭据引用没有匹配到对应 target 的 Gateway 授权，或物化 namespace
+  无效；数据库资产与 SQL 规则由 DoSql/Agent
   校验，不要把业务数据库字段重新塞回 Gateway grant。
 - `credential preflight failed`：项目清单中的 credentialRef 缺失、use 不匹配、grant
   已吊销或同名资源不唯一。先修复受管凭据和精确授权；不得读取本地 secret 文件兜底。
-- `credential_verification_required`：staged 版本尚未覆盖全部 active grant 的验证；对每个
-  active grant 使用完全相同的 scope 执行 `credential verify`。
+- `credential_verification_required`：staged 版本尚未覆盖全部 active target 的验证；对每个
+  active target 使用相同 target 执行 `credential verify`。
 - 凭据物化失败：按 Gateway 返回的错误类别定位目标或权限状态；不得重试、猜测或将 payload 放入任务。
 - `ask --apply` 未出现可信 mutation 完成证据：检查 Agent 运行时是否注册 required
   `mcp_doops_helm` 工具，并核对 attestation 的运行时 session 绑定、confirm 和

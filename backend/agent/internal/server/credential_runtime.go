@@ -168,16 +168,12 @@ func (h *GatewayHub) resolveExplicitCredentials(
 	if credentialScalarContainsInlineMaterial(instruction) {
 		return nil, ErrInlineCredentialMaterial
 	}
-	use := CredentialUse("")
-	if skill == "dosql" {
-		use = CredentialUseDatabase
-	}
 	authorized := make([]authorizedCredentialMaterialization, 0, len(names))
 	for _, name := range names {
 		name = strings.TrimSpace(name)
 		request := CredentialUseRequest{
 			ActorID: auth.UserID,
-			Scope:   CredentialGrantScope{Cluster: cluster, Instance: instance, Use: use},
+			Scope:   CredentialGrantScope{Cluster: cluster, Instance: instance},
 		}
 		if isCredentialResourceIDReference(name) {
 			request.CredentialID = name
@@ -188,11 +184,17 @@ func (h *GatewayHub) resolveExplicitCredentials(
 		if err != nil {
 			return nil, err
 		}
-		if err := credentialTypeAllowsUse(resolved.Resource.Type, resolved.Grant.Scope.Use); err != nil {
+		use := credentialUseForType(resolved.Resource.Type)
+		if skill == "dosql" {
+			use = CredentialUseDatabase
+		}
+		if err := credentialTypeAllowsUse(resolved.Resource.Type, use); err != nil {
 			return nil, err
 		}
+		effectiveScope := normalizeCredentialGrantScope(resolved.Grant.Scope)
+		effectiveScope.Use = use
 		authorized = append(authorized, authorizedCredentialMaterialization{
-			Reference:  CredentialPlanReference{Name: resolved.Resource.Name, Scope: normalizeCredentialGrantScope(resolved.Grant.Scope)},
+			Reference:  CredentialPlanReference{Name: resolved.Resource.Name, Scope: effectiveScope},
 			Authorized: resolved,
 		})
 	}
@@ -289,6 +291,23 @@ func credentialTypeAllowsUse(credentialType CredentialType, use CredentialUse) e
 		return errors.New("credential_use_mismatch")
 	}
 	return nil
+}
+
+func credentialUseForType(credentialType CredentialType) CredentialUse {
+	switch credentialType {
+	case CredentialTypeRegistry:
+		return CredentialUseImagePull
+	case CredentialTypeTLS:
+		return CredentialUseTLS
+	case CredentialTypeHelmRepository:
+		return CredentialUseHelmPull
+	case CredentialTypeGitToken:
+		return CredentialUseGitCheckout
+	case CredentialTypeOpaque:
+		return CredentialUseOpaqueSecret
+	default:
+		return ""
+	}
 }
 
 func (h *GatewayHub) rollbackCredentialPrepare(ctx context.Context, completed []completedCredentialMaterialization) error {

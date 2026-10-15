@@ -488,7 +488,7 @@ func TestCredentialUseInheritsTargetAuthorityWithoutDeploymentScope(t *testing.T
 			if test.name == "actor" || test.name == "cluster" || test.name == "instance" {
 				wantErr = ErrCredentialForbidden
 			}
-			if test.name != "actor" && test.name != "cluster" && test.name != "instance" && test.name != "use" {
+			if test.name != "actor" && test.name != "cluster" && test.name != "instance" {
 				wantErr = nil
 			}
 			if _, err := store.AuthorizeCredentialUse(changed); !errors.Is(err, wantErr) {

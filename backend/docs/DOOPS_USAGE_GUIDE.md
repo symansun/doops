@@ -55,8 +55,8 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Release an existing standalone Docker Agent | External `scripts/release-host-agent.sh` | Explicit DockerHost controller, not CLI fallback; real read-only `--dry-run`. See [SOP](BUILD_DEPLOY_SOP.md#独立-dockerhost-发布). |
 | Cache token | `doops login ...` | Gateway login can exchange username/password for user token. |
 | List target credentials | `doops credential list --target <t>` | Uses the cached gateway login and returns only metadata granted to that user on the selected cluster/instance. |
-| Preflight development credentials | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` | Fails closed unless every declared credentialRef has a matching active grant use on the selected target. |
-| Configure a credential once | `doops -session <s> credential configure --target <t> --id <id> --namespace <ns> --use <use> <source-and-scope-flags>` | Reuses managed storage, stages, grants to the current user, verifies every active scope and promotes. See `CREDENTIAL_RESOURCES.md`. |
+| Preflight development credentials | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` | Fails closed unless every declared credentialRef has an active grant on the selected target. The manifest `use` describes the requested operation and does not create a second permission. |
+| Configure a credential once | `doops -session <s> credential configure --target <t> --id <id> [--namespace <ns>] [--use <use>] <source-and-scope-flags>` | Reuses managed storage, stages, grants to the current user for that target, verifies and promotes. See `CREDENTIAL_RESOURCES.md`. |
 | Manage credential lifecycle | `doops credential <create|put|grant|verify|promote|grant-revoke|revoke>` | See `CREDENTIAL_RESOURCES.md`. |
 | Create Gateway user and API key | `doops admin user create --target <t> --user <u> (--password-stdin\|--generate-password)` | Removes bootstrap wildcard access and applies only explicit `--grant-target` scopes. |
 | List Gateway users | `doops admin user list --target <t>` | Returns metadata only. |
@@ -369,10 +369,10 @@ grant。这是暂时的过宽 bootstrap 行为，不代表已完成授权。账�
 2. `GET /v1/admin/grants?user=<user_id>`，记录该用户全部 grant ID。
 3. 对所有 wildcard scope 或 action `"*"` 执行
    `DELETE /v1/admin/grants?id=<grant-id>`。
-4. 为每个允许 target 分别创建精确 grant，并显式列出 actions。
+4. 为每个允许 target 分别创建一个 `target:use` grant。
 5. 重新读取用户和 grants，确认 `is_admin=false`、grant 数量符合预期且 wildcard 为 0。
 
-普通机器操作的精确 grant 示例：
+普通 target 使用权的 grant 示例：
 
 ```http
 POST /v1/admin/grants
@@ -383,16 +383,13 @@ Content-Type: application/json
   "user_id": "usr_xxx",
   "cluster": "doops-oilan",
   "instance": "oilan-node",
-  "actions": [
-    "targets:list", "exec", "ask", "read", "write",
-    "push", "pull", "info", "check", "clean"
-  ]
+  "actions": ["target:use"]
 }
 ```
 
-不要省略 `actions`：空列表会由 Gateway 展开为默认权限集合。`credential:*`、
-`agent:upgrade`、`admin` 和 action `"*"` 不属于普通机器操作授权，只有用户明确要求且
-风险边界清楚时才单独添加。若收窄或精确 grant 创建失败，立即停用用户再退出：
+普通授权只需要 `target:use`；它包含标准日常操作、`capabilities` 探针和受管凭据使用。
+`credential:*`、`agent:upgrade`、`admin` 和 action `"*"` 仍不包含在内。若精确 grant
+创建失败，立即停用用户再退出：
 
 ```http
 POST /v1/admin/users/disable
@@ -686,8 +683,9 @@ doops credential revoke --target gw-edu-coder --id <credential-id>
 ```
 
 payload 只能从 stdin 输入并由 Gateway 加密持久化。验证输出只允许状态、
-resourceVersion、digest 和稳定错误类别。Grant scope 是全字段精确匹配，不支持通配符或
-从 credential name 推断。
+resourceVersion、digest 和稳定错误类别。Grant scope 只匹配用户和 target 的
+`cluster/instance`；namespace、workload、release、仓库路径和 database asset 都是执行元数据，
+不参与授权。
 
 数据库凭据的 resource `state=active` 只表示 resource 未吊销，不表示已有可执行版本。
 数据库执行前必须完成 `put -> grant -> verify -> promote`；缺少 active version 或精确

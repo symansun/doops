@@ -530,6 +530,9 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 		CreatedBy:    req.CreatedBy,
 		CreatedAt:    time.Now().UTC(),
 	}
+	if grant.Scope.Use == "" {
+		grant.Scope.Use = credentialUseForType(resource.Type)
+	}
 	if err := validateCredentialGrantScope(grant.Scope); err != nil {
 		return CredentialGrant{}, err
 	}
@@ -815,8 +818,11 @@ func (s *GatewayStore) AuthorizeCredentialGrant(req CredentialUseRequest) (Crede
 		if err != nil {
 			return CredentialResource{}, CredentialGrant{}, err
 		}
+		if grant.Scope.Use == "" {
+			grant.Scope.Use = credentialUseForType(resource.Type)
+		}
 		if grant.Scope.Cluster != req.Scope.Cluster || grant.Scope.Instance != req.Scope.Instance ||
-			(req.Scope.Use != "" && grant.Scope.Use != req.Scope.Use) || validateCredentialGrantScope(grant.Scope) != nil {
+			validateCredentialGrantScope(grant.Scope) != nil {
 			continue
 		}
 		if len(matches) != 0 && matches[len(matches)-1].Resource.ID == resource.ID &&

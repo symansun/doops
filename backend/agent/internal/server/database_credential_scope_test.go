@@ -10,10 +10,9 @@ func TestDatabaseCredentialScopeOnlyBindsTargetAndMaterializationNamespace(t *te
 		t.Fatalf("valid database scope rejected: %v", err)
 	}
 	for name, mutate := range map[string]func(*CredentialGrantScope){
-		"missing cluster":   func(scope *CredentialGrantScope) { scope.Cluster = "" },
-		"missing instance":  func(scope *CredentialGrantScope) { scope.Instance = "" },
-		"missing namespace": func(scope *CredentialGrantScope) { scope.Namespace = "" },
-		"invalid use":        func(scope *CredentialGrantScope) { scope.Use = CredentialUse("invalid") },
+		"missing cluster":  func(scope *CredentialGrantScope) { scope.Cluster = "" },
+		"missing instance": func(scope *CredentialGrantScope) { scope.Instance = "" },
+		"invalid use":      func(scope *CredentialGrantScope) { scope.Use = CredentialUse("invalid") },
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := base
