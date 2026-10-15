@@ -79,8 +79,10 @@ func normalizeCredentialGrantScope(scope CredentialGrantScope) CredentialGrantSc
 
 func validateCredentialGrantScope(scope CredentialGrantScope) error {
 	scope = normalizeCredentialGrantScope(scope)
-	if scope.Cluster == "" || scope.Instance == "" || !validKubernetesCredentialName(scope.Namespace) ||
-		!validCredentialUse(scope.Use) {
+	if scope.Cluster == "" || scope.Instance == "" || !validKubernetesCredentialName(scope.Namespace) {
+		return errors.New("credential_scope_invalid")
+	}
+	if scope.Use != "" && !validCredentialUse(scope.Use) {
 		return errors.New("credential_scope_invalid")
 	}
 	if scope.Workload.Kind != "" || scope.Workload.Name != "" {
@@ -127,7 +129,7 @@ func normalizedCredentialKeys(values []string) []string {
 func credentialScopeEqual(left, right CredentialGrantScope) bool {
 	left = normalizeCredentialGrantScope(left)
 	right = normalizeCredentialGrantScope(right)
-	return left.Cluster == right.Cluster && left.Instance == right.Instance && left.Use == right.Use
+	return left.Cluster == right.Cluster && left.Instance == right.Instance
 }
 
 func validCredentialSHA256Digest(value string) bool {

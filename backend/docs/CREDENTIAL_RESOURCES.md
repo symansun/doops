@@ -12,8 +12,8 @@ session 的目标执行可以并行。取消或审计收尾不得把其中一个
 | :--- | :--- |
 | Credential Resource | 稳定名称、personal/platform 归属、类型和资源状态 |
 | Credential Version | 加密 payload 的不可变版本，保存 payload digest，不返回 payload |
-| Credential Grant | 凭据的 target/use 绑定及运行位置元数据；不要求每个操作员重复授权 |
-| Credential Verification | staged 版本在某个 grant scope 上的实际物化和验证证据 |
+| Credential Grant | 凭据的 target 绑定及运行位置元数据；不要求每个操作员重复授权 |
+| Credential Verification | staged 版本在某个 target grant 上的实际物化和验证证据 |
 | Credential Bundle | 一组 credential ID 的静态元数据集合，当前不参与 `ask --apply` 展开 |
 | Materialization | 目标环境中的 Kubernetes Secret 或临时 Helm/Git 凭据上下文 |
 
@@ -117,10 +117,8 @@ personal owner 给 target 创建绑定前必须能操作该 target。运行时�
 
 ### Grant scope
 
-Gateway 授权匹配只使用：
-
-- `cluster`、`instance`；
-- `use`；
+Gateway 授权只回答一个问题：当前用户能否使用哪个 target。授权匹配只使用
+`cluster` 和 `instance`；`use` 只是凭据类型和物化用途的元数据，不是第二套权限。
 
 以下字段是物化或执行元数据，不是凭据授权条件：
 
@@ -293,8 +291,8 @@ doops -session db-setup credential configure \
   需要其它连接形式时由安全输入端通过 stdin 提交完整 payload，不自动改写或降级。
 - 不带 `--from-secret` 时只读 stdin，格式与 `credential put` 相同；Secret 模式不读 stdin。
   导入值经内部 Agent 控制通道进入 Gateway 加密存储，不进入公开 RPC、prompt 或 CLI 输出。
-- 自动为当前用户建立精确 grant，读取并验证该资源全部 active scope 后才 promote。
-  Database use 无需 workload 或数据库资产参数；其它 use 仍需原有 workload 和精确授权字段。
+- 自动为当前用户建立 target grant，读取并验证该资源全部 active target 后才 promote。
+  不再要求 workload、镜像仓库、Helm release、Chart、数据库资产或其它业务绑定字段。
 - 任一步失败即非零退出，不宣称就绪、不自动重试或清理已有资源。重跑会产生新的 staged version。
   该流程不是跨请求事务；失败前已完成的资源/版本/授权保留，输出仅含阶段 ID 和元数据。
 - `phase=promoted` 表示受管凭据已激活；opaque/database 验证的是 Secret 物化与内容一致性，
@@ -325,7 +323,7 @@ printf '%s' '{"server":"registry.example.com","username":"deploy","password":"..
 
 输出只包含 `credential_id`、`version_id`、`state` 和 `payload_digest`。
 
-3. 创建精确 grant：
+3. 创建 target grant：
 
 ```bash
 doops credential grant \
@@ -333,12 +331,7 @@ doops credential grant \
   --id <credential-id> \
   --cluster <cluster> \
   --instance <instance> \
-  --namespace <namespace> \
-  --use imagePull \
-  --workload-kind Deployment \
-  --workload-name <workload> \
-  --image-repository registry.example.com/team/app \
-  --image-digest sha256:<64-hex>
+  --namespace <namespace>
 ```
 
 省略 `--grantee-id` 时授权给当前登录用户。
@@ -380,7 +373,7 @@ doops credential promote \
 轮换使用同一 resource：
 
 1. `credential put` 创建新的 staged version。
-2. 对每个 active grant 的精确 scope 执行 `credential verify`。
+2. 对每个 active target grant 执行 `credential verify`。
 3. 检查验证输出只有 metadata。
 4. 执行 `credential promote`。
 5. 通过 `credential list --view managed` 和目标功能路径确认新版本生效。
@@ -462,7 +455,7 @@ Gateway-to-Agent 凭据控制面会把解密 payload 临时传给目标 doops-ag
 payload 不进入公开 prompt、doagent 上下文或 metadata binding。
 
 注意：Resource `state=active` 不等于存在 active Version。数据库执行必须同时满足：
-active resource、active version、目标上的 active database 绑定和当前用户的目标操作权限，
+active resource、active version、目标上的 active target 绑定和当前用户的目标操作权限，
 以及该 version 在所有 active grant 上完成 verification。标准顺序是
 `credential put -> credential grant -> credential verify -> credential promote`。
 缺少 active version 时，target credential list 会隐藏该 resource，DoSql 执行会被 Gateway
@@ -474,7 +467,7 @@ active resource、active version、目标上的 active database 绑定和当前�
 
 - user/token ID；
 - credential/version/grant ID；
-- target、session、`cluster/instance/use` authorization scope 和执行元数据；
+- target、session、`cluster/instance` authorization scope 和执行元数据；
 - action、时间、状态；
 - resourceVersion、digest 或稳定错误类别。
 

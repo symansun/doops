@@ -8,8 +8,8 @@ def test_skill_requires_wildcard_grant_removal_and_end_to_end_verification():
     skill = (ROOT / "skills" / "SKILL.md").read_text(encoding="utf-8")
 
     assert "POST /v1/admin/users" in skill
-    assert 'cluster="*"' in skill
-    assert 'instance="*"' in skill
+    assert "wildcard bootstrap grant" in skill
+    assert "wildcard scope" in skill
     assert "删除所有" in skill
     assert "wildcard grant 数为 0" in skill
     assert "DOOPS_CONFIG" in skill

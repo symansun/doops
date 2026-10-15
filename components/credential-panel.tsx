@@ -164,7 +164,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
   async function revokeGrant(resource: CredentialResource, grant: CredentialGrant) {
     if (
       !window.confirm(
-        `确认吊销授权「${grant.scope.namespace} · ${grant.scope.workload.name}」？已物化资源将进入清理流程。`,
+        `确认吊销「${grant.scope.cluster}/${grant.scope.instance}」上的凭据授权？已物化资源将进入清理流程。`,
       )
     ) {
       return
@@ -604,24 +604,10 @@ function VerifyDialog({
           <ReadOnlyField label="Version ID" value={version.id} />
           <ReadOnlyField label="Grant ID" value={grant.id} />
           <ReadOnlyField label="Cluster / instance" value={`${scope.cluster}/${scope.instance}`} />
-          <ReadOnlyField label="Namespace" value={scope.namespace} />
-          <ReadOnlyField label="Use" value={scope.use} />
-          <ReadOnlyField
-            label="Workload"
-            value={`${scope.workload.kind}/${scope.workload.name}`}
-          />
-          {scope.image_repository && (
-            <ReadOnlyField label="Image repository" value={scope.image_repository} />
-          )}
-          {scope.image_digest && <ReadOnlyField label="Image digest" value={scope.image_digest} />}
-          {scope.helm_release && <ReadOnlyField label="Helm release" value={scope.helm_release} />}
-          {scope.helm_chart && <ReadOnlyField label="Helm chart" value={scope.helm_chart} />}
-          {scope.required_keys?.length ? (
-            <ReadOnlyField label="Required keys" value={scope.required_keys.join(", ")} />
-          ) : null}
+          <ReadOnlyField label="用途" value={scope.use || "按凭据类型推断"} />
         </div>
         <p className="text-xs text-muted-foreground">
-          将按该 grant 的完整精确 scope 验证 staged version；返回内容仅为状态和 metadata evidence。
+          将按该 target 验证 staged version；namespace 等运行参数只用于物化，不参与授权。
         </p>
         <div className="flex justify-end gap-2">
           <button
@@ -635,7 +621,7 @@ function VerifyDialog({
             disabled={busy || version.state !== "staged" || grant.state !== "active"}
             className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
           >
-            {busy ? "验证中" : "验证完整 scope"}
+            {busy ? "验证中" : "验证 target"}
           </button>
         </div>
       </div>
@@ -691,21 +677,8 @@ function GrantSummary({
             )}
           </div>
           <div>
-            {grant.scope.cluster}/{grant.scope.instance} · ns/{grant.scope.namespace} ·{" "}
-            {grant.scope.use}
+            {grant.scope.cluster}/{grant.scope.instance} · 用途 {grant.scope.use || "自动推断"}
           </div>
-          <div>
-            workload {grant.scope.workload.kind}/{grant.scope.workload.name}
-          </div>
-          {grant.scope.image_repository && <div>image {grant.scope.image_repository}</div>}
-          {grant.scope.image_digest && (
-            <div className="font-mono text-[11px]">digest {grant.scope.image_digest}</div>
-          )}
-          {grant.scope.helm_release && <div>helm release {grant.scope.helm_release}</div>}
-          {grant.scope.helm_chart && <div>helm chart {grant.scope.helm_chart}</div>}
-          {grant.scope.required_keys?.length ? (
-            <div>required keys {grant.scope.required_keys.join(", ")}</div>
-          ) : null}
         </div>
       ))}
     </div>
@@ -977,94 +950,15 @@ function GrantDialog({
   const [selectedUse, setSelectedUse] = useState<CredentialUse>(TYPE_USES[credential.type])
   const use = selectedUse
   const [namespace, setNamespace] = useState("default")
-  const [workloadKind, setWorkloadKind] = useState("deployment")
-  const [workloadName, setWorkloadName] = useState("")
-  const [imageRepository, setImageRepository] = useState("")
-  const [imageDigest, setImageDigest] = useState("")
-  const [helmRelease, setHelmRelease] = useState("")
-  const [helmChart, setHelmChart] = useState("")
-  const [requiredKeys, setRequiredKeys] = useState("")
-  const [databaseAssetID, setDatabaseAssetID] = useState("")
-  const [environmentID, setEnvironmentID] = useState("")
-  const [databaseEngine, setDatabaseEngine] = useState<"mysql" | "postgres" | "mongodb">("postgres")
-  const [databaseName, setDatabaseName] = useState("")
   const [busy, setBusy] = useState(false)
-  const requiredKeyList = useMemo(
-    () =>
-      requiredKeys
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean),
-    [requiredKeys],
-  )
-  const scopeError = useMemo(() => {
-    if (!namespace.trim() || !workloadName.trim()) return "Namespace 和 workload name 必填"
-    if (use === "imagePull") {
-      if (!imageRepository.trim()) return "Image repository 必填"
-      if (!/^sha256:[0-9a-f]{64}$/.test(imageDigest.trim())) {
-        return "Image digest 必须是 sha256: 加 64 位小写十六进制"
-      }
-    }
-    if (use === "helmPull") {
-      if (!helmRelease.trim()) return "Helm release 必填"
-      if (!/^https:\/\/\S+$/.test(helmChart.trim())) {
-        return "Helm chart 必须是明确的 HTTPS URL"
-      }
-    }
-    if (use === "opaqueSecret" && requiredKeyList.length === 0) {
-      return "Required keys 至少填写一项"
-    }
-    if (use === "database") {
-      if (!databaseAssetID.trim() || !environmentID.trim() || !databaseName.trim()) {
-        return "数据库资产、环境和数据库名必填"
-      }
-    }
-    return ""
-  }, [
-    helmChart,
-    helmRelease,
-    imageDigest,
-    imageRepository,
-    namespace,
-    requiredKeyList,
-    databaseAssetID,
-    databaseName,
-    environmentID,
-    use,
-    workloadName,
-  ])
 
   async function submit() {
-    if (scopeError) {
-      onError(scopeError)
-      return
-    }
     const scope: CredentialGrantScope = {
       cluster: target.cluster,
       instance: target.instance,
       namespace: namespace.trim(),
       use,
-      workload: { kind: workloadKind, name: workloadName.trim() },
-    }
-    if (credential.type === "opaque") {
-      scope.use = use
-    }
-    if (use === "imagePull") {
-      scope.image_repository = imageRepository.trim()
-      scope.image_digest = imageDigest.trim()
-    } else if (use === "helmPull") {
-      scope.helm_release = helmRelease.trim()
-      scope.helm_chart = helmChart.trim()
-    } else if (use === "opaqueSecret") {
-      scope.required_keys = requiredKeyList
-    } else if (use === "database") {
-      scope.database_asset_id = databaseAssetID.trim()
-      scope.environment_id = environmentID.trim()
-      scope.database_engine = databaseEngine
-      scope.database_name = databaseName.trim()
-      scope.required_keys = databaseEngine === "mysql"
-        ? ["SPRING_DATASOURCE_URL", "SPRING_DATASOURCE_USERNAME", "SPRING_DATASOURCE_PASSWORD"]
-        : ["connection_uri"]
+      workload: { kind: "", name: "" },
     }
     setBusy(true)
     onError("")
@@ -1091,72 +985,14 @@ function GrantDialog({
             </select>
           </label>
         ) : <ReadOnlyField label="用途" value={use} />}
-        <TextField label="Namespace" value={namespace} onChange={setNamespace} />
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-          Workload kind
-          <select
-            className="input"
-            value={workloadKind}
-            onChange={(event) => setWorkloadKind(event.target.value)}
-          >
-            <option value="deployment">Deployment</option>
-            <option value="statefulset">StatefulSet</option>
-            <option value="daemonset">DaemonSet</option>
-          </select>
-        </label>
-        <TextField label="Workload name" value={workloadName} onChange={setWorkloadName} />
-        {use === "imagePull" && (
-          <>
-            <TextField
-              label="Image repository"
-              value={imageRepository}
-              onChange={setImageRepository}
-            />
-            <TextField
-              label="Image digest"
-              value={imageDigest}
-              onChange={setImageDigest}
-              placeholder="sha256:..."
-            />
-          </>
-        )}
-        {use === "helmPull" && (
-          <>
-            <TextField label="Helm release" value={helmRelease} onChange={setHelmRelease} />
-            <TextField label="Helm chart" value={helmChart} onChange={setHelmChart} />
-          </>
-        )}
-        {use === "opaqueSecret" && (
-          <TextField
-            label="Required keys"
-            value={requiredKeys}
-            onChange={setRequiredKeys}
-            placeholder="username,password"
-          />
-        )}
-        {use === "database" && (
-          <>
-            <TextField label="数据库资产 ID" value={databaseAssetID} onChange={setDatabaseAssetID} />
-            <TextField label="环境 ID" value={environmentID} onChange={setEnvironmentID} />
-            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-              数据库引擎
-              <select className="input" value={databaseEngine} onChange={(event) => setDatabaseEngine(event.target.value as typeof databaseEngine)}>
-                <option value="postgres">PostgreSQL</option>
-                <option value="mysql">MySQL</option>
-                <option value="mongodb">MongoDB</option>
-              </select>
-            </label>
-            <TextField label="数据库名" value={databaseName} onChange={setDatabaseName} />
-            <p className="text-xs text-muted-foreground sm:col-span-2">
-              受管凭据 payload 的 keys：{databaseEngine === "mysql" ? "SPRING_DATASOURCE_URL、SPRING_DATASOURCE_USERNAME、SPRING_DATASOURCE_PASSWORD" : "connection_uri"}
-            </p>
-          </>
-        )}
-        {scopeError && <p className="text-xs text-destructive sm:col-span-2">{scopeError}</p>}
+        <TextField label="Secret namespace（可选）" value={namespace} onChange={setNamespace} />
+        <p className="text-xs text-muted-foreground sm:col-span-2">
+          授权只决定谁可以使用哪个集群。Namespace 仅用于目标机创建临时 Secret，不参与权限匹配。
+        </p>
         <div className="flex justify-end sm:col-span-2">
           <button
             onClick={submit}
-            disabled={busy || Boolean(scopeError)}
+            disabled={busy}
             className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
           >
             <ShieldIcon width={14} height={14} /> {busy ? "授权中" : "确认授权"}

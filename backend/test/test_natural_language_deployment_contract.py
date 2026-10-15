@@ -235,7 +235,7 @@ def test_cicd_and_credential_guides_match_the_runtime_contract():
     assert ".agent/doops-credentials.yaml" in credential_preflight
     assert "DevelopmentCredentialRequirements" in credential_preflight
     assert "KnownFields(true)" in credential_preflight
-    assert "credentialHasActiveUse" in credential_preflight
+    assert "credentialHasActiveTarget" in credential_preflight
     assert "preflight 不为本机进程或远端 workspace 注入 payload" in credential_doc
     assert "docs/CREDENTIAL_RESOURCES.md" in skill
     assert "backend/skills/SKILL.md" in skill
