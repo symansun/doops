@@ -145,7 +145,7 @@ Agent 会根据当前 target 的非 Secret discovery 校验。PostgreSQL 和 Mon
 `connection_uri`；MySQL 使用
 `required_keys=SPRING_DATASOURCE_URL,SPRING_DATASOURCE_USERNAME,SPRING_DATASOURCE_PASSWORD`。
 `database_asset_id` 必须来自 DoSql 的 target discovery 或授权代码资产，不能由 CLI 根据
-数据库名猜测；它不再进入 Gateway grant equality。`credential grant`/`verify` 只验证
+数据库名猜测；它不再进入 Gateway target binding equality。`credential grant`/`verify` 只验证
 Gateway target、credential ownership、materialization namespace 和 payload usability；DoSql
 query/apply 继续验证资产、引擎、数据库名、SQL policy、approval 和 evidence。
 
@@ -206,7 +206,7 @@ key 和 value 都不能为空。
 `/charts/<repo>/<name>/v/<version>.tgz` 接口。当前 remote 仅支持 HTTPS `.tgz`
 下载，不支持 `oci://`；调用方须明确授权 HTTPS Chart 身份，不会猜测、自动替换仓库路径或 fallback。
 
-Helm grant 只绑定 target 的 cluster/instance 和 use=helmPull，不再把 namespace、workload、
+Helm target binding 只绑定 target 的 cluster/instance 和 use=helmPull，不再把 namespace、workload、
 release 或 Chart URL 写成 Gateway 授权条件。实际请求仍必须从受管凭据 payload 的仓库 URL
 同源下载，并通过 Chart 内容校验；这保证凭据不会被发往无关 host，
 同时允许同一 target 使用多个 namespace、release 和 Chart。
