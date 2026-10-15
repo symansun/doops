@@ -5,17 +5,17 @@ import type { Session, Target } from "@/lib/client"
 import { randomSession } from "@/lib/gateway"
 import {
   createCredential,
-  grantCredentialToSelf,
-  listCredentialGrants,
+  bindCredentialToTarget,
+  listCredentialBindings,
   listCredentialVersions,
   listCredentials,
   promoteCredentialVersion,
   putCredentialPayload,
-  revokeCredentialGrant,
+  revokeCredentialBinding,
   revokeCredential,
   verifyCredentialVersion,
-  type CredentialGrant,
-  type CredentialGrantScope,
+  type CredentialBinding,
+  type CredentialBindingScope,
   type CredentialResource,
   type CredentialScope,
   type CredentialType,
@@ -51,13 +51,13 @@ const TYPE_USES: Record<CredentialType, CredentialUse> = {
 
 type Action =
   | { kind: "payload"; credential: CredentialResource }
-  | { kind: "grant"; credential: CredentialResource }
+  | { kind: "binding"; credential: CredentialResource }
   | { kind: "version"; credential: CredentialResource; version: CredentialVersion }
   | {
       kind: "verify"
       credential: CredentialResource
       version: CredentialVersion
-      grant: CredentialGrant
+      binding: CredentialBinding
     }
   | null
 
@@ -100,12 +100,12 @@ export function CredentialPanel({ session, target }: { session: Session; target:
         const managedRows = await listCredentials(session, target, "managed")
         nextRows = await Promise.all(
           managedRows.map(async (resource) => {
-            const [versions, grants] = await Promise.all([
+            const [versions, bindings] = await Promise.all([
               listCredentialVersions(session, resource.id),
-              listCredentialGrants(session, resource.id),
+              listCredentialBindings(session, resource.id),
             ])
             versionEntries.push([resource.id, versions])
-            return { ...resource, grants }
+            return { ...resource, bindings }
           }),
         )
       } else {
@@ -161,18 +161,18 @@ export function CredentialPanel({ session, target }: { session: Session; target:
     }
   }
 
-  async function revokeGrant(resource: CredentialResource, grant: CredentialGrant) {
+  async function revokeBinding(resource: CredentialResource, binding: CredentialBinding) {
     if (
       !window.confirm(
-        `确认吊销「${grant.scope.cluster}/${grant.scope.instance}」上的凭据授权？已物化资源将进入清理流程。`,
+        `确认解除「${binding.scope.cluster}/${binding.scope.instance}」上的凭据绑定？已物化资源将进入清理流程。`,
       )
     ) {
       return
     }
     setError("")
     try {
-      await revokeCredentialGrant(session, resource.id, grant.id)
-      completed(`已吊销 ${resource.name} 的一条授权`)
+      await revokeCredentialBinding(session, resource.id, binding.id)
+      completed(`已解除 ${resource.name} 的一条目标绑定`)
       await load()
     } catch (err) {
       setError((err as Error).message)
@@ -181,7 +181,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
 
   async function promote(resource: CredentialResource, version: CredentialVersion) {
     if (version.state !== "staged") return
-    if (!window.confirm(`确认激活暂存版本 ${version.id}？Gateway 会重新检查全部 active grant。`)) {
+    if (!window.confirm(`确认激活暂存版本 ${version.id}？Gateway 会重新检查全部 active target binding。`)) {
       return
     }
     setError("")
@@ -343,15 +343,15 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                 <td className="max-w-md px-3 py-3 text-xs text-muted-foreground">
                   {view === "target" ? (
                     <div className="flex flex-col gap-2">
-                      <GrantSummary
+                      <BindingSummary
                         resource={resource}
                         version={version}
                         disabled
-                        onVerify={(grant) =>
+                        onVerify={(binding) =>
                           version &&
-                          setAction({ kind: "verify", credential: resource, version, grant })
+                          setAction({ kind: "verify", credential: resource, version, binding })
                         }
-                        onRevoke={(grant) => revokeGrant(resource, grant)}
+                        onRevoke={(binding) => revokeBinding(resource, binding)}
                       />
                       {versions.length > 0 && (
                         <VersionSummary
@@ -372,15 +372,15 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                         verification={verification}
                         onSelect={(versionID) => selectVersion(resource.id, versionID)}
                       />
-                      <GrantSummary
+                      <BindingSummary
                         resource={resource}
                         version={version}
                         disabled={Boolean(session.demo)}
-                        onVerify={(grant) =>
+                        onVerify={(binding) =>
                           version &&
-                          setAction({ kind: "verify", credential: resource, version, grant })
+                          setAction({ kind: "verify", credential: resource, version, binding })
                         }
-                        onRevoke={(grant) => revokeGrant(resource, grant)}
+                        onRevoke={(binding) => revokeBinding(resource, binding)}
                       />
                     </div>
                   )}
@@ -416,10 +416,10 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                           </>
                         )}
                         <button
-                          onClick={() => setAction({ kind: "grant", credential: resource })}
+                          onClick={() => setAction({ kind: "binding", credential: resource })}
                           className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-foreground hover:bg-muted"
                         >
-                          <ShieldIcon width={12} height={12} /> 授权
+                          <ShieldIcon width={12} height={12} /> 绑定目标
                         </button>
                         <button
                           onClick={() => revoke(resource)}
@@ -463,8 +463,8 @@ export function CredentialPanel({ session, target }: { session: Session; target:
           onError={setError}
         />
       )}
-      {action?.kind === "grant" && (
-        <GrantDialog
+      {action?.kind === "binding" && (
+        <BindingDialog
           session={session}
           target={target}
           credential={action.credential}
@@ -491,7 +491,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
           session={session}
           credential={action.credential}
           version={action.version}
-          grant={action.grant}
+          binding={action.binding}
           onClose={() => setAction(null)}
           onDone={(result) => {
             rememberVerification(action.credential, action.version, result)
@@ -563,7 +563,7 @@ function VerifyDialog({
   session,
   credential,
   version,
-  grant,
+  binding,
   onClose,
   onDone,
   onError,
@@ -571,14 +571,14 @@ function VerifyDialog({
   session: Session
   credential: CredentialResource
   version: CredentialVersion
-  grant: CredentialGrant
+  binding: CredentialBinding
   onClose: () => void
   onDone: (result: CredentialVerificationResponse) => void
   onError: (message: string) => void
 }) {
   const [busy, setBusy] = useState(false)
   const [sessionID] = useState(() => randomSession("credential-verify"))
-  const scope = grant.scope
+  const scope = binding.scope
 
   async function submit() {
     setBusy(true)
@@ -602,7 +602,7 @@ function VerifyDialog({
       <div className="space-y-3 p-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <ReadOnlyField label="Version ID" value={version.id} />
-          <ReadOnlyField label="Grant ID" value={grant.id} />
+          <ReadOnlyField label="Binding ID" value={binding.id} />
           <ReadOnlyField label="Cluster / instance" value={`${scope.cluster}/${scope.instance}`} />
           <ReadOnlyField label="用途" value={scope.use || "按凭据类型推断"} />
         </div>
@@ -618,7 +618,7 @@ function VerifyDialog({
           </button>
           <button
             onClick={submit}
-            disabled={busy || version.state !== "staged" || grant.state !== "active"}
+            disabled={busy || version.state !== "staged" || binding.state !== "active"}
             className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
           >
             {busy ? "验证中" : "验证 target"}
@@ -629,7 +629,7 @@ function VerifyDialog({
   )
 }
 
-function GrantSummary({
+function BindingSummary({
   resource,
   version,
   disabled,
@@ -639,37 +639,37 @@ function GrantSummary({
   resource: CredentialResource
   version?: CredentialVersion
   disabled: boolean
-  onVerify: (grant: CredentialGrant) => void
-  onRevoke: (grant: CredentialGrant) => void
+  onVerify: (binding: CredentialBinding) => void
+  onRevoke: (binding: CredentialBinding) => void
 }) {
-  if (!resource.grants?.length) return <span>-</span>
+  if (!resource.bindings?.length) return <span>-</span>
   return (
     <div className="flex flex-col gap-1">
-      {resource.grants.map((grant) => (
-        <div key={grant.id} className="flex flex-col gap-1.5">
+      {resource.bindings.map((binding) => (
+        <div key={binding.id} className="flex flex-col gap-1.5">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="font-mono text-[11px] text-muted-foreground">{grant.id}</span>
+            <span className="font-mono text-[11px] text-muted-foreground">{binding.id}</span>
             <span
               className={`rounded px-1.5 py-0.5 ${
-                grant.state === "active"
+                binding.state === "active"
                   ? "bg-success/15 text-success"
                   : "bg-muted text-muted-foreground"
               }`}
             >
-              {grant.state}
+              {binding.state}
             </span>
-            {grant.state === "active" && !disabled && version?.state === "staged" && (
+            {binding.state === "active" && !disabled && version?.state === "staged" && (
               <button
-                onClick={() => onVerify(grant)}
+                onClick={() => onVerify(binding)}
                 className="rounded border px-1.5 py-0.5 text-[11px] text-foreground hover:bg-muted"
               >
                 验证暂存
               </button>
             )}
-            {grant.state === "active" && !disabled && (
+            {binding.state === "active" && !disabled && (
               <button
-                onClick={() => onRevoke(grant)}
-                title="吊销授权"
+                onClick={() => onRevoke(binding)}
+                title="解除绑定"
                 className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
               >
                 <BanIcon width={12} height={12} />
@@ -677,7 +677,7 @@ function GrantSummary({
             )}
           </div>
           <div>
-            {grant.scope.cluster}/{grant.scope.instance} · 用途 {grant.scope.use || "自动推断"}
+            {binding.scope.cluster}/{binding.scope.instance} · 用途 {binding.scope.use || "自动推断"}
           </div>
         </div>
       ))}
@@ -932,7 +932,7 @@ function PayloadDialog({
   )
 }
 
-function GrantDialog({
+function BindingDialog({
   session,
   target,
   credential,
@@ -953,7 +953,7 @@ function GrantDialog({
   const [busy, setBusy] = useState(false)
 
   async function submit() {
-    const scope: CredentialGrantScope = {
+    const scope: CredentialBindingScope = {
       cluster: target.cluster,
       instance: target.instance,
       namespace: namespace.trim(),
@@ -963,8 +963,8 @@ function GrantDialog({
     setBusy(true)
     onError("")
     try {
-      await grantCredentialToSelf(session, credential.id, scope)
-      onDone(`已授权 ${credential.name} 到 ${target.cluster}/${target.instance}`)
+      await bindCredentialToTarget(session, credential.id, scope)
+      onDone(`已绑定 ${credential.name} 到 ${target.cluster}/${target.instance}`)
     } catch (err) {
       onError((err as Error).message)
     } finally {
@@ -973,7 +973,7 @@ function GrantDialog({
   }
 
   return (
-    <DialogFrame title={`授权当前目标 · ${credential.name}`} onClose={onClose}>
+    <DialogFrame title={`绑定当前目标 · ${credential.name}`} onClose={onClose}>
       <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2">
         <ReadOnlyField label="目标" value={`${target.cluster}/${target.instance}`} />
         {credential.type === "opaque" ? (
@@ -987,7 +987,7 @@ function GrantDialog({
         ) : <ReadOnlyField label="用途" value={use} />}
         <TextField label="Secret namespace（可选）" value={namespace} onChange={setNamespace} />
         <p className="text-xs text-muted-foreground sm:col-span-2">
-          授权只决定谁可以使用哪个集群。Namespace 仅用于目标机创建临时 Secret，不参与权限匹配。
+          这里配置凭据在哪个目标可用。谁能使用它由该用户的目标权限决定；Namespace 只用于目标机创建临时 Secret。
         </p>
         <div className="flex justify-end sm:col-span-2">
           <button
@@ -995,7 +995,7 @@ function GrantDialog({
             disabled={busy}
             className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
           >
-            <ShieldIcon width={14} height={14} /> {busy ? "授权中" : "确认授权"}
+            <ShieldIcon width={14} height={14} /> {busy ? "绑定中" : "确认绑定"}
           </button>
         </div>
       </div>

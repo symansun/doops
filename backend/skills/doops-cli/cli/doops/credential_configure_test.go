@@ -34,7 +34,7 @@ type configureHTTPMock struct {
 func newConfigureHTTPMock() *configureHTTPMock {
 	resource := credentialResource{ID: "cred_1", Name: "database", Scope: "personal", Type: "opaque", State: "active"}
 	grant := credentialGrant{
-		ID: "grant_1", CredentialID: "cred_1", GranteeID: "user_1", State: "active",
+		ID: "grant_1", CredentialID: "cred_1", State: "active",
 		Scope: credentialGrantScope{Cluster: "cluster-a", Instance: "instance-a", Namespace: "apps", Use: "database"},
 	}
 	return &configureHTTPMock{
@@ -213,7 +213,7 @@ func TestCredentialConfigureCLI(t *testing.T) {
 					})
 				case "POST /v1/credentials/cred_1/grants":
 					assertCredentialCLIJSON(t, request, "POST", request.Path, map[string]any{
-						"grantee_id": "", "scope": map[string]any{
+						"scope": map[string]any{
 							"cluster": "cluster-a", "instance": "instance-a", "namespace": "apps",
 							"use": "database", "workload": map[string]any{"kind": "", "name": ""},
 						},
@@ -234,7 +234,7 @@ func TestCredentialConfigureCLI(t *testing.T) {
 	t.Run("all_active_scopes_not_just_selected_target", func(t *testing.T) {
 		mock := newConfigureHTTPMock()
 		duplicate := mock.grant
-		duplicate.ID, duplicate.GranteeID = "grant_2", "user_2"
+		duplicate.ID = "grant_2"
 		other := mock.grant
 		other.ID, other.Scope.Cluster, other.Scope.Instance, other.Scope.Namespace = "grant_3", "cluster-b", "instance-b", "elsewhere"
 		revoked := other
@@ -499,7 +499,7 @@ func TestCredentialConfigureCLI(t *testing.T) {
 			{"unknown_use", append(append([]string(nil), base...), "--use", "unknown"), `{}`},
 			{"duplicate_route_flag", append(append([]string(nil), base...), "--cluster", "other"), `{}`},
 			{"token_flag", append(append([]string(nil), base...), "--token", configureCanary), `{}`},
-			{"grantee_flag", append(append([]string(nil), base...), "--grantee-id", "other"), `{}`},
+			{"removed_grantee_flag", append(append([]string(nil), base...), "--grantee-id", "other"), `{}`},
 			{"database_asset_flag", append(append([]string(nil), base...), "--database-asset-id", "asset"), `{}`},
 			{"positional", append(append([]string(nil), base...), "unexpected"), `{}`},
 			{"bad_json", base, configureCanary},

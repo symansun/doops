@@ -42,10 +42,8 @@ doops credential list --target <target> --view managed
 - 有 target 的 `ask` 或 `exec` 权限时，默认 `target` 视图返回绑定该 target 且存在 active version
   的 active resource，不再要求给每个操作员重复授予凭据权限。
 - `managed` 视图返回当前用户拥有的 personal resource；platform admin 可查看平台资源。
-- `managed` 视图只返回 resource metadata，不加载 grant 详情；CLI 的 `grants=not_loaded`
-  不是“没有 grant”。检查 target 可用性应使用 `credential list --target <target>`，但它同样
-  只显示已有 active version 的 active grant。
-- target 视图不返回 owner、creator、grantee 或 payload 等管理/秘密字段。
+- `managed` 视图只返回 resource metadata，不加载 target binding 详情。
+- target 视图不返回 owner、creator 或 payload 等管理/秘密字段。
 - 未授权详情使用 404，避免泄露资源是否存在。
 
 ## Web 控制台管理
@@ -55,10 +53,10 @@ doops credential list --target <target> --view managed
 返回的 staged、active 和历史版本，以及所有授权的完整 metadata scope；不会从本地状态、
 更新时间或 resource ID 推断版本。页面不会缓存、回显或把 payload 放入任务上下文。
 
-切换到 `当前目标可用` 后，页面使用该 target 返回的实际 grant 元数据展示授权状态。对
-active grant 的 staged version 执行验证时，页面提交 target/use 和物化 namespace；
+切换到 `当前目标可用` 后，页面使用该 target 返回的实际 binding 元数据展示可用状态。对
+active target binding 的 staged version 执行验证时，页面提交 target/use 和物化 namespace；
 workload、image、Helm 或 required keys 只在本次执行确实需要时作为可选元数据传入，不作为
-Gateway 授权条件。Promote 请求仍由 Gateway 检查所有 active grant 的验证状态；
+Gateway 授权条件。Promote 请求仍由 Gateway 检查所有 active target binding 的验证状态；
 grant 吊销和 resource 吊销都沿用 Gateway 的清理流程。
 
 target 视图只读取 target 接口，不并行请求 managed 列表或 versions；管理接口的权限状态
@@ -101,7 +99,7 @@ use 不匹配、revoked grant 或同名资源不唯一时返回非零。
   token 形态或 fallback 值；
 - manifest 可以进入 Git，但它只是需求清单，不创建 grant、不授予权限、不物化 secret；
 - preflight 不从项目名、目录、prompt 或历史命令推断 credentialRef；
-- preflight 不为本机进程或远端 workspace 注入 payload。实际使用仍走精确 grant、
+- preflight 不为本机进程或远端 workspace 注入 payload。实际使用仍走 target binding、
   verification、promotion 和内部 materialization。
 
 ## Scope 和权限
@@ -115,10 +113,11 @@ use 不匹配、revoked grant 或同名资源不唯一时返回非零。
 personal owner 给 target 创建绑定前必须能操作该 target。运行时使用和验证继承已有
 `ask`/`exec` 权限，不再检查独立 `credential:use`；验证、轮换、吊销的资源管理权限仍检查 owner/admin。
 
-### Grant scope
+### Target binding
 
-Gateway 授权只回答一个问题：当前用户能否使用哪个 target。授权匹配只使用
-`cluster` 和 `instance`；`use` 只是凭据类型和物化用途的元数据，不是第二套权限。
+Gateway 授权只回答一个问题：当前用户能否使用哪个 target。凭据绑定只回答凭据在哪个
+target 可用。权限匹配只使用 target 的 `cluster` 和 `instance`；`use` 只是凭据类型和
+物化用途的元数据，不是第二套权限。凭据不再绑定某个用户。
 
 以下字段是物化或执行元数据，不是凭据授权条件：
 
@@ -329,12 +328,11 @@ printf '%s' '{"server":"registry.example.com","username":"deploy","password":"..
 doops credential grant \
   --target <target> \
   --id <credential-id> \
-  --cluster <cluster> \
-  --instance <instance> \
   --namespace <namespace>
 ```
 
-省略 `--grantee-id` 时授权给当前登录用户。
+该命令只建立凭据到 target 的绑定，不接收用户授权参数；谁能使用凭据由该用户的 target
+操作权限决定。
 
 4. 在相同 scope 验证 staged version：
 
@@ -343,8 +341,6 @@ doops -session credential-verify-<version> credential verify \
   --target <target> \
   --id <credential-id> \
   --version-id <version-id> \
-  --cluster <cluster> \
-  --instance <instance> \
   --namespace <namespace> \
   --use imagePull \
   --workload-kind Deployment \
@@ -365,8 +361,8 @@ doops credential promote \
   --version-id <version-id>
 ```
 
-所有 active grant 都必须存在该 staged version 的 verification。Promotion 只重新物化
-当前 active grant，旧 active version 变为 `superseded`。
+所有 active target binding 都必须存在该 staged version 的 verification。Promotion 只重新物化
+当前 active target binding，旧 active version 变为 `superseded`。
 
 ## 轮换
 
@@ -438,9 +434,9 @@ doops -session release-<commit> ask \
   --msg '在 <target> 的 namespace <namespace> 发布 deployment/<workload>，镜像 <repository>@sha256:<digest>；原因：<reason>；验收：Secret 类型/key、rollout、实际镜像、健康检查和功能路径通过。'
 ```
 
-Gateway 不从 resource name 推断 scope。完整 workload/image/Helm 事实必须来自任务或
-其明确授权的仓库、Chart、values、现有 release 的只读证据，并与 grant 精确一致；
-不得猜测或要求将已明确资产中的事实再粘贴到 prompt；事实读取不能扩大 scope。
+Gateway 不从 resource name 推断执行事实。完整 workload/image/Helm 事实必须来自任务或
+其明确授权的仓库、Chart、values、现有 release 的只读证据；不得猜测或要求将已明确资产中的
+事实再粘贴到 prompt。凭据授权只绑定 target，事实读取不能扩大 target 权限。
 
 ## 状态和可见输出
 
@@ -456,7 +452,7 @@ payload 不进入公开 prompt、doagent 上下文或 metadata binding。
 
 注意：Resource `state=active` 不等于存在 active Version。数据库执行必须同时满足：
 active resource、active version、目标上的 active target 绑定和当前用户的目标操作权限，
-以及该 version 在所有 active grant 上完成 verification。标准顺序是
+以及该 version 在所有 active target binding 上完成 verification。标准顺序是
 `credential put -> credential grant -> credential verify -> credential promote`。
 缺少 active version 时，target credential list 会隐藏该 resource，DoSql 执行会被 Gateway
 返回 `credential_version_not_found`；缺少目标绑定返回 `credential_grant_denied`，不把缺少配置说成 `credential_invalid`。
