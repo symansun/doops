@@ -28,7 +28,7 @@ commit 校验候选 Agent，因此使用该脚本时 CLI 必须与候选制品�
 | 发布对象 | 入口 | 控制上下文 |
 | :--- | :--- | :--- |
 | 普通业务 workload | `doops -session <s> ask --target <t> --apply` | 目标 Agent 的运行环境，不读取本机 kubeconfig |
-| 已具备控制器的 Helm Agent 镜像 | `doops -session <s> upgrade --target <t> --image <repository>@sha256:<digest>` | 集群内 Job 复用 Agent 挂载，不读取本机 kubeconfig |
+| 已具备控制器的 Helm Agent 镜像 | `doops -session <s> upgrade --target <t> --image <repository:tag 或 repository@sha256:<digest>` | 集群内 Job 复用 Agent 挂载，不读取本机 kubeconfig |
 | K8S 首次安装、旧 Helm Agent 接入控制器、显式 Helm 配置变更 | `scripts/release-managed-agent.sh` | 指定外部控制器的 kubeconfig；没有 Helm release 的现有 workload 不自动接管 |
 | 已有独立 Docker Agent | `scripts/release-host-agent.sh` | 已授权外部宿主 SSH；不依赖旧 Agent、K8S 或 Helm |
 | 空 Ubuntu/Debian 服务器 | `scripts/bootstrap-host-agent.sh` | 外部 root；安装 Docker/Compose，必须提供模型 settings；不覆盖已有 Agent |
@@ -140,7 +140,7 @@ doops -session release-<commit> ask \
   --msg '在 <target> 发布 <service-scope>，镜像 <repository>@sha256:<verified-ci-digest>；使用 chart https://charts.example/<name>.tgz；原因：<reason>；验收：<rollout、最终 Deployment spec/status、健康检查和功能路径>。'
 ```
 
-`--apply` 是本次 mutation 的显式授权，不是兼容开关。任务返回的文本声明不能作为成功证据；验收必须来自本轮实际命令、Kubernetes 状态、健康检查和功能测试。需要凭据时只传 `--credential <resource-name>` 元数据引用，Gateway 必须按当前用户、target、session 和精确资源 scope 授权。公开 prompt、doagent 上下文、CLI 输出和日志不得接收凭据 payload；Gateway 仅通过内部凭据物化调用向目标 Agent 短暂传递 payload。
+`--apply` 是本次 mutation 的显式授权，不是兼容开关。任务返回的文本声明不能作为成功证据；验收必须来自本轮实际命令、Kubernetes 状态、健康检查和功能测试。需要凭据时只传 `--credential <resource-name>` 元数据引用，Gateway 必须按当前用户的 target 操作权限和凭据 target binding 授权。公开 prompt、doagent 上下文、CLI 输出和日志不得接收凭据 payload；Gateway 仅通过内部凭据物化调用向目标 Agent 短暂传递 payload。
 
 doagent 会话默认使用 `restricted` 权限，普通任务只额外放行 `mcp_doops_k8s_read`；
 该读取工具不得读取 Secret、ServiceAccount 或其它凭据载体。只有 `--apply` 对应的原生

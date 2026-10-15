@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target } from "@/lib/client"
 import { RefreshIcon, RocketIcon, StopIcon } from "./icons"
 
+const agentImagePattern = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[a-f0-9]{64})$/
+
 export function AgentUpgradePanel({ session, target, sessionId }: { session: Session; target: Target; sessionId: string }) {
   const [image, setImage] = useState("")
   const [commit, setCommit] = useState("")
@@ -25,7 +27,7 @@ export function AgentUpgradePanel({ session, target, sessionId }: { session: Ses
   async function run(rollback: boolean, preview: boolean) {
     if (running || (!preview && !confirmed)) return
     setError("")
-    if (!rollback && !/^[a-z0-9][a-z0-9._:/-]+@sha256:[a-f0-9]{64}$/.test(image)) { setError("Agent 镜像必须为 repository@sha256:<64 位 digest>"); return }
+    if (!rollback && !agentImagePattern.test(image)) { setError("Agent 镜像必须为 repository:tag 或 repository@sha256:<64 位 digest>"); return }
     if (!preview && !rollback && (!/^[a-f0-9]{40}$/.test(commit) || !ci.startsWith("https://"))) { setError("请填写完整来源提交和成功 CI 记录 URL"); return }
     const ac = new AbortController()
     abortRef.current = ac
