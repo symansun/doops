@@ -233,6 +233,26 @@ func TestResolveCredentialGatewayRequiresConfiguredTarget(t *testing.T) {
 	}
 }
 
+func TestCredentialCommandsRejectDuplicateTargetRouteFlags(t *testing.T) {
+	servers := []Server{{Name: "target", Gateway: "https://gateway.example.com", Cluster: "cluster-a", Instance: "node-a"}}
+	for _, args := range [][]string{
+		{"--target", "target", "--id", "cred_123", "--cluster", "other"},
+		{"--target", "target", "--id", "cred_123", "--instance", "other"},
+	} {
+		if err := runCredentialGrant(args, servers, nil, io.Discard); err == nil {
+			t.Fatalf("credential grant accepted duplicate route flag: %v", args)
+		}
+	}
+	for _, args := range [][]string{
+		{"--target", "target", "--id", "cred_123", "--version-id", "credver_456", "--cluster", "other"},
+		{"--target", "target", "--id", "cred_123", "--version-id", "credver_456", "--instance", "other"},
+	} {
+		if err := runCredentialVerify(args, "verify", servers, nil, io.Discard); err == nil {
+			t.Fatalf("credential verify accepted duplicate route flag: %v", args)
+		}
+	}
+}
+
 func TestCredentialGatewayStructured401GuidesGatewayLogin(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
