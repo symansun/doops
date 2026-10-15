@@ -23,7 +23,7 @@ Agent 镜像升级当作同一件事。下列脚本命令均从仓库 `backend/`
 ```bash
 doops -session agent-upgrade upgrade \
   --target <configured-target> \
-  --image <repository>@sha256:<verified-ci-digest>
+  --image <repository:tag 或 repository@sha256:<verified-ci-digest>
 ```
 
 `--image` 也接受发布 tag，但 tag 不是不可变版本证据。`--dry-run` 只预览参数，

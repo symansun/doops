@@ -106,7 +106,7 @@ DoOps architecture, security, release, and verification boundaries.
   The manifest is only a fail-closed checklist of `credentialRef` plus `use`; it must never contain
   payloads, grant authority, materialization instructions, local secret paths, or fallback values.
   Credential references must be lowercase resource names, not URLs, paths, tokens, or arbitrary
-  scalars. It does not weaken the exact target/workload grant model.
+  scalars. It only checks that the named credential is active and bound to the selected target.
 - The lifecycle is `create -> put staged version -> grant -> verify every active grant -> promote`.
   Rotation repeats put/verify/promote. Grant or resource revocation must clean materializations
   before reaching the terminal revoked state.

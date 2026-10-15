@@ -245,7 +245,7 @@ func TestGatewayCredentialRecoveryOutcome(t *testing.T) {
 				Workload: CredentialPlanWorkload{Kind: "deployment", Name: "api"}, RequiredKeys: []string{"dsn"},
 			}
 			grant, err := f.store.CreateCredentialGrant(CredentialGrantCreateRequest{
-				CredentialID: resource.ID, GranteeID: auth.UserID, Scope: scope, CreatedBy: auth.UserID,
+				CredentialID: resource.ID, Scope: scope, CreatedBy: auth.UserID,
 			})
 			if err != nil {
 				t.Fatal(err)

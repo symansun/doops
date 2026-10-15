@@ -57,7 +57,7 @@ The URL requires a concrete database path, with no query (including an empty ?) 
 
 Reuses a unique managed resource or creates it, stages a version, configures the
 target binding, GETs all bindings, verifies every unique active target, then promotes.
-Target operators inherit credential use without a second grant.
+Target operators inherit credential use from their target access; the binding is not a user grant.
 Stops on the first failure, without retries or automatic cleanup.
 Only phase IDs and metadata are printed. Re-running stages a new version.
 No workload, repository, release or database asset fields are required for target authorization.
@@ -267,16 +267,16 @@ Flags:
 	}
 	var selfGrant credentialGrant
 	if err := request(http.MethodPost, base+"grants", nil, map[string]any{
-		"grantee_id": "", "scope": scope,
+		"scope": scope,
 	}, &selfGrant); err != nil {
 		return err
 	}
 	if !configureCredentialIDPattern.MatchString(selfGrant.ID) || selfGrant.CredentialID != id ||
-		selfGrant.GranteeID == "" || selfGrant.State != "active" ||
+		selfGrant.State != "active" ||
 		configureCredentialScopeKey(selfGrant.Scope) != configureCredentialScopeKey(scope) {
-		return fmt.Errorf("credential configure: exact self grant not confirmed")
+		return fmt.Errorf("credential configure: target binding not confirmed")
 	}
-	if _, err := fmt.Fprintf(stdout, "phase=grant credential_id=%s grant_id=%s\n", id, selfGrant.ID); err != nil {
+	if _, err := fmt.Fprintf(stdout, "phase=target-binding credential_id=%s binding_id=%s\n", id, selfGrant.ID); err != nil {
 		return err
 	}
 	var history struct {
@@ -294,10 +294,10 @@ Flags:
 		}
 		if grant.CredentialID != id || grant.ID == "" || grant.Scope.Cluster == "" || grant.Scope.Instance == "" ||
 			validateConfigureCredentialScope(grant.Scope) != nil {
-			return fmt.Errorf("credential configure: invalid active grant metadata")
+			return fmt.Errorf("credential configure: invalid active target binding metadata")
 		}
 		key := configureCredentialScopeKey(grant.Scope)
-		if grant.ID == selfGrant.ID && grant.GranteeID == selfGrant.GranteeID && key == configureCredentialScopeKey(scope) {
+		if grant.ID == selfGrant.ID && key == configureCredentialScopeKey(scope) {
 			foundSelf = true
 		}
 		if counts[key] == 0 {
@@ -306,7 +306,7 @@ Flags:
 		counts[key]++
 	}
 	if !foundSelf {
-		return fmt.Errorf("credential configure: exact self grant missing from active grants")
+		return fmt.Errorf("credential configure: target binding missing from active bindings")
 	}
 	for index, activeScope := range scopes {
 		var verified credentialVerifyResponse

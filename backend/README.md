@@ -353,7 +353,7 @@ bash scripts/release-managed-agent.sh \
 发布者通过 `doops ask --apply` 提交明确授权的自然语言任务。任务必须直接给出 Gateway
 target、服务范围、不可变镜像 digest、变更原因和验收条件；需要凭据时仅以可重复的
 `--credential <resource-name>` 元数据引用声明。Gateway 绑定用户、target 和 session，
-按精确 workload/image/Helm scope 授权并在目标 doops-agent 的内部控制面物化；公开
+凭据只按 target 绑定并在目标 doops-agent 的内部控制面物化；公开
 prompt、doagent 上下文和 metadata binding 不接收凭据 payload。完整流程见
 [docs/NATURAL_LANGUAGE_DEPLOYMENT.md](docs/NATURAL_LANGUAGE_DEPLOYMENT.md) 和
 [docs/CREDENTIAL_RESOURCES.md](docs/CREDENTIAL_RESOURCES.md)。

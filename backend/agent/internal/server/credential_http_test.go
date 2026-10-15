@@ -86,7 +86,7 @@ func TestCredentialHTTPGrantRequiresOwnerTargetAuthority(t *testing.T) {
 	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("a", 32))
 	store := openCredentialTestStore(t)
 	owner, ownerToken := createCredentialHTTPUser(t, store, "owner", false)
-	deployer, deployerToken := createCredentialHTTPUser(t, store, "deployer", false)
+	_, deployerToken := createCredentialHTTPUser(t, store, "deployer", false)
 	hub := NewGatewayHub(store, GatewayHubOptions{})
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)
@@ -101,7 +101,6 @@ func TestCredentialHTTPGrantRequiresOwnerTargetAuthority(t *testing.T) {
 		t.Fatalf("decode credential: %v", err)
 	}
 	grantBody := map[string]any{
-		"grantee_id": deployer.ID,
 		"scope": map[string]any{
 			"cluster":   "doops-edu",
 			"instance":  "edu-coder",
@@ -370,7 +369,6 @@ func TestCredentialHTTPListIsIsolatedByUserAndTarget(t *testing.T) {
 	} {
 		if _, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 			CredentialID: item.resource.ID,
-			GranteeID:    user.ID,
 			Scope:        item.scope,
 			CreatedBy:    item.creator,
 		}); err != nil {
@@ -449,8 +447,8 @@ func TestCredentialHTTPListIsIsolatedByUserAndTarget(t *testing.T) {
 
 	otherTargetA := credentialHTTPRequest(t, mux, otherToken, http.MethodGet,
 		"/v1/credentials?view=target&cluster=cluster-a&instance=instance-a", nil)
-	if otherTargetA.Code != http.StatusOK || strings.Contains(otherTargetA.Body.String(), targetA.ID) {
-		t.Fatalf("other user saw target A credential: HTTP %d: %s", otherTargetA.Code, otherTargetA.Body.String())
+	if otherTargetA.Code != http.StatusOK || !strings.Contains(otherTargetA.Body.String(), targetA.ID) {
+		t.Fatalf("other target operator could not see target A credential: HTTP %d: %s", otherTargetA.Code, otherTargetA.Body.String())
 	}
 	adminTargetA := credentialHTTPRequest(t, mux, adminToken, http.MethodGet,
 		"/v1/credentials?view=target&cluster=cluster-a&instance=instance-a", nil)
@@ -489,8 +487,8 @@ func TestCredentialHTTPSelfGrantUsesAuthenticatedUser(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &grant); err != nil {
 		t.Fatalf("decode self grant: %v", err)
 	}
-	if grant.GranteeID != owner.ID {
-		t.Fatalf("self grant grantee = %q, want %q", grant.GranteeID, owner.ID)
+	if strings.Contains(response.Body.String(), `"grantee_id"`) {
+		t.Fatalf("target binding exposed removed grantee field: %s", response.Body.String())
 	}
 }
 

@@ -131,7 +131,7 @@ const STEPS: Step[] = [
           该路径由集群内 Job 复用 Agent 挂载的 kubeconfig，不需要操作机 kubeconfig。
         </p>
         <Cmd>
-          {"doops -session agent-upgrade-<RELEASE_ID> upgrade \\\n  --target <CONFIGURED_GATEWAY_TARGET> \\\n  --image <IMAGE_REPOSITORY>@sha256:<VERIFIED_CI_DIGEST>"}
+          {"doops -session agent-upgrade-<RELEASE_ID> upgrade \\\n  --target <CONFIGURED_GATEWAY_TARGET> \\\n  --image <IMAGE_REPOSITORY>:<TAG> 或 <IMAGE_REPOSITORY>@sha256:<VERIFIED_CI_DIGEST>"}
         </Cmd>
         <p className="text-xs">
           doops upgrade 只适用于 controller-ready 的现有 Helm release；structuredSSH 声明不代表具备自升级控制器。

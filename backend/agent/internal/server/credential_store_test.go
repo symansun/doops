@@ -74,7 +74,6 @@ func TestCredentialMetadataAndTargetGrantPersistAcrossGatewayRestart(t *testing.
 	scope := credentialStoreImageScope("cluster-a", "instance-a", "apps")
 	if _, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 		CredentialID: resource.ID,
-		GranteeID:    owner.ID,
 		Scope:        scope,
 		CreatedBy:    owner.ID,
 	}); err != nil {
@@ -93,12 +92,12 @@ func TestCredentialMetadataAndTargetGrantPersistAcrossGatewayRestart(t *testing.
 	if err != nil || len(managed) != 1 || managed[0].ID != resource.ID {
 		t.Fatalf("managed credentials after restart = %#v, %v", managed, err)
 	}
-	visible, err := reopened.ListCredentialAccess(owner.ID, "cluster-a", "instance-a", false)
+	visible, err := reopened.ListCredentialAccess(owner.ID, "cluster-a", "instance-a")
 	if err != nil || len(visible) != 1 || visible[0].ID != resource.ID ||
 		len(visible[0].Grants) != 1 || !credentialScopeEqual(visible[0].Grants[0].Scope, scope) {
 		t.Fatalf("target credentials after restart = %#v, %v", visible, err)
 	}
-	otherTarget, err := reopened.ListCredentialAccess(owner.ID, "cluster-b", "instance-b", false)
+	otherTarget, err := reopened.ListCredentialAccess(owner.ID, "cluster-b", "instance-b")
 	if err != nil || len(otherTarget) != 0 {
 		t.Fatalf("other target credentials after restart = %#v, %v", otherTarget, err)
 	}
@@ -117,13 +116,12 @@ func TestCredentialTargetListRequiresActiveVersion(t *testing.T) {
 	}
 	if _, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 		CredentialID: resource.ID,
-		GranteeID:    owner.ID,
 		Scope:        credentialStoreImageScope("cluster-a", "instance-a", "apps"),
 		CreatedBy:    owner.ID,
 	}); err != nil {
 		t.Fatalf("create grant: %v", err)
 	}
-	visible, err := store.ListCredentialAccess(owner.ID, "cluster-a", "instance-a", false)
+	visible, err := store.ListCredentialAccess(owner.ID, "cluster-a", "instance-a")
 	if err != nil || len(visible) != 0 {
 		t.Fatalf("credential without version was target-visible: %#v, %v", visible, err)
 	}
@@ -136,7 +134,7 @@ func TestCredentialTargetListRequiresActiveVersion(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("put staged version: %v", err)
 	}
-	visible, err = store.ListCredentialAccess(owner.ID, "cluster-a", "instance-a", false)
+	visible, err = store.ListCredentialAccess(owner.ID, "cluster-a", "instance-a")
 	if err != nil || len(visible) != 0 {
 		t.Fatalf("credential with staged version was target-visible: %#v, %v", visible, err)
 	}
@@ -150,7 +148,7 @@ func TestCredentialTargetListRequiresActiveVersion(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("activate version: %v", err)
 	}
-	visible, err = store.ListCredentialAccess(owner.ID, "cluster-a", "instance-a", false)
+	visible, err = store.ListCredentialAccess(owner.ID, "cluster-a", "instance-a")
 	if err != nil || len(visible) != 1 || visible[0].ID != resource.ID {
 		t.Fatalf("credential with active version not target-visible: %#v, %v", visible, err)
 	}
@@ -341,7 +339,6 @@ func TestCredentialBundleResolvesMetadataAndNamedAuthorizationRejectsAmbiguity(t
 		}
 		grant, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 			CredentialID: credential.ID,
-			GranteeID:    deployer.ID,
 			Scope:        credentialStoreImageScope("cluster", "instance", "apps"),
 			CreatedBy:    grantActor,
 		})
@@ -398,7 +395,6 @@ func TestCredentialBundleResolvesMetadataAndNamedAuthorizationRejectsAmbiguity(t
 	}
 	restored, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 		CredentialID: credentials[0].ID,
-		GranteeID:    deployer.ID,
 		Scope:        credentialStoreImageScope("cluster", "instance", "apps"),
 		CreatedBy:    admin.ID,
 	})
@@ -447,7 +443,6 @@ func TestCredentialUseInheritsTargetAuthorityWithoutDeploymentScope(t *testing.T
 	}
 	grant, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 		CredentialID: credential.ID,
-		GranteeID:    deployer.ID,
 		Scope:        credentialStoreImageScope("doops-edu", "edu-coder", "kz-ops"),
 		CreatedBy:    owner.ID,
 	})
@@ -567,7 +562,6 @@ func TestPlatformCredentialAdministratorCanManageResourceCreatedByAnotherAdmin(t
 	store := openCredentialTestStore(t)
 	creator := createCredentialTestUser(t, store, "creator")
 	operator := createCredentialTestUser(t, store, "operator")
-	deployer := createCredentialTestUser(t, store, "deployer")
 	if err := store.GrantUser(operator.ID, ScopeGrant{
 		Cluster: "*", Instance: "*",
 		Actions: []GatewayAction{ActionAdmin},
@@ -600,7 +594,6 @@ func TestPlatformCredentialAdministratorCanManageResourceCreatedByAnotherAdmin(t
 	}
 	if _, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 		CredentialID: credential.ID,
-		GranteeID:    deployer.ID,
 		Scope:        credentialStoreImageScope("doops-edu", "edu-coder", "kz-ops"),
 		CreatedBy:    operator.ID,
 	}); err != nil {
@@ -619,7 +612,6 @@ func TestCredentialAdministratorCanRecoverAnotherUsersPersonalCredential(t *test
 	store := openCredentialTestStore(t)
 	owner := createCredentialTestUser(t, store, "owner")
 	operator := createCredentialTestUser(t, store, "operator")
-	deployer := createCredentialTestUser(t, store, "deployer")
 	if err := store.GrantUser(operator.ID, ScopeGrant{
 		Cluster: "*", Instance: "*",
 		Actions: []GatewayAction{ActionAdmin},
@@ -645,7 +637,6 @@ func TestCredentialAdministratorCanRecoverAnotherUsersPersonalCredential(t *test
 	}
 	grant, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 		CredentialID: credential.ID,
-		GranteeID:    deployer.ID,
 		Scope:        credentialStoreImageScope("doops-edu", "edu-coder", "kz-ops"),
 		CreatedBy:    operator.ID,
 	})
