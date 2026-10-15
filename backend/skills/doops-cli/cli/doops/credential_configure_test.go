@@ -554,7 +554,7 @@ func TestCredentialConfigureCLI(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, text := range []string{"-session", "mutually exclusive", "never reads stdin", "--password-key", "Database and Helm grants require no workload", "every unique active target/use authorization scope",
+		for _, text := range []string{"-session", "mutually exclusive", "never reads stdin", "--password-key", "No workload, repository, release or database asset fields are required", "every unique active target",
 			"concrete database path", "no query (including an empty ?) or fragment"} {
 			if !strings.Contains(output, text) {
 				t.Errorf("help missing %q", text)

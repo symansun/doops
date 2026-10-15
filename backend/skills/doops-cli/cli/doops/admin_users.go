@@ -74,16 +74,7 @@ type gatewayAdminUserPasswordRequest struct {
 }
 
 var ordinaryGatewayActions = []string{
-	"targets:list",
-	"exec",
-	"ask",
-	"read",
-	"write",
-	"push",
-	"pull",
-	"info",
-	"check",
-	"clean",
+	"target:use",
 }
 
 func GatewayAdminUsersList(gateway, adminToken string) ([]gatewayAdminUserSummary, error) {
@@ -186,9 +177,6 @@ func GatewayAdminGrantCreate(gateway, adminToken string, grant gatewayAdminGrant
 	}
 	if grant.Cluster == "" || grant.Instance == "" {
 		return fmt.Errorf("cluster and instance are required")
-	}
-	if len(grant.Actions) == 0 {
-		return fmt.Errorf("actions are required; refusing implicit default permissions")
 	}
 	body, err := json.Marshal(grant)
 	if err != nil {
@@ -568,7 +556,7 @@ func runAdminGrantAdd(args []string, servers []Server, configErr error) {
 	fs.StringVar(&scopeTarget, "scope-target", "", "Configured target whose exact cluster/instance should be granted")
 	fs.StringVar(&userID, "user-id", "", "Gateway user id")
 	fs.StringVar(&user, "user", "", "Gateway username")
-	fs.Var(&actions, "action", "Explicit action; repeat for multiple actions")
+	fs.Var(&actions, "action", "Advanced action; omit for standard target access")
 	fs.Parse(args)
 	if strings.TrimSpace(userID) == "" && strings.TrimSpace(user) == "" {
 		fmt.Println("Error: exactly one of --user-id or --user is required")
@@ -626,7 +614,7 @@ func printAdminUsersUsage() {
 
 func printAdminGrantsUsage() {
 	fmt.Println("Usage: doops admin grant list --target <gateway-target> [--user-id <user-id>]")
-	fmt.Println("       doops admin grant add --target <gateway-target> --scope-target <target> (--user-id <id>|--user <username>) [--action <action> ...]")
+	fmt.Println("       doops admin grant add --target <gateway-target> --scope-target <target> (--user-id <id>|--user <username>) [--action <advanced-action> ...]")
 	fmt.Println("       doops admin grant delete --target <gateway-target> --id <grant-id>")
 }
 

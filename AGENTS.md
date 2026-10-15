@@ -44,7 +44,9 @@ DoOps architecture, security, release, and verification boundaries.
   explicitly reuses that mounted kubeconfig, so its Kubernetes permissions come from that
   kubeconfig rather than from a local operator file. The CLI waits for the Job, verifies Gateway
   handoff and `structuredSSH`, and starts a rollback Job when the probe fails.
-  `--dry-run` is preview-only and still requires an immutable `repository@sha256:<64 hex>` image.
+  `--dry-run` is preview-only and accepts either `repository:tag` or immutable
+  `repository@sha256:<64 hex>` image references. Tag upgrades use runtime imageID verification;
+  rollback still requires an evidenced immutable image.
   A new Kubernetes cluster without an Agent and legacy Helm Agents without the controller use
   `backend/scripts/release-managed-agent.sh` with an operator kubeconfig. Its new-cluster
   `--values` mode is bootstrap-only: it performs Helm wait and final Deployment checks, not

@@ -445,12 +445,12 @@ func activeCredentialVerifications(
 	}
 	active := make(map[string]struct{}, len(grants))
 	for _, grant := range grants {
-		active[grant.ID+"\x00"+string(grant.Scope.Use)] = struct{}{}
+		active[grant.ID] = struct{}{}
 	}
 	required := make([]CredentialVerification, 0, len(grants))
 	verified := make(map[string]struct{}, len(grants))
 	for _, verification := range verifications {
-		key := verification.GrantID + "\x00" + string(verification.Use)
+		key := verification.GrantID
 		if _, ok := active[key]; !ok {
 			continue
 		}

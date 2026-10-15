@@ -37,7 +37,6 @@ func TestHelmCredentialScopeKeepsTargetExact(t *testing.T) {
 	for name, mutate := range map[string]func(*CredentialGrantScope){
 		"cluster":  func(scope *CredentialGrantScope) { scope.Cluster = "cluster-b" },
 		"instance": func(scope *CredentialGrantScope) { scope.Instance = "instance-b" },
-		"use":      func(scope *CredentialGrantScope) { scope.Use = CredentialUseOpaqueSecret },
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := base

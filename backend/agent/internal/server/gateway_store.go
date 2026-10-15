@@ -23,6 +23,7 @@ type GatewayAction string
 
 const (
 	ActionAll                GatewayAction = "*"
+	ActionTargetUse          GatewayAction = "target:use"
 	ActionExec               GatewayAction = "exec"
 	ActionAsk                GatewayAction = "ask"
 	ActionRead               GatewayAction = "read"
@@ -49,19 +50,7 @@ const (
 )
 
 var defaultGatewayUserActions = []GatewayAction{
-	ActionTargetsList,
-	ActionExec,
-	ActionAsk,
-	ActionRead,
-	ActionWrite,
-	ActionPush,
-	ActionPull,
-	ActionInfo,
-	ActionCheck,
-	ActionClean,
-	ActionCredentialCreate,
-	ActionCredentialMetadata,
-	ActionCredentialUse,
+	ActionTargetUse,
 }
 
 type TokenKind string
@@ -827,12 +816,26 @@ func (s *GatewayStore) UserCan(userID, cluster, instance string, action GatewayA
 			continue
 		}
 		for _, a := range actions {
+			if a == ActionTargetUse && targetActionAllowed(action) {
+				return true
+			}
 			if gatewayActionAllows(a, action) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func targetActionAllowed(action GatewayAction) bool {
+	switch action {
+	case ActionTargetsList, ActionExec, ActionAsk, ActionRead, ActionWrite,
+		ActionPush, ActionPull, ActionInfo, ActionCheck, ActionClean,
+		ActionCredentialMetadata, ActionCredentialUse:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *GatewayStore) CanUseTargetCredentials(userID, cluster, instance string) bool {

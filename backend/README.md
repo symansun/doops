@@ -259,14 +259,14 @@ Skill 会随安装同步到项目目录。标准 target 的配置只包含
 
 授权模型：
 
-- 普通 user token 必须通过显式 grant 获得对应 `cluster/instance/action` 权限；无 grant 默认拒绝，`targets:list` 不隐式授予 exec、ask、read、write、push 等操作。
+- 普通 user token 只按精确 `cluster/instance` target 授权；一个 target grant 即包含标准 targets、exec、ask、read、write、push、pull、info、check、clean 和受管凭据使用。无 target grant 默认拒绝。
 - 全局管理员需要显式授予 `admin` 权限。
 - 审计记录按 `user_id`、`token_id`、`cluster`、`instance`、`action`、`session`、`status` 可追溯。
 
 故障判断：
 
 - `401 Unauthorized`：token 无效或过期，认证失败
-- `403 Forbidden`：token 有效，但该用户缺少当前 `cluster/instance/action` 的显式 grant，或缺少 gateway 管理员 `admin` 权限
+- `403 Forbidden`：token 有效，但该用户没有当前 target grant，或缺少独立的管理员、高危管理权限
 
 ### 2. 通过 gateway 添加内网集群目标
 

@@ -77,7 +77,7 @@ credentials:
 	}
 }
 
-func TestCredentialPreflightFailsForMissingWrongUseAndRevokedGrant(t *testing.T) {
+func TestCredentialPreflightFailsForMissingAndUnavailableTargetGrant(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"credentials":[
 			{"id":"cred_git","name":"wrong-use","state":"active",
@@ -116,10 +116,10 @@ credentials:
 	text := string(output)
 	for _, expected := range []string{
 		"credential_ref=missing use=gitCheckout status=missing",
-		"credential_ref=wrong-use use=imagePull credential_id=cred_git status=wrong_use",
-		"credential_ref=revoked-grant use=imagePull credential_id=cred_revoked status=wrong_use",
+		"credential_ref=wrong-use use=imagePull credential_id=cred_git status=ready",
+		"credential_ref=revoked-grant use=imagePull credential_id=cred_revoked status=no_active_target_grant",
 		"credential_ref=ambiguous use=tls status=ambiguous matches=2",
-		"credential preflight failed: 4 requirement(s) unavailable",
+		"credential preflight failed: 3 requirement(s) unavailable",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("preflight failure output missing %q: %s", expected, text)
