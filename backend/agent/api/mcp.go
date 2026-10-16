@@ -146,6 +146,7 @@ type AgentPromptParams struct {
 	EventFormat        string                   `json:"event_format,omitempty"` // Empty or "acp"; validated by the prompt bridge.
 	Operation          string                   `json:"operation,omitempty"`
 	Skill              string                   `json:"skill,omitempty"`
+	CredentialMode     string                   `json:"credential_mode,omitempty"`
 	CredentialRefs     []string                 `json:"credential_refs,omitempty"`
 	CredentialBindings []AgentCredentialBinding `json:"credential_bindings,omitempty"`
 }

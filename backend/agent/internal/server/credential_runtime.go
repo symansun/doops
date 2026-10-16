@@ -158,8 +158,10 @@ func (h *GatewayHub) resolveExplicitCredentials(
 	names []string,
 	action GatewayAction,
 	skill string,
+	credentialMode string,
 ) ([]authorizedCredentialMaterialization, error) {
-	if len(names) == 0 {
+	autoDatabase := skill == "dosql" && strings.TrimSpace(credentialMode) == "auto"
+	if len(names) == 0 && !autoDatabase {
 		return nil, nil
 	}
 	if !h.store.UserCan(auth.UserID, cluster, instance, action) {
@@ -167,6 +169,16 @@ func (h *GatewayHub) resolveExplicitCredentials(
 	}
 	if credentialScalarContainsInlineMaterial(instruction) {
 		return nil, ErrInlineCredentialMaterial
+	}
+	if autoDatabase {
+		entries, err := h.store.ListCredentialAccess(auth.UserID, cluster, instance)
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, databaseCredentialNames(entries)...)
+		if len(names) == 0 {
+			return nil, ErrCredentialGrantDenied
+		}
 	}
 	authorized := make([]authorizedCredentialMaterialization, 0, len(names))
 	for _, name := range names {
@@ -199,6 +211,31 @@ func (h *GatewayHub) resolveExplicitCredentials(
 		})
 	}
 	return authorized, nil
+}
+
+func databaseCredentialNames(entries []CredentialListEntry) []string {
+	seen := make(map[string]struct{}, len(entries))
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Type != CredentialTypeOpaque || entry.State != CredentialStateActive {
+			continue
+		}
+		for _, binding := range entry.Grants {
+			use := binding.Scope.Use
+			if use == "" {
+				use = credentialUseForType(entry.Type)
+			}
+			if use != CredentialUseDatabase {
+				continue
+			}
+			if _, exists := seen[entry.Name]; !exists {
+				names = append(names, entry.Name)
+				seen[entry.Name] = struct{}{}
+			}
+			break
+		}
+	}
+	return names
 }
 
 func isCredentialResourceIDReference(value string) bool {
