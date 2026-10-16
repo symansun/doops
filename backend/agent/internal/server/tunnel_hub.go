@@ -1112,7 +1112,15 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
 			return nil
 		}
-		if err := validatePromptCredentialAccess(operation, len(promptArgs.CredentialRefs) != 0); err != nil {
+		if promptArgs.CredentialMode != "" && promptArgs.CredentialMode != "auto" {
+			writeJSON(buildErrorResponse(req.ID, -32602, "unsupported credential mode"))
+			return nil
+		}
+		if promptArgs.CredentialMode == "auto" && promptArgs.Skill != "dosql" {
+			writeJSON(buildErrorResponse(req.ID, -32602, "automatic credential mode is only supported by dosql"))
+			return nil
+		}
+		if err := validatePromptCredentialAccess(operation, len(promptArgs.CredentialRefs) != 0 || promptArgs.CredentialMode == "auto"); err != nil {
 			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
 			return nil
 		}
@@ -1227,10 +1235,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	}
 	var err error
 	var authorizedCredentials []authorizedCredentialMaterialization
-	if params.Name == "doops_agent_prompt" && len(promptArgs.CredentialRefs) != 0 {
+	if params.Name == "doops_agent_prompt" && (len(promptArgs.CredentialRefs) != 0 ||
+		(promptArgs.Skill == "dosql" && promptArgs.CredentialMode == "auto")) {
 		authorizedCredentials, err = h.hub.resolveExplicitCredentials(
 			auth, cluster, instance,
-			promptArgs.Instruction, promptArgs.CredentialRefs, action, promptArgs.Skill,
+			promptArgs.Instruction, promptArgs.CredentialRefs, action, promptArgs.Skill, promptArgs.CredentialMode,
 		)
 		if err != nil {
 			category := credentialErrorCategory(err)

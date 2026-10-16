@@ -49,6 +49,9 @@ func TestDomainCLIsShareGatewayLoginAndPropagateFailure(t *testing.T) {
 			if skill != "doweb" && skill != "dosql" {
 				t.Errorf("wrong domain skill: %q", skill)
 			}
+			if skill == "dosql" && arguments["credential_mode"] != "auto" {
+				t.Errorf("sql must use automatic credential mode: %#v", arguments)
+			}
 			calls.Add(1)
 			instruction, _ := arguments["instruction"].(string)
 			failed := strings.Contains(instruction, "synthetic-failure")
@@ -78,9 +81,6 @@ func TestDomainCLIsShareGatewayLoginAndPropagateFailure(t *testing.T) {
 				request = "synthetic-failure"
 			}
 			args := []string{"-session", "domain-functional", domain, "--target", "domain", "--request", request}
-			if domain == "sql" {
-				args = append(args, "--credential", "synthetic-db")
-			}
 			command := exec.Command(binary, args...)
 			command.Env = os.Environ()
 			output, err := command.CombinedOutput()

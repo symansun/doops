@@ -49,10 +49,6 @@ export function DatabasePanel({
     const text = request.trim()
     if (!text || running || stopPending) return
     const credentialRefs = credentials.split(/[\s,]+/).filter(Boolean)
-    if ((mode === "query" || mode === "apply") && credentialRefs.length === 0) {
-      setError("只读查询和受控执行都需要 Gateway 受管数据库凭据")
-      return
-    }
     if (mode === "apply" && !confirmed) {
       setError("执行变更前请确认已阅读变更说明，并由 DoSql 提供匹配的审批证据")
       return
@@ -90,6 +86,7 @@ export function DatabasePanel({
             session_id: sessionId,
             operation,
             skill: "dosql",
+				...(mode === "query" || mode === "apply" ? { credential_mode: "auto" } : {}),
             instruction,
             ...(credentialRefs.length ? { credential_refs: credentialRefs } : {}),
           },
