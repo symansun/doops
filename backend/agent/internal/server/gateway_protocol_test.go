@@ -2423,6 +2423,10 @@ func TestGatewayResourceKeysUseSessionWorkspacePathAndTarget(t *testing.T) {
 	if got := resourceKeyForTool(ActionExec, "doops_agent_prompt", boundPromptArgs, "dev", "node"); got != "target-mutation:dev/node" {
 		t.Fatalf("bound apply prompt resource key mismatch: %q", got)
 	}
+	autoSQLPromptArgs := json.RawMessage(`{"operation":"ask","skill":"dosql","credential_mode":"auto","session_id":"sql-a"}`)
+	if got := resourceKeyForTool(ActionAsk, "doops_agent_prompt", autoSQLPromptArgs, "dev", "node"); got != "target-mutation:dev/node" {
+		t.Fatalf("automatic SQL credential prompt resource key mismatch: %q", got)
+	}
 	metadataArgs := json.RawMessage(`{"session_id":"ask-a","mode":"metadata"}`)
 	if got := actionForTool("doops_agent_prompt", metadataArgs); got != ActionAsk {
 		t.Fatalf("metadata prompt must remain a read-only ask: %q", got)
