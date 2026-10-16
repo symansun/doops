@@ -47,3 +47,17 @@ func TestDatabaseCredentialTypeReusesOpaqueMaterializationOnly(t *testing.T) {
 		t.Fatal("registry credential was accepted for database use")
 	}
 }
+
+func TestDatabaseCredentialNamesSelectOnlyTargetDatabaseBindings(t *testing.T) {
+	entries := []CredentialListEntry{
+		{CredentialResource: CredentialResource{Name: "postgres", Type: CredentialTypeOpaque, State: CredentialStateActive}, Grants: []CredentialGrant{{Scope: CredentialGrantScope{Use: CredentialUseDatabase}}}},
+		{CredentialResource: CredentialResource{Name: "postgres", Type: CredentialTypeOpaque, State: CredentialStateActive}, Grants: []CredentialGrant{{Scope: CredentialGrantScope{Use: CredentialUseDatabase}}}},
+		{CredentialResource: CredentialResource{Name: "opaque", Type: CredentialTypeOpaque, State: CredentialStateActive}, Grants: []CredentialGrant{{Scope: CredentialGrantScope{Use: CredentialUseOpaqueSecret}}}},
+		{CredentialResource: CredentialResource{Name: "registry", Type: CredentialTypeRegistry, State: CredentialStateActive}, Grants: []CredentialGrant{{Scope: CredentialGrantScope{Use: CredentialUseImagePull}}}},
+		{CredentialResource: CredentialResource{Name: "revoked", Type: CredentialTypeOpaque, State: CredentialStateRevoked}, Grants: []CredentialGrant{{Scope: CredentialGrantScope{Use: CredentialUseDatabase}}}},
+	}
+	got := databaseCredentialNames(entries)
+	if len(got) != 1 || got[0] != "postgres" {
+		t.Fatalf("database credential names = %#v, want [postgres]", got)
+	}
+}
