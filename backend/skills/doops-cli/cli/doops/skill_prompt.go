@@ -6,7 +6,7 @@ import (
 )
 
 // Domain commands reuse the Gateway client and login store; skills never own auth.
-func runSkillPrompt(skill, operation, target, session, instruction string, credentials []string, servers []Server, configErr error, ss *SessionStore, verbose bool) error {
+func runSkillPrompt(skill, operation, target, session, instruction, credentialMode string, credentials []string, servers []Server, configErr error, ss *SessionStore, verbose bool) error {
 	if strings.TrimSpace(session) == "" {
 		return fmt.Errorf("-session is required")
 	}
@@ -26,6 +26,9 @@ func runSkillPrompt(skill, operation, target, session, instruction string, crede
 	defer client.Close()
 	arguments := map[string]interface{}{
 		"operation": operation, "skill": skill, "instruction": instruction,
+	}
+	if strings.TrimSpace(credentialMode) != "" {
+		arguments["credential_mode"] = credentialMode
 	}
 	if len(credentials) > 0 {
 		arguments["credential_refs"] = credentials

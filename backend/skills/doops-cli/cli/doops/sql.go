@@ -70,14 +70,15 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 	if parsedMode == sqlModeDiscover && strings.TrimSpace(*root) != "" {
 		return runLocalSQLResourceDiscovery(*root, *resourcesFile, *displayResourcesFile, *project, *environment, *script, *target, servers, configErr)
 	}
-	if (parsedMode == sqlModeQuery || parsedMode == sqlModeApply) && len(credentialRefs) == 0 {
-		return fmt.Errorf("--credential 至少需要一个 Gateway 受管数据库凭据资源名")
-	}
 	instruction, err := appendConversationReferences(buildSQLInstruction(parsedMode, *database, *request), []string(databaseRefs), []string(repositoryRefs))
 	if err != nil {
 		return err
 	}
-	return runSkillPrompt("dosql", sqlGatewayOperation(parsedMode), *target, sessionName, instruction, []string(credentialRefs), servers, configErr, ss, verbose)
+	credentialMode := ""
+	if parsedMode == sqlModeQuery || parsedMode == sqlModeApply {
+		credentialMode = "auto"
+	}
+	return runSkillPrompt("dosql", sqlGatewayOperation(parsedMode), *target, sessionName, instruction, credentialMode, []string(credentialRefs), servers, configErr, ss, verbose)
 }
 
 func runLocalSQLResourceDiscovery(root, resourcesFile, displayResourcesFile, project, environment, script, target string, servers []Server, configErr error) error {

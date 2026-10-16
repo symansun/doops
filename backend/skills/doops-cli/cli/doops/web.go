@@ -62,7 +62,7 @@ func runWebCommand(args []string, sessionName string, servers []Server, configEr
 		return fmt.Errorf("--credential 仅允许与 --mode apply 一起使用")
 	}
 	instruction := buildWebInstruction(parsedMode, *site, *dist, *domain, *request) + "\nNginx runtime_mode=" + *runtimeMode
-	return runSkillPrompt("doweb", webGatewayOperation(parsedMode), *target, sessionName, instruction, []string(credentialRefs), servers, configErr, ss, verbose)
+	return runSkillPrompt("doweb", webGatewayOperation(parsedMode), *target, sessionName, instruction, "", []string(credentialRefs), servers, configErr, ss, verbose)
 }
 
 func parseWebMode(value string) (webMode, error) {
