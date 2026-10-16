@@ -2577,7 +2577,8 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 	if tool == "doops_agent_prompt" {
 		var prompt api.AgentPromptParams
 		if json.Unmarshal(args, &prompt) == nil &&
-			(len(prompt.CredentialRefs) != 0 || len(prompt.CredentialBindings) != 0) {
+			(len(prompt.CredentialRefs) != 0 || len(prompt.CredentialBindings) != 0 ||
+				(prompt.Skill == "dosql" && prompt.CredentialMode == "auto")) {
 			return targetMutation
 		}
 	}
