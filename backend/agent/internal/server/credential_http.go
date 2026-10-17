@@ -729,7 +729,8 @@ func credentialErrorCategory(err error) string {
 	case errors.Is(err, ErrCredentialRevoked):
 		return "credential_revoked"
 	case errors.Is(err, ErrCredentialGrantDenied):
-		return "credential_grant_denied"
+		category, _ := credentialGrantDenialCategory(err)
+		return category
 	case errors.Is(err, ErrCredentialForbidden):
 		return "credential_forbidden"
 	case errors.Is(err, ErrSecretKeyUnavailable):
