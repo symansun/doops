@@ -347,6 +347,11 @@ DoSql 只有自动凭据模式：Gateway 按资源 ID 绑定当前 target 上全
 补 `credential configure --use database`；`credential_version_not_found` 完成 verify/promote；
 `dosql_database_required` 补 `--database`；`dosql_database_not_bound` 表示没有凭据指向该库；
 `dosql_credential_ambiguous` 表示多个凭据指向同一库，吊销重复绑定。
+直接 SQL（`--sql/--file`）每批一个事务：Postgres 的 DDL 与 DML 一起回滚；MySQL/Oracle 的 DDL 会隐式提交，
+所以 `--dry-run` 含 DDL 返回 `dosql_dry_run_ddl_unsupported`，DDL 与 DML 混批返回 `dosql_mixed_ddl_dml_unsupported`，
+已隐式提交的 DDL 在结果里体现为 `implicit_commits` 和 `partially_committed`，不会被报成已回滚。
+真实 apply 在 Agent 上按库记录带哈希链的版本日志（`.doops-dosql-versions`），执行前先取版本号，日志不可写或被篡改时拒绝执行；
+查询和 dry-run 不产生版本。日志只在 Agent 的 `/root` 为持久卷时跨重启保留。
 | 推送本地目录 | `doops -session <s> push --target <t> --src <dir>` |
 | 拉取远端工作区 | `doops -session <s> pull --target <t> --dest <dir>` |
 | 小文本读写 | `doops read/write ...` |
