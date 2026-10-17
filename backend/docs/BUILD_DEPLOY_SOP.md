@@ -59,9 +59,9 @@ CLI 安装必须把 Release Asset 内嵌 commit 对应的 skill/docs 一起安�
 固定发布入口：
 
 ```bash
-bash scripts/extract-gateway-from-image.sh \
-  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<verified-ci-digest> \
-  --source-commit <verified-main-commit>
+bash scripts/fetch-gateway-release.sh \
+  --release-tag <verified-release-tag> \
+  --source-commit <verified-release-commit>
 
 bash scripts/deploy-gateway.sh \
   --host 106.54.197.139 \
@@ -82,13 +82,13 @@ bash scripts/deploy-gateway.sh \
 
 这条脚本只走 SSH/SCP，在宿主机真实 root 下完成：
 
-1. 从 `main` 的 CNB CI 候选镜像 digest 提取同 revision 的
-   `/app/doops-gateway`；禁止在发布控制端重新编译。
+1. 从 CNB Release Assets 下载同 tag 的 `doops-gateway-linux-amd64`，按
+   `checksums.txt` 校验，并确认二进制内嵌 release tag 与 commit；禁止在发布控制端重新编译。
 2. SSH 校验远端真实 DB `/var/lib/doops-gateway/gateway.db` 存在且非空。
 3. 上传二进制到远端 `/tmp`。
 4. 备份 `/usr/local/bin/doops-gateway`。
 5. 替换二进制并重启 gateway。
-6. 校验 `/proc/<pid>/exe` hash 与 CI 镜像提取产物一致。
+6. 校验 `/proc/<pid>/exe` hash 与下载的 Release Asset 一致。
 7. 校验 `/v1/targets` 未认证访问返回 `401`，并通过 `--verify-target` 复用 DoOps 已配置认证，
    确认发布前的全部 target 均已重新连接；不得为发布导出或新建明文 token 文件。
 8. 校验候选二进制内嵌的 `source-commit` 与本次 CNB 构建 commit 完全一致；
@@ -99,7 +99,7 @@ bash scripts/deploy-gateway.sh \
 - 禁止用 `doops exec` 启动或重启 `doops-gateway`。
 - 禁止用 `doops push/write/read` 给 gateway 控制面发版。
 - 禁止让 `deploy-gateway.sh` 在发布控制端执行默认本地构建；线上发布必须显式
-  使用 `--no-build` 和由 `extract-gateway-from-image.sh` 提取的不可变 CI 产物。
+  使用 `--no-build` 和由 `fetch-gateway-release.sh` 下载并校验的 CI Release Asset。
 - 禁止用 base64/tar/分片临时传输替代 gateway 发布脚本。
 - 不保留 gateway host agent 作为默认 target；需要主机巡检时走独立 SSH/监控流程。
 
@@ -164,9 +164,9 @@ stdio 响应在本地生成结果证明。
 
 本节只负责构建、校验和发布 `doops-agent` 运行时镜像，不负责普通业务 workload。
 进行任何 Agent 运行时修改后，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA
-为标签的候选镜像。该镜像同时携带同一 revision 的 `/app/doops-agent`、
-`/app/doops-gateway` 和锁定版本的 `/usr/local/bin/do-agent`；不得在发布控制端重新编译
-Gateway。生产候选镜像必须解析为 registry digest；`doops upgrade` 也接受明确的
+为标签的候选镜像。该镜像携带同一 revision 的 `/app/doops-agent` 和锁定版本的
+`/usr/local/bin/do-agent`，不包含 Gateway；Gateway 只作为同 tag 的 Release Asset
+`doops-gateway-linux-amd64` 发布，不得在发布控制端重新编译。生产候选镜像必须解析为 registry digest；`doops upgrade` 也接受明确的
 `repository:tag`，并在运行时校验实际 `imageID`。发布者必须自行保留精确 source commit、
 registry digest 和 CI 成功证据；Agent、CLI 和
 发布脚本不会替发布者证明 CI provenance。

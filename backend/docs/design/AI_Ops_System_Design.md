@@ -91,7 +91,7 @@ commit、registry digest 和构建成功证据，调用方再显式选择 config
 target 并提交远程 Helm 资产、镜像版本和验收条件；CLI、Agent 和 Helm 工具不自动验证
 CI provenance。Gateway 完成鉴权、审计和凭据预物化，
 目标 Agent/doagent 执行 mutation，最终状态由实际工具和功能证据验证。它不依赖仓库同步
-或隔离 workspace。Gateway 本体仍通过 `extract-gateway-from-image.sh` 提取不可变制品后，
+或隔离 workspace。Gateway 本体通过 `fetch-gateway-release.sh` 下载并校验 CI Release Asset 后，
 由 `deploy-gateway.sh` 从 SSH 宿主机发布，不通过 doops target。Agent 自升级在控制器已
 存在且满足自身 namespace、标准 Deployment、已有匹配 Helm release 和
 `/root/.kube` 或 `/root/.kube/config` 共享挂载时使用 `doops upgrade`；Job 的 Kubernetes

@@ -28,7 +28,7 @@ docker run --rm \
   '
 
 mkdir -p "${RELEASE_DIR}"
-for artifact in doops-darwin-amd64 doops-darwin-arm64 doops-linux-amd64 doops-linux-arm64; do
+for artifact in doops-darwin-amd64 doops-darwin-arm64 doops-linux-amd64 doops-linux-arm64 doops-gateway-linux-amd64; do
   install -m 0755 "${TEMP_DIR}/release/${artifact}" "${RELEASE_DIR}/${artifact}"
 done
 install -m 0644 "${TEMP_DIR}/release/checksums.txt" "${RELEASE_DIR}/checksums.txt"

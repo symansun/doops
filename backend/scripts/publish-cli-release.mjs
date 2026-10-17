@@ -10,6 +10,7 @@ const ASSET_NAMES = [
   "doops-darwin-arm64",
   "doops-linux-amd64",
   "doops-linux-arm64",
+  "doops-gateway-linux-amd64",
   "checksums.txt",
 ];
 
