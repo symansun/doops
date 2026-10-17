@@ -33,6 +33,11 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 	environment := flags.String("environment", "", "DoSql environment ID for --mode discover")
 	script := flags.String("dosql-script", "", "Path to dosql-agent.mjs for --mode discover")
 	subSession := flags.String("session", "", "Session ID (can also be set before subcommand)")
+	sqlText := flags.String("sql", "", "SQL to execute verbatim; one or more statements separated by ;")
+	sqlFile := flags.String("file", "", "SQL file to execute verbatim")
+	verify := flags.String("verify", "", "Read-only verification SQL run in the same transaction (--mode apply)")
+	verifyFile := flags.String("verify-file", "", "File holding the read-only verification SQL (--mode apply)")
+	dryRun := flags.Bool("dry-run", false, "Execute the batch and verification, then roll back (--mode apply)")
 	var credentialRefs stringListFlag
 	var databaseRefs stringListFlag
 	var repositoryRefs stringListFlag
@@ -64,8 +69,20 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 	if err != nil {
 		return err
 	}
+	direct, err := buildSQLDirectInput(parsedMode, *sqlText, *sqlFile, *verify, *verifyFile, *database, *dryRun)
+	if err != nil {
+		return err
+	}
+	if direct != nil {
+		if strings.TrimSpace(*request) != "" {
+			return fmt.Errorf("--sql/--file 与 --request 只能二选一")
+		}
+		return runSkillPromptWith("dosql", sqlGatewayOperation(parsedMode), *target, sessionName,
+			sqlDirectAuditDescription(parsedMode, direct), "auto", []string(credentialRefs),
+			direct.promptArguments(), servers, configErr, ss, verbose)
+	}
 	if strings.TrimSpace(*request) == "" && !(parsedMode == sqlModeDiscover && strings.TrimSpace(*root) != "") {
-		return fmt.Errorf("数据库需求不能为空，请使用 --request")
+		return fmt.Errorf("数据库需求不能为空，请使用 --request、--sql 或 --file")
 	}
 	if parsedMode == sqlModeDiscover && strings.TrimSpace(*root) != "" {
 		return runLocalSQLResourceDiscovery(*root, *resourcesFile, *displayResourcesFile, *project, *environment, *script, *target, servers, configErr)

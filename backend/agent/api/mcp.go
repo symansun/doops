@@ -149,6 +149,12 @@ type AgentPromptParams struct {
 	CredentialMode     string                   `json:"credential_mode,omitempty"`
 	CredentialRefs     []string                 `json:"credential_refs,omitempty"`
 	CredentialBindings []AgentCredentialBinding `json:"credential_bindings,omitempty"`
+	// A dosql prompt carrying SQL is executed verbatim by the Agent without the
+	// model; the instruction is only an audit description.
+	SQL             string `json:"sql,omitempty"`
+	SQLVerification string `json:"sql_verification,omitempty"`
+	SQLDatabase     string `json:"sql_database,omitempty"`
+	SQLDryRun       bool   `json:"sql_dry_run,omitempty"`
 }
 
 // AgentPromptAttachment is a browser-uploaded conversation document. The

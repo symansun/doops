@@ -1079,6 +1079,19 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 				defer cleanup()
 			}
 		}
+		if doSQLDirectRequested(args) {
+			result, err := handleDirectDoSQLPrompt(ctx, sessionID, args)
+			if err != nil {
+				if ctx.Err() != nil {
+					writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+					return
+				}
+				writeJSON(buildToolErrorResponse(reqID, sanitizeSecretText(err.Error())))
+				return
+			}
+			writeJSON(buildSuccessResponse(reqID, result))
+			return
+		}
 		nativeMode, err := doagentModeForPrompt(operation, "")
 		if err != nil {
 			writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
@@ -2512,7 +2525,7 @@ func subscribeDoagentSSEWithCollectorReady(
 				if updateType == "turn_finished" && pendingAgentMessage.Len() > 0 {
 					// A reply streamed only as chunks has no agent_message event; the
 					// collector still needs it as the turn's final answer.
-					streamed := pendingAgentMessage.String()
+					streamed := sanitizeSecretText(pendingAgentMessage.String())
 					flushPendingAgentMessage()
 					if collector != nil {
 						if err := collector(map[string]interface{}{
