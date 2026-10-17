@@ -170,19 +170,22 @@ func (h *GatewayHub) resolveExplicitCredentials(
 	if credentialScalarContainsInlineMaterial(instruction) {
 		return nil, ErrInlineCredentialMaterial
 	}
-	if autoDatabase {
+	// Explicit refs are the user's selection; auto discovery only fills the gap.
+	// Appending discovered names to explicit ones bound the same credential twice
+	// and made every DoSql call fail as dosql_credential_binding_ambiguous.
+	if autoDatabase && len(names) == 0 {
 		entries, err := h.store.ListCredentialAccess(auth.UserID, cluster, instance)
 		if err != nil {
 			return nil, err
 		}
-		names = append(names, databaseCredentialNames(entries)...)
+		names = databaseCredentialNames(entries)
 		if len(names) == 0 {
 			return nil, ErrCredentialGrantDenied
 		}
 	}
+	names = uniqueCredentialReferences(names)
 	authorized := make([]authorizedCredentialMaterialization, 0, len(names))
 	for _, name := range names {
-		name = strings.TrimSpace(name)
 		request := CredentialUseRequest{
 			ActorID: auth.UserID,
 			Scope:   CredentialGrantScope{Cluster: cluster, Instance: instance},
@@ -211,6 +214,23 @@ func (h *GatewayHub) resolveExplicitCredentials(
 		})
 	}
 	return authorized, nil
+}
+
+func uniqueCredentialReferences(names []string) []string {
+	seen := make(map[string]struct{}, len(names))
+	unique := make([]string, 0, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		unique = append(unique, name)
+	}
+	return unique
 }
 
 func databaseCredentialNames(entries []CredentialListEntry) []string {
