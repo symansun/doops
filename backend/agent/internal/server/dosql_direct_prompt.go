@@ -31,21 +31,11 @@ func doSQLDirectRequested(args api.AgentPromptParams) bool {
 }
 
 func handleDirectDoSQLPrompt(ctx context.Context, sessionID string, args api.AgentPromptParams) (string, error) {
-	binding, err := selectDirectDoSQLBinding(args.CredentialBindings)
+	candidate, err := resolveDirectDoSQLBinding(ctx, args.CredentialBindings, args.SQLDatabase, readDoSQLSecretData)
 	if err != nil {
 		return "", err
 	}
-	data, err := readDoSQLSecretData(ctx, binding)
-	if err != nil {
-		return "", err
-	}
-	engine, database, err := inferDoSQLEngine(data)
-	if err != nil {
-		return "", err
-	}
-	if expected := strings.TrimSpace(args.SQLDatabase); expected != "" && expected != database {
-		return "", fmt.Errorf("dosql_database_name_mismatch: credential %s points to %q, --database names %q", binding.Name, database, expected)
-	}
+	binding, data, engine, database := candidate.Binding, candidate.Data, candidate.Engine, candidate.Database
 	target, err := doSQLConnectionTarget(engine, database, data)
 	if err != nil {
 		return "", err
@@ -117,25 +107,101 @@ func directDoSQLMode(request doSQLDirectRequest) string {
 	}
 }
 
-func selectDirectDoSQLBinding(bindings []api.AgentCredentialBinding) (api.AgentCredentialBinding, error) {
-	var matches []api.AgentCredentialBinding
+type doSQLBindingCandidate struct {
+	Binding  api.AgentCredentialBinding
+	Data     map[string]string
+	Engine   string
+	Database string
+}
+
+type doSQLSecretReader func(context.Context, api.AgentCredentialBinding) (map[string]string, error)
+
+// resolveDirectDoSQLBinding picks the target's database binding without a
+// caller-chosen credential: one binding is used as is, several are told apart
+// by the database each credential points to. Errors carry names only.
+func resolveDirectDoSQLBinding(ctx context.Context, bindings []api.AgentCredentialBinding, database string, read doSQLSecretReader) (doSQLBindingCandidate, error) {
+	var databaseBindings []api.AgentCredentialBinding
 	for _, binding := range bindings {
 		if binding.Use == string(CredentialUseDatabase) {
-			matches = append(matches, binding)
+			databaseBindings = append(databaseBindings, binding)
+		}
+	}
+	if len(databaseBindings) == 0 {
+		return doSQLBindingCandidate{}, errors.New("dosql_credential_missing: run credential configure --use database for this target")
+	}
+	database = strings.TrimSpace(database)
+	var candidates []doSQLBindingCandidate
+	var unusable []string
+	for _, binding := range databaseBindings {
+		candidate, err := loadDoSQLBindingCandidate(ctx, binding, read)
+		if err != nil {
+			if len(databaseBindings) == 1 {
+				return doSQLBindingCandidate{}, err
+			}
+			// Keep the reason: one broken binding must not hide behind a generic miss.
+			unusable = append(unusable, binding.Name+"("+doSQLErrorCategory(err)+")")
+			continue
+		}
+		candidates = append(candidates, candidate)
+	}
+	if database == "" {
+		if len(candidates) == 1 && len(unusable) == 0 {
+			return candidates[0], nil
+		}
+		return doSQLBindingCandidate{}, fmt.Errorf("dosql_database_required: target binds %s; pass --database <name>",
+			describeDoSQLCandidates(candidates, unusable))
+	}
+	var matches []doSQLBindingCandidate
+	for _, candidate := range candidates {
+		if candidate.Database == database {
+			matches = append(matches, candidate)
 		}
 	}
 	switch len(matches) {
-	case 0:
-		return api.AgentCredentialBinding{}, errors.New("dosql_credential_missing: bind a database credential to this target or pass --credential <name>")
 	case 1:
 		return matches[0], nil
+	case 0:
+		return doSQLBindingCandidate{}, fmt.Errorf("dosql_database_not_bound: no database credential on this target points to %q; target binds %s",
+			database, describeDoSQLCandidates(candidates, unusable))
 	}
 	names := make([]string, 0, len(matches))
-	for _, binding := range matches {
-		names = append(names, binding.Name)
+	for _, candidate := range matches {
+		names = append(names, candidate.Binding.Name)
 	}
 	sort.Strings(names)
-	return api.AgentCredentialBinding{}, fmt.Errorf("dosql_credential_ambiguous: pass --credential, bound: %s", strings.Join(names, ","))
+	return doSQLBindingCandidate{}, fmt.Errorf("dosql_credential_ambiguous: credentials %s all point to %q; revoke the duplicate binding",
+		strings.Join(names, ","), database)
+}
+
+func loadDoSQLBindingCandidate(ctx context.Context, binding api.AgentCredentialBinding, read doSQLSecretReader) (doSQLBindingCandidate, error) {
+	data, err := read(ctx, binding)
+	if err != nil {
+		return doSQLBindingCandidate{}, err
+	}
+	engine, database, err := inferDoSQLEngine(data)
+	if err != nil {
+		return doSQLBindingCandidate{}, err
+	}
+	return doSQLBindingCandidate{Binding: binding, Data: data, Engine: engine, Database: database}, nil
+}
+
+func describeDoSQLCandidates(candidates []doSQLBindingCandidate, unusable []string) string {
+	parts := make([]string, 0, len(candidates)+len(unusable))
+	for _, candidate := range candidates {
+		parts = append(parts, candidate.Binding.Name+"="+candidate.Engine+"/"+candidate.Database)
+	}
+	sort.Strings(parts)
+	sort.Strings(unusable)
+	if len(unusable) != 0 {
+		parts = append(parts, "unusable: "+strings.Join(unusable, ","))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// doSQLErrorCategory keeps only the stable category prefix of an Agent error.
+func doSQLErrorCategory(err error) string {
+	category, _, _ := strings.Cut(err.Error(), ":")
+	return strings.TrimSpace(category)
 }
 
 func inferDoSQLEngine(data map[string]string) (string, string, error) {

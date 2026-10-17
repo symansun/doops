@@ -170,15 +170,15 @@ func (h *GatewayHub) resolveExplicitCredentials(
 	if credentialScalarContainsInlineMaterial(instruction) {
 		return nil, ErrInlineCredentialMaterial
 	}
-	// Explicit refs are the user's selection; auto discovery only fills the gap.
-	// Appending discovered names to explicit ones bound the same credential twice
-	// and made every DoSql call fail as dosql_credential_binding_ambiguous.
-	if autoDatabase && len(names) == 0 {
+	// DoSql has no caller-selected credentials: the Gateway binds every database
+	// credential on the target by stable ID, so same-named resources owned by
+	// different users cannot make the selection ambiguous.
+	if autoDatabase {
 		entries, err := h.store.ListCredentialAccess(auth.UserID, cluster, instance)
 		if err != nil {
 			return nil, err
 		}
-		names = databaseCredentialNames(entries)
+		names = databaseCredentialIDs(entries)
 		if len(names) == 0 {
 			// Discovery only lists promoted credentials; report an unpromoted
 			// database binding as a lifecycle gap, not a missing binding.
@@ -242,9 +242,9 @@ func uniqueCredentialReferences(names []string) []string {
 	return unique
 }
 
-func databaseCredentialNames(entries []CredentialListEntry) []string {
+func databaseCredentialIDs(entries []CredentialListEntry) []string {
 	seen := make(map[string]struct{}, len(entries))
-	names := make([]string, 0, len(entries))
+	ids := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if entry.Type != CredentialTypeOpaque || entry.State != CredentialStateActive {
 			continue
@@ -257,14 +257,14 @@ func databaseCredentialNames(entries []CredentialListEntry) []string {
 			if use != CredentialUseDatabase {
 				continue
 			}
-			if _, exists := seen[entry.Name]; !exists {
-				names = append(names, entry.Name)
-				seen[entry.Name] = struct{}{}
+			if _, exists := seen[entry.ID]; !exists {
+				ids = append(ids, entry.ID)
+				seen[entry.ID] = struct{}{}
 			}
 			break
 		}
 	}
-	return names
+	return ids
 }
 
 func isCredentialResourceIDReference(value string) bool {

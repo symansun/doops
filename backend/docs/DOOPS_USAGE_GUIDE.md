@@ -34,10 +34,10 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | One RPC waits for the Agent task's terminal result; no task-status polling or command retries. |
 | Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
 | Run an authorized release | `doops -session <s> ask --target <t> --apply --credential <name> --msg '<facts>'` | Canonical business workload CI/CD entry. |
-| DoSql read-only query or scan | `doops -session <s> sql --target <t> --mode query [--credential <database-resource>] --request '<request>'` | Automatically uses active database bindings on the selected Gateway target; an explicit credential narrows the candidates. No local connection file is read. |
-| DoSql live schema inspection | `doops -session <s> sql --target <t> --mode query [--credential <database-resource>] --request '读取指定 database_asset_id 的表、列或索引结构'` | Uses one read-only engine catalog/information-schema query. `discover` only finds Kubernetes database assets; it does not inspect live tables. |
+| DoSql read-only query or scan | `doops -session <s> sql --target <t> --mode query [--database <name>] --request '<request>'` | Automatically binds every active database credential on the selected Gateway target; `--database` picks among several. No local connection file is read. |
+| DoSql live schema inspection | `doops -session <s> sql --target <t> --mode query [--database <name>] --request '读取指定 database_asset_id 的表、列或索引结构'` | Uses one read-only engine catalog/information-schema query. `discover` only finds Kubernetes database assets; it does not inspect live tables. |
 | DoSql change plan | `doops -session <s> sql --target <t> --mode plan --request '<request>'` | Returns business summary, risk and verification evidence without mutation. |
-| DoSql controlled mutation | `doops -session <s> sql --target <t> --mode apply [--credential <database-resource>] --request '<approved change>'` | Automatically uses active database bindings on the target; DoSql still requires its change evidence before mutation. |
+| DoSql controlled mutation | `doops -session <s> sql --target <t> --mode apply [--database <name>] --request '<approved change>'` | Automatically binds the target's database credentials; DoSql still requires its change evidence before mutation. |
 | DoSql target discovery | `doops -session <s> sql --target <t> --mode discover --request '<request>'` | Uses `mcp_dosql_read` to scan non-Secret target metadata; it never stores connection secrets. |
 | DoSql repository/resource discovery | `doops -session <s> sql --target <t> --mode discover --root <authorized-repo> --resources-file <assets.json> --project <id> --environment <id> --dosql-script <path>/dosql-agent.mjs` | Scans authorized code/config metadata and persists a metadata-only database inventory. |
 | DoWeb read-only inspection | `doops -session <s> web --target <t> --mode check --request '<site/Nginx/TLS/health request>'` | Uses the selected Gateway target and DoWeb evidence path. |
@@ -74,6 +74,11 @@ journal/evidence 链。
 DoSql 的凭据使用继承本次目标 `ask`/`exec` 权限，不再要求额外 `credential:use` 或逐操作员绑定。
 Gateway 直接解析保存的 target/database 绑定和 active version，不让模型生成凭据 scope。
 不存在 active version 时先用 `credential configure` 安全导入；该错误明确为 `credential_version_not_found`。
+`doops sql` 不接受 `--credential`：Gateway 总是按 ID 绑定当前 target 上全部 active 的
+`use=database` 凭据。只有一个绑定时直接使用；有多个时按 `--database` 匹配凭据指向的数据库，
+未指定时返回 `dosql_database_required` 并列出各绑定指向的 `engine/database`。
+当前 target 没有 `use=database` 绑定时返回 `dosql_database_binding_missing`；绑定 scope
+失效时返回 `credential_binding_scope_invalid`。完整对照见 `CREDENTIAL_RESOURCES.md`。
 
 `registry sync` is a thin generic wrapper over the target Agent's audited exec path. The
 standard DoOps Agent image provides `buildctl` for image builds and `skopeo` for OCI
@@ -596,7 +601,7 @@ the user's grants.
 已有资源传 `--id`，避免重复创建；`--from-secret <name> --keys <keys>` 让 platform admin
 在 Agent 内导入指定 Secret，无须回传密码；源 Secret key 与运行时契约不一致时可增加
 `--key-map source=runtime`。不指定 Secret 时沿用 stdin payload。
-数据库 use 不要求 workload；配置失败不会报告成功，后续仍只通过 `--credential <name>` 引用。
+数据库 use 不要求 workload；配置失败不会报告成功。`doops sql` 自动使用 target 上的 database 绑定，不再传 `--credential`。
 
 安装正式 CLI 并验证不可变构建信息：
 

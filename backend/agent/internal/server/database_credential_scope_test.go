@@ -48,16 +48,20 @@ func TestDatabaseCredentialTypeReusesOpaqueMaterializationOnly(t *testing.T) {
 	}
 }
 
-func TestDatabaseCredentialNamesSelectOnlyTargetDatabaseBindings(t *testing.T) {
+func TestDatabaseCredentialIDsSelectOnlyTargetDatabaseBindings(t *testing.T) {
+	database := []CredentialGrant{{Scope: CredentialGrantScope{Use: CredentialUseDatabase}}}
 	entries := []CredentialListEntry{
-		{CredentialResource: CredentialResource{Name: "postgres", Type: CredentialTypeOpaque, State: CredentialStateActive}, Grants: []CredentialGrant{{Scope: CredentialGrantScope{Use: CredentialUseDatabase}}}},
-		{CredentialResource: CredentialResource{Name: "postgres", Type: CredentialTypeOpaque, State: CredentialStateActive}, Grants: []CredentialGrant{{Scope: CredentialGrantScope{Use: CredentialUseDatabase}}}},
-		{CredentialResource: CredentialResource{Name: "opaque", Type: CredentialTypeOpaque, State: CredentialStateActive}, Grants: []CredentialGrant{{Scope: CredentialGrantScope{Use: CredentialUseOpaqueSecret}}}},
-		{CredentialResource: CredentialResource{Name: "registry", Type: CredentialTypeRegistry, State: CredentialStateActive}, Grants: []CredentialGrant{{Scope: CredentialGrantScope{Use: CredentialUseImagePull}}}},
-		{CredentialResource: CredentialResource{Name: "revoked", Type: CredentialTypeOpaque, State: CredentialStateRevoked}, Grants: []CredentialGrant{{Scope: CredentialGrantScope{Use: CredentialUseDatabase}}}},
+		{CredentialResource: CredentialResource{ID: "cred_a", Name: "postgres", Type: CredentialTypeOpaque, State: CredentialStateActive}, Grants: database},
+		// Same resource listed twice (two grants) is selected once.
+		{CredentialResource: CredentialResource{ID: "cred_a", Name: "postgres", Type: CredentialTypeOpaque, State: CredentialStateActive}, Grants: database},
+		// Same name, different owner: still a distinct credential, selected by ID.
+		{CredentialResource: CredentialResource{ID: "cred_b", Name: "postgres", Type: CredentialTypeOpaque, State: CredentialStateActive}, Grants: database},
+		{CredentialResource: CredentialResource{ID: "cred_c", Name: "opaque", Type: CredentialTypeOpaque, State: CredentialStateActive}, Grants: []CredentialGrant{{Scope: CredentialGrantScope{Use: CredentialUseOpaqueSecret}}}},
+		{CredentialResource: CredentialResource{ID: "cred_d", Name: "registry", Type: CredentialTypeRegistry, State: CredentialStateActive}, Grants: []CredentialGrant{{Scope: CredentialGrantScope{Use: CredentialUseImagePull}}}},
+		{CredentialResource: CredentialResource{ID: "cred_e", Name: "revoked", Type: CredentialTypeOpaque, State: CredentialStateRevoked}, Grants: database},
 	}
-	got := databaseCredentialNames(entries)
-	if len(got) != 1 || got[0] != "postgres" {
-		t.Fatalf("database credential names = %#v, want [postgres]", got)
+	got := databaseCredentialIDs(entries)
+	if len(got) != 2 || got[0] != "cred_a" || got[1] != "cred_b" {
+		t.Fatalf("database credential ids = %#v, want [cred_a cred_b]", got)
 	}
 }

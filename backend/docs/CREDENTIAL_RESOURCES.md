@@ -297,7 +297,8 @@ doops -session db-setup credential configure \
 - `phase=promoted` 表示受管凭据已激活；opaque/database 验证的是 Secret 物化与内容一致性，
   不是数据库登录或 SQL 执行成功。业务验收仍通过 DoSql 完成。
 
-后续执行只引用稳定资源名：`doops -session <s> sql --target <t> --credential <name> ...`。
+数据库凭据激活后，`doops -session <s> sql --target <t> ...` 自动使用当前 target 上全部 active database 绑定，
+不再引用资源名；多个数据库凭据时用 `--database <name>` 选择目标库。其他 use 仍通过 `--credential <name>` 引用。
 旧的分步命令保留给轮换、权限维护和故障诊断；Web 的版本/授权管理仍使用相同底层 API。
 Secret 导入需要 Gateway 和目标 Agent 都发布此能力；旧端报错时应升级，不绕过到 shell 取密。
 
@@ -455,7 +456,15 @@ active resource、active version、目标上的 active target 绑定和当前用
 以及该 version 在所有 active target binding 上完成 verification。标准顺序是
 `credential put -> credential grant -> credential verify -> credential promote`。
 缺少 active version 时，target credential list 会隐藏该 resource，DoSql 执行会被 Gateway
-返回 `credential_version_not_found`；缺少目标绑定返回 `credential_grant_denied`，不把缺少配置说成 `credential_invalid`。
+返回 `credential_version_not_found`（自动发现时目标上存在未 promote 的 database 绑定也返回此类别）。
+绑定缺失按原因区分，均为 403，不把缺少配置说成 `credential_invalid`：
+
+| 类别 | 含义 | 处理 |
+| --- | --- | --- |
+| `dosql_database_binding_missing` | DoSql 请求的当前 target 没有 active `use=database` 的 opaque 绑定 | `credential configure --use database` 绑定到当前 target |
+| `credential_binding_target_mismatch` | `--credential` 显式引用的凭据（发布、DoWeb 等非 DoSql 入口）只绑定在其他 `cluster/instance` | 在当前 target 上 grant/configure |
+| `credential_binding_scope_invalid` | 当前 target 上的绑定 scope 不再通过校验（例如 namespace 无效） | grant-revoke 后用合法 namespace 重新 configure |
+| `credential_grant_denied` | 其他绑定不存在的情况，例如绑定已吊销 | 检查 `credential list --target` |
 
 ## 审计
 
