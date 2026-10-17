@@ -123,8 +123,7 @@ bash scripts/build-gateway.sh
 ```
 
 `gateway/` 只是构建入口，实现在 `agent/internal/server/`，与 Agent 运行时共用一个包，文件索引见
-[agent/internal/server/README.md](agent/internal/server/README.md)。兼容入口 `agent/cmd/gateway`
-仍保留，新部署使用 `gateway/`。
+[agent/internal/server/README.md](agent/internal/server/README.md)。
 
 面向外部系统的 API 使用指南见 [docs/DOOPS_API_GUIDE.md](docs/DOOPS_API_GUIDE.md)，包括登录、目标查询、WebSocket JSON-RPC、自然语言部署、进度流和审计查询。
 

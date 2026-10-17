@@ -86,8 +86,7 @@ Gateway 不保存源码包，也不再用 tar/base64 分块作为 `push/pull` �
 ## 源码入口
 
 构建入口是本目录；实现在 `agent/internal/server/`（文件索引见
-[server/README.md](../agent/internal/server/README.md)）。旧路径 `agent/cmd/gateway` 是同样的
-兼容 wrapper，新的部署和流水线使用本目录。
+[server/README.md](../agent/internal/server/README.md)）。
 
 ## 文档
 

@@ -504,7 +504,7 @@ doops -session agent-upgrade upgrade \
 - SQLite 数据库建议放持久卷：`/var/lib/doops-gateway/gateway.db`。
 - 单活部署即可，K8s 使用单副本 Deployment 或 systemd 托管。
 - 构建入口是 `backend/gateway/`，实现在 `backend/agent/internal/server/`（与 Agent 共用，
-  文件索引见该目录 `README.md`）；`agent/cmd/gateway` 仅保留为兼容 wrapper。
+  文件索引见该目录 `README.md`）。
 - gateway 默认监听 `42222`；公网部署时云安全组/防火墙也必须放行 TCP 42222。
 - gateway 按 `cluster/instance` 和资源键隔离操作；独立结构化 workspace 可并发。
   不同 target 指向同一 release/数据库时尚无统一所有权或执行器 fencing；不得用另一
