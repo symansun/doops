@@ -61,10 +61,10 @@ docker run --rm --entrypoint /app/doops-agent "${APP_IMAGE}" -help >/dev/null
 test "$(
   docker run --rm --entrypoint /app/doops-agent "${APP_IMAGE}" -version
 )" = "release=${DOOPS_RELEASE_TAG} commit=${CNB_COMMIT}"
-docker run --rm --entrypoint /app/doops-gateway "${APP_IMAGE}" -help >/dev/null
-test "$(
-  docker run --rm --entrypoint /app/doops-gateway "${APP_IMAGE}" version
-)" = "release=${DOOPS_RELEASE_TAG} commit=${CNB_COMMIT}"
+if docker run --rm --entrypoint /bin/sh "${APP_IMAGE}" -c 'test -e /app/doops-gateway'; then
+  echo "Agent image must not contain the Gateway binary; it ships as a release asset" >&2
+  exit 1
+fi
 ACTUAL_DOAGENT_VERSION="$(docker run --rm --entrypoint /usr/local/bin/do-agent "${APP_IMAGE}" --version | awk '{print $NF}')"
 test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"
 docker run --rm --entrypoint /usr/local/bin/buildctl "${APP_IMAGE}" --version

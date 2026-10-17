@@ -167,12 +167,13 @@ Manual rollback selects only an evidenced superseded revision with a pinned imag
 and rechecks the admitted revision before mutation; missing evidence fails closed.
 Legacy releases without that evidence need an authorized external rollback.
 
-Gateway 控制面发布不走 doops target。必须从 CNB 不可变 Agent 镜像提取 Gateway，
-并把同一个 `main` commit 传给发布脚本；脚本会拒绝没有该 commit provenance 的本地旧二进制：
+Gateway 控制面发布不走 doops target。Gateway 不在 Agent 镜像里，它是同版本 CNB Release
+的 `doops-gateway-linux-amd64` 资产；下载脚本校验 checksum 和内嵌 commit，发布脚本会拒绝
+没有该 commit provenance 的本地旧二进制：
 
 ```bash
-bash scripts/extract-gateway-from-image.sh \
-  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<verified-ci-digest> \
+bash scripts/fetch-gateway-release.sh \
+  --release-tag <release-tag> \
   --source-commit <verified-main-commit>
 bash scripts/deploy-gateway.sh \
   --host <gateway-host> \

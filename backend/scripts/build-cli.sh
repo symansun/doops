@@ -88,12 +88,22 @@ if [[ "${BUILD_ALL}" == "true" ]]; then
   build_one "darwin" "arm64" "${RELEASE_DIR}/doops-darwin-arm64"
   build_one "linux" "amd64" "${RELEASE_DIR}/doops-linux-amd64"
   build_one "linux" "arm64" "${RELEASE_DIR}/doops-linux-arm64"
+  # The Gateway runs on its own host; it ships as a release asset next to the
+  # CLI instead of riding inside every target's Agent image.
+  (
+    cd "${REPO_ROOT}/gateway"
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+      go build -buildvcs=false -trimpath \
+        -ldflags="-X github.com/user/doops/agent/pkg/release.Version=${CLI_VERSION} -X github.com/user/doops/agent/pkg/release.Commit=${CLI_COMMIT}" \
+        -o "${RELEASE_DIR}/doops-gateway-linux-amd64" .
+  )
+  echo "Built: ${RELEASE_DIR}/doops-gateway-linux-amd64 (linux/amd64)"
   (
     cd "${RELEASE_DIR}"
     if command -v sha256sum >/dev/null 2>&1; then
-      sha256sum doops-darwin-amd64 doops-darwin-arm64 doops-linux-amd64 doops-linux-arm64 > checksums.txt
+      sha256sum doops-darwin-amd64 doops-darwin-arm64 doops-linux-amd64 doops-linux-arm64 doops-gateway-linux-amd64 > checksums.txt
     elif command -v shasum >/dev/null 2>&1; then
-      shasum -a 256 doops-darwin-amd64 doops-darwin-arm64 doops-linux-amd64 doops-linux-arm64 > checksums.txt
+      shasum -a 256 doops-darwin-amd64 doops-darwin-arm64 doops-linux-amd64 doops-linux-arm64 doops-gateway-linux-amd64 > checksums.txt
     else
       echo "Neither sha256sum nor shasum is available" >&2
       exit 1
