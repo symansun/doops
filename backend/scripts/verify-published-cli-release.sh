@@ -62,4 +62,18 @@ if [[ "${identity}" != "release=${RELEASE_TAG} commit=${RELEASE_COMMIT}" ]] ||
   exit 1
 fi
 
+gateway=doops-gateway-linux-amd64
+download_asset "${gateway}"
+expected="$(awk -v file="${gateway}" '$2 == file { print $1 }' "${TEMP_DIR}/checksums.txt")"
+actual="$(sha256_file "${TEMP_DIR}/${gateway}")"
+if [[ -z "${expected}" || "${actual}" != "${expected}" ]]; then
+  echo "Published Gateway checksum mismatch: ${gateway}" >&2
+  exit 1
+fi
+chmod 0755 "${TEMP_DIR}/${gateway}"
+if [[ "$("${TEMP_DIR}/${gateway}" version)" != "release=${RELEASE_TAG} commit=${RELEASE_COMMIT}" ]]; then
+  echo "Published Gateway identity mismatch for ${gateway}" >&2
+  exit 1
+fi
+
 echo "CNB Release Assets verified for ${RELEASE_TAG}."

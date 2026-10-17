@@ -3,7 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY = ROOT / "scripts" / "deploy-gateway.sh"
-EXTRACT = ROOT / "scripts" / "extract-gateway-from-image.sh"
+FETCH = ROOT / "scripts" / "fetch-gateway-release.sh"
 
 
 def test_gateway_deploy_detects_systemd_unit_without_pipefail_pipeline():
@@ -39,22 +39,29 @@ def test_gateway_deploy_can_verify_with_configured_doops_target_without_exportin
     assert "VERIFY_TOKEN" not in text
 
 
-def test_gateway_release_extracts_the_ci_binary_from_an_immutable_image():
-    text = EXTRACT.read_text()
+def test_gateway_release_fetches_the_ci_binary_from_release_assets():
+    text = FETCH.read_text()
 
-    assert '@sha256:[a-f0-9]{64}$' in text
+    assert "--release-tag" in text
     assert "--source-commit" in text
-    assert 'org.opencontainers.image.revision' in text
-    assert 'release=${RELEASE_TAG} commit=${SOURCE_COMMIT}' in text
-    assert 'org.opencontainers.image.version' in text
-    assert 'PLATFORM="${DOOPS_IMAGE_PLATFORM:-linux/amd64}"' in text
-    assert 'docker pull --platform "${PLATFORM}" "${IMAGE}"' in text
-    assert 'docker create --platform "${PLATFORM}" "${IMAGE}"' in text
-    assert 'docker cp "${container_id}:/app/doops-gateway" "${OUTPUT}"' in text
-    assert 'docker run --rm --platform "${PLATFORM}" --entrypoint /app/doops-gateway "${IMAGE}" -help >/dev/null' in text
+    assert "^[0-9a-f]{40}$" in text
+    assert "doops-gateway-linux-amd64" in text
+    assert "checksums.txt" in text
+    assert "checksum mismatch" in text
+    assert 'for marker in "${RELEASE_TAG}" "${SOURCE_COMMIT}"' in text
+
+    build = (ROOT / "scripts" / "build-cli.sh").read_text()
+    assert "doops-gateway-linux-amd64" in build
+    publish = (ROOT / "scripts" / "publish-cli-release.mjs").read_text()
+    assert '"doops-gateway-linux-amd64"' in publish
+
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    assert "COPY --from=builder /app/doops-gateway" not in dockerfile
+    assert "! test -e /app/doops-gateway" in dockerfile
 
     sop = (ROOT / "docs" / "BUILD_DEPLOY_SOP.md").read_text()
-    assert "extract-gateway-from-image.sh" in sop
+    assert "fetch-gateway-release.sh" in sop
+    assert "extract-gateway-from-image.sh" not in sop
     assert "--no-build" in sop
     assert "禁止在发布控制端重新编译" in sop
 

@@ -84,9 +84,20 @@ def test_agent_runtime_keeps_ssh_client_and_rejects_ssh_server():
     assert "DOOPS_BASE_IMAGE_OUTPUT" in base_image_build
 
     ci = CI.read_text()
-    assert "build-agent-base-image.sh" in ci
+    assert "resolve-agent-base-image.sh" in ci
+    assert "build-agent-base-image.sh" not in ci
     assert "backend/.ci-agent-base-image" in ci
     assert "backend/runtime-versions.env" in ci
+
+    # The base is rebuilt only when its inputs change, so unchanged base layers
+    # stay cached on every target node across releases.
+    resolve = (ROOT / "scripts" / "resolve-agent-base-image.sh").read_text()
+    assert "Dockerfile.base.light" in resolve
+    assert "runtime-versions.env" in resolve
+    assert "grep -v '^DOOPS_AGENT_BASE_IMAGE='" in resolve
+    assert 'BASE_TAG="inputs-${INPUT_HASH}"' in resolve
+    assert "scripts/build-agent-base-image.sh" in resolve
+    assert "@sha256:[0-9a-f]{64}$" in resolve
 
 
 def test_doops_ssh_uses_structured_ssh_commands():
