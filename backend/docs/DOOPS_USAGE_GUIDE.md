@@ -82,6 +82,34 @@ Gateway 直接解析保存的 target/database 绑定和 active version，不让�
 `dosql_database_not_bound`；多个凭据指向同一库时返回 `dosql_credential_ambiguous`，
 吊销重复绑定后重试。完整对照见 `CREDENTIAL_RESOURCES.md`。
 
+### DoSql 直接执行 SQL
+
+已知确切 SQL 时用 `--sql` 或 `--file`，SQL 原样提交给 Agent，不经过模型，与 `--request`
+二选一。只支持 `--mode query` 和 `--mode apply`，引擎为 postgres、mysql、oracle。
+
+```bash
+# 只读：每条语句都必须是 SELECT/WITH/SHOW/DESCRIBE/EXPLAIN/VALUES/TABLE
+doops -session db-check sql --target <t> --mode query [--database <name>] \
+  --sql 'SELECT count(*) FROM orders'
+
+# 变更：整批语句与验证 SQL 在同一事务内执行，验证失败整批回滚
+doops -session db-change sql --target <t> --mode apply [--database <name>] \
+  --file migrate.sql --verify 'SELECT count(*) FROM orders WHERE status IS NULL'
+
+# 干跑：执行整批和验证后回滚，用于确认语句可执行
+doops -session db-change sql --target <t> --mode apply --file migrate.sql --dry-run
+```
+
+- 不要在 SQL 里写 `BEGIN/COMMIT/ROLLBACK/SAVEPOINT`，事务边界由 DoSql 持有；写了返回
+  `dosql_statement_transaction_control_forbidden`。
+- `--verify`/`--verify-file` 只能是一条只读语句，否则 `dosql_verification_invalid`；
+  验证失败返回 `dosql_verification_failed`。`--verify` 与 `--dry-run` 只用于 apply。
+- query 中出现写语句返回 `dosql_query_requires_read_only`，改用 `--mode apply`。
+- MySQL 和 Oracle 的 DDL 会隐式提交，这两种引擎只有 DML 能整体回滚。
+- 结果是带 `operation_id`、`statement_fingerprint` 的 JSON，证据写入目标 session 工作区
+  `.dosql/operations/<operation_id>.evidence.json`，可用 `pull` 取回。
+- query 走 target `ask` 权限，apply 走 `exec` 权限；数据库选择规则同上一节。
+
 `registry sync` is a thin generic wrapper over the target Agent's audited exec path. The
 standard DoOps Agent image provides `buildctl` for image builds and `skopeo` for OCI
 copy/inspect. The command performs copy and source/destination manifest digest checks;
@@ -473,6 +501,34 @@ doops -session ops ask --target jm --msg '只读检查 Kubernetes 节点状态�
 
 Use `ask` for diagnostics that require exploration. The target must have doagent/model configuration available.
 
+`--database-ref <id>` 和 `--repo-ref <id>[@branch]` 可重复，只把引用 ID 作为
+`[DoOps 任务引用]` 前缀拼进任务文本，不授予数据库或仓库权限，也不物化凭据。
+`--model` 为本次指令选择模型。`--credential` 只允许与 `--apply` 一起使用。
+
+## Kubernetes Operations
+
+`doops k8s` 调用 Agent 的 `doops_k8s` 工具，不走 shell `kubectl`：
+
+```bash
+doops -session ops k8s --target <t> get pods --namespace apps
+doops -session ops k8s --target <t> describe deployment api --namespace apps
+doops -session ops k8s --target <t> logs deployment/api --namespace apps --tail 200
+doops -session ops k8s --target <t> top pods --namespace apps
+doops -session ops k8s --target <t> events --namespace apps --for deployment/api
+doops -session ops k8s --target <t> rollout status deployment/api --namespace apps
+# 以下是 mutation，必须带 --confirm
+doops -session ops k8s --target <t> rollout restart deployment/api --namespace apps --confirm
+doops -session ops k8s --target <t> scale deployment/api --replicas 3 --namespace apps --confirm
+doops -session ops k8s --target <t> node cordon <node> --confirm
+doops -session ops k8s --target <t> delete pod <pod> --namespace apps --confirm
+```
+
+可用参数：`--namespace`、`--container`、`--output json|yaml|wide|name`、`--tail`、
+`--replicas`、`--timeout`、`--for`、`--confirm`。`get/describe/logs/top/events/rollout status`
+是只读查询，可与 target mutation 并行；`rollout restart/scale/cordon/uncordon/delete pod`
+使用 target mutation lease。两类都需要 target 的 `exec` 权限。版本发布不走这里，用
+`ask --apply`。
+
 ## Development Credential Preflight
 
 需要 Git、Registry、Helm、TLS 或 API 凭据的项目，在仓库中提交 metadata-only 清单：
@@ -594,8 +650,12 @@ Confirm the session name before cleaning. Do not share one session across unrela
 
 ```bash
 doops login --target jm --username alice
+printf '%s' "$DOOPS_GATEWAY_TOKEN" | doops login --target jm --token-stdin
 doops logout --target jm
 ```
+
+CI 和自动化用 `--token-stdin` 传入 Gateway user token，不能与 `--token`、`--username`、
+`--password` 混用。不要用 `--token`/`--password` 把凭据放进命令行参数。
 
 Login and logout apply to the Gateway, not one target. `auth.json` stores one
 token under the normalized Gateway URL, and every configured target on that

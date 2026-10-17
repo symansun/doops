@@ -38,7 +38,9 @@ description: |
   不自动重放 mutation，不宣称成功。
 - 业务 workload 只用 `doops ask --apply` 发布。任务写明 target、服务范围、镜像版本或其
   授权来源、原因、验收条件；镜像版本不靠猜。发布者调用前自行核对 CI commit 与 digest。
-- Kubernetes mutation 只走 `mcp_doops_helm`，不用 shell kubectl、`kubectl set image` 或文本声明冒充成功。
+- 业务 workload 的发布收敛只走 `ask --apply` 内的 `mcp_doops_helm`，不用 shell kubectl、
+  `kubectl set image` 或文本声明冒充成功。运维类变更（重启、扩缩、cordon、删 Pod）用
+  `doops k8s ... --confirm`，它不是发布入口。
 - 嵌套 SSH 只用 `doops ssh` 的结构化入口，不拼进 `exec --cmd`。
 - 不用 base64、tar 或分片绕过 `push/pull`；大文件和二进制用 `pull`。
 - 长任务用 `exec --bg`，不在 `exec` 里用 `&`、`nohup`、`setsid`。
@@ -63,7 +65,10 @@ description: |
 | 嵌套 SSH | `doops -session <s> ssh --target <t> --host <user@host> -- <cmd> [args...]` |
 | 诊断分析 | `doops -session <s> ask --target <t> --msg '<task>'` |
 | 业务发布 | `doops -session <s> ask --target <t> --apply [--credential <name>...] --msg '<facts>'` |
-| DoSql | `doops -session <s> sql --target <t> --mode query\|plan\|apply\|discover [--database <name>] --request '<req>'` |
+| DoSql 自然语言 | `doops -session <s> sql --target <t> --mode query\|plan\|apply\|discover [--database <name>] --request '<req>'` |
+| DoSql 原样 SQL | `doops -session <s> sql --target <t> --mode query\|apply (--sql '<sql>'\|--file <f>) [--verify '<select>'] [--dry-run]` |
+| K8s 只读 | `doops -session <s> k8s --target <t> get\|describe\|logs\|top\|events\|rollout status ... [--namespace <ns>]` |
+| K8s 运维变更 | `doops -session <s> k8s --target <t> rollout restart\|scale\|node cordon\|delete pod ... --confirm` |
 | DoWeb | `doops -session <s> web --target <t> --mode check\|plan\|apply --request '<req>'` |
 | 推送 / 拉取工作区 | `doops -session <s> push --target <t> --src <dir>`；`pull --dest <dir>` |
 | OCI 镜像 | `image build`、`image copy`、`registry sync`（authfile 只引用目标文件） |
@@ -72,12 +77,36 @@ description: |
 | 用户与授权 | `doops admin user create\|list`、`admin grant list\|add\|delete` |
 | token | `doops admin token create\|list\|revoke` |
 | 活动操作 | `doops -session <s> admin operations list --target <t>` |
-| Helm Agent 升级 | `doops -session <s> upgrade --target <t> --image <ref>`（`--dry-run` 只预览） |
+| Helm Agent 升级 / 回滚 | `doops -session <s> upgrade --target <t> --image <ref>`（`--dry-run` 只预览）；`upgrade --target <t> --rollback` |
+| CI 非交互登录 | `printf '%s' "$TOKEN" \| doops login --target <t> --token-stdin` |
 
 DoSql 必须从 `doops sql` 进入；普通 `ask` 不保证注入 DoSql 工具。DoSql 只有自动凭据模式：
 Gateway 绑定当前 target 上全部 active `use=database` 凭据，`doops sql` 不接受 `--credential`；
 有多个数据库凭据时用 `--database <name>` 选库。完整参数和 `dosql_*` 错误类别见
 `docs/DOOPS_USAGE_GUIDE.md`，凭据分步命令见 `docs/CREDENTIAL_RESOURCES.md`。
+
+## 场景链路
+
+每条链路按顺序执行，前一步失败就停下处理，不跳步、不重放 mutation。`<s>` 每次任务用新值。
+
+1. 首次接入项目：`scripts/install.sh --version <tag> --project <path>` → `doops add --name <t> --gateway <url> --cluster <c> --instance <i>`
+   → `doops login --target <t> --username <u>` → `targets --target <t>` → `capabilities --target <t> --require structuredSSH`
+   → `exec --target <t> --cmd hostname`。心跳在线不等于命令通道可用，最后一步通过才算接入。
+2. 首次配置凭据：`credential configure --target <t> --namespace <ns> --use <use> --name <n> --type <type> --scope personal`
+   （payload 走 stdin，或 `--from-secret <secret> --keys <k>`）→ `credential list --target <t>` 确认可见。
+3. 业务发布：`doops version` 与 `targets` 的 `RELEASE_COMMIT` 核对 → 有 `.agent/doops-credentials.yaml` 时先
+   `credential preflight` → `ask --apply [--credential <n>] --msg '<target、范围、镜像、Chart、原因、验收>'`
+   → 用 `k8s --target <t> rollout status deployment/<w> --namespace <ns>` 和业务健康检查独立复核。
+4. 数据库变更：`sql --mode discover` → `sql --mode plan --request '<变更>'` →
+   `sql --mode apply --file <f.sql> --verify '<单条只读校验>' --dry-run`（执行后回滚）→ 去掉 `--dry-run` 正式执行。
+   多个数据库凭据时每步都带 `--database <name>`。
+5. 故障诊断：`targets` → `k8s get pods --namespace <ns>` / `k8s logs <pod>` / `k8s events --namespace <ns>`
+   → 需要推理时 `ask --msg '<只读诊断任务>'`。诊断阶段不带 `--apply`，不用 `exec` 改资源。
+6. Helm Agent 升级：`targets` 记录当前 `RELEASE_COMMIT` → `upgrade --image <ref> --dry-run` → `upgrade --image <ref>`
+   → `targets` 确认新 commit。探针失败时 CLI 自动回滚；事后回退用 `upgrade --rollback`。
+   没有控制器的旧 Agent 和独立 Docker Agent 不走这条链路，见 `docs/BUILD_DEPLOY_SOP.md`。
+7. 开通用户：`admin user create --user <u> --generate-password --grant-target <t>` → `admin grant list --user-id <id>`
+   确认无 wildcard → 用隔离 `DOOPS_CONFIG` 登录验证允许与拒绝 → `admin token revoke` 撤销验证 token。
 
 ## 安装与升级
 
