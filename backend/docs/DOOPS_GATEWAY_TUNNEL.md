@@ -283,7 +283,12 @@ doops admin token revoke --target <gateway-target> --id <token-id>
   缺少有效 session 时直接拒绝，不退回 target 级独占；只有 Agent 自升级独占 target。
 - 同一客户端 WebSocket 上的多个 `tools/call` 可以并行；Agent 的每条
   `notifications/message` 必须带 `params.request_id`，Gateway 和 CLI 按请求 ID
-  路由，不得用 session 名称覆盖另一个并发请求的通知。
+  路由，不得用 session 名称覆盖另一个并发请求的通知。CLI 原样保留输出文本及分块边界，
+  不按业务 JSON 的 `type` 字段猜测事件或任务完成。CLI/Web 取消使用原 Gateway RPC
+  连接的 `tools/cancel`，只能操作该连接自己的请求。Agent 断连后先等待连接所属执行
+  清理完成，再重新注册，避免旧进程与新请求重叠。
+- `finalizing` 只表示终态审计待落盘，不持有执行锁、不阻断后续任务；持久化失败会报告
+  错误并自动重试原始证据。
 - 普通 `exec`/`ssh`/`bg`、`ask --apply`、Kubernetes mutation 和凭据物化使用
   `target + session` lease；同 session 的 workspace 写入与 mutation 不得重叠。
   session 不是 OS 或远端资源沙箱，不同 session 不得同时修改同一 Helm release 或数据库。

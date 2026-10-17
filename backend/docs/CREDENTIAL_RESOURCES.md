@@ -466,6 +466,17 @@ active resource、active version、目标上的 active target 绑定和当前用
 | `credential_binding_scope_invalid` | 当前 target 上的绑定 scope 不再通过校验（例如 namespace 无效） | grant-revoke 后用合法 namespace 重新 configure |
 | `credential_grant_denied` | 其他绑定不存在的情况，例如绑定已吊销 | 检查 `credential list --target` |
 
+其它稳定错误类别：
+
+- `credential_scope_invalid`：凭据引用没有匹配到该 target 的 Gateway 授权，或物化
+  namespace 无效。数据库资产与 SQL 规则由 DoSql/Agent 校验，不要把业务数据库字段塞回
+  Gateway grant。
+- `credential_verification_required`：staged 版本尚未覆盖全部 active target 的验证；
+  对每个 active target 执行 `credential verify`。
+- `credential preflight failed`：清单中的 credentialRef 缺失、use 不匹配、grant 已吊销
+  或同名资源不唯一。修复受管凭据和精确授权，不得读取本地 secret 文件兜底。
+- 物化失败按返回的错误类别定位目标或权限状态，不重试、不猜测，不把 payload 放入任务。
+
 ## 审计
 
 所有 Credential mutation 在执行前创建 audit，审计不可用时 fail closed。记录包括：
