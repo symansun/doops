@@ -78,12 +78,11 @@ main:
             pnpm test:console
             pnpm exec tsc --noEmit
             pnpm build
-        - name: build immutable agent base
-          # Rebuild when the pinned inputs in backend/runtime-versions.env or the base Dockerfile change.
+        - name: resolve immutable agent base
+          # Reuses the base for unchanged backend/runtime-versions.env and Dockerfile.base.light inputs.
           script: |
-            DOOPS_BASE_RELEASE_TAG="${CNB_COMMIT}" \
             DOOPS_BASE_IMAGE_OUTPUT="${PWD}/backend/.ci-agent-base-image" \
-              bash backend/scripts/build-agent-base-image.sh
+              bash backend/scripts/resolve-agent-base-image.sh
         - name: build immutable agent images
           script: |
             if [ -s backend/.ci-agent-base-image ]; then
@@ -322,11 +321,10 @@ $:
             pnpm test:console
             pnpm exec tsc --noEmit
             pnpm build
-        - name: build release agent base
+        - name: resolve release agent base
           script: |
-            DOOPS_BASE_RELEASE_TAG="${CNB_BRANCH}" \
             DOOPS_BASE_IMAGE_OUTPUT="${PWD}/backend/.ci-agent-base-image" \
-              bash backend/scripts/build-agent-base-image.sh
+              bash backend/scripts/resolve-agent-base-image.sh
         - name: build release agent image
           script: |
             export DOOPS_AGENT_BASE_IMAGE_OVERRIDE="$(cat backend/.ci-agent-base-image)"
