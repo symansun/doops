@@ -22,8 +22,21 @@ type doSQLDirectReport struct {
 	Database             string            `json:"database"`
 	Credential           string            `json:"credential"`
 	StatementFingerprint string            `json:"statement_fingerprint"`
+	Version              int64             `json:"version,omitempty"`
+	VersionRecordError   string            `json:"version_record_error,omitempty"`
 	EvidencePath         string            `json:"evidence_path,omitempty"`
 	Result               doSQLDirectResult `json:"result"`
+}
+
+func doSQLVersionSuffix(report doSQLDirectReport) string {
+	if report.Version == 0 {
+		return ""
+	}
+	suffix := fmt.Sprintf(" version=%d", report.Version)
+	if report.VersionRecordError != "" {
+		suffix += " version_record_error=" + report.VersionRecordError
+	}
+	return suffix
 }
 
 func doSQLDirectRequested(args api.AgentPromptParams) bool {
@@ -50,11 +63,27 @@ func handleDirectDoSQLPrompt(ctx context.Context, sessionID string, args api.Age
 		Database: database, Credential: binding.Name,
 		StatementFingerprint: "sha256:" + doSQLStatementFingerprint(request.Statements),
 	}
+	// A real apply takes its version before touching the database; if the
+	// journal cannot record it, nothing runs. Queries and dry-runs are not versions.
+	journalPath := doSQLVersionJournalPath(engine, database)
+	if !request.ReadOnly && !request.DryRun {
+		version, err := beginDoSQLVersion(journalPath, report.OperationID, binding.Name, report.StatementFingerprint, request.Statements)
+		if err != nil {
+			return "", fmt.Errorf("%w (operation_id=%s): nothing was executed", err, report.OperationID)
+		}
+		report.Version = version
+	}
 	result, execErr := executeDoSQLDirect(ctx, request)
 	report.Result = result
+	if report.Version != 0 {
+		if err := endDoSQLVersion(journalPath, report.Version, report.OperationID, binding.Name, report.StatementFingerprint, result, execErr); err != nil {
+			// The change already ran; say the record is missing instead of hiding it.
+			report.VersionRecordError = err.Error()
+		}
+	}
 	report.EvidencePath = writeDirectDoSQLEvidence(sessionID, report, execErr)
 	if execErr != nil {
-		return "", fmt.Errorf("%w (operation_id=%s)", execErr, report.OperationID)
+		return "", fmt.Errorf("%w (operation_id=%s%s)", execErr, report.OperationID, doSQLVersionSuffix(report))
 	}
 	encoded, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
