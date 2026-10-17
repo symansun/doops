@@ -1,8 +1,8 @@
 # doops-gateway
 
-`gateway/` 是 doops 反向隧道模式的一等公网控制面入口。
-
-它构建 `doops-gateway` 二进制。Gateway 接收用户 CLI / API 请求，维护内网 `doops-agent` 主动连上的 WebSocket，执行 RBAC、审计、排队和 `cluster/instance` 路由。
+`gateway/` 只是 `doops-gateway` 二进制的构建入口：`main.go` 共 11 行，调用
+`agent/pkg/gatewaycmd`。实现代码在 `agent/internal/server/`，与 Agent 运行时共用一个包，
+按文件前缀区分 Gateway 侧与 Agent 侧，见 [server/README.md](../agent/internal/server/README.md)。Gateway 接收用户 CLI / API 请求，维护内网 `doops-agent` 主动连上的 WebSocket，执行 RBAC、审计、排队和 `cluster/instance` 路由。
 
 ## 构建
 
@@ -85,7 +85,9 @@ Gateway 不保存源码包，也不再用 tar/base64 分块作为 `push/pull` �
 
 ## 源码入口
 
-旧路径 `agent/cmd/gateway` 仅保留为兼容 wrapper。新的部署、流水线和文档都应把本目录作为 gateway 权威入口。
+构建入口是本目录；实现在 `agent/internal/server/`（文件索引见
+[server/README.md](../agent/internal/server/README.md)）。旧路径 `agent/cmd/gateway` 是同样的
+兼容 wrapper，新的部署和流水线使用本目录。
 
 ## 文档
 

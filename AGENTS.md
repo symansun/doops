@@ -10,6 +10,37 @@ This file records repository-specific rules that are easy to miss during DoOps d
 General engineering rules belong in the caller's global `AGENTS.md`; keep this file focused on
 DoOps architecture, security, release, and verification boundaries.
 
+## Repository Map
+
+| Component | Source | Notes |
+|---|---|---|
+| Gateway + Agent runtime | `backend/agent/internal/server/` | One shared package; see its `README.md` for the file-prefix index |
+| Gateway entrypoint | `backend/gateway/main.go` | 11-line wrapper that calls `backend/agent/pkg/gatewaycmd` |
+| Agent entrypoint | `backend/agent/cmd/agent/` | Imports `internal/server` and `internal/dispatcher` |
+| CLI | `backend/skills/doops-cli/cli/doops/` | Separate Go module named `doops` |
+| Agent-side skills | `backend/agent/skills/` | Copied into the Agent image; includes `dosql/` and `doweb/` |
+| Operator Skill | `backend/skills/SKILL.md` + `backend/docs/*.md` | Installed into projects by `backend/scripts/install.sh` |
+| Helm Charts | `backend/deploy/helm/` | Runtime assets only |
+| Release scripts | `backend/scripts/` | Python contract tests live in `backend/test/` |
+| Web console | `app/`, `components/`, `lib/` (Next.js) | Built from `Dockerfile.web` |
+
+`bin/`, `backend/bin/`, `DoSuite/`, `DoSecurity/`, `.next/`, and `node_modules/` are ignored local
+artifacts. Do not read, search, or execute them; they include stale binaries.
+
+## Topic Ownership
+
+Each topic has one authoritative document. Expand a rule only there; elsewhere, link to it.
+
+| Topic | Authoritative document |
+|---|---|
+| Workload delivery (`ask --apply`, Helm assets) | `backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md` |
+| Credentials | `backend/docs/CREDENTIAL_RESOURCES.md` |
+| Agent and Gateway release | `backend/docs/BUILD_DEPLOY_SOP.md` |
+| Gateway protocol and lifecycle | `backend/docs/DOOPS_GATEWAY_TUNNEL.md` |
+| External API | `backend/docs/DOOPS_API_GUIDE.md` |
+| Installation and onboarding | `backend/docs/CLUSTER_INSTALL_GUIDE.md` |
+| Day-to-day commands | `backend/docs/DOOPS_USAGE_GUIDE.md` |
+
 ## Canonical Architecture
 
 - Ordinary workload delivery uses an explicit natural-language task:
@@ -56,22 +87,12 @@ DoOps architecture, security, release, and verification boundaries.
   release; `proxy.allowedHosts` and `hostAliases` remain explicit external-script configuration.
   Do not create a temporary Agent, target, or release-runner, and do not use `kubectl set image`
   or an Agent-process Helm mutation.
-- Existing standalone Docker Agents use the explicit external DockerHost controller
-  `backend/scripts/release-host-agent.sh` and its Python implementation, not `doops upgrade`,
-  automatic fallback, or a mandatory Kubernetes migration. Require explicit target, session,
-  host, user, port (never default to 22), container, cluster, instance, immutable image digest,
-  CI source commit, and release. SSH must verify host keys; an optional private authenticated
-  control socket is a reference only, never password/token input. Prepare the immutable image
-  externally before read-only inspection; dry-run must not pull or create containers and must
-  fail explicitly for a missing local artifact. Hold a host-side release lock during mutation,
-  preserve the existing container configuration and stopped old container, and roll back
-  externally on failure.
-  Verify the actual replacement container/image/version, Gateway identity and release commit,
-  structuredSSH protocol, argv dispatch and expected failure terminal result, plus real
-  foreground/background exec RPC streams with each call's Root RequestID. Successful external
-  management SSH is separate evidence, not Agent authentication to the destination; host
-  passwords remain external-bootstrap stdin only and must never reach the Agent. Never ask the
-  current Agent to exec its own replacement or delete the old container. Full procedure belongs in
+- Existing standalone Docker Agents use the external controller
+  `backend/scripts/release-host-agent.sh`, never `doops upgrade`, automatic fallback, or a forced
+  Kubernetes migration. Every parameter is explicit (port never defaults to 22), SSH verifies host
+  keys, host passwords are external-bootstrap stdin only and never reach the Agent, and the current
+  Agent never execs its own replacement or deletes the old container. The full dry-run, lock,
+  verification, and rollback contract lives only in
   [BUILD_DEPLOY_SOP.md](backend/docs/BUILD_DEPLOY_SOP.md#独立-dockerhost-发布).
 
 ## Credential Security
@@ -135,19 +156,25 @@ DoOps architecture, security, release, and verification boundaries.
 
 ## Required Documentation
 
-Meaningful CLI, CI/CD, credential, permission, payload-boundary, or release behavior changes must
-update all affected authoritative surfaces in the same change:
-
-- `backend/skills/SKILL.md`
-- `backend/docs/DOOPS_USAGE_GUIDE.md`
-- `backend/docs/CREDENTIAL_RESOURCES.md`
-- `backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md`
-- `backend/docs/DOOPS_API_GUIDE.md` or `backend/docs/DOOPS_GATEWAY_TUNNEL.md` when protocol changes
-- CLI `--help` text and README when user-visible commands change
+A behavior change updates, in the same change, the one authoritative document that owns its topic
+(see Topic Ownership), plus CLI `--help` text and README when user-visible commands change.
+`backend/skills/SKILL.md` keeps only red lines, command selection, and links; update it only when a
+red line or a command entry changes. Other documents link to the owner instead of restating it.
 
 Do not document intended behavior that the current CLI and Gateway do not implement.
 
 ## Verification And Delivery
+
+Pick the highest tier the change touches:
+
+| Tier | Applies to | Done when |
+|---|---|---|
+| T0 | Docs, tests, or refactors with no behavior change | Relevant local tests pass, `git diff --check` is clean, the branch is pushed, and required CI passes |
+| T1 | CLI, Agent, Gateway, or Web behavior | T0, plus the checks below for the touched components, published release assets, `backend/scripts/install.sh` installing the released CLI and Skill, and touched components deployed from the matching immutable CI artifact |
+| T2 | Credentials, CI/CD, permissions, payload boundaries, release contracts | T1, plus the full Given/When/Then matrix and the online synthetic credential lifecycle below |
+
+Skill and docs changes reach user projects with the next release; a T0 change does not need its own
+release.
 
 - Credential and CI/CD changes require Given/When/Then coverage for success, denied authority,
   unavailable/wrong target, unavailable audit/key, verification failure, revocation, and payload
@@ -160,9 +187,7 @@ Do not document intended behavior that the current CLI and Gateway do not implem
 - Web changes require production build plus browser testing of login, target/managed credential
   views, loading/empty/error/forbidden states, payload submission, navigation, console, and network
   failures. Use synthetic credentials only.
-- Delivery is incomplete until commit and push are remotely visible, required CI passes, release
-  assets are published, `backend/scripts/install.sh` installs the released CLI and Skill, Gateway
-  changes are deployed from the matching immutable CI artifact, and an online synthetic credential
-  lifecycle verifies create, list isolation, persistence, verify, promote, and revoke.
+- T2 delivery is incomplete until an online synthetic credential lifecycle verifies create, list
+  isolation, persistence, verify, promote, and revoke against the deployed Gateway.
 - Do not use fallback, silent downgrade, manual hotfix, or an old CLI to bypass a failing contract.
   Fix the root cause and rerun the failed evidence path.
