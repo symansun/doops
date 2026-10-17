@@ -11,7 +11,7 @@
 ```bash
 (cd agent && go test ./...)
 (cd gateway && go test ./...)
-(cd skills/doops-cli && go test ./...)
+(cd cli && go test ./...)
 ```
 
 ## 架构图

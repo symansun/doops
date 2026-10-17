@@ -8,10 +8,10 @@ ROOT = Path(__file__).resolve().parents[2]
 AGENT_RULES = ROOT / "AGENTS.md"
 BACKEND = ROOT / "backend"
 CNB = ROOT / ".cnb.yml"
-CLI = BACKEND / "skills" / "doops-cli" / "cli" / "doops" / "main.go"
-CREDENTIAL_CLI = BACKEND / "skills" / "doops-cli" / "cli" / "doops" / "credential_commands.go"
+CLI = BACKEND / "cli" / "cli" / "doops" / "main.go"
+CREDENTIAL_CLI = BACKEND / "cli" / "cli" / "doops" / "credential_commands.go"
 CREDENTIAL_PREFLIGHT = (
-    BACKEND / "skills" / "doops-cli" / "cli" / "doops" / "credential_preflight.go"
+    BACKEND / "cli" / "cli" / "doops" / "credential_preflight.go"
 )
 SKILL = BACKEND / "skills" / "SKILL.md"
 DEPLOYMENT_DOC = BACKEND / "docs" / "NATURAL_LANGUAGE_DEPLOYMENT.md"
