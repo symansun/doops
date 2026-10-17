@@ -17,7 +17,7 @@ DoOps architecture, security, release, and verification boundaries.
 | Gateway + Agent runtime | `backend/agent/internal/server/` | One shared package; see its `README.md` for the file-prefix index |
 | Gateway entrypoint | `backend/gateway/main.go` | 11-line wrapper that calls `backend/agent/pkg/gatewaycmd` |
 | Agent entrypoint | `backend/agent/cmd/agent/` | Imports `internal/server` and `internal/dispatcher` |
-| CLI | `backend/skills/doops-cli/cli/doops/` | Separate Go module named `doops` |
+| CLI | `backend/cli/cli/doops/` | Separate Go module named `doops` |
 | Agent-side skills | `backend/agent/skills/` | Copied into the Agent image; includes `dosql/` and `doweb/` |
 | Operator Skill | `backend/skills/SKILL.md` + `backend/docs/*.md` | Installed into projects by `backend/scripts/install.sh` |
 | Helm Charts | `backend/deploy/helm/` | Runtime assets only |
@@ -140,7 +140,7 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
 ## CLI And Skill Distribution
 
 - The only supported installed CLI path is `~/.local/bin/doops`.
-- Build-tree binaries such as `backend/skills/doops-cli/bin/*` and binaries embedded inside a Skill
+- Build-tree binaries such as `backend/cli/bin/*` and binaries embedded inside a Skill
   directory are development artifacts, not supported user entrypoints.
 - Users install a checksummed, versioned CNB Release Asset through
   `backend/scripts/install.sh --version <tag> --project <absolute-project-path>`.

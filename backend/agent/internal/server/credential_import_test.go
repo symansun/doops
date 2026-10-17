@@ -396,7 +396,7 @@ func TestCredentialConfigureCLIThroughGatewayAndRealAgent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	build := exec.CommandContext(ctx, "go", "build", "-o", binary, "./cli/doops")
-	build.Dir = "../../../skills/doops-cli"
+	build.Dir = "../../../cli"
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v\n%s", err, output)
 	}

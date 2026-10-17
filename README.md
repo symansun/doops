@@ -12,7 +12,7 @@ components/                  Console UI components
 lib/                         Browser and API client helpers
 backend/agent/               doops-agent, gateway hub, ACP bridge, scheduler
 backend/gateway/             doops-gateway compatibility entrypoint
-backend/skills/doops-cli/    doops CLI source and prebuilt CLI artifacts
+backend/cli/    doops CLI source and prebuilt CLI artifacts
 backend/docs/                Runtime, deployment, and protocol documentation
 Dockerfile.web               Production web console image
 .cnb.yml                     CNB CI checks and immutable agent image publication
@@ -41,7 +41,7 @@ Run the same checks before publishing source:
 ```bash
 (cd backend/agent && go test ./...)
 (cd backend/gateway && go test ./...)
-(cd backend/skills/doops-cli && go test ./...)
+(cd backend/cli && go test ./...)
 pnpm exec tsc --noEmit
 pnpm build
 ```

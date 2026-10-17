@@ -602,7 +602,7 @@ SQLite 单写连接下 per-conn 插入会直接成为吞吐瓶颈。
 
 ## 8. CLI
 
-`backend/skills/doops-cli/` 新增 `edge` 子命令。
+`backend/cli/` 新增 `edge` 子命令。
 
 ```bash
 # 路由

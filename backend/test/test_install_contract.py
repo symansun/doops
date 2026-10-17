@@ -35,6 +35,7 @@ def test_cli_install_downloads_named_release_asset_and_replaces_binary_atomicall
     assert "${CLI_OUT} version" in text
     assert "\n  doops list" not in text
     assert 'skills/doops-cli/bin' not in text
+    assert 'backend/cli/bin' not in text
     assert '"${candidate}" --contract' in text
     assert '${CLI_OUT} -session setup login --target ${TARGET_NAME:-<target-name>}' in text
     assert 'DOOPS_CONFIG= "${candidate}" list' in text
