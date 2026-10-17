@@ -113,6 +113,18 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 		c.finalMessage = text
 		return nil
 	}
+	if update["sessionUpdate"] == doagentStreamedReplyUpdate {
+		text, err := doagentAgentMessageText(update["content"])
+		if err != nil {
+			return err
+		}
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.finalMessage == "" {
+			c.finalMessage = text
+		}
+		return nil
+	}
 	updateType, _ := update["sessionUpdate"].(string)
 	if updateType != "tool_call" && updateType != "tool_call_update" {
 		return nil
