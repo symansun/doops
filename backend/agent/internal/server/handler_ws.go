@@ -1663,7 +1663,16 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		return
 	}
 
-	writeJSON(buildSuccessResponse(reqID, "Operation complete."))
+	answer, err := toolTraces.finalAnswer()
+	if err != nil {
+		if verifiedMutation {
+			writeJSON(buildSuccessResponse(reqID, "verified mutation completed; the model did not write a summary"))
+			return
+		}
+		writeJSON(buildToolErrorResponse(reqID, err.Error()))
+		return
+	}
+	writeJSON(buildSuccessResponse(reqID, answer))
 }
 
 func validateAgentPromptAttachments(attachments []api.AgentPromptAttachment) error {
@@ -2501,7 +2510,18 @@ func subscribeDoagentSSEWithCollectorReady(
 					flushPendingAgentMessage()
 				}
 				if updateType == "turn_finished" && pendingAgentMessage.Len() > 0 {
+					// A reply streamed only as chunks has no agent_message event; the
+					// collector still needs it as the turn's final answer.
+					streamed := pendingAgentMessage.String()
 					flushPendingAgentMessage()
+					if collector != nil {
+						if err := collector(map[string]interface{}{
+							"sessionUpdate": doagentStreamedReplyUpdate, "turnId": targetTurnID,
+							"content": map[string]interface{}{"type": "text", "text": streamed},
+						}); err != nil {
+							return err
+						}
+					}
 				}
 				if collector != nil {
 					if err := collector(sessionUpdate); err != nil {
