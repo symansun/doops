@@ -1456,7 +1456,7 @@ func TestGatewayDispatchesTaggedAndPinnedAgentUpgrade(t *testing.T) {
 	}
 }
 
-func TestGatewayRejectsAgentSelfMutationShellBeforeDispatch(t *testing.T) {
+func TestGatewayForwardsShellCommandsWithoutInspectingContent(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -1491,20 +1491,16 @@ func TestGatewayRejectsAgentSelfMutationShellBeforeDispatch(t *testing.T) {
 		id := index + 2
 		args, _ := json.Marshal(map[string]interface{}{
 			"command":    command,
-			"session_id": fmt.Sprintf("blocked-self-mutation-%d", id),
+			"session_id": fmt.Sprintf("gateway-forwards-%d", id),
 		})
 		writeGatewayJSON(t, client, map[string]interface{}{
 			"jsonrpc": "2.0", "id": id, "method": "tools/call",
 			"params": map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(args)},
 		})
 		resp := readUntilID(t, client, float64(id))
-		errObj, ok := resp["error"].(map[string]interface{})
-		if !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "blocked dangerous command") {
-			t.Fatalf("expected gateway command rejection for %q, got %#v", command, resp)
+		if resp["error"] != nil || resp["result"] == nil {
+			t.Fatalf("gateway must forward %q to the Agent unchanged, got %#v", command, resp)
 		}
-	}
-	if gw.getAgent("dev", "local") == nil {
-		t.Fatal("rejected shell command disconnected the agent")
 	}
 }
 

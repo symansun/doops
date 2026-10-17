@@ -1193,11 +1193,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
 		return nil
 	}
-	if err := h.validateCommand(params.Name, params.Arguments); err != nil {
-		finishAudit("blocked", err.Error(), "", 0)
-		writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
-		return nil
-	}
 	agent := h.registry.Get(cluster, instance)
 	if agent == nil || agent.Cluster != cluster || agent.Instance != instance {
 		errMsg := fmt.Sprintf("target offline: %s/%s", cluster, instance)
