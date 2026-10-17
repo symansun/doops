@@ -136,7 +136,6 @@ description: |
   Skill 目录中的文件。
 - CNB CI 负责测试、构建和发布不可变制品，不选择生产 target。Gateway 负责鉴权、审计、
   资源锁和凭据预物化，实际业务 Helm/Kubernetes mutation 由目标 Agent 在其运行环境执行。
-- 当前没有 EnvironmentRegistry、`cicd run`、CICDReport 或 `doops_cicd_result` 发布链路。
 - 禁止当前 Agent 自行替换自己。具备控制器的标准 Helm Agent 用 `doops upgrade`，
   保留集群内 Job、匹配 Helm release 和共享 kubeconfig 的前置条件；其 `--dry-run`
   仍只预览参数。旧 Helm Agent、K8S 首次接入或显式 Helm 配置变更用外部

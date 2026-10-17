@@ -521,8 +521,8 @@ doops -session release-<commit> ask \
 `ask --apply`、`--image`、`--version` 和 Helm 工具不自动验证 CI provenance。
 
 CNB CI 负责测试、构建和发布制品；Gateway 负责鉴权、审计、并发控制和凭据预物化；
-目标 Agent/doagent 在目标运行环境执行业务 mutation。当前没有 EnvironmentRegistry、
-`cicd run`、workflow 环境推断、CICDReport 或 `doops_cicd_result`。
+目标 Agent/doagent 在目标运行环境执行业务 mutation。发布目标和参数只来自任务本身，
+不从 workflow 或环境名推断。
 
 普通前台 `exec` 可以执行操作者明确给出的 Helm 命令，但不替代标准发布编排，也不能使用
 managed credential references。标准 Helm `doops-agent` 自身升级使用 `doops upgrade`，仅适用于

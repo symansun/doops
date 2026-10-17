@@ -59,12 +59,6 @@ def test_gateway_release_fetches_the_ci_binary_from_release_assets():
     assert "COPY --from=builder /app/doops-gateway" not in dockerfile
     assert "! test -e /app/doops-gateway" in dockerfile
 
-    sop = (ROOT / "docs" / "BUILD_DEPLOY_SOP.md").read_text()
-    assert "fetch-gateway-release.sh" in sop
-    assert "extract-gateway-from-image.sh" not in sop
-    assert "--no-build" in sop
-    assert "禁止在发布控制端重新编译" in sop
-
 
 def test_gateway_deploy_rejects_binary_without_exact_source_commit():
     text = DEPLOY.read_text()

@@ -12,10 +12,6 @@ IMAGE = ROOT / "scripts" / "doops-release-image.sh"
 CHART = ROOT / "deploy" / "helm" / "doops-agent" / "templates" / "deployment.yaml"
 VALUES = ROOT / "deploy" / "helm" / "doops-agent" / "values.yaml"
 SCHEMA = ROOT / "deploy" / "helm" / "doops-agent" / "values.schema.json"
-SOP = ROOT / "docs" / "BUILD_DEPLOY_SOP.md"
-GUIDE = ROOT / "docs" / "CLUSTER_INSTALL_GUIDE.md"
-USAGE = ROOT / "docs" / "DOOPS_USAGE_GUIDE.md"
-SKILL = ROOT / "skills" / "SKILL.md"
 
 
 def test_agent_chart_hands_off_without_dropping_the_live_replica():
@@ -116,40 +112,6 @@ def test_single_managed_agent_release_script():
     assert "docker.cnb.cool/l8ai/ai/doops.sh" in helper
 
 
-def test_docs_point_agent_release_at_one_script():
-    sop = SOP.read_text()
-    guide = GUIDE.read_text()
-    usage = USAGE.read_text()
-    skill = SKILL.read_text()
-
-    for text in (sop, guide, usage, skill):
-        assert "release-managed-agent.sh" in text
-        assert "upgrade-managed-agent.sh" not in text
-        assert "install-managed-agent.sh" not in text
-        assert "/dowork/-/git/raw/main/doops-k8s/install.sh" not in text
-    assert "maxSurge=1" in sop
-    assert "maxUnavailable=0" in sop
-    assert "sandbox-entrypoint.sh" in usage
-
-
-def test_release_guidance_does_not_route_managed_or_normal_deployments_to_local_kubeconfig():
-    skill = SKILL.read_text()
-    model_standards = (ROOT / "docs" / "MODEL_STANDARDS.md").read_text()
-    tunnel = (ROOT / "docs" / "DOOPS_GATEWAY_TUNNEL.md").read_text()
-    authoritative_docs = (skill, model_standards, tunnel)
-    for text in authoritative_docs:
-        normalized = " ".join(text.split())
-        assert "ask --" in normalized
-        assert "--apply" in normalized
-        assert "upgrade" in normalized
-        assert "doops upgrade` 只允许 `--dry-run`" not in normalized
-        assert "preview-only interfaces" not in normalized
-
-    normalized_model_standards = " ".join(model_standards.split()).lower()
-    assert "ordinary workload deployments" in normalized_model_standards
-    assert "operator machine does not need a kubeconfig" in normalized_model_standards
-
-
 def test_existing_release_requires_an_external_kubeconfig_before_target_contact():
     env = os.environ.copy()
     env.pop("KUBECONFIG", None)
@@ -213,36 +175,17 @@ def test_bootstrap_requires_explicit_kubeconfig_before_running_cluster_tools():
     assert "Release complete:" not in result.stdout
 
 
-def test_deployment_routes_are_explicit_in_runtime_and_authoritative_docs():
+def test_runtime_prompts_route_agent_upgrades_through_the_job_controller():
+    # Runtime prompts are loaded by the Agent, so their routing is behavior, not wording.
+    # Operator docs are checked by test_doc_links.py and test_stale_contracts.py.
     for path in (
         ROOT / "agent" / "skills" / "system_prompt.md",
         ROOT / "agent" / "skills" / "k8s" / "SKILL.md",
-        SKILL,
-        SOP,
-        USAGE,
     ):
         text = path.read_text()
         assert "upgrade" in text, path
         assert "kubeconfig" in text, path
         assert "Job" in text, path
-    for path in (SOP, ROOT / "docs" / "NATURAL_LANGUAGE_DEPLOYMENT.md"):
-        text = path.read_text()
-        assert "临时配置单个 Gateway route、同步当前仓库" not in text, path
-        assert "同步当前仓库并提交" not in text, path
-
-
-def test_deployment_guidance_does_not_reintroduce_manual_agent_replacement():
-    sop = SOP.read_text()
-    readme = (ROOT / "README.md").read_text()
-    for retired in (
-        "kubectl run <node>-doops-deployer",
-        "chroot /host /usr/bin/nsenter",
-        "再启动新 agent 或触发 DaemonSet 滚动更新",
-        "nerdctl ps | grep doops-agent",
-    ):
-        assert retired not in sop
-    assert "单机或没有 DaemonSet 的节点，推荐标准安装" not in readme
-    assert "生产环境建议升级成 K8s/DaemonSet 或容器模式" not in readme
 
 
 def test_release_rejects_proxy_urls_before_contacting_a_target():
