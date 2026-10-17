@@ -78,7 +78,9 @@ Gateway 直接解析保存的 target/database 绑定和 active version，不让�
 `use=database` 凭据。只有一个绑定时直接使用；有多个时按 `--database` 匹配凭据指向的数据库，
 未指定时返回 `dosql_database_required` 并列出各绑定指向的 `engine/database`。
 当前 target 没有 `use=database` 绑定时返回 `dosql_database_binding_missing`；绑定 scope
-失效时返回 `credential_binding_scope_invalid`。完整对照见 `CREDENTIAL_RESOURCES.md`。
+失效时返回 `credential_binding_scope_invalid`。`--database` 没有凭据指向该库时返回
+`dosql_database_not_bound`；多个凭据指向同一库时返回 `dosql_credential_ambiguous`，
+吊销重复绑定后重试。完整对照见 `CREDENTIAL_RESOURCES.md`。
 
 `registry sync` is a thin generic wrapper over the target Agent's audited exec path. The
 standard DoOps Agent image provides `buildctl` for image builds and `skopeo` for OCI
@@ -107,6 +109,12 @@ doops -session image-toolchain-check info --target <gateway-target>
 `info` 输出中的 `buildctl: OK`、`skopeo: OK` 和 `buildkit-sock: OK` 表示目标具备
 DoOps 通用镜像工具链。镜像构建使用明确授权的 `exec` 命令调用 `buildctl`；镜像复制
 和源/目标 manifest 校验使用 `image copy` 或 `registry sync`。两者都不需要 AMP 专用脚本或外置同步 Job。
+目标缺少 `skopeo` 时直接报告工具缺失，不在线安装，也不静默切换到其它工具。私有 Registry
+凭据只能引用目标上的受控 authfile，禁止写入命令参数。
+
+运行态文件与配置同目录：`auth.json`（按 Gateway URL 保存的登录态）、`history.jsonl`
+（本机命令历史）、`sessions.json`（本机会话缓存）。`~/.config/doops/config.json`、
+`~/.doops/auth.json` 和项目 `.doops/` 是旧路径，不作为当前配置依据。
 
 `doops version` 的 `release` 是唯一 DoOps 发布版本，`commit` 是该版本对应的完整
 源码 provenance；`doops targets` 的 `RELEASE_COMMIT` 必须与它一致。输出中的
@@ -454,6 +462,8 @@ doops -session ops ssh --target jm --host ops@app.internal \
 `--option` 只接受 `-4`、`-6`、`-p`、`-i`，以及 `BatchMode`、`StrictHostKeyChecking`、
 `ConnectTimeout`、`IdentitiesOnly`、`IdentityFile` 和 `Port`。`key=value` 简写会转换为
 `-o<key>=<value>`。会改写目标或执行本地命令的选项会被拒绝。
+CLI 只拦截直接以 `ssh`、`/usr/bin/ssh` 或 `/bin/ssh` 开头的 `exec` 命令，不是完整 Shell
+分析器；包装命令仍须由调用者改用结构化入口。
 
 ## Ask
 

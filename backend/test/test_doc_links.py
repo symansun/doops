@@ -14,8 +14,8 @@ SKILL = BACKEND / "skills" / "SKILL.md"
 DOCS = BACKEND / "docs"
 AGENT_RULES = ROOT / "AGENTS.md"
 
-# Guards against the Skill growing back into a full manual. Phase-4 target is 10KB.
-SKILL_MAX_BYTES = 40_000
+# Guards against the Skill growing back into a full manual. Keep it a navigation entrypoint.
+SKILL_MAX_BYTES = 12_000
 
 # `docs/NAME.md` mentions in prose or code spans, and relative markdown link targets.
 DOC_MENTION = re.compile(r"(?<![\w/.-])docs/([A-Za-z0-9_./-]+\.md)")
