@@ -127,15 +127,6 @@ bash scripts/build-gateway.sh
 
 面向外部系统的 API 使用指南见 [docs/DOOPS_API_GUIDE.md](docs/DOOPS_API_GUIDE.md)，包括登录、目标查询、WebSocket JSON-RPC、自然语言部署、进度流和审计查询。
 
-2026-05-11 gateway 验收状态（历史记录）：
-
-- 公网 gateway：当前标准入口为 `https://doops.l8ai.cn`；早期明文 HTTP
-  地址只属于历史受控实验，不得进入当前客户端配置
-- 已接入 target：`doops-114/vm-114`、`doops-jm/jm-228`
-- 已验证：`targets`、`exec`、`write/read`、`push`、高危 action 未授权拒绝、90 秒以上 heartbeat 保活
-- `ask` 链路通过 `doops-agent -> doagent ACP HTTP`；模型配置必须来自 `doagent-model-settings` Secret，Agent 镜像升级不得覆盖该 Secret
-- 89/114/JM 的运行容器命名已统一为标准 `doops-agent`；JM 通过 89 内网路径接入 gateway。
-
 ## Agent 双镜像发布
 
 版本化 CNB Release Workflow 负责测试、构建并发布两类镜像：

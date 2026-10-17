@@ -719,7 +719,7 @@ bash scripts/install.sh --version <vX.Y.Z> --project "$PWD"
 
 安装器只使用 canonical 配置，忽略 `DOOPS_CONFIG` 覆盖；在替换 CLI/Skill 前用
 候选 CLI 检查配置，包括仅有旧配置的情况。迁移报错时修正路由配置，不用临时配置
-绕过问题。Agent 入口选择和 HDU 升级限制统一见
+绕过问题。Agent 入口选择和外部脚本已知限制统一见
 [集群接入指南](CLUSTER_INSTALL_GUIDE.md#先选部署对象)。
 
 K8S 新集群首次安装、旧 Helm Agent 首次启用控制器与显式 Helm 配置变更使用本仓库

@@ -8,7 +8,7 @@
 安装、正常升级和旧 Agent 恢复的入口统一见
 [集群接入指南](CLUSTER_INSTALL_GUIDE.md#先选部署对象)。`install.sh` 只更新客户端和
 Skill。已有 release 的外部脚本仍要求 Gateway 登录；它不是仅凭 kubeconfig 的免登录
-恢复工具。其当前镜像身份验收限制见同文 HDU 记录，不得把示例命令作为已验证部署证据。
+恢复工具。镜像身份验收的已知限制见同文“外部脚本已知限制”，不得把示例命令作为已验证部署证据。
 
 执行生命周期变更必须先验证 Gateway 的统一终态状态机，再切换 Gateway。候选
 Agent 不再需要声明独立的生命周期 capability；必须验证前台和后台 RPC 的原始终态、
@@ -340,7 +340,7 @@ bash scripts/release-host-agent.sh \
 `--ssh-control-path <private-authenticated-socket>` 仅复用本机已认证的私有 SSH socket，
 不接收 password/token；严格核验已知主机密钥，禁止关闭校验。密码、私钥或 token
 不得写入参数、文件、示例或日志；不输出完整 `docker inspect` 或敏感环境值。
-本次 43/49 主机密码仅用于外部 bootstrap 的 stdin，以建立外部管理 SSH 认证，
+宿主密码只用于外部 bootstrap 的 stdin，以建立外部管理 SSH 认证，
 不传给 Agent。成功访问目的地主机需要 Agent 内已有授权 SSH 认证材料，发布不新增该能力。
 
 1. `--dry-run` 必须实际只读检查 SSH、宿主身份、Docker 权限、原容器运行配置、
@@ -369,7 +369,7 @@ bash scripts/release-host-agent.sh \
    不得操作上一次发布的 receipt。该 ID 由脚本内部生成，不新增用户配置或版本门禁。
 
 禁止临时 Agent/target/runner、`kubectl set image`、跳过 `request_id` 验证或手工换镜像
-冒充该正式入口。本次宿主入口和只读授权边界见 [宿主访问说明](PHYSICAL_HOST_ACCESS.md)。
+冒充该正式入口。宿主入口和只读授权边界见 [宿主访问说明](PHYSICAL_HOST_ACCESS.md)。
 
 ### 环境依赖注射规范 (Secret)
 严禁在 `agent.yaml` 中明文出现 `LLM_API_KEY=sk-xxxx` 之类的配置。此类密钥应由 Secret 提取并通过 `envFrom` 下放。
