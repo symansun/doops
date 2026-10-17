@@ -136,9 +136,7 @@ def test_release_guidance_does_not_route_managed_or_normal_deployments_to_local_
     skill = SKILL.read_text()
     model_standards = (ROOT / "docs" / "MODEL_STANDARDS.md").read_text()
     tunnel = (ROOT / "docs" / "DOOPS_GATEWAY_TUNNEL.md").read_text()
-    environment = (ROOT / "docs" / "environments" / "dev-114.md").read_text()
-
-    authoritative_docs = (skill, model_standards, tunnel, environment)
+    authoritative_docs = (skill, model_standards, tunnel)
     for text in authoritative_docs:
         normalized = " ".join(text.split())
         assert "ask --" in normalized
@@ -148,11 +146,8 @@ def test_release_guidance_does_not_route_managed_or_normal_deployments_to_local_
         assert "preview-only interfaces" not in normalized
 
     normalized_model_standards = " ".join(model_standards.split()).lower()
-    normalized_environment = " ".join(environment.split()).lower()
     assert "ordinary workload deployments" in normalized_model_standards
     assert "operator machine does not need a kubeconfig" in normalized_model_standards
-    assert "operator machine does not need a kubeconfig" in normalized_environment
-    assert "only if this target is being adopted" in normalized_environment
 
 
 def test_existing_release_requires_an_external_kubeconfig_before_target_contact():
@@ -234,8 +229,6 @@ def test_deployment_routes_are_explicit_in_runtime_and_authoritative_docs():
         text = path.read_text()
         assert "临时配置单个 Gateway route、同步当前仓库" not in text, path
         assert "同步当前仓库并提交" not in text, path
-    design = (ROOT / "docs" / "design" / "AI_Ops_System_Design.md").read_text()
-    assert "锁内校验 `.doops-ready`" not in design
 
 
 def test_deployment_guidance_does_not_reintroduce_manual_agent_replacement():

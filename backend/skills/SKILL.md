@@ -15,7 +15,7 @@ description: |
 - Gateway/API 细节：看 `docs/DOOPS_GATEWAY_TUNNEL.md` 和 `docs/DOOPS_API_GUIDE.md`。
 - CI/CD 与发布：看 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
 - 凭据管理：看 `docs/CREDENTIAL_RESOURCES.md`。
-- 升级维护：看 `docs/BUILD_DEPLOY_SOP.md` 和 `docs/DOOPS_MAINTENANCE_LOG.md`。
+- 升级维护：看 `docs/BUILD_DEPLOY_SOP.md`。
 - 模型与 ask 配置：看 `docs/MODEL_STANDARDS.md`。
 - 物理机/宿主机/Bare-metal 接入：看 `docs/PHYSICAL_HOST_ACCESS.md`。
 
@@ -437,13 +437,7 @@ doops admin grant delete --target <gateway-target> --id <grant-id>
 
 ## 升级引导
 
-升级 doops CLI、gateway、agent 或 skill 前，先更新维护记录：
-
-```text
-docs/DOOPS_MAINTENANCE_LOG.md
-```
-
-升级前检查：
+升级 doops CLI、gateway、agent 或 skill 前检查：
 
 - 唯一配置源仍是 `~/.agent/skills/doops/config.json`。
 - `auth.json` 使用 `tokens` 字段，没有写到旧的 `~/.doops/auth.json` 或 `passwords` 字段。
