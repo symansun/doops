@@ -128,6 +128,19 @@ func callDoSQLTool(ctx context.Context, request k8sMCPRequest, boundSessionID st
 	}}
 }
 
+// The executor's own reason is the only actionable signal for the caller; a bare
+// category hides approval, credential and syntax failures behind one code.
+func doSQLFailure(category, reason string) error {
+	reason = strings.Join(strings.Fields(sanitizeSecretText(reason)), " ")
+	if reason == "" {
+		return errors.New(category)
+	}
+	if len(reason) > 400 {
+		reason = reason[:400]
+	}
+	return fmt.Errorf("%s: %s", category, reason)
+}
+
 func doSQLMCPErrorResponse(id interface{}, code int, message string) api.JSONRPCResponse {
 	return api.JSONRPCResponse{JSONRPC: "2.0", ID: id, Error: &api.RPCError{Code: code, Message: "dosql: " + message}}
 }
@@ -224,15 +237,15 @@ func handleDoSQLTool(ctx context.Context, raw json.RawMessage, mutation bool) (s
 	command := exec.CommandContext(ctx, node, script, params.Operation, "--input", inputPath, "--output", outputPath)
 	command.Dir = workspace
 	command.Env = append(os.Environ(), env...)
-	if output, err := command.CombinedOutput(); err != nil {
-		if ctx.Err() != nil {
-			return "", errExecutionOutcomeUnknown
-		}
-		_ = output
-		return "", errors.New("dosql_execution_failed")
+	output, runErr := command.CombinedOutput()
+	if runErr != nil && ctx.Err() != nil {
+		return "", errExecutionOutcomeUnknown
 	}
-	responseBytes, err := os.ReadFile(outputPath)
-	if err != nil {
+	responseBytes, readErr := os.ReadFile(outputPath)
+	if readErr != nil {
+		if runErr != nil {
+			return "", doSQLFailure("dosql_execution_failed", string(output))
+		}
 		return "", errors.New("dosql_response_missing")
 	}
 	var response struct {
@@ -243,8 +256,12 @@ func handleDoSQLTool(ctx context.Context, raw json.RawMessage, mutation bool) (s
 	if err := json.Unmarshal(responseBytes, &response); err != nil {
 		return "", errors.New("dosql_response_invalid")
 	}
-	if response.Status != "succeeded" {
-		return "", errors.New("dosql_execution_failed")
+	if runErr != nil || response.Status != "succeeded" {
+		message, _ := response.Error["message"].(string)
+		if strings.TrimSpace(message) == "" {
+			message = string(output)
+		}
+		return "", doSQLFailure("dosql_execution_failed", message)
 	}
 	if status, _ := response.Result["status"].(string); status != "verified" {
 		return "", errors.New("dosql_verification_failed")
