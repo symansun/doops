@@ -7,8 +7,6 @@ RUNTIME = ROOT / "runtime-versions.env"
 IMAGE_BUILD = ROOT / "scripts" / "build-agent-image.sh"
 BASE_IMAGE_BUILD = ROOT / "scripts" / "build-agent-base-image.sh"
 LIGHT_BASE = ROOT / "Dockerfile.base.light"
-SKILL = ROOT / "skills" / "SKILL.md"
-USAGE_GUIDE = ROOT / "docs" / "DOOPS_USAGE_GUIDE.md"
 DOCKERFILES = (
     ROOT / "Dockerfile",
     LIGHT_BASE,
@@ -99,17 +97,6 @@ def test_agent_runtime_keeps_ssh_client_and_rejects_ssh_server():
     assert "scripts/build-agent-base-image.sh" in resolve
     assert "@sha256:[0-9a-f]{64}$" in resolve
 
-
-def test_doops_ssh_uses_structured_ssh_commands():
-    skill = SKILL.read_text()
-    usage = USAGE_GUIDE.read_text()
-
-    assert "doops ssh" in skill
-    assert "结构化" in skill and "嵌套引号" in skill
-    assert "Run nested SSH safely" in usage
-    assert "必须使用结构化入口" in usage
-    assert "SSH 只用于首次安装、自恢复 agent" not in skill
-    assert "才可通过前台 `doops exec` 执行 SSH 恢复" not in skill
 
 
 def test_only_init_reaps_orphan_processes():

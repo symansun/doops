@@ -110,8 +110,7 @@ bash scripts/deploy-gateway.sh \
 ## 二、普通业务 workload apply
 
 普通业务 workload 的唯一运行时发布入口是明确授权的 `doops ask --apply` 自然语言任务。
-不得使用 `EnvironmentRegistry`、`EnvironmentDefinition`、`DeploymentTemplate`、
-`deploy/environments.yaml`、`cicd run` 或 workflow YAML 作为发布根，也不得从目录名、
+不得用环境注册表、部署模板或 workflow YAML 作为发布根，也不得从目录名、
 环境名、业务名或历史发布记录猜测目标和参数；可读取任务明确授权的代码、Chart、values
 和现有 release 解析事实，不要求已明确资产中的事实再粘贴到 prompt。CNB 负责构建、
 校验和推送业务制品；

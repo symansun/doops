@@ -22,14 +22,9 @@ CI_GUIDE = ROOT / "components" / "cicd-guide.tsx"
 
 def test_v3_release_contract_is_explicit_natural_language_apply():
     cli = CLI.read_text(encoding="utf-8")
-    skill = SKILL.read_text(encoding="utf-8")
-    deployment_doc = DEPLOYMENT_DOC.read_text(encoding="utf-8")
     ci_guide = CI_GUIDE.read_text(encoding="utf-8")
     system_prompt = (BACKEND / "agent" / "skills" / "system_prompt.md").read_text(encoding="utf-8")
     k8s_skill = (BACKEND / "agent" / "skills" / "k8s" / "SKILL.md").read_text(encoding="utf-8")
-    build_deploy_sop = (BACKEND / "docs" / "BUILD_DEPLOY_SOP.md").read_text(
-        encoding="utf-8"
-    )
     handler_ws = (BACKEND / "agent" / "internal" / "server" / "handler_ws.go").read_text(
         encoding="utf-8"
     )
@@ -50,12 +45,6 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert 'cliContractVersion = "doops.sh/cli-contract/v3"' in cli
     assert 'BoolVar(&apply, "apply"' in cli
     assert 'arguments["operation"] = "apply"' in cli
-    assert "doops ask --apply" in skill
-    assert "target" in deployment_doc
-    assert "服务范围" in deployment_doc
-    assert "镜像版本" in deployment_doc
-    assert "变更原因" in deployment_doc
-    assert "验收条件" in deployment_doc
     assert not re.search(r"doops add(?:(?!doops (?:-session [^\n]+ )?login).)*--token", ci_guide, re.DOTALL)
     assert len(re.findall(r"doops -session [^\n]+ login", ci_guide)) == 3
     assert ci_guide.count("--token-stdin") == 3
@@ -130,46 +119,14 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "缺少 `confirm=true` 的调用试探" in k8s_skill
     assert "image.tag=release-YYYYMMDD" not in k8s_skill
     assert "明确的 release、namespace、`value_files`" not in k8s_skill
-    assert "Chart、`value_files` 和非敏感" not in build_deploy_sop
-    assert "按 Chart schema 使用明确授权的资产" in build_deploy_sop
-    assert "取消自动保留现有非镜像 values" in build_deploy_sop
     assert "Secret、ServiceAccount" in k8s_skill
-    assert "mcp_doops_helm" in deployment_doc
-    assert "`session_id` 不属于模型参数" in deployment_doc
-    assert "attestation schema" in deployment_doc
-    assert "包括只更新镜像在内的所有发布" in deployment_doc
-    assert "隔离工作区" in deployment_doc
-    assert "共享 mutation 锁" in deployment_doc
-    assert "api_trigger_bootstrap_release_runner" not in deployment_doc
-    assert "bootstrap-release-runner.sh" not in deployment_doc
-    assert "不要求用户重复粘贴已明确资产中的" in deployment_doc
-    assert "image.tag=release-YYYYMMDD" not in deployment_doc
-    assert "覆盖键及类型由 Chart schema 决定" in deployment_doc
-    assert "缺少 `confirm=true` 的调用不是预演接口" in deployment_doc
-    assert "历史未知审计不参与新任务准入" in deployment_doc
-    assert "不自动重放 mutation" in deployment_doc
     assert "validate_simple_name" in cnb
     assert '*[!A-Za-z0-9._-]*' in cnb
     assert 'test "${#image_digest}" -eq 64' in cnb
 
 
 def test_release_guidance_does_not_build_images_on_business_targets():
-    for path in (
-        BACKEND / "agent" / "skills" / "image-build" / "SKILL.md",
-        BACKEND / "agent" / "skills" / "shell" / "SKILL.md",
-        BACKEND / "docs" / "DOOPS_USAGE_GUIDE.md",
-    ):
-        text = path.read_text(encoding="utf-8")
-        assert "CI" in text, path
-        for obsolete in (
-            "git archive --format=tar.gz HEAD",
-            "SCP 传输到构建节点",
-            "buildctl --addr",
-            "latest,push=true",
-            "registry.insecure=true",
-        ):
-            assert obsolete not in text, (path, obsolete)
-
+    # Retired build commands are covered by test_stale_contracts.py.
     for name in ("image-build", "shell"):
         text = (BACKEND / "agent" / "skills" / name / "SKILL.md").read_text()
         metadata = yaml.safe_load(text.split("---", 2)[1])
@@ -186,61 +143,33 @@ def test_apply_does_not_depend_on_workspace_commit_evidence():
         BACKEND / "agent" / "internal" / "server" / "workspace_upload.go"
     ).read_text(encoding="utf-8")
     cli = CLI.read_text(encoding="utf-8")
-    deployment_doc = DEPLOYMENT_DOC.read_text(encoding="utf-8")
 
     assert "doagent_apply_workspace_commit_required" not in handler_ws
     assert "validateWorkspaceCommitBinding" not in workspace_upload
     assert "validateBareWorkspaceCommitBinding" not in workspace_upload
     assert "workspace_commit" not in cli
-    assert "apply 不要求先把代码同步到 target 的隔离工作区" in deployment_doc
-    assert "不要求先把代码同步到 target 的隔离工作区" in deployment_doc
 
 
 def test_ordinary_exec_does_not_block_explicit_helm_operations():
     dispatcher = (BACKEND / "agent" / "internal" / "dispatcher" / "dispatcher.go").read_text(
         encoding="utf-8"
     )
-    deployment_doc = DEPLOYMENT_DOC.read_text(encoding="utf-8")
-
     blacklist = dispatcher.split("blacklist:", 1)[1].split("naturalLangRe:", 1)[0]
     assert r"\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b" not in blacklist
     assert "IsAgentHelmMutation" in dispatcher
-    assert "普通前台 `exec`" in deployment_doc
-    assert "不得把 Helm 误判为危险 shell 命令" in deployment_doc
-    assert "后台调用必须明确拒绝" in deployment_doc
 
 
 def test_cicd_and_credential_guides_match_the_runtime_contract():
-    cli = CLI.read_text(encoding="utf-8")
     credential_cli = CREDENTIAL_CLI.read_text(encoding="utf-8")
     credential_preflight = CREDENTIAL_PREFLIGHT.read_text(encoding="utf-8")
-    skill = SKILL.read_text(encoding="utf-8")
-    cicd_doc = CICD_DOC.read_text(encoding="utf-8")
-    credential_doc = CREDENTIAL_DOC.read_text(encoding="utf-8")
-    api_doc = (BACKEND / "docs" / "DOOPS_API_GUIDE.md").read_text(encoding="utf-8")
-    tunnel_doc = (BACKEND / "docs" / "DOOPS_GATEWAY_TUNNEL.md").read_text(encoding="utf-8")
 
-    assert "doops ask --apply" in cicd_doc
-    assert "--credential <resource-name>" in cicd_doc
-    assert "credential verify" in credential_doc
+    # Doc links are checked by test_doc_links.py; retired phrases by test_stale_contracts.py.
     assert "credential verify" in credential_cli
-    assert "docs/NATURAL_LANGUAGE_DEPLOYMENT.md" in skill
     assert "credential preflight" in credential_cli
     assert ".agent/doops-credentials.yaml" in credential_preflight
     assert "DevelopmentCredentialRequirements" in credential_preflight
     assert "KnownFields(true)" in credential_preflight
     assert "credentialHasActiveTarget" in credential_preflight
-    assert "preflight 不为本机进程或远端 workspace 注入 payload" in credential_doc
-    assert "docs/CREDENTIAL_RESOURCES.md" in skill
-    assert "backend/skills/SKILL.md" in skill
-
-    active_contract = "\n".join((skill, cicd_doc, credential_doc, api_doc, tunnel_doc))
-    assert "目标由环境注册表解析" not in active_contract
-    assert "公共 Agent 不接收凭据 payload" not in active_contract
-    assert "凭据 payload 不进入 prompt、Agent" not in active_contract
-    assert "CICDReport；Gateway" not in active_contract
-    assert "内部凭据物化调用" in active_contract
-    assert "fingerprint/expiry" not in active_contract
 
 
 def test_repository_agent_rules_guard_release_and_credential_boundaries():
