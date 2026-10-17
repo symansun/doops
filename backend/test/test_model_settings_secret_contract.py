@@ -361,11 +361,10 @@ def test_oilan_agent_chart_rejects_invalid_image_references(tmp_path):
 
 
 def test_public_agent_template_does_not_require_registry_auth():
-    deployment = yaml.safe_load((ROOT / "agent" / "agent-default.yaml").read_text(encoding="utf-8"))
-    pod_spec = deployment["spec"]["template"]["spec"]
+    values = yaml.safe_load((CHART / "values.yaml").read_text(encoding="utf-8"))
 
-    assert pod_spec.get("imagePullSecrets") in (None, [])
-    assert all(item["name"] != "registry-auth" for item in pod_spec["volumes"])
+    assert values.get("imagePullSecrets") in (None, [])
+    assert all(item.get("name") != "registry-auth" for item in values.get("volumes") or [])
 
 
 def test_single_model_policy_preserves_mounted_settings_and_omits_duplicate_tiers(

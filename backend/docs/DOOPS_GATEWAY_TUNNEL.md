@@ -138,24 +138,6 @@ bash scripts/deploy-gateway.sh \
   必须作为独立协议扩展并绑定 `cluster/instance`，不得复用 Gateway user token
   或重新引入 CLI per-target token。
 
-### TODO: Installation Registration Link
-
-Future Agent enrollment should use a Gateway-issued installation registration
-link:
-
-- an administrator issues a short-lived, one-time link bound to one exact
-  `cluster/instance`;
-- the installer exchanges the link for an Agent workload identity before the
-  first `/v1/agent/connect`;
-- the link is consumed atomically, cannot be replayed, and never authorizes user
-  RPC, Git, token administration, or any other Gateway user action;
-- subsequent Agent connections prove the enrolled workload identity without
-  storing or reusing a Gateway user token;
-- acceptance requires expiry, wrong-target, replay, revoked-link, and
-  unauthenticated-registration tests.
-
-This TODO reserves the protocol boundary only. The current release intentionally
-keeps Agent registration open and does not ship a partial enrollment fallback.
 - user token 只能执行授权范围内的 action。
 - gateway 转发 doops JSON-RPC 操作流量和 Git HTTP 请求，不做裸 TCP 隧道。
 - `push/pull` 在标准 gateway 路径下使用 Git 语义。gateway 对外暴露 `/v1/git/<cluster>/<instance>/<session>.git/...`，再通过目标 agent 已建立的反向 WebSocket 把 Git HTTP 请求透传给 agent 本地 `/git/<session>.git/...`。
@@ -526,26 +508,6 @@ doops -session agent-upgrade upgrade \
   操作者核查目标资源。
 - 审计记录包含 user、token、target、action、session、命令摘要、状态、错误和输出尾部；输出尾部使用有界缓冲，默认只保留 8 KiB 尾部摘要。
 - gateway 只转发操作流量和 Git HTTP 流量，不保存仓库快照。大文件、可恢复续传、跨用户长期共享 artifact 建议新增独立 artifact store，不把 gateway 扩展成对象存储。
-
-## 2026-05-11 Production Smoke
-
-这段 smoke 使用的是受控实验 gateway。doops 支持 `http` / `https` gateway；公网生产环境建议改用 `https` / `wss` gateway，但 CLI 和 agent 不会因为 gateway 是 HTTP 而拒绝连接。
-
-这段记录对应早期受控实验环境，不是当前 target 或发布配置。实验时接入：
-
-- `doops-114/vm-114`
-- `doops-jm/jm-228`
-
-已验证：
-
-- `doops targets --target <historical-test-target>`
-- 89/114/JM 的 `exec`
-- 89/114/JM 的 `write` + `read`
-- 89/114/JM 的 gateway `push` 到 `/root/ws/$SESSION`，并校验 `.doops-ready` 和文件 sha256；传输路径为 `/v1/git/<cluster>/<instance>/<session>.git` 的 Git HTTP 反向隧道
-- 未授权 token 执行 `write` 返回 `forbidden` 并写入 audit
-- 超过 90 秒后重复 `targets` 和 `exec`，确认 heartbeat 不误踢 agent
-
-JM 第三实例已通过 89 内网路径接入，目标标识为 `doops-jm/jm-228`。89/114/JM 的运行容器命名已统一为标准 `doops-agent`。
 
 ## Current Managed Targets
 

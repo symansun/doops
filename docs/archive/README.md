@@ -11,7 +11,8 @@ and is not installed into user projects. Scheduled for deletion after the cleanu
 - `backend-docs/code_sync_rsync_analysis.md`: superseded code-sync analysis
 - `backend-docs/design/AI_Ops_System_Design.md`: early system design
 - `backend-docs/environments/dev-114.md`: one environment's notes
-- `backend-docs/reports/`: dated release and acceptance reports (2026-09 to 2026-10)
+- `backend-docs/reports/`: dated release and acceptance reports (2026-09 to 2026-10), including the
+  HDU upgrade record and physical-host entry notes moved out of the install guides
 - `backend-docs/superpowers/`: old plan and spec drafts
 - `root-docs/*-progress.md`, `root-docs/*-2026-10-*.md`, `root-docs/credential-permission-repair-20261011.md`: remediation notes and reviews
 - `root-docs/superpowers/`: DoWeb resource-control design draft
