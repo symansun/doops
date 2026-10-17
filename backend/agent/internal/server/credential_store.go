@@ -25,7 +25,28 @@ var (
 	ErrCredentialBundleNotFound   = errors.New("credential bundle not found")
 	ErrCredentialAmbiguous        = errors.New("credential reference is ambiguous")
 	ErrCredentialAuditUnavailable = errors.New("credential audit unavailable")
+
+	// Specific grant denials keep errors.Is(err, ErrCredentialGrantDenied) and its
+	// 403 status, but report which binding precondition failed.
+	ErrCredentialBindingTargetMismatch = fmt.Errorf("%w: credential is bound to another target", ErrCredentialGrantDenied)
+	ErrCredentialBindingScopeInvalid   = fmt.Errorf("%w: target binding scope is invalid", ErrCredentialGrantDenied)
+	ErrDoSQLDatabaseBindingMissing     = fmt.Errorf("%w: target has no database binding", ErrCredentialGrantDenied)
 )
+
+// credentialGrantDenialCategory must run before the generic grant-denied case.
+func credentialGrantDenialCategory(err error) (string, bool) {
+	switch {
+	case errors.Is(err, ErrCredentialBindingTargetMismatch):
+		return "credential_binding_target_mismatch", true
+	case errors.Is(err, ErrCredentialBindingScopeInvalid):
+		return "credential_binding_scope_invalid", true
+	case errors.Is(err, ErrDoSQLDatabaseBindingMissing):
+		return "dosql_database_binding_missing", true
+	case errors.Is(err, ErrCredentialGrantDenied):
+		return "credential_grant_denied", true
+	}
+	return "", false
+}
 
 type CredentialScope string
 
@@ -804,6 +825,7 @@ func (s *GatewayStore) AuthorizeCredentialGrant(req CredentialUseRequest) (Crede
 	}
 	defer rows.Close()
 	var matches []AuthorizedCredentialUse
+	otherTarget, invalidScope := false, false
 	for rows.Next() {
 		resource, grant, err := scanCredentialAuthorization(rows)
 		if err != nil {
@@ -812,8 +834,12 @@ func (s *GatewayStore) AuthorizeCredentialGrant(req CredentialUseRequest) (Crede
 		if grant.Scope.Use == "" {
 			grant.Scope.Use = credentialUseForType(resource.Type)
 		}
-		if grant.Scope.Cluster != req.Scope.Cluster || grant.Scope.Instance != req.Scope.Instance ||
-			validateCredentialGrantScope(grant.Scope) != nil {
+		if grant.Scope.Cluster != req.Scope.Cluster || grant.Scope.Instance != req.Scope.Instance {
+			otherTarget = true
+			continue
+		}
+		if validateCredentialGrantScope(grant.Scope) != nil {
+			invalidScope = true
 			continue
 		}
 		if len(matches) != 0 && matches[len(matches)-1].Resource.ID == resource.ID &&
@@ -826,12 +852,52 @@ func (s *GatewayStore) AuthorizeCredentialGrant(req CredentialUseRequest) (Crede
 		return CredentialResource{}, CredentialGrant{}, err
 	}
 	if len(matches) == 0 {
+		switch {
+		case invalidScope:
+			return CredentialResource{}, CredentialGrant{}, ErrCredentialBindingScopeInvalid
+		case otherTarget:
+			return CredentialResource{}, CredentialGrant{}, ErrCredentialBindingTargetMismatch
+		}
 		return CredentialResource{}, CredentialGrant{}, ErrCredentialGrantDenied
 	}
 	if len(matches) > 1 {
 		return CredentialResource{}, CredentialGrant{}, ErrCredentialAmbiguous
 	}
 	return matches[0].Resource, matches[0].Grant, nil
+}
+
+// HasUnpromotedDatabaseBinding reports whether the target has an active opaque
+// database binding whose credential still lacks an active version. Auto DoSql
+// discovery hides such credentials, so this separates "not promoted" from
+// "never bound".
+func (s *GatewayStore) HasUnpromotedDatabaseBinding(cluster, instance string) (bool, error) {
+	rows, err := s.db.Query(`SELECT g.scope_json
+		FROM credentials c JOIN credential_grants g ON g.credential_id = c.id
+		WHERE c.state = ? AND c.type = ? AND g.state = ?
+		  AND NOT EXISTS (
+			SELECT 1 FROM credential_versions v
+			WHERE v.credential_id = c.id AND v.state = ?
+		  )`,
+		CredentialStateActive, CredentialTypeOpaque, CredentialStateActive, CredentialVersionActive)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var scopeJSON string
+		if err := rows.Scan(&scopeJSON); err != nil {
+			return false, err
+		}
+		var scope CredentialGrantScope
+		if err := json.Unmarshal([]byte(scopeJSON), &scope); err != nil {
+			return false, err
+		}
+		scope = normalizeCredentialGrantScope(scope)
+		if scope.Cluster == cluster && scope.Instance == instance && scope.Use == CredentialUseDatabase {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func (s *GatewayStore) CreateCredentialBundle(req CredentialBundleCreateRequest) (CredentialBundle, error) {

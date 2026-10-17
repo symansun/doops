@@ -332,6 +332,8 @@ func TestTargetCredentialPromptRejectsUnauthorizedUse(t *testing.T) {
 						t.Fatal(marshalErr)
 					}
 					f.http(t, f.admin, http.MethodDelete, "/v1/credentials/"+resource.ID+"/grants", string(body), http.StatusOK)
+				case "wrong_grant_cluster", "wrong_grant_instance":
+					wantError = "credential_binding_target_mismatch"
 				case "no_permission", "wrong_operation_action":
 					wantError, wantStatus = "forbidden:", "forbidden"
 				}

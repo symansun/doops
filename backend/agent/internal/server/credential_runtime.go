@@ -180,7 +180,16 @@ func (h *GatewayHub) resolveExplicitCredentials(
 		}
 		names = databaseCredentialNames(entries)
 		if len(names) == 0 {
-			return nil, ErrCredentialGrantDenied
+			// Discovery only lists promoted credentials; report an unpromoted
+			// database binding as a lifecycle gap, not a missing binding.
+			unpromoted, err := h.store.HasUnpromotedDatabaseBinding(cluster, instance)
+			if err != nil {
+				return nil, err
+			}
+			if unpromoted {
+				return nil, ErrCredentialVersionNotFound
+			}
+			return nil, ErrDoSQLDatabaseBindingMissing
 		}
 	}
 	names = uniqueCredentialReferences(names)
@@ -798,7 +807,8 @@ func credentialOperationErrorCategory(err error) string {
 	case errors.Is(err, ErrCredentialVersionNotFound):
 		return "credential_version_not_found"
 	case errors.Is(err, ErrCredentialGrantDenied):
-		return "credential_grant_denied"
+		category, _ := credentialGrantDenialCategory(err)
+		return category
 	case errors.Is(err, ErrCredentialForbidden):
 		return "credential_forbidden"
 	case errors.Is(err, ErrCredentialRevoked):
