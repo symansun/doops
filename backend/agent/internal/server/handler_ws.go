@@ -2158,17 +2158,6 @@ func doagentTCPReady(baseURL string, timeout time.Duration) bool {
 	return true
 }
 
-func tailFile(path string, max int) string {
-	data, err := os.ReadFile(path)
-	if err != nil || max <= 0 {
-		return ""
-	}
-	if len(data) <= max {
-		return string(data)
-	}
-	return string(data[len(data)-max:])
-}
-
 // doagentRPC 向本地 doagent ACP HTTP 服务发送 JSON-RPC 请求并返回响应。
 func doagentRPC(baseURL string, payload map[string]interface{}) (map[string]interface{}, error) {
 	return doagentRPCContext(context.Background(), baseURL, payload)

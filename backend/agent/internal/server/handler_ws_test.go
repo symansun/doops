@@ -30,17 +30,6 @@ import (
 type temporaryHeartbeatError struct{}
 type fatalHeartbeatTimeoutError struct{}
 
-func runTestCommand(t *testing.T, directory, name string, arguments ...string) string {
-	t.Helper()
-	command := exec.Command(name, arguments...)
-	command.Dir = directory
-	output, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s %v: %v\n%s", name, arguments, err, output)
-	}
-	return string(output)
-}
-
 func newGatewayAuthorizedAgentServer(t *testing.T, gateway *Gateway) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

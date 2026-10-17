@@ -1552,10 +1552,6 @@ func (h *GatewayHub) getAgent(cluster, instance string) *GatewayAgent {
 	return h.registry.Get(cluster, instance)
 }
 
-func (h *GatewayHub) waitForAgent(ctx context.Context, cluster, instance string) *GatewayAgent {
-	return h.registry.Wait(ctx, cluster, instance, h.opts.TargetReconnectGrace)
-}
-
 func (h *GatewayHub) ListTargets() []GatewayTarget {
 	return h.registry.List()
 }
@@ -2471,10 +2467,6 @@ func (a *GatewayAgent) runtimeState() targetRuntimeState {
 		state.status = "active"
 	}
 	return state
-}
-
-func (a *GatewayAgent) busyState() bool {
-	return a.runtimeState().busy
 }
 
 func (a *GatewayAgent) snapshot() GatewayTarget {

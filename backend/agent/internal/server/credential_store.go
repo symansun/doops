@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 )
@@ -1468,32 +1467,6 @@ func validCredentialUse(use CredentialUse) bool {
 	default:
 		return false
 	}
-}
-
-func normalizedCredentialUses(uses []CredentialUse) []CredentialUse {
-	seen := make(map[CredentialUse]struct{}, len(uses))
-	out := make([]CredentialUse, 0, len(uses))
-	for _, use := range uses {
-		if !validCredentialUse(use) {
-			continue
-		}
-		if _, exists := seen[use]; exists {
-			continue
-		}
-		seen[use] = struct{}{}
-		out = append(out, use)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
-}
-
-func containsCredentialUse(uses []CredentialUse, want CredentialUse) bool {
-	for _, use := range uses {
-		if use == want {
-			return true
-		}
-	}
-	return false
 }
 
 func validateCredentialPayload(credentialType CredentialType, payload json.RawMessage) error {

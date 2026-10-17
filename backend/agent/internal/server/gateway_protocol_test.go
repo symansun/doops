@@ -3365,36 +3365,6 @@ func serveFakeAgentWithRuntimeID(t *testing.T, conn *websocket.Conn, runtimeID s
 	}
 }
 
-func serveApplyGateFakeAgent(conn *websocket.Conn, credentialProtocol bool) {
-	for {
-		var msg map[string]interface{}
-		if err := conn.ReadJSON(&msg); err != nil {
-			return
-		}
-		switch msg["method"] {
-		case "initialize":
-			result := gatewayTestInitializeResult("")
-			if credentialProtocol {
-				protocols := result["capabilities"].(map[string]interface{})["protocols"].(map[string]interface{})
-				protocols["credentialPlan"] = credentialPlanCapability()
-			}
-			_ = conn.WriteJSON(map[string]interface{}{
-				"jsonrpc": "2.0",
-				"id":      msg["id"],
-				"result":  result,
-			})
-		case "tools/call":
-			_ = conn.WriteJSON(map[string]interface{}{
-				"jsonrpc": "2.0",
-				"id":      msg["id"],
-				"result": map[string]interface{}{
-					"content": []map[string]interface{}{{"type": "text", "text": "unexpected dispatch"}},
-				},
-			})
-		}
-	}
-}
-
 func serveFakeGitAgent(t *testing.T, conn *websocket.Conn, requests chan<- string) {
 	t.Helper()
 	for {
