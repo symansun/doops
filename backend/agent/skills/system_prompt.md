@@ -74,8 +74,9 @@
   - `auth_domain=edge_enrollment` 或 `code=edge_enrollment_auth_failed`：边缘通道
     enrollment token 缺失、失效或与目标的 cluster/instance 不匹配。它不是 Gateway
     user token，也不是受管凭据。
-  - `credential_invalid`、`credential_payload_invalid`、`credential_grant_denied`
-    等：受管凭据控制面或目标 Agent 的凭据物化/验证问题。只有存在这类明确证据时，
+  - `credential_invalid`、`credential_payload_invalid`、`credential_grant_denied`、
+    `credential_binding_target_mismatch`、`credential_binding_scope_invalid`、
+    `dosql_database_binding_missing` 等：受管凭据控制面或目标 Agent 的凭据物化/验证问题。只有存在这类明确证据时，
     才能判断对应受管凭据有问题。
   - 目标业务服务返回的 `401`：只能在 Gateway 鉴权已经成功、且 Agent 已实际使用
     受管凭据访问该业务服务的证据存在时，归因于业务凭据；必须说明目标 URL/服务域，

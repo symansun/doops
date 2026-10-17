@@ -38,10 +38,10 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 	verify := flags.String("verify", "", "Read-only verification SQL run in the same transaction (--mode apply)")
 	verifyFile := flags.String("verify-file", "", "File holding the read-only verification SQL (--mode apply)")
 	dryRun := flags.Bool("dry-run", false, "Execute the batch and verification, then roll back (--mode apply)")
-	var credentialRefs stringListFlag
+	// DoSql has no --credential: the Gateway binds the target's database
+	// credentials and the Agent selects one by --database.
 	var databaseRefs stringListFlag
 	var repositoryRefs stringListFlag
-	flags.Var(&credentialRefs, "credential", "Managed credential resource name; repeatable")
 	flags.Var(&databaseRefs, "database-ref", "Database asset reference for the conversation; repeatable")
 	flags.Var(&repositoryRefs, "repo-ref", "Code repository reference, optionally ID@branch; repeatable")
 	if err := flags.Parse(args); err != nil {
@@ -78,7 +78,7 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 			return fmt.Errorf("--sql/--file 与 --request 只能二选一")
 		}
 		return runSkillPromptWith("dosql", sqlGatewayOperation(parsedMode), *target, sessionName,
-			sqlDirectAuditDescription(parsedMode, direct), "auto", []string(credentialRefs),
+			sqlDirectAuditDescription(parsedMode, direct), "auto", nil,
 			direct.promptArguments(), servers, configErr, ss, verbose)
 	}
 	if strings.TrimSpace(*request) == "" && !(parsedMode == sqlModeDiscover && strings.TrimSpace(*root) != "") {
@@ -95,7 +95,7 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 	if parsedMode == sqlModeQuery || parsedMode == sqlModeApply {
 		credentialMode = "auto"
 	}
-	return runSkillPrompt("dosql", sqlGatewayOperation(parsedMode), *target, sessionName, instruction, credentialMode, []string(credentialRefs), servers, configErr, ss, verbose)
+	return runSkillPrompt("dosql", sqlGatewayOperation(parsedMode), *target, sessionName, instruction, credentialMode, nil, servers, configErr, ss, verbose)
 }
 
 func runLocalSQLResourceDiscovery(root, resourcesFile, displayResourcesFile, project, environment, script, target string, servers []Server, configErr error) error {

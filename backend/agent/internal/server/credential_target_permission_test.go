@@ -216,7 +216,7 @@ func TestTargetCredentialPromptUsesOperationAction(t *testing.T) {
 				instruction = "apply the authorized synthetic database change"
 			}
 			lifecycleSend(t, client, 2, "doops_agent_prompt", session, map[string]interface{}{
-				"skill": "dosql", "operation": operation.name, "instruction": instruction, "credential_refs": []string{resource.Name},
+				"skill": "dosql", "operation": operation.name, "instruction": instruction, "credential_mode": "auto",
 			})
 			first := agent.call(t, client, "doops_credential_materialize", session)
 			foundRoot := false
@@ -332,8 +332,10 @@ func TestTargetCredentialPromptRejectsUnauthorizedUse(t *testing.T) {
 						t.Fatal(marshalErr)
 					}
 					f.http(t, f.admin, http.MethodDelete, "/v1/credentials/"+resource.ID+"/grants", string(body), http.StatusOK)
+					// Auto discovery no longer sees a database binding on this target.
+					wantError = "dosql_database_binding_missing"
 				case "wrong_grant_cluster", "wrong_grant_instance":
-					wantError = "credential_binding_target_mismatch"
+					wantError = "dosql_database_binding_missing"
 				case "no_permission", "wrong_operation_action":
 					wantError, wantStatus = "forbidden:", "forbidden"
 				}
@@ -359,7 +361,7 @@ func TestTargetCredentialPromptRejectsUnauthorizedUse(t *testing.T) {
 				client := f.client(t, user)
 				session := "denied-" + operation.name + "-" + scenario
 				lifecycleSend(t, client, 2, "doops_agent_prompt", session, map[string]interface{}{
-					"skill": "dosql", "operation": operation.name, "instruction": "perform the synthetic database operation", "credential_refs": []string{resource.Name},
+					"skill": "dosql", "operation": operation.name, "instruction": "perform the synthetic database operation", "credential_mode": "auto",
 				})
 				response := lifecycleResponse(t, client, 2, wantError)
 				if response["error"].(map[string]interface{})["code"] != float64(-32003) {
@@ -411,7 +413,7 @@ func TestTargetCredentialPromptRechecksQueuedAuthority(t *testing.T) {
 					}
 				}()
 				lifecycleSend(t, client, 2, "doops_agent_prompt", session, map[string]interface{}{
-					"skill": "dosql", "operation": operation.name, "instruction": "perform the synthetic database operation", "credential_refs": []string{resource.Name},
+					"skill": "dosql", "operation": operation.name, "instruction": "perform the synthetic database operation", "credential_mode": "auto",
 				})
 				f.operation(t, session, "waiting")
 				agent.noCalls(t)

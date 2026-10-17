@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -126,18 +128,56 @@ func TestDoSQLConnectionTargetsKeepCredentialsOutOfErrors(t *testing.T) {
 	}
 }
 
-func TestSelectDirectDoSQLBindingRequiresExactlyOneDatabaseBinding(t *testing.T) {
+func TestResolveDirectDoSQLBindingSelectsByCredentialDatabase(t *testing.T) {
+	const canary = "synthetic-resolve-canary"
+	uris := map[string]string{
+		"orders":    "postgres://app:" + canary + "@db/orders",
+		"billing":   "postgres://app:" + canary + "@db/billing",
+		"billing-2": "postgres://app:" + canary + "@db/billing",
+	}
+	read := func(_ context.Context, binding api.AgentCredentialBinding) (map[string]string, error) {
+		if binding.Name == "broken" {
+			return nil, errors.New("dosql_credential_secret_unavailable")
+		}
+		return map[string]string{"connection_uri": uris[binding.Name]}, nil
+	}
 	db := func(name string) api.AgentCredentialBinding {
 		return api.AgentCredentialBinding{Name: name, Use: string(CredentialUseDatabase)}
 	}
-	if _, err := selectDirectDoSQLBinding(nil); err == nil {
-		t.Fatal("missing binding accepted")
+	registry := api.AgentCredentialBinding{Name: "registry", Use: string(CredentialUseImagePull)}
+	tests := []struct {
+		name     string
+		bindings []api.AgentCredentialBinding
+		database string
+		want     string
+		wantErr  string
+	}{
+		{name: "no database binding", bindings: []api.AgentCredentialBinding{registry}, wantErr: "dosql_credential_missing"},
+		{name: "single binding without --database", bindings: []api.AgentCredentialBinding{db("orders"), registry}, want: "orders"},
+		{name: "single binding with matching --database", bindings: []api.AgentCredentialBinding{db("orders")}, database: "orders", want: "orders"},
+		{name: "single binding with other --database", bindings: []api.AgentCredentialBinding{db("orders")}, database: "billing", wantErr: "dosql_database_not_bound"},
+		{name: "several bindings need --database", bindings: []api.AgentCredentialBinding{db("orders"), db("billing")}, wantErr: "dosql_database_required"},
+		{name: "several bindings select by database", bindings: []api.AgentCredentialBinding{db("orders"), db("billing")}, database: "billing", want: "billing"},
+		{name: "broken binding does not hide the match", bindings: []api.AgentCredentialBinding{db("orders"), db("broken")}, database: "orders", want: "orders"},
+		{name: "broken binding is reported", bindings: []api.AgentCredentialBinding{db("orders"), db("broken")}, wantErr: "broken(dosql_credential_secret_unavailable)"},
+		{name: "single broken binding keeps its reason", bindings: []api.AgentCredentialBinding{db("broken")}, wantErr: "dosql_credential_secret_unavailable"},
+		{name: "two credentials for one database", bindings: []api.AgentCredentialBinding{db("billing"), db("billing-2")}, database: "billing", wantErr: "dosql_credential_ambiguous"},
 	}
-	if _, err := selectDirectDoSQLBinding([]api.AgentCredentialBinding{db("a"), db("b")}); err == nil ||
-		!strings.Contains(err.Error(), "a,b") {
-		t.Fatalf("ambiguous binding error = %v", err)
-	}
-	if got, err := selectDirectDoSQLBinding([]api.AgentCredentialBinding{db("a"), {Name: "reg", Use: string(CredentialUseImagePull)}}); err != nil || got.Name != "a" {
-		t.Fatalf("single binding = %#v, %v", got, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveDirectDoSQLBinding(context.Background(), tt.bindings, tt.database, read)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tt.wantErr)
+				}
+				if strings.Contains(err.Error(), canary) {
+					t.Fatal("selection error exposed credential material")
+				}
+				return
+			}
+			if err != nil || got.Binding.Name != tt.want || got.Database == "" {
+				t.Fatalf("selected %#v, %v; want %s", got, err, tt.want)
+			}
+		})
 	}
 }

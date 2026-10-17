@@ -33,7 +33,6 @@ export function DatabasePanel({
   const [mode, setMode] = useState<DatabaseMode>("query")
   const [request, setRequest] = useState("")
   const [databaseHint, setDatabaseHint] = useState("")
-  const [credentials, setCredentials] = useState("")
   const [confirmed, setConfirmed] = useState(false)
   const [lines, setLines] = useState<DatabaseLine[]>([])
   const [running, setRunning] = useState(false)
@@ -48,13 +47,8 @@ export function DatabasePanel({
   async function run() {
     const text = request.trim()
     if (!text || running || stopPending) return
-    const credentialRefs = credentials.split(/[\s,]+/).filter(Boolean)
     if (mode === "apply" && !confirmed) {
       setError("执行变更前请确认已阅读变更说明，并由 DoSql 提供匹配的审批证据")
-      return
-    }
-    if (credentialRefs.some((value) => !/^[a-z0-9][a-z0-9.-]*$/.test(value))) {
-      setError("受管凭据只能填写资源名")
       return
     }
     setError("")
@@ -88,7 +82,6 @@ export function DatabasePanel({
             skill: "dosql",
 				...(mode === "query" || mode === "apply" ? { credential_mode: "auto" } : {}),
             instruction,
-            ...(credentialRefs.length ? { credential_refs: credentialRefs } : {}),
           },
           onCancelReady: (cancel) => { cancelRef.current = cancel },
         },
@@ -173,7 +166,7 @@ export function DatabasePanel({
           ))}
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid gap-2">
           <label className="flex min-w-0 flex-col gap-1.5">
             <span className="text-xs font-medium text-foreground">数据库提示</span>
             <input
@@ -184,19 +177,6 @@ export function DatabasePanel({
               }}
               disabled={running}
               placeholder="数据库名称或资产提示（可选）"
-              className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring disabled:opacity-60"
-            />
-          </label>
-          <label className="flex min-w-0 flex-col gap-1.5">
-            <span className="text-xs font-medium text-foreground">受管凭据</span>
-            <input
-              value={credentials}
-              onChange={(event) => {
-                setCredentials(event.target.value)
-                setConfirmed(false)
-              }}
-              disabled={running}
-              placeholder="资源名，多个用空格或逗号分隔（可选）"
               className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring disabled:opacity-60"
             />
           </label>

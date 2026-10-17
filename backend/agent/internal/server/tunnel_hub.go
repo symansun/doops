@@ -1120,6 +1120,12 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			writeJSON(buildErrorResponse(req.ID, -32602, "automatic credential mode is only supported by dosql"))
 			return nil
 		}
+		// DoSql only uses the target's database bindings; a caller-chosen
+		// reference would reintroduce the second selection path.
+		if promptArgs.Skill == "dosql" && len(promptArgs.CredentialRefs) != 0 {
+			writeJSON(buildErrorResponse(req.ID, -32602, "dosql_credential_refs_unsupported: DoSql selects the target's database bindings automatically"))
+			return nil
+		}
 		if err := validatePromptCredentialAccess(operation, len(promptArgs.CredentialRefs) != 0 || promptArgs.CredentialMode == "auto"); err != nil {
 			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
 			return nil

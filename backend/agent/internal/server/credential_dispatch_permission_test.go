@@ -16,7 +16,7 @@ func TestTargetCredentialRechecksOperationAuthorityAfterMaterialization(t *testi
 	agent, client := newCredentialTargetPermissionAgent(t, f), f.client(t, user)
 	const session = "permission-during-materialization"
 	lifecycleSend(t, client, 2, "doops_agent_prompt", session, map[string]interface{}{
-		"skill": "dosql", "operation": "ask", "instruction": "SELECT 1", "credential_refs": []string{resource.Name},
+		"skill": "dosql", "operation": "ask", "instruction": "SELECT 1", "credential_mode": "auto",
 	})
 	materialization := agent.call(t, client, "doops_credential_materialize", session)
 	auth, err := f.store.VerifyUserToken(user.Plaintext)

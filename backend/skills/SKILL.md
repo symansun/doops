@@ -319,9 +319,9 @@ doops -session preflight targets --target <gateway-target>
 | 同步 OCI 镜像 | `doops -session <s> registry sync --target <t> --source-registry <src> --target-registry <dst> --tag <release> --source-authfile <remote-file> --target-authfile <remote-file> --image <name>` |
 | AI 自主分析 | `doops -session <s> ask --target <t> --msg '<task>'` |
 | 发布任务 | `doops -session <s> ask --target <t> --apply --credential <resource-name> --msg '<target、范围、明确镜像版本、原因、验收>'` |
-| DoSql 只读查询/巡检 | `doops -session <s> sql --target <t> --mode query [--credential <database-resource>] --request '<数据库目标和问题>'` |
+| DoSql 只读查询/巡检 | `doops -session <s> sql --target <t> --mode query [--database <name>] --request '<数据库目标和问题>'` |
 | DoSql 变更计划 | `doops -session <s> sql --target <t> --mode plan --request '<数据库变更>'` |
-| DoSql 受控变更 | `doops -session <s> sql --target <t> --mode apply [--credential <database-resource>] --request '<已批准的变更请求>'` |
+| DoSql 受控变更 | `doops -session <s> sql --target <t> --mode apply [--database <name>] --request '<已批准的变更请求>'` |
 | DoSql 发现数据库资产 | `doops -session <s> sql --target <t> --mode discover --request '<发现数据库资产>'` | 通过 `mcp_dosql_read` 扫描当前 target 的非 Secret 元数据；授权代码资产另用 `--root/--resources-file/--project/--environment/--dosql-script` 持久化 metadata-only 清单。 |
 | DoWeb 只读巡检 | `doops -session <s> web --target <t> --mode check --request '<站点、Nginx、TLS 或健康检查需求>'` |
 | DoWeb 发布计划 | `doops -session <s> web --target <t> --mode plan --request '<站点发布需求>'` |
@@ -341,6 +341,12 @@ doops -session preflight targets --target <gateway-target>
 
 DoSql 必须从 `doops sql` 入口进入。普通 `doops ask --msg '使用 DoSql'` 是通用 Agent
 对话，不保证注入 `mcp_dosql_read/execute`，也不能用来判断目标是否支持 DoSql。
+DoSql 只有自动凭据模式：Gateway 按资源 ID 绑定当前 target 上全部 active `use=database` 凭据，
+`doops sql` 不接受 `--credential`，Gateway 拒绝 DoSql 的 `credential_refs`。target 上有多个数据库凭据时
+用 `--database <name>` 指定目标库，Agent 按凭据指向的库名选择。错误类别：`dosql_database_binding_missing`
+补 `credential configure --use database`；`credential_version_not_found` 完成 verify/promote；
+`dosql_database_required` 补 `--database`；`dosql_database_not_bound` 表示没有凭据指向该库；
+`dosql_credential_ambiguous` 表示多个凭据指向同一库，吊销重复绑定。
 | 推送本地目录 | `doops -session <s> push --target <t> --src <dir>` |
 | 拉取远端工作区 | `doops -session <s> pull --target <t> --dest <dir>` |
 | 小文本读写 | `doops read/write ...` |
