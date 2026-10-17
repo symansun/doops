@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -137,14 +136,4 @@ func cleanupNativeHelmCredential(req CredentialCleanupRequest) (bool, error) {
 		_ = os.RemoveAll(filepath.Dir(record.Socket))
 	}
 	return len(records) != 0, nil
-}
-
-func nativeHelmContextForSocket(socket string) (*nativeHelmRecord, error) {
-	nativeHelmContexts.Lock()
-	defer nativeHelmContexts.Unlock()
-	record := nativeHelmContexts.bySocket[socket]
-	if record == nil {
-		return nil, fmt.Errorf("native_helm_context_unavailable")
-	}
-	return record, nil
 }

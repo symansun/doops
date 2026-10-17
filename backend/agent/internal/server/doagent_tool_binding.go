@@ -736,15 +736,6 @@ func rejectSensitiveToolResult(value interface{}) error {
 	return nil
 }
 
-type deploymentRunContractBinding struct {
-	APIVersion    string
-	Workflow      string
-	RunID         string
-	Mode          string
-	PrimaryTool   string
-	RequiredTools []string
-}
-
 func publicDoagentToolResult(trace doagentToolTrace) (interface{}, error) {
 	result, err := decodeDoagentJSONValue(trace.resultJSON)
 	if err != nil {
@@ -768,28 +759,6 @@ func publicDoagentToolResult(trace doagentToolTrace) (interface{}, error) {
 		return nil, err
 	}
 	return result, nil
-}
-
-func resolveDoagentToolTrace(
-	tool string,
-	inputJSON json.RawMessage,
-	traces []doagentToolTrace,
-) (doagentToolTrace, error) {
-	var matches []doagentToolTrace
-	for _, trace := range traces {
-		if modelVisibleDoagentToolName(trace.ToolName) == tool &&
-			bytes.Equal(trace.inputJSON, inputJSON) {
-			matches = append(matches, trace)
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return doagentToolTrace{}, fmt.Errorf("completed runtime tool call was not observed")
-	case 1:
-		return matches[0], nil
-	default:
-		return doagentToolTrace{}, fmt.Errorf("runtime tool reference is ambiguous")
-	}
 }
 
 func modelVisibleDoagentToolName(runtimeName string) string {

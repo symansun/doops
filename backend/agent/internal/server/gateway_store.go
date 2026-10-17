@@ -907,15 +907,6 @@ func gatewayActionAllows(granted, requested GatewayAction) bool {
 	return false
 }
 
-func defaultGatewayUserActionAllows(action GatewayAction) bool {
-	for _, allowed := range defaultGatewayUserActions {
-		if allowed == action {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *GatewayStore) MarkAgentOnline(agent AgentStatus) error {
 	if strings.TrimSpace(agent.Cluster) == "" || strings.TrimSpace(agent.Instance) == "" {
 		return fmt.Errorf("cluster and instance are required")

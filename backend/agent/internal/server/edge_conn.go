@@ -332,12 +332,6 @@ func (c *edgeConn) readyForFINLocked() bool {
 	return c.sendClosed && !c.shutdownQueued && !c.shutdownSent && !c.closed && len(c.dataQ) == 0
 }
 
-func (c *edgeConn) hasData() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return len(c.dataQ) > 0
-}
-
 func (c *edgeConn) markQueued() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
