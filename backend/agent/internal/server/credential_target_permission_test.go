@@ -378,7 +378,9 @@ func TestTargetCredentialPromptRechecksQueuedAuthority(t *testing.T) {
 		for _, revoke := range []string{"token", "operation_action", "same_name_credential", "grant_id", "revoked_grant", "revoked_version"} {
 			t.Run(operation.name+"/"+revoke, func(t *testing.T) {
 				t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("p", 32))
-				f := newExecutionLifecycleFixture(t, GatewayHubOptions{OperationTimeout: 3 * time.Second})
+				f := newExecutionLifecycleFixture(t, GatewayHubOptions{
+					OperationTimeout: 3 * time.Second, MaxQueuedPerTarget: 1, TargetQueueTimeout: 5 * time.Second,
+				})
 				user := f.user(t, "database-queued", ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{operation.action}})
 				auth, err := f.store.VerifyUserToken(user.Plaintext)
 				if err != nil {
@@ -387,16 +389,25 @@ func TestTargetCredentialPromptRechecksQueuedAuthority(t *testing.T) {
 				scope := CredentialGrantScope{Cluster: "dev", Instance: "local", Namespace: "apps", Use: CredentialUseDatabase}
 				resource, version, grant := credentialTargetPermissionResource(t, f, f.admin, scope)
 				agent, client := newCredentialTargetPermissionAgent(t, f), f.client(t, user)
-				unlock, err := f.hub.acquireCredentialMutationLocks(context.Background(), []string{resource.ID})
+				session := "queued-" + operation.name + "-" + revoke
+				var target *GatewayAgent
+				requireEventually(t, 3*time.Second, func() bool {
+					target = f.hub.client.registry.Get("dev", "local")
+					return target != nil
+				})
+				// Park the prompt behind its own session lease so authority can
+				// change between admission and dispatch.
+				held, err := target.acquireActionLeaseForSession(context.Background(), ActionExec,
+					"target-mutation:dev/local", session, 1, time.Second)
 				if err != nil {
 					t.Fatal(err)
 				}
+				unlock := held.Release
 				defer func() {
 					if unlock != nil {
 						unlock()
 					}
 				}()
-				session := "queued-" + operation.name + "-" + revoke
 				lifecycleSend(t, client, 2, "doops_agent_prompt", session, map[string]interface{}{
 					"skill": "dosql", "operation": operation.name, "instruction": "perform the synthetic database operation", "credential_refs": []string{resource.Name},
 				})

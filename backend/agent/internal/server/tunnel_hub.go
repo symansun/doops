@@ -1283,25 +1283,9 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 
-	if len(authorizedCredentials) != 0 {
-		credentialIDs := make([]string, 0, len(authorizedCredentials))
-		for _, item := range authorizedCredentials {
-			credentialIDs = append(credentialIDs, item.Authorized.Resource.ID)
-		}
-		// Match verification/promotion's lock order before holding a target lease.
-		releaseCredentialLocks, err := h.hub.acquireCredentialMutationLocks(opCtx, credentialIDs)
-		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				finishAudit("canceled", "operation canceled", "", 0)
-				writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled"))
-				return nil
-			}
-			finishAudit("error", "credential_mutation_lock_failed", "", 0)
-			writeJSON(buildErrorResponse(req.ID, -32603, "credential_mutation_lock_failed"))
-			return nil
-		}
-		defer releaseCredentialLocks()
-	}
+	// Credential use does not take the credential mutation lock: the grant is
+	// re-read right before materialization, so a concurrent promotion only
+	// decides which version this operation materializes.
 	lease, err := agent.acquireActionLeaseForSession(opCtx, action, resourceKey, extractSession(params.Arguments), h.opts.MaxQueuedPerTarget, h.opts.TargetQueueTimeout)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
