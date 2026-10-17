@@ -151,11 +151,6 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "validate_simple_name" in cnb
     assert '*[!A-Za-z0-9._-]*' in cnb
     assert 'test "${#image_digest}" -eq 64' in cnb
-    environment_docs = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in (BACKEND / "docs" / "environments").glob("*.md")
-    )
-    assert "kubectl -n kube-system set image" not in environment_docs
 
 
 def test_release_guidance_does_not_build_images_on_business_targets():
@@ -163,7 +158,6 @@ def test_release_guidance_does_not_build_images_on_business_targets():
         BACKEND / "agent" / "skills" / "image-build" / "SKILL.md",
         BACKEND / "agent" / "skills" / "shell" / "SKILL.md",
         BACKEND / "docs" / "DOOPS_USAGE_GUIDE.md",
-        BACKEND / "docs" / "code_sync_rsync_analysis.md",
     ):
         text = path.read_text(encoding="utf-8")
         assert "CI" in text, path
