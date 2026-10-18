@@ -4,7 +4,7 @@
 
 凭据资源 ID 的互斥与操作 session 的互斥是不同边界：同一凭据的变更仍串行；不同
 session 的目标执行可以并行。取消或审计收尾不得把其中一个 session 的状态扩展为
-整个 target 的发布屏障。凭据使用继承 target ask/exec 权限；workload 不是独立权限维度。
+整个 target 的发布屏障。凭据使用只要求该 target 的 grant；workload 不是独立权限维度。
 
 ## 对象模型
 
@@ -39,7 +39,7 @@ doops credential list --target <target>
 doops credential list --target <target> --view managed
 ```
 
-- 有 target 的 `ask` 或 `exec` 权限时，默认 `target` 视图返回绑定该 target 且存在 active version
+- 有该 target 的 grant 时，默认 `target` 视图返回绑定该 target 且存在 active version
   的 active resource，不再要求给每个操作员重复授予凭据权限。
 - `managed` 视图返回当前用户拥有的 personal resource；platform admin 可查看平台资源。
 - `managed` 视图只返回 resource metadata，不加载 target binding 详情。
@@ -203,7 +203,7 @@ key 和 value 都不能为空。
 下载 URL 必须属于 payload URL 的 HTTPS origin；仓库路径不参与权限匹配。重定向、私网地址、无效包和超限失败关闭，
 不会改为匿名请求。CNB 的 payload URL 可用 `https://helm.cnb.cool`，Chart 使用其官方
 `/charts/<repo>/<name>/v/<version>.tgz` 接口。当前 remote 仅支持 HTTPS `.tgz`
-下载，不支持 `oci://`；调用方须明确授权 HTTPS Chart 身份，不会猜测、自动替换仓库路径或 fallback。
+下载，不支持 `oci://`；调用方须在任务中指定 HTTPS Chart，不会猜测、自动替换仓库路径或 fallback。
 
 Helm target binding 只绑定 target 的 cluster/instance 和 use=helmPull，不再把 namespace、workload、
 release 或 Chart URL 写成 Gateway 授权条件。实际请求仍必须从受管凭据 payload 的仓库 URL
@@ -215,7 +215,7 @@ release 或 Chart URL 写成 Gateway 授权条件。实际请求仍必须从受�
 namespace、release、Chart 不是授权条件。凭据物化不下载历史 Chart。实际发布下载当前
 Chart 并验证后一次 staging，dry-run 与 Helm mutation 使用同一个文件。
 租约在 prompt 结束时移除；模型和公开 MCP 参数不读取、提交或回显 Secret 值。
-受管发布保留认证、target 权限与固定下载文件，允许明确授权的零或多个有序
+受管发布保留认证、target 权限与固定下载文件，允许任务指定的零或多个有序
 `value_files` 和非敏感 Chart-specific `set_strings`，不强制 bundled-only；覆盖资产不扩大
 凭据授权，未授权的远程 values 不可使用。普通升级不再隐式保留历史 values；完整迁移和
 发布校验契约见 [`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
@@ -278,7 +278,7 @@ doops -session db-setup credential configure \
 
 边界：
 
-- `--from-secret` 仅用于 `opaque`，要求对应 target exec 权限、可管理资源、明确 namespace/Secret 和
+- `--from-secret` 仅用于 `opaque`，要求对应 target 的 grant、可管理资源、明确 namespace/Secret 和
   明确的 key 集合；源 Secret namespace 与本次物化 namespace 相同，不修改源 Secret。
 - `--key-map source=runtime` 可将源 Secret key 映射为运行时 key；每个 source 必须同时出现在
   `--keys` 中，runtime key 不能重复。映射只改 key 名称，值仍通过 Agent 私有控制通道传输。
@@ -431,8 +431,7 @@ doops -session release-<commit> ask \
   --msg '在 <target> 的 namespace <namespace> 发布 deployment/<workload>，镜像 <repository>@sha256:<digest>；原因：<reason>；验收：Secret 类型/key、rollout、实际镜像、健康检查和功能路径通过。'
 ```
 
-Gateway 不从 resource name 推断执行事实。完整 workload/image/Helm 事实必须来自任务或
-其明确授权的仓库、Chart、values、现有 release 的只读证据；不得猜测或要求将已明确资产中的
+Gateway 不从 resource name 推断执行事实。完整 workload/image/Helm 事实必须来自任务或任务指定的仓库、Chart、values、现有 release 的只读证据；不得猜测或要求将已明确资产中的
 事实再粘贴到 prompt。凭据授权只绑定 target，事实读取不能扩大 target 权限。
 
 ## 状态和可见输出

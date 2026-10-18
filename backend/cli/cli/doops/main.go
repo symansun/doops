@@ -28,7 +28,7 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `
 Doops 分布式服务器管理工具 (doops.sh CLI)
-专为 AI Agent 设计的自然语言运维工具。发布任务须明确 target、范围、原因和验收；镜像与 Chart 参数可从任务明确授权的资产读取。
+专为 AI Agent 设计的自然语言运维工具。发布任务须明确 target、范围、原因和验收；镜像与 Chart 参数可从任务指定的资产读取。
 
 配置文件路径: ~/.agent/skills/doops/config.json（唯一默认配置；DOOPS_CONFIG 可显式覆盖）
 
@@ -81,7 +81,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   -help       显示此帮助信息
 
 	自然语言发布示例:
-	  # --apply 是明确的 mutation 授权；任务本身必须给出所有发布事实。
+	  # --apply 允许本次任务做变更；任务本身必须给出所有发布事实。
 	  doops -session release-<commit> ask --target <target> --apply --msg "在 target <target> 发布服务范围 api，release app，namespace apps，chart https://charts.example/app.tgz，镜像 <repository>@sha256:<digest>；原因：修复课堂权限；验收：最终 Deployment spec/generation/副本、实际镜像、Service/Endpoint 和 /health 均通过。"
 `)
 	}
@@ -410,7 +410,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		case "ask":
 			subFlag.StringVar(&msgStr, "msg", "", "Instruction")
 			subFlag.StringVar(&modelStr, "model", "", "Model to use for this instruction (optional)")
-			subFlag.BoolVar(&apply, "apply", false, "Allow the explicitly requested instruction to make authorized changes")
+			subFlag.BoolVar(&apply, "apply", false, "Allow the instruction to make the changes it requests")
 			subFlag.Var(&credentialRefs, "credential", "Managed credential resource name (repeatable; requires --apply)")
 			subFlag.Var(&databaseRefs, "database-ref", "Database asset reference for the conversation (repeatable)")
 			subFlag.Var(&repositoryRefs, "repo-ref", "Code repository reference, optionally ID@branch (repeatable)")

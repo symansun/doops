@@ -1,7 +1,7 @@
 # Unified Operations Workbench
 
 本文档记录 2026-10-07 的统一运维工作台边界。`doops.sh` 是运行宿主，Web 控制台和
-`doops` CLI 是两种入口，DoOps Gateway 是唯一用户认证与 target/action 授权中心，Agent
+`doops` CLI 是两种入口，DoOps Gateway 是唯一用户认证与 target 授权中心，Agent
 skill 负责领域执行和证据。
 
 ## 运行结构
@@ -10,7 +10,7 @@ skill 负责领域执行和证据。
 Web Console / doops CLI
         | one Gateway user login
         v
-DoOps Gateway: authenticate -> target/action grant -> audit -> lease
+DoOps Gateway: authenticate -> target grant -> audit -> lease
         |
         v
 doops-agent: tool dispatch -> selected skill
@@ -46,7 +46,7 @@ Workbench session、附件上传。缺少 session 时统一返回未建立 Gatew
 ## DoSql 边界
 
 DoSql 已接入受限的数据库 MCP 工具和 Gateway 受管凭据到数据库 adapter 的内部绑定。
-`doops sql`、控制台数据库页和 DoSql skill 共用 Gateway 登录、target/action 授权、
+`doops sql`、控制台数据库页和 DoSql skill 共用 Gateway 登录、target 授权、
 审计和 session；skill 不实现第二套认证，也不能通过 Bash、本地连接文件、环境变量或
 密码 prompt 绕过授权。只读查询和变更都会进入 DoSql 的 journal/evidence 生命周期，
 变更只通过 `doops sql --mode apply --sql/--file` 原样提交，使用 target 上绑定的数据库凭据，在事务内执行并记录版本。
@@ -59,7 +59,7 @@ DoSql 通过 `doops_agent_prompt` 进入 Agent runtime。数据库目标来自�
 credential reference 时必须显式声明 `skill=dosql`；普通只读 prompt 不能附带数据库凭据。
 
 DoSql 不再有签名审批：旧的 `mcp_dosql_execute` 要求的审批文件没有签发方，已经删除。
-变更授权只来自 Gateway 的 target `exec` 权限；每次真实变更在版本日志里先取版本号再执行，
+变更只要求用户对该 target 的 Gateway grant；每次真实变更在版本日志里先取版本号再执行，
 日志不可写时拒绝执行。
 
 数据库发现使用 `mcp_dosql_read operation=discover`，只扫描 Kubernetes 非 Secret 元数据，
@@ -70,7 +70,7 @@ DoSql 不再有签名审批：旧的 `mcp_dosql_execute` 要求的审批文件�
 
 DoWeb 运行在选定 target 上，接收客户已经构建好的 `dist/`，通过 SiteSpec 渲染 Nginx，
 执行 `nginx -t`、reload、健康检查并保留回滚状态。正常入口不接受 SSH host、用户名、密码
-或第二套 token；首次主机安装也必须进入明确授权的 target bootstrap 流程。
+或第二套 token；首次主机安装也必须进入任务指定的 target bootstrap 流程。
 
 DoWeb 巡检使用 `mcp_doops_web_read`，变更使用 `mcp_doops_web` 并返回本轮 runtime
 attestation。只有精确的 `skill=doweb` apply 才获得网站写工具，普通 apply 不能取得
@@ -86,7 +86,7 @@ session 的其它 mutation/workspace 操作不得重叠，但其它 session 的�
 
 - Given 浏览器没有 session，When 打开控制台，Then 只能看到登录页，targets/RPC 不会向外转发。
 - Given 用户登录一个 Gateway，When 切换控制台的数据库页签，Then 请求沿用同一 session、target 和 audit，不出现第二个登录入口。
-- Given 用户只有 `ask` 权限，When 提交 DoSql 只读请求，Then Gateway 允许或拒绝由 `UserCan` 决定，skill 不自行扩大权限。
+- Given 用户没有该 target 的 grant，When 提交 DoSql 请求，Then Gateway 按 `UserCanUseTarget` 拒绝，skill 不自行扩大权限。
 - Given 用户没有精确数据库 credential grant，When 提交 DoSql 变更，Then Gateway/Agent 明确拒绝，不能回退到本地连接文件、环境变量或旧 token。
 - Given 用户提交 DoWeb 发布，When target、站点范围或 dist/域名事实缺失，Then 只返回阻塞，不猜测站点或回退到另一台机器。
 - Given DoWeb `nginx -t`、reload 或健康检查失败，When 变更已开始，Then 恢复上一份激活状态并返回真实失败证据。

@@ -38,8 +38,8 @@ or execution path. Nginx bootstrap requires an explicit runtime mode.
 
 | Entry | Authentication | Authority | Execution And Evidence |
 | --- | --- | --- | --- |
-| Console website page | Existing HttpOnly Gateway session | Gateway target/action grants | Same prompt transport and audit |
-| `doops web` | Existing Gateway auth store | Same target/action grants | Shared CLI skill prompt client, also used by `doops sql` |
+| Console website page | Existing HttpOnly Gateway session | Gateway target grants | Same prompt transport and audit |
+| `doops web` | Existing Gateway auth store | Same target grants | Shared CLI skill prompt client, also used by `doops sql` |
 | Inspection/plan prompt | Gateway user | `ask` on the target | Only `mcp_doops_web_read` reads website state |
 | Publish/config/rollback prompt | Gateway user | `exec` and explicit `apply` | `mcp_doops_web`, `confirm=true`, runtime attestation |
 | Deterministic `doops_web` RPC | Gateway user | `ask` for reads, `exec` for changes | Same Agent executor and outcome lifecycle |

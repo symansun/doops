@@ -182,7 +182,7 @@ jobs:
         </div>
         <h1 className="text-2xl font-semibold text-balance">将 Doops 接入 CI/CD</h1>
         <p className="mt-2 text-pretty text-sm leading-relaxed text-muted-foreground">
-          流水线通过明确授权的自然语言任务调用 DoOps。任务直接说明 target、服务范围、不可变镜像 digest、变更原因和验收条件。
+          流水线通过明确的自然语言任务调用 DoOps。任务直接说明 target、服务范围、不可变镜像 digest、变更原因和验收条件。
         </p>
       </div>
 
@@ -265,7 +265,7 @@ jobs:
         <p className="mb-3 text-sm text-muted-foreground">
           选择你的平台，复制下面的示例。发布前先确认不可变镜像 digest 和验收条件，再通过
           <code className="mx-1 rounded bg-muted px-1">--apply</code>
-          明确授权本次变更。
+          声明本次是变更任务。
         </p>
         <p className="mb-3 text-xs text-muted-foreground">
           必须先核验成功的 CI 构建与源提交、镜像 digest 的对应关系。在线 target 发布现有 Helm release

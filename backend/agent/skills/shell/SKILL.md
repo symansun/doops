@@ -10,7 +10,7 @@ requires: []
 conflicts: []
 ---
 
-Shell 只用于结构化工具没有覆盖且已授权的文件、进程和只读诊断操作。不得把完整自然语言
+Shell 只用于结构化工具没有覆盖的文件、进程和只读诊断操作。不得把完整自然语言
 任务翻译成待执行脚本，也不得生成固定发布阶段或替代 doagent 的规划与工具调用。
 
 【命令生成规范】
@@ -24,7 +24,7 @@ Shell 只用于结构化工具没有覆盖且已授权的文件、进程和只�
 - 操作系统：Ubuntu/Debian 或 Alpine
 - 包管理器：`apt-get` 或 `apk`
 - 发布镜像由 CNB CI 构建；目标存在 BuildKit 不代表可以在业务 target 上替代 CI 构建。
-- 私有仓库认证必须有当前授权证据，不得假设 Agent 已预写凭据或改用本地登录态。
+- 私有仓库认证只用已绑定该 target 的受管凭据，不得假设 Agent 已预写凭据或改用本地登录态。
 - Go 代理：`GOPROXY=https://proxy.golang.org,direct`（不使用 goproxy.cn，它会限流）
 - Kubernetes 发布 mutation 必须使用 `mcp_doops_helm`；shell 中禁止 `kubectl apply`、
   `patch`、`set image`、`rollout restart`、`scale`、`delete`、`annotate`、`label` 或 `edit`

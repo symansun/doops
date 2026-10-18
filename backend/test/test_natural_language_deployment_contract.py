@@ -114,7 +114,7 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "不存在直接 Kubernetes 镜像 mutation 例外" in k8s_skill
     assert "add-image-pull-secret" not in k8s_skill
     assert "command、args、env" in k8s_skill
-    assert "授权 chart" in k8s_skill
+    assert "任务指定的 chart" in k8s_skill
     assert "`value_files` 可选" in k8s_skill
     assert "缺少 `confirm=true` 的调用试探" in k8s_skill
     assert "image.tag=release-YYYYMMDD" not in k8s_skill

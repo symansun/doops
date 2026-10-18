@@ -24,7 +24,7 @@ and all Go services under `backend/`. Older CNB branches may still have Go
 sources at the repository root; new work should use the layout above.
 
 The AI Assistant embeds Agent Cloud's `@agent-cloud/agent-ui` React workspace
-through a DoOps Gateway runtime adapter. Diagnosis, deployment authorization,
+through a DoOps Gateway runtime adapter. Diagnosis, deployment forms,
 target/session isolation, and acceptance scenarios are documented in
 [Agent UI Integration](docs/agent-ui-integration.md).
 
@@ -100,8 +100,7 @@ reuses the existing resource/version/grant lifecycle in one invocation. It accep
 stdin payloads or a target-exec-authorized `--from-secret <name> --keys <keys>`
 reference on the selected target. Existing resources are reused by ID or unique
 name and scope. It configures the target binding, verifies active materializations,
-and promotes only on success. Operators inherit credential use from target ask/exec
-authority; no extra per-user grant or model-generated scope is needed. Secret values never enter CLI output.
+and promotes only on success. Operators can use bound credentials with the target grant alone; no extra per-user grant or model-generated scope is needed. Secret values never enter CLI output.
 See [Credential Resources](backend/docs/CREDENTIAL_RESOURCES.md) for flags and
 failure semantics; database connectivity is a separate DoSql acceptance step.
 

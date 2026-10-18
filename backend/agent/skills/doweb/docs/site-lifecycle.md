@@ -11,7 +11,7 @@ website operations use the same runtime selection thereafter.
 
 ```bash
 node /app/skills/doweb/scripts/doweb.mjs install-nginx --local true --mode host
-# Or use --mode docker on an explicitly authorized Docker target.
+# Or use --mode docker on a Docker target.
 ```
 
 The bundled runtime rejects SSH hosts, usernames, passwords and alternate

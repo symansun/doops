@@ -90,7 +90,7 @@ func probeGatewayTarget(server Server, token, session string) (bool, error) {
 		strings.TrimSpace(server.Cluster),
 		strings.TrimSpace(server.Instance),
 	)
-	// Gateway checks exact target/action authorization before returning -32004.
+	// Gateway checks the exact target grant before returning -32004.
 	if errors.As(err, &rpcErr) && rpcErr.Code == -32004 &&
 		rpcErr.Message == offline {
 		return false, nil

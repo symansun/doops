@@ -1,18 +1,18 @@
 ---
 name: physical-host-access
-description: 通过已授权入口查看物理机硬件，明确容器、VM、SSH 与新安装的边界。
+description: 通过已有入口查看物理机硬件，明确容器、VM、SSH 与新安装的边界。
 scope: doops-operations
 ---
 
 # 物理机 / 宿主机访问与硬件检查
 
-查看硬件不要求安装新 Agent。先根据已有拓扑、资产记录和明确授权，选择已有
+查看硬件不要求安装新 Agent。先根据已有拓扑和资产记录，选择已有
 物理机 target 或经 VM target 发起的 SSH；用户说“已进入宿主机”不是安装授权。
 
 ## 1. 确认目标与可见范围
 
 - 核对 Agent 容器、所在节点（VM 或物理机）、hypervisor 与目标物理机的对应关系，
-  以及已授权的地址、账号、入口和只读检查范围。target 在线不代表它就是物理机。
+  以及已知的地址、账号、入口和只读检查范围。target 在线不代表它就是物理机。
 - 容器看到的是其权限与设备暴露范围内的信息；VM 只能看到虚拟设备或已分配的
   passthrough / vGPU，不能据此推断宿主机完整硬件清单。
 - `nsenter` 只能进入当前内核中有权限访问的命名空间。VM 内即使能进入 VM 节点
@@ -20,7 +20,7 @@ scope: doops-operations
 - 不扫描未知网段、不猜地址或密码、不尝试越权入口。缺少映射、授权或可用入口时，
   说明缺失事实并请资产负责人补充，不以自动安装或绕过认证代替。
 
-## 2. 使用已授权入口
+## 2. 使用已有入口
 
 以下 `<...>` 是需替换的占位符；`--target` 使用本地已配置的 target 名称，
 不是任意拼接的 `cluster/instance`。所有远程示例显式携带 session。
@@ -41,7 +41,7 @@ doops -session <s> exec --target <physical-target> -- uname -a
 
 ### 经已有 VM target SSH 到物理机
 
-这是已授权入口，不是要求先尝试安装的降级路径。前提是 VM Agent 到已知宿主 SSH
+这是已有入口，不是要求先尝试安装的降级路径。前提是 VM Agent 到已知宿主 SSH
 地址可达、宿主允许该账号登录，且 Agent 执行环境已有合法认证材料和已核验主机密钥。
 
 ```bash
@@ -56,19 +56,19 @@ doops -session <s> ssh --target <vm-target> --host user@<physical-host> \
 
 当前 CLI 的 `ssh` 没有 `--credential`，凭据系统也没有 generic SSH credential
 injection：不能宣称创建、写入或授权托管凭据后就能自动 SSH。
-`--option=IdentityFile=<agent-side-path>` 仅引用 Agent 执行环境中已有、已授权的
+`--option=IdentityFile=<agent-side-path>` 仅引用 Agent 执行环境中已有的
 文件，不会上传本机私钥或注入托管凭据。认证或主机密钥缺失时交由授权管理员配置，
 不要把密码、私钥或 token 写进参数、prompt、日志或文档，也不要关闭主机密钥校验。
 
 ### 外部宿主发布控制器
 
-已有独立 Docker Agent 的正式发布由授权外部控制器执行
+已有独立 Docker Agent 的正式发布由外部控制器执行
 `backend/scripts/release-host-agent.sh`，不是日常 SSH target，也不由旧 Agent 升级自己。
 显式端口、真实只读预检、可选本机已认证私有 `--ssh-control-path`、宿主锁、配置保留、
 旧容器保留、外部回滚及功能验收见 [主 SOP](BUILD_DEPLOY_SOP.md#独立-dockerhost-发布)。
 不接收密码/token，不改变凭据 API；只读入口不能因脚本存在而获得发布授权。
 
-已有并获授权的 Proxmox 管理面、IPMI / iLO / Redfish 或控制台可用于核对拓扑与硬件；
+已有的 Proxmox 管理面、IPMI / iLO / Redfish 或控制台可用于核对拓扑与硬件；
 按该入口实际权限和平台工具操作，不假设 DoOps 内置这些 API，也不自动扩大到写操作。
 
 ## 3. 判读检查结果

@@ -90,7 +90,7 @@ SSH 服务端。镜像保留 `ssh` 客户端，已在线 Agent 可通过结构�
 - 网关二进制：`/app/doops-agent`
 - doagent AI 内核：`/usr/local/bin/do-agent`
 - 构建闸门：独立 `DO_AGENT_IMAGE` 和最终镜像必须确认 `/usr/local/bin/do-agent --version` 与声明的 `DO_AGENT_VERSION` 完全一致；基础镜像只负责 BuildKit、kubectl、Python/PyYAML、Helm 等工具，并固定到 OCI digest
-- 发布原则：最终镜像同时固定 `DOOPS_AGENT_BASE_IMAGE` 和 `DO_AGENT_IMAGE`；app 镜像 push 前必须校验两者 label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --version` 与声明版本一致、`buildctl --version`、Python/PyYAML 与 Helm。部署由明确授权的自然语言任务进入 Gateway；任务必须给出 target、服务范围、镜像版本、变更原因和验收条件。
+- 发布原则：最终镜像同时固定 `DOOPS_AGENT_BASE_IMAGE` 和 `DO_AGENT_IMAGE`；app 镜像 push 前必须校验两者 label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --version` 与声明版本一致、`buildctl --version`、Python/PyYAML 与 Helm。部署由明确的自然语言任务进入 Gateway；任务必须给出 target、服务范围、镜像版本、变更原因和验收条件。
 
 协议与端点：
 
@@ -322,7 +322,7 @@ doops -session smoke ask --target prod-master --msg '用一句话说明当前机
 不是日常 DoOps 连接方式。在线 Agent 的出站 SSH 使用结构化 `doops ssh` 入口，
 保留每个远端 argv，避免多层命令引号被远端 shell 破坏。
 
-新集群首次安装使用本仓库 Helm bootstrap 脚本，由已授权的集群管理主机或 CI 执行；
+新集群首次安装使用本仓库 Helm bootstrap 脚本，由持有集群 kubeconfig 的管理主机或 CI 执行；
 完整 values 必须明确 `gateway.cluster/instance`。控制器就绪后的镜像更新使用
 `doops upgrade`，普通业务使用 `ask --apply`，两者均不需要开发机 kubeconfig。见
 [docs/CLUSTER_INSTALL_GUIDE.md](docs/CLUSTER_INSTALL_GUIDE.md)：
@@ -342,7 +342,7 @@ bash scripts/release-managed-agent.sh \
 
 ### 维护者发布业务 workload
 
-发布者通过 `doops ask --apply` 提交明确授权的自然语言任务。任务必须直接给出 Gateway
+发布者通过 `doops ask --apply` 提交明确的自然语言任务。任务必须直接给出 Gateway
 target、服务范围、不可变镜像 digest、变更原因和验收条件；需要凭据时仅以可重复的
 `--credential <resource-name>` 元数据引用声明。Gateway 绑定用户、target 和 session，
 凭据只按 target 绑定并在目标 doops-agent 的内部控制面物化；公开

@@ -78,7 +78,7 @@ Supported commands:
 - Configure reverse proxy routes such as `/api/`.
 - Configure named upstreams for load balancing.
 - Configure TLS certificate paths when provided.
-- Bootstrap Nginx on an authorized target through `install-nginx --local true`.
+- Bootstrap Nginx on the target through `install-nginx --local true`.
 - Maintain domain resources with `domain-set` and allocate subdomains from
   `--domain-base` while checking for site conflicts.
 - Support controlled Nginx edits through `config-set` and `snippet-set`.
@@ -140,5 +140,5 @@ by silently switching to a different path or skipping validation.
   authorized deterministic tool. Ordinary apply cannot call website mutation
   tools without the Nginx resource lease, and website apply cannot call Helm.
 - DoWeb evidence includes SiteSpec, candidate config, `nginx -t`, reload, health
-  and rollback status. Gateway mutation authorization and DoWeb validation
+  and rollback status. The Gateway target grant and DoWeb validation
   evidence are separate concerns.
