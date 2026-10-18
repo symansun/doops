@@ -94,7 +94,6 @@ echo "[3/8] starting the real gateway process"
 "${GW_BIN}" serve \
   -db "${GW_DB}" \
   -port "${GW_PORT}" \
-  -scheduler-tick 0 \
   -operation-timeout 10s \
   -target-queue-timeout 2s >"${GW_LOG}" 2>&1 &
 GW_PID=$!

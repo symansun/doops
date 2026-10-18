@@ -17,7 +17,7 @@ import (
 
 func TestWorkspaceInterruptionMissingTerminalBlocksMutation(t *testing.T) {
 	for _, tool := range []string{
-		"doops_file_write", "doops_clean_workspace", "doops_git_clone",
+		"doops_file_write", "doops_clean_workspace",
 		"doops_workspace_begin", "doops_workspace_chunk", "doops_workspace_commit",
 	} {
 		for _, interruption := range []string{"disconnect", "cancel_disconnect", "explicit_unknown"} {

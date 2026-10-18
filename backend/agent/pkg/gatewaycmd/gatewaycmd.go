@@ -51,7 +51,8 @@ func serve(args []string) {
 	maxConcurrentPerUser := fs.Int("max-concurrent-per-user", 10, "Maximum concurrent forwarded operations per user")
 	targetQueueTimeout := fs.Duration("target-queue-timeout", 10*time.Minute, "How long an operation waits for a busy target")
 	maxQueuedPerTarget := fs.Int("max-queued-per-target", 10, "Maximum queued operations per target; negative disables queueing")
-	schedulerTick := fs.Duration("scheduler-tick", time.Minute, "How often the issue-scheduler checks for due jobs; 0 disables the scheduler")
+	// The issue scheduler was removed; the flag stays accepted so existing service units keep starting.
+	_ = fs.Duration("scheduler-tick", 0, "Removed; accepted and ignored")
 	edgeListen := fs.String("edge-listen", "", "TCP listen address for Edge public traffic; empty disables it")
 	edgeProxyProtocol := fs.Bool("edge-proxy-protocol", true, "Require PROXY protocol on Edge listener (must be true behind nginx stream)")
 	fs.Parse(args)
@@ -80,11 +81,6 @@ func serve(args []string) {
 		TargetQueueTimeout:      *targetQueueTimeout,
 		MaxQueuedPerTarget:      *maxQueuedPerTarget,
 	})
-	if *schedulerTick > 0 {
-		scheduler := server.NewScheduler(hub, store, *schedulerTick)
-		hub.AttachScheduler(scheduler)
-		scheduler.Start()
-	}
 
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)

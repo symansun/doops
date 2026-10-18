@@ -38,11 +38,6 @@ func newAdminReadScopeFixture(t *testing.T) *adminAuditFixture {
 			Cluster: target.cluster, Instance: target.instance, Action: ActionExec,
 		}, cancel)
 	}
-	if _, err := f.store.RecordIssue(SchedulerIssue{
-		JobID: f.job.ID, Fingerprint: "admin-read-scope", Cluster: "prod", Instance: "node", Title: "global issue",
-	}); err != nil {
-		t.Fatal(err)
-	}
 	return f
 }
 
@@ -57,8 +52,7 @@ func assertAdminReadScopeNoAudit(t *testing.T, store *GatewayStore) {
 func TestAdminReadScopeGlobalResources(t *testing.T) {
 	f := newAdminReadScopeFixture(t)
 	for _, path := range []string{
-		"/v1/admin/users", "/v1/admin/grants", "/v1/admin/tokens", "/v1/admin/repos", "/v1/admin/jobs",
-		"/v1/admin/jobs/issues", "/v1/admin/jobs/issues?id=" + f.job.ID,
+		"/v1/admin/users", "/v1/admin/grants", "/v1/admin/tokens",
 	} {
 		t.Run(path, func(t *testing.T) {
 			for _, method := range []string{http.MethodGet, http.MethodHead} {
@@ -149,8 +143,6 @@ func TestAdminReadScopeWrapperHEADAndUnsupportedMethods(t *testing.T) {
 	}{
 		{"target-global", "/v1/admin/users", "", f.userToken, http.StatusForbidden},
 		{"platform-global", "/v1/admin/users", "", f.adminToken, http.StatusOK},
-		{"target-issues", "/v1/admin/jobs/issues", "", f.userToken, http.StatusForbidden},
-		{"platform-issues", "/v1/admin/jobs/issues", "", f.adminToken, http.StatusOK},
 		{"allowed-target", "/v1/admin/operations", "?cluster=dev&instance=node", f.userToken, http.StatusOK},
 		{"sibling-target", "/v1/admin/operations", "?cluster=dev&instance=sibling", f.userToken, http.StatusForbidden},
 		{"platform-target", "/v1/admin/operations", "?cluster=dev&instance=sibling", f.adminToken, http.StatusOK},
@@ -168,7 +160,7 @@ func TestAdminReadScopeWrapperHEADAndUnsupportedMethods(t *testing.T) {
 		})
 	}
 	for _, method := range []string{http.MethodOptions, http.MethodTrace, http.MethodConnect} {
-		for _, path := range []string{"/v1/admin/instances", "/v1/admin/proxy-routes", "/v1/admin/jobs/issues"} {
+		for _, path := range []string{"/v1/admin/instances", "/v1/admin/proxy-routes"} {
 			for _, token := range []string{f.userToken, f.adminToken} {
 				response := credentialHTTPRequest(t, f.mux, token, method, path, nil)
 				if response.Code != http.StatusMethodNotAllowed {

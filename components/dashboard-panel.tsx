@@ -8,7 +8,7 @@ import {
   type AuditEvent,
   type AuditSummary,
 } from "@/lib/client"
-import { listJobs, listInstances, type SchedulerJob } from "@/lib/admin"
+import { listInstances } from "@/lib/admin"
 import {
   ServerIcon,
   ActivityIcon,
@@ -45,12 +45,6 @@ type ManagedScope = {
   isAdmin: boolean
 }
 
-const SCAN_MODE_LABELS: Record<string, string> = {
-  ask: "AI 巡检",
-  exec: "命令巡检",
-  audit: "审计巡检",
-}
-
 export function DashboardPanel({
   session,
   targets,
@@ -59,7 +53,6 @@ export function DashboardPanel({
   refreshVersion,
   onRefresh,
   onOpenTab,
-  onOpenJobs,
   onDeployAgent,
 }: {
   session: Session
@@ -69,28 +62,23 @@ export function DashboardPanel({
   refreshVersion: number
   onRefresh: () => void
   onOpenTab: (tab: QuickTab, target?: Target) => void
-  onOpenJobs: () => void
   onDeployAgent: () => void
 }) {
   const [audit, setAudit] = useState<AuditEvent[]>([])
   const [auditSummary, setAuditSummary] = useState<AuditSummary | null>(null)
-  const [jobs, setJobs] = useState<SchedulerJob[]>([])
   const [managed, setManaged] = useState<ManagedScope | null>(null)
   const [auditDenied, setAuditDenied] = useState(false)
   const [auditError, setAuditError] = useState("")
-  const [jobsError, setJobsError] = useState("")
   const [managedError, setManagedError] = useState("")
 
   useEffect(() => {
     let alive = true
     setAuditError("")
-    setJobsError("")
     setManagedError("")
     Promise.allSettled([
       fetchAudit(session, { limit: "12" }),
-      listJobs(session),
       listInstances(session),
-    ]).then(([auditResult, jobsResult, instancesResult]) => {
+    ]).then(([auditResult, instancesResult]) => {
         if (!alive) return
         if (auditResult.status === "rejected") {
           setAuditError(auditResult.reason instanceof Error ? auditResult.reason.message : "查询审计失败")
@@ -110,12 +98,6 @@ export function DashboardPanel({
           setAuditDenied(false)
           setAudit((auditResult.value.events || []).slice(0, 12))
           setAuditSummary(auditResult.value.summary || null)
-        }
-        if (jobsResult.status === "rejected") {
-          setJobsError(jobsResult.reason instanceof Error ? jobsResult.reason.message : "查询定时任务失败")
-          setJobs([])
-        } else {
-          setJobs(jobsResult.value)
         }
         if (instancesResult.status === "rejected") {
           setManagedError(instancesResult.reason instanceof Error ? instancesResult.reason.message : "查询实例状态失败")
@@ -139,7 +121,6 @@ export function DashboardPanel({
   const metrics = useMemo(() => computeTargetMetrics(targets), [targets])
   const clusters = metrics.clusters
 
-  const enabledJobs = jobs.filter((j) => j.enabled).length
   const recentRuns = auditSummary?.total ?? audit.length
   const recentFailed = auditSummary?.failed ?? audit.filter(isFailedEvent).length
   const managedHint = managedError
@@ -215,21 +196,11 @@ export function DashboardPanel({
                 }
               />
               <StatCard
-                label="定时任务"
-                value={jobsError ? "—" : enabledJobs}
+                label="近期执行"
+                value={auditDenied || auditError ? "—" : recentRuns}
                 icon={ActivityIcon}
-                tone={jobsError ? "warning" : enabledJobs > 0 ? "primary" : "muted"}
-                hint={
-                  jobsError
-                    ? jobsError
-                    : jobs.length > 0
-                    ? `共 ${jobs.length} 个`
-                    : auditDenied
-                      ? "需管理员权限"
-                      : recentRuns > 0
-                        ? `近期执行 ${recentRuns}`
-                        : undefined
-                }
+                tone={recentFailed > 0 ? "warning" : recentRuns > 0 ? "primary" : "muted"}
+                hint={auditDenied ? "需管理员权限" : recentFailed > 0 ? `失败 ${recentFailed}` : undefined}
               />
             </div>
 
@@ -242,8 +213,7 @@ export function DashboardPanel({
               <ClusterOverviewSection clusters={clusters} />
             </div>
 
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-              <ScheduledJobsSection jobs={jobs} error={jobsError} onOpenJobs={onOpenJobs} />
+            <div className="grid grid-cols-1 gap-4">
               <RecentActivitySection
                 audit={audit}
                 denied={auditDenied}
@@ -430,75 +400,6 @@ function ClusterOverviewSection({ clusters }: { clusters: ClusterSummary[] }) {
           </div>
         ))}
       </div>
-    </section>
-  )
-}
-
-function ScheduledJobsSection({
-  jobs,
-  error,
-  onOpenJobs,
-}: {
-  jobs: SchedulerJob[]
-  error: string
-  onOpenJobs: () => void
-}) {
-  const preview = jobs.slice(0, 5)
-
-  return (
-    <section className="rounded-xl border bg-card p-5">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <SectionTitle icon={ActivityIcon} title="定时任务" />
-        <button
-          onClick={onOpenJobs}
-          className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-        >
-          全部任务
-          <ChevronRightIcon width={13} height={13} />
-        </button>
-      </div>
-
-      {error ? (
-        <p className="rounded-lg border border-warning/30 bg-warning/10 px-4 py-8 text-center text-sm text-warning">
-          定时任务暂时不可用：{error}
-        </p>
-      ) : jobs.length === 0 ? (
-        <div className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
-          还没有定时巡检任务。
-          <button onClick={onOpenJobs} className="ml-1 text-primary transition-opacity hover:opacity-80">
-            去创建
-          </button>
-        </div>
-      ) : (
-        <div className="flex flex-col divide-y">
-          {preview.map((job) => (
-            <div key={job.id} className="flex items-start gap-3 py-2.5 text-sm">
-              <span
-                className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
-                  job.enabled
-                    ? "bg-primary/15 text-primary"
-                    : "bg-muted text-muted-foreground"
-                }`}
-              >
-                {job.enabled ? "运行中" : "已暂停"}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="truncate font-medium text-foreground">{job.name}</div>
-                <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-                  <span>{intervalLabel(job.interval_sec)}</span>
-                  <span>{SCAN_MODE_LABELS[job.scan_mode] || job.scan_mode}</span>
-                  <span className="font-mono">
-                    {job.cluster_glob}/{job.instance_glob}
-                  </span>
-                </div>
-              </div>
-              <span className="shrink-0 text-xs text-muted-foreground">
-                {job.last_run_at ? fmtRelative(job.last_run_at) : "未执行"}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
     </section>
   )
 }
@@ -731,12 +632,6 @@ function isFailedStatus(status: string): boolean {
 
 function isFailedEvent(event: AuditEvent): boolean {
   return !!event.status && isFailedStatus(event.status)
-}
-
-function intervalLabel(sec: number): string {
-  if (sec % 3600 === 0) return `每 ${sec / 3600} 小时`
-  if (sec % 60 === 0) return `每 ${sec / 60} 分钟`
-  return `每 ${sec} 秒`
 }
 
 function busyReasonLabel(reason: string): string {
