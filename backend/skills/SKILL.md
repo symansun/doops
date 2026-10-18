@@ -32,7 +32,7 @@ description: |
 - CLI 只接受 Gateway target；没有直连 target、SSH target 或按 target 保存的 token。
   Gateway 登录态按 Gateway URL 共享，target 配置只存路由。Agent 注册不用 token。
 - 凭据 payload 只走 stdin，不进入命令参数、prompt、日志、文档、提交或工作区。
-  运行时只传 `--credential <resource-name>`（DoSql 自动绑定，见下文），权限继承当前 target 的 `ask`/`exec`。
+  运行时只传 `--credential <resource-name>`（DoSql 自动绑定，见下文），只要求该 target 的 grant。
   不要用 `exec` 输出密码再让用户粘贴；已有目标 Secret 用 `credential configure --from-secret` 导入。
 - 每次调用都等待 RPC 实际终态。取消 ACK、超时或断连缺少终态时报告 `outcome_unknown`，
   不自动重放 mutation，不宣称成功。
@@ -108,14 +108,14 @@ Gateway 绑定当前 target 上全部 active `use=database` 凭据，`doops sql`
    → `targets` 确认新 commit。探针失败时 CLI 自动回滚；事后回退用 `upgrade --rollback`。
    没有控制器的旧 Agent 和独立 Docker Agent 不走这条链路，见 `docs/BUILD_DEPLOY_SOP.md`。
 7. 开通用户：`admin user create --user <u> --generate-password --grant-target <t>` → `admin grant list --user-id <id>`
-   确认无 wildcard → 用隔离 `DOOPS_CONFIG` 登录验证允许与拒绝 → `admin token revoke` 撤销验证 token。
+   确认只有预期 target → 用隔离 `DOOPS_CONFIG` 登录验证允许与拒绝 → `admin token revoke` 撤销验证 token。
 
 ## 安装与升级
 
 - 安装 CLI/Skill：`bash scripts/install.sh --version <tag> --project <absolute-path>`。
   它不部署 Agent；Agent 接入见 `docs/CLUSTER_INSTALL_GUIDE.md`。
 - 配置唯一来源是 `~/.agent/skills/doops/config.json`；`auth.json` 按 Gateway URL 存 token。
-- 创建普通用户用 `admin user create`，交付前确认 wildcard grant 为 0 并用隔离的
+- 创建普通用户用 `admin user create`，交付前确认 grant 只含预期 target，并用隔离的
   `DOOPS_CONFIG` 验证允许与拒绝路径，流程见 `docs/DOOPS_USAGE_GUIDE.md`。
 - Agent / Gateway 升级的参数、验收和回滚见 `docs/BUILD_DEPLOY_SOP.md`。
 

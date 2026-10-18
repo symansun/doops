@@ -157,8 +157,8 @@ bash scripts/deploy-gateway.sh \
   target、范围、镜像、原因和验收条件。
 - 密码登录签发短期 user token，默认 24 小时过期；过期 token 会在登录时顺手清理。
 - token 校验通过 token id 定位单行哈希，避免多人多 token 时全表 bcrypt 扫描。
-- 同一 `cluster/instance` 按 session 与明确资源互斥；普通 Shell 使用 session mutation
-  lease，不同 session 可以并行，详见 Multi-User Behavior。
+- 同一 `cluster/instance` 的普通调用可并发；只有 workspace 写入、精确资源和 Agent 自升级互斥，
+  详见 Multi-User Behavior。
 
 ## Endpoints
 
@@ -246,15 +246,12 @@ doops admin token revoke --target <gateway-target> --id <token-id>
 
 - 创建/禁用用户，设置或重置密码。
 - 创建、吊销、轮换 user token。
-- 普通 user token 只按精确 target 授权；`target:use` grant 自动包含标准日常操作和受管凭据使用。管理员、凭据管理和 Agent 升级仍使用独立高危权限。
+- 授权只按 (user, cluster, instance)：有 grant 即可完整使用该 target 及其绑定的凭据；平台管理员是用户的 `is_admin` 标记，不是 grant。
 - 按 `user_id`、`token_id`、`cluster`、`instance`、`action`、`session`、`status` 查询审计。
 - 按保留周期清理过期审计，清理前保留可追溯导出。
 
-当前实现有一个必须显式处理的 bootstrap 行为：`POST /v1/admin/users` 创建普通用户时
-会自动添加 `cluster="*"`、`instance="*"` 的 bootstrap grant。权限判断仍然是无 grant
-默认拒绝，但管理员创建流程必须在交付账号前删除这条通配 grant，再按每个目标的精确
-`cluster/instance` 建立 `target:use` 授权。收窄失败时立即停用新用户，不能把半完成账号留在
-启用状态。完整操作顺序见 `DOOPS_USAGE_GUIDE.md`。
+`POST /v1/admin/users` 创建的普通用户没有任何 target grant，管理员按精确 `cluster/instance`
+逐个授权。完整操作顺序见 `DOOPS_USAGE_GUIDE.md`。
 
 说明：
 
@@ -262,16 +259,15 @@ doops admin token revoke --target <gateway-target> --id <token-id>
   `auth_domain=gateway` 表示 Gateway user token 缺失、无效、过期或撤销；
   `edge_enrollment_auth_failed` / `auth_domain=edge_enrollment` 表示边缘通道 enrollment
   token 缺失、无效、过期或目标绑定不匹配。裸 `401` 不足以判断受管凭据错误。
-- `403 Forbidden`：token 有效，但当前用户缺少目标 `cluster/instance/action` 的显式 grant，或缺少 gateway 管理员 `admin` 权限。
-- 新 target 接入后如果 `exec/ask` 直接 403，检查该用户是否已经获得对应 target/action 的显式 grant。
+- `403 Forbidden`：token 有效，但用户没有匹配该 `cluster/instance` 的 grant，或调用管理接口时不是平台管理员。
 
 ## Multi-User Behavior
 
-多人同时使用时，gateway 分别控制执行额度和资源所有权：
+多人同时使用时，gateway 只控制资源所有权，没有全局或单用户执行额度：
 
 - 不同 target 可以并发执行。
-- 同一 target 上普通 mutation 按 session 串行，不同 session 可以并行。普通 mutation
-  缺少有效 session 时直接拒绝，不退回 target 级独占；只有 Agent 自升级独占 target。
+- 同一 target 上的 Shell/SSH/bg/apply 调用可以并发，同一 session 内也不串行。缺少有效
+  session 的 mutation 直接拒绝；只有 Agent 自升级独占 target。
 - 同一客户端 WebSocket 上的多个 `tools/call` 可以并行；Agent 的每条
   `notifications/message` 必须带 `params.request_id`，Gateway 和 CLI 按请求 ID
   路由，不得用 session 名称覆盖另一个并发请求的通知。CLI 原样保留输出文本及分块边界，
@@ -281,7 +277,7 @@ doops admin token revoke --target <gateway-target> --id <token-id>
 - `finalizing` 只表示终态审计待落盘，不持有执行锁、不阻断后续任务；持久化失败会报告
   错误并自动重试原始证据。
 - 普通 `exec`/`ssh`/`bg`、`ask --apply`、Kubernetes mutation 和凭据物化使用
-  `target + session` lease；同 session 的 workspace 写入与 mutation 不得重叠。
+  `target + session` 共享 lease，同 session 内可并发；该 session 的 workspace 写入要等这些调用结束。
   session 不是 OS 或远端资源沙箱，不同 session 不得同时修改同一 Helm release 或数据库。
 - 独立 session 的 push/write/clean/pull 按实际 workspace 互斥；清理其它 workspace
   时锁定被清理的 workspace，不是调用者的 session。排队超时返回 `target queue timeout`。
@@ -430,26 +426,12 @@ doops -session smoke ask --target prod-master --msg '只读巡检集群节点状
 doops -session build push --target prod-master --src .
 ```
 
-## Actions
+## Authorization
 
-授权 action：
-
-- `exec`
-- `ask`
-- `read`
-- `write`
-- `push`
-- `pull`
-- `info`
-- `check`
-- `clean`
-- `agent:upgrade`
-- `targets:list`
-- `admin`
-
-普通 user token 默认不拥有 target 操作能力。每个 target/action 都必须显式授权；
-`targets:list` 只允许列出可见 target，不隐式授予 `exec`、`ask`、`write` 或其他操作。
-`admin` 只用于 gateway 管理，不随默认 target 权限下发。
+Grant 只有 `cluster`、`instance` 两个维度，`*` 是唯一通配。有 grant 的用户可以执行该 target 的
+全部操作，包括 exec、ask、读写、push/pull、Agent 升级和使用该 target 绑定的凭据。平台管理员
+（用户 `is_admin`）可使用全部 target，并管理用户、grant、token 和代理路由。凭据资源由 owner
+或平台管理员管理。旧客户端发送的 `actions: ["target:use"]` 仍被接受，其它 action 返回 `400`。
 
 ## Agent Upgrade
 

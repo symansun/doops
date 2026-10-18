@@ -65,6 +65,10 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
 - Do not add or restore `EnvironmentRegistry`, `EnvironmentDefinition`, `DeploymentTemplate`,
   `deploy/environments.yaml`, `doops cicd run`, prompt-derived deployment scope, `CICDReport`, or
   `doops_cicd_result` as a deployment root or compatibility path.
+- Gateway authorization is (user, cluster, instance) only; a grant covers every operation on the
+  target and its bound credentials. Platform admin is a user flag. Gateway has no per-action
+  grants, execution quotas, operation admin, unlock, audit-optimize, scheduler, or repo registry;
+  do not reintroduce them.
 - `deploy/helm/<name>/` contains runtime assets only. It must not become an environment registry,
   credential store, target selector, or deployment authorization source.
 - A doops-agent cannot replace the workload from its own process. `doops upgrade` is available
@@ -108,15 +112,15 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
   the explicitly authorized target Agent. Public prompt and metadata bindings contain names,
   scopes, Secret names/types/key sets, resource versions, digests, status, and stable error
   categories only.
-- Runtime credential use inherits the current target operation's `ask`/`exec` authority. Do not
-  require a second `credential:use` action or a per-operator credential grant. Active grants identify
+- Runtime credential use requires only the user's grant on that target. Do not
+  add a credential action or a per-operator credential grant. Active grants identify
   which target/use owns a credential; management still belongs to its owner or platform admin.
   Database bindings resolve directly from stored target metadata, without a model-generated scope;
   the saved namespace is used for materialization. DoSql/Agent owns database assets and SQL policy.
   Namespace, workload, release, image and repository paths are execution metadata, not credential
   permission dimensions. Resolve explicit names directly from stored target bindings, without a
   model scope-planning request. Credential management uses owner/admin; personal credential APIs
-  do not require separate credential actions. Target Secret import requires target exec authority.
+  do not require separate credential actions. Target Secret import requires a grant on that target.
   Keep HTTPS origin protection, package validation and immutable staging for Helm. Do not add
   wildcard, prefix, inferred, project, environment, template, or workflow-path grants to the
   Gateway layer.
