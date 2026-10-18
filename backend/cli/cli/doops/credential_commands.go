@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -134,38 +135,32 @@ Use "doops credential <subcommand> -h" for command flags.
 	return err
 }
 
+// retiredCredentialVerifyFlags were scope fields that verify used to require. The
+// Gateway now verifies each binding with the scope stored when it was granted.
+var retiredCredentialVerifyFlags = []string{
+	"namespace", "use", "workload-kind", "workload-name", "database-asset-id", "environment-id",
+	"database-engine", "database-name", "image-repository", "image-digest", "helm-release",
+	"helm-chart", "required-keys",
+}
+
 func runCredentialVerify(args []string, sessionName string, servers []Server, configErr error, stdout io.Writer) error {
+	for _, arg := range args {
+		name := strings.TrimLeft(strings.SplitN(arg, "=", 2)[0], "-")
+		if strings.HasPrefix(arg, "-") && slices.Contains(retiredCredentialVerifyFlags, name) {
+			return fmt.Errorf("--%s is no longer needed: verify uses the scope stored on each target binding", name)
+		}
+	}
 	var target, id, versionID string
-	var cluster, instance, namespace, use, workloadKind, workloadName string
-	var databaseAssetID, environmentID, databaseEngine, databaseName string
-	var imageRepository, imageDigest, helmRelease, helmChart, requiredKeys string
 	flags := credentialFlagSet("credential verify", stdout)
 	flags.StringVar(&target, "target", "", "Configured gateway target")
 	flags.StringVar(&id, "id", "", "Credential ID")
-	flags.StringVar(&versionID, "version-id", "", "Staged credential version ID")
-	flags.StringVar(&namespace, "namespace", "default", "Secret materialization namespace (default: default)")
-	flags.StringVar(&use, "use", "", "Optional credential use; inferred from credential type when omitted")
-	flags.StringVar(&workloadKind, "workload-kind", "", "Optional workload metadata for imagePull materialization")
-	flags.StringVar(&workloadName, "workload-name", "", "Optional workload metadata for imagePull materialization")
-	flags.StringVar(&databaseAssetID, "database-asset-id", "", "Authorized database asset ID")
-	flags.StringVar(&environmentID, "environment-id", "", "Authorized database environment ID")
-	flags.StringVar(&databaseEngine, "database-engine", "", "Authorized database engine: mysql, postgres, or mongodb")
-	flags.StringVar(&databaseName, "database-name", "", "Authorized database name")
-	flags.StringVar(&imageRepository, "image-repository", "", "Optional image verification repository")
-	flags.StringVar(&imageDigest, "image-digest", "", "Optional image verification digest")
-	flags.StringVar(&helmRelease, "helm-release", "", "Optional Helm execution metadata")
-	flags.StringVar(&helmChart, "helm-chart", "", "Optional Helm execution metadata")
-	flags.StringVar(&requiredKeys, "required-keys", "", "Optional Secret keys")
+	flags.StringVar(&versionID, "version-id", "", "Staged credential version ID; every binding on the target is verified with its stored scope")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 || strings.TrimSpace(sessionName) == "" ||
 		strings.TrimSpace(target) == "" || strings.TrimSpace(id) == "" || strings.TrimSpace(versionID) == "" {
 		return fmt.Errorf("-session, --target, --id and --version-id are required")
-	}
-	keyList, err := parseOptionalCredentialList(requiredKeys, "--required-keys")
-	if err != nil {
-		return err
 	}
 	gateway, token, cluster, instance, err := resolveCredentialListTarget(target, servers, configErr)
 	if err != nil {
@@ -182,23 +177,8 @@ func runCredentialVerify(args []string, sessionName string, servers []Server, co
 		"version_id": strings.TrimSpace(versionID),
 		"session_id": strings.TrimSpace(sessionName),
 		"scope": credentialGrantScope{
-			Cluster:   strings.TrimSpace(cluster),
-			Instance:  strings.TrimSpace(instance),
-			Namespace: strings.TrimSpace(namespace),
-			Use:       strings.TrimSpace(use),
-			Workload: credentialGrantWorkload{
-				Kind: strings.TrimSpace(workloadKind),
-				Name: strings.TrimSpace(workloadName),
-			},
-			DatabaseAssetID: strings.TrimSpace(databaseAssetID),
-			EnvironmentID:   strings.TrimSpace(environmentID),
-			DatabaseEngine:  strings.TrimSpace(databaseEngine),
-			DatabaseName:    strings.TrimSpace(databaseName),
-			ImageRepository: strings.TrimSpace(imageRepository),
-			ImageDigest:     strings.TrimSpace(imageDigest),
-			HelmRelease:     strings.TrimSpace(helmRelease),
-			HelmChart:       strings.TrimSpace(helmChart),
-			RequiredKeys:    keyList,
+			Cluster:  strings.TrimSpace(cluster),
+			Instance: strings.TrimSpace(instance),
 		},
 	})
 	if err != nil {

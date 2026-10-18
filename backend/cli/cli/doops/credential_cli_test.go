@@ -111,14 +111,9 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 		"--namespace", "agents", "--use", "database",
 		"--required-keys", "connection_uri")
 	run("", "-session", "credential-verify", "credential", "verify",
-		"--target", "gw-edu-coder", "--id", "cred_123", "--version-id", "credver_456",
-		"--namespace", "apps", "--use", "imagePull",
-		"--workload-kind", "Deployment", "--workload-name", "api",
-		"--image-repository", "team/api", "--image-digest", "sha256:manifest")
+		"--target", "gw-edu-coder", "--id", "cred_123", "--version-id", "credver_456")
 	run("", "-session", "credential-verify-database", "credential", "verify",
-		"--target", "gw-edu-coder", "--id", "cred_123", "--version-id", "credver_456",
-		"--namespace", "agents", "--use", "database",
-		"--required-keys", "connection_uri")
+		"--target", "gw-edu-coder", "--id", "cred_123", "--version-id", "credver_456")
 	run("", "credential", "promote", "--target", "gw-edu-coder", "--id", "cred_123", "--version-id", "credver_456")
 	run("", "credential", "grant-revoke", "--target", "gw-edu-coder", "--id", "cred_123", "--grant-id", "credgrant_789")
 	run("", "credential", "revoke", "--target", "gw-edu-coder", "--id", "cred_123")
@@ -184,31 +179,20 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 			"required_keys": []any{"connection_uri"},
 		},
 	})
-	assertCredentialCLIJSON(t, requests[6], http.MethodPost, "/v1/credentials/cred_123/verify", map[string]any{
-		"version_id": "credver_456",
-		"session_id": "credential-verify",
-		"scope": map[string]any{
-			"cluster":          "doops-edu",
-			"instance":         "edu-coder",
-			"namespace":        "apps",
-			"use":              "imagePull",
-			"workload":         map[string]any{"kind": "Deployment", "name": "api"},
-			"image_repository": "team/api",
-			"image_digest":     "sha256:manifest",
-		},
-	})
-	assertCredentialCLIJSON(t, requests[7], http.MethodPost, "/v1/credentials/cred_123/verify", map[string]any{
-		"version_id": "credver_456",
-		"session_id": "credential-verify-database",
-		"scope": map[string]any{
-			"cluster":       "doops-edu",
-			"instance":      "edu-coder",
-			"namespace":     "agents",
-			"use":           "database",
-			"workload":      map[string]any{"kind": "", "name": ""},
-			"required_keys": []any{"connection_uri"},
-		},
-	})
+	for index, session := range map[int]string{6: "credential-verify", 7: "credential-verify-database"} {
+		// verify sends only the target; each binding keeps the scope stored at grant time.
+		assertCredentialCLIJSON(t, requests[index], http.MethodPost, "/v1/credentials/cred_123/verify", map[string]any{
+			"version_id": "credver_456",
+			"session_id": session,
+			"scope": map[string]any{
+				"cluster":   "doops-edu",
+				"instance":  "edu-coder",
+				"namespace": "",
+				"use":       "",
+				"workload":  map[string]any{"kind": "", "name": ""},
+			},
+		})
+	}
 	assertCredentialCLIJSON(t, requests[8], http.MethodPost, "/v1/credentials/cred_123/promote", map[string]any{
 		"version_id": "credver_456",
 	})
@@ -340,4 +324,28 @@ func jsonEquivalent(got, want map[string]any) bool {
 	gotJSON, _ := json.Marshal(got)
 	wantJSON, _ := json.Marshal(want)
 	return bytes.Equal(gotJSON, wantJSON)
+}
+
+func TestCredentialVerifyRejectsRetiredScopeFlagsBeforeHTTP(t *testing.T) {
+	requests := 0
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests++ }))
+	defer gateway.Close()
+	servers := []Server{{Name: "target", Gateway: gateway.URL, Cluster: "dev", Instance: "local"}}
+	for _, tc := range []struct{ name, arg string }{
+		{"namespace", "--namespace=apps"},
+		{"use", "--use"},
+		{"required keys", "--required-keys=a"},
+		{"single dash", "-image-digest"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{"--target", "target", "--id", "cred_123", "--version-id", "credver_456", tc.arg}
+			err := runCredentialVerify(args, "verify", servers, nil, io.Discard)
+			if err == nil || !strings.Contains(err.Error(), "is no longer needed") {
+				t.Fatalf("retired flag %s accepted: %v", tc.arg, err)
+			}
+		})
+	}
+	if requests != 0 {
+		t.Fatalf("retired flags reached the Gateway: %d requests", requests)
+	}
 }
