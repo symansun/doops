@@ -57,8 +57,8 @@ func credentialImportFixture(t *testing.T) (*executionLifecycleFixture, string) 
 		"metadata": map[string]string{"uid": "source-uid", "resourceVersion": "7"},
 		"type":     "Opaque",
 		"data": map[string]string{
-			"DB_PASSWORD":    base64.StdEncoding.EncodeToString([]byte(importCanary)),
-			"SOURCE_URL":     base64.StdEncoding.EncodeToString([]byte("jdbc:mysql://mysql.test:3306/test")),
+			"DB_PASSWORD":     base64.StdEncoding.EncodeToString([]byte(importCanary)),
+			"SOURCE_URL":      base64.StdEncoding.EncodeToString([]byte("jdbc:mysql://mysql.test:3306/test")),
 			"SOURCE_USERNAME": base64.StdEncoding.EncodeToString([]byte("test-user")),
 			"SOURCE_PASSWORD": base64.StdEncoding.EncodeToString([]byte(importCanary)),
 			"UNSELECTED":      base64.StdEncoding.EncodeToString([]byte("never-import-this")),
@@ -165,7 +165,8 @@ func TestCredentialImportHTTPThroughRealAgent(t *testing.T) {
 		{"missing_key", http.StatusBadGateway},
 		{"missing_encryption_key", http.StatusServiceUnavailable},
 		{"audit_unavailable", http.StatusInternalServerError},
-		{"non_admin_owner", http.StatusForbidden},
+		{"owner_with_target", http.StatusOK},
+		{"owner_without_target", http.StatusForbidden},
 		{"inline_password", http.StatusBadRequest},
 		{"query", http.StatusBadRequest},
 		{"empty_query", http.StatusBadRequest},
@@ -175,9 +176,11 @@ func TestCredentialImportHTTPThroughRealAgent(t *testing.T) {
 		t.Run(scenario.name, func(t *testing.T) {
 			f, argsLog := credentialImportFixture(t)
 			token := f.admin
-			if scenario.name == "non_admin_owner" {
-				token = f.user(t, "owner", ScopeGrant{Cluster: "dev", Instance: "local",
-					Actions: []GatewayAction{ActionAsk, ActionCredentialCreate, ActionCredentialMetadata, ActionCredentialUse}})
+			switch scenario.name {
+			case "owner_with_target":
+				token = f.user(t, "owner", ScopeGrant{Cluster: "dev", Instance: "local"})
+			case "owner_without_target":
+				token = f.user(t, "owner", ScopeGrant{Cluster: "dev", Instance: "other"})
 			}
 			var resource CredentialResource
 			json.Unmarshal(f.http(t, token, http.MethodPost, "/v1/credentials",
@@ -293,7 +296,7 @@ func TestCredentialImportRechecksAdministrationAfterWaiting(t *testing.T) {
 		close(release)
 		t.Fatal("import did not reach request parsing")
 	}
-	_, revokeErr := f.store.db.Exec("DELETE FROM grants WHERE user_id = ?", resource.OwnerID)
+	revokeErr := revokeAllAuthority(f.store, resource.OwnerID)
 	close(release)
 	unlock()
 	unlock = nil
@@ -362,7 +365,7 @@ func TestCredentialMutationRechecksAuthorityAfterLockWait(t *testing.T) {
 				t.Fatal("request did not enter lock acquisition")
 			}
 			if scenario == "verify-target" {
-				_, err = f.store.db.Exec("DELETE FROM grants WHERE user_id = ?", resource.OwnerID)
+				err = revokeAllAuthority(f.store, resource.OwnerID)
 			} else {
 				err = f.store.RevokeToken(f.admin.ID)
 			}
@@ -406,7 +409,7 @@ func TestCredentialConfigureCLIThroughGatewayAndRealAgent(t *testing.T) {
 			actor := f.admin
 			if scenario == "target-exec-import" {
 				actor = f.user(t, "configure-target-exec", ScopeGrant{
-					Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec},
+					Cluster: "dev", Instance: "local",
 				})
 			}
 			configRoot := t.TempDir()
@@ -478,4 +481,13 @@ func TestCredentialConfigureCLIThroughGatewayAndRealAgent(t *testing.T) {
 			t.Logf("actual CLI output: %s", output)
 		})
 	}
+}
+
+// revokeAllAuthority removes every target grant and the platform admin flag.
+func revokeAllAuthority(store *GatewayStore, userID string) error {
+	if _, err := store.db.Exec("DELETE FROM grants WHERE user_id = ?", userID); err != nil {
+		return err
+	}
+	_, err := store.db.Exec("UPDATE users SET is_admin = 0 WHERE id = ?", userID)
+	return err
 }

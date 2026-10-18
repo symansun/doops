@@ -202,7 +202,7 @@ func (h *GatewayHub) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 		h.writeUserAuthError(w, r)
 		return false
 	}
-	if !h.store.UserHasAction(auth.UserID, ActionAdmin) {
+	if !h.store.UserIsPlatformAdmin(auth.UserID) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return false
 	}

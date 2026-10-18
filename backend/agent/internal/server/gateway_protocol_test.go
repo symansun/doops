@@ -43,7 +43,7 @@ func TestGatewayHTTPListsTargetsForGrantedUserToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user token: %v", err)
 	}
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionTargetsList}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 		t.Fatalf("grant targets list: %v", err)
 	}
 
@@ -495,7 +495,7 @@ func TestGatewayGitHTTPRoutesByClusterAndInstance(t *testing.T) {
 
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionPull}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 		t.Fatalf("grant pull: %v", err)
 	}
 
@@ -543,7 +543,7 @@ func TestGatewayGitHTTPWaitsForShortAgentReconnect(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionPull}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 		t.Fatalf("grant pull: %v", err)
 	}
 
@@ -606,7 +606,7 @@ func TestGatewayGitHTTPEndToEndPushAndFetch(t *testing.T) {
 
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionPush, ActionPull}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 		t.Fatalf("grant push/pull: %v", err)
 	}
 
@@ -732,7 +732,7 @@ func TestGatewayPasswordLoginIssuesUserToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create password user: %v", err)
 	}
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionTargetsList}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "*", Instance: "*"}); err != nil {
 		t.Fatalf("grant targets list: %v", err)
 	}
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, LoginTokenTTL: 2 * time.Second})
@@ -798,7 +798,7 @@ func TestGatewayAuditHTTPAllowsOwnHistoryAndFiltersEvents(t *testing.T) {
 
 	admin, _ := store.CreateUser("admin")
 	adminToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: admin.ID, Name: "admin"})
-	if err := store.GrantUser(admin.ID, ScopeGrant{Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin}}); err != nil {
+	if err := store.SetUserAdmin(admin.ID, true); err != nil {
 		t.Fatalf("add admin grant: %v", err)
 	}
 	user, _ := store.CreateUser("alice")
@@ -886,7 +886,7 @@ func TestGatewayAdminTokenCreateRequiresAdminAndIssuesUserToken(t *testing.T) {
 
 	admin, _ := store.CreateUser("admin")
 	adminToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: admin.ID, Name: "admin"})
-	if err := store.GrantUser(admin.ID, ScopeGrant{Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin}}); err != nil {
+	if err := store.SetUserAdmin(admin.ID, true); err != nil {
 		t.Fatalf("grant admin: %v", err)
 	}
 	alice, _ := store.CreateUser("alice")
@@ -961,7 +961,7 @@ func TestGatewayAdminReposCRUDAndTestAccess(t *testing.T) {
 
 	admin, _ := store.CreateUser("admin")
 	adminToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: admin.ID, Name: "admin"})
-	if err := store.GrantUser(admin.ID, ScopeGrant{Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin}}); err != nil {
+	if err := store.SetUserAdmin(admin.ID, true); err != nil {
 		t.Fatalf("grant admin: %v", err)
 	}
 	user, _ := store.CreateUser("alice")
@@ -1118,7 +1118,7 @@ func TestGatewayRPCForwardsAllowedActionAndRejectsDeniedAction(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
 
@@ -1156,7 +1156,7 @@ func TestGatewayRPCForwardsAllowedActionAndRejectsDeniedAction(t *testing.T) {
 		t.Fatalf("expected forwarded result, got %#v", final)
 	}
 
-	writeArgs, _ := json.Marshal(map[string]interface{}{"path": "/tmp/nope", "content": "x"})
+	writeArgs, _ := json.Marshal(map[string]interface{}{"path": "/tmp/nope", "content": "x", "session_id": "smoke"})
 	writeGatewayJSON(t, clientConn, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      3,
@@ -1166,22 +1166,30 @@ func TestGatewayRPCForwardsAllowedActionAndRejectsDeniedAction(t *testing.T) {
 			"arguments": json.RawMessage(writeArgs),
 		},
 	})
-	denied := readUntilID(t, clientConn, 3)
-	if _, ok := denied["error"]; !ok {
-		t.Fatalf("expected denied write error, got %#v", denied)
+	written := readUntilID(t, clientConn, 3)
+	if _, ok := written["result"]; !ok {
+		t.Fatalf("a target grant must cover file writes, got %#v", written)
 	}
 	events, err := store.ListAudit(10)
 	if err != nil {
 		t.Fatalf("list audit: %v", err)
 	}
-	foundForbiddenWrite := false
 	for _, event := range events {
-		if event.Action == ActionWrite && event.Status == "forbidden" {
-			foundForbiddenWrite = true
+		if event.Status == "forbidden" {
+			t.Fatalf("granted target produced a forbidden audit: %#v", event)
 		}
 	}
-	if !foundForbiddenWrite {
-		t.Fatalf("expected forbidden write audit event, got %#v", events)
+
+	otherWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/rpc?cluster=prod&instance=local"
+	otherConn, response, err := websocket.DefaultDialer.Dial(otherWS, http.Header{"Authorization": []string{"Bearer " + userToken.Plaintext}})
+	if otherConn != nil {
+		otherConn.Close()
+	}
+	if response != nil {
+		defer response.Body.Close()
+	}
+	if err == nil || response == nil || response.StatusCode != http.StatusForbidden {
+		t.Fatalf("ungranted target must be refused at connect: response=%v err=%v", response, err)
 	}
 }
 
@@ -1193,7 +1201,7 @@ func TestGatewayRPCForwardsBackgroundToolsAsExec(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
 
@@ -1266,7 +1274,7 @@ func TestGatewayRPCDoesNotAllowClientActionOverrideForShell(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionInfo}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 		t.Fatalf("grant info: %v", err)
 	}
 
@@ -1294,9 +1302,25 @@ func TestGatewayRPCDoesNotAllowClientActionOverrideForShell(t *testing.T) {
 		"method":  "tools/call",
 		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(args)},
 	})
-	denied := readUntilID(t, clientConn, 2)
-	if errObj, ok := denied["error"].(map[string]interface{}); !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "forbidden: exec") {
-		t.Fatalf("expected shell to require exec permission despite override, got %#v", denied)
+	final := readUntilID(t, clientConn, 2)
+	if _, ok := final["result"]; !ok {
+		t.Fatalf("granted shell call failed: %#v", final)
+	}
+	events, err := store.ListAudit(10)
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	found := false
+	for _, event := range events {
+		if event.Session == "smoke" {
+			found = true
+			if event.Action != ActionExec {
+				t.Fatalf("client override relabeled shell audit as %q", event.Action)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("shell call left no audit: %#v", events)
 	}
 }
 
@@ -1330,7 +1354,7 @@ func TestGatewayRejectsStructuredSSHForAgentWithoutCapability(t *testing.T) {
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
 	if err := store.GrantUser(user.ID, ScopeGrant{
-		Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec},
+		Cluster: "dev", Instance: "local",
 	}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
@@ -1382,7 +1406,7 @@ func TestGatewayDispatchesTaggedAndPinnedAgentUpgrade(t *testing.T) {
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
 	if err := store.GrantUser(user.ID, ScopeGrant{
-		Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionAgentUpgrade},
+		Cluster: "dev", Instance: "local",
 	}); err != nil {
 		t.Fatalf("grant agent upgrade: %v", err)
 	}
@@ -1465,7 +1489,7 @@ func TestGatewayForwardsShellCommandsWithoutInspectingContent(t *testing.T) {
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
 	if err := store.GrantUser(user.ID, ScopeGrant{
-		Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec},
+		Cluster: "dev", Instance: "local",
 	}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
@@ -2040,7 +2064,7 @@ func TestGatewayRPCRejectsSecondConcurrentOperationForSameSessionAsBusy(t *testi
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
 
@@ -2102,7 +2126,7 @@ func TestGatewayRPCAllowsConcurrentStructuredWorkspacesForSameTarget(t *testing.
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionWrite}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 		t.Fatalf("grant write: %v", err)
 	}
 
@@ -2171,7 +2195,7 @@ func TestGatewayRPCAllowsConcurrentCallsOnOneClientConnection(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionInfo}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 		t.Fatalf("grant info: %v", err)
 	}
 
@@ -2235,7 +2259,7 @@ func TestGatewayRPCAllowsShellMutationsAcrossSessions(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
 
@@ -2303,7 +2327,7 @@ func TestGatewayRPCDoesNotFallbackSessionNotificationsWithoutSessionID(t *testin
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
 
@@ -2469,9 +2493,7 @@ func TestGatewayRPCRejectsInternalCredentialToolsFromUserClients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	if err := store.GrantUser(user.ID, ScopeGrant{
-		Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAll},
-	}); err != nil {
+	if err := store.SetUserAdmin(user.ID, true); err != nil {
 		t.Fatalf("grant user: %v", err)
 	}
 	token, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "credential-caller"})
@@ -2529,7 +2551,7 @@ func testGatewayConcurrentReadOnlyRPC(t *testing.T, action GatewayAction, tool s
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{action}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 		t.Fatalf("grant %s: %v", action, err)
 	}
 
@@ -2590,7 +2612,7 @@ func TestGatewayRPCQueuesSecondOperationForSameTarget(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
 
@@ -2645,7 +2667,7 @@ func TestGatewayRPCDefaultDoesNotQueueBehindBusyTarget(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
 
@@ -2696,7 +2718,7 @@ func TestGatewayRPCCancelsOperationWhenClientDisconnects(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
 
@@ -2736,7 +2758,7 @@ func TestGatewayGitClientCancelReleasesTarget(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionPull}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 		t.Fatalf("grant pull: %v", err)
 	}
 
@@ -2809,7 +2831,7 @@ func TestGatewayAdminUnlockRefusesActiveAndReconnectsIdleTarget(t *testing.T) {
 	defer store.Close()
 	admin, _ := store.CreateUser("admin")
 	adminToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: admin.ID, Name: "admin"})
-	if err := store.GrantUser(admin.ID, ScopeGrant{Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin}}); err != nil {
+	if err := store.SetUserAdmin(admin.ID, true); err != nil {
 		t.Fatalf("grant admin: %v", err)
 	}
 
@@ -2881,7 +2903,7 @@ func TestGatewayRPCEnforcesPerUserConcurrencyLimitAcrossTargets(t *testing.T) {
 	defer store.Close()
 	user, _ := store.CreateUser("alice")
 	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "*", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "*", Instance: "local"}); err != nil {
 		t.Fatalf("grant exec: %v", err)
 	}
 
@@ -2940,7 +2962,7 @@ func TestGatewayAdminOperationsListAndCancel(t *testing.T) {
 
 	admin, _ := store.CreateUser("admin")
 	adminToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: admin.ID, Name: "admin"})
-	if err := store.GrantUser(admin.ID, ScopeGrant{Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin, ActionExec}}); err != nil {
+	if err := store.SetUserAdmin(admin.ID, true); err != nil {
 		t.Fatalf("grant admin: %v", err)
 	}
 
@@ -3135,7 +3157,7 @@ func newGatewayGitE2E(t *testing.T, targets []gatewayGitE2ETarget) (*GatewayHub,
 		if err != nil {
 			t.Fatalf("create user token: %v", err)
 		}
-		if err := store.GrantUser(user.ID, ScopeGrant{Cluster: target.Cluster, Instance: target.Instance, Actions: []GatewayAction{ActionPush, ActionPull}}); err != nil {
+		if err := store.GrantUser(user.ID, ScopeGrant{Cluster: target.Cluster, Instance: target.Instance}); err != nil {
 			t.Fatalf("grant push/pull: %v", err)
 		}
 		out.Targets = append(out.Targets, gatewayGitE2EToken{

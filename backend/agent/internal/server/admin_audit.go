@@ -2,9 +2,7 @@ package server
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,26 +14,24 @@ import (
 // Only identifiers and typed control metadata may enter the admin audit.
 // Request/response bodies, names, URLs, configuration and error text must not.
 type adminAuditMetadata struct {
-	Route      string          `json:"route"`
-	Method     string          `json:"method"`
-	ResourceID string          `json:"resource_id,omitempty"`
-	UserID     string          `json:"subject_user_id,omitempty"`
-	Actions    []GatewayAction `json:"actions,omitempty"`
-	Disabled   *bool           `json:"disabled,omitempty"`
-	Enabled    *bool           `json:"enabled,omitempty"`
-	HTTPStatus int             `json:"http_status,omitempty"`
+	Route      string `json:"route"`
+	Method     string `json:"method"`
+	ResourceID string `json:"resource_id,omitempty"`
+	UserID     string `json:"subject_user_id,omitempty"`
+	Disabled   *bool  `json:"disabled,omitempty"`
+	Enabled    *bool  `json:"enabled,omitempty"`
+	HTTPStatus int    `json:"http_status,omitempty"`
 }
 
 type adminAuditInput struct {
-	ID        string   `json:"id"`
-	UserID    string   `json:"user_id"`
-	User      string   `json:"user"`
-	Cluster   string   `json:"cluster"`
-	Instance  string   `json:"instance"`
-	SessionID string   `json:"session_id"`
-	Actions   []string `json:"actions"`
-	Disabled  *bool    `json:"disabled"`
-	Enabled   *bool    `json:"enabled"`
+	ID        string `json:"id"`
+	UserID    string `json:"user_id"`
+	User      string `json:"user"`
+	Cluster   string `json:"cluster"`
+	Instance  string `json:"instance"`
+	SessionID string `json:"session_id"`
+	Disabled  *bool  `json:"disabled"`
+	Enabled   *bool  `json:"enabled"`
 }
 
 var adminAuditIDPattern = regexp.MustCompile(`^(usr_[a-f0-9]{24}|tok_[a-f0-9]{24}|repo_[a-f0-9]{24}|route_[a-f0-9]{24}|job_[a-f0-9]{20}|op-[a-f0-9]{24}|audit-[1-9][0-9]*|[0-9]+)$`)
@@ -109,20 +105,11 @@ func (h *GatewayHub) auditAdminMutation(route string, next http.HandlerFunc) htt
 			h.writeUserAuthError(w, r)
 			return
 		}
-		isAdmin := h.store.UserHasAction(auth.UserID, ActionAdmin)
+		isAdmin := h.store.UserIsPlatformAdmin(auth.UserID)
 		switch r.Method {
 		case http.MethodGet, http.MethodHead:
 			if !isAdmin {
 				http.Error(w, "Forbidden", http.StatusForbidden)
-				return
-			}
-			if err := h.authorizeAdminMutationTarget(auth.UserID, route, r, adminAuditInput{},
-				r.URL.Query().Get("cluster"), r.URL.Query().Get("instance")); err != nil {
-				status := http.StatusInternalServerError
-				if errors.Is(err, ErrUnauthorized) {
-					status = http.StatusForbidden
-				}
-				http.Error(w, http.StatusText(status), status)
 				return
 			}
 			next(w, r)
@@ -147,11 +134,6 @@ func (h *GatewayHub) auditAdminMutation(route string, next http.HandlerFunc) htt
 		if isAdmin && metadata.UserID == "" && input.User != "" {
 			if user, err := h.store.FindUserByName(input.User); err == nil {
 				metadata.UserID = user.ID
-			}
-		}
-		for _, raw := range input.Actions {
-			if action, ok := knownActions[strings.ToLower(strings.TrimSpace(raw))]; ok {
-				metadata.Actions = append(metadata.Actions, action)
 			}
 		}
 		if enabled := r.URL.Query().Get("enabled"); enabled == "true" || enabled == "false" {
@@ -197,12 +179,6 @@ func (h *GatewayHub) auditAdminMutation(route string, next http.HandlerFunc) htt
 			http.Error(response, "invalid request body", http.StatusBadRequest)
 		} else if !isAdmin {
 			http.Error(response, "Forbidden", http.StatusForbidden)
-		} else if err := h.authorizeAdminMutationTarget(auth.UserID, route, r, input, cluster, instance); err != nil {
-			status := http.StatusInternalServerError
-			if errors.Is(err, ErrUnauthorized) {
-				status = http.StatusForbidden
-			}
-			http.Error(response, http.StatusText(status), status)
 		} else {
 			r = r.WithContext(contextWithInternalAuditAuth(r.Context(), auth))
 			next(response, r)
@@ -260,87 +236,4 @@ func (h *GatewayHub) auditAdminMutation(route string, next http.HandlerFunc) htt
 		w.WriteHeader(response.status)
 		_, _ = w.Write(response.body.Bytes())
 	}
-}
-
-// Global control-plane access requires platform admin; target operations retain
-// their own action grants. An admin grant on one target cannot elevate a user.
-func (h *GatewayHub) authorizeAdminMutationTarget(userID, route string, r *http.Request, input adminAuditInput, cluster, instance string) error {
-	check := func(cluster, instance string, action GatewayAction) error {
-		if !h.store.UserCan(userID, strings.TrimSpace(cluster), strings.TrimSpace(instance), action) {
-			return ErrUnauthorized
-		}
-		return nil
-	}
-	switch route {
-	case "/v1/admin/users", "/v1/admin/users/password", "/v1/admin/users/disable",
-		"/v1/admin/grants", "/v1/admin/tokens", "/v1/admin/repos", "/v1/admin/repos/test",
-		"/v1/admin/jobs", "/v1/admin/jobs/issues", "/v1/admin/audit/optimize":
-		if !h.store.UserIsPlatformAdmin(userID) {
-			return ErrUnauthorized
-		}
-	case "/v1/admin/repos/clone":
-		return check(cluster, instance, ActionPull)
-	case "/v1/targets/unlock", "/v1/admin/operations":
-		if route == "/v1/admin/operations" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
-			return check(cluster, instance, ActionAdmin)
-		}
-		if route == "/v1/admin/operations" && r.Method == http.MethodPost && !h.store.UserIsPlatformAdmin(userID) {
-			return ErrUnauthorized
-		}
-		if cluster != "" && instance != "" {
-			return check(cluster, instance, ActionAdmin)
-		}
-	case "/v1/admin/proxy-routes":
-		id := strings.TrimSpace(r.URL.Query().Get("id"))
-		if r.Method == http.MethodPost {
-			id = strings.TrimSpace(input.ID)
-			if err := check(cluster, instance, ActionAdmin); err != nil {
-				return err
-			}
-		}
-		if id != "" {
-			var oldCluster, oldInstance string
-			err := h.store.db.QueryRow(`SELECT cluster, instance FROM proxy_routes WHERE id = ?`, id).Scan(&oldCluster, &oldInstance)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return err
-			}
-			if err == nil {
-				return check(oldCluster, oldInstance, ActionAdmin)
-			}
-		}
-	case "/v1/admin/jobs/run":
-		if strings.TrimSpace(r.URL.Query().Get("enabled")) != "" {
-			if !h.store.UserIsPlatformAdmin(userID) {
-				return ErrUnauthorized
-			}
-			return nil
-		}
-		if h.scheduler == nil {
-			return nil
-		}
-		job, err := h.store.GetSchedulerJob(r.URL.Query().Get("id"))
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		mode := strings.ToLower(job.ScanMode)
-		if mode == "audit" {
-			if !h.store.UserIsPlatformAdmin(userID) {
-				return ErrUnauthorized
-			}
-			return nil
-		}
-		action := ActionAsk
-		if mode == "exec" {
-			action = ActionExec
-		}
-		for _, target := range h.scheduler.matchTargets(job) {
-			if err := check(target.Cluster, target.Instance, action); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }

@@ -476,7 +476,7 @@ function GrantsView({ session }: { session: Session }) {
     setBusy(true)
     setError("")
     try {
-      await createGrant(session, { user_id: userId, cluster, instance, actions: ["target:use"] })
+      await createGrant(session, { user_id: userId, cluster, instance })
       setShowCreate(false)
       await load()
     } catch (e) {
@@ -559,7 +559,6 @@ function GrantsView({ session }: { session: Session }) {
               <th className="px-3 py-2 font-medium">用户</th>
               <th className="px-3 py-2 font-medium">集群</th>
               <th className="px-3 py-2 font-medium">实例</th>
-              <th className="px-3 py-2 font-medium">动作</th>
               <th className="px-3 py-2 font-medium text-right">操作</th>
             </tr>
           </thead>
@@ -569,22 +568,6 @@ function GrantsView({ session }: { session: Session }) {
                 <td className="px-3 py-2.5 font-medium text-foreground">{g.user_name || g.user_id}</td>
                 <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{g.cluster}</td>
                 <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{g.instance}</td>
-                <td className="px-3 py-2.5">
-                  <div className="flex flex-wrap gap-1">
-                    {g.actions.map((a) => (
-                      <span
-                        key={a}
-                        className={`rounded px-1.5 py-0.5 font-mono text-xs ${
-                          a === "admin"
-                            ? "bg-primary/15 text-primary"
-                            : "bg-muted text-muted-foreground"
-                        }`}
-                      >
-                        {a}
-                      </span>
-                    ))}
-                  </div>
-                </td>
                 <td className="px-3 py-2.5">
                   <div className="flex justify-end">
                     <button

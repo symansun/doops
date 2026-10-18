@@ -298,14 +298,11 @@ func TestCredentialBundleResolvesMetadataAndNamedAuthorizationRejectsAmbiguity(t
 	admin := createCredentialTestUser(t, store, "admin")
 	deployer := createCredentialTestUser(t, store, "deployer")
 	if err := store.GrantUser(deployer.ID, ScopeGrant{
-		Cluster: "cluster", Instance: "instance", Actions: []GatewayAction{ActionExec},
+		Cluster: "cluster", Instance: "instance",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.GrantUser(admin.ID, ScopeGrant{
-		Cluster: "*", Instance: "*",
-		Actions: []GatewayAction{ActionAdmin},
-	}); err != nil {
+	if err := store.SetUserAdmin(admin.ID, true); err != nil {
 		t.Fatalf("grant credential administration: %v", err)
 	}
 
@@ -412,14 +409,12 @@ func TestCredentialUseInheritsTargetAuthorityWithoutDeploymentScope(t *testing.T
 	owner := createCredentialTestUser(t, store, "owner")
 	deployer := createCredentialTestUser(t, store, "deployer")
 	if err := store.GrantUser(deployer.ID, ScopeGrant{
-		Cluster: "doops-edu", Instance: "edu-coder", Actions: []GatewayAction{ActionExec},
+		Cluster: "doops-edu", Instance: "edu-coder",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	outsider := createCredentialTestUser(t, store, "outsider")
-	if err := store.GrantUser(owner.ID, ScopeGrant{
-		Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin},
-	}); err != nil {
+	if err := store.SetUserAdmin(owner.ID, true); err != nil {
 		t.Fatalf("grant credential administration: %v", err)
 	}
 
@@ -562,10 +557,7 @@ func TestPlatformCredentialAdministratorCanManageResourceCreatedByAnotherAdmin(t
 	store := openCredentialTestStore(t)
 	creator := createCredentialTestUser(t, store, "creator")
 	operator := createCredentialTestUser(t, store, "operator")
-	if err := store.GrantUser(operator.ID, ScopeGrant{
-		Cluster: "*", Instance: "*",
-		Actions: []GatewayAction{ActionAdmin},
-	}); err != nil {
+	if err := store.SetUserAdmin(operator.ID, true); err != nil {
 		t.Fatalf("grant credential administration: %v", err)
 	}
 
@@ -612,10 +604,7 @@ func TestCredentialAdministratorCanRecoverAnotherUsersPersonalCredential(t *test
 	store := openCredentialTestStore(t)
 	owner := createCredentialTestUser(t, store, "owner")
 	operator := createCredentialTestUser(t, store, "operator")
-	if err := store.GrantUser(operator.ID, ScopeGrant{
-		Cluster: "*", Instance: "*",
-		Actions: []GatewayAction{ActionAdmin},
-	}); err != nil {
+	if err := store.SetUserAdmin(operator.ID, true); err != nil {
 		t.Fatalf("grant credential administration: %v", err)
 	}
 

@@ -50,26 +50,21 @@ func TestCredentialVersionAndGrantHistoryIsMetadataOnlyAndOwnerScoped(t *testing
 		}
 	}
 	deniedUser, deniedToken := createCredentialHTTPUser(t, store, "history-no-metadata", false)
-	if err := store.GrantUser(deniedUser.ID, ScopeGrant{Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAsk}}); err != nil {
+	if err := store.GrantUser(deniedUser.ID, ScopeGrant{Cluster: "*", Instance: "*"}); err != nil {
 		t.Fatal(err)
 	}
 	resourceWithoutMetadata, err := store.CreateCredential(CredentialCreateRequest{Name: "no-metadata", Scope: CredentialScopePersonal, Type: CredentialTypeRegistry, OwnerID: deniedUser.ID, CreatedBy: deniedUser.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Ownership is sufficient for metadata; no second credential action is required.
+	// Ownership alone is sufficient for metadata: drop every target grant first.
 	grants, err := store.ListGrants(deniedUser.ID)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || len(grants) == 0 {
+		t.Fatalf("owner must start with a target grant: %#v, %v", grants, err)
 	}
 	for _, grant := range grants {
-		for _, action := range grant.Actions {
-			if action == ActionCredentialMetadata || action == ActionAll {
-				if err := store.DeleteGrant(grant.ID); err != nil {
-					t.Fatal(err)
-				}
-				break
-			}
+		if err := store.DeleteGrant(grant.ID); err != nil {
+			t.Fatal(err)
 		}
 	}
 	response := credentialHTTPRequest(t, mux, deniedToken, http.MethodGet, "/v1/credentials/"+resourceWithoutMetadata.ID+"/versions", nil)

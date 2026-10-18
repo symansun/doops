@@ -55,7 +55,6 @@ func TestOpenGatewayStoreUpgradesPreEdgeDatabaseWithoutBreakingOpsTokens(t *test
 	if err := store.GrantUser(user.ID, ScopeGrant{
 		Cluster:  "jm",
 		Instance: "gw-jm",
-		Actions:  []GatewayAction{ActionExec, ActionTargetsList},
 	}); err != nil {
 		t.Fatalf("grant user: %v", err)
 	}
@@ -94,8 +93,8 @@ func TestOpenGatewayStoreUpgradesPreEdgeDatabaseWithoutBreakingOpsTokens(t *test
 	if auth.UserID != user.ID {
 		t.Fatalf("upgraded token user = %s, want %s", auth.UserID, user.ID)
 	}
-	if !upgraded.UserCan(auth.UserID, "jm", "gw-jm", ActionExec) {
-		t.Fatal("upgrade must keep the existing exec grant")
+	if !upgraded.UserCanUseTarget(auth.UserID, "jm", "gw-jm") {
+		t.Fatal("upgrade must keep the existing target grant")
 	}
 	if _, err := upgraded.CreateEdgeEnrollment("jm", "gw-jm"); err != nil {
 		t.Fatalf("upgrade must create edge enrollments: %v", err)

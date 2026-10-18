@@ -32,7 +32,7 @@ func newExecutionLifecycleFixture(t *testing.T, opts GatewayHubOptions) *executi
 	t.Helper()
 	f := &executionLifecycleFixture{path: filepath.Join(t.TempDir(), "gateway.db"), opts: opts}
 	f.open(t)
-	f.admin = f.user(t, "lifecycle-admin", ScopeGrant{Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAll}})
+	f.admin = f.adminUser(t, "lifecycle-admin")
 	return f
 }
 
@@ -66,6 +66,19 @@ func (f *executionLifecycleFixture) user(t *testing.T, name string, grant ScopeG
 	}
 	token, err := f.store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: name})
 	if err != nil {
+		t.Fatal(err)
+	}
+	return token
+}
+
+func (f *executionLifecycleFixture) adminUser(t *testing.T, name string) CreatedToken {
+	t.Helper()
+	token := f.user(t, name, ScopeGrant{Cluster: "*", Instance: "*"})
+	auth, err := f.store.VerifyUserToken(token.Plaintext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.SetUserAdmin(auth.UserID, true); err != nil {
 		t.Fatal(err)
 	}
 	return token
@@ -540,7 +553,7 @@ func TestExecutionLifecycleWaitingDoesNotConsumeUserOrGlobalQuota(t *testing.T) 
 		MaxQueuedPerTarget: 1, TargetQueueTimeout: 5 * time.Second,
 	})
 	agent := f.agent(t, "quota-agent")
-	waiter := f.user(t, "waiter", ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec, ActionWrite}})
+	waiter := f.user(t, "waiter", ScopeGrant{Cluster: "dev", Instance: "local"})
 	holderClient, queuedClient, independentClient := f.client(t, f.admin), f.client(t, waiter), f.client(t, waiter)
 	lifecycleSend(t, holderClient, 2, "doops_file_write", "occupied", map[string]interface{}{"path": "config.txt", "content": "first"})
 	holderCall := agent.call(t, "doops_file_write", "occupied")
@@ -774,7 +787,7 @@ func TestExecutionLifecycleDisconnectPersistsAcrossReconnectAndRestart(t *testin
 		listed.Operations[0].State != "outcome_unknown" || listed.Operations[0].Session != "lost-owner" {
 		t.Fatalf("historical unknown missing from admin display: %#v", listed)
 	}
-	scoped := f.user(t, "target-admin", ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionAdmin}})
+	scoped := f.user(t, "target-admin", ScopeGrant{Cluster: "dev", Instance: "local"})
 	body := fmt.Sprintf(`{"id":"audit-%d","confirm_stopped":true,"reason":"operator reconciled externally; password=reason-canary","evidence":"external process inspection; Bearer evidence-canary"}`, op.AuditID)
 	before := executionAuditTestEvent(t, f.store, op.AuditID)
 	for _, tc := range []struct {
@@ -793,7 +806,7 @@ func TestExecutionLifecycleDisconnectPersistsAcrossReconnectAndRestart(t *testin
 			}
 		}
 	}
-	denied := f.user(t, "query-only", ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionInfo}})
+	denied := f.user(t, "query-only", ScopeGrant{Cluster: "dev", Instance: "local"})
 	f.http(t, denied, http.MethodPost, "/v1/admin/operations?cluster=dev&instance=local", body, http.StatusForbidden)
 	lifecycleSend(t, afterRestart, 3, "doops_shell", "new-workspace", map[string]interface{}{"command": "printf next"})
 	restarted.complete(t, restarted.call(t, "doops_shell", "new-workspace"), "")

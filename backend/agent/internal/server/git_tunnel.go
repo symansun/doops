@@ -45,7 +45,7 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unsupported git service", http.StatusBadRequest)
 		return
 	}
-	if !h.store.UserCan(auth.UserID, cluster, instance, action) {
+	if !h.store.UserCanUseTarget(auth.UserID, cluster, instance) {
 		http.Error(w, fmt.Sprintf("forbidden: %s on %s/%s", action, cluster, instance), http.StatusForbidden)
 		return
 	}
