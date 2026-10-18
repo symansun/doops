@@ -251,10 +251,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			runAdminAuditOptimize(cmdArgs[2:], servers, configErr, *sessionName)
 			return
 		}
-		if len(cmdArgs) >= 1 && cmdArgs[0] == "jobs" {
-			runAdminJobs(cmdArgs[1:], servers, configErr)
-			return
-		}
 		if len(cmdArgs) >= 1 && cmdArgs[0] == "user" {
 			runAdminUsers(cmdArgs[1:], servers, configErr)
 			return
@@ -276,7 +272,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Println("       doops admin token revoke --target <gateway-target> --id <token-id>")
 			fmt.Println("       doops admin operations list --target <gateway-target>")
 			fmt.Println("       doops admin operations cancel --target <gateway-target> --id <operation-id>")
-			fmt.Println("       doops admin jobs <list|add|run|enable|disable|rm|issues> --target <gateway-target> [...]")
 			os.Exit(1)
 		}
 		if cmdArgs[0] == "operations" && cmdArgs[1] == "list" {

@@ -64,7 +64,6 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Manage target grants | `doops admin grant <list\|add\|delete> ...` | Grants use exact configured `cluster/instance` routes. |
 | Issue token as admin | `doops admin token create ...` | Requires a gateway token with `admin` permission. |
 | Inspect/cancel active operations | `doops admin operations <list|cancel> --target <target> ...` | Gateway scopes the operation list and cancellation to the selected cluster/instance; cancellation requests termination, not confirmation that work stopped. |
-| Manage scheduled issue jobs | `doops admin jobs <list|add|run|enable|disable|rm|issues> ...` | See `DOOPS_SCHEDULED_ISSUES.md`. |
 | Reconnect an idle target | `doops unlock --target <t>` | Refuses active or queued work; does not force-release operations. |
 | Remove cached token | `doops logout --target <t>` | Removes local token cache. |
 
@@ -564,9 +563,7 @@ the user's grants.
 | 凭据 payload | 轮换：`credential put` → 对每个 active 绑定 `verify` → `promote`；或对已有资源重跑 `credential configure --id <id>`（每次生成新版本） | 历史版本不可改 |
 | 凭据 target 绑定 | 同一 scope 重新 `credential grant` 会复活已吊销绑定；换 scope 要新 `grant` 再 `grant-revoke` 旧的 | 绑定不支持原地改 scope |
 | 凭据资源 | 只能 `credential revoke` | name、type、scope 无修改入口；要改就新建资源 |
-| 定时巡检 job | `admin jobs enable\|disable` 开关；其它字段替换：`admin jobs add` 后 `admin jobs rm` | job 字段不支持原地修改 |
 | 网站代理路由 | `doops admin proxy set --id <id> [--host] [--scope-target] [--upstream] [--enabled]` 原地修改，只改传入字段；新建省略 `--id`，见 `DOOPS_GATEWAY_TUNNEL.md` | — |
-| Git 仓库登记 | HTTP `PATCH /v1/admin/repos?id=<id>` 或 Web 控制台（无 CLI） | — |
 | Edge 域名路由 / enrollment | 当前没有 HTTP 或 CLI 管理入口；存储层的增改删只被测试调用 | 不要直接改 Gateway SQLite |
 | Agent 的 cluster/instance | 由 Agent 部署配置（Helm values）声明，改它就是重新发布 Agent，见 `BUILD_DEPLOY_SOP.md` | CLI 和 Gateway 都不能改在线 Agent 的身份 |
 

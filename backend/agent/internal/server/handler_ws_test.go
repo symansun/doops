@@ -379,41 +379,6 @@ func TestAgentWebSocketShellSnapshotNoOpDoesNotPanic(t *testing.T) {
 	}
 }
 
-func TestGitCloneToolClonesIntoWorkspace(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	repoPath := createLocalBareGitRepo(t)
-
-	result, err := handleGitClone(mustJSON(t, map[string]interface{}{
-		"session_id": "clone",
-		"url":        repoPath,
-		"branch":     "main",
-		"directory":  "app",
-	}))
-	if err != nil {
-		t.Fatalf("git clone: %v", err)
-	}
-	if !strings.Contains(result, "cloned") {
-		t.Fatalf("unexpected clone result: %s", result)
-	}
-	if _, err := os.Stat(filepath.Join(root, "clone", "app", "README.md")); err != nil {
-		t.Fatalf("expected cloned file: %v", err)
-	}
-}
-
-func TestGitCloneToolRejectsDirectoryEscape(t *testing.T) {
-	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
-	_, err := handleGitClone(mustJSON(t, map[string]interface{}{
-		"session_id": "clone",
-		"url":        "https://example.com/repo.git",
-		"branch":     "main",
-		"directory":  "../escape",
-	}))
-	if err == nil || !strings.Contains(err.Error(), "directory") {
-		t.Fatalf("expected directory validation error, got %v", err)
-	}
-}
-
 func TestAgentMetadataModeReturnsModelStatusWithoutPrompt(t *testing.T) {
 	settingsPath := filepath.Join(t.TempDir(), "settings.json")
 	t.Setenv("DO_AGENT_SETTINGS", settingsPath)

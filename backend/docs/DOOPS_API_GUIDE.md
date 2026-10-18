@@ -854,31 +854,21 @@ Gateway 重启时遗留的 `running` 落为 `error`；已派发且需要变更�
 `POST /v1/admin/operations` 不再支持人工声明解锁，返回 `405`。历史审计保留原记录。
 `POST /v1/targets/unlock` 仅重连空闲目标，拒绝活动或排队操作，不强制释放活动 lease。
 
-定时巡检 job 使用 Gateway 持久 lease 单飞执行。`tick` 与 `run-now` 同时命中同一
-job 时，后到请求返回 HTTP `409`；执行期间自动续租，成功、失败、取消和超时都会在
-结束路径释放 lease，Gateway 进程异常退出后由 lease 到期自动接管，不需要人工
-unlock。每次运行都登记为可取消的 active operation。
-
 管理员 mutation 审计：
 
 - 管理员 GET 接口不要求 session，也不会产生 mutation 审计；远端 RPC/CLI 仍使用显式 session。
-- `/v1/admin/` 下的用户创建、密码、启停、grant 增删、token 签发/撤销、仓库增改删/
-  测试/克隆、巡检创建/删除/启停/立即运行、操作取消、代理路由增改删，以及
+- `/v1/admin/` 下的用户创建、密码、启停、grant 增删、token 签发/撤销、操作取消、代理路由增改删，以及
   `POST /v1/targets/unlock` 均记录调用者 `user_id + token_id`、动作和资源元数据、
   开始/结束时间与成功、拒绝或失败结果。token 签发只有一条审计，不重复记录。
 - 此类事件的 `action=admin`；`command_summary` 是白名单 JSON 元数据，包含注册路由、
   HTTP method/status，以及可用的资源 ID、subject user ID、授权动作或启停值。
-  请求体、密码、token 明文、仓库 URL/认证内容、配置、巡检命令、响应和原始错误均不进入
+  请求体、密码、token 明文、配置、响应和原始错误均不进入
   summary/tail；失败只记录稳定分类（如 `http_403`、`http_502`），tail 为空。
-- 全局用户创建/密码/启停、grant 增删、token 签发/撤销、仓库配置增改删/连接测试、
-  巡检任务创建/删除/启停必须通过 `UserIsPlatformAdmin`；仅有某个 target 的 `admin`
+- 全局用户创建/密码/启停、grant 增删、token 签发/撤销必须通过 `UserIsPlatformAdmin`；仅有某个 target 的 `admin`
   不得修改这些全局资源或给自己追加平台权限。此限制在 mutation 审计入口执行，
   不改变现有管理员 GET 的权限或 session 约定。
-- 管理员身份不替代目标动作授权：仓库克隆检查目标 `pull`，操作取消/解锁/代理路由
-  检查对应目标 `admin`；立即巡检检查匹配目标的实际 `ask/exec` 权限，审计型巡检要求平台管理员。
+- 管理员身份不替代目标授权：操作取消/解锁/代理路由检查对应目标。
   普通用户查询本人审计不会获得任何 mutation 权限。
-  自动巡检沿用已保存任务的目标选择，不因本次审计改动获得新的用户或目标授权，
-  也不会伪造一个在线管理员 token 作为自动任务 actor。
 - `/v1/admin/operations` 的 GET/DELETE 必须按 `cluster` 与 `instance` 成对指定目标；
   GET 只返回该目标的 active/unresolved 操作，DELETE 只允许取消该目标的操作，
   缺少或不匹配目标时拒绝请求；人工审计改写入口已删除。
@@ -889,7 +879,7 @@ unlock。每次运行都登记为可取消的 active operation。
   `503 audit_unavailable`（RPC 为 `-32603`），不执行 mutation。执行后才发生的审计故障
   返回 `audit_completion_failed; mutation outcome requires verification`，不返回成功响应；
   持久的 pending 记录保留。该错误不表示远端动作已经回滚，调用方必须先核验真实状态，
-  不能盲目重试。巡检下游扫描/Issue 创建/结果保存失败也返回失败，不以“零 Issue”冒充成功。
+  不能盲目重试。
 
 审计清理也是管理员 API：
 
