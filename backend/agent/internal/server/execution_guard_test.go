@@ -410,8 +410,13 @@ func TestExecutionGuardCanceledMutationRetainsUnknownWithoutBlockingNextCall(t *
 			case <-time.After(3 * time.Second):
 				t.Fatal("Agent did not receive the cancellation request")
 			}
+			// Same-session shell work runs concurrently even while a cancel is pending.
 			lifecycleSend(t, probe, 2, "doops_shell", "interrupted", map[string]interface{}{"command": "./next-change"})
-			lifecycleResponse(t, probe, 2, "target busy")
+			agent.complete(t, agent.call(t, "doops_shell", "interrupted"), "")
+			lifecycleResponse(t, probe, 2, "")
+			// The session workspace stays fenced until the canceled call reaches a terminal state.
+			lifecycleSend(t, probe, 5, "doops_file_write", "interrupted", map[string]interface{}{"path": "config.txt", "content": "x"})
+			lifecycleResponse(t, probe, 5, "target busy")
 			lifecycleSend(t, probe, 4, "doops_shell", "independent", map[string]interface{}{"command": "./independent-change"})
 			agent.complete(t, agent.call(t, "doops_shell", "independent"), "")
 			lifecycleResponse(t, probe, 4, "")

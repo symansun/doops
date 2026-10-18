@@ -315,6 +315,9 @@ func operationsConflict(left, right GatewayActiveOperation) bool {
 	if left.Resource != "" && left.Resource == right.Resource && !strings.HasPrefix(left.Resource, "target-mutation:") {
 		return true
 	}
+	if strings.HasPrefix(left.Resource, "target-mutation:") && strings.HasPrefix(right.Resource, "target-mutation:") {
+		return false
+	}
 	if left.Session != "" && left.Session == right.Session {
 		return true
 	}

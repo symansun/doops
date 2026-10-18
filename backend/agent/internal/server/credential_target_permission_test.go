@@ -390,10 +390,10 @@ func TestTargetCredentialPromptRechecksQueuedAuthority(t *testing.T) {
 					target = f.hub.client.registry.Get("dev", "local")
 					return target != nil
 				})
-				// Park the prompt behind its own session lease so authority can
-				// change between admission and dispatch.
-				held, err := target.acquireActionLeaseForSession(context.Background(), ActionExec,
-					"target-mutation:dev/local", session, 1, time.Second)
+				// Park the prompt behind its session workspace lease so authority
+				// can change between admission and dispatch.
+				held, err := target.acquireActionLeaseForSession(context.Background(), ActionWrite,
+					"workspace:"+session, session, 1, time.Second)
 				if err != nil {
 					t.Fatal(err)
 				}

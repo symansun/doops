@@ -1578,14 +1578,28 @@ func TestGatewaySessionMutationLocksArePerSession(t *testing.T) {
 		t.Fatalf("first session acquire: %v", err)
 	}
 	defer first.Release()
-	if _, err := agent.acquireActionLeaseForSession(context.Background(), ActionExec, "target-mutation:dev/local", "session-a", 0, time.Second); err == nil || !strings.Contains(err.Error(), "target busy") {
-		t.Fatalf("same session must remain serialized, got %v", err)
-	}
-	second, err := agent.acquireActionLeaseForSession(context.Background(), ActionExec, "target-mutation:dev/local", "session-b", 0, time.Second)
+	sameSession, err := agent.acquireActionLeaseForSession(context.Background(), ActionExec, "target-mutation:dev/local", "session-a", 0, time.Second)
 	if err != nil {
-		t.Fatalf("different session must not be blocked by target lock: %v", err)
+		t.Fatalf("same-session shell calls must run concurrently: %v", err)
 	}
-	second.Release()
+	if _, err := agent.acquireActionLeaseForSession(context.Background(), ActionWrite, "workspace:session-a", "session-a", 0, time.Second); err == nil || !strings.Contains(err.Error(), "target busy") {
+		t.Fatalf("same-session workspace write must wait for running shell calls, got %v", err)
+	}
+	other, err := agent.acquireActionLeaseForSession(context.Background(), ActionWrite, "workspace:session-b", "session-b", 0, time.Second)
+	if err != nil {
+		t.Fatalf("another session's workspace must not be blocked: %v", err)
+	}
+	other.Release()
+	sameSession.Release()
+	if _, err := agent.acquireActionLeaseForSession(context.Background(), ActionWrite, "workspace:session-a", "session-a", 0, time.Second); err == nil {
+		t.Fatal("workspace write entered while one same-session shell call is still running")
+	}
+	first.Release()
+	write, err := agent.acquireActionLeaseForSession(context.Background(), ActionWrite, "workspace:session-a", "session-a", 0, time.Second)
+	if err != nil {
+		t.Fatalf("workspace write blocked after every shell call released: %v", err)
+	}
+	write.Release()
 }
 
 func TestGatewayTargetBusySnapshotUsesResourceLocks(t *testing.T) {
@@ -2056,7 +2070,7 @@ func TestGatewayAgentReadLoopKeepsPingResponsiveWhenPendingConsumerStalls(t *tes
 	}
 }
 
-func TestGatewayRPCRejectsSecondConcurrentOperationForSameSessionAsBusy(t *testing.T) {
+func TestGatewayRPCRunsSameSessionShellConcurrentlyAndFencesWorkspace(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -2076,46 +2090,53 @@ func TestGatewayRPCRejectsSecondConcurrentOperationForSameSessionAsBusy(t *testi
 
 	agentConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer agentConn.Close()
-	blockRelease := make(chan struct{})
-	go serveBlockingFakeAgent(t, agentConn, blockRelease)
+	release := make(chan struct{})
+	started := make(chan string, 4)
+	go serveSessionAwareBlockingFakeAgent(t, agentConn, started, release)
 
-	clientWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/rpc?cluster=dev&instance=local"
-	clientA, _, err := websocket.DefaultDialer.Dial(clientWS, http.Header{"Authorization": []string{"Bearer " + userToken.Plaintext}})
-	if err != nil {
-		t.Fatalf("dial client A: %v", err)
-	}
+	clientA := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
 	defer clientA.Close()
-	clientB, _, err := websocket.DefaultDialer.Dial(clientWS, http.Header{"Authorization": []string{"Bearer " + userToken.Plaintext}})
-	if err != nil {
-		t.Fatalf("dial client B: %v", err)
-	}
+	clientB := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
 	defer clientB.Close()
-	writeGatewayJSON(t, clientA, map[string]interface{}{"jsonrpc": "2.0", "id": 1, "method": "initialize"})
-	readUntilID(t, clientA, 1)
-	writeGatewayJSON(t, clientB, map[string]interface{}{"jsonrpc": "2.0", "id": 1, "method": "initialize"})
-	readUntilID(t, clientB, 1)
+	clientC := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
+	defer clientC.Close()
 
-	args, _ := json.Marshal(map[string]interface{}{"command": "sleep", "session_id": "busy"})
-	writeGatewayJSON(t, clientA, map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "tools/call",
-		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(args)},
-	})
-	time.Sleep(200 * time.Millisecond)
-
-	writeGatewayJSON(t, clientB, map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "tools/call",
-		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(args)},
-	})
-	busy := readUntilID(t, clientB, 2)
-	if errObj, ok := busy["error"].(map[string]interface{}); !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "target busy") {
-		t.Fatalf("expected target busy error, got %#v", busy)
+	call := func(conn *websocket.Conn, tool string, args map[string]interface{}) {
+		raw, _ := json.Marshal(args)
+		writeGatewayJSON(t, conn, map[string]interface{}{
+			"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+			"params": map[string]interface{}{"name": tool, "arguments": json.RawMessage(raw)},
+		})
 	}
-	close(blockRelease)
-	readUntilID(t, clientA, 2)
+	call(clientA, "doops_shell", map[string]interface{}{"command": "sleep", "session_id": "busy"})
+	call(clientB, "doops_shell", map[string]interface{}{"command": "sleep", "session_id": "busy"})
+	// Barrier: both same-session shell calls reach the Agent before either is released.
+	for i := 0; i < 2; i++ {
+		select {
+		case session := <-started:
+			if session != "busy" {
+				t.Fatalf("unexpected dispatched session %q", session)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("same-session shell call %d was serialized instead of dispatched", i+1)
+		}
+	}
+	call(clientC, "doops_file_write", map[string]interface{}{"path": "config.txt", "content": "x", "session_id": "busy"})
+	fenced := readUntilID(t, clientC, 2)
+	if errObj, ok := fenced["error"].(map[string]interface{}); !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "target busy") {
+		t.Fatalf("same-session workspace write must wait for running shell calls, got %#v", fenced)
+	}
+	select {
+	case session := <-started:
+		t.Fatalf("fenced workspace write reached the Agent: %q", session)
+	default:
+	}
+	close(release)
+	for _, conn := range []*websocket.Conn{clientA, clientB} {
+		if done := readUntilID(t, conn, 2); done["error"] != nil {
+			t.Fatalf("concurrent shell call failed: %#v", done)
+		}
+	}
 }
 
 func TestGatewayRPCAllowsConcurrentStructuredWorkspacesForSameTarget(t *testing.T) {
@@ -2696,11 +2717,14 @@ func TestGatewayRPCDefaultDoesNotQueueBehindBusyTarget(t *testing.T) {
 	})
 	time.Sleep(200 * time.Millisecond)
 
+	// A same-session workspace write conflicts with the running shell call;
+	// with default options it must fail fast instead of waiting in a hidden queue.
+	writeArgs, _ := json.Marshal(map[string]interface{}{"path": "config.txt", "content": "x", "session_id": "busy-default"})
 	writeGatewayJSON(t, clientB, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      2,
 		"method":  "tools/call",
-		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(args)},
+		"params":  map[string]interface{}{"name": "doops_file_write", "arguments": json.RawMessage(writeArgs)},
 	})
 	busy := readUntilID(t, clientB, 2)
 	if errObj, ok := busy["error"].(map[string]interface{}); !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "target busy") {
