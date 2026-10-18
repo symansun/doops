@@ -53,7 +53,7 @@ func newAdminAuditFixture(t *testing.T) *adminAuditFixture {
 		t.Fatal(err)
 	}
 	f.userToken, f.tokenID = userToken.Plaintext, userToken.ID
-	if err := store.GrantUser(f.user.ID, ScopeGrant{Cluster: "dev", Instance: "node", Actions: []GatewayAction{ActionRead}}); err != nil {
+	if err := store.GrantUser(f.user.ID, ScopeGrant{Cluster: "dev", Instance: "node"}); err != nil {
 		t.Fatal(err)
 	}
 	grants, err := store.ListGrants(f.user.ID)
@@ -186,7 +186,7 @@ func TestAdminMutationRoutesAuditAndFailClosed(t *testing.T) {
 			return request{"POST", "/v1/admin/users/disable", map[string]any{"user_id": f.user.ID, "disabled": true, "payload": adminAuditCanary}}
 		}},
 		{"grant-create", func(t *testing.T, f *adminAuditFixture) request {
-			return request{"POST", "/v1/admin/grants", map[string]any{"user_id": f.user.ID, "cluster": "dev", "instance": "node", "actions": []string{"read"}, "payload": adminAuditCanary}}
+			return request{"POST", "/v1/admin/grants", map[string]any{"user_id": f.user.ID, "cluster": "dev", "instance": "node", "payload": adminAuditCanary}}
 		}},
 		{"grant-delete", func(t *testing.T, f *adminAuditFixture) request {
 			return request{"DELETE", fmt.Sprintf("/v1/admin/grants?id=%d", f.grantID), nil}
@@ -319,11 +319,11 @@ func TestTargetAdminCannotMutateGlobalResources(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newAdminAuditFixture(t)
-			if err := f.store.GrantUser(f.user.ID, ScopeGrant{Cluster: "dev", Instance: "node", Actions: []GatewayAction{ActionAdmin}}); err != nil {
+			if err := f.store.GrantUser(f.user.ID, ScopeGrant{Cluster: "dev", Instance: "node"}); err != nil {
 				t.Fatal(err)
 			}
-			if !f.store.UserHasAction(f.user.ID, ActionAdmin) || f.store.UserIsPlatformAdmin(f.user.ID) {
-				t.Fatal("fixture must have target admin authority, not platform admin")
+			if !f.store.UserCanUseTarget(f.user.ID, "dev", "node") || f.store.UserIsPlatformAdmin(f.user.ID) {
+				t.Fatal("fixture must have target access, not platform admin")
 			}
 			path := tc.path
 			if strings.Contains(path, "%") {
@@ -379,7 +379,7 @@ func TestAdminTokenDirectAndMuxEachAuditOnce(t *testing.T) {
 			if strings.Contains(events[0].CommandSummary, result.Token) {
 				t.Fatal("issued token entered audit")
 			}
-			if err := f.store.GrantUser(f.user.ID, ScopeGrant{Cluster: "dev", Instance: "node", Actions: []GatewayAction{ActionAdmin}}); err != nil {
+			if err := f.store.GrantUser(f.user.ID, ScopeGrant{Cluster: "dev", Instance: "node"}); err != nil {
 				t.Fatal(err)
 			}
 			before := f.state(t)
@@ -404,10 +404,12 @@ func TestAdminTokenDirectAndMuxEachAuditOnce(t *testing.T) {
 	}
 }
 
-func TestTargetAdminMutationsRetainExactActions(t *testing.T) {
+// A target grant never reaches the admin control plane; every admin route is
+// platform-admin only and still records the refused attempt.
+func TestTargetGrantCannotUseAdminRoutes(t *testing.T) {
 	f := newAdminAuditFixture(t)
 	f.agent(t, false)
-	if err := f.store.GrantUser(f.user.ID, ScopeGrant{Cluster: "dev", Instance: "node", Actions: []GatewayAction{ActionAdmin}}); err != nil {
+	if err := f.store.GrantUser(f.user.ID, ScopeGrant{Cluster: "dev", Instance: "node"}); err != nil {
 		t.Fatal(err)
 	}
 	auth, err := f.store.VerifyUserToken(f.userToken)
@@ -423,15 +425,15 @@ func TestTargetAdminMutationsRetainExactActions(t *testing.T) {
 		{"DELETE", "/v1/admin/proxy-routes?id=" + f.route.ID, nil},
 		{"POST", "/v1/targets/unlock?cluster=dev&instance=node", nil},
 	} {
+		before := f.state(t)
 		response := credentialHTTPRequest(t, f.mux, f.userToken, tc.method, tc.path, tc.body)
-		wantCode := http.StatusOK
-		if strings.HasPrefix(tc.path, "/v1/admin/operations?") {
-			wantCode = http.StatusAccepted
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("target grant reached admin route: %s HTTP %d: %s", tc.path, response.Code, response.Body.String())
 		}
-		if response.Code != wantCode {
-			t.Fatalf("target authority was removed: %s HTTP %d: %s", tc.path, response.Code, response.Body.String())
+		if f.state(t) != before {
+			t.Fatalf("refused admin route mutated state: %s", tc.path)
 		}
-		assertAdminAudit(t, f.store, auth, tc.path, tc.method, "success", wantCode)
+		assertAdminAudit(t, f.store, auth, tc.path, tc.method, "forbidden", http.StatusForbidden)
 	}
 }
 
@@ -442,7 +444,7 @@ func TestAdminAuditRejectsOtherTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.store.GrantUser(limited.ID, ScopeGrant{Cluster: "elsewhere", Instance: "other", Actions: []GatewayAction{ActionAdmin}}); err != nil {
+	if err := f.store.GrantUser(limited.ID, ScopeGrant{Cluster: "elsewhere", Instance: "other"}); err != nil {
 		t.Fatal(err)
 	}
 	token, err := f.store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: limited.ID})
@@ -557,25 +559,37 @@ func TestAuditHTTPPersonalHistoryAndCredentialScope(t *testing.T) {
 	if admin.Code != http.StatusOK || !strings.Contains(admin.Body.String(), "other-exec") {
 		t.Fatalf("platform admin lost full history: %d: %s", admin.Code, admin.Body.String())
 	}
-	if err := f.store.GrantUser(f.user.ID, ScopeGrant{Cluster: "dev", Instance: "node", Actions: []GatewayAction{ActionCredentialAudit}}); err != nil {
+	// A target grant does not reveal other users' events on that target.
+	if err := f.store.GrantUser(f.user.ID, ScopeGrant{Cluster: "dev", Instance: "node"}); err != nil {
 		t.Fatal(err)
 	}
-	auditor := credentialHTTPRequest(t, f.mux, f.userToken, http.MethodGet, "/v1/audit", nil)
-	if auditor.Code != http.StatusOK || !strings.Contains(auditor.Body.String(), "allowed-credential") ||
-		!strings.Contains(auditor.Body.String(), "my-exec") ||
-		!strings.Contains(auditor.Body.String(), "my-other-target-credential") ||
-		!strings.Contains(auditor.Body.String(), "my-unscoped-credential") ||
-		strings.Contains(auditor.Body.String(), "other-exec") ||
-		strings.Contains(auditor.Body.String(), "forbidden-credential") ||
-		strings.Contains(auditor.Body.String(), "other-unscoped-credential") {
-		t.Fatalf("credential audit scope changed: %d: %s", auditor.Code, auditor.Body.String())
+	granted := credentialHTTPRequest(t, f.mux, f.userToken, http.MethodGet, "/v1/audit", nil)
+	if granted.Code != http.StatusOK || !strings.Contains(granted.Body.String(), "my-exec") ||
+		strings.Contains(granted.Body.String(), "allowed-credential") ||
+		strings.Contains(granted.Body.String(), "other-exec") {
+		t.Fatalf("target grant changed audit visibility: %d: %s", granted.Code, granted.Body.String())
+	}
+	// Owning a credential reveals other users' events that reference it.
+	owned, err := f.store.CreateCredential(CredentialCreateRequest{
+		Name: "audit-owned", Scope: CredentialScopePersonal, Type: CredentialTypeOpaque,
+		OwnerID: f.user.ID, CreatedBy: f.user.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.StartAudit(AuditEvent{UserID: other.ID, Action: ActionCredentialUse, Cluster: "prod", Instance: "other",
+		CredentialID: owned.ID, CommandSummary: "owned-credential-use"}); err != nil {
+		t.Fatal(err)
+	}
+	ownerView := credentialHTTPRequest(t, f.mux, f.userToken, http.MethodGet, "/v1/audit", nil)
+	if ownerView.Code != http.StatusOK || !strings.Contains(ownerView.Body.String(), "owned-credential-use") ||
+		strings.Contains(ownerView.Body.String(), "forbidden-credential") ||
+		strings.Contains(ownerView.Body.String(), "other-unscoped-credential") {
+		t.Fatalf("credential owner audit boundary failed: %d: %s", ownerView.Code, ownerView.Body.String())
 	}
 	crossCredential := credentialHTTPRequest(t, f.mux, f.userToken, http.MethodGet, "/v1/audit?user_id="+other.ID, nil)
-	if crossCredential.Code != http.StatusOK || !strings.Contains(crossCredential.Body.String(), "allowed-credential") ||
-		strings.Contains(crossCredential.Body.String(), "other-exec") ||
-		strings.Contains(crossCredential.Body.String(), "forbidden-credential") ||
-		strings.Contains(crossCredential.Body.String(), "other-unscoped-credential") {
-		t.Fatalf("credential management boundary failed: %d: %s", crossCredential.Code, crossCredential.Body.String())
+	if crossCredential.Code != http.StatusForbidden {
+		t.Fatalf("explicit cross-user audit query accepted: %d", crossCredential.Code)
 	}
 	if _, err := f.store.db.Exec(`DROP TABLE audit_events`); err != nil {
 		t.Fatal(err)
@@ -598,28 +612,27 @@ func TestAuditHTTPExplicitSelfAndGlobalViews(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, role := range []string{"ordinary", "credential-auditor", "target-admin", "platform-credential-auditor", "platform-admin", "platform-all"} {
+	for _, role := range []string{"no-grant", "target-grant", "wildcard-grant", "platform-admin"} {
 		t.Run(role, func(t *testing.T) {
 			t.Cleanup(func() {
 				if _, err := f.store.db.Exec("DELETE FROM grants WHERE user_id = ?", f.user.ID); err != nil {
 					t.Error(err)
 				}
+				if err := f.store.SetUserAdmin(f.user.ID, false); err != nil {
+					t.Error(err)
+				}
 			})
-			grant := ScopeGrant{Cluster: "dev", Instance: "node"}
 			switch role {
-			case "credential-auditor":
-				grant.Actions = []GatewayAction{ActionCredentialAudit}
-			case "target-admin":
-				grant.Actions = []GatewayAction{ActionAdmin}
-			case "platform-credential-auditor":
-				grant = ScopeGrant{Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionCredentialAudit}}
+			case "target-grant":
+				if err := f.store.GrantUser(f.user.ID, ScopeGrant{Cluster: "dev", Instance: "node"}); err != nil {
+					t.Fatal(err)
+				}
+			case "wildcard-grant":
+				if err := f.store.GrantUser(f.user.ID, ScopeGrant{Cluster: "*", Instance: "*"}); err != nil {
+					t.Fatal(err)
+				}
 			case "platform-admin":
-				grant = ScopeGrant{Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin}}
-			case "platform-all":
-				grant = ScopeGrant{Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAll}}
-			}
-			if len(grant.Actions) != 0 {
-				if err := f.store.GrantUser(f.user.ID, grant); err != nil {
+				if err := f.store.SetUserAdmin(f.user.ID, true); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -642,7 +655,8 @@ func TestAuditHTTPExplicitSelfAndGlobalViews(t *testing.T) {
 					t.Fatalf("self query lost own credentials/filters: %s", response.Body.String())
 				}
 			}
-			platform := role == "platform-admin" || role == "platform-all"
+			// A wildcard target grant is not platform admin: global audit stays denied.
+			platform := role == "platform-admin"
 			for _, query := range []string{"view=global", "view=global&user_id=self"} {
 				response := credentialHTTPRequest(t, f.mux, f.userToken, http.MethodGet, "/v1/audit?"+query, nil)
 				if !platform {
@@ -678,7 +692,7 @@ func TestAuditHTTPExplicitSelfAndGlobalViews(t *testing.T) {
 
 func TestAuditHTTPFiltersVisibilityBeforeLimit(t *testing.T) {
 	f := newAdminAuditFixture(t)
-	if err := f.store.GrantUser(f.user.ID, ScopeGrant{Cluster: "dev", Instance: "node", Actions: []GatewayAction{ActionCredentialAudit}}); err != nil {
+	if err := f.store.GrantUser(f.user.ID, ScopeGrant{Cluster: "dev", Instance: "node"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.store.StartAudit(AuditEvent{UserID: f.user.ID, Action: ActionExec, CommandSummary: "older-own-event"}); err != nil {
@@ -705,6 +719,10 @@ func TestConfigWriteUsesOnePayloadFreeRPCAudit(t *testing.T) {
 				var err error
 				auth, err = f.store.VerifyUserToken(f.userToken)
 				if err != nil {
+					t.Fatal(err)
+				}
+				// Without a grant on the target the write must not reach the Agent.
+				if _, err := f.store.db.Exec("DELETE FROM grants WHERE user_id = ?", f.user.ID); err != nil {
 					t.Fatal(err)
 				}
 			}

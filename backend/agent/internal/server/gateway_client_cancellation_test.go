@@ -12,7 +12,7 @@ func TestGatewayClientCancellationIsConnectionScopedAndWaitsForTerminal(t *testi
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
 	remote := f.agent(t, "client-cancellation")
 	token := f.user(t, "executor", ScopeGrant{
-		Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec},
+		Cluster: "dev", Instance: "local",
 	})
 	client, other := f.client(t, token), f.client(t, token)
 	lifecycleSend(t, client, 2, "doops_shell", "client-cancel", map[string]interface{}{"command": "sleep 60"})

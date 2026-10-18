@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
+// Platform admins see every event. Other users see their own events and the
+// events that reference a credential they own.
 func (h *GatewayHub) visibleAuditEvents(auth TokenAuth, query url.Values) ([]AuditEvent, error) {
 	isAdmin := h.store.UserIsPlatformAdmin(auth.UserID)
-	credentialAuditor := h.store.UserHasAction(auth.UserID, ActionCredentialAudit)
-	unscopedCredentialAuditor := h.store.UserCan(auth.UserID, "", "", ActionCredentialAudit)
 	if strings.TrimSpace(query.Get("view")) == "global" && !isAdmin {
 		return nil, ErrUnauthorized
 	}
@@ -17,11 +17,8 @@ func (h *GatewayHub) visibleAuditEvents(auth TokenAuth, query url.Values) ([]Aud
 	if userID == "self" {
 		userID = auth.UserID
 	}
-	if !isAdmin && !credentialAuditor {
-		if userID != "" && userID != auth.UserID {
-			return nil, ErrUnauthorized
-		}
-		userID = auth.UserID
+	if !isAdmin && userID != "" && userID != auth.UserID {
+		return nil, ErrUnauthorized
 	}
 	limit, _ := strconv.Atoi(query.Get("limit"))
 	if limit <= 0 || limit > 500 {
@@ -32,8 +29,21 @@ func (h *GatewayHub) visibleAuditEvents(auth TokenAuth, query url.Values) ([]Aud
 		Session: query.Get("session"), Action: GatewayAction(query.Get("action")),
 		Status: query.Get("status"), Limit: 500,
 	}
+	owned := map[string]bool{}
+	ownsCredential := func(id string) bool {
+		if id == "" {
+			return false
+		}
+		if value, ok := owned[id]; ok {
+			return value
+		}
+		resource, err := h.store.CredentialByID(id)
+		value := err == nil && resource.OwnerID == auth.UserID
+		owned[id] = value
+		return value
+	}
 	visible := make([]AuditEvent, 0, limit)
-	// Apply visibility before the requested limit. Other users' events must not
+	// Apply visibility before the requested limit so other users' events cannot
 	// crowd an operator's own history out of the first database page.
 	for {
 		events, err := h.store.ListAuditFiltered(filter)
@@ -41,17 +51,8 @@ func (h *GatewayHub) visibleAuditEvents(auth TokenAuth, query url.Values) ([]Aud
 			return nil, err
 		}
 		for _, event := range events {
-			if !isAdmin && event.UserID != auth.UserID {
-				if !strings.HasPrefix(string(event.Action), "credential:") || !credentialAuditor {
-					continue
-				}
-				if event.Cluster == "" || event.Instance == "" {
-					if !unscopedCredentialAuditor {
-						continue
-					}
-				} else if !h.store.UserCan(auth.UserID, event.Cluster, event.Instance, ActionCredentialAudit) {
-					continue
-				}
+			if !isAdmin && event.UserID != auth.UserID && !ownsCredential(event.CredentialID) {
+				continue
 			}
 			visible = append(visible, event)
 			if len(visible) == limit {

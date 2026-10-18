@@ -289,7 +289,7 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 	}
 	if resource.Scope == CredentialScopePersonal {
 		if resource.OwnerID == auth.UserID {
-			if !h.store.CanUseTargetCredentials(auth.UserID, body.Scope.Cluster, body.Scope.Instance) {
+			if !h.store.UserCanUseTarget(auth.UserID, body.Scope.Cluster, body.Scope.Instance) {
 				http.Error(w, "Forbidden", http.StatusForbidden)
 				return
 			}
@@ -528,9 +528,7 @@ func (h *GatewayHub) canViewCredential(
 	}
 	cluster = strings.TrimSpace(cluster)
 	instance = strings.TrimSpace(instance)
-	if cluster == "" || instance == "" ||
-		(!h.store.CanUseTargetCredentials(actorID, cluster, instance) &&
-			!h.store.UserCan(actorID, cluster, instance, ActionCredentialMetadata)) {
+	if cluster == "" || instance == "" || !h.store.UserCanUseTarget(actorID, cluster, instance) {
 		return false
 	}
 	entries, err := h.store.ListCredentialAccess(actorID, cluster, instance)
@@ -558,8 +556,7 @@ func (h *GatewayHub) handleCredentialList(w http.ResponseWriter, r *http.Request
 			http.Error(w, "credential target list requires cluster and instance", http.StatusBadRequest)
 			return
 		}
-		if !h.store.CanUseTargetCredentials(auth.UserID, cluster, instance) &&
-			!h.store.UserCan(auth.UserID, cluster, instance, ActionCredentialMetadata) {
+		if !h.store.UserCanUseTarget(auth.UserID, cluster, instance) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
 			return
 		}

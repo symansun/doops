@@ -2,7 +2,6 @@ package server
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -21,13 +20,12 @@ type UserSummary struct {
 
 // StoredGrant 表示一条已落库的授权规则。
 type StoredGrant struct {
-	ID        int64           `json:"id"`
-	UserID    string          `json:"user_id"`
-	UserName  string          `json:"user_name,omitempty"`
-	Cluster   string          `json:"cluster"`
-	Instance  string          `json:"instance"`
-	Actions   []GatewayAction `json:"actions"`
-	CreatedAt time.Time       `json:"created_at"`
+	ID        int64     `json:"id"`
+	UserID    string    `json:"user_id"`
+	UserName  string    `json:"user_name,omitempty"`
+	Cluster   string    `json:"cluster"`
+	Instance  string    `json:"instance"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // TokenInfo 表示一条令牌的元信息（不含明文，明文仅创建时返回一次）。
@@ -74,7 +72,7 @@ func (s *GatewayStore) ListUsers() ([]UserSummary, error) {
 	}
 	for i := range users {
 		users[i].GrantCount = s.countGrants(users[i].ID)
-		users[i].IsAdmin = s.UserHasAction(users[i].ID, ActionAdmin)
+		users[i].IsAdmin = s.UserIsPlatformAdmin(users[i].ID)
 	}
 	return users, nil
 }
@@ -121,10 +119,10 @@ func (s *GatewayStore) ListGrants(userID string) ([]StoredGrant, error) {
 		err  error
 	)
 	if strings.TrimSpace(userID) != "" {
-		rows, err = s.db.Query(`SELECT g.id, g.user_id, u.name, g.cluster, g.instance, g.actions_json, g.created_at
+		rows, err = s.db.Query(`SELECT g.id, g.user_id, u.name, g.cluster, g.instance, g.created_at
 			FROM grants g LEFT JOIN users u ON u.id = g.user_id WHERE g.user_id = ? ORDER BY g.id`, strings.TrimSpace(userID))
 	} else {
-		rows, err = s.db.Query(`SELECT g.id, g.user_id, u.name, g.cluster, g.instance, g.actions_json, g.created_at
+		rows, err = s.db.Query(`SELECT g.id, g.user_id, u.name, g.cluster, g.instance, g.created_at
 			FROM grants g LEFT JOIN users u ON u.id = g.user_id ORDER BY g.id`)
 	}
 	if err != nil {
@@ -135,14 +133,13 @@ func (s *GatewayStore) ListGrants(userID string) ([]StoredGrant, error) {
 	for rows.Next() {
 		var g StoredGrant
 		var name sql.NullString
-		var rawActions, created string
-		if err := rows.Scan(&g.ID, &g.UserID, &name, &g.Cluster, &g.Instance, &rawActions, &created); err != nil {
+		var created string
+		if err := rows.Scan(&g.ID, &g.UserID, &name, &g.Cluster, &g.Instance, &created); err != nil {
 			return nil, err
 		}
 		if name.Valid {
 			g.UserName = name.String
 		}
-		_ = json.Unmarshal([]byte(rawActions), &g.Actions)
 		g.CreatedAt, _ = parseTime(created)
 		grants = append(grants, g)
 	}

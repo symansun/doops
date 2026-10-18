@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"sort"
 	"strings"
@@ -16,10 +15,6 @@ type ClientService struct {
 	store    *GatewayStore
 	registry *AgentRegistry
 	opts     GatewayHubOptions
-
-	opsMu   sync.Mutex
-	active  int
-	userOps map[string]int
 
 	activeOpsMu sync.Mutex
 	activeOps   map[string]*gatewayActiveOperation
@@ -34,45 +29,8 @@ func NewClientService(
 		store:     store,
 		registry:  registry,
 		opts:      opts,
-		userOps:   make(map[string]int),
 		activeOps: make(map[string]*gatewayActiveOperation),
 	}
-}
-
-func (s *ClientService) acquireOperationSlot(userID string) (func(), error) {
-	s.opsMu.Lock()
-	defer s.opsMu.Unlock()
-	if s.active >= s.opts.MaxConcurrentOperations {
-		return nil, fmt.Errorf("global operation limit exceeded")
-	}
-	if s.userOps[userID] >= s.opts.MaxConcurrentPerUser {
-		return nil, fmt.Errorf("user operation limit exceeded")
-	}
-	s.active++
-	s.userOps[userID]++
-	return func() {
-		s.opsMu.Lock()
-		defer s.opsMu.Unlock()
-		s.active--
-		s.userOps[userID]--
-		if s.userOps[userID] <= 0 {
-			delete(s.userOps, userID)
-		}
-	}, nil
-}
-
-func (s *ClientService) acquireGlobalOperationSlot() (func(), error) {
-	s.opsMu.Lock()
-	defer s.opsMu.Unlock()
-	if s.active >= s.opts.MaxConcurrentOperations {
-		return nil, fmt.Errorf("global operation limit exceeded")
-	}
-	s.active++
-	return func() {
-		s.opsMu.Lock()
-		defer s.opsMu.Unlock()
-		s.active--
-	}, nil
 }
 
 func (s *ClientService) registerActiveOperation(op GatewayActiveOperation, cancel context.CancelFunc) string {
@@ -356,6 +314,9 @@ func operationsConflict(left, right GatewayActiveOperation) bool {
 	}
 	if left.Resource != "" && left.Resource == right.Resource && !strings.HasPrefix(left.Resource, "target-mutation:") {
 		return true
+	}
+	if strings.HasPrefix(left.Resource, "target-mutation:") && strings.HasPrefix(right.Resource, "target-mutation:") {
+		return false
 	}
 	if left.Session != "" && left.Session == right.Session {
 		return true

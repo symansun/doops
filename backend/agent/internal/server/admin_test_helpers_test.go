@@ -18,11 +18,7 @@ func newAdminStoreAndToken(t *testing.T) (*GatewayStore, string) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	if err := store.GrantUser(user.ID, ScopeGrant{
-		Cluster:  "*",
-		Instance: "*",
-		Actions:  []GatewayAction{ActionAdmin},
-	}); err != nil {
+	if err := store.SetUserAdmin(user.ID, true); err != nil {
 		t.Fatalf("grant admin: %v", err)
 	}
 	token, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "admin"})

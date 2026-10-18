@@ -21,14 +21,12 @@ import (
 )
 
 type GatewayHubOptions struct {
-	AgentLease              time.Duration
-	OperationTimeout        time.Duration
-	TargetQueueTimeout      time.Duration
-	TargetReconnectGrace    time.Duration
-	LoginTokenTTL           time.Duration
-	MaxConcurrentOperations int
-	MaxConcurrentPerUser    int
-	MaxQueuedPerTarget      int
+	AgentLease           time.Duration
+	OperationTimeout     time.Duration
+	TargetQueueTimeout   time.Duration
+	TargetReconnectGrace time.Duration
+	LoginTokenTTL        time.Duration
+	MaxQueuedPerTarget   int
 }
 
 type GatewayHub struct {
@@ -468,12 +466,6 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	if opts.LoginTokenTTL <= 0 {
 		opts.LoginTokenTTL = 24 * time.Hour
 	}
-	if opts.MaxConcurrentOperations <= 0 {
-		opts.MaxConcurrentOperations = 64
-	}
-	if opts.MaxConcurrentPerUser <= 0 {
-		opts.MaxConcurrentPerUser = 8
-	}
 	if opts.MaxQueuedPerTarget <= 0 {
 		opts.MaxQueuedPerTarget = 0
 	}
@@ -589,7 +581,7 @@ func (h *GatewayHub) handleAdminTokens(w http.ResponseWriter, r *http.Request) {
 		h.writeUserAuthError(w, r)
 		return
 	}
-	if !h.store.UserHasAction(auth.UserID, ActionAdmin) {
+	if !h.store.UserIsPlatformAdmin(auth.UserID) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -666,7 +658,7 @@ func (h *GatewayHub) HandleAdminOperations(w http.ResponseWriter, r *http.Reques
 		h.writeUserAuthError(w, r)
 		return
 	}
-	if !h.store.UserHasAction(auth.UserID, ActionAdmin) {
+	if !h.store.UserIsPlatformAdmin(auth.UserID) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -777,14 +769,10 @@ func (h *GatewayHub) HandleTargets(w http.ResponseWriter, r *http.Request) {
 		h.writeUserAuthError(w, r)
 		return
 	}
-	if !h.store.UserHasAction(auth.UserID, ActionTargetsList) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 	targets := h.ListTargets()
 	filtered := targets[:0]
 	for _, target := range targets {
-		if h.store.UserCan(auth.UserID, target.Cluster, target.Instance, ActionTargetsList) {
+		if h.store.UserCanUseTarget(auth.UserID, target.Cluster, target.Instance) {
 			filtered = append(filtered, target)
 		}
 	}
@@ -801,7 +789,7 @@ func (h *GatewayHub) HandleTargetUnlock(w http.ResponseWriter, r *http.Request) 
 		h.writeUserAuthError(w, r)
 		return
 	}
-	if !h.store.UserHasAction(auth.UserID, ActionAdmin) {
+	if !h.store.UserIsPlatformAdmin(auth.UserID) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -919,15 +907,7 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "missing instance", http.StatusBadRequest)
 		return
 	}
-	if !h.store.UserCan(auth.UserID, cluster, instance, ActionInfo) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionExec) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionAsk) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionRead) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionWrite) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionPush) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionCheck) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionClean) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionAgentUpgrade) {
+	if !h.store.UserCanUseTarget(auth.UserID, cluster, instance) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -1181,7 +1161,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		}
 		return nil
 	}
-	if !h.store.UserCan(auth.UserID, cluster, instance, action) {
+	if !h.store.UserCanUseTarget(auth.UserID, cluster, instance) {
 		errMsg := fmt.Sprintf("forbidden: %s on %s/%s", action, cluster, instance)
 		finishAudit("forbidden", errMsg, "", 0)
 		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
@@ -1289,13 +1269,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	}
 	h.attachOperationLease(opID, lease)
 	opCtx = withInternalCredentialLock(opCtx, agent, resourceKey)
-	releaseLimit, err := h.acquireOperationSlot(auth.UserID)
-	if err != nil {
-		finishAudit("rate_limited", err.Error(), "", 0)
-		writeJSON(buildErrorResponse(req.ID, -32006, err.Error()))
-		return nil
-	}
-	defer releaseLimit()
 	if err := opCtx.Err(); err != nil {
 		finishAudit("canceled", "operation canceled before dispatch", "", 0)
 		writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled before dispatch"))
@@ -1319,7 +1292,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 				ActorID: auth.UserID, CredentialID: item.Authorized.Resource.ID, Scope: item.Reference.Scope,
 			})
 			if refreshErr != nil || h.store.validateUserTokenAuth(auth) != nil ||
-				!h.store.UserCan(auth.UserID, cluster, instance, action) ||
+				!h.store.UserCanUseTarget(auth.UserID, cluster, instance) ||
 				resolved.Grant.ID != item.Authorized.Grant.ID ||
 				!credentialScopeEqual(resolved.Grant.Scope, item.Authorized.Grant.Scope) {
 				finishAudit("blocked", "credential_authorization_changed", "", 0)
@@ -1338,7 +1311,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			return nil
 		}
 		promptArgs.CredentialRefs = nil
-		if h.store.validateUserTokenAuth(auth) != nil || !h.store.UserCan(auth.UserID, cluster, instance, action) {
+		if h.store.validateUserTokenAuth(auth) != nil || !h.store.UserCanUseTarget(auth.UserID, cluster, instance) {
 			if cleanupErr := h.hub.rollbackCredentialPrepare(opCtx, credentialPreparation.completed); cleanupErr != nil {
 				category := credentialOperationErrorCategory(cleanupErr)
 				finishAudit("error", category, "", 0)
@@ -2036,12 +2009,18 @@ func (a *GatewayAgent) sessionResourceHeldLocked(lockKey string) bool {
 	if session == "" {
 		return false
 	}
+	shellLike := strings.HasPrefix(lockKey, "session-mutation:")
 	for key, count := range a.sessionWriters {
 		if count == 0 {
 			continue
 		}
 		if strings.HasPrefix(key, "target:") {
 			return true
+		}
+		// Shell, SSH and apply calls in one session run concurrently; only
+		// workspace resources and Agent upgrade exclude them.
+		if shellLike && strings.HasPrefix(key, "session-mutation:") {
+			continue
 		}
 		if sessionForResourceKey(key) == session {
 			return true
@@ -2190,7 +2169,9 @@ func (a *GatewayAgent) releaseExclusive(lockKey string) {
 		return
 	}
 	a.writers--
-	delete(a.sessionWriters, lockKey)
+	if a.sessionWriters[lockKey]--; a.sessionWriters[lockKey] <= 0 {
+		delete(a.sessionWriters, lockKey)
+	}
 	a.opsMu.Unlock()
 	a.setBusy(false)
 	a.signalStateChange()
