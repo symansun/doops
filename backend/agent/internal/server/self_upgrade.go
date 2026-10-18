@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -30,6 +31,8 @@ const (
 	selfUpgradeContainer            = "doops-agent"
 	selfUpgradeChartPath            = "/app/deploy/helm/doops-agent"
 )
+
+var errNoManagedRelease = errors.New("no managed doops-agent Helm release")
 
 var (
 	imageRepositoryPattern  = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`)
@@ -166,7 +169,16 @@ func (p upgradeProcess) startSelfUpgradeJob(ctx context.Context, args agentUpgra
 	if err != nil {
 		return "", err
 	}
+	script := selfUpgradeApplyScript
 	release, workload, err := p.managedRelease(ctx, namespace, args.Release, args.Workload)
+	if errors.Is(err, errNoManagedRelease) {
+		// No Helm release yet: the same controller Job brings the Deployment under Helm.
+		release, workload, err = adoptionTarget(args.Release, args.Workload)
+		if err == nil && digest == "" {
+			err = fmt.Errorf("adopting an unmanaged Agent requires a repository@sha256:<digest> image")
+		}
+		script = selfUpgradeAdoptScript
+	}
 	if err != nil {
 		return "", err
 	}
@@ -185,7 +197,9 @@ func (p upgradeProcess) startSelfUpgradeJob(ctx context.Context, args agentUpgra
 		digest:     digest,
 		release:    release,
 		workload:   workload,
-		script:     selfUpgradeApplyScript,
+		script:     script,
+		cluster:    p.cluster,
+		instance:   p.instance,
 	})
 	if err != nil {
 		return "", err
@@ -419,6 +433,9 @@ func (p upgradeProcess) managedRelease(ctx context.Context, namespace, requested
 			continue
 		}
 		matches = append(matches, release.Name)
+	}
+	if len(matches) == 0 {
+		return "", "", errNoManagedRelease
 	}
 	if len(matches) != 1 {
 		return "", "", fmt.Errorf("expected exactly one managed doops-agent Helm release in %s, found %d", namespace, len(matches))
@@ -717,6 +734,8 @@ type selfUpgradePlan struct {
 	workload   string
 	revision   int
 	script     string
+	cluster    string
+	instance   string
 }
 
 type jobVolumeMount struct {
@@ -741,6 +760,10 @@ func selfUpgradeJobManifest(jobName, namespace string, pod selfUpgradePod, plan 
 	}
 	if plan.revision != 0 {
 		env = append(env, map[string]string{"name": "DOOPS_UPGRADE_REVISION", "value": fmt.Sprint(plan.revision)})
+	}
+	if plan.cluster != "" {
+		env = append(env, map[string]string{"name": "DOOPS_GATEWAY_CLUSTER", "value": plan.cluster},
+			map[string]string{"name": "DOOPS_GATEWAY_INSTANCE", "value": plan.instance})
 	}
 	if plan.repository != "" {
 		env = append(env, map[string]string{"name": "DOOPS_UPGRADE_REPOSITORY", "value": plan.repository})
@@ -1254,4 +1277,31 @@ helm rollback "$release" "$previous" -n "$ns" --timeout 300s --wait
 kubectl -n "$ns" rollout status "deployment/${workload}" --timeout 300s
 verify_deployment "$expected" controller record
 echo "self-upgrade rolled back to ${previous}"
+`
+
+// adoptionTarget names the release and workload for an Agent Deployment that has no
+// Helm release yet. The release defaults to the Deployment name.
+func adoptionTarget(requestedRelease, requestedWorkload string) (string, string, error) {
+	workload := strings.TrimPrefix(strings.TrimSpace(requestedWorkload), "deployment/")
+	if workload == "" {
+		workload = selfUpgradeContainer
+	}
+	if strings.Contains(workload, "/") {
+		return "", "", fmt.Errorf("adoption supports a Deployment workload only")
+	}
+	release := firstNonEmptyString(strings.TrimSpace(requestedRelease), workload)
+	if err := validateK8sName("workload", workload, 63); err != nil {
+		return "", "", err
+	}
+	if err := validateK8sName("release", release, 53); err != nil {
+		return "", "", err
+	}
+	return release, workload, nil
+}
+
+const selfUpgradeAdoptScript = selfUpgradeKubeconfigPrelude + `python3 /app/adopt_agent.py run \
+  --namespace "$ns" --workload "$workload" --release "$release" \
+  --cluster "$DOOPS_GATEWAY_CLUSTER" --instance "$DOOPS_GATEWAY_INSTANCE" \
+  --image "$DOOPS_UPGRADE_IMAGE"
+echo "self-upgrade complete image=${DOOPS_UPGRADE_IMAGE}"
 `
