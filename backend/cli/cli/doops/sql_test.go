@@ -53,3 +53,22 @@ func TestDiscoverModeAllowsLocalResourceScanWithoutRequest(t *testing.T) {
 		t.Fatalf("discover mode = %q, err = %v", mode, err)
 	}
 }
+
+func TestSQLCopyFromRejectsInvalidCombinationsBeforeAnyRequest(t *testing.T) {
+	for name, args := range map[string][]string{
+		"query mode":        {"--target", "t", "--mode", "query", "--copy-from", "a", "--database", "b", "--tables", "x"},
+		"with sql":          {"--target", "t", "--mode", "apply", "--copy-from", "a", "--database", "b", "--tables", "x", "--sql", "select 1"},
+		"with verify":       {"--target", "t", "--mode", "apply", "--copy-from", "a", "--database", "b", "--tables", "x", "--verify", "select 1"},
+		"no destination":    {"--target", "t", "--mode", "apply", "--copy-from", "a", "--tables", "x"},
+		"no tables":         {"--target", "t", "--mode", "apply", "--copy-from", "a", "--database", "b"},
+		"only blank tables": {"--target", "t", "--mode", "apply", "--copy-from", "a", "--database", "b", "--tables", " , "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// Every case must fail on argument validation, not on the missing config.
+			err := runSQLCommand(args, "s", nil, nil, nil, false)
+			if err == nil || strings.Contains(err.Error(), "not found") {
+				t.Fatalf("expected a validation error, got %v", err)
+			}
+		})
+	}
+}
