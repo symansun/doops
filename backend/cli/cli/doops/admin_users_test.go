@@ -34,7 +34,7 @@ func TestGatewayAdminUserAndGrantRequests(t *testing.T) {
 				t.Fatalf("grant user query = %q", got)
 			}
 			_ = json.NewEncoder(w).Encode(gatewayAdminGrantsResponse{
-				Grants: []gatewayAdminGrant{{ID: 7, UserID: "usr_1", Cluster: "*", Instance: "*", Actions: ordinaryGatewayActions}},
+				Grants: []gatewayAdminGrant{{ID: 7, UserID: "usr_1", Cluster: "*", Instance: "*"}},
 			})
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/admin/grants":
 			if got := r.URL.Query().Get("id"); got != "7" {
@@ -42,13 +42,13 @@ func TestGatewayAdminUserAndGrantRequests(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 7, "deleted": true})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/grants":
-			var request gatewayAdminGrantRequest
+			var request map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatalf("decode grant: %v", err)
 			}
-			if request.UserID != "usr_1" || request.Cluster != "cluster-a" || request.Instance != "node-a" ||
-				!sameStringSet(request.Actions, ordinaryGatewayActions) {
-				t.Fatalf("grant request = %#v", request)
+			if _, hasActions := request["actions"]; hasActions || request["user_id"] != "usr_1" ||
+				request["cluster"] != "cluster-a" || request["instance"] != "node-a" {
+				t.Fatalf("grant request must be target-only: %#v", request)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"user_id": "usr_1", "granted": true})
 		default:
@@ -86,7 +86,7 @@ func TestGatewayAdminUserAndGrantRequests(t *testing.T) {
 		t.Fatalf("delete grant: %v", err)
 	}
 	if err := GatewayAdminGrantCreate(server.URL, "admin-token", gatewayAdminGrantRequest{
-		UserID: "usr_1", Cluster: "cluster-a", Instance: "node-a", Actions: ordinaryGatewayActions,
+		UserID: "usr_1", Cluster: "cluster-a", Instance: "node-a",
 	}); err != nil {
 		t.Fatalf("create grant: %v", err)
 	}

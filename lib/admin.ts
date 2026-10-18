@@ -18,7 +18,6 @@ export interface AdminGrant {
   user_name?: string
   cluster: string
   instance: string
-  actions: string[]
   created_at?: string
 }
 
@@ -64,28 +63,6 @@ export interface AdminOperation {
   age_seconds: number
 }
 
-export const ALL_ACTIONS = [
-  "exec",
-  "ask",
-  "read",
-  "write",
-  "push",
-  "pull",
-  "info",
-  "check",
-  "clean",
-  "agent:upgrade",
-  "targets:list",
-  "credential:create",
-  "credential:metadata",
-  "credential:grant",
-  "credential:use",
-  "credential:verify",
-  "credential:rotate",
-  "credential:revoke",
-  "credential:audit",
-  "admin",
-] as const
 
 function headers(s: Session): HeadersInit {
   void s
@@ -144,7 +121,7 @@ export async function listGrants(s: Session, user?: string): Promise<AdminGrant[
 
 export async function createGrant(
   s: Session,
-  body: { user_id: string; cluster: string; instance: string; actions: string[] },
+  body: { user_id: string; cluster: string; instance: string },
 ): Promise<void> {
   if (s.demo) return (await import("./demo")).demoCreateGrant(body)
   await req(s, "grants", { method: "POST", body: JSON.stringify(body) })

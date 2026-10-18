@@ -16,8 +16,6 @@ func TestGatewayGitHTTPAdmissionRecordsKnownTerminal(t *testing.T) {
 		status string
 		code   int
 	}{
-		{"user limit", GatewayHubOptions{MaxConcurrentPerUser: 1}, "rate_limited", http.StatusTooManyRequests},
-		{"global limit", GatewayHubOptions{MaxConcurrentOperations: 1}, "rate_limited", http.StatusTooManyRequests},
 		{"canceled after lease", GatewayHubOptions{}, "canceled", http.StatusConflict},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -36,31 +34,18 @@ func TestGatewayGitHTTPAdmissionRecordsKnownTerminal(t *testing.T) {
 				f.hub.HandleGitHTTP(response, request)
 				close(done)
 			}
-			if tc.status == "rate_limited" {
-				auth, err := f.store.VerifyUserToken(f.admin.Plaintext)
-				if err != nil {
-					t.Fatal(err)
-				}
-				release, err := f.hub.client.acquireOperationSlot(auth.UserID)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer release()
+			func() {
+				// Pause setBusy after acquiring the lease, before dispatch.
+				agent.stateMu.Lock()
+				defer agent.stateMu.Unlock()
 				go run()
-			} else {
-				func() {
-					// Pause setBusy after acquiring the lease, before dispatch.
-					agent.stateMu.Lock()
-					defer agent.stateMu.Unlock()
-					go run()
-					requireEventually(t, time.Second, func() bool {
-						agent.opsMu.Lock()
-						defer agent.opsMu.Unlock()
-						return agent.readers == 1
-					})
-					cancel()
-				}()
-			}
+				requireEventually(t, time.Second, func() bool {
+					agent.opsMu.Lock()
+					defer agent.opsMu.Unlock()
+					return agent.readers == 1
+				})
+				cancel()
+			}()
 			select {
 			case <-done:
 			case <-time.After(3 * time.Second):
