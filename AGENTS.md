@@ -56,8 +56,8 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
   session path isolation, and dry-run/final Deployment verification intact. Full asset, optional
   `expected_image`, and migration contracts belong in
   [NATURAL_LANGUAGE_DEPLOYMENT.md](backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md).
-- CNB CI tests, builds, scans, and publishes immutable artifacts. Gateway authenticates, audits,
-  limits concurrency, locks resources, and authorizes credentials. The selected target Agent
+- CNB CI tests, builds, scans, and publishes immutable artifacts. Gateway authenticates users,
+  authorizes targets and credentials, routes traffic, and audits. The selected target Agent
   performs the actual Kubernetes or Helm mutation and returns live evidence.
 - For image/version inputs, the publisher must establish
   the exact CI source-commit and registry-digest provenance before invoking the command. The CLI
@@ -71,33 +71,20 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
   do not reintroduce them.
 - `deploy/helm/<name>/` contains runtime assets only. It must not become an environment registry,
   credential store, target selector, or deployment authorization source.
-- A doops-agent cannot replace the workload from its own process. `doops upgrade` is available
-  only when the Agent is in its own namespace, runs as the standard Helm-managed Deployment, and
-  has an existing identity-matched managed Helm release. Without `--release` exactly one matching
-  release is required; with `--release` the named release is selected and validated. The Agent
-  Pod must expose a shared `/root/.kube` or `/root/.kube/config` volume. The in-cluster Job
-  explicitly reuses that mounted kubeconfig, so its Kubernetes permissions come from that
-  kubeconfig rather than from a local operator file. The CLI waits for the Job, verifies Gateway
-  handoff and `structuredSSH`, and starts a rollback Job when the probe fails.
-  `--dry-run` is preview-only and accepts either `repository:tag` or immutable
-  `repository@sha256:<64 hex>` image references. Tag upgrades use runtime imageID verification;
-  rollback still requires an evidenced immutable image.
-  A new Kubernetes cluster without an Agent and legacy Helm Agents without the controller use
-  `backend/scripts/release-managed-agent.sh` with an operator kubeconfig. Its new-cluster
-  `--values` mode is bootstrap-only: it performs Helm wait and final Deployment checks, not
-  Gateway takeover or automatic rollback; installation acceptance must follow. Its existing
-  release mode updates an existing Helm release, stops when no Helm release exists, and does
-  not perform adoption. `doops upgrade` only changes the Agent image or rolls back a managed
-  release; `proxy.allowedHosts` and `hostAliases` remain explicit external-script configuration.
-  Do not create a temporary Agent, target, or release-runner, and do not use `kubectl set image`
-  or an Agent-process Helm mutation.
-- Existing standalone Docker Agents use the external controller
-  `backend/scripts/release-host-agent.sh`, never `doops upgrade`, automatic fallback, or a forced
-  Kubernetes migration. Every parameter is explicit (port never defaults to 22), SSH verifies host
-  keys, host passwords are external-bootstrap stdin only and never reach the Agent, and the current
-  Agent never execs its own replacement or deletes the old container. The full dry-run, lock,
-  verification, and rollback contract lives only in
-  [BUILD_DEPLOY_SOP.md](backend/docs/BUILD_DEPLOY_SOP.md#独立-dockerhost-发布).
+- Agent upgrade has one hard constraint: an Agent cannot replace its own workload from its own
+  process, because the rollout kills that process. The replacement always runs in a separate
+  controller: an in-cluster Job started by `doops upgrade` (or, for a first upgrade the old Agent
+  cannot start itself, the same Job started through `doops exec`), or an external script.
+  Every path, whatever starts it, must:
+  1. back up what it changes (Helm revision, or the exported Deployment/ConfigMaps when the
+     workload is not yet Helm-managed);
+  2. verify the result: new Pod Ready on the pinned image digest, Gateway reconnect, and the
+     reported `release_commit`;
+  3. restore the backup automatically when verification fails;
+  4. run through the audited Gateway path, never with credential payloads in arguments or output.
+  Bringing an unmanaged Agent Deployment under Helm is allowed under the same four rules. The
+  procedure and per-runtime details (Helm, unmanaged Deployment, standalone Docker) live in
+  [BUILD_DEPLOY_SOP.md](backend/docs/BUILD_DEPLOY_SOP.md).
 
 ## Credential Security
 

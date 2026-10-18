@@ -89,10 +89,9 @@ doops -session <release-session> upgrade \
 
 Use `scripts/release-managed-agent.sh` with an operator-side kubeconfig only
 for a new cluster without an Agent or an existing Helm release whose Agent
-does not contain the self-upgrade controller. If an existing workload has no
-Helm release, the script stops and does not perform adoption; adoption must be
-completed explicitly before using the script. The script is also the only
-supported path here for changing Agent `proxy.allowedHosts` or `hostAliases`.
+does not contain the self-upgrade controller. An existing workload without a Helm
+release is brought under Helm first, as described in BUILD_DEPLOY_SOP.md. The
+script also changes Agent `proxy.allowedHosts` or `hostAliases`.
 `doops upgrade` changes only the managed Agent image or performs rollback.
 Ordinary workload deployments always use
 `doops -session <session> ask --target <target> --apply` and do not require a

@@ -7,13 +7,12 @@ Install into a new cluster or externally reconcile an existing Helm-managed
 doops-agent. Use this script for a new cluster without an Agent, a Helm-managed
 Agent without the in-cluster self-upgrade controller, or explicit Helm runtime
 configuration changes. Managed Agents with the controller use `doops upgrade`
-for image-only changes without an operator kubeconfig. This script does not
-automatically adopt an existing unmanaged workload.
+for image-only changes without an operator kubeconfig. A workload without a Helm
+release is adopted first (see docs/BUILD_DEPLOY_SOP.md); this script then manages it.
 
 Helm chart deploy/helm/doops-agent starts the replacement Pod first
 (maxSurge=1, maxUnavailable=0). The live Agent keeps serving until the new Pod
-is Ready and has replaced the Gateway session. kubectl set-image, docker
-restart, ad-hoc Jobs, and release-runners are not release methods.
+is Ready and has replaced the Gateway session.
 
 Existing Helm release (DoOps target already online):
 

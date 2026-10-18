@@ -68,8 +68,7 @@ bash scripts/release-managed-agent.sh \
   --dry-run
 ```
 
-dry-run 通过后才执行正式恢复。不能用临时 target、复制 token、跳过验收或把失败标为
-成功来完成升级。
+dry-run 通过后再执行正式恢复，完成后按本节做安装验收。
 
 ## Kubernetes / K3s
 
@@ -89,17 +88,15 @@ bash scripts/release-managed-agent.sh \
 外部控制器可以是已授权的集群管理主机或 CI，不要求一定运行在开发机。首次安装或
 Agent 自恢复可以通过 SSH 到该主机执行受控流程；日常业务仍通过明确 target 的
 `ask --apply`，不以本机 kubeconfig 或 `push` 为前提。
-新身份必须确认没有同 `cluster/instance` 的在线实例。外部清单安装器不作为本仓库的
-第二条标准 Helm 升级路径；不要通过 `kubectl set image`、手工 Docker `run` 或重跑旧清单换镜像。
+新身份要先确认没有同 `cluster/instance` 的在线实例。
 
 本仓库的 `scripts/release-managed-agent.sh` 用于新集群安装、旧 Helm Agent 首次启用
 自升级控制器，以及显式 Agent Helm 配置变更。新集群的 `--values` 模式
 是 bootstrap-only，只做 Helm wait 和最终 Deployment 检查，不做 Gateway 接管或自动回滚；
-完成后必须继续执行本节安装验收。已有 workload 但没有 Helm release 时，脚本会在 Helm
-查询阶段停止，不执行 adoption；必须先完成独立、明确的 Helm adoption。控制器就绪后，
-后续镜像替换用 `doops upgrade`，不再传 kubeconfig；该路径要求 Agent 自身 namespace、
-标准 Helm-managed Deployment、已有匹配 Helm release，以及可由 Job 共享的
-`/root/.kube` 或 `/root/.kube/config` 挂载，Job 的 Kubernetes 权限来自该 kubeconfig。
+完成后必须继续执行本节安装验收。已有 workload 但没有 Helm release 时，按
+[BUILD_DEPLOY_SOP.md](BUILD_DEPLOY_SOP.md) 的收编流程先纳入 Helm。纳入后镜像替换用
+`doops upgrade`，不需要操作机 kubeconfig；升级 Job 使用 Agent 挂载的 kubeconfig，没有挂载时
+使用 Agent 自己的 ServiceAccount。
 `doops upgrade` 只替换 Agent 镜像或回滚，不修改 `proxy.allowedHosts` 或 `hostAliases`；
 这些配置仍只能通过该外部 Helm 脚本显式传入。
 
