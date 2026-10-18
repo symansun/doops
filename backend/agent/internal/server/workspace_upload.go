@@ -87,6 +87,7 @@ type agentUpgradeParams struct {
 	DryRun     bool   `json:"dry_run"`
 	ObserveJob string `json:"observe_job"`
 	Rollback   bool   `json:"rollback"`
+	Preflight  bool   `json:"preflight"`
 }
 
 type workspaceUploadMeta struct {

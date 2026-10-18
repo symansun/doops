@@ -170,6 +170,9 @@ func (p upgradeProcess) startSelfUpgradeJob(ctx context.Context, args agentUpgra
 		return "", err
 	}
 	script := selfUpgradeApplyScript
+	if args.Preflight {
+		script = selfUpgradePreflightScript
+	}
 	release, workload, err := p.managedRelease(ctx, namespace, args.Release, args.Workload)
 	if errors.Is(err, errNoManagedRelease) {
 		// No Helm release yet: the same controller Job brings the Deployment under Helm.
@@ -178,6 +181,9 @@ func (p upgradeProcess) startSelfUpgradeJob(ctx context.Context, args agentUpgra
 			err = fmt.Errorf("adopting an unmanaged Agent requires a repository@sha256:<digest> image")
 		}
 		script = selfUpgradeAdoptScript
+		if args.Preflight {
+			script = selfUpgradePullOnlyScript
+		}
 	}
 	if err != nil {
 		return "", err
@@ -200,6 +206,7 @@ func (p upgradeProcess) startSelfUpgradeJob(ctx context.Context, args agentUpgra
 		script:     script,
 		cluster:    p.cluster,
 		instance:   p.instance,
+		preflight:  args.Preflight,
 	})
 	if err != nil {
 		return "", err
@@ -736,6 +743,7 @@ type selfUpgradePlan struct {
 	script     string
 	cluster    string
 	instance   string
+	preflight  bool
 }
 
 type jobVolumeMount struct {
@@ -843,6 +851,10 @@ func selfUpgradeJobManifest(jobName, namespace string, pod selfUpgradePod, plan 
 				"spec": podSpec,
 			},
 		},
+	}
+	if plan.preflight {
+		// An unpullable image never fails the pod, it just waits; bound that wait.
+		manifest["spec"].(map[string]interface{})["activeDeadlineSeconds"] = 600
 	}
 	return json.Marshal(manifest)
 }
@@ -1121,7 +1133,9 @@ PY
 }
 `
 
-const selfUpgradeApplyScript = selfUpgradeKubeconfigPrelude + selfUpgradeDeploymentVerifier + `repository="$DOOPS_UPGRADE_REPOSITORY"
+// selfUpgradeApplyChecks holds every check that runs before the first change, so
+// the preflight Job and the apply Job cannot disagree about what is admissible.
+const selfUpgradeApplyChecks = `repository="$DOOPS_UPGRADE_REPOSITORY"
 tag="${DOOPS_UPGRADE_TAG:-}"
 digest="${DOOPS_UPGRADE_DIGEST:-}"
 target="$DOOPS_UPGRADE_IMAGE"
@@ -1176,7 +1190,7 @@ print(json.dumps({"image": image, "digest": digest, "node": spec["nodeName"],
 PY
 )"
 export DOOPS_UPGRADE_BASELINE="$baseline"
-verify_deployment "$previous_image" baseline record
+verify_deployment "$previous_image" baseline ${verify_record-record}
 values="${TMPDIR:-/tmp}/doops-upgrade-values.json"
 helm get values "$release" -n "$ns" -o json >"$values"
 python3 - "$values" "$repository" "$tag" "$digest" "$selector_json" <<'PY'
@@ -1196,7 +1210,20 @@ values.setdefault("workload", {})["selectorLabels"] = json.loads(selector_json)
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(values, fh)
 PY
-mutated=false
+`
+
+// The preflight Job starts from the target image, so a successful start already
+// means the image was pulled to the node. It changes nothing: it only repeats the
+// apply checks and asks the API server to dry-run the same Helm upgrade.
+const selfUpgradePreflightScript = selfUpgradeKubeconfigPrelude + selfUpgradeDeploymentVerifier + "verify_record=\n" + selfUpgradeApplyChecks + `helm upgrade "$release" "$chart" -n "$ns" -f "$values" --timeout 180s --wait=false --dry-run=server >/dev/null
+echo "preflight-passed image=${target}"
+`
+
+// Adoption has no Helm release to dry-run yet; starting the Job still proves the pull.
+const selfUpgradePullOnlyScript = `echo "preflight-passed image=${DOOPS_UPGRADE_IMAGE}"
+`
+
+const selfUpgradeApplyScript = selfUpgradeKubeconfigPrelude + selfUpgradeDeploymentVerifier + selfUpgradeApplyChecks + `mutated=false
 rollback_release() {
   echo "rolling back ${release} to ${previous}" >&2
   if ! helm rollback "$release" "$previous" -n "$ns" --timeout 300s --wait; then
