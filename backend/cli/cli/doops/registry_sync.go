@@ -12,16 +12,13 @@ import (
 var registrySyncTokenPattern = regexp.MustCompile(`^[A-Za-z0-9._:/-]+$`)
 
 func runRegistryCommand(args []string, sessionName string, servers []Server, configErr error, stdout io.Writer) error {
+	if len(args) > 0 && (args[0] == "-h" || args[0] == "-help" || args[0] == "--help" || args[0] == "help") {
+		fmt.Fprintln(stdout, "用法: doops -session <s> registry sync --target <t> ...\n查看参数: doops registry sync -h")
+		return nil
+	}
 	if len(args) == 0 || args[0] != "sync" {
 		return fmt.Errorf("用法: doops registry sync --target <target> --source-registry <registry/path> --target-registry <registry/path> --tag <tag> --source-authfile <remote-path> --target-authfile <remote-path> --image <name> (可重复)")
 	}
-	if sessionName == "" {
-		return fmt.Errorf("-session 必传")
-	}
-	if configErr != nil {
-		return configErr
-	}
-
 	registryFlags := flag.NewFlagSet("registry sync", flag.ContinueOnError)
 	registryFlags.SetOutput(os.Stdout)
 	var target, sourceRegistry, targetRegistry, tag, sourceAuthfile, targetAuthfile string
@@ -40,6 +37,13 @@ func runRegistryCommand(args []string, sessionName string, servers []Server, con
 			return nil
 		}
 		return err
+	}
+	// Help must work without a session or config, so these checks follow parsing.
+	if sessionName == "" {
+		return fmt.Errorf("-session 必传")
+	}
+	if configErr != nil {
+		return configErr
 	}
 	if target == "" || sourceRegistry == "" || targetRegistry == "" || tag == "" || sourceAuthfile == "" || targetAuthfile == "" || len(images) == 0 {
 		return fmt.Errorf("registry sync requires --target, --source-registry, --target-registry, --tag, --source-authfile, --target-authfile and at least one --image")

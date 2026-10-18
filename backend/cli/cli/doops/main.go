@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -370,6 +371,10 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 	case "k8s":
 		req, err := buildK8SRequest(cmdArgs)
+		if errors.Is(err, errK8SHelp) {
+			fmt.Println(k8sUsage)
+			os.Exit(0)
+		}
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
