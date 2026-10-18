@@ -1,6 +1,7 @@
 package dispatcher
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -9,54 +10,91 @@ var helmMutationPattern = regexp.MustCompile(
 	`(?s)\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b`,
 )
 
-type PathType int
+// rule is one command shape the Agent refuses. Every rule names the supported
+// alternative so the caller can switch paths instead of guessing why it failed.
+type rule struct {
+	name   string
+	hint   string
+	match  *regexp.Regexp
+	except *regexp.Regexp
+}
 
-const (
-	PathFast PathType = iota
-	PathSlow
-	PathBlocked
-)
+// An Agent cannot replace its own workload from its own process; everything else
+// a target grant allows runs as given.
+var selfReplacementHint = "an Agent cannot replace its own workload; use `doops upgrade` for a Helm Agent " +
+	"or the external release scripts in docs/BUILD_DEPLOY_SOP.md"
+
+var blockRules = []rule{
+	{
+		name:  "delete_root_filesystem",
+		hint:  "deleting the root filesystem is never allowed; name the exact path to remove",
+		match: regexp.MustCompile(`\brm\s+(-[a-z]*\s+)*-[a-z]*[rf][a-z]*\s+(-[a-z]*\s+)*/(\*)?(\s|;|&|\||$)`),
+	},
+	{
+		name:  "format_filesystem",
+		hint:  "formatting a filesystem is not allowed through exec",
+		match: regexp.MustCompile(`\bmkfs(\.\w+)?\b`),
+	},
+	{
+		name:   "edit_partitions",
+		hint:   "editing partitions is not allowed through exec; `fdisk -l` and `lsblk` are allowed",
+		match:  regexp.MustCompile(`\bfdisk\b`),
+		except: regexp.MustCompile(`\bfdisk\s+(-l|--list)\b`),
+	},
+	{
+		name:  "agent_self_replacement",
+		hint:  selfReplacementHint,
+		match: regexp.MustCompile(`(?s)\b(kubectl|oc)\b.*\b(set\s+image|rollout\s+(restart|undo)|apply|delete|edit|patch|replace|scale)\b.*\bdoops-agent\b`),
+	},
+	{
+		name:  "agent_self_replacement",
+		hint:  selfReplacementHint,
+		match: regexp.MustCompile(`(?s)\b(docker|nerdctl|podman|crictl)\b.*\b(restart|stop|rm|update|run)\b.*\bdoops-agent\b`),
+	},
+	{
+		name:  "agent_self_replacement",
+		hint:  selfReplacementHint,
+		match: regexp.MustCompile(`(?s)\bsystemctl\b.*\b(restart|stop)\b.*\bdoops-agent\b`),
+	},
+	{
+		name:  "agent_self_replacement",
+		hint:  selfReplacementHint,
+		match: regexp.MustCompile(`(?s)\bservice\b.*\bdoops-agent\b.*\b(restart|stop)\b`),
+	},
+	{
+		name:  "agent_self_replacement",
+		hint:  selfReplacementHint,
+		match: regexp.MustCompile(`(?s)\b(pkill|killall)\b.*\bdoops-agent\b`),
+	},
+}
+
+// BlockedError reports which rule refused a command and what to do instead.
+type BlockedError struct {
+	Rule string
+	Hint string
+}
+
+func (e *BlockedError) Error() string {
+	return fmt.Sprintf("blocked_command(%s): %s", e.Rule, e.Hint)
+}
 
 type Dispatcher struct {
-	blacklist     []*regexp.Regexp
-	naturalLangRe *regexp.Regexp
+	rules []rule
 }
 
 func NewDispatcher() *Dispatcher {
-	return &Dispatcher{
-		blacklist: []*regexp.Regexp{
-			regexp.MustCompile(`rm -rf /`),
-			regexp.MustCompile(`fdisk`),
-			regexp.MustCompile(`mkfs`),
-			regexp.MustCompile(`(?s)\bbase64\b.*\|\s*(kubectl|oc)(\s+-{1,2}[\w-]+(=\S+)?(\s+[^-\s]\S*)?)*\s+(apply|create|replace)\b`),
-			regexp.MustCompile(`(?s)\b(kubectl|oc)\b.*\b(set\s+image|rollout\s+(restart|undo)|apply|delete|edit|patch|replace|scale)\b.*\bdoops-agent\b`),
-			regexp.MustCompile(`(?s)\b(docker|nerdctl|podman|crictl)\b.*\b(restart|stop|rm|update|run)\b.*\bdoops-agent\b`),
-			regexp.MustCompile(`(?s)\bsystemctl\b.*\b(restart|stop)\b.*\bdoops-agent\b`),
-			regexp.MustCompile(`(?s)\bservice\b.*\bdoops-agent\b.*\b(restart|stop)\b`),
-			regexp.MustCompile(`(?s)\b(pkill|killall)\b.*\bdoops-agent\b`),
-		},
-		// Natural language heuristic: if it contains only letters and spaces and is relatively long
-		naturalLangRe: regexp.MustCompile(`^[\p{L}\s]{10,}$`),
-	}
+	return &Dispatcher{rules: blockRules}
 }
 
-func (d *Dispatcher) Classify(command string) PathType {
+// Check returns a *BlockedError for the first rule the command hits, or nil.
+func (d *Dispatcher) Check(command string) error {
 	lower := strings.ToLower(strings.TrimSpace(command))
-
-	// Check blacklist first
-	for _, re := range d.blacklist {
-		if re.MatchString(lower) {
-			return PathBlocked
+	for _, r := range d.rules {
+		if r.match.MatchString(lower) && (r.except == nil || !r.except.MatchString(lower)) {
+			return &BlockedError{Rule: r.name, Hint: r.hint}
 		}
 	}
-
-	// Check if it looks like natural language (Simplified heuristic)
-	// If it contains spaces and no typical shell markers like / . - it might be NL
-	if d.naturalLangRe.MatchString(command) && !strings.ContainsAny(command, "/.-_") {
-		return PathSlow
-	}
-
-	return PathFast
+	return nil
 }
 
 func (d *Dispatcher) IsHelmMutation(command string) bool {

@@ -26,7 +26,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/user/doops/agent/api"
-	"github.com/user/doops/agent/internal/dispatcher"
 	"github.com/user/doops/agent/pkg/release"
 )
 
@@ -711,9 +710,11 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	case "doops_shell":
 		var args api.ShellParams
 		json.Unmarshal(argBytes, &args)
-		if gw.Dispatcher != nil && gw.Dispatcher.Classify(args.Command) == dispatcher.PathBlocked {
-			writeJSON(buildErrorResponse(reqID, -32602, "blocked dangerous command"))
-			return
+		if gw.Dispatcher != nil {
+			if err := gw.Dispatcher.Check(args.Command); err != nil {
+				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+				return
+			}
 		}
 
 		log.Printf("🖥️  WS Exec: [%s] %s", sessionID, args.Command)
@@ -927,9 +928,11 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			return
 		}
 		// 与 doops_shell 一致: 后台任务同样要经过危险命令分类过滤。
-		if gw.Dispatcher != nil && gw.Dispatcher.Classify(args.Command) == dispatcher.PathBlocked {
-			writeJSON(buildErrorResponse(reqID, -32602, "blocked dangerous command"))
-			return
+		if gw.Dispatcher != nil {
+			if err := gw.Dispatcher.Check(args.Command); err != nil {
+				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+				return
+			}
 		}
 		log.Printf("🚀 WS doops_bg: %s", args.Command)
 		if ctx.Err() != nil {

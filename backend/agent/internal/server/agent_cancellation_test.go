@@ -375,7 +375,7 @@ func TestAgentCancellationBackgroundStillRejectsHelm(t *testing.T) {
 func TestAgentRejectsBlockedShellAndBackgroundCommands(t *testing.T) {
 	commands := map[string]string{
 		"set image on agent": "kubectl -n doops-system set image deployment/doops-agent doops-agent=image:v2",
-		"base64 into apply":  "printf '%s' 'encoded-job' | base64 -d | kubectl apply -f -",
+		"remove root":        "rm -rf /",
 	}
 	for _, tool := range []string{"doops_shell", "doops_bg"} {
 		for name, command := range commands {
@@ -385,7 +385,7 @@ func TestAgentRejectsBlockedShellAndBackgroundCommands(t *testing.T) {
 					"session_id": "blocked-command", "command": command,
 				})
 				final := awaitCancellationTestMessage(t, messages, func(m map[string]interface{}) bool { return m["id"] == float64(42) })
-				if !strings.Contains(fmt.Sprint(final["error"]), "blocked dangerous command") {
+				if !strings.Contains(fmt.Sprint(final["error"]), "blocked_command(") {
 					t.Fatalf("%s %q was not rejected by the Agent: %#v", tool, command, final)
 				}
 			})
