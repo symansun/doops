@@ -108,10 +108,9 @@ use 不匹配、revoked grant 或同名资源不唯一时返回非零。
 
 - `personal`：owner 是创建者。owner 可以写入版本、授权、验证、轮换和吊销。
 - `platform`：只有 platform admin 可以创建、管理、授权、轮换和吊销。
-- platform admin 需要 Gateway 全局 `admin` 或 `*` 权限，不由某个 target action 推导。
+- platform admin 是用户的 `is_admin` 标记，不由 target grant 推导。
 
-personal owner 给 target 创建绑定前必须能操作该 target。运行时使用和验证继承已有
-`ask`/`exec` 权限，不再检查独立 `credential:use`；验证、轮换、吊销的资源管理权限仍检查 owner/admin。
+personal owner 给 target 创建绑定前必须能操作该 target。运行时使用和验证只要求该 target 的 grant；验证、轮换、吊销的资源管理权限仍检查 owner/admin。
 
 ### Target binding
 
@@ -487,6 +486,6 @@ active resource、active version、目标上的 active target 绑定和当前用
 - action、时间、状态；
 - resourceVersion、digest 或稳定错误类别。
 
-审计不记录 payload。具有 `credential:audit` 或 platform admin 权限的用户可以通过
+审计不记录 payload。凭据 owner 和 platform admin 可以通过
 Gateway `/v1/audit` 按 target 和 credential 元数据查询；当前 CLI 尚未提供独立的
 credential audit 子命令。
