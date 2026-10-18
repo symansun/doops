@@ -923,11 +923,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	case "doops_bg":
 		var args api.BgExecParams
 		json.Unmarshal(argBytes, &args)
-		if gw.Dispatcher != nil && gw.Dispatcher.IsHelmMutation(args.Command) {
-			writeJSON(buildErrorResponse(reqID, -32602, "background Helm mutation is prohibited; use foreground exec"))
-			return
-		}
-		// 与 doops_shell 一致: 后台任务同样要经过危险命令分类过滤。
+		// 与 doops_shell 一致: 后台任务同样要经过危险命令过滤。
 		if gw.Dispatcher != nil {
 			if err := gw.Dispatcher.Check(args.Command); err != nil {
 				writeJSON(buildErrorResponse(reqID, -32602, err.Error()))

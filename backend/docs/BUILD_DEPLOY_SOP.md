@@ -214,8 +214,8 @@ env、probes、volumeMounts 和 volumes。包括只更新镜像在内的所有�
 [`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
 `upgrade-install` 先用相同输入执行 server-side Helm dry-run，再执行真实
 mutation。不存在 Kubernetes 镜像 mutation 发布旁路。自然语言 apply 禁止通过 shell
-执行 kubectl 或 Helm mutation；运维人员明确给出的前台 `exec` Helm 操作合法，但
-`exec --bg` Helm mutation 必须拒绝。用户明确给出的 SSH 命令必须通过结构化 `doops_ssh`
+执行 kubectl 或 Helm mutation；运维人员给出的 `exec` / `exec --bg` 命令按原样执行，
+Agent 只拒绝删除根目录（`rm -rf /`）。用户明确给出的 SSH 命令必须通过结构化 `doops_ssh`
 入口由在线 Agent 代理执行，不能把多层 SSH 拼成普通 `doops_shell` 字符串；该入口
 遵守相同的权限、排队、超时、取消和审计规则。Helm 成功后还必须以
 最终 Deployment manifest/spec/status 为事实源；若 Chart 需要显式 selector，按其 schema
