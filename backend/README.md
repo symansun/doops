@@ -62,7 +62,7 @@ docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>  # 基础工具：buildkit
 docker.cnb.cool/l8ai/ai/doops.sh:<release>             # doops-agent / 精确 doagent / skills / docs / entrypoint
 ```
 
-`Dockerfile` / `agent/Dockerfile` 不提供可用的可变基础镜像默认值；占位地址会在遗漏参数时立即失败。构建时必须显式传入本次不可变 `DOOPS_AGENT_BASE_IMAGE` 和 `DO_AGENT_VERSION`，当前运行架构固定为 `linux/amd64`。
+`Dockerfile` 不提供可用的可变基础镜像默认值；占位地址会在遗漏参数时立即失败。构建时必须显式传入本次不可变 `DOOPS_AGENT_BASE_IMAGE` 和 `DO_AGENT_VERSION`，当前运行架构固定为 `linux/amd64`。
 
 ```text
 Dockerfile.base.light                     # 轻量基础镜像：doagent / buildkit / kubectl / Python+PyYAML / Helm / git / ssh client / tini / bash
@@ -79,7 +79,7 @@ SSH 服务端。镜像保留 `ssh` 客户端，已在线 Agent 可通过结构�
 
 - 基础镜像源码：`Dockerfile.base.light`
 - doAgent 版本基线：`runtime-versions.env`
-- 更新镜像源码：`Dockerfile` / `agent/Dockerfile`
+- 更新镜像源码：`Dockerfile`
 - doagent 来源：最终镜像直接从 `runtime-versions.env` 的不可变 `DO_AGENT_IMAGE` 复制，不依赖基础镜像内的历史二进制
 - DoOps 只有一个发布版本：CLI、Gateway 和 Agent 统一嵌入同一个发布标签，并同时报告
   本次 CI 的完整 `CNB_COMMIT` 作为不可变 provenance；`doops targets` 的

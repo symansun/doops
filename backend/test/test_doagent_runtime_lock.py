@@ -7,12 +7,7 @@ RUNTIME = ROOT / "runtime-versions.env"
 IMAGE_BUILD = ROOT / "scripts" / "build-agent-image.sh"
 BASE_IMAGE_BUILD = ROOT / "scripts" / "build-agent-base-image.sh"
 LIGHT_BASE = ROOT / "Dockerfile.base.light"
-DOCKERFILES = (
-    ROOT / "Dockerfile",
-    LIGHT_BASE,
-    ROOT / "agent" / "Dockerfile",
-    ROOT / "agent" / "Dockerfile.sandbox",
-)
+DOCKERFILES = (ROOT / "Dockerfile", LIGHT_BASE)
 
 
 def test_doagent_runtime_lock_includes_exact_source_revision():
@@ -38,11 +33,7 @@ def test_doagent_runtime_lock_includes_exact_source_revision():
         in image_build
     )
 
-    for dockerfile in (
-        ROOT / "Dockerfile",
-        ROOT / "agent" / "Dockerfile",
-        ROOT / "agent" / "Dockerfile.sandbox",
-    ):
+    for dockerfile in (ROOT / "Dockerfile",):
         text = dockerfile.read_text()
         assert "ARG DO_AGENT_REVISION" in text
         assert "ARG DOOPS_RELEASE_TAG" in text
@@ -61,11 +52,7 @@ def test_agent_runtime_keeps_ssh_client_and_rejects_ssh_server():
     assert "ssh -V" in base
     assert "! command -v sshd" in base
 
-    for dockerfile in (
-        ROOT / "Dockerfile",
-        ROOT / "agent" / "Dockerfile",
-        ROOT / "agent" / "Dockerfile.sandbox",
-    ):
+    for dockerfile in (ROOT / "Dockerfile",):
         text = dockerfile.read_text()
         assert "ssh -V" in text
         assert "! command -v sshd" in text

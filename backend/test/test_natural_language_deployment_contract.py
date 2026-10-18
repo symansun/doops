@@ -156,7 +156,7 @@ def test_ordinary_exec_does_not_block_explicit_helm_operations():
     )
     blacklist = dispatcher.split("blacklist:", 1)[1].split("naturalLangRe:", 1)[0]
     assert r"\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b" not in blacklist
-    assert "IsAgentHelmMutation" in dispatcher
+    assert "IsHelmMutation" in dispatcher
 
 
 def test_cicd_and_credential_guides_match_the_runtime_contract():

@@ -90,20 +90,24 @@ func TestHandleAgentUpgradeRejectsInvalidApplyImage(t *testing.T) {
 	}
 }
 
-func TestAgentDockerfileInstallsAndVerifiesKubectl(t *testing.T) {
-	dockerfile, err := os.ReadFile(filepath.Join("..", "..", "Dockerfile"))
+// The shipped Agent image takes kubectl from the base image, which copies it
+// from a digest-pinned upstream image and runs it once at build time.
+func TestAgentBaseImagePinsAndVerifiesKubectl(t *testing.T) {
+	dockerfile, err := os.ReadFile(filepath.Join("..", "..", "..", "Dockerfile.base.light"))
 	if err != nil {
-		t.Fatalf("read agent Dockerfile: %v", err)
+		t.Fatalf("read agent base Dockerfile: %v", err)
 	}
 
 	out := string(dockerfile)
 	for _, requirement := range []string{
-		"dl.k8s.io/release/",
-		"sha256sum",
-		"kubectl version --client >/dev/null",
+		"ARG KUBECTL_IMAGE=registry.k8s.io/kubectl:",
+		"@sha256:",
+		"FROM ${KUBECTL_IMAGE} AS kubectl",
+		"COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl",
+		"kubectl version --client=true",
 	} {
 		if !strings.Contains(out, requirement) {
-			t.Fatalf("agent Dockerfile must install and verify kubectl; missing %q", requirement)
+			t.Fatalf("agent base Dockerfile must pin and verify kubectl; missing %q", requirement)
 		}
 	}
 }
