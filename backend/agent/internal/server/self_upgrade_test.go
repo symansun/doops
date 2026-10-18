@@ -42,7 +42,6 @@ func TestSelfUpgradeScriptStaysOutsideTheAgentProcess(t *testing.T) {
 		t.Fatal("apply script must helm-upgrade the existing release without kubectl set image")
 	}
 	for _, part := range []string{
-		"maxUnavailable must be 0",
 		"helm upgrade",
 		"helm rollback",
 		selfUpgradeChartPath,
@@ -448,24 +447,30 @@ func TestSelfUpgradeRejectsInvalidPodEvidence(t *testing.T) {
 	}
 }
 
-func TestSelfUpgradeRejectsNonstandardSurgeBeforeMutation(t *testing.T) {
-	for _, surge := range []string{"0", "2", "true", `"100%"`} {
+func TestSelfUpgradeReplacesALiveStrategyTheChartWillCorrect(t *testing.T) {
+	// A legacy Deployment with maxSurge 0 is exactly what the Chart handoff fixes.
+	for _, surge := range []string{"0", "2", `"100%"`} {
 		t.Run(surge, func(t *testing.T) {
 			logPath := filepath.Join(t.TempDir(), "calls.log")
 			env := selfUpgradeScriptEnv(logPath)
 			env["MAX_SURGE"] = surge
 			out, err := runSelfUpgradeScript(t, selfUpgradeApplyScript, selfUpgradeFakeCommands(), env)
-			if err == nil || !strings.Contains(out, "maxSurge must be 1") {
-				t.Fatalf("nonstandard surge accepted: %v\n%s", err, out)
-			}
-			log, err := os.ReadFile(logPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if strings.Contains(string(log), "helm upgrade") || strings.Contains(string(log), "helm rollback") {
-				t.Fatalf("nonstandard surge reached mutation:\n%s", log)
+			if strings.Contains(out, "maxSurge must be 1") || strings.Contains(out, "maxUnavailable must be 0") {
+				t.Fatalf("live strategy still gates the upgrade: %v\n%s", err, out)
 			}
 		})
+	}
+}
+
+func TestAgentChartHandsOffWithSurgeAndNoUnavailable(t *testing.T) {
+	raw, err := os.ReadFile("../../../deploy/helm/doops-agent/templates/deployment.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"maxUnavailable: 0", "maxSurge: 1"} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("Chart template lost %q", want)
+		}
 	}
 }
 

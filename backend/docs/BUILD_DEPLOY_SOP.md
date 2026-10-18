@@ -232,8 +232,9 @@ release，提供 `--release` 时按名称选择并校验该 release。Agent Pod 
 新 Pod 未持续就绪时回滚。镜像可以是 `repository:tag` 或 `repository@sha256:<64 hex>`；
 tag 使用 `Always` 拉取，回滚只接受历史已验证的 digest。
 真实升级前 CLI 先对每个 target 提交一个预检 Job（`preflight=true`）：Job 以目标镜像启动，
-所以镜像必须先被节点成功拉取；随后重复升级的全部改动前检查（Deployment 策略 `maxSurge=1`、
-`maxUnavailable=0`、Helm release 唯一、当前 Pod 基线），并对同一 values 做 server-side
+所以镜像必须先被节点成功拉取；随后重复升级的全部改动前检查（Helm release 唯一、
+当前 Pod 基线；现有 Deployment 的 `maxSurge`/`maxUnavailable` 不是准入条件，由 Chart 在
+同一次升级里改成 `maxSurge=1`、`maxUnavailable=0`），并对同一 values 做 server-side
 Helm dry-run。预检不修改 release，也不写验收回执。预检失败（含镜像拉取不到，预检 Job 600 秒
 超时）时 CLI 报 `preflight failed, nothing was changed`，不提交真实升级 Job。
 未纳入 Helm 的收编路径没有 release 可 dry-run，预检只证明镜像可拉取。
