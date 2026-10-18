@@ -29,7 +29,7 @@ main:
             go test ./... -count=1 -timeout=5m
         - name: Linux cli tests
           script: |
-            cd backend/skills/doops-cli
+            cd backend/cli
             go test ./... -count=1 -timeout=5m
         - name: Linux Git process acceptance
           timeout: 15m
@@ -68,7 +68,7 @@ main:
             go test ./...
         - name: cli tests
           script: |
-            cd backend/skills/doops-cli
+            cd backend/cli
             go test ./...
         - name: web build
           script: |
@@ -117,7 +117,7 @@ main:
             export HOME="${PWD}/.ci-doops-home"
             mkdir -p "${HOME}" .ci-bin
             (
-              cd backend/skills/doops-cli
+              cd backend/cli
               go build -o "${ROOT}/.ci-bin/doops" ./cli/doops
             )
             .ci-bin/doops add \
@@ -253,7 +253,7 @@ master:
             go test ./...
         - name: cli tests
           script: |
-            cd backend/skills/doops-cli
+            cd backend/cli
             go test ./...
         - name: web build
           script: |
@@ -311,7 +311,7 @@ $:
             go test ./...
         - name: cli tests
           script: |
-            cd backend/skills/doops-cli
+            cd backend/cli
             go test ./...
         - name: web build
           script: |

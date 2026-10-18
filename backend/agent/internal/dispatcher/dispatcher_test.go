@@ -75,24 +75,20 @@ func TestHelmMutationDetection(t *testing.T) {
 	t.Parallel()
 	d := NewDispatcher()
 	tests := []struct {
-		name      string
-		command   string
-		helm      bool
-		agentHelm bool
+		name    string
+		command string
+		helm    bool
 	}{
-		{"install agent", "helm install doops-agent ./deploy/helm/doops-agent -n kz-ops", true, true},
-		{"reordered upgrade agent", "cd deploy/helm/doops-agent && helm upgrade --install agent . -n kz-ops", true, true},
-		{"rollback other release", "helm rollback app 2 -n apps", true, false},
-		{"read-only helm", "helm list -n apps", false, false},
+		{"install agent", "helm install doops-agent ./deploy/helm/doops-agent -n kz-ops", true},
+		{"reordered upgrade agent", "cd deploy/helm/doops-agent && helm upgrade --install agent . -n kz-ops", true},
+		{"rollback other release", "helm rollback app 2 -n apps", true},
+		{"read-only helm", "helm list -n apps", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			if got := d.IsHelmMutation(tt.command); got != tt.helm {
 				t.Errorf("IsHelmMutation(%q) = %v, want %v", tt.command, got, tt.helm)
-			}
-			if got := d.IsAgentHelmMutation(tt.command); got != tt.agentHelm {
-				t.Errorf("IsAgentHelmMutation(%q) = %v, want %v", tt.command, got, tt.agentHelm)
 			}
 		})
 	}

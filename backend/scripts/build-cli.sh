@@ -23,7 +23,7 @@ EOF
 }
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CLI_DIR="${REPO_ROOT}/skills/doops-cli"
+CLI_DIR="${REPO_ROOT}/cli"
 DEFAULT_OUT="${DOOPS_CLI_OUT:-${REPO_ROOT}/bin/doops}"
 RELEASE_DIR="${DOOPS_CLI_RELEASE_DIR:-${REPO_ROOT}/dist/cli}"
 BUILD_ALL=false

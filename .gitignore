@@ -8,7 +8,7 @@ bin/doops-gateway
 bin/doops-webui
 /bin/
 backend/bin/
-skills/doops-cli/doops
+backend/cli/doops
 
 # Agent 二进制 (所有变体)
 **/doops-agent
@@ -20,7 +20,7 @@ skills/doops-cli/doops
 
 # 打包发行物
 dist/*
-backend/skills/doops-cli/bin/
+backend/cli/bin/
 
 # Frontend dependencies / build output
 node_modules/
@@ -40,7 +40,7 @@ __pycache__/
 .agent/skills/doops/config.json
 .agent/skills/doops/history.jsonl
 .agent/skills/doops/sessions.json
-skills/doops-cli/.doops/
+backend/cli/.doops/
 tmp_agent/
 tmp-openwork/
 /backend/.ci-agent-base-image

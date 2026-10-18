@@ -11,7 +11,7 @@
 ```bash
 (cd agent && go test ./...)
 (cd gateway && go test ./...)
-(cd skills/doops-cli && go test ./...)
+(cd cli && go test ./...)
 ```
 
 ## 架构图
@@ -62,7 +62,7 @@ docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>  # 基础工具：buildkit
 docker.cnb.cool/l8ai/ai/doops.sh:<release>             # doops-agent / 精确 doagent / skills / docs / entrypoint
 ```
 
-`Dockerfile` / `agent/Dockerfile` 不提供可用的可变基础镜像默认值；占位地址会在遗漏参数时立即失败。构建时必须显式传入本次不可变 `DOOPS_AGENT_BASE_IMAGE` 和 `DO_AGENT_VERSION`，当前运行架构固定为 `linux/amd64`。
+`Dockerfile` 不提供可用的可变基础镜像默认值；占位地址会在遗漏参数时立即失败。构建时必须显式传入本次不可变 `DOOPS_AGENT_BASE_IMAGE` 和 `DO_AGENT_VERSION`，当前运行架构固定为 `linux/amd64`。
 
 ```text
 Dockerfile.base.light                     # 轻量基础镜像：doagent / buildkit / kubectl / Python+PyYAML / Helm / git / ssh client / tini / bash
@@ -79,7 +79,7 @@ SSH 服务端。镜像保留 `ssh` 客户端，已在线 Agent 可通过结构�
 
 - 基础镜像源码：`Dockerfile.base.light`
 - doAgent 版本基线：`runtime-versions.env`
-- 更新镜像源码：`Dockerfile` / `agent/Dockerfile`
+- 更新镜像源码：`Dockerfile`
 - doagent 来源：最终镜像直接从 `runtime-versions.env` 的不可变 `DO_AGENT_IMAGE` 复制，不依赖基础镜像内的历史二进制
 - DoOps 只有一个发布版本：CLI、Gateway 和 Agent 统一嵌入同一个发布标签，并同时报告
   本次 CI 的完整 `CNB_COMMIT` 作为不可变 provenance；`doops targets` 的
@@ -122,18 +122,10 @@ bash scripts/build-gateway.sh
 ./bin/doops-gateway serve -db /var/lib/doops-gateway/gateway.db -port 42222
 ```
 
-兼容入口 `agent/cmd/gateway` 仍保留，但只作为旧构建路径 wrapper；新文档和新部署应使用 `gateway/`。
+`gateway/` 只是构建入口，实现在 `agent/internal/server/`，与 Agent 运行时共用一个包，文件索引见
+[agent/internal/server/README.md](agent/internal/server/README.md)。
 
 面向外部系统的 API 使用指南见 [docs/DOOPS_API_GUIDE.md](docs/DOOPS_API_GUIDE.md)，包括登录、目标查询、WebSocket JSON-RPC、自然语言部署、进度流和审计查询。
-
-2026-05-11 gateway 验收状态（历史记录）：
-
-- 公网 gateway：当前标准入口为 `https://doops.l8ai.cn`；早期明文 HTTP
-  地址只属于历史受控实验，不得进入当前客户端配置
-- 已接入 target：`doops-114/vm-114`、`doops-jm/jm-228`
-- 已验证：`targets`、`exec`、`write/read`、`push`、高危 action 未授权拒绝、90 秒以上 heartbeat 保活
-- `ask` 链路通过 `doops-agent -> doagent ACP HTTP`；模型配置必须来自 `doagent-model-settings` Secret，Agent 镜像升级不得覆盖该 Secret
-- 89/114/JM 的运行容器命名已统一为标准 `doops-agent`；JM 通过 89 内网路径接入 gateway。
 
 ## Agent 双镜像发布
 

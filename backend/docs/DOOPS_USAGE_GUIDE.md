@@ -79,7 +79,61 @@ Gateway 直接解析保存的 target/database 绑定和 active version，不让�
 `use=database` 凭据。只有一个绑定时直接使用；有多个时按 `--database` 匹配凭据指向的数据库，
 未指定时返回 `dosql_database_required` 并列出各绑定指向的 `engine/database`。
 当前 target 没有 `use=database` 绑定时返回 `dosql_database_binding_missing`；绑定 scope
-失效时返回 `credential_binding_scope_invalid`。完整对照见 `CREDENTIAL_RESOURCES.md`。
+失效时返回 `credential_binding_scope_invalid`。`--database` 没有凭据指向该库时返回
+`dosql_database_not_bound`；多个凭据指向同一库时返回 `dosql_credential_ambiguous`，
+吊销重复绑定后重试。完整对照见 `CREDENTIAL_RESOURCES.md`。
+
+### DoSql 直接执行 SQL
+
+已知确切 SQL 时用 `--sql` 或 `--file`，SQL 原样提交给 Agent，不经过模型，与 `--request`
+二选一。只支持 `--mode query` 和 `--mode apply`，引擎为 postgres、mysql、oracle、mongodb。
+
+```bash
+# 只读：每条语句都必须是 SELECT/WITH/SHOW/DESCRIBE/EXPLAIN/VALUES/TABLE
+doops -session db-check sql --target <t> --mode query [--database <name>] \
+  --sql 'SELECT count(*) FROM orders'
+
+# 变更：整批语句与验证 SQL 在同一事务内执行，验证失败整批回滚
+doops -session db-change sql --target <t> --mode apply [--database <name>] \
+  --file migrate.sql --verify 'SELECT count(*) FROM orders WHERE status IS NULL'
+
+# 干跑：执行整批和验证后回滚，用于确认语句可执行
+doops -session db-change sql --target <t> --mode apply --file migrate.sql --dry-run
+```
+
+- 不要在 SQL 里写 `BEGIN/COMMIT/ROLLBACK/SAVEPOINT`，事务边界由 DoSql 持有；写了返回
+  `dosql_statement_transaction_control_forbidden`。
+- `--verify`/`--verify-file` 只能是一条只读语句，否则 `dosql_verification_invalid`；
+  验证失败返回 `dosql_verification_failed`。`--verify` 与 `--dry-run` 只用于 apply。
+- query 中出现写语句返回 `dosql_query_requires_read_only`，改用 `--mode apply`。
+- Postgres 的 DDL 与 DML 一起回滚。MySQL 和 Oracle 的 DDL 会隐式提交：`--dry-run` 含 DDL
+  返回 `dosql_dry_run_ddl_unsupported`，DDL 与 DML 混批返回 `dosql_mixed_ddl_dml_unsupported`；
+  已隐式提交的 DDL 在结果中体现为 `implicit_commits` 和 `status=partially_committed`，不报成已回滚。
+- 真实 apply 在 Agent 上按库写带哈希链的版本日志（`.doops-dosql-versions/<db>.jsonl`），
+  执行前先分配版本号；日志不可写返回 `dosql_version_journal_unavailable`，被篡改返回
+  `dosql_version_journal_corrupt`，两者都拒绝执行。query 和 dry-run 不产生版本。日志只在
+  Agent 的 `/root` 是持久卷时跨重启保留。
+- 结果是带 `operation_id`、`statement_fingerprint` 的 JSON，证据写入目标 session 工作区
+  `.dosql/operations/<operation_id>.evidence.json`，可用 `pull` 取回。
+- query 走 target `ask` 权限，apply 走 `exec` 权限；数据库选择规则同上一节。
+
+MongoDB 也走 `--sql/--file`，但语句是 JSON 操作，不是 SQL。一批可以是 JSON 数组，也可以是连续多个文档：
+
+```bash
+doops -session db-change sql --target <t> --mode apply --database <name> \
+  --sql '{"collection":"orders","op":"updateMany","filter":{"status":null},"update":{"$set":{"status":"new"}}}' \
+  --verify '{"collection":"orders","op":"count","filter":{"status":null}}'
+```
+
+- 读：`find`、`count`、`aggregate`。写：`insertOne/insertMany/updateOne/updateMany/replaceOne/deleteOne/deleteMany`。
+- 一批写操作与 `--verify` 在同一事务内，失败整批回滚，`--dry-run` 回滚。事务需要副本集，单机返回
+  `dosql_transaction_unsupported`。
+- `createCollection/createIndex/dropIndex/drop` 不能进事务：`--dry-run` 含它们返回
+  `dosql_dry_run_ddl_unsupported`，与写操作混批返回 `dosql_mixed_ddl_dml_unsupported`，执行后计入 `implicit_commits`。
+- `$where/$function/$accumulator` 返回 `dosql_mongo_javascript_forbidden`；聚合 `$out/$merge` 返回
+  `dosql_mongo_stage_unsupported`；`system.*` 集合、未知操作或结构错误返回 `dosql_mongo_operation_invalid` /
+  `dosql_mongo_document_invalid`。`deleteOne/deleteMany` 必须显式给 `filter`（`{}` 表示全部）。
+- 认证库默认取 URI 中的库，认证失败时用 `authSource=admin` 重试一次；实际使用的库见结果的 `auth_source`。
 
 `registry sync` is a thin generic wrapper over the target Agent's audited exec path. The
 standard DoOps Agent image provides `buildctl` for image builds and `skopeo` for OCI
@@ -108,6 +162,12 @@ doops -session image-toolchain-check info --target <gateway-target>
 `info` 输出中的 `buildctl: OK`、`skopeo: OK` 和 `buildkit-sock: OK` 表示目标具备
 DoOps 通用镜像工具链。镜像构建使用明确授权的 `exec` 命令调用 `buildctl`；镜像复制
 和源/目标 manifest 校验使用 `image copy` 或 `registry sync`。两者都不需要 AMP 专用脚本或外置同步 Job。
+目标缺少 `skopeo` 时直接报告工具缺失，不在线安装，也不静默切换到其它工具。私有 Registry
+凭据只能引用目标上的受控 authfile，禁止写入命令参数。
+
+运行态文件与配置同目录：`auth.json`（按 Gateway URL 保存的登录态）、`history.jsonl`
+（本机命令历史）、`sessions.json`（本机会话缓存）。`~/.config/doops/config.json`、
+`~/.doops/auth.json` 和项目 `.doops/` 是旧路径，不作为当前配置依据。
 
 `doops version` 的 `release` 是唯一 DoOps 发布版本，`commit` 是该版本对应的完整
 源码 provenance；`doops targets` 的 `RELEASE_COMMIT` 必须与它一致。输出中的
@@ -118,143 +178,29 @@ Agent 未提供完整 `RELEASE_COMMIT` 时只能视为旧运行时，升级验�
 
 To remove a stale local route, use `doops -session <s> remove --target <gateway-target>`. The command first queries the configured Gateway and refuses to modify the config if the Gateway is unreachable, authentication fails, or the exact route is currently visible. It does not delete Gateway grants, audit records, proxy routes, or historical agent status.
 
-`doops targets` separates target-wide busy from normal per-session activity:
+`doops targets` 的状态：
 
-- `busy=true` means an Agent self-upgrade holds the target-wide exclusive lease. Ordinary mutations and waiting sessions do not set target-wide busy.
-- `status=active` with `busy=false` means one or more sessions/resources are running; ordinary Shell/SSH/bg/apply operations are serialized only within the same target + session, while different sessions can use the same Agent concurrently.
-- `resources` shows workspace locks such as `workspace:<session>`.
-  Shell/SSH/bg and apply use a session-scoped mutation lease; a session is an ownership key, not an OS or remote-resource sandbox.
-- The admin operation view shows both the requested resource and the effective lock. A
-  `target-mutation:<target>` request with a session is actually fenced as
-  `session-mutation:<target>/<session>`; do not infer target-wide exclusivity from the
-  requested resource label.
-- Public HTTP proxy requests are classified by method: `GET/HEAD/OPTIONS/TRACE` are read-only
-  queries; other methods use a route-scoped resource lock and record `outcome_unknown`
-  when the Agent disconnects before a terminal response.
+- `busy=true` 只表示 Agent 自升级占用整个 target；普通操作不会置位。
+- `status=active` 且 `busy=false` 表示有 session 在跑。同一 target + session 的 Shell/SSH/bg/apply
+  串行，不同 session 可并行；session 只是并发归属，不是沙箱，不要从两个 session 同时改同一
+  release 或数据库。
+- `resources` 列出 `workspace:<session>` 等锁；`admin operations list` 同时给出
+  `requested_resource` 和实际生效的 `effective_lock`，以后者为准。
 
-Cancellation uses the same session/resource conflict rules as admission. Audit-only
-finalization retries retain evidence, not execution leases; even the same session can
-start new work after execution cleanup. Missing-session mutations are rejected,
-not silently turned into target-wide operations. A session is not a sandbox: callers
-must not concurrently mutate the same release or database from independent sessions.
+`exec` 的 Shell 从 Agent 进程目录启动，需要 session 工作区时显式 `cd /root/ws/<session>`。
+CLI 原样输出通知文本（含 JSON、空行、分块）；超时会请求取消并继续等原请求终态。
 
-Existing WebSocket connections recheck their token identity for each new operation.
-Disabled accounts and revoked/expired tokens cannot start new work; this does not
-add a manual approval step. Target administrators see only their authorized target
-operations, instances and proxy routes. Global user/grant/token/repository/job lists
-remain platform-admin resources. Attachment uploads verify the live target and ask
-scope before storing bytes.
+`capabilities --require structuredSSH|executionLifecycle` 只做握手，不证明 Agent 支持自升级；
+只有 `exec --bg` 需要 `executionLifecycle`。其它名称在联网前即报参数错误。
 
-`capabilities --require structuredSSH` performs only the Gateway WebSocket initialize
-handshake. It succeeds only when the selected online Agent advertises the exact
-structured SSH protocol; it never falls back to `doops exec`.
-`capabilities --require executionLifecycle` checks background execution's exact
-terminal-response, managed-lifetime and cancellation contract. Only `exec --bg`
-requires it before dispatch; foreground exec, SSH and ask do not. Background
-execution remains one streaming RPC, not a promise to survive disconnection.
-Other protocol names are rejected locally before configuration, authentication
-or network access; those argument errors are not evidence of an outdated Agent.
-It does not prove that the Agent supports in-cluster self-upgrade. Verify the
-installed CLI and target image against the selected release before choosing an
-upgrade path; source changes alone do not update either runtime.
+执行生命周期（终态、`outcome_unknown`、取消返回 `202 cancel_requested` 不代表已停止、
+`finalizing`/`audit_completion_failed`、SSH 退出码 `1..254` 与 `255` 的区别、并发与锁）见
+[`DOOPS_GATEWAY_TUNNEL.md`](DOOPS_GATEWAY_TUNNEL.md#multi-user-behavior)；操作列表字段见
+[`DOOPS_API_GUIDE.md`](DOOPS_API_GUIDE.md)。Gateway 控制面发布（`fetch-gateway-release.sh` +
+`deploy-gateway.sh --no-build`）见 [`BUILD_DEPLOY_SOP.md`](BUILD_DEPLOY_SOP.md)。
 
-Managed update controllers use the Agent node and runtime class. The requested
-image reference remains an exact Deployment/Pod spec requirement; tag references use
-`Always` pulling, while runtime imageID is independently checked against the controller
-requested image. Automatic
-rollback checks the pre-update runtime identity. Successful complete verification
-persists revision/image/runtime evidence in `doops-upgrade-verified-<release>`.
-Manual rollback selects only an evidenced superseded revision with a pinned image
-and rechecks the admitted revision before mutation; missing evidence fails closed.
-Legacy releases without that evidence need an authorized external rollback.
-
-Gateway 控制面发布不走 doops target。Gateway 不在 Agent 镜像里，它是同版本 CNB Release
-的 `doops-gateway-linux-amd64` 资产；下载脚本校验 checksum 和内嵌 commit，发布脚本会拒绝
-没有该 commit provenance 的本地旧二进制：
-
-```bash
-bash scripts/fetch-gateway-release.sh \
-  --release-tag <release-tag> \
-  --source-commit <verified-main-commit>
-bash scripts/deploy-gateway.sh \
-  --host <gateway-host> \
-  --user <ssh-user> \
-  --binary backend/bin/doops-gateway \
-  --no-build \
-  --source-commit <verified-main-commit> \
-  --verify-target <configured-doops-target> \
-  --verify-session gateway-release-<release>
-```
-
-If gateway returns `user operation limit exceeded`, list active gateway operations and cancel stale ones with an admin token:
-
-```bash
-doops -session <s> admin operations list --target <gateway-target>
-doops -session <s> admin operations cancel --target <gateway-target> --id <operation-id>
-```
-
-Both commands scope operation lookup to the target's exact `cluster/instance`.
-The CLI refuses to cancel an operation that is missing, unscoped, or belongs to
-another target on the same Gateway.
-
-Cancel returns HTTP `202` with `cancel_requested=true`, meaning the request was
-registered, not that the operation stopped. The operation keeps ownership until
-the original terminal response. Shell-style commands join process-group
-termination; `ask` waits for the matching doagent turn terminal event. Missing
-terminal evidence persists `outcome_unknown` and is reported as failure, not success.
-This includes interrupted workspace writes, cleanup and clone/commit operations
-without a terminal reply. A confirmed local completion after cancellation is
-not an unknown outcome. Read-only query failures do not quarantine the target.
-Agent progress notifications carry `params.request_id`; Gateway and CLI route them by
-request ID so concurrent calls in one session cannot overwrite one another. The Gateway
-attempts terminal persistence before returning success. If that write fails, it reports
-`audit_completion_failed` and retries the original evidence independently of execution
-ownership. Completed execution cleanup releases the lease even while the audit retries.
-Interrupted Shell/SSH/bg, apply and Kubernetes mutations also require reconciliation:
-local process or turn termination does not fence remote or detached work. Historical
-unknown audits do not participate in new-task admission; they are neither deleted nor
-changed to success. Active work still uses resource locks, queueing and cancellation;
-an audit storage outage is not an execution lock. The operation list shows
-`waiting`, `running`, `cancel_requested`, `finalizing`, `outcome_unknown`, `audit_id`,
-`resource`, `requested_resource`, `effective_lock` and `blocked_by`. `running` is the admission
-state for admission and unguarded reads; it does not prove that no Agent call was sent.
-Interrupted `running` rows become terminal `error` after restart. `executing` identifies a
-dispatched guarded operation and becomes `outcome_unknown` if its owner is lost. A failed
-terminal audit write retries the original status, error, timestamp and output evidence,
-not an inferred replacement result. Waiting for a resource
-does not consume a user execution slot.
-Different sessions can run Shell/SSH/bg/apply concurrently; operations sharing one
-session or an explicit shared resource remain serialized. Structured Kubernetes queries and task status remain available during a
-mutation or unknown outcome. Agent upgrades remain exclusive. Different routes to
-one release/database are not coordinated by this target-local lock; do not bypass it
-using another target. There is no safe force-preemption or automatic replay protocol.
-
-CLI streaming and captured output preserve notification text exactly, including JSON,
-blank lines and partial chunks. Business output cannot declare an Agent event or task
-completion. Shell commands start in the Agent process directory; use an explicit `cd`
-when a command needs a session workspace. Agent reconnection waits for old
-connection-owned executions to finish cleanup before registering again.
-CLI timeouts request cancellation and continue observing the original RPC. Missing
-terminal evidence reports `execution_outcome_unknown`; no automatic retry is made.
-Captured output is retained on failures for diagnosis.
-Shell audit records the actual command and output; it no longer guesses file paths
-from `kubectl apply -f` text or reads incidental files into the audit.
-
-An SSH failure with an Agent structured terminal result is an ordinary failed
-operation when it has a remote exit code in `1..254`, or when the structured
-tool error has no exit code. Exit code `255`, signal termination, cancellation,
-disconnection and missing structured terminal evidence still report unknown outcomes. Command
-text never determines whether an SSH operation is safe to preempt.
-
-Verified terminal Helm tool errors are failed operations, not unknown outcomes.
-One successful tool cannot hide another failed tool in the same apply. Credential
-operations lock their exact resource IDs, allowing unrelated credentials to run
-concurrently while preserving serialization for the same credential.
-Manual execution reconciliation is no longer available: operator declarations
-must not rewrite an audit or force-release an active lease. Historical unknown results
-remain readable without blocking the whole target. Failure or uncertainty never
-authorizes automatic mutation replay. `unlock` only reconnects an idle target and
-refuses active or queued operations.
+取消他人操作前先 `admin operations list` 核对所有权；`unlock` 只重连空闲 target，
+拒绝有活动或排队操作的 target，不强制释放。
 
 ## Gateway Admin Tokens
 
@@ -455,6 +401,8 @@ doops -session ops ssh --target jm --host ops@app.internal \
 `--option` 只接受 `-4`、`-6`、`-p`、`-i`，以及 `BatchMode`、`StrictHostKeyChecking`、
 `ConnectTimeout`、`IdentitiesOnly`、`IdentityFile` 和 `Port`。`key=value` 简写会转换为
 `-o<key>=<value>`。会改写目标或执行本地命令的选项会被拒绝。
+CLI 只拦截直接以 `ssh`、`/usr/bin/ssh` 或 `/bin/ssh` 开头的 `exec` 命令，不是完整 Shell
+分析器；包装命令仍须由调用者改用结构化入口。
 
 ## Ask
 
@@ -463,6 +411,34 @@ doops -session ops ask --target jm --msg '只读检查 Kubernetes 节点状态�
 ```
 
 Use `ask` for diagnostics that require exploration. The target must have doagent/model configuration available.
+
+`--database-ref <id>` 和 `--repo-ref <id>[@branch]` 可重复，只把引用 ID 作为
+`[DoOps 任务引用]` 前缀拼进任务文本，不授予数据库或仓库权限，也不物化凭据。
+`--model` 为本次指令选择模型。`--credential` 只允许与 `--apply` 一起使用。
+
+## Kubernetes Operations
+
+`doops k8s` 调用 Agent 的 `doops_k8s` 工具，不走 shell `kubectl`：
+
+```bash
+doops -session ops k8s --target <t> get pods --namespace apps
+doops -session ops k8s --target <t> describe deployment api --namespace apps
+doops -session ops k8s --target <t> logs deployment/api --namespace apps --tail 200
+doops -session ops k8s --target <t> top pods --namespace apps
+doops -session ops k8s --target <t> events --namespace apps --for deployment/api
+doops -session ops k8s --target <t> rollout status deployment/api --namespace apps
+# 以下是 mutation，必须带 --confirm
+doops -session ops k8s --target <t> rollout restart deployment/api --namespace apps --confirm
+doops -session ops k8s --target <t> scale deployment/api --replicas 3 --namespace apps --confirm
+doops -session ops k8s --target <t> node cordon <node> --confirm
+doops -session ops k8s --target <t> delete pod <pod> --namespace apps --confirm
+```
+
+可用参数：`--namespace`、`--container`、`--output json|yaml|wide|name`、`--tail`、
+`--replicas`、`--timeout`、`--for`、`--confirm`。`get/describe/logs/top/events/rollout status`
+是只读查询，可与 target mutation 并行；`rollout restart/scale/cordon/uncordon/delete pod`
+使用 target mutation lease。两类都需要 target 的 `exec` 权限。版本发布不走这里，用
+`ask --apply`。
 
 ## Development Credential Preflight
 
@@ -496,8 +472,8 @@ materialization 路径。
 
 ## CI/CD And Apply
 
-普通业务 workload 的标准发布入口是 `doops ask --apply`。完整职责边界、执行顺序、
-凭据预物化、验收和自托管组件例外见
+普通业务 workload 用 `doops ask --apply` 发布。任务写明 target、服务范围、镜像版本或其授权来源、
+原因和验收条件；Helm 资产参数、`--reset-values`、可选 `expected_image`、凭据预物化和验收见
 [`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
 
 ```bash
@@ -505,34 +481,11 @@ doops -session release-<commit> ask \
   --target <configured-target> \
   --apply \
   --credential <resource-name> \
-  --msg '在 <target> 的 namespace <namespace> 发布 deployment/<workload>，镜像 <repository>@sha256:<verified-ci-digest>；使用 chart https://charts.example/<name>.tgz；原因：<reason>；验收：Secret 类型/key、rollout、最终 Deployment spec/status、实际镜像、Service/Endpoint、健康检查和关键功能路径通过。'
+  --msg '在 <target> 的 namespace <namespace> 发布 deployment/<workload>，镜像 <repository>@sha256:<verified-ci-digest>；使用 chart https://charts.example/<name>.tgz；原因：<reason>；验收：rollout、最终 Deployment spec/status、实际镜像、Service/Endpoint 和健康检查通过。'
 ```
 
-必须明确提供 target、服务范围、变更原因、授权资产和验收条件。业务镜像版本必须来自
-任务或其明确授权的仓库、Chart、values、现有 release 的只读证据，不猜测，也不要求
-将已明确资产中的事实再粘贴到 prompt。覆盖遵循 Chart schema，不固定业务镜像键或版本格式。
-普通升级使用 `--reset-values`，不再自动保留现有非镜像 values；需要保留的值须显式作为
-资产授权。`asset_source` 默认 remote，当前支持 HTTPS `.tgz`，不支持 `oci://`。
-完整资产参数、可选 `expected_image` 和迁移说明见
-[`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
-`--credential` 可重复，但只传 resource name，不能内联 payload；受管 Helm 认证、
-凭据权限继承 target 操作权限；当前包校验后一次 staging，dry-run 与 Helm 共用下载文件。
-允许授权的 values overlay 和字符串覆盖，namespace、workload、release 和仓库路径不是凭据权限条件。
-发布者必须在调用前独立核对精确 CI source commit、registry digest 和构建成功证据；
-`ask --apply`、`--image`、`--version` 和 Helm 工具不自动验证 CI provenance。
-
-CNB CI 负责测试、构建和发布制品；Gateway 负责鉴权、审计、并发控制和凭据预物化；
-目标 Agent/doagent 在目标运行环境执行业务 mutation。当前没有 EnvironmentRegistry、
-`cicd run`、workflow 环境推断、CICDReport 或 `doops_cicd_result`。
-
-普通前台 `exec` 可以执行操作者明确给出的 Helm 命令，但不替代标准发布编排，也不能使用
-managed credential references。标准 Helm `doops-agent` 自身升级使用 `doops upgrade`，仅适用于
-Agent 自身 namespace 中的标准 Helm-managed Deployment 和已有匹配 Helm release；未给
-`--release` 时必须只有一个匹配 release，给出时按名称选择并校验。Agent Pod 必须挂载
-可由 Job 共享的 `/root/.kube` 或 `/root/.kube/config`，Job 的 Kubernetes 权限来自该
-kubeconfig，不需要操作机 kubeconfig。旧 Helm Agent 使用外部
-`scripts/release-managed-agent.sh`；已有独立 Docker 使用外部
-`scripts/release-host-agent.sh`，不要求先迁 K8S，不通过旧 Agent `exec` 升级自己。
+`--credential` 可重复，只传资源名。发布者调用前自行核对 CI source commit 和镜像 digest；
+CLI 与 Agent 不验证 CI 来源。Agent 自身升级不走这条路径，见下文 Upgrade。
 
 ## Push
 
@@ -585,8 +538,12 @@ Confirm the session name before cleaning. Do not share one session across unrela
 
 ```bash
 doops login --target jm --username alice
+printf '%s' "$DOOPS_GATEWAY_TOKEN" | doops login --target jm --token-stdin
 doops logout --target jm
 ```
+
+CI 和自动化用 `--token-stdin` 传入 Gateway user token，不能与 `--token`、`--username`、
+`--password` 混用。不要用 `--token`/`--password` 把凭据放进命令行参数。
 
 Login and logout apply to the Gateway, not one target. `auth.json` stores one
 token under the normalized Gateway URL, and every configured target on that
@@ -594,221 +551,75 @@ Gateway uses the same login state. Target configuration contains routing only;
 it must not contain a Gateway user token. Gateway permissions still come from
 the user's grants.
 
+## Updating Metadata
+
+没有通用的 `update` 命令。各类元信息按下表修改；“替换”表示先建新的再删旧的。
+
+| 对象 | 如何修改 | 不能改的部分 |
+| :--- | :--- | :--- |
+| 本机 target 路由 | 同名再执行 `doops add --name <n> ...` 原地覆盖 gateway/cluster/instance/aliases/use；alias 与其它 target 冲突时拒绝 | 只有确认离线才能 `remove` |
+| Gateway 用户 | `admin user password` 改密码；`admin user disable --disabled=true\|false` 停用/恢复 | 用户名、`is_admin` 无修改入口 |
+| target grant | 替换：`admin grant add` 新范围，再 `admin grant delete --id` 旧的 | grant 不支持原地改 actions 或 scope |
+| Gateway token | 替换：`admin token create` 新 token，确认后 `admin token revoke` 旧 token | token 不能续期或改名 |
+| 凭据 payload | 轮换：`credential put` → 对每个 active 绑定 `verify` → `promote`；或对已有资源重跑 `credential configure --id <id>`（每次生成新版本） | 历史版本不可改 |
+| 凭据 target 绑定 | 同一 scope 重新 `credential grant` 会复活已吊销绑定；换 scope 要新 `grant` 再 `grant-revoke` 旧的 | 绑定不支持原地改 scope |
+| 凭据资源 | 只能 `credential revoke` | name、type、scope 无修改入口；要改就新建资源 |
+| 定时巡检 job | `admin jobs enable\|disable` 开关；其它字段替换：`admin jobs add` 后 `admin jobs rm` | job 字段不支持原地修改 |
+| 网站代理路由 | `doops admin proxy set --id <id> [--host] [--scope-target] [--upstream] [--enabled]` 原地修改，只改传入字段；新建省略 `--id`，见 `DOOPS_GATEWAY_TUNNEL.md` | — |
+| Git 仓库登记 | HTTP `PATCH /v1/admin/repos?id=<id>` 或 Web 控制台（无 CLI） | — |
+| Edge 域名路由 / enrollment | 当前没有 HTTP 或 CLI 管理入口；存储层的增改删只被测试调用 | 不要直接改 Gateway SQLite |
+| Agent 的 cluster/instance | 由 Agent 部署配置（Helm values）声明，改它就是重新发布 Agent，见 `BUILD_DEPLOY_SOP.md` | CLI 和 Gateway 都不能改在线 Agent 的身份 |
+
 ## Credential Resources
 
-完整凭据模型、payload schema、权限矩阵、验证、轮换、吊销、bundle、审计和发布引用见
-[`CREDENTIAL_RESOURCES.md`](CREDENTIAL_RESOURCES.md)。
+凭据模型、payload schema、权限、分步生命周期（create/put/grant/verify/promote/revoke）、轮换、
+bundle、审计和错误类别见 [`CREDENTIAL_RESOURCES.md`](CREDENTIAL_RESOURCES.md)。
 
-首次配置优先使用 `credential configure`，不要求用户逐步执行 create/put/grant/verify/promote。
-已有资源传 `--id`，避免重复创建；`--from-secret <name> --keys <keys>` 让 platform admin
-在 Agent 内导入指定 Secret，无须回传密码；源 Secret key 与运行时契约不一致时可增加
-`--key-map source=runtime`。不指定 Secret 时沿用 stdin payload。
-数据库 use 不要求 workload；配置失败不会报告成功。`doops sql` 自动使用 target 上的 database 绑定，不再传 `--credential`。
-
-安装正式 CLI 并验证不可变构建信息：
+首次配置用一条命令完成写入、绑定、验证和激活：
 
 ```bash
-bash scripts/install.sh --version <release-tag> --project "$PWD"
-~/.local/bin/doops version
+# payload 从 stdin 输入
+printf '%s' '<payload-json>' | doops -session setup credential configure \
+  --target <t> --name <name> --type <type> --scope personal --namespace <ns> --use <use>
+
+# 从目标上已有 Secret 导入，不回传密码
+doops -session setup credential configure --target <t> --id <id> \
+  --namespace <ns> --use database --from-secret <secret> --keys connection_uri
+
+doops credential list --target <t>                 # target 可用的凭据
+doops credential list --target <t> --view managed  # 本人管理的凭据
 ```
 
-The installer downloads a checksummed CNB Release Asset into `~/.local/bin/doops`
-and writes a receipt to `~/.local/share/doops/install.txt`. Skill directories contain
-instructions and docs only; they are not CLI executable locations.
-Skill/docs are read from the exact Git commit embedded in that CLI, not from the
-current working tree. A missing commit or required source file stops installation
-before replacing the installed CLI or Skill. Fetch the selected release commit
-into this repository and retry; the installer does not create a worktree or fetch
-another revision automatically. The receipt records matching `commit` and `skill_commit`.
-
-同一个 Gateway 只登录一次，但查询和使用仍按用户及 configured target 的
-`cluster/instance` 隔离：
-
-```bash
-doops login --target gw-edu-coder --username alice
-doops credential create --target gw-edu-coder \
-  --name oilan-registry --scope personal --type registry
-doops credential list --target gw-edu-coder
-doops credential list --target gw-edu-coder --view managed
-```
-
-默认 `target` 视图在当前用户能操作该 target 时返回目标绑定且存在 active version
-的 active resource；
-`managed` 视图返回本人拥有的 personal resource，platform admin 可以管理平台资源。
-两个视图都不返回 payload。`managed` 视图只返回 resource metadata，不加载 grant 详情；
-target 视图只在 resource、active version 和 active target binding 同时存在时返回凭据。
-
-完整 CLI 生命周期：
-
-```bash
-# 1. 写入 staged version
-printf '%s' '{"server":"registry.example.com","username":"deploy","password":"..."}' |
-  doops credential put --target gw-edu-coder --id <credential-id>
-
-# 2. 绑定到 target
-doops credential grant --target gw-edu-coder \
-  --id <credential-id> \
-  --namespace apps --use imagePull \
-  --workload-kind Deployment --workload-name oilan \
-  --image-repository registry.example.com/oilan \
-  --image-digest sha256:<manifest-digest>
-
-# DoSql database grant: Gateway binds target + credential usability only;
-# DoSql/Agent validates asset, environment, engine and database name at execution time
-doops credential grant --target gw-edu-coder \
-  --id <credential-id> \
-  --namespace agents --use database \
-  --required-keys connection_uri
-
-# 3. 在相同 scope 验证 staged version
-doops -session credential-verify-<version> credential verify \
-  --target gw-edu-coder \
-  --id <credential-id> --version-id <version-id> \
-  --namespace apps --use imagePull \
-  --workload-kind Deployment --workload-name oilan \
-  --image-repository registry.example.com/oilan \
-  --image-digest sha256:<manifest-digest>
-
-doops -session credential-verify-db-<version> credential verify \
-  --target gw-edu-coder --id <credential-id> --version-id <version-id> \
-  --namespace agents --use database \
-  --required-keys connection_uri
-
-# 4. 激活已经覆盖全部 active target bindings 的版本
-doops credential promote \
-  --target gw-edu-coder \
-  --id <credential-id> --version-id <version-id>
-
-# 5. 吊销单条 grant 或整个 resource
-doops credential grant-revoke \
-  --target gw-edu-coder --id <credential-id> --grant-id <grant-id>
-doops credential revoke --target gw-edu-coder --id <credential-id>
-```
-
-payload 只能从 stdin 输入并由 Gateway 加密持久化。验证输出只允许状态、
-resourceVersion、digest 和稳定错误类别。Target binding 只匹配 target 的
-`cluster/instance`；namespace、workload、release、仓库路径和 database asset 都是执行元数据，
-不参与授权。
-
-数据库凭据的 resource `state=active` 只表示 resource 未吊销，不表示已有可执行版本。
-数据库执行前必须完成 `put -> target binding -> verify -> promote`；缺少 active version
-或 target binding 时，Gateway 会在物化阶段拒绝执行。遇到 `credential_invalid`，先检查生命周期和
-scope，不要换用普通 `opaqueSecret` 或绕过 Gateway。
+已有资源传 `--id`，避免重复创建；源 Secret key 与运行时契约不同时加 `--key-map source=runtime`。
+`doops sql` 自动使用 target 上的 database 绑定，不传 `--credential`。
 
 ## Upgrade
 
-空 Ubuntu/Debian 服务器的 Docker 首装使用 `scripts/bootstrap-host-agent.sh`，
-不使用本节的 CLI 安装器或已有 Agent 升级器。脚本安装 Docker/Compose、拉取指定版本、
-保存配置并等待 Gateway 隧道健康；参数和 Unicom 示例见
-[空服务器 Docker 首装](CLUSTER_INSTALL_GUIDE.md#空服务器-docker-首装)。
+入口按运行方式选择，参数、验收和回滚见 [`BUILD_DEPLOY_SOP.md`](BUILD_DEPLOY_SOP.md)：
 
-CLI / Skill 安装或更新（不会部署或升级 Agent）：
+| 场景 | 入口 |
+| :--- | :--- |
+| 安装或更新 CLI / Skill（不动 Agent） | `bash scripts/install.sh --version <vX.Y.Z> --project "$PWD"` |
+| 已有自升级控制器的 Helm Agent | `doops upgrade`（下方示例） |
+| K8S 首装、旧 Helm Agent、`--proxy-allowed-hosts` / `--host-alias` 等 Helm 配置变更 | `scripts/release-managed-agent.sh`，操作机 kubeconfig |
+| 已有独立 Docker Agent | `scripts/release-host-agent.sh`，见 SOP“独立 DockerHost 发布” |
+| 空 Ubuntu/Debian 服务器 | `scripts/bootstrap-host-agent.sh`，见 [`CLUSTER_INSTALL_GUIDE.md`](CLUSTER_INSTALL_GUIDE.md#空服务器-docker-首装) |
 
-```bash
-bash scripts/install.sh --version <vX.Y.Z> --project "$PWD"
-```
-
-安装器只使用 canonical 配置，忽略 `DOOPS_CONFIG` 覆盖；在替换 CLI/Skill 前用
-候选 CLI 检查配置，包括仅有旧配置的情况。迁移报错时修正路由配置，不用临时配置
-绕过问题。Agent 入口选择和 HDU 升级限制统一见
-[集群接入指南](CLUSTER_INSTALL_GUIDE.md#先选部署对象)。
-
-K8S 新集群首次安装、旧 Helm Agent 首次启用控制器与显式 Helm 配置变更使用本仓库
-`scripts/release-managed-agent.sh`，不能重跑外部清单安装器替代 Helm 升级。
-首次安装完整命令与验收见 `CLUSTER_INSTALL_GUIDE.md`；这条 bootstrap 路径与普通
-业务 `ask --apply` 分开。外部控制器可以位于授权管理主机或 CI，不必在开发机。
-
-已有独立 Docker Agent 用 `backend/scripts/release-host-agent.sh` 和同目录 Python
-实现，由外部宿主控制器发布并保持原配置。必须显式指定 SSH 端口，核验主机密钥；
-可引用已认证私有 SSH socket，不接收密码/token。完整必填参数、真实只读 `--dry-run`、
-宿主锁、停止后保留旧容器、外部回滚以及实际容器/镜像/版本、Gateway
-`release_commit`、structuredSSH 协议/argv 派发/预期失败终态、foreground/bg 真实 RPC
-流与 Root RequestID 验收见
-[主 SOP](BUILD_DEPLOY_SOP.md#独立-dockerhost-发布)。这不是 `doops upgrade` 的 Docker
-模式或自动 fallback，也不是无 Agent 主机的 bootstrap，不依赖旧 Agent 的
-`doops_agent_upgrade` / `managedHelm`。
-候选镜像先由外部准备，dry-run 仅只读检查已有制品，缺失明确失败；候选二进制静态
-`--version` 检测仅在正式发布停止旧容器前执行，不启动 Agent 或新 target。
-外部 bootstrap 密码只走 stdin，不传给 Agent；外部管理 SSH 成功另记，不能据此宣称
-Agent 已成功认证 SSH 目的地主机。
-
-已经改用 Helm chart `deploy/helm/doops-agent`、并且 Agent 镜像包含自升级控制器的节点，
-用 `doops upgrade`，不需要本机 kubeconfig。普通业务仍使用 `doops ask --apply`。
-发布者须先通过只读检查确认现网采用标准 `/app/sandbox-entrypoint.sh`；
-CLI 的参数预览不替代这项检查。Agent 进程不执行这次 Helm mutation；
-集群内 Job 复用 Agent 已挂载的 kubeconfig。Chart 先起新 Pod，Gateway
-切换会话后才删旧副本；新 Pod 不持续就绪或 `structuredSSH` 探针失败会回滚。
-`doops upgrade` 只接受 Agent 镜像和 rollback 操作，不修改 `proxy.allowedHosts`、
-`hostAliases` 或其它 Agent Helm 配置。
-
-还没有该控制器的旧 Helm Agent，以及 K8S 新集群第一次接入，仍用
-`scripts/release-managed-agent.sh` 和操作机 kubeconfig：
-
-脚本会先验证 Kubernetes API 和 kubeconfig 可达性，再读取 Helm release。`--values` 新集群
-模式是 bootstrap-only，只做 Helm wait 和最终 Deployment 检查，不做 Gateway 接管或自动
-回滚；完成后必须继续执行安装验收。API 超时、
-EOF、鉴权或其它连接失败会直接报告控制器不可达，不会误报为“release 不存在”。新集群
-无 Agent 时传完整 `--values` 走安装路径；已有 workload 但 Helm release 缺失时脚本会
-停止，不执行 adopt，必须先完成独立的 `deploy/helm/doops-agent` adoption。
+安装器从 CNB Release Asset 下载带校验的 CLI 到 `~/.local/bin/doops`，回执写在
+`~/.local/share/doops/install.txt`，其中 `commit` 与 `skill_commit` 一致。Skill/docs 取自 CLI
+内嵌 commit，不取当前工作区；缺少该 commit 时安装在替换前停止。
 
 ```bash
-bash scripts/release-managed-agent.sh \
-  --target gw-edu-coder \
-  --session agent-release-<tag> \
-  --cluster doops-edu \
-  --instance edu-coder \
-  --release doops-agent-live \
-  --namespace kz-ops \
-  --kubeconfig /secure/path/to/kubeconfig \
-  --image <repository>@sha256:<verified-ci-digest>
+doops -session agent-upgrade upgrade --target <t> --image <repository>@sha256:<digest> --dry-run
+doops -session agent-upgrade upgrade --target <t> --image <repository>@sha256:<digest>
+doops -session agent-upgrade upgrade --target <t> --rollback
 ```
 
-脚本命令从 `backend/` 执行。已有 release 模式要求管理机 Gateway 登录；
-`--version` 当前依赖 Docker 拉取镜像，K3s/containerd 本身不提供该依赖。
-
-以下 `--proxy-allowed-hosts` 和 `--host-alias` 仅属于外部
-`release-managed-agent.sh` 路径；`doops upgrade` 不支持这些配置变更。需要开放网站反代时，
-通过 `--proxy-allowed-hosts` 显式传入逗号分隔的精确上游
-hostname/IP；省略会保留现网值，传空字符串会恢复为拒绝全部。该参数控制 Agent
-能访问的内网上游，不是公网访问域名。URL、端口、路径、通配符和空条目会在任何
-集群变更前被拒绝；发布后会核对新 Agent 环境与 Helm release 的值。新集群省略
-`proxy.allowedHosts` 时安全地默认拒绝全部。
-
-当上游域名必须固定到指定地址时，重复传
-`--host-alias <hostname>=<ip>`。该参数会合并到 live Helm
-`hostAliases`，同名 hostname 会被显式替换，其他映射保持不变。域名或 IP
-格式错误会在接触 target 前失败；发布后会核对 Pod 配置，并从新 Agent
-内执行真实解析验证。省略该参数会完整保留现网映射，不存在 DNS fallback。
-
-`doops upgrade` 执行自升级。`--dry-run` 只预览参数，不校验现网 Helm release、挂载、
-权限或回滚可行性，不能作为发布就绪证据：
-
-```bash
-doops -session agent-upgrade upgrade \
-  --target gw-edu-coder \
-  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest> \
-  --dry-run
-
-doops -session agent-upgrade upgrade \
-  --target gw-edu-coder \
-  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest>
-```
-
-镜像可以是 `repository:tag` 或 `repository@sha256:<64 hex>`，包括 `--dry-run` 预演。
-tag 使用 `Always` 拉取并校验实际 `imageID`；回滚仍只接受历史已验证的 digest 镜像。
-`--rollback` 回到前一个成功且已被替代的 revision。
-`--target` 的 `cluster/instance` 就是升级范围。还没有自升级控制器的旧 Helm Agent 用
-`scripts/release-managed-agent.sh`。
-`PREVIEW` 不是已部署，`ACCEPTED` 不是已完成。Job 成功后还需核对 Gateway 实际服务
-Pod 的 UID、imageID、版本与功能路径；`structuredSSH` 只是协议声明。协议探针失败时
-CLI 尝试提交回滚 Job，但 target 不可达时不能保证回滚，必须明确报告并按恢复流程处理。
-CLI 的 `OK` 表示 Job、`structuredSSH`，以及普通升级时与本机 CLI 对照的
-`release_commit` 已核验，仍不替代 Gateway 实际服务 Pod 与功能验收。
-Job 自动校验最终 Deployment 与 selector 匹配的非终止 Pod 的 UID、Ready、spec image
-和 imageID；当前控制器以同节点、同一不可变镜像引用的 controller Pod 运行身份作比较，
-不把 OCI index/manifest digest 直接当成 CRI imageID。旧 Agent 生成的 Job 仍是旧逻辑，
-不能以新源码替代旧 Agent 的实际验收。回滚以历史已验收证据和 Helm revision 为依据，并重新
-检查 Gateway 协议；这些检查仍不替代 Gateway 实际服务 Pod 关联和功能验收。
+- 镜像可以是 `repository:tag` 或 `repository@sha256:<64 hex>`；回滚只回到有验收证据的历史 revision。
+- `--dry-run` 只预览参数，不检查 release、挂载或权限。`PREVIEW` 不是已部署，`ACCEPTED` 不是已完成。
+- `OK` 表示 Job、`structuredSSH` 探针和 `release_commit` 已核验；之后仍要用同一 target 的
+  `exec hostname` 确认实际服务的 Pod，并验证功能路径。
+- `doops upgrade` 只换 Agent 镜像或回滚，不改 `proxy.allowedHosts`、`hostAliases` 等 Helm 配置。
 
 ## BuildKit Availability
 

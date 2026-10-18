@@ -8,7 +8,7 @@
 安装、正常升级和旧 Agent 恢复的入口统一见
 [集群接入指南](CLUSTER_INSTALL_GUIDE.md#先选部署对象)。`install.sh` 只更新客户端和
 Skill。已有 release 的外部脚本仍要求 Gateway 登录；它不是仅凭 kubeconfig 的免登录
-恢复工具。其当前镜像身份验收限制见同文 HDU 记录，不得把示例命令作为已验证部署证据。
+恢复工具。镜像身份验收的已知限制见同文“外部脚本已知限制”，不得把示例命令作为已验证部署证据。
 
 执行生命周期变更必须先验证 Gateway 的统一终态状态机，再切换 Gateway。候选
 Agent 不再需要声明独立的生命周期 capability；必须验证前台和后台 RPC 的原始终态、
@@ -110,8 +110,7 @@ bash scripts/deploy-gateway.sh \
 ## 二、普通业务 workload apply
 
 普通业务 workload 的唯一运行时发布入口是明确授权的 `doops ask --apply` 自然语言任务。
-不得使用 `EnvironmentRegistry`、`EnvironmentDefinition`、`DeploymentTemplate`、
-`deploy/environments.yaml`、`cicd run` 或 workflow YAML 作为发布根，也不得从目录名、
+不得用环境注册表、部署模板或 workflow YAML 作为发布根，也不得从目录名、
 环境名、业务名或历史发布记录猜测目标和参数；可读取任务明确授权的代码、Chart、values
 和现有 release 解析事实，不要求已明确资产中的事实再粘贴到 prompt。CNB 负责构建、
 校验和推送业务制品；
@@ -180,7 +179,7 @@ docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>
 docker.cnb.cool/l8ai/ai/doops.sh:<release>
 ```
 
-`Dockerfile.base.light` 只放基础运行时：doagent、BuildKit、`buildctl`、`skopeo`、kubectl、Python+PyYAML、Helm、SSH 客户端和系统包。`buildctl` 是标准镜像构建入口，`skopeo` 是标准 OCI 复制/检查入口。它必须保留 `ssh` 客户端但删除 SSH 服务端。`Dockerfile` 和 `agent/Dockerfile` 只放轻更新：doops-agent、skills、docs、entrypoint。禁止把基础 rootfs 压平成每个 release 都变化的单个多 GiB layer。
+`Dockerfile.base.light` 只放基础运行时：doagent、BuildKit、`buildctl`、`skopeo`、kubectl、Python+PyYAML、Helm、SSH 客户端和系统包。`buildctl` 是标准镜像构建入口，`skopeo` 是标准 OCI 复制/检查入口。它必须保留 `ssh` 客户端但删除 SSH 服务端。`Dockerfile` 只放轻更新：doops-agent、skills、docs、entrypoint。禁止把基础 rootfs 压平成每个 release 都变化的单个多 GiB layer。
 
 CNB 非同名制品路径使用 `docker.cnb.cool/<owner>/<repo>/base-light:<release>` 这种仓库下级路径；不要使用 `<repo>-base-light:<release>`。
 
@@ -341,7 +340,7 @@ bash scripts/release-host-agent.sh \
 `--ssh-control-path <private-authenticated-socket>` 仅复用本机已认证的私有 SSH socket，
 不接收 password/token；严格核验已知主机密钥，禁止关闭校验。密码、私钥或 token
 不得写入参数、文件、示例或日志；不输出完整 `docker inspect` 或敏感环境值。
-本次 43/49 主机密码仅用于外部 bootstrap 的 stdin，以建立外部管理 SSH 认证，
+宿主密码只用于外部 bootstrap 的 stdin，以建立外部管理 SSH 认证，
 不传给 Agent。成功访问目的地主机需要 Agent 内已有授权 SSH 认证材料，发布不新增该能力。
 
 1. `--dry-run` 必须实际只读检查 SSH、宿主身份、Docker 权限、原容器运行配置、
@@ -370,7 +369,7 @@ bash scripts/release-host-agent.sh \
    不得操作上一次发布的 receipt。该 ID 由脚本内部生成，不新增用户配置或版本门禁。
 
 禁止临时 Agent/target/runner、`kubectl set image`、跳过 `request_id` 验证或手工换镜像
-冒充该正式入口。本次宿主入口和只读授权边界见 [宿主访问说明](PHYSICAL_HOST_ACCESS.md)。
+冒充该正式入口。宿主入口和只读授权边界见 [宿主访问说明](PHYSICAL_HOST_ACCESS.md)。
 
 ### 环境依赖注射规范 (Secret)
 严禁在 `agent.yaml` 中明文出现 `LLM_API_KEY=sk-xxxx` 之类的配置。此类密钥应由 Secret 提取并通过 `envFrom` 下放。
