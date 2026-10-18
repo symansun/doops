@@ -150,13 +150,14 @@ def test_apply_does_not_depend_on_workspace_commit_evidence():
     assert "workspace_commit" not in cli
 
 
-def test_ordinary_exec_does_not_block_explicit_helm_operations():
+def test_exec_blocks_only_root_filesystem_deletion():
     dispatcher = (BACKEND / "agent" / "internal" / "dispatcher" / "dispatcher.go").read_text(
         encoding="utf-8"
     )
-    blacklist = dispatcher.split("var blockRules", 1)[1].split("type BlockedError", 1)[0]
-    assert r"\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b" not in blacklist
-    assert "IsHelmMutation" in dispatcher
+    rules = dispatcher.split("var blockRules", 1)[1].split("type BlockedError", 1)[0]
+    assert rules.count("name:") == 1
+    assert '"delete_root_filesystem"' in rules
+    assert "IsHelmMutation" not in dispatcher
 
 
 def test_cicd_and_credential_guides_match_the_runtime_contract():

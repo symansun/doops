@@ -361,21 +361,10 @@ func TestAgentCancellationDisconnectJoinsTermResistantToolBeforeServeReturns(t *
 	}
 }
 
-func TestAgentCancellationBackgroundStillRejectsHelm(t *testing.T) {
-	_, conn, messages := cancellationTestAgent(t)
-	sendCancellationTestTool(t, conn, "doops_bg", map[string]interface{}{
-		"session_id": "reject-helm", "command": "helm upgrade example ./chart",
-	})
-	final := awaitCancellationTestMessage(t, messages, func(m map[string]interface{}) bool { return m["id"] == float64(42) })
-	if !strings.Contains(fmt.Sprint(final["error"]), "background Helm mutation is prohibited") {
-		t.Fatalf("background Helm was not rejected: %#v", final)
-	}
-}
-
 func TestAgentRejectsBlockedShellAndBackgroundCommands(t *testing.T) {
 	commands := map[string]string{
-		"set image on agent": "kubectl -n doops-system set image deployment/doops-agent doops-agent=image:v2",
-		"remove root":        "rm -rf /",
+		"remove root":      "rm -rf /",
+		"remove root glob": "rm -rf /*",
 	}
 	for _, tool := range []string{"doops_shell", "doops_bg"} {
 		for name, command := range commands {
