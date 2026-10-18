@@ -4,7 +4,7 @@
 
 ## 受管凭据配置
 
-运行时引用凭据继承本次目标操作的 `ask`/`exec` 权限，不要求额外 `credential:use` 或逐用户绑定。
+运行时引用凭据只要求该 target 的 grant，不要求额外凭据权限或逐用户绑定。
 目标视图也继承操作权限；返回无 payload 的目标绑定元数据。创建、轮换、吊销仍检查 owner/admin。
 `skill=dosql` 请求直接用服务器保存的 database 绑定解析 namespace/version，不运行 scope 规划 prompt。
 DoSql 只有自动凭据模式：Gateway 按资源 ID 把当前 target 上全部 active 的 database credential bindings
@@ -196,8 +196,7 @@ Content-Type: application/json
 {
   "user_id": "usr_xxx",
   "cluster": "doops-oilan",
-  "instance": "oilan-node",
-  "actions": ["target:use"]
+  "instance": "oilan-node"
 }
 ```
 
@@ -208,8 +207,8 @@ DELETE /v1/admin/grants?id=<grant-id>
 Authorization: Bearer <ADMIN_USER_TOKEN>
 ```
 
-普通 target 授权使用 `target:use`；它包含标准日常操作和受管凭据使用。
-`credential:*`、`agent:upgrade`、`admin` 和 `*` 仍不包含在内。
+grant 覆盖整个 target，没有 action 维度；`actions` 可省略，只接受 `["target:use"]`，其它值返回 `400`。
+平台管理员是用户的 `is_admin` 标记，创建用户时用 `"admin": true` 设置。
 
 ## 管理员签发用户 Token
 
@@ -294,8 +293,8 @@ Authorization: Bearer <USER_TOKEN>
 - `403 Forbidden`：token 有效，但无权查询目标列表。
 
 `busy` 只表示 Agent 自升级持有 target 级独占 lease；普通变更和排队 session 使用
-`target + session` 作用域的 mutation lease。同一 session 内的 Shell/SSH/bg/apply 仍串行，
-不同 session 在同一 target 可以并行。`status=active` 且 `busy=false` 表示有
+`target + session` 作用域的共享 lease，同一 session 内的 Shell/SSH/bg/apply 也可并发，
+只有该 session 的 workspace 写入要等它们结束。`status=active` 且 `busy=false` 表示有
 workspace/resource 正在执行，但其他 session 仍可使用同一 Agent。`resources` 列出
 `workspace:<session>` 等资源锁；session 是并发归属，不是操作系统沙箱。
 取消和审计收尾复用同一冲突规则，不阻塞其它 session；普通 mutation 缺少有效 session
@@ -676,7 +675,7 @@ socket。镜像构建使用 CLI 的通用 `image build`，高级场景仍可通�
 }
 ```
 
-需要权限：`agent:upgrade`。
+需要该 target 的 grant；升级期间 Agent 独占 target。
 
 `image` 接受 `repository:tag` 或 `repository@sha256:<64 hex>`，包括 `dry_run: true` 的预演请求。
 tag 使用 `Always` 拉取并校验实际 `imageID`；回滚仍只接受历史已验证的 digest 镜像。
@@ -746,15 +745,10 @@ Authorization: Bearer <USER_TOKEN>
 
 查询权限：
 
-- 普通用户默认只返回自己的全部操作（包括 `credential:*`）；本人事件按 actor `user_id`
-  判断，不要求额外 `credential:audit`。`user_id` 可省略、等于当前用户 ID，或使用
-  `user_id=self` 显式解析为当前登录用户；普通用户指定其他用户返回 `403`。
-- 平台管理员（`*/*` 的 `admin` 或 `*` grant）可查询全部用户和动作；
-  `view=global` 显式要求平台管理员，其他角色一律 `403`，即使同时指定 `user_id=self`。
-  `view=global` 不取消其他过滤条件，平台管理员也可用 `user_id=self` 只查本人。
-- 不传 `view` 时按当前权限返回可见范围。`credential:audit` 保留独立的管理权限：
-  可查看获授权精确 target 的其他用户 `credential:*` 记录；他人无 target 的凭据事件仍要求
-  覆盖无 target 事件的授权。该权限不授予其他用户的普通操作历史，也不授予 `view=global`。
+- 普通用户返回自己的全部操作，以及引用其拥有的凭据的事件。`user_id` 可省略、等于当前
+  用户 ID 或 `self`；指定其他用户返回 `403`。
+- 平台管理员可查询全部用户；`view=global` 要求平台管理员，否则 `403`。`view=global`
+  不取消其他过滤条件，平台管理员也可用 `user_id=self` 只查本人。
 - 过滤和权限检查在 `limit` 截断前完成；`limit` 为 1–500，省略或超范围时为 100。
   审计存储读取失败返回 `503 audit_unavailable`，不伪装成空列表。
 
@@ -888,22 +882,8 @@ JSON-RPC 错误：
 
 ## 权限
 
-目标动作：
-
-```text
-target:use agent:upgrade
-```
-
-管理员动作：
-
-```text
-admin
-```
-
-Gateway 权限判断本身是默认拒绝：用户没有匹配 grant 时不能操作 target，且
-`target:use` 才是普通 target 使用权。需要注意，当前管理员创建用户 API 会额外写入
-一条 `*/*` 默认 action grant；管理员必须先删除该 bootstrap grant，再按明确的
-`cluster/instance` 创建精确 `target:use` grant。如果调用返回 `403`，检查该用户的 target grant。
+用户有匹配 `cluster/instance` 的 grant 才能操作 target，grant 覆盖该 target 的全部操作。
+管理接口要求平台管理员（用户 `is_admin`）。新建用户没有任何 grant。返回 `403` 时检查该用户的 grant。
 
 ## 操作规则
 

@@ -29,9 +29,8 @@ and does not expose the token to React state, localStorage or copied examples.
   input uses the credential endpoint only and never enters an AI task.
 - The audit page exposes target/session/self/global scopes and action/status
   filters. Users can read their own history; global audit requires platform admin.
-  Other users' credential events retain precise `credential:audit` scope checks.
-  A platform administrator can explicitly maintain the fixed query indexes from
-  the global view. This operation is audited and preserves all history.
+  Credential owners also see events that reference their credentials. Audit
+  query indexes are created when the Gateway starts.
 - The database page routes through the same `doops_agent_prompt` Gateway RPC and
   invokes the bundled DoSql skill. It reuses the selected target, session and
   Gateway audit; database connections and credentials are never stored in the

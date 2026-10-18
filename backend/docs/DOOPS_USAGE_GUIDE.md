@@ -54,7 +54,7 @@ DoSql 必须使用 `doops sql` 入口。普通 `doops ask --msg '使用 DoSql'` 
 `mcp_dosql_read/execute`，也不能替代 DoSql 的 target discovery、credential scope 或
 journal/evidence 链。
 
-DoSql 的凭据使用继承本次目标 `ask`/`exec` 权限，不再要求额外 `credential:use` 或逐操作员绑定。
+DoSql 使用凭据只要求该 target 的 grant，不需要逐操作员绑定。
 Gateway 直接解析保存的 target/database 绑定和 active version，不让模型生成凭据 scope。
 不存在 active version 时先用 `credential configure` 安全导入；该错误明确为 `credential_version_not_found`。
 `doops sql` 不接受 `--credential`：Gateway 总是按 ID 绑定当前 target 上全部 active 的
@@ -163,8 +163,8 @@ To remove a stale local route, use `doops -session <s> remove --target <gateway-
 `doops targets` 的状态：
 
 - `busy=true` 只表示 Agent 自升级占用整个 target；普通操作不会置位。
-- `status=active` 且 `busy=false` 表示有 session 在跑。同一 target + session 的 Shell/SSH/bg/apply
-  串行，不同 session 可并行；session 只是并发归属，不是沙箱，不要从两个 session 同时改同一
+- `status=active` 且 `busy=false` 表示有 session 在跑。Shell/SSH/bg/apply 可并发，同 session 也不串行，
+  但该 session 的 workspace 写入会等它们结束；session 只是并发归属，不是沙箱，不要从两个 session 同时改同一
   release 或数据库。
 - `resources` 列出 `workspace:<session>` 等当前持有的锁。
 
@@ -291,18 +291,7 @@ Content-Type: application/json
 }
 ```
 
-当前 Gateway 会随创建请求自动写入一条 `cluster="*"`、`instance="*"` 的标准操作
-grant。这是暂时的过宽 bootstrap 行为，不代表已完成授权。账号在以下收窄流程完成前
-不得交付：
-
-1. 从创建响应或用户列表取得 `user_id`。
-2. `GET /v1/admin/grants?user=<user_id>`，记录该用户全部 grant ID。
-3. 对所有 wildcard scope 或 action `"*"` 执行
-   `DELETE /v1/admin/grants?id=<grant-id>`。
-4. 为每个允许 target 分别创建一个 `target:use` grant。
-5. 重新读取用户和 grants，确认 `is_admin=false`、grant 数量符合预期且 wildcard 为 0。
-
-普通 target 使用权的 grant 示例：
+新用户没有任何 target grant。为每个允许的 target 创建一条 grant：
 
 ```http
 POST /v1/admin/grants
@@ -312,14 +301,11 @@ Content-Type: application/json
 {
   "user_id": "usr_xxx",
   "cluster": "doops-oilan",
-  "instance": "oilan-node",
-  "actions": ["target:use"]
+  "instance": "oilan-node"
 }
 ```
 
-普通授权只需要 `target:use`；它包含标准日常操作、`capabilities` 探针和受管凭据使用。
-`credential:*`、`agent:upgrade`、`admin` 和 action `"*"` 仍不包含在内。若精确 grant
-创建失败，立即停用用户再退出：
+grant 覆盖该 target 的全部操作和它绑定的凭据，没有 action 维度。授权失败时停用用户再退出：
 
 ```http
 POST /v1/admin/users/disable
@@ -536,7 +522,7 @@ the user's grants.
 | :--- | :--- | :--- |
 | 本机 target 路由 | 同名再执行 `doops add --name <n> ...` 原地覆盖 gateway/cluster/instance/aliases/use；alias 与其它 target 冲突时拒绝 | 只有确认离线才能 `remove` |
 | Gateway 用户 | `admin user password` 改密码；`admin user disable --disabled=true\|false` 停用/恢复 | 用户名、`is_admin` 无修改入口 |
-| target grant | 替换：`admin grant add` 新范围，再 `admin grant delete --id` 旧的 | grant 不支持原地改 actions 或 scope |
+| target grant | 替换：`admin grant add` 新范围，再 `admin grant delete --id` 旧的 | grant 不支持原地改 scope |
 | Gateway token | 替换：`admin token create` 新 token，确认后 `admin token revoke` 旧 token | token 不能续期或改名 |
 | 凭据 payload | 轮换：`credential put` → 对每个 active 绑定 `verify` → `promote`；或对已有资源重跑 `credential configure --id <id>`（每次生成新版本） | 历史版本不可改 |
 | 凭据 target 绑定 | 同一 scope 重新 `credential grant` 会复活已吊销绑定；换 scope 要新 `grant` 再 `grant-revoke` 旧的 | 绑定不支持原地改 scope |
