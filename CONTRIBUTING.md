@@ -9,7 +9,7 @@ Run the relevant package tests before opening a pull request:
 ```bash
 (cd backend/agent && go test ./...)
 (cd backend/gateway && go test ./...)
-(cd backend/skills/doops-cli && go test ./...)
+(cd backend/cli && go test ./...)
 pnpm exec tsc --noEmit
 pnpm build
 ```

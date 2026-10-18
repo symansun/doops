@@ -21,7 +21,7 @@ func TestLifecycleCLIThroughGatewayAndRealAgent(t *testing.T) {
 	buildCtx, stopBuild := context.WithTimeout(context.Background(), time.Minute)
 	defer stopBuild()
 	build := exec.CommandContext(buildCtx, "go", "build", "-o", binary, "./cli/doops")
-	build.Dir = "../../../skills/doops-cli"
+	build.Dir = "../../../cli"
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v\n%s", err, output)
 	}

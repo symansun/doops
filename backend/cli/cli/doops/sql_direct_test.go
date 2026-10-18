@@ -51,15 +51,36 @@ func TestSQLDirectRejectsAmbiguousOrInvalidInput(t *testing.T) {
 	file := writeSQLFixture(t, "x.sql", "SELECT 1")
 	empty := writeSQLFixture(t, "empty.sql", "  \n")
 	for name, call := range map[string]func() error{
-		"sql and file":         func() error { _, err := buildSQLDirectInput(sqlModeQuery, "SELECT 1", file, "", "", "", false); return err },
-		"verify and file":      func() error { _, err := buildSQLDirectInput(sqlModeApply, "UPDATE t SET a=1", "", "SELECT 1", file, "", false); return err },
-		"empty file":           func() error { _, err := buildSQLDirectInput(sqlModeQuery, "", empty, "", "", "", false); return err },
-		"missing file":         func() error { _, err := buildSQLDirectInput(sqlModeQuery, "", file+".missing", "", "", "", false); return err },
-		"verify on query":      func() error { _, err := buildSQLDirectInput(sqlModeQuery, "SELECT 1", "", "SELECT 1", "", "", false); return err },
-		"dry-run on query":     func() error { _, err := buildSQLDirectInput(sqlModeQuery, "SELECT 1", "", "", "", "", true); return err },
-		"plan mode":            func() error { _, err := buildSQLDirectInput(sqlModePlan, "SELECT 1", "", "", "", "", false); return err },
-		"verify without sql":   func() error { _, err := buildSQLDirectInput(sqlModeApply, "", "", "SELECT 1", "", "", false); return err },
-		"dry-run without sql":  func() error { _, err := buildSQLDirectInput(sqlModeApply, "", "", "", "", "", true); return err },
+		"sql and file": func() error {
+			_, err := buildSQLDirectInput(sqlModeQuery, "SELECT 1", file, "", "", "", false)
+			return err
+		},
+		"verify and file": func() error {
+			_, err := buildSQLDirectInput(sqlModeApply, "UPDATE t SET a=1", "", "SELECT 1", file, "", false)
+			return err
+		},
+		"empty file": func() error { _, err := buildSQLDirectInput(sqlModeQuery, "", empty, "", "", "", false); return err },
+		"missing file": func() error {
+			_, err := buildSQLDirectInput(sqlModeQuery, "", file+".missing", "", "", "", false)
+			return err
+		},
+		"verify on query": func() error {
+			_, err := buildSQLDirectInput(sqlModeQuery, "SELECT 1", "", "SELECT 1", "", "", false)
+			return err
+		},
+		"dry-run on query": func() error {
+			_, err := buildSQLDirectInput(sqlModeQuery, "SELECT 1", "", "", "", "", true)
+			return err
+		},
+		"plan mode": func() error {
+			_, err := buildSQLDirectInput(sqlModePlan, "SELECT 1", "", "", "", "", false)
+			return err
+		},
+		"verify without sql": func() error {
+			_, err := buildSQLDirectInput(sqlModeApply, "", "", "SELECT 1", "", "", false)
+			return err
+		},
+		"dry-run without sql": func() error { _, err := buildSQLDirectInput(sqlModeApply, "", "", "", "", "", true); return err },
 	} {
 		if err := call(); err == nil {
 			t.Fatalf("%s: expected an error", name)

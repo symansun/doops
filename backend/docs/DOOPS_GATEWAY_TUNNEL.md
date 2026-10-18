@@ -79,7 +79,18 @@ sequenceDiagram
 ```
 
 `GET /v1/admin/proxy-routes` 列出路由，`DELETE /v1/admin/proxy-routes?id=<id>`
-删除路由。Agent 侧通过 `DOOPS_PROXY_ALLOW_HOSTS` 配置精确的上游 hostname，
+删除路由。CLI 等价命令：
+
+```bash
+doops admin proxy list --target <gateway-target>
+doops admin proxy set --target <gateway-target> --host app.example.com \
+  --scope-target <target> --upstream http://127.0.0.1:8080
+doops admin proxy set --target <gateway-target> --id <route-id> --enabled=false
+doops admin proxy delete --target <gateway-target> --id <route-id>
+```
+
+带 `--id` 时只修改传入的字段，其它字段保持现值；`--scope-target` 取本机已配置 target
+的 cluster/instance，且必须属于同一 Gateway。Agent 侧通过 `DOOPS_PROXY_ALLOW_HOSTS` 配置精确的上游 hostname，
 例如 Helm values 中的
 `proxy.allowedHosts: "127.0.0.1,internal.example.com"`。Chart 会把它注入为
 `DOOPS_PROXY_ALLOW_HOSTS`；默认空值会拒绝所有上游。这个配置不是公网域名
@@ -138,24 +149,6 @@ bash scripts/deploy-gateway.sh \
   必须作为独立协议扩展并绑定 `cluster/instance`，不得复用 Gateway user token
   或重新引入 CLI per-target token。
 
-### TODO: Installation Registration Link
-
-Future Agent enrollment should use a Gateway-issued installation registration
-link:
-
-- an administrator issues a short-lived, one-time link bound to one exact
-  `cluster/instance`;
-- the installer exchanges the link for an Agent workload identity before the
-  first `/v1/agent/connect`;
-- the link is consumed atomically, cannot be replayed, and never authorizes user
-  RPC, Git, token administration, or any other Gateway user action;
-- subsequent Agent connections prove the enrolled workload identity without
-  storing or reusing a Gateway user token;
-- acceptance requires expiry, wrong-target, replay, revoked-link, and
-  unauthenticated-registration tests.
-
-This TODO reserves the protocol boundary only. The current release intentionally
-keeps Agent registration open and does not ship a partial enrollment fallback.
 - user token 只能执行授权范围内的 action。
 - gateway 转发 doops JSON-RPC 操作流量和 Git HTTP 请求，不做裸 TCP 隧道。
 - `push/pull` 在标准 gateway 路径下使用 Git 语义。gateway 对外暴露 `/v1/git/<cluster>/<instance>/<session>.git/...`，再通过目标 agent 已建立的反向 WebSocket 把 Git HTTP 请求透传给 agent 本地 `/git/<session>.git/...`。
@@ -283,7 +276,12 @@ doops admin token revoke --target <gateway-target> --id <token-id>
   缺少有效 session 时直接拒绝，不退回 target 级独占；只有 Agent 自升级独占 target。
 - 同一客户端 WebSocket 上的多个 `tools/call` 可以并行；Agent 的每条
   `notifications/message` 必须带 `params.request_id`，Gateway 和 CLI 按请求 ID
-  路由，不得用 session 名称覆盖另一个并发请求的通知。
+  路由，不得用 session 名称覆盖另一个并发请求的通知。CLI 原样保留输出文本及分块边界，
+  不按业务 JSON 的 `type` 字段猜测事件或任务完成。CLI/Web 取消使用原 Gateway RPC
+  连接的 `tools/cancel`，只能操作该连接自己的请求。Agent 断连后先等待连接所属执行
+  清理完成，再重新注册，避免旧进程与新请求重叠。
+- `finalizing` 只表示终态审计待落盘，不持有执行锁、不阻断后续任务；持久化失败会报告
+  错误并自动重试原始证据。
 - 普通 `exec`/`ssh`/`bg`、`ask --apply`、Kubernetes mutation 和凭据物化使用
   `target + session` lease；同 session 的 workspace 写入与 mutation 不得重叠。
   session 不是 OS 或远端资源沙箱，不同 session 不得同时修改同一 Helm release 或数据库。
@@ -498,7 +496,8 @@ doops -session agent-upgrade upgrade \
 
 - SQLite 数据库建议放持久卷：`/var/lib/doops-gateway/gateway.db`。
 - 单活部署即可，K8s 使用单副本 Deployment 或 systemd 托管。
-- 源码入口是仓库一级目录 `gateway/`；`agent/cmd/gateway` 仅保留为兼容 wrapper。
+- 构建入口是 `backend/gateway/`，实现在 `backend/agent/internal/server/`（与 Agent 共用，
+  文件索引见该目录 `README.md`）。
 - gateway 默认监听 `42222`；公网部署时云安全组/防火墙也必须放行 TCP 42222。
 - gateway 按 `cluster/instance` 和资源键隔离操作；独立结构化 workspace 可并发。
   不同 target 指向同一 release/数据库时尚无统一所有权或执行器 fencing；不得用另一
@@ -515,31 +514,11 @@ doops -session agent-upgrade upgrade \
 - gateway 会主动对 agent WebSocket 发 ping，agent pong 后刷新租约和 SQLite `last_seen`。
 - agent 上下线状态写入 SQLite，在线目标由内存连接表提供，断线时立即标记 offline。
 - agent 重连替换旧连接时，旧连接的关闭不会把新连接错误标记为 offline。
-- `ask --apply` 发生客户端或隧道断连时，当前等待路径取消并保留真实审计状态。系统没有
-  CICDReport 恢复或 mutation 重放协议；实际状态不确定时必须返回 outcome unknown，并由
+- `ask --apply` 发生客户端或隧道断连时，当前等待路径取消并保留真实审计状态。系统不恢复或
+  重放 mutation；实际状态不确定时必须返回 outcome unknown，并由
   操作者核查目标资源。
 - 审计记录包含 user、token、target、action、session、命令摘要、状态、错误和输出尾部；输出尾部使用有界缓冲，默认只保留 8 KiB 尾部摘要。
 - gateway 只转发操作流量和 Git HTTP 流量，不保存仓库快照。大文件、可恢复续传、跨用户长期共享 artifact 建议新增独立 artifact store，不把 gateway 扩展成对象存储。
-
-## 2026-05-11 Production Smoke
-
-这段 smoke 使用的是受控实验 gateway。doops 支持 `http` / `https` gateway；公网生产环境建议改用 `https` / `wss` gateway，但 CLI 和 agent 不会因为 gateway 是 HTTP 而拒绝连接。
-
-这段记录对应早期受控实验环境，不是当前 target 或发布配置。实验时接入：
-
-- `doops-114/vm-114`
-- `doops-jm/jm-228`
-
-已验证：
-
-- `doops targets --target <historical-test-target>`
-- 89/114/JM 的 `exec`
-- 89/114/JM 的 `write` + `read`
-- 89/114/JM 的 gateway `push` 到 `/root/ws/$SESSION`，并校验 `.doops-ready` 和文件 sha256；传输路径为 `/v1/git/<cluster>/<instance>/<session>.git` 的 Git HTTP 反向隧道
-- 未授权 token 执行 `write` 返回 `forbidden` 并写入 audit
-- 超过 90 秒后重复 `targets` 和 `exec`，确认 heartbeat 不误踢 agent
-
-JM 第三实例已通过 89 内网路径接入，目标标识为 `doops-jm/jm-228`。89/114/JM 的运行容器命名已统一为标准 `doops-agent`。
 
 ## Current Managed Targets
 

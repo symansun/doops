@@ -16,6 +16,9 @@ func runImageCommand(args []string, sessionName string, servers []Server, config
 		return fmt.Errorf("用法: doops image build|copy ...")
 	}
 	switch args[0] {
+	case "-h", "-help", "--help", "help":
+		fmt.Fprintln(stdout, "用法: doops -session <s> image build|copy --target <t> ...\n查看参数: doops image build -h / doops image copy -h")
+		return nil
 	case "build":
 		return runImageBuild(args[1:], sessionName, servers, configErr, stdout)
 	case "copy":

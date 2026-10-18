@@ -23,7 +23,7 @@ jobs:
           cache-dependency-path: |
             backend/agent/go.sum
             backend/gateway/go.sum
-            backend/skills/doops-cli/go.sum
+            backend/cli/go.sum
 
       - name: Test agent
         working-directory: backend/agent
@@ -34,7 +34,7 @@ jobs:
         run: go test ./...
 
       - name: Test CLI
-        working-directory: backend/skills/doops-cli
+        working-directory: backend/cli
         run: go test ./...
 
       - name: Set up Node

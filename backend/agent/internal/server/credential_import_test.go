@@ -57,8 +57,8 @@ func credentialImportFixture(t *testing.T) (*executionLifecycleFixture, string) 
 		"metadata": map[string]string{"uid": "source-uid", "resourceVersion": "7"},
 		"type":     "Opaque",
 		"data": map[string]string{
-			"DB_PASSWORD":    base64.StdEncoding.EncodeToString([]byte(importCanary)),
-			"SOURCE_URL":     base64.StdEncoding.EncodeToString([]byte("jdbc:mysql://mysql.test:3306/test")),
+			"DB_PASSWORD":     base64.StdEncoding.EncodeToString([]byte(importCanary)),
+			"SOURCE_URL":      base64.StdEncoding.EncodeToString([]byte("jdbc:mysql://mysql.test:3306/test")),
 			"SOURCE_USERNAME": base64.StdEncoding.EncodeToString([]byte("test-user")),
 			"SOURCE_PASSWORD": base64.StdEncoding.EncodeToString([]byte(importCanary)),
 			"UNSELECTED":      base64.StdEncoding.EncodeToString([]byte("never-import-this")),
@@ -396,7 +396,7 @@ func TestCredentialConfigureCLIThroughGatewayAndRealAgent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	build := exec.CommandContext(ctx, "go", "build", "-o", binary, "./cli/doops")
-	build.Dir = "../../../skills/doops-cli"
+	build.Dir = "../../../cli"
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v\n%s", err, output)
 	}

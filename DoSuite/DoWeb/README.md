@@ -28,7 +28,7 @@ Current status: Skill-side MVP script and knowledge base.
 
 Resource-control design:
 
-- `docs/superpowers/specs/2026-07-05-doweb-agent-nginx-resource-control-design.md`
+- `docs/archive/root-docs/superpowers/specs/2026-07-05-doweb-agent-nginx-resource-control-design.md`
 
 ```text
 DoWeb/
