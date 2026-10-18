@@ -128,23 +128,25 @@ func TestUpgradeAgentsRequiresVerifiedResult(t *testing.T) {
 		wantRollback int32
 		wantSuccess  bool
 		wantObserved int32
+		wantApplies  int32
 	}{
 		{name: "missing acceptance", acceptance: "upgrade completed"},
 		{name: "preview", acceptance: "dry-run: image=example", dryRun: true, wantSuccess: true},
 		{name: "invalid preview", acceptance: "upgrade completed", dryRun: true},
-		{name: "wrong job", acceptance: accepted, observation: "self-upgrade-succeeded job=other namespace=ops", wantObserved: 1},
+		{name: "wrong job", acceptance: accepted, observation: "self-upgrade-succeeded job=other namespace=ops", wantObserved: 1, wantApplies: 0},
 		{name: "wrong namespace", acceptance: accepted, observation: "self-upgrade-succeeded job=doops-self-upgrade-aaaaaaaa namespace=other", wantObserved: 1},
 		{name: "failed with success in logs", acceptance: accepted, observation: "self-upgrade-failed job=doops-self-upgrade-aaaaaaaa namespace=ops\nlog: self-upgrade-succeeded", wantObserved: 1},
-		{name: "verified", acceptance: accepted, observation: "self-upgrade-succeeded job=doops-self-upgrade-aaaaaaaa namespace=ops", wantObserved: 1, wantSuccess: true},
+		{name: "verified", acceptance: accepted, observation: "self-upgrade-succeeded job=doops-self-upgrade-aaaaaaaa namespace=ops", wantObserved: 2, wantApplies: 1, wantSuccess: true},
 		{name: "rollback verified", acceptance: accepted, observation: "self-upgrade-succeeded job=doops-self-upgrade-aaaaaaaa namespace=ops", rollback: true, wantRollback: 1, wantObserved: 1, wantSuccess: true},
 		{name: "rollback protocol failure", acceptance: accepted, observation: "self-upgrade-succeeded job=doops-self-upgrade-aaaaaaaa namespace=ops", rollback: true, noProtocol: true, wantRollback: 1, wantObserved: 1},
-		{name: "recovery protocol failure", acceptance: accepted, observation: "self-upgrade-succeeded job=doops-self-upgrade-aaaaaaaa namespace=ops", noProtocol: true, wantRollback: 1, wantObserved: 2},
+		{name: "recovery protocol failure", acceptance: accepted, observation: "self-upgrade-succeeded job=doops-self-upgrade-aaaaaaaa namespace=ops", noProtocol: true, wantRollback: 1, wantObserved: 3, wantApplies: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("DOOPS_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 			var observed atomic.Int32
 			var rollbacks atomic.Int32
+			var applies atomic.Int32
 			upgrader := websocket.Upgrader{}
 			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/v1/targets" {
@@ -186,6 +188,9 @@ func TestUpgradeAgentsRequiresVerifiedResult(t *testing.T) {
 						if args["rollback"] == true {
 							rollbacks.Add(1)
 						}
+						if args["image"] != nil && args["preflight"] != true && args["dry_run"] != true && args["rollback"] != true {
+							applies.Add(1)
+						}
 						if args["observe_job"] != nil {
 							observed.Add(1)
 							text = test.observation
@@ -219,6 +224,9 @@ func TestUpgradeAgentsRequiresVerifiedResult(t *testing.T) {
 			}
 			if observed.Load() != test.wantObserved {
 				t.Fatalf("Job observations = %d, want %d", observed.Load(), test.wantObserved)
+			}
+			if !test.dryRun && !test.rollback && test.acceptance == accepted && applies.Load() != test.wantApplies {
+				t.Fatalf("real upgrade requests = %d, want %d (a failed preflight must not start one)", applies.Load(), test.wantApplies)
 			}
 			if rollbacks.Load() != test.wantRollback {
 				t.Fatalf("rollback requests = %d, want %d", rollbacks.Load(), test.wantRollback)

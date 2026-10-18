@@ -85,6 +85,16 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 		} else {
 			fmt.Printf("==> upgrading %s/%s image=%s\n", target.Cluster, target.Instance, opts.Image)
 		}
+		if !opts.DryRun && !opts.Rollback {
+			// The preflight Job starts from the target image, so it pulls the image
+			// to the node and repeats every pre-change check. Nothing is changed
+			// unless it passes.
+			if err := runUpgradePreflight(server, token, session, verbose, opts); err != nil {
+				fmt.Printf("FAIL %s/%s: preflight failed, nothing was changed: %v\n", target.Cluster, target.Instance, err)
+				failures++
+				continue
+			}
+		}
 		out, err := callUpgradeTool(server, token, session, verbose, args)
 		if err != nil {
 			fmt.Printf("FAIL %s/%s: %v\n", target.Cluster, target.Instance, err)
@@ -144,6 +154,57 @@ func upgradeArguments(opts UpgradeOptions) map[string]interface{} {
 		"container": opts.Container,
 		"release":   opts.Release,
 		"dry_run":   opts.DryRun,
+	}
+}
+
+// runUpgradePreflight pulls the target image on the Agent's node and runs every
+// pre-change check without modifying the release. It returns only after the Job
+// reached a terminal state.
+func runUpgradePreflight(server Server, token, session string, verbose bool, opts UpgradeOptions) error {
+	args := upgradeArguments(opts)
+	args["preflight"] = true
+	fmt.Printf("==> preflight: pulling %s and checking the release\n", opts.Image)
+	out, err := callUpgradeTool(server, token, session, verbose, args)
+	if err != nil {
+		return err
+	}
+	job, namespace, _, err := parseUpgradeAcceptance(strings.TrimSpace(out))
+	if err != nil {
+		return err
+	}
+	deadline := time.Now().Add(upgradeWait)
+	for {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("preflight job %s did not finish (the image may not be pullable)", job)
+		}
+		observed, err := callUpgradeTool(server, token, session, verbose, map[string]interface{}{
+			"observe_job": job,
+			"namespace":   namespace,
+		})
+		if err == nil {
+			_, fields, parseErr := parseUpgradeResponse(observed)
+			if parseErr != nil {
+				return parseErr
+			}
+			if fields["job"] != job || fields["namespace"] != namespace {
+				return fmt.Errorf("preflight observation does not match job %s in namespace %s", job, namespace)
+			}
+		}
+		switch classifyUpgradeObservation(observed, err) {
+		case "retry", "running":
+			time.Sleep(upgradePollInterval)
+			continue
+		case "failed":
+			return fmt.Errorf("%s", strings.TrimSpace(observed))
+		case "succeeded":
+			fmt.Printf("preflight passed for %s\n", opts.Image)
+			return nil
+		default:
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("unrecognized preflight status: %s", strings.TrimSpace(observed))
+		}
 	}
 }
 

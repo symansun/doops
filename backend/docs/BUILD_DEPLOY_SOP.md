@@ -233,6 +233,13 @@ release，提供 `--release` 时按名称选择并校验该 release。Agent Pod 
 权限由该 kubeconfig 决定。Agent 只创建 Job，在 Agent 进程外执行 Helm upgrade，并在
 新 Pod 未持续就绪时回滚。镜像可以是 `repository:tag` 或 `repository@sha256:<64 hex>`；
 tag 使用 `Always` 拉取，回滚只接受历史已验证的 digest。
+真实升级前 CLI 先对每个 target 提交一个预检 Job（`preflight=true`）：Job 以目标镜像启动，
+所以镜像必须先被节点成功拉取；随后重复升级的全部改动前检查（Deployment 策略 `maxSurge=1`、
+`maxUnavailable=0`、Helm release 唯一、当前 Pod 基线），并对同一 values 做 server-side
+Helm dry-run。预检不修改 release，也不写验收回执。预检失败（含镜像拉取不到，预检 Job 600 秒
+超时）时 CLI 报 `preflight failed, nothing was changed`，不提交真实升级 Job。
+未纳入 Helm 的收编路径没有 release 可 dry-run，预检只证明镜像可拉取。
+旧 Agent 不认识 `preflight`，会直接执行真实升级，所以预检要等 Agent 升级到该版本后才生效。
 CLI 在 Job 成功后执行 `capabilities --require structuredSSH`，探针失败会创建回滚 Job。
 `PREVIEW` 仅表示参数预览，不检查 Helm release、挂载、权限或回滚可行性；`ACCEPTED`
 仅表示 Job 已提交。Job 完成和协议声明不是完整发布验收：还须通过同一 target 的
