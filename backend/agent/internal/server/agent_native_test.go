@@ -53,7 +53,7 @@ func TestDoagentAllowedToolsHardLimitOrdinaryAndApplyPrompts(t *testing.T) {
 		sliceContainsString(ordinary, "mcp_doops_k8s") {
 		t.Fatalf("ordinary prompt tool boundary is unsafe: %#v", ordinary)
 	}
-	if sliceContainsString(ordinary, "mcp_dosql_read") || sliceContainsString(ordinary, "mcp_dosql_execute") {
+	if sliceContainsString(ordinary, "mcp_dosql_read") {
 		t.Fatalf("generic prompt gained SQL tools: %#v", ordinary)
 	}
 
@@ -70,11 +70,11 @@ func TestDoagentAllowedToolsHardLimitOrdinaryAndApplyPrompts(t *testing.T) {
 		t.Fatalf("website prompt did not retain its domain boundary: %#v", website)
 	}
 	databaseRead := doagentAllowedTools(false, "dosql")
-	if !sliceContainsString(databaseRead, "mcp_dosql_read") || sliceContainsString(databaseRead, "mcp_dosql_execute") {
+	if !sliceContainsString(databaseRead, "mcp_dosql_read") {
 		t.Fatalf("database read prompt boundary is unsafe: %#v", databaseRead)
 	}
 	databaseApply := doagentAllowedTools(true, "dosql")
-	if !sliceContainsString(databaseApply, "mcp_dosql_read") || !sliceContainsString(databaseApply, "mcp_dosql_execute") ||
+	if !sliceContainsString(databaseApply, "mcp_dosql_read") ||
 		sliceContainsString(databaseApply, "mcp_doops_helm") || sliceContainsString(databaseApply, "mcp_doops_web") {
 		t.Fatalf("database apply prompt boundary is unsafe: %#v", databaseApply)
 	}

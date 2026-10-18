@@ -498,7 +498,7 @@ func (c *doagentToolTraceCollector) hasUnresolvedMutation() bool {
 			return true
 		}
 		tool := modelVisibleDoagentToolName(trace.ToolName)
-		if tool != "doops_helm" && tool != "doops_web" && tool != "dosql_execute" {
+		if tool != "doops_helm" && tool != "doops_web" {
 			continue
 		}
 		trace.expectedSessionID = c.expectedSessionID
@@ -556,7 +556,7 @@ func (trace doagentToolTrace) terminalMutationReason() string {
 		return "raw_cluster_mutation_forbidden"
 	}
 	tool := modelVisibleDoagentToolName(trace.ToolName)
-	if tool != "doops_helm" && tool != "doops_web" && tool != "dosql_execute" {
+	if tool != "doops_helm" && tool != "doops_web" {
 		return "structured_mutation_tool_required"
 	}
 	if reason := trace.runtimeMutationAttestationReason(); reason != "" {
@@ -634,8 +634,6 @@ func (trace doagentToolTrace) runtimeMutationAttestationReason() string {
 	allowedOperations := helmMutationOperations
 	if tool == "doops_web" {
 		allowedOperations = webMutationOperations
-	} else if tool == "dosql_execute" {
-		allowedOperations = doSQLMutationOperations
 	}
 	if !stringSliceContains(allowedOperations, operation) {
 		return "mutation_operation_invalid"
@@ -779,8 +777,6 @@ func modelVisibleDoagentToolName(runtimeName string) string {
 		return "doops_helm"
 	case "mcp_doops_web":
 		return "doops_web"
-	case "mcp_dosql_execute":
-		return "dosql_execute"
 	}
 	return runtimeName
 }
@@ -796,8 +792,6 @@ func runtimeToolBinding(modelTool string) doagentRuntimeToolBinding {
 		return doagentRuntimeToolBinding{Server: "doops", Tool: "helm"}
 	case "doops_web":
 		return doagentRuntimeToolBinding{Server: "doops", Tool: "web"}
-	case "dosql_execute":
-		return doagentRuntimeToolBinding{Server: "dosql", Tool: "execute"}
 	default:
 		return doagentRuntimeToolBinding{}
 	}

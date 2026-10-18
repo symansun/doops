@@ -141,7 +141,7 @@ execution.
 | `propose-confirmation` | Implemented | Return human-readable confirmation for a mutating change. |
 | `render-script` | Target | Render engine-specific migration script. |
 | `dry-run` | Target | Validate script without changing target when engine supports it. |
-| `execute` | Implemented | Execute an approved schema, data or admin operation and a mandatory read-only verification operation. Public users reach it through `doops sql --mode apply` or `mcp_dosql_execute operation=execute`. |
+| `execute` | Removed | The signed-approval executor had no approval issuer. Changes run through `doops sql --mode apply --sql/--file` on the Agent's direct path. |
 | `verify` | Target | Run post-change verification. |
 
 ## Request Envelope
@@ -160,12 +160,11 @@ execution.
     "to": 4,
     "label": "dosql_000004"
   },
-  "changeRequestId": "chg_...",
-  "approvalArtifactPath": ".dosql/changes/chg_.../approval.json"
+  "changeRequestId": "chg_..."
 }
 ```
 
-## Controlled Query And Execute
+## Controlled Query
 
 `query` accepts only operations classified as `read`. MySQL and PostgreSQL
 requests must contain exactly one SQL statement and execute inside a database
@@ -196,37 +195,10 @@ artifact:
 }
 ```
 
-`execute` accepts only recognized schema, data or admin operations. It requires
-a non-empty `changeRequestId` and a signed `dosql.operation-approval.v1`
-artifact at `approvalArtifactPath`. The Ed25519 signature is verified with the
-fixed trust file at `~/.config/dosql/approval-public-key.pem`; the artifact binds the operation ID,
-database name, runtime-resolved connection fingerprint, change request,
-statement fingerprint, verification fingerprint, approver and expiry. SQL
-verification must be a single read-only statement and runs in a database
-read-only transaction. A successful mutation is not
-`verified` until the verification operation succeeds:
-
-```json
-{
-  "operationId": "dbop_update_001",
-  "projectId": "proj_erp",
-  "databaseAssetId": "db_orders_test",
-  "environmentId": "test",
-  "environment": "test",
-  "engine": "postgres",
-  "actor": { "type": "user", "id": "u_001" },
-  "statement": "update orders set status = 'paid' where id = 1",
-  "changeRequestId": "chg_orders_001",
-  "approvalArtifactPath": ".dosql/changes/chg_orders_001/approval.json",
-  "verificationStatement": "select status from orders where id = 1",
-  "journalPath": ".dosql/journals/db_orders_test.jsonl",
-  "evidencePath": ".dosql/evidence/dbop_update_001.json",
-  "adapter": {
-    "type": "postgres-psql",
-    "connectionUriEnv": "DOSQL_POSTGRES_URI"
-  }
-}
-```
+Changes are not a node command. The earlier `execute` command, which required a
+signed `dosql.operation-approval.v1` artifact that nothing issued, was removed.
+Mutations run only through the Agent's direct `--sql/--file` path (one
+transaction, optional read-only verification, per-database version journal).
 
 Supported adapter types:
 

@@ -17,11 +17,13 @@ func TestParseSQLMode(t *testing.T) {
 }
 
 func TestBuildSQLInstructionKeepsAuthorizationAtGatewayAndDoSQL(t *testing.T) {
-	message := buildSQLInstruction(sqlModeApply, "billing-main", "add an external id")
+	message := buildSQLInstruction(sqlModePlan, "billing-main", "add an external id")
+	if strings.Contains(message, "签名审批") {
+		t.Fatalf("signed approval no longer exists: %s", message)
+	}
 	for _, expected := range []string{
 		"使用 DoSql skill",
 		"数据库提示：billing-main",
-		"签名审批",
 		"不要读取或索取密码",
 		"用户需求：add an external id",
 	} {

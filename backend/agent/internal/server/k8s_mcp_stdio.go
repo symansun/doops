@@ -145,7 +145,6 @@ func mcpToolsForDomain(domain string) ([]interface{}, error) {
 	case mcpDomainDoSQL:
 		return []interface{}{
 			doSQLMCPToolDefinition(doSQLReadMCPToolName, doSQLReadOperations, "Run a Gateway-authorized, read-only DoSql query through the target database credential. Returns bounded execution evidence, never secret payloads."),
-			doSQLMCPToolDefinition(doSQLMCPToolName, doSQLMutationOperations, "Run a Gateway-authorized DoSql mutation with signed approval, verification and journal/evidence. Requires confirm=true."),
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported MCP domain %q", domain)
@@ -194,10 +193,6 @@ func callK8SMCPToolDomain(
 		if !k8sMCPOperationAllowed(call.Arguments, doSQLReadOperations) {
 			return doSQLMCPErrorResponse(request.ID, -32602, "sql_read tool requires a supported read operation")
 		}
-	case doSQLMCPToolName:
-		if !k8sMCPOperationAllowed(call.Arguments, doSQLMutationOperations) {
-			return doSQLMCPErrorResponse(request.ID, -32602, "sql tool requires a supported mutation")
-		}
 	default:
 		return mcpErrorResponse(request.ID, -32601, "unknown tool")
 	}
@@ -220,9 +215,8 @@ func callK8SMCPToolDomain(
 		result, err = handleHelmTool(ctx, boundArguments, push)
 	} else if call.Name == webMCPToolName || call.Name == webReadMCPToolName {
 		result, err = handleWebTool(ctx, boundArguments, push)
-	} else if call.Name == doSQLMCPToolName || call.Name == doSQLReadMCPToolName {
-		response := callDoSQLTool(ctx, request, boundSessionID, call.Name == doSQLMCPToolName)
-		return response
+	} else if call.Name == doSQLReadMCPToolName {
+		return callDoSQLTool(ctx, request, boundSessionID)
 	} else {
 		result, err = handleK8STool(ctx, boundArguments, push)
 	}
@@ -251,7 +245,7 @@ func callK8SMCPToolDomain(
 
 func mcpToolBelongsToDomain(name, domain string) bool {
 	if domain == mcpDomainDoSQL {
-		return name == doSQLReadMCPToolName || name == doSQLMCPToolName
+		return name == doSQLReadMCPToolName
 	}
 	return name == k8sReadMCPToolName || name == helmMCPToolName || name == webReadMCPToolName || name == webMCPToolName
 }

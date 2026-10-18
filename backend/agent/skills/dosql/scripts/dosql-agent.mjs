@@ -114,10 +114,6 @@ const FORWARD_WRITE_COMMANDS = new Set([
   "execute-forward-artifacts",
 ]);
 
-const DATABASE_WRITE_COMMANDS = new Set([
-  "execute",
-]);
-
 async function main(argv) {
   const { command, inputPath, outputPath } = parseArgs(argv);
   let response;
@@ -188,8 +184,6 @@ async function runCommand(command, input) {
       return recordMetadataCommitExecution(input);
     case "execute-metadata-commit":
       return executeMetadataCommitCommand(input);
-    case "execute":
-      return executeDatabaseCommand(input, "execute");
     case "execute-timepoint-state-query":
       return executeTimepointStateQueryCommand(input);
     case "execute-forward-artifacts":
@@ -1171,7 +1165,6 @@ function commandMode(command) {
   if (METADATA_WRITE_COMMANDS.has(command)) return "metadata_write";
   if (RESTORE_WRITE_COMMANDS.has(command)) return "restore_write";
   if (FORWARD_WRITE_COMMANDS.has(command)) return "forward_write";
-  if (DATABASE_WRITE_COMMANDS.has(command)) return "database_write";
   return "plan_only";
 }
 

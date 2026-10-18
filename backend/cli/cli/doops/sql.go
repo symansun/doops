@@ -81,6 +81,11 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 			sqlDirectAuditDescription(parsedMode, direct), "auto", nil,
 			direct.promptArguments(), servers, configErr, ss, verbose)
 	}
+	if parsedMode == sqlModeApply {
+		// The model-driven apply path needed a signed approval nobody issues; a
+		// change is always the verbatim, journaled --sql/--file path.
+		return fmt.Errorf("--mode apply 只接受 --sql 或 --file（原样提交、事务内执行、记录版本）；自然语言 --request 不再支持变更")
+	}
 	if strings.TrimSpace(*request) == "" && !(parsedMode == sqlModeDiscover && strings.TrimSpace(*root) != "") {
 		return fmt.Errorf("数据库需求不能为空，请使用 --request、--sql 或 --file")
 	}
@@ -92,7 +97,7 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 		return err
 	}
 	credentialMode := ""
-	if parsedMode == sqlModeQuery || parsedMode == sqlModeApply {
+	if parsedMode == sqlModeQuery {
 		credentialMode = "auto"
 	}
 	return runSkillPrompt("dosql", sqlGatewayOperation(parsedMode), *target, sessionName, instruction, credentialMode, nil, servers, configErr, ss, verbose)
@@ -187,8 +192,6 @@ func buildSQLInstruction(mode sqlMode, databaseHint, request string) string {
 		purpose = "扫描当前 Gateway target 的 Kubernetes 非 Secret 元数据，发现数据库实例和可识别数据库，不读取 Secret 值，不执行数据库连接或变更。"
 	case sqlModePlan:
 		purpose = "只生成可读的变更计划、风险、影响和验证步骤，不执行数据库变更。"
-	case sqlModeApply:
-		purpose = "执行受控数据库变更；必须先完成 DoSql 人类可读确认、精确目标解析、签名审批和执行后验证，缺少任一证据就明确失败。"
 	}
 	hint := ""
 	if strings.TrimSpace(databaseHint) != "" {

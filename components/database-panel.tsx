@@ -5,7 +5,7 @@ import { useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target, type ToolCancel } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
 
-type DatabaseMode = "query" | "discover" | "plan" | "apply"
+type DatabaseMode = "query" | "discover" | "plan"
 
 interface DatabaseLine {
   kind: "out" | "err" | "info"
@@ -33,7 +33,6 @@ export function DatabasePanel({
   const [mode, setMode] = useState<DatabaseMode>("query")
   const [request, setRequest] = useState("")
   const [databaseHint, setDatabaseHint] = useState("")
-  const [confirmed, setConfirmed] = useState(false)
   const [lines, setLines] = useState<DatabaseLine[]>([])
   const [running, setRunning] = useState(false)
   const [stopPending, setStopPending] = useState(false)
@@ -47,24 +46,16 @@ export function DatabasePanel({
   async function run() {
     const text = request.trim()
     if (!text || running || stopPending) return
-    if (mode === "apply" && !confirmed) {
-      setError("执行变更前请确认已阅读变更说明，并由 DoSql 提供匹配的审批证据")
-      return
-    }
     setError("")
     setLines([])
     setRunning(true)
     setStopPending(false)
     onRunningChange(true)
     cancelRef.current = null
-    const operation = mode === "apply" ? "apply" : "ask"
     const instruction = [
       `使用 DoSql skill 处理目标 ${target.cluster}/${target.instance}。`,
       mode === "discover" ? "只扫描当前目标集群的非 Secret Kubernetes 元数据，返回数据库实例候选，不读取凭据或 Secret 值。" : mode === "query" ? "保持只读，不执行数据库变更。" : "先输出结构化、可读的结果。",
       mode === "plan" ? "只生成变更计划，不执行 SQL 或 MongoDB 变更。" : "",
-      mode === "apply"
-        ? "只有在 Gateway managed credential、目标范围和匹配的 DoSql 签名审批证据都存在时才执行；缺少任一条件就明确失败。"
-        : "",
       databaseHint.trim() ? `数据库提示：${databaseHint.trim()}` : "",
       `用户需求：${text}`,
     ].filter(Boolean).join("\n")
@@ -78,9 +69,9 @@ export function DatabasePanel({
           tool: TOOLS.prompt,
           arguments: {
             session_id: sessionId,
-            operation,
+            operation: "ask",
             skill: "dosql",
-				...(mode === "query" || mode === "apply" ? { credential_mode: "auto" } : {}),
+            ...(mode === "query" ? { credential_mode: "auto" } : {}),
             instruction,
           },
           onCancelReady: (cancel) => { cancelRef.current = cancel },
@@ -128,16 +119,13 @@ export function DatabasePanel({
           </div>
         </div>
         <div className="flex items-center gap-1 rounded-md border bg-background p-0.5" role="group" aria-label="数据库操作模式">
-          {(["query", "discover", "plan", "apply"] as const).map((value) => (
+          {(["query", "discover", "plan"] as const).map((value) => (
             <button
               key={value}
               type="button"
               aria-pressed={mode === value}
               disabled={running}
-              onClick={() => {
-                setMode(value)
-                setConfirmed(false)
-              }}
+              onClick={() => setMode(value)}
               className={`rounded px-2 py-1 text-xs transition-colors ${mode === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
             >
               {modeLabel(value)}
@@ -156,7 +144,6 @@ export function DatabasePanel({
               onClick={() => {
                 setMode(item.mode)
                 setRequest(item.request)
-                setConfirmed(false)
                 setError("")
               }}
               className="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:opacity-50"
@@ -171,10 +158,7 @@ export function DatabasePanel({
             <span className="text-xs font-medium text-foreground">数据库提示</span>
             <input
               value={databaseHint}
-              onChange={(event) => {
-                setDatabaseHint(event.target.value)
-                setConfirmed(false)
-              }}
+              onChange={(event) => setDatabaseHint(event.target.value)}
               disabled={running}
               placeholder="数据库名称或资产提示（可选）"
               className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring disabled:opacity-60"
@@ -186,28 +170,12 @@ export function DatabasePanel({
           <span className="text-xs font-medium text-foreground">操作需求</span>
           <textarea
             value={request}
-            onChange={(event) => {
-              setRequest(event.target.value)
-              setConfirmed(false)
-            }}
+            onChange={(event) => setRequest(event.target.value)}
             disabled={running}
             placeholder="描述数据库、环境和要查询或计划的业务目标，不要粘贴密码或连接串。"
             className="min-h-32 flex-1 resize-y rounded-md border bg-background px-3 py-2 text-sm leading-6 text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20 disabled:opacity-60"
           />
         </label>
-
-        {mode === "apply" && (
-          <label className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={confirmed}
-              onChange={(event) => setConfirmed(event.target.checked)}
-              disabled={running}
-              className="mt-0.5 accent-primary"
-            />
-            <span>我已阅读变更说明，允许 DoSql 在 Gateway 授权和签名审批证据齐全时执行。</span>
-          </label>
-        )}
 
         {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
 
@@ -218,7 +186,7 @@ export function DatabasePanel({
             </button>
           ) : (
             <button type="button" onClick={() => void run()} disabled={!request.trim()} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50">
-              <Send aria-hidden="true" className="size-3.5" /> {mode === "apply" ? "提交受控变更" : "运行 DoSql"}
+              <Send aria-hidden="true" className="size-3.5" /> 运行 DoSql
             </button>
           )}
         </div>
@@ -246,6 +214,5 @@ export function DatabasePanel({
 function modeLabel(mode: DatabaseMode): string {
   if (mode === "query") return "只读查询"
   if (mode === "discover") return "扫描发现"
-  if (mode === "plan") return "变更计划"
-  return "受控执行"
+  return "变更计划"
 }
