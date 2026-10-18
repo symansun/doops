@@ -14,11 +14,18 @@ IMAGE = "docker.cnb.cool/l8ai/ai/doops.sh@" + DIGEST
 SETTINGS_CANARY = '{"apiKey":"synthetic-settings-canary"}'
 
 
+_MODULE = None
+CONTROLLER_DIGEST = "sha256:" + "c" * 64
+
+
 def load():
-    spec = importlib.util.spec_from_file_location("adopt_agent", MODULE)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    # One module instance, so AdoptError raised by fakes is the class the script catches.
+    global _MODULE
+    if _MODULE is None:
+        spec = importlib.util.spec_from_file_location("adopt_agent", MODULE)
+        _MODULE = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_MODULE)
+    return _MODULE
 
 
 def jm_deployment(**overrides):
@@ -94,7 +101,8 @@ class FakeCluster:
         if "get" in args and "secrets" in args:
             return json.dumps({"items": [{"metadata": {"name": "sh.helm.release.v1.doops-agent.v1"}}]})
         if "get" in args and "pod" in args:
-            raise load().AdoptError("no controller pod in test")
+            return json.dumps({"status": {"containerStatuses": [
+                {"name": "controller", "imageID": "registry.example/doops@" + CONTROLLER_DIGEST}]}})
         if "apply" in args or "replace" in args:
             self.applied.append(json.loads(stdin))
         return ""
@@ -218,3 +226,33 @@ def test_generated_values_render_with_the_real_chart(tmp_path):
     assert env["DOOPS_GATEWAY_CLUSTER"] == "doops-jm" and env["DOOPS_GATEWAY_INSTANCE"] == "jm-228"
     assert {v["name"] for v in pod["volumes"]} == {"doagent-config"}
     assert pod["volumes"][0]["secret"]["secretName"] == "doops-agent-doagent-settings"
+
+
+@pytest.mark.parametrize("hostname,want", [
+    ("", "sha256:" + IMAGE.rsplit("sha256:", 1)[1]),
+    ("doops-self-upgrade-abc", CONTROLLER_DIGEST),
+])
+def test_verifier_expects_the_controller_runtime_digest(monkeypatch, hostname, want):
+    module = load()
+    monkeypatch.setenv("HOSTNAME", hostname)
+    seen = {}
+
+    def verifier(*_args, **kwargs):
+        seen["digest"] = kwargs.get("runtime_digest")
+        return "new-pod-uid"
+
+    assert adopt(module, FakeCluster(), verifier=verifier)["phase"] == "adopted"
+    assert seen["digest"] == want
+
+
+def test_missing_controller_pod_falls_back_to_the_image_digest(monkeypatch):
+    module = load()
+    monkeypatch.setenv("HOSTNAME", "gone")
+    seen = {}
+
+    def verifier(*_args, **kwargs):
+        seen["digest"] = kwargs.get("runtime_digest")
+        return "new-pod-uid"
+
+    adopt(module, FakeCluster(fail={"get pod gone": "pod not found"}), verifier=verifier)
+    assert seen["digest"] == "sha256:" + IMAGE.rsplit("sha256:", 1)[1]
