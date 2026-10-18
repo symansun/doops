@@ -1,26 +1,10 @@
 # Doops API 对接指南
 
-## Audit Index Maintenance
-
-`POST /v1/admin/audit/optimize` accepts only `{"session_id":"<operation-session>"}`.
-It requires platform administration and writable audit storage, then directly
-executes the repository's fixed `audit_indexes.sql`. It accepts no arbitrary SQL,
-does not delete history, and records the actor/token/session and HTTP result.
-The indexes cover user history, user/session history and target history. Startup,
-application entrypoints and CI never invoke this production maintenance operation.
-The console exposes it in the administrator's global audit view; CLI entry:
-`doops -session <s> admin audit optimize --target <configured-gateway-target>`.
-Execution has a four-minute server deadline and one DDL transaction; cancellation
-or failure rolls back newly created indexes. Success includes verified column/order
-definitions and three actual EXPLAIN query plans. A preexisting incompatible index
-is a failure, not an implicit replacement. The maintenance button remains reachable
-after a query error; Gateway permission checks remain authoritative.
-
 本文档面向需要通过 API 调用 Doops 的平台、CI 系统和内部工具。推荐的公共入口是 Doops Gateway 的 HTTP / WebSocket 服务；目标集群内的 doops-agent 主动连接 Gateway，不要求调用方能直连内网节点。
 
 ## 受管凭据配置
 
-运行时引用凭据继承本次目标操作的 `ask`/`exec` 权限，不要求额外 `credential:use` 或逐用户绑定。
+运行时引用凭据只要求该 target 的 grant，不要求额外凭据权限或逐用户绑定。
 目标视图也继承操作权限；返回无 payload 的目标绑定元数据。创建、轮换、吊销仍检查 owner/admin。
 `skill=dosql` 请求直接用服务器保存的 database 绑定解析 namespace/version，不运行 scope 规划 prompt。
 DoSql 只有自动凭据模式：Gateway 按资源 ID 把当前 target 上全部 active 的 database credential bindings
@@ -212,8 +196,7 @@ Content-Type: application/json
 {
   "user_id": "usr_xxx",
   "cluster": "doops-oilan",
-  "instance": "oilan-node",
-  "actions": ["target:use"]
+  "instance": "oilan-node"
 }
 ```
 
@@ -224,8 +207,8 @@ DELETE /v1/admin/grants?id=<grant-id>
 Authorization: Bearer <ADMIN_USER_TOKEN>
 ```
 
-普通 target 授权使用 `target:use`；它包含标准日常操作和受管凭据使用。
-`credential:*`、`agent:upgrade`、`admin` 和 `*` 仍不包含在内。
+grant 覆盖整个 target，没有 action 维度；`actions` 可省略，只接受 `["target:use"]`，其它值返回 `400`。
+平台管理员是用户的 `is_admin` 标记，创建用户时用 `"admin": true` 设置。
 
 ## 管理员签发用户 Token
 
@@ -310,8 +293,8 @@ Authorization: Bearer <USER_TOKEN>
 - `403 Forbidden`：token 有效，但无权查询目标列表。
 
 `busy` 只表示 Agent 自升级持有 target 级独占 lease；普通变更和排队 session 使用
-`target + session` 作用域的 mutation lease。同一 session 内的 Shell/SSH/bg/apply 仍串行，
-不同 session 在同一 target 可以并行。`status=active` 且 `busy=false` 表示有
+`target + session` 作用域的共享 lease，同一 session 内的 Shell/SSH/bg/apply 也可并发，
+只有该 session 的 workspace 写入要等它们结束。`status=active` 且 `busy=false` 表示有
 workspace/resource 正在执行，但其他 session 仍可使用同一 Agent。`resources` 列出
 `workspace:<session>` 等资源锁；session 是并发归属，不是操作系统沙箱。
 取消和审计收尾复用同一冲突规则，不阻塞其它 session；普通 mutation 缺少有效 session
@@ -692,7 +675,7 @@ socket。镜像构建使用 CLI 的通用 `image build`，高级场景仍可通�
 }
 ```
 
-需要权限：`agent:upgrade`。
+需要该 target 的 grant；升级期间 Agent 独占 target。
 
 `image` 接受 `repository:tag` 或 `repository@sha256:<64 hex>`，包括 `dry_run: true` 的预演请求。
 tag 使用 `Always` 拉取并校验实际 `imageID`；回滚仍只接受历史已验证的 digest 镜像。
@@ -762,15 +745,10 @@ Authorization: Bearer <USER_TOKEN>
 
 查询权限：
 
-- 普通用户默认只返回自己的全部操作（包括 `credential:*`）；本人事件按 actor `user_id`
-  判断，不要求额外 `credential:audit`。`user_id` 可省略、等于当前用户 ID，或使用
-  `user_id=self` 显式解析为当前登录用户；普通用户指定其他用户返回 `403`。
-- 平台管理员（`*/*` 的 `admin` 或 `*` grant）可查询全部用户和动作；
-  `view=global` 显式要求平台管理员，其他角色一律 `403`，即使同时指定 `user_id=self`。
-  `view=global` 不取消其他过滤条件，平台管理员也可用 `user_id=self` 只查本人。
-- 不传 `view` 时按当前权限返回可见范围。`credential:audit` 保留独立的管理权限：
-  可查看获授权精确 target 的其他用户 `credential:*` 记录；他人无 target 的凭据事件仍要求
-  覆盖无 target 事件的授权。该权限不授予其他用户的普通操作历史，也不授予 `view=global`。
+- 普通用户返回自己的全部操作，以及引用其拥有的凭据的事件。`user_id` 可省略、等于当前
+  用户 ID 或 `self`；指定其他用户返回 `403`。
+- 平台管理员可查询全部用户；`view=global` 要求平台管理员，否则 `403`。`view=global`
+  不取消其他过滤条件，平台管理员也可用 `user_id=self` 只查本人。
 - 过滤和权限检查在 `limit` 截断前完成；`limit` 为 1–500，省略或超范围时为 100。
   审计存储读取失败返回 `503 audit_unavailable`，不伪装成空列表。
 
@@ -819,11 +797,6 @@ Gateway 对前台、后台、SSH、prompt 和 `ask --apply` 统一维护执行�
 调用被取消、超时或断连且没有足够终态证据时写入 `outcome_unknown`，不能把本地等待
 结束当成远端 mutation 已停止。结构化 SSH 仍由 `structuredSSH` 参数协议保护。
 
-`GET /v1/admin/operations` 返回 `audit_id`、`state`、`resource` 和 `blocked_by`，并同时返回
-`requested_resource` 与 `effective_lock`。`requested_resource` 是调用方请求的资源，
-`effective_lock` 是 Gateway 实际用于冲突判断的锁；例如带 session 的 target mutation
-会显示为 `session-mutation:<target>/<session>`，不代表整个 target 被独占。
-
 CLI/Web 可在原 `/v1/rpc` WebSocket 上取消自己的请求，不需要管理员权限：
 
 ```json
@@ -834,13 +807,7 @@ CLI/Web 可在原 `/v1/rpc` WebSocket 上取消自己的请求，不需要管理
 返回 `result.canceled=true` 仅表示已请求取消；原请求仍通过其原 ID 返回实际终态。
 连接内重复的活动请求 ID 会被拒绝，不允许覆盖已有执行的所有权。
 
-`DELETE /v1/admin/operations?id=<operation-id>` 返回 HTTP `202`：
-
-```json
-{"id":"op-example","cancel_requested":true,"state":"cancel_requested"}
-```
-
-该响应仅确认取消请求，资源所有权必须保留到原始请求终态。
+取消只确认请求，资源所有权保留到原始请求终态。
 终态不确定时审计持久化为 `outcome_unknown`，仍报告失败，不自动重放 mutation。
 `running` 包含准入等待及无需变更结果保护的只读执行，不能据此认定请求尚未派发。
 Gateway 重启时遗留的 `running` 落为 `error`；已派发且需要变更结果保护的 `executing`
@@ -851,14 +818,11 @@ Gateway 重启时遗留的 `running` 落为 `error`；已派发且需要变更�
 已验签的 Helm 工具明确失败按失败终态处理，不封锁后续操作；同轮任何明确失败
 不得被另一条成功调用掩盖。工具请求错误与执行失败保持区分，执行失败返回 MCP
 `result.isError=true`，取消或缺失终态不转换成普通失败。
-`POST /v1/admin/operations` 不再支持人工声明解锁，返回 `405`。历史审计保留原记录。
-`POST /v1/targets/unlock` 仅重连空闲目标，拒绝活动或排队操作，不强制释放活动 lease。
 
 管理员 mutation 审计：
 
 - 管理员 GET 接口不要求 session，也不会产生 mutation 审计；远端 RPC/CLI 仍使用显式 session。
-- `/v1/admin/` 下的用户创建、密码、启停、grant 增删、token 签发/撤销、操作取消、代理路由增改删，以及
-  `POST /v1/targets/unlock` 均记录调用者 `user_id + token_id`、动作和资源元数据、
+- `/v1/admin/` 下的用户创建、密码、启停、grant 增删、token 签发/撤销、代理路由增改删均记录调用者 `user_id + token_id`、动作和资源元数据、
   开始/结束时间与成功、拒绝或失败结果。token 签发只有一条审计，不重复记录。
 - 此类事件的 `action=admin`；`command_summary` 是白名单 JSON 元数据，包含注册路由、
   HTTP method/status，以及可用的资源 ID、subject user ID、授权动作或启停值。
@@ -867,11 +831,8 @@ Gateway 重启时遗留的 `running` 落为 `error`；已派发且需要变更�
 - 全局用户创建/密码/启停、grant 增删、token 签发/撤销必须通过 `UserIsPlatformAdmin`；仅有某个 target 的 `admin`
   不得修改这些全局资源或给自己追加平台权限。此限制在 mutation 审计入口执行，
   不改变现有管理员 GET 的权限或 session 约定。
-- 管理员身份不替代目标授权：操作取消/解锁/代理路由检查对应目标。
+- 管理员身份不替代目标授权：代理路由检查对应目标。
   普通用户查询本人审计不会获得任何 mutation 权限。
-- `/v1/admin/operations` 的 GET/DELETE 必须按 `cluster` 与 `instance` 成对指定目标；
-  GET 只返回该目标的 active/unresolved 操作，DELETE 只允许取消该目标的操作，
-  缺少或不匹配目标时拒绝请求；人工审计改写入口已删除。
 - 配置下发使用既有 `doops_file_write` RPC 和目标 `write` 权限，不新增 admin 配置接口。
   继续使用唯一的 RPC 审计，保留 target/session/文件路径元数据，不保存文件内容、
   下游输出或原始错误；下游 tool error 记录为失败。其他 RPC/凭据沿用其既有审计。
@@ -921,22 +882,8 @@ JSON-RPC 错误：
 
 ## 权限
 
-目标动作：
-
-```text
-target:use agent:upgrade
-```
-
-管理员动作：
-
-```text
-admin
-```
-
-Gateway 权限判断本身是默认拒绝：用户没有匹配 grant 时不能操作 target，且
-`target:use` 才是普通 target 使用权。需要注意，当前管理员创建用户 API 会额外写入
-一条 `*/*` 默认 action grant；管理员必须先删除该 bootstrap grant，再按明确的
-`cluster/instance` 创建精确 `target:use` grant。如果调用返回 `403`，检查该用户的 target grant。
+用户有匹配 `cluster/instance` 的 grant 才能操作 target，grant 覆盖该 target 的全部操作。
+管理接口要求平台管理员（用户 `is_admin`）。新建用户没有任何 grant。返回 `403` 时检查该用户的 grant。
 
 ## 操作规则
 

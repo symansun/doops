@@ -32,7 +32,7 @@ description: |
 - CLI 只接受 Gateway target；没有直连 target、SSH target 或按 target 保存的 token。
   Gateway 登录态按 Gateway URL 共享，target 配置只存路由。Agent 注册不用 token。
 - 凭据 payload 只走 stdin，不进入命令参数、prompt、日志、文档、提交或工作区。
-  运行时只传 `--credential <resource-name>`（DoSql 自动绑定，见下文），权限继承当前 target 的 `ask`/`exec`。
+  运行时只传 `--credential <resource-name>`（DoSql 自动绑定，见下文），只要求该 target 的 grant。
   不要用 `exec` 输出密码再让用户粘贴；已有目标 Secret 用 `credential configure --from-secret` 导入。
 - 每次调用都等待 RPC 实际终态。取消 ACK、超时或断连缺少终态时报告 `outcome_unknown`，
   不自动重放 mutation，不宣称成功。
@@ -77,7 +77,6 @@ description: |
 | 用户与授权 | `doops admin user create\|list`、`admin grant list\|add\|delete` |
 | 网站代理路由 | `doops admin proxy list\|set\|delete --target <t> ...`（`set --id` 只改传入字段） |
 | token | `doops admin token create\|list\|revoke` |
-| 活动操作 | `doops -session <s> admin operations list --target <t>` |
 | Helm Agent 升级 / 回滚 | `doops -session <s> upgrade --target <t> --image <ref>`（`--dry-run` 只预览）；`upgrade --target <t> --rollback` |
 | CI 非交互登录 | `printf '%s' "$TOKEN" \| doops login --target <t> --token-stdin` |
 
@@ -110,14 +109,14 @@ Gateway 绑定当前 target 上全部 active `use=database` 凭据，`doops sql`
    → `targets` 确认新 commit。探针失败时 CLI 自动回滚；事后回退用 `upgrade --rollback`。
    没有控制器的旧 Agent 和独立 Docker Agent 不走这条链路，见 `docs/BUILD_DEPLOY_SOP.md`。
 7. 开通用户：`admin user create --user <u> --generate-password --grant-target <t>` → `admin grant list --user-id <id>`
-   确认无 wildcard → 用隔离 `DOOPS_CONFIG` 登录验证允许与拒绝 → `admin token revoke` 撤销验证 token。
+   确认只有预期 target → 用隔离 `DOOPS_CONFIG` 登录验证允许与拒绝 → `admin token revoke` 撤销验证 token。
 
 ## 安装与升级
 
 - 安装 CLI/Skill：`bash scripts/install.sh --version <tag> --project <absolute-path>`。
   它不部署 Agent；Agent 接入见 `docs/CLUSTER_INSTALL_GUIDE.md`。
 - 配置唯一来源是 `~/.agent/skills/doops/config.json`；`auth.json` 按 Gateway URL 存 token。
-- 创建普通用户用 `admin user create`，交付前确认 wildcard grant 为 0 并用隔离的
+- 创建普通用户用 `admin user create`，交付前确认 grant 只含预期 target，并用隔离的
   `DOOPS_CONFIG` 验证允许与拒绝路径，流程见 `docs/DOOPS_USAGE_GUIDE.md`。
 - Agent / Gateway 升级的参数、验收和回滚见 `docs/BUILD_DEPLOY_SOP.md`。
 
@@ -130,7 +129,5 @@ Gateway 绑定当前 target 上全部 active `use=database` 凭据，`doops sql`
 - `ask --apply` 没有可信 mutation 证据：检查 Agent 是否注册 `mcp_doops_helm` 及 attestation，
   见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
 - target 不可见：空结果可能是离线，也可能是缺少精确 grant，不能直接断言集群宕机。
-- 并发冲突或 `busy=true`：先 `admin operations list` 核对 `state/resource/blocked_by`；
-  未获明确授权不取消其它发布。语义见 `docs/DOOPS_GATEWAY_TUNNEL.md`。
+- `busy=true` 只表示 Agent 自升级占用整个 target；普通操作按 session/资源互斥，语义见 `docs/DOOPS_GATEWAY_TUNNEL.md`。
 - `push/pull` 失败：确认 `/v1/git/<cluster>/<instance>/<session>.git` 能路由到在线 Agent。
-- 审计查询超时：平台管理员显式执行 `doops -session <s> admin audit optimize --target <t>`。
