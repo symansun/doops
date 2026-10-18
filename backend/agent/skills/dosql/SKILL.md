@@ -34,24 +34,24 @@ Use exactly one route for each database task. Do not silently switch routes:
 
 | User intent | Public route | What it actually does |
 | --- | --- | --- |
-| Find database instances/assets | `doops sql --mode discover` or `mcp_dosql_read operation=discover` | Reads target Kubernetes Pod/Service/Deployment/StatefulSet metadata only; never reads Secret values or connects to the database. |
-| Inspect live tables/columns/indexes/schema | `doops sql --mode query` or `mcp_dosql_read operation=query` | Runs one explicitly read-only, asset-bound schema query through the database client. `discover` is not a schema query. |
-| Read business data | `doops sql --mode query` or `mcp_dosql_read operation=query` | Runs one read-only statement and records bounded result/evidence. |
-| Plan a change | `doops sql --mode plan` | Produces a human-readable change plan, impact, risk and verification steps; it must not connect for mutation. |
-| Change data/schema/admin state | `doops sql --mode apply --sql/--file` | Requires target exec authority and the target's bound database credential. Statements run verbatim in one transaction with an optional read-only `--verify`, and every real apply takes a version in the per-database journal. There is no model-driven or signed-approval mutation path. |
+| Change data/schema/admin state | `doops sql --mode apply --sql/--file` | Requires target exec authority and the target's bound database credential. Statements run verbatim in one transaction with an optional `--verify` check, and every real apply takes a version in the per-database journal. There is no model-driven or signed-approval mutation path. |
+| Copy whole tables between two bound databases | `doops sql --mode apply --copy-from <src> --database <dst> --tables a,b` | The Agent reads and writes in batches, outside the model. |
+| Plan a change | `doops sql --mode plan` | Produces a human-readable change plan, impact, risk and verification steps before the apply. |
+| Find database instances/assets | `doops sql --mode discover` or `mcp_dosql_read operation=discover` | Uses target Kubernetes Pod/Service/Deployment/StatefulSet metadata; never reads Secret values or connects to the database. |
+| Inspect tables/columns/indexes/schema | `doops sql --mode query` or `mcp_dosql_read operation=query` | Runs one asset-bound catalog statement through the database client. `discover` is not a schema query. |
+| Read business data | `doops sql --mode query` or `mcp_dosql_read operation=query` | Runs one statement and records bounded result/evidence. |
 
 `register-database`, `discover-resources`, `compare-databases` and structure
 snapshot commands consume supplied probe/snapshot/repository metadata. They are
 not a live database schema inspection fallback. A standalone `inspect-schema`
 command is not currently implemented; do not claim it exists or invoke an
-unregistered MCP operation. If the user asks for structure, use a read-only
-`query` with the correct engine catalog/information-schema statement and the
-selected `database_asset_id`.
+unregistered MCP operation. If the user asks for structure, use a `query` with
+the correct engine catalog/information-schema statement and the selected
+`database_asset_id`.
 
-For PostgreSQL/MySQL schema reads, the request must be a single read-only SQL
-statement. For MongoDB, use a structured `mongoOperation`; raw JavaScript is not
-accepted. Mutation requests must not be sent through `query`, `discover`, a
-generic `doops ask`, Bash, `psql`, or a local connection file.
+For MongoDB, use a structured `mongoOperation`; raw JavaScript is not accepted.
+Changes go through `apply`, not through `query`, `discover`, a generic
+`doops ask`, Bash, `psql`, or a local connection file.
 
 ## Intended Capabilities
 
@@ -81,11 +81,9 @@ generic `doops ask`, Bash, `psql`, or a local connection file.
 
 ## Safety Rules
 
-- Read-only queries are audited but do not enter a change document by default.
 - Schema changes, data changes, admin operations and unknown operations always
-  enter the change document.
-- A user may explicitly include a read-only query in a change document.
-- A user may not exclude a mutating operation from a change document.
+  enter the change document and take a version.
+- Queries are audited and do not enter a change document by default.
 - Production changes are admitted by the Gateway target grant and
   recorded as a version in the per-database journal. There is no signed
   approval artifact.
