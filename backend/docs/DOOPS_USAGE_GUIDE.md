@@ -663,6 +663,25 @@ Gateway uses the same login state. Target configuration contains routing only;
 it must not contain a Gateway user token. Gateway permissions still come from
 the user's grants.
 
+## Updating Metadata
+
+没有通用的 `update` 命令。各类元信息按下表修改；“替换”表示先建新的再删旧的。
+
+| 对象 | 如何修改 | 不能改的部分 |
+| :--- | :--- | :--- |
+| 本机 target 路由 | 同名再执行 `doops add --name <n> ...` 原地覆盖 gateway/cluster/instance/aliases/use；alias 与其它 target 冲突时拒绝 | 只有确认离线才能 `remove` |
+| Gateway 用户 | `admin user password` 改密码；`admin user disable --disabled=true\|false` 停用/恢复 | 用户名、`is_admin` 无修改入口 |
+| target grant | 替换：`admin grant add` 新范围，再 `admin grant delete --id` 旧的 | grant 不支持原地改 actions 或 scope |
+| Gateway token | 替换：`admin token create` 新 token，确认后 `admin token revoke` 旧 token | token 不能续期或改名 |
+| 凭据 payload | 轮换：`credential put` → 对每个 active 绑定 `verify` → `promote`；或对已有资源重跑 `credential configure --id <id>`（每次生成新版本） | 历史版本不可改 |
+| 凭据 target 绑定 | 同一 scope 重新 `credential grant` 会复活已吊销绑定；换 scope 要新 `grant` 再 `grant-revoke` 旧的 | 绑定不支持原地改 scope |
+| 凭据资源 | 只能 `credential revoke` | name、type、scope 无修改入口；要改就新建资源 |
+| 定时巡检 job | `admin jobs enable\|disable` 开关；其它字段替换：`admin jobs add` 后 `admin jobs rm` | job 字段不支持原地修改 |
+| 网站代理路由 | HTTP `POST /v1/admin/proxy-routes` 带 `id` 时按 ID upsert（无 CLI），见 `DOOPS_GATEWAY_TUNNEL.md` | — |
+| Git 仓库登记 | HTTP `PATCH /v1/admin/repos?id=<id>` 或 Web 控制台（无 CLI） | — |
+| Edge 域名路由 / enrollment | 当前没有 HTTP 或 CLI 管理入口；存储层的增改删只被测试调用 | 不要直接改 Gateway SQLite |
+| Agent 的 cluster/instance | 由 Agent 部署配置（Helm values）声明，改它就是重新发布 Agent，见 `BUILD_DEPLOY_SOP.md` | CLI 和 Gateway 都不能改在线 Agent 的身份 |
+
 ## Credential Resources
 
 完整凭据模型、payload schema、权限矩阵、验证、轮换、吊销、bundle、审计和发布引用见
