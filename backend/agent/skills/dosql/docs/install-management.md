@@ -40,15 +40,14 @@ doops -session db-plan sql --target <target> --mode plan \
 
 doops -session db-change sql --target <target> --mode apply \
   --database <logical-database> \
-  --request '按已批准的变更请求执行并返回 journal/evidence'
+  --file migrations/0001_add_external_id.sql
 ```
 
 `sql --mode query` and `sql --mode plan` use Gateway `ask` and declare
-`skill=dosql`. `sql --mode apply` uses Gateway `apply`. Gateway authenticates
-the user, checks the exact target/action scope, binds every active database
+`skill=dosql`. `sql --mode apply` runs the verbatim `--sql/--file` statements. Gateway authenticates
+the user, checks the user's grant on the exact target, binds every active database
 credential on the target by ID and materializes only metadata bindings; DoSql
-does not accept caller-selected credentials. DoSql then applies database classification, journal,
-verification and signed change approval rules.
+does not accept caller-selected credentials. DoSql then applies database classification, journal and verification rules.
 
 ## Agent Runtime
 

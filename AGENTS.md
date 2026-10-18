@@ -47,7 +47,7 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
   `doops -session <s> ask --target <t> --apply [--credential <name>...] --msg '<facts>'`.
 - The task must state target, workload/service scope, reason, authorized Helm assets, and
   machine-checkable acceptance criteria. Business image versions must come from the task or
-  read-only evidence from its explicitly authorized repository, Chart, values, or existing release;
+  read-only evidence from its task-specified repository, Chart, values, or existing release;
   never guess them or require facts already in those assets to be pasted into the prompt.
   Do not impose business-specific image keys, tag formats, CORS, repository, or directory gates.
 - Ordinary `upgrade-install` uses `--reset-values` with explicit Chart defaults, ordered optional
@@ -96,7 +96,7 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
   bypass grant/verify/promote. Platform-admin Secret import accepts exact references only and
   transfers selected values from Agent to Gateway on the private control channel, never via exec.
 - Gateway may send decrypted payload only through the internal credential materialization call to
-  the explicitly authorized target Agent. Public prompt and metadata bindings contain names,
+  the granted target Agent. Public prompt and metadata bindings contain names,
   scopes, Secret names/types/key sets, resource versions, digests, status, and stable error
   categories only.
 - Runtime credential use requires only the user's grant on that target. Do not

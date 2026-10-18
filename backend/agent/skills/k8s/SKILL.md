@@ -12,7 +12,7 @@ conflicts: []
 ---
 
 执行 Kubernetes 任务时，目标、namespace、resource、container 和镜像必须来自当前任务
-或任务明确授权的仓库、Chart、values、现有 release 的本轮只读证据，不得从环境名、
+或任务指定的仓库、Chart、values、现有 release 的本轮只读证据，不得从环境名、
 域名、目录名或历史记录猜测，也不得要求将已明确资产中的事实重新粘贴到 prompt。
 
 以下发布规则用于普通业务 workload。当前 Agent 自身镜像升级使用 CLI
@@ -24,13 +24,13 @@ kubeconfig 或 `doops push` 为前置条件；旧 Agent 首次启用控制器需
 
 1. Kubernetes 读取只调用 `mcp_doops_k8s_read`；所有发布 mutation 调用
    `mcp_doops_helm`（规范能力名 `doops_helm`）。`session_id` 由运行时绑定，模型不得
-   传入 target、session 或工作区根路径；chart/values 可使用授权的 session 相对路径。
+   传入 target、session 或工作区根路径；chart/values 可使用任务指定的 session 相对路径。
    不得用 shell 执行 kubectl 或 Helm mutation。
 2. 所有 namespaced 请求显式传 namespace；cluster-scoped 资源（例如 nodes）不传 namespace，
    不得依赖 namespaced 请求的 default namespace。
-3. mutation 必须有 `confirm=true`；业务镜像键、版本格式和配置由授权 Chart 定义，
+3. mutation 必须有 `confirm=true`；业务镜像键、版本格式和配置由任务指定的 Chart 定义，
    不作为 DoOps 全局前置闸门。
-4. 通过 `mcp_doops_helm` 完整收敛明确的 release、namespace 和授权 chart。
+4. 通过 `mcp_doops_helm` 完整收敛明确的 release、namespace 和任务指定的 chart。
    `value_files` 可选，覆盖遵循 Chart schema；普通升级统一 `--reset-values`，不隐式
    继承历史 values。只更新镜像也走同一 Helm 路径，不存在直接 Kubernetes 镜像 mutation 例外。
    工具自动以相同输入先执行 server dry-run；不得用缺少 `confirm=true` 的调用试探，

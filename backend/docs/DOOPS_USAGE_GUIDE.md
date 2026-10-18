@@ -13,19 +13,19 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Add a Gateway target | `doops add --name <n> --gateway <url> --cluster <c> --instance <i>` | Stores routing only; never stores a target token. |
 | Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Known checks and explicitly requested operations; standard releases use `ask --apply`. |
 | Sync OCI images | `doops -session <s> registry sync --target <t> --source-registry <src> --target-registry <dst> --tag <release> --source-authfile <remote-file> --target-authfile <remote-file> --image <name>` | Generic target-side `skopeo copy --all`, bounded timeout/retry, and manifest digest verification; auth payloads never enter CLI arguments. |
-| Build an OCI image | `doops -session <s> image build --target <t> --context <remote-dir> --output oci --output-path <remote-file>` | Generic BuildKit build; supports `--platform` and `--output image --image <ref> --push` for an explicitly authorized registry push. |
+| Build an OCI image | `doops -session <s> image build --target <t> --context <remote-dir> --output oci --output-path <remote-file>` | Generic BuildKit build; supports `--platform` and `--output image --image <ref> --push` for a registry push. |
 | Copy an OCI image | `doops -session <s> image copy --target <t> --source <ref> --destination <ref>` | Generic Skopeo transport-to-transport copy with optional authfiles and raw manifest digest verification. |
 | Run nested SSH safely | `doops -session <s> ssh --target <t> --host <user@host> -- <command> [args...]` | Preserves remote argv across nested shells. |
 | Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | One RPC waits for the Agent task's terminal result; no task-status polling or command retries. |
 | Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
-| Run an authorized release | `doops -session <s> ask --target <t> --apply --credential <name> --msg '<facts>'` | Canonical business workload CI/CD entry. |
+| Run a release | `doops -session <s> ask --target <t> --apply --credential <name> --msg '<facts>'` | Canonical business workload CI/CD entry. |
 | DoSql read-only query or scan | `doops -session <s> sql --target <t> --mode query [--database <name>] --request '<request>'` | Automatically binds every active database credential on the selected Gateway target; `--database` picks among several. No local connection file is read. |
 | DoSql live schema inspection | `doops -session <s> sql --target <t> --mode query [--database <name>] --request '读取指定 database_asset_id 的表、列或索引结构'` | Uses one read-only engine catalog/information-schema query. `discover` only finds Kubernetes database assets; it does not inspect live tables. |
 | DoSql change plan | `doops -session <s> sql --target <t> --mode plan --request '<request>'` | Returns business summary, risk and verification evidence without mutation. |
 | DoSql controlled mutation | `doops -session <s> sql --target <t> --mode apply [--database <name>] --request '<approved change>'` | Automatically binds the target's database credentials; DoSql still requires its change evidence before mutation. |
 | DoSql direct SQL | `doops -session <s> sql --target <t> --mode apply [--database <name>] --sql '<sql>' [--verify '<read sql>'] [--dry-run]` | One transaction per batch. Postgres rolls back DDL and DML together. MySQL/Oracle commit DDL implicitly: `--dry-run` rejects DDL (`dosql_dry_run_ddl_unsupported`), a batch mixing DDL and DML is refused (`dosql_mixed_ddl_dml_unsupported`), and a DDL that already ran is reported as `implicit_commits` / `partially_committed`. Each real apply gets a per-database `version` in a hash-chained journal on the Agent (`$(dirname workspace root)/.doops-dosql-versions`, persists only if that path is on a persistent volume); the version is reserved before execution and an apply is refused if the journal is unwritable or corrupt. Queries and dry-runs get no version. MongoDB takes JSON operation documents instead of SQL (`{"collection":"c","op":"updateMany","filter":{},"update":{"$set":{}}}`, array or consecutive documents): writes plus `--verify` share one transaction and roll back together, `--dry-run` rolls back (replica set required, else `dosql_transaction_unsupported`); `createCollection/createIndex/dropIndex/drop` are non-transactional and follow the same DDL rules as MySQL; `$where/$function/$accumulator`, `$out/$merge` and `system.*` are refused; auth retries once with `authSource=admin` and reports `auth_source`. |
 | DoSql target discovery | `doops -session <s> sql --target <t> --mode discover --request '<request>'` | Uses `mcp_dosql_read` to scan non-Secret target metadata; it never stores connection secrets. |
-| DoSql repository/resource discovery | `doops -session <s> sql --target <t> --mode discover --root <authorized-repo> --resources-file <assets.json> --project <id> --environment <id> --dosql-script <path>/dosql-agent.mjs` | Scans authorized code/config metadata and persists a metadata-only database inventory. |
+| DoSql repository/resource discovery | `doops -session <s> sql --target <t> --mode discover --root <repo> --resources-file <assets.json> --project <id> --environment <id> --dosql-script <path>/dosql-agent.mjs` | Scans the repository's code/config metadata and persists a metadata-only database inventory. |
 | DoWeb read-only inspection | `doops -session <s> web --target <t> --mode check --request '<site/Nginx/TLS/health request>'` | Uses the selected Gateway target and DoWeb evidence path. |
 | DoWeb site plan | `doops -session <s> web --target <t> --mode plan --request '<site publish request>'` | Produces SiteSpec, Nginx plan, checks and rollback without mutation. |
 | DoWeb controlled publish | `doops -session <s> web --target <t> --mode apply --credential <web-resource> --request '<site, dist, domain, proxy, acceptance>'` | Requires Gateway mutation authority and `nginx -t`/reload/health evidence. |
@@ -97,7 +97,7 @@ doops -session db-change sql --target <t> --mode apply --file migrate.sql --dry-
   Agent 的 `/root` 是持久卷时跨重启保留。
 - 结果是带 `operation_id`、`statement_fingerprint` 的 JSON，证据写入目标 session 工作区
   `.dosql/operations/<operation_id>.evidence.json`，可用 `pull` 取回。
-- query 走 target `ask` 权限，apply 走 `exec` 权限；数据库选择规则同上一节。
+- query 和 apply 都只要求该 target 的 grant；数据库选择规则同上一节。
 
 MongoDB 也走 `--sql/--file`，但语句是 JSON 操作，不是 SQL。一批可以是 JSON 数组，也可以是连续多个文档：
 
@@ -132,12 +132,12 @@ standard DoOps Agent image provides `buildctl` for image builds and `skopeo` for
 copy/inspect. The command performs copy and source/destination manifest digest checks;
 it has no AMP-specific path and never installs a missing tool at runtime. If the target
 does not advertise `skopeo`, the operation fails with a missing-tool error; upgrade the
-DoOps Agent image or use an explicitly authorized target that already provides it.
+DoOps Agent image or use a target that already provides it.
 
 `image build` and `image copy` are thin generic wrappers over the same audited exec path.
 They use standard BuildKit and Skopeo transports, so the command does not depend on Docker,
 nerdctl, Harbor, AMP image names, or a project-specific script. For private Registry output,
-the target must have an authorized remote authfile; credentials are never accepted inline in
+the target must already have the remote authfile; credentials are never accepted inline in
 the command arguments.
 
 ## Basic Checks
@@ -152,7 +152,7 @@ doops -session image-toolchain-check info --target <gateway-target>
 ```
 
 `info` 输出中的 `buildctl: OK`、`skopeo: OK` 和 `buildkit-sock: OK` 表示目标具备
-DoOps 通用镜像工具链。镜像构建使用明确授权的 `exec` 命令调用 `buildctl`；镜像复制
+DoOps 通用镜像工具链。镜像构建使用明确给出的 `exec` 命令调用 `buildctl`；镜像复制
 和源/目标 manifest 校验使用 `image copy` 或 `registry sync`。两者都不需要 AMP 专用脚本或外置同步 Job。
 目标缺少 `skopeo` 时直接报告工具缺失，不在线安装，也不静默切换到其它工具。私有 Registry
 凭据只能引用目标上的受控 authfile，禁止写入命令参数。
@@ -410,7 +410,7 @@ doops -session ops k8s --target <t> delete pod <pod> --namespace apps --confirm
 可用参数：`--namespace`、`--container`、`--output json|yaml|wide|name`、`--tail`、
 `--replicas`、`--timeout`、`--for`、`--confirm`。`get/describe/logs/top/events/rollout status`
 是只读查询，可与 target mutation 并行；`rollout restart/scale/cordon/uncordon/delete pod`
-使用 target mutation lease。两类都需要 target 的 `exec` 权限。版本发布不走这里，用
+使用 target mutation lease。两类都只要求该 target 的 grant。版本发布不走这里，用
 `ask --apply`。
 
 ## Development Credential Preflight
@@ -471,7 +471,7 @@ Standard `push` uses Git workspace sync through Gateway:
 
 - Gateway: `/v1/git/<cluster>/<instance>/<session>.git`
 
-Agent 的 Git handler 只接受已授权 Gateway 反向隧道中的进程内调用，不暴露本地
+Agent 的 Git handler 只接受 Gateway 反向隧道中的进程内调用，不暴露本地
 HTTP `/git` 入口。
 
 Do not reimplement push with tar/base64/chunk upload. `doops_workspace_*` chunk tools are low-level compatibility JSON-RPC tools, not the standard CLI/deploy path; seeing 512KB chunk logs means a script is bypassing the supported Git HTTP path. Push respects `.gitignore` and `.doopsignore`; do not hide deploy manifests or scripts behind ignore rules unless intentional.
@@ -495,7 +495,7 @@ cat ./pod.yaml | doops -session ops write --target jm --path pod.yaml
 
 File API paths are relative to the named session workspace. The Web file browser
 uses the same paths for open, save, new-file and upload, and its navigation stays
-inside that workspace. Use explicit authorized Shell operations for host paths.
+inside that workspace. Use explicit Shell operations for host paths.
 
 `read` and `write` are for small text files and short scripts. Use `push/pull` for directories and binary assets.
 
@@ -603,6 +603,6 @@ Check availability without starting a build:
 doops -session buildkit-check exec --target <target> --cmd 'buildctl --version'
 ```
 
-Explicitly authorized long-running non-release commands use `exec --bg`, not
+Long-running non-release commands use `exec --bg`, not
 `&`, `nohup`, or `setsid` inside a foreground `exec`. The native task service owns
 the process, logs and exit status; it does not grant deployment authority.

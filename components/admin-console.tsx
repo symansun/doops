@@ -484,7 +484,7 @@ function GrantsView({ session }: { session: Session }) {
     <div>
       <Toolbar
         title="权限"
-        desc="RBAC 授权：用户 × 集群/实例 × 动作"
+        desc="授权：用户 × 集群/实例"
         onRefresh={load}
         loading={loading}
       >
@@ -521,7 +521,7 @@ function GrantsView({ session }: { session: Session }) {
             </label>
           </div>
           <p className="text-xs text-muted-foreground">
-            授权后用户可使用该 target 的标准运维能力；管理员、凭据管理和 Agent 升级需单独授权。
+            授权后用户可使用该 target 的全部运维能力（含 Agent 升级）和它绑定的凭据；平台管理员和凭据管理不随 grant 下发。
           </p>
           <div>
             <button

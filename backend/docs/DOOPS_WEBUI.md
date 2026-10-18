@@ -10,20 +10,19 @@ and does not expose the token to React state, localStorage or copied examples.
 
 - AI conversation uses the shared Agent Cloud `AgentWorkspace`, v2 runtime,
   queue and store. The host supplies only Gateway transport, target/session
-  routing and authorized deployment forms. The session API requires the Agent's
+  routing and deployment forms. The session API requires the Agent's
   explicit structured ACP event capability and never downgrades to the old chat
   engine. This source change needs a new shared package publication and matching
   Agent/Web rollout; local fixture evidence is not production acceptance.
 - AI diagnostics query Agent runtime metadata instead of reading settings or API
-  keys. Diagnostics use `operation=ask`; the deployment form requires explicit
-  authorization and sends `operation=apply` with target, release, namespace,
+  keys. Diagnostics use `operation=ask`; the deployment form requires an explicit confirmation and sends `operation=apply` with target, release, namespace,
   remote Chart, controlled image, CI commit/evidence, reason and acceptance.
 - Helm success must include the final live Deployment and task acceptance.
   Native MCP `isError`, protocol errors and interrupted streams remain failures.
 - Existing managed Agents have an image-reference upgrade/rollback form. An accepted
   Job is not a completed release; the page observes the same Job and checks the
   Gateway protocol. Verify the serving Pod/imageID/runtime and affected functions.
-  First installation still requires an authorized cluster administration context.
+  First installation runs from the external controller with a cluster kubeconfig.
 - Credential pages manage create, staged payload, target bindings, persisted version
   metadata, verify, promote, grant revocation and resource revocation. Payload
   input uses the credential endpoint only and never enters an AI task.

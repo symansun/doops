@@ -33,7 +33,7 @@ grants、verify 和 promote；不增加另一套凭据资源或提升权限的 A
 `key_map` 可将 source Secret key 映射为运行时 key；每个 source 必须出现在 `keys` 中，
 runtime key 不能重复。未映射的 key 原样保留。`connection_uri` 和 `password_key` 一起使用或一起省略。URI 不得含密码、query 或 fragment，
 必须是含用户名、host、数据库路径的 postgres/postgresql/mongodb URI；组合时只允许选中密码 key。
-该 endpoint 要求对应 target 的 exec 权限和可管理的 active opaque resource，沿用凭据资源锁、
+该 endpoint 要求对应 target 的 grant 和可管理的 active opaque resource，沿用凭据资源锁、
 加密主密钥和审计。它只在当前精确 target 内读取指定 Opaque Secret，不修改源 Secret。
 Agent 通过内部 `doops_credential_import` 控制通道返回选中 payload，Gateway 加密为 staged
 version 后只向 HTTP 返回版本元数据。公开 RPC 禁止调用该工具，流式通知不会进入导入结果。
@@ -418,7 +418,7 @@ CLI 和 Gateway（包括内部调度调用）在后台任务派发前校验，�
 }
 ```
 
-需要权限：`exec`。
+需要该 target 的 grant（审计动作记为 `exec`）。
 
 适用于 CI/CD、固定部署脚本、健康检查、BuildKit 构建和 Kubernetes 命令。
 
@@ -455,7 +455,7 @@ Agent 在 `initialize` 响应的 `capabilities.protocols.structuredSSH` 中声�
 }
 ```
 
-需要权限：`exec`。
+需要该 target 的 grant（审计动作记为 `exec`）。
 
 CLI 对应入口：
 
@@ -488,7 +488,7 @@ CLI 的 `--option` 只接受不会改写连接目标的旗标：`-4`、`-6`、`-
 }
 ```
 
-需要权限：`exec`。
+需要该 target 的 grant（审计动作记为 `exec`）。
 
 不要把 `doops_shell` 里的命令用 `&`、`nohup` 或 `setsid` 转为后台任务。普通 shell 调用结束时，agent 会终止其子进程；长构建必须使用 `doops_bg`。
 
@@ -506,7 +506,7 @@ CLI 的 `--option` 只接受不会改写连接目标的旗标：`-4`、`-6`、`-
 }
 ```
 
-需要权限：`exec`。
+需要该 target 的 grant（审计动作记为 `exec`）。
 
 ### `doops_agent_prompt`
 
@@ -518,9 +518,9 @@ mutation evidence. The deterministic `doops_web` RPC maps reads to `ask` and
 mutations to `exec`; website writes hold a target-wide lease because Nginx
 activation/reload is shared. See `DOWEB_INTEGRATION.md` for parameters and mounts.
 
-向目标 AI agent 下发诊断、运维或明确授权的发布任务。发布任务必须使用
-`operation=apply`，并在自然语言中明确 target、服务范围、原因、授权资产和验收条件。
-业务镜像版本来自任务或其明确授权的仓库、Chart、values、现有 release 的只读证据，
+向目标 AI agent 下发诊断、运维或发布任务。发布任务必须使用
+`operation=apply`，并在自然语言中明确 target、服务范围、原因、任务指定的资产和验收条件。
+业务镜像版本来自任务或任务指定的仓库、Chart、values、现有 release 的只读证据，
 不得猜测，也不要求已明确资产中的事实再粘贴到 prompt。
 
 参数：
@@ -534,12 +534,9 @@ activation/reload is shared. See `DOWEB_INTEGRATION.md` for parameters and mount
 }
 ```
 
-需要权限：
+需要该 target 的 grant。审计动作：普通诊断或只读任务记为 `ask`，`operation=apply` 记为 `exec`。
 
-- 普通诊断或只读任务：`ask`。
-- `operation=apply` 的发布或变更任务：`exec`。
-
-适用于诊断、信息收集和用户明确授权的运维或发布任务。需要凭据时，CLI 只传递
+适用于诊断、信息收集和用户明确要求的运维或发布任务。需要凭据时，CLI 只传递
 `--credential <resource-name>` 的 metadata-only 引用；Gateway 在绑定用户、target 和
 session 后按 `cluster/instance/use` 授权和物化，namespace、workload、image、Helm 和
 required keys 只作为执行元数据。普通发布使用 `operation=apply`；DoSql 只读查询或
@@ -569,7 +566,7 @@ CLI 保持原有输出契约，不能以该路径绕过组件的版本检查。
 {"session_id": "deploy_20260514", "path": "deploy.sh"}
 ```
 
-需要权限：`read`。
+需要该 target 的 grant（审计动作记为 `read`）。
 
 不要用它下载大文件、二进制、压缩包、数据库导出或图片。大文件和目录下载使用 `doops pull`。
 
@@ -587,7 +584,7 @@ CLI 保持原有输出契约，不能以该路径绕过组件的版本检查。
 }
 ```
 
-需要权限：`write`。
+需要该 target 的 grant（审计动作记为 `write`）。
 
 ### `doops_workspace_read`
 
@@ -631,7 +628,7 @@ doops -session <session> pull --target <target> --dest <dir>
 
 返回节点基础信息和通用镜像工具链状态，包括 `buildctl`、`skopeo` 和 BuildKit
 socket。镜像构建使用 CLI 的通用 `image build`，高级场景仍可通过 `doops exec` 调用
-明确授权的 `buildctl` 命令；OCI 镜像复制和 manifest 校验使用 `image copy` 或
+明确给出的 `buildctl` 命令；OCI 镜像复制和 manifest 校验使用 `image copy` 或
 `registry sync`，不依赖业务项目脚本。
 
 参数：
@@ -640,13 +637,13 @@ socket。镜像构建使用 CLI 的通用 `image build`，高级场景仍可通�
 {"session_id": "smoke"}
 ```
 
-需要权限：`info`。
+需要该 target 的 grant（审计动作记为 `info`）。
 
 ### `doops_check_deployment`
 
 检查线上部署镜像是否与最新构建一致。
 
-需要权限：`check`。
+需要该 target 的 grant（审计动作记为 `check`）。
 
 ### `doops_clean_workspace`
 
@@ -658,7 +655,7 @@ socket。镜像构建使用 CLI 的通用 `image build`，高级场景仍可通�
 {"workspace": "deploy_20260514"}
 ```
 
-需要权限：`clean`。
+需要该 target 的 grant（审计动作记为 `clean`）。
 
 ### `doops_agent_upgrade`
 
@@ -696,15 +693,14 @@ kubeconfig。Deployment/Pod 的 spec 镜像必须精确匹配请求的不可变�
 证据到自身 namespace 的 `doops-upgrade-verified-<release>` ConfigMap；写入失败不报告成功。
 手动回滚只选有该证据且仍 superseded 的具体 revision，不推断所有 superseded 都成功。
 Job 使用选定 revision 镜像并复核 revision、namespace 和镜像；无证据的旧 release
-必须经授权外部控制器回滚，不能在新控制器里跳过验证。
+必须经外部控制器回滚，不能在新控制器里跳过验证。
 
 ## 自然语言发布 API 对接模式
 
-平台通过 `doops ask --apply` 发送明确授权的发布任务。任务必须明确 target、
-服务范围、变更原因、授权资产和验收条件；业务镜像版本必须来自任务或其明确授权的
-仓库、Chart、values、现有 release 的只读证据，不猜测，也不要求重复粘贴已明确资产中的事实。
+平台通过 `doops ask --apply` 发送明确的发布任务。任务必须明确 target、
+服务范围、变更原因、任务指定的资产和验收条件；业务镜像版本必须来自任务或任务指定的仓库、Chart、values、现有 release 的只读证据，不猜测，也不要求重复粘贴已明确资产中的事实。
 需要凭据时，调用方显式提供一个或多个 metadata-only credential resource
-name；Gateway 根据当前操作的 ask/exec 权限直接读取 target/use 绑定并物化，
+name；Gateway 根据用户对该 target 的 grant 直接读取 target/use 绑定并物化，
 不调用模型生成授权 scope。凭据 payload 不进入公开 prompt、doagent 上下文、CLI 输出、日志或
 审计记录；Gateway 仅通过内部凭据物化调用向目标 Agent 短暂传递 payload。
 
@@ -714,7 +710,7 @@ Helm target binding 只绑定 target 的 cluster/instance 和 use=helmPull；nam
 和 Chart URL 不再参与 Gateway 或 Agent 授权匹配。认证只发送给配置的 HTTPS origin，
 仓库路径不作权限条件。Agent 仅在本次 prompt 存续期间建立无 payload 的绑定租约，
 检查 session、凭据身份与 resourceVersion 后消费凭据。公开 MCP 不增加密码/token 参数。
-受管 Helm 发布允许明确授权的 `value_files` 和非敏感 `set_strings`，不强制 bundled-only，
+受管 Helm 发布允许任务指定的 `value_files` 和非敏感 `set_strings`，不强制 bundled-only，
 认证、target 权限、包校验与单次 staging 保留；失败不改走匿名或旧登录态。
 
 `mcp_doops_helm upgrade-install` 显式提供 `release`、`namespace`、`chart` 和 `confirm=true`；

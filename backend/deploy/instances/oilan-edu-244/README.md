@@ -21,7 +21,7 @@ existing `kz-ops/doops-agent-live` Agent.
 
 ## Bootstrap And Secrets
 
-Bootstrap through the authorized external controller or existing EDU Agent,
+Bootstrap through the external controller or existing EDU Agent,
 using the canonical chart and these values after server-side dry-run. Apply
 `rbac.yaml` and the token Secret metadata before installing the new release.
 
@@ -39,7 +39,7 @@ these files do not implement automatic token rotation. Kubernetes grants are
 cluster read access without general Secret access and namespace write access
 to `doops-oilan`, `oilan`, `oilan-middleware`, and `ecp`. The Agent remains
 privileged for the existing runtime contract, so RBAC alone does not isolate it
-from host access. Gateway target/action grants still control user requests.
+from host access. Gateway target grants still control user requests.
 
 The public Agent image does not depend on a registry pull Secret. Keep payloads
 out of values and never use registry credentials as a substitute for diagnosing

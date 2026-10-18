@@ -1203,7 +1203,7 @@ baselines in one transaction.
 ## Hard Requirements
 
 - Do not execute without `operationId`.
-- Do not execute mutating operations without approval metadata.
+- Do not execute mutating operations outside the journaled `doops sql --mode apply --sql/--file` path.
 - Do not ask users to approve raw SQL as the primary confirmation surface. Return
   human-readable confirmation first, then keep SQL as an internal artifact.
 - Do not print database passwords, tokens or secret values.

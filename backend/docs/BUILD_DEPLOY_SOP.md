@@ -15,7 +15,7 @@ Agent 不再需要声明独立的生命周期 capability；必须验证前台和
 进程组终止、`202 cancel_requested`、持久化 `outcome_unknown` 以及按
 `request_id` 路由流式通知。结构化 SSH 单独验证 `structuredSSH`。发布者仍须逐项
 核对 Gateway 在线 Agent 基线，不能只以一个 target 的上线验收代替实际使用场景的
-终态证据。缺少已授权升级范围时先完成源码与 CI 制品，停止生产切换。
+终态证据。任务没有给出升级范围时只完成源码与 CI 制品，不做生产切换。
 
 先用 `doops version`、`doops list` 和
 `doops -session <s> targets --target <t>` 核对已安装 CLI、Gateway 路由及精确
@@ -30,7 +30,7 @@ commit 校验候选 Agent，因此使用该脚本时 CLI 必须与候选制品�
 | 普通业务 workload | `doops -session <s> ask --target <t> --apply` | 目标 Agent 的运行环境，不读取本机 kubeconfig |
 | 已具备控制器的 Helm Agent 镜像 | `doops -session <s> upgrade --target <t> --image <repository:tag 或 repository@sha256:<digest>` | 集群内 Job 复用 Agent 挂载，不读取本机 kubeconfig |
 | K8S 首次安装、旧 Helm Agent 接入控制器、显式 Helm 配置变更 | `scripts/release-managed-agent.sh` | 指定外部控制器的 kubeconfig；没有 Helm release 的现有 workload 不自动接管 |
-| 已有独立 Docker Agent | `scripts/release-host-agent.sh` | 已授权外部宿主 SSH；不依赖旧 Agent、K8S 或 Helm |
+| 已有独立 Docker Agent | `scripts/release-host-agent.sh` | 外部宿主 SSH；不依赖旧 Agent、K8S 或 Helm |
 | 空 Ubuntu/Debian 服务器 | `scripts/bootstrap-host-agent.sh` | 外部 root；安装 Docker/Compose，必须提供模型 settings；不覆盖已有 Agent |
 | Gateway 控制面 | `scripts/deploy-gateway.sh --no-build` | 已核验 CI 产物，通过宿主机 SSH 发布，不通过 Agent target |
 
@@ -109,9 +109,9 @@ bash scripts/deploy-gateway.sh \
 
 ## 二、普通业务 workload apply
 
-普通业务 workload 的唯一运行时发布入口是明确授权的 `doops ask --apply` 自然语言任务。
+普通业务 workload 的唯一运行时发布入口是 `doops ask --apply` 自然语言任务。
 不得用环境注册表、部署模板或 workflow YAML 作为发布根，也不得从目录名、
-环境名、业务名或历史发布记录猜测目标和参数；可读取任务明确授权的代码、Chart、values
+环境名、业务名或历史发布记录猜测目标和参数；可读取任务指定的代码、Chart、values
 和现有 release 解析事实，不要求已明确资产中的事实再粘贴到 prompt。CNB 负责构建、
 校验和推送业务制品；
 业务 workload 的 mutation 仍由同一 `ask --apply` 入口授权和验收。
@@ -124,11 +124,10 @@ bash scripts/deploy-gateway.sh \
 到 target，也不要求创建或校验 target 隔离 workspace。人工控制端与 CI 使用同一入口、
 相同的显式授权和验收要求。
 自然语言任务必须明确 target、服务范围、变更原因、允许使用的 Helm 资产和验收条件；
-业务镜像版本必须来自任务或其明确授权的仓库、Chart、values、现有 release 的只读证据，
-同 Chart 可有不同服务镜像及不同版本；缺少事实且无授权读取来源时阻塞，不猜测或补默认值。
+业务镜像版本必须来自任务或任务指定的仓库、Chart、values、现有 release 的只读证据，
+同 Chart 可有不同服务镜像及不同版本；缺少事实且任务没有指定可读取的来源时阻塞，不猜测或补默认值。
 `api_trigger_deploy_agent` 只定义在 `main` 分支事件下，Gateway token 仅通过 stdin
-交给 main 上构建的 CLI。CI secret 中的 `DOOPS_HELM_ASSET` 必须是任务明确授权的
-HTTPS `.tgz` Chart 下载 URL；当前 remote 不支持 `oci://`，不新增 fallback。
+交给 main 上构建的 CLI。CI secret 中的 `DOOPS_HELM_ASSET` 必须是任务指定的 HTTPS `.tgz` Chart 下载 URL；当前 remote 不支持 `oci://`，不新增 fallback。
 `ask --apply` 直接把该远程 Chart 和明确的镜像事实交给
 目标 Agent，不经由代码同步或隔离 workspace 传递发布输入。
 
@@ -152,9 +151,8 @@ stdio 响应在本地生成结果证明。
 调用方必须在提交任务前核对 CI source commit、registry digest 和构建成功证据；这只是
 发布前置条件，不是 Agent 在本轮自动执行的 CI provenance 校验。
 **普通业务 apply 执行顺序：**
-1. 核对 target、服务范围、原因、验收条件及授权资产；从任务或明确授权资产的只读证据
-   核实各服务镜像版本，不猜测，也不要求用户重复粘贴已有事实。
-2. 按明确授权的 Chart 默认值、按顺序可选多个 `value_files` 和非敏感 Chart-specific
+1. 核对 target、服务范围、原因、验收条件及任务指定的资产；从任务或任务指定资产的只读证据核实各服务镜像版本，不猜测，也不要求用户重复粘贴已有事实。
+2. 按任务指定的 Chart 默认值、按顺序可选多个 `value_files` 和非敏感 Chart-specific
    `set_strings` 执行 `--reset-values` 收敛；禁止隐式继承历史 values，也禁止在 schema
    失败后临场改变目标或参数重试。
 3. 等待 Helm release 和 Kubernetes rollout 成功，并逐项执行任务中的健康与功能验收。
@@ -207,11 +205,11 @@ tag 构建中继续引用旧 base digest；没有本轮基础镜像产物时直�
 ## 四、 Agent 部署与热更新机制
 
 普通业务 workload 由 Helm 管理的 `Deployment` 托管。具体镜像、目标节点、Secret 引用、
-Gateway 地址、Chart 和发布参数必须来自本次任务或其明确授权的仓库、Chart、values、
+Gateway 地址、Chart 和发布参数必须来自本次任务或任务指定的仓库、Chart、values、
 当前 Helm release 的只读证据。发布前必须对比当前业务 workload 与候选 Chart 的 command、args、
 env、probes、volumeMounts 和 volumes。包括只更新镜像在内的所有发布都必须调用结构化
-`doops_helm upgrade-install`，按 Chart schema 使用明确授权的资产。普通升级统一
-`--reset-values`，取消自动保留现有非镜像 values；需保留的值必须显式作为资产授权。
+`doops_helm upgrade-install`，按 Chart schema 使用任务指定的资产。普通升级统一
+`--reset-values`，取消自动保留现有非镜像 values；需保留的值必须显式作为输入资产传入。
 完整资产参数、可选 `expected_image` 和迁移说明见
 [`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
 `upgrade-install` 先用相同输入执行 server-side Helm dry-run，再执行真实
@@ -221,7 +219,7 @@ mutation。不存在 Kubernetes 镜像 mutation 发布旁路。自然语言 appl
 入口由在线 Agent 代理执行，不能把多层 SSH 拼成普通 `doops_shell` 字符串；该入口
 遵守相同的权限、排队、超时、取消和审计规则。Helm 成功后还必须以
 最终 Deployment manifest/spec/status 为事实源；若 Chart 需要显式 selector，按其 schema
-从 live Deployment `spec.selector.matchLabels` 读取并写入已授权输入，不固定业务 values 键，
+从 live Deployment `spec.selector.matchLabels` 读取并写入任务输入，不固定业务 values 键，
 也不要求历史 Helm values 已包含该字段。还要确认 generation、镜像和副本状态一致；只看 Helm revision 或 Pod Ready 不构成
 发布成功。
 
@@ -308,7 +306,7 @@ Chart 的 `helm upgrade --install`。已有非 Helm workload 按上面的收编�
 ### 独立 DockerHost 发布
 
 已有独立 Docker Agent 使用 `backend/scripts/release-host-agent.sh` 和同目录
-`release-host-agent.py`，由已授权的外部宿主控制器执行；不由当前 Agent 替换自己，
+`release-host-agent.py`，由外部宿主控制器执行；不由当前 Agent 替换自己，
 不自动从 `doops upgrade` 降级，也不要求先迁 K8S。旧 Agent 的 `doops_agent_upgrade`
 或 `managedHelm` 缺失不能成为恢复前置条件，否则会形成“先升级才能升级”的依赖环。
 
@@ -316,7 +314,7 @@ Chart 的 `helm upgrade --install`。已有非 Helm workload 按上面的收编�
 `--release` 是 DoOps 发布版本而非 Helm release。先核对 CI 成功证据、完整 40 位
 source commit 和不可变平台镜像 digest；脚本不替发布者证明 CI 来源：
 
-候选镜像须先由授权外部控制器在目标 Docker 宿主执行
+候选镜像须先由外部控制器在目标 Docker 宿主执行
 `docker pull <repository>@sha256:<verified-ci-digest>` 准备；这是独立于只读预检的制品准备
 mutation。`--dry-run` 只检查已有本地候选制品，缺失时明确报告预检制品未准备，不自动 pull。
 
@@ -324,8 +322,8 @@ mutation。`--dry-run` 只检查已有本地候选制品，缺失时明确报告
 bash scripts/release-host-agent.sh \
   --target <configured-target> \
   --session host-agent-release-<release> \
-  --host <authorized-host> \
-  --user <authorized-ssh-user> \
+  --host <host> \
+  --user <ssh-user> \
   --port <verified-ssh-port> \
   --container <existing-agent-container> \
   --cluster <gateway-cluster> \
@@ -336,7 +334,7 @@ bash scripts/release-host-agent.sh \
   --dry-run
 ```
 
-只读预检通过且获发布授权后，使用相同参数去掉 `--dry-run`。可选
+只读预检通过后，使用相同参数去掉 `--dry-run`。可选
 `--ssh-control-path <private-authenticated-socket>` 仅复用本机已认证的私有 SSH socket，
 不接收 password/token；严格核验已知主机密钥，禁止关闭校验。密码、私钥或 token
 不得写入参数、文件、示例或日志；不输出完整 `docker inspect` 或敏感环境值。
@@ -390,7 +388,7 @@ overlay snapshot、FIFO、`/etc/hosts` 或 nerdctl name-store 位于宿主机路
 
 遇到 containerd overlay/FIFO/name-store 错误时，保留现有 Agent 并读取挂载、节点和
 运行时错误证据。挂载修正必须进入仓库 Chart/values，再由上述 Agent 升级路径收敛。
-Agent 完全不可用时，SSH 仅用于已明确授权的自恢复，恢复后仍须完成 Gateway、版本和
+Agent 完全不可用时，SSH 仅用于 Agent 自恢复，恢复后仍须完成 Gateway、版本和
 功能验收，不能把一次主机修复当成版本发布。
 
 ### 其它非 Helm 节点

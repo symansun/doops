@@ -26,8 +26,7 @@ private secret store. Do not commit real API keys to the public repository.
 `doagent-model-settings` is the required model configuration object for
 `doops ask`. It must exist before the `doops-agent` Pod starts:
 
-The following bootstrap example runs only on the authorized external controller
-(cluster management host or CI) with an explicitly selected Kubernetes identity.
+The following bootstrap example runs only on the external controller (cluster management host or CI) with an explicitly selected Kubernetes identity.
 It is not an instruction to find a developer-machine kubeconfig for an ordinary release.
 
 ```bash

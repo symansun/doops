@@ -149,7 +149,7 @@ bash scripts/deploy-gateway.sh \
   必须作为独立协议扩展并绑定 `cluster/instance`，不得复用 Gateway user token
   或重新引入 CLI per-target token。
 
-- user token 只能执行授权范围内的 action。
+- user token 只能操作有 grant 的 target。
 - gateway 转发 doops JSON-RPC 操作流量和 Git HTTP 请求，不做裸 TCP 隧道。
 - `push/pull` 在标准 gateway 路径下使用 Git 语义。gateway 对外暴露 `/v1/git/<cluster>/<instance>/<session>.git/...`，再通过目标 agent 已建立的反向 WebSocket 把 Git HTTP 请求透传给 agent 本地 `/git/<session>.git/...`。
 - `doops_workspace_*` 是低层文件传输工具；通用 CLI 的目录同步使用 Git HTTP
@@ -473,8 +473,7 @@ doops -session agent-upgrade upgrade \
   target 绕过已有锁，也不能将当前实现描述为安全抢占或分布式 release 锁。
 - 发布通过 `doops ask --apply` 的明确自然语言任务进入 Gateway。任务必须给出
   target、服务范围、镜像版本、原因和验收条件；`--credential <resource-name>` 只传递
-  metadata-only 引用。Gateway 将引用绑定用户、target 和 session；凭据使用继承 target
-  的 ask/exec 权限，凭据本身按 target binding/use 解析。workload、image 和 Helm scope
+  metadata-only 引用。Gateway 将引用绑定用户、target 和 session；凭据使用只要求该 target 的 grant，凭据本身按 target binding/use 解析。workload、image 和 Helm scope
   是本次执行事实，不是凭据授权条件。公开 prompt、doagent 上下文和 metadata binding
   不接收凭据 payload；Gateway 仅通过内部物化调用向目标 Agent 短暂传递 payload。
 - `/v1/targets` 中 `busy=true` 只表示 target-wide 阻塞；普通 session 运行显示为 `status=active`、`busy=false`，并在 `resources` 中标出锁住的资源。

@@ -73,7 +73,7 @@ const STEPS: Step[] = [
     title: "准备授权的集群管理上下文",
     body: (
       <ul className="ml-4 list-disc space-y-1 text-sm text-muted-foreground">
-        <li>准备可联网访问 gateway 的 Linux 服务器或已授权的 CI / 管理主机</li>
+        <li>准备可联网访问 gateway 的 Linux 服务器或持有 kubeconfig 的 CI / 管理主机</li>
         <li>首次接入新集群必须具备外部控制器 kubeconfig 及对应集群管理权限</li>
         <li>
           向管理员确认 <span className="font-medium text-foreground">gateway 地址</span>、{" "}
@@ -178,7 +178,7 @@ const STEPS: Step[] = [
 const TROUBLE = [
   {
     q: "首次接入被权限阻塞",
-    a: "首次接入新集群需要已授权的外部控制器 kubeconfig、完整 reviewed values 和核验过的 CI 镜像 digest。当前页面不会绕过集群管理授权。",
+    a: "首次接入新集群需要外部控制器的集群 kubeconfig、完整 reviewed values 和核验过的 CI 镜像 digest。当前页面不提供集群管理权限。",
   },
   {
     q: "已有 workload 但没有 Helm release",
@@ -219,7 +219,7 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
               自己部署
             </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              有已授权的集群管理上下文？按下面路径完成首次接入或受控升级。
+              有集群 kubeconfig？按下面路径完成首次接入或受控升级。
             </p>
           </div>
           <div className="rounded-xl border bg-card p-4">

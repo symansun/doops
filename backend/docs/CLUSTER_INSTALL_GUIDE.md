@@ -85,7 +85,7 @@ bash scripts/release-managed-agent.sh \
   --image <repository>@sha256:<verified-ci-digest>
 ```
 
-外部控制器可以是已授权的集群管理主机或 CI，不要求一定运行在开发机。首次安装或
+外部控制器可以是持有集群 kubeconfig 的管理主机或 CI，不要求一定运行在开发机。首次安装或
 Agent 自恢复可以通过 SSH 到该主机执行受控流程；日常业务仍通过明确 target 的
 `ask --apply`，不以本机 kubeconfig 或 `push` 为前提。
 新身份要先确认没有同 `cluster/instance` 的在线实例。
