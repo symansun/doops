@@ -1,21 +1,5 @@
 # Doops API 对接指南
 
-## Audit Index Maintenance
-
-`POST /v1/admin/audit/optimize` accepts only `{"session_id":"<operation-session>"}`.
-It requires platform administration and writable audit storage, then directly
-executes the repository's fixed `audit_indexes.sql`. It accepts no arbitrary SQL,
-does not delete history, and records the actor/token/session and HTTP result.
-The indexes cover user history, user/session history and target history. Startup,
-application entrypoints and CI never invoke this production maintenance operation.
-The console exposes it in the administrator's global audit view; CLI entry:
-`doops -session <s> admin audit optimize --target <configured-gateway-target>`.
-Execution has a four-minute server deadline and one DDL transaction; cancellation
-or failure rolls back newly created indexes. Success includes verified column/order
-definitions and three actual EXPLAIN query plans. A preexisting incompatible index
-is a failure, not an implicit replacement. The maintenance button remains reachable
-after a query error; Gateway permission checks remain authoritative.
-
 本文档面向需要通过 API 调用 Doops 的平台、CI 系统和内部工具。推荐的公共入口是 Doops Gateway 的 HTTP / WebSocket 服务；目标集群内的 doops-agent 主动连接 Gateway，不要求调用方能直连内网节点。
 
 ## 受管凭据配置
@@ -819,11 +803,6 @@ Gateway 对前台、后台、SSH、prompt 和 `ask --apply` 统一维护执行�
 调用被取消、超时或断连且没有足够终态证据时写入 `outcome_unknown`，不能把本地等待
 结束当成远端 mutation 已停止。结构化 SSH 仍由 `structuredSSH` 参数协议保护。
 
-`GET /v1/admin/operations` 返回 `audit_id`、`state`、`resource` 和 `blocked_by`，并同时返回
-`requested_resource` 与 `effective_lock`。`requested_resource` 是调用方请求的资源，
-`effective_lock` 是 Gateway 实际用于冲突判断的锁；例如带 session 的 target mutation
-会显示为 `session-mutation:<target>/<session>`，不代表整个 target 被独占。
-
 CLI/Web 可在原 `/v1/rpc` WebSocket 上取消自己的请求，不需要管理员权限：
 
 ```json
@@ -834,13 +813,7 @@ CLI/Web 可在原 `/v1/rpc` WebSocket 上取消自己的请求，不需要管理
 返回 `result.canceled=true` 仅表示已请求取消；原请求仍通过其原 ID 返回实际终态。
 连接内重复的活动请求 ID 会被拒绝，不允许覆盖已有执行的所有权。
 
-`DELETE /v1/admin/operations?id=<operation-id>` 返回 HTTP `202`：
-
-```json
-{"id":"op-example","cancel_requested":true,"state":"cancel_requested"}
-```
-
-该响应仅确认取消请求，资源所有权必须保留到原始请求终态。
+取消只确认请求，资源所有权保留到原始请求终态。
 终态不确定时审计持久化为 `outcome_unknown`，仍报告失败，不自动重放 mutation。
 `running` 包含准入等待及无需变更结果保护的只读执行，不能据此认定请求尚未派发。
 Gateway 重启时遗留的 `running` 落为 `error`；已派发且需要变更结果保护的 `executing`
@@ -851,14 +824,11 @@ Gateway 重启时遗留的 `running` 落为 `error`；已派发且需要变更�
 已验签的 Helm 工具明确失败按失败终态处理，不封锁后续操作；同轮任何明确失败
 不得被另一条成功调用掩盖。工具请求错误与执行失败保持区分，执行失败返回 MCP
 `result.isError=true`，取消或缺失终态不转换成普通失败。
-`POST /v1/admin/operations` 不再支持人工声明解锁，返回 `405`。历史审计保留原记录。
-`POST /v1/targets/unlock` 仅重连空闲目标，拒绝活动或排队操作，不强制释放活动 lease。
 
 管理员 mutation 审计：
 
 - 管理员 GET 接口不要求 session，也不会产生 mutation 审计；远端 RPC/CLI 仍使用显式 session。
-- `/v1/admin/` 下的用户创建、密码、启停、grant 增删、token 签发/撤销、操作取消、代理路由增改删，以及
-  `POST /v1/targets/unlock` 均记录调用者 `user_id + token_id`、动作和资源元数据、
+- `/v1/admin/` 下的用户创建、密码、启停、grant 增删、token 签发/撤销、代理路由增改删均记录调用者 `user_id + token_id`、动作和资源元数据、
   开始/结束时间与成功、拒绝或失败结果。token 签发只有一条审计，不重复记录。
 - 此类事件的 `action=admin`；`command_summary` 是白名单 JSON 元数据，包含注册路由、
   HTTP method/status，以及可用的资源 ID、subject user ID、授权动作或启停值。
@@ -867,11 +837,8 @@ Gateway 重启时遗留的 `running` 落为 `error`；已派发且需要变更�
 - 全局用户创建/密码/启停、grant 增删、token 签发/撤销必须通过 `UserIsPlatformAdmin`；仅有某个 target 的 `admin`
   不得修改这些全局资源或给自己追加平台权限。此限制在 mutation 审计入口执行，
   不改变现有管理员 GET 的权限或 session 约定。
-- 管理员身份不替代目标授权：操作取消/解锁/代理路由检查对应目标。
+- 管理员身份不替代目标授权：代理路由检查对应目标。
   普通用户查询本人审计不会获得任何 mutation 权限。
-- `/v1/admin/operations` 的 GET/DELETE 必须按 `cluster` 与 `instance` 成对指定目标；
-  GET 只返回该目标的 active/unresolved 操作，DELETE 只允许取消该目标的操作，
-  缺少或不匹配目标时拒绝请求；人工审计改写入口已删除。
 - 配置下发使用既有 `doops_file_write` RPC 和目标 `write` 权限，不新增 admin 配置接口。
   继续使用唯一的 RPC 审计，保留 target/session/文件路径元数据，不保存文件内容、
   下游输出或原始错误；下游 tool error 记录为失败。其他 RPC/凭据沿用其既有审计。

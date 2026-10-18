@@ -77,7 +77,6 @@ description: |
 | 用户与授权 | `doops admin user create\|list`、`admin grant list\|add\|delete` |
 | 网站代理路由 | `doops admin proxy list\|set\|delete --target <t> ...`（`set --id` 只改传入字段） |
 | token | `doops admin token create\|list\|revoke` |
-| 活动操作 | `doops -session <s> admin operations list --target <t>` |
 | Helm Agent 升级 / 回滚 | `doops -session <s> upgrade --target <t> --image <ref>`（`--dry-run` 只预览）；`upgrade --target <t> --rollback` |
 | CI 非交互登录 | `printf '%s' "$TOKEN" \| doops login --target <t> --token-stdin` |
 
@@ -129,7 +128,5 @@ Gateway 绑定当前 target 上全部 active `use=database` 凭据，`doops sql`
 - `ask --apply` 没有可信 mutation 证据：检查 Agent 是否注册 `mcp_doops_helm` 及 attestation，
   见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
 - target 不可见：空结果可能是离线，也可能是缺少精确 grant，不能直接断言集群宕机。
-- 并发冲突或 `busy=true`：先 `admin operations list` 核对 `state/resource/blocked_by`；
-  未获明确授权不取消其它发布。语义见 `docs/DOOPS_GATEWAY_TUNNEL.md`。
+- `busy=true` 只表示 Agent 自升级占用整个 target；普通操作按 session/资源互斥，语义见 `docs/DOOPS_GATEWAY_TUNNEL.md`。
 - `push/pull` 失败：确认 `/v1/git/<cluster>/<instance>/<session>.git` 能路由到在线 Agent。
-- 审计查询超时：平台管理员显式执行 `doops -session <s> admin audit optimize --target <t>`。
