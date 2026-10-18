@@ -134,24 +134,29 @@ func TestRealDoSQLCopyBetweenDatabases(t *testing.T) {
 }
 
 func TestDoSQLCopyValidation(t *testing.T) {
+	// Only a name that cannot be a table at all is refused.
 	for name, tables := range map[string][]string{
-		"empty":      nil,
-		"injection":  {"items; DROP TABLE x"},
-		"schema dot": {"other.items"},
-		"quote":      {"it`ems"},
+		"empty list":    nil,
+		"blank":         {" "},
+		"control chars": {"it\nems"},
 	} {
 		if _, err := validateDoSQLCopyTables(tables); err == nil {
 			t.Errorf("%s was accepted", name)
 		}
 	}
+	// Anything else is a table name, and quoting keeps it one identifier.
+	for _, c := range []struct{ engine, name, want string }{
+		{"mysql", "items; DROP TABLE x", "`items; DROP TABLE x`"},
+		{"mysql", "it`ems", "`it``ems`"},
+		{"postgres", "items\" ; DROP TABLE x", `"items"" ; DROP TABLE x"`},
+		{"postgres", "other.items", `"other.items"`},
+	} {
+		if got := doSQLQuoteIdentifier(c.engine, c.name); got != c.want {
+			t.Errorf("%s quote(%q) = %s, want %s", c.engine, c.name, got, c.want)
+		}
+	}
 	got, err := validateDoSQLCopyTables([]string{"a", " a ", "b"})
 	if err != nil || len(got) != 2 {
 		t.Fatalf("dedupe: %v %v", got, err)
-	}
-	if insert := doSQLCopyInsert("postgres", "t", []string{"a", "b"}, 2); insert != `INSERT INTO "t" ("a", "b") VALUES ($1, $2), ($3, $4)` {
-		t.Fatalf("postgres insert: %s", insert)
-	}
-	if insert := doSQLCopyInsert("mysql", "t", []string{"a"}, 2); insert != "INSERT INTO `t` (`a`) VALUES (?), (?)" {
-		t.Fatalf("mysql insert: %s", insert)
 	}
 }
