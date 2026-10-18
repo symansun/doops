@@ -219,3 +219,25 @@ func doSQLStatementFingerprint(statements []string) string {
 	sum := sha256.Sum256([]byte(builder.String()))
 	return hex.EncodeToString(sum[:])
 }
+
+// MySQL and Oracle commit the open transaction before and after DDL, so a
+// batch containing DDL cannot be rolled back or dry-run on those engines.
+var doSQLImplicitCommitKeywords = map[string]bool{
+	"CREATE": true, "ALTER": true, "DROP": true, "TRUNCATE": true, "RENAME": true,
+	"GRANT": true, "REVOKE": true, "ANALYZE": true, "OPTIMIZE": true, "REPAIR": true,
+	"LOCK": true, "UNLOCK": true, "FLUSH": true, "COMMENT": true, "AUDIT": true,
+}
+
+func doSQLEngineCommitsDDLImplicitly(engine string) bool {
+	return engine == "mysql" || engine == "oracle"
+}
+
+// doSQLCommitsImplicitly reports whether running the statement ends the
+// transaction on its own. Postgres DDL is transactional and never matches.
+func doSQLCommitsImplicitly(engine, statement string) bool {
+	if !doSQLEngineCommitsDDLImplicitly(engine) {
+		return false
+	}
+	words := doSQLLeadingKeywords(statement, 1)
+	return len(words) == 1 && doSQLImplicitCommitKeywords[words[0]]
+}

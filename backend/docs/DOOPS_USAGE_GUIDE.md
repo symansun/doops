@@ -38,6 +38,7 @@ This guide holds command-level usage details. The skill file is only the entry p
 | DoSql live schema inspection | `doops -session <s> sql --target <t> --mode query [--database <name>] --request '读取指定 database_asset_id 的表、列或索引结构'` | Uses one read-only engine catalog/information-schema query. `discover` only finds Kubernetes database assets; it does not inspect live tables. |
 | DoSql change plan | `doops -session <s> sql --target <t> --mode plan --request '<request>'` | Returns business summary, risk and verification evidence without mutation. |
 | DoSql controlled mutation | `doops -session <s> sql --target <t> --mode apply [--database <name>] --request '<approved change>'` | Automatically binds the target's database credentials; DoSql still requires its change evidence before mutation. |
+| DoSql direct SQL | `doops -session <s> sql --target <t> --mode apply [--database <name>] --sql '<sql>' [--verify '<read sql>'] [--dry-run]` | One transaction per batch. Postgres rolls back DDL and DML together. MySQL/Oracle commit DDL implicitly: `--dry-run` rejects DDL (`dosql_dry_run_ddl_unsupported`), a batch mixing DDL and DML is refused (`dosql_mixed_ddl_dml_unsupported`), and a DDL that already ran is reported as `implicit_commits` / `partially_committed`. Each real apply gets a per-database `version` in a hash-chained journal on the Agent (`$(dirname workspace root)/.doops-dosql-versions`, persists only if that path is on a persistent volume); the version is reserved before execution and an apply is refused if the journal is unwritable or corrupt. Queries and dry-runs get no version. |
 | DoSql target discovery | `doops -session <s> sql --target <t> --mode discover --request '<request>'` | Uses `mcp_dosql_read` to scan non-Secret target metadata; it never stores connection secrets. |
 | DoSql repository/resource discovery | `doops -session <s> sql --target <t> --mode discover --root <authorized-repo> --resources-file <assets.json> --project <id> --environment <id> --dosql-script <path>/dosql-agent.mjs` | Scans authorized code/config metadata and persists a metadata-only database inventory. |
 | DoWeb read-only inspection | `doops -session <s> web --target <t> --mode check --request '<site/Nginx/TLS/health request>'` | Uses the selected Gateway target and DoWeb evidence path. |
@@ -105,7 +106,13 @@ doops -session db-change sql --target <t> --mode apply --file migrate.sql --dry-
 - `--verify`/`--verify-file` 只能是一条只读语句，否则 `dosql_verification_invalid`；
   验证失败返回 `dosql_verification_failed`。`--verify` 与 `--dry-run` 只用于 apply。
 - query 中出现写语句返回 `dosql_query_requires_read_only`，改用 `--mode apply`。
-- MySQL 和 Oracle 的 DDL 会隐式提交，这两种引擎只有 DML 能整体回滚。
+- Postgres 的 DDL 与 DML 一起回滚。MySQL 和 Oracle 的 DDL 会隐式提交：`--dry-run` 含 DDL
+  返回 `dosql_dry_run_ddl_unsupported`，DDL 与 DML 混批返回 `dosql_mixed_ddl_dml_unsupported`；
+  已隐式提交的 DDL 在结果中体现为 `implicit_commits` 和 `status=partially_committed`，不报成已回滚。
+- 真实 apply 在 Agent 上按库写带哈希链的版本日志（`.doops-dosql-versions/<db>.jsonl`），
+  执行前先分配版本号；日志不可写返回 `dosql_version_journal_unavailable`，被篡改返回
+  `dosql_version_journal_corrupt`，两者都拒绝执行。query 和 dry-run 不产生版本。日志只在
+  Agent 的 `/root` 是持久卷时跨重启保留。
 - 结果是带 `operation_id`、`statement_fingerprint` 的 JSON，证据写入目标 session 工作区
   `.dosql/operations/<operation_id>.evidence.json`，可用 `pull` 取回。
 - query 走 target `ask` 权限，apply 走 `exec` 权限；数据库选择规则同上一节。
