@@ -70,7 +70,7 @@ build_one() {
 
 if [[ "${BUILD_ALL}" == "true" ]]; then
   actual_builder="$(go env GOOS)/$(go env GOARCH) $(go version | awk '{print $3}')"
-  expected_builder="linux/amd64 go1.24.13"
+  expected_builder="linux/amd64 go1.25.14"
   if [[ "${actual_builder}" != "${expected_builder}" ]]; then
     echo "release artifacts require ${expected_builder}; got ${actual_builder}" >&2
     echo "run scripts/build-cli-release.sh instead" >&2
