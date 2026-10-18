@@ -547,9 +547,8 @@ func TestExecutionLifecycleInternalForegroundCallUsesTerminalEvidenceWithoutCapa
 	}
 }
 
-func TestExecutionLifecycleWaitingDoesNotConsumeUserOrGlobalQuota(t *testing.T) {
+func TestExecutionLifecycleWaitingBlocksOnlyTheContendedResource(t *testing.T) {
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{
-		MaxConcurrentOperations: 2, MaxConcurrentPerUser: 1,
 		MaxQueuedPerTarget: 1, TargetQueueTimeout: 5 * time.Second,
 	})
 	agent := f.agent(t, "quota-agent")

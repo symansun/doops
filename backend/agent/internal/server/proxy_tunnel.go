@@ -117,15 +117,6 @@ func (h *GatewayHub) HandlePublicProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.client.attachOperationLease(opID, lease)
-	releaseLimit, err := h.client.acquireGlobalOperationSlot()
-	if err != nil {
-		_ = h.client.finishExecutionAudit(auditID, AuditFinish{
-			Status: "rate_limited", Error: err.Error(), EndedAt: time.Now().UTC(),
-		})
-		http.Error(w, err.Error(), http.StatusTooManyRequests)
-		return
-	}
-	defer releaseLimit()
 	h.client.markOperationRunning(opID)
 	if !proxyRequestIsReadOnly(r.Method) {
 		if err := h.client.beginExecution(agent, opID, auditID); err != nil {

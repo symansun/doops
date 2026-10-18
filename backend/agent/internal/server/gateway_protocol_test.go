@@ -2895,7 +2895,7 @@ func TestGatewayAdminUnlockRefusesActiveAndReconnectsIdleTarget(t *testing.T) {
 	}
 }
 
-func TestGatewayRPCEnforcesPerUserConcurrencyLimitAcrossTargets(t *testing.T) {
+func TestGatewayRPCAllowsOneUserToRunOnSeveralTargetsAtOnce(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -2907,11 +2907,7 @@ func TestGatewayRPCEnforcesPerUserConcurrencyLimitAcrossTargets(t *testing.T) {
 		t.Fatalf("grant exec: %v", err)
 	}
 
-	gw := NewGatewayHub(store, GatewayHubOptions{
-		AgentLease:              time.Minute,
-		MaxConcurrentOperations: 4,
-		MaxConcurrentPerUser:    1,
-	})
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -2945,12 +2941,15 @@ func TestGatewayRPCEnforcesPerUserConcurrencyLimitAcrossTargets(t *testing.T) {
 		"method":  "tools/call",
 		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(args)},
 	})
-	limited := readUntilID(t, prodClient, 2)
-	if errObj, ok := limited["error"].(map[string]interface{}); !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "user operation limit exceeded") {
-		t.Fatalf("expected user operation limit error, got %#v", limited)
+	// The dev call is still blocked in the agent; the prod call must not wait for it.
+	concurrent := readUntilID(t, prodClient, 2)
+	if _, ok := concurrent["result"]; !ok {
+		t.Fatalf("second target was limited by the first: %#v", concurrent)
 	}
 	close(release)
-	readUntilID(t, devClient, 2)
+	if first := readUntilID(t, devClient, 2); first["result"] == nil {
+		t.Fatalf("blocked call did not complete: %#v", first)
+	}
 }
 
 func TestGatewayAdminOperationsListAndCancel(t *testing.T) {
