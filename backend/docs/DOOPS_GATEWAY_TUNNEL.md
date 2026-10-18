@@ -79,7 +79,18 @@ sequenceDiagram
 ```
 
 `GET /v1/admin/proxy-routes` 列出路由，`DELETE /v1/admin/proxy-routes?id=<id>`
-删除路由。Agent 侧通过 `DOOPS_PROXY_ALLOW_HOSTS` 配置精确的上游 hostname，
+删除路由。CLI 等价命令：
+
+```bash
+doops admin proxy list --target <gateway-target>
+doops admin proxy set --target <gateway-target> --host app.example.com \
+  --scope-target <target> --upstream http://127.0.0.1:8080
+doops admin proxy set --target <gateway-target> --id <route-id> --enabled=false
+doops admin proxy delete --target <gateway-target> --id <route-id>
+```
+
+带 `--id` 时只修改传入的字段，其它字段保持现值；`--scope-target` 取本机已配置 target
+的 cluster/instance，且必须属于同一 Gateway。Agent 侧通过 `DOOPS_PROXY_ALLOW_HOSTS` 配置精确的上游 hostname，
 例如 Helm values 中的
 `proxy.allowedHosts: "127.0.0.1,internal.example.com"`。Chart 会把它注入为
 `DOOPS_PROXY_ALLOW_HOSTS`；默认空值会拒绝所有上游。这个配置不是公网域名

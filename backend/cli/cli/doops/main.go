@@ -263,9 +263,14 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			runAdminGrants(cmdArgs[1:], servers, configErr)
 			return
 		}
+		if len(cmdArgs) >= 1 && cmdArgs[0] == "proxy" {
+			runAdminProxyRoutes(cmdArgs[1:], servers, configErr)
+			return
+		}
 		if len(cmdArgs) < 2 {
 			fmt.Println("Usage: doops admin user <list|create|password|disable> ...")
 			fmt.Println("       doops admin grant <list|add|delete> ...")
+			fmt.Println("       doops admin proxy <list|set|delete> ...")
 			fmt.Println("Usage: doops admin token create --target <gateway-target> --user <username> [--name label] [--expires 720h] [--save-as target]")
 			fmt.Println("       doops admin token list --target <gateway-target>")
 			fmt.Println("       doops admin token revoke --target <gateway-target> --id <token-id>")
@@ -293,6 +298,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		if cmdArgs[0] != "token" || cmdArgs[1] != "create" {
 			fmt.Println("Usage: doops admin user <list|create|password|disable> ...")
 			fmt.Println("       doops admin grant <list|add|delete> ...")
+			fmt.Println("       doops admin proxy <list|set|delete> ...")
 			fmt.Println("Usage: doops admin token create --target <gateway-target> --user <username> [--name label] [--expires 720h] [--save-as target]")
 			fmt.Println("       doops admin token list --target <gateway-target>")
 			fmt.Println("       doops admin token revoke --target <gateway-target> --id <token-id>")
