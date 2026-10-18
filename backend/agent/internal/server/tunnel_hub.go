@@ -21,14 +21,12 @@ import (
 )
 
 type GatewayHubOptions struct {
-	AgentLease              time.Duration
-	OperationTimeout        time.Duration
-	TargetQueueTimeout      time.Duration
-	TargetReconnectGrace    time.Duration
-	LoginTokenTTL           time.Duration
-	MaxConcurrentOperations int
-	MaxConcurrentPerUser    int
-	MaxQueuedPerTarget      int
+	AgentLease           time.Duration
+	OperationTimeout     time.Duration
+	TargetQueueTimeout   time.Duration
+	TargetReconnectGrace time.Duration
+	LoginTokenTTL        time.Duration
+	MaxQueuedPerTarget   int
 }
 
 type GatewayHub struct {
@@ -473,12 +471,6 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	}
 	if opts.LoginTokenTTL <= 0 {
 		opts.LoginTokenTTL = 24 * time.Hour
-	}
-	if opts.MaxConcurrentOperations <= 0 {
-		opts.MaxConcurrentOperations = 64
-	}
-	if opts.MaxConcurrentPerUser <= 0 {
-		opts.MaxConcurrentPerUser = 8
 	}
 	if opts.MaxQueuedPerTarget <= 0 {
 		opts.MaxQueuedPerTarget = 0
@@ -1283,13 +1275,6 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	}
 	h.attachOperationLease(opID, lease)
 	opCtx = withInternalCredentialLock(opCtx, agent, resourceKey)
-	releaseLimit, err := h.acquireOperationSlot(auth.UserID)
-	if err != nil {
-		finishAudit("rate_limited", err.Error(), "", 0)
-		writeJSON(buildErrorResponse(req.ID, -32006, err.Error()))
-		return nil
-	}
-	defer releaseLimit()
 	if err := opCtx.Err(); err != nil {
 		finishAudit("canceled", "operation canceled before dispatch", "", 0)
 		writeJSON(buildErrorResponse(req.ID, -32007, "operation canceled before dispatch"))

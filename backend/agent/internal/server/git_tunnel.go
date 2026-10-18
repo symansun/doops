@@ -108,13 +108,6 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-	releaseLimit, err := h.acquireOperationSlot(auth.UserID)
-	if err != nil {
-		_ = h.finishExecutionAudit(auditID, AuditFinish{Status: "rate_limited", Error: err.Error()})
-		http.Error(w, err.Error(), http.StatusTooManyRequests)
-		return
-	}
-	defer releaseLimit()
 	h.markOperationRunning(opID)
 	if err := h.beginExecution(agent, opID, auditID); err != nil {
 		_ = h.finishExecutionAudit(auditID, AuditFinish{Status: "blocked", Error: err.Error()})

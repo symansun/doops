@@ -47,8 +47,9 @@ func serve(args []string) {
 	dbPath := fs.String("db", defaultGatewayDB, "SQLite database path")
 	loginTokenTTL := fs.Duration("login-token-ttl", 24*time.Hour, "Password-login token TTL")
 	operationTimeout := fs.Duration("operation-timeout", 30*time.Minute, "Maximum runtime for one forwarded operation")
-	maxConcurrentOperations := fs.Int("max-concurrent-operations", 64, "Maximum concurrent forwarded operations across all users")
-	maxConcurrentPerUser := fs.Int("max-concurrent-per-user", 10, "Maximum concurrent forwarded operations per user")
+	// Retired limits stay parseable so existing unit files keep starting.
+	retiredGlobalLimit := fs.Int("max-concurrent-operations", 0, "Retired; ignored")
+	retiredUserLimit := fs.Int("max-concurrent-per-user", 0, "Retired; ignored")
 	targetQueueTimeout := fs.Duration("target-queue-timeout", 10*time.Minute, "How long an operation waits for a busy target")
 	maxQueuedPerTarget := fs.Int("max-queued-per-target", 10, "Maximum queued operations per target; negative disables queueing")
 	schedulerTick := fs.Duration("scheduler-tick", time.Minute, "How often the issue-scheduler checks for due jobs; 0 disables the scheduler")
@@ -56,6 +57,9 @@ func serve(args []string) {
 	edgeProxyProtocol := fs.Bool("edge-proxy-protocol", true, "Require PROXY protocol on Edge listener (must be true behind nginx stream)")
 	fs.Parse(args)
 
+	if *retiredGlobalLimit != 0 || *retiredUserLimit != 0 {
+		log.Printf("[gateway] -max-concurrent-operations and -max-concurrent-per-user are retired and ignored")
+	}
 	resolvedDBPath, err := canonicalGatewayDBPath(*dbPath)
 	if err != nil {
 		log.Fatal(err)
@@ -73,12 +77,10 @@ func serve(args []string) {
 	defer store.Close()
 
 	hub := server.NewGatewayHub(store, server.GatewayHubOptions{
-		LoginTokenTTL:           *loginTokenTTL,
-		OperationTimeout:        *operationTimeout,
-		MaxConcurrentOperations: *maxConcurrentOperations,
-		MaxConcurrentPerUser:    *maxConcurrentPerUser,
-		TargetQueueTimeout:      *targetQueueTimeout,
-		MaxQueuedPerTarget:      *maxQueuedPerTarget,
+		LoginTokenTTL:      *loginTokenTTL,
+		OperationTimeout:   *operationTimeout,
+		TargetQueueTimeout: *targetQueueTimeout,
+		MaxQueuedPerTarget: *maxQueuedPerTarget,
 	})
 	if *schedulerTick > 0 {
 		scheduler := server.NewScheduler(hub, store, *schedulerTick)
