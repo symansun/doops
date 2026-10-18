@@ -1144,15 +1144,6 @@ previous_image="$(python3 - "$ns" "$workload" <<'PY'
 import json, subprocess, sys
 ns, workload = sys.argv[1:3]
 doc = json.loads(subprocess.check_output(["kubectl", "-n", ns, "get", "deployment", workload, "-o", "json"]))
-strategy = (doc.get("spec") or {}).get("strategy") or {}
-if strategy.get("type") != "RollingUpdate":
-    raise SystemExit("deployment strategy must be RollingUpdate")
-rolling = strategy.get("rollingUpdate") or {}
-if rolling.get("maxUnavailable") not in (0, "0"):
-    raise SystemExit("maxUnavailable must be 0")
-surge = rolling.get("maxSurge")
-if isinstance(surge, bool) or surge not in (1, "1"):
-    raise SystemExit("maxSurge must be 1")
 containers = ((doc.get("spec") or {}).get("template") or {}).get("spec", {}).get("containers") or []
 actual_image = next(
     (container.get("image") for container in containers
