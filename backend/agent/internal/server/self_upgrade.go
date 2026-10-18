@@ -138,7 +138,7 @@ func dryRunAgentUpgrade(args agentUpgradeParams) (string, error) {
 			image, namespace, workload, container,
 		), nil
 	case "daemonset", "docker", "container", "unsupported", "bare":
-		return "", fmt.Errorf("self-upgrade supports the managed Helm Deployment only; existing unmanaged workloads require an explicit Helm migration, not automatic adoption by scripts/release-managed-agent.sh")
+		return "", fmt.Errorf("doops upgrade replaces a Helm-managed Deployment; bring this workload under Helm first (see BUILD_DEPLOY_SOP.md, unmanaged Agent adoption)")
 	default:
 		return "", fmt.Errorf("unsupported agent upgrade mode %q", mode)
 	}
@@ -543,16 +543,19 @@ func (p upgradeProcess) podSpec(ctx context.Context, namespace string) (selfUpgr
 	if containerImage == "" {
 		return selfUpgradePod{}, fmt.Errorf("agent pod has no %s container", selfUpgradeContainer)
 	}
-	if !foundMount {
-		return selfUpgradePod{}, fmt.Errorf("agent pod has no /root/.kube volume for the in-cluster kubeconfig")
-	}
-	volume, err := volumeByName(pod.Spec.Volumes, selectedMount.Name)
-	if err != nil {
-		return selfUpgradePod{}, err
-	}
-	_, err = nodeNameForVolume(volume, pod.Spec.NodeName)
-	if err != nil {
-		return selfUpgradePod{}, err
+	var volume json.RawMessage
+	if foundMount {
+		volume, err = volumeByName(pod.Spec.Volumes, selectedMount.Name)
+		if err != nil {
+			return selfUpgradePod{}, err
+		}
+		if _, err = nodeNameForVolume(volume, pod.Spec.NodeName); err != nil {
+			return selfUpgradePod{}, err
+		}
+	} else if sa := strings.TrimSpace(pod.Spec.ServiceAccountName); sa == "" || sa == "default" {
+		// Without a kubeconfig volume the Job authenticates as the Agent's own
+		// ServiceAccount; the namespace default account carries no Agent authority.
+		return selfUpgradePod{}, fmt.Errorf("agent pod has no /root/.kube volume and no dedicated ServiceAccount")
 	}
 	if strings.TrimSpace(pod.Spec.NodeName) == "" {
 		return selfUpgradePod{}, fmt.Errorf("self-upgrade requires the agent pod node name")
@@ -767,10 +770,16 @@ func selfUpgradeJobManifest(jobName, namespace string, pod selfUpgradePod, plan 
 				"command":         []string{"/bin/sh", "-c", plan.script},
 				"env":             env,
 				"securityContext": map[string]bool{"privileged": false},
-				"volumeMounts":    []jobVolumeMount{pod.mount},
 			},
 		},
-		"volumes": []json.RawMessage{pod.volume},
+	}
+	container := podSpec["containers"].([]map[string]interface{})[0]
+	if pod.volume != nil {
+		container["volumeMounts"] = []jobVolumeMount{pod.mount}
+		podSpec["volumes"] = []json.RawMessage{pod.volume}
+	} else {
+		env = append(env, map[string]string{"name": "DOOPS_UPGRADE_KUBECONFIG_SOURCE", "value": "serviceAccount"})
+		container["env"] = env
 	}
 	if pod.serviceAccountName != "" {
 		podSpec["serviceAccountName"] = pod.serviceAccountName
@@ -895,12 +904,13 @@ func tailText(text string, limit int) string {
 const selfUpgradeKubeconfigPrelude = `set -eu
 sleep 5
 source=/root/.kube/config
-if [ ! -f "$source" ]; then
+export KUBECONFIG=/tmp/doops-kubeconfig
+if [ "${DOOPS_UPGRADE_KUBECONFIG_SOURCE:-mounted}" = "serviceAccount" ]; then
+  python3 /app/configure_kubeconfig.py --service-account "$KUBECONFIG" "$KUBERNETES_SERVICE_HOST" "${KUBERNETES_SERVICE_PORT_HTTPS:-443}"
+elif [ ! -f "$source" ]; then
   echo "kubeconfig volume is missing" >&2
   exit 1
-fi
-export KUBECONFIG=/tmp/doops-kubeconfig
-if [ -n "${KUBERNETES_SERVICE_HOST:-}" ]; then
+elif [ -n "${KUBERNETES_SERVICE_HOST:-}" ]; then
   python3 /app/configure_kubeconfig.py "$source" "$KUBECONFIG" "$KUBERNETES_SERVICE_HOST" "${KUBERNETES_SERVICE_PORT_HTTPS:-443}"
 else
   cp "$source" "$KUBECONFIG"

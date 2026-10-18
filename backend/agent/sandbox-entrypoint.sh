@@ -162,6 +162,19 @@ sync_skills() {
 configure_kubectl() {
     mkdir -p /root/.kube
     local source=/root/.kube/config
+    if [ "${DOOPS_KUBECONFIG_SOURCE:-mounted}" = "serviceAccount" ]; then
+        if [ -z "${KUBERNETES_SERVICE_HOST:-}" ]; then
+            echo "❌ kubectl config: serviceAccount source requires Kubernetes" >&2
+            return 1
+        fi
+        python3 /app/configure_kubeconfig.py --service-account \
+            "${source}" \
+            "${KUBERNETES_SERVICE_HOST}" \
+            "${KUBERNETES_SERVICE_PORT_HTTPS:-443}"
+        export KUBECONFIG="${source}"
+        echo "✅ kubectl config: using the Pod ServiceAccount"
+        return
+    fi
     if [ ! -f "${source}" ]; then
         if [ -n "${KUBERNETES_SERVICE_HOST:-}" ]; then
             echo "❌ kubectl config: ${source} is required in Kubernetes" >&2

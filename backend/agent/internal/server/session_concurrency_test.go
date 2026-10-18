@@ -174,6 +174,12 @@ func TestActiveOperationRegistrationBindsConnectionForQueueAndFence(t *testing.T
 	if holderID != "" {
 		t.Fatalf("same-connection waiting operation was rejected: %q", holderID)
 	}
+	// Registrations in the same instant tie on StartedAt; pin the order so the
+	// oldest-holder assertion does not depend on random operation IDs.
+	service.activeOpsMu.Lock()
+	service.activeOps[first].StartedAt = time.Unix(1, 0)
+	service.activeOps[second].StartedAt = time.Unix(2, 0)
+	service.activeOpsMu.Unlock()
 	third, holderID := service.registerActiveOperationForAgent(candidate, func() {}, newAgent)
 	if holderID != first {
 		t.Fatalf("replacement connection holder = %q, want %q", holderID, first)

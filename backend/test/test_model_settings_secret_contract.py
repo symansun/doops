@@ -469,3 +469,88 @@ def test_tiered_policy_rejects_duplicate_model_identifiers(tmp_path):
 
     with pytest.raises(module.SettingsConfigurationError, match="distinct"):
         module.configure_settings(source, destination, "tiered")
+
+
+def agent_container(deployment):
+    return next(
+        item
+        for item in deployment["spec"]["template"]["spec"]["containers"]
+        if item["name"] == "doops-agent"
+    )
+
+
+@pytest.mark.parametrize(
+    "overrides, want_source, want_account",
+    [
+        ((), "mounted", None),
+        (("kubeconfig.source=serviceAccount", "serviceAccount.name=doops-agent"), "serviceAccount", "doops-agent"),
+        (("serviceAccount.name=doops-agent",), "mounted", "doops-agent"),
+    ],
+)
+def test_chart_selects_kubeconfig_source_and_service_account(
+    tmp_path, overrides, want_source, want_account
+):
+    result = render_oilan_chart_with(tmp_path, f"image.digest={IMAGE_DIGEST}", *overrides)
+    result.check_returncode()
+    deployment = [item for item in yaml.safe_load_all(result.stdout) if item][0]
+    pod_spec = deployment["spec"]["template"]["spec"]
+    assert pod_spec.get("serviceAccountName") == want_account
+    assert env_value(agent_container(deployment), "DOOPS_KUBECONFIG_SOURCE")["value"] == want_source
+
+
+@pytest.mark.parametrize(
+    "override",
+    ["kubeconfig.source=inline", "serviceAccount.name=Bad_Name"],
+)
+def test_chart_rejects_invalid_kubeconfig_source_and_service_account(tmp_path, override):
+    result = render_oilan_chart_with(tmp_path, f"image.digest={IMAGE_DIGEST}", override)
+    assert result.returncode != 0, result.stdout
+
+
+def test_entrypoint_generates_service_account_kubeconfig_when_selected():
+    text = SANDBOX_ENTRYPOINT.read_text(encoding="utf-8")
+    assert 'DOOPS_KUBECONFIG_SOURCE:-mounted}" = "serviceAccount"' in text
+    assert "configure_kubeconfig.py --service-account" in text
+
+
+def test_service_account_kubeconfig_references_rotated_token_without_copying(tmp_path):
+    module = load_kubeconfig_module()
+    account = tmp_path / "sa"
+    account.mkdir()
+    (account / "token").write_text("synthetic-sa-token-canary", encoding="utf-8")
+    (account / "ca.crt").write_text("synthetic-ca", encoding="utf-8")
+    destination = tmp_path / "kube" / "config"
+
+    module.configure_service_account_kubeconfig(destination, "10.96.0.1", "443", account)
+
+    text = destination.read_text(encoding="utf-8")
+    assert "synthetic-sa-token-canary" not in text
+    config = yaml.safe_load(text)
+    assert config["current-context"] == "in-cluster"
+    assert config["clusters"][0]["cluster"]["server"] == "https://10.96.0.1:443"
+    assert config["clusters"][0]["cluster"]["certificate-authority"] == str(account / "ca.crt")
+    assert config["users"][0]["user"] == {"tokenFile": str(account / "token")}
+    assert destination.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize(
+    "files, host, port",
+    [
+        (("token",), "10.96.0.1", "443"),
+        (("ca.crt",), "10.96.0.1", "443"),
+        (("token", "ca.crt"), "not-an-ip", "443"),
+        (("token", "ca.crt"), "10.96.0.1", "0"),
+    ],
+)
+def test_service_account_kubeconfig_rejects_missing_credentials_and_bad_endpoint(
+    tmp_path, files, host, port
+):
+    module = load_kubeconfig_module()
+    account = tmp_path / "sa"
+    account.mkdir()
+    for name in files:
+        (account / name).write_text("synthetic", encoding="utf-8")
+    destination = tmp_path / "config"
+    with pytest.raises(ValueError):
+        module.configure_service_account_kubeconfig(destination, host, port, account)
+    assert not destination.exists()
