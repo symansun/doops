@@ -154,7 +154,7 @@ def test_ordinary_exec_does_not_block_explicit_helm_operations():
     dispatcher = (BACKEND / "agent" / "internal" / "dispatcher" / "dispatcher.go").read_text(
         encoding="utf-8"
     )
-    blacklist = dispatcher.split("blacklist:", 1)[1].split("naturalLangRe:", 1)[0]
+    blacklist = dispatcher.split("var blockRules", 1)[1].split("type BlockedError", 1)[0]
     assert r"\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b" not in blacklist
     assert "IsHelmMutation" in dispatcher
 
