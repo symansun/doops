@@ -1,9 +1,5 @@
 import { spawn } from "node:child_process";
-import {
-  createHash,
-  createPublicKey,
-  verify as verifySignature,
-} from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   readFileSync,
@@ -11,7 +7,6 @@ import {
   statSync,
 } from "node:fs";
 import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -56,15 +51,11 @@ export async function executeControlledDatabaseOperation(input) {
   });
 
   let adapter;
-  let approval = null;
   try {
     enforceOperationPolicy({ input, mode, classification });
     adapter = requireAdapter(input.adapter);
-    if (mode === "query" && adapter.trustedClient !== true) {
+    if (adapter.trustedClient !== true) {
       throw new Error("query requires a trusted database client executable");
-    }
-    if (mode === "execute") {
-      approval = await loadAndVerifyApproval({ input, operation, adapter });
     }
   } catch (error) {
     const failedAt = input.finishedAt ?? new Date().toISOString();
@@ -78,24 +69,8 @@ export async function executeControlledDatabaseOperation(input) {
       error,
       startedAt,
       failedAt,
-      approval,
     });
     throw error;
-  }
-
-  if (approval) {
-    await appendJournalEvent({
-      journalPath,
-      event: {
-        ...baseEvent,
-        eventType: "database.operation.approved",
-        status: "approved",
-        approvedBy: approval.approvedBy,
-        approvedAt: approval.approvedAt,
-        approvalFingerprint: approval.approvalFingerprint,
-        createdAt: approval.approvedAt,
-      },
-    });
   }
 
   await appendJournalEvent({
@@ -112,8 +87,8 @@ export async function executeControlledDatabaseOperation(input) {
         statement: operation.normalizedStatement,
         databaseName: input.databaseName,
         phase: "operation",
-        readOnly: mode === "query",
-        requireReadOnlyCredential: mode === "query" && operation.engine === "mongodb",
+        readOnly: true,
+        requireReadOnlyCredential: operation.engine === "mongodb",
         mongoOperation: input.mongoOperation,
       }),
     );
@@ -129,7 +104,6 @@ export async function executeControlledDatabaseOperation(input) {
       error,
       startedAt,
       failedAt,
-      approval,
     });
     throw error;
   }
@@ -149,20 +123,7 @@ export async function executeControlledDatabaseOperation(input) {
 
   let verificationResult = null;
   try {
-    if (mode === "execute") {
-      verificationResult = normalizeExecutionResult(await adapter.execute({
-        engine: operation.engine,
-        operationId: operation.operationId,
-        statement: verificationStatement(input),
-        databaseName: input.databaseName,
-        phase: "verification",
-        readOnly: true,
-        requireReadOnlyCredential: false,
-        mongoOperation: input.verificationMongoOperation,
-      }));
-    } else {
-      verificationResult = executionResult;
-    }
+    verificationResult = executionResult;
     const verifiedAt = input.verifiedAt ?? new Date().toISOString();
     const evidence = createEvidence({
       input,
@@ -174,7 +135,6 @@ export async function executeControlledDatabaseOperation(input) {
       startedAt,
       finishedAt,
       verifiedAt,
-      approval,
     });
     await writeEvidence(evidencePath, evidence);
     await appendJournalEvent({
@@ -200,7 +160,6 @@ export async function executeControlledDatabaseOperation(input) {
       startedAt,
       finishedAt,
       verifiedAt,
-      approval,
     });
     await appendJournalEvent({
       journalPath,
@@ -229,7 +188,6 @@ async function recordFailedOperation({
   error,
   startedAt,
   failedAt,
-  approval,
 }) {
   const evidence = createEvidence({
     input,
@@ -239,7 +197,6 @@ async function recordFailedOperation({
     executionResult: { status: "failed", errorMessage: error.message },
     startedAt,
     finishedAt: failedAt,
-    approval,
   });
   await appendJournalEvent({
     journalPath,
@@ -473,21 +430,6 @@ function enforceOperationPolicy({ input, mode, classification }) {
   if (mode === "query" && classification.operationKind !== "read") {
     throw new Error("query only accepts read-only database operations");
   }
-  if (mode === "execute") {
-    if (!["schema_change", "data_change", "admin"].includes(classification.operationKind)) {
-      throw new Error("execute requires a recognized mutating database operation");
-    }
-    requireText(input.changeRequestId, "changeRequestId");
-    const verificationText = verificationStatement(input);
-    ensureSingleSqlStatement(input.engine, verificationText, "verificationStatement");
-    const verification = classifyDatabaseOperation({
-      engine: input.engine,
-      statement: verificationText,
-    });
-    if (verification.operationKind !== "read") {
-      throw new Error("verificationStatement must be read-only");
-    }
-  }
 }
 
 function createBaseEvent({ input, operation, classification }) {
@@ -514,7 +456,6 @@ function createEvidence({
   startedAt,
   finishedAt,
   verifiedAt,
-  approval,
 }) {
   return {
     schema: "dosql.database-operation-evidence.v1",
@@ -528,18 +469,6 @@ function createEvidence({
     operationKind: classification.operationKind,
     statementFingerprint: operation.statementFingerprint,
     changeRequestId: input.changeRequestId ? String(input.changeRequestId).trim() : "",
-    approval: approval
-      ? {
-          approvedBy: approval.approvedBy,
-          approvedAt: approval.approvedAt,
-          expiresAt: approval.expiresAt,
-          approvalFingerprint: approval.approvalFingerprint,
-          approvalArtifactPath: requireText(
-            input.approvalArtifactPath,
-            "approvalArtifactPath",
-          ),
-        }
-      : null,
     executionResult,
     verificationResult,
     requestedAt: operation.requestedAt,
@@ -614,7 +543,7 @@ function requireAdapter(value) {
 }
 
 function requireMode(value) {
-  if (value !== "query" && value !== "execute") throw new Error("mode must be query or execute");
+  if (value !== "query") throw new Error("mode must be query; changes run through the Agent's direct --sql path");
   return value;
 }
 
@@ -629,66 +558,6 @@ function ensureSingleSqlStatement(engine, statement, fieldName) {
   if (normalized.includes(";")) {
     throw new Error(`${fieldName} must contain exactly one SQL statement`);
   }
-}
-
-async function loadAndVerifyApproval({ input, operation, adapter }) {
-  const approvalArtifactPath = await requireManagedInputPath(
-    input.approvalArtifactPath,
-    input.artifactRoot,
-    "approvalArtifactPath",
-  );
-  const publicKeyPem = await loadApprovalPublicKey(input);
-  const approval = JSON.parse(await readFile(approvalArtifactPath, "utf8"));
-  const expected = {
-    schema: "dosql.operation-approval.v1",
-    status: "approved",
-    operationId: requireText(input.operationId, "operationId"),
-    changeRequestId: requireText(input.changeRequestId, "changeRequestId"),
-    projectId: operation.projectId,
-    databaseAssetId: operation.databaseAssetId,
-    environmentId: operation.environmentId,
-    engine: operation.engine,
-    databaseName: requireText(input.databaseName, "databaseName"),
-    connectionFingerprint: adapter.targetFingerprint({
-      databaseName: input.databaseName,
-    }),
-    statementFingerprint: operation.statementFingerprint,
-    verificationFingerprint: sha256(verificationStatement(input)),
-  };
-  for (const [field, value] of Object.entries(expected)) {
-    if (approval[field] !== value) {
-      throw new Error(`approval artifact ${field} does not match the operation`);
-    }
-  }
-  const approvedBy = requireText(approval.approvedBy, "approval.approvedBy");
-  const approvedAt = requireIsoDate(approval.approvedAt, "approval.approvedAt");
-  const expiresAt = requireIsoDate(approval.expiresAt, "approval.expiresAt");
-  const now = Date.now();
-  if (Date.parse(approvedAt) > now) {
-    throw new Error("approval artifact approval time is in the future");
-  }
-  if (Date.parse(expiresAt) <= Date.parse(approvedAt)) {
-    throw new Error("approval artifact expiry must be after approval time");
-  }
-  if (Date.parse(expiresAt) <= now) {
-    throw new Error("approval artifact has expired");
-  }
-  const signature = requireText(approval.signature, "approval.signature");
-  const signedPayload = { ...approval };
-  delete signedPayload.signature;
-  const valid = verifySignature(
-    null,
-    Buffer.from(stableJson(signedPayload)),
-    createPublicKey(publicKeyPem),
-    Buffer.from(signature, "base64"),
-  );
-  if (!valid) throw new Error("approval artifact signature is invalid");
-  return {
-    approvedBy,
-    approvedAt,
-    expiresAt,
-    approvalFingerprint: `sha256:${sha256(stableJson(approval))}`,
-  };
 }
 
 async function prepareArtifactRoot(input) {
@@ -716,19 +585,6 @@ async function prepareManagedOutputPath(value, root, fieldName) {
   return path;
 }
 
-async function requireManagedInputPath(value, root, fieldName) {
-  const path = managedPath(value, root, fieldName);
-  const metadata = await lstat(path);
-  if (!metadata.isFile() || metadata.isSymbolicLink()) {
-    throw new Error(`${fieldName} must be a regular file`);
-  }
-  const parent = realpathSync(dirname(path));
-  if (!isPathInside(parent, root)) {
-    throw new Error(`${fieldName} must stay inside the DoSql artifact root`);
-  }
-  return path;
-}
-
 function managedPath(value, root, fieldName) {
   const path = resolve(requireText(value, fieldName));
   if (!isPathInside(path, root)) {
@@ -739,27 +595,6 @@ function managedPath(value, root, fieldName) {
 
 function isPathInside(path, root) {
   return path === root || path.startsWith(`${root}/`);
-}
-
-async function loadApprovalPublicKey(input) {
-  if (typeof input.approvalPublicKeyProvider === "function") {
-    return requireText(
-      await input.approvalPublicKeyProvider(),
-      "approval public key",
-    );
-  }
-  const path = join(homedir(), ".config", "dosql", "approval-public-key.pem");
-  const metadata = await lstat(path);
-  if (!metadata.isFile() || metadata.isSymbolicLink()) {
-    throw new Error("DoSql approval trust file must be a regular file");
-  }
-  if (typeof process.getuid === "function" && metadata.uid !== process.getuid()) {
-    throw new Error("DoSql approval trust file must be owned by the current user");
-  }
-  if ((metadata.mode & 0o022) !== 0) {
-    throw new Error("DoSql approval trust file must not be group- or world-writable");
-  }
-  return requireText(await readFile(path, "utf8"), "approval public key");
 }
 
 function normalizeDatabaseRequest(input) {
@@ -776,16 +611,6 @@ function normalizeDatabaseRequest(input) {
         }
       : {}),
   };
-}
-
-function verificationStatement(input) {
-  if (input.engine === "mongodb") {
-    if (!input.verificationMongoOperation) {
-      throw new Error("verificationMongoOperation is required for MongoDB execute");
-    }
-    return renderMongoOperation(input.verificationMongoOperation);
-  }
-  return requireText(input.verificationStatement, "verificationStatement");
 }
 
 function normalizeMongoOperation(value) {
@@ -874,12 +699,6 @@ function stableJson(value) {
       .join(",")}}`;
   }
   return JSON.stringify(value);
-}
-
-function requireIsoDate(value, fieldName) {
-  const text = requireText(value, fieldName);
-  if (Number.isNaN(Date.parse(text))) throw new Error(`${fieldName} must be an ISO date`);
-  return text;
 }
 
 function formatSqlInput(request, dialect) {

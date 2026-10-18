@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,10 +8,6 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const CLI = new URL("./dosql-agent.mjs", import.meta.url).pathname;
-const approvalKeys = generateKeyPairSync("ed25519");
-const approvalPublicKey = approvalKeys.publicKey
-  .export({ type: "spki", format: "pem" })
-  .toString();
 
 test("classify command returns operation policy as JSON", async () => {
   const result = await runCli("classify", {
@@ -96,121 +92,7 @@ for (const engine of ["mysql", "postgres", "mongodb"]) {
       await rm(dir, { recursive: true, force: true });
     }
   });
-
-  test(`execute command runs approved ${engine} DDL and DML operations`, async () => {
-    const dir = await mkdtemp(join(tmpdir(), `dosql-cli-execute-${engine}-`));
-    try {
-      const clientPath = await createFakeDatabaseClient(dir);
-      const operations =
-        engine === "mongodb"
-          ? [
-              ["create", { method: "createCollection", args: ["items"] }, { method: "getCollectionNames", args: [] }, "schema_change"],
-              ["insert", { collection: "items", method: "insertOne", args: [{ _id: 1, value: 1 }] }, { collection: "items", method: "findOne", args: [{ _id: 1 }] }, "data_change"],
-              ["update", { collection: "items", method: "updateOne", args: [{ _id: 1 }, { $set: { value: 2 } }] }, { collection: "items", method: "findOne", args: [{ _id: 1 }] }, "data_change"],
-              ["delete", { collection: "items", method: "deleteOne", args: [{ _id: 1 }] }, { collection: "items", method: "countDocuments", args: [{}] }, "data_change"],
-            ]
-          : engine === "postgres"
-            ? [
-                ["create", "create table items (id integer primary key, value integer)", "select count(*) from items", "schema_change"],
-                ["alter", "alter table items add column extra text", "select count(*) from items", "schema_change"],
-                ["comment", "comment on table items is 'test table'", "select count(*) from items", "schema_change"],
-                ["truncate", "truncate table items", "select count(*) from items", "schema_change"],
-                ["insert", "insert into items (id, value) values (1, 1)", "select value from items where id = 1", "data_change"],
-                ["update", "update items set value = 2 where id = 1", "select value from items where id = 1", "data_change"],
-                ["delete", "delete from items where id = 1", "select count(*) from items", "data_change"],
-                ["merge", "merge into items using items source on items.id = source.id when matched then update set value = source.value", "select count(*) from items", "data_change"],
-                ["drop", "drop table items", "select 1", "schema_change"],
-              ]
-            : [
-                ["create", "create table items (id integer primary key, value integer)", "select count(*) from items", "schema_change"],
-                ["alter", "alter table items add column extra text", "select count(*) from items", "schema_change"],
-                ["rename", "rename table items to archived_items", "select count(*) from archived_items", "schema_change"],
-                ["truncate", "truncate table archived_items", "select count(*) from archived_items", "schema_change"],
-                ["insert", "insert into archived_items (id, value) values (1, 1)", "select value from archived_items where id = 1", "data_change"],
-                ["replace", "replace into archived_items (id, value) values (1, 2)", "select value from archived_items where id = 1", "data_change"],
-                ["update", "update archived_items set value = 3 where id = 1", "select value from archived_items where id = 1", "data_change"],
-                ["delete", "delete from archived_items where id = 1", "select count(*) from archived_items", "data_change"],
-                ["drop", "drop table archived_items", "select 1", "schema_change"],
-              ];
-
-      for (const [action, statement, verificationStatement, operationKind] of operations) {
-        const payload = {
-            ...databaseOperationPayload({
-              dir,
-              engine,
-              operationId: `dbop_cli_${action}_${engine}`,
-              operation:
-                engine === "mongodb"
-                  ? { mongoOperation: statement }
-                  : { statement },
-              adapter: adapterForEngine(engine, clientPath),
-            }),
-            changeRequestId: `chg_cli_${engine}`,
-            ...(engine === "mongodb"
-              ? { verificationMongoOperation: verificationStatement }
-              : { verificationStatement }),
-            evidencePath: join(
-              realpathSync(dir),
-              ".dosql",
-              `${action}.evidence.json`,
-            ),
-          };
-        await writeCliApprovalArtifact(payload, dir);
-        const result = await runCli(
-          "execute",
-          payload,
-          { env: databaseTestEnv(dir), cwd: dir },
-        );
-
-        assert.equal(result.mode, "database_write");
-        assert.equal(result.result.status, "verified");
-        assert.equal(result.result.operationKind, operationKind);
-      }
-      const statuses = await journalStatuses(join(dir, ".dosql", "journal.jsonl"));
-      assert.equal(statuses.length, operations.length * 5);
-      for (let index = 0; index < operations.length; index += 1) {
-        assert.deepEqual(statuses.slice(index * 5, index * 5 + 5), [
-          "planned",
-          "approved",
-          "running",
-          "succeeded",
-          "verified",
-        ]);
-      }
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
 }
-
-test("execute command exposes missing approval as a machine-readable failure", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "dosql-cli-execute-reject-"));
-  try {
-    const clientPath = await createFakeDatabaseClient(dir);
-    const { proc, result } = await runCliResult(
-      "execute",
-      {
-        ...databaseOperationPayload({
-          dir,
-          engine: "mysql",
-          operationId: "dbop_cli_execute_reject",
-          operation: { statement: "update items set value = 2 where id = 1" },
-          adapter: adapterForEngine("mysql", clientPath),
-        }),
-        changeRequestId: "chg_cli_reject",
-        verificationStatement: "select value from items where id = 1",
-      },
-      { env: databaseTestEnv(dir), cwd: dir },
-    );
-
-    assert.notEqual(proc.status, 0);
-    assert.equal(result.status, "failed");
-    assert.match(result.error.message, /approvalArtifactPath is required/);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
 test("query command rejects multiple SQL statements as a machine-readable failure", async () => {
   const dir = await mkdtemp(join(tmpdir(), "dosql-cli-query-multi-statement-"));
   try {
@@ -4076,127 +3958,6 @@ async function journalStatuses(path) {
 
 function sha256ForTest(value) {
   return createHash("sha256").update(String(value)).digest("hex");
-}
-
-async function writeCliApprovalArtifact(input, dir) {
-  const trustDir = join(dir, "home", ".config", "dosql");
-  await mkdir(trustDir, { recursive: true });
-  await writeFile(
-    join(trustDir, "approval-public-key.pem"),
-    approvalPublicKey,
-    { encoding: "utf8", mode: 0o600 },
-  );
-  const statement =
-    input.engine === "mongodb"
-      ? renderMongoOperationForTest(input.mongoOperation)
-      : input.statement;
-  const verification =
-    input.engine === "mongodb"
-      ? renderMongoOperationForTest(input.verificationMongoOperation)
-      : input.verificationStatement;
-  const clientPath =
-    input.adapter.psqlPath ??
-    input.adapter.mysqlPath ??
-    input.adapter.mongoshPath;
-  const clientFingerprint = `sha256:${createHash("sha256")
-    .update(await readFile(clientPath))
-    .digest("hex")}`;
-  const payload = {
-    schema: "dosql.operation-approval.v1",
-    status: "approved",
-    operationId: input.operationId,
-    changeRequestId: input.changeRequestId,
-    projectId: input.projectId,
-    databaseAssetId: input.databaseAssetId,
-    environmentId: input.environmentId,
-    engine: input.engine,
-    databaseName: input.databaseName,
-    connectionFingerprint: connectionFingerprintForTest(
-      input,
-      clientFingerprint,
-    ),
-    statementFingerprint: sha256ForTest(normalizeStatementForTest(statement)),
-    verificationFingerprint: sha256ForTest(verification),
-    approvedBy: "u_cli_approver",
-    approvedAt: "2026-07-16T02:09:00.000Z",
-    expiresAt: "2099-01-01T00:00:00.000Z",
-  };
-  const artifact = {
-    ...payload,
-    signature: sign(
-      null,
-      Buffer.from(stableJsonForTest(payload)),
-      approvalKeys.privateKey,
-    ).toString("base64"),
-  };
-  input.approvalArtifactPath = join(
-    dirname(input.evidencePath),
-    `${input.operationId}.approval.json`,
-  );
-  await mkdir(dirname(input.approvalArtifactPath), { recursive: true });
-  await writeFile(
-    input.approvalArtifactPath,
-    `${JSON.stringify(artifact, null, 2)}\n`,
-    "utf8",
-  );
-}
-
-function renderMongoOperationForTest(operation) {
-  const args = (operation.args ?? []).map((entry) => JSON.stringify(entry)).join(", ");
-  if (operation.method === "getCollectionNames") return "db.getCollectionNames()";
-  if (operation.method === "createCollection") return `db.createCollection(${args})`;
-  return `db.getCollection(${JSON.stringify(operation.collection)}).${operation.method}(${args})`;
-}
-
-function normalizeStatementForTest(statement) {
-  return String(statement).trim().replace(/;+$/g, "").replace(/\s+/g, " ");
-}
-
-function stableJsonForTest(value) {
-  if (Array.isArray(value)) return `[${value.map(stableJsonForTest).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableJsonForTest(value[key])}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function connectionFingerprintForTest(input, clientFingerprint) {
-  const env = databaseTestEnv(input.evidencePath ? dirname(input.evidencePath) : ".");
-  let target;
-  if (input.engine === "postgres") {
-    const uri = new URL(env.DOSQL_TEST_PG_URI);
-    target = {
-      engine: "postgres",
-      host: uri.hostname,
-      port: uri.port || "5432",
-      user: decodeURIComponent(uri.username),
-      database: decodeURIComponent(uri.pathname.replace(/^\/+/, "")),
-      clientFingerprint,
-    };
-  } else if (input.engine === "mysql") {
-    target = {
-      engine: "mysql",
-      host: env.DOSQL_TEST_MYSQL_HOST,
-      port: "3306",
-      user: env.DOSQL_TEST_MYSQL_USER,
-      database: input.databaseName,
-      clientFingerprint,
-    };
-  } else {
-    const uri = new URL(env.DOSQL_TEST_MONGO_URI);
-    target = {
-      engine: "mongodb",
-      host: uri.hostname,
-      port: uri.port || "27017",
-      user: decodeURIComponent(uri.username),
-      database: decodeURIComponent(uri.pathname.replace(/^\/+/, "")),
-      clientFingerprint,
-    };
-  }
-  return `sha256:${sha256ForTest(stableJsonForTest(target))}`;
 }
 
 function sampleCliForwardExecution() {

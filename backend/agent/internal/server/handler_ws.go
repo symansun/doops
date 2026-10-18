@@ -1774,8 +1774,6 @@ func doagentAllowedTools(apply bool, skill string) []string {
 			tools = append(tools, "mcp_doops_helm")
 		case "doweb":
 			tools = append(tools, "mcp_doops_web")
-		case "dosql":
-			tools = append(tools, "mcp_dosql_execute")
 		}
 	}
 	return tools

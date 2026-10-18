@@ -19,30 +19,23 @@ import (
 	"github.com/user/doops/agent/api"
 )
 
-const (
-	doSQLReadMCPToolName = "read"
-	doSQLMCPToolName     = "execute"
-)
+const doSQLReadMCPToolName = "read"
 
+// The model-facing DoSql tool is read-only. Changes go through `doops sql
+// --mode apply --sql/--file`, which runs in the Agent without the model.
 var doSQLReadOperations = []string{"query", "discover"}
-var doSQLMutationOperations = []string{"execute"}
 
 type doSQLParams struct {
-	SessionID             string          `json:"session_id"`
-	Operation             string          `json:"operation"`
-	Confirm               bool            `json:"confirm,omitempty"`
-	CredentialRef         string          `json:"credential_ref"`
-	DatabaseAssetID       string          `json:"database_asset_id"`
-	EnvironmentID         string          `json:"environment_id"`
-	ProjectID             string          `json:"project_id"`
-	Engine                string          `json:"engine"`
-	DatabaseName          string          `json:"database_name"`
-	Statement             string          `json:"statement,omitempty"`
-	MongoOperation        json.RawMessage `json:"mongo_operation,omitempty"`
-	VerificationStatement string          `json:"verification_statement,omitempty"`
-	VerificationMongo     json.RawMessage `json:"verification_mongo_operation,omitempty"`
-	ChangeRequestID       string          `json:"change_request_id,omitempty"`
-	ApprovalArtifactPath  string          `json:"approval_artifact_path,omitempty"`
+	SessionID       string          `json:"session_id"`
+	Operation       string          `json:"operation"`
+	CredentialRef   string          `json:"credential_ref"`
+	DatabaseAssetID string          `json:"database_asset_id"`
+	EnvironmentID   string          `json:"environment_id"`
+	ProjectID       string          `json:"project_id"`
+	Engine          string          `json:"engine"`
+	DatabaseName    string          `json:"database_name"`
+	Statement       string          `json:"statement,omitempty"`
+	MongoOperation  json.RawMessage `json:"mongo_operation,omitempty"`
 }
 
 type doSQLSecret struct {
@@ -60,26 +53,18 @@ func doSQLMCPToolDefinition(name string, operations []string, description string
 	if name == doSQLReadMCPToolName && containsDoSQLString(operations, "discover") {
 		required = []string{"operation"}
 	}
-	if name == doSQLMCPToolName {
-		required = append(required, "confirm", "change_request_id", "approval_artifact_path")
-	}
 	properties := map[string]interface{}{
 		"operation": map[string]interface{}{"type": "string", "enum": operations},
-		"confirm":   map[string]interface{}{"type": "boolean"},
 		"credential_ref": map[string]interface{}{
 			"type": "string", "description": "Use the bound credential resource name or credential_id. grant_id and version_id are audit metadata and must not be used here.",
 		},
-		"database_asset_id":            map[string]interface{}{"type": "string"},
-		"environment_id":               map[string]interface{}{"type": "string"},
-		"project_id":                   map[string]interface{}{"type": "string"},
-		"engine":                       map[string]interface{}{"type": "string", "enum": []string{"mysql", "postgres", "mongodb"}},
-		"database_name":                map[string]interface{}{"type": "string"},
-		"statement":                    map[string]interface{}{"type": "string"},
-		"mongo_operation":              map[string]interface{}{"type": "object"},
-		"verification_statement":       map[string]interface{}{"type": "string"},
-		"verification_mongo_operation": map[string]interface{}{"type": "object"},
-		"change_request_id":            map[string]interface{}{"type": "string"},
-		"approval_artifact_path":       map[string]interface{}{"type": "string"},
+		"database_asset_id": map[string]interface{}{"type": "string"},
+		"environment_id":    map[string]interface{}{"type": "string"},
+		"project_id":        map[string]interface{}{"type": "string"},
+		"engine":            map[string]interface{}{"type": "string", "enum": []string{"mysql", "postgres", "mongodb"}},
+		"database_name":     map[string]interface{}{"type": "string"},
+		"statement":         map[string]interface{}{"type": "string"},
+		"mongo_operation":   map[string]interface{}{"type": "object"},
 	}
 	schema := map[string]interface{}{
 		"type": "object", "additionalProperties": false, "required": required, "properties": properties,
@@ -102,20 +87,19 @@ func doSQLMCPToolDefinition(name string, operations []string, description string
 	}
 }
 
-func callDoSQLTool(ctx context.Context, request k8sMCPRequest, boundSessionID string, mutation bool) api.JSONRPCResponse {
+func callDoSQLTool(ctx context.Context, request k8sMCPRequest, boundSessionID string) api.JSONRPCResponse {
 	var call k8sMCPToolCall
 	if err := json.Unmarshal(request.Params, &call); err != nil {
 		return mcpErrorResponse(request.ID, -32602, "invalid tools/call params")
 	}
-	if (mutation && !k8sMCPOperationAllowed(call.Arguments, doSQLMutationOperations)) ||
-		(!mutation && !k8sMCPOperationAllowed(call.Arguments, doSQLReadOperations)) {
+	if !k8sMCPOperationAllowed(call.Arguments, doSQLReadOperations) {
 		return doSQLMCPErrorResponse(request.ID, -32602, "unsupported SQL operation")
 	}
 	bound, err := bindK8SMCPSession(call.Arguments, boundSessionID)
 	if err != nil {
 		return doSQLMCPErrorResponse(request.ID, -32602, err.Error())
 	}
-	result, err := handleDoSQLTool(ctx, bound, mutation)
+	result, err := handleDoSQLTool(ctx, bound)
 	if err != nil {
 		if errors.Is(err, errExecutionOutcomeUnknown) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return mcpErrorResponse(request.ID, -32008, errExecutionOutcomeUnknown.Error())
@@ -145,7 +129,7 @@ func doSQLMCPErrorResponse(id interface{}, code int, message string) api.JSONRPC
 	return api.JSONRPCResponse{JSONRPC: "2.0", ID: id, Error: &api.RPCError{Code: code, Message: "dosql: " + message}}
 }
 
-func handleDoSQLTool(ctx context.Context, raw json.RawMessage, mutation bool) (string, error) {
+func handleDoSQLTool(ctx context.Context, raw json.RawMessage) (string, error) {
 	var params doSQLParams
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -158,7 +142,7 @@ func handleDoSQLTool(ctx context.Context, raw json.RawMessage, mutation bool) (s
 	if params.SessionID == "" || params.Operation == "" {
 		return "", errors.New("dosql_request_invalid")
 	}
-	if !mutation && params.Operation == "discover" {
+	if params.Operation == "discover" {
 		return discoverDatabaseCandidates(ctx)
 	}
 	if params.CredentialRef == "" || params.DatabaseName == "" || !validDatabaseName(params.DatabaseName) {
@@ -168,11 +152,7 @@ func handleDoSQLTool(ctx context.Context, raw json.RawMessage, mutation bool) (s
 	if params.Engine != "mysql" && params.Engine != "postgres" && params.Engine != "mongodb" {
 		return "", errors.New("dosql_engine_invalid")
 	}
-	if mutation {
-		if params.Operation != "execute" || !params.Confirm || params.ChangeRequestID == "" || params.ApprovalArtifactPath == "" {
-			return "", errors.New("dosql_mutation_confirmation_required")
-		}
-	} else if params.Operation != "query" {
+	if params.Operation != "query" {
 		return "", errors.New("dosql_read_operation_invalid")
 	}
 	binding, err := authorizedDoSQLCredential(params.SessionID, params.CredentialRef)
@@ -215,7 +195,7 @@ func handleDoSQLTool(ctx context.Context, raw json.RawMessage, mutation bool) (s
 	defer os.RemoveAll(tmpDir)
 	inputPath := filepath.Join(tmpDir, "request.json")
 	outputPath := filepath.Join(tmpDir, "response.json")
-	request, env, err := buildDoSQLExecutionRequest(params, binding, operationID, journalPath, evidencePath, mutation)
+	request, env, err := buildDoSQLExecutionRequest(params, binding, operationID, journalPath, evidencePath)
 	if err != nil {
 		return "", err
 	}
@@ -537,7 +517,7 @@ func validateDoSQLSecretBinding(ctx context.Context, binding api.AgentCredential
 	return nil
 }
 
-func buildDoSQLExecutionRequest(params doSQLParams, binding api.AgentCredentialBinding, operationID, journalPath, evidencePath string, mutation bool) (map[string]interface{}, []string, error) {
+func buildDoSQLExecutionRequest(params doSQLParams, binding api.AgentCredentialBinding, operationID, journalPath, evidencePath string) (map[string]interface{}, []string, error) {
 	request := map[string]interface{}{
 		"operationId": operationID, "projectId": params.ProjectID, "databaseAssetId": params.DatabaseAssetID,
 		"environmentId": params.EnvironmentID, "engine": params.Engine, "databaseName": params.DatabaseName,
@@ -552,22 +532,10 @@ func buildDoSQLExecutionRequest(params doSQLParams, binding api.AgentCredentialB
 			return nil, nil, errors.New("mongo_operation_invalid")
 		}
 		request["mongoOperation"] = operation
-		if mutation {
-			var verification interface{}
-			if len(params.VerificationMongo) == 0 || json.Unmarshal(params.VerificationMongo, &verification) != nil {
-				return nil, nil, errors.New("verification_mongo_operation_required")
-			}
-			request["verificationMongoOperation"] = verification
-		}
 	} else {
 		request["statement"] = params.Statement
 		if strings.TrimSpace(params.Statement) == "" {
 			return nil, nil, errors.New("statement_required")
-		}
-		if mutation {
-			request["verificationStatement"] = params.VerificationStatement
-			request["changeRequestId"] = params.ChangeRequestID
-			request["approvalArtifactPath"] = params.ApprovalArtifactPath
 		}
 	}
 	env := []string{}

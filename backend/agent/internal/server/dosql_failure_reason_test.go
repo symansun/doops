@@ -58,7 +58,7 @@ func prepareDoSQLFailureSession(t *testing.T, nodeScript string) []byte {
 func TestDoSQLFailureCarriesExecutorReasonWithoutSecrets(t *testing.T) {
 	encoded := prepareDoSQLFailureSession(t, "#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ \"$1\" = \"--output\" ]; then out=\"$2\"; fi; shift; done\n"+
 		"printf '%s' '{\"status\":\"failed\",\"error\":{\"name\":\"Error\",\"message\":\"psql: connection to postgres://db-user:db-secret@db/orders refused\"}}' > \"$out\"\nexit 1\n")
-	_, err := handleDoSQLTool(t.Context(), encoded, false)
+	_, err := handleDoSQLTool(t.Context(), encoded)
 	if err == nil {
 		t.Fatal("expected executor failure")
 	}
@@ -73,7 +73,7 @@ func TestDoSQLFailureCarriesExecutorReasonWithoutSecrets(t *testing.T) {
 
 func TestDoSQLFailureFallsBackToProcessOutputWhenResponseIsMissing(t *testing.T) {
 	encoded := prepareDoSQLFailureSession(t, "#!/bin/sh\necho 'Cannot find module /app/skills/dosql/scripts/dosql-agent.mjs' >&2\nexit 1\n")
-	_, err := handleDoSQLTool(t.Context(), encoded, false)
+	_, err := handleDoSQLTool(t.Context(), encoded)
 	if err == nil || !strings.Contains(err.Error(), "Cannot find module") {
 		t.Fatalf("process output missing from failure: %v", err)
 	}

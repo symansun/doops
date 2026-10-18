@@ -48,17 +48,11 @@ but it is not the primary confirmation UI.
 
 ## Execution Gate
 
-The agent may only execute after the approval service turns the accepted
-human-readable confirmation into a signed
-`dosql.operation-approval.v1` artifact:
-
-- Ed25519 signature verifiable by the fixed trust file at
-  `~/.config/dosql/approval-public-key.pem`;
-- `status = approved`, approver identity, approval timestamp and expiry;
-- operation ID, change-request ID, database name and runtime-resolved
-  connection fingerprint created by DoSql;
-- exact statement and verification fingerprints.
-
-The signing private key belongs to the approval service and must not be exposed
-to the executing agent or stored in a `DOSQL_` runtime variable. If any field,
-binding or signature is missing or invalid, the Skill refuses execution.
+There is no signed-approval artifact. A change is admitted by the Gateway:
+the caller needs `exec` on the selected target and the target must carry a
+database credential binding. The change then runs through
+`doops sql --mode apply --sql/--file`, which submits the statements verbatim,
+runs them with the optional read-only `--verify` in one transaction, and records
+a version in the per-database hash-chained journal before touching the database.
+The earlier signed `dosql.operation-approval.v1` path had no issuer and was
+removed.

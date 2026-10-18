@@ -34,7 +34,8 @@ and does not expose the token to React state, localStorage or copied examples.
 - The database page routes through the same `doops_agent_prompt` Gateway RPC and
   invokes the bundled DoSql skill. It reuses the selected target, session and
   Gateway audit; database connections and credentials are never stored in the
-  browser. DoSql's signed approval is change evidence, not a second login path.
+  browser. The page is read-only (query, discover, plan); changes go through
+  `doops sql --mode apply --sql/--file`.
 - The website page routes through the same `doops_agent_prompt` Gateway RPC and
   invokes the bundled DoWeb skill. It reuses the selected target and Gateway
   audit for SiteSpec, Nginx validation, reload, health and rollback evidence.

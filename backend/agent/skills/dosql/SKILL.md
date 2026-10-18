@@ -38,7 +38,7 @@ Use exactly one route for each database task. Do not silently switch routes:
 | Inspect live tables/columns/indexes/schema | `doops sql --mode query` or `mcp_dosql_read operation=query` | Runs one explicitly read-only, asset-bound schema query through the database client. `discover` is not a schema query. |
 | Read business data | `doops sql --mode query` or `mcp_dosql_read operation=query` | Runs one read-only statement and records bounded result/evidence. |
 | Plan a change | `doops sql --mode plan` | Produces a human-readable change plan, impact, risk and verification steps; it must not connect for mutation. |
-| Change data/schema/admin state | `doops sql --mode apply` or `mcp_dosql_execute operation=execute` | Requires target exec authority, its bound credential, explicit confirmation, signed approval, one recognized mutation and a mandatory read-only verification. |
+| Change data/schema/admin state | `doops sql --mode apply --sql/--file` | Requires target exec authority and the target's bound database credential. Statements run verbatim in one transaction with an optional read-only `--verify`, and every real apply takes a version in the per-database journal. There is no model-driven or signed-approval mutation path. |
 
 `register-database`, `discover-resources`, `compare-databases` and structure
 snapshot commands consume supplied probe/snapshot/repository metadata. They are
@@ -86,10 +86,9 @@ generic `doops ask`, Bash, `psql`, or a local connection file.
   enter the change document.
 - A user may explicitly include a read-only query in a change document.
 - A user may not exclude a mutating operation from a change document.
-- Production execution requires an approved change request and execution
-  evidence. The signed approval is change-control evidence bound to the exact
-  operation and verification fingerprints; it is not a second login or a
-  replacement for Gateway target/action authorization.
+- Production changes are admitted by Gateway target/action authorization and
+  recorded as a version in the per-database journal. There is no signed
+  approval artifact.
 - MongoDB commands must use structured `mongoOperation` documents. Raw
   JavaScript is never executed, and queries require a database read-only role.
 - Scanning modules are read-only and must still produce operation records and
@@ -131,9 +130,9 @@ generic `doops ask`, Bash, `psql`, or a local connection file.
   discovery, deduplicates by database identity, and can project the same asset
   into `config/resources.json`. It ignores credential-like filenames and never
   persists URI userinfo, passwords, tokens or other secret payloads.
-- `mcp_dosql_execute` is the only structured mutation executor. It requires
-  `confirm=true`, an approved change request, a Gateway-bound database credential,
-  verification input and the DoSql journal/evidence chain.
+- Changes are not made through an MCP tool. `doops sql --mode apply
+  --sql/--file` runs them on the Agent's direct path with a Gateway-bound
+  database credential, one transaction and the version journal.
 - Database credentials are DoOps managed credentials. Pass only credential
   resource names to the Gateway; never put payloads, connection strings or
   passwords in prompts, artifacts or logs.
@@ -148,7 +147,7 @@ generic `doops ask`, Bash, `psql`, or a local connection file.
   target grant is absent; use the target view after an active version exists or
   inspect the explicit grant response.
 - Gateway target/action checks happen before the skill runs. DoSql's operation
-  journal and signed approval checks protect database change evidence after
+  journal and version records protect database change evidence after
   admission and must not duplicate Gateway authentication.
 
 ## Detailed Contract

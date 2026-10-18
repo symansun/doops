@@ -34,7 +34,7 @@ Gateway `/v1/auth/login`、`/v1/targets`、`/v1/rpc` 和凭据 API。
 | Target 可见性 | Gateway target grant（`UserCanUseTarget`） | `cluster/instance` 精确匹配 | 否 |
 | 普通工具 | Gateway target grant | `ask`、`exec`、读写、push/pull 等 | 否 |
 | Managed credential | Gateway credential resource/target binding | 资源名、target 绑定、物化和清理 | 否 |
-| 数据库变更控制 | DoSql operation journal + signed approval | 变更说明、指纹、验证、未知结果证据 | 是领域规则，不是登录授权 |
+| 数据库变更控制 | DoSql 按库版本日志（哈希链） | 版本号、语句指纹、事务内验证、回滚结果 | 是领域规则，不是登录授权 |
 | 网站变更控制 | DoWeb SiteSpec + Nginx validation/reload/health evidence | 站点范围、配置验证、回滚和健康状态 | 是领域规则，不是登录授权 |
 | Web 会话 | DoOps Web `/api/session` | HttpOnly cookie 的建立、恢复、清理 | 否 |
 | CLI 会话 | `~/.agent/skills/doops/auth.json` | Gateway token 本地缓存 | 否 |
@@ -49,7 +49,7 @@ DoSql 已接入受限的数据库 MCP 工具和 Gateway 受管凭据到数据库
 `doops sql`、控制台数据库页和 DoSql skill 共用 Gateway 登录、target/action 授权、
 审计和 session；skill 不实现第二套认证，也不能通过 Bash、本地连接文件、环境变量或
 密码 prompt 绕过授权。只读查询和变更都会进入 DoSql 的 journal/evidence 生命周期，
-变更还必须携带精确的数据库凭据、签名审批和执行后验证。
+变更只通过 `doops sql --mode apply --sql/--file` 原样提交，使用 target 上绑定的数据库凭据，在事务内执行并记录版本。
 
 DoSql 通过 `doops_agent_prompt` 进入 Agent runtime。数据库目标来自当前 Gateway target 的
 探测结果；`config/resources.json` 只能放标签和示例，不能选择 target、保存权限或保存密码。
@@ -58,9 +58,9 @@ DoSql 通过 `doops_agent_prompt` 进入 Agent runtime。数据库目标来自�
 引擎、数据库名由 DoSql/目标 Agent 根据 target discovery 和任务上下文校验。只读请求携带
 credential reference 时必须显式声明 `skill=dosql`；普通只读 prompt 不能附带数据库凭据。
 
-DoSql 的签名审批是变更控制证据，必须绑定 operation、change request、数据库资产、语句和
-验证指纹。它不能绕过 Gateway grant，也不应被当作另一种用户登录。只读查询也必须写入
-journal/evidence；写操作的未知结果必须阻止同一 operation 重放，直到人工核对。
+DoSql 不再有签名审批：旧的 `mcp_dosql_execute` 要求的审批文件没有签发方，已经删除。
+变更授权只来自 Gateway 的 target `exec` 权限；每次真实变更在版本日志里先取版本号再执行，
+日志不可写时拒绝执行。
 
 数据库发现使用 `mcp_dosql_read operation=discover`，只扫描 Kubernetes 非 Secret 元数据，
 从 Pod、Service、Deployment 和 StatefulSet 识别数据库实例、引擎、端口以及非 Secret 配置

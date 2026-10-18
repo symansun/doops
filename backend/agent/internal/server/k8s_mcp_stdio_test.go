@@ -116,7 +116,7 @@ func TestK8SMCPStdioExposesIndependentDoSQLTools(t *testing.T) {
 		tool, _ := value.(map[string]interface{})
 		names = append(names, tool["name"].(string))
 	}
-	if strings.Join(names, ",") != "read,execute" {
+	if strings.Join(names, ",") != "read" {
 		t.Fatalf("unexpected DoSQL tools: %#v", names)
 	}
 }

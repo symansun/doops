@@ -73,19 +73,6 @@ func TestApplyAcceptsStructuredHelmMutationEvidence(t *testing.T) {
 	}
 }
 
-func TestApplyAcceptsStructuredDoSQLMutationEvidence(t *testing.T) {
-	collector := newDoagentToolTraceCollector(false)
-	bindApplyCollector(collector, "apply-test")
-	collector.calls["call-1"] = attestedMutationTrace(t, "mcp_dosql_execute", map[string]interface{}{
-		"operation": "execute", "credential_ref": "orders-db", "database_asset_id": "db_orders",
-		"environment_id": "prod", "project_id": "ops", "engine": "postgres", "database_name": "orders",
-		"confirm": true,
-	})
-	if err := collector.requireCompletedToolEvidence(); err != nil {
-		t.Fatalf("structured DoSQL evidence rejected: %v", err)
-	}
-}
-
 func TestApplyCompletedMutationDoesNotHideUnresolvedTool(t *testing.T) {
 	for _, status := range []string{"running", "failed", "completed"} {
 		t.Run(status, func(t *testing.T) {
