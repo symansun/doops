@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/user/doops/agent/api"
 )
@@ -18,14 +18,13 @@ import (
 // as INSERT text. Both sides must use the same engine; the destination tables
 // must already exist. All inserts share one destination transaction: a failure,
 // or --dry-run, leaves the destination untouched.
+//
+// Only the engines' own protocol limits apply: one INSERT carries at most
+// doSQLCopyMaxParams placeholders (both drivers cap at 65535).
 const (
-	doSQLCopyBatchRows    = 500
-	doSQLCopyMaxParams    = 60000
-	doSQLCopyMaxTables    = 64
-	doSQLCopyMaxRowsTotal = 5_000_000
+	doSQLCopyBatchRows = 500
+	doSQLCopyMaxParams = 60000
 )
-
-var doSQLCopyTableName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]{0,62}$`)
 
 func doSQLCopyRequested(args api.AgentPromptParams) bool {
 	return strings.TrimSpace(args.Skill) == "dosql" && strings.TrimSpace(args.SQLCopyFrom) != ""
@@ -35,15 +34,14 @@ func validateDoSQLCopyTables(tables []string) ([]string, error) {
 	if len(tables) == 0 {
 		return nil, errors.New("dosql_copy_tables_required: pass --tables a,b")
 	}
-	if len(tables) > doSQLCopyMaxTables {
-		return nil, errors.New("dosql_copy_too_many_tables")
-	}
 	seen := map[string]bool{}
 	out := make([]string, 0, len(tables))
 	for _, table := range tables {
 		table = strings.TrimSpace(table)
-		if !doSQLCopyTableName.MatchString(table) {
-			return nil, fmt.Errorf("dosql_copy_table_invalid: %q must be a plain table name", table)
+		// Identifiers are quoted with escaping, so any real table name is safe;
+		// only an empty name or control characters cannot be one.
+		if table == "" || strings.ContainsFunc(table, unicode.IsControl) {
+			return nil, fmt.Errorf("dosql_copy_table_invalid: %q is not a table name", table)
 		}
 		if seen[table] {
 			continue
@@ -202,9 +200,8 @@ func executeDoSQLCopy(ctx context.Context, source, dest doSQLTarget, tables []st
 			_ = dstTx.Rollback()
 		}
 	}()
-	var total int64
 	for _, table := range tables {
-		copied, err := copyDoSQLTable(ctx, srcTx, dstTx, dest.Engine, table, &total)
+		copied, err := copyDoSQLTable(ctx, srcTx, dstTx, dest.Engine, table)
 		if err != nil {
 			return result, doSQLFailure("dosql_copy_failed", fmt.Sprintf("table %s: %v", table, err))
 		}
@@ -226,7 +223,7 @@ func executeDoSQLCopy(ctx context.Context, source, dest doSQLTarget, tables []st
 	return result, nil
 }
 
-func copyDoSQLTable(ctx context.Context, src, dst *sql.Tx, engine, table string, total *int64) (int64, error) {
+func copyDoSQLTable(ctx context.Context, src, dst *sql.Tx, engine, table string) (int64, error) {
 	rows, err := src.QueryContext(ctx, "SELECT * FROM "+doSQLQuoteIdentifier(engine, table))
 	if err != nil {
 		return 0, fmt.Errorf("read source: %w", err)
@@ -261,9 +258,6 @@ func copyDoSQLTable(ctx context.Context, src, dst *sql.Tx, engine, table string,
 		return nil
 	}
 	for rows.Next() {
-		if *total >= doSQLCopyMaxRowsTotal {
-			return 0, fmt.Errorf("dosql_copy_too_large: more than %d rows in one copy", doSQLCopyMaxRowsTotal)
-		}
 		values := make([]interface{}, len(columns))
 		pointers := make([]interface{}, len(columns))
 		for i := range values {
@@ -274,7 +268,6 @@ func copyDoSQLTable(ctx context.Context, src, dst *sql.Tx, engine, table string,
 		}
 		args = append(args, values...)
 		pending++
-		*total++
 		if pending == batchRows {
 			if err := flush(); err != nil {
 				return 0, err
