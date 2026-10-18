@@ -49,7 +49,7 @@ def test_cli_release_builds_to_ignored_distribution_directory():
     build = BUILD.read_text()
     release = RELEASE_BUILD.read_text()
 
-    assert 'expected_builder="linux/amd64 go1.24.13"' in build
+    assert 'expected_builder="linux/amd64 go1.25.14"' in build
     assert "run scripts/build-cli-release.sh instead" in build
     assert f'BUILDER_IMAGE="{BUILDER_IMAGE}"' in release
     assert "--platform linux/amd64" in release
