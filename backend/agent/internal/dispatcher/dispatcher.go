@@ -5,10 +5,6 @@ import (
 	"strings"
 )
 
-var agentHelmMutationPattern = regexp.MustCompile(
-	`(?s)(\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b.*\bdoops-agent\b|\bdoops-agent\b.*\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b)`,
-)
-
 var helmMutationPattern = regexp.MustCompile(
 	`(?s)\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b`,
 )
@@ -61,10 +57,6 @@ func (d *Dispatcher) Classify(command string) PathType {
 	}
 
 	return PathFast
-}
-
-func (d *Dispatcher) IsAgentHelmMutation(command string) bool {
-	return agentHelmMutationPattern.MatchString(strings.ToLower(strings.TrimSpace(command)))
 }
 
 func (d *Dispatcher) IsHelmMutation(command string) bool {

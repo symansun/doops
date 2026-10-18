@@ -172,11 +172,6 @@ func loadPath(path string) ([]Server, LLMConfig, error) {
 	return root.Servers, root.LLM, nil
 }
 
-func LoadServers() ([]Server, error) {
-	servers, _, err := LoadConfig()
-	return servers, err
-}
-
 func removeServer(servers []Server, target string) ([]Server, Server, error) {
 	target = strings.TrimSpace(target)
 	for i, server := range servers {
@@ -190,11 +185,6 @@ func removeServer(servers []Server, target string) ([]Server, Server, error) {
 		return remaining, removed, nil
 	}
 	return nil, Server{}, fmt.Errorf("target %q not found", target)
-}
-
-func GetLLMConfig() LLMConfig {
-	_, llm, _ := LoadConfig()
-	return llm
 }
 
 func saveServers(servers []Server) error {

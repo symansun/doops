@@ -57,8 +57,8 @@ func credentialImportFixture(t *testing.T) (*executionLifecycleFixture, string) 
 		"metadata": map[string]string{"uid": "source-uid", "resourceVersion": "7"},
 		"type":     "Opaque",
 		"data": map[string]string{
-			"DB_PASSWORD":    base64.StdEncoding.EncodeToString([]byte(importCanary)),
-			"SOURCE_URL":     base64.StdEncoding.EncodeToString([]byte("jdbc:mysql://mysql.test:3306/test")),
+			"DB_PASSWORD":     base64.StdEncoding.EncodeToString([]byte(importCanary)),
+			"SOURCE_URL":      base64.StdEncoding.EncodeToString([]byte("jdbc:mysql://mysql.test:3306/test")),
 			"SOURCE_USERNAME": base64.StdEncoding.EncodeToString([]byte("test-user")),
 			"SOURCE_PASSWORD": base64.StdEncoding.EncodeToString([]byte(importCanary)),
 			"UNSELECTED":      base64.StdEncoding.EncodeToString([]byte("never-import-this")),
