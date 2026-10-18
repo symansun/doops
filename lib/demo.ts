@@ -556,11 +556,11 @@ const demoUsers: AdminUser[] = [
 ]
 
 const demoGrants: AdminGrant[] = [
-  { id: 1, user_id: "usr_admin01", user_name: "admin", cluster: "*", instance: "*", actions: ["admin"], created_at: ago(720) },
-  { id: 2, user_id: "usr_ops01", user_name: "ops-zhang", cluster: "prod-cn", instance: "*", actions: ["exec", "ask", "read", "write", "info", "check"], created_at: ago(240) },
-  { id: 3, user_id: "usr_ops01", user_name: "ops-zhang", cluster: "staging", instance: "*", actions: ["exec", "ask", "read"], created_at: ago(120) },
-  { id: 4, user_id: "usr_dev01", user_name: "dev-li", cluster: "staging", instance: "db-01", actions: ["read", "info"], created_at: ago(72) },
-  { id: 5, user_id: "usr_bot01", user_name: "ci-bot", cluster: "prod-cn", instance: "*", actions: ["push", "pull"], created_at: ago(48) },
+  { id: 1, user_id: "usr_admin01", user_name: "admin", cluster: "*", instance: "*", created_at: ago(720) },
+  { id: 2, user_id: "usr_ops01", user_name: "ops-zhang", cluster: "prod-cn", instance: "*", created_at: ago(240) },
+  { id: 3, user_id: "usr_ops01", user_name: "ops-zhang", cluster: "staging", instance: "*", created_at: ago(120) },
+  { id: 4, user_id: "usr_dev01", user_name: "dev-li", cluster: "staging", instance: "db-01", created_at: ago(72) },
+  { id: 5, user_id: "usr_bot01", user_name: "ci-bot", cluster: "prod-cn", instance: "*", created_at: ago(48) },
 ]
 
 const demoTokens: AdminToken[] = [
@@ -606,7 +606,7 @@ export function demoListGrants(user?: string): AdminGrant[] {
   const list = user ? demoGrants.filter((g) => g.user_id === user) : demoGrants
   return list.map((g) => ({ ...g }))
 }
-export function demoCreateGrant(body: { user_id: string; cluster: string; instance: string; actions: string[] }): void {
+export function demoCreateGrant(body: { user_id: string; cluster: string; instance: string }): void {
   const u = demoUsers.find((x) => x.id === body.user_id)
   demoGrants.push({
     id: grantSeq++,
@@ -614,7 +614,6 @@ export function demoCreateGrant(body: { user_id: string; cluster: string; instan
     user_name: u?.name,
     cluster: body.cluster || "*",
     instance: body.instance || "*",
-    actions: body.actions.length ? body.actions : ["exec", "ask", "read"],
     created_at: nowISO(),
   })
   if (u) u.grant_count += 1

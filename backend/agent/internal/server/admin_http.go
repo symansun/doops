@@ -71,14 +71,11 @@ func (h *GatewayHub) HandleAdminUsers(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		// 新用户默认授予标准操作权限；如指定 admin 则追加 admin。
-		grant := ScopeGrant{Cluster: "*", Instance: "*"}
 		if req.Admin {
-			grant.Actions = []GatewayAction{ActionAdmin}
-		}
-		if err := h.store.GrantUser(user.ID, grant); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			if err := h.store.SetUserAdmin(user.ID, true); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 		writeJSONHTTP(w, map[string]interface{}{
 			"id":       user.ID,
@@ -165,12 +162,11 @@ func (h *GatewayHub) HandleAdminGrants(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "user not found", http.StatusNotFound)
 			return
 		}
-		actions, err := parseActions(req.Actions)
-		if err != nil {
+		if err := rejectPerActionGrant(req.Actions); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		grant := ScopeGrant{Cluster: req.Cluster, Instance: req.Instance, Actions: actions}
+		grant := ScopeGrant{Cluster: req.Cluster, Instance: req.Instance}
 		if err := h.store.GrantUser(userID, grant); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -203,7 +199,7 @@ func (h *GatewayHub) HandleAdminInstances(w http.ResponseWriter, r *http.Request
 		h.writeUserAuthError(w, r)
 		return
 	}
-	if !h.store.UserHasAction(auth.UserID, ActionAdmin) {
+	if !h.store.UserIsPlatformAdmin(auth.UserID) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -229,11 +225,7 @@ func (h *GatewayHub) HandleAdminInstances(w http.ResponseWriter, r *http.Request
 		LastSeen    time.Time `json:"last_seen,omitempty"`
 	}
 	out := make([]instanceInfo, 0, len(statuses))
-	platformAdmin := h.store.UserIsPlatformAdmin(auth.UserID)
 	for _, st := range statuses {
-		if !platformAdmin && !h.store.UserCan(auth.UserID, st.Cluster, st.Instance, ActionAdmin) {
-			continue
-		}
 		info := instanceInfo{
 			Cluster:     st.Cluster,
 			Instance:    st.Instance,
@@ -445,43 +437,14 @@ func (h *GatewayHub) resolveUserID(userID, userName string) (string, error) {
 	return user.ID, nil
 }
 
-var knownActions = map[string]GatewayAction{
-	"*":                   ActionAll,
-	"target:use":          ActionTargetUse,
-	"admin":               ActionAdmin,
-	"exec":                ActionExec,
-	"ask":                 ActionAsk,
-	"read":                ActionRead,
-	"write":               ActionWrite,
-	"push":                ActionPush,
-	"pull":                ActionPull,
-	"info":                ActionInfo,
-	"check":               ActionCheck,
-	"clean":               ActionClean,
-	"agent:upgrade":       ActionAgentUpgrade,
-	"targets:list":        ActionTargetsList,
-	"credential:create":   ActionCredentialCreate,
-	"credential:metadata": ActionCredentialMetadata,
-	"credential:grant":    ActionCredentialGrant,
-	"credential:use":      ActionCredentialUse,
-	"credential:verify":   ActionCredentialVerify,
-	"credential:rotate":   ActionCredentialRotate,
-	"credential:revoke":   ActionCredentialRevoke,
-	"credential:audit":    ActionCredentialAudit,
-}
-
-func parseActions(raw []string) ([]GatewayAction, error) {
-	if len(raw) == 0 {
-		return nil, nil // store 会填充默认动作集合
-	}
-	actions := make([]GatewayAction, 0, len(raw))
+// A grant always covers the whole target. "target:use" is what older CLIs send
+// by default and means exactly that; any narrower action list would silently
+// widen into full access, so it is refused instead.
+func rejectPerActionGrant(raw []string) error {
 	for _, a := range raw {
-		key := strings.TrimSpace(strings.ToLower(a))
-		act, ok := knownActions[key]
-		if !ok {
-			return nil, errors.New("unknown action: " + a)
+		if strings.TrimSpace(strings.ToLower(a)) != "target:use" {
+			return errors.New("per-action grants were removed; a grant covers the whole target")
 		}
-		actions = append(actions, act)
 	}
-	return actions, nil
+	return nil
 }

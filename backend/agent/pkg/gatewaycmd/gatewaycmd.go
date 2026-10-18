@@ -186,7 +186,7 @@ func grant(args []string) {
 	userName := fs.String("user", "", "User name")
 	cluster := fs.String("cluster", "*", "Cluster scope")
 	instance := fs.String("instance", "*", "Instance scope")
-	actions := fs.String("actions", "", "Comma separated actions; empty means full target access")
+	admin := fs.Bool("admin", false, "Make the user a platform admin instead of granting a target")
 	dbPath := fs.String("db", defaultGatewayDB, "SQLite database path")
 	fs.Parse(args)
 	store := mustStore(*dbPath)
@@ -195,20 +195,17 @@ func grant(args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	var parsed []server.GatewayAction
-	for _, raw := range strings.Split(*actions, ",") {
-		raw = strings.TrimSpace(raw)
-		if raw != "" {
-			parsed = append(parsed, server.GatewayAction(raw))
+	if *admin {
+		if err := store.SetUserAdmin(u.ID, true); err != nil {
+			log.Fatal(err)
 		}
+		fmt.Printf("granted user=%s admin=true\n", u.Name)
+		return
 	}
-	if err := store.GrantUser(u.ID, server.ScopeGrant{Cluster: *cluster, Instance: *instance, Actions: parsed}); err != nil {
+	if err := store.GrantUser(u.ID, server.ScopeGrant{Cluster: *cluster, Instance: *instance}); err != nil {
 		log.Fatal(err)
 	}
-	if strings.TrimSpace(*actions) == "" {
-		*actions = "default-full-target-access"
-	}
-	fmt.Printf("granted user=%s scope=%s/%s actions=%s\n", u.Name, *cluster, *instance, *actions)
+	fmt.Printf("granted user=%s scope=%s/%s\n", u.Name, *cluster, *instance)
 }
 
 func audit(args []string) {

@@ -106,7 +106,6 @@ type TokenAuth struct {
 type ScopeGrant struct {
 	Cluster  string
 	Instance string
-	Actions  []GatewayAction
 }
 
 type AuditEvent struct {
@@ -269,8 +268,8 @@ func (s *GatewayStore) migrate() error {
 			user_id TEXT NOT NULL,
 			cluster TEXT NOT NULL,
 			instance TEXT NOT NULL,
-			actions_json TEXT NOT NULL,
 			created_at TEXT NOT NULL,
+			UNIQUE(user_id, cluster, instance),
 			FOREIGN KEY(user_id) REFERENCES users(id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_grants_user ON grants(user_id)`,
@@ -513,6 +512,12 @@ func (s *GatewayStore) migrate() error {
 		return err
 	}
 	if err := s.ensureColumn("users", "password_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("users", "is_admin", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.migrateGrantActions(); err != nil {
 		return err
 	}
 	if err := s.ensureColumn("git_repos", "password_ciphertext", "TEXT NOT NULL DEFAULT ''"); err != nil {
@@ -770,141 +775,6 @@ func (s *GatewayStore) DeleteExpiredTokens(now time.Time) (int64, error) {
 		return 0, err
 	}
 	return res.RowsAffected()
-}
-
-func (s *GatewayStore) GrantUser(userID string, grant ScopeGrant) error {
-	if strings.TrimSpace(userID) == "" {
-		return fmt.Errorf("user id is required")
-	}
-	if grant.Cluster == "" {
-		grant.Cluster = "*"
-	}
-	if grant.Instance == "" {
-		grant.Instance = "*"
-	}
-	if len(grant.Actions) == 0 {
-		grant.Actions = append([]GatewayAction(nil), defaultGatewayUserActions...)
-	}
-	actions, err := json.Marshal(grant.Actions)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.Exec(`INSERT INTO grants (user_id, cluster, instance, actions_json, created_at)
-		VALUES (?, ?, ?, ?, ?)`, userID, grant.Cluster, grant.Instance, string(actions), formatTime(time.Now().UTC()))
-	return err
-}
-
-func (s *GatewayStore) UserCan(userID, cluster, instance string, action GatewayAction) bool {
-	if userID == "" || action == "" {
-		return false
-	}
-	rows, err := s.db.Query(`SELECT cluster, instance, actions_json FROM grants WHERE user_id = ?`, userID)
-	if err != nil {
-		return false
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var clusterPattern, instancePattern, rawActions string
-		if err := rows.Scan(&clusterPattern, &instancePattern, &rawActions); err != nil {
-			return false
-		}
-		if !scopeMatches(clusterPattern, cluster) || !scopeMatches(instancePattern, instance) {
-			continue
-		}
-		var actions []GatewayAction
-		if json.Unmarshal([]byte(rawActions), &actions) != nil {
-			continue
-		}
-		for _, a := range actions {
-			if a == ActionTargetUse && targetActionAllowed(action) {
-				return true
-			}
-			if gatewayActionAllows(a, action) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func targetActionAllowed(action GatewayAction) bool {
-	switch action {
-	case ActionTargetsList, ActionExec, ActionAsk, ActionRead, ActionWrite,
-		ActionPush, ActionPull, ActionInfo, ActionCheck, ActionClean,
-		ActionCredentialMetadata, ActionCredentialUse:
-		return true
-	default:
-		return false
-	}
-}
-
-func (s *GatewayStore) CanUseTargetCredentials(userID, cluster, instance string) bool {
-	return s.UserCan(userID, cluster, instance, ActionAsk) ||
-		s.UserCan(userID, cluster, instance, ActionExec)
-}
-
-func (s *GatewayStore) UserHasAction(userID string, action GatewayAction) bool {
-	if userID == "" || action == "" {
-		return false
-	}
-	rows, err := s.db.Query(`SELECT actions_json FROM grants WHERE user_id = ?`, userID)
-	if err != nil {
-		return false
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var rawActions string
-		if err := rows.Scan(&rawActions); err != nil {
-			return false
-		}
-		var actions []GatewayAction
-		if json.Unmarshal([]byte(rawActions), &actions) != nil {
-			continue
-		}
-		for _, a := range actions {
-			if gatewayActionAllows(a, action) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (s *GatewayStore) UserIsPlatformAdmin(userID string) bool {
-	if userID == "" {
-		return false
-	}
-	rows, err := s.db.Query(`SELECT cluster, instance, actions_json FROM grants WHERE user_id = ?`, userID)
-	if err != nil {
-		return false
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cluster, instance, rawActions string
-		if err := rows.Scan(&cluster, &instance, &rawActions); err != nil {
-			return false
-		}
-		if cluster != "*" || instance != "*" {
-			continue
-		}
-		var actions []GatewayAction
-		if json.Unmarshal([]byte(rawActions), &actions) != nil {
-			continue
-		}
-		for _, action := range actions {
-			if action == ActionAdmin || action == ActionAll {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func gatewayActionAllows(granted, requested GatewayAction) bool {
-	if granted == requested || granted == ActionAdmin || granted == ActionAll {
-		return true
-	}
-	return false
 }
 
 func (s *GatewayStore) MarkAgentOnline(agent AgentStatus) error {

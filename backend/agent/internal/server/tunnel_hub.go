@@ -601,7 +601,7 @@ func (h *GatewayHub) handleAdminTokens(w http.ResponseWriter, r *http.Request) {
 		h.writeUserAuthError(w, r)
 		return
 	}
-	if !h.store.UserHasAction(auth.UserID, ActionAdmin) {
+	if !h.store.UserIsPlatformAdmin(auth.UserID) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -678,7 +678,7 @@ func (h *GatewayHub) HandleAdminOperations(w http.ResponseWriter, r *http.Reques
 		h.writeUserAuthError(w, r)
 		return
 	}
-	if !h.store.UserHasAction(auth.UserID, ActionAdmin) {
+	if !h.store.UserIsPlatformAdmin(auth.UserID) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -789,14 +789,10 @@ func (h *GatewayHub) HandleTargets(w http.ResponseWriter, r *http.Request) {
 		h.writeUserAuthError(w, r)
 		return
 	}
-	if !h.store.UserHasAction(auth.UserID, ActionTargetsList) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
 	targets := h.ListTargets()
 	filtered := targets[:0]
 	for _, target := range targets {
-		if h.store.UserCan(auth.UserID, target.Cluster, target.Instance, ActionTargetsList) {
+		if h.store.UserCanUseTarget(auth.UserID, target.Cluster, target.Instance) {
 			filtered = append(filtered, target)
 		}
 	}
@@ -813,7 +809,7 @@ func (h *GatewayHub) HandleTargetUnlock(w http.ResponseWriter, r *http.Request) 
 		h.writeUserAuthError(w, r)
 		return
 	}
-	if !h.store.UserHasAction(auth.UserID, ActionAdmin) {
+	if !h.store.UserIsPlatformAdmin(auth.UserID) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -931,15 +927,7 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "missing instance", http.StatusBadRequest)
 		return
 	}
-	if !h.store.UserCan(auth.UserID, cluster, instance, ActionInfo) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionExec) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionAsk) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionRead) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionWrite) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionPush) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionCheck) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionClean) &&
-		!h.store.UserCan(auth.UserID, cluster, instance, ActionAgentUpgrade) {
+	if !h.store.UserCanUseTarget(auth.UserID, cluster, instance) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -1187,7 +1175,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		}
 		return nil
 	}
-	if !h.store.UserCan(auth.UserID, cluster, instance, action) {
+	if !h.store.UserCanUseTarget(auth.UserID, cluster, instance) {
 		errMsg := fmt.Sprintf("forbidden: %s on %s/%s", action, cluster, instance)
 		finishAudit("forbidden", errMsg, "", 0)
 		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
@@ -1325,7 +1313,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 				ActorID: auth.UserID, CredentialID: item.Authorized.Resource.ID, Scope: item.Reference.Scope,
 			})
 			if refreshErr != nil || h.store.validateUserTokenAuth(auth) != nil ||
-				!h.store.UserCan(auth.UserID, cluster, instance, action) ||
+				!h.store.UserCanUseTarget(auth.UserID, cluster, instance) ||
 				resolved.Grant.ID != item.Authorized.Grant.ID ||
 				!credentialScopeEqual(resolved.Grant.Scope, item.Authorized.Grant.Scope) {
 				finishAudit("blocked", "credential_authorization_changed", "", 0)
@@ -1344,7 +1332,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			return nil
 		}
 		promptArgs.CredentialRefs = nil
-		if h.store.validateUserTokenAuth(auth) != nil || !h.store.UserCan(auth.UserID, cluster, instance, action) {
+		if h.store.validateUserTokenAuth(auth) != nil || !h.store.UserCanUseTarget(auth.UserID, cluster, instance) {
 			if cleanupErr := h.hub.rollbackCredentialPrepare(opCtx, credentialPreparation.completed); cleanupErr != nil {
 				category := credentialOperationErrorCategory(cleanupErr)
 				finishAudit("error", category, "", 0)

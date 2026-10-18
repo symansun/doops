@@ -164,7 +164,7 @@ func (h *GatewayHub) resolveExplicitCredentials(
 	if len(names) == 0 && !autoDatabase {
 		return nil, nil
 	}
-	if !h.store.UserCan(auth.UserID, cluster, instance, action) {
+	if !h.store.UserCanUseTarget(auth.UserID, cluster, instance) {
 		return nil, ErrCredentialForbidden
 	}
 	if credentialScalarContainsInlineMaterial(instruction) {
@@ -642,7 +642,7 @@ func (h *GatewayHub) handleCredentialVerify(
 		http.Error(w, "invalid credential verify request", http.StatusBadRequest)
 		return
 	}
-	if !h.store.CanUseTargetCredentials(auth.UserID, body.Scope.Cluster, body.Scope.Instance) {
+	if !h.store.UserCanUseTarget(auth.UserID, body.Scope.Cluster, body.Scope.Instance) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
@@ -653,7 +653,7 @@ func (h *GatewayHub) handleCredentialVerify(
 	}
 	defer unlock()
 	if h.store.validateUserTokenAuth(auth) != nil || !h.canVerifyCredential(auth.UserID, resource) ||
-		!h.store.CanUseTargetCredentials(auth.UserID, body.Scope.Cluster, body.Scope.Instance) {
+		!h.store.UserCanUseTarget(auth.UserID, body.Scope.Cluster, body.Scope.Instance) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}

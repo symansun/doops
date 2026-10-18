@@ -121,7 +121,7 @@ func TestCredentialHTTPGrantRequiresOwnerTargetAuthority(t *testing.T) {
 	}
 
 	if err := store.GrantUser(owner.ID, ScopeGrant{
-		Cluster: "doops-edu", Instance: "edu-coder", Actions: []GatewayAction{ActionAsk},
+		Cluster: "doops-edu", Instance: "edu-coder",
 	}); err != nil {
 		t.Fatalf("grant owner target authority: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestTargetScopedCredentialActionDoesNotGrantPlatformAdministration(t *testi
 	platformAdmin, _ := createCredentialHTTPUser(t, store, "platform-admin", true)
 	targetOperator, targetToken := createCredentialHTTPUser(t, store, "target-operator", false)
 	if err := store.GrantUser(targetOperator.ID, ScopeGrant{
-		Cluster: "cluster-a", Instance: "target-a", Actions: []GatewayAction{ActionCredentialRotate},
+		Cluster: "cluster-a", Instance: "target-a",
 	}); err != nil {
 		t.Fatalf("grant target-scoped rotate: %v", err)
 	}
@@ -300,7 +300,6 @@ func TestTargetScopedCredentialActionDoesNotGrantPlatformAdministration(t *testi
 	}
 	if err := store.GrantUser(targetOperator.ID, ScopeGrant{
 		Cluster: "cluster-a", Instance: "target-a",
-		Actions: []GatewayAction{ActionCredentialMetadata, ActionCredentialGrant, ActionCredentialAudit},
 	}); err != nil {
 		t.Fatalf("grant target-scoped metadata actions: %v", err)
 	}
@@ -319,6 +318,18 @@ func TestCredentialHTTPListIsIsolatedByUserAndTarget(t *testing.T) {
 	admin, adminToken := createCredentialHTTPUser(t, store, "credential-admin", true)
 	user, userToken := createCredentialHTTPUser(t, store, "target-user", false)
 	other, otherToken := createCredentialHTTPUser(t, store, "other-user", false)
+	for _, grant := range []struct {
+		userID            string
+		cluster, instance string
+	}{
+		{user.ID, "cluster-a", "instance-a"},
+		{user.ID, "cluster-b", "instance-b"},
+		{other.ID, "cluster-a", "instance-a"},
+	} {
+		if err := store.GrantUser(grant.userID, ScopeGrant{Cluster: grant.cluster, Instance: grant.instance}); err != nil {
+			t.Fatalf("grant target: %v", err)
+		}
+	}
 
 	owned, err := store.CreateCredential(CredentialCreateRequest{
 		Name: "owned-ungranted", Scope: CredentialScopePersonal, Type: CredentialTypeOpaque,
@@ -462,7 +473,7 @@ func TestCredentialHTTPSelfGrantUsesAuthenticatedUser(t *testing.T) {
 	store := openCredentialTestStore(t)
 	owner, ownerToken := createCredentialHTTPUser(t, store, "self-grant-owner", false)
 	if err := store.GrantUser(owner.ID, ScopeGrant{
-		Cluster: "cluster-a", Instance: "instance-a", Actions: []GatewayAction{ActionAsk},
+		Cluster: "cluster-a", Instance: "instance-a",
 	}); err != nil {
 		t.Fatalf("grant owner target authority: %v", err)
 	}
@@ -508,7 +519,7 @@ func TestTargetScopedCredentialAuditCannotReadOtherTargets(t *testing.T) {
 	store := openCredentialTestStore(t)
 	user := createCredentialTestUser(t, store, "target-auditor")
 	if err := store.GrantUser(user.ID, ScopeGrant{
-		Cluster: "cluster-a", Instance: "target-a", Actions: []GatewayAction{ActionCredentialAudit},
+		Cluster: "cluster-a", Instance: "target-a",
 	}); err != nil {
 		t.Fatalf("grant target-scoped audit: %v", err)
 	}
@@ -519,9 +530,24 @@ func TestTargetScopedCredentialAuditCannotReadOtherTargets(t *testing.T) {
 		t.Fatalf("create target auditor token: %v", err)
 	}
 	other := createCredentialTestUser(t, store, "other-operator")
+	owned, err := store.CreateCredential(CredentialCreateRequest{
+		Name: "auditor-owned", Scope: CredentialScopePersonal, Type: CredentialTypeOpaque,
+		OwnerID: user.ID, CreatedBy: user.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := store.CreateCredential(CredentialCreateRequest{
+		Name: "other-owned", Scope: CredentialScopePersonal, Type: CredentialTypeOpaque,
+		OwnerID: other.ID, CreatedBy: other.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Visibility follows credential ownership, not the target grant.
 	for _, event := range []AuditEvent{
-		{UserID: other.ID, Cluster: "cluster-a", Instance: "target-a", Action: ActionCredentialUse, CredentialID: "cred_allowed", StartedAt: time.Now().UTC()},
-		{UserID: other.ID, Cluster: "cluster-b", Instance: "target-b", Action: ActionCredentialUse, CredentialID: "cred_forbidden", StartedAt: time.Now().UTC()},
+		{UserID: other.ID, Cluster: "cluster-b", Instance: "target-b", Action: ActionCredentialUse, CredentialID: owned.ID, CommandSummary: "cred_allowed", StartedAt: time.Now().UTC()},
+		{UserID: other.ID, Cluster: "cluster-a", Instance: "target-a", Action: ActionCredentialUse, CredentialID: foreign.ID, CommandSummary: "cred_forbidden", StartedAt: time.Now().UTC()},
 		{UserID: user.ID, Action: ActionCredentialRotate, CredentialID: "cred_own", StartedAt: time.Now().UTC()},
 	} {
 		if _, err := store.StartAudit(event); err != nil {
@@ -547,7 +573,7 @@ func TestCredentialAuditPermissionCannotReadNonCredentialEvents(t *testing.T) {
 	user := createCredentialTestUser(t, store, "credential-auditor")
 	other := createCredentialTestUser(t, store, "other-operator")
 	if err := store.GrantUser(user.ID, ScopeGrant{
-		Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionCredentialAudit},
+		Cluster: "*", Instance: "*",
 	}); err != nil {
 		t.Fatalf("grant credential audit: %v", err)
 	}
@@ -584,12 +610,11 @@ func createCredentialHTTPUser(t *testing.T, store *GatewayStore, name string, ad
 	if err != nil {
 		t.Fatalf("create user %s: %v", name, err)
 	}
-	actions := []GatewayAction{ActionCredentialCreate, ActionCredentialMetadata, ActionCredentialUse}
+	// Credential management needs no target grant; tests add target grants explicitly.
 	if admin {
-		actions = append(actions, ActionAdmin)
-	}
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "*", Instance: "*", Actions: actions}); err != nil {
-		t.Fatalf("grant credential actions: %v", err)
+		if err := store.SetUserAdmin(user.ID, true); err != nil {
+			t.Fatalf("set admin: %v", err)
+		}
 	}
 	token, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: name})
 	if err != nil {
