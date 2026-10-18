@@ -110,8 +110,11 @@ func TestInferDoSQLEngineFromCredential(t *testing.T) {
 			t.Fatalf("infer %#v = %s %s %v", testCase.data, engine, database, err)
 		}
 	}
-	if _, _, err := inferDoSQLEngine(map[string]string{"connection_uri": "mongodb://u:p@db/x"}); err == nil {
-		t.Fatal("mongodb must not use direct SQL")
+	if engine, database, err := inferDoSQLEngine(map[string]string{"connection_uri": "mongodb://u:p@db/x"}); err != nil || engine != "mongodb" || database != "x" {
+		t.Fatalf("mongodb credential = %s %s %v", engine, database, err)
+	}
+	if _, _, err := inferDoSQLEngine(map[string]string{"connection_uri": "redis://u:p@db/x"}); err == nil {
+		t.Fatal("unsupported engine accepted")
 	}
 }
 
