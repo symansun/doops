@@ -23,6 +23,9 @@ spec:
 {{ toYaml .Values.workload.selectorLabels | indent 8 }}
     spec:
       terminationGracePeriodSeconds: 30
+{{- with .Values.serviceAccount.name }}
+      serviceAccountName: {{ . | quote }}
+{{- end }}
       dnsPolicy: ClusterFirst
       hostNetwork: false
       hostPID: false
@@ -64,6 +67,8 @@ spec:
               value: {{ .Values.proxy.allowedHosts | quote }}
             - name: KUBECONFIG
               value: /root/.kube/config
+            - name: DOOPS_KUBECONFIG_SOURCE
+              value: {{ .Values.kubeconfig.source | default "mounted" | quote }}
             - name: DO_AGENT_PORT
               value: "9000"
             - name: DO_AGENT_URL

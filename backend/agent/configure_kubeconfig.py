@@ -55,10 +55,57 @@ def configure_kubeconfig(source, destination, service_host, service_port):
     os.replace(temporary, destination)
 
 
+SERVICE_ACCOUNT_DIR = Path("/var/run/secrets/kubernetes.io/serviceaccount")
+
+
+def configure_service_account_kubeconfig(
+    destination, service_host, service_port, account_dir=SERVICE_ACCOUNT_DIR
+):
+    """Write a kubeconfig that authenticates as the Pod's own ServiceAccount."""
+    account_dir = Path(account_dir)
+    destination = Path(destination)
+    host = str(ipaddress.ip_address(str(service_host).strip()))
+    port = int(str(service_port).strip())
+    if port < 1 or port > 65535:
+        raise ValueError("Kubernetes service port is invalid")
+    token_path = account_dir / "token"
+    ca_path = account_dir / "ca.crt"
+    if not token_path.is_file() or not ca_path.is_file():
+        raise ValueError("ServiceAccount token and ca.crt are required")
+    address = f"[{host}]" if ":" in host else host
+    # tokenFile keeps the rotated projected token instead of copying a snapshot.
+    config = {
+        "apiVersion": "v1",
+        "kind": "Config",
+        "clusters": [{
+            "name": "in-cluster",
+            "cluster": {
+                "server": f"https://{address}:{port}",
+                "certificate-authority": str(ca_path),
+            },
+        }],
+        "users": [{"name": "service-account", "user": {"tokenFile": str(token_path)}}],
+        "contexts": [{
+            "name": "in-cluster",
+            "context": {"cluster": "in-cluster", "user": "service-account"},
+        }],
+        "current-context": "in-cluster",
+    }
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(destination.name + ".tmp")
+    temporary.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, destination)
+
+
 def main():
+    if len(sys.argv) == 5 and sys.argv[1] == "--service-account":
+        configure_service_account_kubeconfig(*sys.argv[2:])
+        return
     if len(sys.argv) != 5:
         raise SystemExit(
-            "usage: configure_kubeconfig.py SOURCE DESTINATION SERVICE_HOST SERVICE_PORT"
+            "usage: configure_kubeconfig.py SOURCE DESTINATION SERVICE_HOST SERVICE_PORT\n"
+            "       configure_kubeconfig.py --service-account DESTINATION SERVICE_HOST SERVICE_PORT"
         )
     configure_kubeconfig(*sys.argv[1:])
 

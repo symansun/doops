@@ -18,6 +18,15 @@ doagentSettings:
 
 imagePullSecrets: []
 
+serviceAccount:
+  # Empty keeps the namespace default ServiceAccount.
+  name: ""
+
+kubeconfig:
+  # mounted: /root/.kube/config comes from a volume.
+  # serviceAccount: the entrypoint writes it from the Pod ServiceAccount token.
+  source: mounted
+
 gateway:
   url: ""
   cluster: ""
