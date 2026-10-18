@@ -239,38 +239,34 @@ CLI 在 Job 成功后执行 `capabilities --require structuredSSH`，探针失�
 `exec hostname` 确认 Gateway 当前实际服务的 Pod，并核对该 Pod 的 UID、Ready、
 imageID 与候选 digest、`do-agent --version` 和实际功能路径。
 
-还没有这个控制器的旧 Helm Agent，以及 K8S 新集群第一次接入，仍用
-`scripts/release-managed-agent.sh`。这条路径必须显式提供操作机 kubeconfig，
-`cluster/instance` 与 live Deployment 环境精确匹配。新集群无 Agent 时使用完整
-`--values` 安装；已有 Helm release 时由脚本执行 server-side Helm dry-run 和真实
-mutation。已有 release 模式会在读取 Helm release 或执行任何 mutation 前确认操作机上的 `doops` CLI
-支持 `capabilities` 协议探针；旧 CLI 必须先通过 CNB Release Asset 安装更新。
-新集群 `--values` 模式不要求本机 CLI 或已有 Gateway 登录，安装后另做接入验收。已有 release 模式先
-验证 Kubernetes API 可达性；API 超时、EOF 或鉴权失败会在读取 Helm release 之前停止，
-并报告外部控制器问题。已有 workload 但没有 Helm release 时脚本会停止，不能把它当成
-自动 adoption 路径。
+还没有这个控制器的旧 Helm Agent，以及 K8S 新集群第一次接入，用
+`scripts/release-managed-agent.sh`，从外部控制器执行。新集群无 Agent 时传完整
+`--values` 安装；已有 Helm release 时脚本先做 server-side dry-run，再做真实 mutation，
+失败时回滚。
+
+所有 Agent 升级路径都满足同一组保证，与由谁发起无关（`doops upgrade`、通过 `doops exec`
+在集群内起的同一个 Job，或外部脚本）：
+
+1. 改动前备份：Helm revision，或尚未由 Helm 管理时导出的 Deployment/ConfigMap。
+2. 改动后校验：新 Pod Ready 且 imageID 与固定 digest 一致、Gateway 重连、`release_commit` 正确。
+3. 校验失败自动恢复备份。
+4. 全程走 Gateway 审计路径，参数和输出不含凭据 payload。
+
+唯一的硬性限制是 Agent 不能在自己进程里替换自己的 workload，升级始终由独立的
+controller（集群内 Job 或外部脚本）执行。
+
+尚未由 Helm 管理的 Agent Deployment 可以在满足上述保证的前提下收编进 Helm：
+Deployment selector 与 Chart 的 `workload.selectorLabels` 一致即可原地接管；
+没有 `/root/.kube` 卷的 Agent 设置 `kubeconfig.source=serviceAccount` 和
+`serviceAccount.name`，由 Pod 自己的 ServiceAccount 提供集群权限。收编完成后
+按已有 Helm release 路径升级。
 
 已有 Helm release 的路径以 `maxSurge=1`、`maxUnavailable=0` 先拉起新 Pod，Gateway
-`Register` 用新会话替换旧 WebSocket 后再删旧副本。镜像拉取、调度、启动、readiness
-失败时，`doops upgrade` 的 Job 会尝试回滚；Job 成功后的协议探针失败由 CLI 请求另一个
-回滚 Job，需要 target 仍可连接，不能承诺 Gateway 完全离线时仍能自动恢复。
-`scripts/release-managed-agent.sh` 在其外部控制器中执行失败回滚。回滚失败必须明确报告，
-保留现场并停止发布；回滚命令成功后仍需核对旧镜像、最终 Deployment 和 Gateway 状态。
-自升级 Job 固定到 Agent 节点并保留 runtime class。新 Pod 的不可变 spec pin 不变，
-imageID 以同节点、同 pin 的 controller 运行身份为基准；不能把 OCI manifest/index
-digest 与 CRI imageID 直接比较。自动回滚使用升级前捕获的身份，手动回滚 controller
-使用已记录验收证据的具体历史 revision 镜像。验证证据保存在
-`doops-upgrade-verified-<release>` ConfigMap，绑定 workload/revision/image；
-superseded 本身不是成功证据。写入失败或证据缺失必须报告，旧版 release 的手动回滚
-仍需授权外部控制器，不能跳过校验。旧 Agent 生成的是旧版 Job 脚本，因此更新后
-还必须再次通过该 Agent 执行升级/回滚验收，不能仅凭新镜像已构建就宣称控制器已生效。
-新集群 `--values` 路径是 bootstrap-only，只做 Helm wait 和最终
-Deployment 检查，不做 Gateway 接管或自动回滚；完成后必须继续安装验收。
-禁止临时 Agent、临时 target、`kubectl set image`、release-runner，以及通过旧 Agent
-`exec`、Docker restart 或进程内 Helm mutation 升级其自身。
-对于已有 Helm release 的 `scripts/release-managed-agent.sh` 路径，发布后还必须通过
-`doops -session <session>-capabilities capabilities --target <target> --require structuredSSH`
-完成协议能力握手；能力缺失视为发布失败，自动回滚，不得用普通 `exec` 代替结构化 SSH。
+`Register` 用新会话替换旧 WebSocket 后再删旧副本。Job 成功后 CLI 执行
+`capabilities --require structuredSSH`，失败时请求回滚 Job；Gateway 完全离线时
+无法自动恢复。自升级 Job 固定到 Agent 节点并保留 runtime class；验证证据保存在
+`doops-upgrade-verified-<release>` ConfigMap，手动回滚只使用有验收证据的历史 revision。
+旧 Agent 生成的是旧版 Job 脚本，新控制器要等 Agent 升级后才生效。
 
 ```bash
 bash scripts/release-managed-agent.sh \
@@ -299,11 +295,8 @@ K3s/containerd 操作机优先传入已核验 digest。仅更换镜像时不传�
 的冲突地址。新 Pod 接管后必须同时通过 Pod spec 对比和容器内 DNS
 解析验证；省略参数时保留现网 aliases，不允许解析失败时回退到其他地址。
 
-新集群还没有 Agent 时，同一条命令改传完整 `--values` 和本机 kubeconfig，仍然只走
-这份 Chart 的 `helm upgrade --install`。已有非 Helm workload 不能由该脚本自动接管；
-必须先完成独立、明确的 Helm adoption，再按已有 Helm release 路径发布。自定义
-entrypoint 或 `hostNetwork` 的 K8S workload 必须先完成标准 Chart 迁移；这不是独立 Docker
-Agent 升级的前置条件。
+新集群还没有 Agent 时，同一条命令改传完整 `--values` 和本机 kubeconfig，走这份
+Chart 的 `helm upgrade --install`。已有非 Helm workload 按上面的收编方式进入 Helm。
 
 ### 独立 DockerHost 发布
 
@@ -368,8 +361,7 @@ bash scripts/release-host-agent.sh \
    每次调用复用其唯一 SSH staging ID 绑定 receipt；重复 session 被拒绝后，自动回滚
    不得操作上一次发布的 receipt。该 ID 由脚本内部生成，不新增用户配置或版本门禁。
 
-禁止临时 Agent/target/runner、`kubectl set image`、跳过 `request_id` 验证或手工换镜像
-冒充该正式入口。宿主入口和只读授权边界见 [宿主访问说明](PHYSICAL_HOST_ACCESS.md)。
+宿主入口和只读授权边界见 [宿主访问说明](PHYSICAL_HOST_ACCESS.md)。
 
 ### 环境依赖注射规范 (Secret)
 严禁在 `agent.yaml` 中明文出现 `LLM_API_KEY=sk-xxxx` 之类的配置。此类密钥应由 Secret 提取并通过 `envFrom` 下放。
@@ -390,8 +382,7 @@ overlay snapshot、FIFO、`/etc/hosts` 或 nerdctl name-store 位于宿主机路
 ```
 
 遇到 containerd overlay/FIFO/name-store 错误时，保留现有 Agent 并读取挂载、节点和
-运行时错误证据。挂载修正必须进入仓库 Chart/values，再由上述显式 Agent 配置变更
-入口收敛；不能创建临时特权 Pod、手工启动 Agent 容器或强制删除旧副本绕过发布控制器。
+运行时错误证据。挂载修正必须进入仓库 Chart/values，再由上述 Agent 升级路径收敛。
 Agent 完全不可用时，SSH 仅用于已明确授权的自恢复，恢复后仍须完成 Gateway、版本和
 功能验收，不能把一次主机修复当成版本发布。
 
@@ -399,4 +390,4 @@ Agent 完全不可用时，SSH 仅用于已明确授权的自恢复，恢复后�
 
 已有独立 Docker Agent 按上述 DockerHost 入口保持运行方式发布。非 Helm 的 K8S
 `agent.yaml`、二进制 bind-mount 或裸机 tar 不在该入口范围；需先明确其受支持的发布或
-迁移方案，不能猜测并套用 Docker/Helm。`release-managed-agent.sh` 不会自动 adoption。
+迁移方案。

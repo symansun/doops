@@ -71,8 +71,8 @@ func TestHandleAgentUpgradeDryRunRejectsLegacyDaemonSet(t *testing.T) {
 		"dry_run":true
 	}`))
 	if err == nil ||
-		!strings.Contains(err.Error(), "explicit Helm migration") ||
-		!strings.Contains(err.Error(), "not automatic adoption") {
+		!strings.Contains(err.Error(), "Helm-managed Deployment") ||
+		!strings.Contains(err.Error(), "BUILD_DEPLOY_SOP.md") {
 		t.Fatalf("expected legacy Agent guidance, got %v", err)
 	}
 }
