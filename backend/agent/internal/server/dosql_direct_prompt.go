@@ -96,7 +96,7 @@ func handleDirectDoSQLPrompt(ctx context.Context, sessionID string, args api.Age
 // query prompt only accepts read statements so ask authority never mutates.
 func planDirectDoSQL(engine string, args api.AgentPromptParams) (doSQLDirectRequest, error) {
 	apply := strings.ToLower(strings.TrimSpace(args.Operation)) == "apply"
-	statements, err := splitDoSQLStatements(engine, args.SQL)
+	statements, err := splitDirectStatements(engine, args.SQL)
 	if err != nil {
 		return doSQLDirectRequest{}, err
 	}
@@ -106,23 +106,37 @@ func planDirectDoSQL(engine string, args api.AgentPromptParams) (doSQLDirectRequ
 			return doSQLDirectRequest{}, errors.New("dosql_query_options_invalid: --verify and --dry-run require --mode apply")
 		}
 		for index, statement := range statements {
-			if !doSQLReadOnlyStatement(statement) {
+			if !directReadOnlyStatement(engine, statement) {
 				return doSQLDirectRequest{}, fmt.Errorf("dosql_query_requires_read_only: statement %d is not a read statement; use --mode apply", index+1)
 			}
 		}
 		return request, nil
 	}
 	if strings.TrimSpace(args.SQLVerification) != "" {
-		verification, err := splitDoSQLStatements(engine, args.SQLVerification)
+		verification, err := splitDirectStatements(engine, args.SQLVerification)
 		if err != nil {
 			return doSQLDirectRequest{}, err
 		}
-		if len(verification) != 1 || !doSQLReadOnlyStatement(verification[0]) {
+		if len(verification) != 1 || !directReadOnlyStatement(engine, verification[0]) {
 			return doSQLDirectRequest{}, errors.New("dosql_verification_invalid: verification must be exactly one read statement")
 		}
 		request.Verification = verification[0]
 	}
 	return request, nil
+}
+
+func splitDirectStatements(engine, text string) ([]string, error) {
+	if engine == "mongodb" {
+		return parseMongoStatements(text)
+	}
+	return splitDoSQLStatements(engine, text)
+}
+
+func directReadOnlyStatement(engine, statement string) bool {
+	if engine == "mongodb" {
+		return mongoOperationKind(statement) == "read"
+	}
+	return doSQLReadOnlyStatement(statement)
 }
 
 func directDoSQLMode(request doSQLDirectRequest) string {
@@ -253,6 +267,8 @@ func inferDoSQLEngine(data map[string]string) (string, string, error) {
 		return "mysql", database, nil
 	case "oracle":
 		return "oracle", database, nil
+	case "mongodb":
+		return "mongodb", database, nil
 	}
 	return "", "", fmt.Errorf("dosql_engine_unsupported: %s is not supported for direct SQL", parsed.Scheme)
 }

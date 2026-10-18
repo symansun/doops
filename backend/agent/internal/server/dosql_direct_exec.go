@@ -40,10 +40,12 @@ type doSQLDirectResult struct {
 	Committed bool   `json:"committed"`
 	// ImplicitCommits counts statements the engine committed on its own (DDL on
 	// MySQL/Oracle); those cannot be rolled back by this executor.
-	ImplicitCommits int                    `json:"implicit_commits,omitempty"`
-	Statements      []doSQLStatementResult `json:"statements"`
-	Verification    *doSQLStatementResult  `json:"verification,omitempty"`
-	DurationMS      int64                  `json:"duration_ms"`
+	ImplicitCommits int `json:"implicit_commits,omitempty"`
+	// AuthSource is the MongoDB authentication database that accepted the login.
+	AuthSource   string                 `json:"auth_source,omitempty"`
+	Statements   []doSQLStatementResult `json:"statements"`
+	Verification *doSQLStatementResult  `json:"verification,omitempty"`
+	DurationMS   int64                  `json:"duration_ms"`
 }
 
 // executeDoSQLDirect runs the whole batch plus its verification in one
@@ -54,6 +56,9 @@ func executeDoSQLDirect(ctx context.Context, request doSQLDirectRequest) (doSQLD
 	result := doSQLDirectResult{Status: "failed"}
 	if len(request.Statements) == 0 {
 		return result, errors.New("dosql_statement_required")
+	}
+	if request.Target.Engine == "mongodb" {
+		return executeDoSQLMongo(ctx, request)
 	}
 	if request.DryRun {
 		// Checked before connecting: running the DDL is what would leak it.
