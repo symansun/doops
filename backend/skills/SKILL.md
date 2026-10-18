@@ -352,6 +352,12 @@ DoSql 只有自动凭据模式：Gateway 按资源 ID 绑定当前 target 上全
 已隐式提交的 DDL 在结果里体现为 `implicit_commits` 和 `partially_committed`，不会被报成已回滚。
 真实 apply 在 Agent 上按库记录带哈希链的版本日志（`.doops-dosql-versions`），执行前先取版本号，日志不可写或被篡改时拒绝执行；
 查询和 dry-run 不产生版本。日志只在 Agent 的 `/root` 为持久卷时跨重启保留。
+MongoDB 同样走 `--sql/--file`，语句是 JSON 操作而非 SQL：`{"collection":"orders","op":"updateMany","filter":{...},"update":{"$set":{...}}}`，
+可用 JSON 数组或连续多个文档组成一批。读：`find`/`count`/`aggregate`；写：`insertOne/insertMany/updateOne/updateMany/replaceOne/deleteOne/deleteMany`，
+一批写操作与 `--verify` 在同一事务内，失败整体回滚，`--dry-run` 回滚（需要副本集，单机返回 `dosql_transaction_unsupported`）。
+`createCollection/createIndex/dropIndex/drop` 不能进事务：`--dry-run` 含它们返回 `dosql_dry_run_ddl_unsupported`，与写操作混批返回
+`dosql_mixed_ddl_dml_unsupported`，执行后体现为 `implicit_commits`。`$where/$function/$accumulator`、聚合 `$out/$merge`、`system.*` 集合被拒绝；
+`deleteOne/deleteMany` 必须显式给 `filter`（`{}` 表示全部）。认证库默认取 URI 的库，认证失败时重试一次 `authSource=admin`，实际使用的库见结果的 `auth_source`。
 | 推送本地目录 | `doops -session <s> push --target <t> --src <dir>` |
 | 拉取远端工作区 | `doops -session <s> pull --target <t> --dest <dir>` |
 | 小文本读写 | `doops read/write ...` |

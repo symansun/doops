@@ -63,6 +63,8 @@ func doSQLConnectionTarget(engine, databaseName string, data map[string]string) 
 		return doSQLURITarget(engine, "pgx", databaseName, data["connection_uri"], []string{"postgres", "postgresql"}, "5432")
 	case "oracle":
 		return doSQLURITarget(engine, "oracle", databaseName, data["connection_uri"], []string{"oracle"}, "1521")
+	case "mongodb":
+		return doSQLURITarget(engine, "mongo", databaseName, data["connection_uri"], []string{"mongodb"}, "27017")
 	case "mysql":
 		if uri := data["connection_uri"]; uri != "" {
 			return doSQLMySQLTarget(databaseName, uri, "mysql://", "", "")
