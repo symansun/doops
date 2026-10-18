@@ -332,25 +332,22 @@ doops credential grant \
 ```
 
 该命令只建立凭据到 target 的绑定，不接收用户授权参数；谁能使用凭据由该用户的 target
-操作权限决定。
+操作权限决定。namespace、`--use`（省略时按凭据类型推断）、workload、image、Helm 和
+`--required-keys` 等物化参数在这一步写入绑定，之后的 verify 和运行时物化都使用这里保存的值。
 
-4. 在相同 scope 验证 staged version：
+4. 验证 staged version：
 
 ```bash
 doops -session credential-verify-<version> credential verify \
   --target <target> \
   --id <credential-id> \
-  --version-id <version-id> \
-  --namespace <namespace> \
-  --use imagePull \
-  --workload-kind Deployment \
-  --workload-name <workload> \
-  --image-repository registry.example.com/team/app \
-  --image-digest sha256:<64-hex>
+  --version-id <version-id>
 ```
 
-验证会临时物化 staged version，检查 Secret 类型/key 集合及类型特定外部能力，然后恢复
-当前 active version 或清理临时资源。输出仅包含状态、resourceVersion、digest 和错误类别。
+verify 只需要 target、凭据 ID 和版本，不再接受 namespace、use、keys 等参数；
+Gateway 对该 target 上的每个 active 绑定，用绑定时保存的参数临时物化 staged version，
+检查 Secret 类型/key 集合及类型特定外部能力，然后恢复当前 active version 或清理临时资源。
+输出仅包含状态、resourceVersion、digest 和错误类别。要改物化参数，先吊销旧绑定再按新参数 grant。
 
 5. 激活版本：
 

@@ -636,9 +636,13 @@ func (h *GatewayHub) handleCredentialVerify(
 	}
 	body.VersionID = strings.TrimSpace(body.VersionID)
 	body.SessionID = strings.TrimSpace(body.SessionID)
-	body.Scope = normalizeCredentialGrantScope(body.Scope)
+	// Verification only selects the target; each grant is verified with the scope
+	// stored when it was bound, so callers never restate namespace, use or keys.
+	body.Scope = CredentialGrantScope{
+		Cluster: strings.TrimSpace(body.Scope.Cluster), Instance: strings.TrimSpace(body.Scope.Instance),
+	}
 	if body.VersionID == "" || validateSession(body.SessionID) != nil ||
-		validateCredentialGrantScope(body.Scope) != nil {
+		body.Scope.Cluster == "" || body.Scope.Instance == "" {
 		http.Error(w, "invalid credential verify request", http.StatusBadRequest)
 		return
 	}
@@ -682,8 +686,16 @@ func (h *GatewayHub) handleCredentialVerify(
 	}
 	evidence := make([]credentialVerificationEvidence, 0, len(grants))
 	verifications := make([]CredentialVerification, 0, len(grants))
-	for _, grant := range grants {
-		ref := CredentialPlanReference{Name: resource.Name, Scope: body.Scope}
+	var auditScope CredentialGrantScope
+	for index, grant := range grants {
+		scope := grant.Scope
+		if scope.Use == "" {
+			scope.Use = credentialUseForType(resource.Type)
+		}
+		if index == 0 {
+			auditScope = scope
+		}
+		ref := CredentialPlanReference{Name: resource.Name, Scope: scope}
 		expectedPreviousVersionID := ""
 		if activeErr == nil {
 			expectedPreviousVersionID = active.ID
@@ -714,7 +726,7 @@ func (h *GatewayHub) handleCredentialVerify(
 		}
 		verifications = append(verifications, CredentialVerification{
 			CredentialID: resource.ID, VersionID: version.ID, GrantID: grant.ID,
-			Use: body.Scope.Use, Request: request, Evidence: observed,
+			Use: scope.Use, Request: request, Evidence: observed,
 		})
 		evidence = append(evidence, credentialVerificationEvidence{
 			Status: observed.Status, ResourceVersion: observed.ResourceVersion,
@@ -723,7 +735,7 @@ func (h *GatewayHub) handleCredentialVerify(
 	}
 	if err := h.store.RecordCredentialVerificationsAudited(verifications, auditID, AuditFinish{
 		Status: "success", Cluster: body.Scope.Cluster, Instance: body.Scope.Instance,
-		Scope: &body.Scope, VersionID: version.ID, EndedAt: time.Now().UTC(),
+		Scope: &auditScope, VersionID: version.ID, EndedAt: time.Now().UTC(),
 	}); err != nil {
 		h.writeCredentialVerificationError(w, auditID, "credential_verification_persist_failed", http.StatusInternalServerError)
 		return
