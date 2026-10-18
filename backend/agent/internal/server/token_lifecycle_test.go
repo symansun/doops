@@ -73,7 +73,7 @@ func TestGatewayClientWSTokenLifecycleAdmission(t *testing.T) {
 	for _, state := range []string{"enabled", "disabled", "revoked", "expired", "invalid-expiry", "reassigned"} {
 		t.Run(state, func(t *testing.T) {
 			f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
-			token := f.user(t, "token-operator", ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec, ActionTargetsList}})
+			token := f.user(t, "token-operator", ScopeGrant{Cluster: "dev", Instance: "local"})
 			auth, err := f.store.VerifyUserToken(token.Plaintext)
 			if err != nil {
 				t.Fatal(err)
@@ -100,7 +100,7 @@ func TestGatewayClientWSTokenLifecycleAdmission(t *testing.T) {
 				if createErr != nil {
 					t.Fatal(createErr)
 				}
-				if err := f.store.GrantUser(other.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
+				if err := f.store.GrantUser(other.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
 					t.Fatal(err)
 				}
 				_, err = f.store.db.Exec("UPDATE tokens SET user_id = ? WHERE id = ?", other.ID, auth.TokenID)
@@ -153,7 +153,7 @@ func TestGatewayClientWSTokenLifecycleAdmission(t *testing.T) {
 
 func TestGatewayClientWSStoreFailureDoesNotForward(t *testing.T) {
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
-	token := f.user(t, "store-failure-operator", ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}})
+	token := f.user(t, "store-failure-operator", ScopeGrant{Cluster: "dev", Instance: "local"})
 	agent, client := f.agent(t, "store-failure"), f.client(t, token)
 	response, forwarded := tokenLifecycleShellCall(t, client, agent, 2, "store-failure-before")
 	if !forwarded || response["error"] != nil || response["result"] == nil {

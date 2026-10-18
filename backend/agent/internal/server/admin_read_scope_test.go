@@ -10,14 +10,14 @@ import (
 func newAdminReadScopeFixture(t *testing.T) *adminAuditFixture {
 	t.Helper()
 	f := newAdminAuditFixture(t)
-	if err := f.store.GrantUser(f.user.ID, ScopeGrant{Cluster: "dev", Instance: "node", Actions: []GatewayAction{ActionAdmin}}); err != nil {
+	if err := f.store.GrantUser(f.user.ID, ScopeGrant{Cluster: "dev", Instance: "node"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.store.GrantUser(f.user.ID, ScopeGrant{Cluster: "dev", Instance: "sibling", Actions: []GatewayAction{ActionRead}}); err != nil {
+	if err := f.store.GrantUser(f.user.ID, ScopeGrant{Cluster: "dev", Instance: "sibling"}); err != nil {
 		t.Fatal(err)
 	}
 	if f.store.UserIsPlatformAdmin(f.user.ID) {
-		t.Fatal("fixture must be a target admin")
+		t.Fatal("fixture must hold target grants only, not platform admin")
 	}
 	for _, target := range []struct{ cluster, instance string }{{"dev", "node"}, {"dev", "sibling"}, {"prod", "node"}} {
 		if err := f.store.MarkAgentOnline(AgentStatus{Cluster: target.cluster, Instance: target.instance, Remote: target.cluster + "/" + target.instance}); err != nil {
@@ -77,18 +77,18 @@ func TestAdminReadScopeGlobalResources(t *testing.T) {
 func TestAdminReadScopeOperationsExactTarget(t *testing.T) {
 	f := newAdminReadScopeFixture(t)
 	for _, query := range []string{
-		"cluster=dev&instance=sibling", "cluster=prod&instance=node", "cluster=dev&instance=*",
+		"cluster=dev&instance=node", "cluster=dev&instance=sibling", "cluster=prod&instance=node", "cluster=dev&instance=*",
 		"", "cluster=dev", "instance=node", "cluster=dev&instance=sibling&id=" + f.operationID,
 	} {
 		for _, method := range []string{http.MethodGet, http.MethodHead} {
 			response := credentialHTTPRequest(t, f.mux, f.userToken, method, "/v1/admin/operations?"+query, nil)
 			if response.Code != http.StatusForbidden {
-				t.Errorf("target admin read unauthorized operations: %s %s HTTP %d: %s", method, query, response.Code, response.Body.String())
+				t.Errorf("target grant read admin operations: %s %s HTTP %d: %s", method, query, response.Code, response.Body.String())
 			}
 		}
 	}
 	for _, tc := range []struct{ token, cluster, instance string }{
-		{f.userToken, "dev", "node"}, {f.adminToken, "dev", "node"},
+		{f.adminToken, "dev", "node"},
 		{f.adminToken, "dev", "sibling"}, {f.adminToken, "prod", "node"},
 	} {
 		response := credentialHTTPRequest(t, f.mux, tc.token, http.MethodGet,
@@ -114,9 +114,15 @@ func TestAdminReadScopeCollectionsFilterResources(t *testing.T) {
 		for _, role := range []struct {
 			name, token string
 			count       int
-		}{{"target", f.userToken, 1}, {"platform", f.adminToken, 3}} {
+		}{{"target", f.userToken, 0}, {"platform", f.adminToken, 3}} {
 			t.Run(tc.key+"/"+role.name, func(t *testing.T) {
 				response := credentialHTTPRequest(t, f.mux, role.token, http.MethodGet, tc.path, nil)
+				if role.name == "target" {
+					if response.Code != http.StatusForbidden {
+						t.Fatalf("target grant read admin collection: HTTP %d: %s", response.Code, response.Body.String())
+					}
+					return
+				}
 				var result map[string][]struct {
 					Cluster  string `json:"cluster"`
 					Instance string `json:"instance"`
@@ -143,7 +149,7 @@ func TestAdminReadScopeWrapperHEADAndUnsupportedMethods(t *testing.T) {
 	}{
 		{"target-global", "/v1/admin/users", "", f.userToken, http.StatusForbidden},
 		{"platform-global", "/v1/admin/users", "", f.adminToken, http.StatusOK},
-		{"allowed-target", "/v1/admin/operations", "?cluster=dev&instance=node", f.userToken, http.StatusOK},
+		{"granted-target", "/v1/admin/operations", "?cluster=dev&instance=node", f.userToken, http.StatusForbidden},
 		{"sibling-target", "/v1/admin/operations", "?cluster=dev&instance=sibling", f.userToken, http.StatusForbidden},
 		{"platform-target", "/v1/admin/operations", "?cluster=dev&instance=sibling", f.adminToken, http.StatusOK},
 	} {

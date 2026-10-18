@@ -69,7 +69,8 @@ func TestSessionConflictPolicyMatchesMutationAndWorkspaceLeases(t *testing.T) {
 		session  string
 		conflict bool
 	}{
-		{"same mutation", ActionExec, holder.Resource, "release", true},
+		{"same session shell", ActionExec, holder.Resource, "release", false},
+		{"same session workspace write", ActionWrite, "workspace:release", "release", true},
 		{"different mutation", ActionExec, holder.Resource, "other", false},
 		{"same workspace", ActionWrite, "workspace:release", "release", true},
 		{"different workspace", ActionWrite, "workspace:other", "other", false},
@@ -129,29 +130,29 @@ func TestActiveOperationConflictFencesSameSessionAcrossConnections(t *testing.T)
 	}
 	service.activeOps[holder.ID] = &gatewayActiveOperation{GatewayActiveOperation: holder, agent: oldAgent}
 
-	if got := service.activeOperationConflict(GatewayActiveOperation{
-		Cluster: "dev", Instance: "node", Action: ActionExec,
-		Session: "reconnect-session", Resource: "target-mutation:dev/node",
-	}, newAgent); got != holder.ID {
-		t.Fatalf("same-session reconnect was not fenced: got %q", got)
+	workspace := func(session string) GatewayActiveOperation {
+		return GatewayActiveOperation{
+			Cluster: "dev", Instance: "node", Action: ActionWrite,
+			Session: session, Resource: "workspace:" + session,
+		}
 	}
-	if got := service.activeOperationConflict(GatewayActiveOperation{
-		Cluster: "dev", Instance: "node", Action: ActionExec,
-		Session: "reconnect-session", Resource: "target-mutation:dev/node",
-	}, oldAgent); got != "" {
+	if got := service.activeOperationConflict(workspace("reconnect-session"), newAgent); got != holder.ID {
+		t.Fatalf("same-session workspace after reconnect was not fenced: got %q", got)
+	}
+	if got := service.activeOperationConflict(workspace("reconnect-session"), oldAgent); got != "" {
 		t.Fatalf("same-connection operation was incorrectly fenced: %q", got)
 	}
-	if got := service.activeOperationConflict(GatewayActiveOperation{
-		Cluster: "dev", Instance: "node", Action: ActionExec,
-		Session: "other-session", Resource: "target-mutation:dev/node",
-	}, newAgent); got != "" {
+	if got := service.activeOperationConflict(workspace("other-session"), newAgent); got != "" {
 		t.Fatalf("different session was incorrectly fenced: %q", got)
 	}
-	service.activeOps[holder.ID].State = "finalizing"
 	if got := service.activeOperationConflict(GatewayActiveOperation{
 		Cluster: "dev", Instance: "node", Action: ActionExec,
 		Session: "reconnect-session", Resource: "target-mutation:dev/node",
 	}, newAgent); got != "" {
+		t.Fatalf("same-session shell calls must not fence each other across connections: got %q", got)
+	}
+	service.activeOps[holder.ID].State = "finalizing"
+	if got := service.activeOperationConflict(workspace("reconnect-session"), newAgent); got != "" {
 		t.Fatalf("pending audit blocked a finished execution: got %q", got)
 	}
 }
@@ -161,8 +162,8 @@ func TestActiveOperationRegistrationBindsConnectionForQueueAndFence(t *testing.T
 	oldAgent := &GatewayAgent{}
 	newAgent := &GatewayAgent{}
 	candidate := GatewayActiveOperation{
-		Cluster: "dev", Instance: "node", Action: ActionExec,
-		Session: "same-session", Resource: "target-mutation:dev/node",
+		Cluster: "dev", Instance: "node", Action: ActionWrite,
+		Session: "same-session", Resource: "workspace:same-session",
 	}
 
 	first, holderID := service.registerActiveOperationForAgent(candidate, func() {}, oldAgent)
@@ -188,8 +189,8 @@ func TestActiveOperationRegistrationBindsConnectionForQueueAndFence(t *testing.T
 func TestActiveOperationConflictReportsOldestOwnerDeterministically(t *testing.T) {
 	oldAgent, current := &GatewayAgent{}, &GatewayAgent{}
 	candidate := GatewayActiveOperation{
-		Cluster: "dev", Instance: "node", Action: ActionExec,
-		Session: "same-session", Resource: "target-mutation:dev/node",
+		Cluster: "dev", Instance: "node", Action: ActionWrite,
+		Session: "same-session", Resource: "workspace:same-session",
 	}
 	service := &ClientService{activeOps: map[string]*gatewayActiveOperation{}}
 	for id, started := range map[string]int64{"a-new": 2, "b-old": 1, "c-old": 1, "finalized": 0, "current": 0} {
@@ -250,7 +251,8 @@ func TestNginxLeaseProtectsItsResourceAndSessionWithoutTargetExclusion(t *testin
 
 func TestSessionQueueAllowsOtherSessionAndReleasesAfterCancellation(t *testing.T) {
 	agent := &GatewayAgent{closed: make(chan struct{})}
-	holder, err := agent.acquireActionLeaseForSession(context.Background(), ActionExec, "target-mutation:dev/node", "release", 0, time.Second)
+	// The session's workspace is the shared resource; a second writer queues behind it.
+	holder, err := agent.acquireActionLeaseForSession(context.Background(), ActionWrite, "workspace:release", "release", 0, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +261,7 @@ func TestSessionQueueAllowsOtherSessionAndReleasesAfterCancellation(t *testing.T
 	defer cancel()
 	finished := make(chan error, 1)
 	go func() {
-		lease, err := agent.acquireActionLeaseForSession(ctx, ActionExec, "target-mutation:dev/node", "release", 1, time.Second)
+		lease, err := agent.acquireActionLeaseForSession(ctx, ActionWrite, "workspace:release", "release", 1, time.Second)
 		if lease != nil {
 			lease.Release()
 		}

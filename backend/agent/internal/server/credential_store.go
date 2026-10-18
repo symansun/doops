@@ -803,7 +803,7 @@ func (s *GatewayStore) AuthorizeCredentialGrant(req CredentialUseRequest) (Crede
 		req.Scope.Cluster == "" || req.Scope.Instance == "" {
 		return CredentialResource{}, CredentialGrant{}, ErrCredentialGrantDenied
 	}
-	if !s.CanUseTargetCredentials(req.ActorID, req.Scope.Cluster, req.Scope.Instance) {
+	if !s.UserCanUseTarget(req.ActorID, req.Scope.Cluster, req.Scope.Instance) {
 		return CredentialResource{}, CredentialGrant{}, ErrCredentialForbidden
 	}
 	if req.Scope.Use != "" && !validCredentialUse(req.Scope.Use) {

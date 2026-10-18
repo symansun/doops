@@ -101,7 +101,7 @@ wait_for_http "http://127.0.0.1:${GW_PORT}/health" 200
 
 echo "[4/8] creating a synthetic admin route"
 "${GW_BIN}" user create -db "${GW_DB}" -name smoke-admin >/dev/null
-"${GW_BIN}" grant -db "${GW_DB}" -user smoke-admin -cluster '*' -instance '*' -actions admin >/dev/null
+"${GW_BIN}" grant -db "${GW_DB}" -user smoke-admin -admin >/dev/null
 TOKEN="$("${GW_BIN}" token create -db "${GW_DB}" -user smoke-admin -name smoke |
   awk -F= '/^token=/{print $2}')"
 test -n "${TOKEN}"

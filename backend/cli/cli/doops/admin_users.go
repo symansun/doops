@@ -41,13 +41,12 @@ type gatewayAdminUserCreateResponse struct {
 }
 
 type gatewayAdminGrant struct {
-	ID        int64    `json:"id"`
-	UserID    string   `json:"user_id"`
-	UserName  string   `json:"user_name"`
-	Cluster   string   `json:"cluster"`
-	Instance  string   `json:"instance"`
-	Actions   []string `json:"actions"`
-	CreatedAt string   `json:"created_at"`
+	ID        int64  `json:"id"`
+	UserID    string `json:"user_id"`
+	UserName  string `json:"user_name"`
+	Cluster   string `json:"cluster"`
+	Instance  string `json:"instance"`
+	CreatedAt string `json:"created_at"`
 }
 
 type gatewayAdminGrantsResponse struct {
@@ -55,11 +54,10 @@ type gatewayAdminGrantsResponse struct {
 }
 
 type gatewayAdminGrantRequest struct {
-	UserID   string   `json:"user_id,omitempty"`
-	User     string   `json:"user,omitempty"`
-	Cluster  string   `json:"cluster"`
-	Instance string   `json:"instance"`
-	Actions  []string `json:"actions"`
+	UserID   string `json:"user_id,omitempty"`
+	User     string `json:"user,omitempty"`
+	Cluster  string `json:"cluster"`
+	Instance string `json:"instance"`
 }
 
 type gatewayAdminUserDisableRequest struct {
@@ -71,10 +69,6 @@ type gatewayAdminUserPasswordRequest struct {
 	UserID   string `json:"user_id,omitempty"`
 	User     string `json:"user,omitempty"`
 	Password string `json:"password"`
-}
-
-var ordinaryGatewayActions = []string{
-	"target:use",
 }
 
 func GatewayAdminUsersList(gateway, adminToken string) ([]gatewayAdminUserSummary, error) {
@@ -387,7 +381,6 @@ func runAdminUserCreate(args []string, servers []Server, configErr error) {
 			UserID:   created.ID,
 			Cluster:  server.Cluster,
 			Instance: server.Instance,
-			Actions:  append([]string(nil), ordinaryGatewayActions...),
 		}); err != nil {
 			rollback(fmt.Errorf("grant target %q: %w", grantTarget, err))
 		}
@@ -493,15 +486,12 @@ func verifyCreatedGatewayUser(gateway, adminToken, userID, userName string, gran
 		expected[strings.TrimSpace(server.Cluster)+"/"+strings.TrimSpace(server.Instance)] = struct{}{}
 	}
 	for _, grant := range grants {
-		if grant.Cluster == "*" || grant.Instance == "*" || containsStringValue(grant.Actions, "*") {
+		if grant.Cluster == "*" || grant.Instance == "*" {
 			return fmt.Errorf("verify grants: wildcard grant %d remains", grant.ID)
 		}
 		scope := strings.TrimSpace(grant.Cluster) + "/" + strings.TrimSpace(grant.Instance)
 		if _, ok := expected[scope]; !ok {
 			return fmt.Errorf("verify grants: unexpected scope %s", scope)
-		}
-		if !sameStringSet(grant.Actions, ordinaryGatewayActions) {
-			return fmt.Errorf("verify grants: scope %s has unexpected actions", scope)
 		}
 		delete(expected, scope)
 	}
@@ -542,21 +532,18 @@ func runAdminGrantList(args []string, servers []Server, configErr error) {
 		os.Exit(1)
 	}
 	for _, grant := range grants {
-		fmt.Printf("grant_id=%d user_id=%s user=%s cluster=%s instance=%s actions=%s created_at=%s\n",
-			grant.ID, grant.UserID, grant.UserName, grant.Cluster, grant.Instance,
-			strings.Join(grant.Actions, ","), grant.CreatedAt)
+		fmt.Printf("grant_id=%d user_id=%s user=%s cluster=%s instance=%s created_at=%s\n",
+			grant.ID, grant.UserID, grant.UserName, grant.Cluster, grant.Instance, grant.CreatedAt)
 	}
 }
 
 func runAdminGrantAdd(args []string, servers []Server, configErr error) {
 	var target, scopeTarget, userID, user string
-	var actions stringListFlag
 	fs := flag.NewFlagSet("admin grant add", flag.ExitOnError)
 	fs.StringVar(&target, "target", "", "Configured gateway target whose admin token should be used")
 	fs.StringVar(&scopeTarget, "scope-target", "", "Configured target whose exact cluster/instance should be granted")
 	fs.StringVar(&userID, "user-id", "", "Gateway user id")
 	fs.StringVar(&user, "user", "", "Gateway username")
-	fs.Var(&actions, "action", "Advanced action; omit for standard target access")
 	fs.Parse(args)
 	if strings.TrimSpace(userID) == "" && strings.TrimSpace(user) == "" {
 		fmt.Println("Error: exactly one of --user-id or --user is required")
@@ -576,18 +563,15 @@ func runAdminGrantAdd(args []string, servers []Server, configErr error) {
 		fmt.Println("Error: --scope-target belongs to a different Gateway")
 		os.Exit(1)
 	}
-	if len(actions) == 0 {
-		actions = append(actions, ordinaryGatewayActions...)
-	}
 	err := GatewayAdminGrantCreate(gateway, token, gatewayAdminGrantRequest{
-		UserID: userID, User: user, Cluster: scope.Cluster, Instance: scope.Instance, Actions: actions,
+		UserID: userID, User: user, Cluster: scope.Cluster, Instance: scope.Instance,
 	})
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("grant_created=true user=%s user_id=%s cluster=%s instance=%s actions=%s\n",
-		user, userID, scope.Cluster, scope.Instance, strings.Join(actions, ","))
+	fmt.Printf("grant_created=true user=%s user_id=%s cluster=%s instance=%s\n",
+		user, userID, scope.Cluster, scope.Instance)
 }
 
 func runAdminGrantDelete(args []string, servers []Server, configErr error) {
@@ -614,34 +598,6 @@ func printAdminUsersUsage() {
 
 func printAdminGrantsUsage() {
 	fmt.Println("Usage: doops admin grant list --target <gateway-target> [--user-id <user-id>]")
-	fmt.Println("       doops admin grant add --target <gateway-target> --scope-target <target> (--user-id <id>|--user <username>) [--action <advanced-action> ...]")
+	fmt.Println("       doops admin grant add --target <gateway-target> --scope-target <target> (--user-id <id>|--user <username>)")
 	fmt.Println("       doops admin grant delete --target <gateway-target> --id <grant-id>")
-}
-
-func containsStringValue(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
-func sameStringSet(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	seen := make(map[string]struct{}, len(left))
-	for _, value := range left {
-		if _, ok := seen[value]; ok {
-			return false
-		}
-		seen[value] = struct{}{}
-	}
-	for _, value := range right {
-		if _, ok := seen[value]; !ok {
-			return false
-		}
-	}
-	return true
 }

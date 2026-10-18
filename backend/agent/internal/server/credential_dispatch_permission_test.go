@@ -10,7 +10,7 @@ import (
 func TestTargetCredentialRechecksOperationAuthorityAfterMaterialization(t *testing.T) {
 	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("m", 32))
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
-	user := f.user(t, "operator", ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionAsk}})
+	user := f.user(t, "operator", ScopeGrant{Cluster: "dev", Instance: "local"})
 	scope := CredentialGrantScope{Cluster: "dev", Instance: "local", Namespace: "apps", Use: CredentialUseDatabase}
 	resource, version, grant := credentialTargetPermissionResource(t, f, f.admin, scope)
 	agent, client := newCredentialTargetPermissionAgent(t, f), f.client(t, user)

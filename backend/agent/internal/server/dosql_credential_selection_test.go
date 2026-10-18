@@ -12,7 +12,7 @@ func TestDoSQLAutoBindsEveryTargetDatabaseCredentialByID(t *testing.T) {
 	first, _, _ := credentialTargetPermissionResource(t, f, f.admin, scope)
 	// A second owner's credential reuses the fixture name; name-based
 	// resolution would turn this into credential_reference_ambiguous.
-	owner := f.user(t, "second-owner", ScopeGrant{Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAll}})
+	owner := f.user(t, "second-owner", ScopeGrant{Cluster: "*", Instance: "*"})
 	second, _, _ := credentialTargetPermissionResource(t, f, owner, scope)
 	if first.Name != second.Name || first.ID == second.ID {
 		t.Fatal("fixture must create two same-named credentials")

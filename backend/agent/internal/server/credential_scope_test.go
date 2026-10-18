@@ -52,9 +52,7 @@ func TestHelmCredentialGrantRotationReusesOneActiveGrant(t *testing.T) {
 	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", "credential-scope-test-master-key-32bytes")
 	store := openCredentialTestStore(t)
 	owner := createCredentialTestUser(t, store, "helm-owner")
-	if err := store.GrantUser(owner.ID, ScopeGrant{
-		Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAdmin},
-	}); err != nil {
+	if err := store.SetUserAdmin(owner.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	resource, err := store.CreateCredential(CredentialCreateRequest{

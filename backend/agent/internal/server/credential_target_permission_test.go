@@ -195,14 +195,14 @@ func TestTargetCredentialPromptUsesOperationAction(t *testing.T) {
 		t.Run(operation.name, func(t *testing.T) {
 			t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("p", 32))
 			f := newExecutionLifecycleFixture(t, GatewayHubOptions{OperationTimeout: 3 * time.Second})
-			user := f.user(t, "database-operator", ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{operation.action}})
+			user := f.user(t, "database-operator", ScopeGrant{Cluster: "dev", Instance: "local"})
 			auth, err := f.store.VerifyUserToken(user.Plaintext)
 			if err != nil {
 				t.Fatal(err)
 			}
 			grants, err := f.store.ListGrants(auth.UserID)
-			if err != nil || len(grants) != 1 || !reflect.DeepEqual(grants[0].Actions, []GatewayAction{operation.action}) {
-				t.Fatalf("request user must have only %s: %#v, %v", operation.action, grants, err)
+			if err != nil || len(grants) != 1 || grants[0].Cluster != "dev" || grants[0].Instance != "local" {
+				t.Fatalf("request user must have only the dev/local grant: %#v, %v", grants, err)
 			}
 			scope := CredentialGrantScope{Cluster: "dev", Instance: "local", Namespace: "apps", Use: CredentialUseDatabase}
 			resource, version, grant := credentialTargetPermissionResource(t, f, f.admin, scope)
@@ -288,28 +288,23 @@ func TestTargetCredentialPromptRejectsUnauthorizedUse(t *testing.T) {
 		name   string
 		action GatewayAction
 	}{{"ask", ActionAsk}, {"apply", ActionExec}} {
-		for _, scenario := range []string{"no_permission", "credential_only", "wrong_user_target", "wrong_grant_cluster", "wrong_grant_instance", "no_active_version", "revoked_version", "revoked_grant", "wrong_operation_action"} {
+		for _, scenario := range []string{"no_grant", "wrong_user_target", "wrong_grant_cluster", "wrong_grant_instance", "no_active_version", "revoked_version", "revoked_grant"} {
 			t.Run(operation.name+"/"+scenario, func(t *testing.T) {
 				t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("p", 32))
 				f := newExecutionLifecycleFixture(t, GatewayHubOptions{OperationTimeout: 3 * time.Second})
-				targetGrant := ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{operation.action}}
-				switch scenario {
-				case "no_permission":
-					targetGrant.Actions = []GatewayAction{ActionInfo}
-				case "credential_only":
-					targetGrant.Actions = []GatewayAction{ActionCredentialUse}
-				case "wrong_user_target":
+				targetGrant := ScopeGrant{Cluster: "dev", Instance: "local"}
+				if scenario == "wrong_user_target" {
 					targetGrant.Cluster = "other"
-				case "wrong_operation_action":
-					targetGrant.Actions = []GatewayAction{ActionExec}
-					if operation.action == ActionExec {
-						targetGrant.Actions = []GatewayAction{ActionAsk}
-					}
 				}
 				user := f.user(t, "database-denied", targetGrant)
 				auth, err := f.store.VerifyUserToken(user.Plaintext)
 				if err != nil {
 					t.Fatal(err)
+				}
+				if scenario == "no_grant" {
+					if _, err := f.store.db.Exec("DELETE FROM grants WHERE user_id = ?", auth.UserID); err != nil {
+						t.Fatal(err)
+					}
 				}
 				scope := CredentialGrantScope{Cluster: "dev", Instance: "local", Namespace: "apps", Use: CredentialUseDatabase}
 				if scenario == "wrong_grant_cluster" {
@@ -336,14 +331,12 @@ func TestTargetCredentialPromptRejectsUnauthorizedUse(t *testing.T) {
 					wantError = "dosql_database_binding_missing"
 				case "wrong_grant_cluster", "wrong_grant_instance":
 					wantError = "dosql_database_binding_missing"
-				case "no_permission", "wrong_operation_action":
-					wantError, wantStatus = "forbidden:", "forbidden"
 				}
 				if err != nil {
 					t.Fatal(err)
 				}
 				agent := newCredentialTargetPermissionAgent(t, f)
-				if scenario == "credential_only" || scenario == "wrong_user_target" {
+				if scenario == "no_grant" || scenario == "wrong_user_target" {
 					conn, response, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(f.server.URL, "http")+
 						"/v1/rpc?cluster=dev&instance=local", http.Header{"Authorization": []string{"Bearer " + user.Plaintext}})
 					if conn != nil {
@@ -385,7 +378,7 @@ func TestTargetCredentialPromptRechecksQueuedAuthority(t *testing.T) {
 				f := newExecutionLifecycleFixture(t, GatewayHubOptions{
 					OperationTimeout: 3 * time.Second, MaxQueuedPerTarget: 1, TargetQueueTimeout: 5 * time.Second,
 				})
-				user := f.user(t, "database-queued", ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{operation.action}})
+				user := f.user(t, "database-queued", ScopeGrant{Cluster: "dev", Instance: "local"})
 				auth, err := f.store.VerifyUserToken(user.Plaintext)
 				if err != nil {
 					t.Fatal(err)
@@ -399,10 +392,10 @@ func TestTargetCredentialPromptRechecksQueuedAuthority(t *testing.T) {
 					target = f.hub.client.registry.Get("dev", "local")
 					return target != nil
 				})
-				// Park the prompt behind its own session lease so authority can
-				// change between admission and dispatch.
-				held, err := target.acquireActionLeaseForSession(context.Background(), ActionExec,
-					"target-mutation:dev/local", session, 1, time.Second)
+				// Park the prompt behind its session workspace lease so authority
+				// can change between admission and dispatch.
+				held, err := target.acquireActionLeaseForSession(context.Background(), ActionWrite,
+					"workspace:"+session, session, 1, time.Second)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -427,7 +420,7 @@ func TestTargetCredentialPromptRechecksQueuedAuthority(t *testing.T) {
 					}
 					// Keep credential-only authority to prove it cannot replace the
 					// revoked operation action at dispatch time.
-					err = f.store.GrantUser(auth.UserID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionCredentialUse}})
+					err = f.store.GrantUser(auth.UserID, ScopeGrant{Cluster: "dev", Instance: "local"})
 					if err == nil {
 						err = f.store.DeleteGrant(grants[0].ID)
 					}
@@ -438,7 +431,7 @@ func TestTargetCredentialPromptRechecksQueuedAuthority(t *testing.T) {
 						t.Fatal(err)
 					}
 					if revoke == "same_name_credential" {
-						owner := f.user(t, "replacement-owner", ScopeGrant{Cluster: "*", Instance: "*", Actions: []GatewayAction{ActionAll}})
+						owner := f.adminUser(t, "replacement-owner")
 						replacement, _, _ := credentialTargetPermissionResource(t, f, owner, scope)
 						resolved, resolveErr := f.store.AuthorizeCredentialUse(CredentialUseRequest{
 							ActorID: auth.UserID, Credential: resource.Name, Scope: scope,

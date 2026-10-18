@@ -150,13 +150,6 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 		return "", err
 	}
 	guarded := requiresExecutionOutcomeGuard(action, tool, rawArgs, resourceKey)
-	if !inherited {
-		releaseLimit, err := h.acquireOperationSlot(operationUserID)
-		if err != nil {
-			return "", err
-		}
-		defer releaseLimit()
-	}
 	h.markOperationRunning(opID)
 	opCtx = h.withExecutionOwner(opCtx, agent, resourceKey, opID)
 	if guarded {
