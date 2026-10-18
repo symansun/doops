@@ -252,12 +252,14 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 		}
 	}
 
+	// Request bodies are handed to handlers through tunnelBody so a slow handler
+	// can never block this read loop, which also answers Gateway pings.
 	gitBodyMu := sync.Mutex{}
-	gitBodyWriters := make(map[int64]*io.PipeWriter)
+	gitBodyWriters := make(map[int64]*tunnelBody)
 	activeGitMu := sync.Mutex{}
 	activeGitCancels := make(map[int64]context.CancelFunc)
 	proxyBodyMu := sync.Mutex{}
-	proxyBodyWriters := make(map[int64]*io.PipeWriter)
+	proxyBodyWriters := make(map[int64]*tunnelBody)
 	activeProxyMu := sync.Mutex{}
 	activeProxyCancels := make(map[int64]context.CancelFunc)
 	activeToolMu := sync.Mutex{}
@@ -266,11 +268,20 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 	var readyOnce sync.Once
 	closeGitBody := func(id int64) {
 		gitBodyMu.Lock()
-		pw := gitBodyWriters[id]
+		body := gitBodyWriters[id]
 		delete(gitBodyWriters, id)
 		gitBodyMu.Unlock()
-		if pw != nil {
-			_ = pw.Close()
+		if body != nil {
+			body.Abort(nil)
+		}
+	}
+	closeProxyBody := func(id int64) {
+		proxyBodyMu.Lock()
+		body := proxyBodyWriters[id]
+		delete(proxyBodyWriters, id)
+		proxyBodyMu.Unlock()
+		if body != nil {
+			body.Abort(nil)
 		}
 	}
 	defer func() {
@@ -278,17 +289,17 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 		cancelConnection()
 		gitBodyMu.Lock()
 		writers := gitBodyWriters
-		gitBodyWriters = make(map[int64]*io.PipeWriter)
+		gitBodyWriters = make(map[int64]*tunnelBody)
 		gitBodyMu.Unlock()
-		for _, pw := range writers {
-			_ = pw.Close()
+		for _, body := range writers {
+			body.Abort(nil)
 		}
 		proxyBodyMu.Lock()
 		proxyWriters := proxyBodyWriters
-		proxyBodyWriters = make(map[int64]*io.PipeWriter)
+		proxyBodyWriters = make(map[int64]*tunnelBody)
 		proxyBodyMu.Unlock()
-		for _, pw := range proxyWriters {
-			_ = pw.Close()
+		for _, body := range proxyWriters {
+			body.Abort(nil)
 		}
 		executionWG.Wait()
 	}()
@@ -365,9 +376,9 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 				})
 				continue
 			}
-			pr, pw := io.Pipe()
+			body := newTunnelBody()
 			gitBodyMu.Lock()
-			gitBodyWriters[id] = pw
+			gitBodyWriters[id] = body
 			gitBodyMu.Unlock()
 			ctx, cancel := context.WithCancel(connectionCtx)
 			activeGitMu.Lock()
@@ -383,7 +394,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 					cancel()
 				}()
 				defer closeGitBody(id)
-				gw.handleGitHTTPOverWS(ctx, req.ID, params, pr, writeJSON)
+				gw.handleGitHTTPOverWS(ctx, req.ID, params, body.Reader(), writeJSON)
 			}()
 			continue
 		}
@@ -401,9 +412,9 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 					Error: &api.RPCError{Code: -32602, Message: "Invalid proxy/http params"}})
 				continue
 			}
-			pr, pw := io.Pipe()
+			body := newTunnelBody()
 			proxyBodyMu.Lock()
-			proxyBodyWriters[id] = pw
+			proxyBodyWriters[id] = body
 			proxyBodyMu.Unlock()
 			ctx, cancel := context.WithCancel(connectionCtx)
 			activeProxyMu.Lock()
@@ -418,13 +429,8 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 					activeProxyMu.Unlock()
 					cancel()
 				}()
-				defer func() {
-					proxyBodyMu.Lock()
-					delete(proxyBodyWriters, id)
-					proxyBodyMu.Unlock()
-					_ = pw.Close()
-				}()
-				gw.handleHTTPProxyOverWS(ctx, req.ID, params, pr, writeJSON)
+				defer closeProxyBody(id)
+				gw.handleHTTPProxyOverWS(ctx, req.ID, params, body.Reader(), writeJSON)
 			}()
 			continue
 		}
@@ -470,13 +476,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 			if cancel != nil {
 				cancel()
 			}
-			proxyBodyMu.Lock()
-			pw := proxyBodyWriters[params.ID]
-			delete(proxyBodyWriters, params.ID)
-			proxyBodyMu.Unlock()
-			if pw != nil {
-				_ = pw.Close()
-			}
+			closeProxyBody(params.ID)
 			writeJSON(api.JSONRPCResponse{JSONRPC: "2.0", ID: req.ID,
 				Result: map[string]interface{}{"canceled": cancel != nil}})
 			continue
@@ -492,24 +492,12 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 				continue
 			}
 			gitBodyMu.Lock()
-			pw := gitBodyWriters[frame.ID]
+			body := gitBodyWriters[frame.ID]
 			gitBodyMu.Unlock()
-			if pw == nil {
+			if body == nil {
 				continue
 			}
-			if frame.DataB64 != "" {
-				data, err := base64.StdEncoding.DecodeString(frame.DataB64)
-				if err != nil {
-					_ = pw.CloseWithError(err)
-					closeGitBody(frame.ID)
-					continue
-				}
-				if _, err := pw.Write(data); err != nil {
-					closeGitBody(frame.ID)
-					continue
-				}
-			}
-			if frame.EOF {
+			if !pushTunnelBodyFrame(body, frame.DataB64, frame.EOF) {
 				closeGitBody(frame.ID)
 			}
 			continue
@@ -525,26 +513,13 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 				continue
 			}
 			proxyBodyMu.Lock()
-			pw := proxyBodyWriters[frame.ID]
+			body := proxyBodyWriters[frame.ID]
 			proxyBodyMu.Unlock()
-			if pw == nil {
+			if body == nil {
 				continue
 			}
-			if frame.DataB64 != "" {
-				data, err := base64.StdEncoding.DecodeString(frame.DataB64)
-				if err != nil {
-					_ = pw.CloseWithError(err)
-					continue
-				}
-				if _, err := pw.Write(data); err != nil {
-					continue
-				}
-			}
-			if frame.EOF {
-				proxyBodyMu.Lock()
-				delete(proxyBodyWriters, frame.ID)
-				proxyBodyMu.Unlock()
-				_ = pw.Close()
+			if !pushTunnelBodyFrame(body, frame.DataB64, frame.EOF) {
+				closeProxyBody(frame.ID)
 			}
 			continue
 		}
