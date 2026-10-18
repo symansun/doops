@@ -1,20 +1,5 @@
 # Doops Usage Guide
 
-## Audit Query Maintenance
-
-When filtered audit queries time out because the Gateway's existing SQLite audit
-history has no query indexes, a platform administrator explicitly runs:
-
-```bash
-doops -session audit-index-maintenance admin audit optimize --target <target>
-```
-
-The selected target identifies the Gateway login, not an Agent database. The
-operation executes only the fixed repository SQL through the Gateway's audited
-control plane. It is idempotent, accepts no custom SQL and preserves every event.
-The global audit page provides the same operation. Audit unavailability or denied
-authority blocks DDL; application startup and CI do not run it automatically.
-
 This guide holds command-level usage details. The skill file is only the entry point.
 
 ## Command Choice
@@ -63,8 +48,6 @@ This guide holds command-level usage details. The skill file is only the entry p
 | List Gateway users | `doops admin user list --target <t>` | Returns metadata only. |
 | Manage target grants | `doops admin grant <list\|add\|delete> ...` | Grants use exact configured `cluster/instance` routes. |
 | Issue token as admin | `doops admin token create ...` | Requires a gateway token with `admin` permission. |
-| Inspect/cancel active operations | `doops admin operations <list|cancel> --target <target> ...` | Gateway scopes the operation list and cancellation to the selected cluster/instance; cancellation requests termination, not confirmation that work stopped. |
-| Reconnect an idle target | `doops unlock --target <t>` | Refuses active or queued work; does not force-release operations. |
 | Remove cached token | `doops logout --target <t>` | Removes local token cache. |
 
 DoSql 必须使用 `doops sql` 入口。普通 `doops ask --msg '使用 DoSql'` 不保证注入
@@ -183,8 +166,7 @@ To remove a stale local route, use `doops -session <s> remove --target <gateway-
 - `status=active` 且 `busy=false` 表示有 session 在跑。同一 target + session 的 Shell/SSH/bg/apply
   串行，不同 session 可并行；session 只是并发归属，不是沙箱，不要从两个 session 同时改同一
   release 或数据库。
-- `resources` 列出 `workspace:<session>` 等锁；`admin operations list` 同时给出
-  `requested_resource` 和实际生效的 `effective_lock`，以后者为准。
+- `resources` 列出 `workspace:<session>` 等当前持有的锁。
 
 `exec` 的 Shell 从 Agent 进程目录启动，需要 session 工作区时显式 `cd /root/ws/<session>`。
 CLI 原样输出通知文本（含 JSON、空行、分块）；超时会请求取消并继续等原请求终态。
@@ -194,12 +176,8 @@ CLI 原样输出通知文本（含 JSON、空行、分块）；超时会请求�
 
 执行生命周期（终态、`outcome_unknown`、取消返回 `202 cancel_requested` 不代表已停止、
 `finalizing`/`audit_completion_failed`、SSH 退出码 `1..254` 与 `255` 的区别、并发与锁）见
-[`DOOPS_GATEWAY_TUNNEL.md`](DOOPS_GATEWAY_TUNNEL.md#multi-user-behavior)；操作列表字段见
-[`DOOPS_API_GUIDE.md`](DOOPS_API_GUIDE.md)。Gateway 控制面发布（`fetch-gateway-release.sh` +
+[`DOOPS_GATEWAY_TUNNEL.md`](DOOPS_GATEWAY_TUNNEL.md#multi-user-behavior)。Gateway 控制面发布（`fetch-gateway-release.sh` +
 `deploy-gateway.sh --no-build`）见 [`BUILD_DEPLOY_SOP.md`](BUILD_DEPLOY_SOP.md)。
-
-取消他人操作前先 `admin operations list` 核对所有权；`unlock` 只重连空闲 target，
-拒绝有活动或排队操作的 target，不强制释放。
 
 ## Gateway Admin Tokens
 

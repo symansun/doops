@@ -209,8 +209,6 @@ bash scripts/build-gateway.sh
 ./bin/doops-gateway serve -db /var/lib/doops-gateway/gateway.db -port 42222 \
   -login-token-ttl 24h \
   -operation-timeout 30m \
-  -max-concurrent-operations 64 \
-  -max-concurrent-per-user 10 \
   -max-queued-per-target 10 \
   -target-queue-timeout 10m
 ```
@@ -296,29 +294,19 @@ doops admin token revoke --target <gateway-target> --id <token-id>
   缺少终态时保留 `outcome_unknown`，不宣称业务没有执行或自动重放。
   上游收到写请求后的连接/响应体传输失败同样是未知结果；不能把代理返回的传输
   错误当成业务没有执行。下游写失败必须等待取消结果后完成审计。
-- `-max-concurrent-per-user` 控制单个 gateway 用户最多占用多少个运行中操作槽；
-  `serve` 默认 10，等待资源不计入执行额度，超过时返回 `user operation limit exceeded`。
 - `-operation-timeout` 控制单个转发操作的最长运行时间；超时请求取消并等待原始终态。
   取消 ACK 不是终态；缺失终态时持久化 `outcome_unknown` 后释放本次 lease，不自动重放。
   历史未知审计不参与准入。取消中或审计收尾中的活跃操作只阻挡同 session/资源的冲突请求；
   审计持久化失败保留该 lease 并自动重试，不扩展为整台 target 的屏障。
-- `serve` 默认全局 64 个执行槽，每个互斥槽最多 10 个等待者、等待上限 10 分钟。
+- 每个互斥资源最多 10 个等待者、等待上限 10 分钟，没有全局或单用户执行配额。
   workspace 锁和 session mutation 都使用有界等待队列；同 session 冲突在允许排队时会等待
-  reader/resource 终态，不占用户或全局运行配额，只有队列满、排队关闭或超时才返回
+  reader/resource 终态，只有队列满、排队关闭或超时才返回
   `target busy`/`target queue timeout`。`-max-queued-per-target` 设为负数可关闭排队。
 - `-login-token-ttl` 控制密码登录生成 token 的有效期；长期自动化应使用管理员发放的可轮换服务 token。
 
-管理员先核对所有权；明确获准中断对应任务后才请求取消，不自动抢占其它发布：
+取消只能由发起方在原 RPC 连接上通过 `tools/cancel` 请求（CLI 超时或 Ctrl-C、Web 停止按钮）。
 
-```bash
-doops -session <s> admin operations list --target <gateway-target>
-doops -session <s> admin operations cancel --target <gateway-target> --id <operation-id>
-```
-
-Gateway 把 `cluster`、`instance` 作为管理操作查询和取消的强制 target 边界；
-缺少或不匹配 target 时不会取消操作。
-
-`cancel` 返回 HTTP `202 cancel_requested`，只确认请求已登记。原始操作的资源所有权
+取消只确认请求已登记。原始操作的资源所有权
 保留到 terminal response；取消 ACK 不是终态。shell/SSH/bg 等本地命令等待进程组
 终止，`ask` 发起 doagent `session/cancel` 并等待匹配的 `turn_finished`。
 `executionLifecycle` 能力只在后台 `doops_bg` 的派发前校验，要求完整终态、受控任务寿命
@@ -330,7 +318,6 @@ Gateway 把 `cluster`、`instance` 作为管理操作查询和取消的强制 ta
 Agent 重连后继续有效。人工声明不能改写审计或解除执行守卫；历史记录仍可读取。
 已验证的 Helm 工具失败属于明确失败，不是未知结果，按正常终态释放运行锁。
 受管凭据只锁本次使用的资源 ID，不再跨不同凭据串行化整个 Gateway。
-`unlock` 只重连空闲且没有未决执行的目标，不自动接管或重放任务。
 
 workspace 写入、清理和 clone/commit 缺失终态时同样保留未知结果；真实本地终态
 可以证明这些本地操作已经结束，不能将其与缺失终态混淆。客户端 WebSocket 使用
@@ -509,8 +496,6 @@ doops -session agent-upgrade upgrade \
   是本次执行事实，不是凭据授权条件。公开 prompt、doagent 上下文和 metadata binding
   不接收凭据 payload；Gateway 仅通过内部物化调用向目标 Agent 短暂传递 payload。
 - `/v1/targets` 中 `busy=true` 只表示 target-wide 阻塞；普通 session 运行显示为 `status=active`、`busy=false`，并在 `resources` 中标出锁住的资源。
-- gateway `serve` 默认全局 64、单用户 10 个执行槽；嵌入式 `NewGatewayHub` 的零值
-  options 是全局 64、单用户 8、无等待队列，测试默认不代表生产启动参数。
 - gateway 会主动对 agent WebSocket 发 ping，agent pong 后刷新租约和 SQLite `last_seen`。
 - agent 上下线状态写入 SQLite，在线目标由内存连接表提供，断线时立即标记 offline。
 - agent 重连替换旧连接时，旧连接的关闭不会把新连接错误标记为 offline。
