@@ -14,8 +14,8 @@ PUBLISH = ROOT / "scripts" / "publish-cli-release.mjs"
 VERIFY_PUBLISHED = ROOT / "scripts" / "verify-published-cli-release.sh"
 CI = ROOT.parent / ".cnb.yml"
 BUILDER_IMAGE = (
-    "docker.io/library/golang:1.24-alpine@"
-    "sha256:8bee1901f1e530bfb4a7850aa7a479d17ae3a18beb6e09064ed54cfd245b7191"
+    "docker.io/library/golang:1.25-alpine@"
+    "sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59"
 )
 
 

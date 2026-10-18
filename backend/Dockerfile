@@ -10,7 +10,7 @@ ARG DOOPS_SOURCE_COMMIT=missing-source-commit
 
 # Stage 1: Build the Agent. The Gateway runs on its own host and ships as a
 # release asset, so it is not part of the image every target pulls.
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine@sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59 AS builder
 ARG DOOPS_RELEASE_TAG
 ARG DOOPS_SOURCE_COMMIT
 USER root
