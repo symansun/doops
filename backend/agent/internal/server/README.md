@@ -21,10 +21,9 @@ it: `backend/gateway` (via `pkg/gatewaycmd`) and `backend/agent/cmd/agent`.
 | `gateway_store*`, `audit_*`, `admin_*`, `secret_box.go` | Gateway | Persistence, audit, admin API, encryption at rest |
 | `credential_store*`, `credential_http.go`, `credential_runtime.go`, `credential_lock.go`, `credential_import.go`, `credential_bundle_http.go`, `credential_materialization_store.go` | Gateway | Credential lifecycle, grants, verify/promote, materialization dispatch |
 | `credential_materializer.go`, `credential_tools.go`, `credential_scope.go` | Agent | Writes Secrets on the target cluster for `doops_credential_*` tools |
-| `scheduler*` | Gateway | Scheduled inspections with persistent lease |
 | `edge_*` | Both | Edge tunnel. `edge_listener`, `edge_registry`, `edge_sni`, `edge_route` are Gateway; `edge_agent`, `edge_backend` are Agent; frame/conn/sched are shared |
 | `proxy_*` | Both | HTTP proxy tunnel. `proxy_route_*` is Gateway; `proxy_tunnel.go` has both sides |
-| `git_*` | Both | Git HTTP reverse tunnel. `git_tunnel.go`, `git_repo_*`, `git_issue.go` are Gateway; `git_http.go`, `git_ws.go`, `git_clone_tool.go` are Agent |
+| `git_*` | Both | Git HTTP reverse tunnel. `git_tunnel.go` is Gateway; `git_http.go`, `git_ws.go` are Agent |
 | `gateway.go`, `handler_ws.go` | Agent | Tool-call dispatch (`case "doops_*"` in `handler_ws.go`), exec, ask, workspace |
 | `doagent_*` | Agent | doagent ACP bridge, tool binding, final answer, UI events |
 | `mutation_authority.go`, `json_digest.go`, `retired_ws.go` | Agent | Signed mutation authorization, attestation digests, retired inbound `/ws` |

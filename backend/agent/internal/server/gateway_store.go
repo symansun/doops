@@ -323,57 +323,6 @@ func (s *GatewayStore) migrate() error {
 			started_at TEXT NOT NULL,
 			ended_at TEXT NOT NULL DEFAULT ''
 		)`,
-		`CREATE TABLE IF NOT EXISTS scheduler_jobs (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			cluster_glob TEXT NOT NULL DEFAULT '*',
-			instance_glob TEXT NOT NULL DEFAULT '*',
-			interval_sec INTEGER NOT NULL DEFAULT 3600,
-			scan_mode TEXT NOT NULL DEFAULT 'ask',
-			scan_config TEXT NOT NULL DEFAULT '{}',
-			platform TEXT NOT NULL DEFAULT 'cnb',
-			repo_slug TEXT NOT NULL DEFAULT '',
-			labels TEXT NOT NULL DEFAULT '',
-			token_env TEXT NOT NULL DEFAULT '',
-			api_base TEXT NOT NULL DEFAULT '',
-			dedup_window_sec INTEGER NOT NULL DEFAULT 86400,
-			enabled INTEGER NOT NULL DEFAULT 1,
-			last_run_at TEXT NOT NULL DEFAULT '',
-			created_at TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS scheduler_job_leases (
-			job_id TEXT PRIMARY KEY,
-			owner_id TEXT NOT NULL,
-			lease_until TEXT NOT NULL,
-			started_at TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS scheduler_issues (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			job_id TEXT NOT NULL,
-			fingerprint TEXT NOT NULL,
-			repo_slug TEXT NOT NULL,
-			cluster TEXT NOT NULL DEFAULT '',
-			instance TEXT NOT NULL DEFAULT '',
-			issue_url TEXT NOT NULL DEFAULT '',
-			title TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL DEFAULT 'created',
-			created_at TEXT NOT NULL
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_sched_issues_dedup ON scheduler_issues(repo_slug, fingerprint, created_at)`,
-		`CREATE TABLE IF NOT EXISTS git_repos (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			url TEXT NOT NULL,
-				branch TEXT NOT NULL DEFAULT 'main',
-				username TEXT NOT NULL DEFAULT '',
-				password_hash TEXT NOT NULL DEFAULT '',
-				password_ciphertext TEXT NOT NULL DEFAULT '',
-				description TEXT NOT NULL DEFAULT '',
-				last_used_at TEXT NOT NULL DEFAULT '',
-				created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_git_repos_created ON git_repos(created_at)`,
 		`CREATE TABLE IF NOT EXISTS proxy_routes (
 			id TEXT PRIMARY KEY,
 			host TEXT NOT NULL UNIQUE,
@@ -513,9 +462,6 @@ func (s *GatewayStore) migrate() error {
 		return err
 	}
 	if err := s.ensureColumn("users", "password_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-	if err := s.ensureColumn("git_repos", "password_ciphertext", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	if err := s.ensureColumn("agent_status", "generation", "INTEGER NOT NULL DEFAULT 0"); err != nil {

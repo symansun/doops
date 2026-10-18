@@ -39,7 +39,6 @@ type GatewayHub struct {
 	client       *ClientService
 	edge         *EdgeRegistry
 
-	scheduler               *Scheduler
 	credentialMutationLocks sync.Map
 }
 
@@ -64,11 +63,6 @@ func (m *contextMutex) Acquire(ctx context.Context) error {
 
 func (m *contextMutex) Release() {
 	m.ready <- struct{}{}
-}
-
-// AttachScheduler 注入定时巡检调度器，供 /v1/admin/jobs run-now 等接口使用。
-func (h *GatewayHub) AttachScheduler(sched *Scheduler) {
-	h.scheduler = sched
 }
 
 var (
@@ -534,12 +528,6 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	admin("/v1/admin/instances", h.HandleAdminInstances)
 	admin("/v1/admin/operations", h.HandleAdminOperations)
 	admin("/v1/admin/proxy-routes", h.HandleAdminProxyRoutes)
-	admin("/v1/admin/repos", h.HandleAdminRepos)
-	admin("/v1/admin/repos/test", h.HandleAdminRepoTest)
-	admin("/v1/admin/repos/clone", h.HandleAdminRepoClone)
-	admin("/v1/admin/jobs", h.HandleAdminJobs)
-	admin("/v1/admin/jobs/run", h.HandleAdminJobRun)
-	admin("/v1/admin/jobs/issues", h.HandleAdminJobIssues)
 	admin("/v1/admin/audit/optimize", h.HandleAdminAuditOptimize)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -2514,8 +2502,6 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 		default:
 			return ActionAsk
 		}
-	case "doops_git_clone":
-		return ActionPull
 	case "doops_file_read":
 		return ActionRead
 	case "doops_workspace_read":
@@ -2690,10 +2676,6 @@ func summarizeToolCall(tool string, args json.RawMessage) string {
 		return summary
 	case "doops_web":
 		return trimTail("doops_web "+extractStringArg(args, "operation")+" site="+extractStringArg(args, "site_id"), 512)
-	case "doops_git_clone":
-		repoURL, _ := m["url"].(string)
-		branch, _ := m["branch"].(string)
-		return trimTail("doops_git_clone "+repoURL+" "+branch, 512)
 	case "doops_file_read", "doops_file_write":
 		if p, _ := m["path"].(string); p != "" {
 			return tool + " " + p

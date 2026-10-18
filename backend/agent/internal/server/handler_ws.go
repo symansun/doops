@@ -1181,14 +1181,6 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			writeJSON(buildSuccessResponse(reqID, result))
 		}
 
-	case "doops_git_clone":
-		result, err := handleGitClone(argBytes)
-		if err != nil {
-			writeJSON(buildToolErrorResponse(reqID, err.Error()))
-		} else {
-			writeJSON(buildSuccessResponse(reqID, result))
-		}
-
 	case "doops_file_write":
 		result, err := handleFileWrite(argBytes)
 		if err != nil {

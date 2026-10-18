@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/user/doops/agent/api"
 )
@@ -26,8 +25,6 @@ type adminAuditFixture struct {
 	userToken   string
 	adminAuth   TokenAuth
 	user        GatewayUser
-	repo        GitRepo
-	job         SchedulerJob
 	route       ProxyRoute
 	grantID     int64
 	tokenID     string
@@ -64,17 +61,6 @@ func newAdminAuditFixture(t *testing.T) *adminAuditFixture {
 		t.Fatal(err)
 	}
 	f.grantID = grants[0].ID
-	f.repo, err = store.CreateGitRepo(GitRepoInput{Name: "audit-repo", URL: "https://example.invalid/repo.git", Branch: "main", Password: adminAuditCanary})
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.job, err = store.CreateSchedulerJob(SchedulerJob{
-		Name: "audit-job", ScanMode: "audit", ClusterGlob: "no-target", InstanceGlob: "no-target",
-		ScanConfig: `{"secret":"` + adminAuditCanary + `"}`, Enabled: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	f.route, err = store.UpsertProxyRoute(ProxyRouteInput{
 		Host: "audit.example.test", Cluster: "dev", Instance: "node", Upstream: "http://localhost:8080", Enabled: true,
 	})
@@ -82,7 +68,6 @@ func newAdminAuditFixture(t *testing.T) *adminAuditFixture {
 		t.Fatal(err)
 	}
 	f.hub = NewGatewayHub(store, GatewayHubOptions{})
-	f.hub.AttachScheduler(NewScheduler(f.hub, store, time.Hour))
 	f.mux = http.NewServeMux()
 	f.hub.RegisterRoutes(f.mux)
 	var cancel context.CancelFunc
@@ -125,7 +110,7 @@ func (f *adminAuditFixture) agent(t *testing.T, failed bool) {
 func (f *adminAuditFixture) state(t *testing.T) string {
 	t.Helper()
 	var snapshot bytes.Buffer
-	for _, table := range []string{"users", "grants", "tokens", "git_repos", "scheduler_jobs", "scheduler_issues", "proxy_routes"} {
+	for _, table := range []string{"users", "grants", "tokens", "proxy_routes"} {
 		rows, err := f.store.db.Query("SELECT * FROM " + table + " ORDER BY rowid")
 		if err != nil {
 			t.Fatal(err)
@@ -212,43 +197,6 @@ func TestAdminMutationRoutesAuditAndFailClosed(t *testing.T) {
 		{"token-revoke", func(t *testing.T, f *adminAuditFixture) request {
 			return request{"DELETE", "/v1/admin/tokens?id=" + f.tokenID, nil}
 		}},
-		{"repo-create", func(t *testing.T, f *adminAuditFixture) request {
-			return request{"POST", "/v1/admin/repos", map[string]any{"name": "new-repo", "url": "https://example.invalid/new.git", "password": adminAuditCanary, "description": adminAuditCanary}}
-		}},
-		{"repo-patch", func(t *testing.T, f *adminAuditFixture) request {
-			return request{"PATCH", "/v1/admin/repos?id=" + f.repo.ID, map[string]any{"password": adminAuditCanary, "description": adminAuditCanary}}
-		}},
-		{"repo-put", func(t *testing.T, f *adminAuditFixture) request {
-			return request{"PUT", "/v1/admin/repos?id=" + f.repo.ID, map[string]any{"password": adminAuditCanary, "description": adminAuditCanary}}
-		}},
-		{"repo-delete", func(t *testing.T, f *adminAuditFixture) request {
-			return request{"DELETE", "/v1/admin/repos?id=" + f.repo.ID, nil}
-		}},
-		{"repo-test", func(t *testing.T, f *adminAuditFixture) request {
-			if _, err := f.store.UpdateGitRepo(f.repo.ID, GitRepoInput{URL: createLocalBareGitRepo(t)}); err != nil {
-				t.Fatal(err)
-			}
-			return request{"POST", "/v1/admin/repos/test?id=" + f.repo.ID, nil}
-		}},
-		{"repo-clone", func(t *testing.T, f *adminAuditFixture) request {
-			f.agent(t, false)
-			return request{"POST", "/v1/admin/repos/clone?id=" + f.repo.ID, map[string]any{"cluster": "dev", "instance": "node", "session_id": "audit-test"}}
-		}},
-		{"job-create", func(t *testing.T, f *adminAuditFixture) request {
-			return request{"POST", "/v1/admin/jobs", map[string]any{"name": "new-job", "scan_config": map[string]any{"command": adminAuditCanary}}}
-		}},
-		{"job-delete", func(t *testing.T, f *adminAuditFixture) request {
-			return request{"DELETE", "/v1/admin/jobs?id=" + f.job.ID, nil}
-		}},
-		{"job-run", func(t *testing.T, f *adminAuditFixture) request {
-			return request{"POST", "/v1/admin/jobs/run?id=" + f.job.ID, nil}
-		}},
-		{"job-enable", func(t *testing.T, f *adminAuditFixture) request {
-			return request{"POST", "/v1/admin/jobs/run?id=" + f.job.ID + "&enabled=true", nil}
-		}},
-		{"job-disable", func(t *testing.T, f *adminAuditFixture) request {
-			return request{"POST", "/v1/admin/jobs/run?id=" + f.job.ID + "&enabled=false", nil}
-		}},
 		{"operation-cancel", func(t *testing.T, f *adminAuditFixture) request {
 			return request{"DELETE", "/v1/admin/operations?cluster=dev&id=" + f.operationID + "&instance=node", nil}
 		}},
@@ -311,19 +259,6 @@ func TestAdminMutationRoutesAuditAndFailClosed(t *testing.T) {
 				t.Fatal(err)
 			}
 			wantCount := countBefore + 1
-			if tc.name == "repo-clone" {
-				wantCount++
-				internal, err := f.store.ListAuditFiltered(AuditFilter{Action: ActionPull, Session: "audit-test", Limit: 1})
-				if err != nil || len(internal) != 1 || internal[0].UserID != f.adminAuth.UserID ||
-					internal[0].TokenID != f.adminAuth.TokenID || internal[0].Status != "success" ||
-					internal[0].EndedAt.IsZero() {
-					t.Fatalf("internal execution audit lost actor or outcome: %#v, %v", internal, err)
-				}
-				data, _ := json.Marshal(internal[0])
-				if strings.Contains(string(data), adminAuditCanary) || internal[0].Tail != "" {
-					t.Fatal("internal execution audit leaked payload")
-				}
-			}
 			if countAfter != wantCount {
 				t.Fatalf("duplicate/missing audit: before %d after %d", countBefore, countAfter)
 			}
@@ -339,7 +274,7 @@ func TestAdminMutationRoutesAuditAndFailClosed(t *testing.T) {
 
 func TestAdminAuditReadRoutesDoNotCreateMutationEvents(t *testing.T) {
 	f := newAdminAuditFixture(t)
-	for _, path := range []string{"users", "grants", "tokens", "instances", "operations?cluster=dev&instance=node", "proxy-routes", "repos", "jobs", "jobs/issues"} {
+	for _, path := range []string{"users", "grants", "tokens", "instances", "operations?cluster=dev&instance=node", "proxy-routes"} {
 		response := credentialHTTPRequest(t, f.mux, f.adminToken, http.MethodGet, "/v1/admin/"+path, nil)
 		if response.Code != http.StatusOK {
 			t.Fatalf("%s: HTTP %d: %s", path, response.Code, response.Body.String())
@@ -381,25 +316,6 @@ func TestTargetAdminCannotMutateGlobalResources(t *testing.T) {
 			return map[string]any{"user": user.Name, "name": adminAuditCanary}
 		}},
 		{"revoke-admin-token", "DELETE", "/v1/admin/tokens?id=%s", nil},
-		{"create-repo", "POST", "/v1/admin/repos", func(f *adminAuditFixture) any {
-			return map[string]any{"name": "global-repo", "url": "https://example.invalid/new.git"}
-		}},
-		{"patch-repo", "PATCH", "/v1/admin/repos?id=%s", func(f *adminAuditFixture) any {
-			return map[string]any{"description": adminAuditCanary}
-		}},
-		{"put-repo", "PUT", "/v1/admin/repos?id=%s", func(f *adminAuditFixture) any {
-			return map[string]any{"description": adminAuditCanary}
-		}},
-		{"delete-repo", "DELETE", "/v1/admin/repos?id=%s", nil},
-		{"test-repo", "POST", "/v1/admin/repos/test?id=%s", nil},
-		{"create-job", "POST", "/v1/admin/jobs", func(f *adminAuditFixture) any {
-			return map[string]any{"name": "global-job", "cluster_glob": "*", "instance_glob": "*", "scan_mode": "exec",
-				"scan_config": map[string]any{"command": adminAuditCanary}}
-		}},
-		{"delete-job", "DELETE", "/v1/admin/jobs?id=%s", nil},
-		{"enable-job", "POST", "/v1/admin/jobs/run?id=%s&enabled=true", nil},
-		{"disable-job", "POST", "/v1/admin/jobs/run?id=%s&enabled=false", nil},
-		{"run-global-audit", "POST", "/v1/admin/jobs/run?id=%s", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newAdminAuditFixture(t)
@@ -417,17 +333,8 @@ func TestTargetAdminCannotMutateGlobalResources(t *testing.T) {
 					id = f.grantID
 				case strings.Contains(path, "/tokens"):
 					id = f.adminAuth.TokenID
-				case strings.Contains(path, "/repos"):
-					id = f.repo.ID
-				case strings.Contains(path, "/jobs"):
-					id = f.job.ID
 				}
 				path = fmt.Sprintf(path, id)
-			}
-			if tc.name == "test-repo" {
-				if _, err := f.store.UpdateGitRepo(f.repo.ID, GitRepoInput{URL: createLocalBareGitRepo(t)}); err != nil {
-					t.Fatal(err)
-				}
 			}
 			var body any
 			if tc.body != nil {
@@ -507,18 +414,10 @@ func TestTargetAdminMutationsRetainExactActions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err := f.store.CreateSchedulerJob(SchedulerJob{
-		Name: "local-ask-job", ClusterGlob: "dev", InstanceGlob: "node", ScanMode: "ask",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, tc := range []struct {
 		method, path string
 		body         any
 	}{
-		{"POST", "/v1/admin/repos/clone?id=" + f.repo.ID, map[string]any{"cluster": "dev", "instance": "node", "session_id": "exact-admin"}},
-		{"POST", "/v1/admin/jobs/run?id=" + job.ID, nil},
 		{"DELETE", "/v1/admin/operations?cluster=dev&id=" + f.operationID + "&instance=node", nil},
 		{"POST", "/v1/admin/proxy-routes", map[string]any{"id": f.route.ID, "cluster": "dev", "instance": "node", "host": f.route.Host, "upstream": "http://localhost:9090"}},
 		{"DELETE", "/v1/admin/proxy-routes?id=" + f.route.ID, nil},
@@ -536,66 +435,7 @@ func TestTargetAdminMutationsRetainExactActions(t *testing.T) {
 	}
 }
 
-func TestAdminJobRunCannotBypassTargetAuthorization(t *testing.T) {
-	f := newAdminAuditFixture(t)
-	f.agent(t, false)
-	for _, grant := range []ScopeGrant{
-		{Cluster: "elsewhere", Instance: "other", Actions: []GatewayAction{ActionAdmin}},
-		{Cluster: "dev", Instance: "node", Actions: []GatewayAction{ActionAsk}},
-	} {
-		if err := f.store.GrantUser(f.user.ID, grant); err != nil {
-			t.Fatal(err)
-		}
-	}
-	auth, err := f.store.VerifyUserToken(f.userToken)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range []struct{ mode, query string }{
-		{"exec", "&enabled=%20"},
-		{"EXEC", ""},
-		{"AUDIT", ""},
-	} {
-		job, err := f.store.CreateSchedulerJob(SchedulerJob{
-			Name: "denied-job", ClusterGlob: "dev", InstanceGlob: "node", ScanMode: tc.mode,
-			ScanConfig: `{"command":"` + adminAuditCanary + `"}`,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		path := "/v1/admin/jobs/run?id=" + job.ID + tc.query
-		before := f.state(t)
-		response := credentialHTTPRequest(t, f.mux, f.userToken, http.MethodPost, path, nil)
-		if response.Code != http.StatusForbidden || f.state(t) != before {
-			t.Fatalf("job %s bypassed authorization: HTTP %d: %s", tc.mode, response.Code, response.Body.String())
-		}
-		assertAdminAudit(t, f.store, auth, path, http.MethodPost, "forbidden", http.StatusForbidden)
-	}
-}
-
-func TestSchedulerAutomaticRunKeepsConfiguredTargetSelection(t *testing.T) {
-	f := newAdminAuditFixture(t)
-	f.agent(t, false)
-	job, err := f.store.CreateSchedulerJob(SchedulerJob{
-		Name: "other-target-only", ClusterGlob: "other-cluster", InstanceGlob: "other-node",
-		ScanMode: "exec", ScanConfig: `{"command":"hostname"}`, Enabled: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.hub.scheduler.runJob(context.Background(), job); err != nil {
-		t.Fatal(err)
-	}
-	if f.calls.Load() != 0 {
-		t.Fatal("automatic scheduler expanded configured target selection")
-	}
-	events, err := f.store.ListAudit(100)
-	if err != nil || len(events) != 0 {
-		t.Fatalf("automatic run invented a user-token admin event: %v, %#v", err, events)
-	}
-}
-
-func TestAdminAuditRejectsOtherTargetsAndRecordsRealDownstreamFailure(t *testing.T) {
+func TestAdminAuditRejectsOtherTargets(t *testing.T) {
 	f := newAdminAuditFixture(t)
 	f.agent(t, true)
 	limited, err := f.store.CreateUser("limited-admin")
@@ -613,18 +453,10 @@ func TestAdminAuditRejectsOtherTargetsAndRecordsRealDownstreamFailure(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err := f.store.CreateSchedulerJob(SchedulerJob{
-		Name: "exec-job", ScanMode: "exec", ClusterGlob: "dev", InstanceGlob: "node",
-		ScanConfig: `{"command":"` + adminAuditCanary + `"}`,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, tc := range []struct {
 		method, path string
 		body         any
 	}{
-		{"POST", "/v1/admin/repos/clone?id=" + f.repo.ID, map[string]any{"cluster": "dev", "instance": "node", "session_id": "audit-test"}},
 		{"POST", "/v1/targets/unlock?cluster=dev&instance=node", nil},
 		{"DELETE", "/v1/admin/operations?cluster=dev&id=" + f.operationID + "&instance=node", nil},
 		{"DELETE", "/v1/admin/operations?cluster=dev&id=%20" + f.operationID + "%20&instance=node", nil},
@@ -632,7 +464,6 @@ func TestAdminAuditRejectsOtherTargetsAndRecordsRealDownstreamFailure(t *testing
 		{"POST", "/v1/admin/proxy-routes", map[string]any{"cluster": "dev", "instance": "node", "host": "denied.test", "upstream": "http://localhost:80"}},
 		{"POST", "/v1/admin/proxy-routes", map[string]any{"id": f.route.ID, "cluster": "elsewhere", "instance": "other", "host": f.route.Host, "upstream": "http://localhost:80"}},
 		{"POST", "/v1/admin/proxy-routes", map[string]any{"id": " " + f.route.ID + " ", "cluster": "elsewhere", "instance": "other", "host": f.route.Host, "upstream": "http://localhost:80"}},
-		{"POST", "/v1/admin/jobs/run?id=" + job.ID, nil},
 	} {
 		before := f.state(t)
 		response := credentialHTTPRequest(t, f.mux, token.Plaintext, tc.method, tc.path, tc.body)
@@ -640,27 +471,6 @@ func TestAdminAuditRejectsOtherTargetsAndRecordsRealDownstreamFailure(t *testing
 			t.Fatalf("%s crossed target authority: HTTP %d", tc.path, response.Code)
 		}
 		assertAdminAudit(t, f.store, auth, tc.path, tc.method, "forbidden", http.StatusForbidden)
-	}
-	var logs bytes.Buffer
-	oldLog := log.Writer()
-	log.SetOutput(&logs)
-	t.Cleanup(func() { log.SetOutput(oldLog) })
-	for _, tc := range []struct {
-		path string
-		body any
-		code int
-	}{
-		{"/v1/admin/repos/clone?id=" + f.repo.ID, map[string]any{"cluster": "dev", "instance": "node", "session_id": "audit-test"}, http.StatusBadGateway},
-		{"/v1/admin/jobs/run?id=" + job.ID, nil, http.StatusInternalServerError},
-	} {
-		response := credentialHTTPRequest(t, f.mux, f.adminToken, http.MethodPost, tc.path, tc.body)
-		if response.Code != tc.code {
-			t.Fatalf("downstream failure reported as HTTP %d: %s", response.Code, response.Body.String())
-		}
-		assertAdminAudit(t, f.store, f.adminAuth, tc.path, http.MethodPost, "error", tc.code)
-	}
-	if strings.Contains(logs.String(), adminAuditCanary) {
-		t.Fatalf("downstream payload logged: %s", logs.String())
 	}
 }
 
@@ -674,20 +484,20 @@ func TestAdminAuditResponseStatusAndCompletionFailure(t *testing.T) {
 		{`{"isError":true,"error":"` + adminAuditCanary + `"}`, http.StatusBadGateway},
 		{adminAuditCanary, http.StatusConflict},
 	} {
-		handler := f.hub.auditAdminMutation("/v1/admin/repos", func(w http.ResponseWriter, r *http.Request) {
+		handler := f.hub.auditAdminMutation("/v1/admin/users", func(w http.ResponseWriter, r *http.Request) {
 			if tc.code == http.StatusConflict {
 				w.WriteHeader(http.StatusConflict)
 			}
 			_, _ = w.Write([]byte(tc.body))
 		})
-		response := credentialHTTPRequest(t, handler, f.adminToken, http.MethodPost, "/v1/admin/repos", nil)
+		response := credentialHTTPRequest(t, handler, f.adminToken, http.MethodPost, "/v1/admin/users", nil)
 		if response.Code != tc.code {
 			t.Fatalf("real error status = %d, want %d", response.Code, tc.code)
 		}
-		assertAdminAudit(t, f.store, f.adminAuth, "/v1/admin/repos", http.MethodPost, "error", tc.code)
+		assertAdminAudit(t, f.store, f.adminAuth, "/v1/admin/users", http.MethodPost, "error", tc.code)
 	}
 	called := false
-	handler := f.hub.auditAdminMutation("/v1/admin/repos", func(w http.ResponseWriter, r *http.Request) {
+	handler := f.hub.auditAdminMutation("/v1/admin/users", func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		if _, err := f.store.db.Exec(`CREATE TRIGGER late_audit_failure BEFORE UPDATE ON audit_events
 			BEGIN SELECT RAISE(FAIL, 'synthetic late audit failure'); END`); err != nil {
@@ -695,7 +505,7 @@ func TestAdminAuditResponseStatusAndCompletionFailure(t *testing.T) {
 		}
 		writeJSONHTTP(w, map[string]any{"ok": true, "message": adminAuditCanary})
 	})
-	response := credentialHTTPRequest(t, handler, f.adminToken, http.MethodPost, "/v1/admin/repos", nil)
+	response := credentialHTTPRequest(t, handler, f.adminToken, http.MethodPost, "/v1/admin/users", nil)
 	if !called || response.Code != http.StatusServiceUnavailable ||
 		!strings.Contains(response.Body.String(), "mutation outcome requires verification") ||
 		strings.Contains(response.Body.String(), adminAuditCanary) {

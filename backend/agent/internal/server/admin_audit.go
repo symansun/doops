@@ -273,13 +273,10 @@ func (h *GatewayHub) authorizeAdminMutationTarget(userID, route string, r *http.
 	}
 	switch route {
 	case "/v1/admin/users", "/v1/admin/users/password", "/v1/admin/users/disable",
-		"/v1/admin/grants", "/v1/admin/tokens", "/v1/admin/repos", "/v1/admin/repos/test",
-		"/v1/admin/jobs", "/v1/admin/jobs/issues", "/v1/admin/audit/optimize":
+		"/v1/admin/grants", "/v1/admin/tokens", "/v1/admin/audit/optimize":
 		if !h.store.UserIsPlatformAdmin(userID) {
 			return ErrUnauthorized
 		}
-	case "/v1/admin/repos/clone":
-		return check(cluster, instance, ActionPull)
 	case "/v1/targets/unlock", "/v1/admin/operations":
 		if route == "/v1/admin/operations" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 			return check(cluster, instance, ActionAdmin)
@@ -306,39 +303,6 @@ func (h *GatewayHub) authorizeAdminMutationTarget(userID, route string, r *http.
 			}
 			if err == nil {
 				return check(oldCluster, oldInstance, ActionAdmin)
-			}
-		}
-	case "/v1/admin/jobs/run":
-		if strings.TrimSpace(r.URL.Query().Get("enabled")) != "" {
-			if !h.store.UserIsPlatformAdmin(userID) {
-				return ErrUnauthorized
-			}
-			return nil
-		}
-		if h.scheduler == nil {
-			return nil
-		}
-		job, err := h.store.GetSchedulerJob(r.URL.Query().Get("id"))
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		mode := strings.ToLower(job.ScanMode)
-		if mode == "audit" {
-			if !h.store.UserIsPlatformAdmin(userID) {
-				return ErrUnauthorized
-			}
-			return nil
-		}
-		action := ActionAsk
-		if mode == "exec" {
-			action = ActionExec
-		}
-		for _, target := range h.scheduler.matchTargets(job) {
-			if err := check(target.Cluster, target.Instance, action); err != nil {
-				return err
 			}
 		}
 	}
