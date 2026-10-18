@@ -2015,12 +2015,18 @@ func (a *GatewayAgent) sessionResourceHeldLocked(lockKey string) bool {
 	if session == "" {
 		return false
 	}
+	shellLike := strings.HasPrefix(lockKey, "session-mutation:")
 	for key, count := range a.sessionWriters {
 		if count == 0 {
 			continue
 		}
 		if strings.HasPrefix(key, "target:") {
 			return true
+		}
+		// Shell, SSH and apply calls in one session run concurrently; only
+		// workspace resources and Agent upgrade exclude them.
+		if shellLike && strings.HasPrefix(key, "session-mutation:") {
+			continue
 		}
 		if sessionForResourceKey(key) == session {
 			return true
@@ -2169,7 +2175,9 @@ func (a *GatewayAgent) releaseExclusive(lockKey string) {
 		return
 	}
 	a.writers--
-	delete(a.sessionWriters, lockKey)
+	if a.sessionWriters[lockKey]--; a.sessionWriters[lockKey] <= 0 {
+		delete(a.sessionWriters, lockKey)
+	}
 	a.opsMu.Unlock()
 	a.setBusy(false)
 	a.signalStateChange()

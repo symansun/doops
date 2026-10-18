@@ -348,13 +348,17 @@ func TestExecutionLifecycleRPCReconnectFenceBlocksReplacementDispatch(t *testing
 
 	replacement := f.agent(t, "reconnect-rpc-new")
 	client := f.client(t, f.admin)
-	lifecycleSend(t, client, 2, "doops_shell", "reconnect-rpc", map[string]interface{}{"command": "true"})
+	lifecycleSend(t, client, 2, "doops_file_write", "reconnect-rpc", map[string]interface{}{"path": "config.txt", "content": "x"})
 	lifecycleResponse(t, client, 2, "active operation")
 	select {
 	case call := <-replacement.calls:
-		t.Fatalf("replacement Agent received fenced dispatch: %#v", call)
+		t.Fatalf("replacement Agent received fenced workspace dispatch: %#v", call)
 	default:
 	}
+	// Shell calls in the same session are not fenced by each other.
+	lifecycleSend(t, client, 3, "doops_shell", "reconnect-rpc", map[string]interface{}{"command": "true"})
+	replacement.complete(t, replacement.call(t, "doops_shell", "reconnect-rpc"), "")
+	lifecycleResponse(t, client, 3, "")
 	if oldAgent == replacement {
 		t.Fatal("replacement fixture did not create a new Agent connection")
 	}
