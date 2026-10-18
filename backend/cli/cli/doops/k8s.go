@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -15,7 +16,33 @@ type k8sCaller interface {
 	Call(toolName string, arguments map[string]interface{}) error
 }
 
+// errK8SHelp tells the caller to print k8sUsage and exit successfully.
+var errK8SHelp = errors.New("k8s help requested")
+
+const k8sUsage = `用法: doops -session <s> k8s --target <t> <command> [flags]
+
+只读（可与发布并行）:
+  get <kind>                      [--namespace ns] [--output json|yaml|wide|name]
+  describe <kind> <name>          [--namespace ns]
+  logs <resource>                 [--namespace ns] [--container c] [--tail N]
+  top pods|nodes                  [--namespace ns]
+  events                          [--namespace ns] [--for kind/name]
+  rollout status <resource>       [--namespace ns] [--timeout 120s]
+
+写操作（必须带 --confirm）:
+  rollout restart <resource>      --confirm
+  scale <resource> --replicas N   --confirm
+  node cordon|uncordon <node>     --confirm
+  delete pod <name>               --confirm
+
+业务发布使用 ask --apply，不用本入口。`
+
 func buildK8SRequest(args []string) (K8SRequest, error) {
+	for _, arg := range args {
+		if arg == "-h" || arg == "-help" || arg == "--help" {
+			return K8SRequest{}, errK8SHelp
+		}
+	}
 	opts, positional, err := parseK8SFlags(args)
 	if err != nil {
 		return K8SRequest{}, err
