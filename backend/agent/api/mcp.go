@@ -155,6 +155,10 @@ type AgentPromptParams struct {
 	SQLVerification string `json:"sql_verification,omitempty"`
 	SQLDatabase     string `json:"sql_database,omitempty"`
 	SQLDryRun       bool   `json:"sql_dry_run,omitempty"`
+	// SQLCopyFrom names the source database; SQLDatabase is the destination.
+	// The Agent copies SQLCopyTables between the two bound databases itself.
+	SQLCopyFrom   string   `json:"sql_copy_from,omitempty"`
+	SQLCopyTables []string `json:"sql_copy_tables,omitempty"`
 }
 
 // AgentPromptAttachment is a browser-uploaded conversation document. The

@@ -1078,8 +1078,12 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 				defer cleanup()
 			}
 		}
-		if doSQLDirectRequested(args) {
-			result, err := handleDirectDoSQLPrompt(ctx, sessionID, args)
+		if doSQLDirectRequested(args) || doSQLCopyRequested(args) {
+			handle := handleDirectDoSQLPrompt
+			if doSQLCopyRequested(args) {
+				handle = handleDoSQLCopy
+			}
+			result, err := handle(ctx, sessionID, args)
 			if err != nil {
 				if ctx.Err() != nil {
 					writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))

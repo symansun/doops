@@ -38,6 +38,8 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 	verify := flags.String("verify", "", "Read-only verification SQL run in the same transaction (--mode apply)")
 	verifyFile := flags.String("verify-file", "", "File holding the read-only verification SQL (--mode apply)")
 	dryRun := flags.Bool("dry-run", false, "Execute the batch and verification, then roll back (--mode apply)")
+	copyFrom := flags.String("copy-from", "", "Copy whole tables from this source database into --database (--mode apply, same engine, destination tables must exist)")
+	copyTables := flags.String("tables", "", "Comma-separated table names for --copy-from")
 	// DoSql has no --credential: the Gateway binds the target's database
 	// credentials and the Agent selects one by --database.
 	var databaseRefs stringListFlag
@@ -68,6 +70,37 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 	parsedMode, err := parseSQLMode(*mode)
 	if err != nil {
 		return err
+	}
+	if strings.TrimSpace(*copyFrom) != "" {
+		if parsedMode != sqlModeApply {
+			return fmt.Errorf("--copy-from 只用于 --mode apply")
+		}
+		if *sqlText != "" || *sqlFile != "" || strings.TrimSpace(*request) != "" || *verify != "" || *verifyFile != "" {
+			return fmt.Errorf("--copy-from 不能与 --sql/--file/--request/--verify 同用")
+		}
+		if strings.TrimSpace(*database) == "" {
+			return fmt.Errorf("--copy-from 需要 --database 指定目标库")
+		}
+		var tables []string
+		for _, name := range strings.Split(*copyTables, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				tables = append(tables, name)
+			}
+		}
+		if len(tables) == 0 {
+			return fmt.Errorf("--copy-from 需要 --tables a,b")
+		}
+		extra := map[string]interface{}{
+			"sql_copy_from":   strings.TrimSpace(*copyFrom),
+			"sql_copy_tables": tables,
+			"sql_database":    strings.TrimSpace(*database),
+		}
+		if *dryRun {
+			extra["sql_dry_run"] = true
+		}
+		return runSkillPromptWith("dosql", "apply", *target, sessionName,
+			fmt.Sprintf("DoSql 跨库复制 %s -> %s：%s，由 Agent 分批读写，不经过模型。", *copyFrom, *database, strings.Join(tables, ",")),
+			"auto", nil, extra, servers, configErr, ss, verbose)
 	}
 	direct, err := buildSQLDirectInput(parsedMode, *sqlText, *sqlFile, *verify, *verifyFile, *database, *dryRun)
 	if err != nil {
