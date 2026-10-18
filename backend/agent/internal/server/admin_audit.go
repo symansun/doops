@@ -141,23 +141,9 @@ func (h *GatewayHub) auditAdminMutation(route string, next http.HandlerFunc) htt
 			metadata.Enabled = &value
 		}
 		cluster, instance := input.Cluster, input.Instance
-		if route == "/v1/targets/unlock" {
-			cluster, instance = r.URL.Query().Get("cluster"), r.URL.Query().Get("instance")
-		}
-		if isAdmin && route == "/v1/admin/operations" {
-			for _, op := range h.listActiveOperations() {
-				if op.ID == strings.TrimSpace(r.URL.Query().Get("id")) {
-					cluster, instance = op.Cluster, op.Instance
-					break
-				}
-			}
-		}
 		session := "admin-" + strings.ReplaceAll(strings.TrimPrefix(route, "/v1/admin/"), "/", "-")
 		if route == "/v1/admin/tokens" && r.Method == http.MethodPost {
 			session = "admin-token-create"
-		}
-		if route == "/v1/admin/audit/optimize" && validateSession(input.SessionID) == nil {
-			session = input.SessionID
 		}
 		id, err := h.store.startMutationAudit(AuditEvent{
 			UserID: auth.UserID, TokenID: auth.TokenID, Action: ActionAdmin,

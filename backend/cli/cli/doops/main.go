@@ -66,10 +66,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
   pull        基于 Git 拉取远端 session 工作区到本地目录
   clean       清理远端节点上的工作区隔离沙盒
-  unlock      管理员仅重连空闲 target，不强制释放活动任务
   admin       gateway 管理命令：用户、target 授权和 API key
-              admin audit optimize：显式、受审计地维护查询索引
-              admin operations cancel：仅请求取消，不代表任务已停止
   upgrade     仅升级标准 Helm doops-agent；--dry-run 只预览参数，正式升级由目标集群内 Job 执行
   add         添加 gateway target
   remove      仅在 target 确认离线时删除本机 gateway target 配置
@@ -223,34 +220,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Printf("%-18s %-18s %-8v %-16s %-7d %-7d %-40s %-28s %-24s\n", item.Cluster, item.Instance, item.Busy, status, item.ActiveOps, item.QueuedOps, releaseCommit, resources, item.LastSeen.Format(time.RFC3339))
 		}
 
-	case "unlock":
-		var target string
-		unlockFlag := flag.NewFlagSet("unlock", flag.ExitOnError)
-		unlockFlag.StringVar(&target, "target", "", "Configured Gateway target to reconnect only when idle; does not force-release active work")
-		unlockFlag.Parse(cmdArgs)
-		if target == "" {
-			fmt.Println("Error: --target is required")
-			unlockFlag.Usage()
-			os.Exit(1)
-		}
-		requireConfig(configErr)
-		server := findServer(servers, target)
-		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
-			os.Exit(1)
-		}
-		token := mustResolveToken(*server)
-		if err := unlockGatewayTarget(server.Gateway, token, server.Cluster, server.Instance); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Idle target reconnect requested for %s/%s; active work is not force-released.\n", server.Cluster, server.Instance)
-
 	case "admin":
-		if len(cmdArgs) >= 2 && cmdArgs[0] == "audit" && cmdArgs[1] == "optimize" {
-			runAdminAuditOptimize(cmdArgs[2:], servers, configErr, *sessionName)
-			return
-		}
 		if len(cmdArgs) >= 1 && cmdArgs[0] == "user" {
 			runAdminUsers(cmdArgs[1:], servers, configErr)
 			return
@@ -270,17 +240,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Println("Usage: doops admin token create --target <gateway-target> --user <username> [--name label] [--expires 720h] [--save-as target]")
 			fmt.Println("       doops admin token list --target <gateway-target>")
 			fmt.Println("       doops admin token revoke --target <gateway-target> --id <token-id>")
-			fmt.Println("       doops admin operations list --target <gateway-target>")
-			fmt.Println("       doops admin operations cancel --target <gateway-target> --id <operation-id>")
 			os.Exit(1)
-		}
-		if cmdArgs[0] == "operations" && cmdArgs[1] == "list" {
-			runAdminOperationsList(cmdArgs[2:], servers, configErr)
-			return
-		}
-		if cmdArgs[0] == "operations" && cmdArgs[1] == "cancel" {
-			runAdminOperationCancel(cmdArgs[2:], servers, configErr)
-			return
 		}
 		if cmdArgs[0] == "token" && cmdArgs[1] == "list" {
 			runAdminTokensList(cmdArgs[2:], servers, configErr)
@@ -297,8 +257,6 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Println("Usage: doops admin token create --target <gateway-target> --user <username> [--name label] [--expires 720h] [--save-as target]")
 			fmt.Println("       doops admin token list --target <gateway-target>")
 			fmt.Println("       doops admin token revoke --target <gateway-target> --id <token-id>")
-			fmt.Println("       doops admin operations list --target <gateway-target>")
-			fmt.Println("       doops admin operations cancel --target <gateway-target> --id <operation-id>")
 			os.Exit(1)
 		}
 		var target, user, label, expires, saveAs string
@@ -1147,52 +1105,7 @@ func findRouteConflict(servers []Server, candidate Server) string {
 	return ""
 }
 
-func runAdminOperationsList(args []string, servers []Server, configErr error) {
-	server, token := resolveAdminTargetFlags("admin operations list", args, servers, configErr, nil)
-	ops, err := GatewayAdminOperationsList(server.Gateway, token, server.Cluster, server.Instance)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
-	}
-	ops = filterGatewayOperations(ops, server.Cluster, server.Instance)
-	fmt.Printf("%-12s %-8s %-18s %-24s %-30s %-18s %-8s %-16s %-8s %-8s %s\n", "ID", "AUDIT_ID", "STATE", "REQUESTED_RESOURCE", "EFFECTIVE_LOCK", "BLOCKED_BY", "ACTION", "SESSION", "AGE", "USER", "SUMMARY")
-	fmt.Println(strings.Repeat("-", 170))
-	for _, op := range ops {
-		summary := op.CommandSummary
-		if len(summary) > 48 {
-			summary = summary[:45] + "..."
-		}
-		requested := op.RequestedResource
-		if requested == "" {
-			requested = "-"
-		}
-		effective := op.EffectiveLock
-		if effective == "" {
-			effective = "-"
-		}
-		fmt.Printf("%-12s %-8d %-18s %-24s %-30s %-18s %-8s %-16s %-8ds %-8s %s\n", op.ID, op.AuditID, op.State, requested, effective, strings.Join(op.BlockedBy, ","), op.Action, op.Session, op.AgeSeconds, op.UserID, summary)
-	}
-}
 
-func runAdminOperationCancel(args []string, servers []Server, configErr error) {
-	var opID string
-	server, token := resolveAdminTargetFlags("admin operations cancel", args, servers, configErr, &opID)
-	ops, err := GatewayAdminOperationsList(server.Gateway, token, server.Cluster, server.Instance)
-	if err != nil {
-		fmt.Printf("Error: cannot verify operation target: %v\n", err)
-		os.Exit(1)
-	}
-	if !operationBelongsToTarget(ops, opID, server.Cluster, server.Instance) {
-		fmt.Printf("Error: operation %q is not active on target %s/%s; refusing cross-target cancellation.\n",
-			strings.TrimSpace(opID), strings.TrimSpace(server.Cluster), strings.TrimSpace(server.Instance))
-		os.Exit(1)
-	}
-	if err := GatewayAdminOperationCancel(server.Gateway, token, opID, server.Cluster, server.Instance); err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("id=%s cancel_requested=true state=cancel_requested; cancellation requested, not confirmed stopped.\n", strings.TrimSpace(opID))
-}
 
 func runAdminTokensList(args []string, servers []Server, configErr error) {
 	fs := flag.NewFlagSet("admin token list", flag.ExitOnError)
@@ -1277,27 +1190,7 @@ func resolveAdminGatewayFlags(name string, args []string, servers []Server, conf
 	return server.Gateway, token
 }
 
-func filterGatewayOperations(ops []gatewayActiveOperation, cluster, instance string) []gatewayActiveOperation {
-	cluster = strings.TrimSpace(cluster)
-	instance = strings.TrimSpace(instance)
-	filtered := make([]gatewayActiveOperation, 0, len(ops))
-	for _, op := range ops {
-		if strings.TrimSpace(op.Cluster) == cluster && strings.TrimSpace(op.Instance) == instance {
-			filtered = append(filtered, op)
-		}
-	}
-	return filtered
-}
 
-func operationBelongsToTarget(ops []gatewayActiveOperation, id, cluster, instance string) bool {
-	id = strings.TrimSpace(id)
-	for _, op := range filterGatewayOperations(ops, cluster, instance) {
-		if op.ID == id {
-			return true
-		}
-	}
-	return false
-}
 
 func requireConfig(err error) {
 	if err == nil {

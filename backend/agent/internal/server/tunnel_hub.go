@@ -388,12 +388,6 @@ type targetResponse struct {
 	Targets []GatewayTarget `json:"targets"`
 }
 
-type targetUnlockResponse struct {
-	Cluster      string `json:"cluster"`
-	Instance     string `json:"instance"`
-	Disconnected bool   `json:"disconnected"`
-}
-
 type auditResponse struct {
 	Events []auditRecord `json:"events"`
 }
@@ -504,7 +498,6 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/git/", h.HandleGitHTTP)
 	mux.HandleFunc("/", h.HandlePublicProxy)
 	mux.HandleFunc("/v1/targets", h.HandleTargets)
-	mux.HandleFunc("/v1/targets/unlock", h.auditAdminMutation("/v1/targets/unlock", h.HandleTargetUnlock))
 	mux.HandleFunc("/v1/audit", h.HandleAudit)
 	mux.HandleFunc("/v1/credential-bundles", h.HandleCredentialBundles)
 	mux.HandleFunc("/v1/credentials", h.HandleCredentials)
@@ -518,9 +511,7 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	admin("/v1/admin/users/disable", h.HandleAdminUserDisable)
 	admin("/v1/admin/grants", h.HandleAdminGrants)
 	admin("/v1/admin/instances", h.HandleAdminInstances)
-	admin("/v1/admin/operations", h.HandleAdminOperations)
 	admin("/v1/admin/proxy-routes", h.HandleAdminProxyRoutes)
-	admin("/v1/admin/audit/optimize", h.HandleAdminAuditOptimize)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -652,82 +643,12 @@ func (h *GatewayHub) handleAdminTokens(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *GatewayHub) HandleAdminOperations(w http.ResponseWriter, r *http.Request) {
-	auth, err := h.authenticateUser(r)
-	if err != nil {
-		h.writeUserAuthError(w, r)
-		return
-	}
-	if !h.store.UserIsPlatformAdmin(auth.UserID) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-	cluster := strings.TrimSpace(r.URL.Query().Get("cluster"))
-	instance := strings.TrimSpace(r.URL.Query().Get("instance"))
-	if (cluster == "") != (instance == "") {
-		http.Error(w, "cluster and instance must be provided together", http.StatusBadRequest)
-		return
-	}
-	targetScoped := cluster != "" && instance != ""
-	if !targetScoped {
-		http.Error(w, "cluster and instance are required", http.StatusBadRequest)
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		ops := filterActiveOperationsForTarget(h.listActiveOperations(), cluster, instance)
-		unresolved, err := h.client.unresolvedExecutions(cluster, instance)
-		if err != nil {
-			http.Error(w, "execution_guard_unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		for _, event := range unresolved {
-			ops = append(ops, GatewayActiveOperation{
-				ID: fmt.Sprintf("audit-%d", event.ID), AuditID: event.ID, State: "outcome_unknown",
-				UserID: event.UserID, Cluster: event.Cluster, Instance: event.Instance,
-				Action: event.Action, Session: event.Session, CommandSummary: event.CommandSummary,
-				Kind: "unresolved", StartedAt: event.StartedAt, AgeSeconds: int64(time.Since(event.StartedAt).Seconds()),
-			})
-		}
-		writeJSONHTTP(w, map[string]interface{}{"operations": ops})
-	case http.MethodDelete:
-		id := strings.TrimSpace(r.URL.Query().Get("id"))
-		if id == "" {
-			http.Error(w, "missing id", http.StatusBadRequest)
-			return
-		}
-		if !h.cancelActiveOperationForTarget(id, cluster, instance) {
-			http.Error(w, "operation not found", http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		writeJSONHTTP(w, map[string]interface{}{"id": id, "cancel_requested": true, "state": "cancel_requested"})
-	default:
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-	}
-}
-
 func (h *GatewayHub) listActiveOperations() []GatewayActiveOperation {
 	return h.client.listActiveOperations()
 }
 
-func filterActiveOperationsForTarget(ops []GatewayActiveOperation, cluster, instance string) []GatewayActiveOperation {
-	filtered := make([]GatewayActiveOperation, 0, len(ops))
-	for _, op := range ops {
-		if op.Cluster == cluster && op.Instance == instance {
-			filtered = append(filtered, op)
-		}
-	}
-	return filtered
-}
-
 func (h *GatewayHub) cancelActiveOperation(id string) bool {
 	return h.client.cancelActiveOperation(id)
-}
-
-func (h *GatewayHub) cancelActiveOperationForTarget(id, cluster, instance string) bool {
-	return h.client.cancelActiveOperationForTarget(id, cluster, instance)
 }
 
 func (h *GatewayHub) HandleAgentConnect(w http.ResponseWriter, r *http.Request) {
@@ -777,38 +698,6 @@ func (h *GatewayHub) HandleTargets(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSONHTTP(w, targetResponse{Targets: filtered})
-}
-
-func (h *GatewayHub) HandleTargetUnlock(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	auth, err := h.authenticateUser(r)
-	if err != nil {
-		h.writeUserAuthError(w, r)
-		return
-	}
-	if !h.store.UserIsPlatformAdmin(auth.UserID) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-	cluster := strings.TrimSpace(r.URL.Query().Get("cluster"))
-	instance := strings.TrimSpace(r.URL.Query().Get("instance"))
-	if cluster == "" || instance == "" {
-		http.Error(w, "missing cluster or instance", http.StatusBadRequest)
-		return
-	}
-	agent := h.getAgent(cluster, instance)
-	if agent == nil {
-		http.Error(w, fmt.Sprintf("target offline: %s/%s", cluster, instance), http.StatusNotFound)
-		return
-	}
-	if err := agent.forceUnlock(); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
-		return
-	}
-	writeJSONHTTP(w, targetUnlockResponse{Cluster: cluster, Instance: instance, Disconnected: true})
 }
 
 func (h *GatewayHub) HandleAudit(w http.ResponseWriter, r *http.Request) {
@@ -2339,21 +2228,6 @@ func isConcurrentQuery(action GatewayAction, resourceKey string) bool {
 func isExclusiveOperation(action GatewayAction, resourceKey string) bool {
 	return action == ActionAgentUpgrade || strings.HasPrefix(resourceKey, "target:") || strings.HasPrefix(resourceKey, "target-mutation:") ||
 		(resourceKey == "" && !isConcurrentReadOnlyAction(action))
-}
-
-func (a *GatewayAgent) forceUnlock() error {
-	a.opsMu.Lock()
-	defer a.opsMu.Unlock()
-	a.queueMu.Lock()
-	defer a.queueMu.Unlock()
-	a.pendingMu.Lock()
-	defer a.pendingMu.Unlock()
-	if a.writers != 0 || a.readers != 0 || len(a.resources) != 0 ||
-		len(a.sessionWriters) != 0 || a.queued != 0 || len(a.pending) != 0 {
-		return fmt.Errorf("target has active or queued operations; request operation cancellation and wait for terminal evidence")
-	}
-	a.draining = true
-	return a.conn.Close()
 }
 
 func (a *GatewayAgent) setBusy(busy bool) {

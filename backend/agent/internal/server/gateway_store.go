@@ -502,6 +502,11 @@ func (s *GatewayStore) migrate() error {
 			return err
 		}
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	if _, err := s.optimizeAuditIndexes(ctx); err != nil {
+		return fmt.Errorf("audit index maintenance: %w", err)
+	}
 	return nil
 }
 

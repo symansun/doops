@@ -98,45 +98,11 @@ func probeGatewayTarget(server Server, token, session string) (bool, error) {
 	return false, err
 }
 
-func unlockGatewayTarget(gateway, token, cluster, instance string) error {
-	unlockURL, err := gatewayTargetUnlockURL(gateway, cluster, instance)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequest(http.MethodPost, unlockURL, nil)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(token) != "" {
-		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
-	}
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return decodeGatewayHTTPError("gateway unlock", resp, body)
-	}
-	return nil
-}
 
 func gatewayTargetsURL(rawGateway string) (string, error) {
 	return gatewayURLWithPath(rawGateway, "/v1/targets", nil)
 }
 
-func gatewayTargetUnlockURL(rawGateway, cluster, instance string) (string, error) {
-	cluster = strings.TrimSpace(cluster)
-	instance = strings.TrimSpace(instance)
-	if cluster == "" || instance == "" {
-		return "", fmt.Errorf("cluster and instance are required")
-	}
-	return gatewayURLWithPath(rawGateway, "/v1/targets/unlock", url.Values{
-		"cluster":  []string{cluster},
-		"instance": []string{instance},
-	})
-}
 
 func gatewayURLWithPath(rawGateway, endpoint string, query url.Values) (string, error) {
 	rawGateway = strings.TrimSpace(rawGateway)

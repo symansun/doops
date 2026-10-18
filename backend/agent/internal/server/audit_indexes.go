@@ -4,48 +4,11 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
-	"net/http"
 	"strings"
-	"time"
 )
 
 //go:embed audit_indexes.sql
 var auditIndexesSQL string
-
-func (h *GatewayHub) HandleAdminAuditOptimize(w http.ResponseWriter, r *http.Request) {
-	auth, err := h.authenticateUser(r)
-	if err != nil {
-		h.writeUserAuthError(w, r)
-		return
-	}
-	if !h.store.UserIsPlatformAdmin(auth.UserID) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var input struct {
-		SessionID string `json:"session_id"`
-	}
-	if err := decodeCredentialJSON(w, r, &input); err != nil {
-		http.Error(w, "invalid audit maintenance request", http.StatusBadRequest)
-		return
-	}
-	if err := validateSession(input.SessionID); err != nil {
-		http.Error(w, "valid session_id is required", http.StatusBadRequest)
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
-	defer cancel()
-	plans, err := h.store.optimizeAuditIndexes(ctx)
-	if err != nil {
-		http.Error(w, "audit_index_maintenance_failed", http.StatusInternalServerError)
-		return
-	}
-	writeJSONHTTP(w, map[string]interface{}{"optimized": true, "definitions_verified": true, "query_plans": plans})
-}
 
 func (s *GatewayStore) optimizeAuditIndexes(ctx context.Context) ([]string, error) {
 	tx, err := s.db.BeginTx(ctx, nil)

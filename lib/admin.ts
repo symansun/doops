@@ -45,24 +45,6 @@ export interface AdminInstance {
   last_seen?: string
 }
 
-export interface AdminOperation {
-  id: string
-  state: "waiting" | "running" | "cancel_requested" | "finalizing" | "outcome_unknown"
-  audit_id?: number
-  resource?: string
-  requested_resource?: string
-  effective_lock?: string
-  blocked_by?: string[]
-  user_id: string
-  cluster: string
-  instance: string
-  action: string
-  kind: string
-  command_summary?: string
-  started_at: string
-  age_seconds: number
-}
-
 
 function headers(s: Session): HeadersInit {
   void s
@@ -162,30 +144,4 @@ export async function revokeToken(s: Session, id: string): Promise<void> {
 export async function listInstances(s: Session): Promise<AdminInstance[]> {
   if (s.demo) return (await import("./demo")).demoListInstances()
   return (await req<{ instances: AdminInstance[] }>(s, "instances")).instances || []
-}
-
-// ---------- 运行中操作 ----------
-export async function listOperations(s: Session, cluster: string, instance: string): Promise<AdminOperation[]> {
-  if (s.demo) return (await import("./demo")).demoListOperations()
-  const qs = new URLSearchParams({ cluster, instance })
-  return (await req<{ operations: AdminOperation[] }>(s, `operations?${qs.toString()}`)).operations || []
-}
-
-export async function optimizeAuditIndexes(s: Session, sessionId: string): Promise<void> {
-	if (s.demo) throw new Error("演示模式不执行索引维护")
-	const result = await req<{ optimized: boolean; definitions_verified: boolean; query_plans: string[] }>(s, "audit/optimize", { method: "POST", body: JSON.stringify({ session_id: sessionId }) })
-	if (!result.optimized || !result.definitions_verified || result.query_plans?.length !== 3) throw new Error("审计索引维护未通过验证")
-}
-
-export async function cancelOperation(s: Session, id: string, cluster: string, instance: string): Promise<void> {
-  if (s.demo) return (await import("./demo")).demoCancelOperation(id)
-  const result = await req<{ id: string; cancel_requested: boolean; state: string } | null>(
-    s,
-    `operations?cluster=${encodeURIComponent(cluster)}&id=${encodeURIComponent(id)}&instance=${encodeURIComponent(instance)}`,
-    { method: "DELETE" },
-    202,
-  )
-  if (!result || result.id !== id || result.cancel_requested !== true || result.state !== "cancel_requested") {
-    throw new Error("取消请求响应无效：未确认对应操作的 cancel_requested 状态")
-  }
 }

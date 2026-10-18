@@ -146,29 +146,7 @@ type gatewayAdminTokensResponse struct {
 	Tokens []gatewayAdminTokenInfo `json:"tokens"`
 }
 
-type gatewayActiveOperation struct {
-	ID                string   `json:"id"`
-	AuditID           int64    `json:"audit_id,omitempty"`
-	State             string   `json:"state"`
-	Resource          string   `json:"resource,omitempty"`
-	RequestedResource string   `json:"requested_resource,omitempty"`
-	EffectiveLock     string   `json:"effective_lock,omitempty"`
-	BlockedBy         []string `json:"blocked_by,omitempty"`
-	UserID            string   `json:"user_id"`
-	TokenID           string   `json:"token_id,omitempty"`
-	Cluster           string   `json:"cluster"`
-	Instance          string   `json:"instance"`
-	Action            string   `json:"action"`
-	Session           string   `json:"session,omitempty"`
-	CommandSummary    string   `json:"command_summary,omitempty"`
-	Kind              string   `json:"kind"`
-	StartedAt         string   `json:"started_at"`
-	AgeSeconds        int64    `json:"age_seconds"`
-}
 
-type gatewayAdminOperationsResponse struct {
-	Operations []gatewayActiveOperation `json:"operations"`
-}
 
 func GatewayLogin(gateway, username, password, label string) (string, error) {
 	loginURL, err := gatewayAuthLoginURL(gateway)
@@ -305,75 +283,7 @@ func GatewayAdminTokenRevoke(gateway, adminToken, id string) error {
 	return nil
 }
 
-func GatewayAdminOperationsList(gateway, adminToken, cluster, instance string) ([]gatewayActiveOperation, error) {
-	opsURL, err := gatewayAdminOperationsURL(gateway, "", cluster, instance)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(http.MethodGet, opsURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(adminToken) != "" {
-		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(adminToken))
-	}
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return nil, decodeGatewayHTTPError("gateway admin operations list", resp, respBody)
-	}
-	var parsed gatewayAdminOperationsResponse
-	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return nil, err
-	}
-	return parsed.Operations, nil
-}
 
-func GatewayAdminOperationCancel(gateway, adminToken, id, cluster, instance string) error {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return fmt.Errorf("operation id is required")
-	}
-	cancelURL, err := gatewayAdminOperationsURL(gateway, id, cluster, instance)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequest(http.MethodDelete, cancelURL, nil)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(adminToken) != "" {
-		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(adminToken))
-	}
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != http.StatusAccepted {
-		return decodeGatewayHTTPError("gateway admin operation cancel", resp, respBody)
-	}
-	var parsed struct {
-		ID              string `json:"id"`
-		CancelRequested bool   `json:"cancel_requested"`
-		State           string `json:"state"`
-	}
-	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return fmt.Errorf("decode gateway admin operation cancel response: %w", err)
-	}
-	if parsed.ID != id || !parsed.CancelRequested || parsed.State != "cancel_requested" {
-		return fmt.Errorf("gateway admin operation cancel returned invalid acknowledgment: expected id=%s cancel_requested=true state=cancel_requested", id)
-	}
-	return nil
-}
 
 func gatewayAuthLoginURL(rawGateway string) (string, error) {
 	return gatewayURLWithPath(rawGateway, "/v1/auth/login", nil)
@@ -392,18 +302,4 @@ func gatewayAdminTokensURL(rawGateway, kind, id string) (string, error) {
 		values.Set("id", strings.TrimSpace(id))
 	}
 	return gatewayURLWithPath(rawGateway, "/v1/admin/tokens", values)
-}
-
-func gatewayAdminOperationsURL(rawGateway, id, cluster, instance string) (string, error) {
-	values := url.Values{}
-	if strings.TrimSpace(id) != "" {
-		values.Set("id", strings.TrimSpace(id))
-	}
-	if strings.TrimSpace(cluster) != "" {
-		values.Set("cluster", strings.TrimSpace(cluster))
-	}
-	if strings.TrimSpace(instance) != "" {
-		values.Set("instance", strings.TrimSpace(instance))
-	}
-	return gatewayURLWithPath(rawGateway, "/v1/admin/operations", values)
 }
