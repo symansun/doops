@@ -75,6 +75,7 @@ description: |
 | 一次配置凭据 | `doops -session <s> credential configure --target <t> --id <id> ...` |
 | 开发凭据预检 | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` |
 | 用户与授权 | `doops admin user create\|list`、`admin grant list\|add\|delete` |
+| 网站代理路由 | `doops admin proxy list\|set\|delete --target <t> ...`（`set --id` 只改传入字段） |
 | token | `doops admin token create\|list\|revoke` |
 | 活动操作 | `doops -session <s> admin operations list --target <t>` |
 | Helm Agent 升级 / 回滚 | `doops -session <s> upgrade --target <t> --image <ref>`（`--dry-run` 只预览）；`upgrade --target <t> --rollback` |

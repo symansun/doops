@@ -684,7 +684,7 @@ the user's grants.
 | 凭据 target 绑定 | 同一 scope 重新 `credential grant` 会复活已吊销绑定；换 scope 要新 `grant` 再 `grant-revoke` 旧的 | 绑定不支持原地改 scope |
 | 凭据资源 | 只能 `credential revoke` | name、type、scope 无修改入口；要改就新建资源 |
 | 定时巡检 job | `admin jobs enable\|disable` 开关；其它字段替换：`admin jobs add` 后 `admin jobs rm` | job 字段不支持原地修改 |
-| 网站代理路由 | HTTP `POST /v1/admin/proxy-routes` 带 `id` 时按 ID upsert（无 CLI），见 `DOOPS_GATEWAY_TUNNEL.md` | — |
+| 网站代理路由 | `doops admin proxy set --id <id> [--host] [--scope-target] [--upstream] [--enabled]` 原地修改，只改传入字段；新建省略 `--id`，见 `DOOPS_GATEWAY_TUNNEL.md` | — |
 | Git 仓库登记 | HTTP `PATCH /v1/admin/repos?id=<id>` 或 Web 控制台（无 CLI） | — |
 | Edge 域名路由 / enrollment | 当前没有 HTTP 或 CLI 管理入口；存储层的增改删只被测试调用 | 不要直接改 Gateway SQLite |
 | Agent 的 cluster/instance | 由 Agent 部署配置（Helm values）声明，改它就是重新发布 Agent，见 `BUILD_DEPLOY_SOP.md` | CLI 和 Gateway 都不能改在线 Agent 的身份 |
