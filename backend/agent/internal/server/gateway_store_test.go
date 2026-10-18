@@ -96,7 +96,6 @@ func TestGatewayStoreOnlyIssuesUserTokensAndPermissions(t *testing.T) {
 	if err := store.GrantUser(user.ID, ScopeGrant{
 		Cluster:  "dev",
 		Instance: "local",
-		Actions:  []GatewayAction{ActionExec, ActionRead, ActionTargetsList},
 	}); err != nil {
 		t.Fatalf("grant user: %v", err)
 	}
@@ -105,14 +104,11 @@ func TestGatewayStoreOnlyIssuesUserTokensAndPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verify user token: %v", err)
 	}
-	if !store.UserCan(userAuth.UserID, "dev", "local", ActionExec) {
-		t.Fatal("expected alice to execute dev/local")
+	if !store.UserCanUseTarget(userAuth.UserID, "dev", "local") {
+		t.Fatal("expected alice to use dev/local")
 	}
-	if store.UserCan(userAuth.UserID, "prod", "local", ActionExec) {
-		t.Fatal("alice must not execute prod/local")
-	}
-	if store.UserCan(userAuth.UserID, "dev", "local", ActionWrite) {
-		t.Fatal("targets:list must not imply write access")
+	if store.UserCanUseTarget(userAuth.UserID, "prod", "local") {
+		t.Fatal("alice must not use prod/local")
 	}
 }
 
@@ -165,69 +161,11 @@ func TestGatewayStoreUserDefaultsToNoTargetAccess(t *testing.T) {
 		t.Fatalf("verify user token: %v", err)
 	}
 
-	for _, action := range defaultGatewayUserActions {
-		if store.UserCan(auth.UserID, "any-cluster", "any-node", action) {
-			t.Fatalf("new user without grants must not have target action %q", action)
-		}
+	if store.UserCanUseTarget(auth.UserID, "any-cluster", "any-node") {
+		t.Fatal("new user without grants must not use any target")
 	}
-	if store.UserCan(auth.UserID, "any-cluster", "any-node", ActionAdmin) {
-		t.Fatal("default target access must not imply gateway admin access")
-	}
-}
-
-func TestGatewayStoreTargetUseGrantsStandardTargetAccessOnly(t *testing.T) {
-	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	defer store.Close()
-	user, err := store.CreateUser("target-user")
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-	if err := store.GrantUser(user.ID, ScopeGrant{
-		Cluster: "edu", Instance: "coder", Actions: []GatewayAction{ActionTargetUse},
-	}); err != nil {
-		t.Fatalf("grant target: %v", err)
-	}
-	for _, action := range []GatewayAction{
-		ActionTargetsList, ActionExec, ActionAsk, ActionRead, ActionWrite,
-		ActionPush, ActionPull, ActionInfo, ActionCheck, ActionClean,
-		ActionCredentialUse,
-	} {
-		if !store.UserCan(user.ID, "edu", "coder", action) {
-			t.Fatalf("target use must allow %q", action)
-		}
-	}
-	for _, action := range []GatewayAction{ActionAdmin, ActionAgentUpgrade, ActionCredentialGrant} {
-		if store.UserCan(user.ID, "edu", "coder", action) {
-			t.Fatalf("target use must not allow %q", action)
-		}
-	}
-	if store.UserCan(user.ID, "prod", "coder", ActionExec) {
-		t.Fatal("target use must remain scoped to its target")
-	}
-}
-
-func TestGatewayStoreImplicitGrantExcludesAgentUpgrade(t *testing.T) {
-	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	defer store.Close()
-
-	user, err := store.CreateUser("operator")
-	if err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "prod", Instance: "node-1"}); err != nil {
-		t.Fatalf("grant user: %v", err)
-	}
-	if !store.UserCan(user.ID, "prod", "node-1", ActionExec) {
-		t.Fatal("implicit grant should retain ordinary operator actions")
-	}
-	if store.UserCan(user.ID, "prod", "node-1", ActionAgentUpgrade) {
-		t.Fatal("agent upgrade must require an explicit privileged grant")
+	if store.UserIsPlatformAdmin(auth.UserID) {
+		t.Fatal("new user must not be a platform admin")
 	}
 }
 
@@ -339,23 +277,20 @@ func TestGatewayStoreListUsersDoesNotDeadlockSingleConnection(t *testing.T) {
 	if err := store.GrantUser(alice.ID, ScopeGrant{
 		Cluster:  "dev",
 		Instance: "node-1",
-		Actions:  []GatewayAction{ActionExec},
 	}); err != nil {
 		t.Fatalf("grant alice exec: %v", err)
 	}
 	if err := store.GrantUser(alice.ID, ScopeGrant{
 		Cluster:  "dev",
 		Instance: "node-2",
-		Actions:  []GatewayAction{ActionRead},
 	}); err != nil {
 		t.Fatalf("grant alice read: %v", err)
 	}
-	if err := store.GrantUser(bob.ID, ScopeGrant{
-		Cluster:  "*",
-		Instance: "*",
-		Actions:  []GatewayAction{ActionAdmin},
-	}); err != nil {
-		t.Fatalf("grant bob admin: %v", err)
+	if err := store.GrantUser(bob.ID, ScopeGrant{Cluster: "*", Instance: "*"}); err != nil {
+		t.Fatalf("grant bob targets: %v", err)
+	}
+	if err := store.SetUserAdmin(bob.ID, true); err != nil {
+		t.Fatalf("set bob admin: %v", err)
 	}
 
 	type result struct {

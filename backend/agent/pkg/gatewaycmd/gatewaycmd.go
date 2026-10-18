@@ -47,8 +47,9 @@ func serve(args []string) {
 	dbPath := fs.String("db", defaultGatewayDB, "SQLite database path")
 	loginTokenTTL := fs.Duration("login-token-ttl", 24*time.Hour, "Password-login token TTL")
 	operationTimeout := fs.Duration("operation-timeout", 30*time.Minute, "Maximum runtime for one forwarded operation")
-	maxConcurrentOperations := fs.Int("max-concurrent-operations", 64, "Maximum concurrent forwarded operations across all users")
-	maxConcurrentPerUser := fs.Int("max-concurrent-per-user", 10, "Maximum concurrent forwarded operations per user")
+	// Retired limits stay parseable so existing unit files keep starting.
+	retiredGlobalLimit := fs.Int("max-concurrent-operations", 0, "Retired; ignored")
+	retiredUserLimit := fs.Int("max-concurrent-per-user", 0, "Retired; ignored")
 	targetQueueTimeout := fs.Duration("target-queue-timeout", 10*time.Minute, "How long an operation waits for a busy target")
 	maxQueuedPerTarget := fs.Int("max-queued-per-target", 10, "Maximum queued operations per target; negative disables queueing")
 	// The issue scheduler was removed; the flag stays accepted so existing service units keep starting.
@@ -57,6 +58,9 @@ func serve(args []string) {
 	edgeProxyProtocol := fs.Bool("edge-proxy-protocol", true, "Require PROXY protocol on Edge listener (must be true behind nginx stream)")
 	fs.Parse(args)
 
+	if *retiredGlobalLimit != 0 || *retiredUserLimit != 0 {
+		log.Printf("[gateway] -max-concurrent-operations and -max-concurrent-per-user are retired and ignored")
+	}
 	resolvedDBPath, err := canonicalGatewayDBPath(*dbPath)
 	if err != nil {
 		log.Fatal(err)
@@ -74,12 +78,10 @@ func serve(args []string) {
 	defer store.Close()
 
 	hub := server.NewGatewayHub(store, server.GatewayHubOptions{
-		LoginTokenTTL:           *loginTokenTTL,
-		OperationTimeout:        *operationTimeout,
-		MaxConcurrentOperations: *maxConcurrentOperations,
-		MaxConcurrentPerUser:    *maxConcurrentPerUser,
-		TargetQueueTimeout:      *targetQueueTimeout,
-		MaxQueuedPerTarget:      *maxQueuedPerTarget,
+		LoginTokenTTL:      *loginTokenTTL,
+		OperationTimeout:   *operationTimeout,
+		TargetQueueTimeout: *targetQueueTimeout,
+		MaxQueuedPerTarget: *maxQueuedPerTarget,
 	})
 
 	mux := http.NewServeMux()
@@ -182,7 +184,7 @@ func grant(args []string) {
 	userName := fs.String("user", "", "User name")
 	cluster := fs.String("cluster", "*", "Cluster scope")
 	instance := fs.String("instance", "*", "Instance scope")
-	actions := fs.String("actions", "", "Comma separated actions; empty means full target access")
+	admin := fs.Bool("admin", false, "Make the user a platform admin instead of granting a target")
 	dbPath := fs.String("db", defaultGatewayDB, "SQLite database path")
 	fs.Parse(args)
 	store := mustStore(*dbPath)
@@ -191,20 +193,17 @@ func grant(args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	var parsed []server.GatewayAction
-	for _, raw := range strings.Split(*actions, ",") {
-		raw = strings.TrimSpace(raw)
-		if raw != "" {
-			parsed = append(parsed, server.GatewayAction(raw))
+	if *admin {
+		if err := store.SetUserAdmin(u.ID, true); err != nil {
+			log.Fatal(err)
 		}
+		fmt.Printf("granted user=%s admin=true\n", u.Name)
+		return
 	}
-	if err := store.GrantUser(u.ID, server.ScopeGrant{Cluster: *cluster, Instance: *instance, Actions: parsed}); err != nil {
+	if err := store.GrantUser(u.ID, server.ScopeGrant{Cluster: *cluster, Instance: *instance}); err != nil {
 		log.Fatal(err)
 	}
-	if strings.TrimSpace(*actions) == "" {
-		*actions = "default-full-target-access"
-	}
-	fmt.Printf("granted user=%s scope=%s/%s actions=%s\n", u.Name, *cluster, *instance, *actions)
+	fmt.Printf("granted user=%s scope=%s/%s\n", u.Name, *cluster, *instance)
 }
 
 func audit(args []string) {

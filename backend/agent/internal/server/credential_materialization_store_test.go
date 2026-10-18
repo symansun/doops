@@ -11,10 +11,7 @@ func TestCredentialMaterializationInventoryKeepsEveryWorkloadContext(t *testing.
 	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("m", 32))
 	store := openCredentialTestStore(t)
 	admin := createCredentialTestUser(t, store, "inventory-admin")
-	if err := store.GrantUser(admin.ID, ScopeGrant{
-		Cluster: "*", Instance: "*",
-		Actions: []GatewayAction{ActionAdmin},
-	}); err != nil {
+	if err := store.SetUserAdmin(admin.ID, true); err != nil {
 		t.Fatalf("grant admin actions: %v", err)
 	}
 	credential, err := store.CreateCredential(CredentialCreateRequest{

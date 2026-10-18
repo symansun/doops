@@ -143,7 +143,7 @@ func (h *GatewayHub) handleCredentialSecretImport(w http.ResponseWriter, r *http
 		http.Error(w, "credential_import_type_invalid", http.StatusBadRequest)
 		return
 	}
-	if !h.canRotateCredential(auth.UserID, resource) || !h.store.UserCan(auth.UserID, req.Cluster, req.Instance, ActionExec) {
+	if !h.canRotateCredential(auth.UserID, resource) || !h.store.UserCanUseTarget(auth.UserID, req.Cluster, req.Instance) {
 		http.Error(w, "credential_import_forbidden", http.StatusForbidden)
 		return
 	}
@@ -154,7 +154,7 @@ func (h *GatewayHub) handleCredentialSecretImport(w http.ResponseWriter, r *http
 	}
 	defer unlock()
 	if h.store.validateUserTokenAuth(auth) != nil || !h.canRotateCredential(auth.UserID, resource) ||
-		!h.store.UserCan(auth.UserID, req.Cluster, req.Instance, ActionExec) {
+		!h.store.UserCanUseTarget(auth.UserID, req.Cluster, req.Instance) {
 		http.Error(w, "credential_import_forbidden", http.StatusForbidden)
 		return
 	}
@@ -217,7 +217,7 @@ func (h *GatewayHub) handleCredentialSecretImport(w http.ResponseWriter, r *http
 		return
 	}
 	if h.store.validateUserTokenAuth(auth) != nil || !h.canRotateCredential(auth.UserID, resource) ||
-		!h.store.UserCan(auth.UserID, req.Cluster, req.Instance, ActionExec) {
+		!h.store.UserCanUseTarget(auth.UserID, req.Cluster, req.Instance) {
 		fail("credential_import_forbidden", http.StatusForbidden)
 		return
 	}
