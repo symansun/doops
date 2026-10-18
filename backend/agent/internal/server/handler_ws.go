@@ -2656,7 +2656,18 @@ func doagentSSEIdleTimeout() time.Duration {
 	return 5 * time.Minute
 }
 
+// sanitizeSecretText redacts and keeps only the last 1200 characters, which is
+// right for error text but silently drops the start of query results.
 func sanitizeSecretText(s string) string {
+	s = redactSecretText(s)
+	if len(s) > 1200 {
+		return s[len(s)-1200:]
+	}
+	return s
+}
+
+// redactSecretText redacts without truncating, for data that must stay complete.
+func redactSecretText(s string) string {
 	if s == "" {
 		return ""
 	}
@@ -2676,9 +2687,6 @@ func sanitizeSecretText(s string) string {
 	}
 	for _, pattern := range credentialInlineMaterialPatterns {
 		s = pattern.ReplaceAllString(s, "...REDACTED")
-	}
-	if len(s) > 1200 {
-		return s[len(s)-1200:]
 	}
 	return s
 }
