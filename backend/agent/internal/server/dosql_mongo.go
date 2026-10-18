@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -47,13 +48,49 @@ type mongoOperation struct {
 	Keys        json.RawMessage `json:"keys,omitempty"`
 	Name        string          `json:"name,omitempty"`
 	Unique      bool            `json:"unique,omitempty"`
+
+	To                 string          `json:"to,omitempty"`
+	Field              string          `json:"field,omitempty"`
+	Return             string          `json:"return,omitempty"`
+	Verbosity          string          `json:"verbosity,omitempty"`
+	Options            json.RawMessage `json:"options,omitempty"`
+	ExpireAfterSeconds *int32          `json:"expireAfterSeconds,omitempty"`
+	Sparse             bool            `json:"sparse,omitempty"`
+	PartialFilter      json.RawMessage `json:"partialFilter,omitempty"`
+	OpID               *int64          `json:"opid,omitempty"`
+	ConfirmDatabase    string          `json:"confirmDatabase,omitempty"`
 }
 
+// Kinds: read runs in query mode; write joins the transaction; ddl covers every
+// operation MongoDB cannot make transactional (collection, index, database and
+// server administration), so it follows the implicit-commit rules.
 var mongoOpKinds = map[string]string{
-	"find": "read", "count": "read", "aggregate": "read",
+	"find": "read", "count": "read", "aggregate": "read", "distinct": "read", "explain": "read",
+	"listDatabases": "read", "listCollections": "read", "listIndexes": "read",
+	"dbStats": "read", "collStats": "read", "currentOp": "read", "serverStatus": "read",
+	"replSetStatus": "read", "buildInfo": "read",
 	"insertOne": "write", "insertMany": "write", "updateOne": "write", "updateMany": "write",
 	"replaceOne": "write", "deleteOne": "write", "deleteMany": "write",
+	"findOneAndUpdate": "write", "findOneAndReplace": "write", "findOneAndDelete": "write",
 	"createCollection": "ddl", "createIndex": "ddl", "dropIndex": "ddl", "drop": "ddl",
+	"renameCollection": "ddl", "collMod": "ddl", "compact": "ddl", "killOp": "ddl", "dropDatabase": "ddl",
+}
+
+// Database or server level operations do not name a collection.
+var mongoDatabaseLevelOps = map[string]bool{
+	"listDatabases": true, "listCollections": true, "dbStats": true, "currentOp": true,
+	"serverStatus": true, "replSetStatus": true, "buildInfo": true, "killOp": true, "dropDatabase": true,
+}
+
+// Administrative reads cannot run inside a transaction, so they always use the
+// plain context and never see uncommitted writes of the same batch.
+func mongoNeedsPlainContext(op string) bool {
+	switch op {
+	case "listDatabases", "listCollections", "listIndexes", "dbStats", "collStats", "currentOp",
+		"serverStatus", "replSetStatus", "buildInfo", "explain", "distinct":
+		return true
+	}
+	return false
 }
 
 func parseMongoOperation(statement string) (mongoOperation, error) {
@@ -66,10 +103,12 @@ func parseMongoOperation(statement string) (mongoOperation, error) {
 	if _, kind := mongoOpKinds[op.Op]; !kind {
 		return op, fmt.Errorf("dosql_mongo_operation_invalid: unknown op %q; use %s", op.Op, strings.Join(mongoOpNames(), ", "))
 	}
-	if !mongoCollectionName.MatchString(op.Collection) || strings.HasPrefix(op.Collection, "system.") {
-		return op, errors.New("dosql_mongo_operation_invalid: collection name is missing or not allowed")
+	if !mongoDatabaseLevelOps[op.Op] || op.Collection != "" {
+		if !mongoCollectionName.MatchString(op.Collection) || strings.HasPrefix(op.Collection, "system.") {
+			return op, errors.New("dosql_mongo_operation_invalid: collection name is missing or not allowed")
+		}
 	}
-	for _, raw := range [][]byte{op.Filter, op.Sort, op.Projection, op.Pipeline, op.Document, op.Documents, op.Update, op.Replacement, op.Keys} {
+	for _, raw := range [][]byte{op.Filter, op.Sort, op.Projection, op.Pipeline, op.Document, op.Documents, op.Update, op.Replacement, op.Keys, op.Options, op.PartialFilter} {
 		for _, forbidden := range mongoForbiddenOperators {
 			if bytes.Contains(raw, []byte(`"`+forbidden+`"`)) {
 				return op, fmt.Errorf("dosql_mongo_javascript_forbidden: %s runs server-side JavaScript", forbidden)
@@ -119,17 +158,67 @@ func parseMongoOperation(statement string) (mongoOperation, error) {
 		if len(op.Keys) == 0 {
 			return op, errors.New("dosql_mongo_operation_invalid: createIndex needs keys")
 		}
+		if op.ExpireAfterSeconds != nil && *op.ExpireAfterSeconds < 0 {
+			return op, errors.New("dosql_mongo_operation_invalid: expireAfterSeconds must not be negative")
+		}
 	case "dropIndex":
 		if op.Name == "" || op.Name == "*" {
 			return op, errors.New("dosql_mongo_operation_invalid: dropIndex needs one index name")
 		}
+	case "findOneAndUpdate":
+		if len(op.Update) == 0 || len(op.Filter) == 0 {
+			return op, errors.New("dosql_mongo_operation_invalid: findOneAndUpdate needs filter and update")
+		}
+	case "findOneAndReplace":
+		if len(op.Replacement) == 0 || len(op.Filter) == 0 {
+			return op, errors.New("dosql_mongo_operation_invalid: findOneAndReplace needs filter and replacement")
+		}
+	case "findOneAndDelete":
+		if len(op.Filter) == 0 {
+			return op, errors.New("dosql_mongo_operation_invalid: findOneAndDelete needs filter")
+		}
+	case "distinct":
+		if op.Field == "" {
+			return op, errors.New("dosql_mongo_operation_invalid: distinct needs field")
+		}
+	case "explain":
+		switch op.Verbosity {
+		case "", "queryPlanner", "executionStats", "allPlansExecution":
+		default:
+			return op, errors.New("dosql_mongo_operation_invalid: verbosity must be queryPlanner, executionStats or allPlansExecution")
+		}
+	case "renameCollection":
+		if !mongoCollectionName.MatchString(op.To) || strings.HasPrefix(op.To, "system.") || op.To == op.Collection {
+			return op, errors.New("dosql_mongo_operation_invalid: renameCollection needs a different, allowed target name in to")
+		}
+	case "collMod":
+		if len(bytes.TrimSpace(op.Options)) < 3 {
+			return op, errors.New("dosql_mongo_operation_invalid: collMod needs options")
+		}
+	case "killOp":
+		if op.OpID == nil {
+			return op, errors.New("dosql_mongo_operation_invalid: killOp needs opid from currentOp")
+		}
+	case "dropDatabase":
+		if op.ConfirmDatabase == "" {
+			return op, errors.New("dosql_mongo_operation_invalid: dropDatabase needs confirmDatabase set to the database name")
+		}
+	}
+	switch op.Return {
+	case "", "before", "after":
+	default:
+		return op, errors.New("dosql_mongo_operation_invalid: return must be before or after")
 	}
 	return op, nil
 }
 
 func mongoOpNames() []string {
-	return []string{"find", "count", "aggregate", "insertOne", "insertMany", "updateOne", "updateMany",
-		"replaceOne", "deleteOne", "deleteMany", "createCollection", "createIndex", "dropIndex", "drop"}
+	names := make([]string, 0, len(mongoOpKinds))
+	for name := range mongoOpKinds {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // parseMongoStatements turns a JSON array (or consecutive JSON documents) into
@@ -214,7 +303,7 @@ func mongoDocumentText(doc interface{}) string {
 	if err != nil {
 		return "<unencodable document>"
 	}
-	return sanitizeSecretText(string(encoded))
+	return redactSecretText(string(encoded))
 }
 
 func mongoConnectURI(raw, authSource string) string {
@@ -273,10 +362,14 @@ func executeDoSQLMongo(ctx context.Context, request doSQLDirectRequest) (doSQLDi
 		if err != nil {
 			return result, err
 		}
+		if op.Op == "dropDatabase" && op.ConfirmDatabase != request.Target.Database {
+			result.Status = "rejected"
+			return result, fmt.Errorf("dosql_mongo_confirm_mismatch: confirmDatabase %q does not match the target database %q", op.ConfirmDatabase, request.Target.Database)
+		}
 		kind := mongoOpKinds[op.Op]
 		if request.ReadOnly && kind != "read" {
 			result.Status = "rejected"
-			return result, errors.New("dosql_query_requires_read_only: only find, count and aggregate run in query mode")
+			return result, errors.New("dosql_query_requires_read_only: only read operations (find, count, aggregate, distinct, explain, list*, stats, currentOp, serverStatus) run in query mode")
 		}
 		hasData = hasData || kind == "write"
 		operations = append(operations, op)
@@ -341,7 +434,11 @@ func executeDoSQLMongo(ctx context.Context, request doSQLDirectRequest) (doSQLDi
 		return doSQLFailure(category, err.Error()+partialCommitNote(&result))
 	}
 	for index, op := range operations {
-		executed, err := runDoSQLMongoOperation(runCtx, database, op, request.Statements[index])
+		opCtx := runCtx
+		if mongoNeedsPlainContext(op.Op) {
+			opCtx = ctx
+		}
+		executed, err := runDoSQLMongoOperation(opCtx, database, op, request.Statements[index])
 		if err != nil {
 			return result, failure("dosql_statement_failed", fmt.Errorf("statement %d: %v", index+1, err))
 		}
@@ -383,7 +480,7 @@ func executeDoSQLMongo(ctx context.Context, request doSQLDirectRequest) (doSQLDi
 }
 
 func runDoSQLMongoOperation(ctx context.Context, database *mongo.Database, op mongoOperation, statement string) (doSQLStatementResult, error) {
-	executed := doSQLStatementResult{Statement: sanitizeSecretText(statement)}
+	executed := doSQLStatementResult{Statement: redactSecretText(statement)}
 	collection := database.Collection(op.Collection)
 	switch op.Op {
 	case "find":
@@ -533,6 +630,19 @@ func runDoSQLMongoOperation(ctx context.Context, database *mongo.Database, op mo
 		if op.Name != "" {
 			index.SetName(op.Name)
 		}
+		if op.ExpireAfterSeconds != nil {
+			index.SetExpireAfterSeconds(*op.ExpireAfterSeconds)
+		}
+		if op.Sparse {
+			index.SetSparse(true)
+		}
+		if len(op.PartialFilter) != 0 {
+			partial, err := mongoBSON(op.PartialFilter)
+			if err != nil {
+				return executed, err
+			}
+			index.SetPartialFilterExpression(partial)
+		}
 		if _, err := collection.Indexes().CreateOne(ctx, mongo.IndexModel{Keys: keys, Options: index}); err != nil {
 			return executed, err
 		}
@@ -544,6 +654,8 @@ func runDoSQLMongoOperation(ctx context.Context, database *mongo.Database, op mo
 		if err := collection.Drop(ctx); err != nil {
 			return executed, err
 		}
+	default:
+		return runDoSQLMongoExtended(ctx, database, op, executed)
 	}
 	return executed, nil
 }

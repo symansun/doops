@@ -242,10 +242,10 @@ func doSQLCellText(value interface{}) string {
 	case nil:
 		return "NULL"
 	case []byte:
-		return sanitizeSecretText(string(typed))
+		return redactSecretText(string(typed))
 	case time.Time:
 		return typed.UTC().Format(time.RFC3339Nano)
 	default:
-		return sanitizeSecretText(fmt.Sprint(typed))
+		return redactSecretText(fmt.Sprint(typed))
 	}
 }

@@ -83,7 +83,8 @@ description: |
 
 DoSql 必须从 `doops sql` 进入；普通 `ask` 不保证注入 DoSql 工具。DoSql 只有自动凭据模式：
 Gateway 绑定当前 target 上全部 active `use=database` 凭据，`doops sql` 不接受 `--credential`；
-有多个数据库凭据时用 `--database <name>` 选库。完整参数和 `dosql_*` 错误类别见
+有多个数据库凭据时用 `--database <name>` 选库。MongoDB 的 `--sql/--file` 是 JSON 操作文档
+（读写、事务、索引、explain、currentOp、findAndModify、重命名等），不含用户管理。完整参数和 `dosql_*` 错误类别见
 `docs/DOOPS_USAGE_GUIDE.md`，凭据分步命令见 `docs/CREDENTIAL_RESOURCES.md`。
 没有通用 `update` 命令；target、用户、grant、token、凭据、job 等元信息怎么改（原地改还是替换）
 见 `docs/DOOPS_USAGE_GUIDE.md` 的 “Updating Metadata”。

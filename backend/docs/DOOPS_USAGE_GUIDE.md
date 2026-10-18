@@ -124,7 +124,17 @@ doops -session db-change sql --target <t> --mode apply --database <name> \
   --verify '{"collection":"orders","op":"count","filter":{"status":null}}'
 ```
 
-- 读：`find`、`count`、`aggregate`。写：`insertOne/insertMany/updateOne/updateMany/replaceOne/deleteOne/deleteMany`。
+- 读（`--mode query` 可用）：`find`、`count`、`aggregate`、`distinct`、`explain`（`verbosity`）、`listDatabases`、
+  `listCollections`、`listIndexes`、`dbStats`、`collStats`、`currentOp`（只返回 opid/op/ns/耗时/client，不含命令文本）、
+  `serverStatus`、`replSetStatus`、`buildInfo`。库级和服务级操作不需要 `collection`。
+- 写：`insertOne/insertMany/updateOne/updateMany/replaceOne/deleteOne/deleteMany`，以及原子的
+  `findOneAndUpdate/findOneAndReplace/findOneAndDelete`（`return` 取 `before` 或 `after`）。
+- 运维（非事务，等同 DDL 规则）：`createCollection`、`createIndex`（`unique/sparse/expireAfterSeconds/partialFilter`）、
+  `dropIndex`、`drop`、`renameCollection`（`to`）、`collMod`（`options`）、`compact`、`killOp`（`opid`）、
+  `dropDatabase`（`confirmDatabase` 必须等于当前目标库名，否则返回 `dosql_mongo_confirm_mismatch`）。
+- 刻意不支持：用户和角色管理（`createUser` 等需要密码，会进入语句、版本日志和证据）、`$where/$function`、
+  `$out/$merge`。这些要用独立的受控流程。
+- 管理类读取不在事务内，看不到同一批里尚未提交的写入。
 - 一批写操作与 `--verify` 在同一事务内，失败整批回滚，`--dry-run` 回滚。事务需要副本集，单机返回
   `dosql_transaction_unsupported`。
 - `createCollection/createIndex/dropIndex/drop` 不能进事务：`--dry-run` 含它们返回
