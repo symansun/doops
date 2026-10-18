@@ -271,7 +271,7 @@ func assertGatewayLockRejected(t *testing.T, child *gatewayLockTestProcess) {
 }
 
 func gatewayServeTestArgs(path string, port int) []string {
-	return []string{"serve", "-db", path, "-port", strconv.Itoa(port), "-scheduler-tick", "0"}
+	return []string{"serve", "-db", path, "-port", strconv.Itoa(port)}
 }
 
 func freeGatewayLockTestPort(t *testing.T) int {

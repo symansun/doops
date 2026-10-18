@@ -91,7 +91,7 @@ export function ConsoleShell() {
     if (!agentRuntime || (view === "console" && tab === "ask")) setOpenedAgentRuntime(agentRuntime)
   }, [agentRuntime, tab, view])
   const [adminDefaultTab, setAdminDefaultTab] = useState<
-    "instances" | "config" | "repos" | "jobs" | "users" | "grants" | "tokens" | "operations"
+    "instances" | "config" | "users" | "grants" | "tokens" | "operations"
   >("instances")
 
   useEffect(() => {
@@ -359,10 +359,6 @@ export function ConsoleShell() {
               refreshVersion={refreshVersion}
               onRefresh={refresh}
               onDeployAgent={() => setView("deploy")}
-              onOpenJobs={() => {
-                setAdminDefaultTab("jobs")
-                setView("admin")
-              }}
               onOpenTab={(nextTab, target) => {
                 if (target) selectTarget(target)
                 setTab(nextTab)

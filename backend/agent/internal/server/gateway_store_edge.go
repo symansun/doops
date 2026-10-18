@@ -179,7 +179,7 @@ func (s *GatewayStore) CreateEdgeRoute(req CreateEdgeRouteRequest) (EdgeRoute, e
 		(hostname, cluster, instance, backend, mode, enabled, max_conns, note, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		input.Hostname, input.Cluster, input.Instance, input.Backend, input.Mode,
-		boolToInt(input.Enabled), input.MaxConns, input.Note, now, now)
+		boolInt(input.Enabled), input.MaxConns, input.Note, now, now)
 	if err != nil {
 		return EdgeRoute{}, err
 	}
@@ -251,7 +251,7 @@ func (s *GatewayStore) UpdateEdgeRoute(id int64, req UpdateEdgeRouteRequest) (Ed
 		SET cluster = ?, instance = ?, backend = ?, mode = ?, enabled = ?, max_conns = ?, note = ?, updated_at = ?
 		WHERE id = ?`,
 		input.Cluster, input.Instance, input.Backend, input.Mode,
-		boolToInt(input.Enabled), input.MaxConns, input.Note, now, id); err != nil {
+		boolInt(input.Enabled), input.MaxConns, input.Note, now, id); err != nil {
 		return EdgeRoute{}, err
 	}
 	if err := bumpEdgeRouteRevision(tx); err != nil {
