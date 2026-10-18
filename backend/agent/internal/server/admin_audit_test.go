@@ -197,18 +197,11 @@ func TestAdminMutationRoutesAuditAndFailClosed(t *testing.T) {
 		{"token-revoke", func(t *testing.T, f *adminAuditFixture) request {
 			return request{"DELETE", "/v1/admin/tokens?id=" + f.tokenID, nil}
 		}},
-		{"operation-cancel", func(t *testing.T, f *adminAuditFixture) request {
-			return request{"DELETE", "/v1/admin/operations?cluster=dev&id=" + f.operationID + "&instance=node", nil}
-		}},
 		{"proxy-upsert", func(t *testing.T, f *adminAuditFixture) request {
 			return request{"POST", "/v1/admin/proxy-routes", map[string]any{"id": f.route.ID, "host": f.route.Host, "cluster": "dev", "instance": "node", "upstream": "http://localhost:9090", "payload": adminAuditCanary}}
 		}},
 		{"proxy-delete", func(t *testing.T, f *adminAuditFixture) request {
 			return request{"DELETE", "/v1/admin/proxy-routes?id=" + f.route.ID, nil}
-		}},
-		{"target-unlock", func(t *testing.T, f *adminAuditFixture) request {
-			f.agent(t, false)
-			return request{"POST", "/v1/targets/unlock?cluster=dev&instance=node", nil}
 		}},
 	}
 	for _, tc := range cases {
@@ -247,9 +240,6 @@ func TestAdminMutationRoutesAuditAndFailClosed(t *testing.T) {
 			}
 			response := credentialHTTPRequest(t, f.mux, f.adminToken, req.method, req.path, req.body)
 			wantCode := http.StatusOK
-			if tc.name == "operation-cancel" {
-				wantCode = http.StatusAccepted
-			}
 			if response.Code != wantCode {
 				t.Fatalf("admin success HTTP %d: %s", response.Code, response.Body.String())
 			}
@@ -274,7 +264,7 @@ func TestAdminMutationRoutesAuditAndFailClosed(t *testing.T) {
 
 func TestAdminAuditReadRoutesDoNotCreateMutationEvents(t *testing.T) {
 	f := newAdminAuditFixture(t)
-	for _, path := range []string{"users", "grants", "tokens", "instances", "operations?cluster=dev&instance=node", "proxy-routes"} {
+	for _, path := range []string{"users", "grants", "tokens", "instances", "proxy-routes"} {
 		response := credentialHTTPRequest(t, f.mux, f.adminToken, http.MethodGet, "/v1/admin/"+path, nil)
 		if response.Code != http.StatusOK {
 			t.Fatalf("%s: HTTP %d: %s", path, response.Code, response.Body.String())
@@ -420,10 +410,8 @@ func TestTargetGrantCannotUseAdminRoutes(t *testing.T) {
 		method, path string
 		body         any
 	}{
-		{"DELETE", "/v1/admin/operations?cluster=dev&id=" + f.operationID + "&instance=node", nil},
 		{"POST", "/v1/admin/proxy-routes", map[string]any{"id": f.route.ID, "cluster": "dev", "instance": "node", "host": f.route.Host, "upstream": "http://localhost:9090"}},
 		{"DELETE", "/v1/admin/proxy-routes?id=" + f.route.ID, nil},
-		{"POST", "/v1/targets/unlock?cluster=dev&instance=node", nil},
 	} {
 		before := f.state(t)
 		response := credentialHTTPRequest(t, f.mux, f.userToken, tc.method, tc.path, tc.body)
@@ -459,9 +447,6 @@ func TestAdminAuditRejectsOtherTargets(t *testing.T) {
 		method, path string
 		body         any
 	}{
-		{"POST", "/v1/targets/unlock?cluster=dev&instance=node", nil},
-		{"DELETE", "/v1/admin/operations?cluster=dev&id=" + f.operationID + "&instance=node", nil},
-		{"DELETE", "/v1/admin/operations?cluster=dev&id=%20" + f.operationID + "%20&instance=node", nil},
 		{"DELETE", "/v1/admin/proxy-routes?id=" + f.route.ID, nil},
 		{"POST", "/v1/admin/proxy-routes", map[string]any{"cluster": "dev", "instance": "node", "host": "denied.test", "upstream": "http://localhost:80"}},
 		{"POST", "/v1/admin/proxy-routes", map[string]any{"id": f.route.ID, "cluster": "elsewhere", "instance": "other", "host": f.route.Host, "upstream": "http://localhost:80"}},
@@ -802,5 +787,37 @@ func TestConfigWriteUsesOnePayloadFreeRPCAudit(t *testing.T) {
 				t.Fatalf("wrong/duplicate config audit: %#v", events)
 			}
 		})
+	}
+}
+
+func TestRemovedGatewayAdminOperationRoutesReturnNotFound(t *testing.T) {
+	f := newAdminAuditFixture(t)
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/v1/admin/operations?cluster=dev&instance=node"},
+		{http.MethodDelete, "/v1/admin/operations?cluster=dev&id=" + f.operationID + "&instance=node"},
+		{http.MethodPost, "/v1/targets/unlock?cluster=dev&instance=node"},
+		{http.MethodPost, "/v1/admin/audit/optimize"},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			before := f.state(t)
+			var countBefore int
+			if err := f.store.db.QueryRow("SELECT COUNT(*) FROM audit_events").Scan(&countBefore); err != nil {
+				t.Fatal(err)
+			}
+			response := credentialHTTPRequest(t, f.mux, f.adminToken, tc.method, tc.path, nil)
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("removed route answered HTTP %d: %s", response.Code, response.Body.String())
+			}
+			var countAfter int
+			if err := f.store.db.QueryRow("SELECT COUNT(*) FROM audit_events").Scan(&countAfter); err != nil {
+				t.Fatal(err)
+			}
+			if f.state(t) != before || countAfter != countBefore {
+				t.Fatal("removed route changed state or wrote an audit event")
+			}
+		})
+	}
+	if f.canceled.Err() != nil {
+		t.Fatal("removed cancel route still canceled the operation")
 	}
 }

@@ -74,38 +74,6 @@ func TestAdminReadScopeGlobalResources(t *testing.T) {
 	assertAdminReadScopeNoAudit(t, f.store)
 }
 
-func TestAdminReadScopeOperationsExactTarget(t *testing.T) {
-	f := newAdminReadScopeFixture(t)
-	for _, query := range []string{
-		"cluster=dev&instance=node", "cluster=dev&instance=sibling", "cluster=prod&instance=node", "cluster=dev&instance=*",
-		"", "cluster=dev", "instance=node", "cluster=dev&instance=sibling&id=" + f.operationID,
-	} {
-		for _, method := range []string{http.MethodGet, http.MethodHead} {
-			response := credentialHTTPRequest(t, f.mux, f.userToken, method, "/v1/admin/operations?"+query, nil)
-			if response.Code != http.StatusForbidden {
-				t.Errorf("target grant read admin operations: %s %s HTTP %d: %s", method, query, response.Code, response.Body.String())
-			}
-		}
-	}
-	for _, tc := range []struct{ token, cluster, instance string }{
-		{f.adminToken, "dev", "node"},
-		{f.adminToken, "dev", "sibling"}, {f.adminToken, "prod", "node"},
-	} {
-		response := credentialHTTPRequest(t, f.mux, tc.token, http.MethodGet,
-			"/v1/admin/operations?cluster="+tc.cluster+"&instance="+tc.instance, nil)
-		var result struct {
-			Operations []GatewayActiveOperation `json:"operations"`
-		}
-		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &result) != nil || len(result.Operations) != 1 {
-			t.Fatalf("authorized operations read failed: HTTP %d: %s", response.Code, response.Body.String())
-		}
-		if op := result.Operations[0]; op.Cluster != tc.cluster || op.Instance != tc.instance {
-			t.Fatalf("operations escaped query target: %#v", op)
-		}
-	}
-	assertAdminReadScopeNoAudit(t, f.store)
-}
-
 func TestAdminReadScopeCollectionsFilterResources(t *testing.T) {
 	f := newAdminReadScopeFixture(t)
 	for _, tc := range []struct{ path, key string }{
@@ -149,9 +117,6 @@ func TestAdminReadScopeWrapperHEADAndUnsupportedMethods(t *testing.T) {
 	}{
 		{"target-global", "/v1/admin/users", "", f.userToken, http.StatusForbidden},
 		{"platform-global", "/v1/admin/users", "", f.adminToken, http.StatusOK},
-		{"granted-target", "/v1/admin/operations", "?cluster=dev&instance=node", f.userToken, http.StatusForbidden},
-		{"sibling-target", "/v1/admin/operations", "?cluster=dev&instance=sibling", f.userToken, http.StatusForbidden},
-		{"platform-target", "/v1/admin/operations", "?cluster=dev&instance=sibling", f.adminToken, http.StatusOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			called := false

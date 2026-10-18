@@ -404,7 +404,7 @@ func TestExecutionGuardCanceledMutationRetainsUnknownWithoutBlockingNextCall(t *
 			lifecycleSend(t, client, 2, tool, "interrupted", args)
 			call := agent.call(t, tool, "interrupted")
 			op := f.operation(t, "interrupted", "running")
-			f.http(t, f.admin, http.MethodDelete, "/v1/admin/operations?cluster=dev&id="+op.ID+"&instance=local", "", http.StatusAccepted)
+			f.cancel(t, op.ID)
 			select {
 			case <-agent.cancels:
 			case <-time.After(3 * time.Second):
@@ -437,7 +437,6 @@ func TestExecutionGuardCanceledMutationRetainsUnknownWithoutBlockingNextCall(t *
 			if got := executionAuditTestEvent(t, f.store, op.AuditID); !reflect.DeepEqual(got, before) {
 				t.Fatalf("follow-up execution rewrote unknown audit: %#v", got)
 			}
-			f.http(t, f.admin, http.MethodPost, "/v1/targets/unlock?cluster=dev&instance=local", "", http.StatusOK)
 		})
 	}
 }

@@ -46,16 +46,6 @@ func TestGatewayTargetsAllowsInsecureLocalhostForDevelopment(t *testing.T) {
 	}
 }
 
-func TestGatewayTargetUnlockURLUsesVersionedEndpoint(t *testing.T) {
-	got, err := gatewayTargetUnlockURL("https://gateway.example.com", "dev", "node-1")
-	if err != nil {
-		t.Fatalf("build unlock URL: %v", err)
-	}
-	want := "https://gateway.example.com/v1/targets/unlock?cluster=dev&instance=node-1"
-	if got != want {
-		t.Fatalf("unlock URL mismatch\nwant: %s\n got: %s", want, got)
-	}
-}
 
 func TestFilterGatewayTargetsMatchesConfiguredRoute(t *testing.T) {
 	targets := []GatewayTarget{

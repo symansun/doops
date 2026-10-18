@@ -128,9 +128,7 @@ func TestK8SMutationOutcomeThroughRealAgentGateway(t *testing.T) {
 		})
 		waitForK8SFunctionalFile(t, f.started)
 		op := f.fixture.operation(t, "k8s-cancel", "running")
-		f.fixture.http(t, f.fixture.admin, http.MethodDelete,
-			"/v1/admin/operations?cluster=dev&id="+op.ID+"&instance=local",
-			"", http.StatusAccepted)
+		f.fixture.cancel(t, op.ID)
 		assertK8SUnknownResponse(t, readK8SFunctionalResponse(t, client, 2))
 		_ = os.WriteFile(f.release, []byte("release\n"), 0o600)
 	})

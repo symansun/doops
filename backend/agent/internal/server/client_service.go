@@ -233,22 +233,6 @@ func (s *ClientService) cancelActiveOperation(id string) bool {
 	return true
 }
 
-func (s *ClientService) cancelActiveOperationForTarget(id, cluster, instance string) bool {
-	s.activeOpsMu.Lock()
-	op := s.activeOps[id]
-	if op == nil || op.Cluster != cluster || op.Instance != instance {
-		s.activeOpsMu.Unlock()
-		return false
-	}
-	if op.State != "finalizing" {
-		op.State = "cancel_requested"
-	}
-	cancel := op.cancel
-	s.activeOpsMu.Unlock()
-	cancel()
-	return true
-}
-
 func (s *ClientService) markOperationRunning(id string) {
 	s.activeOpsMu.Lock()
 	defer s.activeOpsMu.Unlock()

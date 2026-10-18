@@ -91,7 +91,7 @@ export function ConsoleShell() {
     if (!agentRuntime || (view === "console" && tab === "ask")) setOpenedAgentRuntime(agentRuntime)
   }, [agentRuntime, tab, view])
   const [adminDefaultTab, setAdminDefaultTab] = useState<
-    "instances" | "config" | "users" | "grants" | "tokens" | "operations"
+    "instances" | "config" | "users" | "grants" | "tokens"
   >("instances")
 
   useEffect(() => {

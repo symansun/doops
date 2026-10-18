@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import type { Session } from "@/lib/client"
 import {
   listUsers,
@@ -14,20 +14,16 @@ import {
   createToken,
   revokeToken,
   listInstances,
-  listOperations,
-  cancelOperation,
   type AdminUser,
   type AdminGrant,
   type AdminToken,
   type AdminInstance,
-  type AdminOperation,
 } from "@/lib/admin"
 import { AdminConfigDispatch } from "./admin-config-dispatch"
 import {
   ServerIcon,
   UsersIcon,
   ShieldIcon,
-  ActivityIcon,
   KeyIcon,
   RefreshIcon,
   PlusIcon,
@@ -44,7 +40,6 @@ type AdminTab =
   | "users"
   | "grants"
   | "tokens"
-  | "operations"
 
 const ADMIN_TABS: { id: AdminTab; label: string; icon: typeof ServerIcon }[] = [
   { id: "instances", label: "实例", icon: ServerIcon },
@@ -52,7 +47,6 @@ const ADMIN_TABS: { id: AdminTab; label: string; icon: typeof ServerIcon }[] = [
   { id: "users", label: "用户", icon: UsersIcon },
   { id: "grants", label: "权限", icon: ShieldIcon },
   { id: "tokens", label: "令牌", icon: KeyIcon },
-  { id: "operations", label: "运行中操作", icon: ActivityIcon },
 ]
 
 function fmtTime(v?: string): string {
@@ -103,7 +97,6 @@ export function AdminConsole({
         {tab === "users" && <UsersView session={session} />}
         {tab === "grants" && <GrantsView session={session} />}
         {tab === "tokens" && <TokensView session={session} />}
-        {tab === "operations" && <OperationsView session={session} />}
       </div>
     </div>
   )
@@ -754,161 +747,6 @@ function TokensView({ session }: { session: Session }) {
               <tr>
                 <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
                   暂无令牌
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
-
-/* ============================ 运行中操作 ============================ */
-function OperationsView({ session }: { session: Session }) {
-  const [rows, setRows] = useState<AdminOperation[]>([])
-  const [instances, setInstances] = useState<AdminInstance[]>([])
-  const [targetKey, setTargetKey] = useState("")
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState("")
-  const [canceling, setCanceling] = useState<string[]>([])
-  const loadSequence = useRef(0)
-
-  const load = useCallback(async () => {
-    const sequence = ++loadSequence.current
-    setLoading(true)
-    setError("")
-    try {
-      const available = await listInstances(session)
-      if (sequence !== loadSequence.current) return
-      setInstances(available)
-      const target = available.find((item) => `${item.cluster}/${item.instance}` === targetKey) || available[0]
-      if (!target) {
-        setTargetKey("")
-        setRows([])
-        return
-      }
-      setTargetKey(`${target.cluster}/${target.instance}`)
-      const operations = await listOperations(session, target.cluster, target.instance)
-      if (sequence === loadSequence.current) setRows(operations)
-    } catch (e) {
-      if (sequence === loadSequence.current) setError((e as Error).message)
-    } finally {
-      if (sequence === loadSequence.current) setLoading(false)
-    }
-  }, [session, targetKey])
-
-  useEffect(() => {
-    load()
-    const id = setInterval(load, 5000)
-    return () => {
-      clearInterval(id)
-      loadSequence.current++
-    }
-  }, [load])
-
-  async function cancel(op: AdminOperation) {
-    if (canceling.includes(op.id) || (op.state !== "waiting" && op.state !== "running")) return
-    if (!window.confirm("确认请求取消该操作？远端终态仍需确认。")) return
-    setError("")
-    setCanceling((ids) => [...ids, op.id])
-    try {
-      await cancelOperation(session, op.id, op.cluster, op.instance)
-      setRows((items) => items.map((item) => item.id === op.id ? { ...item, state: "cancel_requested" } : item))
-      await load()
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setCanceling((ids) => ids.filter((id) => id !== op.id))
-    }
-  }
-
-  return (
-    <div>
-      <Toolbar
-        title="运行中操作"
-        desc="按实例查看操作状态（每 5 秒刷新）"
-        onRefresh={load}
-        loading={loading}
-      >
-        <select
-          aria-label="选择操作目标"
-          value={targetKey}
-          onChange={(event) => setTargetKey(event.target.value)}
-          disabled={loading || !instances.length}
-          className="max-w-[16rem] rounded-md border bg-card px-2 py-1.5 text-xs text-foreground disabled:opacity-50"
-        >
-          {!instances.length && <option value="">暂无在线实例</option>}
-          {instances.map((item) => {
-            const key = `${item.cluster}/${item.instance}`
-            return (
-              <option key={key} value={key}>
-                {item.cluster}/{item.instance}
-              </option>
-            )
-          })}
-        </select>
-      </Toolbar>
-      <ErrorBar msg={error} />
-      <div className="overflow-x-auto p-4">
-        <table className="w-full min-w-[720px] border-collapse text-sm">
-          <thead>
-            <tr className="border-b text-left text-xs text-muted-foreground">
-              <th className="px-3 py-2 font-medium">目标</th>
-              <th className="px-3 py-2 font-medium">用户</th>
-              <th className="px-3 py-2 font-medium">动作</th>
-              <th className="px-3 py-2 font-medium">实际锁</th>
-              <th className="px-3 py-2 font-medium">摘要</th>
-              <th className="px-3 py-2 font-medium">状态</th>
-              <th className="px-3 py-2 font-medium">已运行</th>
-              <th className="px-3 py-2 font-medium text-right">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((o) => (
-              <tr key={o.id} className="border-b border-border/50">
-                <td className="px-3 py-2.5 text-xs">
-                  <span className="font-medium text-foreground">{o.instance}</span>
-                  <span className="text-muted-foreground"> · {o.cluster}</span>
-                </td>
-                <td className="px-3 py-2.5 text-xs text-muted-foreground">{o.user_id}</td>
-                <td className="px-3 py-2.5">
-                  <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
-                    {o.action}
-                  </span>
-                </td>
-                <td className="max-w-xs px-3 py-2.5 text-xs">
-                  <div className="truncate font-mono text-foreground" title={o.effective_lock || "—"}>
-                    {o.effective_lock || "—"}
-                  </div>
-                  {o.requested_resource && o.requested_resource !== o.effective_lock && (
-                    <div className="truncate font-mono text-[10px] text-muted-foreground" title={o.requested_resource}>
-                      requested: {o.requested_resource}
-                    </div>
-                  )}
-                </td>
-                <td className="px-3 py-2.5 max-w-xs truncate font-mono text-xs text-muted-foreground">
-                  {o.command_summary || o.kind}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-muted-foreground">{o.state}</td>
-                <td className="px-3 py-2.5 text-xs text-muted-foreground">{o.age_seconds}s</td>
-                <td className="px-3 py-2.5">
-                  <div className="flex justify-end">
-                    <button
-                      onClick={() => cancel(o)}
-                      disabled={canceling.includes(o.id) || (o.state !== "waiting" && o.state !== "running")}
-                      className="flex items-center gap-1 whitespace-nowrap rounded-md border px-2 py-1 text-xs text-destructive transition-colors enabled:hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <BanIcon width={12} height={12} /> 请求取消
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {!rows.length && !loading && (
-              <tr>
-                <td colSpan={8} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  当前无运行中操作
                 </td>
               </tr>
             )}
