@@ -260,15 +260,8 @@ func inferDoSQLEngine(data map[string]string) (string, string, error) {
 		return "", "", errors.New("dosql_connection_uri_invalid: credential needs connection_uri or SPRING_DATASOURCE_URL")
 	}
 	database := strings.Trim(parsed.Path, "/")
-	switch parsed.Scheme {
-	case "postgres", "postgresql":
-		return "postgres", database, nil
-	case "mysql":
-		return "mysql", database, nil
-	case "oracle":
-		return "oracle", database, nil
-	case "mongodb":
-		return "mongodb", database, nil
+	if engine, ok := doSQLEngineForScheme(parsed.Scheme); ok {
+		return engine, database, nil
 	}
 	return "", "", fmt.Errorf("dosql_engine_unsupported: %s is not supported for direct SQL", parsed.Scheme)
 }

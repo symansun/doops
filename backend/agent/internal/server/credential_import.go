@@ -33,7 +33,9 @@ type credentialSecretImportResult struct {
 
 // Schemes DoSql can open; the Agent injects the password from the Secret.
 var credentialConnectionURISchemes = map[string]bool{
-	"postgres": true, "postgresql": true, "mysql": true, "oracle": true, "mongodb": true,
+	"postgres": true, "postgresql": true, "cockroachdb": true, "cockroach": true,
+	"mysql": true, "mariadb": true, "tidb": true, "oracle": true,
+	"sqlserver": true, "mssql": true, "mongodb": true,
 }
 
 func validateCredentialSecretImport(req credentialSecretImportRequest) error {

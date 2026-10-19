@@ -140,7 +140,7 @@ workload kind 仅支持 `Deployment`、`StatefulSet`、`DaemonSet`。不支持 w
 
 数据库 grant 不绑定数据库资产、环境、引擎、数据库名或 workload；这些是 DoSql 的执行上下文，
 DoSql 请求直接由 Gateway 读取保存的 target/database 绑定，物化使用绑定的 namespace；不调用模型生成凭据 scope。
-Agent 会根据当前 target 的非 Secret discovery 校验。PostgreSQL、MySQL、Oracle 和 MongoDB 都可以用
+Agent 会根据当前 target 的非 Secret discovery 校验。PostgreSQL、MySQL、Oracle、SQL Server 和 MongoDB 都可以用
 `connection_uri`（`credential configure --from-secret ... --connection-uri` 由 Agent 注入密码，
 不回传）；MySQL 也可以用
 `required_keys=SPRING_DATASOURCE_URL,SPRING_DATASOURCE_USERNAME,SPRING_DATASOURCE_PASSWORD`。
@@ -285,7 +285,8 @@ doops -session db-setup credential configure \
   `--keys` 中，runtime key 不能重复。映射只改 key 名称，值仍通过 Agent 私有控制通道传输。
   例如 Test MySQL 将 `EXAM_MYSQL_JDBC_URL`、`EXAM_MYSQL_USERNAME`、`EXAM_MYSQL_PASSWORD`
   映射为 `SPRING_DATASOURCE_URL`、`SPRING_DATASOURCE_USERNAME`、`SPRING_DATASOURCE_PASSWORD`。
-- URI 支持 postgres/postgresql/mysql/oracle/mongodb，必须含用户名、host 和数据库路径，不允许密码、
+- URI scheme 支持 postgres/postgresql、mysql、oracle、sqlserver/mssql、mongodb，以及按同协议处理的
+  mariadb、tidb（MySQL 协议）和 cockroachdb（Postgres 协议），必须含用户名、host 和数据库路径，不允许密码、
   query 或 fragment；`--password-key` 必须是唯一选中的 key，输出 payload 只有 `connection_uri`。
   需要其它连接形式时由安全输入端通过 stdin 提交完整 payload，不自动改写或降级。
 - 不带 `--from-secret` 时只读 stdin，格式与 `credential put` 相同；Secret 模式不读 stdin。

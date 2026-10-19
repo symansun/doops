@@ -56,6 +56,9 @@ func doSQLQuoteIdentifier(engine, name string) string {
 	if engine == "mysql" {
 		return "`" + strings.ReplaceAll(name, "`", "``") + "`"
 	}
+	if engine == "mssql" {
+		return "[" + strings.ReplaceAll(name, "]", "]]") + "]"
+	}
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
@@ -79,6 +82,8 @@ func doSQLCopyInsert(engine, table string, columns []string, rows int) string {
 			n++
 			if engine == "postgres" {
 				builder.WriteString(fmt.Sprintf("$%d", n))
+			} else if engine == "mssql" {
+				builder.WriteString(fmt.Sprintf("@p%d", n))
 			} else {
 				builder.WriteString("?")
 			}
@@ -110,8 +115,8 @@ func handleDoSQLCopy(ctx context.Context, sessionID string, args api.AgentPrompt
 	if err != nil {
 		return "", fmt.Errorf("destination: %w", err)
 	}
-	if source.Engine != dest.Engine || (dest.Engine != "mysql" && dest.Engine != "postgres") {
-		return "", fmt.Errorf("dosql_copy_engine_unsupported: copy needs mysql→mysql or postgres→postgres, got %s→%s", source.Engine, dest.Engine)
+	if source.Engine != dest.Engine || (dest.Engine != "mysql" && dest.Engine != "postgres" && dest.Engine != "mssql") {
+		return "", fmt.Errorf("dosql_copy_engine_unsupported: copy needs the same SQL engine on both sides (mysql, postgres or mssql), got %s→%s", source.Engine, dest.Engine)
 	}
 	sourceTarget, err := doSQLConnectionTarget(source.Engine, source.Database, source.Data)
 	if err != nil {
@@ -185,7 +190,7 @@ func executeDoSQLCopy(ctx context.Context, source, dest doSQLTarget, tables []st
 	if err := prepareDoSQLSession(ctx, dstConn, dest.Engine); err != nil {
 		return result, doSQLFailure("dosql_session_setup_failed", err.Error())
 	}
-	srcTx, err := srcDB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	srcTx, err := srcDB.BeginTx(ctx, doSQLTxOptions(source.Engine, true))
 	if err != nil {
 		return result, doSQLFailure("dosql_transaction_failed", "source: "+err.Error())
 	}
@@ -236,9 +241,10 @@ func copyDoSQLTable(ctx context.Context, src, dst *sql.Tx, engine, table string)
 	if len(columns) == 0 {
 		return 0, errors.New("table has no columns")
 	}
-	batchRows := doSQLCopyMaxParams / len(columns)
-	if batchRows > doSQLCopyBatchRows {
-		batchRows = doSQLCopyBatchRows
+	maxParams, maxRows := doSQLCopyLimits(engine)
+	batchRows := maxParams / len(columns)
+	if batchRows > maxRows {
+		batchRows = maxRows
 	}
 	if batchRows < 1 {
 		return 0, errors.New("table has too many columns")

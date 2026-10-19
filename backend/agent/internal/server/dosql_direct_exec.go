@@ -10,6 +10,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "github.com/microsoft/go-mssqldb"
 	_ "github.com/sijms/go-ora/v2"
 )
 
@@ -172,6 +173,8 @@ func prepareDoSQLSession(ctx context.Context, conn *sql.Conn, engine string) err
 		statements = []string{fmt.Sprintf("SET SESSION innodb_lock_wait_timeout = %d", seconds)}
 	case "oracle":
 		statements = []string{fmt.Sprintf("ALTER SESSION SET DDL_LOCK_TIMEOUT = %d", seconds)}
+	case "mssql":
+		statements = []string{fmt.Sprintf("SET LOCK_TIMEOUT %d", seconds*1000)}
 	}
 	for _, statement := range statements {
 		if _, err := conn.ExecContext(ctx, statement); err != nil {
@@ -194,7 +197,7 @@ func beginDoSQLTransaction(ctx context.Context, conn *sql.Conn, engine string, r
 		}
 		return tx, nil
 	}
-	return conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: readOnly})
+	return conn.BeginTx(ctx, doSQLTxOptions(engine, readOnly))
 }
 
 func runDoSQLStatement(ctx context.Context, tx *sql.Tx, statement string) (doSQLStatementResult, error) {
