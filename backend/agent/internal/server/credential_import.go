@@ -31,6 +31,11 @@ type credentialSecretImportResult struct {
 	ResourceVersion string          `json:"resource_version"`
 }
 
+// Schemes DoSql can open; the Agent injects the password from the Secret.
+var credentialConnectionURISchemes = map[string]bool{
+	"postgres": true, "postgresql": true, "mysql": true, "oracle": true, "mongodb": true,
+}
+
 func validateCredentialSecretImport(req credentialSecretImportRequest) error {
 	if validateSession(req.SessionID) != nil || req.Cluster == "" || req.Instance == "" ||
 		!validKubernetesCredentialName(req.Namespace) || !validKubernetesCredentialName(req.SecretName) ||
@@ -67,7 +72,7 @@ func validateCredentialSecretImport(req credentialSecretImportRequest) error {
 		return nil
 	}
 	u, err := url.Parse(req.ConnectionURI)
-	if err != nil || u == nil || (u.Scheme != "postgres" && u.Scheme != "postgresql" && u.Scheme != "mongodb") ||
+	if err != nil || u == nil || !credentialConnectionURISchemes[u.Scheme] ||
 		u.Hostname() == "" || u.User == nil || u.User.Username() == "" ||
 		u.Path == "" || u.Path == "/" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
 		len(req.Keys) != 1 || req.Keys[0] != req.PasswordKey {

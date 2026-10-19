@@ -264,6 +264,8 @@ func TestCredentialConfigureCLI(t *testing.T) {
 		{"postgres_uri", []string{"--keys", "password", "--password-key", "password", "--connection-uri", "postgres://user@db:5432/app"}, "postgres://user@db:5432/app"},
 		{"postgresql_uri", []string{"--keys", "password", "--password-key", "password", "--connection-uri", "postgresql://user@db/app"}, "postgresql://user@db/app"},
 		{"mongodb_uri", []string{"--keys", "password", "--password-key", "password", "--connection-uri", "mongodb://user@db:27017/app"}, "mongodb://user@db:27017/app"},
+		{"mysql_uri", []string{"--keys", "password", "--password-key", "password", "--connection-uri", "mysql://root@mysql.ns:3306/app"}, "mysql://root@mysql.ns:3306/app"},
+		{"oracle_uri", []string{"--keys", "password", "--password-key", "password", "--connection-uri", "oracle://sys@db:1521/ORCL"}, "oracle://sys@db:1521/ORCL"},
 	} {
 		t.Run(source.name, func(t *testing.T) {
 			mock := newConfigureHTTPMock()
@@ -522,7 +524,8 @@ func TestCredentialConfigureCLI(t *testing.T) {
 			"postgres://user:" + configureCanary + "@db/app", "postgres://user:@db/app",
 			"mongodb://user:" + configureCanary + "@db/app", "postgres://user@db/app?password=" + configureCanary,
 			"postgres://user@db/app?%70assword=" + configureCanary, "postgres://user@db/app?sslpassword=" + configureCanary,
-			"postgres://user@db/app?token=" + configureCanary, "mysql://user@db/app",
+			"postgres://user@db/app?token=" + configureCanary, "mysql://user@db", "mysql://user@db/", "mysql://user@db/app?ssl=true",
+			"oracle://user@db", "oracle://user@db/app?x=1", "mssql://user@db/app",
 			"postgres://user@/app", "postgres://user@db/app#" + configureCanary,
 			"postgres://user@db/app?password=%zz", "postgres://user:%zz@db/app",
 			"postgres://user@db", "postgres://user@db/",
