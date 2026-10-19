@@ -48,9 +48,7 @@ func runCredentialPreflight(
 	if flags.NArg() != 0 {
 		return fmt.Errorf("credential preflight accepts no positional arguments")
 	}
-	if strings.TrimSpace(sessionName) == "" {
-		return fmt.Errorf("-session is required")
-	}
+	sessionName = resolveSession(sessionName)
 
 	manifest, err := readDevelopmentCredentialManifest(manifestPath)
 	if err != nil {

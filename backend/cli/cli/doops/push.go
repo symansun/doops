@@ -107,9 +107,7 @@ func pushWorkspaceSnapshotWithSource(
 		clean := strings.TrimRight(dest, "/")
 		sessionID = filepath.Base(clean)
 	}
-	if sessionID == "" {
-		return "", fmt.Errorf("session ID 必传：请通过 -session 指定会话 ID 以隔离工作区 (例如: doops exec -session prod ...)")
-	}
+	sessionID = resolveSession(sessionID)
 
 	token, err := ResolveToken(server)
 	if err != nil {

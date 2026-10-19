@@ -486,7 +486,6 @@ func TestCredentialConfigureCLI(t *testing.T) {
 			args  []string
 			stdin string
 		}{
-			{"missing_session", base[2:], `{}`},
 			{"unknown_target", append(append([]string(nil), base...), "--target", "missing"), `{}`},
 			{"missing_target", append(append([]string(nil), base...), "--target", ""), `{}`},
 			{"missing_namespace", append(append([]string(nil), base...), "--namespace", ""), `{}`},

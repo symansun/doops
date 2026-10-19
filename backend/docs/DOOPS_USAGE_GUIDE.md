@@ -2,6 +2,11 @@
 
 This guide holds command-level usage details. The skill file is only the entry point.
 
+`-session <s>` names the operation context and its `/root/ws/<s>` workspace. Any valid name
+works and nothing has to be created first. When it is omitted, the CLI generates `ses_<16 hex>`,
+prints it to stderr, and proceeds; pass that name again to continue in the same workspace.
+`pull` is the exception: it needs the existing session whose workspace it downloads.
+
 ## Command Choice
 
 | Need | Command | Notes |

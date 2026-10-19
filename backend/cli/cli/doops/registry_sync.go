@@ -39,9 +39,7 @@ func runRegistryCommand(args []string, sessionName string, servers []Server, con
 		return err
 	}
 	// Help must work without a session or config, so these checks follow parsing.
-	if sessionName == "" {
-		return fmt.Errorf("-session 必传")
-	}
+	sessionName = resolveSession(sessionName)
 	if configErr != nil {
 		return configErr
 	}

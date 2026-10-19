@@ -235,16 +235,18 @@ func TestUpgradeAgentsRequiresVerifiedResult(t *testing.T) {
 	}
 }
 
-func TestUpgradeAgentsRequiresSessionBeforeContactingGateway(t *testing.T) {
+// A missing session is generated, not an error; the upgrade still stops on the
+// next precondition (an unpublished test CLI) before contacting Gateway.
+func TestUpgradeAgentsGeneratesMissingSession(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("missing session must fail before contacting Gateway")
+		t.Error("an unpublished CLI must fail before contacting Gateway")
 	}))
 	defer gateway.Close()
 	err := UpgradeAgents(Server{
 		Name: "test", Gateway: gateway.URL, Cluster: "test", Instance: "node",
 	}, UpgradeOptions{Image: "registry.example/doops@sha256:" + strings.Repeat("a", 64)}, false)
-	if err == nil || !strings.Contains(err.Error(), "-session") {
-		t.Fatalf("expected explicit session requirement, got %v", err)
+	if err == nil || strings.Contains(err.Error(), "-session") {
+		t.Fatalf("missing session must be generated, not rejected; got %v", err)
 	}
 }
 

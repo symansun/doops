@@ -79,9 +79,10 @@ Flags:
 		&scope.HelmRelease, &scope.HelmChart} {
 		*value = strings.TrimSpace(*value)
 	}
-	if flags.NArg() != 0 || sessionName == "" || target == "" {
-		return fmt.Errorf("-session and --target are required; no positional arguments")
+	if flags.NArg() != 0 || target == "" {
+		return fmt.Errorf("--target is required; no positional arguments")
 	}
+	sessionName = resolveSession(sessionName)
 	if sessionName == "." || strings.Contains(sessionName, "..") || strings.ContainsAny(sessionName, `/\`) {
 		return fmt.Errorf("invalid -session")
 	}

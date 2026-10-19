@@ -45,9 +45,7 @@ func runImageBuild(args []string, sessionName string, servers []Server, configEr
 		}
 		return err
 	}
-	if strings.TrimSpace(sessionName) == "" {
-		return fmt.Errorf("-session 必传")
-	}
+	sessionName = resolveSession(sessionName)
 	if configErr != nil {
 		return configErr
 	}
@@ -134,9 +132,7 @@ func runImageCopy(args []string, sessionName string, servers []Server, configErr
 		}
 		return err
 	}
-	if strings.TrimSpace(sessionName) == "" {
-		return fmt.Errorf("-session 必传")
-	}
+	sessionName = resolveSession(sessionName)
 	if configErr != nil {
 		return configErr
 	}
