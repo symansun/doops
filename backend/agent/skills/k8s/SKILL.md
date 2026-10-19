@@ -22,7 +22,9 @@ kubeconfig 或 `doops push` 为前置条件；旧 Agent 首次启用控制器需
 
 ## 核心原则
 
-1. Kubernetes 读取只调用 `mcp_doops_k8s_read`；所有发布 mutation 调用
+1. Kubernetes 与 Helm 读取只调用 `mcp_doops_k8s_read`（含 `helm-history`/`helm-status`/
+   `helm-list`/`helm-values`，可用 `selector`、`all_namespaces`、`previous`、`since`、
+   `output=jsonpath=...`）；所有发布 mutation 调用
    `mcp_doops_helm`（规范能力名 `doops_helm`）。`session_id` 由运行时绑定，模型不得
    传入 target、session 或工作区根路径；chart/values 可使用任务指定的 session 相对路径。
    不得用 shell 执行 kubectl 或 Helm mutation。
@@ -60,7 +62,8 @@ kubeconfig 或 `doops push` 为前置条件；旧 Agent 首次启用控制器需
 - `operation=events` 的 `resource` 只有在按对象过滤时才填写，格式必须是
   `<kind>/<name>`，例如 `pod/node-debugger-0`；不得把 namespace、`events` 或裸名称放进
   `resource`。如果事件读取报参数错误，修正结构化参数并重试一次，禁止改用 Bash/kubectl。
-- `output` 单独传 `json`、`yaml`、`wide` 或 `name`，不要拼进 `name`。
+- `output` 单独传 `json`、`yaml`、`wide`、`name`、`jsonpath=...` 或 `custom-columns=...`，
+  不要拼进 `name`。
 
 ## 安全合规
 - 不要在命令行明文传递 Secret

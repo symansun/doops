@@ -406,6 +406,14 @@ doops -session ops k8s --target <t> logs deployment/api --namespace apps --tail 
 doops -session ops k8s --target <t> top pods --namespace apps
 doops -session ops k8s --target <t> events --namespace apps --for deployment/api
 doops -session ops k8s --target <t> rollout status deployment/api --namespace apps
+doops -session ops k8s --target <t> get pods -A -l app=api
+doops -session ops k8s --target <t> get networkpolicy worker -n apps -o yaml
+doops -session ops k8s --target <t> get deploy -n apps -o 'jsonpath={.items[*].spec.template.spec.containers[0].image}'
+doops -session ops k8s --target <t> logs pod/api-0 -n apps --previous --since 10m
+doops -session ops k8s --target <t> helm list -A
+doops -session ops k8s --target <t> helm history zhiyong -n zyj
+doops -session ops k8s --target <t> helm status zhiyong -n zyj
+doops -session ops k8s --target <t> helm values zhiyong -n zyj   # 只返回 key 路径
 # 以下是 mutation，必须带 --confirm
 doops -session ops k8s --target <t> rollout restart deployment/api --namespace apps --confirm
 doops -session ops k8s --target <t> scale deployment/api --replicas 3 --namespace apps --confirm
@@ -413,9 +421,12 @@ doops -session ops k8s --target <t> node cordon <node> --confirm
 doops -session ops k8s --target <t> delete pod <pod> --namespace apps --confirm
 ```
 
-可用参数：`--namespace`、`--container`、`--output json|yaml|wide|name`、`--tail`、
-`--replicas`、`--timeout`、`--for`、`--confirm`。`get/describe/logs/top/events/rollout status`
-是只读查询，可与 target mutation 并行；`rollout restart/scale/cordon/uncordon/delete pod`
+可用参数：`--namespace`/`-n`、`--all-namespaces`/`-A`、`--selector`/`-l`、`--container`/`-c`、
+`--output`/`-o json|yaml|wide|name|jsonpath=...|custom-columns=...`、`--tail`、`--previous`/`-p`、
+`--since`、`--replicas`、`--timeout`、`--for`、`--confirm`。可读 kind 包括工作负载、Service/Ingress、
+ConfigMap、NetworkPolicy、HPA、PDB、RBAC、StorageClass、CRD、事件和存储；Secret 与
+ServiceAccount 不开放。`helm values` 只返回 key 路径，因为 values 里可能有明文。
+`get/describe/logs/top/events/rollout status/helm` 是只读查询，可与 target mutation 并行；`rollout restart/scale/cordon/uncordon/delete pod`
 使用 target mutation lease。两类都只要求该 target 的 grant。版本发布不走这里，用
 `ask --apply`。
 

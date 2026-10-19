@@ -2467,7 +2467,8 @@ func resourceKeyForTool(action GatewayAction, tool string, args json.RawMessage,
 
 func gatewayK8SReadOnly(operation string) bool {
 	switch strings.ToLower(strings.TrimSpace(operation)) {
-	case "get", "describe", "logs", "top", "events", "rollout-status":
+	case "get", "describe", "logs", "top", "events", "rollout-status",
+		"helm-list", "helm-history", "helm-status", "helm-values":
 		return true
 	default:
 		return false
