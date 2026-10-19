@@ -491,23 +491,35 @@ func (c *doagentToolTraceCollector) hasFailedSQLRead() bool {
 }
 
 func (c *doagentToolTraceCollector) hasUnresolvedMutation() bool {
+	return c.unresolvedMutationSummary() != ""
+}
+
+// unresolvedMutationSummary lists tool=reason for every mutation whose outcome
+// cannot be proven from its trace, or "" when every mutation is resolved.
+func (c *doagentToolTraceCollector) unresolvedMutationSummary() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	var unresolved []string
 	for _, trace := range c.calls {
-		if trace.usesRawClusterMutation() {
-			return true
-		}
 		tool := modelVisibleDoagentToolName(trace.ToolName)
+		if tool == "" {
+			tool = "unknown"
+		}
+		if trace.usesRawClusterMutation() {
+			unresolved = append(unresolved, tool+"=raw_cluster_mutation_forbidden")
+			continue
+		}
 		if tool != "doops_helm" && tool != "doops_web" {
 			continue
 		}
 		trace.expectedSessionID = c.expectedSessionID
 		trace.expectedMutationAuthorityDigest = c.expectedMutationAuthorityDigest
 		if reason := trace.terminalMutationReason(); reason != "" && reason != "tool_result_failed" {
-			return true
+			unresolved = append(unresolved, tool+"="+reason)
 		}
 	}
-	return false
+	sort.Strings(unresolved)
+	return strings.Join(unresolved, ",")
 }
 
 func (c *doagentToolTraceCollector) forbiddenMutationSummary() string {

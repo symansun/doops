@@ -531,6 +531,8 @@ func (c *MCPClient) Call(toolName string, arguments map[string]interface{}) erro
 
 	// 监听事件：流式输出 + 最终结果
 	streamedAny := false
+	streamedAnswer := false // assistant text already streamed
+	endsWithNewline := true
 	timeout := time.NewTimer(c.callTimeout())
 	defer timeout.Stop()
 	timedOut := false
@@ -549,9 +551,23 @@ func (c *MCPClient) Call(toolName string, arguments map[string]interface{}) erro
 			// Notification data is output, not a content-sniffed event protocol.
 			if method, ok := msg["method"].(string); ok && method == "notifications/message" {
 				if params, ok := msg["params"].(map[string]interface{}); ok {
-					if chunk, ok := params["data"].(string); ok {
+					if chunk, ok := params["data"].(string); ok && chunk != "" {
+						kind, _ := params["kind"].(string)
+						if kind == "tool" {
+							// Tool markers are progress, not the answer; keep them on their own line.
+							if !endsWithNewline {
+								fmt.Println()
+							}
+							fmt.Println(chunk)
+							endsWithNewline = true
+							continue
+						}
 						fmt.Print(chunk)
-						streamedAny = streamedAny || chunk != ""
+						endsWithNewline = strings.HasSuffix(chunk, "\n")
+						streamedAny = true
+						if kind == "assistant_delta" {
+							streamedAnswer = true
+						}
 					}
 				}
 				continue
@@ -565,8 +581,15 @@ func (c *MCPClient) Call(toolName string, arguments map[string]interface{}) erro
 						m := item.(map[string]interface{})
 						if m["type"] == "text" {
 							text := m["text"].(string)
-							if !streamedAny || toolName == "doops_agent_prompt" || toolName == "doops_distill" || toolName == "doops_bg" {
+							if printFinalResult(toolName, streamedAny, streamedAnswer) {
+								if !endsWithNewline {
+									fmt.Println()
+								}
 								fmt.Println(text)
+								endsWithNewline = true
+							} else if !endsWithNewline {
+								fmt.Println()
+								endsWithNewline = true
 							}
 						}
 					}
@@ -888,4 +911,19 @@ func (c *MCPClient) Distill(content string) string {
 	ratio := float64(len(distilledText)) / float64(originalSize)
 
 	return fmt.Sprintf("\n[Smart Compression %.1f%%] Original: %dB\n%s\n%s\n%s\n", ratio*100, originalSize, strings.Repeat("-", 50), distilledText, strings.Repeat("-", 50))
+}
+
+// printFinalResult reports whether the final tool result text must be printed.
+// ask streams its answer as assistant deltas; printing the final result again
+// duplicated the whole answer. Other tools print the result only when nothing
+// was streamed, except bg/distill, whose result is a summary of its own.
+func printFinalResult(toolName string, streamedAny, streamedAnswer bool) bool {
+	switch toolName {
+	case "doops_agent_prompt":
+		return !streamedAnswer
+	case "doops_distill", "doops_bg":
+		return true
+	default:
+		return !streamedAny
+	}
 }
