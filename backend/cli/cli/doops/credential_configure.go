@@ -41,7 +41,7 @@ func runCredentialConfigure(args []string, sessionName string, servers []Server,
 	flags.StringVar(&fromSecret, "from-secret", "", "Import selected keys from this target Secret (opaque only); never reads stdin")
 	flags.StringVar(&keys, "keys", "", "Explicit comma-separated source Secret keys (required with --from-secret)")
 	flags.StringVar(&keyMap, "key-map", "", "Optional source=runtime Secret key mappings for --from-secret")
-	flags.StringVar(&connectionURI, "connection-uri", "", "Passwordless postgres/postgresql/mongodb URL with a concrete database path; no query (including an empty ?) or fragment")
+	flags.StringVar(&connectionURI, "connection-uri", "", "Passwordless postgres/postgresql/mysql/oracle/mongodb URL with a concrete database path; no query (including an empty ?) or fragment")
 	flags.StringVar(&passwordKey, "password-key", "", "Source password key; must be the sole selected --keys entry with --connection-uri")
 	flags.Usage = func() {
 		fmt.Fprint(stdout, `Usage:
@@ -468,14 +468,18 @@ func configureCredentialScopeKey(scope credentialGrantScope) string {
 	return string(data)
 }
 
+var configureConnectionURISchemes = map[string]bool{
+	"postgres": true, "postgresql": true, "mysql": true, "oracle": true, "mongodb": true,
+}
+
 func validateConfigureConnectionURI(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" || parsed.Hostname() == "" || parsed.User == nil ||
 		parsed.User.Username() == "" {
-		return fmt.Errorf("--connection-uri must be a passwordless postgres/postgresql/mongodb URL with username and host")
+		return fmt.Errorf("--connection-uri must be a passwordless postgres/postgresql/mysql/oracle/mongodb URL with username and host")
 	}
-	if parsed.Scheme != "postgres" && parsed.Scheme != "postgresql" && parsed.Scheme != "mongodb" {
-		return fmt.Errorf("--connection-uri scheme must be postgres, postgresql or mongodb")
+	if !configureConnectionURISchemes[parsed.Scheme] {
+		return fmt.Errorf("--connection-uri scheme must be postgres, postgresql, mysql, oracle or mongodb")
 	}
 	if _, present := parsed.User.Password(); present {
 		return fmt.Errorf("--connection-uri must not contain a password")
