@@ -11,9 +11,7 @@ func runSkillPrompt(skill, operation, target, session, instruction, credentialMo
 }
 
 func runSkillPromptWith(skill, operation, target, session, instruction, credentialMode string, credentials []string, extra map[string]interface{}, servers []Server, configErr error, ss *SessionStore, verbose bool) error {
-	if strings.TrimSpace(session) == "" {
-		return fmt.Errorf("-session is required")
-	}
+	session = resolveSession(session)
 	if configErr != nil {
 		return fmt.Errorf("load Gateway config: %w", configErr)
 	}

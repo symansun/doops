@@ -158,10 +158,10 @@ func runCredentialVerify(args []string, sessionName string, servers []Server, co
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if flags.NArg() != 0 || strings.TrimSpace(sessionName) == "" ||
-		strings.TrimSpace(target) == "" || strings.TrimSpace(id) == "" || strings.TrimSpace(versionID) == "" {
-		return fmt.Errorf("-session, --target, --id and --version-id are required")
+	if flags.NArg() != 0 || strings.TrimSpace(target) == "" || strings.TrimSpace(id) == "" || strings.TrimSpace(versionID) == "" {
+		return fmt.Errorf("--target, --id and --version-id are required")
 	}
+	sessionName = resolveSession(sessionName)
 	gateway, token, cluster, instance, err := resolveCredentialListTarget(target, servers, configErr)
 	if err != nil {
 		return err

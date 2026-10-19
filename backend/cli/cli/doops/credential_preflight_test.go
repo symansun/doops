@@ -185,7 +185,7 @@ credentials:
 	}
 }
 
-func TestCredentialPreflightRequiresSessionAndMatchingTarget(t *testing.T) {
+func TestCredentialPreflightRequiresMatchingTarget(t *testing.T) {
 	manifestPath := writeCredentialPreflightManifest(t, `
 apiVersion: doops.sh/v1
 kind: DevelopmentCredentialRequirements
@@ -195,11 +195,6 @@ credentials:
     use: gitCheckout
 `)
 	var output bytes.Buffer
-	if err := runCredentialPreflight(
-		[]string{"--manifest", manifestPath}, "", nil, nil, &output,
-	); err == nil || !strings.Contains(err.Error(), "-session is required") {
-		t.Fatalf("expected session requirement, got %v", err)
-	}
 	if err := runCredentialPreflight(
 		[]string{"--manifest", manifestPath, "--target", "other-target"},
 		"dev-preflight", nil, nil, &output,

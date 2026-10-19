@@ -49,10 +49,7 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 		strings.TrimSpace(base.Instance) == "" {
 		return fmt.Errorf("configured Gateway target is required")
 	}
-	session := strings.TrimSpace(opts.Session)
-	if session == "" {
-		return fmt.Errorf("-session is required for agent upgrade")
-	}
+	session := resolveSession(opts.Session)
 	expectedRelease := ""
 	if !opts.DryRun && !opts.Rollback {
 		expectedRelease = strings.TrimSpace(cliBuildCommit)

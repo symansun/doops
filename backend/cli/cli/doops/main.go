@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
@@ -23,7 +22,7 @@ var (
 
 func main() {
 	verbose := flag.Bool("verbose", false, "Enable verbose logging")
-	sessionName := flag.String("session", "", "Session/Task ID for operation context (REQUIRED)")
+	sessionName := flag.String("session", "", "Session/Task ID for operation context; generated when omitted")
 	printContract := flag.Bool("contract", false, "Print the machine-readable CLI contract version")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `
@@ -76,7 +75,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 选项:
   -verbose    启用详细日志
-  -session    会话/任务ID (远程调用须提供；用于操作上下文，不要求先 push 或创建源码快照)
+  -session    会话/任务ID (可省略，省略时自动生成并打印到 stderr；复用同名即延续同一工作区)
   -contract   输出机器可读的 CLI 契约版本
   -help       显示此帮助信息
 
@@ -127,10 +126,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}
-		if *sessionName == "" {
-			fmt.Println("Error: -session 必传，请指定会话 ID")
-			os.Exit(1)
-		}
+		*sessionName = resolveSession(*sessionName)
 		requireConfig(configErr)
 		server := findServer(servers, target)
 		if server == nil {
@@ -148,9 +144,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		fmt.Printf("target=%s protocol=%s status=ready\n", target, required)
 
 	case "session":
-		b := make([]byte, 8)
-		rand.Read(b)
-		fmt.Printf("ses_%x\n", b)
+		fmt.Println(newSessionID())
 		os.Exit(0)
 
 	case "list":
@@ -345,10 +339,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			os.Exit(1)
 		}
 
-		if *sessionName == "" {
-			fmt.Println("Error: -session 必传，请指定会话 ID 以隔离 K8S 运维操作")
-			os.Exit(1)
-		}
+		*sessionName = resolveSession(*sessionName)
 		token := mustResolveToken(*server)
 		client := NewMCPClient(*server, ss, *sessionName, *verbose)
 		client.Token = token
@@ -440,10 +431,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			*sessionName = subSession
 		}
 
-		if *sessionName == "" {
-			fmt.Println("Error: -session 必传，请指定会话 ID 以隔离操作上下文 (例如: doops exec -session prod -target node1 -cmd \"...\")")
-			os.Exit(1)
-		}
+		*sessionName = resolveSession(*sessionName)
 
 		if target == "" {
 			fmt.Println("Error: --target 必传，请指定目标服务器名称。")
@@ -776,10 +764,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			removeFlag.Usage()
 			os.Exit(1)
 		}
-		if strings.TrimSpace(*sessionName) == "" {
-			fmt.Println("Error: -session 必传，请指定会话 ID")
-			os.Exit(1)
-		}
+		*sessionName = resolveSession(*sessionName)
 		requireConfig(configErr)
 		index := -1
 		for i, candidate := range servers {
@@ -900,10 +885,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			cleanFlag.Usage()
 			os.Exit(1)
 		}
-		if *sessionName == "" {
-			fmt.Println("Error: -session 必传，请指定会话 ID")
-			os.Exit(1)
-		}
+		*sessionName = resolveSession(*sessionName)
 		requireConfig(configErr)
 
 		server := findServer(servers, target)
@@ -941,11 +923,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		if upgradeSession != "" && *sessionName == "" {
 			*sessionName = upgradeSession
 		}
-		if *sessionName == "" {
-			fmt.Println("Error: -session is required for agent upgrade")
-			upgradeFlag.Usage()
-			os.Exit(1)
-		}
+		*sessionName = resolveSession(*sessionName)
 		if target == "" || (image == "" && !rollback) {
 			fmt.Println("Error: --target is required; also provide --image unless using --rollback")
 			upgradeFlag.Usage()
@@ -990,10 +968,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			checkFlag.Usage()
 			os.Exit(1)
 		}
-		if *sessionName == "" {
-			fmt.Println("Error: -session 必传，请指定会话 ID")
-			os.Exit(1)
-		}
+		*sessionName = resolveSession(*sessionName)
 		requireConfig(configErr)
 
 		server := findServer(servers, target)
@@ -1105,8 +1080,6 @@ func findRouteConflict(servers []Server, candidate Server) string {
 	return ""
 }
 
-
-
 func runAdminTokensList(args []string, servers []Server, configErr error) {
 	fs := flag.NewFlagSet("admin token list", flag.ExitOnError)
 	target := fs.String("target", "", "Configured gateway target whose token/gateway should be used")
@@ -1189,8 +1162,6 @@ func resolveAdminGatewayFlags(name string, args []string, servers []Server, conf
 	server, token := resolveAdminTargetFlags(name, args, servers, configErr, opID)
 	return server.Gateway, token
 }
-
-
 
 func requireConfig(err error) {
 	if err == nil {

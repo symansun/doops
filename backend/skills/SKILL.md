@@ -27,8 +27,9 @@ description: |
 
 ## 红线
 
-- 只用 `~/.local/bin/doops`。所有远端调用带 `-session <name>`；session 是操作上下文和
-  并发归属，不要求 Git worktree 或先 `push`。
+- 只用 `~/.local/bin/doops`。`-session <name>` 是操作上下文和并发归属，任意合法名字即可，
+  不需要事先创建，也不要求 Git worktree 或先 `push`；省略时 CLI 自动生成并打印到 stderr，
+  要延续同一工作区就复用那个名字。不要因为"没有 session 名"而停下来问。
 - CLI 只接受 Gateway target；没有直连 target、SSH target 或按 target 保存的 token。
   Gateway 登录态按 Gateway URL 共享，target 配置只存路由。Agent 注册不用 token。
 - 凭据 payload 只走 stdin，不进入命令参数、prompt、日志、文档、提交或工作区。

@@ -36,9 +36,7 @@ func runWebCommand(args []string, sessionName string, servers []Server, configEr
 	if *subSession != "" && sessionName == "" {
 		sessionName = *subSession
 	}
-	if strings.TrimSpace(sessionName) == "" {
-		return fmt.Errorf("-session 必传，请指定会话 ID 以隔离网站操作上下文")
-	}
+	sessionName = resolveSession(sessionName)
 	if strings.TrimSpace(*target) == "" {
 		return fmt.Errorf("--target 必传，请指定 Gateway target")
 	}
