@@ -595,3 +595,69 @@ func TestSQLReadToolFailureCannotBecomeSuccessfulPrompt(t *testing.T) {
 		})
 	}
 }
+
+// An unknown apply outcome must name which mutation could not be proven, so the
+// caller knows what to check on the target instead of seeing a bare
+// execution_outcome_unknown.
+func TestApplyUnresolvedMutationSummaryNamesEachTool(t *testing.T) {
+	input := map[string]interface{}{
+		"operation": "upgrade-install", "release": "app",
+		"chart": "deploy/helm/app", "namespace": "apps", "confirm": true,
+	}
+	cases := []struct {
+		name  string
+		calls func(t *testing.T) map[string]doagentToolTrace
+		want  string
+	}{
+		{"verified helm is resolved", func(t *testing.T) map[string]doagentToolTrace {
+			return map[string]doagentToolTrace{"ok": attestedMutationTrace(t, "mcp_doops_helm", input)}
+		}, ""},
+		{"running helm is unresolved", func(t *testing.T) map[string]doagentToolTrace {
+			return map[string]doagentToolTrace{"run": {ToolName: "mcp_doops_helm", Status: "running"}}
+		}, "doops_helm=status_not_completed"},
+		{"helm without raw output is unresolved", func(t *testing.T) map[string]doagentToolTrace {
+			trace := attestedMutationTrace(t, "mcp_doops_helm", input)
+			trace.resultJSON = nil
+			return map[string]doagentToolTrace{"x": trace}
+		}, "doops_helm=raw_output_missing"},
+		{"raw kubectl mutation is unresolved", func(t *testing.T) map[string]doagentToolTrace {
+			return map[string]doagentToolTrace{"sh": {ToolName: "shell", Status: "completed",
+				inputJSON: json.RawMessage(`{"command":"kubectl rollout restart deployment/app"}`)}}
+		}, "shell=raw_cluster_mutation_forbidden"},
+		{"read tools are ignored", func(t *testing.T) map[string]doagentToolTrace {
+			return map[string]doagentToolTrace{"r": {ToolName: "mcp_doops_k8s_read", Status: "running"}}
+		}, ""},
+		{"several reasons are sorted", func(t *testing.T) map[string]doagentToolTrace {
+			return map[string]doagentToolTrace{
+				"a": {ToolName: "mcp_doops_web", Status: "running"},
+				"b": {ToolName: "mcp_doops_helm", Status: "running"},
+			}
+		}, "doops_helm=status_not_completed,doops_web=status_not_completed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			collector := newDoagentToolTraceCollector(false)
+			bindApplyCollector(collector, "apply-test")
+			for id, trace := range tc.calls(t) {
+				collector.calls[id] = trace
+			}
+			if got := collector.unresolvedMutationSummary(); got != tc.want {
+				t.Fatalf("unresolvedMutationSummary() = %q, want %q", got, tc.want)
+			}
+			if got := collector.hasUnresolvedMutation(); got != (tc.want != "") {
+				t.Fatalf("hasUnresolvedMutation() = %t, want %t", got, tc.want != "")
+			}
+		})
+	}
+}
+
+func TestPromptOutcomeUnknownKeepsContract(t *testing.T) {
+	message := promptOutcomeUnknown("turn_finished_missing")
+	response := map[string]interface{}{"error": map[string]interface{}{"message": message}}
+	if !executionResponseUnknown(response) {
+		t.Fatalf("%q is no longer recognised as execution_outcome_unknown", message)
+	}
+	if message != "execution_outcome_unknown: turn_finished_missing" {
+		t.Fatalf("promptOutcomeUnknown = %q", message)
+	}
+}

@@ -634,6 +634,12 @@ func toolNotification(toolName, status string) notificationEvent {
 	}
 }
 
+// promptOutcomeUnknown keeps the execution_outcome_unknown contract and names the
+// check that could not be proven, so callers know what to verify on the target.
+func promptOutcomeUnknown(reason string) string {
+	return errExecutionOutcomeUnknown.Error() + ": " + reason
+}
+
 func errorNotification(text string) notificationEvent {
 	return notificationEvent{Kind: "error", Data: text}
 }
@@ -1564,13 +1570,13 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		// A transport failure can hide an accepted prompt. Without its turn ID
 		// even a cancel ACK cannot prove which execution has stopped.
 		_ = cancelDoagentPrompt(ctx, doagentURL, targetSessionID, nil, &terminalSeen, doagentCancellationTimeout)
-		writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+		writeJSON(buildErrorResponse(reqID, -32603, promptOutcomeUnknown("prompt_transport_failed")))
 		return
 	}
 	turnID, err := doagentPromptTurnID(promptResponse)
 	if err != nil {
 		_ = cancelDoagentPrompt(ctx, doagentURL, targetSessionID, nil, &terminalSeen, doagentCancellationTimeout)
-		writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+		writeJSON(buildErrorResponse(reqID, -32603, promptOutcomeUnknown("prompt_turn_id_missing")))
 		return
 	}
 	turnIDReady <- turnID
@@ -1581,7 +1587,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	select {
 	case <-ctx.Done():
 		if err := cancelDoagentPrompt(ctx, doagentURL, targetSessionID, sseDone, &terminalSeen, doagentCancellationTimeout); err != nil {
-			writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+			writeJSON(buildErrorResponse(reqID, -32603, promptOutcomeUnknown("cancel_unconfirmed")))
 		} else {
 			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 		}
@@ -1590,7 +1596,11 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	}
 	if !terminalSeen.Load() {
 		_ = cancelDoagentPrompt(ctx, doagentURL, targetSessionID, sseDone, &terminalSeen, doagentCancellationTimeout)
-		writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+		reason := "turn_finished_missing"
+		if sseErr != nil {
+			reason += " (" + sanitizeSecretText(sseErr.Error()) + ")"
+		}
+		writeJSON(buildErrorResponse(reqID, -32603, promptOutcomeUnknown(reason)))
 		return
 	}
 	if ctx.Err() != nil {
@@ -1598,9 +1608,11 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 		return
 	}
-	if execution.RequireToolEvidence && toolTraces.hasUnresolvedMutation() {
-		writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
-		return
+	if execution.RequireToolEvidence {
+		if unresolved := toolTraces.unresolvedMutationSummary(); unresolved != "" {
+			writeJSON(buildErrorResponse(reqID, -32603, promptOutcomeUnknown("unverified_mutation "+unresolved)))
+			return
+		}
 	}
 	verifiedMutation := execution.RequireToolEvidence && len(toolTraces.completed()) != 0
 	sseFailed := sseErr != nil && !errors.Is(sseErr, context.Canceled)
