@@ -25,6 +25,7 @@ const (
 var (
 	k8sReadOperations = []string{
 		"get", "describe", "logs", "top", "events", "rollout-status",
+		"helm-list", "helm-history", "helm-status", "helm-values",
 	}
 	helmMutationOperations = []string{
 		"upgrade-install", "rollback", "uninstall",
@@ -351,7 +352,7 @@ func k8sMCPToolDefinition(name string, operations []string, description string) 
 			"operation": map[string]interface{}{
 				"type":        "string",
 				"enum":        operations,
-				"description": "Use get, describe, logs, top, events, or rollout-status. get/top require kind; describe requires kind and name; logs/rollout-status require resource.",
+				"description": "Use get, describe, logs, top, events, rollout-status, or the Helm reads helm-list, helm-history, helm-status, helm-values. get/top require kind; describe requires kind and name; logs/rollout-status require resource; helm-history/helm-status/helm-values require name (the release) and namespace. helm-values returns key paths only.",
 			},
 			"kind": map[string]interface{}{
 				"type":        "string",
@@ -370,6 +371,13 @@ func k8sMCPToolDefinition(name string, operations []string, description string) 
 			"output":    map[string]interface{}{"type": "string"},
 			"timeout":   map[string]interface{}{"type": "string"},
 			"tail":      map[string]interface{}{"type": "integer"},
+			"selector": map[string]interface{}{
+				"type":        "string",
+				"description": "Label selector for get/top, for example app=api or tier in (web,api).",
+			},
+			"all_namespaces": map[string]interface{}{"type": "boolean", "description": "Read across all namespaces; do not combine with namespace."},
+			"previous":       map[string]interface{}{"type": "boolean", "description": "logs: read the previous (crashed) container instance."},
+			"since":          map[string]interface{}{"type": "string", "description": "logs: only newer than this duration, for example 10m or 2h."},
 		},
 		"oneOf": []interface{}{
 			map[string]interface{}{
@@ -389,8 +397,12 @@ func k8sMCPToolDefinition(name string, operations []string, description string) 
 				"required":   []string{"operation", "resource"},
 			},
 			map[string]interface{}{
-				"properties": map[string]interface{}{"operation": map[string]interface{}{"enum": []string{"events"}}},
+				"properties": map[string]interface{}{"operation": map[string]interface{}{"enum": []string{"events", "helm-list"}}},
 				"required":   []string{"operation"},
+			},
+			map[string]interface{}{
+				"properties": map[string]interface{}{"operation": map[string]interface{}{"enum": []string{"helm-history", "helm-status", "helm-values"}}},
+				"required":   []string{"operation", "name", "namespace"},
 			},
 		},
 	}

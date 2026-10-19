@@ -22,12 +22,16 @@ var errK8SHelp = errors.New("k8s help requested")
 const k8sUsage = `用法: doops -session <s> k8s --target <t> <command> [flags]
 
 只读（可与发布并行）:
-  get <kind>                      [--namespace ns] [--output json|yaml|wide|name]
+  get <kind> [name]               [--namespace ns|-A] [-l selector] [--output json|yaml|wide|name|jsonpath=...|custom-columns=...]
   describe <kind> <name>          [--namespace ns]
-  logs <resource>                 [--namespace ns] [--container c] [--tail N]
-  top pods|nodes                  [--namespace ns]
-  events                          [--namespace ns] [--for kind/name]
+  logs <resource>                 [--namespace ns] [--container c] [--tail N] [--previous] [--since 10m]
+  top pods|nodes                  [--namespace ns|-A] [-l selector]
+  events                          [--namespace ns|-A] [--for kind/name]
   rollout status <resource>       [--namespace ns] [--timeout 120s]
+  helm list                       [--namespace ns|-A]
+  helm history|status <release>   --namespace ns
+  helm values <release>           --namespace ns   (只返回 key 路径，不返回值)
+  Secret 与 ServiceAccount 不开放读取。
 
 写操作（必须带 --confirm）:
   rollout restart <resource>      --confirm
@@ -85,6 +89,14 @@ func buildK8SRequest(args []string) (K8SRequest, error) {
 		if err := addInt("replicas", opts["replicas"]); err != nil {
 			return err
 		}
+		addString("selector", opts["selector"])
+		addString("since", opts["since"])
+		if opts["all-namespaces"] == "true" {
+			req.Payload["all_namespaces"] = true
+		}
+		if opts["previous"] == "true" {
+			req.Payload["previous"] = true
+		}
 		if opts["confirm"] == "true" {
 			req.Payload["confirm"] = true
 		}
@@ -93,11 +105,33 @@ func buildK8SRequest(args []string) (K8SRequest, error) {
 
 	switch positional[0] {
 	case "get":
-		if len(positional) != 2 {
-			return K8SRequest{}, fmt.Errorf("get requires kind")
+		if len(positional) != 2 && len(positional) != 3 {
+			return K8SRequest{}, fmt.Errorf("get requires kind and an optional name")
 		}
 		req.Payload["operation"] = "get"
 		req.Payload["kind"] = positional[1]
+		if len(positional) == 3 {
+			req.Payload["name"] = positional[2]
+		}
+	case "helm":
+		if len(positional) < 2 {
+			return K8SRequest{}, fmt.Errorf("helm requires list|history|status|values")
+		}
+		switch positional[1] {
+		case "list":
+			if len(positional) != 2 {
+				return K8SRequest{}, fmt.Errorf("helm list takes no release")
+			}
+			req.Payload["operation"] = "helm-list"
+		case "history", "status", "values":
+			if len(positional) != 3 {
+				return K8SRequest{}, fmt.Errorf("helm %s requires a release", positional[1])
+			}
+			req.Payload["operation"] = "helm-" + positional[1]
+			req.Payload["name"] = positional[2]
+		default:
+			return K8SRequest{}, fmt.Errorf("unsupported helm read %q", positional[1])
+		}
 	case "describe":
 		if len(positional) != 3 {
 			return K8SRequest{}, fmt.Errorf("describe requires kind and name")
@@ -206,19 +240,26 @@ func parseK8SFlags(args []string) (map[string]string, []string, error) {
 		"timeout":   "",
 		"for":       "",
 		"confirm":   "",
+		"selector":  "",
+		"since":     "",
 	}
 	var positional []string
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
-		case "--target", "--namespace", "--container", "--output", "--tail", "--replicas", "--timeout", "--for":
+		case "--target", "--namespace", "-n", "--container", "-c", "--output", "-o", "--tail", "--replicas",
+			"--timeout", "--for", "--selector", "-l", "--since":
 			if i+1 >= len(args) {
 				return nil, nil, fmt.Errorf("%s requires a value", arg)
 			}
-			opts[strings.TrimPrefix(arg, "--")] = args[i+1]
+			opts[k8sFlagName(arg)] = args[i+1]
 			i++
 		case "--confirm":
 			opts["confirm"] = "true"
+		case "--all-namespaces", "-A":
+			opts["all-namespaces"] = "true"
+		case "--previous", "-p":
+			opts["previous"] = "true"
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return nil, nil, fmt.Errorf("unknown k8s flag %s", arg)
@@ -227,4 +268,19 @@ func parseK8SFlags(args []string) (map[string]string, []string, error) {
 		}
 	}
 	return opts, positional, nil
+}
+
+// k8sFlagName maps kubectl-style short flags to their long option name.
+func k8sFlagName(arg string) string {
+	switch arg {
+	case "-n":
+		return "namespace"
+	case "-c":
+		return "container"
+	case "-o":
+		return "output"
+	case "-l":
+		return "selector"
+	}
+	return strings.TrimPrefix(arg, "--")
 }

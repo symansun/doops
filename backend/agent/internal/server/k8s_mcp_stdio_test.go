@@ -48,7 +48,7 @@ func TestK8SMCPStdioExposesBoundedDomainTools(t *testing.T) {
 		}
 		if name == "k8s_read" {
 			oneOf, _ := schema["oneOf"].([]interface{})
-			if len(oneOf) != 5 {
+			if len(oneOf) != 6 { // get, top, describe, logs/rollout-status, events/helm-list, helm release reads
 				t.Fatalf("k8s operation conditional schema missing: %#v", schema)
 			}
 			resource, _ := properties["resource"].(map[string]interface{})

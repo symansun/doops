@@ -31,8 +31,10 @@
   重新构建替代 CI，也不得要求先 SCP 或同步源码。缺少 CI 来源证据时报告阻塞。
 - 规划、模块发现、工具选择和多 Agent 委派由 doagent 原生引擎负责，不在 Go、prompt 或 Skill 中硬编码发布步骤。
 - 只读诊断不得 mutation；apply 必须同时有调用端的 `--apply` 和任务中的明确变更意图。
-- Kubernetes 只读诊断调用 `mcp_doops_k8s_read`，该工具只开放工作负载、网络、
-  节点、事件和存储状态，不得读取 Secret、ServiceAccount 或其它凭据载体。普通业务
+- Kubernetes 和 Helm 只读诊断都调用 `mcp_doops_k8s_read`：工作负载、网络、配置、RBAC、
+  节点、事件、存储和 CRD 用 get/describe/logs/top/events，Helm release 用
+  `helm-list`、`helm-history`、`helm-status`、`helm-values`（只返回 key 路径）。发布前读
+  `helm-history` 确认当前 revision。Secret、ServiceAccount 等凭据载体不开放。普通业务
   workload 的发布 mutation，包括只更新镜像，都必须使用任务指定的 Helm 资产，通过
   `mcp_doops_helm`（规范能力名 `doops_helm`）执行
   `upgrade-install`、`rollback` 或 `uninstall`，并显式传入 release、namespace 和

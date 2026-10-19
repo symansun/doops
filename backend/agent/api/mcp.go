@@ -92,6 +92,11 @@ type K8SParams struct {
 	Tail      int    `json:"tail,omitempty"`
 	Replicas  *int   `json:"replicas,omitempty"`
 	Confirm   bool   `json:"confirm,omitempty"`
+	// Read-side filters.
+	Selector      string `json:"selector,omitempty"`
+	AllNamespaces bool   `json:"all_namespaces,omitempty"`
+	Previous      bool   `json:"previous,omitempty"`
+	Since         string `json:"since,omitempty"`
 }
 
 // HelmParams is the structured request accepted by doops_helm.
