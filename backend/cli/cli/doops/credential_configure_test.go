@@ -525,7 +525,7 @@ func TestCredentialConfigureCLI(t *testing.T) {
 			"mongodb://user:" + configureCanary + "@db/app", "postgres://user@db/app?password=" + configureCanary,
 			"postgres://user@db/app?%70assword=" + configureCanary, "postgres://user@db/app?sslpassword=" + configureCanary,
 			"postgres://user@db/app?token=" + configureCanary, "mysql://user@db", "mysql://user@db/", "mysql://user@db/app?ssl=true",
-			"oracle://user@db", "oracle://user@db/app?x=1", "mssql://user@db/app",
+			"oracle://user@db", "oracle://user@db/app?x=1", "sqlserver://user@db", "sqlserver://user@db/app?encrypt=true", "ftp://user@db/app",
 			"postgres://user@/app", "postgres://user@db/app#" + configureCanary,
 			"postgres://user@db/app?password=%zz", "postgres://user:%zz@db/app",
 			"postgres://user@db", "postgres://user@db/",

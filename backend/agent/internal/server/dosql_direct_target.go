@@ -60,19 +60,42 @@ func readDoSQLSecretData(ctx context.Context, binding api.AgentCredentialBinding
 func doSQLConnectionTarget(engine, databaseName string, data map[string]string) (doSQLTarget, error) {
 	switch engine {
 	case "postgres":
-		return doSQLURITarget(engine, "pgx", databaseName, data["connection_uri"], []string{"postgres", "postgresql"}, "5432")
+		return doSQLURITarget(engine, "pgx", databaseName, data["connection_uri"], doSQLSchemesForEngine(engine), "5432")
 	case "oracle":
-		return doSQLURITarget(engine, "oracle", databaseName, data["connection_uri"], []string{"oracle"}, "1521")
+		return doSQLURITarget(engine, "oracle", databaseName, data["connection_uri"], doSQLSchemesForEngine(engine), "1521")
 	case "mongodb":
-		return doSQLURITarget(engine, "mongo", databaseName, data["connection_uri"], []string{"mongodb"}, "27017")
+		return doSQLURITarget(engine, "mongo", databaseName, data["connection_uri"], doSQLSchemesForEngine(engine), "27017")
+	case "mssql":
+		return doSQLMSSQLTarget(databaseName, data["connection_uri"])
 	case "mysql":
 		if uri := data["connection_uri"]; uri != "" {
-			return doSQLMySQLTarget(databaseName, uri, "mysql://", "", "")
+			return doSQLMySQLTarget(databaseName, uri, "", "", "")
 		}
 		return doSQLMySQLTarget(databaseName, data["SPRING_DATASOURCE_URL"], "jdbc:mysql://",
 			data["SPRING_DATASOURCE_USERNAME"], data["SPRING_DATASOURCE_PASSWORD"])
 	}
 	return doSQLTarget{}, errors.New("dosql_engine_invalid")
+}
+
+// The mssql driver takes its database as a query parameter, so the URL path is
+// moved there before the DSN is formed.
+func doSQLMSSQLTarget(databaseName, raw string) (doSQLTarget, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "sqlserver" && parsed.Scheme != "mssql") {
+		return doSQLTarget{}, errors.New("dosql_connection_uri_invalid: mssql credential needs connection_uri sqlserver://user:password@host:port/database")
+	}
+	database := strings.Trim(parsed.Path, "/")
+	if database != databaseName {
+		return doSQLTarget{}, fmt.Errorf("dosql_database_name_mismatch: credential points to %q, request names %q", database, databaseName)
+	}
+	port := parsed.Port()
+	if port == "" {
+		port = "1433"
+	}
+	query := parsed.Query()
+	query.Set("database", database)
+	dsn := url.URL{Scheme: "sqlserver", User: parsed.User, Host: net.JoinHostPort(parsed.Hostname(), port), RawQuery: query.Encode()}
+	return doSQLTarget{Engine: "mssql", Driver: "sqlserver", DSN: dsn.String(), Database: database, Address: dsn.Host}, nil
 }
 
 func doSQLURITarget(engine, driver, databaseName, raw string, schemes []string, defaultPort string) (doSQLTarget, error) {
@@ -95,8 +118,21 @@ func doSQLURITarget(engine, driver, databaseName, raw string, schemes []string, 
 }
 
 func doSQLMySQLTarget(databaseName, raw, prefix, user, password string) (doSQLTarget, error) {
-	if !strings.HasPrefix(raw, prefix) {
+	if prefix != "" && !strings.HasPrefix(raw, prefix) {
 		return doSQLTarget{}, errors.New("dosql_connection_uri_invalid: mysql credential needs SPRING_DATASOURCE_URL jdbc:mysql://host:port/database or connection_uri mysql://user:password@host:port/database")
+	}
+	if prefix == "" {
+		parsed, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil {
+			return doSQLTarget{}, errors.New("dosql_connection_uri_invalid: mysql host is missing")
+		}
+		if engine, ok := doSQLEngineForScheme(parsed.Scheme); !ok || engine != "mysql" {
+			return doSQLTarget{}, errors.New("dosql_connection_uri_invalid: mysql credential needs connection_uri mysql://user:password@host:port/database")
+		}
+		raw, prefix = "mysql://"+parsed.Host+parsed.RequestURI(), "mysql://"
+		if parsed.User != nil {
+			raw = "mysql://" + parsed.User.String() + "@" + parsed.Host + parsed.RequestURI()
+		}
 	}
 	parsed, err := url.Parse("mysql://" + strings.TrimPrefix(raw, prefix))
 	if err != nil || parsed.Hostname() == "" {

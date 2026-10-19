@@ -469,14 +469,16 @@ func configureCredentialScopeKey(scope credentialGrantScope) string {
 }
 
 var configureConnectionURISchemes = map[string]bool{
-	"postgres": true, "postgresql": true, "mysql": true, "oracle": true, "mongodb": true,
+	"postgres": true, "postgresql": true, "cockroachdb": true, "cockroach": true,
+	"mysql": true, "mariadb": true, "tidb": true, "oracle": true,
+	"sqlserver": true, "mssql": true, "mongodb": true,
 }
 
 func validateConfigureConnectionURI(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" || parsed.Hostname() == "" || parsed.User == nil ||
 		parsed.User.Username() == "" {
-		return fmt.Errorf("--connection-uri must be a passwordless postgres/postgresql/mysql/oracle/mongodb URL with username and host")
+		return fmt.Errorf("--connection-uri must be a passwordless postgres/mysql/mariadb/tidb/oracle/sqlserver/mongodb URL with username and host")
 	}
 	if !configureConnectionURISchemes[parsed.Scheme] {
 		return fmt.Errorf("--connection-uri scheme must be postgres, postgresql, mysql, oracle or mongodb")

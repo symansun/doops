@@ -61,7 +61,7 @@ func doSQLMCPToolDefinition(name string, operations []string, description string
 		"database_asset_id": map[string]interface{}{"type": "string"},
 		"environment_id":    map[string]interface{}{"type": "string"},
 		"project_id":        map[string]interface{}{"type": "string"},
-		"engine":            map[string]interface{}{"type": "string", "enum": []string{"mysql", "postgres", "mongodb"}},
+		"engine":            map[string]interface{}{"type": "string", "enum": []string{"mysql", "postgres", "mongodb", "oracle", "mssql"}},
 		"database_name":     map[string]interface{}{"type": "string"},
 		"statement":         map[string]interface{}{"type": "string"},
 		"mongo_operation":   map[string]interface{}{"type": "object"},
@@ -149,7 +149,7 @@ func handleDoSQLTool(ctx context.Context, raw json.RawMessage) (string, error) {
 		return "", errors.New("dosql_request_invalid")
 	}
 	params.Engine = strings.ToLower(strings.TrimSpace(params.Engine))
-	if params.Engine != "mysql" && params.Engine != "postgres" && params.Engine != "mongodb" {
+	if params.Engine != "mysql" && params.Engine != "postgres" && params.Engine != "mongodb" && params.Engine != "oracle" && params.Engine != "mssql" {
 		return "", errors.New("dosql_engine_invalid")
 	}
 	if params.Operation != "query" {
@@ -395,8 +395,10 @@ func detectDatabaseEngine(item map[string]interface{}) string {
 		return "mongodb"
 	case strings.Contains(value, "postgres") || strings.Contains(value, "postgresql"):
 		return "postgres"
-	case strings.Contains(value, "mysql") || strings.Contains(value, "mariadb"):
+	case strings.Contains(value, "mysql") || strings.Contains(value, "mariadb") || strings.Contains(value, "tidb"):
 		return "mysql"
+	case strings.Contains(value, "mssql") || strings.Contains(value, "sqlserver") || strings.Contains(value, "sql-server") || strings.Contains(value, "azure-sql"):
+		return "mssql"
 	default:
 		return ""
 	}
@@ -422,7 +424,7 @@ func detectDatabaseName(item map[string]interface{}, engine string) string {
 }
 
 func detectDatabasePort(item map[string]interface{}, engine string) int {
-	defaults := map[string]int{"mysql": 3306, "postgres": 5432, "mongodb": 27017}
+	defaults := map[string]int{"mysql": 3306, "postgres": 5432, "mongodb": 27017, "mssql": 1433}
 	spec, _ := item["spec"].(map[string]interface{})
 	ports, _ := spec["ports"].([]interface{})
 	for _, raw := range ports {

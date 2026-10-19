@@ -74,7 +74,7 @@ Gateway 直接解析保存的 target/database 绑定和 active version，不让�
 ### DoSql 直接执行 SQL
 
 已知确切 SQL 时用 `--sql` 或 `--file`，SQL 原样提交给 Agent，不经过模型，与 `--request`
-二选一。只支持 `--mode query` 和 `--mode apply`，引擎为 postgres、mysql、oracle、mongodb。
+二选一。只支持 `--mode query` 和 `--mode apply`，引擎为 postgres、mysql、oracle、sqlserver、mongodb；MariaDB、TiDB 走 mysql 路径，CockroachDB 走 postgres 路径，由凭据 `connection_uri` 的 scheme 决定。
 
 ```bash
 # 只读：每条语句都必须是 SELECT/WITH/SHOW/DESCRIBE/EXPLAIN/VALUES/TABLE
@@ -94,7 +94,7 @@ doops -session db-change sql --target <t> --mode apply --file migrate.sql --dry-
 - `--verify`/`--verify-file` 只能是一条只读语句，否则 `dosql_verification_invalid`；
   验证失败返回 `dosql_verification_failed`。`--verify` 与 `--dry-run` 只用于 apply。
 - query 中出现写语句返回 `dosql_query_requires_read_only`，改用 `--mode apply`。
-- Postgres 的 DDL 与 DML 一起回滚。MySQL 和 Oracle 的 DDL 会隐式提交：`--dry-run` 含 DDL
+- Postgres 和 SQL Server 的 DDL 与 DML 一起回滚。MySQL 和 Oracle 的 DDL 会隐式提交：`--dry-run` 含 DDL
   返回 `dosql_dry_run_ddl_unsupported`，DDL 与 DML 混批返回 `dosql_mixed_ddl_dml_unsupported`；
   已隐式提交的 DDL 在结果中体现为 `implicit_commits` 和 `status=partially_committed`，不报成已回滚。
 - 真实 apply 在 Agent 上按库写带哈希链的版本日志（`.doops-dosql-versions/<db>.jsonl`），

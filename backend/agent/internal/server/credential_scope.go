@@ -157,7 +157,7 @@ func validDatabaseCredentialKeys(engine string, keys []string) bool {
 	switch engine {
 	case "mysql":
 		want = map[string]struct{}{"SPRING_DATASOURCE_URL": {}, "SPRING_DATASOURCE_USERNAME": {}, "SPRING_DATASOURCE_PASSWORD": {}}
-	case "postgres", "mongodb":
+	case "postgres", "mongodb", "oracle", "mssql":
 		want = map[string]struct{}{"connection_uri": {}}
 	default:
 		return false
