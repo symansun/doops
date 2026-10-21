@@ -635,7 +635,7 @@ func verifyHelmDeploymentState(ctx context.Context, command helmCommand) (string
 		return "", fmt.Errorf("helm verification failed: read final release manifest: %w", err)
 	}
 	workloads, err := validateHelmRenderedImages(manifest, command.expectedImage)
-	if err != nil {
+	if err != nil && strings.Contains(err.Error(), "no supported workload") {
 		hookCmd := exec.CommandContext(ctx, "helm", "get", "hooks", command.release, "--namespace", command.namespace)
 		hookCmd.Dir = command.cwd
 		if hooks, hookErr := hookCmd.Output(); hookErr == nil {
