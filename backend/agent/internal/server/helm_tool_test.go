@@ -494,6 +494,43 @@ func TestBuildHelmCommandRejectsLocalAssetsAndUncontrolledImages(t *testing.T) {
 	}
 }
 
+func TestValidateHelmRenderedHookJob(t *testing.T) {
+	manifest := []byte(`apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sync-1
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+spec:
+  template:
+    spec:
+      containers:
+        - name: sync
+          image: registry.example/sync:release
+`)
+	workloads, err := validateHelmRenderedImages(manifest, "registry.example/sync:release")
+	if err != nil || len(workloads) != 1 || workloads[0].Kind != "Job" {
+		t.Fatalf("hook Job was not accepted: workloads=%#v err=%v", workloads, err)
+	}
+	if _, err := validateHelmRenderedImages(manifest, "registry.example/sync:wrong"); err == nil {
+		t.Fatal("hook Job with mismatched expected image was accepted")
+	}
+
+	nonHook := []byte(`apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ordinary
+spec:
+  template:
+    spec:
+      containers:
+        - image: registry.example/sync:release
+`)
+	if _, err := validateHelmRenderedImages(nonHook, ""); err == nil || !strings.Contains(err.Error(), "no supported workload") {
+		t.Fatalf("ordinary Job was accepted as a release workload: %v", err)
+	}
+}
+
 func TestHelmRemoteReferenceSchemes(t *testing.T) {
 	for _, chart := range []string{"https://charts.example.test/app.tgz"} {
 		if _, err := resolveRemoteHelmChartReference(chart); err != nil {

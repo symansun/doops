@@ -496,11 +496,15 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 		}
 		var rendered struct {
 			Manifest string `json:"manifest"`
+			Hooks    []struct {
+				Manifest string `json:"manifest"`
+			} `json:"hooks"`
 		}
 		if json.Unmarshal(preflightOutput.Bytes(), &rendered) != nil {
 			return "", fmt.Errorf("helm_preflight_invalid_manifest")
 		}
-		if _, err := validateHelmRenderedImages([]byte(rendered.Manifest), command.expectedImage); err != nil {
+		preflightManifest := appendHelmHookManifests([]byte(rendered.Manifest), rendered.Hooks)
+		if _, err := validateHelmRenderedImages(preflightManifest, command.expectedImage); err != nil {
 			return "", fmt.Errorf("helm_preflight_image_mismatch")
 		}
 	}
@@ -560,7 +564,8 @@ func parseHelmReleaseOutput(output []byte, expectedDescription string) (int, err
 	return release.Version, nil
 }
 
-type renderedHelmDeployment struct {
+type renderedHelmWorkload struct {
+	Kind       string
 	Name       string
 	Containers []string
 }
@@ -588,6 +593,23 @@ type liveDeployment struct {
 	} `json:"status"`
 }
 
+type liveJob struct {
+	Spec struct {
+		Template struct {
+			Spec struct {
+				Containers []struct {
+					Image string `json:"image"`
+				} `json:"containers"`
+			} `json:"spec"`
+		} `json:"template"`
+	} `json:"spec"`
+	Status struct {
+		Active    int32 `json:"active"`
+		Succeeded int32 `json:"succeeded"`
+		Failed    int32 `json:"failed"`
+	} `json:"status"`
+}
+
 func verifyHelmDeploymentState(ctx context.Context, command helmCommand) (string, error) {
 	if command.mutationID != "" && command.revision <= 0 {
 		return "", fmt.Errorf("helm verification failed: mutation revision is unavailable")
@@ -612,12 +634,52 @@ func verifyHelmDeploymentState(ctx context.Context, command helmCommand) (string
 	if err != nil {
 		return "", fmt.Errorf("helm verification failed: read final release manifest: %w", err)
 	}
-	deployments, err := validateHelmRenderedImages(manifest, command.expectedImage)
+	workloads, err := validateHelmRenderedImages(manifest, command.expectedImage)
+	if err != nil {
+		hookCmd := exec.CommandContext(ctx, "helm", "get", "hooks", command.release, "--namespace", command.namespace)
+		hookCmd.Dir = command.cwd
+		if hooks, hookErr := hookCmd.Output(); hookErr == nil {
+			workloads, err = validateHelmRenderedImages(append(manifest, hooks...), command.expectedImage)
+		}
+	}
 	if err != nil {
 		return "", fmt.Errorf("helm verification failed: %w", err)
 	}
 
-	for _, expected := range deployments {
+	for _, expected := range workloads {
+		if expected.Kind == "Job" {
+			getCmd := exec.CommandContext(
+				ctx,
+				"kubectl",
+				"get",
+				"job",
+				expected.Name,
+				"--namespace",
+				command.namespace,
+				"--output",
+				"json",
+			)
+			getCmd.Dir = command.cwd
+			liveBytes, err := getCmd.Output()
+			if err != nil {
+				return "", fmt.Errorf("helm verification failed: read final Job %s/%s: %w", command.namespace, expected.Name, err)
+			}
+			var live liveJob
+			if err := json.Unmarshal(liveBytes, &live); err != nil {
+				return "", fmt.Errorf("helm verification failed: decode final Job %s/%s: %w", command.namespace, expected.Name, err)
+			}
+			if live.Status.Succeeded != 1 || live.Status.Failed != 0 || live.Status.Active != 0 {
+				return "", fmt.Errorf("helm verification failed: Job %s/%s is not complete (active=%d succeeded=%d failed=%d)", command.namespace, expected.Name, live.Status.Active, live.Status.Succeeded, live.Status.Failed)
+			}
+			actualImages := make([]string, 0, len(live.Spec.Template.Spec.Containers))
+			for _, container := range live.Spec.Template.Spec.Containers {
+				actualImages = append(actualImages, strings.TrimSpace(container.Image))
+			}
+			if !sameStringList(expected.Containers, actualImages) {
+				return "", fmt.Errorf("helm verification failed: Job %s/%s spec images=%q rendered=%q", command.namespace, expected.Name, actualImages, expected.Containers)
+			}
+			continue
+		}
 		getCmd := exec.CommandContext(
 			ctx,
 			"kubectl",
@@ -703,39 +765,54 @@ func verifyHelmDeploymentState(ctx context.Context, command helmCommand) (string
 			return "", fmt.Errorf("helm verification failed: release was changed by another mutation")
 		}
 	}
-	return fmt.Sprintf("final Deployment spec verified: %d Deployment(s) observed at current generation and Ready", len(deployments)), nil
+	return fmt.Sprintf("final Helm workload spec verified: %d workload(s) observed and Ready or complete", len(workloads)), nil
 }
 
-func validateHelmRenderedImages(manifest []byte, expectedImage string) ([]renderedHelmDeployment, error) {
-	deployments, err := parseRenderedHelmDeployments(manifest)
+func appendHelmHookManifests(manifest []byte, hooks []struct {
+	Manifest string `json:"manifest"`
+}) []byte {
+	result := append([]byte(nil), manifest...)
+	for _, hook := range hooks {
+		if strings.TrimSpace(hook.Manifest) == "" {
+			continue
+		}
+		result = append(result, '\n')
+		result = append(result, hook.Manifest...)
+	}
+	return result
+}
+
+func validateHelmRenderedImages(manifest []byte, expectedImage string) ([]renderedHelmWorkload, error) {
+	workloads, err := parseRenderedHelmWorkloads(manifest)
 	if err != nil {
 		return nil, err
 	}
-	if len(deployments) == 0 {
-		return nil, fmt.Errorf("final release manifest contains no Deployment")
+	if len(workloads) == 0 {
+		return nil, fmt.Errorf("final release manifest contains no supported workload")
 	}
 	if expectedImage == "" {
-		return deployments, nil
+		return workloads, nil
 	}
-	for _, deployment := range deployments {
-		for _, image := range deployment.Containers {
+	for _, workload := range workloads {
+		for _, image := range workload.Containers {
 			if image == expectedImage {
-				return deployments, nil
+				return workloads, nil
 			}
 		}
 	}
 	return nil, fmt.Errorf("final release manifest does not contain expected image %q", expectedImage)
 }
 
-func parseRenderedHelmDeployments(manifest []byte) ([]renderedHelmDeployment, error) {
+func parseRenderedHelmWorkloads(manifest []byte) ([]renderedHelmWorkload, error) {
 	decoder := yaml.NewDecoder(strings.NewReader(string(manifest)))
-	var deployments []renderedHelmDeployment
+	var workloads []renderedHelmWorkload
 	seen := make(map[string]struct{})
 	for {
 		var document struct {
 			Kind     string `yaml:"kind"`
 			Metadata struct {
-				Name string `yaml:"name"`
+				Name        string            `yaml:"name"`
+				Annotations map[string]string `yaml:"annotations"`
 			} `yaml:"metadata"`
 			Spec struct {
 				Template struct {
@@ -756,31 +833,44 @@ func parseRenderedHelmDeployments(manifest []byte) ([]renderedHelmDeployment, er
 		if strings.EqualFold(strings.TrimSpace(document.Kind), "List") {
 			return nil, fmt.Errorf("final release manifest uses unsupported Deployment List wrapper")
 		}
-		if !strings.EqualFold(strings.TrimSpace(document.Kind), "Deployment") {
+		kind := strings.TrimSpace(document.Kind)
+		if !strings.EqualFold(kind, "Deployment") && !strings.EqualFold(kind, "Job") {
 			continue
+		}
+		if strings.EqualFold(kind, "Job") {
+			hooks := strings.Split(document.Metadata.Annotations["helm.sh/hook"], ",")
+			hasUpgradeHook := false
+			for _, hook := range hooks {
+				if strings.TrimSpace(hook) == "pre-install" || strings.TrimSpace(hook) == "pre-upgrade" {
+					hasUpgradeHook = true
+				}
+			}
+			if !hasUpgradeHook {
+				continue
+			}
 		}
 		name := strings.TrimSpace(document.Metadata.Name)
 		if name == "" {
-			return nil, fmt.Errorf("final release manifest contains Deployment without metadata.name")
+			return nil, fmt.Errorf("final release manifest contains %s without metadata.name", kind)
 		}
 		if _, exists := seen[name]; exists {
-			return nil, fmt.Errorf("final release manifest contains duplicate Deployment %q", name)
+			return nil, fmt.Errorf("final release manifest contains duplicate %s %q", kind, name)
 		}
 		seen[name] = struct{}{}
 		containers := make([]string, 0, len(document.Spec.Template.Spec.Containers))
 		for _, container := range document.Spec.Template.Spec.Containers {
 			image := strings.TrimSpace(container.Image)
 			if image == "" {
-				return nil, fmt.Errorf("final release manifest Deployment %q contains an empty image", name)
+				return nil, fmt.Errorf("final release manifest %s %q contains an empty image", kind, name)
 			}
 			containers = append(containers, image)
 		}
 		if len(containers) == 0 {
-			return nil, fmt.Errorf("final release manifest Deployment %q contains no containers", name)
+			return nil, fmt.Errorf("final release manifest %s %q contains no containers", kind, name)
 		}
-		deployments = append(deployments, renderedHelmDeployment{Name: name, Containers: containers})
+		workloads = append(workloads, renderedHelmWorkload{Kind: kind, Name: name, Containers: containers})
 	}
-	return deployments, nil
+	return workloads, nil
 }
 
 func sameStringList(left, right []string) bool {
