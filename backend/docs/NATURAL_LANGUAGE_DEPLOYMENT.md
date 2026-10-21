@@ -126,8 +126,11 @@ mutation 不构成发布成功证据。
 
 `expected_image` 是可选显式参数，接受完整 `repository:tag` 或
 `repository@sha256:<64 hex digest>`，不要求日期 tag，工具不从 values 推导。指定时同时
-校验 dry-run 和最终 manifest；未指定时仍以 Chart 渲染及最终 Deployment
-generation/spec/status、镜像和副本状态证明收敛，不把不同服务版本强制统一。
+校验 dry-run（包括 Helm JSON 的 hook manifest）和最终 release 内容；未指定时仍以 Chart
+渲染及最终工作负载状态证明收敛，不把不同服务版本强制统一。普通 Deployment 必须满足
+generation/spec/status 和副本就绪校验；带 `pre-install` 或 `pre-upgrade` 的 hook Job
+必须满足容器镜像与渲染结果一致、`succeeded=1`、`active=0`、`failed=0`。普通 Job 不被
+当作 Helm 发布工作负载接受。
 
 不同 session 的 Helm 调用不额外获取 DoOps release 独占锁。每次 upgrade-install 写入唯一
 description，从本次 Helm JSON 结果取得 revision，并按该 revision 读取 manifest；
@@ -135,10 +138,11 @@ description，从本次 Helm JSON 结果取得 revision，并按该 revision 读
 明确返回 `helm_verification_failed`，不借用另一任务的结果，也不自动重放。
 结构化 rollback 使用 Helm 支持的 wait/timeout 参数，不传不支持的 `--atomic`。
 
-Helm mutation 成功后，工具还必须读取本次 revision 的 release manifest 和最终 Deployment 对象，确认
-Deployment 当前 generation 已被 controller 观察、spec 中的容器镜像与渲染结果一致，
-updated/ready/available replicas 全部达到 desired 且没有 unavailable replicas；只满足
-Helm revision 或 Pod Ready 不构成发布成功。
+Helm mutation 成功后，工具还必须读取本次 revision 的 release manifest（必要时读取 hook
+manifest）和最终工作负载对象，确认 Deployment 当前 generation 已被 controller 观察、
+spec 中的容器镜像与渲染结果一致，updated/ready/available replicas 全部达到 desired
+且没有 unavailable replicas；hook Job 必须已成功完成。只满足 Helm revision 或 Pod
+Ready 不构成发布成功。
 
 CNB CI 负责测试、构建和发布制品。Gateway 负责鉴权、审计、资源锁和凭据预物化。
 实际业务 Helm/Kubernetes mutation 由 target 指向的 Agent/doagent 在目标运行环境执行；
