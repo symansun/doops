@@ -638,7 +638,7 @@ JSON
 	if err != nil {
 		t.Fatalf("run helm command: %v", err)
 	}
-	if !strings.Contains(verification, "final Deployment spec verified") {
+	if !strings.Contains(verification, "final Helm workload spec verified") {
 		t.Fatalf("final Deployment verification missing: %q", verification)
 	}
 	if strings.Contains(verification, "chart-output-canary") {
