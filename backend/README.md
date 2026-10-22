@@ -55,9 +55,16 @@ target 只来自本机 Gateway-only `config.json` 与 Gateway 当前在线注册
 
 ## 当前镜像与协议
 
-当前维护版 agent 默认采用轻量双镜像发布：
+当前维护版 agent 默认采用轻量双镜像发布。不带标签的 `docker pull` 使用 `latest`，它指向 main CI 刚构建成功的同一份镜像；固定版本仍使用完整 commit SHA、发布标签或 digest。
+
+```bash
+docker pull docker.cnb.cool/l8ai/ai/doops.sh
+docker pull docker.cnb.cool/l8ai/ai/doops.sh/web
+```
 
 ```text
+docker.cnb.cool/l8ai/ai/doops.sh:latest                 # main 最新 Agent 镜像，等同于不写标签
+docker.cnb.cool/l8ai/ai/doops.sh/web:latest             # main 最新 Web 控制台镜像
 docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>  # 基础工具：buildkit / kubectl / Python+PyYAML / Helm / git / ssh client / tini / bash
 docker.cnb.cool/l8ai/ai/doops.sh:<release>             # doops-agent / 精确 doagent / skills / docs / entrypoint
 ```

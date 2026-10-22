@@ -18,15 +18,17 @@ Agent 镜像升级当作同一件事。下列脚本命令均从仓库 `backend/`
 | 没有 Agent 的新集群 | 同一外部脚本的 `--values` 模式 | 完整 values 与操作机 kubeconfig；安装后另做 Gateway 验收 |
 | 已有独立 Docker Agent | `release-host-agent.sh` | 见下文 DockerHost 流程 |
 
-标准 Helm Agent 的日常镜像升级是一条命令：
+标准 Helm Agent 的日常镜像升级是一条命令。`latest` 指向 main CI 最新构建，不写标签的 `docker pull` 就是它：
 
 ```bash
+docker pull docker.cnb.cool/l8ai/ai/doops.sh
+
 doops -session agent-upgrade upgrade \
   --target <configured-target> \
-  --image <repository:tag 或 repository@sha256:<verified-ci-digest>
+  --image docker.cnb.cool/l8ai/ai/doops.sh:latest
 ```
 
-`--image` 也接受发布 tag，但 tag 不是不可变版本证据。`--dry-run` 只预览参数，
+`--image` 也接受其它发布 tag 或 `repository@sha256:<verified-ci-digest>`。tag 不是不可变版本证据。`--dry-run` 只预览参数，
 不能证明控制器、挂载或权限可用。没有命令通道的旧 Agent 不能用这条命令自恢复。
 当前 CLI 会将升级后的 Agent commit 与自身 commit 比较，因此先安装候选镜像
 同版 CLI；升级前旧 Agent 不需要与 CLI 同版。

@@ -42,5 +42,11 @@ docker rm -f "${container}" >/dev/null
 trap - EXIT
 
 docker push "${WEB_IMAGE}"
+if [[ "${DOOPS_PUBLISH_LATEST:-}" == "1" && "${DOOPS_RELEASE_TAG}" != "latest" ]]; then
+  latest_image="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/web:latest"
+  docker tag "${WEB_IMAGE}" "${latest_image}"
+  docker push "${latest_image}"
+  echo "Published Web image latest: ${latest_image} from ${DOOPS_RELEASE_TAG}"
+fi
 
 echo "Published Web image: ${WEB_IMAGE}"
