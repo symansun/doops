@@ -59,9 +59,15 @@ main:
         - name: release contract tests
           script: python3 -m pytest backend/test -q
         - name: agent tests
+          timeout: 25m
           script: |
             cd backend/agent
-            go test ./...
+            # The runner closes a stage after 10 minutes without output. go test
+            # stays silent while compiling and while a package is still running.
+            ( while true; do sleep 30; echo "agent tests still running $(date -u +%H:%M:%S)"; done ) &
+            heartbeat=$!
+            trap 'kill "$heartbeat" 2>/dev/null || true' EXIT
+            go test ./... -count=1 -timeout=20m
         - name: gateway tests
           script: |
             cd backend/gateway
