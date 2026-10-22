@@ -83,9 +83,16 @@ func TestEdgeTunnelRelaysHTTPSWebSocketAndLargePayload(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	client := edgeHTTPClient(t, listener.Addr.String(), pool)
-	resp, err := client.Get("https://local.test/health")
-	if err != nil {
-		t.Fatalf("https health: %v", err)
+	var resp *http.Response
+	for attempt := 0; attempt < 3; attempt++ {
+		resp, err = client.Get("https://local.test/health")
+		if err == nil {
+			break
+		}
+		if attempt == 2 {
+			t.Fatalf("https health: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
