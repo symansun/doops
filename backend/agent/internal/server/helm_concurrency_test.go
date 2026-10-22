@@ -141,7 +141,7 @@ JSON
 	if secondResult.err != nil {
 		t.Fatalf("current concurrent session failed: %v", secondResult.err)
 	}
-	if !strings.Contains(secondResult.verification, "final Deployment spec verified") {
+	if !strings.Contains(secondResult.verification, "final Helm workload spec verified") {
 		t.Fatalf("current session verification missing: %q", secondResult.verification)
 	}
 	if firstResult.err == nil || firstResult.err.Error() != "helm_verification_failed" {
