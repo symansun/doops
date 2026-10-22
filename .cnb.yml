@@ -90,10 +90,11 @@ main:
                 cat backend/.ci-agent-base-image
               )"
             fi
+            DOOPS_PUBLISH_LATEST=1 \
             DOOPS_RELEASE_TAG="${CNB_COMMIT}" \
               bash backend/scripts/build-agent-image.sh
         - name: build immutable web image
-          script: DOOPS_RELEASE_TAG="${CNB_COMMIT}" bash backend/scripts/build-web-image.sh
+          script: DOOPS_PUBLISH_LATEST=1 DOOPS_RELEASE_TAG="${CNB_COMMIT}" bash backend/scripts/build-web-image.sh
   api_trigger_deploy_agent:
     - name: deploy business workload through natural-language apply
       runner:

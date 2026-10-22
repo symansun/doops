@@ -161,7 +161,15 @@ stdio 响应在本地生成结果证明。
 
 本节只负责构建、校验和发布 `doops-agent` 运行时镜像，不负责普通业务 workload。
 进行任何 Agent 运行时修改后，先由 `main` 的 CNB CI 构建并推送以完整 40 位 commit SHA
-为标签的候选镜像。该镜像携带同一 revision 的 `/app/doops-agent` 和锁定版本的
+为标签的候选镜像，并把同一镜像再推成 `latest`。因此下面两条命令拉到的是当前 main 代码：
+
+```bash
+docker pull docker.cnb.cool/l8ai/ai/doops.sh
+docker pull docker.cnb.cool/l8ai/ai/doops.sh:latest
+```
+
+Web 控制台镜像同样由 main CI 更新 `docker.cnb.cool/l8ai/ai/doops.sh/web:latest`。
+版本 tag 流水线只发布 `vX.Y.Z`，不移动 `latest`。该镜像携带同一 revision 的 `/app/doops-agent` 和锁定版本的
 `/usr/local/bin/do-agent`，不包含 Gateway；Gateway 只作为同 tag 的 Release Asset
 `doops-gateway-linux-amd64` 发布，不得在发布控制端重新编译。生产候选镜像必须解析为 registry digest；`doops upgrade` 也接受明确的
 `repository:tag`，并在运行时校验实际 `imageID`。发布者必须自行保留精确 source commit、
