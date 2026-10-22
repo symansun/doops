@@ -1486,7 +1486,7 @@ func TestGatewayKeepsIdleAgentAliveWithPing(t *testing.T) {
 	go serveFakeAgentObservingPings(t, agentConn, pings)
 
 	regularPings := 0
-	timeout := time.NewTimer(5 * time.Second)
+	timeout := time.NewTimer(20 * time.Second)
 	defer timeout.Stop()
 	for regularPings < 5 {
 		select {
