@@ -15,6 +15,7 @@ Agent 镜像升级当作同一件事。下列脚本命令均从仓库 `backend/`
 | 空 Ubuntu/Debian 服务器首次 Docker 接入 | `bash scripts/bootstrap-host-agent.sh ...` | root、模型 settings 文件、唯一 cluster/instance、指定发布版本 |
 | 已有标准 Helm Agent，命令通道和升级控制器可用 | `doops -session <s> upgrade --target <t> --image <已核验镜像>` | 操作员已登录 Gateway；Agent 挂载共享 kubeconfig |
 | 旧 Helm Agent 或命令通道损坏，需要外部恢复 | `bash scripts/release-managed-agent.sh ...` | 操作机 kubeconfig、Helm、kubectl、python3，以及可查询目标的 Gateway 登录 |
+| K8S Agent 离线、镜像拉取失败或收编中断，需清理重装 | `python3 scripts/reinstall-k8s-agent.py plan\|run --cluster <c> --instance <i>` | 能访问该集群的 kubectl、helm、python3；流程见 [BUILD_DEPLOY_SOP.md](BUILD_DEPLOY_SOP.md) |
 | 没有 Agent 的新集群 | 同一外部脚本的 `--values` 模式 | 完整 values 与操作机 kubeconfig；安装后另做 Gateway 验收 |
 | 已有独立 Docker Agent | `release-host-agent.sh` | 见下文 DockerHost 流程 |
 

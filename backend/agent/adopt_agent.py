@@ -81,6 +81,11 @@ def preflight(namespace, workload, release, cluster, instance):
     owner = (deployment["metadata"].get("annotations") or {}).get("meta.helm.sh/release-name")
     if owner not in (None, release):
         raise AdoptError(f"deployment is owned by Helm release {owner}")
+    return deployment, validate_deployment(deployment, cluster, instance)
+
+
+def validate_deployment(deployment, cluster, instance):
+    """Check that a Deployment can be rendered by the Chart; returns its model settings volume."""
     spec = deployment["spec"]
     if int(spec.get("replicas", 1)) != 1:
         raise AdoptError("adoption requires exactly one replica")
@@ -103,7 +108,7 @@ def preflight(namespace, workload, release, cluster, instance):
     volume = next((v for v in pod.get("volumes") or [] if v.get("name") == mount["name"]), None)
     if not volume or not ("configMap" in volume or "secret" in volume):
         raise AdoptError("model settings volume must be a ConfigMap or Secret")
-    return deployment, volume
+    return volume
 
 
 def settings_source(volume):
@@ -121,6 +126,8 @@ def chart_values(deployment, settings_volume, workload, repository, digest):
     dropped.update({settings_volume["name"], "doagent-config"})
     mounts = [m for m in container.get("volumeMounts") or [] if m["name"] not in dropped]
     kept = {m["name"] for m in mounts}
+    # The Chart owns the doagent-config volume but not its mount; without it the Pod exits at start.
+    mounts.append({"name": "doagent-config", "mountPath": SETTINGS_MOUNT, "readOnly": True})
     return {
         "image": {"repository": repository, "digest": digest, "pullPolicy": "IfNotPresent"},
         "workload": {"name": workload, "selectorLabels": spec["selector"]["matchLabels"]},
