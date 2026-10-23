@@ -226,6 +226,8 @@ def test_generated_values_render_with_the_real_chart(tmp_path):
     assert env["DOOPS_GATEWAY_CLUSTER"] == "doops-jm" and env["DOOPS_GATEWAY_INSTANCE"] == "jm-228"
     assert {v["name"] for v in pod["volumes"]} == {"doagent-config"}
     assert pod["volumes"][0]["secret"]["secretName"] == "doops-agent-doagent-settings"
+    assert container["volumeMounts"] == [
+        {"name": "doagent-config", "mountPath": "/opt/doagent_config", "readOnly": True}]
 
 
 @pytest.mark.parametrize("hostname,want", [

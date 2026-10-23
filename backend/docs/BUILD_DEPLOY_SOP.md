@@ -275,6 +275,29 @@ Deployment selector 与 Chart 的 `workload.selectorLabels` 一致即可原地�
 `serviceAccount.name`，由 Pod 自己的 ServiceAccount 提供集群权限。收编完成后
 按已有 Helm release 路径升级。
 
+Agent 已离线、Deployment 卡在 ImagePullBackOff 或收编中途失败时，由能访问该集群的
+外部主机执行 `scripts/reinstall-k8s-agent.py`（从 `backend/` 运行，需要 kubectl、helm、
+python3）：
+
+```bash
+python3 scripts/reinstall-k8s-agent.py plan --cluster <gateway-cluster> --instance <gateway-instance>
+python3 scripts/reinstall-k8s-agent.py run  --cluster <gateway-cluster> --instance <gateway-instance>
+```
+
+`--image` 默认 `docker.cnb.cool/l8ai/ai/doops.sh:latest`，脚本向 registry 解析为
+`repository@sha256:<digest>` 后只使用该 digest。`plan` 只读，列出将备份和删除的对象。
+`run` 依次执行：用候选镜像在集群里起一次性 Pod 运行 `doops-agent -version`，拉取或启动
+失败时不改动任何资源；把上一份可用的 Deployment（已有的收编/重装备份优先，其次是 live）、
+清单和 Helm values 写入 `doops-reinstall-backup-<workload>` ConfigMap 与本机备份目录；
+卸载旧 release，删除 Deployment、同 selector 的 ReplicaSet/Pod 以及 `doops-adopt-*`、
+`doops-self-upgrade-*` 残留，Terminating 超过 60 秒的 Pod 强制删除 API 记录；从模型
+settings 来源复制出 Chart Secret 后 `helm upgrade --install`；等待新 Pod Ready
+（Ready 即 Gateway 隧道已连接）且 imageID 与拉取检查的运行时 digest 一致。任一步失败
+自动卸载新 release 并重新应用备份的 Deployment；`restore` 子命令可手动执行同一恢复。
+模型 settings、ServiceAccount 和拉取凭据 Secret 保留不删，payload 不打印、不落盘。
+Gateway 离线时该脚本不经 Gateway，完成后须用 `doops targets` 核对 `RELEASE_COMMIT`
+与脚本输出的候选 commit 一致，再按[集群接入指南](CLUSTER_INSTALL_GUIDE.md)验收。
+
 已有 Helm release 的路径以 `maxSurge=1`、`maxUnavailable=0` 先拉起新 Pod，Gateway
 `Register` 用新会话替换旧 WebSocket 后再删旧副本。Job 成功后 CLI 执行
 `capabilities --require structuredSSH`，失败时请求回滚 Job；Gateway 完全离线时
