@@ -238,7 +238,7 @@ doops admin token create \
 轮换旧 token：
 
 ```bash
-doops admin token list --target <gateway-target> --kind user
+doops admin token list --target <gateway-target>
 doops admin token revoke --target <gateway-target> --id <token-id>
 ```
 

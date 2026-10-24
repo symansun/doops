@@ -71,7 +71,7 @@ digest。同一 target 上的 apply、shell、Kubernetes mutation 和凭据物�
 
 普通前台 `exec` 可以执行明确给出的 Helm `upgrade/install/rollback/uninstall`。
 命令受 Gateway target grant、session 隔离、同 session 的目标操作串行化和完整退出审计约束；
-不得把 Helm 误判为危险 shell 命令。该路径是低层确定性操作，不替代标准
+该路径是低层确定性操作，不替代标准
 `ask --apply` 发布编排，也不能使用 managed credential reference。`exec --bg` 同样按原样
 执行；其原始 RPC 和审计保留到进程终止，取消请求不等于终态。
 Agent 只拒绝删除根目录（`rm -rf /`、`rm -rf /*`），报错 `blocked_command(<rule>): <做法>`。

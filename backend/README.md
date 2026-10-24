@@ -392,7 +392,7 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 | `doops -session <s> remove --target <name>` | Gateway 查询确认不可见后，淘汰本机离线 target 路由 |
 | `doops login --target <name>` | 登录该 target 所属 Gateway |
 | `doops list` | 列出客户端已配置的 Gateway target 路由 |
-| `doops capabilities --require structuredSSH` | 校验在线 Agent 已声明结构化 SSH 协议；缺失时失败关闭 |
+| `doops -session <s> capabilities --target <t> --require structuredSSH` | 校验在线 Agent 已声明结构化 SSH 协议；缺失时失败关闭 |
 | `doops exec` | 在远端 agent 容器内执行确定性命令 |
 | `doops image build` | 通过标准 BuildKit 构建 OCI 镜像，支持平台选择和 Registry 输出 |
 | `doops image copy` | 通过标准 Skopeo 在 Registry、OCI archive、目录等 transport 之间复制并校验镜像 |
