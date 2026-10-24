@@ -132,6 +132,7 @@ Deployment、StatefulSet、DaemonSet、CronJob，以及带 `pre-install` 或 `pr
 hook Job；镜像包括 initContainers。Deployment/StatefulSet/DaemonSet 必须满足
 generation 已观察、spec 镜像与渲染一致且副本全部就绪；hook Job 必须 `succeeded=1`、
 `active=0`、`failed=0`；CronJob 只校验镜像。普通 Job 不被当作发布工作负载。
+工作负载渲染了 `metadata.namespace` 时，按该 namespace 读取线上对象；未写则用 release namespace。
 
 `upgrade-install` 分三步：preflight（server dry-run 渲染并检查）→ mutate（真实 Helm）→
 verify（按本次 revision 回读并对比集群）。每步失败返回一个稳定错误码，后接 `: ` 和具体原因：
