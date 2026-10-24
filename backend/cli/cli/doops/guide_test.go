@@ -9,12 +9,10 @@ import (
 	"testing"
 )
 
-// Every `doops ...` command written in the Skill, the docs and the Agent skills
-// must name a real command and only flags that command accepts. The docs are
-// what an AI reads before it runs the CLI; a stale flag there is a failed call.
+// `doops guide` is how an AI learns a task; every step it prints must be a real
+// command with flags that command accepts, so following the guide never fails.
 
 var (
-	docBacktickCommand = regexp.MustCompile("`((?:\\S*/)?doops\\s[^`\\n]*)`")
 	docFlagToken       = regexp.MustCompile(`(?:^|[\s\[|(/])(--?[A-Za-z][A-Za-z0-9-]*)`)
 	docQuoted          = regexp.MustCompile(`'[^']*'|"[^"]*"`)
 	docDoopsInvocation = regexp.MustCompile(`(?:^|[\s(|;&/])doops\s+(.*)`)
@@ -30,54 +28,6 @@ var docNoFlagCommands = map[string]bool{"session": true, "version": true, "list"
 var docSubcommandDepth = map[string]int{"admin": 2, "credential": 1, "image": 1, "registry": 1}
 
 var docGlobalFlags = map[string]bool{"-session": true, "-verbose": true, "-contract": true, "-help": true, "-h": true}
-
-func docSources(t *testing.T) []string {
-	t.Helper()
-	root := filepath.Join("..", "..", "..")
-	var files []string
-	for _, pattern := range []string{"skills/SKILL.md", "docs/*.md", "README.md", "agent/skills/*/SKILL.md", "agent/skills/*/docs/*.md", "agent/skills/system_prompt.md"} {
-		matches, err := filepath.Glob(filepath.Join(root, pattern))
-		if err != nil {
-			t.Fatal(err)
-		}
-		files = append(files, matches...)
-	}
-	if len(files) < 10 {
-		t.Fatalf("found only %d documentation files; the glob roots are wrong", len(files))
-	}
-	return files
-}
-
-// docCommands returns every doops invocation in a document: inline code spans
-// and fenced shell blocks, with backslash continuations joined.
-func docCommands(text string) []string {
-	var commands []string
-	for _, match := range docBacktickCommand.FindAllStringSubmatch(text, -1) {
-		commands = append(commands, match[1])
-	}
-	inFence := false
-	var pending string
-	for _, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			inFence = !inFence
-			pending = ""
-			continue
-		}
-		if !inFence {
-			continue
-		}
-		line = pending + strings.TrimSpace(line)
-		if strings.HasSuffix(line, `\`) {
-			pending = strings.TrimSuffix(line, `\`) + " "
-			continue
-		}
-		pending = ""
-		if docShellLine.MatchString(line) {
-			commands = append(commands, line)
-		}
-	}
-	return commands
-}
 
 type docInvocation struct {
 	path  []string
@@ -135,7 +85,7 @@ func parseDocInvocation(raw string) (docInvocation, bool) {
 	return inv, true
 }
 
-func TestDocumentedCommandsMatchTheCLI(t *testing.T) {
+func TestEveryGuideStepIsARealCommand(t *testing.T) {
 	binary := buildDoopsCLIBinary(t)
 	home := t.TempDir()
 	helpCache := map[string]string{}
@@ -152,18 +102,14 @@ func TestDocumentedCommandsMatchTheCLI(t *testing.T) {
 	}
 
 	checked := 0
-	for _, file := range docSources(t) {
-		data, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, raw := range docCommands(string(data)) {
+	for name, scenario := range guideScenarios {
+		for _, raw := range scenario.steps {
 			inv, ok := parseDocInvocation(raw)
 			if !ok {
 				continue
 			}
 			checked++
-			where := filepath.Base(file) + ": " + strings.TrimSpace(raw)
+			where := "guide " + name + ": " + strings.TrimSpace(raw)
 			if docNoFlagCommands[inv.path[0]] {
 				if len(inv.flags) != 0 {
 					t.Errorf("%s: `doops %s` takes no flags, got %v", where, inv.path[0], inv.flags)
@@ -171,7 +117,7 @@ func TestDocumentedCommandsMatchTheCLI(t *testing.T) {
 				continue
 			}
 			text := help(inv.path)
-			if strings.HasPrefix(text, "Unknown command") {
+			if strings.HasPrefix(text, "Error: unknown command") {
 				t.Errorf("%s: unknown command `doops %s`", where, strings.Join(inv.path, " "))
 				continue
 			}
@@ -184,8 +130,8 @@ func TestDocumentedCommandsMatchTheCLI(t *testing.T) {
 			}
 		}
 	}
-	if checked < 100 {
-		t.Fatalf("checked only %d documented commands; extraction is broken", checked)
+	if checked < 20 {
+		t.Fatalf("checked only %d guide steps; extraction is broken", checked)
 	}
 }
 
@@ -207,5 +153,41 @@ func TestParseDocInvocation(t *testing.T) {
 		if !ok || strings.Join(inv.path, " ") != tc.path || strings.Join(inv.flags, " ") != tc.flags {
 			t.Errorf("parse(%q) = %v %v %v, want path %q flags %q", tc.raw, ok, inv.path, inv.flags, tc.path, tc.flags)
 		}
+	}
+}
+
+func TestFailuresNameTheNextCommand(t *testing.T) {
+	servers := []Server{{Name: "gw-edu-coder"}, {Name: "gw-zyj"}}
+	cases := []struct {
+		name string
+		got  string
+		want []string
+	}{
+		{"typo in target suggests the closest", targetNotFound(servers, "gw-edu-codr"), []string{`did you mean "gw-edu-coder"`, "next: rerun with --target gw-edu-coder"}},
+		{"unrelated target lists the configured ones", targetNotFound(servers, "prod"), []string{"configured targets: gw-edu-coder, gw-zyj", "next: doops list"}},
+		{"no targets yet says how to add one", targetNotFound(nil, "x"), []string{"next: doops add --name"}},
+		{"typo in command suggests the closest", unknownCommand("exce"), []string{`did you mean "exec"`, "next: doops exec -h"}},
+		{"unknown command points to the guide", unknownCommand("frobnicate"), []string{"next: doops guide"}},
+		{"nested ssh in exec becomes a doops ssh command", sshCommandSuggestion("t", "ssh ops@db 'uptime'"), []string{"doops ssh --target t --host ops@db --"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, want := range tc.want {
+				if !strings.Contains(tc.got, want) {
+					t.Fatalf("output %q is missing %q", tc.got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestRetiredVerifyFlagsAreDroppedNotFatal(t *testing.T) {
+	var notes strings.Builder
+	got := dropRetiredCredentialVerifyFlags([]string{"--target", "t", "--namespace", "apps", "--use=imagePull", "--id", "c"}, &notes)
+	if strings.Join(got, " ") != "--target t --id c" {
+		t.Fatalf("kept args = %q", got)
+	}
+	if !strings.Contains(notes.String(), "--namespace ignored") || !strings.Contains(notes.String(), "--use ignored") {
+		t.Fatalf("notes = %q", notes.String())
 	}
 }

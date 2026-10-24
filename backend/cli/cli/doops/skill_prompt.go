@@ -17,7 +17,7 @@ func runSkillPromptWith(skill, operation, target, session, instruction, credenti
 	}
 	server := findServer(servers, target)
 	if server == nil {
-		return fmt.Errorf("Gateway target %q not found", target)
+		return errTargetNotFound(servers, target)
 	}
 	token, err := ResolveToken(*server)
 	if err != nil {

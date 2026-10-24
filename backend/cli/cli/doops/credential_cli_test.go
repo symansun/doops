@@ -326,26 +326,30 @@ func jsonEquivalent(got, want map[string]any) bool {
 	return bytes.Equal(gotJSON, wantJSON)
 }
 
-func TestCredentialVerifyRejectsRetiredScopeFlagsBeforeHTTP(t *testing.T) {
-	requests := 0
-	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests++ }))
-	defer gateway.Close()
-	servers := []Server{{Name: "target", Gateway: gateway.URL, Cluster: "dev", Instance: "local"}}
-	for _, tc := range []struct{ name, arg string }{
-		{"namespace", "--namespace=apps"},
-		{"use", "--use"},
-		{"required keys", "--required-keys=a"},
-		{"single dash", "-image-digest"},
+// Scope flags verify used to need are dropped with a note; the call proceeds
+// with the scope stored on each binding instead of failing.
+func TestCredentialVerifyDropsRetiredScopeFlags(t *testing.T) {
+	base := []string{"--target", "t", "--id", "cred_1", "--version-id", "credver_1"}
+	for _, tc := range []struct {
+		name string
+		args []string
+		note string
+	}{
+		{"value with equals", []string{"--namespace=apps"}, "--namespace ignored"},
+		{"value as next word", []string{"--namespace", "apps"}, "--namespace ignored"},
+		{"boolean-looking flag before another flag", []string{"--use", "--required-keys=a"}, "--required-keys ignored"},
+		{"single dash", []string{"-image-digest", "sha256:x"}, "--image-digest ignored"},
+		{"nothing retired", nil, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			args := []string{"--target", "target", "--id", "cred_123", "--version-id", "credver_456", tc.arg}
-			err := runCredentialVerify(args, "verify", servers, nil, io.Discard)
-			if err == nil || !strings.Contains(err.Error(), "is no longer needed") {
-				t.Fatalf("retired flag %s accepted: %v", tc.arg, err)
+			var out bytes.Buffer
+			kept := dropRetiredCredentialVerifyFlags(append(append([]string(nil), base...), tc.args...), &out)
+			if strings.Join(kept, " ") != strings.Join(base, " ") {
+				t.Fatalf("kept = %q, want %q", kept, base)
+			}
+			if tc.note == "" && out.Len() != 0 || !strings.Contains(out.String(), tc.note) {
+				t.Fatalf("note = %q, want %q", out.String(), tc.note)
 			}
 		})
-	}
-	if requests != 0 {
-		t.Fatalf("retired flags reached the Gateway: %d requests", requests)
 	}
 }

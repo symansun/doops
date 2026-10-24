@@ -50,7 +50,7 @@ func applyTarget(target string, servers []Server, configErr error) (string, stri
 	requireConfig(configErr)
 	server := findServer(servers, target)
 	if server == nil {
-		fmt.Printf("Error: Server '%s' not found.\n", target)
+		fmt.Println(targetNotFound(servers, target))
 		os.Exit(1)
 	}
 	return server.Gateway, mustResolveToken(*server)

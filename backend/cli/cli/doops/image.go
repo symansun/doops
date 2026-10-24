@@ -77,7 +77,7 @@ func runImageBuild(args []string, sessionName string, servers []Server, configEr
 
 	server := findServer(servers, *target)
 	if server == nil {
-		return fmt.Errorf("server %q not found", *target)
+		return errTargetNotFound(servers, *target)
 	}
 	client := NewMCPClient(*server, NewSessionStore(), sessionName, false)
 	client.Token = mustResolveToken(*server)
@@ -145,7 +145,7 @@ func runImageCopy(args []string, sessionName string, servers []Server, configErr
 
 	server := findServer(servers, *target)
 	if server == nil {
-		return fmt.Errorf("server %q not found", *target)
+		return errTargetNotFound(servers, *target)
 	}
 	client := NewMCPClient(*server, NewSessionStore(), sessionName, false)
 	client.Token = mustResolveToken(*server)

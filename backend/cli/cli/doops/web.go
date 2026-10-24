@@ -47,7 +47,7 @@ func runWebCommand(args []string, sessionName string, servers []Server, configEr
 		}
 	}
 	if strings.TrimSpace(*request) == "" {
-		return fmt.Errorf("网站需求不能为空，请使用 --request")
+		return fmt.Errorf("%s", withNext("web needs --request", "doops web --target "+*target+" --mode check --request '<site>'"))
 	}
 	parsedMode, err := parseWebMode(*mode)
 	if err != nil {

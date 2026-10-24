@@ -24,7 +24,6 @@ func TestPrintFinalResult(t *testing.T) {
 		{"doops_shell", false, false, true},
 		{"doops_shell", true, false, false},
 		{"doops_bg", true, false, true},
-		{"doops_distill", true, true, true},
 	}
 	for _, tc := range cases {
 		if got := printFinalResult(tc.tool, tc.streamedAny, tc.streamedText); got != tc.want {

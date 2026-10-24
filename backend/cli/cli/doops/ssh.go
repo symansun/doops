@@ -193,3 +193,24 @@ func cliValidateTimeout(value string) error {
 	}
 	return nil
 }
+
+// sshCommandSuggestion rewrites `ssh [opts] host cmd...` typed into exec as the
+// structured doops ssh call, so the caller can rerun it as printed.
+func sshCommandSuggestion(target, command string) string {
+	fields := strings.Fields(command)
+	host, rest := "<user@host>", "<remote-command>"
+	for index := 1; index < len(fields); index++ {
+		if strings.HasPrefix(fields[index], "-") {
+			if len(fields[index]) == 2 && strings.ContainsAny(fields[index][1:], "oipJlF") {
+				index++
+			}
+			continue
+		}
+		host = fields[index]
+		if index+1 < len(fields) {
+			rest = strings.Join(fields[index+1:], " ")
+		}
+		break
+	}
+	return fmt.Sprintf("doops ssh --target %s --host %s -- %s", target, host, rest)
+}

@@ -115,10 +115,10 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 	if parsedMode == sqlModeApply {
 		// The model-driven apply path needed a signed approval nobody issues; a
 		// change is always the verbatim, journaled --sql/--file path.
-		return fmt.Errorf("--mode apply 只接受 --sql 或 --file（原样提交、事务内执行、记录版本）；自然语言 --request 不再支持变更")
+		return fmt.Errorf("%s", withNext("--mode apply runs SQL you wrote, verbatim, in one transaction; it does not translate --request", "doops sql --target "+*target+" --mode plan --request '<change>'   # get the SQL", "doops sql --target "+*target+" --mode apply --sql '<sql>' --verify '<select>' --dry-run"))
 	}
 	if strings.TrimSpace(*request) == "" && !(parsedMode == sqlModeDiscover && strings.TrimSpace(*root) != "") {
-		return fmt.Errorf("数据库需求不能为空，请使用 --request、--sql 或 --file")
+		return fmt.Errorf("%s", withNext("sql needs --sql, --file or --request", "doops sql --target "+*target+" --mode query --sql 'select ...'", "doops guide database"))
 	}
 	if parsedMode == sqlModeDiscover && strings.TrimSpace(*root) != "" {
 		return runLocalSQLResourceDiscovery(*root, *resourcesFile, *displayResourcesFile, *project, *environment, *script, *target, servers, configErr)
@@ -143,7 +143,7 @@ func runLocalSQLResourceDiscovery(root, resourcesFile, displayResourcesFile, pro
 	}
 	server := findServer(servers, target)
 	if server == nil {
-		return fmt.Errorf("server %q not found", target)
+		return errTargetNotFound(servers, target)
 	}
 	input := map[string]interface{}{
 		"operationId": "discover-resources-cli",

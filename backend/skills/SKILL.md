@@ -93,26 +93,9 @@ Gateway 绑定当前 target 上全部 active `use=database` 凭据，`doops sql`
 
 ## 场景链路
 
-每条链路按顺序执行，前一步失败就停下处理，不跳步、不重放 mutation。`<s>` 每次任务用新值。
-
-1. 首次接入项目：`scripts/install.sh --version <tag> --project <path>` → `doops add --name <t> --gateway <url> --cluster <c> --instance <i>`
-   → `doops login --target <t> --username <u>` → `targets --target <t>` → `capabilities --target <t> --require structuredSSH`
-   → `exec --target <t> --cmd hostname`。心跳在线不等于命令通道可用，最后一步通过才算接入。
-2. 首次配置凭据：`credential configure --target <t> --namespace <ns> --use <use> --name <n> --type <type> --scope personal`
-   （payload 走 stdin，或 `--from-secret <secret> --keys <k>`）→ `credential list --target <t>` 确认可见。
-3. 业务发布：`doops version` 与 `targets` 的 `RELEASE_COMMIT` 核对 → 有 `.agent/doops-credentials.yaml` 时先
-   `credential preflight` → `ask --apply [--credential <n>] --msg '<target、范围、镜像、Chart、原因、验收>'`
-   → 用 `k8s --target <t> rollout status deployment/<w> --namespace <ns>` 和业务健康检查独立复核。
-4. 数据库变更：`sql --mode discover` → `sql --mode plan --request '<变更>'` →
-   `sql --mode apply --file <f.sql> --verify '<单条只读校验>' --dry-run`（执行后回滚）→ 去掉 `--dry-run` 正式执行。
-   多个数据库凭据时每步都带 `--database <name>`。
-5. 故障诊断：`targets` → `k8s get pods --namespace <ns>` / `k8s logs <pod>` / `k8s events --namespace <ns>`
-   → 需要推理时 `ask --msg '<只读诊断任务>'`。诊断阶段不带 `--apply`，不用 `exec` 改资源。
-6. Helm Agent 升级：`targets` 记录当前 `RELEASE_COMMIT` → `upgrade --image <ref> --dry-run` → `upgrade --image <ref>`
-   → `targets` 确认新 commit。探针失败时 CLI 自动回滚；事后回退用 `upgrade --rollback`。
-   没有控制器的旧 Agent 和独立 Docker Agent 不走这条链路，见 `docs/BUILD_DEPLOY_SOP.md`。
-7. 开通用户：`admin user create --user <u> --generate-password --grant-target <t>` → `admin grant list --user-id <id>`
-   确认只有预期 target → 用隔离 `DOOPS_CONFIG` 登录验证允许与拒绝 → `admin token revoke` 撤销验证 token。
+场景链路由 CLI 自己给出，和当前安装的二进制一致：`doops guide` 列出场景，
+`doops guide <onboard|diagnose|release|credential|database|upgrade|user|files>` 打印按顺序执行的命令。
+命令失败时输出里的 `next:` 行就是下一步要执行的命令，照着执行，不必回头翻文档。
 
 ## 安装与升级
 

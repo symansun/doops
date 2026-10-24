@@ -312,7 +312,7 @@ func TestAdminTokenCreateValidatesSaveTargetBeforeIssuing(t *testing.T) {
 	)
 	command.Env = append(os.Environ(), "DOOPS_CONFIG="+config)
 	output, err := command.CombinedOutput()
-	if err == nil || !strings.Contains(string(output), "Gateway target 'missing' not found") {
+	if err == nil || !strings.Contains(string(output), `target "missing" is not configured`) {
 		t.Fatalf("expected local save target validation, got err=%v output=%s", err, output)
 	}
 	if requests != 0 {
