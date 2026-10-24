@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"errors"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -505,7 +506,10 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 		}
 		preflightManifest := appendHelmHookManifests([]byte(rendered.Manifest), rendered.Hooks)
 		if _, err := validateHelmRenderedImages(preflightManifest, command.expectedImage); err != nil {
-			return "", fmt.Errorf("helm_preflight_image_mismatch")
+			if errors.Is(err, errHelmExpectedImageMissing) {
+				return "", fmt.Errorf("helm_preflight_image_mismatch: %s", command.expectedImage)
+			}
+			return "", fmt.Errorf("helm_preflight_invalid_manifest: %s", sanitizeSecretText(err.Error()))
 		}
 	}
 
@@ -776,7 +780,9 @@ func appendHelmHookManifests(manifest []byte, hooks []struct {
 		if strings.TrimSpace(hook.Manifest) == "" {
 			continue
 		}
-		result = append(result, '\n')
+		// Helm's JSON hook manifests carry no leading document separator; without
+		// one the hook merges into the previous document and decoding fails.
+		result = append(result, "\n---\n"...)
 		result = append(result, hook.Manifest...)
 	}
 	return result
@@ -800,8 +806,10 @@ func validateHelmRenderedImages(manifest []byte, expectedImage string) ([]render
 			}
 		}
 	}
-	return nil, fmt.Errorf("final release manifest does not contain expected image %q", expectedImage)
+	return nil, fmt.Errorf("%w %q", errHelmExpectedImageMissing, expectedImage)
 }
+
+var errHelmExpectedImageMissing = errors.New("final release manifest does not contain expected image")
 
 func parseRenderedHelmWorkloads(manifest []byte) ([]renderedHelmWorkload, error) {
 	decoder := yaml.NewDecoder(strings.NewReader(string(manifest)))
