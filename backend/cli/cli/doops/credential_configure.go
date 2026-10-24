@@ -468,20 +468,18 @@ func configureCredentialScopeKey(scope credentialGrantScope) string {
 	return string(data)
 }
 
-var configureConnectionURISchemes = map[string]bool{
-	"postgres": true, "postgresql": true, "cockroachdb": true, "cockroach": true,
-	"mysql": true, "mariadb": true, "tidb": true, "oracle": true,
-	"sqlserver": true, "mssql": true, "mongodb": true,
-}
+// The Agent decides which engines it can open (built in or an installed external
+// driver); the CLI only checks that the scheme is well formed.
+var configureConnectionURISchemePattern = regexp.MustCompile(`^[a-z][a-z0-9]{1,31}$`)
 
 func validateConfigureConnectionURI(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" || parsed.Hostname() == "" || parsed.User == nil ||
 		parsed.User.Username() == "" {
-		return fmt.Errorf("--connection-uri must be a passwordless postgres/mysql/mariadb/tidb/oracle/sqlserver/mongodb URL with username and host")
+		return fmt.Errorf("--connection-uri must be a passwordless database URL with username and host")
 	}
-	if !configureConnectionURISchemes[parsed.Scheme] {
-		return fmt.Errorf("--connection-uri scheme must be postgres, postgresql, mysql, oracle or mongodb")
+	if !configureConnectionURISchemePattern.MatchString(parsed.Scheme) {
+		return fmt.Errorf("--connection-uri scheme must be a database scheme such as postgres, mysql, oracle, sqlserver or mongodb")
 	}
 	if _, present := parsed.User.Password(); present {
 		return fmt.Errorf("--connection-uri must not contain a password")
