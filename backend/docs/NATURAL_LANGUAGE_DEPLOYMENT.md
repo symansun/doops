@@ -135,6 +135,10 @@ generation 已观察、spec 镜像与渲染一致且副本全部就绪；hook Jo
 会被 Helm 删除，读到 NotFound 即视为已成功（Helm 只在 hook 成功后才继续）；CronJob 只校验镜像。
 普通 Job 不被当作发布工作负载。
 工作负载渲染了 `metadata.namespace` 时，按该 namespace 读取线上对象；未写则用 release namespace。
+Helm `--wait` 在 ready >= replicas - maxUnavailable 时就返回，所以验收会继续轮询尚未就绪的
+工作负载，直到全部就绪或超过本次 `timeout`（未传时 5 分钟）。镜像与渲染不一致、对象不存在、
+hook Job 已失败这几种不会因等待而恢复，立即判失败。工具失败时 `ask --apply` 返回
+`doagent_apply_tool_failed: <工具>: <工具错误码与原因>`。
 
 `upgrade-install` 分三步：preflight（server dry-run 渲染并检查）→ mutate（真实 Helm）→
 verify（按本次 revision 回读并对比集群）。每步失败返回一个稳定错误码，后接 `: ` 和具体原因：

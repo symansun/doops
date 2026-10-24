@@ -31,6 +31,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
@@ -476,7 +477,43 @@ func readReleaseWorkloads(ctx context.Context, command helmCommand) ([]renderedH
 	return workloads, nil
 }
 
+// defaultHelmRolloutTimeout matches Helm's own default --timeout.
+const defaultHelmRolloutTimeout = 5 * time.Minute
+
+// helmRolloutPollInterval is how often verification re-reads a workload that is
+// still rolling out. A var so tests can shorten it.
+var helmRolloutPollInterval = 3 * time.Second
+
+// verifyLiveWorkload waits for one rendered workload to roll out. Helm --wait
+// returns once ready >= replicas - maxUnavailable, so with maxUnavailable >= 1 a
+// Deployment can still be rolling when Helm reports success; verification keeps
+// reading until the workload is fully rolled out or the release timeout passes.
 func verifyLiveWorkload(ctx context.Context, command helmCommand, expected renderedHelmWorkload) error {
+	timeout := command.rolloutTimeout
+	if timeout <= 0 {
+		timeout = defaultHelmRolloutTimeout
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		rolling, err := checkLiveWorkload(ctx, command, expected)
+		if err == nil {
+			return nil
+		}
+		if !rolling || time.Now().After(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(helmRolloutPollInterval):
+		}
+	}
+}
+
+// checkLiveWorkload reads the live object once. rolling reports a failure that
+// can still resolve by waiting (not yet observed or not yet Ready); a missing
+// object or an image that differs from the rendered release is final.
+func checkLiveWorkload(ctx context.Context, command helmCommand, expected renderedHelmWorkload) (rolling bool, err error) {
 	// A chart may place a workload outside the release namespace.
 	namespace := expected.Namespace
 	if namespace == "" {
@@ -490,22 +527,23 @@ func verifyLiveWorkload(ctx context.Context, command helmCommand, expected rende
 	if err != nil {
 		var exitErr *exec.ExitError
 		if expected.DeletedOnSuccess && errors.As(err, &exitErr) && strings.Contains(string(exitErr.Stderr), "NotFound") {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("read final %s: %w", ref, err)
+		return false, fmt.Errorf("read final %s: %w", ref, err)
 	}
 	var live liveHelmWorkload
 	if err := json.Unmarshal(liveBytes, &live); err != nil {
-		return fmt.Errorf("decode final %s: %w", ref, err)
-	}
-	if err := liveWorkloadRolledOut(expected.Kind, live); err != nil {
-		return fmt.Errorf("%s %s", ref, err)
+		return false, fmt.Errorf("decode final %s: %w", ref, err)
 	}
 	actual := live.Spec.podTemplate(expected.Kind).images()
 	if !sameStringList(expected.Containers, actual) {
-		return fmt.Errorf("%s spec images=%q rendered=%q", ref, actual, expected.Containers)
+		return false, fmt.Errorf("%s spec images=%q rendered=%q", ref, actual, expected.Containers)
 	}
-	return nil
+	if err := liveWorkloadRolledOut(expected.Kind, live); err != nil {
+		// A failed hook Job will not recover by waiting.
+		return expected.Kind != "Job" || live.Status.Failed == 0, fmt.Errorf("%s %s", ref, err)
+	}
+	return false, nil
 }
 
 func liveWorkloadRolledOut(kind string, live liveHelmWorkload) error {
@@ -542,8 +580,12 @@ func liveWorkloadRolledOut(kind string, live liveHelmWorkload) error {
 		desired := desiredReplicas(live)
 		if status.UpdatedReplicas != desired || status.ReadyReplicas != desired || status.AvailableReplicas != desired ||
 			(status.UnavailableReplicas != nil && *status.UnavailableReplicas != 0) {
-			return fmt.Errorf("is not fully Ready (desired=%d updated=%d ready=%d available=%d unavailable=%v)",
-				desired, status.UpdatedReplicas, status.ReadyReplicas, status.AvailableReplicas, status.UnavailableReplicas)
+			unavailable := int32(0)
+			if status.UnavailableReplicas != nil {
+				unavailable = *status.UnavailableReplicas
+			}
+			return fmt.Errorf("is not fully Ready (desired=%d updated=%d ready=%d available=%d unavailable=%d)",
+				desired, status.UpdatedReplicas, status.ReadyReplicas, status.AvailableReplicas, unavailable)
 		}
 		return nil
 	}
