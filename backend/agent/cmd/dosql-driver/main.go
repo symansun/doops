@@ -18,7 +18,7 @@ func main() {
 	if scheme == "" {
 		scheme = "extsql"
 	}
-	if err := server.RunDoSQLDriver(scheme, "mysql", os.Stdin, os.Stdout); err != nil {
+	if err := server.RunDoSQLDriver(scheme, "mysql", server.DoSQLMySQLDSN, os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

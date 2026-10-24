@@ -67,7 +67,7 @@ func validateCredentialSecretImport(req credentialSecretImportRequest) error {
 		return nil
 	}
 	u, err := url.Parse(req.ConnectionURI)
-	if err != nil || u == nil || !doSQLSchemeSupported(u.Scheme) ||
+	if err != nil || u == nil || !doSQLExternalSchemePattern.MatchString(u.Scheme) ||
 		u.Hostname() == "" || u.User == nil || u.User.Username() == "" ||
 		u.Path == "" || u.Path == "/" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
 		len(req.Keys) != 1 || req.Keys[0] != req.PasswordKey {
@@ -86,6 +86,13 @@ func handleCredentialSecretImportTool(ctx context.Context, raw json.RawMessage) 
 	}
 	if err := validateCredentialSecretImport(req); err != nil {
 		return "", err
+	}
+	// Only the Agent knows which drivers are installed, so the Gateway checks
+	// the scheme's syntax and this is where an unknown engine is refused.
+	if req.ConnectionURI != "" {
+		if u, err := url.Parse(req.ConnectionURI); err != nil || !doSQLSchemeSupported(u.Scheme) {
+			return "", errors.New("credential_import_connection_invalid")
+		}
 	}
 	secret, err := inspectCredentialSecret(ctx, req.Namespace, req.SecretName)
 	defer clear(secret.Data)
