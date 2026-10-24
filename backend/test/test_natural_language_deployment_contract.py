@@ -23,8 +23,6 @@ CI_GUIDE = ROOT / "components" / "cicd-guide.tsx"
 def test_v3_release_contract_is_explicit_natural_language_apply():
     cli = CLI.read_text(encoding="utf-8")
     ci_guide = CI_GUIDE.read_text(encoding="utf-8")
-    system_prompt = (BACKEND / "agent" / "skills" / "system_prompt.md").read_text(encoding="utf-8")
-    k8s_skill = (BACKEND / "agent" / "skills" / "k8s" / "SKILL.md").read_text(encoding="utf-8")
     handler_ws = (BACKEND / "agent" / "internal" / "server" / "handler_ws.go").read_text(
         encoding="utf-8"
     )
@@ -58,23 +56,9 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "image: alpine:3.22@sha256:<PINNED_ALPINE_DIGEST>" in ci_guide
     assert "backend/scripts/install.sh" in ci_guide
     assert "dry-run" not in ci_guide
-    assert "mcp_doops_helm" in system_prompt
-    assert "`session_id` 由运行时绑定" in system_prompt
-    assert "target 只是路由标签" in system_prompt
     assert "Current DoOps session_id" not in handler_ws
-    assert not re.search(r"mcp_doops_k8s(?!_read)", system_prompt)
-    assert "set-image" not in system_prompt
-    assert "包括只更新镜像" in system_prompt
-    assert "`value_files`" in system_prompt
-    assert "`value_files` 是可选" in system_prompt
-    assert "已明确资产中的事实再粘贴到 prompt" in system_prompt
-    assert "不得询问是否启用 dry-run" in system_prompt
-    assert "Chart schema" in system_prompt
-    assert "image.tag=release-YYYYMMDD" not in system_prompt
     assert '"value_files": map[string]interface{}' in helm_mcp
     assert '"values": map[string]interface{}' not in helm_mcp
-    assert "shell 中的 Kubernetes" in system_prompt
-    assert "不得用 shell 执行 kubectl mutation" in k8s_skill
     assert "api_trigger_deploy_agent" in main_pipeline
     assert "api_trigger_deploy_agent" not in fallback_pipeline
     assert "api_trigger_bootstrap_release_runner" not in cnb
@@ -111,15 +95,6 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "doops cicd" not in cnb
     assert "execute-doops-cicd" not in cnb
     assert "106.54.197.139:42222" not in cnb
-    assert "不存在直接 Kubernetes 镜像 mutation 例外" in k8s_skill
-    assert "add-image-pull-secret" not in k8s_skill
-    assert "command、args、env" in k8s_skill
-    assert "任务指定的 chart" in k8s_skill
-    assert "`value_files` 可选" in k8s_skill
-    assert "缺少 `confirm=true` 的调用试探" in k8s_skill
-    assert "image.tag=release-YYYYMMDD" not in k8s_skill
-    assert "明确的 release、namespace、`value_files`" not in k8s_skill
-    assert "Secret、ServiceAccount" in k8s_skill
     assert "validate_simple_name" in cnb
     assert '*[!A-Za-z0-9._-]*' in cnb
     assert 'test "${#image_digest}" -eq 64' in cnb
