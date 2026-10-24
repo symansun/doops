@@ -739,7 +739,7 @@ touch "${MUTATION_MARKER}"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runHelmCommand(t.Context(), command, nil); err == nil || err.Error() != "helm_preflight_image_mismatch" {
+	if _, err := runHelmCommand(t.Context(), command, nil); err == nil || !strings.HasPrefix(err.Error(), "helm_preflight_image_mismatch") {
 		t.Fatalf("wrong rendered image did not fail preflight: %v", err)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
