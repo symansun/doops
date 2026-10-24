@@ -1,7 +1,7 @@
 // dosql-driver is the template for an external DoSql engine. Build it with the
 // driver you need linked in and install it as <driver dir>/dosql-driver-<scheme>:
 //
-//	go build -o /opt/doops/drivers/dosql-driver-extsql ./cmd/dosql-driver
+//	go build -o <driver dir>/dosql-driver-extsql ./cmd/dosql-driver
 package main
 
 import (

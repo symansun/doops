@@ -21,10 +21,18 @@ import (
 // directory. The Agent runs it once per batch; it owns the connection, the
 // transaction and the rollback, so the Agent stays free of its client library.
 const (
-	doSQLExternalDriver    = "external"
-	doSQLExternalDirEnv    = "DOOPS_DOSQL_DRIVER_DIR"
-	doSQLExternalDefaultIn = "/opt/doops/drivers"
+	doSQLExternalDriver = "external"
+	doSQLExternalDirEnv = "DOOPS_DOSQL_DRIVER_DIR"
 )
+
+// The default directory sits beside the version journal, so drivers survive a
+// Pod replacement exactly when the journal does.
+func doSQLExternalDriverDir() string {
+	if dir := os.Getenv(doSQLExternalDirEnv); dir != "" {
+		return dir
+	}
+	return filepath.Join(filepath.Dir(workspaceRoot()), ".doops-dosql-drivers")
+}
 
 var doSQLExternalSchemePattern = regexp.MustCompile(`^[a-z][a-z0-9]{1,31}$`)
 
@@ -45,11 +53,7 @@ func doSQLExternalDriverPath(scheme string) (string, error) {
 	if !doSQLExternalSchemePattern.MatchString(scheme) {
 		return "", errors.New("dosql_engine_unsupported")
 	}
-	dir := os.Getenv(doSQLExternalDirEnv)
-	if dir == "" {
-		dir = doSQLExternalDefaultIn
-	}
-	path := filepath.Join(dir, "dosql-driver-"+scheme)
+	path := filepath.Join(doSQLExternalDriverDir(), "dosql-driver-"+scheme)
 	info, err := os.Stat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 || info.Mode().Perm()&0o002 != 0 {
 		return "", errors.New("dosql_engine_unsupported")

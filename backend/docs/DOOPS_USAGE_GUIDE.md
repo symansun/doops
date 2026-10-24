@@ -75,7 +75,7 @@ Gateway 直接解析保存的 target/database 绑定和 active version，不让�
 已知确切 SQL 时用 `--sql` 或 `--file`，SQL 原样提交给 Agent，不经过模型，与 `--request`
 二选一。只支持 `--mode query` 和 `--mode apply`，引擎为 postgres、mysql、oracle、sqlserver、mongodb；MariaDB、TiDB 走 mysql 路径，CockroachDB 走 postgres 路径，由凭据 `connection_uri` 的 scheme 决定。
 
-其它数据库可由运维在 Agent 主机放置外置驱动：可执行文件 `dosql-driver-<scheme>`（目录 `/opt/doops/drivers`，可用 `DOOPS_DOSQL_DRIVER_DIR` 覆盖，不得 world-writable）。Agent 每批调用一次，DSN（含密码）只经 stdin 传入，helper 在进程内完成事务、回滚和 dry-run，并把 `doSQLDirectResult` JSON 写到 stdout；版本日志和 evidence 仍由 Agent 写。没有对应文件时返回 `dosql_engine_unsupported`。模板见 `backend/agent/cmd/dosql-driver`，Agent 不自动下载驱动。
+其它数据库可由运维在 Agent 主机放置外置驱动：可执行文件 `dosql-driver-<scheme>`（默认目录 `<工作区根的上级>/.doops-dosql-drivers`，与版本日志同处，Agent 换 Pod 后随 agent-home 保留；可用 `DOOPS_DOSQL_DRIVER_DIR` 覆盖，不得 world-writable）。Agent 每批调用一次，DSN（含密码）只经 stdin 传入，helper 在进程内完成事务、回滚和 dry-run，并把 `doSQLDirectResult` JSON 写到 stdout；版本日志和 evidence 仍由 Agent 写。没有对应文件时返回 `dosql_engine_unsupported`。模板见 `backend/agent/cmd/dosql-driver`，Agent 不自动下载驱动。
 
 ```bash
 # 只读：每条语句都必须是 SELECT/WITH/SHOW/DESCRIBE/EXPLAIN/VALUES/TABLE
