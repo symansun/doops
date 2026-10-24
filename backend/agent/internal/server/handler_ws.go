@@ -712,7 +712,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
 		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
-			writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+			writeJSON(buildErrorResponse(reqID, -32603, cmdErr.Error()))
 			return
 		}
 		if execCtx.Err() != nil {
@@ -747,7 +747,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
 		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
-			writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+			writeJSON(buildErrorResponse(reqID, -32603, cmdErr.Error()))
 			return
 		}
 		if execCtx.Err() != nil {
@@ -791,7 +791,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
 		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
-			writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+			writeJSON(buildErrorResponse(reqID, -32603, cmdErr.Error()))
 			return
 		}
 		if execCtx.Err() != nil {
@@ -842,7 +842,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, false)
 		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
-			writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+			writeJSON(buildErrorResponse(reqID, -32603, cmdErr.Error()))
 			return
 		}
 		if execCtx.Err() != nil {
@@ -860,7 +860,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	case "doops_k8s":
 		result, err := handleK8STool(ctx, argBytes, pushProgress)
 		if errors.Is(err, errExecutionOutcomeUnknown) {
-			writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+			writeJSON(buildErrorResponse(reqID, -32603, err.Error()))
 		} else if err != nil {
 			writeJSON(buildToolErrorResponse(reqID, err.Error()))
 		} else {
@@ -870,7 +870,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	case "doops_web":
 		result, err := handleWebTool(ctx, argBytes, pushProgress)
 		if errors.Is(err, errExecutionOutcomeUnknown) {
-			writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+			writeJSON(buildErrorResponse(reqID, -32603, err.Error()))
 		} else if err != nil {
 			writeJSON(buildToolErrorResponse(reqID, err.Error()))
 		} else {
@@ -986,7 +986,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			publishLog(nil, true)
 		}
 		if errors.Is(task.err, errExecutionOutcomeUnknown) {
-			writeJSON(buildErrorResponse(reqID, -32603, errExecutionOutcomeUnknown.Error()))
+			writeJSON(buildErrorResponse(reqID, -32603, task.err.Error()))
 		} else if ctx.Err() != nil {
 			writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
 		} else if logErr != nil {
