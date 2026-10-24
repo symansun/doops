@@ -43,12 +43,12 @@ func TestPreflightManifestKeepsHooksAsSeparateDocuments(t *testing.T) {
 			workloads, err := validateHelmRenderedImages(combined, tc.expectedImage)
 			switch {
 			case tc.wantMismatch:
-				if !errors.Is(err, errHelmExpectedImageMissing) {
+				if !errors.Is(err, errHelmImageMismatch) {
 					t.Fatalf("err = %v, want expected-image mismatch", err)
 				}
 				return
 			case tc.wantDecodeErr:
-				if err == nil || errors.Is(err, errHelmExpectedImageMissing) {
+				if err == nil || errors.Is(err, errHelmImageMismatch) {
 					t.Fatalf("err = %v, want a decode error distinct from image mismatch", err)
 				}
 				return

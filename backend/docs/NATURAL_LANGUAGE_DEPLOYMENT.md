@@ -127,10 +127,26 @@ mutation 不构成发布成功证据。
 `expected_image` 是可选显式参数，接受完整 `repository:tag` 或
 `repository@sha256:<64 hex digest>`，不要求日期 tag，工具不从 values 推导。指定时同时
 校验 dry-run（包括 Helm JSON 的 hook manifest）和最终 release 内容；未指定时仍以 Chart
-渲染及最终工作负载状态证明收敛，不把不同服务版本强制统一。普通 Deployment 必须满足
-generation/spec/status 和副本就绪校验；带 `pre-install` 或 `pre-upgrade` 的 hook Job
-必须满足容器镜像与渲染结果一致、`succeeded=1`、`active=0`、`failed=0`。普通 Job 不被
-当作 Helm 发布工作负载接受。
+渲染及最终工作负载状态证明收敛，不把不同服务版本强制统一。校验的工作负载是
+Deployment、StatefulSet、DaemonSet、CronJob，以及带 `pre-install` 或 `pre-upgrade` 的
+hook Job；镜像包括 initContainers。Deployment/StatefulSet/DaemonSet 必须满足
+generation 已观察、spec 镜像与渲染一致且副本全部就绪；hook Job 必须 `succeeded=1`、
+`active=0`、`failed=0`；CronJob 只校验镜像。普通 Job 不被当作发布工作负载。
+
+`upgrade-install` 分三步：preflight（server dry-run 渲染并检查）→ mutate（真实 Helm）→
+verify（按本次 revision 回读并对比集群）。每步失败返回一个稳定错误码，后接 `: ` 和具体原因：
+
+| 错误码 | 含义 |
+|---|---|
+| `helm_preflight_failed` | Helm dry-run 本身失败，原因是脱敏后的 Helm 报错首行 |
+| `helm_manifest_invalid` | 渲染结果无法解码或格式不对，原因指出第几个 YAML 文档或哪个 `Kind/name` |
+| `helm_no_workload` | 渲染结果里没有可校验的工作负载 |
+| `helm_image_mismatch` | `expected_image` 不在任何渲染容器里，原因列出实际渲染的镜像 |
+| `helm_mutation_failed` | 真实 Helm 命令失败，原因是脱敏后的 Helm 报错首行 |
+| `helm_mutation_invalid_result` | Helm 输出里没有本次 mutation 的 revision |
+| `helm_verification_failed` | 集群状态与渲染结果不一致或未就绪 |
+
+Chart 的 stdout（NOTES、渲染 manifest）始终不返回。
 
 不同 session 的 Helm 调用不额外获取 DoOps release 独占锁。每次 upgrade-install 写入唯一
 description，从本次 Helm JSON 结果取得 revision，并按该 revision 读取 manifest；
