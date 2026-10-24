@@ -77,7 +77,7 @@ func TestRunDoSQLDriverKeepsRollbackSemantics(t *testing.T) {
 	run := func(req doSQLExternalRequest) doSQLExternalResponse {
 		in, _ := json.Marshal(req)
 		var out bytes.Buffer
-		if err := RunDoSQLDriver("sqlite", "sqlite", bytes.NewReader(in), &out); err != nil {
+		if err := RunDoSQLDriver("sqlite", "sqlite", nil, bytes.NewReader(in), &out); err != nil {
 			t.Fatal(err)
 		}
 		var response doSQLExternalResponse
@@ -97,5 +97,12 @@ func TestRunDoSQLDriverKeepsRollbackSemantics(t *testing.T) {
 	ok := run(doSQLExternalRequest{DSN: target.DSN, Statements: []string{"UPDATE orders SET status='x'"}})
 	if ok.Error != "" || !ok.Result.Committed || countDoSQLRows(t, target, "status = 'x'") != "2" {
 		t.Fatalf("apply: %#v", ok)
+	}
+}
+
+func TestDoSQLMySQLDSNRewritesAnyScheme(t *testing.T) {
+	dsn, err := DoSQLMySQLDSN("extsql://u:p%40x@db.example:3307/app")
+	if err != nil || !strings.Contains(dsn, "u:p@x@tcp(db.example:3307)/app") {
+		t.Fatalf("dsn = %q, %v", dsn, err)
 	}
 }

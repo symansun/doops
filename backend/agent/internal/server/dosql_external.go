@@ -93,10 +93,22 @@ func executeDoSQLExternal(ctx context.Context, request doSQLDirectRequest) (doSQ
 	return response.Result, nil
 }
 
+// DoSQLMySQLDSN turns the connection URL the Agent sends into go-sql-driver's DSN.
+func DoSQLMySQLDSN(rawURL string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "", err
+	}
+	parsed.Scheme = "mysql"
+	target, err := doSQLMySQLTarget(strings.Trim(parsed.Path, "/"), parsed.String(), "mysql://", "", "")
+	return target.DSN, err
+}
+
 // RunDoSQLDriver is the whole body of an external driver: read one request,
 // run it with the named database/sql driver (already imported by the caller),
-// write one response.
-func RunDoSQLDriver(engine, driver string, in io.Reader, out io.Writer) error {
+// write one response. toDSN converts the connection URL into the driver's own
+// DSN form; nil passes the URL through.
+func RunDoSQLDriver(engine, driver string, toDSN func(string) (string, error), in io.Reader, out io.Writer) error {
 	var request doSQLExternalRequest
 	if err := json.NewDecoder(in).Decode(&request); err != nil {
 		return err
@@ -104,8 +116,15 @@ func RunDoSQLDriver(engine, driver string, in io.Reader, out io.Writer) error {
 	if !slices.Contains(sql.Drivers(), driver) {
 		return fmt.Errorf("driver %q is not linked into this binary", driver)
 	}
+	dsn := request.DSN
+	if toDSN != nil {
+		var err error
+		if dsn, err = toDSN(dsn); err != nil {
+			return err
+		}
+	}
 	result, err := executeDoSQLDirect(context.Background(), doSQLDirectRequest{
-		Target:     doSQLTarget{Engine: engine, Driver: driver, DSN: request.DSN},
+		Target:     doSQLTarget{Engine: engine, Driver: driver, DSN: dsn},
 		Statements: request.Statements, Verification: request.Verification,
 		ReadOnly: request.ReadOnly, DryRun: request.DryRun,
 	})

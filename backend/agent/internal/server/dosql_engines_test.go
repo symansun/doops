@@ -46,17 +46,25 @@ func TestDoSQLMSSQLTarget(t *testing.T) {
 	}
 }
 
-func TestCredentialImportRejectsSchemesWithoutADriver(t *testing.T) {
+func TestCredentialImportSchemeNeedsADriverOnTheAgent(t *testing.T) {
 	t.Setenv(doSQLExternalDirEnv, t.TempDir())
 	req := credentialSecretImportRequest{
 		SessionID: "s1", Cluster: "c", Instance: "i", Namespace: "ns", SecretName: "db",
-		Keys: []string{"password"}, PasswordKey: "password", ConnectionURI: "ftp://user@db/app",
+		Keys: []string{"password"}, PasswordKey: "password", ConnectionURI: "extsql://user@db/app",
 	}
-	if err := validateCredentialSecretImport(req); err == nil {
-		t.Fatal("scheme without a built-in or external driver accepted")
-	}
-	req.ConnectionURI = "mysql://user@db/app"
+	// The Gateway has no driver directory, so it accepts any well-formed scheme.
 	if err := validateCredentialSecretImport(req); err != nil {
-		t.Fatalf("built-in scheme rejected: %v", err)
+		t.Fatalf("well-formed scheme rejected by the Gateway: %v", err)
+	}
+	req.ConnectionURI = "FTP_://user@db/app"
+	if err := validateCredentialSecretImport(req); err == nil {
+		t.Fatal("malformed scheme accepted")
+	}
+	// The Agent decides whether a driver exists for it.
+	if doSQLSchemeSupported("extsql") {
+		t.Fatal("scheme without a driver reported as supported")
+	}
+	if !doSQLSchemeSupported("mysql") {
+		t.Fatal("built-in scheme rejected")
 	}
 }
