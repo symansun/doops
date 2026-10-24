@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,7 +205,10 @@ func OpenGatewayStore(path string) (*GatewayStore, error) {
 	if err := os.Chmod(path, 0600); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	// busy_timeout must be set on the connection before the first statement:
+	// switching to WAL takes a lock that a just-closed store may still hold.
+	dsn := (&url.URL{Scheme: "file", Path: path, RawQuery: "_pragma=busy_timeout(5000)"}).String()
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -239,8 +243,8 @@ func (s *GatewayStore) Close() error {
 
 func (s *GatewayStore) migrate() error {
 	stmts := []string{
-		`PRAGMA journal_mode=WAL`,
 		`PRAGMA busy_timeout=5000`,
+		`PRAGMA journal_mode=WAL`,
 		`CREATE TABLE IF NOT EXISTS users (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL UNIQUE,
