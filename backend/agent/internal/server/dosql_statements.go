@@ -228,8 +228,14 @@ var doSQLImplicitCommitKeywords = map[string]bool{
 	"LOCK": true, "UNLOCK": true, "FLUSH": true, "COMMENT": true, "AUDIT": true,
 }
 
+// Unknown (external) engines are assumed to commit DDL implicitly: claiming a
+// rollback that the engine cannot honour is worse than refusing a dry run.
 func doSQLEngineCommitsDDLImplicitly(engine string) bool {
-	return engine == "mysql" || engine == "oracle"
+	switch engine {
+	case "postgres", "mssql", "mongodb":
+		return false
+	}
+	return true
 }
 
 // doSQLCommitsImplicitly reports whether running the statement ends the

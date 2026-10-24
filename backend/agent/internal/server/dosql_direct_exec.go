@@ -61,6 +61,9 @@ func executeDoSQLDirect(ctx context.Context, request doSQLDirectRequest) (doSQLD
 	if request.Target.Engine == "mongodb" {
 		return executeDoSQLMongo(ctx, request)
 	}
+	if request.Target.Driver == doSQLExternalDriver {
+		return executeDoSQLExternal(ctx, request)
+	}
 	if request.DryRun {
 		// Checked before connecting: running the DDL is what would leak it.
 		for index, statement := range request.Statements {

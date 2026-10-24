@@ -15,7 +15,7 @@ func TestDoSQLSchemesMapToEngines(t *testing.T) {
 		if !ok || got != want {
 			t.Errorf("%s -> %q %v, want %s", scheme, got, ok, want)
 		}
-		if scheme != "mongodb" && !credentialConnectionURISchemes[scheme] {
+		if !doSQLSchemeSupported(scheme) {
 			t.Errorf("import does not accept %s", scheme)
 		}
 	}
@@ -43,5 +43,20 @@ func TestDoSQLMSSQLTarget(t *testing.T) {
 	}
 	if _, err := doSQLConnectionTarget("mysql", "app", map[string]string{"connection_uri": "mariadb://u:p@db/app"}); err != nil {
 		t.Fatalf("mariadb uri: %v", err)
+	}
+}
+
+func TestCredentialImportRejectsSchemesWithoutADriver(t *testing.T) {
+	t.Setenv(doSQLExternalDirEnv, t.TempDir())
+	req := credentialSecretImportRequest{
+		SessionID: "s1", Cluster: "c", Instance: "i", Namespace: "ns", SecretName: "db",
+		Keys: []string{"password"}, PasswordKey: "password", ConnectionURI: "ftp://user@db/app",
+	}
+	if err := validateCredentialSecretImport(req); err == nil {
+		t.Fatal("scheme without a built-in or external driver accepted")
+	}
+	req.ConnectionURI = "mysql://user@db/app"
+	if err := validateCredentialSecretImport(req); err != nil {
+		t.Fatalf("built-in scheme rejected: %v", err)
 	}
 }

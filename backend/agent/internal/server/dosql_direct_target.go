@@ -74,6 +74,9 @@ func doSQLConnectionTarget(engine, databaseName string, data map[string]string) 
 		return doSQLMySQLTarget(databaseName, data["SPRING_DATASOURCE_URL"], "jdbc:mysql://",
 			data["SPRING_DATASOURCE_USERNAME"], data["SPRING_DATASOURCE_PASSWORD"])
 	}
+	if _, err := doSQLExternalDriverPath(engine); err == nil {
+		return doSQLExternalTarget(engine, databaseName, data["connection_uri"])
+	}
 	return doSQLTarget{}, errors.New("dosql_engine_invalid")
 }
 

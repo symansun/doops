@@ -16,9 +16,22 @@ var doSQLSchemeEngine = map[string]string{
 	"mongodb": "mongodb",
 }
 
+// doSQLEngineForScheme is the one place that decides whether DoSql can open a
+// scheme: a built-in engine, or an operator-installed external driver.
 func doSQLEngineForScheme(scheme string) (string, bool) {
-	engine, ok := doSQLSchemeEngine[strings.ToLower(scheme)]
-	return engine, ok
+	scheme = strings.ToLower(scheme)
+	if engine, ok := doSQLSchemeEngine[scheme]; ok {
+		return engine, true
+	}
+	if _, err := doSQLExternalDriverPath(scheme); err == nil {
+		return scheme, true
+	}
+	return "", false
+}
+
+func doSQLSchemeSupported(scheme string) bool {
+	_, ok := doSQLEngineForScheme(scheme)
+	return ok
 }
 
 func doSQLSchemesForEngine(engine string) []string {
@@ -34,7 +47,7 @@ func doSQLSchemesForEngine(engine string) []string {
 // SQL Server has no read-only transaction mode in its driver. Read-only
 // batches there never commit, so the transaction is always rolled back.
 func doSQLTxOptions(engine string, readOnly bool) *sql.TxOptions {
-	if engine == "mssql" || engine == "oracle" {
+	if engine != "postgres" && engine != "mysql" {
 		return nil
 	}
 	return &sql.TxOptions{ReadOnly: readOnly}

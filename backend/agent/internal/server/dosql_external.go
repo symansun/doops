@@ -1,0 +1,117 @@
+package server
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+)
+
+// An external driver is an executable the operator drops into the driver
+// directory. The Agent runs it once per batch; it owns the connection, the
+// transaction and the rollback, so the Agent stays free of its client library.
+const (
+	doSQLExternalDriver    = "external"
+	doSQLExternalDirEnv    = "DOOPS_DOSQL_DRIVER_DIR"
+	doSQLExternalDefaultIn = "/opt/doops/drivers"
+)
+
+var doSQLExternalSchemePattern = regexp.MustCompile(`^[a-z][a-z0-9]{1,31}$`)
+
+type doSQLExternalRequest struct {
+	DSN          string   `json:"dsn"`
+	Statements   []string `json:"statements"`
+	Verification string   `json:"verification,omitempty"`
+	ReadOnly     bool     `json:"read_only"`
+	DryRun       bool     `json:"dry_run"`
+}
+
+type doSQLExternalResponse struct {
+	Result doSQLDirectResult `json:"result"`
+	Error  string            `json:"error,omitempty"`
+}
+
+func doSQLExternalDriverPath(scheme string) (string, error) {
+	if !doSQLExternalSchemePattern.MatchString(scheme) {
+		return "", errors.New("dosql_engine_unsupported")
+	}
+	dir := os.Getenv(doSQLExternalDirEnv)
+	if dir == "" {
+		dir = doSQLExternalDefaultIn
+	}
+	path := filepath.Join(dir, "dosql-driver-"+scheme)
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 || info.Mode().Perm()&0o002 != 0 {
+		return "", errors.New("dosql_engine_unsupported")
+	}
+	return path, nil
+}
+
+func doSQLExternalTarget(engine, databaseName, raw string) (doSQLTarget, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Hostname() == "" || strings.ToLower(parsed.Scheme) != engine {
+		return doSQLTarget{}, fmt.Errorf("dosql_connection_uri_invalid: %s credential needs connection_uri %s://user:password@host:port/database", engine, engine)
+	}
+	if database := strings.Trim(parsed.Path, "/"); database != databaseName {
+		return doSQLTarget{}, fmt.Errorf("dosql_database_name_mismatch: credential points to %q, request names %q", database, databaseName)
+	}
+	return doSQLTarget{Engine: engine, Driver: doSQLExternalDriver, DSN: parsed.String(), Database: databaseName, Address: parsed.Host}, nil
+}
+
+// The DSN carries the password, so it travels on stdin only: never argv or env.
+func executeDoSQLExternal(ctx context.Context, request doSQLDirectRequest) (doSQLDirectResult, error) {
+	result := doSQLDirectResult{Status: "failed"}
+	path, err := doSQLExternalDriverPath(request.Target.Engine)
+	if err != nil {
+		return result, err
+	}
+	input, _ := json.Marshal(doSQLExternalRequest{
+		DSN: request.Target.DSN, Statements: request.Statements, Verification: request.Verification,
+		ReadOnly: request.ReadOnly, DryRun: request.DryRun,
+	})
+	var stdout bytes.Buffer
+	command := exec.CommandContext(ctx, path)
+	command.Stdin, command.Stdout, command.Env = bytes.NewReader(input), &stdout, []string{}
+	runErr := command.Run()
+	var response doSQLExternalResponse
+	if json.Unmarshal(stdout.Bytes(), &response) != nil {
+		return result, doSQLFailure("dosql_driver_failed", fmt.Sprintf("%s did not return a result (%v)", filepath.Base(path), runErr))
+	}
+	if response.Error != "" {
+		return response.Result, errors.New(strings.Join(strings.Fields(sanitizeSecretText(response.Error)), " "))
+	}
+	return response.Result, nil
+}
+
+// RunDoSQLDriver is the whole body of an external driver: read one request,
+// run it with the named database/sql driver (already imported by the caller),
+// write one response.
+func RunDoSQLDriver(engine, driver string, in io.Reader, out io.Writer) error {
+	var request doSQLExternalRequest
+	if err := json.NewDecoder(in).Decode(&request); err != nil {
+		return err
+	}
+	if !slices.Contains(sql.Drivers(), driver) {
+		return fmt.Errorf("driver %q is not linked into this binary", driver)
+	}
+	result, err := executeDoSQLDirect(context.Background(), doSQLDirectRequest{
+		Target:     doSQLTarget{Engine: engine, Driver: driver, DSN: request.DSN},
+		Statements: request.Statements, Verification: request.Verification,
+		ReadOnly: request.ReadOnly, DryRun: request.DryRun,
+	})
+	response := doSQLExternalResponse{Result: result}
+	if err != nil {
+		response.Error = err.Error()
+	}
+	return json.NewEncoder(out).Encode(response)
+}
