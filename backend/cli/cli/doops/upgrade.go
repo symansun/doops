@@ -124,7 +124,7 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 			action = "rollback"
 		}
 		fmt.Printf("OK %s/%s: %s Job and structuredSSH protocol verified\n", target.Cluster, target.Instance, action)
-		fmt.Println("Release acceptance still requires Gateway-serving Pod UID/imageID, runtime version and functional checks.")
+		fmt.Println(withNext("verify the release", "doops targets --target "+base.Name+"   # RELEASE_COMMIT is the new commit", "doops capabilities --target "+base.Name+" --require structuredSSH"))
 	}
 	if failures > 0 {
 		return fmt.Errorf("upgrade failed on %d/%d target(s)", failures, len(selected))

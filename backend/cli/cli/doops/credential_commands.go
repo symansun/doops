@@ -136,7 +136,8 @@ Use "doops credential <subcommand> -h" for command flags.
 }
 
 // retiredCredentialVerifyFlags were scope fields that verify used to require. The
-// Gateway now verifies each binding with the scope stored when it was granted.
+// Gateway now verifies each binding with the scope stored when it was granted, so
+// these are dropped with a note instead of failing the call.
 var retiredCredentialVerifyFlags = []string{
 	"namespace", "use", "workload-kind", "workload-name", "database-asset-id", "environment-id",
 	"database-engine", "database-name", "image-repository", "image-digest", "helm-release",
@@ -144,12 +145,7 @@ var retiredCredentialVerifyFlags = []string{
 }
 
 func runCredentialVerify(args []string, sessionName string, servers []Server, configErr error, stdout io.Writer) error {
-	for _, arg := range args {
-		name := strings.TrimLeft(strings.SplitN(arg, "=", 2)[0], "-")
-		if strings.HasPrefix(arg, "-") && slices.Contains(retiredCredentialVerifyFlags, name) {
-			return fmt.Errorf("--%s is no longer needed: verify uses the scope stored on each target binding", name)
-		}
-	}
+	args = dropRetiredCredentialVerifyFlags(args, stdout)
 	var target, id, versionID string
 	flags := credentialFlagSet("credential verify", stdout)
 	flags.StringVar(&target, "target", "", "Configured gateway target")
@@ -621,7 +617,7 @@ func resolveCredentialGateway(target string, servers []Server, configErr error) 
 	}
 	server := findServer(servers, target)
 	if server == nil {
-		return "", "", fmt.Errorf("target %q not found", target)
+		return "", "", errTargetNotFound(servers, target)
 	}
 	token, err := ResolveToken(*server)
 	if err != nil {
@@ -642,7 +638,7 @@ func resolveCredentialListTarget(
 	}
 	server := findServer(servers, target)
 	if server == nil {
-		return "", "", "", "", fmt.Errorf("target %q not found", target)
+		return "", "", "", "", errTargetNotFound(servers, target)
 	}
 	cluster := strings.TrimSpace(server.Cluster)
 	instance := strings.TrimSpace(server.Instance)
@@ -725,4 +721,21 @@ func gatewayCredentialRequest(method, gateway, token, endpoint string, query url
 		return nil, decodeGatewayHTTPError("credential gateway "+endpoint, response, responseBody)
 	}
 	return responseBody, nil
+}
+
+func dropRetiredCredentialVerifyFlags(args []string, stdout io.Writer) []string {
+	kept := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		name := strings.TrimLeft(strings.SplitN(arg, "=", 2)[0], "-")
+		if !strings.HasPrefix(arg, "-") || !slices.Contains(retiredCredentialVerifyFlags, name) {
+			kept = append(kept, arg)
+			continue
+		}
+		fmt.Fprintf(stdout, "note: --%s ignored; verify uses the scope stored on each binding\n", name)
+		if !strings.Contains(arg, "=") && index+1 < len(args) && !strings.HasPrefix(args[index+1], "-") {
+			index++
+		}
+	}
+	return kept
 }

@@ -130,7 +130,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		requireConfig(configErr)
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
+			fmt.Println(targetNotFound(servers, target))
 			os.Exit(1)
 		}
 		token := mustResolveToken(*server)
@@ -175,7 +175,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		requireConfig(configErr)
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
+			fmt.Println(targetNotFound(servers, target))
 			os.Exit(1)
 		}
 		token := mustResolveToken(*server)
@@ -269,7 +269,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		requireConfig(configErr)
 		server := findServer(servers, target)
 		if server == nil || strings.TrimSpace(server.Gateway) == "" {
-			fmt.Printf("Error: Gateway target '%s' not found.\n", target)
+			fmt.Println(targetNotFound(servers, target))
 			os.Exit(1)
 		}
 		gateway := server.Gateway
@@ -283,7 +283,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		if strings.TrimSpace(saveAs) != "" {
 			saveServer := findServer(servers, saveAs)
 			if saveServer == nil || strings.TrimSpace(saveServer.Gateway) == "" {
-				fmt.Printf("Error: Gateway target '%s' not found.\n", saveAs)
+				fmt.Println(targetNotFound(servers, saveAs))
 				os.Exit(1)
 			}
 			if gatewayAuthKey(saveServer.Gateway) != gatewayAuthKey(gateway) {
@@ -335,7 +335,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		requireConfig(configErr)
 		server := findServer(servers, req.Target)
 		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", req.Target)
+			fmt.Println(targetNotFound(servers, req.Target))
 			os.Exit(1)
 		}
 
@@ -441,19 +441,19 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 		// 指令/命令校验 (支持位置参数提取后)
 		if command == "ask" && strings.TrimSpace(msgStr) == "" {
-			fmt.Println("Error: 指令内容不能为空。用法: doops ask \"你的指令\"")
+			fmt.Println(withNext("Error: ask needs an instruction", "doops ask --target "+target+" --msg '<what to do>'", "doops guide diagnose"))
 			os.Exit(1)
 		}
 		if command == "ask" && len(credentialRefs) != 0 && !apply {
-			fmt.Println("Error: --credential 仅允许与 --apply 一起使用。")
+			fmt.Println(withNext("Error: --credential is materialized only for a change task; add --apply", "doops ask --target "+target+" --apply --credential <name> --msg '<change>'"))
 			os.Exit(1)
 		}
 		if command == "exec" && strings.TrimSpace(cmdStr) == "" {
-			fmt.Println("Error: 命令内容不能为空。用法: doops exec \"ls -la\"")
+			fmt.Println(withNext("Error: exec needs a command", "doops exec --target "+target+" --cmd '<cmd>'"))
 			os.Exit(1)
 		}
 		if command == "exec" && looksLikeSSHCommand(cmdStr) {
-			fmt.Println("Error: 多层 SSH 必须使用结构化命令: doops ssh --host <user@host> -- <remote-command> [args...]")
+			fmt.Println(withNext("Error: run nested SSH through doops ssh so remote quoting survives", sshCommandSuggestion(target, cmdStr)))
 			os.Exit(1)
 		}
 		if command == "ssh" && strings.TrimSpace(sshHost) == "" {
@@ -469,17 +469,17 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			sshOptions = normalizedOptions
 		}
 		if command == "read" && strings.TrimSpace(path) == "" {
-			fmt.Println("Error: path 不能为空。doops read 只用于查看远端小文本文件。")
+			fmt.Println(withNext("Error: read needs --path (small text files; use pull for large or binary files)", "doops read --target "+target+" --path <remote-file>"))
 			os.Exit(1)
 		}
 		if command == "write" && strings.TrimSpace(path) == "" {
-			fmt.Println("Error: path 不能为空。用法: doops write --path /remote/file --file ./local 或 echo data | doops write --path /remote/file")
+			fmt.Println(withNext("Error: write needs --path", "doops write --target "+target+" --path <remote-file> --file <local-file>"))
 			os.Exit(1)
 		}
 
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
+			fmt.Println(targetNotFound(servers, target))
 			os.Exit(1)
 		}
 		token := mustResolveToken(*server)
@@ -568,6 +568,12 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		}
 		RecordHistory(server.Name, *sessionName, cmdLog)
 
+	case "guide":
+		if err := runGuide(cmdArgs, os.Stdout); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+
 	case "history":
 		historyPath := historyLogPath()
 
@@ -599,7 +605,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		requireConfig(configErr)
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Gateway target '%s' not found.\n", target)
+			fmt.Println(targetNotFound(servers, target))
 			os.Exit(1)
 		}
 		gateway := server.Gateway
@@ -671,7 +677,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		requireConfig(configErr)
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Gateway target '%s' not found.\n", target)
+			fmt.Println(targetNotFound(servers, target))
 			os.Exit(1)
 		}
 		auth, err := LoadAuth()
@@ -774,7 +780,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			}
 		}
 		if index < 0 {
-			fmt.Printf("Error: Gateway target '%s' not found.\n", target)
+			fmt.Println(targetNotFound(servers, target))
 			os.Exit(1)
 		}
 		server := servers[index]
@@ -825,7 +831,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
+			fmt.Println(targetNotFound(servers, target))
 			os.Exit(1)
 		}
 
@@ -860,7 +866,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
+			fmt.Println(targetNotFound(servers, target))
 			os.Exit(1)
 		}
 		if err := Pull(*server, dest, *sessionName); err != nil {
@@ -890,7 +896,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
+			fmt.Println(targetNotFound(servers, target))
 			os.Exit(1)
 		}
 
@@ -932,7 +938,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		requireConfig(configErr)
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
+			fmt.Println(targetNotFound(servers, target))
 			os.Exit(1)
 		}
 		if err := UpgradeAgents(*server, UpgradeOptions{
@@ -973,7 +979,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
+			fmt.Println(targetNotFound(servers, target))
 			os.Exit(1)
 		}
 
@@ -989,8 +995,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("check %s/%s", namespace, deployment))
 
 	default:
-		fmt.Printf("Unknown command: %s\n", command)
-		flag.Usage()
+		fmt.Println(unknownCommand(command))
 		os.Exit(1)
 	}
 }
@@ -1092,7 +1097,7 @@ func runAdminTokensList(args []string, servers []Server, configErr error) {
 	requireConfig(configErr)
 	server := findServer(servers, *target)
 	if server == nil || strings.TrimSpace(server.Gateway) == "" {
-		fmt.Printf("Error: Gateway target '%s' not found.\n", *target)
+		fmt.Println(targetNotFound(servers, *target))
 		os.Exit(1)
 	}
 	tokens, err := GatewayAdminTokensList(server.Gateway, mustResolveToken(*server), "user")
@@ -1121,7 +1126,7 @@ func runAdminTokenRevoke(args []string, servers []Server, configErr error) {
 	requireConfig(configErr)
 	server := findServer(servers, target)
 	if server == nil || strings.TrimSpace(server.Gateway) == "" {
-		fmt.Printf("Error: Gateway target '%s' not found.\n", target)
+		fmt.Println(targetNotFound(servers, target))
 		os.Exit(1)
 	}
 	if err := GatewayAdminTokenRevoke(server.Gateway, mustResolveToken(*server), id); err != nil {
@@ -1147,7 +1152,7 @@ func resolveAdminTargetFlags(name string, args []string, servers []Server, confi
 	requireConfig(configErr)
 	server := findServer(servers, target)
 	if server == nil || strings.TrimSpace(server.Gateway) == "" {
-		fmt.Printf("Error: Gateway target '%s' not found.\n", target)
+		fmt.Println(targetNotFound(servers, target))
 		os.Exit(1)
 	}
 	if opID != nil && strings.TrimSpace(*opID) == "" {

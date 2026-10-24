@@ -11,7 +11,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -845,83 +844,15 @@ func (c *MCPClient) ExecBg(command string) error {
 	})
 }
 
-// postJSON 已废弃，被直接的 conn.WriteJSON 替代
-
-// Distill 对长输出进行 LLM 压缩摘要
-func (c *MCPClient) Distill(content string) string {
-	maxSize := 2048
-	if len(content) < maxSize {
-		return content
-	}
-
-	apiEndpoint := os.Getenv("OPENAI_API_BASE")
-	if apiEndpoint == "" {
-		apiEndpoint = os.Getenv("API_BASE_URL")
-	}
-	if apiEndpoint != "" && !strings.HasSuffix(apiEndpoint, "/chat/completions") {
-		apiEndpoint = strings.TrimRight(apiEndpoint, "/") + "/chat/completions"
-	}
-	if apiEndpoint == "" {
-		apiEndpoint = "https://api.example.com/v1/chat/completions"
-	}
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		return content // 未配置 API Key，不做压缩
-	}
-	model := os.Getenv("DO_AGENT_MODEL")
-	if model == "" {
-		model = "gpt-5.4-mini"
-	}
-
-	payload := map[string]interface{}{
-		"model": model,
-		"messages": []map[string]string{
-			{"role": "system", "content": "You are a Log Distillation Expert. Analyze the raw log/output and distill it into a concise summary focusing on status, errors, resource usage, and key paths. Max 500 words."},
-			{"role": "user", "content": fmt.Sprintf("=== RAW OUTPUT START ===\n%s\n=== RAW OUTPUT END ===", content)},
-		},
-		"temperature": 0.3,
-	}
-
-	body, _ := json.Marshal(payload)
-	req, _ := http.NewRequest("POST", apiEndpoint, bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-
-	client := &http.Client{Timeout: 0}
-	resp, err := client.Do(req)
-	if err != nil {
-		return content
-	}
-	defer resp.Body.Close()
-
-	var respData struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&respData); err != nil || len(respData.Choices) == 0 {
-		return content
-	}
-
-	originalSize := len(content)
-	distilledText := respData.Choices[0].Message.Content
-	ratio := float64(len(distilledText)) / float64(originalSize)
-
-	return fmt.Sprintf("\n[Smart Compression %.1f%%] Original: %dB\n%s\n%s\n%s\n", ratio*100, originalSize, strings.Repeat("-", 50), distilledText, strings.Repeat("-", 50))
-}
-
 // printFinalResult reports whether the final tool result text must be printed.
 // ask streams its answer as assistant deltas; printing the final result again
 // duplicated the whole answer. Other tools print the result only when nothing
-// was streamed, except bg/distill, whose result is a summary of its own.
+// was streamed, except bg, whose result is a summary of its own.
 func printFinalResult(toolName string, streamedAny, streamedAnswer bool) bool {
 	switch toolName {
 	case "doops_agent_prompt":
 		return !streamedAnswer
-	case "doops_distill", "doops_bg":
+	case "doops_bg":
 		return true
 	default:
 		return !streamedAny
