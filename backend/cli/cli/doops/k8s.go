@@ -22,22 +22,22 @@ var errK8SHelp = errors.New("k8s help requested")
 const k8sUsage = `用法: doops -session <s> k8s --target <t> <command> [flags]
 
 只读（可与发布并行）:
-  get <kind> [name]               [--namespace ns|-A] [-l selector] [--output json|yaml|wide|name|jsonpath=...|custom-columns=...]
-  describe <kind> <name>          [--namespace ns]
-  logs <resource>                 [--namespace ns] [--container c] [--tail N] [--previous] [--since 10m]
-  top pods|nodes                  [--namespace ns|-A] [-l selector]
-  events                          [--namespace ns|-A] [--for kind/name]
-  rollout status <resource>       [--namespace ns] [--timeout 120s]
-  helm list                       [--namespace ns|-A]
-  helm history|status <release>   --namespace ns
-  helm values <release>           --namespace ns   (只返回 key 路径，不返回值)
+  get <kind> [name]               [-n|--namespace ns | -A|--all-namespaces] [-l|--selector sel] [-o|--output json|yaml|wide|name|jsonpath=...|custom-columns=...]
+  describe <kind> <name>          [-n|--namespace ns]
+  logs <resource>                 [-n|--namespace ns] [-c|--container c] [--tail N] [-p|--previous] [--since 10m]
+  top pods|nodes                  [-n|--namespace ns | -A] [-l|--selector sel]
+  events                          [-n|--namespace ns | -A] [--for kind/name]
+  rollout status <resource>       [-n|--namespace ns] [--timeout 120s]
+  helm list                       [-n|--namespace ns | -A]
+  helm history|status <release>   -n|--namespace ns
+  helm values <release>           -n|--namespace ns   (只返回 key 路径，不返回值)
   Secret 与 ServiceAccount 不开放读取。
 
 写操作（必须带 --confirm）:
-  rollout restart <resource>      --confirm
-  scale <resource> --replicas N   --confirm
+  rollout restart <resource>      [-n ns] --confirm
+  scale <resource> --replicas N   [-n ns] --confirm
   node cordon|uncordon <node>     --confirm
-  delete pod <name>               --confirm
+  delete pod <name>               [-n ns] --confirm
 
 业务发布使用 ask --apply，不用本入口。`
 

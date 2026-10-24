@@ -58,7 +58,6 @@ DoSql 通过 `doops_agent_prompt` 进入 Agent runtime。数据库目标来自�
 引擎、数据库名由 DoSql/目标 Agent 根据 target discovery 和任务上下文校验。只读请求携带
 credential reference 时必须显式声明 `skill=dosql`；普通只读 prompt 不能附带数据库凭据。
 
-DoSql 不再有签名审批：旧的 `mcp_dosql_execute` 要求的审批文件没有签发方，已经删除。
 变更只要求用户对该 target 的 Gateway grant；每次真实变更在版本日志里先取版本号再执行，
 日志不可写时拒绝执行。
 

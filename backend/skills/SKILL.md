@@ -129,6 +129,11 @@ Gateway 绑定当前 target 上全部 active `use=database` 凭据，`doops sql`
   `edge_enrollment_auth_failed` 是边缘通道 enrollment token 问题。裸 `401` 不归因于受管凭据。
 - `403`：已认证但权限不足。
 - `credential_*` 错误与 `credential preflight failed`：见 `docs/CREDENTIAL_RESOURCES.md`。
+- 报错都是 `错误码: 原因`，原因就是要修的东西，不要只看错误码去猜：
+  `helm_preflight_failed|helm_manifest_invalid|helm_no_workload|helm_image_mismatch|helm_mutation_failed|helm_verification_failed`
+  （含义见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`）；`doagent_apply_tool_failed: <工具>: <工具错误>` 是工具自己的失败，
+  模型文字说"成功"不算数；`execution_outcome_unknown: <原因>` 不重放 mutation，按原因去 target 上核对；
+  `blocked_command(delete_root_filesystem)` 是 exec 唯一拦截的命令。
 - `ask --apply` 没有可信 mutation 证据：检查 Agent 是否注册 `mcp_doops_helm` 及 attestation，
   见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
 - target 不可见：空结果可能是离线，也可能是缺少精确 grant，不能直接断言集群宕机。
