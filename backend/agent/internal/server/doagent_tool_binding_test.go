@@ -115,7 +115,7 @@ func TestApplyVerifiedToolFailureIsTerminalButNeverSuccessful(t *testing.T) {
 			if collector.hasUnresolvedMutation() {
 				t.Fatal("verified terminal failure became unknown")
 			}
-			if err := collector.requireCompletedToolEvidence(); err == nil || err.Error() != "doagent_apply_tool_failed" {
+			if err := collector.requireCompletedToolEvidence(); err == nil || !strings.HasPrefix(err.Error(), "doagent_apply_tool_failed: doops_helm: helm_verification_failed") {
 				t.Fatalf("successful tool hid a failed mutation: %v", err)
 			}
 			trace.AttestedResultDigest = "sha256:" + strings.Repeat("0", 64)

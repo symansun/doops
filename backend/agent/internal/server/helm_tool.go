@@ -37,6 +37,8 @@ type helmCommand struct {
 	expectedImage string
 	mutationID    string
 	revision      int
+	// rolloutTimeout bounds how long verification waits for workloads to roll out.
+	rolloutTimeout time.Duration
 }
 
 func handleHelmTool(ctx context.Context, raw json.RawMessage, push notificationSender) (string, error) {
@@ -160,9 +162,16 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 			}
 			args = append(args, "--set-string", key+"="+escapeHelmSetString(value))
 		}
+		rolloutTimeout := defaultHelmRolloutTimeout
+		if params.Timeout != "" {
+			if parsed, err := time.ParseDuration(params.Timeout); err == nil {
+				rolloutTimeout = parsed
+			}
+		}
 		return helmCommand{
 			args: append(args, common...), cwd: workspace,
 			release: params.Release, namespace: params.Namespace, expectedImage: expectedImage, mutationID: mutationID,
+			rolloutTimeout: rolloutTimeout,
 		}, nil
 	case "rollback":
 		if params.AssetSource == helmAssetSourceWorkspace {

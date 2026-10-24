@@ -459,7 +459,8 @@ func (c *doagentToolTraceCollector) requireCompletedToolEvidence() error {
 		trace.expectedMutationAuthorityDigest = c.expectedMutationAuthorityDigest
 		if trace.terminalMutationReason() == "tool_result_failed" {
 			c.mu.Unlock()
-			return fmt.Errorf("doagent_apply_tool_failed")
+			return fmt.Errorf("doagent_apply_tool_failed: %s: %s",
+				modelVisibleDoagentToolName(trace.ToolName), trace.failedResultText())
 		}
 	}
 	c.mu.Unlock()
@@ -841,4 +842,25 @@ func decodeDoagentJSONValue(data []byte) (interface{}, error) {
 func stringField(object map[string]interface{}, field string) string {
 	value, _ := object[field].(string)
 	return value
+}
+
+// failedResultText is the tool's own error, so a failed apply names the cause
+// instead of only "tool failed". It is redacted and capped like other reasons.
+func (trace doagentToolTrace) failedResultText() string {
+	result, err := trace.verifiedResult()
+	if err != nil {
+		return "tool error text unavailable"
+	}
+	content, _ := result["content"].([]interface{})
+	for _, item := range content {
+		part, _ := item.(map[string]interface{})
+		if text, _ := part["text"].(string); strings.TrimSpace(text) != "" {
+			text = redactSecretText(strings.TrimSpace(text))
+			if len([]rune(text)) > 400 {
+				text = string([]rune(text)[:400]) + "..."
+			}
+			return text
+		}
+	}
+	return "tool returned no error text"
 }
