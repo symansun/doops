@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -526,7 +527,7 @@ spec:
       containers:
         - image: registry.example/sync:release
 `)
-	if _, err := validateHelmRenderedImages(nonHook, ""); err == nil || !strings.Contains(err.Error(), "no supported workload") {
+	if _, err := validateHelmRenderedImages(nonHook, ""); err == nil || !errors.Is(err, errHelmNoWorkload) {
 		t.Fatalf("ordinary Job was accepted as a release workload: %v", err)
 	}
 }
@@ -709,7 +710,7 @@ touch "${MUTATION_MARKER}"
 		t.Fatalf("build helm command: %v", err)
 	}
 	_, err = runHelmCommand(context.Background(), command, func(notificationEvent) {})
-	if err == nil || err.Error() != "helm_preflight_failed" {
+	if err == nil || err.Error() != "helm_preflight_failed: cannot overwrite table with non table" {
 		t.Fatalf("preflight failure not returned: %v", err)
 	}
 	if _, err := os.Stat(mutationMarker); !os.IsNotExist(err) {
@@ -739,7 +740,7 @@ touch "${MUTATION_MARKER}"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runHelmCommand(t.Context(), command, nil); err == nil || !strings.HasPrefix(err.Error(), "helm_preflight_image_mismatch") {
+	if _, err := runHelmCommand(t.Context(), command, nil); err == nil || !strings.HasPrefix(err.Error(), "helm_image_mismatch: ") {
 		t.Fatalf("wrong rendered image did not fail preflight: %v", err)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {

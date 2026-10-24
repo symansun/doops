@@ -144,7 +144,7 @@ JSON
 	if !strings.Contains(secondResult.verification, "final Helm workload spec verified") {
 		t.Fatalf("current session verification missing: %q", secondResult.verification)
 	}
-	if firstResult.err == nil || firstResult.err.Error() != "helm_verification_failed" {
+	if firstResult.err == nil || !strings.HasPrefix(firstResult.err.Error(), "helm_verification_failed: ") {
 		t.Fatalf("superseded session was reported as successful: verification=%q err=%v", firstResult.verification, firstResult.err)
 	}
 

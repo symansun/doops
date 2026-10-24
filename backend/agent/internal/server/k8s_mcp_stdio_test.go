@@ -244,7 +244,7 @@ exit 9
 	}
 	content, _ := result["content"].([]interface{})
 	text := content[0].(map[string]interface{})["text"].(string)
-	if text != "helm_mutation_failed" {
+	if !strings.HasPrefix(text, "helm_mutation_failed: ") {
 		t.Fatalf("unexpected stable execution error: %q", text)
 	}
 	if strings.Contains(output.String(), "stdio-helm-canary") {
