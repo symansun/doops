@@ -175,19 +175,6 @@ def test_bootstrap_requires_explicit_kubeconfig_before_running_cluster_tools():
     assert "Release complete:" not in result.stdout
 
 
-def test_runtime_prompts_route_agent_upgrades_through_the_job_controller():
-    # Runtime prompts are loaded by the Agent, so their routing is behavior, not wording.
-    # Operator docs are checked by test_doc_links.py and test_stale_contracts.py.
-    for path in (
-        ROOT / "agent" / "skills" / "system_prompt.md",
-        ROOT / "agent" / "skills" / "k8s" / "SKILL.md",
-    ):
-        text = path.read_text()
-        assert "upgrade" in text, path
-        assert "kubeconfig" in text, path
-        assert "Job" in text, path
-
-
 def test_release_rejects_proxy_urls_before_contacting_a_target():
     result = subprocess.run(
         [

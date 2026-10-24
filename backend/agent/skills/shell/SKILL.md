@@ -1,35 +1,21 @@
 ---
 name: shell
-description: 结构化工具未覆盖时的受约束 Shell 操作知识
+description: 结构化工具没覆盖的操作用 shell 完成
 triggers:
   keywords: []
 phase: [analyze]
 priority: 5
-max_tokens: 600
+max_tokens: 400
 requires: []
 conflicts: []
 ---
 
-Shell 只用于结构化工具没有覆盖的文件、进程和只读诊断操作。不得把完整自然语言
-任务翻译成待执行脚本，也不得生成固定发布阶段或替代 doagent 的规划与工具调用。
+结构化工具（K8s/Helm 读取、Helm 发布、DoWeb、DoSql）没覆盖的事用 shell：文件、进程、
+网络探测、包管理、镜像工具（`buildctl`、`skopeo`）等。
 
-【命令生成规范】
-1. **可靠性优先**：在关键命令前加 `set -euo pipefail`，确保一条失败即停止。
-2. **幂等性**：使用目标系统已有的幂等接口，不用删除重建掩盖状态问题。
-3. **可见性**：在关键步骤前加 `echo ">>> Step N: 描述"` 以便追踪进度。
-4. **超时保护**：长命令应使用 `timeout` 包裹。
-5. **清理**：临时文件放在 `/tmp/doops-*`，脚本结束时自动清理。
-
-【环境感知】
-- 操作系统：Ubuntu/Debian 或 Alpine
-- 包管理器：`apt-get` 或 `apk`
-- 发布镜像由 CNB CI 构建；目标存在 BuildKit 不代表可以在业务 target 上替代 CI 构建。
-- 私有仓库认证只用已绑定该 target 的受管凭据，不得假设 Agent 已预写凭据或改用本地登录态。
-- Go 代理：`GOPROXY=https://proxy.golang.org,direct`（不使用 goproxy.cn，它会限流）
-- Kubernetes 发布 mutation 必须使用 `mcp_doops_helm`；shell 中禁止 `kubectl apply`、
-  `patch`、`set image`、`rollout restart`、`scale`、`delete`、`annotate`、`label` 或 `edit`
-
-【敏感信息处理】
-- 如果需要 sudo，使用 `sudo` 前缀而非手动 echo 密码
-- 密码和 token 通过环境变量传递，永不硬编码
-- 不要在命令输出中泄露任何凭据
+- 系统是 Ubuntu/Debian 或 Alpine，包管理器 `apt-get` 或 `apk`。
+- 长命令加 `timeout`；关键步骤失败就停（`set -eu`）。
+- 临时文件放 `/tmp/doops-*`。
+- 凭据从环境变量或已绑定的受管凭据文件读取，不要打印出来。
+- Go 代理用 `GOPROXY=https://proxy.golang.org,direct`。
+- 在 `ask --apply` 里，K8s/Helm 变更用 `mcp_doops_helm`；shell 里的 kubectl/helm 变更不算发布证据。

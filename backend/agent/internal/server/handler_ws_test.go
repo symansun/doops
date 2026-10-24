@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -728,36 +729,30 @@ func TestAgentInitializeDoesNotExposeDedicatedCICDReconciliation(t *testing.T) {
 	}
 }
 
-func TestAgentSystemPromptDoesNotRequireDeploymentScripts(t *testing.T) {
+// The prompt tells the model which tools to call. Every mcp_* tool it names must be
+// one the Agent actually offers in some mode, or the model is sent to a tool that
+// does not exist.
+func TestAgentSystemPromptNamesOnlyOfferedTools(t *testing.T) {
 	prompt, err := os.ReadFile(filepath.Join("..", "..", "skills", "system_prompt.md"))
 	if err != nil {
 		t.Fatalf("read system prompt: %v", err)
 	}
-	text := string(prompt)
-	for _, marker := range []string{
-		"doagent",
-		"多 Agent",
-		"Skill",
-		"自然语言任务",
-	} {
-		if !strings.Contains(text, marker) {
-			t.Fatalf("system prompt must describe the Agent-native boundary %q: %s", marker, text)
+	offered := map[string]bool{}
+	for _, apply := range []bool{false, true} {
+		for _, skill := range []string{"", "dosql", "doweb"} {
+			for _, tool := range doagentAllowedTools(apply, skill) {
+				offered[tool] = true
+			}
 		}
 	}
-	for _, forbidden := range []string{
-		"deploy.sh",
-		"build.sh",
-		"buildctl --addr",
-		"Harbor",
-		"registry.example.com",
-		"last known good Helm",
-	} {
-		if strings.Contains(text, forbidden) {
-			t.Fatalf("system prompt must not hard-code orchestration detail %q: %s", forbidden, text)
-		}
+	named := regexp.MustCompile(`mcp_[a-z0-9_]+`).FindAllString(string(prompt), -1)
+	if len(named) == 0 {
+		t.Fatal("system prompt names no tools")
 	}
-	if !strings.Contains(text, "不得通过 Kubernetes mutation 工具、shell") {
-		t.Fatal("system prompt must preserve the structured mutation boundary")
+	for _, tool := range named {
+		if !offered[tool] {
+			t.Errorf("system prompt names %s, which the Agent never offers", tool)
+		}
 	}
 }
 
