@@ -131,7 +131,9 @@ mutation 不构成发布成功证据。
 Deployment、StatefulSet、DaemonSet、CronJob，以及带 `pre-install` 或 `pre-upgrade` 的
 hook Job；镜像包括 initContainers。Deployment/StatefulSet/DaemonSet 必须满足
 generation 已观察、spec 镜像与渲染一致且副本全部就绪；hook Job 必须 `succeeded=1`、
-`active=0`、`failed=0`；CronJob 只校验镜像。普通 Job 不被当作发布工作负载。
+`active=0`、`failed=0`；带 `helm.sh/hook-delete-policy: hook-succeeded` 的 hook Job 成功后
+会被 Helm 删除，读到 NotFound 即视为已成功（Helm 只在 hook 成功后才继续）；CronJob 只校验镜像。
+普通 Job 不被当作发布工作负载。
 工作负载渲染了 `metadata.namespace` 时，按该 namespace 读取线上对象；未写则用 release namespace。
 
 `upgrade-install` 分三步：preflight（server dry-run 渲染并检查）→ mutate（真实 Helm）→

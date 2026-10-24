@@ -217,6 +217,10 @@ type renderedHelmWorkload struct {
 	Name string
 	// Namespace is the rendered metadata.namespace; empty means the release namespace.
 	Namespace string
+	// DeletedOnSuccess marks a hook Job Helm deletes once it succeeds
+	// (helm.sh/hook-delete-policy: hook-succeeded). Helm only proceeds past a
+	// successful hook, so a missing object is the success evidence.
+	DeletedOnSuccess bool
 	// Containers lists init containers first, then containers, in spec order.
 	Containers []string
 }
@@ -350,9 +354,21 @@ func parseRenderedHelmWorkloads(manifest []byte) ([]renderedHelmWorkload, error)
 				return nil, fmt.Errorf("%w: %s has a container without an image", errHelmManifestInvalid, key)
 			}
 		}
-		workloads = append(workloads, renderedHelmWorkload{Kind: kind, Name: name, Namespace: namespace, Containers: images})
+		workloads = append(workloads, renderedHelmWorkload{
+			Kind: kind, Name: name, Namespace: namespace, Containers: images,
+			DeletedOnSuccess: kind == "Job" && hasHelmDeletePolicy(document.Metadata.Annotations, "hook-succeeded"),
+		})
 	}
 	return workloads, nil
+}
+
+func hasHelmDeletePolicy(annotations map[string]string, policy string) bool {
+	for _, value := range strings.Split(annotations["helm.sh/hook-delete-policy"], ",") {
+		if strings.TrimSpace(value) == policy {
+			return true
+		}
+	}
+	return false
 }
 
 func isHelmUpgradeHook(annotations map[string]string) bool {
@@ -472,6 +488,10 @@ func verifyLiveWorkload(ctx context.Context, command helmCommand, expected rende
 	getCmd.Dir = command.cwd
 	liveBytes, err := getCmd.Output()
 	if err != nil {
+		var exitErr *exec.ExitError
+		if expected.DeletedOnSuccess && errors.As(err, &exitErr) && strings.Contains(string(exitErr.Stderr), "NotFound") {
+			return nil
+		}
 		return fmt.Errorf("read final %s: %w", ref, err)
 	}
 	var live liveHelmWorkload
