@@ -215,6 +215,8 @@ var helmWorkloadKinds = map[string]string{
 type renderedHelmWorkload struct {
 	Kind string
 	Name string
+	// Namespace is the rendered metadata.namespace; empty means the release namespace.
+	Namespace string
 	// Containers lists init containers first, then containers, in spec order.
 	Containers []string
 }
@@ -307,6 +309,7 @@ func parseRenderedHelmWorkloads(manifest []byte) ([]renderedHelmWorkload, error)
 			Kind     string `yaml:"kind"`
 			Metadata struct {
 				Name        string            `yaml:"name"`
+				Namespace   string            `yaml:"namespace"`
 				Annotations map[string]string `yaml:"annotations"`
 			} `yaml:"metadata"`
 			Spec helmWorkloadSpec `yaml:"spec"`
@@ -329,7 +332,11 @@ func parseRenderedHelmWorkloads(manifest []byte) ([]renderedHelmWorkload, error)
 		if name == "" {
 			return nil, fmt.Errorf("%w: %s without metadata.name", errHelmManifestInvalid, kind)
 		}
+		namespace := strings.TrimSpace(document.Metadata.Namespace)
 		key := kind + "/" + name
+		if namespace != "" {
+			key = kind + "/" + namespace + "/" + name
+		}
 		if _, exists := seen[key]; exists {
 			return nil, fmt.Errorf("%w: duplicate %s", errHelmManifestInvalid, key)
 		}
@@ -343,7 +350,7 @@ func parseRenderedHelmWorkloads(manifest []byte) ([]renderedHelmWorkload, error)
 				return nil, fmt.Errorf("%w: %s has a container without an image", errHelmManifestInvalid, key)
 			}
 		}
-		workloads = append(workloads, renderedHelmWorkload{Kind: kind, Name: name, Containers: images})
+		workloads = append(workloads, renderedHelmWorkload{Kind: kind, Name: name, Namespace: namespace, Containers: images})
 	}
 	return workloads, nil
 }
@@ -454,9 +461,14 @@ func readReleaseWorkloads(ctx context.Context, command helmCommand) ([]renderedH
 }
 
 func verifyLiveWorkload(ctx context.Context, command helmCommand, expected renderedHelmWorkload) error {
-	ref := fmt.Sprintf("%s %s/%s", expected.Kind, command.namespace, expected.Name)
+	// A chart may place a workload outside the release namespace.
+	namespace := expected.Namespace
+	if namespace == "" {
+		namespace = command.namespace
+	}
+	ref := fmt.Sprintf("%s %s/%s", expected.Kind, namespace, expected.Name)
 	getCmd := exec.CommandContext(ctx, "kubectl", "get", strings.ToLower(expected.Kind), expected.Name,
-		"--namespace", command.namespace, "--output", "json")
+		"--namespace", namespace, "--output", "json")
 	getCmd.Dir = command.cwd
 	liveBytes, err := getCmd.Output()
 	if err != nil {
