@@ -969,26 +969,68 @@ func TestSubscribeDoagentSSEDoesNotForwardMalformedRawData(t *testing.T) {
 	}
 }
 
-func TestSubscribeDoagentSSEReturnsErrorWhenStreamGoesIdle(t *testing.T) {
-	t.Setenv("DOOPS_DOAGENT_SSE_IDLE_TIMEOUT", "20ms")
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/events" {
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-		<-r.Context().Done()
-	}))
-	defer ts.Close()
+func TestSubscribeDoagentSSESilentStreamEndsOnlyOnTerminalSignal(t *testing.T) {
+	const silence = 100 * time.Millisecond
+	toolStart := `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"tool_call","toolCallId":"helm-1","toolName":"mcp_doops_helm","status":"in_progress"}}}` + "\n\n"
+	finished := `data: {"jsonrpc":"2.0","method":"session/update","params":{"update":{"sessionUpdate":"turn_finished","status":"completed","stopReason":"end_turn"}}}` + "\n\n"
 
-	err := subscribeDoagentSSE(t.Context(), ts.URL, "sse-idle", func(notificationEvent) {})
-	if err == nil {
-		t.Fatal("expected idle timeout error")
-	}
-	if !strings.Contains(err.Error(), "idle timeout") {
-		t.Fatalf("unexpected error: %v", err)
+	for _, test := range []struct {
+		name       string
+		deadline   time.Duration // caller deadline; 0 means none
+		closeAfter bool          // server drops the connection after the silence
+		finish     bool          // server sends turn_finished after the silence
+		wantErr    string        // empty means success
+		minElapsed time.Duration
+	}{
+		{name: "silent tool then turn finished succeeds", finish: true, minElapsed: silence},
+		{name: "silent tool then connection drop fails", closeAfter: true, wantErr: "ended before final", minElapsed: silence},
+		{name: "silent tool past caller deadline is canceled", deadline: silence / 2, wantErr: "context deadline exceeded"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/events" {
+					t.Errorf("unexpected path: %s", r.URL.Path)
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				flusher := w.(http.Flusher)
+				fmt.Fprint(w, toolStart)
+				flusher.Flush()
+				select {
+				case <-time.After(silence):
+				case <-r.Context().Done():
+					return
+				}
+				if test.finish {
+					fmt.Fprint(w, finished)
+					flusher.Flush()
+				}
+				if !test.closeAfter && !test.finish {
+					<-r.Context().Done()
+				}
+			}))
+			defer ts.Close()
+
+			ctx := t.Context()
+			if test.deadline > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, test.deadline)
+				defer cancel()
+			}
+			started := time.Now()
+			err := subscribeDoagentSSE(ctx, ts.URL, "sse-silent", func(notificationEvent) {})
+			elapsed := time.Since(started)
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatalf("subscribe: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error = %v, want containing %q", err, test.wantErr)
+			}
+			if elapsed < test.minElapsed {
+				t.Fatalf("returned after %s, before the %s silence ended", elapsed, test.minElapsed)
+			}
+		})
 	}
 }
 

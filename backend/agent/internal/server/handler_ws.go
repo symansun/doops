@@ -2396,36 +2396,10 @@ func subscribeDoagentSSEWithCollectorReady(
 		}
 		pendingAgentMessage.Reset()
 	}
+	// No idle timer: a running tool (Helm rollout wait, image pull, build) is
+	// silent by design. The stream ends on turn_finished, a read error when the
+	// connection drops, or the caller's execution deadline.
 	receivedEvent := false
-	idleTimeout := doagentSSEIdleTimeout()
-	idleTimer := time.NewTimer(idleTimeout)
-	idleDone := make(chan struct{})
-	var idleMu sync.Mutex
-	var idleErr error
-	defer func() {
-		close(idleDone)
-		idleTimer.Stop()
-	}()
-	resetIdle := func() {
-		if !idleTimer.Stop() {
-			select {
-			case <-idleTimer.C:
-			default:
-			}
-		}
-		idleTimer.Reset(idleTimeout)
-	}
-	go func() {
-		select {
-		case <-idleTimer.C:
-			err := fmt.Errorf("doagent SSE idle timeout after %s", idleTimeout)
-			idleMu.Lock()
-			idleErr = err
-			idleMu.Unlock()
-			cancel()
-		case <-idleDone:
-		}
-	}()
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -2445,7 +2419,6 @@ func subscribeDoagentSSEWithCollectorReady(
 			data := eventData.String()
 			eventData.Reset()
 			receivedEvent = true
-			resetIdle()
 
 			// doagent SSE 使用 JSON-RPC 2.0 通知格式：{"jsonrpc":"2.0","method":"...","params":{...}}
 			update, err := decodeDoagentJSONObject(data)
@@ -2585,19 +2558,7 @@ func subscribeDoagentSSEWithCollectorReady(
 	}
 
 	if err := scanner.Err(); err != nil {
-		idleMu.Lock()
-		timeoutErr := idleErr
-		idleMu.Unlock()
-		if timeoutErr != nil && errors.Is(err, context.Canceled) {
-			return timeoutErr
-		}
 		return fmt.Errorf("SSE read: %w", err)
-	}
-	idleMu.Lock()
-	timeoutErr := idleErr
-	idleMu.Unlock()
-	if timeoutErr != nil {
-		return timeoutErr
 	}
 	if receivedEvent {
 		return fmt.Errorf("doagent SSE ended before final event")
@@ -2625,23 +2586,6 @@ func doagentTurnFinishedError(update map[string]interface{}) error {
 		return fmt.Errorf("doagent turn %s", status)
 	}
 	return fmt.Errorf("doagent turn %s: %s", status, stopReason)
-}
-
-func doagentSSEIdleTimeout() time.Duration {
-	raw := strings.TrimSpace(os.Getenv("DOOPS_DOAGENT_SSE_IDLE_TIMEOUT"))
-	if raw != "" {
-		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
-			return d
-		}
-	}
-	// Idle = no SSE event from the agent-core for this long. The timer resets on
-	// every streamed event, so this only fires during a genuine silent gap.
-	// Agent-driven work (a reasoning step plus a long tool call: build, image
-	// pull, kubectl wait) routinely stays silent well beyond 30s, so a short
-	// default aborts healthy long-running stages (notably agent-driven CI/CD).
-	// Default to a generous 5m; set DOOPS_DOAGENT_SSE_IDLE_TIMEOUT higher for
-	// heavy build stages, or lower for snappy hang-detection in interactive use.
-	return 5 * time.Minute
 }
 
 // sanitizeSecretText redacts and keeps only the last 1200 characters, which is
