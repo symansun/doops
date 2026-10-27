@@ -160,6 +160,9 @@ type AgentPromptParams struct {
 	SQLVerification string `json:"sql_verification,omitempty"`
 	SQLDatabase     string `json:"sql_database,omitempty"`
 	SQLDryRun       bool   `json:"sql_dry_run,omitempty"`
+	// SQLCredential names one database credential bound to the target (resource
+	// name or credential ID). The Gateway then binds only that credential.
+	SQLCredential string `json:"sql_credential,omitempty"`
 	// SQLCopyFrom names the source database; SQLDatabase is the destination.
 	// The Agent copies SQLCopyTables between the two bound databases itself.
 	SQLCopyFrom   string   `json:"sql_copy_from,omitempty"`

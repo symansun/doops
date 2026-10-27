@@ -189,6 +189,10 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 				}
 			} else if rpcErr, ok := msg.Parsed["error"]; ok && rpcErr != nil {
 				if tool == "doops_credential_import" {
+					// An Agent without the tool answers -32601; say so instead of a generic failure.
+					if detail, ok := rpcErr.(map[string]interface{}); ok && fmt.Sprint(detail["code"]) == "-32601" {
+						return errors.New("credential_import_agent_unsupported")
+					}
 					return errors.New("credential_import_failed")
 				}
 				return fmt.Errorf("%v", rpcErr)

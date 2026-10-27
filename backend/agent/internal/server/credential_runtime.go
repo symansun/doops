@@ -159,6 +159,7 @@ func (h *GatewayHub) resolveExplicitCredentials(
 	action GatewayAction,
 	skill string,
 	credentialMode string,
+	sqlCredential string,
 ) ([]authorizedCredentialMaterialization, error) {
 	autoDatabase := skill == "dosql" && strings.TrimSpace(credentialMode) == "auto"
 	if len(names) == 0 && !autoDatabase {
@@ -170,15 +171,28 @@ func (h *GatewayHub) resolveExplicitCredentials(
 	if credentialScalarContainsInlineMaterial(instruction) {
 		return nil, ErrInlineCredentialMaterial
 	}
-	// DoSql has no caller-selected credentials: the Gateway binds every database
-	// credential on the target by stable ID, so same-named resources owned by
-	// different users cannot make the selection ambiguous.
+	// DoSql binds the target's database credentials by stable ID, so same-named
+	// resources owned by different users cannot make the selection ambiguous.
+	// A named selection (doops sql --credential) narrows that set to one
+	// credential, e.g. a migration account beside the application account.
 	if autoDatabase {
 		entries, err := h.store.ListCredentialAccess(auth.UserID, cluster, instance)
 		if err != nil {
 			return nil, err
 		}
-		names = databaseCredentialIDs(entries)
+		if selected := strings.TrimSpace(sqlCredential); selected != "" {
+			names = databaseCredentialIDs(credentialEntriesNamed(entries, selected))
+			switch len(names) {
+			case 0:
+				return nil, ErrDoSQLCredentialNotBound
+			case 1:
+			default:
+				// Two owners use the same name; the credential ID tells them apart.
+				return nil, ErrCredentialAmbiguous
+			}
+		} else {
+			names = databaseCredentialIDs(entries)
+		}
 		if len(names) == 0 {
 			// Discovery only lists promoted credentials; report an unpromoted
 			// database binding as a lifecycle gap, not a missing binding.
@@ -265,6 +279,17 @@ func databaseCredentialIDs(entries []CredentialListEntry) []string {
 		}
 	}
 	return ids
+}
+
+// credentialEntriesNamed keeps the entries whose resource name or ID is reference.
+func credentialEntriesNamed(entries []CredentialListEntry, reference string) []CredentialListEntry {
+	var matches []CredentialListEntry
+	for _, entry := range entries {
+		if entry.ID == reference || entry.Name == reference {
+			matches = append(matches, entry)
+		}
+	}
+	return matches
 }
 
 func isCredentialResourceIDReference(value string) bool {

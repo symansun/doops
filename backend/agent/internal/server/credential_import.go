@@ -196,7 +196,7 @@ func (h *GatewayHub) handleCredentialSecretImport(w http.ResponseWriter, r *http
 	result, err := h.RunInternalToolCall(contextWithInternalAuditAuth(r.Context(), auth),
 		req.Cluster, req.Instance, "doops_credential_import", args)
 	if err != nil {
-		fail("credential_import_failed", http.StatusBadGateway)
+		fail(credentialImportFailure(err))
 		return
 	}
 	var imported credentialSecretImportResult
@@ -236,6 +236,35 @@ func (h *GatewayHub) handleCredentialSecretImport(w http.ResponseWriter, r *http
 		return
 	}
 	writeJSONHTTP(w, version)
+}
+
+// credentialImportFailure turns an internal import call error into a stable
+// category and status, so the caller learns why the import did not run instead
+// of a bare 502. Categories carry no Secret values or Agent output.
+func credentialImportFailure(err error) (string, int) {
+	message := strings.ToLower(err.Error())
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "operation_canceled", http.StatusConflict
+	case errors.Is(err, context.DeadlineExceeded), strings.Contains(message, "operation timed out"):
+		return "credential_import_timeout", http.StatusGatewayTimeout
+	case errors.Is(err, errGatewayAgentDisconnected), strings.HasPrefix(message, "target offline"):
+		return "target_offline", http.StatusServiceUnavailable
+	case strings.HasPrefix(message, "target queue full"):
+		return "target_queue_full", http.StatusConflict
+	case strings.HasPrefix(message, "target queue timeout"):
+		return "target_queue_timeout", http.StatusConflict
+	case strings.HasPrefix(message, "target busy"):
+		return "target_busy", http.StatusConflict
+	case strings.HasPrefix(message, "execution_audit"):
+		return "credential_audit_unavailable", http.StatusInternalServerError
+	}
+	// Agent-side refusals (credential_import_key_missing, ..._source_unavailable)
+	// already arrive as a stable category.
+	if category := sanitizeCredentialCategory(err.Error()); category != "credential_operation_failed" {
+		return category, http.StatusBadGateway
+	}
+	return "credential_import_failed", http.StatusBadGateway
 }
 
 func credentialImportOutputKeys(req credentialSecretImportRequest) []string {

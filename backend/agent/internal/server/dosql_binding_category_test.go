@@ -51,7 +51,7 @@ func TestDoSQLAutoDiscoveryReportsWhyNoDatabaseBindingIsUsable(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			_, err = f.hub.resolveExplicitCredentials(auth, "dev", "local", "SELECT 1", nil, ActionAsk, "dosql", "auto")
+			_, err = f.hub.resolveExplicitCredentials(auth, "dev", "local", "SELECT 1", nil, ActionAsk, "dosql", "auto", "")
 
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("resolve error = %v, want %v", err, tt.wantErr)

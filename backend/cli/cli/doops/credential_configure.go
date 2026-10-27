@@ -183,6 +183,9 @@ Flags:
 		if requestErr != nil {
 			var httpErr *gatewayHTTPError
 			if errors.As(requestErr, &httpErr) {
+				if category := stableCredentialCategory(httpErr.Message); category != "" {
+					return fmt.Errorf("credential configure %s %s failed: %s: %s", method, endpoint, httpErr.Status, category)
+				}
 				return fmt.Errorf("credential configure %s %s failed: %s", method, endpoint, httpErr.Status)
 			}
 			return fmt.Errorf("credential configure %s %s failed: request unavailable", method, endpoint)
@@ -466,6 +469,22 @@ func configureCredentialScopeKey(scope credentialGrantScope) string {
 	scope.RequiredKeys = nil
 	data, _ := json.Marshal(scope)
 	return string(data)
+}
+
+// stableCredentialCategory returns message only when it is a Gateway error
+// category (lowercase letters, digits, underscores). Anything else may carry
+// response text, so it is dropped rather than echoed.
+func stableCredentialCategory(message string) string {
+	message = strings.TrimSpace(message)
+	if message == "" || len(message) > 128 {
+		return ""
+	}
+	for _, char := range message {
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '_' {
+			return ""
+		}
+	}
+	return message
 }
 
 // The Agent decides which engines it can open (built in or an installed external

@@ -72,3 +72,37 @@ func TestSQLCopyFromRejectsInvalidCombinationsBeforeAnyRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestSQLCredentialRejectsUnsupportedCombinationsBeforeAnyRequest(t *testing.T) {
+	for name, args := range map[string][]string{
+		"with copy-from": {"--target", "t", "--mode", "apply", "--credential", "migrate", "--copy-from", "a", "--database", "b", "--tables", "x"},
+		"with request":   {"--target", "t", "--mode", "query", "--credential", "migrate", "--request", "list tables"},
+		"plan request":   {"--target", "t", "--mode", "plan", "--credential", "migrate", "--request", "add a column"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := runSQLCommand(args, "s", nil, nil, nil, false)
+			if err == nil || !strings.Contains(err.Error(), "--credential") {
+				t.Fatalf("expected a --credential validation error, got %v", err)
+			}
+		})
+	}
+}
+
+func TestStableCredentialCategoryDropsResponseText(t *testing.T) {
+	for _, tt := range []struct {
+		message string
+		want    string
+	}{
+		{"target_offline", "target_offline"},
+		{" credential_import_key_missing\n", "credential_import_key_missing"},
+		{"", ""},
+		{"404 page not found", ""},
+		{`{"message":"synthetic-canary"}`, ""},
+		{"Target_Busy", ""},
+		{strings.Repeat("a", 129), ""},
+	} {
+		if got := stableCredentialCategory(tt.message); got != tt.want {
+			t.Fatalf("stableCredentialCategory(%q) = %q, want %q", tt.message, got, tt.want)
+		}
+	}
+}

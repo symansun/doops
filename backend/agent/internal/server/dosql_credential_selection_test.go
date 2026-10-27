@@ -22,7 +22,7 @@ func TestDoSQLAutoBindsEveryTargetDatabaseCredentialByID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	authorized, err := f.hub.resolveExplicitCredentials(auth, "dev", "local", "SELECT 1", nil, ActionAsk, "dosql", "auto")
+	authorized, err := f.hub.resolveExplicitCredentials(auth, "dev", "local", "SELECT 1", nil, ActionAsk, "dosql", "auto", "")
 	if err != nil {
 		t.Fatalf("resolve credentials: %v", err)
 	}
