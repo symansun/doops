@@ -45,18 +45,24 @@ func TestAgentEntrypointDisablesSSHDAndWebIDEByDefault(t *testing.T) {
 	}
 }
 
-func TestAgentEntrypointsMaterializeSettingsIntoFixedDoagentPath(t *testing.T) {
+func TestAgentEntrypointsWriteBaseSettingsWithoutMountedModel(t *testing.T) {
 	for _, path := range []string{"agent-entrypoint.sh", "sandbox-entrypoint.sh"} {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
 		}
 		script := string(data)
-		if !strings.Contains(script, "/opt/doagent_config/settings.json") {
-			t.Fatalf("%s must materialize from the mounted settings Secret", path)
+		// The model provider arrives from the Gateway; the entrypoint only writes
+		// doagent's fixed settings file with the runtime MCP servers.
+		if !strings.Contains(script, "/app/doops-agent doagent-settings") {
+			t.Fatalf("%s must write doagent base settings through doops-agent", path)
 		}
-		if !strings.Contains(script, "=/root/.agent/settings.json") {
-			t.Fatalf("%s must write doagent's fixed settings path", path)
+		for _, forbidden := range []string{
+			"/opt/doagent_config", "configure_doagent_settings.py", "DO_AGENT_MODEL_ROUTING_POLICY",
+		} {
+			if strings.Contains(script, forbidden) {
+				t.Fatalf("%s must not depend on a mounted model settings file (%s)", path, forbidden)
+			}
 		}
 		// doagent no longer reads any environment variable for its settings path.
 		if strings.Contains(script, "DO_AGENT_SETTINGS") {

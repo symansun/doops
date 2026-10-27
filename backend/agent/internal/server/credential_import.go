@@ -23,7 +23,12 @@ type credentialSecretImportRequest struct {
 	KeyMap        map[string]string `json:"key_map,omitempty"`
 	ConnectionURI string            `json:"connection_uri,omitempty"`
 	PasswordKey   string            `json:"password_key,omitempty"`
+	// Format "doagent_settings" reads one key holding a doagent settings.json
+	// and keeps only the fields a modelProvider credential owns.
+	Format string `json:"format,omitempty"`
 }
+
+const credentialImportFormatDoagentSettings = "doagent_settings"
 
 type credentialSecretImportResult struct {
 	Payload         json.RawMessage `json:"payload"`
@@ -62,6 +67,16 @@ func validateCredentialSecretImport(req credentialSecretImportRequest) error {
 	}
 	if req.ConnectionURI != "" && len(req.KeyMap) != 0 {
 		return errors.New("credential_import_key_map_invalid")
+	}
+	switch req.Format {
+	case "":
+	case credentialImportFormatDoagentSettings:
+		if len(req.Keys) != 1 || len(req.KeyMap) != 0 || req.ConnectionURI != "" || req.PasswordKey != "" {
+			return errors.New("credential_import_format_invalid")
+		}
+		return nil
+	default:
+		return errors.New("credential_import_format_invalid")
 	}
 	if req.ConnectionURI == "" && req.PasswordKey == "" {
 		return nil
@@ -121,7 +136,12 @@ func handleCredentialSecretImportTool(ctx context.Context, raw json.RawMessage) 
 		clear(data)
 		data["connection_uri"] = u.String()
 	}
-	payload, err := json.Marshal(map[string]any{"data": data})
+	var payload []byte
+	if req.Format == credentialImportFormatDoagentSettings {
+		payload, err = modelProviderPayloadFromSettings([]byte(data[req.Keys[0]]))
+	} else {
+		payload, err = json.Marshal(map[string]any{"data": data})
+	}
 	if err != nil || len(payload) > 1<<20 {
 		return "", ErrCredentialPayloadInvalid
 	}
@@ -146,7 +166,7 @@ func (h *GatewayHub) handleCredentialSecretImport(w http.ResponseWriter, r *http
 		http.Error(w, "credential_import_request_invalid", http.StatusBadRequest)
 		return
 	}
-	if resource.Type != CredentialTypeOpaque {
+	if !credentialImportFormatMatchesType(req.Format, resource.Type) {
 		http.Error(w, "credential_import_type_invalid", http.StatusBadRequest)
 		return
 	}
@@ -210,18 +230,20 @@ func (h *GatewayHub) handleCredentialSecretImport(w http.ResponseWriter, r *http
 		return
 	}
 	defer clear(imported.Payload)
-	var payload struct {
-		Data map[string]string `json:"data"`
-	}
-	_ = json.Unmarshal(imported.Payload, &payload)
-	defer clear(payload.Data)
-	expectedKeys := credentialImportOutputKeys(req)
-	if req.ConnectionURI != "" {
-		expectedKeys = []string{"connection_uri"}
-	}
-	if !sameCredentialKeys(expectedKeys, mapKeys(payload.Data)) {
-		fail("credential_import_keys_invalid", http.StatusBadGateway)
-		return
+	if resource.Type == CredentialTypeOpaque {
+		var payload struct {
+			Data map[string]string `json:"data"`
+		}
+		_ = json.Unmarshal(imported.Payload, &payload)
+		defer clear(payload.Data)
+		expectedKeys := credentialImportOutputKeys(req)
+		if req.ConnectionURI != "" {
+			expectedKeys = []string{"connection_uri"}
+		}
+		if !sameCredentialKeys(expectedKeys, mapKeys(payload.Data)) {
+			fail("credential_import_keys_invalid", http.StatusBadGateway)
+			return
+		}
 	}
 	if h.store.validateUserTokenAuth(auth) != nil || !h.canRotateCredential(auth.UserID, resource) ||
 		!h.store.UserCanUseTarget(auth.UserID, req.Cluster, req.Instance) {

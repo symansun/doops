@@ -12,7 +12,7 @@ Agent 镜像升级当作同一件事。下列脚本命令均从仓库 `backend/`
 | 当前状态 | 使用入口 | 前提 |
 | :--- | :--- | :--- |
 | 只安装客户端和 Skill | `bash scripts/install.sh --version <tag> --project <项目绝对路径>` | 不部署 Agent；不修改线上 Helm |
-| 空 Ubuntu/Debian 服务器首次 Docker 接入 | `bash scripts/bootstrap-host-agent.sh ...` | root、模型 settings 文件、唯一 cluster/instance、指定发布版本 |
+| 空 Ubuntu/Debian 服务器首次 Docker 接入 | `bash scripts/bootstrap-host-agent.sh ...` | root、唯一 cluster/instance、指定发布版本；模型由 Gateway 下发 |
 | 已有标准 Helm Agent，命令通道和升级控制器可用 | `doops -session <s> upgrade --target <t> --image <已核验镜像>` | 操作员已登录 Gateway；Agent 挂载共享 kubeconfig |
 | 旧 Helm Agent 或命令通道损坏，需要外部恢复 | `bash scripts/release-managed-agent.sh ...` | 操作机 kubeconfig、Helm、kubectl、python3，以及可查询目标的 Gateway 登录 |
 | K8S Agent 离线、镜像拉取失败或收编中断，需清理重装 | `python3 scripts/reinstall-k8s-agent.py plan\|run --cluster <c> --instance <i>` | 能访问该集群的 kubectl、helm、python3；流程见 [BUILD_DEPLOY_SOP.md](BUILD_DEPLOY_SOP.md) |
@@ -116,18 +116,17 @@ Agent 自恢复可以通过 SSH 到该主机执行受控流程；日常业务仍
 sudo bash backend/scripts/bootstrap-host-agent.sh \
   --version v1.3.48 \
   --gateway https://doops.l8ai.cn \
-  --cluster doops-unicom --instance unicom-1 \
-  --settings /root/doagent-settings.json
+  --cluster doops-unicom --instance unicom-1
 ```
 
-`v1.3.48` 是明确示例版本，不表示动态最新版。settings 是私有 doagent 模型配置
-JSON（model、provider 等），格式见 `agent/agent-config.yaml` 中的 `settings.json`，
-不要把 YAML Secret 整份传入，不要使用占位密钥。通过安全渠道放到服务器，不在聊天
-或命令参数中传密钥。现有镜像强制要求模型配置；缺失时脚本在安装 Docker 前停止。
+`v1.3.48` 是明确示例版本，不表示动态最新版。服务器上不放模型配置：Agent 连上
+Gateway 后，Gateway 把绑定到该 target 的 `modelProvider` 凭据下发给它，配置方式见
+[CREDENTIAL_RESOURCES.md](CREDENTIAL_RESOURCES.md#model-provider)。没有绑定时 Agent
+照常上线，只有 `ask` 会报“模型未配置”。
 
 脚本使用 Docker 官方 apt 仓库安装 Engine/Compose，已安装 Docker 时验证并复用；
 不卸载其它运行时、不迁移已有环境。拉取明确版本后锁定 registry digest，检查镜像
-内版本信息，将部署和私有配置写入 `/opt/doops-agent`，使用 Compose 启动。
+内版本信息，将 Compose 部署文件写入 `/opt/doops-agent`，使用 Compose 启动。
 容器使用标准镜像要求的 privileged 模式；不发布宿主端口，不挂载宿主 Docker socket。
 Agent 管理的是容器执行环境；此安装不会自动获得宿主文件系统或 Kubernetes 权限。
 

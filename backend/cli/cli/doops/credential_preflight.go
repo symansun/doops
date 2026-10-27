@@ -147,6 +147,8 @@ func credentialSupportsUse(credentialType, use string) bool {
 		return credentialType == "tls"
 	case "opaqueSecret", "database":
 		return credentialType == "opaque"
+	case "modelProvider":
+		return credentialType == "modelProvider"
 	default:
 		return false
 	}

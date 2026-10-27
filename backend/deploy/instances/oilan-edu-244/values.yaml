@@ -8,13 +8,6 @@ workload:
   selectorLabels:
     app: doops-agent-oilan
 
-modelRouting:
-  policy: single-model
-
-doagentSettings:
-  secretName: doagent-model-settings
-  key: settings.json
-
 imagePullSecrets: []
 
 gateway:
@@ -32,9 +25,6 @@ tolerations: []
 hostAliases: []
 
 volumeMounts:
-  - name: doagent-config
-    mountPath: /opt/doagent_config
-    readOnly: true
   - name: kubeconfig
     mountPath: /root/.kube/config
     subPath: config

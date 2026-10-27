@@ -339,9 +339,11 @@ grep -n 'baseURL\|model' /root/.agent/settings.json
 ```
 
 `/root/.agent/settings.json` 是 doagent 唯一读取的配置文件（不接受环境变量或命令行
-指定其他路径）。入口脚本每次启动都从挂载的 `/opt/doagent_config/settings.json`
-重新物化它，必须有非空 `provider.<id>.options.apiKey`；否则 doagent 会拒绝启动，
-`ask` 会失败。
+指定其他路径）。入口脚本启动时只写入运行时 MCP 和权限；模型和 provider 由 Gateway
+在 Agent 连接后通过该 target 的 `modelProvider` 凭据写入，见
+[CREDENTIAL_RESOURCES.md](CREDENTIAL_RESOURCES.md)。没有模型时 doagent 照常启动，
+`ask` 返回“模型未配置”；此时检查 `doops credential list --target <t>` 是否有已
+promote 的 `modelProvider` 绑定。
 
 ## Start Private Agent
 

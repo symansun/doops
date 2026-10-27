@@ -2,11 +2,11 @@
 """Bring an unmanaged doops-agent Deployment under the doops-agent Helm Chart.
 
   plan     preflight only; prints what run would do.
-  run      back up, copy settings to a Secret, mark for Helm, helm install,
-           verify the new Pod, and restore the backup on any failure.
+  run      back up, mark for Helm, helm install, verify the new Pod, and
+           restore the backup on any failure.
   restore  put the backed-up Deployment back and drop the Helm release record.
 
-Settings payloads travel only through kubectl stdin/stdout and are never printed.
+The adopted Agent receives its model provider from the Gateway; no settings are copied.
 """
 import argparse
 import json
@@ -20,7 +20,6 @@ import time
 CHART = "/app/deploy/helm/doops-agent"
 CONTAINER = "doops-agent"
 SETTINGS_MOUNT = "/opt/doagent_config"
-SETTINGS_KEY = "settings.json"
 DROPPED_MOUNTS = {SETTINGS_MOUNT, "/scripts", "/root/.kube", "/root/.kube/config"}
 VOLATILE = ("resourceVersion", "uid", "generation", "creationTimestamp", "managedFields", "selfLink")
 ADOPTED_LABEL = "doops.sh/adopted-by"
@@ -45,10 +44,6 @@ def kget(namespace, *args):
 
 def backup_name(workload):
     return f"doops-adopt-backup-{workload}"[:63]
-
-
-def secret_name(workload):
-    return f"{workload}-doagent-settings"[:63]
 
 
 def agent_container(deployment):
@@ -81,11 +76,12 @@ def preflight(namespace, workload, release, cluster, instance):
     owner = (deployment["metadata"].get("annotations") or {}).get("meta.helm.sh/release-name")
     if owner not in (None, release):
         raise AdoptError(f"deployment is owned by Helm release {owner}")
-    return deployment, validate_deployment(deployment, cluster, instance)
+    validate_deployment(deployment, cluster, instance)
+    return deployment
 
 
 def validate_deployment(deployment, cluster, instance):
-    """Check that a Deployment can be rendered by the Chart; returns its model settings volume."""
+    """Check that a Deployment can be rendered by the Chart."""
     spec = deployment["spec"]
     if int(spec.get("replicas", 1)) != 1:
         raise AdoptError("adoption requires exactly one replica")
@@ -99,40 +95,24 @@ def validate_deployment(deployment, cluster, instance):
     env = env_map(container)
     if env.get("DOOPS_GATEWAY_CLUSTER") != cluster or env.get("DOOPS_GATEWAY_INSTANCE") != instance:
         raise AdoptError("deployment Gateway identity does not match this Agent")
-    for key in ("DOOPS_GATEWAY_URL", "DO_AGENT_MODEL_ROUTING_POLICY"):
-        if not env.get(key):
-            raise AdoptError(f"deployment env {key} is required")
-    mount = next((m for m in container.get("volumeMounts") or [] if m.get("mountPath") == SETTINGS_MOUNT), None)
-    if not mount:
-        raise AdoptError(f"deployment does not mount model settings at {SETTINGS_MOUNT}")
-    volume = next((v for v in pod.get("volumes") or [] if v.get("name") == mount["name"]), None)
-    if not volume or not ("configMap" in volume or "secret" in volume):
-        raise AdoptError("model settings volume must be a ConfigMap or Secret")
-    return volume
+    if not env.get("DOOPS_GATEWAY_URL"):
+        raise AdoptError("deployment env DOOPS_GATEWAY_URL is required")
 
 
-def settings_source(volume):
-    if "configMap" in volume:
-        return "configmap", volume["configMap"]["name"]
-    return "secret", volume["secret"]["secretName"]
-
-
-def chart_values(deployment, settings_volume, workload, repository, digest):
+def chart_values(deployment, workload, repository, digest):
     spec = deployment["spec"]
     pod = spec["template"]["spec"]
     container = agent_container(deployment)
     env = env_map(container)
+    # A legacy model settings mount is dropped: the adopted Agent receives its
+    # model provider from the Gateway.
     dropped = {m["name"] for m in container.get("volumeMounts") or [] if m.get("mountPath") in DROPPED_MOUNTS}
-    dropped.update({settings_volume["name"], "doagent-config"})
+    dropped.add("doagent-config")
     mounts = [m for m in container.get("volumeMounts") or [] if m["name"] not in dropped]
     kept = {m["name"] for m in mounts}
-    # The Chart owns the doagent-config volume but not its mount; without it the Pod exits at start.
-    mounts.append({"name": "doagent-config", "mountPath": SETTINGS_MOUNT, "readOnly": True})
     return {
         "image": {"repository": repository, "digest": digest, "pullPolicy": "IfNotPresent"},
         "workload": {"name": workload, "selectorLabels": spec["selector"]["matchLabels"]},
-        "modelRouting": {"policy": env["DO_AGENT_MODEL_ROUTING_POLICY"]},
-        "doagentSettings": {"secretName": secret_name(workload), "key": SETTINGS_KEY},
         "imagePullSecrets": [{"name": s["name"]} for s in pod.get("imagePullSecrets") or []],
         "serviceAccount": {"name": service_account(pod)},
         "kubeconfig": {"source": "serviceAccount"},
@@ -159,8 +139,8 @@ def clean_object(obj):
     return obj
 
 
-def write_backup(namespace, workload, deployment, settings_kind, settings_name):
-    """Back up only non-secret objects; the source settings object is left untouched."""
+def write_backup(namespace, workload, deployment):
+    """Back up the Deployment; any legacy settings object is left untouched."""
     name = backup_name(workload)
     backup = {
         "apiVersion": "v1",
@@ -168,31 +148,10 @@ def write_backup(namespace, workload, deployment, settings_kind, settings_name):
         "metadata": {"name": name, "namespace": namespace, "labels": {ADOPTED_LABEL: "doops-upgrade"}},
         "data": {
             "deployment.json": json.dumps(clean_object(json.loads(json.dumps(deployment))), sort_keys=True),
-            "settings-source.json": json.dumps({"kind": settings_kind, "name": settings_name}),
         },
     }
     run(["kubectl", "-n", namespace, "apply", "-f", "-"], stdin=json.dumps(backup))
     return name
-
-
-def copy_settings_secret(namespace, workload, settings_kind, settings_name):
-    source = kget(namespace, settings_kind, settings_name)
-    data = source.get("data") or {}
-    if SETTINGS_KEY not in data:
-        raise AdoptError(f"{settings_kind}/{settings_name} has no {SETTINGS_KEY}")
-    secret = {
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "type": "Opaque",
-        "metadata": {"name": secret_name(workload), "namespace": namespace,
-                     "labels": {ADOPTED_LABEL: "doops-upgrade"}},
-    }
-    if settings_kind == "configmap":
-        secret["stringData"] = {SETTINGS_KEY: data[SETTINGS_KEY]}
-    else:
-        secret["data"] = {SETTINGS_KEY: data[SETTINGS_KEY]}
-    run(["kubectl", "-n", namespace, "apply", "-f", "-"], stdin=json.dumps(secret))
-    return secret["metadata"]["name"]
 
 
 def mark_for_helm(namespace, workload, release):
@@ -278,18 +237,15 @@ def restore(namespace, workload, release):
 
 def adopt(namespace, workload, release, cluster, instance, image, chart=CHART, plan_only=False, verifier=verify):
     repository, digest = parse_image(image)
-    deployment, volume = preflight(namespace, workload, release, cluster, instance)
-    values = chart_values(deployment, volume, workload, repository, digest)
-    kind, name = settings_source(volume)
+    deployment = preflight(namespace, workload, release, cluster, instance)
+    values = chart_values(deployment, workload, repository, digest)
     if plan_only:
         return {"phase": "plan", "release": release, "workload": workload, "image": image,
-                "serviceAccount": values["serviceAccount"]["name"], "settingsSource": f"{kind}/{name}",
-                "secret": secret_name(workload), "backup": backup_name(workload),
+                "serviceAccount": values["serviceAccount"]["name"], "backup": backup_name(workload),
                 "keptVolumes": [v["name"] for v in values["volumes"]]}
-    write_backup(namespace, workload, deployment, kind, name)
+    write_backup(namespace, workload, deployment)
     mutated = False
     try:
-        copy_settings_secret(namespace, workload, kind, name)
         mark_for_helm(namespace, workload, release)
         mutated = True
         helm_install(namespace, release, values, chart, dry_run=True)

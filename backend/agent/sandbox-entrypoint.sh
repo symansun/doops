@@ -201,18 +201,13 @@ configure_kubectl() {
 
 configure_doagent() {
     mkdir -p /root/.agent
-    # doagent reads only this fixed file; rewrite it from the mount on every start.
-    local settings_file=/root/.agent/settings.json
-    local source=/opt/doagent_config/settings.json
-    local policy="${DO_AGENT_MODEL_ROUTING_POLICY:-}"
-
-    if [ ! -f "${source}" ]; then
-        echo "❌ doagent config: mounted settings are required at ${source}"
+    # doagent reads only /root/.agent/settings.json. The model provider arrives
+    # from the Gateway after the Agent connects; no mounted settings are needed.
+    if ! /app/doops-agent doagent-settings; then
+        echo "❌ doagent config: could not write /root/.agent/settings.json" >&2
         exit 1
     fi
-
-    python3 /app/configure_doagent_settings.py "${source}" "${settings_file}" "${policy}"
-    echo "✅ doagent config: materialized from mounted settings into ${settings_file}"
+    echo "✅ doagent config: runtime settings ready; model is delivered by the Gateway"
 }
 
 configure_mutation_authority() {

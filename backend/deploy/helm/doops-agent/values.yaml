@@ -9,13 +9,6 @@ workload:
   selectorLabels:
     app: doops-agent
 
-modelRouting:
-  policy: ""
-
-doagentSettings:
-  secretName: ""
-  key: ""
-
 imagePullSecrets: []
 
 serviceAccount:

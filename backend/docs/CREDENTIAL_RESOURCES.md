@@ -137,6 +137,7 @@ workload kind 仅支持 `Deployment`、`StatefulSet`、`DaemonSet`。不支持 w
 | `database` | `opaque` | 目标 `cluster/instance`、物化 `namespace` 和 `use=database`；数据库资产、环境、引擎、数据库名由 DoSql/Agent 校验 |
 | `helmPull` | `helmRepository` | target 上可用的 Helm 仓库凭据；实际 Chart 由任务和仓库来源决定 |
 | `gitCheckout` | `gitToken` | 无；当前 scope 不包含 branch/ref |
+| `modelProvider` | `modelProvider` | 无；一个 target 同时只能绑定一个 active `modelProvider` 凭据 |
 
 数据库 grant 不绑定数据库资产、环境、引擎、数据库名或 workload；这些是 DoSql 的执行上下文，
 DoSql 请求直接由 Gateway 读取保存的 target/database 绑定，物化使用绑定的 namespace；不调用模型生成凭据 scope。
@@ -232,6 +233,57 @@ Chart 并验证后一次 staging，dry-run 与 Helm mutation 使用同一个文�
 ```
 
 验证执行 `git ls-remote --heads`；不验证特定 branch/ref。
+
+### Model Provider
+
+Agent 内置 doagent 的模型配置。Agent 部署不需要挂载模型 Secret，也不需要先配置模型：
+Agent 连上 Gateway 后，Gateway 把该 target 上 active 的 `modelProvider` 凭据物化到
+doagent 的固定配置文件 `/root/.agent/settings.json`。
+
+```json
+{
+  "model": "openai/gpt-5.4",
+  "provider": {
+    "openai": {
+      "options": {
+        "apiKey": "<secret>",
+        "baseURL": "https://api.example.com/v1",
+        "kind": "openai"
+      },
+      "models": { "gpt-5.4": { "type": "text", "features": { "toolCall": true } } }
+    }
+  },
+  "image_provider": "openai",
+  "image_model": "openai/gpt-image-2"
+}
+```
+
+- `model` 必须是 `<provider>/<model>`，且该 provider 必须在 `provider` 中配置。
+  `image_provider`、`image_model` 可选。
+- `provider.<id>` 使用 doagent `settings.json` 的 provider 结构，原样写入。
+  `apiKey` 必须是实值；`{file:...}`、`{env:...}` 等引用会被拒绝，因为 Gateway 是唯一密钥来源。
+  `baseURL` 规则同 Helm/Git URL。
+- verify 由目标 Agent 执行 `do-agent model probe`，payload 只走 stdin，真实调用一次模型。
+  调用失败返回稳定类别（如 `model_auth_failed`、`model_unavailable`），不能 promote。
+- 物化时 Agent 把模型字段与 Agent 自带的 doops/dosql MCP 服务和权限合并写入配置文件，
+  权限 0600。doagent 每个新会话重新读配置，轮换后不用重启；进行中的会话不受影响。
+- Agent 重启时只保留由 Gateway 下发记录的模型字段，其他来源（如旧挂载复制来的 key）一律丢弃。
+  吊销 grant 或资源时，Agent 先从配置文件删掉该模型，再进入 revoked。
+- 一个配置文件只放一个模型来源：同一 target 上第二个 `modelProvider` 绑定会被拒绝
+  （`model_provider_already_bound`）。
+
+doagent 在没有模型时也能启动，`/health` 正常；收到 prompt 时报告模型未配置并给出配置路径。
+
+从旧的模型 settings Secret 迁移时，平台管理员用精确引用导入，Agent 只取 `model`、`provider`、
+`image_provider`、`image_model`，其余字段丢弃，payload 不经过 stdin 或输出：
+
+```bash
+doops -session migrate credential configure --target <t> --namespace <secret-ns> \
+  --name <name> --type modelProvider --scope platform \
+  --from-secret <secret-name> --keys settings.json
+```
+
+导入后照常 grant、逐个 verify、promote；全部成功后再去掉 Agent 的旧挂载。
 
 Helm/Git URL 必须为 HTTPS、不得包含 URL userinfo/query/fragment，并默认拒绝私网、
 loopback 和 link-local 目标。Registry 可以使用无 scheme 的 registry host。

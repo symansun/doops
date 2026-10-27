@@ -39,6 +39,7 @@ const TYPE_LABELS: Record<CredentialType, string> = {
   opaque: "Opaque Secret",
   helmRepository: "Helm Repository",
   gitToken: "Git Token",
+  modelProvider: "Model Provider",
 }
 
 const TYPE_USES: Record<CredentialType, CredentialUse> = {
@@ -47,6 +48,7 @@ const TYPE_USES: Record<CredentialType, CredentialUse> = {
   opaque: "opaqueSecret",
   helmRepository: "helmPull",
   gitToken: "gitCheckout",
+  modelProvider: "modelProvider",
 }
 
 type Action =

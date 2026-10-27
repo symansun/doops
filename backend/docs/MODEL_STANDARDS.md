@@ -8,37 +8,35 @@ embedded doagent runtime.
 `doops-agent` starts doagent as an ACP HTTP service on `127.0.0.1:$DO_AGENT_PORT`
 (default `9000`). When `DO_AGENT_URL` is omitted, it is derived from that same
 port so the Agent never starts a second ACP HTTP process on a different port. The
-effective runtime settings are stored at:
+only settings file doagent reads is:
 
 ```text
-/root/.agent/runtime-settings.json
+/root/.agent/settings.json
 ```
 
-Kubernetes mounts `/opt/doagent_config/settings.json` from the
-`doagent-model-settings` Secret. The entrypoint materializes that mounted
-Secret into the runtime path without modifying the Secret. The public
-`doops.sh` repository keeps only a placeholder Secret template;
-environment-specific deployments must generate the real Secret from their
-private secret store. Do not commit real API keys to the public repository.
+No environment variable or command-line flag selects another file.
 
-## Kubernetes Secret Deployment
+## Model Provider Delivery
 
-`doagent-model-settings` is the required model configuration object for
-`doops ask`. It must exist before the `doops-agent` Pod starts:
+An Agent deploys without any model configuration. At start the entrypoint runs
+`doops-agent doagent-settings`, which writes the fixed settings file with the
+runtime MCP servers and permissions only; doagent starts and reports
+"no model configured" until a model arrives.
 
-The following bootstrap example runs only on the external controller (cluster management host or CI) with an explicitly selected Kubernetes identity.
-It is not an instruction to find a developer-machine kubeconfig for an ordinary release.
+The model comes from the Gateway as a `modelProvider` credential bound to the
+target. When the Agent connects, the Gateway materializes the active version
+into `/root/.agent/settings.json`; doagent reads that file for every new
+session, so delivery and rotation take effect without restarting it. Payload
+schema, verification (one real model call per binding) and revocation are
+defined in [CREDENTIAL_RESOURCES.md](CREDENTIAL_RESOURCES.md#model-provider).
+No Kubernetes Secret, ConfigMap or host file holds the model configuration, and
+the Chart has no model settings values.
+
+A new cluster is installed with the external controller (cluster management
+host or CI) and an explicitly selected Kubernetes identity; the values need no
+model settings:
 
 ```bash
-export KUBECONFIG=<external-controller-kubeconfig>
-kubectl create namespace doops-system --dry-run=client -o yaml | kubectl apply -f -
-
-# Public template, suitable only after replacing the placeholder apiKey.
-kubectl -n doops-system apply -f agent/agent-config.yaml
-
-# In production, apply the environment-specific Secret from the private store.
-# kubectl -n doops-system apply -f /path/to/private/doagent-model-settings.yaml
-
 bash scripts/release-managed-agent.sh \
   --release doops-agent \
   --namespace doops-system \
@@ -52,15 +50,8 @@ bash scripts/release-managed-agent.sh \
 证据。`--values` 新集群路径是 bootstrap-only，只做 Helm wait 和最终 Deployment 检查，
 不做 Gateway 接管或自动回滚；完成后必须继续执行安装验收。
 
-The Secret must provide:
-
-```text
-data.settings.json
-```
-
-with a configured `provider.minimax.options.apiKey`. The image must not supply
-a second provider, infer a credential, or reset the selected model during an
-upgrade.
+The image must not supply a provider, infer a credential, or reset the
+delivered model during an upgrade.
 
 Ordinary workload deployments use the Gateway target's natural-language
 apply path:
@@ -114,7 +105,8 @@ If `doops ask` fails:
 
 1. Check `DO_AGENT_URL`, default `http://127.0.0.1:9000`.
 2. Verify `/usr/local/bin/do-agent --help` works inside the final image.
-3. Verify the mounted `doagent-model-settings/settings.json` has a configured
-   provider and non-empty API key without printing it.
+3. Run `doops credential list --target <target>` and confirm one active
+   `modelProvider` credential is bound and promoted for this target. The Agent
+   metadata reports whether a model was delivered; it never shows the key.
 4. Run `doops exec` against the same target to confirm the gateway fast path is
    healthy.

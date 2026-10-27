@@ -2,9 +2,16 @@
 
 import type { Session, Target } from "./client"
 
-export type CredentialType = "registry" | "tls" | "opaque" | "helmRepository" | "gitToken"
+export type CredentialType = "registry" | "tls" | "opaque" | "helmRepository" | "gitToken" | "modelProvider"
 export type CredentialScope = "personal" | "platform"
-export type CredentialUse = "imagePull" | "gitCheckout" | "helmPull" | "tls" | "opaqueSecret" | "database"
+export type CredentialUse =
+  | "imagePull"
+  | "gitCheckout"
+  | "helmPull"
+  | "tls"
+  | "opaqueSecret"
+  | "database"
+  | "modelProvider"
 export type CredentialVersionState = "staged" | "active" | "superseded" | "revoked"
 
 export interface CredentialBindingScope {
