@@ -2075,11 +2075,12 @@ func isPlaceholderAPIKey(apiKey string) bool {
 	return apiKey == "" || strings.Contains(apiKey, "your_") || strings.Contains(apiKey, "replace") || strings.Contains(apiKey, "placeholder")
 }
 
+// doagentSettingsFile is the only settings file doagent reads. It is a variable
+// solely so tests can point it at a fixture.
+var doagentSettingsFile = "/root/.agent/settings.json"
+
 func doagentSettingsPath() string {
-	if path := strings.TrimSpace(os.Getenv("DO_AGENT_SETTINGS")); path != "" {
-		return path
-	}
-	return "/root/.agent/settings.json"
+	return doagentSettingsFile
 }
 
 func configuredDoagentURL() string {

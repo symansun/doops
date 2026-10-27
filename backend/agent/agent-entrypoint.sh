@@ -115,9 +115,10 @@ if [ -d /app/skills ]; then
     echo "✅ doops skills: synced from /app/skills"
 fi
 
-# The mounted settings Secret is authoritative. Do not reuse a persisted,
-# potentially stale settings file or synthesize credentials in the container.
-SETTINGS_FILE="${DO_AGENT_SETTINGS:-/tmp/doops-doagent/settings.json}"
+# The mounted settings Secret is authoritative. doagent reads only its fixed
+# settings file, so every start rewrites that file from the mount; a persisted,
+# potentially stale copy is never reused and no credentials are synthesized.
+SETTINGS_FILE=/root/.agent/settings.json
 if [ ! -f "/opt/doagent_config/settings.json" ]; then
     echo "❌ doagent config: mounted settings are required at /opt/doagent_config/settings.json"
     exit 1
@@ -126,8 +127,7 @@ python3 /app/configure_doagent_settings.py \
     /opt/doagent_config/settings.json \
     "${SETTINGS_FILE}" \
     "${DO_AGENT_MODEL_ROUTING_POLICY:-}"
-export DO_AGENT_SETTINGS="${SETTINGS_FILE}"
-echo "✅ doagent config: materialized from mounted settings"
+echo "✅ doagent config: materialized from mounted settings into ${SETTINGS_FILE}"
 
 if [ -z "${DO_AGENT_MUTATION_AUTHORITY_SECRET:-}" ]; then
     DO_AGENT_MUTATION_AUTHORITY_SECRET="$(

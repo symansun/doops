@@ -45,18 +45,25 @@ func TestAgentEntrypointDisablesSSHDAndWebIDEByDefault(t *testing.T) {
 	}
 }
 
-func TestAgentEntrypointsMaterializeSettingsOutsideMountedAgentHome(t *testing.T) {
+func TestAgentEntrypointsMaterializeSettingsIntoFixedDoagentPath(t *testing.T) {
 	for _, path := range []string{"agent-entrypoint.sh", "sandbox-entrypoint.sh"} {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
 		}
 		script := string(data)
-		if !strings.Contains(script, "${DO_AGENT_SETTINGS:-/tmp/doops-doagent/settings.json}") {
-			t.Fatalf("%s must default effective settings to a writable runtime path", path)
+		if !strings.Contains(script, "/opt/doagent_config/settings.json") {
+			t.Fatalf("%s must materialize from the mounted settings Secret", path)
 		}
-		if strings.Contains(script, "${DO_AGENT_SETTINGS:-/root/.agent/settings.json}") {
-			t.Fatalf("%s must not overwrite a mounted or persisted settings file", path)
+		if !strings.Contains(script, "=/root/.agent/settings.json") {
+			t.Fatalf("%s must write doagent's fixed settings path", path)
+		}
+		// doagent no longer reads any environment variable for its settings path.
+		if strings.Contains(script, "DO_AGENT_SETTINGS") {
+			t.Fatalf("%s must not select doagent settings through the environment", path)
+		}
+		if strings.Contains(script, "/tmp/doops-doagent/settings.json") {
+			t.Fatalf("%s must not write a settings file doagent never reads", path)
 		}
 	}
 }

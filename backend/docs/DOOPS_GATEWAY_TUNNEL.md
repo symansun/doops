@@ -335,12 +335,13 @@ Git 退出失败仍返回 `execution_outcome_unknown`，不会发送成功 EOF�
 
 ```bash
 ps -ef | grep 'do-agent acp-http'
-grep -n 'apiKey\|baseURL\|model' /tmp/doops-doagent/settings.json
+grep -n 'baseURL\|model' /root/.agent/settings.json
 ```
 
-`/tmp/doops-doagent/settings.json` 是由挂载的 `/opt/doagent_config/settings.json`
-物化出的可写运行时配置，必须有非空 `provider.openai.options.apiKey`；否则
-doagent 会拒绝启动，`ask` 会失败。
+`/root/.agent/settings.json` 是 doagent 唯一读取的配置文件（不接受环境变量或命令行
+指定其他路径）。入口脚本每次启动都从挂载的 `/opt/doagent_config/settings.json`
+重新物化它，必须有非空 `provider.<id>.options.apiKey`；否则 doagent 会拒绝启动，
+`ask` 会失败。
 
 ## Start Private Agent
 
