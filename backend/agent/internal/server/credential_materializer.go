@@ -164,6 +164,9 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 		return materializeNativeHelmCredential(ctx, req, nativeHelmAuth{
 			URL: payload.URL, Username: payload.Username, Password: payload.Password,
 		}, digest)
+	case CredentialTypeModelProvider:
+		// The model lives in doagent's fixed settings file, not a Kubernetes Secret.
+		return materializeModelProviderCredential(ctx, req)
 	case CredentialTypeGitToken:
 		if req.Scope.Use != CredentialUseGitCheckout {
 			return CredentialMaterialization{}, errors.New("credential_use_mismatch")
@@ -444,6 +447,11 @@ func cleanupCredential(ctx context.Context, req CredentialCleanupRequest) error 
 		return errors.New("credential_cleanup_invalid")
 	}
 	if cleaned, err := cleanupNativeHelmCredential(req); err != nil {
+		return err
+	} else if cleaned {
+		return nil
+	}
+	if cleaned, err := cleanupModelProviderCredential(req); err != nil {
 		return err
 	} else if cleaned {
 		return nil

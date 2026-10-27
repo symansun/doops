@@ -1,7 +1,6 @@
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 
 import pytest
@@ -11,12 +10,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/bootstrap-host-agent.sh"
 
 
-def run_bootstrap(tmp_path, failure="", settings=None):
+def run_bootstrap(tmp_path, failure="", extra_args=()):
     scripts = tmp_path / "scripts"
     scripts.mkdir()
-    agent = tmp_path / "agent"
-    agent.mkdir()
-    shutil.copy(ROOT / "agent/configure_doagent_settings.py", agent)
     config_dir = tmp_path / "installed"
     os_release = tmp_path / "os-release"
     os_release.write_text('ID=ubuntu\nVERSION="24.04.3 LTS (Noble Numbat)"\nVERSION_CODENAME=noble\n')
@@ -27,11 +23,6 @@ def run_bootstrap(tmp_path, failure="", settings=None):
         .replace("/run/lock/doops-agent-bootstrap.lock", str(tmp_path / "lock"))
         .replace(". /etc/os-release", f". '{os_release}'")
     )
-    model = tmp_path / "settings.json"
-    model.write_text(json.dumps(settings if settings is not None else {
-        "model": "example/model",
-        "provider": {"example": {"options": {"apiKey": "SYNTHETIC-CANARY"}}},
-    }))
     commands = tmp_path / "commands"
     commands.mkdir()
     for name, body in {
@@ -60,13 +51,11 @@ esac
     result = subprocess.run(
         ["bash", str(script), "--version", "v1.3.48",
          "--gateway", "https://gateway.example.com",
-         "--cluster", "doops-test", "--instance", "node-1",
-         "--settings", str(model)],
+         "--cluster", "doops-test", "--instance", "node-1", *extra_args],
         env={**os.environ, "PATH": f"{commands}:{os.environ['PATH']}",
              "TEST_FAILURE": failure, "TEST_CALLS": str(log)},
         capture_output=True, text=True, timeout=20,
     )
-    assert "SYNTHETIC-CANARY" not in result.stdout + result.stderr
     return result, config_dir, log.read_text() if log.exists() else ""
 
 
@@ -79,7 +68,10 @@ def test_bootstrap_writes_pinned_persistent_deployment_and_waits(tmp_path):
     assert service["command"][-4:] == ["-cluster", "doops-test", "-instance", "node-1"]
     assert not service.get("ports")
     assert not any("docker.sock" in value for value in service["volumes"])
-    assert (path / "settings.json").stat().st_mode & 0o777 == 0o600
+    # The model provider comes from the Gateway; nothing model-related is installed.
+    assert not (path / "settings.json").exists()
+    assert not any("doagent_config" in value for value in service["volumes"])
+    assert "agent-state:/root/.agent" in service["volumes"]
     assert "up -d --wait --wait-timeout 240" in calls
     assert "pull --platform linux/amd64 docker.cnb.cool/l8ai/ai/doops.sh:v1.3.48" in calls
     assert "Agent registered: doops-test/node-1" in result.stdout
@@ -101,9 +93,9 @@ def test_bootstrap_refuses_existing_agent(tmp_path):
     assert "pull " not in calls
 
 
-def test_bootstrap_invalid_settings_fail_before_pull(tmp_path):
-    result, path, calls = run_bootstrap(tmp_path, settings={"model": ""})
-    assert result.returncode != 0
+def test_bootstrap_rejects_removed_settings_flag_before_pull(tmp_path):
+    result, path, calls = run_bootstrap(tmp_path, extra_args=("--settings", "/secure/settings.json"))
+    assert result.returncode == 2
     assert not path.exists()
     assert "pull " not in calls
 

@@ -183,15 +183,9 @@ def release(args):
         destination = mount["Destination"].rstrip("/")
         if destination == "" or destination == "/app" or destination.startswith("/app/"):
             raise RuntimeError("mount_masks_release_artifact")
-    settings_sources = []
-    for mount in original.get("Mounts") or []:
-        destination = mount["Destination"].rstrip("/")
-        if destination == "/opt/doagent_config/settings.json":
-            settings_sources.append(mount["Source"])
-        elif destination == "/opt/doagent_config":
-            settings_sources.append(str(Path(mount["Source"]) / "settings.json"))
-    if len(settings_sources) != 1 or not Path(settings_sources[0]).is_file():
-        raise RuntimeError("authoritative_doagent_settings_mount_required")
+    # The model provider comes from the Gateway after the Agent connects; a
+    # settings mount is neither required nor read. Existing mounts are copied
+    # unchanged by replacement_config.
     if not args.dry_run:
         cli("docker", "pull", "--platform", "linux/amd64", args.image)
     image_info = docker_api("GET", "/images/%s/json" % quote(args.image, safe=""))

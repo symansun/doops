@@ -158,7 +158,7 @@ def test_plan_reports_without_mutating():
     plan = adopt(module, cluster, plan_only=True)
     assert plan["phase"] == "plan"
     assert plan["serviceAccount"] == "doops-agent"
-    assert plan["settingsSource"] == "configmap/doops-agent-settings"
+    assert "settingsSource" not in plan and "secret" not in plan
     assert plan["keptVolumes"] == []
     assert cluster.mutations() == []
     assert SETTINGS_CANARY not in json.dumps(plan)
@@ -174,8 +174,10 @@ def test_run_backs_up_before_mutation_and_never_prints_settings(capsys):
     first_apply = cluster.applied[0]
     assert first_apply["kind"] == "ConfigMap" and "deployment.json" in first_apply["data"]
     assert SETTINGS_CANARY not in json.dumps(first_apply)
-    secret = next(obj for obj in cluster.applied if obj["kind"] == "Secret")
-    assert secret["metadata"]["name"] == "doops-agent-doagent-settings"
+    # The model provider comes from the Gateway: no settings Secret is created
+    # and the legacy settings object is never read.
+    assert not any(obj["kind"] == "Secret" for obj in cluster.applied)
+    assert not any("doops-agent-settings" in " ".join(c) for c in cluster.calls)
     assert SETTINGS_CANARY not in json.dumps(result) + capsys.readouterr().out
 
 
@@ -207,9 +209,9 @@ def test_restore_failure_is_reported_explicitly():
 def test_generated_values_render_with_the_real_chart(tmp_path):
     module = load()
     deployment = jm_deployment()
-    volume = deployment["spec"]["template"]["spec"]["volumes"][1]
     repository, digest = module.parse_image(IMAGE)
-    values = module.chart_values(deployment, volume, "doops-agent", repository, digest)
+    values = module.chart_values(deployment, "doops-agent", repository, digest)
+    assert "doagentSettings" not in values and "modelRouting" not in values
     path = tmp_path / "values.json"
     path.write_text(json.dumps(values))
     result = subprocess.run(["helm", "template", "doops-agent", str(CHART), "-n", "doops-system", "-f", str(path)],
@@ -224,10 +226,9 @@ def test_generated_values_render_with_the_real_chart(tmp_path):
     env = {e["name"]: e["value"] for e in container["env"]}
     assert env["DOOPS_KUBECONFIG_SOURCE"] == "serviceAccount"
     assert env["DOOPS_GATEWAY_CLUSTER"] == "doops-jm" and env["DOOPS_GATEWAY_INSTANCE"] == "jm-228"
-    assert {v["name"] for v in pod["volumes"]} == {"doagent-config"}
-    assert pod["volumes"][0]["secret"]["secretName"] == "doops-agent-doagent-settings"
-    assert container["volumeMounts"] == [
-        {"name": "doagent-config", "mountPath": "/opt/doagent_config", "readOnly": True}]
+    assert "DO_AGENT_MODEL_ROUTING_POLICY" not in env
+    assert not pod.get("volumes")
+    assert not container.get("volumeMounts")
 
 
 @pytest.mark.parametrize("hostname,want", [

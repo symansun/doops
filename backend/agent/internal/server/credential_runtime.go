@@ -377,7 +377,8 @@ func credentialTypeAllowsUse(credentialType CredentialType, use CredentialUse) e
 		(credentialType == CredentialTypeTLS && use == CredentialUseTLS) ||
 		(credentialType == CredentialTypeOpaque && (use == CredentialUseOpaqueSecret || use == CredentialUseDatabase)) ||
 		(credentialType == CredentialTypeHelmRepository && use == CredentialUseHelmPull) ||
-		(credentialType == CredentialTypeGitToken && use == CredentialUseGitCheckout)
+		(credentialType == CredentialTypeGitToken && use == CredentialUseGitCheckout) ||
+		(credentialType == CredentialTypeModelProvider && use == CredentialUseModelProvider)
 	if !valid {
 		return errors.New("credential_use_mismatch")
 	}
@@ -396,6 +397,8 @@ func credentialUseForType(credentialType CredentialType) CredentialUse {
 		return CredentialUseGitCheckout
 	case CredentialTypeOpaque:
 		return CredentialUseOpaqueSecret
+	case CredentialTypeModelProvider:
+		return CredentialUseModelProvider
 	default:
 		return ""
 	}
@@ -584,7 +587,7 @@ func (h *GatewayHub) validateCredentialMaterializationResult(
 		expectedSecretType = "kubernetes.io/dockerconfigjson"
 	case CredentialTypeTLS:
 		expectedSecretType = "kubernetes.io/tls"
-	case CredentialTypeHelmRepository:
+	case CredentialTypeHelmRepository, CredentialTypeModelProvider:
 		expectedSecretType = ""
 	case CredentialTypeOpaque, CredentialTypeGitToken:
 	default:
@@ -601,7 +604,7 @@ func (h *GatewayHub) validateCredentialMaterializationResult(
 		return errors.New("credential_materialization_metadata_invalid")
 	}
 	switch resource.Type {
-	case CredentialTypeRegistry, CredentialTypeHelmRepository, CredentialTypeGitToken:
+	case CredentialTypeRegistry, CredentialTypeHelmRepository, CredentialTypeGitToken, CredentialTypeModelProvider:
 		if resource.Type != CredentialTypeRegistry && materialization.Digest == "" {
 			return errors.New("credential_materialization_metadata_invalid")
 		}
@@ -903,7 +906,7 @@ func credentialRequiredKeys(credentialType CredentialType, payload json.RawMessa
 		return []string{".dockerconfigjson"}, nil
 	case CredentialTypeTLS:
 		return []string{"tls.crt", "tls.key"}, nil
-	case CredentialTypeHelmRepository:
+	case CredentialTypeHelmRepository, CredentialTypeModelProvider:
 		return nil, nil
 	case CredentialTypeGitToken:
 		return []string{"password", "url", "username"}, nil

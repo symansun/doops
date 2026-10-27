@@ -1772,7 +1772,7 @@ func doagentAllowedTools(apply bool, skill string) []string {
 func (gw *Gateway) handleAgentMetadataWS(ctx context.Context, doopsSessionID string) (string, error) {
 	doagentURL := configuredDoagentURL()
 	status := inspectDoagentModelChannels()
-	if status.status == "unconfigured" && status.settingsFound {
+	if (status.status == "unconfigured" || status.status == "awaiting_model_provider") && status.settingsFound {
 		return marshalDoagentMetadataStatus(status)
 	}
 	if err := ensureDoagentAvailable(doagentURL); err != nil {
@@ -1935,6 +1935,16 @@ func inspectDoagentModelChannels() agentModelRuntimeStatus {
 	}
 	if len(status.models) == 0 && strings.TrimSpace(status.model) != "" {
 		status.models = []string{status.model}
+	}
+	if strings.TrimSpace(status.model) == "" && len(providers) == 0 {
+		// A fresh Agent has no model until the Gateway delivers its
+		// modelProvider credential; that is a pending state, not a fault.
+		status.status = "awaiting_model_provider"
+		status.channels[1] = agentModelChannelStatus{
+			Name: "api_key", Status: "pending",
+			Message: "waiting for the Gateway to deliver a modelProvider credential bound to this target",
+		}
+		return status
 	}
 	if strings.TrimSpace(status.model) == "" || strings.TrimSpace(status.provider) == "" {
 		status.channels[1] = agentModelChannelStatus{Name: "api_key", Status: "error", Message: "model or provider is missing"}

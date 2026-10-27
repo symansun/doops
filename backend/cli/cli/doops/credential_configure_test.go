@@ -622,3 +622,62 @@ func TestConfigureCredentialScopeKeyIgnoresHelmRuntimeScope(t *testing.T) {
 		t.Fatal("configure did not treat same Chart path with a new version as one scope")
 	}
 }
+
+func TestCredentialConfigureModelProviderFromSecret(t *testing.T) {
+	binary := buildDoopsCLIBinary(t)
+	modelArgs := func(extra ...string) []string {
+		return append([]string{"-session", "configure-test", "credential", "configure",
+			"--target", "db", "--namespace", "apps", "--use", "modelProvider",
+			"--name", "model", "--type", "modelProvider", "--scope", "platform"}, extra...)
+	}
+	t.Run("imports_one_settings_key", func(t *testing.T) {
+		mock := newConfigureHTTPMock()
+		mock.resource.Type, mock.resource.Name, mock.resource.Scope = "modelProvider", "model", "platform"
+		mock.managed = []credentialResource{mock.resource}
+		mock.grant.Scope.Use = "modelProvider"
+		mock.grants = []credentialGrant{mock.grant}
+		config, _ := configureTestServers(t, mock)
+		output, err := runConfigureBinary(t, binary, config, "",
+			modelArgs("--from-secret", "doagent-model-settings", "--keys", "settings.json"))
+		if err != nil || !strings.Contains(output, "phase=promoted") {
+			t.Fatalf("configure failed: %v\n%s", err, output)
+		}
+		var found bool
+		for _, request := range configureRequestSnapshot(mock) {
+			if request.Method+" "+request.Path != "POST /v1/credentials/cred_1/import-secret" {
+				continue
+			}
+			found = true
+			var body map[string]any
+			if err := json.Unmarshal(request.Body, &body); err != nil {
+				t.Fatal(err)
+			}
+			if body["format"] != "doagent_settings" || body["secret_name"] != "doagent-model-settings" {
+				t.Fatalf("import body = %s", request.Body)
+			}
+		}
+		if !found {
+			t.Fatal("configure must import the settings Secret")
+		}
+	})
+	for _, test := range []struct {
+		name string
+		args []string
+	}{
+		{"two_keys", []string{"--from-secret", "s", "--keys", "a,b"}},
+		{"key_map", []string{"--from-secret", "s", "--keys", "a", "--key-map", "a=b"}},
+		{"connection_uri", []string{"--from-secret", "s", "--keys", "a", "--password-key", "a",
+			"--connection-uri", "postgres://u@db/app"}},
+	} {
+		t.Run("rejects_"+test.name, func(t *testing.T) {
+			mock := newConfigureHTTPMock()
+			config, _ := configureTestServers(t, mock)
+			if output, err := runConfigureBinary(t, binary, config, "", modelArgs(test.args...)); err == nil {
+				t.Fatalf("configure must fail: %s", output)
+			}
+			if len(configureRequestSnapshot(mock)) != 0 {
+				t.Fatal("invalid modelProvider import must fail before any request")
+			}
+		})
+	}
+}

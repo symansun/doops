@@ -27,11 +27,10 @@ using the canonical chart and these values after server-side dry-run. Apply
 
 The kubeconfig Secret `doops-oilan-kubeconfig` must contain a `config` key for
 ServiceAccount `doops-oilan/doops-oilan-agent`, not a copied cluster-admin
-credential. The model Secret `doagent-model-settings` must contain
-`settings.json` from the authorized secret store. Values must mount it at
-`/opt/doagent_config`; declaring the Secret volume without the mount prevents
-startup. Do not print, commit, or transfer Secret payloads through public
-prompts or workspaces.
+credential. No model Secret is mounted: the Agent receives its model from the
+Gateway as the `modelProvider` credential bound to `doops-oilan/oilan-node`
+(see `backend/docs/CREDENTIAL_RESOURCES.md`). Do not print, commit, or transfer
+credential payloads through public prompts or workspaces.
 
 The ServiceAccount token is persistent bootstrap material. Rotate it and
 regenerate the kubeconfig Secret through an authorized secret-control path;

@@ -289,16 +289,18 @@ def test_containerized_controller_fails_before_any_docker_call(
     assert docker.old["State"]["Running"]
 
 
-def test_missing_authoritative_settings_source_fails_before_pull_create_or_stop(
+def test_agent_without_settings_mount_passes_preflight(
     controller, args, docker, capsys,
 ):
-    docker.old["Mounts"][-1]["Source"] += ".missing"
-    with pytest.raises(RuntimeError, match="authoritative_doagent_settings_mount_required"):
-        controller.release(args)
-    assert docker.events == [("api", "GET", "/containers/%s/json" % args.container)]
-    assert docker.old["State"]["Running"]
-    assert json.loads(receipt_path(controller, args).read_text())["phase"] == "preflight"
-    assert_private_receipts(controller, capsys.readouterr())
+    # The model provider comes from the Gateway; no settings mount is required.
+    docker.old["Mounts"] = [
+        mount for mount in docker.old["Mounts"]
+        if not mount["Destination"].startswith("/opt/doagent_config")
+    ]
+    args.dry_run = True
+    controller.release(args)
+    assert all(event[:2] == ("api", "GET") for event in docker.events)
+    assert "preflight_ready" in capsys.readouterr().out
 
 
 def test_dry_run_rollback_rejected_before_uid_lock_remote_or_receipt(

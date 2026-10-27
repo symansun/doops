@@ -8,28 +8,27 @@ Installs Docker Engine and Compose if absent; never replaces an existing Agent.
 
   bash backend/scripts/bootstrap-host-agent.sh \
     --version vX.Y.Z --gateway https://doops.l8ai.cn \
-    --cluster doops-unicom --instance unicom-1 \
-    --settings /secure/settings.json
+    --cluster doops-unicom --instance unicom-1
 
-Required: --version, --gateway, --cluster, --instance, --settings
-The settings file is the existing doagent JSON model/provider configuration.
+Required: --version, --gateway, --cluster, --instance
+The Agent receives its model provider from the Gateway after it connects;
+no model settings or credentials are copied to the host.
 No Gateway operator token is required for Agent registration.
-Files: /opt/doops-agent/{compose.yaml,settings.json}
+Files: /opt/doops-agent/compose.yaml
 No host ports or host Docker socket are exposed to the container.
 EOF
 }
 
-RELEASE_VERSION="" GATEWAY="" CLUSTER="" INSTANCE="" SETTINGS=""
+RELEASE_VERSION="" GATEWAY="" CLUSTER="" INSTANCE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --version|--gateway|--cluster|--instance|--settings)
+    --version|--gateway|--cluster|--instance)
       [[ $# -ge 2 && -n "$2" ]] || { usage >&2; exit 2; }
       case "$1" in
         --version) RELEASE_VERSION="$2" ;;
         --gateway) GATEWAY="$2" ;;
         --cluster) CLUSTER="$2" ;;
         --instance) INSTANCE="$2" ;;
-        --settings) SETTINGS="$2" ;;
       esac
       shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -41,7 +40,6 @@ done
 for identity in "$CLUSTER" "$INSTANCE"; do
   [[ "$identity" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]] || { echo "Explicit cluster and instance required" >&2; exit 2; }
 done
-[[ -f "$SETTINGS" && -s "$SETTINGS" ]] || { echo "Existing --settings JSON file required; credentials are not embedded in the image" >&2; exit 2; }
 [[ "$(id -u)" == 0 ]] || { echo "Run with sudo or as root" >&2; exit 1; }
 exec 9>/run/lock/doops-agent-bootstrap.lock
 flock -n 9 || { echo "Another Agent installation is running" >&2; exit 1; }
@@ -61,13 +59,6 @@ fi
 
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl python3
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TEMP="$(mktemp -d)"
-trap 'rm -rf "$TEMP"' EXIT
-chmod 700 "$TEMP"
-# Use the same settings validator as the image; it never prints credential values.
-python3 "${SCRIPT_DIR}/../agent/configure_doagent_settings.py" \
-  "$SETTINGS" "$TEMP/settings.json"
 if ! command -v docker >/dev/null; then
   install -d -m 0755 /etc/apt/keyrings
   curl --fail --silent --show-error --location \
@@ -102,7 +93,6 @@ IDENTITY="$(docker run --rm --network none --platform "$PLATFORM" --entrypoint /
 [[ "$IDENTITY" =~ ^release=${RELEASE_VERSION}[[:space:]]commit=[a-f0-9]{40}$ ]] || { echo "Image release identity mismatch" >&2; exit 1; }
 
 install -d -m 0700 /opt/doops-agent
-install -m 0600 "$TEMP/settings.json" /opt/doops-agent/settings.json
 python3 - "$IMAGE" "$PLATFORM" "$GATEWAY" "$CLUSTER" "$INSTANCE" <<'PY'
 import json
 import pathlib
@@ -121,7 +111,6 @@ config = {
             "command": ["-listen", "0.0.0.0", "-gateway-url", gateway,
                         "-cluster", cluster, "-instance", instance],
             "volumes": [
-                "./settings.json:/opt/doagent_config/settings.json:ro",
                 "workspace:/root/ws",
                 "agent-state:/root/.agent",
             ],

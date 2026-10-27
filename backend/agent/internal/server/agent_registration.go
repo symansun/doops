@@ -13,6 +13,8 @@ type AgentRegistrationHandler struct {
 	heartbeatTimeout time.Duration
 	messageBudget    *gatewayMessageBudget
 	acknowledge      func(*GatewayAgent) error
+	// onRegistered runs after an Agent is registered, outside the read loop.
+	onRegistered func(*GatewayAgent)
 }
 
 func NewAgentRegistrationHandler(
@@ -85,6 +87,9 @@ func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	}
 	log.Printf("[gateway] agent online: %s generation=%d remote=%s", session.Key, session.Generation, session.Remote)
 	go session.pingLoop(h.registry, h.lease)
+	if h.onRegistered != nil {
+		go h.onRegistered(session)
+	}
 
 	<-session.closed
 	if err := h.registry.Unregister(session); err != nil {

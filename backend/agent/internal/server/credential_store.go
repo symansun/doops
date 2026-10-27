@@ -66,6 +66,9 @@ const (
 	CredentialTypeOpaque         CredentialType = "opaque"
 	CredentialTypeHelmRepository CredentialType = "helmRepository"
 	CredentialTypeGitToken       CredentialType = "gitToken"
+	// CredentialTypeModelProvider is the doagent model provider configuration a
+	// target Agent receives from the Gateway instead of a mounted settings file.
+	CredentialTypeModelProvider CredentialType = "modelProvider"
 )
 
 type CredentialState string
@@ -88,12 +91,13 @@ const (
 type CredentialUse string
 
 const (
-	CredentialUseImagePull    CredentialUse = "imagePull"
-	CredentialUseGitCheckout  CredentialUse = "gitCheckout"
-	CredentialUseHelmPull     CredentialUse = "helmPull"
-	CredentialUseTLS          CredentialUse = "tls"
-	CredentialUseOpaqueSecret CredentialUse = "opaqueSecret"
-	CredentialUseDatabase     CredentialUse = "database"
+	CredentialUseImagePull     CredentialUse = "imagePull"
+	CredentialUseGitCheckout   CredentialUse = "gitCheckout"
+	CredentialUseHelmPull      CredentialUse = "helmPull"
+	CredentialUseTLS           CredentialUse = "tls"
+	CredentialUseOpaqueSecret  CredentialUse = "opaqueSecret"
+	CredentialUseDatabase      CredentialUse = "database"
+	CredentialUseModelProvider CredentialUse = "modelProvider"
 )
 
 type CredentialResource struct {
@@ -550,6 +554,19 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 	}
 	if err := validateCredentialGrantScope(grant.Scope); err != nil {
 		return CredentialGrant{}, err
+	}
+	if resource.Type == CredentialTypeModelProvider {
+		if grant.Scope.Use != CredentialUseModelProvider {
+			return CredentialGrant{}, errors.New("credential_use_mismatch")
+		}
+		// doagent has one settings file, so a target takes one model provider.
+		conflict, err := s.modelProviderGrantConflicts(resource.ID, grant.Scope)
+		if err != nil {
+			return CredentialGrant{}, err
+		}
+		if conflict {
+			return CredentialGrant{}, errors.New("model_provider_already_bound")
+		}
 	}
 	scopeJSON, err := json.Marshal(grant.Scope)
 	if err != nil {
@@ -1522,7 +1539,8 @@ func validCredentialScope(scope CredentialScope) bool {
 
 func validCredentialType(credentialType CredentialType) bool {
 	switch credentialType {
-	case CredentialTypeRegistry, CredentialTypeTLS, CredentialTypeOpaque, CredentialTypeHelmRepository, CredentialTypeGitToken:
+	case CredentialTypeRegistry, CredentialTypeTLS, CredentialTypeOpaque, CredentialTypeHelmRepository, CredentialTypeGitToken,
+		CredentialTypeModelProvider:
 		return true
 	default:
 		return false
@@ -1531,7 +1549,8 @@ func validCredentialType(credentialType CredentialType) bool {
 
 func validCredentialUse(use CredentialUse) bool {
 	switch use {
-	case CredentialUseImagePull, CredentialUseGitCheckout, CredentialUseHelmPull, CredentialUseTLS, CredentialUseOpaqueSecret, CredentialUseDatabase:
+	case CredentialUseImagePull, CredentialUseGitCheckout, CredentialUseHelmPull, CredentialUseTLS, CredentialUseOpaqueSecret, CredentialUseDatabase,
+		CredentialUseModelProvider:
 		return true
 	default:
 		return false
@@ -1597,6 +1616,10 @@ func validateCredentialPayload(credentialType CredentialType, payload json.RawMe
 			!validCredentialEndpoint(value.URL, false) ||
 			strings.TrimSpace(value.Username) == "" ||
 			strings.TrimSpace(value.Token) == "" {
+			return ErrCredentialPayloadInvalid
+		}
+	case CredentialTypeModelProvider:
+		if _, err := decodeModelProviderPayload(payload); err != nil {
 			return ErrCredentialPayloadInvalid
 		}
 	default:

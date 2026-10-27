@@ -275,25 +275,22 @@ def prepare(namespace, workload, release, cluster, instance, image):
     if owner not in (None, release):
         raise ReinstallError(f"deployment {workload} belongs to Helm release {owner}; pass --release {owner}")
     source, origin = source_deployment(namespace, workload)
-    volume = A.validate_deployment(source, cluster, instance)
+    A.validate_deployment(source, cluster, instance)
     service_account = A.service_account(source["spec"]["template"]["spec"])
     if try_kget(namespace, "serviceaccount", service_account) is None:
         raise ReinstallError(f"serviceaccount/{service_account} must exist; the new Agent runs as it")
-    kind, name = A.settings_source(volume)
-    settings = try_kget(namespace, kind, name)
-    if not settings or A.SETTINGS_KEY not in (settings.get("data") or {}):
-        raise ReinstallError(f"{kind}/{name} with key {A.SETTINGS_KEY} must exist; the new Agent reads it")
+    # The reinstalled Agent receives its model provider from the Gateway.
     repository, digest = A.parse_image(pinned)
-    values = A.chart_values(source, volume, workload, repository, digest)
+    values = A.chart_values(source, workload, repository, digest)
     found = inventory(namespace, workload, release, source["spec"]["selector"]["matchLabels"])
-    return pinned, source, origin, (kind, name), values, found
+    return pinned, source, origin, values, found
 
 
 def reinstall(namespace, workload, release, cluster, instance, image, chart=CHART, plan_only=False,
               backup_dir="", verifier=None, checker=pull_check, deleter=delete_old):
-    pinned, source, origin, (kind, name), values, found = prepare(
+    pinned, source, origin, values, found = prepare(
         namespace, workload, release, cluster, instance, image)
-    summary = {"image": pinned, "source": origin, "settingsSource": f"{kind}/{name}",
+    summary = {"image": pinned, "source": origin,
                "serviceAccount": values["serviceAccount"]["name"], "release": release, "delete": found}
     if plan_only:
         return {"phase": "plan", **summary}
@@ -304,7 +301,6 @@ def reinstall(namespace, workload, release, cluster, instance, image, chart=CHAR
     log(f"backed up to configmap/{backup_name(workload)}" + (f" and {backup_dir}" if backup_dir else ""))
     try:
         deleter(namespace, workload, found)
-        A.copy_settings_secret(namespace, workload, kind, name)
         A.helm_install(namespace, release, values, str(chart), dry_run=True)
         A.helm_install(namespace, release, values, str(chart))
         log("waiting for the new Pod to become Ready (Ready means the Gateway tunnel is up)")

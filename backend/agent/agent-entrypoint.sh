@@ -115,19 +115,14 @@ if [ -d /app/skills ]; then
     echo "✅ doops skills: synced from /app/skills"
 fi
 
-# The mounted settings Secret is authoritative. doagent reads only its fixed
-# settings file, so every start rewrites that file from the mount; a persisted,
-# potentially stale copy is never reused and no credentials are synthesized.
-SETTINGS_FILE=/root/.agent/settings.json
-if [ ! -f "/opt/doagent_config/settings.json" ]; then
-    echo "❌ doagent config: mounted settings are required at /opt/doagent_config/settings.json"
+# doagent reads only its fixed settings file. Write the runtime MCP servers and
+# permissions there; the model provider arrives from the Gateway after the Agent
+# connects, so the Agent starts without any mounted model settings.
+if ! /app/doops-agent doagent-settings; then
+    echo "❌ doagent config: could not write /root/.agent/settings.json" >&2
     exit 1
 fi
-python3 /app/configure_doagent_settings.py \
-    /opt/doagent_config/settings.json \
-    "${SETTINGS_FILE}" \
-    "${DO_AGENT_MODEL_ROUTING_POLICY:-}"
-echo "✅ doagent config: materialized from mounted settings into ${SETTINGS_FILE}"
+echo "✅ doagent config: runtime settings ready; model is delivered by the Gateway"
 
 if [ -z "${DO_AGENT_MUTATION_AUTHORITY_SECRET:-}" ]; then
     DO_AGENT_MUTATION_AUTHORITY_SECRET="$(

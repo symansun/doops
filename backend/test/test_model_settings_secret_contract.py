@@ -9,7 +9,6 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CHART = ROOT / "deploy" / "helm" / "doops-agent"
-SETTINGS_MODULE = ROOT / "agent" / "configure_doagent_settings.py"
 KUBECONFIG_MODULE = ROOT / "agent" / "configure_kubeconfig.py"
 SANDBOX_ENTRYPOINT = ROOT / "agent" / "sandbox-entrypoint.sh"
 IMAGE_DIGEST = "sha256:" + ("b" * 64)
@@ -23,7 +22,6 @@ def deployment_values(workload_name, instance, agent_home, selector_labels=None)
             "pullPolicy": "Always",
         },
         "workload": {"name": workload_name},
-        "modelRouting": {"policy": "single-model"},
         "imagePullSecrets": [],
         "gateway": {
             "url": "https://doops.l8ai.cn",
@@ -44,10 +42,6 @@ def deployment_values(workload_name, instance, agent_home, selector_labels=None)
                 "hostnames": ["apiserver.cluster.local"],
             }
         ],
-        "doagentSettings": {
-            "secretName": "doagent-model-settings",
-            "key": "settings.json",
-        },
         "volumeMounts": [
             {
                 "name": "kube-admin",
@@ -60,11 +54,6 @@ def deployment_values(workload_name, instance, agent_home, selector_labels=None)
                 "readOnly": True,
             },
             {"name": "agent-home", "mountPath": "/root"},
-            {
-                "name": "doagent-config",
-                "mountPath": "/opt/doagent_config",
-                "readOnly": True,
-            },
             {
                 "name": "containerd-socket",
                 "mountPath": "/run/containerd/containerd.sock",
@@ -179,17 +168,6 @@ def env_value(container, name: str):
     return next(item for item in container["env"] if item["name"] == name)
 
 
-def load_settings_module():
-    spec = importlib.util.spec_from_file_location(
-        "configure_doagent_settings",
-        SETTINGS_MODULE,
-    )
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
-
-
 def load_kubeconfig_module():
     spec = importlib.util.spec_from_file_location(
         "configure_kubeconfig",
@@ -201,11 +179,10 @@ def load_kubeconfig_module():
     return module
 
 
-def test_oilan_agent_model_settings_are_secret_backed(tmp_path):
+def test_oilan_agent_renders_without_model_settings(tmp_path):
     deployment = render_oilan_chart(tmp_path)
     container = deployment["spec"]["template"]["spec"]["containers"][0]
     volumes = deployment["spec"]["template"]["spec"]["volumes"]
-    settings = next(item for item in volumes if item["name"] == "doagent-config")
 
     assert deployment["kind"] == "Deployment"
     assert deployment["metadata"]["name"] == "doops-agent-live"
@@ -268,18 +245,15 @@ def test_oilan_agent_model_settings_are_secret_backed(tmp_path):
     assert "/health/live" in probes["startupProbe"]
     assert "/health/ready" in probes["readinessProbe"]
     assert "/health/live" in probes["livenessProbe"]
-    assert "configMap" not in settings
-    assert settings["secret"] == {
-        "secretName": "doagent-model-settings",
-        "items": [{"key": "settings.json", "path": "settings.json"}],
-    }
-
-    values = oilan_values()
-    assert values["modelRouting"] == {"policy": "single-model"}
-    assert values["doagentSettings"] == {
-        "secretName": "doagent-model-settings",
-        "key": "settings.json",
-    }
+    # The model provider comes from the Gateway: no settings Secret, mount or
+    # routing-policy environment is rendered.
+    assert all(item["name"] != "doagent-config" for item in volumes)
+    assert all(
+        mount["mountPath"] != "/opt/doagent_config" for mount in container["volumeMounts"]
+    )
+    assert all(
+        item["name"] != "DO_AGENT_MODEL_ROUTING_POLICY" for item in container["env"]
+    )
 
     host_paths = {
         item["name"]: item["hostPath"]["path"]
@@ -365,110 +339,6 @@ def test_public_agent_template_does_not_require_registry_auth():
 
     assert values.get("imagePullSecrets") in (None, [])
     assert all(item.get("name") != "registry-auth" for item in values.get("volumes") or [])
-
-
-def test_single_model_policy_preserves_mounted_settings_and_omits_duplicate_tiers(
-    tmp_path,
-):
-    module = load_settings_module()
-    source = tmp_path / "mounted-settings.json"
-    destination = tmp_path / "runtime-settings.json"
-    source.write_text(
-        json.dumps(
-            {
-                "model": "quan2go/gpt-5-4",
-                "provider": {
-                    "quan2go": {
-                        "options": {"apiKey": "secret-must-be-preserved"},
-                        "models": {"gpt-5-4": {"name": "GPT-5.4"}},
-                    }
-                },
-                "model_tiers": {
-                    "high": "quan2go/gpt-5-4",
-                    "default": "quan2go/gpt-5-4",
-                    "low": "quan2go/gpt-5-4",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    module.configure_settings(source, destination, "single-model")
-
-    rendered = json.loads(destination.read_text(encoding="utf-8"))
-    original = json.loads(source.read_text(encoding="utf-8"))
-    assert rendered["model"] == "quan2go/gpt-5-4"
-    assert (
-        rendered["provider"]["quan2go"]["options"]["apiKey"]
-        == "secret-must-be-preserved"
-    )
-    assert "model_tiers" not in rendered
-    assert rendered["mcp_servers"] == [module.DOOPS_MCP_SERVER, module.DOSQL_MCP_SERVER]
-    assert rendered["permissions"] == module.DOOPS_PERMISSIONS
-    assert original["model_tiers"]["high"] == "quan2go/gpt-5-4"
-
-
-def test_runtime_settings_reject_conflicting_doops_mcp_server(tmp_path):
-    module = load_settings_module()
-    source = tmp_path / "mounted-settings.json"
-    destination = tmp_path / "runtime-settings.json"
-    source.write_text(
-        json.dumps(
-            {
-                "model": "quan2go/gpt-5-4",
-                "mcp_servers": [
-                    {
-                        "name": "doops",
-                        "command": "/tmp/other-server",
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(module.SettingsConfigurationError, match="runtime-owned"):
-        module.configure_settings(source, destination, "single-model")
-
-
-def test_runtime_settings_reject_conflicting_dosql_mcp_server(tmp_path):
-    module = load_settings_module()
-    source = tmp_path / "mounted-settings.json"
-    destination = tmp_path / "runtime-settings.json"
-    source.write_text(
-        json.dumps(
-            {
-                "model": "quan2go/gpt-5-4",
-                "mcp_servers": [{"name": "dosql", "command": "/tmp/other-server"}],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(module.SettingsConfigurationError, match="runtime-owned"):
-        module.configure_settings(source, destination, "single-model")
-
-
-def test_tiered_policy_rejects_duplicate_model_identifiers(tmp_path):
-    module = load_settings_module()
-    source = tmp_path / "mounted-settings.json"
-    destination = tmp_path / "runtime-settings.json"
-    source.write_text(
-        json.dumps(
-            {
-                "model": "quan2go/gpt-5-4",
-                "model_tiers": {
-                    "high": "quan2go/gpt-5-4",
-                    "default": "quan2go/gpt-5-4",
-                    "low": "quan2go/gpt-5-4-mini",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(module.SettingsConfigurationError, match="distinct"):
-        module.configure_settings(source, destination, "tiered")
 
 
 def agent_container(deployment):

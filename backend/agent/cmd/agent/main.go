@@ -43,6 +43,18 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "doagent-settings" {
+		// Run by the entrypoint before doagent starts: doagent reads only its
+		// fixed settings file and refuses to start when it is missing. The
+		// model itself arrives from the Gateway after the Agent connects.
+		if len(os.Args) != 2 {
+			log.Fatal("doagent-settings does not accept arguments")
+		}
+		if err := server.EnsureDoagentBaseSettings(); err != nil {
+			log.Fatalf("write doagent settings: %v", err)
+		}
+		return
+	}
 	if err := server.InitializeMutationAuthority(); err != nil {
 		log.Fatal(err)
 	}

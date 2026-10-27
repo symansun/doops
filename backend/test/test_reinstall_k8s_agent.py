@@ -121,13 +121,10 @@ def module():
 @pytest.mark.parametrize("name,cluster,kwargs,error", [
     ("wrong gateway identity", FakeCluster(), {"instance": "other"}, "Gateway identity"),
     ("missing service account", FakeCluster(serviceaccounts=()), {}, "serviceaccount/doops-agent must exist"),
-    ("missing settings", FakeCluster(), {"_drop": "doops-agent-settings"}, "doops-agent-settings with key"),
     ("no deployment and no backup", FakeCluster(deployment=None), {}, "no Deployment doops-agent"),
     ("other helm owner", FakeCluster(), {"_owner": "someone-else"}, "belongs to Helm release someone-else"),
 ])
 def test_prepare_refuses_before_any_mutation(module, name, cluster, kwargs, error):
-    if kwargs.pop("_drop", None):
-        del cluster.objects["configmap"]["doops-agent-settings"]
     owner = kwargs.pop("_owner", None)
     if owner:
         cluster.objects["deployment"]["doops-agent"]["metadata"]["annotations"] = {
@@ -156,7 +153,8 @@ def test_plan_lists_leftovers_without_mutating(module):
     plan = reinstall(module, cluster, plan_only=True)
     assert plan["phase"] == "plan" and plan["image"] == IMAGE
     assert plan["source"] == "deployment/doops-agent"
-    assert plan["settingsSource"] == "configmap/doops-agent-settings"
+    # The model provider comes from the Gateway; reinstall reads no settings object.
+    assert "settingsSource" not in plan
     delete = plan["delete"]
     assert delete["deployment"] == "doops-agent" and delete["helmRelease"] == ""
     assert delete["pods"] == ["doops-agent-57f4d9d5f4-957bx", "doops-agent-6c8848bd9-nlbp9", "doops-adopt-run"]
@@ -204,8 +202,7 @@ def test_run_orders_check_backup_delete_install(module, capsys, tmp_path):
         cluster.index("helm upgrade --install doops-agent")]
     assert order == sorted(order)
     assert cluster.applied[0]["metadata"]["name"] == "doops-reinstall-backup-doops-agent"
-    secret = next(o for o in cluster.applied if o["kind"] == "Secret")
-    assert secret["metadata"]["name"] == "doops-agent-doagent-settings"
+    assert not any(o["kind"] == "Secret" for o in cluster.applied)
     dry, real = [c for c in cluster.calls if c[:2] == ["helm", "upgrade"]]
     assert "--dry-run=server" in dry and "--dry-run=server" not in real
     files = {p.name for p in (tmp_path / "bk").iterdir()}

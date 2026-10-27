@@ -38,7 +38,7 @@ func runCredentialConfigure(args []string, sessionName string, servers []Server,
 	flags.StringVar(&scope.HelmRelease, "helm-release", "", "Optional Helm execution metadata")
 	flags.StringVar(&scope.HelmChart, "helm-chart", "", "Optional Helm execution metadata")
 	flags.StringVar(&requiredKeys, "required-keys", "", "Optional Secret keys; payload keys are inferred when omitted")
-	flags.StringVar(&fromSecret, "from-secret", "", "Import selected keys from this target Secret (opaque only); never reads stdin")
+	flags.StringVar(&fromSecret, "from-secret", "", "Import selected keys from this target Secret (opaque, or modelProvider with one key holding a doagent settings.json); never reads stdin")
 	flags.StringVar(&keys, "keys", "", "Explicit comma-separated source Secret keys (required with --from-secret)")
 	flags.StringVar(&keyMap, "key-map", "", "Optional source=runtime Secret key mappings for --from-secret")
 	flags.StringVar(&connectionURI, "connection-uri", "", "Passwordless postgres/postgresql/mysql/oracle/mongodb URL with a concrete database path; no query (including an empty ?) or fragment")
@@ -49,7 +49,9 @@ func runCredentialConfigure(args []string, sessionName string, servers []Server,
     (--id <id> | --name <name> --type <type> --scope <personal|platform>) [scope flags]
 
 Default source: stdin JSON, using the existing credential put payload format.
-Alternative source: --from-secret <name> --keys <key,...> (opaque only).
+Alternative source: --from-secret <name> --keys <key,...> (opaque), or
+--from-secret <name> --keys <settings-key> for modelProvider: the single key holds a
+doagent settings.json and only model/provider fields are imported.
 These sources are mutually exclusive; --from-secret never reads stdin.
 With --connection-uri, select exactly --password-key in --keys; the Agent builds
 data.connection_uri without returning the source password. Never put passwords in a URL.
@@ -107,6 +109,7 @@ Flags:
 	wantType := map[string]string{
 		"imagePull": "registry", "gitCheckout": "gitToken", "helmPull": "helmRepository",
 		"tls": "tls", "opaqueSecret": "opaque", "database": "opaque",
+		"modelProvider": "modelProvider",
 	}[scope.Use]
 	if credentialType != "" && credentialType != wantType {
 		return fmt.Errorf("--type does not match --use")
@@ -124,8 +127,11 @@ Flags:
 			return fmt.Errorf("--keys, --key-map, --connection-uri and --password-key require --from-secret")
 		}
 	} else {
-		if wantType != "opaque" || !validConfigureCredentialName(fromSecret) || len(selectedKeys) == 0 {
-			return fmt.Errorf("--from-secret requires an opaque credential, valid Secret name and explicit --keys")
+		if (wantType != "opaque" && wantType != "modelProvider") || !validConfigureCredentialName(fromSecret) || len(selectedKeys) == 0 {
+			return fmt.Errorf("--from-secret requires an opaque or modelProvider credential, valid Secret name and explicit --keys")
+		}
+		if wantType == "modelProvider" && (len(selectedKeys) != 1 || keyMap != "" || connectionURI != "" || passwordKey != "") {
+			return fmt.Errorf("--from-secret for modelProvider takes exactly one --keys entry holding a doagent settings.json")
 		}
 		seen := map[string]bool{}
 		for _, key := range selectedKeys {
@@ -236,6 +242,7 @@ Flags:
 	wantType = map[string]string{
 		"imagePull": "registry", "gitCheckout": "gitToken", "helmPull": "helmRepository",
 		"tls": "tls", "opaqueSecret": "opaque", "database": "opaque",
+		"modelProvider": "modelProvider",
 	}[scope.Use]
 	if wantType == "" || resource.Type != wantType || validateConfigureCredentialScope(scope) != nil {
 		return fmt.Errorf("credential configure: managed resource type or scope mismatch")
@@ -256,6 +263,9 @@ Flags:
 		}
 		if connectionURI != "" {
 			body["connection_uri"], body["password_key"] = connectionURI, passwordKey
+		}
+		if wantType == "modelProvider" {
+			body["format"] = "doagent_settings"
 		}
 		if err := request(http.MethodPost, base+"import-secret", nil, body, &version); err != nil {
 			return err
@@ -425,6 +435,11 @@ func validateConfigureCredentialScope(scope credentialGrantScope) error {
 		if !image && !helm && (scope.Use == "database" || !keys) {
 			return nil
 		}
+	case "modelProvider":
+		// The model goes into doagent's settings file, not a workload.
+		if !image && !helm && !keys && scope.Workload.Kind == "" && scope.Workload.Name == "" {
+			return nil
+		}
 	}
 	return fmt.Errorf("invalid optional execution metadata for --use")
 }
@@ -441,6 +456,8 @@ func configureUseForType(credentialType string) string {
 		return "tls"
 	case "opaque":
 		return "opaqueSecret"
+	case "modelProvider":
+		return "modelProvider"
 	default:
 		return ""
 	}
