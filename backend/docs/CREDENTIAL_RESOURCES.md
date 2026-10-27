@@ -291,6 +291,11 @@ doops -session db-setup credential configure \
   需要其它连接形式时由安全输入端通过 stdin 提交完整 payload，不自动改写或降级。
 - 不带 `--from-secret` 时只读 stdin，格式与 `credential put` 相同；Secret 模式不读 stdin。
   导入值经内部 Agent 控制通道进入 Gateway 加密存储，不进入公开 RPC、prompt 或 CLI 输出。
+- 导入失败返回真实类别，CLI 原样打印：`target_offline`（503）、`target_busy`、`target_queue_full`、
+  `target_queue_timeout`、`operation_canceled`（409）、`credential_import_timeout`（504）、
+  `credential_audit_unavailable`（500）、`credential_import_agent_unsupported`（502，Agent 太旧，先升级），
+  以及 Agent 端的 `credential_import_source_unavailable`、`credential_import_key_missing` 等（502）。
+  只有无法归类时才是 `credential_import_failed`。
 - 自动为当前用户建立 target grant，读取并验证该资源全部 active target 后才 promote。
   不再要求 workload、镜像仓库、Helm release、Chart、数据库资产或其它业务绑定字段。
 - 任一步失败即非零退出，不宣称就绪、不自动重试或清理已有资源。重跑会产生新的 staged version。
@@ -459,6 +464,7 @@ active resource、active version、目标上的 active target 绑定和当前用
 | 类别 | 含义 | 处理 |
 | --- | --- | --- |
 | `dosql_database_binding_missing` | DoSql 请求的当前 target 没有 active `use=database` 的 opaque 绑定 | `credential configure --use database` 绑定到当前 target |
+| `dosql_credential_not_bound` | `doops sql --credential` 指定的凭据在当前 target 上没有 active `use=database` 绑定 | `credential list --target` 查看名称，或先 configure 该凭据 |
 | `credential_binding_target_mismatch` | `--credential` 显式引用的凭据（发布、DoWeb 等非 DoSql 入口）只绑定在其他 `cluster/instance` | 在当前 target 上 grant/configure |
 | `credential_binding_scope_invalid` | 当前 target 上的绑定 scope 不再通过校验（例如 namespace 无效） | grant-revoke 后用合法 namespace 重新 configure |
 | `credential_grant_denied` | 其他绑定不存在的情况，例如绑定已吊销 | 检查 `credential list --target` |

@@ -40,8 +40,10 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 	dryRun := flags.Bool("dry-run", false, "Execute the batch and verification, then roll back (--mode apply)")
 	copyFrom := flags.String("copy-from", "", "Copy whole tables from this source database into --database (--mode apply, same engine, destination tables must exist)")
 	copyTables := flags.String("tables", "", "Comma-separated table names for --copy-from")
-	// DoSql has no --credential: the Gateway binds the target's database
-	// credentials and the Agent selects one by --database.
+	// Without --credential the Gateway binds every database credential on the
+	// target and the Agent selects one by --database. --credential picks one
+	// bound credential by name or ID, e.g. a migration account for DDL.
+	credential := flags.String("credential", "", "Bound database credential to use, by resource name or ID (--sql/--file only)")
 	var databaseRefs stringListFlag
 	var repositoryRefs stringListFlag
 	flags.Var(&databaseRefs, "database-ref", "Database asset reference for the conversation; repeatable")
@@ -69,7 +71,11 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 	if err != nil {
 		return err
 	}
+	selectedCredential := strings.TrimSpace(*credential)
 	if strings.TrimSpace(*copyFrom) != "" {
+		if selectedCredential != "" {
+			return fmt.Errorf("--credential 不能与 --copy-from 同用：复制需要源库和目标库两个凭据")
+		}
 		if parsedMode != sqlModeApply {
 			return fmt.Errorf("--copy-from 只用于 --mode apply")
 		}
@@ -108,9 +114,16 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 		if strings.TrimSpace(*request) != "" {
 			return fmt.Errorf("--sql/--file 与 --request 只能二选一")
 		}
+		arguments := direct.promptArguments()
+		if selectedCredential != "" {
+			arguments["sql_credential"] = selectedCredential
+		}
 		return runSkillPromptWith("dosql", sqlGatewayOperation(parsedMode), *target, sessionName,
 			sqlDirectAuditDescription(parsedMode, direct), "auto", nil,
-			direct.promptArguments(), servers, configErr, ss, verbose)
+			arguments, servers, configErr, ss, verbose)
+	}
+	if selectedCredential != "" {
+		return fmt.Errorf("%s", withNext("--credential only applies to --sql/--file", "doops sql --target "+*target+" --mode apply --credential "+selectedCredential+" --sql '<sql>' --verify '<select>'"))
 	}
 	if parsedMode == sqlModeApply {
 		// The model-driven apply path needed a signed approval nobody issues; a

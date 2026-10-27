@@ -980,8 +980,20 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		// DoSql only uses the target's database bindings; a caller-chosen
 		// reference would reintroduce the second selection path.
 		if promptArgs.Skill == "dosql" && len(promptArgs.CredentialRefs) != 0 {
-			writeJSON(buildErrorResponse(req.ID, -32602, "dosql_credential_refs_unsupported: DoSql selects the target's database bindings automatically"))
+			writeJSON(buildErrorResponse(req.ID, -32602, "dosql_credential_refs_unsupported: pick one bound database credential with sql_credential (doops sql --credential <name>)"))
 			return nil
+		}
+		// sql_credential narrows the automatic set to one bound credential by
+		// name or ID; it never adds a credential the target has not bound.
+		if promptArgs.SQLCredential != "" {
+			if promptArgs.Skill != "dosql" || promptArgs.CredentialMode != "auto" {
+				writeJSON(buildErrorResponse(req.ID, -32602, "sql_credential requires skill dosql with automatic credential mode"))
+				return nil
+			}
+			if !validCredentialMetadataToken(promptArgs.SQLCredential, 128) {
+				writeJSON(buildErrorResponse(req.ID, -32602, "credential reference name is invalid"))
+				return nil
+			}
 		}
 		if err := validatePromptCredentialAccess(operation, len(promptArgs.CredentialRefs) != 0 || promptArgs.CredentialMode == "auto"); err != nil {
 			writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
@@ -1098,6 +1110,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		authorizedCredentials, err = h.hub.resolveExplicitCredentials(
 			auth, cluster, instance,
 			promptArgs.Instruction, promptArgs.CredentialRefs, action, promptArgs.Skill, promptArgs.CredentialMode,
+			promptArgs.SQLCredential,
 		)
 		if err != nil {
 			category := credentialErrorCategory(err)

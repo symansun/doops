@@ -7,9 +7,11 @@
 运行时引用凭据只要求该 target 的 grant，不要求额外凭据权限或逐用户绑定。
 目标视图也继承操作权限；返回无 payload 的目标绑定元数据。创建、轮换、吊销仍检查 owner/admin。
 `skill=dosql` 请求直接用服务器保存的 database 绑定解析 namespace/version，不运行 scope 规划 prompt。
-DoSql 只有自动凭据模式：Gateway 按资源 ID 把当前 target 上全部 active 的 database credential bindings
+DoSql 使用自动凭据模式：Gateway 按资源 ID 把当前 target 上全部 active 的 database credential bindings
 传给 DoSql。`skill=dosql` 携带 `credential_refs` 时返回 `-32602 dosql_credential_refs_unsupported`。
-多个绑定时由 Agent 按 `sql_database` 与凭据指向的库名匹配选择。
+多个绑定时由 Agent 按 `sql_database` 与凭据指向的库名匹配选择。`sql_credential`（资源名或 ID）
+把这个集合收窄为一个已绑定凭据；只接受 `skill=dosql` + `credential_mode=auto`，否则返回 `-32602`。
+未绑定返回 `dosql_credential_not_bound`，同名多 owner 返回 `credential_reference_ambiguous`。
 缺少版本、目标绑定、格式不合法或目标离线分别返回真实错误类别，不合并为 `credential_invalid`。
 
 CLI `credential configure` 顺序调用既有的 managed list/create、payload/import-secret、
@@ -37,7 +39,8 @@ runtime key 不能重复。未映射的 key 原样保留。`connection_uri` 和 
 加密主密钥和审计。它只在当前精确 target 内读取指定 Opaque Secret，不修改源 Secret。
 Agent 通过内部 `doops_credential_import` 控制通道返回选中 payload，Gateway 加密为 staged
 version 后只向 HTTP 返回版本元数据。公开 RPC 禁止调用该工具，流式通知不会进入导入结果。
-错误只返回稳定类别；无权限、无加密主密钥或审计不可用时不读取 Secret。
+错误只返回稳定类别；无权限、无加密主密钥或审计不可用时不读取 Secret。内部调用失败的类别与状态见
+`CREDENTIAL_RESOURCES.md` 的 `--from-secret` 边界。
 导入本身不建立 grant 或激活；configure 继续走既有 grant/verify/promote。
 
 ## 架构

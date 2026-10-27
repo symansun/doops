@@ -31,6 +31,7 @@ var (
 	ErrCredentialBindingTargetMismatch = fmt.Errorf("%w: credential is bound to another target", ErrCredentialGrantDenied)
 	ErrCredentialBindingScopeInvalid   = fmt.Errorf("%w: target binding scope is invalid", ErrCredentialGrantDenied)
 	ErrDoSQLDatabaseBindingMissing     = fmt.Errorf("%w: target has no database binding", ErrCredentialGrantDenied)
+	ErrDoSQLCredentialNotBound         = fmt.Errorf("%w: named credential has no active database binding on this target", ErrCredentialGrantDenied)
 )
 
 // credentialGrantDenialCategory must run before the generic grant-denied case.
@@ -42,6 +43,8 @@ func credentialGrantDenialCategory(err error) (string, bool) {
 		return "credential_binding_scope_invalid", true
 	case errors.Is(err, ErrDoSQLDatabaseBindingMissing):
 		return "dosql_database_binding_missing", true
+	case errors.Is(err, ErrDoSQLCredentialNotBound):
+		return "dosql_credential_not_bound", true
 	case errors.Is(err, ErrCredentialGrantDenied):
 		return "credential_grant_denied", true
 	}
