@@ -334,6 +334,56 @@ def test_oilan_agent_chart_rejects_invalid_image_references(tmp_path):
         assert result.returncode != 0, result.stdout
 
 
+@pytest.mark.parametrize(
+    "legacy",
+    [
+        # Live release values from before Gateway delivery: mount + Secret values.
+        {
+            "doagentSettings": {"secretName": "doagent-model-settings", "key": "settings.json"},
+            "modelRouting": {"policy": "single-model"},
+            "mounts": [{"name": "doagent-config", "mountPath": "/opt/doagent_config", "readOnly": True}],
+            "volumes": [],
+        },
+        # A mount under another volume name still targets the legacy path.
+        {
+            "mounts": [{"name": "legacy-model", "mountPath": "/opt/doagent_config/"}],
+            "volumes": [{"name": "legacy-model", "secret": {"secretName": "doagent-model-settings"}}],
+        },
+        # An explicit doagent-config volume carried in values.volumes.
+        {
+            "mounts": [],
+            "volumes": [{"name": "doagent-config", "secret": {"secretName": "doagent-model-settings"}}],
+        },
+    ],
+)
+def test_chart_drops_legacy_model_settings_mount_from_carried_values(tmp_path, legacy):
+    values = oilan_values()
+    for key in ("doagentSettings", "modelRouting"):
+        if key in legacy:
+            values[key] = legacy[key]
+    values["volumeMounts"] = values["volumeMounts"] + legacy["mounts"]
+    values["volumes"] = values["volumes"] + legacy["volumes"]
+
+    result = render_chart(tmp_path, "doops-agent-live", values, f"image.digest={IMAGE_DIGEST}")
+    result.check_returncode()
+    deployment = [item for item in yaml.safe_load_all(result.stdout) if item][0]
+    container = agent_container(deployment)
+    pod_volumes = deployment["spec"]["template"]["spec"]["volumes"]
+
+    assert "doagent-model-settings" not in result.stdout
+    assert all(
+        mount["mountPath"].rstrip("/") != "/opt/doagent_config"
+        for mount in container["volumeMounts"]
+    )
+    assert all(volume["name"] != "doagent-config" for volume in pod_volumes)
+    # Every other mount survives and keeps a backing volume.
+    volume_names = {volume["name"] for volume in pod_volumes}
+    kept = {mount["mountPath"] for mount in container["volumeMounts"]}
+    assert "/root/.kube/config" in kept and "/root" in kept
+    for mount in container["volumeMounts"]:
+        assert mount["name"] in volume_names, mount
+
+
 def test_public_agent_template_does_not_require_registry_auth():
     values = yaml.safe_load((CHART / "values.yaml").read_text(encoding="utf-8"))
 

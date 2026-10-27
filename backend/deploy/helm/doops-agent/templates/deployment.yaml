@@ -110,22 +110,29 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 10
             timeoutSeconds: 2
+{{- /* The model provider comes from the Gateway. A legacy doagent settings
+       mount (/opt/doagent_config, volume doagent-config) carried over in
+       release values is dropped, so its Secret can be deleted. */}}
+{{- $mounts := list }}
+{{- $dropped := list "doagent-config" }}
+{{- range .Values.volumeMounts }}
+{{- if or (eq (default "" .name) "doagent-config") (eq (trimSuffix "/" (default "" .mountPath)) "/opt/doagent_config") }}
+{{- $dropped = append $dropped (default "" .name) }}
+{{- else }}
+{{- $mounts = append $mounts . }}
+{{- end }}
+{{- end }}
+{{- $volumes := list }}
+{{- range .Values.volumes }}
+{{- if not (has (default "" .name) $dropped) }}
+{{- $volumes = append $volumes . }}
+{{- end }}
+{{- end }}
           volumeMounts:
-{{- with .Values.volumeMounts }}
+{{- with $mounts }}
 {{ toYaml . | nindent 12 }}
 {{- end }}
       volumes:
-{{- /* The model provider comes from the Gateway. A legacy settings Secret is
-       rendered only so releases whose volumeMounts still reference it stay
-       valid; the Agent never reads it. */}}
-{{- with (.Values.doagentSettings | default dict).secretName }}
-        - name: doagent-config
-          secret:
-            secretName: {{ . }}
-            items:
-              - key: {{ $.Values.doagentSettings.key | default "settings.json" }}
-                path: settings.json
-{{- end }}
-{{- with .Values.volumes }}
+{{- with $volumes }}
 {{ toYaml . | nindent 8 }}
 {{- end }}
