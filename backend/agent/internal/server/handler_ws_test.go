@@ -382,7 +382,9 @@ func TestAgentWebSocketShellSnapshotNoOpDoesNotPanic(t *testing.T) {
 
 func TestAgentMetadataModeReturnsModelStatusWithoutPrompt(t *testing.T) {
 	settingsPath := filepath.Join(t.TempDir(), "settings.json")
-	t.Setenv("DO_AGENT_SETTINGS", settingsPath)
+	previousSettingsFile := doagentSettingsFile
+	doagentSettingsFile = settingsPath
+	t.Cleanup(func() { doagentSettingsFile = previousSettingsFile })
 	if err := os.WriteFile(settingsPath, []byte(`{
   "model": "minimax/MiniMax-M3",
   "provider": {

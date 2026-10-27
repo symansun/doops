@@ -201,7 +201,8 @@ configure_kubectl() {
 
 configure_doagent() {
     mkdir -p /root/.agent
-    local settings_file="${DO_AGENT_SETTINGS:-/tmp/doops-doagent/settings.json}"
+    # doagent reads only this fixed file; rewrite it from the mount on every start.
+    local settings_file=/root/.agent/settings.json
     local source=/opt/doagent_config/settings.json
     local policy="${DO_AGENT_MODEL_ROUTING_POLICY:-}"
 
@@ -211,8 +212,7 @@ configure_doagent() {
     fi
 
     python3 /app/configure_doagent_settings.py "${source}" "${settings_file}" "${policy}"
-    export DO_AGENT_SETTINGS="${settings_file}"
-    echo "✅ doagent config: materialized from mounted settings"
+    echo "✅ doagent config: materialized from mounted settings into ${settings_file}"
 }
 
 configure_mutation_authority() {
