@@ -225,7 +225,13 @@ func (gw *Gateway) submitBgTask(sessionID, command, logPath string) (*bgTask, er
 	}
 
 	// 构造独立进程: setsid bash -c 'command' > logPath 2>&1
-	cmd := exec.Command("bash", "-c", command)
+	cmd, script, err := bashCommand(command)
+	if err != nil {
+		return nil, err
+	}
+	if script != nil {
+		defer script.Close()
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // 独立会话组
 
 	logFile, err := os.Create(logPath)

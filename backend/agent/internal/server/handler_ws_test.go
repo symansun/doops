@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -151,9 +152,20 @@ func (f *fakeWebSocketDataWriter) SetWriteDeadline(deadline time.Time) error {
 	return nil
 }
 
-func (f *fakeWebSocketDataWriter) WriteJSON(interface{}) error {
-	return f.writeErr
+func (f *fakeWebSocketDataWriter) NextWriter(int) (io.WriteCloser, error) {
+	return fakeMessageWriter{f}, nil
 }
+
+type fakeMessageWriter struct{ f *fakeWebSocketDataWriter }
+
+func (w fakeMessageWriter) Write(p []byte) (int, error) {
+	if w.f.writeErr != nil {
+		return 0, w.f.writeErr
+	}
+	return len(p), nil
+}
+
+func (w fakeMessageWriter) Close() error { return nil }
 
 func (f *fakeWebSocketDataWriter) Close() error {
 	f.closes++
@@ -167,8 +179,9 @@ func TestWriteWebSocketJSONBoundsBlockedWrites(t *testing.T) {
 		if err := writeWebSocketJSON(conn, &sync.Mutex{}, &dataWriteState, map[string]string{"ok": "true"}, time.Second); err != nil {
 			t.Fatalf("write JSON: %v", err)
 		}
-		if len(conn.deadlines) != 2 || conn.deadlines[0].IsZero() || !conn.deadlines[1].IsZero() {
-			t.Fatalf("write deadlines = %v, want finite deadline followed by zero", conn.deadlines)
+		last := len(conn.deadlines) - 1
+		if last < 1 || conn.deadlines[0].IsZero() || !conn.deadlines[last].IsZero() {
+			t.Fatalf("write deadlines = %v, want finite deadlines followed by zero", conn.deadlines)
 		}
 		if conn.closes != 0 {
 			t.Fatalf("close calls = %d, want 0", conn.closes)
@@ -2417,5 +2430,55 @@ func TestWaitCommandStreamsBoundsDescendantHoldingOutputPipe(t *testing.T) {
 	if elapsed := time.Since(started); elapsed < postLeaderDescendantGracePeriod ||
 		elapsed > postLeaderDescendantGracePeriod+3*time.Second {
 		t.Fatalf("descendant output pipe wait was not bounded: %s", elapsed)
+	}
+}
+
+// A message that takes longer than one write timeout on a slow link must still
+// be delivered as long as every chunk makes progress within the timeout.
+func TestWriteWebSocketMessageSurvivesSlowButProgressingLink(t *testing.T) {
+	serverConn := make(chan *websocket.Conn, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		serverConn <- conn
+	}))
+	defer server.Close()
+	client, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	peer := <-serverConn
+	defer peer.Close()
+
+	payload := strings.Repeat("x", 6*websocketWriteChunkBytes)
+	received := make(chan int, 1)
+	go func() {
+		_, reader, err := peer.NextReader()
+		if err != nil {
+			received <- -1
+			return
+		}
+		total := 0
+		buf := make([]byte, 4<<10)
+		for {
+			n, err := reader.Read(buf)
+			total += n
+			time.Sleep(25 * time.Millisecond) // ~160 KiB/s reader
+			if err != nil {
+				break
+			}
+		}
+		received <- total
+	}()
+	var state websocketDataWriteState
+	// The whole message takes well over 200ms; each chunk finishes in time.
+	if err := writeWebSocketMessage(client, &sync.Mutex{}, &state, websocket.TextMessage, []byte(payload), 200*time.Millisecond); err != nil {
+		t.Fatalf("slow but progressing write failed: %v", err)
+	}
+	if got := <-received; got != len(payload) {
+		t.Fatalf("received %d bytes, want %d", got, len(payload))
 	}
 }

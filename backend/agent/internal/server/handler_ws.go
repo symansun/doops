@@ -95,15 +95,11 @@ type websocketControlWriter interface {
 
 type websocketDataWriter interface {
 	SetWriteDeadline(deadline time.Time) error
-	WriteJSON(v interface{}) error
+	NextWriter(messageType int) (io.WriteCloser, error)
 	Close() error
 }
 
-type websocketBinaryWriter interface {
-	SetWriteDeadline(deadline time.Time) error
-	WriteMessage(messageType int, data []byte) error
-	Close() error
-}
+type websocketBinaryWriter = websocketDataWriter
 
 type websocketDataWriteState struct {
 	sequence atomic.Uint64
@@ -142,42 +138,60 @@ func writeHeartbeatPing(conn websocketControlWriter, dataWriteState *websocketDa
 	return writeHeartbeatControl(conn, dataWriteState, websocket.PingMessage, payload, timeout)
 }
 
+// websocketWriteChunkBytes bounds how much of one message is written before
+// the stall deadline is extended. A slow link keeps the tunnel as long as bytes
+// keep moving; only a link that makes no progress for the timeout is closed.
+const websocketWriteChunkBytes = 32 << 10
+
 func writeWebSocketBinary(conn websocketBinaryWriter, writeMu *sync.Mutex, dataWriteState *websocketDataWriteState, payload []byte, timeout time.Duration) error {
-	writeMu.Lock()
-	defer writeMu.Unlock()
-	dataWriteState.begin()
-	defer dataWriteState.end()
-	if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
-		_ = conn.Close()
-		return err
-	}
-	if err := conn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
-		_ = conn.Close()
-		return err
-	}
-	if err := conn.SetWriteDeadline(time.Time{}); err != nil {
-		_ = conn.Close()
-		return err
-	}
-	return nil
+	return writeWebSocketMessage(conn, writeMu, dataWriteState, websocket.BinaryMessage, payload, timeout)
 }
 
 func writeWebSocketJSON(conn websocketDataWriter, writeMu *sync.Mutex, dataWriteState *websocketDataWriteState, value interface{}, timeout time.Duration) error {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return writeWebSocketMessage(conn, writeMu, dataWriteState, websocket.TextMessage, payload, timeout)
+}
+
+// writeWebSocketMessage writes one message in chunks with a stall deadline:
+// each chunk gets a fresh deadline, so total duration scales with link speed
+// instead of failing every message that takes longer than timeout.
+func writeWebSocketMessage(conn websocketDataWriter, writeMu *sync.Mutex, dataWriteState *websocketDataWriteState, messageType int, payload []byte, timeout time.Duration) error {
 	writeMu.Lock()
 	defer writeMu.Unlock()
 	dataWriteState.begin()
 	defer dataWriteState.end()
-	if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+	fail := func(err error) error {
 		_ = conn.Close()
 		return err
 	}
-	if err := conn.WriteJSON(value); err != nil {
-		_ = conn.Close()
-		return err
+	if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+		return fail(err)
+	}
+	writer, err := conn.NextWriter(messageType)
+	if err != nil {
+		return fail(err)
+	}
+	for len(payload) > 0 {
+		n := len(payload)
+		if n > websocketWriteChunkBytes {
+			n = websocketWriteChunkBytes
+		}
+		if _, err := writer.Write(payload[:n]); err != nil {
+			return fail(err)
+		}
+		payload = payload[n:]
+		if err := conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+			return fail(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return fail(err)
 	}
 	if err := conn.SetWriteDeadline(time.Time{}); err != nil {
-		_ = conn.Close()
-		return err
+		return fail(err)
 	}
 	return nil
 }
@@ -2690,7 +2704,43 @@ func executeRawCommand(ctx context.Context, command string) (*exec.Cmd, io.ReadC
 	if ctx.Err() != nil {
 		return nil, nil, nil, ctx.Err()
 	}
-	return startRawCommand(ctx, exec.Command("bash", "-c", command))
+	cmd, script, err := bashCommand(command)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if script != nil {
+		// The child holds its own copy of the descriptor after Start.
+		defer script.Close()
+	}
+	return startRawCommand(ctx, cmd)
+}
+
+// inlineCommandLimit keeps `bash -c` for ordinary commands. Linux caps one
+// argv entry at 128 KiB (MAX_ARG_STRLEN), so a longer command is written to an
+// unlinked private file and run as `bash /dev/fd/3`; callers see no difference
+// and nothing is left on disk.
+const inlineCommandLimit = 64 << 10
+
+func bashCommand(command string) (*exec.Cmd, *os.File, error) {
+	if len(command) <= inlineCommandLimit {
+		return exec.Command("bash", "-c", command), nil, nil
+	}
+	file, err := os.CreateTemp("", "doops-cmd-*.sh")
+	if err != nil {
+		return nil, nil, fmt.Errorf("prepare long command: %w", err)
+	}
+	_ = os.Remove(file.Name())
+	if _, err := file.WriteString(command); err != nil {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("prepare long command: %w", err)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("prepare long command: %w", err)
+	}
+	cmd := exec.Command("bash", "/dev/fd/3")
+	cmd.ExtraFiles = []*os.File{file}
+	return cmd, file, nil
 }
 
 func startRawCommand(ctx context.Context, cmd *exec.Cmd) (*exec.Cmd, io.ReadCloser, io.ReadCloser, error) {
