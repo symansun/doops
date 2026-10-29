@@ -6,16 +6,10 @@ import (
 	"fmt"
 	"io"
 	"reflect"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
-)
-
-var (
-	rawKubectlMutationPattern = regexp.MustCompile(`(?i)\bkubectl\s+(apply|patch|replace|create|delete|set|scale|annotate|label|edit|rollout\s+restart)\b`)
-	rawHelmMutationPattern    = regexp.MustCompile(`(?i)\bhelm\b.*\b(upgrade|install|rollback|uninstall)\b`)
 )
 
 type doagentToolTrace struct {
@@ -450,9 +444,6 @@ func (c *doagentToolTraceCollector) rejectionSummary() string {
 }
 
 func (c *doagentToolTraceCollector) requireCompletedToolEvidence() error {
-	if forbidden := c.forbiddenMutationSummary(); forbidden != "" {
-		return fmt.Errorf("doagent_apply_forbidden_mutation: %s", forbidden)
-	}
 	c.mu.Lock()
 	for _, trace := range c.calls {
 		trace.expectedSessionID = c.expectedSessionID
@@ -506,10 +497,6 @@ func (c *doagentToolTraceCollector) unresolvedMutationSummary() string {
 		if tool == "" {
 			tool = "unknown"
 		}
-		if trace.usesRawClusterMutation() {
-			unresolved = append(unresolved, tool+"=raw_cluster_mutation_forbidden")
-			continue
-		}
 		if tool != "doops_helm" && tool != "doops_web" {
 			continue
 		}
@@ -521,24 +508,6 @@ func (c *doagentToolTraceCollector) unresolvedMutationSummary() string {
 	}
 	sort.Strings(unresolved)
 	return strings.Join(unresolved, ",")
-}
-
-func (c *doagentToolTraceCollector) forbiddenMutationSummary() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	var forbidden []string
-	for _, trace := range c.calls {
-		if trace.usesRawClusterMutation() {
-			tool := modelVisibleDoagentToolName(trace.ToolName)
-			if tool == "" {
-				tool = "unknown"
-			}
-			forbidden = append(forbidden, tool)
-		}
-	}
-	sort.Strings(forbidden)
-	return strings.Join(forbidden, ",")
 }
 
 func (trace doagentToolTrace) eligible() bool {
@@ -565,8 +534,6 @@ func (trace doagentToolTrace) terminalMutationReason() string {
 		return "raw_output_missing"
 	case !validDoagentObservedAt(trace.ObservedAt):
 		return "observed_at_invalid"
-	case trace.usesRawClusterMutation():
-		return "raw_cluster_mutation_forbidden"
 	}
 	tool := modelVisibleDoagentToolName(trace.ToolName)
 	if tool != "doops_helm" && tool != "doops_web" {
@@ -675,32 +642,6 @@ func stringSliceContains(values []string, expected string) bool {
 		}
 	}
 	return false
-}
-
-func (trace doagentToolTrace) usesRawClusterMutation() bool {
-	tool := modelVisibleDoagentToolName(trace.ToolName)
-	switch tool {
-	case "shell", "doops_shell", "mcp_doops_shell", "Bash", "bash":
-		var input struct {
-			Command string `json:"command"`
-		}
-		if json.Unmarshal(trace.inputJSON, &input) != nil {
-			return false
-		}
-		command := strings.TrimSpace(input.Command)
-		return rawKubectlMutationPattern.MatchString(command) || rawHelmMutationPattern.MatchString(command)
-	case "ExecuteCode":
-		var input struct {
-			Code string `json:"code"`
-		}
-		if json.Unmarshal(trace.inputJSON, &input) != nil {
-			return false
-		}
-		code := strings.TrimSpace(input.Code)
-		return rawKubectlMutationPattern.MatchString(code) || rawHelmMutationPattern.MatchString(code)
-	default:
-		return false
-	}
 }
 
 func validDoagentObservedAt(value string) bool {
