@@ -247,11 +247,32 @@ func callK8SMCPToolDomain(
 		ID:      request.ID,
 		Result: map[string]interface{}{
 			"content": []interface{}{
-				map[string]interface{}{"type": "text", "text": progress.String()},
+				map[string]interface{}{"type": "text", "text": capToolOutput(progress.String())},
 			},
 			"isError": false,
 		},
 	}
+}
+
+// maxToolOutputBytes bounds one tool result. doagent sends a tool result back
+// inside a single SSE line, and a line beyond the Agent's read limit kills the
+// whole event stream: the turn then ends as an unknown outcome even though the
+// tool worked. Big output is cut here, with a marker, before it can reach the
+// stream.
+const maxToolOutputBytes = 256 * 1024
+
+// capToolOutput keeps the head and the tail of a long tool result and marks
+// what was cut, so the caller can tell a truncated result from a complete one.
+func capToolOutput(text string) string {
+	if len(text) <= maxToolOutputBytes {
+		return text
+	}
+	head := maxToolOutputBytes / 2
+	tail := maxToolOutputBytes - head
+	cut := len(text) - maxToolOutputBytes
+	return text[:head] +
+		fmt.Sprintf("\n...[doops cut %d bytes of tool output; read the full state with doops exec]\n", cut) +
+		text[len(text)-tail:]
 }
 
 // mcpToolCallDeadline ends every tool call before doagent's MCP tool timeout.

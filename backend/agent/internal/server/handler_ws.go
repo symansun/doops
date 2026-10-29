@@ -2399,7 +2399,10 @@ func subscribeDoagentSSEWithCollectorReady(
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+	// One SSE event carries a whole tool result, so a line can be far larger
+	// than a log line. A line beyond this limit used to kill the stream and
+	// turn a finished turn into an unknown outcome.
+	scanner.Buffer(make([]byte, 256*1024), maxDoagentSSELineBytes)
 
 	var eventData strings.Builder
 	var pendingAgentMessage strings.Builder
@@ -2613,6 +2616,10 @@ func doagentTurnFinishedError(update map[string]interface{}) error {
 	return fmt.Errorf("doagent turn %s: %s", status, stopReason)
 }
 
+// maxDoagentSSELineBytes bounds one doagent SSE line. A line holds a whole
+// tool result, so this must be well above maxToolOutputBytes.
+const maxDoagentSSELineBytes = 8 * 1024 * 1024
+
 // sanitizeSecretText redacts and keeps only the last 1200 characters, which is
 // right for error text but silently drops the start of query results.
 func sanitizeSecretText(s string) string {
@@ -2633,10 +2640,14 @@ func redactSecretText(s string) string {
 		regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://)[^/@\s]+@`),
 		regexp.MustCompile(`(?i)([?&](?:[A-Za-z0-9._-]*(?:token|password|secret|signature|credential|api[_-]?key)|sig|auth|authorization|cookie)=)[^&#\s]+`),
 		regexp.MustCompile(`sk-[A-Za-z0-9_-]+`),
-		regexp.MustCompile(`(?i)(api[_-]?key[=: ]+)[^ ,}\n]+`),
+		regexp.MustCompile(`(?i)(api[_-]?key[=:])[^ ,}\n]+`),
+		regexp.MustCompile(`(?i)(api[_-]?key )[A-Za-z0-9._~+/=-]{20,}`),
 		regexp.MustCompile(`(?i)(Bearer )[A-Za-z0-9._-]+`),
 		regexp.MustCompile(`(?i)(Basic )[A-Za-z0-9+/=._-]+`),
-		regexp.MustCompile(`(?i)((?:authorization|cookie|password|token|secret)[_-]?[A-Za-z0-9_-]*[=: ]+)[^ ,}\n]+`),
+		regexp.MustCompile(`(?i)((?:authorization|cookie|password|token|secret)[_-]?[A-Za-z0-9_-]*[=:])[^ ,}\n]+`),
+		// The space-separated form only counts as a credential when the value is
+		// long enough to be one. "token too long" is prose, not a secret.
+		regexp.MustCompile(`(?i)((?:authorization|cookie|password|token|secret)[_-]?[A-Za-z0-9_-]* )[A-Za-z0-9._~+/=-]{20,}`),
 	}
 	s = replacers[0].ReplaceAllString(s, "...REDACTED PRIVATE KEY...")
 	for _, replacer := range replacers[1:] {
