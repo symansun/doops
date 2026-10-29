@@ -436,9 +436,12 @@ Job、最终 Deployment 状态和能力检查通过后才报告 `OK`。新集群
 ```bash
 git tag v1.2.4
 git push cnb v1.2.4
+cnb build start-build --repo l8ai/ai/doops.sh --tag v1.2.4 --event api_trigger_release
 ```
 
-CNB 的 `main` push 会构建并推送以 commit SHA 命名的 Agent 镜像。`tag_push` 则在完整测试后推送同 tag 的 Agent 镜像，构建四个平台 CLI、生成 `checksums.txt`、上传到同名 Release，并从公开下载入口回读校验。二进制不进入 Git。
+发版流水线运行在云原生开发节点上，扣开发配额；CNB 不允许 tag_push 事件使用 vscode service，所以推 tag 不会自动发版，需要用上面的命令从该 tag 触发。
+
+CNB 的 `main` push 会构建并推送以 commit SHA 命名的 Agent 镜像。从 tag 触发的 `api_trigger_release` 则在完整测试后推送同 tag 的 Agent 镜像，构建四个平台 CLI、生成 `checksums.txt`、上传到同名 Release，并从公开下载入口回读校验。二进制不进入 Git。
 
 ## 边界
 
