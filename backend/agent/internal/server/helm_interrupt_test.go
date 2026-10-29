@@ -63,26 +63,24 @@ func TestSettleInterruptedHelmRelease(t *testing.T) {
 		historyFail  bool
 		rollbackFail string
 		want         string
+		wantErr      bool
 		wantRollback string
 	}{
 		{
 			name: "history unreadable", historyFail: true,
-			want: "release history could not be read",
+			want: "release history could not be read", wantErr: true,
 		},
 		{
 			name:    "no revision for this mutation",
 			history: history(entry("5", "deployed", "old")),
-			want:    "before Helm created a revision; release unchanged (deployed revision 5)",
 		},
 		{
 			name:    "Helm recorded the revision failed",
 			history: history(entry("5", "deployed", "old"), entry("6", "failed", mine)),
-			want:    "Helm recorded revision 6 failed; deployed revision 5 is unchanged",
 		},
 		{
-			name:    "revision deployed but not verified",
+			name:    "revision deployed needs no settle",
 			history: history(entry("5", "superseded", "old"), entry("6", "deployed", mine)),
-			want:    "after revision 6 was deployed; the workloads were not verified",
 		},
 		{
 			name:         "pending revision is rolled back to the last deployed one",
@@ -100,12 +98,12 @@ func TestSettleInterruptedHelmRelease(t *testing.T) {
 			history:      history(entry("5", "deployed", "old"), entry("6", "pending-upgrade", mine)),
 			rollbackFail: "release locked by synthetic test",
 			want:         "the rollback to revision 5 failed: release locked by synthetic test",
+			wantErr:      true,
 			wantRollback: "rollback\napp\n5\n--namespace\napps\n",
 		},
 		{
 			name:    "other terminal state is left alone",
 			history: history(entry("5", "deployed", "old"), entry("6", "superseded", mine)),
-			want:    "revision 6 is superseded",
 		},
 	}
 	for _, tt := range tests {
@@ -120,11 +118,18 @@ func TestSettleInterruptedHelmRelease(t *testing.T) {
 			t.Setenv("ROLLBACK_FAIL", tt.rollbackFail)
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel() // settle runs after the call's own context has ended
-			err := settleInterruptedHelmRelease(ctx, helmCommand{
+			note, err := settleHelmRevision(ctx, helmCommand{
 				release: "app", namespace: "apps", mutationID: mine, cwd: root,
 			})
-			if err == nil || !strings.HasPrefix(err.Error(), "helm_interrupted: ") || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("error = %v, want helm_interrupted containing %q", err, tt.want)
+			if tt.wantErr {
+				if err == nil || !strings.HasPrefix(err.Error(), "helm_interrupted: ") || !strings.Contains(err.Error(), tt.want) {
+					t.Fatalf("error = %v, want helm_interrupted containing %q", err, tt.want)
+				}
+			} else if err != nil {
+				t.Fatalf("settle failed: %v", err)
+			}
+			if !tt.wantErr && !strings.Contains(note, tt.want) {
+				t.Fatalf("note = %q, want it to contain %q", note, tt.want)
 			}
 			args, _ := os.ReadFile(filepath.Join(root, "rollback-args"))
 			if string(args) != tt.wantRollback {
@@ -139,13 +144,14 @@ func TestSettleInterruptedHelmRelease(t *testing.T) {
 // so the release is never stuck in pending-upgrade.
 func TestRunHelmCommandInterruptedUpgradeNeverStaysPending(t *testing.T) {
 	for _, tt := range []struct {
-		name         string
-		mineStatus   string
-		want         string
-		wantRollback bool
+		name          string
+		mineStatus    string
+		want          string
+		wantInterrupt bool
+		wantRollback  bool
 	}{
-		{"helm left the revision pending", "pending-upgrade", "rolled back to revision 5", true},
-		{"helm recorded the revision failed", "failed", "Helm recorded revision 6 failed", false},
+		{"helm left the revision pending", "pending-upgrade", "rolled back to revision 5", true, true},
+		{"helm recorded the revision failed", "failed", "Helm recorded revision 6 failed", false, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			root := installInterruptFakeHelm(t)
@@ -163,8 +169,11 @@ func TestRunHelmCommandInterruptedUpgradeNeverStaysPending(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
 			defer cancel()
 			_, err = runHelmCommand(ctx, command, func(notificationEvent) {})
-			if err == nil || !strings.HasPrefix(err.Error(), "helm_interrupted: ") || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("error = %v, want helm_interrupted containing %q", err, tt.want)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want it to contain %q", err, tt.want)
+			}
+			if tt.wantInterrupt && !strings.HasPrefix(err.Error(), "helm_interrupted: ") {
+				t.Fatalf("error = %v, want helm_interrupted", err)
 			}
 			if marker, _ := os.ReadFile(filepath.Join(root, "terminated")); strings.TrimSpace(string(marker)) != "term" {
 				t.Fatal("interrupted helm did not receive SIGTERM")
@@ -218,5 +227,58 @@ func TestHelmToolDeadlineLeavesRoomBeforeDoagentTimeout(t *testing.T) {
 	if helmToolDeadline+helmTerminationGrace+helmSettleTimeout > doagent {
 		t.Fatalf("deadline %s + grace %s + settle %s exceeds doagent's %s",
 			helmToolDeadline, helmTerminationGrace, helmSettleTimeout, doagent)
+	}
+}
+
+// Helm's own --wait can time out: helm exits non-zero and leaves the revision
+// pending-upgrade, which locks the release for every later operation. The
+// Agent must unlock it and say which revision is in effect.
+func TestHelmWaitTimeoutLeavesNoPendingRevision(t *testing.T) {
+	const waitTimeoutHelm = `#!/bin/sh
+case "$1" in
+history)
+  cat "$ROOT/history.json"; exit 0;;
+rollback)
+  printf '%s\n' "$@" > "$ROOT/rollback-args"; exit 0;;
+esac
+for arg in "$@"; do
+  if [ "$arg" = "--dry-run=server" ]; then printf '%s' "$DRY_JSON"; exit 0; fi
+done
+prev=""; desc=""
+for arg in "$@"; do
+  if [ "$prev" = "--description" ]; then desc="$arg"; fi
+  prev="$arg"
+done
+printf '[{"revision":5,"status":"deployed","description":"old"},{"revision":6,"status":"pending-upgrade","description":"%s"}]' "$desc" > "$ROOT/history.json"
+printf 'Error: context deadline exceeded\n' >&2
+exit 1
+`
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "helm"), []byte(waitTimeoutHelm), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("ROOT", root)
+	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+	manifest := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: app\nspec:\n  template:\n    spec:\n      containers:\n        - image: registry.example/app@" + testHelmDigest + "\n"
+	t.Setenv("DRY_JSON", helmDryRunJSON(t, manifest))
+
+	command, err := buildHelmCommand(testHelmParams())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = runHelmCommand(context.Background(), command, func(notificationEvent) {})
+	if err == nil {
+		t.Fatal("a failed upgrade was reported as success")
+	}
+	if !strings.Contains(err.Error(), "rolled back to revision 5") {
+		t.Fatalf("error = %v, want it to report the rollback to revision 5", err)
+	}
+	args, readErr := os.ReadFile(filepath.Join(root, "rollback-args"))
+	if readErr != nil {
+		t.Fatalf("the pending revision was left locked: %v", err)
+	}
+	if !strings.Contains(string(args), "\n5\n") {
+		t.Fatalf("rollback args = %q, want revision 5", args)
 	}
 }
