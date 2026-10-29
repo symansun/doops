@@ -18,8 +18,17 @@ package server
 //	helm_mutation_failed          the real helm command failed (first stderr line)
 //	helm_mutation_invalid_result  helm output has no revision for this mutation
 //	helm_verification_failed      live state does not match the rendered release
+//	helm_interrupted              the call ran out of time; the reason names the
+//	                              revision and state the release was left in
 //
 // Only rollback and uninstall skip preflight and verify.
+//
+// A doops_helm call must end, with its outcome recorded, before doagent's MCP
+// tool timeout stops the server. An interrupted helm that is simply killed
+// leaves the release pending-upgrade with nobody to record its terminal state,
+// and every later Helm operation on it fails. So the whole call runs under
+// helmToolDeadline, helm is stopped with SIGTERM (Helm then records the
+// revision failed itself), and settleInterruptedHelmRelease checks the result.
 
 import (
 	"bufio"
@@ -31,10 +40,33 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
+)
+
+const (
+	// helmSettleReserve is kept free at the end of the MCP tool timeout for the
+	// SIGTERM grace period and the settle step.
+	helmSettleReserve = 90 * time.Second
+	// maxHelmWaitTimeout is the largest helm --timeout a single call accepts, so
+	// the helm wait itself always ends inside helmToolDeadline. Verification
+	// shares what is left; running out there is reported as helm_interrupted.
+	maxHelmWaitTimeout = 10 * time.Minute
+	// helmSettleTimeout bounds reading history and unlocking a pending release.
+	helmSettleTimeout = 45 * time.Second
+)
+
+var (
+	// helmToolDeadline bounds one whole doops_helm call. It is tighter than
+	// mcpToolCallDeadline so the SIGTERM grace and the settle step still fit
+	// before doagent's own timeout. Vars so tests can shorten them.
+	helmToolDeadline = time.Duration(doopsMCPToolTimeoutSeconds)*time.Second - helmSettleReserve
+	// helmTerminationGrace is how long an interrupted helm has after SIGTERM to
+	// record its terminal status before it is killed.
+	helmTerminationGrace = 30 * time.Second
 )
 
 var (
@@ -112,6 +144,9 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 	}
 	output, err := mutateHelmRelease(ctx, command)
 	if err != nil {
+		if ctx.Err() != nil && command.mutationID != "" {
+			return "", settleInterruptedHelmRelease(ctx, command)
+		}
 		return "", err
 	}
 	if command.operation() != "upgrade" {
@@ -124,6 +159,10 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 	command.revision = revision
 	verified, err := verifyHelmDeploymentState(ctx, command)
 	if err != nil {
+		if ctx.Err() != nil {
+			return "", helmStepFailure("helm_interrupted", fmt.Sprintf(
+				"the call ran out of time after revision %d was deployed; the workloads were not fully verified, read them back before relying on it", revision))
+		}
 		return "", helmStepFailure("helm_verification_failed", redactSecretText(err.Error()))
 	}
 	return verified, nil
@@ -133,8 +172,7 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 // the real run, and checks the rendered workloads before Helm creates a revision.
 func preflightHelmUpgrade(ctx context.Context, command helmCommand) error {
 	args := append(append([]string(nil), command.args...), "--dry-run=server", "--output=json")
-	preflight := exec.CommandContext(ctx, "helm", args...)
-	preflight.Dir = command.cwd
+	preflight := helmProcess(ctx, command.cwd, args...)
 	var stdout, stderr bytes.Buffer
 	preflight.Stdout = &stdout
 	preflight.Stderr = &stderr
@@ -162,8 +200,7 @@ func mutateHelmRelease(ctx context.Context, command helmCommand) ([]byte, error)
 	if command.operation() == "upgrade" {
 		args = append(args, "--output=json")
 	}
-	cmd := exec.CommandContext(ctx, "helm", args...)
-	cmd.Dir = command.cwd
+	cmd := helmProcess(ctx, command.cwd, args...)
 	// stdout carries chart output (NOTES, manifests) and is only parsed for the
 	// revision; it is never returned to the caller.
 	var stdout, stderr bytes.Buffer
@@ -173,6 +210,79 @@ func mutateHelmRelease(ctx context.Context, command helmCommand) ([]byte, error)
 		return nil, helmStepFailure("helm_mutation_failed", helmStderrReason(stderr.Bytes()))
 	}
 	return stdout.Bytes(), nil
+}
+
+// helmProcess stops helm with SIGTERM when ctx ends, so Helm can record the
+// revision failed and release its lock; it is killed only after the grace period.
+func helmProcess(ctx context.Context, cwd string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "helm", args...)
+	cmd.Dir = cwd
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = helmTerminationGrace
+	return cmd
+}
+
+type helmHistoryEntry struct {
+	Revision    int    `json:"revision"`
+	Status      string `json:"status"`
+	Description string `json:"description"`
+}
+
+// settleInterruptedHelmRelease runs after an upgrade ran out of time. It reads
+// what Helm recorded for this mutation's revision. A revision still pending-*
+// locks the release for every later operation, so it is rolled back to the last
+// deployed revision; any other state is left for the operator. The error always
+// names the revision and state the caller starts from.
+func settleInterruptedHelmRelease(ctx context.Context, command helmCommand) error {
+	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), helmSettleTimeout)
+	defer cancel()
+	interrupted := func(reason string) error { return helmStepFailure("helm_interrupted", reason) }
+	historyCmd := exec.CommandContext(settleCtx, "helm", "history", command.release,
+		"--namespace", command.namespace, "--max", "20", "--output", "json")
+	historyCmd.Dir = command.cwd
+	raw, err := historyCmd.Output()
+	var history []helmHistoryEntry
+	if err == nil {
+		err = json.Unmarshal(raw, &history)
+	}
+	if err != nil {
+		return interrupted("the upgrade ran out of time and the release history could not be read; check helm status before any retry")
+	}
+	var mine *helmHistoryEntry
+	deployed := 0
+	for i := range history {
+		entry := &history[i]
+		if entry.Description == command.mutationID {
+			mine = entry
+		}
+		if entry.Status == "deployed" && entry.Revision > deployed {
+			deployed = entry.Revision
+		}
+	}
+	switch {
+	case mine == nil:
+		return interrupted(fmt.Sprintf("the upgrade ran out of time before Helm created a revision; release unchanged (deployed revision %d)", deployed))
+	case mine.Status == "failed":
+		return interrupted(fmt.Sprintf("the upgrade ran out of time; Helm recorded revision %d failed; deployed revision %d is unchanged; roll back explicitly if the workloads need it", mine.Revision, deployed))
+	case mine.Status == "deployed":
+		return interrupted(fmt.Sprintf("the upgrade ran out of time after revision %d was deployed; the workloads were not verified, read them back before relying on it", mine.Revision))
+	case !strings.HasPrefix(mine.Status, "pending-"):
+		return interrupted(fmt.Sprintf("the upgrade ran out of time; revision %d is %s", mine.Revision, mine.Status))
+	case deployed == 0:
+		return interrupted(fmt.Sprintf("the upgrade ran out of time; revision %d is %s and there is no deployed revision to roll back to; uninstall or rerun the install", mine.Revision, mine.Status))
+	}
+	// No --wait: unlocking the release must finish inside the settle budget.
+	rollbackCmd := exec.CommandContext(settleCtx, "helm", "rollback", command.release, fmt.Sprintf("%d", deployed),
+		"--namespace", command.namespace)
+	rollbackCmd.Dir = command.cwd
+	var stderr bytes.Buffer
+	rollbackCmd.Stderr = &stderr
+	if err := rollbackCmd.Run(); err != nil {
+		return interrupted(fmt.Sprintf("the upgrade ran out of time; revision %d stayed %s and the rollback to revision %d failed: %s",
+			mine.Revision, mine.Status, deployed, helmStderrReason(stderr.Bytes())))
+	}
+	return interrupted(fmt.Sprintf("the upgrade ran out of time; revision %d stayed %s, so the release was rolled back to revision %d to unlock it; verify the workloads before retrying",
+		mine.Revision, mine.Status, deployed))
 }
 
 func (c helmCommand) operation() string {
@@ -494,6 +604,9 @@ func verifyLiveWorkload(ctx context.Context, command helmCommand, expected rende
 		timeout = defaultHelmRolloutTimeout
 	}
 	deadline := time.Now().Add(timeout)
+	if callDeadline, ok := ctx.Deadline(); ok && callDeadline.Before(deadline) {
+		deadline = callDeadline
+	}
 	for {
 		rolling, err := checkLiveWorkload(ctx, command, expected)
 		if err == nil {

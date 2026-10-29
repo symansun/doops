@@ -56,6 +56,9 @@ func handleHelmTool(ctx context.Context, raw json.RawMessage, push notificationS
 	if err != nil {
 		return "", err
 	}
+	// The call must end before doagent's MCP tool timeout; see helmToolDeadline.
+	ctx, cancel := context.WithTimeout(ctx, helmToolDeadline)
+	defer cancel()
 	cleanup, err := prepareManagedHelmChart(ctx, params, &command)
 	if err != nil {
 		return "", err
@@ -106,6 +109,13 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 	}
 	if params.Timeout != "" && !k8sTimeoutPattern.MatchString(params.Timeout) {
 		return helmCommand{}, fmt.Errorf("invalid helm timeout")
+	}
+	if params.Timeout != "" {
+		// Preflight, the wait and the verification share one call budget, so a
+		// longer wait would be cut off mid-upgrade instead of failing cleanly.
+		if parsed, err := time.ParseDuration(params.Timeout); err != nil || parsed > maxHelmWaitTimeout {
+			return helmCommand{}, fmt.Errorf("helm timeout must be at most %s", maxHelmWaitTimeout)
+		}
 	}
 
 	common := []string{"--namespace", params.Namespace, "--wait"}

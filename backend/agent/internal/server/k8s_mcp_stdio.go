@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/user/doops/agent/api"
 )
@@ -201,6 +202,11 @@ func callK8SMCPToolDomain(
 	if err != nil {
 		return mcpErrorResponse(request.ID, -32602, err.Error())
 	}
+	// doagent stops and restarts this server when a call reaches its tool
+	// timeout, and the restarted server is no longer bound to the session
+	// workspace. So every call ends on its own first.
+	ctx, cancel := context.WithTimeout(ctx, mcpToolCallDeadline)
+	defer cancel()
 
 	var progress strings.Builder
 	push := func(event notificationEvent) {
@@ -222,6 +228,10 @@ func callK8SMCPToolDomain(
 		result, err = handleK8STool(ctx, boundArguments, push)
 	}
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) && readOnlyMCPTool(call.Name) {
+			// A read that runs out of time changed nothing; say so plainly.
+			return buildToolErrorResponse(request.ID, fmt.Sprintf("tool_timeout: %s did not finish within %s; nothing was changed", call.Name, mcpToolCallDeadline))
+		}
 		if ctx.Err() != nil || errors.Is(err, errExecutionOutcomeUnknown) ||
 			errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return mcpErrorResponse(request.ID, -32008, errExecutionOutcomeUnknown.Error())
@@ -242,6 +252,14 @@ func callK8SMCPToolDomain(
 			"isError": false,
 		},
 	}
+}
+
+// mcpToolCallDeadline ends every tool call before doagent's MCP tool timeout.
+// Helm uses the tighter helmToolDeadline. A var so tests can shorten it.
+var mcpToolCallDeadline = time.Duration(doopsMCPToolTimeoutSeconds)*time.Second - 30*time.Second
+
+func readOnlyMCPTool(name string) bool {
+	return name == k8sReadMCPToolName || name == webReadMCPToolName
 }
 
 func mcpToolBelongsToDomain(name, domain string) bool {
@@ -455,7 +473,10 @@ func helmMCPToolDefinition() map[string]interface{} {
 					"description": "Optional explicit complete repository:tag or repository@sha256:<64 hex digest>, checked against dry-run and final Deployment manifests. Image fields are not inferred from chart values.",
 				},
 				"revision": map[string]interface{}{"type": "integer", "minimum": 1},
-				"timeout":  map[string]interface{}{"type": "string"},
+				"timeout": map[string]interface{}{
+					"type":        "string",
+					"description": "Helm --wait timeout, e.g. 300s or 8m; at most 10m. Preflight, the wait and verification must all finish inside one tool call.",
+				},
 				"atomic": map[string]interface{}{
 					"type":        "boolean",
 					"default":     false,

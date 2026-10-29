@@ -37,6 +37,9 @@ description: |
   不要用 `exec` 输出密码再让用户粘贴；已有目标 Secret 用 `credential configure --from-secret` 导入。
 - 每次调用都等待 RPC 实际终态。取消 ACK、超时或断连缺少终态时报告 `outcome_unknown`，
   不自动重放 mutation，不宣称成功。
+- `ask` 的文字回答是模型写的摘要，不是状态证据，可能写错 revision 或答非所问。发布前后的
+  Helm release、Deployment、Pod 状态用 `doops exec`（`helm history`、`kubectl get -o json`）
+  或 `doops k8s` 只读入口回读，以回读结果为准。
 - 业务 workload 只用 `doops ask --apply` 发布。任务写明 target、服务范围、镜像版本或其
   授权来源、原因、验收条件；镜像版本不靠猜。发布者调用前自行核对 CI commit 与 digest。
 - 业务 workload 的发布收敛只走 `ask --apply` 内的 `mcp_doops_helm`，不用 shell kubectl、
