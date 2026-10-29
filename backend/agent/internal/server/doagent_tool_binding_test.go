@@ -7,41 +7,6 @@ import (
 	"time"
 )
 
-func TestApplyRejectsRawKubectlMutationEvidence(t *testing.T) {
-	collector := newDoagentToolTraceCollector(false)
-	if err := collector.requireCompletedToolEvidence(); err == nil ||
-		err.Error() != "doagent_apply_tool_evidence_missing" {
-		t.Fatalf("missing tool evidence error = %v", err)
-	}
-
-	collector.calls["call-1"] = doagentToolTrace{
-		ToolCallID: "call-1",
-		ToolName:   "shell",
-		Status:     "completed",
-		ObservedAt: time.Now().UTC().Format(time.RFC3339Nano),
-		inputJSON:  json.RawMessage(`{"command":"kubectl patch deployment doops-agent"}`),
-		resultJSON: json.RawMessage(`{"exitCode":0}`),
-	}
-	if err := collector.requireCompletedToolEvidence(); err == nil ||
-		!strings.Contains(err.Error(), "doagent_apply_forbidden_mutation: shell") {
-		t.Fatalf("raw kubectl mutation evidence accepted: %v", err)
-	}
-}
-
-func TestApplyRejectsAllShellMutationToolAliases(t *testing.T) {
-	for _, tool := range []string{"shell", "doops_shell", "mcp_doops_shell", "Bash", "bash"} {
-		t.Run(tool, func(t *testing.T) {
-			trace := doagentToolTrace{
-				ToolName:  tool,
-				inputJSON: json.RawMessage(`{"command":"kubectl rollout restart deployment/app"}`),
-			}
-			if !trace.usesRawClusterMutation() {
-				t.Fatalf("raw mutation was not detected for %s", tool)
-			}
-		})
-	}
-}
-
 func TestApplyRejectsRemovedStructuredK8sMutationEvidence(t *testing.T) {
 	collector := newDoagentToolTraceCollector(false)
 	bindApplyCollector(collector, "apply-test")
@@ -156,70 +121,6 @@ func TestApplyRejectsReadOnlyK8sEvidence(t *testing.T) {
 	err := collector.requireCompletedToolEvidence()
 	if err == nil || !strings.Contains(err.Error(), "mcp_doops_k8s_read=structured_mutation_tool_required") {
 		t.Fatalf("read-only k8s evidence accepted: %v", err)
-	}
-}
-
-func TestApplyRejectsForbiddenMutationEvenWithStructuredEvidence(t *testing.T) {
-	collector := newDoagentToolTraceCollector(false)
-	bindApplyCollector(collector, "apply-test")
-	collector.calls["call-1"] = doagentToolTrace{
-		ToolCallID: "call-1",
-		ToolName:   "Bash",
-		Status:     "completed",
-		ObservedAt: time.Now().UTC().Format(time.RFC3339Nano),
-		inputJSON:  json.RawMessage(`{"command":"kubectl patch deployment app --patch '{}'"}`),
-		resultJSON: json.RawMessage(`{"exitCode":0}`),
-	}
-	collector.calls["call-2"] = attestedMutationTrace(t, "mcp_doops_helm", map[string]interface{}{
-		"operation": "upgrade-install",
-		"release":   "app",
-		"chart":     "deploy/helm/app",
-		"namespace": "apps",
-		"confirm":   true,
-	})
-	err := collector.requireCompletedToolEvidence()
-	if err == nil || !strings.Contains(err.Error(), "doagent_apply_forbidden_mutation: Bash") {
-		t.Fatalf("forbidden mutation was masked by structured evidence: %v", err)
-	}
-}
-
-func TestApplyRejectsShellHelmMutationEvenWithStructuredEvidence(t *testing.T) {
-	collector := newDoagentToolTraceCollector(false)
-	bindApplyCollector(collector, "apply-test")
-	collector.calls["call-1"] = doagentToolTrace{
-		ToolCallID: "call-1",
-		ToolName:   "shell",
-		Status:     "completed",
-		ObservedAt: time.Now().UTC().Format(time.RFC3339Nano),
-		inputJSON:  json.RawMessage(`{"command":"helm --namespace kz-ops upgrade --install app deploy/helm/app"}`),
-		resultJSON: json.RawMessage(`{"exitCode":0}`),
-	}
-	collector.calls["call-2"] = attestedMutationTrace(t, "mcp_doops_helm", map[string]interface{}{
-		"operation": "upgrade-install",
-		"release":   "app",
-		"chart":     "deploy/helm/app",
-		"namespace": "kz-ops",
-		"confirm":   true,
-	})
-	err := collector.requireCompletedToolEvidence()
-	if err == nil || !strings.Contains(err.Error(), "doagent_apply_forbidden_mutation: shell") {
-		t.Fatalf("shell helm mutation was masked by structured evidence: %v", err)
-	}
-}
-
-func TestApplyRejectsExecuteCodeKubectlMutation(t *testing.T) {
-	collector := newDoagentToolTraceCollector(false)
-	collector.calls["call-1"] = doagentToolTrace{
-		ToolCallID: "call-1",
-		ToolName:   "ExecuteCode",
-		Status:     "completed",
-		ObservedAt: time.Now().UTC().Format(time.RFC3339Nano),
-		inputJSON:  json.RawMessage(`{"language":"shell","code":"kubectl rollout restart deployment/app"}`),
-		resultJSON: json.RawMessage(`{"exitCode":0}`),
-	}
-	err := collector.requireCompletedToolEvidence()
-	if err == nil || !strings.Contains(err.Error(), "doagent_apply_forbidden_mutation: ExecuteCode") {
-		t.Fatalf("ExecuteCode kubectl mutation accepted: %v", err)
 	}
 }
 
@@ -461,22 +362,6 @@ func TestApplyRejectsFailedToolTransitionToCompleted(t *testing.T) {
 	}
 }
 
-func TestApplyRejectsBashKubectlMutationEvidence(t *testing.T) {
-	collector := newDoagentToolTraceCollector(false)
-	collector.calls["call-1"] = doagentToolTrace{
-		ToolCallID: "call-1",
-		ToolName:   "Bash",
-		Status:     "completed",
-		ObservedAt: time.Now().UTC().Format(time.RFC3339Nano),
-		inputJSON:  json.RawMessage(`{"command":"kubectl patch deployment doops-agent"}`),
-		resultJSON: json.RawMessage(`{"content":[{"type":"content","content":{"type":"text","text":"patched"}}]}`),
-	}
-	err := collector.requireCompletedToolEvidence()
-	if err == nil || !strings.Contains(err.Error(), "doagent_apply_forbidden_mutation: Bash") {
-		t.Fatalf("Bash kubectl mutation evidence accepted: %v", err)
-	}
-}
-
 func TestApplyToolEvidenceReportsRejectedTrace(t *testing.T) {
 	collector := newDoagentToolTraceCollector(false)
 	collector.calls["call-1"] = doagentToolTrace{
@@ -620,10 +505,10 @@ func TestApplyUnresolvedMutationSummaryNamesEachTool(t *testing.T) {
 			trace.resultJSON = nil
 			return map[string]doagentToolTrace{"x": trace}
 		}, "doops_helm=raw_output_missing"},
-		{"raw kubectl mutation is unresolved", func(t *testing.T) map[string]doagentToolTrace {
+		{"shell kubectl is not a structured mutation", func(t *testing.T) map[string]doagentToolTrace {
 			return map[string]doagentToolTrace{"sh": {ToolName: "shell", Status: "completed",
 				inputJSON: json.RawMessage(`{"command":"kubectl rollout restart deployment/app"}`)}}
-		}, "shell=raw_cluster_mutation_forbidden"},
+		}, ""},
 		{"read tools are ignored", func(t *testing.T) map[string]doagentToolTrace {
 			return map[string]doagentToolTrace{"r": {ToolName: "mcp_doops_k8s_read", Status: "running"}}
 		}, ""},
@@ -659,5 +544,53 @@ func TestPromptOutcomeUnknownKeepsContract(t *testing.T) {
 	}
 	if message != "execution_outcome_unknown: turn_finished_missing" {
 		t.Fatalf("promptOutcomeUnknown = %q", message)
+	}
+}
+
+// Shell, Bash and ExecuteCode may run kubectl or helm during an apply; they are
+// neither forbidden nor counted as structured mutation evidence.
+func TestApplyAllowsShellClusterCommands(t *testing.T) {
+	helm := map[string]interface{}{
+		"operation": "upgrade-install", "release": "app",
+		"chart": "deploy/helm/app", "namespace": "apps", "confirm": true,
+	}
+	for _, tc := range []struct {
+		tool, field, command string
+	}{
+		{"shell", "command", "kubectl patch deployment app --patch '{}'"},
+		{"doops_shell", "command", "kubectl rollout restart deployment/app"},
+		{"mcp_doops_shell", "command", "kubectl apply -f app.yaml"},
+		{"Bash", "command", "helm --namespace apps upgrade --install app deploy/helm/app"},
+		{"bash", "command", "helm rollback app 3"},
+		{"ExecuteCode", "code", "kubectl delete pod app-0"},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			input, _ := json.Marshal(map[string]string{tc.field: tc.command})
+			shell := doagentToolTrace{
+				ToolCallID: "shell", ToolName: tc.tool, Status: "completed",
+				ObservedAt: time.Now().UTC().Format(time.RFC3339Nano),
+				inputJSON:  input, resultJSON: json.RawMessage(`{"exitCode":0}`),
+			}
+
+			alone := newDoagentToolTraceCollector(false)
+			bindApplyCollector(alone, "apply-test")
+			alone.calls["shell"] = shell
+			if got := alone.unresolvedMutationSummary(); got != "" {
+				t.Fatalf("shell command left unresolved: %q", got)
+			}
+			err := alone.requireCompletedToolEvidence()
+			if err == nil || !strings.HasPrefix(err.Error(), "doagent_apply_tool_evidence_missing") ||
+				strings.Contains(err.Error(), "forbidden") {
+				t.Fatalf("shell-only apply error = %v, want evidence_missing without forbidden", err)
+			}
+
+			withHelm := newDoagentToolTraceCollector(false)
+			bindApplyCollector(withHelm, "apply-test")
+			withHelm.calls["shell"] = shell
+			withHelm.calls["helm"] = attestedMutationTrace(t, "mcp_doops_helm", helm)
+			if err := withHelm.requireCompletedToolEvidence(); err != nil {
+				t.Fatalf("shell command blocked a verified helm apply: %v", err)
+			}
+		})
 	}
 }
