@@ -269,7 +269,8 @@ func createWorkspaceSnapshotCommit(root string, source *WorkspaceSourceIdentity)
 		gitCmds = append(gitCmds, []string{"add", "-f", "--", workspaceSourceManifestPath})
 	}
 	gitCmds = append(gitCmds,
-		[]string{"-c", "user.name=doops", "-c", "user.email=doops@localhost", "commit", "--allow-empty", "-m", "AutoSync"},
+		// Internal snapshot commit: never use the host's signing setup.
+		[]string{"-c", "user.name=doops", "-c", "user.email=doops@localhost", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "AutoSync"},
 	)
 
 	for _, args := range gitCmds {

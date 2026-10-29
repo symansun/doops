@@ -328,7 +328,7 @@ func ensureWorkspaceGitSnapshot(wsPath, sessionID string) error {
 	if err := runCommand(wsPath, "git", "add", "-A"); err != nil {
 		return err
 	}
-	if err := runCommand(wsPath, "git", "commit", "--allow-empty", "-m", "DoopsPullSnapshot"); err != nil {
+	if err := runCommand(wsPath, "git", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "DoopsPullSnapshot"); err != nil {
 		return err
 	}
 	if err := os.MkdirAll("/tmp/repos", 0755); err != nil {
