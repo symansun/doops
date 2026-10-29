@@ -2409,7 +2409,7 @@ func subscribeDoagentSSEWithCollectorReady(
 		if pendingAgentMessage.Len() == 0 {
 			return
 		}
-		text := sanitizeSecretText(pendingAgentMessage.String())
+		text := redactSecretText(pendingAgentMessage.String())
 		if forwardAgentMessages && !structuredEvents {
 			pushProgress(assistantDeltaNotification(text))
 		}
@@ -2503,7 +2503,7 @@ func subscribeDoagentSSEWithCollectorReady(
 				if updateType == "turn_finished" && pendingAgentMessage.Len() > 0 {
 					// A reply streamed only as chunks has no agent_message event; the
 					// collector still needs it as the turn's final answer.
-					streamed := sanitizeSecretText(pendingAgentMessage.String())
+					streamed := redactSecretText(pendingAgentMessage.String())
 					flushPendingAgentMessage()
 					if collector != nil {
 						if err := collector(map[string]interface{}{
@@ -2648,14 +2648,24 @@ func redactSecretText(s string) string {
 	return s
 }
 
+// sanitizeDoagentValue redacts and caps every string, for history and error data.
 func sanitizeDoagentValue(value interface{}) interface{} {
+	return mapDoagentValue(value, sanitizeSecretText)
+}
+
+// redactDoagentValue redacts every string without truncating it, for answers.
+func redactDoagentValue(value interface{}) interface{} {
+	return mapDoagentValue(value, redactSecretText)
+}
+
+func mapDoagentValue(value interface{}, text func(string) string) interface{} {
 	switch typed := value.(type) {
 	case string:
-		return sanitizeSecretText(typed)
+		return text(typed)
 	case []interface{}:
 		sanitized := make([]interface{}, len(typed))
 		for index, item := range typed {
-			sanitized[index] = sanitizeDoagentValue(item)
+			sanitized[index] = mapDoagentValue(item, text)
 		}
 		return sanitized
 	case map[string]interface{}:
@@ -2664,7 +2674,7 @@ func sanitizeDoagentValue(value interface{}) interface{} {
 			if credentialSecretLikeKey(key) || strings.EqualFold(strings.TrimSpace(key), "passwd") {
 				sanitized[key] = "...REDACTED"
 			} else {
-				sanitized[key] = sanitizeDoagentValue(item)
+				sanitized[key] = mapDoagentValue(item, text)
 			}
 		}
 		return sanitized
@@ -2684,7 +2694,8 @@ func sanitizeDoagentSessionUpdate(update map[string]interface{}) map[string]inte
 	updateType, _ := update["sessionUpdate"].(string)
 	switch updateType {
 	case "agent_message_chunk", "agent_message":
-		sanitized["content"] = sanitizeDoagentValue(update["content"])
+		// Message text is the answer itself; redact it without the error-text cap.
+		sanitized["content"] = redactDoagentValue(update["content"])
 	case "error", "permission_request", "turn_finished":
 		for _, key := range []string{"error", "failureReason", "message", "reason"} {
 			if value, ok := update[key].(string); ok {

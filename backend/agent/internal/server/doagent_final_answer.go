@@ -17,7 +17,8 @@ func (c *doagentToolTraceCollector) finalAnswer() (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if text := strings.TrimSpace(c.finalMessage); text != "" {
-		return sanitizeSecretText(text), nil
+		// The answer is the caller's result: redact it, never truncate it.
+		return redactSecretText(text), nil
 	}
 	tools := make([]string, 0, len(c.calls))
 	for _, trace := range c.calls {

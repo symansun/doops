@@ -101,6 +101,11 @@ func readModelProviderRecord() (modelProviderRecord, bool) {
 	return record, true
 }
 
+// doopsMCPToolTimeoutSeconds is how long doagent waits for one MCP tool call
+// before it stops the server. Tools that mutate (Helm) budget their own work to
+// finish inside it; see helmToolBudget.
+const doopsMCPToolTimeoutSeconds = 900
+
 // Runtime MCP servers and permissions every DoOps doagent session needs. They
 // are owned by the Agent image, not by any credential.
 var doagentRuntimeMCPServers = []map[string]any{
@@ -114,7 +119,7 @@ func doagentRuntimeMCPServer(domain string) map[string]any {
 		"args": []string{"mcp-stdio", "--domain", domain},
 		"env":  map[string]string{}, "cwd": nil, "status": "Unknown",
 		"capabilities": []string{"tools"}, "auto_start": true,
-		"tool_timeout_secs": 900, "required": true, "trusted_result_attestation": true,
+		"tool_timeout_secs": doopsMCPToolTimeoutSeconds, "required": true, "trusted_result_attestation": true,
 	}
 }
 
