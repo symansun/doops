@@ -456,7 +456,12 @@ func helmMCPToolDefinition() map[string]interface{} {
 				},
 				"revision": map[string]interface{}{"type": "integer", "minimum": 1},
 				"timeout":  map[string]interface{}{"type": "string"},
-				"confirm":  map[string]interface{}{"type": "boolean"},
+				"atomic": map[string]interface{}{
+					"type":        "boolean",
+					"default":     false,
+					"description": "upgrade-install only. true adds helm --atomic: a failed upgrade is rolled back automatically. Default false keeps the failed revision for the operator to inspect and roll back explicitly.",
+				},
+				"confirm": map[string]interface{}{"type": "boolean"},
 			},
 		},
 	}

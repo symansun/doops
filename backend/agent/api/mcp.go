@@ -112,6 +112,7 @@ type HelmParams struct {
 	ExpectedImage string            `json:"expected_image,omitempty"`
 	Revision      int               `json:"revision,omitempty"`
 	Timeout       string            `json:"timeout,omitempty"`
+	Atomic        bool              `json:"atomic,omitempty"`
 	Confirm       bool              `json:"confirm,omitempty"`
 }
 

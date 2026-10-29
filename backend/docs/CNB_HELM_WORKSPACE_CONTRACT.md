@@ -12,7 +12,7 @@ paths, `..`, symlink escapes and missing files are rejected before Helm runs.
 
 The caller must provide `expected_image` as a complete repository tag or digest. The
 Agent runs Helm with `--reset-values`, performs a server-side dry run, checks rendered
-release tags, then performs the atomic upgrade and verifies every rendered Deployment's
+release tags, then performs the upgrade (with `--atomic` only when the caller passes `atomic: true`) and verifies every rendered Deployment's
 generation, replicas and expected image state. The runtime session is injected by the
 MCP server and cannot be supplied by the model.
 

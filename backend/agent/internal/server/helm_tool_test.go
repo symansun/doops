@@ -82,7 +82,7 @@ func TestBuildHelmUpgradeInstallUsesBoundWorkspaceAssets(t *testing.T) {
 	if !slices.Contains(command.args, "--reset-values") {
 		t.Fatal("workspace assets must reset old release values")
 	}
-	for _, want := range []string{"upgrade", "app", "deploy/helm/prod", "--install", "--atomic", "--reset-values", "--values", "deploy/helm/prod/values.yaml", "--namespace", "apps", "--wait", "--timeout", "180s", "--description"} {
+	for _, want := range []string{"upgrade", "app", "deploy/helm/prod", "--install", "--reset-values", "--values", "deploy/helm/prod/values.yaml", "--namespace", "apps", "--wait", "--timeout", "180s", "--description"} {
 		if !slices.Contains(command.args, want) {
 			t.Fatalf("helm args missing %q: %#v", want, command.args)
 		}
@@ -282,7 +282,7 @@ func TestBuildHelmUpgradeInstallUsesRemoteAssetsAndImmutableImage(t *testing.T) 
 	}
 	got := strings.Join(command.args, " ")
 	for _, expected := range []string{
-		"upgrade app https://charts.example.test/app-1.0.0.tgz --install --atomic",
+		"upgrade app https://charts.example.test/app-1.0.0.tgz --install --reset-values",
 		"--values https://config.example.test/app-production.yaml",
 		"--set-string image.digest=" + testHelmDigest,
 		"--set-string image.repository=registry.example/app",
@@ -801,5 +801,32 @@ printf '{"metadata":{"generation":7},"spec":{"replicas":1,"template":{"spec":{"c
 	command.expectedImage = "registry.example/missing@" + testHelmDigest
 	if _, err := verifyHelmDeploymentState(t.Context(), command); err == nil || !strings.Contains(err.Error(), "does not contain expected image") {
 		t.Fatalf("missing intended image accepted: %v", err)
+	}
+}
+
+// --atomic is the caller's choice: by default a failed upgrade stays in place
+// for the operator; atomic=true asks Helm to roll it back automatically.
+func TestBuildHelmUpgradeInstallAtomicIsOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		atomic     bool
+		wantAtomic bool
+	}{
+		{"default keeps the failed revision", false, false},
+		{"explicit atomic rolls back on failure", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("DOOPS_WORKSPACE_ROOT", root)
+			params := testHelmParams()
+			params.Atomic = tc.atomic
+			command, err := buildHelmCommand(params)
+			if err != nil {
+				t.Fatalf("build helm command: %v", err)
+			}
+			if got := slices.Contains(command.args, "--atomic"); got != tc.wantAtomic {
+				t.Fatalf("--atomic present = %v, want %v: %q", got, tc.wantAtomic, command.args)
+			}
+		})
 	}
 }

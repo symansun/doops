@@ -159,7 +159,7 @@ Chart 的 stdout（NOTES、渲染 manifest）始终不返回。
 description，从本次 Helm JSON 结果取得 revision，并按该 revision 读取 manifest；
 最终验收还要求当前 release revision/description 与本次 mutation 一致。被并发发布覆盖时
 明确返回 `helm_verification_failed`，不借用另一任务的结果，也不自动重放。
-结构化 rollback 使用 Helm 支持的 wait/timeout 参数，不传不支持的 `--atomic`。
+upgrade-install 默认不加 `--atomic`：升级失败时失败的 revision 保留在集群里，由操作者查看后自行决定是否回滚、回滚到哪个 revision。只有调用方显式传 `atomic: true` 时才加 `--atomic`，让 Helm 在失败时自动回滚。结构化 rollback 使用 Helm 支持的 wait/timeout 参数，不传 `--atomic`。
 
 Helm mutation 成功后，工具还必须读取本次 revision 的 release manifest（必要时读取 hook
 manifest）和最终工作负载对象，确认 Deployment 当前 generation 已被 controller 观察、

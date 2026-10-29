@@ -142,7 +142,13 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 			return helmCommand{}, err
 		}
 		mutationID := fmt.Sprintf("doops:%s:%d", params.SessionID, time.Now().UnixNano())
-		args := []string{"upgrade", params.Release, chart, "--install", "--atomic", "--reset-values", "--description", mutationID}
+		args := []string{"upgrade", params.Release, chart, "--install", "--reset-values", "--description", mutationID}
+		// --atomic rolls a failed upgrade back automatically. It is the caller's
+		// choice: by default a failed revision stays in place so the operator can
+		// inspect it and decide whether and where to roll back.
+		if params.Atomic {
+			args = append(args, "--atomic")
+		}
 		for _, valuePath := range values {
 			args = append(args, "--values", valuePath)
 		}
