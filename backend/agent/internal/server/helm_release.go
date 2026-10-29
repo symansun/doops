@@ -144,10 +144,33 @@ func runHelmCommand(ctx context.Context, command helmCommand, push notificationS
 	}
 	output, err := mutateHelmRelease(ctx, command)
 	if err != nil {
-		if ctx.Err() != nil && command.mutationID != "" {
-			return "", settleInterruptedHelmRelease(ctx, command)
+		if command.mutationID == "" {
+			return "", err
 		}
-		return "", err
+		// The upgrade failed. Helm may have left this mutation's revision
+		// pending, which locks the release for every later operation, so the
+		// revision is settled before the error is returned.
+		note, settleErr := settleHelmRevision(ctx, command)
+		if settleErr != nil {
+			// The release state is unknown, but Helm's own failure is still the
+			// result. The interruption is only claimed when our budget ended.
+			if ctx.Err() != nil {
+				return "", helmStepFailure("helm_interrupted", fmt.Sprintf(
+					"the call ran out of time and the release history could not be read; check helm status before any retry; helm reported: %s", err.Error()))
+			}
+			return "", helmStepFailure("helm_mutation_failed", fmt.Sprintf(
+				"the release history could not be read, so the release state is unknown; check helm status before any retry; helm reported: %s", err.Error()))
+		}
+		if note == "" {
+			return "", err
+		}
+		if ctx.Err() != nil {
+			return "", helmStepFailure("helm_interrupted", fmt.Sprintf(
+				"the call ran out of time; %s; helm reported: %s", note, err.Error()))
+		}
+		// Helm failed on its own terms and left nothing pending: the original
+		// failure is the result, with the revision state added.
+		return "", helmStepFailure("helm_mutation_failed", fmt.Sprintf("%s; helm reported: %s", note, err.Error()))
 	}
 	if command.operation() != "upgrade" {
 		return "", nil
@@ -228,15 +251,17 @@ type helmHistoryEntry struct {
 	Description string `json:"description"`
 }
 
-// settleInterruptedHelmRelease runs after an upgrade ran out of time. It reads
-// what Helm recorded for this mutation's revision. A revision still pending-*
-// locks the release for every later operation, so it is rolled back to the last
-// deployed revision; any other state is left for the operator. The error always
-// names the revision and state the caller starts from.
-func settleInterruptedHelmRelease(ctx context.Context, command helmCommand) error {
+// settleHelmRevision reads what Helm recorded for this mutation's revision and
+// makes sure the release is not left locked. A revision still pending-* blocks
+// every later Helm operation on the release, so it is rolled back to the last
+// deployed revision; any other state is left for the operator.
+//
+// The returned note describes what was done, and is empty when the release
+// needs nothing. An error means the release state could not be read, so the
+// caller must not claim the release is fine.
+func settleHelmRevision(ctx context.Context, command helmCommand) (string, error) {
 	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), helmSettleTimeout)
 	defer cancel()
-	interrupted := func(reason string) error { return helmStepFailure("helm_interrupted", reason) }
 	historyCmd := exec.CommandContext(settleCtx, "helm", "history", command.release,
 		"--namespace", command.namespace, "--max", "20", "--output", "json")
 	historyCmd.Dir = command.cwd
@@ -246,7 +271,8 @@ func settleInterruptedHelmRelease(ctx context.Context, command helmCommand) erro
 		err = json.Unmarshal(raw, &history)
 	}
 	if err != nil {
-		return interrupted("the upgrade ran out of time and the release history could not be read; check helm status before any retry")
+		return "", helmStepFailure("helm_interrupted",
+			"the release history could not be read; check helm status before any retry")
 	}
 	var mine *helmHistoryEntry
 	deployed := 0
@@ -261,15 +287,16 @@ func settleInterruptedHelmRelease(ctx context.Context, command helmCommand) erro
 	}
 	switch {
 	case mine == nil:
-		return interrupted(fmt.Sprintf("the upgrade ran out of time before Helm created a revision; release unchanged (deployed revision %d)", deployed))
+		return "", nil
 	case mine.Status == "failed":
-		return interrupted(fmt.Sprintf("the upgrade ran out of time; Helm recorded revision %d failed; deployed revision %d is unchanged; roll back explicitly if the workloads need it", mine.Revision, deployed))
+		// Helm recorded the failure itself; nothing is locked.
+		return fmt.Sprintf("Helm recorded revision %d failed; deployed revision %d is unchanged", mine.Revision, deployed), nil
 	case mine.Status == "deployed":
-		return interrupted(fmt.Sprintf("the upgrade ran out of time after revision %d was deployed; the workloads were not verified, read them back before relying on it", mine.Revision))
+		return "", nil
 	case !strings.HasPrefix(mine.Status, "pending-"):
-		return interrupted(fmt.Sprintf("the upgrade ran out of time; revision %d is %s", mine.Revision, mine.Status))
+		return "", nil
 	case deployed == 0:
-		return interrupted(fmt.Sprintf("the upgrade ran out of time; revision %d is %s and there is no deployed revision to roll back to; uninstall or rerun the install", mine.Revision, mine.Status))
+		return fmt.Sprintf("revision %d is %s and there is no deployed revision to roll back to; uninstall it or rerun the install", mine.Revision, mine.Status), nil
 	}
 	// No --wait: unlocking the release must finish inside the settle budget.
 	rollbackCmd := exec.CommandContext(settleCtx, "helm", "rollback", command.release, fmt.Sprintf("%d", deployed),
@@ -278,11 +305,12 @@ func settleInterruptedHelmRelease(ctx context.Context, command helmCommand) erro
 	var stderr bytes.Buffer
 	rollbackCmd.Stderr = &stderr
 	if err := rollbackCmd.Run(); err != nil {
-		return interrupted(fmt.Sprintf("the upgrade ran out of time; revision %d stayed %s and the rollback to revision %d failed: %s",
+		return "", helmStepFailure("helm_interrupted", fmt.Sprintf(
+			"revision %d stayed %s and the rollback to revision %d failed: %s",
 			mine.Revision, mine.Status, deployed, helmStderrReason(stderr.Bytes())))
 	}
-	return interrupted(fmt.Sprintf("the upgrade ran out of time; revision %d stayed %s, so the release was rolled back to revision %d to unlock it; verify the workloads before retrying",
-		mine.Revision, mine.Status, deployed))
+	return fmt.Sprintf("revision %d stayed %s, so the release was rolled back to revision %d to unlock it; verify the workloads before retrying",
+		mine.Revision, mine.Status, deployed), nil
 }
 
 func (c helmCommand) operation() string {

@@ -159,17 +159,22 @@ Chart 的 stdout（NOTES、渲染 manifest）始终不返回。
 一次 `mcp_doops_helm` 调用必须在 doagent 的 MCP 工具超时（900 秒）之前结束并留下终态。
 preflight、Helm `--wait` 和验收共用一个调用预算（810 秒），`timeout` 最大 `10m`，超出时
 构建阶段直接拒绝，不开始升级。预算用完时 Agent 先给 helm 发 SIGTERM，让 Helm 自己把
-revision 记为 failed 并释放锁，30 秒后仍未退出才强制结束；随后读取 release history：
+revision 记为 failed 并释放锁，30 秒后仍未退出才强制结束。
+
+升级失败后（含 Helm 自己的 `--wait` 超时，helm 非零退出）Agent 读取 release history，
+按本次 mutation 的 description 找到自己的 revision，并处理它留下的状态：
 
 | 本次 revision 状态 | Agent 的处理 |
 |---|---|
-| 未创建 | release 未改动，报告当前 deployed revision |
+| 未创建 | release 未改动，只返回 helm 的失败原因 |
 | `failed` | 不回滚，报告失败 revision 和仍在生效的 deployed revision |
 | `deployed`（验收未完成） | 不回滚，提示先回读工作负载再判断 |
 | `pending-*` | 回滚到最近的 deployed revision 以解锁 release，报告两个 revision |
 | `pending-*` 且没有 deployed revision | 不处理，提示卸载或重新安装 |
 
-所有结果都以 `helm_interrupted: <原因>` 返回，不会把 release 留在无人处理的 `pending-*`。
+预算用完时以 `helm_interrupted: <原因>` 返回；Helm 自己失败但状态已收敛时以
+`helm_mutation_failed: <revision 状态>; helm reported: <原因>` 返回。两种情况都不会把
+release 留在无人处理的 `pending-*`。
 
 不同 session 的 Helm 调用不额外获取 DoOps release 独占锁。每次 upgrade-install 写入唯一
 description，从本次 Helm JSON 结果取得 revision，并按该 revision 读取 manifest；
