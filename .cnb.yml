@@ -301,7 +301,11 @@ $:
             node --version
         - name: 打开 VS Code
           type: vscode:go
-  tag_push:
+  # Releases run on cloud-dev nodes (services: vscode), which CNB allows only
+  # for push, branch.create, vscode, web_trigger and api_trigger events, so a
+  # pushed tag no longer starts the release. Start it from the tag with:
+  #   cnb build start-build --repo l8ai/ai/doops.sh --tag vX.Y.Z --event api_trigger_release
+  api_trigger_release:
     - name: publish-release
       runner:
         cpus: 4
@@ -316,6 +320,11 @@ $:
       docker:
         image: docker.io/library/golang:1.25-alpine@sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59
       stages:
+        - name: require a release tag
+          script: |
+            set -eu
+            test "${CNB_IS_TAG:-}" = "true" || { echo "release must be started from a tag (--tag vX.Y.Z)" >&2; exit 2; }
+            printf '%s' "${CNB_BRANCH}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || { echo "release tag must be vX.Y.Z, got ${CNB_BRANCH}" >&2; exit 2; }
         - name: prepare tools
           script: apk add --no-cache bash curl docker-cli git helm nodejs npm openssh-client python3 py3-pytest py3-yaml
         - name: release contract tests

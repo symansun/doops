@@ -25,4 +25,4 @@ def test_web_image_release_builds_smokes_and_pushes_immutable_image():
     assert invocation in ci
     tag_invocation = 'DOOPS_RELEASE_TAG="${CNB_BRANCH}" bash backend/scripts/build-web-image.sh'
     assert tag_invocation in ci
-    assert "DOOPS_PUBLISH_LATEST" not in ci.split("tag_push:", 1)[1]
+    assert "DOOPS_PUBLISH_LATEST" not in ci.split("api_trigger_release:", 1)[1]

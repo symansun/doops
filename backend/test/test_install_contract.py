@@ -498,7 +498,9 @@ def test_tag_pipeline_publishes_and_verifies_release_assets():
     publish = PUBLISH.read_text()
     verify = VERIFY_PUBLISHED.read_text()
 
-    assert "tag_push:" in ci
+    assert "api_trigger_release:" in ci
+    assert "tag_push:" not in ci
+    assert 'test "${CNB_IS_TAG:-}" = "true"' in ci
     assert 'DOOPS_RELEASE_TAG="${CNB_BRANCH}" bash backend/scripts/build-agent-image.sh' in ci
     assert "build release agent image" in ci
     assert "publish CLI release assets" in ci
@@ -613,6 +615,11 @@ def prepare_synthetic_repo(root: Path, skill: str | None, docs: dict[str, str]):
     )
     subprocess.run(
         ["git", "-C", str(root), "config", "user.name", "Install Test"],
+        check=True,
+    )
+    # CI nodes may enable commit signing globally; this fixture repo is unsigned.
+    subprocess.run(
+        ["git", "-C", str(root), "config", "commit.gpgsign", "false"],
         check=True,
     )
     subprocess.run(["git", "-C", str(root), "add", "backend"], check=True)
