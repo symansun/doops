@@ -35,6 +35,7 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
 |---|---|
 | Workload delivery (`ask --apply`, Helm assets) | `backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md` |
 | Credentials | `backend/docs/CREDENTIAL_RESOURCES.md` |
+| Harbor image replication | `backend/docs/HARBOR_REPLICATION_SPEC.md` |
 | Agent and Gateway release | `backend/docs/BUILD_DEPLOY_SOP.md` |
 | Gateway protocol and lifecycle | `backend/docs/DOOPS_GATEWAY_TUNNEL.md` |
 | External API | `backend/docs/DOOPS_API_GUIDE.md` |

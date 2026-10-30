@@ -14,6 +14,7 @@ description: |
 | 日常命令、用户与 token、凭据命令 | `docs/DOOPS_USAGE_GUIDE.md` |
 | 业务发布（`ask --apply`、Helm 资产） | `docs/NATURAL_LANGUAGE_DEPLOYMENT.md` |
 | 凭据生命周期与错误类别 | `docs/CREDENTIAL_RESOURCES.md` |
+| Harbor 镜像复制与 CNB 同步 | `docs/HARBOR_REPLICATION_SPEC.md` |
 | Agent / Gateway 发布与回滚 | `docs/BUILD_DEPLOY_SOP.md` |
 | 执行生命周期、并发、取消、代理 | `docs/DOOPS_GATEWAY_TUNNEL.md` |
 | HTTP / WebSocket API | `docs/DOOPS_API_GUIDE.md` |
