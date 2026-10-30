@@ -36,10 +36,10 @@ __pycache__/
 *.py[cod]
 .doops/
 .agents/
-.agent/skills/doops/auth.json
-.agent/skills/doops/config.json
-.agent/skills/doops/history.jsonl
-.agent/skills/doops/sessions.json
+# Installed Skill copy. The canonical source is backend/skills/SKILL.md and
+# backend/docs/*.md; scripts/install.sh copies them into the project from the
+# release commit, so a checked-in copy here would only drift.
+.agent/skills/doops/
 backend/cli/.doops/
 tmp_agent/
 tmp-openwork/
