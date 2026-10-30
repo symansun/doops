@@ -19,7 +19,38 @@ const (
 	sqlModeDiscover sqlMode = "discover"
 )
 
-func runSQLCommand(args []string, sessionName string, servers []Server, configErr error, ss *SessionStore, verbose bool) error {
+// sqlBindingNext turns a DoSql binding failure into the command that fixes it.
+// The Secret keys are the ones the Agent already reads for jdbc:mysql sources.
+func sqlBindingNext(err error, target string) error {
+	if err == nil {
+		return nil
+	}
+	message := err.Error()
+	importSecret := "doops credential configure --target " + target +
+		" --name <db-credential> --type opaque --scope personal --namespace <ns> --use database" +
+		" --from-secret <secret> --keys SPRING_DATASOURCE_URL,SPRING_DATASOURCE_USERNAME,SPRING_DATASOURCE_PASSWORD"
+	switch {
+	case strings.Contains(message, "dosql_database_binding_missing"),
+		strings.Contains(message, "dosql_credential_missing"):
+		return fmt.Errorf("%s", withNext(message,
+			"doops sql --target "+target+" --mode discover --request 'list database workloads'   # engine, host, database name",
+			"doops k8s --target "+target+" get deployment <workload> -n <ns> -o yaml   # read env valueFrom.secretKeyRef.name; Secret values stay hidden",
+			importSecret+"   # imports the Secret on the Agent; no password is typed or printed",
+			"doops sql --target "+target+" --mode query --sql 'select 1'"))
+	case strings.Contains(message, "dosql_database_not_bound"):
+		return fmt.Errorf("%s", withNext(message,
+			"doops credential list --target "+target+"   # databases already bound",
+			importSecret+"   # bind the other database's Secret, or omit --database to use the bound one"))
+	case strings.Contains(message, "dosql_database_required"):
+		return fmt.Errorf("%s", withNext(message, "rerun with --database <name> from the list above"))
+	case strings.Contains(message, "credential_version_not_found"):
+		return fmt.Errorf("%s", withNext(message,
+			"doops credential configure --target "+target+" --id <id> --namespace <ns> --use database --from-secret <secret> --keys <keys>"))
+	}
+	return err
+}
+
+func runSQLCommand(args []string, sessionName string, servers []Server, configErr error, ss *SessionStore, verbose bool) (runErr error) {
 	flags := flag.NewFlagSet("sql", flag.ContinueOnError)
 	flags.SetOutput(nil)
 	target := flags.String("target", "", "Configured Gateway target")
@@ -61,6 +92,7 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 	if strings.TrimSpace(*target) == "" {
 		return fmt.Errorf("--target 必传，请指定 Gateway target")
 	}
+	defer func() { runErr = sqlBindingNext(runErr, strings.TrimSpace(*target)) }()
 	if strings.TrimSpace(*request) == "" {
 		positional := strings.TrimSpace(strings.Join(flags.Args(), " "))
 		if positional != "" {

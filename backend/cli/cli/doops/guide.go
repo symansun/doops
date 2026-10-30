@@ -61,11 +61,17 @@ var guideScenarios = map[string]guideScenario{
 	"database": {
 		summary: "query or change a database bound to the target",
 		steps: []string{
+			"doops credential list --target <t>                 # a database credential must be bound; if none, do step 2",
+			"doops credential configure --target <t> --name <n> --type opaque --scope personal --namespace <ns> --use database --from-secret <workload-secret> --keys SPRING_DATASOURCE_URL,SPRING_DATASOURCE_USERNAME,SPRING_DATASOURCE_PASSWORD",
 			"doops sql --target <t> --mode query --sql 'select ...'",
 			"doops sql --target <t> --mode apply --file change.sql --verify 'select ...' --dry-run",
 			"doops sql --target <t> --mode apply --file change.sql --verify 'select ...'",
 		},
-		notes: []string{"several databases on one target: add --database <name>"},
+		notes: []string{
+			"several databases on one target: add --database <name>",
+			"find <workload-secret> from the workload's secretKeyRef (doops k8s --target <t> get deployment <name> -n <ns> -o yaml); Secret values are never readable or printed",
+			"the user's database need is the requirement: identify the database from the workload, then bind it with --from-secret instead of asking the user for a password",
+		},
 	},
 	"upgrade": {
 		summary: "upgrade the Agent that serves a target",

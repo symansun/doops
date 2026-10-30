@@ -74,6 +74,16 @@ Gateway 直接解析保存的 target/database 绑定和 active version，不让�
 `dosql_database_not_bound`；多个凭据指向同一库时返回 `dosql_credential_ambiguous`，
 吊销重复绑定后重试。完整对照见 `CREDENTIAL_RESOURCES.md`。
 
+没有数据库绑定不是终点：用户的数据库需求就是任务，AI 应自己找到库并完成绑定，不向用户索要密码。
+上述绑定类错误，CLI 的 `next:` 行和 `doops guide database` 会按顺序给出命令：
+
+1. `doops sql --target <t> --mode discover --request '...'` 识别引擎、主机、库名。
+2. `doops k8s --target <t> get deployment <workload> -n <ns> -o yaml` 读取环境变量的
+   `valueFrom.secretKeyRef.name`，得到工作负载使用的 Secret 名（Secret 值不可读，也不会输出）。
+3. `doops credential configure --target <t> --name <n> --type opaque --scope personal --namespace <ns> --use database --from-secret <secret> --keys SPRING_DATASOURCE_URL,SPRING_DATASOURCE_USERNAME,SPRING_DATASOURCE_PASSWORD`
+   由 Agent 就地导入，走完整的 create、put、grant、verify、promote 生命周期。
+4. 重跑原来的 `doops sql` 命令。
+
 ### DoSql 直接执行 SQL
 
 已知确切 SQL 时用 `--sql` 或 `--file`，SQL 原样提交给 Agent，不经过模型，与 `--request`
