@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -104,5 +105,42 @@ func TestStableCredentialCategoryDropsResponseText(t *testing.T) {
 		if got := stableCredentialCategory(tt.message); got != tt.want {
 			t.Fatalf("stableCredentialCategory(%q) = %q, want %q", tt.message, got, tt.want)
 		}
+	}
+}
+
+func TestSQLBindingNextGuidesEachBindingFailure(t *testing.T) {
+	cases := []struct {
+		name    string
+		in      error
+		wantAll []string
+	}{
+		{"binding missing", fmt.Errorf("dosql_database_binding_missing"), []string{"next:", "credential configure", "--use database", "--from-secret", "SPRING_DATASOURCE_URL"}},
+		{"credential missing", fmt.Errorf("dosql_credential_missing: run credential configure"), []string{"--from-secret"}},
+		{"not bound", fmt.Errorf("dosql_database_not_bound: x"), []string{"credential list", "--from-secret"}},
+		{"database required", fmt.Errorf("dosql_database_required: target binds a"), []string{"--database <name>"}},
+		{"version missing", fmt.Errorf("credential_version_not_found"), []string{"--id <id>"}},
+		{"unrelated", fmt.Errorf("dosql_statement_failed"), nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sqlBindingNext(tc.in, "tgt")
+			if tc.wantAll == nil {
+				if got != tc.in {
+					t.Fatalf("unrelated error was rewritten: %v", got)
+				}
+				return
+			}
+			for _, want := range tc.wantAll {
+				if !strings.Contains(got.Error(), want) {
+					t.Errorf("missing %q in %q", want, got.Error())
+				}
+			}
+			if !strings.Contains(got.Error(), tc.in.Error()) {
+				t.Errorf("original message lost: %q", got.Error())
+			}
+		})
+	}
+	if sqlBindingNext(nil, "tgt") != nil {
+		t.Fatal("nil must stay nil")
 	}
 }

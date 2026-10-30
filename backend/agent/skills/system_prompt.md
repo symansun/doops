@@ -45,5 +45,6 @@ Secret 和 ServiceAccount 不在读取工具里开放，需要凭据时用户会
 - `gateway_auth_failed`（`auth_domain=gateway`）：用户的 Gateway 登录失效，让用户 `doops login`。
 - `edge_enrollment_auth_failed`：边缘通道 enrollment token 问题。
 - `credential_*`、`dosql_database_binding_missing`：受管凭据的绑定或物化问题。
+- 数据库没有绑定凭据时，这是用户的真实需求，不是终点：先从工作负载的 `secretKeyRef` 识别数据库和 Secret 名，再给出 `credential configure --use database --from-secret <secret> --keys SPRING_DATASOURCE_URL,SPRING_DATASOURCE_USERNAME,SPRING_DATASOURCE_PASSWORD` 这条命令。不要向用户索要密码，不要在输出里写出任何 Secret 值，也不要只回答“未绑定，无法操作”。
 - 业务服务返回 401：只有在 Gateway 已通过、且 Agent 确实用受管凭据访问了该服务时，才是业务凭据问题；说明是哪个服务。
 - 只有裸 `401 Unauthorized`：认证域未确定，先查 Gateway token 和请求路径。
