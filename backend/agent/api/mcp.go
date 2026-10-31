@@ -113,6 +113,7 @@ type HelmParams struct {
 	Revision      int               `json:"revision,omitempty"`
 	Timeout       string            `json:"timeout,omitempty"`
 	Atomic        bool              `json:"atomic,omitempty"`
+	TakeOwnership bool              `json:"take_ownership,omitempty"`
 	Confirm       bool              `json:"confirm,omitempty"`
 }
 

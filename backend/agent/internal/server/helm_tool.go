@@ -159,6 +159,13 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 		if params.Atomic {
 			args = append(args, "--atomic")
 		}
+		// --take-ownership lets this release adopt objects that already exist
+		// without Helm ownership metadata, such as an object applied by hand.
+		// It is the caller's explicit choice, never a default: without it Helm
+		// refuses to touch an object another owner may still manage.
+		if params.TakeOwnership {
+			args = append(args, "--take-ownership")
+		}
 		for _, valuePath := range values {
 			args = append(args, "--values", valuePath)
 		}
