@@ -238,6 +238,18 @@ doops -session <s> exec --target <t> --cmd 'python3 /root/harbor-replication.py 
 方向很关键：早先的实现从 Harbor 侧出发反查上游，上游新发布而尚未复制的 tag 因此完全不可见。
 实测中 CNB 清掉一代 tag 并新发一代后，两侧集合零交集，`missing` 才把这个缺口暴露出来。
 
+闭环实测（2026-10-31，两个仓库都从零交集补齐到全匹配）：
+
+| 仓库 | 执行 | 结果 |
+|---|---|---|
+| `l8ai/agentcloud/backend` | 1918 + 1923 | `matched=11/11`、`mismatched=0`、`missing=0`、`extra=19`，`harbor_replication=complete` |
+| `aiedulab/zhiyong/education/zhiyong-lab-api` | 1924 | `matched=11/11`、`mismatched=0`、`missing=0`、`extra=10`，`harbor_replication=complete` |
+
+过程中 `missing` 随拷贝推进单调下降（agentcloud 11 → 2 → 0），`mismatched` 始终为 0。
+一次触发只搬触发时刻源侧已有的 tag：执行 1918 启动时源侧 10 个 item，期间 CNB 又发布 1 个，
+该 tag 要到下次触发（1923）才落地。所以发布流程必须在镜像推送完成之后再触发，
+不能并行。
+
 ### 凭据边界
 
 凭据取值只在进程内存里，经 Basic 认证头发给 Harbor。没有任何命令行参数接受取值，
