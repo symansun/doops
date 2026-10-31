@@ -185,6 +185,10 @@ grant 吊销或轮换时只清理自己下发的条目。轮换到另一个 regi
 `--source-authfile` / `--target-authfile` 保留为覆盖项，用于目标把 registry 配置放在别处的情况。
 凭据本身始终不进入命令参数。
 
+重新物化只发给握手时声明 `registryAuthfile` 协议（`doops.sh/registry-authfile/v1`）的 Agent。
+旧版本 Agent 严格解析物化参数，收到该请求会直接拒绝，因此 Gateway 不发，
+它的 authfile 保持升级前的样子，直到该 target 的 Agent 升级完成。
+
 ### TLS
 
 ```json

@@ -5,7 +5,25 @@ const (
 	structuredSSHSchema        = "doops.sh/structured-ssh/v1"
 	executionLifecycleProtocol = "executionLifecycle"
 	executionLifecycleSchema   = "doops.sh/execution-lifecycle/v1"
+	registryAuthfileProtocol   = "registryAuthfile"
+	registryAuthfileSchema     = "doops.sh/registry-authfile/v1"
 )
+
+// registryAuthfileCapability says the Agent writes a registry credential to the
+// authfile its OCI tools read, and accepts the authfile-only materialization
+// the Gateway sends on reconnect. An Agent from before that work decodes
+// materialization arguments strictly and rejects the unknown field, so the
+// Gateway checks this before delivering.
+func registryAuthfileCapability() map[string]interface{} {
+	return map[string]interface{}{
+		"schemaVersion": registryAuthfileSchema,
+		"authfileOnly":  true,
+	}
+}
+
+func registryAuthfileCapabilityCompatible(value interface{}) bool {
+	return capabilityMatches(value, registryAuthfileCapability())
+}
 
 func structuredSSHCapability() map[string]interface{} {
 	return map[string]interface{}{

@@ -154,6 +154,7 @@ type GatewayAgent struct {
 	CredentialPlanProtocol string    `json:"credential_plan_protocol,omitempty"`
 	StructuredSSH          bool      `json:"structured_ssh,omitempty"`
 	ExecutionLifecycle     bool      `json:"execution_lifecycle,omitempty"`
+	RegistryAuthfile       bool      `json:"registry_authfile,omitempty"`
 	ConnectedAt            time.Time `json:"connected_at"`
 	LastSeen               time.Time `json:"last_seen"`
 	HeartbeatAt            time.Time `json:"heartbeat_at,omitempty"`
@@ -1513,6 +1514,9 @@ func (a *GatewayAgent) applyInitializeResult(result map[string]interface{}) {
 	capabilities, _ := result["capabilities"].(map[string]interface{})
 	protocols, ok := capabilities["protocols"].(map[string]interface{})
 	a.ExecutionLifecycle = executionLifecycleCapabilityCompatible(protocols[executionLifecycleProtocol])
+	// An Agent that does not advertise this rejects an authfile_only request
+	// outright, because it decodes the materialization request strictly.
+	a.RegistryAuthfile = registryAuthfileCapabilityCompatible(protocols[registryAuthfileProtocol])
 	if !ok {
 		return
 	}
