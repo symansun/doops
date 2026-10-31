@@ -394,7 +394,15 @@ func (c *MCPClient) RequireAgentRelease(expected string) error {
 		return fmt.Errorf("target Agent did not advertise a DoOps release commit")
 	}
 	if actual != expected {
-		return fmt.Errorf("target Agent release commit mismatch: got %s, want %s", actual, expected)
+		// The CLI and the Agent are released as a pair. The Agent reports the
+		// commit it was built from, so a difference means this CLI and that
+		// Agent are not the same release, not that the Agent is broken.
+		return fmt.Errorf(
+			"target Agent release commit mismatch: got %s, want %s; "+
+				"the CLI and the Agent are released as a pair, so install the CLI "+
+				"that matches the target Agent before upgrading it",
+			actual, expected,
+		)
 	}
 	return nil
 }

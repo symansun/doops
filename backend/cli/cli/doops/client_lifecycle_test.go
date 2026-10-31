@@ -48,6 +48,12 @@ func TestAgentReleaseRequiresExactCommit(t *testing.T) {
 		!strings.Contains(err.Error(), "release commit mismatch") {
 		t.Fatalf("mismatched release commit was accepted: %v", err)
 	}
+	// The CLI and the Agent are released as a pair, so the message has to say
+	// that; otherwise the operator reads it as a broken Agent.
+	if err := client.RequireAgentRelease(strings.Repeat("b", 40)); err == nil ||
+		!strings.Contains(err.Error(), "install the CLI that matches the target Agent") {
+		t.Fatalf("the mismatch did not tell the operator what to do: %v", err)
+	}
 }
 
 func executionLifecycleCapability() map[string]interface{} {
