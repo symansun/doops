@@ -303,6 +303,36 @@ zhiyong 五个仓库在实测期间上游一直在发布，`sha-*` 从 12 涨到
 `mismatched=0`，且 `missing` 里只剩本轮新发布的 tag"。要拿到全绿快照，
 得在上游停止发布的窗口里触发一轮再校验。
 
+### 收敛循环：`harbor-converge.py`
+
+手工重复"校验 → 挑出落后的规则 → 触发 → 等 → 再校验"容易漏规则（实测里就漏过
+一条）。`backend/scripts/harbor-converge.py` 把这个循环固定下来：
+
+```bash
+python3 /root/ws/harborsync/harbor-converge.py \
+  --harbor-credential <id> --upstream-credential <id> \
+  --credential-namespace harbor-system
+```
+
+它复用 `harbor-replication.py` 的客户端和校验代码，内置 8 条规则的 project /
+仓库 / tag 模式映射，每轮只触发**本轮校验报 `missing` 的那些规则**，并发触发后
+统一等待。退出条件三种，各自对应不同动作：
+
+| 退出 | 含义 | 退出码 |
+|---|---|---|
+| 全部 `missing=0` | 收敛完成 | 0 |
+| 出现 `mismatched` | digest 不一致，再触发也修不了，立即中止 | 非 0 |
+| 轮次或时间预算用尽 | 上游仍在发布，报告还差几个仓库 | 1 |
+
+`mismatched` 直接中止是有意的：同名 tag digest 不同意味着某一侧被覆写，
+多触发几轮只会掩盖问题。预算用尽不算失败，只是说明上游比复制快，
+按上一节的验收标准读结果即可。
+
+循环只触发和读取：不建、不改、不删 Harbor 对象，也不写入、作废或轮换凭据。
+契约测试 `backend/test/test_harbor_converge_contract.py` 钉住这些判定——
+只触发落后的规则、全匹配即停、`mismatched` 立即中止、预算用尽报 incomplete、
+执行失败不静默继续，以及源码里不含任何删除或凭据写入调用。
+
 ### 凭据边界
 
 凭据取值只在进程内存里，经 Basic 认证头发给 Harbor。没有任何命令行参数接受取值，
