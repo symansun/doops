@@ -30,6 +30,15 @@ func TestAskCredentialNextGuidesEachHelmCredentialFailure(t *testing.T) {
 			fmt.Errorf("credential_version_not_found"),
 			[]string{"--id <id>", "--use helmPull"},
 		},
+		{
+			// A name that does not exist and a name the caller may not use
+			// answer the same way, so the reply never reveals a credential
+			// outside the caller's authority.
+			"named credential not usable on this target",
+			fmt.Errorf("remote error: credential_grant_denied"),
+			[]string{"doops credential list --target tgt", "rerun without --credential"},
+		},
+		{"named credential forbidden", fmt.Errorf("credential_forbidden"), []string{"doops credential list --target tgt"}},
 		{"unrelated failure", fmt.Errorf("helm_release_pending"), nil},
 		{"anonymous download still allowed", fmt.Errorf("helm_artifact_http_404"), nil},
 	} {

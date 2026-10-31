@@ -44,6 +44,14 @@ func askCredentialNext(err error, target string) error {
 		return fmt.Errorf("%s", withNext(message,
 			"doops credential list --target "+target+"   # the credential is bound but never promoted",
 			"doops credential configure --target "+target+" --id <id> --use helmPull --namespace <ns>"))
+	case strings.Contains(message, "credential_grant_denied"),
+		strings.Contains(message, "credential_forbidden"):
+		// The named credential is not usable on this target. Whether it does
+		// not exist, belongs to someone else, or is bound elsewhere, the
+		// reply is the same, so it never reveals a name the caller may not see.
+		return fmt.Errorf("%s", withNext(message,
+			"doops credential list --target "+target+"   # the credentials bound to this target",
+			"rerun without --credential   # a single bound Helm credential is used automatically"))
 	}
 	return err
 }
