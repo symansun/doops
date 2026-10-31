@@ -36,6 +36,11 @@ type CredentialMaterializeRequest struct {
 	Scope          CredentialGrantScope `json:"scope"`
 	RequiredKeys   []string             `json:"required_keys,omitempty"`
 	Payload        json.RawMessage      `json:"payload"`
+	// AuthfileOnly delivers the credential to the Agent's own OCI tool
+	// configuration file and leaves the Kubernetes Secret alone. The Gateway
+	// uses it to restore that file after an Agent restart, where the Secret
+	// still exists but the file the Agent wrote is gone with the Pod.
+	AuthfileOnly bool `json:"authfile_only,omitempty"`
 }
 
 type CredentialCleanupRequest struct {
@@ -46,6 +51,11 @@ type CredentialCleanupRequest struct {
 	AnyVersion   bool                   `json:"any_version,omitempty"`
 	Namespace    string                 `json:"namespace"`
 	Workload     CredentialPlanWorkload `json:"workload,omitempty"`
+	// AuthfileOnly limits the cleanup to the Agent's own OCI authfile. The
+	// Kubernetes Secret is the kubelet's pull credential and outlives the Pod,
+	// so a failed reconnect delivery must not remove it: a workload pulling
+	// with that Secret would lose its registry access.
+	AuthfileOnly bool `json:"authfile_only,omitempty"`
 }
 
 type credentialTargetSnapshot struct {
@@ -88,6 +98,9 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 
 	var secretType string
 	var secretData map[string]string
+	// pendingRegistryAuth holds a registry authfile delivery that must happen
+	// only after the Secret verifies.
+	var pendingRegistryAuth *registryAuthPendingDelivery
 	switch req.CredentialType {
 	case CredentialTypeRegistry:
 		if req.Scope.Use != CredentialUseImagePull {
@@ -120,15 +133,28 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 			result.Digest = digest
 		}
 		// The Secret is what the kubelet pulls with; the Agent's own OCI tools
-		// read an authfile. Deliver both so image work on this target needs no
-		// hand-written credential file.
-		if err := deliverRegistryAuthEntry(payload.Server, map[string]string{
+		// read an authfile. The file is written after the Secret verifies, so a
+		// failed materialization never leaves the Agent holding registry
+		// access the Secret was not granted.
+		authfileEntry := map[string]string{
 			"username": payload.Username,
 			"password": payload.Password,
 			"email":    payload.Email,
 			"auth":     auth,
-		}, req.CredentialID, req.GrantID, req.VersionID); err != nil {
-			return CredentialMaterialization{}, err
+		}
+		if req.AuthfileOnly {
+			// The Secret already exists and outlives the Pod; only the authfile
+			// was lost. Restoring it must not rebuild the Secret, because
+			// replacing it would break a workload that is pulling with it.
+			if err := deliverRegistryAuthEntry(payload.Server, authfileEntry,
+				req.CredentialID, req.GrantID, req.VersionID); err != nil {
+				return CredentialMaterialization{}, err
+			}
+			return registryAuthOnlyMaterialization(req, payload.Server, auth, result.Digest), nil
+		}
+		pendingRegistryAuth = &registryAuthPendingDelivery{
+			server: payload.Server, entry: authfileEntry,
+			credentialID: req.CredentialID, grantID: req.GrantID, versionID: req.VersionID,
 		}
 	case CredentialTypeTLS:
 		if req.Scope.Use != CredentialUseTLS {
@@ -246,6 +272,14 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 	result.SecretType = actual.SecretType
 	result.ResourceVersion = actual.ResourceVersion
 	result.Keys = keys
+	if pendingRegistryAuth != nil {
+		// The Secret is in place and verified, so the Agent may now use the
+		// registry from its own tools.
+		if err := deliverRegistryAuthEntry(pendingRegistryAuth.server, pendingRegistryAuth.entry,
+			pendingRegistryAuth.credentialID, pendingRegistryAuth.grantID, pendingRegistryAuth.versionID); err != nil {
+			return CredentialMaterialization{}, err
+		}
+	}
 	return result, nil
 }
 
@@ -456,6 +490,14 @@ func cleanupCredential(ctx context.Context, req CredentialCleanupRequest) error 
 		(!req.AnyVersion && strings.TrimSpace(req.VersionID) == "") ||
 		!validKubernetesCredentialName(req.Namespace) {
 		return errors.New("credential_cleanup_invalid")
+	}
+	if req.AuthfileOnly {
+		// A restore owns nothing new: the Kubernetes Secret belongs to the
+		// workload pulling with it, and the authfile entry it restores was
+		// already there before the restore. Removing either would take away
+		// registry access the Agent had before the restore was attempted, so a
+		// failed restore leaves both alone.
+		return nil
 	}
 	if cleaned, err := cleanupNativeHelmCredential(req); err != nil {
 		return err

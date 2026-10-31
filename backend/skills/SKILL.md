@@ -78,7 +78,7 @@ description: |
 | K8s 运维变更 | `doops -session <s> k8s --target <t> rollout restart\|scale\|node cordon\|delete pod ... --confirm` |
 | DoWeb | `doops -session <s> web --target <t> --mode check\|plan\|apply --request '<req>'` |
 | 推送 / 拉取工作区 | `doops -session <s> push --target <t> --src <dir>`；`pull --dest <dir>` |
-| OCI 镜像 | `image build`、`image copy`、`registry sync`（authfile 只引用目标文件） |
+| OCI 镜像 | `image build`、`image copy`、`registry sync`（仓库认证由 Gateway 下发到目标） |
 | 一次配置凭据 | `doops -session <s> credential configure --target <t> --id <id> ...` |
 | 开发凭据预检 | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` |
 | 用户与授权 | `doops admin user create\|list`、`admin grant list\|add\|delete` |

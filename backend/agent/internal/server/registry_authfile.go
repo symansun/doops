@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -21,6 +23,8 @@ import (
 // merged, never replaced: entries this Agent did not deliver stay untouched,
 // and a sidecar record tracks which servers came from which grant so cleanup
 // removes only those.
+// registryAuthFile is the authfile every OCI tool reads by default. It is a
+// variable solely so tests can point it at a fixture.
 var registryAuthFile = "/root/.docker/config.json"
 
 // registryAuthMutex serializes the read-modify-write of the shared authfile.
@@ -32,7 +36,14 @@ func registryAuthFilePath() string {
 	return registryAuthFile
 }
 
+// registryAuthRecordPathOverride lets a test point the ownership record
+// somewhere other than beside the authfile.
+var registryAuthRecordPathOverride string
+
 func registryAuthRecordPath() string {
+	if override := strings.TrimSpace(registryAuthRecordPathOverride); override != "" {
+		return override
+	}
 	return filepath.Join(filepath.Dir(doagentSettingsPath()), "doops-registry-auth.json")
 }
 
@@ -133,6 +144,37 @@ func writeRegistryAuthFile(auths map[string]json.RawMessage, rest map[string]jso
 		return errors.New("registry_authfile_unavailable")
 	}
 	return nil
+}
+
+// registryAuthPendingDelivery is a registry authfile write that waits until
+// the Kubernetes Secret has been verified.
+type registryAuthPendingDelivery struct {
+	server       string
+	entry        map[string]string
+	credentialID string
+	grantID      string
+	versionID    string
+}
+
+// registryAuthOnlyMaterialization builds the evidence for a delivery that only
+// restored the Agent's authfile. The Kubernetes Secret was left untouched, so
+// the evidence reports the Secret the credential owns without claiming a new
+// resource version for it.
+func registryAuthOnlyMaterialization(req CredentialMaterializeRequest, server, auth, digest string) CredentialMaterialization {
+	sum := sha256.Sum256([]byte(server + "\x00" + auth))
+	return CredentialMaterialization{
+		CredentialID: req.CredentialID,
+		VersionID:    req.VersionID,
+		ResourceName: credentialSecretName(req.CredentialID, req.GrantID),
+		Namespace:    req.Scope.Namespace,
+		SecretType:   "kubernetes.io/dockerconfigjson",
+		Keys:         []string{".dockerconfigjson"},
+		// The authfile is the artifact that was actually written. Its digest
+		// identifies that file, not the Secret, which was not touched.
+		ResourceVersion: "authfile-" + hex.EncodeToString(sum[:8]),
+		Digest:          digest,
+		Status:          "verified",
+	}
 }
 
 // deliverRegistryAuthEntry merges one registry's authentication into the

@@ -27,6 +27,7 @@ import (
 
 func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T) {
 	allowCredentialPrivateEndpointsForTest(t)
+	authfile := useRegistryAuthFileFixture(t)
 	bin, argsLog := installCredentialTestCommands(t)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("DOOPS_TEST_GIT_SECRET", "")
@@ -83,6 +84,26 @@ func TestMaterializeRegistryCredentialUsesStdinAndVerifiesManifest(t *testing.T)
 	assertCredentialCanaryNotInText(t, "materializer result", string(mustJSON(t, result)), "materializer-canary-secret")
 	logged := readCredentialTestFile(t, argsLog)
 	assertCredentialCanaryNotInText(t, "command arguments", logged, "materializer-canary-secret")
+	// The Agent's own OCI tools read an authfile, so a successful
+	// materialization must leave one behind that carries the registry.
+	authfileData := readCredentialTestFile(t, authfile)
+	var authfileDocument struct {
+		Auths map[string]map[string]string `json:"auths"`
+	}
+	if err := json.Unmarshal([]byte(authfileData), &authfileDocument); err != nil {
+		t.Fatalf("read registry authfile: %v", err)
+	}
+	entry, ok := authfileDocument.Auths[registry.URL]
+	if !ok || entry["username"] != "deploy" || entry["password"] != "materializer-canary-secret" {
+		t.Fatalf("registry authfile does not carry the delivered registry: %#v", authfileDocument.Auths)
+	}
+	authfileInfo, err := os.Stat(authfile)
+	if err != nil {
+		t.Fatalf("stat registry authfile: %v", err)
+	}
+	if authfileInfo.Mode().Perm() != 0600 {
+		t.Fatalf("registry authfile mode = %v, want 0600", authfileInfo.Mode().Perm())
+	}
 	if strings.Contains(logged, "[--patch-file] [-]") ||
 		!strings.Contains(logged, "[--type=merge] [--patch]") {
 		t.Fatalf("workload patch does not use a kubectl-supported inline merge patch: %s", logged)
@@ -1056,4 +1077,19 @@ func allowCredentialPrivateEndpointsForTest(t *testing.T) {
 	t.Cleanup(func() {
 		credentialPrivateEndpointAllowed = previous
 	})
+}
+
+// useRegistryAuthFileFixture points the Agent's registry authfile and its
+// ownership record at a fixture directory, so a test never writes to the real
+// /root/.docker and never inherits entries from another test.
+func useRegistryAuthFileFixture(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	previousFile, previousRecord := registryAuthFile, registryAuthRecordPathOverride
+	registryAuthFile = filepath.Join(dir, "config.json")
+	registryAuthRecordPathOverride = filepath.Join(dir, "doops-registry-auth.json")
+	t.Cleanup(func() {
+		registryAuthFile, registryAuthRecordPathOverride = previousFile, previousRecord
+	})
+	return registryAuthFile
 }

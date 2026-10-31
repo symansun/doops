@@ -17,7 +17,7 @@ func runRegistryCommand(args []string, sessionName string, servers []Server, con
 		return nil
 	}
 	if len(args) == 0 || args[0] != "sync" {
-		return fmt.Errorf("用法: doops registry sync --target <target> --source-registry <registry/path> --target-registry <registry/path> --tag <tag> --source-authfile <remote-path> --target-authfile <remote-path> --image <name> (可重复)")
+		return fmt.Errorf("用法: doops registry sync --target <target> --source-registry <registry/path> --target-registry <registry/path> --tag <tag> [--source-authfile <remote-path>] [--target-authfile <remote-path>] --image <name> (可重复)")
 	}
 	registryFlags := flag.NewFlagSet("registry sync", flag.ContinueOnError)
 	registryFlags.SetOutput(os.Stdout)
@@ -28,8 +28,8 @@ func runRegistryCommand(args []string, sessionName string, servers []Server, con
 	registryFlags.StringVar(&sourceRegistry, "source-registry", "", "Source registry/repository prefix")
 	registryFlags.StringVar(&targetRegistry, "target-registry", "", "Target registry/repository prefix")
 	registryFlags.StringVar(&tag, "tag", "", "Immutable release tag")
-	registryFlags.StringVar(&sourceAuthfile, "source-authfile", "", "Remote source registry authfile path")
-	registryFlags.StringVar(&targetAuthfile, "target-authfile", "", "Remote target registry authfile path")
+	registryFlags.StringVar(&sourceAuthfile, "source-authfile", "", "Remote source registry authfile path (default: the authfile the Gateway delivered to the target)")
+	registryFlags.StringVar(&targetAuthfile, "target-authfile", "", "Remote target registry authfile path (default: the authfile the Gateway delivered to the target)")
 	registryFlags.IntVar(&timeoutSeconds, "timeout", 600, "Timeout per copy/inspect operation in seconds")
 	registryFlags.Var(&images, "image", "Image name without registry/tag (repeatable)")
 	if err := registryFlags.Parse(args[1:]); err != nil {
@@ -43,8 +43,8 @@ func runRegistryCommand(args []string, sessionName string, servers []Server, con
 	if configErr != nil {
 		return configErr
 	}
-	if target == "" || sourceRegistry == "" || targetRegistry == "" || tag == "" || sourceAuthfile == "" || targetAuthfile == "" || len(images) == 0 {
-		return fmt.Errorf("registry sync requires --target, --source-registry, --target-registry, --tag, --source-authfile, --target-authfile and at least one --image")
+	if target == "" || sourceRegistry == "" || targetRegistry == "" || tag == "" || len(images) == 0 {
+		return fmt.Errorf("registry sync requires --target, --source-registry, --target-registry, --tag and at least one --image")
 	}
 	if timeoutSeconds <= 0 {
 		return fmt.Errorf("--timeout must be positive")
@@ -82,13 +82,41 @@ func runRegistryCommand(args []string, sessionName string, servers []Server, con
 
 func buildRegistrySyncCommand(sourceRegistry, targetRegistry, tag, sourceAuthfile, targetAuthfile string, images []string, timeoutSeconds int) string {
 	parts := []string{"set -eu", "command -v timeout >/dev/null 2>&1", "command -v sha256sum >/dev/null 2>&1", "command -v skopeo >/dev/null 2>&1"}
+	// An authfile path is optional. Without one, skopeo reads the target's own
+	// registry authfile, which the Gateway delivers to the Agent for the
+	// credentials granted on it.
+	srcAuthArgs := []string{}
+	if sourceAuthfile != "" {
+		srcAuthArgs = append(srcAuthArgs, "--src-authfile", shellQuote(sourceAuthfile))
+	}
+	dstAuthArgs := []string{}
+	if targetAuthfile != "" {
+		dstAuthArgs = append(dstAuthArgs, "--dest-authfile", shellQuote(targetAuthfile))
+	}
+	srcInspectArgs := []string{}
+	if sourceAuthfile != "" {
+		srcInspectArgs = append(srcInspectArgs, "--authfile", shellQuote(sourceAuthfile))
+	}
+	dstInspectArgs := []string{}
+	if targetAuthfile != "" {
+		dstInspectArgs = append(dstInspectArgs, "--authfile", shellQuote(targetAuthfile))
+	}
 	for _, image := range images {
 		sourceRef := sourceRegistry + "/" + image + ":" + tag
 		targetRef := targetRegistry + "/" + image + ":" + tag
-		parts = append(parts, fmt.Sprintf("timeout %ds skopeo copy --all --retry-times 3 --src-authfile %s --dest-authfile %s %s %s", timeoutSeconds, shellQuote(sourceAuthfile), shellQuote(targetAuthfile), shellQuote("docker://"+sourceRef), shellQuote("docker://"+targetRef)))
-		parts = append(parts, fmt.Sprintf("src_digest=$(timeout %ds skopeo inspect --raw --authfile %s %s | sha256sum | cut -d' ' -f1)", timeoutSeconds, shellQuote(sourceAuthfile), shellQuote("docker://"+sourceRef)))
-		parts = append(parts, fmt.Sprintf("dst_digest=$(timeout %ds skopeo inspect --raw --authfile %s %s | sha256sum | cut -d' ' -f1)", timeoutSeconds, shellQuote(targetAuthfile), shellQuote("docker://"+targetRef)))
-		parts = append(parts, fmt.Sprintf("test -n \"${src_digest}\" && test \"${src_digest}\" = \"${dst_digest}\" || { echo 'registry manifest digest mismatch for %s' >&2; exit 1; }", image))
+		copyArgs := append([]string{"skopeo", "copy", "--all", "--retry-times", "3"}, srcAuthArgs...)
+		copyArgs = append(copyArgs, dstAuthArgs...)
+		copyArgs = append(copyArgs, shellQuote("docker://"+sourceRef), shellQuote("docker://"+targetRef))
+		parts = append(parts, fmt.Sprintf("timeout %ds %s", timeoutSeconds, strings.Join(copyArgs, " ")))
+		srcInspect := append([]string{"skopeo", "inspect", "--raw"}, srcInspectArgs...)
+		srcInspect = append(srcInspect, shellQuote("docker://"+sourceRef))
+		dstInspect := append([]string{"skopeo", "inspect", "--raw"}, dstInspectArgs...)
+		dstInspect = append(dstInspect, shellQuote("docker://"+targetRef))
+		parts = append(parts,
+			fmt.Sprintf("src_digest=$(timeout %ds %s | sha256sum | cut -d' ' -f1)", timeoutSeconds, strings.Join(srcInspect, " ")),
+			fmt.Sprintf("dst_digest=$(timeout %ds %s | sha256sum | cut -d' ' -f1)", timeoutSeconds, strings.Join(dstInspect, " ")),
+			fmt.Sprintf("test -n \"${src_digest}\" && test \"${src_digest}\" = \"${dst_digest}\" || { echo 'registry manifest digest mismatch for %s' >&2; exit 1; }", image),
+		)
 	}
 	return strings.Join(parts, "\n")
 }
