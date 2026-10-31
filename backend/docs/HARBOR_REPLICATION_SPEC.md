@@ -76,7 +76,10 @@
 只搬一个镜像，耗时与镜像大小成正比，可预期。
 
 触发接口是 `POST /api/v2.0/replication/executions`，请求体 `{"policy_id": <id>}`，返回 201。
-`POST /replication/policies/{id}/executions` 在 v2.14.3 上不返回执行 id，不能用来判断是否已触发。
+**响应体是空的，执行 id 只在 `Location` 响应头里**，形如 `/api/v2.0/replication/executions/1922`，
+要从里面取末段数字。只读 body 会拿不到 id，看起来像触发失败，其实执行已经建好并在跑——
+重试只会多建一次重复执行。`POST /replication/policies/{id}/executions` 在 v2.14.3 上两处都不给
+执行 id，不能用来判断是否已触发。
 
 ### 已知性能特征
 
@@ -176,7 +179,7 @@ V2 的结果决定方案是否成立：若集群出网到 CNB 不通，改用经
 - `PUT /registries/{id}` 的凭据字段是扁平的 `credential_type`、`access_key`、`access_secret`。嵌套的 `{"credential":{...}}` 请求返回 200，但凭据没有写入，Harbor 不报错。每次写入后必须读回端点，确认 `access_key` 有值且 `access_secret` 已设置。
 - 创建规则的请求体不能同时给出源和目标两侧的 registry 对象，否则报 `either src_registry or dest_registry should be empty and the other one shouldn't be empty`。本地 Harbor 是目标侧，只填 `dest_namespace` 和 `dest_namespace_replace_count`；源侧填 `{"id":2,"name":"cnb-upstream"}` 即可。
 - 创建规则后不要用 HTTP 201 判断成功，要按名称查询规则 id 并确认大于 0，再触发。
-- 触发复制用 `POST /api/v2.0/replication/executions`，请求体 `{"policy_id": <id>}`，返回 201。`POST /replication/policies/{id}/executions` 不返回执行 id，不能用它判断是否已触发。
+- 触发复制用 `POST /api/v2.0/replication/executions`，请求体 `{"policy_id": <id>}`，返回 201，**响应体为空，执行 id 只在 `Location` 响应头里**（`/api/v2.0/replication/executions/<id>`）。只读 body 会拿不到 id。`POST /replication/policies/{id}/executions` 不返回执行 id，不能用它判断是否已触发。
 - CNB 令牌注册为受管凭据（opaque，key 为 `CNB_USERNAME`、`CNB_TOKEN`），物化到 `harbor-system` 后由 Agent 内脚本读取并写入 Harbor 端点，不经过命令行和输出。
 - `doops write` 只接受相对路径（落到会话工作区），`doops exec` 的工作目录是 `/workspace`，运行脚本要写完整路径。
 - 机器人账号需要系统级 `replication-policy` 权限，只给 `replication` 会让规则列表返回 403。
