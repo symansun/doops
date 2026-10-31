@@ -561,6 +561,11 @@ active resource、active version、目标上的 active target 绑定和当前用
 | `credential_binding_scope_invalid` | 当前 target 上的绑定 scope 不再通过校验（例如 namespace 无效） | grant-revoke 后用合法 namespace 重新 configure |
 | `credential_grant_denied` | 其他绑定不存在的情况，例如绑定已吊销 | 检查 `credential list --target` |
 
+`--credential` 引用的名称在当前 target 上不存在、属于他人、或只绑定在别的 target 时，
+返回同一类别，不区分「不存在」与「无权访问」，避免泄露调用者看不到的凭据名称。
+CLI 在该类别后给出 `next:` 步骤：先 `credential list --target` 查看本 target 的绑定，
+再决定是改用 `--credential <name>` 还是去掉 `--credential`（单一绑定的 Helm 凭据会自动生效）。
+
 其它稳定错误类别：
 
 - `credential_scope_invalid`：凭据引用没有匹配到该 target 的 Gateway 授权，或物化
