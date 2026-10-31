@@ -7,9 +7,11 @@ asserted here against a fake Harbor, so no cluster and no real credential is
 needed. Payload values are synthetic canaries.
 """
 import importlib.util
+import io
 import json
 import re
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -550,6 +552,82 @@ def test_credentials_are_never_passed_as_command_line_arguments():
 
 
 # -------------------------------------------------------------- script contract
+
+
+class FakeResponse(io.BytesIO):
+    """A urllib response that carries headers, like a real HTTP reply."""
+
+    def __init__(self, body=b"", status=200, headers=None):
+        super().__init__(body)
+        self.status = status
+        self.headers = headers or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def harbor_client_with_response(response):
+    """A HarborClient whose opener returns one canned response."""
+    module = load()
+    client = module.HarborClient("http://harbor.example", "admin", "pw")
+    client._opener = type("Opener", (), {
+        "open": staticmethod(lambda request, timeout=None: response),
+    })()
+    return client
+
+
+def test_a_create_that_answers_201_with_an_empty_body_yields_its_id_from_location():
+    """Harbor returns 201 and an empty body; the id arrives in Location."""
+    module = load()
+    response = FakeResponse(b"", status=201,
+                            headers={"Location": "/api/v2.0/replication/executions/1922"})
+    client = harbor_client_with_response(response)
+
+    created = client.post("/replication/executions", {"policy_id": 6})
+
+    assert created == {"id": 1922}
+
+
+def test_triggering_a_policy_finds_the_execution_id_in_the_location_header():
+    module = load()
+    response = FakeResponse(b"", status=201,
+                            headers={"Location": "/api/v2.0/replication/executions/1922"})
+    client = harbor_client_with_response(response)
+
+    execution_id = module.trigger_replication(client, 6)
+
+    assert execution_id == 1922
+
+
+def test_a_create_without_a_location_header_and_without_a_body_has_no_id():
+    module = load()
+    client = harbor_client_with_response(FakeResponse(b"", status=201))
+
+    assert client.post("/projects", {"project_name": "x"}) == {}
+
+
+def test_a_json_body_still_parses_and_beats_the_location_header():
+    module = load()
+    response = FakeResponse(json.dumps({"id": 7}).encode(), status=201,
+                            headers={"Location": "/api/v2.0/whatever/9"})
+    client = harbor_client_with_response(response)
+
+    assert client.post("/replication/executions", {"policy_id": 6}) == {"id": 7}
+
+
+def test_a_location_header_without_an_id_is_not_turned_into_a_zero_id():
+    module = load()
+    response = FakeResponse(b"", status=201,
+                            headers={"Location": "/api/v2.0/replication/executions/"})
+    client = harbor_client_with_response(response)
+
+    with pytest.raises(module.HarborError) as failure:
+        module.trigger_replication(client, 6)
+
+    assert "no execution id" in str(failure.value)
 
 
 def test_the_script_never_deletes_a_harbor_object():

@@ -165,6 +165,7 @@ class HarborClient:
         try:
             with self._opener.open(request, timeout=self.timeout) as response:
                 raw = response.read()
+                location = response.headers.get("Location")
         except urllib.error.HTTPError as error:
             detail = error.read().decode("utf-8", "replace").strip()[:300]
             raise HarborError(
@@ -173,11 +174,27 @@ class HarborClient:
         except (urllib.error.URLError, OSError) as error:
             raise HarborError("harbor " + method + " " + path + " unreachable: " + str(error))
         if not raw:
+            # Harbor answers a create with 201 and an empty body, and puts the
+            # new object's id in the Location header. Drop it here so the
+            # caller does not have to know that.
+            if location:
+                created = {"id": self._id_from_location(location)}
+                return created
             return {}
         try:
             return json.loads(raw.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise HarborError("harbor " + method + " " + path + " returned a non-JSON body")
+
+    @staticmethod
+    def _id_from_location(location):
+        """Pull the object id out of a Location header such as
+        /api/v2.0/replication/executions/1922."""
+        tail = location.rstrip("/").rsplit("/", 1)[-1]
+        try:
+            return int(tail)
+        except ValueError:
+            return 0
 
     def get(self, path, query=None):
         return self._request("GET", path, query=query)
