@@ -130,6 +130,26 @@ func executionResponseUnknown(response map[string]interface{}) bool {
 		strings.HasPrefix(message, errExecutionOutcomeUnknown.Error()+":")
 }
 
+// executionUnknownFromResponse keeps the reason the Agent gave for an unknown
+// outcome, so the caller and the audit can tell which check could not be
+// proven. Without it every unknown outcome reads the same.
+func executionUnknownFromResponse(response map[string]interface{}) error {
+	rpcError, _ := response["error"].(map[string]interface{})
+	message, _ := rpcError["message"].(string)
+	message = strings.TrimSpace(message)
+	prefix := errExecutionOutcomeUnknown.Error()
+	switch {
+	case strings.HasPrefix(message, prefix+":"):
+		reason := strings.TrimSpace(strings.TrimPrefix(message, prefix+":"))
+		if reason != "" {
+			return fmt.Errorf("%w: %s", errExecutionOutcomeUnknown, sanitizeSecretText(reason))
+		}
+	case message != "" && message != prefix:
+		return fmt.Errorf("%w: remote error: %s", errExecutionOutcomeUnknown, sanitizeSecretText(message))
+	}
+	return errExecutionOutcomeUnknown
+}
+
 func (q *gatewayMessageQueue) observeTerminal(msg gatewayWSMessage) {
 	if _, notification := msg.Parsed["method"]; notification {
 		return
@@ -145,7 +165,7 @@ func (q *gatewayMessageQueue) observeTerminal(msg gatewayWSMessage) {
 	q.terminalOnce.Do(func() {
 		q.terminalMessage = msg
 		if executionResponseUnknown(msg.Parsed) {
-			q.terminalErr = errExecutionOutcomeUnknown
+			q.terminalErr = executionUnknownFromResponse(msg.Parsed)
 		}
 		close(q.terminal)
 	})
