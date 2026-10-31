@@ -36,9 +36,13 @@ Secret、ServiceAccount 不开放读取。
 - `rollback`：`release`、`namespace`、`revision`、`confirm=true`。
 - 工具自己做 server dry-run → helm → 核对每个渲染出的工作负载（含其它 namespace 的对象、
   hook Job、initContainers），并等滚动完成。你只需一次调用。
+- 只含 Ingress 的 release 也能发：Ingress 按路由核对（class、每条 route 的 host/path/
+  pathType 与后端 Service、TLS），引用的后端 Service 必须存在。Ingress 没有容器，
+  这种 release 不要传 `expected_image`。
 - 失败返回 `错误码: 原因`：
   - `helm_preflight_failed`：Helm 渲染报错，原因是 Helm 的原话，通常是 values 或 chart 问题。
-  - `helm_manifest_invalid` / `helm_no_workload`：chart 渲染结果有问题。
+  - `helm_manifest_invalid` / `helm_no_workload`：chart 渲染结果有问题（没有可核对的工作负载
+    或 Ingress）。
   - `helm_image_mismatch`：`expected_image` 不在渲染结果里，原因列出了实际渲染的镜像。
   - `helm_mutation_failed`：Helm 执行失败，原因是 Helm 的原话。
   - `helm_verification_failed`：线上对象和渲染结果不一致或超时未就绪，原因指出是哪个对象。

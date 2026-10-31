@@ -105,7 +105,7 @@ func TestHelmUpgradeFailuresNameTheirStepAndReason(t *testing.T) {
 			name:       "release with only a ConfigMap has no workload",
 			dryRunJSON: `{"manifest":"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: cfg\n"}`,
 			wantPrefix: "helm_no_workload: ",
-			wantReason: "no supported workload",
+			wantReason: "no verifiable workload or ingress",
 		},
 		{
 			name:          "expected image missing lists what was rendered",

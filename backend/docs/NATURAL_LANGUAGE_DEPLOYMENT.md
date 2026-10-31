@@ -140,6 +140,21 @@ Helm `--wait` 在 ready >= replicas - maxUnavailable 时就返回，所以验收
 hook Job 已失败这几种不会因等待而恢复，立即判失败。工具失败时 `ask --apply` 返回
 `doagent_apply_tool_failed: <工具>: <工具错误码与原因>`。
 
+**Ingress 也是可校验的发布内容。** 只含 Ingress 的 release（例如给已有服务加一个域名
+入口）没有自己的 Pod 可供滚动，但它的路由可以被核对，所以照样发布。校验方式是按渲染
+结果核对线上的 Ingress：
+
+- 线上对象必须存在，且 `ingressClassName`、每条 route（host、path、pathType）和后端
+  Service 与端口、TLS Secret 与 hosts，都与渲染结果完全一致；渲染与线上用同一套
+  规范化签名比较，route 顺序和 `networking.k8s.io/v1` 与旧版 backend 写法不影响结论。
+- Ingress 引用的每个后端 Service 必须存在，否则这个入口服务的是错误，发布失败。
+- 没有 route 的 Ingress 视为渲染结果有问题（`helm_manifest_invalid`）。
+- Ingress 不参与 `expected_image` 校验：它没有容器。只有 Ingress 的 release 不应传
+  `expected_image`，传了会因渲染结果里没有该镜像而失败。
+
+渲染结果里既没有上述工作负载也没有 Ingress 时，仍返回 `helm_no_workload`：这种 release
+没有任何可核对的内容。
+
 `upgrade-install` 分三步：preflight（server dry-run 渲染并检查）→ mutate（真实 Helm）→
 verify（按本次 revision 回读并对比集群）。每步失败返回一个稳定错误码，后接 `: ` 和具体原因：
 
@@ -147,7 +162,7 @@ verify（按本次 revision 回读并对比集群）。每步失败返回一个�
 |---|---|
 | `helm_preflight_failed` | Helm dry-run 本身失败，原因是脱敏后的 Helm 报错首行 |
 | `helm_manifest_invalid` | 渲染结果无法解码或格式不对，原因指出第几个 YAML 文档或哪个 `Kind/name` |
-| `helm_no_workload` | 渲染结果里没有可校验的工作负载 |
+| `helm_no_workload` | 渲染结果里没有可校验的工作负载或 Ingress |
 | `helm_image_mismatch` | `expected_image` 不在任何渲染容器里，原因列出实际渲染的镜像 |
 | `helm_mutation_failed` | 真实 Helm 命令失败，原因是脱敏后的 Helm 报错首行 |
 | `helm_mutation_invalid_result` | Helm 输出里没有本次 mutation 的 revision |
