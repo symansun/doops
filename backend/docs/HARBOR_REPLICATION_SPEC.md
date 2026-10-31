@@ -333,6 +333,13 @@ python3 /root/ws/harborsync/harbor-converge.py \
 只触发落后的规则、全匹配即停、`mismatched` 立即中止、预算用尽报 incomplete、
 执行失败不静默继续，以及源码里不含任何删除或凭据写入调用。
 
+循环会跑几十分钟到几小时，必须用 `doops exec --bg` 脱离连接运行，输出重定向到
+Agent 上的文件再回读。实测用前台 `exec` 跑到第 4 轮时连接断开，返回
+`execution_outcome_unknown`——按红线这不证明失败，也不证明成功，要回读
+`GET /replication/executions` 的实际终态（那次 7 个执行全部 `Succeed`，
+断开只发生在校验阶段）。脚本本身是可重复执行的，断开后重跑会从当前状态接着收敛，
+不会重复搬已经一致的 tag。
+
 ### 凭据边界
 
 凭据取值只在进程内存里，经 Basic 认证头发给 Harbor。没有任何命令行参数接受取值，
