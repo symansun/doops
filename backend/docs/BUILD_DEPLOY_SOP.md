@@ -248,6 +248,11 @@ Helm dry-run。预检不修改 release，也不写验收回执。预检失败（
 未纳入 Helm 的收编路径没有 release 可 dry-run，预检只证明镜像可拉取。
 旧 Agent 不认识 `preflight`，会直接执行真实升级，所以预检要等 Agent 升级到该版本后才生效。
 CLI 在 Job 成功后执行 `capabilities --require structuredSSH`，探针失败会创建回滚 Job。
+升级后校验 `release_commit` 时，CLI 期望的是**自己这次发布**的 commit，即发起 `doops upgrade`
+的 CLI 必须与目标 Agent 镜像出自同一次发布（同一 commit）。CLI 比 Agent 新或旧都会导致
+`target Agent release commit mismatch`，并按上面第 3 条触发自动回滚；升级前允许 CLI 与 Agent
+不同版本，但升级后的 `release_commit` 校验要求同版，因此必须先用与候选 Agent 制品同 commit
+的 CLI 发起升级。
 `PREVIEW` 仅表示参数预览，不检查 Helm release、挂载、权限或回滚可行性；`ACCEPTED`
 仅表示 Job 已提交。Job 完成和协议声明不是完整发布验收：还须通过同一 target 的
 `exec hostname` 确认 Gateway 当前实际服务的 Pod，并核对该 Pod 的 UID、Ready、
