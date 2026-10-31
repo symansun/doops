@@ -185,7 +185,66 @@ V2 的结果决定方案是否成立：若集群出网到 CNB 不通，改用经
 - Harbor 的复制执行任务列表接口是 `GET /replication/executions/{id}/tasks`，旧路径 `/log` 在 v2.14.3 已不存在。
 - 项目级保留策略接口在 v2.14.3 上是 `POST /retentions`（只允许 POST，GET 报 METHOD_NOT_ALLOWED），`GET /projects/{name}/retention` 和 `GET /projects/{name}/retentions` 都是 404。保留策略还没建。
 
-## 6. 未验证与待决项
+## 6. 配置脚本 `scripts/harbor-replication.py`
+
+第 2 节的全套对象由 `backend/scripts/harbor-replication.py` 一次建成，不靠模型推理。
+输入只有两个受管凭据的 id（本集群 Harbor 与上游 registry 各一个），脚本从它们在集群内
+物化的 Secret 读取取值，依次收敛 registry 端点、项目、每仓库一条的复制规则和不可变 tag 规则，
+再按需触发复制并逐 tag 校验 digest。
+
+```bash
+doops -session <s> exec --target <t> --cmd 'python3 /root/harbor-replication.py plan \
+  --harbor-url http://harbor-core.harbor-system.svc \
+  --harbor-credential cred_17c0dfc7da9f76dd73b4c260 \
+  --upstream-url https://docker.cnb.cool \
+  --upstream-credential cred_8d9021b5db3c41f2b3ae7029 \
+  --credential-namespace harbor-system \
+  --project agentcloud --repository l8ai/agentcloud/backend --tag-pattern "git-*"'
+```
+
+`plan` 只读，逐个对象打印 `reuse` / `create` / `update`；`run` 执行收敛，可加 `--trigger`
+触发复制、`--verify` 校验 digest。其余参数见 `--help`。
+
+### 可重复执行
+
+同一集群第二次运行收敛到同一批对象，全部报 `reuse`，不新建、不改名、不产生重复规则。
+实测：registry `cnb-upstream` id=2、项目 `agentcloud` id=226 / `zhiyong` id=342、
+规则 id 6 和 10、不可变规则 id 38 全部复用，`run` 未发出任何写请求。
+
+规则名由 `--policy-prefix`（默认 `cnb`）、项目名和源仓库最后一段拼成，并去掉与项目名重复的
+前缀，因此 `aiedulab/zhiyong/education/zhiyong-lab-api` 得到 `cnb-zhiyong-lab-api`，
+与第 5 节表中已有的 8 条规则名逐字一致。若改成按完整路径命名，脚本会在已有规则旁边再建一条
+重复规则——这是实测中发现并修掉的缺陷。
+
+### 不做的事
+
+脚本不删除端点、项目、规则和 tag，也不写入、作废或轮换任何凭据。校验失败时只报告差异，
+不清理任何一侧。
+
+### 校验语义
+
+校验以**上游**的 tag 列表为准，逐个比对 `Docker-Content-Digest`：
+
+| 分类 | 含义 | 是否失败 |
+|---|---|---|
+| `matched` | 两侧 digest 一致 | 否 |
+| `mismatched` | 同名 tag digest 不同 | 是 |
+| `missing` | 上游有、Harbor 没有，复制还没跟上 | 是 |
+| `extra` | Harbor 有、上游已清理（见第 5 节 CNB 保留策略） | 否，只报告 |
+
+方向很关键：早先的实现从 Harbor 侧出发反查上游，上游新发布而尚未复制的 tag 因此完全不可见。
+实测中 CNB 清掉一代 tag 并新发一代后，两侧集合零交集，`missing` 才把这个缺口暴露出来。
+
+### 凭据边界
+
+凭据取值只在进程内存里，经 Basic 认证头发给 Harbor。没有任何命令行参数接受取值，
+`--harbor-password-key` 一类参数传的是 Secret 里的 key 名；错误信息只列受管凭据的 id 和
+缺失的 key 名，不含取值。契约测试 `backend/test/test_harbor_replication_contract.py`
+用合成 canary 钉住这一点：26 个用例覆盖凭据缺失、key 缺失、端点不健康、端点静默丢弃凭据、
+规则过滤不一致时改而不重建、重复执行不新建、digest 不一致、上游 tag 缺失、执行失败中止，
+以及 canary 不出现在任何输出或错误文本中。
+
+## 7. 未验证与待决项
 
 - 另一个集群（腾讯 ZYJ）到 CNB 的出网连通性。
 - 机器人账号替代 admin 的权限范围。机器人已能列规则、列端点、列仓库和 artifact，
