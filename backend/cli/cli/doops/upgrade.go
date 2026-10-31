@@ -17,6 +17,11 @@ type UpgradeOptions struct {
 	DryRun    bool
 	Rollback  bool
 	Session   string
+	// AllowMissingRollbackBaseline lets the operator upgrade an Agent whose
+	// rollback baseline image is gone from the registry. The default is fail
+	// closed: without that image an automatic rollback could not restore the
+	// backup, so the third upgrade guarantee could not hold.
+	AllowMissingRollbackBaseline bool
 }
 
 var (
@@ -70,6 +75,7 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 		return fmt.Errorf("configured target is offline: %s/%s", base.Cluster, base.Instance)
 	}
 	failures := 0
+	var firstFailure error
 	for _, target := range selected {
 		server := base
 		server.Name = target.Key
@@ -89,6 +95,9 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 			if err := runUpgradePreflight(server, token, session, verbose, opts); err != nil {
 				fmt.Printf("FAIL %s/%s: preflight failed, nothing was changed: %v\n", target.Cluster, target.Instance, err)
 				failures++
+				if firstFailure == nil {
+					firstFailure = fmt.Errorf("%s/%s: preflight failed, nothing was changed: %w", target.Cluster, target.Instance, err)
+				}
 				continue
 			}
 		}
@@ -127,6 +136,9 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 		fmt.Println(withNext("verify the release", "doops targets --target "+base.Name+"   # RELEASE_COMMIT is the new commit", "doops capabilities --target "+base.Name+" --require structuredSSH"))
 	}
 	if failures > 0 {
+		if firstFailure != nil {
+			return firstFailure
+		}
 		return fmt.Errorf("upgrade failed on %d/%d target(s)", failures, len(selected))
 	}
 	return nil
@@ -144,13 +156,14 @@ func upgradeArguments(opts UpgradeOptions) map[string]interface{} {
 		return args
 	}
 	return map[string]interface{}{
-		"image":     opts.Image,
-		"mode":      opts.Mode,
-		"namespace": opts.Namespace,
-		"workload":  opts.Workload,
-		"container": opts.Container,
-		"release":   opts.Release,
-		"dry_run":   opts.DryRun,
+		"image":                           opts.Image,
+		"mode":                            opts.Mode,
+		"namespace":                       opts.Namespace,
+		"workload":                        opts.Workload,
+		"container":                       opts.Container,
+		"release":                         opts.Release,
+		"dry_run":                         opts.DryRun,
+		"allow_missing_rollback_baseline": opts.AllowMissingRollbackBaseline,
 	}
 }
 

@@ -197,16 +197,17 @@ func (p upgradeProcess) startSelfUpgradeJob(ctx context.Context, args agentUpgra
 		return "", err
 	}
 	manifest, err := selfUpgradeJobManifest(jobName, namespace, pod, selfUpgradePlan{
-		image:      strings.TrimSpace(args.Image),
-		repository: repository,
-		tag:        tag,
-		digest:     digest,
-		release:    release,
-		workload:   workload,
-		script:     script,
-		cluster:    p.cluster,
-		instance:   p.instance,
-		preflight:  args.Preflight,
+		image:                        strings.TrimSpace(args.Image),
+		repository:                   repository,
+		tag:                          tag,
+		digest:                       digest,
+		release:                      release,
+		workload:                     workload,
+		script:                       script,
+		cluster:                      p.cluster,
+		instance:                     p.instance,
+		preflight:                    args.Preflight,
+		allowMissingRollbackBaseline: args.AllowMissingRollbackBaseline,
 	})
 	if err != nil {
 		return "", err
@@ -388,6 +389,11 @@ func (p upgradeProcess) observeSelfUpgrade(ctx context.Context, args agentUpgrad
 	case "succeeded":
 		return fmt.Sprintf("self-upgrade-succeeded job=%s namespace=%s\n%s", jobName, namespace, logs), nil
 	case "failed":
+		// A failed upgrade names its reason with a stable category, so the
+		// operator reads why the release was left alone instead of guessing.
+		if category := selfUpgradeFailureCategory(logs); category != "" {
+			return fmt.Sprintf("self-upgrade-failed job=%s namespace=%s category=%s\n%s", jobName, namespace, category, logs), nil
+		}
 		return fmt.Sprintf("self-upgrade-failed job=%s namespace=%s\n%s", jobName, namespace, logs), nil
 	default:
 		return fmt.Sprintf("self-upgrade-running job=%s namespace=%s", jobName, namespace), nil
@@ -744,6 +750,9 @@ type selfUpgradePlan struct {
 	cluster    string
 	instance   string
 	preflight  bool
+	// allowMissingRollbackBaseline lets the operator accept an upgrade whose
+	// rollback baseline image can no longer be pulled.
+	allowMissingRollbackBaseline bool
 }
 
 type jobVolumeMount struct {
@@ -765,6 +774,9 @@ func selfUpgradeJobManifest(jobName, namespace string, pod selfUpgradePod, plan 
 		{"name": "DOOPS_UPGRADE_NAMESPACE", "value": namespace},
 		{"name": "DOOPS_UPGRADE_RELEASE", "value": plan.release},
 		{"name": "DOOPS_UPGRADE_WORKLOAD", "value": plan.workload},
+	}
+	if plan.allowMissingRollbackBaseline {
+		env = append(env, map[string]string{"name": "DOOPS_UPGRADE_ALLOW_MISSING_ROLLBACK_BASELINE", "value": "1"})
 	}
 	if plan.revision != 0 {
 		env = append(env, map[string]string{"name": "DOOPS_UPGRADE_REVISION", "value": fmt.Sprint(plan.revision)})
@@ -1133,9 +1145,206 @@ PY
 }
 `
 
+// The stable categories an upgrade preflight can report. They name why an
+// upgrade was refused, so an operator reads the reason instead of guessing
+// whether the Agent or the release is broken.
+const (
+	selfUpgradeCategoryRollbackBaselineUnavailable = "rollback_baseline_image_unavailable"
+	selfUpgradeCategoryRollbackBaselineUnresolved  = "rollback_baseline_image_unresolved"
+	selfUpgradeCategoryRollbackBaselineProbeFailed = "rollback_baseline_probe_failed"
+)
+
+var selfUpgradeFailureCategories = []string{
+	selfUpgradeCategoryRollbackBaselineUnavailable,
+	selfUpgradeCategoryRollbackBaselineUnresolved,
+	selfUpgradeCategoryRollbackBaselineProbeFailed,
+}
+
+// selfUpgradeFailureCategory reports the stable category a failed upgrade Job
+// carried, or "" when the failure has no category. The category is part of the
+// Job log, so it survives the Job, the observation and the CLI report.
+func selfUpgradeFailureCategory(logs string) string {
+	for _, category := range selfUpgradeFailureCategories {
+		if strings.Contains(logs, category) {
+			return category
+		}
+	}
+	return ""
+}
+
+// selfUpgradeRevisionImage prints the doops-agent image of one Helm revision.
+// The pre-change checks and the rollback script both read the rollback target
+// through this one helper, so the two can never select different images.
+const selfUpgradeRevisionImage = `revision_image() {
+  python3 - "$release" "$ns" "$1" "$workload" <<'PY'
+import subprocess, sys, yaml
+release, namespace, revision, workload = sys.argv[1:5]
+manifest = subprocess.check_output(
+    ["helm", "get", "manifest", release, "-n", namespace, "--revision", revision],
+    timeout=30,
+)
+images = [
+    container["image"]
+    for doc in yaml.safe_load_all(manifest) if doc and doc.get("kind") == "Deployment"
+    and (doc.get("metadata") or {}).get("name") == workload
+    and (doc.get("metadata") or {}).get("namespace", namespace) == namespace
+    for container in ((doc.get("spec") or {}).get("template") or {}).get("spec", {}).get("containers") or []
+    if container.get("name") == "doops-agent"
+]
+if len(images) != 1 or not images[0]:
+    raise SystemExit("rollback_baseline_image_unresolved: the revision must contain exactly one doops-agent image")
+print(images[0])
+PY
+}
+`
+
+// selfUpgradeRollbackBaselineProbe proves that the image an automatic rollback
+// would restore can still be pulled.
+//
+// The probe is a throwaway Job in the Agent's namespace whose Pod runs the
+// baseline image on the Agent's own node, with the Agent's own pull secrets,
+// service account, runtime class and scheduling constraints. The kubelet that
+// would serve the rollback Pod is therefore the kubelet that has to pull the
+// baseline image, and the credentials are the ones the workload already has:
+// no new credential dimension and no new mount.
+//
+// A manifest that is gone from the registry is therefore caught before the
+// release changes, which is what makes the third upgrade guarantee (restore the
+// backup when verification fails) real rather than aspirational.
+//
+// The operator can still proceed on purpose with
+// DOOPS_UPGRADE_ALLOW_MISSING_ROLLBACK_BASELINE=1; the default is fail closed.
+const selfUpgradeRollbackBaselineProbe = `rollback_baseline_probe="$(python3 - "$ns" "$rollback_baseline_image" "$previous" "$baseline" <<'PY' 2>&1
+import json, subprocess, sys, time
+
+namespace, image, revision, baseline_json = sys.argv[1:5]
+baseline = json.loads(baseline_json)
+probe_job = "doops-rollback-baseline-" + revision
+PROBE_LABEL = "app.kubernetes.io/name=doops-rollback-baseline-probe"
+CATEGORY_UNAVAILABLE = "rollback_baseline_image_unavailable"
+CATEGORY_PROBE_FAILED = "rollback_baseline_probe_failed"
+PULL_FAILURE_MARKERS = (
+    "ErrImagePull", "ImagePullBackOff", "InvalidImageName", "ErrImageNeverPull",
+    "RegistryUnavailable", "failed to resolve reference", "manifest unknown",
+)
+
+
+def fail(category, detail):
+    raise SystemExit(category + ": " + detail)
+
+
+def kubectl(*args, stdin=None):
+    return subprocess.run(
+        ["kubectl", "-n", namespace] + list(args),
+        input=stdin, capture_output=True, timeout=60,
+    )
+
+
+def cleanup():
+    kubectl("delete", "job", probe_job, "--ignore-not-found", "--wait=false")
+
+
+probe = {
+    "apiVersion": "batch/v1",
+    "kind": "Job",
+    "metadata": {
+        "name": probe_job,
+        "namespace": namespace,
+        "labels": {"app.kubernetes.io/name": "doops-rollback-baseline-probe"},
+    },
+    "spec": {
+        "backoffLimit": 0,
+        "ttlSecondsAfterFinished": 120,
+        "activeDeadlineSeconds": 90,
+        "template": {
+            "metadata": {"labels": {"app.kubernetes.io/name": "doops-rollback-baseline-probe"}},
+            "spec": {
+                "restartPolicy": "Never",
+                "terminationGracePeriodSeconds": 5,
+                "containers": [{
+                    "name": "probe",
+                    "image": image,
+                    "imagePullPolicy": "Always",
+                    "command": ["/bin/sh", "-c", "exit 0"],
+                }],
+            },
+        },
+    },
+}
+pod_spec = probe["spec"]["template"]["spec"]
+if baseline.get("node"):
+    pod_spec["nodeName"] = baseline["node"]
+if baseline.get("runtime_class"):
+    pod_spec["runtimeClassName"] = baseline["runtime_class"]
+if baseline.get("service_account"):
+    pod_spec["serviceAccountName"] = baseline["service_account"]
+if baseline.get("tolerations"):
+    pod_spec["tolerations"] = baseline["tolerations"]
+if baseline.get("node_selector"):
+    pod_spec["nodeSelector"] = baseline["node_selector"]
+if baseline.get("image_pull_secrets"):
+    pod_spec["imagePullSecrets"] = baseline["image_pull_secrets"]
+
+cleanup()
+try:
+    created = kubectl("create", "-f", "-", stdin=json.dumps(probe).encode())
+    if created.returncode != 0:
+        fail(CATEGORY_PROBE_FAILED, created.stderr.decode("utf-8", "replace").strip()[:400])
+
+    def probe_pods():
+        try:
+            return subprocess.check_output(
+                ["kubectl", "-n", namespace, "get", "pods", "-l", PROBE_LABEL, "-o", "json"],
+                timeout=30, stderr=subprocess.STDOUT,
+            ).decode("utf-8", "replace")
+        except Exception:
+            return ""
+
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        read = kubectl("get", "job", probe_job, "-o", "json")
+        if read.returncode != 0:
+            fail(CATEGORY_PROBE_FAILED, "the pull probe job could not be read")
+        status = json.loads(read.stdout).get("status") or {}
+        if int(status.get("succeeded") or 0) > 0:
+            print("rollback_baseline_image_available image=" + image)
+            raise SystemExit(0)
+
+        # An unpullable image leaves the Pod in a pull failure state and the Job
+        # active forever, so the Pod state is what names the reason. The Job
+        # status alone would report this as a timeout instead.
+        evidence = probe_pods()
+        if any(marker in evidence for marker in PULL_FAILURE_MARKERS):
+            fail(CATEGORY_UNAVAILABLE, "image=" + image + " reason=the image could not be pulled")
+        if int(status.get("failed") or 0) > 0:
+            if any(marker in evidence for marker in PULL_FAILURE_MARKERS):
+                fail(CATEGORY_UNAVAILABLE, "image=" + image + " reason=the image could not be pulled")
+            fail(CATEGORY_PROBE_FAILED, "image=" + image + " reason=the pull probe job failed")
+        time.sleep(3)
+    fail(CATEGORY_PROBE_FAILED, "image=" + image + " reason=the pull probe did not settle in time")
+finally:
+    cleanup()
+PY
+)" || {
+  case "$rollback_baseline_probe" in
+    *rollback_baseline_image_unavailable*)
+      if [ "${DOOPS_UPGRADE_ALLOW_MISSING_ROLLBACK_BASELINE:-0}" != "1" ]; then
+        echo "$rollback_baseline_probe" >&2
+        exit 1
+      fi
+      echo "warning: $rollback_baseline_probe; the operator allowed this upgrade without a pullable rollback baseline" >&2
+      ;;
+    *)
+      echo "rollback_baseline_probe_failed: $rollback_baseline_probe" >&2
+      exit 1
+      ;;
+  esac
+}
+`
+
 // selfUpgradeApplyChecks holds every check that runs before the first change, so
 // the preflight Job and the apply Job cannot disagree about what is admissible.
-const selfUpgradeApplyChecks = `repository="$DOOPS_UPGRADE_REPOSITORY"
+const selfUpgradeApplyChecks = selfUpgradeRevisionImage + `repository="$DOOPS_UPGRADE_REPOSITORY"
 tag="${DOOPS_UPGRADE_TAG:-}"
 digest="${DOOPS_UPGRADE_DIGEST:-}"
 target="$DOOPS_UPGRADE_IMAGE"
@@ -1155,7 +1364,8 @@ if not actual_image:
 print(actual_image)
 PY
 )"
-previous="$(helm history "$release" -n "$ns" -o json | python3 -c 'import json,sys; rows=json.load(sys.stdin); print(max(int(row["revision"]) for row in rows if row["status"]=="deployed"))')"
+previous="$(helm history "$release" -n "$ns" -o json | python3 -c 'import json,sys; rows=json.load(sys.stdin); deployed=[int(row["revision"]) for row in rows if row["status"]=="deployed"]; print(max(deployed) if len(deployed)==1 else "")')"
+test -n "$previous" || { echo "rollback_baseline_image_unresolved: the release must have exactly one deployed revision" >&2; exit 1; }
 selector_json="$(kubectl -n "$ns" get deployment "$workload" -o json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d["spec"]["selector"]["matchLabels"], separators=(",", ":"), sort_keys=True))')"
 baseline="$(python3 - "$ns" "$previous_image" "$selector_json" <<'PY'
 import json, re, subprocess, sys
@@ -1177,12 +1387,21 @@ digest = str(status.get("imageID") or "").split("://")[-1].rsplit("@", 1)[-1]
 if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
     raise SystemExit("Rollback baseline runtime digest is invalid")
 print(json.dumps({"image": image, "digest": digest, "node": spec["nodeName"],
-                 "runtime_class": spec.get("runtimeClassName") or ""}))
+                 "runtime_class": spec.get("runtimeClassName") or "",
+                 "service_account": spec.get("serviceAccountName") or "",
+                 "tolerations": spec.get("tolerations") or [],
+                 "node_selector": spec.get("nodeSelector") or {},
+                 "image_pull_secrets": spec.get("imagePullSecrets") or []}))
 PY
 )"
 export DOOPS_UPGRADE_BASELINE="$baseline"
 verify_deployment "$previous_image" baseline ${verify_record-record}
-values="${TMPDIR:-/tmp}/doops-upgrade-values.json"
+rollback_baseline_image="$(revision_image "$previous")"
+test "$rollback_baseline_image" = "$previous_image" || {
+  echo "rollback_baseline_image_unresolved: the rollback revision image differs from the live Agent image" >&2
+  exit 1
+}
+` + selfUpgradeRollbackBaselineProbe + `values="${TMPDIR:-/tmp}/doops-upgrade-values.json"
 helm get values "$release" -n "$ns" -o json >"$values"
 python3 - "$values" "$repository" "$tag" "$digest" "$selector_json" <<'PY'
 import json, sys
@@ -1261,7 +1480,7 @@ echo "new deployment did not stay ready" >&2
 exit 1
 `
 
-const selfUpgradeRollbackScript = selfUpgradeKubeconfigPrelude + selfUpgradeDeploymentVerifier + `previous="$DOOPS_UPGRADE_REVISION"
+const selfUpgradeRollbackScript = selfUpgradeKubeconfigPrelude + selfUpgradeDeploymentVerifier + selfUpgradeRevisionImage + `previous="$DOOPS_UPGRADE_REVISION"
 python3 - "$ns" "$release" "$previous" <<'PY'
 import json, subprocess, sys
 ns, release, revision = sys.argv[1:4]
@@ -1270,26 +1489,7 @@ current = [int(row["revision"]) for row in rows if row["status"] == "deployed"]
 if len(current) != 1 or not any(int(row["revision"]) == int(revision) < current[0] and row["status"] == "superseded" for row in rows):
     raise SystemExit("admitted rollback revision is no longer eligible")
 PY
-expected="$(python3 - "$release" "$ns" "$previous" "$workload" <<'PY'
-import subprocess, sys, yaml
-release, namespace, revision, workload = sys.argv[1:5]
-manifest = subprocess.check_output(
-    ["helm", "get", "manifest", release, "-n", namespace, "--revision", revision],
-    timeout=30,
-)
-images = [
-    container["image"]
-    for doc in yaml.safe_load_all(manifest) if doc and doc.get("kind") == "Deployment"
-    and (doc.get("metadata") or {}).get("name") == workload
-    and (doc.get("metadata") or {}).get("namespace", namespace) == namespace
-    for container in doc["spec"]["template"]["spec"]["containers"]
-    if container.get("name") == "doops-agent"
-]
-if len(images) != 1 or not images[0]:
-    raise SystemExit("rollback revision must contain exactly one doops-agent image")
-print(images[0])
-PY
-)"
+expected="$(revision_image "$previous")"
 test "$expected" = "$DOOPS_UPGRADE_IMAGE" || { echo "rollback revision image changed after admission" >&2; exit 1; }
 helm rollback "$release" "$previous" -n "$ns" --timeout 300s --wait
 kubectl -n "$ns" rollout status "deployment/${workload}" --timeout 300s
