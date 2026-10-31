@@ -230,6 +230,57 @@ func TestRegistryAuthFailedRestoreLeavesTheSecretAndEntryAlone(t *testing.T) {
 	}
 }
 
+// An Agent from before this protocol decodes the materialization request
+// strictly and would reject the authfile-only field, so the Gateway must not
+// send it one. Its authfile stays whatever is already there.
+func TestRegistryAuthIsNotDeliveredToAnAgentWithoutTheProtocol(t *testing.T) {
+	f, authfile := registryAuthLifecycleFixture(t)
+	base, version, _ := registryAuthCredential(t, f)
+	f.http(t, f.admin, http.MethodPost, base+"/verify", registryAuthVerifyBody(version.ID), http.StatusOK)
+	f.http(t, f.admin, http.MethodPost, base+"/promote", `{"version_id":"`+version.ID+`"}`, http.StatusOK)
+	if err := os.Remove(authfile); err != nil {
+		t.Fatalf("remove the authfile: %v", err)
+	}
+
+	f.hub.deliverRegistryAuthFiles(&GatewayAgent{
+		Cluster: "dev", Instance: "local", Key: "dev/local", RegistryAuthfile: false,
+	})
+	if _, err := os.Stat(authfile); err == nil {
+		t.Fatal("the Gateway delivered to an Agent that does not advertise the protocol")
+	}
+
+	// The same Agent with the protocol does get its registry back.
+	f.hub.deliverRegistryAuthFiles(&GatewayAgent{
+		Cluster: "dev", Instance: "local", Key: "dev/local", RegistryAuthfile: true,
+	})
+	auths := registryAuthFileEntries(t, authfile)
+	if _, ok := auths["registry.example.com:30002"]; !ok {
+		t.Fatalf("an Agent advertising the protocol was not delivered to: %#v", auths)
+	}
+}
+
+// The capability the Agent advertises and the one the Gateway checks must be
+// the same, or a matching pair silently stops delivering.
+func TestRegistryAuthfileCapabilityRoundTrips(t *testing.T) {
+	if !registryAuthfileCapabilityCompatible(registryAuthfileCapability()) {
+		t.Fatal("the Agent's own registry authfile capability is not accepted by the Gateway")
+	}
+	for name, mutate := range map[string]func(map[string]any){
+		"version": func(c map[string]any) { c["schemaVersion"] = "doops.sh/registry-authfile/v0" },
+		"extra":   func(c map[string]any) { c["extra"] = true },
+		"missing": func(c map[string]any) { delete(c, "authfileOnly") },
+	} {
+		capability := registryAuthfileCapability()
+		mutate(capability)
+		if registryAuthfileCapabilityCompatible(capability) {
+			t.Fatalf("an incompatible capability was accepted: %s", name)
+		}
+	}
+	if registryAuthfileCapabilityCompatible(nil) {
+		t.Fatal("an Agent advertising nothing was treated as compatible")
+	}
+}
+
 // Given a target with no registry credential at all,
 // When its Agent reconnects,
 // Then the delivery is a no-op rather than a failure.

@@ -355,9 +355,10 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 					"capabilities": map[string]interface{}{
 						"tools": map[string]interface{}{},
 						"protocols": map[string]interface{}{
-							"credentialPlan":     credentialPlanCapability(),
-							"structuredSSH":      structuredSSHCapability(),
-							"executionLifecycle": executionLifecycleCapability(),
+							"credentialPlan":         credentialPlanCapability(),
+							"structuredSSH":          structuredSSHCapability(),
+							"executionLifecycle":     executionLifecycleCapability(),
+							registryAuthfileProtocol: registryAuthfileCapability(),
 						},
 					},
 				},

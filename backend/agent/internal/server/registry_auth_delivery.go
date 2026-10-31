@@ -79,6 +79,13 @@ func (h *GatewayHub) deliverRegistryAuthFiles(agent *GatewayAgent) {
 	if agent == nil {
 		return
 	}
+	if !agent.RegistryAuthfile {
+		// An Agent from before this protocol decodes the materialization
+		// request strictly and rejects the authfile-only field, so sending it
+		// would only record a failure on every reconnect. Its authfile stays
+		// whatever an operator put there until the Agent is upgraded.
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), registryAuthDeliveryTimeout)
 	defer cancel()
 	category := h.deliverRegistryAuthFilesTo(ctx, agent.Cluster, agent.Instance)
