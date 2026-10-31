@@ -727,6 +727,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
 		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
+			log.Printf("⚠️  WS outcome unknown: [%s] %v", sessionID, cmdErr)
 			writeJSON(buildErrorResponse(reqID, -32603, cmdErr.Error()))
 			return
 		}
@@ -762,6 +763,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
 		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
+			log.Printf("⚠️  WS outcome unknown: [%s] %v", sessionID, cmdErr)
 			writeJSON(buildErrorResponse(reqID, -32603, cmdErr.Error()))
 			return
 		}
@@ -806,6 +808,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 
 		cmdErr := waitCommandStreams(execCtx, cmd, stdoutPipe, stderrPipe, pushProgress, true)
 		if errors.Is(cmdErr, errExecutionOutcomeUnknown) {
+			log.Printf("⚠️  WS outcome unknown: [%s] %v", sessionID, cmdErr)
 			writeJSON(buildErrorResponse(reqID, -32603, cmdErr.Error()))
 			return
 		}

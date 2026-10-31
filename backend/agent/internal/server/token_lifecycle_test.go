@@ -272,7 +272,7 @@ func TestGatewayCredentialRecoveryOutcome(t *testing.T) {
 			response := readUntilID(t, client, float64(2))
 			if recoveryFails {
 				rpcError, ok := response["error"].(map[string]interface{})
-				if !ok || rpcError["code"] != float64(-32008) || rpcError["message"] != errExecutionOutcomeUnknown.Error() {
+				if !ok || rpcError["code"] != float64(-32008) || rpcError["message"] != errExecutionOutcomeUnknown.Error()+": credential_apply_outcome_unknown" {
 					t.Fatalf("credential recovery uncertainty lost: %#v", response)
 				}
 			} else if result, ok := response["result"].(map[string]interface{}); !ok || result["isError"] != true {
@@ -281,7 +281,7 @@ func TestGatewayCredentialRecoveryOutcome(t *testing.T) {
 			events, err := f.store.ListAuditFiltered(AuditFilter{Session: session, Action: ActionExec})
 			wantStatus, wantError := "error", "synthetic_apply_failed"
 			if recoveryFails {
-				wantStatus, wantError = "outcome_unknown", errExecutionOutcomeUnknown.Error()
+				wantStatus, wantError = "outcome_unknown", errExecutionOutcomeUnknown.Error()+": credential_apply_outcome_unknown"
 			}
 			if err != nil || len(events) != 1 || events[0].Status != wantStatus || events[0].Error != wantError ||
 				events[0].UserID != auth.UserID || events[0].TokenID != auth.TokenID {

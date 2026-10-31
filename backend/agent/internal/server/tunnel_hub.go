@@ -1298,7 +1298,8 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	if err != nil {
 		if errors.Is(err, errExecutionOutcomeUnknown) {
 			finalStatus = "outcome_unknown"
-			finalErr = errExecutionOutcomeUnknown.Error()
+			// Keep the reason: the code alone cannot say which check failed.
+			finalErr = sanitizeSecretText(err.Error())
 			finalResponse, _ = json.Marshal(buildErrorResponse(req.ID, -32008, finalErr))
 		} else if errors.Is(err, errGatewayClientDisconnected) {
 			finalStatus = "canceled"
@@ -1383,9 +1384,28 @@ func sanitizeAgentPromptAudit(toolName, errMsg, tail string) (string, string) {
 		return sanitizeSecretText(errMsg), sanitizeSecretText(tail)
 	}
 	if errMsg != "" {
-		errMsg = sanitizeCredentialCategory(errMsg)
+		errMsg = agentPromptAuditCategory(errMsg)
 	}
 	return errMsg, ""
+}
+
+// agentPromptAuditCategory keeps only stable categories for prompt audits. An
+// unknown outcome keeps its code, and its reason only when the reason is itself
+// a stable category, so the audit still says the outcome must be verified.
+func agentPromptAuditCategory(errMsg string) string {
+	prefix := errExecutionOutcomeUnknown.Error()
+	message := strings.TrimSpace(errMsg)
+	if message == prefix {
+		return prefix
+	}
+	if strings.HasPrefix(message, prefix+":") {
+		reason := strings.TrimSpace(strings.TrimPrefix(message, prefix+":"))
+		if category := sanitizeCredentialCategory(reason); category == reason {
+			return prefix + ": " + category
+		}
+		return prefix
+	}
+	return sanitizeCredentialCategory(message)
 }
 
 func internalCredentialTool(tool string) bool {
@@ -1645,9 +1665,9 @@ func (a *GatewayAgent) waitPendingCancel(queue *gatewayMessageQueue) error {
 	case <-queue.terminal:
 		return queue.terminalErr
 	case <-a.closed:
-		return errExecutionOutcomeUnknown
+		return fmt.Errorf("%w: agent disconnected before acknowledging cancellation", errExecutionOutcomeUnknown)
 	case <-timer.C:
-		return errExecutionOutcomeUnknown
+		return fmt.Errorf("%w: agent did not acknowledge cancellation within %s", errExecutionOutcomeUnknown, executionCancellationTimeout)
 	}
 }
 
@@ -1777,10 +1797,10 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 		if _, ok := msg.Parsed["id"]; ok {
 			if (uncertainWithoutTerminal && executionResponseUnknown(msg.Parsed)) ||
 				remoteMutationFailed(params.Name, params.Arguments, msg.Parsed) {
-				return true, errExecutionOutcomeUnknown
+				return true, executionUnknownFromResponse(msg.Parsed)
 			}
 			if uncertainIfInterrupted && (ctx.Err() != nil || executionResponseCanceled(msg.Parsed)) {
-				return true, errExecutionOutcomeUnknown
+				return true, fmt.Errorf("%w: mutation was interrupted before it finished", errExecutionOutcomeUnknown)
 			}
 			if forwardErr == nil {
 				if err := forward(msg); err != nil {
@@ -1844,10 +1864,10 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 					return ch.terminalErr
 				}
 				if remoteMutationFailed(params.Name, params.Arguments, ch.terminalMessage.Parsed) {
-					return errExecutionOutcomeUnknown
+					return executionUnknownFromResponse(ch.terminalMessage.Parsed)
 				}
 				if uncertainIfInterrupted && (ctx.Err() != nil || executionResponseCanceled(ch.terminalMessage.Parsed)) {
-					return errExecutionOutcomeUnknown
+					return fmt.Errorf("%w: mutation was interrupted before it finished", errExecutionOutcomeUnknown)
 				}
 				if forwardErr != nil {
 					return forwardErr
@@ -1857,7 +1877,7 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 				if !uncertainWithoutTerminal {
 					return errGatewayAgentDisconnected
 				}
-				return errExecutionOutcomeUnknown
+				return fmt.Errorf("%w: agent disconnected before a terminal reply", errExecutionOutcomeUnknown)
 			}
 		}
 	}
