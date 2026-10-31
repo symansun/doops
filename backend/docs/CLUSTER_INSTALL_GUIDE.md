@@ -46,6 +46,43 @@ doops -session preflight exec --target <configured-target> --cmd hostname
 `DOOPS_CONFIG` 会改变配置及相邻 `auth.json` 的位置，单独 `doops add` 只添加路由，
 不会复制登录态。Agent 免 token 注册不等于操作员免登录访问。
 
+### 操作员客户端安装（git、CLI、Skill）
+
+新操作员机器按下面顺序执行。`install.sh` 从下载的 CLI 内嵌的发布提交读取 Skill 和文档，
+所以必须先有 git 和一份包含该提交的仓库克隆：
+
+1. 安装 git：macOS 用 `brew install git`，Debian/Ubuntu 用 `apt install git`。
+2. 克隆仓库，二选一（需要对应平台的访问权限）：
+   `git clone https://cnb.cool/l8ai/ai/doops.sh.git` 或
+   `git clone https://github.com/l8ai-cn/doops.git`。
+3. 在仓库根目录执行 `git fetch --tags`，再运行安装脚本：
+
+```bash
+git fetch --tags
+bash backend/scripts/install.sh \
+  --version <tag> \
+  --project <项目绝对路径> \
+  --target-name <name> \
+  --target-gateway <gateway-url> \
+  --target-cluster <cluster> \
+  --target-instance <instance> \
+  --use '<说明>'
+```
+
+4. 确认 `~/.local/bin` 在 `PATH` 中，再按上文登录并验证：`doops login --target <name>`、
+   `doops list`、`doops targets --target <name>`。
+
+约束：
+
+- 安装前确认 `<tag>` 的 CNB Release 已发布 CLI 二进制和 `checksums.txt`，不要凭 tag 列表假定可用。
+- 本地缺少发布提交时脚本报 `Release commit ... is unavailable in local git objects` 并退出，
+  不会自动 fetch，也不会混装其它版本。先 `git fetch --tags` 或 `git pull` 再重试。
+- 安装结果：CLI 在 `~/.local/bin/doops`，Skill 在 `<项目>/.agent/skills/doops/`，
+  配置在 `~/.agent/skills/doops/config.json`。不要先改已安装的副本。
+- 管理员创建账号后交付给操作员的密码和 API key 只显示一次，不写入文档、issue 或提交。
+  `doops admin user create` 只创建非管理员；管理员账号需调用 `POST /v1/admin/users` 并带
+  `"admin": true`，见 [DOOPS_API_GUIDE.md](DOOPS_API_GUIDE.md)。
+
 ### 外部脚本已知限制
 
 - `install.sh` 只更新 CLI/Skill，成功不代表 Agent 已升级。
