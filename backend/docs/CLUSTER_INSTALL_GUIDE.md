@@ -83,6 +83,24 @@ bash backend/scripts/install.sh \
   `doops admin user create` 只创建非管理员；管理员账号需调用 `POST /v1/admin/users` 并带
   `"admin": true`，见 [DOOPS_API_GUIDE.md](DOOPS_API_GUIDE.md)。
 
+### 开发者本地基线（可选，不替代上面的安装）
+
+在仓库里改 CLI 源码时，不必每次都从 Release Assets 重装。在仓库根目录执行：
+
+```bash
+bash backend/scripts/dev-link.sh --project <项目绝对路径>
+```
+
+它把当前仓库构建成 `bin/doops`，并把 `~/.local/bin/doops` 和项目里的
+`.agent/skills/doops` 做成指向仓库的软链接，所以改完源码重新执行一次就生效。
+已有的正式安装产物会备份成 `~/.local/bin/doops.release`，不删除。
+
+这是开发用的单一基线，不是受支持的安装入口：操作员和用户仍按上面一节用
+`install.sh` 安装。开发链接版的 CLI 版本号是 `dev`、`release_commit` 是当前仓库
+HEAD，而 Agent 升级后会校验 Agent 的 `release_commit` 是否等于 CLI 自己的 commit，
+所以升级 Agent 必须用与候选 Agent 制品同 commit 的正式 CLI，不能用开发链接版。
+`bash backend/scripts/dev-link.sh --unlink` 可以断开软链接。
+
 ### 外部脚本已知限制
 
 - `install.sh` 只更新 CLI/Skill，成功不代表 Agent 已升级。
