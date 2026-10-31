@@ -376,10 +376,15 @@ def policy_name_for(prefix, project, repository):
     return "-".join(part for part in (prefix, project, base) if part)
 
 
-def policy_body(name, registry_id, project, repository, tag_pattern):
+def policy_body(name, registry_id, project, repository, tag_pattern, cron=""):
     # Harbor rejects a body that fills in both registry sides. This is a pull
     # policy, so only the source endpoint is named; the destination is a
     # namespace, flattened across every path level by replace_count -1.
+    #
+    # An empty cron means the policy waits for a manual trigger. A cron makes
+    # Harbor pull on its own, which is what an upstream that keeps publishing
+    # needs: a manual trigger only copies the tags the upstream served at that
+    # moment, so the copy is behind again as soon as the next tag lands.
     return {
         "name": name,
         "description": "Pull " + repository + " " + tag_pattern,
@@ -393,17 +398,25 @@ def policy_body(name, registry_id, project, repository, tag_pattern):
         ],
         "override": False,
         "deletion": False,
-        "trigger": {"type": "manual", "trigger_settings": {"cron": ""}},
+        "trigger": {
+            "type": "scheduled" if cron else "manual",
+            "trigger_settings": {"cron": cron},
+        },
     }
 
 
-def policy_matches(policy, project, repository, tag_pattern):
+def policy_matches(policy, project, repository, tag_pattern, cron=""):
     filters = {f.get("type"): f.get("value") for f in (policy.get("filters") or [])}
+    trigger = policy.get("trigger") or {}
+    settings = trigger.get("trigger_settings") or {}
+    expected_type = "scheduled" if cron else "manual"
     return (
         filters.get("name") == repository
         and filters.get("tag") == tag_pattern
         and policy.get("dest_namespace") == project
         and policy.get("enabled") is True
+        and trigger.get("type") == expected_type
+        and (settings.get("cron") or "") == cron
     )
 
 
@@ -414,19 +427,19 @@ def find_policy(client, name):
     return None
 
 
-def ensure_policy(client, name, registry_id, project, repository, tag_pattern):
-    body = policy_body(name, registry_id, project, repository, tag_pattern)
+def ensure_policy(client, name, registry_id, project, repository, tag_pattern, cron=""):
+    body = policy_body(name, registry_id, project, repository, tag_pattern, cron)
     existing = find_policy(client, name)
     if existing is not None:
         policy_id = existing["id"]
         current = client.policy(policy_id)
-        if policy_matches(current, project, repository, tag_pattern):
+        if policy_matches(current, project, repository, tag_pattern, cron):
             log("policy " + name + " reused (id=" + str(policy_id) + ")")
             return policy_id, False
         log("policy " + name + " has different filters; updating it")
         client.put("/replication/policies/" + str(policy_id), body)
         updated = client.policy(policy_id)
-        if not policy_matches(updated, project, repository, tag_pattern):
+        if not policy_matches(updated, project, repository, tag_pattern, cron):
             raise HarborError("policy " + name + " did not accept the requested filters")
         log("policy " + name + " updated (id=" + str(policy_id) + ")")
         return policy_id, False
@@ -717,7 +730,7 @@ def plan(client, args, registry_id):
         if existing is not None:
             current = client.policy(existing["id"])
             action = "reuse" if policy_matches(
-                current, args.project, repository, args.tag_pattern
+                current, args.project, repository, args.tag_pattern, args.cron
             ) else "update"
         rows.append(("policy", name, action))
     for kind, name, action in rows:
@@ -739,7 +752,8 @@ def run(client, args, upstream_user, upstream_token):
     for repository in args.repository:
         name = policy_name_for(args.policy_prefix, args.project, repository)
         policy_id, created = ensure_policy(
-            client, name, registry_id, args.project, repository, args.tag_pattern
+            client, name, registry_id, args.project, repository, args.tag_pattern,
+            args.cron,
         )
         policies.append({"repository": repository, "policy": name,
                          "policy_id": policy_id, "created": created})
@@ -830,6 +844,10 @@ def parse_args(argv):
                         help="Upstream repository path to replicate; repeatable")
     parser.add_argument("--tag-pattern", default="git-*",
                         help="Tag filter for every policy (default: %(default)s)")
+    parser.add_argument("--cron", default="",
+                        help="Harbor cron expression that makes every policy pull "
+                             "on its own, for example '0 * * * *'. Empty keeps the "
+                             "policies manual (default: %(default)s)")
     parser.add_argument("--immutable-tag-pattern",
                         help="Tag pattern to make immutable; defaults to --tag-pattern")
     parser.add_argument("--trigger", action="store_true",

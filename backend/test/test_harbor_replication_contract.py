@@ -208,6 +208,8 @@ def configured_harbor():
             "dest_namespace": "agentcloud", "dest_namespace_replace_count": -1,
             "filters": [{"type": "name", "value": "l8ai/agentcloud/backend"},
                         {"type": "tag", "value": "git-*"}],
+            # Harbor reports a manual policy without any trigger_settings.
+            "trigger": {"type": "manual"},
         }],
         immutable=[{"id": 38, "tag_selectors": [{"pattern": "git-*"}]}],
     )
@@ -299,6 +301,84 @@ def test_pull_policy_names_only_the_source_registry():
     assert body["dest_namespace_replace_count"] == -1
     assert body["override"] is False
     assert body["trigger"]["type"] == "manual"
+
+
+def test_a_cron_makes_the_policy_pull_on_its_own():
+    """A manual trigger only copies what the upstream served at that moment."""
+    module = load()
+    body = module.policy_body("cnb-agentcloud-backend", 2, "agentcloud",
+                              "l8ai/agentcloud/backend", "git-*", "0 * * * *")
+
+    assert body["trigger"]["type"] == "scheduled"
+    assert body["trigger"]["trigger_settings"]["cron"] == "0 * * * *"
+
+
+def test_a_manual_policy_is_distinguished_from_a_scheduled_one():
+    """The trigger mode is part of what the policy is, so reuse must check it."""
+    module = load()
+    harbor = configured_harbor()
+    # The policy exists and its filters are right, but it pulls only on demand.
+    harbor.policies_list[0]["trigger"] = {"type": "manual"}
+
+    result = module.run(harbor, args_for(cron="0 * * * *"), "robot",
+                         UPSTREAM_TOKEN_CANARY)
+
+    assert [path for path, _ in harbor.puts] == ["/replication/policies/6"], \
+        "a manual policy must be switched to scheduled, not left alone"
+    assert result["policies"][0]["policy_id"] == 6
+    assert harbor.policies_list[0]["trigger"]["type"] == "scheduled"
+
+
+def test_a_scheduled_policy_is_reused_when_the_cron_agrees():
+    """Running the same command twice must not rewrite a policy that fits."""
+    module = load()
+    harbor = configured_harbor()
+    harbor.policies_list[0]["trigger"] = {"type": "scheduled",
+                                          "trigger_settings": {"cron": "0 * * * *"}}
+
+    result = module.run(harbor, args_for(cron="0 * * * *"), "robot",
+                         UPSTREAM_TOKEN_CANARY)
+
+    assert harbor.puts == [], "a policy that already matches must not be written"
+    assert harbor.posted == []
+    assert result["policies"][0]["policy_id"] == 6
+
+
+def test_the_cron_syntax_harbor_accepts_is_pinned():
+    """Harbor's cron has a seconds field; a five-field cron is rejected.
+
+    The live Harbor answered a five-field cron with
+    "invalid cron string for scheduled trigger: 0 * * * *", so the six-field
+    form is what this script must produce and what the cluster is set to.
+    """
+    module = load()
+    body = module.policy_body("cnb-agentcloud-backend", 2, "agentcloud",
+                              "l8ai/agentcloud/backend", "git-*", "0 0 * * * *")
+
+    cron = body["trigger"]["trigger_settings"]["cron"]
+    assert cron.split() == ["0", "0", "*", "*", "*", "*"], \
+        "Harbor expects seconds first, then the five usual fields"
+    assert body["trigger"]["type"] == "scheduled"
+
+
+def test_the_cron_is_a_command_line_option_and_defaults_to_manual():
+    """An operator has to be able to choose manual or scheduled per run."""
+    module = load()
+
+    assert module.parse_args([
+        "plan", "--harbor-url", "http://h", "--harbor-credential", "cred_h",
+        "--upstream-url", "https://u", "--upstream-credential", "cred_u",
+        "--credential-namespace", "harbor-system", "--project", "agentcloud",
+        "--repository", "l8ai/agentcloud/backend",
+    ]).cron == "", "without --cron the policy stays manual"
+
+    assert module.parse_args([
+        "plan", "--harbor-url", "http://h", "--harbor-credential", "cred_h",
+        "--upstream-url", "https://u", "--upstream-credential", "cred_u",
+        "--credential-namespace", "harbor-system", "--project", "agentcloud",
+        "--repository", "l8ai/agentcloud/backend",
+        "--cron", "0 0 * * * *",
+    ]).cron == "0 0 * * * *"
 
 
 def test_project_is_created_without_a_registry_id():
