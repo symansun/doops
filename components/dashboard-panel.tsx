@@ -142,7 +142,7 @@ export function DashboardPanel({
               {session.username ? `你好，${session.username}` : "欢迎使用 Doops"}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground text-pretty">
-              Agent 隧道连接、控制台会话、任务执行与定时巡检的一屏总览。
+              Agent 隧道连接、控制台会话与任务执行的一屏总览。
             </p>
           </div>
           <button
