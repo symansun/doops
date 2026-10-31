@@ -32,6 +32,7 @@ import {
   SaveIcon,
   ShieldIcon,
 } from "./icons"
+import { CredentialBundleButton } from "./credential-bundle-dialog"
 
 const TYPE_LABELS: Record<CredentialType, string> = {
   registry: "OCI Registry",
@@ -261,6 +262,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
           >
             <RefreshIcon width={15} height={15} className={loading ? "animate-spin" : ""} />
           </button>
+          <CredentialBundleButton session={session} target={target} />
           <button
             onClick={() => {
               setView("managed")
