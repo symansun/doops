@@ -253,6 +253,24 @@ CLI 在 Job 成功后执行 `capabilities --require structuredSSH`，探针失�
 `exec hostname` 确认 Gateway 当前实际服务的 Pod，并核对该 Pod 的 UID、Ready、
 imageID 与候选 digest、`do-agent --version` 和实际功能路径。
 
+第三条保证（校验失败自动恢复备份）只有在回滚会恢复的那个镜像还能被拉取时才成立。
+因此改动前检查还必须解析回滚目标：从 `helm history` 取唯一 deployed revision，
+用 `helm get manifest --revision` 读出该 revision 的 doops-agent 镜像，并用一个一次性
+Job 验证它现在还能拉取。该 Job 复用 Agent 自己的 service account、nodeName、
+runtimeClass、tolerations、nodeSelector 和 imagePullSecrets，让执行回滚的同一个
+kubelet 完成这次拉取；不新增凭据维度，也不新增挂载。探针失败按稳定类别上报，
+预检不做任何改动：
+
+- `rollback_baseline_image_unavailable`：回滚镜像已不在 registry，探针 Pod 出现
+  `ErrImagePull`/`ImagePullBackOff`/`failed to resolve reference` 等拉取失败证据。
+- `rollback_baseline_image_unresolved`：历史 revision 不含唯一 doops-agent 镜像，
+  或 release 没有唯一 deployed revision。
+- `rollback_baseline_probe_failed`：探针本身失败，但拉取失败证据不明确。
+
+默认 fail closed。运维明确知道回滚无法恢复备份时，可用
+`doops upgrade --allow-missing-rollback-baseline` 放行；该开关只作为参数传给
+Agent（`allow_missing_rollback_baseline`），Job 日志会留下可见的 `warning:`。
+
 还没有这个控制器的旧 Helm Agent，以及 K8S 新集群第一次接入，用
 `scripts/release-managed-agent.sh`，从外部控制器执行。新集群无 Agent 时传完整
 `--values` 安装；已有 Helm release 时脚本先做 server-side dry-run，再做真实 mutation，
@@ -263,7 +281,8 @@ imageID 与候选 digest、`do-agent --version` 和实际功能路径。
 
 1. 改动前备份：Helm revision，或尚未由 Helm 管理时导出的 Deployment/ConfigMap。
 2. 改动后校验：新 Pod Ready 且 imageID 与固定 digest 一致、Gateway 重连、`release_commit` 正确。
-3. 校验失败自动恢复备份。
+3. 校验失败自动恢复备份。备份可恢复的前提是回滚镜像仍可拉取，该前提由上面的
+   改动前检查保证。
 4. 全程走 Gateway 审计路径，参数和输出不含凭据 payload。
 
 唯一的硬性限制是 Agent 不能在自己进程里替换自己的 workload，升级始终由独立的
