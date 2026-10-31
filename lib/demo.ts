@@ -7,6 +7,8 @@ import type {
   AdminGrant,
   AdminToken,
   AdminInstance,
+  ProxyRoute,
+  ProxyRouteBody,
 } from "./admin"
 
 // 演示模式：内置 mock 数据 + 模拟流式输出，无需连接真实 gateway
@@ -641,6 +643,34 @@ export function demoRevokeToken(id: string): void {
 }
 export function demoListInstances(): AdminInstance[] {
   return demoInstances.map((i) => ({ ...i }))
+}
+
+const demoProxyRoutes: ProxyRoute[] = [
+  { id: "route_demo01", host: "app.demo.example", cluster: "prod-cn", instance: "web-01", upstream: "http://127.0.0.1:8080", enabled: true, created_at: ago(96), updated_at: ago(24) },
+  { id: "route_demo02", host: "status.demo.example", cluster: "staging", instance: "db-01", upstream: "http://127.0.0.1:9090", enabled: false, created_at: ago(48), updated_at: ago(48) },
+]
+
+// 与 Gateway 一致：按 host 排序，host 唯一，id 为空时新建。
+export function demoListProxyRoutes(): ProxyRoute[] {
+  return demoProxyRoutes.map((r) => ({ ...r })).sort((a, b) => a.host.localeCompare(b.host))
+}
+export function demoSetProxyRoute(body: ProxyRouteBody): ProxyRoute {
+  const clash = demoProxyRoutes.find((r) => r.host === body.host && r.id !== body.id)
+  if (clash) throw new Error(`域名 ${body.host} 已被路由 ${clash.id} 使用`)
+  const now = nowISO()
+  const existing = body.id ? demoProxyRoutes.find((r) => r.id === body.id) : undefined
+  if (existing) {
+    Object.assign(existing, { ...body, id: existing.id, updated_at: now })
+    return { ...existing }
+  }
+  const route: ProxyRoute = { ...body, id: body.id || `route_demo${randomToken(6)}`, created_at: now, updated_at: now }
+  demoProxyRoutes.push(route)
+  return { ...route }
+}
+export function demoDeleteProxyRoute(id: string): void {
+  const idx = demoProxyRoutes.findIndex((r) => r.id === id)
+  if (idx < 0) throw new Error("proxy route not found")
+  demoProxyRoutes.splice(idx, 1)
 }
 function randomToken(n: number): string {
   const chars = "0123456789abcdef"

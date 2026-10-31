@@ -1,6 +1,9 @@
 "use client"
 
 import type { Session } from "./client"
+import type { ProxyRoute, ProxyRouteBody } from "./proxy-routes"
+
+export type { ProxyRoute, ProxyRouteBody }
 
 export interface AdminUser {
   id: string
@@ -57,7 +60,7 @@ async function req<T>(s: Session, path: string, init?: RequestInit, expectedStat
   const res = await fetch(`/api/admin/${path}`, { ...init, headers: headers(s) })
   const text = await res.text()
   const data = text ? JSON.parse(text) : {}
-  if (!res.ok) throw new Error(data.error || `请求失败 (${res.status})`)
+  if (!res.ok) throw Object.assign(new Error(data.error || `请求失败 (${res.status})`), { status: res.status })
   if (expectedStatus !== undefined && res.status !== expectedStatus) {
     throw new Error(`请求失败：预期 HTTP ${expectedStatus}，实际 HTTP ${res.status}`)
   }
@@ -138,6 +141,22 @@ export async function createToken(
 export async function revokeToken(s: Session, id: string): Promise<void> {
   if (s.demo) return (await import("./demo")).demoRevokeToken(id)
   await req(s, `tokens?id=${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+// ---------- 代理路由 ----------
+export async function listProxyRoutes(s: Session): Promise<ProxyRoute[]> {
+  if (s.demo) return (await import("./demo")).demoListProxyRoutes()
+  return (await req<{ routes: ProxyRoute[] | null }>(s, "proxy-routes")).routes || []
+}
+
+export async function setProxyRoute(s: Session, body: ProxyRouteBody): Promise<ProxyRoute> {
+  if (s.demo) return (await import("./demo")).demoSetProxyRoute(body)
+  return req<ProxyRoute>(s, "proxy-routes", { method: "POST", body: JSON.stringify(body) })
+}
+
+export async function deleteProxyRoute(s: Session, id: string): Promise<void> {
+  if (s.demo) return (await import("./demo")).demoDeleteProxyRoute(id)
+  await req(s, `proxy-routes?id=${encodeURIComponent(id)}`, { method: "DELETE" })
 }
 
 // ---------- 实例 ----------
