@@ -368,6 +368,42 @@ Agent 上的文件再回读。实测用前台 `exec` 跑到第 4 轮时连接断
 断开只发生在校验阶段）。脚本本身是可重复执行的，断开后重跑会从当前状态接着收敛，
 不会重复搬已经一致的 tag。
 
+### 定时触发：`--cron`
+
+收敛循环解决的是"已经在追赶时怎么追得上"，但它要有人跑。定时触发解决的是
+"没人盯着时怎么追上"：把策略从 `manual` 改成 `scheduled`，Harbor 自己按 cron
+去拉，上游发了新 tag 会在下一个周期被搬过来。
+
+```bash
+python3 /root/ws/harbor-script/harbor-replication.py run \
+  --harbor-url http://harbor-core.harbor-system.svc \
+  --harbor-credential <id> --upstream-credential <id> \
+  --credential-namespace harbor-system \
+  --project agentcloud \
+  --repository l8ai/agentcloud/backend --repository l8ai/agentcloud/web \
+  --repository l8ai/agentcloud/relay \
+  --tag-pattern 'git-*' --cron '0 0 * * * *'
+```
+
+`--cron` 为空时策略保持 `manual`，和脚本默认行为一致。
+
+**Harbor 的 cron 是 6 字段，秒在最前**（`秒 分 时 日 月 周`）。5 字段的
+`0 * * * *` 会被拒，实测 Harbor 返回
+`invalid cron string for scheduled trigger: 0 * * * *`。每小时第 0 分 0 秒写
+成 `0 0 * * * *`。
+
+触发方式属于策略定义的一部分，所以 `policy_matches` 会比对 `trigger.type`
+和 cron 字符串：策略的过滤器对但触发方式不对时，脚本会 PUT 更新而不是复用，
+cron 一致时才判定为 reuse。这是幂等性的边界——同一个命令跑两次，第二次
+`plan` 全部显示 reuse，不写任何对象。
+
+2026-10-31 已把 8 条策略全部改成 `scheduled` + `0 0 * * * *`（策略 6–13），
+回读确认 Harbor 侧存的就是这个值，改完再跑 `plan` 全部 reuse。
+
+定时触发不取代手动触发：Harbor 允许对 `scheduled` 策略再手动触发一次，
+所以发布流程仍然可以在推完镜像后立刻触发一轮，不必等下一个整点。
+收敛循环也因此继续可用——它只是把"等下一个整点"换成了"现在就跑"。
+
 ### 凭据边界
 
 凭据取值只在进程内存里，经 Basic 认证头发给 Harbor。没有任何命令行参数接受取值，
