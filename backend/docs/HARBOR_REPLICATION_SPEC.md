@@ -300,8 +300,31 @@ zhiyong 五个仓库在实测期间上游一直在发布，`sha-*` 从 12 涨到
 漏掉 10），`zhiyong-lab-api` 因此报了 4 个缺失，补触发 1935 后归零。
 
 所以 zhiyong 这类活跃仓库的验收标准不是"某次校验全绿"，而是"每轮
-`mismatched=0`，且 `missing` 里只剩本轮新发布的 tag"。要拿到全绿快照，
-得在上游停止发布的窗口里触发一轮再校验。
+`mismatched=0`，且 `missing` 里只剩本轮新发布的 tag"。全绿快照要靠下一节的
+收敛循环反复追赶，直到某一轮里上游没有新发布。
+
+2026-10-31 06:37 用 `harbor-converge.py` 拿到了这个快照，八个仓库在同一轮
+全部 `missing=0`、`mismatched=0`：
+
+| 仓库 | 上游 tag | 匹配 | 保留 |
+|---|---|---|---|
+| `l8ai/agentcloud/backend` | 11 | 11 | 19 |
+| `l8ai/agentcloud/web` | 11 | 11 | 0 |
+| `l8ai/agentcloud/relay` | 11 | 11 | 0 |
+| `aiedulab/zhiyong/education/zhiyong-frontend` | 19 | 19 | 1 |
+| `aiedulab/zhiyong/education/zhiyong-lab-api` | 19 | 19 | 10 |
+| `aiedulab/zhiyong/education/zhiyong-course-api` | 19 | 19 | 0 |
+| `aiedulab/zhiyong/education/zhiyong-ai-api` | 19 | 19 | 0 |
+| `aiedulab/zhiyong/education/zhiyong-exam-api` | 19 | 19 | 0 |
+
+追赶过程（执行 1925–1951，27 次，全部 Succeed、零失败）：zhiyong 的 `sha-*`
+从 12 一路涨到 19，每轮校验都会撞上新发布的 tag，循环因此跑了多轮才在一轮里
+全部归零。agentcloud 三个仓库上游未变动，第一轮即 11/11。
+
+这张表是**某一时刻的快照，不是稳定状态**：7 分钟后复核，`zhiyong-ai-api` 的上游
+已经是 21 个、`zhiyong-exam-api` 20 个，又出现 `missing`。活跃仓库上
+`missing=0` 本质上是瞬时的，所以发布流程要在推完镜像后自己触发一轮并校验到
+`missing=0`，而不是依赖"同步已经配好了"这个状态。
 
 ### 收敛循环：`harbor-converge.py`
 
