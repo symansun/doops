@@ -277,27 +277,31 @@ doops -session <s> exec --target <t> --cmd 'python3 /root/harbor-replication.py 
 这也是校验必须以上游 tag 列表为准的原因：只有上游驱动才能发现"刚发布的 tag 还没到"，
 而 Harbor 驱动的校验永远看不见这个缺口。
 
-### 八个仓库的最终校验
+### 八个仓库的实测
 
-2026-10-31 全部触发并补齐后，8 条规则逐一校验：
+2026-10-31 为全部 8 条规则逐一触发并校验。`mismatched` 在每一轮、每个仓库
+都是 0——凡是两侧都有的 tag，digest 从未出现过不一致。
+
+agentcloud 三个仓库上游稳定在 11 个 `git-*`，一轮触发后即 11/11：
 
 | 仓库 | 上游 tag | 匹配 | digest 不一致 | 缺失 | 保留 |
 |---|---|---|---|---|---|
 | `l8ai/agentcloud/backend` | 11 | 11 | 0 | 0 | 19 |
 | `l8ai/agentcloud/web` | 11 | 11 | 0 | 0 | 0 |
 | `l8ai/agentcloud/relay` | 11 | 11 | 0 | 0 | 0 |
-| `aiedulab/zhiyong/education/zhiyong-frontend` | 15 | 15 | 0 | 0 | 1 |
-| `aiedulab/zhiyong/education/zhiyong-lab-api` | 15 | 15 | 0 | 0 | 10 |
-| `aiedulab/zhiyong/education/zhiyong-course-api` | 15 | 15 | 0 | 0 | 0 |
-| `aiedulab/zhiyong/education/zhiyong-ai-api` | 15 | 15 | 0 | 0 | 0 |
-| `aiedulab/zhiyong/education/zhiyong-exam-api` | 15 | 15 | 0 | 0 | 0 |
 
-全部 `missing=0`、`mismatched=0`。`保留` 是 Harbor 侧留着而上游已清理的 tag 数，
-按第 5 节的 CNB 保留策略，这些是上游删掉的旧一代副本，不算故障。
+`保留` 是 Harbor 侧留着而上游已清理的 tag 数，按第 5 节的 CNB 保留策略，
+这些是上游删掉的旧一代副本，不算故障。
 
-zhiyong 四个仓库共用同一批 `sha-*` tag 名，上游一轮发布会同时推高四个仓库的 tag 数。
-补齐时四个规则都要重新触发，漏一个就留下 `missing`——实测里就漏过一轮，
-`zhiyong-lab-api` 报了 4 个缺失，补触发（1935）后归零。
+zhiyong 五个仓库在实测期间上游一直在发布，`sha-*` 从 12 涨到 17，所以
+`missing=0` 只在某个时刻成立，下一轮校验又会出现新缺口。这五个仓库共用同一批
+`sha-*` tag 名，上游一个 commit 会同时推高五个仓库的 tag 数，补齐时五条规则
+都要重新触发，漏一条就留下 `missing`——实测里漏过一轮（只触发了 9/11/12/13，
+漏掉 10），`zhiyong-lab-api` 因此报了 4 个缺失，补触发 1935 后归零。
+
+所以 zhiyong 这类活跃仓库的验收标准不是"某次校验全绿"，而是"每轮
+`mismatched=0`，且 `missing` 里只剩本轮新发布的 tag"。要拿到全绿快照，
+得在上游停止发布的窗口里触发一轮再校验。
 
 ### 凭据边界
 
