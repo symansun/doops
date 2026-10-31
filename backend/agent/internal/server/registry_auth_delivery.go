@@ -2,10 +2,7 @@ package server
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"log"
-	"strings"
 	"time"
 )
 
@@ -55,6 +52,19 @@ func (s *GatewayStore) ActiveRegistryBindings(cluster, instance string) ([]regis
 		bindings = append(bindings, registryAuthBinding{Resource: resource, Grant: grant})
 	}
 	return bindings, nil
+}
+
+// deliverAgentCredentials materializes the credentials a target needs to work
+// on its own once it connects. A model provider and a registry credential both
+// live in files the Agent reads rather than in cluster objects, so a new or
+// restarted Agent has to be given them again; the Gateway holds the only copy
+// that survives the Pod.
+func (h *GatewayHub) deliverAgentCredentials(agent *GatewayAgent) {
+	if agent == nil {
+		return
+	}
+	h.deliverModelProviders(agent)
+	h.deliverRegistryAuthFiles(agent)
 }
 
 // deliverRegistryAuthFiles materializes the target's active registry
@@ -113,42 +123,13 @@ func (h *GatewayHub) deliverRegistryAuthFileTo(
 	if scope.Use == "" {
 		scope.Use = CredentialUseImagePull
 	}
-	// The authfile is delivered on its own: the Secret belongs to the workload
-	// the grant names, and a delivery that only restores the file must not
-	// create one or touch an imagePullSecret list.
-	scope.Namespace = scope.Namespace
 	ref := CredentialPlanReference{Name: binding.Resource.Name, Scope: scope}
 	sessionID := "registry-auth-delivery-" + randomHex(8)
 	if _, _, err := h.materializeCredentialVersion(
 		ctx, cluster, instance, sessionID, binding.Resource, version, "", binding.Grant.ID, ref,
+		materializeAuthfileOnly,
 	); err != nil {
 		return credentialOperationErrorCategory(err)
 	}
 	return ""
 }
-
-// marshalRegistryAuthStatus is kept small so Agent metadata never carries keys.
-func marshalRegistryAuthStatus(record registryAuthRecord) json.RawMessage {
-	servers := make([]string, 0, len(record.Entries))
-	for _, entry := range record.Entries {
-		servers = append(servers, entry.Server)
-	}
-	data, _ := json.Marshal(map[string]any{
-		"delivered": len(record.Entries) > 0, "servers": servers,
-	})
-	return data
-}
-
-// registryAuthDeliveryError reports a delivery failure as a stable category.
-func registryAuthDeliveryError(err error) string {
-	if err == nil {
-		return ""
-	}
-	if strings.TrimSpace(err.Error()) == "" {
-		return "registry_auth_delivery_failed"
-	}
-	return "registry_auth_delivery_failed"
-}
-
-// errRegistryAuthDeliveryUnavailable marks a delivery that could not write.
-var errRegistryAuthDeliveryUnavailable = errors.New("registry_authfile_unavailable")

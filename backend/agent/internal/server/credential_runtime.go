@@ -432,6 +432,16 @@ func (h *GatewayHub) rollbackCredentialPrepare(ctx context.Context, completed []
 	return rollbackErr
 }
 
+// materializeOption adjusts one materialization without changing the call
+// sites that do not need it.
+type materializeOption func(*CredentialMaterializeRequest)
+
+// materializeAuthfileOnly asks the Agent to restore only its OCI authfile and
+// leave the Kubernetes Secret alone.
+func materializeAuthfileOnly(request *CredentialMaterializeRequest) {
+	request.AuthfileOnly = true
+}
+
 func (h *GatewayHub) materializeCredentialVersion(
 	ctx context.Context,
 	cluster string,
@@ -442,10 +452,11 @@ func (h *GatewayHub) materializeCredentialVersion(
 	expectedPreviousVersionID string,
 	grantID string,
 	ref CredentialPlanReference,
+	options ...materializeOption,
 ) (CredentialMaterialization, CredentialMaterializeRequest, error) {
 	return h.materializeCredentialVersionAttempt(
 		ctx, cluster, instance, sessionID, resource, version,
-		expectedPreviousVersionID, grantID, ref, true,
+		expectedPreviousVersionID, grantID, ref, true, options...,
 	)
 }
 
@@ -460,6 +471,7 @@ func (h *GatewayHub) materializeCredentialVersionAttempt(
 	grantID string,
 	ref CredentialPlanReference,
 	recoverBindingFailure bool,
+	options ...materializeOption,
 ) (CredentialMaterialization, CredentialMaterializeRequest, error) {
 	payload, err := h.store.ResolveCredentialPayload(resource.ID, version.ID)
 	if err != nil {
@@ -478,6 +490,11 @@ func (h *GatewayHub) materializeCredentialVersionAttempt(
 		CredentialID: resource.ID, GrantID: grantID, VersionID: version.ID,
 		CredentialType: resource.Type, Scope: ref.Scope, RequiredKeys: requiredKeys,
 		Payload: json.RawMessage(payload),
+	}
+	for _, option := range options {
+		if option != nil {
+			option(&request)
+		}
 	}
 	intentRequest := request
 	intentRequest.Payload = nil
@@ -549,6 +566,12 @@ func (h *GatewayHub) recoverRejectedCredentialMaterialization(
 	grantID string,
 	ref CredentialPlanReference,
 ) error {
+	if request.AuthfileOnly {
+		// A restore changed no binding: the Kubernetes Secret is untouched and
+		// the authfile entry it restores was already the Agent's. There is
+		// nothing to roll back to and nothing to tear down.
+		return nil
+	}
 	if expectedPreviousVersionID == "" {
 		return h.cleanupCredentialVersion(ctx, request)
 	}
@@ -783,6 +806,12 @@ func (h *GatewayHub) cleanupCredentialVersion(ctx context.Context, request Crede
 		"session_id": request.SessionID, "credential_id": request.CredentialID,
 		"grant_id": request.GrantID, "version_id": request.VersionID,
 		"namespace": request.Scope.Namespace, "workload": request.Scope.Workload,
+	}
+	if request.AuthfileOnly {
+		// The restore owns only the Agent's authfile. The Kubernetes Secret
+		// belongs to the workload pulling with it, so a failed restore must
+		// not remove it.
+		arguments["authfile_only"] = true
 	}
 	if _, err := h.RunInternalToolCall(ctx, request.Cluster, request.Instance, "doops_credential_cleanup", arguments); err != nil {
 		return err

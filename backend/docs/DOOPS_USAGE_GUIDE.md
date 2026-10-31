@@ -17,7 +17,7 @@ prints it to stderr, and proceeds; pass that name again to continue in the same 
 | Check Agent protocol capability | `doops -session <s> capabilities --target <t> --require structuredSSH` | Fails closed when the online Agent is too old for structured SSH. |
 | Add a Gateway target | `doops add --name <n> --gateway <url> --cluster <c> --instance <i>` | Stores routing only; never stores a target token. |
 | Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Known checks and explicitly requested operations; standard releases use `ask --apply`. |
-| Sync OCI images | `doops -session <s> registry sync --target <t> --source-registry <src> --target-registry <dst> --tag <release> --source-authfile <remote-file> --target-authfile <remote-file> --image <name>` | Generic target-side `skopeo copy --all`, bounded timeout/retry, and manifest digest verification; auth payloads never enter CLI arguments. |
+| Sync OCI images | `doops -session <s> registry sync --target <t> --source-registry <src> --target-registry <dst> --tag <release> --image <name>` | Generic target-side `skopeo copy --all`, bounded timeout/retry, and manifest digest verification; auth payloads never enter CLI arguments. `--source-authfile` / `--target-authfile` are optional overrides for the authfile the Gateway delivered to the target. |
 | Build an OCI image | `doops -session <s> image build --target <t> --context <remote-dir> --output oci --output-path <remote-file>` | Generic BuildKit build; supports `--platform` and `--output image --image <ref> --push` for a registry push. |
 | Copy an OCI image | `doops -session <s> image copy --target <t> --source <ref> --destination <ref>` | Generic Skopeo transport-to-transport copy with optional authfiles and raw manifest digest verification. |
 | Run nested SSH safely | `doops -session <s> ssh --target <t> --host <user@host> -- <command> [args...]` | Preserves remote argv across nested shells. |
@@ -158,8 +158,10 @@ DoOps Agent image or use a target that already provides it.
 `image build` and `image copy` are thin generic wrappers over the same audited exec path.
 They use standard BuildKit and Skopeo transports, so the command does not depend on Docker,
 nerdctl, Harbor, AMP image names, or a project-specific script. For private Registry output,
-the target must already have the remote authfile; credentials are never accepted inline in
-the command arguments.
+the target uses the authfile the Gateway delivered for the registry credentials granted on it;
+credentials are never accepted inline in the command arguments. `--source-authfile` and
+`--target-authfile` override that file when a target keeps its registry configuration somewhere
+else, and both may be omitted.
 
 ## Basic Checks
 
@@ -176,7 +178,7 @@ doops -session image-toolchain-check info --target <gateway-target>
 DoOps 通用镜像工具链。镜像构建使用明确给出的 `exec` 命令调用 `buildctl`；镜像复制
 和源/目标 manifest 校验使用 `image copy` 或 `registry sync`。两者都不需要 AMP 专用脚本或外置同步 Job。
 目标缺少 `skopeo` 时直接报告工具缺失，不在线安装，也不静默切换到其它工具。私有 Registry
-凭据只能引用目标上的受控 authfile，禁止写入命令参数。
+凭据由 Gateway 下发到目标的受控 authfile，命令参数里不出现任何凭据。
 
 运行态文件与配置同目录：`auth.json`（按 Gateway URL 保存的登录态）、`history.jsonl`
 （本机命令历史）、`sessions.json`（本机会话缓存）。`~/.config/doops/config.json`、

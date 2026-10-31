@@ -475,7 +475,7 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	)
 	hub.client = NewClientService(store, registry, opts)
 	hub.client.hub = hub
-	hub.registration.onRegistered = hub.deliverModelProviders
+	hub.registration.onRegistered = hub.deliverAgentCredentials
 	edge, err := NewEdgeRegistry(store)
 	if err != nil {
 		panic(err)

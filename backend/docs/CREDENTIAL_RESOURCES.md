@@ -165,6 +165,26 @@ payload 只能从 stdin 输入，最大 1 MiB，必须是单个 strict JSON；�
 }
 ```
 
+一份 registry 凭据同时物化两处，二者都由 Gateway 下发：
+
+- Kubernetes Secret（`kubernetes.io/dockerconfigjson`）供 kubelet 拉取镜像使用。
+- Agent 自己的 OCI 工具配置文件 `/root/.docker/config.json`（权限 0600），供
+  `doops registry sync`、`doops image copy` 等目标侧命令使用。
+
+Agent 的配置文件随 Pod 一起消失，因此 Agent 连上 Gateway 后，Gateway 会把该 target 上
+active 的 registry 凭据重新物化到该文件，Agent 不需要、也不应该由运维手工写入。
+重新物化只恢复这个文件，不重建 Kubernetes Secret，也不改 workload 的 imagePullSecrets，
+因此正在用该 Secret 拉取的工作负载不受 Agent 重启影响。
+
+配置文件是合并写入，不是整体替换：Agent 没有下发的条目（例如运维自己写的）保持不变。
+Agent 另写一份只含元数据的归属记录（server、credential/grant/version ID），据此在
+grant 吊销或轮换时只清理自己下发的条目。轮换到另一个 registry 时，旧的 registry 条目
+一并移除。
+
+`doops registry sync` 与 `doops image copy` 默认使用这个文件，不必再传 authfile 路径；
+`--source-authfile` / `--target-authfile` 保留为覆盖项，用于目标把 registry 配置放在别处的情况。
+凭据本身始终不进入命令参数。
+
 ### TLS
 
 ```json

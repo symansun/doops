@@ -36,7 +36,8 @@ Agent 镜像内存在 `buildctl` 不代表本次任务要求构建。
 ### 私有仓库配置
 - **Registry 与镜像名**：来自任务或任务指定的 Chart/values，不使用示例地址。
 - **认证方式**：使用已配置的 CI secret；目标运行时使用已绑定该 target 的受管凭据引用。
-  不得假设 Agent 已预写仓库认证，不得在 prompt 或构建参数中放入凭据。
+  仓库认证由 Gateway 下发到 Agent 的受管 authfile，不依赖运维手工预写文件；
+  不得在 prompt 或构建参数中放入凭据。
 - **制品证据**：记录成功流水线、完整 source commit 和 registry digest；不能用
   `latest` 或日期 tag 本身证明来源，也不能关闭 Registry TLS 校验来绕过失败。
 
