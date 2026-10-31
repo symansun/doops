@@ -269,17 +269,44 @@ doops -session <s> exec --target <t> --cmd 'python3 /root/harbor-replication.py 
 各 12 个 `sha-*`，触发后 CNB 又发布了 3 个（上游变成 15 个），校验报 `missing=3`，
 再触发一轮（1931–1934）才补齐。
 
-因此发布流程的顺序是：镜像推送完成 → 触发 → 等执行成功 → 校验 `missing=0`。
-校验报 `missing` 时重新触发，不要等。
+拷贝期间上游还可能继续发布，所以**收敛点是校验，不是触发**：上游一直有人推镜像时，
+`missing` 不会自己归零。发布流程的顺序是：镜像推送完成 → 触发 → 等执行成功 →
+校验 `missing=0`。校验报 `missing` 就重新触发被点名的那条规则，然后重新校验，
+直到 `missing=0` 或上游停止发布。
+
+这也是校验必须以上游 tag 列表为准的原因：只有上游驱动才能发现"刚发布的 tag 还没到"，
+而 Harbor 驱动的校验永远看不见这个缺口。
+
+### 八个仓库的最终校验
+
+2026-10-31 全部触发并补齐后，8 条规则逐一校验：
+
+| 仓库 | 上游 tag | 匹配 | digest 不一致 | 缺失 | 保留 |
+|---|---|---|---|---|---|
+| `l8ai/agentcloud/backend` | 11 | 11 | 0 | 0 | 19 |
+| `l8ai/agentcloud/web` | 11 | 11 | 0 | 0 | 0 |
+| `l8ai/agentcloud/relay` | 11 | 11 | 0 | 0 | 0 |
+| `aiedulab/zhiyong/education/zhiyong-frontend` | 15 | 15 | 0 | 0 | 1 |
+| `aiedulab/zhiyong/education/zhiyong-lab-api` | 15 | 15 | 0 | 0 | 10 |
+| `aiedulab/zhiyong/education/zhiyong-course-api` | 15 | 15 | 0 | 0 | 0 |
+| `aiedulab/zhiyong/education/zhiyong-ai-api` | 15 | 15 | 0 | 0 | 0 |
+| `aiedulab/zhiyong/education/zhiyong-exam-api` | 15 | 15 | 0 | 0 | 0 |
+
+全部 `missing=0`、`mismatched=0`。`保留` 是 Harbor 侧留着而上游已清理的 tag 数，
+按第 5 节的 CNB 保留策略，这些是上游删掉的旧一代副本，不算故障。
+
+zhiyong 四个仓库共用同一批 `sha-*` tag 名，上游一轮发布会同时推高四个仓库的 tag 数。
+补齐时四个规则都要重新触发，漏一个就留下 `missing`——实测里就漏过一轮，
+`zhiyong-lab-api` 报了 4 个缺失，补触发（1935）后归零。
 
 ### 凭据边界
 
 凭据取值只在进程内存里，经 Basic 认证头发给 Harbor。没有任何命令行参数接受取值，
 `--harbor-password-key` 一类参数传的是 Secret 里的 key 名；错误信息只列受管凭据的 id 和
 缺失的 key 名，不含取值。契约测试 `backend/test/test_harbor_replication_contract.py`
-用合成 canary 钉住这一点：26 个用例覆盖凭据缺失、key 缺失、端点不健康、端点静默丢弃凭据、
-规则过滤不一致时改而不重建、重复执行不新建、digest 不一致、上游 tag 缺失、执行失败中止，
-以及 canary 不出现在任何输出或错误文本中。
+用合成 canary 钉住这一点：31 个用例覆盖凭据缺失、key 缺失、端点不健康、端点静默丢弃凭据、
+规则过滤不一致时改而不重建、重复执行不新建、digest 不一致、上游 tag 缺失、执行失败中止、
+触发返回的 id 只在 Location 头里，以及 canary 不出现在任何输出或错误文本中。
 
 ## 7. 未验证与待决项
 
