@@ -119,6 +119,17 @@ func materializeCredential(ctx context.Context, req CredentialMaterializeRequest
 			}
 			result.Digest = digest
 		}
+		// The Secret is what the kubelet pulls with; the Agent's own OCI tools
+		// read an authfile. Deliver both so image work on this target needs no
+		// hand-written credential file.
+		if err := deliverRegistryAuthEntry(payload.Server, map[string]string{
+			"username": payload.Username,
+			"password": payload.Password,
+			"email":    payload.Email,
+			"auth":     auth,
+		}, req.CredentialID, req.GrantID, req.VersionID); err != nil {
+			return CredentialMaterialization{}, err
+		}
 	case CredentialTypeTLS:
 		if req.Scope.Use != CredentialUseTLS {
 			return CredentialMaterialization{}, errors.New("credential_use_mismatch")
@@ -455,6 +466,11 @@ func cleanupCredential(ctx context.Context, req CredentialCleanupRequest) error 
 		return err
 	} else if cleaned {
 		return nil
+	}
+	// A registry grant owns authfile entries as well as a Secret, so this
+	// removes the entries and the Secret cleanup below still runs.
+	if err := cleanupRegistryAuthEntries(req); err != nil {
+		return err
 	}
 	name := credentialSecretName(req.CredentialID, req.GrantID)
 	output, err := getCredentialSecret(ctx, req.Namespace, name)
