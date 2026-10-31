@@ -51,16 +51,6 @@ main:
         cpus: 4
       services:
         - docker
-        # Declaring vscode runs this pipeline on cloud-dev nodes, billed on the
-        # cloud-dev quota instead of the build quota. Nobody connects to the
-        # environment here, so recycle it as soon as the build goes idle: a
-        # long keepAliveTimeout pins the build to the cloud-dev node pool, and
-        # a pool that cannot hand out a node fails the build before its first
-        # stage starts. Keep this in step with the working pipelines in
-        # l8ai/agentcloud.
-        - name: vscode
-          options:
-            keepAliveTimeout: 1m
       env:
         # Tests create throwaway git repos; never sign them with the node's key.
         GIT_CONFIG_COUNT: "1"
@@ -310,26 +300,16 @@ $:
             node --version
         - name: 打开 VS Code
           type: vscode:go
-  # Releases run on cloud-dev nodes (services: vscode), which CNB allows only
-  # for push, branch.create, vscode, web_trigger and api_trigger events, so a
-  # pushed tag no longer starts the release. Start it from the tag with:
-  #   cnb build start-build --repo l8ai/ai/doops.sh --tag vX.Y.Z --event api_trigger_release
+  # The release pipeline runs no IDE stage, so it does not ask for a cloud-dev
+  # CPU workspace. That keeps it out of the shared workspace quota and lets a
+  # pushed tag start the release on its own. The release stage still refuses to
+  # run unless the build came from a vX.Y.Z tag.
   api_trigger_release:
     - name: publish-release
       runner:
         cpus: 4
       services:
         - docker
-        # Declaring vscode runs this pipeline on cloud-dev nodes, billed on the
-        # cloud-dev quota instead of the build quota. Nobody connects to the
-        # environment here, so recycle it as soon as the build goes idle: a
-        # long keepAliveTimeout pins the build to the cloud-dev node pool, and
-        # a pool that cannot hand out a node fails the build before its first
-        # stage starts. Keep this in step with the working pipelines in
-        # l8ai/agentcloud.
-        - name: vscode
-          options:
-            keepAliveTimeout: 1m
       env:
         # Tests create throwaway git repos; never sign them with the node's key.
         GIT_CONFIG_COUNT: "1"
