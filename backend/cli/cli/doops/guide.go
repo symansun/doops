@@ -41,11 +41,12 @@ var guideScenarios = map[string]guideScenario{
 		summary: "release a business workload with Helm",
 		steps: []string{
 			"doops k8s --target <t> helm history <release> -n <ns>   # current revision = rollback target",
-			"doops ask --target <t> --apply [--credential <name>] --msg 'release <release> in <ns>, chart <url or session path>, images <ref>; reason: <why>; accept: <checks>'",
+			"doops ask --target <t> --apply --msg 'release <release> in <ns>, chart <url or session path>, images <ref>; reason: <why>; accept: <checks>'",
 			"doops k8s --target <t> helm history <release> -n <ns>   # new revision is deployed",
 		},
 		notes: []string{
 			"the Agent dry-runs, upgrades and verifies every rendered workload; a failure says which step and why",
+			"a Helm credential bound to the target authenticates the Chart download on its own; --credential <name> picks one when several are bound",
 			"exec runs helm/kubectl as given when you need a lower-level command",
 		},
 	},

@@ -162,11 +162,32 @@ func (h *GatewayHub) resolveExplicitCredentials(
 	sqlCredential string,
 ) ([]authorizedCredentialMaterialization, error) {
 	autoDatabase := skill == "dosql" && strings.TrimSpace(credentialMode) == "auto"
-	if len(names) == 0 && !autoDatabase {
+	autoHelm := len(names) == 0 && !autoDatabase && automaticHelmCredentialEligible(action, skill)
+	if len(names) == 0 && !autoDatabase && !autoHelm {
 		return nil, nil
 	}
 	if !h.store.UserCanUseTarget(auth.UserID, cluster, instance) {
 		return nil, ErrCredentialForbidden
+	}
+	// A change task pulls its Chart with the Helm credential already bound to
+	// the target, so the operator does not name again what authorization has
+	// already settled. Discovery runs before the checks below, because a target
+	// with no Helm credential must keep downloading a public Chart anonymously.
+	if autoHelm {
+		entries, err := h.store.ListCredentialAccess(auth.UserID, cluster, instance)
+		if err != nil {
+			return nil, err
+		}
+		names = helmCredentialIDs(entries)
+		switch len(names) {
+		case 0:
+			return nil, nil
+		case 1:
+		default:
+			// Several Helm repositories are bound; which one this Chart comes
+			// from is the task's to state, not the Gateway's to guess.
+			return nil, ErrCredentialAmbiguous
+		}
 	}
 	if credentialScalarContainsInlineMaterial(instruction) {
 		return nil, ErrInlineCredentialMaterial
@@ -254,6 +275,52 @@ func uniqueCredentialReferences(names []string) []string {
 		unique = append(unique, name)
 	}
 	return unique
+}
+
+// automaticHelmCredentialEligible reports whether this operation may use the
+// target's bound Helm credential without the caller naming it.
+//
+// Only a change task qualifies (ActionExec is what an apply prompt resolves
+// to), and only the deployment form: dosql owns its own automatic database
+// selection, and doweb reaches apply for website changes that pull no Chart.
+// The automatic set is limited to helmPull because materializing one opens a
+// process-local broker socket and touches no cluster object, while a registry,
+// TLS or opaque credential writes a Secret into the namespace; creating one of
+// those still requires the operator to ask for it by name.
+func automaticHelmCredentialEligible(action GatewayAction, skill string) bool {
+	switch strings.TrimSpace(skill) {
+	case "dosql", "doweb":
+		return false
+	}
+	return action == ActionExec
+}
+
+// helmCredentialIDs returns the stable IDs of the active Helm repository
+// credentials among entries, so two resources sharing a name cannot make the
+// automatic selection ambiguous.
+func helmCredentialIDs(entries []CredentialListEntry) []string {
+	seen := make(map[string]struct{}, len(entries))
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Type != CredentialTypeHelmRepository || entry.State != CredentialStateActive {
+			continue
+		}
+		for _, binding := range entry.Grants {
+			use := binding.Scope.Use
+			if use == "" {
+				use = credentialUseForType(entry.Type)
+			}
+			if use != CredentialUseHelmPull {
+				continue
+			}
+			if _, exists := seen[entry.ID]; !exists {
+				ids = append(ids, entry.ID)
+				seen[entry.ID] = struct{}{}
+			}
+			break
+		}
+	}
+	return ids
 }
 
 func databaseCredentialIDs(entries []CredentialListEntry) []string {

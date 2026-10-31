@@ -1108,7 +1108,10 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	var err error
 	var authorizedCredentials []authorizedCredentialMaterialization
 	if params.Name == "doops_agent_prompt" && (len(promptArgs.CredentialRefs) != 0 ||
-		(promptArgs.Skill == "dosql" && promptArgs.CredentialMode == "auto")) {
+		(promptArgs.Skill == "dosql" && promptArgs.CredentialMode == "auto") ||
+		// A change task resolves the Helm credential already bound to the target
+		// without naming it; resolution returns nothing when none is bound.
+		automaticHelmCredentialEligible(action, promptArgs.Skill)) {
 		authorizedCredentials, err = h.hub.resolveExplicitCredentials(
 			auth, cluster, instance,
 			promptArgs.Instruction, promptArgs.CredentialRefs, action, promptArgs.Skill, promptArgs.CredentialMode,

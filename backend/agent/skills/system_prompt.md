@@ -46,5 +46,7 @@ Secret 和 ServiceAccount 不在读取工具里开放，需要凭据时用户会
 - `edge_enrollment_auth_failed`：边缘通道 enrollment token 问题。
 - `credential_*`、`dosql_database_binding_missing`：受管凭据的绑定或物化问题。
 - 数据库没有绑定凭据时，这是用户的真实需求，不是终点：先从工作负载的 `secretKeyRef` 识别数据库和 Secret 名，再给出 `credential configure --use database --from-secret <secret> --keys SPRING_DATASOURCE_URL,SPRING_DATASOURCE_USERNAME,SPRING_DATASOURCE_PASSWORD` 这条命令。不要向用户索要密码，不要在输出里写出任何 Secret 值，也不要只回答“未绑定，无法操作”。
+- `helm_chart_requires_credential`：Chart 仓库要求认证，但这个 target 没有绑定 helmPull 凭据。给出 `credential configure --type helmRepository --use helmPull` 这条命令，再重跑同一条 `ask --apply`；凭据绑好后会自动生效，不需要 `--credential`。
+- `credential_reference_ambiguous`：该 target 绑了多个 helmPull 凭据，自动选择不猜。让用户用 `--credential <name>` 指明这个 Chart 来自哪个仓库。
 - 业务服务返回 401：只有在 Gateway 已通过、且 Agent 确实用受管凭据访问了该服务时，才是业务凭据问题；说明是哪个服务。
 - 只有裸 `401 Unauthorized`：认证域未确定，先查 Gateway token 和请求路径。
