@@ -604,11 +604,19 @@ set -eu
 printf 'helm %s\n' "$*" >> "$CALL_LOG"
 case "${1:-}" in
   history)
-    printf '%s\n' '[{"revision":4,"status":"superseded"},{"revision":5,"status":"deployed"},{"revision":6,"status":"failed"}]'
+    if [ -n "${HELM_HISTORY:-}" ]; then
+      printf '%s\n' "$HELM_HISTORY"
+    else
+      printf '%s\n' '[{"revision":4,"status":"superseded"},{"revision":5,"status":"deployed"},{"revision":6,"status":"failed"}]'
+    fi
     ;;
   get)
     if [ "${2:-}" = "manifest" ]; then
-      printf '{"kind":"Deployment","metadata":{"name":"doops-agent"},"spec":{"template":{"spec":{"containers":[{"name":"doops-agent","image":"%s"}]}}}}\n' "${OLD_IMAGE:-registry.example/doops:old}"
+      if [ -n "${REVISION_MANIFEST:-}" ]; then
+        printf '%s\n' "$REVISION_MANIFEST"
+      else
+        printf '{"kind":"Deployment","metadata":{"name":"doops-agent"},"spec":{"template":{"spec":{"containers":[{"name":"doops-agent","image":"%s"}]}}}}\n' "${OLD_IMAGE:-registry.example/doops:old}"
+      fi
     else
       printf '%s\n' '{"image":{"repository":"registry.example/doops","tag":"old"},"workload":{"name":"doops-agent"}}'
     fi
@@ -647,6 +655,30 @@ case "$*" in
   *"apply -f -"*)
     if [ "${RECEIPT_FAIL:-0}" = "1" ]; then echo "verification receipt persistence failed" >&2; exit 17; fi
     cat >"$RECEIPT_FILE"
+    ;;
+  *"create -f -"*)
+    cat >/dev/null
+    printf 'pod/probe created\n'
+    ;;
+  *"delete job doops-rollback-baseline"*)
+    ;;
+  *"get job doops-rollback-baseline"*)
+    if [ "${PROBE_JOB_FAILS:-0}" = "1" ]; then
+      printf '{"status":{"failed":1}}\n'
+    elif [ "${PROBE_PULL_FAILS:-0}" = "1" ]; then
+      # An unpullable image leaves the Job active: the Pod never starts, so the
+      # Job never reaches a terminal state either.
+      printf '{"status":{"active":1}}\n'
+    else
+      printf '{"status":{"succeeded":1}}\n'
+    fi
+    ;;
+  *"get pods -l app.kubernetes.io/name=doops-rollback-baseline-probe"*)
+    if [ "${PROBE_PULL_FAILS:-0}" = "1" ]; then
+      printf '{"items":[{"status":{"containerStatuses":[{"waiting":{"reason":"ImagePullBackOff"}}]}}]}\n'
+    else
+      printf '{"items":[]}\n'
+    fi
     ;;
   *"-o jsonpath="*)
     echo "jsonpath is forbidden in this test" >&2

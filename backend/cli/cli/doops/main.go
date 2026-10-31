@@ -916,7 +916,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 	case "upgrade":
 		var target, image, mode, namespace, workload, container, release, upgradeSession string
-		var dryRun, rollback bool
+		var dryRun, rollback, allowMissingRollbackBaseline bool
 		upgradeFlag := flag.NewFlagSet("upgrade", flag.ExitOnError)
 		upgradeFlag.StringVar(&target, "target", "", "Configured Gateway target")
 		upgradeFlag.StringVar(&image, "image", "", "doops-agent image, repository:tag or repository@sha256:<digest>")
@@ -928,6 +928,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		upgradeFlag.StringVar(&upgradeSession, "session", "", "Session ID")
 		upgradeFlag.BoolVar(&dryRun, "dry-run", false, "Preview parameters only; does not verify live release, mounts or permissions, or create a Job")
 		upgradeFlag.BoolVar(&rollback, "rollback", false, "Roll the managed Helm release back to the previous successful revision")
+		upgradeFlag.BoolVar(&allowMissingRollbackBaseline, "allow-missing-rollback-baseline", false, "Proceed when the image an automatic rollback would restore is gone from the registry; the automatic rollback can then not restore the backup")
 		upgradeFlag.Parse(cmdArgs)
 		if upgradeSession != "" && *sessionName == "" {
 			*sessionName = upgradeSession
@@ -945,15 +946,16 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			os.Exit(1)
 		}
 		if err := UpgradeAgents(*server, UpgradeOptions{
-			Image:     image,
-			Mode:      mode,
-			Namespace: namespace,
-			Workload:  workload,
-			Container: container,
-			Release:   release,
-			DryRun:    dryRun,
-			Rollback:  rollback,
-			Session:   *sessionName,
+			Image:                        image,
+			Mode:                         mode,
+			Namespace:                    namespace,
+			Workload:                     workload,
+			Container:                    container,
+			Release:                      release,
+			DryRun:                       dryRun,
+			Rollback:                     rollback,
+			Session:                      *sessionName,
+			AllowMissingRollbackBaseline: allowMissingRollbackBaseline,
 		}, *verbose); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)

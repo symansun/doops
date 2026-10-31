@@ -88,6 +88,11 @@ type agentUpgradeParams struct {
 	ObserveJob string `json:"observe_job"`
 	Rollback   bool   `json:"rollback"`
 	Preflight  bool   `json:"preflight"`
+	// AllowMissingRollbackBaseline lets an operator proceed on purpose when
+	// the image a rollback would restore is gone from the registry. The
+	// default is fail closed, because without that image the third upgrade
+	// guarantee (restore the backup when verification fails) cannot hold.
+	AllowMissingRollbackBaseline bool `json:"allow_missing_rollback_baseline"`
 }
 
 type workspaceUploadMeta struct {

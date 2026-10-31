@@ -300,3 +300,121 @@ func TestUpgradeAgentsRequiresConfiguredTarget(t *testing.T) {
 		t.Fatalf("expected configured target requirement, got %v", err)
 	}
 }
+
+// A preflight that refuses an upgrade must leave the release alone, and it must
+// name the stable category so an operator reads why instead of guessing.
+func TestUpgradeAgentsPreflightFailureChangesNothingAndReportsTheCategory(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		observation  string
+		wantCategory string
+	}{
+		{
+			name:         "the rollback baseline image is gone",
+			observation:  "self-upgrade-failed job=doops-self-upgrade-aaaaaaaa namespace=ops category=rollback_baseline_image_unavailable\nrollback_baseline_image_unavailable: image=registry.example/doops@sha256:bbbb reason=the image could not be pulled",
+			wantCategory: "rollback_baseline_image_unavailable",
+		},
+		{
+			name:         "the rollback baseline image is unresolved",
+			observation:  "self-upgrade-failed job=doops-self-upgrade-aaaaaaaa namespace=ops category=rollback_baseline_image_unresolved\nrollback_baseline_image_unresolved: the revision must contain exactly one doops-agent image",
+			wantCategory: "rollback_baseline_image_unresolved",
+		},
+		{
+			name:        "the preflight failed for another reason",
+			observation: "self-upgrade-failed job=doops-self-upgrade-aaaaaaaa namespace=ops\nhelm dry-run failed",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("DOOPS_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+			previousCommit := cliBuildCommit
+			cliBuildCommit = strings.Repeat("a", 40)
+			defer func() { cliBuildCommit = previousCommit }()
+			var observed atomic.Int32
+			var applies atomic.Int32
+			upgrader := websocket.Upgrader{}
+			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/targets" {
+					_, _ = w.Write([]byte(`{"targets":[{"cluster":"test","instance":"node"}]}`))
+					return
+				}
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					t.Errorf("upgrade: %v", err)
+					return
+				}
+				defer conn.Close()
+				for {
+					var req map[string]interface{}
+					if err := conn.ReadJSON(&req); err != nil {
+						return
+					}
+					result := map[string]interface{}{
+						"protocolVersion": "2024-11-05",
+						"capabilities":    map[string]interface{}{"releaseCommit": strings.Repeat("a", 40)},
+					}
+					switch req["method"] {
+					case "initialize":
+					case "tools/call":
+						params := req["params"].(map[string]interface{})
+						args := params["arguments"].(map[string]interface{})
+						text := "self-upgrade-accepted job=doops-self-upgrade-aaaaaaaa namespace=ops release=agent"
+						if args["image"] != nil && args["preflight"] != true && args["dry_run"] != true {
+							applies.Add(1)
+						}
+						if args["observe_job"] != nil {
+							observed.Add(1)
+							text = tc.observation
+						}
+						result = map[string]interface{}{
+							"content": []map[string]string{{"type": "text", "text": text}},
+						}
+					default:
+						continue
+					}
+					_ = conn.WriteJSON(map[string]interface{}{"jsonrpc": "2.0", "id": req["id"], "result": result})
+				}
+			}))
+			defer gateway.Close()
+			auth := AuthStore{Tokens: map[string]string{}}
+			auth.SetGateway(gateway.URL, "synthetic-upgrade-token")
+			if err := auth.Save(); err != nil {
+				t.Fatal(err)
+			}
+			err := UpgradeAgents(Server{
+				Name: "test", Gateway: gateway.URL, Cluster: "test", Instance: "node",
+			}, UpgradeOptions{
+				Image:   "registry.example/doops@sha256:" + strings.Repeat("a", 64),
+				Session: "upgrade-preflight-failure",
+			}, false)
+			if err == nil {
+				t.Fatal("a failed preflight must fail the upgrade")
+			}
+			if applies.Load() != 0 {
+				t.Fatalf("real upgrade requests = %d, want 0 (a failed preflight must not start one)", applies.Load())
+			}
+			if observed.Load() == 0 {
+				t.Fatalf("the preflight Job was never observed: %v", err)
+			}
+			if tc.wantCategory != "" && !strings.Contains(err.Error(), tc.wantCategory) {
+				t.Fatalf("the failure did not name %s: %v", tc.wantCategory, err)
+			}
+		})
+	}
+}
+
+// The override is a parameter, so it reaches the Agent as one and defaults to
+// off.
+func TestUpgradeArgumentsCarryTheRollbackBaselineOverride(t *testing.T) {
+	args := upgradeArguments(UpgradeOptions{Image: "registry.example/doops:v1"})
+	if args["allow_missing_rollback_baseline"] != false {
+		t.Fatalf("the override must be off by default: %#v", args["allow_missing_rollback_baseline"])
+	}
+	args = upgradeArguments(UpgradeOptions{
+		Image:                        "registry.example/doops:v1",
+		AllowMissingRollbackBaseline: true,
+	})
+	if args["allow_missing_rollback_baseline"] != true {
+		t.Fatalf("the override did not reach the Agent: %#v", args["allow_missing_rollback_baseline"])
+	}
+}
