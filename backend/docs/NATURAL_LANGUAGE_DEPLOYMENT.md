@@ -155,6 +155,13 @@ hook Job 已失败这几种不会因等待而恢复，立即判失败。工具�
 渲染结果里既没有上述工作负载也没有 Ingress 时，仍返回 `helm_no_workload`：这种 release
 没有任何可核对的内容。
 
+**接管已存在的对象。** 渲染出的对象已经存在、但没有 Helm 所有权元数据（例如曾被手工
+apply）时，Helm 默认拒绝接管，以 `helm_preflight_failed: ... invalid ownership metadata`
+失败，release 不改动。任务明确要求把这些对象纳入本 release 时，传 `take_ownership: true`，
+dry-run 与真实 Helm 同时加 `--take-ownership`，接管随本次 mutation 一起进入审计，之后照常按
+渲染结果核对。它从不默认开启；不要在受管路径之外手工补 `managed-by` / `meta.helm.sh/*`
+元数据来绕过这一检查。
+
 `upgrade-install` 分三步：preflight（server dry-run 渲染并检查）→ mutate（真实 Helm）→
 verify（按本次 revision 回读并对比集群）。每步失败返回一个稳定错误码，后接 `: ` 和具体原因：
 

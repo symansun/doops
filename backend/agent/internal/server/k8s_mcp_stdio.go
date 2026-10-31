@@ -503,6 +503,11 @@ func helmMCPToolDefinition() map[string]interface{} {
 					"default":     false,
 					"description": "upgrade-install only. true adds helm --atomic: a failed upgrade is rolled back automatically. Default false keeps the failed revision for the operator to inspect and roll back explicitly.",
 				},
+				"take_ownership": map[string]interface{}{
+					"type":        "boolean",
+					"default":     false,
+					"description": "upgrade-install only. true adds helm --take-ownership: the release adopts rendered objects that already exist without Helm ownership metadata (for example applied by hand). Set it only when the task says to bring those objects under this release.",
+				},
 				"confirm": map[string]interface{}{"type": "boolean"},
 			},
 		},

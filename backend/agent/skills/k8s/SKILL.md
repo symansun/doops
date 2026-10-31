@@ -39,6 +39,8 @@ Secret、ServiceAccount 不开放读取。
 - 只含 Ingress 的 release 也能发：Ingress 按路由核对（class、每条 route 的 host/path/
   pathType 与后端 Service、TLS），引用的后端 Service 必须存在。Ingress 没有容器，
   这种 release 不要传 `expected_image`。
+- 渲染出的对象已存在但不归 Helm 管（报 `invalid ownership metadata`）：只有任务明确要求纳入
+  本 release 时才传 `take_ownership=true`；不要用 kubectl 手工补 Helm 标签。
 - 失败返回 `错误码: 原因`：
   - `helm_preflight_failed`：Helm 渲染报错，原因是 Helm 的原话，通常是 values 或 chart 问题。
   - `helm_manifest_invalid` / `helm_no_workload`：chart 渲染结果有问题（没有可核对的工作负载
