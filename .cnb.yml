@@ -53,10 +53,14 @@ main:
         - docker
         # Declaring vscode runs this pipeline on cloud-dev nodes, billed on the
         # cloud-dev quota instead of the build quota. Nobody connects to the
-        # environment, so keep it alive past the default 10-minute idle recycle.
+        # environment here, so recycle it as soon as the build goes idle: a
+        # long keepAliveTimeout pins the build to the cloud-dev node pool, and
+        # a pool that cannot hand out a node fails the build before its first
+        # stage starts. Keep this in step with the working pipelines in
+        # l8ai/agentcloud.
         - name: vscode
           options:
-            keepAliveTimeout: 2h
+            keepAliveTimeout: 1m
       env:
         # Tests create throwaway git repos; never sign them with the node's key.
         GIT_CONFIG_COUNT: "1"
@@ -318,10 +322,14 @@ $:
         - docker
         # Declaring vscode runs this pipeline on cloud-dev nodes, billed on the
         # cloud-dev quota instead of the build quota. Nobody connects to the
-        # environment, so keep it alive past the default 10-minute idle recycle.
+        # environment here, so recycle it as soon as the build goes idle: a
+        # long keepAliveTimeout pins the build to the cloud-dev node pool, and
+        # a pool that cannot hand out a node fails the build before its first
+        # stage starts. Keep this in step with the working pipelines in
+        # l8ai/agentcloud.
         - name: vscode
           options:
-            keepAliveTimeout: 2h
+            keepAliveTimeout: 1m
       env:
         # Tests create throwaway git repos; never sign them with the node's key.
         GIT_CONFIG_COUNT: "1"
