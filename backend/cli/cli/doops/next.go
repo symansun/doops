@@ -18,6 +18,36 @@ func withNext(message string, next ...string) string {
 	return message + "\nnext: " + strings.Join(next, "\nnext: ")
 }
 
+// askCredentialNext turns a Helm credential failure from `ask --apply` into the
+// commands that fix it. A target's bound Helm credential is used automatically,
+// so these are the two cases automation cannot settle: no credential is bound
+// for a repository that requires one, and several are bound.
+func askCredentialNext(err error, target string) error {
+	if err == nil {
+		return nil
+	}
+	message := err.Error()
+	configure := "doops credential configure --target " + target +
+		" --name <helm-credential> --type helmRepository --scope personal --use helmPull" +
+		" --namespace <ns>   # payload on stdin only; the URL is the repository origin"
+	switch {
+	case strings.Contains(message, "helm_chart_requires_credential"):
+		return fmt.Errorf("%s", withNext(message,
+			"doops credential list --target "+target+"   # a helmPull credential here is used automatically",
+			configure,
+			"rerun the same doops ask --target "+target+" --apply command   # no --credential needed"))
+	case strings.Contains(message, "credential_reference_ambiguous"):
+		return fmt.Errorf("%s", withNext(message,
+			"doops credential list --target "+target+"   # several helmPull credentials are bound",
+			"rerun with --credential <name> to pick the repository this Chart comes from"))
+	case strings.Contains(message, "credential_version_not_found"):
+		return fmt.Errorf("%s", withNext(message,
+			"doops credential list --target "+target+"   # the credential is bound but never promoted",
+			"doops credential configure --target "+target+" --id <id> --use helmPull --namespace <ns>"))
+	}
+	return err
+}
+
 // targetNotFound explains a missing target and lists the configured ones, with
 // the closest name first.
 func targetNotFound(servers []Server, name string) string {

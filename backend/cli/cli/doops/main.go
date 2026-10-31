@@ -402,7 +402,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			subFlag.StringVar(&msgStr, "msg", "", "Instruction")
 			subFlag.StringVar(&modelStr, "model", "", "Model to use for this instruction (optional)")
 			subFlag.BoolVar(&apply, "apply", false, "Allow the instruction to make the changes it requests")
-			subFlag.Var(&credentialRefs, "credential", "Managed credential resource name (repeatable; requires --apply)")
+			subFlag.Var(&credentialRefs, "credential", "Managed credential resource name (repeatable; requires --apply). A Helm credential bound to the target is used without this flag; name one to pick among several, or to add a registry, TLS or opaque credential")
 			subFlag.Var(&databaseRefs, "database-ref", "Database asset reference for the conversation (repeatable)")
 			subFlag.Var(&repositoryRefs, "repo-ref", "Code repository reference, optionally ID@branch (repeatable)")
 		case "write":
@@ -553,6 +553,9 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			}
 		}
 		if err := client.Call(toolName, arguments); err != nil {
+			if command == "ask" && apply {
+				err = askCredentialNext(err, target)
+			}
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}

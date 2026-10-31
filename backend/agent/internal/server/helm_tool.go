@@ -209,6 +209,22 @@ func buildHelmCommand(params api.HelmParams) (helmCommand, error) {
 	}
 }
 
+// annotateAnonymousHelmChartRejection names the cause when a repository turns
+// away a download that carried no credential. The bare status code reads as a
+// broken Chart URL, when what actually happened is that this repository needs a
+// Helm credential bound to the target. The original code stays in the message
+// so the repository's own answer is still visible.
+func annotateAnonymousHelmChartRejection(err error, anonymous bool) error {
+	if err == nil || !anonymous {
+		return err
+	}
+	switch err.Error() {
+	case "helm_artifact_http_401", "helm_artifact_http_403":
+		return fmt.Errorf("helm_chart_requires_credential: %w", err)
+	}
+	return err
+}
+
 func prepareManagedHelmChart(ctx context.Context, params api.HelmParams, command *helmCommand) (func(), error) {
 	cleanup := func() {}
 	if command.operation() != "upgrade" {
@@ -228,7 +244,10 @@ func prepareManagedHelmChart(ctx context.Context, params api.HelmParams, command
 	if !strings.HasPrefix(params.Chart, "https://") {
 		return nil, fmt.Errorf("helm_chart_requires_explicit_https_download_reference")
 	}
-	if auth == nil {
+	// No lease means the target has no Helm credential bound: a public Chart
+	// still downloads anonymously from its own origin.
+	anonymous := auth == nil
+	if anonymous {
 		parsed, err := url.Parse(params.Chart)
 		if err != nil {
 			return nil, fmt.Errorf("helm chart reference invalid")
@@ -239,7 +258,7 @@ func prepareManagedHelmChart(ctx context.Context, params api.HelmParams, command
 	auth.Password = ""
 	auth.Username = ""
 	if err != nil {
-		return nil, err
+		return nil, annotateAnonymousHelmChartRejection(err, anonymous)
 	}
 	directory, err := os.MkdirTemp("", "doops-helm-chart-*")
 	if err != nil {

@@ -236,6 +236,22 @@ release 或 Chart URL 写成 Gateway 授权条件。实际请求仍必须从受�
 同源下载，并通过 Chart 内容校验；这保证凭据不会被发往无关 host，
 同时允许同一 target 使用多个 namespace、release 和 Chart。
 
+`ask --apply` 不必再用 `--credential` 点名 helmPull 凭据：授权已经由该 target 上的 active
+grant 决定，Gateway 按 (user, cluster, instance) 发现并按稳定 ID 选择，同名资源不会产生歧义。
+该 target 上有 0 个 helmPull 凭据时保持匿名下载，公开 Chart 照常可用；有 1 个时自动绑定，
+走的是与显式 `--credential` 完全相同的解析、物化与租约路径；有 2 个以上时返回
+`credential_reference_ambiguous`，由任务用 `--credential <name>` 指明 Chart 来自哪个仓库，
+Gateway 不猜。显式 `--credential` 始终优先，行为不变。
+
+自动选择只覆盖 helmPull：物化一个 helmPull 凭据只在 Agent 进程内开一个临时 unix socket
+broker，prompt 结束即删，不碰任何集群对象。`registry`、`tls`、`opaque` 的物化会在 namespace
+里创建或替换 Kubernetes Secret，因此仍必须由调用方显式 `--credential` 点名。dosql 的自动
+database 选择和 doweb 的网站变更不受影响。
+
+仓库要求认证而该 target 没有绑定 helmPull 凭据时，匿名下载会被仓库拒绝；此时报
+`helm_chart_requires_credential`（保留原始 `helm_artifact_http_401`/`_403` 便于排查），
+CLI 随错误给出 `credential list`、`credential configure --use helmPull` 和重跑命令。
+
 发布时 Gateway 仍只发送物化元数据。Agent 为本次授权 prompt 建立临时、无 payload 的
 租约，结构化 Helm 内部匹配 session 与 credential/grant/version/resourceVersion；
 namespace、release、Chart 不是授权条件。凭据物化不下载历史 Chart。实际发布下载当前
