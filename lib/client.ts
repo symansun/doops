@@ -9,6 +9,15 @@ export interface Session {
   token?: string
   username?: string
   demo?: boolean
+  // 只决定是否显示管理入口；由服务端探测 Gateway 管理员接口得出，Gateway 仍是权限边界。
+  isAdmin?: boolean
+}
+
+// 演示会话默认保持原来的管理员界面，显式 isAdmin=false 时模拟普通用户；
+// 真实会话只有服务端探测为 200 时才是管理员。
+export function sessionIsAdmin(s: Session): boolean {
+  if (s.demo === true) return s.isAdmin !== false
+  return s.isAdmin === true
 }
 
 export type RpcEvent =
@@ -29,7 +38,7 @@ export async function login(
   gateway: string,
   username: string,
   password: string,
-): Promise<{ gateway: string; username: string }> {
+): Promise<{ gateway: string; username: string; isAdmin: boolean }> {
   const res = await fetch("/api/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -37,7 +46,7 @@ export async function login(
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || "登录失败")
-  return { gateway: data.gateway || gateway, username: data.username || username }
+  return { gateway: data.gateway || gateway, username: data.username || username, isAdmin: data.isAdmin === true }
 }
 
 export async function restoreServerSession(): Promise<Session | null> {
@@ -49,6 +58,7 @@ export async function restoreServerSession(): Promise<Session | null> {
   return {
     gateway: data.session.gateway,
     username: data.session.username || undefined,
+    isAdmin: data.session.isAdmin === true,
   }
 }
 
@@ -64,7 +74,7 @@ export async function persistTokenSession(
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || "保存会话失败")
-  return { gateway: data.gateway || gateway, username: data.username || username }
+  return { gateway: data.gateway || gateway, username: data.username || username, isAdmin: data.isAdmin === true }
 }
 
 export async function clearServerSession(): Promise<void> {

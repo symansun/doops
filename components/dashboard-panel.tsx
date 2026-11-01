@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import {
   fetchAudit,
+  sessionIsAdmin,
   type Session,
   type Target,
   type AuditEvent,
@@ -42,7 +43,6 @@ type ManagedScope = {
   total: number
   online: number
   offline: number
-  isAdmin: boolean
 }
 
 export function DashboardPanel({
@@ -70,6 +70,8 @@ export function DashboardPanel({
   const [auditDenied, setAuditDenied] = useState(false)
   const [auditError, setAuditError] = useState("")
   const [managedError, setManagedError] = useState("")
+  // 实例列表是管理员接口；普通用户只用 /v1/targets 已返回的可见机器。
+  const isAdmin = sessionIsAdmin(session)
 
   useEffect(() => {
     let alive = true
@@ -77,7 +79,7 @@ export function DashboardPanel({
     setManagedError("")
     Promise.allSettled([
       fetchAudit(session, { limit: "12" }),
-      listInstances(session),
+      isAdmin ? listInstances(session) : Promise.resolve(null),
     ]).then(([auditResult, instancesResult]) => {
         if (!alive) return
         if (auditResult.status === "rejected") {
@@ -102,6 +104,8 @@ export function DashboardPanel({
         if (instancesResult.status === "rejected") {
           setManagedError(instancesResult.reason instanceof Error ? instancesResult.reason.message : "查询实例状态失败")
           setManaged(null)
+        } else if (!instancesResult.value) {
+          setManaged(null)
         } else {
           const instances = instancesResult.value
           const online = instances.filter((row) => row.status === "online").length
@@ -109,14 +113,13 @@ export function DashboardPanel({
             total: instances.length,
             online,
             offline: instances.length - online,
-            isAdmin: true,
           })
         }
       })
     return () => {
       alive = false
     }
-  }, [session, refreshVersion])
+  }, [session, isAdmin, refreshVersion])
 
   const metrics = useMemo(() => computeTargetMetrics(targets), [targets])
   const clusters = metrics.clusters
