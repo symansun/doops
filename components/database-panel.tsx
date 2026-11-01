@@ -4,6 +4,7 @@ import { Database, Send, Square } from "lucide-react"
 import { useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target, type ToolCancel } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
+import { unseenResultText } from "@/lib/agent-output"
 
 type DatabaseMode = "query" | "discover" | "plan"
 
@@ -60,6 +61,7 @@ export function DatabasePanel({
       `用户需求：${text}`,
     ].filter(Boolean).join("\n")
     push({ kind: "info", text: `目标 ${target.cluster}/${target.instance} · ${modeLabel(mode)}` })
+    let streamedAssistant = ""
     try {
       await callTool(
         session,
@@ -77,9 +79,12 @@ export function DatabasePanel({
           onCancelReady: (cancel) => { cancelRef.current = cancel },
         },
         (event) => {
-          if (event.type === "output") push({ kind: "out", text: event.data })
+          if (event.type === "output") {
+            if (event.kind === "assistant_delta") streamedAssistant += event.data
+            push({ kind: "out", text: event.data })
+          }
           if (event.type === "result") {
-            const result = extractText(event.result)
+            const result = unseenResultText(streamedAssistant, extractText(event.result))
             if (result) push({ kind: "out", text: result })
           }
         },
