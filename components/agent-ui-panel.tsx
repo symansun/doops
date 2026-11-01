@@ -39,7 +39,9 @@ export function AgentUiPanel({
     [runtime, sessionId],
   )
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
-  const busy = isDoopsAgentSessionBusy(snapshot)
+  // 执行栏里的命令还在跑时也不能换会话：面板会重新挂载，正在执行的命令输出会丢失。
+  const [execRunning, setExecRunning] = useState(false)
+  const busy = isDoopsAgentSessionBusy(snapshot) || execRunning
   const [workspaceArtifacts, setWorkspaceArtifacts] = useState<AgentArtifactItem[]>([])
   const [workspaceError, setWorkspaceError] = useState("")
   const workspaceSourceId = useMemo(() => `workspace:${codeWorkspace.workspaceKey}/${sessionId}`, [codeWorkspace.workspaceKey, sessionId])
@@ -129,6 +131,7 @@ export function AgentUiPanel({
       sessionId={sessionId}
       items={snapshot.items}
       onRunInTerminal={onRunInTerminal}
+      onRunningChange={setExecRunning}
     />
     </div>
   )

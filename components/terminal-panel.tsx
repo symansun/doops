@@ -3,7 +3,15 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target, type ToolCancel } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
-import { prefillToApply, type TerminalPrefill } from "@/lib/shell-blocks"
+import {
+  appendShellOutput,
+  describeShellFailure,
+  destructiveCommandReason,
+  prefillToApply,
+  shellResultOutcome,
+  terminalExecGate,
+  type TerminalPrefill,
+} from "@/lib/shell-blocks"
 import { TerminalIcon, SendIcon, StopIcon } from "./icons"
 
 interface Line {
@@ -26,20 +34,27 @@ export function TerminalPanel({
 }) {
   const [command, setCommand] = useState("")
   const appliedPrefillRef = useRef(0)
+  // 记下助手预填的原文：未经改动就执行破坏性命令时需要额外确认一次。
+  const assistantCommandRef = useRef("")
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const [pendingConfirm, setPendingConfirm] = useState<{ command: string; reason: string } | null>(null)
 
   // AI 助手“在终端执行”只预填输入框，用户确认（Enter/执行）后才走 doops_shell。
   useEffect(() => {
     const next = prefillToApply(prefill, appliedPrefillRef.current)
     if (next === null || !prefill) return
     appliedPrefillRef.current = prefill.nonce
+    assistantCommandRef.current = next
+    setPendingConfirm(null)
     setCommand(next)
     inputRef.current?.focus()
     onPrefillApplied?.(prefill.nonce)
   }, [prefill, onPrefillApplied])
   const [lines, setLines] = useState<Line[]>([])
   const [running, setRunning] = useState(false)
+  const [progress, setProgress] = useState("")
   const [stopPending, setStopPending] = useState(false)
+  const stopRequestedRef = useRef(false)
   const [history, setHistory] = useState<string[]>([])
   const [histIdx, setHistIdx] = useState(-1)
   const cancelRef = useRef<ToolCancel | null>(null)
@@ -51,16 +66,32 @@ export function TerminalPanel({
 
   const push = useCallback((line: Line) => setLines((p) => [...p, line]), [])
 
-  async function run() {
+  function fail(message: string) {
+    const failure = describeShellFailure(message, { stopRequested: stopRequestedRef.current, target })
+    push({ kind: failure.kind === "canceled" && stopRequestedRef.current ? "info" : "err", text: failure.text })
+  }
+
+  async function run(confirmed = "") {
     const cmd = command.trim()
-    if (!cmd || running || stopPending) return
+    if (running || stopPending) return
+    const gate = terminalExecGate(cmd, { assistantCommand: assistantCommandRef.current, confirmed })
+    if (gate === "empty") return
+    if (gate === "confirm") {
+      setPendingConfirm({ command: cmd, reason: destructiveCommandReason(cmd) ?? "" })
+      return
+    }
+    setPendingConfirm(null)
+    assistantCommandRef.current = ""
     setHistory((h) => [...h, cmd])
     setHistIdx(-1)
     setCommand("")
     push({ kind: "cmd", text: cmd })
     setRunning(true)
+    setProgress("")
     setStopPending(false)
+    stopRequestedRef.current = false
     cancelRef.current = null
+    let settled = false
     try {
       await callTool(
         session,
@@ -72,17 +103,29 @@ export function TerminalPanel({
           onCancelReady: (cancel) => { cancelRef.current = cancel },
         },
         (ev) => {
-          if (ev.type === "output") push({ kind: "out", text: ev.data })
-          else if (ev.type === "result") {
-            const txt = extractText(ev.result)
-            if (txt) push({ kind: "out", text: txt })
+          if (ev.type === "output") {
+            const next = appendShellOutput({ output: "", progress: "" }, ev.data)
+            if (next.progress) setProgress(next.progress)
+            if (next.output) push({ kind: "out", text: next.output })
+          } else if (ev.type === "result") {
+            settled = true
+            const outcome = shellResultOutcome(extractText(ev.result))
+            if (!outcome.ok) {
+              fail(outcome.text)
+              return
+            }
+            if (outcome.text) push({ kind: "out", text: outcome.text })
+            push({ kind: "info", text: "✓ 完成，退出码 0" })
           }
         },
       )
     } catch (err) {
-      if ((err as Error).name !== "AbortError") push({ kind: "err", text: (err as Error).message })
+      settled = true
+      fail((err as Error).message)
     } finally {
+      if (!settled) fail("连接已结束，未收到工具执行结果")
       setRunning(false)
+      setProgress("")
       setStopPending(false)
       cancelRef.current = null
     }
@@ -90,9 +133,11 @@ export function TerminalPanel({
 
   function stop() {
     if (!cancelRef.current || stopPending) return
+    stopRequestedRef.current = true
     setStopPending(true)
     push({ kind: "info", text: "— 已请求停止，等待远端终态；请勿立即重试 —" })
     void cancelRef.current().catch((err) => {
+      stopRequestedRef.current = false
       setStopPending(false)
       push({ kind: "err", text: `停止请求失败：${(err as Error).message}` })
     })
@@ -101,7 +146,7 @@ export function TerminalPanel({
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
-      run()
+      void run()
     } else if (e.key === "ArrowUp" && !command.includes("\n")) {
       e.preventDefault()
       const idx = histIdx < 0 ? history.length - 1 : histIdx - 1
@@ -164,12 +209,35 @@ export function TerminalPanel({
       </div>
 
       <div className="border-t bg-card p-3">
+        {progress && (
+          <div role="status" className="mb-2 font-mono text-xs text-muted-foreground">{progress}</div>
+        )}
+        {pendingConfirm && (
+          <div role="alert" className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs">
+            <span className="min-w-0 flex-1 text-destructive">
+              这条助手建议的命令会{pendingConfirm.reason}，将在 {target.cluster}/{target.instance} 上执行。确认无误后再执行。
+            </span>
+            <button
+              type="button"
+              onClick={() => void run(pendingConfirm.command)}
+              className="rounded-md bg-destructive px-2 py-1 font-medium text-destructive-foreground hover:opacity-90"
+            >
+              确认执行
+            </button>
+            <button type="button" onClick={() => setPendingConfirm(null)} className="rounded-md border px-2 py-1 hover:bg-muted">
+              取消
+            </button>
+          </div>
+        )}
         <div className="flex items-end gap-2">
           <span className="select-none pb-2 font-mono text-primary">$</span>
           <textarea
             ref={inputRef}
             value={command}
-            onChange={(e) => setCommand(e.target.value)}
+            onChange={(e) => {
+              setCommand(e.target.value)
+              setPendingConfirm(null)
+            }}
             onKeyDown={onKeyDown}
             placeholder="hostname && kubectl get nodes"
             rows={1}
@@ -185,7 +253,7 @@ export function TerminalPanel({
             </button>
           ) : (
             <button
-              onClick={run}
+              onClick={() => void run()}
               disabled={!command.trim()}
               className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
             >
