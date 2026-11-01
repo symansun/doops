@@ -304,7 +304,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
       )}
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <table className="w-full min-w-[760px] border-collapse text-sm">
+        <table className="w-full min-w-[1040px] border-collapse text-sm">
           <thead className="sticky top-0 z-10 bg-card">
             <tr className="border-b text-left text-xs text-muted-foreground">
               <th className="px-4 py-2.5 font-medium">名称</th>
@@ -314,7 +314,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
               <th className="px-3 py-2.5 font-medium">
                 {view === "target" ? "目标绑定" : "版本 / 目标绑定"}
               </th>
-              <th className="px-4 py-2.5 text-right font-medium">操作</th>
+              <th className="min-w-[310px] px-4 py-2.5 text-right font-medium">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -392,8 +392,8 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                     </div>
                   )}
                 </td>
-                <td className="px-4 py-3">
-                  <div className="flex justify-end gap-1.5">
+                <td className="min-w-[310px] px-4 py-3">
+                  <div className="flex flex-nowrap justify-end gap-1.5 whitespace-nowrap">
                     {view === "managed" && resource.state === "active" && canImportFromSecret(resource.type) && (
                       <button
                         onClick={() => setAction({ kind: "import", credential: resource })}
@@ -978,14 +978,19 @@ function BindingDialog({
 }) {
   const [selectedUse, setSelectedUse] = useState<CredentialUse>(TYPE_USES[credential.type])
   const use = selectedUse
-  const [namespace, setNamespace] = useState("default")
+  const [namespace, setNamespace] = useState("")
   const [busy, setBusy] = useState(false)
 
   async function submit() {
+    const selectedNamespace = namespace.trim()
+    if (!selectedNamespace) {
+      onError("请填写目标 Agent 已获 Kubernetes RBAC 授权的 Secret namespace")
+      return
+    }
     const scope: CredentialBindingScope = {
       cluster: target.cluster,
       instance: target.instance,
-      namespace: namespace.trim(),
+      namespace: selectedNamespace,
       use,
       workload: { kind: "", name: "" },
     }
@@ -1014,9 +1019,14 @@ function BindingDialog({
             </select>
           </label>
         ) : <ReadOnlyField label="用途" value={use} />}
-        <TextField label="Secret namespace（可选）" value={namespace} onChange={setNamespace} />
+        <TextField
+          label="Secret namespace"
+          value={namespace}
+          onChange={setNamespace}
+          placeholder="例如 agents-test"
+        />
         <p className="text-xs text-muted-foreground sm:col-span-2">
-          这里配置凭据在哪个目标可用。谁能使用它由该用户的目标权限决定；Namespace 只用于目标机创建临时 Secret。
+          请填写目标 Agent 已获 Kubernetes RBAC 授权、可创建临时 Secret 的 namespace。Gateway 当前不会提供可写 namespace 列表；不要假设 default 可用。
         </p>
         <div className="flex justify-end sm:col-span-2">
           <button
