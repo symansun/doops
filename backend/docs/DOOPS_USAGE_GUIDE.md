@@ -49,6 +49,7 @@ prints it to stderr, and proceeds; pass that name again to continue in the same 
 | Preflight development credentials | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` | Fails closed unless every declared credentialRef is active and bound to the selected target. The manifest `use` describes the requested operation and does not create a second permission. |
 | Configure a credential once | `doops -session <s> credential configure --target <t> --id <id> [--namespace <ns>] [--use <use>] <source-and-scope-flags>` | Reuses managed storage, stages, binds to the target, verifies and promotes. See `CREDENTIAL_RESOURCES.md`. |
 | Manage credential lifecycle | `doops credential <create|put|grant|verify|promote|grant-revoke|revoke>` | See `CREDENTIAL_RESOURCES.md`. |
+| Create or read a credential bundle | `doops credential bundle-create --target <t>` (JSON from stdin) / `doops credential bundle-get --target <t> --name <n>` | A static set of credential IDs, no payload. The Web console `凭据` page has the same actions under `凭据组`. See `CREDENTIAL_RESOURCES.md`. |
 | Create Gateway user and API key | `doops admin user create --target <t> --user <u> (--password-stdin\|--generate-password)` | Removes bootstrap wildcard access and applies only explicit `--grant-target` scopes. |
 | List Gateway users | `doops admin user list --target <t>` | Returns metadata only. |
 | Manage target grants | `doops admin grant <list\|add\|delete> ...` | Grants use exact configured `cluster/instance` routes. |
