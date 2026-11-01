@@ -6,8 +6,13 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import { randomSession } from "@/lib/gateway"
 import { isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { workspaceArtifactsFromChanges } from "@/lib/agent-code-workspace"
+import type { Session, Target } from "@/lib/client"
+import { AgentExecBar } from "./agent-exec-bar"
 
 export function AgentUiPanel({
+  session,
+  target,
+  onRunInTerminal,
   runtime,
   sessionId,
   codeWorkspace,
@@ -15,6 +20,9 @@ export function AgentUiPanel({
   onConfigureModel,
   onSessionChange,
 }: {
+  session: Session
+  target: Target
+  onRunInTerminal?: (command: string) => void
   runtime: AgentSessionRuntime
   sessionId: string
   codeWorkspace: CodeWorkspaceSource
@@ -59,8 +67,9 @@ export function AgentUiPanel({
   }, [busy, onSessionChange])
 
   return (
+    <div className="flex h-full min-h-0 flex-col">
     <AgentWorkspace
-      className="agent-ui h-full min-h-0"
+      className="agent-ui min-h-0 flex-1"
       clientLabel="doops-console"
       headerActions={
         <div className="flex shrink-0 items-center gap-1">
@@ -114,5 +123,13 @@ export function AgentUiPanel({
       workspaceArtifacts={workspaceArtifacts}
       showFullscreen={false}
     />
+    <AgentExecBar
+      session={session}
+      target={target}
+      sessionId={sessionId}
+      items={snapshot.items}
+      onRunInTerminal={onRunInTerminal}
+    />
+    </div>
   )
 }
