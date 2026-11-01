@@ -15,6 +15,9 @@ type proxyRouteHTTPBody struct {
 	Instance string `json:"instance"`
 	Upstream string `json:"upstream"`
 	Enabled  *bool  `json:"enabled,omitempty"`
+	// UpdatedAt is the updated_at the client last read. An update that carries
+	// it is refused with 409 once the route has changed; omit it to overwrite.
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
 func (h *GatewayHub) HandleAdminProxyRoutes(w http.ResponseWriter, r *http.Request) {
@@ -45,11 +48,28 @@ func (h *GatewayHub) HandleAdminProxyRoutes(w http.ResponseWriter, r *http.Reque
 		if body.Enabled != nil {
 			enabled = *body.Enabled
 		}
-		route, err := h.store.UpsertProxyRoute(ProxyRouteInput{
+		input := ProxyRouteInput{
 			ID: body.ID, Host: body.Host, Cluster: body.Cluster, Instance: body.Instance,
 			Upstream: body.Upstream, Enabled: enabled,
-		})
-		if err != nil {
+		}
+		if raw := strings.TrimSpace(body.UpdatedAt); raw != "" {
+			expected, err := parseTime(raw)
+			if err != nil {
+				http.Error(w, "invalid proxy route updated_at", http.StatusBadRequest)
+				return
+			}
+			input.ExpectUpdatedAt = &expected
+		}
+		route, err := h.store.UpsertProxyRoute(input)
+		switch {
+		case err == nil:
+		case errors.Is(err, ErrProxyRouteHostInUse), errors.Is(err, ErrProxyRouteStale):
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		case errors.Is(err, sql.ErrNoRows):
+			http.Error(w, "proxy route not found", http.StatusNotFound)
+			return
+		default:
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

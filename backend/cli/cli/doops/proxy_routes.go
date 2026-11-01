@@ -16,6 +16,9 @@ type gatewayProxyRoute struct {
 	Instance string `json:"instance"`
 	Upstream string `json:"upstream"`
 	Enabled  *bool  `json:"enabled,omitempty"`
+	// UpdatedAt is sent back unchanged so the Gateway refuses the edit with 409
+	// if another admin changed the route after this read.
+	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
 type gatewayProxyRoutesResponse struct {
