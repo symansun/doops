@@ -41,7 +41,7 @@ const FEATURES = [
   {
     icon: FileIcon,
     title: "配置、文件与自动化",
-    desc: "从配置模板、文件同步到定时巡检，把高频运维动作沉淀成可复用的工作流。",
+    desc: "从配置模板、文件管理到知识库，用受管凭据和审计记录支撑高频运维动作。",
   },
   {
     icon: ShieldIcon,

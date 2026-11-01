@@ -20,7 +20,6 @@ const METRICS = [
   { value: "92%", label: "重复运维操作被 AI 接管" },
   { value: "8 倍", label: "故障平均响应速度提升" },
   { value: "0", label: "因误操作导致的线上事故" },
-  { value: "24/7", label: "无人值守定时巡检" },
 ]
 
 type Case = {
@@ -57,11 +56,11 @@ const CASES: Case[] = [
     challenge:
       "大促时机器负载、磁盘、服务存活状态需要时刻盯着，靠人工巡检根本看不过来，异常发现往往滞后，影响下单转化。",
     solution:
-      "用 Doops 的定时巡检对所有节点周期体检，异常自动归类并提交 issue 到 GitHub；值班同学只需在控制台用自然语言追问「db-03 现在负载为什么高」即可定位。",
+      "值班同学在控制台用自然语言让 AI 对节点做只读巡检，查看负载、磁盘和服务状态并返回证据；追问「db-03 现在负载为什么高」即可定位。",
     results: [
-      "异常发现从分钟级提升到秒级",
+      "定位异常不再需要逐台登录",
       "大促全程零线上事故",
-      "巡检报告自动归档，复盘有据可查",
+      "每次排查都有审计记录，复盘有据可查",
     ],
   },
   {
@@ -180,7 +179,7 @@ export function CasesPage() {
 
       {/* 指标 */}
       <section className="border-b border-border/60 bg-card/30">
-        <div className="mx-auto grid max-w-6xl grid-cols-2 gap-px overflow-hidden px-4 py-12 md:grid-cols-4">
+        <div className="mx-auto grid max-w-6xl grid-cols-2 gap-px overflow-hidden px-4 py-12 md:grid-cols-3">
           {METRICS.map((m) => (
             <div key={m.label} className="px-4 text-center">
               <div className="text-3xl font-semibold tracking-tight text-primary md:text-4xl">
@@ -291,7 +290,7 @@ export function CasesPage() {
           <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
             {[
               { icon: SparkIcon, label: "自然语言运维" },
-              { icon: ActivityIcon, label: "定时巡检 · 自动提单" },
+              { icon: ActivityIcon, label: "网站 DoWeb · 数据库 DoSql" },
               { icon: LayersIcon, label: "配置模板 · 一键下发" },
               { icon: TerminalIcon, label: "远程终端" },
               { icon: ShieldIcon, label: "权限与审计" },
