@@ -55,8 +55,9 @@ export function WorkloadDeployPanel({ session, target }: { session: Session; tar
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
-        <div className="min-h-0 overflow-y-auto border-b bg-muted/20 p-4 lg:border-b-0 lg:border-r">
+      {/* Narrow screens scroll the whole page with the form at full height; wide screens scroll each column. */}
+      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden">
+        <div className="border-b bg-muted/20 p-4 lg:min-h-0 lg:overflow-y-auto lg:border-b-0 lg:border-r">
           <DeploymentForm
             key={sessionId}
             target={target}
@@ -67,7 +68,7 @@ export function WorkloadDeployPanel({ session, target }: { session: Session; tar
             }}
           />
         </div>
-        <div className="flex min-h-[28rem] min-w-0 flex-col">
+        <div className="flex h-[36rem] min-w-0 flex-col lg:h-auto lg:min-h-0">
           <div className="flex shrink-0 items-center justify-between border-b px-4 py-2">
             <div className="min-w-0">
               <h3 className="text-sm font-medium">执行过程</h3>
@@ -117,6 +118,6 @@ function ConnectionBadge({ snapshot, canDeploy }: { snapshot: AgentSessionSnapsh
 
 // The workspace composer slot only reports run state; releases are submitted from the form.
 function RunStatus({ snapshot }: { snapshot: AgentSessionSnapshot }) {
-  const text = isDoopsAgentSessionBusy(snapshot) ? "发布执行中…" : snapshot.status === "failed" ? "上次发布失败，详情见上方执行过程" : snapshot.status === "completed" ? "上次发布已结束，请按验收条件核对 Agent 返回的证据" : "在左侧填写并确认发布信息后，执行过程显示在这里"
+  const text = isDoopsAgentSessionBusy(snapshot) ? "发布执行中…" : snapshot.status === "failed" ? "上次发布失败，详情见上方执行过程" : snapshot.status === "completed" ? "上次发布已结束，请按验收条件核对 Agent 返回的证据" : "填写并确认发布信息后，执行过程显示在这里"
   return <div role="status" className="shrink-0 border-t px-4 py-2.5 text-xs text-muted-foreground">{text}</div>
 }
