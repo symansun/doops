@@ -5,6 +5,7 @@ import {
   readGatewaySession,
   setGatewaySession,
 } from "@/lib/gateway-policy"
+import { probeGatewayAdmin } from "@/lib/server/gateway-admin"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -28,8 +29,9 @@ export async function GET(req: Request) {
         headers,
       })
     }
+    const isAdmin = await probeGatewayAdmin(gateway, stored.token)
     return Response.json({
-      session: { gateway, username: stored.username || "" },
+      session: { gateway, username: stored.username || "", isAdmin },
     }, { headers: { "Cache-Control": "no-store" } })
   } catch (error) {
     return gatewayPolicyResponse(error) || Response.json({ error: "无法验证 Gateway 会话" }, { status: 502 })
@@ -58,9 +60,10 @@ export async function POST(req: Request) {
       const text = await response.text()
       return Response.json({ error: text || `token 验证失败 (${response.status})` }, { status: response.status })
     }
+    const isAdmin = await probeGatewayAdmin(gateway, token)
     const headers = new Headers({ "Content-Type": "application/json" })
     setGatewaySession(headers, { gateway, token, username: body.username || "" })
-    return new Response(JSON.stringify({ authenticated: true, gateway, username: body.username || "" }), {
+    return new Response(JSON.stringify({ authenticated: true, gateway, username: body.username || "", isAdmin }), {
       status: 200,
       headers,
     })

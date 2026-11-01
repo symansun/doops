@@ -1,7 +1,14 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import type { Session } from "@/lib/client"
+import {
+  GRANT_ALL,
+  grantInstanceChoices,
+  grantScopeOptions,
+  grantScopeWarning,
+  validateGrantForm,
+} from "@/lib/grant-form"
 import {
   listUsers,
   createUser,
@@ -437,17 +444,34 @@ function GrantsView({ session }: { session: Session }) {
   const [error, setError] = useState("")
   const [showCreate, setShowCreate] = useState(false)
   const [userId, setUserId] = useState("")
-  const [cluster, setCluster] = useState("*")
-  const [instance, setInstance] = useState("*")
+  // 集群和实例默认不选；Gateway 会把空值存成 "*"，所以未选择时不允许提交。
+  const [cluster, setCluster] = useState("")
+  const [instance, setInstance] = useState("")
+  const [instances, setInstances] = useState<AdminInstance[]>([])
+  const [instancesError, setInstancesError] = useState("")
   const [busy, setBusy] = useState(false)
+
+  const scope = useMemo(() => grantScopeOptions(instances), [instances])
+  const instanceChoices = grantInstanceChoices(scope, cluster)
+  const validation = validateGrantForm({ userId, cluster, instance }, scope)
+  const scopeWarning = grantScopeWarning(cluster, instance)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError("")
+    setInstancesError("")
     try {
-      const [g, u] = await Promise.all([listGrants(session), listUsers(session)])
+      const [g, u, i] = await Promise.all([
+        listGrants(session),
+        listUsers(session),
+        listInstances(session).catch((e: Error) => {
+          setInstancesError(`查询实例列表失败：${e.message}`)
+          return [] as AdminInstance[]
+        }),
+      ])
       setGrants(g)
       setUsers(u)
+      setInstances(i)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -459,13 +483,24 @@ function GrantsView({ session }: { session: Session }) {
     load()
   }, [load])
 
+  function selectCluster(next: string) {
+    setCluster(next)
+    setInstance(next === GRANT_ALL ? GRANT_ALL : "")
+  }
+
   async function submit() {
-    if (!userId) return
+    const checked = validateGrantForm({ userId, cluster, instance }, scope)
+    if (!checked.ok) {
+      setError(checked.error)
+      return
+    }
     setBusy(true)
     setError("")
     try {
-      await createGrant(session, { user_id: userId, cluster, instance })
+      await createGrant(session, checked.body)
       setShowCreate(false)
+      setCluster("")
+      setInstance("")
       await load()
     } catch (e) {
       setError((e as Error).message)
@@ -518,20 +553,57 @@ function GrantsView({ session }: { session: Session }) {
             </label>
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               集群
-              <input value={cluster} onChange={(e) => setCluster(e.target.value)} className="input w-32" placeholder="* 或 prod-cn" />
+              <select aria-label="集群" value={cluster} onChange={(e) => selectCluster(e.target.value)} className="input w-44">
+                <option value="">选择集群…</option>
+                {scope.map((item) => (
+                  <option key={item.name} value={item.name}>
+                    {item.name}
+                  </option>
+                ))}
+                <option value={GRANT_ALL}>全部集群（*）</option>
+              </select>
             </label>
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               实例
-              <input value={instance} onChange={(e) => setInstance(e.target.value)} className="input w-32" placeholder="* 或 web-01" />
+              <select
+                aria-label="实例"
+                value={instance}
+                onChange={(e) => setInstance(e.target.value)}
+                disabled={!cluster || cluster === GRANT_ALL}
+                className="input w-44 disabled:opacity-60"
+              >
+                {cluster === GRANT_ALL ? (
+                  <option value={GRANT_ALL}>全部实例（*）</option>
+                ) : (
+                  <>
+                    <option value="">{cluster ? "选择实例…" : "先选择集群"}</option>
+                    {instanceChoices.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                    {cluster && <option value={GRANT_ALL}>该集群全部实例（*）</option>}
+                  </>
+                )}
+              </select>
             </label>
           </div>
+          {instancesError && <p className="text-xs text-destructive">{instancesError}</p>}
+          {!instancesError && !loading && scope.length === 0 && (
+            <p className="text-xs text-muted-foreground">Gateway 还没有登记过实例，Agent 接入后才能按集群/实例授权。</p>
+          )}
+          {scopeWarning && (
+            <p role="alert" className="rounded-md bg-warning/15 px-2.5 py-2 text-xs text-warning">
+              {scopeWarning}
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">
             授权后用户可使用该 target 的全部运维能力（含 Agent 升级）和它绑定的凭据；平台管理员和凭据管理不随 grant 下发。
           </p>
           <div>
             <button
               onClick={submit}
-              disabled={busy || !userId}
+              disabled={busy || !validation.ok}
               className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-40"
             >
               {busy ? "授权中…" : "授权"}
