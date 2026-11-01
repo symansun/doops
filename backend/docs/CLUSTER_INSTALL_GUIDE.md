@@ -19,7 +19,7 @@ Agent 镜像升级当作同一件事。下列脚本命令均从仓库 `backend/`
 | 没有 Agent 的新集群 | 同一外部脚本的 `--values` 模式 | 完整 values 与操作机 kubeconfig；安装后另做 Gateway 验收 |
 | 已有独立 Docker Agent | `release-host-agent.sh` | 见下文 DockerHost 流程 |
 
-标准 Helm Agent 的日常镜像升级是一条命令。`latest` 指向 main CI 最新构建，不写标签的 `docker pull` 就是它：
+标准 Helm Agent 的日常镜像升级是一条命令。`latest` 指向最近一次成功的 main CI 或版本发布构建，不写标签的 `docker pull` 就是它：
 
 ```bash
 docker pull docker.cnb.cool/l8ai/ai/doops.sh

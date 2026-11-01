@@ -23,6 +23,7 @@ def test_web_image_release_builds_smokes_and_pushes_immutable_image():
 
     invocation = 'DOOPS_PUBLISH_LATEST=1 DOOPS_RELEASE_TAG="${CNB_COMMIT}" bash backend/scripts/build-web-image.sh'
     assert invocation in ci
-    tag_invocation = 'DOOPS_RELEASE_TAG="${CNB_BRANCH}" bash backend/scripts/build-web-image.sh'
-    assert tag_invocation in ci
-    assert "DOOPS_PUBLISH_LATEST" not in ci.split("api_trigger_release:", 1)[1]
+    # A version release also moves latest, so an untagged pull gets the
+    # version that was just released and fully verified.
+    tag_invocation = 'DOOPS_PUBLISH_LATEST=1 DOOPS_RELEASE_TAG="${CNB_BRANCH}" bash backend/scripts/build-web-image.sh'
+    assert tag_invocation in ci.split("api_trigger_release:", 1)[1]

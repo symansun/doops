@@ -878,6 +878,9 @@ JSON-RPC 错误：
 - `-32007`：操作取消；不能单凭客户端取消 ACK 推断执行停止。
 - `-32008`：`execution_outcome_unknown`，本次调用缺少可信终态或外部 mutation 被中断，
   不代表成功，不自动重放；历史未知审计不阻断新任务，活动任务仍受实际资源锁约束。
+  message 为 `execution_outcome_unknown: <原因>` 时，原因是 Agent 无法证明的那一项
+  （如 `process group did not terminate`、`command output drain timed out`），按原因核对；
+  prompt 审计只保留稳定类别，自由文本原因在审计里收敛为裸错误码。
 
 ## 权限
 

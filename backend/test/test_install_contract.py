@@ -501,7 +501,7 @@ def test_tag_pipeline_publishes_and_verifies_release_assets():
     assert "api_trigger_release:" in ci
     assert "tag_push:" not in ci
     assert 'test "${CNB_IS_TAG:-}" = "true"' in ci
-    assert 'DOOPS_RELEASE_TAG="${CNB_BRANCH}" bash backend/scripts/build-agent-image.sh' in ci
+    assert 'DOOPS_RELEASE_TAG="${CNB_BRANCH}" \\\n              bash backend/scripts/build-agent-image.sh' in ci
     assert "build release agent image" in ci
     assert "publish CLI release assets" in ci
     assert '--repo "${CNB_REPO_SLUG_LOWERCASE}"' in ci
