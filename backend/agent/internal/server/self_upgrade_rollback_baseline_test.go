@@ -10,16 +10,20 @@ import (
 )
 
 // The third upgrade guarantee is "restore the backup when verification fails".
-// It can only hold when the image a rollback would restore is still pullable,
-// so the pre-change checks probe that image before the release changes.
+// It can only hold when the image a rollback would restore is still in its
+// registry, so the pre-change checks read that image's manifest before the
+// release changes.
 //
 // Given/When/Then matrix:
 //
-//	Given the rollback baseline image is pullable, When the pre-change checks
-//	run, Then the checks pass and the release may change.
+//	Given the rollback baseline manifest is in the registry, When the
+//	pre-change checks run, Then the checks pass and the release may change.
 //	Given the rollback baseline image is gone from the registry, When the
 //	pre-change checks run, Then they fail with
 //	rollback_baseline_image_unavailable and nothing changes.
+//	Given the registry refuses the pull credentials, is unreachable, or the
+//	Agent's pull secret cannot be read, When the pre-change checks run, Then
+//	they fail with rollback_baseline_probe_failed, never as a missing image.
 //	Given the operator allowed a missing rollback baseline on purpose, When the
 //	pre-change checks run, Then they pass with a visible warning.
 //	Given the target image is not pullable, When the pre-change checks run,
@@ -63,7 +67,7 @@ func TestSelfUpgradePreflightRefusesAnUnpullableRollbackBaseline(t *testing.T) {
 			callLog := filepath.Join(t.TempDir(), "calls.log")
 			env := selfUpgradeScriptEnv(callLog)
 			if tc.pullFails {
-				env["PROBE_PULL_FAILS"] = "1"
+				env["SKOPEO_RESULT"] = "missing"
 			}
 			if tc.allowMissing {
 				env["DOOPS_UPGRADE_ALLOW_MISSING_ROLLBACK_BASELINE"] = "1"
@@ -117,7 +121,7 @@ func TestSelfUpgradePreflightRefusesAnUnpullableRollbackBaseline(t *testing.T) {
 func TestSelfUpgradeApplyRunsTheSameRollbackBaselineProbe(t *testing.T) {
 	callLog := filepath.Join(t.TempDir(), "calls.log")
 	env := selfUpgradeScriptEnv(callLog)
-	env["PROBE_PULL_FAILS"] = "1"
+	env["SKOPEO_RESULT"] = "missing"
 	out, err := runSelfUpgradeScript(t, selfUpgradeApplyScript, selfUpgradeFakeCommands(), env)
 	if err == nil {
 		t.Fatalf("the apply Job accepted an unusable rollback baseline:\n%s", out)
@@ -200,67 +204,110 @@ func TestSelfUpgradePreflightRefusesAnUnresolvedRollbackBaseline(t *testing.T) {
 	}
 }
 
-// The probe proves the image the kubelet would restore can be pulled. It must
-// run against the baseline image, on the Agent's node, with the Agent's pull
-// secrets, so it asks the same kubelet that would serve the rollback Pod.
-func TestSelfUpgradeRollbackBaselineProbeUsesTheAgentRuntime(t *testing.T) {
-	callLog := filepath.Join(t.TempDir(), "calls.log")
-	env := selfUpgradeScriptEnv(callLog)
-	env["DOOPS_UPGRADE_ALLOW_MISSING_ROLLBACK_BASELINE"] = "0"
-	out, err := runSelfUpgradeScript(t, selfUpgradePreflightScript, selfUpgradeFakeCommands(), env)
-	if err != nil {
-		t.Fatalf("preflight refused a pullable rollback baseline: %v\n%s", err, out)
-	}
-	logBytes, readErr := os.ReadFile(callLog)
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	log := string(logBytes)
-	if !strings.Contains(log, "kubectl -n kz-ops create -f -") {
-		t.Fatalf("the pull probe did not run:\n%s", log)
-	}
-	if !strings.Contains(log, "kubectl -n kz-ops get job doops-rollback-baseline-5") {
-		t.Fatalf("the pull probe job was not observed:\n%s", log)
-	}
-	if !strings.Contains(log, "kubectl -n kz-ops delete job doops-rollback-baseline-5") {
-		t.Fatalf("the pull probe job was not cleaned up:\n%s", log)
-	}
-}
+// The probe reads the baseline manifest from the registry, with the
+// credentials the kubelet would use for the rollback Pod: the Agent Pod's own
+// imagePullSecrets, or none. Each registry answer maps to one category, and a
+// refused credential or an unreachable registry is never reported as a
+// missing image. The pull secret payload reaches a 0600 file only, never an
+// argument or the Job log, and the file is gone when the probe returns.
+func TestSelfUpgradeRollbackBaselineProbeClassifiesTheRegistryAnswer(t *testing.T) {
+	const canary = "c3ludGhldGljLXB1bGwtc2VjcmV0LWNhbmFyeQ=="
+	for _, tc := range []struct {
+		name         string
+		skopeo       string
+		pullSecret   string
+		wantCategory string
+		wantReason   string
+		wantAuthfile bool
+	}{
+		{name: "the manifest is there, anonymous", skopeo: "ok"},
+		{name: "the manifest is there, with the Agent pull secret", skopeo: "ok", pullSecret: "dockerconfig", wantAuthfile: true},
+		{name: "the registry has no artifact for the digest", skopeo: "missing",
+			wantCategory: selfUpgradeCategoryRollbackBaselineUnavailable, wantReason: "the registry has no manifest for this image"},
+		{name: "the registry reports manifest unknown", skopeo: "manifest-unknown",
+			wantCategory: selfUpgradeCategoryRollbackBaselineUnavailable, wantReason: "the registry has no manifest for this image"},
+		{name: "the registry refuses the credentials", skopeo: "refused", pullSecret: "dockerconfig", wantAuthfile: true,
+			wantCategory: selfUpgradeCategoryRollbackBaselineProbeFailed, wantReason: "the registry refused the pull credentials"},
+		{name: "a refusal worded as not found is still a refusal", skopeo: "refused-not-found",
+			wantCategory: selfUpgradeCategoryRollbackBaselineProbeFailed, wantReason: "the registry refused the pull credentials"},
+		{name: "the registry is unreachable", skopeo: "unreachable",
+			wantCategory: selfUpgradeCategoryRollbackBaselineProbeFailed, wantReason: "the manifest check failed"},
+		{name: "the pull secret cannot be read", skopeo: "ok", pullSecret: "missing",
+			wantCategory: selfUpgradeCategoryRollbackBaselineProbeFailed, wantReason: "the pull secret cnb-pull could not be read"},
+		{name: "the pull secret is not a registry credential", skopeo: "ok", pullSecret: "opaque",
+			wantCategory: selfUpgradeCategoryRollbackBaselineProbeFailed, wantReason: "the pull secret cnb-pull is not a registry credential"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			callLog := filepath.Join(t.TempDir(), "calls.log")
+			env := selfUpgradeScriptEnv(callLog)
+			env["SKOPEO_RESULT"] = tc.skopeo
+			env["PULL_SECRET"] = tc.pullSecret
+			env["PULL_SECRET_CANARY"] = canary
+			out, err := runSelfUpgradeScript(t, selfUpgradePreflightScript, selfUpgradeFakeCommands(), env)
+			logBytes, readErr := os.ReadFile(callLog)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			log := string(logBytes)
 
-// An unpullable image leaves the probe Pod in a pull failure state and the
-// probe Job active forever. The reason must still be the pull failure, not a
-// timeout, or the operator is told the wrong thing.
-func TestSelfUpgradePreflightNamesAPullFailureWhileTheProbeJobIsStillActive(t *testing.T) {
-	callLog := filepath.Join(t.TempDir(), "calls.log")
-	env := selfUpgradeScriptEnv(callLog)
-	env["PROBE_PULL_FAILS"] = "1"
-	out, err := runSelfUpgradeScript(t, selfUpgradePreflightScript, selfUpgradeFakeCommands(), env)
-	if err == nil {
-		t.Fatalf("preflight accepted an unpullable rollback baseline:\n%s", out)
-	}
-	if !strings.Contains(out, selfUpgradeCategoryRollbackBaselineUnavailable) {
-		t.Fatalf("the pull failure was not named:\n%s", out)
-	}
-	if strings.Contains(out, "did not settle in time") {
-		t.Fatalf("the pull failure was reported as a timeout:\n%s", out)
-	}
-}
+			if tc.wantCategory == "" {
+				if err != nil {
+					t.Fatalf("preflight refused a baseline whose manifest is there: %v\n%s", err, out)
+				}
+				if !strings.Contains(out, "preflight-passed image="+testPinnedImage()) {
+					t.Fatalf("preflight did not pass:\n%s", out)
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("preflight accepted %s:\n%s", tc.name, out)
+				}
+				if !strings.Contains(out, tc.wantCategory+": image=registry.example/doops:old reason="+tc.wantReason) {
+					t.Fatalf("want %s with reason %q:\n%s", tc.wantCategory, tc.wantReason, out)
+				}
+				if tc.wantCategory != selfUpgradeCategoryRollbackBaselineUnavailable &&
+					strings.Contains(out, selfUpgradeCategoryRollbackBaselineUnavailable) {
+					t.Fatalf("a probe failure was reported as a missing image:\n%s", out)
+				}
+			}
 
-// A probe that fails for a reason that is not a pull failure names its own
-// category, so it is never confused with an image that is gone.
-func TestSelfUpgradePreflightNamesAProbeFailureThatIsNotAPullFailure(t *testing.T) {
-	callLog := filepath.Join(t.TempDir(), "calls.log")
-	env := selfUpgradeScriptEnv(callLog)
-	env["PROBE_JOB_FAILS"] = "1"
-	out, err := runSelfUpgradeScript(t, selfUpgradePreflightScript, selfUpgradeFakeCommands(), env)
-	if err == nil {
-		t.Fatalf("preflight accepted a failed pull probe:\n%s", out)
-	}
-	if !strings.Contains(out, selfUpgradeCategoryRollbackBaselineProbeFailed) {
-		t.Fatalf("the probe failure was not named:\n%s", out)
-	}
-	if strings.Contains(out, selfUpgradeCategoryRollbackBaselineUnavailable) {
-		t.Fatalf("a probe failure was reported as a missing image:\n%s", out)
+			if tc.pullSecret == "missing" || tc.pullSecret == "opaque" {
+				if strings.Contains(log, "skopeo ") {
+					t.Fatalf("skopeo ran without the Agent's pull credentials:\n%s", log)
+				}
+			} else if !strings.Contains(log, "skopeo inspect --raw") || !strings.Contains(log, "docker://registry.example/doops:old") {
+				t.Fatalf("the baseline manifest was not read:\n%s", log)
+			}
+			if tc.pullSecret != "" && !strings.Contains(log, "kubectl -n kz-ops get secret cnb-pull -o json") {
+				t.Fatalf("the Agent pull secret was not read from the Agent namespace:\n%s", log)
+			}
+			if tc.wantAuthfile {
+				mode, _ := os.ReadFile(callLog + ".authmode")
+				if strings.TrimSpace(string(mode)) != "600" {
+					t.Fatalf("authfile mode = %q, want 600", mode)
+				}
+				content, _ := os.ReadFile(callLog + ".authfile")
+				if !strings.Contains(string(content), canary) || !strings.Contains(string(content), `"registry.example"`) {
+					t.Fatalf("authfile does not carry the Agent pull secret: %s", content)
+				}
+				path, _ := os.ReadFile(callLog + ".authpath")
+				if _, statErr := os.Stat(strings.TrimSpace(string(path))); !os.IsNotExist(statErr) {
+					t.Fatalf("authfile %s was left behind: %v", path, statErr)
+				}
+			} else {
+				if strings.Contains(log, "--authfile") {
+					t.Fatalf("an authfile was used without a pull secret:\n%s", log)
+				}
+				if tc.pullSecret == "" && !strings.Contains(log, "--no-creds") {
+					t.Fatalf("a Pod without pull secrets must be checked anonymously:\n%s", log)
+				}
+			}
+			if strings.Contains(out, canary) || strings.Contains(log, canary) {
+				t.Fatalf("the pull secret payload reached the output or an argument:\n%s\n%s", out, log)
+			}
+			if strings.Contains(log, "create -f -") || strings.Contains(log, "job doops-rollback-baseline") {
+				t.Fatalf("the probe must not start a Job:\n%s", log)
+			}
+		})
 	}
 }
 
