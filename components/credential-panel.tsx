@@ -14,6 +14,7 @@ import {
   revokeCredentialBinding,
   revokeCredential,
   verifyCredentialVersion,
+  canImportFromSecret,
   type CredentialBinding,
   type CredentialBindingScope,
   type CredentialResource,
@@ -32,6 +33,7 @@ import {
   SaveIcon,
   ShieldIcon,
 } from "./icons"
+import { SecretImportDialog } from "./credential-secret-import"
 
 const TYPE_LABELS: Record<CredentialType, string> = {
   registry: "OCI Registry",
@@ -54,6 +56,7 @@ const TYPE_USES: Record<CredentialType, CredentialUse> = {
 type Action =
   | { kind: "payload"; credential: CredentialResource }
   | { kind: "binding"; credential: CredentialResource }
+  | { kind: "import"; credential: CredentialResource }
   | { kind: "version"; credential: CredentialResource; version: CredentialVersion }
   | {
       kind: "verify"
@@ -389,6 +392,14 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex justify-end gap-1.5">
+                    {view === "managed" && resource.state === "active" && canImportFromSecret(resource.type) && (
+                      <button
+                        onClick={() => setAction({ kind: "import", credential: resource })}
+                        className="rounded-md border px-2 py-1 text-xs text-foreground hover:bg-muted"
+                      >
+                        从 Secret 导入
+                      </button>
+                    )}
                     {view === "managed" && resource.state === "active" && !session.demo && (
                       <>
                         <button
@@ -461,6 +472,20 @@ export function CredentialPanel({ session, target }: { session: Session; target:
             rememberVersion(action.credential.id, version)
             setAction(null)
             completed(`已写入暂存版本 ${version.id}`)
+          }}
+          onError={setError}
+        />
+      )}
+      {action?.kind === "import" && (
+        <SecretImportDialog
+          session={session}
+          target={target}
+          credential={action.credential}
+          onClose={() => setAction(null)}
+          onDone={(version) => {
+            rememberVersion(action.credential.id, version)
+            setAction(null)
+            completed(`已从 Secret 导入暂存版本 ${version.id}`)
           }}
           onError={setError}
         />
