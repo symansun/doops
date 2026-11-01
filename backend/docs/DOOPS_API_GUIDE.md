@@ -821,7 +821,7 @@ Gateway 重启时遗留的 `running` 落为 `error`；已派发且需要变更�
 管理员 mutation 审计：
 
 - 管理员 GET 接口不要求 session，也不会产生 mutation 审计；远端 RPC/CLI 仍使用显式 session。
-- `/v1/admin/` 下的用户创建、密码、启停、grant 增删、token 签发/撤销、代理路由增改删均记录调用者 `user_id + token_id`、动作和资源元数据、
+- `/v1/admin/` 下的用户创建、密码、启停、grant 增删、token 签发/撤销、实例归档/恢复、代理路由增改删均记录调用者 `user_id + token_id`、动作和资源元数据、
   开始/结束时间与成功、拒绝或失败结果。token 签发只有一条审计，不重复记录。
 - 此类事件的 `action=admin`；`command_summary` 是白名单 JSON 元数据，包含注册路由、
   HTTP method/status，以及可用的资源 ID、subject user ID、授权动作或启停值。
@@ -840,6 +840,50 @@ Gateway 重启时遗留的 `running` 落为 `error`；已派发且需要变更�
   返回 `audit_completion_failed; mutation outcome requires verification`，不返回成功响应；
   持久的 pending 记录保留。该错误不表示远端动作已经回滚，调用方必须先核验真实状态，
   不能盲目重试。
+
+### 实例归档
+
+平台管理员可将已离线的实例记录从控制台的常规历史视图中归档，也可恢复归档。归档仅标记
+`agent_status` 记录，绝不删除或更改该实例的用户授权、令牌、凭据绑定或审计历史。Agent 下次
+成功连接时，Gateway 自动清除归档标记。
+
+```http
+POST /v1/admin/instances/archive
+Authorization: Bearer <ADMIN_USER_TOKEN>
+Content-Type: application/json
+
+{"cluster":"doops-oilan","instance":"oilan-node"}
+```
+
+恢复使用相同请求体：
+
+```http
+POST /v1/admin/instances/unarchive
+Authorization: Bearer <ADMIN_USER_TOKEN>
+Content-Type: application/json
+
+{"cluster":"doops-oilan","instance":"oilan-node"}
+```
+
+成功响应为实例元数据，例如：
+
+```json
+{
+  "cluster":"doops-oilan",
+  "instance":"oilan-node",
+  "status":"offline",
+  "busy":false,
+  "active_ops":0,
+  "queued_ops":0,
+  "archived":true,
+  "archived_at":"2026-11-01T06:00:00Z",
+  "archived_by":"usr_xxx"
+}
+```
+
+`GET /v1/admin/instances` 返回全部已知记录，以便管理员能发现并恢复归档实例；每条记录新增
+`archived`、可选的 `archived_at` 和 `archived_by`。归档在线实例返回 `409`；未知实例返回
+`404`。重复归档和对已恢复记录再次恢复都是幂等的成功操作。
 
 审计清理也是管理员 API：
 
@@ -863,8 +907,9 @@ HTTP 错误：
 - `400`：查询参数或请求体缺失、非法。
 - `401`：token 缺失、无效、过期或已撤销。
 - `403`：token 有效，但缺少目标或动作权限。
-- `404`：路由不存在。
+- `404`：路由或请求的资源不存在。
 - `405`：HTTP 方法不允许。
+- `409`：请求与当前资源状态冲突，例如尝试归档在线实例。
 
 JSON-RPC 错误：
 

@@ -35,6 +35,49 @@ type adminGrantRequest struct {
 	Actions  []string `json:"actions"`
 }
 
+type adminInstanceRequest struct {
+	Cluster  string `json:"cluster"`
+	Instance string `json:"instance"`
+}
+
+type adminInstanceInfo struct {
+	Cluster     string    `json:"cluster"`
+	Instance    string    `json:"instance"`
+	Status      string    `json:"status"`
+	Remote      string    `json:"remote,omitempty"`
+	Busy        bool      `json:"busy"`
+	ActiveOps   int       `json:"active_ops"`
+	QueuedOps   int       `json:"queued_ops"`
+	ConnectedAt time.Time `json:"connected_at,omitempty"`
+	LastSeen    time.Time `json:"last_seen,omitempty"`
+	Archived    bool      `json:"archived"`
+	ArchivedAt  time.Time `json:"archived_at,omitempty"`
+	ArchivedBy  string    `json:"archived_by,omitempty"`
+}
+
+func adminInstanceStatus(st AgentStatus) adminInstanceInfo {
+	return adminInstanceInfo{
+		Cluster: st.Cluster, Instance: st.Instance, Status: "offline", Remote: st.Remote,
+		ConnectedAt: st.ConnectedAt, LastSeen: st.LastSeen,
+		Archived: !st.ArchivedAt.IsZero(), ArchivedAt: st.ArchivedAt, ArchivedBy: st.ArchivedBy,
+	}
+}
+
+func (h *GatewayHub) readAdminInstanceRequest(w http.ResponseWriter, r *http.Request) (adminInstanceRequest, bool) {
+	var req adminInstanceRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return adminInstanceRequest{}, false
+	}
+	req.Cluster = strings.TrimSpace(req.Cluster)
+	req.Instance = strings.TrimSpace(req.Instance)
+	if req.Cluster == "" || req.Instance == "" {
+		http.Error(w, "cluster and instance are required", http.StatusBadRequest)
+		return adminInstanceRequest{}, false
+	}
+	return req, true
+}
+
 // HandleAdminUsers 处理 GET(列出) 与 POST(创建) 用户。
 func (h *GatewayHub) HandleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	if !h.requireAdmin(w, r) {
@@ -184,15 +227,14 @@ func (h *GatewayHub) HandleAdminGrants(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// HandleAdminInstances 列出授权范围内已知实例（在线/离线），合并实时连接状态。
+// HandleAdminInstances lists every known instance, including archived records,
+// and merges the persistent status with the current live connection state.
 func (h *GatewayHub) HandleAdminInstances(w http.ResponseWriter, r *http.Request) {
-	auth, err := h.authenticateUser(r)
-	if err != nil {
-		h.writeUserAuthError(w, r)
+	if !h.requireAdmin(w, r) {
 		return
 	}
-	if !h.store.UserIsPlatformAdmin(auth.UserID) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	statuses, err := h.store.ListAgentStatus()
@@ -200,32 +242,13 @@ func (h *GatewayHub) HandleAdminInstances(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// 合并当前在线连接的繁忙信息。
 	live := make(map[string]GatewayTarget)
 	for _, t := range h.ListTargets() {
 		live[tunnelKey(t.Cluster, t.Instance)] = t
 	}
-	type instanceInfo struct {
-		Cluster     string    `json:"cluster"`
-		Instance    string    `json:"instance"`
-		Status      string    `json:"status"`
-		Remote      string    `json:"remote,omitempty"`
-		Busy        bool      `json:"busy"`
-		ActiveOps   int       `json:"active_ops"`
-		QueuedOps   int       `json:"queued_ops"`
-		ConnectedAt time.Time `json:"connected_at,omitempty"`
-		LastSeen    time.Time `json:"last_seen,omitempty"`
-	}
-	out := make([]instanceInfo, 0, len(statuses))
+	out := make([]adminInstanceInfo, 0, len(statuses))
 	for _, st := range statuses {
-		info := instanceInfo{
-			Cluster:     st.Cluster,
-			Instance:    st.Instance,
-			Status:      "offline",
-			Remote:      st.Remote,
-			ConnectedAt: st.ConnectedAt,
-			LastSeen:    st.LastSeen,
-		}
+		info := adminInstanceStatus(st)
 		if t, ok := live[tunnelKey(st.Cluster, st.Instance)]; ok {
 			info.Status = "online"
 			info.Busy = t.Busy
@@ -235,6 +258,65 @@ func (h *GatewayHub) HandleAdminInstances(w http.ResponseWriter, r *http.Request
 		out = append(out, info)
 	}
 	writeJSONHTTP(w, map[string]interface{}{"instances": out})
+}
+
+// HandleAdminInstanceArchive archives an offline instance record without
+// deleting its grants, tokens, credential bindings, or audit history.
+func (h *GatewayHub) HandleAdminInstanceArchive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	auth, err := h.authenticateUser(r)
+	if err != nil {
+		h.writeUserAuthError(w, r)
+		return
+	}
+	if !h.store.UserIsPlatformAdmin(auth.UserID) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+	req, ok := h.readAdminInstanceRequest(w, r)
+	if !ok {
+		return
+	}
+	status, err := h.store.ArchiveAgentStatus(req.Cluster, req.Instance, auth.UserID, time.Now().UTC())
+	switch {
+	case err == nil:
+		writeJSONHTTP(w, adminInstanceStatus(status))
+	case errors.Is(err, ErrAgentStatusNotFound):
+		http.Error(w, "instance not found", http.StatusNotFound)
+	case errors.Is(err, ErrAgentStatusOnline):
+		http.Error(w, "instance is online", http.StatusConflict)
+	default:
+		http.Error(w, "failed to archive instance", http.StatusInternalServerError)
+	}
+}
+
+// HandleAdminInstanceUnarchive restores an archived instance to the normal
+// history view. It is intentionally idempotent for known records.
+func (h *GatewayHub) HandleAdminInstanceUnarchive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	req, ok := h.readAdminInstanceRequest(w, r)
+	if !ok {
+		return
+	}
+	status, err := h.store.UnarchiveAgentStatus(req.Cluster, req.Instance)
+	if errors.Is(err, ErrAgentStatusNotFound) {
+		http.Error(w, "instance not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "failed to unarchive instance", http.StatusInternalServerError)
+		return
+	}
+	writeJSONHTTP(w, adminInstanceStatus(status))
 }
 
 func (h *GatewayHub) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
