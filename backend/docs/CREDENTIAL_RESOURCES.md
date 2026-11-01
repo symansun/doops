@@ -69,10 +69,14 @@ target 视图只读取 target 接口，不并行请求 managed 列表或 version
 可选键映射（`modelProvider` 固定一个键并使用 `format=doagent_settings`，不允许映射）；浏览器端先做与
 Gateway 相同的格式校验，校验失败不发请求。值由 Agent 读取后经私有控制通道交给 Gateway 加密保存，
 响应只保留新 staged version 的 ID、状态和 digest。权限沿用 Gateway：需是资源 owner 或平台管理员，
-且对当前 target 有授权，否则返回 `credential_import_forbidden`。失败只显示稳定的 lower_snake 类别
-（见下文 `--from-secret` 边界中的类别列表）及中文说明，其它形态的错误正文一律替换为
-`credential_import_failed`，不展示上游原文。导入后仍需在页面上绑定目标、验证并激活，与 CLI 的
-后续阶段相同；页面不自动执行这些步骤。
+且对当前 target 有授权，否则返回 `credential_import_forbidden`。页面将已知的稳定错误类别映射为中文原因和
+下一步；未知正文按 HTTP 状态显示通用提示，不展示上游原文或值。导入后仍需在页面上绑定目标、验证并激活，
+与 CLI 的后续阶段相同；页面不自动执行这些步骤。
+
+绑定目标时，必须显式填写目标 Agent 已获 Kubernetes RBAC 授权、可创建临时 Secret 的 namespace。
+Gateway 当前不提供可写 namespace 列表，控制台不会假定 `default` 可用。
+
+页头的 `凭据组` 入口用于创建和按名称查看 bundle，步骤和限制见 [Bundle](#bundle)。
 
 ## 开发凭据 Preflight
 
@@ -532,7 +536,14 @@ doops credential bundle-get --target <target> --name release
 - `bundle-get` CLI 只输出 bundle 基本元数据，不输出 items。
 
 Web 控制台在「凭据」页的「凭据组」入口提供同样的创建和按名称查看，经 `/api/credential-bundles`
-代理到 Gateway `/v1/credential-bundles`：
+代理到 Gateway `/v1/credential-bundles`。操作步骤：
+
+1. 选中 target，打开「凭据」页，点页头的「凭据组」；
+2. 新建：切到「新建凭据组」，填写名称，选择归属（平台归属只有 platform admin 能创建成功），
+   勾选要放入的凭据，点「创建凭据组」；创建成功后页面切回查看并显示该 bundle；
+3. 查看：在「按名称查看」输入 bundle 名称，点「查看」或按回车。
+
+界面行为：
 
 - 创建时只能勾选当前账号「我管理的」有效凭据，请求体只含 name、scope 和 `credential_id` 列表；
   bundle 不包含凭据 payload，界面也没有 payload 输入框；
