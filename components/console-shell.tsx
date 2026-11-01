@@ -11,7 +11,7 @@ import { DEMO_TOKEN } from "@/lib/demo"
 import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
 import { TerminalPanel } from "./terminal-panel"
-import { nextTerminalPrefill, prefillToApply, type TerminalPrefill } from "@/lib/shell-blocks"
+import { nextTerminalPrefill, prefillToApply, targetSwitchBlocker, type TerminalPrefill } from "@/lib/shell-blocks"
 import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { createDoopsCodeWorkspace } from "@/lib/agent-code-workspace"
 import { FilesPanel } from "./files-panel"
@@ -85,6 +85,7 @@ export function ConsoleShell() {
   const [view, setView] = useState<"console" | "deploy" | "cicd" | "admin">("console")
   const [authLoading, setAuthLoading] = useState(true)
   const [skillRunning, setSkillRunning] = useState(false)
+  const [execRunning, setExecRunning] = useState(false)
   const [loading, setLoading] = useState(false)
   const [refreshVersion, setRefreshVersion] = useState(0)
   const [error, setError] = useState("")
@@ -201,11 +202,12 @@ export function ConsoleShell() {
   }
 
   function selectTarget(t: Target) {
-    if (skillRunning) { setError("请先等待当前操作结束，再切换目标"); return }
-    if (agentRuntime && isDoopsAgentSessionBusy(agentRuntime.getSnapshot(sessionId))) {
-      setError("请先停止当前 AI 任务，再切换目标")
-      return
-    }
+    const blocker = targetSwitchBlocker({
+      skillRunning,
+      agentBusy: Boolean(agentRuntime && isDoopsAgentSessionBusy(agentRuntime.getSnapshot(sessionId))),
+      execRunning,
+    })
+    if (blocker) { setError(blocker); return }
     setSelected(t)
     setSessionId(randomSession())
     // AI 优先：切换机器后，默认进入 AI 助手而非终端
@@ -504,6 +506,7 @@ export function ConsoleShell() {
               setView("admin")
             }}
             onSessionChange={setSessionId}
+            onExecRunningChange={setExecRunning}
           />
         </div>
       )}

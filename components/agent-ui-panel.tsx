@@ -19,6 +19,7 @@ export function AgentUiPanel({
   active,
   onConfigureModel,
   onSessionChange,
+  onExecRunningChange,
 }: {
   session: Session
   target: Target
@@ -29,6 +30,7 @@ export function AgentUiPanel({
   active: boolean
   onConfigureModel?: () => void
   onSessionChange?: (id: string) => void
+  onExecRunningChange?: (running: boolean) => void
 }) {
   const subscribe = useCallback(
     (listener: () => void) => runtime.subscribe(sessionId, listener),
@@ -42,6 +44,11 @@ export function AgentUiPanel({
   // 执行栏里的命令还在跑时也不能换会话：面板会重新挂载，正在执行的命令输出会丢失。
   const [execRunning, setExecRunning] = useState(false)
   const busy = isDoopsAgentSessionBusy(snapshot) || execRunning
+  // 同时告诉外层：执行栏有命令在跑时不能切换目标。卸载时归零，避免外层一直被锁住。
+  useEffect(() => {
+    onExecRunningChange?.(execRunning)
+    return () => onExecRunningChange?.(false)
+  }, [execRunning, onExecRunningChange])
   const [workspaceArtifacts, setWorkspaceArtifacts] = useState<AgentArtifactItem[]>([])
   const [workspaceError, setWorkspaceError] = useState("")
   const workspaceSourceId = useMemo(() => `workspace:${codeWorkspace.workspaceKey}/${sessionId}`, [codeWorkspace.workspaceKey, sessionId])

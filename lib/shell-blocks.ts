@@ -420,3 +420,18 @@ export function describeShellFailure(
   if (signal) return { kind: "signal", text: `命令被信号终止（${signal[1].trim()}）` }
   return { kind: "other", text: raw }
 }
+
+export interface TargetSwitchState {
+  skillRunning: boolean
+  agentBusy: boolean
+  execRunning: boolean
+}
+
+// targetSwitchBlocker 返回不能切换目标的原因；可以切换时返回 null。执行栏命令还在跑时
+// 切换会让面板重新挂载，用户就看不到这条命令的输出和终态了。
+export function targetSwitchBlocker(state: TargetSwitchState): string | null {
+  if (state.skillRunning) return "请先等待当前操作结束，再切换目标"
+  if (state.agentBusy) return "请先停止当前 AI 任务，再切换目标"
+  if (state.execRunning) return "AI 助手执行栏里的命令还在运行，请等它结束或停止后再切换目标"
+  return null
+}
