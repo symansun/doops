@@ -11,6 +11,7 @@ import { DEMO_TOKEN } from "@/lib/demo"
 import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
 import { TerminalPanel } from "./terminal-panel"
+import { nextTerminalPrefill, prefillToApply, type TerminalPrefill } from "@/lib/shell-blocks"
 import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { createDoopsCodeWorkspace } from "@/lib/agent-code-workspace"
 import { FilesPanel } from "./files-panel"
@@ -71,6 +72,13 @@ export function ConsoleShell() {
   const [selected, setSelected] = useState<Target | null>(null)
   const [sessionId, setSessionId] = useState(randomSession())
   const [tab, setTab] = useState<Tab>("overview")
+  const [terminalPrefill, setTerminalPrefill] = useState<TerminalPrefill | null>(null)
+  // 终端标签按需挂载；记录已消费的 nonce，避免重新进入终端时再次预填旧命令。
+  const [consumedPrefillNonce, setConsumedPrefillNonce] = useState(0)
+  const runInTerminal = useCallback((command: string) => {
+    setTerminalPrefill((previous) => nextTerminalPrefill(previous, command))
+    setTab("terminal")
+  }, [])
   const [view, setView] = useState<"console" | "deploy" | "cicd" | "admin">("console")
   const [authLoading, setAuthLoading] = useState(true)
   const [skillRunning, setSkillRunning] = useState(false)
@@ -425,6 +433,8 @@ export function ConsoleShell() {
                     session={session}
                     target={selected}
                     sessionId={sessionId}
+                    prefill={prefillToApply(terminalPrefill, consumedPrefillNonce) === null ? null : terminalPrefill}
+                    onPrefillApplied={setConsumedPrefillNonce}
                   />
                 )}
                 {tab === "files" && (
@@ -469,6 +479,9 @@ export function ConsoleShell() {
         <div hidden={view !== "console" || tab !== "ask"} className="min-h-0 flex-1">
           <AgentUiPanel
             key={`ask-${selected.key}-${sessionId}`}
+            session={session}
+            target={selected}
+            onRunInTerminal={runInTerminal}
             runtime={agentRuntime}
             sessionId={sessionId}
             codeWorkspace={codeWorkspace}

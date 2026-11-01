@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "test:gateway-policy": "node --no-warnings --test lib/gateway-policy.test.mjs",
-    "test:console": "node --no-warnings --test lib/client.test.mjs lib/deployment.test.mjs lib/gateway.test.mjs lib/demo-policy.test.mjs lib/agent-session-transport.test.mjs lib/workspace-path.test.mjs lib/files-listing.test.mjs lib/server/agent-session.test.mjs lib/server/agent-attachments.test.mjs lib/server/rpc-route.test.mjs"
+    "test:console": "node --no-warnings --test lib/client.test.mjs lib/deployment.test.mjs lib/gateway.test.mjs lib/demo-policy.test.mjs lib/agent-session-transport.test.mjs lib/workspace-path.test.mjs lib/files-listing.test.mjs lib/shell-blocks.test.mjs lib/server/agent-session.test.mjs lib/server/agent-attachments.test.mjs lib/server/rpc-route.test.mjs"
   },
   "dependencies": {
     "@agent-cloud/agent-ui": "0.1.4",
