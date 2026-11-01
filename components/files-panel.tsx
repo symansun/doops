@@ -8,6 +8,7 @@ import {
   workspaceRelativePath,
   workspaceRootPath,
 } from "@/lib/workspace-path"
+import { listDirectoryCommand, parseDirectoryListing } from "@/lib/files-listing"
 import {
   FileIcon,
   FolderIcon,
@@ -108,7 +109,7 @@ export function FilesPanel({
             cluster: target.cluster,
             instance: target.instance,
             tool: TOOLS.shell,
-            arguments: { session_id: sessionId, command: `ls -1Ap ${shq(remoteDir)}` },
+            arguments: { session_id: sessionId, command: listDirectoryCommand(safeRoot, remoteDir) },
           },
           (ev) => {
             if (ev.type === "output") buf += ev.data
@@ -117,20 +118,9 @@ export function FilesPanel({
             else if (ev.type === "error") setListErr(ev.error)
           },
         )
-        const lines = buf
-          .split("\n")
-          .filter((l) => l.length > 0)
-        if (lines.some((l) => l.includes("No such file") || l.includes("没有那个文件"))) {
-          setListErr(lines.join(" "))
-          setEntries([])
-        } else {
-          const parsed: Entry[] = lines.map((l) => ({
-            name: l.replace(/\/$/, ""),
-            isDir: l.endsWith("/"),
-          }))
-          parsed.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1))
-          setEntries(parsed)
-        }
+        const parsed = parseDirectoryListing(buf)
+        if (parsed.error) setListErr(parsed.error)
+        setEntries(parsed.entries)
         setCwd(remoteDir)
       } catch (err) {
         setListErr((err as Error).message)
