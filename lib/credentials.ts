@@ -444,4 +444,129 @@ export async function importCredentialFromSecret(
     body: JSON.stringify(body),
   })
   return stagedVersionMetadata(version, credentialID)
+export interface CredentialBundleItem {
+  credential_id: string
+}
+
+export interface CredentialBundle {
+  id: string
+  name: string
+  scope: CredentialScope
+  state: string
+  created_at?: string
+  updated_at?: string
+  items: CredentialBundleItem[]
+}
+
+export interface CredentialBundleCreateInput {
+  name: string
+  scope: CredentialScope
+  credentialIDs: string[]
+}
+
+const BUNDLE_ERROR_MESSAGES: Record<string, string> = {
+  credential_bundle_not_found: "未找到该凭据组，或当前账号无权查看",
+  credential_reference_ambiguous: "存在同名的个人与平台凭据组，无法确定要查看哪一个",
+  credential_forbidden: "无权限：只能把自己可管理的凭据放进凭据组，平台凭据组仅平台管理员可创建",
+  Forbidden: "无权限：平台凭据组仅平台管理员可创建",
+  credential_audit_unavailable: "凭据审计或所含凭据不可用，Gateway 已拒绝本次操作",
+  credential_key_unavailable: "Gateway 密钥不可用，暂时无法处理凭据",
+}
+
+// Gateway errors are stable categories; anything else is replaced by a generic
+// message so unexpected response text is never shown in the console.
+function bundleErrorMessage(status: number, raw: unknown): string {
+  const text = String(raw || "").trim()
+  if (BUNDLE_ERROR_MESSAGES[text]) return BUNDLE_ERROR_MESSAGES[text]
+  if (text === "未建立 Gateway 会话") return text
+  if (text.startsWith("无法连接 gateway")) return "无法连接 Gateway，请检查目标是否可用"
+  if (status === 401) return "Gateway 会话已失效，请重新登录"
+  if (status === 403) return "无权限执行该凭据组操作"
+  if (status === 404) return BUNDLE_ERROR_MESSAGES.credential_bundle_not_found
+  if (status === 400) return "Gateway 拒绝了凭据组请求：名称、归属或凭据列表无效"
+  if (status >= 500) return `Gateway 暂时不可用 (${status})`
+  return `凭据组请求失败 (${status})`
+}
+
+// Only metadata fields are kept; any other field in the response is dropped.
+function bundleMetadata(raw: unknown): CredentialBundle {
+  const value = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>
+  const id = typeof value.id === "string" ? value.id.trim() : ""
+  if (!id) throw new Error("凭据组响应缺少 id")
+  const items = Array.isArray(value.items) ? value.items : []
+  return {
+    id,
+    name: String(value.name ?? ""),
+    scope: value.scope === "platform" ? "platform" : "personal",
+    state: String(value.state ?? ""),
+    ...(typeof value.created_at === "string" ? { created_at: value.created_at } : {}),
+    ...(typeof value.updated_at === "string" ? { updated_at: value.updated_at } : {}),
+    items: items
+      .map((item) => (item && typeof item === "object" ? (item as Record<string, unknown>).credential_id : ""))
+      .filter((credentialID): credentialID is string => typeof credentialID === "string" && credentialID !== "")
+      .map((credential_id) => ({ credential_id })),
+  }
+}
+
+async function bundleRequest(query: string, init?: RequestInit): Promise<CredentialBundle> {
+  const res = await fetch(`/api/credential-bundles${query}`, {
+    ...init,
+    headers: { "Content-Type": "application/json" },
+    cache: "no-store",
+  })
+  const text = await res.text()
+  let data: unknown = {}
+  try {
+    data = text ? JSON.parse(text) : {}
+  } catch {
+    throw new Error(`凭据服务返回了无效响应 (${res.status})`)
+  }
+  if (!res.ok) {
+    throw new Error(bundleErrorMessage(res.status, (data as Record<string, unknown>)?.error))
+  }
+  return bundleMetadata(data)
+}
+
+export function validateCredentialBundleInput(input: CredentialBundleCreateInput): string {
+  if (!input.name.trim()) return "请填写凭据组名称"
+  if (input.scope !== "personal" && input.scope !== "platform") return "请选择凭据组归属"
+  const ids = input.credentialIDs.map((id) => id.trim())
+  if (!ids.length || ids.some((id) => !id)) return "至少选择一个凭据"
+  if (new Set(ids).size !== ids.length) return "凭据组不能包含重复凭据"
+  return ""
+}
+
+export async function createCredentialBundle(
+  s: Session,
+  input: CredentialBundleCreateInput,
+): Promise<CredentialBundle> {
+  if (s.demo) throw new Error("演示模式不执行凭据写操作")
+  const invalid = validateCredentialBundleInput(input)
+  if (invalid) throw new Error(invalid)
+  return bundleRequest("", {
+    method: "POST",
+    body: JSON.stringify({
+      name: input.name.trim(),
+      scope: input.scope,
+      items: input.credentialIDs.map((id) => ({ credential_id: id.trim() })),
+    }),
+  })
+}
+
+export async function getCredentialBundle(s: Session, name: string): Promise<CredentialBundle> {
+  const trimmed = name.trim()
+  if (!trimmed) throw new Error("请填写凭据组名称")
+  if (s.demo) {
+    if (trimmed !== "release-demo") throw new Error(BUNDLE_ERROR_MESSAGES.credential_bundle_not_found)
+    return {
+      id: "credbundle_demo_release",
+      name: "release-demo",
+      scope: "personal",
+      state: "active",
+      created_at: "2026-07-18T03:30:00Z",
+      updated_at: "2026-07-18T03:30:00Z",
+      items: [{ credential_id: "cred_demo_registry" }],
+    }
+  }
+  return bundleRequest(`?${new URLSearchParams({ name: trimmed })}`)
 }
