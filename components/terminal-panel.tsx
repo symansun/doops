@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target, type ToolCancel } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
+import { prefillToApply, type TerminalPrefill } from "@/lib/shell-blocks"
 import { TerminalIcon, SendIcon, StopIcon } from "./icons"
 
 interface Line {
@@ -14,12 +15,28 @@ export function TerminalPanel({
   session,
   target,
   sessionId,
+  prefill = null,
+  onPrefillApplied,
 }: {
   session: Session
   target: Target
   sessionId: string
+  prefill?: TerminalPrefill | null
+  onPrefillApplied?: (nonce: number) => void
 }) {
   const [command, setCommand] = useState("")
+  const appliedPrefillRef = useRef(0)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  // AI 助手“在终端执行”只预填输入框，用户确认（Enter/执行）后才走 doops_shell。
+  useEffect(() => {
+    const next = prefillToApply(prefill, appliedPrefillRef.current)
+    if (next === null || !prefill) return
+    appliedPrefillRef.current = prefill.nonce
+    setCommand(next)
+    inputRef.current?.focus()
+    onPrefillApplied?.(prefill.nonce)
+  }, [prefill, onPrefillApplied])
   const [lines, setLines] = useState<Line[]>([])
   const [running, setRunning] = useState(false)
   const [stopPending, setStopPending] = useState(false)
@@ -150,6 +167,7 @@ export function TerminalPanel({
         <div className="flex items-end gap-2">
           <span className="select-none pb-2 font-mono text-primary">$</span>
           <textarea
+            ref={inputRef}
             value={command}
             onChange={(e) => setCommand(e.target.value)}
             onKeyDown={onKeyDown}
