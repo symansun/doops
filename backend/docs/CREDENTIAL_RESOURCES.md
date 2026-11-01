@@ -531,6 +531,16 @@ doops credential bundle-get --target <target> --name release
 - platform bundle 仅 platform admin 可读取；
 - `bundle-get` CLI 只输出 bundle 基本元数据，不输出 items。
 
+Web 控制台在「凭据」页的「凭据组」入口提供同样的创建和按名称查看，经 `/api/credential-bundles`
+代理到 Gateway `/v1/credential-bundles`：
+
+- 创建时只能勾选当前账号「我管理的」有效凭据，请求体只含 name、scope 和 `credential_id` 列表；
+  bundle 不包含凭据 payload，界面也没有 payload 输入框；
+- 查看结果只展示 id、名称、归属、状态和所含 `credential_id`，响应中的其他字段在客户端丢弃；
+- Gateway 错误按稳定类别（`credential_forbidden`、`credential_bundle_not_found`、
+  `credential_audit_unavailable`、`credential_key_unavailable` 等）映射为中文提示，未知响应文本不显示；
+- 演示模式拒绝创建，查看只返回本地合成的 `release-demo`。
+
 ## 发布引用
 
 ```bash
