@@ -24,8 +24,7 @@ import { AuditPanel } from "./audit-panel"
 import { CredentialPanel } from "./credential-panel"
 import { AdminConsole } from "./admin-console"
 import { DashboardPanel } from "./dashboard-panel"
-import { DeployGuideBody } from "./deploy-guide"
-import { AgentUpgradePanel } from "./agent-upgrade-panel"
+import { DeployView } from "./deploy-view"
 import { CicdGuide } from "./cicd-guide"
 import { OnboardingGuide } from "./onboarding-guide"
 import {
@@ -261,7 +260,7 @@ export function ConsoleShell() {
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
-              <RocketIcon width={13} height={13} /> 部署 Agent
+              <RocketIcon width={13} height={13} /> 部署
             </button>
             <button
               disabled={skillRunning}
@@ -314,15 +313,7 @@ export function ConsoleShell() {
       {view === "admin" ? (
         <AdminConsole session={session} defaultTab={adminDefaultTab} />
       ) : view === "deploy" ? (
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {selected && <AgentUpgradePanel key={selected.key} session={session} target={selected} sessionId={sessionId} />}
-          <details className="border-t" open={!selected}><summary className="cursor-pointer px-4 py-3 text-sm font-medium">首次接入</summary><DeployGuideBody
-            onEnterConsole={() => {
-              setView("console")
-              refresh()
-            }}
-          /></details>
-        </div>
+        <DeployView session={session} target={selected} sessionId={sessionId} onEnterConsole={() => { setView("console"); refresh() }} />
       ) : view === "cicd" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <CicdGuide session={session} />
