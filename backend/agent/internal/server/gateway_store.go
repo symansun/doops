@@ -1059,10 +1059,10 @@ func firstNonEmpty(values ...string) string {
 }
 
 func trimTail(s string, max int) string {
-	if max <= 0 || len(s) <= max {
+	if max <= 0 {
 		return s
 	}
-	return s[len(s)-max:]
+	return utf8Tail(s, max)
 }
 
 func formatTime(t time.Time) string {

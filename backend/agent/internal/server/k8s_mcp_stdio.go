@@ -269,10 +269,12 @@ func capToolOutput(text string) string {
 	}
 	head := maxToolOutputBytes / 2
 	tail := maxToolOutputBytes - head
-	cut := len(text) - maxToolOutputBytes
-	return text[:head] +
+	kept := utf8Head(text, head)
+	end := utf8Tail(text, tail)
+	cut := len(text) - len(kept) - len(end)
+	return kept +
 		fmt.Sprintf("\n...[doops cut %d bytes of tool output; read the full state with doops exec]\n", cut) +
-		text[len(text)-tail:]
+		end
 }
 
 // mcpToolCallDeadline ends every tool call before doagent's MCP tool timeout.

@@ -1,5 +1,7 @@
 package server
 
+import "unicode/utf8"
+
 type auditTailBuffer struct {
 	max int
 	buf []byte
@@ -31,6 +33,11 @@ func (b *auditTailBuffer) Len() int {
 	return len(b.buf)
 }
 
+// String drops a rune the byte bound split at the start of the tail.
 func (b *auditTailBuffer) String() string {
-	return string(b.buf)
+	start := 0
+	for start < len(b.buf) && start < utf8.UTFMax && !utf8.RuneStart(b.buf[start]) {
+		start++
+	}
+	return string(b.buf[start:])
 }

@@ -586,9 +586,7 @@ func doSQLResultSummary(result map[string]interface{}, operationID, journalPath,
 		if stdout, ok := execution["stdout"].(string); ok {
 			const limit = 32 << 10
 			summary["output_truncated"] = len(stdout) > limit
-			if len(stdout) > limit {
-				stdout = stdout[:limit]
-			}
+			stdout = utf8Head(stdout, limit)
 			summary["output"] = sanitizeSecretText(stdout)
 		}
 	}
