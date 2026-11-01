@@ -2,11 +2,20 @@ package server
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"strings"
 	"time"
+
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
+)
+
+var (
+	ErrProxyRouteHostInUse = errors.New("proxy host already in use")
+	ErrProxyRouteStale     = errors.New("proxy route changed since it was read")
 )
 
 type ProxyRoute struct {
@@ -27,6 +36,9 @@ type ProxyRouteInput struct {
 	Instance string
 	Upstream string
 	Enabled  bool
+	// ExpectUpdatedAt, when set on an update, rejects the write with
+	// ErrProxyRouteStale unless the stored route still has this updated_at.
+	ExpectUpdatedAt *time.Time
 }
 
 func normalizeProxyHost(raw string) (string, error) {
@@ -148,25 +160,61 @@ func (s *GatewayStore) ProxyRouteByHost(host string) (ProxyRoute, error) {
 	return route, nil
 }
 
+// UpsertProxyRoute creates a route when input.ID is empty and otherwise updates
+// that route in place. An update never recreates a deleted route (it returns
+// sql.ErrNoRows), and a host another route already serves is
+// ErrProxyRouteHostInUse.
 func (s *GatewayStore) UpsertProxyRoute(input ProxyRouteInput) (ProxyRoute, error) {
 	input, err := normalizeProxyRouteInput(input, false)
 	if err != nil {
 		return ProxyRoute{}, err
 	}
-	now := time.Now().UTC()
-	if input.ID == "" {
-		input.ID = "route_" + randomHex(12)
-	}
-	_, err = s.db.Exec(`INSERT INTO proxy_routes(id, host, cluster, instance, upstream, enabled, created_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET host=excluded.host, cluster=excluded.cluster,
-		instance=excluded.instance, upstream=excluded.upstream, enabled=excluded.enabled, updated_at=excluded.updated_at`,
-		input.ID, input.Host, input.Cluster, input.Instance, input.Upstream, boolInt(input.Enabled),
-		formatTime(now), formatTime(now))
+	route := ProxyRoute{ID: input.ID, Host: input.Host, Cluster: input.Cluster, Instance: input.Instance,
+		Upstream: input.Upstream, Enabled: input.Enabled}
+	tx, err := s.db.Begin()
 	if err != nil {
 		return ProxyRoute{}, err
 	}
-	return s.ProxyRouteByHost(input.Host)
+	defer tx.Rollback()
+	now := time.Now().UTC()
+	if route.ID == "" {
+		route.ID = "route_" + randomHex(12)
+		route.CreatedAt, route.UpdatedAt = now, now
+		_, err = tx.Exec(`INSERT INTO proxy_routes(id, host, cluster, instance, upstream, enabled, created_at, updated_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+			route.ID, route.Host, route.Cluster, route.Instance, route.Upstream, boolInt(route.Enabled),
+			formatTime(now), formatTime(now))
+	} else {
+		var created, updated string
+		if err := tx.QueryRow(`SELECT created_at, updated_at FROM proxy_routes WHERE id = ?`, route.ID).
+			Scan(&created, &updated); err != nil {
+			return ProxyRoute{}, err
+		}
+		route.CreatedAt, _ = parseTime(created)
+		previous, _ := parseTime(updated)
+		if input.ExpectUpdatedAt != nil && !input.ExpectUpdatedAt.Equal(previous) {
+			return ProxyRoute{}, ErrProxyRouteStale
+		}
+		// updated_at is the version clients send back, so every write must move it.
+		if !now.After(previous) {
+			now = previous.Add(time.Nanosecond)
+		}
+		route.UpdatedAt = now
+		_, err = tx.Exec(`UPDATE proxy_routes SET host = ?, cluster = ?, instance = ?, upstream = ?, enabled = ?, updated_at = ?
+			WHERE id = ?`,
+			route.Host, route.Cluster, route.Instance, route.Upstream, boolInt(route.Enabled), formatTime(now), route.ID)
+	}
+	if err != nil {
+		var sqliteErr *sqlite.Error
+		if errors.As(err, &sqliteErr) && sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
+			return ProxyRoute{}, ErrProxyRouteHostInUse
+		}
+		return ProxyRoute{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ProxyRoute{}, err
+	}
+	return route, nil
 }
 
 func (s *GatewayStore) DeleteProxyRoute(id string) error {
