@@ -55,7 +55,7 @@ target 只来自本机 Gateway-only `config.json` 与 Gateway 当前在线注册
 
 ## 当前镜像与协议
 
-当前维护版 agent 默认采用轻量双镜像发布。不带标签的 `docker pull` 使用 `latest`，它指向 main CI 刚构建成功的同一份镜像；固定版本仍使用完整 commit SHA、发布标签或 digest。
+当前维护版 agent 默认采用轻量双镜像发布。不带标签的 `docker pull` 使用 `latest`，它指向最近一次成功的 main CI 或版本发布构建；固定版本仍使用完整 commit SHA、发布标签或 digest。
 
 ```bash
 docker pull docker.cnb.cool/l8ai/ai/doops.sh
@@ -63,8 +63,8 @@ docker pull docker.cnb.cool/l8ai/ai/doops.sh/web
 ```
 
 ```text
-docker.cnb.cool/l8ai/ai/doops.sh:latest                 # main 最新 Agent 镜像，等同于不写标签
-docker.cnb.cool/l8ai/ai/doops.sh/web:latest             # main 最新 Web 控制台镜像
+docker.cnb.cool/l8ai/ai/doops.sh:latest                 # 最近一次成功构建的 Agent 镜像，等同于不写标签
+docker.cnb.cool/l8ai/ai/doops.sh/web:latest             # 最近一次成功构建的 Web 控制台镜像
 docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>  # 基础工具：buildkit / kubectl / Python+PyYAML / Helm / git / ssh client / tini / bash
 docker.cnb.cool/l8ai/ai/doops.sh:<release>             # doops-agent / 精确 doagent / skills / docs / entrypoint
 ```
@@ -441,7 +441,7 @@ cnb build start-build --repo l8ai/ai/doops.sh --tag v1.2.4 --event api_trigger_r
 
 发版流水线运行在云原生开发节点上，扣开发配额；CNB 不允许 tag_push 事件使用 vscode service，所以推 tag 不会自动发版，需要用上面的命令从该 tag 触发。
 
-CNB 的 `main` push 会构建并推送以 commit SHA 命名的 Agent 镜像。从 tag 触发的 `api_trigger_release` 则在完整测试后推送同 tag 的 Agent 镜像，构建四个平台 CLI、生成 `checksums.txt`、上传到同名 Release，并从公开下载入口回读校验。二进制不进入 Git。
+CNB 的 `main` push 会构建并推送以 commit SHA 命名的 Agent 镜像。从 tag 触发的 `api_trigger_release` 则在完整测试后推送同 tag 的 Agent 与 Web 镜像并同时更新 `latest`，构建四个平台 CLI、生成 `checksums.txt`、上传到同名 Release，并从公开下载入口回读校验。二进制不进入 Git。
 
 ## 边界
 

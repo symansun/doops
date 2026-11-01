@@ -32,7 +32,12 @@ def test_doagent_runtime_lock_includes_exact_source_revision():
     assert 'latest_image="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:latest"' in image_build
     assert 'docker push "${latest_image}"' in image_build
     assert "DOOPS_PUBLISH_LATEST=1 \\\n            DOOPS_RELEASE_TAG=\"${CNB_COMMIT}\" \\\n" in CI.read_text()
-    assert "DOOPS_PUBLISH_LATEST" not in CI.read_text().split("api_trigger_release:", 1)[1]
+    # A version release also moves latest, so an untagged pull gets the
+    # version that was just released and fully verified.
+    assert (
+        "DOOPS_PUBLISH_LATEST=1 \\\n            DOOPS_RELEASE_TAG=\"${CNB_BRANCH}\" \\\n"
+        "              bash backend/scripts/build-agent-image.sh"
+    ) in CI.read_text().split("api_trigger_release:", 1)[1]
     assert (
         'test "${ACTUAL_DOAGENT_REVISION}" = "${DO_AGENT_REVISION}"'
         in image_build
