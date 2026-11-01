@@ -258,19 +258,26 @@ CLI 在 Job 成功后执行 `capabilities --require structuredSSH`，探针失�
 `exec hostname` 确认 Gateway 当前实际服务的 Pod，并核对该 Pod 的 UID、Ready、
 imageID 与候选 digest、`do-agent --version` 和实际功能路径。
 
-第三条保证（校验失败自动恢复备份）只有在回滚会恢复的那个镜像还能被拉取时才成立。
+第三条保证（校验失败自动恢复备份）只有在回滚会恢复的那个镜像还在 registry 里时才成立。
 因此改动前检查还必须解析回滚目标：从 `helm history` 取唯一 deployed revision，
-用 `helm get manifest --revision` 读出该 revision 的 doops-agent 镜像，并用一个一次性
-Job 验证它现在还能拉取。该 Job 复用 Agent 自己的 service account、nodeName、
-runtimeClass、tolerations、nodeSelector 和 imagePullSecrets，让执行回滚的同一个
-kubelet 完成这次拉取；不新增凭据维度，也不新增挂载。探针失败按稳定类别上报，
-预检不做任何改动：
+用 `helm get manifest --revision` 读出该 revision 的 doops-agent 镜像，再用
+`skopeo inspect --raw` 读这个镜像的清单。认证用 Agent Pod 自己的 imagePullSecrets，
+也就是 kubelet 拉回滚 Pod 时用的凭据；Agent Pod 没有 pull secret 时匿名读取，
+和 kubelet 一致。Secret 内容只写进一个 0600 临时文件给 skopeo 读，检查结束即删除，
+不进参数也不进 Job 日志。不新增凭据维度、挂载或权限：升级 Job 本来就要读写
+同 namespace 里存放 Helm release 的 Secret。
 
-- `rollback_baseline_image_unavailable`：回滚镜像已不在 registry，探针 Pod 出现
-  `ErrImagePull`/`ImagePullBackOff`/`failed to resolve reference` 等拉取失败证据。
+检查直接问 registry 而不是让 kubelet 真拉一遍：kubelet 的拉取要排在节点上其它拉取
+后面，繁忙节点上要等几分钟，却证明不了更多。探针失败按稳定类别上报，预检不做任何改动：
+
+- `rollback_baseline_image_unavailable`：registry 回答没有这个清单
+  （`manifest unknown`、`name unknown`、CNB 的 `artifact … not found`）。
 - `rollback_baseline_image_unresolved`：历史 revision 不含唯一 doops-agent 镜像，
   或 release 没有唯一 deployed revision。
-- `rollback_baseline_probe_failed`：探针本身失败，但拉取失败证据不明确。
+- `rollback_baseline_probe_failed`：其它失败，原因写在 `reason=` 里：registry 拒绝凭据
+  （`unauthorized`/`denied`/`forbidden`，先于"缺失"判断，因为有的 registry 会把拒绝说成
+  not found）、registry 连不上或超时、pull secret 读不到或不是 registry 凭据。
+  这些都不是镜像已丢，不能用 `--allow-missing-rollback-baseline` 放行。
 
 默认 fail closed。运维明确知道回滚无法恢复备份时，可用
 `doops upgrade --allow-missing-rollback-baseline` 放行；该开关只作为参数传给

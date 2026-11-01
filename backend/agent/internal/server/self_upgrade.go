@@ -1199,131 +1199,94 @@ PY
 `
 
 // selfUpgradeRollbackBaselineProbe proves that the image an automatic rollback
-// would restore can still be pulled.
+// would restore is still in its registry.
 //
-// The probe is a throwaway Job in the Agent's namespace whose Pod runs the
-// baseline image on the Agent's own node, with the Agent's own pull secrets,
-// service account, runtime class and scheduling constraints. The kubelet that
-// would serve the rollback Pod is therefore the kubelet that has to pull the
-// baseline image, and the credentials are the ones the workload already has:
-// no new credential dimension and no new mount.
+// It reads the baseline image manifest with skopeo, authenticated with the
+// Agent Pod's own imagePullSecrets, which are the credentials the kubelet uses
+// for the rollback Pod. An Agent Pod without pull secrets is checked
+// anonymously, as the kubelet would pull it. No new credential dimension and no
+// new mount: the Secret is read into a 0600 file that only skopeo reads, and the
+// payload never reaches an argument or the Job log.
+//
+// It asks the registry instead of the kubelet on purpose. A kubelet pull waits
+// behind every other pull on the node, so on a busy node it can take minutes
+// and proves nothing more about whether the manifest is gone.
 //
 // A manifest that is gone from the registry is therefore caught before the
 // release changes, which is what makes the third upgrade guarantee (restore the
-// backup when verification fails) real rather than aspirational.
+// backup when verification fails) real rather than aspirational. A refused
+// credential or an unreachable registry is not reported as a missing image.
 //
 // The operator can still proceed on purpose with
 // DOOPS_UPGRADE_ALLOW_MISSING_ROLLBACK_BASELINE=1; the default is fail closed.
 const selfUpgradeRollbackBaselineProbe = `rollback_baseline_probe="$(python3 - "$ns" "$rollback_baseline_image" "$previous" "$baseline" <<'PY' 2>&1
-import json, subprocess, sys, time
+import base64, json, os, subprocess, sys, tempfile
 
 namespace, image, revision, baseline_json = sys.argv[1:5]
 baseline = json.loads(baseline_json)
-probe_job = "doops-rollback-baseline-" + revision
-PROBE_LABEL = "app.kubernetes.io/name=doops-rollback-baseline-probe"
 CATEGORY_UNAVAILABLE = "rollback_baseline_image_unavailable"
 CATEGORY_PROBE_FAILED = "rollback_baseline_probe_failed"
-PULL_FAILURE_MARKERS = (
-    "ErrImagePull", "ImagePullBackOff", "InvalidImageName", "ErrImageNeverPull",
-    "RegistryUnavailable", "failed to resolve reference", "manifest unknown",
-)
+# A refused credential is checked first: some registries answer a refused
+# request for a repository with "not found", and that is not a missing image.
+REFUSED_MARKERS = ("unauthorized", "denied", "forbidden", "authentication required")
+MISSING_MARKERS = ("manifest unknown", "name unknown", "not found")
 
 
-def fail(category, detail):
-    raise SystemExit(category + ": " + detail)
+def fail(category, reason):
+    raise SystemExit(category + ": image=" + image + " reason=" + reason)
 
 
-def kubectl(*args, stdin=None):
-    return subprocess.run(
-        ["kubectl", "-n", namespace] + list(args),
-        input=stdin, capture_output=True, timeout=60,
-    )
+def pull_secret_auths(name):
+    read = subprocess.run(["kubectl", "-n", namespace, "get", "secret", name, "-o", "json"],
+                          capture_output=True, timeout=30)
+    if read.returncode != 0:
+        fail(CATEGORY_PROBE_FAILED, "the pull secret " + name + " could not be read")
+    data = (json.loads(read.stdout).get("data") or {})
+    try:
+        if data.get(".dockerconfigjson"):
+            return json.loads(base64.b64decode(data[".dockerconfigjson"])).get("auths") or {}
+        if data.get(".dockercfg"):
+            return json.loads(base64.b64decode(data[".dockercfg"]))
+    except (ValueError, TypeError, AttributeError):
+        pass
+    fail(CATEGORY_PROBE_FAILED, "the pull secret " + name + " is not a registry credential")
 
 
-def cleanup():
-    kubectl("delete", "job", probe_job, "--ignore-not-found", "--wait=false")
+auths = {}
+for ref in baseline.get("image_pull_secrets") or []:
+    for server, entry in pull_secret_auths(ref.get("name") or "").items():
+        auths.setdefault(server, entry)
 
-
-probe = {
-    "apiVersion": "batch/v1",
-    "kind": "Job",
-    "metadata": {
-        "name": probe_job,
-        "namespace": namespace,
-        "labels": {"app.kubernetes.io/name": "doops-rollback-baseline-probe"},
-    },
-    "spec": {
-        "backoffLimit": 0,
-        "ttlSecondsAfterFinished": 120,
-        "activeDeadlineSeconds": 90,
-        "template": {
-            "metadata": {"labels": {"app.kubernetes.io/name": "doops-rollback-baseline-probe"}},
-            "spec": {
-                "restartPolicy": "Never",
-                "terminationGracePeriodSeconds": 5,
-                "containers": [{
-                    "name": "probe",
-                    "image": image,
-                    "imagePullPolicy": "Always",
-                    "command": ["/bin/sh", "-c", "exit 0"],
-                }],
-            },
-        },
-    },
-}
-pod_spec = probe["spec"]["template"]["spec"]
-if baseline.get("node"):
-    pod_spec["nodeName"] = baseline["node"]
-if baseline.get("runtime_class"):
-    pod_spec["runtimeClassName"] = baseline["runtime_class"]
-if baseline.get("service_account"):
-    pod_spec["serviceAccountName"] = baseline["service_account"]
-if baseline.get("tolerations"):
-    pod_spec["tolerations"] = baseline["tolerations"]
-if baseline.get("node_selector"):
-    pod_spec["nodeSelector"] = baseline["node_selector"]
-if baseline.get("image_pull_secrets"):
-    pod_spec["imagePullSecrets"] = baseline["image_pull_secrets"]
-
-cleanup()
+command = ["skopeo", "inspect", "--raw", "--retry-times", "2"]
+authfile = ""
 try:
-    created = kubectl("create", "-f", "-", stdin=json.dumps(probe).encode())
-    if created.returncode != 0:
-        fail(CATEGORY_PROBE_FAILED, created.stderr.decode("utf-8", "replace").strip()[:400])
-
-    def probe_pods():
-        try:
-            return subprocess.check_output(
-                ["kubectl", "-n", namespace, "get", "pods", "-l", PROBE_LABEL, "-o", "json"],
-                timeout=30, stderr=subprocess.STDOUT,
-            ).decode("utf-8", "replace")
-        except Exception:
-            return ""
-
-    deadline = time.time() + 90
-    while time.time() < deadline:
-        read = kubectl("get", "job", probe_job, "-o", "json")
-        if read.returncode != 0:
-            fail(CATEGORY_PROBE_FAILED, "the pull probe job could not be read")
-        status = json.loads(read.stdout).get("status") or {}
-        if int(status.get("succeeded") or 0) > 0:
-            print("rollback_baseline_image_available image=" + image)
-            raise SystemExit(0)
-
-        # An unpullable image leaves the Pod in a pull failure state and the Job
-        # active forever, so the Pod state is what names the reason. The Job
-        # status alone would report this as a timeout instead.
-        evidence = probe_pods()
-        if any(marker in evidence for marker in PULL_FAILURE_MARKERS):
-            fail(CATEGORY_UNAVAILABLE, "image=" + image + " reason=the image could not be pulled")
-        if int(status.get("failed") or 0) > 0:
-            if any(marker in evidence for marker in PULL_FAILURE_MARKERS):
-                fail(CATEGORY_UNAVAILABLE, "image=" + image + " reason=the image could not be pulled")
-            fail(CATEGORY_PROBE_FAILED, "image=" + image + " reason=the pull probe job failed")
-        time.sleep(3)
-    fail(CATEGORY_PROBE_FAILED, "image=" + image + " reason=the pull probe did not settle in time")
+    if auths:
+        fd, authfile = tempfile.mkstemp(prefix="doops-rollback-baseline-", suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({"auths": auths}, fh)
+        command += ["--authfile", authfile]
+    else:
+        command.append("--no-creds")
+    try:
+        checked = subprocess.run(command + ["docker://" + image], capture_output=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        fail(CATEGORY_PROBE_FAILED, "the registry did not answer in time")
+    except OSError:
+        fail(CATEGORY_PROBE_FAILED, "skopeo is not available in the upgrade image")
 finally:
-    cleanup()
+    if authfile:
+        os.unlink(authfile)
+
+if checked.returncode == 0:
+    print("rollback_baseline_image_available image=" + image)
+    raise SystemExit(0)
+detail = checked.stderr.decode("utf-8", "replace").strip()
+lowered = detail.lower()
+if any(marker in lowered for marker in REFUSED_MARKERS):
+    fail(CATEGORY_PROBE_FAILED, "the registry refused the pull credentials")
+if any(marker in lowered for marker in MISSING_MARKERS):
+    fail(CATEGORY_UNAVAILABLE, "the registry has no manifest for this image")
+fail(CATEGORY_PROBE_FAILED, "the manifest check failed: " + (detail.splitlines() or [""])[-1][-300:])
 PY
 )" || {
   case "$rollback_baseline_probe" in
