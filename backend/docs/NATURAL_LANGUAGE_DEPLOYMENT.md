@@ -7,6 +7,11 @@ Gateway 控制台的部署表单调用同一 `doops_agent_prompt operation=apply
 明确勾选变更授权并填写 CI 来源、target、服务范围、release、namespace、远程 Chart、
 镜像、原因与验收；公开调用只携带 credential resource names，不携带 payload。
 页面的工具失败、连接中断和缺失终态不能成为成功结果，诊断模式不会授权 mutation。
+控制台入口在「部署 → 发布工作负载」：表单经 agent-session 通道发送扩展命令
+`doops.operations/apply`（schema 1，payload 仅 `input` 与 `confirmed: true`），浏览器和服务端
+用同一 `deploymentRequest()` 校验；未勾选授权不构造命令。执行轨迹与 Agent 返回的 rollout、
+最终 Deployment 状态在同一会话时间线显示；发布会话按 target 保存在浏览器标签页内，切换视图后
+回到同一会话。
 apply 不要求先把代码同步到 target 的隔离工作区。业务镜像版本必须来自任务或任务指定的仓库、Chart、values、现有 release 的只读证据，不猜测，也不要求已明确资产中的
 事实再粘贴到 prompt。镜像键和版本由 Chart 定义，同 Chart 可有不同服务镜像及不同版本，
 不固定 `image.repository/tag/digest` 或日期 tag。CORS Origin、仓库业务名、项目目录不是
