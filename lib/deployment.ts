@@ -43,3 +43,12 @@ export function deploymentRequest(target: Target, input: DeploymentInput) {
   const instruction = `在 target ${target.cluster}/${target.instance} 发布服务范围 ${input.services}，release ${input.release}，namespace ${input.namespace}；使用 chart ${input.chart}${values.length ? `，values URL ${values.join(", ")}` : ""}；镜像 ${image}。\n发布者已核对 CI 成功证据 ${input.ci}，来源提交 ${input.commit}。\n变更原因：${input.reason}。\n验收条件：${input.acceptance}。`
   return { instruction, operation: "apply", credential_refs }
 }
+
+export const DEPLOYMENT_EXTENSION = { namespace: "doops.operations", semanticType: "apply", schemaVersion: "1" } as const
+
+// Builds the confirmed `doops.operations/apply` command the console sends; the server re-validates the same input.
+export function deploymentExtensionCommand(target: Target, input: DeploymentInput, confirmed: boolean) {
+  if (confirmed !== true) throw new Error("部署前必须勾选变更授权")
+  deploymentRequest(target, input)
+  return { ...DEPLOYMENT_EXTENSION, payload: { input: { ...input }, confirmed: true as const } }
+}
