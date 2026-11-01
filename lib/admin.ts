@@ -46,6 +46,9 @@ export interface AdminInstance {
   queued_ops: number
   connected_at?: string
   last_seen?: string
+  archived?: boolean
+  archived_at?: string
+  archived_by?: string
 }
 
 
@@ -163,4 +166,14 @@ export async function deleteProxyRoute(s: Session, id: string): Promise<void> {
 export async function listInstances(s: Session): Promise<AdminInstance[]> {
   if (s.demo) return (await import("./demo")).demoListInstances()
   return (await req<{ instances: AdminInstance[] }>(s, "instances")).instances || []
+}
+
+export async function archiveInstance(s: Session, body: { cluster: string; instance: string }): Promise<AdminInstance> {
+  if (s.demo) return (await import("./demo")).demoArchiveInstance(body)
+  return req<AdminInstance>(s, "instances/archive", { method: "POST", body: JSON.stringify(body) })
+}
+
+export async function unarchiveInstance(s: Session, body: { cluster: string; instance: string }): Promise<AdminInstance> {
+  if (s.demo) return (await import("./demo")).demoUnarchiveInstance(body)
+  return req<AdminInstance>(s, "instances/unarchive", { method: "POST", body: JSON.stringify(body) })
 }

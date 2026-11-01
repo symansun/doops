@@ -14,10 +14,12 @@ export function gatewayTime(value?: string): number | null {
 
 /* ============================ 实例 ============================ */
 
-export type InstanceActivity = "online" | "recent" | "history"
+export type InstanceActivity = "online" | "recent" | "history" | "archived"
 
-// 在线、离线 7 天以内（含恰好 7 天）算活跃；离线超过 7 天或没有心跳时间算历史。
+// Archived records are not part of active/history counts. Online records are
+// never archival candidates because the Gateway clears a mark on reconnect.
 export function instanceActivity(row: AdminInstance, now: number): InstanceActivity {
+  if (row.archived) return "archived"
   if (row.status === "online") return "online"
   const lastSeen = gatewayTime(row.last_seen)
   if (lastSeen === null) return "history"
@@ -54,14 +56,17 @@ export function compareInstances(a: AdminInstance, b: AdminInstance): number {
 export interface InstanceGroups {
   active: AdminInstance[]
   history: AdminInstance[]
+  archived: AdminInstance[]
 }
 
 // cluster 为空表示全部集群。
 export function groupInstances(rows: AdminInstance[], now: number, cluster = ""): InstanceGroups {
-  const groups: InstanceGroups = { active: [], history: [] }
+  const groups: InstanceGroups = { active: [], history: [], archived: [] }
   for (const row of [...rows].sort(compareInstances)) {
     if (cluster && row.cluster !== cluster) continue
-    if (instanceActivity(row, now) === "history") groups.history.push(row)
+    const activity = instanceActivity(row, now)
+    if (activity === "archived") groups.archived.push(row)
+    else if (activity === "history") groups.history.push(row)
     else groups.active.push(row)
   }
   return groups
@@ -88,12 +93,17 @@ export interface InstanceScope {
   active: number
   online: number
   history: number
+  archived: number
 }
 
 export function summarizeInstanceScope(rows: AdminInstance[], now: number): InstanceScope {
-  const scope: InstanceScope = { active: 0, online: 0, history: 0 }
+  const scope: InstanceScope = { active: 0, online: 0, history: 0, archived: 0 }
   for (const row of rows) {
     const activity = instanceActivity(row, now)
+    if (activity === "archived") {
+      scope.archived++
+      continue
+    }
     if (activity === "history") {
       scope.history++
       continue

@@ -847,6 +847,11 @@ Gateway 重启时遗留的 `running` 落为 `error`；已派发且需要变更�
 `agent_status` 记录，绝不删除或更改该实例的用户授权、令牌、凭据绑定或审计历史。Agent 下次
 成功连接时，Gateway 自动清除归档标记。
 
+Gateway 在启动时以及之后每小时，删除 `status=offline` 且 `last_seen` 早于 24 小时的实例记录。
+在线记录、缺少或无法解析 `last_seen` 的记录保留。删除只作用于实例记录；用户授权、令牌、
+凭据绑定和审计历史不动。Agent 再次连接会写入一条新的实例记录。24 小时内离线的记录仍保留，
+可按下面的接口归档或恢复。
+
 ```http
 POST /v1/admin/instances/archive
 Authorization: Bearer <ADMIN_USER_TOKEN>

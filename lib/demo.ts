@@ -727,6 +727,23 @@ export function demoRevokeToken(id: string): void {
 export function demoListInstances(): AdminInstance[] {
   return demoInstances.map((i) => ({ ...i }))
 }
+export function demoArchiveInstance(body: { cluster: string; instance: string }): AdminInstance {
+  const instance = demoInstances.find((item) => item.cluster === body.cluster && item.instance === body.instance)
+  if (!instance) throw new Error("实例不存在")
+  if (instance.status === "online") throw new Error("在线实例不能归档")
+  instance.archived = true
+  instance.archived_at = nowISO()
+  instance.archived_by = "usr_admin01"
+  return { ...instance }
+}
+export function demoUnarchiveInstance(body: { cluster: string; instance: string }): AdminInstance {
+  const instance = demoInstances.find((item) => item.cluster === body.cluster && item.instance === body.instance)
+  if (!instance) throw new Error("实例不存在")
+  instance.archived = false
+  delete instance.archived_at
+  delete instance.archived_by
+  return { ...instance }
+}
 
 const demoProxyRoutes: ProxyRoute[] = [
   { id: "route_demo01", host: "app.demo.example", cluster: "prod-cn", instance: "web-01", upstream: "http://127.0.0.1:8080", enabled: true, created_at: ago(96), updated_at: ago(24) },

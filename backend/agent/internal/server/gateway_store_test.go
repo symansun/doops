@@ -521,6 +521,68 @@ func TestGatewayStoreAgentStatusLifecycle(t *testing.T) {
 	}
 }
 
+func TestGatewayStoreDeletesOfflineAgentsAfterRetention(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	user, err := store.CreateUser("alice")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "old"}); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	now := time.Now().UTC()
+	records := []AgentStatus{
+		{Cluster: "dev", Instance: "live", Status: "online", Generation: 3, LastSeen: now.Add(-48 * time.Hour)},
+		{Cluster: "dev", Instance: "recent", Status: "offline", Generation: 1, LastSeen: now.Add(-time.Hour)},
+		{Cluster: "dev", Instance: "old", Status: "offline", Generation: 4, LastSeen: now.Add(-25 * time.Hour)},
+		{Cluster: "dev", Instance: "unknown", Status: "offline", Generation: 1},
+	}
+	for _, agent := range records {
+		if err := store.MarkAgentOnline(agent); err != nil {
+			t.Fatalf("seed %s: %v", agent.Instance, err)
+		}
+	}
+	if err := store.MarkAgentOffline("dev", "recent", 1, now.Add(-time.Hour)); err != nil {
+		t.Fatalf("mark recent offline: %v", err)
+	}
+	if err := store.MarkAgentOffline("dev", "old", 4, now.Add(-25*time.Hour)); err != nil {
+		t.Fatalf("mark old offline: %v", err)
+	}
+	if _, err := store.db.Exec(`UPDATE agent_status SET status = 'offline', last_seen = '' WHERE instance = 'unknown'`); err != nil {
+		t.Fatalf("clear unknown last_seen: %v", err)
+	}
+
+	if _, err := store.DeleteStaleOfflineAgents(now, 0); err == nil {
+		t.Fatal("non-positive retention must fail")
+	}
+	deleted, err := store.DeleteStaleOfflineAgents(now, StaleOfflineAgentRetention)
+	if err != nil {
+		t.Fatalf("delete stale agents: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("expected 1 deleted record, got %d", deleted)
+	}
+	agents, err := store.ListAgentStatus()
+	if err != nil {
+		t.Fatalf("list agents: %v", err)
+	}
+	kept := map[string]string{}
+	for _, agent := range agents {
+		kept[agent.Instance] = agent.Status
+	}
+	if len(kept) != 3 || kept["live"] != "online" || kept["recent"] != "offline" || kept["unknown"] != "offline" || kept["old"] != "" {
+		t.Fatalf("unexpected remaining records: %#v", kept)
+	}
+	if !store.UserCanUseTarget(user.ID, "dev", "old") {
+		t.Fatal("deleting an instance record must keep its grant")
+	}
+}
+
 func TestGatewayStoreDoesNotLetStaleAgentTouchOverwriteLifecycle(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {

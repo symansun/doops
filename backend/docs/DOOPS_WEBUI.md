@@ -44,6 +44,9 @@ and does not expose the token to React state, localStorage or copied examples.
 - Administrator mutations are audited with actor/token IDs, resource metadata,
   HTTP result and stable errors. Credential/configuration bodies are excluded.
   Unavailable audit storage blocks a mutation.
+- 管理员实例页将在线、近期离线、历史和已归档记录分开计数。历史和已归档记录默认折叠；
+  只有离线记录可在显式确认后归档或恢复。归档不会删除 target 授权、令牌、凭据绑定或审计历史，
+  Agent 重新连接时会自动恢复该记录。离线超过 24 小时的实例记录由 Gateway 自动删除，授权仍保留。
 
 The complete Web/CLI/skill boundary and authorization matrix is documented in
 `UNIFIED_OPERATIONS_WORKBENCH.md`.
