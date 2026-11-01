@@ -10,6 +10,20 @@ import {
   validateGrantForm,
 } from "@/lib/grant-form"
 import {
+  ACTIVE_INSTANCE_WINDOW_DAYS,
+  TOKEN_STATE_LABELS,
+  gatewayTime,
+  groupInstances,
+  groupTokensByUser,
+  instanceClusterOptions,
+  isTokenGroupCollapsed,
+  offlineLabel,
+  sortUsersForDisplay,
+  summarizeInstanceScope,
+  summarizeUsers,
+  type TokenState,
+} from "@/lib/admin-views"
+import {
   listUsers,
   createUser,
   setUserPassword,
@@ -168,15 +182,19 @@ function StatusDot({ status }: { status: string }) {
 
 /* ============================ 实例 ============================ */
 function InstancesView({ session }: { session: Session }) {
-  const [rows, setRows] = useState<AdminInstance[]>([])
+  const [all, setAll] = useState<AdminInstance[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const [now, setNow] = useState(() => Date.now())
+  const [cluster, setCluster] = useState("")
+  const [showHistory, setShowHistory] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError("")
     try {
-      setRows(await listInstances(session))
+      setAll(await listInstances(session))
+      setNow(Date.now())
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -188,14 +206,35 @@ function InstancesView({ session }: { session: Session }) {
     load()
   }, [load])
 
+  const clusterOptions = useMemo(() => instanceClusterOptions(all), [all])
+  const groups = useMemo(() => groupInstances(all, now, cluster), [all, now, cluster])
+  const scope = useMemo(() => summarizeInstanceScope(all, now), [all, now])
+  const historyKeys = new Set(groups.history.map((r) => `${r.cluster}/${r.instance}`))
+  // 默认只显示在线和离线 7 天以内的实例；历史实例折叠，展开后排在活跃实例后面。
+  const rows = showHistory ? [...groups.active, ...groups.history] : groups.active
+
   return (
     <div>
       <Toolbar
         title="实例"
-        desc="已注册到 gateway 的边缘节点及其连接状态"
+        desc={`在线 ${scope.online} · ${ACTIVE_INSTANCE_WINDOW_DAYS} 天内离线 ${scope.active - scope.online} · 历史 ${scope.history}（离线超过 ${ACTIVE_INSTANCE_WINDOW_DAYS} 天或没有心跳记录）`}
         onRefresh={load}
         loading={loading}
-      />
+      >
+        <select
+          aria-label="按集群筛选"
+          value={cluster}
+          onChange={(e) => setCluster(e.target.value)}
+          className="input w-56 text-xs"
+        >
+          <option value="">全部集群（{clusterOptions.length}）</option>
+          {clusterOptions.map((option) => (
+            <option key={option.name} value={option.name}>
+              {option.name}（在线 {option.online}/{option.total}）
+            </option>
+          ))}
+        </select>
+      </Toolbar>
       <ErrorBar msg={error} />
       <div className="overflow-x-auto p-4">
         <table className="w-full min-w-[640px] border-collapse text-sm">
@@ -211,12 +250,15 @@ function InstancesView({ session }: { session: Session }) {
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={`${r.cluster}/${r.instance}`} className="border-b border-border/50">
+              <tr
+                key={`${r.cluster}/${r.instance}`}
+                className={`border-b border-border/50 ${historyKeys.has(`${r.cluster}/${r.instance}`) ? "opacity-60" : ""}`}
+              >
                 <td className="px-3 py-2.5">
                   <span className="flex items-center gap-2">
                     <StatusDot status={r.status} />
-                    <span className="text-xs text-muted-foreground">
-                      {r.status === "online" ? (r.busy ? "忙碌" : "在线") : "离线"}
+                    <span className="whitespace-nowrap text-xs text-muted-foreground">
+                      {r.status === "online" ? (r.busy ? "忙碌" : "在线") : offlineLabel(r, now)}
                     </span>
                   </span>
                 </td>
@@ -235,12 +277,30 @@ function InstancesView({ session }: { session: Session }) {
             {!rows.length && !loading && (
               <tr>
                 <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  暂无注册实例
+                  {groups.history.length
+                    ? `没有在线或 ${ACTIVE_INSTANCE_WINDOW_DAYS} 天内离线的实例，历史实例已折叠`
+                    : cluster
+                      ? "该集群暂无注册实例"
+                      : "暂无注册实例"}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+        {groups.history.length > 0 && (
+          <button
+            type="button"
+            aria-expanded={showHistory}
+            onClick={() => setShowHistory((v) => !v)}
+            className="mt-2 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <span aria-hidden>{showHistory ? "▾" : "▸"}</span>
+            {showHistory ? "收起" : "展开"}历史实例（{groups.history.length}）
+            <span className="text-muted-foreground/70">
+              · 离线超过 {ACTIVE_INSTANCE_WINDOW_DAYS} 天或没有心跳记录
+            </span>
+          </button>
+        )}
       </div>
     </div>
   )
@@ -313,9 +373,18 @@ function UsersView({ session }: { session: Session }) {
     }
   }
 
+  const userSummary = useMemo(() => summarizeUsers(rows), [rows])
+  // 已停用用户排到最后并淡化显示。
+  const displayRows = useMemo(() => sortUsersForDisplay(rows), [rows])
+
   return (
     <div>
-      <Toolbar title="用户" desc="管理可登录 gateway 的账号" onRefresh={load} loading={loading}>
+      <Toolbar
+        title={`用户（共 ${userSummary.total} · admin ${userSummary.admins}${userSummary.disabled ? ` · 已停用 ${userSummary.disabled}` : ""}）`}
+        desc="管理可登录 gateway 的账号"
+        onRefresh={load}
+        loading={loading}
+      >
         <button
           onClick={() => setShowCreate((v) => !v)}
           className="flex items-center gap-1.5 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
@@ -373,8 +442,8 @@ function UsersView({ session }: { session: Session }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((u) => (
-              <tr key={u.id} className="border-b border-border/50">
+            {displayRows.map((u) => (
+              <tr key={u.id} className={`border-b border-border/50 ${u.disabled ? "opacity-50" : ""}`}>
                 <td className="px-3 py-2.5 font-medium text-foreground">{u.name}</td>
                 <td className="px-3 py-2.5">
                   {u.is_admin ? (
@@ -665,6 +734,24 @@ function TokensView({ session }: { session: Session }) {
   const [name, setName] = useState("")
   const [busy, setBusy] = useState(false)
   const [created, setCreated] = useState("")
+  const [showRevoked, setShowRevoked] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
+  const [toggled, setToggled] = useState<ReadonlySet<string>>(() => new Set())
+
+  const groups = useMemo(
+    () => groupTokensByUser(rows, users, { now, showRevoked }),
+    [rows, users, now, showRevoked],
+  )
+  const revokedTotal = rows.filter((t) => t.revoked).length
+
+  function toggleGroup(key: string) {
+    setToggled((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -673,6 +760,7 @@ function TokensView({ session }: { session: Session }) {
       const [t, u] = await Promise.all([listTokens(session), listUsers(session)])
       setRows(t)
       setUsers(u)
+      setNow(Date.now())
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -718,10 +806,14 @@ function TokensView({ session }: { session: Session }) {
     <div>
       <Toolbar
         title="令牌"
-        desc="用户访问令牌"
+        desc={`用户访问令牌 · ${groups.length} 个用户 · 共 ${rows.length} 个，已撤销 ${revokedTotal} 个`}
         onRefresh={load}
         loading={loading}
       >
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <input type="checkbox" checked={showRevoked} onChange={(e) => setShowRevoked(e.target.checked)} />
+          显示已撤销（{revokedTotal}）
+        </label>
         <button
           onClick={() => {
             setShowCreate((v) => !v)
@@ -779,57 +871,86 @@ function TokensView({ session }: { session: Session }) {
         <table className="w-full min-w-[900px] border-collapse text-sm">
           <thead>
             <tr className="border-b text-left text-xs text-muted-foreground">
-              <th className="px-3 py-2 font-medium">类型</th>
-              <th className="px-3 py-2 font-medium">归属</th>
+              <th className="px-3 py-2 font-medium">备注名</th>
               <th className="px-3 py-2 font-medium">前缀</th>
               <th className="px-3 py-2 font-medium">状态</th>
               <th className="px-3 py-2 font-medium">创建时间</th>
+              <th className="px-3 py-2 font-medium">过期时间</th>
               <th className="px-3 py-2 font-medium text-right">操作</th>
             </tr>
           </thead>
-          <tbody>
-            {rows.map((t) => (
-              <tr key={t.id} className="border-b border-border/50">
-                <td className="px-3 py-2.5">
-                  <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                    user
-                  </span>
-                </td>
-                <td className="px-3 py-2.5 text-xs text-foreground">
-                  {t.user_name || t.user_id || "—"}
-                  {t.name ? <span className="text-muted-foreground"> · {t.name}</span> : null}
-                </td>
-                <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{t.prefix}…</td>
-                <td className="px-3 py-2.5">
-                  <span className={`text-xs ${t.revoked ? "text-destructive" : "text-success"}`}>
-                    {t.revoked ? "已撤销" : "有效"}
-                  </span>
-                </td>
-                <td className="px-3 py-2.5 text-xs text-muted-foreground">{fmtTime(t.created_at)}</td>
-                <td className="px-3 py-2.5">
-                  <div className="flex justify-end">
-                    {!t.revoked && (
-                      <button
-                        onClick={() => revoke(t.id)}
-                        className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-destructive transition-colors hover:bg-muted"
-                      >
-                        <BanIcon width={12} height={12} /> 撤销
-                      </button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {!rows.length && !loading && (
+          {groups.map((group) => {
+            const collapsed = isTokenGroupCollapsed(group, toggled)
+            return (
+              <tbody key={group.key || "unknown"}>
+                <tr className={`border-b bg-muted/40 ${group.userDisabled ? "opacity-60" : ""}`}>
+                  <td colSpan={6} className="px-3 py-2">
+                    <button
+                      type="button"
+                      aria-expanded={!collapsed}
+                      onClick={() => toggleGroup(group.key)}
+                      className="flex w-full items-center gap-2 text-left text-xs"
+                    >
+                      <span aria-hidden className="text-muted-foreground">{collapsed ? "▸" : "▾"}</span>
+                      <span className="font-medium text-foreground">{group.userName}</span>
+                      {group.userDisabled && <span className="text-warning">用户已停用</span>}
+                      <span className="text-muted-foreground">
+                        令牌 {group.total} 个 · 可用 {group.usable}
+                        {group.revoked > 0 ? ` · 已撤销 ${group.revoked}` : ""}
+                      </span>
+                    </button>
+                  </td>
+                </tr>
+                {!collapsed &&
+                  group.rows.map(({ token: t, state }) => (
+                    <tr key={t.id} className={`border-b border-border/50 ${state === "active" ? "" : "opacity-70"}`}>
+                      <td className="px-3 py-2.5 pl-8 text-xs text-foreground">{t.name || "—"}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{t.prefix}…</td>
+                      <td className="px-3 py-2.5">
+                        <span className={`whitespace-nowrap text-xs ${TOKEN_STATE_TONE[state]}`}>
+                          {TOKEN_STATE_LABELS[state]}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">{fmtTime(t.created_at)}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                        {gatewayTime(t.expires_at) === null ? "不过期" : fmtTime(t.expires_at)}
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <div className="flex justify-end">
+                          {!t.revoked && (
+                            <button
+                              onClick={() => revoke(t.id)}
+                              className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-destructive transition-colors hover:bg-muted"
+                            >
+                              <BanIcon width={12} height={12} /> 撤销
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            )
+          })}
+          {!groups.length && !loading && (
+            <tbody>
               <tr>
                 <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  暂无令牌
+                  {rows.length ? "没有未撤销的令牌，已撤销令牌已隐藏" : "暂无令牌"}
                 </td>
               </tr>
-            )}
-          </tbody>
+            </tbody>
+          )}
         </table>
       </div>
     </div>
   )
+}
+
+const TOKEN_STATE_TONE: Record<TokenState, string> = {
+  active: "text-success",
+  revoked: "text-destructive",
+  user_disabled: "text-warning",
+  user_missing: "text-warning",
+  expired: "text-muted-foreground",
 }

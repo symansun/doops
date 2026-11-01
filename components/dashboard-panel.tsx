@@ -10,6 +10,7 @@ import {
   type AuditSummary,
 } from "@/lib/client"
 import { listInstances } from "@/lib/admin"
+import { commandPreview, summarizeInstanceScope, type InstanceScope } from "@/lib/admin-views"
 import {
   ServerIcon,
   ActivityIcon,
@@ -39,12 +40,6 @@ type ClusterSummary = {
   queuedOps: number
 }
 
-type ManagedScope = {
-  total: number
-  online: number
-  offline: number
-}
-
 export function DashboardPanel({
   session,
   targets,
@@ -66,7 +61,7 @@ export function DashboardPanel({
 }) {
   const [audit, setAudit] = useState<AuditEvent[]>([])
   const [auditSummary, setAuditSummary] = useState<AuditSummary | null>(null)
-  const [managed, setManaged] = useState<ManagedScope | null>(null)
+  const [managed, setManaged] = useState<InstanceScope | null>(null)
   const [auditDenied, setAuditDenied] = useState(false)
   const [auditError, setAuditError] = useState("")
   const [managedError, setManagedError] = useState("")
@@ -107,13 +102,8 @@ export function DashboardPanel({
         } else if (!instancesResult.value) {
           setManaged(null)
         } else {
-          const instances = instancesResult.value
-          const online = instances.filter((row) => row.status === "online").length
-          setManaged({
-            total: instances.length,
-            online,
-            offline: instances.length - online,
-          })
+          // 离线超过 7 天的实例算历史，不计入纳管规模。
+          setManaged(summarizeInstanceScope(instancesResult.value, Date.now()))
         }
       })
     return () => {
@@ -129,7 +119,7 @@ export function DashboardPanel({
   const managedHint = managedError
     ? "实例状态不可用"
     : managed
-    ? `${managed.online} 在线 · ${managed.offline} 离线`
+    ? `活跃 ${managed.active}（在线 ${managed.online}）· 历史 ${managed.history}`
     : `${metrics.agentConnections} 台当前可见`
 
   const selectedCluster = selected
@@ -179,7 +169,7 @@ export function DashboardPanel({
               />
               <StatCard
                 label={managed ? "纳管机器" : "可见机器"}
-                value={managed?.total ?? metrics.agentConnections}
+                value={managed?.active ?? metrics.agentConnections}
                 icon={ServerIcon}
                 tone="primary"
                 hint={managedHint}
@@ -445,21 +435,49 @@ function RecentActivitySection({
           ) : null}
           <div className="flex flex-col divide-y">
             {audit.map((event) => (
-              <div key={event.id} className="flex items-center gap-2 py-2.5 text-sm">
-                <ActionBadge action={event.action} />
-                <span className="min-w-0 flex-1 truncate text-foreground">
-                  {event.command_summary || event.action || "操作"}
-                </span>
-                <span className="hidden shrink-0 font-mono text-xs text-muted-foreground sm:inline">
-                  {event.instance || ""}
-                </span>
-                <StatusTag status={event.status} />
-              </div>
+              <RecentActivityRow key={event.id} event={event} />
             ))}
           </div>
         </>
       )}
     </section>
+  )
+}
+
+// 命令摘要只显示一行；超长或含 base64 时悬停看完整内容，点击展开。
+function RecentActivityRow({ event }: { event: AuditEvent }) {
+  const [expanded, setExpanded] = useState(false)
+  const preview = commandPreview(event.command_summary || event.action || "操作")
+  return (
+    <div className="py-2.5 text-sm">
+      <div className="flex items-center gap-2">
+        <ActionBadge action={event.action} />
+        {preview.shortened ? (
+          <button
+            type="button"
+            title={preview.title}
+            aria-expanded={expanded}
+            onClick={() => setExpanded((v) => !v)}
+            className="min-w-0 flex-1 truncate text-left text-foreground hover:underline"
+          >
+            {preview.text}
+          </button>
+        ) : (
+          <span title={preview.full} className="min-w-0 flex-1 truncate text-foreground">
+            {preview.text}
+          </span>
+        )}
+        <span className="hidden shrink-0 font-mono text-xs text-muted-foreground sm:inline">
+          {event.instance || ""}
+        </span>
+        <StatusTag status={event.status} />
+      </div>
+      {expanded && (
+        <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted/60 px-3 py-2 font-mono text-xs text-muted-foreground">
+          {preview.full}
+        </pre>
+      )}
+    </div>
   )
 }
 
