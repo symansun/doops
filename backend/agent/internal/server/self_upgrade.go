@@ -1152,12 +1152,14 @@ const (
 	selfUpgradeCategoryRollbackBaselineUnavailable = "rollback_baseline_image_unavailable"
 	selfUpgradeCategoryRollbackBaselineUnresolved  = "rollback_baseline_image_unresolved"
 	selfUpgradeCategoryRollbackBaselineProbeFailed = "rollback_baseline_probe_failed"
+	selfUpgradeCategoryStaleVolumeMountsUnresolved = "stale_volume_mounts_unresolved"
 )
 
 var selfUpgradeFailureCategories = []string{
 	selfUpgradeCategoryRollbackBaselineUnavailable,
 	selfUpgradeCategoryRollbackBaselineUnresolved,
 	selfUpgradeCategoryRollbackBaselineProbeFailed,
+	selfUpgradeCategoryStaleVolumeMountsUnresolved,
 }
 
 // selfUpgradeFailureCategory reports the stable category a failed upgrade Job
@@ -1312,10 +1314,14 @@ tag="${DOOPS_UPGRADE_TAG:-}"
 digest="${DOOPS_UPGRADE_DIGEST:-}"
 target="$DOOPS_UPGRADE_IMAGE"
 chart=` + selfUpgradeChartPath + `
-previous_image="$(python3 - "$ns" "$workload" <<'PY'
+live_deployment="${TMPDIR:-/tmp}/doops-upgrade-live-deployment.json"
+previous_image="$(python3 - "$ns" "$workload" "$live_deployment" <<'PY'
 import json, subprocess, sys
-ns, workload = sys.argv[1:3]
-doc = json.loads(subprocess.check_output(["kubectl", "-n", ns, "get", "deployment", workload, "-o", "json"]))
+ns, workload, live_path = sys.argv[1:4]
+raw = subprocess.check_output(["kubectl", "-n", ns, "get", "deployment", workload, "-o", "json"])
+with open(live_path, "wb") as fh:
+    fh.write(raw)
+doc = json.loads(raw)
 containers = ((doc.get("spec") or {}).get("template") or {}).get("spec", {}).get("containers") or []
 actual_image = next(
     (container.get("image") for container in containers
@@ -1383,6 +1389,133 @@ values.setdefault("workload", {})["selectorLabels"] = json.loads(selector_json)
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(values, fh)
 PY
+` + selfUpgradeStaleVolumeMounts
+
+// selfUpgradeStaleVolumeMounts finds the volume mounts the Helm upgrade would
+// leave pointing at a volume it deletes.
+//
+// Helm removes only what its own previous revision rendered. A volume the
+// previous revision rendered and the new chart drops is deleted, but a mount of
+// that volume added outside Helm (for example by the kubectl apply that first
+// created the Agent) is not Helm's to remove. The API server then rejects the
+// Deployment, because a mount names a volume that no longer exists.
+//
+// Only mounts of exactly those volumes are stale: a volume the previous
+// revision never rendered is not Helm's either, so Helm keeps it and its mount
+// stays valid. The check reads the Deployment snapshot the other checks
+// already took and changes nothing; the apply Job removes the mounts it lists,
+// after backing them up, and restores them if the upgrade is rolled back.
+const selfUpgradeStaleVolumeMounts = `rendered_manifest="${TMPDIR:-/tmp}/doops-upgrade-rendered.yaml"
+previous_manifest="${TMPDIR:-/tmp}/doops-upgrade-previous-manifest.yaml"
+stale_mounts="${TMPDIR:-/tmp}/doops-upgrade-stale-mounts.json"
+remove_mounts_patch="${TMPDIR:-/tmp}/doops-upgrade-remove-mounts.json"
+mount_backup="${TMPDIR:-/tmp}/doops-upgrade-mount-backup.json"
+helm template "$release" "$chart" -n "$ns" -f "$values" >"$rendered_manifest"
+helm get manifest "$release" -n "$ns" --revision "$previous" >"$previous_manifest"
+python3 - "$ns" "$release" "$workload" "$previous" "$rendered_manifest" "$previous_manifest" "$live_deployment" "$stale_mounts" "$remove_mounts_patch" "$mount_backup" <<'PY'
+import json, os, sys, yaml
+
+(namespace, release, workload, revision, rendered_path, previous_path, live_path,
+ stale_path, patch_path, backup_path) = sys.argv[1:11]
+
+
+def deployment_volumes(path, label):
+    with open(path, encoding="utf-8") as fh:
+        docs = [doc for doc in yaml.safe_load_all(fh) if doc and doc.get("kind") == "Deployment"
+                and (doc.get("metadata") or {}).get("name") == workload]
+    if len(docs) != 1:
+        raise SystemExit("stale_volume_mounts_unresolved: the " + label + " must render exactly one " + workload + " Deployment")
+    pod = ((docs[0].get("spec") or {}).get("template") or {}).get("spec") or {}
+    return {volume.get("name") for volume in pod.get("volumes") or []}
+
+
+deleted = deployment_volumes(previous_path, "previous revision") - deployment_volumes(rendered_path, "new chart")
+with open(live_path, encoding="utf-8") as fh:
+    live_pod = ((json.load(fh).get("spec") or {}).get("template") or {}).get("spec") or {}
+
+stale = []
+for group in ("initContainers", "containers"):
+    for container_index, container in enumerate(live_pod.get(group) or []):
+        for mount_index, mount in enumerate(container.get("volumeMounts") or []):
+            if mount.get("name") in deleted:
+                stale.append({"group": group, "container": container.get("name"),
+                              "containerIndex": container_index, "mountIndex": mount_index, "mount": mount})
+
+for path in (stale_path, patch_path, backup_path):
+    if os.path.exists(path):
+        os.unlink(path)
+if not stale:
+    print("stale_volume_mounts=none")
+    raise SystemExit(0)
+
+# Each removal is guarded by a test of the container and mount it expects, so a
+# Deployment that changed since the snapshot rejects the whole patch instead of
+# losing a different mount. Removals run from the highest index down so earlier
+# indices stay valid.
+ops = []
+for item in stale:
+    base = "/spec/template/spec/%s/%d" % (item["group"], item["containerIndex"])
+    ops.append({"op": "test", "path": base + "/name", "value": item["container"]})
+    ops.append({"op": "test", "path": "%s/volumeMounts/%d/name" % (base, item["mountIndex"]),
+                "value": item["mount"].get("name")})
+for item in sorted(stale, key=lambda item: (item["group"], item["containerIndex"], -item["mountIndex"])):
+    ops.append({"op": "remove", "path": "/spec/template/spec/%s/%d/volumeMounts/%d"
+                % (item["group"], item["containerIndex"], item["mountIndex"])})
+
+with open(stale_path, "w", encoding="utf-8") as fh:
+    json.dump(stale, fh)
+with open(patch_path, "w", encoding="utf-8") as fh:
+    json.dump(ops, fh, separators=(",", ":"))
+with open(backup_path, "w", encoding="utf-8") as fh:
+    json.dump({"apiVersion": "v1", "kind": "ConfigMap",
+               "metadata": {"name": "doops-upgrade-mount-backup-" + release, "namespace": namespace},
+               "data": {"workload": workload, "revision": revision,
+                        "volumeMounts.json": json.dumps(stale, sort_keys=True)}}, fh)
+print("stale_volume_mounts=" + ",".join(
+    "%s:%s:%s" % (item["container"], item["mount"].get("name"), item["mount"].get("mountPath", ""))
+    for item in stale))
+PY
+`
+
+// selfUpgradeRestoreVolumeMounts puts back the stale mounts the apply Job
+// removed, once Helm has rolled the release back and the volume exists again.
+// It reads the live Deployment and adds only the mounts that are missing, so it
+// is safe to run whether or not the removal itself went through.
+const selfUpgradeRestoreVolumeMounts = `restore_volume_mounts() {
+  python3 - "$ns" "$workload" "$stale_mounts" <<'PY'
+import json, subprocess, sys
+
+namespace, workload, stale_path = sys.argv[1:4]
+with open(stale_path, encoding="utf-8") as fh:
+    stale = json.load(fh)
+live = json.loads(subprocess.check_output(
+    ["kubectl", "-n", namespace, "get", "deployment", workload, "-o", "json"], timeout=30,
+))
+pod = ((live.get("spec") or {}).get("template") or {}).get("spec") or {}
+ops = []
+for item in stale:
+    containers = pod.get(item["group"]) or []
+    index = next((i for i, container in enumerate(containers) if container.get("name") == item["container"]), None)
+    if index is None:
+        raise SystemExit("container " + str(item["container"]) + " is missing after the rollback")
+    mount = item["mount"]
+    mounts = containers[index].get("volumeMounts")
+    if any(m.get("name") == mount.get("name") and m.get("mountPath") == mount.get("mountPath") for m in mounts or []):
+        continue
+    base = "/spec/template/spec/%s/%d" % (item["group"], index)
+    ops.append({"op": "test", "path": base + "/name", "value": item["container"]})
+    if mounts is None:
+        ops.append({"op": "add", "path": base + "/volumeMounts", "value": [mount]})
+        containers[index]["volumeMounts"] = [mount]
+    else:
+        ops.append({"op": "add", "path": base + "/volumeMounts/-", "value": mount})
+        mounts.append(mount)
+if ops:
+    subprocess.run(["kubectl", "-n", namespace, "patch", "deployment", workload, "--type=json",
+                    "-p", json.dumps(ops, separators=(",", ":"))], check=True, timeout=60)
+print("volume_mounts_restored count=" + str(sum(1 for op in ops if op["op"] == "add")))
+PY
+}
 `
 
 // The preflight Job starts from the target image, so a successful start already
@@ -1396,11 +1529,15 @@ echo "preflight-passed image=${target}"
 const selfUpgradePullOnlyScript = `echo "preflight-passed image=${DOOPS_UPGRADE_IMAGE}"
 `
 
-const selfUpgradeApplyScript = selfUpgradeKubeconfigPrelude + selfUpgradeDeploymentVerifier + selfUpgradeApplyChecks + `mutated=false
+const selfUpgradeApplyScript = selfUpgradeKubeconfigPrelude + selfUpgradeDeploymentVerifier + selfUpgradeApplyChecks + selfUpgradeRestoreVolumeMounts + `mutated=false
 rollback_release() {
   echo "rolling back ${release} to ${previous}" >&2
   if ! helm rollback "$release" "$previous" -n "$ns" --timeout 300s --wait; then
     echo "Error: automatic rollback failed: Helm rollback command failed" >&2
+    return 1
+  fi
+  if [ -s "$stale_mounts" ] && ! restore_volume_mounts; then
+    echo "Error: automatic rollback failed: the removed volume mounts could not be restored" >&2
     return 1
   fi
   if ! kubectl -n "$ns" rollout status "deployment/${workload}" --timeout 300s; then
@@ -1426,7 +1563,16 @@ cleanup() {
 }
 trap cleanup EXIT
 helm upgrade "$release" "$chart" -n "$ns" -f "$values" --timeout 180s --wait=false --dry-run=server
+if [ -s "$stale_mounts" ]; then
+  # Back the mounts up in the cluster before the first change, so the evidence
+  # survives this Job even when the rollback cannot run.
+  kubectl -n "$ns" apply -f "$mount_backup"
+fi
 mutated=true
+if [ -s "$stale_mounts" ]; then
+  kubectl -n "$ns" patch deployment "$workload" --type=json -p "$(cat "$remove_mounts_patch")"
+  echo "stale_volume_mounts_removed workload=${workload}"
+fi
 helm upgrade "$release" "$chart" -n "$ns" -f "$values" --timeout 180s --wait=false
 deadline=$(( $(date +%s) + 600 ))
 while [ "$(date +%s)" -lt "$deadline" ]; do

@@ -440,6 +440,7 @@ func TestSelfUpgradeFailureCategoryIsReadFromTheJobLog(t *testing.T) {
 		{"unavailable", "rollback_baseline_image_unavailable: image=... reason=...", selfUpgradeCategoryRollbackBaselineUnavailable},
 		{"unresolved", "rollback_baseline_image_unresolved: ...", selfUpgradeCategoryRollbackBaselineUnresolved},
 		{"probe failed", "rollback_baseline_probe_failed: ...", selfUpgradeCategoryRollbackBaselineProbeFailed},
+		{"stale mounts unresolved", "stale_volume_mounts_unresolved: the new chart must render exactly one doops-agent Deployment", selfUpgradeCategoryStaleVolumeMountsUnresolved},
 		{"unrelated", "helm upgrade failed", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

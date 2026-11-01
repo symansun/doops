@@ -645,7 +645,19 @@ fi
 		"helm": `#!/bin/sh
 set -eu
 printf 'helm %s\n' "$*" >> "$CALL_LOG"
+# volumes_json turns "a,b" into [{"name":"a"},{"name":"b"}].
+volumes_json() {
+  out=""
+  for name in $(printf '%s' "$1" | tr ',' ' '); do
+    out="${out}${out:+,}{\"name\":\"${name}\"}"
+  done
+  printf '[%s]' "$out"
+}
 case "${1:-}" in
+  template)
+    if [ "${HELM_TEMPLATE_EMPTY:-0}" = "1" ]; then exit 0; fi
+    printf '{"kind":"Deployment","metadata":{"name":"doops-agent"},"spec":{"template":{"spec":{"containers":[{"name":"doops-agent","image":"%s"}],"volumes":%s}}}}\n' "$DOOPS_UPGRADE_IMAGE" "$(volumes_json "${RENDERED_VOLUMES:-}")"
+    ;;
   history)
     if [ -n "${HELM_HISTORY:-}" ]; then
       printf '%s\n' "$HELM_HISTORY"
@@ -658,7 +670,7 @@ case "${1:-}" in
       if [ -n "${REVISION_MANIFEST:-}" ]; then
         printf '%s\n' "$REVISION_MANIFEST"
       else
-        printf '{"kind":"Deployment","metadata":{"name":"doops-agent"},"spec":{"template":{"spec":{"containers":[{"name":"doops-agent","image":"%s"}]}}}}\n' "${OLD_IMAGE:-registry.example/doops:old}"
+        printf '{"kind":"Deployment","metadata":{"name":"doops-agent"},"spec":{"template":{"spec":{"containers":[{"name":"doops-agent","image":"%s"}],"volumes":%s}}}}\n' "${OLD_IMAGE:-registry.example/doops:old}" "$(volumes_json "${PREVIOUS_VOLUMES:-}")"
       fi
     else
       printf '%s\n' '{"image":{"repository":"registry.example/doops","tag":"old"},"workload":{"name":"doops-agent"}}'
@@ -698,6 +710,26 @@ case "$*" in
   *"apply -f -"*)
     if [ "${RECEIPT_FAIL:-0}" = "1" ]; then echo "verification receipt persistence failed" >&2; exit 17; fi
     cat >"$RECEIPT_FILE"
+    ;;
+  *"apply -f "*)
+    # The stale mount backup is applied from a file before the first change.
+    if [ "${MOUNT_BACKUP_FAIL:-0}" = "1" ]; then echo "mount backup persistence failed" >&2; exit 18; fi
+    file="$(printf '%s\n' "$*" | sed 's/.*apply -f //')"
+    cp "$file" "$CALL_LOG.mountbackup"
+    ;;
+  *"patch deployment"*)
+    # A remove patch takes the stale mounts out of the live Deployment; an add
+    # patch puts them back.
+    case "$*" in
+      *'"op":"remove"'*)
+        if [ "${REMOVE_PATCH_FAIL:-0}" = "1" ]; then echo "remove patch rejected" >&2; exit 22; fi
+        : >"$CALL_LOG.mounts-removed"
+        ;;
+      *'"op":"add"'*)
+        if [ "${RESTORE_PATCH_FAIL:-0}" = "1" ]; then echo "restore patch rejected" >&2; exit 23; fi
+        rm -f "$CALL_LOG.mounts-removed"
+        ;;
+    esac
     ;;
   *"get secret"*)
     case "${PULL_SECRET:-}" in
@@ -810,7 +842,15 @@ case "$*" in
     if [ -f "$ROLLBACK_MARKER" ] && [ "${ROLLBACK_VERIFY_FAIL:-0}" = "1" ]; then
       image="registry.example/doops@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     fi
-    printf '{"metadata":{"name":"doops-agent","generation":%s},"spec":{"replicas":%s,"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxUnavailable":0,"maxSurge":%s}},"selector":{"matchLabels":{"app":"doops"}},"template":{"spec":{"containers":[{"name":"sidecar","image":"registry.example/sidecar:old"},{"name":"doops-agent","image":"%s"}]}}},"status":{"observedGeneration":%s,"replicas":%s,"updatedReplicas":%s,"readyReplicas":%s,"availableReplicas":%s,"unavailableReplicas":%s}}\n' "$generation" "$replicas" "${MAX_SURGE:-1}" "$image" "$observed" "$status_replicas" "$updated" "$ready" "$available" "$unavailable"
+    # LIVE_MOUNTS is "name:path,name:path" on the doops-agent container; a
+    # remove patch takes them out until an add patch restores them.
+    mounts=""
+    if [ ! -f "$CALL_LOG.mounts-removed" ]; then
+      for item in $(printf '%s' "${LIVE_MOUNTS:-}" | tr ',' ' '); do
+        mounts="${mounts}${mounts:+,}{\"name\":\"${item%%:*}\",\"mountPath\":\"${item#*:}\"}"
+      done
+    fi
+    printf '{"metadata":{"name":"doops-agent","generation":%s},"spec":{"replicas":%s,"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxUnavailable":0,"maxSurge":%s}},"selector":{"matchLabels":{"app":"doops"}},"template":{"spec":{"containers":[{"name":"sidecar","image":"registry.example/sidecar:old"},{"name":"doops-agent","image":"%s","volumeMounts":[%s]}]}}},"status":{"observedGeneration":%s,"replicas":%s,"updatedReplicas":%s,"readyReplicas":%s,"availableReplicas":%s,"unavailableReplicas":%s}}\n' "$generation" "$replicas" "${MAX_SURGE:-1}" "$image" "$mounts" "$observed" "$status_replicas" "$updated" "$ready" "$available" "$unavailable"
     ;;
   *)
     echo "unexpected kubectl command: $*" >&2

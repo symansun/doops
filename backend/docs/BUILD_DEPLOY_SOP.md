@@ -338,6 +338,19 @@ Gateway 离线时该脚本不经 Gateway，完成后须用 `doops targets` 核�
 `doops-upgrade-verified-<release>` ConfigMap，手动回滚只使用有验收证据的历史 revision。
 旧 Agent 生成的是旧版 Job 脚本，新控制器要等 Agent 升级后才生效。
 
+Helm 只删除它上一个 revision 渲染过的内容。上一 revision 渲染过、新 Chart 不再渲染的卷
+会被删除，但 Helm 之外（例如首次 `kubectl apply` 建 Agent 时）加上的同名挂载不归 Helm 管，
+会留下来指向已删除的卷，API server 因此拒绝整个 Deployment
+（`volumeMounts[N].name: Not found`）。改动前检查用 `helm template` 渲染新 Chart，
+与 `helm get manifest --revision <previous>` 对比，列出 live Deployment 里挂载了这些
+被删卷的挂载（`stale_volume_mounts=...`）；Helm 从未渲染过的卷不在其列，挂载保持不动。
+预检只列出不改。apply Job 在第一次改动前先把这些挂载备份到
+`doops-upgrade-mount-backup-<release>` ConfigMap，再用带 `test` 守卫的 JSON patch 删除
+（Deployment 在快照之后变化时整个 patch 被拒绝），然后执行 Helm 升级。任一步失败时
+自动回滚：Helm rollback 恢复卷后，再把缺少的挂载加回去，最后照常校验回滚后的
+Deployment；挂载恢复失败按回滚失败报告，需要人工处理。新 Chart 渲染不出唯一的 Agent
+Deployment 时以 `stale_volume_mounts_unresolved` 失败，不做任何改动。
+
 ```bash
 bash scripts/release-managed-agent.sh \
   --target <configured-target> \
