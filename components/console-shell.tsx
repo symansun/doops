@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic"
 import type { AgentSessionRuntime } from "@agent-cloud/agent-ui"
-import { Database, Globe2 } from "lucide-react"
+import { Boxes, Database, Globe2 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { clearServerSession, fetchTargets, restoreServerSession, type Session, type Target } from "@/lib/client"
 import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
@@ -18,6 +18,7 @@ import { FilesPanel } from "./files-panel"
 import { KnowledgeBase } from "./knowledge-base"
 import { DatabasePanel } from "./database-panel"
 import { WebsitePanel } from "./website-panel"
+import { K8sPanel } from "./k8s-panel"
 import { AuditPanel } from "./audit-panel"
 import { CredentialPanel } from "./credential-panel"
 import { AdminConsole } from "./admin-console"
@@ -46,13 +47,14 @@ const AgentUiPanel = dynamic(() => import("./agent-ui-panel").then((module) => m
   loading: () => <div role="status" className="flex h-full items-center justify-center text-sm text-muted-foreground">正在加载 AI 助手...</div>,
 })
 
-type Tab = "overview" | "ask" | "database" | "website" | "files" | "kb" | "credentials" | "audit" | "terminal"
+type Tab = "overview" | "ask" | "database" | "website" | "k8s" | "files" | "kb" | "credentials" | "audit" | "terminal"
 
 const TABS: { id: Tab; label: string; icon: typeof TerminalIcon | typeof Database | typeof Globe2; secondary?: boolean }[] = [
   { id: "overview", label: "概览", icon: ActivityIcon },
   { id: "ask", label: "AI 助手", icon: SparkIcon },
   { id: "database", label: "数据库", icon: Database },
   { id: "website", label: "网站", icon: Globe2 },
+  { id: "k8s", label: "Kubernetes", icon: Boxes },
   { id: "files", label: "文件", icon: FileIcon },
   { id: "kb", label: "知识库", icon: FileTextIcon },
   { id: "credentials", label: "凭据", icon: KeyIcon },
@@ -421,6 +423,15 @@ export function ConsoleShell() {
                 {tab === "website" && (
                   <WebsitePanel
                     key={`website-${selected.key}-${sessionId}`}
+                    session={session}
+                    target={selected}
+                    sessionId={sessionId}
+                    onRunningChange={setSkillRunning}
+                  />
+                )}
+                {tab === "k8s" && (
+                  <K8sPanel
+                    key={`k8s-${selected.key}-${sessionId}`}
                     session={session}
                     target={selected}
                     sessionId={sessionId}

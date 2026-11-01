@@ -447,6 +447,11 @@ ServiceAccount 不开放。`helm values` 只返回 key 路径，因为 values �
 使用 target mutation lease。两类都只要求该 target 的 grant。版本发布不走这里，用
 `ask --apply`。
 
+Web 控制台的「Kubernetes」标签用同一个 `doops_k8s` 工具和同一组参数完成上述操作：选择操作、
+填写 kind/名称/资源/命名空间等字段后执行，输出与 CLI 相同。写操作（滚动重启、扩缩容、
+cordon/uncordon、删除 Pod）必须先勾选确认框，对应 CLI 的 `--confirm`；未勾选时不会发送请求，
+修改任何字段都会清除已勾选的确认。
+
 ## Development Credential Preflight
 
 需要 Git、Registry、Helm、TLS 或 API 凭据的项目，在仓库中提交 metadata-only 清单：

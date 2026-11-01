@@ -327,6 +327,66 @@ function shellOutput(cmd: string): string[] {
   return [`$ ${c}\n`, "(演示模式) 命令已在目标节点执行，返回示例输出。\n"]
 }
 
+// 演示 doops_k8s：按 operation 返回示例输出，不触达真实集群。
+function k8sOutput(args: Record<string, unknown>): string[] {
+  const ns = String(args.namespace || "apps")
+  const resource = String(args.resource || "deployment/api")
+  const name = String(args.name || "")
+  switch (args.operation) {
+    case "get":
+      if (/^nodes?$/.test(String(args.kind)))
+        return [
+          "NAME          STATUS   ROLES           AGE   VERSION\n",
+          "node-a       Ready    control-plane   92d   v1.30.4\n",
+          "node-b       Ready    <none>          92d   v1.30.4\n",
+        ]
+      return [
+        "NAME                   READY   STATUS    RESTARTS   AGE\n",
+        "api-7c9d8f6b5d-2xk4p   1/1     Running   0          3d\n",
+        "api-7c9d8f6b5d-q8mzn   1/1     Running   1          3d\n",
+        "worker-0               1/1     Running   0          5d\n",
+      ]
+    case "describe":
+      return [`Name:         ${name}\n`, `Namespace:    ${ns}\n`, "Status:       Running\n", "Events:       <none>\n"]
+    case "logs":
+      return [
+        `[演示] ${resource} 最近日志\n`,
+        "2026-11-01T08:00:01Z INFO  server listening on :8080\n",
+        "2026-11-01T08:00:05Z INFO  GET /healthz 200 1ms\n",
+      ]
+    case "events":
+      return [
+        "LAST SEEN   TYPE     REASON              OBJECT                     MESSAGE\n",
+        "2m          Normal   ScalingReplicaSet   deployment/api             Scaled up replica set api-7c9d8f6b5d to 2\n",
+      ]
+    case "top":
+      return args.kind === "nodes"
+        ? ["NAME     CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%\n", "node-a   412m         10%    5120Mi          32%\n"]
+        : ["NAME                   CPU(cores)   MEMORY(bytes)\n", "api-7c9d8f6b5d-2xk4p   12m          96Mi\n"]
+    case "rollout-status":
+      return [`deployment "${resource.split("/")[1]}" successfully rolled out\n`]
+    case "helm-list":
+      return [JSON.stringify([{ name: "api", namespace: ns, revision: "7", status: "deployed", chart: "api-1.8.2", app_version: "1.8.2" }]) + "\n"]
+    case "helm-history":
+      return [JSON.stringify([{ revision: 6, status: "superseded", chart: "api-1.8.1" }, { revision: 7, status: "deployed", chart: "api-1.8.2" }]) + "\n"]
+    case "helm-status":
+      return [JSON.stringify({ name, namespace: ns, info: { status: "deployed" }, version: 7 }) + "\n"]
+    case "helm-values":
+      return ["image.repository\n", "image.tag\n", "replicaCount\n", "resources.limits.cpu\n"]
+    case "rollout-restart":
+      return [`[演示] ${resource} restarted（未操作真实集群）\n`]
+    case "scale":
+      return [`[演示] ${resource} scaled to ${args.replicas}（未操作真实集群）\n`]
+    case "cordon":
+    case "uncordon":
+      return [`[演示] node/${name} ${args.operation}ed（未操作真实集群）\n`]
+    case "delete-pod":
+      return [`[演示] pod "${name}" deleted（未操作真实集群）\n`]
+    default:
+      return ["(演示模式) 已执行\n"]
+  }
+}
+
 export async function demoCallTool(
   opts: { tool: string; arguments: Record<string, unknown>; signal?: AbortSignal },
   onEvent: (ev: RpcEvent) => void,
@@ -337,6 +397,13 @@ export async function demoCallTool(
     const cmd = String(args.command || args.cmd || "")
     await emitChunks(shellOutput(cmd), onEvent, signal, 160)
     onEvent({ type: "result", result: { content: [{ type: "text", text: "exit code: 0" }] } })
+    onEvent({ type: "done" })
+    return
+  }
+
+  if (tool === "doops_k8s") {
+    await emitChunks(k8sOutput(args), onEvent, signal, 120)
+    onEvent({ type: "result", result: { content: [{ type: "text", text: "Kubernetes operation complete." }] } })
     onEvent({ type: "done" })
     return
   }
