@@ -444,6 +444,8 @@ export async function importCredentialFromSecret(
     body: JSON.stringify(body),
   })
   return stagedVersionMetadata(version, credentialID)
+}
+
 export interface CredentialBundleItem {
   credential_id: string
 }
