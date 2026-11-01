@@ -513,6 +513,8 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	admin("/v1/admin/users/disable", h.HandleAdminUserDisable)
 	admin("/v1/admin/grants", h.HandleAdminGrants)
 	admin("/v1/admin/instances", h.HandleAdminInstances)
+	admin("/v1/admin/instances/archive", h.HandleAdminInstanceArchive)
+	admin("/v1/admin/instances/unarchive", h.HandleAdminInstanceUnarchive)
 	admin("/v1/admin/proxy-routes", h.HandleAdminProxyRoutes)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
