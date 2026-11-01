@@ -20,6 +20,7 @@ import {
   type AdminInstance,
 } from "@/lib/admin"
 import { AdminConfigDispatch } from "./admin-config-dispatch"
+import { ProxyRoutesPanel } from "./proxy-routes-panel"
 import {
   ServerIcon,
   UsersIcon,
@@ -32,6 +33,7 @@ import {
   CheckIcon,
   CopyIcon,
   LayersIcon,
+  PlugIcon,
 } from "./icons"
 
 type AdminTab =
@@ -40,6 +42,7 @@ type AdminTab =
   | "users"
   | "grants"
   | "tokens"
+  | "proxy"
 
 const ADMIN_TABS: { id: AdminTab; label: string; icon: typeof ServerIcon }[] = [
   { id: "instances", label: "实例", icon: ServerIcon },
@@ -47,6 +50,7 @@ const ADMIN_TABS: { id: AdminTab; label: string; icon: typeof ServerIcon }[] = [
   { id: "users", label: "用户", icon: UsersIcon },
   { id: "grants", label: "权限", icon: ShieldIcon },
   { id: "tokens", label: "令牌", icon: KeyIcon },
+  { id: "proxy", label: "代理路由", icon: PlugIcon },
 ]
 
 function fmtTime(v?: string): string {
@@ -97,6 +101,7 @@ export function AdminConsole({
         {tab === "users" && <UsersView session={session} />}
         {tab === "grants" && <GrantsView session={session} />}
         {tab === "tokens" && <TokensView session={session} />}
+        {tab === "proxy" && <ProxyRoutesPanel session={session} />}
       </div>
     </div>
   )
