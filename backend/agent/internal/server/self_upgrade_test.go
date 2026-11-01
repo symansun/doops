@@ -585,6 +585,49 @@ func selfUpgradeFakeCommands() map[string]string {
 		"sleep": `#!/bin/sh
 exit 0
 `,
+		// skopeo answers with the registry's own wording, taken from the live
+		// docker.cnb.cool responses: a missing digest is "artifact ... not found",
+		// a refused credential is "unauthorized: requested access ... denied".
+		"skopeo": `#!/bin/sh
+set -eu
+printf 'skopeo %s\n' "$*" >> "$CALL_LOG"
+authfile=""
+previous=""
+for arg in "$@"; do
+  if [ "$previous" = "--authfile" ]; then authfile="$arg"; fi
+  previous="$arg"
+done
+if [ -n "$authfile" ]; then
+  stat -c '%a' "$authfile" 2>/dev/null >"$CALL_LOG.authmode" || stat -f '%Lp' "$authfile" >"$CALL_LOG.authmode"
+  cat "$authfile" >"$CALL_LOG.authfile"
+  printf '%s\n' "$authfile" >"$CALL_LOG.authpath"
+fi
+case "${SKOPEO_RESULT:-ok}" in
+  ok)
+    printf '{"schemaVersion":2}\n'
+    ;;
+  missing)
+    echo 'time="2026-11-01T01:22:58Z" level=fatal msg="Error parsing image name: reading manifest sha256:0000 in registry.example/doops: unknown: artifact doops@sha256:0000 not found"' >&2
+    exit 1
+    ;;
+  manifest-unknown)
+    echo 'level=fatal msg="reading manifest old in registry.example/doops: manifest unknown: manifest unknown"' >&2
+    exit 1
+    ;;
+  refused)
+    echo 'level=fatal msg="Error parsing image name: unable to retrieve auth token: invalid username/password: unauthorized: requested access to the resource is denied"' >&2
+    exit 1
+    ;;
+  refused-not-found)
+    echo 'level=fatal msg="reading manifest: unauthorized: repository not found or access denied"' >&2
+    exit 1
+    ;;
+  unreachable)
+    echo 'level=fatal msg="pinging container registry registry.example: Get \"https://registry.example/v2/\": dial tcp: i/o timeout"' >&2
+    exit 1
+    ;;
+esac
+`,
 		"date": `#!/bin/sh
 set -eu
 calls=0
@@ -656,29 +699,21 @@ case "$*" in
     if [ "${RECEIPT_FAIL:-0}" = "1" ]; then echo "verification receipt persistence failed" >&2; exit 17; fi
     cat >"$RECEIPT_FILE"
     ;;
-  *"create -f -"*)
-    cat >/dev/null
-    printf 'pod/probe created\n'
-    ;;
-  *"delete job doops-rollback-baseline"*)
-    ;;
-  *"get job doops-rollback-baseline"*)
-    if [ "${PROBE_JOB_FAILS:-0}" = "1" ]; then
-      printf '{"status":{"failed":1}}\n'
-    elif [ "${PROBE_PULL_FAILS:-0}" = "1" ]; then
-      # An unpullable image leaves the Job active: the Pod never starts, so the
-      # Job never reaches a terminal state either.
-      printf '{"status":{"active":1}}\n'
-    else
-      printf '{"status":{"succeeded":1}}\n'
-    fi
-    ;;
-  *"get pods -l app.kubernetes.io/name=doops-rollback-baseline-probe"*)
-    if [ "${PROBE_PULL_FAILS:-0}" = "1" ]; then
-      printf '{"items":[{"status":{"containerStatuses":[{"waiting":{"reason":"ImagePullBackOff"}}]}}]}\n'
-    else
-      printf '{"items":[]}\n'
-    fi
+  *"get secret"*)
+    case "${PULL_SECRET:-}" in
+      missing)
+        echo 'Error from server (NotFound): secrets "cnb-pull" not found' >&2
+        exit 1
+        ;;
+      opaque)
+        printf '{"type":"Opaque","data":{"token":"c3ludGhldGlj"}}\n'
+        ;;
+      *)
+        # {"auths":{"registry.example":{"auth":"<synthetic canary>"}}}
+        printf '{"type":"kubernetes.io/dockerconfigjson","data":{".dockerconfigjson":"%s"}}\n' \
+          "$(printf '{"auths":{"registry.example":{"auth":"%s"}}}' "$PULL_SECRET_CANARY" | base64 | tr -d '\n')"
+        ;;
+    esac
     ;;
   *"-o jsonpath="*)
     echo "jsonpath is forbidden in this test" >&2
@@ -721,7 +756,9 @@ case "$*" in
         digest) image_id="registry.example/doops@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" ;;
       esac
     fi
-    printf '{"items":[{"metadata":{"name":"agent-pod","uid":"%s"},"spec":{"nodeName":"%s","containers":[{"name":"doops-agent","image":"%s"}]},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"name":"doops-agent","ready":%s,"imageID":"%s"}]}}]}\n' "$uid" "${AGENT_NODE:-node-a}" "$image" "$ready" "$image_id"
+    pull_secrets=""
+    if [ -n "${PULL_SECRET:-}" ]; then pull_secrets=',"imagePullSecrets":[{"name":"cnb-pull"}]'; fi
+    printf '{"items":[{"metadata":{"name":"agent-pod","uid":"%s"},"spec":{"nodeName":"%s"%s,"containers":[{"name":"doops-agent","image":"%s"}]},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"name":"doops-agent","ready":%s,"imageID":"%s"}]}}]}\n' "$uid" "${AGENT_NODE:-node-a}" "$pull_secrets" "$image" "$ready" "$image_id"
     ;;
   *"get deployment"*)
     calls=0
