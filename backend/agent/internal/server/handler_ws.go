@@ -2505,6 +2505,13 @@ func subscribeDoagentSSEWithCollectorReady(
 					continue
 				}
 				if updateType == "agent_message" {
+					// agent_message usually repeats the buffered chunks as the whole
+					// reply. Forwarding both showed the same answer twice.
+					final, err := doagentAgentMessageText(sessionUpdate["content"])
+					if !structuredEvents && err == nil && pendingAgentMessage.Len() > 0 &&
+						strings.HasPrefix(final, pendingAgentMessage.String()) {
+						pendingAgentMessage.Reset()
+					}
 					flushPendingAgentMessage()
 				}
 				if updateType == "turn_finished" && pendingAgentMessage.Len() > 0 {
@@ -2624,14 +2631,10 @@ func doagentTurnFinishedError(update map[string]interface{}) error {
 // tool result, so this must be well above maxToolOutputBytes.
 const maxDoagentSSELineBytes = 8 * 1024 * 1024
 
-// sanitizeSecretText redacts and keeps only the last 1200 characters, which is
-// right for error text but silently drops the start of query results.
+// sanitizeSecretText redacts and keeps only the last 1200 bytes, cut on a rune
+// boundary. That is right for error text but drops the start of query results.
 func sanitizeSecretText(s string) string {
-	s = redactSecretText(s)
-	if len(s) > 1200 {
-		return s[len(s)-1200:]
-	}
-	return s
+	return utf8Tail(redactSecretText(s), 1200)
 }
 
 // redactSecretText redacts without truncating, for data that must stay complete.

@@ -942,10 +942,10 @@ func commandError(action string, out []byte, err error) error {
 
 func tailText(text string, limit int) string {
 	text = strings.TrimSpace(text)
-	if limit <= 0 || len(text) <= limit {
+	if limit <= 0 {
 		return text
 	}
-	return text[len(text)-limit:]
+	return utf8Tail(text, limit)
 }
 
 const selfUpgradeKubeconfigPrelude = `set -eu
