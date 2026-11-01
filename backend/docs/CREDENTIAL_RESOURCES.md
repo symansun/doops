@@ -63,6 +63,17 @@ target 视图只读取 target 接口，不并行请求 managed 列表或 version
 不能清空成功返回的目标凭据。该视图仅展示可用凭据与目标绑定，管理操作在 `我管理的`
 视图执行。查询接口只返回 metadata，不返回 payload。
 
+`我管理的` 视图中，`opaque` 和 `modelProvider` 凭据有 `从 Secret 导入` 入口，对应
+`credential configure --from-secret <name> --keys <k,...> [--key-map src=dst]` 的导入步骤，调用
+`POST /v1/credentials/<id>/import-secret`。表单只提交当前 target、namespace、Secret 名、键名列表和
+可选键映射（`modelProvider` 固定一个键并使用 `format=doagent_settings`，不允许映射）；浏览器端先做与
+Gateway 相同的格式校验，校验失败不发请求。值由 Agent 读取后经私有控制通道交给 Gateway 加密保存，
+响应只保留新 staged version 的 ID、状态和 digest。权限沿用 Gateway：需是资源 owner 或平台管理员，
+且对当前 target 有授权，否则返回 `credential_import_forbidden`。失败只显示稳定的 lower_snake 类别
+（见下文 `--from-secret` 边界中的类别列表）及中文说明，其它形态的错误正文一律替换为
+`credential_import_failed`，不展示上游原文。导入后仍需在页面上绑定目标、验证并激活，与 CLI 的
+后续阶段相同；页面不自动执行这些步骤。
+
 ## 开发凭据 Preflight
 
 开发项目可在 `.agent/doops-credentials.yaml` 声明需要使用的受管凭据引用：

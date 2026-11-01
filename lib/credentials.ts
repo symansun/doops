@@ -116,6 +116,14 @@ export async function listCredentials(
         state: "active",
         updated_at: "2026-07-17T08:00:00Z",
       },
+      {
+        id: "cred_demo_database",
+        name: "database-app",
+        scope: "personal",
+        type: "opaque",
+        state: "active",
+        updated_at: "2026-07-19T02:10:00Z",
+      },
     ]
     if (view === "managed") return managed.filter((credential) => credential.scope === "personal")
     return [
@@ -264,4 +272,176 @@ export async function revokeCredentialBinding(
 export async function revokeCredential(s: Session, credentialID: string): Promise<void> {
   if (s.demo) throw new Error("演示模式不执行凭据写操作")
   await request(s, `/${encodeURIComponent(credentialID)}/revoke`, { method: "POST" })
+}
+
+// Secret import submits references only: the Secret name, key names and key
+// mapping. Values travel Agent -> Gateway on the private control channel and
+// are never returned to the browser.
+export type SecretImportCredentialType = Extract<CredentialType, "opaque" | "modelProvider">
+
+export interface SecretImportInput {
+  namespace: string
+  secretName: string
+  keys: string
+  keyMap: string
+}
+
+export interface SecretImportRequest {
+  session_id: string
+  cluster: string
+  instance: string
+  namespace: string
+  secret_name: string
+  keys: string[]
+  key_map?: Record<string, string>
+  format?: "doagent_settings"
+}
+
+export class SecretImportValidationError extends Error {
+  readonly category: string
+
+  constructor(category: string, message: string) {
+    super(message)
+    this.category = category
+  }
+}
+
+export function canImportFromSecret(type: CredentialType): type is SecretImportCredentialType {
+  return type === "opaque" || type === "modelProvider"
+}
+
+const KUBERNETES_NAME = /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/
+const SECRET_KEY = /^[A-Za-z0-9._-]{1,253}$/
+const RUNTIME_KEY = /^[A-Za-z0-9_.:/-]{1,253}$/
+
+function invalid(category: string, message: string): never {
+  throw new SecretImportValidationError(category, message)
+}
+
+export function buildSecretImportRequest(
+  target: Target,
+  sessionID: string,
+  type: CredentialType,
+  input: SecretImportInput,
+): SecretImportRequest {
+  if (!canImportFromSecret(type)) {
+    invalid("credential_import_type_invalid", "只有 Opaque Secret 和 Model Provider 凭据支持从 Secret 导入")
+  }
+  const namespace = input.namespace.trim()
+  const secretName = input.secretName.trim()
+  if (!KUBERNETES_NAME.test(namespace)) invalid("credential_import_request_invalid", "命名空间必须是合法的 Kubernetes 名称")
+  if (!KUBERNETES_NAME.test(secretName)) invalid("credential_import_request_invalid", "Secret 名必须是合法的 Kubernetes 名称")
+  const keys = input.keys.split(",").map((key) => key.trim()).filter(Boolean)
+  if (!keys.length || keys.length > 64) invalid("credential_import_keys_invalid", "需要明确列出 1 到 64 个 Secret 键名")
+  const seen = new Set<string>()
+  for (const key of keys) {
+    if (!SECRET_KEY.test(key)) invalid("credential_import_keys_invalid", `键名 ${JSON.stringify(key)} 只能包含字母、数字、点、下划线和连字符`)
+    if (seen.has(key)) invalid("credential_import_keys_invalid", `键名 ${key} 重复`)
+    seen.add(key)
+  }
+  const keyMap: Record<string, string> = {}
+  const destinations = new Set<string>()
+  for (const entry of input.keyMap.split(",").map((value) => value.trim()).filter(Boolean)) {
+    const parts = entry.split("=")
+    const source = parts[0]?.trim() ?? ""
+    const destination = parts[1]?.trim() ?? ""
+    if (parts.length !== 2 || !source || !destination) {
+      invalid("credential_import_key_map_invalid", "键映射格式为 源键=运行时键，多个用逗号分隔")
+    }
+    if (!seen.has(source)) invalid("credential_import_key_map_invalid", `映射的源键 ${source} 必须出现在键名列表中`)
+    if (!RUNTIME_KEY.test(destination)) invalid("credential_import_key_map_invalid", `运行时键 ${JSON.stringify(destination)} 不合法`)
+    if (source in keyMap) invalid("credential_import_key_map_invalid", `源键 ${source} 重复映射`)
+    if (destinations.has(destination)) invalid("credential_import_key_map_invalid", `运行时键 ${destination} 重复`)
+    keyMap[source] = destination
+    destinations.add(destination)
+  }
+  // Output keys must stay unique once unmapped keys keep their source names.
+  const outputKeys = keys.map((key) => keyMap[key] ?? key)
+  if (new Set(outputKeys).size !== outputKeys.length) {
+    invalid("credential_import_key_map_invalid", "映射后的运行时键与未映射的键重名")
+  }
+  if (type === "modelProvider" && (keys.length !== 1 || destinations.size)) {
+    invalid("credential_import_format_invalid", "Model Provider 只能导入一个保存 doagent settings.json 的键，且不能映射")
+  }
+  const body: SecretImportRequest = {
+    session_id: sessionID,
+    cluster: target.cluster,
+    instance: target.instance,
+    namespace,
+    secret_name: secretName,
+    keys,
+  }
+  if (destinations.size) body.key_map = keyMap
+  if (type === "modelProvider") body.format = "doagent_settings"
+  return body
+}
+
+const SECRET_IMPORT_ERRORS: Record<string, string> = {
+  credential_import_forbidden: "无权导入：需要是该凭据的 owner 或平台管理员，且对当前目标有授权",
+  credential_import_request_invalid: "导入请求不合法，请检查命名空间、Secret 名和键名",
+  credential_import_keys_invalid: "键名不合法，或导入结果的键与请求不一致",
+  credential_import_key_map_invalid: "键映射不合法",
+  credential_import_format_invalid: "导入格式与凭据类型不匹配",
+  credential_import_type_invalid: "该凭据类型不支持从 Secret 导入",
+  credential_import_source_unavailable: "目标上找不到该 Secret，或 Agent 无权读取",
+  credential_import_source_type_invalid: "源 Secret 必须是 Opaque 类型",
+  credential_import_key_missing: "源 Secret 缺少所选键，或键值为空",
+  credential_import_connection_invalid: "连接串不合法",
+  credential_import_result_invalid: "Agent 返回的导入结果无效",
+  credential_import_agent_unsupported: "目标 Agent 版本过旧，不支持导入，请先升级 Agent",
+  credential_import_timeout: "导入超时",
+  credential_import_failed: "导入失败",
+  credential_audit_unavailable: "审计服务不可用，导入未执行",
+  credential_key_unavailable: "凭据加密密钥不可用，导入未执行",
+  credential_revoked: "凭据已吊销或不再可用",
+  credential_payload_invalid: "导入内容不符合该凭据类型的格式",
+  target_offline: "目标离线",
+  target_busy: "目标忙，请稍后重试",
+  target_queue_full: "目标队列已满，请稍后重试",
+  target_queue_timeout: "目标排队超时，请稍后重试",
+  operation_canceled: "操作已取消",
+}
+
+// Only stable lower_snake categories are shown. Anything else is replaced so
+// an unexpected upstream body can never put a value on screen.
+export function describeSecretImportError(err: unknown): string {
+  if (err instanceof SecretImportValidationError) return `${err.message}（${err.category}）`
+  const category = err instanceof Error ? err.message.trim() : ""
+  if (!/^[a-z0-9_]{1,80}$/.test(category)) return "导入失败（credential_import_failed）"
+  return `${SECRET_IMPORT_ERRORS[category] ?? "导入失败"}（${category}）`
+}
+
+function stagedVersionMetadata(value: unknown, credentialID: string): CredentialVersion {
+  const version = (value ?? {}) as Record<string, unknown>
+  if (typeof version.id !== "string" || !version.id || version.credential_id !== credentialID || version.state !== "staged") {
+    throw new Error("credential_import_result_invalid")
+  }
+  return {
+    id: version.id,
+    credential_id: credentialID,
+    payload_digest: typeof version.payload_digest === "string" ? version.payload_digest : "",
+    state: "staged",
+    ...(typeof version.created_at === "string" ? { created_at: version.created_at } : {}),
+  }
+}
+
+export async function importCredentialFromSecret(
+  s: Session,
+  credentialID: string,
+  body: SecretImportRequest,
+): Promise<CredentialVersion> {
+  if (s.demo) {
+    return {
+      id: `credver_demo_${body.secret_name.replace(/[^a-z0-9]/g, "")}`,
+      credential_id: credentialID,
+      payload_digest: `sha256:${"0".repeat(64)}`,
+      state: "staged",
+      created_at: new Date().toISOString(),
+    }
+  }
+  const version = await request<unknown>(s, `/${encodeURIComponent(credentialID)}/import-secret`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  })
+  return stagedVersionMetadata(version, credentialID)
 }
