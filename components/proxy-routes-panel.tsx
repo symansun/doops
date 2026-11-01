@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import type { Session } from "@/lib/client"
 import {
   listProxyRoutes,
@@ -12,10 +12,18 @@ import {
 } from "@/lib/admin"
 import {
   EMPTY_PROXY_ROUTE_FORM,
-  isPermissionError,
-  proxyRouteBody,
+  describeProxyRouteError,
+  planProxyRouteSave,
+  proxyRouteDeletePrompt,
   proxyRouteForm,
+  proxyRouteHostChangePrompt,
+  proxyRouteListState,
+  proxyRouteSavedNotice,
+  proxyRouteTargetStatus,
+  proxyRouteTargetWarning,
+  type ProxyRouteErrorView,
   type ProxyRouteForm,
+  type ProxyRouteTargetStatus,
 } from "@/lib/proxy-routes"
 import { RefreshIcon, PlusIcon, TrashIcon, BanIcon, CheckIcon } from "./icons"
 
@@ -26,33 +34,69 @@ function fmtTime(v?: string): string {
   return d.toLocaleString()
 }
 
+const TARGET_BADGE: Partial<Record<ProxyRouteTargetStatus, string>> = {
+  offline: "离线",
+  unregistered: "未注册",
+}
+
 // 网站代理路由：对应 CLI `doops admin proxy list/set/delete`，仅平台管理员可用。
 export function ProxyRoutesPanel({ session }: { session: Session }) {
   const [rows, setRows] = useState<ProxyRoute[]>([])
-  const [instances, setInstances] = useState<AdminInstance[]>([])
+  // null 表示实例列表不可用，此时不提示目标状态。
+  const [instances, setInstances] = useState<AdminInstance[] | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [forbidden, setForbidden] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const [blocked, setBlocked] = useState<ProxyRouteErrorView | null>(null)
   const [error, setError] = useState("")
+  const [notice, setNotice] = useState("")
   const [form, setForm] = useState<ProxyRouteForm | null>(null)
+  // 打开编辑时的路由快照；保存时拿它和最新列表做三方合并。
+  const [base, setBase] = useState<ProxyRoute | null>(null)
   const [busy, setBusy] = useState(false)
+  // 只采用最后一次列表请求的结果，避免慢的旧响应覆盖新数据。
+  const seq = useRef(0)
+
+  const showError = useCallback((view: ProxyRouteErrorView) => {
+    if (view.kind === "error") setError(view.message)
+    else setBlocked(view)
+  }, [])
+
+  // 读最新列表并刷新表格，失败返回 null。suffix 非空表示为修改操作取数，失败时总是提示。
+  const fetchRoutes = useCallback(
+    async (suffix = ""): Promise<ProxyRoute[] | null> => {
+      const id = ++seq.current
+      try {
+        const latest = await listProxyRoutes(session)
+        if (id === seq.current) {
+          setRows(latest)
+          setLoaded(true)
+          setFailed(false)
+          setBlocked(null)
+        }
+        return latest
+      } catch (e) {
+        if (id === seq.current || suffix) {
+          if (id === seq.current) setFailed(true)
+          const view = describeProxyRouteError(e, "load")
+          showError(suffix && view.kind === "error" ? { ...view, message: view.message + suffix } : view)
+        }
+        return null
+      }
+    },
+    [session, showError],
+  )
 
   const load = useCallback(async () => {
     setLoading(true)
-    setError("")
     try {
-      setRows(await listProxyRoutes(session))
-      setForbidden(false)
-      setLoaded(true)
-    } catch (e) {
-      if (isPermissionError(e)) setForbidden(true)
-      else setError(`加载代理路由失败：${(e as Error).message}`)
+      await fetchRoutes()
     } finally {
       setLoading(false)
     }
-    // 实例列表只用于目标下拉提示，失败不影响路由管理。
-    listInstances(session).then(setInstances, () => setInstances([]))
-  }, [session])
+    // 实例列表只用于目标提示，失败不影响路由管理。
+    listInstances(session).then(setInstances, () => setInstances(null))
+  }, [session, fetchRoutes])
 
   useEffect(() => {
     load()
@@ -62,21 +106,41 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
     setForm((f) => (f ? { ...f, ...change } : f))
   }
 
-  async function save(next: ProxyRouteForm) {
-    const body = proxyRouteBody(next)
-    if (!body.ok) {
-      setError(body.error)
-      return false
-    }
+  function closeForm() {
+    setForm(null)
+    setBase(null)
+  }
+
+  // 保存前重读列表：Gateway 的 upsert 没有版本校验，要在这里查重复域名和并发修改。
+  async function save(next: ProxyRouteForm, from: ProxyRoute | null): Promise<boolean> {
     setBusy(true)
     setError("")
+    setNotice("")
     try {
-      await setProxyRoute(session, body.value)
-      await load()
+      const latest = await fetchRoutes("；本次修改未保存")
+      if (!latest) return false
+      const plan = planProxyRouteSave(next, from, latest)
+      if (!plan.ok) {
+        if (plan.reason === "conflict") {
+          setBase(plan.latest)
+          setForm(plan.form)
+        }
+        setError(plan.error)
+        return false
+      }
+      if (plan.unchanged) {
+        setNotice("没有需要保存的修改（最新数据已是这些值）")
+        return true
+      }
+      if (plan.hostChange && !window.confirm(proxyRouteHostChangePrompt(plan.hostChange))) return false
+      const saved = await setProxyRoute(session, plan.body)
+      setNotice(proxyRouteSavedNotice(saved))
+      await fetchRoutes()
       return true
     } catch (e) {
-      if (isPermissionError(e)) setForbidden(true)
-      else setError(`保存失败：${(e as Error).message}`)
+      const view = describeProxyRouteError(e, "save")
+      showError(view)
+      if (view.reload) await fetchRoutes()
       return false
     } finally {
       setBusy(false)
@@ -84,33 +148,47 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
   }
 
   async function submit() {
-    if (form && (await save(form))) setForm(null)
+    if (form && (await save(form, base))) closeForm()
   }
 
   async function toggle(route: ProxyRoute) {
     const action = route.enabled ? "停用" : "启用"
     if (!window.confirm(`确认${action}域名 ${route.host} 的代理路由？`)) return
-    await save({ ...proxyRouteForm(route), enabled: !route.enabled })
+    await save({ ...proxyRouteForm(route), enabled: !route.enabled }, route)
   }
 
+  // 确认框按最新列表展示，避免按过期的域名确认后删掉别的内容。
   async function remove(route: ProxyRoute) {
-    if (!window.confirm(`确认删除域名 ${route.host} 的代理路由？删除后该域名的请求不再转发。`)) return
     setBusy(true)
     setError("")
+    setNotice("")
     try {
-      await deleteProxyRoute(session, route.id)
-      if (form?.id === route.id) setForm(null)
-      await load()
+      const latest = await fetchRoutes("；未执行删除")
+      if (!latest) return
+      const prompt = proxyRouteDeletePrompt(route, latest)
+      if (!prompt.ok) {
+        setError(prompt.error)
+        return
+      }
+      if (!window.confirm(prompt.value.message)) return
+      const target = prompt.value.route
+      await deleteProxyRoute(session, target.id)
+      if (form?.id === target.id) closeForm()
+      setNotice(`已删除域名 ${target.host} 的代理路由`)
+      await fetchRoutes()
     } catch (e) {
-      if (isPermissionError(e)) setForbidden(true)
-      else setError(`删除失败：${(e as Error).message}`)
+      const view = describeProxyRouteError(e, "delete")
+      showError(view)
+      if (view.reload) await fetchRoutes()
     } finally {
       setBusy(false)
     }
   }
 
+  const listState = proxyRouteListState({ loading, loaded, failed, count: rows.length })
   const targetKey = form ? `${form.cluster}/${form.instance}` : ""
-  const knownTarget = instances.some((i) => `${i.cluster}/${i.instance}` === targetKey)
+  const knownTarget = (instances || []).some((i) => `${i.cluster}/${i.instance}` === targetKey)
+  const targetWarning = form ? proxyRouteTargetWarning(form, proxyRouteTargetStatus(form, instances)) : ""
 
   return (
     <div>
@@ -122,20 +200,30 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {!forbidden && (
+          {!blocked && (
             <button
               onClick={() => {
                 setError("")
-                setForm(form && !form.id ? null : { ...EMPTY_PROXY_ROUTE_FORM })
+                setNotice("")
+                if (form && !form.id) closeForm()
+                else {
+                  setBase(null)
+                  setForm({ ...EMPTY_PROXY_ROUTE_FORM })
+                }
               }}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              disabled={busy}
+              className="flex items-center gap-1.5 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
             >
               <PlusIcon width={14} height={14} /> 新建路由
             </button>
           )}
           <button
-            onClick={load}
-            disabled={loading}
+            onClick={() => {
+              setError("")
+              setNotice("")
+              load()
+            }}
+            disabled={loading || busy}
             className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
           >
             <RefreshIcon width={14} height={14} className={loading ? "animate-spin" : ""} /> 刷新
@@ -148,10 +236,15 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
           {error}
         </div>
       )}
+      {notice && !blocked && (
+        <div className="mx-4 mt-3 rounded-lg border border-success/40 bg-success/10 px-3 py-2 text-xs text-foreground">
+          {notice}
+        </div>
+      )}
 
-      {forbidden ? (
+      {blocked ? (
         <div className="mx-4 mt-6 rounded-lg border bg-muted/40 px-4 py-8 text-center text-sm text-muted-foreground">
-          当前账号不是平台管理员，无权查看或修改代理路由。
+          {blocked.message}
         </div>
       ) : (
         <>
@@ -170,7 +263,7 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
                     placeholder="app.example.com"
                   />
                 </label>
-                {instances.length > 0 && (
+                {instances && instances.length > 0 && (
                   <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                     已注册实例
                     <select
@@ -227,6 +320,7 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
                   启用
                 </label>
               </div>
+              {targetWarning && <p className="text-xs text-warning">{targetWarning}</p>}
               <p className="text-xs text-muted-foreground">
                 域名只填主机名，不带协议、端口和路径；上游是该 Agent 所在网络可访问的 http(s) 地址，不能带账号密码、查询参数或锚点。
               </p>
@@ -239,7 +333,7 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
                   {busy ? "保存中…" : "保存"}
                 </button>
                 <button
-                  onClick={() => setForm(null)}
+                  onClick={closeForm}
                   disabled={busy}
                   className="rounded-lg border px-3 py-2 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-40"
                 >
@@ -262,57 +356,66 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} className="border-b border-border/50">
-                    <td className="px-3 py-2.5">
-                      <div className="font-medium text-foreground">{r.host}</div>
-                      <div className="font-mono text-[11px] text-muted-foreground">{r.id}</div>
-                    </td>
-                    <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
-                      {r.cluster}/{r.instance}
-                    </td>
-                    <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{r.upstream}</td>
-                    <td className="px-3 py-2.5">
-                      <span className={`text-xs ${r.enabled ? "text-success" : "text-muted-foreground"}`}>
-                        {r.enabled ? "启用" : "已停用"}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2.5 text-xs text-muted-foreground">{fmtTime(r.updated_at)}</td>
-                    <td className="px-3 py-2.5">
-                      <div className="flex justify-end gap-1.5">
-                        <button
-                          onClick={() => {
-                            setError("")
-                            setForm(proxyRouteForm(r))
-                          }}
-                          disabled={busy}
-                          className="rounded-md border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-40"
-                        >
-                          编辑
-                        </button>
-                        <button
-                          onClick={() => toggle(r)}
-                          disabled={busy}
-                          className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-40"
-                        >
-                          {r.enabled ? <BanIcon width={12} height={12} /> : <CheckIcon width={12} height={12} />}
-                          {r.enabled ? "停用" : "启用"}
-                        </button>
-                        <button
-                          onClick={() => remove(r)}
-                          disabled={busy}
-                          className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-destructive transition-colors hover:bg-muted disabled:opacity-40"
-                        >
-                          <TrashIcon width={12} height={12} /> 删除
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {!rows.length && (
+                {listState === "rows" &&
+                  rows.map((r) => {
+                    const badge = TARGET_BADGE[proxyRouteTargetStatus(r, instances)]
+                    return (
+                      <tr key={r.id} className="border-b border-border/50">
+                        <td className="px-3 py-2.5">
+                          <div className="font-medium text-foreground">{r.host}</div>
+                          <div className="font-mono text-[11px] text-muted-foreground">{r.id}</div>
+                        </td>
+                        <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
+                          {r.cluster}/{r.instance}
+                          {badge && <span className="ml-1.5 font-sans text-warning">（{badge}）</span>}
+                        </td>
+                        <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{r.upstream}</td>
+                        <td className="px-3 py-2.5">
+                          <span className={`text-xs ${r.enabled ? "text-success" : "text-muted-foreground"}`}>
+                            {r.enabled ? "启用" : "已停用"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2.5 text-xs text-muted-foreground">{fmtTime(r.updated_at)}</td>
+                        <td className="px-3 py-2.5">
+                          <div className="flex justify-end gap-1.5">
+                            <button
+                              onClick={() => {
+                                setError("")
+                                setNotice("")
+                                setBase(r)
+                                setForm(proxyRouteForm(r))
+                              }}
+                              disabled={busy}
+                              className="rounded-md border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-40"
+                            >
+                              编辑
+                            </button>
+                            <button
+                              onClick={() => toggle(r)}
+                              disabled={busy}
+                              className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-40"
+                            >
+                              {r.enabled ? <BanIcon width={12} height={12} /> : <CheckIcon width={12} height={12} />}
+                              {r.enabled ? "停用" : "启用"}
+                            </button>
+                            <button
+                              onClick={() => remove(r)}
+                              disabled={busy}
+                              className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-destructive transition-colors hover:bg-muted disabled:opacity-40"
+                            >
+                              <TrashIcon width={12} height={12} /> 删除
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                {listState !== "rows" && (
                   <tr>
                     <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                      {loading || !loaded ? (error ? "未能加载代理路由" : "加载中…") : "暂无代理路由"}
+                      {listState === "loading" && "加载中…"}
+                      {listState === "empty" && "暂无代理路由"}
+                      {listState === "error" && "未能加载代理路由，请点击刷新重试"}
                     </td>
                   </tr>
                 )}
