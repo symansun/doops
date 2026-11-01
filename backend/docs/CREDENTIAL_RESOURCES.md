@@ -63,6 +63,8 @@ target 视图只读取 target 接口，不并行请求 managed 列表或 version
 不能清空成功返回的目标凭据。该视图仅展示可用凭据与目标绑定，管理操作在 `我管理的`
 视图执行。查询接口只返回 metadata，不返回 payload。
 
+页头的 `凭据组` 入口用于创建和按名称查看 bundle，步骤和限制见 [Bundle](#bundle)。
+
 ## 开发凭据 Preflight
 
 开发项目可在 `.agent/doops-credentials.yaml` 声明需要使用的受管凭据引用：
@@ -521,7 +523,14 @@ doops credential bundle-get --target <target> --name release
 - `bundle-get` CLI 只输出 bundle 基本元数据，不输出 items。
 
 Web 控制台在「凭据」页的「凭据组」入口提供同样的创建和按名称查看，经 `/api/credential-bundles`
-代理到 Gateway `/v1/credential-bundles`：
+代理到 Gateway `/v1/credential-bundles`。操作步骤：
+
+1. 选中 target，打开「凭据」页，点页头的「凭据组」；
+2. 新建：切到「新建凭据组」，填写名称，选择归属（平台归属只有 platform admin 能创建成功），
+   勾选要放入的凭据，点「创建凭据组」；创建成功后页面切回查看并显示该 bundle；
+3. 查看：在「按名称查看」输入 bundle 名称，点「查看」或按回车。
+
+界面行为：
 
 - 创建时只能勾选当前账号「我管理的」有效凭据，请求体只含 name、scope 和 `credential_id` 列表；
   bundle 不包含凭据 payload，界面也没有 payload 输入框；

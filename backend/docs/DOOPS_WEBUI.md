@@ -26,6 +26,9 @@ and does not expose the token to React state, localStorage or copied examples.
 - Credential pages manage create, staged payload, target bindings, persisted version
   metadata, verify, promote, grant revocation and resource revocation. Payload
   input uses the credential endpoint only and never enters an AI task.
+  The `凭据组` button creates a credential bundle and looks one up by name; a
+  bundle holds credential IDs only. Steps and limits are in
+  [CREDENTIAL_RESOURCES.md](CREDENTIAL_RESOURCES.md#bundle).
 - The audit page exposes target/session/self/global scopes and action/status
   filters. Users can read their own history; global audit requires platform admin.
   Credential owners also see events that reference their credentials. Audit
