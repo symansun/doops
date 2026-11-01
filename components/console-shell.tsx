@@ -4,7 +4,7 @@ import dynamic from "next/dynamic"
 import type { AgentSessionRuntime } from "@agent-cloud/agent-ui"
 import { Boxes, Database, Globe2 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { clearServerSession, fetchTargets, restoreServerSession, type Session, type Target } from "@/lib/client"
+import { clearServerSession, fetchTargets, restoreServerSession, sessionIsAdmin, type Session, type Target } from "@/lib/client"
 import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
 import { isDemoAllowed } from "@/lib/demo-policy"
 import { DEMO_TOKEN } from "@/lib/demo"
@@ -113,9 +113,12 @@ export function ConsoleShell() {
       localStorage.removeItem(LEGACY_DEMO_KEY)
     }
     // 演示模式只允许本地开发通过 URL 显式开启，不持久化 mock 会话。
-    const wantsDemo = DEMO_ENABLED && new URLSearchParams(window.location.search).get("demo") === "1"
+    const params = new URLSearchParams(window.location.search)
+    const wantsDemo = DEMO_ENABLED && params.get("demo") === "1"
     if (wantsDemo) {
-      setSession({ gateway: "demo://local", token: DEMO_TOKEN, username: "演示用户", demo: true })
+      // ?demo=1&role=user 模拟普通用户界面，默认仍是管理员界面。
+      const demoAdmin = params.get("role") !== "user"
+      setSession({ gateway: "demo://local", token: DEMO_TOKEN, username: "演示用户", demo: true, isAdmin: demoAdmin })
       if (localStorage.getItem(ONBOARD_KEY) !== "1") setShowGuide(true)
       setAuthLoading(false)
       return
@@ -220,6 +223,9 @@ export function ConsoleShell() {
     return <ConnectScreen defaultGateway={defaultGateway} initialError={error} onConnected={handleConnected} />
   }
 
+  // 只控制管理入口是否显示；管理接口的权限仍由 Gateway 检查。
+  const isAdmin = sessionIsAdmin(session)
+
   return (
     <div className="flex h-dvh flex-col">
       <header className="flex shrink-0 items-center justify-between border-b bg-card px-4 py-2.5">
@@ -273,17 +279,19 @@ export function ConsoleShell() {
             >
               <GitIcon width={13} height={13} /> CI/CD
             </button>
-            <button
-              disabled={skillRunning}
-              onClick={() => setView("admin")}
-              className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                view === "admin"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <ShieldIcon width={13} height={13} /> 管理
-            </button>
+            {isAdmin && (
+              <button
+                disabled={skillRunning}
+                onClick={() => setView("admin")}
+                className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                  view === "admin"
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <ShieldIcon width={13} height={13} /> 管理
+              </button>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -310,7 +318,7 @@ export function ConsoleShell() {
       {showGuide && <OnboardingGuide onClose={closeGuide} />}
 
       {error && <div role="alert" className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>}
-      {view === "admin" ? (
+      {view === "admin" && isAdmin ? (
         <AdminConsole session={session} defaultTab={adminDefaultTab} />
       ) : view === "deploy" ? (
         <DeployView session={session} target={selected} sessionId={sessionId} onEnterConsole={() => { setView("console"); refresh() }} />
@@ -499,10 +507,10 @@ export function ConsoleShell() {
             sessionId={sessionId}
             codeWorkspace={codeWorkspace}
             active={view === "console" && tab === "ask"}
-            onConfigureModel={() => {
+            onConfigureModel={isAdmin ? () => {
               setAdminDefaultTab("config")
               setView("admin")
-            }}
+            } : undefined}
             onSessionChange={setSessionId}
           />
         </div>
