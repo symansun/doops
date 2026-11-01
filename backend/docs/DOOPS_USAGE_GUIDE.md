@@ -163,6 +163,10 @@ credentials are never accepted inline in the command arguments. `--source-authfi
 `--target-authfile` override that file when a target keeps its registry configuration somewhere
 else, and both may be omitted.
 
+Web 控制台的「镜像」标签提供同样的三项操作（构建、复制、Registry 同步）。表单字段与上面的
+CLI 参数一一对应，生成与 CLI 相同的 `doops_shell` 命令；authfile 只填目标上的路径，不接收凭据内容。
+每次执行前须勾选确认，结束后界面列出 Agent 输出中的 manifest digest。
+
 ## Basic Checks
 
 ```bash

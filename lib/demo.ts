@@ -274,6 +274,22 @@ function shellOutput(cmd: string): string[] {
     const dir = lsMatch[1] || lsMatch[2] || lsMatch[3] || "/"
     return demoListing(dir)
   }
+  if (/^set -eu\ncommand -v buildctl/.test(c)) {
+    return [
+      "#1 [internal] load build definition from Dockerfile\n",
+      "#5 exporting to image\n",
+      "#5 exporting manifest sha256:" + "4f".repeat(32) + " done\n",
+      "(演示模式) 未在真实目标上构建镜像。\n",
+    ]
+  }
+  if (/^set -eu\ncommand -v timeout/.test(c) && /skopeo/.test(c)) {
+    const synced = [...c.matchAll(/echo "([^"\s]+) manifest_digest=/g)].map((m) => m[1])
+    const lines = ["Getting image source signatures\n", "Copying blob sha256:" + "1a".repeat(32) + " done\n", "Writing manifest to image destination\n"]
+    if (synced.length) for (const ref of synced) lines.push(`${ref} manifest_digest=sha256:${"9e".repeat(32)}\n`)
+    else if (/manifest_digest=/.test(c)) lines.push(`manifest_digest=sha256:${"9e".repeat(32)}\n`)
+    lines.push("(演示模式) 未在真实 Registry 上复制镜像。\n")
+    return lines
+  }
   if (/find .* -printf/.test(c)) {
     return ["d\tartifacts\n", "f\tREADME.md\n", "f\toutput.md\n"]
   }
