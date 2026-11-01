@@ -311,8 +311,8 @@ export function canImportFromSecret(type: CredentialType): type is SecretImportC
 }
 
 const KUBERNETES_NAME = /^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$/
+const KUBERNETES_NAMESPACE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
 const SECRET_KEY = /^[A-Za-z0-9._-]{1,253}$/
-const RUNTIME_KEY = /^[A-Za-z0-9_.:/-]{1,253}$/
 
 function invalid(category: string, message: string): never {
   throw new SecretImportValidationError(category, message)
@@ -329,7 +329,7 @@ export function buildSecretImportRequest(
   }
   const namespace = input.namespace.trim()
   const secretName = input.secretName.trim()
-  if (!KUBERNETES_NAME.test(namespace)) invalid("credential_import_request_invalid", "命名空间必须是合法的 Kubernetes 名称")
+  if (!KUBERNETES_NAMESPACE.test(namespace)) invalid("credential_import_request_invalid", "命名空间必须是合法的 Kubernetes 名称")
   if (!KUBERNETES_NAME.test(secretName)) invalid("credential_import_request_invalid", "Secret 名必须是合法的 Kubernetes 名称")
   const keys = input.keys.split(",").map((key) => key.trim()).filter(Boolean)
   if (!keys.length || keys.length > 64) invalid("credential_import_keys_invalid", "需要明确列出 1 到 64 个 Secret 键名")
@@ -349,7 +349,7 @@ export function buildSecretImportRequest(
       invalid("credential_import_key_map_invalid", "键映射格式为 源键=运行时键，多个用逗号分隔")
     }
     if (!seen.has(source)) invalid("credential_import_key_map_invalid", `映射的源键 ${source} 必须出现在键名列表中`)
-    if (!RUNTIME_KEY.test(destination)) invalid("credential_import_key_map_invalid", `运行时键 ${JSON.stringify(destination)} 不合法`)
+    if (!SECRET_KEY.test(destination)) invalid("credential_import_key_map_invalid", `运行时键 ${JSON.stringify(destination)} 不合法`)
     if (source in keyMap) invalid("credential_import_key_map_invalid", `源键 ${source} 重复映射`)
     if (destinations.has(destination)) invalid("credential_import_key_map_invalid", `运行时键 ${destination} 重复`)
     keyMap[source] = destination
@@ -377,52 +377,124 @@ export function buildSecretImportRequest(
 }
 
 const SECRET_IMPORT_ERRORS: Record<string, string> = {
-  credential_import_forbidden: "无权导入：需要是该凭据的 owner 或平台管理员，且对当前目标有授权",
-  credential_import_request_invalid: "导入请求不合法，请检查命名空间、Secret 名和键名",
-  credential_import_keys_invalid: "键名不合法，或导入结果的键与请求不一致",
-  credential_import_key_map_invalid: "键映射不合法",
-  credential_import_format_invalid: "导入格式与凭据类型不匹配",
-  credential_import_type_invalid: "该凭据类型不支持从 Secret 导入",
-  credential_import_source_unavailable: "目标上找不到该 Secret，或 Agent 无权读取",
-  credential_import_source_type_invalid: "源 Secret 必须是 Opaque 类型",
-  credential_import_key_missing: "源 Secret 缺少所选键，或键值为空",
-  credential_import_connection_invalid: "连接串不合法",
-  credential_import_result_invalid: "Agent 返回的导入结果无效",
-  credential_import_agent_unsupported: "目标 Agent 版本过旧，不支持导入，请先升级 Agent",
-  credential_import_timeout: "导入超时",
-  credential_import_failed: "导入失败",
-  credential_audit_unavailable: "审计服务不可用，导入未执行",
-  credential_key_unavailable: "凭据加密密钥不可用，导入未执行",
-  credential_revoked: "凭据已吊销或不再可用",
-  credential_payload_invalid: "导入内容不符合该凭据类型的格式",
-  target_offline: "目标离线",
-  target_busy: "目标忙，请稍后重试",
-  target_queue_full: "目标队列已满，请稍后重试",
-  target_queue_timeout: "目标排队超时，请稍后重试",
-  operation_canceled: "操作已取消",
+  credential_import_forbidden: "无权导入。请确认你是凭据 owner 或平台管理员，并且已获当前目标授权",
+  credential_import_request_invalid: "导入请求不合法。请检查命名空间、Secret 名和键名",
+  credential_import_keys_invalid: "键名不合法，或导入结果的键与请求不一致。请检查所选键",
+  credential_import_key_map_invalid: "键映射不合法。请使用 Kubernetes Secret 键名",
+  credential_import_format_invalid: "导入格式与凭据类型不匹配。请检查所选凭据类型和键",
+  credential_import_type_invalid: "该凭据类型不支持从 Secret 导入。请创建 Opaque Secret 或 Model Provider 凭据",
+  credential_import_source_unavailable: "目标上找不到该 Secret，或 Agent 无权读取。请检查命名空间、Secret 和 Agent RBAC",
+  credential_import_source_type_invalid: "源 Secret 必须是 Opaque 类型。请检查目标 Secret 类型",
+  credential_import_key_missing: "源 Secret 缺少所选键，或键值为空。请检查所选键",
+  credential_import_connection_invalid: "连接串不合法。请检查导入的键值格式",
+  credential_import_result_invalid: "Agent 返回的导入结果无效。请刷新后核验暂存版本",
+  credential_import_response_invalid: "Gateway 返回的导入结果无效。请刷新后核验暂存版本",
+  credential_import_agent_unsupported: "目标 Agent 版本过旧，不支持导入。请先升级 Agent",
+  credential_import_timeout: "导入超时。请确认目标 Agent 在线后重试",
+  credential_import_failed: "导入失败。请刷新后核验凭据版本状态",
+  credential_audit_unavailable: "凭据不存在或审计服务不可用，导入未执行。请确认凭据仍存在后重试",
+  credential_key_unavailable: "凭据加密密钥不可用，导入未执行。请联系平台管理员",
+  credential_revoked: "凭据已吊销或不再可用。请使用有效凭据",
+  credential_not_found: "凭据不存在。请刷新凭据列表后重试",
+  credential_payload_invalid: "导入内容不符合该凭据类型的格式。请检查 Secret 键值",
+  target_offline: "目标离线。请确认 Agent 已连接后重试",
+  target_busy: "目标忙。请等待当前操作结束后重试",
+  target_queue_full: "目标队列已满。请稍后重试",
+  target_queue_timeout: "目标排队超时。请稍后重试",
+  operation_canceled: "操作已取消。请刷新后核验凭据状态",
 }
 
-// Only stable lower_snake categories are shown. Anything else is replaced so
-// an unexpected upstream body can never put a value on screen.
+class CredentialImportRequestError extends Error {
+  readonly status: number
+  readonly category: string
+  readonly kind: "gateway_auth" | "no_session" | "unreachable" | "policy" | "unknown"
+
+  constructor(
+    status: number,
+    category: string,
+    kind: "gateway_auth" | "no_session" | "unreachable" | "policy" | "unknown" = "unknown",
+  ) {
+    super("credential_import_request_failed")
+    this.status = status
+    this.category = category
+    this.kind = kind
+  }
+}
+
+function importError(status: number, raw: unknown): CredentialImportRequestError {
+  const text = typeof raw === "string" ? raw.trim() : ""
+  if (/^[a-z0-9_]{1,80}$/.test(text)) return new CredentialImportRequestError(status, text)
+  if (text === "operation canceled") return new CredentialImportRequestError(status, "operation_canceled")
+  if (text === "未建立 Gateway 会话") return new CredentialImportRequestError(status, "", "no_session")
+  if (text.startsWith("无法连接 gateway:")) return new CredentialImportRequestError(status, "", "unreachable")
+  if (text === "该 gateway 未获控制台授权") return new CredentialImportRequestError(status, "", "policy")
+  try {
+    const value = JSON.parse(text) as Record<string, unknown>
+    if (value?.code === "gateway_auth_failed") return new CredentialImportRequestError(status, "gateway_auth_failed", "gateway_auth")
+  } catch {
+    // The raw error remains deliberately undisclosed.
+  }
+  return new CredentialImportRequestError(status, "", "unknown")
+}
+
+// Only known categories, HTTP status, and console-owned connection outcomes are
+// shown. Gateway/Agent text can contain Secret values and is never displayed.
 export function describeSecretImportError(err: unknown): string {
   if (err instanceof SecretImportValidationError) return `${err.message}（${err.category}）`
-  const category = err instanceof Error ? err.message.trim() : ""
-  if (!/^[a-z0-9_]{1,80}$/.test(category)) return "导入失败（credential_import_failed）"
-  return `${SECRET_IMPORT_ERRORS[category] ?? "导入失败"}（${category}）`
+  if (err instanceof CredentialImportRequestError) {
+    if (err.kind === "gateway_auth") return "Gateway 会话已失效。请重新登录（gateway_auth_failed）"
+    if (err.category) return `${SECRET_IMPORT_ERRORS[err.category] ?? "导入失败"}（${err.category}）`
+    switch (err.kind) {
+      case "no_session": return `未建立 Gateway 会话。请重新连接（HTTP ${err.status}）`
+      case "unreachable": return `无法连接 Gateway。请检查网络和目标地址（HTTP ${err.status}）`
+      case "policy": return `控制台拒绝该 Gateway。请联系管理员配置授权（HTTP ${err.status}）`
+      default: return `无法识别的 Gateway 响应。请刷新或联系管理员（HTTP ${err.status}）`
+    }
+  }
+  return "导入失败。请刷新后核验凭据版本状态（credential_import_failed）"
+}
+
+function validRFC3339(value: unknown): value is string {
+  return typeof value === "string" && !Number.isNaN(new Date(value).getTime())
 }
 
 function stagedVersionMetadata(value: unknown, credentialID: string): CredentialVersion {
-  const version = (value ?? {}) as Record<string, unknown>
-  if (typeof version.id !== "string" || !version.id || version.credential_id !== credentialID || version.state !== "staged") {
-    throw new Error("credential_import_result_invalid")
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new SecretImportValidationError("credential_import_response_invalid", "Gateway 返回的导入结果无效，请刷新后核验暂存版本")
+  }
+  const version = value as Record<string, unknown>
+  const id = typeof version.id === "string" ? version.id : ""
+  const digest = typeof version.payload_digest === "string" ? version.payload_digest : ""
+  if (!/^credver_[A-Za-z0-9_-]{1,120}$/.test(id) || version.credential_id !== credentialID || version.state !== "staged" ||
+    !/^(?:sha256:)?[a-f0-9]{64}$/.test(digest)) {
+    throw new SecretImportValidationError("credential_import_response_invalid", "Gateway 返回的导入结果无效，请刷新后核验暂存版本")
   }
   return {
-    id: version.id,
+    id,
     credential_id: credentialID,
-    payload_digest: typeof version.payload_digest === "string" ? version.payload_digest : "",
+    payload_digest: digest,
     state: "staged",
-    ...(typeof version.created_at === "string" ? { created_at: version.created_at } : {}),
+    ...(validRFC3339(version.created_at) ? { created_at: version.created_at } : {}),
   }
+}
+
+async function importSecretRequest(s: Session, path: string, init: RequestInit): Promise<unknown> {
+  const res = await fetch(`/api/credentials${path}`, { ...init, headers: headers(s) })
+  const text = await res.text()
+  let data: unknown
+  try {
+    data = text ? JSON.parse(text) : {}
+  } catch {
+    if (res.ok) {
+      throw new SecretImportValidationError("credential_import_response_invalid", "Gateway 返回的导入结果无效，请刷新后核验暂存版本")
+    }
+    throw importError(res.status, text)
+  }
+  if (!res.ok) {
+    const raw = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>).error : ""
+    throw importError(res.status, raw)
+  }
+  return data
 }
 
 export async function importCredentialFromSecret(
@@ -439,7 +511,7 @@ export async function importCredentialFromSecret(
       created_at: new Date().toISOString(),
     }
   }
-  const version = await request<unknown>(s, `/${encodeURIComponent(credentialID)}/import-secret`, {
+  const version = await importSecretRequest(s, `/${encodeURIComponent(credentialID)}/import-secret`, {
     method: "POST",
     body: JSON.stringify(body),
   })
@@ -471,43 +543,81 @@ const BUNDLE_ERROR_MESSAGES: Record<string, string> = {
   credential_reference_ambiguous: "存在同名的个人与平台凭据组，无法确定要查看哪一个",
   credential_forbidden: "无权限：只能把自己可管理的凭据放进凭据组，平台凭据组仅平台管理员可创建",
   Forbidden: "无权限：平台凭据组仅平台管理员可创建",
-  credential_audit_unavailable: "凭据审计或所含凭据不可用，Gateway 已拒绝本次操作",
+  credential_operation_failed: "凭据组名称可能已在该归属下使用。请更换同名凭据组或刷新后核验",
+  credential_audit_unavailable: "所选凭据不存在或凭据审计不可用，Gateway 已拒绝本次操作",
   credential_key_unavailable: "Gateway 密钥不可用，暂时无法处理凭据",
 }
 
-// Gateway errors are stable categories; anything else is replaced by a generic
-// message so unexpected response text is never shown in the console.
+// Gateway error bodies are untrusted. Only its documented categories and the
+// console's fixed transport outcomes enter a user-visible message.
 function bundleErrorMessage(status: number, raw: unknown): string {
-  const text = String(raw || "").trim()
-  if (BUNDLE_ERROR_MESSAGES[text]) return BUNDLE_ERROR_MESSAGES[text]
-  if (text === "未建立 Gateway 会话") return text
-  if (text.startsWith("无法连接 gateway")) return "无法连接 Gateway，请检查目标是否可用"
-  if (status === 401) return "Gateway 会话已失效，请重新登录"
-  if (status === 403) return "无权限执行该凭据组操作"
-  if (status === 404) return BUNDLE_ERROR_MESSAGES.credential_bundle_not_found
-  if (status === 400) return "Gateway 拒绝了凭据组请求：名称、归属或凭据列表无效"
-  if (status >= 500) return `Gateway 暂时不可用 (${status})`
-  return `凭据组请求失败 (${status})`
+  const text = typeof raw === "string" ? raw.trim() : ""
+  if (BUNDLE_ERROR_MESSAGES[text]) return `${BUNDLE_ERROR_MESSAGES[text]}（${text}）`
+  if (text === "未建立 Gateway 会话") return `未建立 Gateway 会话。请重新连接（HTTP ${status}）`
+  if (text.startsWith("无法连接 gateway:")) return `无法连接 Gateway。请检查网络和目标地址（HTTP ${status}）`
+  if (status === 401) return `Gateway 会话已失效，请重新登录（HTTP ${status}）`
+  if (status === 403) return `无权限执行该凭据组操作（HTTP ${status}）`
+  if (status === 404) return `${BUNDLE_ERROR_MESSAGES.credential_bundle_not_found}（HTTP ${status}）`
+  if (status === 400) return `Gateway 拒绝了凭据组请求：名称、归属或凭据列表无效（HTTP ${status}）`
+  if (status >= 500) return `Gateway 暂时不可用（HTTP ${status}）`
+  return `凭据组请求失败（HTTP ${status}）`
 }
 
-// Only metadata fields are kept; any other field in the response is dropped.
+const BUNDLE_ID = /^credbundle_[A-Za-z0-9_-]{1,120}$/
+const CREDENTIAL_ID = /^cred_[A-Za-z0-9_-]{1,120}$/
+const BUNDLE_STATE = /^(active|revoking|revoked)$/
+
+// Only expected metadata survives an API response. Reject a malformed whole
+// response so the UI never mixes validated rows with untrusted fields.
 function bundleMetadata(raw: unknown): CredentialBundle {
-  const value = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("凭据组响应格式无效")
+  const value = raw as Record<string, unknown>
   const id = typeof value.id === "string" ? value.id.trim() : ""
   if (!id) throw new Error("凭据组响应缺少 id")
-  const items = Array.isArray(value.items) ? value.items : []
+  if (!BUNDLE_ID.test(id) || typeof value.name !== "string" || !value.name.trim() ||
+    (value.scope !== "personal" && value.scope !== "platform") ||
+    typeof value.state !== "string" || !BUNDLE_STATE.test(value.state) || !Array.isArray(value.items)) {
+    throw new Error("凭据组响应格式无效")
+  }
+  const items: CredentialBundleItem[] = []
+  for (const item of value.items) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("凭据组响应格式无效")
+    const credentialID = (item as Record<string, unknown>).credential_id
+    if (typeof credentialID !== "string" || !CREDENTIAL_ID.test(credentialID)) {
+      throw new Error("凭据组响应格式无效")
+    }
+    items.push({ credential_id: credentialID })
+  }
   return {
     id,
-    name: String(value.name ?? ""),
-    scope: value.scope === "platform" ? "platform" : "personal",
-    state: String(value.state ?? ""),
-    ...(typeof value.created_at === "string" ? { created_at: value.created_at } : {}),
-    ...(typeof value.updated_at === "string" ? { updated_at: value.updated_at } : {}),
-    items: items
-      .map((item) => (item && typeof item === "object" ? (item as Record<string, unknown>).credential_id : ""))
-      .filter((credentialID): credentialID is string => typeof credentialID === "string" && credentialID !== "")
-      .map((credential_id) => ({ credential_id })),
+    name: value.name,
+    scope: value.scope,
+    state: value.state,
+    ...(validRFC3339(value.created_at) ? { created_at: value.created_at } : {}),
+    ...(validRFC3339(value.updated_at) ? { updated_at: value.updated_at } : {}),
+    items,
   }
+}
+
+export type CredentialBundleItemStatus = "active" | "revoking" | "revoked" | "unknown" | "unchecked"
+
+export function describeCredentialBundleItems(
+  bundle: CredentialBundle,
+  managed: CredentialResource[] | null,
+): Array<CredentialBundleItem & { name?: string; status: CredentialBundleItemStatus; label: string }> {
+  if (!managed) {
+    return bundle.items.map((item) => ({ ...item, status: "unchecked", label: "未检查" }))
+  }
+  const byID = new Map(managed.map((resource) => [resource.id, resource]))
+  return bundle.items.map((item) => {
+    const resource = byID.get(item.credential_id)
+    if (!resource) return { ...item, status: "unknown", label: "不在你可管理的凭据中" }
+    const status = resource.state === "active" || resource.state === "revoking" || resource.state === "revoked"
+      ? resource.state
+      : "unknown"
+    const label = status === "active" ? "有效" : status === "revoking" ? "吊销中" : status === "revoked" ? "已吊销" : "状态未知"
+    return { ...item, name: resource.name, status, label }
+  })
 }
 
 async function bundleRequest(query: string, init?: RequestInit): Promise<CredentialBundle> {
