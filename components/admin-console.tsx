@@ -35,6 +35,8 @@ import {
   createToken,
   revokeToken,
   listInstances,
+  archiveInstance,
+  unarchiveInstance,
   type AdminUser,
   type AdminGrant,
   type AdminToken,
@@ -188,6 +190,8 @@ function InstancesView({ session }: { session: Session }) {
   const [now, setNow] = useState(() => Date.now())
   const [cluster, setCluster] = useState("")
   const [showHistory, setShowHistory] = useState(false)
+  const [showArchived, setShowArchived] = useState(false)
+  const [busyKey, setBusyKey] = useState("")
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -210,14 +214,39 @@ function InstancesView({ session }: { session: Session }) {
   const groups = useMemo(() => groupInstances(all, now, cluster), [all, now, cluster])
   const scope = useMemo(() => summarizeInstanceScope(all, now), [all, now])
   const historyKeys = new Set(groups.history.map((r) => `${r.cluster}/${r.instance}`))
-  // 默认只显示在线和离线 7 天以内的实例；历史实例折叠，展开后排在活跃实例后面。
-  const rows = showHistory ? [...groups.active, ...groups.history] : groups.active
+  const archivedKeys = new Set(groups.archived.map((r) => `${r.cluster}/${r.instance}`))
+  // Default to active rows. Historical and archived records remain discoverable
+  // through separate explicit expanders so neither is mistaken for a live target.
+  const rows = [
+    ...groups.active,
+    ...(showHistory ? groups.history : []),
+    ...(showArchived ? groups.archived : []),
+  ]
+
+  async function changeArchive(row: AdminInstance) {
+    const action = row.archived ? "取消归档" : "归档"
+    if (!window.confirm(`确认${action}实例「${row.cluster}/${row.instance}」？归档不会删除授权、令牌、凭据绑定或审计记录。`)) {
+      return
+    }
+    const key = `${row.cluster}/${row.instance}`
+    setBusyKey(key)
+    setError("")
+    try {
+      if (row.archived) await unarchiveInstance(session, row)
+      else await archiveInstance(session, row)
+      await load()
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusyKey("")
+    }
+  }
 
   return (
     <div>
       <Toolbar
         title="实例"
-        desc={`在线 ${scope.online} · ${ACTIVE_INSTANCE_WINDOW_DAYS} 天内离线 ${scope.active - scope.online} · 历史 ${scope.history}（离线超过 ${ACTIVE_INSTANCE_WINDOW_DAYS} 天或没有心跳记录）`}
+        desc={`在线 ${scope.online} · ${ACTIVE_INSTANCE_WINDOW_DAYS} 天内离线 ${scope.active - scope.online} · 历史 ${scope.history} · 已归档 ${scope.archived}`}
         onRefresh={load}
         loading={loading}
       >
@@ -237,7 +266,7 @@ function InstancesView({ session }: { session: Session }) {
       </Toolbar>
       <ErrorBar msg={error} />
       <div className="overflow-x-auto p-4">
-        <table className="w-full min-w-[640px] border-collapse text-sm">
+        <table className="w-full min-w-[760px] border-collapse text-sm">
           <thead>
             <tr className="border-b text-left text-xs text-muted-foreground">
               <th className="px-3 py-2 font-medium">状态</th>
@@ -246,19 +275,20 @@ function InstancesView({ session }: { session: Session }) {
               <th className="px-3 py-2 font-medium">远端地址</th>
               <th className="px-3 py-2 font-medium">活动/排队</th>
               <th className="px-3 py-2 font-medium">最后心跳</th>
+              <th className="px-3 py-2 text-right font-medium">操作</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
               <tr
                 key={`${r.cluster}/${r.instance}`}
-                className={`border-b border-border/50 ${historyKeys.has(`${r.cluster}/${r.instance}`) ? "opacity-60" : ""}`}
+                className={`border-b border-border/50 ${historyKeys.has(`${r.cluster}/${r.instance}`) ? "opacity-60" : ""} ${archivedKeys.has(`${r.cluster}/${r.instance}`) ? "bg-muted/40 opacity-60" : ""}`}
               >
                 <td className="px-3 py-2.5">
                   <span className="flex items-center gap-2">
                     <StatusDot status={r.status} />
                     <span className="whitespace-nowrap text-xs text-muted-foreground">
-                      {r.status === "online" ? (r.busy ? "忙碌" : "在线") : offlineLabel(r, now)}
+                      {r.archived ? "已归档" : r.status === "online" ? (r.busy ? "忙碌" : "在线") : offlineLabel(r, now)}
                     </span>
                   </span>
                 </td>
@@ -272,13 +302,25 @@ function InstancesView({ session }: { session: Session }) {
                   <span className="text-muted-foreground"> / {r.queued_ops}</span>
                 </td>
                 <td className="px-3 py-2.5 text-xs text-muted-foreground">{fmtTime(r.last_seen)}</td>
+                <td className="px-3 py-2.5 text-right">
+                  {r.status !== "online" && (
+                    <button
+                      type="button"
+                      onClick={() => changeArchive(r)}
+                      disabled={busyKey === `${r.cluster}/${r.instance}`}
+                      className="rounded-md border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+                    >
+                      {busyKey === `${r.cluster}/${r.instance}` ? "处理中…" : r.archived ? "取消归档" : "归档"}
+                    </button>
+                  )}
+                </td>
               </tr>
             ))}
             {!rows.length && !loading && (
               <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  {groups.history.length
-                    ? `没有在线或 ${ACTIVE_INSTANCE_WINDOW_DAYS} 天内离线的实例，历史实例已折叠`
+                <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                  {groups.history.length || groups.archived.length
+                    ? `没有在线或 ${ACTIVE_INSTANCE_WINDOW_DAYS} 天内离线的实例；历史和已归档实例默认折叠`
                     : cluster
                       ? "该集群暂无注册实例"
                       : "暂无注册实例"}
@@ -287,20 +329,33 @@ function InstancesView({ session }: { session: Session }) {
             )}
           </tbody>
         </table>
-        {groups.history.length > 0 && (
-          <button
-            type="button"
-            aria-expanded={showHistory}
-            onClick={() => setShowHistory((v) => !v)}
-            className="mt-2 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            <span aria-hidden>{showHistory ? "▾" : "▸"}</span>
-            {showHistory ? "收起" : "展开"}历史实例（{groups.history.length}）
-            <span className="text-muted-foreground/70">
-              · 离线超过 {ACTIVE_INSTANCE_WINDOW_DAYS} 天或没有心跳记录
-            </span>
-          </button>
-        )}
+        <div className="mt-2 flex flex-wrap gap-1">
+          {groups.history.length > 0 && (
+            <button
+              type="button"
+              aria-expanded={showHistory}
+              onClick={() => setShowHistory((v) => !v)}
+              className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <span aria-hidden>{showHistory ? "▾" : "▸"}</span>
+              {showHistory ? "收起" : "展开"}历史实例（{groups.history.length}）
+              <span className="text-muted-foreground/70">
+                · 离线超过 {ACTIVE_INSTANCE_WINDOW_DAYS} 天或没有心跳记录
+              </span>
+            </button>
+          )}
+          {groups.archived.length > 0 && (
+            <button
+              type="button"
+              aria-expanded={showArchived}
+              onClick={() => setShowArchived((v) => !v)}
+              className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <span aria-hidden>{showArchived ? "▾" : "▸"}</span>
+              {showArchived ? "收起" : "显示"}已归档实例（{groups.archived.length}）
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )
