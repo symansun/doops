@@ -31,6 +31,7 @@ const (
 
 const (
 	cosErrCredentialMissing = "cos_credential_missing"
+	cosErrNotConfigured     = "cos_not_configured"
 	cosErrCredentialInvalid = "cos_credential_invalid"
 	cosErrBucketMismatch    = "cos_bucket_mismatch"
 	cosErrBucketUnavailable = "cos_bucket_unavailable"
@@ -416,14 +417,10 @@ type cosService struct {
 }
 
 func (s *cosService) Handle(ctx context.Context, call cosCall) (cosResult, error) {
-	call.Credential = strings.TrimSpace(call.Credential)
 	call.Operation = strings.TrimSpace(call.Operation)
 	call.Kind = strings.TrimSpace(call.Kind)
-	if call.Credential == "" {
-		return cosResult{}, cosFail(cosErrCredentialMissing)
-	}
 	if s.load == nil || s.open == nil {
-		return cosResult{}, cosFail(cosErrCredentialMissing)
+		return cosResult{}, cosFail(cosErrNotConfigured)
 	}
 	secret, err := s.load(call.ActorID, call.Credential, call.Cluster, call.Instance)
 	if err != nil {

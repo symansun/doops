@@ -130,8 +130,8 @@ func pushSnapshot(
 		if strings.TrimSpace(token) == "" {
 			return "", fmt.Errorf("gateway_auth_failed")
 		}
-		if strings.TrimSpace(credential) == "" || (!dryRun && transfer == nil) {
-			return "", fmt.Errorf("cos_credential_missing")
+		if !dryRun && transfer == nil {
+			return "", fmt.Errorf("cos_not_configured")
 		}
 		if !dryRun {
 			if err := transfer.Probe(); err != nil {

@@ -41,18 +41,19 @@ type cosTransfer interface {
 
 func normalizeStorageMode(value string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "gateway":
-		return "gateway", nil
-	case "cos":
+	case "", "cos":
 		return "cos", nil
+	case "gateway":
+		return "gateway", nil
 	default:
-		return "", fmt.Errorf("storage must be gateway or cos")
+		return "", fmt.Errorf("storage must be cos or gateway")
 	}
 }
 
 func cosCategories() []string {
 	return []string{
 		"gateway_auth_failed",
+		"cos_not_configured",
 		"cos_credential_missing",
 		"cos_credential_invalid",
 		"cos_bucket_mismatch",
@@ -84,28 +85,23 @@ func cosError(err error) error {
 }
 
 type gatewayCOS struct {
-	client     *MCPClient
-	credential string
+	client *MCPClient
 }
 
-func newGatewayCOS(server Server, token, session, credential string) (*gatewayCOS, error) {
+func newGatewayCOS(server Server, token, session string) (*gatewayCOS, error) {
 	if strings.TrimSpace(token) == "" {
 		return nil, fmt.Errorf("gateway_auth_failed")
 	}
-	if strings.TrimSpace(credential) == "" {
-		return nil, fmt.Errorf("cos_credential_missing")
-	}
 	client := NewMCPClient(server, NewSessionStore(), session, false)
 	client.Token = token
-	return &gatewayCOS{client: client, credential: credential}, nil
+	return &gatewayCOS{client: client}, nil
 }
 
 func (g *gatewayCOS) call(operation, kind, rel string, extra map[string]interface{}) (cosObjectResult, error) {
 	args := map[string]interface{}{
-		"operation":  operation,
-		"credential": g.credential,
-		"kind":       kind,
-		"path":       rel,
+		"operation": operation,
+		"kind":      kind,
+		"path":      rel,
 	}
 	for key, value := range extra {
 		args[key] = value
@@ -314,7 +310,7 @@ func uploadCOSSnapshot(root string, files []string, commit string, transfer cosT
 }
 
 func runCOSWrite(server Server, session, credential, token, relPath string, body []byte, transfer cosTransfer) (cosObjectResult, error) {
-	modeTransfer, closeTransfer, err := ensureCOSTransfer(server, session, credential, token, transfer)
+	modeTransfer, closeTransfer, err := ensureCOSTransfer(server, session, token, transfer)
 	if err != nil {
 		return cosObjectResult{}, err
 	}
@@ -342,7 +338,7 @@ func runCOSWrite(server Server, session, credential, token, relPath string, body
 }
 
 func runCOSRead(server Server, session, credential, token, relPath string, transfer cosTransfer) (cosObjectResult, error) {
-	modeTransfer, closeTransfer, err := ensureCOSTransfer(server, session, credential, token, transfer)
+	modeTransfer, closeTransfer, err := ensureCOSTransfer(server, session, token, transfer)
 	if err != nil {
 		return cosObjectResult{}, err
 	}
@@ -364,7 +360,7 @@ func pullCOS(server Server, dest, session, credential, token, commit string, tra
 	if err != nil {
 		return fmt.Errorf("解析目标路径失败: %v", err)
 	}
-	modeTransfer, closeTransfer, err := ensureCOSTransfer(server, session, credential, token, transfer)
+	modeTransfer, closeTransfer, err := ensureCOSTransfer(server, session, token, transfer)
 	if err != nil {
 		return err
 	}
@@ -413,17 +409,14 @@ func pullCOS(server Server, dest, session, credential, token, commit string, tra
 	return nil
 }
 
-func ensureCOSTransfer(server Server, session, credential, token string, transfer cosTransfer) (cosTransfer, func(), error) {
+func ensureCOSTransfer(server Server, session, token string, transfer cosTransfer) (cosTransfer, func(), error) {
 	if strings.TrimSpace(token) == "" {
 		return nil, func() {}, fmt.Errorf("gateway_auth_failed")
-	}
-	if strings.TrimSpace(credential) == "" {
-		return nil, func() {}, fmt.Errorf("cos_credential_missing")
 	}
 	if transfer != nil {
 		return transfer, func() {}, nil
 	}
-	client, err := newGatewayCOS(server, token, session, credential)
+	client, err := newGatewayCOS(server, token, session)
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -433,7 +426,7 @@ func ensureCOSTransfer(server Server, session, credential, token string, transfe
 func pushCOS(server Server, src, dest string, dryRun bool, session, credential, token string, transfer cosTransfer) (string, error) {
 	modeTransfer := transfer
 	if !dryRun && modeTransfer == nil {
-		client, err := newGatewayCOS(server, token, session, credential)
+		client, err := newGatewayCOS(server, token, session)
 		if err != nil {
 			return "", err
 		}
