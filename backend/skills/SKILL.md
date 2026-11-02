@@ -46,6 +46,10 @@ description: |
 - 业务 workload 的发布收敛只走 `ask --apply` 内的 `mcp_doops_helm`，不用 shell kubectl、
   `kubectl set image` 或文本声明冒充成功。运维类变更（重启、扩缩、cordon、删 Pod）用
   `doops k8s ... --confirm`，它不是发布入口。
+- 进入 Kubernetes Agent 所在节点只走 `doops exec` 里的 `nsenter`。`hostAccess.enabled`
+  默认打开；显式 `false` 才关闭。这是 Gateway 的普通 `exec`：目标 grant 决定能否执行，
+  审计记下用户、target、session 和完整命令。不要用 `kubectl exec`、`docker exec` 或直连
+  `42222` 绕过。`hostNetwork` 保持关闭，`/host` 只读。细节见 `docs/PHYSICAL_HOST_ACCESS.md`。
 - 嵌套 SSH 只用 `doops ssh` 的结构化入口，不拼进 `exec --cmd`。
 - 不用 base64、tar 或分片绕过 `push/pull`；大文件和二进制用 `pull`。
 - `read` / `write` / `push` / `pull` 默认走 COS。桶和密钥以 Gateway 配置为准，不使用 `--credential`。`--storage gateway` 才走原来的本地中转；COS 失败不回退。
@@ -67,6 +71,7 @@ description: |
 | :--- | :--- |
 | 本地 target / 在线检查 | `doops list`；`doops -session <s> targets --target <t>`；`doops sync --target <t>` |
 | 确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'` |
+| 进入 K8s Agent 所在节点 | `doops -session <s> exec --target <t> --cmd 'nsenter -t 1 -m -u -i -n -- hostname'`（`hostAccess.enabled` 默认 true；Gateway 按 `exec` 授权并审计） |
 | 长任务 | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` |
 | 嵌套 SSH | `doops -session <s> ssh --target <t> --host <user@host> -- <cmd> [args...]` |
 | 诊断分析 | `doops -session <s> ask --target <t> --msg '<task>'` |

@@ -28,7 +28,13 @@ spec:
 {{- end }}
       dnsPolicy: ClusterFirst
       hostNetwork: false
-      hostPID: false
+      {{- $hostAccess := .Values.hostAccess | default dict }}
+      {{- /* false is empty to sprig default, so an explicit false must be read with hasKey. */}}
+      {{- $enterNode := true }}
+      {{- if hasKey $hostAccess "enabled" }}
+      {{- $enterNode = index $hostAccess "enabled" }}
+      {{- end }}
+      hostPID: {{ $enterNode }}
       nodeSelector:
 {{ toYaml .Values.nodeSelector | indent 8 }}
 {{- with .Values.tolerations }}
@@ -77,14 +83,21 @@ spec:
             - name: api
               containerPort: 42222
               protocol: TCP
+          {{- /* hostPID makes pgrep see every agent on the node, so the
+                 single-process check would deadlock a rollout. The pod network
+                 namespace still isolates 127.0.0.1. */}}
           startupProbe:
             exec:
               command:
                 - /bin/sh
                 - -lc
                 - >-
+                  {{- if $enterNode }}
+                  curl -fsS --max-time 1 http://127.0.0.1:42222/health/live >/dev/null
+                  {{- else }}
                   test "$(pgrep -fc '^/app/doops-agent -listen( |$)' || true)" = "1"
                   && curl -fsS --max-time 1 http://127.0.0.1:42222/health/live >/dev/null
+                  {{- end }}
             failureThreshold: 40
             periodSeconds: 5
             timeoutSeconds: 2
@@ -94,8 +107,12 @@ spec:
                 - /bin/sh
                 - -lc
                 - >-
+                  {{- if $enterNode }}
+                  curl -fsS --max-time 1 http://127.0.0.1:42222/health/ready >/dev/null
+                  {{- else }}
                   test "$(pgrep -fc '^/app/doops-agent -listen( |$)' || true)" = "1"
                   && curl -fsS --max-time 1 http://127.0.0.1:42222/health/ready >/dev/null
+                  {{- end }}
             initialDelaySeconds: 5
             periodSeconds: 5
             timeoutSeconds: 2
@@ -105,8 +122,12 @@ spec:
                 - /bin/sh
                 - -lc
                 - >-
+                  {{- if $enterNode }}
+                  curl -fsS --max-time 1 http://127.0.0.1:42222/health/live >/dev/null
+                  {{- else }}
                   test "$(pgrep -fc '^/app/doops-agent -listen( |$)' || true)" = "1"
                   && curl -fsS --max-time 1 http://127.0.0.1:42222/health/live >/dev/null
+                  {{- end }}
             initialDelaySeconds: 15
             periodSeconds: 10
             timeoutSeconds: 2
@@ -132,7 +153,18 @@ spec:
 {{- with $mounts }}
 {{ toYaml . | nindent 12 }}
 {{- end }}
+{{- if $enterNode }}
+            - name: node-root
+              mountPath: /host
+              readOnly: true
+{{- end }}
       volumes:
 {{- with $volumes }}
 {{ toYaml . | nindent 8 }}
+{{- end }}
+{{- if $enterNode }}
+        - name: node-root
+          hostPath:
+            path: /
+            type: Directory
 {{- end }}

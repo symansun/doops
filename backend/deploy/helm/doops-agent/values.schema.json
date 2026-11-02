@@ -83,6 +83,15 @@
       "items": {
         "type": "object"
       }
+    },
+    "hostAccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
     }
   }
 }
