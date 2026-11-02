@@ -29,7 +29,11 @@ spec:
       dnsPolicy: ClusterFirst
       hostNetwork: false
       {{- $hostAccess := .Values.hostAccess | default dict }}
-      {{- $enterNode := index $hostAccess "enabled" | default false }}
+      {{- /* false is empty to sprig default, so an explicit false must be read with hasKey. */}}
+      {{- $enterNode := true }}
+      {{- if hasKey $hostAccess "enabled" }}
+      {{- $enterNode = index $hostAccess "enabled" }}
+      {{- end }}
       hostPID: {{ $enterNode }}
       nodeSelector:
 {{ toYaml .Values.nodeSelector | indent 8 }}
