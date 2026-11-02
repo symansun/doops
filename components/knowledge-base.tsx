@@ -42,7 +42,11 @@ export function KnowledgeBase({
   const [mode, setMode] = useState<Mode>("split")
   const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
-  const { confirm, prompt, dialog } = useAppDialog()
+  const nameRef = useRef<HTMLInputElement>(null)
+  const [draftName, setDraftName] = useState("")
+  const [naming, setNaming] = useState(false)
+  const [nameErr, setNameErr] = useState("")
+  const { confirm, dialog } = useAppDialog()
 
   const docPath = useCallback((name: string) => `${KB_ROOT}/${name}`, [])
 
@@ -156,22 +160,30 @@ export function KnowledgeBase({
     }
   }
 
-  async function newDoc() {
-    const entered = await prompt({
-      title: "新建文档",
-      message: "名称会自动补全 .md 后缀。",
-      label: "文档名称",
-      placeholder: "运行手册",
-      confirmLabel: "创建",
-    })
-    if (!entered) return
-    let name = entered
-    name = name.trim()
-    if (!/\.md$/i.test(name)) name += ".md"
-    if (!/^[^\\/\u0000]+\.md$/i.test(name) || name === ".md" || name.includes("..")) {
-      setListErr("文档名只能是单层 Markdown 文件名，不能包含路径")
+  function beginNewDoc() {
+    setNameErr("")
+    setNaming(true)
+    setTimeout(() => nameRef.current?.focus(), 0)
+  }
+
+  function cancelNewDoc() {
+    setNaming(false)
+    setDraftName("")
+    setNameErr("")
+  }
+
+  function createNamedDoc(raw: string) {
+    let name = raw.trim()
+    if (!name) {
+      setNameErr("请填写文档名称")
       return
     }
+    if (!/\.md$/i.test(name)) name += ".md"
+    if (!/^[^\\/\u0000]+\.md$/i.test(name) || name === ".md" || name.includes("..")) {
+      setNameErr("文档名只能是单层 Markdown 文件名，不能包含路径")
+      return
+    }
+    cancelNewDoc()
     if (docs.includes(name)) {
       openFile(name)
       return
@@ -183,6 +195,55 @@ export function KnowledgeBase({
     setStatus({ kind: "ok", text: "编辑后点击保存即可创建" })
     setTimeout(() => taRef.current?.focus(), 0)
   }
+
+  const newDocForm = (compact: boolean) => (
+    <form
+      className={compact ? "border-b p-2" : "flex w-full max-w-xs flex-col gap-2 text-left"}
+      onSubmit={(event) => {
+        event.preventDefault()
+        createNamedDoc(draftName)
+      }}
+    >
+      <label htmlFor="kb-new-doc" className="mb-1 block text-[11px] text-muted-foreground">
+        文档名称，自动补全 .md
+      </label>
+      <input
+        id="kb-new-doc"
+        ref={nameRef}
+        value={draftName}
+        onChange={(event) => {
+          setDraftName(event.target.value)
+          setNameErr("")
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && openDoc) {
+            event.preventDefault()
+            cancelNewDoc()
+          }
+        }}
+        placeholder="运行手册"
+        className="input w-full text-sm"
+      />
+      {nameErr && <p className="mt-1 text-[11px] text-destructive">{nameErr}</p>}
+      <div className={`flex justify-end gap-1.5 ${compact ? "mt-1.5" : ""}`}>
+        {openDoc && (
+          <button
+            type="button"
+            onClick={cancelNewDoc}
+            className="rounded-md border px-2.5 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            取消
+          </button>
+        )}
+        <button
+          type="submit"
+          className="flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:opacity-90"
+        >
+          <PlusIcon width={13} height={13} /> 创建
+        </button>
+      </div>
+    </form>
+  )
 
   async function deleteDoc(name: string) {
     if (
@@ -242,7 +303,7 @@ export function KnowledgeBase({
           </span>
           <div className="flex items-center gap-0.5">
             <button
-              onClick={newDoc}
+              onClick={beginNewDoc}
               className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               title="新建文档"
             >
@@ -257,6 +318,7 @@ export function KnowledgeBase({
             </button>
           </div>
         </div>
+        {openDoc && naming && newDocForm(true)}
         <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
           {listErr ? (
             <p className="px-2 py-3 text-xs text-destructive">{listErr}</p>
@@ -362,12 +424,7 @@ export function KnowledgeBase({
             <p className="max-w-sm text-pretty text-sm">
               在 {target.instance} 上在线维护 Markdown 知识库文档，支持边写边预览
             </p>
-            <button
-              onClick={newDoc}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-            >
-              <PlusIcon width={15} height={15} /> 新建文档
-            </button>
+            {newDocForm(false)}
           </div>
         )}
       </div>
