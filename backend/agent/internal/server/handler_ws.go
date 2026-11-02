@@ -1989,6 +1989,8 @@ func inspectDoagentModelChannels() agentModelRuntimeStatus {
 func marshalDoagentMetadataStatus(status agentModelRuntimeStatus) (string, error) {
 	data, err := json.Marshal(map[string]interface{}{
 		"source":         status.source,
+		"event_formats":  []string{"acp"},
+		"event_schema":   "doops.sh/acp-events/v1",
 		"status":         status.status,
 		"provider":       status.provider,
 		"model":          status.model,

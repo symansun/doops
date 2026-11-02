@@ -186,6 +186,7 @@ type GatewayAgent struct {
 	messageBudget    *gatewayMessageBudget
 	closed           chan struct{}
 	reqID            int64
+	modelVersionID   string
 }
 
 type agentResourceSlot struct {
@@ -1078,6 +1079,15 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		finishAudit("offline", errMsg, "", 0)
 		writeJSON(buildErrorResponse(req.ID, -32004, errMsg))
 		return nil
+	}
+	// A model that was missing or rotated after connect is fetched from the
+	// Gateway before doagent runs. The same active version is not probed again.
+	if params.Name == "doops_agent_prompt" && h.hub != nil {
+		if category := h.hub.deliverModelProvider(ctx, cluster, instance); category != "" {
+			finishAudit("error", category, "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32603, category))
+			return nil
+		}
 	}
 	if params.Name == "doops_ssh" && !agent.StructuredSSH {
 		errMsg := fmt.Sprintf(

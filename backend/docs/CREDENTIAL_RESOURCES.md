@@ -292,8 +292,10 @@ Chart 并验证后一次 staging，dry-run 与 Helm mutation 使用同一个文�
 ### Model Provider
 
 Agent 内置 doagent 的模型配置。Agent 部署不需要挂载模型 Secret，也不需要先配置模型：
-Agent 连上 Gateway 后，Gateway 把该 target 上 active 的 `modelProvider` 凭据物化到
-doagent 的固定配置文件 `/root/.agent/settings.json`。
+Agent 连上 Gateway 后，以及之后每次 `doops_agent_prompt`（含控制台 metadata）之前，
+Gateway 把该 target 上 active 的 `modelProvider` 凭据物化到 doagent 的固定配置文件
+`/root/.agent/settings.json`。已连接的 Agent 如果已经持有这个版本，不再重复探测。
+该 target 没有绑定，或绑定尚未 promote 时，不会从别的 target 取模型。
 
 ```json
 {

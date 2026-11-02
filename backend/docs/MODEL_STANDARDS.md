@@ -24,9 +24,11 @@ runtime MCP servers and permissions only; doagent starts and reports
 "no model configured" until a model arrives.
 
 The model comes from the Gateway as a `modelProvider` credential bound to the
-target. When the Agent connects, the Gateway materializes the active version
-into `/root/.agent/settings.json`; doagent reads that file for every new
-session, so delivery and rotation take effect without restarting it. Payload
+target. Delivery timing, the no-reprobe rule, and the refusal to copy another
+target's model are defined in
+[CREDENTIAL_RESOURCES.md](CREDENTIAL_RESOURCES.md#model-provider). doagent reads
+`/root/.agent/settings.json` for every new session, so delivery and rotation
+take effect without restarting it. Payload
 schema, verification (one real model call per binding) and revocation are
 defined in [CREDENTIAL_RESOURCES.md](CREDENTIAL_RESOURCES.md#model-provider).
 No Kubernetes Secret, ConfigMap or host file holds the model configuration, and
