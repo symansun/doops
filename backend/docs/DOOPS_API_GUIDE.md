@@ -571,6 +571,8 @@ CLI 保持原有输出契约，不能以该路径绕过组件的版本检查。
 
 需要该 target 的 grant（审计动作记为 `read`）。
 
+`path` 必须是当前 session 工作区内的相对路径。唯一例外是控制台知识库：绝对路径必须正好是 `/root/kb/<文件名>.md`。文件名只能是单层 Markdown，不能是子目录、`..` 或符号链接。该目录不在 session 工作区内，因此不会随工作区清理删除。其它绝对路径一律拒绝。
+
 不要用它下载大文件、二进制、压缩包、数据库导出或图片。大文件和目录下载使用 `doops pull`。
 
 ### `doops_file_write`
@@ -587,7 +589,7 @@ CLI 保持原有输出契约，不能以该路径绕过组件的版本检查。
 }
 ```
 
-需要该 target 的 grant（审计动作记为 `write`）。
+需要该 target 的 grant（审计动作记为 `write`）。路径规则与 `doops_file_read` 相同：session 内相对路径，或 `/root/kb/<文件名>.md`。
 
 ### `doops_workspace_read`
 

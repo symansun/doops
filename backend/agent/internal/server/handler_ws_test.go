@@ -352,6 +352,101 @@ func TestAgentWebSocketFileReadWrite(t *testing.T) {
 	}
 }
 
+func TestKnowledgeBaseMarkdownRoundTripAndRejectsEscape(t *testing.T) {
+	kb := filepath.Join(t.TempDir(), "kb")
+	t.Setenv("DOOPS_KB_ROOT", kb)
+	outsideDir := t.TempDir()
+	outside := filepath.Join(outsideDir, "outside.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+
+	doc := filepath.Join(kb, "测试.md")
+	if _, err := handleFileWrite(mustJSON(t, map[string]interface{}{
+		"session_id": "files",
+		"path":       doc,
+		"content":    "hello 知识库",
+	})); err != nil {
+		t.Fatalf("write knowledge base document: %v", err)
+	}
+	got, err := handleFileRead(mustJSON(t, map[string]interface{}{
+		"session_id": "files",
+		"path":       doc,
+	}))
+	if err != nil {
+		t.Fatalf("read knowledge base document: %v", err)
+	}
+	if got != "hello 知识库" {
+		t.Fatalf("knowledge base content = %q", got)
+	}
+	if _, err := resolveWorkspaceFilePath("files", doc); err == nil {
+		t.Fatal("session workspace resolver must still reject absolute knowledge base paths")
+	}
+
+	rejects := []string{
+		outside,
+		filepath.Join(kb, "..", "outside.md"),
+		filepath.Join(kb, "nested", "note.md"),
+		filepath.Join(kb, "note.txt"),
+		filepath.Join(filepath.Dir(kb), "note.md"),
+		filepath.Join(kb, "..md"),
+	}
+	for _, path := range rejects {
+		if _, err := handleFileWrite(mustJSON(t, map[string]interface{}{
+			"session_id": "files",
+			"path":       path,
+			"content":    "nope",
+		})); err == nil {
+			t.Fatalf("expected knowledge base write to reject %s", path)
+		}
+		if _, err := handleFileRead(mustJSON(t, map[string]interface{}{
+			"session_id": "files",
+			"path":       path,
+		})); err == nil {
+			t.Fatalf("expected knowledge base read to reject %s", path)
+		}
+	}
+
+	link := filepath.Join(kb, "link.md")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+	if _, err := handleFileWrite(mustJSON(t, map[string]interface{}{
+		"session_id": "files",
+		"path":       link,
+		"content":    "pwned",
+	})); err == nil {
+		t.Fatal("expected symlink knowledge base write to be rejected")
+	}
+	data, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatalf("read outside file: %v", err)
+	}
+	if string(data) != "secret" {
+		t.Fatalf("symlink write escaped knowledge base: %q", data)
+	}
+
+	real := filepath.Join(t.TempDir(), "real-kb")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatalf("mkdir real kb: %v", err)
+	}
+	linkedRoot := filepath.Join(t.TempDir(), "linked-kb")
+	if err := os.Symlink(real, linkedRoot); err != nil {
+		t.Fatalf("symlink knowledge root: %v", err)
+	}
+	t.Setenv("DOOPS_KB_ROOT", linkedRoot)
+	if _, err := handleFileWrite(mustJSON(t, map[string]interface{}{
+		"session_id": "files",
+		"path":       filepath.Join(linkedRoot, "测试.md"),
+		"content":    "nope",
+	})); err == nil {
+		t.Fatal("expected symlinked knowledge base root to be rejected")
+	}
+	if _, err := os.Stat(filepath.Join(real, "测试.md")); !os.IsNotExist(err) {
+		t.Fatalf("write followed symlinked knowledge base root: %v", err)
+	}
+}
+
 func TestAgentWebSocketFileToolsRejectWorkspaceEscape(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
 	outside := filepath.Join(t.TempDir(), "outside.txt")
