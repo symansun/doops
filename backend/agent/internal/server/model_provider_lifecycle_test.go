@@ -134,6 +134,36 @@ func TestModelProviderLifecycleDeliversAndRevokesThroughGateway(t *testing.T) {
 	}
 }
 
+// A prompt sync delivers the active version once. Repeating it for the same
+// connected Agent must not call the model again.
+func TestRepeatedModelDeliveryDoesNotReprobe(t *testing.T) {
+	probes := 0
+	f, settingsPath := modelLifecycleSetup(t, nil)
+	probeModelProvider = func(context.Context, modelProviderPayload) error {
+		probes++
+		return nil
+	}
+	base, version, _ := createModelProviderCredential(t, f)
+	f.http(t, f.admin, http.MethodPost, base+"/verify", modelVerifyBody(version.ID, "dev", "local"), http.StatusOK)
+	f.http(t, f.admin, http.MethodPost, base+"/promote", `{"version_id":"`+version.ID+`"}`, http.StatusOK)
+	if settings := readDeliveredModel(t, settingsPath); settings["model"] != "gw/text-model" {
+		t.Fatalf("promoted model not delivered: %v", settings["model"])
+	}
+	promotedProbes := probes
+	if category := f.hub.deliverModelProvider(context.Background(), "dev", "local"); category != "" {
+		t.Fatalf("first sync category = %q", category)
+	}
+	if probes != promotedProbes+1 {
+		t.Fatalf("first sync probes = %d, want 1", probes-promotedProbes)
+	}
+	if category := f.hub.deliverModelProvider(context.Background(), "dev", "local"); category != "" {
+		t.Fatalf("second sync category = %q", category)
+	}
+	if probes != promotedProbes+1 {
+		t.Fatalf("unchanged model was probed again (%d extra)", probes-promotedProbes-1)
+	}
+}
+
 // Given a modelProvider whose real model call fails,
 // When it is verified,
 // Then verification reports a stable category, promotion stays blocked and

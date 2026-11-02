@@ -453,6 +453,33 @@ func TestAgentMetadataModeReturnsModelStatusWithoutPrompt(t *testing.T) {
 	}
 }
 
+func TestAgentMetadataAwaitingModelStillAdvertisesACP(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "settings.json")
+	previousSettingsFile := doagentSettingsFile
+	doagentSettingsFile = settingsPath
+	t.Cleanup(func() { doagentSettingsFile = previousSettingsFile })
+	if err := os.WriteFile(settingsPath, []byte(`{"mcp_servers":[],"permissions":{}}`), 0600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	t.Setenv("DO_AGENT_URL", "http://127.0.0.1:1")
+
+	got, err := NewGateway().handleAgentMetadataWS(context.Background(), "awaiting-model")
+	if err != nil {
+		t.Fatalf("metadata: %v", err)
+	}
+	var meta map[string]interface{}
+	if err := json.Unmarshal([]byte(got), &meta); err != nil {
+		t.Fatalf("metadata should be JSON, got %q: %v", got, err)
+	}
+	formats, _ := meta["event_formats"].([]interface{})
+	if meta["status"] != "awaiting_model_provider" || meta["event_schema"] != "doops.sh/acp-events/v1" || len(formats) != 1 || formats[0] != "acp" {
+		t.Fatalf("awaiting model must still advertise ACP: %+v", meta)
+	}
+	if meta["model"] != nil && meta["model"] != "" {
+		t.Fatalf("awaiting model leaked a model: %+v", meta["model"])
+	}
+}
+
 func TestAgentHistoryModeWithoutSessionReturnsEmptyHistory(t *testing.T) {
 	doagent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("history mode without a bound session should not call doagent: %s", r.URL.Path)

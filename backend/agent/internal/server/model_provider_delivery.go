@@ -95,6 +95,10 @@ func (h *GatewayHub) deliverModelProvider(ctx context.Context, cluster, instance
 		// A credential that was never promoted has nothing to deliver.
 		return ""
 	}
+	agent := h.registry.Get(cluster, instance)
+	if agent != nil && agent.deliveredModelVersion() == version.ID {
+		return ""
+	}
 	scope := normalizeCredentialGrantScope(binding.Grant.Scope)
 	if scope.Use == "" {
 		scope.Use = CredentialUseModelProvider
@@ -116,7 +120,28 @@ func (h *GatewayHub) deliverModelProvider(ctx context.Context, cluster, instance
 	); err != nil {
 		return credentialOperationErrorCategory(err)
 	}
+	if agent = h.registry.Get(cluster, instance); agent != nil {
+		agent.setDeliveredModelVersion(version.ID)
+	}
 	return ""
+}
+
+func (a *GatewayAgent) deliveredModelVersion() string {
+	if a == nil {
+		return ""
+	}
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	return a.modelVersionID
+}
+
+func (a *GatewayAgent) setDeliveredModelVersion(versionID string) {
+	if a == nil {
+		return
+	}
+	a.stateMu.Lock()
+	a.modelVersionID = versionID
+	a.stateMu.Unlock()
 }
 
 // modelProviderGrantConflicts reports whether another active modelProvider

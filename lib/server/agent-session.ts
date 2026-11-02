@@ -28,8 +28,11 @@ export async function authorizedAgentSession(context: AgentGatewayContext, signa
   if (metadata.event_schema !== "doops.sh/acp-events/v1" || !Array.isArray(metadata.event_formats) || !metadata.event_formats.includes("acp")) {
     throw new AgentGatewayError("目标 Agent 不支持结构化 ACP 事件协议，必须升级 Agent", 412)
   }
+  if (metadata.status === "awaiting_model_provider" || metadata.status === "unconfigured" || metadata.model === "unconfigured") {
+    throw new AgentGatewayError("Gateway 还没有可下发到该节点的模型", 503)
+  }
   if (metadata.status !== "connected" || typeof metadata.model !== "string" || !metadata.model.trim()) {
-    throw new AgentGatewayError(metadata.status === "unconfigured" ? "AI 助手尚未连接大模型" : "DoAgent 模型连接不可用", 503)
+    throw new AgentGatewayError("DoAgent 模型连接不可用", 503)
   }
   const now = Date.now()
   for (const [key, value] of sessions) {

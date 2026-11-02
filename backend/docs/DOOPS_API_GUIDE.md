@@ -548,7 +548,9 @@ required keys 只作为执行元数据。普通发布使用 `operation=apply`；
 `ask` 不会自动注入 DoSql 工具，也不能附带数据库凭据。payload 永远不进入 prompt、日志或返回事件。
 
 组件对话的结构化事件消费者先发送 `mode=metadata`。支持本协议的 Agent 返回
-`event_schema=doops.sh/acp-events/v1` 和 `event_formats=["acp"]`。
+`event_schema=doops.sh/acp-events/v1` 和 `event_formats=["acp"]`。模型尚未下发时也返回
+这两项，并用 `status=awaiting_model_provider` 表示没有可同步的模型，而不是缺少协议。
+下发时机见 [CREDENTIAL_RESOURCES.md](CREDENTIAL_RESOURCES.md#model-provider)。
 消费者显式发送 `event_format=acp` 时，`notifications/message` 的
 `kind=acp_update`，`data` 是已投影并脱敏的原生 ACP JSON；通知保留匹配的
 `sessionID` 和 Gateway 根请求 `request_id`。任意其他非空 event format 被拒绝。
