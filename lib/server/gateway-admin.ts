@@ -8,7 +8,9 @@ export async function probeGatewayAdmin(gateway: string, token: string): Promise
       cache: "no-store",
       redirect: "manual",
     })
-    await response.body?.cancel()
+    // Do not wait for the body to close. Next's patched fetch can leave
+    // body.cancel() pending, which keeps /api/session from ever responding.
+    void response.body?.cancel()
     return response.status === 200
   } catch {
     return false
