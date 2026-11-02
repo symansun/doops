@@ -3,41 +3,40 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/user/doops/agent/api"
 )
 
-func (s *GatewayStore) loadCOSSecret(actorID, name, cluster, instance string) (cosSecret, error) {
-	name = strings.TrimSpace(name)
-	if name == "" || strings.TrimSpace(actorID) == "" {
-		return cosSecret{}, cosFail(cosErrCredentialMissing)
+// loadGatewayCOSConfig reads the object-store settings from the Gateway process.
+// Callers cannot choose the bucket, endpoint, or keys; a credential name on the
+// request is ignored.
+func loadGatewayCOSConfig() (cosSecret, error) {
+	secret := cosSecret{
+		AccessKeyID:     strings.TrimSpace(os.Getenv("DOOPS_COS_ACCESS_KEY_ID")),
+		SecretAccessKey: strings.TrimSpace(os.Getenv("DOOPS_COS_SECRET_ACCESS_KEY")),
+		Endpoint:        strings.TrimSpace(os.Getenv("DOOPS_COS_ENDPOINT")),
+		Region:          strings.TrimSpace(os.Getenv("DOOPS_COS_REGION")),
+		Bucket:          strings.TrimSpace(os.Getenv("DOOPS_COS_BUCKET")),
 	}
-	authorized, err := s.AuthorizeCredentialUse(CredentialUseRequest{
-		ActorID:    actorID,
-		Credential: name,
-		Scope:      CredentialGrantScope{Cluster: cluster, Instance: instance},
-	})
-	if err != nil {
-		if errors.Is(err, ErrCredentialGrantDenied) || errors.Is(err, ErrCredentialForbidden) || errors.Is(err, ErrCredentialAmbiguous) {
-			return cosSecret{}, cosFail(cosErrCredentialMissing)
-		}
-		return cosSecret{}, cosFail(cosErrCredentialMissing)
+	if secret.Endpoint == "" {
+		secret.Endpoint = cosDefaultEndpoint
 	}
-	if authorized.Resource.Type != CredentialTypeOpaque {
+	if secret.Region == "" {
+		secret.Region = cosDefaultRegion
+	}
+	if secret.Bucket == "" {
+		secret.Bucket = cosBucketName
+	}
+	if secret.AccessKeyID == "" || secret.SecretAccessKey == "" {
+		return cosSecret{}, cosFail(cosErrNotConfigured)
+	}
+	if !strings.HasPrefix(strings.ToLower(secret.Endpoint), "https://") {
 		return cosSecret{}, cosFail(cosErrCredentialInvalid)
 	}
-	payload, err := s.ResolveCredentialPayload(authorized.Resource.ID, authorized.Version.ID)
-	if err != nil {
-		return cosSecret{}, cosFail(cosErrCredentialInvalid)
-	}
-	secret, err := parseCOSSecret(payload)
-	for i := range payload {
-		payload[i] = 0
-	}
-	return secret, err
+	return secret, nil
 }
 
 func (h *ClientService) handleCOSToolCall(ctx context.Context, auth TokenAuth, cluster, instance string, req api.JSONRPCRequest, params api.ToolCallParams, writeJSON func(interface{}) error) error {
@@ -81,7 +80,9 @@ func (h *ClientService) handleCOSToolCall(ctx context.Context, auth TokenAuth, c
 		return writeJSON(buildErrorResponse(req.ID, -32603, "audit_unavailable"))
 	}
 	service := cosService{
-		load: h.store.loadCOSSecret,
+		load: func(string, string, string, string) (cosSecret, error) {
+			return loadGatewayCOSConfig()
+		},
 		open: openCOSBucket,
 		sync: func(ctx context.Context, cluster, instance, session string, files []cosSyncFile) (string, error) {
 			if h.registry.Get(cluster, instance) == nil {

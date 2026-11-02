@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -100,37 +101,40 @@ func TestCOSPutBoundaryUsesSinglePutOrPresign(t *testing.T) {
 	}
 }
 
-func TestCOSMissingCredentialStaysOnCOS(t *testing.T) {
-	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("c", 32))
-	store, err := OpenGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
-	if err != nil {
-		t.Fatal(err)
+func TestGatewayCOSConfigIsAuthoritative(t *testing.T) {
+	t.Setenv("DOOPS_COS_ACCESS_KEY_ID", "")
+	t.Setenv("DOOPS_COS_SECRET_ACCESS_KEY", "")
+	if _, err := loadGatewayCOSConfig(); cosCategory(err) != cosErrNotConfigured {
+		t.Fatalf("missing gateway config error = %v", err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
-	user, err := store.CreateUser("cos-user")
-	if err != nil {
-		t.Fatal(err)
+	t.Setenv("DOOPS_COS_ACCESS_KEY_ID", "AKID")
+	t.Setenv("DOOPS_COS_SECRET_ACCESS_KEY", "synthetic-cos-secret")
+	t.Setenv("DOOPS_COS_ENDPOINT", "https://cos.ap-guangzhou.myqcloud.com")
+	t.Setenv("DOOPS_COS_REGION", "ap-guangzhou")
+	t.Setenv("DOOPS_COS_BUCKET", "")
+	secret, err := loadGatewayCOSConfig()
+	if err != nil || secret.Bucket != cosBucketName || secret.Endpoint != cosDefaultEndpoint {
+		t.Fatalf("gateway config = %#v, %v", secret, err)
 	}
-	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local"}); err != nil {
-		t.Fatal(err)
+	if strings.Contains(fmt.Sprint(err), "synthetic-cos-secret") {
+		t.Fatal("config error exposed the secret")
 	}
-	_, err = store.loadCOSSecret(user.ID, "cos-bucket", "dev", "local")
-	if cosCategory(err) != cosErrCredentialMissing {
-		t.Fatalf("missing credential error = %v", err)
-	}
+	bucket := &fakeCOSBucket{}
 	service := cosService{
-		load: store.loadCOSSecret,
-		open: func(context.Context, cosSecret) (cosBucket, error) {
-			t.Fatal("cos mode opened a bucket without a credential")
-			return nil, nil
+		load: func(_, name, _, _ string) (cosSecret, error) {
+			if name != "caller-picked" {
+				t.Fatalf("loader saw credential %q", name)
+			}
+			return loadGatewayCOSConfig()
 		},
+		open: func(context.Context, cosSecret) (cosBucket, error) { return bucket, nil },
 	}
-	_, err = service.Handle(context.Background(), cosCall{
-		ActorID: user.ID, Cluster: "dev", Instance: "local", SessionID: "sess_1",
-		Credential: "cos-bucket", Operation: "put", Kind: "files", Path: "a.txt", Body: []byte("x"),
+	result, err := service.Handle(context.Background(), cosCall{
+		ActorID: "usr_caller", Cluster: "dev", Instance: "local", SessionID: "sess_1",
+		Credential: "caller-picked", Operation: "probe",
 	})
-	if cosCategory(err) != cosErrCredentialMissing {
-		t.Fatalf("service error = %v", err)
+	if err != nil || result.Bucket != cosBucketName || result.Storage != "cos" {
+		t.Fatalf("result = %#v, %v", result, err)
 	}
 }
 

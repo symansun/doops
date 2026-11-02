@@ -151,7 +151,7 @@ bash scripts/deploy-gateway.sh \
 
 - user token 只能操作有 grant 的 target。
 - gateway 转发 doops JSON-RPC 操作流量和 Git HTTP 请求，不做裸 TCP 隧道。
-- `push/pull` 在标准 gateway 路径下使用 Git 语义。省略 `--storage` 时仍走这条路径。gateway 对外暴露 `/v1/git/<cluster>/<instance>/<session>.git/...`，再通过目标 agent 已建立的反向 WebSocket 把 Git HTTP 请求透传给 agent 本地 `/git/<session>.git/...`。Git HTTP 不服务 `cos` 模式。
+- `read` / `write` / `push` / `pull` 默认走 Gateway 配置的 COS。桶、endpoint、region 和密钥只读 Gateway 进程环境：`DOOPS_COS_BUCKET`、`DOOPS_COS_ENDPOINT`、`DOOPS_COS_REGION`、`DOOPS_COS_ACCESS_KEY_ID`、`DOOPS_COS_SECRET_ACCESS_KEY`。调用方不能改这些值。`--storage gateway` 才走 Git HTTP：`/v1/git/<cluster>/<instance>/<session>.git/...`，再通过目标 agent 已建立的反向 WebSocket 透传给 agent 本地 `/git/<session>.git/...`。Git HTTP 不服务默认的 `cos` 模式。
 - `doops_workspace_*` 是低层文件传输工具；通用 CLI 的目录同步使用 Git HTTP
   `push/pull`。这些接口不属于发布授权协议，发布任务不得用文件同步替代明确的
   target、范围、镜像、原因和验收条件。
