@@ -12,7 +12,8 @@ prints it to stderr, and proceeds; pass that name again to continue in the same 
 | Need | Command | Notes |
 | :--- | :--- | :--- |
 | List configured targets | `doops list` | Local config only; not live gateway state. |
-| List live gateway agents | `doops -session <s> targets --target <gateway-target>` | First check for gateway troubleshooting. |
+| Copy newly online targets into local routes | `doops sync [--target <gateway-target>]` | Adds live targets this login can use and that are missing locally. Does not rename existing routes or remove offline ones. |
+| List live gateway agents | `doops -session <s> targets --target <gateway-target>` | Checks only that configured route. It does not list or save the Gateway's other agents. |
 | Retire an offline target | `doops -session <s> remove --target <gateway-target>` | Removes only the local route after a successful Gateway query confirms the exact route is not currently visible; online, unreachable, or unauthorized targets are refused. |
 | Check Agent protocol capability | `doops -session <s> capabilities --target <t> --require structuredSSH` | Fails closed when the online Agent is too old for structured SSH. |
 | Add a Gateway target | `doops add --name <n> --gateway <url> --cluster <c> --instance <i>` | Stores routing only; never stores a target token. |
@@ -194,7 +195,9 @@ DoOps 通用镜像工具链。镜像构建使用明确给出的 `exec` 命令调
 `cli-contract/v3` 只通过 `doops --contract` 检查协议兼容性，不是另一个发布版本。
 Agent 未提供完整 `RELEASE_COMMIT` 时只能视为旧运行时，升级验收不会通过。
 
-`doops list` reads local config. `doops targets` asks gateway for live connected agents. A target can be listed locally but unavailable in gateway because it is offline or because the logged-in user lacks the exact target grant; the CLI does not collapse these cases into a definitive offline diagnosis.
+`doops list` reads local config. `doops targets --target <t>` asks the Gateway whether that one configured route is visible. A target can be listed locally but unavailable in the Gateway because it is offline or because the logged-in user lacks the exact target grant; the CLI does not collapse these cases into a definitive offline diagnosis. A newly registered agent does not appear in `doops list` until its route is stored locally.
+
+`doops sync` is the local update. It uses each configured Gateway login, or the Gateway selected by `--target`, and calls the same `/v1/targets` list. Every live target that login can use and that is not already routed locally is appended. The new route name prefers the instance name, then `cluster-instance`, and does not reuse an existing name or alias. Existing names, aliases and descriptions are not rewritten. Offline agents are absent from that list, so their local routes stay until `doops remove`. The command stores routing only and never a token. One failed Gateway does not discard routes already added from the others.
 
 To remove a stale local route, use `doops -session <s> remove --target <gateway-target>`. The command first queries the configured Gateway and refuses to modify the config if the Gateway is unreachable, authentication fails, or the exact route is currently visible. It does not delete Gateway grants, audit records, proxy routes, or historical agent status.
 
@@ -574,7 +577,7 @@ the user's grants.
 
 | 对象 | 如何修改 | 不能改的部分 |
 | :--- | :--- | :--- |
-| 本机 target 路由 | 同名再执行 `doops add --name <n> ...` 原地覆盖 gateway/cluster/instance/aliases/use；alias 与其它 target 冲突时拒绝 | 只有确认离线才能 `remove` |
+| 本机 target 路由 | 同名再执行 `doops add --name <n> ...` 原地覆盖 gateway/cluster/instance/aliases/use；alias 与其它 target 冲突时拒绝。`doops sync` 只补当前登录可见、本地还没有的在线路由 | 只有确认离线才能 `remove`；`sync` 不删除、不改名 |
 | Gateway 用户 | `admin user password` 改密码；`admin user disable --disabled=true\|false` 停用/恢复 | 用户名、`is_admin` 无修改入口 |
 | target grant | 替换：`admin grant add` 新范围，再 `admin grant delete --id` 旧的 | grant 不支持原地改 scope |
 | Gateway token | 替换：`admin token create` 新 token，确认后 `admin token revoke` 旧 token | token 不能续期或改名 |

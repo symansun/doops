@@ -64,7 +64,7 @@ description: |
 
 | 需求 | 命令 |
 | :--- | :--- |
-| 本地 target / 在线检查 | `doops list`；`doops -session <s> targets --target <t>` |
+| 本地 target / 在线检查 | `doops list`；`doops -session <s> targets --target <t>`；`doops sync --target <t>` |
 | 确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'` |
 | 长任务 | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` |
 | 嵌套 SSH | `doops -session <s> ssh --target <t> --host <user@host> -- <cmd> [args...]` |

@@ -46,7 +46,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 可用命令:
   list        列出已配置的 Gateway target 路由
-  targets     查看 gateway 当前在线的 cluster/instance
+  sync        把当前登录能看到的在线 target 补进本机路由；不改已有路由，不删除离线路由
+  targets     查看已配置 target 在 gateway 上是否在线
   capabilities 检查 target Agent 的协议能力
   exec        在目标 Agent 进程目录执行 Shell 命令；工作目录请显式 cd
   ssh         通过结构化 argv 代理 SSH，避免多层命令引号被远端 shell 重解析
@@ -146,6 +147,12 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 	case "session":
 		fmt.Println(newSessionID())
 		os.Exit(0)
+
+	case "sync":
+		if err := runSync(cmdArgs, servers, configErr, os.Stdout); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 
 	case "list":
 		if configErr != nil {

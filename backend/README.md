@@ -200,7 +200,7 @@ Doops 有两件事容易混淆，文档里必须先分开看：
 | :--- | :--- |
 | `ws(s)://<gateway>/v1/rpc` | 内网 agent 主动 `-gateway-url ... -cluster ... -instance ...` 连公网 gateway |
 
-是否“可以操作某节点”取决于该 agent 是否已经主动注册到 gateway。`doops targets --target <gateway-target>` 只查询配置中对应的 `cluster/instance`，离线时明确失败。CLI 不提供绕过 target 配置的 Gateway/token 查询入口。
+是否“可以操作某节点”取决于该 agent 是否已经主动注册到 gateway。`doops targets --target <gateway-target>` 只查询配置中对应的 `cluster/instance`，离线时明确失败。同一 Gateway 上新上线、且当前登录有权使用的 agent 用 `doops sync --target <gateway-target>` 补进本机路由；它不改已有路由，也不删除离线路由。CLI 不提供绕过已配置 target 的 Gateway/token 查询入口。
 
 ## 客户端安装与连接
 
@@ -392,6 +392,7 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 | `doops -session <s> remove --target <name>` | Gateway 查询确认不可见后，淘汰本机离线 target 路由 |
 | `doops login --target <name>` | 登录该 target 所属 Gateway |
 | `doops list` | 列出客户端已配置的 Gateway target 路由 |
+| `doops sync [--target <name>]` | 把当前登录可见、本地还没有的在线 target 补进本机路由 |
 | `doops -session <s> capabilities --target <t> --require structuredSSH` | 校验在线 Agent 已声明结构化 SSH 协议；缺失时失败关闭 |
 | `doops exec` | 在远端 agent 容器内执行确定性命令 |
 | `doops image build` | 通过标准 BuildKit 构建 OCI 镜像，支持平台选择和 Registry 输出 |
