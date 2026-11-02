@@ -22,6 +22,7 @@ var guideScenarios = map[string]guideScenario{
 		steps: []string{
 			"doops add --name <t> --gateway <url> --cluster <c> --instance <i>",
 			"doops login --target <t> --username <u>          # CI: printf '%s' \"$TOKEN\" | doops login --target <t> --token-stdin",
+			"doops sync --target <t>                          # add the other live agents on this Gateway to local routes",
 			"doops targets --target <t>",
 			"doops exec --target <t> --cmd hostname            # online heartbeat is not enough; this proves the command channel",
 		},
