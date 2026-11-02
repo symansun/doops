@@ -44,6 +44,7 @@ import {
 } from "@/lib/admin"
 import { AdminConfigDispatch } from "./admin-config-dispatch"
 import { ProxyRoutesPanel } from "./proxy-routes-panel"
+import { useAppDialog } from "./app-dialog"
 import {
   ServerIcon,
   UsersIcon,
@@ -192,12 +193,13 @@ function InstancesView({ session }: { session: Session }) {
   const [showHistory, setShowHistory] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
   const [busyKey, setBusyKey] = useState("")
+  const { confirm, dialog } = useAppDialog()
 
   const load = useCallback(async () => {
     setLoading(true)
     setError("")
     try {
-      setAll(await listInstances(session))
+      setAll(await listInstances(session, { includeHistory: true }))
       setNow(Date.now())
     } catch (e) {
       setError((e as Error).message)
@@ -225,7 +227,14 @@ function InstancesView({ session }: { session: Session }) {
 
   async function changeArchive(row: AdminInstance) {
     const action = row.archived ? "取消归档" : "归档"
-    if (!window.confirm(`确认${action}实例「${row.cluster}/${row.instance}」？归档不会删除授权、令牌、凭据绑定或审计记录。`)) {
+    if (
+      !(await confirm({
+        title: action,
+        message: `确认${action}实例「${row.cluster}/${row.instance}」？归档不会删除授权、令牌、凭据绑定或审计记录。`,
+        confirmLabel: action,
+        tone: row.archived ? "default" : "danger",
+      }))
+    ) {
       return
     }
     const key = `${row.cluster}/${row.instance}`
@@ -357,6 +366,7 @@ function InstancesView({ session }: { session: Session }) {
           )}
         </div>
       </div>
+      {dialog}
     </div>
   )
 }
@@ -371,6 +381,7 @@ function UsersView({ session }: { session: Session }) {
   const [password, setPassword] = useState("")
   const [admin, setAdmin] = useState(false)
   const [busy, setBusy] = useState(false)
+  const { prompt, dialog } = useAppDialog()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -417,7 +428,13 @@ function UsersView({ session }: { session: Session }) {
   }
 
   async function resetPassword(u: AdminUser) {
-    const pw = window.prompt(`为用户「${u.name}」设置新密码：`)
+    const pw = await prompt({
+      title: "设置新密码",
+      message: `为用户「${u.name}」设置新密码。`,
+      label: "新密码",
+      inputType: "password",
+      confirmLabel: "保存",
+    })
     if (!pw) return
     setError("")
     try {
@@ -556,6 +573,7 @@ function UsersView({ session }: { session: Session }) {
           </tbody>
         </table>
       </div>
+      {dialog}
     </div>
   )
 }
@@ -574,6 +592,7 @@ function GrantsView({ session }: { session: Session }) {
   const [instances, setInstances] = useState<AdminInstance[]>([])
   const [instancesError, setInstancesError] = useState("")
   const [busy, setBusy] = useState(false)
+  const { confirm, dialog } = useAppDialog()
 
   const scope = useMemo(() => grantScopeOptions(instances), [instances])
   const instanceChoices = grantInstanceChoices(scope, cluster)
@@ -588,7 +607,7 @@ function GrantsView({ session }: { session: Session }) {
       const [g, u, i] = await Promise.all([
         listGrants(session),
         listUsers(session),
-        listInstances(session).catch((e: Error) => {
+        listInstances(session, { includeHistory: true }).catch((e: Error) => {
           setInstancesError(`查询实例列表失败：${e.message}`)
           return [] as AdminInstance[]
         }),
@@ -634,7 +653,16 @@ function GrantsView({ session }: { session: Session }) {
   }
 
   async function remove(id: number) {
-    if (!window.confirm("确认删除该授权？")) return
+    if (
+      !(await confirm({
+        title: "删除授权",
+        message: "确认删除该授权？",
+        confirmLabel: "删除",
+        tone: "danger",
+      }))
+    ) {
+      return
+    }
     setError("")
     try {
       await deleteGrant(session, id)
@@ -774,6 +802,7 @@ function GrantsView({ session }: { session: Session }) {
           </tbody>
         </table>
       </div>
+      {dialog}
     </div>
   )
 }
@@ -792,6 +821,7 @@ function TokensView({ session }: { session: Session }) {
   const [showRevoked, setShowRevoked] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const [toggled, setToggled] = useState<ReadonlySet<string>>(() => new Set())
+  const { confirm, dialog } = useAppDialog()
 
   const groups = useMemo(
     () => groupTokensByUser(rows, users, { now, showRevoked }),
@@ -847,7 +877,16 @@ function TokensView({ session }: { session: Session }) {
   }
 
   async function revoke(id: string) {
-    if (!window.confirm("确认撤销该令牌？撤销后立即失效。")) return
+    if (
+      !(await confirm({
+        title: "撤销令牌",
+        message: "确认撤销该令牌？撤销后立即失效。",
+        confirmLabel: "撤销",
+        tone: "danger",
+      }))
+    ) {
+      return
+    }
     setError("")
     try {
       await revokeToken(session, id)
@@ -998,6 +1037,7 @@ function TokensView({ session }: { session: Session }) {
           )}
         </table>
       </div>
+      {dialog}
     </div>
   )
 }

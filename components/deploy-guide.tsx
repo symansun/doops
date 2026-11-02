@@ -200,7 +200,7 @@ const TROUBLE = [
 // onEnterConsole 提供时（控制台内嵌），底部 CTA 变为「刷新机器列表」回调；否则链接到 /console
 export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => void }) {
   return (
-    <div className="mx-auto max-w-3xl px-5 py-10">
+    <div className="mx-auto max-w-6xl px-4 py-10">
         {/* 标题 */}
         <div className="mb-8">
           <span className="mb-3 inline-flex items-center gap-1.5 rounded-full border bg-card px-3 py-1 text-xs text-muted-foreground">
@@ -369,8 +369,8 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
 export function DeployGuide() {
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <header className="sticky top-0 z-10 border-b bg-background/80 backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-5 py-3">
+      <header className="sticky top-0 z-20 border-b border-border/60 bg-background/80 backdrop-blur">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
           <Link href="/" className="flex items-center gap-2 text-sm font-semibold">
             <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
               <ServerIcon width={16} height={16} />

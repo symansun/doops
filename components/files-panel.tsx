@@ -23,6 +23,7 @@ import {
   RocketIcon,
   TrashIcon,
 } from "./icons"
+import { useAppDialog } from "./app-dialog"
 
 interface Entry {
   name: string
@@ -88,6 +89,7 @@ export function FilesPanel({
   const [maint, setMaint] = useState<{ tool: "check" | "clean"; lines: string[]; running: boolean } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dirInputRef = useRef<HTMLInputElement>(null)
+  const { confirm, prompt, dialog } = useAppDialog()
 
   const list = useCallback(
     async (dir: string) => {
@@ -203,8 +205,14 @@ export function FilesPanel({
     }
   }
 
-  function newFile() {
-    const name = prompt("新建文件名（相对当前目录）")
+  async function newFile() {
+    const name = await prompt({
+      title: "新建文件",
+      message: "文件名相对于当前目录，保存后才会真正创建。",
+      label: "文件名",
+      placeholder: "notes.txt",
+      confirmLabel: "创建",
+    })
     if (!name) return
     const path = joinWorkspacePath(sessionId, cwd, name)
     if (!path) {
@@ -218,7 +226,15 @@ export function FilesPanel({
   }
 
   async function runMaintenance(kind: "check" | "clean") {
-    if (kind === "clean" && !confirm("确认清理当前工作区？将移除临时文件与较旧的历史版本（保留最近 3 个）。")) {
+    if (
+      kind === "clean" &&
+      !(await confirm({
+        title: "清理工作区",
+        message: "确认清理当前工作区？将移除临时文件与较旧的历史版本（保留最近 3 个）。",
+        confirmLabel: "清理",
+        tone: "danger",
+      }))
+    ) {
       return
     }
     setMaint({ tool: kind, lines: [], running: true })
@@ -657,6 +673,7 @@ export function FilesPanel({
           </div>
         </section>
       </div>
+      {dialog}
     </div>
   )
 }

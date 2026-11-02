@@ -5,6 +5,7 @@ import type { Session } from "@/lib/client"
 import type { Target } from "@/lib/gateway"
 import { randomSession } from "@/lib/gateway"
 import { listInstances, type AdminInstance } from "@/lib/admin"
+import { ACTIVE_INSTANCE_WINDOW_DAYS, instanceActivity } from "@/lib/admin-views"
 import {
   loadConfigs,
   upsertConfig,
@@ -18,6 +19,7 @@ import {
   type ModelConfig,
   type ConfigKind,
 } from "@/lib/model-configs"
+import { useAppDialog } from "./app-dialog"
 import {
   LayersIcon,
   PlusIcon,
@@ -76,7 +78,10 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
   const [dispatchCfg, setDispatchCfg] = useState("")
   const [rows, setRows] = useState<Record<string, DispatchRow>>({})
   const [dispatching, setDispatching] = useState(false)
+  const [formError, setFormError] = useState("")
+  const [dispatchError, setDispatchError] = useState("")
   const sessionRef = useRef(randomSession("admin-cfg"))
+  const { confirm, dialog } = useAppDialog()
 
   useEffect(() => {
     setConfigs(loadConfigs())
@@ -100,40 +105,57 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
     const base = kind === "file" ? EMPTY_FILE : EMPTY_MODEL
     setEditing({ ...base, id: newConfigId() })
     setShowKey(false)
+    setFormError("")
   }
 
   function startEdit(cfg: ModelConfig) {
     setEditing({ ...cfg, models: cfg.models ? [...cfg.models] : [] })
     setShowKey(false)
+    setFormError("")
   }
 
   function saveEditing() {
     if (!editing) return
     if (!editing.name.trim()) {
-      alert("请填写配置名称")
+      setFormError("请填写配置名称")
       return
     }
     if (configKind(editing) === "file" && !editing.path?.trim()) {
-      alert("配置文件需要填写目标路径")
+      setFormError("配置文件需要填写目标路径")
       return
     }
+    setFormError("")
     const list = upsertConfig({ ...editing, name: editing.name.trim() })
     setConfigs(list)
     setEditing(null)
   }
 
-  function deleteConfig(id: string) {
-    if (!window.confirm("确定删除该配置？")) return
+  async function deleteConfig(id: string) {
+    if (
+      !(await confirm({
+        title: "删除配置",
+        message: "确定删除该配置？",
+        confirmLabel: "删除",
+        tone: "danger",
+      }))
+    ) {
+      return
+    }
     const list = removeConfig(id)
     setConfigs(list)
     if (dispatchCfg === id) setDispatchCfg("")
   }
 
-  const onlineKeys = instances
+  const activeInstances = instances.filter((i) => {
+    const activity = instanceActivity(i, Date.now())
+    return activity === "online" || activity === "recent"
+  })
+  const onlineKeys = activeInstances
     .filter((i) => i.status === "online")
     .map((i) => `${i.cluster}/${i.instance}`)
 
   function toggle(key: string) {
+    setDispatchError("")
     setSelected((p) => ({ ...p, [key]: !p[key] }))
   }
   function selectAllOnline() {
@@ -149,14 +171,15 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
   async function publish() {
     const cfg = configs.find((c) => c.id === dispatchCfg)
     if (!cfg) {
-      alert("请先选择要发布的配置")
+      setDispatchError("请先选择要发布的配置")
       return
     }
-    const targets = instances.filter((i) => selected[`${i.cluster}/${i.instance}`])
+    const targets = activeInstances.filter((i) => selected[`${i.cluster}/${i.instance}`])
     if (targets.length === 0) {
-      alert("请至少勾选一个目标实例")
+      setDispatchError("请至少勾选一个目标实例")
       return
     }
+    setDispatchError("")
     setDispatching(true)
     const init: Record<string, DispatchRow> = {}
     targets.forEach((t) => {
@@ -220,9 +243,16 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
               cfg={editing}
               showKey={showKey}
               onToggleKey={() => setShowKey((v) => !v)}
-              onChange={setEditing}
+              formError={formError}
+              onChange={(next) => {
+                setFormError("")
+                setEditing(next)
+              }}
               onSave={saveEditing}
-              onCancel={() => setEditing(null)}
+              onCancel={() => {
+                setFormError("")
+                setEditing(null)
+              }}
             />
           ) : configs.length === 0 ? (
             <p className="px-1 py-8 text-center text-sm text-muted-foreground">
@@ -312,7 +342,14 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
         <div className="flex flex-wrap items-end gap-2 border-b bg-muted/30 px-4 py-3">
           <label className="flex min-w-48 flex-1 flex-col gap-1.5">
             <span className="text-xs font-medium text-muted-foreground">要发布的配置</span>
-            <select value={dispatchCfg} onChange={(e) => setDispatchCfg(e.target.value)} className="input">
+            <select
+              value={dispatchCfg}
+              onChange={(e) => {
+                setDispatchError("")
+                setDispatchCfg(e.target.value)
+              }}
+              className="input"
+            >
               <option value="">选择一个配置…</option>
               {configs.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -331,6 +368,11 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
             {dispatching ? "发布中…" : `发布上线 (${selectedCount})`}
           </button>
         </div>
+        {dispatchError && (
+          <p className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
+            {dispatchError}
+          </p>
+        )}
 
         {dispatchCfg && (
           <p className="border-b bg-background px-4 py-2 font-mono text-xs text-muted-foreground">
@@ -352,13 +394,17 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto px-3 pb-3">
-          {instances.length === 0 ? (
+          {activeInstances.length === 0 ? (
             <p className="px-1 py-8 text-center text-sm text-muted-foreground">
-              {loadingInst ? "加载中…" : "暂无已注册实例"}
+              {loadingInst
+                ? "加载中…"
+                : instances.length
+                  ? `没有在线或 ${ACTIVE_INSTANCE_WINDOW_DAYS} 天内离线的实例`
+                  : "暂无已注册实例"}
             </p>
           ) : (
             <ul className="flex flex-col gap-2">
-              {instances.map((i) => {
+              {activeInstances.map((i) => {
                 const key = `${i.cluster}/${i.instance}`
                 const online = i.status === "online"
                 const row = rows[key]
@@ -417,6 +463,7 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
           )}
         </div>
       </section>
+      {dialog}
     </div>
   )
 }
@@ -424,6 +471,7 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
 function ConfigEditor({
   cfg,
   showKey,
+  formError,
   onToggleKey,
   onChange,
   onSave,
@@ -431,6 +479,7 @@ function ConfigEditor({
 }: {
   cfg: ModelConfig
   showKey: boolean
+  formError: string
   onToggleKey: () => void
   onChange: (c: ModelConfig) => void
   onSave: () => void
@@ -565,6 +614,12 @@ function ConfigEditor({
             />
           </Row>
         </>
+      )}
+
+      {formError && (
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {formError}
+        </p>
       )}
 
       <div className="mt-1 flex items-center gap-2">
