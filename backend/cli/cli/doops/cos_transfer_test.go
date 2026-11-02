@@ -7,14 +7,14 @@ import (
 	"testing"
 )
 
-func TestStorageModeDefaultsToGateway(t *testing.T) {
+func TestStorageModeDefaultsToCOS(t *testing.T) {
 	mode, err := normalizeStorageMode("")
-	if err != nil || mode != "gateway" {
+	if err != nil || mode != "cos" {
 		t.Fatalf("default mode = %q, %v", mode, err)
 	}
-	mode, err = normalizeStorageMode("COS")
-	if err != nil || mode != "cos" {
-		t.Fatalf("cos mode = %q, %v", mode, err)
+	mode, err = normalizeStorageMode("gateway")
+	if err != nil || mode != "gateway" {
+		t.Fatalf("gateway mode = %q, %v", mode, err)
 	}
 	if _, err := normalizeStorageMode("s3"); err == nil {
 		t.Fatal("unknown storage mode was accepted")
@@ -31,9 +31,10 @@ func TestCOSPushRejectsMissingTokenAndCredentialBeforeTransfer(t *testing.T) {
 	if err == nil || err.Error() != "gateway_auth_failed" || transfer.calls != 0 {
 		t.Fatalf("missing token error = %v, calls = %d", err, transfer.calls)
 	}
+	transfer.probeErr = errString("cos_bucket_unavailable")
 	_, err = pushSnapshot(Server{Name: "jm"}, src, "", false, nil, "sess_1", nil, "cos", "", "token", transfer)
-	if err == nil || err.Error() != "cos_credential_missing" || transfer.calls != 0 {
-		t.Fatalf("missing credential error = %v, calls = %d", err, transfer.calls)
+	if err == nil || err.Error() != "cos_bucket_unavailable" || transfer.calls != 1 {
+		t.Fatalf("empty credential still uses cos, error = %v, calls = %d", err, transfer.calls)
 	}
 }
 

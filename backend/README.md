@@ -399,10 +399,10 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 | `doops image copy` | 通过标准 Skopeo 在 Registry、OCI archive、目录等 transport 之间复制并校验镜像 |
 | `doops ssh` | 通过结构化 argv 执行出站 SSH，避免嵌套引号被远端 shell 重解析 |
 | `doops ask` | 交给远端 doagent 自主分析和执行 |
-| `doops push` | 同步本地代码到 `/root/ws/$SESSION`，尊重 `.gitignore`/`.doopsignore`。省略 `--storage` 走 Gateway Git；`--storage cos` 把快照放进 COS |
-| `doops pull` | 基于 Git 拉取远端 `/root/ws/$SESSION` 工作区到本地。`--storage cos` 按 COS 清单拉回 |
-| `doops read` | 查看远端小文本文件，不用于下载大文件或二进制。`--storage cos` 返回 presigned GET |
-| `doops write` | 写入远端小文本文件，支持 `--content`、`--file` 和 stdin。`--storage cos` 写入 COS |
+| `doops push` | 默认把快照写入 Gateway 配置的 COS，并在 Agent 在线时同步到 `/root/ws/$SESSION`。`--storage gateway` 走 Git |
+| `doops pull` | 默认按 Gateway COS 清单拉回本地。`--storage gateway` 走 Git |
+| `doops read` | 默认返回 Gateway COS 的 presigned GET。`--storage gateway` 查看远端小文本 |
+| `doops write` | 默认写入 Gateway COS。`--storage gateway` 写入远端小文本，支持 `--content`、`--file` 和 stdin |
 | `doops clean` | 清理远端工作区 |
 | `doops credential` | 创建、查询、授权、验证、轮换和吊销受管凭据 |
 | `doops upgrade` | 用集群内 Job 升级 Helm 托管的 doops-agent；`--dry-run` 只预演 |

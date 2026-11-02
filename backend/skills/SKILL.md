@@ -48,7 +48,7 @@ description: |
   `doops k8s ... --confirm`，它不是发布入口。
 - 嵌套 SSH 只用 `doops ssh` 的结构化入口，不拼进 `exec --cmd`。
 - 不用 base64、tar 或分片绕过 `push/pull`；大文件和二进制用 `pull`。
-- 省略 `--storage` 时 `read` / `write` / `push` / `pull` 仍走 gateway 中转。`--storage cos --credential <name>` 才把对象放到桶 `doops-1253657668`；失败停在 `cos`，不回退。
+- `read` / `write` / `push` / `pull` 默认走 COS。桶和密钥以 Gateway 配置为准，不使用 `--credential`。`--storage gateway` 才走原来的本地中转；COS 失败不回退。
 - 长任务用 `exec --bg`，不在 `exec` 里用 `&`、`nohup`、`setsid`。
 - 发布镜像只由 CI 构建，不在业务 target 或本机构建。
 - Agent 不替换自己。升级入口按运行方式选择，互不自动 fallback：
@@ -78,7 +78,7 @@ description: |
 | Helm 只读 | `doops -session <s> k8s --target <t> helm list\|history\|status\|values <release> -n <ns>`（values 只给 key） |
 | K8s 运维变更 | `doops -session <s> k8s --target <t> rollout restart\|scale\|node cordon\|delete pod ... --confirm` |
 | DoWeb | `doops -session <s> web --target <t> --mode check\|plan\|apply --request '<req>'` |
-| 推送 / 拉取工作区 | `doops -session <s> push --target <t> --src <dir>`；`pull --dest <dir>`。`--storage cos --credential <name>` 改走 COS，细节见 `docs/DOOPS_USAGE_GUIDE.md` |
+| 推送 / 拉取工作区 | `doops -session <s> push --target <t> --src <dir>`；`pull --dest <dir>`。默认走 Gateway 配置的 COS；`--storage gateway` 才走 Git 中转 |
 | OCI 镜像 | `image build`、`image copy`、`registry sync`（仓库认证由 Gateway 下发到目标） |
 | 一次配置凭据 | `doops -session <s> credential configure --target <t> --id <id> ...` |
 | 开发凭据预检 | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` |
