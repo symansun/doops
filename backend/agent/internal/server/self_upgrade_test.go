@@ -467,10 +467,16 @@ func TestAgentChartHandsOffWithSurgeAndNoUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"maxUnavailable: 0", "maxSurge: 1"} {
+	for _, want := range []string{"maxUnavailable: 0", "maxSurge: 1", "hostNetwork: false"} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("Chart template lost %q", want)
 		}
+	}
+	if !strings.Contains(string(raw), "hostPID: {{ $enterNode }}") {
+		t.Fatal("node entry must stay behind hostAccess.enabled")
+	}
+	if !strings.Contains(string(raw), "mountPath: /host") || !strings.Contains(string(raw), "readOnly: true") {
+		t.Fatal("enabled node entry must mount the node root read-only at /host")
 	}
 }
 

@@ -25,6 +25,26 @@ scope: doops-operations
 以下 `<...>` 是需替换的占位符；`--target` 使用本地已配置的 target 名称，
 不是任意拼接的 `cluster/instance`。所有远程示例显式携带 session。
 
+### Kubernetes Agent 进入所在节点
+
+标准 Helm Agent 的 `hostAccess.enabled` 默认是 `true`：Pod 与所在节点共享
+PID namespace，并把节点根目录只读挂到 `/host`。显式写成 `false` 才关闭。
+`hostNetwork` 仍然关闭。
+
+进入节点只有这一条标准命令，它就是 Gateway 的 `exec`：
+
+```bash
+doops -session <s> exec --target <k8s-agent> --cmd 'nsenter -t 1 -m -u -i -n -- hostname'
+```
+
+控制在 Gateway 的 target grant。没有该 target 的 `exec` 权限时命令返回 `403`，
+不会在节点上执行。审计记录用户、`cluster/instance`、session 和完整
+`command_summary`（含 `nsenter` 及其参数）。不要用 `kubectl exec`、
+`docker exec` 或直连 Agent 端口代替这条命令，那些路径不进这条审计。
+
+`hostname` 应等于该 Pod 的 `spec.nodeName`。开关为 `false` 时，同一条
+`nsenter` 仍停在 Pod 里。这只进入 Pod 所在节点，不跨越 hypervisor。
+
 ### 已有物理机 target
 
 确认该 target 对应目标物理机，再执行只读命令：

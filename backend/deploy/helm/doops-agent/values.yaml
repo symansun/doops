@@ -35,6 +35,13 @@ tolerations: []
 
 hostAliases: []
 
+# Enter the node that runs this Pod. Default true shares the node PID
+# namespace and mounts the node root read-only at /host. Set false to keep
+# the Pod in its own PID namespace. hostNetwork stays off. Gateway exec
+# grants and audit still control the nsenter command.
+hostAccess:
+  enabled: true
+
 volumeMounts: []
 
 volumes: []
