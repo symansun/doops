@@ -387,7 +387,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		}
 
 	case "exec", "ssh", "ask", "write", "read", "info":
-		var target, cmdStr, msgStr, path, modelStr, contentStr, fileStr, sshHost string
+		var target, cmdStr, msgStr, path, modelStr, contentStr, fileStr, sshHost, storageMode, credentialName string
 		var credentialRefs stringListFlag
 		var databaseRefs stringListFlag
 		var repositoryRefs stringListFlag
@@ -416,8 +416,12 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			subFlag.StringVar(&path, "path", "", "Destination path")
 			subFlag.StringVar(&contentStr, "content", "", "Content to write; for multi-line content prefer --file or stdin")
 			subFlag.StringVar(&fileStr, "file", "", "Read content from local file; use - to read stdin")
+			subFlag.StringVar(&storageMode, "storage", "gateway", "Storage mode: gateway (local relay) or cos")
+			subFlag.StringVar(&credentialName, "credential", "", "Managed opaque credential name; required for --storage cos")
 		case "read":
 			subFlag.StringVar(&path, "path", "", "Source path")
+			subFlag.StringVar(&storageMode, "storage", "gateway", "Storage mode: gateway (local relay) or cos")
+			subFlag.StringVar(&credentialName, "credential", "", "Managed opaque credential name; required for --storage cos")
 		}
 
 		subFlag.Parse(cmdArgs)
@@ -483,6 +487,11 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Println(withNext("Error: write needs --path", "doops write --target "+target+" --path <remote-file> --file <local-file>"))
 			os.Exit(1)
 		}
+		storageMode, storageErr := normalizeStorageMode(storageMode)
+		if storageErr != nil && (command == "read" || command == "write") {
+			fmt.Printf("Error: %v\n", storageErr)
+			os.Exit(1)
+		}
 
 		server := findServer(servers, target)
 		if server == nil {
@@ -538,19 +547,43 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 				arguments["model"] = modelStr
 			}
 		case "write":
-			toolName = "doops_file_write"
-			arguments["path"] = path
 			content, err := resolveWriteContent(contentStr, fileStr, subFlag.Args(), os.Stdin)
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				os.Exit(1)
 			}
+			if storageMode == "cos" {
+				result, err := runCOSWrite(*server, *sessionName, credentialName, token, path, []byte(content), nil)
+				if err != nil {
+					fmt.Printf("Error: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Printf("storage: cos\nbucket: %s\nkey: %s\npresigned_get: %s\n", result.Bucket, result.Key, result.URL)
+				RecordHistory(server.Name, *sessionName, "doops_cos write "+path)
+				break
+			}
+			toolName = "doops_file_write"
+			arguments["path"] = path
 			arguments["content"] = content
 		case "read":
+			if storageMode == "cos" {
+				result, err := runCOSRead(*server, *sessionName, credentialName, token, path, nil)
+				if err != nil {
+					fmt.Printf("Error: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Printf("storage: cos\nbucket: %s\nkey: %s\npresigned_get: %s\n", result.Bucket, result.Key, result.URL)
+				RecordHistory(server.Name, *sessionName, "doops_cos read "+path)
+				break
+			}
 			toolName = "doops_file_read"
 			arguments["path"] = path
 		case "info":
 			toolName = "doops_node_info"
+		}
+
+		if (command == "read" || command == "write") && storageMode == "cos" {
+			break
 		}
 
 		if toolName == "doops_ssh" {
@@ -819,12 +852,15 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		var target, src, dest string
 		var dryRun bool
 		var pushSession string
+		var storageMode, credentialName string
 		pushFlag := flag.NewFlagSet("push", flag.ExitOnError)
 		pushFlag.StringVar(&target, "target", "", "Target server name")
 		pushFlag.StringVar(&src, "src", ".", "Local source directory")
 		pushFlag.StringVar(&dest, "dest", "", "Remote destination (用于推导 session 隔离标识)")
 		pushFlag.BoolVar(&dryRun, "dry-run", false, "Preview only, don't actually sync")
 		pushFlag.StringVar(&pushSession, "session", "", "Session ID (can also be set before subcommand)")
+		pushFlag.StringVar(&storageMode, "storage", "gateway", "Storage mode: gateway (local relay) or cos")
+		pushFlag.StringVar(&credentialName, "credential", "", "Managed opaque credential name; required for --storage cos")
 		pushFlag.Parse(cmdArgs)
 
 		// 子命令中的 -session 回填全局值
@@ -845,6 +881,20 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			os.Exit(1)
 		}
 
+		storageMode, storageErr := normalizeStorageMode(storageMode)
+		if storageErr != nil {
+			fmt.Printf("Error: %v\n", storageErr)
+			os.Exit(1)
+		}
+		if storageMode == "cos" {
+			token := mustResolveToken(*server)
+			if _, err := pushCOS(*server, src, dest, dryRun, *sessionName, credentialName, token, nil); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
+			RecordHistory(server.Name, *sessionName, fmt.Sprintf("cos push %s -> %s", src, dest))
+			break
+		}
 		if err := Push(*server, src, dest, dryRun, nil, *sessionName); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
@@ -854,10 +904,14 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 	case "pull":
 		var target, dest string
 		var pullSession string
+		var storageMode, credentialName, commit string
 		pullFlag := flag.NewFlagSet("pull", flag.ExitOnError)
 		pullFlag.StringVar(&target, "target", "", "Target server name")
 		pullFlag.StringVar(&dest, "dest", "", "Local destination directory (default: ./<session>)")
 		pullFlag.StringVar(&pullSession, "session", "", "Session ID (can also be set before subcommand)")
+		pullFlag.StringVar(&storageMode, "storage", "gateway", "Storage mode: gateway (local relay) or cos")
+		pullFlag.StringVar(&credentialName, "credential", "", "Managed opaque credential name; required for --storage cos")
+		pullFlag.StringVar(&commit, "commit", "", "Snapshot commit to pull; only valid with --storage cos")
 		pullFlag.Parse(cmdArgs)
 
 		if pullSession != "" && *sessionName == "" {
@@ -878,6 +932,24 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		if server == nil {
 			fmt.Println(targetNotFound(servers, target))
 			os.Exit(1)
+		}
+		storageMode, storageErr := normalizeStorageMode(storageMode)
+		if storageErr != nil {
+			fmt.Printf("Error: %v\n", storageErr)
+			os.Exit(1)
+		}
+		if storageMode != "cos" && strings.TrimSpace(commit) != "" {
+			fmt.Println("Error: --commit is only valid with --storage cos")
+			os.Exit(1)
+		}
+		if storageMode == "cos" {
+			token := mustResolveToken(*server)
+			if err := pullWorkspace(*server, dest, *sessionName, "cos", credentialName, token, commit); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
+			RecordHistory(server.Name, *sessionName, fmt.Sprintf("cos pull -> %s", dest))
+			break
 		}
 		if err := Pull(*server, dest, *sessionName); err != nil {
 			fmt.Printf("Error: %v\n", err)

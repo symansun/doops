@@ -606,6 +606,23 @@ CLI 保持原有输出契约，不能以该路径绕过组件的版本检查。
 
 需要该 target 的 grant（审计动作记为 `write`）。路径规则与 `doops_file_read` 相同：session 内相对路径，或 `/root/kb/<文件名>.md`。
 
+### `cos` 存储模式
+
+`read`、`write`、`push`、`pull` 增加 `--storage gateway|cos`。省略 `--storage` 时仍是 `gateway`：`read` / `write` 走上面的文件 RPC，`push` / `pull` 走 Git HTTP。`cos` 是新增模式，用 `--storage cos --credential <name>` 进入。失败停在 `cos`，不回退到 `gateway`。
+
+桶固定为 `doops-1253657668`。对象 key 只落在调用方自己的前缀：
+
+```text
+sessions/<user-id>/<session-id>/files/<path>
+sessions/<user-id>/<session-id>/snapshots/<commit>/<path>
+```
+
+`..`、绝对路径，以及任何跳出该前缀的 key 都会被拒绝。16 MiB 及以下由 Gateway 用受管凭据单次 PutObject，并返回 object key 和 24 小时 presigned GET。超过 16 MiB 时 Gateway 签发短期 PresignPutObject，客户端直接 PUT 到 COS，Gateway 再用 HeadObject 核对大小，不在 Gateway 落盘拼大文件。`read --storage cos` 只返回 presigned GET，对象内容留在 COS。`push --storage cos` 仍先做本地隔离快照，再把快照文件放进 `snapshots/<commit>/`。清单是同一前缀下的小 JSON 对象 `snapshots/<commit>/.doops/manifest.json`，`snapshots/latest.json` 指向最近一次提交。`pull --storage cos` 按这份清单把对象拉回本地目录。
+
+凭据是已有的 `opaque` 资源，名字由 `--credential` 传入。payload 放在 `data` 里，字段是 `access_key_id`、`secret_access_key`、`endpoint`、`region`、`bucket`。它不是 Gateway user token，也不进入 prompt、审计、日志或仓库。桶名不是 `doops-1253657668`、凭据缺失或 HeadBucket 失败时返回稳定错误类别。
+
+Agent 在线时，`push --storage cos` 上传完成后通知该 session 的 Agent 把对象同步到 `/root/ws/<session>`。同步失败时结果写明 `cos_workspace_not_updated`。Agent 不在线时对象仍然有效，结果写明 `cos_workspace_not_synced`。Git HTTP 仍只服务 `gateway` 模式。
+
 ### `doops_workspace_read`
 
 为 Agent UI 代码工作台提供当前 session 工作区的只读文件树、源码、变更、Diff、搜索和 Git 信息。

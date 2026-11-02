@@ -514,9 +514,11 @@ doops -session build push --target jm --src .
 doops -session build exec --target jm --cmd 'ls -la /root/ws/build | head'
 ```
 
-Standard `push` uses Git workspace sync through Gateway:
+Standard `push` uses Git workspace sync through Gateway. Omit `--storage`, or pass `--storage gateway`, and this path stays unchanged:
 
 - Gateway: `/v1/git/<cluster>/<instance>/<session>.git`
+
+`--storage cos --credential <name>` uploads the same local snapshot to bucket `doops-1253657668` instead of Git HTTP. The credential is an existing opaque resource. A missing credential, the wrong bucket, or a failed bucket check stops in `cos` and does not fall back to Gateway. When the Agent is online the snapshot is also copied into `/root/ws/<session>`; otherwise the objects remain in COS and the result says the workspace was not synced.
 
 Agent 的 Git handler 只接受 Gateway 反向隧道中的进程内调用，不暴露本地
 HTTP `/git` 入口。
@@ -530,6 +532,8 @@ doops -session build pull --target jm --dest ./doops-build-output
 ```
 
 Use `pull` for large files, archives, SQL dumps, images, videos, and generated assets. Do not use `read` or `exec base64` for downloads.
+
+`pull --storage cos --credential <name>` reads the snapshot manifest from COS and downloads that commit into `--dest`. `--commit` selects a snapshot and is valid only with `--storage cos`.
 
 ## Read And Write
 
@@ -545,6 +549,8 @@ uses the same paths for open, save, new-file and upload, and its navigation stay
 inside that workspace. Use explicit Shell operations for host paths.
 
 `read` and `write` are for small text files and short scripts. Use `push/pull` for directories and binary assets.
+
+`read --storage cos` prints a presigned GET and leaves the object in COS. `write --storage cos --credential <name>` stores the file under the caller's prefix in `doops-1253657668` and prints the object key plus a presigned GET. Files of 16 MiB or less are uploaded by the Gateway; larger files are PUT directly to COS.
 
 ## Clean
 
