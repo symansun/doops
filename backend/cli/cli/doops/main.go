@@ -416,12 +416,12 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			subFlag.StringVar(&path, "path", "", "Destination path")
 			subFlag.StringVar(&contentStr, "content", "", "Content to write; for multi-line content prefer --file or stdin")
 			subFlag.StringVar(&fileStr, "file", "", "Read content from local file; use - to read stdin")
-			subFlag.StringVar(&storageMode, "storage", "gateway", "Storage mode: gateway (local relay) or cos")
-			subFlag.StringVar(&credentialName, "credential", "", "Managed opaque credential name; required for --storage cos")
+			subFlag.StringVar(&storageMode, "storage", "cos", "Storage mode: cos (default, Gateway COS config) or gateway (local relay)")
+			subFlag.StringVar(&credentialName, "credential", "", "Ignored for cos; COS settings come from the Gateway")
 		case "read":
 			subFlag.StringVar(&path, "path", "", "Source path")
-			subFlag.StringVar(&storageMode, "storage", "gateway", "Storage mode: gateway (local relay) or cos")
-			subFlag.StringVar(&credentialName, "credential", "", "Managed opaque credential name; required for --storage cos")
+			subFlag.StringVar(&storageMode, "storage", "cos", "Storage mode: cos (default, Gateway COS config) or gateway (local relay)")
+			subFlag.StringVar(&credentialName, "credential", "", "Ignored for cos; COS settings come from the Gateway")
 		}
 
 		subFlag.Parse(cmdArgs)
@@ -859,8 +859,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		pushFlag.StringVar(&dest, "dest", "", "Remote destination (用于推导 session 隔离标识)")
 		pushFlag.BoolVar(&dryRun, "dry-run", false, "Preview only, don't actually sync")
 		pushFlag.StringVar(&pushSession, "session", "", "Session ID (can also be set before subcommand)")
-		pushFlag.StringVar(&storageMode, "storage", "gateway", "Storage mode: gateway (local relay) or cos")
-		pushFlag.StringVar(&credentialName, "credential", "", "Managed opaque credential name; required for --storage cos")
+		pushFlag.StringVar(&storageMode, "storage", "cos", "Storage mode: cos (default, Gateway COS config) or gateway (local relay)")
+		pushFlag.StringVar(&credentialName, "credential", "", "Ignored for cos; COS settings come from the Gateway")
 		pushFlag.Parse(cmdArgs)
 
 		// 子命令中的 -session 回填全局值
@@ -909,9 +909,9 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		pullFlag.StringVar(&target, "target", "", "Target server name")
 		pullFlag.StringVar(&dest, "dest", "", "Local destination directory (default: ./<session>)")
 		pullFlag.StringVar(&pullSession, "session", "", "Session ID (can also be set before subcommand)")
-		pullFlag.StringVar(&storageMode, "storage", "gateway", "Storage mode: gateway (local relay) or cos")
-		pullFlag.StringVar(&credentialName, "credential", "", "Managed opaque credential name; required for --storage cos")
-		pullFlag.StringVar(&commit, "commit", "", "Snapshot commit to pull; only valid with --storage cos")
+		pullFlag.StringVar(&storageMode, "storage", "cos", "Storage mode: cos (default, Gateway COS config) or gateway (local relay)")
+		pullFlag.StringVar(&credentialName, "credential", "", "Ignored for cos; COS settings come from the Gateway")
+		pullFlag.StringVar(&commit, "commit", "", "Snapshot commit to pull; only used by the default cos mode")
 		pullFlag.Parse(cmdArgs)
 
 		if pullSession != "" && *sessionName == "" {
@@ -938,7 +938,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Printf("Error: %v\n", storageErr)
 			os.Exit(1)
 		}
-		if storageMode != "cos" && strings.TrimSpace(commit) != "" {
+		if storageMode == "gateway" && strings.TrimSpace(commit) != "" {
 			fmt.Println("Error: --commit is only valid with --storage cos")
 			os.Exit(1)
 		}
