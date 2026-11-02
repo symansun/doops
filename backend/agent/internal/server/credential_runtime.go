@@ -162,7 +162,7 @@ func (h *GatewayHub) resolveExplicitCredentials(
 	sqlCredential string,
 ) ([]authorizedCredentialMaterialization, error) {
 	autoDatabase := skill == "dosql" && strings.TrimSpace(credentialMode) == "auto"
-	autoHelm := len(names) == 0 && !autoDatabase && automaticHelmCredentialEligible(action, skill)
+	autoHelm := !autoDatabase && automaticHelmCredentialEligible(action, skill)
 	if len(names) == 0 && !autoDatabase && !autoHelm {
 		return nil, nil
 	}
@@ -171,22 +171,32 @@ func (h *GatewayHub) resolveExplicitCredentials(
 	}
 	// A change task pulls its Chart with the Helm credential already bound to
 	// the target, so the operator does not name again what authorization has
-	// already settled. Discovery runs before the checks below, because a target
-	// with no Helm credential must keep downloading a public Chart anonymously.
+	// already settled. Naming a registry, TLS or opaque credential does not
+	// withdraw that: those write a Secret into the namespace and so must be
+	// asked for by name, while the Chart download keeps the target's own Helm
+	// credential. Discovery runs before the checks below, because a target with
+	// no Helm credential must keep downloading a public Chart anonymously.
 	if autoHelm {
 		entries, err := h.store.ListCredentialAccess(auth.UserID, cluster, instance)
 		if err != nil {
 			return nil, err
 		}
-		names = helmCredentialIDs(entries)
-		switch len(names) {
-		case 0:
-			return nil, nil
-		case 1:
-		default:
-			// Several Helm repositories are bound; which one this Chart comes
-			// from is the task's to state, not the Gateway's to guess.
-			return nil, ErrCredentialAmbiguous
+		// A task that names its own Helm credential has already settled which
+		// repository the Chart comes from, so discovery stays out of it.
+		if !credentialReferencesIncludeHelm(names, entries) {
+			discovered := helmCredentialIDs(entries)
+			switch len(discovered) {
+			case 0:
+				if len(names) == 0 {
+					return nil, nil
+				}
+			case 1:
+				names = append(names, discovered...)
+			default:
+				// Several Helm repositories are bound; which one this Chart comes
+				// from is the task's to state, not the Gateway's to guess.
+				return nil, ErrCredentialAmbiguous
+			}
 		}
 	}
 	if credentialScalarContainsInlineMaterial(instruction) {
@@ -321,6 +331,29 @@ func helmCredentialIDs(entries []CredentialListEntry) []string {
 		}
 	}
 	return ids
+}
+
+// credentialReferencesIncludeHelm reports whether names already pick a Helm
+// repository credential, by stable ID or by name. A task that names its own
+// Helm credential has settled which repository the Chart comes from, so
+// discovery must neither add a second one nor report ambiguity.
+func credentialReferencesIncludeHelm(names []string, entries []CredentialListEntry) bool {
+	helm := make(map[string]struct{}, len(entries))
+	for _, id := range helmCredentialIDs(entries) {
+		helm[id] = struct{}{}
+	}
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		for _, entry := range credentialEntriesNamed(entries, name) {
+			if _, ok := helm[entry.ID]; ok {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func databaseCredentialIDs(entries []CredentialListEntry) []string {

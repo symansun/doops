@@ -256,7 +256,13 @@ grant 决定，Gateway 按 (user, cluster, instance) 发现并按稳定 ID 选�
 该 target 上有 0 个 helmPull 凭据时保持匿名下载，公开 Chart 照常可用；有 1 个时自动绑定，
 走的是与显式 `--credential` 完全相同的解析、物化与租约路径；有 2 个以上时返回
 `credential_reference_ambiguous`，由任务用 `--credential <name>` 指明 Chart 来自哪个仓库，
-Gateway 不猜。显式 `--credential` 始终优先，行为不变。
+Gateway 不猜。
+
+点名一个 helmPull 凭据时它始终优先：该 Chart 来自哪个仓库已由任务定下，发现不再参与，
+也不会因为 target 上还绑着别的 Helm 仓库而报歧义。点名 `registry`、`tls`、`opaque` 不收回
+Chart 下载的凭据：这些类型按下一段必须点名，而 Chart 仍用该 target 自己的 helmPull 凭据，
+两者同时生效。所以「私有仓库 Chart + 运行期 Secret」是一条命令，不需要在点名运行期凭据和
+拿到 Chart 之间二选一。
 
 自动选择只覆盖 helmPull：物化一个 helmPull 凭据只在 Agent 进程内开一个临时 unix socket
 broker，prompt 结束即删，不碰任何集群对象。`registry`、`tls`、`opaque` 的物化会在 namespace

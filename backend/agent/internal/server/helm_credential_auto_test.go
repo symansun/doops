@@ -138,6 +138,29 @@ func TestApplyWithoutAnyHelmCredentialStaysAnonymous(t *testing.T) {
 	}
 }
 
+// Naming a credential on a target that binds no Helm credential at all keeps
+// working: discovery finds nothing to add, and the named selection stands on
+// its own with the Chart still downloaded anonymously.
+func TestNamingACredentialWithoutAnyHelmCredentialKeepsTheNamedOne(t *testing.T) {
+	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("m", 32))
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+	opaque, _, _ := credentialTargetPermissionResource(t, f, f.admin,
+		CredentialGrantScope{Cluster: "dev", Instance: "local", Namespace: "apps", Use: CredentialUseOpaqueSecret})
+	auth, err := f.store.VerifyUserToken(f.admin.Plaintext)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	authorized, err := f.hub.resolveExplicitCredentials(
+		auth, "dev", "local", "release app in apps", []string{opaque.Name}, ActionExec, "", "", "")
+	if err != nil {
+		t.Fatalf("resolve credentials: %v", err)
+	}
+	if len(authorized) != 1 || authorized[0].Authorized.Resource.ID != opaque.ID {
+		t.Fatalf("named credential must stand alone, got %#v", authorized)
+	}
+}
+
 // Only a helmPull credential is selected automatically. A registry, TLS or
 // opaque credential writes a Secret into the namespace, so creating one still
 // requires the operator to ask for it by name.
@@ -157,6 +180,147 @@ func TestAutomaticSelectionIgnoresCredentialsThatWriteSecrets(t *testing.T) {
 	}
 	if len(authorized) != 0 {
 		t.Fatalf("authorized = %d, want 0 (only helmPull is automatic)", len(authorized))
+	}
+}
+
+// Naming a credential that is not a Helm repository must not switch the
+// automatic Helm selection off. A release can need both at once: the Chart
+// comes from a private repository (helmPull, settled by the grant) while a
+// runtime value needs a Secret in the namespace (opaque, which only the task
+// can ask for by name). Dropping the repository credential because the task
+// named the opaque one leaves the Chart download anonymous and fails the
+// release, with no way to express the pair.
+func TestNamingANonHelmCredentialKeepsTheAutomaticHelmSelection(t *testing.T) {
+	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("m", 32))
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+	helm, _ := helmAutoCredential(t, f, f.admin, "target-helm", helmAutoScope())
+	opaque, _, _ := credentialTargetPermissionResource(t, f, f.admin,
+		CredentialGrantScope{Cluster: "dev", Instance: "local", Namespace: "apps", Use: CredentialUseOpaqueSecret})
+	auth, err := f.store.VerifyUserToken(f.admin.Plaintext)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	authorized, err := f.hub.resolveExplicitCredentials(
+		auth, "dev", "local", "release app in apps", []string{opaque.Name}, ActionExec, "", "", "")
+	if err != nil {
+		t.Fatalf("resolve credentials: %v", err)
+	}
+
+	selected := make(map[string]CredentialType, len(authorized))
+	for _, item := range authorized {
+		selected[item.Authorized.Resource.ID] = item.Authorized.Resource.Type
+	}
+	if got := selected[opaque.ID]; got != CredentialTypeOpaque {
+		t.Fatalf("named opaque credential missing: type = %q, want %q", got, CredentialTypeOpaque)
+	}
+	if got := selected[helm.ID]; got != CredentialTypeHelmRepository {
+		t.Fatalf("naming the opaque credential dropped the target's Helm credential: "+
+			"type = %q, want %q (%d authorized)", got, CredentialTypeHelmRepository, len(authorized))
+	}
+}
+
+// Naming the Helm credential explicitly stays exactly one selection: discovery
+// must not add the same credential a second time.
+func TestNamingTheHelmCredentialDoesNotSelectItTwice(t *testing.T) {
+	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("m", 32))
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+	helm, _ := helmAutoCredential(t, f, f.admin, "target-helm", helmAutoScope())
+	auth, err := f.store.VerifyUserToken(f.admin.Plaintext)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	authorized, err := f.hub.resolveExplicitCredentials(
+		auth, "dev", "local", "release app in apps", []string{helm.Name}, ActionExec, "", "", "")
+	if err != nil {
+		t.Fatalf("resolve credentials: %v", err)
+	}
+	if len(authorized) != 1 || authorized[0].Authorized.Resource.ID != helm.ID {
+		t.Fatalf("named Helm credential must be selected once, got %#v", authorized)
+	}
+}
+
+// Adding the target's Helm credential beside a named one must not widen
+// authority: a user without the target still gets nothing, so the pair cannot
+// become a way to reach a credential the grant does not cover.
+func TestNamingACredentialKeepsTargetAuthorityForTheAutomaticOne(t *testing.T) {
+	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("m", 32))
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+	helmAutoCredential(t, f, f.admin, "target-helm", helmAutoScope())
+	opaque, _, _ := credentialTargetPermissionResource(t, f, f.admin,
+		CredentialGrantScope{Cluster: "dev", Instance: "local", Namespace: "apps", Use: CredentialUseOpaqueSecret})
+	outsider := f.user(t, "no-target", ScopeGrant{Cluster: "other", Instance: "other"})
+	auth, err := f.store.VerifyUserToken(outsider.Plaintext)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = f.hub.resolveExplicitCredentials(
+		auth, "dev", "local", "release app in apps", []string{opaque.Name}, ActionExec, "", "", "")
+	if got := credentialErrorCategory(err); got != "credential_forbidden" {
+		t.Fatalf("category = %q, want credential_forbidden (err=%v)", got, err)
+	}
+}
+
+// The combined selection exposes the same metadata the named path does and
+// nothing more: neither credential's payload may reach the bindings the model
+// sees or the audit trail.
+func TestNamingACredentialBesideTheAutomaticOneNeverReturnsPayloads(t *testing.T) {
+	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("m", 32))
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+	helmAutoCredential(t, f, f.admin, "target-helm", helmAutoScope())
+	opaque, _, _ := credentialTargetPermissionResource(t, f, f.admin,
+		CredentialGrantScope{Cluster: "dev", Instance: "local", Namespace: "apps", Use: CredentialUseOpaqueSecret})
+	auth, err := f.store.VerifyUserToken(f.admin.Plaintext)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	authorized, err := f.hub.resolveExplicitCredentials(
+		auth, "dev", "local", "release app in apps", []string{opaque.Name}, ActionExec, "", "", "")
+	if err != nil || len(authorized) != 2 {
+		t.Fatalf("resolve credentials: %v (%d authorized)", err, len(authorized))
+	}
+	events, err := f.store.ListAudit(100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]interface{}{
+		"authorized selection": authorized,
+		"audit trail":          events,
+	} {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, canary := range []string{helmAutoCanary, credentialTargetPermissionCanary} {
+			if strings.Contains(string(encoded), canary) {
+				t.Fatalf("%s leaked a credential payload", name)
+			}
+		}
+	}
+}
+
+// Ambiguity is still reported when the task names a non-Helm credential and
+// several Helm repositories are bound: which repository the Chart comes from
+// stays the task's to state.
+func TestNamingANonHelmCredentialStillReportsHelmAmbiguity(t *testing.T) {
+	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("m", 32))
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+	helmAutoCredential(t, f, f.admin, "first-helm", helmAutoScope())
+	helmAutoCredential(t, f, f.admin, "second-helm", helmAutoScope())
+	opaque, _, _ := credentialTargetPermissionResource(t, f, f.admin,
+		CredentialGrantScope{Cluster: "dev", Instance: "local", Namespace: "apps", Use: CredentialUseOpaqueSecret})
+	auth, err := f.store.VerifyUserToken(f.admin.Plaintext)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = f.hub.resolveExplicitCredentials(
+		auth, "dev", "local", "release app in apps", []string{opaque.Name}, ActionExec, "", "", "")
+	if got := credentialErrorCategory(err); got != "credential_reference_ambiguous" {
+		t.Fatalf("category = %q, want credential_reference_ambiguous (err=%v)", got, err)
 	}
 }
 
