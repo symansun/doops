@@ -24,6 +24,7 @@ import {
   type CredentialVerificationResponse,
   type CredentialVersion,
 } from "@/lib/credentials"
+import { useAppDialog } from "./app-dialog"
 import {
   BanIcon,
   CheckIcon,
@@ -86,6 +87,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
   const [notice, setNotice] = useState("")
   const [showCreate, setShowCreate] = useState(false)
   const [action, setAction] = useState<Action>(null)
+  const { confirm, dialog } = useAppDialog()
   const [versionsByCredential, setVersionsByCredential] = useState<
     Record<string, CredentialVersion[]>
   >({})
@@ -156,7 +158,16 @@ export function CredentialPanel({ session, target }: { session: Session; target:
   }
 
   async function revoke(resource: CredentialResource) {
-    if (!window.confirm(`确认吊销凭据「${resource.name}」？已物化资源将进入清理流程。`)) return
+    if (
+      !(await confirm({
+        title: "吊销凭据",
+        message: `确认吊销凭据「${resource.name}」？已物化资源将进入清理流程。`,
+        confirmLabel: "吊销",
+        tone: "danger",
+      }))
+    ) {
+      return
+    }
     setError("")
     try {
       await revokeCredential(session, resource.id)
@@ -169,9 +180,12 @@ export function CredentialPanel({ session, target }: { session: Session; target:
 
   async function revokeBinding(resource: CredentialResource, binding: CredentialBinding) {
     if (
-      !window.confirm(
-        `确认解除「${binding.scope.cluster}/${binding.scope.instance}」上的凭据绑定？已物化资源将进入清理流程。`,
-      )
+      !(await confirm({
+        title: "解除绑定",
+        message: `确认解除「${binding.scope.cluster}/${binding.scope.instance}」上的凭据绑定？已物化资源将进入清理流程。`,
+        confirmLabel: "解除绑定",
+        tone: "danger",
+      }))
     ) {
       return
     }
@@ -187,7 +201,13 @@ export function CredentialPanel({ session, target }: { session: Session; target:
 
   async function promote(resource: CredentialResource, version: CredentialVersion) {
     if (version.state !== "staged") return
-    if (!window.confirm(`确认激活暂存版本 ${version.id}？Gateway 会重新检查全部 active target binding。`)) {
+    if (
+      !(await confirm({
+        title: "激活暂存版本",
+        message: `确认激活暂存版本 ${version.id}？Gateway 会重新检查全部 active target binding。`,
+        confirmLabel: "激活",
+      }))
+    ) {
       return
     }
     setError("")
@@ -532,6 +552,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
           onError={setError}
         />
       )}
+      {dialog}
     </div>
   )
 }

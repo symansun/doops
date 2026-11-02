@@ -50,6 +50,10 @@ tmp-openwork/
 /examples/
 /test/
 
+# Local preservation area for untracked historical artifacts and potentially sensitive
+# scan evidence removed from the canonical source tree.
+/.local/
+
 # ========================================
 # 操作系统 / 编辑器
 # ========================================

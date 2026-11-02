@@ -12,6 +12,7 @@ import {
   TrashIcon,
   CheckIcon,
 } from "./icons"
+import { useAppDialog } from "./app-dialog"
 
 // 知识库根目录（持久化，不随会话工作区清理）
 const KB_ROOT = "/root/kb"
@@ -41,6 +42,7 @@ export function KnowledgeBase({
   const [mode, setMode] = useState<Mode>("split")
   const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
+  const { confirm, prompt, dialog } = useAppDialog()
 
   const docPath = useCallback((name: string) => `${KB_ROOT}/${name}`, [])
 
@@ -82,9 +84,20 @@ export function KnowledgeBase({
   }, [refresh])
 
   async function openFile(name: string) {
-    if (dirty && !confirm("当前文档有未保存的修改，确定切换吗？")) return
+    if (
+      dirty &&
+      !(await confirm({
+        title: "放弃未保存的修改",
+        message: "当前文档有未保存的修改，确定切换吗？",
+        confirmLabel: "切换",
+        tone: "danger",
+      }))
+    ) {
+      return
+    }
     setBusy(true)
     setStatus(null)
+    setListErr("")
     let buf = ""
     try {
       await callTool(
@@ -105,7 +118,9 @@ export function KnowledgeBase({
       setContent(buf)
       setDirty(false)
     } catch (err) {
-      setStatus({ kind: "err", text: (err as Error).message })
+      const text = (err as Error).message
+      setStatus({ kind: "err", text })
+      setListErr(text)
     } finally {
       setBusy(false)
     }
@@ -141,11 +156,22 @@ export function KnowledgeBase({
     }
   }
 
-  function newDoc() {
-    let name = prompt("新建文档名称（自动补全 .md 后缀）")
-    if (!name) return
+  async function newDoc() {
+    const entered = await prompt({
+      title: "新建文档",
+      message: "名称会自动补全 .md 后缀。",
+      label: "文档名称",
+      placeholder: "运行手册",
+      confirmLabel: "创建",
+    })
+    if (!entered) return
+    let name = entered
     name = name.trim()
     if (!/\.md$/i.test(name)) name += ".md"
+    if (!/^[^\\/\u0000]+\.md$/i.test(name) || name === ".md" || name.includes("..")) {
+      setListErr("文档名只能是单层 Markdown 文件名，不能包含路径")
+      return
+    }
     if (docs.includes(name)) {
       openFile(name)
       return
@@ -159,7 +185,16 @@ export function KnowledgeBase({
   }
 
   async function deleteDoc(name: string) {
-    if (!confirm(`确定删除文档「${name}」？此操作不可恢复。`)) return
+    if (
+      !(await confirm({
+        title: "删除文档",
+        message: `确定删除文档「${name}」？此操作不可恢复。`,
+        confirmLabel: "删除",
+        tone: "danger",
+      }))
+    ) {
+      return
+    }
     setBusy(true)
     try {
       await callTool(
@@ -336,6 +371,7 @@ export function KnowledgeBase({
           </div>
         )}
       </div>
+      {dialog}
     </div>
   )
 }
