@@ -989,6 +989,13 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32003, "credential control-plane tools are internal only"))
 		return nil
 	}
+	if params.Name == "doops_cos_sync" {
+		writeJSON(buildErrorResponse(req.ID, -32003, "cos_sync_internal"))
+		return nil
+	}
+	if cosToolName(params.Name) {
+		return h.handleCOSToolCall(ctx, auth, cluster, instance, req, params, writeJSON)
+	}
 	var promptArgs api.AgentPromptParams
 	if params.Name == "doops_agent_prompt" {
 		if err := json.Unmarshal(params.Arguments, &promptArgs); err != nil {
@@ -2445,6 +2452,8 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 	case "doops_workspace_read":
 		return ActionRead
 	case "doops_file_write":
+		return ActionWrite
+	case "doops_cos_sync":
 		return ActionWrite
 	case "doops_node_info", "doops_database_inventory":
 		return ActionInfo
