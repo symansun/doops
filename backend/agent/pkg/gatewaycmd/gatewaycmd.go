@@ -92,6 +92,7 @@ func serve(args []string) {
 		TargetQueueTimeout: *targetQueueTimeout,
 		MaxQueuedPerTarget: *maxQueuedPerTarget,
 	})
+	hub.StartOfflineInstanceReaper(time.Hour)
 
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)

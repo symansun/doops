@@ -61,7 +61,7 @@ credential reference 时必须显式声明 `skill=dosql`；普通只读 prompt �
 变更只要求用户对该 target 的 Gateway grant；每次真实变更在版本日志里先取版本号再执行，
 日志不可写时拒绝执行。
 
-数据库发现使用 `mcp_dosql_read operation=discover`，只扫描 Kubernetes 非 Secret 元数据，
+数据库发现使用 `mcp_dosql_read operation=discover`。公开只读工具 `doops_database_inventory` 返回同一次扫描的候选，不另存资产库。扫描只看 Kubernetes 非 Secret 元数据，
 从 Pod、Service、Deployment 和 StatefulSet 识别数据库实例、引擎、端口以及非 Secret 配置
 中可见的数据库名，并返回稳定的 `database_asset_id`。缺少数据库名的候选必须由用户补充
 精确选择和数据库凭据，不能猜测或扩大 scope。对话任务可以同时携带数据库资产引用和

@@ -213,6 +213,19 @@ Authorization: Bearer <ADMIN_USER_TOKEN>
 grant 覆盖整个 target，没有 action 维度；`actions` 可省略，只接受 `["target:use"]`，其它值返回 `400`。
 平台管理员是用户的 `is_admin` 标记，创建用户时用 `"admin": true` 设置。
 
+## 管理员查看实例
+
+`GET /v1/admin/instances` 列出已注册到 Gateway 的边缘节点及其连接状态。只有平台管理员可以读；普通用户返回 `403`。GET 不产生 mutation 审计。
+
+默认只返回活跃实例。历史实例要显式包含：
+
+```http
+GET /v1/admin/instances?include=history
+Authorization: Bearer <ADMIN_USER_TOKEN>
+```
+
+`include` 只接受 `history`，其它值返回 `400`。活跃窗口、90 天自动清理，以及清理不触碰的授权、令牌、凭据、审计和路由，见 [DOOPS_GATEWAY_TUNNEL.md](DOOPS_GATEWAY_TUNNEL.md) 的 Reliability Notes。
+
 ## 管理员签发用户 Token
 
 管理员可通过 gateway API 给指定用户签发新的 user token。调用方必须使用拥有
@@ -645,6 +658,25 @@ socket。镜像构建使用 CLI 的通用 `image build`，高级场景仍可通�
 ```
 
 需要该 target 的 grant（审计动作记为 `info`）。
+
+### `doops_database_inventory`
+
+返回当前 target 上可识别的数据库实例。它调用与 `mcp_dosql_read operation=discover`
+相同的非 Secret Kubernetes 元数据扫描，不读取 Secret，不连接数据库，也不把结果存成
+第二份资产库。没有 kubectl 的节点返回 `dosql_discovery_unavailable`。
+
+参数：
+
+```json
+{"session_id": "console-1"}
+```
+
+结果是 JSON，包含 `candidates[]`：`database_asset_id`、`namespace`、`service`、
+`engine`、`port`、`database_name` 和 `status`。缺少库名的候选状态为
+`needs_database_name_or_credential`，调用方必须由用户补充，不能猜测。
+
+需要该 target 的 grant（审计动作记为 `info`）。只读查询仍走 `doops_agent_prompt`
+的 `skill=dosql`，变更仍走 `doops sql --mode apply`。
 
 ### `doops_check_deployment`
 

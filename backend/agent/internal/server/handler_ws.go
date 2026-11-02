@@ -824,6 +824,14 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			writeJSON(buildSuccessResponse(reqID, "Docker command finished."))
 		}
 
+	case "doops_database_inventory":
+		result, err := discoverDatabaseCandidates(ctx)
+		if err != nil {
+			writeJSON(buildToolErrorResponse(reqID, err.Error()))
+		} else {
+			writeJSON(buildSuccessResponse(reqID, result))
+		}
+
 	case "doops_node_info":
 		var args api.NodeInfoParams
 		json.Unmarshal(argBytes, &args)

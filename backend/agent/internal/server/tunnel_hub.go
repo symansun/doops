@@ -492,6 +492,36 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	return hub
 }
 
+// StartOfflineInstanceReaper removes offline instance records past the
+// retention window once immediately and then on interval. It is started by
+// the gateway process, not by tests that only construct a hub.
+func (h *GatewayHub) StartOfflineInstanceReaper(interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Hour
+	}
+	go func() {
+		h.pruneOfflineInstances()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			h.pruneOfflineInstances()
+		}
+	}()
+	log.Printf("[gateway] offline instance cleanup started (active=%s, retention=%s, interval=%s)",
+		ActiveInstanceWindow, OfflineInstanceRetention, interval)
+}
+
+func (h *GatewayHub) pruneOfflineInstances() {
+	deleted, err := h.store.PruneOfflineAgentStatus(time.Now().UTC())
+	if err != nil {
+		log.Printf("[gateway] offline instance cleanup failed: %v", err)
+		return
+	}
+	if deleted > 0 {
+		log.Printf("[gateway] removed %d offline instance records older than %s", deleted, OfflineInstanceRetention)
+	}
+}
+
 func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/ws", HandleRetiredInboundWS)
 	mux.HandleFunc("/v1/auth/login", h.HandleAuthLogin)
@@ -2416,7 +2446,7 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 		return ActionRead
 	case "doops_file_write":
 		return ActionWrite
-	case "doops_node_info":
+	case "doops_node_info", "doops_database_inventory":
 		return ActionInfo
 	case "doops_check_deployment":
 		return ActionCheck
@@ -2597,6 +2627,8 @@ func summarizeToolCall(tool string, args json.RawMessage) string {
 		if image, _ := m["image"].(string); image != "" {
 			return tool + " " + image
 		}
+	case "doops_database_inventory":
+		return "doops_database_inventory"
 	case "doops_k8s":
 		operation, _ := m["operation"].(string)
 		resource, _ := m["resource"].(string)
