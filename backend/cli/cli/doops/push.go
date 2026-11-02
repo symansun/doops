@@ -84,6 +84,19 @@ func pushWorkspaceSnapshotWithSource(
 	sessionID string,
 	source *WorkspaceSourceIdentity,
 ) (string, error) {
+	return pushSnapshot(server, src, dest, dryRun, extraExcludes, sessionID, source, "gateway", "", "", nil)
+}
+
+func pushSnapshot(
+	server Server,
+	src, dest string,
+	dryRun bool,
+	extraExcludes []string,
+	sessionID string,
+	source *WorkspaceSourceIdentity,
+	storage, credential, token string,
+	transfer cosTransfer,
+) (string, error) {
 	// 1. 解析源目录
 	src, err := filepath.Abs(src)
 	if err != nil {
@@ -109,13 +122,27 @@ func pushWorkspaceSnapshotWithSource(
 	}
 	sessionID = resolveSession(sessionID)
 
-	token, err := ResolveToken(server)
+	mode, err := normalizeStorageMode(storage)
 	if err != nil {
 		return "", err
 	}
-	gitURL, err := buildGitRemoteURLForServer(server, sessionID, true)
-	if err != nil {
-		return "", err
+	if mode == "cos" {
+		if strings.TrimSpace(token) == "" {
+			return "", fmt.Errorf("gateway_auth_failed")
+		}
+		if strings.TrimSpace(credential) == "" || (!dryRun && transfer == nil) {
+			return "", fmt.Errorf("cos_credential_missing")
+		}
+		if !dryRun {
+			if err := transfer.Probe(); err != nil {
+				return "", err
+			}
+		}
+	} else {
+		token, err = ResolveToken(server)
+		if err != nil {
+			return "", err
+		}
 	}
 	workspacePath := fmt.Sprintf("/root/ws/%s", sessionID)
 
@@ -141,21 +168,45 @@ func pushWorkspaceSnapshotWithSource(
 		return "", nil
 	}
 
-	// 4. 在幽灵目录中进行纯净 Git 化与差分推送
+	// 4. 在幽灵目录中进行纯净 Git 化。gateway 模式再差分推送；cos 模式把同一份快照对象写入 COS。
 	fmt.Printf("📦 本地隔离快照整理完成: %d 个文件\n", len(stagedFiles))
-	fmt.Printf("🚀 进行极速无感增量推送至远端工作区: %s (%s)\n", workspacePath, server.Name)
 	fmt.Printf("🔧 正在初始化幽灵 Git 仓库并生成同步提交...\n")
 
 	localCommit, err := createWorkspaceSnapshotCommit(tmpDir, source)
 	if err != nil {
 		return "", err
 	}
+	if mode == "cos" {
+		fmt.Printf("🚀 正在把隔离快照上传到 COS 桶 %s: %s (%s)\n", cosBucketName, workspacePath, server.Name)
+		status, err := uploadCOSSnapshot(tmpDir, stagedFiles, localCommit, transfer)
+		if err != nil {
+			return "", err
+		}
+		elapsed := time.Since(start)
+		shortCommit := localCommit
+		if len(shortCommit) > 12 {
+			shortCommit = shortCommit[:12]
+		}
+		fmt.Printf("✅ COS 快照已写入 (%s) @ %s\n", elapsed.Round(time.Millisecond), shortCommit)
+		if status == "" || status == "synced" {
+			fmt.Printf("workspace: synced %s\n", workspacePath)
+		} else {
+			fmt.Printf("workspace: %s\n", status)
+		}
+		return localCommit, nil
+	}
+
+	fmt.Printf("🚀 进行极速无感增量推送至远端工作区: %s (%s)\n", workspacePath, server.Name)
 	sourceManifestBlob := ""
 	if source != nil {
 		sourceManifestBlob, err = workspaceSourceManifestBlobID(tmpDir, localCommit)
 		if err != nil {
 			return "", err
 		}
+	}
+	gitURL, err := buildGitRemoteURLForServer(server, sessionID, true)
+	if err != nil {
+		return "", err
 	}
 
 	gitCmds := [][]string{

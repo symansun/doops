@@ -11,6 +11,17 @@ import (
 // Pull syncs a remote session workspace back to a local directory using the
 // same Git transport model as Push. read remains a small-text viewing command.
 func Pull(server Server, dest, sessionID string) error {
+	return pullWorkspace(server, dest, sessionID, "gateway", "", "", "")
+}
+
+func pullWorkspace(server Server, dest, sessionID, storage, credential, token, commit string) error {
+	mode, err := normalizeStorageMode(storage)
+	if err != nil {
+		return err
+	}
+	if mode == "cos" {
+		return pullCOS(server, dest, sessionID, credential, token, commit, nil)
+	}
 	if strings.TrimSpace(sessionID) == "" {
 		return fmt.Errorf("session ID 必传：请通过 -session 指定要拉取的远端工作区")
 	}
@@ -22,7 +33,7 @@ func Pull(server Server, dest, sessionID string) error {
 		return fmt.Errorf("解析目标路径失败: %v", err)
 	}
 
-	token, err := ResolveToken(server)
+	token, err = ResolveToken(server)
 	if err != nil {
 		return err
 	}
@@ -34,7 +45,7 @@ func Pull(server Server, dest, sessionID string) error {
 	fmt.Printf("📦 正在让远端工作区生成 Git 快照: /root/ws/%s\n", sessionID)
 	client := NewMCPClient(server, NewSessionStore(), sessionID, false)
 	client.Token = token
-	commit, err := client.CallAndCapture("doops_shell", map[string]interface{}{
+	commit, err = client.CallAndCapture("doops_shell", map[string]interface{}{
 		"command": buildGitWorkspaceCommitCommand(sessionID),
 	})
 	client.Close()
