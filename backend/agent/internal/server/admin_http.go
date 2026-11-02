@@ -227,14 +227,22 @@ func (h *GatewayHub) HandleAdminGrants(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// HandleAdminInstances lists every known instance, including archived records,
-// and merges the persistent status with the current live connection state.
+// HandleAdminInstances lists known instances and merges live connection state.
+// The default result is the active window only. include=history also returns
+// older offline records that are still inside the retention window, including
+// archived records. Grants, tokens, credential bindings and audit history are
+// not affected by either view.
 func (h *GatewayHub) HandleAdminInstances(w http.ResponseWriter, r *http.Request) {
 	if !h.requireAdmin(w, r) {
 		return
 	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	includeHistory, err := parseInstanceInclude(strings.TrimSpace(r.URL.Query().Get("include")))
+	if err != nil {
+		http.Error(w, "invalid include", http.StatusBadRequest)
 		return
 	}
 	statuses, err := h.store.ListAgentStatus()
@@ -246,6 +254,7 @@ func (h *GatewayHub) HandleAdminInstances(w http.ResponseWriter, r *http.Request
 	for _, t := range h.ListTargets() {
 		live[tunnelKey(t.Cluster, t.Instance)] = t
 	}
+	now := time.Now().UTC()
 	out := make([]adminInstanceInfo, 0, len(statuses))
 	for _, st := range statuses {
 		info := adminInstanceStatus(st)
@@ -254,6 +263,9 @@ func (h *GatewayHub) HandleAdminInstances(w http.ResponseWriter, r *http.Request
 			info.Busy = t.Busy
 			info.ActiveOps = t.ActiveOps
 			info.QueuedOps = t.QueuedOps
+		}
+		if !includeHistory && !agentInstanceActive(info.Status, info.LastSeen, now) {
+			continue
 		}
 		out = append(out, info)
 	}

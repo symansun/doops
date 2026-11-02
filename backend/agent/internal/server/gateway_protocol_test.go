@@ -1184,6 +1184,12 @@ func TestGatewayActionMappingUsesDedicatedToolsForCheckAndClean(t *testing.T) {
 	if got := actionForTool("doops_k8s", nil); got != ActionExec {
 		t.Fatalf("doops_k8s must map to exec, got %q", got)
 	}
+	if got := actionForTool("doops_database_inventory", nil); got != ActionInfo {
+		t.Fatalf("doops_database_inventory must map to info, got %q", got)
+	}
+	if got := resourceKeyForTool(ActionInfo, "doops_database_inventory", nil, "dev", "node"); got != "" {
+		t.Fatalf("database inventory must stay a concurrent read, got %q", got)
+	}
 }
 
 func TestGatewayRejectsStructuredSSHForAgentWithoutCapability(t *testing.T) {

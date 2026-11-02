@@ -482,6 +482,8 @@ doops -session agent-upgrade upgrade \
 - gateway 会主动对 agent WebSocket 发 ping，agent pong 后刷新租约和 SQLite `last_seen`。
 - agent 上下线状态写入 SQLite，在线目标由内存连接表提供，断线时立即标记 offline。
 - agent 重连替换旧连接时，旧连接的关闭不会把新连接错误标记为 offline。
+- 实例记录会自动过滤和清理。活跃窗口是 7 天：在线实例，以及离线但 `last_seen` 距今不超过 7 天（含恰好 7 天）的实例，出现在 `GET /v1/admin/instances` 的默认结果里。没有心跳时间的离线记录不算活跃。`include=history` 才一并返回尚未删除的历史记录，包括已归档记录；`include` 的其它取值返回 `400`。控制台实例页用 `include=history` 拉取后自行折叠历史和已归档记录；概览的纳管数量和配置发布使用默认结果，不列出历史实例。归档只改变展示，不改变这套保留期。
+- Gateway 进程启动时，以及之后每小时，删除离线超过 90 天的 `agent_status` 行。恰好 90 天保留。没有 `last_seen` 时用 `updated_at`；两者都没有则保留。状态为 online 的行不删除，删除语句再次要求 `status = 'offline'`，避免清理过程中重连的实例被删掉。删除只移除连接状态，不删除用户授权、令牌、凭据绑定、审计、代理路由或 Edge 路由。Agent 再次连接时会重新写入该 `cluster/instance`。
 - `ask --apply` 发生客户端或隧道断连时，当前等待路径取消并保留真实审计状态。系统不恢复或
   重放 mutation；实际状态不确定时必须返回 outcome unknown，并由
   操作者核查目标资源。
