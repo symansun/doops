@@ -160,7 +160,12 @@ Agent 自恢复可以通过 SSH 到该主机执行受控流程；日常业务仍
 
 旧副本卡在 Terminating 时，先核对替代 Pod 已接管 Gateway，再检查事件、finalizer 和
 节点运行时；不能仅凭一分钟超时就强制删除，也不要对同一身份再跑一次安装器。
-非标准 `hostPID` 配置必须在独立迁移中处理，不能通过临时容器绕过。
+进入 Pod 所在节点必须显式打开 values `hostAccess.enabled`。默认 `false`：
+Pod 使用自己的 PID namespace，特权模式也不能当成已经进入宿主机。设为 `true`
+后，Pod 与该节点共享 PID namespace，并把节点根目录只读挂到 `/host`；
+`hostNetwork` 保持关闭。进入该节点只通过 Gateway 的 `doops exec`，由 target grant
+控制并写入审计，命令见 [PHYSICAL_HOST_ACCESS.md](PHYSICAL_HOST_ACCESS.md)。
+这只到达 Pod 所在节点的操作系统，不跨越虚拟机的 hypervisor，也不能代替一份写明范围的 Helm values。
 
 ## 空服务器 Docker 首装
 

@@ -35,6 +35,12 @@ tolerations: []
 
 hostAliases: []
 
+# Enter the node that runs this Pod. Default false keeps the Pod in its own
+# PID namespace. true shares the node PID namespace and mounts the node root
+# read-only at /host. hostNetwork stays off.
+hostAccess:
+  enabled: false
+
 volumeMounts: []
 
 volumes: []
