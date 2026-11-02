@@ -151,7 +151,7 @@ bash scripts/deploy-gateway.sh \
 
 - user token 只能操作有 grant 的 target。
 - gateway 转发 doops JSON-RPC 操作流量和 Git HTTP 请求，不做裸 TCP 隧道。
-- `push/pull` 在标准 gateway 路径下使用 Git 语义。gateway 对外暴露 `/v1/git/<cluster>/<instance>/<session>.git/...`，再通过目标 agent 已建立的反向 WebSocket 把 Git HTTP 请求透传给 agent 本地 `/git/<session>.git/...`。
+- `push/pull` 在标准 gateway 路径下使用 Git 语义。省略 `--storage` 时仍走这条路径。gateway 对外暴露 `/v1/git/<cluster>/<instance>/<session>.git/...`，再通过目标 agent 已建立的反向 WebSocket 把 Git HTTP 请求透传给 agent 本地 `/git/<session>.git/...`。Git HTTP 不服务 `cos` 模式。
 - `doops_workspace_*` 是低层文件传输工具；通用 CLI 的目录同步使用 Git HTTP
   `push/pull`。这些接口不属于发布授权协议，发布任务不得用文件同步替代明确的
   target、范围、镜像、原因和验收条件。
@@ -488,7 +488,7 @@ doops -session agent-upgrade upgrade \
   重放 mutation；实际状态不确定时必须返回 outcome unknown，并由
   操作者核查目标资源。
 - 审计记录包含 user、token、target、action、session、命令摘要、状态、错误和输出尾部；输出尾部使用有界缓冲，默认只保留 8 KiB 尾部摘要。
-- gateway 只转发操作流量和 Git HTTP 流量，不保存仓库快照。大文件、可恢复续传、跨用户长期共享 artifact 建议新增独立 artifact store，不把 gateway 扩展成对象存储。
+- gateway 模式只转发操作流量和 Git HTTP 流量，不保存仓库快照。`cos` 模式把对象字节交给腾讯云 COS 桶 `doops-1253657668`：16 MiB 及以下由 Gateway 用受管凭据单次 PutObject，更大的对象由客户端持预签名直接 PUT。字节不进 Gateway SQLite，也不进 Git 对象库。Gateway 不把自己变成对象存储。
 
 ## Current Managed Targets
 
