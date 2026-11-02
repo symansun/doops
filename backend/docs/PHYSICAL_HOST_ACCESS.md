@@ -27,9 +27,9 @@ scope: doops-operations
 
 ### Kubernetes Agent 进入所在节点
 
-标准 Helm Agent 默认不能进入节点。只有该 Deployment 的 values 把
-`hostAccess.enabled` 设为 `true` 时，Pod 才与所在节点共享 PID namespace，
-并把节点根目录只读挂到 `/host`。`hostNetwork` 仍然关闭。
+标准 Helm Agent 的 `hostAccess.enabled` 默认是 `true`：Pod 与所在节点共享
+PID namespace，并把节点根目录只读挂到 `/host`。显式写成 `false` 才关闭。
+`hostNetwork` 仍然关闭。
 
 进入节点只有这一条标准命令，它就是 Gateway 的 `exec`：
 
