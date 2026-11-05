@@ -70,7 +70,10 @@ export function AuditPanel({
     } finally {
       if (id === requestId.current) setLoading(false)
     }
-  }, [session, target, sessionId, scope, credentialId, action, status])
+    // The target poll replaces the object on every heartbeat; reload only when
+    // the target itself changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, target.cluster, target.instance, sessionId, scope, action, status, credentialId])
 
   function submitCredential() {
     const next = credentialInput.trim()
