@@ -381,22 +381,43 @@ export function shellResultOutcome(text: string): { ok: boolean; text: string } 
   return { ok: true, text }
 }
 
-export type ShellFailureKind = "exit" | "signal" | "canceled" | "forbidden" | "offline" | "auth" | "unknown" | "blocked" | "other"
+export type ShellFailureKind = "exit" | "signal" | "canceled" | "interrupted" | "forbidden" | "offline" | "auth" | "unknown" | "blocked" | "other"
+
+// info：用户自己停止且命令干净结束；warn：用户停止但命令可能执行了一部分；error：其余失败。
+export type ShellFailureTone = "info" | "warn" | "error"
 
 export interface ShellFailure {
   kind: ShellFailureKind
+  tone: ShellFailureTone
   text: string
   exitCode?: number
 }
 
-// describeShellFailure 把 Gateway/Agent 的错误翻译成运维能直接处理的说明。
+// Gateway 对执行中被打断的变更命令（doops_shell 等）不能确认干净停止，会返回这条原因。
+const INTERRUPTED_MUTATION = "mutation was interrupted before it finished"
+
+// describeShellFailure 把 Gateway/Agent 的错误翻译成运维能直接处理的说明，并给出展示样式。
 export function describeShellFailure(
   message: string,
   opts: { stopRequested: boolean; target: { cluster: string; instance: string } },
 ): ShellFailure {
+  const failure = classifyShellFailure(message, opts)
+  const tone: ShellFailureTone = failure.kind === "interrupted" ? "warn"
+    : failure.kind === "canceled" && opts.stopRequested ? "info" : "error"
+  return { ...failure, tone }
+}
+
+function classifyShellFailure(
+  message: string,
+  opts: { stopRequested: boolean; target: { cluster: string; instance: string } },
+): Omit<ShellFailure, "tone"> {
   const raw = message.trim()
   const where = `${opts.target.cluster}/${opts.target.instance}`
   if (raw.includes("execution_outcome_unknown")) {
+    // 用户点了停止、Gateway 报告命令在执行中被打断：这是用户自己的停止，但不能当作干净结束。
+    if (opts.stopRequested && raw.includes(INTERRUPTED_MUTATION)) {
+      return { kind: "interrupted", text: "已停止：命令在执行中被打断，可能已经执行了一部分。请先核对实际状态，再决定是否重新执行" }
+    }
     return { kind: "unknown", text: `远端终态未确认：请先核对实际状态，不要直接重放原命令（${raw}）` }
   }
   const blocked = /blocked_command\(([^)]+)\):\s*(.*)/.exec(raw)

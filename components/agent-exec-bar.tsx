@@ -206,7 +206,14 @@ export function AgentExecBar({
               {run.status === "running" && <div className="text-muted-foreground">{run.progress || "执行中…"}</div>}
               {run.status === "ok" && <div className="text-muted-foreground">✓ 完成，退出码 0</div>}
               {run.status === "failed" && run.failure && (
-                <div className={run.failure.kind === "canceled" && run.failure.text === "已停止" ? "text-muted-foreground" : "text-destructive"}>
+                <div
+                  role={run.failure.tone === "error" ? "alert" : "status"}
+                  className={run.failure.tone === "info"
+                    ? "text-muted-foreground"
+                    : run.failure.tone === "warn"
+                      ? "rounded border border-warning/40 bg-warning/10 px-2 py-1 text-warning"
+                      : "text-destructive"}
+                >
                   {run.failure.text}
                 </div>
               )}
