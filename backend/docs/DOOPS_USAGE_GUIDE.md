@@ -450,7 +450,8 @@ doops -session ops k8s --target <t> delete pod <pod> --namespace apps --confirm
 `--output`/`-o json|yaml|wide|name|jsonpath=...|custom-columns=...`、`--tail`、`--previous`/`-p`、
 `--since`、`--replicas`、`--timeout`、`--for`、`--confirm`。可读 kind 包括工作负载、Service/Ingress、
 ConfigMap、NetworkPolicy、HPA、PDB、RBAC、StorageClass、CRD、事件和存储；Secret 与
-ServiceAccount 不开放。`helm values` 只返回 key 路径，因为 values 里可能有明文。
+ServiceAccount 不开放。`helm values` 只返回 key 路径，`helm status` 只返回发布名、命名空间、修订和
+`info` 里的状态与时间，不返回 values、manifest、hooks 和 notes，因为它们里可能有明文。
 `get/describe/logs/top/events/rollout status/helm` 是只读查询，可与 target mutation 并行；`rollout restart/scale/cordon/uncordon/delete pod`
 使用 target mutation lease。两类都只要求该 target 的 grant。版本发布不走这里，用
 `ask --apply`。
