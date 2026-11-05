@@ -3,12 +3,13 @@
 import dynamic from "next/dynamic"
 import type { AgentSessionRuntime } from "@agent-cloud/agent-ui"
 import { Boxes, Database, Globe2 } from "lucide-react"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { clearServerSession, fetchTargets, restoreServerSession, sessionIsAdmin, type Session, type Target } from "@/lib/client"
 import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
 import { isDemoAllowed } from "@/lib/demo-policy"
 import { DEMO_TOKEN } from "@/lib/demo"
 import { errorAfterRefresh, reconcileSelected, reconcileTargets, type RefreshTrigger } from "@/lib/console-refresh"
+import { browserSessionStorage, consoleScopeKey, loadSelection, restoreSelection, saveSelection } from "@/lib/console-persistence"
 import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
 import { TerminalPanel } from "./terminal-panel"
@@ -93,6 +94,10 @@ export function ConsoleShell() {
   // A failed target poll is shown apart from operation errors and clears itself
   // on the next successful poll.
   const [targetsError, setTargetsError] = useState("")
+  // Shown once when a reload could not return to the target this tab had.
+  const [restoreNotice, setRestoreNotice] = useState("")
+  // The Gateway + user whose saved selection has been restored in this tab.
+  const restoredScope = useRef("")
   const [showGuide, setShowGuide] = useState(false)
   const codeWorkspace = useMemo(() => {
     if (!session || !selected) return null
@@ -160,7 +165,16 @@ export function ConsoleShell() {
       setTargets((previous) => reconcileTargets(previous, t))
       setTargetsError("")
       setRefreshVersion((version) => version + 1)
-      setSelected((cur) => reconcileSelected(cur, t))
+      const scopeKey = consoleScopeKey(session)
+      if (restoredScope.current !== scopeKey) {
+        restoredScope.current = scopeKey
+        const restored = restoreSelection(loadSelection(browserSessionStorage(), session), t)
+        setSelected(restored.selected)
+        if (restored.sessionId) setSessionId(restored.sessionId)
+        setRestoreNotice(restored.notice)
+      } else {
+        setSelected((cur) => reconcileSelected(cur, t))
+      }
     } catch (err) {
       setTargetsError((err as Error).message)
     } finally {
@@ -174,6 +188,12 @@ export function ConsoleShell() {
     const id = setInterval(() => refresh("background"), 10000)
     return () => clearInterval(id)
   }, [session, refresh])
+
+  // Only the target key and session id are kept, never output or tokens.
+  useEffect(() => {
+    if (!session || !selected || restoredScope.current !== consoleScopeKey(session)) return
+    saveSelection(browserSessionStorage(), session, { targetKey: selected.key, sessionId })
+  }, [session, selected?.key, sessionId])
 
   function handleConnected(s: Session) {
     if (!s.demo) {
@@ -200,6 +220,8 @@ export function ConsoleShell() {
         setError((err as Error).message)
       } finally {
         localStorage.removeItem(LEGACY_DEMO_KEY)
+        restoredScope.current = ""
+        setRestoreNotice("")
         setSession(null)
         setTargets([])
         setSelected(null)
@@ -221,6 +243,7 @@ export function ConsoleShell() {
     })
     if (blocker) { setError(blocker); return }
     setError("")
+    setRestoreNotice("")
     setSelected(t)
     setSessionId(randomSession())
     // AI 优先：切换机器后，默认进入 AI 助手而非终端
@@ -331,6 +354,14 @@ export function ConsoleShell() {
       {showGuide && <OnboardingGuide onClose={closeGuide} />}
 
       {(error || targetsError) && <div role="alert" className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">{[error, targetsError].filter(Boolean).join("；")}</div>}
+      {restoreNotice && (
+        <div role="status" className="flex shrink-0 items-center gap-2 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning">
+          <span className="min-w-0 flex-1">{restoreNotice}</span>
+          <button onClick={() => setRestoreNotice("")} className="shrink-0 rounded px-2 py-0.5 text-xs hover:bg-warning/20">
+            知道了
+          </button>
+        </div>
+      )}
       {view === "admin" && isAdmin ? (
         <AdminConsole session={session} defaultTab={adminDefaultTab} />
       ) : view === "deploy" ? (
