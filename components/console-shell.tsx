@@ -9,7 +9,16 @@ import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
 import { isDemoAllowed } from "@/lib/demo-policy"
 import { DEMO_TOKEN } from "@/lib/demo"
 import { errorAfterRefresh, reconcileSelected, reconcileTargets, type RefreshTrigger } from "@/lib/console-refresh"
-import { browserSessionStorage, consoleScopeKey, loadSelection, restoreSelection, saveSelection } from "@/lib/console-persistence"
+import {
+  beforeUnloadWarning,
+  browserSessionStorage,
+  commandJournal,
+  consoleScopeKey,
+  interruptedCommandNotice,
+  loadSelection,
+  restoreSelection,
+  saveSelection,
+} from "@/lib/console-persistence"
 import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
 import { TerminalPanel } from "./terminal-panel"
@@ -98,6 +107,9 @@ export function ConsoleShell() {
   const [restoreNotice, setRestoreNotice] = useState("")
   // The Gateway + user whose saved selection has been restored in this tab.
   const restoredScope = useRef("")
+  // Commands an earlier page started and never saw end, shown once in the
+  // terminal. They are reported, never replayed.
+  const [interruptedNotices, setInterruptedNotices] = useState<string[]>([])
   const [showGuide, setShowGuide] = useState(false)
   const codeWorkspace = useMemo(() => {
     if (!session || !selected) return null
@@ -172,6 +184,15 @@ export function ConsoleShell() {
         setSelected(restored.selected)
         if (restored.sessionId) setSessionId(restored.sessionId)
         setRestoreNotice(restored.notice)
+        const interrupted = commandJournal.takeInterrupted(session)
+        if (interrupted.length) {
+          const current = {
+            targetKey: restored.selected?.key ?? "",
+            sessionId: restored.sessionId ?? "",
+          }
+          setInterruptedNotices(interrupted.map((record) => interruptedCommandNotice(record, current)))
+          if (restored.selected) setTab("terminal")
+        }
       } else {
         setSelected((cur) => reconcileSelected(cur, t))
       }
@@ -188,6 +209,31 @@ export function ConsoleShell() {
     const id = setInterval(() => refresh("background"), 10000)
     return () => clearInterval(id)
   }, [session, refresh])
+
+  const clearInterruptedNotices = useCallback(() => setInterruptedNotices([]), [])
+
+  // A reload or close aborts the /api/rpc stream, which ends a running command
+  // on the target. Warn while one runs; once the page really goes away, keep
+  // the journal records so the next page can say the outcome is unknown.
+  useEffect(() => {
+    function onBeforeUnload(event: BeforeUnloadEvent) {
+      const warning = beforeUnloadWarning(commandJournal.activeCount())
+      if (!warning) return
+      event.preventDefault()
+      event.returnValue = warning
+      return warning
+    }
+    const onPageHide = () => commandJournal.setUnloading(true)
+    const onPageShow = () => commandJournal.setUnloading(false)
+    window.addEventListener("beforeunload", onBeforeUnload)
+    window.addEventListener("pagehide", onPageHide)
+    window.addEventListener("pageshow", onPageShow)
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload)
+      window.removeEventListener("pagehide", onPageHide)
+      window.removeEventListener("pageshow", onPageShow)
+    }
+  }, [])
 
   // Only the target key and session id are kept, never output or tokens.
   useEffect(() => {
@@ -222,6 +268,7 @@ export function ConsoleShell() {
         localStorage.removeItem(LEGACY_DEMO_KEY)
         restoredScope.current = ""
         setRestoreNotice("")
+        setInterruptedNotices([])
         setSession(null)
         setTargets([])
         setSelected(null)
@@ -244,6 +291,7 @@ export function ConsoleShell() {
     if (blocker) { setError(blocker); return }
     setError("")
     setRestoreNotice("")
+    setInterruptedNotices([])
     setSelected(t)
     setSessionId(randomSession())
     // AI 优先：切换机器后，默认进入 AI 助手而非终端
@@ -501,6 +549,8 @@ export function ConsoleShell() {
                     sessionId={sessionId}
                     prefill={prefillToApply(terminalPrefill, consumedPrefillNonce) === null ? null : terminalPrefill}
                     onPrefillApplied={setConsumedPrefillNonce}
+                    notices={interruptedNotices}
+                    onNoticesShown={clearInterruptedNotices}
                   />
                 )}
                 {tab === "files" && (

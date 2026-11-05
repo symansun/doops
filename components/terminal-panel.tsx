@@ -12,6 +12,7 @@ import {
   terminalExecGate,
   type TerminalPrefill,
 } from "@/lib/shell-blocks"
+import { commandJournal } from "@/lib/console-persistence"
 import { TerminalIcon, SendIcon, StopIcon } from "./icons"
 
 interface Line {
@@ -25,12 +26,17 @@ export function TerminalPanel({
   sessionId,
   prefill = null,
   onPrefillApplied,
+  notices = [],
+  onNoticesShown,
 }: {
   session: Session
   target: Target
   sessionId: string
   prefill?: TerminalPrefill | null
   onPrefillApplied?: (nonce: number) => void
+  // Commands an earlier page left unfinished; shown first and never replayed.
+  notices?: readonly string[]
+  onNoticesShown?: () => void
 }) {
   const [command, setCommand] = useState("")
   const appliedPrefillRef = useRef(0)
@@ -50,7 +56,12 @@ export function TerminalPanel({
     inputRef.current?.focus()
     onPrefillApplied?.(prefill.nonce)
   }, [prefill, onPrefillApplied])
-  const [lines, setLines] = useState<Line[]>([])
+  const [lines, setLines] = useState<Line[]>(() => notices.map((text) => ({ kind: "warn", text })))
+  // The notices are copied into this panel's lines once; the shell then drops them.
+  useEffect(() => {
+    if (notices.length) onNoticesShown?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState("")
   const [stopPending, setStopPending] = useState(false)
@@ -86,6 +97,9 @@ export function TerminalPanel({
     setHistIdx(-1)
     setCommand("")
     push({ kind: "cmd", text: cmd })
+    // Only a short redacted summary is kept, so a reload can say a command was
+    // cut off; it is cleared when the command ends.
+    const journalId = commandJournal.begin(session, { targetKey: target.key, sessionId, command: cmd, source: "terminal" })
     setRunning(true)
     setProgress("")
     setStopPending(false)
@@ -124,6 +138,7 @@ export function TerminalPanel({
       fail((err as Error).message)
     } finally {
       if (!settled) fail("连接已结束，未收到工具执行结果")
+      commandJournal.end(session, journalId)
       setRunning(false)
       setProgress("")
       setStopPending(false)

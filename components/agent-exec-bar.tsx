@@ -14,6 +14,7 @@ import {
   type AssistantMessageLike,
   type ShellFailure,
 } from "@/lib/shell-blocks"
+import { commandJournal } from "@/lib/console-persistence"
 import { SendIcon, StopIcon, TerminalIcon } from "./icons"
 
 interface ExecRun {
@@ -98,6 +99,9 @@ export function AgentExecBar({
     const index = runs.length
     stopRequestedRef.current = false
     setRuns((prev) => [...prev, { command: args.command, output: "", progress: "", status: "running" }])
+    // Only a short redacted summary is kept, so a reload can say a command was
+    // cut off; it is cleared when the command ends.
+    const journalId = commandJournal.begin(session, { targetKey: target.key, sessionId, command: args.command, source: "exec" })
     setCommand("")
     setStopError("")
     cancelRef.current = null
@@ -126,6 +130,7 @@ export function AgentExecBar({
       setRuns((prev) => prev.map((r, i) => (i === index && r.status === "running"
         ? { ...r, progress: "", status: "failed", failure: describeShellFailure("连接已结束，未收到工具执行结果", { stopRequested: false, target }) }
         : r)))
+      commandJournal.end(session, journalId)
       setStopPending(false)
       cancelRef.current = null
     }
