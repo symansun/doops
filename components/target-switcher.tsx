@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import type { Target } from "@/lib/client"
+import { targetSwitcherEmptyCopy } from "@/lib/empty-targets"
 import { ServerIcon, RefreshIcon, ChevronDownIcon, CheckIcon } from "./icons"
 
 function statusDot(t: Target): string {
@@ -22,12 +23,15 @@ export function TargetSwitcher({
   onSelect,
   onRefresh,
   loading,
+  isAdmin,
 }: {
   targets: Target[]
   selected: Target | null
   onSelect: (t: Target) => void
   onRefresh: () => void
   loading: boolean
+  // 未传入时空状态用对两种角色都成立的说法。
+  isAdmin?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -41,12 +45,13 @@ export function TargetSwitcher({
     return () => document.removeEventListener("mousedown", onDoc)
   }, [open])
 
-  // 无机器：提示等待接入
+  // 无机器：管理员提示等待接入；普通用户可能是没有授权或已授权机器都不在线。
   if (targets.length === 0) {
+    const empty = targetSwitcherEmptyCopy(isAdmin)
     return (
-      <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-2.5 py-1.5">
+      <div title={empty.hint} className="flex items-center gap-2 rounded-lg border bg-muted/40 px-2.5 py-1.5">
         <ServerIcon width={14} height={14} className="text-muted-foreground" />
-        <span className="text-xs text-muted-foreground">暂无在线机器</span>
+        <span className="whitespace-nowrap text-xs text-muted-foreground">{empty.label}</span>
         <button
           onClick={onRefresh}
           disabled={loading}
