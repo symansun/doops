@@ -502,6 +502,11 @@ doops -session agent-upgrade upgrade \
   重放 mutation；实际状态不确定时必须返回 outcome unknown，并由
   操作者核查目标资源。
 - 审计记录包含 user、token、target、action、session、命令摘要、状态、错误和输出尾部；输出尾部使用有界缓冲，默认只保留 8 KiB 尾部摘要。
+- `/v1/audit` 的每种筛选组合都有按 `id` 倒序的索引（`audit_indexes.sql`）：用户、用户+session、
+  目标、单独 action 或 status、用户或目标再加 action/status、目标内的 session、单独 session
+  （凭据的资源级审计不带目标，session 存凭据 ID）。Gateway 启动时在一个事务里补建缺失的索引，
+  并用 `EXPLAIN QUERY PLAN` 确认每个组合用到对应索引，任一不符则回滚并启动失败，期限 4 分钟。
+  结果顺序和 `before_id` 分页不变。已有库升级后首次启动要补建索引，耗时随审计行数增长。
 - gateway 模式只转发操作流量和 Git HTTP 流量，不保存仓库快照。`cos` 模式把对象字节交给腾讯云 COS 桶 `doops-1253657668`：16 MiB 及以下由 Gateway 用受管凭据单次 PutObject，更大的对象由客户端持预签名直接 PUT。字节不进 Gateway SQLite，也不进 Git 对象库。Gateway 不把自己变成对象存储。
 
 ## Current Managed Targets
