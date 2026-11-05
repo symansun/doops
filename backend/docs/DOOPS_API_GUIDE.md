@@ -837,7 +837,13 @@ GET /v1/audit?user_id=usr_xxx
 GET /v1/audit?session=deploy_20260514
 GET /v1/audit?user_id=self
 GET /v1/audit?view=global
+GET /v1/audit?view=global&session=cred_xxx
 ```
+
+凭据的资源级审计（写入版本、激活、授权、验证、吊销）不带 `cluster/instance`，
+`session` 字段存凭据 ID，所以按凭据查询用 `session=<credential_id>`。创建凭据时还没有
+ID，这条记录的 `session` 为空。部署时使用凭据（`credential:use`）和从 Secret 导入记在
+部署会话下，按 target 或该会话查询。控制台审计页的「按凭据」范围发的就是这个查询。
 
 ### 执行生命周期
 
