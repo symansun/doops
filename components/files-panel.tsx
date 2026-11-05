@@ -10,6 +10,19 @@ import {
 } from "@/lib/workspace-path"
 import { listDirectoryCommand, parseDirectoryListing } from "@/lib/files-listing"
 import {
+  checkDeploymentRequest,
+  cleanWorkspaceConfirmation,
+  cleanWorkspaceRequest,
+  EMPTY_CHECK_INPUT,
+  EMPTY_MAINTENANCE_LOG,
+  maintenanceFailure,
+  maintenanceOutput,
+  maintenanceResultText,
+  type CheckDeploymentInput,
+  type MaintenanceKind,
+  type MaintenanceLog,
+} from "@/lib/files-maintenance"
+import {
   FileIcon,
   FolderIcon,
   SaveIcon,
@@ -86,7 +99,10 @@ export function FilesPanel({
   const [upload, setUpload] = useState<UploadProgress | null>(null)
   const [showCmd, setShowCmd] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [maint, setMaint] = useState<{ tool: "check" | "clean"; lines: string[]; running: boolean } | null>(null)
+  const [maint, setMaint] = useState<({ tool: MaintenanceKind; running: boolean } & MaintenanceLog) | null>(null)
+  const [checkOpen, setCheckOpen] = useState(false)
+  const [checkInput, setCheckInput] = useState<CheckDeploymentInput>(EMPTY_CHECK_INPUT)
+  const [checkErr, setCheckErr] = useState("")
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dirInputRef = useRef<HTMLInputElement>(null)
   const { confirm, prompt, dialog } = useAppDialog()
@@ -225,19 +241,14 @@ export function FilesPanel({
     setStatus({ kind: "ok", text: "输入内容后点击保存即可创建" })
   }
 
-  async function runMaintenance(kind: "check" | "clean") {
-    if (
-      kind === "clean" &&
-      !(await confirm({
-        title: "清理工作区",
-        message: "确认清理当前工作区？将移除临时文件与较旧的历史版本（保留最近 3 个）。",
-        confirmLabel: "清理",
-        tone: "danger",
-      }))
-    ) {
-      return
+  // 返回是否成功；callTool 的 error 事件和随后抛出的同一错误只记一次。
+  async function runMaintenance(kind: MaintenanceKind, args: Record<string, string>) {
+    setMaint({ tool: kind, ...EMPTY_MAINTENANCE_LOG, running: true })
+    let failed = false
+    const fail = (raw: string) => {
+      failed = true
+      setMaint((p) => (p ? { ...p, ...maintenanceFailure(p, kind, raw) } : p))
     }
-    setMaint({ tool: kind, lines: [], running: true })
     const tool = kind === "check" ? TOOLS.checkDeployment : TOOLS.cleanWorkspace
     try {
       await callTool(
@@ -246,24 +257,62 @@ export function FilesPanel({
           cluster: target.cluster,
           instance: target.instance,
           tool,
-          arguments: { session_id: sessionId },
+          arguments: args,
         },
         (ev) => {
           if (ev.type === "output") {
-            setMaint((p) => (p ? { ...p, lines: [...p.lines, ev.data] } : p))
+            setMaint((p) => (p ? { ...p, ...maintenanceOutput(p, ev.data) } : p))
           } else if (ev.type === "result") {
-            const text = extractText(ev.result)
-            if (text) setMaint((p) => (p ? { ...p, lines: [...p.lines, text] } : p))
+            const text = maintenanceResultText(kind, extractText(ev.result))
+            setMaint((p) => (p ? { ...p, ...maintenanceOutput(p, text) } : p))
           } else if (ev.type === "error") {
-            setMaint((p) => (p ? { ...p, lines: [...p.lines, `错误：${ev.error}`] } : p))
+            fail(ev.error)
           }
         },
       )
     } catch (err) {
-      setMaint((p) => (p ? { ...p, lines: [...p.lines, `错误：${(err as Error).message}`] } : p))
+      fail((err as Error).message)
     } finally {
       setMaint((p) => (p ? { ...p, running: false } : p))
-      if (kind === "clean") list(cwd)
+    }
+    return !failed
+  }
+
+  async function submitCheck(e: React.FormEvent) {
+    e.preventDefault()
+    let args: Record<string, string>
+    try {
+      args = checkDeploymentRequest(sessionId, checkInput)
+    } catch (err) {
+      setCheckErr((err as Error).message)
+      return
+    }
+    setCheckErr("")
+    setCheckOpen(false)
+    await runMaintenance("check", args)
+  }
+
+  async function cleanWorkspace() {
+    let args: Record<string, string>
+    try {
+      args = cleanWorkspaceRequest(sessionId)
+    } catch (err) {
+      setMaint({ tool: "clean", lines: [], errors: [(err as Error).message], running: false })
+      return
+    }
+    if (!(await confirm(cleanWorkspaceConfirmation(sessionId)))) return
+    setCheckOpen(false)
+    if (await runMaintenance("clean", args)) {
+      // 工作区已整体删除：不再展示旧目录和已打开的文件，也不重新列举（列根目录会重建空工作区）。
+      setEntries([])
+      setListErr("")
+      setCwd(workspaceRoot || "")
+      setOpenPath(null)
+      setContent("")
+      setDirty(false)
+      setStatus(null)
+    } else {
+      list(cwd)
     }
   }
 
@@ -460,23 +509,93 @@ export function FilesPanel({
           </button>
           <span className="mx-1 h-4 w-px bg-border" aria-hidden />
           <button
-            onClick={() => runMaintenance("check")}
+            onClick={() => {
+              setCheckErr("")
+              setCheckOpen((v) => !v)
+            }}
             disabled={maint?.running}
-            title="检查当前部署的版本与健康状态"
-            className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            title="核对 Deployment 主容器镜像是否与期望一致"
+            className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50 ${
+              checkOpen ? "border-primary/50" : ""
+            }`}
           >
             <RocketIcon width={14} height={14} /> 检查部署
           </button>
           <button
-            onClick={() => runMaintenance("clean")}
+            onClick={cleanWorkspace}
             disabled={maint?.running}
-            title="清理工作区临时文件与旧版本"
+            title="删除本会话的整个工作区和 Git 裸仓库"
             className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
           >
             <TrashIcon width={14} height={14} /> 清理工作区
           </button>
         </div>
       </div>
+
+      {/* 检查部署参数 */}
+      {checkOpen && (
+        <form onSubmit={submitCheck} noValidate className="shrink-0 border-b bg-muted/30 px-3 py-3">
+          <p className="mb-2 text-xs text-muted-foreground">
+            在目标节点用 kubectl 读取 Deployment 主容器镜像，与期望镜像比对。三项均为必填。
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              命名空间
+              <input
+                name="namespace"
+                value={checkInput.namespace}
+                onChange={(e) => setCheckInput((p) => ({ ...p, namespace: e.target.value }))}
+                className="input w-40"
+                placeholder="apps"
+                autoComplete="off"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              Deployment
+              <input
+                name="deployment"
+                value={checkInput.deployment}
+                onChange={(e) => setCheckInput((p) => ({ ...p, deployment: e.target.value }))}
+                className="input w-44"
+                placeholder="api"
+                autoComplete="off"
+              />
+            </label>
+            <label className="flex min-w-64 flex-1 flex-col gap-1 text-xs text-muted-foreground">
+              期望镜像
+              <input
+                name="image"
+                value={checkInput.image}
+                onChange={(e) => setCheckInput((p) => ({ ...p, image: e.target.value }))}
+                className="input w-full font-mono"
+                placeholder="registry.example.com/team/api:1.2.3"
+                autoComplete="off"
+              />
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={maint?.running}
+                className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-40"
+              >
+                开始检查
+              </button>
+              <button
+                type="button"
+                onClick={() => setCheckOpen(false)}
+                className="rounded-lg border px-3 py-2 text-xs text-foreground transition-colors hover:bg-muted"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+          {checkErr && (
+            <p role="alert" className="mt-2 text-xs text-destructive">
+              {checkErr}
+            </p>
+          )}
+        </form>
+      )}
 
       {/* 维护动作结果 */}
       {maint && (
@@ -501,7 +620,12 @@ export function FilesPanel({
             )}
           </div>
           <pre className="max-h-44 overflow-y-auto whitespace-pre-wrap rounded-lg border bg-background p-3 font-mono text-xs leading-relaxed text-foreground">
-            {maint.lines.join("") || "正在执行…"}
+            {maint.lines.join("") || (maint.running ? "正在执行…" : maint.errors.length ? "" : "已完成，无输出")}
+            {maint.errors.map((e, i) => (
+              <span key={i} className="block text-destructive">
+                错误：{e}
+              </span>
+            ))}
           </pre>
         </div>
       )}
