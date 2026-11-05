@@ -22,7 +22,6 @@ Implemented commands:
 
 - `classify`
 - `query`
-- `execute`
 - `discover-databases`
 - `discover-resources`
 - `register-database`
@@ -67,13 +66,17 @@ Implemented commands:
 - `render-restore-evidence-metadata-commit`
 - `finalize-restore`
 - `derive-restore-baseline-records`
-- `propose-confirmation`
 
 These implemented commands are deterministic wrappers around local policy,
 discovery normalization, asset-registration, natural-language database
-resolution, scan-analysis, execution-journal, timeline, forward/rollback artifact,
-metadata commit and confirmation modules. Only explicit `execute-*` commands
-open a database connection, and only through the adapter supplied in the input.
+resolution, scan-analysis, execution-journal, timeline, forward/rollback artifact
+and metadata commit modules. `query` and explicit `execute-*` commands open a
+database connection only through the adapter supplied in the input.
+The in-memory `agent-change-flow.mjs` fixture is test-only; it is not a
+confirmation service or a source of live database versions. Plan output must
+identify supplied or hypothetical state and cite live evidence before claiming
+an actual version. Conversation confirmation follows
+[user-confirmation.md](user-confirmation.md).
 
 ## Target Command Shape
 
@@ -84,7 +87,20 @@ dosql-agent <command> --input request.json --output response.json
 ```
 
 Every command must receive an `operationId` created by DoSql Server before
-execution.
+execution. Use a new response output path distinct from the input, journal,
+claims and evidence. Before running the command, the CLI checks for an existing
+output, exclusively reserves `<outputPath>.claim`, and checks the output again.
+An existing output or claim fails with `DOSQL_RESPONSE_ALREADY_EXISTS` before
+dispatch or lifecycle events. Claims remain after failures and crashes.
+
+The response is published exclusively. If reservation or final publication
+fails, the CLI exits nonzero and writes one failed JSON response to stderr;
+the previous output is never overwritten and must not be treated as the new
+response. Final publication failure reports `DOSQL_RESPONSE_PERSISTENCE_FAILED`,
+the underlying `auditErrorCode`, the command's actual `executionOutcome`, and
+`retryable: false`. If the command itself failed, `commandError` preserves that
+failure. Client success followed by publication failure remains `succeeded`,
+not a rollback. A reservation failure reports `not_started`.
 
 ## Commands
 
@@ -138,7 +154,7 @@ execution.
 | `extract-sql-logs` | Target | Extract SQL logs into structured events. Current implementation exposes this through `scan`. |
 | `analyze-security` | Target | Analyze SQL log events for SQL injection indicators. Current implementation exposes this through `scan`. |
 | `plan-change` | Target | Build migration plan from user intent and current schema. |
-| `propose-confirmation` | Implemented | Return human-readable confirmation for a mutating change. |
+| `propose-confirmation` | Removed | This entrypoint exposed an in-memory add-column test fixture. Business intent is confirmed in the conversation, respecting existing authorization; no replacement confirmation system is provided. |
 | `render-script` | Target | Render engine-specific migration script. |
 | `dry-run` | Target | Validate script without changing target when engine supports it. |
 | `execute` | Removed | The signed-approval executor had no approval issuer. Changes run through `doops sql --mode apply --sql/--file` on the Agent's direct path. |
@@ -197,8 +213,17 @@ artifact:
 
 Changes are not a node command. The earlier `execute` command, which required a
 signed `dosql.operation-approval.v1` artifact that nothing issued, was removed.
-Mutations run only through the Agent's direct `--sql/--file` path (one
-transaction, optional read-only verification, per-database version journal).
+Mutations run only through the Agent's direct `--sql/--file` path with optional
+read-only verification and a per-database version journal. Rollback-capable
+batches execute with verification in one transaction. MySQL/Oracle DDL commits
+implicitly: DDL dry-run is rejected with `dosql_dry_run_ddl_unsupported`, and
+mixing DDL and DML is rejected with `dosql_mixed_ddl_dml_unsupported`. Execute
+authorized DDL separately without `--dry-run`, inspect `implicit_commits` and
+any `partially_committed` result, then read back the schema. Later statement or
+verification failure cannot roll back already committed DDL. MongoDB
+non-transactional operations (`createCollection/createIndex/dropIndex/drop`)
+follow the same dry-run and mixing restrictions; transactional writes require
+a replica set. Do not promise a universal rollback across engines.
 
 Supported adapter types:
 
@@ -212,11 +237,31 @@ Supported adapter types:
   requires the authenticated MongoDB user to have only `read`,
   `readAnyDatabase` or `clusterMonitor` roles.
 
-Execution failures still write `planned`, `running` and `failed` journal events
-plus failed evidence. Verification failures write
-`database.operation.verification_failed` and do not report the operation as
-verified. Persisted evidence stores output sizes and fingerprints rather than
-raw stdout, stderr or database error text.
+Before dispatch, `query` rejects existing evidence, reserves a persistent
+operation ID and evidence-path claim, and rejects IDs already in the selected
+journal. Claims and evidence are published exclusively with
+`writeAuditArtifact`; retries cannot overwrite prior evidence. The audit root
+is `.dosql` in the working directory, or the trusted embedding caller's
+`artifactRootProvider`. All cooperating callers must use the same persistent
+root. Cross-journal protection covers only IDs already reserved in
+`operation-claims/`, including IDs explicitly imported by legacy migration.
+Pre-upgrade historical IDs without claims in another journal, including valid
+hash-chained journals, are outside that protection. Keep using the original
+journal and reconcile its history before changing paths; no global historical
+index or directory scan is performed. The selected journal still rejects its
+own historical IDs. See [journal-recovery.md](journal-recovery.md) for recovery
+boundaries.
+
+Policy rejection records `planned` and `failed` with `executionOutcome:
+"not_started"`; client failures record `planned`, `running` and `failed` with
+outcome `unknown`, when audit storage remains writable. A successful read is
+`verified` after evidence publication and the final journal append; query does
+not run a separate verification statement. Audit persistence failure after
+client success reports `DOSQL_AUDIT_PERSISTENCE_FAILED` with outcome `succeeded`,
+never rollback, and never replaces evidence with a failure artifact. Failure
+responses include `retryable: false` and preserve underlying `auditErrorCode`
+and journal `lineNumber` where available. Persisted evidence stores output
+sizes and fingerprints rather than raw stdout, stderr or database error text.
 
 MongoDB requests use structured operations:
 
@@ -1204,8 +1249,10 @@ baselines in one transaction.
 
 - Do not execute without `operationId`.
 - Do not execute mutating operations outside the journaled `doops sql --mode apply --sql/--file` path.
-- Do not ask users to approve raw SQL as the primary confirmation surface. Return
-  human-readable confirmation first, then keep SQL as an internal artifact.
+- Confirm business intent, target and impact in user-readable language. Honor
+  existing authorization for that scope without asking again; clarify only
+  missing scope, new risks or material changes. Keep SQL as an execution artifact.
+- Do not present fixture or caller-supplied version numbers as verified live state.
 - Do not print database passwords, tokens or secret values.
 - Do not hide driver errors. Return the real error class and message.
 - Return evidence in machine-readable form.

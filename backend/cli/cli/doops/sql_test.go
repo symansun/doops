@@ -114,9 +114,9 @@ func TestSQLBindingNextGuidesEachBindingFailure(t *testing.T) {
 		in      error
 		wantAll []string
 	}{
-		{"binding missing", fmt.Errorf("dosql_database_binding_missing"), []string{"next:", "credential configure", "--use database", "--from-secret", "SPRING_DATASOURCE_URL"}},
+		{"binding missing", fmt.Errorf("dosql_database_binding_missing"), []string{"next:", "credential configure", "--use database", "--from-secret", "--keys <engine-specific-keys>", "doops guide database"}},
 		{"credential missing", fmt.Errorf("dosql_credential_missing: run credential configure"), []string{"--from-secret"}},
-		{"not bound", fmt.Errorf("dosql_database_not_bound: x"), []string{"credential list", "--from-secret"}},
+		{"not bound", fmt.Errorf("dosql_database_not_bound: x"), []string{"credential list", "--from-secret", "original --database", "do not switch databases"}},
 		{"database required", fmt.Errorf("dosql_database_required: target binds a"), []string{"--database <name>"}},
 		{"version missing", fmt.Errorf("credential_version_not_found"), []string{"--id <id>"}},
 		{"unrelated", fmt.Errorf("dosql_statement_failed"), nil},
@@ -137,6 +137,9 @@ func TestSQLBindingNextGuidesEachBindingFailure(t *testing.T) {
 			}
 			if !strings.Contains(got.Error(), tc.in.Error()) {
 				t.Errorf("original message lost: %q", got.Error())
+			}
+			if strings.Contains(got.Error(), "omit --database") {
+				t.Errorf("binding recovery must not redirect to another database: %q", got.Error())
 			}
 		})
 	}

@@ -1,12 +1,9 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 
-import {
-  connectTestDatabase,
-  proposeAgentSchemaChange,
-} from "../Server/lib/agent-change-flow.mjs";
+import { writeAuditArtifact } from "../Server/lib/audit-artifacts.mjs";
 import { classifyDatabaseOperation } from "../Server/lib/change-policy.mjs";
 import {
   compareDatabaseStructures,
@@ -118,9 +115,24 @@ async function main(argv) {
   const { command, inputPath, outputPath } = parseArgs(argv);
   let response;
   let operationId;
+  let input;
+  let inputError;
   try {
-    const input = JSON.parse(await readFile(inputPath, "utf8"));
+    input = JSON.parse(await readFile(inputPath, "utf8"));
     operationId = requireOperationId(input);
+  } catch (error) {
+    inputError = error;
+  }
+
+  try {
+    await reserveResponsePath(outputPath, { command, operationId });
+  } catch (error) {
+    reportFailure(failureResponse(command, operationId, error, "not_started"));
+    return;
+  }
+
+  try {
+    if (inputError) throw inputError;
     response = {
       operationId,
       status: "succeeded",
@@ -129,21 +141,77 @@ async function main(argv) {
       result: await runCommand(command, input),
     };
   } catch (error) {
-    response = {
-      operationId,
-      status: "failed",
-      command,
-      error: {
-        name: error.name,
-        message: error.message,
-      },
-    };
+    response = failureResponse(
+      command, operationId, error, inputError || command === "query" ? "not_started" : "unknown",
+    );
   }
 
-  await writeFile(outputPath, `${JSON.stringify(response, null, 2)}\n`);
+  try {
+    await writeAuditArtifact(outputPath, response);
+  } catch (error) {
+    const executionOutcome = response.error?.executionOutcome ??
+      response.result?.executionOutcome ?? (response.status === "succeeded" ? "succeeded" : "unknown");
+    const failure = failureResponse(command, operationId, Object.assign(error, {
+      auditErrorCode: error.code ?? "UNKNOWN",
+      code: "DOSQL_RESPONSE_PERSISTENCE_FAILED",
+    }), executionOutcome);
+    if (response.error) failure.commandError = response.error;
+    reportFailure(failure);
+    return;
+  }
   if (response.status !== "succeeded") {
     process.exitCode = 1;
   }
+}
+
+async function reserveResponsePath(outputPath, claim) {
+  try {
+    await assertResponseAbsent(outputPath);
+    await writeAuditArtifact(`${outputPath}.claim`, {
+      schema: "dosql.response-claim.v1",
+      ...claim,
+    });
+    await assertResponseAbsent(outputPath);
+  } catch (error) {
+    throw Object.assign(error, {
+      auditErrorCode: error.code ?? "UNKNOWN",
+      code: error.code === "EEXIST" ? "DOSQL_RESPONSE_ALREADY_EXISTS" : "DOSQL_RESPONSE_RESERVATION_FAILED",
+    });
+  }
+}
+
+async function assertResponseAbsent(outputPath) {
+  try {
+    await lstat(outputPath);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  throw Object.assign(new Error("Response output already exists; inspect it before starting another operation"), {
+    code: "EEXIST",
+  });
+}
+
+function failureResponse(command, operationId, error, executionOutcome) {
+  return {
+    operationId,
+    status: "failed",
+    command,
+    error: {
+      name: error.name,
+      message: error.message,
+      code: error.code,
+      lineNumber: error.lineNumber,
+      auditErrorCode: error.auditErrorCode,
+      executionOutcome: error.executionOutcome ?? executionOutcome,
+      retryable: false,
+    },
+  };
+}
+
+function reportFailure(response) {
+  console.error(JSON.stringify(response));
+  process.exitCode = 1;
 }
 
 async function runCommand(command, input) {
@@ -240,8 +308,6 @@ async function runCommand(command, input) {
       return verifyRestore(input);
     case "verify-rollback-restore":
       return verifyRollbackRestore(input);
-    case "propose-confirmation":
-      return proposeConfirmation(input);
     default:
       throw new Error(`Unsupported command: ${command}`);
   }
@@ -265,21 +331,6 @@ function registerDatabase(input) {
     inventory,
     structureSnapshot,
     maintenanceChecklist,
-  };
-}
-
-function proposeConfirmation(input) {
-  const database = connectTestDatabase(input.database);
-  const proposal = proposeAgentSchemaChange({
-    database,
-    actor: input.actor,
-    userMessage: input.userMessage,
-    agentAnalysis: input.agentAnalysis,
-    requestedAt: input.requestedAt,
-  });
-
-  return {
-    proposal,
   };
 }
 
@@ -1312,6 +1363,5 @@ function parseArgs(argv) {
 }
 
 main(process.argv).catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
+  reportFailure(failureResponse(process.argv[2], undefined, error, "unknown"));
 });

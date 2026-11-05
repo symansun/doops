@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import test from "node:test";
+import {
+  connectTestDatabase,
+  proposeAgentSchemaChange,
+} from "../Server/lib/agent-change-flow.mjs";
 
 const CLI = new URL("./dosql-agent.mjs", import.meta.url).pathname;
 
@@ -84,6 +88,8 @@ for (const engine of ["mysql", "postgres", "mongodb"]) {
       assert.notEqual(proc.status, 0);
       assert.equal(result.status, "failed");
       assert.match(result.error.message, /trusted database client executable/);
+      assert.equal(result.error.executionOutcome, "not_started");
+      assert.equal(result.error.retryable, false);
       assert.deepEqual(await journalStatuses(join(dir, ".dosql", "journal.jsonl")), [
         "planned",
         "failed",
@@ -120,6 +126,159 @@ test("query command rejects multiple SQL statements as a machine-readable failur
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("query CLI reports journal error codes and line numbers before dispatch", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "dosql-cli-audit-error-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const clientPath = await createFakeDatabaseClient(dir);
+  const payload = databaseOperationPayload({
+    dir, engine: "postgres", operationId: "invalid-journal",
+    operation: { statement: "select 1" },
+    adapter: adapterForEngine("postgres", clientPath),
+  });
+  await mkdir(dirname(payload.journalPath), { recursive: true });
+  await writeFile(payload.journalPath, "{invalid}\n");
+  const { proc, result } = await runCliResult("query", payload, {
+    env: databaseTestEnv(dir), cwd: dir,
+  });
+  assert.notEqual(proc.status, 0);
+  assert.equal(result.error.code, "DOSQL_AUDIT_PERSISTENCE_FAILED");
+  assert.equal(result.error.auditErrorCode, "DOSQL_JOURNAL_INVALID_JSON");
+  assert.equal(result.error.lineNumber, 1);
+  assert.equal(result.error.executionOutcome, "not_started");
+  assert.equal(result.error.retryable, false);
+  assert.equal(await readFile(payload.journalPath, "utf8"), "{invalid}\n");
+});
+
+test("query CLI response cannot overwrite an existing evidence file", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "dosql-cli-output-evidence-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const clientPath = await createFakeDatabaseClient(dir);
+  const payload = databaseOperationPayload({
+    dir, engine: "postgres", operationId: "protected-evidence",
+    operation: { statement: "select 1" },
+    adapter: adapterForEngine("postgres", clientPath),
+  });
+  const inputPath = join(dir, "input.json");
+  await mkdir(dirname(payload.evidencePath), { recursive: true });
+  await writeFile(payload.evidencePath, "original evidence");
+  await writeFile(inputPath, JSON.stringify(payload));
+  const proc = spawnSync(process.execPath, [
+    CLI, "query", "--input", inputPath, "--output", payload.evidencePath,
+  ], { encoding: "utf8", cwd: dir, env: { ...process.env, ...databaseTestEnv(dir) } });
+  assert.notEqual(proc.status, 0);
+  assert.match(proc.stderr, /EEXIST/);
+  assert.equal(await readFile(payload.evidencePath, "utf8"), "original evidence");
+  await assert.rejects(readFile(payload.journalPath), { code: "ENOENT" });
+});
+
+test("reusing a response for a different operation never dispatches or changes lifecycle records", async (t) => {
+  const fixture = await responseQueryFixture(t);
+  const first = await fixture.run("first");
+  assert.equal(first.status, 0, first.stderr);
+  const originalResponse = await readFile(fixture.outputPath);
+  const originalJournal = await readFile(fixture.payload("first").journalPath);
+  const originalDispatches = await readFile(fixture.dispatchPath);
+  const second = await fixture.run("second");
+  assert.notEqual(second.status, 0);
+  const failure = JSON.parse(second.stderr);
+  assert.equal(failure.operationId, "second");
+  assert.equal(failure.status, "failed");
+  assert.equal(failure.error.code, "DOSQL_RESPONSE_ALREADY_EXISTS");
+  assert.equal(failure.error.executionOutcome, "not_started");
+  assert.equal(failure.error.retryable, false);
+  assert.deepEqual(await readFile(fixture.outputPath), originalResponse);
+  assert.deepEqual(await readFile(fixture.payload("first").journalPath), originalJournal);
+  assert.deepEqual(await readFile(fixture.dispatchPath), originalDispatches);
+  await assert.rejects(lstat(fixture.payload("second").journalPath), { code: "ENOENT" });
+  await assert.rejects(lstat(fixture.payload("second").evidencePath), { code: "ENOENT" });
+});
+
+test("concurrent CLI processes sharing a response dispatch only the reservation winner", async (t) => {
+  const fixture = await responseQueryFixture(t);
+  const ids = Array.from({ length: 6 }, (_, index) => `concurrent-${index}`);
+  const results = await Promise.all(ids.map((id) => fixture.run(id)));
+  assert.equal(results.filter((result) => result.status === 0).length, 1);
+  const response = JSON.parse(await readFile(fixture.outputPath));
+  const claim = JSON.parse(await readFile(`${fixture.outputPath}.claim`));
+  assert.equal(claim.operationId, response.operationId);
+  for (const [index, result] of results.entries()) {
+    if (result.status === 0) continue;
+    const failure = JSON.parse(result.stderr);
+    assert.equal(failure.operationId, ids[index]);
+    assert.equal(failure.error.code, "DOSQL_RESPONSE_ALREADY_EXISTS");
+    assert.equal(failure.error.executionOutcome, "not_started");
+    assert.equal(failure.error.retryable, false);
+    await assert.rejects(lstat(fixture.payload(ids[index]).journalPath), { code: "ENOENT" });
+    await assert.rejects(lstat(fixture.payload(ids[index]).evidencePath), { code: "ENOENT" });
+  }
+  const dispatches = (await readFile(fixture.dispatchPath, "utf8")).trim().split("\n");
+  assert.equal(dispatches.length, 1);
+  assert.equal(JSON.parse(dispatches[0]).operation_id, response.operationId);
+});
+
+for (const kind of ["file", "directory", "dangling-symlink", "claim"]) {
+  test(`pre-existing response ${kind} fails before query lifecycle starts`, async (t) => {
+    const fixture = await responseQueryFixture(t);
+    if (kind === "file") await writeFile(fixture.outputPath, "old response");
+    if (kind === "directory") await mkdir(fixture.outputPath);
+    if (kind === "dangling-symlink") await symlink(join(fixture.dir, "absent"), fixture.outputPath);
+    if (kind === "claim") await writeFile(`${fixture.outputPath}.claim`, "prior claim");
+    const result = await fixture.run("blocked");
+    assert.notEqual(result.status, 0);
+    const failure = JSON.parse(result.stderr);
+    assert.equal(failure.error.code, "DOSQL_RESPONSE_ALREADY_EXISTS");
+    assert.equal(failure.error.executionOutcome, "not_started");
+    assert.equal(failure.error.retryable, false);
+    await assert.rejects(lstat(fixture.dispatchPath), { code: "ENOENT" });
+    await assert.rejects(lstat(join(fixture.dir, ".dosql")), { code: "ENOENT" });
+    if (kind === "file") assert.equal(await readFile(fixture.outputPath, "utf8"), "old response");
+    if (kind === "directory") assert.equal((await lstat(fixture.outputPath)).isDirectory(), true);
+    if (kind === "dangling-symlink") {
+      assert.equal((await lstat(fixture.outputPath)).isSymbolicLink(), true);
+      await assert.rejects(lstat(join(fixture.dir, "absent")), { code: "ENOENT" });
+    }
+    if (kind === "claim") {
+      assert.equal(await readFile(`${fixture.outputPath}.claim`, "utf8"), "prior claim");
+      await assert.rejects(lstat(fixture.outputPath), { code: "ENOENT" });
+    } else {
+      await assert.rejects(lstat(`${fixture.outputPath}.claim`), { code: "ENOENT" });
+    }
+  });
+}
+
+for (const [mode, outcome, states] of [
+  ["publish-response", "succeeded", ["planned", "running", "succeeded", "verified"]],
+  ["publish-response-driver-failure", "unknown", ["planned", "running", "failed"]],
+  ["publish-response-audit-failure", "succeeded", ["planned", "running", "succeeded"]],
+]) {
+  test(`response publication failure reports the true outcome for ${mode}`, async (t) => {
+    const fixture = await responseQueryFixture(t);
+    const result = await fixture.run("publication-failure", mode);
+    assert.notEqual(result.status, 0);
+    const failure = JSON.parse(result.stderr);
+    assert.equal(failure.operationId, "publication-failure");
+    assert.equal(failure.status, "failed");
+    assert.equal(failure.error.code, "DOSQL_RESPONSE_PERSISTENCE_FAILED");
+    assert.equal(failure.error.auditErrorCode, "EEXIST");
+    assert.equal(failure.error.executionOutcome, outcome);
+    assert.equal(failure.error.retryable, false);
+    if (mode === "publish-response-audit-failure") {
+      assert.equal(failure.commandError.code, "DOSQL_AUDIT_PERSISTENCE_FAILED");
+      assert.equal(failure.commandError.executionOutcome, "succeeded");
+    }
+    if (mode === "publish-response-driver-failure") {
+      assert.match(failure.commandError.message, /synthetic driver failure/);
+    }
+    assert.equal(await readFile(fixture.outputPath, "utf8"), "competing response");
+    assert.deepEqual(await journalStatuses(fixture.payload("publication-failure").journalPath), states);
+    assert.equal((await readFile(fixture.dispatchPath, "utf8")).trim().split("\n").length, 1);
+    const replay = await fixture.run("another-operation");
+    assert.equal(JSON.parse(replay.stderr).error.executionOutcome, "not_started");
+    assert.equal((await readFile(fixture.dispatchPath, "utf8")).trim().split("\n").length, 1);
+    assert.equal(await readFile(fixture.outputPath, "utf8"), "competing response");
+  });
+}
 
 test("register-database turns probe output into assets, snapshot and checklist", async () => {
   const result = await runCli("register-database", {
@@ -516,16 +675,25 @@ test("replay-timeline returns latest environment status from JSONL journal", asy
   }
 });
 
-test("propose-confirmation returns user-readable confirmation and hides raw SQL from confirmation text", async () => {
-  const result = await runCli("propose-confirmation", {
-    operationId: "dbop_confirm_001",
-    database: {
-      projectId: "proj_erp",
-      environmentId: "test",
-      databaseAssetId: "db_orders_test",
-      engine: "mysql",
-      schemaVersion: 2,
-    },
+for (const command of ["execute", "propose-confirmation"]) {
+  test(`${command} is not a production CLI entrypoint`, async () => {
+    const { proc, result } = await runCliResult(command, { operationId: "removed-command" });
+    assert.notEqual(proc.status, 0);
+    assert.equal(result.status, "failed");
+    assert.equal(result.error.message, `Unsupported command: ${command}`);
+  });
+}
+
+test("internal schema-change fixture keeps readable confirmation without claiming live database state", () => {
+  const database = connectTestDatabase({
+    projectId: "proj_erp",
+    environmentId: "test",
+    databaseAssetId: "db_orders_test",
+    engine: "mysql",
+    schemaVersion: 2,
+  });
+  const proposal = proposeAgentSchemaChange({
+    database,
     actor: {
       type: "user",
       id: "u_001",
@@ -541,11 +709,14 @@ test("propose-confirmation returns user-readable confirmation and hides raw SQL 
     },
   });
 
-  assert.equal(result.status, "succeeded");
-  assert.equal(result.result.proposal.status, "awaiting_user_confirmation");
-  assert.equal(result.result.proposal.userConfirmation.format, "human_readable");
-  assert.doesNotMatch(result.result.proposal.userConfirmation.confirmationText, /alter\s+table/i);
-  assert.match(result.result.proposal.internalScript, /alter table orders/i);
+  assert.equal(database.kind, "test_database_fixture");
+  assert.equal(database.schemaVersion, 2);
+  assert.equal(proposal.version.from, 2);
+  assert.equal(proposal.version.to, 3);
+  assert.equal(proposal.status, "awaiting_user_confirmation");
+  assert.equal(proposal.userConfirmation.format, "human_readable");
+  assert.doesNotMatch(proposal.userConfirmation.confirmationText, /alter\s+table/i);
+  assert.match(proposal.internalScript, /alter table orders/i);
 });
 
 test("resolve-timeline-at command returns verified node for timestamp", async () => {
@@ -3850,6 +4021,76 @@ async function runCli(command, payload, options = {}) {
   const { proc, result } = await runCliResult(command, payload, options);
   assert.equal(proc.status, 0, proc.stderr || JSON.stringify(result));
   return result;
+}
+
+async function responseQueryFixture(t) {
+  const dir = realpathSync(await mkdtemp(join(tmpdir(), "dosql-response-reservation-")));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const outputPath = join(dir, "response.json");
+  const dispatchPath = join(dir, "dispatches.jsonl");
+  const runnerPath = join(dir, "fake-runner.mjs");
+  await writeFile(runnerPath, `#!/usr/bin/env node
+import { appendFileSync, writeFileSync } from "node:fs";
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => input += chunk);
+process.stdin.on("end", () => {
+  const request = JSON.parse(input);
+  appendFileSync(process.env.DOSQL_TEST_DISPATCH_PATH, JSON.stringify(request) + "\\n");
+  const mode = process.env.DOSQL_TEST_RUNNER_MODE;
+  if (mode.startsWith("publish-response")) {
+    writeFileSync(process.env.DOSQL_TEST_RESPONSE_PATH, "competing response", { flag: "wx" });
+  }
+  if (mode === "publish-response-audit-failure") {
+    writeFileSync(process.env.DOSQL_TEST_EVIDENCE_PATH, "competing evidence", { flag: "wx" });
+  }
+  if (mode === "publish-response-driver-failure") {
+    console.error("synthetic driver failure");
+    process.exitCode = 1;
+  } else {
+    console.log("1");
+  }
+});
+`, "utf8");
+  await chmod(runnerPath, 0o755);
+  const payload = (operationId) => ({
+    ...databaseOperationPayload({
+      dir, operationId, engine: "postgres",
+      operation: { statement: "select 1" },
+      adapter: {
+        type: "doops-go", engine: "postgres", runnerPath,
+        namespace: "synthetic", database: "test", secretName: "synthetic-binding",
+      },
+    }),
+    journalPath: join(dir, ".dosql", `${operationId}.journal.jsonl`),
+    evidencePath: join(dir, ".dosql", `${operationId}.evidence.json`),
+  });
+  return {
+    dir, outputPath, dispatchPath, payload,
+    async run(operationId, mode = "success") {
+      const request = payload(operationId);
+      const inputPath = join(dir, `${operationId}.input.json`);
+      await writeFile(inputPath, JSON.stringify(request));
+      return new Promise((resolve, reject) => {
+        execFile(process.execPath, [
+          CLI, "query", "--input", inputPath, "--output", outputPath,
+        ], {
+          cwd: dir,
+          timeout: 10000,
+          env: {
+            ...process.env,
+            DOSQL_TEST_DISPATCH_PATH: dispatchPath,
+            DOSQL_TEST_RESPONSE_PATH: outputPath,
+            DOSQL_TEST_EVIDENCE_PATH: request.evidencePath,
+            DOSQL_TEST_RUNNER_MODE: mode,
+          },
+        }, (error, stdout, stderr) => {
+          if (error && typeof error.code !== "number") return reject(error);
+          resolve({ status: error?.code ?? 0, stdout, stderr });
+        });
+      });
+    },
+  };
 }
 
 async function runCliResult(command, payload, options = {}) {

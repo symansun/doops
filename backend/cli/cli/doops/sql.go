@@ -20,7 +20,7 @@ const (
 )
 
 // sqlBindingNext turns a DoSql binding failure into the command that fixes it.
-// The Secret keys are the ones the Agent already reads for jdbc:mysql sources.
+// Preserve the requested database while the operator repairs its binding.
 func sqlBindingNext(err error, target string) error {
 	if err == nil {
 		return nil
@@ -28,19 +28,21 @@ func sqlBindingNext(err error, target string) error {
 	message := err.Error()
 	importSecret := "doops credential configure --target " + target +
 		" --name <db-credential> --type opaque --scope personal --namespace <ns> --use database" +
-		" --from-secret <secret> --keys SPRING_DATASOURCE_URL,SPRING_DATASOURCE_USERNAME,SPRING_DATASOURCE_PASSWORD"
+		" --from-secret <secret> --keys <engine-specific-keys>"
 	switch {
 	case strings.Contains(message, "dosql_database_binding_missing"),
 		strings.Contains(message, "dosql_credential_missing"):
 		return fmt.Errorf("%s", withNext(message,
 			"doops sql --target "+target+" --mode discover --request 'list database workloads'   # engine, host, database name",
 			"doops k8s --target "+target+" get deployment <workload> -n <ns> -o yaml   # read env valueFrom.secretKeyRef.name; Secret values stay hidden",
+			"doops guide database   # choose Secret keys for the discovered engine",
 			importSecret+"   # imports the Secret on the Agent; no password is typed or printed",
 			"doops sql --target "+target+" --mode query --sql 'select 1'"))
 	case strings.Contains(message, "dosql_database_not_bound"):
 		return fmt.Errorf("%s", withNext(message,
 			"doops credential list --target "+target+"   # databases already bound",
-			importSecret+"   # bind the other database's Secret, or omit --database to use the bound one"))
+			"doops guide database   # choose Secret keys for the requested database's engine",
+			importSecret+"   # bind the requested database, then rerun with the original --database; do not switch databases"))
 	case strings.Contains(message, "dosql_database_required"):
 		return fmt.Errorf("%s", withNext(message, "rerun with --database <name> from the list above"))
 	case strings.Contains(message, "credential_version_not_found"):
@@ -54,7 +56,7 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 	flags := flag.NewFlagSet("sql", flag.ContinueOnError)
 	flags.SetOutput(nil)
 	target := flags.String("target", "", "Configured Gateway target")
-	request := flags.String("request", "", "Database request in natural language")
+	request := flags.String("request", "", "Database request in natural language (--mode query, plan, or discover)")
 	mode := flags.String("mode", string(sqlModeQuery), "DoSql mode: query, plan, apply, or discover")
 	database := flags.String("database", "", "Optional logical database or asset hint")
 	root := flags.String("root", "", "Local code/Helm root for --mode discover")
@@ -66,9 +68,9 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 	subSession := flags.String("session", "", "Session ID (can also be set before subcommand)")
 	sqlText := flags.String("sql", "", "SQL to execute verbatim; one or more statements separated by ;")
 	sqlFile := flags.String("file", "", "SQL file to execute verbatim")
-	verify := flags.String("verify", "", "Read-only verification SQL run in the same transaction (--mode apply)")
+	verify := flags.String("verify", "", "Read-only verification SQL after the batch (--mode apply); implicit-commit DDL cannot be rolled back")
 	verifyFile := flags.String("verify-file", "", "File holding the read-only verification SQL (--mode apply)")
-	dryRun := flags.Bool("dry-run", false, "Execute the batch and verification, then roll back (--mode apply)")
+	dryRun := flags.Bool("dry-run", false, "Execute a rollback-capable batch and verification, then roll back (--mode apply); rejects implicit-commit DDL")
 	copyFrom := flags.String("copy-from", "", "Copy whole tables from this source database into --database (--mode apply, same engine, destination tables must exist)")
 	copyTables := flags.String("tables", "", "Comma-separated table names for --copy-from")
 	// Without --credential the Gateway binds every database credential on the
@@ -155,12 +157,16 @@ func runSQLCommand(args []string, sessionName string, servers []Server, configEr
 			arguments, servers, configErr, ss, verbose)
 	}
 	if selectedCredential != "" {
-		return fmt.Errorf("%s", withNext("--credential only applies to --sql/--file", "doops sql --target "+*target+" --mode apply --credential "+selectedCredential+" --sql '<sql>' --verify '<select>'"))
+		return fmt.Errorf("%s", withNext("--credential only applies to --sql/--file",
+			"doops guide database   # choose query or apply within the authorized scope; use --sql/--file with --credential "+selectedCredential))
 	}
 	if parsedMode == sqlModeApply {
 		// The model-driven apply path needed a signed approval nobody issues; a
 		// change is always the verbatim, journaled --sql/--file path.
-		return fmt.Errorf("%s", withNext("--mode apply runs SQL you wrote, verbatim, in one transaction; it does not translate --request", "doops sql --target "+*target+" --mode plan --request '<change>'   # get the SQL", "doops sql --target "+*target+" --mode apply --sql '<sql>' --verify '<select>' --dry-run"))
+		return fmt.Errorf("%s", withNext("--mode apply runs SQL you wrote, verbatim; it does not translate --request",
+			"doops sql --target "+*target+" --mode plan --request '<change>'   # prepare SQL within the user's existing authorization",
+			"doops guide database   # check engine/statement rollback limits before apply",
+			"doops sql --target "+*target+" --mode apply --sql '<sql>' --verify '<select>'   # add --dry-run only for rollback-capable batches; MySQL/Oracle implicit-commit DDL must run separately from DML"))
 	}
 	if strings.TrimSpace(*request) == "" && !(parsedMode == sqlModeDiscover && strings.TrimSpace(*root) != "") {
 		return fmt.Errorf("%s", withNext("sql needs --sql, --file or --request", "doops sql --target "+*target+" --mode query --sql 'select ...'", "doops guide database"))

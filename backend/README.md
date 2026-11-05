@@ -158,7 +158,7 @@ CNB 非同名制品必须使用仓库下级路径，例如 `docker.cnb.cool/l8ai
 
 - CLI：`~/.local/bin/doops`
 - Skill 源码权威位置：`skills/SKILL.md`
-- Skill 安装目标：`<project>/.agent/skills/doops/SKILL.md`
+- Skill 安装目标：当前项目、全局 `.agent/skills/doops/` 及已启用的 Codex/Agents 副本，见[安装指南](docs/CLUSTER_INSTALL_GUIDE.md)
 - CLI 唯一默认配置：`~/.agent/skills/doops/config.json`
 - Gateway 登录态：`~/.agent/skills/doops/auth.json`
 - Gateway target 只保存路由；同一 Gateway 的所有 target 共享按 Gateway URL 保存的一份登录态
@@ -218,7 +218,7 @@ bash scripts/install.sh --version <release-tag> --project /absolute/path/to/your
 这一步会完成：
 
 1. 从 CNB Release Assets 下载指定版本的 CLI 和 `checksums.txt`，校验后原子替换 `~/.local/bin/doops`
-2. 把同一 commit 的 `skills/SKILL.md` 和 `docs/*.md` 安装到项目 `.agent/skills/doops/`
+2. 把同一 commit 的 `skills/SKILL.md` 和 `docs/*.md` 同步到当前项目及全局客户端副本；分发范围、运行态保留和失败恢复见[安装指南](docs/CLUSTER_INSTALL_GUIDE.md)
 
 若本地 Git 对象缺少该提交或必需文件，安装器在覆盖现有安装前停止；获取指定发布提交后
 重试，不创建 worktree，也不退回当前分支内容。安装记录中的 `commit` 和 `skill_commit`
@@ -244,7 +244,7 @@ bash scripts/install.sh \
   --use 'JM via gateway'
 ```
 
-Skill 会随安装同步到项目目录。标准 target 的配置只包含
+Skill 会随安装同步，安装回执记录全部 `skill_path`。标准 target 的配置只包含
 `gateway`/`cluster`/`instance` 路由。安装后运行一次
 `doops login --target jm`，登录态会供同一 Gateway 的全部 target 使用。
 
@@ -399,6 +399,9 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 | `doops image copy` | 通过标准 Skopeo 在 Registry、OCI archive、目录等 transport 之间复制并校验镜像 |
 | `doops ssh` | 通过结构化 argv 执行出站 SSH，避免嵌套引号被远端 shell 重解析 |
 | `doops ask` | 交给远端 doagent 自主分析和执行 |
+| `doops -session <s> sql --target <t> --mode query\|plan\|discover --request '<request>'` | DoSql 自然语言只读查询、变更计划或数据库发现 |
+| `doops -session <s> sql --target <t> --mode query (--sql '<sql>'\|--file <f>)` | 原样只读 SQL |
+| `doops -session <s> sql --target <t> --mode apply (--sql '<sql>'\|--file <f>) [--credential <name>] [--verify '<select>']` | 按已有授权原样执行变更，使用 target 绑定的数据库凭据并记录版本 |
 | `doops push` | 默认把快照写入 Gateway 配置的 COS，并在 Agent 在线时同步到 `/root/ws/$SESSION`。`--storage gateway` 走 Git |
 | `doops pull` | 默认按 Gateway COS 清单拉回本地。`--storage gateway` 走 Git |
 | `doops read` | 默认返回 Gateway COS 的 presigned GET。`--storage gateway` 查看远端小文本 |
@@ -406,6 +409,10 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 | `doops clean` | 清理远端工作区 |
 | `doops credential` | 创建、查询、授权、验证、轮换和吊销受管凭据 |
 | `doops upgrade` | 用集群内 Job 升级 Helm 托管的 doops-agent；`--dry-run` 只预演 |
+
+SQL 的 `--dry-run` 只适用于可回滚批次；MySQL/Oracle 隐式提交 DDL 须与 DML 分开执行并回读
+验收，不要求用户重复批准已明确授权的任务。完整参数和引擎限制见
+[使用指南](docs/DOOPS_USAGE_GUIDE.md#dosql-直接执行-sql)。
 
 ### Agent 自升级
 
@@ -450,5 +457,5 @@ CNB 的 `main` push 会构建并推送以 commit SHA 命名的 Agent 镜像。�
 - 标准 target 配置不包含 token；Gateway user token 只保存在统一 `auth.json` 登录态。
 - agent 反向注册只声明 `cluster/instance`，不读取或发送注册 token。
 - CLI target schema 只有 `name/aliases/use/gateway/cluster/instance`。
-- `targets`、`unlock`、`upgrade` 和 `credential` 只接受配置 target，不接受临时 Gateway 或 user token。
+- `targets`、`sql`、`upgrade` 和 `credential` 只接受配置 target，不接受临时 Gateway 或 user token。
 - 缺少 Gateway 登录态时远程命令直接失败，必须先执行 `doops login --target <name>`。
