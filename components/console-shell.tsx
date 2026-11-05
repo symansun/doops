@@ -247,6 +247,7 @@ export function ConsoleShell() {
               onSelect={selectTarget}
               onRefresh={() => refresh("user")}
               loading={loading}
+              isAdmin={isAdmin}
             />
           )}
           <div className="ml-1 flex shrink-0 items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5 sm:ml-2">
