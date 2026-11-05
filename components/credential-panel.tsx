@@ -1,7 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { Session, Target } from "@/lib/client"
+import { mapWithConcurrency } from "@/lib/console-refresh"
 import { randomSession } from "@/lib/gateway"
 import {
   createCredential,
@@ -55,6 +56,9 @@ const TYPE_USES: Record<CredentialType, CredentialUse> = {
   modelProvider: "modelProvider",
 }
 
+// Two requests per managed resource; at most this many resources load at once.
+const MANAGED_DETAIL_CONCURRENCY = 4
+
 type Action =
   | { kind: "payload"; credential: CredentialResource }
   | { kind: "binding"; credential: CredentialResource }
@@ -96,7 +100,15 @@ export function CredentialPanel({ session, target }: { session: Session; target:
     Record<string, VerificationStatus>
   >({})
 
+  const loadController = useRef<AbortController | null>(null)
+
+  // Loads run on a view or target change and on a user action, never on the
+  // console's background target poll. A newer load aborts the older one.
   const load = useCallback(async () => {
+    loadController.current?.abort()
+    const controller = new AbortController()
+    loadController.current = controller
+    const { signal } = controller
     setLoading(true)
     setError("")
     try {
@@ -105,23 +117,29 @@ export function CredentialPanel({ session, target }: { session: Session; target:
       if (session.demo) {
         nextRows = await listCredentials(session, target, view)
       } else if (view === "managed") {
-        const managedRows = await listCredentials(session, target, "managed")
-        nextRows = await Promise.all(
-          managedRows.map(async (resource) => {
+        // Gateway has no batch endpoint for versions and grants, so each
+        // resource takes two requests; keep only a few resources in flight.
+        const managedRows = await listCredentials(session, target, "managed", signal)
+        nextRows = await mapWithConcurrency(
+          managedRows,
+          MANAGED_DETAIL_CONCURRENCY,
+          async (resource) => {
             const [versions, bindings] = await Promise.all([
-              listCredentialVersions(session, resource.id),
-              listCredentialBindings(session, resource.id),
+              listCredentialVersions(session, resource.id, signal),
+              listCredentialBindings(session, resource.id, signal),
             ])
             versionEntries.push([resource.id, versions])
             return { ...resource, bindings }
-          }),
+          },
+          signal,
         )
       } else {
         // Target visibility is authoritative for operators. Do not load the
         // management view here: its owner/admin boundary is independent and
         // must not erase a successful target credential response.
-        nextRows = await listCredentials(session, target, "target")
+        nextRows = await listCredentials(session, target, "target", signal)
       }
+      if (signal.aborted) return
       const nextVersions = Object.fromEntries(versionEntries)
       setRows(nextRows)
       setVersionsByCredential(nextVersions)
@@ -139,17 +157,22 @@ export function CredentialPanel({ session, target }: { session: Session; target:
         return next
       })
     } catch (err) {
+      if (signal.aborted) return
       setRows([])
       setVersionsByCredential({})
       setSelectedVersionIDs({})
       setError((err as Error).message)
     } finally {
-      setLoading(false)
+      if (loadController.current === controller) setLoading(false)
     }
-  }, [session, target, view])
+    // The target poll replaces the object on every heartbeat; reload only when
+    // the target itself changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, target.cluster, target.instance, view])
 
   useEffect(() => {
     load()
+    return () => loadController.current?.abort()
   }, [load])
 
   function completed(message: string) {

@@ -97,6 +97,7 @@ export async function listCredentials(
   s: Session,
   target: Target,
   view: "target" | "managed",
+  signal?: AbortSignal,
 ): Promise<CredentialResource[]> {
   if (s.demo) {
     const managed: CredentialResource[] = [
@@ -153,7 +154,7 @@ export async function listCredentials(
     qs.set("cluster", target.cluster)
     qs.set("instance", target.instance)
   }
-  const response = await request<{ credentials: Array<CredentialResource & { grants?: CredentialBinding[] }> }>(s, `?${qs}`)
+  const response = await request<{ credentials: Array<CredentialResource & { grants?: CredentialBinding[] }> }>(s, `?${qs}`, { signal })
   return (response.credentials || []).map(({ grants, ...credential }) => ({
     ...credential,
     ...(grants ? { bindings: grants } : {}),
@@ -163,11 +164,13 @@ export async function listCredentials(
 export async function listCredentialVersions(
   s: Session,
   credentialID: string,
+  signal?: AbortSignal,
 ): Promise<CredentialVersion[]> {
   if (s.demo) throw new Error("演示模式不查询凭据版本")
   const response = await request<{ versions?: unknown }>(
     s,
     `/${encodeURIComponent(credentialID)}/versions`,
+    { signal },
   )
   if (!Array.isArray(response.versions)) {
     throw new Error("凭据版本响应缺少 versions")
@@ -178,11 +181,13 @@ export async function listCredentialVersions(
 export async function listCredentialBindings(
   s: Session,
   credentialID: string,
+  signal?: AbortSignal,
 ): Promise<CredentialBinding[]> {
   if (s.demo) throw new Error("演示模式不查询凭据绑定")
   const response = await request<{ grants?: unknown }>(
     s,
     `/${encodeURIComponent(credentialID)}/grants`,
+    { signal },
   )
   if (!Array.isArray(response.grants)) {
     throw new Error("凭据绑定响应缺少 grants")
