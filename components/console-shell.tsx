@@ -195,6 +195,7 @@ export function ConsoleShell() {
     void (async () => {
       try {
         if (!current?.demo) await clearServerSession()
+        setError("")
       } catch (err) {
         setError((err as Error).message)
       } finally {
@@ -206,6 +207,12 @@ export function ConsoleShell() {
     })()
   }
 
+  // Switching views clears the operation error, like a refresh the user asked for.
+  function openView(next: typeof view) {
+    setError("")
+    setView(next)
+  }
+
   function selectTarget(t: Target) {
     const blocker = targetSwitchBlocker({
       skillRunning,
@@ -213,6 +220,7 @@ export function ConsoleShell() {
       execRunning,
     })
     if (blocker) { setError(blocker); return }
+    setError("")
     setSelected(t)
     setSessionId(randomSession())
     // AI 优先：切换机器后，默认进入 AI 助手而非终端
@@ -253,7 +261,7 @@ export function ConsoleShell() {
           <div className="ml-1 flex shrink-0 items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5 sm:ml-2">
             <button
               disabled={skillRunning}
-              onClick={() => setView("console")}
+              onClick={() => openView("console")}
               className={`whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                 view === "console"
                   ? "bg-primary text-primary-foreground"
@@ -264,7 +272,7 @@ export function ConsoleShell() {
             </button>
             <button
               disabled={skillRunning}
-              onClick={() => setView("deploy")}
+              onClick={() => openView("deploy")}
               className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                 view === "deploy"
                   ? "bg-primary text-primary-foreground"
@@ -275,7 +283,7 @@ export function ConsoleShell() {
             </button>
             <button
               disabled={skillRunning}
-              onClick={() => setView("cicd")}
+              onClick={() => openView("cicd")}
               className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                 view === "cicd"
                   ? "bg-primary text-primary-foreground"
@@ -287,7 +295,7 @@ export function ConsoleShell() {
             {isAdmin && (
               <button
                 disabled={skillRunning}
-                onClick={() => setView("admin")}
+                onClick={() => openView("admin")}
                 className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                   view === "admin"
                     ? "bg-primary text-primary-foreground"
@@ -387,7 +395,7 @@ export function ConsoleShell() {
               <p className="text-sm">还没有可用的机器，部署 agent 或联系管理员接入后即可使用此功能</p>
               <div className="flex flex-wrap items-center justify-center gap-2">
                 <button
-                  onClick={() => setView("deploy")}
+                  onClick={() => openView("deploy")}
                   className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
                 >
                   部署 Doops Agent
