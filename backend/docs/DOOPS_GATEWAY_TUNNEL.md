@@ -78,6 +78,19 @@ sequenceDiagram
 }
 ```
 
+省略 `id` 时新建路由；带 `id` 时原地更新这条路由，并可带上读取时拿到的
+`updated_at` 作为版本。`POST` 的错误状态码：
+
+| 状态码 | 响应文本 | 含义 |
+|---|---|---|
+| `400` | 校验文案，或 `invalid proxy route updated_at` | 域名、上游或目标无效；`updated_at` 不是 RFC3339 时间 |
+| `404` | `proxy route not found` | 带 `id` 的更新，但这条路由不存在（例如已被删除）。Gateway 不会按旧 `id` 重建 |
+| `409` | `proxy host already in use` | 域名已被另一条路由使用。比较前先规范化域名：忽略大小写和末尾的点 |
+| `409` | `proxy route changed since it was read` | 请求带了 `updated_at`，但路由在读取后已被修改，本次不写入 |
+
+不带 `updated_at` 的更新仍然整体覆盖现值，与旧客户端行为一致。每次写入都会推进
+`updated_at`，客户端应原样回传列表里拿到的字符串。
+
 `GET /v1/admin/proxy-routes` 列出路由，`DELETE /v1/admin/proxy-routes?id=<id>`
 删除路由。CLI 等价命令：
 
@@ -89,7 +102,8 @@ doops admin proxy set --target <gateway-target> --id <route-id> --enabled=false
 doops admin proxy delete --target <gateway-target> --id <route-id>
 ```
 
-带 `--id` 时只修改传入的字段，其它字段保持现值；`--scope-target` 取本机已配置 target
+带 `--id` 时只修改传入的字段，其它字段保持现值，并把读到的 `updated_at` 带回
+Gateway：读取后路由被别人改过就返回 409，路由已被删除就返回 404，都不会写入；`--scope-target` 取本机已配置 target
 的 cluster/instance，且必须属于同一 Gateway。Agent 侧通过 `DOOPS_PROXY_ALLOW_HOSTS` 配置精确的上游 hostname，
 例如 Helm values 中的
 `proxy.allowedHosts: "127.0.0.1,internal.example.com"`。Chart 会把它注入为
