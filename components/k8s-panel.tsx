@@ -145,7 +145,9 @@ export function K8sPanel({
       const hint = k8sResultHint(evidenceRef.current)
       if (hint) push("info", hint)
     } catch (err) {
-      if ((err as Error).name !== "AbortError") {
+      if ((err as Error).name === "AbortError") {
+        if (stopRequestedRef.current) push("info", "已停止")
+      } else {
         const message = (err as Error).message
         if (!started) {
           // Validation failed in the browser; nothing was sent.
