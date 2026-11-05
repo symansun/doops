@@ -348,17 +348,20 @@ export function CredentialPanel({ session, target }: { session: Session; target:
       )}
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <table className="w-full min-w-[1040px] border-collapse text-sm">
-          <thead className="sticky top-0 z-10 bg-card">
+        {/* Fixed column widths keep the table inside a 1200px window. The
+            action column wraps its buttons and stays pinned to the right, so
+            a narrow window may scroll the table but never hides an action. */}
+        <table className="w-full min-w-[900px] table-fixed border-collapse text-sm">
+          <thead className="sticky top-0 z-20 bg-card">
             <tr className="border-b text-left text-xs text-muted-foreground">
-              <th className="px-4 py-2.5 font-medium">名称</th>
-              <th className="px-3 py-2.5 font-medium">类型</th>
-              <th className="px-3 py-2.5 font-medium">归属</th>
-              <th className="px-3 py-2.5 font-medium">状态</th>
+              <th className="w-[240px] px-4 py-2.5 font-medium">名称</th>
+              <th className="w-[120px] px-3 py-2.5 font-medium">类型</th>
+              <th className="w-[64px] px-3 py-2.5 font-medium">归属</th>
+              <th className="w-[84px] px-3 py-2.5 font-medium">状态</th>
               <th className="px-3 py-2.5 font-medium">
                 {view === "target" ? "目标绑定" : "版本 / 目标绑定"}
               </th>
-              <th className="min-w-[310px] px-4 py-2.5 text-right font-medium">操作</th>
+              <th className="sticky right-0 w-[220px] border-l bg-card px-3 py-2.5 text-right font-medium">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -373,8 +376,8 @@ export function CredentialPanel({ session, target }: { session: Session; target:
               return (
               <tr key={resource.id} className="border-b border-border/60 align-top">
                 <td className="px-4 py-3">
-                  <div className="font-medium text-foreground">{resource.name}</div>
-                  <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{resource.id}</div>
+                  <div className="break-words font-medium text-foreground">{resource.name}</div>
+                  <div className="mt-0.5 break-all font-mono text-[11px] text-muted-foreground">{resource.id}</div>
                 </td>
                 <td className="px-3 py-3 text-xs text-foreground">{TYPE_LABELS[resource.type]}</td>
                 <td className="px-3 py-3 text-xs text-muted-foreground">
@@ -391,7 +394,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                     {resource.state}
                   </span>
                 </td>
-                <td className="max-w-md px-3 py-3 text-xs text-muted-foreground">
+                <td className="min-w-0 break-words px-3 py-3 text-xs text-muted-foreground">
                   {view === "target" ? (
                     <div className="flex flex-col gap-2">
                       <BindingSummary
@@ -436,8 +439,8 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                     </div>
                   )}
                 </td>
-                <td className="min-w-[310px] px-4 py-3">
-                  <div className="flex flex-nowrap justify-end gap-1.5 whitespace-nowrap">
+                <td className="sticky right-0 z-10 border-l border-border/60 bg-background px-3 py-3">
+                  <div className="flex flex-wrap justify-end gap-1.5 [&>button]:whitespace-nowrap">
                     {view === "managed" && resource.state === "active" && canImportFromSecret(resource.type) && (
                       <button
                         onClick={() => setAction({ kind: "import", credential: resource })}
