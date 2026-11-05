@@ -325,7 +325,8 @@ export function ConsoleShell() {
       {view === "admin" && isAdmin ? (
         <AdminConsole session={session} defaultTab={adminDefaultTab} />
       ) : view === "deploy" ? (
-        <DeployView session={session} target={selected} sessionId={sessionId} onEnterConsole={() => { setView("console"); refresh("user") }} />
+        <DeployView session={session} target={selected} sessionId={sessionId} onEnterConsole={() => { setView("console"); refresh("user") }}
+          onOpenCredentials={isAdmin ? () => { setView("console"); setTab("credentials") } : undefined} />
       ) : view === "cicd" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <CicdGuide session={session} />

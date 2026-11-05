@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react"
 import { CheckCircle2, CircleAlert, CircleDashed, Rocket } from "lucide-react"
 import type { Target } from "@/lib/gateway"
-import { deploymentRequest, type DeploymentInput } from "@/lib/deployment"
+import { deploymentFormControls, deploymentRequest, type DeploymentInput } from "@/lib/deployment"
 
 type TextKey = Exclude<keyof DeploymentInput, "selector">
 type Field = { key: TextKey; label: string; hint?: string; placeholder?: string; optional?: boolean; mono?: boolean; wide?: boolean; multiline?: boolean }
@@ -56,9 +56,12 @@ function precheck(target: Target, input: DeploymentInput): Check {
 
 const inputClass = "w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/60 focus:border-ring focus:ring-2 focus:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-60"
 
-export function DeploymentForm({ target, disabled, onDeploy }: {
+// canSubmit comes from the Agent session; it only gates submission, so a release can be drafted and
+// checked locally on a target that cannot run it yet.
+export function DeploymentForm({ target, canSubmit, blockedReason, onDeploy }: {
   target: Target
-  disabled: boolean
+  canSubmit: boolean
+  blockedReason?: string
   onDeploy: (input: DeploymentInput, confirmed: boolean) => Promise<void>
 }) {
   const [input, setInput] = useState<DeploymentInput>(EMPTY)
@@ -66,7 +69,7 @@ export function DeploymentForm({ target, disabled, onDeploy }: {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
   const check = useMemo(() => precheck(target, input), [target, input])
-  const locked = disabled || submitting
+  const controls = deploymentFormControls({ canSubmit, valid: check.state === "ok", submitting, confirmed })
   function change(key: keyof DeploymentInput, value: string) {
     setInput((current) => ({ ...current, [key]: value }))
     setConfirmed(false)
@@ -76,12 +79,13 @@ export function DeploymentForm({ target, disabled, onDeploy }: {
   return (
     <form className="flex flex-col gap-4" onSubmit={async (event) => {
       event.preventDefault()
-      if (!confirmed || locked || check.state !== "ok") return
+      // Enter in a field also submits; the same gate as the button applies.
+      if (controls.submitDisabled) return
       setError("")
       setSubmitting(true)
       try { await onDeploy(input, confirmed); setConfirmed(false) } catch (err) { setError((err as Error).message) } finally { setSubmitting(false) }
     }}>
-      <fieldset disabled={locked} className="flex min-w-0 flex-col gap-4">
+      <fieldset disabled={controls.fieldsDisabled} className="flex min-w-0 flex-col gap-4">
         {sections(input.selector).map((section) => (
           <section key={section.title} className="rounded-lg border bg-card p-4">
             <header className="mb-3">
@@ -128,14 +132,15 @@ export function DeploymentForm({ target, disabled, onDeploy }: {
           {check.state === "ok" ? <CheckCircle2 aria-hidden="true" className="mt-px size-3.5 shrink-0" /> : check.state === "invalid" ? <CircleAlert aria-hidden="true" className="mt-px size-3.5 shrink-0" /> : <CircleDashed aria-hidden="true" className="mt-px size-3.5 shrink-0" />}
           <span className="break-words">{check.state === "ok" ? "格式校验通过；提交后服务端会按同一规则再次校验" : check.state === "invalid" ? check.message : `还有 ${check.missing} 项必填信息未填写`}</span>
         </p>
-        <label className={`mt-4 flex items-start gap-2 rounded-md border p-3 text-sm ${confirmed ? "border-primary/60 bg-primary/5" : ""} ${check.state !== "ok" || locked ? "opacity-60" : "cursor-pointer"}`}>
-          <input type="checkbox" checked={confirmed} disabled={locked || check.state !== "ok"} onChange={(e) => setConfirmed(e.target.checked)} className="mt-0.5" />
+        <label className={`mt-4 flex items-start gap-2 rounded-md border p-3 text-sm ${confirmed ? "border-primary/60 bg-primary/5" : ""} ${controls.confirmDisabled ? "opacity-60" : "cursor-pointer"}`}>
+          <input type="checkbox" aria-label="授权本次目标变更" checked={confirmed && !controls.confirmDisabled} disabled={controls.confirmDisabled} onChange={(e) => setConfirmed(e.target.checked)} className="mt-0.5" />
           <span>授权本次目标变更。我已核对 CI 来源、镜像和发布范围。</span>
         </label>
         {error && <p role="alert" className="mt-3 break-words rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>}
-        <button disabled={locked || !confirmed || check.state !== "ok"} className="mt-4 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40">
+        <button disabled={controls.submitDisabled} className="mt-4 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40">
           <Rocket aria-hidden="true" className="size-4" />{submitting ? "正在提交…" : "确认发布"}
         </button>
+        {!canSubmit && blockedReason && <p className="mt-2 text-center text-[11px] text-muted-foreground">{blockedReason}</p>}
       </section>
     </form>
   )
