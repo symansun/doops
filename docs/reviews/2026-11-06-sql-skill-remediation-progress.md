@@ -43,7 +43,7 @@ Reconstruct progress from this file after a context transition.
 | F6/F7/F8: embedded DoSql command/evidence behavior | Implemented and locally verified | 91 Node CLI/filesystem checks, including independent processes and response-path conflicts |
 | F2: release skill distribution | Implemented and locally verified | 29 installer checks, including whole-install rollback, retained failed-recovery backups and physical-path deduplication |
 | Integration and independent review | Source review complete | CLI/Gateway/Agent packages passed; independent reviews closed; 311 Python checks passed with 3 reproduced baseline failures |
-| Push and CI | Pending | Remote commit and pipeline result |
+| Push and CI | Pushed; PR #85 checks in progress | CNB branch `codex/sql-skill-contract-fixes`; release remains blocked by baseline failures |
 | Published artifacts, installation and target rollout | Pending | Matching commit and runtime checks; no manual hotfix |
 
 ## Decisions
@@ -99,3 +99,9 @@ Reconstruct progress from this file after a context transition.
 - Independent follow-up reviews closed the command-guidance and response-path
   findings with local reproductions. There are no remaining actionable review
   findings inside this change's agreed scope.
+- CNB draft PR #85 was created after verifying the pushed source commit
+  `b56234789515713fa46ebb9c42ef32defa36a891` on the remote. Automated review
+  requested a clearer Node/Gateway error boundary: the docs now explicitly
+  state that stderr fields are not parsed into a Gateway error schema by the
+  existing Go wrapper. This is a documentation correction, not a new protocol.
+  CI runs against the PR merge ref; inspect its checks for the final outcome.

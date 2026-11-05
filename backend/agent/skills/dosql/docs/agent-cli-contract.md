@@ -102,6 +102,14 @@ the underlying `auditErrorCode`, the command's actual `executionOutcome`, and
 failure. Client success followed by publication failure remains `succeeded`,
 not a rollback. A reservation failure reports `not_started`.
 
+These are Node CLI response/stderr fields, not a Gateway error schema. The
+current Go MCP wrapper does not parse stderr JSON: when the response file is
+missing and the process fails, it returns `dosql_execution_failed` with a
+sanitized combined-output reason; a missing file after process success returns
+`dosql_response_missing`. Gateway callers cannot rely on structured
+`commandError` or `executionOutcome` propagation. Inspect the persisted journal
+and evidence to reconcile execution; do not automatically retry.
+
 ## Commands
 
 | Command | Status | Purpose |

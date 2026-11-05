@@ -88,7 +88,10 @@ not eligible for migration. Investigate them without modifying the original.
 
 ## Execution Outcomes And Retries
 
-`query` failures include `executionOutcome` and `retryable: false`:
+Node `query` failures include `executionOutcome` and `retryable: false`.
+These fields are not a Gateway error schema; the current Go MCP wrapper returns
+an execution error with a text reason rather than parsing stderr JSON. See the
+[CLI response boundary](agent-cli-contract.md#target-command-shape).
 
 | Outcome | Meaning | Required action |
 | --- | --- | --- |
