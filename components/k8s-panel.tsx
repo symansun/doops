@@ -4,20 +4,25 @@ import { Boxes, Play, Square } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target, type ToolCancel } from "@/lib/client"
 import {
-  EMPTY_K8S_INPUT,
+  EMPTY_K8S_LOG,
+  K8S_LOG_MAX_LINES,
   K8S_OPERATIONS,
+  appendK8sLog,
+  describeK8sFailure,
   isK8sMutation,
-  k8sSummary,
+  k8sConfirmText,
+  k8sFields,
+  k8sFormAfterRun,
+  k8sFormFor,
+  k8sResultHint,
   runK8s,
   type K8sField,
   type K8sInput,
+  type K8sLog,
+  type K8sLogKind,
   type K8sOperation,
+  type K8sScopedForm,
 } from "@/lib/k8s"
-
-interface K8sLine {
-  kind: "out" | "err" | "info"
-  text: string
-}
 
 const READ_OPERATIONS = (Object.keys(K8S_OPERATIONS) as K8sOperation[]).filter((op) => !K8S_OPERATIONS[op].mutation)
 const WRITE_OPERATIONS = (Object.keys(K8S_OPERATIONS) as K8sOperation[]).filter((op) => K8S_OPERATIONS[op].mutation)
@@ -43,7 +48,14 @@ const RESOURCE_PLACEHOLDER: Partial<Record<K8sOperation, string>> = {
   scale: "deployment/api",
 }
 
+// Raw output kept for explaining a failure; kubectl prints its error near the end.
+const FAILURE_EVIDENCE_CHARS = 16_000
+
 const inputClass = "min-w-0 rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-ring disabled:opacity-60"
+
+// The panel unmounts when the tab changes. The form is kept for the same target
+// only, so reopening the tab on another target never shows its namespace.
+let savedForm: K8sScopedForm | null = null
 
 export function K8sPanel({
   session,
@@ -56,20 +68,28 @@ export function K8sPanel({
   sessionId: string
   onRunningChange: (running: boolean) => void
 }) {
-  const [input, setInput] = useState<K8sInput>(EMPTY_K8S_INPUT)
-  const [lines, setLines] = useState<K8sLine[]>([])
+  const targetKey = target.key
+  const [input, setInput] = useState<K8sInput>(() => k8sFormFor(savedForm, targetKey))
+  const [log, setLog] = useState<K8sLog>(EMPTY_K8S_LOG)
   const [running, setRunning] = useState(false)
   const [stopPending, setStopPending] = useState(false)
   const [error, setError] = useState("")
   const cancelRef = useRef<ToolCancel | null>(null)
+  const stopRequestedRef = useRef(false)
+  const evidenceRef = useRef("")
   const logRef = useRef<HTMLPreElement>(null)
   const spec = K8S_OPERATIONS[input.operation]
   const mutation = isK8sMutation(input.operation)
-  const uses = (field: K8sField) => spec.fields.includes(field)
+  const fields = k8sFields(input)
+  const uses = (field: K8sField) => fields.includes(field)
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight })
-  }, [lines])
+  }, [log])
+
+  useEffect(() => {
+    savedForm = { targetKey, input }
+  }, [targetKey, input])
 
   function update(patch: Partial<K8sInput>) {
     // Any change to what will be sent invalidates a previous write confirmation.
@@ -82,47 +102,69 @@ export function K8sPanel({
     update({ operation, kind })
   }
 
-  function push(line: K8sLine) {
-    setLines((current) => [...current, line])
+  function push(kind: K8sLogKind, text: string) {
+    setLog((current) => appendK8sLog(current, kind, text))
   }
 
   async function run() {
     if (running || stopPending) return
+    const submitted = input
+    const where = { cluster: target.cluster, instance: target.instance }
     setError("")
     setRunning(true)
     setStopPending(false)
     onRunningChange(true)
     cancelRef.current = null
+    stopRequestedRef.current = false
+    evidenceRef.current = ""
     let started = false
     try {
       await runK8s(
         (opts) => {
           started = true
-          setLines([{ kind: "info", text: `目标 ${target.cluster}/${target.instance} · ${spec.label}` }])
+          setLog(appendK8sLog(EMPTY_K8S_LOG, "info", `目标 ${where.cluster}/${where.instance} · ${spec.label}`))
           return callTool(
             session,
             { ...opts, onCancelReady: (cancel) => { cancelRef.current = cancel } },
             (event) => {
-              if (event.type === "output") push({ kind: "out", text: event.data })
+              if (event.type === "output") {
+                evidenceRef.current = (evidenceRef.current + event.data).slice(-FAILURE_EVIDENCE_CHARS)
+                push("out", event.data)
+              }
               if (event.type === "result") {
                 const text = extractText(event.result)
-                if (text) push({ kind: "info", text })
+                if (text) push("info", text)
               }
             },
           )
         },
-        target,
+        where,
         sessionId,
-        input,
+        submitted,
       )
-      if (mutation) setInput((current) => ({ ...current, confirm: false }))
+      const hint = k8sResultHint(evidenceRef.current)
+      if (hint) push("info", hint)
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
         const message = (err as Error).message
-        setError(message)
-        if (started) push({ kind: "err", text: message })
+        if (!started) {
+          // Validation failed in the browser; nothing was sent.
+          setError(message)
+        } else {
+          const failure = describeK8sFailure(message, {
+            target: where,
+            output: evidenceRef.current,
+            mutation: isK8sMutation(submitted.operation),
+            stopRequested: stopRequestedRef.current,
+          })
+          setError(failure.text)
+          push("err", failure.text)
+          if (failure.text !== message.trim()) push("info", `原始错误：${message.trim()}`)
+        }
       }
     } finally {
+      // A write that reached the Gateway needs a new confirmation, whatever its outcome.
+      if (started) setInput((current) => (current.operation === submitted.operation ? k8sFormAfterRun(current) : current))
       setRunning(false)
       setStopPending(false)
       onRunningChange(false)
@@ -132,15 +174,17 @@ export function K8sPanel({
 
   function stop() {
     if (!cancelRef.current || stopPending) return
+    stopRequestedRef.current = true
     setStopPending(true)
-    push({ kind: "info", text: "已请求停止，等待远端终态；请勿立即重试" })
+    push("info", "已请求停止，等待远端终态；请勿立即重试")
     void cancelRef.current().catch((err) => {
       setStopPending(false)
-      push({ kind: "err", text: `停止请求失败：${(err as Error).message}` })
+      push("err", `停止请求失败：${(err as Error).message}`)
     })
   }
 
   const disabled = running || stopPending
+  const helmRelease = input.operation.startsWith("helm-") && input.operation !== "helm-list"
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -176,7 +220,7 @@ export function K8sPanel({
             <input aria-label="资源 kind/name" value={input.resource} disabled={disabled} onChange={(e) => update({ resource: e.target.value })} placeholder={RESOURCE_PLACEHOLDER[input.operation] || "kind/name"} className={inputClass} />
           )}
           {uses("namespace") && (
-            <input aria-label="命名空间" value={input.namespace} disabled={disabled || input.allNamespaces} onChange={(e) => update({ namespace: e.target.value })} placeholder={input.operation.startsWith("helm-") && input.operation !== "helm-list" ? "命名空间（必填）" : "命名空间（留空为默认）"} className={inputClass} />
+            <input aria-label="命名空间" value={input.namespace} disabled={disabled || input.allNamespaces} onChange={(e) => update({ namespace: e.target.value })} placeholder={helmRelease ? "命名空间（必填）" : "命名空间（留空为 Agent 默认）"} className={inputClass} />
           )}
           {uses("selector") && (
             <input aria-label="标签选择器" value={input.selector} disabled={disabled} onChange={(e) => update({ selector: e.target.value })} placeholder="标签选择器，如 app=api" className={inputClass} />
@@ -190,7 +234,7 @@ export function K8sPanel({
             <input aria-label="容器" value={input.container} disabled={disabled} onChange={(e) => update({ container: e.target.value })} placeholder="容器（可选）" className={inputClass} />
           )}
           {uses("tail") && (
-            <input aria-label="日志行数" inputMode="numeric" value={input.tail} disabled={disabled} onChange={(e) => update({ tail: e.target.value })} placeholder="最近行数，如 200" className={inputClass} />
+            <input aria-label="日志行数" inputMode="numeric" value={input.tail} disabled={disabled} onChange={(e) => update({ tail: e.target.value })} placeholder="最近行数（留空为全部）" className={inputClass} />
           )}
           {uses("since") && (
             <input aria-label="时间范围" value={input.since} disabled={disabled} onChange={(e) => update({ since: e.target.value })} placeholder="时间范围，如 10m" className={inputClass} />
@@ -222,9 +266,7 @@ export function K8sPanel({
         {mutation && (
           <label className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-foreground">
             <input type="checkbox" className="mt-0.5" checked={input.confirm} disabled={disabled} onChange={(e) => update({ confirm: e.target.checked })} />
-            <span>
-              我确认在 {target.cluster}/{target.instance} 上执行：<strong>{k8sSummary(input)}</strong>。此操作会改变集群状态（对应 CLI 的 --confirm）。
-            </span>
+            <span>{k8sConfirmText(target, input)}</span>
           </label>
         )}
 
@@ -241,12 +283,19 @@ export function K8sPanel({
           {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
         </div>
 
-        <pre ref={logRef} aria-label="执行输出" className="min-h-48 flex-1 overflow-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-3 font-mono text-xs">
-          {lines.length === 0 ? <span className="text-muted-foreground">选择操作并执行，输出显示在这里。</span> : lines.map((line, index) => (
-            <span key={index} className={line.kind === "err" ? "text-destructive" : line.kind === "info" ? "text-muted-foreground" : "text-foreground"}>
-              {line.text.endsWith("\n") ? line.text : line.text + "\n"}
-            </span>
-          ))}
+        <pre ref={logRef} aria-label="执行输出" className="min-h-48 flex-1 overflow-auto whitespace-pre-wrap break-all rounded-md border bg-muted/40 p-3 font-mono text-xs">
+          {log.entries.length === 0 ? <span className="text-muted-foreground">选择操作并执行，输出显示在这里。</span> : (
+            <>
+              {log.dropped > 0 && (
+                <span className="text-muted-foreground">{`… 已省略前 ${log.dropped} 行输出，仅显示最近 ${K8S_LOG_MAX_LINES} 行；需要完整日志请缩小行数或时间范围\n`}</span>
+              )}
+              {log.entries.map((entry, index) => (
+                <span key={index} className={entry.kind === "err" ? "text-destructive" : entry.kind === "info" ? "text-muted-foreground" : "text-foreground"}>
+                  {entry.text}
+                </span>
+              ))}
+            </>
+          )}
         </pre>
       </div>
     </div>
