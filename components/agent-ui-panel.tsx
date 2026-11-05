@@ -1,7 +1,7 @@
 "use client"
 
 import { AgentWorkspace, type AgentArtifactItem, type AgentSessionRuntime, type CodeWorkspaceSource } from "@agent-cloud/agent-ui"
-import { Plus, RefreshCw, Settings2 } from "lucide-react"
+import { KeyRound, Plus, RefreshCw } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react"
 import { randomSession } from "@/lib/gateway"
 import { isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
@@ -104,15 +104,15 @@ export function AgentUiPanel({
           ><RefreshCw aria-hidden="true" className="size-3.5" /></button>
           {onConfigureModel && (
             <button
-              aria-label="配置模型"
+              aria-label="打开凭据"
               className="flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               disabled={busy}
               onClick={onConfigureModel}
-              title="配置该节点的大模型"
+              title="DoAgent 模型来自该目标绑定的 modelProvider 凭据"
               type="button"
             >
-              <Settings2 aria-hidden="true" className="size-3.5" />
-              <span className="hidden sm:inline">配置模型</span>
+              <KeyRound aria-hidden="true" className="size-3.5" />
+              <span className="hidden sm:inline">打开凭据</span>
             </button>
           )}
           <button

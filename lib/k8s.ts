@@ -458,6 +458,13 @@ function lastErrorLine(text: string): string {
 
 // Explains a failed doops_k8s call in terms an operator can act on. Agent RBAC
 // denials are told apart from the user's own Gateway grant.
+// /api/rpc reports a refused Gateway upgrade as "…（HTTP n）". Same format as
+// gatewayUpgradeStatus in lib/shell-blocks.ts; kept local because this file has
+// no imports so its tests can load it directly. shell-blocks.test.mjs checks both agree.
+function gatewayUpgradeStatus(raw: string): string | null {
+  return /（HTTP (\d{3})）$/.exec(raw.trim())?.[1] ?? null
+}
+
 export function describeK8sFailure(message: string, context: K8sFailureContext): K8sFailure {
   const raw = message.trim()
   const where = `${context.target.cluster}/${context.target.instance}`
@@ -475,14 +482,15 @@ export function describeK8sFailure(message: string, context: K8sFailureContext):
       text: `写操作结果未确认：请先在 ${where} 上用 get、describe 或 rollout status 核对实际状态，不要直接重试。${hint}`,
     }
   }
-  if (raw === "gateway_auth_failed" || /Unexpected server response: 401\b/.test(raw) ||
+  const upgrade = gatewayUpgradeStatus(raw)
+  if (raw === "gateway_auth_failed" || upgrade === "401" || /Unexpected server response: 401\b/.test(raw) ||
       raw.includes("未建立 Gateway 会话") || raw.includes("缺少 gateway 地址或 token") || raw.includes("Gateway 会话已失效")) {
     return { kind: "auth", text: "登录已失效，请重新登录后再执行" }
   }
-  if (/^forbidden\b/i.test(raw) || /Unexpected server response: 403\b/.test(raw)) {
+  if (/^forbidden\b/i.test(raw) || upgrade === "403" || /Unexpected server response: 403\b/.test(raw)) {
     return { kind: "forbidden", text: `无权操作 ${where}：你的账号没有该目标的授权，请联系管理员授权` }
   }
-  if (/^target offline\b/i.test(raw) || raw === "agent disconnected") {
+  if (/^target offline\b/i.test(raw) || upgrade === "404" || raw === "agent disconnected") {
     return { kind: "offline", text: `目标 ${where} 已离线或断开：请确认 Agent 在线后重试` }
   }
   if (/session has an active operation|target queue (full|timeout)|target busy/i.test(raw)) {

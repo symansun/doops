@@ -1,9 +1,12 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { CheckCircle2, CircleAlert, CircleDashed, Rocket } from "lucide-react"
 import type { Target } from "@/lib/gateway"
-import { deploymentFormControls, deploymentRequest, type DeploymentInput } from "@/lib/deployment"
+import {
+  deploymentDraftText, deploymentFormControls, deploymentRequest, deploymentSubmitError, parseDeploymentDraft, singleFlight,
+  type DeploymentInput,
+} from "@/lib/deployment"
 
 type TextKey = Exclude<keyof DeploymentInput, "selector">
 type Field = { key: TextKey; label: string; hint?: string; placeholder?: string; optional?: boolean; mono?: boolean; wide?: boolean; multiline?: boolean }
@@ -58,18 +61,35 @@ const inputClass = "w-full min-w-0 rounded-md border border-input bg-background 
 
 // canSubmit comes from the Agent session; it only gates submission, so a release can be drafted and
 // checked locally on a target that cannot run it yet.
-export function DeploymentForm({ target, canSubmit, blockedReason, onDeploy }: {
+export function DeploymentForm({ target, draftKey, canSubmit, blockedReason, onDeploy }: {
   target: Target
+  // sessionStorage key for the draft, so switching tabs or reloading keeps what was typed.
+  draftKey: string
   canSubmit: boolean
   blockedReason?: string
   onDeploy: (input: DeploymentInput, confirmed: boolean) => Promise<void>
 }) {
-  const [input, setInput] = useState<DeploymentInput>(EMPTY)
+  const [input, setInput] = useState<DeploymentInput>(() =>
+    (typeof window === "undefined" ? undefined : parseDeploymentDraft(sessionStorage.getItem(draftKey))) || EMPTY)
   const [confirmed, setConfirmed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
   const check = useMemo(() => precheck(target, input), [target, input])
   const controls = deploymentFormControls({ canSubmit, valid: check.state === "ok", submitting, confirmed })
+  useEffect(() => {
+    const text = deploymentDraftText(input)
+    if (text) sessionStorage.setItem(draftKey, text)
+    else sessionStorage.removeItem(draftKey)
+  }, [draftKey, input])
+  // The guard lives across renders, so it calls the current onDeploy (which reads the current Agent availability).
+  const deploy = useRef(onDeploy)
+  deploy.current = onDeploy
+  // A double click submits twice before React re-renders the disabled button; the second call is dropped.
+  const submit = useRef(singleFlight(async (release: DeploymentInput, authorized: boolean) => {
+    setError("")
+    setSubmitting(true)
+    try { await deploy.current(release, authorized); setConfirmed(false) } catch (err) { setError(deploymentSubmitError((err as Error).message)) } finally { setSubmitting(false) }
+  }))
   function change(key: keyof DeploymentInput, value: string) {
     setInput((current) => ({ ...current, [key]: value }))
     setConfirmed(false)
@@ -77,13 +97,11 @@ export function DeploymentForm({ target, canSubmit, blockedReason, onDeploy }: {
   }
 
   return (
-    <form className="flex flex-col gap-4" onSubmit={async (event) => {
+    <form className="flex flex-col gap-4" onSubmit={(event) => {
       event.preventDefault()
       // Enter in a field also submits; the same gate as the button applies.
       if (controls.submitDisabled) return
-      setError("")
-      setSubmitting(true)
-      try { await onDeploy(input, confirmed); setConfirmed(false) } catch (err) { setError((err as Error).message) } finally { setSubmitting(false) }
+      void submit.current(input, confirmed)
     }}>
       <fieldset disabled={controls.fieldsDisabled} className="flex min-w-0 flex-col gap-4">
         {sections(input.selector).map((section) => (

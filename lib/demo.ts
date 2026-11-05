@@ -250,6 +250,29 @@ function demoListing(dir: string): string[] {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+// 演示集群里的 Deployment 及其主容器镜像，供「检查部署」比对。
+const DEMO_DEPLOYMENTS: Record<string, string> = {
+  "apps/api": "registry.example.com/doops/api:1.8.2",
+  "apps/web": "registry.example.com/doops/web:1.8.2",
+}
+
+// 与 Agent 的 imageRefMatches 一致：完全相同，或一方是另一方去掉 :tag / @digest 的前缀。
+function demoImageMatches(want: string, got: string) {
+  return (
+    want === got ||
+    got.startsWith(`${want}:`) ||
+    got.startsWith(`${want}@`) ||
+    want.startsWith(`${got}:`) ||
+    want.startsWith(`${got}@`)
+  )
+}
+
+function demoToolError(onEvent: (ev: RpcEvent) => void, message: string): never {
+  onEvent({ type: "error", error: message })
+  onEvent({ type: "done" })
+  throw new Error(message)
+}
+
 async function emitChunks(
   chunks: string[],
   onEvent: (ev: RpcEvent) => void,
@@ -573,45 +596,38 @@ nginx -s reload
     return
   }
 
+  // 以下两个工具的参数、成功文本和报错文本与 Agent 一致
+  // （backend/agent/internal/server/workspace_upload.go）；失败时和真实 callTool
+  // 一样先推 error 事件再抛出同一错误。
   if (tool === "doops_check_deployment") {
-    await emitChunks(
-      [
-        "[check] 探测当前发布版本与软链接…\n",
-        "current -> releases/1.8.2 (3 天前发布)\n",
-        "[check] 服务存活：doops-app active · nginx active · redis active\n",
-        "[check] 健康检查 GET /healthz → 200 OK (12ms)\n",
-        "[check] 磁盘 /data 使用率 48% · 内存可用 5.3Gi\n",
-      ],
-      onEvent,
-      signal,
-      200,
-    )
-    onEvent({
-      type: "result",
-      result: {
-        content: [{ type: "text", text: "部署正常：版本 1.8.2，三项服务全部存活，健康检查通过。" }],
-      },
-    })
+    onEvent({ type: "open" })
+    await sleep(260)
+    signal?.throwIfAborted()
+    const namespace = String(args.namespace || "").trim() || "default"
+    const deployment = String(args.deployment || "").trim()
+    const image = String(args.image || "").trim()
+    const actual = DEMO_DEPLOYMENTS[`${namespace}/${deployment}`]
+    if (!deployment || !image) demoToolError(onEvent, "namespace, deployment and image are required")
+    else if (!actual)
+      demoToolError(
+        onEvent,
+        `kubectl get deploy ${namespace}/${deployment} failed: exit status 1: Error from server (NotFound): deployments.apps "${deployment}" not found`,
+      )
+    else if (!demoImageMatches(image, actual)) demoToolError(onEvent, `image mismatch: want "${image}" got "${actual}"`)
+    onEvent({ type: "result", result: { content: [{ type: "text", text: `check ok: ${namespace}/${deployment} -> ${actual}` }] } })
     onEvent({ type: "done" })
     return
   }
 
   if (tool === "doops_clean_workspace") {
-    await emitChunks(
-      [
-        "[clean] 扫描工作区临时文件与历史发布包…\n",
-        "[clean] 保留最近 3 个版本，移除 releases/1.7.9、releases/1.7.8\n",
-        "[clean] 清理 logs/*.gz 与 tmp/ 缓存\n",
-        "[clean] 释放磁盘空间 2.4 GiB\n",
-      ],
-      onEvent,
-      signal,
-      200,
-    )
-    onEvent({
-      type: "result",
-      result: { content: [{ type: "text", text: "工作区清理完成，释放 2.4 GiB，保留最近 3 个版本。" }] },
-    })
+    onEvent({ type: "open" })
+    await sleep(260)
+    signal?.throwIfAborted()
+    const workspace = String(args.workspace || "").trim()
+    if (!workspace || workspace === "." || workspace.includes("..") || /[\\/]/.test(workspace)) {
+      demoToolError(onEvent, `unsafe session id: ${JSON.stringify(workspace)}`)
+    }
+    onEvent({ type: "result", result: { content: [{ type: "text", text: `Cleaned workspace and bare repo: ${workspace}` }] } })
     onEvent({ type: "done" })
     return
   }

@@ -555,6 +555,12 @@ function markerFailure(marker: ImageMarker, signals: string[], timeout?: number)
 }
 
 // explainImageFailure 把 Gateway、Agent 和命令自身的失败标记翻译成运维能直接处理的说明。
+// /api/rpc 在 Gateway 拒绝 WebSocket 升级时给出“…（HTTP n）”。格式与 lib/shell-blocks.ts 的
+// gatewayUpgradeStatus 相同；本文件不引用其他模块，测试可以直接加载，两处由 shell-blocks.test.mjs 校验一致。
+function gatewayUpgradeStatus(raw: string): string | null {
+  return /（HTTP (\d{3})）$/.exec(raw.trim())?.[1] ?? null
+}
+
 export function explainImageFailure(
   message: string,
   output: ImageOutput,
@@ -577,13 +583,14 @@ export function explainImageFailure(
   }
   const blocked = /blocked_command\(([^)]+)\):\s*(.*)/.exec(raw)
   if (blocked) return { kind: "blocked", text: `Agent 拒绝执行（${blocked[1]}）：${blocked[2]}` }
-  if (/^forbidden\b/i.test(raw) || raw.includes("Unexpected server response: 403")) {
+  const upgrade = gatewayUpgradeStatus(raw)
+  if (/^forbidden\b/i.test(raw) || upgrade === "403" || raw.includes("Unexpected server response: 403")) {
     return { kind: "forbidden", text: `无权在 ${where} 上执行：请联系平台管理员授权该目标` }
   }
-  if (raw.includes("Unexpected server response: 401") || raw === "gateway_auth_failed" || raw.includes("未建立 Gateway 会话") || raw.includes("缺少 gateway 地址或 token")) {
+  if (upgrade === "401" || raw.includes("Unexpected server response: 401") || raw === "gateway_auth_failed" || raw.includes("未建立 Gateway 会话") || raw.includes("缺少 gateway 地址或 token")) {
     return { kind: "auth", text: "登录已失效，请重新登录后再执行" }
   }
-  if (/^target offline\b/i.test(raw)) {
+  if (/^target offline\b/i.test(raw) || upgrade === "404") {
     return { kind: "offline", text: `目标离线：${where} 当前未连接 Gateway，确认 Agent 在线后再执行` }
   }
   if (raw.includes("session has an active operation")) {
