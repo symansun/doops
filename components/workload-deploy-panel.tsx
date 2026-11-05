@@ -5,9 +5,13 @@ import { ArrowUpCircle, CircleAlert, KeyRound, Loader2, Plus, RefreshCw, Square 
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react"
 import type { Session, Target } from "@/lib/client"
 import { randomSession } from "@/lib/gateway"
-import { DEPLOYMENT_EXTENSION, deploymentAvailability, deploymentExtensionCommand, type DeploymentAvailability, type DeploymentInput, type DeploymentNotice } from "@/lib/deployment"
+import {
+  DEPLOYMENT_EXTENSION, deploymentAvailability, deploymentExtensionCommand, deploymentNewSessionWarning, deploymentOutcome,
+  deploymentStopFailure, type DeploymentAvailability, type DeploymentInput, type DeploymentNotice, type DeploymentOutcome,
+} from "@/lib/deployment"
 import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { createDoopsCodeWorkspace } from "@/lib/agent-code-workspace"
+import { useAppDialog } from "./app-dialog"
 import { DeploymentForm } from "./deployment-form"
 
 // Business workload release: the same confirmed `doops.operations/apply` command as `doops ask --apply`,
@@ -40,6 +44,24 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
       capability.semanticType === DEPLOYMENT_EXTENSION.semanticType && capability.schemaVersion === DEPLOYMENT_EXTENSION.schemaVersion,
   )
   const availability = deploymentAvailability({ connection: snapshot.connection, error: snapshot.error, supportsApply, running: busy })
+  const outcome = deploymentOutcome({ status: snapshot.status, error: snapshot.error })
+  const { confirm, dialog } = useAppDialog()
+  const [stopping, setStopping] = useState(false)
+  const [stopError, setStopError] = useState("")
+  const startNewRelease = useCallback(async () => {
+    const warning = deploymentNewSessionWarning(outcome.kind)
+    if (warning && !(await confirm({ title: "开始新发布？", message: warning, confirmLabel: "开始新发布", tone: "danger" }))) return
+    setStopError("")
+    setSessionId(randomSession("deploy"))
+  }, [confirm, outcome.kind])
+  // A stop only asks the Agent to stop; the server answers once the original call reaches a terminal state.
+  const stop = useCallback(async () => {
+    setStopping(true)
+    setStopError("")
+    try { await runtime.interrupt(sessionId, crypto.randomUUID()) } catch (error) {
+      setStopError(deploymentStopFailure(error instanceof Error ? error.message : String(error)))
+    } finally { setStopping(false) }
+  }, [runtime, sessionId])
   const reconnect = useCallback(() => {
     if (snapshot.connection !== "disconnected") runtime.close(sessionId)
     void runtime.open(sessionId).catch(() => {
@@ -49,6 +71,7 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {dialog}
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b bg-card px-5 py-3">
         <div className="min-w-0">
           <h2 className="text-base font-semibold">发布业务工作负载</h2>
@@ -61,7 +84,7 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
           <button
             type="button"
             disabled={busy}
-            onClick={() => setSessionId(randomSession("deploy"))}
+            onClick={() => void startNewRelease()}
             title={`当前会话 ${sessionId}`}
             className="flex h-8 items-center gap-1.5 rounded-md border px-3 text-xs transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           ><Plus aria-hidden="true" className="size-3.5" />新发布</button>
@@ -77,6 +100,7 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
           <DeploymentForm
             key={sessionId}
             target={target}
+            draftKey={`doops.deploy-draft.${target.key}`}
             canSubmit={availability.canSubmit}
             blockedReason={availability.canSubmit ? undefined : availability.blockedReason}
             onDeploy={async (input: DeploymentInput, confirmed: boolean) => {
@@ -94,9 +118,9 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
               <p className="truncate text-[11px] text-muted-foreground">rollout 与最终 Deployment 状态以 Agent 返回为准；工具失败、连接中断或缺少终态都不算成功</p>
             </div>
             {busy && snapshot.capabilities.interrupt && (
-              <button type="button" disabled={snapshot.connection !== "connected"} onClick={() => void runtime.interrupt(sessionId, crypto.randomUUID())}
+              <button type="button" disabled={stopping || snapshot.connection !== "connected"} onClick={() => void stop()}
                 className="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-destructive/50 px-2.5 text-xs text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-40">
-                <Square aria-hidden="true" className="size-3" />停止
+                <Square aria-hidden="true" className="size-3" />{stopping ? "正在停止…" : "停止"}
               </button>
             )}
           </div>
@@ -113,7 +137,7 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
               codeWorkspace={codeWorkspace}
               defaultWorkbenchMode="work"
               showFullscreen={false}
-              composer={<RunStatus snapshot={snapshot} />}
+              composer={<RunStatus outcome={outcome} stopError={stopError} onOpenCredentials={onOpenCredentials} />}
             />
           </div>
         </div>
@@ -175,8 +199,26 @@ function ConnectionBadge({ snapshot, availability }: { snapshot: AgentSessionSna
   )
 }
 
-// The workspace composer slot only reports run state; releases are submitted from the form.
-function RunStatus({ snapshot }: { snapshot: AgentSessionSnapshot }) {
-  const text = isDoopsAgentSessionBusy(snapshot) ? "发布执行中…" : snapshot.status === "failed" ? "上次发布失败，详情见上方执行过程" : snapshot.status === "completed" ? "上次发布已结束，请按验收条件核对 Agent 返回的证据" : "填写并确认发布信息后，执行过程显示在这里"
-  return <div role="status" className="shrink-0 border-t px-4 py-2.5 text-xs text-muted-foreground">{text}</div>
+// The workspace composer slot reports what the last release did to the target; releases are submitted from the form.
+function RunStatus({ outcome, stopError, onOpenCredentials }: {
+  outcome: DeploymentOutcome
+  stopError: string
+  onOpenCredentials?: () => void
+}) {
+  const tone = outcome.kind === "failed" ? "text-destructive"
+    : outcome.kind === "unknown" || outcome.kind === "cancelled" ? "text-amber-600 dark:text-amber-400"
+      : outcome.kind === "succeeded" ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"
+  return (
+    <div role="status" aria-live="polite" data-outcome={outcome.kind} className="max-h-40 shrink-0 overflow-y-auto border-t px-4 py-2.5 text-xs">
+      <p className={`font-medium ${tone}`}>{outcome.title}</p>
+      {outcome.detail && <p className="mt-0.5 break-words text-muted-foreground">{outcome.detail}</p>}
+      {stopError && <p role="alert" className="mt-1 break-words text-destructive">{stopError}</p>}
+      {outcome.actions.includes("open_credentials") && onOpenCredentials && (
+        <button type="button" onClick={onOpenCredentials}
+          className="mt-2 flex h-7 items-center gap-1.5 rounded-md border bg-background px-2.5 text-xs transition-colors hover:bg-muted">
+          <KeyRound aria-hidden="true" className="size-3.5" />去凭据页
+        </button>
+      )}
+    </div>
+  )
 }
