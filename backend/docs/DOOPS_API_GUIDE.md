@@ -7,11 +7,8 @@
 运行时引用凭据只要求该 target 的 grant，不要求额外凭据权限或逐用户绑定。
 目标视图也继承操作权限；返回无 payload 的目标绑定元数据。创建、轮换、吊销仍检查 owner/admin。
 `skill=dosql` 请求直接用服务器保存的 database 绑定解析 namespace/version，不运行 scope 规划 prompt。
-DoSql 使用自动凭据模式：Gateway 按资源 ID 把当前 target 上全部 active 的 database credential bindings
-传给 DoSql。`skill=dosql` 携带 `credential_refs` 时返回 `-32602 dosql_credential_refs_unsupported`。
-多个绑定时由 Agent 按 `sql_database` 与凭据指向的库名匹配选择。`sql_credential`（资源名或 ID）
-把这个集合收窄为一个已绑定凭据；只接受 `skill=dosql` + `credential_mode=auto`，否则返回 `-32602`。
-未绑定返回 `dosql_credential_not_bound`，同名多 owner 返回 `credential_reference_ambiguous`。
+DoSql 的自动绑定、`sql_credential` 选择和字段组合以
+[DoSql 参数契约](#dosql-参数契约) 为准。
 缺少版本、目标绑定、格式不合法或目标离线分别返回真实错误类别，不合并为 `credential_invalid`。
 
 CLI `credential configure` 顺序调用既有的 managed list/create、payload/import-secret、
@@ -555,10 +552,58 @@ activation/reload is shared. See `DOWEB_INTEGRATION.md` for parameters and mount
 适用于诊断、信息收集和用户明确要求的运维或发布任务。需要凭据时，CLI 只传递
 `--credential <resource-name>` 的 metadata-only 引用；Gateway 在绑定用户、target 和
 session 后按 `cluster/instance/use` 授权和物化，namespace、workload、image、Helm 和
-required keys 只作为执行元数据。普通发布使用 `operation=apply`；DoSql 只读查询或
-计划可以使用 `operation=ask` 搭配 `skill=dosql` 和精确 credential reference；CLI
-用户应优先使用 `doops sql`，它会设置正确的 DoSql skill/tool boundary。通用
-`ask` 不会自动注入 DoSql 工具，也不能附带数据库凭据。payload 永远不进入 prompt、日志或返回事件。
+required keys 只作为执行元数据。普通发布使用 `operation=apply`；DoSql 使用下面的
+自动绑定契约。CLI 用户应优先使用 `doops sql`，它会设置正确的 DoSql skill/tool boundary。
+通用 `ask` 不会自动注入 DoSql 工具，也不能附带数据库凭据。payload 永远不进入 prompt、日志或返回事件。
+
+#### DoSql 参数契约
+
+DoSql 请求使用 `skill=dosql`。自然语言 query、plan、discover 都是 `operation=ask`；
+query 使用 `credential_mode=auto`，plan 和 discover 不连接数据库，CLI 不传凭据模式。
+模型只获得 `mcp_dosql_read`。变更必须提供原样 `sql` 并设置 `operation=apply` 和
+`credential_mode=auto`，不由模型把 instruction 翻译成变更后执行。
+
+自动模式按资源 ID 绑定当前 target 上全部 active 的 database 凭据；Agent 用
+`sql_database` 匹配库名。`sql_credential`（资源名或 ID）收窄为一个已绑定凭据，
+要求 `skill=dosql` + `credential_mode=auto`，否则返回 `-32602`。
+未绑定返回 `dosql_credential_not_bound`，同名多 owner 返回 `credential_reference_ambiguous`。
+DoSql 的非空 `credential_refs` 返回 `-32602 dosql_credential_refs_unsupported`；
+`credential_bindings` 只能由 Gateway 注入。CLI 的 `--credential` 只用于 `--sql/--file`，
+映射为 `sql_credential`。
+
+以下是 `doops_agent_prompt` 的 arguments 示例。自然语言只读查询：
+
+```json
+{
+  "session_id": "db-query",
+  "skill": "dosql",
+  "operation": "ask",
+  "credential_mode": "auto",
+  "instruction": "只读查询 orders 数据库中 orders 表的行数。"
+}
+```
+
+已明确授权的原样 SQL 变更，选择目标上绑定的迁移账号：
+
+```json
+{
+  "session_id": "db-change",
+  "skill": "dosql",
+  "operation": "apply",
+  "credential_mode": "auto",
+  "sql_credential": "orders-migrate",
+  "sql_database": "orders",
+  "sql": "UPDATE orders SET status = 'paid' WHERE id = 1",
+  "sql_verification": "SELECT status FROM orders WHERE id = 1",
+  "instruction": "原样执行本次已授权的订单状态更新，并返回验证结果。"
+}
+```
+
+原样只读 SQL 使用 `operation=ask` + `sql` + `credential_mode=auto`。
+`sql_dry_run=true` 仅适用于可回滚的 apply 批次；MySQL/Oracle 隐式提交 DDL 与 MongoDB
+非事务操作拒绝 dry-run。事务、混批限制及回读验收见
+[使用指南](DOOPS_USAGE_GUIDE.md#dosql-直接执行-sql)。已有明确授权不需要每次重复批准；
+目标、数据库或变更范围不清或超出授权时才补充确认。
 
 组件对话的结构化事件消费者先发送 `mode=metadata`。支持本协议的 Agent 返回
 `event_schema=doops.sh/acp-events/v1` 和 `event_formats=["acp"]`。模型尚未下发时也返回

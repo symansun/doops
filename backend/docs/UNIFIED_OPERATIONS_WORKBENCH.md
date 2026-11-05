@@ -49,17 +49,21 @@ DoSql 已接入受限的数据库 MCP 工具和 Gateway 受管凭据到数据库
 `doops sql`、控制台数据库页和 DoSql skill 共用 Gateway 登录、target 授权、
 审计和 session；skill 不实现第二套认证，也不能通过 Bash、本地连接文件、环境变量或
 密码 prompt 绕过授权。只读查询和变更都会进入 DoSql 的 journal/evidence 生命周期，
-变更只通过 `doops sql --mode apply --sql/--file` 原样提交，使用 target 上绑定的数据库凭据，在事务内执行并记录版本。
+SQL 变更通过 `doops sql --mode apply --sql/--file` 原样提交，使用 target 上绑定的数据库凭据并记录版本；
+可回滚批次在事务内执行，隐式提交 DDL 的限制及独立执行、回读验收见
+[使用指南](DOOPS_USAGE_GUIDE.md#dosql-直接执行-sql)。
 
 DoSql 通过 `doops_agent_prompt` 进入 Agent runtime。数据库目标来自当前 Gateway target 的
 探测结果；`config/resources.json` 只能放标签和示例，不能选择 target、保存权限或保存密码。
-数据库凭据只以 DoOps managed credential 的资源名进入任务，payload 由 Gateway 内部物化，
+数据库凭据由 `credential_mode=auto` 绑定，payload 由 Gateway 内部物化，
 不进入 prompt、日志或 Web state。Gateway 只判断目标和凭据是否可用；数据库资产、环境、
-引擎、数据库名由 DoSql/目标 Agent 根据 target discovery 和任务上下文校验。只读请求携带
-credential reference 时必须显式声明 `skill=dosql`；普通只读 prompt 不能附带数据库凭据。
+引擎、数据库名由 DoSql/目标 Agent 根据 target discovery 和任务上下文校验。
+DoSql 使用 `skill=dosql`，需要收窄自动绑定时用 `sql_credential`；不接收调用者传入的
+`credential_refs`。字段组合和结构化示例统一见 [API 参数契约](DOOPS_API_GUIDE.md#dosql-参数契约)。
 
 变更只要求用户对该 target 的 Gateway grant；每次真实变更在版本日志里先取版本号再执行，
-日志不可写时拒绝执行。
+日志不可写时拒绝执行。用户已明确授权的任务不要求每次重复批准；目标、数据库或变更范围
+不清或超出授权时才补充确认。
 
 数据库发现使用 `mcp_dosql_read operation=discover`。公开只读工具 `doops_database_inventory` 返回同一次扫描的候选，不另存资产库。扫描只看 Kubernetes 非 Secret 元数据，
 从 Pod、Service、Deployment 和 StatefulSet 识别数据库实例、引擎、端口以及非 Secret 配置
@@ -86,7 +90,7 @@ session 的其它 mutation/workspace 操作不得重叠，但其它 session 的�
 - Given 浏览器没有 session，When 打开控制台，Then 只能看到登录页，targets/RPC 不会向外转发。
 - Given 用户登录一个 Gateway，When 切换控制台的数据库页签，Then 请求沿用同一 session、target 和 audit，不出现第二个登录入口。
 - Given 用户没有该 target 的 grant，When 提交 DoSql 请求，Then Gateway 按 `UserCanUseTarget` 拒绝，skill 不自行扩大权限。
-- Given 用户没有精确数据库 credential grant，When 提交 DoSql 变更，Then Gateway/Agent 明确拒绝，不能回退到本地连接文件、环境变量或旧 token。
+- Given target 没有可用的 database 凭据绑定，When 提交 DoSql 变更，Then Gateway/Agent 明确拒绝，不能回退到本地连接文件、环境变量或旧 token。
 - Given 用户提交 DoWeb 发布，When target、站点范围或 dist/域名事实缺失，Then 只返回阻塞，不猜测站点或回退到另一台机器。
 - Given DoWeb `nginx -t`、reload 或健康检查失败，When 变更已开始，Then 恢复上一份激活状态并返回真实失败证据。
 - Given DoSql 数据库执行成功但 evidence 写入失败，When CLI/Agent 返回，Then 结果标记为审计失败并保留真实数据库 outcome，不宣称成功。

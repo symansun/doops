@@ -22,6 +22,7 @@ Doops CLI / Skill 安装脚本（不部署或升级 Agent）
   CLI:   ~/.local/bin/doops
   Skill: <project>/.agent/skills/doops/SKILL.md
   Skill docs: <project>/.agent/skills/doops/docs/
+  Global Skill: ~/.agent/skills/doops/，以及已有的 ~/.codex/skills/doops/、~/.agents/skills/doops/
   Config: ~/.agent/skills/doops/config.json
 
 安装包来源:
@@ -30,6 +31,8 @@ Doops CLI / Skill 安装脚本（不部署或升级 Agent）
 
 更新行为:
   不带 --target-* 时只更新 CLI 和 Skill，不改已有 config.json
+  同步全局和当前项目中已有的 .codex/.agents DoOps 副本；保留 auth/config 等运行态
+  CLI、全部 Skill/docs 和回执任一替换失败时整体恢复；恢复失败保留备份并报告位置
   带 --target-* 时按 name 新增或更新 canonical config 中的对应 target，保留其它 targets 和 llm 配置
 
 Skill 维护规则:
@@ -52,12 +55,165 @@ PROJECT_PATH="$(pwd)"
 RELEASE_TAG=""
 CLI_TEMP_DIR=""
 RELEASE_SOURCE_DIR=""
+RELEASE_COMMIT=""
+RELEASE_ARTIFACT=""
+RELEASE_SHA256=""
+SKILL_DESTINATIONS=()
+SKILL_STAGES=()
+CLI_STAGE=""
+RECEIPT_STAGE=""
+CLI_REPLACED=false
+RECEIPT_REPLACED=false
+SKILLS_STARTED=0
+INSTALL_COMMITTED=false
 TARGET_NAME=""
 TARGET_GATEWAY=""
 TARGET_CLUSTER=""
 TARGET_INSTANCE=""
 TARGET_ALIASES=""
 TARGET_USE="Doops managed node"
+
+restore_install_path() {
+  local destination="$1" backup="$2"
+  if ! rm -rf "${destination}"; then
+    echo "Installation recovery failed for ${destination}; original backup: ${backup}" >&2
+    return 1
+  fi
+  if [[ -e "${backup}" || -L "${backup}" ]]; then
+    if ! mv "${backup}" "${destination}"; then
+      echo "Installation recovery failed for ${destination}; original backup: ${backup}" >&2
+      return 1
+    fi
+  fi
+}
+
+cleanup_install() {
+  local status="$?" stage index destination recovery_failed=false
+  trap - EXIT
+  if [[ "${status}" -ne 0 && "${INSTALL_COMMITTED}" != true ]]; then
+    if [[ "${RECEIPT_REPLACED}" == true ]]; then
+      restore_install_path "${HOME}/.local/share/doops/install.txt" "${RECEIPT_STAGE}/previous-receipt" || recovery_failed=true
+    fi
+    for ((index=SKILLS_STARTED-1; index>=0; index--)); do
+      destination="${SKILL_DESTINATIONS[index]}"
+      stage="${SKILL_STAGES[index]}"
+      restore_install_path "${destination}/docs" "${stage}/previous-docs" || recovery_failed=true
+      restore_install_path "${destination}/SKILL.md" "${stage}/previous-SKILL.md" || recovery_failed=true
+    done
+    if [[ "${CLI_REPLACED}" == true ]]; then
+      restore_install_path "${CLI_OUT}" "${CLI_STAGE}/previous-cli" || recovery_failed=true
+    fi
+  fi
+  for stage in "${SKILL_STAGES[@]-}" "${CLI_STAGE}" "${RECEIPT_STAGE}" "${CLI_TEMP_DIR}"; do
+    [[ -n "${stage}" ]] || continue
+    if [[ "${recovery_failed}" == true ]]; then
+      echo "Installation recovery incomplete; retain backup directory: ${stage}" >&2
+    else
+      rm -rf "${stage}" || status=1
+    fi
+  done
+  exit "${status}"
+}
+
+add_skill_destination() {
+  local destination="$1" existing parent
+  # Check the doops entry before resolving parent aliases; never follow its link.
+  if [[ -L "${destination}" ]] || { [[ -e "${destination}" ]] && [[ ! -d "${destination}" ]]; }; then
+    echo "Skill directory must be a real directory: ${destination}" >&2
+    exit 1
+  fi
+  parent="$(dirname "${destination}")"
+  mkdir -p "${parent}"
+  parent="$(cd -P "${parent}" && pwd -P)"
+  destination="${parent}/doops"
+  for existing in "${SKILL_DESTINATIONS[@]-}"; do
+    [[ "${existing}" != "${destination}" ]] || return 0
+  done
+  SKILL_DESTINATIONS+=("${destination}")
+}
+
+stage_skill_destinations() {
+  local root destination stage item
+  add_skill_destination "${SKILL_DEST}"
+  add_skill_destination "${HOME}/.agent/skills/doops"
+  for root in "${HOME}" "${PROJECT_PATH}"; do
+    for destination in "${root}/.codex/skills/doops" "${root}/.agents/skills/doops"; do
+      if [[ -e "${destination}" || -L "${destination}" ]]; then
+        add_skill_destination "${destination}"
+      fi
+    done
+  done
+  for destination in "${SKILL_DESTINATIONS[@]}"; do
+    if [[ -L "${destination}" ]] || { [[ -e "${destination}" ]] && [[ ! -d "${destination}" ]]; }; then
+      echo "Skill directory must be a real directory: ${destination}" >&2
+      exit 1
+    fi
+    if [[ -d "${destination}/SKILL.md" ]] ||
+      { [[ -e "${destination}/SKILL.md" ]] && [[ ! -f "${destination}/SKILL.md" ]] && [[ ! -L "${destination}/SKILL.md" ]]; } ||
+      { [[ -e "${destination}/docs" ]] && [[ ! -d "${destination}/docs" ]] && [[ ! -L "${destination}/docs" ]]; }; then
+      echo "Skill files have an unexpected type: ${destination}" >&2
+      exit 1
+    fi
+    mkdir -p "${destination}"
+    stage="$(mktemp -d "${destination}/.doops-install.XXXXXX")"
+    SKILL_STAGES+=("${stage}")
+    cp "${RELEASE_SOURCE_DIR}/backend/skills/SKILL.md" "${stage}/SKILL.md"
+    mkdir "${stage}/docs"
+    cp "${RELEASE_SOURCE_DIR}"/backend/docs/*.md "${stage}/docs/"
+    for item in SKILL.md docs; do
+      if [[ -e "${destination}/${item}" || -L "${destination}/${item}" ]]; then
+        cp -a "${destination}/${item}" "${stage}/previous-${item}"
+      fi
+    done
+  done
+}
+
+install_skills() {
+  local index destination stage
+  for ((index=0; index<${#SKILL_DESTINATIONS[@]}; index++)); do
+    destination="${SKILL_DESTINATIONS[index]}"
+    stage="${SKILL_STAGES[index]}"
+    SKILLS_STARTED=$((index+1))
+    # Moving replaces a development link itself, never its source checkout.
+    mv -f "${stage}/SKILL.md" "${destination}/SKILL.md"
+    if [[ -e "${destination}/docs" || -L "${destination}/docs" ]]; then
+      mv "${destination}/docs" "${stage}/replaced-docs"
+    fi
+    if ! mv "${stage}/docs" "${destination}/docs"; then
+      echo "Failed to install Skill docs: ${destination}" >&2
+      exit 1
+    fi
+    echo "  Skill and docs installed from ${RELEASE_COMMIT}: ${destination}"
+  done
+}
+
+write_install_receipt() {
+  local receipt_dir receipt destination
+  local receipt_lines=()
+  receipt_dir="${HOME}/.local/share/doops"
+  receipt="${receipt_dir}/install.txt"
+  receipt_lines=(
+    "release=${RELEASE_TAG}"
+    "artifact=${RELEASE_ARTIFACT}"
+    "sha256=${RELEASE_SHA256}"
+    "commit=${RELEASE_COMMIT}"
+    "skill_commit=${RELEASE_COMMIT}"
+    "contract=doops.sh/cli-contract/v3"
+    "source=cnb-release-assets"
+    "path=${CLI_OUT}"
+  )
+  for destination in "${SKILL_DESTINATIONS[@]}"; do
+    receipt_lines+=("skill_path=${destination}")
+  done
+  if ! printf '%s\n' "${receipt_lines[@]}" >"${RECEIPT_STAGE}/install.txt"; then
+    echo "Failed to write install receipt: ${receipt}" >&2
+    exit 1
+  fi
+  chmod 0600 "${RECEIPT_STAGE}/install.txt"
+  RECEIPT_REPLACED=true
+  mv -f "${RECEIPT_STAGE}/install.txt" "${receipt}"
+  echo "  Install receipt written to ${receipt}"
+}
 
 detect_host_platform() {
   local os arch
@@ -180,7 +336,9 @@ EOF
 
   artifact="doops-${platform}"
   CLI_TEMP_DIR="$(mktemp -d)"
-  trap 'rm -rf "${CLI_TEMP_DIR:-}"' EXIT
+  trap cleanup_install EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   checksums="${CLI_TEMP_DIR}/checksums.txt"
   candidate="${CLI_TEMP_DIR}/${artifact}"
 
@@ -227,36 +385,44 @@ EOF
     exit 1
   fi
 
+  RELEASE_COMMIT="${commit}"
+  RELEASE_ARTIFACT="${artifact}"
+  RELEASE_SHA256="${actual}"
+  stage_skill_destinations
+
   mkdir -p "$(dirname "${CLI_OUT}")"
-  if [[ -d "${CLI_OUT}" ]]; then
-    echo "CLI install path is a directory: ${CLI_OUT}" >&2
+  if [[ -d "${CLI_OUT}" ]] ||
+    { [[ -e "${CLI_OUT}" ]] && [[ ! -f "${CLI_OUT}" ]] && [[ ! -L "${CLI_OUT}" ]]; }; then
+    echo "CLI install path has an unexpected type: ${CLI_OUT}" >&2
     exit 1
   fi
-  replacement="$(mktemp "$(dirname "${CLI_OUT}")/.doops-install.XXXXXX")"
+  CLI_STAGE="$(mktemp -d "$(dirname "${CLI_OUT}")/.doops-install.XXXXXX")"
+  replacement="${CLI_STAGE}/doops"
   install -m 0755 "${candidate}" "${replacement}"
+  if [[ -e "${CLI_OUT}" || -L "${CLI_OUT}" ]]; then
+    cp -a "${CLI_OUT}" "${CLI_STAGE}/previous-cli"
+  fi
+  receipt_dir="${HOME}/.local/share/doops"
+  receipt="${receipt_dir}/install.txt"
+  if [[ -d "${receipt}" ]] ||
+    { [[ -e "${receipt}" ]] && [[ ! -f "${receipt}" ]] && [[ ! -L "${receipt}" ]]; }; then
+    echo "Install receipt has an unexpected type: ${receipt}" >&2
+    exit 1
+  fi
+  mkdir -p "${receipt_dir}"
+  chmod 0700 "${receipt_dir}"
+  RECEIPT_STAGE="$(mktemp -d "${receipt_dir}/.doops-install.XXXXXX")"
+  if [[ -e "${receipt}" || -L "${receipt}" ]]; then
+    cp -a "${receipt}" "${RECEIPT_STAGE}/previous-receipt"
+  fi
+  CLI_REPLACED=true
   if ! mv -f "${replacement}" "${CLI_OUT}"; then
     rm -f "${replacement}"
     echo "Failed to replace CLI at ${CLI_OUT}" >&2
     exit 1
   fi
-  receipt_dir="${HOME}/.local/share/doops"
-  receipt="${receipt_dir}/install.txt"
-  mkdir -p "${receipt_dir}"
-  chmod 0700 "${receipt_dir}"
-  {
-    printf 'release=%s\n' "${RELEASE_TAG}"
-    printf 'artifact=%s\n' "${artifact}"
-    printf 'sha256=%s\n' "${actual}"
-    printf 'commit=%s\n' "${commit}"
-    printf 'skill_commit=%s\n' "${commit}"
-    printf 'contract=%s\n' "${contract}"
-    printf 'source=cnb-release-assets\n'
-    printf 'path=%s\n' "${CLI_OUT}"
-  } >"${receipt}"
-  chmod 0600 "${receipt}"
   echo "  CLI installed from CNB Release Assets: ${RELEASE_TAG}/${artifact}"
   echo "  CLI installed to ${CLI_OUT}"
-  echo "  Install receipt written to ${receipt}"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -320,13 +486,9 @@ echo "[1/4] Installing CLI to fixed path"
 install_cli
 
 echo "[2/4] Installing doops skill"
-mkdir -p "${SKILL_DEST}"
-cp "${RELEASE_SOURCE_DIR}/backend/skills/SKILL.md" "${SKILL_DEST}/SKILL.md"
-rm -rf "${SKILL_DEST}/docs"
-mkdir -p "${SKILL_DEST}/docs"
-cp "${RELEASE_SOURCE_DIR}"/backend/docs/*.md "${SKILL_DEST}/docs/"
-echo "  Skill installed to ${SKILL_DEST}/SKILL.md"
-echo "  Skill docs installed to ${SKILL_DEST}/docs/"
+install_skills
+write_install_receipt
+INSTALL_COMMITTED=true
 
 echo "[3/4] Preparing canonical doops config"
 
