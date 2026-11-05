@@ -1,5 +1,6 @@
 import WebSocket from "ws"
 import { toWsBase } from "../gateway"
+import { gatewayUpgradeRejection } from "./gateway-upgrade"
 
 export interface AgentGatewayContext {
   gateway: string
@@ -95,7 +96,8 @@ export function agentGatewayCall(
     })
     ws.on("unexpected-response", (_request, response) => {
       response.resume()
-      fail(new AgentGatewayError("Gateway 拒绝连接", response.statusCode === 401 || response.statusCode === 403 ? response.statusCode : 502))
+      const rejection = gatewayUpgradeRejection(response.statusCode)
+      fail(new AgentGatewayError(rejection.message, rejection.status, "not_dispatched"))
     })
     ws.on("close", () => fail(new AgentGatewayError("Gateway 已断开，远端终态未确认")))
   })

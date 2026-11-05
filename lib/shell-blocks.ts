@@ -401,11 +401,13 @@ export function describeShellFailure(
   }
   const blocked = /blocked_command\(([^)]+)\):\s*(.*)/.exec(raw)
   if (blocked) return { kind: "blocked", text: `Agent 拒绝执行（${blocked[1]}）：${blocked[2]}` }
-  if (/^forbidden\b/i.test(raw)) return { kind: "forbidden", text: `无权在 ${where} 上执行命令：请联系管理员授权该目标` }
-  if (/^target offline\b/i.test(raw)) {
+  // /api/rpc 在 Gateway 拒绝 WebSocket 升级时给出“…（HTTP n）”形式的中文原因。
+  const upgrade = /（HTTP (\d{3})）$/.exec(raw)?.[1]
+  if (/^forbidden\b/i.test(raw) || upgrade === "403") return { kind: "forbidden", text: `无权在 ${where} 上执行命令：请联系管理员授权该目标` }
+  if (/^target offline\b/i.test(raw) || upgrade === "404") {
     return { kind: "offline", text: `目标离线：${where} 当前未连接 Gateway，请确认 Agent 在线后重试` }
   }
-  if (raw === "gateway_auth_failed" || raw.includes("未建立 Gateway 会话") || raw.includes("缺少 gateway 地址或 token")) {
+  if (raw === "gateway_auth_failed" || upgrade === "401" || raw.includes("未建立 Gateway 会话") || raw.includes("缺少 gateway 地址或 token")) {
     return { kind: "auth", text: "登录已失效，请重新登录后再执行" }
   }
   if (raw.includes("operation canceled") || raw.includes("请求派发前已停止")) {
