@@ -3,7 +3,9 @@ import type { AgentSessionRuntime, AgentSessionSnapshot } from "@agent-cloud/age
 // Server-side wording for a target whose Agent has no delivered model yet
 // (metadata status awaiting_model_provider / unconfigured).
 export const AGENT_MODEL_MISSING = "Gateway 还没有可下发到该节点的模型"
-export const AGENT_MODEL_MISSING_HINT = "该目标还没有绑定模型，管理员可在「管理 → 配置中心」下发"
+// DoAgent's model comes only from the modelProvider credential Gateway materializes
+// on the target (backend/docs/CREDENTIAL_RESOURCES.md), so the hint points at credentials.
+export const AGENT_MODEL_MISSING_HINT = "该目标还没有绑定 DoAgent 模型。平台管理员可在「凭据」里为该目标绑定并激活 modelProvider 凭据"
 
 // ConnectError prefixes its message with the RPC code, e.g. "[unavailable] ...".
 const CONNECT_CODE_PREFIX = /^\[[a-z_]+\]\s*/
