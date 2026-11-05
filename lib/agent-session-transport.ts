@@ -11,6 +11,7 @@ import {
   SessionSnapshotSchema,
 } from "@agent-cloud/agent-ui/protocol"
 import type { Session, Target } from "./client"
+import { consoleFetch } from "./network-error.ts"
 
 export function createDoopsAgentSessionTransport({ target, sessionId }: {
   session: Session
@@ -20,7 +21,7 @@ export function createDoopsAgentSessionTransport({ target, sessionId }: {
   const scope = { cluster: target.cluster, instance: target.instance, session_id: sessionId }
   async function request(url: string, init: RequestInit): Promise<Response> {
     try {
-      const response = await fetch(url, {
+      const response = await consoleFetch(url, {
         ...init,
         cache: "no-store",
         headers: {

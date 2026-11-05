@@ -9,6 +9,7 @@ import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
 import { isDemoAllowed } from "@/lib/demo-policy"
 import { DEMO_TOKEN } from "@/lib/demo"
 import { errorAfterRefresh, reconcileSelected, reconcileTargets, type RefreshTrigger } from "@/lib/console-refresh"
+import { NETWORK_FAILURE_MESSAGE, subscribeNetworkStatus } from "@/lib/network-error"
 import {
   beforeUnloadWarning,
   browserSessionStorage,
@@ -110,6 +111,9 @@ export function ConsoleShell() {
   // Commands an earlier page started and never saw end, shown once in the
   // terminal. They are reported, never replayed.
   const [interruptedNotices, setInterruptedNotices] = useState<string[]>([])
+  // True while the browser reports it is offline; the banner goes away on its
+  // own when the connection comes back. Nothing is retried automatically.
+  const [offline, setOffline] = useState(false)
   const [showGuide, setShowGuide] = useState(false)
   const codeWorkspace = useMemo(() => {
     if (!session || !selected) return null
@@ -211,6 +215,11 @@ export function ConsoleShell() {
   }, [session, refresh])
 
   const clearInterruptedNotices = useCallback(() => setInterruptedNotices([]), [])
+
+  useEffect(() => {
+    setOffline(typeof navigator !== "undefined" && navigator.onLine === false)
+    return subscribeNetworkStatus(window, (online) => setOffline(!online))
+  }, [])
 
   // A reload or close aborts the /api/rpc stream, which ends a running command
   // on the target. Warn while one runs; once the page really goes away, keep
@@ -401,6 +410,11 @@ export function ConsoleShell() {
 
       {showGuide && <OnboardingGuide onClose={closeGuide} />}
 
+      {offline && (
+        <div role="alert" data-testid="offline-banner" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning">
+          {NETWORK_FAILURE_MESSAGE}。网络恢复后此提示会自动消失，不会自动重试操作。
+        </div>
+      )}
       {(error || targetsError) && <div role="alert" className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">{[error, targetsError].filter(Boolean).join("；")}</div>}
       {restoreNotice && (
         <div role="status" className="flex shrink-0 items-center gap-2 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning">

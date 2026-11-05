@@ -1,6 +1,7 @@
 "use client"
 
 import type { Target, AuditEvent, AuditSummary } from "./gateway"
+import { consoleFetch } from "./network-error.ts"
 
 export type { Target, AuditEvent, AuditSummary }
 
@@ -39,7 +40,7 @@ export async function login(
   username: string,
   password: string,
 ): Promise<{ gateway: string; username: string; isAdmin: boolean }> {
-  const res = await fetch("/api/login", {
+  const res = await consoleFetch("/api/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ gateway, username, password }),
@@ -50,7 +51,7 @@ export async function login(
 }
 
 export async function restoreServerSession(): Promise<Session | null> {
-  const res = await fetch("/api/session", { cache: "no-store" })
+  const res = await consoleFetch("/api/session", { cache: "no-store" })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || `恢复会话失败 (${res.status})`)
   if (data.session === null) return null
@@ -67,7 +68,7 @@ export async function persistTokenSession(
   token: string,
   username?: string,
 ): Promise<Session> {
-  const res = await fetch("/api/session", {
+  const res = await consoleFetch("/api/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ gateway, token, username: username || "" }),
@@ -78,7 +79,7 @@ export async function persistTokenSession(
 }
 
 export async function clearServerSession(): Promise<void> {
-  const res = await fetch("/api/session", { method: "DELETE" })
+  const res = await consoleFetch("/api/session", { method: "DELETE" })
   if (!res.ok) {
     const data = await res.json().catch(() => ({}))
     throw new Error(data.error || `断开连接失败 (${res.status})`)
@@ -92,7 +93,7 @@ export async function fetchTargets(s: Session): Promise<Target[]> {
     const { DEMO_TARGETS } = await import("./demo")
     return DEMO_TARGETS
   }
-  const res = await fetch("/api/targets", { headers: authHeaders(s) })
+  const res = await consoleFetch("/api/targets", { headers: authHeaders(s) })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || "查询目标失败")
   return (data.targets || []) as Target[]
@@ -109,7 +110,7 @@ export async function fetchAudit(
     return { events, summary: summarizeAuditEvents(events) }
   }
   const qs = new URLSearchParams(params)
-  const res = await fetch(`/api/audit?${qs.toString()}`, { headers: authHeaders(s) })
+  const res = await consoleFetch(`/api/audit?${qs.toString()}`, { headers: authHeaders(s) })
   const data = await res.json()
   if (!res.ok) return { error: data.error || "查询审计失败", status: res.status }
   return {
@@ -173,7 +174,7 @@ export async function callTool(
         // A stop click must not overtake the initial operation request.
         const started = await response
         if (!started.ok) throw new Error("原请求未被接受，无法请求停止")
-        const cancelResponse = await fetch("/api/rpc", {
+        const cancelResponse = await consoleFetch("/api/rpc", {
           method: "POST",
           headers: authHeaders(s),
           body: JSON.stringify({
@@ -196,7 +197,7 @@ export async function callTool(
     }
     return cancelPromise
   }
-  const response = fetch("/api/rpc", {
+  const response = consoleFetch("/api/rpc", {
     method: "POST",
     headers: authHeaders(s),
     body: JSON.stringify({

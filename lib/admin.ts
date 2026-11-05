@@ -1,6 +1,7 @@
 "use client"
 
 import type { Session } from "./client"
+import { consoleFetch } from "./network-error.ts"
 import type { ProxyRoute, ProxyRouteBody } from "./proxy-routes"
 
 export type { ProxyRoute, ProxyRouteBody }
@@ -60,7 +61,7 @@ function headers(s: Session): HeadersInit {
 }
 
 async function req<T>(s: Session, path: string, init?: RequestInit, expectedStatus?: number): Promise<T> {
-  const res = await fetch(`/api/admin/${path}`, { ...init, headers: headers(s) })
+  const res = await consoleFetch(`/api/admin/${path}`, { ...init, headers: headers(s) })
   const text = await res.text()
   const data = text ? JSON.parse(text) : {}
   if (!res.ok) throw Object.assign(new Error(data.error || `请求失败 (${res.status})`), { status: res.status })

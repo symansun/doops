@@ -6,6 +6,7 @@ import {
 } from "@agent-cloud/agent-ui/runtime"
 import type { AgentAttachmentReference } from "@agent-cloud/agent-ui"
 import type { Session, Target } from "./client"
+import { consoleFetch } from "./network-error.ts"
 import type { AgentSessionSnapshot } from "@agent-cloud/agent-ui"
 import { createDoopsAgentSessionTransport } from "./agent-session-transport"
 import { agentErrorMessage } from "./agent-error"
@@ -59,7 +60,7 @@ async function uploadDoopsAttachment(
   form.set("instance", options.target.instance)
   form.set("session_id", sessionId)
   form.set("file", file, file.name)
-  const response = await fetch("/api/agent-attachments", {
+  const response = await consoleFetch("/api/agent-attachments", {
     method: "POST",
     body: form,
   })
