@@ -176,7 +176,10 @@ function CreateBundle({
     return () => {
       cancelled = true
     }
-  }, [session, target, onError])
+    // The managed list does not depend on the target, and the target poll
+    // replaces that object on every heartbeat.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, onError])
 
   function toggle(id: string) {
     setSelected((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]))
