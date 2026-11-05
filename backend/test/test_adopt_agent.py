@@ -206,12 +206,15 @@ def test_restore_failure_is_reported_explicitly():
         adopt(module, cluster, verifier=failing)
 
 
-def test_generated_values_render_with_the_real_chart(tmp_path):
+@pytest.mark.parametrize("host_access", [None, True, False])
+def test_generated_values_render_with_the_real_chart(tmp_path, host_access):
     module = load()
     deployment = jm_deployment()
     repository, digest = module.parse_image(IMAGE)
     values = module.chart_values(deployment, "doops-agent", repository, digest)
     assert "doagentSettings" not in values and "modelRouting" not in values
+    if host_access is not None:
+        values["hostAccess"] = {"enabled": host_access}
     path = tmp_path / "values.json"
     path.write_text(json.dumps(values))
     result = subprocess.run(["helm", "template", "doops-agent", str(CHART), "-n", "doops-system", "-f", str(path)],
@@ -227,8 +230,17 @@ def test_generated_values_render_with_the_real_chart(tmp_path):
     assert env["DOOPS_KUBECONFIG_SOURCE"] == "serviceAccount"
     assert env["DOOPS_GATEWAY_CLUSTER"] == "doops-jm" and env["DOOPS_GATEWAY_INSTANCE"] == "jm-228"
     assert "DO_AGENT_MODEL_ROUTING_POLICY" not in env
-    assert not pod.get("volumes")
-    assert not container.get("volumeMounts")
+    assert pod["hostPID"] is (host_access is not False)
+    if host_access is False:
+        assert not pod.get("volumes")
+        assert not container.get("volumeMounts")
+    else:
+        assert pod["volumes"] == [
+            {"name": "node-root", "hostPath": {"path": "/", "type": "Directory"}}
+        ]
+        assert container["volumeMounts"] == [
+            {"name": "node-root", "mountPath": "/host", "readOnly": True}
+        ]
 
 
 @pytest.mark.parametrize("hostname,want", [

@@ -2,15 +2,26 @@
 
 ## Scope
 
-These guarantees apply to `query` and `execute`, using one persistent
-`DOSQL_ARTIFACT_ROOT`, and to the journal commands below. A journal is an audit
+These guarantees apply to Node `query` using one persistent audit root, and to
+the journal commands below. The Node `execute` command has been removed.
+The query root is `.dosql` in the process working directory, or the trusted
+embedding caller's `artifactRootProvider`; it is not selected by a JSON request
+field or a `DOSQL_ARTIFACT_ROOT` environment variable. A journal is an audit
 record, not a database permission or a release-authorization credential.
 DoSql does not provide a hosted release-authority signing service.
 
 ## Inspect Before Recovery
 
 All commands use the usual `--input` and `--output` JSON file interface.
-The output path must be new and distinct from input and artifact paths.
+The output path must be new and distinct from input and artifact paths. The CLI
+checks and reserves `<outputPath>.claim` before command execution, then rechecks
+the output. A conflicting output or claim produces a failed JSON response on
+stderr with `executionOutcome: "not_started"` and no dispatch or lifecycle
+mutation. If final publication fails after execution, stderr reports
+`DOSQL_RESPONSE_PERSISTENCE_FAILED` with the actual execution outcome and
+`retryable: false`. An old response is never overwritten or returned as the new
+attempt's result. See [agent-cli-contract.md](agent-cli-contract.md) for error
+fields. Retain claims for reconciliation; they are not automatically released.
 
 `inspect-journal` requires:
 
@@ -41,13 +52,17 @@ different, nonexistent target:
   "operationId": "migrate-orders-20260921",
   "sourceJournalPath": "/managed-audit/orders-legacy.jsonl",
   "journalPath": "/managed-audit/orders-chained.jsonl",
+  "artifactRoot": "/managed-audit",
   "actor": { "type": "user", "id": "actual-maintainer" },
   "createdAt": "2026-09-21T00:00:00Z"
 }
 ```
 
-Both paths must be inside `DOSQL_ARTIFACT_ROOT`. Supply the actual actor and
-migration time. Stop writers using the old runtime before migration: filesystem
+Use source and target paths in the managed audit directory and set
+`artifactRoot` to the same persistent root used by query so imported IDs block
+replay. The migration command accepts explicit paths; it does not enforce
+query's path containment. Supply the actual actor and migration time.
+Stop writers using the old runtime before migration: filesystem
 locks coordinate cooperating new writers, not older software that ignores them.
 The command:
 
@@ -73,27 +88,42 @@ not eligible for migration. Investigate them without modifying the original.
 
 ## Execution Outcomes And Retries
 
-`query` and `execute` failures include `executionOutcome` and `retryable: false`:
+Node `query` failures include `executionOutcome` and `retryable: false`.
+These fields are not a Gateway error schema; the current Go MCP wrapper returns
+an execution error with a text reason rather than parsing stderr JSON. See the
+[CLI response boundary](agent-cli-contract.md#target-command-shape).
 
 | Outcome | Meaning | Required action |
 | --- | --- | --- |
 | `not_started` | This attempt did not dispatch the database operation | Correct the cause; inspect any claim before a new operation |
 | `unknown` | Dispatch failed ambiguously, or an ID/evidence path is already claimed | Reconcile journal, evidence and database state; do not blindly repeat SQL |
-| `succeeded` | The database client reported success; verification or audit publication failed later | Fix/reconcile the audit or verification failure without repeating the mutation |
+| `succeeded` | The database client reported query success; audit publication failed later | Reconcile the audit failure without blindly repeating the query |
 
 `DOSQL_AUDIT_PERSISTENCE_FAILED` is not a database rollback.
 Its `auditErrorCode` preserves the underlying filesystem/journal error code,
 with `lineNumber` when available, so recovery does not hide the original cause.
-`DOSQL_VERIFICATION_FAILED` does not undo a successful mutation.
-Client failure may mean a script partially ran or a remote commit succeeded
-before the connection was lost. No automatic retry is performed.
+Query has no separate verification statement. Client failure may mean the read
+ran before the connection was lost; the executor reports `unknown`, not rollback.
+No automatic retry is performed.
 
-Before dispatch, the executor validates the journal and atomically reserves
-both an operation ID under `operation-claims/` and `<evidencePath>.claim`.
-Claims survive process crashes. The same ID cannot execute again within that
-artifact root, even with a new journal/evidence path. A different operation
-cannot reuse the evidence path. A pre-existing journal operation also blocks
-reuse, including imported legacy IDs.
+Before dispatch, the executor checks for existing evidence (including symlinks
+and directories), atomically reserves an operation ID under `operation-claims/`
+and then `<evidencePath>.claim`, and validates the journal while appending the
+planned event with duplicate rejection under the journal lock.
+Claims survive process crashes. Once an ID is claimed, it cannot execute again
+within that artifact root, even with a new journal/evidence path. A different
+operation cannot reuse a claimed evidence path. A pre-existing journal
+operation also blocks reuse in the selected journal even without an earlier
+claim; the new ID claim remains protective. Explicitly migrated historical IDs
+are reserved across journals.
+
+This is not replay prevention for all historical records. Pre-upgrade IDs
+without claims in other journals, including valid hash-chained journals, are
+outside cross-journal protection. Keep the original journal selected and
+reconcile its history before changing paths. There is no global historical
+index or directory scan; `migrate-journal` supports only unchained legacy
+journals, not existing hash-chained journals. Claim or selected-journal failure
+prevents dispatch.
 
 Claims prove intent, not completion. Never automatically delete them or change
 IDs to bypass a failed attempt. After human reconciliation, a genuinely new
@@ -103,10 +133,11 @@ artifact roots or using another client bypasses its scope.
 
 ## Evidence And Durability
 
-Evidence v2 is published by exclusive atomic creation, never truncating an
-existing destination. Its `evidenceFingerprint` covers the JSON serialization
-of the persisted object excluding that field, including redacted result
-summaries and outcome. File writes are synced before publication.
+Evidence `dosql.database-operation-evidence.v1` is published by exclusive atomic
+creation, never truncating an existing destination. Persisted results contain
+output sizes and fingerprints and an explicit execution outcome. The existing
+v1 `evidenceFingerprint` summarizes the returned execution data; it is not a hash
+of the redacted file bytes. File writes are synced before publication.
 
 This is application-enforced no-overwrite behavior, not WORM storage, a digital
 signature or proof against the operating-system file owner rewriting files and

@@ -144,11 +144,14 @@ def render_chart(tmp_path, release, values, *overrides):
     return subprocess.run(command, capture_output=True, text=True)
 
 
-def render_oilan_chart(tmp_path):
+def render_oilan_chart(tmp_path, host_access):
+    values = oilan_values()
+    if host_access is not None:
+        values["hostAccess"] = {"enabled": host_access}
     result = render_chart(
         tmp_path,
         "doops-agent-live",
-        oilan_values(),
+        values,
         f"image.digest={IMAGE_DIGEST}",
     )
     result.check_returncode()
@@ -179,8 +182,9 @@ def load_kubeconfig_module():
     return module
 
 
-def test_oilan_agent_renders_without_model_settings(tmp_path):
-    deployment = render_oilan_chart(tmp_path)
+@pytest.mark.parametrize("host_access", [None, True, False])
+def test_oilan_agent_renders_without_model_settings(tmp_path, host_access):
+    deployment = render_oilan_chart(tmp_path, host_access)
     container = deployment["spec"]["template"]["spec"]["containers"][0]
     volumes = deployment["spec"]["template"]["spec"]["volumes"]
 
@@ -192,7 +196,7 @@ def test_oilan_agent_renders_without_model_settings(tmp_path):
         "rollingUpdate": {"maxUnavailable": 0, "maxSurge": 1},
     }
     assert deployment["spec"]["template"]["spec"]["hostNetwork"] is False
-    assert deployment["spec"]["template"]["spec"]["hostPID"] is False
+    assert deployment["spec"]["template"]["spec"]["hostPID"] is (host_access is not False)
     assert all("hostPort" not in port for port in container["ports"])
     assert (
         deployment["spec"]["template"]["spec"]["nodeSelector"]["kubernetes.io/hostname"]
@@ -237,10 +241,8 @@ def test_oilan_agent_renders_without_model_settings(tmp_path):
         name: container[name]["exec"]["command"][-1]
         for name in ("startupProbe", "readinessProbe", "livenessProbe")
     }
-    assert all(
-        "pgrep -fc '^/app/doops-agent -listen( |$)'" in probe
-        for probe in probes.values()
-    )
+    for probe in probes.values():
+        assert ("pgrep -fc '^/app/doops-agent -listen( |$)'" in probe) is (host_access is False)
     assert all("mcp-stdio" not in probe for probe in probes.values())
     assert "/health/live" in probes["startupProbe"]
     assert "/health/ready" in probes["readinessProbe"]
@@ -265,6 +267,17 @@ def test_oilan_agent_renders_without_model_settings(tmp_path):
     assert host_paths["containerd-socket"] == "/run/containerd/containerd.sock"
     assert host_paths["nerdctl-bin"] == "/usr/bin/nerdctl"
     assert host_paths["crictl-bin"] == "/usr/bin/crictl"
+    node_mounts = [
+        mount for mount in container["volumeMounts"] if mount["name"] == "node-root"
+    ]
+    if host_access is False:
+        assert "node-root" not in host_paths
+        assert node_mounts == []
+    else:
+        assert host_paths["node-root"] == "/"
+        assert node_mounts == [
+            {"name": "node-root", "mountPath": "/host", "readOnly": True}
+        ]
 
 
 def test_runtime_kubeconfig_uses_in_cluster_api_without_changing_admin_identity(

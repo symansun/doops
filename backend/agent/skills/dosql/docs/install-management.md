@@ -43,11 +43,23 @@ doops -session db-change sql --target <target> --mode apply \
   --file migrations/0001_add_external_id.sql
 ```
 
-`sql --mode query` and `sql --mode plan` use Gateway `ask` and declare
-`skill=dosql`. `sql --mode apply` runs the verbatim `--sql/--file` statements. Gateway authenticates
-the user, checks the user's grant on the exact target, binds every active database
-credential on the target by ID and materializes only metadata bindings; DoSql
-does not accept caller-selected credentials. DoSql then applies database classification, journal and verification rules.
+All modes declare `skill=dosql`. Natural-language `query`, `plan` and `discover`
+use Gateway `ask`; only `query` connects to the database. `apply` runs the
+verbatim `--sql/--file` statements, using the user's existing authorization for
+the target, database and change scope.
+
+Gateway checks the user's grant on the exact target. Database requests use
+`credential_mode=auto` to resolve its active database bindings; `--database`
+selects the database, and direct `--sql/--file` requests may add
+`--credential <resource-name-or-id>` to select a bound credential. This maps to
+`sql_credential`, not `credential_refs`. Credential payloads reach only the
+private materialization channel; the model receives metadata.
+
+DoSql applies statement classification, journal and verification rules.
+Dry-run requires rollback-capable statements. MySQL/Oracle implicit-commit DDL
+must run separately from DML without `--dry-run`; verification cannot undo
+already committed DDL. Read back the resulting structure or data and compare it
+with the task's acceptance criteria.
 
 ## Agent Runtime
 

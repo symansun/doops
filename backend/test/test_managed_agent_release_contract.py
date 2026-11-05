@@ -3,6 +3,7 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -14,15 +15,39 @@ VALUES = ROOT / "deploy" / "helm" / "doops-agent" / "values.yaml"
 SCHEMA = ROOT / "deploy" / "helm" / "doops-agent" / "values.schema.json"
 
 
-def test_agent_chart_hands_off_without_dropping_the_live_replica():
-    text = CHART.read_text()
-    assert "maxUnavailable: 0" in text
-    assert "maxSurge: 1" in text
-    assert "terminationGracePeriodSeconds: 30" in text
-    assert "minReadySeconds: 5" in text
-    assert "hostNetwork: false" in text
-    assert "hostPID: false" in text
-    assert "/app/sandbox-entrypoint.sh" in text
+@pytest.mark.parametrize("host_access", [None, True, False])
+def test_agent_chart_hands_off_without_dropping_the_live_replica(host_access):
+    command = [
+        "helm", "template", "doops-agent", str(VALUES.parent),
+        "--set", "workload.name=doops-agent",
+        "--set", "gateway.url=https://gateway.example.test",
+        "--set", "gateway.cluster=test-cluster",
+        "--set", "gateway.instance=test-agent",
+        "--set", "image.repository=registry.example.test/doops-agent",
+        "--set", "image.tag=test",
+    ]
+    if host_access is not None:
+        command.extend(["--set", f"hostAccess.enabled={str(host_access).lower()}"])
+    result = subprocess.run(command, capture_output=True, text=True, check=True)
+    deployment = next(item for item in yaml.safe_load_all(result.stdout) if item)
+    spec = deployment["spec"]
+    pod = spec["template"]["spec"]
+    container = pod["containers"][0]
+    assert spec["strategy"] == {
+        "type": "RollingUpdate",
+        "rollingUpdate": {"maxUnavailable": 0, "maxSurge": 1},
+    }
+    assert pod["terminationGracePeriodSeconds"] == 30
+    assert spec["minReadySeconds"] == 5
+    assert pod["hostNetwork"] is False
+    assert pod["hostPID"] is (host_access is not False)
+    assert "/app/sandbox-entrypoint.sh" in container["command"][-1]
+    for name, endpoint in (
+        ("startupProbe", "live"), ("readinessProbe", "ready"), ("livenessProbe", "live")
+    ):
+        probe = container[name]["exec"]["command"][-1]
+        assert f"http://127.0.0.1:42222/health/{endpoint}" in probe
+        assert ("pgrep" in probe) is (host_access is False)
 
 
 def test_agent_chart_requires_an_explicit_proxy_upstream_allowlist():

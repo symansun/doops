@@ -28,7 +28,7 @@ prints it to stderr, and proceeds; pass that name again to continue in the same 
 | DoSql read-only query or scan | `doops -session <s> sql --target <t> --mode query [--database <name>] --request '<request>'` | Automatically binds every active database credential on the selected Gateway target; `--database` picks among several. No local connection file is read. |
 | DoSql live schema inspection | `doops -session <s> sql --target <t> --mode query [--database <name>] --request '读取指定 database_asset_id 的表、列或索引结构'` | Uses one read-only engine catalog/information-schema query. `discover` only finds Kubernetes database assets; it does not inspect live tables. |
 | DoSql change plan | `doops -session <s> sql --target <t> --mode plan --request '<request>'` | Returns business summary, risk and verification evidence without mutation. |
-| DoSql direct SQL | `doops -session <s> sql --target <t> --mode apply [--database <name>] [--credential <name>] --sql '<sql>' [--verify '<read sql>'] [--dry-run]` | `--credential` picks one database credential bound to the target by name or ID, e.g. a migration account for DDL beside a DML-only application account. One transaction per batch. Postgres rolls back DDL and DML together. MySQL/Oracle commit DDL implicitly: `--dry-run` rejects DDL (`dosql_dry_run_ddl_unsupported`), a batch mixing DDL and DML is refused (`dosql_mixed_ddl_dml_unsupported`), and a DDL that already ran is reported as `implicit_commits` / `partially_committed`. Each real apply gets a per-database `version` in a hash-chained journal on the Agent (`$(dirname workspace root)/.doops-dosql-versions`, persists only if that path is on a persistent volume); the version is reserved before execution and an apply is refused if the journal is unwritable or corrupt. Queries and dry-runs get no version. MongoDB takes JSON operation documents instead of SQL (`{"collection":"c","op":"updateMany","filter":{},"update":{"$set":{}}}`, array or consecutive documents): writes plus `--verify` share one transaction and roll back together, `--dry-run` rolls back (replica set required, else `dosql_transaction_unsupported`); `createCollection/createIndex/dropIndex/drop` are non-transactional and follow the same DDL rules as MySQL; `$where/$function/$accumulator`, `$out/$merge` and `system.*` are refused; auth retries once with `authSource=admin` and reports `auth_source`. |
+| DoSql direct SQL | `doops -session <s> sql --target <t> --mode apply [--database <name>] [--credential <name>] --sql '<sql>' [--verify '<read sql>'] [--dry-run]` | `--credential` picks one database credential bound to the target by name or ID, e.g. a migration account for DDL beside a DML-only application account. Rollback-capable batches execute in one transaction. Postgres rolls back DDL and DML together. MySQL/Oracle commit DDL implicitly: `--dry-run` rejects DDL (`dosql_dry_run_ddl_unsupported`), and a batch mixing DDL and DML is refused (`dosql_mixed_ddl_dml_unsupported`). Successful DDL returns `verified` with `implicit_commits`; a later failure after DDL committed returns `partially_committed`. Each real apply gets a per-database `version` in a hash-chained journal on the Agent (`$(dirname workspace root)/.doops-dosql-versions`, persists only if that path is on a persistent volume); the version is reserved before execution and an apply is refused if the journal is unwritable or corrupt. Queries and dry-runs get no version. MongoDB takes JSON operation documents instead of SQL (`{"collection":"c","op":"updateMany","filter":{},"update":{"$set":{}}}`, array or consecutive documents): writes plus `--verify` share one transaction and roll back together, `--dry-run` rolls back (replica set required, else `dosql_transaction_unsupported`); `createCollection/createIndex/dropIndex/drop` are non-transactional and follow the same DDL rules as MySQL; `$where/$function/$accumulator`, `$out/$merge` and `system.*` are refused; auth retries once with `authSource=admin` and reports `auth_source`. |
 | DoSql table copy | `doops -session <s> sql --target <t> --mode apply --copy-from <src-db> --database <dst-db> --tables a,b [--dry-run]` | The Agent copies whole tables between two databases bound to the same target, so rows never pass through the 200-row result limit or the caller. Both databases must use the same engine (mysql or postgres) and the destination tables must already exist. Source is read in a read-only transaction; all batches (500 rows) insert in one destination transaction, so any failure or `--dry-run` leaves the destination untouched. Counts as one versioned apply on the destination (`dosql_copy_*` errors name the cause). |
 | DoSql target discovery | `doops -session <s> sql --target <t> --mode discover --request '<request>'` | Uses `mcp_dosql_read` to scan non-Secret target metadata; it never stores connection secrets. |
 | DoSql repository/resource discovery | `doops -session <s> sql --target <t> --mode discover --root <repo> --resources-file <assets.json> --project <id> --environment <id> --dosql-script <path>/dosql-agent.mjs` | Scans the repository's code/config metadata and persists a metadata-only database inventory. |
@@ -58,8 +58,11 @@ prints it to stderr, and proceeds; pass that name again to continue in the same 
 | Remove cached token | `doops logout --target <t>` | Removes local token cache. |
 
 DoSql 必须使用 `doops sql` 入口。普通 `doops ask --msg '使用 DoSql'` 不保证注入
-`mcp_dosql_read/execute`，也不能替代 DoSql 的 target discovery、credential scope 或
-journal/evidence 链。
+`mcp_dosql_read`，也不能替代 DoSql 的 target discovery、credential scope 或 journal/evidence 链。
+模型的 DoSql MCP 域只提供 `read`，自然语言 `--request` 只支持 query、plan、discover；
+变更需求先整理为可审查的 SQL，再用 apply 的 `--sql/--file` 直接交给 Agent 执行。
+用户已明确授权的 target、数据库和变更范围持续有效，不要求每次调用重复批准；只有范围
+不清或超出已有授权时才补充确认。Gateway target grant 和执行器保护仍按实际请求检查。
 
 DoSql 使用凭据只要求该 target 的 grant，不需要逐操作员绑定。
 Gateway 直接解析保存的 target/database 绑定和 active version，不让模型生成凭据 scope。
@@ -74,7 +77,7 @@ Gateway 直接解析保存的 target/database 绑定和 active version，不让�
 当前 target 没有 `use=database` 绑定时返回 `dosql_database_binding_missing`；绑定 scope
 失效时返回 `credential_binding_scope_invalid`。`--database` 没有凭据指向该库时返回
 `dosql_database_not_bound`；多个凭据指向同一库时返回 `dosql_credential_ambiguous`，
-吊销重复绑定后重试。完整对照见 `CREDENTIAL_RESOURCES.md`。
+直接 SQL 可用 `--credential` 收窄选择。完整对照见 `CREDENTIAL_RESOURCES.md`。
 
 没有数据库绑定不是终点：用户的数据库需求就是任务，AI 应自己找到库并完成绑定，不向用户索要密码。
 上述绑定类错误，CLI 的 `next:` 行和 `doops guide database` 会按顺序给出命令：
@@ -82,9 +85,13 @@ Gateway 直接解析保存的 target/database 绑定和 active version，不让�
 1. `doops sql --target <t> --mode discover --request '...'` 识别引擎、主机、库名。
 2. `doops k8s --target <t> get deployment <workload> -n <ns> -o yaml` 读取环境变量的
    `valueFrom.secretKeyRef.name`，得到工作负载使用的 Secret 名（Secret 值不可读，也不会输出）。
-3. `doops credential configure --target <t> --name <n> --type opaque --scope personal --namespace <ns> --use database --from-secret <secret> --keys SPRING_DATASOURCE_URL,SPRING_DATASOURCE_USERNAME,SPRING_DATASOURCE_PASSWORD`
-   由 Agent 就地导入，走完整的 create、put、grant、verify、promote 生命周期。
-4. 重跑原来的 `doops sql` 命令。
+3. `doops credential configure --target <t> --name <n> --type opaque --scope personal --namespace <ns> --use database --from-secret <secret> --keys <engine-specific-keys>`
+   由 Agent 就地导入，走完整的 create、put、grant、verify、promote 生命周期。MySQL 的
+   `jdbc:mysql` 来源选 `SPRING_DATASOURCE_URL,SPRING_DATASOURCE_USERNAME,SPRING_DATASOURCE_PASSWORD`；
+   PostgreSQL、MongoDB、Oracle、SQL Server 或 MySQL URI 来源选 `connection_uri`。
+   Secret 键映射及仅有密码时的 `--connection-uri/--password-key` 组合见
+   [凭据导入说明](CREDENTIAL_RESOURCES.md)。
+4. 保留原 target 和 `--database` 重跑原命令；绑定失败不代表可以改用另一数据库。
 
 ### DoSql 直接执行 SQL
 
@@ -95,25 +102,39 @@ Gateway 直接解析保存的 target/database 绑定和 active version，不让�
 
 ```bash
 # 只读：每条语句都必须是 SELECT/WITH/SHOW/DESCRIBE/EXPLAIN/VALUES/TABLE
-doops -session db-check sql --target <t> --mode query [--database <name>] \
+doops -session db-check sql --target <t> --mode query --database orders \
   --sql 'SELECT count(*) FROM orders'
 
-# 变更：整批语句与验证 SQL 在同一事务内执行，验证失败整批回滚
-doops -session db-change sql --target <t> --mode apply [--database <name>] \
+# 可回滚的 DML 批次：执行和验证后回滚，migrate.sql 只包含本次授权的 DML
+doops -session db-change sql --target <t> --mode apply --database orders \
+  --file migrate.sql --verify 'SELECT count(*) FROM orders WHERE status IS NULL' --dry-run
+
+# 已授权的真实变更：核对 dry-run 返回值后执行
+doops -session db-change sql --target <t> --mode apply --database orders \
   --file migrate.sql --verify 'SELECT count(*) FROM orders WHERE status IS NULL'
 
-# 干跑：执行整批和验证后回滚，用于确认语句可执行
-doops -session db-change sql --target <t> --mode apply --file migrate.sql --dry-run
+# MySQL/Oracle 隐式提交 DDL：单独执行，不加 --dry-run，不与 DML 混批
+doops -session db-schema sql --target <t> --mode apply --database orders \
+  --credential orders-migrate --sql 'ALTER TABLE orders ADD external_id VARCHAR(64)' \
+  --verify 'SELECT external_id FROM orders WHERE 1 = 0'
+
+# 提交后回读结构；DML 则回读数据并对照任务验收值
+doops -session db-schema sql --target <t> --mode query --database orders \
+  --credential orders-migrate --sql 'SELECT external_id FROM orders WHERE 1 = 0'
 ```
 
 - 不要在 SQL 里写 `BEGIN/COMMIT/ROLLBACK/SAVEPOINT`，事务边界由 DoSql 持有；写了返回
   `dosql_statement_transaction_control_forbidden`。
 - `--verify`/`--verify-file` 只能是一条只读语句，否则 `dosql_verification_invalid`；
-  验证失败返回 `dosql_verification_failed`。`--verify` 与 `--dry-run` 只用于 apply。
+  查询执行失败返回 `dosql_verification_failed`；返回的行和值须与任务验收条件比较，不会自动
+  将非零计数判为失败。`--verify` 与 `--dry-run` 只用于 apply。
 - query 中出现写语句返回 `dosql_query_requires_read_only`，改用 `--mode apply`。
 - Postgres 和 SQL Server 的 DDL 与 DML 一起回滚。MySQL 和 Oracle 的 DDL 会隐式提交：`--dry-run` 含 DDL
   返回 `dosql_dry_run_ddl_unsupported`，DDL 与 DML 混批返回 `dosql_mixed_ddl_dml_unsupported`；
-  已隐式提交的 DDL 在结果中体现为 `implicit_commits` 和 `status=partially_committed`，不报成已回滚。
+  全部执行及验证成功时返回 `status=verified`、`committed=true` 和 `implicit_commits`；
+  已有 DDL 提交、后续语句或验证/提交失败时返回 `status=partially_committed`，不报成已回滚。
+  此类 DDL 按已有明确授权独立执行，事先准备恢复方案，执行后回读结构并核对结果；
+  验证查询失败也不能撤销已提交 DDL。不要为满足向导而更换数据库或绕过执行器保护。
 - 真实 apply 在 Agent 上按库写带哈希链的版本日志（`.doops-dosql-versions/<db>.jsonl`），
   执行前先分配版本号；日志不可写返回 `dosql_version_journal_unavailable`，被篡改返回
   `dosql_version_journal_corrupt`，两者都拒绝执行。query 和 dry-run 不产生版本。日志只在
@@ -615,7 +636,8 @@ doops credential list --target <t> --view managed  # 本人管理的凭据
 ```
 
 已有资源传 `--id`，避免重复创建；源 Secret key 与运行时契约不同时加 `--key-map source=runtime`。
-`doops sql` 自动使用 target 上的 database 绑定，不传 `--credential`。
+`doops sql` 默认自动使用 target 上的 database 绑定；`--sql/--file` 可用 `--credential`
+选择其中一个，详见本指南的 DoSql 参数说明。
 
 ## Upgrade
 

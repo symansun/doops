@@ -34,6 +34,20 @@ website panel operates through structured read/change tools and returns Nginx
 validation, health and rollback evidence. Target prerequisites and functional
 acceptance are documented in [DoWeb Integration](backend/docs/DOWEB_INTEGRATION.md).
 
+DoSql natural-language requests use `query`, `plan`, or `discover`. SQL changes use
+`apply` with `--sql` or `--file`, within the user's existing authorization:
+
+```bash
+doops -session db-check sql --target <t> --mode query --request 'Count rows in orders'
+doops -session db-plan sql --target <t> --mode plan --request 'Plan an external_id column for orders'
+doops -session db-discover sql --target <t> --mode discover --request 'List database workloads'
+doops -session db-change sql --target <t> --mode apply --file change.sql --verify 'SELECT external_id FROM orders WHERE 1 = 0'
+```
+
+Database credentials bind automatically from the target; direct SQL can select one
+with `--credential`. Dry-run requires a rollback-capable batch. For engine limits,
+DDL handling and acceptance checks, see the [SQL usage guide](backend/docs/DOOPS_USAGE_GUIDE.md#dosql-直接执行-sql).
+
 ## Development Checks
 
 Run the same checks before publishing source:
