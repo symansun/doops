@@ -1,11 +1,13 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { Session, Target } from "@/lib/client"
+import { mapWithConcurrency } from "@/lib/console-refresh"
 import { randomSession } from "@/lib/gateway"
 import {
   createCredential,
   bindCredentialToTarget,
+  buildBindingScope,
   listCredentialBindings,
   listCredentialVersions,
   listCredentials,
@@ -55,6 +57,9 @@ const TYPE_USES: Record<CredentialType, CredentialUse> = {
   modelProvider: "modelProvider",
 }
 
+// Two requests per managed resource; at most this many resources load at once.
+const MANAGED_DETAIL_CONCURRENCY = 4
+
 type Action =
   | { kind: "payload"; credential: CredentialResource }
   | { kind: "binding"; credential: CredentialResource }
@@ -96,7 +101,15 @@ export function CredentialPanel({ session, target }: { session: Session; target:
     Record<string, VerificationStatus>
   >({})
 
+  const loadController = useRef<AbortController | null>(null)
+
+  // Loads run on a view or target change and on a user action, never on the
+  // console's background target poll. A newer load aborts the older one.
   const load = useCallback(async () => {
+    loadController.current?.abort()
+    const controller = new AbortController()
+    loadController.current = controller
+    const { signal } = controller
     setLoading(true)
     setError("")
     try {
@@ -105,23 +118,29 @@ export function CredentialPanel({ session, target }: { session: Session; target:
       if (session.demo) {
         nextRows = await listCredentials(session, target, view)
       } else if (view === "managed") {
-        const managedRows = await listCredentials(session, target, "managed")
-        nextRows = await Promise.all(
-          managedRows.map(async (resource) => {
+        // Gateway has no batch endpoint for versions and grants, so each
+        // resource takes two requests; keep only a few resources in flight.
+        const managedRows = await listCredentials(session, target, "managed", signal)
+        nextRows = await mapWithConcurrency(
+          managedRows,
+          MANAGED_DETAIL_CONCURRENCY,
+          async (resource) => {
             const [versions, bindings] = await Promise.all([
-              listCredentialVersions(session, resource.id),
-              listCredentialBindings(session, resource.id),
+              listCredentialVersions(session, resource.id, signal),
+              listCredentialBindings(session, resource.id, signal),
             ])
             versionEntries.push([resource.id, versions])
             return { ...resource, bindings }
-          }),
+          },
+          signal,
         )
       } else {
         // Target visibility is authoritative for operators. Do not load the
         // management view here: its owner/admin boundary is independent and
         // must not erase a successful target credential response.
-        nextRows = await listCredentials(session, target, "target")
+        nextRows = await listCredentials(session, target, "target", signal)
       }
+      if (signal.aborted) return
       const nextVersions = Object.fromEntries(versionEntries)
       setRows(nextRows)
       setVersionsByCredential(nextVersions)
@@ -139,17 +158,22 @@ export function CredentialPanel({ session, target }: { session: Session; target:
         return next
       })
     } catch (err) {
+      if (signal.aborted) return
       setRows([])
       setVersionsByCredential({})
       setSelectedVersionIDs({})
       setError((err as Error).message)
     } finally {
-      setLoading(false)
+      if (loadController.current === controller) setLoading(false)
     }
-  }, [session, target, view])
+    // The target poll replaces the object on every heartbeat; reload only when
+    // the target itself changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, target.cluster, target.instance, view])
 
   useEffect(() => {
     load()
+    return () => loadController.current?.abort()
   }, [load])
 
   function completed(message: string) {
@@ -324,17 +348,20 @@ export function CredentialPanel({ session, target }: { session: Session; target:
       )}
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <table className="w-full min-w-[1040px] border-collapse text-sm">
-          <thead className="sticky top-0 z-10 bg-card">
+        {/* Fixed column widths keep the table inside a 1200px window. The
+            action column wraps its buttons and stays pinned to the right, so
+            a narrow window may scroll the table but never hides an action. */}
+        <table className="w-full min-w-[900px] table-fixed border-collapse text-sm">
+          <thead className="sticky top-0 z-20 bg-card">
             <tr className="border-b text-left text-xs text-muted-foreground">
-              <th className="px-4 py-2.5 font-medium">名称</th>
-              <th className="px-3 py-2.5 font-medium">类型</th>
-              <th className="px-3 py-2.5 font-medium">归属</th>
-              <th className="px-3 py-2.5 font-medium">状态</th>
+              <th className="w-[240px] px-4 py-2.5 font-medium">名称</th>
+              <th className="w-[120px] px-3 py-2.5 font-medium">类型</th>
+              <th className="w-[64px] px-3 py-2.5 font-medium">归属</th>
+              <th className="w-[84px] px-3 py-2.5 font-medium">状态</th>
               <th className="px-3 py-2.5 font-medium">
                 {view === "target" ? "目标绑定" : "版本 / 目标绑定"}
               </th>
-              <th className="min-w-[310px] px-4 py-2.5 text-right font-medium">操作</th>
+              <th className="sticky right-0 w-[220px] border-l bg-card px-3 py-2.5 text-right font-medium">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -349,8 +376,8 @@ export function CredentialPanel({ session, target }: { session: Session; target:
               return (
               <tr key={resource.id} className="border-b border-border/60 align-top">
                 <td className="px-4 py-3">
-                  <div className="font-medium text-foreground">{resource.name}</div>
-                  <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{resource.id}</div>
+                  <div className="break-words font-medium text-foreground">{resource.name}</div>
+                  <div className="mt-0.5 break-all font-mono text-[11px] text-muted-foreground">{resource.id}</div>
                 </td>
                 <td className="px-3 py-3 text-xs text-foreground">{TYPE_LABELS[resource.type]}</td>
                 <td className="px-3 py-3 text-xs text-muted-foreground">
@@ -367,7 +394,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                     {resource.state}
                   </span>
                 </td>
-                <td className="max-w-md px-3 py-3 text-xs text-muted-foreground">
+                <td className="min-w-0 break-words px-3 py-3 text-xs text-muted-foreground">
                   {view === "target" ? (
                     <div className="flex flex-col gap-2">
                       <BindingSummary
@@ -412,8 +439,8 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                     </div>
                   )}
                 </td>
-                <td className="min-w-[310px] px-4 py-3">
-                  <div className="flex flex-nowrap justify-end gap-1.5 whitespace-nowrap">
+                <td className="sticky right-0 z-10 border-l border-border/60 bg-background px-3 py-3">
+                  <div className="flex flex-wrap justify-end gap-1.5 [&>button]:whitespace-nowrap">
                     {view === "managed" && resource.state === "active" && canImportFromSecret(resource.type) && (
                       <button
                         onClick={() => setAction({ kind: "import", credential: resource })}
@@ -1000,20 +1027,16 @@ function BindingDialog({
   const [selectedUse, setSelectedUse] = useState<CredentialUse>(TYPE_USES[credential.type])
   const use = selectedUse
   const [namespace, setNamespace] = useState("")
+  const [requiredKeys, setRequiredKeys] = useState("")
   const [busy, setBusy] = useState(false)
 
   async function submit() {
-    const selectedNamespace = namespace.trim()
-    if (!selectedNamespace) {
-      onError("请填写目标 Agent 已获 Kubernetes RBAC 授权的 Secret namespace")
+    let scope: CredentialBindingScope
+    try {
+      scope = buildBindingScope(target, { use, namespace, requiredKeys })
+    } catch (err) {
+      onError((err as Error).message)
       return
-    }
-    const scope: CredentialBindingScope = {
-      cluster: target.cluster,
-      instance: target.instance,
-      namespace: selectedNamespace,
-      use,
-      workload: { kind: "", name: "" },
     }
     setBusy(true)
     onError("")
@@ -1049,10 +1072,23 @@ function BindingDialog({
         <p className="text-xs text-muted-foreground sm:col-span-2">
           请填写目标 Agent 已获 Kubernetes RBAC 授权、可创建临时 Secret 的 namespace。Gateway 当前不会提供可写 namespace 列表；不要假设 default 可用。
         </p>
+        {use === "opaqueSecret" && (
+          <div className="flex flex-col gap-1 sm:col-span-2">
+            <TextField
+              label="required keys（可选，逗号分隔）"
+              value={requiredKeys}
+              onChange={setRequiredKeys}
+              placeholder="例如 DB_URL,DB_PASSWORD"
+            />
+            <p className="text-xs text-muted-foreground">
+              填写后，验证要求版本内容的键集合与之完全相等；不填则按版本内容推断。只填键名，不要填值。
+            </p>
+          </div>
+        )}
         <div className="flex justify-end sm:col-span-2">
           <button
             onClick={submit}
-            disabled={busy}
+            disabled={busy || !namespace.trim()}
             className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
           >
             <ShieldIcon width={14} height={14} /> {busy ? "绑定中" : "确认绑定"}

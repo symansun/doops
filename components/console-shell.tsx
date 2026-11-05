@@ -8,6 +8,7 @@ import { clearServerSession, fetchTargets, restoreServerSession, sessionIsAdmin,
 import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
 import { isDemoAllowed } from "@/lib/demo-policy"
 import { DEMO_TOKEN } from "@/lib/demo"
+import { errorAfterRefresh, reconcileSelected, reconcileTargets, type RefreshTrigger } from "@/lib/console-refresh"
 import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
 import { TerminalPanel } from "./terminal-panel"
@@ -89,6 +90,9 @@ export function ConsoleShell() {
   const [loading, setLoading] = useState(false)
   const [refreshVersion, setRefreshVersion] = useState(0)
   const [error, setError] = useState("")
+  // A failed target poll is shown apart from operation errors and clears itself
+  // on the next successful poll.
+  const [targetsError, setTargetsError] = useState("")
   const [showGuide, setShowGuide] = useState(false)
   const codeWorkspace = useMemo(() => {
     if (!session || !selected) return null
@@ -144,23 +148,21 @@ export function ConsoleShell() {
     }
   }, [])
 
-  const refresh = useCallback(async () => {
+  // The 10-second poll is a background refresh: it keeps unchanged target
+  // objects and leaves an operation error on screen. Only a refresh the user
+  // asks for clears it.
+  const refresh = useCallback(async (trigger: RefreshTrigger = "user") => {
     if (!session) return
     setLoading(true)
-    setError("")
+    setError((current) => errorAfterRefresh(current, trigger))
     try {
       const t = await fetchTargets(session)
-      setTargets(t)
+      setTargets((previous) => reconcileTargets(previous, t))
+      setTargetsError("")
       setRefreshVersion((version) => version + 1)
-      setSelected((cur) => {
-        if (cur) {
-          const still = t.find((x) => x.key === cur.key)
-          return still || t[0] || null
-        }
-        return t[0] || null
-      })
+      setSelected((cur) => reconcileSelected(cur, t))
     } catch (err) {
-      setError((err as Error).message)
+      setTargetsError((err as Error).message)
     } finally {
       setLoading(false)
     }
@@ -168,8 +170,8 @@ export function ConsoleShell() {
 
   useEffect(() => {
     if (!session) return
-    refresh()
-    const id = setInterval(refresh, 10000)
+    refresh("user")
+    const id = setInterval(() => refresh("background"), 10000)
     return () => clearInterval(id)
   }, [session, refresh])
 
@@ -243,7 +245,7 @@ export function ConsoleShell() {
               targets={targets}
               selected={selected}
               onSelect={selectTarget}
-              onRefresh={refresh}
+              onRefresh={() => refresh("user")}
               loading={loading}
             />
           )}
@@ -319,11 +321,11 @@ export function ConsoleShell() {
 
       {showGuide && <OnboardingGuide onClose={closeGuide} />}
 
-      {error && <div role="alert" className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</div>}
+      {(error || targetsError) && <div role="alert" className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">{[error, targetsError].filter(Boolean).join("；")}</div>}
       {view === "admin" && isAdmin ? (
         <AdminConsole session={session} defaultTab={adminDefaultTab} />
       ) : view === "deploy" ? (
-        <DeployView session={session} target={selected} sessionId={sessionId} onEnterConsole={() => { setView("console"); refresh() }} />
+        <DeployView session={session} target={selected} sessionId={sessionId} onEnterConsole={() => { setView("console"); refresh("user") }} />
       ) : view === "cicd" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <CicdGuide session={session} />
@@ -370,7 +372,7 @@ export function ConsoleShell() {
               selected={selected}
               loading={loading}
               refreshVersion={refreshVersion}
-              onRefresh={refresh}
+              onRefresh={() => refresh("user")}
               onDeployAgent={() => setView("deploy")}
               onOpenTab={(nextTab, target) => {
                 if (target) selectTarget(target)
