@@ -201,8 +201,9 @@ export type ProxyRouteSavePlan =
   | { ok: false; reason: "invalid" | "duplicate" | "deleted"; error: string }
   | { ok: false; reason: "conflict"; error: string; latest: ProxyRoute; form: ProxyRouteForm }
 
-// Gateway 的 upsert 没有版本校验：后写的整体覆盖先写的，id 已被删除时还会按原 id 重新插入。
-// 所以保存前要重读列表，把本次表单（相对打开时的 base）与最新数据（latest）做三方合并：
+// Gateway 只在请求带 updated_at 时做版本校验（本控制台未带），否则后写的整体覆盖先写的；
+// 旧版 Gateway 在 id 已被删除时还会按原 id 重新插入。所以保存前要重读列表，
+// 把本次表单（相对打开时的 base）与最新数据（latest）做三方合并：
 // 只有本次改过的字段才覆盖最新值；同一字段双方都改且不同，就停下来让操作者确认。
 export function planProxyRouteSave(
   form: ProxyRouteForm,
@@ -361,6 +362,7 @@ const GATEWAY_MESSAGES: Record<string, string> = {
   "proxy route cluster and instance are required": SCOPE_REQUIRED,
   "proxy route id is required": "缺少路由 ID",
   "invalid proxy route request": "请求格式无效",
+  "invalid proxy route updated_at": "路由版本（updated_at）格式无效，请刷新列表后重试",
   "missing id": "缺少路由 ID",
 }
 
@@ -399,16 +401,22 @@ export function describeProxyRouteError(error: unknown, op: ProxyRouteOp): Proxy
     if (error instanceof TypeError && mutation) return unknown(`请求中断（${raw}）`)
     return fail(raw || "未知错误")
   }
+  // 带 id 保存时 Gateway 不会按旧 id 重建已删除的路由，而是回 404。
   if (status === 404 && raw === "proxy route not found") {
+    if (op === "save") return fail("该路由已被其他管理员删除，未保存；如需恢复请新建路由；列表已刷新", true)
     return fail("该路由已不存在，可能已被其他管理员删除；列表已刷新", true)
   }
   if (status === 404 && raw === "404 page not found") {
     return fail("当前 Gateway 没有代理路由管理接口（返回 404），请先升级 Gateway")
   }
-  // 域名重复时 Gateway 不回 409，而是把 SQLite 唯一约束错误作为 400 返回。
-  if (status === 400 && raw.includes("UNIQUE constraint failed: proxy_routes.host")) {
-    return fail("该域名已被其它路由使用，可能刚被其他管理员添加；列表已刷新", true)
+  const hostInUse = "该域名已被其它路由使用，可能刚被其他管理员添加；列表已刷新"
+  if (status === 409 && raw === "proxy host already in use") return fail(hostInUse, true)
+  // 请求带了 updated_at，而路由在读取后又被改过。
+  if (status === 409 && raw === "proxy route changed since it was read") {
+    return fail("该路由刚被其他管理员修改，本次修改未保存；列表已刷新，再次保存会先与最新数据合并", true)
   }
+  // 旧版 Gateway 域名重复时不回 409，而是把 SQLite 唯一约束错误作为 400 返回。
+  if (status === 400 && raw.includes("UNIQUE constraint failed: proxy_routes.host")) return fail(hostInUse, true)
   if (status === 400 && GATEWAY_MESSAGES[raw]) return fail(GATEWAY_MESSAGES[raw])
   if (status === 503 && raw === "audit_unavailable") {
     return fail("Gateway 审计存储不可用，本次修改未执行，请稍后重试")

@@ -113,7 +113,7 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
     setBase(null)
   }
 
-  // 保存前重读列表：Gateway 的 upsert 没有版本校验，要在这里查重复域名和并发修改。
+  // 保存前重读列表：请求不带 updated_at 时 Gateway 不做版本校验，要在这里查重复域名和并发修改。
   async function save(next: ProxyRouteForm, from: ProxyRoute | null): Promise<boolean> {
     setBusy(true)
     setError("")
