@@ -11,11 +11,32 @@ import (
 // failure paths can be exercised after startup already built the indexes.
 func dropStartupAuditIndexes(t *testing.T, store *GatewayStore) {
 	t.Helper()
-	for _, name := range []string{"idx_audit_user_id", "idx_audit_user_session_id", "idx_audit_target_id"} {
+	for _, name := range auditIndexNames(t, store) {
 		if _, err := store.db.Exec(`DROP INDEX IF EXISTS ` + name); err != nil {
 			t.Fatal(err)
 		}
 	}
+}
+
+func auditIndexNames(t *testing.T, store *GatewayStore) []string {
+	t.Helper()
+	rows, err := store.db.Query(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='audit_events' AND name LIKE 'idx_audit_%' ORDER BY name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return names
 }
 
 func TestAuditIndexMaintenanceRollsBackPartialDDLAndRejectsWrongDefinitions(t *testing.T) {
@@ -78,18 +99,19 @@ func TestAuditIndexMaintenanceCancellationReleasesTheStoreConnection(t *testing.
 }
 
 func TestGatewayStoreStartupCreatesAuditIndexes(t *testing.T) {
+	want := []string{
+		"idx_audit_action_id", "idx_audit_session_target_id", "idx_audit_status_id",
+		"idx_audit_target_action_id", "idx_audit_target_id", "idx_audit_target_status_id",
+		"idx_audit_user_action_id", "idx_audit_user_id", "idx_audit_user_session_id", "idx_audit_user_status_id",
+	}
 	path := t.TempDir() + "/gateway.db"
 	for range 2 {
 		store, err := OpenGatewayStore(path)
 		if err != nil {
 			t.Fatalf("open store: %v", err)
 		}
-		var count int
-		if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND tbl_name='audit_events' AND name LIKE 'idx_audit_%'`).Scan(&count); err != nil {
-			t.Fatal(err)
-		}
-		if count != 3 {
-			t.Fatalf("startup audit indexes = %d, want 3", count)
+		if got := auditIndexNames(t, store); !sameStringList(got, want) {
+			t.Fatalf("startup audit indexes = %v, want %v", got, want)
 		}
 		var id, parent, unused int
 		var plan string
