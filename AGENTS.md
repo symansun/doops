@@ -140,9 +140,11 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
   CLI's own Go parser. Do not maintain a second Python, Node, jq, or shell JSON schema.
 - The canonical Skill source is `backend/skills/SKILL.md`. The installer copies it and
   `backend/docs/*.md` from the exact commit embedded in the downloaded CLI into
-  `<project>/.agent/skills/doops/`, never from the current working tree. Missing release source
-  must fail before replacement; the install receipt records `skill_commit`. Do not edit
-  installed copies first.
+  the project and global `.agent/skills/doops/` plus existing Codex/Agents copies, never from the
+  current working tree. Missing release source must fail before replacement; the install receipt
+  records `skill_commit` and every `skill_path`. Preserve runtime config/auth when replacing
+  Skill/docs. Installation scope is documented in `backend/docs/CLUSTER_INSTALL_GUIDE.md`.
+  Do not edit installed copies first.
 - One `doops login` is shared by configured targets on the same normalized Gateway URL. Target
   credential listing and use inherit target operation authority; management enforces ownership.
 

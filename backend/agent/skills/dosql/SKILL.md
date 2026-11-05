@@ -34,9 +34,9 @@ Use exactly one route for each database task. Do not silently switch routes:
 
 | User intent | Public route | What it actually does |
 | --- | --- | --- |
-| Change data/schema/admin state | `doops sql --mode apply --sql/--file` | Requires target exec authority and the target's bound database credential. Statements run verbatim in one transaction with an optional `--verify` check, and every real apply takes a version in the per-database journal. There is no model-driven or signed-approval mutation path. |
+| Change data/schema/admin state | `doops sql --mode apply --sql/--file` | Requires target exec authority and the target's bound database credential. Statements run verbatim with optional `--verify`, and every real apply takes a version in the per-database journal. Rollback-capable batches use one transaction; MySQL/Oracle DDL commits implicitly, rejects dry-run and DDL/DML mixing, and cannot be undone by a later verification failure. There is no model-driven or signed-approval mutation path. |
 | Copy whole tables between two bound databases | `doops sql --mode apply --copy-from <src> --database <dst> --tables a,b` | The Agent reads and writes in batches, outside the model. |
-| Plan a change | `doops sql --mode plan` | Produces a human-readable change plan, impact, risk and verification steps before the apply. |
+| Plan a change | `doops sql --mode plan` | Produces a human-readable change plan, impact, risk and verification steps before the apply. Version/state claims require live evidence; supplied examples and fixture versions are not real database state. |
 | Find database instances/assets | `doops sql --mode discover` or `mcp_dosql_read operation=discover` | Uses target Kubernetes Pod/Service/Deployment/StatefulSet metadata; never reads Secret values or connects to the database. |
 | Inspect tables/columns/indexes/schema | `doops sql --mode query` or `mcp_dosql_read operation=query` | Runs one asset-bound catalog statement through the database client. `discover` is not a schema query. |
 | Read business data | `doops sql --mode query` or `mcp_dosql_read operation=query` | Runs one statement and records bounded result/evidence. |
@@ -64,13 +64,13 @@ Changes go through `apply`, not through `query`, `discover`, a generic
 - Generate MongoDB migration scripts or controlled command documents.
 - Execute read queries and migrations through the DoSql CLI.
 - Use `scripts/dosql-agent.mjs` for the first implemented Agent commands:
-  `classify`, `query`, `execute`, `discover-databases`, `discover-resources`, `register-database`, `resolve-database`,
+  `classify`, `query`, `discover-databases`, `discover-resources`, `register-database`, `resolve-database`,
   `compare-databases`, `derive-change-plan-from-comparison`,
   `render-forward-change-artifacts`, `execute-forward-artifacts`,
   `render-forward-evidence-metadata-commit`, `scan`, `record-execution`,
   `inspect-journal`, `migrate-journal`,
   `replay-timeline`, timeline lookup, rollback planning,
-  restore-node baseline derivation and `propose-confirmation`.
+  restore-node baseline derivation.
 - Record SQL/MongoDB execution lifecycle into append-only JSONL journals before
   importing the same events into the future control-plane database.
 - Return affected rows, schema snapshots, dry-run output and verification
@@ -93,8 +93,10 @@ Changes go through `apply`, not through `query`, `discover`, a generic
   evidence.
 - A mutating execution must have JSONL lifecycle events for planned, running,
   succeeded or failed, and verified or verification_failed.
-- Users confirm the change summary, impact, risk and version movement. They do
-  not confirm raw SQL as the primary approval surface.
+- Users confirm business intent, target, impact, risk and verification.
+  Existing authorization for that scope is sufficient; do not ask again
+  merely because a plan or SQL artifact was generated. See
+  `docs/user-confirmation.md` for uncertainty and version evidence boundaries.
 - If a database name resolves to multiple assets, ask the user to choose the
   environment or database. Do not guess.
 - 不允许用兼容分支或静默降级掩盖真实失败。
@@ -130,7 +132,9 @@ Changes go through `apply`, not through `query`, `discover`, a generic
   persists URI userinfo, passwords, tokens or other secret payloads.
 - Changes are not made through an MCP tool. `doops sql --mode apply
   --sql/--file` runs them on the Agent's direct path with a Gateway-bound
-  database credential, one transaction and the version journal.
+  database credential and the version journal. Transaction and rollback
+  guarantees depend on the engine and statement kind; see the direct SQL
+  boundary in `docs/agent-cli-contract.md`.
 - Database credentials are DoOps managed credentials. Pass only credential
   resource names to the Gateway; never put payloads, connection strings or
   passwords in prompts, artifacts or logs.

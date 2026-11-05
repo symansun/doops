@@ -69,7 +69,7 @@ func executeDoSQLDirect(ctx context.Context, request doSQLDirectRequest) (doSQLD
 		for index, statement := range request.Statements {
 			if doSQLCommitsImplicitly(request.Target.Engine, statement) {
 				result.Status = "rejected"
-				return result, fmt.Errorf("dosql_dry_run_ddl_unsupported: statement %d is DDL and %s commits DDL implicitly, so a dry run cannot roll it back; use a Postgres target or apply it for real", index+1, request.Target.Engine)
+				return result, fmt.Errorf("dosql_dry_run_ddl_unsupported: statement %d is DDL and %s commits DDL implicitly, so a dry run cannot roll it back; keep the authorized target/database and execute DDL separately without --dry-run only within the authorized change scope", index+1, request.Target.Engine)
 			}
 		}
 	}

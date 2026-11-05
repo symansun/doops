@@ -76,8 +76,9 @@ description: |
 | 嵌套 SSH | `doops -session <s> ssh --target <t> --host <user@host> -- <cmd> [args...]` |
 | 诊断分析 | `doops -session <s> ask --target <t> --msg '<task>'` |
 | 业务发布 | `doops -session <s> ask --target <t> --apply [--credential <name>...] --msg '<facts>'` |
-| DoSql 自然语言 | `doops -session <s> sql --target <t> --mode query\|plan\|apply\|discover [--database <name>] --request '<req>'` |
-| DoSql 原样 SQL | `doops -session <s> sql --target <t> --mode query\|apply (--sql '<sql>'\|--file <f>) [--verify '<select>'] [--dry-run]` |
+| DoSql 自然语言 | `doops -session <s> sql --target <t> --mode query\|plan\|discover [--database <name>] --request '<req>'` |
+| DoSql 原样查询 | `doops -session <s> sql --target <t> --mode query (--sql '<sql>'\|--file <f>) [--credential <name>]` |
+| DoSql 原样变更 | `doops -session <s> sql --target <t> --mode apply (--sql '<sql>'\|--file <f>) [--credential <name>] [--verify '<select>'] [--dry-run]`（dry-run 适用范围见使用指南） |
 | DoSql 跨库复制表 | `doops -session <s> sql --target <t> --mode apply --copy-from <源库> --database <目标库> --tables a,b [--dry-run]`（同引擎、目标表须已存在；细节见 `docs/DOOPS_USAGE_GUIDE.md`） |
 | K8s 只读 | `doops -session <s> k8s --target <t> get\|describe\|logs\|top\|events\|rollout status ... [-n <ns>\|-A] [-l <sel>] [-o jsonpath=...]` |
 | Helm 只读 | `doops -session <s> k8s --target <t> helm list\|history\|status\|values <release> -n <ns>`（values 只给 key） |
@@ -98,6 +99,8 @@ DoSql 必须从 `doops sql` 进入；普通 `ask` 不保证注入 DoSql 工具�
 应用账号和迁移账号时，`--sql/--file` 加 `--credential <name>` 选用其中一个（如 DDL 用迁移账号）。MongoDB 的 `--sql/--file` 是 JSON 操作文档
 （读写、事务、索引、explain、currentOp、findAndModify、重命名等），不含用户管理。完整参数和 `dosql_*` 错误类别见
 `docs/DOOPS_USAGE_GUIDE.md`，凭据分步命令见 `docs/CREDENTIAL_RESOURCES.md`。
+自然语言变更需求先落实为 SQL，再按已明确授权的 target、数据库和变更范围执行；不要求用户
+每次重复批准。范围不清或超出已有授权时才补充确认。事务、DDL 和验收边界见使用指南。
 没有通用 `update` 命令；target、用户、grant、token、凭据、job 等元信息怎么改（原地改还是替换）
 见 `docs/DOOPS_USAGE_GUIDE.md` 的 “Updating Metadata”。
 
@@ -105,7 +108,8 @@ DoSql 必须从 `doops sql` 进入；普通 `ask` 不保证注入 DoSql 工具�
 
 场景链路由 CLI 自己给出，和当前安装的二进制一致：`doops guide` 列出场景，
 `doops guide <onboard|diagnose|release|credential|database|upgrade|user|files>` 打印按顺序执行的命令。
-命令失败时输出里的 `next:` 行就是下一步要执行的命令，照着执行，不必回头翻文档。
+命令失败时按输出里的 `next:` 指引处理，并遵守其中的前提条件；数据库 dry-run 的引擎和
+语句限制见 `docs/DOOPS_USAGE_GUIDE.md`。
 
 ## 安装与升级
 

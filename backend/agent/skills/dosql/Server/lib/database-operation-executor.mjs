@@ -6,8 +6,8 @@ import {
   realpathSync,
   statSync,
 } from "node:fs";
-import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { chmod, lstat, mkdir } from "node:fs/promises";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -15,12 +15,23 @@ import {
   createDatabaseOperationRecord,
 } from "./change-policy.mjs";
 import { appendJournalEvent } from "./execution-journal.mjs";
+import { reserveOperationId, writeAuditArtifact } from "./audit-artifacts.mjs";
 
 const PSQL_ARGS = ["--no-psqlrc", "--set", "ON_ERROR_STOP=1", "--no-align", "--tuples-only"];
 const MYSQL_ARGS = ["--batch", "--raw", "--skip-column-names"];
 const TRUSTED_SKILL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 export async function executeControlledDatabaseOperation(input) {
+  try {
+    return await executeQuery(input);
+  } catch (error) {
+    error.executionOutcome ??= "not_started";
+    error.retryable = false;
+    throw error;
+  }
+}
+
+async function executeQuery(input) {
   input = normalizeDatabaseRequest(input);
   const mode = requireMode(input.mode);
   const classification = classifyDatabaseOperation(input);
@@ -40,15 +51,21 @@ export async function executeControlledDatabaseOperation(input) {
   const startedAt = input.startedAt ?? new Date().toISOString();
   const baseEvent = createBaseEvent({ input, operation, classification });
 
-  await appendJournalEvent({
-    journalPath,
-    event: {
-      ...baseEvent,
-      eventType: "database.operation.planned",
-      status: "planned",
-      createdAt: operation.requestedAt,
-    },
-  });
+  try {
+    await reserveQueryArtifacts(input);
+    await appendJournalEvent({
+      journalPath,
+      rejectDuplicateOperation: true,
+      event: {
+        ...baseEvent,
+        eventType: "database.operation.planned",
+        status: "planned",
+        createdAt: operation.requestedAt,
+      },
+    });
+  } catch (error) {
+    throw auditPersistenceError(error, "not_started");
+  }
 
   let adapter;
   try {
@@ -58,6 +75,7 @@ export async function executeControlledDatabaseOperation(input) {
       throw new Error("query requires a trusted database client executable");
     }
   } catch (error) {
+    error.executionOutcome = "not_started";
     const failedAt = input.finishedAt ?? new Date().toISOString();
     await recordFailedOperation({
       input,
@@ -73,10 +91,14 @@ export async function executeControlledDatabaseOperation(input) {
     throw error;
   }
 
-  await appendJournalEvent({
-    journalPath,
-    event: { ...baseEvent, eventType: "database.operation.running", status: "running", createdAt: startedAt },
-  });
+  try {
+    await appendJournalEvent({
+      journalPath,
+      event: { ...baseEvent, eventType: "database.operation.running", status: "running", createdAt: startedAt },
+    });
+  } catch (error) {
+    throw auditPersistenceError(error, "not_started");
+  }
 
   let executionResult;
   try {
@@ -93,6 +115,7 @@ export async function executeControlledDatabaseOperation(input) {
       }),
     );
   } catch (error) {
+    error.executionOutcome = "unknown";
     const failedAt = input.finishedAt ?? new Date().toISOString();
     await recordFailedOperation({
       input,
@@ -109,73 +132,92 @@ export async function executeControlledDatabaseOperation(input) {
   }
 
   const finishedAt = input.finishedAt ?? new Date().toISOString();
-  await appendJournalEvent({
-    journalPath,
-    event: {
-      ...baseEvent,
-      eventType: "database.operation.succeeded",
-      status: "succeeded",
-      affectedRows: executionResult.affectedRows,
-      evidenceRef: evidencePath,
-      createdAt: finishedAt,
-    },
-  });
-
-  let verificationResult = null;
   try {
-    verificationResult = executionResult;
+    await appendJournalEvent({
+      journalPath,
+      event: {
+        ...baseEvent,
+        eventType: "database.operation.succeeded",
+        status: "succeeded",
+        executionOutcome: "succeeded",
+        affectedRows: executionResult.affectedRows,
+        evidenceRef: evidencePath,
+        createdAt: finishedAt,
+      },
+    });
     const verifiedAt = input.verifiedAt ?? new Date().toISOString();
     const evidence = createEvidence({
       input,
       operation,
       classification,
       status: "verified",
+      executionOutcome: "succeeded",
       executionResult,
-      verificationResult,
+      verificationResult: executionResult,
       startedAt,
       finishedAt,
       verifiedAt,
     });
-    await writeEvidence(evidencePath, evidence);
+    await writeAuditArtifact(evidencePath, persistableEvidence(evidence));
     await appendJournalEvent({
       journalPath,
       event: {
         ...baseEvent,
         eventType: "database.operation.verified",
         status: "verified",
+        executionOutcome: "succeeded",
         evidenceRef: evidencePath,
         createdAt: verifiedAt,
       },
     });
     return evidence;
   } catch (error) {
-    const verifiedAt = input.verifiedAt ?? new Date().toISOString();
-    const evidence = createEvidence({
-      input,
-      operation,
-      classification,
-      status: "verification_failed",
-      executionResult,
-      verificationResult: { status: "failed", errorMessage: error.message },
-      startedAt,
-      finishedAt,
-      verifiedAt,
-    });
-    await appendJournalEvent({
-      journalPath,
-      event: {
-        ...baseEvent,
-        eventType: "database.operation.verification_failed",
-        status: "verification_failed",
-        errorMessage: "database operation verification failed",
-        errorFingerprint: `sha256:${sha256(error.message)}`,
-        evidenceRef: evidencePath,
-        createdAt: verifiedAt,
-      },
-    });
-    await writeEvidence(evidencePath, evidence);
-    throw error;
+    // Audit failure cannot undo a successful query or justify replacing evidence.
+    throw auditPersistenceError(error, "succeeded");
   }
+}
+
+async function reserveQueryArtifacts({ artifactRoot, operationId, journalPath, evidencePath }) {
+  try {
+    await lstat(evidencePath);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    const claim = {
+      schema: "dosql.database-operation-claim.v1",
+      operationId: requireText(operationId, "operationId"),
+      journalPath,
+      evidencePath,
+    };
+    await reserveOperationId({ artifactRoot, operationId, claim });
+    try {
+      await writeAuditArtifact(`${evidencePath}.claim`, claim);
+    } catch (error) {
+      if (error.code === "EEXIST") throw evidenceAlreadyExists();
+      throw error;
+    }
+    return;
+  }
+  throw evidenceAlreadyExists();
+}
+
+function evidenceAlreadyExists() {
+  return Object.assign(new Error(
+    "evidence path already exists or is claimed; inspect the existing operation before submitting any new SQL",
+  ), { code: "DOSQL_EVIDENCE_ALREADY_EXISTS", executionOutcome: "unknown" });
+}
+
+function auditPersistenceError(error, executionOutcome) {
+  if (error.code === "DOSQL_OPERATION_ALREADY_EXISTS" ||
+      error.code === "DOSQL_EVIDENCE_ALREADY_EXISTS") return error;
+  return Object.assign(new Error(
+    `DoSql audit persistence failed; database execution outcome is ${executionOutcome}: ${error.message}`,
+    { cause: error },
+  ), {
+    code: "DOSQL_AUDIT_PERSISTENCE_FAILED",
+    auditErrorCode: error.code ?? "UNKNOWN",
+    executionOutcome,
+    ...(error.lineNumber === undefined ? {} : { lineNumber: error.lineNumber }),
+  });
 }
 
 async function recordFailedOperation({
@@ -194,23 +236,29 @@ async function recordFailedOperation({
     operation,
     classification,
     status: "failed",
+    executionOutcome: error.executionOutcome,
     executionResult: { status: "failed", errorMessage: error.message },
     startedAt,
     finishedAt: failedAt,
   });
-  await appendJournalEvent({
-    journalPath,
-    event: {
-      ...baseEvent,
-      eventType: "database.operation.failed",
-      status: "failed",
-      errorMessage: "database operation failed",
-      errorFingerprint: `sha256:${sha256(error.message)}`,
-      evidenceRef: evidencePath,
-      createdAt: failedAt,
-    },
-  });
-  await writeEvidence(evidencePath, evidence);
+  try {
+    await appendJournalEvent({
+      journalPath,
+      event: {
+        ...baseEvent,
+        eventType: "database.operation.failed",
+        status: "failed",
+        executionOutcome: error.executionOutcome,
+        errorMessage: "database operation failed",
+        errorFingerprint: `sha256:${sha256(error.message)}`,
+        evidenceRef: evidencePath,
+        createdAt: failedAt,
+      },
+    });
+    await writeAuditArtifact(evidencePath, persistableEvidence(evidence));
+  } catch (auditError) {
+    throw auditPersistenceError(auditError, error.executionOutcome);
+  }
 }
 
 export function createDatabaseCliAdapter(input = {}) {
@@ -451,6 +499,7 @@ function createEvidence({
   operation,
   classification,
   status,
+  executionOutcome,
   executionResult,
   verificationResult,
   startedAt,
@@ -461,6 +510,7 @@ function createEvidence({
     schema: "dosql.database-operation-evidence.v1",
     operationId: requireText(input.operationId, "operationId"),
     status,
+    executionOutcome,
     mode: requireMode(input.mode),
     projectId: operation.projectId,
     databaseAssetId: operation.databaseAssetId,
@@ -493,15 +543,6 @@ function normalizeExecutionResult(value) {
     stdout: String(value.stdout ?? ""),
     stderr: String(value.stderr ?? ""),
   };
-}
-
-async function writeEvidence(path, evidence) {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(persistableEvidence(evidence), null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  await chmod(path, 0o600);
 }
 
 function persistableEvidence(evidence) {

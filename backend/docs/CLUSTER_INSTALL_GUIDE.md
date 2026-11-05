@@ -77,8 +77,25 @@ bash backend/scripts/install.sh \
 - 安装前确认 `<tag>` 的 CNB Release 已发布 CLI 二进制和 `checksums.txt`，不要凭 tag 列表假定可用。
 - 本地缺少发布提交时脚本报 `Release commit ... is unavailable in local git objects` 并退出，
   不会自动 fetch，也不会混装其它版本。先 `git fetch --tags` 或 `git pull` 再重试。
-- 安装结果：CLI 在 `~/.local/bin/doops`，Skill 在 `<项目>/.agent/skills/doops/`，
-  配置在 `~/.agent/skills/doops/config.json`。不要先改已安装的副本。
+- 安装结果：CLI 在 `~/.local/bin/doops`；同一发布提交的 Skill/docs 写入
+  `<项目>/.agent/skills/doops/` 和 `~/.agent/skills/doops/`，同时更新用户目录和
+  当前项目中已有的 `.codex/skills/doops/`、`.agents/skills/doops/`。
+  不创建未启用客户端的目录，也不扫描其它项目。
+  `~/.local/share/doops/install.txt` 记录 `skill_commit` 和全部 `skill_path`；
+  每个路径的 `SKILL.md` 与 `docs/*.md` 均来自该提交，不保留旧版 docs。
+- 更新只替换 Skill/docs，保留各目录的 config、auth 和历史记录。
+  开发链接的 `SKILL.md`/`docs` 会被正式发布内容替换，链接指向的源码保持不变。
+  整个 `doops` 目录是符号链接或文件类型异常时，在替换 CLI 前明确失败；
+  先确认该入口的归属，再修正为独立安装目录，不沿未知链接写入。
+  检查 `doops` 目录归属后，按物理父路径规范化并去重；HOME 尾斜杠或父目录别名不会
+  导致同一份 Skill 重复替换，回执中的 `skill_path` 使用去重后的物理路径。
+  配置仍在 `~/.agent/skills/doops/config.json`。不要先改已安装的副本。
+- CLI、全部 Skill/docs 和回执在替换前暂存新内容并保存原版本。任一替换、回执写入或
+  回执替换失败，安装器按逆序恢复原版本并非零退出；首次安装则移除本次新增的文件。
+  这是失败恢复，不会继续使用旧版执行安装任务。回执成功落盘后才完成这一批制品更新；
+  显式 `--target-*` 的配置变更仍在其后独立执行，制品恢复不修改 config/auth。
+  恢复失败时保留 `.doops-install.*` 备份目录，stderr 给出失败目标及原版本备份位置；
+  先按该位置核对并恢复，未恢复前不要清理备份。全部恢复成功或安装成功后才清理暂存。
 - 管理员创建账号后交付给操作员的密码和 API key 只显示一次，不写入文档、issue 或提交。
   `doops admin user create` 只创建非管理员；管理员账号需调用 `POST /v1/admin/users` 并带
   `"admin": true`，见 [DOOPS_API_GUIDE.md](DOOPS_API_GUIDE.md)。

@@ -5,6 +5,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALL = ROOT / "scripts" / "install.sh"
@@ -344,6 +346,352 @@ def test_installer_uses_release_commit_when_worktree_skill_and_docs_are_updated(
         installed_doc = project / ".agent" / "skills" / "doops" / "docs" / "release.md"
         assert installed_skill.read_text() == "release skill\n"
         assert installed_doc.read_text() == "release docs\n"
+
+
+def test_installer_updates_existing_agent_copies_without_touching_runtime_state(tmp_path):
+    repo, commit = prepare_synthetic_repo(
+        tmp_path / "source",
+        skill="release skill\n",
+        docs={"release.md": "release docs\n"},
+    )
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    home.mkdir()
+    project.mkdir()
+    destinations = [
+        home / ".agent/skills/doops",
+        home / ".codex/skills/doops",
+        home / ".agents/skills/doops",
+        project / ".agent/skills/doops",
+        project / ".codex/skills/doops",
+        project / ".agents/skills/doops",
+    ]
+    for destination in destinations:
+        (destination / "docs").mkdir(parents=True)
+        (destination / "SKILL.md").write_text("outdated skill\n")
+        (destination / "docs/retired.md").write_text("outdated contract\n")
+        (destination / "config.json").write_text('{"servers":[]}\n')
+        (destination / "auth.json").write_text('{"tokens":{}}\n')
+        (destination / "history.jsonl").write_text("synthetic history\n")
+    (repo / "backend/skills/SKILL.md").write_text("unreleased working tree\n")
+    fake_bin, release_env = prepare_fake_cli_release(tmp_path / "release", "v-test", commit)
+
+    result = run_installer(repo, home, project, fake_bin, release_env)
+
+    assert result.returncode == 0, result.stderr
+    for destination in destinations:
+        assert (destination / "SKILL.md").read_text() == "release skill\n"
+        assert sorted(path.name for path in (destination / "docs").iterdir()) == ["release.md"]
+        assert (destination / "docs/release.md").read_text() == "release docs\n"
+        assert (destination / "config.json").read_text() == '{"servers":[]}\n'
+        assert (destination / "auth.json").read_text() == '{"tokens":{}}\n'
+        assert (destination / "history.jsonl").read_text() == "synthetic history\n"
+        assert list(destination.glob(".doops-install.*")) == []
+    receipt = (home / ".local/share/doops/install.txt").read_text()
+    assert f"skill_commit={commit}" in receipt
+    assert receipt.count("skill_path=") == len(destinations)
+
+
+def test_installer_replaces_development_file_links_without_editing_source(tmp_path):
+    repo, commit = prepare_synthetic_repo(
+        tmp_path / "source",
+        skill="release skill\n",
+        docs={"release.md": "release docs\n"},
+    )
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    home.mkdir()
+    project.mkdir()
+    destination = project / ".agent/skills/doops"
+    destination.mkdir(parents=True)
+    (destination / "SKILL.md").symlink_to(repo / "backend/skills/SKILL.md")
+    (destination / "docs").symlink_to(repo / "backend/docs", target_is_directory=True)
+    (repo / "backend/skills/SKILL.md").write_text("development skill\n")
+    (repo / "backend/docs/release.md").write_text("development docs\n")
+    fake_bin, release_env = prepare_fake_cli_release(tmp_path / "release", "v-test", commit)
+
+    result = run_installer(repo, home, project, fake_bin, release_env)
+
+    assert result.returncode == 0, result.stderr
+    assert not (destination / "SKILL.md").is_symlink()
+    assert not (destination / "docs").is_symlink()
+    assert (destination / "SKILL.md").read_text() == "release skill\n"
+    assert (destination / "docs/release.md").read_text() == "release docs\n"
+    assert (repo / "backend/skills/SKILL.md").read_text() == "development skill\n"
+    assert (repo / "backend/docs/release.md").read_text() == "development docs\n"
+
+
+@pytest.mark.parametrize("invalid_type", ["directory-link", "skill-fifo", "docs-file", "receipt-directory"])
+def test_installer_rejects_invalid_existing_copy_before_replacing_release(tmp_path, invalid_type):
+    repo, commit = prepare_synthetic_repo(
+        tmp_path / "source",
+        skill="release skill\n",
+        docs={"release.md": "release docs\n"},
+    )
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    project.mkdir()
+    old_cli = home / ".local/bin/doops"
+    old_cli.parent.mkdir(parents=True)
+    old_cli.write_text("existing-cli")
+    old_skill = project / ".agent/skills/doops/SKILL.md"
+    old_skill.parent.mkdir(parents=True)
+    old_skill.write_text("existing-skill")
+    invalid = home / ".codex/skills/doops"
+    invalid.parent.mkdir(parents=True)
+    if invalid_type == "directory-link":
+        invalid.symlink_to(repo / "backend/skills", target_is_directory=True)
+        expected_error = "Skill directory must be a real directory"
+    elif invalid_type == "receipt-directory":
+        invalid = home / ".local/share/doops/install.txt"
+        invalid.mkdir(parents=True)
+        expected_error = "Install receipt has an unexpected type"
+    else:
+        invalid.mkdir()
+        if invalid_type == "skill-fifo":
+            os.mkfifo(invalid / "SKILL.md")
+        else:
+            (invalid / "docs").write_text("not a docs directory\n")
+        expected_error = "Skill files have an unexpected type"
+    fake_bin, release_env = prepare_fake_cli_release(tmp_path / "release", "v-test", commit)
+
+    result = run_installer(repo, home, project, fake_bin, release_env)
+
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+    assert old_cli.read_text() == "existing-cli"
+    assert old_skill.read_text() == "existing-skill"
+    if invalid_type == "directory-link":
+        assert invalid.is_symlink()
+    elif invalid_type == "skill-fifo":
+        assert (invalid / "SKILL.md").is_fifo()
+    elif invalid_type == "docs-file":
+        assert (invalid / "docs").read_text() == "not a docs directory\n"
+    else:
+        assert invalid.is_dir()
+    assert not (home / ".local/share/doops/install.txt").is_file()
+    assert list(old_skill.parent.glob(".doops-install.*")) == []
+
+
+def test_installer_deduplicates_home_project_and_does_not_create_unused_clients(tmp_path):
+    repo, commit = prepare_synthetic_repo(
+        tmp_path / "source",
+        skill="release skill\n",
+        docs={"release.md": "release docs\n"},
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    fake_bin, release_env = prepare_fake_cli_release(tmp_path / "release", "v-test", commit)
+
+    result = run_installer(repo, home, home, fake_bin, release_env)
+
+    assert result.returncode == 0, result.stderr
+    receipt = (home / ".local/share/doops/install.txt").read_text()
+    assert receipt.count("skill_path=") == 1
+    assert not (home / ".codex").exists()
+    assert not (home / ".agents").exists()
+
+
+@pytest.mark.parametrize("alias", ["trailing-slash", "parent-link"])
+def test_installer_deduplicates_physical_skill_paths(tmp_path, alias):
+    repo, commit = prepare_synthetic_repo(
+        tmp_path / "source", skill="release skill\n", docs={"release.md": "release docs\n"}
+    )
+    home = tmp_path / "home"
+    destination = home / ".agent/skills/doops"
+    (destination / "docs").mkdir(parents=True)
+    (destination / "SKILL.md").write_text("old skill\n")
+    (destination / "docs/old.md").write_text("old docs\n")
+    project = home
+    if alias == "parent-link":
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / ".agent").symlink_to(home / ".agent", target_is_directory=True)
+    fake_bin, release_env = prepare_fake_cli_release(tmp_path / "release", "v-test", commit)
+    moves = tmp_path / "moves"
+    (fake_bin / "mv").write_text(
+        '#!/usr/bin/env bash\n'
+        'printf "%s\\n" "${!#}" >> "$DOOPS_TEST_MOVES"\n'
+        'exec /bin/mv "$@"\n'
+    )
+    (fake_bin / "mv").chmod(0o755)
+
+    result = run_installer(
+        repo, str(home) + "/" if alias == "trailing-slash" else home,
+        project, fake_bin, {**release_env, "DOOPS_TEST_MOVES": str(moves)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    receipt = (home / ".local/share/doops/install.txt").read_text()
+    assert [line for line in receipt.splitlines() if line.startswith("skill_path=")] == [
+        f"skill_path={destination.resolve()}"
+    ]
+    assert moves.read_text().splitlines().count(str(destination.resolve() / "docs")) == 1
+    assert (destination / "SKILL.md").read_text() == "release skill\n"
+    assert sorted(path.name for path in (destination / "docs").iterdir()) == ["release.md"]
+    assert (destination / "docs/release.md").read_text() == "release docs\n"
+    assert not list(home.rglob(".doops-install.*"))
+
+
+@pytest.mark.parametrize("failure", ["second-docs", "receipt", "receipt-write"])
+@pytest.mark.parametrize("existing", [False, True])
+def test_installer_restores_all_artifacts_after_replacement_failure(tmp_path, failure, existing):
+    repo, commit = prepare_synthetic_repo(
+        tmp_path / "source", skill="release skill\n", docs={"release.md": "release docs\n"}
+    )
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    destinations = [
+        project / ".agent/skills/doops",
+        home / ".agent/skills/doops",
+        home / ".codex/skills/doops",
+    ]
+    cli = home / ".local/bin/doops"
+    receipt = home / ".local/share/doops/install.txt"
+    originals = {}
+    for directory in [cli.parent, receipt.parent, *destinations]:
+        directory.mkdir(parents=True)
+    for destination in destinations:
+        for name, content in [
+            ("config.json", '{"servers":[]}\n'),
+            ("auth.json", '{"tokens":{}}\n'),
+            ("history.jsonl", "synthetic history\n"),
+        ]:
+            path = destination / name
+            path.write_text(content)
+            originals[path] = content.encode()
+    if existing:
+        cli.write_text("old cli\n")
+        cli.chmod(0o750)
+        receipt.write_text("old receipt\n")
+        receipt.chmod(0o640)
+        originals.update({cli: b"old cli\n", receipt: b"old receipt\n"})
+        for destination in destinations:
+            (destination / "docs").mkdir()
+            (destination / "SKILL.md").write_text("old skill\n")
+            (destination / "docs/old.md").write_text("old docs\n")
+            originals[destination / "SKILL.md"] = b"old skill\n"
+            originals[destination / "docs/old.md"] = b"old docs\n"
+    fake_bin, release_env = prepare_fake_cli_release(tmp_path / "release", "v-test", commit)
+    marker = tmp_path / "fault-injected"
+    (fake_bin / "mv").write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+args=("$@")
+source="${args[${#args[@]}-2]}"
+destination="${args[${#args[@]}-1]}"
+if { [[ "$DOOPS_TEST_FAILURE" == second-docs && "$destination" == "$DOOPS_TEST_SECOND/docs" && "$source" == */.doops-install.*/docs ]]; } ||
+   { [[ "$DOOPS_TEST_FAILURE" == receipt && "$destination" == "$DOOPS_TEST_RECEIPT" && "$source" == */.doops-install.*/install.txt ]]; }; then
+  touch "$DOOPS_TEST_FAULT"
+  echo "injected replacement failure" >&2
+  exit 74
+fi
+if [[ "$DOOPS_TEST_FAILURE" == receipt-write && "$destination" == "$DOOPS_TEST_SECOND/docs" && "$source" == */.doops-install.*/docs ]]; then
+  /bin/mv "$@"
+  for stage in "${DOOPS_TEST_RECEIPT%/*}"/.doops-install.*; do
+    [[ -d "$stage" ]] || continue
+    mkdir "$stage/install.txt"
+    touch "$DOOPS_TEST_FAULT"
+  done
+  exit 0
+fi
+exec /bin/mv "$@"
+"""
+    )
+    (fake_bin / "mv").chmod(0o755)
+
+    result = run_installer(repo, home, project, fake_bin, {
+        **release_env,
+        "DOOPS_TEST_FAILURE": failure,
+        "DOOPS_TEST_SECOND": str(destinations[1].resolve()),
+        "DOOPS_TEST_RECEIPT": str(receipt.resolve()),
+        "DOOPS_TEST_FAULT": str(marker),
+    })
+
+    assert marker.exists(), result.stdout + result.stderr
+    assert result.returncode != 0
+    for path, content in originals.items():
+        assert path.read_bytes() == content, path
+    if existing:
+        assert cli.stat().st_mode & 0o777 == 0o750
+        assert receipt.stat().st_mode & 0o777 == 0o640
+    else:
+        assert not cli.exists()
+        assert not receipt.exists()
+        for destination in destinations:
+            assert not (destination / "SKILL.md").exists()
+            assert not (destination / "docs").exists()
+    for destination in destinations:
+        assert not (destination / "docs/release.md").exists()
+    assert not list(home.rglob(".doops-install.*"))
+    assert not list(project.rglob(".doops-install.*"))
+
+
+@pytest.mark.parametrize("fail_recovery", [False, True])
+def test_installer_restores_development_links_or_keeps_failed_backup(tmp_path, fail_recovery):
+    repo, commit = prepare_synthetic_repo(
+        tmp_path / "source", skill="release skill\n", docs={"release.md": "release docs\n"}
+    )
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    destination = project / ".agent/skills/doops"
+    destination.mkdir(parents=True)
+    source_skill = repo / "backend/skills/SKILL.md"
+    source_docs = repo / "backend/docs"
+    (destination / "SKILL.md").symlink_to(source_skill)
+    (destination / "docs").symlink_to(source_docs, target_is_directory=True)
+    source_skill.write_text("development skill\n")
+    (source_docs / "release.md").write_text("development docs\n")
+    old_cli = home / ".local/bin/doops"
+    old_cli.parent.mkdir(parents=True)
+    source_cli = tmp_path / "development-cli"
+    source_cli.write_text("old cli\n")
+    old_cli.symlink_to(source_cli)
+    fake_bin, release_env = prepare_fake_cli_release(tmp_path / "release", "v-test", commit)
+    failed_restore = tmp_path / "failed-restore"
+    (fake_bin / "mv").write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+args=("$@")
+source="${args[${#args[@]}-2]}"
+destination="${args[${#args[@]}-1]}"
+if [[ "$destination" == */.local/share/doops/install.txt ]]; then
+  exit 74
+fi
+if [[ "$DOOPS_TEST_FAIL_RECOVERY" == true && "$source" == */previous-docs ]]; then
+  printf '%s\\n' "$source" > "$DOOPS_TEST_FAILED_RESTORE"
+  exit 74
+fi
+exec /bin/mv "$@"
+"""
+    )
+    (fake_bin / "mv").chmod(0o755)
+
+    result = run_installer(repo, home, project, fake_bin, {
+        **release_env, "DOOPS_TEST_FAILED_RESTORE": str(failed_restore),
+        "DOOPS_TEST_FAIL_RECOVERY": "true" if fail_recovery else "false",
+    })
+
+    assert result.returncode != 0
+    if fail_recovery:
+        assert failed_restore.exists(), result.stdout + result.stderr
+        backup = Path(failed_restore.read_text().strip())
+        assert backup.is_symlink()
+        assert backup.resolve() == source_docs.resolve()
+        assert str(backup) in result.stderr
+        assert "recovery" in result.stderr.lower()
+    else:
+        assert (destination / "docs").is_symlink()
+        assert (destination / "docs").resolve() == source_docs.resolve()
+        assert not list(home.rglob(".doops-install.*"))
+        assert not list(project.rglob(".doops-install.*"))
+    assert (destination / "SKILL.md").is_symlink()
+    assert (destination / "SKILL.md").resolve() == source_skill.resolve()
+    assert source_skill.read_text() == "development skill\n"
+    assert (source_docs / "release.md").read_text() == "development docs\n"
+    assert old_cli.is_symlink()
+    assert old_cli.resolve() == source_cli.resolve()
+    assert old_cli.read_text() == "old cli\n"
 
 
 def test_installer_preserves_existing_installation_when_release_commit_is_missing():
