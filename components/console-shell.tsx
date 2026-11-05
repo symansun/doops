@@ -10,6 +10,7 @@ import { isDemoAllowed } from "@/lib/demo-policy"
 import { DEMO_TOKEN } from "@/lib/demo"
 import { errorAfterRefresh, reconcileSelected, reconcileTargets, type RefreshTrigger } from "@/lib/console-refresh"
 import { NETWORK_FAILURE_MESSAGE, subscribeNetworkStatus } from "@/lib/network-error"
+import { consoleViewEntries, type ConsoleView, type ConsoleViewEntry } from "@/lib/console-views"
 import {
   beforeUnloadWarning,
   browserSessionStorage,
@@ -317,6 +318,7 @@ export function ConsoleShell() {
 
   // 只控制管理入口是否显示；管理接口的权限仍由 Gateway 检查。
   const isAdmin = sessionIsAdmin(session)
+  const viewEntries = consoleViewEntries(isAdmin)
 
   return (
     <div className="flex h-dvh flex-col">
@@ -338,53 +340,18 @@ export function ConsoleShell() {
               isAdmin={isAdmin}
             />
           )}
-          <div className="ml-1 flex shrink-0 items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5 sm:ml-2">
-            <button
-              disabled={skillRunning}
-              onClick={() => openView("console")}
-              className={`whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                view === "console"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              控制台
-            </button>
-            <button
-              disabled={skillRunning}
-              onClick={() => openView("deploy")}
-              className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                view === "deploy"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <RocketIcon width={13} height={13} /> 部署
-            </button>
-            <button
-              disabled={skillRunning}
-              onClick={() => openView("cicd")}
-              className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                view === "cicd"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <GitIcon width={13} height={13} /> CI/CD
-            </button>
-            {isAdmin && (
-              <button
+          {/* From 640px up the view entries sit inline, as before. */}
+          <div className="ml-2 hidden shrink-0 items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5 sm:flex">
+            {viewEntries.map((entry) => (
+              <ViewButton
+                key={entry.id}
+                entry={entry}
+                active={view === entry.id}
                 disabled={skillRunning}
-                onClick={() => openView("admin")}
-                className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                  view === "admin"
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <ShieldIcon width={13} height={13} /> 管理
-              </button>
-            )}
+                onSelect={openView}
+                className="px-2.5 py-1"
+              />
+            ))}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -407,6 +374,25 @@ export function ConsoleShell() {
           </button>
         </div>
       </header>
+      {/* Below 640px the view entries get a row of their own, so every one of
+          them stays visible without scrolling and nothing covers it. */}
+      <nav
+        aria-label="视图"
+        data-testid="view-nav-narrow"
+        className="grid shrink-0 gap-1 border-b bg-card px-2 py-1.5 sm:hidden"
+        style={{ gridTemplateColumns: `repeat(${viewEntries.length}, minmax(0, 1fr))` }}
+      >
+        {viewEntries.map((entry) => (
+          <ViewButton
+            key={entry.id}
+            entry={entry}
+            active={view === entry.id}
+            disabled={skillRunning}
+            onSelect={openView}
+            className="justify-center border px-1 py-1.5"
+          />
+        ))}
+      </nav>
 
       {showGuide && <OnboardingGuide onClose={closeGuide} />}
 
@@ -626,5 +612,39 @@ export function ConsoleShell() {
         </div>
       )}
     </div>
+  )
+}
+
+const VIEW_ICONS: Partial<Record<ConsoleView, typeof RocketIcon>> = {
+  deploy: RocketIcon,
+  cicd: GitIcon,
+  admin: ShieldIcon,
+}
+
+function ViewButton({
+  entry,
+  active,
+  disabled,
+  onSelect,
+  className,
+}: {
+  entry: ConsoleViewEntry
+  active: boolean
+  disabled: boolean
+  onSelect: (view: ConsoleView) => void
+  className: string
+}) {
+  const Icon = VIEW_ICONS[entry.id]
+  return (
+    <button
+      disabled={disabled}
+      onClick={() => onSelect(entry.id)}
+      aria-current={active ? "page" : undefined}
+      className={`flex items-center gap-1 whitespace-nowrap rounded-md text-xs font-medium transition-colors ${className} ${
+        active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {Icon && <Icon width={13} height={13} />} {entry.label}
+    </button>
   )
 }
