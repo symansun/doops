@@ -21,3 +21,10 @@ const ENTRIES: ConsoleViewEntry[] = [
 export function consoleViewEntries(isAdmin: boolean): ConsoleViewEntry[] {
   return ENTRIES.filter((entry) => entry.id !== "admin" || isAdmin)
 }
+
+// Where "打开凭据" leads from the AI assistant and the release page. DoAgent
+// models come only from modelProvider credentials, so this is the console's
+// credentials tab, never the admin config center. Only admins get the link.
+export function credentialsDestination(isAdmin: boolean): { view: "console"; tab: "credentials" } | null {
+  return isAdmin ? { view: "console", tab: "credentials" } : null
+}

@@ -10,7 +10,7 @@ import { isDemoAllowed } from "@/lib/demo-policy"
 import { DEMO_TOKEN } from "@/lib/demo"
 import { errorAfterRefresh, reconcileSelected, reconcileTargets, type RefreshTrigger } from "@/lib/console-refresh"
 import { NETWORK_FAILURE_MESSAGE, subscribeNetworkStatus } from "@/lib/network-error"
-import { consoleViewEntries, type ConsoleView, type ConsoleViewEntry } from "@/lib/console-views"
+import { consoleViewEntries, credentialsDestination, type ConsoleView, type ConsoleViewEntry } from "@/lib/console-views"
 import {
   beforeUnloadWarning,
   browserSessionStorage,
@@ -128,9 +128,6 @@ export function ConsoleShell() {
   useEffect(() => {
     if (!agentRuntime || (view === "console" && tab === "ask")) setOpenedAgentRuntime(agentRuntime)
   }, [agentRuntime, tab, view])
-  const [adminDefaultTab, setAdminDefaultTab] = useState<
-    "instances" | "config" | "users" | "grants" | "tokens"
-  >("instances")
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -319,6 +316,15 @@ export function ConsoleShell() {
   // 只控制管理入口是否显示；管理接口的权限仍由 Gateway 检查。
   const isAdmin = sessionIsAdmin(session)
   const viewEntries = consoleViewEntries(isAdmin)
+  // "打开凭据" on the AI assistant and the release page: the credentials tab,
+  // where a modelProvider credential is bound. Only admins get the link.
+  const credentials = credentialsDestination(isAdmin)
+  const openCredentials = credentials
+    ? () => {
+        openView(credentials.view)
+        setTab(credentials.tab)
+      }
+    : undefined
 
   return (
     <div className="flex h-dvh flex-col">
@@ -411,10 +417,10 @@ export function ConsoleShell() {
         </div>
       )}
       {view === "admin" && isAdmin ? (
-        <AdminConsole session={session} defaultTab={adminDefaultTab} />
+        <AdminConsole session={session} />
       ) : view === "deploy" ? (
-        <DeployView session={session} target={selected} sessionId={sessionId} onEnterConsole={() => { setView("console"); refresh("user") }}
-          onOpenCredentials={isAdmin ? () => { setView("console"); setTab("credentials") } : undefined} />
+        <DeployView session={session} target={selected} sessionId={sessionId} onEnterConsole={() => { openView("console"); refresh("user") }}
+          onOpenCredentials={openCredentials} />
       ) : view === "cicd" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <CicdGuide session={session} />
@@ -462,7 +468,7 @@ export function ConsoleShell() {
               loading={loading}
               refreshVersion={refreshVersion}
               onRefresh={() => refresh("user")}
-              onDeployAgent={() => setView("deploy")}
+              onDeployAgent={() => openView("deploy")}
               onOpenTab={(nextTab, target) => {
                 if (target) selectTarget(target)
                 setTab(nextTab)
@@ -602,10 +608,7 @@ export function ConsoleShell() {
             sessionId={sessionId}
             codeWorkspace={codeWorkspace}
             active={view === "console" && tab === "ask"}
-            onConfigureModel={isAdmin ? () => {
-              setAdminDefaultTab("config")
-              setView("admin")
-            } : undefined}
+            onConfigureModel={openCredentials}
             onSessionChange={setSessionId}
             onExecRunningChange={setExecRunning}
           />
