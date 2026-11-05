@@ -283,7 +283,7 @@ doops admin token revoke --target <gateway-target> --id <token-id>
   时锁定被清理的 workspace，不是调用者的 session。排队超时返回 `target queue timeout`。
 - 结构化文件和工作区 read 使用共享只读通道，可并发读取，也可查看正在执行的 session；
   目标 read 权限和会话路径边界仍逐次校验，Agent 自升级期间仍禁止读取。
-- 结构化 K8s 的 `get/describe/logs/top/events/rollout-status`、任务状态和节点信息
+- 结构化 K8s 的 `get/describe/logs/top/events/rollout-status/configmap-keys`、任务状态和节点信息
   可与 target mutation 并行，结果未知时仍可诊断；Agent 自升级阻止这些查询。
 - 公网 HTTP 代理只有 `GET/HEAD/OPTIONS/TRACE` 按只读查询处理；`POST/PUT/PATCH/DELETE`
   等其它方法按精确代理 route 互斥，不阻塞其它 route 或普通 session。转发中断且

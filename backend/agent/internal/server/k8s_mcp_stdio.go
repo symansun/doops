@@ -25,7 +25,7 @@ const (
 
 var (
 	k8sReadOperations = []string{
-		"get", "describe", "logs", "top", "events", "rollout-status",
+		"get", "describe", "logs", "top", "events", "rollout-status", "configmap-keys",
 		"helm-list", "helm-history", "helm-status", "helm-values",
 	}
 	helmMutationOperations = []string{
@@ -393,7 +393,7 @@ func k8sMCPToolDefinition(name string, operations []string, description string) 
 			"operation": map[string]interface{}{
 				"type":        "string",
 				"enum":        operations,
-				"description": "Use get, describe, logs, top, events, rollout-status, or the Helm reads helm-list, helm-history, helm-status, helm-values. get/top require kind; describe requires kind and name; logs/rollout-status require resource; helm-history/helm-status/helm-values require name (the release) and namespace. helm-values returns key paths only.",
+				"description": "Use get, describe, logs, top, events, rollout-status, configmap-keys, or the Helm reads helm-list, helm-history, helm-status, helm-values. get/top require kind; describe requires kind and name; logs/rollout-status require resource; helm-history/helm-status/helm-values require name (the release) and namespace. configmap-keys lists ConfigMap data key names without values (optional name, namespace, all_namespaces, selector). helm-values returns key paths only.",
 			},
 			"kind": map[string]interface{}{
 				"type":        "string",
@@ -438,7 +438,7 @@ func k8sMCPToolDefinition(name string, operations []string, description string) 
 				"required":   []string{"operation", "resource"},
 			},
 			map[string]interface{}{
-				"properties": map[string]interface{}{"operation": map[string]interface{}{"enum": []string{"events", "helm-list"}}},
+				"properties": map[string]interface{}{"operation": map[string]interface{}{"enum": []string{"events", "configmap-keys", "helm-list"}}},
 				"required":   []string{"operation"},
 			},
 			map[string]interface{}{
