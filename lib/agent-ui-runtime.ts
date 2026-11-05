@@ -8,6 +8,7 @@ import type { AgentAttachmentReference } from "@agent-cloud/agent-ui"
 import type { Session, Target } from "./client"
 import type { AgentSessionSnapshot } from "@agent-cloud/agent-ui"
 import { createDoopsAgentSessionTransport } from "./agent-session-transport"
+import { agentErrorMessage } from "./agent-error"
 import { createDoopsCodeWorkspace, loadDoopsWorkspaceArtifact } from "./agent-code-workspace"
 import type { CodeWorkspaceSource } from "@agent-cloud/agent-ui"
 
@@ -38,6 +39,7 @@ export function createDoopsAgentUiRuntime(options: {
       const model = snapshot.configuration?.find((control) => control.id === "model")?.value
       return {
         ...snapshot,
+        error: agentErrorMessage(snapshot.error),
         metadata: [
           { id: "target", label: "目标", value: `${options.target.cluster}/${options.target.instance}` },
           ...(model ? [{ id: "model", label: "模型", value: model }] : []),
