@@ -7,6 +7,7 @@ import { randomSession } from "@/lib/gateway"
 import {
   createCredential,
   bindCredentialToTarget,
+  buildBindingScope,
   listCredentialBindings,
   listCredentialVersions,
   listCredentials,
@@ -1023,20 +1024,16 @@ function BindingDialog({
   const [selectedUse, setSelectedUse] = useState<CredentialUse>(TYPE_USES[credential.type])
   const use = selectedUse
   const [namespace, setNamespace] = useState("")
+  const [requiredKeys, setRequiredKeys] = useState("")
   const [busy, setBusy] = useState(false)
 
   async function submit() {
-    const selectedNamespace = namespace.trim()
-    if (!selectedNamespace) {
-      onError("请填写目标 Agent 已获 Kubernetes RBAC 授权的 Secret namespace")
+    let scope: CredentialBindingScope
+    try {
+      scope = buildBindingScope(target, { use, namespace, requiredKeys })
+    } catch (err) {
+      onError((err as Error).message)
       return
-    }
-    const scope: CredentialBindingScope = {
-      cluster: target.cluster,
-      instance: target.instance,
-      namespace: selectedNamespace,
-      use,
-      workload: { kind: "", name: "" },
     }
     setBusy(true)
     onError("")
@@ -1072,10 +1069,23 @@ function BindingDialog({
         <p className="text-xs text-muted-foreground sm:col-span-2">
           请填写目标 Agent 已获 Kubernetes RBAC 授权、可创建临时 Secret 的 namespace。Gateway 当前不会提供可写 namespace 列表；不要假设 default 可用。
         </p>
+        {use === "opaqueSecret" && (
+          <div className="flex flex-col gap-1 sm:col-span-2">
+            <TextField
+              label="required keys（可选，逗号分隔）"
+              value={requiredKeys}
+              onChange={setRequiredKeys}
+              placeholder="例如 DB_URL,DB_PASSWORD"
+            />
+            <p className="text-xs text-muted-foreground">
+              填写后，验证要求版本内容的键集合与之完全相等；不填则按版本内容推断。只填键名，不要填值。
+            </p>
+          </div>
+        )}
         <div className="flex justify-end sm:col-span-2">
           <button
             onClick={submit}
-            disabled={busy}
+            disabled={busy || !namespace.trim()}
             className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
           >
             <ShieldIcon width={14} height={14} /> {busy ? "绑定中" : "确认绑定"}
