@@ -20,8 +20,22 @@ type HostedSession = {
 }
 const sessions = new Map<string, HostedSession>()
 
+// Gateway admission answers (tunnel_hub.go handleGatewayToolCall) given only after the token and target grant pass.
+const gatewayBusy = /^(?:target busy|target queue (?:full|timeout)|session has an active operation)/
+
 export async function authorizedAgentSession(context: AgentGatewayContext, signal: AbortSignal): Promise<HostedSession> {
-  const raw = await agentGatewayCall(context, { mode: "metadata" }, signal)
+  const key = createHash("sha256").update(JSON.stringify([context.gateway, context.token, context.cluster, context.instance, context.sessionId])).digest("hex")
+  let raw: string
+  try { raw = await agentGatewayCall(context, { mode: "metadata" }, signal) } catch (error) {
+    // The metadata read is an ask on this session, so the Gateway answers "busy" while this session's release runs.
+    // That answer already proves the token and grant; reattach the caller to the release it hosts here.
+    const hosted = sessions.get(key)
+    if (hosted && error instanceof AgentGatewayError && gatewayBusy.test(error.message)) {
+      hosted.touchedAt = Date.now()
+      return hosted
+    }
+    throw error
+  }
   let metadata: Record<string, unknown>
   try { metadata = JSON.parse(raw) } catch { throw new AgentGatewayError("DoAgent metadata 不是合法 JSON") }
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) throw new AgentGatewayError("DoAgent metadata 无效")
@@ -38,7 +52,6 @@ export async function authorizedAgentSession(context: AgentGatewayContext, signa
   for (const [key, value] of sessions) {
     if (!value.active && !value.subscribers && now - value.touchedAt > 30 * 60_000) sessions.delete(key)
   }
-  const key = createHash("sha256").update(JSON.stringify([context.gateway, context.token, context.cluster, context.instance, context.sessionId])).digest("hex")
   let hosted = sessions.get(key)
   if (!hosted) {
     if (sessions.size >= 100) throw new AgentGatewayError("控制台会话容量已满", 429)
@@ -135,7 +148,7 @@ export async function executeAgentCommand(hosted: HostedSession, context: AgentG
         hosted.active.uncertain = true
         hosted.uncertainCommandIds.add(owned.commandId)
       }
-      const failed = commandReceipt(owned, CommandReceiptState.FAILED, "会话状态发布失败，远端结果未确认")
+      const failed = commandReceipt(owned, CommandReceiptState.FAILED, "会话状态发布失败，远端结果未确认", true)
       await hosted.source.emit([receiptEvent(failed), { itemId: `status:${owned.commandId}`, turnId: owned.commandId,
         event: create(AgentEventSchema, { event: { case: "sessionStatusChanged", value: { status: SessionStatus.FAILED, error: failed.error } } }).event }], owned.streamEpoch)
     }).finally(() => {
@@ -183,7 +196,7 @@ async function runOperation(hosted: HostedSession, context: AgentGatewayContext,
   }
   if (hosted.active?.command.commandId === command.commandId) hosted.active.uncertain = uncertain
   const status = failure ? SessionStatus.FAILED : SessionStatus.COMPLETED
-  const receipt = commandReceipt(command, canceled ? CommandReceiptState.CANCELLED : failure ? CommandReceiptState.FAILED : CommandReceiptState.SUCCEEDED, failure)
+  const receipt = commandReceipt(command, canceled ? CommandReceiptState.CANCELLED : failure ? CommandReceiptState.FAILED : CommandReceiptState.SUCCEEDED, failure, uncertain)
   if (uncertain) hosted.uncertainCommandIds.add(command.commandId)
   await hosted.source.emit([
     ...terminalEvents,
@@ -260,12 +273,14 @@ function userMessageContent(command: CommandEnvelope, instruction: string) {
   return command.command.case === "sendPrompt" ? [...content, ...command.command.value.attachments] : content
 }
 
-function commandReceipt(command: CommandEnvelope, state: CommandReceiptState, failure?: string) {
+// An apply whose outcome is unconfirmed may already have changed the target, so it carries its own code.
+function commandReceipt(command: CommandEnvelope, state: CommandReceiptState, failure?: string, uncertain = false) {
+  const code = uncertain && command.command.case === "extension" ? "doops_apply_outcome_unknown" : "doops_operation_failed"
   return create(CommandReceiptSchema, {
     sessionId: command.sessionId, commandId: command.commandId, payloadDigest: command.payloadDigest, state,
     receivedAt: command.issuedAt, updatedAt: new Date().toISOString(),
     ...(command.command.case === "extension" ? { interactionKind: "extension" } : {}),
-    ...(failure ? { error: { code: "doops_operation_failed", message: failure } } : {}),
+    ...(failure ? { error: { code, message: failure } } : {}),
   })
 }
 

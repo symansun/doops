@@ -4,14 +4,10 @@ import { Database, Send, Square } from "lucide-react"
 import { useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target, type ToolCancel } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
-import { unseenResultText } from "@/lib/agent-output"
+import { addAgentRunNote, addAgentRunOutput, addAgentRunResult, startAgentRun, type AgentRun, type AgentRunNote } from "@/lib/agent-output"
+import { AgentRunOutput } from "@/components/agent-run-output"
 
 type DatabaseMode = "query" | "discover" | "plan"
-
-interface DatabaseLine {
-  kind: "out" | "err" | "info"
-  text: string
-}
 
 const QUICK_REQUESTS: Array<{ label: string; mode: DatabaseMode; request: string }> = [
   { label: "扫描数据库实例", mode: "discover", request: "扫描当前目标集群中的数据库实例和可识别数据库，返回 database_asset_id、引擎、命名空间、服务、端口、数据库名和需要补充的凭据，不读取 Secret 值。" },
@@ -34,21 +30,20 @@ export function DatabasePanel({
   const [mode, setMode] = useState<DatabaseMode>("query")
   const [request, setRequest] = useState("")
   const [databaseHint, setDatabaseHint] = useState("")
-  const [lines, setLines] = useState<DatabaseLine[]>([])
+  const [agentRun, setAgentRun] = useState<AgentRun | null>(null)
   const [running, setRunning] = useState(false)
   const [stopPending, setStopPending] = useState(false)
   const [error, setError] = useState("")
   const cancelRef = useRef<ToolCancel | null>(null)
 
-  function push(line: DatabaseLine) {
-    setLines((current) => [...current, line])
+  function push(note: AgentRunNote) {
+    setAgentRun((current) => current && addAgentRunNote(current, note))
   }
 
   async function run() {
     const text = request.trim()
     if (!text || running || stopPending) return
     setError("")
-    setLines([])
     setRunning(true)
     setStopPending(false)
     onRunningChange(true)
@@ -60,8 +55,7 @@ export function DatabasePanel({
       databaseHint.trim() ? `数据库提示：${databaseHint.trim()}` : "",
       `用户需求：${text}`,
     ].filter(Boolean).join("\n")
-    push({ kind: "info", text: `目标 ${target.cluster}/${target.instance} · ${modeLabel(mode)}` })
-    let streamedAssistant = ""
+    setAgentRun(startAgentRun(`目标 ${target.cluster}/${target.instance} · ${modeLabel(mode)}`))
     try {
       await callTool(
         session,
@@ -79,13 +73,10 @@ export function DatabasePanel({
           onCancelReady: (cancel) => { cancelRef.current = cancel },
         },
         (event) => {
-          if (event.type === "output") {
-            if (event.kind === "assistant_delta") streamedAssistant += event.data
-            push({ kind: "out", text: event.data })
-          }
+          if (event.type === "output") setAgentRun((current) => current && addAgentRunOutput(current, event.kind, event.data))
           if (event.type === "result") {
-            const result = unseenResultText(streamedAssistant, extractText(event.result))
-            if (result) push({ kind: "out", text: result })
+            const result = extractText(event.result)
+            setAgentRun((current) => current && addAgentRunResult(current, result))
           }
         },
       )
@@ -197,19 +188,7 @@ export function DatabasePanel({
         </div>
 
         <section className="min-h-40 rounded-md border bg-background/60 p-3" aria-live="polite">
-          {lines.length === 0 ? (
-            <div className="flex min-h-32 items-center justify-center text-center text-xs text-muted-foreground">
-              结果、journal 和 evidence 会由目标 Agent 返回，并进入统一 Gateway 审计。
-            </div>
-          ) : (
-            <div className="space-y-2 font-mono text-xs leading-5">
-              {lines.map((line, index) => (
-                <pre key={`${index}-${line.text.slice(0, 12)}`} className={`whitespace-pre-wrap break-words ${line.kind === "err" ? "text-destructive" : line.kind === "info" ? "text-muted-foreground" : "text-foreground/90"}`}>
-                  {line.text}
-                </pre>
-              ))}
-            </div>
-          )}
+          <AgentRunOutput run={agentRun} running={running} empty="结果、journal 和 evidence 会由目标 Agent 返回，并进入统一 Gateway 审计。" />
         </section>
       </div>
     </div>
