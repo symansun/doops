@@ -6,6 +6,7 @@ import {
   setGatewaySession,
 } from "@/lib/gateway-policy"
 import { probeGatewayAdmin } from "@/lib/server/gateway-admin"
+import { gatewayErrorResponse } from "@/lib/server/gateway-errors"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -56,10 +57,7 @@ export async function POST(req: Request) {
       cache: "no-store",
       redirect: "manual",
     })
-    if (!response.ok) {
-      const text = await response.text()
-      return Response.json({ error: text || `token 验证失败 (${response.status})` }, { status: response.status })
-    }
+    if (!response.ok) return await gatewayErrorResponse(response)
     const isAdmin = await probeGatewayAdmin(gateway, token)
     const headers = new Headers({ "Content-Type": "application/json" })
     setGatewaySession(headers, { gateway, token, username: body.username || "" })
