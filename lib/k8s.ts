@@ -299,6 +299,16 @@ export function k8sFormFor(scoped: K8sScopedForm | null, targetKey: string): K8s
   return { ...scoped.input, confirm: false }
 }
 
+// Saved forms belong to one login session object. Logging out drops the session,
+// so the next login in the same browser, by any account, starts from an empty form.
+export function createK8sFormStore() {
+  const forms = new WeakMap<object, K8sScopedForm>()
+  return {
+    load: (owner: object, targetKey: string): K8sInput => k8sFormFor(forms.get(owner) ?? null, targetKey),
+    save: (owner: object, targetKey: string, input: K8sInput) => { forms.set(owner, { targetKey, input }) },
+  }
+}
+
 // ---- Output ----
 
 export type K8sLogKind = "out" | "err" | "info"
@@ -489,7 +499,7 @@ export function describeK8sFailure(message: string, context: K8sFailureContext):
   if (denial) {
     return {
       kind: "rbac",
-      text: `目标 Agent 的 Kubernetes 身份权限比该目标的授权窄：${denial}。你的账号对该目标已有授权，这是 Agent 部署配置问题：请平台管理员把该 Agent 身份对齐为集群级权限（集群级 ClusterRoleBinding 或挂载的管理员 kubeconfig），不要按命名空间单独申请授权。`,
+      text: `目标 Agent 在集群里的 Kubernetes 身份无权执行此操作：${denial}。你对该目标的 DoOps 授权没有问题；这台 Agent 能操作哪些资源由它的部署配置（ServiceAccount 的 RBAC）决定。如需执行，请联系平台管理员调整该 Agent 的 RBAC，或换用能执行该操作的目标。`,
     }
   }
   const missing = notFound(evidence)

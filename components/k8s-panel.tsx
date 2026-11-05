@@ -8,12 +8,12 @@ import {
   K8S_LOG_MAX_LINES,
   K8S_OPERATIONS,
   appendK8sLog,
+  createK8sFormStore,
   describeK8sFailure,
   isK8sMutation,
   k8sConfirmText,
   k8sFields,
   k8sFormAfterRun,
-  k8sFormFor,
   k8sResultHint,
   runK8s,
   type K8sField,
@@ -21,7 +21,6 @@ import {
   type K8sLog,
   type K8sLogKind,
   type K8sOperation,
-  type K8sScopedForm,
 } from "@/lib/k8s"
 
 const READ_OPERATIONS = (Object.keys(K8S_OPERATIONS) as K8sOperation[]).filter((op) => !K8S_OPERATIONS[op].mutation)
@@ -53,9 +52,10 @@ const FAILURE_EVIDENCE_CHARS = 16_000
 
 const inputClass = "min-w-0 rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-ring disabled:opacity-60"
 
-// The panel unmounts when the tab changes. The form is kept for the same target
-// only, so reopening the tab on another target never shows its namespace.
-let savedForm: K8sScopedForm | null = null
+// The panel unmounts when the tab changes. The form is kept for the same login
+// and target only, so reopening the tab on another target or after another
+// login never shows the previous namespace.
+const savedForms = createK8sFormStore()
 
 export function K8sPanel({
   session,
@@ -69,7 +69,7 @@ export function K8sPanel({
   onRunningChange: (running: boolean) => void
 }) {
   const targetKey = target.key
-  const [input, setInput] = useState<K8sInput>(() => k8sFormFor(savedForm, targetKey))
+  const [input, setInput] = useState<K8sInput>(() => savedForms.load(session, targetKey))
   const [log, setLog] = useState<K8sLog>(EMPTY_K8S_LOG)
   const [running, setRunning] = useState(false)
   const [stopPending, setStopPending] = useState(false)
@@ -88,8 +88,8 @@ export function K8sPanel({
   }, [log])
 
   useEffect(() => {
-    savedForm = { targetKey, input }
-  }, [targetKey, input])
+    savedForms.save(session, targetKey, input)
+  }, [session, targetKey, input])
 
   function update(patch: Partial<K8sInput>) {
     // Any change to what will be sent invalidates a previous write confirmation.
