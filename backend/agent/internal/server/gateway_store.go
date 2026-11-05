@@ -1088,6 +1088,43 @@ func (s *GatewayStore) ListAudit(limit int) ([]AuditEvent, error) {
 }
 
 func (s *GatewayStore) ListAuditFiltered(filter AuditFilter) ([]AuditEvent, error) {
+	query, args := auditFilterQuery(filter)
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var events []AuditEvent
+	for rows.Next() {
+		var ev AuditEvent
+		var action, started, ended, scopeJSON string
+		if err := rows.Scan(&ev.ID, &ev.UserID, &ev.TokenID, &ev.Cluster, &ev.Instance,
+			&ev.CredentialID, &ev.VersionID, &ev.GrantID, &scopeJSON,
+			&ev.ResourceVersion, &ev.Digest, &ev.CorrelationID,
+			&action, &ev.Session, &ev.CommandSummary, &ev.Status, &ev.Error, &ev.Tail,
+			&ev.BytesIn, &ev.BytesOut, &started, &ended); err != nil {
+			return nil, err
+		}
+		if scopeJSON != "" {
+			var scope CredentialGrantScope
+			if err := json.Unmarshal([]byte(scopeJSON), &scope); err != nil {
+				return nil, err
+			}
+			ev.Scope = &scope
+		}
+		ev.Action = GatewayAction(action)
+		ev.StartedAt, _ = parseTime(started)
+		if ended != "" {
+			ev.EndedAt, _ = parseTime(ended)
+		}
+		events = append(events, ev)
+	}
+	return events, rows.Err()
+}
+
+// auditFilterQuery builds the ListAuditFiltered statement. audit_indexes.sql
+// keeps an index for each filter combination the console and CLI send.
+func auditFilterQuery(filter AuditFilter) (string, []any) {
 	if filter.Limit <= 0 || filter.Limit > 500 {
 		filter.Limit = 100
 	}
@@ -1131,37 +1168,7 @@ func (s *GatewayStore) ListAuditFiltered(filter AuditFilter) ([]AuditEvent, erro
 	}
 	query += " ORDER BY id DESC LIMIT ?"
 	args = append(args, filter.Limit)
-	rows, err := s.db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var events []AuditEvent
-	for rows.Next() {
-		var ev AuditEvent
-		var action, started, ended, scopeJSON string
-		if err := rows.Scan(&ev.ID, &ev.UserID, &ev.TokenID, &ev.Cluster, &ev.Instance,
-			&ev.CredentialID, &ev.VersionID, &ev.GrantID, &scopeJSON,
-			&ev.ResourceVersion, &ev.Digest, &ev.CorrelationID,
-			&action, &ev.Session, &ev.CommandSummary, &ev.Status, &ev.Error, &ev.Tail,
-			&ev.BytesIn, &ev.BytesOut, &started, &ended); err != nil {
-			return nil, err
-		}
-		if scopeJSON != "" {
-			var scope CredentialGrantScope
-			if err := json.Unmarshal([]byte(scopeJSON), &scope); err != nil {
-				return nil, err
-			}
-			ev.Scope = &scope
-		}
-		ev.Action = GatewayAction(action)
-		ev.StartedAt, _ = parseTime(started)
-		if ended != "" {
-			ev.EndedAt, _ = parseTime(ended)
-		}
-		events = append(events, ev)
-	}
-	return events, rows.Err()
+	return query, args
 }
 
 func credentialAuditScopeJSON(scope *CredentialGrantScope) (string, error) {
