@@ -97,8 +97,8 @@ func auditFilterPlan(t *testing.T, store *GatewayStore, filter AuditFilter) stri
 	return strings.Join(details, " | ")
 }
 
-// Every filter combination the console (components/audit-panel.tsx) and
-// `doops-gateway audit list` send must read its index in id order, and paging
+// Every filter combination the console (components/audit-panel.tsx) sends
+// must read its index in id order, and paging
 // with BeforeID must return exactly the matching rows, newest first.
 func TestAuditFilterCombinationsUseIndexesAndKeepPaging(t *testing.T) {
 	store := openCredentialTestStore(t)
