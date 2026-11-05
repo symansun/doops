@@ -4,6 +4,7 @@ import {
   setGatewaySession,
 } from "@/lib/gateway-policy"
 import { probeGatewayAdmin } from "@/lib/server/gateway-admin"
+import { gatewayErrorResponse } from "@/lib/server/gateway-errors"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -30,13 +31,8 @@ export async function POST(req: Request) {
       body: JSON.stringify({ username, password, name: name || "doops-console" }),
       redirect: "manual",
     })
+    if (!res.ok) return await gatewayErrorResponse(res)
     const text = await res.text()
-    if (!res.ok) {
-      return Response.json(
-        { error: text || `登录失败 (${res.status})` },
-        { status: res.status },
-      )
-    }
     let parsed: { token?: string; username?: string }
     try {
       parsed = JSON.parse(text) as { token?: string; username?: string }
@@ -55,9 +51,7 @@ export async function POST(req: Request) {
   } catch (err) {
     const policyResponse = gatewayPolicyResponse(err)
     if (policyResponse) return policyResponse
-    return Response.json(
-      { error: `无法连接 gateway: ${(err as Error).message}` },
-      { status: 502 },
-    )
+    // 网络层错误信息是英文且可能带内部地址，不回给浏览器。
+    return Response.json({ error: "无法连接 Gateway，请检查地址或网络" }, { status: 502 })
   }
 }
