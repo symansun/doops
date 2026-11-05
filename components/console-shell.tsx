@@ -240,7 +240,6 @@ export function ConsoleShell() {
           </span>
           {(view === "console" || view === "deploy") && (
             <TargetSwitcher
-              isAdmin={isAdmin}
               targets={targets}
               selected={selected}
               onSelect={selectTarget}
