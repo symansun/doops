@@ -21,9 +21,10 @@ conflicts: []
 | `events` | — | 整个 namespace 省略 `resource`；只看一个对象用 `resource=pod/<name>` |
 | `top` | `kind` | `kind=pods namespace=apps` |
 | `rollout-status` | `resource` | `resource=deployment/api namespace=apps` |
-| `helm-history` / `helm-status` | `name`、`namespace` | `name=<release>`；发布前先读 history 记下回滚目标 |
+| `helm-history` / `helm-status` | `name`、`namespace` | `name=<release>`；发布前先读 history 记下回滚目标。status 只给修订、状态和时间，不给 values/manifest/notes |
 | `helm-list` | — | `namespace=<ns>` 或 `all_namespaces=true` |
 | `helm-values` | `name`、`namespace` | 只返回 key 路径，看 chart 支持哪些配置 |
+| `configmap-keys` | — | `namespace=apps` 或 `all_namespaces=true`；可加 `name`、`selector`。只返回 ConfigMap 的键名，不返回值；不要对 ConfigMap 用 `describe` 或 `output=json` |
 
 namespaced 资源总是带 `namespace`；`nodes` 这类集群级资源不带。kind 用 kubectl 小写名。
 Secret、ServiceAccount 不开放读取。

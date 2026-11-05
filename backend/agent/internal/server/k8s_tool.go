@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"text/tabwriter"
 
 	"github.com/user/doops/agent/api"
 )
@@ -80,10 +81,16 @@ var (
 )
 
 type k8sCommand struct {
-	args          []string
-	helm          bool // run helm instead of kubectl
-	valueKeysOnly bool // print only the key paths of a values document
+	args              []string
+	helm              bool // run helm instead of kubectl
+	valueKeysOnly     bool // print only the key paths of a values document
+	statusOnly        bool // print only release metadata, not values, manifest or notes
+	configMapKeysOnly bool // print only the data key names of ConfigMaps
 }
+
+// configMapKeysOutputLimit bounds the kubectl JSON held in memory while its
+// values are discarded; a larger listing must be narrowed to a namespace.
+var configMapKeysOutputLimit = 64 << 20
 
 func handleK8STool(ctx context.Context, raw json.RawMessage, push notificationSender) (string, error) {
 	var params api.K8SParams
@@ -101,6 +108,12 @@ func handleK8STool(ctx context.Context, raw json.RawMessage, push notificationSe
 		return "", err
 	}
 	for _, command := range commands {
+		if command.configMapKeysOnly {
+			if err := runConfigMapKeysCommand(ctx, command.args, push); err != nil {
+				return "", err
+			}
+			continue
+		}
 		if command.helm {
 			if err := runHelmReadCommand(ctx, command, push); err != nil {
 				return "", err
@@ -269,6 +282,19 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 			args = append(args, "--for", params.Resource)
 		}
 		return []k8sCommand{{args: args}}, nil
+	case "configmap-keys":
+		// describe and get -o json print ConfigMap values, so this read keeps
+		// only the key names, the way helm-values keeps only key paths.
+		if params.Output != "" {
+			return nil, fmt.Errorf("configmap-keys has a fixed output; omit output")
+		}
+		args := namespace([]string{"get", "configmaps"})
+		if params.Name != "" {
+			args = append(args, params.Name)
+		} else {
+			args = selector(args)
+		}
+		return []k8sCommand{{configMapKeysOnly: true, args: append(args, "--output", "json")}}, nil
 	case "helm-list":
 		return []k8sCommand{{helm: true, args: namespace([]string{"list", "--output", "json"})}}, nil
 	case "helm-history", "helm-status", "helm-values":
@@ -282,7 +308,9 @@ func buildK8SCommands(params api.K8SParams) ([]k8sCommand, error) {
 		case "helm-history":
 			return []k8sCommand{{helm: true, args: []string{"history", params.Name, "--namespace", params.Namespace, "--max", "20", "--output", "json"}}}, nil
 		case "helm-status":
-			return []k8sCommand{{helm: true, args: []string{"status", params.Name, "--namespace", params.Namespace, "--output", "json"}}}, nil
+			// helm status -o json carries the release values, rendered manifest and
+			// NOTES, any of which can hold plaintext secrets; only metadata is kept.
+			return []k8sCommand{{helm: true, statusOnly: true, args: []string{"status", params.Name, "--namespace", params.Namespace, "--output", "json"}}}, nil
 		default:
 			// Values can hold plaintext secrets, so only their key paths are returned.
 			return []k8sCommand{{helm: true, valueKeysOnly: true, args: []string{"get", "values", params.Name, "--namespace", params.Namespace, "--all", "--output", "json"}}}, nil
@@ -412,6 +440,9 @@ func runHelmReadCommand(ctx context.Context, command k8sCommand, push notificati
 	if err != nil {
 		return fmt.Errorf("helm %s failed: %s", command.args[0], sanitizeSecretText(strings.TrimSpace(string(output))))
 	}
+	if command.statusOnly {
+		return pushHelmStatusSummary(output, push)
+	}
 	if !command.valueKeysOnly {
 		push(rawNotification(string(output)))
 		return nil
@@ -423,6 +454,125 @@ func runHelmReadCommand(ctx context.Context, command k8sCommand, push notificati
 	keys := helmValueKeyPaths("", values)
 	sort.Strings(keys)
 	push(rawNotification("value keys (values are not shown):\n" + strings.Join(keys, "\n") + "\n"))
+	return nil
+}
+
+// helmStatusSummary is the part of helm status -o json that holds no values:
+// config, manifest, hooks and info.notes are dropped before anything is printed.
+type helmStatusSummary struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Version   int    `json:"version"`
+	Info      struct {
+		Status        string `json:"status"`
+		Description   string `json:"description,omitempty"`
+		FirstDeployed string `json:"first_deployed,omitempty"`
+		LastDeployed  string `json:"last_deployed,omitempty"`
+		Deleted       string `json:"deleted,omitempty"`
+	} `json:"info"`
+}
+
+func pushHelmStatusSummary(output []byte, push notificationSender) error {
+	var summary helmStatusSummary
+	if err := json.Unmarshal(output, &summary); err != nil || summary.Name == "" {
+		// The decoder's message can quote input; the input holds values.
+		return fmt.Errorf("decode helm status: helm output is not a release status")
+	}
+	// A failed release description can repeat rendered text.
+	summary.Info.Description = redactSecretText(summary.Info.Description)
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		return fmt.Errorf("encode helm status: %w", err)
+	}
+	push(rawNotification(string(encoded) + "\n"))
+	return nil
+}
+
+// configMapKeysObject decodes one ConfigMap or a List of them. Values are kept
+// only as raw JSON so they can be dropped; nothing here formats them.
+type configMapKeysObject struct {
+	Kind     string `json:"kind"`
+	Metadata struct {
+		Namespace string `json:"namespace"`
+		Name      string `json:"name"`
+	} `json:"metadata"`
+	Data       map[string]json.RawMessage `json:"data"`
+	BinaryData map[string]json.RawMessage `json:"binaryData"`
+	Items      []configMapKeysObject       `json:"items"`
+}
+
+// runConfigMapKeysCommand runs kubectl get configmaps -o json and prints only
+// namespace, name and the data/binaryData key names. Neither the output nor an
+// error carries a value.
+func runConfigMapKeysCommand(ctx context.Context, args []string, push notificationSender) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "kubectl", args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("start kubectl: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start kubectl: %w", err)
+	}
+	output, readErr := io.ReadAll(io.LimitReader(stdout, int64(configMapKeysOutputLimit)+1))
+	if len(output) > configMapKeysOutputLimit {
+		cancel()
+		_ = cmd.Wait()
+		return fmt.Errorf("configmap listing exceeds %d bytes; narrow it to one namespace or a selector", configMapKeysOutputLimit)
+	}
+	if err := cmd.Wait(); err != nil {
+		detail := sanitizeSecretText(strings.TrimSpace(stderr.String()))
+		if detail == "" {
+			detail = err.Error()
+		}
+		return fmt.Errorf("kubectl %s failed: %s", strings.Join(args, " "), detail)
+	}
+	if readErr != nil {
+		return fmt.Errorf("read kubectl output: %w", readErr)
+	}
+	var document configMapKeysObject
+	if err := json.Unmarshal(output, &document); err != nil {
+		// The decoder's message can quote input; the input holds values.
+		return fmt.Errorf("decode configmaps: kubectl output is not ConfigMap JSON")
+	}
+	objects := []configMapKeysObject{document}
+	if document.Kind == "List" || document.Items != nil {
+		objects = document.Items
+	}
+	var table bytes.Buffer
+	writer := tabwriter.NewWriter(&table, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(writer, "NAMESPACE\tNAME\tKEYS")
+	for _, object := range objects {
+		if object.Metadata.Name == "" {
+			return fmt.Errorf("decode configmaps: kubectl output is not ConfigMap JSON")
+		}
+		keys := make([]string, 0, len(object.Data)+len(object.BinaryData))
+		for key := range object.Data {
+			keys = append(keys, key)
+		}
+		for key := range object.BinaryData {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		// ConfigMap keys cannot contain commas, spaces or "<", so the list and
+		// the empty marker stay unambiguous.
+		joined := strings.Join(keys, ",")
+		if joined == "" {
+			joined = "<none>"
+		}
+		namespace := object.Metadata.Namespace
+		if namespace == "" {
+			namespace = "<none>"
+		}
+		fmt.Fprintf(writer, "%s\t%s\t%s\n", namespace, object.Metadata.Name, joined)
+	}
+	if err := writer.Flush(); err != nil {
+		return fmt.Errorf("format configmap keys: %w", err)
+	}
+	push(rawNotification(table.String()))
 	return nil
 }
 
