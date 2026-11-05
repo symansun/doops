@@ -393,6 +393,12 @@ export interface ShellFailure {
   exitCode?: number
 }
 
+// /api/rpc 在 Gateway 拒绝 WebSocket 升级时给出“…（HTTP n）”形式的中文原因；
+// gatewayUpgradeStatus 取出其中的状态码，不是这种格式时返回 null。
+export function gatewayUpgradeStatus(raw: string): string | null {
+  return /（HTTP (\d{3})）$/.exec(raw.trim())?.[1] ?? null
+}
+
 // Gateway 对执行中被打断的变更命令（doops_shell 等）不能确认干净停止，会返回这条原因。
 const INTERRUPTED_MUTATION = "mutation was interrupted before it finished"
 
@@ -422,8 +428,7 @@ function classifyShellFailure(
   }
   const blocked = /blocked_command\(([^)]+)\):\s*(.*)/.exec(raw)
   if (blocked) return { kind: "blocked", text: `Agent 拒绝执行（${blocked[1]}）：${blocked[2]}` }
-  // /api/rpc 在 Gateway 拒绝 WebSocket 升级时给出“…（HTTP n）”形式的中文原因。
-  const upgrade = /（HTTP (\d{3})）$/.exec(raw)?.[1]
+  const upgrade = gatewayUpgradeStatus(raw)
   if (/^forbidden\b/i.test(raw) || upgrade === "403") return { kind: "forbidden", text: `无权在 ${where} 上执行命令：请联系管理员授权该目标` }
   if (/^target offline\b/i.test(raw) || upgrade === "404") {
     return { kind: "offline", text: `目标离线：${where} 当前未连接 Gateway，请确认 Agent 在线后重试` }
