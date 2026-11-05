@@ -8,7 +8,8 @@
 | 要做的事 | 用这个 | 你会拿到什么 |
 |---|---|---|
 | 读 K8s 状态（工作负载、网络、配置、RBAC、节点、事件、存储、CRD、日志） | `mcp_doops_k8s_read` 的 get/describe/logs/top/events/rollout-status | kubectl 原样输出；支持 `selector`、`all_namespaces`、`previous`、`since`、`output=jsonpath=...` |
-| 读 Helm release | `mcp_doops_k8s_read` 的 `helm-list`/`helm-history`/`helm-status`/`helm-values` | revision 历史与状态；values 只给 key 路径 |
+| 读 Helm release | `mcp_doops_k8s_read` 的 `helm-list`/`helm-history`/`helm-status`/`helm-values` | revision 历史与状态（status 不含 values、manifest 和 notes）；values 只给 key 路径 |
+| 看 ConfigMap 有哪些键 | `mcp_doops_k8s_read` 的 `configmap-keys` | 命名空间、名称、键名，不含值 |
 | 发布、回滚、卸载业务 workload | `mcp_doops_helm` 的 `upgrade-install`/`rollback`/`uninstall`，带 `confirm=true` | 工具先 server dry-run，再执行，再逐个核对渲染出的工作负载；成功返回 `final Helm workload spec verified: N workload(s)`，失败返回 `错误码: 原因` |
 | 网站巡检 / 变更 | `mcp_doops_web_read` / `mcp_doops_web`（变更带 `confirm=true`） | SiteSpec、`nginx -t`、reload、健康检查和回滚证据 |
 | 数据库只读查询 | `mcp_dosql_read` | 结果和 evidence；数据库变更由用户用 `doops sql --mode apply --sql/--file` 提交 |
