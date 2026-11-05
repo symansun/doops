@@ -44,7 +44,7 @@ export interface AuditSummary {
   status?: Record<string, number>
 }
 
-export type AuditScope = "target" | "session" | "self" | "global"
+export type AuditScope = "target" | "session" | "self" | "global" | "credential"
 
 export const AUDIT_ACTIONS = [
   "exec",
@@ -85,6 +85,54 @@ export const AUDIT_STATUSES = [
   "busy",
   "rate_limited",
 ] as const
+
+export interface AuditQueryInput {
+  scope: AuditScope
+  target: { cluster: string; instance: string }
+  sessionId: string
+  credentialId: string
+  action: string
+  status: string
+  limit: number
+}
+
+export type AuditQueryPlan =
+  | { ok: true; params: Record<string, string> }
+  | { ok: false; reason: "missing" | "invalid"; message: string }
+
+const CREDENTIAL_ID = /^cred_[0-9a-f]{24}$/
+
+// 审计页的查询参数。凭据的资源级审计（写入版本、激活、授权、验证、吊销）不带目标，
+// session 字段存凭据 ID，所以「按凭据」只发 session=<id>；可见性由 Gateway 按本人和凭据归属判断。
+export function auditQueryParams(input: AuditQueryInput): AuditQueryPlan {
+  const params: Record<string, string> = { limit: String(input.limit) }
+  switch (input.scope) {
+    case "target":
+    case "session":
+      params.cluster = input.target.cluster
+      params.instance = input.target.instance
+      if (input.scope === "session") params.session = input.sessionId
+      break
+    case "self":
+      params.user_id = "self"
+      break
+    case "global":
+      params.view = "global"
+      break
+    case "credential": {
+      const id = input.credentialId.trim()
+      if (!id) return { ok: false, reason: "missing", message: "填写凭据 ID（cred_ 开头）后查询该凭据的审计记录" }
+      if (!CREDENTIAL_ID.test(id)) {
+        return { ok: false, reason: "invalid", message: "凭据 ID 格式应为 cred_ 加 24 位小写十六进制，可在凭据页复制" }
+      }
+      params.session = id
+      break
+    }
+  }
+  if (input.action) params.action = input.action
+  if (input.status) params.status = input.status
+  return { ok: true, params }
+}
 
 // gateway 目标动作工具名
 export const TOOLS = {

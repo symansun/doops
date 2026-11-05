@@ -635,5 +635,7 @@ CLI 在该类别后给出 `next:` 步骤：先 `credential list --target` 查看
 - resourceVersion、digest 或稳定错误类别。
 
 审计不记录 payload。凭据 owner 和 platform admin 可以通过
-Gateway `/v1/audit` 按 target 和 credential 元数据查询；当前 CLI 尚未提供独立的
+Gateway `/v1/audit` 按 target 和 credential 元数据查询；资源级操作不带 target，
+按 `session=<credential_id>` 查询，控制台审计页的「按凭据」范围即此查询，详见
+[DOOPS_API_GUIDE.md](DOOPS_API_GUIDE.md) 的审计查询。当前 CLI 尚未提供独立的
 credential audit 子命令。

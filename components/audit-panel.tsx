@@ -5,6 +5,7 @@ import { fetchAudit, type AuditEvent, type Session, type Target } from "@/lib/cl
 import {
   AUDIT_ACTIONS,
   AUDIT_STATUSES,
+  auditQueryParams,
   type AuditScope,
 } from "@/lib/gateway"
 import { HistoryIcon, RefreshIcon } from "./icons"
@@ -33,26 +34,28 @@ export function AuditPanel({
   const [scope, setScope] = useState<AuditScope>("target")
   const [action, setAction] = useState("")
   const [status, setStatus] = useState("")
+  // 输入框的草稿；按回车或点「查询」后才写入 credentialId 并发起查询。
+  const [credentialInput, setCredentialInput] = useState("")
+  const [credentialId, setCredentialId] = useState("")
+  const [hint, setHint] = useState("")
   const requestId = useRef(0)
 
   const load = useCallback(async () => {
     const id = ++requestId.current
-    setLoading(true)
     setError("")
+    setHint("")
     setEvents([])
-    const params: Record<string, string> = { limit: "50" }
-    if (scope === "target" || scope === "session") {
-      params.cluster = target.cluster
-      params.instance = target.instance
+    const plan = auditQueryParams({ scope, target, sessionId, credentialId, action, status, limit: 50 })
+    if (!plan.ok) {
+      setLoading(false)
+      if (plan.reason === "missing") setHint(plan.message)
+      else setError(plan.message)
+      return
     }
-    if (scope === "session") params.session = sessionId
-    if (scope === "self") params.user_id = "self"
-    if (scope === "global") params.view = "global"
-    if (action) params.action = action
-    if (status) params.status = status
+    setLoading(true)
 
     try {
-      const r = await fetchAudit(session, params)
+      const r = await fetchAudit(session, plan.params)
       if (id !== requestId.current) return
       if (r.error) {
         setError(r.status === 403 ? "当前账号无权查看此审计范围" : r.error)
@@ -70,7 +73,15 @@ export function AuditPanel({
     // The target poll replaces the object on every heartbeat; reload only when
     // the target itself changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, target.cluster, target.instance, sessionId, scope, action, status])
+  }, [session, target.cluster, target.instance, sessionId, scope, action, status, credentialId])
+
+  function submitCredential() {
+    const next = credentialInput.trim()
+    setCredentialInput(next)
+    // 值没变时 load 不会重建，手动再查一次。
+    if (next === credentialId) load()
+    else setCredentialId(next)
+  }
 
   useEffect(() => {
     load()
@@ -91,7 +102,33 @@ export function AuditPanel({
             <option value="session">本会话</option>
             <option value="self">本人跨目标</option>
             <option value="global">全局（管理员）</option>
+            <option value="credential">按凭据</option>
           </select>
+          {scope === "credential" && (
+            <form
+              className="flex items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault()
+                submitCredential()
+              }}
+            >
+              <input
+                value={credentialInput}
+                onChange={(e) => setCredentialInput(e.target.value)}
+                placeholder="cred_…"
+                spellCheck={false}
+                className="h-9 w-72 rounded-md border bg-background px-2.5 font-mono text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/25"
+                aria-label="凭据 ID"
+              />
+              <button
+                type="submit"
+                disabled={loading}
+                className="h-9 rounded-md border px-3 text-sm text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+              >
+                查询
+              </button>
+            </form>
+          )}
           <select
             value={action}
             onChange={(e) => setAction(e.target.value)}
@@ -136,14 +173,16 @@ export function AuditPanel({
       <div className="flex-1 overflow-y-auto p-4">
         <p className="mb-4 max-w-4xl text-sm leading-6 text-muted-foreground">
           普通用户仅查看本人记录；管理员可查看全局，凭据审计另按授权范围可见。最近 50 条。
+          {scope === "credential" && " 按凭据查询覆盖创建之后的写入版本、激活、授权、验证和吊销；部署时使用凭据、从 Secret 导入记在部署会话下，请按「该目标」或「本会话」查询。"}
         </p>
+        {hint && <p className="mb-3 text-sm text-muted-foreground">{hint}</p>}
         {error && (
           <p className="mb-3 rounded-lg bg-destructive/15 px-3 py-2 text-sm text-destructive">
             {error}
           </p>
         )}
         {loading && <p className="mb-3 text-sm text-muted-foreground">正在查询审计记录…</p>}
-        {!error && events.length === 0 && !loading && (
+        {!error && !hint && events.length === 0 && !loading && (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
             <HistoryIcon width={28} height={28} />
             <p className="text-sm">暂无审计记录</p>
