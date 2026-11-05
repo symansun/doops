@@ -1,7 +1,7 @@
 ---
 title: DoOps SQL Skill Remediation
 date: 2026-11-06
-status: source-verification-complete-release-pending
+status: mainline-release-in-progress
 scope: sql-contracts-and-skill-distribution
 ---
 
@@ -42,8 +42,8 @@ Reconstruct progress from this file after a context transition.
 | F1/F3/F4/F5: command, API, guide and README contracts | Implemented and locally verified | Compiled CLI, real Gateway handler and temporary SQLite commit/read-back |
 | F6/F7/F8: embedded DoSql command/evidence behavior | Implemented and locally verified | 91 Node CLI/filesystem checks, including independent processes and response-path conflicts |
 | F2: release skill distribution | Implemented and locally verified | 29 installer checks, including whole-install rollback, retained failed-recovery backups and physical-path deduplication |
-| Integration and independent review | Source review complete | CLI/Gateway/Agent packages passed; independent reviews closed; 311 Python checks passed with 3 reproduced baseline failures |
-| Push and CI | Pushed; PR #85 checks in progress | CNB branch `codex/sql-skill-contract-fixes`; release remains blocked by baseline failures |
+| Integration and independent review | Source review complete; baseline test repair verified locally | CLI/Gateway/Agent packages passed; independent SQL reviews closed; 320 Python checks passed after correcting hostAccess expectations |
+| Push and CI | PR #85 being prepared for merge | CNB branch `codex/sql-skill-contract-fixes`; require green checks for the final commit |
 | Published artifacts, installation and target rollout | Pending | Matching commit and runtime checks; no manual hotfix |
 
 ## Decisions
@@ -105,3 +105,21 @@ Reconstruct progress from this file after a context transition.
   state that stderr fields are not parsed into a Gateway error schema by the
   existing Go wrapper. This is a documentation correction, not a new protocol.
   CI runs against the PR merge ref; inspect its checks for the final outcome.
+
+## Mainline Release Follow-Up
+
+- The user authorized merging and publishing the mainline on 2026-11-06.
+  Scope is the mainline artifacts and matching local CLI/Skill installation;
+  no runtime target was selected for a production rollout.
+- PR CI `cnb-r2s-1k6mkrr5b` confirmed exactly the three baseline Helm failures
+  recorded above. The existing mainline documents `hostAccess.enabled=true`
+  by default and an explicit false opt-out.
+- Replace stale fixed expectations with real Helm render checks for default,
+  explicit true and explicit false. Preserve disabled-mode mount/PID isolation
+  checks and verify probe behavior in both modes. No runtime or Chart change.
+- Local `python3 -m pytest backend/test -q`: 320 passed in 72.53s;
+  `git diff --check` passed. This supersedes the three baseline failures above.
+- Release acceptance: full contract checks and PR CI pass; PR merged normally;
+  remote main contains the remediation; main and versioned release pipelines
+  succeed; published artifact identity/checksums and installed CLI/Skill commits
+  match. Record a failed stage and fix its cause before continuing.
