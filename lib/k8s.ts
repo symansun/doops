@@ -489,7 +489,7 @@ export function describeK8sFailure(message: string, context: K8sFailureContext):
   if (denial) {
     return {
       kind: "rbac",
-      text: `目标 Agent 的 Kubernetes 权限不足：${denial}。这是 Agent 在集群里的 RBAC 限制，不是你的账号授权问题；请联系集群管理员为该身份授权，或换用有权限的目标。`,
+      text: `目标 Agent 的 Kubernetes 身份权限比该目标的授权窄：${denial}。你的账号对该目标已有授权，这是 Agent 部署配置问题：请平台管理员把该 Agent 身份对齐为集群级权限（集群级 ClusterRoleBinding 或挂载的管理员 kubeconfig），不要按命名空间单独申请授权。`,
     }
   }
   const missing = notFound(evidence)
