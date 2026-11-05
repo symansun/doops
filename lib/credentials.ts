@@ -1,6 +1,7 @@
 "use client"
 
 import type { Session, Target } from "./client"
+import { NETWORK_FAILURE_MESSAGE, consoleFetch, isNetworkError } from "./network-error.ts"
 
 export type CredentialType = "registry" | "tls" | "opaque" | "helmRepository" | "gitToken" | "modelProvider"
 export type CredentialScope = "personal" | "platform"
@@ -238,10 +239,10 @@ function credentialRequestError(status: number, raw: unknown): CredentialRequest
 async function request<T>(s: Session, path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
-    res = await fetch(`/api/credentials${path}`, { ...init, headers: headers(s) })
+    res = await consoleFetch(`/api/credentials${path}`, { ...init, headers: headers(s) })
   } catch (err) {
-    if (init?.signal?.aborted) throw err
-    throw new CredentialRequestError(0, "", "无法连接控制台服务。请检查网络后刷新")
+    if (init?.signal?.aborted || !isNetworkError(err)) throw err
+    throw new CredentialRequestError(0, "", NETWORK_FAILURE_MESSAGE)
   }
   const text = await res.text()
   let data: unknown
@@ -654,6 +655,7 @@ function importError(status: number, raw: unknown): CredentialImportRequestError
 // shown. Gateway/Agent text can contain Secret values and is never displayed.
 export function describeSecretImportError(err: unknown): string {
   if (err instanceof SecretImportValidationError) return `${err.message}（${err.category}）`
+  if (isNetworkError(err)) return NETWORK_FAILURE_MESSAGE
   if (err instanceof CredentialImportRequestError) {
     if (err.kind === "gateway_auth") return "Gateway 会话已失效。请重新登录（gateway_auth_failed）"
     if (err.category) return `${SECRET_IMPORT_ERRORS[err.category] ?? "导入失败"}（${err.category}）`
@@ -692,7 +694,7 @@ function stagedVersionMetadata(value: unknown, credentialID: string): Credential
 }
 
 async function importSecretRequest(s: Session, path: string, init: RequestInit): Promise<unknown> {
-  const res = await fetch(`/api/credentials${path}`, { ...init, headers: headers(s) })
+  const res = await consoleFetch(`/api/credentials${path}`, { ...init, headers: headers(s) })
   const text = await res.text()
   let data: unknown
   try {
@@ -834,7 +836,7 @@ export function describeCredentialBundleItems(
 }
 
 async function bundleRequest(query: string, init?: RequestInit): Promise<CredentialBundle> {
-  const res = await fetch(`/api/credential-bundles${query}`, {
+  const res = await consoleFetch(`/api/credential-bundles${query}`, {
     ...init,
     headers: { "Content-Type": "application/json" },
     cache: "no-store",
