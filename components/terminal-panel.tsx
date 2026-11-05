@@ -15,7 +15,7 @@ import {
 import { TerminalIcon, SendIcon, StopIcon } from "./icons"
 
 interface Line {
-  kind: "cmd" | "out" | "err" | "info"
+  kind: "cmd" | "out" | "err" | "warn" | "info"
   text: string
 }
 
@@ -68,7 +68,7 @@ export function TerminalPanel({
 
   function fail(message: string) {
     const failure = describeShellFailure(message, { stopRequested: stopRequestedRef.current, target })
-    push({ kind: failure.kind === "canceled" && stopRequestedRef.current ? "info" : "err", text: failure.text })
+    push({ kind: failure.tone === "info" ? "info" : failure.tone === "warn" ? "warn" : "err", text: failure.text })
   }
 
   async function run(confirmed = "") {
@@ -193,6 +193,12 @@ export function TerminalPanel({
               <pre key={i} className="whitespace-pre-wrap break-all text-destructive">
                 {l.text}
               </pre>
+            )
+          if (l.kind === "warn")
+            return (
+              <div key={i} role="status" className="my-1 rounded border border-warning/40 bg-warning/10 px-2 py-1 text-xs text-warning">
+                {l.text}
+              </div>
             )
           if (l.kind === "info")
             return (

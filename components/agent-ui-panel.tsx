@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import { randomSession } from "@/lib/gateway"
 import { isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { workspaceArtifactsFromChanges } from "@/lib/agent-code-workspace"
+import { createVisibilityScopedRuntime } from "@/lib/agent-error"
 import type { Session, Target } from "@/lib/client"
 import { AgentExecBar } from "./agent-exec-bar"
 
@@ -13,7 +14,7 @@ export function AgentUiPanel({
   session,
   target,
   onRunInTerminal,
-  runtime,
+  runtime: sourceRuntime,
   sessionId,
   codeWorkspace,
   active,
@@ -32,6 +33,11 @@ export function AgentUiPanel({
   onSessionChange?: (id: string) => void
   onExecRunningChange?: (running: boolean) => void
 }) {
+  // 面板在其他标签下保持挂载（hidden），此时不渲染智能体连接错误，避免出现在凭据等页面里。
+  // 初始可见性只在创建时读取，之后由 effect 同步。
+  const scoped = useMemo(() => createVisibilityScopedRuntime(sourceRuntime, active), [sourceRuntime])
+  useEffect(() => scoped.setVisible(active), [scoped, active])
+  const runtime = scoped.runtime
   const subscribe = useCallback(
     (listener: () => void) => runtime.subscribe(sessionId, listener),
     [runtime, sessionId],
