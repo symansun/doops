@@ -80,16 +80,183 @@ function headers(s: Session): HeadersInit {
   }
 }
 
-async function request<T>(s: Session, path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api/credentials${path}`, { ...init, headers: headers(s) })
-  const text = await res.text()
-  let data: Record<string, unknown> = {}
-  try {
-    data = text ? (JSON.parse(text) as Record<string, unknown>) : {}
-  } catch {
-    throw new Error(`凭据服务返回了无效响应 (${res.status})`)
+// Stable categories the credential endpoints return (credential_http.go,
+// credential_runtime.go, credential_materializer.go, model_provider.go,
+// registry_authfile.go and handler_ws.go), each with a reason and next step.
+const CREDENTIAL_ERRORS: Record<string, string> = {
+  credential_not_found: "凭据不存在或已删除。请刷新凭据列表",
+  credential_version_not_found: "该凭据版本不存在，或凭据还没有 active 版本。请刷新后选择现有版本",
+  credential_reference_ambiguous: "存在同名的个人凭据和平台凭据，无法确定引用哪一个。请联系平台管理员处理同名凭据",
+  credential_revoked: "凭据已吊销或正在吊销，不能再写入、绑定或激活。请改用有效凭据",
+  credential_forbidden: "无权管理该凭据。请确认你是凭据 owner 或平台管理员",
+  credential_grant_denied: "该绑定不存在或已解除。请刷新后查看当前绑定",
+  credential_binding_target_mismatch: "该凭据只绑定在其他目标上。请先在当前目标上绑定",
+  credential_binding_scope_invalid: "当前目标上的绑定参数已不再合法（例如 namespace 无效）。请解除该绑定后用合法 namespace 重新绑定",
+  credential_key_unavailable: "Gateway 的凭据加密密钥不可用，操作未执行。请联系平台管理员",
+  credential_payload_invalid: "凭据内容不符合该类型的格式，或物化结果与版本不一致。请检查内容字段后重新写入版本",
+  credential_audit_unavailable: "凭据审计不可用，Gateway 已拒绝本次操作。请稍后重试或联系平台管理员",
+  credential_operation_failed: "Gateway 拒绝了该请求，可能是参数无效或凭据状态已变化。请刷新后核对凭据状态再重试",
+  credential_metadata_unavailable: "Gateway 暂时无法读取凭据元数据。请稍后刷新",
+  credential_version_not_staged: "该版本不是暂存版本，只有暂存版本可以验证或激活。请刷新后选择暂存版本",
+  credential_grants_unavailable: "Gateway 暂时无法读取绑定列表。请稍后重试",
+  credential_verifications_unavailable: "Gateway 暂时无法读取验证记录。请稍后重试",
+  credential_verification_required:
+    "还有 active 绑定没有验证这个暂存版本，或凭据没有任何 active 绑定。请先绑定目标，再对每个 active 绑定点「验证暂存」，全部通过后再激活",
+  credential_promotion_materialization_failed:
+    "激活时目标物化失败，Gateway 已恢复原版本。请检查目标 Agent 和绑定的 namespace 后重新验证",
+  credential_promotion_outcome_unknown:
+    "激活失败且恢复原版本的结果未知，目标上的 Secret 可能处于中间状态。请刷新后核对版本状态，并在目标上核对 Secret",
+  credential_grant_revocation_outcome_unknown:
+    "解除绑定时目标上物化资源的清理结果未知，绑定停留在 revoking。请确认目标 Agent 在线后再次解除绑定",
+  credential_cleanup_context_unavailable: "Gateway 暂时无法读取物化记录，吊销未完成。请稍后再次吊销",
+  credential_cleanup_failed: "吊销时目标上的物化资源清理失败，凭据停留在 revoking。请确认目标 Agent 在线后再次吊销",
+  credential_scope_invalid: "绑定参数不合法（namespace、用途、workload 或 required keys）。请检查后重新绑定",
+  credential_use_mismatch: "用途与凭据类型不匹配。请按凭据类型选择用途",
+  model_provider_already_bound: "当前目标已绑定另一个 Model Provider 凭据，一个目标只能绑定一个。请先解除原绑定",
+  credential_verification_outcome_unknown:
+    "验证后恢复原版本或清理临时物化的结果未知。请刷新后核对状态，并在目标上核对 Secret 后重新验证",
+  credential_verification_persist_failed: "目标验证已完成，但 Gateway 未能保存验证记录。请重新验证",
+  verification_transport_failed: "与目标 Agent 的通信中断或超时，验证未完成。请确认 Agent 在线后重试",
+  target_offline: "目标 Agent 离线。请确认 Agent 已连接后重试",
+  execution_audit_unavailable: "执行审计不可用，Gateway 未下发本次操作。请稍后重试或联系平台管理员",
+  credential_materialization_metadata_invalid: "Agent 返回的物化结果不完整或与请求不符。请确认 Agent 版本后重新验证",
+  credential_materialization_outcome_unknown: "物化被拒绝后恢复失败，目标状态未知。请在目标上核对 Secret 后重新验证",
+  credential_target_lock_changed: "目标连接在操作期间发生了变化。请确认 Agent 在线后重试",
+  credential_tool_failed: "目标 Agent 执行凭据操作失败。请查看 Agent 日志后重试",
+  credential_binding_metadata_invalid: "目标 Agent 拒绝了绑定元数据。请确认 Agent 版本与 Gateway 一致",
+  credential_secret_get_failed:
+    "目标 Agent 无法在绑定的 namespace 中读取 Secret。请检查该 namespace 是否填写正确，并确认它在目标 Agent 的 Kubernetes RBAC 范围内",
+  credential_target_mutation_failed:
+    "目标 Agent 无法在绑定的 namespace 中写入 Secret 或 workload。请确认该 namespace 在目标 Agent 的 Kubernetes RBAC 范围内",
+  credential_secret_ownership_conflict:
+    "目标 namespace 中已有同名但不归该凭据管理的 Secret。请更换绑定的 namespace，或与该 Secret 的维护者确认",
+  credential_secret_ownership_mismatch: "目标上的 Secret 不属于这个凭据或绑定。请刷新后核对绑定，再重新验证",
+  credential_secret_verification_failed: "目标上的 Secret 内容与版本不一致，或无法解析。请重新验证，仍失败时在目标上检查该 Secret",
+  credential_secret_identity_invalid: "目标 Secret 缺少 UID 或 resourceVersion。请在目标上核对该 Secret 后重试",
+  credential_secret_metadata_invalid: "目标 Secret 的元数据无法解析。请在目标上核对该 Secret 后重试",
+  credential_secret_restore_failed: "恢复目标 Secret 原状失败。请在目标上核对 Secret 后重新验证",
+  credential_secret_delete_failed: "清理目标上的临时 Secret 失败。请确认目标 Agent 有删除该 Secret 的权限后重试",
+  credential_workload_get_failed: "目标 Agent 无法读取绑定的 workload。请检查 workload 名称和 Agent 的 Kubernetes RBAC",
+  credential_workload_invalid: "绑定的 workload 不存在或类型不受支持。请检查 workload 类型和名称",
+  credential_workload_verification_failed: "workload 没有引用预期的凭据 Secret。请检查 workload 配置后重新验证",
+  credential_workload_restore_failed: "恢复 workload 原状失败。请在目标上核对 workload 后重试",
+  credential_key_mismatch: "版本内容的键与绑定的 required keys 不一致。请修改绑定的 required keys，或重新写入版本",
+  credential_type_unsupported: "目标 Agent 不支持该凭据类型。请先升级 Agent",
+  credential_request_invalid: "目标 Agent 拒绝了物化请求。请确认 Agent 版本与 Gateway 一致",
+  credential_cleanup_invalid: "目标 Agent 拒绝了清理请求。请确认 Agent 版本与 Gateway 一致",
+  credential_target_outcome_unknown: "目标上的写入结果未知。请在目标上核对 Secret 后重新验证",
+  credential_endpoint_invalid: "凭据中的服务地址必须是不带账号和查询参数的 https 地址。请修改后重新写入版本",
+  credential_endpoint_private: "凭据中的服务地址解析到内网或本机地址，被 Agent 拒绝。请改用目标可访问的公网地址",
+  credential_endpoint_unresolvable: "目标 Agent 无法解析凭据中的服务地址。请检查域名和目标的 DNS",
+  model_probe_failed: "模型探测失败，模型服务拒绝了该配置。请检查 provider、模型名和密钥后重新写入版本",
+  model_probe_unavailable: "目标 Agent 无法运行模型探测。请确认 Agent 版本已包含 do-agent",
+  model_probe_result_invalid: "模型探测返回了无法识别的结果。请确认 Agent 版本后重试",
+  model_settings_write_failed: "目标 Agent 无法写入模型配置文件。请检查 Agent 的文件权限",
+  registry_authfile_unavailable: "目标 Agent 无法读写镜像仓库认证文件。请检查 Agent 的认证文件挂载",
+  registry_authfile_invalid: "目标 Agent 上的镜像仓库认证文件格式无效。请在目标上检查该文件",
+  registry_authfile_request_invalid: "目标 Agent 拒绝了镜像仓库认证请求。请确认 Agent 版本与 Gateway 一致",
+  operation_canceled: "操作已取消，或在等待同一凭据的其他操作时中断。请刷新后核对状态再重试",
+}
+
+// Gateway phrases that mean the request shape does not match what this Gateway
+// accepts, usually a console and Gateway from different releases.
+const REQUEST_SHAPE_PHRASES = new Set([
+  "invalid credential request",
+  "invalid credential verify request",
+  "invalid credential grant revoke request",
+  "credential request must contain exactly one JSON object",
+  "invalid credential list view",
+  "credential target list requires cluster and instance",
+  "Method Not Allowed",
+])
+
+// Messages the console's own Gateway policy returns (lib/gateway-policy.ts).
+const CONSOLE_POLICY_MESSAGES = new Set([
+  "缺少 gateway 地址",
+  "gateway 地址格式无效",
+  "gateway 协议必须是 http 或 https",
+  "gateway 地址不能包含认证信息、查询参数或片段",
+  "gateway 地址不能包含路径",
+  "该 gateway 未获控制台授权",
+  "生产 gateway 必须使用 https",
+  "控制台未配置 gateway allowlist",
+  "开发模式只允许访问本机 gateway",
+  "gateway 策略检查失败",
+])
+
+export class CredentialRequestError extends Error {
+  readonly status: number
+  readonly category: string
+
+  constructor(status: number, category: string, message: string) {
+    super(message)
+    this.status = status
+    this.category = category
   }
-  if (!res.ok) throw new Error(String(data.error || `凭据请求失败 (${res.status})`).trim())
+}
+
+// Gateway and Agent text can carry credential values, so only a known
+// category, a fixed phrase or the HTTP status reaches the message.
+function credentialRequestError(status: number, raw: unknown): CredentialRequestError {
+  const text = typeof raw === "string" ? raw.trim() : ""
+  const labelled = (category: string, reason: string) =>
+    new CredentialRequestError(status, category, `${reason}（${category}）`)
+  const byStatus = (reason: string) => new CredentialRequestError(status, "", `${reason}（HTTP ${status}）`)
+  if (/^[a-z0-9_]{1,80}$/.test(text)) {
+    return labelled(text, CREDENTIAL_ERRORS[text] ?? "凭据操作失败。请刷新后核对凭据状态")
+  }
+  switch (text) {
+    case "Forbidden":
+      return labelled("Forbidden", "无权执行该凭据操作。请确认你是凭据 owner 或平台管理员，并对当前目标有授权")
+    case "operation canceled":
+      return labelled("operation_canceled", CREDENTIAL_ERRORS.operation_canceled)
+    case "404 page not found":
+      return byStatus("凭据不存在，或当前账号无权查看。请刷新凭据列表")
+    case "credential payload must be valid JSON":
+      return byStatus("凭据内容必须是合法 JSON。请检查后重新提交")
+    case "credential versions must be verified before promotion":
+      return byStatus("版本需要先验证才能激活。请对每个 active 绑定点「验证暂存」后再激活")
+    case "failed to list managed credentials":
+    case "failed to list target credentials":
+      return byStatus("Gateway 暂时无法列出凭据。请稍后刷新")
+    case "未建立 Gateway 会话":
+      return byStatus("未建立 Gateway 会话。请重新连接")
+  }
+  if (REQUEST_SHAPE_PHRASES.has(text)) return byStatus("Gateway 拒绝了请求格式。请刷新页面，并确认控制台与 Gateway 版本一致")
+  if (text.startsWith("无法连接 gateway:")) return byStatus("无法连接 Gateway。请检查网络和 Gateway 地址")
+  if (CONSOLE_POLICY_MESSAGES.has(text)) return byStatus("控制台拒绝访问该 Gateway。请联系管理员检查控制台授权配置")
+  try {
+    if ((JSON.parse(text) as Record<string, unknown> | null)?.code === "gateway_auth_failed") {
+      return labelled("gateway_auth_failed", "Gateway 会话已失效。请重新登录")
+    }
+  } catch {
+    // Anything else stays undisclosed.
+  }
+  return byStatus("无法识别的 Gateway 响应。请刷新后核对凭据状态")
+}
+
+async function request<T>(s: Session, path: string, init?: RequestInit): Promise<T> {
+  let res: Response
+  try {
+    res = await fetch(`/api/credentials${path}`, { ...init, headers: headers(s) })
+  } catch (err) {
+    if (init?.signal?.aborted) throw err
+    throw new CredentialRequestError(0, "", "无法连接控制台服务。请检查网络后刷新")
+  }
+  const text = await res.text()
+  let data: unknown
+  try {
+    data = text ? JSON.parse(text) : {}
+  } catch {
+    if (res.ok) {
+      throw new CredentialRequestError(res.status, "", `凭据服务返回了无效响应。请刷新后核对凭据状态（HTTP ${res.status}）`)
+    }
+    throw credentialRequestError(res.status, text)
+  }
+  if (!res.ok) {
+    const raw = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>).error : ""
+    throw credentialRequestError(res.status, raw)
+  }
   return data as T
 }
 
