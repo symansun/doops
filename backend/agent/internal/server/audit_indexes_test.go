@@ -100,7 +100,7 @@ func TestAuditIndexMaintenanceCancellationReleasesTheStoreConnection(t *testing.
 
 func TestGatewayStoreStartupCreatesAuditIndexes(t *testing.T) {
 	want := []string{
-		"idx_audit_action_id", "idx_audit_session_target_id", "idx_audit_status_id",
+		"idx_audit_action_id", "idx_audit_session_id", "idx_audit_session_target_id", "idx_audit_status_id",
 		"idx_audit_target_action_id", "idx_audit_target_id", "idx_audit_target_status_id",
 		"idx_audit_user_action_id", "idx_audit_user_id", "idx_audit_user_session_id", "idx_audit_user_status_id",
 	}

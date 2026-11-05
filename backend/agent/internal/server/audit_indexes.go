@@ -36,7 +36,9 @@ func (s *GatewayStore) optimizeAuditIndexes(ctx context.Context) ([]string, erro
 		{"idx_audit_target_action_id", []string{"cluster", "instance", "action", "id", "status"}, "EXPLAIN QUERY PLAN SELECT id FROM audit_events WHERE cluster=? AND instance=? AND action=? ORDER BY id DESC LIMIT 500", []any{"cluster", "instance", "action"}},
 		{"idx_audit_target_status_id", []string{"cluster", "instance", "status", "id", "action"}, "EXPLAIN QUERY PLAN SELECT id FROM audit_events WHERE cluster=? AND instance=? AND status=? ORDER BY id DESC LIMIT 500", []any{"cluster", "instance", "status"}},
 		{"idx_audit_session_target_id", []string{"session", "cluster", "instance", "id"}, "EXPLAIN QUERY PLAN SELECT id FROM audit_events WHERE cluster=? AND instance=? AND session=? ORDER BY id DESC LIMIT 500", []any{"cluster", "instance", "session"}},
-		{"idx_audit_session_target_id", []string{"session", "cluster", "instance", "id"}, "EXPLAIN QUERY PLAN SELECT id FROM audit_events WHERE session=? ORDER BY id DESC LIMIT 500", []any{"session"}},
+		{"idx_audit_session_id", []string{"session", "id"}, "EXPLAIN QUERY PLAN SELECT id FROM audit_events WHERE session=? ORDER BY id DESC LIMIT 500", []any{"session"}},
+		{"idx_audit_session_id", []string{"session", "id"}, "EXPLAIN QUERY PLAN SELECT id FROM audit_events WHERE session=? AND action=? ORDER BY id DESC LIMIT 500", []any{"session", "action"}},
+		{"idx_audit_session_id", []string{"session", "id"}, "EXPLAIN QUERY PLAN SELECT id FROM audit_events WHERE session=? AND status=? ORDER BY id DESC LIMIT 500", []any{"session", "status"}},
 	}
 	plans := make([]string, 0, len(definitions))
 	for _, definition := range definitions {

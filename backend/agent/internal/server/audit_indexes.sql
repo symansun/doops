@@ -11,7 +11,10 @@ CREATE INDEX IF NOT EXISTS idx_audit_target_status_id ON audit_events(cluster, i
 CREATE INDEX IF NOT EXISTS idx_audit_action_id ON audit_events(action, id DESC, status);
 CREATE INDEX IF NOT EXISTS idx_audit_user_action_id ON audit_events(user_id, action, id DESC, status);
 CREATE INDEX IF NOT EXISTS idx_audit_target_action_id ON audit_events(cluster, instance, action, id DESC, status);
--- One session within a target, and credential resource audits, which store
--- the credential id as the session and leave the target empty. Created last so
--- a session filter wins over the target action/status indexes.
+-- One session within a target. Created after the target action/status indexes
+-- so a session filter wins over them.
 CREATE INDEX IF NOT EXISTS idx_audit_session_target_id ON audit_events(session, cluster, instance, id DESC);
+-- A session on its own: credential resource audits store the credential id as
+-- the session and leave the target empty. Without it a session plus status
+-- filter would walk the status index instead.
+CREATE INDEX IF NOT EXISTS idx_audit_session_id ON audit_events(session, id DESC);
