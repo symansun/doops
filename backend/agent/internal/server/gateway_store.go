@@ -1123,7 +1123,7 @@ func (s *GatewayStore) ListAuditFiltered(filter AuditFilter) ([]AuditEvent, erro
 }
 
 // auditFilterQuery builds the ListAuditFiltered statement. audit_indexes.sql
-// keeps an index for each filter combination the console and CLI send.
+// keeps an index for each filter combination the console sends.
 func auditFilterQuery(filter AuditFilter) (string, []any) {
 	if filter.Limit <= 0 || filter.Limit > 500 {
 		filter.Limit = 100
