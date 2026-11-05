@@ -397,6 +397,47 @@ export async function bindCredentialToTarget(
   })
 }
 
+export interface BindingFormInput {
+  use: CredentialUse
+  namespace: string
+  requiredKeys: string
+}
+
+// Mirrors `credential grant/configure --required-keys`: optional; when given,
+// verification requires the version's payload keys to equal this set exactly,
+// otherwise the Gateway infers them from the version.
+export function parseRequiredKeys(raw: string): string[] {
+  if (!raw.trim()) return []
+  const keys = raw.split(",").map((key) => key.trim())
+  for (const key of keys) {
+    if (!/^[A-Za-z0-9._-]{1,253}$/.test(key)) {
+      throw new Error(
+        `required keys 只能是逗号分隔的 Secret 键名（字母、数字、点、下划线和连字符），${key ? `${JSON.stringify(key)} 不合法` : "不能有空项"}`,
+      )
+    }
+  }
+  return [...new Set(keys)].sort()
+}
+
+export function buildBindingScope(target: Target, input: BindingFormInput): CredentialBindingScope {
+  const namespace = input.namespace.trim()
+  if (!namespace) throw new Error("请填写目标 Agent 已获 Kubernetes RBAC 授权的 Secret namespace")
+  const scope: CredentialBindingScope = {
+    cluster: target.cluster,
+    instance: target.instance,
+    namespace,
+    use: input.use,
+    workload: { kind: "", name: "" },
+  }
+  // The Gateway drops required keys for database bindings and the CLI rejects
+  // them for other uses, so only opaqueSecret sends them.
+  if (input.use === "opaqueSecret") {
+    const keys = parseRequiredKeys(input.requiredKeys)
+    if (keys.length) scope.required_keys = keys
+  }
+  return scope
+}
+
 export async function verifyCredentialVersion(
   s: Session,
   credentialID: string,

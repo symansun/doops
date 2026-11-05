@@ -74,7 +74,14 @@ Gateway 相同的格式校验，校验失败不发请求。值由 Agent 读取�
 与 CLI 的后续阶段相同；页面不自动执行这些步骤。
 
 绑定目标时，必须显式填写目标 Agent 已获 Kubernetes RBAC 授权、可创建临时 Secret 的 namespace。
-Gateway 当前不提供可写 namespace 列表，控制台不会假定 `default` 可用。
+Gateway 当前不提供可写 namespace 列表，控制台不会假定 `default` 可用。用途为 `opaqueSecret` 时，
+绑定对话框另有可选的 required keys（逗号分隔的 Secret 键名，提交前去重排序），对应 CLI
+`--required-keys`：填写后验证要求版本 payload 的键集合与之完全相等，不填则按版本内容推断。
+
+凭据操作（写入版本、绑定、验证、激活、解除绑定、吊销）失败时，页面把 Gateway 返回的稳定类别映射为
+中文原因和下一步，括号中保留原类别；未知类别显示通用说明和类别本身，非类别的错误正文按 HTTP 状态
+显示固定提示，不展示上游原文。例如 `credential_secret_get_failed` 提示检查绑定的 namespace 是否在目标
+Agent 的 Kubernetes RBAC 范围内，`credential_verification_required` 提示先对每个 active 绑定验证暂存版本。
 
 页头的 `凭据组` 入口用于创建和按名称查看 bundle，步骤和限制见 [Bundle](#bundle)。
 
@@ -148,7 +155,7 @@ workload kind 仅支持 `Deployment`、`StatefulSet`、`DaemonSet`。不支持 w
 | :--- | :--- | :--- |
 | `imagePull` | `registry` | 可选 image repository 和 64 位 `sha256:` digest，用于运行时镜像校验 |
 | `tls` | `tls` | 无 |
-| `opaqueSecret` | `opaque` | `required_keys`，必须与 payload key 集合完全相等 |
+| `opaqueSecret` | `opaque` | 可选 `required_keys`；填写时验证要求 payload key 集合与之完全相等，省略时按版本 payload 的 key 推断 |
 | `database` | `opaque` | 目标 `cluster/instance`、物化 `namespace` 和 `use=database`；数据库资产、环境、引擎、数据库名由 DoSql/Agent 校验 |
 | `helmPull` | `helmRepository` | target 上可用的 Helm 仓库凭据；实际 Chart 由任务和仓库来源决定 |
 | `gitCheckout` | `gitToken` | 无；当前 scope 不包含 branch/ref |
