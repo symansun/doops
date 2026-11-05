@@ -11,6 +11,7 @@ import {
 } from "@/lib/client"
 import { listInstances } from "@/lib/admin"
 import { commandPreview, summarizeInstanceScope, type InstanceScope } from "@/lib/admin-views"
+import { emptyTargetsCopy } from "@/lib/empty-targets"
 import {
   ServerIcon,
   ActivityIcon,
@@ -149,7 +150,7 @@ export function DashboardPanel({
         </div>
 
         {targets.length === 0 ? (
-          <EmptyState onDeployAgent={onDeployAgent} />
+          <EmptyState isAdmin={isAdmin} onDeployAgent={onDeployAgent} />
         ) : (
           <>
             <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
@@ -680,45 +681,48 @@ function fmtRelative(iso: string): string {
   return `${Math.floor(h / 24)} 天前`
 }
 
-function EmptyState({ onDeployAgent }: { onDeployAgent: () => void }) {
+function EmptyState({ isAdmin, onDeployAgent }: { isAdmin: boolean; onDeployAgent: () => void }) {
+  const copy = emptyTargetsCopy(isAdmin)
   return (
     <div className="rounded-xl border bg-card p-8 text-center">
       <span className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted text-muted-foreground">
         <PlugIcon width={26} height={26} />
       </span>
-      <h2 className="text-base font-semibold text-foreground">还没有纳管的机器</h2>
+      <h2 className="text-base font-semibold text-foreground">{copy.title}</h2>
       <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground text-pretty">
-        Doops 通过在你的服务器上安装一个轻量 agent 来工作。你可以自己部署一台，或联系管理员为你接入。
+        {copy.description}
       </p>
 
-      <div className="mx-auto mt-5 grid max-w-lg gap-3 text-left sm:grid-cols-2">
-        <button
-          onClick={onDeployAgent}
-          className="group flex flex-col rounded-lg border bg-background p-4 text-left transition-colors hover:border-primary/50 hover:bg-muted"
-        >
-          <span className="mb-1.5 flex items-center gap-2 text-sm font-medium text-foreground">
-            <RocketIcon width={16} height={16} className="text-primary" />
-            部署 Doops Agent
-          </span>
-          <span className="text-xs leading-relaxed text-muted-foreground">
-            有服务器权限？按部署指南几分钟即可接入一台机器。
-          </span>
-          <span className="mt-2 flex items-center gap-1 text-xs font-medium text-primary">
-            查看部署指南
-            <ChevronRightIcon
-              width={13}
-              height={13}
-              className="transition-transform group-hover:translate-x-0.5"
-            />
-          </span>
-        </button>
+      <div className={`mx-auto mt-5 grid gap-3 text-left ${copy.showDeployAgent ? "max-w-lg sm:grid-cols-2" : "max-w-sm"}`}>
+        {copy.showDeployAgent && (
+          <button
+            onClick={onDeployAgent}
+            className="group flex flex-col rounded-lg border bg-background p-4 text-left transition-colors hover:border-primary/50 hover:bg-muted"
+          >
+            <span className="mb-1.5 flex items-center gap-2 text-sm font-medium text-foreground">
+              <RocketIcon width={16} height={16} className="text-primary" />
+              部署 Doops Agent
+            </span>
+            <span className="text-xs leading-relaxed text-muted-foreground">
+              有服务器权限？按部署指南几分钟即可接入一台机器。
+            </span>
+            <span className="mt-2 flex items-center gap-1 text-xs font-medium text-primary">
+              查看部署指南
+              <ChevronRightIcon
+                width={13}
+                height={13}
+                className="transition-transform group-hover:translate-x-0.5"
+              />
+            </span>
+          </button>
+        )}
         <div className="flex flex-col rounded-lg border bg-background p-4">
           <span className="mb-1.5 flex items-center gap-2 text-sm font-medium text-foreground">
             <HelpIcon width={16} height={16} className="text-primary" />
-            联系管理员
+            {copy.contactTitle}
           </span>
           <span className="text-xs leading-relaxed text-muted-foreground">
-            没有服务器权限或不确定 gateway 地址与 cluster/instance？请管理员为你接入机器。
+            {copy.contactHint}
           </span>
         </div>
       </div>

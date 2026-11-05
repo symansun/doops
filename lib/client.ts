@@ -87,6 +87,8 @@ export async function clearServerSession(): Promise<void> {
 
 export async function fetchTargets(s: Session): Promise<Target[]> {
   if (s.demo) {
+    // ?demo=1&targets=none 模拟没有可用目标，用来查看空状态。
+    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("targets") === "none") return []
     const { DEMO_TARGETS } = await import("./demo")
     return DEMO_TARGETS
   }
