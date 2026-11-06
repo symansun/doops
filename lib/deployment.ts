@@ -1,4 +1,5 @@
 import type { Target } from "./gateway"
+import { AGENT_MODEL_MISSING_HINT } from "./agent-error.ts"
 
 export interface DeploymentInput {
   services: string
@@ -211,15 +212,30 @@ const busyPattern = /target busy|target queue (?:full|timeout)|session has an ac
 // Messages from the console's own Gateway allowlist (gateway-policy.ts), answered with 403 like a missing grant.
 const consolePolicyPattern = /gateway (?:地址|协议)|未获控制台授权|生产 gateway|gateway allowlist|只允许访问本机 gateway/
 
-function grantRefused(code: string | undefined, message: string): boolean {
+// The console runtime rewrites the session error (agent-error.ts agentErrorMessage): the "[code] " prefix is gone and
+// the missing-model text becomes AGENT_MODEL_MISSING_HINT. A refused /v1/rpc upgrade ends with the HTTP status
+// (server/gateway-upgrade.ts). Each check below accepts both the raw and the rewritten form.
+function modelMissing(message: string): boolean {
+  return message === AGENT_MODEL_MISSING_HINT || /还没有可下发到该节点的模型|尚未连接大模型/.test(message)
+}
+
+function signedOut(code: string | undefined, message: string): boolean {
+  return code === "unauthenticated" || /gateway_auth_failed|缺少登录 token|（HTTP 401）$/.test(message)
+}
+
+function grantRefused(message: string): boolean {
   // HandleClientRPC answers a user without a grant with 403 before the WebSocket upgrade.
-  return /^forbidden:/.test(message) || (code === "permission_denied" && message === "Gateway 拒绝连接")
+  return /^forbidden:|（HTTP 403）$/.test(message)
+}
+
+function targetOffline(message: string): boolean {
+  return /target offline|（HTTP 404）$/.test(message)
 }
 
 function connectionNotice(raw: string): DeploymentNotice {
   const code = errorCode(raw)
   const message = agentErrorText(raw)
-  if (/还没有可下发到该节点的模型|尚未连接大模型/.test(message)) {
+  if (modelMissing(message)) {
     return { kind: "no_model", title: "该目标还没有配置 DoAgent 模型，暂时不能发布",
       detail: "发布由目标上的 DoAgent 执行，需要 Gateway 下发的模型。请联系平台管理员为该目标绑定 modelProvider 凭据，激活后点「重新连接」。可以先填写和校验发布信息。",
       actions: ["open_credentials", "reconnect"] }
@@ -233,18 +249,18 @@ function connectionNotice(raw: string): DeploymentNotice {
     return { kind: "upgrade_agent", title: "目标 Agent 版本过旧，需要升级后才能发布",
       detail: "该 Agent 不支持控制台的结构化执行事件。请到「部署 → 升级 Agent」升级，完成后回到这里重新连接。", actions: ["upgrade_agent"] }
   }
-  if (code === "unauthenticated" || /gateway_auth_failed/.test(message)) {
+  if (signedOut(code, message)) {
     return { kind: "signed_out", title: "登录已失效", detail: "Gateway 不再接受当前登录。请断开后重新登录。", actions: [] }
   }
   if (consolePolicyPattern.test(message)) {
     return { kind: "console_policy", title: "控制台不允许访问这个 Gateway",
       detail: `${clip(message)}。请联系控制台运维检查 DOOPS_CONSOLE_ALLOWED_GATEWAYS 配置。`, actions: [] }
   }
-  if (grantRefused(code, message)) {
+  if (grantRefused(message)) {
     return { kind: "forbidden", title: "当前账号没有该目标的使用权限",
       detail: "请联系平台管理员在「管理 → 权限」为当前账号授予该目标。", actions: [] }
   }
-  if (/target offline/.test(message)) {
+  if (targetOffline(message)) {
     return { kind: "offline", title: "目标 Agent 离线",
       detail: "Gateway 当前没有该目标的 Agent 连接。确认 Agent 正常运行后点「重新连接」。", actions: ["reconnect"] }
   }
@@ -273,7 +289,8 @@ const unchanged = "目标没有被修改。"
 export function deploymentOutcome(state: { status: string; error: string | null | undefined }): DeploymentOutcome {
   const outcome = (kind: DeploymentOutcome["kind"], title: string, detail = "", actions: DeploymentNoticeAction[] = []): DeploymentOutcome =>
     ({ kind, title, detail, actions })
-  if (state.status === "running" || state.status === "waiting" || state.status === "launching") {
+  // "launching" is the SDK's placeholder before any session snapshot arrives (emptySession); nothing was submitted.
+  if (state.status === "running" || state.status === "waiting") {
     return outcome("running", "发布执行中…", "rollout 与最终 Deployment 状态以 Agent 返回为准。")
   }
   if (state.status === "completed") {
@@ -308,10 +325,10 @@ export function deploymentOutcome(state: { status: string; error: string | null 
   if (busyPattern.test(message)) {
     return outcome("failed", "目标正忙", `目标上有其他变更在执行。${notStarted}可以在「审计」查看正在执行的操作，结束后重新提交。`)
   }
-  if (grantRefused(code, message)) {
+  if (grantRefused(message)) {
     return outcome("failed", "当前账号没有该目标的使用权限", `授权可能已被收回。${notStarted}请联系平台管理员在「管理 → 权限」授予该目标。`)
   }
-  if (/target offline/.test(message)) {
+  if (targetOffline(message)) {
     return outcome("failed", "目标 Agent 离线", `${notStarted}确认 Agent 正常运行后重新提交。`)
   }
   const helm = /\b(helm_[a-z]+(?:_[a-z]+)*(?:_\d{3})?)(?::\s*([\s\S]*))?/.exec(message)
@@ -353,9 +370,9 @@ export function deploymentSubmitError(raw: string): string {
   if (/command_position_mismatch|cursor_/.test(message)) return "执行过程刚刚更新，本次没有提交。请核对后重新勾选授权再提交。"
   if (/agent_workbench_command_/.test(message)) return "Agent 没有接受本次提交，发布没有执行。详情见执行过程。"
   if (/agent_workbench_/.test(message)) return "与目标 Agent 的连接未就绪，本次没有提交。请等待连接完成后重试。"
-  if (/target offline/.test(message)) return `目标 Agent 离线，${notStarted}`
-  if (grantRefused(code, message)) return `当前账号没有该目标的使用权限，${notStarted}`
-  if (/还没有可下发到该节点的模型|尚未连接大模型/.test(message)) return `该目标还没有配置 DoAgent 模型，${notStarted}`
+  if (targetOffline(message)) return `目标 Agent 离线，${notStarted}`
+  if (grantRefused(message)) return `当前账号没有该目标的使用权限，${notStarted}`
+  if (modelMissing(message)) return `该目标还没有配置 DoAgent 模型，${notStarted}`
   if (code === "unavailable" || code === "deadline_exceeded" || code === "unknown" || code === "internal" || /Failed to fetch|NetworkError/.test(message)) {
     return "提交请求没有收到确认，发布可能已经开始。请查看执行过程或「审计」，不要重复提交。"
   }
