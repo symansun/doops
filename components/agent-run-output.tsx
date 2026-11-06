@@ -27,7 +27,7 @@ export function AgentRunOutput({ run, running, empty }: { run: AgentRun | null; 
           <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words border-t px-2.5 py-2 font-mono text-xs leading-5 text-muted-foreground">{trace.join("\n")}</pre>
         </details>
       )}
-      {answer ? <Markdown content={answer} /> : !running && errors.length === 0 && (
+      {answer ? <Markdown content={answer} allowImages={false} /> : !running && errors.length === 0 && (
         <p className="text-xs text-muted-foreground">Agent 未返回结果正文。</p>
       )}
       {errors.map((note, index) => (
