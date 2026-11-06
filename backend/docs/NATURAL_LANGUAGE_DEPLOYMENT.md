@@ -11,7 +11,8 @@ Gateway 控制台的部署表单调用同一 `doops_agent_prompt operation=apply
 `doops.operations/apply`（schema 1，payload 仅 `input` 与 `confirmed: true`），浏览器和服务端
 用同一 `deploymentRequest()` 校验；未勾选授权不构造命令。执行轨迹与 Agent 返回的 rollout、
 最终 Deployment 状态在同一会话时间线显示；发布会话和未提交的表单草稿按 Gateway、用户和 target
-保存在浏览器标签页内，切换视图后回到同一会话。令牌登录没有用户名，不保存；退出登录时清除。
+保存在浏览器标签页内，切换视图后回到同一会话。令牌登录没有用户名，只保存在当前页面的内存里，
+刷新后不再保留；退出登录时清除。
 草稿含凭据内容时不保存。
 apply 不要求先把代码同步到 target 的隔离工作区。业务镜像版本必须来自任务或任务指定的仓库、Chart、values、现有 release 的只读证据，不猜测，也不要求已明确资产中的
 事实再粘贴到 prompt。镜像键和版本由 Chart 定义，同 Chart 可有不同服务镜像及不同版本，

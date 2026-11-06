@@ -316,27 +316,38 @@ function deployEntry(value: unknown): DeployEntry | null {
   return entry
 }
 
+// A token login stores nothing (persistsScope), yet a running release must stay visible after switching views. Its
+// entries live in memory only, keyed by that login's session object, so the next login in the tab, by any account,
+// starts empty (the same approach as createK8sFormStore in k8s.ts).
+const memoryDeployEntries = new WeakMap<object, DeployEntry[]>()
+
 function readDeployEntries(storage: StorageLike | null, scope: StorageScope): DeployEntry[] {
+  if (!persistsScope(scope)) return memoryDeployEntries.get(scope) ?? []
   const value = readStored(storage, deployKey(scope))
   if (!Array.isArray(value)) return []
   return value.map(deployEntry).filter((entry): entry is DeployEntry => entry !== null)
 }
 
+function writeDeployEntries(storage: StorageLike | null, scope: StorageScope, entries: DeployEntry[]): void {
+  const kept = entries.slice(-MAX_DEPLOY_TARGETS)
+  if (persistsScope(scope)) writeStored(storage, deployKey(scope), kept.length ? kept : null)
+  else if (kept.length) memoryDeployEntries.set(scope, kept)
+  else memoryDeployEntries.delete(scope)
+}
+
 // Most recent target last; an entry with neither a session nor a draft is dropped.
 function updateDeployEntry(storage: StorageLike | null, scope: StorageScope, targetKey: string, change: Partial<DeployEntry>): void {
-  if (!persistsScope(scope) || !validTargetKey(targetKey)) return
+  if (!validTargetKey(targetKey)) return
   const entries = readDeployEntries(storage, scope)
   const previous = entries.find((entry) => entry.targetKey === targetKey)
   const next: DeployEntry = { ...previous, ...change, targetKey }
   if (next.sessionId === undefined) delete next.sessionId
   if (next.draft === undefined) delete next.draft
   const rest = entries.filter((entry) => entry.targetKey !== targetKey)
-  const kept = next.sessionId || next.draft ? [...rest, next] : rest
-  writeStored(storage, deployKey(scope), kept.length ? kept.slice(-MAX_DEPLOY_TARGETS) : null)
+  writeDeployEntries(storage, scope, next.sessionId || next.draft ? [...rest, next] : rest)
 }
 
 export function loadDeployState(storage: StorageLike | null, scope: StorageScope, targetKey: string): DeployState {
-  if (!persistsScope(scope)) return { sessionId: null, draft: null }
   const entry = readDeployEntries(storage, scope).find((candidate) => candidate.targetKey === targetKey)
   return { sessionId: entry?.sessionId ?? null, draft: entry?.draft ?? null }
 }
@@ -376,5 +387,6 @@ export function clearConsoleState(storage: StorageLike | null, scope: StorageSco
   writeStored(storage, selectionKey(scope), null)
   writeStored(storage, commandsKey(scope), null)
   writeStored(storage, deployKey(scope), null)
+  memoryDeployEntries.delete(scope)
   removeLegacyDeployKeys(storage)
 }
