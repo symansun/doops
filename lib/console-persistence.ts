@@ -1,4 +1,5 @@
 import type { Target } from "./gateway"
+import { containsCredentialMaterial } from "./deployment.ts"
 
 // A page reload must not silently move the user to another target or session.
 // The selected target key and the current session id are kept per browser tab
@@ -153,17 +154,24 @@ const MAX_RECORDS = 20
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
 const EXECUTABLE = /^[A-Za-z0-9._/+-]{1,64}$/
 
+// A token pasted into the terminal by mistake is the first word itself. Long
+// letter-digit words without a path look like one; executable names rarely do.
+function tokenLike(word: string): boolean {
+  return containsCredentialMaterial(word) ||
+    (word.length >= 20 && /[A-Za-z]/.test(word) && /\d/.test(word) && !word.includes("/"))
+}
+
 // The summary is the executable name of the first line and nothing else:
 // arguments can carry a password in more forms than any pattern catches
 // (mysql -pS3cret, curl -u admin:pw, echo pw | sudo -S). Leading VAR=value
 // assignments are skipped; anything after the name becomes " …". A first word
-// that is not a plain name is stored as "命令".
+// that is not a plain name, or looks like a token, is stored as "命令".
 export function commandSummary(raw: string): string {
   const words = raw.trim().split(/\s+/).filter(Boolean)
   let index = 0
   while (index < words.length && ENV_ASSIGNMENT.test(words[index])) index++
   const word = words[index] ?? ""
-  const name = EXECUTABLE.test(word) ? word : "命令"
+  const name = EXECUTABLE.test(word) && !tokenLike(word) ? word : "命令"
   return index + 1 < words.length || index > 0 ? `${name} …` : name
 }
 
