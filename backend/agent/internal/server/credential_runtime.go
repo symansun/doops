@@ -836,6 +836,10 @@ func (h *GatewayHub) handleCredentialVerify(
 	if !ok {
 		return
 	}
+	// A verification runs on one target, so a failure is audited against that
+	// target the same way a success is.
+	failure := credentialTargetAudit(body.Scope, "")
+	failure.VersionID = version.ID
 	evidence := make([]credentialVerificationEvidence, 0, len(grants))
 	verifications := make([]CredentialVerification, 0, len(grants))
 	var auditScope CredentialGrantScope
@@ -847,6 +851,8 @@ func (h *GatewayHub) handleCredentialVerify(
 		if index == 0 {
 			auditScope = scope
 		}
+		failure = credentialTargetAudit(scope, grant.ID)
+		failure.VersionID = version.ID
 		ref := CredentialPlanReference{Name: resource.Name, Scope: scope}
 		expectedPreviousVersionID := ""
 		if activeErr == nil {
@@ -857,7 +863,7 @@ func (h *GatewayHub) handleCredentialVerify(
 			resource, version, expectedPreviousVersionID, grant.ID, ref,
 		)
 		if err != nil {
-			h.writeCredentialVerificationError(w, auditID, credentialOperationErrorCategory(err), http.StatusBadGateway)
+			h.writeCredentialVerificationError(w, auditID, failure, credentialOperationErrorCategory(err), http.StatusBadGateway)
 			return
 		}
 		if activeErr == nil {
@@ -865,15 +871,15 @@ func (h *GatewayHub) handleCredentialVerify(
 				r.Context(), body.Scope.Cluster, body.Scope.Instance, body.SessionID,
 				resource, active, version.ID, grant.ID, ref,
 			); err != nil {
-				h.writeCredentialVerificationError(w, auditID, "credential_verification_outcome_unknown", http.StatusBadGateway)
+				h.writeCredentialVerificationError(w, auditID, failure, "credential_verification_outcome_unknown", http.StatusBadGateway)
 				return
 			}
 			if err := h.store.MarkCredentialMaterializationCleaned(request); err != nil {
-				h.writeCredentialVerificationError(w, auditID, "credential_verification_outcome_unknown", http.StatusBadGateway)
+				h.writeCredentialVerificationError(w, auditID, failure, "credential_verification_outcome_unknown", http.StatusBadGateway)
 				return
 			}
 		} else if err := h.cleanupCredentialVersion(r.Context(), request); err != nil {
-			h.writeCredentialVerificationError(w, auditID, "credential_verification_outcome_unknown", http.StatusBadGateway)
+			h.writeCredentialVerificationError(w, auditID, failure, "credential_verification_outcome_unknown", http.StatusBadGateway)
 			return
 		}
 		verifications = append(verifications, CredentialVerification{
@@ -889,14 +895,21 @@ func (h *GatewayHub) handleCredentialVerify(
 		Status: "success", Cluster: body.Scope.Cluster, Instance: body.Scope.Instance,
 		Scope: &auditScope, VersionID: version.ID, EndedAt: time.Now().UTC(),
 	}); err != nil {
-		h.writeCredentialVerificationError(w, auditID, "credential_verification_persist_failed", http.StatusInternalServerError)
+		h.writeCredentialVerificationError(w, auditID, failure, "credential_verification_persist_failed", http.StatusInternalServerError)
 		return
 	}
 	writeJSONHTTP(w, map[string]any{"status": "verified", "evidence": evidence})
 }
 
-func (h *GatewayHub) writeCredentialVerificationError(w http.ResponseWriter, auditID int64, category string, status int) {
-	if !h.completeCredentialAudit(w, auditID, "error", category) {
+func (h *GatewayHub) writeCredentialVerificationError(
+	w http.ResponseWriter,
+	auditID int64,
+	target AuditFinish,
+	category string,
+	status int,
+) {
+	if err := h.finishCredentialTargetAudit(auditID, target, "error", category); err != nil {
+		http.Error(w, "credential_audit_unavailable", http.StatusInternalServerError)
 		return
 	}
 	http.Error(w, category, status)

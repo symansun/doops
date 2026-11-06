@@ -656,5 +656,18 @@ CLI 在该类别后给出 `next:` 步骤：先 `credential list --target` 查看
 - resourceVersion、digest 或稳定错误类别。
 
 审计不记录 payload。凭据 owner 和 platform admin 可以通过
-Gateway `/v1/audit` 按 target 和 credential 元数据查询；当前 CLI 尚未提供独立的
-credential audit 子命令。
+Gateway `/v1/audit` 查询；当前 CLI 尚未提供独立的 credential audit 子命令。
+
+凭据审计分两类，查询方式不同：
+
+| 类别 | 操作 | `cluster/instance` | 查询 |
+| --- | --- | --- | --- |
+| 资源级 | create、put、promote、resource revoke | 空 | `session=<credential_id>` |
+| 目标级 | grant 创建和吊销、verify、Secret 导入、Gateway 内部的物化和清理调用 | 该次操作的目标，成功和失败都记录 | `cluster=<cluster>&instance=<instance>`，可加 `action=` |
+
+- 资源级操作的 `session` 和 `credential_id` 都是该凭据 ID。create 在成功后才有 ID，
+  失败的 create 没有 credential ID；
+- promote 和 resource revoke 可能影响多个目标，一条审计只有一组 `cluster/instance`，
+  所以不填目标。它们在各目标上发出的物化和清理调用另有目标级审计，`session` 是物化记录里保存的会话；
+- grant 吊销和 verify 失败时也记录目标；grant 已确定时同时记录 grant ID 和保存的 scope；
+- resource revoke 失败时，返回体列出仍未清理的 `cluster/instance`，审计只记录稳定错误类别。
