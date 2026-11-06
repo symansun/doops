@@ -47,8 +47,9 @@ function containsInlineCredential(value: string): boolean {
   return lower.includes("bearer ") || lower.includes("basic ")
 }
 
-// URLs written inside free text; trailing Chinese punctuation is not part of the address.
-const embeddedUrl = /\bhttps?:\/\/[^\s<>"'`，。；：、）」]+/gi
+// Addresses written inside free text, of any scheme, so a database connection string (postgres://user:pass@...)
+// is found wherever it sits in the sentence. Trailing Chinese punctuation is not part of the address.
+const embeddedUrl = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`，。；：、）」]+/gi
 
 // A URL in free text is checked like a URL field: no user info and no token-like query keys.
 function containsCredentialUrl(text: string): boolean {
