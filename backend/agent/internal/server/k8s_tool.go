@@ -498,7 +498,7 @@ type configMapKeysObject struct {
 	} `json:"metadata"`
 	Data       map[string]json.RawMessage `json:"data"`
 	BinaryData map[string]json.RawMessage `json:"binaryData"`
-	Items      []configMapKeysObject       `json:"items"`
+	Items      []configMapKeysObject      `json:"items"`
 }
 
 // runConfigMapKeysCommand runs kubectl get configmaps -o json and prints only

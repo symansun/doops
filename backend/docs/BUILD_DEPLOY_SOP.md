@@ -334,8 +334,12 @@ Gateway 离线时该脚本不经 Gateway，完成后须用 `doops targets` 核�
 已有 Helm release 的路径以 `maxSurge=1`、`maxUnavailable=0` 先拉起新 Pod，Gateway
 `Register` 用新会话替换旧 WebSocket 后再删旧副本。Job 成功后 CLI 执行
 `capabilities --require structuredSSH`，失败时请求回滚 Job；Gateway 完全离线时
-无法自动恢复。自升级 Job 固定到 Agent 节点并保留 runtime class；验证证据保存在
-`doops-upgrade-verified-<release>` ConfigMap，手动回滚只使用有验收证据的历史 revision。
+无法自动恢复。自升级 Job 固定到 Agent 节点并保留 runtime class。新 Pod 与 Job 在同一节点时，
+imageID 必须等于 Job 自己的运行时 digest。镜像按 `repository@sha256:<digest>` 固定时，调度器
+把新 Pod 放到其他节点也可以，此时 imageID 必须等于固定 digest 或 Job 的运行时 digest，其它
+digest 视为不同内容并回滚。按 tag 升级时只能在同一节点证明身份，新 Pod 必须与 Job 同节点。
+自动回滚恢复的 Pod 按同一规则核对。验证证据保存在 `doops-upgrade-verified-<release>`
+ConfigMap，记录实际 Pod 的节点和 digest；手动回滚只使用有验收证据的历史 revision。
 旧 Agent 生成的是旧版 Job 脚本，新控制器要等 Agent 升级后才生效。
 
 Helm 只删除它上一个 revision 渲染过的内容。上一 revision 渲染过、新 Chart 不再渲染的卷
