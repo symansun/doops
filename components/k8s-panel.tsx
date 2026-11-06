@@ -30,6 +30,7 @@ const OUTPUT_OPTIONS = ["", "wide", "yaml", "json", "name"]
 
 const NAME_LABEL: Partial<Record<K8sOperation, string>> = {
   get: "名称（可选）",
+  "configmap-keys": "ConfigMap 名称（可选）",
   describe: "资源名称",
   "helm-history": "Release",
   "helm-status": "Release",
@@ -204,7 +205,7 @@ export function K8sPanel({
           <OperationGroup title="只读" operations={READ_OPERATIONS} active={input.operation} disabled={disabled} onSelect={selectOperation} />
           <OperationGroup title="写操作（需确认）" operations={WRITE_OPERATIONS} active={input.operation} disabled={disabled} onSelect={selectOperation} danger />
         </div>
-        <p className="font-mono text-xs text-muted-foreground">doops k8s {spec.cli}</p>
+        {spec.cli && <p className="font-mono text-xs text-muted-foreground">doops k8s {spec.cli}</p>}
 
         <div className="grid gap-2 sm:grid-cols-3">
           {uses("kind") && (input.operation === "top" ? (
@@ -263,6 +264,8 @@ export function K8sPanel({
           )}
         </div>
         {input.operation === "helm-values" && <p className="text-xs text-muted-foreground">只返回 values 的键路径，不返回值。</p>}
+        {input.operation === "helm-status" && <p className="text-xs text-muted-foreground">只返回发布名、修订、状态和时间，不返回 values 和 manifest。</p>}
+        {input.operation === "configmap-keys" && <p className="text-xs text-muted-foreground">只返回键名，不返回值。</p>}
         {(input.operation === "get" || input.operation === "describe") && <p className="text-xs text-muted-foreground">Secret 与 ServiceAccount 不开放读取。</p>}
 
         {mutation && (
