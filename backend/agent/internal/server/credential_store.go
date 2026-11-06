@@ -264,6 +264,13 @@ func (s *GatewayStore) createCredential(req CredentialCreateRequest, auditID int
 		return CredentialResource{}, err
 	}
 	if auditID != 0 {
+		// The ID is only known now. Every other resource-level credential audit
+		// carries it as credential and session, so the create is found the same way.
+		if _, err := tx.Exec(`UPDATE audit_events SET credential_id = ?, session = ?
+			WHERE id = ? AND status IN ('running', 'executing')`,
+			resource.ID, resource.ID, auditID); err != nil {
+			return CredentialResource{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
+		}
 		if err := finishAuditWith(tx, auditID, AuditFinish{Status: "success", EndedAt: now}); err != nil {
 			return CredentialResource{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 		}

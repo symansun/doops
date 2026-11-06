@@ -192,7 +192,8 @@ func TestCredentialVerificationErrorFinishesAudit(t *testing.T) {
 	response := httptest.NewRecorder()
 
 	hub.writeCredentialVerificationError(
-		response, auditID, "credential_verification_outcome_unknown", http.StatusBadGateway,
+		response, auditID, credentialTargetAudit(CredentialGrantScope{Cluster: "dev", Instance: "node"}, ""),
+		"credential_verification_outcome_unknown", http.StatusBadGateway,
 	)
 
 	if response.Code != http.StatusBadGateway ||
@@ -205,6 +206,7 @@ func TestCredentialVerificationErrorFinishesAudit(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].Status != "error" ||
 		events[0].Error != "credential_verification_outcome_unknown" ||
+		events[0].Cluster != "dev" || events[0].Instance != "node" ||
 		events[0].EndedAt.IsZero() {
 		t.Fatalf("verification audit was not completed: %#v", events)
 	}

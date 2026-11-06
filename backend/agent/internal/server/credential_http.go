@@ -268,17 +268,18 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 			http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
 			return
 		}
+		target := credentialTargetAudit(grant.Scope, grant.ID)
 		if err := h.cleanupCredentialGrantMaterializations(r.Context(), resource.ID, grant.ID); err != nil {
 			// The grant stays revoking: a context that may still hold the
 			// credential on the target has not been cleaned yet.
 			category, status := credentialCleanupFailure(err, "credential_grant_revocation_outcome_unknown")
-			_ = h.finishCredentialAudit(auditID, "error", category)
+			_ = h.finishCredentialTargetAudit(auditID, target, "error", category)
 			http.Error(w, category, status)
 			return
 		}
 		grant, err = h.store.FinalizeCredentialGrantRevocation(resource.ID, grant.ID, auditID)
 		if err != nil {
-			_ = h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
+			_ = h.finishCredentialTargetAudit(auditID, target, "error", credentialErrorCategory(err))
 			http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
 			return
 		}
@@ -316,7 +317,7 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 		CreatedBy:    auth.UserID,
 	}, auditID)
 	if err != nil {
-		_ = h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
+		_ = h.finishCredentialTargetAudit(auditID, credentialTargetAudit(body.Scope, ""), "error", credentialErrorCategory(err))
 		http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
 		return
 	}
@@ -682,6 +683,34 @@ func (h *GatewayHub) finishCredentialAudit(id int64, status, category string) er
 		Error:   category,
 		EndedAt: time.Now().UTC(),
 	})
+}
+
+// credentialTargetAudit is the target part of the audit of an operation that
+// runs on one target: its cluster/instance and, once a grant is known, the
+// grant and its stored scope. Values that are not plain identifiers are left
+// out, so request text never reaches the audit columns.
+func credentialTargetAudit(scope CredentialGrantScope, grantID string) AuditFinish {
+	scope = normalizeCredentialGrantScope(scope)
+	var finish AuditFinish
+	if validCredentialMetadataToken(scope.Cluster, 253) && validCredentialMetadataToken(scope.Instance, 253) {
+		finish.Cluster, finish.Instance = scope.Cluster, scope.Instance
+	}
+	if grantID != "" {
+		finish.GrantID = grantID
+		if validateCredentialGrantScope(scope) == nil {
+			finish.Scope = &scope
+		}
+	}
+	return finish
+}
+
+// finishCredentialTargetAudit finishes the audit of a single-target operation,
+// keeping its target on failure as well as on success.
+func (h *GatewayHub) finishCredentialTargetAudit(id int64, target AuditFinish, status, category string) error {
+	target.Status = status
+	target.Error = category
+	target.EndedAt = time.Now().UTC()
+	return h.store.FinishAudit(id, target)
 }
 
 func (h *GatewayHub) requireCredentialAudit(
