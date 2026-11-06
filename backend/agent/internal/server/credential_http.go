@@ -269,8 +269,11 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		if err := h.cleanupCredentialGrantMaterializations(r.Context(), resource.ID, grant.ID); err != nil {
-			_ = h.finishCredentialAudit(auditID, "error", "credential_grant_revocation_outcome_unknown")
-			http.Error(w, "credential_grant_revocation_outcome_unknown", http.StatusBadGateway)
+			// The grant stays revoking: a context that may still hold the
+			// credential on the target has not been cleaned yet.
+			category, status := credentialCleanupFailure(err, "credential_grant_revocation_outcome_unknown")
+			_ = h.finishCredentialAudit(auditID, "error", category)
+			http.Error(w, category, status)
 			return
 		}
 		grant, err = h.store.FinalizeCredentialGrantRevocation(resource.ID, grant.ID, auditID)

@@ -506,7 +506,29 @@ doops credential grant-revoke \
   --grant-id <grant-id>
 ```
 
-Gateway 先清理该 grant 的全部物化上下文，再把 grant 置为 `revoked`。
+Gateway 先把 grant 置为 `revoking`，清理该 grant 的全部物化上下文，再置为 `revoked`。
+清理不完时 grant 保持 `revoking`，重复执行同一命令会继续清理，已 `revoked` 的 grant 再次吊销直接返回成功。
+
+物化记录决定哪些上下文需要清理：
+
+- 物化成功（`verified`）或结果未知（`outcome_unknown`）的上下文，必须由目标 Agent 清理；
+- 确定没有改动目标的失败记为 `not_applied`，不需要清理。目标离线、请求编码失败等派发前的失败，
+  以及 Agent 在写入前拒绝、或写入失败后已恢复快照并复核一致时返回的稳定错误类别，属于这一类；
+  白名单和依据在 `credential_materialization_store.go` 的 `credentialMaterializationUnchangedCategories`；
+- 同一上下文先前成功过的物化不会被后来一次「没有改动」的失败覆盖，记录保持先前的状态，仍需清理；
+- 引入 `not_applied` 之前写下的 `outcome_unknown` 记录，无论错误类别是什么都按结果未知处理，
+  因为当时的重试会覆盖先前成功的记录。
+
+一个上下文清理失败不会中断其余上下文。全部尝试后仍有上下文未清理时，按原因返回：
+
+| 类别 | HTTP | 含义 |
+| --- | --- | --- |
+| `target_offline` | 503 | 需要清理的目标没有连接，清理调用没有发出 |
+| `target_busy`、`target_queue_full`、`target_queue_timeout` | 409 | 目标正在执行其他操作，清理调用没有发出 |
+| `credential_grant_revocation_outcome_unknown` | 502 | 清理已到达 Agent 但失败或结果未知 |
+
+任何一个上下文结果未知时返回 `credential_grant_revocation_outcome_unknown`。
+Gateway 不提供跳过清理或强制置为 `revoked` 的入口；目标恢复连接后重试即可。
 
 吊销整个 resource：
 
@@ -516,7 +538,7 @@ doops credential revoke \
   --id <credential-id>
 ```
 
-Gateway 按 `active -> revoking -> revoked` 清理所有物化资源。Resource revoke 是终态，
+Gateway 按 `active -> revoking -> revoked` 清理所有物化资源，同样跳过 `not_applied` 记录。Resource revoke 是终态，
 当前没有恢复、删除、改名或改类型能力。
 
 ## Bundle

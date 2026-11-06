@@ -604,12 +604,12 @@ func (h *GatewayHub) materializeCredentialVersionAttempt(
 	}
 	toolArgs, err := credentialToolArguments(request)
 	if err != nil {
-		_ = h.store.MarkCredentialMaterializationUnknown(intent.ID, "credential_request_encode_failed")
+		_ = h.store.MarkCredentialMaterializationFailed(intent, "credential_request_encode_failed")
 		return CredentialMaterialization{}, intentRequest, err
 	}
 	resultText, err := h.RunInternalToolCall(ctx, cluster, instance, "doops_credential_materialize", toolArgs)
 	if err != nil {
-		_ = h.store.MarkCredentialMaterializationUnknown(intent.ID, credentialOperationErrorCategory(err))
+		_ = h.store.MarkCredentialMaterializationFailed(intent, credentialOperationErrorCategory(err))
 		return CredentialMaterialization{}, intentRequest, err
 	}
 	var materialization CredentialMaterialization
@@ -943,18 +943,76 @@ func (h *GatewayHub) cleanupCredentialGrantMaterializations(
 	if err != nil {
 		return err
 	}
+	var failures []error
+	for _, request := range pendingCredentialCleanups(materializations) {
+		// Every reachable context is cleaned even after one fails, so a single
+		// unreachable context does not leave the others' Secrets behind.
+		if err := h.cleanupCredentialMaterializationContext(ctx, request); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// pendingCredentialCleanups keeps one request per materialization context.
+// The records come from CredentialMaterializations, which leaves out contexts
+// that provably own nothing, so an offline target whose attempts all left it
+// unchanged gets no cleanup call and does not block revocation.
+func pendingCredentialCleanups(records []CredentialMaterializationRecord) []CredentialMaterializeRequest {
+	var pending []CredentialMaterializeRequest
 	seen := make(map[string]struct{})
-	for _, materialization := range materializations {
-		key := credentialMaterializationContextKey(materialization.Request)
+	for _, record := range records {
+		key := credentialMaterializationContextKey(record.Request)
 		if _, ok := seen[key]; ok {
 			continue
 		}
 		seen[key] = struct{}{}
-		if err := h.cleanupCredentialMaterializationContext(ctx, materialization.Request); err != nil {
-			return err
+		pending = append(pending, record.Request)
+	}
+	return pending
+}
+
+// credentialCleanupFailure names why a cleanup did not finish. A target that
+// never received the call is reported as offline, busy or queued; anything that
+// may have reached the Agent keeps the caller's outcome-unknown category, and
+// one such failure among several decides the result.
+func credentialCleanupFailure(err error, unknown string) (string, int) {
+	failures := []error{err}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		failures = joined.Unwrap()
+	}
+	category, status := "", 0
+	for _, failure := range failures {
+		next, nextStatus := credentialCleanupFailureCategory(failure, unknown)
+		if next == unknown {
+			return unknown, nextStatus
+		}
+		if category == "" {
+			category, status = next, nextStatus
 		}
 	}
-	return nil
+	if category == "" {
+		return unknown, http.StatusBadGateway
+	}
+	return category, status
+}
+
+func credentialCleanupFailureCategory(err error, unknown string) (string, int) {
+	if errors.Is(err, errExecutionOutcomeUnknown) {
+		return unknown, http.StatusBadGateway
+	}
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.HasPrefix(message, "target offline"):
+		return "target_offline", http.StatusServiceUnavailable
+	case strings.HasPrefix(message, "target busy"):
+		return "target_busy", http.StatusConflict
+	case strings.HasPrefix(message, "target queue full"):
+		return "target_queue_full", http.StatusConflict
+	case strings.HasPrefix(message, "target queue timeout"):
+		return "target_queue_timeout", http.StatusConflict
+	}
+	return unknown, http.StatusBadGateway
 }
 
 func credentialReferenceFromRequest(request CredentialMaterializeRequest) CredentialPlanReference {
@@ -994,6 +1052,10 @@ func credentialOperationErrorCategory(err error) string {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		return "verification_transport_failed"
+	case errors.Is(err, errExecutionOutcomeUnknown):
+		// The call may have reached the Agent, so its text is not evidence
+		// that the target was offline before dispatch.
+		return "credential_operation_failed"
 	case strings.Contains(strings.ToLower(err.Error()), "target offline"):
 		return "target_offline"
 	default:
