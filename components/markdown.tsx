@@ -4,6 +4,7 @@ import { memo, useState, type ReactNode } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { CopyIcon, CheckIcon } from "./icons"
+import { imageAsText } from "@/lib/markdown-images"
 
 function CodeBlock({ children, className }: { children: ReactNode; className?: string }) {
   const [copied, setCopied] = useState(false)
@@ -47,12 +48,15 @@ function extractRawText(node: ReactNode): string {
   return ""
 }
 
-export const Markdown = memo(function Markdown({ content }: { content: string }) {
+// allowImages=false renders images as plain text (lib/markdown-images.ts); use it
+// for Agent answers that may carry text from outside the console.
+export const Markdown = memo(function Markdown({ content, allowImages = true }: { content: string; allowImages?: boolean }) {
   return (
     <div className="text-sm leading-relaxed text-foreground">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          ...(allowImages ? {} : { img: imageAsText }),
           p: ({ children }) => <p className="my-1.5 first:mt-0 last:mb-0 break-words">{children}</p>,
           h1: ({ children }) => (
             <h1 className="mb-2 mt-3 text-base font-semibold text-foreground first:mt-0">{children}</h1>
