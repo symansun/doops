@@ -517,7 +517,8 @@ Gateway 先把 grant 置为 `revoking`，清理该 grant 的全部物化上下�
   白名单和依据在 `credential_materialization_store.go` 的 `credentialMaterializationUnchangedCategories`；
 - 同一上下文先前成功过的物化不会被后来一次「没有改动」的失败覆盖，记录保持先前的状态，仍需清理；
 - 引入 `not_applied` 之前写下的 `outcome_unknown` 记录，无论错误类别是什么都按结果未知处理，
-  因为当时的重试会覆盖先前成功的记录。
+  因为当时的重试会覆盖先前成功的记录。升级前留下的这类记录不会被自动判为未改动，
+  对应的绑定仍需目标在线、由 Agent 清理完才能进入 `revoked`。
 
 一个上下文清理失败不会中断其余上下文。全部尝试后仍有上下文未清理时，按原因返回：
 
@@ -538,7 +539,12 @@ doops credential revoke \
   --id <credential-id>
 ```
 
-Gateway 按 `active -> revoking -> revoked` 清理所有物化资源，同样跳过 `not_applied` 记录。Resource revoke 是终态，
+Gateway 先把 resource 和它的全部 grant 一起置为 `revoking`，再按上面的同一套规则清理所有 grant 的物化上下文，
+跳过 `not_applied` 记录。一个上下文失败不会中断其余上下文，全部清理完才把 resource、version 和 grant 置为终态。
+清理不完时 resource 和 grant 都保持 `revoking`，返回体是类别加上仍未清理的 `cluster/instance` 列表，
+例如 `target_offline: doops-zyj/test`；审计只记录类别。类别和状态码与 grant 吊销一致，
+结果未知时为 `credential_revocation_outcome_unknown`（502）。重复执行同一命令会继续清理，
+已 `revoked` 的 resource 再次吊销直接返回成功。Resource revoke 是终态，
 当前没有恢复、删除、改名或改类型能力。
 
 ## Bundle

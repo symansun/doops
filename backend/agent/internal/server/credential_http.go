@@ -496,18 +496,14 @@ func (h *GatewayHub) handleCredentialRevoke(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "credential_cleanup_context_unavailable", http.StatusInternalServerError)
 		return
 	}
-	seen := make(map[string]struct{})
-	for _, materialization := range materializations {
-		key := credentialMaterializationContextKey(materialization.Request)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		if err := h.cleanupCredentialMaterializationContext(r.Context(), materialization.Request); err != nil {
-			_ = h.finishCredentialAudit(auditID, "error", "credential_cleanup_failed")
-			http.Error(w, "credential_cleanup_failed", http.StatusBadGateway)
-			return
-		}
+	if unfinished, err := h.cleanupCredentialMaterializationContexts(r.Context(), materializations); err != nil {
+		// The resource and its grants stay revoking until every context that may
+		// still hold the credential is cleaned. A resource spans several targets,
+		// so the response names the ones left; the audit keeps only the category.
+		category, status := credentialCleanupFailure(err, "credential_revocation_outcome_unknown")
+		_ = h.finishCredentialAudit(auditID, "error", category)
+		http.Error(w, category+": "+strings.Join(unfinished, ", "), status)
+		return
 	}
 	if err := h.store.FinalizeCredentialRevocationAudited(resource.ID, auditID); err != nil {
 		_ = h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))

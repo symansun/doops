@@ -1283,14 +1283,29 @@ func (s *GatewayStore) BeginCredentialRevocation(credentialID, actorID string) (
 	if resource.State == CredentialStateRevoked {
 		return resource, nil
 	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return CredentialResource{}, err
+	}
+	defer tx.Rollback()
 	if resource.State == CredentialStateActive {
 		now := time.Now().UTC()
-		if _, err := s.db.Exec(`UPDATE credentials SET state = ?, updated_at = ? WHERE id = ? AND state = ?`,
+		if _, err := tx.Exec(`UPDATE credentials SET state = ?, updated_at = ? WHERE id = ? AND state = ?`,
 			CredentialStateRevoking, formatTime(now), resource.ID, CredentialStateActive); err != nil {
 			return CredentialResource{}, err
 		}
 		resource.State = CredentialStateRevoking
 		resource.UpdatedAt = now
+	}
+	// Revoking a resource revokes all of its grants, so they follow it to
+	// revoking. This also moves grants that a revocation started before this
+	// rule left active, so no grant reads as active while it is being cleaned.
+	if _, err := tx.Exec(`UPDATE credential_grants SET state = ?, revoked_at = '' WHERE credential_id = ? AND state = ?`,
+		CredentialStateRevoking, resource.ID, CredentialStateActive); err != nil {
+		return CredentialResource{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return CredentialResource{}, err
 	}
 	return resource, nil
 }

@@ -81,15 +81,20 @@ func (f *revocationFixture) request(workload string) CredentialMaterializeReques
 // "outcome_unknown" writes it the way the Gateway did before not_applied existed.
 func (f *revocationFixture) record(t *testing.T, workload, status, category string) CredentialMaterializationRecord {
 	t.Helper()
-	intent, err := f.store.RecordCredentialMaterializationIntent(f.request(workload))
+	return f.recordRequest(t, f.request(workload), status, category)
+}
+
+func (f *revocationFixture) recordRequest(t *testing.T, request CredentialMaterializeRequest, status, category string) CredentialMaterializationRecord {
+	t.Helper()
+	intent, err := f.store.RecordCredentialMaterializationIntent(request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	switch status {
 	case "verified":
 		err = f.store.CompleteCredentialMaterialization(intent.ID, CredentialMaterialization{
-			CredentialID: f.resource.ID, GrantID: f.grant.ID, VersionID: f.version.ID, Namespace: "apps",
-			ResourceName: credentialSecretName(f.resource.ID, f.grant.ID), SecretType: "Opaque",
+			CredentialID: f.resource.ID, GrantID: request.GrantID, VersionID: f.version.ID, Namespace: "apps",
+			ResourceName: credentialSecretName(f.resource.ID, request.GrantID), SecretType: "Opaque",
 			Keys: []string{"dsn"}, ResourceVersion: "1", Status: "verified",
 		})
 	case "failed":
@@ -145,7 +150,12 @@ func (f *revocationFixture) grantState(t *testing.T) CredentialState {
 func (f *revocationFixture) revoke(t *testing.T) <-chan revocationResponse {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"grant_id": f.grant.ID})
-	req, err := http.NewRequest(http.MethodDelete, f.server.URL+"/v1/credentials/"+f.resource.ID+"/grants", strings.NewReader(string(body)))
+	return f.send(t, http.MethodDelete, "/v1/credentials/"+f.resource.ID+"/grants", string(body))
+}
+
+func (f *revocationFixture) send(t *testing.T, method, path, body string) <-chan revocationResponse {
+	t.Helper()
+	req, err := http.NewRequest(method, f.server.URL+path, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
