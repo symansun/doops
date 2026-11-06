@@ -1048,7 +1048,12 @@ for pod in pods:
 if len(matching_pods) < desired:
     raise SystemExit(f"Active Agent Pods={len(matching_pods)}, desiredReplicas={desired}")
 pods = matching_pods
-expected_digest = expected_image.rsplit("@", 1)[1] if "@sha256:" in expected_image else ""
+# A digest-pinned reference names its content, so a Pod on any node can be
+# checked against it. A tag only names what one node's runtime pulled.
+pinned_digest = expected_image.rsplit("@", 1)[1] if "@sha256:" in expected_image else ""
+if not re.fullmatch(r"sha256:[0-9a-f]{64}", pinned_digest):
+    pinned_digest = ""
+expected_digest = pinned_digest
 controller_node = ""
 runtime_class = ""
 if identity_source == "baseline":
@@ -1098,7 +1103,11 @@ for pod in pods:
     container = next((item for item in containers if item.get("name") == "doops-agent"), None)
     if not container or container.get("image") != expected_image:
         raise SystemExit("Agent Pod spec image does not match the expected image")
-    if controller_node and (pod.get("spec") or {}).get("nodeName") != controller_node:
+    pod_node = (pod.get("spec") or {}).get("nodeName") or ""
+    if not pod_node:
+        raise SystemExit("Agent Pod is not bound to a node")
+    same_node = pod_node == controller_node
+    if not same_node and not pinned_digest:
         raise SystemExit("Agent and Controller Pods must use the same node runtime")
     if ((pod.get("spec") or {}).get("runtimeClassName") or "") != runtime_class:
         raise SystemExit("Agent and Controller Pods must use the same runtime class")
@@ -1110,9 +1119,18 @@ for pod in pods:
     actual_digest = image_id.split("://")[-1].rsplit("@", 1)[-1]
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", actual_digest):
         raise SystemExit("Agent Pod imageID has no valid sha256 digest")
-    if expected_digest and actual_digest != expected_digest:
-        raise SystemExit("Agent Pod imageID does not match the expected digest")
-    print("pod_verified uid=" + uid + " imageID=" + image_id)
+    if same_node:
+        if expected_digest and actual_digest != expected_digest:
+            raise SystemExit("Agent Pod imageID does not match the expected digest")
+    elif actual_digest not in (pinned_digest, expected_digest):
+        # Another node pulled the pinned reference itself. Its runtime may report
+        # the pinned digest or the platform digest the controller saw; any other
+        # digest is different content.
+        raise SystemExit(
+            "Agent Pod on node " + pod_node + " reports a digest that matches neither the pinned image"
+            " nor the controller runtime on node " + controller_node
+        )
+    print("pod_verified uid=" + uid + " imageID=" + image_id + " node=" + pod_node)
 print("deployment_verified=" + name + " generation=" + str(generation))
 if record == "record":
     release = os.environ["DOOPS_UPGRADE_RELEASE"]
@@ -1132,8 +1150,8 @@ if record == "record":
     if receipt.get("schemaVersion") != 1 or receipt.get("release") != release or receipt.get("workload") != expected_workload:
         raise SystemExit("Verified revision evidence scope mismatch")
     revisions = receipt["revisions"]
-    revisions[str(deployed[0])] = {"image": expected_image, "runtimeDigest": expected_digest,
-                                  "podUID": uid, "node": controller_node, "runtimeClass": runtime_class}
+    revisions[str(deployed[0])] = {"image": expected_image, "runtimeDigest": actual_digest,
+                                  "podUID": uid, "node": pod_node, "runtimeClass": runtime_class}
     retained = {str(row["revision"]) for row in rows}
     receipt["revisions"] = {key: value for key, value in revisions.items() if key in retained}
     manifest = {"apiVersion": "v1", "kind": "ConfigMap",
