@@ -61,26 +61,22 @@ const inputClass = "w-full min-w-0 rounded-md border border-input bg-background 
 
 // canSubmit comes from the Agent session; it only gates submission, so a release can be drafted and
 // checked locally on a target that cannot run it yet.
-export function DeploymentForm({ target, draftKey, canSubmit, blockedReason, onDeploy }: {
+export function DeploymentForm({ target, loadDraft, saveDraft, canSubmit, blockedReason, onDeploy }: {
   target: Target
-  // sessionStorage key for the draft, so switching tabs or reloading keeps what was typed.
-  draftKey: string
+  // Where the draft is kept, so switching tabs or reloading keeps what was typed; the caller scopes it to the user.
+  loadDraft: () => string | null
+  saveDraft: (text: string | null) => void
   canSubmit: boolean
   blockedReason?: string
   onDeploy: (input: DeploymentInput, confirmed: boolean) => Promise<void>
 }) {
-  const [input, setInput] = useState<DeploymentInput>(() =>
-    (typeof window === "undefined" ? undefined : parseDeploymentDraft(sessionStorage.getItem(draftKey))) || EMPTY)
+  const [input, setInput] = useState<DeploymentInput>(() => parseDeploymentDraft(loadDraft()) || EMPTY)
   const [confirmed, setConfirmed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
   const check = useMemo(() => precheck(target, input), [target, input])
   const controls = deploymentFormControls({ canSubmit, valid: check.state === "ok", submitting, confirmed })
-  useEffect(() => {
-    const text = deploymentDraftText(input)
-    if (text) sessionStorage.setItem(draftKey, text)
-    else sessionStorage.removeItem(draftKey)
-  }, [draftKey, input])
+  useEffect(() => { saveDraft(deploymentDraftText(input)) }, [saveDraft, input])
   // The guard lives across renders, so it calls the current onDeploy (which reads the current Agent availability).
   const deploy = useRef(onDeploy)
   deploy.current = onDeploy

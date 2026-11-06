@@ -275,9 +275,96 @@ export class CommandJournal {
 // One journal per page, shared by the terminal, the exec bar and the shell.
 export const commandJournal = new CommandJournal(browserSessionStorage)
 
+// The release page keeps, per target, its release session (so a running apply
+// stays visible after switching views) and the unsent form draft. The draft
+// text comes from deploymentDraftText, which never contains credential material.
+export interface DeployState {
+  sessionId: string | null
+  draft: string | null
+}
+
+interface DeployEntry {
+  targetKey: string
+  sessionId?: string
+  draft?: string
+}
+
+const MAX_DEPLOY_TARGETS = 20
+const MAX_DRAFT_LENGTH = 128_000
+
+function deployKey(scope: StorageScope): string {
+  return `${PREFIX}.deploy:${consoleScopeKey(scope)}`
+}
+
+function deployEntry(value: unknown): DeployEntry | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const { targetKey, sessionId, draft } = value as Record<string, unknown>
+  if (!validTargetKey(targetKey)) return null
+  const entry: DeployEntry = { targetKey }
+  if (validSessionId(sessionId)) entry.sessionId = sessionId
+  if (typeof draft === "string" && draft.length <= MAX_DRAFT_LENGTH) entry.draft = draft
+  return entry
+}
+
+function readDeployEntries(storage: StorageLike | null, scope: StorageScope): DeployEntry[] {
+  const value = readStored(storage, deployKey(scope))
+  if (!Array.isArray(value)) return []
+  return value.map(deployEntry).filter((entry): entry is DeployEntry => entry !== null)
+}
+
+// Most recent target last; an entry with neither a session nor a draft is dropped.
+function updateDeployEntry(storage: StorageLike | null, scope: StorageScope, targetKey: string, change: Partial<DeployEntry>): void {
+  if (!persistsScope(scope) || !validTargetKey(targetKey)) return
+  const entries = readDeployEntries(storage, scope)
+  const previous = entries.find((entry) => entry.targetKey === targetKey)
+  const next: DeployEntry = { ...previous, ...change, targetKey }
+  if (next.sessionId === undefined) delete next.sessionId
+  if (next.draft === undefined) delete next.draft
+  const rest = entries.filter((entry) => entry.targetKey !== targetKey)
+  const kept = next.sessionId || next.draft ? [...rest, next] : rest
+  writeStored(storage, deployKey(scope), kept.length ? kept.slice(-MAX_DEPLOY_TARGETS) : null)
+}
+
+export function loadDeployState(storage: StorageLike | null, scope: StorageScope, targetKey: string): DeployState {
+  if (!persistsScope(scope)) return { sessionId: null, draft: null }
+  const entry = readDeployEntries(storage, scope).find((candidate) => candidate.targetKey === targetKey)
+  return { sessionId: entry?.sessionId ?? null, draft: entry?.draft ?? null }
+}
+
+export function saveDeploySession(storage: StorageLike | null, scope: StorageScope, targetKey: string, sessionId: string): void {
+  if (!validSessionId(sessionId)) return
+  updateDeployEntry(storage, scope, targetKey, { sessionId })
+}
+
+export function saveDeployDraft(storage: StorageLike | null, scope: StorageScope, targetKey: string, draft: string | null): void {
+  if (draft !== null && draft.length > MAX_DRAFT_LENGTH) draft = null
+  updateDeployEntry(storage, scope, targetKey, { draft: draft ?? undefined })
+}
+
+// Earlier console versions kept the release session and draft under these
+// keys without a user, so they are removed at logout too.
+const LEGACY_DEPLOY_PREFIXES = ["doops.deploy-session.", "doops.deploy-draft."]
+
+function removeLegacyDeployKeys(storage: StorageLike | null): void {
+  const listable = storage as (StorageLike & Partial<Pick<Storage, "key" | "length">>) | null
+  if (!listable || typeof listable.key !== "function" || typeof listable.length !== "number") return
+  try {
+    const keys: string[] = []
+    for (let index = 0; index < listable.length; index++) {
+      const key = listable.key(index)
+      if (key && LEGACY_DEPLOY_PREFIXES.some((prefix) => key.startsWith(prefix))) keys.push(key)
+    }
+    for (const key of keys) listable.removeItem(key)
+  } catch {
+    // Storage is best effort.
+  }
+}
+
 // Logging out removes everything this tab kept for that Gateway and user, so
 // the next login in the same tab starts from nothing.
 export function clearConsoleState(storage: StorageLike | null, scope: StorageScope): void {
   writeStored(storage, selectionKey(scope), null)
   writeStored(storage, commandsKey(scope), null)
+  writeStored(storage, deployKey(scope), null)
+  removeLegacyDeployKeys(storage)
 }
