@@ -11,6 +11,7 @@ import {
 } from "@/lib/deployment"
 import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { createDoopsCodeWorkspace } from "@/lib/agent-code-workspace"
+import { browserSessionStorage, loadDeployState, saveDeployDraft, saveDeploySession } from "@/lib/console-persistence"
 import { useAppDialog } from "./app-dialog"
 import { DeploymentForm } from "./deployment-form"
 
@@ -23,13 +24,15 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
   onOpenCredentials?: () => void
   onOpenUpgrade?: () => void
 }) {
-  // Keep the release session across view switches so a running apply stays visible after returning.
-  const storageKey = `doops.deploy-session.${target.key}`
+  // Keep the release session across view switches so a running apply stays visible after returning. It is kept per
+  // Gateway, user and target, never for a token login, and logout clears it (console-persistence.ts).
   const [sessionId, setSessionId] = useState(() => {
-    const saved = typeof window === "undefined" ? null : sessionStorage.getItem(storageKey)
+    const saved = loadDeployState(browserSessionStorage(), session, target.key).sessionId
     return saved && /^deploy-[a-z0-9]{1,16}$/.test(saved) ? saved : randomSession("deploy")
   })
-  useEffect(() => { sessionStorage.setItem(storageKey, sessionId) }, [storageKey, sessionId])
+  useEffect(() => { saveDeploySession(browserSessionStorage(), session, target.key, sessionId) }, [session, target.key, sessionId])
+  const loadDraft = useCallback(() => loadDeployState(browserSessionStorage(), session, target.key).draft, [session, target.key])
+  const saveDraft = useCallback((text: string | null) => saveDeployDraft(browserSessionStorage(), session, target.key, text), [session, target.key])
   const codeWorkspace = useMemo(() => createDoopsCodeWorkspace({ session, target, sessionId }), [session, target.cluster, target.instance, sessionId])
   const runtime = useMemo(
     () => createDoopsAgentUiRuntime({ session, target, sessionId, codeWorkspace }),
@@ -100,7 +103,8 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
           <DeploymentForm
             key={sessionId}
             target={target}
-            draftKey={`doops.deploy-draft.${target.key}`}
+            loadDraft={loadDraft}
+            saveDraft={saveDraft}
             canSubmit={availability.canSubmit}
             blockedReason={availability.canSubmit ? undefined : availability.blockedReason}
             onDeploy={async (input: DeploymentInput, confirmed: boolean) => {
