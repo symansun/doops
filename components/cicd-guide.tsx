@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react"
 import type { Session } from "@/lib/client"
+import { cicdGatewaySnippetValue } from "@/lib/cicd-gateway"
 import {
   KeyIcon,
   CopyIcon,
@@ -64,7 +65,8 @@ export function CicdGuide(_props: { session: Session }) {
   const [gateway, setGateway] = useState("")
   const [provider, setProvider] = useState<Provider>("curl")
 
-  const gw = gateway.trim() || "<DOOPS_GATEWAY_URL>"
+  // 地址不合法（带账号密码、http、查询参数或片段）时片段继续用占位符，不把输入写进可复制的代码。
+  const { value: gw, error: gatewayError } = cicdGatewaySnippetValue(gateway)
 
   const snippet = useMemo(() => {
     if (provider === "curl") {
@@ -204,9 +206,18 @@ jobs:
               value={gateway}
               onChange={(e) => setGateway(e.target.value)}
               placeholder="https://gateway.example.com"
-              className="w-full rounded-md border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none focus:border-ring"
+              aria-invalid={gatewayError ? true : undefined}
+              aria-describedby={gatewayError ? "cicd-gateway-error" : undefined}
+              className={`w-full rounded-md border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none focus:border-ring ${
+                gatewayError ? "border-destructive" : ""
+              }`}
             />
           </label>
+          {gatewayError && (
+            <p id="cicd-gateway-error" role="alert" className="text-xs text-destructive">
+              {gatewayError}。下方片段仍使用占位符 <code className="font-mono">&lt;DOOPS_GATEWAY_URL&gt;</code>。
+            </p>
+          )}
 
           <div className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs text-muted-foreground">
             <ShieldIcon width={15} height={15} className="mt-0.5 shrink-0 text-primary" />

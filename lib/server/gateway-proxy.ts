@@ -1,4 +1,5 @@
 import { readAllowedAuth } from "@/lib/gateway-policy"
+import { gatewayProxyErrorResponse, gatewayUnreachableResponse } from "@/lib/server/gateway-errors"
 
 export async function proxyGatewayRequest(
   req: Request,
@@ -7,7 +8,7 @@ export async function proxyGatewayRequest(
 ): Promise<Response> {
   const { gateway, token } = readAllowedAuth(req)
   if (!gateway || !token) {
-    return Response.json({ error: "未建立 Gateway 会话" }, { status: 401 })
+    return Response.json({ error: "未建立 Gateway 会话", message: "未建立 Gateway 会话，请重新登录", status: 401 }, { status: 401 })
   }
 
   const init: RequestInit = {
@@ -27,21 +28,14 @@ export async function proxyGatewayRequest(
   const label = options.errorLabel || "Gateway 请求"
   try {
     const response = await fetch(`${gateway}${path}`, init)
+    // 错误响应体可能带 Go/SQLite 错误、HTML 错误页或英文说明，只保留类别和中文说明。
+    if (!response.ok) return await gatewayProxyErrorResponse(response, label)
     const text = await response.text()
-    if (!response.ok) {
-      return Response.json(
-        { error: text.trim() || `${label}失败 (${response.status})`, status: response.status },
-        { status: response.status },
-      )
-    }
     return new Response(response.status === 204 ? null : text || "{}", {
       status: response.status,
       headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
     })
-  } catch (error) {
-    return Response.json(
-      { error: `无法连接 gateway: ${(error as Error).message}` },
-      { status: 502 },
-    )
+  } catch {
+    return gatewayUnreachableResponse()
   }
 }

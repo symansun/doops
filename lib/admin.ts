@@ -64,7 +64,13 @@ async function req<T>(s: Session, path: string, init?: RequestInit, expectedStat
   const res = await consoleFetch(`/api/admin/${path}`, { ...init, headers: headers(s) })
   const text = await res.text()
   const data = text ? JSON.parse(text) : {}
-  if (!res.ok) throw Object.assign(new Error(data.error || `请求失败 (${res.status})`), { status: res.status })
+  // message 是给页面展示的中文说明；category 保留 Gateway 类别原文，给代理路由页等调用方解析。
+  if (!res.ok) {
+    throw Object.assign(new Error(data.message || data.error || `请求失败 (${res.status})`), {
+      status: res.status,
+      category: typeof data.error === "string" ? data.error : undefined,
+    })
+  }
   if (expectedStatus !== undefined && res.status !== expectedStatus) {
     throw new Error(`请求失败：预期 HTTP ${expectedStatus}，实际 HTTP ${res.status}`)
   }
