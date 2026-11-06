@@ -10,6 +10,7 @@ export type K8sOperation =
   | "events"
   | "top"
   | "rollout-status"
+  | "configmap-keys"
   | "helm-list"
   | "helm-history"
   | "helm-status"
@@ -78,6 +79,7 @@ export const EMPTY_K8S_INPUT: K8sInput = { ...BLANK_K8S_INPUT, tail: K8S_DEFAULT
 
 export interface K8sOperationSpec {
   label: string
+  // Empty when `doops k8s` has no subcommand for the Agent operation.
   cli: string
   mutation: boolean
   fields: K8sField[]
@@ -90,6 +92,8 @@ export const K8S_OPERATIONS: Record<K8sOperation, K8sOperationSpec> = {
   events: { label: "事件 events", cli: "events [--for kind/name]", mutation: false, fields: ["resource", "namespace", "allNamespaces"] },
   top: { label: "资源用量 top", cli: "top pods|nodes", mutation: false, fields: ["kind", "namespace", "allNamespaces", "selector"] },
   "rollout-status": { label: "发布状态 rollout status", cli: "rollout status <resource>", mutation: false, fields: ["resource", "namespace", "timeout"] },
+  // Fields follow the doops_k8s schema in k8s_mcp_stdio.go; the output is fixed by the Agent.
+  "configmap-keys": { label: "ConfigMap 键名", cli: "", mutation: false, fields: ["name", "namespace", "allNamespaces", "selector"] },
   "helm-list": { label: "Helm 列表", cli: "helm list", mutation: false, fields: ["namespace", "allNamespaces"] },
   "helm-history": { label: "Helm 历史", cli: "helm history <release>", mutation: false, fields: ["name", "namespace"] },
   "helm-status": { label: "Helm 状态", cli: "helm status <release>", mutation: false, fields: ["name", "namespace"] },
@@ -168,7 +172,7 @@ export function k8sRequest(sessionId: string, input: K8sInput): Record<string, u
     payload.kind = kind
   }
   if (uses("name")) {
-    const required = input.operation !== "get"
+    const required = input.operation !== "get" && input.operation !== "configmap-keys"
     if (!name && required) {
       const label = input.operation.startsWith("helm-") ? "Release 名称" : input.operation === "delete-pod" ? "Pod 名称" : input.operation === "describe" ? "资源名称" : "节点名称"
       throw new Error(`请填写${label}`)
@@ -201,9 +205,10 @@ export function k8sRequest(sessionId: string, input: K8sInput): Record<string, u
   if (input.operation.startsWith("helm-") && input.operation !== "helm-list" && !namespace) {
     throw new Error("请填写 Release 所在命名空间")
   }
-  if (input.operation === "get" && name) {
+  if ((input.operation === "get" || input.operation === "configmap-keys") && name) {
     // kubectl refuses a named get across all namespaces, and the Agent drops the
     // selector when a name is given, so neither combination means what it shows.
+    // configmap-keys runs the same kubectl get.
     if (input.allNamespaces) throw new Error("按名称查看时不能勾选「全部命名空间」，请填写命名空间")
     if (input.selector.trim()) throw new Error("按名称查看时标签选择器不会生效，请清空名称或选择器")
   }
@@ -403,6 +408,7 @@ export type K8sFailureKind =
   | "offline"
   | "busy"
   | "canceled"
+  | "toolarge"
   | "unknown"
   | "exit"
   | "other"
@@ -501,6 +507,12 @@ export function describeK8sFailure(message: string, context: K8sFailureContext):
   }
   if (raw.includes("operation canceled")) {
     return { kind: "canceled", text: context.stopRequested ? "已停止" : "操作被中止：可能超过执行时限，或会话被取消" }
+  }
+  // runConfigMapKeysCommand refuses a kubectl listing above its in-memory limit.
+  const tooLarge = /configmap listing exceeds (\d+) bytes/i.exec(raw)
+  if (tooLarge) {
+    const mib = Math.round(Number(tooLarge[1]) / (1 << 20))
+    return { kind: "toolarge", text: `ConfigMap 列表超过 ${mib} MiB，Agent 不返回这么大的结果：请改为单个命名空间，或填写名称、标签选择器缩小范围` }
   }
 
   const denial = rbacDenial(evidence)

@@ -404,6 +404,12 @@ function k8sOutput(args: Record<string, unknown>): string[] {
         : ["NAME                   CPU(cores)   MEMORY(bytes)\n", "api-7c9d8f6b5d-2xk4p   12m          96Mi\n"]
     case "rollout-status":
       return [`deployment "${resource.split("/")[1]}" successfully rolled out\n`]
+    case "configmap-keys":
+      return [
+        "NAMESPACE   NAME            KEYS\n",
+        `${ns}        api-config      LOG_LEVEL,app.yaml\n`,
+        `${ns}        orders-config   <none>\n`,
+      ]
     case "helm-list":
       return [JSON.stringify([{ name: "api", namespace: ns, revision: "7", status: "deployed", chart: "api-1.8.2", app_version: "1.8.2" }]) + "\n"]
     case "helm-history":

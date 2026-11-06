@@ -480,7 +480,10 @@ ServiceAccount 不开放。`helm values` 只返回 key 路径，`helm status` �
 Web 控制台的「Kubernetes」标签用同一个 `doops_k8s` 工具和同一组参数完成上述操作：选择操作、
 填写 kind/名称/资源/命名空间等字段后执行，输出与 CLI 相同。写操作（滚动重启、扩缩容、
 cordon/uncordon、删除 Pod）必须先勾选确认框，对应 CLI 的 `--confirm`；未勾选时不会发送请求，
-修改任何字段都会清除已勾选的确认。
+修改任何字段都会清除已勾选的确认。Web 另有只读的「ConfigMap 键名」，调用 Agent 的
+`configmap-keys`（可选名称、命名空间、全部命名空间、标签选择器），只返回命名空间、名称和
+data/binaryData 键名，不返回值；CLI 目前没有对应子命令。结果超过 64 MiB 时 Agent 拒绝返回，
+需要缩小到单个命名空间或用选择器。
 
 ## Development Credential Preflight
 
