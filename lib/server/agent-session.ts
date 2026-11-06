@@ -28,9 +28,11 @@ export async function authorizedAgentSession(context: AgentGatewayContext, signa
   let raw: string
   try { raw = await agentGatewayCall(context, { mode: "metadata" }, signal) } catch (error) {
     // The metadata read is an ask on this session, so the Gateway answers "busy" while this session's release runs.
-    // That answer already proves the token and grant; reattach the caller to the release it hosts here.
+    // That answer already proves the token and grant; reattach the caller to the release it hosts here. Only a
+    // running command counts: once it ends, a busy answer comes from other work on the session (a write, a push)
+    // and the cached snapshot would skip the protocol and model checks below.
     const hosted = sessions.get(key)
-    if (hosted && error instanceof AgentGatewayError && gatewayBusy.test(error.message)) {
+    if (hosted?.active && error instanceof AgentGatewayError && gatewayBusy.test(error.message)) {
       hosted.touchedAt = Date.now()
       return hosted
     }
