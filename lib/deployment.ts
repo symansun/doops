@@ -59,8 +59,10 @@ function queryKeys(value: string): string[] {
 
 const urlUserInfo = /^[a-z][a-z0-9+.-]*:\/\/[^/?#\s]*@/i
 
-// The Gateway runs credentialScalarContainsInlineMaterial on the whole instruction (credential_runtime.go:202). The
+// The Gateway runs credentialScalarContainsInlineMaterial on the whole instruction (credential_runtime.go:202) when it
+// resolves a credential for the release; it returns before that check when none is resolved (166, 190-192). The
 // instruction has line breaks, so its url.Parse fails and only these checks take effect (credential_scope.go:182-192).
+// The console applies them to every release, since such text must not reach the prompt or a stored draft either.
 function containsInlineCredential(value: string): boolean {
   const lower = value.toLowerCase()
   if (lower.includes("-----begin ") && lower.includes("private key-----")) return true
@@ -141,7 +143,7 @@ export function deploymentRequest(target: Target, input: DeploymentInput) {
   for (const [key, label] of [["services", "服务范围"], ["reason", "变更原因"], ["acceptance", "验收条件"]] as const) {
     const found = freeTextCredential(input[key])
     if (found === "inline") {
-      throw new Error(`${label}包含 Gateway 会按凭据内容拒绝的文字（私钥、访问令牌，或 basic、bearer 后跟空格的认证写法）。请改写这段文字，例如把「basic auth」写成「HTTP 基本认证」；凭据只在「凭据资源名」里填写资源名`)
+      throw new Error(`${label}包含会被当成凭据内容的文字（私钥、访问令牌，或 basic、bearer 后跟空格的认证写法），可能被 Gateway 拒绝，也不应写进发布说明。请改写这段文字，例如把「basic auth」写成「HTTP 基本认证」；凭据只在「凭据资源名」里填写资源名`)
     }
     if (found === "url") throw new Error(`${label}中的地址包含凭据内容（用户名密码，或 token、签名等查询参数），请删除后再提交`)
   }
