@@ -370,7 +370,9 @@ export function describeProxyRouteError(error: unknown, op: ProxyRouteOp): Proxy
   const label = OP_LABEL[op]
   const rawStatus = (error as { status?: unknown } | null)?.status
   const status = typeof rawStatus === "number" ? rawStatus : undefined
-  const raw = error instanceof Error ? error.message.trim() : ""
+  // lib/admin.ts 把 Gateway 类别原文放在 category，message 是给页面看的中文说明。
+  const rawCategory = (error as { category?: unknown } | null)?.category
+  const raw = typeof rawCategory === "string" ? rawCategory.trim() : error instanceof Error ? error.message.trim() : ""
   const fail = (message: string, reload = false): ProxyRouteErrorView => ({
     kind: "error",
     message: `${label}失败：${message}`,
