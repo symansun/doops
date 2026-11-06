@@ -38,6 +38,27 @@ function secretLikeKey(key: string): boolean {
   return secretKeys.has(normalized) || secretKeySuffixes.some((suffix) => normalized.endsWith(suffix))
 }
 
+// The Gateway never checks URLs inside the instruction, so a URL in free text does not need the URL fields' key list:
+// "data" and "stringdata" are ordinary query keys there, and "pat" counts only as a whole word (gitlab_pat, not compat).
+function freeTextSecretKey(key: string): boolean {
+  const lower = key.trim().toLowerCase()
+  if (lower === "pat" || /[_.-]pat$/.test(lower)) return true
+  const normalized = lower.replace(/[_\-. ]/g, "")
+  if (normalized === "data" || normalized === "stringdata") return false
+  return secretKeys.has(normalized) || secretKeySuffixes.some((suffix) => suffix !== "pat" && normalized.endsWith(suffix))
+}
+
+function queryKeys(value: string): string[] {
+  const query = value.split("#", 1)[0]
+  const start = query.indexOf("?")
+  if (start < 0) return []
+  return query.slice(start + 1).split("&").flatMap((part) => {
+    try { return [decodeURIComponent(part.split("=", 1)[0].replace(/\+/g, " "))] } catch { return [] }
+  })
+}
+
+const urlUserInfo = /^[a-z][a-z0-9+.-]*:\/\/[^/?#\s]*@/i
+
 // The Gateway runs credentialScalarContainsInlineMaterial on the whole instruction (credential_runtime.go:202). The
 // instruction has line breaks, so its url.Parse fails and only these checks take effect (credential_scope.go:182-192).
 function containsInlineCredential(value: string): boolean {
@@ -51,9 +72,9 @@ function containsInlineCredential(value: string): boolean {
 // is found wherever it sits in the sentence. Trailing Chinese punctuation is not part of the address.
 const embeddedUrl = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`，。；：、）」]+/gi
 
-// A URL in free text is checked like a URL field: no user info and no token-like query keys.
+// A URL in free text carries no user info (a password) and no token-like query key.
 function containsCredentialUrl(text: string): boolean {
-  return [...text.matchAll(embeddedUrl)].some(([url]) => containsCredentialMaterial(url))
+  return [...text.matchAll(embeddedUrl)].some(([url]) => urlUserInfo.test(url) || queryKeys(url).some(freeTextSecretKey))
 }
 
 // Free text (service scope, reason, acceptance): a half-width "?" in a sentence is not a query string.
@@ -69,13 +90,8 @@ export function containsCredentialMaterial(value: string): boolean {
   value = value.trim()
   if (!value) return false
   if (containsInlineCredential(value)) return true
-  if (/^[a-z][a-z0-9+.-]*:\/\/[^/?#\s]*@/i.test(value)) return true
-  const query = value.split("#", 1)[0]
-  const start = query.indexOf("?")
-  if (start < 0) return false
-  return query.slice(start + 1).split("&").some((part) => {
-    try { return secretLikeKey(decodeURIComponent(part.split("=", 1)[0].replace(/\+/g, " "))) } catch { return false }
-  })
+  if (urlUserInfo.test(value)) return true
+  return queryKeys(value).some(secretLikeKey)
 }
 
 function parseUrl(raw: string, label: string): URL {
