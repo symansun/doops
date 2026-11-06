@@ -94,7 +94,8 @@ export async function fetchTargets(s: Session): Promise<Target[]> {
   }
   const res = await fetch("/api/targets", { headers: authHeaders(s) })
   const data = await res.json()
-  if (!res.ok) throw new Error(data.error || "查询目标失败")
+  // message 是代理给页面的中文说明；error 可能是 Gateway 类别原文。
+  if (!res.ok) throw new Error(data.message || data.error || "查询目标失败")
   return (data.targets || []) as Target[]
 }
 
@@ -111,7 +112,7 @@ export async function fetchAudit(
   const qs = new URLSearchParams(params)
   const res = await fetch(`/api/audit?${qs.toString()}`, { headers: authHeaders(s) })
   const data = await res.json()
-  if (!res.ok) return { error: data.error || "查询审计失败", status: res.status }
+  if (!res.ok) return { error: data.message || data.error || "查询审计失败", status: res.status }
   return {
     events: (data.events || []) as AuditEvent[],
     summary: data.summary as AuditSummary | undefined,
