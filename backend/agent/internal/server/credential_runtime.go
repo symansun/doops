@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -943,15 +944,30 @@ func (h *GatewayHub) cleanupCredentialGrantMaterializations(
 	if err != nil {
 		return err
 	}
+	_, err = h.cleanupCredentialMaterializationContexts(ctx, materializations)
+	return err
+}
+
+// cleanupCredentialMaterializationContexts cleans every context in records,
+// once each. A failed context does not stop the others, so one unreachable
+// target does not leave Secrets behind on the reachable ones. It returns the
+// sorted cluster/instance of every target that still holds an uncleaned context.
+func (h *GatewayHub) cleanupCredentialMaterializationContexts(
+	ctx context.Context,
+	records []CredentialMaterializationRecord,
+) ([]string, error) {
 	var failures []error
-	for _, request := range pendingCredentialCleanups(materializations) {
-		// Every reachable context is cleaned even after one fails, so a single
-		// unreachable context does not leave the others' Secrets behind.
+	var unfinished []string
+	for _, request := range pendingCredentialCleanups(records) {
 		if err := h.cleanupCredentialMaterializationContext(ctx, request); err != nil {
 			failures = append(failures, err)
+			if target := request.Cluster + "/" + request.Instance; !containsString(unfinished, target) {
+				unfinished = append(unfinished, target)
+			}
 		}
 	}
-	return errors.Join(failures...)
+	sort.Strings(unfinished)
+	return unfinished, errors.Join(failures...)
 }
 
 // pendingCredentialCleanups keeps one request per materialization context.
