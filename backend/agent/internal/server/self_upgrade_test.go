@@ -235,12 +235,72 @@ func TestSelfUpgradeRejectsUnverifiedControllerIdentity(t *testing.T) {
 	}
 }
 
-func TestSelfUpgradeRejectsDifferentNodeRuntime(t *testing.T) {
-	env := selfUpgradeScriptEnv(filepath.Join(t.TempDir(), "calls.log"))
-	env["AGENT_NODE"] = "node-b"
-	out, err := runSelfUpgradeScript(t, selfUpgradeApplyScript, selfUpgradeFakeCommands(), env)
-	if err == nil || !strings.Contains(out, "same node runtime") || strings.Contains(out, "self-upgrade complete") {
-		t.Fatalf("cross-node runtime identity was not rejected: %v\n%s", err, out)
+// The controller Job runs on the old Agent's node. A digest-pinned candidate
+// that the scheduler puts on another node is checked against the pinned digest
+// (or the controller's runtime digest); a tag can only be proven on one node.
+func TestSelfUpgradeVerifiesCandidateNodeAndDigest(t *testing.T) {
+	pinned := "sha256:" + testPinnedDigest
+	controllerRuntime := "sha256:" + strings.Repeat("c", 64)
+	other := "sha256:" + strings.Repeat("e", 64)
+	oldPinned := "sha256:" + strings.Repeat("b", 64)
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+		// want is the outcome: "complete", "rolled back", or "rollback failed".
+		want   string
+		output []string
+	}{
+		{"same node, pinned digest", nil, "complete", []string{"node=node-a"}},
+		{"other node, pinned digest", map[string]string{"AGENT_NODE": "node-b"}, "complete", []string{"node=node-b"}},
+		{"other node, controller runtime digest",
+			map[string]string{"AGENT_NODE": "node-b", "RUNTIME_DIGEST": controllerRuntime}, "complete", []string{"node=node-b", controllerRuntime}},
+		{"other node reports the pinned digest while the controller runtime differs",
+			map[string]string{"AGENT_NODE": "node-b", "RUNTIME_DIGEST": controllerRuntime, "CANDIDATE_IMAGE_ID": "registry.example/doops@" + pinned},
+			"complete", []string{"node=node-b", pinned}},
+		{"other node, different content",
+			map[string]string{"AGENT_NODE": "node-b", "CANDIDATE_IMAGE_ID": "registry.example/doops@" + other},
+			"rolled back", []string{"matches neither the pinned image nor the controller runtime"}},
+		{"same node must match the controller runtime exactly",
+			map[string]string{"RUNTIME_DIGEST": controllerRuntime, "CANDIDATE_IMAGE_ID": "registry.example/doops@" + pinned},
+			"rolled back", []string{"does not match the expected digest"}},
+		{"same node, tag", map[string]string{
+			"DOOPS_UPGRADE_IMAGE": "registry.example/doops:v2", "DOOPS_UPGRADE_DIGEST": "", "DOOPS_UPGRADE_TAG": "v2",
+			"RUNTIME_DIGEST": controllerRuntime, "OLD_RUNTIME_DIGEST": oldPinned}, "complete", []string{"node=node-a"}},
+		{"other node, tag", map[string]string{
+			"DOOPS_UPGRADE_IMAGE": "registry.example/doops:v2", "DOOPS_UPGRADE_DIGEST": "", "DOOPS_UPGRADE_TAG": "v2",
+			"RUNTIME_DIGEST": controllerRuntime, "OLD_RUNTIME_DIGEST": oldPinned, "AGENT_NODE": "node-b"}, "rolled back", []string{"same node runtime"}},
+		{"rollback restored on another node, pinned baseline", map[string]string{
+			"BAD_FIELD": "readyReplicas", "RESTORED_NODE": "node-b",
+			"OLD_IMAGE": "registry.example/doops@" + oldPinned, "OLD_RUNTIME_DIGEST": oldPinned}, "rolled back", []string{"node=node-b"}},
+		{"rollback restored on another node, tag baseline", map[string]string{
+			"BAD_FIELD": "readyReplicas", "RESTORED_NODE": "node-b"}, "rollback failed", []string{"same node runtime"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := selfUpgradeScriptEnv(filepath.Join(t.TempDir(), "calls.log"))
+			for key, value := range tc.env {
+				env[key] = value
+			}
+			out, err := runSelfUpgradeScript(t, selfUpgradeApplyScript, selfUpgradeFakeCommands(), env)
+			switch tc.want {
+			case "complete":
+				if err != nil || !strings.Contains(out, "self-upgrade complete image="+env["DOOPS_UPGRADE_IMAGE"]) || strings.Contains(out, "rolling back") {
+					t.Fatalf("upgrade was not accepted: %v\n%s", err, out)
+				}
+			case "rolled back":
+				if err == nil || strings.Contains(out, "self-upgrade complete") || !strings.Contains(out, "automatic rollback complete revision=5") {
+					t.Fatalf("candidate was not rejected and restored: %v\n%s", err, out)
+				}
+			case "rollback failed":
+				if err == nil || strings.Contains(out, "self-upgrade complete") || !strings.Contains(out, "automatic rollback failed") {
+					t.Fatalf("unverifiable restore was accepted: %v\n%s", err, out)
+				}
+			}
+			for _, want := range tc.output {
+				if !strings.Contains(out, want) {
+					t.Fatalf("output lacks %q:\n%s", want, out)
+				}
+			}
+		})
 	}
 }
 
@@ -432,7 +492,7 @@ func TestSelfUpgradeApplyScriptDryRunFailureDoesNotMutate(t *testing.T) {
 }
 
 func TestSelfUpgradeRejectsInvalidPodEvidence(t *testing.T) {
-	for _, field := range []string{"missing", "uid", "ready", "image", "imageID", "digest"} {
+	for _, field := range []string{"missing", "uid", "node", "ready", "image", "imageID", "digest"} {
 		t.Run(field, func(t *testing.T) {
 			env := selfUpgradeScriptEnv(filepath.Join(t.TempDir(), "calls.log"))
 			env["BAD_POD_FIELD"] = field
@@ -778,16 +838,21 @@ case "$*" in
     image_id="registry.example/doops@${RUNTIME_DIGEST:-$DOOPS_UPGRADE_DIGEST}"
     uid="candidate-pod"
     ready=true
+    node="${AGENT_NODE:-node-a}"
     calls=0
     if [ -f "$KUBECTL_CALLS" ]; then calls="$(cat "$KUBECTL_CALLS")"; fi
     if [ -f "$ROLLBACK_MARKER" ] || [ "$calls" -lt 4 ]; then
       image="${OLD_IMAGE:-registry.example/doops:old}"
       image_id="registry.example/doops@${OLD_RUNTIME_DIGEST:-$DOOPS_UPGRADE_DIGEST}"
       uid="restored-pod"
+      node="${BASELINE_NODE:-node-a}"
+      if [ -f "$ROLLBACK_MARKER" ] && [ -n "${RESTORED_NODE:-}" ]; then node="$RESTORED_NODE"; fi
     else
+      if [ -n "${CANDIDATE_IMAGE_ID:-}" ]; then image_id="$CANDIDATE_IMAGE_ID"; fi
       case "${BAD_POD_FIELD:-}" in
         missing) printf '{"items":[]}\n'; exit 0 ;;
         uid) uid="" ;;
+        node) node="" ;;
         ready) ready=false ;;
         image) image="registry.example/doops:old" ;;
         imageID) image_id="" ;;
@@ -796,7 +861,7 @@ case "$*" in
     fi
     pull_secrets=""
     if [ -n "${PULL_SECRET:-}" ]; then pull_secrets=',"imagePullSecrets":[{"name":"cnb-pull"}]'; fi
-    printf '{"items":[{"metadata":{"name":"agent-pod","uid":"%s"},"spec":{"nodeName":"%s"%s,"containers":[{"name":"doops-agent","image":"%s"}]},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"name":"doops-agent","ready":%s,"imageID":"%s"}]}}]}\n' "$uid" "${AGENT_NODE:-node-a}" "$pull_secrets" "$image" "$ready" "$image_id"
+    printf '{"items":[{"metadata":{"name":"agent-pod","uid":"%s"},"spec":{"nodeName":"%s"%s,"containers":[{"name":"doops-agent","image":"%s"}]},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"name":"doops-agent","ready":%s,"imageID":"%s"}]}}]}\n' "$uid" "$node" "$pull_secrets" "$image" "$ready" "$image_id"
     ;;
   *"get deployment"*)
     calls=0
