@@ -289,7 +289,8 @@ const unchanged = "目标没有被修改。"
 export function deploymentOutcome(state: { status: string; error: string | null | undefined }): DeploymentOutcome {
   const outcome = (kind: DeploymentOutcome["kind"], title: string, detail = "", actions: DeploymentNoticeAction[] = []): DeploymentOutcome =>
     ({ kind, title, detail, actions })
-  if (state.status === "running" || state.status === "waiting" || state.status === "launching") {
+  // "launching" is the SDK's placeholder before any session snapshot arrives (emptySession); nothing was submitted.
+  if (state.status === "running" || state.status === "waiting") {
     return outcome("running", "发布执行中…", "rollout 与最终 Deployment 状态以 Agent 返回为准。")
   }
   if (state.status === "completed") {
