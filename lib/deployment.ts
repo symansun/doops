@@ -38,13 +38,36 @@ function secretLikeKey(key: string): boolean {
   return secretKeys.has(normalized) || secretKeySuffixes.some((suffix) => normalized.endsWith(suffix))
 }
 
-export function containsCredentialMaterial(value: string): boolean {
-  value = value.trim()
-  if (!value) return false
+// The Gateway runs credentialScalarContainsInlineMaterial on the whole instruction (credential_runtime.go:202). The
+// instruction has line breaks, so its url.Parse fails and only these checks take effect (credential_scope.go:182-192).
+function containsInlineCredential(value: string): boolean {
   const lower = value.toLowerCase()
   if (lower.includes("-----begin ") && lower.includes("private key-----")) return true
   if (credentialPatterns.some((pattern) => pattern.test(value))) return true
-  if (lower.includes("bearer ") || lower.includes("basic ")) return true
+  return lower.includes("bearer ") || lower.includes("basic ")
+}
+
+// URLs written inside free text; trailing Chinese punctuation is not part of the address.
+const embeddedUrl = /\bhttps?:\/\/[^\s<>"'`，。；：、）」]+/gi
+
+// A URL in free text is checked like a URL field: no user info and no token-like query keys.
+function containsCredentialUrl(text: string): boolean {
+  return [...text.matchAll(embeddedUrl)].some(([url]) => containsCredentialMaterial(url))
+}
+
+// Free text (service scope, reason, acceptance): a half-width "?" in a sentence is not a query string.
+function freeTextCredential(value: string): "inline" | "url" | undefined {
+  if (containsInlineCredential(value)) return "inline"
+  if (containsCredentialUrl(value)) return "url"
+  return undefined
+}
+
+const FREE_TEXT_FIELDS = new Set<keyof DeploymentInput>(["services", "reason", "acceptance"])
+
+export function containsCredentialMaterial(value: string): boolean {
+  value = value.trim()
+  if (!value) return false
+  if (containsInlineCredential(value)) return true
   if (/^[a-z][a-z0-9+.-]*:\/\/[^/?#\s]*@/i.test(value)) return true
   const query = value.split("#", 1)[0]
   const start = query.indexOf("?")
@@ -99,7 +122,11 @@ export function deploymentRequest(target: Target, input: DeploymentInput) {
   const repeated = credential_refs.find((name, index) => credential_refs.indexOf(name) !== index)
   if (repeated) throw new Error(`凭据资源名重复：${repeated}`)
   for (const [key, label] of [["services", "服务范围"], ["reason", "变更原因"], ["acceptance", "验收条件"]] as const) {
-    if (containsCredentialMaterial(input[key])) throw new Error(`${label}不能包含凭据内容（token、私钥或认证头）`)
+    const found = freeTextCredential(input[key])
+    if (found === "inline") {
+      throw new Error(`${label}包含 Gateway 会按凭据内容拒绝的文字（私钥、访问令牌，或 basic、bearer 后跟空格的认证写法）。请改写这段文字，例如把「basic auth」写成「HTTP 基本认证」；凭据只在「凭据资源名」里填写资源名`)
+    }
+    if (found === "url") throw new Error(`${label}中的地址包含凭据内容（用户名密码，或 token、签名等查询参数），请删除后再提交`)
   }
   const image = `${input.repository}${input.selector === "digest" ? "@" : ":"}${input.version}`
   const instruction = `在 target ${target.cluster}/${target.instance} 发布服务范围 ${input.services}，release ${input.release}，namespace ${input.namespace}；使用 chart ${input.chart}${values.length ? `，values URL ${values.join(", ")}` : ""}；镜像 ${image}。\n发布者已核对 CI 成功证据 ${input.ci}，来源提交 ${input.commit}。\n变更原因：${input.reason}。\n验收条件：${input.acceptance}。`
@@ -118,7 +145,8 @@ export function deploymentExtensionCommand(target: Target, input: DeploymentInpu
 // The draft kept in the tab's sessionStorage, so switching tabs or reloading keeps what was typed. A draft with
 // credential material is never stored.
 export function deploymentDraftText(input: DeploymentInput): string | null {
-  if (DEPLOYMENT_FIELDS.some((key) => key !== "selector" && containsCredentialMaterial(input[key]))) return null
+  if (DEPLOYMENT_FIELDS.some((key) => key !== "selector" &&
+    (FREE_TEXT_FIELDS.has(key) ? freeTextCredential(input[key]) !== undefined : containsCredentialMaterial(input[key])))) return null
   return JSON.stringify(Object.fromEntries(DEPLOYMENT_FIELDS.map((key) => [key, input[key]])))
 }
 
