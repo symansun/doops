@@ -75,12 +75,21 @@ export function validTargetKey(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 256 && !CONTROL.test(value)
 }
 
+// A token login carries no username, so every token user on one Gateway would
+// share the same key and inherit the previous user's target and session. Such
+// a login keeps nothing.
+export function persistsScope(scope: StorageScope): boolean {
+  return Boolean(scope.username?.trim())
+}
+
 export function saveSelection(storage: StorageLike | null, scope: StorageScope, selection: ConsoleSelection): void {
+  if (!persistsScope(scope)) return
   if (!validTargetKey(selection.targetKey) || !validSessionId(selection.sessionId)) return
   writeStored(storage, selectionKey(scope), { targetKey: selection.targetKey, sessionId: selection.sessionId })
 }
 
 export function loadSelection(storage: StorageLike | null, scope: StorageScope): ConsoleSelection | null {
+  if (!persistsScope(scope)) return null
   const value = readStored(storage, selectionKey(scope))
   if (!value || typeof value !== "object" || Array.isArray(value)) return null
   const { targetKey, sessionId } = value as Record<string, unknown>
@@ -111,9 +120,9 @@ export function restoreSelection(saved: ConsoleSelection | null, targets: readon
 
 // A command the terminal or the AI exec bar started is recorded while it runs
 // and cleared when it ends. A record still present after a reload means the
-// reload cut the command off and its outcome is unknown. The record holds a
-// redacted summary only, never output, credentials or tokens, and nothing is
-// ever replayed from it.
+// reload cut the command off and its outcome is unknown. The record holds the
+// executable name only, never arguments, output, credentials or tokens, and
+// nothing is ever replayed from it.
 
 export type CommandSource = "terminal" | "exec"
 
@@ -141,34 +150,21 @@ export function beforeUnloadWarning(activeCommands: number): string {
 
 const SUMMARY_LIMIT = 80
 const MAX_RECORDS = 20
-const REDACTED = "***"
-const SENSITIVE = "(?:pass(?:word|wd)?|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|auth\\w*|credential)"
-const VALUE = `("[^"]*"|'[^']*'|\\S+)`
-const URL_USERINFO = /(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi
-const AUTH_SCHEME = new RegExp(`\\b(Bearer|Basic|Token)\\s+${VALUE}`, "gi")
-const SENSITIVE_ASSIGNMENT = new RegExp(`([A-Za-z0-9_.-]*${SENSITIVE}[A-Za-z0-9_.-]*\\s*[=:]\\s*)${VALUE}`, "gi")
-const SENSITIVE_FLAG = new RegExp(`((?:^|\\s)--?[A-Za-z0-9_-]*${SENSITIVE}[A-Za-z0-9_-]*)\\s+(?!-)${VALUE}`, "gi")
-const LONG_TOKEN = /[A-Za-z0-9_+/=]{24,}/g
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
+const EXECUTABLE = /^[A-Za-z0-9._/+-]{1,64}$/
 
-// Values that look like credentials are replaced before anything is stored:
-// URL userinfo, Authorization schemes, password/token/secret assignments and
-// flags, and long mixed letter-digit tokens.
-function redactCommand(line: string): string {
-  return line
-    .replace(URL_USERINFO, `$1${REDACTED}@`)
-    .replace(AUTH_SCHEME, `$1 ${REDACTED}`)
-    .replace(SENSITIVE_ASSIGNMENT, `$1${REDACTED}`)
-    .replace(SENSITIVE_FLAG, `$1 ${REDACTED}`)
-    .replace(LONG_TOKEN, (token) => (/[A-Za-z]/.test(token) && /\d/.test(token) ? REDACTED : token))
-}
-
-// The summary keeps the first line only, so heredocs and later lines never
-// reach storage.
+// The summary is the executable name of the first line and nothing else:
+// arguments can carry a password in more forms than any pattern catches
+// (mysql -pS3cret, curl -u admin:pw, echo pw | sudo -S). Leading VAR=value
+// assignments are skipped; anything after the name becomes " …". A first word
+// that is not a plain name is stored as "命令".
 export function commandSummary(raw: string): string {
-  const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
-  let summary = redactCommand(lines[0] ?? "").replace(/\s+/g, " ").trim()
-  if (lines.length > 1) summary = `${summary} …`
-  return summary.length > SUMMARY_LIMIT ? `${summary.slice(0, SUMMARY_LIMIT)}…` : summary
+  const words = raw.trim().split(/\s+/).filter(Boolean)
+  let index = 0
+  while (index < words.length && ENV_ASSIGNMENT.test(words[index])) index++
+  const word = words[index] ?? ""
+  const name = EXECUTABLE.test(word) ? word : "命令"
+  return index + 1 < words.length || index > 0 ? `${name} …` : name
 }
 
 function formatStartedAt(value: string): string {
@@ -226,7 +222,7 @@ export class CommandJournal {
     this.active.add(id)
     // An id the Gateway would reject cannot be looked up later; still count it
     // as running so the unload warning covers it.
-    if (validTargetKey(start.targetKey) && validSessionId(start.sessionId)) {
+    if (persistsScope(scope) && validTargetKey(start.targetKey) && validSessionId(start.sessionId)) {
       const record: CommandRecord = {
         id,
         targetKey: start.targetKey,
@@ -259,6 +255,7 @@ export class CommandJournal {
   // Returns the records an earlier page left behind, once. Commands this page
   // is still running are kept and not reported.
   takeInterrupted(scope: StorageScope): CommandRecord[] {
+    if (!persistsScope(scope)) return []
     const records = this.read(scope)
     this.write(scope, records.filter((record) => this.active.has(record.id)))
     return records.filter((record) => !this.active.has(record.id))
@@ -277,3 +274,10 @@ export class CommandJournal {
 
 // One journal per page, shared by the terminal, the exec bar and the shell.
 export const commandJournal = new CommandJournal(browserSessionStorage)
+
+// Logging out removes everything this tab kept for that Gateway and user, so
+// the next login in the same tab starts from nothing.
+export function clearConsoleState(storage: StorageLike | null, scope: StorageScope): void {
+  writeStored(storage, selectionKey(scope), null)
+  writeStored(storage, commandsKey(scope), null)
+}

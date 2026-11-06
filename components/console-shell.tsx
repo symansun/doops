@@ -14,6 +14,7 @@ import { consoleViewEntries, credentialsDestination, type ConsoleView, type Cons
 import {
   beforeUnloadWarning,
   browserSessionStorage,
+  clearConsoleState,
   commandJournal,
   consoleScopeKey,
   interruptedCommandNotice,
@@ -273,6 +274,7 @@ export function ConsoleShell() {
         setError((err as Error).message)
       } finally {
         localStorage.removeItem(LEGACY_DEMO_KEY)
+        if (current) clearConsoleState(browserSessionStorage(), current)
         restoredScope.current = ""
         setRestoreNotice("")
         setInterruptedNotices([])
