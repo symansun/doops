@@ -25,7 +25,7 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
   onOpenUpgrade?: () => void
 }) {
   // Keep the release session across view switches so a running apply stays visible after returning. It is kept per
-  // Gateway, user and target, never for a token login, and logout clears it (console-persistence.ts).
+  // Gateway, user and target; a token login keeps it in memory only. Logout clears both (console-persistence.ts).
   const [sessionId, setSessionId] = useState(() => {
     const saved = loadDeployState(browserSessionStorage(), session, target.key).sessionId
     return saved && /^deploy-[a-z0-9]{1,16}$/.test(saved) ? saved : randomSession("deploy")
