@@ -154,11 +154,13 @@ const MAX_RECORDS = 20
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
 const EXECUTABLE = /^[A-Za-z0-9._/+-]{1,64}$/
 
-// A token pasted into the terminal by mistake is the first word itself. Long
-// letter-digit words without a path look like one; executable names rarely do.
+// A token pasted into the terminal by mistake is the first word itself. A word
+// with letters and digits and a run of 16 or more characters between / . _ -
+// looks like one (an AWS secret key contains "/"); executable names such as
+// x86_64-linux-gnu-gcc or terraform-provider-aws_v5.31.0 are short runs.
 function tokenLike(word: string): boolean {
   return containsCredentialMaterial(word) ||
-    (word.length >= 20 && /[A-Za-z]/.test(word) && /\d/.test(word) && !word.includes("/"))
+    (/[A-Za-z]/.test(word) && /\d/.test(word) && word.split(/[/._-]/).some((segment) => segment.length >= 16))
 }
 
 // The summary is the executable name of the first line and nothing else:
