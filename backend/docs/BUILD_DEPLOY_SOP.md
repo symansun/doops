@@ -308,6 +308,40 @@ Deployment selector 与 Chart 的 `workload.selectorLabels` 一致即可原地�
 `serviceAccount.name`，由 Pod 自己的 ServiceAccount 提供集群权限。收编完成后
 按已有 Helm release 路径升级。
 
+### Agent RBAC 纳管与回滚
+
+身份与权限配置契约见 [CLUSTER_INSTALL_GUIDE.md](CLUSTER_INSTALL_GUIDE.md#agentgateway-target-与集群身份)。
+`rbac.create=true` 是显式集群管理授权，不能只为绕过 Forbidden 而给未授权 target 开启。
+第一次把外管 SA/CRB 加入 release 时，必须由另一个已授权管理通道执行 Helm 收敛，
+不能依赖正在收编的 SA 做控制器：回滚到旧 revision 会删除新纳管的 SA/CRB，
+控制器会同时失去自己的身份或恢复权限。
+
+1. 经 Gateway 审计通道核对 target 对应的集群、release/namespace、当前 revision、SA UID、
+   CRB roleRef/subjects 和现有 owner。备份 Helm history、完整 values/manifest、SA/CRB、
+   该 SA 的现有 RoleBinding 与 Agent Pod 状态；备份仅用户可读，不包含 token/Secret payload。
+2. 用明确版本的 Chart 和完整 values，显式设置 `kubeconfig.source=serviceAccount`、
+   `serviceAccount.name` 和 `rbac.create=true`。同名对象归属另一个 release 时停止。
+   对已核验的无 owner 对象使用 Helm 的 `--take-ownership` 收编，不全局修改其他对象标签。
+   去掉旧 CRB 的 `helm.sh/resource-policy: keep` 前保存原注解，避免残留永久集群权限。
+3. 独立控制器先执行 server-side dry-run，再执行真实 Helm mutation。不要在 test Agent
+   进程里替换自身。没有 Pod template 差异时，不为增加 RBAC 强行重启 Pod。
+4. 回读 manifest 必须同时包含 Deployment、SA、CRB；live CRB 的唯一主体必须等于
+   Pod SA。经目标 Agent 验证 `auth whoami`、跨 namespace 读 Pod、列节点和 API server
+   dry-run 创建 Namespace/Deployment；验证 `auth can-i` 原有四项，以及 Ready、Gateway
+   回连和固定镜像。不得用模型摘要或单独的 Helm ownership 标签当成功证据。
+5. 失败由独立管理通道恢复旧 Helm revision，重新应用备份的 SA/CRB 并恢复其原 owner
+   和 `keep` 状态，再检查身份、权限和健康。普通应用 `apply` 不会删除新增的 ownership
+   注解，恢复时需明确移除备份中没有的 Helm 标签/注解。恢复后的 SA UID 若变化，
+   现有 Pod 的投射 token 会失效，需要通过独立通道重新创建 Pod 后验证 Gateway 回连。
+
+迁移后的普通镜像升级仍用 `doops upgrade`。回滚范围必须是已包含托管 RBAC 的 revision；
+需要跨越首次纳管点回滚时，按上面的独立控制器流程恢复，不能让当前 SA 删除自己的权限。
+预检、升级和显式回滚先用 Kubernetes `auth whoami` 取得控制器真实身份；
+实际使用 SA 的控制器会比较前后 manifest 中自己的 SA 及相关绑定（包括挂载 SA kubeconfig 的情况）。
+新增纳管、删除、改 roleRef 或 subjects 会在 Helm mutation 前报
+`rbac_controller_identity_changed`，要求独立控制器处理，不绕过检查。
+卸载 Agent 会撤销 release 管理的集群级绑定；外部维护的历史 RoleBinding 不在此自动删除。
+
 Agent 已离线、Deployment 卡在 ImagePullBackOff 或收编中途失败时，由能访问该集群的
 外部主机执行 `scripts/reinstall-k8s-agent.py`（从 `backend/` 运行，需要 kubectl、helm、
 python3）：
