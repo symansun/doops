@@ -1,6 +1,6 @@
-# doops.sh — 分布式 AI 运维执行系统
+# DoOps — 分布式 AI 运维执行系统
 
-`doops.sh` 是面向远端运维节点的执行与智能分析入口。系统把确定性命令和自然语言任务拆成两条路径：明确命令走 `exec` 快路径，复杂意图走 `ask` 慢路径，由边缘节点上的 doagent 结合 Skills 自主分析、执行和回传结果。
+`DoOps` 是面向远端运维节点的执行与智能分析入口。系统把确定性命令和自然语言任务拆成两条路径：明确命令走 `exec` 快路径，复杂意图走 `ask` 慢路径，由边缘节点上的 doagent 结合 Skills 自主分析、执行和回传结果。
 
 ## 核心调用链路
 
@@ -95,7 +95,7 @@ registry.example.com/doops/doops:v1.1
 registry.example.com/doops/doops-base:v1
 ```
 
-`doops.sh/base` 包含 sandbox、doagent、BuildKit 和系统工具；`doops.sh` 只叠加 doops-agent、skills、docs 和 entrypoint。K8s 日常只滚动 `doops.sh`，基础镜像只在运行时能力变化时升级。
+`doops-base` 包含 sandbox、doagent、BuildKit 和系统工具；`doops` 只叠加 doops-agent、skills、docs 和 entrypoint。K8s 日常只滚动 `doops`，基础镜像只在运行时能力变化时升级。
 
 镜像内关键路径：
 

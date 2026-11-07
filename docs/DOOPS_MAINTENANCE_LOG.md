@@ -1,4 +1,4 @@
-# Doops Maintenance Log
+# DoOps Maintenance Log
 
 This file records release hygiene decisions for doops CLI, gateway, agent, and skills.
 
@@ -11,7 +11,7 @@ This file records release hygiene decisions for doops CLI, gateway, agent, and s
 - Do not commit runtime state: `.agents/`, `.doops/`, `auth.json`, `config.json`, `history.jsonl`, or `sessions.json`.
 - Never print complete user or agent tokens in logs, docs, commands, or commit messages.
 - Treat `/v1/targets` as connection state. Verify health with active probes for `exec`, git `push/pull`, and `ask` when release risk requires it.
-- Normal doops-agent upgrades should pull only the lightweight `doops.sh:<version>` layer. Rebuild or roll the base image only when sandbox, doagent, BuildKit, or system packages change.
+- Normal doops-agent upgrades should pull only the lightweight `doops:<version>` layer. Rebuild or roll the base image only when sandbox, doagent, BuildKit, or system packages change.
 - Publish `doops-gateway` only with `scripts/deploy-gateway.sh` over SSH/SCP from the host context. Do not use a doops target, `doops exec`, `doops push`, `doops write`, base64, tar, or ad-hoc split chunks to deploy the gateway control plane.
 - Do not keep the gateway host as a default doops target. Gateway is an endpoint/package, not an agent target.
 

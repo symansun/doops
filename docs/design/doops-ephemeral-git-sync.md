@@ -1,4 +1,4 @@
-# Doops 无感增量隔离同步引擎设计方案 (Ephemeral Git Sync)
+# DoOps 无感增量隔离同步引擎设计方案 (Ephemeral Git Sync)
 
 > **✅ 状态：已于 2026-03 落地实施。此文档作为底层架构回顾与历史设计记录保留。**
 ## 1. 背景与目标
@@ -20,7 +20,7 @@
 ```mermaid
 sequenceDiagram
     participant Dev as 开发者本地代码区
-    participant Cli as Doops 客户端 (push.go)
+    participant Cli as DoOps 客户端 (push.go)
     participant Buffer as 全新临时影子仓库 (/tmp)
     participant Agent as Agent 微型 Git Gateway (:42222/git)
     participant Dest as 隔离容器工作区 (/root/ws)

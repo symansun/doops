@@ -1,6 +1,6 @@
-# Doops API 对接指南
+# DoOps API 对接指南
 
-本文档面向需要通过 API 调用 Doops 的平台、CI 系统和内部工具。推荐的公共入口是 Doops Gateway 的 HTTP / WebSocket 服务；目标集群内的 doops-agent 主动连接 Gateway，不要求调用方能直连内网节点。
+本文档面向需要通过 API 调用 DoOps 的平台、CI 系统和内部工具。推荐的公共入口是 DoOps Gateway 的 HTTP / WebSocket 服务；目标集群内的 doops-agent 主动连接 Gateway，不要求调用方能直连内网节点。
 
 ## 架构
 
@@ -387,7 +387,7 @@ doops -session <session> pull --target <target> --dest <dir>
 
 ## 自然语言部署 API 对接模式
 
-平台可以对外提供更高层的“部署这个仓库”接口，然后在内部组合 Doops Gateway 调用。一个典型的平台接口可以是：
+平台可以对外提供更高层的“部署这个仓库”接口，然后在内部组合 DoOps Gateway 调用。一个典型的平台接口可以是：
 
 ```http
 POST /your-platform/deployments
@@ -403,7 +403,7 @@ Content-Type: application/json
 }
 ```
 
-平台内部映射为以下 Doops 操作：
+平台内部映射为以下 DoOps 操作：
 
 1. 生成 `session_id`，例如 `deploy_${repo}_${timestamp}`。
 2. 查询 `/v1/targets`，确认目标在线；`busy=false` 表示没有 target-wide 阻塞，`status=active` 仍可继续使用不同 session。
@@ -427,7 +427,7 @@ Content-Type: application/json
 
 ## 进展和可追溯性
 
-Doops 有三层进展数据：
+DoOps 有三层进展数据：
 
 - WebSocket 流：实时 `notifications/message` 输出。
 - Gateway 审计库：按 user、token、target、action、session、status、命令摘要、输出尾部和时间记录持久事件。
@@ -500,7 +500,7 @@ HTTP 错误：
 
 JSON-RPC 错误：
 
-- `-32601`：未知方法或未知 Doops 工具。
+- `-32601`：未知方法或未知 DoOps 工具。
 - `-32602`：请求参数非法。
 - `-32603`：Gateway 或目标 agent 内部执行失败。
 - `-32003`：目标或动作权限不足。

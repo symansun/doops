@@ -1,7 +1,7 @@
 # 业务项目如何编写和插拔 Skill 指南
 
-Doops 的 AI 调度能力完全是由 `Skills` 驱动的。
-业务项目（如 `workspace`、`training-hub` 等）如果希望将他们的构建、发布、故障排查经验自动化，**不需要修改 Doops 核心代码**，只需要提供 `.agent/skills/` 配置文件即可。
+DoOps 的 AI 调度能力完全是由 `Skills` 驱动的。
+业务项目（如 `workspace`、`training-hub` 等）如果希望将他们的构建、发布、故障排查经验自动化，**不需要修改 DoOps 核心代码**，只需要提供 `.agent/skills/` 配置文件即可。
 
 本文档将指导你如何从零编写并为一个业务项目插拔一项专属 Skill。
 
@@ -91,4 +91,4 @@ Agent 的智能核心就会匹配到关键词 `deploy labelU`，加载该 Skill 
 
 1. **内聚原则**：一个子业务的特性 SOP 就写在一个独立的 Skill 目录里，不要混杂。
 2. **避免重复造轮子**：如果你只是希望用到现成的通用部署能力，优先依靠通用的 `deploy/SKILL.md`，没必要为每个项目写专有指引，除非它的部署逻辑很特殊。
-3. **安全第一**：Skill 编写务必遵循 Doops 的沙盒纪律，所有远端操作都要在 `/root/ws/$SESSION/` 下收敛，绝对禁止引用旧的 SCP / SSH 手工交互手段。
+3. **安全第一**：Skill 编写务必遵循 DoOps 的沙盒纪律，所有远端操作都要在 `/root/ws/$SESSION/` 下收敛，绝对禁止引用旧的 SCP / SSH 手工交互手段。

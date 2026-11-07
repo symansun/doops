@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Doops 一键安装脚本
+DoOps 一键安装脚本
 
 用法:
   bash scripts/install.sh --project /path/to/project
@@ -33,7 +33,7 @@ Doops 一键安装脚本
   带 --target-* 时按 name 新增或更新 canonical config 中的对应 target，保留其它 targets 和 llm 配置
 
 Skill 维护规则:
-  权威源码在 doops.sh 仓库 skills/SKILL.md
+  权威源码在 DoOps 仓库 skills/SKILL.md
   install.sh 只把源码里的 skill/docs 复制到业务项目，不从业务项目反向生成 skill
 
 连接模式:
@@ -56,7 +56,7 @@ TARGET_CLUSTER="default"
 TARGET_INSTANCE=""
 TARGET_ALIASES=""
 TARGET_TOKEN=""
-TARGET_USE="Doops managed node"
+TARGET_USE="DoOps managed node"
 
 detect_host_platform() {
   local os arch
@@ -115,7 +115,7 @@ EOF
 
   User install does not compile doops locally.
   Maintainers must run scripts/build-cli.sh --all and commit the generated
-  skills/doops-cli/bin/doops-${platform} artifact to the fixed doops.sh repo.
+  skills/doops-cli/bin/doops-${platform} artifact to the fixed DoOps repo.
 EOF
   exit 1
 }

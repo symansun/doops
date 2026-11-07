@@ -1,4 +1,4 @@
-# doops.sh
+# DoOps
 
 <p align="center">
   <img src="docs/images/slogan.svg" alt="不用 SSH，也能运维任何一台机器。" width="760">
@@ -19,9 +19,9 @@
 
 ## 界面预览
 
-![Doops 智能运维工具首页](docs/images/doops-home.jpg)
+![DoOps 智能运维工具首页](docs/images/doops-home.jpg)
 
-Doops 统一入口：把智能体、控制台、CLI 和多领域 skill 组合成一套运维工具，覆盖服务器、Kubernetes、网站、数据库、文件与巡检等场景，并用同一套认证、授权与审计完成日常运维。
+DoOps 统一入口：把智能体、控制台、CLI 和多领域 skill 组合成一套运维工具，覆盖服务器、Kubernetes、网站、数据库、文件与巡检等场景，并用同一套认证、授权与审计完成日常运维。
 
 ## 目录结构
 
@@ -154,7 +154,7 @@ doops -session smoke ask --target <gateway-target> --msg '<read-only task>'
 
 ## 安装模型先看这里
 
-Doops 有两件事容易混淆，文档里必须先分开看：
+DoOps 有两件事容易混淆，文档里必须先分开看：
 
 1. **agent 部署形态**：`doops-agent` 在目标机器上怎么跑起来。
 2. **连接模式**：CLI/skill 怎么连到这个 agent。

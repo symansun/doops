@@ -1,4 +1,4 @@
-# Doops Gateway Tunnel
+# DoOps Gateway Tunnel
 
 `doops-gateway` 是公网控制面。内网 `doops-agent` 不暴露端口，而是主动连到
 gateway；`doops` CLI 和 skill 再连接 gateway，通过 `cluster/instance` 选择目标。

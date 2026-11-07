@@ -1,4 +1,4 @@
-# Doops Usage Guide
+# DoOps Usage Guide
 
 This guide holds command-level usage details. The skill file is only the entry point.
 
