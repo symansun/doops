@@ -712,19 +712,21 @@ func (h *GatewayHub) finishCredentialAudit(id int64, status, category string) er
 
 // credentialTargetAudit is the target part of the audit of an operation that
 // runs on one target: its cluster/instance and, once a grant is known, the
-// grant and its stored scope. Values that are not plain identifiers are left
-// out, so request text never reaches the audit columns.
+// grant and its stored scope. Only a pair of plain identifiers may reach the
+// audit columns; anything else is request text, and the scope that holds it is
+// left out too, so no audit column carries it.
 func credentialTargetAudit(scope CredentialGrantScope, grantID string) AuditFinish {
 	scope = normalizeCredentialGrantScope(scope)
 	var finish AuditFinish
-	if validCredentialMetadataToken(scope.Cluster, 253) && validCredentialMetadataToken(scope.Instance, 253) {
-		finish.Cluster, finish.Instance = scope.Cluster, scope.Instance
-	}
 	if grantID != "" {
 		finish.GrantID = grantID
-		if validateCredentialGrantScope(scope) == nil {
-			finish.Scope = &scope
-		}
+	}
+	if !validCredentialMetadataToken(scope.Cluster, 253) || !validCredentialMetadataToken(scope.Instance, 253) {
+		return finish
+	}
+	finish.Cluster, finish.Instance = scope.Cluster, scope.Instance
+	if grantID != "" && validateCredentialGrantScope(scope) == nil {
+		finish.Scope = &scope
 	}
 	return finish
 }

@@ -623,10 +623,7 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 			existing.CreatedAt = grant.CreatedAt
 		}
 		if auditID != 0 {
-			if err := finishAuditWith(tx, auditID, AuditFinish{
-				Status: "success", Cluster: existing.Scope.Cluster, Instance: existing.Scope.Instance,
-				GrantID: existing.ID, Scope: &existing.Scope, EndedAt: time.Now().UTC(),
-			}); err != nil {
+			if err := finishAuditWith(tx, auditID, credentialGrantSuccessAudit(existing)); err != nil {
 				return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 			}
 		}
@@ -648,10 +645,7 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 		existing.CreatedBy = grant.CreatedBy
 		existing.CreatedAt = grant.CreatedAt
 		if auditID != 0 {
-			if err := finishAuditWith(tx, auditID, AuditFinish{
-				Status: "success", Cluster: existing.Scope.Cluster, Instance: existing.Scope.Instance,
-				GrantID: existing.ID, Scope: &existing.Scope, EndedAt: time.Now().UTC(),
-			}); err != nil {
+			if err := finishAuditWith(tx, auditID, credentialGrantSuccessAudit(existing)); err != nil {
 				return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 			}
 		}
@@ -692,10 +686,7 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 	}
 	existing.CreatedAt, _ = parseTime(createdAt)
 	if auditID != 0 {
-		if err := finishAuditWith(tx, auditID, AuditFinish{
-			Status: "success", Cluster: existing.Scope.Cluster, Instance: existing.Scope.Instance,
-			GrantID: existing.ID, Scope: &existing.Scope, EndedAt: time.Now().UTC(),
-		}); err != nil {
+		if err := finishAuditWith(tx, auditID, credentialGrantSuccessAudit(existing)); err != nil {
 			return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 		}
 	}
@@ -703,6 +694,17 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 		return CredentialGrant{}, err
 	}
 	return existing, nil
+}
+
+// credentialGrantSuccessAudit is the success audit of a created grant. It keeps
+// only the identifiers credentialTargetAudit accepts, so a request scope whose
+// cluster or instance is free text leaves the target columns and the stored
+// scope JSON empty.
+func credentialGrantSuccessAudit(existing CredentialGrant) AuditFinish {
+	target := credentialTargetAudit(existing.Scope, existing.ID)
+	target.Status = "success"
+	target.EndedAt = time.Now().UTC()
+	return target
 }
 
 func (s *GatewayStore) RevokeCredentialGrant(credentialID, grantID, actorID string) (CredentialGrant, error) {

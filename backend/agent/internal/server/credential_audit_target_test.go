@@ -164,6 +164,37 @@ func TestCredentialGrantFailuresAuditTheTarget(t *testing.T) {
 			t.Fatalf("grant failure audit = %#v, want no target and the generic summary", event)
 		}
 	})
+	t.Run("grant created with request text in the target", func(t *testing.T) {
+		// Given a platform admin and a grant request whose cluster field is
+		// request text while the rest of the scope is valid
+		f := newRevocationFixture(t)
+		const requestText = "dev probe=request text"
+		body := `{"scope":{"cluster":"` + requestText + `","instance":"local","namespace":"apps"}}`
+		// When the Gateway accepts it
+		response := f.wait(t, f.send(t, http.MethodPost, "/v1/credentials/"+f.resource.ID+"/grants", body))
+		if response.code != http.StatusOK {
+			t.Fatalf("grant = HTTP %d %q", response.code, response.body)
+		}
+		// Then no audit column carries the request text: the target and the
+		// stored scope stay empty and the summary keeps its generic form
+		event := f.lastRevokeAudit(t)
+		if event.Status != "success" || event.Cluster != "" || event.Instance != "" ||
+			event.Scope != nil || event.CommandSummary != "credential grant" || event.GrantID == "" {
+			t.Fatalf("grant success audit = %#v", event)
+		}
+		encoded, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, text := range map[string]string{"audit event": string(encoded), "audit summary": event.CommandSummary} {
+			if strings.Contains(text, requestText) {
+				t.Fatalf("%s carries the request text: %q", name, text)
+			}
+			if strings.Contains(text, revocationCanary) {
+				t.Fatalf("%s carries the payload canary: %q", name, text)
+			}
+		}
+	})
 }
 
 func TestCredentialResourceAuditsAreFoundByCredential(t *testing.T) {
