@@ -149,17 +149,27 @@ func (f *revocationFixture) grantState(t *testing.T) CredentialState {
 // the cleanup calls the Agent receives while the request is in flight.
 func (f *revocationFixture) revoke(t *testing.T) <-chan revocationResponse {
 	t.Helper()
+	return f.revokeAs(t, f.admin)
+}
+
+func (f *revocationFixture) revokeAs(t *testing.T, token CreatedToken) <-chan revocationResponse {
+	t.Helper()
 	body, _ := json.Marshal(map[string]string{"grant_id": f.grant.ID})
-	return f.send(t, http.MethodDelete, "/v1/credentials/"+f.resource.ID+"/grants", string(body))
+	return f.sendAs(t, token, http.MethodDelete, "/v1/credentials/"+f.resource.ID+"/grants", string(body))
 }
 
 func (f *revocationFixture) send(t *testing.T, method, path, body string) <-chan revocationResponse {
+	t.Helper()
+	return f.sendAs(t, f.admin, method, path, body)
+}
+
+func (f *revocationFixture) sendAs(t *testing.T, token CreatedToken, method, path, body string) <-chan revocationResponse {
 	t.Helper()
 	req, err := http.NewRequest(method, f.server.URL+path, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("Authorization", "Bearer "+f.admin.Plaintext)
+	req.Header.Set("Authorization", "Bearer "+token.Plaintext)
 	req.Header.Set("Content-Type", "application/json")
 	done := make(chan revocationResponse, 1)
 	go func() {
@@ -354,8 +364,10 @@ func TestCredentialGrantRevocationOutcomes(t *testing.T) {
 		given func(*testing.T, *revocationFixture) *executionLifecycleAgent
 		// cleanups answers each cleanup call the Agent receives, in order.
 		cleanups []string
-		want     result
-		rows     map[string]string
+		// caller returns the token that sends the revocation; nil is the platform admin.
+		caller func(*testing.T, *revocationFixture) CreatedToken
+		want   result
+		rows   map[string]string
 	}{
 		{
 			name: "online target is cleaned then revoked",
@@ -464,13 +476,62 @@ func TestCredentialGrantRevocationOutcomes(t *testing.T) {
 				"error", "credential_grant_revocation_outcome_unknown"},
 			rows: map[string]string{"api": "verified/", "worker": "cleaned/"},
 		},
+		{
+			name: "caller is neither the owner nor a platform admin",
+			given: func(t *testing.T, f *revocationFixture) *executionLifecycleAgent {
+				f.record(t, "api", "verified", "")
+				return f.agent(t, "revocation-forbidden")
+			},
+			// A grant on the target is the caller's whole authority there, and it
+			// does not let the caller manage a platform credential bound to it.
+			caller: func(t *testing.T, f *revocationFixture) CreatedToken {
+				return f.user(t, "revocation-operator", ScopeGrant{Cluster: "dev", Instance: "local"})
+			},
+			want: result{code: http.StatusForbidden, body: "Forbidden", state: CredentialStateActive},
+			rows: map[string]string{"api": "verified/"},
+		},
+		{
+			name: "caller does not own the personal credential",
+			given: func(t *testing.T, f *revocationFixture) *executionLifecycleAgent {
+				owner, err := f.store.VerifyUserToken(f.admin.Plaintext)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := f.store.db.Exec(`UPDATE credentials SET scope = ?, owner_id = ? WHERE id = ?`,
+					CredentialScopePersonal, owner.UserID, f.resource.ID); err != nil {
+					t.Fatal(err)
+				}
+				f.record(t, "api", "verified", "")
+				return f.agent(t, "revocation-not-owner")
+			},
+			caller: func(t *testing.T, f *revocationFixture) CreatedToken {
+				return f.user(t, "revocation-other-owner", ScopeGrant{Cluster: "dev", Instance: "local"})
+			},
+			want: result{code: http.StatusForbidden, body: "Forbidden", state: CredentialStateActive},
+			rows: map[string]string{"api": "verified/"},
+		},
+		{
+			name: "credential audit is unavailable",
+			given: func(t *testing.T, f *revocationFixture) *executionLifecycleAgent {
+				f.record(t, "api", "verified", "")
+				agent := f.agent(t, "revocation-audit-unavailable")
+				f.failCredentialAudit(t)
+				return agent
+			},
+			want: result{code: http.StatusInternalServerError, body: "credential_audit_unavailable", state: CredentialStateActive},
+			rows: map[string]string{"api": "verified/"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// Given the grant's materialization history and target connectivity
 			f := newRevocationFixture(t)
 			agent := tc.given(t, f)
 			// When the grant is revoked
-			pending := f.revoke(t)
+			token := f.admin
+			if tc.caller != nil {
+				token = tc.caller(t, f)
+			}
+			pending := f.revokeAs(t, token)
 			for _, failure := range tc.cleanups {
 				call := agent.call(t, "doops_credential_cleanup", revocationSession)
 				if failure == "" {
@@ -480,6 +541,13 @@ func TestCredentialGrantRevocationOutcomes(t *testing.T) {
 				}
 			}
 			response := f.wait(t, pending)
+			if agent != nil {
+				select {
+				case call := <-agent.calls:
+					t.Fatalf("%s reached the Agent beyond the expected cleanups", call.name)
+				case <-time.After(100 * time.Millisecond):
+				}
+			}
 			// Then the response, grant state, rows and audit agree
 			if response.code != tc.want.code || (tc.want.body != "" && response.body != tc.want.body) {
 				t.Fatalf("revoke = HTTP %d %q, want %d %q", response.code, response.body, tc.want.code, tc.want.body)
@@ -490,11 +558,31 @@ func TestCredentialGrantRevocationOutcomes(t *testing.T) {
 			if got := f.statuses(t); fmt.Sprint(got) != fmt.Sprint(tc.rows) {
 				t.Fatalf("rows = %v, want %v", got, tc.rows)
 			}
+			if tc.want.audit == "" {
+				// The request was refused before a grant audit could start.
+				events, err := f.store.ListAuditFiltered(AuditFilter{Action: ActionCredentialGrant, Limit: 10})
+				if err != nil || len(events) != 0 {
+					t.Fatalf("refused revoke left grant audits: %v, %#v", err, events)
+				}
+				return
+			}
 			audit := f.lastRevokeAudit(t)
 			if audit.Status != tc.want.audit || audit.Error != tc.want.category || audit.EndedAt.IsZero() {
 				t.Fatalf("revoke audit = %s %q, want %s %q", audit.Status, audit.Error, tc.want.audit, tc.want.category)
 			}
 		})
+	}
+}
+
+// failCredentialAudit makes every new credential audit row fail to insert, the
+// way an unavailable audit store refuses to start a mutation. The failure text
+// is the payload canary, so the cleanup check also proves it is not echoed.
+func (f *revocationFixture) failCredentialAudit(t *testing.T) {
+	t.Helper()
+	if _, err := f.store.db.Exec(`CREATE TRIGGER fail_credential_audit
+		BEFORE INSERT ON audit_events WHEN NEW.action LIKE 'credential:%'
+		BEGIN SELECT RAISE(FAIL, '` + revocationCanary + `'); END`); err != nil {
+		t.Fatal(err)
 	}
 }
 
