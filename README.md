@@ -1,5 +1,7 @@
 # doops.sh
 
+> **不用 SSH，也能运维任何一台机器。**
+
 > 本项目以 [MIT License](LICENSE) 开源。
 
 **核心贡献者：孙勇、高家祺、宋晨宇。** 具体署名顺序见[贡献者](#contributors)。
