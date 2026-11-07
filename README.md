@@ -6,6 +6,12 @@
 
 `doops` 是 SSH 的替代入口。日常使用只走公网 `doops-gateway`，再由 gateway 路由到主动注册的内网 `doops-agent`；不需要 SSH 用户、SSH 端口或 SSH 密码。
 
+## 界面预览
+
+![Doops 智能运维工具首页](docs/images/doops-home.jpg)
+
+Doops 统一入口：把智能体、控制台、CLI 和多领域 skill 组合成一套运维工具，覆盖服务器、Kubernetes、网站、数据库、文件与巡检等场景，并用同一套认证、授权与审计完成日常运维。
+
 ## 目录结构
 
 | 路径 | 说明 |
