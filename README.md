@@ -21,6 +21,8 @@
 
 ![DoOps 智能运维工具首页](docs/images/doops-home.jpg)
 
+![DoOps Console 控制台总览](docs/images/doops-console.png)
+
 DoOps 统一入口：把智能体、控制台、CLI 和多领域 skill 组合成一套运维工具，覆盖服务器、Kubernetes、网站、数据库、文件与巡检等场景，并用同一套认证、授权与审计完成日常运维。
 
 ## 目录结构
