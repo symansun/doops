@@ -411,10 +411,13 @@ func (h *GatewayHub) materializeExplicitCredentialApply(
 	for _, item := range authorized {
 		cluster := item.Reference.Scope.Cluster
 		instance := item.Reference.Scope.Instance
+		// The audit carries only validated identifiers: a scope whose
+		// cluster/instance is request text keeps them and its scope JSON out.
+		target := credentialTargetAudit(item.Reference.Scope, item.Authorized.Grant.ID)
 		auditID, err := h.store.StartAudit(AuditEvent{
-			UserID: auth.UserID, TokenID: auth.TokenID, Cluster: cluster, Instance: instance,
+			UserID: auth.UserID, TokenID: auth.TokenID, Cluster: target.Cluster, Instance: target.Instance,
 			CredentialID: item.Authorized.Resource.ID, VersionID: item.Authorized.Version.ID,
-			GrantID: item.Authorized.Grant.ID, Scope: &item.Reference.Scope,
+			GrantID: item.Authorized.Grant.ID, Scope: target.Scope,
 			CorrelationID: "credapply_" + randomHex(12), Action: ActionCredentialUse,
 			Session: sessionID, CommandSummary: "credential materialize use=" + string(item.Reference.Scope.Use),
 			StartedAt: time.Now().UTC(),
@@ -447,7 +450,7 @@ func (h *GatewayHub) materializeExplicitCredentialApply(
 			return credentialApplyPreparation{}, err
 		}
 		if err := h.store.FinishAudit(auditID, AuditFinish{
-			Status: "success", Scope: &item.Reference.Scope, ResourceVersion: materialization.ResourceVersion,
+			Status: "success", Scope: target.Scope, ResourceVersion: materialization.ResourceVersion,
 			Digest: materialization.Digest, EndedAt: time.Now().UTC(),
 		}); err != nil {
 			_ = h.rollbackCredentialPrepare(ctx, preparation.completed)
@@ -891,10 +894,17 @@ func (h *GatewayHub) handleCredentialVerify(
 			Digest: observed.Digest, ErrorCategory: observed.ErrorCategory,
 		})
 	}
-	if err := h.store.RecordCredentialVerificationsAudited(verifications, auditID, AuditFinish{
-		Status: "success", Cluster: body.Scope.Cluster, Instance: body.Scope.Instance,
-		Scope: &auditScope, VersionID: version.ID, EndedAt: time.Now().UTC(),
-	}); err != nil {
+	// The success audit keeps only validated identifiers, like the failure
+	// target above: a verify whose request target is request text writes no
+	// cluster, instance or scope column.
+	success := credentialTargetAudit(body.Scope, "")
+	success.Status = "success"
+	success.VersionID = version.ID
+	if success.Cluster != "" && success.Instance != "" && validateCredentialGrantScope(auditScope) == nil {
+		success.Scope = &auditScope
+	}
+	success.EndedAt = time.Now().UTC()
+	if err := h.store.RecordCredentialVerificationsAudited(verifications, auditID, success); err != nil {
 		h.writeCredentialVerificationError(w, auditID, failure, "credential_verification_persist_failed", http.StatusInternalServerError)
 		return
 	}

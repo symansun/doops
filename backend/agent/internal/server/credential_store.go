@@ -766,10 +766,7 @@ func (s *GatewayStore) FinalizeCredentialGrantRevocation(
 	}
 	if grant.State == CredentialStateRevoked {
 		if auditID != 0 {
-			if err := s.FinishAudit(auditID, AuditFinish{
-				Status: "success", GrantID: grant.ID, Cluster: grant.Scope.Cluster, Instance: grant.Scope.Instance,
-				Scope: &grant.Scope, EndedAt: time.Now().UTC(),
-			}); err != nil {
+			if err := s.FinishAudit(auditID, credentialGrantSuccessAudit(grant)); err != nil {
 				return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 			}
 		}
@@ -807,10 +804,7 @@ func (s *GatewayStore) FinalizeCredentialGrantRevocation(
 		return CredentialGrant{}, ErrCredentialGrantDenied
 	}
 	if auditID != 0 {
-		if err := finishAuditWith(tx, auditID, AuditFinish{
-			Status: "success", GrantID: grant.ID, Cluster: grant.Scope.Cluster, Instance: grant.Scope.Instance,
-			Scope: &grant.Scope, EndedAt: now,
-		}); err != nil {
+		if err := finishAuditWith(tx, auditID, credentialGrantSuccessAudit(grant)); err != nil {
 			return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 		}
 	}
