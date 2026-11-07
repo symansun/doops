@@ -12,6 +12,7 @@ import {
 import { listInstances } from "@/lib/admin"
 import { commandPreview, summarizeInstanceScope, type InstanceScope } from "@/lib/admin-views"
 import { emptyTargetsCopy } from "@/lib/empty-targets"
+import { greeting } from "@/lib/session-display"
 import {
   ServerIcon,
   ActivityIcon,
@@ -133,7 +134,7 @@ export function DashboardPanel({
         <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold text-foreground text-balance">
-              {session.username ? `你好，${session.username}` : "欢迎使用 Doops"}
+              {greeting(session)}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground text-pretty">
               Agent 隧道连接、控制台会话与任务执行的一屏总览。

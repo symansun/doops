@@ -9,6 +9,7 @@ import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
 import { isDemoAllowed } from "@/lib/demo-policy"
 import { DEMO_TOKEN } from "@/lib/demo"
 import { errorAfterRefresh, reconcileSelected, reconcileTargets, type RefreshTrigger } from "@/lib/console-refresh"
+import { displayUserName } from "@/lib/session-display"
 import { NETWORK_FAILURE_MESSAGE, subscribeNetworkStatus } from "@/lib/network-error"
 import { consoleViewEntries, credentialsDestination, type ConsoleView, type ConsoleViewEntry } from "@/lib/console-views"
 import {
@@ -363,9 +364,7 @@ export function ConsoleShell() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {session.username && (
-            <span className="hidden text-xs text-muted-foreground sm:inline">{session.username}</span>
-          )}
+          <span className="hidden text-xs text-muted-foreground sm:inline">{displayUserName(session)}</span>
           <button
             onClick={() => setShowGuide(true)}
             title="新手引导"
