@@ -105,6 +105,14 @@ export const K8S_OPERATIONS: Record<K8sOperation, K8sOperationSpec> = {
   "delete-pod": { label: "删除 Pod", cli: "delete pod <name>", mutation: true, fields: ["name", "namespace"] },
 }
 
+// What the Agent leaves out of the output. Helm status was trimmed in Agent
+// v1.3.119 (3c53dbd); older Agents still return the whole release.
+export const K8S_OUTPUT_HINTS: Partial<Record<K8sOperation, string>> = {
+  "helm-values": "只返回 values 的键路径，不返回值。",
+  "helm-status": "v1.3.119 及以上的 Agent 只返回发布名、修订、状态和时间；更早的 Agent 会返回完整 release，其中可能有 values 里的敏感值。",
+  "configmap-keys": "只返回键名，不返回值。",
+}
+
 const NAME = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/
 const KIND = /^[a-z][a-z0-9.-]*$/
 const CONTAINER = /^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/
@@ -409,6 +417,7 @@ export type K8sFailureKind =
   | "busy"
   | "canceled"
   | "toolarge"
+  | "unsupported"
   | "unknown"
   | "exit"
   | "other"
@@ -513,6 +522,12 @@ export function describeK8sFailure(message: string, context: K8sFailureContext):
   if (tooLarge) {
     const mib = Math.round(Number(tooLarge[1]) / (1 << 20))
     return { kind: "toolarge", text: `ConfigMap 列表超过 ${mib} MiB，Agent 不返回这么大的结果：请改为单个命名空间，或填写名称、标签选择器缩小范围` }
+  }
+  // buildK8SCommands on an Agent older than the operation.
+  const unsupported = /unsupported k8s operation "([^"]+)"/.exec(raw)?.[1]
+  if (unsupported && unsupported in K8S_OPERATIONS) {
+    const label = K8S_OPERATIONS[unsupported as K8sOperation].label
+    return { kind: "unsupported", text: `目标 Agent 版本过旧，不支持「${label}」，请联系平台管理员升级该 Agent。` }
   }
 
   const denial = rbacDenial(evidence)

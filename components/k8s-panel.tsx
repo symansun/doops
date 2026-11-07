@@ -7,6 +7,7 @@ import {
   EMPTY_K8S_LOG,
   K8S_LOG_MAX_LINES,
   K8S_OPERATIONS,
+  K8S_OUTPUT_HINTS,
   appendK8sLog,
   createK8sFormStore,
   describeK8sFailure,
@@ -263,9 +264,7 @@ export function K8sPanel({
             </label>
           )}
         </div>
-        {input.operation === "helm-values" && <p className="text-xs text-muted-foreground">只返回 values 的键路径，不返回值。</p>}
-        {input.operation === "helm-status" && <p className="text-xs text-muted-foreground">只返回发布名、修订、状态和时间，不返回 values 和 manifest。</p>}
-        {input.operation === "configmap-keys" && <p className="text-xs text-muted-foreground">只返回键名，不返回值。</p>}
+        {K8S_OUTPUT_HINTS[input.operation] && <p className="text-xs text-muted-foreground">{K8S_OUTPUT_HINTS[input.operation]}</p>}
         {(input.operation === "get" || input.operation === "describe") && <p className="text-xs text-muted-foreground">Secret 与 ServiceAccount 不开放读取。</p>}
 
         {mutation && (
