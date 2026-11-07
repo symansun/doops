@@ -15,6 +15,11 @@ serviceAccount:
   # Empty keeps the namespace default ServiceAccount.
   name: ""
 
+rbac:
+  # Explicitly manage a dedicated ServiceAccount and its cluster-admin binding.
+  # Requires kubeconfig.source=serviceAccount and serviceAccount.name.
+  create: false
+
 kubeconfig:
   # mounted: /root/.kube/config comes from a volume.
   # serviceAccount: the entrypoint writes it from the Pod ServiceAccount token.

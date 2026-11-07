@@ -13,7 +13,7 @@ Agent 镜像升级当作同一件事。下列脚本命令均从仓库 `backend/`
 | :--- | :--- | :--- |
 | 只安装客户端和 Skill | `bash scripts/install.sh --version <tag> --project <项目绝对路径>` | 不部署 Agent；不修改线上 Helm |
 | 空 Ubuntu/Debian 服务器首次 Docker 接入 | `bash scripts/bootstrap-host-agent.sh ...` | root、唯一 cluster/instance、指定发布版本；模型由 Gateway 下发 |
-| 已有标准 Helm Agent，命令通道和升级控制器可用 | `doops -session <s> upgrade --target <t> --image <已核验镜像>` | 操作员已登录 Gateway；Agent 挂载共享 kubeconfig |
+| 已有标准 Helm Agent，命令通道和升级控制器可用 | `doops -session <s> upgrade --target <t> --image <已核验镜像>` | 操作员已登录 Gateway；Agent 有共享 kubeconfig 或专用 ServiceAccount |
 | 旧 Helm Agent 或命令通道损坏，需要外部恢复 | `bash scripts/release-managed-agent.sh ...` | 操作机 kubeconfig、Helm、kubectl、python3，以及可查询目标的 Gateway 登录 |
 | K8S Agent 离线、镜像拉取失败或收编中断，需清理重装 | `python3 scripts/reinstall-k8s-agent.py plan\|run --cluster <c> --instance <i>` | 能访问该集群的 kubectl、helm、python3；流程见 [BUILD_DEPLOY_SOP.md](BUILD_DEPLOY_SOP.md) |
 | 没有 Agent 的新集群 | 同一外部脚本的 `--values` 模式 | 完整 values 与操作机 kubeconfig；安装后另做 Gateway 验收 |
@@ -146,6 +146,46 @@ bash scripts/release-managed-agent.sh \
 dry-run 通过后再执行正式恢复，完成后按本节做安装验收。
 
 ## Kubernetes / K3s
+
+### Agent、Gateway target 与集群身份
+
+Gateway 的 `cluster/instance` 是路由及授权身份，不是 Kubernetes context 或 namespace。
+一个 Agent 在哪个 namespace 运行，不决定它能管理哪些 namespace。Kubernetes API
+按 Agent 实际使用的凭据和 RBAC 判断权限；给 Gateway 用户增加 target grant 不会创建 RBAC。
+
+标准集群管理 Agent 使用专用 ServiceAccount。完整 values 显式包含：
+
+```yaml
+kubeconfig:
+  source: serviceAccount
+serviceAccount:
+  name: doops-agent
+rbac:
+  create: true
+```
+
+`rbac.create=true` 由同一 Helm release 管理 ServiceAccount 和名为
+`<namespace>-<serviceAccount.name>-cluster-admin` 的 ClusterRoleBinding；绑定只指向该
+namespace 的这一个 SA。SA 和绑定都会出现在 `helm get manifest`，不使用 `keep`，
+卸载 release 时一并删除。已有同名资源必须先核对主体和 owner，再显式收编；
+只贴 Helm 标签不算完成收编。迁移和回滚见 [BUILD_DEPLOY_SOP.md](BUILD_DEPLOY_SOP.md#agent-rbac-纳管与回滚)。
+
+这项设置赋予整个集群的管理权限，包括所有 namespace 的 Secret；获准操作该 target 的用户
+通过 Agent 获得同一能力。Gateway 负责用户、target 授权及操作审计，Kubernetes 审计仍显示
+`system:serviceaccount:<namespace>:<name>`，不用共享 `kubernetes-admin` 证书。
+入口通过 `tokenFile` 引用 Pod 的短期投射 token，让 kubelet 轮换凭据；不复制 token 到 Git
+或长期 kubeconfig。`serviceAccount` 模式拒绝空名称和 `default`。
+
+`rbac.create` 默认 `false`，升级不会自动提升已有 Agent 权限。选择外部管理的 SA 时，
+用 `kubeconfig.source=serviceAccount` 和其专用名称，RBAC 由外部声明负责；选择现有挂载
+kubeconfig 时继续显式使用 `kubeconfig.source=mounted`，权限来自该 kubeconfig。
+这两种既有输入不会在认证或授权失败后相互切换。新建集群管理 Agent 优先使用上述
+Helm 管理的 SA 模式，保留可区分的身份和完整生命周期。
+
+`hostAccess.enabled` 管的是 Pod 所在节点的操作系统入口，不能代替 Kubernetes RBAC；
+Kubernetes `cluster-admin` 也不等于已取得其他节点或 hypervisor 的操作系统权限。
+
+### 安装
 
 新集群首次安装使用本仓库 `scripts/release-managed-agent.sh` 和
 `deploy/helm/doops-agent`。以下示例从仓库 `backend/` 执行，完整 values 必须明确
