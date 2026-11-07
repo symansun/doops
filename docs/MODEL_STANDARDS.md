@@ -10,7 +10,7 @@ This document defines the model configuration used by `doops ask` through the em
 /root/.agent/settings.json
 ```
 
-Kubernetes deployments mount this file from the `doagent-config` ConfigMap. The public `doops.sh` repository keeps only a placeholder template; environment-specific deployments should generate the real ConfigMap from the private secret repository, for example `私有配置仓库`. Do not commit real API keys to the public `doops.sh` repository.
+Kubernetes deployments mount this file from the `doagent-config` ConfigMap. The public `DoOps` repository keeps only a placeholder template; environment-specific deployments should generate the real ConfigMap from the private secret repository, for example `私有配置仓库`. Do not commit real API keys to the public `DoOps` repository.
 
 ## Kubernetes ConfigMap Deployment
 

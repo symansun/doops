@@ -68,7 +68,7 @@ func main() {
 	})
 	gw.SetupGitHandler()
 
-	log.Printf("🚀 doops.sh agent gateway starting on :%s", *port)
+	log.Printf("🚀 DoOps agent gateway starting on :%s", *port)
 	if token != "" {
 		log.Printf("   🔒 Token authentication enabled")
 	}

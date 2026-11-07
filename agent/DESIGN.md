@@ -95,7 +95,7 @@ graph TD
 | **标准命令** | ⚡ 直接注入 PTY 快路径 |
 
 ### C. doagent 内置推理 (In-Process Inference)
-*   **部署**：发布拆为 `doops.sh/base:<release>` 和 `doops.sh:<release>`。基础镜像包含 sandbox、doagent、BuildKit 和系统工具；更新镜像只包含 `/app/doops-agent`、skills、docs 和 entrypoint。
+*   **部署**：发布拆为 `doops-base:<release>` 和 `doops:<release>`。基础镜像包含 sandbox、doagent、BuildKit 和系统工具；更新镜像只包含 `/app/doops-agent`、skills、docs 和 entrypoint。
 *   **二进制位置**：`/usr/local/bin/do-agent`
 *   **通信**：Gateway 通过本地 ACP HTTP（默认 `http://127.0.0.1:9000`）调用 doagent。
 *   **优势**：单容器部署，无需 Sidecar 协调；即使 doagent 崩溃，Gateway 仍保证基础 Shell 执行。
@@ -189,7 +189,7 @@ Skill **不直接执行命令**，而是教 AI 如何将自然语言翻译为可
 
 ## 9. 部署方案 (Deployment)
 
-*   **形式**：双镜像分层发布，每节点运行一个 `doops.sh:<release>` 容器，复用已缓存的 `doops.sh/base:<release>` 基础层。
+*   **形式**：双镜像分层发布，每节点运行一个 `doops:<release>` 容器，复用已缓存的 `doops-base:<release>` 基础层。
 *   **镜像内容**：
     *   `doops-agent` binary — Go Gateway
     *   `do-agent` binary — 本地 doagent AI 内核（`/usr/local/bin/do-agent`）

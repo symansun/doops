@@ -15,7 +15,7 @@ description: |
 - 构建、发布、升级：看 `docs/BUILD_DEPLOY_SOP.md` 和 `docs/DOOPS_MAINTENANCE_LOG.md`。
 - 模型与 ask 配置：看 `docs/MODEL_STANDARDS.md`。
 
-权威源码在 doops.sh 仓库 `skills/SKILL.md`。项目里的 `.agent/skills/doops/SKILL.md` 是安装副本；修改 skill 时必须先改 doops.sh 源码，再通过 `scripts/install.sh` 同步。
+权威源码在 DoOps 仓库 `skills/SKILL.md`。项目里的 `.agent/skills/doops/SKILL.md` 是安装副本；修改 skill 时必须先改 DoOps 源码，再通过 `scripts/install.sh` 同步。
 
 ## 核心纪律
 
@@ -37,7 +37,7 @@ description: |
 
 ## 配置与凭据
 
-Doops CLI 默认只有一个配置源：
+DoOps CLI 默认只有一个配置源：
 
 ```text
 ~/.agent/skills/doops/config.json
@@ -81,7 +81,7 @@ Doops CLI 默认只有一个配置源：
 
 ```bash
 git clone https://github.com/symansun/doops.git
-cd doops.sh
+cd doops
 bash scripts/install.sh --project /absolute/path/to/project
 ```
 

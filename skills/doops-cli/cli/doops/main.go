@@ -18,7 +18,7 @@ func main() {
 	sessionName := flag.String("session", "", "Session/Task ID for isolation (REQUIRED)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `
-Doops 分布式服务器管理工具 (doops.sh CLI)
+DoOps 分布式服务器管理工具 (DoOps CLI)
 专为 AI Agent 设计的声明式运维工具。遵循 DevOps 原则：无缝推流工作区、意图智能探索部署，并将成果固化在本地。
 
 配置文件路径: ~/.agent/skills/doops/config.json（唯一默认配置；DOOPS_CONFIG 可显式覆盖）
