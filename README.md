@@ -1,6 +1,8 @@
 # doops.sh
 
-> **不用 SSH，也能运维任何一台机器。**
+<p align="center">
+  <img src="docs/images/slogan.svg" alt="不用 SSH，也能运维任何一台机器。" width="760">
+</p>
 
 > 本项目以 [MIT License](LICENSE) 开源。
 
