@@ -1,0 +1,36 @@
+{
+  "name": "doops-console",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test:gateway-policy": "node --no-warnings --test lib/gateway-policy.test.mjs",
+    "test:console": "node --no-warnings --test lib/client.test.mjs lib/k8s.test.mjs lib/deployment.test.mjs lib/image.test.mjs lib/gateway.test.mjs lib/demo-policy.test.mjs lib/agent-session-transport.test.mjs lib/workspace-path.test.mjs lib/agent-output.test.mjs lib/files-listing.test.mjs lib/shell-blocks.test.mjs lib/proxy-routes.test.mjs lib/credential-import.test.mjs lib/credential-bundles.test.mjs lib/grant-form.test.mjs lib/admin-views.test.mjs lib/server/agent-session.test.mjs lib/server/agent-attachments.test.mjs lib/server/rpc-route.test.mjs lib/server/credential-bundles-route.test.mjs lib/server/session-route.test.mjs"
+  },
+  "dependencies": {
+    "@agent-cloud/agent-ui": "0.1.4",
+    "@bufbuild/protobuf": "2.16.0",
+    "@connectrpc/connect": "2.1.2",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "lucide-react": "^0.577.0",
+    "next": "^16.2.9",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.1",
+    "@types/node": "^26.0.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
+    "postcss": "^8.5.15",
+    "tailwindcss": "^4.3.1",
+    "typescript": "^6.0.3"
+  }
+}

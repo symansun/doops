@@ -1,0 +1,176 @@
+{{- if eq .Values.kubeconfig.source "serviceAccount" }}
+{{- $account := required "serviceAccount.name is required for kubeconfig.source=serviceAccount" .Values.serviceAccount.name }}
+{{- if eq $account "default" }}
+{{- fail "kubeconfig.source=serviceAccount requires a dedicated ServiceAccount, not default" }}
+{{- end }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ required "workload.name is required" .Values.workload.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+{{ toYaml .Values.workload.selectorLabels | indent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  minReadySeconds: 5
+  progressDeadlineSeconds: 180
+  selector:
+    matchLabels:
+{{ toYaml .Values.workload.selectorLabels | indent 6 }}
+  template:
+    metadata:
+      labels:
+{{ toYaml .Values.workload.selectorLabels | indent 8 }}
+    spec:
+      terminationGracePeriodSeconds: 30
+{{- with .Values.serviceAccount.name }}
+      serviceAccountName: {{ . | quote }}
+{{- end }}
+      dnsPolicy: ClusterFirst
+      hostNetwork: false
+      {{- $hostAccess := .Values.hostAccess | default dict }}
+      {{- /* false is empty to sprig default, so an explicit false must be read with hasKey. */}}
+      {{- $enterNode := true }}
+      {{- if hasKey $hostAccess "enabled" }}
+      {{- $enterNode = index $hostAccess "enabled" }}
+      {{- end }}
+      hostPID: {{ $enterNode }}
+      nodeSelector:
+{{ toYaml .Values.nodeSelector | indent 8 }}
+{{- with .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+{{- end }}
+{{- with .Values.hostAliases }}
+      hostAliases:
+{{ toYaml . | indent 8 }}
+{{- end }}
+      imagePullSecrets:
+{{ toYaml .Values.imagePullSecrets | indent 8 }}
+      containers:
+        - name: doops-agent
+          image: {{ if .Values.image.digest }}{{ printf "%s@%s" (required "image.repository is required" .Values.image.repository) .Values.image.digest | quote }}{{ else }}{{ printf "%s:%s" (required "image.repository is required" .Values.image.repository) (required "image.tag is required" .Values.image.tag) | quote }}{{ end }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            privileged: true
+          command:
+            - /bin/sh
+            - -lc
+            - >-
+              exec /app/sandbox-entrypoint.sh
+              -listen "0.0.0.0"
+              -gateway-url "$DOOPS_GATEWAY_URL"
+              -cluster "$DOOPS_GATEWAY_CLUSTER"
+              -instance "$DOOPS_GATEWAY_INSTANCE"
+          env:
+            - name: DOOPS_GATEWAY_URL
+              value: {{ .Values.gateway.url | quote }}
+            - name: DOOPS_GATEWAY_CLUSTER
+              value: {{ .Values.gateway.cluster | quote }}
+            - name: DOOPS_GATEWAY_INSTANCE
+              value: {{ .Values.gateway.instance | quote }}
+            - name: DOOPS_PROXY_ALLOW_HOSTS
+              value: {{ .Values.proxy.allowedHosts | quote }}
+            - name: KUBECONFIG
+              value: /root/.kube/config
+            - name: DOOPS_KUBECONFIG_SOURCE
+              value: {{ .Values.kubeconfig.source | default "mounted" | quote }}
+            - name: DO_AGENT_PORT
+              value: "9000"
+            - name: DO_AGENT_URL
+              value: http://127.0.0.1:9000
+          ports:
+            - name: api
+              containerPort: 42222
+              protocol: TCP
+          {{- /* hostPID makes pgrep see every agent on the node, so the
+                 single-process check would deadlock a rollout. The pod network
+                 namespace still isolates 127.0.0.1. */}}
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -lc
+                - >-
+                  {{- if $enterNode }}
+                  curl -fsS --max-time 1 http://127.0.0.1:42222/health/live >/dev/null
+                  {{- else }}
+                  test "$(pgrep -fc '^/app/doops-agent -listen( |$)' || true)" = "1"
+                  && curl -fsS --max-time 1 http://127.0.0.1:42222/health/live >/dev/null
+                  {{- end }}
+            failureThreshold: 40
+            periodSeconds: 5
+            timeoutSeconds: 2
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -lc
+                - >-
+                  {{- if $enterNode }}
+                  curl -fsS --max-time 1 http://127.0.0.1:42222/health/ready >/dev/null
+                  {{- else }}
+                  test "$(pgrep -fc '^/app/doops-agent -listen( |$)' || true)" = "1"
+                  && curl -fsS --max-time 1 http://127.0.0.1:42222/health/ready >/dev/null
+                  {{- end }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -lc
+                - >-
+                  {{- if $enterNode }}
+                  curl -fsS --max-time 1 http://127.0.0.1:42222/health/live >/dev/null
+                  {{- else }}
+                  test "$(pgrep -fc '^/app/doops-agent -listen( |$)' || true)" = "1"
+                  && curl -fsS --max-time 1 http://127.0.0.1:42222/health/live >/dev/null
+                  {{- end }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 2
+{{- /* The model provider comes from the Gateway. A legacy doagent settings
+       mount (/opt/doagent_config, volume doagent-config) carried over in
+       release values is dropped, so its Secret can be deleted. */}}
+{{- $mounts := list }}
+{{- $dropped := list "doagent-config" }}
+{{- range .Values.volumeMounts }}
+{{- if or (eq (default "" .name) "doagent-config") (eq (trimSuffix "/" (default "" .mountPath)) "/opt/doagent_config") }}
+{{- $dropped = append $dropped (default "" .name) }}
+{{- else }}
+{{- $mounts = append $mounts . }}
+{{- end }}
+{{- end }}
+{{- $volumes := list }}
+{{- range .Values.volumes }}
+{{- if not (has (default "" .name) $dropped) }}
+{{- $volumes = append $volumes . }}
+{{- end }}
+{{- end }}
+          volumeMounts:
+{{- with $mounts }}
+{{ toYaml . | nindent 12 }}
+{{- end }}
+{{- if $enterNode }}
+            - name: node-root
+              mountPath: /host
+              readOnly: true
+{{- end }}
+      volumes:
+{{- with $volumes }}
+{{ toYaml . | nindent 8 }}
+{{- end }}
+{{- if $enterNode }}
+        - name: node-root
+          hostPath:
+            path: /
+            type: Directory
+{{- end }}
