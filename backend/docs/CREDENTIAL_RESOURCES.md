@@ -532,6 +532,14 @@ Gateway 先把 grant 置为 `revoking`，清理该 grant 的全部物化上下�
 任何一个上下文结果未知时返回 `credential_grant_revocation_outcome_unknown`。
 Gateway 不提供跳过清理或强制置为 `revoked` 的入口；目标恢复连接后重试即可。
 
+吊销与 `ask --apply`、重连交付等使用并发时：
+
+- resource 或 grant 一旦离开 `active`，新的物化记录就写不进去，使用会以 `credential_revoked` 失败，不会派发到目标；
+- 进入终态前，Gateway 在同一事务里复查该 grant（resource 吊销时是该 resource 的全部 grant）还有没有
+  `cleaned`、`not_applied` 以外的物化记录。有就不进入终态，保持 `revoking`，返回 502 结果未知类别；
+  resource 吊销的返回体同样列出这些记录所在的 `cluster/instance`。重试会清理这些上下文；
+- 重连交付在拿到凭据锁后复查 grant 状态，等锁期间被吊销的 grant 不再交付。
+
 吊销整个 resource：
 
 ```bash

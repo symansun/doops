@@ -983,6 +983,24 @@ func (h *GatewayHub) cleanupCredentialMaterializationContexts(
 	return unfinished, errors.Join(failures...)
 }
 
+// uncleanedCredentialTargets lists, sorted, the cluster/instance of every
+// target that still holds a context of the credential needing a cleanup. It is
+// best effort: a failed read returns no targets and the caller still fails.
+func (h *GatewayHub) uncleanedCredentialTargets(credentialID string) []string {
+	records, err := h.store.CredentialMaterializations(credentialID, "", "")
+	if err != nil {
+		return nil
+	}
+	var targets []string
+	for _, record := range records {
+		if target := record.Request.Cluster + "/" + record.Request.Instance; !containsString(targets, target) {
+			targets = append(targets, target)
+		}
+	}
+	sort.Strings(targets)
+	return targets
+}
+
 // pendingCredentialCleanups keeps one request per materialization context.
 // The records come from CredentialMaterializations, which leaves out contexts
 // that provably own nothing, so an offline target whose attempts all left it

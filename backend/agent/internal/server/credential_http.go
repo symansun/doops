@@ -279,8 +279,15 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 		}
 		grant, err = h.store.FinalizeCredentialGrantRevocation(resource.ID, grant.ID, auditID)
 		if err != nil {
-			_ = h.finishCredentialTargetAudit(auditID, target, "error", credentialErrorCategory(err))
-			http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
+			category, status := credentialErrorCategory(err), credentialHTTPStatus(err)
+			if errors.Is(err, ErrCredentialCleanupPending) {
+				// A use that began before the revocation finished on the target
+				// after the cleanup ran. The grant stays revoking and the next
+				// attempt cleans that context.
+				category, status = "credential_grant_revocation_outcome_unknown", http.StatusBadGateway
+			}
+			_ = h.finishCredentialTargetAudit(auditID, target, "error", category)
+			http.Error(w, category, status)
 			return
 		}
 		writeJSONHTTP(w, grant)
@@ -507,6 +514,18 @@ func (h *GatewayHub) handleCredentialRevoke(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := h.store.FinalizeCredentialRevocationAudited(resource.ID, auditID); err != nil {
+		if errors.Is(err, ErrCredentialCleanupPending) {
+			// Same as for a grant: a use that began before the revocation left a
+			// context after the cleanup ran, so the resource stays revoking.
+			const category = "credential_revocation_outcome_unknown"
+			_ = h.finishCredentialAudit(auditID, "error", category)
+			body := category
+			if targets := h.uncleanedCredentialTargets(resource.ID); len(targets) != 0 {
+				body += ": " + strings.Join(targets, ", ")
+			}
+			http.Error(w, body, http.StatusBadGateway)
+			return
+		}
 		_ = h.finishCredentialAudit(auditID, "error", credentialErrorCategory(err))
 		http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
 		return
