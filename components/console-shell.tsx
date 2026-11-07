@@ -18,11 +18,11 @@ import {
   clearConsoleState,
   commandJournal,
   consoleScopeKey,
-  interruptedCommandNotice,
   loadSelection,
   restoreSelection,
   saveSelection,
 } from "@/lib/console-persistence"
+import { interruptedBannerNotices, interruptedBannerView } from "@/lib/interrupted-banner"
 import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
 import { TerminalPanel } from "./terminal-panel"
@@ -190,11 +190,7 @@ export function ConsoleShell() {
         setRestoreNotice(restored.notice)
         const interrupted = commandJournal.takeInterrupted(session)
         if (interrupted.length) {
-          const current = {
-            targetKey: restored.selected?.key ?? "",
-            sessionId: restored.sessionId ?? "",
-          }
-          setInterruptedNotices(interrupted.map((record) => interruptedCommandNotice(record, current)))
+          setInterruptedNotices(interruptedBannerNotices(interrupted, restored))
           if (restored.selected) setTab("terminal")
         }
       } else {
@@ -329,6 +325,10 @@ export function ConsoleShell() {
       }
     : undefined
 
+  // K25：刷新后的「结果未知」提示固定在 shell 顶层渲染，不依赖终端标签页是否打开，
+  // 也不依赖当次 /api/targets 是否返回目标；记录留在状态里，直到用户关闭横幅。
+  const interruptedBanner = interruptedBannerView(interruptedNotices)
+
   return (
     <div className="flex h-dvh flex-col">
       <header className="flex shrink-0 items-center justify-between border-b bg-card px-4 py-2.5">
@@ -406,6 +406,19 @@ export function ConsoleShell() {
       {offline && (
         <div role="alert" data-testid="offline-banner" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning">
           {NETWORK_FAILURE_MESSAGE}。网络恢复后此提示会自动消失，不会自动重试操作。
+        </div>
+      )}
+      {interruptedBanner && (
+        <div role={interruptedBanner.role} data-testid="interrupted-commands-banner"
+          className="flex shrink-0 flex-wrap items-start gap-2 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning">
+          <span className="min-w-0 flex-1">
+            {interruptedBanner.notices.map((notice, index) => (
+              <span key={index} className="block">{notice}</span>
+            ))}
+          </span>
+          <button onClick={clearInterruptedNotices} className="shrink-0 rounded px-2 py-0.5 text-xs hover:bg-warning/20">
+            {interruptedBanner.dismissLabel}
+          </button>
         </div>
       )}
       {(error || targetsError) && <div role="alert" className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">{[error, targetsError].filter(Boolean).join("；")}</div>}
@@ -556,8 +569,6 @@ export function ConsoleShell() {
                     sessionId={sessionId}
                     prefill={prefillToApply(terminalPrefill, consumedPrefillNonce) === null ? null : terminalPrefill}
                     onPrefillApplied={setConsumedPrefillNonce}
-                    notices={interruptedNotices}
-                    onNoticesShown={clearInterruptedNotices}
                   />
                 )}
                 {tab === "files" && (

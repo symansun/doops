@@ -26,17 +26,12 @@ export function TerminalPanel({
   sessionId,
   prefill = null,
   onPrefillApplied,
-  notices = [],
-  onNoticesShown,
 }: {
   session: Session
   target: Target
   sessionId: string
   prefill?: TerminalPrefill | null
   onPrefillApplied?: (nonce: number) => void
-  // Commands an earlier page left unfinished; shown first and never replayed.
-  notices?: readonly string[]
-  onNoticesShown?: () => void
 }) {
   const [command, setCommand] = useState("")
   const appliedPrefillRef = useRef(0)
@@ -56,12 +51,8 @@ export function TerminalPanel({
     inputRef.current?.focus()
     onPrefillApplied?.(prefill.nonce)
   }, [prefill, onPrefillApplied])
-  const [lines, setLines] = useState<Line[]>(() => notices.map((text) => ({ kind: "warn", text })))
-  // The notices are copied into this panel's lines once; the shell then drops them.
-  useEffect(() => {
-    if (notices.length) onNoticesShown?.()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // 刷新留下的「结果未知」提示由 console-shell 的顶层横幅渲染，这里不再复制一份。
+  const [lines, setLines] = useState<Line[]>([])
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState("")
   const [stopPending, setStopPending] = useState(false)
