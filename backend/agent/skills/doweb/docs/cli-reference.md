@@ -76,7 +76,7 @@ Record trusted base-domain metadata for automatic subdomain assignment.
 ```bash
 node /app/skills/doweb/scripts/doweb.mjs domain-set \
   --domain aihub.org.cn \
-  --host-ip 114.55.61.32 \
+  --host-ip 192.0.2.13 \
   --provider aliyun
 
 node /app/skills/doweb/scripts/doweb.mjs domain-list
@@ -120,7 +120,7 @@ node /app/skills/doweb/scripts/doweb.mjs deploy \
   --site-id proxy-106 \
   --domain proxy-106.aihub.org.cn \
   --dist dist \
-  --proxy /=http://106.54.197.139/ \
+  --proxy /=http://192.0.2.10/ \
   --health-url http://proxy-106.aihub.org.cn/
 ```
 

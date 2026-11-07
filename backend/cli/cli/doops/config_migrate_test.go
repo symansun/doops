@@ -17,7 +17,7 @@ func TestLoadConfigRejectsAbandonedLegacyDotConfigPath(t *testing.T) {
 	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
 		t.Fatalf("mkdir legacy config dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(legacyDir, "config.json"), []byte(`{"servers":[{"name":"gw-oilan","ip":"106.54.197.139","port":"42222"}]}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(legacyDir, "config.json"), []byte(`{"servers":[{"name":"gw-oilan","ip":"192.0.2.10","port":"42222"}]}`), 0o600); err != nil {
 		t.Fatalf("write legacy config: %v", err)
 	}
 
@@ -61,16 +61,16 @@ func TestLoadConfigWrapsRetiredIPPortFields(t *testing.T) {
 
 func TestEnforceSecureGatewayURLTellsOperatorToUseHTTPS(t *testing.T) {
 	t.Setenv("DOOPS_ALLOW_INSECURE_GATEWAY", "")
-	u, err := url.Parse("http://106.54.197.139:42222")
+	u, err := url.Parse("http://192.0.2.10:42222")
 	if err != nil {
 		t.Fatalf("parse url: %v", err)
 	}
-	err = enforceSecureGatewayURL("http://106.54.197.139:42222", u)
+	err = enforceSecureGatewayURL("http://192.0.2.10:42222", u)
 	if err == nil {
 		t.Fatal("expected insecure non-loopback gateway to be rejected")
 	}
 	msg := err.Error()
-	for _, want := range []string{"https://", "wss://", "https://doops.l8ai.cn"} {
+	for _, want := range []string{"https://", "wss://", "https://gateway.example.com"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("insecure gateway error missing %q: %v", want, err)
 		}

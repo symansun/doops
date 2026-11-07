@@ -35,7 +35,7 @@ def run_bootstrap(tmp_path, failure="", extra_args=()):
 printf '%s\\n' "$*" >> "$TEST_CALLS"
 case "$*" in
   "ps -aq"*) [[ "$TEST_FAILURE" != existing ]] || echo existing-container ;;
-  "image inspect"*) printf 'docker.cnb.cool/l8ai/ai/doops.sh@sha256:%064d\\n' 0 ;;
+  "image inspect"*) printf 'ghcr.io/symansun/doops@sha256:%064d\\n' 0 ;;
   run*) printf 'release=v1.3.48 commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n' ;;
   exec*) [[ "$TEST_FAILURE" != version ]] || exit 1
     printf 'release=v1.3.48 commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n' ;;
@@ -73,7 +73,7 @@ def test_bootstrap_writes_pinned_persistent_deployment_and_waits(tmp_path):
     assert not any("doagent_config" in value for value in service["volumes"])
     assert "agent-state:/root/.agent" in service["volumes"]
     assert "up -d --wait --wait-timeout 240" in calls
-    assert "pull --platform linux/amd64 docker.cnb.cool/l8ai/ai/doops.sh:v1.3.48" in calls
+    assert "pull --platform linux/amd64 ghcr.io/symansun/doops:v1.3.48" in calls
     assert "Agent registered: doops-test/node-1" in result.stdout
 
 

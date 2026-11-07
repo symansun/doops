@@ -31,13 +31,10 @@ def test_doagent_runtime_lock_includes_exact_source_revision():
     assert '[[ "${DOOPS_PUBLISH_LATEST:-}" == "1" && "${DOOPS_RELEASE_TAG}" != "latest" ]]' in image_build
     assert 'latest_image="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:latest"' in image_build
     assert 'docker push "${latest_image}"' in image_build
-    assert "DOOPS_PUBLISH_LATEST=1 \\\n            DOOPS_RELEASE_TAG=\"${CNB_COMMIT}\" \\\n" in CI.read_text()
-    # A version release also moves latest, so an untagged pull gets the
-    # version that was just released and fully verified.
-    assert (
-        "DOOPS_PUBLISH_LATEST=1 \\\n            DOOPS_RELEASE_TAG=\"${CNB_BRANCH}\" \\\n"
-        "              bash backend/scripts/build-agent-image.sh"
-    ) in CI.read_text().split("api_trigger_release:", 1)[1]
+    ci = CI.read_text()
+    assert "public-ci" in ci
+    assert "api_trigger_deploy_agent" not in ci
+    assert "build-agent-image.sh" not in ci
     assert (
         'test "${ACTUAL_DOAGENT_REVISION}" = "${DO_AGENT_REVISION}"'
         in image_build
@@ -79,10 +76,7 @@ def test_agent_runtime_keeps_ssh_client_and_rejects_ssh_server():
     assert "DOOPS_BASE_IMAGE_OUTPUT" in base_image_build
 
     ci = CI.read_text()
-    assert "resolve-agent-base-image.sh" in ci
     assert "build-agent-base-image.sh" not in ci
-    assert "backend/.ci-agent-base-image" in ci
-    assert "backend/runtime-versions.env" in ci
 
     # The base is rebuilt only when its inputs change, so unchanged base layers
     # stay cached on every target node across releases.

@@ -54,7 +54,6 @@ def test_public_release_contract_is_explicit_natural_language_apply():
     assert "public-ci" in public_ci
     assert "api_trigger_deploy_agent" not in public_ci
     assert "DOOPS_GATEWAY_TOKEN" not in public_ci
-    assert "gateway.example.com" in public_ci
     assert "192.0.2.10:42222" not in public_ci
     assert "deploy/environments.yaml" not in public_ci
     assert "doops cicd" not in public_ci

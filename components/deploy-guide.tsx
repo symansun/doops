@@ -131,11 +131,11 @@ const STEPS: Step[] = [
           该路径由集群内 Job 复用 Agent 挂载的 kubeconfig，不需要操作机 kubeconfig。
         </p>
         <Cmd>
-          {"doops -session agent-upgrade-<RELEASE_ID> upgrade \\\n  --target <CONFIGURED_GATEWAY_TARGET> \\\n  --image docker.cnb.cool/l8ai/ai/doops.sh:latest"}
+          {"doops -session agent-upgrade-<RELEASE_ID> upgrade \\\n  --target <CONFIGURED_GATEWAY_TARGET> \\\n  --image ghcr.io/symansun/doops:latest"}
         </Cmd>
         <p className="text-xs">
           <span className="font-mono">:latest</span> 跟随 main 最新构建。固定版本写成{" "}
-          <span className="font-mono">docker.cnb.cool/l8ai/ai/doops.sh@sha256:&lt;digest&gt;</span>。
+          <span className="font-mono">ghcr.io/symansun/doops@sha256:&lt;digest&gt;</span>。
           doops upgrade 只适用于 controller-ready 的现有 Helm release；structuredSSH 声明不代表具备自升级控制器。
           显式 Helm 配置变更使用外部脚本的现有 release 模式，不重新 bootstrap。
         </p>
@@ -212,9 +212,9 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
             Doops 通过在你的服务器上安装一个轻量 agent 来工作。Agent 主动连接 Gateway，机器无需暴露公网端口。接入后即可远程执行命令、管理文件、用 AI 完成部署与巡检。
           </p>
           <p className="mt-3 text-sm text-muted-foreground">拉取当前 main 构建的最新镜像。不写标签就是 <span className="font-mono text-foreground">latest</span>：</p>
-          <Cmd>{"docker pull docker.cnb.cool/l8ai/ai/doops.sh"}</Cmd>
+          <Cmd>{"docker pull ghcr.io/symansun/doops"}</Cmd>
           <p className="text-xs text-muted-foreground">
-            控制台镜像是 <span className="font-mono">docker.cnb.cool/l8ai/ai/doops.sh/web:latest</span>。
+            控制台镜像是 <span className="font-mono">ghcr.io/symansun/doops/web:latest</span>。
             需要固定版本时使用完整 commit 标签或 <span className="font-mono">@sha256:&lt;digest&gt;</span>。
           </p>
         </div>

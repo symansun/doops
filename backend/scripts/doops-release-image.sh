@@ -2,7 +2,7 @@
 # Shared helpers for resolving the official DoOps Agent image to an immutable digest.
 # Source this file; do not execute it.
 
-DOOPS_RELEASE_IMAGE_REPOSITORY="${DOOPS_RELEASE_IMAGE_REPOSITORY:-docker.cnb.cool/l8ai/ai/doops.sh}"
+DOOPS_RELEASE_IMAGE_REPOSITORY="${DOOPS_RELEASE_IMAGE_REPOSITORY:-ghcr.io/symansun/doops}"
 
 doops_release_image_usage_error() {
   echo "Error: $1" >&2

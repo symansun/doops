@@ -10,7 +10,7 @@ Both must be correct.
 ```bash
 node /app/skills/doweb/scripts/doweb.mjs domain-set \
   --domain aihub.org.cn \
-  --host-ip 114.55.61.32 \
+  --host-ip 192.0.2.13 \
   --provider aliyun
 ```
 
@@ -25,7 +25,7 @@ the wildcard answer.
 Example:
 
 ```text
-*.aihub.org.cn A 114.55.61.32
+*.aihub.org.cn A 192.0.2.13
 *.aihub.org.cn A 192.168.150.228
 ```
 
@@ -33,7 +33,7 @@ Then `proxy-106.aihub.org.cn` may resolve to both addresses unless an exact
 record overrides it:
 
 ```text
-proxy-106.aihub.org.cn A 114.55.61.32
+proxy-106.aihub.org.cn A 192.0.2.13
 ```
 
 Every returned A record must serve the same hostname. If one IP has the DoWeb
@@ -60,7 +60,7 @@ curl -sS 'https://cloudflare-dns.com/dns-query?name=proxy-106.aihub.org.cn&type=
 Use `curl --resolve` to separate DNS from Nginx behavior:
 
 ```bash
-curl --resolve proxy-106.aihub.org.cn:80:114.55.61.32 \
+curl --resolve proxy-106.aihub.org.cn:80:192.0.2.13 \
   http://proxy-106.aihub.org.cn/
 ```
 
@@ -102,7 +102,7 @@ Nginx server blocks and health checks.
 For public DoWeb sites:
 
 ```text
-<site>.aihub.org.cn A 114.55.61.32
+<site>.aihub.org.cn A 192.0.2.13
 ```
 
 Avoid returning private addresses from public DNS unless the private address is

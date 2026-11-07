@@ -69,8 +69,10 @@ main:
 $:
   tag_push:
     - name: validate-release-tag
-      script: |
-        case "${CNB_BRANCH}" in
-          v[0-9]*.[0-9]*.[0-9]*) echo "release tag: ${CNB_BRANCH}" ;;
-          *) echo "release tags must use vMAJOR.MINOR.PATCH" >&2; exit 1 ;;
-        esac
+      stages:
+        - name: validate-release-tag
+          script: |
+            case "${CNB_BRANCH}" in
+              v[0-9]*.[0-9]*.[0-9]*) echo "release tag: ${CNB_BRANCH}" ;;
+              *) echo "release tags must use vMAJOR.MINOR.PATCH" >&2; exit 1 ;;
+            esac

@@ -846,16 +846,10 @@ def test_tag_pipeline_publishes_and_verifies_release_assets():
     publish = PUBLISH.read_text()
     verify = VERIFY_PUBLISHED.read_text()
 
-    assert "api_trigger_release:" in ci
-    assert "tag_push:" not in ci
-    assert 'test "${CNB_IS_TAG:-}" = "true"' in ci
-    assert 'DOOPS_RELEASE_TAG="${CNB_BRANCH}" \\\n              bash backend/scripts/build-agent-image.sh' in ci
-    assert "build release agent image" in ci
-    assert "publish CLI release assets" in ci
-    assert '--repo "${CNB_REPO_SLUG_LOWERCASE}"' in ci
-    assert '--repo "${CNB_REPO}"' not in ci
-    assert "verify published CLI release assets" in ci
-    assert 'DOOPS_RELEASE_COMMIT="${CNB_COMMIT}"' in ci
+    assert "main:" in ci
+    assert "public-ci" in ci
+    assert "tag_push:" in ci
+    assert "api_trigger_release:" not in ci
     assert "https://api.github.com" in publish
     assert "uploads.github.com/repos" in publish
     assert 'GITHUB_TOKEN is required' in publish

@@ -55,7 +55,7 @@ Git HTTP 反向隧道或目标 agent 版本。
 
 ### TLS reverse proxy
 
-Production clients use `https://doops.l8ai.cn`. The versioned Nginx config is
+Production clients use `https://gateway.example.com`. The versioned Nginx config is
 `gateway/nginx/doops-proxy.conf`; it terminates the `*.l8ai.cn` certificate and
 proxies HTTP, WebSocket, and Git HTTP traffic to `127.0.0.1:42222`.
 

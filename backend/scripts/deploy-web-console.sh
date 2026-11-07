@@ -7,15 +7,15 @@ Deploy the Next.js DoOps console to the audited Gateway host boundary.
 
 Usage:
   bash backend/scripts/deploy-web-console.sh \
-    --host 106.54.197.139 \
-    --image docker.cnb.cool/l8ai/ai/doops.sh/web@sha256:<digest>
+    --host 192.0.2.10 \
+    --image ghcr.io/symansun/doops/web@sha256:<digest>
 
 Options:
   --host HOST         Gateway SSH host or IP. Required.
   --user USER         SSH user. Default: ubuntu.
   --port PORT         SSH port. Default: 22.
   --image IMAGE       Immutable Web image digest. Required.
-  --gateway URL       Allowed Gateway origin. Default: https://doops.l8ai.cn.
+  --gateway URL       Allowed Gateway origin. Default: https://gateway.example.com.
   --dry-run           Verify host, Docker, current container, and image only.
 EOF
 }
@@ -24,7 +24,7 @@ HOST=""
 SSH_USER="ubuntu"
 SSH_PORT="22"
 IMAGE=""
-GATEWAY="https://doops.l8ai.cn"
+GATEWAY="https://gateway.example.com"
 DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do

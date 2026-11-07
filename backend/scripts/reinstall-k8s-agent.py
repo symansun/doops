@@ -28,7 +28,7 @@ from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parents[1]
 CHART = BACKEND / "deploy" / "helm" / "doops-agent"
-DEFAULT_IMAGE = "docker.cnb.cool/l8ai/ai/doops.sh:latest"
+DEFAULT_IMAGE = "ghcr.io/symansun/doops:latest"
 PULLCHECK = "doops-reinstall-pullcheck"
 LEFTOVER_PREFIXES = ("doops-adopt-", "doops-self-upgrade-", PULLCHECK)
 MANIFEST_TYPES = ", ".join((

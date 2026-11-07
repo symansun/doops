@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / "agent" / "adopt_agent.py"
 CHART = ROOT / "deploy" / "helm" / "doops-agent"
 DIGEST = "sha256:" + "a" * 64
-IMAGE = "docker.cnb.cool/l8ai/ai/doops.sh@" + DIGEST
+IMAGE = "ghcr.io/symansun/doops@" + DIGEST
 SETTINGS_CANARY = '{"apiKey":"synthetic-settings-canary"}'
 
 
@@ -44,9 +44,9 @@ def jm_deployment(**overrides):
                     "serviceAccountName": "doops-agent",
                     "containers": [{
                         "name": "doops-agent",
-                        "image": "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "2" * 64,
+                        "image": "ghcr.io/symansun/doops@sha256:" + "2" * 64,
                         "env": [
-                            {"name": "DOOPS_GATEWAY_URL", "value": "https://doops.l8ai.cn"},
+                            {"name": "DOOPS_GATEWAY_URL", "value": "https://gateway.example.com"},
                             {"name": "DOOPS_GATEWAY_CLUSTER", "value": "doops-jm"},
                             {"name": "DOOPS_GATEWAY_INSTANCE", "value": "jm-228"},
                             {"name": "KUBECONFIG", "value": "/tmp/doops-kubeconfig"},

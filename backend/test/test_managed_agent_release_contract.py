@@ -134,7 +134,7 @@ def test_single_managed_agent_release_script():
     assert "was not found or is not readable" in text
     assert "only when the Kubernetes API is reachable" in text
     assert "@sha256:" in helper
-    assert "docker.cnb.cool/l8ai/ai/doops.sh" in helper
+    assert "ghcr.io/symansun/doops" in helper
 
 
 def test_existing_release_requires_an_external_kubeconfig_before_target_contact():
@@ -157,7 +157,7 @@ def test_existing_release_requires_an_external_kubeconfig_before_target_contact(
             "--namespace",
             "doops-system",
             "--image",
-            "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "a" * 64,
+            "ghcr.io/symansun/doops@sha256:" + "a" * 64,
             "--dry-run",
         ],
         cwd=ROOT,
@@ -216,7 +216,7 @@ def test_release_rejects_proxy_urls_before_contacting_a_target():
             "--proxy-allowed-hosts",
             "https://internal.example.com:8443/path",
             "--image",
-            "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "a" * 64,
+            "ghcr.io/symansun/doops@sha256:" + "a" * 64,
             "--dry-run",
         ],
         cwd=ROOT,
@@ -246,7 +246,7 @@ def test_release_rejects_empty_proxy_entries():
             "--proxy-allowed-hosts",
             "127.0.0.1,,internal.example.com",
             "--image",
-            "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "a" * 64,
+            "ghcr.io/symansun/doops@sha256:" + "a" * 64,
             "--dry-run",
         ],
         cwd=ROOT,
@@ -276,7 +276,7 @@ def test_release_rejects_invalid_host_alias_before_contacting_a_target():
             "--host-alias",
             "https://jm.aiedulab.cn=not-an-ip",
             "--image",
-            "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "a" * 64,
+            "ghcr.io/symansun/doops@sha256:" + "a" * 64,
             "--dry-run",
         ],
         cwd=ROOT,
@@ -308,7 +308,7 @@ def test_release_rejects_conflicting_host_aliases():
             "--host-alias",
             "jm.aiedulab.cn=192.168.150.228",
             "--image",
-            "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "a" * 64,
+            "ghcr.io/symansun/doops@sha256:" + "a" * 64,
             "--dry-run",
         ],
         cwd=ROOT,

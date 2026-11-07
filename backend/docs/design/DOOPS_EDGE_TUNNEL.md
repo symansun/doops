@@ -21,7 +21,7 @@
 
 | # | 前提 | 影响 |
 | :--- | :--- | :--- |
-| P1 | 公网只有**一个 IP 一个 443 端口**，多域名靠 SNI 区分 | 必须与 `doops.l8ai.cn` 控制面共用 nginx `stream`；必须走 PROXY protocol 拿真实客户端 IP（§3.3） |
+| P1 | 公网只有**一个 IP 一个 443 端口**，多域名靠 SNI 区分 | 必须与 `gateway.example.com` 控制面共用 nginx `stream`；必须走 PROXY protocol 拿真实客户端 IP（§3.3） |
 | P2 | 需要承载**大量域名站点**，含 HTTP 接口、WebSocket、文件上传下载 | 必须支持通配路由；隧道必须做半关闭、公平调度和长空闲保活（§4） |
 | P3 | 站点证书留在源站 | `tls-passthrough` 是默认且首期唯一模式，Gateway 不解密、不持源站私钥 |
 
@@ -67,7 +67,7 @@ flowchart LR
     NG["nginx stream :443\nssl_preread + proxy_protocol"]
     GWE["doops-gateway\nedge listener :42443"]
     ER["EdgeRegistry\n+ edge_routes 原子快照"]
-    WS["Edge WS x N\nwss://doops.l8ai.cn/v1/edge/connect"]
+    WS["Edge WS x N\nwss://gateway.example.com/v1/edge/connect"]
     AG["doops-agent (jm/gw-jm)"]
     ING["JM Ingress\n192.168.150.228:443"]
 
@@ -95,7 +95,7 @@ P2 的三类流量在 passthrough 模式下**都不需要隧道做任何特殊�
 
 如果改用 `http-terminate`，上面每一项都要在网关侧重新实现一遍。所以首期只做 passthrough。
 
-### 3.2 与 doops.l8ai.cn 共用同一个 443（P1）
+### 3.2 与 gateway.example.com 共用同一个 443（P1）
 
 现有 `backend/gateway/nginx/doops-proxy.conf` 已用 `stream` + `ssl_preread` 做 SNI 分流。
 为满足 G3（加域名不改 nginx），map 的语义必须**反过来写**——控制面走显式白名单，其余下沉：
@@ -103,7 +103,7 @@ P2 的三类流量在 passthrough 模式下**都不需要隧道做任何特殊�
 ```nginx
 stream {
     map $ssl_preread_server_name $doops_upstream {
-        doops.l8ai.cn   127.0.0.1:42222;   # 控制面：唯一显式白名单
+        gateway.example.com   127.0.0.1:42222;   # 控制面：唯一显式白名单
         default         127.0.0.1:42443;   # 其余一律交给 edge listener
     }
 
@@ -713,7 +713,7 @@ doops edge status --dry-run-host grafana.jm.aiedulab.cn      # 期望 denied
 doops edge status --dry-run-host amp.jm.aiedulab.cn          # 期望命中通配
 ```
 
-Agent 侧（JM 内网，出网只需 443 到 `doops.l8ai.cn`）：
+Agent 侧（JM 内网，出网只需 443 到 `gateway.example.com`）：
 
 ```
 -edge -edge-enroll-token <token> \

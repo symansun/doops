@@ -72,7 +72,7 @@ DNS challenge or HTTP challenge cannot be proven.
 The Agent should normalize requests like:
 
 - "发布这个 dist 到 demo.aihub.org.cn";
-- "把 proxy-106.aihub.org.cn 反代到 http://106.54.197.139/";
+- "把 proxy-106.aihub.org.cn 反代到 http://192.0.2.10/";
 - "只允许内网访问 /admin";
 - "给这个站点换成 cert-prod-aihub";
 - "两台后端做 least_conn 负载均衡";

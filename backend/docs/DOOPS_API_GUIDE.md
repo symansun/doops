@@ -766,7 +766,7 @@ socket。镜像构建使用 CLI 的通用 `image build`，高级场景仍可通�
 
 ```json
 {
-  "image": "docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest>",
+  "image": "ghcr.io/symansun/doops@sha256:<digest>",
   "mode": "k8s",
   "release": "doops-agent-live",
   "dry_run": false

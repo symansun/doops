@@ -18,11 +18,11 @@ func testPinnedImage() string {
 }
 
 func TestParsePinnedImage(t *testing.T) {
-	repository, digest, err := parsePinnedImage("docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + testPinnedDigest)
+	repository, digest, err := parsePinnedImage("ghcr.io/symansun/doops@sha256:" + testPinnedDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if repository != "docker.cnb.cool/l8ai/ai/doops.sh" || digest != "sha256:"+testPinnedDigest {
+	if repository != "ghcr.io/symansun/doops" || digest != "sha256:"+testPinnedDigest {
 		t.Fatalf("parsed repository=%s digest=%s", repository, digest)
 	}
 	for _, image := range []string{

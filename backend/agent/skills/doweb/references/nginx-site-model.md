@@ -77,7 +77,7 @@ Use `domain-set` before automatic publishing:
 ```bash
 node /app/skills/doweb/scripts/doweb.mjs domain-set \
   --domain aihub.org.cn \
-  --host-ip 114.55.61.32 \
+  --host-ip 192.0.2.13 \
   --provider aliyun
 ```
 

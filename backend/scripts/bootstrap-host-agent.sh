@@ -7,7 +7,7 @@ First installation on an empty Ubuntu/Debian Docker host (run as root).
 Installs Docker Engine and Compose if absent; never replaces an existing Agent.
 
   bash backend/scripts/bootstrap-host-agent.sh \
-    --version vX.Y.Z --gateway https://doops.l8ai.cn \
+    --version vX.Y.Z --gateway https://gateway.example.com \
     --cluster doops-unicom --instance unicom-1
 
 Required: --version, --gateway, --cluster, --instance
@@ -85,10 +85,10 @@ fi
 systemctl enable --now docker
 docker info >/dev/null
 docker compose version >/dev/null
-REPOSITORY=docker.cnb.cool/l8ai/ai/doops.sh
+REPOSITORY=ghcr.io/symansun/doops
 docker pull --platform "$PLATFORM" "$REPOSITORY:$RELEASE_VERSION"
 IMAGE="$(docker image inspect --format '{{index .RepoDigests 0}}' "$REPOSITORY:$RELEASE_VERSION")"
-[[ "$IMAGE" =~ ^docker.cnb.cool/l8ai/ai/doops.sh@sha256:[a-f0-9]{64}$ ]] || { echo "Registry digest missing" >&2; exit 1; }
+[[ "$IMAGE" =~ ^ghcr.io/symansun/doops@sha256:[a-f0-9]{64}$ ]] || { echo "Registry digest missing" >&2; exit 1; }
 IDENTITY="$(docker run --rm --network none --platform "$PLATFORM" --entrypoint /app/doops-agent "$IMAGE" -version)"
 [[ "$IDENTITY" =~ ^release=${RELEASE_VERSION}[[:space:]]commit=[a-f0-9]{40}$ ]] || { echo "Image release identity mismatch" >&2; exit 1; }
 

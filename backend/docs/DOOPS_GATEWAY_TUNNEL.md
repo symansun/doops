@@ -124,17 +124,17 @@ bash scripts/release-managed-agent.sh \
 
 当前受管 gateway 主机信息：
 
-- SSH 地址：`106.54.197.139`
+- SSH 地址：`192.0.2.10`
 - SSH 用户：`ubuntu`
 - Gateway 服务端口：`42222`
-- Gateway URL：`https://doops.l8ai.cn`
+- Gateway URL：`https://gateway.example.com`
 - 维护用途：发布和自恢复 `doops-gateway` 控制面，不作为普通 `doops-agent` target 使用。
 
 维护凭据不得写入仓库。需要发布 gateway 时使用：
 
 ```bash
 bash scripts/deploy-gateway.sh \
-  --host 106.54.197.139 \
+  --host 192.0.2.10 \
   --user ubuntu \
   --source-commit <verified-main-commit> \
   --verify-target gw-edu-coder \
@@ -357,7 +357,7 @@ docker run -d --name doops-agent \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /root/.kube:/root/.kube:ro \
   -v /etc/kubernetes:/etc/kubernetes:ro \
-  docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI> \
+  ghcr.io/symansun/doops@sha256:<digest-from-successful-CI> \
   -port 42222 \
   -gateway-url https://gateway.example.com \
   -cluster prod \
@@ -455,12 +455,12 @@ CLI 必须显式传 `-session`；Job accepted 仅代表已提交，不代表升�
 ```bash
 doops -session agent-upgrade upgrade \
   --target prod-master \
-  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest> \
+  --image ghcr.io/symansun/doops@sha256:<digest> \
   --dry-run
 
 doops -session agent-upgrade upgrade \
   --target prod-master \
-  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest>
+  --image ghcr.io/symansun/doops@sha256:<digest>
 ```
 
 ## Reliability Notes

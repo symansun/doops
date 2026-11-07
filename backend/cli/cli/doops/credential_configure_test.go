@@ -611,7 +611,7 @@ func TestConfigureCredentialScopeKeyIgnoresHelmRuntimeScope(t *testing.T) {
 		Cluster: "cluster-a", Instance: "instance-a", Namespace: "apps", Use: "helmPull",
 		Workload:    credentialGrantWorkload{Kind: "Deployment", Name: "frontend"},
 		HelmRelease: "zhiyong",
-		HelmChart:   "https://helm.cnb.cool/charts/team/app/v/0.1.0-zyj.gold.tgz",
+		HelmChart:   "https://charts.example.com/charts/team/app/v/0.1.0-zyj.gold.tgz",
 	}
 	newScope := oldScope
 	newScope.Namespace = "other"

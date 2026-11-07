@@ -21,9 +21,5 @@ def test_web_image_release_builds_smokes_and_pushes_immutable_image():
     assert 'latest_image="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/web:latest"' in script
     assert 'docker push "${latest_image}"' in script
 
-    invocation = 'DOOPS_PUBLISH_LATEST=1 DOOPS_RELEASE_TAG="${CNB_COMMIT}" bash backend/scripts/build-web-image.sh'
-    assert invocation in ci
-    # A version release also moves latest, so an untagged pull gets the
-    # version that was just released and fully verified.
-    tag_invocation = 'DOOPS_PUBLISH_LATEST=1 DOOPS_RELEASE_TAG="${CNB_BRANCH}" bash backend/scripts/build-web-image.sh'
-    assert tag_invocation in ci.split("api_trigger_release:", 1)[1]
+    assert "public-ci" in ci
+    assert "build-web-image.sh" not in ci

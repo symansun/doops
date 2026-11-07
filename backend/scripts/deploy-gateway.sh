@@ -10,7 +10,7 @@ doops target; targets are doops-agent execution contexts and can point at the
 wrong root filesystem.
 
 Usage:
-  bash scripts/deploy-gateway.sh --host 106.54.197.139 --user ubuntu
+  bash scripts/deploy-gateway.sh --host 192.0.2.10 --user ubuntu
 
 Options:
   --host HOST             Gateway host or IP. Required.
@@ -21,7 +21,7 @@ Options:
   --db PATH               Gateway SQLite DB. Default: /var/lib/doops-gateway/gateway.db.
   --gateway-port PORT     Gateway listen port. Default: 42222.
   --verify-url URL        Public Gateway URL used for health and target checks.
-                          Default: https://doops.l8ai.cn.
+                          Default: https://gateway.example.com.
   --verify-target NAME    Configured DoOps target used for authenticated target
                           baseline checks without exporting its token.
   --verify-session NAME   Required session name for --verify-target.
@@ -48,7 +48,7 @@ LOCAL_BIN="${REPO_ROOT}/bin/doops-gateway"
 REMOTE_BIN="/usr/local/bin/doops-gateway"
 DB_PATH="/var/lib/doops-gateway/gateway.db"
 GATEWAY_PORT="42222"
-VERIFY_URL="https://doops.l8ai.cn"
+VERIFY_URL="https://gateway.example.com"
 VERIFY_TARGET=""
 VERIFY_SESSION=""
 SOURCE_COMMIT=""

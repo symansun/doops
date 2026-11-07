@@ -22,7 +22,7 @@ logins. First Agent installation and recovery remain external DoOps procedures.
 ```bash
 node /app/skills/doweb/scripts/doweb.mjs domain-set \
   --domain aihub.org.cn \
-  --host-ip 114.55.61.32 \
+  --host-ip 192.0.2.13 \
   --provider aliyun
 ```
 
@@ -42,7 +42,7 @@ node /app/skills/doweb/scripts/doweb.mjs deploy \
 Validation:
 
 ```bash
-curl --resolve vibe-demo.aihub.org.cn:80:114.55.61.32 \
+curl --resolve vibe-demo.aihub.org.cn:80:192.0.2.13 \
   http://vibe-demo.aihub.org.cn/
 ```
 
@@ -56,7 +56,7 @@ node /app/skills/doweb/scripts/doweb.mjs deploy \
   --site-id proxy-106 \
   --domain proxy-106.aihub.org.cn \
   --dist dist \
-  --proxy /=http://106.54.197.139/
+  --proxy /=http://192.0.2.10/
 ```
 
 When `--proxy /=...` is used, DoWeb renders a root proxy location and does not

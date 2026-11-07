@@ -17,14 +17,14 @@ IMAGE_DIGEST = "sha256:" + ("b" * 64)
 def deployment_values(workload_name, instance, agent_home, selector_labels=None):
     values = {
         "image": {
-            "repository": "docker.cnb.cool/l8ai/ai/doops.sh",
+            "repository": "ghcr.io/symansun/doops",
             "digest": IMAGE_DIGEST,
             "pullPolicy": "Always",
         },
         "workload": {"name": workload_name},
         "imagePullSecrets": [],
         "gateway": {
-            "url": "https://doops.l8ai.cn",
+            "url": "https://gateway.example.com",
             "cluster": "doops-edu",
             "instance": instance,
         },
@@ -216,11 +216,11 @@ def test_oilan_agent_renders_without_model_settings(tmp_path, host_access):
         }
     ]
     assert deployment["spec"]["template"]["spec"]["imagePullSecrets"] == []
-    assert container["image"] == f"docker.cnb.cool/l8ai/ai/doops.sh@{IMAGE_DIGEST}"
+    assert container["image"] == f"ghcr.io/symansun/doops@{IMAGE_DIGEST}"
     assert "DOOPS_ALLOW_INSECURE_GATEWAY" not in {
         item["name"] for item in container["env"]
     }
-    assert env_value(container, "DOOPS_GATEWAY_URL")["value"] == "https://doops.l8ai.cn"
+    assert env_value(container, "DOOPS_GATEWAY_URL")["value"] == "https://gateway.example.com"
     assert env_value(container, "DOOPS_GATEWAY_CLUSTER")["value"] == "doops-edu"
     assert env_value(container, "DOOPS_GATEWAY_INSTANCE")["value"] == "edu-coder"
     assert '-listen "0.0.0.0"' in container["command"][-1]

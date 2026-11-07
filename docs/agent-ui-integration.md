@@ -161,7 +161,7 @@ Do not infer a deployed web version from a local build or an npm package release
   including desktop 1440x1000, mobile 390x844, task survival across navigation,
   separate transport receipts, errors, metadata recovery, and authorized forms.
 - Live acceptance: the local console completed two read-only prompts on
-  `doops-edu/edu-coder` through `https://doops.l8ai.cn`. The second prompt returned
+  `doops-edu/edu-coder` through `https://gateway.example.com`. The second prompt returned
   the first prompt's marker, verifying real doagent session context. No mutation
   or deployment was performed for this acceptance.
 - Local production build, TypeScript, console tests, Gateway policy tests, and

@@ -26,7 +26,7 @@ Existing Helm release (DoOps target already online):
     --kubeconfig /secure/path/to/kubeconfig \
     --proxy-allowed-hosts 127.0.0.1,internal.example.com \
     --host-alias internal.example.com=10.0.0.10 \
-    --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<verified-ci-digest>
+    --image ghcr.io/symansun/doops@sha256:<verified-ci-digest>
 
 New cluster (operator kubeconfig, complete values, no Agent yet):
 
@@ -35,7 +35,7 @@ New cluster (operator kubeconfig, complete values, no Agent yet):
     --namespace doops-system \
     --values /path/to/complete-values.yaml \
     --kubeconfig /secure/path/to/kubeconfig \
-    --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<verified-ci-digest>
+    --image ghcr.io/symansun/doops@sha256:<verified-ci-digest>
 
 Required:
   --release NAME
