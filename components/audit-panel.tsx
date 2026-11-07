@@ -173,7 +173,7 @@ export function AuditPanel({
       <div className="flex-1 overflow-y-auto p-4">
         <p className="mb-4 max-w-4xl text-sm leading-6 text-muted-foreground">
           普通用户仅查看本人记录；管理员可查看全局，凭据审计另按授权范围可见。最近 50 条。
-          {scope === "credential" && " 按凭据查询覆盖创建之后的写入版本、激活、授权、验证和吊销；部署时使用凭据、从 Secret 导入记在部署会话下，请按「该目标」或「本会话」查询。"}
+          {scope === "credential" && " 按凭据查询覆盖创建、写入版本、激活、授权、验证和吊销；部署时使用凭据、从 Secret 导入记在部署会话下，请按「该目标」或「本会话」查询。"}
         </p>
         {hint && <p className="mb-3 text-sm text-muted-foreground">{hint}</p>}
         {error && (

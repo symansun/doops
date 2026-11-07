@@ -110,6 +110,9 @@ const CREDENTIAL_ERRORS: Record<string, string> = {
   credential_grant_revocation_outcome_unknown:
     "解除绑定时目标上物化资源的清理结果未知，绑定停留在 revoking。请确认目标 Agent 在线后再次解除绑定",
   credential_cleanup_context_unavailable: "Gateway 暂时无法读取物化记录，吊销未完成。请稍后再次吊销",
+  credential_revocation_outcome_unknown:
+    "吊销时目标上的清理结果未知，凭据停在 revoking。请确认下列目标的 Agent 在线后再次吊销",
+  // 旧版 Gateway 吊销清理失败时返回这个类别。
   credential_cleanup_failed: "吊销时目标上的物化资源清理失败，凭据停留在 revoking。请确认目标 Agent 在线后再次吊销",
   credential_scope_invalid: "绑定参数不合法（namespace、用途、workload 或 required keys）。请检查后重新绑定",
   credential_use_mismatch: "用途与凭据类型不匹配。请按凭据类型选择用途",
@@ -119,6 +122,7 @@ const CREDENTIAL_ERRORS: Record<string, string> = {
   credential_verification_persist_failed: "目标验证已完成，但 Gateway 未能保存验证记录。请重新验证",
   verification_transport_failed: "与目标 Agent 的通信中断或超时，验证未完成。请确认 Agent 在线后重试",
   target_offline: "目标 Agent 离线。请确认 Agent 已连接后重试",
+  target_busy: "目标上正有其他操作在执行。请等待当前操作结束后重试",
   execution_audit_unavailable: "执行审计不可用，Gateway 未下发本次操作。请稍后重试或联系平台管理员",
   credential_materialization_metadata_invalid: "Agent 返回的物化结果不完整或与请求不符。请确认 Agent 版本后重新验证",
   credential_materialization_outcome_unknown: "物化被拒绝后恢复失败，目标状态未知。请在目标上核对 Secret 后重新验证",
@@ -196,15 +200,26 @@ export class CredentialRequestError extends Error {
   }
 }
 
+// The console proxy splits a revocation body such as "target_offline: c/i, c/i"
+// into the category and its targets. Only cluster/instance identifiers are shown.
+const CLEANUP_TARGET = /^[A-Za-z0-9_.:-]{1,253}\/[A-Za-z0-9_.:-]{1,253}$/
+
+function cleanupTargets(raw: unknown): string[] {
+  if (!Array.isArray(raw) || raw.length === 0) return []
+  return raw.every((item) => typeof item === "string" && CLEANUP_TARGET.test(item)) ? raw : []
+}
+
 // Gateway and Agent text can carry credential values, so only a known
 // category, a fixed phrase or the HTTP status reaches the message.
-function credentialRequestError(status: number, raw: unknown): CredentialRequestError {
+function credentialRequestError(status: number, raw: unknown, rawTargets?: unknown): CredentialRequestError {
   const text = typeof raw === "string" ? raw.trim() : ""
   const labelled = (category: string, reason: string) =>
     new CredentialRequestError(status, category, `${reason}（${category}）`)
   const byStatus = (reason: string) => new CredentialRequestError(status, "", `${reason}（HTTP ${status}）`)
   if (/^[a-z0-9_]{1,80}$/.test(text)) {
-    return labelled(text, CREDENTIAL_ERRORS[text] ?? "凭据操作失败。请刷新后核对凭据状态")
+    const reason = CREDENTIAL_ERRORS[text] ?? "凭据操作失败。请刷新后核对凭据状态"
+    const targets = cleanupTargets(rawTargets)
+    return labelled(text, targets.length ? `${reason}。未清理的目标：${targets.join("、")}` : reason)
   }
   switch (text) {
     case "Forbidden":
@@ -255,8 +270,8 @@ async function request<T>(s: Session, path: string, init?: RequestInit): Promise
     throw credentialRequestError(res.status, text)
   }
   if (!res.ok) {
-    const raw = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>).error : ""
-    throw credentialRequestError(res.status, raw)
+    const body = data && typeof data === "object" && !Array.isArray(data) ? (data as Record<string, unknown>) : {}
+    throw credentialRequestError(res.status, body.error, body.targets)
   }
   return data as T
 }
