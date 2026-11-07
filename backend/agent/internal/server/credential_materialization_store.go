@@ -67,6 +67,13 @@ func (s *GatewayStore) RecordCredentialMaterializationIntent(
 		return CredentialMaterializationRecord{}, err
 	}
 	defer tx.Rollback()
+	// A revocation moves the resource and grant to revoking before it reads the
+	// records it must clean. Refusing an intent once either one has left active
+	// keeps every record a revocation has to clean visible to it, so a use that
+	// races a revocation cannot add a Secret after the cleanup list was read.
+	if err := credentialGrantUsable(tx, record.CredentialID, record.GrantID); err != nil {
+		return CredentialMaterializationRecord{}, err
+	}
 	var prior credentialMaterializationPrior
 	err = tx.QueryRow(`SELECT status, error_category, request_json, evidence_json
 		FROM credential_materializations
@@ -98,6 +105,51 @@ func (s *GatewayStore) RecordCredentialMaterializationIntent(
 		return CredentialMaterializationRecord{}, err
 	}
 	return record, nil
+}
+
+type credentialRowQuerier interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// credentialGrantUsable returns ErrCredentialRevoked unless the resource and
+// the grant are both active. A missing row counts as revoked.
+func credentialGrantUsable(q credentialRowQuerier, credentialID, grantID string) error {
+	var resourceState, grantState CredentialState
+	err := q.QueryRow(`SELECT c.state, g.state
+		FROM credentials c JOIN credential_grants g ON g.credential_id = c.id
+		WHERE c.id = ? AND g.id = ?`,
+		strings.TrimSpace(credentialID), strings.TrimSpace(grantID),
+	).Scan(&resourceState, &grantState)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return ErrCredentialRevoked
+	case err != nil:
+		return err
+	case resourceState != CredentialStateActive || grantState != CredentialStateActive:
+		return ErrCredentialRevoked
+	}
+	return nil
+}
+
+// CredentialGrantUsable reports, as credentialGrantUsable does, whether a
+// grant may still be materialized.
+func (s *GatewayStore) CredentialGrantUsable(credentialID, grantID string) error {
+	return credentialGrantUsable(s.db, credentialID, grantID)
+}
+
+// uncleanedCredentialMaterializations counts the records of a credential, or
+// of one of its grants, that may still own something on a target.
+func uncleanedCredentialMaterializations(q credentialRowQuerier, credentialID, grantID string) (int, error) {
+	query := `SELECT COUNT(*) FROM credential_materializations
+		WHERE credential_id = ? AND status NOT IN ('cleaned', ?)`
+	args := []any{strings.TrimSpace(credentialID), credentialMaterializationNotApplied}
+	if strings.TrimSpace(grantID) != "" {
+		query += ` AND grant_id = ?`
+		args = append(args, strings.TrimSpace(grantID))
+	}
+	var count int
+	err := q.QueryRow(query, args...).Scan(&count)
+	return count, err
 }
 
 func (s *GatewayStore) CompleteCredentialMaterialization(

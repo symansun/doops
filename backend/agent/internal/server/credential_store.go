@@ -25,6 +25,9 @@ var (
 	ErrCredentialBundleNotFound   = errors.New("credential bundle not found")
 	ErrCredentialAmbiguous        = errors.New("credential reference is ambiguous")
 	ErrCredentialAuditUnavailable = errors.New("credential audit unavailable")
+	// ErrCredentialCleanupPending refuses a revocation's terminal state while a
+	// materialization record may still own something on a target.
+	ErrCredentialCleanupPending = errors.New("credential cleanup pending")
 
 	// Specific grant denials keep errors.Is(err, ErrCredentialGrantDenied) and its
 	// 403 status, but report which binding precondition failed.
@@ -779,6 +782,14 @@ func (s *GatewayStore) FinalizeCredentialGrantRevocation(
 		return CredentialGrant{}, err
 	}
 	defer tx.Rollback()
+	// A use already under way when the revocation began can record or finish a
+	// materialization after the cleanup list was read. The grant reaches revoked
+	// only when none of its records may still own something on the target.
+	if pending, err := uncleanedCredentialMaterializations(tx, grant.CredentialID, grant.ID); err != nil {
+		return CredentialGrant{}, err
+	} else if pending != 0 {
+		return CredentialGrant{}, ErrCredentialCleanupPending
+	}
 	result, err := tx.Exec(`UPDATE credential_grants
 		SET state = ?, revoked_at = ?
 		WHERE id = ? AND credential_id = ? AND state = ?`,
@@ -1349,6 +1360,12 @@ func (s *GatewayStore) finalizeCredentialRevocation(credentialID string, auditID
 		return err
 	}
 	defer tx.Rollback()
+	// The same check as for a grant, over every grant of the resource.
+	if pending, err := uncleanedCredentialMaterializations(tx, resource.ID, ""); err != nil {
+		return err
+	} else if pending != 0 {
+		return ErrCredentialCleanupPending
+	}
 	if _, err := tx.Exec(`UPDATE credentials SET state = ?, revoked_at = ?, updated_at = ? WHERE id = ?`,
 		CredentialStateRevoked, formatTime(now), formatTime(now), resource.ID); err != nil {
 		return err

@@ -82,11 +82,35 @@ func TestCredentialMaterializationInventoryKeepsEveryWorkloadContext(t *testing.
 	}
 }
 
+// activeInventoryGrant creates an active registry credential with an active
+// grant, the only state in which a materialization intent may be recorded.
+func activeInventoryGrant(t *testing.T, store *GatewayStore, name string) (string, string) {
+	t.Helper()
+	admin := createCredentialTestUser(t, store, name+"-admin")
+	if err := store.SetUserAdmin(admin.ID, true); err != nil {
+		t.Fatalf("grant admin: %v", err)
+	}
+	credential, err := store.CreateCredential(CredentialCreateRequest{
+		Name: name, Scope: CredentialScopePlatform, Type: CredentialTypeRegistry, CreatedBy: admin.ID,
+	})
+	if err != nil {
+		t.Fatalf("create credential: %v", err)
+	}
+	grant, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
+		CredentialID: credential.ID, Scope: testImagePullCredentialScope("api"), CreatedBy: admin.ID,
+	})
+	if err != nil {
+		t.Fatalf("create grant: %v", err)
+	}
+	return credential.ID, grant.ID
+}
+
 func TestCredentialMaterializationCleanupUsesNewestVersionAndClosesContext(t *testing.T) {
 	store := openCredentialTestStore(t)
+	credentialID, grantID := activeInventoryGrant(t, store, "rotate")
 	base := CredentialMaterializeRequest{
 		SessionID: "rotate-session", Cluster: "doops", Instance: "runner",
-		CredentialID: "cred_rotate", GrantID: "credgrant_rotate",
+		CredentialID: credentialID, GrantID: grantID,
 		CredentialType: CredentialTypeRegistry,
 		Scope:          testImagePullCredentialScope("api"),
 	}
@@ -123,9 +147,10 @@ func TestCredentialMaterializationCleanupUsesNewestVersionAndClosesContext(t *te
 
 func TestCredentialMaterializationInventoryPreservesUnknownOutcomeForCleanup(t *testing.T) {
 	store := openCredentialTestStore(t)
+	credentialID, grantID := activeInventoryGrant(t, store, "unknown")
 	request := CredentialMaterializeRequest{
 		SessionID: "unknown-session", Cluster: "doops", Instance: "runner",
-		CredentialID: "cred_unknown", VersionID: "credver_unknown", GrantID: "credgrant_unknown",
+		CredentialID: credentialID, VersionID: "credver_unknown", GrantID: grantID,
 		CredentialType: CredentialTypeRegistry,
 		Scope:          testImagePullCredentialScope("api"),
 	}
