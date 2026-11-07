@@ -312,9 +312,15 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	auditID, ok := h.requireCredentialAudit(w, auth, ActionCredentialGrant, resource.ID,
-		fmt.Sprintf("credential grant %s/%s",
-			strings.TrimSpace(body.Scope.Cluster), strings.TrimSpace(body.Scope.Instance)))
+	// The summary carries only validated identifiers, so request text never
+	// reaches the audit columns. A scope that is not a pair of identifiers keeps
+	// the generic summary the same way credentialTargetAudit leaves the target out.
+	target := credentialTargetAudit(body.Scope, "")
+	summary := "credential grant"
+	if target.Cluster != "" && target.Instance != "" {
+		summary = fmt.Sprintf("credential grant %s/%s", target.Cluster, target.Instance)
+	}
+	auditID, ok := h.requireCredentialAudit(w, auth, ActionCredentialGrant, resource.ID, summary)
 	if !ok {
 		return
 	}
@@ -324,7 +330,7 @@ func (h *GatewayHub) handleCredentialGrants(w http.ResponseWriter, r *http.Reque
 		CreatedBy:    auth.UserID,
 	}, auditID)
 	if err != nil {
-		_ = h.finishCredentialTargetAudit(auditID, credentialTargetAudit(body.Scope, ""), "error", credentialErrorCategory(err))
+		_ = h.finishCredentialTargetAudit(auditID, target, "error", credentialErrorCategory(err))
 		http.Error(w, credentialErrorCategory(err), credentialHTTPStatus(err))
 		return
 	}

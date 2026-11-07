@@ -672,11 +672,13 @@ Gateway `/v1/audit` 查询；当前 CLI 尚未提供独立的 credential audit �
 | 类别 | 操作 | `cluster/instance` | 查询 |
 | --- | --- | --- | --- |
 | 资源级 | create、put、promote、resource revoke | 空 | `session=<credential_id>` |
-| 目标级 | grant 创建和吊销、verify、Secret 导入、Gateway 内部的物化和清理调用 | 该次操作的目标，成功和失败都记录 | `cluster=<cluster>&instance=<instance>`，可加 `action=` |
+| 目标级 | grant 创建和吊销、verify、Secret 导入、Gateway 内部的物化和清理调用 | 该次操作的目标，审计开始后的成功和失败都记录目标 | `cluster=<cluster>&instance=<instance>`，可加 `action=`；grant 和 verify 同时带 `session=<credential_id>`，按凭据也能查到 |
 
 - 资源级操作的 `session` 和 `credential_id` 都是该凭据 ID。create 在成功后才有 ID，
   失败的 create 没有 credential ID；
 - promote 和 resource revoke 可能影响多个目标，一条审计只有一组 `cluster/instance`，
   所以不填目标。它们在各目标上发出的物化和清理调用另有目标级审计，`session` 是物化记录里保存的会话；
 - grant 吊销和 verify 失败时也记录目标；grant 已确定时同时记录 grant ID 和保存的 scope；
+- verify 在审计开始前的校验失败（version 不存在、不是 staged、该目标没有 grant）不写审计；
+  grant 吊销在 grant 确定之前的失败不带目标。审计只覆盖审计开始之后的成功和失败；
 - resource revoke 失败时，返回体列出仍未清理的 `cluster/instance`，审计只记录稳定错误类别。
