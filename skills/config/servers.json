@@ -1,0 +1,13 @@
+[
+    {
+        "name": "example",
+        "aliases": [
+            "demo"
+        ],
+        "gateway": "https://gateway.example.com",
+        "cluster": "example-cluster",
+        "instance": "example-node",
+        "use": "Example target via gateway",
+        "token": "<GATEWAY_USER_TOKEN>"
+    }
+]
