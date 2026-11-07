@@ -25,9 +25,9 @@
 修改哪个组件，就运行哪个组件的构建和测试；跨组件改动运行全部检查：
 
 ```bash
-(cd agent && go test ./...)
-(cd gateway && go test ./...)
-(cd skills/doops-cli && go test ./...)
+(cd backend/agent && go test ./...)
+(cd backend/gateway && go test ./...)
+(cd backend/cli && go test ./...)
 python3 -m pytest -q test/test_sandbox_image_contract.py
 ```
 
@@ -38,7 +38,7 @@ bash scripts/build-cli.sh --all
 git diff --check
 ```
 
-不要把 `bin/` 下的本地构建产物、运行时配置、token、日志或真实凭据加入提交。预构建 CLI 只放在 `skills/doops-cli/bin/`，并在 Pull Request 中说明构建平台和验证结果。
+不要把 `bin/` 下的本地构建产物、运行时配置、token、日志或真实凭据加入提交。预构建 CLI 只放在 `dist/cli/`，并在 Pull Request 中说明构建平台和验证结果。
 
 ## Pull Request 要求
 

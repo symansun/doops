@@ -5,9 +5,9 @@
 ## 源头和目录边界
 
 - GitHub `main` 是唯一公开开发主线。CNB 只承担镜像、构建和内部协作职责；CNB 与 GitHub 出现差异时，必须通过可审阅的 Pull Request 收敛，不能在两个平台各自继续开发。
-- 公开仓库只保留可公开分发的 `agent/`、`gateway/`、`skills/`、`scripts/`、`docs/`、`test/` 和镜像构建文件。内部环境清单、真实凭据、部署证据、工作日志和未公开产品代码不得进入公开快照。
+- 公开仓库保留完整的 `app/`、`components/`、`lib/` Web 控制台，以及 `backend/agent/`、`backend/gateway/`、`backend/cli/`、`backend/skills/`、`backend/scripts/`、`backend/docs/`、`backend/test/` 和镜像构建文件。内部环境清单、真实凭据、部署证据、工作日志和历史审查记录不得进入公开快照。
 - `skills/SKILL.md`、README、协议文档和安装脚本中描述的行为必须与当前实现一致。行为变更应在同一个 Pull Request 更新权威文档。
-- 预构建 CLI 是发布输入，不是开发源码。源码在 `skills/doops-cli/`，发布包固定放在 `skills/doops-cli/bin/`，每次重建都要记录平台和 commit。
+- 预构建 CLI 是发布输入，不是开发源码。源码在 `backend/cli/`，发布包固定放在 `dist/cli/`，每次重建都要记录平台和 commit。
 
 ## 分支模型
 
@@ -68,13 +68,13 @@
 每个 Pull Request 至少运行：
 
 ```bash
-(cd agent && go test ./...)
-(cd gateway && go test ./...)
-(cd skills/doops-cli && go test ./...)
+(cd backend/agent && go test ./...)
+(cd backend/gateway && go test ./...)
+(cd backend/cli && go test ./...)
 python3 -m pytest -q test/test_sandbox_image_contract.py
 ```
 
-维护者在本地还应运行 `git diff --check`。涉及 CLI 预构建包时运行 `bash scripts/build-cli.sh --all`，并审查二进制是否与源码 commit 对应。
+维护者在本地还应运行 `git diff --check`。涉及 CLI 预构建包时运行 `bash backend/scripts/build-cli.sh --all`，并审查二进制是否与源码 commit 对应。
 
 版本使用 `vMAJOR.MINOR.PATCH`：
 
