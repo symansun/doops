@@ -511,7 +511,8 @@ Gateway 先把 grant 置为 `revoking`，清理该 grant 的全部物化上下�
 
 物化记录决定哪些上下文需要清理：
 
-- 物化成功（`verified`）或结果未知（`outcome_unknown`）的上下文，必须由目标 Agent 清理；
+- 物化成功（`verified`）、结果未知（`outcome_unknown`）或尚未结束（`pending`，例如 Gateway 在派发后重启）的上下文，
+  必须由目标 Agent 清理；
 - 确定没有改动目标的失败记为 `not_applied`，不需要清理。目标离线、请求编码失败等派发前的失败，
   以及 Agent 在写入前拒绝、或写入失败后已恢复快照并复核一致时返回的稳定错误类别，属于这一类；
   白名单和依据在 `credential_materialization_store.go` 的 `credentialMaterializationUnchangedCategories`；
