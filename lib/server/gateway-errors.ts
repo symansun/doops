@@ -141,6 +141,12 @@ const UNIQUE_CONSTRAINTS: { category: string; message: string }[] = [
 
 const CATEGORY = /^[a-z][a-z0-9_]{0,79}$/
 
+// 资源吊销清理失败时 Gateway 返回「类别: cluster/instance, cluster/instance」
+// （credential_http.go 的 strings.Join(unfinished, ", ")）。目标部分只接受标识符字符，
+// 有任何其它文本就整体按未知文本处理。
+const TARGET = "[A-Za-z0-9_.:-]{1,253}/[A-Za-z0-9_.:-]{1,253}"
+const CATEGORY_WITH_TARGETS = new RegExp(`^([a-z][a-z0-9_]{0,79}): (${TARGET}(?:, ${TARGET})*)$`)
+
 export interface GatewayProxyErrorBody {
   // 给调用方解析：Gateway 类别原文、JSON code，或未知文本时的中文说明。
   error: string
@@ -148,6 +154,8 @@ export interface GatewayProxyErrorBody {
   message: string
   status: number
   code?: string
+  // 类别后面带的目标（cluster/instance），按 Gateway 返回的顺序。
+  targets?: string[]
 }
 
 // label 是调用方的操作名（如「管理请求」），只用在按状态码给出的说明里。
@@ -158,6 +166,11 @@ export function gatewayProxyErrorBody(status: number, raw: string, label = ""): 
   const code = gatewayErrorCode(text)
   // 调用方按 JSON 解析 code（如 gateway_auth_failed）；只留 code，丢掉英文 message 和 next_action。
   if (code) return { error: JSON.stringify({ code }), message: CATEGORY_MESSAGES[code] || byStatus, status, code }
+  const withTargets = CATEGORY_WITH_TARGETS.exec(text)
+  if (withTargets) {
+    const category = withTargets[1]
+    return { error: category, message: CATEGORY_MESSAGES[category] || byStatus, status, targets: withTargets[2].split(", ") }
+  }
   if (CATEGORY.test(text)) return { error: text, message: CATEGORY_MESSAGES[text] || byStatus, status }
   if (Object.hasOwn(GATEWAY_PHRASES, text)) return { error: text, message: GATEWAY_PHRASES[text], status }
   const unique = UNIQUE_CONSTRAINTS.find((item) => text.includes(item.category))
