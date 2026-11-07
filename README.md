@@ -39,17 +39,9 @@ DoOps 统一入口：把智能体、控制台、CLI 和多领域 skill 组合成
 
 ## 架构图
 
-```mermaid
-flowchart LR
-    U["用户 / IDE"] --> CLI["doops CLI / Skill"]
-    CLI -->|"WS /v1/rpc\nGit HTTP /v1/git\nuser token"| GW["doops-gateway"]
-    GW -->|"WS /v1/agent/connect"| AG
-
-    AG -->|"exec / push / file / info"| HOST["Host / K8s / Docker"]
-    AG -->|"ask / chat"| ACP["doagent ACP :9000"]
-    ACP --> SK["运维 Skills"]
-    ACP --> WS["/root/ws/<session>"]
-```
+<p align="center">
+  <img src="docs/images/architecture.svg" alt="DoOps 架构图" width="1100">
+</p>
 
 系统里有两条正交维度：
 
