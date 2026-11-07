@@ -141,6 +141,29 @@ func TestCredentialGrantFailuresAuditTheTarget(t *testing.T) {
 			t.Fatalf("grant failure audit = %#v", event)
 		}
 	})
+	t.Run("grant rejected with request text in the target", func(t *testing.T) {
+		// Given a grant request whose cluster field is request text, not an identifier
+		f := newRevocationFixture(t)
+		body := `{"scope":{"cluster":"dev probe=` + revocationCanary + `","instance":"local"}}`
+		// When the Gateway rejects it
+		response := f.wait(t, f.send(t, http.MethodPost, "/v1/credentials/"+f.resource.ID+"/grants", body))
+		if response.code != http.StatusBadRequest || response.body != "credential_scope_invalid" {
+			t.Fatalf("grant = HTTP %d %q", response.code, response.body)
+		}
+		// Then the request text reaches no audit column: the target stays empty
+		// and the summary keeps its generic form
+		event := f.lastRevokeAudit(t)
+		for name, value := range map[string]string{
+			"cluster": event.Cluster, "instance": event.Instance, "command summary": event.CommandSummary,
+		} {
+			if strings.Contains(value, revocationCanary) {
+				t.Fatalf("grant failure audit %s carries request text: %q", name, value)
+			}
+		}
+		if event.Cluster != "" || event.Instance != "" || event.CommandSummary != "credential grant" {
+			t.Fatalf("grant failure audit = %#v, want no target and the generic summary", event)
+		}
+	})
 }
 
 func TestCredentialResourceAuditsAreFoundByCredential(t *testing.T) {

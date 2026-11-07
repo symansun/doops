@@ -44,7 +44,12 @@ func (f *revocationFixture) requestFor(grant CredentialGrant) CredentialMaterial
 
 func (f *revocationFixture) revokeResource(t *testing.T) <-chan revocationResponse {
 	t.Helper()
-	return f.send(t, http.MethodPost, "/v1/credentials/"+f.resource.ID+"/revoke", "")
+	return f.revokeResourceAs(t, f.admin)
+}
+
+func (f *revocationFixture) revokeResourceAs(t *testing.T, token CreatedToken) <-chan revocationResponse {
+	t.Helper()
+	return f.sendAs(t, token, http.MethodPost, "/v1/credentials/"+f.resource.ID+"/revoke", "")
 }
 
 // lifecycleStates renders the resource state and every grant state by target.
@@ -113,10 +118,13 @@ func TestCredentialResourceRevocationOutcomes(t *testing.T) {
 		audit, category string
 	}
 	revoking := "resource=revoking local=revoking renamed=revoking"
+	untouched := "resource=active local=active renamed=active"
 	for _, tc := range []struct {
 		name string
 		// given prepares both grants' rows and returns the online dev/local Agent, if any.
 		given func(*testing.T, *revocationFixture, CredentialGrant) *executionLifecycleAgent
+		// caller returns the token that sends the revocation; nil is the platform admin.
+		caller func(*testing.T, *revocationFixture) CreatedToken
 		// cleanups answers each cleanup call that reaches dev/local, in order.
 		cleanups []string
 		want     result
@@ -172,6 +180,50 @@ func TestCredentialResourceRevocationOutcomes(t *testing.T) {
 			want: result{http.StatusBadGateway, "credential_revocation_outcome_unknown: dev/local, dev/renamed", revoking,
 				"local=verified/ renamed=verified/", "error", "credential_revocation_outcome_unknown"},
 		},
+		{
+			name: "caller is neither the owner nor a platform admin",
+			given: func(t *testing.T, f *revocationFixture, renamed CredentialGrant) *executionLifecycleAgent {
+				f.record(t, "api", "verified", "")
+				f.recordRequest(t, f.requestFor(renamed), "verified", "")
+				return f.agent(t, "resource-revoke-forbidden")
+			},
+			// A grant on the target is the caller's whole authority there, and it
+			// does not let the caller revoke a platform credential bound to it.
+			caller: func(t *testing.T, f *revocationFixture) CreatedToken {
+				return f.user(t, "resource-revoke-operator", ScopeGrant{Cluster: "dev", Instance: "local"})
+			},
+			want: result{code: http.StatusForbidden, body: "Forbidden", states: untouched,
+				rows: "local=verified/ renamed=verified/"},
+		},
+		{
+			name: "caller does not own the personal credential",
+			given: func(t *testing.T, f *revocationFixture, renamed CredentialGrant) *executionLifecycleAgent {
+				if _, err := f.store.db.Exec(`UPDATE credentials SET scope = ?, owner_id = ? WHERE id = ?`,
+					CredentialScopePersonal, f.adminID(t), f.resource.ID); err != nil {
+					t.Fatal(err)
+				}
+				f.record(t, "api", "verified", "")
+				f.recordRequest(t, f.requestFor(renamed), "verified", "")
+				return f.agent(t, "resource-revoke-not-owner")
+			},
+			caller: func(t *testing.T, f *revocationFixture) CreatedToken {
+				return f.user(t, "resource-revoke-other-owner", ScopeGrant{Cluster: "dev", Instance: "local"})
+			},
+			want: result{code: http.StatusForbidden, body: "Forbidden", states: untouched,
+				rows: "local=verified/ renamed=verified/"},
+		},
+		{
+			name: "credential audit is unavailable",
+			given: func(t *testing.T, f *revocationFixture, renamed CredentialGrant) *executionLifecycleAgent {
+				f.record(t, "api", "verified", "")
+				f.recordRequest(t, f.requestFor(renamed), "verified", "")
+				agent := f.agent(t, "resource-revoke-audit-unavailable")
+				f.failCredentialAudit(t)
+				return agent
+			},
+			want: result{code: http.StatusInternalServerError, body: "credential_audit_unavailable", states: untouched,
+				rows: "local=verified/ renamed=verified/"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// Given a resource bound to a live target and to a renamed one
@@ -179,7 +231,11 @@ func TestCredentialResourceRevocationOutcomes(t *testing.T) {
 			renamed := f.renamedGrant(t)
 			agent := tc.given(t, f, renamed)
 			// When the resource is revoked
-			pending := f.revokeResource(t)
+			token := f.admin
+			if tc.caller != nil {
+				token = tc.caller(t, f)
+			}
+			pending := f.revokeResourceAs(t, token)
 			for _, failure := range tc.cleanups {
 				call := agent.call(t, "doops_credential_cleanup", revocationSession)
 				if failure == "" {
@@ -189,6 +245,13 @@ func TestCredentialResourceRevocationOutcomes(t *testing.T) {
 				}
 			}
 			response := f.wait(t, pending)
+			if agent != nil {
+				select {
+				case call := <-agent.calls:
+					t.Fatalf("%s reached the Agent beyond the expected cleanups", call.name)
+				case <-time.After(100 * time.Millisecond):
+				}
+			}
 			// Then every reachable context is cleaned, the response names the targets
 			// left, and the resource and its grants move together
 			if response.code != tc.want.code || (tc.want.body != "" && response.body != tc.want.body) {
@@ -199,6 +262,15 @@ func TestCredentialResourceRevocationOutcomes(t *testing.T) {
 			}
 			if got := f.rowsByTarget(t); got != tc.want.rows {
 				t.Fatalf("rows = %s, want %s", got, tc.want.rows)
+			}
+			if tc.want.audit == "" {
+				// The request was refused before a revocation audit could start, and
+				// no cleanup ran, so no internal cleanup audit exists either.
+				events, err := f.store.ListAuditFiltered(AuditFilter{Action: ActionCredentialRevoke, Limit: 10})
+				if err != nil || len(events) != 0 {
+					t.Fatalf("refused revoke left revoke audits: %v, %#v", err, events)
+				}
+				return
 			}
 			audits := f.resourceRevokeAudits(t)
 			if len(audits) != 1 || audits[0].Status != tc.want.audit || audits[0].Error != tc.want.category ||
