@@ -1,3 +1,9 @@
+{{- if eq .Values.kubeconfig.source "serviceAccount" }}
+{{- $account := required "serviceAccount.name is required for kubeconfig.source=serviceAccount" .Values.serviceAccount.name }}
+{{- if eq $account "default" }}
+{{- fail "kubeconfig.source=serviceAccount requires a dedicated ServiceAccount, not default" }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
