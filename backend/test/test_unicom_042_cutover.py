@@ -1,4 +1,5 @@
 import importlib.util
+import copy
 import json
 import unittest
 from pathlib import Path
@@ -52,6 +53,8 @@ class CutoverTests(unittest.TestCase):
                     retired = True
                 else:
                     installed = False
+            if "rollout" in args and failure == "recover":
+                raise RuntimeError("old readiness unavailable")
             if args[:len(cutover.KUBECTL) + 2] == (*cutover.KUBECTL, "get", "deployments"):
                 return json.dumps({"items": [] if retired else [old]})
             return ""
@@ -73,8 +76,11 @@ class CutoverTests(unittest.TestCase):
              patch.dict(cutover.os.environ, {"KUBECONFIG": "/tmp/test-config",
                         "KUBERNETES_SERVICE_HOST": "127.0.0.1", "KUBERNETES_SERVICE_PORT": "443"}):
             if failure or not accepted:
-                with self.assertRaises(RuntimeError):
+                with self.assertRaises(RuntimeError) as caught:
                     cutover.main()
+                if failure == "recover":
+                    self.assertIn("acceptance was not received", str(caught.exception))
+                    self.assertIn("old readiness unavailable", str(caught.exception))
             else:
                 cutover.main()
         return commands, phases
@@ -103,6 +109,38 @@ class CutoverTests(unittest.TestCase):
         commands, phases = self.execute(failure="retire")
         self.assertEqual(phases[-1], "old-cleanup-incomplete")
         self.assertFalse(any(c[:3] == ("helm", "uninstall", "doops-agent") for c in commands))
+
+    def test_recovery_failure_cannot_report_old_preserved(self):
+        _, phases = self.execute(failure="recover", accepted=False)
+        self.assertNotIn("old-preserved", phases)
+
+    def test_candidate_requires_current_generation_unique_ready_pod_and_exact_image(self):
+        deployment = {"metadata": {"generation": 1},
+                      "status": {"observedGeneration": 1, "readyReplicas": 1}}
+        pod = {"metadata": {"name": "new-pod", "uid": "new-uid"},
+               "spec": {"containers": [{"image": cutover.IMAGE}]},
+               "status": {"containerStatuses": [{"ready": True, "imageID": cutover.IMAGE}]}}
+        for failure in [None, "generation", "duplicate", "image", "unready", "deleting"]:
+            with self.subTest(failure=failure):
+                dep, candidate = copy.deepcopy(deployment), copy.deepcopy(pod)
+                pods = [candidate]
+                if failure == "generation":
+                    dep["status"]["observedGeneration"] = 0
+                if failure == "duplicate":
+                    pods.append(copy.deepcopy(candidate))
+                if failure == "image":
+                    candidate["status"]["containerStatuses"][0]["imageID"] = "wrong-image"
+                if failure == "unready":
+                    candidate["status"]["containerStatuses"][0]["ready"] = False
+                if failure == "deleting":
+                    candidate["metadata"]["deletionTimestamp"] = "2026-11-08T07:00:00Z"
+                with patch.object(cutover, "get", return_value=dep), \
+                     patch.object(cutover, "run", return_value=json.dumps({"items": pods})):
+                    if failure:
+                        with self.assertRaises(AssertionError):
+                            cutover.ready_candidate()
+                    else:
+                        self.assertEqual(cutover.ready_candidate(), ("new-pod", "new-uid"))
 
 
 if __name__ == "__main__":

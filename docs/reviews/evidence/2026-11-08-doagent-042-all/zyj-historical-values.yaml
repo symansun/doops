@@ -1,5 +1,7 @@
 # Historical Helm values evidence only; NOT approved deployment input.
-# Contains duplicate nerdctl-data volume and differs from the live Pod spec.
+# Original helm get values output at revision 48; not a hand-edited desired state.
+# Contains duplicate nerdctl-data volume; Helm values and live Pod spec had drifted.
+# Rebuild deployment input from a newly verified live baseline before any future rollout.
 doagentSettings:
   key: settings.json
   secretName: doagent-model-settings

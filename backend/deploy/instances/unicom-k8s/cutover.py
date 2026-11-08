@@ -121,19 +121,25 @@ def main():
         assert ready_candidate() == (pod_name, pod_uid)
         receipt(phase="complete")
     except BaseException as error:
-        if retiring_old:
-            # The accepted candidate is now the only recoverable service.
-            receipt(phase="old-cleanup-incomplete", error=str(error))
-        else:
-            if new_created:
-                releases = json.loads(run("helm", "list", "-a", "-n", NAMESPACE, "-o", "json"))
-                if any(r["name"] == NEW_RELEASE for r in releases):
-                    run("helm", "uninstall", NEW_RELEASE, "-n", NAMESPACE,
-                        "--wait", "--timeout", "120s", timeout=150)
-                run(*KUBECTL, "rollout", "status", f"deployment/{OLD_RELEASE}",
-                    "--timeout=120s", timeout=150)
-            assert get("deployment", OLD_RELEASE)["metadata"]["uid"] == old_uid
-            receipt(phase="old-preserved", error=str(error))
+        print(json.dumps({"phase": "failed", "cause": str(error)}), flush=True)
+        try:
+            if retiring_old:
+                # The accepted candidate is now the only recoverable service.
+                receipt(phase="old-cleanup-incomplete", error=str(error))
+            else:
+                if new_created:
+                    releases = json.loads(run("helm", "list", "-a", "-n", NAMESPACE, "-o", "json"))
+                    if any(r["name"] == NEW_RELEASE for r in releases):
+                        run("helm", "uninstall", NEW_RELEASE, "-n", NAMESPACE,
+                            "--wait", "--timeout", "120s", timeout=150)
+                    run(*KUBECTL, "rollout", "status", f"deployment/{OLD_RELEASE}",
+                        "--timeout=120s", timeout=150)
+                assert get("deployment", OLD_RELEASE)["metadata"]["uid"] == old_uid
+                receipt(phase="old-preserved", error=str(error))
+        except BaseException as recovery_error:
+            print(json.dumps({"phase": "recovery-failed", "cause": str(error),
+                              "recovery": str(recovery_error)}), flush=True)
+            raise RuntimeError(f"cutover failed: {error}; recovery failed: {recovery_error}") from recovery_error
         raise
 
 
