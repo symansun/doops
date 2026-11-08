@@ -11,39 +11,34 @@ requires: [shell]
 conflicts: []
 ---
 
-你具备深厚的 Docker 运维知识。执行容器相关任务时请遵循以下规范。
+按任务选择检查或变更；只读诊断不启动、删除、重建或清理容器。
 
-## 操作规范
+## 对象与环境
 
-### 状态检查（操作前必做）
-1. `docker ps -a | grep {name}` — 检查容器是否存在
-2. `docker images | grep {name}` — 检查镜像是否已拉取
-3. `docker inspect {container} --format '{{.State.Status}}'` — 获取运行状态
+- 先确认 Docker 客户端、daemon/context 和明确的容器 ID 或名称，不假设 Agent 内有 Docker。
+- 用精确对象的 `docker inspect` 查询必要字段，避免 `grep` 子串误选；不输出含凭据的完整环境配置。
+- “对象不存在”和 daemon 不可用、权限不足是不同结果；后两者必须停止，不能吞错后创建替代对象。
+- 镜像、仓库、认证、网络、端口与卷来自任务和已核验配置，不假设 IP 白名单免登录。
 
-### 容器生命周期
-- **启动**：优先 `docker run -d --name {name} --restart=unless-stopped`
-- **更新**：`docker rm -f {name} 2>/dev/null || true` → `docker run ...`（先删后建，幂等）
-- **日志**：`docker logs --tail 50 {name}` 或 `docker logs -f --since 5m {name}`
-- **进入**：`docker exec -it {name} /bin/sh`（alpine 用 sh，debian 用 bash）
+## 生命周期
 
-### 镜像管理
-- **清理悬空镜像**：`docker image prune -f`
-- **清理全部无用**：`docker system prune -f`（不包括 volume）
-- **磁盘占用**：`docker system df` 查看各类资源占用
+- 已存在容器的启动使用 `docker start <exact-name>`；创建新容器前确定镜像和所需配置。
+- 替换仅在删除/重建影响已获授权时进行；先记录镜像、卷、网络、端口、健康检查和回退路径。
+  不将 `docker rm -f` 当通用幂等步骤，不用 `|| true` 隐藏停止、删除或创建失败。
+- 日志默认有限条数，如 `docker logs --tail 50 <exact-name>`；无人值守命令不使用 `-it`。
+- `docker system df` 可用于诊断；prune、删镜像和删卷需要明确对象及清理范围，不能作为构建失败的自动修复。
+- 变更成功须有容器状态、实际镜像和适用健康检查证据；仅进程运行不代表应用健康。
 
-### 私有仓库
-- 仓库地址：`registry.example.com`
-- 命名规范：`registry.example.com/doops-system/{service}:{tag}`
-- 无需 `docker login`，仓库已配置 IP 白名单
+## 镜像与网络
 
-### Dockerfile 最佳实践
-1. 多阶段构建减小镜像体积
-2. 合并 RUN 指令减少层数
-3. 使用 `COPY` 而非 `ADD`（除非解压 tar）
-4. `EXPOSE` 声明端口
-5. 使用非 root 用户：`RUN adduser -D appuser && USER appuser`
+- BuildKit 构建流程按 image-build skill；保留现有 Dockerfile 和项目运行要求。
+- Dockerfile 的 `USER` 是独立指令。Alpine 新建用户示例：
 
-### 网络
-- 容器间通信：使用 `docker network create` + `--network` 替代 `--link`
-- 端口映射：`-p 主机端口:容器端口`
-- 如在 K8s 环境，使用 Service 而非 Docker 端口映射
+```dockerfile
+RUN adduser -D appuser
+USER appuser
+```
+
+- 用户创建命令按基础镜像选择；非 root 用户须有必要目录权限。
+- 发布镜像用明确版本或 digest；`EXPOSE` 不等于发布主机端口。
+- 仅按已授权访问范围创建网络、端口映射或 Kubernetes Service，不默认扩大外部可达性。

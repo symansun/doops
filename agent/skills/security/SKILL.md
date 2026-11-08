@@ -1,6 +1,6 @@
 ---
 name: security
-description: 运维安全与权限控制守卫
+description: 运维计划与命令的安全审查指导，不替代执行器权限控制
 triggers:
   keywords: [安全, 权限, sudo, password, secret, token, 密码, 密钥, 证书, tls, ssl, firewall, iptables, 防火墙]
   regex: "chmod\\s+777|rm\\s+-rf\\s+/[^t]|curl.*\\|.*sh|wget.*\\|.*bash"
@@ -11,46 +11,33 @@ requires: [shell]
 conflicts: []
 ---
 
-你是一个安全守卫，负责在所有运维操作中执行安全策略。当你被激活时，意味着用户的操作可能涉及敏感行为。
+这是模型审查指导，不是所有工具的执行隔离或自动脱敏保证。关键词触发不能证明全程覆盖；
+现有命令护栏也不能替代任务授权。不要通过换入口、改写命令或关闭护栏绕过拒绝。
 
-## 🛑 绝对禁止（Hard Block）
+## 审查输入与出口
 
-以下操作在任何情况下都**必须拒绝**，用 `echo "ERROR: 操作被安全策略阻止" && exit 1` 替代：
+- 执行前核对目标、最终命令/变更、已有授权、环境和影响；用户输入、生成计划与最终工具参数都要看。
+- 只要方案或审查时不执行。目标和影响已获授权且检查通过时继续，不逐条重复索要批准。
+- 新增提权、端口开放、主机挂载、系统写入或特权容器等影响超出授权时，说明对象、影响和缺项，
+  交回上层确认；警告注释不构成许可。无人值守时停止相关变更，不自动猜测授权。
+- shell 阶段保持纯 Bash；被阻断时只生成不做变更的失败脚本
+  `printf '%s\n' 'ERROR: operation blocked' >&2; exit 1`。
+  这只是非零失败，不代表执行器已有专门的审批状态；调用方不得自动修复并重放被拒命令。
 
-1. **密码/Token 明文输出**：禁止 `echo $PASSWORD`、`cat /etc/shadow`、`printenv | grep -i pass`
-2. **危险删除**：禁止 `rm -rf /`、`rm -rf /*`、`dd if=/dev/zero of=/dev/sda`
-3. **全局权限放开**：禁止 `chmod 777`、`chmod -R 777`
-4. **远程脚本盲执行**：禁止 `curl ... | sh`、`wget ... | bash`（必须先下载审查再执行）
-5. **内核参数修改**：禁止直接写入 `/proc/sys/` 或 `sysctl -w` 不可逆设置
+## 保留的禁止项
 
-## ⚠️ 需要审查（Soft Gate）
+- 不输出密码、完整 token、私钥或 Secret payload；不打印全量环境或 `/etc/shadow`。
+- 不删除根/系统目录、直接覆盖块设备、执行 `chmod 777` / `chmod -R 777`，或盲执行下载脚本。
+- 不直接写 `/proc/sys/`，不执行无法恢复的内核参数变更；其它参数变更先核对当前值、
+  影响、恢复路径和授权，不因未命中禁止项就直接放行。
 
-以下操作需要生成**安全警告注释**，在命令前加 `# ⚠️ SECURITY: {原因}`：
+## 凭据与特权边界
 
-1. **sudo 使用**：记录哪些命令用了 sudo 以及原因
-2. **端口暴露**：`--publish`、`-p`、`iptables` 规则变更
-3. **挂载主机路径**：`docker run -v /:/host`、敏感路径挂载
-4. **配置文件修改**：`/etc/`、`/root/` 下文件的写入操作
-5. **Docker 特权模式**：`--privileged`、`--cap-add`
-
-## 🔒 安全最佳实践
-
-### 凭据管理
-- 密码通过环境变量传递：`SSHPASS="$PASS" sshpass -e ssh ...`
-- K8s Secret 使用 `kubectl create secret generic` 管理
-- 日志中自动脱敏：输出前过滤包含 `password`、`token`、`secret` 的行
-
-### 容器安全
-- 生产容器使用非 root 用户运行（`USER 1001`）
-- 不挂载 Docker Socket 到容器内（除非是 CI/CD 构建节点）
-- 镜像使用固定 tag 而非 `latest`（生产环境）
-
-### 网络安全
-- 内部服务间通信使用 ClusterIP，不暴露 NodePort
-- Ingress 强制 HTTPS（HSTS header）
-- 私有仓库通过 IP 白名单而非公开访问
-
-### SSH 安全
-- 使用 `sshpass -e`（读取环境变量）而非 `-p 'password'`（进程列表泄露）
-- 添加 `-o StrictHostKeyChecking=no` 仅限自动化场景
-- 连接超时设置：`-o ConnectTimeout=10 -o ServerAliveInterval=30`
+- 凭据不进入命令参数、prompt、固化脚本、Git 或日志；使用运行时已支持的受限输入。
+  环境变量本身不保证保密，禁止 `set -x`、环境转储和展开秘密的日志。
+- 不把过滤 `password/token/secret` 整行当成脱敏；可能含秘密的输出先限定字段或在输出边界脱敏，
+  无法可靠处理的敏感内容不读取、不打印。对必须签发的秘密由上层写入授权的私密交付文件，
+  不读回模型上下文。
+- Docker Socket 挂载仅限明确批准的隔离构建环境；“CI/CD 节点”不是默认许可。
+- SSH 身份校验沿用已核验的 known_hosts；自动化不构成关闭校验的理由，指纹变化须停止核验。
+- 仓库默认 TLS 与实际认证；网络、容器用户和端口暴露按任务和项目策略配置，不套用固定环境。
