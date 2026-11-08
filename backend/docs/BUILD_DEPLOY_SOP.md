@@ -281,9 +281,22 @@ imageID 与候选 digest、`do-agent --version` 和实际功能路径。
   not found）、registry 连不上或超时、pull secret 读不到或不是 registry 凭据。
   这些都不是镜像已丢，不能用 `--allow-missing-rollback-baseline` 放行。
 
-默认 fail closed。运维明确知道回滚无法恢复备份时，可用
-`doops upgrade --allow-missing-rollback-baseline` 放行；该开关只作为参数传给
+默认 fail closed。`rollback_baseline_image_unavailable` 的标准切换是下面的发新停旧，
+不使用 `--allow-missing-rollback-baseline`。该开关只在运维明确拒绝更换
+`cluster/instance`、并接受原地升级失败后无法拉回旧镜像时使用；它只作为参数传给
 Agent（`allow_missing_rollback_baseline`），Job 日志会留下可见的 `warning:`。
+
+### 回滚镜像缺失时发新停旧
+
+回滚镜像已从 registry 消失时，原地 `doops upgrade` 不能在失败后拉回旧 Pod。默认切换是 0-1：模糊匹配到唯一的旧 release，装上唯一的新 release，验收通过后卸载旧 release。这是长期通道，不是临时 target。回滚镜像仍在仓库、并且不更换 workload 身份时，继续用 `doops upgrade`。
+
+候选镜像先解析成 digest 再写入 Deployment。`latest` 只用于解析，不留在运行中的 tag 上。多架构索引用索引 digest，验收时的 `imageID` 必须等于这次解析出的 digest。候选镜像里的 `doops-agent -version` 给出 release 和 40 位 `release_commit`。这条路径不要求操作机 CLI 事先与候选镜像同 commit；切过去之后，下一次原地升级前再安装同 commit 的 CLI。
+
+旧 release 在安装新 release 之前用模糊匹配选出，结果必须正好一个，并记下它的 namespace 和 release 名。候选的 chart 是 `doops-agent`，并且 release 名、workload 名或 `gateway.instance` 包含这次要切换的身份。同集群里对不上这个身份的其他 Agent 不在范围内；匹配到 0 个或多于 1 个就停止，不猜测。新 release 沿用原来的 `gateway.cluster` 和 `gateway.instance`。最终名字只有一套：Helm release `doops-agent`，`workload.name` 为 `doops-agent`，`selectorLabels` 为 `app: doops-agent`，本机路由为 `gw-<instance>`。旧 release 如果已经占用这个名字，并存期间只用临时 release `doops-agent-next`，验收并卸载旧 release 后，再安装正式的 `doops-agent` 并卸载 `doops-agent-next`。临时名字不留在线上。agent home 使用单独目录，不和并存的旧 Pod 共用 `/root`；正式 Pod 的 home 目录用 `/var/lib/doops-agent`。`hostNetwork` 保持关闭，`nodeSelector` 沿用当前 Pod 所在节点。Chart 用候选镜像里的 `/app/deploy/helm/doops-agent`。
+
+安装由候选镜像中的一次性 Job 执行。旧 Agent 只负责提交这个 Job，不在自己的进程里对旧 release 做 Helm mutation。宿主机 kubeconfig 指向 `127.0.0.1` 时，Pod 网络访问不到 API；Job 用镜像里的 `configure_kubeconfig.py` 把 server 改写到 `KUBERNETES_SERVICE_HOST`，凭据仍来自原来的 kubeconfig。先做 server-side `helm upgrade --install --dry-run=server`，再正式安装。正式安装失败时只卸载新 release，旧 Deployment 继续服务。
+
+新通道全部通过后才删旧：新 Pod Ready 且 `imageID` 等于钉住的 digest；Gateway 上原来的 `cluster/instance` 在线，且 `release_commit` 等于候选镜像的 commit；`capabilities --require structuredSSH` 为 ready；`exec hostname` 等于新 Pod 名，而不是旧 Pod。然后 `helm uninstall` 安装前记下的那一个旧 release。Deployment、ReplicaSet 和 Pod 随 release 删除，不把副本缩到 0 后留着。同集群的其他 Agent release 不动。
 
 还没有这个控制器的旧 Helm Agent，以及 K8S 新集群第一次接入，用
 `scripts/release-managed-agent.sh`，从外部控制器执行。新集群无 Agent 时传完整
@@ -296,7 +309,7 @@ Agent（`allow_missing_rollback_baseline`），Job 日志会留下可见的 `war
 1. 改动前备份：Helm revision，或尚未由 Helm 管理时导出的 Deployment/ConfigMap。
 2. 改动后校验：新 Pod Ready 且 imageID 与固定 digest 一致、Gateway 重连、`release_commit` 正确。
 3. 校验失败自动恢复备份。备份可恢复的前提是回滚镜像仍可拉取，该前提由上面的
-   改动前检查保证。
+   改动前检查保证。发新停旧在删除旧 release 之前满足这四条，失败时只卸载新 release。旧 release 卸载后，这条通道只剩新 Pod，不再保留一个副本数为 0 的旧 Deployment。
 4. 全程走 Gateway 审计路径，参数和输出不含凭据 payload。
 
 唯一的硬性限制是 Agent 不能在自己进程里替换自己的 workload，升级始终由独立的
