@@ -12,6 +12,7 @@
 - 审计强化：`GET /v1/audit?format=csv|jsonl` 导出（升序、按时间/集群/用户/会话/动作/状态过滤，单次上限 10000 条）；`doops admin audit export` 命令支持 `--output` 落盘
 - 审计留存策略：`-audit-retention-days`（或 `DOOPS_AUDIT_RETENTION_DAYS`）>0 时 gateway 启动即清理一次、之后每 24h 删除过期审计，默认关闭
 - 高危操作告警 webhook：`-alert-webhook`（或 `DOOPS_ALERT_WEBHOOK`）推送护栏拦截、审批创建、审批结果三类事件，消息体兼容飞书/企业微信机器人文本格式，失败仅记日志
+- 飞书机器人接入：gateway 新增 `POST /v1/integrations/feishu/event` 事件订阅入口，支持 URL 验证、Verification Token 校验、`X-Lark-Signature` 签名校验与 AES-256-CBC 事件解密；消息按 `open_id → gateway 用户名` 映射后执行 `help/targets/exec/ask` 显式命令，鉴权/审批闸/审计全链路复用；事件 5 分钟去重，回调 3 秒内响应、执行异步，回复截断 1500 字符
 - E2E 冒烟新增审批流断言：拦截 → 未审批重放拒绝 → approve → 放行 → 一次性消费 → 列表可见
 - E2E 冒烟新增审计导出断言：CSV 表头/命令记录/审批拦截记录、JSONL 记录格式
 

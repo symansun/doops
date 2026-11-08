@@ -35,6 +35,8 @@ type GatewayHubOptions struct {
 	AuditRetentionDays int
 	// AlertWebhook 高危操作告警地址（飞书/企业微信自定义机器人 webhook 可直接消费）
 	AlertWebhook string
+	// Feishu 飞书机器人接入配置；nil 表示未启用
+	Feishu *FeishuConfig
 }
 
 type GatewayHub struct {
@@ -52,6 +54,9 @@ type GatewayHub struct {
 	activeSeq   uint64
 
 	metrics gatewayMetrics
+
+	feishuMu   sync.Mutex
+	feishuSeen map[string]time.Time
 }
 
 var errGatewayClientDisconnected = errors.New("gateway client disconnected")
@@ -215,11 +220,12 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		opts.MaxQueuedPerTarget = 0
 	}
 	return &GatewayHub{
-		store:     store,
-		opts:      opts,
-		agents:    make(map[string]*GatewayAgent),
-		userOps:   make(map[string]int),
-		activeOps: make(map[string]*gatewayActiveOperation),
+		store:      store,
+		opts:       opts,
+		agents:     make(map[string]*GatewayAgent),
+		userOps:    make(map[string]int),
+		activeOps:  make(map[string]*gatewayActiveOperation),
+		feishuSeen: make(map[string]time.Time),
 	}
 }
 
@@ -234,6 +240,7 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/admin/tokens", h.HandleAdminTokens)
 	mux.HandleFunc("/v1/admin/operations", h.HandleAdminOperations)
 	mux.HandleFunc("/v1/admin/approvals", h.HandleAdminApprovals)
+	mux.HandleFunc("/v1/integrations/feishu/event", h.HandleFeishuEvent)
 	mux.HandleFunc("/metrics", h.HandleMetrics)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

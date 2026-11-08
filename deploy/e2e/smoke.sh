@@ -243,6 +243,24 @@ assert_audit_export() {
   log "审计导出断言通过"
 }
 
+# 飞书接入断言：事件订阅的 URL 验证需回显 challenge（gateway 以 e2e-vt 启动）。
+assert_feishu_endpoint() {
+  log "断言飞书事件入口（/v1/integrations/feishu/event）"
+  local resp
+  resp="$(curl -fsS -X POST "http://127.0.0.1:${GATEWAY_PORT}/v1/integrations/feishu/event" \
+    -H 'Content-Type: application/json' \
+    -d '{"type":"url_verification","challenge":"e2e-challenge","token":"e2e-vt"}')" \
+    || fail "飞书 URL 验证请求失败"
+  echo "$resp" | grep -q "e2e-challenge" || fail "飞书 challenge 未回显: $resp"
+
+  if curl -fsS -X POST "http://127.0.0.1:${GATEWAY_PORT}/v1/integrations/feishu/event" \
+    -H 'Content-Type: application/json' \
+    -d '{"type":"url_verification","challenge":"x","token":"wrong"}' >/dev/null 2>&1; then
+    fail "错误的 verification token 不应通过"
+  fi
+  log "飞书事件入口断言通过"
+}
+
 # ---------------------------------------------------------------------------
 # compose 模式
 # ---------------------------------------------------------------------------
@@ -317,6 +335,7 @@ run_process() {
   [[ -n "$AGENT_TOKEN" ]] || fail "未解析到 agent_token"
 
   log "启动 gateway 进程 (127.0.0.1:${GATEWAY_PORT})"
+  DOOPS_FEISHU_VERIFICATION_TOKEN="e2e-vt" \
   "${WORKDIR}/doops-gateway" serve -port "$GATEWAY_PORT" -db "$DB" \
     -approval-targets "e2e-prod/*" \
     >"${WORKDIR}/gateway.log" 2>&1 &
@@ -341,6 +360,7 @@ run_process() {
   assert_metrics
   assert_approval_flow
   assert_audit_export
+  assert_feishu_endpoint
 
   log "断言 agent 工作区审计日志 ${WORKDIR}/ws/${SESSION}/.doops-audit-log"
   local audit_file="${WORKDIR}/ws/${SESSION}/.doops-audit-log"
