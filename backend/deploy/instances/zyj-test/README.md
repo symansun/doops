@@ -21,5 +21,7 @@ RoleBinding。持有本 target grant 意味着可经 Agent 管理整个集群，
 收编与恢复见 [BUILD_DEPLOY_SOP.md](../../../docs/BUILD_DEPLOY_SOP.md#agent-rbac-纳管与回滚)。
 跨越首次 RBAC 纳管点回滚必须由独立管理通道恢复；不能让 SA 自己删除自己的绑定后继续验证。
 
-本文件的 image digest 固定到 CNB 验证过的 `v1.3.121` 制品，
-发布结果与实际 Helm revision 记录在 [整改进度](../../../../docs/reviews/2026-11-07-agent-k8s-identity-progress.md)。
+本文件的 image digest 固定到 CNB 验证过的 `v1.3.123` 制品（DoAgent `0.2.42`），
+发布结果、实际 Helm revision 与回滚基线记录在
+[发布验收](../../../../docs/reviews/2026-11-08-doagent-042-release.md)。
+此前的身份纳管证据见 [整改进度](../../../../docs/reviews/2026-11-07-agent-k8s-identity-progress.md)。
