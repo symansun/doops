@@ -193,10 +193,12 @@ cd doops
 bash scripts/install.sh --project /absolute/path/to/your/project
 ```
 
+По умолчанию скрипт скачивает CLI-бинарник и skill-пакет для вашей платформы из GitHub Releases (с проверкой sha256 по `checksums.txt`, публикуемому с каждым релизом); `--version vX.Y.Z` фиксирует версию. Режим `--from-source` по-прежнему использует предсобранный CLI из `skills/doops-cli/bin/doops-<os>-<arch>` в репозитории и требует полного клона.
+
 Этот шаг делает следующее:
 
-1. Копирует предсобранный CLI для вашей платформы из `skills/doops-cli/bin/doops-<os>-<arch>` этого репозитория в `~/.local/bin/doops`
-2. Устанавливает `skills/SKILL.md` из этого репозитория в `/absolute/path/to/your/project/.agent/skills/doops/SKILL.md`
+1. Устанавливает CLI для вашей платформы в `~/.local/bin/doops`
+2. Устанавливает `skills/SKILL.md` в `/absolute/path/to/your/project/.agent/skills/doops/SKILL.md`
 
 Если `~/.local/bin` ещё не в `PATH`:
 
