@@ -7,6 +7,25 @@ with their existing Gateway account or user token, select an explicit target,
 and execute operations under that identity. The console stores the Gateway
 session in an HttpOnly cookie, restores and clears it through `/api/session`,
 and does not expose the token to React state, localStorage or copied examples.
+When the Gateway returns a token expiry, the cookie lifetime is capped at that
+expiry and never outlives the token. A token with no expiry keeps the console's
+local seven-day session cap; that cap is only browser storage policy, not token
+validity. Gateway `401` responses preserve the structured token reason so the
+console can distinguish missing, invalid, expired, revoked and disabled-user
+states. A temporary Gateway 5xx keeps the local session cookie so a transient
+outage does not force a new login; only an authentication 401 clears it. A 403
+means permission denial and keeps the login cookie.
+
+Password login, token import and session restore all validate against
+`GET /v1/auth/me`. The Gateway supplies the real username, platform-admin flag,
+current token ID, issue time and optional expiry. The console does not infer
+identity from target visibility or probe an admin-only endpoint. An absent or
+malformed identity endpoint is an explicit error and does not create a cookie.
+Token login therefore displays the real username and restores only that user's
+target/session selection. The token page marks the current login token and its
+revocation confirmation states that the console, CLI and any other clients using
+that same token lose access together. Disconnect only clears the browser cookie;
+revocation remains a separate explicit action. Neither operation renews a token.
 
 - AI conversation uses the shared Agent Cloud `AgentWorkspace`, v2 runtime,
   queue and store. The host supplies only Gateway transport, target/session

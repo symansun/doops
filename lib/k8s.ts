@@ -1,3 +1,4 @@
+import { gatewayAuthMessage } from "./gateway-auth.ts"
 // Web form for the Agent doops_k8s tool. The payload mirrors buildK8SRequest in
 // backend/cli/cli/doops/k8s.go so the console and `doops k8s` call the same contract.
 
@@ -498,7 +499,9 @@ export function describeK8sFailure(message: string, context: K8sFailureContext):
     }
   }
   const upgrade = gatewayUpgradeStatus(raw)
-  if (raw === "gateway_auth_failed" || upgrade === "401" || /Unexpected server response: 401\b/.test(raw) ||
+  const authMessage = gatewayAuthMessage(raw)
+  if (authMessage) return { kind: "auth", text: authMessage }
+  if (upgrade === "401" || /Unexpected server response: 401\b/.test(raw) ||
       raw.includes("未建立 Gateway 会话") || raw.includes("缺少 gateway 地址或 token") || raw.includes("Gateway 会话已失效")) {
     return { kind: "auth", text: "登录已失效，请重新登录后再执行" }
   }

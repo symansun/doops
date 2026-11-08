@@ -10,62 +10,70 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func TestGatewayStoreTokenRejectsDisabledUser(t *testing.T) {
-	for _, legacy := range []bool{false, true} {
-		name := "token-id"
-		if legacy {
-			name = "legacy-token"
+	store, err := OpenGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	user, err := store.CreateUser("token-owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, err := store.VerifyUserToken(token.Plaintext)
+	if err != nil || auth.UserID != user.ID || auth.TokenID != token.ID {
+		t.Fatalf("enabled token identity: %#v, %v", auth, err)
+	}
+	if err := store.SetUserDisabled(user.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.VerifyUserToken(token.Plaintext); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("disabled user token was accepted: %v", err)
+	}
+	if err := store.SetUserDisabled(user.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if restored, err := store.VerifyUserToken(token.Plaintext); err != nil || restored != auth {
+		t.Fatalf("re-enabled token changed identity: %#v, %v", restored, err)
+	}
+	if _, err := store.db.Exec("UPDATE tokens SET expires_at = ? WHERE id = ?", "invalid-expiry", token.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.VerifyUserToken(token.Plaintext); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("invalid token expiry was accepted: %v", err)
+	}
+}
+
+func TestGatewayStoreRejectsTokenWithoutIDBeforeStoreAccess(t *testing.T) {
+	store, err := OpenGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []string{
+		"legacy-lifecycle-synthetic-canary",
+		"dgw_user_1234abcd_" + strings.Repeat("a", 64),
+		"dgw_user_1234abcd_tok__" + strings.Repeat("a", 64),
+		"dgw_user_1234abcd_tok_0123456789abcdef01234567",
+	} {
+		_, err := store.VerifyUserToken(input)
+		var failure *TokenAuthError
+		if !errors.As(err, &failure) || failure.Reason != AuthFailureInvalid {
+			t.Fatalf("token without a parseable ID reached the unavailable store: %v", err)
 		}
-		t.Run(name, func(t *testing.T) {
-			store, err := OpenGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = store.Close() })
-			user, err := store.CreateUser("token-owner")
-			if err != nil {
-				t.Fatal(err)
-			}
-			token, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if legacy {
-				token.Plaintext = "legacy-lifecycle-synthetic-canary"
-				hash, err := bcrypt.GenerateFromPassword(tokenPassword(token.Plaintext), bcrypt.DefaultCost)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err := store.db.Exec("UPDATE tokens SET hash = ? WHERE id = ?", string(hash), token.ID); err != nil {
-					t.Fatal(err)
-				}
-			}
-			auth, err := store.VerifyUserToken(token.Plaintext)
-			if err != nil || auth.UserID != user.ID || auth.TokenID != token.ID {
-				t.Fatalf("enabled token identity: %#v, %v", auth, err)
-			}
-			if err := store.SetUserDisabled(user.ID, true); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := store.VerifyUserToken(token.Plaintext); !errors.Is(err, ErrUnauthorized) {
-				t.Fatalf("disabled user token was accepted: %v", err)
-			}
-			if err := store.SetUserDisabled(user.ID, false); err != nil {
-				t.Fatal(err)
-			}
-			if restored, err := store.VerifyUserToken(token.Plaintext); err != nil || restored != auth {
-				t.Fatalf("re-enabled token changed identity: %#v, %v", restored, err)
-			}
-			if _, err := store.db.Exec("UPDATE tokens SET expires_at = ? WHERE id = ?", "invalid-expiry", token.ID); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := store.VerifyUserToken(token.Plaintext); !errors.Is(err, ErrUnauthorized) {
-				t.Fatalf("invalid token expiry was accepted: %v", err)
-			}
-		})
+	}
+	// A supported token with an ID still reports the real storage failure.
+	_, err = store.VerifyUserToken("dgw_user_1234abcd_tok_0123456789abcdef01234567_" + strings.Repeat("a", 64))
+	if err == nil || errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("supported token hid the unavailable store: %v", err)
 	}
 }
 
@@ -116,7 +124,18 @@ func TestGatewayClientWSTokenLifecycleAdmission(t *testing.T) {
 					}
 				} else {
 					rpcError, ok := response["error"].(map[string]interface{})
-					if forwarded || !ok || rpcError["code"] != float64(-32001) || rpcError["message"] != "gateway_auth_failed" {
+					wantCode := "gateway_auth_invalid"
+					switch state {
+					case "disabled":
+						wantCode = "gateway_auth_user_disabled"
+					case "revoked":
+						wantCode = "gateway_auth_revoked"
+					case "expired":
+						wantCode = "gateway_auth_expired"
+					case "invalid-expiry":
+						wantCode = "gateway_auth_invalid_expiry"
+					}
+					if forwarded || !ok || rpcError["code"] != float64(-32001) || rpcError["message"] != wantCode {
 						t.Fatalf("invalid original identity admitted: forwarded=%t, response=%#v", forwarded, response)
 					}
 				}

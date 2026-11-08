@@ -52,7 +52,6 @@ func normalizeStorageMode(value string) (string, error) {
 
 func cosCategories() []string {
 	return []string{
-		"gateway_auth_failed",
 		"cos_not_configured",
 		"cos_credential_missing",
 		"cos_credential_invalid",
@@ -90,7 +89,7 @@ type gatewayCOS struct {
 
 func newGatewayCOS(server Server, token, session string) (*gatewayCOS, error) {
 	if strings.TrimSpace(token) == "" {
-		return nil, fmt.Errorf("gateway_auth_failed")
+		return nil, fmt.Errorf("gateway_auth_missing")
 	}
 	client := NewMCPClient(server, NewSessionStore(), session, false)
 	client.Token = token
@@ -411,7 +410,7 @@ func pullCOS(server Server, dest, session, credential, token, commit string, tra
 
 func ensureCOSTransfer(server Server, session, token string, transfer cosTransfer) (cosTransfer, func(), error) {
 	if strings.TrimSpace(token) == "" {
-		return nil, func() {}, fmt.Errorf("gateway_auth_failed")
+		return nil, func() {}, fmt.Errorf("gateway_auth_missing")
 	}
 	if transfer != nil {
 		return transfer, func() {}, nil

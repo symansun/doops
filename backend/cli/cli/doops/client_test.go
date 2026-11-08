@@ -108,14 +108,14 @@ func TestCallDoesNotRetryHTTPHandshakeError(t *testing.T) {
 		connections.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"error":"unauthorized","code":"gateway_auth_failed","auth_domain":"gateway","message":"Gateway user token is missing or invalid"}`))
+		_, _ = w.Write([]byte(`{"error":"unauthorized","code":"gateway_auth_expired","auth_domain":"gateway","message":"Gateway user token has expired"}`))
 	}))
 	defer ts.Close()
 
 	client := newGatewayTestClient(t, ts.URL, "handshake-http-error")
 	defer client.Close()
 	err := client.Call("doops_shell", map[string]interface{}{"command": "hostname"})
-	if err == nil || !strings.Contains(err.Error(), "gateway_auth_failed") ||
+	if err == nil || !strings.Contains(err.Error(), "gateway_auth_expired") ||
 		!strings.Contains(err.Error(), "auth_domain=gateway") {
 		t.Fatalf("expected HTTP handshake error, got %v", err)
 	}

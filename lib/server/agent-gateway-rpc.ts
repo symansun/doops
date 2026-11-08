@@ -1,6 +1,6 @@
 import WebSocket from "ws"
 import { toWsBase } from "../gateway"
-import { gatewayUpgradeRejection } from "./gateway-upgrade"
+import { readGatewayUpgradeRejection } from "./gateway-upgrade"
 
 export interface AgentGatewayContext {
   gateway: string
@@ -82,7 +82,7 @@ export function agentGatewayCall(
         if (message.id !== 2) return
         const error = message.error?.message || (message.result?.isError
           ? message.result.content?.map((item: { text?: string }) => item.text || "").join("") : "")
-        if (error) throw new AgentGatewayError(error, [-32001, -32003].includes(message.error?.code) ? 403 : 502,
+        if (error) throw new AgentGatewayError(error, message.error?.code === -32001 ? 401 : message.error?.code === -32003 ? 403 : 502,
           error === "execution_outcome_unknown" || error.startsWith("execution_outcome_unknown:") ? "unknown" : "terminal",
           message.error?.code === -32007)
         if (!message.result || !Array.isArray(message.result.content)) throw new AgentGatewayError("Agent 执行结果无效")
@@ -94,9 +94,8 @@ export function agentGatewayCall(
         fail(error instanceof Error ? error : new AgentGatewayError("Agent 事件无效"))
       }
     })
-    ws.on("unexpected-response", (_request, response) => {
-      response.resume()
-      const rejection = gatewayUpgradeRejection(response.statusCode)
+    ws.on("unexpected-response", async (_request, response) => {
+      const rejection = await readGatewayUpgradeRejection(response)
       fail(new AgentGatewayError(rejection.message, rejection.status, "not_dispatched"))
     })
     ws.on("close", () => fail(new AgentGatewayError("Gateway 已断开，远端终态未确认")))

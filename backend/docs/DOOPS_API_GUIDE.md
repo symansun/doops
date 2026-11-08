@@ -69,22 +69,37 @@ wss://gateway.example.com
 Authorization: Bearer <DOOPS_GATEWAY_USER_TOKEN>
 ```
 
-Gateway 鉴权失败仍返回 HTTP `401`，但响应体包含稳定错误分类，避免与目标业务服务
+Gateway 凭证校验失败返回 HTTP `401`，响应体包含稳定错误分类，避免与目标业务服务
 或受管凭据的认证失败混淆：
 
 ```json
 {
   "error": "unauthorized",
-  "code": "gateway_auth_failed",
+  "code": "gateway_auth_expired",
   "auth_domain": "gateway",
-  "message": "Gateway user token is missing, invalid, expired, or revoked",
+  "message": "Gateway user token has expired",
   "next_action": "Run doops login for this Gateway target; do not replace the Gateway token with a managed credential or business API key"
 }
 ```
 
-`gateway_auth_failed` 只表示 DoOps Gateway 登录态问题，不表示受管凭据
-`credential_invalid`。如果响应只有裸 `401 Unauthorized`，调用方必须将认证域视为
-未确定，不得直接把错误归因于受管凭据。
+凭证无效返回 HTTP `401` 和 Bearer challenge，`code` 区分原因；鉴权存储不可用返回 HTTP `503`，
+不提示凭证无效，也不发出重新认证 challenge：
+
+- `gateway_auth_missing`：没有 Bearer token。
+- `gateway_auth_invalid`：格式、token ID、hash 或归属校验失败。
+- `gateway_auth_expired`：token 已过期。
+- `gateway_auth_revoked`：token 已撤销。
+- `gateway_auth_user_disabled`（401）：token 所属用户已停用，需要管理员启用账号。
+- `gateway_auth_invalid_expiry`（401）：token 的到期字段损坏，需要管理员修复并重新签发。
+- `gateway_auth_unavailable`（503）：Gateway 鉴权存储不可用，不能据此判断 token 状态。
+
+Gateway 签发的用户 token 格式为
+`dgw_user_<8 位十六进制前缀>_tok_<24 位十六进制 ID>_<64 位十六进制密钥>`。
+没有可解析 token ID 的输入直接返回 `gateway_auth_invalid`，不扫描历史 token 或逐条尝试 bcrypt；
+有 ID 的凭证只读取对应记录，hash 匹配后再判断撤销、过期和用户停用状态。
+
+这些错误只描述 Gateway user token，不表示受管凭据 `credential_invalid`。如果响应只有裸
+`401 Unauthorized`，调用方必须将认证域视为未确定，不得直接把错误归因于受管凭据。
 
 `/v1/edge/connect` 使用独立的 enrollment token。失败时返回
 `code=edge_enrollment_auth_failed` 和 `auth_domain=edge_enrollment`，不能使用 Gateway
@@ -107,6 +122,9 @@ ok
 ## 用户登录换取 Token
 
 密码登录是可选能力，返回短期 user token。长期自动化任务应使用 Gateway 管理员签发的服务 token。
+默认登录 token 有 24 小时有效期；每次成功登录都会创建新的 token ID，不会自动复用或撤销旧 token。
+客户端应根据 `token_id`、`issued_at` 和 `expires_at` 记录替换关系，并通过管理员接口显式撤销旧 token。
+登录不删除过期 token 的记录；旧凭证继续返回明确的过期原因，便于审计和轮换核对。
 
 ```http
 POST /v1/auth/login
@@ -126,14 +144,46 @@ Content-Type: application/json
   "token": "dgw_user_xxx",
   "token_id": "tok_xxx",
   "token_type": "user",
-  "username": "alice"
+  "username": "alice",
+  "name": "ci deploy token",
+  "issued_at": "2026-11-08T08:39:00Z",
+  "expires_at": "2026-11-09T08:39:00Z"
 }
 ```
 
 常见错误：
 
 - `401 Unauthorized`：用户名或密码错误。
+- `503 Service Unavailable` / `gateway_auth_unavailable`：无法读取或校验账号认证数据，不能据此判断密码错误。
 - `400 Bad Request`：请求体不是合法 JSON。
+
+## 当前身份与 Token 元数据
+
+```http
+GET /v1/auth/me
+Authorization: Bearer <DOOPS_GATEWAY_USER_TOKEN>
+```
+
+这是 CLI token 导入、控制台 token 登录和会话恢复的统一校验入口。任何已认证用户都可调用，
+不要求管理员身份或 target grant。它只返回请求中该 token 的身份与元数据；query 参数不能选择
+其他用户或 token，也不会返回 token 明文。
+
+```json
+{
+  "token_id": "tok_xxx",
+  "user_id": "usr_xxx",
+  "username": "alice",
+  "is_admin": false,
+  "name": "ci deploy token",
+  "issued_at": "2026-11-08T08:39:00Z",
+  "expires_at": "2026-11-09T08:39:00Z"
+}
+```
+
+响应为 `Cache-Control: no-store`。永不过期 token 省略 `expires_at`；返回的身份、角色和
+到期时间以数据库当前记录为准，客户端不得靠用户输入的用户名或管理员接口探测推断。
+认证失败保留上面的具体 401 类别，存储不可用为 503；非 GET 请求返回 405。
+管理端 token list 如果遇到损坏的 expiry，会明确报错，不把它当成永不过期。
 
 ## 管理员创建和维护用户
 
@@ -248,7 +298,10 @@ Content-Type: application/json
   "token": "dgw_user_xxx",
   "token_id": "tok_xxx",
   "token_type": "user",
-  "username": "alice"
+  "username": "alice",
+  "name": "ci deploy token",
+  "issued_at": "2026-11-08T08:39:00Z",
+  "expires_at": "2028-07-16T08:39:00Z"
 }
 ```
 

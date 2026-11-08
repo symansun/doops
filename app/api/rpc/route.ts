@@ -4,7 +4,7 @@ import {
   gatewayPolicyResponse,
   readAllowedAuth,
 } from "@/lib/gateway-policy"
-import { gatewayUpgradeRejection } from "@/lib/server/gateway-upgrade"
+import { readGatewayUpgradeRejection } from "@/lib/server/gateway-upgrade"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -299,12 +299,11 @@ export async function POST(req: Request) {
 
       // Gateway refuses login or target access before the upgrade with a plain HTTP
       // status. Nothing was dispatched, so this is a terminal error, never an unknown outcome.
-      ws.on("unexpected-response", (_request, response) => {
-        response.resume()
+      ws.on("unexpected-response", async (_request, response) => {
         clearSilenceTimer()
         if (!terminal) {
           terminal = true
-          const rejection = gatewayUpgradeRejection(response.statusCode)
+          const rejection = await readGatewayUpgradeRejection(response)
           send({ type: "error", error: rejection.message, code: rejection.code })
         }
         // With this listener ws no longer aborts the handshake on its own.

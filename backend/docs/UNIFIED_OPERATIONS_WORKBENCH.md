@@ -37,7 +37,7 @@ Gateway `/v1/auth/login`、`/v1/targets`、`/v1/rpc` 和凭据 API。
 | 数据库变更控制 | DoSql 按库版本日志（哈希链） | 版本号、语句指纹、事务内验证、回滚结果 | 是领域规则，不是登录授权 |
 | 网站变更控制 | DoWeb SiteSpec + Nginx validation/reload/health evidence | 站点范围、配置验证、回滚和健康状态 | 是领域规则，不是登录授权 |
 | Web 会话 | DoOps Web `/api/session` | HttpOnly cookie 的建立、恢复、清理 | 否 |
-| CLI 会话 | `~/.agent/skills/doops/auth.json` | Gateway token 本地缓存 | 否 |
+| CLI 会话 | `~/.agent/skills/doops/auth.json` | Gateway token 与生命周期元数据本地缓存 | 否 |
 
 以下入口已经复用同一 Web 代理和 session 读取：targets、RPC、审计、凭据、admin、Agent
 Workbench session、附件上传。缺少 session 时统一返回未建立 Gateway 会话；Gateway 的

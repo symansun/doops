@@ -68,6 +68,31 @@ var (
 	ErrAgentStatusOnline   = errors.New("instance_online")
 )
 
+type AuthFailureReason string
+
+const (
+	AuthFailureMissing       AuthFailureReason = "missing"
+	AuthFailureInvalid       AuthFailureReason = "invalid"
+	AuthFailureExpired       AuthFailureReason = "expired"
+	AuthFailureRevoked       AuthFailureReason = "revoked"
+	AuthFailureUserDisabled  AuthFailureReason = "user_disabled"
+	AuthFailureInvalidExpiry AuthFailureReason = "invalid_expiry"
+)
+
+// TokenAuthError keeps the authentication failure category while preserving
+// errors.Is(err, ErrUnauthorized) for callers that only need the auth boundary.
+type TokenAuthError struct {
+	Reason AuthFailureReason
+}
+
+func (e *TokenAuthError) Error() string {
+	return "gateway authentication failed: " + string(e.Reason)
+}
+
+func (e *TokenAuthError) Unwrap() error { return ErrUnauthorized }
+
+func authFailure(reason AuthFailureReason) error { return &TokenAuthError{Reason: reason} }
+
 type GatewayStore struct {
 	db *sql.DB
 }
@@ -97,6 +122,9 @@ type CreatedToken struct {
 	ID        string
 	Prefix    string
 	Plaintext string
+	Name      string
+	CreatedAt time.Time
+	ExpiresAt time.Time
 }
 
 type TokenAuth struct {
@@ -592,11 +620,20 @@ func (s *GatewayStore) SetUserPassword(userID, password string) error {
 
 func (s *GatewayStore) VerifyUserPassword(name, password string) (GatewayUser, error) {
 	user, err := s.FindUserByName(name)
-	if err != nil || user.PasswordHash == "" {
+	if errors.Is(err, sql.ErrNoRows) {
 		return GatewayUser{}, ErrUnauthorized
 	}
-	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
+	if err != nil {
+		return GatewayUser{}, err
+	}
+	if user.PasswordHash == "" {
 		return GatewayUser{}, ErrUnauthorized
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
+			return GatewayUser{}, ErrUnauthorized
+		}
+		return GatewayUser{}, err
 	}
 	return user, nil
 }
@@ -616,6 +653,7 @@ func (s *GatewayStore) CreateToken(req CreateTokenRequest) (CreatedToken, error)
 	if err != nil {
 		return CreatedToken{}, err
 	}
+	createdAt := time.Now().UTC()
 	expires := ""
 	if !req.ExpiresAt.IsZero() {
 		expires = formatTime(req.ExpiresAt.UTC())
@@ -628,11 +666,11 @@ func (s *GatewayStore) CreateToken(req CreateTokenRequest) (CreatedToken, error)
 		(id, kind, user_id, name, prefix, hash, cluster, instance, expires_at, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, string(req.Kind), req.UserID, name, prefix, string(hash),
-		strings.TrimSpace(req.Cluster), strings.TrimSpace(req.Instance), expires, formatTime(time.Now().UTC()))
+		strings.TrimSpace(req.Cluster), strings.TrimSpace(req.Instance), expires, formatTime(createdAt))
 	if err != nil {
 		return CreatedToken{}, err
 	}
-	return CreatedToken{ID: id, Prefix: prefix, Plaintext: plain}, nil
+	return CreatedToken{ID: id, Prefix: prefix, Plaintext: plain, Name: name, CreatedAt: createdAt, ExpiresAt: req.ExpiresAt.UTC()}, nil
 }
 
 func (s *GatewayStore) VerifyUserToken(token string) (TokenAuth, error) {
@@ -646,87 +684,73 @@ func (s *GatewayStore) VerifyUserToken(token string) (TokenAuth, error) {
 func (s *GatewayStore) verifyToken(token string, kind TokenKind) (TokenAuth, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return TokenAuth{}, ErrUnauthorized
+		return TokenAuth{}, authFailure(AuthFailureMissing)
 	}
 	if tokenID := tokenIDFromPlaintext(token); tokenID != "" {
 		return s.verifyTokenByID(token, kind, tokenID)
 	}
-	rows, err := s.db.Query(`SELECT t.id, t.user_id, t.hash, t.cluster, t.instance, t.expires_at
-		FROM tokens t JOIN users u ON u.id = t.user_id
-		WHERE t.kind = ? AND t.revoked_at = '' AND u.disabled = 0`, string(kind))
-	if err != nil {
-		return TokenAuth{}, err
-	}
-	defer rows.Close()
-	now := time.Now().UTC()
-	for rows.Next() {
-		var id, userID, hash, cluster, instance, expires string
-		if err := rows.Scan(&id, &userID, &hash, &cluster, &instance, &expires); err != nil {
-			return TokenAuth{}, err
-		}
-		if expires != "" {
-			exp, err := parseTime(expires)
-			if err != nil || !now.Before(exp) {
-				continue
-			}
-		}
-		if bcrypt.CompareHashAndPassword([]byte(hash), tokenPassword(token)) == nil {
-			return TokenAuth{TokenID: id, UserID: userID, Kind: kind, Cluster: cluster, Instance: instance}, nil
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return TokenAuth{}, err
-	}
-	return TokenAuth{}, ErrUnauthorized
+	return TokenAuth{}, authFailure(AuthFailureInvalid)
 }
 
 func (s *GatewayStore) verifyTokenByID(token string, kind TokenKind, tokenID string) (TokenAuth, error) {
-	var id, userID, hash, cluster, instance, expires string
-	err := s.db.QueryRow(`SELECT t.id, t.user_id, t.hash, t.cluster, t.instance, t.expires_at
+	var id, userID, hash, cluster, instance, expires, revoked string
+	var disabled int
+	err := s.db.QueryRow(`SELECT t.id, t.user_id, t.hash, t.cluster, t.instance, t.expires_at, t.revoked_at, u.disabled
 		FROM tokens t JOIN users u ON u.id = t.user_id
-		WHERE t.id = ? AND t.kind = ? AND t.revoked_at = '' AND u.disabled = 0`, tokenID, string(kind)).
-		Scan(&id, &userID, &hash, &cluster, &instance, &expires)
+		WHERE t.id = ? AND t.kind = ?`, tokenID, string(kind)).
+		Scan(&id, &userID, &hash, &cluster, &instance, &expires, &revoked, &disabled)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return TokenAuth{}, ErrUnauthorized
+			return TokenAuth{}, authFailure(AuthFailureInvalid)
 		}
 		return TokenAuth{}, err
 	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), tokenPassword(token)) != nil {
+		return TokenAuth{}, authFailure(AuthFailureInvalid)
+	}
+	return classifyTokenRecord(TokenAuth{TokenID: id, UserID: userID, Kind: kind, Cluster: cluster, Instance: instance}, expires, revoked, disabled, time.Now().UTC())
+}
+
+func classifyTokenRecord(auth TokenAuth, expires, revoked string, disabled int, now time.Time) (TokenAuth, error) {
+	if disabled != 0 {
+		return TokenAuth{}, authFailure(AuthFailureUserDisabled)
+	}
+	if revoked != "" {
+		return TokenAuth{}, authFailure(AuthFailureRevoked)
+	}
 	if expires != "" {
 		exp, err := parseTime(expires)
-		if err != nil || !time.Now().UTC().Before(exp) {
-			return TokenAuth{}, ErrUnauthorized
+		if err != nil {
+			return TokenAuth{}, authFailure(AuthFailureInvalidExpiry)
+		}
+		if !now.Before(exp) {
+			return TokenAuth{}, authFailure(AuthFailureExpired)
 		}
 	}
-	if bcrypt.CompareHashAndPassword([]byte(hash), tokenPassword(token)) != nil {
-		return TokenAuth{}, ErrUnauthorized
-	}
-	return TokenAuth{TokenID: id, UserID: userID, Kind: kind, Cluster: cluster, Instance: instance}, nil
+	return auth, nil
 }
 
 // Recheck the verified connection identity without retaining its plaintext token.
 func (s *GatewayStore) validateUserTokenAuth(auth TokenAuth) error {
 	if auth.Kind != TokenKindUser || auth.TokenID == "" || auth.UserID == "" {
-		return ErrUnauthorized
+		return authFailure(AuthFailureInvalid)
 	}
-	var expires string
-	err := s.db.QueryRow(`SELECT t.expires_at
+	var userID, expires, revoked string
+	var disabled int
+	err := s.db.QueryRow(`SELECT t.user_id, t.expires_at, t.revoked_at, u.disabled
 		FROM tokens t JOIN users u ON u.id = t.user_id
-		WHERE t.id = ? AND t.user_id = ? AND t.kind = ?
-		  AND t.revoked_at = '' AND u.disabled = 0`, auth.TokenID, auth.UserID, string(auth.Kind)).Scan(&expires)
+		WHERE t.id = ? AND t.kind = ?`, auth.TokenID, string(auth.Kind)).Scan(&userID, &expires, &revoked, &disabled)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ErrUnauthorized
+		return authFailure(AuthFailureInvalid)
 	}
 	if err != nil {
 		return err
 	}
-	if expires != "" {
-		exp, err := parseTime(expires)
-		if err != nil || !time.Now().UTC().Before(exp) {
-			return ErrUnauthorized
-		}
+	if userID != auth.UserID {
+		return authFailure(AuthFailureInvalid)
 	}
-	return nil
+	_, err = classifyTokenRecord(auth, expires, revoked, disabled, time.Now().UTC())
+	return err
 }
 
 func tokenIDFromPlaintext(token string) string {

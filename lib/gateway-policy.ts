@@ -4,6 +4,7 @@ export interface GatewaySession {
   gateway: string
   token: string
   username?: string
+  expiresAt?: string
 }
 
 const SESSION_MAX_AGE = 60 * 60 * 24 * 7
@@ -101,9 +102,10 @@ export function readGatewaySession(req: Request): GatewaySession | null {
 }
 
 export function setGatewaySession(headers: Headers, session: GatewaySession): void {
-  headers.append("Set-Cookie", sessionCookie(SESSION_GATEWAY_COOKIE, session.gateway, SESSION_MAX_AGE))
-  headers.append("Set-Cookie", sessionCookie(SESSION_TOKEN_COOKIE, session.token, SESSION_MAX_AGE))
-  headers.append("Set-Cookie", sessionCookie(SESSION_USERNAME_COOKIE, session.username || "", SESSION_MAX_AGE))
+  const maxAge = sessionCookieMaxAge(session.expiresAt)
+  headers.append("Set-Cookie", sessionCookie(SESSION_GATEWAY_COOKIE, session.gateway, maxAge))
+  headers.append("Set-Cookie", sessionCookie(SESSION_TOKEN_COOKIE, session.token, maxAge))
+  headers.append("Set-Cookie", sessionCookie(SESSION_USERNAME_COOKIE, session.username || "", maxAge))
 }
 
 export function clearGatewaySession(headers: Headers): void {
@@ -132,6 +134,13 @@ function parseCookieHeader(header: string | null): Record<string, string> {
 function sessionCookie(name: string, value: string, maxAge: number): string {
   const secure = process.env.NODE_ENV === "production" ? "; Secure" : ""
   return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`
+}
+
+function sessionCookieMaxAge(expiresAt?: string): number {
+  if (!expiresAt) return SESSION_MAX_AGE
+  const expiry = Date.parse(expiresAt)
+  if (!Number.isFinite(expiry)) throw new Error("Gateway token expiry is invalid")
+  return Math.max(0, Math.min(SESSION_MAX_AGE, Math.floor((expiry - Date.now()) / 1000)))
 }
 
 export function gatewayPolicyResponse(err: unknown): Response | null {

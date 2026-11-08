@@ -209,7 +209,7 @@ func TestAccountProvisioningLifecycleThroughCLIGatewayAndRealAgent(t *testing.T)
 	if output, err := admin.run(t, "", "admin", "token", "revoke", "--target", "allowed", "--id", apiKeyID); err != nil {
 		t.Fatalf("admin token revoke: %v\n%s", err, output)
 	}
-	if output, err := user.run(t, "", "-session", "acct", "targets", "--target", "allowed"); err == nil || !strings.Contains(output, "gateway_auth_failed") {
+	if output, err := user.run(t, "", "-session", "acct", "targets", "--target", "allowed"); err == nil || !strings.Contains(output, "gateway_auth_revoked") {
 		t.Fatalf("revoked API key still works: %v\n%s", err, output)
 	}
 

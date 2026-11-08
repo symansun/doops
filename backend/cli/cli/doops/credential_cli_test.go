@@ -67,7 +67,7 @@ func TestCredentialCLIManagesMetadataAndReadsPutPayloadOnlyFromStdin(t *testing.
 	}]}`), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	auth := AuthStore{Tokens: map[string]string{}}
+	auth := AuthStore{}
 	auth.SetGateway(gateway.URL, "cli-token")
 	authData, err := json.Marshal(&auth)
 	if err != nil {
@@ -241,7 +241,7 @@ func TestCredentialGatewayStructured401GuidesGatewayLogin(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"error":"unauthorized","code":"gateway_auth_failed","auth_domain":"gateway","message":"Gateway user token is missing or invalid","next_action":"Run doops login --target <gateway-target>"}`))
+		_, _ = w.Write([]byte(`{"error":"unauthorized","code":"gateway_auth_expired","auth_domain":"gateway","message":"Gateway user token has expired","next_action":"Run doops login --target <gateway-target>"}`))
 	}))
 	defer gateway.Close()
 
@@ -250,7 +250,7 @@ func TestCredentialGatewayStructured401GuidesGatewayLogin(t *testing.T) {
 		t.Fatal("expected credential gateway unauthorized error")
 	}
 	message := err.Error()
-	for _, want := range []string{"gateway_auth_failed", "auth_domain=gateway", "doops login --target <gateway-target>"} {
+	for _, want := range []string{"gateway_auth_expired", "auth_domain=gateway", "doops login --target <gateway-target>"} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("error missing %q: %s", want, message)
 		}

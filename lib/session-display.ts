@@ -1,8 +1,6 @@
 import type { Session } from "./client"
 
-// 粘贴 token 登录时 Gateway 不返回用户名，控制台拿不到真实身份（身份接口另立项）。
-// 这里只做显示回退：占位名不进 session，也不参与 R4-2 的持久化判断
-// （console-persistence 的 persistsScope 仍然只认真实 username）。
+// 真实身份由 Gateway /v1/auth/me 返回；缺少用户名的会话只显示占位文案。
 export const TOKEN_LOGIN_LABEL = "令牌登录"
 
 type SessionDisplay = Pick<Session, "username" | "demo">

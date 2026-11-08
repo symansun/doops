@@ -128,7 +128,7 @@ func pushSnapshot(
 	}
 	if mode == "cos" {
 		if strings.TrimSpace(token) == "" {
-			return "", fmt.Errorf("gateway_auth_failed")
+			return "", fmt.Errorf("gateway_auth_missing")
 		}
 		if !dryRun && transfer == nil {
 			return "", fmt.Errorf("cos_not_configured")

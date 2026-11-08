@@ -76,7 +76,7 @@ func TestCLIRemoveUsesSessionAndPreservesConfigWhenNotOffline(t *testing.T) {
 		{name: "wrong scope", mode: "wrong-scope", session: "retire-denied", wantOutput: "http_403"},
 		{name: "info not granted", mode: "info-forbidden", session: "retire-no-info", wantOutput: "forbidden: info on dev/node"},
 		{name: "bare 401", mode: "bare-401", session: "retire-401", wantOutput: "http_401"},
-		{name: "structured 401", mode: "structured-401", session: "retire-auth", wantOutput: "gateway_auth_failed (auth_domain=gateway)"},
+		{name: "structured 401", mode: "structured-401", session: "retire-auth", wantOutput: "gateway_auth_expired (auth_domain=gateway)"},
 		{name: "gateway unavailable", mode: "unavailable", session: "retire-503", wantOutput: "http_503"},
 		{name: "wrong error code", mode: "wrong-code", session: "retire-code", wantOutput: "cannot verify target is offline"},
 		{name: "fractional error code", mode: "fractional-code", session: "retire-invalid-code", wantOutput: "cannot verify target is offline"},
@@ -134,7 +134,7 @@ func TestCLIRemoveUsesSessionAndPreservesConfigWhenNotOffline(t *testing.T) {
 			if requests.Load() != 1 {
 				t.Fatalf("HTTP requests = %d, want 1", requests.Load())
 			}
-			if test.mode == "bare-401" && (strings.Contains(string(output), "gateway_auth_failed") ||
+			if test.mode == "bare-401" && (strings.Contains(string(output), "gateway_auth_expired") ||
 				strings.Contains(string(output), "auth_domain=") || strings.Contains(string(output), "doops login")) {
 				t.Fatalf("bare 401 invented an authentication diagnosis: %s", output)
 			}
@@ -187,7 +187,7 @@ func newGatewayTargetProbeServer(t *testing.T, mode, wantSession string) (*httpt
 		case "structured-401":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"code":"gateway_auth_failed","auth_domain":"gateway","message":"token rejected","next_action":"Run doops login"}`))
+			_, _ = w.Write([]byte(`{"code":"gateway_auth_expired","auth_domain":"gateway","message":"token rejected","next_action":"Run doops login"}`))
 			return
 		case "unavailable":
 			http.Error(w, "unavailable", http.StatusServiceUnavailable)

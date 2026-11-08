@@ -118,7 +118,7 @@ func configureTestServers(t *testing.T, mock *configureHTTPMock) (string, []Serv
 	if err := os.WriteFile(config, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	auth := AuthStore{Tokens: map[string]string{}}
+	auth := AuthStore{}
 	auth.SetGateway(gateway.URL, "configure-test-token")
 	data, err = json.Marshal(auth)
 	if err != nil {

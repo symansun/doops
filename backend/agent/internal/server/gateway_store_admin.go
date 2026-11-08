@@ -2,6 +2,7 @@ package server
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -30,17 +31,17 @@ type StoredGrant struct {
 
 // TokenInfo 表示一条令牌的元信息（不含明文，明文仅创建时返回一次）。
 type TokenInfo struct {
-	ID        string    `json:"id"`
-	Kind      string    `json:"kind"`
-	UserID    string    `json:"user_id,omitempty"`
-	UserName  string    `json:"user_name,omitempty"`
-	Name      string    `json:"name"`
-	Prefix    string    `json:"prefix"`
-	Cluster   string    `json:"cluster,omitempty"`
-	Instance  string    `json:"instance,omitempty"`
-	Revoked   bool      `json:"revoked"`
-	ExpiresAt time.Time `json:"expires_at,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        string     `json:"id"`
+	Kind      string     `json:"kind"`
+	UserID    string     `json:"user_id,omitempty"`
+	UserName  string     `json:"user_name,omitempty"`
+	Name      string     `json:"name"`
+	Prefix    string     `json:"prefix"`
+	Cluster   string     `json:"cluster,omitempty"`
+	Instance  string     `json:"instance,omitempty"`
+	Revoked   bool       `json:"revoked"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 // ListUsers 返回全部用户，并附带授权数量及是否具备 admin 权限。
@@ -190,7 +191,11 @@ func (s *GatewayStore) ListTokens(kind TokenKind) ([]TokenInfo, error) {
 			t.UserName = userName.String
 		}
 		if expires.Valid && expires.String != "" {
-			t.ExpiresAt, _ = parseTime(expires.String)
+			parsed, parseErr := parseTime(expires.String)
+			if parseErr != nil {
+				return nil, authFailure(AuthFailureInvalidExpiry)
+			}
+			t.ExpiresAt = &parsed
 		}
 		t.Revoked = revoked.Valid && revoked.String != ""
 		if created.Valid {
@@ -199,6 +204,43 @@ func (s *GatewayStore) ListTokens(kind TokenKind) ([]TokenInfo, error) {
 		tokens = append(tokens, t)
 	}
 	return tokens, rows.Err()
+}
+
+// CurrentUserTokenInfo returns only the authenticated token's metadata. Recheck
+// the record so a revoke or account change during the request cannot publish a
+// now-invalid credential as the current identity.
+func (s *GatewayStore) CurrentUserTokenInfo(auth TokenAuth) (TokenInfo, bool, error) {
+	if auth.Kind != TokenKindUser || auth.TokenID == "" || auth.UserID == "" {
+		return TokenInfo{}, false, authFailure(AuthFailureInvalid)
+	}
+	var info TokenInfo
+	var expires, revoked, created string
+	var disabled, admin int
+	err := s.db.QueryRow(`SELECT t.id, t.kind, t.user_id, u.name, t.name, t.expires_at, t.revoked_at, t.created_at, u.disabled, u.is_admin
+		FROM tokens t JOIN users u ON u.id = t.user_id
+		WHERE t.id = ? AND t.user_id = ? AND t.kind = ?`, auth.TokenID, auth.UserID, string(auth.Kind)).
+		Scan(&info.ID, &info.Kind, &info.UserID, &info.UserName, &info.Name, &expires, &revoked, &created, &disabled, &admin)
+	if errors.Is(err, sql.ErrNoRows) {
+		return TokenInfo{}, false, authFailure(AuthFailureInvalid)
+	}
+	if err != nil {
+		return TokenInfo{}, false, err
+	}
+	if _, err := classifyTokenRecord(auth, expires, revoked, disabled, time.Now().UTC()); err != nil {
+		return TokenInfo{}, false, err
+	}
+	if expires != "" {
+		parsed, err := parseTime(expires)
+		if err != nil {
+			return TokenInfo{}, false, authFailure(AuthFailureInvalidExpiry)
+		}
+		info.ExpiresAt = &parsed
+	}
+	info.CreatedAt, err = parseTime(created)
+	if err != nil {
+		return TokenInfo{}, false, fmt.Errorf("invalid token issuance metadata")
+	}
+	return info, admin == 1, nil
 }
 
 // RevokeToken 撤销一个令牌（标记 revoked_at）。

@@ -1,3 +1,4 @@
+import { gatewayAuthMessage } from "./gateway-auth.ts"
 // Gateway 网站代理路由（/v1/admin/proxy-routes）的类型、表单校验和运维提示。
 // 校验规则与 backend/agent/internal/server/proxy_route_store.go 保持一致（上游地址只会更严），
 // 只用于在提交前给出中文提示；最终以 Gateway 返回为准。
@@ -384,6 +385,8 @@ export function describeProxyRouteError(error: unknown, op: ProxyRouteOp): Proxy
     reload: true,
   })
   const mutation = op !== "load"
+  const authMessage = gatewayAuthMessage(raw)
+  if (authMessage) return { kind: "auth", message: authMessage, reload: false }
 
   if (status === 401) {
     return { kind: "auth", message: "登录已失效或令牌已被撤销，请重新登录后再管理代理路由。", reload: false }

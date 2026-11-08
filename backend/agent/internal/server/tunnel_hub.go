@@ -430,10 +430,24 @@ type gatewayLoginRequest struct {
 }
 
 type gatewayLoginResponse struct {
-	Token     string `json:"token"`
-	TokenID   string `json:"token_id"`
-	TokenType string `json:"token_type"`
-	Username  string `json:"username"`
+	Token     string     `json:"token"`
+	TokenID   string     `json:"token_id"`
+	TokenType string     `json:"token_type"`
+	Username  string     `json:"username"`
+	Name      string     `json:"name,omitempty"`
+	IssuedAt  *time.Time `json:"issued_at,omitempty"`
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+type gatewayCurrentTokenResponse struct {
+	TokenID   string     `json:"token_id"`
+	UserID    string     `json:"user_id"`
+	Username  string     `json:"username"`
+	IsAdmin   bool       `json:"is_admin"`
+	Name      string     `json:"name"`
+	IssuedAt  time.Time  `json:"issued_at"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 type gatewayAdminTokenCreateRequest struct {
@@ -525,6 +539,7 @@ func (h *GatewayHub) pruneOfflineInstances() {
 func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/ws", HandleRetiredInboundWS)
 	mux.HandleFunc("/v1/auth/login", h.HandleAuthLogin)
+	mux.HandleFunc("/v1/auth/me", h.HandleAuthMe)
 	mux.HandleFunc("/v1/agent/connect", h.HandleAgentConnect)
 	mux.HandleFunc("/v1/edge/connect", h.HandleEdgeConnect)
 	mux.HandleFunc("/v1/rpc", h.HandleClientRPC)
@@ -565,6 +580,10 @@ func (h *GatewayHub) HandleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := h.store.VerifyUserPassword(req.Username, req.Password)
 	if err != nil {
+		if !errors.Is(err, ErrUnauthorized) {
+			writeGatewayAuthError(w, `Bearer realm="doops-gateway"`, err)
+			return
+		}
 		writeDoopsError(w, http.StatusUnauthorized, "", doopsErrorResponse{
 			Error:      "unauthorized",
 			Code:       "gateway_login_invalid_credentials",
@@ -578,7 +597,6 @@ func (h *GatewayHub) HandleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "password login"
 	}
-	_, _ = h.store.DeleteExpiredTokens(time.Now().UTC())
 	token, err := h.store.CreateToken(CreateTokenRequest{
 		Kind:      TokenKindUser,
 		UserID:    user.ID,
@@ -594,6 +612,33 @@ func (h *GatewayHub) HandleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		TokenID:   token.ID,
 		TokenType: string(TokenKindUser),
 		Username:  user.Name,
+		Name:      token.Name,
+		IssuedAt:  tokenTimePtr(token.CreatedAt),
+		CreatedAt: tokenTimePtr(token.CreatedAt),
+		ExpiresAt: tokenTimePtr(token.ExpiresAt),
+	})
+}
+
+func (h *GatewayHub) HandleAuthMe(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	auth, err := h.authenticateUser(r)
+	if err != nil {
+		h.writeUserAuthError(w, r, err)
+		return
+	}
+	info, isAdmin, err := h.store.CurrentUserTokenInfo(auth)
+	if err != nil {
+		h.writeUserAuthError(w, r, err)
+		return
+	}
+	writeJSONHTTP(w, gatewayCurrentTokenResponse{
+		TokenID: info.ID, UserID: info.UserID, Username: info.UserName, IsAdmin: isAdmin, Name: info.Name,
+		IssuedAt: info.CreatedAt, ExpiresAt: info.ExpiresAt,
 	})
 }
 
@@ -604,7 +649,7 @@ func (h *GatewayHub) HandleAdminTokens(w http.ResponseWriter, r *http.Request) {
 func (h *GatewayHub) handleAdminTokens(w http.ResponseWriter, r *http.Request) {
 	auth, err := h.authenticateUser(r)
 	if err != nil {
-		h.writeUserAuthError(w, r)
+		h.writeUserAuthError(w, r, err)
 		return
 	}
 	if !h.store.UserIsPlatformAdmin(auth.UserID) {
@@ -675,7 +720,19 @@ func (h *GatewayHub) handleAdminTokens(w http.ResponseWriter, r *http.Request) {
 		TokenID:   token.ID,
 		TokenType: string(TokenKindUser),
 		Username:  user.Name,
+		Name:      token.Name,
+		IssuedAt:  tokenTimePtr(token.CreatedAt),
+		CreatedAt: tokenTimePtr(token.CreatedAt),
+		ExpiresAt: tokenTimePtr(token.ExpiresAt),
 	})
+}
+
+func tokenTimePtr(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	utc := value.UTC()
+	return &utc
 }
 
 func (h *GatewayHub) listActiveOperations() []GatewayActiveOperation {
@@ -722,7 +779,7 @@ func newGatewayAgentSession(
 func (h *GatewayHub) HandleTargets(w http.ResponseWriter, r *http.Request) {
 	auth, err := h.authenticateUser(r)
 	if err != nil {
-		h.writeUserAuthError(w, r)
+		h.writeUserAuthError(w, r, err)
 		return
 	}
 	targets := h.ListTargets()
@@ -738,7 +795,7 @@ func (h *GatewayHub) HandleTargets(w http.ResponseWriter, r *http.Request) {
 func (h *GatewayHub) HandleAudit(w http.ResponseWriter, r *http.Request) {
 	auth, err := h.authenticateUser(r)
 	if err != nil {
-		h.writeUserAuthError(w, r)
+		h.writeUserAuthError(w, r, err)
 		return
 	}
 	isAdmin := h.store.UserIsPlatformAdmin(auth.UserID)
@@ -818,7 +875,7 @@ func (h *GatewayHub) HandleClientRPC(w http.ResponseWriter, r *http.Request) {
 func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) {
 	auth, err := h.authenticateUser(r)
 	if err != nil {
-		h.writeUserAuthError(w, r)
+		h.writeUserAuthError(w, r, err)
 		return
 	}
 	cluster := strings.TrimSpace(r.URL.Query().Get("cluster"))
@@ -975,7 +1032,7 @@ func clientRPCRequestKey(id interface{}) (string, bool) {
 func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAuth, cluster, instance string, req api.JSONRPCRequest, writeRaw func([]byte) error, writeJSON func(interface{}) error) error {
 	if err := h.store.validateUserTokenAuth(auth); err != nil {
 		if errors.Is(err, ErrUnauthorized) {
-			return writeJSON(buildErrorResponse(req.ID, -32001, "gateway_auth_failed"))
+			return writeJSON(buildErrorResponse(req.ID, -32001, authFailureCode(err)))
 		}
 		return writeJSON(buildErrorResponse(req.ID, -32603, "gateway_auth_unavailable"))
 	}
@@ -1479,19 +1536,27 @@ func (h *GatewayHub) ListTargets() []GatewayTarget {
 }
 
 func (h *GatewayHub) authenticateUser(r *http.Request) (TokenAuth, error) {
-	return h.store.VerifyUserToken(bearerToken(r))
+	return authenticateGatewayUser(h.store, r)
 }
 
 func (h *ClientService) authenticateUser(r *http.Request) (TokenAuth, error) {
-	return h.store.VerifyUserToken(bearerToken(r))
+	return authenticateGatewayUser(h.store, r)
 }
 
-func (h *ClientService) writeUserAuthError(w http.ResponseWriter, r *http.Request) {
-	writeGatewayAuthError(w, `Bearer realm="doops-gateway"`)
+func authenticateGatewayUser(store *GatewayStore, r *http.Request) (TokenAuth, error) {
+	token := bearerToken(r)
+	if token == "" && strings.TrimSpace(r.Header.Get("Authorization")) != "" {
+		return TokenAuth{}, authFailure(AuthFailureInvalid)
+	}
+	return store.VerifyUserToken(token)
 }
 
-func (h *GatewayHub) writeUserAuthError(w http.ResponseWriter, r *http.Request) {
-	writeGatewayAuthError(w, `Bearer realm="doops-gateway"`)
+func (h *ClientService) writeUserAuthError(w http.ResponseWriter, _ *http.Request, err error) {
+	writeGatewayAuthError(w, `Bearer realm="doops-gateway"`, err)
+}
+
+func (h *GatewayHub) writeUserAuthError(w http.ResponseWriter, _ *http.Request, err error) {
+	writeGatewayAuthError(w, `Bearer realm="doops-gateway"`, err)
 }
 
 func bearerToken(r *http.Request) string {
@@ -1510,14 +1575,68 @@ type doopsErrorResponse struct {
 	NextAction string `json:"next_action,omitempty"`
 }
 
-func writeGatewayAuthError(w http.ResponseWriter, challenge string) {
-	writeDoopsError(w, http.StatusUnauthorized, challenge, doopsErrorResponse{
+func writeGatewayAuthError(w http.ResponseWriter, challenge string, authErr error) {
+	response := gatewayAuthErrorResponse(authErr)
+	status := http.StatusUnauthorized
+	if response.Code == "gateway_auth_unavailable" {
+		status = http.StatusServiceUnavailable
+		response.Error = "service_unavailable"
+		challenge = ""
+	}
+	writeDoopsError(w, status, challenge, response)
+}
+
+func authFailureCode(err error) string {
+	var failure *TokenAuthError
+	if errors.As(err, &failure) {
+		switch failure.Reason {
+		case AuthFailureMissing:
+			return "gateway_auth_missing"
+		case AuthFailureExpired:
+			return "gateway_auth_expired"
+		case AuthFailureRevoked:
+			return "gateway_auth_revoked"
+		case AuthFailureUserDisabled:
+			return "gateway_auth_user_disabled"
+		case AuthFailureInvalidExpiry:
+			return "gateway_auth_invalid_expiry"
+		case AuthFailureInvalid:
+			return "gateway_auth_invalid"
+		}
+	}
+	return "gateway_auth_unavailable"
+}
+
+func gatewayAuthErrorResponse(err error) doopsErrorResponse {
+	code := authFailureCode(err)
+	message := "Gateway authentication could not be verified"
+	nextAction := "Retry the request; if the Gateway is unavailable, inspect Gateway health and logs"
+	if code != "gateway_auth_unavailable" {
+		nextAction = "Run doops login for this Gateway target; do not replace the Gateway token with a managed credential or business API key"
+	}
+	switch code {
+	case "gateway_auth_missing":
+		message = "Gateway user token is missing"
+	case "gateway_auth_invalid":
+		message = "Gateway user token is invalid"
+	case "gateway_auth_expired":
+		message = "Gateway user token has expired"
+	case "gateway_auth_revoked":
+		message = "Gateway user token was revoked"
+	case "gateway_auth_user_disabled":
+		message = "Gateway user account is disabled"
+		nextAction = "Contact a Gateway administrator to enable this account"
+	case "gateway_auth_invalid_expiry":
+		message = "Gateway user token has invalid expiry metadata"
+		nextAction = "Contact a Gateway administrator to repair the token expiry metadata and reissue the token"
+	}
+	return doopsErrorResponse{
 		Error:      "unauthorized",
-		Code:       "gateway_auth_failed",
+		Code:       code,
 		AuthDomain: "gateway",
-		Message:    "Gateway user token is missing, invalid, expired, or revoked",
-		NextAction: "Run doops login for this Gateway target; do not replace the Gateway token with a managed credential or business API key",
-	})
+		Message:    message,
+		NextAction: nextAction,
+	}
 }
 
 func writeDoopsError(w http.ResponseWriter, status int, challenge string, response doopsErrorResponse) {

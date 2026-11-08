@@ -880,7 +880,9 @@ function TokensView({ session }: { session: Session }) {
     if (
       !(await confirm({
         title: "撤销令牌",
-        message: "确认撤销该令牌？撤销后立即失效。",
+        message: id === session.tokenId
+          ? "这是当前登录使用的令牌。撤销后控制台以及复用该令牌的 CLI 和其它客户端都会立即失效，需要重新登录。"
+          : "确认撤销该令牌？所有使用该令牌的客户端将立即失效。",
         confirmLabel: "撤销",
         tone: "danger",
       }))
@@ -998,7 +1000,10 @@ function TokensView({ session }: { session: Session }) {
                 {!collapsed &&
                   group.rows.map(({ token: t, state }) => (
                     <tr key={t.id} className={`border-b border-border/50 ${state === "active" ? "" : "opacity-70"}`}>
-                      <td className="px-3 py-2.5 pl-8 text-xs text-foreground">{t.name || "—"}</td>
+                      <td className="px-3 py-2.5 pl-8 text-xs text-foreground">
+                        {t.name || "—"}
+                        {t.id === session.tokenId && <span className="ml-2 text-primary">当前登录</span>}
+                      </td>
                       <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{t.prefix}…</td>
                       <td className="px-3 py-2.5">
                         <span className={`whitespace-nowrap text-xs ${TOKEN_STATE_TONE[state]}`}>

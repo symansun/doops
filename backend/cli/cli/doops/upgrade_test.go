@@ -205,7 +205,7 @@ func TestUpgradeAgentsRequiresVerifiedResult(t *testing.T) {
 				}
 			}))
 			defer gateway.Close()
-			auth := AuthStore{Tokens: map[string]string{}}
+			auth := AuthStore{}
 			auth.SetGateway(gateway.URL, "synthetic-upgrade-token")
 			if err := auth.Save(); err != nil {
 				t.Fatal(err)
@@ -259,7 +259,7 @@ func TestUpgradeAgentsUsesConfiguredGatewayLogin(t *testing.T) {
 	defer gateway.Close()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	auth := AuthStore{Tokens: map[string]string{}}
+	auth := AuthStore{}
 	auth.SetGateway(gateway.URL, "cached-token")
 	data, err := json.Marshal(&auth)
 	if err != nil {
@@ -376,7 +376,7 @@ func TestUpgradeAgentsPreflightFailureChangesNothingAndReportsTheCategory(t *tes
 				}
 			}))
 			defer gateway.Close()
-			auth := AuthStore{Tokens: map[string]string{}}
+			auth := AuthStore{}
 			auth.SetGateway(gateway.URL, "synthetic-upgrade-token")
 			if err := auth.Save(); err != nil {
 				t.Fatal(err)

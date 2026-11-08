@@ -5,8 +5,7 @@ import {
   readGatewaySession,
   setGatewaySession,
 } from "@/lib/gateway-policy"
-import { probeGatewayAdmin } from "@/lib/server/gateway-admin"
-import { gatewayErrorResponse } from "@/lib/server/gateway-errors"
+import { readGatewayIdentity } from "@/lib/server/gateway-identity"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -17,22 +16,21 @@ export async function GET(req: Request) {
 
   try {
     const gateway = allowedGatewayBase(stored.gateway)
-    const response = await fetch(`${gateway}/v1/targets`, {
-      headers: { Authorization: `Bearer ${stored.token}` },
-      cache: "no-store",
-      redirect: "manual",
-    })
-    if (!response.ok) {
+    const identity = await readGatewayIdentity(gateway, stored.token)
+    if (identity.error) {
       const headers = new Headers({ "Content-Type": "application/json" })
-      clearGatewaySession(headers)
-      return new Response(JSON.stringify({ session: null, error: "Gateway 会话已失效" }), {
-        status: response.status === 401 || response.status === 403 ? response.status : 502,
+      const authenticationFailed = identity.error.status === 401
+      if (authenticationFailed) clearGatewaySession(headers)
+      return new Response(JSON.stringify({
+        ...(authenticationFailed ? { session: null } : {}),
+        ...await identity.error.json(),
+      }), {
+        status: identity.error.status,
         headers,
       })
     }
-    const isAdmin = await probeGatewayAdmin(gateway, stored.token)
     return Response.json({
-      session: { gateway, username: stored.username || "", isAdmin },
+      session: identity.session,
     }, { headers: { "Cache-Control": "no-store" } })
   } catch (error) {
     return gatewayPolicyResponse(error) || Response.json({ error: "无法验证 Gateway 会话" }, { status: 502 })
@@ -40,7 +38,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  let body: { gateway?: string; token?: string; username?: string }
+  let body: { gateway?: string; token?: string }
   try {
     body = await req.json()
   } catch {
@@ -52,16 +50,11 @@ export async function POST(req: Request) {
 
   try {
     const gateway = allowedGatewayBase(body.gateway || "")
-    const response = await fetch(`${gateway}/v1/targets`, {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-      redirect: "manual",
-    })
-    if (!response.ok) return await gatewayErrorResponse(response)
-    const isAdmin = await probeGatewayAdmin(gateway, token)
+    const identity = await readGatewayIdentity(gateway, token)
+    if (identity.error) return identity.error
     const headers = new Headers({ "Content-Type": "application/json" })
-    setGatewaySession(headers, { gateway, token, username: body.username || "" })
-    return new Response(JSON.stringify({ authenticated: true, gateway, username: body.username || "", isAdmin }), {
+    setGatewaySession(headers, { ...identity.session, token })
+    return new Response(JSON.stringify({ authenticated: true, ...identity.session }), {
       status: 200,
       headers,
     })

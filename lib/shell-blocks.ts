@@ -1,3 +1,4 @@
+import { gatewayAuthMessage } from "./gateway-auth.ts"
 // AI 助手回复里的 shell 代码块只作为“建议命令”交给用户；执行一律由用户确认后
 // 走终端页同一条 doops_shell 路径。这里只做纯文本解析和参数构造，不拼接凭据。
 
@@ -429,11 +430,13 @@ function classifyShellFailure(
   const blocked = /blocked_command\(([^)]+)\):\s*(.*)/.exec(raw)
   if (blocked) return { kind: "blocked", text: `Agent 拒绝执行（${blocked[1]}）：${blocked[2]}` }
   const upgrade = gatewayUpgradeStatus(raw)
+  const authMessage = gatewayAuthMessage(raw)
+  if (authMessage) return { kind: "auth", text: authMessage }
   if (/^forbidden\b/i.test(raw) || upgrade === "403") return { kind: "forbidden", text: `无权在 ${where} 上执行命令：请联系管理员授权该目标` }
   if (/^target offline\b/i.test(raw) || upgrade === "404") {
     return { kind: "offline", text: `目标离线：${where} 当前未连接 Gateway，请确认 Agent 在线后重试` }
   }
-  if (raw === "gateway_auth_failed" || upgrade === "401" || raw.includes("未建立 Gateway 会话") || raw.includes("缺少 gateway 地址或 token")) {
+  if (upgrade === "401" || raw.includes("未建立 Gateway 会话") || raw.includes("缺少 gateway 地址或 token")) {
     return { kind: "auth", text: "登录已失效，请重新登录后再执行" }
   }
   if (raw.includes("operation canceled") || raw.includes("请求派发前已停止")) {

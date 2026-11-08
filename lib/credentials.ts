@@ -1,5 +1,7 @@
 "use client"
 
+import { GATEWAY_AUTH_MESSAGES, gatewayAuthCode } from "./gateway-auth.ts"
+
 import type { Session, Target } from "./client"
 import { NETWORK_FAILURE_MESSAGE, consoleFetch, isNetworkError } from "./network-error.ts"
 
@@ -241,13 +243,8 @@ function credentialRequestError(status: number, raw: unknown, rawTargets?: unkno
   if (REQUEST_SHAPE_PHRASES.has(text)) return byStatus("Gateway 拒绝了请求格式。请刷新页面，并确认控制台与 Gateway 版本一致")
   if (text.startsWith("无法连接 gateway:")) return byStatus("无法连接 Gateway。请检查网络和 Gateway 地址")
   if (CONSOLE_POLICY_MESSAGES.has(text)) return byStatus("控制台拒绝访问该 Gateway。请联系管理员检查控制台授权配置")
-  try {
-    if ((JSON.parse(text) as Record<string, unknown> | null)?.code === "gateway_auth_failed") {
-      return labelled("gateway_auth_failed", "Gateway 会话已失效。请重新登录")
-    }
-  } catch {
-    // Anything else stays undisclosed.
-  }
+  const authCode = gatewayAuthCode(text)
+  if (authCode) return labelled(authCode, GATEWAY_AUTH_MESSAGES[authCode])
   return byStatus("无法识别的 Gateway 响应。请刷新后核对凭据状态")
 }
 
@@ -652,17 +649,13 @@ class CredentialImportRequestError extends Error {
 
 function importError(status: number, raw: unknown): CredentialImportRequestError {
   const text = typeof raw === "string" ? raw.trim() : ""
+  const authCode = gatewayAuthCode(text)
+  if (authCode) return new CredentialImportRequestError(status, authCode, "gateway_auth")
   if (/^[a-z0-9_]{1,80}$/.test(text)) return new CredentialImportRequestError(status, text)
   if (text === "operation canceled") return new CredentialImportRequestError(status, "operation_canceled")
   if (text === "未建立 Gateway 会话") return new CredentialImportRequestError(status, "", "no_session")
   if (text.startsWith("无法连接 gateway:")) return new CredentialImportRequestError(status, "", "unreachable")
   if (text === "该 gateway 未获控制台授权") return new CredentialImportRequestError(status, "", "policy")
-  try {
-    const value = JSON.parse(text) as Record<string, unknown>
-    if (value?.code === "gateway_auth_failed") return new CredentialImportRequestError(status, "gateway_auth_failed", "gateway_auth")
-  } catch {
-    // The raw error remains deliberately undisclosed.
-  }
   return new CredentialImportRequestError(status, "", "unknown")
 }
 
@@ -672,7 +665,7 @@ export function describeSecretImportError(err: unknown): string {
   if (err instanceof SecretImportValidationError) return `${err.message}（${err.category}）`
   if (isNetworkError(err)) return NETWORK_FAILURE_MESSAGE
   if (err instanceof CredentialImportRequestError) {
-    if (err.kind === "gateway_auth") return "Gateway 会话已失效。请重新登录（gateway_auth_failed）"
+    if (err.kind === "gateway_auth") return `${GATEWAY_AUTH_MESSAGES[err.category]}（${err.category}）`
     if (err.category) return `${SECRET_IMPORT_ERRORS[err.category] ?? "导入失败"}（${err.category}）`
     switch (err.kind) {
       case "no_session": return `未建立 Gateway 会话。请重新连接（HTTP ${err.status}）`
