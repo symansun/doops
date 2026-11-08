@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -198,8 +199,13 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 	case "admin":
 		if len(cmdArgs) < 2 {
 			fmt.Println("Usage: doops admin token create --target <gateway-target> --user <username> [--name label] [--expires 720h] [--save-as target]")
+			fmt.Println("       doops admin token list --target <gateway-target> [--user <username>]")
+			fmt.Println("       doops admin token revoke --target <gateway-target> --id <tok_xxx>")
 			fmt.Println("       doops admin operations list --target <gateway-target>")
 			fmt.Println("       doops admin operations cancel --target <gateway-target> --id <operation-id>")
+			fmt.Println("       doops admin approvals list --target <gateway-target> [--status pending]")
+			fmt.Println("       doops admin approve|reject --target <gateway-target> --id <apr_xxx>")
+			fmt.Println("       doops admin audit export --target <gateway-target> [--format csv|jsonl] [--output file] [--cluster c] [--since RFC3339] [--limit N]")
 			os.Exit(1)
 		}
 		if cmdArgs[0] == "operations" && cmdArgs[1] == "list" {
@@ -218,10 +224,19 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 			runAdminApprovalDecide(cmdArgs[0], cmdArgs[1:], servers, configErr)
 			return
 		}
+		if cmdArgs[0] == "audit" && (cmdArgs[1] == "export" || cmdArgs[1] == "list") {
+			runAdminAudit(cmdArgs[1], cmdArgs[2:], servers, configErr)
+			return
+		}
 		if cmdArgs[0] != "token" || cmdArgs[1] != "create" {
 			fmt.Println("Usage: doops admin token create --target <gateway-target> --user <username> [--name label] [--expires 720h] [--save-as target]")
+			fmt.Println("       doops admin token list --target <gateway-target> [--user <username>]")
+			fmt.Println("       doops admin token revoke --target <gateway-target> --id <tok_xxx>")
 			fmt.Println("       doops admin operations list --target <gateway-target>")
 			fmt.Println("       doops admin operations cancel --target <gateway-target> --id <operation-id>")
+			fmt.Println("       doops admin approvals list --target <gateway-target> [--status pending]")
+			fmt.Println("       doops admin approve|reject --target <gateway-target> --id <apr_xxx>")
+			fmt.Println("       doops admin audit export --target <gateway-target> [--format csv|jsonl] [--output file] [--cluster c] [--since RFC3339] [--limit N]")
 			os.Exit(1)
 		}
 		var target, gateway, token, user, label, expires, saveAs string
@@ -1007,6 +1022,101 @@ func runAdminOperationCancel(args []string, servers []Server, configErr error) {
 		fatalErr(err)
 	}
 	fmt.Printf("Canceled operation %s\n", opID)
+}
+
+func runAdminAudit(mode string, args []string, servers []Server, configErr error) {
+	var target, gateway, token string
+	var cluster, instance, userID, session, action, status, since, until, output, format string
+	limit := 0
+	fs := flag.NewFlagSet("admin audit "+mode, flag.ExitOnError)
+	fs.StringVar(&target, "target", "", "Configured gateway target whose token/gateway should be used")
+	fs.StringVar(&gateway, "gateway", "", "Gateway URL")
+	fs.StringVar(&token, "token", "", "Gateway admin user token")
+	fs.StringVar(&cluster, "cluster", "", "Filter by cluster")
+	fs.StringVar(&instance, "instance", "", "Filter by instance")
+	fs.StringVar(&userID, "user", "", "Filter by user id")
+	fs.StringVar(&session, "session", "", "Filter by session")
+	fs.StringVar(&action, "action", "", "Filter by action (exec/ask/read/write/push/...)")
+	fs.StringVar(&status, "status", "", "Filter by status (success/error/pending_approval/...)")
+	fs.StringVar(&since, "since", "", "Only events started at/after this RFC3339 time")
+	fs.StringVar(&until, "until", "", "Only events started at/before this RFC3339 time")
+	fs.StringVar(&output, "output", "", "Write export to this file instead of stdout")
+	fs.StringVar(&format, "format", "csv", "Export format: csv or jsonl")
+	fs.IntVar(&limit, "limit", 0, "Maximum records; 0 means all (gateway caps export at 10000)")
+	fs.Parse(args)
+
+	if target != "" {
+		requireConfig(configErr)
+		server := findServer(servers, target)
+		if server == nil {
+			fatalServerNotFound(target)
+		}
+		if gateway == "" {
+			gateway = server.Gateway
+		}
+		if token == "" {
+			token = ResolveToken(server.Name, server.Token)
+		}
+	}
+	if gateway == "" {
+		fmt.Println("Error: --gateway or --target is required")
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	format = strings.ToLower(strings.TrimSpace(format))
+	if format != "csv" && format != "jsonl" {
+		fmt.Printf("Error: --format must be csv or jsonl (got %q)\n", format)
+		os.Exit(1)
+	}
+	for _, ts := range []struct{ name, value string }{{"since", since}, {"until", until}} {
+		if strings.TrimSpace(ts.value) == "" {
+			continue
+		}
+		if _, err := time.Parse(time.RFC3339, strings.TrimSpace(ts.value)); err != nil {
+			fmt.Printf("Error: --%s must be RFC3339 (e.g. 2026-11-08T00:00:00Z): %v\n", ts.name, err)
+			os.Exit(1)
+		}
+	}
+
+	params := url.Values{}
+	params.Set("format", format)
+	for key, value := range map[string]string{
+		"cluster": cluster, "instance": instance, "user_id": userID, "session": session,
+		"action": action, "status": status, "since": since, "until": until,
+	} {
+		if v := strings.TrimSpace(value); v != "" {
+			params.Set(key, v)
+		}
+	}
+	if limit > 0 {
+		params.Set("limit", fmt.Sprintf("%d", limit))
+	}
+
+	body, _, err := GatewayAuditExport(gateway, token, params)
+	if err != nil {
+		fatalErr(err)
+	}
+
+	lines := 0
+	for _, line := range strings.Split(strings.TrimRight(string(body), "\n"), "\n") {
+		if strings.TrimSpace(line) != "" {
+			lines++
+		}
+	}
+	if format == "csv" && lines > 0 {
+		lines-- // 去掉表头
+	}
+
+	if dest := strings.TrimSpace(output); dest != "" {
+		if err := os.WriteFile(dest, body, 0600); err != nil {
+			fatalErr(err)
+		}
+		fmt.Fprintf(os.Stderr, "Exported %d audit events (%s) to %s\n", lines, format, dest)
+		return
+	}
+	fmt.Fprint(os.Stdout, string(body))
+	fmt.Fprintf(os.Stderr, "Exported %d audit events (%s)\n", lines, format)
 }
 
 func runAdminApprovalsList(args []string, servers []Server, configErr error) {

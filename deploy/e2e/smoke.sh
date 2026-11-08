@@ -225,6 +225,24 @@ assert_approval_flow() {
   log "审批流断言通过"
 }
 
+# 审计导出断言：gateway /v1/audit?format=csv|jsonl 需包含本次 exec 与审批拦截记录。
+assert_audit_export() {
+  log "断言审计导出（admin audit export）"
+  local csv_out jsonl_out
+  csv_out="$("$DOOPS_BIN" admin audit export --target e2e --format csv --limit 500 2>/dev/null)" \
+    || fail "CSV 审计导出失败"
+  echo "$csv_out" | head -1 | grep -q '^id,started_at,ended_at,user_id,token_id,cluster,instance,action,session,status' \
+    || fail "CSV 表头不符合预期"
+  echo "$csv_out" | grep -q "${EXPECT_STRING}" || fail "CSV 缺少 exec 命令记录"
+  echo "$csv_out" | grep -q "approval required" || fail "CSV 缺少审批拦截记录"
+
+  jsonl_out="$("$DOOPS_BIN" admin audit export --target e2e --format jsonl --limit 50 2>/dev/null)" \
+    || fail "JSONL 审计导出失败"
+  echo "$jsonl_out" | head -1 | grep -q '"action"' || fail "JSONL 首行不是审计记录"
+  echo "$jsonl_out" | grep -q '"cluster":"e2e-prod"' || fail "JSONL 缺少审批目标记录"
+  log "审计导出断言通过"
+}
+
 # ---------------------------------------------------------------------------
 # compose 模式
 # ---------------------------------------------------------------------------
@@ -271,6 +289,7 @@ run_compose() {
   wait_agent_online
   cli_exec_assert
   assert_metrics
+  assert_audit_export
 
   log "断言 agent 容器内审计日志 /root/ws/${SESSION}/.doops-audit-log"
   local audit
@@ -321,6 +340,7 @@ run_process() {
   cli_exec_assert
   assert_metrics
   assert_approval_flow
+  assert_audit_export
 
   log "断言 agent 工作区审计日志 ${WORKDIR}/ws/${SESSION}/.doops-audit-log"
   local audit_file="${WORKDIR}/ws/${SESSION}/.doops-audit-log"

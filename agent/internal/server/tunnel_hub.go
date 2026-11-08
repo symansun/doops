@@ -31,6 +31,10 @@ type GatewayHubOptions struct {
 	// ApprovalTargets 命中这些 "cluster/instance" glob 的目标，
 	// 变更类调用（exec/write/push）必须先走审批
 	ApprovalTargets []string
+	// AuditRetentionDays > 0 时后台每 24h 清理更早的审计记录（0=不清理）
+	AuditRetentionDays int
+	// AlertWebhook 高危操作告警地址（飞书/企业微信自定义机器人 webhook 可直接消费）
+	AlertWebhook string
 }
 
 type GatewayHub struct {
@@ -496,6 +500,18 @@ func (h *GatewayHub) HandleAudit(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		query := r.URL.Query()
 		limit, _ := strconv.Atoi(strings.TrimSpace(query.Get("limit")))
+		format := strings.ToLower(strings.TrimSpace(query.Get("format")))
+		since, err := parseAuditTimeParam(query.Get("since"))
+		if err != nil {
+			http.Error(w, "invalid since; use RFC3339", http.StatusBadRequest)
+			return
+		}
+		until, err := parseAuditTimeParam(query.Get("until"))
+		if err != nil {
+			http.Error(w, "invalid until; use RFC3339", http.StatusBadRequest)
+			return
+		}
+		export := format == "csv" || format == "jsonl"
 		events, err := h.store.ListAuditFiltered(AuditFilter{
 			UserID:   query.Get("user_id"),
 			Cluster:  query.Get("cluster"),
@@ -503,34 +519,30 @@ func (h *GatewayHub) HandleAudit(w http.ResponseWriter, r *http.Request) {
 			Session:  query.Get("session"),
 			Action:   GatewayAction(query.Get("action")),
 			Status:   query.Get("status"),
+			Since:    since,
+			Until:    until,
 			Limit:    limit,
+			Export:   export,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		if format == "csv" {
+			if err := writeAuditCSV(w, events); err != nil {
+				return
+			}
+			return
+		}
+		if format == "jsonl" {
+			if err := writeAuditJSONL(w, events); err != nil {
+				return
+			}
+			return
+		}
 		records := make([]auditRecord, 0, len(events))
 		for _, event := range events {
-			record := auditRecord{
-				ID:             event.ID,
-				UserID:         event.UserID,
-				TokenID:        event.TokenID,
-				Cluster:        event.Cluster,
-				Instance:       event.Instance,
-				Action:         string(event.Action),
-				Session:        event.Session,
-				CommandSummary: event.CommandSummary,
-				Status:         event.Status,
-				Error:          event.Error,
-				Tail:           event.Tail,
-				BytesIn:        event.BytesIn,
-				BytesOut:       event.BytesOut,
-				StartedAt:      event.StartedAt.UTC().Format(time.RFC3339),
-			}
-			if !event.EndedAt.IsZero() {
-				record.EndedAt = event.EndedAt.UTC().Format(time.RFC3339)
-			}
-			records = append(records, record)
+			records = append(records, auditRecordFromEvent(event))
 		}
 		writeJSONHTTP(w, auditResponse{Events: records})
 	case http.MethodDelete:
@@ -676,6 +688,7 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 		h.metrics.recordToolCall(string(action), status)
 		if strings.Contains(errMsg, "command blocked by agent guardrail") {
 			atomic.AddInt64(&h.metrics.guardrailBlocked, 1)
+			h.notifyAlert("guardrail_blocked", auth.UserID, cluster, instance, string(action), errMsg)
 		}
 		_ = h.store.FinishAudit(auditID, AuditFinish{
 			Status:   status,

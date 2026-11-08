@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,6 +52,8 @@ func serve(args []string) {
 	targetQueueTimeout := fs.Duration("target-queue-timeout", 2*time.Minute, "How long an operation waits for a busy target")
 	maxQueuedPerTarget := fs.Int("max-queued-per-target", 8, "Maximum queued operations per target; negative disables queueing")
 	approvalTargets := fs.String("approval-targets", os.Getenv("DOOPS_APPROVAL_TARGETS"), "Comma-separated cluster/instance globs requiring approval for mutating calls, e.g. 'prod/*' (env DOOPS_APPROVAL_TARGETS)")
+	auditRetentionDays := fs.Int("audit-retention-days", envInt(os.Getenv("DOOPS_AUDIT_RETENTION_DAYS"), 0), "Delete audit events older than N days; 0 disables retention (env DOOPS_AUDIT_RETENTION_DAYS)")
+	alertWebhook := fs.String("alert-webhook", os.Getenv("DOOPS_ALERT_WEBHOOK"), "Webhook for high-risk alerts: guardrail block, approval created/decided (env DOOPS_ALERT_WEBHOOK)")
 	fs.Parse(args)
 
 	store, err := server.OpenGatewayStore(*dbPath)
@@ -67,12 +70,23 @@ func serve(args []string) {
 		TargetQueueTimeout:      *targetQueueTimeout,
 		MaxQueuedPerTarget:      *maxQueuedPerTarget,
 		ApprovalTargets:         splitCSV(*approvalTargets),
+		AuditRetentionDays:      *auditRetentionDays,
+		AlertWebhook:            strings.TrimSpace(*alertWebhook),
 	})
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)
+	hub.StartAuditRetention()
 
 	log.Printf("🌉 doops-gateway starting on :%s", *port)
 	log.Printf("   database: %s", *dbPath)
+	if *auditRetentionDays > 0 {
+		log.Printf("   audit retention: %d days", *auditRetentionDays)
+	} else {
+		log.Printf("   audit retention: disabled (set -audit-retention-days to enable)")
+	}
+	if strings.TrimSpace(*alertWebhook) != "" {
+		log.Printf("   alert webhook: %s", strings.TrimSpace(*alertWebhook))
+	}
 	log.Printf("   agent endpoint: ws://127.0.0.1:%s/v1/agent/connect", *port)
 	log.Printf("   client endpoint: ws://127.0.0.1:%s/v1/rpc?cluster=<cluster>&instance=<instance>", *port)
 	if err := http.ListenAndServe(":"+*port, mux); err != nil {
@@ -133,6 +147,19 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// envInt 把环境变量解析为整数；空串或非法值回落到 def。
+func envInt(raw string, def int) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return def
+	}
+	return v
 }
 
 func userToken(args []string) {

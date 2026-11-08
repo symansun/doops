@@ -9,7 +9,11 @@
 - `doops admin approvals list` / `doops admin approve` / `doops admin reject` CLI 命令；`exec` 新增 `--approval` 参数；错误提示覆盖审批全链路（approval required / 校验失败排查清单）
 - `examples/skills/release-flow` 发布规范示例：只发 tag、预发直接发、生产走审批闸自动建单/轮询/重放
 - `examples/skills/blue-green-release` 平滑发布/灰度示例：双容器 blue-green + nginx upstream 切换，standby 健康检查后才切流，可选 `--canary` 权重灰度，`--rollback` 秒级回滚
+- 审计强化：`GET /v1/audit?format=csv|jsonl` 导出（升序、按时间/集群/用户/会话/动作/状态过滤，单次上限 10000 条）；`doops admin audit export` 命令支持 `--output` 落盘
+- 审计留存策略：`-audit-retention-days`（或 `DOOPS_AUDIT_RETENTION_DAYS`）>0 时 gateway 启动即清理一次、之后每 24h 删除过期审计，默认关闭
+- 高危操作告警 webhook：`-alert-webhook`（或 `DOOPS_ALERT_WEBHOOK`）推送护栏拦截、审批创建、审批结果三类事件，消息体兼容飞书/企业微信机器人文本格式，失败仅记日志
 - E2E 冒烟新增审批流断言：拦截 → 未审批重放拒绝 → approve → 放行 → 一次性消费 → 列表可见
+- E2E 冒烟新增审计导出断言：CSV 表头/命令记录/审批拦截记录、JSONL 记录格式
 
 ## [0.2.2] — 2026-11-08
 

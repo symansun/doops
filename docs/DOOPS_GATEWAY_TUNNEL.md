@@ -154,6 +154,60 @@ doops admin operations cancel --target <gateway-target> --id <operation-id>
 依赖 doagent 异步执行，当前 cancel 只中断 doops 等待链路，不能保证 doagent 内部
 已经派生的任务全部终止；遇到这类场景仍要按 session 或进程维度做后续清理。
 
+## 审批、审计导出与告警
+
+生产变更审批、审计留存与高危告警都由 gateway 统一控制，agent 侧无需改动。
+
+### 生产审批闸
+
+```bash
+doops-gateway serve ... -approval-targets "prod/*,staging/db-*"   # 或 DOOPS_APPROVAL_TARGETS
+```
+
+命中 `cluster/instance` glob 目标的 `exec/write/push` 先登记审批单（`apr_...`，24h 有效，按参数 sha256 记指纹），发起人会收到 `-32010 approval required`：
+
+```bash
+doops admin approve --target <gateway-target> --id apr_xxx                      # 审批人
+doops -session s1 exec --target prod --cmd "..." --approval apr_xxx            # 发起人重放
+doops admin reject  --target <gateway-target> --id apr_xxx                     # 或拒绝
+doops admin approvals list --target <gateway-target> --status pending          # 查看待审批
+```
+
+审批单一次性消费；重放命令与申请时参数不一致返回 `-32011`。审批操作自身落审计（`session=admin-approval-decide`），命中的目标在审批前不会产生任何远端变更。
+
+### 审计导出
+
+```bash
+doops admin audit export --target <gateway-target> --format csv --output audit.csv --since 2026-11-01T00:00:00Z
+doops admin audit export --target <gateway-target> --format jsonl --cluster prod | jq .
+```
+
+- CSV 列：`id,started_at,ended_at,user_id,token_id,cluster,instance,action,session,status,error,command_summary,bytes_in,bytes_out,tail`
+- 导出按时间升序（便于存档回放），gateway 单次上限 10000 条，`--limit` 可调小
+- 过滤参数：`--cluster/--instance/--user/--session/--action/--status/--since/--until`（时间为 RFC3339）
+
+### 审计留存
+
+```bash
+doops-gateway serve ... -audit-retention-days 90    # 或 DOOPS_AUDIT_RETENTION_DAYS=90
+```
+
+大于 0 时 gateway 启动即清理一次，之后每 24h 删除更早的记录，并在日志打印清理条数；默认 0（关闭清理）。**开启前先确认已有定期导出存档。**
+
+### 高危操作告警
+
+```bash
+doops-gateway serve ... -alert-webhook https://open.feishu.cn/open-apis/bot/v2/hook/xxx   # 或 DOOPS_ALERT_WEBHOOK
+```
+
+- 触发点：agent 命令护栏拦截（`guardrail_blocked`）、审批单创建（`approval_required`）、审批结果（`approval_approved` / `approval_rejected`）
+- 消息体是飞书/企业微信自定义机器人可直接消费的文本格式 `{"msg_type":"text","content":{"text":"..."}}`，文本含 kind / user / target / action / detail（detail 截断 200 字符）
+- 推送失败只记 gateway 日志，不影响业务调用
+
+### metrics
+
+`GET /metrics` 输出 Prometheus 文本格式：`doops_gateway_agents_online`、`ws_clients`、`operations_active`、`tool_calls_total{action,status}`、`guardrail_blocked_total`。回环地址直接放行；非回环需 `Authorization: Bearer $DOOPS_METRICS_TOKEN`，未配置该变量时非回环请求返回 403。
+
 `ask` 链路是 `CLI -> gateway -> doops-agent -> doagent ACP HTTP`。如果 `exec` 成功而 `ask` 失败，优先检查目标 agent 容器内：
 
 ```bash

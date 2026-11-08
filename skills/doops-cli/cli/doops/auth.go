@@ -303,6 +303,32 @@ func gatewayAdminApprovalsURL(rawGateway, status string) (string, error) {
 	return gatewayURLWithPath(rawGateway, "/v1/admin/approvals", values)
 }
 
+// GatewayAuditExport 拉取 gateway 审计数据（format=csv/jsonl 时返回原文，供存档/管道处理）。
+// 返回响应体与 Content-Type，由调用方决定写到文件还是 stdout。
+func GatewayAuditExport(gateway, adminToken string, params url.Values) ([]byte, string, error) {
+	auditURL, err := gatewayURLWithPath(gateway, "/v1/audit", params)
+	if err != nil {
+		return nil, "", err
+	}
+	req, err := http.NewRequest(http.MethodGet, auditURL, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	if strings.TrimSpace(adminToken) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(adminToken))
+	}
+	resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("gateway audit export failed: HTTP %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+	}
+	return respBody, resp.Header.Get("Content-Type"), nil
+}
+
 func GatewayAdminApprovalsList(gateway, adminToken, status string) ([]gatewayApproval, error) {
 	listURL, err := gatewayAdminApprovalsURL(gateway, status)
 	if err != nil {
