@@ -40,10 +40,11 @@ This is explicit file transport, not a downgraded CLI or a second deployment pat
 ```
 
 Compare the remote script SHA256 with the committed file. Then start the
-independent, bounded controller:
+independent, bounded controller through `unicom-k8s`, the verified management
+channel on the same host. It remains available while the Compose Agent is replaced:
 
 ```sh
-~/.local/bin/doops -session doagent-unicom-compose-20261108 exec --target unicom-1 \
+~/.local/bin/doops -session doagent-unicom-compose-20261108 exec --target unicom-k8s \
   --cmd 'nsenter -t 1 -m -u -i -n -- systemd-run --unit=doagent-unicom1-042-20261108 --property=RuntimeMaxSec=1200 --property=TimeoutStopSec=300 /usr/bin/python3 /data/docker/volumes/doops-agent_doops-workspace/_data/doagent-unicom-compose-20261108/compose-upgrade.py --apply'
 ```
 
