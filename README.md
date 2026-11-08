@@ -453,6 +453,18 @@ ls -lh skills/doops-cli/bin/
 - `ssh_password` 只保留为 SSH bootstrap 参数。
 - `bash` 子命令仍是遗留 SSH 交互入口；推荐使用 `doops exec` 和 `doops ask`。
 
+## Agent 命令护栏
+
+agent 端 `exec` 执行前会经过内置命令护栏（[dispatcher](agent/internal/dispatcher/dispatcher.go)），命中即拒绝执行并写入会话审计（`.doops-audit-log`，标记 `blocked=1` 与规则 ID）。内置规则覆盖：递归删除根/系统目录、`dd` 写块设备、`mkfs`/分区工具、关机重启、fork 炸弹、递归改根权限、覆写 `/etc` 关键文件、下载并直接执行远程脚本、杀死所有进程。匹配前会做空白压缩与小写规范化，防止 `rm  -rf  /`、`RM -RF /` 这类混淆绕过。
+
+护栏可通过 agent 环境变量调整：
+
+- `DOOPS_BLOCK_EXTRA`：追加自定义正则，分号分隔（作用于规范化后的命令）
+- `DOOPS_BLOCK_DISABLE`：按规则 ID 禁用内置规则，逗号分隔，如 `net.pipe_shell`
+- `DOOPS_BLOCK_OFF=1`：完全关闭护栏（仅限应急）
+
+护栏是纵深防御的一层，不是安全边界：它无法覆盖所有混淆写法（编码、变量展开、脚本文件间接执行），日常操作规范仍以 skill 纪律与最小授权为准。
+
 ## Contributors
 
 本项目核心贡献者，署名顺序如下：
