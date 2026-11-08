@@ -3,7 +3,7 @@
 # DoOps
 
 <p align="center">
-  <img src="docs/images/slogan-en.svg" alt="Управляйте любой машиной — без SSH" width="760">
+  <img src="docs/images/slogan-ru.svg" alt="Управляйте любой машиной — без SSH" width="760">
 </p>
 
 > Проект распространяется по лицензии [MIT License](LICENSE).
@@ -44,7 +44,7 @@ DoOps — единая точка входа: интеллектуальные �
 ## Архитектурная схема
 
 <p align="center">
-  <img src="docs/images/architecture-en.svg" alt="Архитектурная схема DoOps" width="1100">
+  <img src="docs/images/architecture-ru.svg" alt="Архитектурная схема DoOps" width="1100">
 </p>
 
 В системе есть два ортогональных измерения:
