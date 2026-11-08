@@ -5,7 +5,7 @@ triggers:
   keywords: [宿主机, 进入节点, nsenter]
 phase: [analyze]
 priority: 5
-max_tokens: 1600
+max_tokens: 2400
 requires: []
 conflicts: []
 ---
@@ -21,8 +21,9 @@ conflicts: []
 沿用当前 target/session，先做只读身份验证；不要列 A/B/C 让用户选，也不转成 GPU
 检查或新 Agent 安装。只有明确指向其它物理机或 hypervisor 且缺少映射时，才询问具体目标。
 
-1. 用 `Read` 读取 `/app/self-docs/docs/PHYSICAL_HOST_ACCESS.md` 的“进入宿主机的固定流程”，
-   使用其中的完整探测脚本，校验 `/host`、PID 1 根目录、进入前后的 mount namespace。
+1. 使用本 Skill 下方的完整探测脚本，校验 `/host`、PID 1 根目录和进入前后的 mount
+   namespace。`Skill` 的 `load_prompt` 已加载脚本，不再调用 `Read` 读取 Skill 或
+   `/app/self-docs`：`Read` 只能访问当前工作区，无法读取这些全局文件。
 2. 当前 ask 没有 Bash/ExecuteCode 是既定分工。输出一个完整的原始 `bash` 代码块，
    不包 `doops exec`、不含占位符。Web 的“在此执行”会预填命令，用户提交后沿当前
    target/session 走 Gateway exec；上层有 CLI 时，将脚本作为
@@ -32,6 +33,39 @@ conflicts: []
    不尝试 K8s 只读工具的 exec、其它 Pod、SSH、直连端口或自行开启 `hostAccess`。
 4. 每次后续宿主命令仍带 `nsenter`；单次 exec 不会永久切换后续会话。
    进入和只读检查不授权安装、重启、改挂载、改权限或修驱动。
+
+```bash
+set -eu
+for tool in nsenter readlink stat; do
+  command -v "$tool" >/dev/null || {
+    printf 'host_access_unavailable: missing %s\n' "$tool" >&2
+    exit 69
+  }
+done
+test -d /host || { printf '%s\n' 'host_access_unavailable: /host not mounted' >&2; exit 69; }
+host_root=$(stat -Lc '%d:%i' /host)
+pid1_root=$(stat -Lc '%d:%i' /proc/1/root)
+host_mnt=$(readlink /proc/1/ns/mnt)
+agent_mnt=$(readlink /proc/self/ns/mnt)
+if [ "$host_root" != "$pid1_root" ] || [ "$host_mnt" = "$agent_mnt" ]; then
+  printf '%s\n' 'host_access_unavailable: host root or PID namespace not exposed; check hostAccess' >&2
+  exit 69
+fi
+nsenter -t 1 -m -u -i -n -- sh -c '
+  set -eu
+  cd /
+  test "$(readlink /proc/self/ns/mnt)" = "$1" || {
+    printf "host_access_unavailable: entered mount namespace mismatch\n" >&2; exit 69;
+  }
+  test "$(stat -Lc "%d:%i" /)" = "$2" || {
+    printf "host_access_unavailable: entered root mismatch\n" >&2; exit 69;
+  }
+  printf "host_hostname="; hostname
+  printf "host_mount_namespace=%s\nhost_root=%s\n" "$1" "$2"
+  uname -srm
+  id
+' sh "$host_mnt" "$host_root"
+```
 
 ## 其它命令
 
