@@ -55,7 +55,6 @@ func serve(args []string) {
 	auditRetentionDays := fs.Int("audit-retention-days", envInt(os.Getenv("DOOPS_AUDIT_RETENTION_DAYS"), 0), "Delete audit events older than N days; 0 disables retention (env DOOPS_AUDIT_RETENTION_DAYS)")
 	alertWebhook := fs.String("alert-webhook", os.Getenv("DOOPS_ALERT_WEBHOOK"), "Webhook for high-risk alerts: guardrail block, approval created/decided (env DOOPS_ALERT_WEBHOOK)")
 	fs.Parse(args)
-
 	store, err := server.OpenGatewayStore(*dbPath)
 	if err != nil {
 		log.Fatal(err)
@@ -72,6 +71,7 @@ func serve(args []string) {
 		ApprovalTargets:         splitCSV(*approvalTargets),
 		AuditRetentionDays:      *auditRetentionDays,
 		AlertWebhook:            strings.TrimSpace(*alertWebhook),
+		Feishu:                  feishuConfigFromEnv(),
 	})
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)
@@ -86,6 +86,9 @@ func serve(args []string) {
 	}
 	if strings.TrimSpace(*alertWebhook) != "" {
 		log.Printf("   alert webhook: %s", strings.TrimSpace(*alertWebhook))
+	}
+	if hub.HasFeishu() {
+		log.Printf("   feishu bot: enabled (POST /v1/integrations/feishu/event)")
 	}
 	log.Printf("   agent endpoint: ws://127.0.0.1:%s/v1/agent/connect", *port)
 	log.Printf("   client endpoint: ws://127.0.0.1:%s/v1/rpc?cluster=<cluster>&instance=<instance>", *port)
@@ -160,6 +163,40 @@ func envInt(raw string, def int) int {
 		return def
 	}
 	return v
+}
+
+// feishuConfigFromEnv 从环境变量构建飞书机器人配置；未配置任何飞书变量时返回 nil。
+func feishuConfigFromEnv() *server.FeishuConfig {
+	cfg := server.FeishuConfig{
+		AppID:             strings.TrimSpace(os.Getenv("DOOPS_FEISHU_APP_ID")),
+		AppSecret:         strings.TrimSpace(os.Getenv("DOOPS_FEISHU_APP_SECRET")),
+		VerificationToken: strings.TrimSpace(os.Getenv("DOOPS_FEISHU_VERIFICATION_TOKEN")),
+		EncryptKey:        strings.TrimSpace(os.Getenv("DOOPS_FEISHU_ENCRYPT_KEY")),
+		DefaultCluster:    strings.TrimSpace(os.Getenv("DOOPS_FEISHU_DEFAULT_CLUSTER")),
+		ReplyWebhook:      strings.TrimSpace(os.Getenv("DOOPS_FEISHU_REPLY_WEBHOOK")),
+		Users:             parseFeishuUserMap(os.Getenv("DOOPS_FEISHU_USER_MAP")),
+	}
+	if cfg.AppID == "" && cfg.VerificationToken == "" && cfg.ReplyWebhook == "" {
+		return nil
+	}
+	return &cfg
+}
+
+// parseFeishuUserMap 解析 "ou_xxx=alice,ou_yyy=bob" 形式的 open_id → 用户名映射。
+func parseFeishuUserMap(raw string) map[string]string {
+	mapping := map[string]string{}
+	for _, pair := range strings.Split(raw, ",") {
+		keyValue := strings.SplitN(strings.TrimSpace(pair), "=", 2)
+		if len(keyValue) != 2 {
+			continue
+		}
+		openID := strings.TrimSpace(keyValue[0])
+		name := strings.TrimSpace(keyValue[1])
+		if openID != "" && name != "" {
+			mapping[openID] = name
+		}
+	}
+	return mapping
 }
 
 func userToken(args []string) {

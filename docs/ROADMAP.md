@@ -14,7 +14,7 @@
 ### P1 开发
 4. ✅ **审计强化**（2026-11-08 完成）：`/v1/audit?format=csv|jsonl` 导出（升序 + 时间/集群/用户/会话/动作/状态过滤，上限 10000 条）、`doops admin audit export` 落盘、`-audit-retention-days` 日度留存清理、`-alert-webhook` 高危告警（护栏拦截/审批创建/审批结果，飞书文本消息兼容）
 5. ✅ **平滑发布/灰度**（2026-11-08 完成）：`examples/skills/blue-green-release`——双容器 blue-green + nginx upstream 切换，可选 canary 权重灰度，`--rollback` 秒级回滚
-6. **飞书 AI 集成**：飞书机器人 @ 机器人下达运维任务（webhook → doops gateway 桥接），与数字员工工程对接
+6. ✅ **飞书 AI 集成**（2026-11-08 完成）：gateway 事件订阅入口 `/v1/integrations/feishu/event`（URL 验证 + 签名校验 + 事件解密），消息经 `open_id → 用户名` 映射后执行 `help/targets/exec/ask`，鉴权/审批/审计复用同一条链路；`ask` 即数字员工（doagent ACP）入口
 
 ### 运营事项（线下执行，非代码）
 - 给小浩开 DoOps 账号 + GitHub 代码权限

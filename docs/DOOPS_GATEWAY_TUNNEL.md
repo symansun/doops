@@ -204,6 +204,40 @@ doops-gateway serve ... -alert-webhook https://open.feishu.cn/open-apis/bot/v2/h
 - 消息体是飞书/企业微信自定义机器人可直接消费的文本格式 `{"msg_type":"text","content":{"text":"..."}}`，文本含 kind / user / target / action / detail（detail 截断 200 字符）
 - 推送失败只记 gateway 日志，不影响业务调用
 
+### 飞书机器人接入
+
+gateway 内置事件订阅入口 `POST /v1/integrations/feishu/event`，把飞书群里的 @机器人 消息映射为 doops 调用，鉴权、审批闸、审计与 CLI 完全共用同一条链路。
+
+```bash
+export DOOPS_FEISHU_APP_ID=cli_xxx
+export DOOPS_FEISHU_APP_SECRET=xxx
+export DOOPS_FEISHU_VERIFICATION_TOKEN=xxx
+export DOOPS_FEISHU_ENCRYPT_KEY=xxx            # 可选：启用后同时校验签名并解密事件体
+export DOOPS_FEISHU_USER_MAP="ou_aaa=alice,ou_bbb=bob"   # 飞书 open_id → gateway 用户名
+export DOOPS_FEISHU_DEFAULT_CLUSTER=prod        # 可选：允许 "exec web-1 ..." 省略集群
+export DOOPS_FEISHU_REPLY_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/xxx  # 无应用凭证时的兜底回复
+doops-gateway serve ...
+```
+
+飞书开放平台侧：创建企业自建应用 → 开启机器人能力 → 事件订阅地址填 `https://<gateway>/v1/integrations/feishu/event` → 订阅 `im.message.receive_v1` → 申请 `im:message`（接收）与 `im:message:send_as_bot`（回复）权限。配置 Encrypt Key 后 gateway 会校验 `X-Lark-Signature` 并解密事件体；未配应用凭证时仅能通过 ReplyWebhook 单向回复。
+
+支持命令（必须显式命令，自然语言一律拒绝，避免误执行）：
+
+| 命令 | 说明 |
+| --- | --- |
+| `help` / `/帮助` | 命令帮助 |
+| `targets` / `节点` | 按调用者授权过滤后的节点列表 |
+| `exec <cluster>/<instance> <命令>` | 远端执行 shell（`session=feishu`） |
+| `ask <cluster>/<instance> <问题>` | 交给节点上的 doagent 处理（ACP） |
+
+行为要点：
+
+- 权限：飞书 open_id 必须先映射到 gateway 用户名，调用以该用户身份走 `UserCan` 校验；未映射直接回复「未绑定」。
+- 审批：命中 `-approval-targets` 的生产变更会返回审批单提示，需审批人 `doops admin approve` 后用 CLI 加 `--approval` 重放（飞书侧不提供审批按钮，避免误批）。
+- 审计：所有飞书发起的调用落 gateway 审计（`session=feishu`），可用 `doops admin audit export --session feishu` 单独导出。
+- 可靠性：回调 3 秒内返回 200，执行异步；同一 `event_id` 5 分钟内去重，防止飞书重推导致重复执行。
+- 回复截断到 1500 字符，完整输出仍可在审计里查到。
+
 ### metrics
 
 `GET /metrics` 输出 Prometheus 文本格式：`doops_gateway_agents_online`、`ws_clients`、`operations_active`、`tool_calls_total{action,status}`、`guardrail_blocked_total`。回环地址直接放行；非回环需 `Authorization: Bearer $DOOPS_METRICS_TOKEN`，未配置该变量时非回环请求返回 403。
