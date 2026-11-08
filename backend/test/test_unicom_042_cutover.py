@@ -38,6 +38,8 @@ class CutoverTests(unittest.TestCase):
                     "instance": "unicom-k8s", "url": "https://doops.l8ai.cn"}})
             if args[:3] == ("helm", "get", "manifest"):
                 return manifest
+            if args[:3] == ("helm", "show", "chart"):
+                return "name: doops-agent\nversion: 0.3.0\n"
             if args[:2] == ("helm", "upgrade"):
                 if "--dry-run=server" in args:
                     if failure == "dry-run":

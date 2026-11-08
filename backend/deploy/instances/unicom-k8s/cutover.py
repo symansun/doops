@@ -1,6 +1,8 @@
 """One-time 0.2.42 cutover; run only in the pinned, independent release Job."""
 import json
+import hashlib
 import os
+from pathlib import Path
 import signal
 import subprocess
 import time
@@ -63,7 +65,7 @@ def main():
     assert run("/app/doops-agent", "-version").strip() == f"release=v1.3.123 commit={COMMIT}"
     assert run("/usr/local/bin/do-agent", "--version").strip() == "do-agent 0.2.42"
 
-    releases = json.loads(run("helm", "list", "-n", NAMESPACE, "-o", "json"))
+    releases = json.loads(run("helm", "list", "-a", "-n", NAMESPACE, "-o", "json"))
     assert [r["name"] for r in releases if r["chart"].startswith("doops-agent-")] == [OLD_RELEASE]
     history = run("helm", "history", OLD_RELEASE, "-n", NAMESPACE, "-o", "json")
     assert [r["revision"] for r in json.loads(history) if r["status"] == "deployed"] == [5]
@@ -77,6 +79,13 @@ def main():
     old = get("deployment", OLD_RELEASE)
     assert old["status"].get("readyReplicas") == 1
     old_uid = old["metadata"]["uid"]
+    chart = yaml.safe_load(run("helm", "show", "chart", "/app/deploy/helm/doops-agent"))
+    assert (chart["name"], chart["version"]) == ("doops-agent", "0.3.0")
+    asset_dir = Path(__file__).parent
+    asset_values = (asset_dir / "values.yaml").read_bytes()
+    candidate_values = yaml.safe_load(asset_values)
+    assert candidate_values["gateway"] == json.loads(values)["gateway"]
+    assert candidate_values["image"]["repository"] + "@" + candidate_values["image"]["digest"] == IMAGE
     backup = {
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": RECEIPT, "namespace": NAMESPACE},
@@ -84,6 +93,9 @@ def main():
             "phase": "preflight", "oldUID": old_uid, "oldHistory": history,
             "oldValues": values, "oldManifest": manifest,
             "oldDeployment": json.dumps(old), "image": IMAGE, "commit": COMMIT,
+            "chartVersion": chart["version"],
+            "valuesSHA256": hashlib.sha256(asset_values).hexdigest(),
+            "controllerSHA256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         },
     }
     run(*KUBECTL, "create", "-f", "-", data=json.dumps(backup))
