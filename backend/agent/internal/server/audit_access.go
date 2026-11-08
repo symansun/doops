@@ -7,7 +7,8 @@ import (
 )
 
 // Platform admins see every event. Other users see their own events and the
-// events that reference a credential they own.
+// events that reference a credential they own. The scope is applied in SQL
+// before LIMIT, so another user's events cannot fill the page.
 func (h *GatewayHub) visibleAuditEvents(auth TokenAuth, query url.Values) ([]AuditEvent, error) {
 	isAdmin := h.store.UserIsPlatformAdmin(auth.UserID)
 	if strings.TrimSpace(query.Get("view")) == "global" && !isAdmin {
@@ -27,41 +28,10 @@ func (h *GatewayHub) visibleAuditEvents(auth TokenAuth, query url.Values) ([]Aud
 	filter := AuditFilter{
 		UserID: userID, Cluster: query.Get("cluster"), Instance: query.Get("instance"),
 		Session: query.Get("session"), Action: GatewayAction(query.Get("action")),
-		Status: query.Get("status"), Limit: 500,
+		Status: query.Get("status"), Limit: limit,
 	}
-	owned := map[string]bool{}
-	ownsCredential := func(id string) bool {
-		if id == "" {
-			return false
-		}
-		if value, ok := owned[id]; ok {
-			return value
-		}
-		resource, err := h.store.CredentialByID(id)
-		value := err == nil && resource.OwnerID == auth.UserID
-		owned[id] = value
-		return value
+	if !isAdmin {
+		filter.VisibleToUser = auth.UserID
 	}
-	visible := make([]AuditEvent, 0, limit)
-	// Apply visibility before the requested limit so other users' events cannot
-	// crowd an operator's own history out of the first database page.
-	for {
-		events, err := h.store.ListAuditFiltered(filter)
-		if err != nil {
-			return nil, err
-		}
-		for _, event := range events {
-			if !isAdmin && event.UserID != auth.UserID && !ownsCredential(event.CredentialID) {
-				continue
-			}
-			visible = append(visible, event)
-			if len(visible) == limit {
-				return visible, nil
-			}
-		}
-		if len(events) < filter.Limit {
-			return visible, nil
-		}
-		filter.BeforeID = events[len(events)-1].ID
-	}
+	return h.store.ListAuditFiltered(filter)
 }

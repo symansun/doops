@@ -205,6 +205,9 @@ type AuditFilter struct {
 	Status   string
 	Limit    int
 	BeforeID int64
+	// VisibleToUser restricts a non-admin query to that user's own events and
+	// events that reference a credential they own. Empty means no extra scope.
+	VisibleToUser string
 }
 
 var errAuditTerminalConflict = errors.New("audit terminal state conflict")
@@ -1181,6 +1184,10 @@ func auditFilterQuery(filter AuditFilter) (string, []any) {
 	if v := strings.TrimSpace(filter.Status); v != "" {
 		conditions = append(conditions, "status = ?")
 		args = append(args, v)
+	}
+	if v := strings.TrimSpace(filter.VisibleToUser); v != "" {
+		conditions = append(conditions, `(user_id = ? OR credential_id IN (SELECT id FROM credentials WHERE owner_id = ?))`)
+		args = append(args, v, v)
 	}
 	query := `SELECT id, user_id, token_id, cluster, instance, credential_id,
 			credential_version_id, credential_grant_id, scope_json,
