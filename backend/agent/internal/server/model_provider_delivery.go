@@ -90,6 +90,11 @@ func (h *GatewayHub) deliverModelProvider(ctx context.Context, cluster, instance
 		return "operation_canceled"
 	}
 	defer unlock()
+	// The binding was read before the credential lock. A grant revoked while
+	// this delivery waited for the lock has nothing to deliver any more.
+	if err := h.store.CredentialGrantUsable(binding.Resource.ID, binding.Grant.ID); err != nil {
+		return ""
+	}
 	version, err := h.store.ActiveCredentialVersion(binding.Resource.ID)
 	if err != nil {
 		// A credential that was never promoted has nothing to deliver.

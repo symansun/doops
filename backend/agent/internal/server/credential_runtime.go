@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -410,10 +411,13 @@ func (h *GatewayHub) materializeExplicitCredentialApply(
 	for _, item := range authorized {
 		cluster := item.Reference.Scope.Cluster
 		instance := item.Reference.Scope.Instance
+		// The audit carries only validated identifiers: a scope whose
+		// cluster/instance is request text keeps them and its scope JSON out.
+		target := credentialTargetAudit(item.Reference.Scope, item.Authorized.Grant.ID)
 		auditID, err := h.store.StartAudit(AuditEvent{
-			UserID: auth.UserID, TokenID: auth.TokenID, Cluster: cluster, Instance: instance,
+			UserID: auth.UserID, TokenID: auth.TokenID, Cluster: target.Cluster, Instance: target.Instance,
 			CredentialID: item.Authorized.Resource.ID, VersionID: item.Authorized.Version.ID,
-			GrantID: item.Authorized.Grant.ID, Scope: &item.Reference.Scope,
+			GrantID: item.Authorized.Grant.ID, Scope: target.Scope,
 			CorrelationID: "credapply_" + randomHex(12), Action: ActionCredentialUse,
 			Session: sessionID, CommandSummary: "credential materialize use=" + string(item.Reference.Scope.Use),
 			StartedAt: time.Now().UTC(),
@@ -446,7 +450,7 @@ func (h *GatewayHub) materializeExplicitCredentialApply(
 			return credentialApplyPreparation{}, err
 		}
 		if err := h.store.FinishAudit(auditID, AuditFinish{
-			Status: "success", Scope: &item.Reference.Scope, ResourceVersion: materialization.ResourceVersion,
+			Status: "success", Scope: target.Scope, ResourceVersion: materialization.ResourceVersion,
 			Digest: materialization.Digest, EndedAt: time.Now().UTC(),
 		}); err != nil {
 			_ = h.rollbackCredentialPrepare(ctx, preparation.completed)
@@ -604,12 +608,12 @@ func (h *GatewayHub) materializeCredentialVersionAttempt(
 	}
 	toolArgs, err := credentialToolArguments(request)
 	if err != nil {
-		_ = h.store.MarkCredentialMaterializationUnknown(intent.ID, "credential_request_encode_failed")
+		_ = h.store.MarkCredentialMaterializationFailed(intent, "credential_request_encode_failed")
 		return CredentialMaterialization{}, intentRequest, err
 	}
 	resultText, err := h.RunInternalToolCall(ctx, cluster, instance, "doops_credential_materialize", toolArgs)
 	if err != nil {
-		_ = h.store.MarkCredentialMaterializationUnknown(intent.ID, credentialOperationErrorCategory(err))
+		_ = h.store.MarkCredentialMaterializationFailed(intent, credentialOperationErrorCategory(err))
 		return CredentialMaterialization{}, intentRequest, err
 	}
 	var materialization CredentialMaterialization
@@ -835,6 +839,10 @@ func (h *GatewayHub) handleCredentialVerify(
 	if !ok {
 		return
 	}
+	// A verification runs on one target, so a failure is audited against that
+	// target the same way a success is.
+	failure := credentialTargetAudit(body.Scope, "")
+	failure.VersionID = version.ID
 	evidence := make([]credentialVerificationEvidence, 0, len(grants))
 	verifications := make([]CredentialVerification, 0, len(grants))
 	var auditScope CredentialGrantScope
@@ -846,6 +854,8 @@ func (h *GatewayHub) handleCredentialVerify(
 		if index == 0 {
 			auditScope = scope
 		}
+		failure = credentialTargetAudit(scope, grant.ID)
+		failure.VersionID = version.ID
 		ref := CredentialPlanReference{Name: resource.Name, Scope: scope}
 		expectedPreviousVersionID := ""
 		if activeErr == nil {
@@ -856,7 +866,7 @@ func (h *GatewayHub) handleCredentialVerify(
 			resource, version, expectedPreviousVersionID, grant.ID, ref,
 		)
 		if err != nil {
-			h.writeCredentialVerificationError(w, auditID, credentialOperationErrorCategory(err), http.StatusBadGateway)
+			h.writeCredentialVerificationError(w, auditID, failure, credentialOperationErrorCategory(err), http.StatusBadGateway)
 			return
 		}
 		if activeErr == nil {
@@ -864,15 +874,15 @@ func (h *GatewayHub) handleCredentialVerify(
 				r.Context(), body.Scope.Cluster, body.Scope.Instance, body.SessionID,
 				resource, active, version.ID, grant.ID, ref,
 			); err != nil {
-				h.writeCredentialVerificationError(w, auditID, "credential_verification_outcome_unknown", http.StatusBadGateway)
+				h.writeCredentialVerificationError(w, auditID, failure, "credential_verification_outcome_unknown", http.StatusBadGateway)
 				return
 			}
 			if err := h.store.MarkCredentialMaterializationCleaned(request); err != nil {
-				h.writeCredentialVerificationError(w, auditID, "credential_verification_outcome_unknown", http.StatusBadGateway)
+				h.writeCredentialVerificationError(w, auditID, failure, "credential_verification_outcome_unknown", http.StatusBadGateway)
 				return
 			}
 		} else if err := h.cleanupCredentialVersion(r.Context(), request); err != nil {
-			h.writeCredentialVerificationError(w, auditID, "credential_verification_outcome_unknown", http.StatusBadGateway)
+			h.writeCredentialVerificationError(w, auditID, failure, "credential_verification_outcome_unknown", http.StatusBadGateway)
 			return
 		}
 		verifications = append(verifications, CredentialVerification{
@@ -884,18 +894,32 @@ func (h *GatewayHub) handleCredentialVerify(
 			Digest: observed.Digest, ErrorCategory: observed.ErrorCategory,
 		})
 	}
-	if err := h.store.RecordCredentialVerificationsAudited(verifications, auditID, AuditFinish{
-		Status: "success", Cluster: body.Scope.Cluster, Instance: body.Scope.Instance,
-		Scope: &auditScope, VersionID: version.ID, EndedAt: time.Now().UTC(),
-	}); err != nil {
-		h.writeCredentialVerificationError(w, auditID, "credential_verification_persist_failed", http.StatusInternalServerError)
+	// The success audit keeps only validated identifiers, like the failure
+	// target above: a verify whose request target is request text writes no
+	// cluster, instance or scope column.
+	success := credentialTargetAudit(body.Scope, "")
+	success.Status = "success"
+	success.VersionID = version.ID
+	if success.Cluster != "" && success.Instance != "" && validateCredentialGrantScope(auditScope) == nil {
+		success.Scope = &auditScope
+	}
+	success.EndedAt = time.Now().UTC()
+	if err := h.store.RecordCredentialVerificationsAudited(verifications, auditID, success); err != nil {
+		h.writeCredentialVerificationError(w, auditID, failure, "credential_verification_persist_failed", http.StatusInternalServerError)
 		return
 	}
 	writeJSONHTTP(w, map[string]any{"status": "verified", "evidence": evidence})
 }
 
-func (h *GatewayHub) writeCredentialVerificationError(w http.ResponseWriter, auditID int64, category string, status int) {
-	if !h.completeCredentialAudit(w, auditID, "error", category) {
+func (h *GatewayHub) writeCredentialVerificationError(
+	w http.ResponseWriter,
+	auditID int64,
+	target AuditFinish,
+	category string,
+	status int,
+) {
+	if err := h.finishCredentialTargetAudit(auditID, target, "error", category); err != nil {
+		http.Error(w, "credential_audit_unavailable", http.StatusInternalServerError)
 		return
 	}
 	http.Error(w, category, status)
@@ -943,18 +967,109 @@ func (h *GatewayHub) cleanupCredentialGrantMaterializations(
 	if err != nil {
 		return err
 	}
+	_, err = h.cleanupCredentialMaterializationContexts(ctx, materializations)
+	return err
+}
+
+// cleanupCredentialMaterializationContexts cleans every context in records,
+// once each. A failed context does not stop the others, so one unreachable
+// target does not leave Secrets behind on the reachable ones. It returns the
+// sorted cluster/instance of every target that still holds an uncleaned context.
+func (h *GatewayHub) cleanupCredentialMaterializationContexts(
+	ctx context.Context,
+	records []CredentialMaterializationRecord,
+) ([]string, error) {
+	var failures []error
+	var unfinished []string
+	for _, request := range pendingCredentialCleanups(records) {
+		if err := h.cleanupCredentialMaterializationContext(ctx, request); err != nil {
+			failures = append(failures, err)
+			if target := request.Cluster + "/" + request.Instance; !containsString(unfinished, target) {
+				unfinished = append(unfinished, target)
+			}
+		}
+	}
+	sort.Strings(unfinished)
+	return unfinished, errors.Join(failures...)
+}
+
+// uncleanedCredentialTargets lists, sorted, the cluster/instance of every
+// target that still holds a context of the credential needing a cleanup. It is
+// best effort: a failed read returns no targets and the caller still fails.
+func (h *GatewayHub) uncleanedCredentialTargets(credentialID string) []string {
+	records, err := h.store.CredentialMaterializations(credentialID, "", "")
+	if err != nil {
+		return nil
+	}
+	var targets []string
+	for _, record := range records {
+		if target := record.Request.Cluster + "/" + record.Request.Instance; !containsString(targets, target) {
+			targets = append(targets, target)
+		}
+	}
+	sort.Strings(targets)
+	return targets
+}
+
+// pendingCredentialCleanups keeps one request per materialization context.
+// The records come from CredentialMaterializations, which leaves out contexts
+// that provably own nothing, so an offline target whose attempts all left it
+// unchanged gets no cleanup call and does not block revocation.
+func pendingCredentialCleanups(records []CredentialMaterializationRecord) []CredentialMaterializeRequest {
+	var pending []CredentialMaterializeRequest
 	seen := make(map[string]struct{})
-	for _, materialization := range materializations {
-		key := credentialMaterializationContextKey(materialization.Request)
+	for _, record := range records {
+		key := credentialMaterializationContextKey(record.Request)
 		if _, ok := seen[key]; ok {
 			continue
 		}
 		seen[key] = struct{}{}
-		if err := h.cleanupCredentialMaterializationContext(ctx, materialization.Request); err != nil {
-			return err
+		pending = append(pending, record.Request)
+	}
+	return pending
+}
+
+// credentialCleanupFailure names why a cleanup did not finish. A target that
+// never received the call is reported as offline, busy or queued; anything that
+// may have reached the Agent keeps the caller's outcome-unknown category, and
+// one such failure among several decides the result.
+func credentialCleanupFailure(err error, unknown string) (string, int) {
+	failures := []error{err}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		failures = joined.Unwrap()
+	}
+	category, status := "", 0
+	for _, failure := range failures {
+		next, nextStatus := credentialCleanupFailureCategory(failure, unknown)
+		if next == unknown {
+			return unknown, nextStatus
+		}
+		if category == "" {
+			category, status = next, nextStatus
 		}
 	}
-	return nil
+	if category == "" {
+		return unknown, http.StatusBadGateway
+	}
+	return category, status
+}
+
+func credentialCleanupFailureCategory(err error, unknown string) (string, int) {
+	if errors.Is(err, errExecutionOutcomeUnknown) {
+		return unknown, http.StatusBadGateway
+	}
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.HasPrefix(message, "target offline"):
+		return "target_offline", http.StatusServiceUnavailable
+	case strings.HasPrefix(message, "target busy"):
+		return "target_busy", http.StatusConflict
+	case strings.HasPrefix(message, "target queue full"):
+		return "target_queue_full", http.StatusConflict
+	case strings.HasPrefix(message, "target queue timeout"):
+		return "target_queue_timeout", http.StatusConflict
+	}
+	return unknown, http.StatusBadGateway
 }
 
 func credentialReferenceFromRequest(request CredentialMaterializeRequest) CredentialPlanReference {
@@ -994,6 +1109,10 @@ func credentialOperationErrorCategory(err error) string {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		return "verification_transport_failed"
+	case errors.Is(err, errExecutionOutcomeUnknown):
+		// The call may have reached the Agent, so its text is not evidence
+		// that the target was offline before dispatch.
+		return "credential_operation_failed"
 	case strings.Contains(strings.ToLower(err.Error()), "target offline"):
 		return "target_offline"
 	default:

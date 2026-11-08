@@ -484,6 +484,117 @@ func TestMaterializeCredentialClassifiesApplyFailureFromObservedState(t *testing
 	}
 }
 
+// credentialTargetState renders the fake target as an operator would compare
+// it: each file as canonical JSON, or absent. The fake writes a restore patch
+// verbatim, so JSON is decoded first; only whitespace and key order are ignored.
+func credentialTargetState(t *testing.T, paths ...string) string {
+	t.Helper()
+	parts := make([]string, 0, len(paths))
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			parts = append(parts, filepath.Base(path)+"=absent")
+			continue
+		}
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		var value any
+		if err := json.Unmarshal(data, &value); err != nil {
+			t.Fatalf("%s is not JSON: %v", filepath.Base(path), err)
+		}
+		canonical, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parts = append(parts, filepath.Base(path)+"="+string(canonical))
+	}
+	return strings.Join(parts, "\n")
+}
+
+// A category may be on the Gateway's unchanged list only if every path that
+// returns it leaves the target exactly as it was. These cases drive the real
+// materializer against the fake cluster through each such path, before apply
+// and after a restore.
+func TestMaterializeCredentialUnchangedCategoriesLeaveTheTargetAsItWas(t *testing.T) {
+	const canary = "unchanged-target-canary-secret"
+	opaque := CredentialMaterializeRequest{
+		CredentialID: "cred_opaque", GrantID: "grant_opaque", VersionID: "ver_opaque",
+		CredentialType: CredentialTypeOpaque,
+		Scope: credentialGrantScopeWithKeys(
+			credentialMaterializerTestScope(CredentialUseOpaqueSecret, "app"), []string{"API_KEY"},
+		),
+		RequiredKeys: []string{"API_KEY"},
+		Payload:      json.RawMessage(`{"data":{"API_KEY":"` + canary + `"}}`),
+	}
+	// A registry grant with a workload also snapshots and patches the workload.
+	registry := CredentialMaterializeRequest{
+		CredentialID: "cred_registry", GrantID: "grant_registry", VersionID: "ver_registry",
+		CredentialType: CredentialTypeRegistry,
+		Scope:          credentialMaterializerTestScope(CredentialUseImagePull, "app"),
+		Payload:        json.RawMessage(`{"server":"registry.example.test","username":"deploy","password":"` + canary + `"}`),
+	}
+	existingSecret := `{"metadata":{"uid":"uid-existing","resourceVersion":"7",` +
+		`"labels":{"app.kubernetes.io/managed-by":"doops","doops.sh/credential-id":"cred_opaque",` +
+		`"doops.sh/credential-grant-id":"grant_opaque"},"annotations":{"doops.sh/credential-version":"ver_previous"}},` +
+		`"type":"Opaque","data":{"API_KEY":"cHJldmlvdXM="}}`
+	for _, tc := range []struct {
+		name     string
+		category string
+		request  CredentialMaterializeRequest
+		// secret seeds the Secret before the attempt; "" means it does not exist yet.
+		secret string
+		env    map[string]string
+	}{
+		{"Secret snapshot read fails before apply", "credential_secret_get_failed",
+			opaque, existingSecret, map[string]string{"DOOPS_TEST_GET_FAIL": "secret-lookup:1"}},
+		{"Secret re-read fails after apply and the Secret is restored", "credential_secret_get_failed",
+			opaque, "", map[string]string{"DOOPS_TEST_GET_FAIL": "secret:2"}},
+		{"workload snapshot read fails before apply", "credential_workload_get_failed",
+			registry, "", map[string]string{"DOOPS_TEST_GET_FAIL": "workload:1"}},
+		{"workload read fails after apply and the target is restored", "credential_workload_get_failed",
+			registry, "", map[string]string{"DOOPS_TEST_GET_FAIL": "workload:2"}},
+		{"apply fails before writing", "credential_target_mutation_failed",
+			opaque, "", map[string]string{"DOOPS_TEST_APPLY_MODE": "fail_before"}},
+		{"workload patch fails after apply and the Secret is restored", "credential_target_mutation_failed",
+			registry, "", map[string]string{"DOOPS_TEST_PATCH_MODE": "fail_before"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given a target in a known state
+			if !credentialMaterializationUnchangedCategories[tc.category] {
+				t.Fatalf("%s is not on the unchanged list this test guards", tc.category)
+			}
+			authfile := useRegistryAuthFileFixture(t)
+			bin, argsLog := installCredentialTestCommands(t)
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			for key, value := range tc.env {
+				t.Setenv(key, value)
+			}
+			secretPath := filepath.Join(bin, "secret.json")
+			if tc.secret != "" {
+				if err := os.WriteFile(secretPath, []byte(tc.secret), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			paths := []string{secretPath, filepath.Join(bin, "workload.json"), authfile}
+			before := credentialTargetState(t, paths...)
+
+			// When the materialization fails with an unchanged category
+			_, err := materializeCredential(context.Background(), tc.request)
+
+			// Then the Secret, the workload and the authfile are as they were
+			if err == nil || err.Error() != tc.category {
+				t.Fatalf("materialize error = %v, want %s", err, tc.category)
+			}
+			if after := credentialTargetState(t, paths...); after != before {
+				t.Fatalf("%s changed the target:\nbefore:\n%s\nafter:\n%s", tc.category, before, after)
+			}
+			assertCredentialCanaryNotInText(t, "materialize error", err.Error(), canary)
+			assertCredentialCanaryNotInText(t, "command arguments", readCredentialTestFile(t, argsLog), canary)
+		})
+	}
+}
+
 func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T) {
 	allowCredentialPrivateEndpointsForTest(t)
 	bin, argsLog := installCredentialTestCommands(t)
@@ -946,6 +1057,22 @@ case "$1" in
     rm -f "$DOOPS_TEST_SECRET_STATE"
     ;;
   get)
+    # DOOPS_TEST_GET_FAIL lists reads to fail as kind:n, e.g. "secret:2".
+    # kind is secret-lookup (--ignore-not-found), secret or workload; n counts
+    # that kind's reads from 1.
+    kind=workload
+    if [ "$2" = "secret" ]; then
+      kind=secret
+      for arg in "$@"; do
+        if [ "$arg" = "--ignore-not-found" ]; then kind=secret-lookup; fi
+      done
+    fi
+    counter="$DOOPS_TEST_SECRET_STATE.$kind.count"
+    count=$(( $(cat "$counter" 2>/dev/null || echo 0) + 1 ))
+    printf '%s\n' "$count" > "$counter"
+    case " $DOOPS_TEST_GET_FAIL " in
+      *" $kind:$count "*) exit 1 ;;
+    esac
     if [ "$2" = "secret" ]; then
       for arg in "$@"; do
         if [ "$arg" = "--ignore-not-found" ]; then

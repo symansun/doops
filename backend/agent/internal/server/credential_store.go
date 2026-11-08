@@ -25,6 +25,9 @@ var (
 	ErrCredentialBundleNotFound   = errors.New("credential bundle not found")
 	ErrCredentialAmbiguous        = errors.New("credential reference is ambiguous")
 	ErrCredentialAuditUnavailable = errors.New("credential audit unavailable")
+	// ErrCredentialCleanupPending refuses a revocation's terminal state while a
+	// materialization record may still own something on a target.
+	ErrCredentialCleanupPending = errors.New("credential cleanup pending")
 
 	// Specific grant denials keep errors.Is(err, ErrCredentialGrantDenied) and its
 	// 403 status, but report which binding precondition failed.
@@ -264,6 +267,13 @@ func (s *GatewayStore) createCredential(req CredentialCreateRequest, auditID int
 		return CredentialResource{}, err
 	}
 	if auditID != 0 {
+		// The ID is only known now. Every other resource-level credential audit
+		// carries it as credential and session, so the create is found the same way.
+		if _, err := tx.Exec(`UPDATE audit_events SET credential_id = ?, session = ?
+			WHERE id = ? AND status IN ('running', 'executing')`,
+			resource.ID, resource.ID, auditID); err != nil {
+			return CredentialResource{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
+		}
 		if err := finishAuditWith(tx, auditID, AuditFinish{Status: "success", EndedAt: now}); err != nil {
 			return CredentialResource{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 		}
@@ -613,10 +623,7 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 			existing.CreatedAt = grant.CreatedAt
 		}
 		if auditID != 0 {
-			if err := finishAuditWith(tx, auditID, AuditFinish{
-				Status: "success", Cluster: existing.Scope.Cluster, Instance: existing.Scope.Instance,
-				GrantID: existing.ID, Scope: &existing.Scope, EndedAt: time.Now().UTC(),
-			}); err != nil {
+			if err := finishAuditWith(tx, auditID, credentialGrantSuccessAudit(existing)); err != nil {
 				return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 			}
 		}
@@ -638,10 +645,7 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 		existing.CreatedBy = grant.CreatedBy
 		existing.CreatedAt = grant.CreatedAt
 		if auditID != 0 {
-			if err := finishAuditWith(tx, auditID, AuditFinish{
-				Status: "success", Cluster: existing.Scope.Cluster, Instance: existing.Scope.Instance,
-				GrantID: existing.ID, Scope: &existing.Scope, EndedAt: time.Now().UTC(),
-			}); err != nil {
+			if err := finishAuditWith(tx, auditID, credentialGrantSuccessAudit(existing)); err != nil {
 				return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 			}
 		}
@@ -682,10 +686,7 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 	}
 	existing.CreatedAt, _ = parseTime(createdAt)
 	if auditID != 0 {
-		if err := finishAuditWith(tx, auditID, AuditFinish{
-			Status: "success", Cluster: existing.Scope.Cluster, Instance: existing.Scope.Instance,
-			GrantID: existing.ID, Scope: &existing.Scope, EndedAt: time.Now().UTC(),
-		}); err != nil {
+		if err := finishAuditWith(tx, auditID, credentialGrantSuccessAudit(existing)); err != nil {
 			return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 		}
 	}
@@ -693,6 +694,17 @@ func (s *GatewayStore) createCredentialGrant(req CredentialGrantCreateRequest, a
 		return CredentialGrant{}, err
 	}
 	return existing, nil
+}
+
+// credentialGrantSuccessAudit is the success audit of a created grant. It keeps
+// only the identifiers credentialTargetAudit accepts, so a request scope whose
+// cluster or instance is free text leaves the target columns and the stored
+// scope JSON empty.
+func credentialGrantSuccessAudit(existing CredentialGrant) AuditFinish {
+	target := credentialTargetAudit(existing.Scope, existing.ID)
+	target.Status = "success"
+	target.EndedAt = time.Now().UTC()
+	return target
 }
 
 func (s *GatewayStore) RevokeCredentialGrant(credentialID, grantID, actorID string) (CredentialGrant, error) {
@@ -754,10 +766,7 @@ func (s *GatewayStore) FinalizeCredentialGrantRevocation(
 	}
 	if grant.State == CredentialStateRevoked {
 		if auditID != 0 {
-			if err := s.FinishAudit(auditID, AuditFinish{
-				Status: "success", GrantID: grant.ID, Cluster: grant.Scope.Cluster, Instance: grant.Scope.Instance,
-				Scope: &grant.Scope, EndedAt: time.Now().UTC(),
-			}); err != nil {
+			if err := s.FinishAudit(auditID, credentialGrantSuccessAudit(grant)); err != nil {
 				return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 			}
 		}
@@ -772,6 +781,14 @@ func (s *GatewayStore) FinalizeCredentialGrantRevocation(
 		return CredentialGrant{}, err
 	}
 	defer tx.Rollback()
+	// A use already under way when the revocation began can record or finish a
+	// materialization after the cleanup list was read. The grant reaches revoked
+	// only when none of its records may still own something on the target.
+	if pending, err := uncleanedCredentialMaterializations(tx, grant.CredentialID, grant.ID); err != nil {
+		return CredentialGrant{}, err
+	} else if pending != 0 {
+		return CredentialGrant{}, ErrCredentialCleanupPending
+	}
 	result, err := tx.Exec(`UPDATE credential_grants
 		SET state = ?, revoked_at = ?
 		WHERE id = ? AND credential_id = ? AND state = ?`,
@@ -787,10 +804,7 @@ func (s *GatewayStore) FinalizeCredentialGrantRevocation(
 		return CredentialGrant{}, ErrCredentialGrantDenied
 	}
 	if auditID != 0 {
-		if err := finishAuditWith(tx, auditID, AuditFinish{
-			Status: "success", GrantID: grant.ID, Cluster: grant.Scope.Cluster, Instance: grant.Scope.Instance,
-			Scope: &grant.Scope, EndedAt: now,
-		}); err != nil {
+		if err := finishAuditWith(tx, auditID, credentialGrantSuccessAudit(grant)); err != nil {
 			return CredentialGrant{}, fmt.Errorf("%w: %v", ErrCredentialAuditUnavailable, err)
 		}
 	}
@@ -1283,14 +1297,29 @@ func (s *GatewayStore) BeginCredentialRevocation(credentialID, actorID string) (
 	if resource.State == CredentialStateRevoked {
 		return resource, nil
 	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return CredentialResource{}, err
+	}
+	defer tx.Rollback()
 	if resource.State == CredentialStateActive {
 		now := time.Now().UTC()
-		if _, err := s.db.Exec(`UPDATE credentials SET state = ?, updated_at = ? WHERE id = ? AND state = ?`,
+		if _, err := tx.Exec(`UPDATE credentials SET state = ?, updated_at = ? WHERE id = ? AND state = ?`,
 			CredentialStateRevoking, formatTime(now), resource.ID, CredentialStateActive); err != nil {
 			return CredentialResource{}, err
 		}
 		resource.State = CredentialStateRevoking
 		resource.UpdatedAt = now
+	}
+	// Revoking a resource revokes all of its grants, so they follow it to
+	// revoking. This also moves grants that a revocation started before this
+	// rule left active, so no grant reads as active while it is being cleaned.
+	if _, err := tx.Exec(`UPDATE credential_grants SET state = ?, revoked_at = '' WHERE credential_id = ? AND state = ?`,
+		CredentialStateRevoking, resource.ID, CredentialStateActive); err != nil {
+		return CredentialResource{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return CredentialResource{}, err
 	}
 	return resource, nil
 }
@@ -1327,6 +1356,12 @@ func (s *GatewayStore) finalizeCredentialRevocation(credentialID string, auditID
 		return err
 	}
 	defer tx.Rollback()
+	// The same check as for a grant, over every grant of the resource.
+	if pending, err := uncleanedCredentialMaterializations(tx, resource.ID, ""); err != nil {
+		return err
+	} else if pending != 0 {
+		return ErrCredentialCleanupPending
+	}
 	if _, err := tx.Exec(`UPDATE credentials SET state = ?, revoked_at = ?, updated_at = ? WHERE id = ?`,
 		CredentialStateRevoked, formatTime(now), formatTime(now), resource.ID); err != nil {
 		return err
