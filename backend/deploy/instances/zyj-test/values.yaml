@@ -1,0 +1,26 @@
+# Reviewed cluster-management identity for doops-zyj/zyj-test.
+# CNB release v1.3.121, commit 2d720b7fd54b9ae77b9114cbcf2261bc0aca3f25.
+gateway:
+  cluster: doops-zyj
+  instance: zyj-test
+  url: https://doops.l8ai.cn
+image:
+  digest: sha256:e926271555dfad6eacc454ae31fab6c1bb4e9de52173bd68ceadc364480919dd
+  pullPolicy: IfNotPresent
+  repository: docker.cnb.cool/l8ai/ai/doops.sh
+imagePullSecrets:
+  - name: cnb-regcred
+kubeconfig:
+  source: serviceAccount
+serviceAccount:
+  name: doops-agent-test
+rbac:
+  create: true
+proxy:
+  allowedHosts: ""
+workload:
+  name: doops-agent-test
+  selectorLabels:
+    app: doops-agent-test
+hostAccess:
+  enabled: true
