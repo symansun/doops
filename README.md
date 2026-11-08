@@ -193,10 +193,12 @@ cd doops
 bash scripts/install.sh --project /absolute/path/to/your/project
 ```
 
+默认从 GitHub Release 下载对应平台的 CLI 二进制和 Skill 包（sha256 校验，`checksums.txt` 随 Release 发布）；`--version vX.Y.Z` 可锁定版本。源码模式 `--from-source` 沿用仓库内 `skills/doops-cli/bin/doops-<os>-<arch>` 预构建包，需要完整仓库检出。
+
 这一步会完成：
 
-1. 把对应平台的预构建 CLI 从本仓库的 `skills/doops-cli/bin/doops-<os>-<arch>` 拷贝到 `~/.local/bin/doops`
-2. 把本仓库的 `skills/SKILL.md` 安装到 `/absolute/path/to/your/project/.agent/skills/doops/SKILL.md`
+1. 把对应平台的 CLI 安装到 `~/.local/bin/doops`
+2. 把 `skills/SKILL.md` 安装到 `/absolute/path/to/your/project/.agent/skills/doops/SKILL.md`
 
 如果 `~/.local/bin` 还不在 `PATH`：
 
