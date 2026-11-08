@@ -11,48 +11,35 @@ requires: [shell]
 conflicts: []
 ---
 
-你是一个 Docker 和 OCI 镜像构建工程师，精通多语言项目的容器化。
-在 doops agent 内，镜像构建标准工具是 **BuildKit (`buildctl`)**，不要再生成 `nerdctl build` 或 `docker build` 作为默认方案。
+为已明确的构建任务提供 BuildKit 命令与验证条件；仅构建不包含推送或部署。
 
-## 构建规范
+## 输入与准备
 
-### 基础镜像选择
-| 语言 | 构建阶段 | 运行阶段 |
-|------|---------|---------|
-| Go | `golang:1.24-alpine` | `alpine:3.19` |
-| Java | (不在容器内编译，接收外部 jar) | `eclipse-temurin:17-jre` |
-| Python | `python:3.11-slim` | (同构建阶段) |
-| Node.js | (不在容器内编译，接收外部 dist) | `nginx:1.27-alpine` |
+- 确认构建目标、session 工作区、源码版本、平台和产物位置。复用已获授权的范围，
+  缺少推送目的地时只暂停推送，不猜仓库、tag 或部署对象。
+- Agent 使用 `doops push` 已同步的 session 工作区；上位调用方负责 `push/pull`。
+  不用 SCP、base64 或重新打包绕过同步，也不把用户工作区静默替换为 `git archive HEAD`。
+- 优先读取已有 Dockerfile、锁文件和构建脚本。语言版本、CGO、Go 入口、Java jar、Node
+  静态/服务端模式和代理设置以项目事实为准；`.dockerignore` 保留实际 COPY 所需的产物。
+- Agent 的构建工具是 `buildctl`；核验二进制和配置的 BuildKit endpoint 可用。
+  默认 socket 为 `unix:///run/buildkit/buildkitd.sock`，不可用即报告原因，不改用其它构建器掩盖错误。
+- 仓库认证只有在启动配置完整时才写入；仅检查存在性和授权结果，不读取、打印认证内容。
 
-### 镜像优化清单
-1. **多阶段构建**：Go/Rust 项目必须使用多阶段构建，运行时镜像不含编译器。
-2. **最小层数**：合并 RUN 命令，每个逻辑块一层。
-3. **缓存清理**：`apt-get clean && rm -rf /var/lib/apt/lists/*` 或 `rm -rf /var/cache/apk/*`。
-4. **非 root 运行**：生产镜像应使用 `USER 1001`，除非业务明确需要 root。
-5. **.dockerignore**：排除 `.git`、`node_modules`、`target`、`__pycache__`。
+## 输出与授权
 
-### 私有仓库配置
-- **镜像仓库地址**：`registry.example.com`
-- **命名规范**：`registry.example.com/doops-system/{service-name}:{tag}`
-- **认证方式**：Agent 启动时会写入 `/root/.docker/config.json`，供 BuildKit 推送时读取
-- **推送方式**：使用 `--output type=image,name=...,push=true,registry.insecure=true`
+- 仅构建时显式导出 OCI 归档，例如 `--output type=oci,dest=<task-output>/image.tar`。
+  不以构建缓存作为已交付镜像，不默认附加 `push=true`。
+- 已授权推送时才用 `--output type=image,name=<approved-image>,push=true`，目的地及版本来自任务。
+  默认使用 TLS；`registry.insecure=true` 仅用于任务已批准且配置确实需要的特定仓库。
+- 生产发布沿用项目 CI 构建产物；不要在业务 target 上临时构建替代 CI。
+  部署是独立阶段，只有任务同时授权且镜像验证通过才交给指定目标的发布流程。
+- 多阶段、非 root 和缓存优化按项目需要应用；不覆盖现有运行要求或删除必需文件。
 
-### Go 项目特殊处理
-- **GOPROXY**：必须使用 `ENV GOPROXY=https://proxy.golang.org,direct`
-- **禁止使用** `goproxy.cn`（该镜像对大依赖有 HTTP2 GOAWAY 限流）
-- 编译参数：`CGO_ENABLED=0 GOOS=linux go build -o bin/server main.go`
+## 完成与清理
 
-### 代码传输策略
-构建时优先使用本地打包的方式而非远端 git clone：
-1. 使用 `git archive --format=tar.gz HEAD -o /tmp/{name}.tar.gz` 打包源码（自动排除 .git）
-2. SCP 传输到构建节点（Go 项目通常 < 500KB，极快）
-3. 在构建节点解压后执行 `buildctl build`
-
-### Milestones 模板
-典型的镜像构建步骤：
-1. `mkdir -p /tmp/doops-build-{name} && cd /tmp/doops-build-{name}`
-2. 准备构建上下文（解压源码或写入 Dockerfile）
-3. `buildctl --addr unix:///run/buildkit/buildkitd.sock build --progress=plain --frontend dockerfile.v0 --local context=. --local dockerfile=. --opt filename=Dockerfile --output type=image,name=registry.example.com/doops-system/{name}:latest,push=true,registry.insecure=true`
-4. `kubectl set image ...` 或其他发布动作
-5. 用 `kubectl describe` / `kubectl rollout status` 验证发布结果
-6. `cd / && rm -rf /tmp/doops-build-{name}` (清理)
+- 每条独立 shell 步骤都带明确工作目录，不能依赖上一步的 `cd` 或局部变量。
+- 长任务使用执行环境已有的任务跟踪能力，保留任务 ID、日志和退出码；提交成功不等于构建成功。
+- 构建须退出 0 且存在有效产物；OCI 归档检查结构和 digest，推送核对 registry 中的目标 digest。
+  失败停止依赖步骤；只有日志片段或连接中断时报告结果未知，不自动重放推送或部署。
+- 临时目录用本次任务独占的 `mktemp -d` 创建；任务结束后才清理自己创建且不再使用的文件。
+  失败保留必要诊断，不删除源码工作区、待交付镜像或仍在后台使用的上下文。

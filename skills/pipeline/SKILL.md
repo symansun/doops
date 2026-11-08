@@ -3,25 +3,33 @@ name: pipeline
 description: 核心意图解析和任务规划管线
 ---
 
-你是一个专业的 Linux 系统自动化 Agent。
-请严格按照以下 JSON Schema 输出你的执行计划，**不要输出任何 markdown 代码块标记，只输出纯 JSON**！
+把目标明确、范围已授权的任务转为执行计划。只输出纯 JSON，不带代码围栏；
+保持三个字段：`north_star` 为目标字符串，`milestones` 和 `verification` 为 Bash 命令字符串数组。
+不要自行增加状态字段或将数组项改成对象；此 skill 生成计划，不执行计划或授予权限。
 
-你的目标是理解用户的意图，并将其拆解为：
-1. **north_star**: 当前任务的北极星目标（核心一句话总结）
-2. **milestones**: 达成目标需要执行的**具体、可执行在 Linux Shell 的步骤列表**（请使用明确的 Shell 命令如 `buildctl --addr unix:///run/buildkit/buildkitd.sock build ...` 或 `apt-get install -y xxx`）
-3. **verification**: 执行完成后，验证任务是否成功的 Shell 命令列表
+## 计划前提
 
-JSON 格式要求如下：
+- 沿用用户的目标、target、session 和授权；只读任务不加入安装、重启、推送、部署或清理。
+- 仅要方案时交给上层展示，不因计划可执行就执行。缺目标或授权时不能猜测；
+  仍须返回 JSON 时，用不做变更的失败命令作为 milestone 和 verification，例如：
+
+```json
 {
-  "north_star": "目标描述",
-  "milestones": [
-    "mkdir -p /tmp/build-xxx && cd /tmp/build-xxx",
-    "cat <<'EOF' > Dockerfile\nFROM alpine:latest\nEOF",
-    "buildctl --addr unix:///run/buildkit/buildkitd.sock build --progress=plain --frontend dockerfile.v0 --local context=. --local dockerfile=. --opt filename=Dockerfile --output type=image,name=xxx:latest,push=true,registry.insecure=true"
-  ],
-  "verification": [
-    "kubectl get pods -A | grep xxx || true"
-  ]
+  "north_star": "需要明确操作目标，尚未执行变更",
+  "milestones": ["printf '%s\\n' 'Missing target or authorization' >&2; exit 64"],
+  "verification": ["exit 64"]
 }
+```
 
-请确保 milestones 里的每一项是一个独立的、可直接在 bash 中执行的命令**字符串**（不是对象）。如果你需要编写多行文件，可以直接把内容用 `cat <<'EOF' > file.txt ... EOF` 写入。
+这是非零失败，不是消费者已支持的待审批协议；调用方应停止并交回缺项，不能自动改写后执行。
+
+## 步骤与验收
+
+- 每项都是独立 shell 命令，显式指定工作目录和输入；不依赖上项 `cd`、export 或 shell 局部变量。
+  跨步骤需要的文件路径来自已确认的任务工作区，不猜共享临时目录。
+- 依赖项完成且成功才运行后继步骤；任务提交或后台 PID 不是完成，未知结果先核实再继续。
+  执行器负责检查每步退出码和前置产物，本 JSON 本身不能保证调度器会执行这些检查。
+- verification 必须检查目标状态、版本、产物或健康条件，未达标返回非零。
+  不用 `|| true`、仅列资源或仅匹配名称代替断言；多对象分别验证，不能用最后一项成功覆盖前项失败。
+- 构建、推送和部署按授权分别进入，不在模板中默认添加远端写入。
+  失败保留诊断；清理只涉及本任务创建、已经不再使用的临时资源。
