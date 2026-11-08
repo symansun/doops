@@ -649,8 +649,8 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 				params, _ := req["params"].(map[string]interface{})
 				prompt, _ := params["prompt"].(string)
 				allowed, _ := params["allowedTools"].([]interface{})
-				if strings.Join(interfaceStringValues(allowed), ",") != "Read,Glob,Grep,Skill,mcp_doops_k8s_read,mcp_doops_web_read" {
-					t.Fatalf("ordinary prompt must have an exact read-only tool allowlist: %#v", params)
+				if strings.Join(interfaceStringValues(allowed), ",") != "Read,Glob,Grep,Skill,Bash,mcp_doops_k8s_read,mcp_doops_web_read" {
+					t.Fatalf("ordinary prompt must expose the Auto diagnostic tool surface: %#v", params)
 				}
 				if params["responseMode"] != "stream" {
 					t.Fatalf("prompt must request SSE terminal delivery: %#v", params)
