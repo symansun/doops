@@ -50,6 +50,7 @@ func serve(args []string) {
 	maxConcurrentPerUser := fs.Int("max-concurrent-per-user", 8, "Maximum concurrent forwarded operations per user")
 	targetQueueTimeout := fs.Duration("target-queue-timeout", 2*time.Minute, "How long an operation waits for a busy target")
 	maxQueuedPerTarget := fs.Int("max-queued-per-target", 8, "Maximum queued operations per target; negative disables queueing")
+	approvalTargets := fs.String("approval-targets", os.Getenv("DOOPS_APPROVAL_TARGETS"), "Comma-separated cluster/instance globs requiring approval for mutating calls, e.g. 'prod/*' (env DOOPS_APPROVAL_TARGETS)")
 	fs.Parse(args)
 
 	store, err := server.OpenGatewayStore(*dbPath)
@@ -65,6 +66,7 @@ func serve(args []string) {
 		MaxConcurrentPerUser:    *maxConcurrentPerUser,
 		TargetQueueTimeout:      *targetQueueTimeout,
 		MaxQueuedPerTarget:      *maxQueuedPerTarget,
+		ApprovalTargets:         splitCSV(*approvalTargets),
 	})
 	mux := http.NewServeMux()
 	hub.RegisterRoutes(mux)
@@ -121,6 +123,16 @@ func userPasswd(args []string) {
 		log.Fatal(err)
 	}
 	fmt.Printf("password=updated user=%s\n", u.Name)
+}
+
+func splitCSV(s string) []string {
+	out := []string{}
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func userToken(args []string) {

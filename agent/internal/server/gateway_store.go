@@ -248,6 +248,21 @@ func (s *GatewayStore) migrate() error {
 			started_at TEXT NOT NULL,
 			ended_at TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS approvals (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			cluster TEXT NOT NULL,
+			instance TEXT NOT NULL,
+			action TEXT NOT NULL,
+			args_hash TEXT NOT NULL,
+			command_summary TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'pending',
+			approver_id TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			decided_at TEXT NOT NULL DEFAULT '',
+			expires_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -452,6 +467,141 @@ func tokenIDFromPlaintext(token string) string {
 		return ""
 	}
 	return "tok_" + parts[4]
+}
+
+// Approval 是一次生产环境变更的审批单：命中审批策略的工具调用先登记为 pending，
+// 审批人通过后，发起人携带 approval_id 重放同一调用，gateway 校验一致并消费。
+type Approval struct {
+	ID             string        `json:"id"`
+	UserID         string        `json:"user_id"`
+	Cluster        string        `json:"cluster"`
+	Instance       string        `json:"instance"`
+	Action         GatewayAction `json:"action"`
+	ArgsHash       string        `json:"args_hash"`
+	CommandSummary string        `json:"command_summary"`
+	Status         string        `json:"status"` // pending / approved / rejected / consumed / expired
+	ApproverID     string        `json:"approver_id"`
+	CreatedAt      time.Time     `json:"created_at"`
+	DecidedAt      time.Time     `json:"decided_at"`
+	ExpiresAt      time.Time     `json:"expires_at"`
+}
+
+func (s *GatewayStore) CreateApproval(a Approval) error {
+	if a.ID == "" {
+		a.ID = "apr_" + randomHex(12)
+	}
+	if a.Status == "" {
+		a.Status = "pending"
+	}
+	_, err := s.db.Exec(`INSERT INTO approvals
+		(id, user_id, cluster, instance, action, args_hash, command_summary, status, approver_id, created_at, decided_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.UserID, a.Cluster, a.Instance, string(a.Action), a.ArgsHash, a.CommandSummary, a.Status, a.ApproverID,
+		formatTime(a.CreatedAt), formatTime(a.DecidedAt), formatTime(a.ExpiresAt))
+	return err
+}
+
+func (s *GatewayStore) GetApproval(id string) (*Approval, error) {
+	row := s.db.QueryRow(`SELECT id, user_id, cluster, instance, action, args_hash, command_summary, status, approver_id, created_at, decided_at, expires_at
+		FROM approvals WHERE id = ?`, strings.TrimSpace(id))
+	return scanApproval(row)
+}
+
+type approvalScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanApproval(row approvalScanner) (*Approval, error) {
+	var a Approval
+	var action, createdAt, decidedAt, expiresAt string
+	if err := row.Scan(&a.ID, &a.UserID, &a.Cluster, &a.Instance, &action, &a.ArgsHash, &a.CommandSummary, &a.Status, &a.ApproverID, &createdAt, &decidedAt, &expiresAt); err != nil {
+		return nil, err
+	}
+	a.Action = GatewayAction(action)
+	a.CreatedAt, _ = parseTime(createdAt)
+	a.DecidedAt, _ = parseTime(decidedAt)
+	a.ExpiresAt, _ = parseTime(expiresAt)
+	return &a, nil
+}
+
+// DecideApproval 审批/驳回 pending 状态的审批单；已处理或已过期的单据报错。
+func (s *GatewayStore) DecideApproval(id, approverID string, approve bool) error {
+	a, err := s.GetApproval(id)
+	if err != nil {
+		return fmt.Errorf("approval not found: %s", id)
+	}
+	if a.Status != "pending" {
+		return fmt.Errorf("approval %s is %s", id, a.Status)
+	}
+	if !a.ExpiresAt.IsZero() && time.Now().UTC().After(a.ExpiresAt) {
+		_, _ = s.db.Exec(`UPDATE approvals SET status = 'expired' WHERE id = ?`, a.ID)
+		return fmt.Errorf("approval %s expired", id)
+	}
+	status := "rejected"
+	if approve {
+		status = "approved"
+	}
+	res, err := s.db.Exec(`UPDATE approvals SET status = ?, approver_id = ?, decided_at = ? WHERE id = ? AND status = 'pending'`,
+		status, approverID, formatTime(time.Now().UTC()), a.ID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("approval %s no longer pending", id)
+	}
+	return nil
+}
+
+// ConsumeApproval 将 approved 的审批单标记为 consumed（一次性），返回消费后的单据。
+func (s *GatewayStore) ConsumeApproval(id string) (*Approval, error) {
+	a, err := s.GetApproval(id)
+	if err != nil {
+		return nil, fmt.Errorf("approval not found: %s", id)
+	}
+	if a.Status != "approved" {
+		return nil, fmt.Errorf("approval %s is %s", id, a.Status)
+	}
+	if !a.ExpiresAt.IsZero() && time.Now().UTC().After(a.ExpiresAt) {
+		_, _ = s.db.Exec(`UPDATE approvals SET status = 'expired' WHERE id = ?`, a.ID)
+		return nil, fmt.Errorf("approval %s expired", id)
+	}
+	res, err := s.db.Exec(`UPDATE approvals SET status = 'consumed' WHERE id = ? AND status = 'approved'`, a.ID)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, fmt.Errorf("approval %s no longer approved", id)
+	}
+	a.Status = "consumed"
+	return a, nil
+}
+
+func (s *GatewayStore) ListApprovals(status string, limit int) ([]Approval, error) {
+	query := `SELECT id, user_id, cluster, instance, action, args_hash, command_summary, status, approver_id, created_at, decided_at, expires_at FROM approvals`
+	args := []interface{}{}
+	if strings.TrimSpace(status) != "" {
+		query += ` WHERE status = ?`
+		args = append(args, status)
+	}
+	query += ` ORDER BY created_at DESC`
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Approval{}
+	for rows.Next() {
+		a, err := scanApproval(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *a)
+	}
+	return out, rows.Err()
 }
 
 func (s *GatewayStore) DeleteExpiredTokens(now time.Time) (int64, error) {

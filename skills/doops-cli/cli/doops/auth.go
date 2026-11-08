@@ -280,3 +280,88 @@ func gatewayAdminOperationsURL(rawGateway, id string) (string, error) {
 	}
 	return gatewayURLWithPath(rawGateway, "/v1/admin/operations", values)
 }
+
+type gatewayApproval struct {
+	ID             string `json:"id"`
+	UserID         string `json:"user_id"`
+	Cluster        string `json:"cluster"`
+	Instance       string `json:"instance"`
+	Action         string `json:"action"`
+	CommandSummary string `json:"command_summary"`
+	Status         string `json:"status"`
+	ApproverID     string `json:"approver_id"`
+	CreatedAt      string `json:"created_at"`
+	DecidedAt      string `json:"decided_at"`
+	ExpiresAt      string `json:"expires_at"`
+}
+
+func gatewayAdminApprovalsURL(rawGateway, status string) (string, error) {
+	values := url.Values{}
+	if strings.TrimSpace(status) != "" {
+		values.Set("status", strings.TrimSpace(status))
+	}
+	return gatewayURLWithPath(rawGateway, "/v1/admin/approvals", values)
+}
+
+func GatewayAdminApprovalsList(gateway, adminToken, status string) ([]gatewayApproval, error) {
+	listURL, err := gatewayAdminApprovalsURL(gateway, status)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequest(http.MethodGet, listURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(adminToken) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(adminToken))
+	}
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("gateway admin approvals list failed: HTTP %s: %s", resp.Status, strings.TrimSpace(string(respBody)))
+	}
+	var parsed struct {
+		Approvals []gatewayApproval `json:"approvals"`
+	}
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return nil, err
+	}
+	return parsed.Approvals, nil
+}
+
+func GatewayAdminApprovalDecide(gateway, adminToken, id, decision string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("approval id is required")
+	}
+	decideURL, err := gatewayAdminApprovalsURL(gateway, "")
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(map[string]string{"id": id, "decision": decision})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, decideURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if strings.TrimSpace(adminToken) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(adminToken))
+	}
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("gateway admin approval %s failed: HTTP %s: %s", decision, resp.Status, strings.TrimSpace(string(respBody)))
+	}
+	return nil
+}
