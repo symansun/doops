@@ -8,8 +8,8 @@
 
 ### P0 开发
 1. **控制台最小闭环（设计先行）**：Web 控制台 + AI 助手，覆盖资源查询（服务器/K8s）、部署变更两个场景；先交控制台架构设计文档与 API 草案，再做最小可点通闭环
-2. **DevOps 发布规范 skill 化**：把"选分支 → 测试/预发直接发 → 生产走审批"的发布流程固化为 skill（GitOps 式），解决多人通过自然语言并发操作同一环境无规范冲突的问题
-3. **生产发布审批流**：gateway 侧审批环节（发起 → 审批人确认 → 放行执行），与护栏/审计联动
+2. ✅ **DevOps 发布规范 skill 化**：`examples/skills/release-flow`（2026-11-08 完成）——只发 tag、预发直接发、生产走审批闸自动建单/轮询/重放，全程同 session 可审计回放
+3. ✅ **生产发布审批流**（2026-11-08 完成）：gateway `-approval-targets` 按 cluster/instance glob 管控变更类调用，审批单（apr_*，24h TTL，参数指纹校验）approve 后 `--approval` 重放放行，一次性消费；CLI `admin approvals list/approve/reject`；审批操作落审计
 
 ### P1 开发
 4. **审计强化**：审计导出（JSONL/CSV）、留存策略、高危操作告警通道；客户真实上线前必须完成
@@ -22,7 +22,7 @@
 ### 发布检查单
 - [ ] 控制台设计文档评审通过
 - [ ] 发布规范 skill 在 staging 环境走通一次完整发布
-- [ ] 审批流单测 + E2E
+- [x] 审批流单测 + E2E（approval_test.go 全绿；smoke.sh 审批流 6 步断言通过）
 - [ ] CHANGELOG v0.3.0 定稿
 - [ ] tag v0.3.0 → Release 产物冒烟
 
