@@ -133,3 +133,22 @@ func TestNaturalLanguageStillSlow(t *testing.T) {
 		t.Fatalf("expect fast path, got %v", path)
 	}
 }
+
+func TestScopeBypassesGuardrail(t *testing.T) {
+	if ScopeBypassesGuardrail(nil) {
+		t.Fatal("empty scopes must not bypass guardrail")
+	}
+	if ScopeBypassesGuardrail([]string{"exec", "read"}) {
+		t.Fatal("non-privileged scopes must not bypass guardrail")
+	}
+	for _, scopes := range [][]string{
+		{"admin"},
+		{"exec:privileged"},
+		{"exec", "admin"},
+		{" exec:privileged "},
+	} {
+		if !ScopeBypassesGuardrail(scopes) {
+			t.Fatalf("expected bypass for scopes %v", scopes)
+		}
+	}
+}

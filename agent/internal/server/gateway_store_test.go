@@ -1,6 +1,7 @@
 package server
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,6 +71,47 @@ func TestGatewayStoreTokenKindIsolationAndPermissions(t *testing.T) {
 	}
 	if store.UserCan(userAuth.UserID, "dev", "local", ActionWrite) {
 		t.Fatal("targets:list must not imply write access")
+	}
+}
+
+func TestUserScopeActions(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	user, err := store.CreateUser("alice")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	// 多笔授权合并去重并排序；不匹配 cluster/instance 的授权不计入
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec, GatewayAction("exec:privileged")}}); err != nil {
+		t.Fatalf("grant exec: %v", err)
+	}
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "*", Actions: []GatewayAction{ActionRead, ActionExec}}); err != nil {
+		t.Fatalf("grant read: %v", err)
+	}
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "prod", Instance: "local", Actions: []GatewayAction{ActionAdmin}}); err != nil {
+		t.Fatalf("grant admin: %v", err)
+	}
+
+	cases := []struct {
+		cluster, instance, want string
+	}{
+		{"dev", "local", "exec,exec:privileged,read"},
+		{"dev", "other", "exec,read"},
+		{"prod", "local", "admin"},
+		{"prod", "other", ""},
+	}
+	for _, tc := range cases {
+		got := strings.Join(store.UserScopeActions(user.ID, tc.cluster, tc.instance), ",")
+		if got != tc.want {
+			t.Fatalf("scopes for %s/%s: got %q want %q", tc.cluster, tc.instance, got, tc.want)
+		}
+	}
+	if got := store.UserScopeActions("", "dev", "local"); got != nil {
+		t.Fatalf("empty user id must yield no scopes, got %v", got)
 	}
 }
 

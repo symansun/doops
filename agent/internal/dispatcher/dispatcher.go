@@ -57,6 +57,24 @@ var builtinRules = []struct {
 
 var whitespaceRe = regexp.MustCompile(`\s+`)
 
+// guardrailBypassScopes 中的调用方 scope 使命中护栏的 exec 调用跳过规则匹配（审计仍照常写入）。
+var guardrailBypassScopes = map[string]struct{}{
+	"admin":           {},
+	"exec:privileged": {},
+}
+
+// ScopeBypassesGuardrail 报告调用方 scope 列表是否豁免命令护栏。
+// scope 摘要由 gateway 在转发 exec 帧时注入（caller_scopes 字段），直连客户端可自行伪造该字段，
+// 因此该豁免只应被视为对已认证高权限调用方的便利通道，而非安全边界。
+func ScopeBypassesGuardrail(scopes []string) bool {
+	for _, scope := range scopes {
+		if _, ok := guardrailBypassScopes[strings.TrimSpace(scope)]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // normalize 压缩连续空白并转小写，防止 "rm  -rf  /"、"RM -RF /" 这类绕过。
 func normalize(cmd string) string {
 	return whitespaceRe.ReplaceAllString(strings.ToLower(strings.TrimSpace(cmd)), " ")
