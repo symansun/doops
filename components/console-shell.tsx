@@ -13,7 +13,6 @@ import { displayUserName } from "@/lib/session-display"
 import { NETWORK_FAILURE_MESSAGE, subscribeNetworkStatus } from "@/lib/network-error"
 import { consoleViewEntries, credentialsDestination, type ConsoleView, type ConsoleViewEntry } from "@/lib/console-views"
 import {
-  beforeUnloadWarning,
   browserSessionStorage,
   clearConsoleState,
   commandJournal,
@@ -23,6 +22,7 @@ import {
   saveSelection,
 } from "@/lib/console-persistence"
 import { interruptedBannerNotices, interruptedBannerView } from "@/lib/interrupted-banner"
+import { installJournalUnloadHandlers } from "@/lib/unload-journal"
 import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
 import { TerminalPanel } from "./terminal-panel"
@@ -218,27 +218,9 @@ export function ConsoleShell() {
   }, [])
 
   // A reload or close aborts the /api/rpc stream, which ends a running command
-  // on the target. Warn while one runs; once the page really goes away, keep
-  // the journal records so the next page can say the outcome is unknown.
-  useEffect(() => {
-    function onBeforeUnload(event: BeforeUnloadEvent) {
-      const warning = beforeUnloadWarning(commandJournal.activeCount())
-      if (!warning) return
-      event.preventDefault()
-      event.returnValue = warning
-      return warning
-    }
-    const onPageHide = () => commandJournal.setUnloading(true)
-    const onPageShow = () => commandJournal.setUnloading(false)
-    window.addEventListener("beforeunload", onBeforeUnload)
-    window.addEventListener("pagehide", onPageHide)
-    window.addEventListener("pageshow", onPageShow)
-    return () => {
-      window.removeEventListener("beforeunload", onBeforeUnload)
-      window.removeEventListener("pagehide", onPageHide)
-      window.removeEventListener("pageshow", onPageShow)
-    }
-  }, [])
+  // on the target. Warn while one runs; the unloading flag must be set in
+  // beforeunload, because Chrome ends the aborted stream before pagehide.
+  useEffect(() => installJournalUnloadHandlers(window, commandJournal), [])
 
   // Only the target key and session id are kept, never output or tokens.
   useEffect(() => {
