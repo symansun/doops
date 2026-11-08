@@ -35,6 +35,10 @@ type GatewayTarget struct {
 }
 
 func fetchGatewayTargets(gateway, token string) ([]GatewayTarget, error) {
+	return fetchGatewayTargetsWithin(gateway, token, 15*time.Second)
+}
+
+func fetchGatewayTargetsWithin(gateway, token string, timeout time.Duration) ([]GatewayTarget, error) {
 	targetsURL, err := gatewayTargetsURL(gateway)
 	if err != nil {
 		return nil, err
@@ -46,7 +50,7 @@ func fetchGatewayTargets(gateway, token string) ([]GatewayTarget, error) {
 	if strings.TrimSpace(token) != "" {
 		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
 	}
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	resp, err := (&http.Client{Timeout: timeout}).Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -98,11 +102,9 @@ func probeGatewayTarget(server Server, token, session string) (bool, error) {
 	return false, err
 }
 
-
 func gatewayTargetsURL(rawGateway string) (string, error) {
 	return gatewayURLWithPath(rawGateway, "/v1/targets", nil)
 }
-
 
 func gatewayURLWithPath(rawGateway, endpoint string, query url.Values) (string, error) {
 	rawGateway = strings.TrimSpace(rawGateway)

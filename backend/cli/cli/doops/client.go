@@ -11,6 +11,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +45,7 @@ type MCPClient struct {
 
 	// --- 持久连接状态 ---
 	mu           sync.Mutex
+	writes       chan struct{}
 	connected    bool
 	conn         *websocket.Conn // WebSocket 长连接
 	reqCounter   int64           // 请求 ID 计数器（原子递增）
@@ -86,6 +88,7 @@ func NewMCPClient(target Server, ss *SessionStore, sessionName string, verbose b
 		SessionName:  sessionName,
 		Verbose:      verbose,
 		pending:      make(map[int64]chan wsEvent),
+		writes:       make(chan struct{}, 1),
 		CallTimeout:  defaultToolCallTimeout(),
 	}
 }
@@ -155,7 +158,12 @@ func (c *MCPClient) connect() error {
 	initCh := c.registerPending(initID)
 	defer c.unregisterPending(initID)
 
-	if err := c.conn.WriteJSON(map[string]interface{}{
+	initializeDeadline := time.Now().Add(5 * time.Second)
+	if err := conn.SetWriteDeadline(initializeDeadline); err != nil {
+		conn.Close()
+		return fmt.Errorf("initialization failed: %v", err)
+	}
+	if err := conn.WriteJSON(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  "initialize",
 		"id":      initID,
@@ -172,7 +180,7 @@ func (c *MCPClient) connect() error {
 	}
 
 	// 启动后台事件分发循环
-	go c.dispatchLoop()
+	go c.dispatchLoop(conn)
 	c.dispatching = true
 
 	// 启动客户端级 Ping 心跳，防范 NAT/LB 针对单向长连（如长时间无包）的静默超时。
@@ -182,13 +190,14 @@ func (c *MCPClient) connect() error {
 		defer ticker.Stop()
 		for range ticker.C {
 			c.mu.Lock()
-			if !c.connected || c.conn == nil {
-				c.mu.Unlock()
+			active := c.connected && c.conn == conn
+			c.mu.Unlock()
+			if !active {
 				return
 			}
-			err := c.conn.WriteMessage(websocket.PingMessage, nil)
-			c.mu.Unlock()
+			err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
 			if err != nil {
+				c.closeConnection(conn)
 				return
 			}
 		}
@@ -202,7 +211,7 @@ func (c *MCPClient) connect() error {
 			return err
 		}
 		c.capabilities = initializeCapabilities(evt)
-	case <-time.After(5 * time.Second):
+	case <-time.After(time.Until(initializeDeadline)):
 		c.conn.Close()
 		return fmt.Errorf("initialize handshake timed out")
 	}
@@ -258,9 +267,9 @@ func (c *MCPClient) targetWebSocketURL() (string, error) {
 }
 
 // dispatchLoop 持续读取 WS 流并按 request ID 分发。
-func (c *MCPClient) dispatchLoop() {
+func (c *MCPClient) dispatchLoop(conn *websocket.Conn) {
 	for {
-		msgType, message, err := c.conn.ReadMessage()
+		msgType, message, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				c.log("CLIENT:WS_ERROR", fmt.Sprintf("WS read error: %v", err))
@@ -268,22 +277,7 @@ func (c *MCPClient) dispatchLoop() {
 				c.log("CLIENT:WS_CLOSE", "WS connection closed cleanly by server")
 			}
 
-			c.mu.Lock()
-			c.connected = false
-			c.dispatching = false
-			c.mu.Unlock()
-
-			// 通知所有等待者连接已断
-			c.pendingMu.Lock()
-			for _, ch := range c.pending {
-				select {
-				case ch <- wsEvent{IsError: true, Raw: "WS connection lost"}:
-				default:
-				}
-			}
-			// 清空 pending map 防止内存泄漏
-			c.pending = make(map[int64]chan wsEvent)
-			c.pendingMu.Unlock()
+			c.closeConnection(conn)
 			return
 		}
 
@@ -452,18 +446,51 @@ func (c *MCPClient) unregisterPending(reqID int64) {
 	c.pendingMu.Unlock()
 }
 
-func (c *MCPClient) requestCancellation(reqID int64) error {
+// Bind the pending response and its writer before Close can retire this connection.
+func (c *MCPClient) registerCall(reqID int64) (*websocket.Conn, chan wsEvent) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.connected || c.conn == nil {
-		return errors.New("connection is not available for cancellation")
+	return c.conn, c.registerPending(reqID)
+}
+
+// writeRequest bounds both writer acquisition and socket backpressure. A failed
+// write may have reached the peer; close that transport and never replay it.
+func (c *MCPClient) writeRequest(conn *websocket.Conn, request interface{}, deadline time.Time) error {
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case c.writes <- struct{}{}:
+		defer func() { <-c.writes }()
+	case <-timer.C:
+		return fmt.Errorf("request not sent: %w", context.DeadlineExceeded)
 	}
-	return c.conn.WriteJSON(map[string]interface{}{
+	c.mu.Lock()
+	connected := c.connected && c.conn == conn
+	c.mu.Unlock()
+	if !connected || conn == nil {
+		return errors.New("request not sent: connection is not available")
+	}
+	if !time.Now().Before(deadline) {
+		return fmt.Errorf("request not sent: %w", context.DeadlineExceeded)
+	}
+	if err := conn.SetWriteDeadline(deadline); err != nil {
+		c.closeConnection(conn)
+		return fmt.Errorf("request not sent: %w", err)
+	}
+	if err := conn.WriteJSON(request); err != nil {
+		c.closeConnection(conn)
+		return fmt.Errorf("%w: WebSocket request write failed: %v", executionOutcomeUnknownError(), err)
+	}
+	return nil
+}
+
+func (c *MCPClient) requestCancellation(conn *websocket.Conn, reqID int64, deadline time.Time) error {
+	return c.writeRequest(conn, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  "tools/cancel",
 		"id":      fmt.Sprintf("cancel-%d", reqID),
 		"params":  map[string]interface{}{"id": reqID},
-	})
+	}, deadline)
 }
 
 func requestIDFromClientNotification(msg map[string]interface{}) (int64, bool) {
@@ -494,11 +521,32 @@ func requestIDFromClientNotification(msg map[string]interface{}) (int64, bool) {
 func (c *MCPClient) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.conn != nil {
-		c.conn.Close()
-		c.conn = nil
+	c.closeConnectionLocked(c.conn)
+}
+
+func (c *MCPClient) closeConnection(conn *websocket.Conn) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closeConnectionLocked(conn)
+}
+
+func (c *MCPClient) closeConnectionLocked(conn *websocket.Conn) {
+	if conn == nil || c.conn != conn {
+		return
 	}
+	conn.Close()
+	c.conn = nil
 	c.connected = false
+	c.dispatching = false
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	for _, ch := range c.pending {
+		select {
+		case ch <- wsEvent{IsError: true, Raw: "WS connection lost"}:
+		default:
+		}
+	}
+	c.pending = make(map[int64]chan wsEvent)
 }
 
 // Call 在持久连接上执行 MCP tool call，流式输出到 stdout。
@@ -515,14 +563,14 @@ func (c *MCPClient) Call(toolName string, arguments map[string]interface{}) erro
 
 	// 分配请求 ID 并注册接收 channel
 	reqID := c.nextReqID()
-	ch := c.registerPending(reqID)
+	conn, ch := c.registerCall(reqID)
 	defer c.unregisterPending(reqID)
 
 	// 发送 tool call
 	c.log("CLIENT:SEND_TOOL_CALL", fmt.Sprintf("Invoking tool %s (reqID=%d)", toolName, reqID))
 	// WebSocket 发送
-	c.mu.Lock()
-	err := c.conn.WriteJSON(map[string]interface{}{
+	deadline := time.Now().Add(c.callTimeout())
+	err := c.writeRequest(conn, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  "tools/call",
 		"id":      reqID,
@@ -530,17 +578,16 @@ func (c *MCPClient) Call(toolName string, arguments map[string]interface{}) erro
 			"name":      toolName,
 			"arguments": arguments,
 		},
-	})
-	c.mu.Unlock()
+	}, deadline)
 	if err != nil {
-		return fmt.Errorf("tool call failed: %v", err)
+		return fmt.Errorf("tool call failed: %w", err)
 	}
 
 	// 监听事件：流式输出 + 最终结果
 	streamedAny := false
 	streamedAnswer := false // assistant text already streamed
 	endsWithNewline := true
-	timeout := time.NewTimer(c.callTimeout())
+	timeout := time.NewTimer(time.Until(deadline))
 	defer timeout.Stop()
 	timedOut := false
 	for {
@@ -623,10 +670,11 @@ func (c *MCPClient) Call(toolName string, arguments map[string]interface{}) erro
 				return executionOutcomeUnknownError()
 			}
 			timedOut = true
-			if err := c.requestCancellation(reqID); err != nil {
+			cancelDeadline := time.Now().Add(executionCancellationTimeout)
+			if err := c.requestCancellation(conn, reqID, cancelDeadline); err != nil {
 				return executionOutcomeUnknownError()
 			}
-			timeout.Reset(executionCancellationTimeout)
+			timeout.Reset(time.Until(cancelDeadline))
 		}
 	}
 }
@@ -647,12 +695,12 @@ func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interfa
 
 	// 分配请求 ID 并注册接收 channel
 	reqID := c.nextReqID()
-	ch := c.registerPending(reqID)
+	conn, ch := c.registerCall(reqID)
 	defer c.unregisterPending(reqID)
 
 	// 发送 tool call
-	c.mu.Lock()
-	err := c.conn.WriteJSON(map[string]interface{}{
+	deadline := time.Now().Add(c.callTimeout())
+	err := c.writeRequest(conn, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  "tools/call",
 		"id":      reqID,
@@ -660,16 +708,15 @@ func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interfa
 			"name":      toolName,
 			"arguments": arguments,
 		},
-	})
-	c.mu.Unlock()
+	}, deadline)
 	if err != nil {
-		return "", fmt.Errorf("tool call failed: %v", err)
+		return "", fmt.Errorf("tool call failed: %w", err)
 	}
 
 	var capturedOutput strings.Builder
 
 	// 等待最终结果
-	timeout := time.NewTimer(c.callTimeout())
+	timeout := time.NewTimer(time.Until(deadline))
 	defer timeout.Stop()
 	timedOut := false
 	for {
@@ -721,10 +768,11 @@ func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interfa
 				return capturedOutput.String(), executionOutcomeUnknownError()
 			}
 			timedOut = true
-			if err := c.requestCancellation(reqID); err != nil {
+			cancelDeadline := time.Now().Add(executionCancellationTimeout)
+			if err := c.requestCancellation(conn, reqID, cancelDeadline); err != nil {
 				return capturedOutput.String(), executionOutcomeUnknownError()
 			}
-			timeout.Reset(executionCancellationTimeout)
+			timeout.Reset(time.Until(cancelDeadline))
 		}
 	}
 }
@@ -742,11 +790,11 @@ func (c *MCPClient) CallStructured(toolName string, arguments map[string]interfa
 	}
 
 	reqID := c.nextReqID()
-	ch := c.registerPending(reqID)
+	conn, ch := c.registerCall(reqID)
 	defer c.unregisterPending(reqID)
 
-	c.mu.Lock()
-	err := c.conn.WriteJSON(map[string]interface{}{
+	deadline := time.Now().Add(c.callTimeout())
+	err := c.writeRequest(conn, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  "tools/call",
 		"id":      reqID,
@@ -754,13 +802,12 @@ func (c *MCPClient) CallStructured(toolName string, arguments map[string]interfa
 			"name":      toolName,
 			"arguments": arguments,
 		},
-	})
-	c.mu.Unlock()
+	}, deadline)
 	if err != nil {
-		return fmt.Errorf("tool call failed: %v", err)
+		return fmt.Errorf("tool call failed: %w", err)
 	}
 
-	timeout := time.NewTimer(c.callTimeout())
+	timeout := time.NewTimer(time.Until(deadline))
 	defer timeout.Stop()
 	for {
 		select {
