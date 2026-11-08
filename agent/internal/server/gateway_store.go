@@ -462,6 +462,67 @@ func (s *GatewayStore) DeleteExpiredTokens(now time.Time) (int64, error) {
 	return res.RowsAffected()
 }
 
+// TokenInfo 是 token 的元数据视图（不含明文与哈希），用于轮换管理。
+type TokenInfo struct {
+	ID        string
+	Kind      TokenKind
+	UserID    string
+	Name      string
+	Prefix    string
+	Cluster   string
+	Instance  string
+	ExpiresAt string
+	RevokedAt string
+	CreatedAt string
+}
+
+// ListTokens 列出某个用户的全部 token（含已吊销/过期），传空 userID 列出全部。
+func (s *GatewayStore) ListTokens(userID string) ([]TokenInfo, error) {
+	query := `SELECT id, kind, user_id, name, prefix, cluster, instance, expires_at, revoked_at, created_at FROM tokens`
+	args := []interface{}{}
+	if strings.TrimSpace(userID) != "" {
+		query += ` WHERE user_id = ?`
+		args = append(args, userID)
+	}
+	query += ` ORDER BY created_at DESC`
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []TokenInfo{}
+	for rows.Next() {
+		var t TokenInfo
+		var kind string
+		if err := rows.Scan(&t.ID, &kind, &t.UserID, &t.Name, &t.Prefix, &t.Cluster, &t.Instance, &t.ExpiresAt, &t.RevokedAt, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		t.Kind = TokenKind(kind)
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// RevokeToken 吊销指定 token（幂等），吊销后 Verify 一律拒绝。
+func (s *GatewayStore) RevokeToken(id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("token id is required")
+	}
+	res, err := s.db.Exec(`UPDATE tokens SET revoked_at = ? WHERE id = ? AND revoked_at = ''`, formatTime(time.Now().UTC()), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("token not found or already revoked: %s", id)
+	}
+	return nil
+}
+
 func (s *GatewayStore) GrantUser(userID string, grant ScopeGrant) error {
 	if strings.TrimSpace(userID) == "" {
 		return fmt.Errorf("user id is required")

@@ -124,9 +124,19 @@ func userPasswd(args []string) {
 }
 
 func userToken(args []string) {
-	if len(args) == 0 || args[0] != "create" {
-		fmt.Fprintln(os.Stderr, "usage: doops-gateway token create -user <name> [-name label] [-db path]")
+	if len(args) == 0 || (args[0] != "create" && args[0] != "list" && args[0] != "revoke") {
+		fmt.Fprintln(os.Stderr, "usage: doops-gateway token create -user <name> [-name label] [-expires 720h] [-db path]")
+		fmt.Fprintln(os.Stderr, "       doops-gateway token list [-user <name>] [-db path]")
+		fmt.Fprintln(os.Stderr, "       doops-gateway token revoke -id <tok_xxx> [-db path]")
 		os.Exit(2)
+	}
+	switch args[0] {
+	case "list":
+		tokenList(args[1:])
+		return
+	case "revoke":
+		tokenRevoke(args[1:])
+		return
 	}
 	fs := flag.NewFlagSet("token create", flag.ExitOnError)
 	userName := fs.String("user", "", "User name")
@@ -150,6 +160,44 @@ func userToken(args []string) {
 	}
 	fmt.Printf("token=%s\n", tok.Plaintext)
 	fmt.Println("warning=store this token now; only its hash is saved")
+}
+
+func tokenList(args []string) {
+	fs := flag.NewFlagSet("token list", flag.ExitOnError)
+	userName := fs.String("user", "", "Filter by user name")
+	dbPath := fs.String("db", defaultGatewayDB, "SQLite database path")
+	fs.Parse(args)
+	store := mustStore(*dbPath)
+	defer store.Close()
+	userID := ""
+	if strings.TrimSpace(*userName) != "" {
+		u, err := store.FindUserByName(*userName)
+		if err != nil {
+			log.Fatal(err)
+		}
+		userID = u.ID
+	}
+	tokens, err := store.ListTokens(userID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, t := range tokens {
+		fmt.Printf("%s kind=%s user=%s name=%q cluster=%s instance=%s expires=%s revoked=%s created=%s\n",
+			t.ID, t.Kind, t.UserID, t.Name, t.Cluster, t.Instance, t.ExpiresAt, t.RevokedAt, t.CreatedAt)
+	}
+}
+
+func tokenRevoke(args []string) {
+	fs := flag.NewFlagSet("token revoke", flag.ExitOnError)
+	id := fs.String("id", "", "Token id (tok_...)")
+	dbPath := fs.String("db", defaultGatewayDB, "SQLite database path")
+	fs.Parse(args)
+	store := mustStore(*dbPath)
+	defer store.Close()
+	if err := store.RevokeToken(*id); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("revoked=%s\n", *id)
 }
 
 func agentToken(args []string) {
