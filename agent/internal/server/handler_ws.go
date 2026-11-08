@@ -305,6 +305,27 @@ func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
 	log.Printf("🔗 WS Client Disconnected: %s", remoteAddr)
 }
 
+// appendBlockedAudit 将被命令护栏拦截的命令写入会话工作区审计文件（best-effort）。
+func appendBlockedAudit(sessionID, ruleID, command string) {
+	if strings.TrimSpace(command) == "" {
+		return
+	}
+	wsPath, err := workspacePath(sessionID)
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(wsPath, 0o755); err != nil {
+		return
+	}
+	auditPath := filepath.Join(wsPath, ".doops-audit-log")
+	f, err := os.OpenFile(auditPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "# [%s] blocked=1 rule=%s\n%s\n", time.Now().Format(time.RFC3339), ruleID, command)
+}
+
 // notificationSender 抽象了发送 notifications/message 的能力
 type notificationSender func(text string)
 
@@ -340,9 +361,15 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	case "doops_shell":
 		var args api.ShellParams
 		json.Unmarshal(argBytes, &args)
-		if gw.Dispatcher != nil && gw.Dispatcher.Classify(args.Command) == dispatcher.PathBlocked {
-			writeJSON(buildErrorResponse(reqID, -32602, "blocked dangerous command"))
-			return
+		// 命令护栏：命中即拒绝并写审计（含规则 ID，便于追溯与豁免配置）
+		if gw.Dispatcher != nil {
+			if path, rule := gw.Dispatcher.ClassifyCommand(args.Command); path == dispatcher.PathBlocked {
+				log.Printf("⛔ WS Exec blocked: [%s] rule=%s cmd=%s", sessionID, rule.ID, args.Command)
+				appendBlockedAudit(sessionID, rule.ID, args.Command)
+				writeJSON(buildErrorResponse(reqID, -32602,
+					fmt.Sprintf("command blocked by agent guardrail [%s]: %s", rule.ID, rule.Desc)))
+				return
+			}
 		}
 
 		log.Printf("🖥️  WS Exec: [%s] %s", sessionID, args.Command)

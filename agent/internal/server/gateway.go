@@ -60,7 +60,7 @@ type Gateway struct {
 
 func NewGateway(port string) *Gateway {
 	gw := &Gateway{
-		Dispatcher: dispatcher.NewDispatcher(),
+		Dispatcher: dispatcher.NewDispatcherFromEnv(),
 		Port:       port,
 		tasks:      make(map[string]*bgTask),
 		sessionMap: make(map[string]*sessionEntry),
