@@ -33,6 +33,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
   exec        在目标节点工作区执行 Shell 命令 (用于确定性的日常流水线执行)
   ask         发送自然语言指令 (由边缘端智能体自行分析底层环境、重试排障，并要求留下固化脚本)
   read        查看目标节点上的小文本文件（不用于下载大文件/二进制）
+  audit       查询目标节点会话审计日志 (.doops-audit-log)，支持 blocked/bypassed 过滤与 JSONL 导出
   write       写入文件到目标服务器
   info        获取节点系统信息 (CPU/内存/磁盘)
   session     生成并输出一个新的唯一 Session ID
@@ -773,6 +774,61 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 			fatalErr(err)
 		}
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("clean workspace=%s", workspace))
+
+	case "audit":
+		var target, auditSession string
+		var blocked, bypassed, jsonOut bool
+		var limit int
+		auditFlag := flag.NewFlagSet("audit", flag.ExitOnError)
+		auditFlag.StringVar(&target, "target", "", "Target server name")
+		auditFlag.StringVar(&auditSession, "session", "", "Session ID (可选；缺省聚合所有 session 的审计记录)")
+		auditFlag.BoolVar(&blocked, "blocked", false, "只看护栏拦截记录 (blocked=1)")
+		auditFlag.BoolVar(&bypassed, "bypassed", false, "只看 scope 豁免放行记录 (bypassed_by_scope=1)")
+		auditFlag.IntVar(&limit, "limit", 0, "只输出最近 N 条 (0 表示全部)")
+		auditFlag.BoolVar(&jsonOut, "json", false, "以 JSONL 导出 (每行一条 JSON 记录，便于管道处理)")
+		auditFlag.Parse(cmdArgs)
+		if auditSession != "" && *sessionName == "" {
+			*sessionName = auditSession
+		}
+
+		if target == "" {
+			fmt.Println("Error: --target 必传，请指定目标服务器名称。")
+			auditFlag.Usage()
+			os.Exit(1)
+		}
+		requireConfig(configErr)
+
+		server := findServer(servers, target)
+		if server == nil {
+			fatalServerNotFound(target)
+		}
+
+		token := ResolveToken(server.Name, server.Token)
+		client := NewMCPClient(*server, ss, *sessionName, *verbose)
+		client.Token = token
+		defer client.Close()
+
+		// 过滤参数均为可选字段（omitempty 语义），旧 agent 收到未知工具会明确报错，不破坏协议
+		arguments := make(map[string]interface{})
+		if blocked {
+			arguments["blocked"] = true
+		}
+		if bypassed {
+			arguments["bypassed"] = true
+		}
+		if limit > 0 {
+			arguments["limit"] = limit
+		}
+		if jsonOut {
+			arguments["format"] = "jsonl"
+		}
+
+		out, err := client.CallAndCapture("doops_audit_query", arguments)
+		if err != nil {
+			fatalErr(err)
+		}
+		fmt.Print(out)
+		RecordHistory(server.Name, *sessionName, "audit query")
 
 	case "upgrade":
 		var target, gateway, token, cluster, instance, image, mode, namespace, workload, container, upgradeSession string

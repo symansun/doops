@@ -467,6 +467,8 @@ agent 端 `exec` 执行前会经过内置命令护栏（[dispatcher](agent/inter
 
 护栏是纵深防御的一层，不是安全边界：它无法覆盖所有混淆写法（编码、变量展开、脚本文件间接执行），日常操作规范仍以 skill 纪律与最小授权为准。
 
+审计查询：`doops audit --target <节点> [--session <id>]` 读取会话审计日志，`--blocked` / `--bypassed` 只看护栏拦截或 scope 豁免记录，`--limit N` 取最近 N 条，`--json` 以 JSONL 导出（如 `doops audit --target prod --blocked --json | jq .`）。
+
 ## Contributors
 
 本项目核心贡献者，署名顺序如下：
