@@ -12,7 +12,8 @@ from this target's original settings into `unicom-existing-doagent-model`;
 the unused legacy settings mount is removed. `/var/lib/doops-agent` did not
 exist at preflight, so it does not share the old container's home.
 
-Prerequisites: successful CI for the source commit and pinned image; image
+Prerequisites: successful CI for the source commit and pinned image, containing
+chart `doops-agent` version `0.3.0`; image
 already cached on `k8s-master`; no active task on this target; original
 ServiceAccount `doops-unicom-agent` retains its existing permissions to
 manage Jobs, Deployments, Helm Secrets and ConfigMaps. No RBAC is created.
@@ -29,13 +30,24 @@ Job. These are single-use names; existing objects require inspection, not replay
 
 ```sh
 ~/.local/bin/doops -session doagent-all-20261108 exec --target unicom-k8s --cmd '
+  test -s /root/ws/doagent-all-20261108/cutover.py &&
+  test -s /root/ws/doagent-all-20261108/values.yaml &&
+  test -s /root/ws/doagent-all-20261108/cutover-job.yaml &&
+  sha256sum /root/ws/doagent-all-20261108/cutover.py /root/ws/doagent-all-20261108/values.yaml &&
   kubectl -n doops-system create configmap doagent-unicom-042-assets-r2 \
     --from-file=cutover.py=/root/ws/doagent-all-20261108/cutover.py \
     --from-file=values.yaml=/root/ws/doagent-all-20261108/values.yaml &&
   kubectl -n doops-system patch configmap doagent-unicom-042-assets-r2 \
     --type=merge -p "{\"immutable\":true}" &&
-  kubectl create -f /root/ws/doagent-all-20261108/cutover-job.yaml'
+  kubectl -n doops-system create -f /root/ws/doagent-all-20261108/cutover-job.yaml'
 ```
+
+Compare the printed hashes with the committed files before starting the Job.
+The backup receipt records both hashes and the image's chart version. If asset
+creation stopped before the Job was created, inspect the existing ConfigMap,
+and only after proving no Job references it delete that exact asset ConfigMap
+and recreate it from the verified files. Never delete the backup/acceptance
+receipt to replay a transaction.
 
 Observe Job logs via `doops k8s logs`. `candidate-ready` names the new Pod and
 UID; it does not mean acceptance. Before writing the receipt, the operator must:

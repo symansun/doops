@@ -145,3 +145,26 @@ ConfigMap 权限；旧 Helm release 仅管理 `Deployment/doops-unicom`，
 新增控制器的故障注入覆盖预检失败、安装失败、验收超时和旧资源清理失败；
 验收缺失时不能卸载旧 release，清理失败时不能卸载已验收候选。
 本地四项事务测试和 Helm 渲染已通过；部署结果将按实际回读补充。
+
+### 控制器复审与 Compose 准备
+
+- K8s 控制器已补齐可执行的资产创建与验收回执写入流程；备份包含输入
+  SHA256 和 chart 0.3.0。候选模型只走已激活的本 target Gateway binding，
+  移除无效的旧 settings 挂载。
+- 复审建议“不清理 failed 候选”未采纳：旧 release 是 `doops-unicom`，
+  被清理的候选是 `doops-agent`，Job 又是独立资源；清理未验收候选正是
+  让旧实例重新接管的必要步骤。测试明确覆盖了安装失败后仍存在的候选、
+  未收到验收、恢复失败。不会把 `candidate-ready` 当作验收通过。
+- 旧 chart 名 `doops-agent-0.2.1` 来自真实 `helm list` 回读，并非猜测；
+  现在包含 failed release 的 `helm list -a` 还会拒绝已有同名候选。
+  Job manifest 本身声明 namespace；runbook 同时显式传 namespace。
+- Compose 候选预取 Task `c8efa267da54b6b4` 终态 exit 0。真实 dry-run
+  验证旧容器 ID、健康、原项目/服务、候选 image/commit、配置等价与
+  kubeconfig 来源通过。该 kubeconfig 是容器内指向宿主的未持久化软链接，
+  首次外部检查因按普通文件读取软链接而失败，查清后改为验证精确软链接
+  和宿主文件逐字节一致，没有跳过来源检查。
+- Compose 的旧 Agent 不支持 modelProvider Secret 导入，创建的
+  `cred_f26c3073d35ba2e447ccea3b` 尚无版本；升级后按同 target、同源 Secret
+  完成 configure/verify/promote。临时 Secret 在成功导入后删除。
+- 两种事务合计 11 项本地检查通过；Compose 真实 dry-run 通过。
+  `unicom-1` 未执行 apply，`unicom-k8s` 尚未启动切换 Job。
