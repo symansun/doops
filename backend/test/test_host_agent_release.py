@@ -289,6 +289,35 @@ def test_containerized_controller_fails_before_any_docker_call(
     assert docker.old["State"]["Running"]
 
 
+def test_attested_socket_controller_allows_containerized_preflight(
+    controller, args, docker, monkeypatch, capsys,
+):
+    args.dry_run = True
+    args.socket_controller = True
+    real_exists = Path.exists
+    monkeypatch.setattr(
+        controller.Path,
+        "exists",
+        lambda path: True
+        if str(path) in ("/.dockerenv", "/var/run/docker.sock")
+        else real_exists(path),
+    )
+    monkeypatch.setenv("DOOPS_SOCKET_CONTROLLER", "1")
+    controller.release(args)
+    assert all(event[:2] == ("api", "GET") for event in docker.events)
+    assert "preflight_ready" in capsys.readouterr().out
+
+
+def test_socket_controller_requires_attestation(
+    controller, args, docker, monkeypatch,
+):
+    args.socket_controller = True
+    monkeypatch.setenv("DOOPS_SOCKET_CONTROLLER", "0")
+    with pytest.raises(RuntimeError, match="socket_controller_attestation_required"):
+        controller.release(args)
+    assert not docker.events
+
+
 def test_agent_without_settings_mount_passes_preflight(
     controller, args, docker, capsys,
 ):
