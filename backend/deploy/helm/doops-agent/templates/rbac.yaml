@@ -1,0 +1,35 @@
+{{- if .Values.rbac.create }}
+{{- if ne .Values.kubeconfig.source "serviceAccount" }}
+{{- fail "rbac.create requires kubeconfig.source=serviceAccount" }}
+{{- end }}
+{{- $account := required "rbac.create requires serviceAccount.name" .Values.serviceAccount.name }}
+{{- if eq $account "default" }}
+{{- fail "rbac.create requires a dedicated ServiceAccount, not default" }}
+{{- end }}
+{{- $binding := printf "%s-%s-cluster-admin" .Release.Namespace $account }}
+{{- if gt (len $binding) 253 }}
+{{- fail "namespace and serviceAccount.name make the ClusterRoleBinding name exceed 253 characters" }}
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $account | quote }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $binding | quote }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: {{ $account | quote }}
+    namespace: {{ .Release.Namespace | quote }}
+{{- end }}

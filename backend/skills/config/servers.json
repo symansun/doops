@@ -1,0 +1,9 @@
+[
+  {
+    "name": "example",
+    "gateway": "https://gateway.example.com",
+    "cluster": "example-cluster",
+    "instance": "example-node",
+    "use": "Example target; replace with your deployment"
+  }
+]

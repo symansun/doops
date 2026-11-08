@@ -1,0 +1,178 @@
+"use client"
+
+import { useEffect, useState } from "react"
+import { fetchTargets, login, persistTokenSession, type Session } from "@/lib/client"
+import { DEMO_TOKEN } from "@/lib/demo"
+import { isDemoAllowed } from "@/lib/demo-policy"
+import { PlugIcon, ServerIcon, SparkIcon } from "./icons"
+
+const DEMO_ENABLED = isDemoAllowed()
+
+export function ConnectScreen({
+  defaultGateway,
+  initialError = "",
+  onConnected,
+}: {
+  defaultGateway: string
+  initialError?: string
+  onConnected: (s: Session) => void
+}) {
+  const [gateway, setGateway] = useState(defaultGateway)
+  const [mode, setMode] = useState<"password" | "token">("password")
+  const [username, setUsername] = useState("")
+  const [password, setPassword] = useState("")
+  const [token, setToken] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(initialError)
+  useEffect(() => { setGateway(defaultGateway) }, [defaultGateway])
+  useEffect(() => { if (initialError) setError(initialError) }, [initialError])
+
+  function enterDemo() {
+    onConnected({ gateway: "demo://local", token: DEMO_TOKEN, username: "演示用户", demo: true })
+  }
+
+  async function connect() {
+    setError("")
+    if (!gateway.trim()) {
+      setError("请填写 Gateway 地址")
+      return
+    }
+    setBusy(true)
+    try {
+      let session: Session
+      if (mode === "password") {
+        if (!username || !password) throw new Error("请填写用户名和密码")
+        const r = await login(gateway, username, password)
+        session = { gateway: r.gateway, username: r.username, isAdmin: r.isAdmin }
+      } else {
+        if (!token.trim()) throw new Error("请粘贴 user token")
+        session = await persistTokenSession(gateway, token.trim())
+      }
+      // 验证 token 有效性
+      await fetchTargets(session)
+      onConnected(session)
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <main className="flex min-h-dvh items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="mb-8 flex flex-col items-center text-center">
+          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/15 text-primary">
+            <ServerIcon width={24} height={24} />
+          </div>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Doops Console</h1>
+          <p className="mt-1 text-sm text-muted-foreground text-balance">
+            智能运维控制台 · 连接 doops-gateway 执行命令、自然语言运维与部署
+          </p>
+        </div>
+
+        <div className="rounded-xl border bg-card p-6 shadow-sm">
+          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+            Gateway 地址
+          </label>
+          <input
+            aria-label="Gateway 地址"
+            value={gateway}
+            onChange={(e) => setGateway(e.target.value)}
+            placeholder="https://gateway.example.com"
+            className="mb-4 w-full rounded-lg border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+          />
+
+          <div className="mb-4 inline-flex rounded-lg border bg-background p-1 text-sm">
+            <button
+              onClick={() => setMode("password")}
+              className={`rounded-md px-3 py-1.5 transition-colors ${
+                mode === "password"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              账号密码
+            </button>
+            <button
+              onClick={() => setMode("token")}
+              className={`rounded-md px-3 py-1.5 transition-colors ${
+                mode === "token"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              粘贴 Token
+            </button>
+          </div>
+
+          {mode === "password" ? (
+            <div className="flex flex-col gap-3">
+              <input
+                aria-label="用户名"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="用户名"
+                autoComplete="username"
+                className="w-full rounded-lg border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+              />
+              <input
+                aria-label="密码"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && connect()}
+                type="password"
+                placeholder="密码"
+                autoComplete="current-password"
+                className="w-full rounded-lg border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+              />
+            </div>
+          ) : (
+            <textarea
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder="dgw_user_xxx"
+              rows={3}
+              className="w-full resize-none rounded-lg border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+            />
+          )}
+
+          {error && (
+            <p className="mt-3 rounded-lg bg-destructive/15 px-3 py-2 text-sm text-destructive">
+              {error}
+            </p>
+          )}
+
+          <button
+            onClick={connect}
+            disabled={busy}
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            <PlugIcon width={16} height={16} />
+            {busy ? "连接中…" : "连接"}
+          </button>
+
+          <div className="my-4 flex items-center gap-3">
+            <span className="h-px flex-1 bg-border" />
+            <span className="text-xs text-muted-foreground">或</span>
+            <span className="h-px flex-1 bg-border" />
+          </div>
+
+          {DEMO_ENABLED && (
+            <button
+              onClick={enterDemo}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-primary/40 bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary transition-colors hover:bg-primary/20"
+            >
+              <SparkIcon width={16} height={16} />
+              进入演示模式（无需连接 gateway）
+            </button>
+          )}
+        </div>
+
+        <p className="mt-4 text-center text-xs text-muted-foreground">
+          登录会话由当前工作台的 HttpOnly Cookie 保存，业务请求统一经过 Gateway 授权。
+        </p>
+      </div>
+    </main>
+  )
+}
