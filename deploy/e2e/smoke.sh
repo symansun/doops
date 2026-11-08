@@ -204,7 +204,8 @@ wait_agent_online() {
   local i
   for ((i=0; i<45; i++)); do
     if "$DOOPS_BIN" -session "$SESSION" targets --target e2e >"${LOG_DIR}/targets.log" 2>&1 &&
-      grep -q "${CLUSTER}/${INSTANCE}" "${LOG_DIR}/targets.log"; then
+      awk -v cluster="$CLUSTER" -v instance="$INSTANCE" \
+        '$1 == cluster && $2 == instance && $4 == "idle" { found = 1 } END { exit !found }' "${LOG_DIR}/targets.log"; then
       return 0
     fi
     sleep 1
