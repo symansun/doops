@@ -153,7 +153,11 @@ type AuditFilter struct {
 	Session  string
 	Action   GatewayAction
 	Status   string
+	Since    time.Time
+	Until    time.Time
 	Limit    int
+	// Export 为 true 时按时间升序返回（便于存档回放），并把 limit 上限放宽到 10000
+	Export bool
 }
 
 func OpenGatewayStore(path string) (*GatewayStore, error) {
@@ -922,11 +926,22 @@ func (s *GatewayStore) ListAudit(limit int) ([]AuditEvent, error) {
 }
 
 func (s *GatewayStore) ListAuditFiltered(filter AuditFilter) ([]AuditEvent, error) {
-	if filter.Limit <= 0 || filter.Limit > 500 {
-		filter.Limit = 100
+	maxLimit := 500
+	if filter.Export {
+		maxLimit = 10000
 	}
-	conditions := make([]string, 0, 6)
-	args := make([]any, 0, 7)
+	if filter.Limit <= 0 {
+		if filter.Export {
+			filter.Limit = maxLimit
+		} else {
+			filter.Limit = 100
+		}
+	}
+	if filter.Limit > maxLimit {
+		filter.Limit = maxLimit
+	}
+	conditions := make([]string, 0, 8)
+	args := make([]any, 0, 9)
 	if v := strings.TrimSpace(filter.UserID); v != "" {
 		conditions = append(conditions, "user_id = ?")
 		args = append(args, v)
@@ -951,13 +966,25 @@ func (s *GatewayStore) ListAuditFiltered(filter AuditFilter) ([]AuditEvent, erro
 		conditions = append(conditions, "status = ?")
 		args = append(args, v)
 	}
+	if !filter.Since.IsZero() {
+		conditions = append(conditions, "started_at >= ?")
+		args = append(args, formatTime(filter.Since.UTC()))
+	}
+	if !filter.Until.IsZero() {
+		conditions = append(conditions, "started_at <= ?")
+		args = append(args, formatTime(filter.Until.UTC()))
+	}
 	query := `SELECT id, user_id, token_id, cluster, instance, action, session,
 		command_summary, status, error, tail, bytes_in, bytes_out, started_at, ended_at
 		FROM audit_events`
 	if len(conditions) > 0 {
 		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	query += " ORDER BY id DESC LIMIT ?"
+	if filter.Export {
+		query += " ORDER BY id ASC LIMIT ?"
+	} else {
+		query += " ORDER BY id DESC LIMIT ?"
+	}
 	args = append(args, filter.Limit)
 	rows, err := s.db.Query(query, args...)
 	if err != nil {

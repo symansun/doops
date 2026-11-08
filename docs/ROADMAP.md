@@ -12,7 +12,7 @@
 3. ✅ **生产发布审批流**（2026-11-08 完成）：gateway `-approval-targets` 按 cluster/instance glob 管控变更类调用，审批单（apr_*，24h TTL，参数指纹校验）approve 后 `--approval` 重放放行，一次性消费；CLI `admin approvals list/approve/reject`；审批操作落审计
 
 ### P1 开发
-4. **审计强化**：审计导出（JSONL/CSV）、留存策略、高危操作告警通道；客户真实上线前必须完成
+4. ✅ **审计强化**（2026-11-08 完成）：`/v1/audit?format=csv|jsonl` 导出（升序 + 时间/集群/用户/会话/动作/状态过滤，上限 10000 条）、`doops admin audit export` 落盘、`-audit-retention-days` 日度留存清理、`-alert-webhook` 高危告警（护栏拦截/审批创建/审批结果，飞书文本消息兼容）
 5. ✅ **平滑发布/灰度**（2026-11-08 完成）：`examples/skills/blue-green-release`——双容器 blue-green + nginx upstream 切换，可选 canary 权重灰度，`--rollback` 秒级回滚
 6. **飞书 AI 集成**：飞书机器人 @ 机器人下达运维任务（webhook → doops gateway 桥接），与数字员工工程对接
 
@@ -23,6 +23,7 @@
 - [ ] 控制台设计文档评审通过
 - [ ] 发布规范 skill 在 staging 环境走通一次完整发布
 - [x] 审批流单测 + E2E（approval_test.go 全绿；smoke.sh 审批流 6 步断言通过）
+- [x] 审计导出/留存/告警单测 + E2E（audit_ops_test.go 全绿；smoke.sh 审计导出断言通过）
 - [ ] CHANGELOG v0.3.0 定稿
 - [ ] tag v0.3.0 → Release 产物冒烟
 

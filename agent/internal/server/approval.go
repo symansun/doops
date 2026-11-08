@@ -100,6 +100,7 @@ func (h *GatewayHub) gateApproval(auth TokenAuth, cluster, instance string, acti
 		errMsg := fmt.Sprintf("approval required: %s（%s %s/%s: %s）— 审批人执行 doops admin approve --id %s 后，重发同一命令并加 --approval %s",
 			apr.ID, action, cluster, instance, summary, apr.ID, apr.ID)
 		finishAudit("pending_approval", errMsg, "", 0)
+		h.notifyAlert("approval_required", auth.UserID, cluster, instance, string(action), summary)
 		writeJSON(buildErrorResponse(reqID, -32010, errMsg))
 		return false
 	}
@@ -196,6 +197,9 @@ func (h *GatewayHub) HandleAdminApprovals(w http.ResponseWriter, r *http.Request
 			return
 		}
 		_ = h.store.FinishAudit(auditID, AuditFinish{Status: "success", EndedAt: time.Now().UTC()})
+		if apr, err := h.store.GetApproval(req.ID); err == nil {
+			h.notifyAlert("approval_"+strings.TrimSpace(req.Decision), auth.UserID, apr.Cluster, apr.Instance, string(apr.Action), apr.CommandSummary)
+		}
 		writeJSONHTTP(w, map[string]string{"id": strings.TrimSpace(req.ID), "decision": req.Decision})
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
