@@ -1,9 +1,9 @@
-# DoWeb
+# DoWeb MVP Archive
 
 The canonical runtime is now `backend/agent/skills/doweb/` in this repository.
-Use the unified `doops web` command and the Console website panel. Historical
-MVP examples below describe the original prototype and are not supported
-installation or authentication entrypoints for the unified runtime.
+Use the unified `doops web` command and the Console website panel. This archive
+describes the original prototype only and is not an installation or
+authentication entrypoint for the unified runtime.
 
 DoWeb is the frontend deployment and Nginx operations product.
 
@@ -24,7 +24,8 @@ Target scope:
 - inspect site availability, certificate status and access/error logs;
 - rollback site configuration and deployments through doagent.
 
-Current status: Skill-side MVP script and knowledge base.
+Historical status: standalone MVP script and knowledge base. The maintained
+implementation is the Agent skill at `backend/agent/skills/doweb/`.
 
 Resource-control design:
 
@@ -36,26 +37,12 @@ DoWeb/
 └─ Skill/    Nginx/site publishing skill, scripts, references and runbooks.
 ```
 
-## MVP Command
+## Former prototype usage
 
-```bash
-export DOWEB_SSH_PASSWORD='...'
-node DoSuite/DoWeb/Skill/scripts/doweb.mjs install-nginx \
-  --ssh-host 114.55.61.32 \
-  --ssh-user root \
-  --password-env DOWEB_SSH_PASSWORD
-
-node DoSuite/DoWeb/Skill/scripts/doweb.mjs domain-set \
-  --domain aihub.org.cn \
-  --host-ip 114.55.61.32 \
-  --provider aliyun
-
-node DoSuite/DoWeb/Skill/scripts/doweb.mjs deploy \
-  --site-id demo \
-  --domain-base aihub.org.cn \
-  --dist /path/to/dist \
-  --proxy /api/=https://api.example.com
-```
+The standalone commands that formerly targeted `DoSuite/DoWeb/Skill/` have
+been retired. They are retained only as part of this historical description;
+use the canonical `doops web` workflow and the Agent skill at
+`backend/agent/skills/doweb/` for all current operations.
 
 DoWeb converts natural-language publishing requests into a SiteSpec, renders a
 candidate Nginx config, runs `nginx -t`, reloads Nginx, records state, and
