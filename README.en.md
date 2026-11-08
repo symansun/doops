@@ -3,7 +3,7 @@
 # DoOps
 
 <p align="center">
-  <img src="docs/images/slogan.svg" alt="不用 SSH，也能运维任何一台机器。" width="760">
+  <img src="docs/images/slogan-en.svg" alt="Manage any machine — no SSH required." width="760">
 </p>
 
 > This project is open source under the [MIT License](LICENSE).
@@ -44,7 +44,7 @@ This repo neither contains nor publishes the `do-agent` binary; to run `doops as
 ## Architecture
 
 <p align="center">
-  <img src="docs/images/architecture.svg" alt="DoOps architecture diagram" width="1100">
+  <img src="docs/images/architecture-en.svg" alt="DoOps architecture diagram" width="1100">
 </p>
 
 The system has two orthogonal dimensions:
