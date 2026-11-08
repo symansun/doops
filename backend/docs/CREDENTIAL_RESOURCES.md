@@ -513,7 +513,39 @@ doops credential grant-revoke \
   --grant-id <grant-id>
 ```
 
-Gateway 先清理该 grant 的全部物化上下文，再把 grant 置为 `revoked`。
+Gateway 先把 grant 置为 `revoking`，清理该 grant 的全部物化上下文，再置为 `revoked`。
+清理不完时 grant 保持 `revoking`，重复执行同一命令会继续清理，已 `revoked` 的 grant 再次吊销直接返回成功。
+
+物化记录决定哪些上下文需要清理：
+
+- 物化成功（`verified`）、结果未知（`outcome_unknown`）或尚未结束（`pending`，例如 Gateway 在派发后重启）的上下文，
+  必须由目标 Agent 清理；
+- 确定没有改动目标的失败记为 `not_applied`，不需要清理。目标离线、请求编码失败等派发前的失败，
+  以及 Agent 在写入前拒绝、或写入失败后已恢复快照并复核一致时返回的稳定错误类别，属于这一类；
+  白名单和依据在 `credential_materialization_store.go` 的 `credentialMaterializationUnchangedCategories`；
+- 同一上下文先前成功过的物化不会被后来一次「没有改动」的失败覆盖，记录保持先前的状态，仍需清理；
+- 引入 `not_applied` 之前写下的 `outcome_unknown` 记录，无论错误类别是什么都按结果未知处理，
+  因为当时的重试会覆盖先前成功的记录。升级前留下的这类记录不会被自动判为未改动，
+  对应的绑定仍需目标在线、由 Agent 清理完才能进入 `revoked`。
+
+一个上下文清理失败不会中断其余上下文。全部尝试后仍有上下文未清理时，按原因返回：
+
+| 类别 | HTTP | 含义 |
+| --- | --- | --- |
+| `target_offline` | 503 | 需要清理的目标没有连接，清理调用没有发出 |
+| `target_busy`、`target_queue_full`、`target_queue_timeout` | 409 | 目标正在执行其他操作，清理调用没有发出 |
+| `credential_grant_revocation_outcome_unknown` | 502 | 清理已到达 Agent 但失败或结果未知 |
+
+任何一个上下文结果未知时返回 `credential_grant_revocation_outcome_unknown`。
+Gateway 不提供跳过清理或强制置为 `revoked` 的入口；目标恢复连接后重试即可。
+
+吊销与 `ask --apply`、重连交付等使用并发时：
+
+- resource 或 grant 一旦离开 `active`，新的物化记录就写不进去，使用会以 `credential_revoked` 失败，不会派发到目标；
+- 进入终态前，Gateway 在同一事务里复查该 grant（resource 吊销时是该 resource 的全部 grant）还有没有
+  `cleaned`、`not_applied` 以外的物化记录。有就不进入终态，保持 `revoking`，返回 502 结果未知类别；
+  resource 吊销的返回体同样列出这些记录所在的 `cluster/instance`。重试会清理这些上下文；
+- 重连交付在拿到凭据锁后复查 grant 状态，等锁期间被吊销的 grant 不再交付。
 
 吊销整个 resource：
 
@@ -523,7 +555,12 @@ doops credential revoke \
   --id <credential-id>
 ```
 
-Gateway 按 `active -> revoking -> revoked` 清理所有物化资源。Resource revoke 是终态，
+Gateway 先把 resource 和它的全部 grant 一起置为 `revoking`，再按上面的同一套规则清理所有 grant 的物化上下文，
+跳过 `not_applied` 记录。一个上下文失败不会中断其余上下文，全部清理完才把 resource、version 和 grant 置为终态。
+清理不完时 resource 和 grant 都保持 `revoking`，返回体是类别加上仍未清理的 `cluster/instance` 列表，
+例如 `target_offline: doops-zyj/test`；审计只记录类别。类别和状态码与 grant 吊销一致，
+结果未知时为 `credential_revocation_outcome_unknown`（502）。重复执行同一命令会继续清理，
+已 `revoked` 的 resource 再次吊销直接返回成功。Resource revoke 是终态，
 当前没有恢复、删除、改名或改类型能力。
 
 ## Bundle
@@ -635,7 +672,22 @@ CLI 在该类别后给出 `next:` 步骤：先 `credential list --target` 查看
 - resourceVersion、digest 或稳定错误类别。
 
 审计不记录 payload。凭据 owner 和 platform admin 可以通过
-Gateway `/v1/audit` 按 target 和 credential 元数据查询；资源级操作不带 target，
-按 `session=<credential_id>` 查询，控制台审计页的「按凭据」范围即此查询，详见
-[DOOPS_API_GUIDE.md](DOOPS_API_GUIDE.md) 的审计查询。当前 CLI 尚未提供独立的
+Gateway `/v1/audit` 查询；控制台审计页的「按凭据」范围即 `session=<credential_id>` 查询，
+详见 [DOOPS_API_GUIDE.md](DOOPS_API_GUIDE.md) 的审计查询。当前 CLI 尚未提供独立的
 credential audit 子命令。
+
+凭据审计分两类，查询方式不同：
+
+| 类别 | 操作 | `cluster/instance` | 查询 |
+| --- | --- | --- | --- |
+| 资源级 | create、put、promote、resource revoke | 空 | `session=<credential_id>` |
+| 目标级 | grant 创建和吊销、verify、Secret 导入、Gateway 内部的物化和清理调用 | 该次操作的目标，审计开始后的成功和失败都记录目标 | `cluster=<cluster>&instance=<instance>`，可加 `action=`；grant 和 verify 同时带 `session=<credential_id>`，按凭据也能查到 |
+
+- 资源级操作的 `session` 和 `credential_id` 都是该凭据 ID。create 在成功后才有 ID，
+  失败的 create 没有 credential ID；
+- promote 和 resource revoke 可能影响多个目标，一条审计只有一组 `cluster/instance`，
+  所以不填目标。它们在各目标上发出的物化和清理调用另有目标级审计，`session` 是物化记录里保存的会话；
+- grant 吊销和 verify 失败时也记录目标；grant 已确定时同时记录 grant ID 和保存的 scope；
+- verify 在审计开始前的校验失败（version 不存在、不是 staged、该目标没有 grant）不写审计；
+  grant 吊销在 grant 确定之前的失败不带目标。审计只覆盖审计开始之后的成功和失败；
+- resource revoke 失败时，返回体列出仍未清理的 `cluster/instance`，审计只记录稳定错误类别。
