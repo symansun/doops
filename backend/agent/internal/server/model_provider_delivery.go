@@ -110,16 +110,10 @@ func (h *GatewayHub) deliverModelProvider(ctx context.Context, cluster, instance
 	}
 	ref := CredentialPlanReference{Name: binding.Resource.Name, Scope: scope}
 	sessionID := "model-delivery-" + randomHex(8)
-	// The Agent may still hold a version of this grant that was superseded
-	// while it was offline. Clear any version first so the delivery starts
-	// from a known state and the previous-version check stays exact.
-	if err := h.cleanupCredentialMaterializationContext(ctx, CredentialMaterializeRequest{
-		SessionID: sessionID, Cluster: cluster, Instance: instance,
-		CredentialID: binding.Resource.ID, GrantID: binding.Grant.ID, VersionID: version.ID,
-		CredentialType: binding.Resource.Type, Scope: scope,
-	}); err != nil {
-		return credentialOperationErrorCategory(err)
-	}
+	// Native model materialization probes before replacing its fixed settings
+	// and reports no PreviousVersionID. Pre-cleanup is unnecessary: it erases
+	// a working model before a failed probe and, on a fresh standalone Agent,
+	// reaches Kubernetes Secret cleanup despite the model owning no Secret.
 	if _, _, err := h.materializeCredentialVersion(
 		ctx, cluster, instance, sessionID, binding.Resource, version, "", binding.Grant.ID, ref,
 	); err != nil {
