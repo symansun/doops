@@ -770,6 +770,10 @@ esac
 set -eu
 printf 'kubectl %s\n' "$*" >> "$CALL_LOG"
 case "$*" in
+  "auth whoami -o json")
+    if [ "${AUTH_WHOAMI_DENIED:-0}" = "1" ]; then echo "auth whoami forbidden" >&2; exit 21; fi
+    printf '{"status":{"userInfo":{"username":"%s"}}}\n' "${AUTH_USERNAME-kubernetes-admin}"
+    ;;
   *"get configmap"*)
     if [ -f "$RECEIPT_FILE" ]; then cat "$RECEIPT_FILE"; fi
     ;;

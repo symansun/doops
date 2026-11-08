@@ -1167,10 +1167,11 @@ PY
 // upgrade was refused, so an operator reads the reason instead of guessing
 // whether the Agent or the release is broken.
 const (
-	selfUpgradeCategoryRollbackBaselineUnavailable = "rollback_baseline_image_unavailable"
-	selfUpgradeCategoryRollbackBaselineUnresolved  = "rollback_baseline_image_unresolved"
-	selfUpgradeCategoryRollbackBaselineProbeFailed = "rollback_baseline_probe_failed"
-	selfUpgradeCategoryStaleVolumeMountsUnresolved = "stale_volume_mounts_unresolved"
+	selfUpgradeCategoryRollbackBaselineUnavailable   = "rollback_baseline_image_unavailable"
+	selfUpgradeCategoryRollbackBaselineUnresolved    = "rollback_baseline_image_unresolved"
+	selfUpgradeCategoryRollbackBaselineProbeFailed   = "rollback_baseline_probe_failed"
+	selfUpgradeCategoryStaleVolumeMountsUnresolved   = "stale_volume_mounts_unresolved"
+	selfUpgradeCategoryRBACControllerIdentityChanged = "rbac_controller_identity_changed"
 )
 
 var selfUpgradeFailureCategories = []string{
@@ -1178,6 +1179,7 @@ var selfUpgradeFailureCategories = []string{
 	selfUpgradeCategoryRollbackBaselineUnresolved,
 	selfUpgradeCategoryRollbackBaselineProbeFailed,
 	selfUpgradeCategoryStaleVolumeMountsUnresolved,
+	selfUpgradeCategoryRBACControllerIdentityChanged,
 }
 
 // selfUpgradeFailureCategory reports the stable category a failed upgrade Job
@@ -1327,7 +1329,7 @@ PY
 
 // selfUpgradeApplyChecks holds every check that runs before the first change, so
 // the preflight Job and the apply Job cannot disagree about what is admissible.
-const selfUpgradeApplyChecks = selfUpgradeRevisionImage + `repository="$DOOPS_UPGRADE_REPOSITORY"
+const selfUpgradeApplyChecks = selfUpgradeRevisionImage + selfUpgradeRBACGuard + `repository="$DOOPS_UPGRADE_REPOSITORY"
 tag="${DOOPS_UPGRADE_TAG:-}"
 digest="${DOOPS_UPGRADE_DIGEST:-}"
 target="$DOOPS_UPGRADE_IMAGE"
@@ -1407,7 +1409,84 @@ values.setdefault("workload", {})["selectorLabels"] = json.loads(selector_json)
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(values, fh)
 PY
-` + selfUpgradeStaleVolumeMounts
+` + selfUpgradeStaleVolumeMounts + `verify_controller_rbac "$previous_manifest" "$rendered_manifest"
+`
+
+// A ServiceAccount controller cannot let Helm add, remove or rebind its own
+// identity: a failed upgrade's rollback could delete the newly managed account
+// or binding, and a rollback across that adoption point could do the same.
+// Those transitions need a controller with an independent Kubernetes identity.
+// A mounted kubeconfig may also authenticate as a ServiceAccount, so the API
+// server's effective identity, not the configuration source, selects the check.
+const selfUpgradeRBACGuard = `verify_controller_rbac() {
+  python3 - "$ns" "$1" "$2" <<'PY'
+import json, os, subprocess, sys, yaml
+
+namespace, before_path, after_path = sys.argv[1:4]
+
+
+def refuse(reason):
+    raise SystemExit("rbac_controller_identity_changed: " + reason + "; use the authorized external controller")
+
+
+def identities(path, account_namespace, account):
+    result = {}
+    with open(path, encoding="utf-8") as fh:
+        for doc in yaml.safe_load_all(fh):
+            if not doc:
+                continue
+            kind = doc.get("kind")
+            metadata = doc.get("metadata") or {}
+            name = metadata.get("name")
+            resource_namespace = "" if kind == "ClusterRoleBinding" else metadata.get("namespace", namespace)
+            identity = None
+            if kind == "ServiceAccount" and name == account and resource_namespace == account_namespace:
+                identity = {}
+            elif kind in ("RoleBinding", "ClusterRoleBinding"):
+                subjects = doc.get("subjects") or []
+                if any(subject.get("kind") == "ServiceAccount" and subject.get("name") == account
+                       and subject.get("namespace", resource_namespace) == account_namespace for subject in subjects):
+                    identity = {"roleRef": doc.get("roleRef"),
+                                "subjects": sorted(json.dumps(subject, sort_keys=True) for subject in subjects)}
+            if identity is not None:
+                key = (kind, resource_namespace, name)
+                if key in result:
+                    refuse("duplicate controller RBAC resource in the Helm manifest")
+                result[key] = identity
+    return result
+
+
+try:
+    authentication = json.loads(subprocess.check_output(
+        ["kubectl", "auth", "whoami", "-o", "json"], timeout=30,
+    ))
+    username = ((authentication.get("status") or {}).get("userInfo") or {}).get("username")
+    if not isinstance(username, str) or not username:
+        refuse("Kubernetes did not return the controller authentication identity")
+    source_is_account = os.environ.get("DOOPS_UPGRADE_KUBECONFIG_SOURCE") == "serviceAccount"
+    if not username.startswith("system:serviceaccount:"):
+        if source_is_account:
+            refuse("the controller authentication does not match its ServiceAccount source")
+        print("controller_rbac=independent")
+        raise SystemExit(0)
+    identity = username.split(":")
+    if len(identity) != 4 or not identity[2] or not identity[3]:
+        refuse("Kubernetes returned an invalid ServiceAccount identity")
+    account_namespace, account = identity[2:4]
+    if source_is_account:
+        pod = json.loads(subprocess.check_output(
+            ["kubectl", "-n", namespace, "get", "pod", os.environ["HOSTNAME"], "-o", "json"], timeout=30,
+        ))
+        if account_namespace != namespace or (pod.get("spec") or {}).get("serviceAccountName") != account:
+            refuse("the controller Pod ServiceAccount does not match its authentication identity")
+    if identities(before_path, account_namespace, account) != identities(after_path, account_namespace, account):
+        refuse("Helm would change the controller ServiceAccount or its RBAC bindings")
+except (OSError, subprocess.SubprocessError, ValueError, yaml.YAMLError) as exc:
+    refuse("cannot verify controller RBAC: " + str(exc))
+print("controller_rbac=unchanged")
+PY
+}
+`
 
 // selfUpgradeStaleVolumeMounts finds the volume mounts the Helm upgrade would
 // leave pointing at a volume it deletes.
@@ -1607,7 +1686,7 @@ echo "new deployment did not stay ready" >&2
 exit 1
 `
 
-const selfUpgradeRollbackScript = selfUpgradeKubeconfigPrelude + selfUpgradeDeploymentVerifier + selfUpgradeRevisionImage + `previous="$DOOPS_UPGRADE_REVISION"
+const selfUpgradeRollbackScript = selfUpgradeKubeconfigPrelude + selfUpgradeDeploymentVerifier + selfUpgradeRevisionImage + selfUpgradeRBACGuard + `previous="$DOOPS_UPGRADE_REVISION"
 python3 - "$ns" "$release" "$previous" <<'PY'
 import json, subprocess, sys
 ns, release, revision = sys.argv[1:4]
@@ -1618,6 +1697,11 @@ if len(current) != 1 or not any(int(row["revision"]) == int(revision) < current[
 PY
 expected="$(revision_image "$previous")"
 test "$expected" = "$DOOPS_UPGRADE_IMAGE" || { echo "rollback revision image changed after admission" >&2; exit 1; }
+current_manifest="${TMPDIR:-/tmp}/doops-rollback-current-manifest.yaml"
+rollback_manifest="${TMPDIR:-/tmp}/doops-rollback-target-manifest.yaml"
+helm get manifest "$release" -n "$ns" >"$current_manifest"
+helm get manifest "$release" -n "$ns" --revision "$previous" >"$rollback_manifest"
+verify_controller_rbac "$current_manifest" "$rollback_manifest"
 helm rollback "$release" "$previous" -n "$ns" --timeout 300s --wait
 kubectl -n "$ns" rollout status "deployment/${workload}" --timeout 300s
 verify_deployment "$expected" controller record

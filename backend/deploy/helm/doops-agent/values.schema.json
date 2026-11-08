@@ -68,6 +68,15 @@
         }
       }
     },
+    "rbac": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "type": "boolean"
+        }
+      }
+    },
     "kubeconfig": {
       "type": "object",
       "additionalProperties": false,
