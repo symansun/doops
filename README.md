@@ -124,6 +124,13 @@ doops -session acceptance exec --target <target> --cmd 'hostname'
 
 涉及发布、数据库写入或升级时，按对应权威文档执行授权、验收与回滚流程。
 
+## 开源协作
+
+- [贡献指南](CONTRIBUTING.md)
+- [开源维护规范](docs/OPEN_SOURCE_MAINTENANCE.md)
+- [安全报告](SECURITY.md)
+- [CNB 分支审计（固定于 2026-11-07）](docs/reports/cnb-branch-audit-2026-11-07.md)
+
 ## Contributors
 
 核心贡献者署名顺序：孙勇、高家祺、宋晨宇。欢迎通过 Issue 和 Pull Request 贡献。
