@@ -13,7 +13,7 @@
 
 ### P1 开发
 4. **审计强化**：审计导出（JSONL/CSV）、留存策略、高危操作告警通道；客户真实上线前必须完成
-5. **平滑发布/灰度**：双容器平滑切换的参考实现与示例 skill
+5. ✅ **平滑发布/灰度**（2026-11-08 完成）：`examples/skills/blue-green-release`——双容器 blue-green + nginx upstream 切换，可选 canary 权重灰度，`--rollback` 秒级回滚
 6. **飞书 AI 集成**：飞书机器人 @ 机器人下达运维任务（webhook → doops gateway 桥接），与数字员工工程对接
 
 ### 运营事项（线下执行，非代码）
