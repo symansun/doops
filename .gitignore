@@ -60,3 +60,7 @@ tmp-openwork/
 .DS_Store
 *.swp
 *.swo
+
+# Local agent tool state (nested git worktrees; never publish)
+.claude/
+.worktrees/
