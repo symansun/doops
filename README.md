@@ -11,8 +11,10 @@ app/                         Next.js routes and API proxy endpoints
 components/                  Console UI components
 lib/                         Browser and API client helpers
 backend/agent/               doops-agent, gateway hub, ACP bridge, scheduler
-backend/gateway/             doops-gateway compatibility entrypoint
-backend/cli/    doops CLI source and prebuilt CLI artifacts
+backend/gateway/             doops-gateway entrypoint
+backend/cli/                 doops CLI source
+backend/skills/              Operator Skill entrypoint
+backend/agent/skills/        Agent runtime skills
 backend/docs/                Runtime, deployment, and protocol documentation
 Dockerfile.web               Production web console image
 .cnb.yml                     CNB CI checks and immutable agent image publication
@@ -56,9 +58,16 @@ Run the same checks before publishing source:
 (cd backend/agent && go test ./...)
 (cd backend/gateway && go test ./...)
 (cd backend/cli && go test ./...)
+python3 -m pytest -q backend/test
+pnpm install --frozen-lockfile
 pnpm exec tsc --noEmit
 pnpm build
 ```
+
+The checked-in `.npmrc` uses npmjs for general dependencies and the public CNB
+registry for `@agent-cloud/agent-ui`. That package is not published on npmjs;
+its CNB metadata and versioned tarball support anonymous reads, and the lockfile
+pins its integrity. No private registry token is required for this checkout.
 
 ## Publishing Model
 

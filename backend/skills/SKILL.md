@@ -25,12 +25,13 @@ description: |
 
 权威源码是 doops.sh 仓库的 `backend/skills/SKILL.md`；项目里的 `.agent/skills/doops/` 是
 安装副本，只能通过 `scripts/install.sh` 从 Release CLI 内嵌 commit 同步，不要直接改副本。
+安装副本中的 `docs/` 相对 `SKILL.md`；维护脚本从 doops 源码仓库定位。
 
 ## 红线
 
-- 只用 `~/.local/bin/doops`。`-session <name>` 是操作上下文和并发归属，任意合法名字即可，
-  不需要事先创建，也不要求 Git worktree 或先 `push`；省略时 CLI 自动生成并打印到 stderr，
-  要延续同一工作区就复用那个名字。不要因为"没有 session 名"而停下来问。
+- 只用 `~/.local/bin/doops`。Agent 执行显式带 `-session <name>`，自行取名、不需预创建；
+  同一工作区复用，`pull` 必须用已有 session。控制面 HTTP 不消费该参数，也不因此获得
+  session 审计或隔离。完整语义见使用指南。
 - CLI 只接受 Gateway target；没有直连 target、SSH target 或按 target 保存的 token。
   Gateway 登录态按 Gateway URL 共享，target 配置只存路由。Agent 注册不用 token。
 - 凭据 payload 只走 stdin，不进入命令参数、prompt、日志、文档、提交或工作区。
@@ -38,9 +39,11 @@ description: |
   不要用 `exec` 输出密码再让用户粘贴；已有目标 Secret 用 `credential configure --from-secret` 导入。
 - 每次调用都等待 RPC 实际终态。取消 ACK、超时或断连缺少终态时报告 `outcome_unknown`，
   不自动重放 mutation，不宣称成功。
-- `ask` 的文字回答是模型写的摘要，不是状态证据，可能写错 revision 或答非所问。发布前后的
+- `ask` 的文字摘要不是状态证据。发布前后的
   Helm release、Deployment、Pod 状态用 `doops exec`（`helm history`、`kubectl get -o json`）
   或 `doops k8s` 只读入口回读，以回读结果为准。
+- 诊断和方案任务明确写只读；`--apply` 传递 target、范围、授权动作、原因与验收。
+  沿用同一任务的已有授权，新增对象或影响才交回上层确认。
 - 业务 workload 只用 `doops ask --apply` 发布。任务写明 target、服务范围、镜像版本或其
   授权来源、原因、验收条件；镜像版本不靠猜。发布者调用前自行核对 CI commit 与 digest。
 - 业务 workload 的发布收敛只走 `ask --apply` 内的 `mcp_doops_helm`，不用 shell kubectl、
@@ -51,8 +54,9 @@ description: |
   审计记下用户、target、session 和完整命令。不要用 `kubectl exec`、`docker exec` 或直连
   `42222` 绕过。`hostNetwork` 保持关闭，`/host` 只读。细节见 `docs/PHYSICAL_HOST_ACCESS.md`。
 - 嵌套 SSH 只用 `doops ssh` 的结构化入口，不拼进 `exec --cmd`。
-- 不用 base64、tar 或分片绕过 `push/pull`；大文件和二进制用 `pull`。
-- `read` / `write` / `push` / `pull` 默认走 COS。桶和密钥以 Gateway 配置为准，不使用 `--credential`。`--storage gateway` 才走原来的本地中转；COS 失败不回退。
+- 小文本用 `read/write`，目录和大文件用 `push/pull`；不用 base64、tar 或分片替代。
+- 文件传输默认走 Gateway 配置的 COS；`--storage gateway` 才走本地中转，失败不自动切换。
+- `pull` 用新下载目录；COS 覆盖同名文件，Git 中转会 `reset --hard`；不能指向业务仓库。
 - 长任务用 `exec --bg`，不在 `exec` 里用 `&`、`nohup`、`setsid`。
 - 发布镜像只由 CI 构建，不在业务 target 或本机构建。
 - Agent 不替换自己。升级入口按运行方式选择，互不自动 fallback：
@@ -61,7 +65,8 @@ description: |
   空服务器用 `scripts/bootstrap-host-agent.sh`。
 - Gateway 本体只用 `scripts/deploy-gateway.sh --source-commit <commit>` 从宿主机 SSH 发布，
   不登记为 target，不通过 target 发布。
-- 不在任何输出中暴露完整 token；签发 token 用 `doops admin token create`，不 SSH 改 Gateway DB。
+- token、建用户、生成密码会输出秘密；先读使用指南 “Gateway Admin Tokens”，只输出到
+  `0600` 私密文件，不读回对话。`--save-as` 不隐藏输出；不 SSH 改 Gateway DB。
 - 发布前核对 `doops version` 与 target 的 `release_commit` 一致；`cli-contract/v3` 和
   `structuredSSH` 都不证明 Agent 版本或自升级能力。
 
@@ -69,12 +74,14 @@ description: |
 
 | 需求 | 命令 |
 | :--- | :--- |
-| 本地 target / 在线检查 | `doops list`；`doops -session <s> targets --target <t>`；`doops sync --target <t>` |
+| 本地 target | `doops list` |
+| 同步在线 target 路由 | `doops sync [--target <t>]` |
+| 在线检查 | `doops targets --target <t>` |
 | 确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'` |
-| 进入 K8s Agent 所在节点 | `doops -session <s> exec --target <t> --cmd 'nsenter -t 1 -m -u -i -n -- hostname'`（`hostAccess.enabled` 默认 true；Gateway 按 `exec` 授权并审计） |
+| 进入 K8s Agent 所在节点 | `doops -session <s> exec --target <t> --cmd 'nsenter -t 1 -m -u -i -n -- hostname'`（须 `hostAccess.enabled=true`；Gateway 按 `exec` 授权并审计） |
 | 长任务 | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` |
 | 嵌套 SSH | `doops -session <s> ssh --target <t> --host <user@host> -- <cmd> [args...]` |
-| 诊断分析 | `doops -session <s> ask --target <t> --msg '<task>'` |
+| 诊断分析 | `doops -session <s> ask --target <t> --msg '只读检查 <对象与问题>，禁止变更；返回证据与结论'` |
 | 业务发布 | `doops -session <s> ask --target <t> --apply [--credential <name>...] --msg '<facts>'` |
 | DoSql 自然语言 | `doops -session <s> sql --target <t> --mode query\|plan\|discover [--database <name>] --request '<req>'` |
 | DoSql 原样查询 | `doops -session <s> sql --target <t> --mode query (--sql '<sql>'\|--file <f>) [--credential <name>]` |
@@ -84,20 +91,21 @@ description: |
 | Helm 只读 | `doops -session <s> k8s --target <t> helm list\|history\|status\|values <release> -n <ns>`（values 只给 key） |
 | K8s 运维变更 | `doops -session <s> k8s --target <t> rollout restart\|scale\|node cordon\|delete pod ... --confirm` |
 | DoWeb | `doops -session <s> web --target <t> --mode check\|plan\|apply --request '<req>'` |
-| 推送 / 拉取工作区 | `doops -session <s> push --target <t> --src <dir>`；`pull --dest <dir>`。默认走 Gateway 配置的 COS；`--storage gateway` 才走 Git 中转 |
-| OCI 镜像 | `image build`、`image copy`、`registry sync`（仓库认证由 Gateway 下发到目标） |
+| 小文本读写 | `doops -session <s> read --target <t> --path <file>`；`doops -session <s> write --target <t> --path <file> --file <local>` |
+| 工作区推送 / 下载 | `doops -session <s> push --target <t> --src <dir>`；`doops -session <existing-session> pull --target <t> --dest <new-download-dir>` |
+| OCI 镜像 | `doops -session <s> image build\|copy --target <t> ...`；`doops -session <s> registry sync --target <t> ...`（发布镜像由 CI 构建；推送/复制需授权） |
 | 一次配置凭据 | `doops -session <s> credential configure --target <t> --id <id> ...` |
 | 开发凭据预检 | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` |
 | 用户与授权 | `doops admin user create\|list`、`admin grant list\|add\|delete` |
 | 网站代理路由 | `doops admin proxy list\|set\|delete --target <t> ...`（`set --id` 只改传入字段） |
-| token | `doops admin token create\|list\|revoke` |
+| token | `doops admin token create\|list\|revoke`（私密签发见使用指南；普通 ask 不提供） |
 | Helm Agent 升级 / 回滚 | `doops -session <s> upgrade --target <t> --image <ref>`（`--dry-run` 只预览）；`upgrade --target <t> --rollback` |
 | CI 非交互登录 | `printf '%s' "$TOKEN" \| doops login --target <t> --token-stdin` |
 
 DoSql 必须从 `doops sql` 进入；普通 `ask` 不保证注入 DoSql 工具。Gateway 默认绑定当前 target
 上全部 active `use=database` 凭据，有多个数据库凭据时用 `--database <name>` 选库；同一库绑了
-应用账号和迁移账号时，`--sql/--file` 加 `--credential <name>` 选用其中一个（如 DDL 用迁移账号）。MongoDB 的 `--sql/--file` 是 JSON 操作文档
-（读写、事务、索引、explain、currentOp、findAndModify、重命名等），不含用户管理。完整参数和 `dosql_*` 错误类别见
+应用账号和迁移账号时，`--sql/--file` 加 `--credential <name>` 选账号。MongoDB 使用 JSON
+操作文档，不含用户管理。完整参数和 `dosql_*` 错误类别见
 `docs/DOOPS_USAGE_GUIDE.md`，凭据分步命令见 `docs/CREDENTIAL_RESOURCES.md`。
 自然语言变更需求先落实为 SQL，再按已明确授权的 target、数据库和变更范围执行；不要求用户
 每次重复批准。范围不清或超出已有授权时才补充确认。事务、DDL 和验收边界见使用指南。
@@ -108,8 +116,7 @@ DoSql 必须从 `doops sql` 进入；普通 `ask` 不保证注入 DoSql 工具�
 
 场景链路由 CLI 自己给出，和当前安装的二进制一致：`doops guide` 列出场景，
 `doops guide <onboard|diagnose|release|credential|database|upgrade|user|files>` 打印按顺序执行的命令。
-命令失败时按输出里的 `next:` 指引处理，并遵守其中的前提条件；数据库 dry-run 的引擎和
-语句限制见 `docs/DOOPS_USAGE_GUIDE.md`。
+命令失败时核对 `next:` 的前提与授权，不重放结果未知的变更。数据库 dry-run 限制见使用指南。
 
 ## 安装与升级
 
@@ -135,4 +142,5 @@ DoSql 必须从 `doops sql` 进入；普通 `ask` 不保证注入 DoSql 工具�
   见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
 - target 不可见：空结果可能是离线，也可能是缺少精确 grant，不能直接断言集群宕机。
 - `busy=true` 只表示 Agent 自升级占用整个 target；普通操作按 session/资源互斥，语义见 `docs/DOOPS_GATEWAY_TUNNEL.md`。
-- `push/pull` 失败：确认 `/v1/git/<cluster>/<instance>/<session>.git` 能路由到在线 Agent。
+- `push/pull` 失败：核对 target 在线及 session 工作区；`push` 返回已同步才确认文件就绪。
+  不换用 base64、tar 或分片重试。

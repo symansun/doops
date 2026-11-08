@@ -52,9 +52,8 @@ doops -session preflight exec --target <configured-target> --cmd hostname
 所以必须先有 git 和一份包含该提交的仓库克隆：
 
 1. 安装 git：macOS 用 `brew install git`，Debian/Ubuntu 用 `apt install git`。
-2. 克隆仓库，二选一（需要对应平台的访问权限）：
-   `git clone https://github.com/symansun/doops.git` 或
-   `git clone https://github.com/l8ai-cn/doops.git`。
+2. 克隆公开仓库：
+   `git clone https://github.com/symansun/doops.git`。
 3. 在仓库根目录执行 `git fetch --tags`，再运行安装脚本：
 
 ```bash

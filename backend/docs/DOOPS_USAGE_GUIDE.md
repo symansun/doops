@@ -2,10 +2,33 @@
 
 This guide holds command-level usage details. The skill file is only the entry point.
 
-`-session <s>` names the operation context and its `/root/ws/<s>` workspace. Any valid name
-works and nothing has to be created first. When it is omitted, the CLI generates `ses_<16 hex>`,
-prints it to stderr, and proceeds; pass that name again to continue in the same workspace.
-`pull` is the exception: it needs the existing session whose workspace it downloads.
+For Agent execution/workspace commands, `-session <s>` names the operation context and
+`/root/ws/<s>` workspace. Choose a valid name without asking the user or pre-creating it.
+Commands using `resolveSession` generate `ses_<16 hex>` on stderr when omitted; reuse it
+to continue the same task. `pull` requires the existing session whose workspace it downloads.
+Gateway HTTP commands such as `targets`, `sync`, `admin`, `login`, and credential metadata
+listing do not forward the global session flag; adding it does not add session audit or isolation.
+Local commands such as `list`, `version`, `guide`, and `logout` do not use a remote workspace.
+An operator may require the global flag on all remote calls as a naming convention, but it
+does not change these implementation boundaries.
+
+## Source And Installed Paths
+
+Daily operations use the business project directory and `~/.local/bin/doops`. In an installed
+Skill, `docs/` is relative to `SKILL.md`; the source documents live in `backend/docs/`.
+The installer copies the operator entrypoint and documents, not maintenance scripts.
+
+For Skill edits or installation/release maintenance, first locate the DoOps checkout and verify
+its Git root, remote, `AGENTS.md`, `backend/skills/SKILL.md`, and required script. Run documented
+`scripts/<name>.sh` maintenance commands from `backend/`; the root `scripts/install.sh` is the
+installer wrapper. Resolve `--project` before changing directory so `$PWD` does not silently
+select the DoOps checkout. Missing source blocks maintenance, not ordinary CLI queries;
+do not create lookalike scripts in the business project.
+
+Agent skill sources are separate: `backend/agent/skills/` is copied to `/app/skills`, then
+synchronized into `/root/.agent/skills/` by the entrypoint. The prompt handler injects
+`system_prompt.md`. Agent reference documents live at `/app/self-docs/docs/`.
+The operator installer does not distribute Agent subskills or update a running Agent.
 
 ## Command Choice
 
@@ -19,11 +42,11 @@ prints it to stderr, and proceeds; pass that name again to continue in the same 
 | Add a Gateway target | `doops add --name <n> --gateway <url> --cluster <c> --instance <i>` | Stores routing only; never stores a target token. |
 | Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Known checks and explicitly requested operations; standard releases use `ask --apply`. |
 | Sync OCI images | `doops -session <s> registry sync --target <t> --source-registry <src> --target-registry <dst> --tag <release> --image <name>` | Generic target-side `skopeo copy --all`, bounded timeout/retry, and manifest digest verification; auth payloads never enter CLI arguments. `--source-authfile` / `--target-authfile` are optional overrides for the authfile the Gateway delivered to the target. |
-| Build an OCI image | `doops -session <s> image build --target <t> --context <remote-dir> --output oci --output-path <remote-file>` | Generic BuildKit build; supports `--platform` and `--output image --image <ref> --push` for a registry push. |
+| Build an OCI image | `doops -session <s> image build --target <t> --context <remote-dir> --output oci --output-path <remote-file>` | Generic BuildKit tool, not a substitute for CI release builds. `--output image --image <ref> --push` writes to a registry and needs that destination in the authorized scope. |
 | Copy an OCI image | `doops -session <s> image copy --target <t> --source <ref> --destination <ref>` | Generic Skopeo transport-to-transport copy with optional authfiles and raw manifest digest verification. |
 | Run nested SSH safely | `doops -session <s> ssh --target <t> --host <user@host> -- <command> [args...]` | Preserves remote argv across nested shells. |
 | Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | One RPC waits for the Agent task's terminal result; no task-status polling or command retries. |
-| Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
+| Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg 'Read-only: <target, object and question>; no changes; return evidence'` | Delegate the original target, scope and restrictions. A diagnostic or plan request does not authorize mutation. |
 | Run a release | `doops -session <s> ask --target <t> --apply --credential <name> --msg '<facts>'` | Canonical business workload CI/CD entry. |
 | DoSql read-only query or scan | `doops -session <s> sql --target <t> --mode query [--database <name>] --request '<request>'` | Automatically binds every active database credential on the selected Gateway target; `--database` picks among several. No local connection file is read. |
 | DoSql live schema inspection | `doops -session <s> sql --target <t> --mode query [--database <name>] --request '读取指定 database_asset_id 的表、列或索引结构'` | Uses one read-only engine catalog/information-schema query. `discover` only finds Kubernetes database assets; it does not inspect live tables. |
@@ -36,7 +59,7 @@ prints it to stderr, and proceeds; pass that name again to continue in the same 
 | DoWeb site plan | `doops -session <s> web --target <t> --mode plan --request '<site publish request>'` | Produces SiteSpec, Nginx plan, checks and rollback without mutation. |
 | DoWeb controlled publish | `doops -session <s> web --target <t> --mode apply --credential <web-resource> --request '<site, dist, domain, proxy, acceptance>'` | Requires the target grant and `nginx -t`/reload/health evidence. |
 | Push a local directory | `doops -session <s> push --target <t> --src <dir>` | Syncs into `/root/ws/<session>`. |
-| Pull a remote workspace | `doops -session <s> pull --target <t> --dest <dir>` | Use for large files and binary assets. |
+| Pull a remote workspace | `doops -session <existing-session> pull --target <t> --dest <new-download-dir>` | Use for large files and binary assets; do not overwrite a business checkout. See the workspace transfer section. |
 | Read small text | `doops -session <s> read --target <t> --path <file>` | Small text only. |
 | Write small text | `doops -session <s> write --target <t> --path <file> --file <local>` | Also supports `--content` and stdin. |
 | Read system information | `doops -session <s> info --target <t>` | CPU, memory and disk metadata. |
@@ -246,31 +269,32 @@ CLI 原样输出通知文本（含 JSON、空行、分块）；超时会请求�
 给用户签发 token 时，优先用 CLI 管理入口，不要 SSH 到 gateway 主机手工跑
 `doops-gateway token create`：
 
+签发前核对用户、有效期和私密交付位置。以下 Bash 示例把输出直接写进本机新建的
+`0700` 目录和 `0600` 文件；只汇报退出状态和路径，不读取文件内容到对话、日志或审查附件。
+已有授权覆盖该用户和有效期时直接执行；缺少安全交付方式时先停在签发方案。
+
 ```bash
+set -euo pipefail
+umask 077
+token_dir=$(mktemp -d "${TMPDIR:-/tmp}/doops-token.XXXXXX")
 doops admin token create \
-  --target jm \
-  --user gaojiaqi \
+  --target <gateway-target> \
+  --user <username> \
   --name maintenance \
-  --expires 720h
+  --expires 720h > "$token_dir/token.txt"
+printf 'Token delivery file: %s\n' "$token_dir/token.txt"
 ```
 
 `--target` 必须是本地配置里的 gateway target，并且它当前使用的 token 要有
-`admin` 权限。新 token 只打印一次；需要写入本机缓存时显式使用：
-
-```bash
-doops admin token create \
-  --target jm \
-  --user gaojiaqi \
-  --name maintenance \
-  --expires 720h \
-  --save-as jm
-```
+`admin` 权限。`--save-as <configured-target>` 仍会打印 token，也会改写该目标 Gateway 的
+本机缓存（同 Gateway 的目标共享登录态）；只有需要替换该登录态时才使用，并继续捕获 stdout。
+交付文件含秘密，不加入仓库；仅在用户完成交付且不再需要时清理本次创建的文件。
 
 查看 token 元数据和撤销旧 token：
 
 ```bash
-doops admin token list --target jm
-doops admin token revoke --target jm --id <token-id>
+doops admin token list --target <gateway-target>
+doops admin token revoke --target <gateway-target> --id <token-id>
 ```
 
 列表只返回 ID、前缀、归属和状态，不返回 token 明文。管理员凭据只从
@@ -283,17 +307,21 @@ CLI 已封装用户创建、API key 签发和精确 target grant 管理。管理
 文档中。用户密码只通过 stdin、交互式终端或 `--generate-password` 输入，禁止放入命令
 参数或自然语言 prompt。
 
-创建新用户并签发 API key：
+创建新用户会输出 API key；`--generate-password` 还会输出密码。按上节同样的私密交付方式
+捕获 stdout，不把终端输出作为成功证据贴回对话：
 
 ```bash
-printf '%s' '<PASSWORD_FROM_SECURE_INPUT>' | \
-  doops admin user create \
+set -euo pipefail
+umask 077
+user_dir=$(mktemp -d "${TMPDIR:-/tmp}/doops-user.XXXXXX")
+doops admin user create \
   --target <gateway-target> \
   --user <username> \
-  --password-stdin \
+  --generate-password \
   --grant-target <allowed-target> \
   --name user-create \
-  --expires 720h
+  --expires 720h > "$user_dir/access.txt"
+printf 'User delivery file: %s\n' "$user_dir/access.txt"
 ```
 
 `--grant-target` 可以重复。没有指定时，CLI 会删除后端 bootstrap grant，不授予任何
@@ -556,6 +584,13 @@ doops -session build pull --target jm --dest ./doops-build-output
 Use `pull` for large files, archives, SQL dumps, images, videos, and generated assets. Do not use `read` or `exec base64` for downloads.
 
 `pull` reads the snapshot manifest from the Gateway's COS bucket and downloads that commit into `--dest`. `--commit` selects a snapshot. `--storage gateway` keeps the Git pull.
+
+Always choose a new, task-owned download directory. With Git relay, an existing Git destination
+is fetched and reset with `git reset --hard FETCH_HEAD`, without a dirty-worktree refusal.
+COS downloads can replace matching paths as well. Reuse only a download directory owned by
+this task after checking that no local changes need preserving; never point `pull` at a business
+checkout. Do not delete existing files merely to make the command succeed.
+Current `exec` and `ask` do not automatically download `deploy.sh`; fetch wanted artifacts explicitly.
 
 ## Read And Write
 

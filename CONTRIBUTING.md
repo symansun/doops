@@ -28,13 +28,13 @@
 (cd backend/agent && go test ./...)
 (cd backend/gateway && go test ./...)
 (cd backend/cli && go test ./...)
-python3 -m pytest -q test/test_sandbox_image_contract.py
+python3 -m pytest -q backend/test
 ```
 
 发布 CLI 预构建包时，还要运行：
 
 ```bash
-bash scripts/build-cli.sh --all
+bash backend/scripts/build-cli.sh --all
 git diff --check
 ```
 
