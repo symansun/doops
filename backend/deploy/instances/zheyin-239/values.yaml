@@ -1,0 +1,53 @@
+# Live Helm values recorded 2026-11-08; DoAgent 0.2.42 / DoOps v1.3.123.
+doagentSettings:
+  key: settings.json
+  secretName: doops-agent-239-agent-settings
+gateway:
+  cluster: doops-zheyin
+  instance: node-239
+  url: https://doops.l8ai.cn
+hostAliases: []
+image:
+  digest: sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a
+  pullPolicy: Always
+  repository: docker.cnb.cool/l8ai/ai/doops.sh
+imagePullSecrets:
+- name: aiedulab-regcred
+modelRouting:
+  policy: single-model
+nodeSelector:
+  kubernetes.io/hostname: cluster-node0014.172.16.50.239
+resources:
+  limits:
+    nvidia.com/gpu: 1
+runtimeClassName: nvidia
+tolerations:
+- operator: Exists
+volumeMounts:
+- mountPath: /opt/doagent_config
+  name: doagent-config
+  readOnly: true
+- mountPath: /root
+  name: agent-home
+- mountPath: /root/.kube
+  name: root-kube
+  readOnly: true
+- mountPath: /var/run/docker.sock
+  name: docker-sock
+volumes:
+- hostPath:
+    path: /var/lib/doops-agent-home-239
+    type: DirectoryOrCreate
+  name: agent-home
+- hostPath:
+    path: /root/.kube
+    type: DirectoryOrCreate
+  name: root-kube
+- hostPath:
+    path: /var/run/docker.sock
+    type: Socket
+  name: docker-sock
+workload:
+  name: doops-agent-239
+  selectorLabels:
+    app: doops-agent-239

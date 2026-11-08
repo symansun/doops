@@ -1,0 +1,36 @@
+gateway:
+  cluster: doops-unicom
+  instance: unicom-k8s
+  url: https://doops.l8ai.cn
+hostAccess:
+  enabled: true
+hostAliases: []
+image:
+  repository: docker.cnb.cool/l8ai/ai/doops.sh
+  digest: sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+kubeconfig:
+  source: serviceAccount
+nodeSelector:
+  kubernetes.io/hostname: k8s-master
+proxy:
+  allowedHosts: ''
+serviceAccount:
+  name: doops-unicom-agent
+tolerations:
+- effect: NoSchedule
+  key: node-role.kubernetes.io/control-plane
+  operator: Exists
+volumeMounts:
+- name: agent-home
+  mountPath: /root
+volumes:
+- name: agent-home
+  hostPath:
+    path: /var/lib/doops-agent
+    type: DirectoryOrCreate
+workload:
+  name: doops-agent
+  selectorLabels:
+    app: doops-agent

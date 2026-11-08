@@ -1,0 +1,42 @@
+# Live Helm values recorded 2026-11-08; DoAgent 0.2.42 / DoOps v1.3.123.
+gateway:
+  cluster: doops-235
+  instance: hdu-235
+  url: https://doops.l8ai.cn
+hostAccess:
+  enabled: false
+hostAliases: []
+image:
+  digest: sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a
+  pullPolicy: IfNotPresent
+  repository: docker.cnb.cool/l8ai/ai/doops.sh
+imagePullSecrets: []
+kubeconfig:
+  source: mounted
+nodeSelector:
+  kubernetes.io/hostname: 1e07451bc39b
+proxy:
+  allowedHosts: ''
+tolerations: []
+volumeMounts:
+- mountPath: /etc/rancher/k3s/k3s.yaml
+  name: kubeconfig
+  readOnly: true
+- mountPath: /root/.kube/config
+  name: kubeconfig
+  readOnly: true
+- mountPath: /root
+  name: agent-home
+volumes:
+- hostPath:
+    path: /etc/rancher/k3s/k3s.yaml
+    type: File
+  name: kubeconfig
+- hostPath:
+    path: /var/lib/doops-agent
+    type: DirectoryOrCreate
+  name: agent-home
+workload:
+  name: doops-agent
+  selectorLabels:
+    app: doops-agent

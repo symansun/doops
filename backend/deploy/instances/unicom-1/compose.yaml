@@ -1,0 +1,71 @@
+name: doops-agent
+services:
+  doops-agent:
+    restart: unless-stopped
+    container_name: doops-agent
+    command:
+    - -gateway-url
+    - https://doops.l8ai.cn
+    - -cluster
+    - doops-unicom
+    - -instance
+    - unicom-1
+    entrypoint: null
+    image: docker.cnb.cool/l8ai/ai/doops.sh@sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a
+    network_mode: host
+    pid: host
+    privileged: true
+    volumes:
+    - type: bind
+      source: /opt/doops-agent/config/settings.json
+      target: /opt/doagent_config/settings.json
+      read_only: true
+      bind: {}
+    - type: volume
+      source: doops-workspace
+      target: /root/ws
+      volume: {}
+    - type: volume
+      source: doops-agent-state
+      target: /root/.agent
+      volume: {}
+    - type: bind
+      source: /var/run/docker.sock
+      target: /var/run/docker.sock
+      bind: {}
+    - type: bind
+      source: /root/.kube
+      target: /root/.kube
+      read_only: true
+      bind: {}
+    - type: bind
+      source: /etc/kubernetes
+      target: /etc/kubernetes
+      read_only: true
+      bind: {}
+    - type: bind
+      source: /
+      target: /host
+      read_only: true
+      bind: {}
+    - type: bind
+      source: /etc/kubernetes/admin.conf
+      target: /root/.kube/config
+      read_only: true
+      bind:
+        create_host_path: true
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -fsS
+      - http://127.0.0.1:42222/health/ready
+      timeout: 5s
+      interval: 30s
+      retries: 3
+      start_period: 30s
+volumes:
+  doops-agent-state:
+    name: doops-agent_doops-agent-state
+  doops-workspace:
+    name: doops-agent_doops-workspace

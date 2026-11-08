@@ -419,7 +419,22 @@ K3s/containerd 操作机优先传入已核验 digest。仅更换镜像时不传�
 新集群还没有 Agent 时，同一条命令改传完整 `--values` 和本机 kubeconfig，走这份
 Chart 的 `helm upgrade --install`。已有非 Helm workload 按上面的收编方式进入 Helm。
 
+### 已核验实例的发新停旧
+
+旧镜像已从 registry 删除但旧实例仍健康时，先保留旧实例，独立部署固定镜像的
+候选，完成 Gateway、Pod 身份和真实模型调用验收后才卸载旧 release。
+2026-11-08 `unicom-k8s` 的单次 Job、配置、输入校验和恢复路径见
+[该实例操作记录](../deploy/instances/unicom-k8s/README.md)。
+Job 明确绑定旧 release/revision，不能直接复用于其他实例或重放未知结果。
+
 ### 独立 DockerHost 发布
+
+Compose 管理的容器不能交给下述独立 Docker 控制器。2026-11-08 的
+`unicom-1` 升级使用已核验该实例身份的独立 systemd 事务，保留 Compose、
+固定镜像和相同的既有 kubeconfig；配置备份、缓存旧镜像、失败自动恢复及
+Gateway/真实模型验收见
+[该实例操作记录](../deploy/instances/unicom-1/README.md)。
+这是绑定该次容器基线的单次控制器，不能套用于其他 Compose 项目。
 
 已有独立 Docker Agent 使用 `backend/scripts/release-host-agent.sh` 和同目录
 `release-host-agent.py`，由外部宿主控制器执行；不由当前 Agent 替换自己，
