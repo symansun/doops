@@ -5,10 +5,12 @@
 用户授权升级全部 13 个已配置 DoOps target。本记录不表示全部完成。
 本轮保持原部署方式、模型来源、数据、网络及权限；未发布业务 workload。
 
-截至 2026-11-08 16:20（Asia/Shanghai），8 个 target 已运行 DoAgent 0.2.42，
-版本、ACP 健康和至少一次真实模型工具调用已验证；5 个 target 仍未完成。
-联通 K8s 与 Compose 的独立升级控制器均已返回成功终态。本轮全环境浏览器
-验收仍未完成，不能将后端验收等同完整发布闭环。后文的早期进度保留时间边界。
+截至 2026-11-08 23:32（Asia/Shanghai），9 个 target 实际运行 DoAgent 0.2.42；
+其中原 8 个已有版本、ACP 健康和真实模型工具调用证据。Silicon 的版本与健康
+通过，但首次模型下发暴露出确定的代码缺陷，因此仍有 5 个 target 未完成验收。
+联通 K8s、Compose 及 Silicon 的独立升级控制器均已返回成功终态。本轮全环境
+浏览器验收仍未完成，不能将后端验收等同完整发布闭环。早期进度保留时间边界，
+当前结论以文末的 23:32 复核为准。
 
 - DoAgent `0.2.42`：`08ecb0193767f559844d985cc7365484c61bf9c5`。
 - DoOps `v1.3.123`：`8683d67174e19a1750e9b19de99a0816cdb8ea79`。
@@ -233,3 +235,105 @@ Ego TaskSpace 274 已不存在，16:12 再次检查空间列表仍无此空间�
 本轮没有新建空间绕过浏览器控制。全环境浏览器路径尚未完成。
 最终版本清单、联通模型调用和 Compose 回执见同目录 evidence 中的 JSON；
 所有文件仅包含状态和工具输出，不包含凭据 payload。
+
+## 23:32 全量复核与 Silicon 首次模型下发缺陷
+
+本轮重新查询全部 13 个配置 target，原 8 台与 Silicon 均返回 DoAgent 0.2.42、
+ACP `status=ok`。ZYJ 仍为其他工作流发布的 DoOps v1.3.124，其他 8 台为本任务
+固定的 v1.3.123；没有降级 ZYJ。SCU 仍为 0.2.39 / v1.3.116，Keyi 仍为
+v1.3.43 且没有 DoAgent，114/JM 仍不可见。
+原始回读见 `evidence/2026-11-08-doagent-042-all/current-targets-2320.json`。
+
+### Silicon 部署终态
+
+- PR #92 已合入 main `1282639c`，完整 main CI `cnb-5uh-1k6t8nalc`
+  与固定制品发布 CI `cnb-rl3-1k6sg8rga` 本轮均实际回读 `success`。
+- 外部控制器容器
+  `1324a5e99511b780306d86e58d7215cca6e67c90a3a90a40b457be40b200528d`
+  于 17:50:56（Asia/Shanghai）以 exit 0 结束。日志包含精确新容器 ID、
+  回滚名及 `state.json` 路径的 `host_upgrade_ready` 终态；本轮未重新启动控制器。
+- 当前容器
+  `537b481436243cb61592780d589cba59d708a6d5b96045591190b1737ac303eb`
+  使用固定平台 manifest `fd20c510...`，实际 config digest 为 `6cde872a...`。
+  命令、入口、环境、工作目录、用户、端口声明以及网络、PID 模式、privilege、
+  restart policy、bind mounts 均逐字段与保留的旧容器相等。
+- 原容器 `fb0fefdead6a551d58faf742156cddb4325ab14554a9b5c3b4508122bd072d19`
+  保留为 `doops-agent-rollback-doagent-silicon-042-20261108`。
+  已投递控制器 SHA256 `5808e03721fdbea9bb27f6266805e1a840a907ef0796b38de9b07cb9dcf285c1`
+  与提交文件相等。
+- ACP 端口是 7750；Agent readiness 端口由原容器参数回读为 **42223**。
+  首次误用默认 42222 的检查失败，后续按真实参数检查 42223 返回 `ready`。
+  失败记录保留在 `silicon-current-2331.json`，纠正后的证据为
+  `silicon-health-2332.json`，没有覆盖失败证据。
+
+### 模型功能失败的代码链路
+
+Silicon 的旧只读挂载 `/opt/doagent_config/settings.json` 中有
+`minimax/MiniMax-M3`。其 MiniMax provider 完整配置的规范化 SHA256 与
+Gateway 已管理的 `zyj-existing-doagent-model` 对应 provider 相等；仅比较
+指纹和配置元数据，未输出密钥。旧文件另外含其他 provider 和图像模型配置，
+不能把单个主模型相等说成整个配置文件相等。
+
+23:25 为 Silicon 新建同源主模型的精确 target binding：
+`credgrant_be035e0695b12395a21886bc`。对 active version 调用 staged-only verify
+明确返回 `credential_version_not_staged`；随后通过正常 `doops ask` 触发
+active version 下发，得到 `credential_secret_get_failed`，尚未进入模型推理。
+真实失败记录见 `silicon-model-delivery-failed-2326.json`。
+本轮已通过 `credential grant-revoke` 撤销该 binding，并收到 `revoked=true`；
+共享资源及其他 target 的绑定没有变更。
+
+23:40 在 Silicon 原地将旧文件中的主模型字段通过 stdin 传给
+`do-agent model probe --timeout-secs 60`，真实模型请求返回
+`status=verified`、exit 0，见 `silicon-existing-model-probe.json`。
+该探测不写 runtime settings，只返回状态；它证明现存主模型来源有效，
+不能替代经 Gateway 的 AI 对话验收。
+
+在固定发布 commit `8683d67174e19a1750e9b19de99a0816cdb8ea79` 上可证明：
+
+1. `model_provider_delivery.go` 的 `deliverModelProvider` 在物化之前总是调用
+   `cleanupCredentialMaterializationContext`。
+2. `credential_runtime.go` 构造 cleanup 参数时未发送已有的 `CredentialType`。
+3. `cleanupModelProviderCredential` 在本地尚无 delivery record 时返回
+   `(false, nil)`，只表示没有匹配的本地模型记录。
+4. 通用 `cleanupCredential` 随后继续走 Kubernetes Secret 清理；独立 Docker
+   节点没有 kubeconfig，因此 `getCredentialSecret` 返回上述错误。
+5. 模型物化本身直接写固定 settings 文件，不需要 Kubernetes。阻断发生在
+   无关的前置清理，健康接口不会检测到这个失败。
+
+因此本轮不能将 Silicon 记为功能验收成功，也不能通过伪造 delivery record、
+复制 payload 到运行配置或挂入无关集群的 kubeconfig 绕过它。
+尚未实际执行回滚：旧 v1.3.117 entrypoint 同样要求 Gateway 下发模型，
+回滚不能证明会修复该缺陷；已健康的新 runtime 和可恢复旧容器均保留。
+
+修复必须让清理过程依据可信凭据类型选择存储，原生模型未落盘时应幂等成功，
+同时保留其他 grant 的所有权边界、错误传播和审计。验收至少包含无 kubectl/
+无 kubeconfig 的首次下发、重连、重复清理、其他 grant 不被删除、失败与撤销。
+当前 Agent cleanup 解码器启用 `DisallowUnknownFields`，直接给旧协议添加
+字段会破坏混合版本集群；修复方案需要明确滚动升级协议，不能直接宣称
+“Gateway 先升级即可兼容”。这需要新的、经过 CI 验证的不可变 DoOps 制品，
+不能改变 v1.3.123 的既有 tag/digest。本轮没有改动运行代码或发布额外版本。
+
+### 其他未完成项的新证据
+
+- SCU：root 是容器内的 root。实际 mountinfo 无宿主根、Docker/containerd
+  socket 或宿主 kubeconfig；`kubectl auth can-i --list` 只有权限自查及 API
+  discovery。没有部署权限，需恢复已授权的独立集群管理入口。
+- Keyi：OpenEuler x86_64，systemd 单元运行
+  `/usr/local/bin/doops-agent -gateway-url https://doops.l8ai.cn -cluster keyi -instance keyi -port 42222`。
+  无 Docker/Podman、无 DoAgent，但有 containerd 与现成 Kubernetes 管理配置；
+  `kubectl auth can-i create deployments --all-namespaces` 返回 yes，
+  集群三个控制面节点均 v1.31.14。它并非无法管理，待确定新增原生 DoAgent
+  运行时还是迁为标准 Helm Agent，以及其模型来源后再发布。
+- 114/JM：本轮 target 查询仍不可见。没有将其解释成确定宕机。
+  本地默认 kubeconfig 仅有 docker-desktop；SSH 配置中仅发现已知 114 地址，
+  没有发现新的 SCU/JM 管理入口。
+- 浏览器 TaskSpace 274 仍不存在；已回读当前空间列表确认。
+  ego-browser 的规则禁止用新空间恢复已丢失的任务空间，页面验收仍需用户
+  允许重建空间。Ego Lite 提示有更新，本轮未升级浏览器。
+
+### 下一轮入口
+
+先解决原生模型清理协议缺陷及所需新制品范围；Keyi 明确部署形态与模型来源；
+SCU/114/JM 恢复可用的管理入口；获准重建浏览器空间后完成全环境页面验收。
+已有四台旧 Helm 镜像 index 缺失的回滚风险仍在，不能因新增证据而从结论中删除。
+目标保持未完成，不把“9 台版本正确”替代“全部环境健康且功能通过”。

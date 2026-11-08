@@ -59,3 +59,21 @@ If any post-replacement acceptance fails, invoke the same controller with
 `--rollback` and the same controller ID/session. Do not replay an unknown
 Docker launch or start a second controller while the first receipt is
 non-terminal.
+
+## Observed result on 2026-11-08
+
+The apply controller exited 0 at 09:50:56Z and reported `host_upgrade_ready`.
+The replacement is
+`537b481436243cb61592780d589cba59d708a6d5b96045591190b1737ac303eb`.
+Its image, runtime versions, ACP port 7750, and Agent readiness port **42223**
+were verified. The original container remains under the documented rollback
+name. Do not launch the controller again for this release.
+
+Functional acceptance remains incomplete: first delivery of an active
+`modelProvider` fails with `credential_secret_get_failed` on this host without
+Kubernetes. Generic credential cleanup attempts a Kubernetes Secret read when
+no native model delivery record exists. The attempted binding was revoked;
+neither a fabricated record nor a foreign kubeconfig was installed.
+See `docs/reviews/2026-11-08-doagent-042-all-environments.md` for the reproduction,
+source path, current evidence, and required repair. `host_upgrade_ready` alone
+does not mean the model smoke passed.

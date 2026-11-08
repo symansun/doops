@@ -1,0 +1,25 @@
+{
+  "at": "2026-11-08T23:38:50.783045+08:00",
+  "checks": {
+    "silicon_binding_after_revoke": {
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "keyi_os": {
+      "returncode": 0,
+      "stdout": "[TARGETING] Server: gw-keyi (https://doops.l8ai.cn -> keyi/keyi), Use: Keyi control plane\nNAME=\"openEuler\"\nVERSION=\"22.03 LTS\"\nID=\"openEuler\"\nVERSION_ID=\"22.03\"\nPRETTY_NAME=\"openEuler 22.03 LTS\"\nANSI_COLOR=\"0;31\"\n\n",
+      "stderr": ""
+    },
+    "main_ci": {
+      "returncode": 0,
+      "stdout": "status: 200\ncontentType: application/json; charset=utf-8\ndata:\n  status: success\n  pipelinesStatus:\n    \"cnb-5uh-1k6t8nalc-001\":\n      id: cnb-5uh-1k6t8nalc-001\n      name: ci\n      status: success\n      duration: 1121764\n      metricCoreHours: 1.24\n      metricDuration: 1112477\n      stages[13]{status,duration,name,id}:\n        success,21877,Prepare,prepare\n        success,17457,prepare tools,stage-0\n        success,83914,release contract tests,stage-1\n        success,342375,agent tests,stage-2\n        success,2436,gateway tests,stage-3\n        success,19070,cli tests,stage-4\n        success,91703,web build,stage-5\n        success,12749,resolve immutable agent base,stage-6\n        success,97166,build immutable agent images,stage-7\n        success,107727,build immutable web image,stage-8\n        success,325203,BeforeEnd,beforeEnd\n        skipped,0,DebugDetection,debugDetection\n        success,2804,End,end\n      labels[4]:\n        - key: ARCH\n          value[1]: amd64\n        - key: cpus\n          value[1]: 4\n        - key: memory\n          value[1]: 8\n        - key: vscode\n          value[1]: 远程开发\n      ip: 10.235.16.13\n",
+      "stderr": ""
+    },
+    "release_ci": {
+      "returncode": 0,
+      "stdout": "status: 200\ncontentType: application/json; charset=utf-8\ndata:\n  status: success\n  pipelinesStatus:\n    \"cnb-rl3-1k6sg8rga-001\":\n      id: cnb-rl3-1k6sg8rga-001\n      name: publish-release\n      status: success\n      duration: 1264629\n      metricCoreHours: 1.4\n      metricDuration: 1256506\n      stages[17]{status,duration,name,id}:\n        success,17142,Prepare,prepare\n        success,171,require a release tag,stage-0\n        success,17535,prepare tools,stage-1\n        success,95823,release contract tests,stage-2\n        success,357607,agent tests,stage-3\n        success,2163,gateway tests,stage-4\n        success,16660,cli tests,stage-5\n        success,108635,web build,stage-6\n        success,31058,resolve release agent base,stage-7\n        success,103488,build release agent image,stage-8\n        success,113552,build release web image,stage-9\n        success,60164,build CLI release assets,stage-10\n        success,5135,publish CLI release assets,stage-11\n        success,5310,verify published CLI release assets,stage-12\n        success,330108,BeforeEnd,beforeEnd\n        skipped,0,DebugDetection,debugDetection\n        success,2485,End,end\n      labels[4]:\n        - key: ARCH\n          value[1]: amd64\n        - key: cpus\n          value[1]: 4\n        - key: memory\n          value[1]: 8\n        - key: vscode\n          value[1]: 远程开发\n      ip: 10.235.16.13\n",
+      "stderr": ""
+    }
+  }
+}
