@@ -138,6 +138,13 @@ Before agent `exec`, the [dispatcher](backend/agent/internal/dispatcher/dispatch
 
 Agent environment variables control these rules: `DOOPS_BLOCK_EXTRA` appends semicolon-separated regexes, `DOOPS_BLOCK_DISABLE` disables comma-separated rule IDs, and `DOOPS_BLOCK_OFF=1` disables guardrails for emergencies. Regex guardrails cannot cover every encoded or indirect command; target authorization and operating discipline still apply.
 
+## Contributing
+
+- [Contribution guide](CONTRIBUTING.md)
+- [Open-source maintenance policy](docs/OPEN_SOURCE_MAINTENANCE.md)
+- [Security reporting](SECURITY.md)
+- [Public release audit — November 8, 2026](docs/reports/public-release-audit-2026-11-08.md)
+
 ## Contributors
 
 Core contributors, in attribution order:

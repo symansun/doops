@@ -134,6 +134,13 @@ doops -session acceptance exec --target <target> --cmd 'hostname'
 
 涉及发布、数据库写入或升级时，按对应权威文档执行授权、验收与回滚流程。
 
+## 开源协作
+
+- [贡献指南](CONTRIBUTING.md)
+- [开源维护规范](docs/OPEN_SOURCE_MAINTENANCE.md)
+- [安全报告](SECURITY.md)
+- [公开发布审计（固定于 2026-11-08）](docs/reports/public-release-audit-2026-11-08.md)
+
 ## Agent 命令护栏
 
 agent 端 `exec` 执行前会经过内置命令护栏（[dispatcher](backend/agent/internal/dispatcher/dispatcher.go)），命中即拒绝执行并写入会话审计（`.doops-audit-log`，标记 `blocked=1` 与规则 ID）。内置规则覆盖：递归删除根/系统目录、`dd` 写块设备、`mkfs`/分区工具、关机重启、fork 炸弹、递归改根权限、覆写 `/etc` 关键文件、下载并直接执行远程脚本、杀死所有进程。匹配前会做空白压缩与小写规范化，防止 `rm  -rf  /`、`RM -RF /` 这类混淆绕过。
