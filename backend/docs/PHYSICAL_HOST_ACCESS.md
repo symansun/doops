@@ -6,8 +6,67 @@ scope: doops-operations
 
 # 物理机 / 宿主机访问与硬件检查
 
-查看硬件不要求安装新 Agent。先根据已有拓扑和资产记录，选择已有
-物理机 target 或经 VM target 发起的 SSH；用户说“已进入宿主机”不是安装授权。
+当前会话已经选定 Kubernetes Agent target 时，“进入宿主机”就是进入该 Agent
+所在节点，先执行下面的固定流程；不再让用户从 SSH、GPU 检查或其它 Pod 中猜选。
+用户明确要求另一个物理机或 hypervisor 时，才按已有资产映射选择对应入口。
+查看硬件不要求安装新 Agent；进入节点也不授权安装、重启或改变挂载和权限。
+
+## 进入宿主机的固定流程
+
+1. 沿用已选 target/session。没有 target 时由上层核对已配置目标；存在多个目标且上下文
+   无法确定时只询问目标，不把缺执行工具误判成用户意图不清。
+2. 在 Agent 执行环境运行以下只读探测。它在进入前核对 host 根目录和 PID 1 的视图，
+   再验证进入后的 mount namespace、根目录身份并输出 hostname、内核和身份。
+   不依赖 `hostname == spec.nodeName`：Kubernetes 节点可以使用不同的注册名。
+
+```bash
+set -eu
+for tool in nsenter readlink stat; do
+  command -v "$tool" >/dev/null || {
+    printf 'host_access_unavailable: missing %s\n' "$tool" >&2
+    exit 69
+  }
+done
+test -d /host || { printf '%s\n' 'host_access_unavailable: /host not mounted' >&2; exit 69; }
+host_root=$(stat -Lc '%d:%i' /host)
+pid1_root=$(stat -Lc '%d:%i' /proc/1/root)
+host_mnt=$(readlink /proc/1/ns/mnt)
+agent_mnt=$(readlink /proc/self/ns/mnt)
+if [ "$host_root" != "$pid1_root" ] || [ "$host_mnt" = "$agent_mnt" ]; then
+  printf '%s\n' 'host_access_unavailable: host root or PID namespace not exposed; check hostAccess' >&2
+  exit 69
+fi
+nsenter -t 1 -m -u -i -n -- sh -c '
+  set -eu
+  cd /
+  test "$(readlink /proc/self/ns/mnt)" = "$1" || {
+    printf "host_access_unavailable: entered mount namespace mismatch\n" >&2; exit 69;
+  }
+  test "$(stat -Lc "%d:%i" /)" = "$2" || {
+    printf "host_access_unavailable: entered root mismatch\n" >&2; exit 69;
+  }
+  printf "host_hostname="; hostname
+  printf "host_mount_namespace=%s\nhost_root=%s\n" "$1" "$2"
+  uname -srm
+  id
+' sh "$host_mnt" "$host_root"
+```
+
+3. 上层 CLI 将完整脚本作为 `doops -session <s> exec --target <t> --cmd` 的一个参数。
+   Web AI 助手则返回上面的原始 `bash` 代码块；“在此执行”预填命令，提交后由 Web
+   绑定当前 target/session 走同一条 Gateway exec。不要把 CLI 命令放进 Web 的代码块，
+   它会在 Agent 内执行。ask 自身不获得 Bash 工具，也不会自动执行回复里的代码。
+   Web 的命令输出和退出状态只显示在执行栏，当前不会自动反馈到模型上下文；
+   模型没有收到结果时停在“命令已准备好”，不声称能够轮询或已经进入。
+4. 执行方只有在 exec 返回退出码 0 且身份验证通过时，才报告“已在所选 Agent 所在节点执行”。
+   这是单次命令，不是持久交互登录；后续宿主命令仍使用同样的 `nsenter` 前缀。
+   宿主是 VM 时，成功不代表已进入其物理 hypervisor。
+
+失败按证据处理：`403` 是 target 授权问题；`host_access_unavailable` 是工具或宿主视图
+缺失；`nsenter: Operation not permitted` 是命名空间权限问题；进入后命令非零保留其
+退出码；断连且无终态报告未知。缺失条件交给上层按已授权配置修复，不用 `kubectl exec`、
+其它 Pod、直连 Agent、临时提权或安装命令绕过。默认值不是部署事实，探测失败后检查实际 Pod 的
+`hostPID`、`/host` 挂载和 `hostAccess.enabled`；不要把容器 hostname 当作成功证据。
 
 ## 1. 确认目标与可见范围
 
@@ -42,8 +101,9 @@ doops -session <s> exec --target <k8s-agent> --cmd 'nsenter -t 1 -m -u -i -n -- 
 `command_summary`（含 `nsenter` 及其参数）。不要用 `kubectl exec`、
 `docker exec` 或直连 Agent 端口代替这条命令，那些路径不进这条审计。
 
-`hostname` 应等于该 Pod 的 `spec.nodeName`。开关为 `false` 时，同一条
-`nsenter` 仍停在 Pod 里。这只进入 Pod 所在节点，不跨越 hypervisor。
+上面的单行命令只用于已通过固定流程的节点。`spec.nodeName` 标识调度节点，
+不保证等于 OS hostname。开关为 `false` 时，PID 1 仍可能属于 Pod；单行命令即使
+退出 0 也不证明进入节点，必须先通过固定流程。这只进入 Pod 所在节点，不跨越 hypervisor。
 
 ### 已有物理机 target
 
