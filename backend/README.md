@@ -438,17 +438,12 @@ Job、最终 Deployment 状态和能力检查通过后才报告 `OK`。新集群
 
 ## 维护者说明
 
-发布新的多平台 CLI 和 Gateway：
+先按[首次发布步骤](docs/BUILD_DEPLOY_SOP.md#github-首次发布)核对公开 runtime digest、
+仓库变量和 GHCR 可见性。待代码通过 PR 合入 `main` 且 CI 成功后，从已核验 commit 创建版本 tag：
 
 ```bash
-git tag v1.2.4
-git push origin v1.2.4
-GITHUB_TOKEN=... node backend/scripts/publish-cli-release.mjs \
-  --repo symansun/doops \
-  --tag v1.2.4 \
-  --commit "$(git rev-list -n 1 v1.2.4)" \
-  --dir backend/dist/cli \
-  --image ghcr.io/symansun/doops-agent:v1.2.4
+git tag -a v1.2.4 <verified-main-commit> -m 'DoOps v1.2.4'
+git push --atomic origin refs/tags/v1.2.4
 ```
 
 GitHub Actions 在 Pull Request 上运行完整验证，在版本 tag 上先完成相同验证，再构建四个平台 CLI、Gateway 和镜像；发布脚本会创建 draft Release，回读所有资产后才公开。二进制不进入 Git。
