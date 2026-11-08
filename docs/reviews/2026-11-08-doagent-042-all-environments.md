@@ -5,6 +5,11 @@
 用户授权升级全部 13 个已配置 DoOps target。本记录不表示全部完成。
 本轮保持原部署方式、模型来源、数据、网络及权限；未发布业务 workload。
 
+截至 2026-11-08 16:20（Asia/Shanghai），8 个 target 已运行 DoAgent 0.2.42，
+版本、ACP 健康和至少一次真实模型工具调用已验证；5 个 target 仍未完成。
+联通 K8s 与 Compose 的独立升级控制器均已返回成功终态。本轮全环境浏览器
+验收仍未完成，不能将后端验收等同完整发布闭环。后文的早期进度保留时间边界。
+
 - DoAgent `0.2.42`：`08ecb0193767f559844d985cc7365484c61bf9c5`。
 - DoOps `v1.3.123`：`8683d67174e19a1750e9b19de99a0816cdb8ea79`。
 - CNB release CI `cnb-rl3-1k6sg8rga` 已回读为 success，制品溯源接口确认同一 commit。
@@ -15,8 +20,10 @@
   Oilan、ZYJ 的 containerd 报告 index，其他节点报告平台 manifest；
   registry index 内容证明两者关联，不能只按字符串不同认定版本不同。
 
-升级时使用同 commit 的 CLI。后续共享 CLI 被其他工作流更新到 v1.3.124，
-未再用它执行本轮 v1.3.123 升级。v1.3.124 与 latest 的移动不改变上述制品身份。
+最初四台升级使用同 commit 的 CLI。后续共享 CLI 被其他工作流更新到 v1.3.124；
+联通两台通过该 CLI 的审计 Gateway 入口启动独立控制器，控制器分别核对镜像中
+二进制的 v1.3.123 / 源码 commit 和 DoAgent 0.2.42。没有降级共享 CLI。
+v1.3.124 与 latest 的移动不改变上述固定制品身份。
 
 ## 已部署回读
 
@@ -94,9 +101,7 @@ unicom 宿主缓存有原 index、平台 manifest、config、全部运行 layers
 
 | target | 实时事实 | 未完成原因 / 后续条件 |
 |---|---|---|
-| unicom-k8s | 0.2.39；doops-system/doops-unicom revision 5 | 候选拉取超过预检 Job 600 秒；并且原回滚摘要已删除。需同时解决制品拉取与完整可恢复基线。 |
 | gw-silicon | 0.2.39 / v1.3.117；独立 Docker，host 网络、privileged、ACP 7750 | 既有宿主 49.51.244.8:2022 外部 SSH banner 超时；目标侧 ubuntu/root 结构化 SSH 无可用认证。恢复已授权管理入口后走 release-host-agent.sh。 |
-| unicom-1 | 0.2.35；Docker Compose `/opt/doops-agent/compose.yaml`，容器 doops-agent | release-host-agent.py 明确拒绝 Compose。需要有配置备份、自动恢复、版本/Gateway/功能验收的 Compose 外部控制器；未移除标签或绕过检查。 |
 | gw-scu | 0.2.39 / v1.3.116；doops-system，default SA | 无 Deployment/Secret 权限，且无可用宿主或 kubeconfig 挂载。需要既有独立授权管理通道；未临时授予 cluster-admin。 |
 | gw-keyi | systemd `/usr/local/bin/doops-agent` v1.3.43，无 DoAgent/ACP | 增装运行时或迁移部署方式及模型来源尚未确定；未把首次安装当作原地升级。 |
 | gw-114-k8s | 本地有 route，Gateway 管理员实例列表含 history 也无此 target | 无在线/留存实例记录。已有外部 kubeconfig 114.55.61.32:6443 超时，SSH 22 连接被关闭。 |
@@ -168,3 +173,63 @@ ConfigMap 权限；旧 Helm release 仅管理 `Deployment/doops-unicom`，
   完成 configure/verify/promote。临时 Secret 在成功导入后删除。
 - 两种事务合计 11 项本地检查通过；Compose 真实 dry-run 通过。
   `unicom-1` 未执行 apply，`unicom-k8s` 尚未启动切换 Job。
+
+## 16:20 联通发布完成及全量回读
+
+控制器提交 `46f077d231f4a794e2409cb662869438662b6637` 的 CI
+`cnb-l91-1k6t1r1qk` 全部通过，包含发布契约、Agent、Gateway、CLI、
+Git 进程验收和 Web 检查。固定镜像发布 CI `cnb-rl3-1k6sg8rga`
+再次回读 success。独立代码复审确认 Compose 事务可通过同宿主
+`unicom-k8s` 管理通道执行；现场 dry-run 和脚本 SHA256 均吻合。
+
+### unicom-k8s
+
+- Job `doops-system/doagent-unicom-042-cutover` 为 Complete，1/1；
+  接收回执 `phase=complete`。
+- 新 Pod `doops-agent-6cc9c96f85-f7sql`，UID
+  `a8d4ea61-0fd3-4771-ba9a-bd4fc42f8451`，Ready 1/1，固定镜像摘要吻合。
+- 回执保存控制器 hash `19c39249ea797f94106d897f5ecb6b7f20ee82fbdc65205ca9760b6b5b434cc5`、
+  values hash `77dca9465f4de83ae0358e0ebd376be0d3e070c3f0f32818c86e038c4aac426d`。
+  接收 UID 与实际 Pod 一致，旧 `Deployment/doops-unicom` 已移除。
+- Gateway release commit、DoAgent 0.2.42、ACP 健康通过。
+  16:04 的真实模型请求执行两次 `mcp_doops_k8s_read`，终态 exit 0，
+  标识 `RELEASE_SMOKE_UNICOM_042`。
+
+### unicom-1
+
+- 16:13:27 经 `unicom-k8s` 的审计 `nsenter` 启动独立 host systemd
+  `doagent-unicom1-042-20261108`；16:13:36 候选 Ready。
+- 新容器 ID
+  `3eba9048d97ded2f3e2ed9884833942d93f3825be19ff74ca3df1b2a61089233`。
+  Gateway commit、DoAgent 0.2.42、ACP 健康、structuredSSH、前台 stdout/stderr
+  和后台命令真实终态全部通过。后台 Task `c9e3dbbe87e0e92e` exit 0。
+- 同 target 原模型通过 Secret 导入完成 staged/verify/promote。
+  16:17:22 真实模型调用两次 `mcp_doops_k8s_read`，终态 exit 0，
+  标识 `RELEASE_SMOKE_UNICOM1_042`。随后才写入精确容器 ID 的验收回执。
+  临时 Secret `doagent-unicom1-upgrade-source-20261108` 已删除。
+- 最终 systemd `Result=success / ExecMainStatus=0 / inactive/dead`，
+  回执 `phase=complete`，容器 ID 未改变，Docker health=healthy。
+- 线上 Compose 与提交文件分别经相同 `docker compose config` 规范化后逐项相等。
+  首次直接比较未规范化 YAML 时断言失败，查明是表现形式不同；
+  没有修改线上配置或放宽规范化后的相等判断。
+- 原配置备份仍在 `/var/lib/doops-releases/unicom1-042-20261108/`。
+  回滚 tag `doops-agent-rollback:unicom1-042-20261108` 对应原 image ID
+  `sha256:8eea00f3b42fe3fbeeb916e5a58f45107b986e15cc66ca9e0735678807ac536c`。
+
+### 最终状态与仍需条件
+
+16:20 重新读取全部 13 个 target：gw-test、gw-zyj、gw-hdu-235、gw-edu-coder、
+gw-zy、oilan、unicom-k8s、unicom-1 均为 DoAgent 0.2.42 / ACP ok。
+ZYJ 已被另一工作流更新为 DoOps v1.3.124，本任务保留该版本。
+
+剩余 5 个 target 的阻断未变化：SCU 的默认 ServiceAccount 只有权限自查，
+没有部署权限；Silicon 虽能访问 Docker socket，但 PID1 与当前进程处于同一
+容器 mount namespace，`nsenter -t 1` 不是宿主入口，不能据此执行要求宿主的发布器；
+科艺仍为 v1.3.43，未安装 `do-agent` 或 Docker，需要确定原生 systemd 运行时安装
+及模型来源；114/JM 在 Gateway 仍不可见，需要恢复既有管理通道。
+未更改这些节点的权限或部署形态。
+
+Ego TaskSpace 274 已不存在，16:12 再次检查空间列表仍无此空间；
+本轮没有新建空间绕过浏览器控制。全环境浏览器路径尚未完成。
+最终版本清单、联通模型调用和 Compose 回执见同目录 evidence 中的 JSON；
+所有文件仅包含状态和工具输出，不包含凭据 payload。

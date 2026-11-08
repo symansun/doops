@@ -1,0 +1,7 @@
+{
+  "time": "2026-11-08T16:17:22.589605+08:00",
+  "target": "unicom-1",
+  "returncode": 0,
+  "stdout": "[TARGETING] Server: unicom-1 (https://doops.l8ai.cn -> doops-unicom/unicom-1), Use: Unicom independent cluster\n[tool:mcp_doops_k8s_read]\n[tool:mcp_doops_k8s_read]\nRELEASE_SMOKE_UNICOM1_042\n\n只读验收完成（未做任何写操作）。\n\n**deployment/doops-agent @ doops-system**\n- Ready 副本数：**1/1**（desired 1 / updated 1 / available 1 / unavailable 0）\n- 镜像：`docker.cnb.cool/l8ai/ai/doops.sh@sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a`\n- 状态条件：Available=True (MinimumReplicasAvailable)、Progressing=True (NewReplicaSetAvailable)\n- NewReplicaSet：`doops-agent-6cc9c96f85` (1/1)，无旧 ReplicaSet 残留\n\n发布结论：通过。\n",
+  "stderr": ""
+}
