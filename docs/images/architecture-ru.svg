@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="840" viewBox="0 0 1500 840" role="img" aria-label="Архитектура DoOps">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0C1424"/>
+      <stop offset="100%" stop-color="#101B30"/>
+    </linearGradient>
+    <linearGradient id="flow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00C896"/>
+      <stop offset="55%" stop-color="#22B8CF"/>
+      <stop offset="100%" stop-color="#3B82F6"/>
+    </linearGradient>
+    <linearGradient id="flowV" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#22B8CF"/>
+      <stop offset="100%" stop-color="#3B82F6"/>
+    </linearGradient>
+    <pattern id="dots" width="40" height="40" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1" fill="#FFFFFF" opacity="0.035"/>
+    </pattern>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#3B82F6"/>
+    </marker>
+    <marker id="arrowG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#22B8CF"/>
+    </marker>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <style>
+      .t { font-family: 'Helvetica Neue',Arial,'Segoe UI',sans-serif; }
+      .zone { font-size: 12px; letter-spacing: 3px; fill: #7C8DB0; font-weight: 600; }
+      .zone-cn { font-size: 13px; fill: #5E7194; }
+      .card-t { font-size: 16px; font-weight: 600; fill: #EDF2FB; }
+      .card-s { font-size: 12px; fill: #8DA2C7; }
+      .note { font-size: 12.5px; fill: #93A5C8; }
+      .link { font-size: 11.5px; fill: #7DD3FC; font-weight: 600; }
+      .link-s { font-size: 11px; fill: #5E7194; }
+    </style>
+  </defs>
+
+  <!-- ===== Background ===== -->
+  <rect width="1500" height="840" rx="28" fill="url(#bg)"/>
+  <rect width="1500" height="840" rx="28" fill="url(#dots)"/>
+
+  <!-- ===== Title bar ===== -->
+  <rect x="64" y="46" width="28" height="28" rx="8" fill="url(#flow)"/>
+  <text class="t" x="106" y="68" font-size="27" font-weight="700" fill="#F1F5F9" letter-spacing="0.5">DoOps Architecture</text>
+  <rect x="1178" y="42" width="258" height="40" rx="20" fill="rgba(34,184,207,0.08)" stroke="url(#flow)" stroke-width="1.5"/>
+  <text class="t" x="1307" y="67" font-size="14" font-weight="600" fill="#7DD3FC" text-anchor="middle">Без SSH · Аудируемо</text>
+
+  <!-- ===== Zone 1: User side ===== -->
+  <rect x="56" y="120" width="280" height="600" rx="20" fill="rgba(20,32,58,0.55)" stroke="#22345C"/>
+  <text class="t zone" x="80" y="156">СТОРОНА ПОЛЬЗОВАТЕЛЯ</text>
+  
+
+  <rect x="80" y="176" width="232" height="92" rx="14" fill="#141F38" stroke="#26365C"/>
+  <circle cx="108" cy="206" r="9" fill="url(#flow)"/>
+  <text class="t card-t" x="126" y="211">Пользователь / IDE</text>
+  <text class="t card-s" x="104" y="242">Trae · Терминал · Веб-консоль</text>
+
+  <line x1="196" y1="268" x2="196" y2="296" stroke="url(#flowV)" stroke-width="2.5" marker-end="url(#arrowG)"/>
+
+  <rect x="80" y="300" width="232" height="92" rx="14" fill="#141F38" stroke="#26365C"/>
+  <rect x="99" y="320" width="18" height="18" rx="5" fill="url(#flow)"/>
+  <text class="t card-t" x="126" y="335">DoOps CLI · Skill</text>
+  <text class="t card-s" x="104" y="366">Декларативные операции, единая точка входа</text>
+
+  <text class="t note" x="104" y="470">· Одна команда — любая машина в сети</text>
+  <text class="t note" x="104" y="502">· Изолированные сессионные workspace</text>
+  <text class="t note" x="104" y="534">· Декларативный API для агентов</text>
+
+  <!-- ===== Link 1: User side -> Gateway ===== -->
+  <line x1="336" y1="346" x2="452" y2="346" stroke="url(#flow)" stroke-width="3" marker-end="url(#arrow)" filter="url(#glow)"/>
+  <text class="t link" x="394" y="306" text-anchor="middle">WS /v1/rpc</text>
+  <text class="t link" x="394" y="326" text-anchor="middle">Git HTTP /v1/git</text>
+  <text class="t link-s" x="394" y="374" text-anchor="middle">user token</text>
+
+  <!-- ===== Zone 2: Public gateway ===== -->
+  <rect x="456" y="120" width="328" height="600" rx="20" fill="rgba(20,32,58,0.55)" stroke="#22345C"/>
+  <text class="t zone" x="480" y="156">ПУБЛИЧНЫЙ GATEWAY</text>
+  
+
+  <rect x="480" y="240" width="280" height="224" rx="16" fill="#141F38" stroke="#2A3E6B" stroke-width="1.5"/>
+  <circle cx="620" cy="282" r="16" fill="none" stroke="url(#flow)" stroke-width="2.5"/>
+  <circle cx="620" cy="282" r="6" fill="url(#flow)"/>
+  <text class="t" x="620" y="330" font-size="18" font-weight="700" fill="#EDF2FB" text-anchor="middle">doops-gateway</text>
+  <text class="t card-s" x="620" y="354" text-anchor="middle">Единый публичный вход</text>
+
+  <rect x="500" y="374" width="240" height="30" rx="15" fill="rgba(0,200,150,0.08)" stroke="#23406B"/>
+  <text class="t" x="620" y="393" font-size="12" fill="#7DD3FC" text-anchor="middle">Маршрутизация</text>
+  <rect x="500" y="412" width="240" height="30" rx="15" fill="rgba(34,184,207,0.08)" stroke="#23406B"/>
+  <text class="t" x="620" y="431" font-size="12" fill="#7DD3FC" text-anchor="middle">Аутентификация · скоупы по target/action</text>
+
+  <text class="t note" x="504" y="530">· Единая аутентификация и авторизация</text>
+  <text class="t note" x="504" y="562">· Тонкий контроль операций</text>
+  <text class="t note" x="504" y="594">· Сквозной аудит операций</text>
+
+  <!-- ===== Link 2: Gateway -> Internal agent ===== -->
+  <line x1="784" y1="346" x2="900" y2="346" stroke="url(#flow)" stroke-width="3" marker-end="url(#arrow)" filter="url(#glow)"/>
+  <text class="t link" x="842" y="306" text-anchor="middle">Agent регистрируется сам</text>
+  <text class="t link" x="842" y="326" text-anchor="middle" font-size="10.5">WS /v1/agent/connect</text>
+  <text class="t link-s" x="842" y="374" text-anchor="middle">Обход NAT · публичный IP не нужен</text>
+
+  <!-- ===== Zone 3: Private network ===== -->
+  <rect x="904" y="120" width="540" height="600" rx="20" fill="rgba(0,200,150,0.03)" stroke="#2E4B7A" stroke-width="1.5" stroke-dasharray="7 6"/>
+  <text class="t zone" x="928" y="156">ЧАСТНАЯ СЕТЬ</text>
+  <text class="t zone-cn" x="1136" y="156">за NAT</text>
+
+  <rect x="928" y="176" width="236" height="96" rx="14" fill="#141F38" stroke="#26365C"/>
+  <rect x="952" y="196" width="18" height="18" rx="5" fill="url(#flow)"/>
+  <text class="t card-t" x="980" y="210">doops-agent</text>
+  <text class="t card-s" x="952" y="244">Демон · саморегистрация · автореконнект</text>
+
+  <rect x="1184" y="176" width="236" height="96" rx="14" fill="#141F38" stroke="#26365C"/>
+  <text class="t card-t" x="1208" y="210">Host / K8s / Docker</text>
+  <text class="t card-s" x="1208" y="244">exec · push · file · info</text>
+
+  <line x1="1164" y1="224" x2="1180" y2="224" stroke="url(#flow)" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <rect x="928" y="336" width="236" height="96" rx="14" fill="#141F38" stroke="#26365C"/>
+  <text class="t card-t" x="952" y="370">doagent ACP</text>
+  <text class="t card-s" x="952" y="404">ACP :9000 · ask / chat</text>
+
+  <line x1="1046" y1="272" x2="1046" y2="332" stroke="url(#flowV)" stroke-width="2.5" marker-end="url(#arrowG)"/>
+
+  <rect x="1184" y="336" width="236" height="96" rx="14" fill="#141F38" stroke="#26365C"/>
+  <text class="t card-t" x="1208" y="370">Ops-скиллы</text>
+  <text class="t card-s" x="1208" y="404">Инспекция · Диагностика · SOP деплоя</text>
+
+  <line x1="1164" y1="384" x2="1180" y2="384" stroke="url(#flow)" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <rect x="1184" y="496" width="236" height="96" rx="14" fill="#141F38" stroke="#26365C"/>
+  <text class="t card-t" x="1208" y="530">Сессионный workspace</text>
+  <text class="t card-s" x="1208" y="564">/root/ws/&lt;session&gt;</text>
+
+  <path d="M1046 432 V544 H1180" fill="none" stroke="url(#flowV)" stroke-width="2.5" marker-end="url(#arrowG)"/>
+
+  <text class="t note" x="928" y="664">· Каждый шаг проверяем · опасные операции запрещены</text>
+
+  <!-- ===== Footer ===== -->
+  <line x1="64" y1="762" x2="1436" y2="762" stroke="#1C2C4A"/>
+  <text class="t" x="750" y="796" font-size="13" fill="#7C8DB0" text-anchor="middle">Без SSH · Без VPN · Без jump-хоста — один зашифрованный канал до любой машины</text>
+</svg>
