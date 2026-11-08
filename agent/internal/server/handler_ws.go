@@ -341,8 +341,11 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		sessionID = "default" // fallback
 	}
 	if err := validateSession(sessionID); err != nil {
-		writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
-		return
+		// doops_audit_query 允许空 session_id：聚合所有 session 工作区的审计记录
+		if !(toolName == "doops_audit_query" && strings.TrimSpace(sessionID) == "") {
+			writeJSON(buildErrorResponse(reqID, -32602, err.Error()))
+			return
+		}
 	}
 
 	// 统一流式推送方法
@@ -630,6 +633,14 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 
 	case "doops_file_read":
 		result, err := handleFileRead(argBytes)
+		if err != nil {
+			writeJSON(buildToolErrorResponse(reqID, err.Error()))
+		} else {
+			writeJSON(buildSuccessResponse(reqID, result))
+		}
+
+	case "doops_audit_query":
+		result, err := handleAuditQuery(argBytes)
 		if err != nil {
 			writeJSON(buildToolErrorResponse(reqID, err.Error()))
 		} else {
