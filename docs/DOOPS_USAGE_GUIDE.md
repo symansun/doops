@@ -7,27 +7,29 @@ This guide holds command-level usage details. The skill file is only the entry p
 | Need | Command | Notes |
 | :--- | :--- | :--- |
 | List configured targets | `doops list` | Local config only; not live gateway state. |
-| List live gateway agents | `doops targets --target <gateway-target>` | First check for gateway troubleshooting. |
+| List live gateway agents | `doops -session <s> targets --target <gateway-target>` | HTTP control plane; session does not provide isolation. |
 | Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Best for known checks and deploy scripts. |
-| Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
+| Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<scope and acceptance>'` | Delegate the authorized scope explicitly. |
 | Push a local directory | `doops -session <s> push --target <t> --src <dir>` | Syncs into `/root/ws/<session>`. |
-| Pull a remote workspace | `doops -session <s> pull --target <t> --dest <dir>` | Use for large files and binary assets. |
+| Pull a remote workspace | `doops -session <s> pull --target <t> --dest <new-download-dir>` | Commits a remote snapshot; resets existing local Git directories. |
 | Read small text | `doops -session <s> read --target <t> --path <file>` | Small text only. |
 | Write small text | `doops -session <s> write --target <t> --path <file> --file <local>` | Also supports `--content` and stdin. |
 | Clean workspace | `doops -session <s> clean --target <t>` | Cleans `/root/ws/<session>`. |
-| Cache token | `doops login ...` | Gateway login can exchange username/password for user token. |
-| Issue token as admin | `doops admin token create ...` | Requires a gateway token with `admin` permission. |
+| Cache token | `doops -session <s> login ...` | Gateway login can exchange username/password for user token. |
+| Issue token as admin | `doops -session <s> admin token create ...` | Requires an admin identity and private output capture as described below. |
 | Remove cached token | `doops logout --target <t>` | Removes local token cache. |
 
 ## Basic Checks
 
 ```bash
 doops list
-doops targets --target prod
-doops -session smoke exec --target prod --cmd 'hostname && date -u +%FT%TZ'
+doops -session smoke targets --target <gateway-target>
 ```
 
-`doops list` reads local config. `doops targets` asks gateway for live connected agents. A target can be listed locally but offline in gateway.
+`doops list` reads local config. Select the target from that configuration before querying live state.
+The global `-session` belongs before the subcommand. It isolates workspace operations, but HTTP
+control-plane commands such as `targets` and `admin` do not use it for isolation.
+A locally configured target can be offline or hidden from the current user.
 
 `doops targets` separates target-wide busy from normal per-session activity:
 
@@ -38,58 +40,84 @@ doops -session smoke exec --target prod --cmd 'hostname && date -u +%FT%TZ'
 If gateway returns `user operation limit exceeded`, list active gateway operations and cancel stale ones with an admin token:
 
 ```bash
-doops admin operations list --target <gateway-target>
-doops admin operations cancel --target <gateway-target> --id <operation-id>
+doops -session inspect admin operations list --target <gateway-target>
+doops -session inspect admin operations cancel --target <gateway-target> --id <operation-id>
 ```
 
-On upgraded agents, cancel terminates local shell-style commands by process group. For `ask`, treat cancel as stopping the doops waiting path first; verify the remote session if doagent already started work.
+Only cancel the identified operation within the user's authorized scope. On upgraded agents, cancel
+terminates local shell-style commands by process group. For `ask`, treat cancel as stopping the doops
+waiting path first; verify the remote session if doagent already started work.
 
 ## Gateway Admin Tokens
 
-给用户签发 token 时，优先用 CLI 管理入口，不要 SSH 到 gateway 主机手工跑
-`doops-gateway token create`：
+签发前确认 Gateway、用户、有效期和授权的本地私密交付目录。不要 SSH 修改 Gateway DB。
+当前 CLI 会向 stdout 打印完整 token；stdout 和 stderr 必须直接写入私密文件，
+不能返回工具输出或读回对话。以下变量是已确认的非敏感输入；示例不包含真实凭据：
 
 ```bash
-doops admin token create \
-  --target jm \
-  --user gaojiaqi \
-  --name maintenance \
-  --expires 720h
+set -eu
+umask 077
+: "${TOKEN_DELIVERY_DIR:?set an approved private parent directory}"
+: "${DOOPS_TARGET:?set the configured gateway target}"
+: "${TOKEN_USER:?set the approved recipient}"
+: "${TOKEN_TTL:?set the approved expiry}"
+delivery_dir=$(mktemp -d "${TOKEN_DELIVERY_DIR%/}/doops-token.XXXXXX")
+chmod 700 "$delivery_dir"
+if doops -session token-issue admin token create \
+  --target "$DOOPS_TARGET" --user "$TOKEN_USER" --name maintenance \
+  --expires "$TOKEN_TTL" >"$delivery_dir/issued.txt" 2>&1; then
+  chmod 600 "$delivery_dir/issued.txt"
+  printf 'Token delivery: %s\n' "$delivery_dir/issued.txt"
+else
+  printf 'Issuance failed; private diagnostic: %s\n' "$delivery_dir/issued.txt" >&2
+  exit 1
+fi
 ```
 
-`--target` 必须是本地配置里的 gateway target，并且它当前使用的 token 要有
-`admin` 权限。新 token 只打印一次；需要写入本机缓存时显式使用：
-
-```bash
-doops admin token create \
-  --target jm \
-  --user gaojiaqi \
-  --name maintenance \
-  --expires 720h \
-  --save-as jm
-```
+`--target` 当前身份必须有 `admin` 权限。`--save-as <target-name>` 会覆盖该本地缓存，
+仍打印完整 token；只有缓存替换也获授权才附加，并继续捕获输出。
+没有私密交付方式时不签发。失败或断连不盲目重试，先核对是否已签发。
 
 ## Exec
 
+当前 `exec/ask` 成功后会检查远端 `/root/ws/<session>/deploy.sh`，满足脚本检测时直接写入
+本地 `./deploy.sh`，没有关闭或禁止覆盖选项。因此即使远端只读，也要从本任务专用的新目录调用：
+
 ```bash
-doops -session ops exec --target jm --cmd 'hostname && df -h && free -h'
+(
+  local_task_dir=$(mktemp -d "${TMPDIR:-/tmp}/doops-call.XXXXXX") || exit 1
+  cd "$local_task_dir" || exit 1
+  printf 'Local output directory: %s\n' "$local_task_dir"
+  doops -session ops exec --target jm --cmd 'hostname && df -h && free -h'
+)
 ```
 
-Use `exec` for deterministic commands, read-only checks, and known deployment scripts.
+Use `exec` for deterministic commands. Keep any returned script for review; do not automatically execute,
+commit or copy it over the project's script. This containment does not change the CLI's overwrite behavior.
 
 ## Ask
 
 ```bash
-doops -session ops ask --target jm --msg '只读检查 Kubernetes 节点状态，给出结论和风险'
+(
+  local_task_dir=$(mktemp -d "${TMPDIR:-/tmp}/doops-call.XXXXXX") || exit 1
+  cd "$local_task_dir" || exit 1
+  printf 'Local output directory: %s\n' "$local_task_dir"
+  doops -session ops ask --target jm --msg '只读检查当前 target 的 Kubernetes 节点状态；禁止修改、重启、部署和清理；返回对象、证据、结论和未知项'
+)
 ```
 
-Use `ask` for diagnostics that require exploration. The target must have doagent/model configuration available.
+The subshell isolates any returned script as described above. The target must have doagent/model configuration.
+The current Agent uses automatic tool approval; a natural-language restriction is model guidance, not
+an enforced read-only sandbox. Supply target, objects, allowed actions, reason and acceptance criteria.
+Reuse existing authorization; return newly discovered impacts to the caller instead of expanding scope.
+The Agent also appends a script-generation hint after successful build/deploy actions; review returned
+scripts and preserve existing files. Neither the model summary nor `Operation complete.` proves success:
+read back actual workload state, output artifacts and health. Unknown outcomes must not trigger automatic replay.
 
 ## Push
 
 ```bash
 doops -session build push --target jm --src .
-doops -session build exec --target jm --cmd 'ls -la /root/ws/build | head'
 ```
 
 `push` uses Git workspace sync in both direct and gateway modes:
@@ -106,6 +134,10 @@ doops -session build pull --target jm --dest ./doops-build-output
 ```
 
 Use `pull` for large files, archives, SQL dumps, images, videos, and generated assets. Do not use `read` or `exec base64` for downloads.
+
+`pull` writes a Git snapshot on the remote session before downloading. Use a new dedicated destination:
+if it already contains `.git`, the CLI fetches then runs `reset --hard FETCH_HEAD`, discarding tracked
+local edits. Reuse requires checking ownership and preserved changes; never point it at a business repo.
 
 ## Read And Write
 
@@ -129,11 +161,15 @@ Confirm the session name before cleaning. Do not share one session across unrela
 ## Login And Logout
 
 ```bash
-doops login --target jm --gateway https://gateway.example.com --username alice
+doops -session login login --target jm --gateway https://gateway.example.com --username alice
 doops logout --target jm
 ```
 
 `auth.json` only affects local CLI token selection. Gateway permissions still come from gateway user scopes.
+Use a private interactive terminal for the password prompt. This version's `add --token` and
+`login --token` take secrets as arguments and do not implement `--token-stdin`; do not expand real
+secrets into an agent tool command. If the required input cannot be delivered privately, report that
+limitation before creating or replacing configuration.
 
 ## Upgrade
 
@@ -155,14 +191,23 @@ Remove `--dry-run` only after reviewing the command. Gateway upgrade requires `a
 ## BuildKit Example
 
 ```bash
-doops -session build exec --target jm --cmd \
-  'cd /root/ws/build && buildctl --addr unix:///run/buildkit/buildkitd.sock build \
-   --progress=plain \
-   --frontend dockerfile.v0 \
-   --local context=. \
-   --local dockerfile=. \
-   --opt filename=Dockerfile \
-   --output type=image,name=repo.example.com/team/app:latest,push=true'
+(
+  local_task_dir=$(mktemp -d "${TMPDIR:-/tmp}/doops-call.XXXXXX") || exit 1
+  cd "$local_task_dir" || exit 1
+  printf 'Local output directory: %s\n' "$local_task_dir"
+  doops -session build exec --target jm --cmd \
+    'cd /root/ws/build && buildctl --addr unix:///run/buildkit/buildkitd.sock build \
+     --progress=plain \
+     --frontend dockerfile.v0 \
+     --local context=. \
+     --local dockerfile=. \
+     --opt filename=Dockerfile \
+     --output type=oci,dest=/root/ws/build/image.tar'
+)
 ```
 
-For long builds, redirect output to a file and poll with short `exec` calls. Do not leave a foreground websocket call waiting indefinitely when the command is expected to run for many minutes.
+This example only builds an OCI archive, with the local directory isolation described under Exec.
+Verify exit status and the archive's structure/digest. A registry push or deployment requires its
+own authorized destination and verification. Use the runtime's exposed task tracker for long builds,
+record its task ID and wait for final status/exit code; a log tail is progress only. This CLI does not
+expose an `exec --bg` flag, so do not invent one. Do not clean a context still used by a background job.
