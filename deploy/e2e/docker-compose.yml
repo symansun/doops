@@ -1,0 +1,47 @@
+# DoOps E2E 冒烟拓扑：gateway（内嵌 SQLite）+ agent（反向 WS 注册）。
+# 由 deploy/e2e/smoke.sh 驱动；通常不需要手工使用。
+#
+# 环境变量（smoke.sh 会自动注入）：
+#   E2E_GATEWAY_PORT  gateway 映射到宿主机 127.0.0.1 的端口（默认 42222）
+#   E2E_CLUSTER       agent 注册的 cluster（默认 e2e）
+#   E2E_INSTANCE      agent 注册的 instance（默认 agent-1）
+#   AGENT_TOKEN       gateway 侧预置的 agent-token（smoke.sh 播种时生成）
+
+services:
+  gateway:
+    image: doops-e2e:local
+    build:
+      context: ../..
+      dockerfile: deploy/e2e/Dockerfile
+    command: ["/app/doops-gateway", "serve", "-port", "42222", "-db", "/data/gateway.db"]
+    volumes:
+      - gwdata:/data
+    ports:
+      - "127.0.0.1:${E2E_GATEWAY_PORT:-42222}:42222"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:42222/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  agent:
+    image: doops-e2e:local
+    depends_on:
+      gateway:
+        condition: service_healthy
+    environment:
+      DOOPS_WORKSPACE_ROOT: /root/ws
+    command:
+      - sh
+      - -c
+      - >-
+        /app/doops-agent
+        -gateway-url ws://gateway:42222
+        -cluster ${E2E_CLUSTER:-e2e}
+        -instance ${E2E_INSTANCE:-agent-1}
+        -agent-token "${AGENT_TOKEN:-}"
+      # 注意：AGENT_TOKEN 由 smoke.sh 在播种后导出；为空时 agent 会因 401 无法注册，日志可见。
+
+volumes:
+  gwdata:

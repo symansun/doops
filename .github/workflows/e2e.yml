@@ -1,0 +1,27 @@
+name: E2E Smoke
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # 取舍说明：冒烟链路（gateway SQLite + agent 反向注册 + CLI login/exec/审计）
+      # 与是否运行在容器内无关，进程级即可完整覆盖；直接 go build 可复用
+      # setup-go 的模块缓存，避免拉取 golang/alpine 基础镜像与镜像构建开销，
+      # 在 10 分钟超时预算内更快、更稳定。容器化路径仍可在本地通过
+      # `bash deploy/e2e/smoke.sh --mode compose` 验证。
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: |
+            agent/go.sum
+            skills/doops-cli/go.sum
+
+      - name: Run E2E smoke (process mode)
+        run: bash deploy/e2e/smoke.sh --mode process
