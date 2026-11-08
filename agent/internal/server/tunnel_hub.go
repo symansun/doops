@@ -1521,6 +1521,9 @@ func actionForTool(tool string, args json.RawMessage) GatewayAction {
 		return ActionAsk
 	case "doops_file_read":
 		return ActionRead
+	case "doops_audit_query":
+		// 审计查询是只读操作，复用 read 授权粒度
+		return ActionRead
 	case "doops_file_write":
 		return ActionWrite
 	case "doops_node_info":
