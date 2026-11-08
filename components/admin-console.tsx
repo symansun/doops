@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import type { Session } from "@/lib/client"
 import {
   listUsers,
@@ -19,7 +19,23 @@ import {
   type AdminToken,
   type AdminInstance,
 } from "@/lib/admin"
+import {
+  ACTIVE_INSTANCE_WINDOW_DAYS,
+  OFFLINE_INSTANCE_RETENTION_DAYS,
+  groupInstances,
+  instanceClusterOptions,
+  offlineLabel,
+  summarizeInstanceScope,
+} from "@/lib/instance-activity"
+import {
+  GRANT_ALL,
+  grantInstanceChoices,
+  grantScopeOptions,
+  grantScopeWarning,
+  validateGrantForm,
+} from "@/lib/grant-form"
 import { AdminConfigDispatch } from "./admin-config-dispatch"
+import { useAppDialog } from "./app-dialog"
 import {
   ServerIcon,
   UsersIcon,
@@ -64,14 +80,20 @@ export function AdminConsole({
   defaultTab?: AdminTab
 }) {
   const [tab, setTab] = useState<AdminTab>(defaultTab)
+  const [grantPreset, setGrantPreset] = useState<{ cluster: string; instance: string; nonce: number } | null>(null)
 
   useEffect(() => {
     setTab(defaultTab)
   }, [defaultTab])
 
+  function grantInstance(cluster: string, instance: string) {
+    setGrantPreset({ cluster, instance, nonce: Date.now() })
+    setTab("grants")
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <nav className="flex shrink-0 gap-1 overflow-x-auto border-b bg-card px-2">
+      <nav className="flex shrink-0 gap-1 overflow-x-auto border-b bg-card px-4">
         {ADMIN_TABS.map((t) => {
           const Icon = t.icon
           const active = tab === t.id
@@ -79,11 +101,8 @@ export function AdminConsole({
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm transition-colors ${
-                active
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
+              aria-current={active ? "page" : undefined}
+              className="page-tab"
             >
               <Icon width={16} height={16} />
               {t.label}
@@ -92,10 +111,10 @@ export function AdminConsole({
         })}
       </nav>
       <div className="min-h-0 flex-1 overflow-auto">
-        {tab === "instances" && <InstancesView session={session} />}
+        {tab === "instances" && <InstancesView session={session} onGrant={grantInstance} />}
         {tab === "config" && <AdminConfigDispatch session={session} />}
         {tab === "users" && <UsersView session={session} />}
-        {tab === "grants" && <GrantsView session={session} />}
+        {tab === "grants" && <GrantsView session={session} preset={grantPreset} />}
         {tab === "tokens" && <TokensView session={session} />}
       </div>
     </div>
@@ -126,7 +145,7 @@ function Toolbar({
         <button
           onClick={onRefresh}
           disabled={loading}
-          className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+          className="btn btn-sm"
         >
           <RefreshIcon width={14} height={14} className={loading ? "animate-spin" : ""} /> 刷新
         </button>
@@ -138,7 +157,7 @@ function Toolbar({
 function ErrorBar({ msg }: { msg: string }) {
   if (!msg) return null
   return (
-    <div className="mx-4 mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+    <div role="alert" className="status-error mx-4 mt-3">
       {msg}
     </div>
   )
@@ -155,16 +174,26 @@ function StatusDot({ status }: { status: string }) {
 }
 
 /* ============================ 实例 ============================ */
-function InstancesView({ session }: { session: Session }) {
-  const [rows, setRows] = useState<AdminInstance[]>([])
+function InstancesView({
+  session,
+  onGrant,
+}: {
+  session: Session
+  onGrant: (cluster: string, instance: string) => void
+}) {
+  const [all, setAll] = useState<AdminInstance[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const [now, setNow] = useState(() => Date.now())
+  const [cluster, setCluster] = useState("")
+  const [showHistory, setShowHistory] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError("")
     try {
-      setRows(await listInstances(session))
+      setAll(await listInstances(session, { includeHistory: true }))
+      setNow(Date.now())
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -176,14 +205,34 @@ function InstancesView({ session }: { session: Session }) {
     load()
   }, [load])
 
+  const clusterOptions = useMemo(() => instanceClusterOptions(all), [all])
+  const groups = useMemo(() => groupInstances(all, now, cluster), [all, now, cluster])
+  const scope = useMemo(() => summarizeInstanceScope(all, now), [all, now])
+  const historyKeys = new Set(groups.history.map((r) => `${r.cluster}/${r.instance}`))
+  const rows = showHistory ? [...groups.active, ...groups.history] : groups.active
+
   return (
     <div>
       <Toolbar
         title="实例"
-        desc="已注册到 gateway 的边缘节点及其连接状态"
+        desc={`已注册到 gateway 的边缘节点及其连接状态。在线 ${scope.online} · ${ACTIVE_INSTANCE_WINDOW_DAYS} 天内离线 ${scope.active - scope.online} · 历史 ${scope.history}`}
         onRefresh={load}
         loading={loading}
-      />
+      >
+        <select
+          aria-label="按集群筛选"
+          value={cluster}
+          onChange={(e) => setCluster(e.target.value)}
+          className="input input-sm w-56"
+        >
+          <option value="">全部集群（{clusterOptions.length}）</option>
+          {clusterOptions.map((option) => (
+            <option key={option.name} value={option.name}>
+              {option.name}（在线 {option.online}/{option.total}）
+            </option>
+          ))}
+        </select>
+      </Toolbar>
       <ErrorBar msg={error} />
       <div className="overflow-x-auto p-4">
         <table className="w-full min-w-[640px] border-collapse text-sm">
@@ -195,16 +244,20 @@ function InstancesView({ session }: { session: Session }) {
               <th className="px-3 py-2 font-medium">远端地址</th>
               <th className="px-3 py-2 font-medium">活动/排队</th>
               <th className="px-3 py-2 font-medium">最后心跳</th>
+              <th className="px-3 py-2 font-medium text-right">操作</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={`${r.cluster}/${r.instance}`} className="border-b border-border/50">
+              <tr
+                key={`${r.cluster}/${r.instance}`}
+                className={`border-b border-border/50 ${historyKeys.has(`${r.cluster}/${r.instance}`) ? "opacity-60" : ""}`}
+              >
                 <td className="px-3 py-2.5">
                   <span className="flex items-center gap-2">
                     <StatusDot status={r.status} />
-                    <span className="text-xs text-muted-foreground">
-                      {r.status === "online" ? (r.busy ? "忙碌" : "在线") : "离线"}
+                    <span className="whitespace-nowrap text-xs text-muted-foreground">
+                      {r.status === "online" ? (r.busy ? "忙碌" : "在线") : offlineLabel(r, now)}
                     </span>
                   </span>
                 </td>
@@ -218,17 +271,47 @@ function InstancesView({ session }: { session: Session }) {
                   <span className="text-muted-foreground"> / {r.queued_ops}</span>
                 </td>
                 <td className="px-3 py-2.5 text-xs text-muted-foreground">{fmtTime(r.last_seen)}</td>
+                <td className="px-3 py-2.5">
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => onGrant(r.cluster, r.instance)}
+                      className="btn btn-sm"
+                    >
+                      授权给用户
+                    </button>
+                  </div>
+                </td>
               </tr>
             ))}
             {!rows.length && !loading && (
               <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  暂无注册实例
+                <td colSpan={7} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                  {groups.history.length
+                    ? `没有在线或 ${ACTIVE_INSTANCE_WINDOW_DAYS} 天内离线的实例，历史实例已折叠`
+                    : cluster
+                      ? "该集群暂无注册实例"
+                      : "暂无注册实例"}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+        {groups.history.length > 0 && (
+          <button
+            type="button"
+            aria-expanded={showHistory}
+            onClick={() => setShowHistory((v) => !v)}
+            className="mt-2 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <span aria-hidden>{showHistory ? "▾" : "▸"}</span>
+            {showHistory ? "收起" : "展开"}历史实例（{groups.history.length}）
+            <span className="text-muted-foreground/70">
+              · 离线超过 {ACTIVE_INSTANCE_WINDOW_DAYS} 天或没有心跳。超过 {OFFLINE_INSTANCE_RETENTION_DAYS}{" "}
+              天由 gateway 自动删除，授权和审计保留
+            </span>
+          </button>
+        )}
       </div>
     </div>
   )
@@ -244,6 +327,7 @@ function UsersView({ session }: { session: Session }) {
   const [password, setPassword] = useState("")
   const [admin, setAdmin] = useState(false)
   const [busy, setBusy] = useState(false)
+  const { prompt, dialog } = useAppDialog()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -290,7 +374,13 @@ function UsersView({ session }: { session: Session }) {
   }
 
   async function resetPassword(u: AdminUser) {
-    const pw = window.prompt(`为用户「${u.name}」设置新密码：`)
+    const pw = await prompt({
+      title: "设置新密码",
+      message: `为用户「${u.name}」设置新密码。`,
+      label: "新密码",
+      inputType: "password",
+      confirmLabel: "保存",
+    })
     if (!pw) return
     setError("")
     try {
@@ -306,7 +396,7 @@ function UsersView({ session }: { session: Session }) {
       <Toolbar title="用户" desc="管理可登录 gateway 的账号" onRefresh={load} loading={loading}>
         <button
           onClick={() => setShowCreate((v) => !v)}
-          className="flex items-center gap-1.5 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+          className="btn btn-primary btn-sm"
         >
           <PlusIcon width={14} height={14} /> 新建用户
         </button>
@@ -341,7 +431,7 @@ function UsersView({ session }: { session: Session }) {
           <button
             onClick={submit}
             disabled={busy || !name.trim() || !password.trim()}
-            className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-40"
+            className="btn btn-primary btn-sm"
           >
             {busy ? "创建中…" : "创建"}
           </button>
@@ -386,7 +476,7 @@ function UsersView({ session }: { session: Session }) {
                   <div className="flex items-center justify-end gap-1.5">
                     <button
                       onClick={() => resetPassword(u)}
-                      className="rounded-md border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted"
+                      className="btn btn-sm"
                     >
                       改密码
                     </button>
@@ -420,29 +510,60 @@ function UsersView({ session }: { session: Session }) {
           </tbody>
         </table>
       </div>
+      {dialog}
     </div>
   )
 }
 
 /* ============================ 权限 ============================ */
-function GrantsView({ session }: { session: Session }) {
+function GrantsView({
+  session,
+  preset,
+}: {
+  session: Session
+  preset: { cluster: string; instance: string; nonce: number } | null
+}) {
   const [grants, setGrants] = useState<AdminGrant[]>([])
   const [users, setUsers] = useState<AdminUser[]>([])
+  const [instances, setInstances] = useState<AdminInstance[]>([])
+  const [instancesError, setInstancesError] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const [showCreate, setShowCreate] = useState(false)
   const [userId, setUserId] = useState("")
-  const [cluster, setCluster] = useState("*")
-  const [instance, setInstance] = useState("*")
+  // 集群和实例默认不选。Gateway 会把空值存成 "*"，未选择时不允许提交。
+  const [cluster, setCluster] = useState("")
+  const [instance, setInstance] = useState("")
   const [busy, setBusy] = useState(false)
+  const { confirm, dialog } = useAppDialog()
+
+  const scope = useMemo(() => grantScopeOptions(instances), [instances])
+  const instanceChoices = grantInstanceChoices(scope, cluster)
+  const validation = validateGrantForm({ userId, cluster, instance }, scope)
+  const scopeWarning = grantScopeWarning(cluster, instance)
+  const alreadyGranted = grants.some(
+    (grant) => grant.user_id === userId && grant.cluster === cluster && grant.instance === instance,
+  )
+  const userChoices = [...users].sort(
+    (a, b) => Number(a.disabled) - Number(b.disabled) || a.name.localeCompare(b.name),
+  )
 
   const load = useCallback(async () => {
     setLoading(true)
     setError("")
+    setInstancesError("")
     try {
-      const [g, u] = await Promise.all([listGrants(session), listUsers(session)])
+      const [g, u, listed] = await Promise.all([
+        listGrants(session),
+        listUsers(session),
+        listInstances(session, { includeHistory: true }).catch((e: Error) => {
+          setInstancesError(`查询实例列表失败：${e.message}`)
+          return [] as AdminInstance[]
+        }),
+      ])
       setGrants(g)
       setUsers(u)
+      setInstances(listed)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -454,13 +575,43 @@ function GrantsView({ session }: { session: Session }) {
     load()
   }, [load])
 
+  useEffect(() => {
+    if (!preset) return
+    setShowCreate(true)
+    setCluster(preset.cluster)
+    setInstance(preset.instance)
+    setError("")
+  }, [preset])
+
+  function selectCluster(next: string) {
+    setCluster(next)
+    setInstance(next === GRANT_ALL ? GRANT_ALL : "")
+  }
+
+  function instanceChoiceLabel(name: string) {
+    const row = instances.find((item) => item.cluster === cluster && item.instance === name)
+    if (!row) return name
+    if (row.status === "online") return row.busy ? `${name}（忙碌）` : `${name}（在线）`
+    return `${name}（${offlineLabel(row, Date.now())}）`
+  }
+
   async function submit() {
-    if (!userId) return
+    const checked = validateGrantForm({ userId, cluster, instance }, scope)
+    if (!checked.ok) {
+      setError(checked.error)
+      return
+    }
+    if (alreadyGranted) {
+      setError("该用户已经拥有这条授权")
+      return
+    }
     setBusy(true)
     setError("")
     try {
-      await createGrant(session, { user_id: userId, cluster, instance })
+      await createGrant(session, checked.body)
       setShowCreate(false)
+      setCluster("")
+      setInstance("")
       await load()
     } catch (e) {
       setError((e as Error).message)
@@ -470,7 +621,16 @@ function GrantsView({ session }: { session: Session }) {
   }
 
   async function remove(id: number) {
-    if (!window.confirm("确认删除该授权？")) return
+    if (
+      !(await confirm({
+        title: "删除授权",
+        message: "确认删除该授权？",
+        confirmLabel: "删除",
+        tone: "danger",
+      }))
+    ) {
+      return
+    }
     setError("")
     try {
       await deleteGrant(session, id)
@@ -484,13 +644,13 @@ function GrantsView({ session }: { session: Session }) {
     <div>
       <Toolbar
         title="权限"
-        desc="授权：用户 × 集群/实例"
+        desc="从已注册实例里选择，授权给指定用户。不会把空值存成全部目标。"
         onRefresh={load}
         loading={loading}
       >
         <button
           onClick={() => setShowCreate((v) => !v)}
-          className="flex items-center gap-1.5 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+          className="btn btn-primary btn-sm"
         >
           <PlusIcon width={14} height={14} /> 新建授权
         </button>
@@ -502,32 +662,72 @@ function GrantsView({ session }: { session: Session }) {
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               用户
-              <select value={userId} onChange={(e) => setUserId(e.target.value)} className="input w-44">
+              <select aria-label="用户" value={userId} onChange={(e) => setUserId(e.target.value)} className="input w-44">
                 <option value="">选择用户…</option>
-                {users.map((u) => (
+                {userChoices.map((u) => (
                   <option key={u.id} value={u.id}>
-                    {u.name}
+                    {u.disabled ? `${u.name}（已停用）` : u.name}
                   </option>
                 ))}
               </select>
             </label>
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               集群
-              <input value={cluster} onChange={(e) => setCluster(e.target.value)} className="input w-32" placeholder="* 或 prod-cn" />
+              <select aria-label="集群" value={cluster} onChange={(e) => selectCluster(e.target.value)} className="input w-52">
+                <option value="">选择集群…</option>
+                {scope.map((item) => (
+                  <option key={item.name} value={item.name}>
+                    {item.name}
+                  </option>
+                ))}
+                <option value={GRANT_ALL}>全部集群（*）</option>
+              </select>
             </label>
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               实例
-              <input value={instance} onChange={(e) => setInstance(e.target.value)} className="input w-32" placeholder="* 或 web-01" />
+              <select
+                aria-label="实例"
+                value={instance}
+                onChange={(e) => setInstance(e.target.value)}
+                disabled={!cluster || cluster === GRANT_ALL}
+                className="input w-56 disabled:opacity-60"
+              >
+                {cluster === GRANT_ALL ? (
+                  <option value={GRANT_ALL}>全部实例（*）</option>
+                ) : (
+                  <>
+                    <option value="">{cluster ? "选择实例…" : "先选择集群"}</option>
+                    {instanceChoices.map((name) => (
+                      <option key={name} value={name}>
+                        {instanceChoiceLabel(name)}
+                      </option>
+                    ))}
+                    {cluster && <option value={GRANT_ALL}>该集群全部实例（*）</option>}
+                  </>
+                )}
+              </select>
             </label>
           </div>
+          {instancesError && <p className="text-xs text-destructive">{instancesError}</p>}
+          {!instancesError && !loading && scope.length === 0 && (
+            <p className="text-xs text-muted-foreground">Gateway 还没有登记过实例。Agent 接入后，才能按集群和实例授权。</p>
+          )}
+          {scopeWarning && (
+            <p role="alert" className="rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-xs text-foreground">
+              {scopeWarning}
+            </p>
+          )}
+          {alreadyGranted && (
+            <p className="text-xs text-muted-foreground">该用户已经拥有这条授权。</p>
+          )}
           <p className="text-xs text-muted-foreground">
             授权后用户可使用该 target 的全部运维能力（含 Agent 升级）和它绑定的凭据；平台管理员和凭据管理不随 grant 下发。
           </p>
           <div>
             <button
               onClick={submit}
-              disabled={busy || !userId}
-              className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-40"
+              disabled={busy || !validation.ok || alreadyGranted}
+              className="btn btn-primary btn-sm"
             >
               {busy ? "授权中…" : "授权"}
             </button>
@@ -555,7 +755,7 @@ function GrantsView({ session }: { session: Session }) {
                   <div className="flex justify-end">
                     <button
                       onClick={() => remove(g.id)}
-                      className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-destructive transition-colors hover:bg-muted"
+                      className="btn btn-sm text-destructive"
                     >
                       <TrashIcon width={12} height={12} /> 删除
                     </button>
@@ -565,7 +765,7 @@ function GrantsView({ session }: { session: Session }) {
             ))}
             {!grants.length && !loading && (
               <tr>
-                <td colSpan={5} className="px-3 py-8 text-center text-sm text-muted-foreground">
+                <td colSpan={4} className="px-3 py-8 text-center text-sm text-muted-foreground">
                   暂无授权
                 </td>
               </tr>
@@ -573,6 +773,7 @@ function GrantsView({ session }: { session: Session }) {
           </tbody>
         </table>
       </div>
+      {dialog}
     </div>
   )
 }
@@ -583,6 +784,7 @@ function TokensView({ session }: { session: Session }) {
   const [users, setUsers] = useState<AdminUser[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const { confirm, dialog } = useAppDialog()
   const [showCreate, setShowCreate] = useState(false)
   const [userName, setUserName] = useState("")
   const [name, setName] = useState("")
@@ -627,7 +829,16 @@ function TokensView({ session }: { session: Session }) {
   }
 
   async function revoke(id: string) {
-    if (!window.confirm("确认撤销该令牌？撤销后立即失效。")) return
+    if (
+      !(await confirm({
+        title: "撤销令牌",
+        message: "确认撤销该令牌？撤销后立即失效。",
+        confirmLabel: "撤销",
+        tone: "danger",
+      }))
+    ) {
+      return
+    }
     setError("")
     try {
       await revokeToken(session, id)
@@ -650,7 +861,7 @@ function TokensView({ session }: { session: Session }) {
             setShowCreate((v) => !v)
             setCreated("")
           }}
-          className="flex items-center gap-1.5 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+          className="btn btn-primary btn-sm"
         >
           <PlusIcon width={14} height={14} /> 签发令牌
         </button>
@@ -678,7 +889,7 @@ function TokensView({ session }: { session: Session }) {
             <button
               onClick={submit}
               disabled={busy || !userName}
-              className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-40"
+              className="btn btn-primary btn-sm"
             >
               {busy ? "签发中…" : "签发"}
             </button>
@@ -689,7 +900,7 @@ function TokensView({ session }: { session: Session }) {
               <code className="flex-1 truncate font-mono text-xs text-foreground">{created}</code>
               <button
                 onClick={() => navigator.clipboard?.writeText(created)}
-                className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted"
+                className="btn btn-sm"
               >
                 <CopyIcon width={12} height={12} /> 复制
               </button>
@@ -734,7 +945,7 @@ function TokensView({ session }: { session: Session }) {
                     {!t.revoked && (
                       <button
                         onClick={() => revoke(t.id)}
-                        className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-destructive transition-colors hover:bg-muted"
+                        className="btn btn-sm text-destructive"
                       >
                         <BanIcon width={12} height={12} /> 撤销
                       </button>
@@ -753,6 +964,7 @@ function TokensView({ session }: { session: Session }) {
           </tbody>
         </table>
       </div>
+      {dialog}
     </div>
   )
 }

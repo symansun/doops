@@ -325,6 +325,64 @@ function shellOutput(cmd: string): string[] {
   return [`$ ${c}\n`, "(演示模式) 命令已在目标节点执行，返回示例输出。\n"]
 }
 
+const DEMO_K8S_ROWS: Record<string, string[][]> = {
+  namespaces: [["NAME", "STATUS"], ["apps", "Active"], ["data", "Active"], ["kube-system", "Active"]],
+  deployments: [["NS", "NAME", "DESIRED", "READY", "AVAILABLE"], ["apps", "orders-api", "2", "2", "2"], ["apps", "web", "1", "<none>", "<none>"]],
+  statefulsets: [["NS", "NAME", "DESIRED", "READY", "AVAILABLE"], ["data", "orders-postgres", "1", "1", "1"]],
+  daemonsets: [["NS", "NAME", "DESIRED", "READY", "AVAILABLE"], ["kube-system", "node-exporter", "1", "1", "1"]],
+  jobs: [["NS", "NAME", "COMPLETIONS", "SUCCEEDED"], ["apps", "migrate-20261101", "1", "1"]],
+  cronjobs: [["NS", "NAME", "SCHEDULE", "SUSPEND"], ["apps", "nightly-report", "0 2 * * *", "false"]],
+  pods: [["NS", "NAME", "READY", "PHASE", "NODE"], ["apps", "orders-api-7d9c-abcde", "true,true", "Running", "web-01"], ["data", "orders-postgres-0", "true", "Running", "web-01"]],
+  services: [["NS", "NAME", "TYPE", "CLUSTER-IP", "PORTS"], ["apps", "orders-api", "ClusterIP", "10.96.0.12", "8080"], ["data", "orders-postgres", "ClusterIP", "10.96.0.30", "5432"]],
+  ingresses: [["NS", "NAME", "CLASS", "HOSTS"], ["apps", "web", "nginx", "orders.example.test"]],
+  persistentvolumeclaims: [["NS", "NAME", "STATUS", "CAPACITY", "CLASS"], ["data", "data-orders-postgres-0", "Bound", "20Gi", "local-path"]],
+  persistentvolumes: [["NAME", "STATUS", "CAPACITY", "CLAIM"], ["pvc-1f2e", "Bound", "20Gi", "data-orders-postgres-0"]],
+  storageclasses: [["NAME", "PROVISIONER"], ["local-path", "rancher.io/local-path"]],
+}
+
+function demoAligned(rows: string[][], namespace: string): string {
+  const namespaced = rows[0][0] === "NS" || rows[0][0] === "NAMESPACE"
+  const body = rows.slice(1).filter((row) => !namespaced || !namespace || row[0] === namespace)
+  const all = [rows[0], ...body]
+  const widths = rows[0].map((_, index) => Math.max(...all.map((row) => row[index].length)))
+  return all.map((row) => row.map((cell, index) => cell.padEnd(widths[index])).join("   ").trimEnd()).join("\n") + "\n"
+}
+
+function demoK8sBody(args: Record<string, unknown>): string {
+  const operation = String(args.operation || "")
+  const kind = String(args.kind || "")
+  const namespace = String(args.namespace || "")
+  const output = String(args.output || "")
+  if (operation === "helm-list") {
+    return JSON.stringify([{ name: "orders", namespace: "apps", revision: 3, status: "deployed", chart: "orders-1.4.0" }])
+  }
+  if (operation === "describe") return `Name:         ${String(args.name || "")}\nNamespace:    ${namespace || "—"}\n演示模式：没有读取真实集群。\n`
+  // The Agent prints configmap-keys as NAMESPACE / NAME / KEYS, keys only.
+  if (operation === "configmap-keys") {
+    return demoAligned([["NAMESPACE", "NAME", "KEYS"], ["apps", "orders-config", "FEATURE_FLAGS,LOG_LEVEL"], ["data", "postgres-tuning", "postgresql.conf"], ["data", "empty-config", "<none>"]], namespace)
+  }
+  if (operation !== "get") return `演示模式：${operation} 没有读取真实集群。\n`
+  // kubectl prints `jsonpath={.spec.selector}` as compact JSON.
+  if (output === "jsonpath={.spec.selector}") return JSON.stringify({ matchLabels: { app: "orders-api" } })
+  if (kind === "nodes") {
+    return JSON.stringify({
+      items: [{
+        kind: "Node",
+        metadata: { name: "web-01", labels: { "node-role.kubernetes.io/control-plane": "" } },
+        status: {
+          conditions: [{ type: "Ready", status: "True" }],
+          addresses: [{ type: "InternalIP", address: "10.0.0.21" }],
+          nodeInfo: { kubeletVersion: "v1.29.6" },
+        },
+      }],
+    })
+  }
+  const rows = DEMO_K8S_ROWS[kind]
+  if (!rows) return `error: the server doesn't have a resource type "${kind}"\n`
+  if (kind === "pods" && args.selector) return demoAligned([rows[0], rows[1]], namespace)
+  return demoAligned(rows, namespace)
+}
+
 export async function demoCallTool(
   opts: { tool: string; arguments: Record<string, unknown>; signal?: AbortSignal },
   onEvent: (ev: RpcEvent) => void,
@@ -339,7 +397,118 @@ export async function demoCallTool(
     return
   }
 
+  if (tool === "doops_database_inventory") {
+    onEvent({
+      type: "result",
+      result: {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            status: "discovered",
+            cluster: "demo",
+            instance: "web-01",
+            candidates: [
+              {
+                database_asset_id: "dbscan_demo_web-01_apps_orders-postgres_postgres",
+                namespace: "apps",
+                service: "orders-postgres",
+                engine: "postgres",
+                host: "orders-postgres.apps.svc",
+                port: 5432,
+                database_name: "orders",
+                status: "candidate",
+                source: "StatefulSet",
+              },
+              {
+                database_asset_id: "dbscan_demo_web-01_data_billing-mysql_mysql",
+                namespace: "data",
+                service: "billing-mysql",
+                engine: "mysql",
+                host: "billing-mysql.data.svc",
+                port: 3306,
+                status: "needs_database_name_or_credential",
+                source: "StatefulSet",
+              },
+            ],
+          }),
+        }],
+      },
+    })
+    onEvent({ type: "done" })
+    return
+  }
+
+  if (tool === "doops_node_info") {
+    onEvent({
+      type: "output",
+      data: [
+        "--- System Info ---",
+        "Linux web-01 6.1.0-21-amd64 x86_64 GNU/Linux",
+        "--- Uptime ---",
+        " 10:21:03 up 5 days, 2 users, load average: 0.18, 0.22, 0.19",
+        "--- Memory ---",
+        "               total        used        free",
+        "Mem:            7982        2140        1204",
+        "--- Disk ---",
+        "Filesystem      Size  Used Avail Use% Mounted on",
+        "/dev/vda1        80G   29G   48G  38% /",
+        "--- Capabilities ---",
+        "kubectl: OK /usr/bin/kubectl",
+        "container-runtime: docker /usr/bin/docker",
+        "buildctl: MISSING",
+        "skopeo: MISSING",
+        "buildkit-sock: MISSING",
+        "kubeconfig: OK /root/.kube/config",
+        "",
+      ].join("\n"),
+    })
+    onEvent({ type: "result", result: { content: [{ type: "text", text: "Operation complete." }] } })
+    onEvent({ type: "done" })
+    return
+  }
+
+  if (tool === "doops_k8s") {
+    const operation = String(args.operation || "")
+    const mutating = ["rollout-restart", "scale", "delete-pod", "cordon", "uncordon"].includes(operation)
+    if (mutating && args.confirm !== true) {
+      onEvent({ type: "error", error: "confirm=true is required" })
+      onEvent({ type: "done" })
+      return
+    }
+    if (mutating) {
+      onEvent({ type: "output", data: "演示模式已接受变更请求，没有改动真实集群。\n" })
+      onEvent({ type: "result", result: { content: [{ type: "text", text: "Kubernetes operation complete." }] } })
+      onEvent({ type: "done" })
+      return
+    }
+    onEvent({ type: "output", data: demoK8sBody(args) })
+    onEvent({ type: "result", result: { content: [{ type: "text", text: "Kubernetes operation complete." }] } })
+    onEvent({ type: "done" })
+    return
+  }
+
   if (tool === "doops_agent_prompt") {
+    if (typeof args.sql === "string" && args.sql.trim()) {
+      onEvent({
+        type: "result",
+        result: {
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              engine: "postgres",
+              database: args.sql_database || "orders",
+              credential: "orders-db",
+              result: {
+                status: "verified",
+                statements: [{ columns: ["ok"], rows: [["1"]], statement: args.sql }],
+              },
+            }),
+          }],
+        },
+      })
+      onEvent({ type: "done" })
+      return
+    }
     if (args.mode === "metadata") {
       onEvent({ type: "result", result: { content: [{ type: "text", text: JSON.stringify({ status: "connected", model: JSON.parse(DEMO_SETTINGS).model }) }] } })
       onEvent({ type: "done" })
@@ -567,6 +736,7 @@ const demoInstances: AdminInstance[] = [
   { cluster: "prod-cn", instance: "web-01", status: "online", remote: "10.0.1.11:51820", busy: false, active_ops: 1, queued_ops: 0, connected_at: ago(6), last_seen: nowISO() },
   { cluster: "prod-cn", instance: "web-02", status: "online", remote: "10.0.1.12:51820", busy: true, active_ops: 2, queued_ops: 1, connected_at: ago(6), last_seen: nowISO() },
   { cluster: "staging", instance: "db-01", status: "offline", remote: "10.0.2.21:51820", busy: false, active_ops: 0, queued_ops: 0, connected_at: ago(48), last_seen: ago(2) },
+  { cluster: "probe-20260913", instance: "release-runner", status: "offline", remote: "", busy: false, active_ops: 0, queued_ops: 0, connected_at: ago(24 * 120), last_seen: ago(24 * 40) },
 ]
 
 let grantSeq = 100

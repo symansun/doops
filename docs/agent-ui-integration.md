@@ -47,6 +47,13 @@ credential resolution, cancellation, and audit ownership.
   database/repository binding bar or prompt prefix. The terminal result is a
   transport receipt (`Operation complete.`), not replacement answer text;
   Gateway audit and execution evidence remain authoritative.
+- Tool activity is rendered once in the conversation timeline. The execution
+  trace is reserved for independent interaction receipts (permission, tool and
+  artifact actions), rather than replaying the same conversation tool events.
+  A tool's secondary title is omitted when it matches the displayed label or
+  workspace path; distinct titles, inputs, outputs and failures remain visible.
+  The pinned `0.1.4` package carries these render fixes in the tracked pnpm
+  patch; frozen installs and `Dockerfile.web` apply the same patch.
 - The console passes Agent UI's `codeWorkspace` for the current DoOps session
   workspace. Code view uses read-only workspace metadata, file reads, search,
   Git changes/Diff and Git history; it does not replace the existing Files panel
@@ -90,9 +97,11 @@ be enabled; this change does not introduce distributed session storage.
 
 1. Given an authenticated user and configured target, opening AI Assistant reads
    metadata, enables the composer, and two messages reach the same target/session.
-2. Given a stream of tool output and assistant deltas, the user presentation
-   preserves the streamed answer and terminal status without exposing the
-   internal execution trace.
+2. Given a stream of tool output and assistant deltas, the developer presentation
+   shows each tool call once in the conversation timeline. Tool headers do not
+   repeat identical labels; distinct calls with the same name remain separate.
+   Expanding a call retains its input, output and failure evidence, and independent
+   interaction receipts remain in the execution trace.
 3. Given a session workspace with source files and deliverables, Agent UI
    exposes Code and Work views; Code supports file inspection and changes/Diff,
    while Work exposes previewable/downloadable deliverables.

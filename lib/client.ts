@@ -1,6 +1,7 @@
 "use client"
 
-import type { Target, AuditEvent, AuditSummary } from "./gateway"
+import { auditStatusKind, type Target, type AuditEvent, type AuditSummary } from "./gateway"
+import { SESSION_CHANGED_CODE, SESSION_GENERATION_HEADER, SessionChangedError } from "./auth-session"
 
 export type { Target, AuditEvent, AuditSummary }
 
@@ -9,6 +10,7 @@ export interface Session {
   token?: string
   username?: string
   demo?: boolean
+  sessionGeneration?: string
 }
 
 export type RpcEvent =
@@ -21,15 +23,17 @@ export type RpcEvent =
 export type ToolCancel = () => Promise<void>
 
 function authHeaders(s: Session): HeadersInit {
-  void s
-  return { "Content-Type": "application/json" }
+  return {
+    "Content-Type": "application/json",
+    ...(s.sessionGeneration ? { [SESSION_GENERATION_HEADER]: s.sessionGeneration } : {}),
+  }
 }
 
 export async function login(
   gateway: string,
   username: string,
   password: string,
-): Promise<{ gateway: string; username: string }> {
+): Promise<Session> {
   const res = await fetch("/api/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -37,7 +41,8 @@ export async function login(
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || "登录失败")
-  return { gateway: data.gateway || gateway, username: data.username || username }
+  if (typeof data.sessionGeneration !== "string" || !data.sessionGeneration) throw new Error("登录会话响应缺少代次")
+  return { gateway: data.gateway || gateway, username: data.username || username, sessionGeneration: data.sessionGeneration }
 }
 
 export async function restoreServerSession(): Promise<Session | null> {
@@ -45,10 +50,11 @@ export async function restoreServerSession(): Promise<Session | null> {
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || `恢复会话失败 (${res.status})`)
   if (data.session === null) return null
-  if (!data.session?.gateway) throw new Error("Gateway 会话响应无效")
+  if (!data.session?.gateway || typeof data.session.sessionGeneration !== "string" || !data.session.sessionGeneration) throw new Error("Gateway 会话响应无效")
   return {
     gateway: data.session.gateway,
     username: data.session.username || undefined,
+    sessionGeneration: data.session.sessionGeneration,
   }
 }
 
@@ -64,7 +70,8 @@ export async function persistTokenSession(
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || "保存会话失败")
-  return { gateway: data.gateway || gateway, username: data.username || username }
+  if (typeof data.sessionGeneration !== "string" || !data.sessionGeneration) throw new Error("登录会话响应缺少代次")
+  return { gateway: data.gateway || gateway, username: data.username || username, sessionGeneration: data.sessionGeneration }
 }
 
 export async function clearServerSession(): Promise<void> {
@@ -100,9 +107,10 @@ export async function fetchAudit(
   const res = await fetch(`/api/audit?${qs.toString()}`, { headers: authHeaders(s) })
   const data = await res.json()
   if (!res.ok) return { error: data.error || "查询审计失败", status: res.status }
+  const events = (data.events || []) as AuditEvent[]
   return {
-    events: (data.events || []) as AuditEvent[],
-    summary: data.summary as AuditSummary | undefined,
+    events,
+    summary: (data.summary as AuditSummary | undefined) || summarizeAuditEvents(events),
   }
 }
 
@@ -112,6 +120,7 @@ function summarizeAuditEvents(events: AuditEvent[]): AuditSummary {
     running: 0,
     success: 0,
     failed: 0,
+    unknown: 0,
     bytes_in: 0,
     bytes_out: 0,
     status: {},
@@ -122,9 +131,20 @@ function summarizeAuditEvents(events: AuditEvent[]): AuditSummary {
     summary.bytes_in += event.bytes_in || 0
     summary.bytes_out += event.bytes_out || 0
     summary.status![status] = (summary.status![status] || 0) + 1
-    if (status === "running") summary.running += 1
-    else if (status === "success") summary.success += 1
-    else summary.failed += 1
+    switch (auditStatusKind(status)) {
+      case "running":
+        summary.running += 1
+        break
+      case "success":
+        summary.success += 1
+        break
+      case "unknown":
+        summary.unknown += 1
+        break
+      case "failed":
+        summary.failed += 1
+        break
+    }
   }
   return summary
 }
@@ -202,15 +222,17 @@ export async function callTool(
 
   if (!res.ok || !res.body) {
     let msg = `请求失败 (${res.status})`
+    let sessionChanged = false
     try {
       const data = await res.json()
       msg = data.error || msg
+      sessionChanged = data.code === SESSION_CHANGED_CODE
     } catch {
       /* noop */
     }
     onEvent({ type: "error", error: msg })
     onEvent({ type: "done" })
-    throw new Error(msg)
+    throw sessionChanged ? new SessionChangedError() : new Error(msg)
   }
 
   const reader = res.body.getReader()

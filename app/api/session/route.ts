@@ -2,6 +2,7 @@ import {
   allowedGatewayBase,
   clearGatewaySession,
   gatewayPolicyResponse,
+  gatewaySessionGeneration,
   readGatewaySession,
   setGatewaySession,
 } from "@/lib/gateway-policy"
@@ -15,6 +16,7 @@ export async function GET(req: Request) {
 
   try {
     const gateway = allowedGatewayBase(stored.gateway)
+    const sessionGeneration = gatewaySessionGeneration(stored)
     const response = await fetch(`${gateway}/v1/targets`, {
       headers: { Authorization: `Bearer ${stored.token}` },
       cache: "no-store",
@@ -29,7 +31,7 @@ export async function GET(req: Request) {
       })
     }
     return Response.json({
-      session: { gateway, username: stored.username || "" },
+      session: { gateway, username: stored.username || "", sessionGeneration },
     }, { headers: { "Cache-Control": "no-store" } })
   } catch (error) {
     return gatewayPolicyResponse(error) || Response.json({ error: "无法验证 Gateway 会话" }, { status: 502 })
@@ -59,8 +61,8 @@ export async function POST(req: Request) {
       return Response.json({ error: text || `token 验证失败 (${response.status})` }, { status: response.status })
     }
     const headers = new Headers({ "Content-Type": "application/json" })
-    setGatewaySession(headers, { gateway, token, username: body.username || "" })
-    return new Response(JSON.stringify({ authenticated: true, gateway, username: body.username || "" }), {
+    const sessionGeneration = setGatewaySession(headers, { gateway, token, username: body.username || "" })
+    return new Response(JSON.stringify({ authenticated: true, gateway, username: body.username || "", sessionGeneration }), {
       status: 200,
       headers,
     })

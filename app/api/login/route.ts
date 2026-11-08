@@ -45,8 +45,8 @@ export async function POST(req: Request) {
     if (!parsed.token) return Response.json({ error: "gateway 登录响应缺少 token" }, { status: 502 })
     const usernameValue = parsed.username || username
     const headers = new Headers({ "Content-Type": "application/json" })
-    setGatewaySession(headers, { gateway: gatewayBase, token: parsed.token, username: usernameValue })
-    return new Response(JSON.stringify({ authenticated: true, gateway: gatewayBase, username: usernameValue }), {
+    const sessionGeneration = setGatewaySession(headers, { gateway: gatewayBase, token: parsed.token, username: usernameValue })
+    return new Response(JSON.stringify({ authenticated: true, gateway: gatewayBase, username: usernameValue, sessionGeneration }), {
       status: 200,
       headers,
     })

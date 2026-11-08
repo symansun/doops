@@ -25,6 +25,7 @@ import {
   CheckIcon,
   LayersIcon,
 } from "./icons"
+import { useAppDialog } from "./app-dialog"
 
 // 通用配置文件管理：编辑节点上任意配置文件并应用/发布。
 // 注意：大模型配置不在此处，请到「管理 → 配置中心」维护模型。
@@ -60,6 +61,7 @@ export function ConfigPanel({
   const [dirty, setDirty] = useState(false)
   const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
   const [configs, setConfigs] = useState<ModelConfig[]>([])
+  const { confirm, prompt, dialog } = useAppDialog()
 
   useEffect(() => {
     setConfigs(loadConfigs())
@@ -137,12 +139,18 @@ export function ConfigPanel({
     load(p)
   }
 
-  function saveToLibrary() {
+  async function saveToLibrary() {
     if (!path.trim()) {
       setStatus({ kind: "err", text: "请先填写目标路径，再另存为配置" })
       return
     }
-    const name = window.prompt("为该配置文件命名（保存到配置库，可应用到其他机器）：")
+    const name = await prompt({
+      title: "保存到配置库",
+      message: "命名后可应用到其他机器。",
+      label: "配置名称",
+      placeholder: "Nginx 反代配置",
+      confirmLabel: "保存",
+    })
     if (!name) return
     const list = upsertConfig({
       id: newConfigId(),
@@ -170,7 +178,7 @@ export function ConfigPanel({
     setStatus(null)
     try {
       await applyConfigToNode(session, target, sessionId, cfg)
-      setConfigs(markPublished(cfg.id))
+      setConfigs(markPublished(cfg))
       setStatus({ kind: "ok", text: `已应用「${cfg.name}」到 ${target.instance}` })
     } catch (err) {
       setStatus({ kind: "err", text: (err as Error).message })
@@ -179,8 +187,17 @@ export function ConfigPanel({
     }
   }
 
-  function deleteFromLibrary(id: string) {
-    if (!window.confirm("确定从配置库删除该配置？")) return
+  async function deleteFromLibrary(id: string) {
+    if (
+      !(await confirm({
+        title: "删除配置",
+        message: "确定从配置库删除该配置？",
+        confirmLabel: "删除",
+        tone: "danger",
+      }))
+    ) {
+      return
+    }
     setConfigs(removeConfig(id))
   }
 
@@ -342,6 +359,7 @@ export function ConfigPanel({
           </p>
         </div>
       </aside>
+      {dialog}
     </div>
   )
 }

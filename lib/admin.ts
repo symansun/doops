@@ -141,7 +141,11 @@ export async function revokeToken(s: Session, id: string): Promise<void> {
 }
 
 // ---------- 实例 ----------
-export async function listInstances(s: Session): Promise<AdminInstance[]> {
+export async function listInstances(
+  s: Session,
+  options?: { includeHistory?: boolean },
+): Promise<AdminInstance[]> {
   if (s.demo) return (await import("./demo")).demoListInstances()
-  return (await req<{ instances: AdminInstance[] }>(s, "instances")).instances || []
+  const query = options?.includeHistory ? "?include=history" : ""
+  return (await req<{ instances: AdminInstance[] }>(s, `instances${query}`)).instances || []
 }

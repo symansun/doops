@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type ComponentType, type SVGProps } from "react"
 import {
   fetchAudit,
   type Session,
@@ -8,11 +8,13 @@ import {
   type AuditEvent,
   type AuditSummary,
 } from "@/lib/client"
+import { Boxes } from "lucide-react"
 import { listInstances } from "@/lib/admin"
+import { summarizeInstanceScope } from "@/lib/instance-activity"
+import { auditStatusKind, auditStatusLabel } from "@/lib/gateway"
 import {
   ServerIcon,
   ActivityIcon,
-  TerminalIcon,
   SparkIcon,
   FileIcon,
   FileTextIcon,
@@ -25,8 +27,9 @@ import {
   LayersIcon,
   UsersIcon,
 } from "./icons"
+import { Button } from "./ui"
 
-type QuickTab = "terminal" | "ask" | "files" | "kb"
+type QuickTab = "resources" | "ask" | "files" | "kb"
 
 type ClusterSummary = {
   name: string
@@ -39,9 +42,9 @@ type ClusterSummary = {
 }
 
 type ManagedScope = {
-  total: number
+  active: number
   online: number
-  offline: number
+  history: number
   isAdmin: boolean
 }
 
@@ -77,7 +80,7 @@ export function DashboardPanel({
     setManagedError("")
     Promise.allSettled([
       fetchAudit(session, { limit: "12" }),
-      listInstances(session),
+      listInstances(session, { includeHistory: true }),
     ]).then(([auditResult, instancesResult]) => {
         if (!alive) return
         if (auditResult.status === "rejected") {
@@ -103,12 +106,11 @@ export function DashboardPanel({
           setManagedError(instancesResult.reason instanceof Error ? instancesResult.reason.message : "查询实例状态失败")
           setManaged(null)
         } else {
-          const instances = instancesResult.value
-          const online = instances.filter((row) => row.status === "online").length
+          const scope = summarizeInstanceScope(instancesResult.value, Date.now())
           setManaged({
-            total: instances.length,
-            online,
-            offline: instances.length - online,
+            active: scope.active,
+            online: scope.online,
+            history: scope.history,
             isAdmin: true,
           })
         }
@@ -122,11 +124,12 @@ export function DashboardPanel({
   const clusters = metrics.clusters
 
   const recentRuns = auditSummary?.total ?? audit.length
-  const recentFailed = auditSummary?.failed ?? audit.filter(isFailedEvent).length
+  const recentFailed = auditSummary?.failed ?? audit.filter((event) => auditStatusKind(event.status) === "failed").length
+  const recentUnknown = auditSummary?.unknown ?? audit.filter((event) => auditStatusKind(event.status) === "unknown").length
   const managedHint = managedError
     ? "实例状态不可用"
     : managed
-    ? `${managed.online} 在线 · ${managed.offline} 离线`
+    ? `活跃 ${managed.active} · 历史 ${managed.history}`
     : `${metrics.agentConnections} 台当前可见`
 
   const selectedCluster = selected
@@ -135,7 +138,7 @@ export function DashboardPanel({
 
   return (
     <div className="h-full overflow-auto">
-      <div className="mx-auto max-w-screen-2xl px-5 py-6">
+      <div className="px-4 py-6">
         <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold text-foreground text-balance">
@@ -145,14 +148,14 @@ export function DashboardPanel({
               Agent 隧道连接、控制台会话、任务执行与定时巡检的一屏总览。
             </p>
           </div>
-          <button
+          <Button
             onClick={onRefresh}
             disabled={loading}
-            className="flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            size="sm"
           >
             <RefreshIcon width={15} height={15} className={loading ? "animate-spin" : ""} />
             刷新
-          </button>
+          </Button>
         </div>
 
         {targets.length === 0 ? (
@@ -176,7 +179,7 @@ export function DashboardPanel({
               />
               <StatCard
                 label={managed ? "纳管机器" : "可见机器"}
-                value={managed?.total ?? metrics.agentConnections}
+                value={managed?.active ?? metrics.agentConnections}
                 icon={ServerIcon}
                 tone="primary"
                 hint={managedHint}
@@ -200,11 +203,19 @@ export function DashboardPanel({
                 value={auditDenied || auditError ? "—" : recentRuns}
                 icon={ActivityIcon}
                 tone={recentFailed > 0 ? "warning" : recentRuns > 0 ? "primary" : "muted"}
-                hint={auditDenied ? "需管理员权限" : recentFailed > 0 ? `失败 ${recentFailed}` : undefined}
+                hint={
+                  auditDenied
+                    ? "无权查看"
+                    : recentFailed > 0
+                      ? `失败 ${recentFailed}`
+                      : recentUnknown > 0
+                        ? `结果未知 ${recentUnknown}`
+                        : undefined
+                }
               />
             </div>
 
-            <div className="mb-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <div className="mb-4 grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
               <CurrentMachineSection
                 selected={selected}
                 cluster={selectedCluster}
@@ -220,6 +231,7 @@ export function DashboardPanel({
                 error={auditError}
                 summary={auditSummary}
                 failedCount={recentFailed}
+                unknownCount={recentUnknown}
               />
             </div>
           </>
@@ -342,6 +354,12 @@ function CurrentMachineSection({
 
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
         <QuickAction
+          icon={Boxes}
+          title="资源"
+          desc="集群对象、数据库与主机"
+          onClick={() => onOpenTab("resources", selected)}
+        />
+        <QuickAction
           icon={FileIcon}
           title="文件管理"
           desc="浏览、上传、编辑"
@@ -352,12 +370,6 @@ function CurrentMachineSection({
           title="知识库"
           desc="在线运维文档"
           onClick={() => onOpenTab("kb", selected)}
-        />
-        <QuickAction
-          icon={TerminalIcon}
-          title="终端"
-          desc="直接执行命令"
-          onClick={() => onOpenTab("terminal", selected)}
         />
       </div>
     </section>
@@ -410,12 +422,14 @@ function RecentActivitySection({
   error,
   summary,
   failedCount,
+  unknownCount,
 }: {
   audit: AuditEvent[]
   denied: boolean
   error: string
   summary: AuditSummary | null
   failedCount: number
+  unknownCount: number
 }) {
   return (
     <section className="rounded-xl border bg-card p-5">
@@ -426,7 +440,7 @@ function RecentActivitySection({
         </p>
       ) : denied ? (
         <p className="py-8 text-center text-sm text-muted-foreground">
-          审计日志需要管理员权限。普通用户可在各机器的 AI 助手 / 终端中查看自己的操作记录。
+          当前账号不能查看这一范围。本人记录在审计页；只有平台管理员能看全局。
         </p>
       ) : audit.length === 0 ? (
         <p className="py-8 text-center text-sm text-muted-foreground">暂无记录，操作后会显示在这里</p>
@@ -437,6 +451,7 @@ function RecentActivitySection({
               <span>共 {summary.total} 次</span>
               <span className="text-primary">成功 {summary.success}</span>
               {failedCount > 0 ? <span className="text-destructive">失败 {failedCount}</span> : null}
+              {unknownCount > 0 ? <span className="text-warning">结果未知 {unknownCount}</span> : null}
               {summary.running > 0 ? <span>进行中 {summary.running}</span> : null}
             </div>
           ) : null}
@@ -548,7 +563,7 @@ function QuickAction({
   desc,
   onClick,
 }: {
-  icon: typeof ServerIcon
+  icon: ComponentType<SVGProps<SVGSVGElement>>
   title: string
   desc: string
   onClick: () => void
@@ -608,6 +623,12 @@ function ActionBadge({ action }: { action?: string }) {
     check_deployment: "检查",
     clean: "清理",
     clean_workspace: "清理",
+    admin: "管理",
+    proxy: "代理",
+    "agent:upgrade": "升级",
+    "credential:use": "凭据",
+    "credential:rotate": "凭据",
+    "credential:revoke": "凭据",
   }
   const key = (action || "").replace(/^doops_/, "")
   return (
@@ -619,19 +640,16 @@ function ActionBadge({ action }: { action?: string }) {
 
 function StatusTag({ status }: { status?: string }) {
   if (!status) return null
-  const ok = status === "success" || status === "ok" || status === "completed"
-  const fail = isFailedStatus(status)
-  const cls = ok ? "text-primary" : fail ? "text-destructive" : "text-muted-foreground"
-  const label = ok ? "成功" : fail ? "失败" : status
-  return <span className={`shrink-0 text-xs ${cls}`}>{label}</span>
-}
-
-function isFailedStatus(status: string): boolean {
-  return status === "error" || status === "failed" || status === "outcome_unknown"
-}
-
-function isFailedEvent(event: AuditEvent): boolean {
-  return !!event.status && isFailedStatus(event.status)
+  const kind = auditStatusKind(status)
+  const cls =
+    kind === "success"
+      ? "text-primary"
+      : kind === "failed"
+        ? "text-destructive"
+        : kind === "unknown" || kind === "running"
+          ? "text-warning"
+          : "text-muted-foreground"
+  return <span className={`shrink-0 text-xs ${cls}`}>{auditStatusLabel(status)}</span>
 }
 
 function busyReasonLabel(reason: string): string {

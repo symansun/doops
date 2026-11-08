@@ -1,0 +1,23 @@
+diff --git a/chunks/WorkerConversation-ZnlZqmaU.js b/chunks/WorkerConversation-ZnlZqmaU.js
+index 843338f6509cab9a8d849fde3cc7e1b4f2c8f56a..7edc9adc456634b6cf65ee64f2dcd69514a6403c 100644
+--- a/chunks/WorkerConversation-ZnlZqmaU.js
++++ b/chunks/WorkerConversation-ZnlZqmaU.js
+@@ -2649,7 +2649,8 @@ function ToolActivityCard({
+   const output = cleanToolEvidence(item.output);
+   const detail = cleanToolEvidence(item.detail);
+   const failure = item.failure?.message;
+-  const title = cleanToolEvidence(item.title);
++  const rawTitle = cleanToolEvidence(item.title);
++  const title = rawTitle && rawTitle !== workspacePath && text.toolText(rawTitle) !== text.toolText(presentation.label) ? rawTitle : void 0;
+   const rawEvidence = presentation.specialized ? void 0 : toolActivityRawEvidence(item);
+   const hasActions = Boolean(
+     item.actions.length && runtime.executeToolAction && runtime.getSnapshot(sessionId).capabilities.executeToolAction
+@@ -5036,7 +5037,7 @@ function AgentConversationSurface({
+       onRemoveCodeReference
+     }
+   ) : hostComposer;
+-  const executionTimeline = presentation === "developer" ? /* @__PURE__ */ jsx(ExecutionTrace, { execution: snapshot.execution, interactions: snapshot.interactions, items }) : null;
++  const executionTimeline = presentation === "developer" ? /* @__PURE__ */ jsx(ExecutionTrace, { interactions: snapshot.interactions, items: [] }) : null;
+   const trace = executionTrace || executionTimeline;
+   const isEmpty = !trace && items.length === 0 && snapshot.permissions.length === 0 && !snapshot.hasOlderItems;
+   const { loadingOlder, scrollRef, showJump, jumpToLatest } = useConversationHistoryScroll({

@@ -39,7 +39,7 @@ export async function POST(req: Request) {
   let gateway: string
   let token: string
   try {
-    ;({ gateway, token } = readAllowedAuth(req))
+    ;({ gateway, token } = readAllowedAuth(req, { requireGeneration: true }))
   } catch (err) {
     return gatewayPolicyResponse(err) || Response.json({ error: "gateway 策略检查失败" }, { status: 500 })
   }

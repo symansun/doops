@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Session } from "@/lib/client"
+import { SessionChangedError } from "@/lib/auth-session"
 import type { Target } from "@/lib/gateway"
 import { randomSession } from "@/lib/gateway"
 import { listInstances, type AdminInstance } from "@/lib/admin"
+import { ACTIVE_INSTANCE_WINDOW_DAYS, instanceActivity } from "@/lib/instance-activity"
 import {
   loadConfigs,
   upsertConfig,
@@ -15,9 +17,11 @@ import {
   configKind,
   configTargetPath,
   hasUnpublishedChanges,
+  requireConfigWorkspacePath,
   type ModelConfig,
   type ConfigKind,
 } from "@/lib/model-configs"
+import { useAppDialog } from "./app-dialog"
 import {
   LayersIcon,
   PlusIcon,
@@ -76,7 +80,10 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
   const [dispatchCfg, setDispatchCfg] = useState("")
   const [rows, setRows] = useState<Record<string, DispatchRow>>({})
   const [dispatching, setDispatching] = useState(false)
+  const [formError, setFormError] = useState("")
+  const [dispatchError, setDispatchError] = useState("")
   const sessionRef = useRef(randomSession("admin-cfg"))
+  const { confirm, dialog } = useAppDialog()
 
   useEffect(() => {
     setConfigs(loadConfigs())
@@ -100,40 +107,61 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
     const base = kind === "file" ? EMPTY_FILE : EMPTY_MODEL
     setEditing({ ...base, id: newConfigId() })
     setShowKey(false)
+    setFormError("")
   }
 
   function startEdit(cfg: ModelConfig) {
     setEditing({ ...cfg, models: cfg.models ? [...cfg.models] : [] })
     setShowKey(false)
+    setFormError("")
+    try {
+      requireConfigWorkspacePath(configTargetPath(cfg), sessionRef.current)
+    } catch (error) {
+      setFormError((error as Error).message)
+    }
   }
 
   function saveEditing() {
     if (!editing) return
     if (!editing.name.trim()) {
-      alert("请填写配置名称")
+      setFormError("请填写配置名称")
       return
     }
-    if (configKind(editing) === "file" && !editing.path?.trim()) {
-      alert("配置文件需要填写目标路径")
+    try {
+      requireConfigWorkspacePath(configTargetPath(editing), sessionRef.current)
+    } catch (error) {
+      setFormError((error as Error).message)
       return
     }
+    setFormError("")
     const list = upsertConfig({ ...editing, name: editing.name.trim() })
     setConfigs(list)
     setEditing(null)
   }
 
-  function deleteConfig(id: string) {
-    if (!window.confirm("确定删除该配置？")) return
+  async function deleteConfig(id: string) {
+    if (
+      !(await confirm({
+        title: "删除配置",
+        message: "确定删除该配置？",
+        confirmLabel: "删除",
+        tone: "danger",
+      }))
+    ) {
+      return
+    }
     const list = removeConfig(id)
     setConfigs(list)
     if (dispatchCfg === id) setDispatchCfg("")
   }
 
-  const onlineKeys = instances
+  const activeInstances = instances.filter((i) => instanceActivity(i, Date.now()) !== "history")
+  const onlineKeys = activeInstances
     .filter((i) => i.status === "online")
     .map((i) => `${i.cluster}/${i.instance}`)
 
   function toggle(key: string) {
+    setDispatchError("")
     setSelected((p) => ({ ...p, [key]: !p[key] }))
   }
   function selectAllOnline() {
@@ -145,18 +173,25 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
     setSelected({})
   }
 
-  // 应用 / 发布上线
+  // 将当前模板快照写入所选工作区。
   async function publish() {
     const cfg = configs.find((c) => c.id === dispatchCfg)
     if (!cfg) {
-      alert("请先选择要发布的配置")
+      setDispatchError("请先选择要写入的配置")
       return
     }
-    const targets = instances.filter((i) => selected[`${i.cluster}/${i.instance}`])
+    try {
+      requireConfigWorkspacePath(configTargetPath(cfg), sessionRef.current)
+    } catch (error) {
+      setDispatchError((error as Error).message)
+      return
+    }
+    const targets = activeInstances.filter((i) => selected[`${i.cluster}/${i.instance}`])
     if (targets.length === 0) {
-      alert("请至少勾选一个目标实例")
+      setDispatchError("请至少勾选一个目标实例")
       return
     }
+    setDispatchError("")
     setDispatching(true)
     const init: Record<string, DispatchRow> = {}
     targets.forEach((t) => {
@@ -177,10 +212,17 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
           ...p,
           [key]: { key, state: "err", message: e instanceof Error ? e.message : String(e) },
         }))
+        if (e instanceof SessionChangedError) {
+          setDispatchError(e.message)
+          setRows((previous) => Object.fromEntries(Object.entries(previous).map(([targetKey, row]) => [
+            targetKey, row.state === "running" ? { ...row, state: "err", message: "登录会话已变更，未继续写入" } : row,
+          ])))
+          break
+        }
       }
     }
     if (anyOk) {
-      setConfigs(markPublished(cfg.id))
+      setConfigs(markPublished(cfg))
     }
     setDispatching(false)
   }
@@ -196,18 +238,18 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
             <h2 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
               <LayersIcon width={16} height={16} className="text-primary" /> 配置模板
             </h2>
-            <p className="text-xs text-muted-foreground">浏览器本地保存模板，发布时通过 doops 写入所选节点</p>
+            <p className="text-xs text-muted-foreground">写入工作区文件；服务或 Agent 全局配置需通过现有明确发布操作生效</p>
           </div>
           <div className="flex items-center gap-1.5">
             <button
               onClick={() => startNew("model")}
-              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              className="btn btn-primary btn-sm"
             >
-              <PlusIcon width={14} height={14} /> 大模型
+              <PlusIcon width={14} height={14} /> 模型文件
             </button>
             <button
               onClick={() => startNew("file")}
-              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+              className="btn btn-sm"
             >
               <PlusIcon width={14} height={14} /> 配置文件
             </button>
@@ -220,13 +262,20 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
               cfg={editing}
               showKey={showKey}
               onToggleKey={() => setShowKey((v) => !v)}
-              onChange={setEditing}
+              formError={formError}
+              onChange={(next) => {
+                setFormError("")
+                setEditing(next)
+              }}
               onSave={saveEditing}
-              onCancel={() => setEditing(null)}
+              onCancel={() => {
+                setFormError("")
+                setEditing(null)
+              }}
             />
           ) : configs.length === 0 ? (
             <p className="px-1 py-8 text-center text-sm text-muted-foreground">
-              暂无配置，点击右上角「大模型」或「配置文件」新建。
+              暂无配置，点击右上角「模型文件」或「配置文件」新建。
             </p>
           ) : (
             <ul className="flex flex-col gap-2">
@@ -250,7 +299,7 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
                         <div className="flex items-center gap-1.5">
                           <p className="truncate text-sm font-medium text-foreground">{c.name}</p>
                           <span className="shrink-0 rounded border px-1 py-0.5 text-[10px] text-muted-foreground">
-                            {isFile ? "配置文件" : "大模型"}
+                            {isFile ? "配置文件" : "模型文件"}
                           </span>
                         </div>
                         <p className="truncate font-mono text-xs text-muted-foreground">
@@ -265,13 +314,13 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
                             ? "bg-warning/15 text-warning"
                             : "bg-success/15 text-success"
                         }`}
-                        title={c.published_at ? `最近发布：${new Date(c.published_at).toLocaleString()}` : "尚未发布"}
+                        title={c.published_at ? `最近写入工作区：${new Date(c.published_at).toLocaleString()}` : "尚未写入"}
                       >
-                        {unpublished ? (c.published_at ? "有改动" : "未发布") : "已发布"}
+                        {unpublished ? (c.published_at ? "有改动" : "未写入") : "已写入"}
                       </span>
                       <button
                         onClick={() => startEdit(c)}
-                        className="rounded-md border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted"
+                        className="btn btn-sm"
                       >
                         编辑
                       </button>
@@ -291,19 +340,19 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
         </div>
       </section>
 
-      {/* 右：发布上线 */}
+      {/* 右：工作区写入 */}
       <section className="flex min-h-0 flex-1 flex-col">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-card/50 px-4 py-3">
           <div>
             <h2 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-              <RocketIcon width={16} height={16} className="text-primary" /> 应用到节点
+              <RocketIcon width={16} height={16} className="text-primary" /> 写入工作区
             </h2>
-            <p className="text-xs text-muted-foreground">选择模板与目标实例，应用后写入节点并标记本地发布时间</p>
+            <p className="break-all text-xs text-muted-foreground">工作区：/root/ws/{sessionRef.current}</p>
           </div>
           <button
             onClick={loadInst}
             disabled={loadingInst}
-            className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            className="btn btn-sm"
           >
             <RefreshIcon width={14} height={14} className={loadingInst ? "animate-spin" : ""} /> 刷新实例
           </button>
@@ -311,8 +360,15 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
 
         <div className="flex flex-wrap items-end gap-2 border-b bg-muted/30 px-4 py-3">
           <label className="flex min-w-48 flex-1 flex-col gap-1.5">
-            <span className="text-xs font-medium text-muted-foreground">要发布的配置</span>
-            <select value={dispatchCfg} onChange={(e) => setDispatchCfg(e.target.value)} className="input">
+            <span className="text-xs font-medium text-muted-foreground">要写入的配置</span>
+            <select
+              value={dispatchCfg}
+              onChange={(e) => {
+                setDispatchError("")
+                setDispatchCfg(e.target.value)
+              }}
+              className="input"
+            >
               <option value="">选择一个配置…</option>
               {configs.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -325,16 +381,21 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
           <button
             onClick={publish}
             disabled={dispatching || !dispatchCfg || selectedCount === 0}
-            className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+            className="btn btn-primary"
           >
             <RocketIcon width={15} height={15} />
-            {dispatching ? "发布中…" : `发布上线 (${selectedCount})`}
+            {dispatching ? "写入中…" : `写入工作区 (${selectedCount})`}
           </button>
         </div>
+        {dispatchError && (
+          <p role="alert" className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
+            {dispatchError}
+          </p>
+        )}
 
         {dispatchCfg && (
           <p className="border-b bg-background px-4 py-2 font-mono text-xs text-muted-foreground">
-            目标路径：{configTargetPath(configs.find((c) => c.id === dispatchCfg)!) || "—"}
+            工作区相对路径：{configTargetPath(configs.find((c) => c.id === dispatchCfg)!) || "—"}
           </p>
         )}
 
@@ -352,13 +413,17 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto px-3 pb-3">
-          {instances.length === 0 ? (
+          {activeInstances.length === 0 ? (
             <p className="px-1 py-8 text-center text-sm text-muted-foreground">
-              {loadingInst ? "加载中…" : "暂无已注册实例"}
+              {loadingInst
+                ? "加载中…"
+                : instances.length
+                  ? `没有在线或 ${ACTIVE_INSTANCE_WINDOW_DAYS} 天内离线的实例`
+                  : "暂无已注册实例"}
             </p>
           ) : (
             <ul className="flex flex-col gap-2">
-              {instances.map((i) => {
+              {activeInstances.map((i) => {
                 const key = `${i.cluster}/${i.instance}`
                 const online = i.status === "online"
                 const row = rows[key]
@@ -402,7 +467,7 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
                         {row.state === "ok" && <CheckIcon width={13} height={13} />}
                         {row.state === "running" && <RefreshIcon width={13} height={13} className="animate-spin" />}
                         {row.state === "ok"
-                          ? "已发布"
+                          ? "已写入"
                           : row.state === "err"
                             ? "失败"
                             : row.state === "running"
@@ -417,6 +482,7 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
           )}
         </div>
       </section>
+      {dialog}
     </div>
   )
 }
@@ -424,6 +490,7 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
 function ConfigEditor({
   cfg,
   showKey,
+  formError,
   onToggleKey,
   onChange,
   onSave,
@@ -431,6 +498,7 @@ function ConfigEditor({
 }: {
   cfg: ModelConfig
   showKey: boolean
+  formError: string
   onToggleKey: () => void
   onChange: (c: ModelConfig) => void
   onSave: () => void
@@ -447,7 +515,7 @@ function ConfigEditor({
           }`}
         >
           {isFile ? <FileTextIcon width={13} height={13} /> : <LayersIcon width={13} height={13} />}
-          {isFile ? "配置文件" : "大模型配置"}
+          {isFile ? "配置文件" : "模型配置文件"}
         </span>
       </div>
 
@@ -460,16 +528,16 @@ function ConfigEditor({
         />
       </Row>
 
+      <Row label="工作区相对文件路径">
+        <input
+          className="input w-full font-mono"
+          value={configTargetPath(cfg)}
+          onChange={(e) => set({ path: e.target.value })}
+          placeholder="nginx/conf.d/doops.conf"
+        />
+      </Row>
       {isFile ? (
         <>
-          <Row label="目标路径 (节点上的绝对路径)">
-            <input
-              className="input w-full font-mono"
-              value={cfg.path ?? ""}
-              onChange={(e) => set({ path: e.target.value })}
-              placeholder="/etc/nginx/conf.d/doops.conf"
-            />
-          </Row>
           <Row label="格式">
             <select
               className="input w-full"
@@ -489,7 +557,7 @@ function ConfigEditor({
               value={cfg.content ?? ""}
               onChange={(e) => set({ content: e.target.value })}
               spellCheck={false}
-              placeholder="# 在此粘贴配置文件内容，发布时原样写入目标路径"
+              placeholder="# 写入工作区文件的内容"
             />
           </Row>
         </>
@@ -567,21 +635,27 @@ function ConfigEditor({
         </>
       )}
 
+      {formError && (
+        <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {formError}
+        </p>
+      )}
+
       <div className="mt-1 flex items-center gap-2">
         <button
           onClick={onSave}
-          className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+          className="btn btn-primary"
         >
           <SaveIcon width={15} height={15} /> 保存配置
         </button>
         <button
           onClick={onCancel}
-          className="rounded-lg border px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
+          className="btn"
         >
           取消
         </button>
         <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
-          <KeyIcon width={12} height={12} /> 仅保存在浏览器本地，发布后才写入节点
+          <KeyIcon width={12} height={12} /> 保存到浏览器本地，执行写入后才更新工作区
         </span>
       </div>
     </div>

@@ -5,6 +5,8 @@ import { fetchAudit, type AuditEvent, type Session, type Target } from "@/lib/cl
 import {
   AUDIT_ACTIONS,
   AUDIT_STATUSES,
+  auditStatusKind,
+  auditStatusLabel,
   type AuditScope,
 } from "@/lib/gateway"
 import { HistoryIcon, RefreshIcon } from "./icons"
@@ -39,7 +41,6 @@ export function AuditPanel({
     const id = ++requestId.current
     setLoading(true)
     setError("")
-    setEvents([])
     const params: Record<string, string> = { limit: "50" }
     if (scope === "target" || scope === "session") {
       params.cluster = target.cluster
@@ -81,7 +82,7 @@ export function AuditPanel({
           <select
             value={scope}
             onChange={(e) => setScope(e.target.value as AuditScope)}
-            className="h-9 rounded-md border bg-background px-2.5 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/25"
+            className="input input-sm"
             aria-label="审计范围"
           >
             <option value="target">该目标</option>
@@ -92,7 +93,7 @@ export function AuditPanel({
           <select
             value={action}
             onChange={(e) => setAction(e.target.value)}
-            className="h-9 rounded-md border bg-background px-2.5 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/25"
+            className="input input-sm"
             aria-label="审计动作"
           >
             <option value="">全部动作</option>
@@ -105,7 +106,7 @@ export function AuditPanel({
           <select
             value={status}
             onChange={(e) => setStatus(e.target.value)}
-            className="h-9 rounded-md border bg-background px-2.5 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/25"
+            className="input input-sm"
             aria-label="审计状态"
           >
             <option value="">全部状态</option>
@@ -123,7 +124,7 @@ export function AuditPanel({
           <button
             onClick={load}
             disabled={loading}
-            className="flex h-9 items-center gap-1.5 rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+            className="btn btn-sm"
           >
             <RefreshIcon width={14} height={14} className={loading ? "animate-spin" : ""} /> 刷新
           </button>
@@ -132,10 +133,10 @@ export function AuditPanel({
 
       <div className="flex-1 overflow-y-auto p-4">
         <p className="mb-4 max-w-4xl text-sm leading-6 text-muted-foreground">
-          普通用户仅查看本人记录；管理员可查看全局，凭据审计另按授权范围可见。最近 50 条。
+          普通用户看到本人记录，以及引用自己凭据的事件。全局只有平台管理员能看。结果未知表示终态没有写上，不能当成失败或成功。最近 50 条。
         </p>
         {error && (
-          <p className="mb-3 rounded-lg bg-destructive/15 px-3 py-2 text-sm text-destructive">
+          <p role="alert" className="status-error mb-3">
             {error}
           </p>
         )}
@@ -155,14 +156,16 @@ export function AuditPanel({
                 </span>
                 <span
                   className={`rounded-md px-2 py-1 text-sm font-medium ${
-                    e.status === "success"
+                    auditStatusKind(e.status) === "success"
                       ? "bg-success/15 text-success"
-                      : e.status === "running" || e.status === "executing"
-                        ? "bg-warning/15 text-warning"
-                        : "bg-destructive/15 text-destructive"
+                      : auditStatusKind(e.status) === "failed"
+                        ? "bg-destructive/15 text-destructive"
+                        : auditStatusKind(e.status) === "unknown" || auditStatusKind(e.status) === "running"
+                          ? "bg-warning/15 text-warning"
+                          : "bg-muted text-muted-foreground"
                   }`}
                 >
-                  status={e.status || "unknown"}
+                  {auditStatusLabel(e.status)}
                 </span>
                 <span className="ml-auto text-sm text-muted-foreground">
                   {fmtTime(e.started_at)}
@@ -172,7 +175,9 @@ export function AuditPanel({
                 <span className="min-w-0 break-all"><strong className="font-medium text-foreground/80">用户</strong> {e.user_id || "—"}</span>
                 <span className="min-w-0 break-all"><strong className="font-medium text-foreground/80">Token</strong> {e.token_id || "—"}</span>
                 <span className="min-w-0 break-all"><strong className="font-medium text-foreground/80">目标</strong> {e.cluster || "—"}/{e.instance || "—"}</span>
+                {e.credential_id && <span className="min-w-0 break-all font-mono"><strong className="font-sans font-medium text-foreground/80">凭据</strong> {e.credential_id}</span>}
                 {e.session && <span className="min-w-0 break-all font-mono"><strong className="font-sans font-medium text-foreground/80">Session</strong> {e.session}</span>}
+                {e.ended_at && <span className="min-w-0 break-all"><strong className="font-medium text-foreground/80">结束</strong> {fmtTime(e.ended_at)}</span>}
               </div>
               {e.command_summary && (
                 <p className="mt-3 break-words rounded-md border border-border/80 bg-background/70 px-3 py-2.5 font-mono text-[13px] leading-6 text-foreground">

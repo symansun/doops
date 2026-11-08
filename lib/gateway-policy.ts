@@ -1,15 +1,20 @@
+import { createHash, randomUUID } from "node:crypto"
+import { SESSION_CHANGED_CODE, SESSION_GENERATION_HEADER, SessionChangedError } from "./auth-session"
+
 export class GatewayPolicyError extends Error {}
 
 export interface GatewaySession {
   gateway: string
   token: string
   username?: string
+  generation?: string
 }
 
 const SESSION_MAX_AGE = 60 * 60 * 24 * 7
 const SESSION_GATEWAY_COOKIE = "doops_session_gateway"
 const SESSION_TOKEN_COOKIE = "doops_session_token"
 const SESSION_USERNAME_COOKIE = "doops_session_username"
+const SESSION_GENERATION_COOKIE = "doops_session_generation"
 
 type GatewayEnvironment = {
   NODE_ENV?: string
@@ -82,8 +87,12 @@ export function allowedGatewayBase(
   return gateway.origin
 }
 
-export function readAllowedAuth(req: Request): { gateway: string; token: string } {
+export function readAllowedAuth(req: Request, options: { requireGeneration?: boolean } = {}): { gateway: string; token: string } {
   const session = readGatewaySession(req)
+  if (options.requireGeneration &&
+      (!session || req.headers.get(SESSION_GENERATION_HEADER) !== gatewaySessionGeneration(session))) {
+    throw new SessionChangedError()
+  }
   if (!session) return { gateway: "", token: "" }
   return {
     gateway: allowedGatewayBase(session.gateway),
@@ -97,19 +106,29 @@ export function readGatewaySession(req: Request): GatewaySession | null {
   const token = (cookies[SESSION_TOKEN_COOKIE] || "").trim()
   if (!gateway || !token) return null
   const username = (cookies[SESSION_USERNAME_COOKIE] || "").trim()
-  return { gateway, token, username: username || undefined }
+  const generation = cookies[SESSION_GENERATION_COOKIE]
+  return { gateway, token, username: username || undefined, generation }
 }
 
-export function setGatewaySession(headers: Headers, session: GatewaySession): void {
+export function gatewaySessionGeneration(session: GatewaySession): string {
+  if (!session.generation) throw new SessionChangedError()
+  return createHash("sha256").update(JSON.stringify([session.gateway, session.token, session.generation])).digest("hex")
+}
+
+export function setGatewaySession(headers: Headers, session: GatewaySession): string {
+  const generation = randomUUID()
   headers.append("Set-Cookie", sessionCookie(SESSION_GATEWAY_COOKIE, session.gateway, SESSION_MAX_AGE))
   headers.append("Set-Cookie", sessionCookie(SESSION_TOKEN_COOKIE, session.token, SESSION_MAX_AGE))
   headers.append("Set-Cookie", sessionCookie(SESSION_USERNAME_COOKIE, session.username || "", SESSION_MAX_AGE))
+  headers.append("Set-Cookie", sessionCookie(SESSION_GENERATION_COOKIE, generation, SESSION_MAX_AGE))
+  return gatewaySessionGeneration({ ...session, generation })
 }
 
 export function clearGatewaySession(headers: Headers): void {
   headers.append("Set-Cookie", sessionCookie(SESSION_GATEWAY_COOKIE, "", 0))
   headers.append("Set-Cookie", sessionCookie(SESSION_TOKEN_COOKIE, "", 0))
   headers.append("Set-Cookie", sessionCookie(SESSION_USERNAME_COOKIE, "", 0))
+  headers.append("Set-Cookie", sessionCookie(SESSION_GENERATION_COOKIE, "", 0))
 }
 
 function parseCookieHeader(header: string | null): Record<string, string> {
@@ -135,6 +154,9 @@ function sessionCookie(name: string, value: string, maxAge: number): string {
 }
 
 export function gatewayPolicyResponse(err: unknown): Response | null {
+  if (err instanceof SessionChangedError) {
+    return Response.json({ error: err.message, code: SESSION_CHANGED_CODE }, { status: 409 })
+  }
   if (!(err instanceof GatewayPolicyError)) return null
   return Response.json({ error: err.message }, { status: 403 })
 }
