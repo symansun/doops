@@ -1787,22 +1787,6 @@ func (gw *Gateway) uploadAgentPromptAttachments(ctx context.Context, doagentURL,
 	return blocks, nil
 }
 
-func doagentAllowedTools(apply bool, skill string) []string {
-	tools := []string{"Read", "Glob", "Grep", "Skill", "mcp_doops_k8s_read", "mcp_doops_web_read"}
-	if strings.TrimSpace(skill) == "dosql" {
-		tools = append(tools, "mcp_dosql_read")
-	}
-	if apply {
-		switch skill {
-		case "":
-			tools = append(tools, "mcp_doops_helm")
-		case "doweb":
-			tools = append(tools, "mcp_doops_web")
-		}
-	}
-	return tools
-}
-
 func (gw *Gateway) handleAgentMetadataWS(ctx context.Context, doopsSessionID string) (string, error) {
 	doagentURL := configuredDoagentURL()
 	status := inspectDoagentModelChannels()
