@@ -31,10 +31,10 @@
 python3 -m pytest -q backend/test
 ```
 
-发布 CLI 预构建包时，还要运行：
+发布 CLI 预构建包时，还要运行固定构建器脚本（需要 Docker）：
 
 ```bash
-bash backend/scripts/build-cli.sh --all
+bash backend/scripts/build-cli-release.sh
 git diff --check
 ```
 

@@ -20,10 +20,10 @@ The installer copies the operator entrypoint and documents, not maintenance scri
 
 For Skill edits or installation/release maintenance, first locate the DoOps checkout and verify
 its Git root, remote, `AGENTS.md`, `backend/skills/SKILL.md`, and required script. Run documented
-`scripts/<name>.sh` maintenance commands from `backend/`; the root `scripts/install.sh` is the
-installer wrapper. Resolve `--project` before changing directory so `$PWD` does not silently
-select the DoOps checkout. Missing source blocks maintenance, not ordinary CLI queries;
-do not create lookalike scripts in the business project.
+maintenance commands from the DoOps checkout root with `bash backend/scripts/<name>.sh`; the root
+`scripts/install.sh` is the installer wrapper. Resolve `--project` before changing directory so
+`$PWD` does not silently select the DoOps checkout. Missing source blocks maintenance, not ordinary
+CLI queries; do not create lookalike scripts in the business project.
 
 Agent skill sources are separate: `backend/agent/skills/` is copied to `/app/skills`, then
 synchronized into `/root/.agent/skills/` by the entrypoint. The prompt handler injects
@@ -36,7 +36,7 @@ The operator installer does not distribute Agent subskills or update a running A
 | :--- | :--- | :--- |
 | List configured targets | `doops list` | Local config only; not live gateway state. |
 | Copy newly online targets into local routes | `doops sync [--target <gateway-target>]` | Adds live targets this login can use and that are missing locally. Does not rename existing routes or remove offline ones. |
-| List live gateway agents | `doops -session <s> targets --target <gateway-target>` | Checks only that configured route. It does not list or save the Gateway's other agents. |
+| List live gateway agents | `doops targets --target <gateway-target>` | Checks only that configured route. It does not list or save the Gateway's other agents; this Gateway HTTP command does not use `-session`. |
 | Retire an offline target | `doops -session <s> remove --target <gateway-target>` | Removes only the local route after a successful Gateway query confirms the exact route is not currently visible; online, unreachable, or unauthorized targets are refused. |
 | Check Agent protocol capability | `doops -session <s> capabilities --target <t> --require structuredSSH` | Fails closed when the online Agent is too old for structured SSH. |
 | Add a Gateway target | `doops add --name <n> --gateway <url> --cluster <c> --instance <i>` | Stores routing only; never stores a target token. |
@@ -218,7 +218,7 @@ CLI 参数一一对应，生成与 CLI 相同的 `doops_shell` 命令；authfile
 ```bash
 doops list
 doops version
-doops -session smoke targets --target <gateway-target>
+doops targets --target <gateway-target>
 doops -session smoke exec --target <gateway-target> --cmd 'hostname && date -u +%FT%TZ'
 doops -session smoke-capabilities capabilities --target <gateway-target> --require structuredSSH
 doops -session image-toolchain-check info --target <gateway-target>
@@ -677,15 +677,16 @@ doops credential list --target <t> --view managed  # 本人管理的凭据
 
 ## Upgrade
 
-入口按运行方式选择，参数、验收和回滚见 [`BUILD_DEPLOY_SOP.md`](BUILD_DEPLOY_SOP.md)：
+入口按运行方式选择，参数、验收和回滚见 [`BUILD_DEPLOY_SOP.md`](BUILD_DEPLOY_SOP.md)。
+下表中的维护脚本都从 DoOps 源码 checkout 根目录执行：
 
 | 场景 | 入口 |
 | :--- | :--- |
 | 安装或更新 CLI / Skill（不动 Agent） | `bash scripts/install.sh --version <vX.Y.Z> --project "$PWD"` |
 | 已有自升级控制器的 Helm Agent | `doops upgrade`（下方示例） |
-| K8S 首装、旧 Helm Agent、`--proxy-allowed-hosts` / `--host-alias` 等 Helm 配置变更 | `scripts/release-managed-agent.sh`，操作机 kubeconfig |
-| 已有独立 Docker Agent | `scripts/release-host-agent.sh`，见 SOP“独立 DockerHost 发布” |
-| 空 Ubuntu/Debian 服务器 | `scripts/bootstrap-host-agent.sh`，见 [`CLUSTER_INSTALL_GUIDE.md`](CLUSTER_INSTALL_GUIDE.md#空服务器-docker-首装) |
+| K8S 首装、旧 Helm Agent、`--proxy-allowed-hosts` / `--host-alias` 等 Helm 配置变更 | `bash backend/scripts/release-managed-agent.sh`，操作机 kubeconfig |
+| 已有独立 Docker Agent | `bash backend/scripts/release-host-agent.sh`，见 SOP“独立 DockerHost 发布” |
+| 空 Ubuntu/Debian 服务器 | `bash backend/scripts/bootstrap-host-agent.sh`，见 [`CLUSTER_INSTALL_GUIDE.md`](CLUSTER_INSTALL_GUIDE.md#空服务器-docker-首装) |
 
 安装器从 GitHub Release asset 下载带校验的 CLI 到 `~/.local/bin/doops`，回执写在
 `~/.local/share/doops/install.txt`，其中 `commit` 与 `skill_commit` 一致。Skill/docs 取自 CLI

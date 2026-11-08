@@ -19,7 +19,7 @@ Then configure a Gateway target and log in once:
 ```bash
 doops add --name <target> --gateway <gateway-url> \
   --cluster <cluster> --instance <instance> --use '<target purpose>'
-doops -session setup login --target <target>
+doops login --target <target>
 ```
 
 The target route and Gateway login are the only user-facing connection

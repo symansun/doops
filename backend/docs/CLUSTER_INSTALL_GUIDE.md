@@ -37,8 +37,8 @@ doops -session agent-upgrade upgrade \
 操作员在一台管理机上登录一次，同一 Gateway 的 targets 共用登录态：
 
 ```bash
-doops -session setup login --target <configured-target>
-doops -session preflight targets --target <configured-target>
+doops login --target <configured-target>
+doops targets --target <configured-target>
 doops -session preflight exec --target <configured-target> --cmd hostname
 ```
 
@@ -260,11 +260,11 @@ token；安装后的完整命令验收在已登录的管理机执行：
 ```bash
 doops add --name gw-unicom --gateway https://gateway.example.com \
   --cluster doops-unicom --instance unicom-1
-doops -session unicom-install targets --target gw-unicom
+doops targets --target gw-unicom
 doops -session unicom-install exec --target gw-unicom --cmd hostname
 ```
 
-尚未登录的管理机先执行 `doops -session setup login --target gw-unicom`。
+尚未登录的管理机先执行 `doops login --target gw-unicom`。
 本地健康仅证明隧道连接；管理端 RPC 和 AI 请求还须真实验收，不能仅凭启动完成宣称
 全部功能可用。已有 Docker Agent 后续发布仍走下面的外部升级入口。
 
@@ -282,7 +282,7 @@ doops -session unicom-install exec --target gw-unicom --cmd hostname
 CLI 不提供直连 Agent 安装入口。不要以“容器起来了”或“`ps` 里有进程”
 作为安装成功标准；必须从 Gateway 和真实远程调用两侧验收：
 
-- `doops -session install-verify targets --target <gateway-target>` 返回指定 `cluster/instance`，不是其它同
+- `doops targets --target <gateway-target>` 返回指定 `cluster/instance`，不是其它同
   Gateway 节点。
 - `doops -session install-verify exec --target <gateway-target> --cmd 'do-agent --version'`
   返回当前发布版本。
@@ -315,12 +315,12 @@ Gateway heartbeat、Agent 版本或容器运行时任一失败，安装都应直
 
 2. **登录 Gateway**:
    ```bash
-   doops -session install-verify login --target new-cluster
+   doops login --target new-cluster
    ```
 
 3. **确认精确身份已注册**:
    ```bash
-   doops -session install-verify targets --target new-cluster
+   doops targets --target new-cluster
    ```
 
 4. **终端测试验证**:

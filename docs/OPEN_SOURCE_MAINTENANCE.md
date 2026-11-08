@@ -74,7 +74,8 @@
 python3 -m pytest -q backend/test
 ```
 
-维护者在本地还应运行 `git diff --check`。涉及 CLI 预构建包时运行 `bash backend/scripts/build-cli.sh --all`，并审查二进制是否与源码 commit 对应。
+维护者在本地还应运行 `git diff --check`。涉及 CLI 预构建包时，从仓库根目录运行
+`bash backend/scripts/build-cli-release.sh`，并审查二进制是否与源码 commit 对应。
 
 版本使用 `vMAJOR.MINOR.PATCH`：
 

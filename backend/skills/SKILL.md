@@ -25,16 +25,16 @@ description: |
 
 权威源码是 doops.sh 仓库的 `backend/skills/SKILL.md`；项目里的 `.agent/skills/doops/` 是
 安装副本，只能通过 `scripts/install.sh` 从 Release CLI 内嵌 commit 同步，不要直接改副本。
-安装副本中的 `docs/` 相对 `SKILL.md`；维护脚本从 doops 源码仓库定位。
+安装副本的 `docs/` 相对 `SKILL.md`，维护脚本在源码仓库。
 
 ## 红线
 
-- 只用 `~/.local/bin/doops`。Agent 执行显式带 `-session <name>`，自行取名、不需预创建；
-  同一工作区复用，`pull` 必须用已有 session。控制面 HTTP 不消费该参数，也不因此获得
-  session 审计或隔离。完整语义见使用指南。
+- 只用 `~/.local/bin/doops`。Agent 执行显式带 `-session <name>`，自行取名且无需预创建；
+  复用同名 session 继续工作区，`pull` 必须用已有 session。HTTP 控制面不消费它，也不提供
+  session 隔离。完整语义见使用指南。
 - CLI 只接受 Gateway target；没有直连 target、SSH target 或按 target 保存的 token。
   Gateway 登录态按 Gateway URL 共享，target 配置只存路由。Agent 注册不用 token。
-- 凭据 payload 只走 stdin，不进入命令参数、prompt、日志、文档、提交或工作区。
+- 凭据 payload 只走 stdin，不进参数、prompt、日志、文档、提交或工作区。
   运行时只传 `--credential <resource-name>`（DoSql 自动绑定，见下文），只要求该 target 的 grant。
   不要用 `exec` 输出密码再让用户粘贴；已有目标 Secret 用 `credential configure --from-secret` 导入。
 - 每次调用都等待 RPC 实际终态。取消 ACK、超时或断连缺少终态时报告 `outcome_unknown`，
@@ -59,11 +59,13 @@ description: |
 - `pull` 用新下载目录；COS 覆盖同名文件，Git 中转会 `reset --hard`；不能指向业务仓库。
 - 长任务用 `exec --bg`，不在 `exec` 里用 `&`、`nohup`、`setsid`。
 - 发布镜像只由 CI 构建，不在业务 target 或本机构建。
-- Agent 不替换自己。升级入口按运行方式选择，互不自动 fallback：
+- Agent 不替换自己；按运行方式选入口，不自动 fallback：
   已有控制器的 Helm Agent 用 `doops upgrade`；K8S 首装、旧 Helm Agent、显式 Helm 配置
-  变更用 `scripts/release-managed-agent.sh`；独立 Docker Agent 用 `scripts/release-host-agent.sh`；
-  空服务器用 `scripts/bootstrap-host-agent.sh`。
-- Gateway 本体只用 `scripts/deploy-gateway.sh --source-commit <commit>` 从宿主机 SSH 发布，
+  变更用源码 checkout 的 `bash backend/scripts/release-managed-agent.sh`；
+  独立 Docker Agent 用 `bash backend/scripts/release-host-agent.sh`；
+  空服务器用 `bash backend/scripts/bootstrap-host-agent.sh`。
+- Gateway 只用源码 checkout 的
+  `bash backend/scripts/deploy-gateway.sh --source-commit <commit>` 从宿主机 SSH 发布，
   不登记为 target，不通过 target 发布。
 - token、建用户、生成密码会输出秘密；先读使用指南 “Gateway Admin Tokens”，只输出到
   `0600` 私密文件，不读回对话。`--save-as` 不隐藏输出；不 SSH 改 Gateway DB。
@@ -120,7 +122,8 @@ DoSql 必须从 `doops sql` 进入；普通 `ask` 不保证注入 DoSql 工具�
 
 ## 安装与升级
 
-- 安装 CLI/Skill：`bash scripts/install.sh --version <tag> --project <absolute-path>`。
+- 安装 CLI/Skill：在 DoOps checkout 根目录运行
+  `bash scripts/install.sh --version <tag> --project <absolute-path>`。
   它不部署 Agent；Agent 接入见 `docs/CLUSTER_INSTALL_GUIDE.md`。
 - 配置唯一来源是 `~/.agent/skills/doops/config.json`；`auth.json` 按 Gateway URL 存 token。
 - 创建普通用户用 `admin user create`，交付前确认 grant 只含预期 target，并用隔离的

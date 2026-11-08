@@ -2,8 +2,8 @@
 name: k8s
 description: 用 doops 结构化工具读 Kubernetes/Helm 状态并发布业务 workload
 triggers:
-  keywords: [k8s, kubernetes, kubectl, pod, deployment, namespace, daemonset, ingress, helm, rollout]
-  regex: "kubectl\\s+|k8s|kubernetes|helm\\s+|rollout"
+  keywords: [k8s, kubernetes, kubectl, pod, deployment, namespace, daemonset, ingress, helm, rollout, 部署, 重启, 扩容, 缩容, 副本]
+  regex: "kubectl\\s+|k8s|kubernetes|helm\\s+|rollout|(?:部署|重启|扩容|缩容|扩到|缩到).*(?:服务|副本|工作负载|pod|deployment|集群|命名空间)"
 phase: [analyze, translate, cleanup]
 priority: 10
 max_tokens: 800
@@ -11,7 +11,8 @@ requires: []
 conflicts: []
 ---
 
-只在上下文已明确 Kubernetes 时使用；“重启服务”不自动指向集群。
+只在上下文已明确 Kubernetes 时使用；动作词可以触发候选匹配，但“重启服务”等请求
+没有集群、工作负载或副本上下文时不进入 Kubernetes 操作。
 沿用本次 Gateway target 对应的集群和运行时配置，资源名、namespace、release 从任务
 或指定资产核对，不从示例补默认值。只读/方案任务到证据或方案结束，不进入发布。
 
@@ -36,12 +37,13 @@ Secret、ServiceAccount 不开放读取。
 
 ## 发布：`mcp_doops_helm`
 
-- 仅在 `ask --apply` 且任务已有具体发布/回滚授权时进入；沿用授权不重复确认，
+- 仅在 `ask --apply` 且任务已有具体发布、回滚或卸载授权时进入；沿用授权不重复确认，
   但新对象或新增影响返回上层确认。核对 CI 制品与目标镜像，构建/推送失败不继续发布。
 - `upgrade-install`：`release`、`namespace`、`chart`（HTTPS `.tgz`，或 `asset_source=workspace`
   时的 session 相对路径）、`confirm=true`；可选 `value_files`、`set_strings`、`expected_image`、
   `timeout`。只改镜像也走这里。
 - `rollback`：`release`、`namespace`、`revision`、`confirm=true`。
+- `uninstall`：`release`、`namespace`、`confirm=true`；只在任务明确授权卸载时调用。
 - 工具自己做 server dry-run → helm → 核对每个渲染出的工作负载（含其它 namespace 的对象、
   hook Job、initContainers），并等滚动完成。你只需一次调用。
 - 只含 Ingress 的 release 也能发：Ingress 按路由核对（class、每条 route 的 host/path/

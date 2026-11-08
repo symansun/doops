@@ -50,7 +50,7 @@ doops -session <s> exec --target <k8s-agent> --cmd 'nsenter -t 1 -m -u -i -n -- 
 确认该 target 对应目标物理机，再执行只读命令：
 
 ```bash
-doops -session <s> targets --target <physical-target>
+doops targets --target <physical-target>
 doops -session <s> exec --target <physical-target> -- hostname
 doops -session <s> exec --target <physical-target> -- uname -a
 ```

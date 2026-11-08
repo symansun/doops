@@ -18,7 +18,7 @@ Agent 不再需要声明独立的生命周期 capability；必须验证前台和
 终态证据。任务没有给出升级范围时只完成源码与 CI 制品，不做生产切换。
 
 先用 `doops version`、`doops list` 和
-`doops -session <s> targets --target <t>` 核对已安装 CLI、Gateway 路由及精确
+`doops targets --target <t>` 核对已安装 CLI、Gateway 路由及精确
 `cluster/instance`。升级前分别记录 CLI 和 Agent 的完整 commit，允许旧 Agent 与新 CLI
 版本不同；不能要求升级前已经同版。升级后按选定 CI 制品验收。当前外部脚本以 CLI
 commit 校验候选 Agent，因此使用该脚本时 CLI 必须与候选制品同版。源码已修改不代表 CLI、Gateway 或 Agent 已更新；
