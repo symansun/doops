@@ -1,11 +1,11 @@
 ---
 name: shell
-description: 结构化工具没覆盖的操作用 shell 完成
+description: 进入当前 target 的宿主机，或把结构化工具未覆盖的操作交给受审计的 exec
 triggers:
-  keywords: []
+  keywords: [宿主机, 进入节点, nsenter]
 phase: [analyze]
 priority: 5
-max_tokens: 400
+max_tokens: 1600
 requires: []
 conflicts: []
 ---
@@ -16,6 +16,26 @@ conflicts: []
 不要因为工具名单或交互审批 UI 缺失而退回让用户手工执行。
 只处理目标和范围已明确的任务；仅方案/诊断不变更，缺关键目标或授权时返回缺项，
 不猜测对象。已有具体授权沿用，不逐命令重复确认。
+
+## 进入宿主机
+
+用户在已有 Kubernetes Agent target 上说“进入宿主机”，指该 Agent 所在节点。
+沿用当前 target/session，先做只读身份验证；不要列 A/B/C 让用户选，也不转成 GPU
+检查或新 Agent 安装。只有明确指向其它物理机或 hypervisor 且缺少映射时，才询问具体目标。
+
+1. 用 `Read` 读取 `/app/self-docs/docs/PHYSICAL_HOST_ACCESS.md` 的“进入宿主机的固定流程”，
+   使用其中的完整探测脚本，校验 `/host`、PID 1 根目录、进入前后的 mount namespace。
+2. 当前 ask 没有 Bash/ExecuteCode 是既定分工。输出一个完整的原始 `bash` 代码块，
+   不包 `doops exec`、不含占位符。Web 的“在此执行”会预填命令，用户提交后沿当前
+   target/session 走 Gateway exec；上层有 CLI 时，将脚本作为
+   `doops -session <s> exec --target <t> --cmd` 的参数，沿用已有授权执行。
+3. 等待执行方的终态和身份输出。Web 结果留在执行栏，不自动回传 ask；没收到结果时
+   只说明命令已准备好，不宣告成功或假装轮询。失败保留退出码和缺项，
+   不尝试 K8s 只读工具的 exec、其它 Pod、SSH、直连端口或自行开启 `hostAccess`。
+4. 每次后续宿主命令仍带 `nsenter`；单次 exec 不会永久切换后续会话。
+   进入和只读检查不授权安装、重启、改挂载、改权限或修驱动。
+
+## 其它命令
 
 - 按已核实的 OS、工具和身份生成命令；不固定包管理器，不因缺 sudo 自动安装或提权。
   代理、入口和工作目录取自项目及调用环境；每次 exec 需要工作区时显式 cd。
