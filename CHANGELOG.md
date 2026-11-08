@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-11-08
+
 ### Added
 - gateway `/metrics` Prometheus 端点：在线 agent 数、WS 客户端连接数、活跃操作数、工具调用计数（按 action/status）、护栏拦截计数；回环地址直接放行，非回环需 `Authorization: Bearer $DOOPS_METRICS_TOKEN`
 - token 轮换管理：`doops-gateway token list` / `token revoke -id <tok_...>`，吊销后立即失效
