@@ -1,3 +1,4 @@
+import { gatewayAuthMessage } from "./gateway-auth.ts"
 // 镜像构建、复制与 Registry 同步的表单到 doops_shell 参数映射。
 // 命令沿用 CLI backend/cli/cli/doops/image.go、registry_sync.go 的工具和参数，另外：
 // - 每个失败点打印一行 doops_image_error=<类别> 标记并保留原退出码，界面据此给出原因；
@@ -584,10 +585,12 @@ export function explainImageFailure(
   const blocked = /blocked_command\(([^)]+)\):\s*(.*)/.exec(raw)
   if (blocked) return { kind: "blocked", text: `Agent 拒绝执行（${blocked[1]}）：${blocked[2]}` }
   const upgrade = gatewayUpgradeStatus(raw)
+  const authMessage = gatewayAuthMessage(raw)
+  if (authMessage) return { kind: "auth", text: authMessage }
   if (/^forbidden\b/i.test(raw) || upgrade === "403" || raw.includes("Unexpected server response: 403")) {
     return { kind: "forbidden", text: `无权在 ${where} 上执行：请联系平台管理员授权该目标` }
   }
-  if (upgrade === "401" || raw.includes("Unexpected server response: 401") || raw === "gateway_auth_failed" || raw.includes("未建立 Gateway 会话") || raw.includes("缺少 gateway 地址或 token")) {
+  if (upgrade === "401" || raw.includes("Unexpected server response: 401") || raw.includes("未建立 Gateway 会话") || raw.includes("缺少 gateway 地址或 token")) {
     return { kind: "auth", text: "登录已失效，请重新登录后再执行" }
   }
   if (/^target offline\b/i.test(raw) || upgrade === "404") {

@@ -9,8 +9,11 @@ export interface Session {
   gateway: string
   token?: string
   username?: string
+  tokenId?: string
+  issuedAt?: string
+  expiresAt?: string
   demo?: boolean
-  // 只决定是否显示管理入口；由服务端探测 Gateway 管理员接口得出，Gateway 仍是权限边界。
+  // 只决定是否显示管理入口；来自 Gateway 当前身份接口，Gateway 仍是权限边界。
   isAdmin?: boolean
 }
 
@@ -39,7 +42,7 @@ export async function login(
   gateway: string,
   username: string,
   password: string,
-): Promise<{ gateway: string; username: string; isAdmin: boolean }> {
+): Promise<Session> {
   const res = await consoleFetch("/api/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -47,7 +50,14 @@ export async function login(
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || "登录失败")
-  return { gateway: data.gateway || gateway, username: data.username || username, isAdmin: data.isAdmin === true }
+  return {
+    gateway: data.gateway,
+    username: data.username,
+    isAdmin: data.isAdmin === true,
+    tokenId: data.tokenId,
+    issuedAt: data.issuedAt,
+    expiresAt: data.expiresAt,
+  }
 }
 
 export async function restoreServerSession(): Promise<Session | null> {
@@ -60,22 +70,31 @@ export async function restoreServerSession(): Promise<Session | null> {
     gateway: data.session.gateway,
     username: data.session.username || undefined,
     isAdmin: data.session.isAdmin === true,
+    tokenId: data.session.tokenId,
+    issuedAt: data.session.issuedAt,
+    expiresAt: data.session.expiresAt,
   }
 }
 
 export async function persistTokenSession(
   gateway: string,
   token: string,
-  username?: string,
 ): Promise<Session> {
   const res = await consoleFetch("/api/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ gateway, token, username: username || "" }),
+    body: JSON.stringify({ gateway, token }),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || "保存会话失败")
-  return { gateway: data.gateway || gateway, username: data.username || username, isAdmin: data.isAdmin === true }
+  return {
+    gateway: data.gateway,
+    username: data.username,
+    isAdmin: data.isAdmin === true,
+    tokenId: data.tokenId,
+    issuedAt: data.issuedAt,
+    expiresAt: data.expiresAt,
+  }
 }
 
 export async function clearServerSession(): Promise<void> {

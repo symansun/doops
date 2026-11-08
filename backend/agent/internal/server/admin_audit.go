@@ -102,7 +102,7 @@ func (h *GatewayHub) auditAdminMutation(route string, next http.HandlerFunc) htt
 	return func(w http.ResponseWriter, r *http.Request) {
 		auth, err := h.authenticateUser(r)
 		if err != nil {
-			h.writeUserAuthError(w, r)
+			h.writeUserAuthError(w, r, err)
 			return
 		}
 		isAdmin := h.store.UserIsPlatformAdmin(auth.UserID)

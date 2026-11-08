@@ -37,7 +37,7 @@ func (h *ClientService) HandleGitHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	auth, err := h.authenticateGitUser(r)
 	if err != nil {
-		writeGitAuthError(w)
+		writeGitAuthError(w, err)
 		return
 	}
 	action := gitActionForRequest(r)
@@ -159,8 +159,8 @@ func (h *ClientService) authenticateGitUser(r *http.Request) (TokenAuth, error) 
 	return h.authenticateUser(r)
 }
 
-func writeGitAuthError(w http.ResponseWriter) {
-	writeGatewayAuthError(w, `Basic realm="doops-gateway"`)
+func writeGitAuthError(w http.ResponseWriter, authErr error) {
+	writeGatewayAuthError(w, `Basic realm="doops-gateway"`, authErr)
 }
 
 func parseGatewayGitPath(rawPath string) (cluster, instance, session, rest string, ok bool) {

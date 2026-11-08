@@ -229,7 +229,9 @@ bash scripts/build-gateway.sh
 
 Token 只打印一次，数据库里只保存哈希。
 
-如果用户使用密码登录，gateway 会通过 `POST /v1/auth/login` 签发一个 user token；CLI 只缓存 token，不保存用户密码。
+如果用户使用密码登录，gateway 会通过 `POST /v1/auth/login` 签发一个 user token；CLI 不保存用户密码，
+但会在 `auth.json` 中保存 token ID、用户名、签发时间、到期时间和来源等非密码元数据。
+`logout` 只删除本机缓存，不会撤销 Gateway token；撤销必须使用管理员 token 管理接口。
 
 ## User Management
 
@@ -269,8 +271,8 @@ doops admin token revoke --target <gateway-target> --id <token-id>
 
 说明：
 
-- `401 Unauthorized`：先读取 JSON `code` 和 `auth_domain`。`gateway_auth_failed` /
-  `auth_domain=gateway` 表示 Gateway user token 缺失、无效、过期或撤销；
+- `401 Unauthorized`：先读取 JSON `code` 和 `auth_domain`。`gateway_auth_missing|invalid|expired|revoked|user_disabled|invalid_expiry` /
+  `auth_domain=gateway` 表示对应的 Gateway user token 状态；`gateway_auth_unavailable` 表示鉴权存储不可用；
   `edge_enrollment_auth_failed` / `auth_domain=edge_enrollment` 表示边缘通道 enrollment
   token 缺失、无效、过期或目标绑定不匹配。裸 `401` 不足以判断受管凭据错误。
 - `403 Forbidden`：token 有效，但用户没有匹配该 `cluster/instance` 的 grant，或调用管理接口时不是平台管理员。

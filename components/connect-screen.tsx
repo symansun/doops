@@ -43,7 +43,14 @@ export function ConnectScreen({
       if (mode === "password") {
         if (!username || !password) throw new Error("请填写用户名和密码")
         const r = await login(gateway, username, password)
-        session = { gateway: r.gateway, username: r.username, isAdmin: r.isAdmin }
+        session = {
+          gateway: r.gateway,
+          username: r.username,
+          isAdmin: r.isAdmin,
+          tokenId: r.tokenId,
+          issuedAt: r.issuedAt,
+          expiresAt: r.expiresAt,
+        }
       } else {
         if (!token.trim()) throw new Error("请粘贴 user token")
         session = await persistTokenSession(gateway, token.trim())

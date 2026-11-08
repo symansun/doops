@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"time"
@@ -41,7 +42,10 @@ func loadGatewayCOSConfig() (cosSecret, error) {
 
 func (h *ClientService) handleCOSToolCall(ctx context.Context, auth TokenAuth, cluster, instance string, req api.JSONRPCRequest, params api.ToolCallParams, writeJSON func(interface{}) error) error {
 	if err := h.store.validateUserTokenAuth(auth); err != nil {
-		return writeJSON(buildErrorResponse(req.ID, -32001, "gateway_auth_failed"))
+		if errors.Is(err, ErrUnauthorized) {
+			return writeJSON(buildErrorResponse(req.ID, -32001, authFailureCode(err)))
+		}
+		return writeJSON(buildErrorResponse(req.ID, -32603, "gateway_auth_unavailable"))
 	}
 	if !h.store.UserCanUseTarget(auth.UserID, cluster, instance) {
 		return writeJSON(buildErrorResponse(req.ID, -32003, "forbidden"))

@@ -1,3 +1,5 @@
+import { GATEWAY_AUTH_MESSAGES } from "../gateway-auth.ts"
+
 // Gateway 错误响应只用于服务端判断，原始响应体（英文 message、next_action、纯文本错误页）
 // 不回给浏览器。浏览器只拿到中文说明和 Gateway 的稳定 code。
 
@@ -5,7 +7,7 @@
 // 登录失败不区分用户不存在、已停用和密码错误，避免枚举账号。
 const CODE_MESSAGES: Record<string, string> = {
   gateway_login_invalid_credentials: "用户名或密码错误",
-  gateway_auth_failed: "Gateway token 无效或已失效，请重新登录",
+  ...GATEWAY_AUTH_MESSAGES,
 }
 
 const STABLE_CODE = /^[a-z][a-z0-9_]{0,63}$/
@@ -164,7 +166,7 @@ export function gatewayProxyErrorBody(status: number, raw: string, label = ""): 
   const statusMessage = gatewayStatusMessage(status)
   const byStatus = label ? `${label}失败：${statusMessage}` : statusMessage
   const code = gatewayErrorCode(text)
-  // 调用方按 JSON 解析 code（如 gateway_auth_failed）；只留 code，丢掉英文 message 和 next_action。
+  // 调用方按 JSON 解析 code；只留 code，丢掉英文 message 和 next_action。
   if (code) return { error: JSON.stringify({ code }), message: CATEGORY_MESSAGES[code] || byStatus, status, code }
   const withTargets = CATEGORY_WITH_TARGETS.exec(text)
   if (withTargets) {

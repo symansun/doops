@@ -207,7 +207,7 @@ DoOps 通用镜像工具链。镜像构建使用明确给出的 `exec` 命令调
 目标缺少 `skopeo` 时直接报告工具缺失，不在线安装，也不静默切换到其它工具。私有 Registry
 凭据由 Gateway 下发到目标的受控 authfile，命令参数里不出现任何凭据。
 
-运行态文件与配置同目录：`auth.json`（按 Gateway URL 保存的登录态）、`history.jsonl`
+运行态文件与配置同目录：`auth.json`（按 Gateway URL 保存的登录态及 token 元数据）、`history.jsonl`
 （本机命令历史）、`sessions.json`（本机会话缓存）。`~/.config/doops/config.json`、
 `~/.doops/auth.json` 和项目 `.doops/` 是旧路径，不作为当前配置依据。
 
@@ -275,6 +275,9 @@ doops admin token revoke --target jm --id <token-id>
 
 列表只返回 ID、前缀、归属和状态，不返回 token 明文。管理员凭据只从
 `--target` 对应的本地受限存储读取，不得通过命令行参数传入。
+不带 `--expires` 的 token 不返回 `expires_at`，表示没有到期时间；不会显示为
+`0001-01-01T00:00:00Z`。密码登录默认签发 24 小时 token，每次登录都会产生新的
+token ID；CLI 会在替换本机记录时打印旧、新 token ID，但不会自动撤销旧 token。
 
 ## Gateway Users And Target Grants
 
@@ -593,14 +596,35 @@ printf '%s' "$DOOPS_GATEWAY_TOKEN" | doops login --target jm --token-stdin
 doops logout --target jm
 ```
 
-CI 和自动化用 `--token-stdin` 传入 Gateway user token，不能与 `--token`、`--username`、
-`--password` 混用。不要用 `--token`/`--password` 把凭据放进命令行参数。
+CI 和自动化只用 `--token-stdin` 传入已有 Gateway user token，不能与 `--username` 混用。
+密码登录使用终端隐藏输入。`login --token` 和 `login --password` 已移除，旧脚本须改为
+上面的 token stdin 导入；不会保留明文 argv 兼容路径。不要把 token 或密码写进命令行参数。
 
 Login and logout apply to the Gateway, not one target. `auth.json` stores one
-token under the normalized Gateway URL, and every configured target on that
-Gateway uses the same login state. Target configuration contains routing only;
-it must not contain a Gateway user token. Gateway permissions still come from
-the user's grants.
+credential record under the normalized Gateway URL, including the token ID,
+username, source, issue time, and expiry. The
+plaintext token is still required for requests, but the record makes a login
+replacement auditable. Existing legacy `{"tokens": {"gateway": "token"}}`
+files are migrated to the versioned `credentials` shape when the CLI next saves
+the file; their unavailable metadata stays unknown until the token is explicitly
+imported again. There is one runtime credential map. Mixed schemas, unknown
+versions, empty tokens, and conflicting normalized Gateway records are rejected.
+Saves replace the complete file atomically through a private `0600` temporary file.
+Target configuration contains routing only; it must not contain a
+Gateway user token. Gateway permissions still come from the user's grants.
+
+Importing a token calls `GET /v1/auth/me` to validate it and read its authoritative
+metadata; it does not issue a new token or infer the owner from CLI flags. Failed
+validation leaves the cached credential unchanged. Password login issues a new
+token and prints the replaced token ID/account plus the new account and expiry;
+it does not renew or revoke the previous token. The CLI loads and validates the
+local auth file before contacting the login endpoint.
+
+`doops logout` only removes this local credential record. It does not revoke the
+Gateway token. To invalidate a token at the Gateway, use `doops admin token revoke
+--target <t> --id <token-id>`; an expired, revoked, disabled-user, or missing
+token now returns a distinct structured authentication reason instead of one
+generic sentence.
 
 ## Updating Metadata
 

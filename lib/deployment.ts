@@ -1,3 +1,4 @@
+import { gatewayAuthCode } from "./gateway-auth.ts"
 import type { Target } from "./gateway"
 import { AGENT_MODEL_MISSING_HINT } from "./agent-error.ts"
 
@@ -267,7 +268,7 @@ function modelMissing(message: string): boolean {
 }
 
 function signedOut(code: string | undefined, message: string): boolean {
-  return code === "unauthenticated" || /gateway_auth_failed|缺少登录 token|（HTTP 401）$/.test(message)
+  return code === "unauthenticated" || Boolean(gatewayAuthCode(message)) || /缺少登录 token|（HTTP 401）$/.test(message)
 }
 
 function grantRefused(message: string): boolean {

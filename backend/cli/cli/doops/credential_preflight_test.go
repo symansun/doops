@@ -215,7 +215,7 @@ func buildCredentialPreflightCLI(t *testing.T, gatewayURL string) (string, strin
 	}]}`), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	auth := AuthStore{Tokens: map[string]string{}}
+	auth := AuthStore{}
 	auth.SetGateway(gatewayURL, "cli-token")
 	authData, err := json.Marshal(&auth)
 	if err != nil {

@@ -3,7 +3,7 @@ import {
   gatewayPolicyResponse,
   setGatewaySession,
 } from "@/lib/gateway-policy"
-import { probeGatewayAdmin } from "@/lib/server/gateway-admin"
+import { readGatewayIdentity } from "@/lib/server/gateway-identity"
 import { gatewayErrorResponse } from "@/lib/server/gateway-errors"
 
 export const runtime = "nodejs"
@@ -32,19 +32,13 @@ export async function POST(req: Request) {
       redirect: "manual",
     })
     if (!res.ok) return await gatewayErrorResponse(res)
-    const text = await res.text()
-    let parsed: { token?: string; username?: string }
-    try {
-      parsed = JSON.parse(text) as { token?: string; username?: string }
-    } catch {
-      return Response.json({ error: "gateway 登录响应不是合法 JSON" }, { status: 502 })
-    }
-    if (!parsed.token) return Response.json({ error: "gateway 登录响应缺少 token" }, { status: 502 })
-    const usernameValue = parsed.username || username
-    const isAdmin = await probeGatewayAdmin(gatewayBase, parsed.token)
+    const parsed = await res.json().catch(() => null)
+    if (typeof parsed?.token !== "string" || !parsed.token) return Response.json({ error: "gateway 登录响应缺少 token" }, { status: 502 })
+    const identity = await readGatewayIdentity(gatewayBase, parsed.token)
+    if (identity.error) return identity.error
     const headers = new Headers({ "Content-Type": "application/json" })
-    setGatewaySession(headers, { gateway: gatewayBase, token: parsed.token, username: usernameValue })
-    return new Response(JSON.stringify({ authenticated: true, gateway: gatewayBase, username: usernameValue, isAdmin }), {
+    setGatewaySession(headers, { ...identity.session, token: parsed.token })
+    return new Response(JSON.stringify({ authenticated: true, ...identity.session }), {
       status: 200,
       headers,
     })

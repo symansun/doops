@@ -170,7 +170,7 @@ func TestGatewayRPCRejectsMissingToken(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusUnauthorized || !strings.Contains(string(body), "gateway_auth_failed") {
+	if resp.StatusCode != http.StatusUnauthorized || !strings.Contains(string(body), "gateway_auth_missing") {
 		t.Fatalf("status = %d, body = %s", resp.StatusCode, body)
 	}
 }

@@ -281,7 +281,7 @@ func (h *GatewayHub) HandleAdminInstanceArchive(w http.ResponseWriter, r *http.R
 	}
 	auth, err := h.authenticateUser(r)
 	if err != nil {
-		h.writeUserAuthError(w, r)
+		h.writeUserAuthError(w, r, err)
 		return
 	}
 	if !h.store.UserIsPlatformAdmin(auth.UserID) {
@@ -334,7 +334,7 @@ func (h *GatewayHub) HandleAdminInstanceUnarchive(w http.ResponseWriter, r *http
 func (h *GatewayHub) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 	auth, err := h.authenticateUser(r)
 	if err != nil {
-		h.writeUserAuthError(w, r)
+		h.writeUserAuthError(w, r, err)
 		return false
 	}
 	if !h.store.UserIsPlatformAdmin(auth.UserID) {

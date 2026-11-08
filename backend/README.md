@@ -264,7 +264,7 @@ Skill 会随安装同步，安装回执记录全部 `skill_path`。标准 target
 
 故障判断：
 
-- `401 Unauthorized`：token 无效或过期，认证失败
+- `401 Unauthorized`：读取结构化 `gateway_auth_*` code；具体区分缺少、无效、过期、撤销、用户停用和元数据损坏。
 - `403 Forbidden`：token 有效，但该用户没有当前 target grant，或缺少独立的管理员、高危管理权限
 
 ### 2. 通过 gateway 添加内网集群目标
@@ -454,7 +454,7 @@ CNB 的 `main` push 会构建并推送以 commit SHA 命名的 Agent 镜像。�
 ## 边界
 
 - `doops` 日常连接不依赖 SSH。
-- 标准 target 配置不包含 token；Gateway user token 只保存在统一 `auth.json` 登录态。
+- 标准 target 配置不包含 token；Gateway user token 只保存在统一 `auth.json` 凭据记录中，记录 token ID、用户、来源和生命周期元数据。
 - agent 反向注册只声明 `cluster/instance`，不读取或发送注册 token。
 - CLI target schema 只有 `name/aliases/use/gateway/cluster/instance`。
 - `targets`、`sql`、`upgrade` 和 `credential` 只接受配置 target，不接受临时 Gateway 或 user token。

@@ -88,7 +88,7 @@ func TestGatewayHTTPListsTargetsForGrantedUserToken(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&authError); err != nil {
 		t.Fatalf("decode unauthenticated error: %v", err)
 	}
-	if authError.Code != "gateway_auth_failed" || authError.AuthDomain != "gateway" {
+	if authError.Code != "gateway_auth_missing" || authError.AuthDomain != "gateway" {
 		t.Fatalf("unexpected unauthenticated error: %#v", authError)
 	}
 	resp.Body.Close()
@@ -735,6 +735,10 @@ func TestGatewayPasswordLoginIssuesUserToken(t *testing.T) {
 	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "*", Instance: "*"}); err != nil {
 		t.Fatalf("grant targets list: %v", err)
 	}
+	oldToken, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "expired-before-login", ExpiresAt: time.Now().UTC().Add(-time.Minute)})
+	if err != nil {
+		t.Fatalf("create expired prior token: %v", err)
+	}
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, LoginTokenTTL: 2 * time.Second})
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
@@ -770,7 +774,8 @@ func TestGatewayPasswordLoginIssuesUserToken(t *testing.T) {
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		t.Fatalf("parse login response: %v", err)
 	}
-	if parsed.Token == "" || parsed.Username != "alice" || parsed.TokenType != string(TokenKindUser) {
+	if parsed.Token == "" || parsed.TokenID == "" || parsed.Username != "alice" || parsed.TokenType != string(TokenKindUser) ||
+		parsed.IssuedAt == nil || parsed.CreatedAt == nil || parsed.ExpiresAt == nil {
 		t.Fatalf("unexpected login response: %#v", parsed)
 	}
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/targets", nil)
@@ -783,10 +788,104 @@ func TestGatewayPasswordLoginIssuesUserToken(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("login token should authorize targets:list, got %d", resp.StatusCode)
 	}
+	oldReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/targets", nil)
+	oldReq.Header.Set("Authorization", "Bearer "+oldToken.Plaintext)
+	oldResp, err := http.DefaultClient.Do(oldReq)
+	if err != nil {
+		t.Fatalf("get targets with expired prior token: %v", err)
+	}
+	defer oldResp.Body.Close()
+	if oldResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expired prior token status = %d", oldResp.StatusCode)
+	}
+	var oldError doopsErrorResponse
+	if err := json.NewDecoder(oldResp.Body).Decode(&oldError); err != nil {
+		t.Fatalf("decode expired prior token error: %v", err)
+	}
+	if oldError.Code != "gateway_auth_expired" {
+		t.Fatalf("expired prior token error = %#v", oldError)
+	}
+	tokens, err := store.ListTokens(TokenKindUser)
+	if err != nil {
+		t.Fatalf("list tokens after login: %v", err)
+	}
+	var foundOld bool
+	for _, item := range tokens {
+		if item.ID == oldToken.ID {
+			foundOld = item.ExpiresAt != nil
+		}
+	}
+	if !foundOld {
+		t.Fatalf("expired prior token was deleted or lost expiry metadata")
+	}
 	time.Sleep(2100 * time.Millisecond)
 	if _, err := store.VerifyUserToken(parsed.Token); err == nil {
 		t.Fatal("password-login token must expire according to gateway LoginTokenTTL")
 	}
+}
+
+func TestGatewayHTTPReportsTokenLifecycleReason(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	user, err := store.CreateUser("auth-http-reasons")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "*", Instance: "*"}); err != nil {
+		t.Fatal(err)
+	}
+	token, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "http-reasons"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub := NewGatewayHub(store, GatewayHubOptions{})
+	mux := http.NewServeMux()
+	hub.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	check := func(want string) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, ts.URL+"/v1/targets", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token.Plaintext)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", resp.StatusCode)
+		}
+		var body doopsErrorResponse
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Code != want || body.AuthDomain != "gateway" || body.Message == "" {
+			t.Fatalf("auth response = %#v, want code %s", body, want)
+		}
+	}
+
+	if _, err := store.db.Exec("UPDATE tokens SET expires_at = ? WHERE id = ?", formatTime(time.Now().Add(-time.Minute)), token.ID); err != nil {
+		t.Fatal(err)
+	}
+	check("gateway_auth_expired")
+	if _, err := store.db.Exec("UPDATE tokens SET expires_at = '', revoked_at = ? WHERE id = ?", formatTime(time.Now()), token.ID); err != nil {
+		t.Fatal(err)
+	}
+	check("gateway_auth_revoked")
+	if _, err := store.db.Exec("UPDATE tokens SET revoked_at = '', expires_at = '' WHERE id = ?", token.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetUserDisabled(user.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	check("gateway_auth_user_disabled")
 }
 
 func TestGatewayAuditHTTPAllowsOwnHistoryAndFiltersEvents(t *testing.T) {
@@ -923,15 +1022,19 @@ func TestGatewayAdminTokenCreateRequiresAdminAndIssuesUserToken(t *testing.T) {
 		t.Fatalf("expected admin token create to succeed, got %d: %s", resp.StatusCode, body)
 	}
 	var body struct {
-		Token     string `json:"token"`
-		TokenID   string `json:"token_id"`
-		TokenType string `json:"token_type"`
-		Username  string `json:"username"`
+		Token     string     `json:"token"`
+		TokenID   string     `json:"token_id"`
+		TokenType string     `json:"token_type"`
+		Username  string     `json:"username"`
+		IssuedAt  *time.Time `json:"issued_at"`
+		CreatedAt *time.Time `json:"created_at"`
+		ExpiresAt *time.Time `json:"expires_at"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode token response: %v", err)
 	}
-	if body.Token == "" || body.TokenID == "" || body.TokenType != string(TokenKindUser) || body.Username != "alice" {
+	if body.Token == "" || body.TokenID == "" || body.TokenType != string(TokenKindUser) || body.Username != "alice" ||
+		body.IssuedAt == nil || body.CreatedAt == nil || body.ExpiresAt == nil {
 		t.Fatalf("unexpected token response: %#v", body)
 	}
 	auth, err := store.VerifyUserToken(body.Token)

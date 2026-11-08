@@ -70,8 +70,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   upgrade     仅升级标准 Helm doops-agent；--dry-run 只预览参数，正式升级由目标集群内 Job 执行
   add         添加 gateway target
   remove      仅在 target 确认离线时删除本机 gateway target 配置
-  login       缓存 gateway user token
-  logout      登出远程节点
+  login       登录 Gateway，或校验并导入已有 user token
+  logout      仅删除本机 Gateway 登录记录，不撤销 token
   check       检查线上服务容器配置的镜像与最新构建是否一致
 
 选项:
@@ -321,7 +321,12 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 				fmt.Printf("Error loading credentials: %v\n", err)
 				os.Exit(1)
 			}
-			auth.SetGateway(saveGateway, issued.Token)
+			credential, err := issued.credential(issued.Token, "admin-token")
+			if err != nil {
+				fmt.Printf("Error validating issued token metadata: %v\n", err)
+				os.Exit(1)
+			}
+			auth.SetGatewayRecord(saveGateway, credential)
 			if err := auth.Save(); err != nil {
 				fmt.Printf("Error saving issued token: %v\n", err)
 				os.Exit(1)
@@ -629,15 +634,13 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		fmt.Print(string(data))
 
 	case "login":
-		var target, token, username, password, label string
+		var target, username, label string
 		var tokenStdin bool
 		loginFlag := flag.NewFlagSet("login", flag.ExitOnError)
 		loginFlag.StringVar(&target, "target", "", "Target server name")
-		loginFlag.StringVar(&token, "token", "", "Gateway user token (optional; username/password login can issue one)")
-		loginFlag.BoolVar(&tokenStdin, "token-stdin", false, "Read the Gateway user token from stdin")
+		loginFlag.BoolVar(&tokenStdin, "token-stdin", false, "Validate and import a Gateway token from stdin without issuing another token")
 		loginFlag.StringVar(&username, "username", "", "Gateway username")
-		loginFlag.StringVar(&password, "password", "", "Gateway password")
-		loginFlag.StringVar(&label, "name", "", "Token label for gateway login")
+		loginFlag.StringVar(&label, "name", "", "Token label for password login")
 		loginFlag.Parse(cmdArgs)
 
 		if target == "" {
@@ -652,9 +655,16 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			os.Exit(1)
 		}
 		gateway := server.Gateway
+		auth, err := LoadAuth()
+		if err != nil {
+			fmt.Printf("Error loading credentials: %v\n", err)
+			os.Exit(1)
+		}
+		previous := auth.GetGatewayRecord(gateway)
+		var credential GatewayAuth
 		if tokenStdin {
-			if strings.TrimSpace(token) != "" || strings.TrimSpace(username) != "" || strings.TrimSpace(password) != "" {
-				fmt.Println("Error: --token-stdin cannot be combined with token, username, or password arguments")
+			if strings.TrimSpace(username) != "" {
+				fmt.Println("Error: --token-stdin cannot be combined with --username")
 				os.Exit(1)
 			}
 			data, err := io.ReadAll(io.LimitReader(os.Stdin, 16*1024))
@@ -662,49 +672,57 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 				fmt.Printf("Error reading gateway token from stdin: %v\n", err)
 				os.Exit(1)
 			}
-			token = strings.TrimSpace(string(data))
+			token := strings.TrimSpace(string(data))
 			if token == "" {
 				fmt.Println("Error: gateway token from stdin is empty")
 				os.Exit(1)
 			}
-		}
-		if strings.TrimSpace(token) == "" {
+			credential, err = GatewayCurrentAuth(gateway, token, "token-stdin")
+			if err != nil {
+				fmt.Printf("Error validating gateway token: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
 			if strings.TrimSpace(username) == "" {
 				fmt.Print("Gateway username: ")
 				fmt.Scanln(&username)
 			}
-			if strings.TrimSpace(password) == "" {
-				fmt.Printf("Enter gateway password for %s: ", username)
-				bytePassword, err := term.ReadPassword(int(syscall.Stdin))
-				fmt.Println()
-				if err != nil {
-					fmt.Printf("Error reading password: %v\n", err)
-					os.Exit(1)
-				}
-				password = string(bytePassword)
+			fmt.Printf("Enter gateway password for %s: ", username)
+			bytePassword, err := term.ReadPassword(int(syscall.Stdin))
+			fmt.Println()
+			if err != nil {
+				fmt.Printf("Error reading password: %v\n", err)
+				os.Exit(1)
 			}
 			if label == "" {
 				label = "doops login"
 			}
-			newToken, err := GatewayLogin(gateway, username, password, label)
+			issued, err := GatewayLogin(gateway, username, string(bytePassword), label)
 			if err != nil {
 				fmt.Printf("Error logging in to gateway: %v\n", err)
 				os.Exit(1)
 			}
-			token = newToken
+			credential = issued
 		}
-
-		auth, err := LoadAuth()
-		if err != nil {
-			fmt.Printf("Error loading credentials: %v\n", err)
-			os.Exit(1)
-		}
-		auth.SetGateway(gateway, token)
+		auth.SetGatewayRecord(gateway, credential)
 		if err := auth.Save(); err != nil {
 			fmt.Printf("Error saving credentials: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Printf("Successfully cached gateway token for %s\n", gatewayAuthKey(gateway))
+		if previous.TokenID != "" && previous.TokenID != credential.TokenID {
+			fmt.Printf("replaced_token_id=%s\n", previous.TokenID)
+			fmt.Printf("replaced_username=%s\n", previous.Username)
+		}
+		if credential.TokenID != "" {
+			fmt.Printf("cached_token_id=%s\n", credential.TokenID)
+		}
+		fmt.Printf("username=%s source=%s\n", credential.Username, credential.Source)
+		if credential.ExpiresAt != "" {
+			fmt.Printf("expires_at=%s\n", credential.ExpiresAt)
+		} else {
+			fmt.Println("expires_at=never")
+		}
 
 	case "logout":
 		var target string
@@ -733,7 +751,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Printf("Error saving credentials: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Logged out from gateway %s\n", gatewayAuthKey(server.Gateway))
+		fmt.Printf("Removed local login for gateway %s; Gateway token was not revoked\n", gatewayAuthKey(server.Gateway))
 
 	case "add":
 		var name, aliases, use, gateway, cluster, instance string

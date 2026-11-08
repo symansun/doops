@@ -28,7 +28,7 @@ func TestCOSPushRejectsMissingTokenAndCredentialBeforeTransfer(t *testing.T) {
 	}
 	transfer := &recordingTransfer{t: t}
 	_, err := pushSnapshot(Server{Name: "jm"}, src, "", false, nil, "sess_1", nil, "cos", "cos-bucket", "", transfer)
-	if err == nil || err.Error() != "gateway_auth_failed" || transfer.calls != 0 {
+	if err == nil || err.Error() != "gateway_auth_missing" || transfer.calls != 0 {
 		t.Fatalf("missing token error = %v, calls = %d", err, transfer.calls)
 	}
 	transfer.probeErr = errString("cos_bucket_unavailable")

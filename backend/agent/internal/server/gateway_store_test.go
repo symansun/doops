@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -220,6 +221,156 @@ func TestGatewayStoreTokenIDFastPathAndExpiredCleanup(t *testing.T) {
 	}
 	if _, err := store.VerifyUserToken(active.Plaintext); err != nil {
 		t.Fatalf("active token should survive cleanup: %v", err)
+	}
+}
+
+func TestGatewayStoreTokenAuthFailureReasons(t *testing.T) {
+	store, err := OpenGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	user, err := store.CreateUser("auth-reasons")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reasonOf := func(token string) AuthFailureReason {
+		t.Helper()
+		_, err := store.VerifyUserToken(token)
+		var authErr *TokenAuthError
+		if !errors.As(err, &authErr) {
+			t.Fatalf("error %v is not a TokenAuthError", err)
+		}
+		return authErr.Reason
+	}
+	if got := reasonOf(""); got != AuthFailureMissing {
+		t.Fatalf("missing token reason = %q", got)
+	}
+	if got := reasonOf("not-a-gateway-token"); got != AuthFailureInvalid {
+		t.Fatalf("unknown token reason = %q", got)
+	}
+
+	newToken := func(name string, expires time.Time) CreatedToken {
+		t.Helper()
+		token, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: name, ExpiresAt: expires})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return token
+	}
+	expired := newToken("expired", time.Now().Add(-time.Minute))
+	if got := reasonOf(expired.Plaintext); got != AuthFailureExpired {
+		t.Fatalf("expired token reason = %q", got)
+	}
+	revoked := newToken("revoked", time.Time{})
+	if err := store.RevokeToken(revoked.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := reasonOf(revoked.Plaintext); got != AuthFailureRevoked {
+		t.Fatalf("revoked token reason = %q", got)
+	}
+	disabled := newToken("disabled", time.Time{})
+	if err := store.SetUserDisabled(user.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := reasonOf(disabled.Plaintext); got != AuthFailureUserDisabled {
+		t.Fatalf("disabled user reason = %q", got)
+	}
+	if err := store.SetUserDisabled(user.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	invalidExpiry := newToken("invalid-expiry", time.Time{})
+	if _, err := store.db.Exec("UPDATE tokens SET expires_at = ? WHERE id = ?", "invalid-expiry", invalidExpiry.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := reasonOf(invalidExpiry.Plaintext); got != AuthFailureInvalidExpiry {
+		t.Fatalf("invalid expiry reason = %q", got)
+	}
+	if _, err := store.db.Exec("UPDATE tokens SET expires_at = ? WHERE id = ?", " ", invalidExpiry.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := reasonOf(invalidExpiry.Plaintext); got != AuthFailureInvalidExpiry {
+		t.Fatalf("whitespace expiry became an unlimited token: %q", got)
+	}
+	if _, err := store.db.Exec("UPDATE tokens SET expires_at = '', revoked_at = ' ' WHERE id = ?", invalidExpiry.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := reasonOf(invalidExpiry.Plaintext); got != AuthFailureRevoked {
+		t.Fatalf("nonempty revocation became an active token: %q", got)
+	}
+	wrongSecret := invalidExpiry.Plaintext[:len(invalidExpiry.Plaintext)-1] + "x"
+	if got := reasonOf(wrongSecret); got != AuthFailureInvalid {
+		t.Fatalf("hash mismatch reason = %q", got)
+	}
+}
+
+func TestGatewayStoreTokenListOmitsExpiryForNonExpiringToken(t *testing.T) {
+	store, err := OpenGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	user, err := store.CreateUser("token-list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "never"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "one-hour", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	tokens, err := store.ListTokens(TokenKindUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tokens) != 2 {
+		t.Fatalf("token count = %d", len(tokens))
+	}
+	data, err := json.Marshal(tokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded []map[string]interface{}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range decoded {
+		if item["name"] == "never" {
+			if _, ok := item["expires_at"]; ok {
+				t.Fatalf("non-expiring token exposed a zero expiry: %s", data)
+			}
+		}
+		if item["name"] == "one-hour" {
+			if _, ok := item["expires_at"]; !ok {
+				t.Fatalf("expiring token omitted expiry: %s", data)
+			}
+		}
+	}
+}
+
+func TestGatewayStoreTokenListRejectsInvalidExpiryMetadata(t *testing.T) {
+	store, err := OpenGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	user, err := store.CreateUser("token-list-corrupt-expiry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec("UPDATE tokens SET expires_at = ? WHERE id = ?", "invalid-expiry", token.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.ListTokens(TokenKindUser)
+	var failure *TokenAuthError
+	if !errors.As(err, &failure) || failure.Reason != AuthFailureInvalidExpiry {
+		t.Fatalf("corrupted expiry must not become an unlimited token: %v", err)
 	}
 }
 

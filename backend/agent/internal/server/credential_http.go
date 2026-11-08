@@ -46,7 +46,7 @@ type credentialTargetListGrant struct {
 func (h *GatewayHub) HandleCredentials(w http.ResponseWriter, r *http.Request) {
 	auth, err := h.authenticateUser(r)
 	if err != nil {
-		h.writeUserAuthError(w, r)
+		h.writeUserAuthError(w, r, err)
 		return
 	}
 	switch r.Method {
@@ -89,7 +89,7 @@ func (h *GatewayHub) HandleCredentials(w http.ResponseWriter, r *http.Request) {
 func (h *GatewayHub) HandleCredential(w http.ResponseWriter, r *http.Request) {
 	auth, err := h.authenticateUser(r)
 	if err != nil {
-		h.writeUserAuthError(w, r)
+		h.writeUserAuthError(w, r, err)
 		return
 	}
 	r = r.WithContext(contextWithInternalAuditAuth(r.Context(), auth))

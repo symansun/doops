@@ -100,7 +100,7 @@ func TestGatewayAdminUserPreservesStructuredGatewayAuthFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"error":"unauthorized","code":"gateway_auth_failed","auth_domain":"gateway","message":"Gateway user token is missing or invalid","next_action":"Run doops login"}`))
+		_, _ = w.Write([]byte(`{"error":"unauthorized","code":"gateway_auth_expired","auth_domain":"gateway","message":"Gateway user token has expired","next_action":"Run doops login"}`))
 	}))
 	defer server.Close()
 
@@ -109,7 +109,7 @@ func TestGatewayAdminUserPreservesStructuredGatewayAuthFailure(t *testing.T) {
 		t.Fatal("expected unauthorized error")
 	}
 	message := err.Error()
-	if !strings.Contains(message, "gateway_auth_failed") ||
+	if !strings.Contains(message, "gateway_auth_expired") ||
 		!strings.Contains(message, "auth_domain=gateway") ||
 		!strings.Contains(message, "Run doops login") {
 		t.Fatalf("unexpected error guidance: %v", err)

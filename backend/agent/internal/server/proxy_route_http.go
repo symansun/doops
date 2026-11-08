@@ -23,7 +23,7 @@ type proxyRouteHTTPBody struct {
 func (h *GatewayHub) HandleAdminProxyRoutes(w http.ResponseWriter, r *http.Request) {
 	auth, err := h.authenticateUser(r)
 	if err != nil {
-		h.writeUserAuthError(w, r)
+		h.writeUserAuthError(w, r, err)
 		return
 	}
 	if !h.store.UserIsPlatformAdmin(auth.UserID) {
