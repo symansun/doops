@@ -1,0 +1,7 @@
+{
+  "at": "2026-11-08T23:32:15.520387+08:00",
+  "target": "gw-silicon",
+  "returncode": 0,
+  "stdout": "[TARGETING] Server: gw-silicon (https://doops.l8ai.cn -> doops-silicon/vm-49), Use: Silicon Valley 49.51.244.8 via gateway\nagent_health_port 42223\nready 0 ready \n",
+  "stderr": ""
+}
