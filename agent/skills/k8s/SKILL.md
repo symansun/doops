@@ -11,49 +11,34 @@ requires: [shell]
 conflicts: []
 ---
 
-你具备深厚的 Kubernetes 运维知识。执行 K8s 任务时请遵循以下规范。
+提供 Kubernetes 检查与已授权变更的领域规则；诊断不自动升级为修复或部署。
 
-## 集群环境
+## 目标确认
 
-| 项目 | 值 |
-|------|-----|
-| 发行版 | K3s |
-| kubeconfig | `/etc/rancher/k3s/k3s.yaml`（需要 sudo） |
-| 业务命名空间 | `doops-system` |
-| 实验命名空间 | `labs` |
-| 镜像仓库 | `registry.example.com` |
-| imagePullPolicy | `Always`（确保每次拉最新）|
+- 从本次任务及配置确认 target、cluster/context、资源类型、名称和 namespace。
+  不预设 K3s、kubeconfig 路径、业务服务或镜像仓库；不把 namespace 名当作环境。
+- 使用已配置的身份，按需检查 `kubectl config current-context` 和 `kubectl auth can-i`。
+  不输出 kubeconfig 内容；root 不加 sudo，权限不足不自行安装 sudo、改权限或切换身份。
+- 命名空间资源显式带 `-n <namespace>`；Node、Namespace、PV、CRD 等集群级资源不强加 `-n`。
+  `-A` 只用于任务所需且已允许的跨命名空间检查。
 
-## 核心原则
+## 诊断
 
-1. **Namespace 显式**：所有命令必须带 `-n {namespace}`，永远不依赖 default。
-2. **诊断优先**：
-   - Pod 状态异常 → `kubectl describe pod` + `kubectl logs --tail=50`
-   - CrashLoopBackOff → 查看上一次日志 `kubectl logs --previous`
-   - Pending → 检查 `Events` 中的调度失败原因
-3. **补丁式更新**：优先 `kubectl apply` / `kubectl patch`，避免 delete+create 导致中断。
-4. **滚动更新**：使用 `kubectl rollout restart deployment/{name}` + `kubectl rollout status` 确认完成。
-5. **资源限制**：Requests 设小（如 100m CPU / 128Mi），Limits 合理（如 1 CPU / 1Gi）。
+- Pod 异常先看必要状态、有限日志和事件；CrashLoopBackOff 按需读 `--previous`，Pending 查调度原因。
+- 区分 NotFound、Forbidden、认证失败和连接超时；不能把目标不可见直接归因于集群宕机。
+- 读取 Secret 仅限所需元数据，不输出 `.data`、完整环境或凭据。
+- 使用精确对象或已核验 label selector；不以名称子串或 `grep ... || true` 作为成功判断。
 
-## 常用服务清单
+## 已授权发布
 
-| 服务名 | Deployment | 端口 | 镜像 |
-|--------|-----------|------|------|
-| Java 后端 | exam-training-api | 8081 | `registry.example.com/doops-system/exam-training-api:latest` |
-| Go 实验服务 | workspace | 23456 | `registry.example.com/doops-system/workspace:latest` |
-| Python 课程服务 | exam-course-api | 8083 | `registry.example.com/doops-system/exam-course-api:latest` |
-| 前端 | exam-frontend | 80 | `registry.example.com/doops-system/exam-frontend:latest` |
+1. 确定实际控制器、容器名、目标版本与验收条件，记录变更前版本和回退方式。
+   保留项目现有 Helm/manifest/CI 流程；只读、重启或扩缩请求不附带构建推送。
+2. 先核验镜像来源与发布结果；按项目配置应用目标版本。`rollout restart` 只重启现有模板，
+   不证明新版本已发布；不默认使用 `latest` 或修改 `imagePullPolicy`。
+3. 前置操作成功后执行有超时的 rollout 检查，回读 workload 的目标镜像、generation、
+   replicas、Pod Ready 和实际 imageID，再做任务要求的健康检查。
+4. 超时、失败或断连时报告已知状态、未知部分及证据；核实后再决定恢复，不能自动重放变更。
 
-## 部署流程模板
-
-```
-1. buildctl ... --output type=image,name={image},push=true,registry.insecure=true   # 确保镜像已推到仓库
-2. sudo kubectl rollout restart deployment/{name} -n doops-system --kubeconfig=/etc/rancher/k3s/k3s.yaml
-3. sudo kubectl rollout status deployment/{name} -n doops-system --kubeconfig=/etc/rancher/k3s/k3s.yaml --timeout=120s
-4. sudo kubectl get pods -n doops-system -l app={name} --kubeconfig=/etc/rancher/k3s/k3s.yaml   # 验证 Running
-```
-
-## 安全合规
-- 不要在命令行明文传递 Secret
-- 使用 `kubectl create secret` 管理敏感配置
-- 生产环境禁止 `kubectl delete pod --force --grace-period=0`
+资源 requests/limits 来自应用需求和实测，不固定给所有服务同一组数值。
+重启、缩容、删除、端口暴露、权限及 Secret 变更均需在任务授权内；不强制删除生产 Pod，
+不通过 delete/create、关闭身份校验或移除检查绕过失败。
