@@ -114,3 +114,34 @@ unicom 制品预取使用审计后台 RPC，TaskID `08d1cf0a04f6751d`。
 
 完成标准仍为每个 target 的精确版本、运行镜像、健康、真实模型工具调用、
 关键页面验证，以及可恢复的回滚路径。当前不能宣称“13 台全部发布完成”。
+
+## 14:55 后续发布准备
+
+用户再次明确要求全部发布升级，继续沿用本轮固定制品。新回读显示联通
+containerd 已完整缓存候选平台镜像 `fd20c510...`，image config 为
+`6cde872aaf307da4420ea3020f4abfa71d6c06a7d3a0480ee83522862206c220`，
+大小 571,163,200 字节，无活动下载。先前取消的 RPC 不作为成功证据，
+本次以 `crictl inspecti` 的完整 `repoDigests` 回读为准。
+
+现有 `doops-unicom-agent` ServiceAccount 已有 Job、Deployment、Secret 和
+ConfigMap 权限；旧 Helm release 仅管理 `Deployment/doops-unicom`，
+不拥有该 ServiceAccount。新增 `backend/deploy/instances/unicom-k8s/`
+记录一次性独立 Job 的发新停旧方案：
+
+- 备份 revision 5、values、manifest 和 live Deployment；保持旧 Pod 运行。
+- 使用同一 Gateway route、原 ServiceAccount、节点和 hostAccess，安装
+  `doops-agent`；独立 `/var/lib/doops-agent` home，模型绑定保持本 target 来源。
+- 新实例必须 Ready，实际 imageID 匹配固定平台摘要；独立 Gateway/真实模型
+  功能验收通过后，才写入与新 Pod UID 绑定的接收回执。
+- 收到回执后才卸载精确旧 release；失败或 600 秒内未收到验收则卸载候选、
+  保留旧 Deployment。旧 release 清理阶段失败时保留已经验收的新服务。
+- Job 无自动重试，整体上限 1,500 秒；不允许免回滚基线的原地升级。
+
+原宿主 `/opt/doops-agent/config/settings.json` 的模型为 MiniMax-M3，已在
+同 target 内经短期 Secret 和 `credential configure --from-secret` 受控导入
+`unicom-existing-doagent-model`，真实模型 verify 与 promote 成功；
+短期 Secret 随后删除。未输出 payload，未借用其他节点的模型。
+
+新增控制器的故障注入覆盖预检失败、安装失败、验收超时和旧资源清理失败；
+验收缺失时不能卸载旧 release，清理失败时不能卸载已验收候选。
+本地四项事务测试和 Helm 渲染已通过；部署结果将按实际回读补充。
