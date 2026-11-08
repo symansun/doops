@@ -3,7 +3,7 @@ import { AgentSessionReductionError } from "@agent-cloud/agent-ui/server"
 import { CommandEnvelopeSchema, CommandReceiptSchema, SessionCursorSchema, SessionDeltaBatchSchema, SessionSnapshotSchema } from "@agent-cloud/agent-ui/protocol"
 import { gatewayPolicyResponse, readAllowedAuth } from "@/lib/gateway-policy"
 import { AgentGatewayError, type AgentGatewayContext } from "@/lib/server/agent-gateway-rpc"
-import { authorizedAgentSession, executeAgentCommand } from "@/lib/server/agent-session"
+import { authorizedAgentSession, executeAgentCommand, existingAgentSessionForInterrupt, readableAgentSession } from "@/lib/server/agent-session"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -13,7 +13,7 @@ export async function GET(req: Request) {
     const query = new URL(req.url).searchParams
     const scope = context(req, Object.fromEntries(query))
     if (!["snapshot", "events"].includes(query.get("view") || "")) throw new AgentGatewayError("需要有效会话视图", 400)
-    const session = await authorizedAgentSession(scope, req.signal)
+    const session = await readableAgentSession(scope, req.signal)
     if (query.get("view") === "snapshot") return Response.json(toJson(SessionSnapshotSchema, session.source.getSnapshot()), { headers: { "Cache-Control": "no-store" } })
     let cursor
     try { cursor = fromJson(SessionCursorSchema, JSON.parse(query.get("cursor") || "null")) }
@@ -48,7 +48,9 @@ export async function POST(req: Request) {
     let command
     try { command = fromJson(CommandEnvelopeSchema, body.command as JsonValue) }
     catch { throw new AgentGatewayError("command 不是有效协议数据", 400) }
-    const session = await authorizedAgentSession(scope, req.signal)
+    const session = command.command.case === "interrupt"
+      ? existingAgentSessionForInterrupt(scope)
+      : await authorizedAgentSession(scope, req.signal)
     const receipt = await executeAgentCommand(session, scope, command)
     return Response.json(toJson(CommandReceiptSchema, receipt), { headers: { "Cache-Control": "no-store" } })
   } catch (error) { return failure(error) }

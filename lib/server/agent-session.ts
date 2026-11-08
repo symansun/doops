@@ -20,6 +20,30 @@ type HostedSession = {
 }
 const sessions = new Map<string, HostedSession>()
 
+function hostedSessionKey(context: AgentGatewayContext): string {
+  return createHash("sha256").update(JSON.stringify([context.gateway, context.token, context.cluster, context.instance, context.sessionId])).digest("hex")
+}
+
+export function existingAgentSessionForInterrupt(context: AgentGatewayContext): HostedSession {
+  // Cancel only an operation already owned by this caller on its original RPC.
+  // A metadata RPC would contend with the operation's workspace lease.
+  const hosted = sessions.get(hostedSessionKey(context))
+  if (!hosted) throw new AgentGatewayError("当前登录下没有该会话", 404, "not_dispatched")
+  hosted.touchedAt = Date.now()
+  return hosted
+}
+
+export async function readableAgentSession(context: AgentGatewayContext, signal: AbortSignal): Promise<HostedSession> {
+  const hosted = sessions.get(hostedSessionKey(context))
+  // Resume the caller's existing stream without competing with its active RPC.
+  // Starting a new command still requires fresh Gateway authorization.
+  if (hosted?.active) {
+    hosted.touchedAt = Date.now()
+    return hosted
+  }
+  return authorizedAgentSession(context, signal)
+}
+
 export async function authorizedAgentSession(context: AgentGatewayContext, signal: AbortSignal): Promise<HostedSession> {
   const raw = await agentGatewayCall(context, { mode: "metadata" }, signal)
   let metadata: Record<string, unknown>
@@ -28,14 +52,17 @@ export async function authorizedAgentSession(context: AgentGatewayContext, signa
   if (metadata.event_schema !== "doops.sh/acp-events/v1" || !Array.isArray(metadata.event_formats) || !metadata.event_formats.includes("acp")) {
     throw new AgentGatewayError("目标 Agent 不支持结构化 ACP 事件协议，必须升级 Agent", 412)
   }
+  if (metadata.status === "awaiting_model_provider" || metadata.status === "unconfigured" || metadata.model === "unconfigured") {
+    throw new AgentGatewayError("Gateway 还没有可下发到该节点的模型", 503)
+  }
   if (metadata.status !== "connected" || typeof metadata.model !== "string" || !metadata.model.trim()) {
-    throw new AgentGatewayError(metadata.status === "unconfigured" ? "AI 助手尚未连接大模型" : "DoAgent 模型连接不可用", 503)
+    throw new AgentGatewayError("DoAgent 模型连接不可用", 503)
   }
   const now = Date.now()
   for (const [key, value] of sessions) {
     if (!value.active && !value.subscribers && now - value.touchedAt > 30 * 60_000) sessions.delete(key)
   }
-  const key = createHash("sha256").update(JSON.stringify([context.gateway, context.token, context.cluster, context.instance, context.sessionId])).digest("hex")
+  const key = hostedSessionKey(context)
   let hosted = sessions.get(key)
   if (!hosted) {
     if (sessions.size >= 100) throw new AgentGatewayError("控制台会话容量已满", 429)
@@ -100,7 +127,7 @@ export async function executeAgentCommand(hosted: HostedSession, context: AgentG
       }
     } catch (error) {
       if (error instanceof AgentGatewayError && error.canceled) {
-        const canceled = commandReceipt(owned, CommandReceiptState.CANCELLED, error.message)
+        const canceled = commandReceipt(owned, CommandReceiptState.CANCELLED)
         try {
           await hosted.source.emit([receiptEvent(canceled)], owned.streamEpoch)
           return canceled
@@ -172,14 +199,17 @@ async function runOperation(hosted: HostedSession, context: AgentGatewayContext,
     if (!projection.finished) throw new AgentGatewayError("缺少 DoAgent turn_finished 终态，执行结果未确认")
     terminalEvents = projection.finishMessage(TimelineItemStatus.COMPLETED)
   } catch (error) {
-    failure = error instanceof Error ? error.message : "智能体执行失败"
     uncertain = !(error instanceof AgentGatewayError) || error.outcome === "unknown"
-    canceled = error instanceof AgentGatewayError && error.canceled
-    try { await updates } catch (updateError) { failure = updateError instanceof Error ? updateError.message : "ACP 事件无效" }
+    canceled = error instanceof AgentGatewayError && error.canceled && !uncertain
+    failure = canceled ? undefined : error instanceof Error ? error.message : "智能体执行失败"
+    try { await updates } catch (updateError) {
+      canceled = false
+      failure = updateError instanceof Error ? updateError.message : "ACP 事件无效"
+    }
     terminalEvents = projection.finishMessage(canceled ? TimelineItemStatus.CANCELLED : TimelineItemStatus.FAILED)
   }
   if (hosted.active?.command.commandId === command.commandId) hosted.active.uncertain = uncertain
-  const status = failure ? SessionStatus.FAILED : SessionStatus.COMPLETED
+  const status = canceled ? SessionStatus.IDLE : failure ? SessionStatus.FAILED : SessionStatus.COMPLETED
   const receipt = commandReceipt(command, canceled ? CommandReceiptState.CANCELLED : failure ? CommandReceiptState.FAILED : CommandReceiptState.SUCCEEDED, failure)
   if (uncertain) hosted.uncertainCommandIds.add(command.commandId)
   await hosted.source.emit([

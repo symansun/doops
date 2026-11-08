@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState } from "react"
 import type { Target } from "@/lib/client"
 import { ServerIcon, RefreshIcon, ChevronDownIcon, CheckIcon } from "./icons"
+import { Button } from "./ui"
 
 function statusDot(t: Target): string {
-  if (t.busy) return "bg-destructive"
+  if (t.busy) return "bg-warning"
   if (t.status === "active") return "bg-accent"
   return "bg-success"
 }
@@ -47,14 +48,16 @@ export function TargetSwitcher({
       <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-2.5 py-1.5">
         <ServerIcon width={14} height={14} className="text-muted-foreground" />
         <span className="text-xs text-muted-foreground">暂无在线机器</span>
-        <button
+        <Button
           onClick={onRefresh}
           disabled={loading}
-          className="rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+          variant="ghost"
+          size="sm"
+          icon
           aria-label="刷新机器列表"
         >
           <RefreshIcon width={13} height={13} className={loading ? "animate-spin" : ""} />
-        </button>
+        </Button>
       </div>
     )
   }
@@ -62,12 +65,11 @@ export function TargetSwitcher({
   const single = targets.length === 1
 
   return (
-    <div ref={ref} className="relative">
-      <button
+    <div ref={ref} className="relative min-w-0">
+      <Button
         onClick={() => !single && setOpen((v) => !v)}
-        className={`flex items-center gap-2 rounded-lg border bg-muted/40 px-2.5 py-1.5 transition-colors ${
-          single ? "cursor-default" : "hover:bg-muted"
-        }`}
+        size="sm"
+        className={`max-w-full ${single ? "cursor-default" : ""}`}
         aria-haspopup={single ? undefined : "listbox"}
         aria-expanded={single ? undefined : open}
       >
@@ -93,25 +95,27 @@ export function TargetSwitcher({
             />
           </>
         )}
-      </button>
+      </Button>
 
       {open && !single && (
         <div
           role="listbox"
-          className="absolute left-0 top-full z-50 mt-1 max-h-80 w-72 max-w-[85vw] overflow-y-auto rounded-lg border bg-card p-1 shadow-lg"
+          className="absolute left-0 top-full z-50 mt-1 max-h-80 w-72 max-w-[calc(100vw_-_4.25rem)] overflow-y-auto rounded-lg border bg-card p-1 shadow-lg"
         >
           <div className="flex items-center justify-between px-2 py-1.5">
             <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               在线机器 {targets.length}
             </span>
-            <button
+            <Button
               onClick={onRefresh}
               disabled={loading}
-              className="rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+              variant="ghost"
+              size="sm"
+              icon
               aria-label="刷新机器列表"
             >
               <RefreshIcon width={13} height={13} className={loading ? "animate-spin" : ""} />
-            </button>
+            </Button>
           </div>
           {targets.map((t) => {
             const active = selected?.key === t.key

@@ -22,6 +22,8 @@ import {
   RocketIcon,
   TrashIcon,
 } from "./icons"
+import { useAppDialog } from "./app-dialog"
+import { Markdown } from "./markdown"
 
 interface Entry {
   name: string
@@ -78,6 +80,7 @@ export function FilesPanel({
   const [openPath, setOpenPath] = useState<string | null>(null)
   const [content, setContent] = useState("")
   const [dirty, setDirty] = useState(false)
+  const [preview, setPreview] = useState(false)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
 
@@ -87,6 +90,7 @@ export function FilesPanel({
   const [maint, setMaint] = useState<{ tool: "check" | "clean"; lines: string[]; running: boolean } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dirInputRef = useRef<HTMLInputElement>(null)
+  const { confirm, prompt, dialog } = useAppDialog()
 
   const list = useCallback(
     async (dir: string) => {
@@ -108,7 +112,7 @@ export function FilesPanel({
             cluster: target.cluster,
             instance: target.instance,
             tool: TOOLS.shell,
-            arguments: { session_id: sessionId, command: `ls -1Ap ${shq(remoteDir)}` },
+            arguments: { session_id: sessionId, command: `mkdir -p -- ${shq(remoteDir)} && ls -1Ap -- ${shq(remoteDir)}` },
           },
           (ev) => {
             if (ev.type === "output") buf += ev.data
@@ -119,7 +123,7 @@ export function FilesPanel({
         )
         const lines = buf
           .split("\n")
-          .filter((l) => l.length > 0)
+          .filter((l) => l.length > 0 && l !== "Operation complete." && !l.startsWith("exit code"))
         if (lines.some((l) => l.includes("No such file") || l.includes("没有那个文件"))) {
           setListErr(lines.join(" "))
           setEntries([])
@@ -146,7 +150,36 @@ export function FilesPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
+  async function confirmDiscard() {
+    if (!dirty) return true
+    return confirm({
+      title: "放弃未保存的修改",
+      message: "当前文件有未保存的修改，确定继续吗？",
+      confirmLabel: "继续",
+      tone: "danger",
+    })
+  }
+
+  function childPath(name: string) {
+    const path = joinWorkspacePath(sessionId, cwd, name.trim())
+    if (!path || workspaceRelativePath(sessionId, path) === "") return null
+    return path
+  }
+
+  function siblingPath(path: string, name: string) {
+    const relative = workspaceRelativePath(sessionId, path)
+    const root = workspaceRootPath(sessionId)
+    const next = name.trim()
+    if (!relative || !root || !next || next === "." || next === ".." || /[\\/\u0000]/.test(next)) return null
+    const parentRelative = relative.includes("/") ? relative.slice(0, relative.lastIndexOf("/")) : ""
+    const parent = parentRelative ? `${root}/${parentRelative}` : root
+    const destination = joinWorkspacePath(sessionId, parent, next)
+    if (!destination || workspaceRelativePath(sessionId, destination) === "") return null
+    return destination
+  }
+
   async function openFile(path: string) {
+    if (path !== openPath && !(await confirmDiscard())) return
     setBusy(true)
     setStatus(null)
     let buf = ""
@@ -206,6 +239,7 @@ export function FilesPanel({
           }
         },
       )
+      await list(cwd)
     } catch (err) {
       setStatus({ kind: "err", text: (err as Error).message })
     } finally {
@@ -213,8 +247,15 @@ export function FilesPanel({
     }
   }
 
-  function newFile() {
-    const name = prompt("新建文件名（相对当前目录）")
+  async function newFile() {
+    if (!(await confirmDiscard())) return
+    const name = await prompt({
+      title: "新建文件",
+      message: "文件名相对于当前目录，保存后才会真正创建。",
+      label: "文件名",
+      placeholder: "notes.txt",
+      confirmLabel: "创建",
+    })
     if (!name) return
     const path = joinWorkspacePath(sessionId, cwd, name)
     if (!path) {
@@ -227,8 +268,139 @@ export function FilesPanel({
     setStatus({ kind: "ok", text: "输入内容后点击保存即可创建" })
   }
 
+  async function newDir() {
+    const name = await prompt({
+      title: "新建目录",
+      message: "目录相对于当前目录，不能超出工作区。",
+      label: "目录名",
+      placeholder: "notes",
+      confirmLabel: "创建",
+    })
+    if (!name) return
+    const path = childPath(name)
+    if (!path) {
+      setStatus({ kind: "err", text: "目录名必须位于当前工作区内" })
+      return
+    }
+    setBusy(true)
+    setStatus(null)
+    try {
+      await callTool(
+        session,
+        {
+          cluster: target.cluster,
+          instance: target.instance,
+          tool: TOOLS.shell,
+          arguments: { session_id: sessionId, command: `mkdir -p -- ${shq(path)}` },
+        },
+        () => {},
+      )
+      setStatus({ kind: "ok", text: "目录已创建" })
+      await list(cwd)
+    } catch (err) {
+      setStatus({ kind: "err", text: (err as Error).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function renameEntry(path: string) {
+    const relative = workspaceRelativePath(sessionId, path)
+    if (!relative) {
+      setStatus({ kind: "err", text: "不能重命名工作区根目录" })
+      return
+    }
+    const current = relative.slice(relative.lastIndexOf("/") + 1)
+    const entered = await prompt({
+      title: "重命名",
+      message: "新名称不能包含路径，也不能超出当前工作区。",
+      label: "新名称",
+      defaultValue: current,
+      confirmLabel: "重命名",
+    })
+    if (!entered || entered.trim() === current) return
+    const destination = siblingPath(path, entered)
+    if (!destination || destination === path) {
+      setStatus({ kind: "err", text: "新名称必须是同一目录下的单个名称" })
+      return
+    }
+    setBusy(true)
+    setStatus(null)
+    try {
+      await callTool(
+        session,
+        {
+          cluster: target.cluster,
+          instance: target.instance,
+          tool: TOOLS.shell,
+          arguments: { session_id: sessionId, command: `mv -- ${shq(path)} ${shq(destination)}` },
+        },
+        () => {},
+      )
+      if (openPath === path) setOpenPath(destination)
+      else if (openPath?.startsWith(`${path}/`)) setOpenPath(`${destination}${openPath.slice(path.length)}`)
+      setStatus({ kind: "ok", text: "已重命名" })
+      await list(cwd)
+    } catch (err) {
+      setStatus({ kind: "err", text: (err as Error).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function removeEntry(path: string, isDir: boolean) {
+    const relative = workspaceRelativePath(sessionId, path)
+    if (!relative) {
+      setStatus({ kind: "err", text: "不能删除工作区根目录" })
+      return
+    }
+    const label = relative.slice(relative.lastIndexOf("/") + 1)
+    const accepted = await confirm({
+      title: isDir ? "删除目录" : "删除文件",
+      message: isDir ? `确定删除目录「${label}」及其全部内容？此操作不可恢复。` : `确定删除文件「${label}」？此操作不可恢复。`,
+      confirmLabel: "删除",
+      tone: "danger",
+    })
+    if (!accepted) return
+    if ((openPath === path || openPath?.startsWith(`${path}/`)) && !(await confirmDiscard())) return
+    setBusy(true)
+    setStatus(null)
+    try {
+      const command = isDir ? `rm -rf -- ${shq(path)}` : `rm -f -- ${shq(path)}`
+      await callTool(
+        session,
+        {
+          cluster: target.cluster,
+          instance: target.instance,
+          tool: TOOLS.shell,
+          arguments: { session_id: sessionId, command },
+        },
+        () => {},
+      )
+      if (openPath === path || openPath?.startsWith(`${path}/`)) {
+        setOpenPath(null)
+        setContent("")
+        setDirty(false)
+      }
+      setStatus({ kind: "ok", text: isDir ? "目录已删除" : "文件已删除" })
+      await list(cwd)
+    } catch (err) {
+      setStatus({ kind: "err", text: (err as Error).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function runMaintenance(kind: "check" | "clean") {
-    if (kind === "clean" && !confirm("确认清理当前工作区？将移除临时文件与较旧的历史版本（保留最近 3 个）。")) {
+    if (
+      kind === "clean" &&
+      !(await confirm({
+        title: "清理工作区",
+        message: "确认清理当前工作区？将移除临时文件与较旧的历史版本（保留最近 3 个）。",
+        confirmLabel: "清理",
+        tone: "danger",
+      }))
+    ) {
       return
     }
     setMaint({ tool: kind, lines: [], running: true })
@@ -396,7 +568,7 @@ export function FilesPanel({
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* 上传工具条（含 session） */}
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card/60 px-3 py-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card/60 px-4 py-2">
         {onSessionChange ? (
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             session
@@ -433,14 +605,14 @@ export function FilesPanel({
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={upload?.active}
-            className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            className="btn btn-sm"
           >
             <UploadIcon width={14} height={14} /> 上传文件
           </button>
           <button
             onClick={() => dirInputRef.current?.click()}
             disabled={upload?.active}
-            className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            className="btn btn-sm"
           >
             <FolderUpIcon width={14} height={14} /> 上传文件夹
           </button>
@@ -457,7 +629,7 @@ export function FilesPanel({
             onClick={() => runMaintenance("check")}
             disabled={maint?.running}
             title="检查当前部署的版本与健康状态"
-            className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            className="btn btn-sm"
           >
             <RocketIcon width={14} height={14} /> 检查部署
           </button>
@@ -465,7 +637,7 @@ export function FilesPanel({
             onClick={() => runMaintenance("clean")}
             disabled={maint?.running}
             title="清理工作区临时文件与旧版本"
-            className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            className="btn btn-sm"
           >
             <TrashIcon width={14} height={14} /> 清理工作区
           </button>
@@ -509,7 +681,7 @@ export function FilesPanel({
             </p>
             <button
               onClick={copyCommand}
-              className="flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              className="btn btn-primary btn-sm"
             >
               {copied ? <CheckIcon width={13} height={13} /> : <CopyIcon width={13} height={13} />}
               {copied ? "已复制" : "复制命令"}
@@ -540,18 +712,27 @@ export function FilesPanel({
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {/* 文件浏览器 */}
-        <aside className="flex w-64 shrink-0 flex-col border-r bg-card/40">
+        <aside className="flex max-h-48 shrink-0 flex-col border-b bg-card/40 md:max-h-none md:w-64 md:border-r md:border-b-0">
           <div className="flex items-center justify-between gap-1 border-b px-3 py-2">
             <span className="text-xs font-medium text-muted-foreground">文件浏览器</span>
             <div className="flex items-center gap-1">
               <button
                 onClick={newFile}
                 title="新建文件"
-                className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                disabled={busy}
+                className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
               >
                 <PlusIcon width={15} height={15} />
+              </button>
+              <button
+                onClick={newDir}
+                title="新建目录"
+                disabled={busy}
+                className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+              >
+                <FolderIcon width={15} height={15} />
               </button>
               <button
                 onClick={() => list(cwd)}
@@ -598,42 +779,86 @@ export function FilesPanel({
               if (!full) return null
               const active = openPath === full
               return (
-                <button
+                <div
                   key={e.name}
-                  onClick={() => (e.isDir ? list(full) : openFile(full))}
-                  className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors ${
+                  className={`group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm ${
                     active ? "bg-primary/15 text-foreground" : "text-foreground/90 hover:bg-muted"
                   }`}
                 >
-                  {e.isDir ? (
-                    <FolderIcon width={15} height={15} className="shrink-0 text-primary" />
-                  ) : (
-                    <FileIcon width={15} height={15} className="shrink-0 text-muted-foreground" />
-                  )}
-                  <span className="truncate">{e.name}</span>
-                  {e.isDir && (
-                    <ChevronRightIcon width={13} height={13} className="ml-auto shrink-0 text-muted-foreground" />
-                  )}
-                </button>
+                  <button
+                    onClick={() => (e.isDir ? list(full) : openFile(full))}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  >
+                    {e.isDir ? (
+                      <FolderIcon width={15} height={15} className="shrink-0 text-primary" />
+                    ) : (
+                      <FileIcon width={15} height={15} className="shrink-0 text-muted-foreground" />
+                    )}
+                    <span className="truncate">{e.name}</span>
+                    {e.isDir && (
+                      <ChevronRightIcon width={13} height={13} className="ml-auto shrink-0 text-muted-foreground group-hover:hidden" />
+                    )}
+                  </button>
+                  <button
+                    onClick={() => renameEntry(full)}
+                    disabled={busy}
+                    title="重命名"
+                    className="shrink-0 rounded px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 disabled:opacity-40"
+                  >
+                    改名
+                  </button>
+                  <button
+                    onClick={() => removeEntry(full, e.isDir)}
+                    disabled={busy}
+                    title={e.isDir ? "删除目录" : "删除文件"}
+                    className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100 disabled:opacity-40"
+                  >
+                    <TrashIcon width={13} height={13} />
+                  </button>
+                </div>
               )
             })}
           </div>
         </aside>
 
         {/* 编辑器 */}
-        <section className="flex min-w-0 flex-1 flex-col">
-          <div className="flex shrink-0 items-center justify-between gap-2 border-b bg-card px-3 py-2">
-            <span className="truncate font-mono text-xs text-muted-foreground">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-card px-3 py-2">
+            <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
               {openPath || "未打开文件"}
               {dirty && <span className="ml-1 text-warning">●</span>}
             </span>
-            <button
-              onClick={save}
-              disabled={!openPath || busy || !dirty}
-              className="flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-            >
-              <SaveIcon width={15} height={15} /> 保存
-            </button>
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              {openPath?.toLowerCase().endsWith(".md") && (
+                <button
+                  onClick={() => setPreview((value) => !value)}
+                  className="rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
+                >
+                  {preview ? "编辑" : "预览"}
+                </button>
+              )}
+              <button
+                onClick={() => openPath && renameEntry(openPath)}
+                disabled={!openPath || busy}
+                className="rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-40"
+              >
+                重命名
+              </button>
+              <button
+                onClick={() => openPath && removeEntry(openPath, false)}
+                disabled={!openPath || busy}
+                className="rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-40"
+              >
+                删除
+              </button>
+              <button
+                onClick={save}
+                disabled={!openPath || busy || !dirty}
+                className="btn btn-primary"
+              >
+                <SaveIcon width={15} height={15} /> 保存
+              </button>
+            </div>
           </div>
 
           {status && (
@@ -648,25 +873,32 @@ export function FilesPanel({
 
           <div className="relative min-h-0 flex-1 p-3">
             {openPath ? (
-              <textarea
-                value={content}
-                onChange={(e) => {
-                  setContent(e.target.value)
-                  setDirty(true)
-                }}
-                spellCheck={false}
-                className="h-full w-full resize-none rounded-lg border bg-background p-3 font-mono text-sm leading-relaxed text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
-              />
+              preview && openPath.toLowerCase().endsWith(".md") ? (
+                <div className="h-full overflow-y-auto rounded-lg border bg-background p-4">
+                  {content.trim() ? <Markdown content={content} /> : <p className="text-sm text-muted-foreground">文档是空的</p>}
+                </div>
+              ) : (
+                <textarea
+                  value={content}
+                  onChange={(e) => {
+                    setContent(e.target.value)
+                    setDirty(true)
+                  }}
+                  spellCheck={false}
+                  className="h-full w-full resize-none rounded-lg border bg-background p-3 font-mono text-sm leading-relaxed text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+                />
+              )
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
                 <FileIcon width={28} height={28} />
-                <p className="text-pretty text-center text-sm">从左侧选择文件打开编辑，或用上方按钮上传文件/文件夹</p>
+                <p className="text-pretty text-center text-sm">从文件浏览器选择文件打开编辑，或用上方按钮上传文件/文件夹</p>
                 <p className="text-xs">小文本走 file_write 一键上传 · 大文件/目录请复制 doops push 命令</p>
               </div>
             )}
           </div>
         </section>
       </div>
+      {dialog}
     </div>
   )
 }

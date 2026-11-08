@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target } from "@/lib/client"
 import { RefreshIcon, RocketIcon, StopIcon } from "./icons"
+import { Button, Input } from "./ui"
 
 const agentImagePattern = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[a-f0-9]{64})$/
 
@@ -67,18 +68,18 @@ export function AgentUpgradePanel({ session, target, sessionId }: { session: Ses
     finally { setRunning(false); abortRef.current = null; setConfirmed(false) }
   }
   return (
-    <section className="mx-auto flex max-w-3xl flex-col gap-3 px-4 py-5">
+    <section className="flex flex-col gap-3 px-4 py-5">
       <h2 className="text-base font-medium">升级现有 Agent</h2>
       <p className="break-all text-sm text-muted-foreground">{target.cluster}/{target.instance} · {sessionId}</p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {([ ["Agent 镜像", image, setImage], ["Agent 来源提交", commit, setCommit], ["Agent CI 记录 URL", ci, setCI] ] as const).map(([label, value, setter]) => <label key={label} className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">{label}<input aria-label={label} value={value} disabled={running} onChange={(e) => { setter(e.target.value); setConfirmed(false) }} className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm text-foreground" /></label>)}
+        {([ ["Agent 镜像", image, setImage], ["Agent 来源提交", commit, setCommit], ["Agent CI 记录 URL", ci, setCI] ] as const).map(([label, value, setter]) => <label key={label} className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">{label}<Input aria-label={label} value={value} disabled={running} onChange={(e) => { setter(e.target.value); setConfirmed(false) }} /></label>)}
       </div>
       <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={running} onChange={(e) => setConfirmed(e.target.checked)} className="mt-1" />授权本次 Agent 变更，已核对 CI 来源和回滚范围</label>
       <div className="flex flex-wrap gap-2">
-        <button disabled={running || !image} onClick={() => run(false, true)} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm disabled:opacity-50"><RefreshIcon width={14} height={14} />参数预览</button>
-        <button disabled={running || !confirmed || !image} onClick={() => run(false, false)} className="flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"><RocketIcon width={14} height={14} />确认升级</button>
-        <button disabled={running || !confirmed} onClick={() => run(true, false)} className="rounded-md border px-3 py-2 text-sm disabled:opacity-50">回滚前一成功版本</button>
-        {running && <button onClick={() => abortRef.current?.abort()} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm"><StopIcon width={14} height={14} />停止观察</button>}
+        <Button disabled={running || !image} onClick={() => run(false, true)}><RefreshIcon width={14} height={14} />参数预览</Button>
+        <Button disabled={running || !confirmed || !image} onClick={() => run(false, false)} variant="primary"><RocketIcon width={14} height={14} />确认升级</Button>
+        <Button disabled={running || !confirmed} onClick={() => run(true, false)}>回滚前一成功版本</Button>
+        {running && <Button onClick={() => abortRef.current?.abort()}><StopIcon width={14} height={14} />停止观察</Button>}
       </div>
       {error && <p role="alert" className="break-words text-sm text-destructive">{error}</p>}
       {output && <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border p-3 text-xs">{output}</pre>}

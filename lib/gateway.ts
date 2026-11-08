@@ -22,6 +22,7 @@ export interface AuditEvent {
   token_id?: string
   cluster?: string
   instance?: string
+  credential_id?: string
   action?: string
   session?: string
   command_summary?: string
@@ -39,9 +40,55 @@ export interface AuditSummary {
   running: number
   success: number
   failed: number
+  unknown: number
   bytes_in: number
   bytes_out: number
   status?: Record<string, number>
+}
+
+export type AuditStatusKind = "success" | "running" | "unknown" | "failed" | "other"
+
+// outcome_unknown is not a confirmed failure: the mutation may still have run.
+export function auditStatusKind(status?: string): AuditStatusKind {
+  switch (status) {
+    case "success":
+    case "ok":
+    case "completed":
+      return "success"
+    case "running":
+    case "executing":
+      return "running"
+    case "outcome_unknown":
+      return "unknown"
+    case "error":
+    case "failed":
+    case "forbidden":
+    case "blocked":
+      return "failed"
+    default:
+      return "other"
+  }
+}
+
+export function auditStatusLabel(status?: string): string {
+  switch (auditStatusKind(status)) {
+    case "success":
+      return "成功"
+    case "running":
+      return "进行中"
+    case "unknown":
+      return "结果未知"
+    case "failed":
+      if (status === "forbidden") return "拒绝"
+      if (status === "blocked") return "阻断"
+      return "失败"
+    default:
+      if (status === "canceled") return "已取消"
+      if (status === "offline") return "离线"
+      if (status === "busy") return "忙碌"
+      if (status === "rate_limited") return "限流"
+      return status || "未知"
+  }
 }
 
 export type AuditScope = "target" | "session" | "self" | "global"
@@ -94,6 +141,8 @@ export const TOOLS = {
   fileWrite: "doops_file_write",
   workspaceRead: "doops_workspace_read",
   nodeInfo: "doops_node_info",
+  k8s: "doops_k8s",
+  databaseInventory: "doops_database_inventory",
   checkDeployment: "doops_check_deployment",
   cleanWorkspace: "doops_clean_workspace",
 } as const

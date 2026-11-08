@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import { randomSession } from "@/lib/gateway"
 import { isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { workspaceArtifactsFromChanges } from "@/lib/agent-code-workspace"
+import { Button } from "./ui"
 
 export function AgentUiPanel({
   runtime,
@@ -65,9 +66,11 @@ export function AgentUiPanel({
       headerActions={
         <div className="flex shrink-0 items-center gap-1">
           {workspaceError && <span role="alert" className="max-w-40 truncate text-xs text-destructive" title={workspaceError}>成果读取失败</span>}
-          <button
+          <Button
             aria-label="重新检查连接"
-            className="flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
+            variant="ghost"
+            size="sm"
+            icon
             disabled={snapshot.connection === "connecting" || snapshot.connection === "reconnecting" || (busy && snapshot.connection !== "disconnected")}
             onClick={() => {
               if (snapshot.connection !== "disconnected") runtime.close(sessionId)
@@ -77,11 +80,12 @@ export function AgentUiPanel({
             }}
             title="重新检查连接"
             type="button"
-          ><RefreshCw aria-hidden="true" className="size-3.5" /></button>
+          ><RefreshCw aria-hidden="true" className="size-3.5" /></Button>
           {onConfigureModel && (
-            <button
+            <Button
               aria-label="配置模型"
-              className="flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              variant="ghost"
+              size="sm"
               disabled={busy}
               onClick={onConfigureModel}
               title="配置该节点的大模型"
@@ -89,11 +93,12 @@ export function AgentUiPanel({
             >
               <Settings2 aria-hidden="true" className="size-3.5" />
               <span className="hidden sm:inline">配置模型</span>
-            </button>
+            </Button>
           )}
-          <button
+          <Button
             aria-label="新会话"
-            className="flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+            variant="ghost"
+            size="sm"
             disabled={busy || !onSessionChange}
             onClick={startNewSession}
             title="新会话"
@@ -101,7 +106,7 @@ export function AgentUiPanel({
           >
             <Plus aria-hidden="true" className="size-3.5" />
             <span className="hidden sm:inline">新会话</span>
-          </button>
+          </Button>
         </div>
       }
       defaultView="conversation"

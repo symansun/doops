@@ -12,6 +12,8 @@ import {
   TrashIcon,
   CheckIcon,
 } from "./icons"
+import { useAppDialog } from "./app-dialog"
+import { Button, SegmentedControl } from "./ui"
 
 // 知识库根目录（持久化，不随会话工作区清理）
 const KB_ROOT = "/root/kb"
@@ -41,6 +43,7 @@ export function KnowledgeBase({
   const [mode, setMode] = useState<Mode>("split")
   const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
+  const { confirm, prompt, dialog } = useAppDialog()
 
   const docPath = useCallback((name: string) => `${KB_ROOT}/${name}`, [])
 
@@ -82,9 +85,20 @@ export function KnowledgeBase({
   }, [refresh])
 
   async function openFile(name: string) {
-    if (dirty && !confirm("当前文档有未保存的修改，确定切换吗？")) return
+    if (
+      dirty &&
+      !(await confirm({
+        title: "放弃未保存的修改",
+        message: "当前文档有未保存的修改，确定切换吗？",
+        confirmLabel: "切换",
+        tone: "danger",
+      }))
+    ) {
+      return
+    }
     setBusy(true)
     setStatus(null)
+    setListErr("")
     let buf = ""
     try {
       await callTool(
@@ -104,8 +118,11 @@ export function KnowledgeBase({
       setOpenDoc(name)
       setContent(buf)
       setDirty(false)
+      setMode("preview")
     } catch (err) {
-      setStatus({ kind: "err", text: (err as Error).message })
+      const text = (err as Error).message
+      setStatus({ kind: "err", text })
+      setListErr(text)
     } finally {
       setBusy(false)
     }
@@ -141,11 +158,22 @@ export function KnowledgeBase({
     }
   }
 
-  function newDoc() {
-    let name = prompt("新建文档名称（自动补全 .md 后缀）")
-    if (!name) return
+  async function newDoc() {
+    const entered = await prompt({
+      title: "新建文档",
+      message: "名称会自动补全 .md 后缀。",
+      label: "文档名称",
+      placeholder: "运行手册",
+      confirmLabel: "创建",
+    })
+    if (!entered) return
+    let name = entered
     name = name.trim()
     if (!/\.md$/i.test(name)) name += ".md"
+    if (!validDocName(name)) {
+      setListErr("文档名只能是单层 Markdown 文件名，不能包含路径")
+      return
+    }
     if (docs.includes(name)) {
       openFile(name)
       return
@@ -158,8 +186,80 @@ export function KnowledgeBase({
     setTimeout(() => taRef.current?.focus(), 0)
   }
 
+  function validDocName(name: string) {
+    return /^[^\\/\u0000]+\.md$/i.test(name) && name !== ".md" && !name.includes("..")
+  }
+
+  async function renameDoc(name: string) {
+    if (!docs.includes(name)) {
+      setListErr("请先保存文档，再重命名")
+      return
+    }
+    if (openDoc === name && dirty && !(await confirm({
+      title: "放弃未保存的修改",
+      message: "重命名会以已保存的内容为准。确定继续吗？",
+      confirmLabel: "继续",
+      tone: "danger",
+    }))) {
+      return
+    }
+    const entered = await prompt({
+      title: "重命名文档",
+      message: "名称会自动补全 .md 后缀。",
+      label: "新名称",
+      defaultValue: name.replace(/\.md$/i, ""),
+      confirmLabel: "重命名",
+    })
+    if (!entered) return
+    let next = entered.trim()
+    if (!/\.md$/i.test(next)) next += ".md"
+    if (next === name) return
+    if (!validDocName(next)) {
+      setListErr("文档名只能是单层 Markdown 文件名，不能包含路径")
+      return
+    }
+    if (docs.includes(next)) {
+      setListErr("已有同名文档")
+      return
+    }
+    setBusy(true)
+    setStatus(null)
+    try {
+      await callTool(
+        session,
+        {
+          cluster: target.cluster,
+          instance: target.instance,
+          tool: TOOLS.shell,
+          arguments: { session_id: sessionId, command: `mv -- ${shq(docPath(name))} ${shq(docPath(next))}` },
+        },
+        () => {},
+      )
+      if (openDoc === name) {
+        setOpenDoc(next)
+        setDirty(false)
+      }
+      setStatus({ kind: "ok", text: "已重命名" })
+      refresh()
+    } catch (err) {
+      setStatus({ kind: "err", text: (err as Error).message })
+      setListErr((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function deleteDoc(name: string) {
-    if (!confirm(`确定删除文档「${name}」？此操作不可恢复。`)) return
+    if (
+      !(await confirm({
+        title: "删除文档",
+        message: `确定删除文档「${name}」？此操作不可恢复。`,
+        confirmLabel: "删除",
+        tone: "danger",
+      }))
+    ) {
+      return
+    }
     setBusy(true)
     try {
       await callTool(
@@ -184,17 +284,6 @@ export function KnowledgeBase({
       setBusy(false)
     }
   }
-
-  const modeBtn = (m: Mode, label: string) => (
-    <button
-      onClick={() => setMode(m)}
-      className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-        mode === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-      }`}
-    >
-      {label}
-    </button>
-  )
 
   return (
     <div className="flex h-full min-h-0">
@@ -245,6 +334,13 @@ export function KnowledgeBase({
                   <span className="truncate">{name.replace(/\.md$/i, "")}</span>
                 </button>
                 <button
+                  onClick={() => renameDoc(name)}
+                  className="shrink-0 rounded px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                  title="重命名"
+                >
+                  改名
+                </button>
+                <button
                   onClick={() => deleteDoc(name)}
                   className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
                   title="删除"
@@ -267,11 +363,16 @@ export function KnowledgeBase({
                 {dirty && <span className="h-1.5 w-1.5 rounded-full bg-primary" title="未保存" />}
               </span>
               <div className="ml-auto flex items-center gap-2">
-                <div className="flex items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5">
-                  {modeBtn("edit", "编辑")}
-                  {modeBtn("split", "分屏")}
-                  {modeBtn("preview", "预览")}
-                </div>
+                <SegmentedControl
+                  value={mode}
+                  onChange={setMode}
+                  ariaLabel="知识库编辑模式"
+                  options={[
+                    { value: "edit", label: "编辑" },
+                    { value: "split", label: "分屏" },
+                    { value: "preview", label: "预览" },
+                  ]}
+                />
                 {status && (
                   <span
                     className={`flex items-center gap-1 text-xs ${
@@ -282,13 +383,13 @@ export function KnowledgeBase({
                     {status.text}
                   </span>
                 )}
-                <button
+                <Button
                   onClick={save}
                   disabled={busy || !dirty}
-                  className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                  variant="primary"
                 >
                   <SaveIcon width={14} height={14} /> 保存
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -309,9 +410,11 @@ export function KnowledgeBase({
                 />
               )}
               {(mode === "preview" || mode === "split") && (
-                <div className="min-h-0 flex-1 overflow-y-auto bg-background p-4">
+                <div className="min-h-0 flex-1 overflow-y-auto bg-background px-6 py-5">
                   {content.trim() ? (
-                    <Markdown content={content} />
+                    <div className={mode === "preview" ? "mx-auto max-w-3xl" : ""}>
+                      <Markdown content={content} />
+                    </div>
                   ) : (
                     <p className="text-sm text-muted-foreground">预览区：开始输入即可看到渲染效果</p>
                   )}
@@ -327,15 +430,16 @@ export function KnowledgeBase({
             <p className="max-w-sm text-pretty text-sm">
               在 {target.instance} 上在线维护 Markdown 知识库文档，支持边写边预览
             </p>
-            <button
+            <Button
               onClick={newDoc}
-              className="flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              variant="primary"
             >
               <PlusIcon width={15} height={15} /> 新建文档
-            </button>
+            </Button>
           </div>
         )}
       </div>
+      {dialog}
     </div>
   )
 }

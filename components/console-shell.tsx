@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic"
 import type { AgentSessionRuntime } from "@agent-cloud/agent-ui"
-import { Database, Globe2 } from "lucide-react"
+import { Boxes, Globe2 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { clearServerSession, fetchTargets, restoreServerSession, type Session, type Target } from "@/lib/client"
 import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
@@ -10,12 +10,11 @@ import { isDemoAllowed } from "@/lib/demo-policy"
 import { DEMO_TOKEN } from "@/lib/demo"
 import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
-import { TerminalPanel } from "./terminal-panel"
 import { createDoopsAgentUiRuntime, isDoopsAgentSessionBusy } from "@/lib/agent-ui-runtime"
 import { createDoopsCodeWorkspace } from "@/lib/agent-code-workspace"
 import { FilesPanel } from "./files-panel"
 import { KnowledgeBase } from "./knowledge-base"
-import { DatabasePanel } from "./database-panel"
+import { ResourcePanel } from "./resource-panel"
 import { WebsitePanel } from "./website-panel"
 import { AuditPanel } from "./audit-panel"
 import { CredentialPanel } from "./credential-panel"
@@ -25,8 +24,8 @@ import { DeployGuideBody } from "./deploy-guide"
 import { AgentUpgradePanel } from "./agent-upgrade-panel"
 import { CicdGuide } from "./cicd-guide"
 import { OnboardingGuide } from "./onboarding-guide"
+import { Button, PageTabs, SegmentedControl, type PageTabItem } from "./ui"
 import {
-  TerminalIcon,
   SparkIcon,
   FileIcon,
   FileTextIcon,
@@ -45,18 +44,17 @@ const AgentUiPanel = dynamic(() => import("./agent-ui-panel").then((module) => m
   loading: () => <div role="status" className="flex h-full items-center justify-center text-sm text-muted-foreground">正在加载 AI 助手...</div>,
 })
 
-type Tab = "overview" | "ask" | "database" | "website" | "files" | "kb" | "credentials" | "audit" | "terminal"
+type Tab = "overview" | "ask" | "resources" | "website" | "files" | "kb" | "credentials" | "audit"
 
-const TABS: { id: Tab; label: string; icon: typeof TerminalIcon | typeof Database | typeof Globe2; secondary?: boolean }[] = [
-  { id: "overview", label: "概览", icon: ActivityIcon },
-  { id: "ask", label: "AI 助手", icon: SparkIcon },
-  { id: "database", label: "数据库", icon: Database },
-  { id: "website", label: "网站", icon: Globe2 },
-  { id: "files", label: "文件", icon: FileIcon },
-  { id: "kb", label: "知识库", icon: FileTextIcon },
-  { id: "credentials", label: "凭据", icon: KeyIcon },
-  { id: "audit", label: "审计", icon: HistoryIcon },
-  { id: "terminal", label: "终端", icon: TerminalIcon, secondary: true },
+const TABS: PageTabItem<Tab>[] = [
+  { id: "overview", label: "概览", icon: <ActivityIcon width={16} height={16} /> },
+  { id: "ask", label: "AI 助手", icon: <SparkIcon width={16} height={16} /> },
+  { id: "resources", label: "资源", icon: <Boxes width={16} height={16} /> },
+  { id: "website", label: "网站", icon: <Globe2 width={16} height={16} /> },
+  { id: "files", label: "文件", icon: <FileIcon width={16} height={16} /> },
+  { id: "kb", label: "知识库", icon: <FileTextIcon width={16} height={16} /> },
+  { id: "credentials", label: "凭据", icon: <KeyIcon width={16} height={16} /> },
+  { id: "audit", label: "审计", icon: <HistoryIcon width={16} height={16} /> },
 ]
 
 const GW_KEY = "doops.gateway"
@@ -198,7 +196,7 @@ export function ConsoleShell() {
     setSelected(t)
     setSessionId(randomSession())
     // AI 优先：切换机器后，默认进入 AI 助手而非终端
-    setTab((cur) => (cur === "overview" || cur === "terminal" ? "ask" : cur))
+    setTab((cur) => (cur === "overview" ? "ask" : cur))
   }
 
   if (authLoading) {
@@ -210,13 +208,13 @@ export function ConsoleShell() {
   }
 
   return (
-    <div className="flex h-dvh flex-col">
-      <header className="flex shrink-0 items-center justify-between border-b bg-card px-4 py-2.5">
-        <div className="flex min-w-0 max-w-full items-center gap-2 overflow-x-auto">
+    <div className="flex h-dvh w-full flex-col">
+      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card px-4 py-2.5">
+        <div className="flex min-w-0 flex-1 items-center gap-2 lg:flex-initial">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
             <ServerIcon width={16} height={16} />
           </div>
-          <span className="hidden truncate text-sm font-semibold text-foreground sm:inline">
+          <span className="hidden truncate text-sm font-semibold text-foreground lg:inline">
             Doops Console
           </span>
           {(view === "console" || view === "deploy") && (
@@ -228,71 +226,38 @@ export function ConsoleShell() {
               loading={loading}
             />
           )}
-          <div className="ml-1 flex shrink-0 items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5 sm:ml-2">
-            <button
-              disabled={skillRunning}
-              onClick={() => setView("console")}
-              className={`whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                view === "console"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              控制台
-            </button>
-            <button
-              disabled={skillRunning}
-              onClick={() => setView("deploy")}
-              className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                view === "deploy"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <RocketIcon width={13} height={13} /> 部署 Agent
-            </button>
-            <button
-              disabled={skillRunning}
-              onClick={() => setView("cicd")}
-              className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                view === "cicd"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <GitIcon width={13} height={13} /> CI/CD
-            </button>
-            <button
-              disabled={skillRunning}
-              onClick={() => setView("admin")}
-              className={`flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                view === "admin"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <ShieldIcon width={13} height={13} /> 管理
-            </button>
-          </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <SegmentedControl
+          value={view}
+          onChange={setView}
+          disabled={skillRunning}
+          className="order-last w-full flex-wrap lg:order-none lg:w-auto"
+          ariaLabel="控制台区域"
+          options={[
+            { value: "console", label: "控制台" },
+            { value: "deploy", label: "部署 Agent", icon: <RocketIcon width={13} height={13} /> },
+            { value: "cicd", label: "CI/CD", icon: <GitIcon width={13} height={13} /> },
+            { value: "admin", label: "管理", icon: <ShieldIcon width={13} height={13} /> },
+          ]}
+        />
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           {session.username && (
             <span className="hidden text-xs text-muted-foreground sm:inline">{session.username}</span>
           )}
-          <button
+          <Button
             onClick={() => setShowGuide(true)}
             title="新手引导"
-            className="flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
+            size="sm"
           >
             <HelpIcon width={14} height={14} /> <span className="hidden sm:inline">帮助</span>
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={logout}
             title="断开连接"
-            className="flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
+            size="sm"
           >
             <LogoutIcon width={14} height={14} /> <span className="hidden sm:inline">断开</span>
-          </button>
+          </Button>
         </div>
       </header>
 
@@ -318,37 +283,7 @@ export function ConsoleShell() {
       ) : (
       <div className={tab === "ask" && selected ? "flex shrink-0" : "flex min-h-0 flex-1"}>
         <main className="flex min-w-0 flex-1 flex-col">
-          <nav className="flex shrink-0 gap-1 overflow-x-auto border-b bg-card px-2">
-            {TABS.map((t) => {
-              const Icon = t.icon
-              const active = tab === t.id
-              return (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  disabled={skillRunning}
-                  title={t.secondary ? "高级：直接执行 shell 命令" : undefined}
-                  className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm transition-colors ${
-                    t.secondary ? "ml-auto" : ""
-                  } ${
-                    active
-                      ? "border-primary text-foreground"
-                      : t.secondary
-                        ? "border-transparent text-muted-foreground/70 hover:text-foreground"
-                        : "border-transparent text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  <Icon width={16} height={16} />
-                  {t.label}
-                  {t.secondary && (
-                    <span className="rounded bg-muted px-1 py-0.5 text-[10px] font-normal text-muted-foreground">
-                      高级
-                    </span>
-                  )}
-                </button>
-              )
-            })}
-          </nav>
+          <PageTabs items={TABS} value={tab} onChange={setTab} disabled={skillRunning} ariaLabel="控制台功能" />
 
           {tab === "overview" ? (
             <DashboardPanel
@@ -371,13 +306,13 @@ export function ConsoleShell() {
               <div className="flex flex-wrap items-center justify-center gap-2">
                 <button
                   onClick={() => setView("deploy")}
-                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                  className="btn btn-primary btn-sm"
                 >
                   部署 Doops Agent
                 </button>
                 <button
                   onClick={() => setTab("overview")}
-                  className="rounded-lg border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
+                  className="btn btn-sm"
                 >
                   返回概览
                 </button>
@@ -401,9 +336,9 @@ export function ConsoleShell() {
               )}
 
               <div className="min-h-0 flex-1">
-                {tab === "database" && (
-                  <DatabasePanel
-                    key={`database-${selected.key}-${sessionId}`}
+                {tab === "resources" && (
+                  <ResourcePanel
+                    key={`resources-${selected.key}-${sessionId}`}
                     session={session}
                     target={selected}
                     sessionId={sessionId}
@@ -417,14 +352,6 @@ export function ConsoleShell() {
                     target={selected}
                     sessionId={sessionId}
                     onRunningChange={setSkillRunning}
-                  />
-                )}
-                {tab === "terminal" && (
-                  <TerminalPanel
-                    key={`term-${selected.key}-${sessionId}`}
-                    session={session}
-                    target={selected}
-                    sessionId={sessionId}
                   />
                 )}
                 {tab === "files" && (

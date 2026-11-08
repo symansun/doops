@@ -23,6 +23,8 @@ import {
   type CredentialVerificationResponse,
   type CredentialVersion,
 } from "@/lib/credentials"
+import { useAppDialog } from "./app-dialog"
+import { Button, SegmentedControl } from "./ui"
 import {
   BanIcon,
   CheckIcon,
@@ -82,6 +84,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
   const [notice, setNotice] = useState("")
   const [showCreate, setShowCreate] = useState(false)
   const [action, setAction] = useState<Action>(null)
+  const { confirm, dialog } = useAppDialog()
   const [versionsByCredential, setVersionsByCredential] = useState<
     Record<string, CredentialVersion[]>
   >({})
@@ -152,7 +155,16 @@ export function CredentialPanel({ session, target }: { session: Session; target:
   }
 
   async function revoke(resource: CredentialResource) {
-    if (!window.confirm(`确认吊销凭据「${resource.name}」？已物化资源将进入清理流程。`)) return
+    if (
+      !(await confirm({
+        title: "吊销凭据",
+        message: `确认吊销凭据「${resource.name}」？已物化资源将进入清理流程。`,
+        confirmLabel: "吊销",
+        tone: "danger",
+      }))
+    ) {
+      return
+    }
     setError("")
     try {
       await revokeCredential(session, resource.id)
@@ -165,9 +177,12 @@ export function CredentialPanel({ session, target }: { session: Session; target:
 
   async function revokeBinding(resource: CredentialResource, binding: CredentialBinding) {
     if (
-      !window.confirm(
-        `确认解除「${binding.scope.cluster}/${binding.scope.instance}」上的凭据绑定？已物化资源将进入清理流程。`,
-      )
+      !(await confirm({
+        title: "解除绑定",
+        message: `确认解除「${binding.scope.cluster}/${binding.scope.instance}」上的凭据绑定？已物化资源将进入清理流程。`,
+        confirmLabel: "解除绑定",
+        tone: "danger",
+      }))
     ) {
       return
     }
@@ -183,7 +198,13 @@ export function CredentialPanel({ session, target }: { session: Session; target:
 
   async function promote(resource: CredentialResource, version: CredentialVersion) {
     if (version.state !== "staged") return
-    if (!window.confirm(`确认激活暂存版本 ${version.id}？Gateway 会重新检查全部 active target binding。`)) {
+    if (
+      !(await confirm({
+        title: "激活暂存版本",
+        message: `确认激活暂存版本 ${version.id}？Gateway 会重新检查全部 active target binding。`,
+        confirmLabel: "激活",
+      }))
+    ) {
       return
     }
     setError("")
@@ -239,49 +260,46 @@ export function CredentialPanel({ session, target }: { session: Session; target:
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex rounded-md border bg-background p-0.5 text-xs">
-            <button
-              onClick={() => setView("target")}
-              className={`rounded px-2.5 py-1.5 ${view === "target" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
-            >
-              当前目标可用
-            </button>
-            <button
-              onClick={() => setView("managed")}
-              className={`rounded px-2.5 py-1.5 ${view === "managed" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
-            >
-              我管理的
-            </button>
-          </div>
-          <button
+          <SegmentedControl
+            value={view}
+            onChange={setView}
+            ariaLabel="凭据范围"
+            options={[
+              { value: "target", label: "当前目标可用" },
+              { value: "managed", label: "我管理的" },
+            ]}
+          />
+          <Button
             onClick={load}
             disabled={loading}
             title="刷新凭据"
-            className="flex h-8 w-8 items-center justify-center rounded-md border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+            size="sm"
+            icon
           >
             <RefreshIcon width={15} height={15} className={loading ? "animate-spin" : ""} />
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={() => {
               setView("managed")
               setShowCreate(true)
             }}
             disabled={session.demo}
             title={session.demo ? "演示模式不执行凭据写操作" : "新建凭据"}
-            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            variant="primary"
+            size="sm"
           >
             <PlusIcon width={14} height={14} /> 新建凭据
-          </button>
+          </Button>
         </div>
       </div>
 
       {error && (
-        <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
+        <div role="alert" className="status-error rounded-none border-x-0 border-t-0 px-4">
           {error}
         </div>
       )}
       {notice && (
-        <div className="flex items-center gap-2 border-b border-success/30 bg-success/10 px-4 py-2 text-xs text-success">
+        <div role="status" className="status-success flex items-center gap-2 rounded-none border-x-0 border-t-0 px-4">
           <CheckIcon width={14} height={14} /> {notice}
         </div>
       )}
@@ -393,7 +411,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                       <>
                         <button
                           onClick={() => setAction({ kind: "payload", credential: resource })}
-                          className="rounded-md border px-2 py-1 text-xs text-foreground hover:bg-muted"
+                          className="btn btn-sm"
                         >
                           写入版本
                         </button>
@@ -401,7 +419,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                           <>
                             <button
                               onClick={() => setAction({ kind: "version", credential: resource, version })}
-                              className="rounded-md border px-2 py-1 text-xs text-foreground hover:bg-muted"
+                              className="btn btn-sm"
                             >
                               查看版本
                             </button>
@@ -419,7 +437,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                         )}
                         <button
                           onClick={() => setAction({ kind: "binding", credential: resource })}
-                          className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-foreground hover:bg-muted"
+                          className="btn btn-sm"
                         >
                           <ShieldIcon width={12} height={12} /> 绑定目标
                         </button>
@@ -505,6 +523,7 @@ export function CredentialPanel({ session, target }: { session: Session; target:
           onError={setError}
         />
       )}
+      {dialog}
     </div>
   )
 }
@@ -543,14 +562,14 @@ function VersionDialog({
         <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="rounded-md border px-3 py-2 text-xs text-foreground hover:bg-muted"
+            className="btn btn-sm"
           >
             关闭
           </button>
           {version.state === "staged" && (
             <button
               onClick={onPromote}
-              className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:opacity-90"
+              className="btn btn-primary btn-sm"
             >
               激活版本
             </button>
@@ -614,14 +633,14 @@ function VerifyDialog({
         <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="rounded-md border px-3 py-2 text-xs text-foreground hover:bg-muted"
+            className="btn btn-sm"
           >
             取消
           </button>
           <button
             onClick={submit}
             disabled={busy || version.state !== "staged" || binding.state !== "active"}
-            className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            className="btn btn-primary btn-sm"
           >
             {busy ? "验证中" : "验证 target"}
           </button>
@@ -816,14 +835,14 @@ function CreateCredentialForm({
       </label>
       <button
         onClick={onCancel}
-        className="rounded-md border px-3 py-2 text-xs text-foreground hover:bg-muted"
+        className="btn btn-sm"
       >
         取消
       </button>
       <button
         onClick={submit}
         disabled={busy || !name.trim()}
-        className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
+        className="btn btn-primary btn-sm"
       >
         {busy ? "创建中" : "创建"}
       </button>
@@ -924,7 +943,7 @@ function PayloadDialog({
           <button
             onClick={submit}
             disabled={busy || !payload.trim()}
-            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            className="btn btn-primary btn-sm"
           >
             <SaveIcon width={14} height={14} /> {busy ? "写入中" : "写入暂存版本"}
           </button>
@@ -995,7 +1014,7 @@ function BindingDialog({
           <button
             onClick={submit}
             disabled={busy}
-            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            className="btn btn-primary btn-sm"
           >
             <ShieldIcon width={14} height={14} /> {busy ? "绑定中" : "确认绑定"}
           </button>

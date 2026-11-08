@@ -12,6 +12,7 @@ import {
   TerminalIcon,
   RocketIcon,
 } from "./icons"
+import { Button, SegmentedControl } from "./ui"
 
 // 可复制的代码块
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
@@ -32,10 +33,11 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
       <pre className="overflow-x-auto px-3 py-2.5 pr-10 font-mono text-xs leading-relaxed text-foreground">
         {code}
       </pre>
-      <button
+      <Button
         onClick={copy}
         aria-label="复制代码"
-        className="absolute right-1.5 top-1.5 flex items-center gap-1 rounded-md border bg-background px-1.5 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+        size="sm"
+        className="absolute right-1.5 top-1.5 h-7 min-h-0 border bg-background px-1.5 py-1 text-[11px] text-muted-foreground hover:text-foreground"
       >
         {copied ? (
           <>
@@ -46,7 +48,7 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
             <CopyIcon width={12} height={12} /> 复制
           </>
         )}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -173,7 +175,7 @@ jobs:
   }, [provider, gw])
 
   return (
-    <div className="mx-auto max-w-3xl px-5 py-10">
+    <div className="px-4 py-10">
       {/* 标题 */}
       <div className="mb-8">
         <div className="mb-3 inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs font-medium text-muted-foreground">
@@ -204,7 +206,7 @@ jobs:
               value={gateway}
               onChange={(e) => setGateway(e.target.value)}
               placeholder="https://gateway.example.com"
-              className="w-full rounded-md border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none focus:border-ring"
+              className="input w-full font-mono"
             />
           </label>
 
@@ -274,21 +276,13 @@ jobs:
         </p>
 
         {/* 平台切换 */}
-        <div className="mb-1 flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-0.5">
-          {PROVIDERS.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => setProvider(p.id)}
-              className={`flex-1 whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                provider === p.id
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          value={provider}
+          onChange={setProvider}
+          className="mb-1 flex w-full flex-wrap"
+          ariaLabel="CI/CD 平台"
+          options={PROVIDERS.map((p) => ({ value: p.id, label: p.label }))}
+        />
 
         <CodeBlock code={snippet.code} lang={snippet.lang} />
 

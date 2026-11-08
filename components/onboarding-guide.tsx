@@ -21,7 +21,7 @@ const STEPS = [
   {
     icon: SparkIcon,
     title: "第二步：开始运维",
-    body: "在左侧选中机器后，打开「AI 对话」用中文描述需求，或在「终端」直接执行命令。「概览」页随时查看机器健康状态。",
+    body: "在左侧选中机器后，打开「资源」查看集群对象、数据库和主机，或打开「AI 助手」用中文描述需求。「概览」页随时查看机器健康状态。",
     tip: "试试在 AI 对话里输入：帮我看看磁盘空间还剩多少。",
   },
 ]
@@ -45,7 +45,7 @@ export function OnboardingGuide({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-2xl border bg-card p-6 shadow-xl">
+      <div className="w-full max-w-lg rounded-xl border bg-card p-6 shadow-xl">
         <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/15 text-primary">
           <Icon width={24} height={24} />
         </div>
@@ -58,7 +58,7 @@ export function OnboardingGuide({ onClose }: { onClose: () => void }) {
               <code className="overflow-x-auto pr-2 font-mono text-xs text-foreground">{INSTALL_CMD}</code>
               <button
                 onClick={copyCmd}
-                className="flex shrink-0 items-center gap-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                className="btn btn-primary btn-sm"
               >
                 {copied ? <CheckIcon width={13} height={13} /> : <CopyIcon width={13} height={13} />}
                 {copied ? "已复制" : "复制"}
@@ -88,21 +88,21 @@ export function OnboardingGuide({ onClose }: { onClose: () => void }) {
           <div className="flex items-center gap-2">
             <button
               onClick={onClose}
-              className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+              className="btn btn-ghost"
             >
               跳过
             </button>
             {step > 0 && (
               <button
                 onClick={() => setStep((s) => s - 1)}
-                className="rounded-lg border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-muted"
+                className="btn"
               >
                 上一步
               </button>
             )}
             <button
               onClick={() => (last ? onClose() : setStep((s) => s + 1))}
-              className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              className="btn btn-primary"
             >
               {last ? "开始使用" : "下一步"}
             </button>

@@ -2,13 +2,14 @@
 
 import { callTool, type Session, type Target } from "./client"
 import { TOOLS } from "./gateway"
+import { workspaceAbsolutePath, workspaceRootPath } from "./workspace-path"
 
-export const SETTINGS_PATH = "/root/.agent/settings.json"
+export const SETTINGS_PATH = ".agent/settings.json"
 
 export type ConfigKind = "model" | "file"
 
-// 一个可复用的配置项，保存在浏览器本地，可一键应用/发布到任意节点。
-// - kind="model"：大模型配置，按字段合并进节点 settings.json
+// 浏览器本地模板，写入所选节点的会话工作区，不激活宿主配置。
+// - kind="model"：模型配置文件，按字段合并进工作区 settings.json
 // - kind="file" ：通用配置文件，把 content 原样写入目标 path
 export interface ModelConfig {
   id: string
@@ -65,7 +66,7 @@ const SEED: ModelConfig[] = [
     id: "cfg_nginx",
     name: "Nginx 反代配置",
     kind: "file",
-    path: "/etc/nginx/conf.d/doops.conf",
+    path: "nginx/conf.d/doops.conf",
     format: "text",
     content:
       "server {\n  listen 80;\n  server_name _;\n  location / {\n    proxy_pass http://127.0.0.1:8080;\n    proxy_set_header Host $host;\n  }\n}\n",
@@ -79,6 +80,14 @@ export function configKind(c: ModelConfig): ConfigKind {
 
 export function configTargetPath(c: ModelConfig): string {
   return configKind(c) === "file" ? c.path || "" : c.path || SETTINGS_PATH
+}
+
+export function requireConfigWorkspacePath(path: string, sessionId: string): string {
+  const absolute = workspaceAbsolutePath(sessionId, path)
+  if (!absolute || absolute === workspaceRootPath(sessionId)) {
+    throw new Error("请编辑模板，将路径改为工作区相对文件路径（如 review.conf）；绝对路径或越界路径不能写入，旧路径不会自动迁移")
+  }
+  return path
 }
 
 export function loadConfigs(): ModelConfig[] {
@@ -104,8 +113,7 @@ function persist(list: ModelConfig[]) {
 export function upsertConfig(cfg: ModelConfig): ModelConfig[] {
   const list = loadConfigs()
   const idx = list.findIndex((c) => c.id === cfg.id)
-  // 编辑后内容变化视为有未发布改动：保留 published_at，由 UI 通过 updated_at>published_at 判断
-  const next = { ...cfg, updated_at: new Date().toISOString() }
+  const next = { ...cfg, updated_at: new Date().toISOString(), published_at: undefined }
   if (idx >= 0) list[idx] = next
   else list.push(next)
   persist(list)
@@ -119,10 +127,13 @@ export function removeConfig(id: string): ModelConfig[] {
 }
 
 // 标记某配置已发布（应用成功后调用），更新 published_at
-export function markPublished(id: string): ModelConfig[] {
+export function markPublished(sent: ModelConfig): ModelConfig[] {
   const list = loadConfigs()
-  const idx = list.findIndex((c) => c.id === id)
-  if (idx >= 0) {
+  const idx = list.findIndex((c) => c.id === sent.id)
+  const version = (cfg: ModelConfig) => JSON.stringify(
+    Object.entries(cfg).filter(([key, value]) => key !== "published_at" && value !== undefined).sort(([a], [b]) => a.localeCompare(b)),
+  )
+  if (idx >= 0 && version(list[idx]) === version(sent)) {
     list[idx] = { ...list[idx], published_at: new Date().toISOString() }
     persist(list)
   }
@@ -132,7 +143,7 @@ export function markPublished(id: string): ModelConfig[] {
 // 是否有未发布的改动
 export function hasUnpublishedChanges(c: ModelConfig): boolean {
   if (!c.published_at) return true
-  return new Date(c.updated_at).getTime() > new Date(c.published_at).getTime() + 1000
+  return new Date(c.updated_at).getTime() > new Date(c.published_at).getTime()
 }
 
 export function newConfigId(): string {
@@ -187,15 +198,13 @@ export async function applyConfigToNode(
   sessionId: string,
   cfg: ModelConfig,
 ): Promise<void> {
+  const path = requireConfigWorkspacePath(configTargetPath(cfg), sessionId)
   if (configKind(cfg) === "file") {
-    const path = configTargetPath(cfg)
-    if (!path) throw new Error("配置文件缺少目标路径")
     await writeRemote(session, target, sessionId, path, cfg.content ?? "")
     return
   }
 
   // model 类型：合并进现有 settings.json
-  const path = configTargetPath(cfg)
   let base: Record<string, unknown> = {}
   const buf = await readRemote(session, target, sessionId, path)
   try {
