@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // 集成测试策略：构建真实 CLI 二进制，用 DOOPS_CONFIG 隔离配置，
@@ -39,9 +41,15 @@ func cliBinary(t *testing.T) string {
 
 func runCLI(t *testing.T, configPath string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command(cliBinary(t), args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, cliBinary(t), args...)
 	cmd.Env = append(os.Environ(), "DOOPS_CONFIG="+configPath)
-	out, _ := cmd.CombinedOutput() // 失败退出码是预期路径，不视为测试失败
+	out, err := cmd.CombinedOutput() // 非零退出码是预期路径，不视为测试失败
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("CLI hung for 60s (args=%v), output so far:\n%s", args, out)
+	}
+	_ = err
 	return string(out)
 }
 
@@ -87,8 +95,13 @@ func TestIntegration401Hint(t *testing.T) {
 	})
 	out := runCLI(t, cfg, "-session", "s1", "exec", "-target", "demo", "-cmd", "echo hi")
 
-	if !strings.Contains(out, "Error:") {
-		t.Fatalf("expected error output:\n%s", out)
+	// 关键：先断言错误本体来自 HTTP 401 路径，防止 target 缺失等其它路径
+	// （其提示语同样含 "doops login"）造成假阳性。
+	if !strings.Contains(out, "401") {
+		t.Fatalf("expected HTTP 401 in error line, output:\n%s", out)
+	}
+	if strings.Contains(out, "not found") {
+		t.Fatalf("must not fall into target-not-found path, output:\n%s", out)
 	}
 	if !strings.Contains(out, "doops login") {
 		t.Fatalf("401 should hint re-login, output:\n%s", out)
@@ -129,8 +142,9 @@ func TestIntegrationConnRefusedHint(t *testing.T) {
 	})
 	out := runCLI(t, cfg, "-session", "s1", "exec", "-target", "demo", "-cmd", "echo hi")
 
-	if !strings.Contains(out, "Error:") {
-		t.Fatalf("expected error output:\n%s", out)
+	// 先断言错误本体是连接层失败（而非 target 缺失等其它路径）。
+	if !strings.Contains(out, "refused") {
+		t.Fatalf("expected connection refused in error line, output:\n%s", out)
 	}
 	if !strings.Contains(out, "gateway 地址") || !strings.Contains(out, "doops targets") {
 		t.Fatalf("connection failure should hint three-step check, output:\n%s", out)
