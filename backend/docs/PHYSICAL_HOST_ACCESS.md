@@ -53,7 +53,9 @@ nsenter -t 1 -m -u -i -n -- sh -c '
 ```
 
 3. 上层 CLI 将完整脚本作为 `doops -session <s> exec --target <t> --cmd` 的一个参数。
-   Web AI 助手则返回上面的原始 `bash` 代码块；“在此执行”预填命令，提交后由 Web
+   ask 通过 `Skill` 的 `action=load_prompt`、`name=shell` 获得同一份完整脚本；
+   `Read` 限制在 session 工作区，不能用于读取全局 Skill 或 `/app/self-docs`。
+   Web AI 助手返回原始 `bash` 代码块；“在此执行”预填命令，提交后由 Web
    绑定当前 target/session 走同一条 Gateway exec。不要把 CLI 命令放进 Web 的代码块，
    它会在 Agent 内执行。ask 自身不获得 Bash 工具，也不会自动执行回复里的代码。
    Web 的命令输出和退出状态只显示在执行栏，当前不会自动反馈到模型上下文；
