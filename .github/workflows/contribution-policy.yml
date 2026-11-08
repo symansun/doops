@@ -1,0 +1,61 @@
+name: Contribution policy
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+  push:
+    branches: ['**']
+
+permissions:
+  contents: read
+
+jobs:
+  contribution-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Check branch, commit intent and audit evidence
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+          const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
+          const intent = /^(feat|fix|docs|chore|refactor|perf|test|build|ci|revert)(\([a-z0-9][a-z0-9/-]*\))?!?: .+/;
+          const branch = event.pull_request?.head.ref ?? process.env.GITHUB_REF_NAME;
+          const base = event.pull_request?.base.sha ?? event.before;
+          const head = event.pull_request?.head.sha ?? event.after;
+          if (!event.pull_request && event.ref_type === 'tag' && /^v[0-9]+\.[0-9]+\.[0-9]+$/.test(branch)) {
+            console.log(`Release tag ${branch} is validated by the release workflow.`);
+            process.exit(0);
+          }
+          if (!event.pull_request && (branch === 'main' || branch === 'master')) {
+            console.log('Merged main is audited by its pull request; branch protection must require this check.');
+            process.exit(0);
+          }
+          if (!/^(feat|fix|docs|chore|refactor|perf|test|build|ci|revert)\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(branch)) {
+            throw new Error(`Use a semantic type/short-description branch: ${branch}`);
+          }
+          if (event.pull_request && !intent.test(event.pull_request.title)) {
+            throw new Error('Pull request title must use Conventional Commits.');
+          }
+          const start = base && !/^0+$/.test(base) ? base : git('merge-base', head, 'origin/main');
+          const commits = git('rev-list', '--reverse', `${start}..${head}`).split('\n').filter(Boolean);
+          if (!commits.length) throw new Error('No contribution commits to audit.');
+          for (const sha of commits) {
+            const subject = git('show', '-s', '--format=%s', sha);
+            const body = git('show', '-s', '--format=%b', sha);
+            if (!intent.test(subject)) throw new Error(`Non-semantic commit ${sha}: ${subject}`);
+            if (!/^Audit:\s+\S/m.test(body) || !/^Validation:\s+\S/m.test(body)) {
+              throw new Error(`Commit ${sha} must record Audit: and Validation: evidence.`);
+            }
+            git('show', '--format=', '--check', sha);
+            console.log(`${sha} ${subject}`);
+          }
+          JS
