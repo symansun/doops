@@ -52,10 +52,11 @@ CI provenance。仓库提供的
 `api_trigger_deploy_agent` 只负责准备临时 Gateway 登录并提交这条自然语言任务；它不
 同步当前仓库、不创建 target 隔离 workspace，也不是独立部署协议，不读取环境注册表。
 
-Agent 必须把 doagent 会话创建为 `restricted`。普通 `ask` 只允许内置只读工具、
-`mcp_doops_k8s_read` 和 `mcp_doops_web_read`；K8s 读取工具明确拒绝 Secret、ServiceAccount 和其它凭据载体。
-普通 `ask` 每轮只暴露精确的只读工具 allowlist；DoOps 不提供交互式 `permission/reply`，
-合法工具也不应触发 `permission.updated`。
+Agent 必须把 doagent 会话创建为 `auto`。普通 `ask` 暴露内置读取工具、
+`Bash`、`mcp_doops_k8s_read` 和 `mcp_doops_web_read`；K8s 读取工具明确拒绝 Secret、ServiceAccount 和其它凭据载体。
+`Bash` 由 doagent 的统一 PermissionEngine 决策，运行在目标 Agent 执行环境中，
+用于结构化读取工具未覆盖的诊断；普通 `ask` 不暴露业务 workload mutation MCP。
+DoOps 不提供交互式 `permission/reply`，Auto 会话的合法工具不应触发 `permission.updated`。
 显式 `--apply` 才切换到 doagent 原生 `build` 模式。Kubernetes workload mutation 只允许
 `mcp_doops_helm`；目标本地 Nginx 站点变更使用 `mcp_doops_web`，详细契约见
 [DOWEB_INTEGRATION.md](DOWEB_INTEGRATION.md)。对于 Kubernetes 业务 workload，

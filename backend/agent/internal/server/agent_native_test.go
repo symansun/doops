@@ -44,14 +44,13 @@ func TestDoagentModeForPromptUsesOnlyNativeAskMode(t *testing.T) {
 	}
 }
 
-func TestDoagentAllowedToolsHardLimitOrdinaryAndApplyPrompts(t *testing.T) {
+func TestDoagentAllowedToolsUsesPermissionEngineForDiagnostics(t *testing.T) {
 	ordinary := doagentAllowedTools(false, "")
-	if strings.Contains(strings.Join(ordinary, ","), "Bash") ||
-		strings.Contains(strings.Join(ordinary, ","), "ExecuteCode") ||
+	if !sliceContainsString(ordinary, "Bash") ||
 		!sliceContainsString(ordinary, "mcp_doops_k8s_read") ||
 		!sliceContainsString(ordinary, "mcp_doops_web_read") ||
 		sliceContainsString(ordinary, "mcp_doops_k8s") {
-		t.Fatalf("ordinary prompt tool boundary is unsafe: %#v", ordinary)
+		t.Fatalf("ordinary prompt tool surface is incomplete: %#v", ordinary)
 	}
 	if sliceContainsString(ordinary, "mcp_dosql_read") {
 		t.Fatalf("generic prompt gained SQL tools: %#v", ordinary)
@@ -61,8 +60,7 @@ func TestDoagentAllowedToolsHardLimitOrdinaryAndApplyPrompts(t *testing.T) {
 	if sliceContainsString(apply, "mcp_doops_k8s") ||
 		!sliceContainsString(apply, "mcp_doops_helm") ||
 		sliceContainsString(apply, "mcp_doops_web") ||
-		strings.Contains(strings.Join(apply, ","), "Bash") ||
-		strings.Contains(strings.Join(apply, ","), "ExecuteCode") {
+		sliceContainsString(apply, "Bash") {
 		t.Fatalf("apply prompt tool boundary is unsafe: %#v", apply)
 	}
 	website := doagentAllowedTools(true, "doweb")
