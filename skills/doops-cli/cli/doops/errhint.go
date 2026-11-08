@@ -35,6 +35,12 @@ func errorHint(err error) string {
 	case containsAny(msg, "http 403", "403 forbidden", "forbidden", "missing scope", "insufficient scope", "scope"):
 		return "权限不足：当前 token 缺少该 target/action 的授权。请用 doops targets 确认可见范围，或联系 gateway 管理员追加授权。"
 
+	case containsAny(msg, "approval required"):
+		return "该目标属于审批管控范围（如生产环境）。审批单已创建（ID 见错误详情）：请审批人执行 doops admin approve --id <apr_xxx> 后，重发同一命令并加 --approval <apr_xxx>。"
+
+	case containsAny(msg, "approval"):
+		return "审批单校验失败：确认 1) 审批单已被 approve 且未过期（24h）；2) 重发命令与申请时完全一致（同 target、同参数）；3) 审批单未被消费过（一次性）。查看：doops admin approvals list。"
+
 	case containsAny(msg, "blocked by agent guardrail"):
 		return "命令被 agent 端命令护栏拦截（[规则ID] 见错误详情）。确属误伤时，由管理员在 agent 侧设置 DOOPS_BLOCK_DISABLE=<规则ID> 豁免；或改写命令绕开高危模式。"
 

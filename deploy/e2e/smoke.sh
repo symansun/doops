@@ -181,6 +181,50 @@ assert_metrics() {
   log "metrics 断言通过"
 }
 
+# 审批流断言：gateway 以 -approval-targets "e2e-prod/*" 启动，
+# 对 e2e-prod/web-1 的 exec 必须先审批再放行。
+assert_approval_flow() {
+  log "断言审批流（approval-targets=e2e-prod/*）"
+  "$DOOPS_BIN" add --name e2e-prod \
+    --gateway "http://127.0.0.1:${GATEWAY_PORT}" \
+    --cluster "e2e-prod" --instance "web-1" \
+    --token bootstrap-placeholder >/dev/null 2>&1
+  "$DOOPS_BIN" login --target e2e-prod \
+    --username "$E2E_USER" --password "$E2E_PASSWORD" >/dev/null 2>&1 \
+    || fail "login e2e-prod 失败"
+
+  # 1. 未带 approval：应被拒绝并登记审批单
+  if "$DOOPS_BIN" -session "$SESSION" exec --target e2e-prod --cmd "hostname" >"${WORKDIR}/approval1.log" 2>&1; then
+    fail "未审批的生产调用不应成功"
+  fi
+  grep -q "approval required: apr_" "${WORKDIR}/approval1.log" || fail "缺少 approval required 提示"
+  local APR_ID
+  APR_ID="$(grep -o 'apr_[a-f0-9]*' "${WORKDIR}/approval1.log" | head -1)"
+  [[ -n "$APR_ID" ]] || fail "未解析到审批单 ID"
+
+  # 2. 未 approve 直接重放：仍应失败
+  if "$DOOPS_BIN" -session "$SESSION" exec --target e2e-prod --cmd "hostname" --approval "$APR_ID" >/dev/null 2>&1; then
+    fail "未 approve 的审批单不应放行"
+  fi
+
+  # 3. 审批人 approve（e2e 用户有 admin grant）
+  "$DOOPS_BIN" admin approve --target e2e --id "$APR_ID" >/dev/null 2>&1 || fail "admin approve 失败"
+
+  # 4. 重放：越过审批闸后目标无 agent，应报 offline —— 证明闸已通过
+  local out
+  out="$("$DOOPS_BIN" -session "$SESSION" exec --target e2e-prod --cmd "hostname" --approval "$APR_ID" 2>&1 || true)"
+  echo "$out" | grep -qi "offline\|not registered\|no agent" || fail "审批后重放未越过审批闸: $out"
+
+  # 5. 审批单一次性：再次重放应失败
+  if "$DOOPS_BIN" -session "$SESSION" exec --target e2e-prod --cmd "hostname" --approval "$APR_ID" >/dev/null 2>&1; then
+    fail "已消费审批单不应再次放行"
+  fi
+
+  # 6. 审批单列表可见且状态为 consumed
+  "$DOOPS_BIN" admin approvals list --target e2e 2>/dev/null | grep -q "$APR_ID" || fail "审批单列表缺少 $APR_ID"
+  log "审批流断言通过"
+}
+
 # ---------------------------------------------------------------------------
 # compose 模式
 # ---------------------------------------------------------------------------
@@ -248,11 +292,14 @@ run_process() {
   log "播种 gateway SQLite：创建用户 / 授权 / 签发 agent-token"
   "${WORKDIR}/doops-gateway" user create -name "$E2E_USER" -password "$E2E_PASSWORD" -db "$DB" >/dev/null
   "${WORKDIR}/doops-gateway" grant -user "$E2E_USER" -cluster "$CLUSTER" -instance "$INSTANCE" -db "$DB" >/dev/null
+  "${WORKDIR}/doops-gateway" grant -user "$E2E_USER" -cluster e2e-prod -instance web-1 -db "$DB" >/dev/null
+  "${WORKDIR}/doops-gateway" grant -user "$E2E_USER" -cluster '*' -instance '*' -actions admin -db "$DB" >/dev/null
   AGENT_TOKEN="$("${WORKDIR}/doops-gateway" agent-token create -cluster "$CLUSTER" -instance "$INSTANCE" -db "$DB" | sed -n 's/^agent_token=//p')"
   [[ -n "$AGENT_TOKEN" ]] || fail "未解析到 agent_token"
 
   log "启动 gateway 进程 (127.0.0.1:${GATEWAY_PORT})"
   "${WORKDIR}/doops-gateway" serve -port "$GATEWAY_PORT" -db "$DB" \
+    -approval-targets "e2e-prod/*" \
     >"${WORKDIR}/gateway.log" 2>&1 &
   GATEWAY_PID=$!
 
@@ -273,6 +320,7 @@ run_process() {
   wait_agent_online
   cli_exec_assert
   assert_metrics
+  assert_approval_flow
 
   log "断言 agent 工作区审计日志 ${WORKDIR}/ws/${SESSION}/.doops-audit-log"
   local audit_file="${WORKDIR}/ws/${SESSION}/.doops-audit-log"

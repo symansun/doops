@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### Added
+- 生产发布审批流：gateway 新增 `-approval-targets`（或 `DOOPS_APPROVAL_TARGETS`）按 `cluster/instance` glob 划定管控目标；命中的变更类调用（exec/write/push）先登记审批单（`apr_...`，24h TTL，参数 sha256 指纹），审批人 `doops admin approve --id <apr_...>` 后发起人重放同一命令加 `--approval <apr_...>` 放行；审批单一次性消费，审批操作自身落审计
+- `doops admin approvals list` / `doops admin approve` / `doops admin reject` CLI 命令；`exec` 新增 `--approval` 参数；错误提示覆盖审批全链路（approval required / 校验失败排查清单）
+- `examples/skills/release-flow` 发布规范示例：只发 tag、预发直接发、生产走审批闸自动建单/轮询/重放
+- E2E 冒烟新增审批流断言：拦截 → 未审批重放拒绝 → approve → 放行 → 一次性消费 → 列表可见
+
 ## [0.2.2] — 2026-11-08
 
 ### Added

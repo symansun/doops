@@ -210,6 +210,14 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 			runAdminOperationCancel(cmdArgs[2:], servers, configErr)
 			return
 		}
+		if cmdArgs[0] == "approvals" && cmdArgs[1] == "list" {
+			runAdminApprovalsList(cmdArgs[2:], servers, configErr)
+			return
+		}
+		if (cmdArgs[0] == "approve" || cmdArgs[0] == "reject") && len(cmdArgs) >= 1 {
+			runAdminApprovalDecide(cmdArgs[0], cmdArgs[1:], servers, configErr)
+			return
+		}
 		if cmdArgs[0] != "token" || cmdArgs[1] != "create" {
 			fmt.Println("Usage: doops admin token create --target <gateway-target> --user <username> [--name label] [--expires 720h] [--save-as target]")
 			fmt.Println("       doops admin operations list --target <gateway-target>")
@@ -268,7 +276,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 
 	case "exec", "ask", "write", "read", "info":
 		var target, cmdStr, msgStr, path, modelStr, contentStr, fileStr string
-		var subSession string
+		var subSession, approvalID string
 		subFlag := flag.NewFlagSet(command, flag.ExitOnError)
 		subFlag.StringVar(&target, "target", "", "Target server name")
 		subFlag.StringVar(&subSession, "session", "", "Session ID (can also be set before subcommand)")
@@ -276,6 +284,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 		switch command {
 		case "exec":
 			subFlag.StringVar(&cmdStr, "cmd", "", "Command to execute")
+			subFlag.StringVar(&approvalID, "approval", "", "Approval ID (apr_...) for targets that require approval")
 		case "ask":
 			subFlag.StringVar(&msgStr, "msg", "", "Instruction")
 			subFlag.StringVar(&modelStr, "model", "", "Model to use for this instruction (optional)")
@@ -376,6 +385,9 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 		case "exec":
 			toolName = "doops_shell"
 			arguments["command"] = cmdStr
+			if approvalID != "" {
+				arguments["approval_id"] = approvalID
+			}
 		case "ask":
 			toolName = "doops_agent_prompt"
 			arguments["instruction"] = msgStr
@@ -997,7 +1009,34 @@ func runAdminOperationCancel(args []string, servers []Server, configErr error) {
 	fmt.Printf("Canceled operation %s\n", opID)
 }
 
-func resolveAdminGatewayFlags(name string, args []string, servers []Server, configErr error, opID *string) (string, string) {
+func runAdminApprovalsList(args []string, servers []Server, configErr error) {
+	var status string
+	gateway, token := resolveAdminGatewayFlags("admin approvals list", args, servers, configErr, nil, &status)
+	list, err := GatewayAdminApprovalsList(gateway, token, status)
+	if err != nil {
+		fatalErr(err)
+	}
+	fmt.Printf("%-18s %-10s %-18s %-18s %-8s %-10s %-20s %s\n", "ID", "STATUS", "CLUSTER", "INSTANCE", "ACTION", "USER", "CREATED", "SUMMARY")
+	fmt.Println(strings.Repeat("-", 128))
+	for _, a := range list {
+		summary := a.CommandSummary
+		if len(summary) > 48 {
+			summary = summary[:45] + "..."
+		}
+		fmt.Printf("%-18s %-10s %-18s %-18s %-8s %-10s %-20s %s\n", a.ID, a.Status, a.Cluster, a.Instance, a.Action, a.UserID, a.CreatedAt, summary)
+	}
+}
+
+func runAdminApprovalDecide(decision string, args []string, servers []Server, configErr error) {
+	var approvalID string
+	gateway, token := resolveAdminGatewayFlags("admin "+decision, args, servers, configErr, &approvalID)
+	if err := GatewayAdminApprovalDecide(gateway, token, approvalID, decision); err != nil {
+		fatalErr(err)
+	}
+	fmt.Printf("Approval %s %sd\n", approvalID, decision)
+}
+
+func resolveAdminGatewayFlags(name string, args []string, servers []Server, configErr error, opID *string, extraString ...*string) (string, string) {
 	var target, gateway, token string
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	fs.StringVar(&target, "target", "", "Configured gateway target whose token/gateway should be used")
@@ -1005,6 +1044,11 @@ func resolveAdminGatewayFlags(name string, args []string, servers []Server, conf
 	fs.StringVar(&token, "token", "", "Gateway admin user token")
 	if opID != nil {
 		fs.StringVar(opID, "id", "", "Active operation id")
+	}
+	var extraName string
+	if len(extraString) > 0 && extraString[0] != nil {
+		extraName = "status"
+		fs.StringVar(extraString[0], extraName, "", "Filter by status")
 	}
 	fs.Parse(args)
 	if target != "" {

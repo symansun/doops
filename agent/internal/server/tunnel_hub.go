@@ -28,6 +28,9 @@ type GatewayHubOptions struct {
 	MaxConcurrentOperations int
 	MaxConcurrentPerUser    int
 	MaxQueuedPerTarget      int
+	// ApprovalTargets 命中这些 "cluster/instance" glob 的目标，
+	// 变更类调用（exec/write/push）必须先走审批
+	ApprovalTargets []string
 }
 
 type GatewayHub struct {
@@ -226,6 +229,7 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/audit", h.HandleAudit)
 	mux.HandleFunc("/v1/admin/tokens", h.HandleAdminTokens)
 	mux.HandleFunc("/v1/admin/operations", h.HandleAdminOperations)
+	mux.HandleFunc("/v1/admin/approvals", h.HandleAdminApprovals)
 	mux.HandleFunc("/metrics", h.HandleMetrics)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -686,6 +690,10 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 		errMsg := fmt.Sprintf("forbidden: %s on %s/%s", action, cluster, instance)
 		finishAudit("forbidden", errMsg, "", 0)
 		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
+		return nil
+	}
+	// 审批闸：命中审批策略的变更类调用，先登记/校验审批单
+	if !h.gateApproval(auth, cluster, instance, action, &params, finishAudit, writeJSON, req.ID) {
 		return nil
 	}
 	// 注入调用方 scope 摘要（仅 exec 类转发帧携带），覆盖/清除客户端伪造的同名字段；
