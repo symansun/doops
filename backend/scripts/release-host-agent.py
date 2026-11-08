@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""External Docker Agent release transaction; never run inside the Agent."""
+"""Docker Agent release transaction.
+
+The normal mode runs on an external host controller.  A target may also start
+this script in a short-lived sibling controller container when the running
+Agent has an audited Docker socket but no separate SSH management path.  The
+socket mode is explicit and attested; the controller is never the Agent being
+replaced.
+"""
 
 import argparse
 import copy
@@ -140,8 +147,15 @@ def release(args):
         raise RuntimeError("dry_run_cannot_mutate_rollback")
     if os.geteuid() != 0:
         raise RuntimeError("host_root_required")
-    if Path("/.dockerenv").exists() or os.environ.get("KUBERNETES_SERVICE_HOST"):
+    socket_controller = bool(getattr(args, "socket_controller", False))
+    containerized = Path("/.dockerenv").exists() or os.environ.get("KUBERNETES_SERVICE_HOST")
+    if containerized and not socket_controller:
         raise RuntimeError("external_host_controller_required")
+    if socket_controller:
+        if os.environ.get("DOOPS_SOCKET_CONTROLLER") != "1":
+            raise RuntimeError("socket_controller_attestation_required")
+        if not Path("/var/run/docker.sock").exists():
+            raise RuntimeError("docker_socket_required")
     for value in (args.container, args.session, args.cluster, args.instance, args.controller_id):
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", value):
             raise RuntimeError("invalid_release_identity")
@@ -253,6 +267,11 @@ def main():
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--rollback", action="store_true")
+    parser.add_argument(
+        "--socket-controller",
+        action="store_true",
+        help="run as an explicitly attested sibling controller with Docker socket access",
+    )
     args = parser.parse_args()
     def interrupted(_number, _frame):
         raise RuntimeError("release_interrupted")
