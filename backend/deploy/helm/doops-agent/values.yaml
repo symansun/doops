@@ -1,0 +1,50 @@
+image:
+  repository: ""
+  tag: latest
+  digest: ""
+  pullPolicy: Always
+
+workload:
+  name: ""
+  selectorLabels:
+    app: doops-agent
+
+imagePullSecrets: []
+
+serviceAccount:
+  # Empty keeps the namespace default ServiceAccount.
+  name: ""
+
+rbac:
+  # Explicitly manage a dedicated ServiceAccount and its cluster-admin binding.
+  # Requires kubeconfig.source=serviceAccount and serviceAccount.name.
+  create: false
+
+kubeconfig:
+  # mounted: /root/.kube/config comes from a volume.
+  # serviceAccount: the entrypoint writes it from the Pod ServiceAccount token.
+  source: mounted
+
+gateway:
+  url: ""
+  cluster: ""
+  instance: ""
+
+proxy:
+  # Empty rejects every public proxy upstream until an operator explicitly allows one.
+  allowedHosts: ""
+
+nodeSelector: {}
+
+tolerations: []
+
+hostAliases: []
+
+# Enter the node that runs this Pod. Disable explicitly to keep the Pod in its
+# own PID namespace. The node root remains read-only and hostNetwork stays off.
+hostAccess:
+  enabled: true
+
+volumeMounts: []
+
+volumes: []

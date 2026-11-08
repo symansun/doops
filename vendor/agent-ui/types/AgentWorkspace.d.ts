@@ -1,0 +1,3 @@
+import type { AgentWorkspaceProps } from "./agentWorkspaceProps.js";
+export type { AgentWorkspaceProps } from "./agentWorkspaceProps.js";
+export declare function AgentWorkspace({ runtime, terminalRuntime, sessionId, adapter, harness, goal, clientLabel, className, contentRenderers, headerActions, composer, renderModelControl, inspectorTabs, inspectorPanel, domainPanel, locale, presentation, mobile, mobileTerminalToolbar, readOnly, showFullscreen, toolRenderers, workspaceArtifacts, workspaceFiles, mentionHarness, defaultView, sessionRecovery, workbenchMode: controlledMode, defaultWorkbenchMode, onWorkbenchModeChange, codeWorkspace, preferenceScope, }: AgentWorkspaceProps): import("react/jsx-runtime").JSX.Element;

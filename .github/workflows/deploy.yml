@@ -1,0 +1,42 @@
+name: Deploy workload
+on:
+  workflow_dispatch:
+    inputs:
+      target: {description: Configured target name, required: true}
+      session: {description: Isolated operation session, required: true}
+      cluster: {description: Exact target cluster, required: true}
+      instance: {description: Exact target instance, required: true}
+      image: {description: Verified image repository@sha256 digest, required: true}
+      chart: {description: Authorized HTTPS Helm Chart URL, required: true}
+      scope: {description: Workload or service scope, required: true}
+      reason: {description: Authorized change reason, required: true}
+      acceptance: {description: Machine-checkable acceptance conditions, required: true}
+      credential: {description: Managed credential resource name, required: false}
+permissions:
+  contents: read
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.25.14"
+          cache-dependency-path: backend/cli/go.sum
+      - name: Apply through the authorized Gateway
+        env:
+          DOOPS_GATEWAY_TOKEN: ${{ secrets.DOOPS_GATEWAY_TOKEN }}
+          DOOPS_GATEWAY_URL: ${{ vars.DOOPS_GATEWAY_URL }}
+          DOOPS_TARGET: ${{ inputs.target }}
+          DOOPS_SESSION: ${{ inputs.session }}
+          DOOPS_CLUSTER: ${{ inputs.cluster }}
+          DOOPS_INSTANCE: ${{ inputs.instance }}
+          DOOPS_IMAGE: ${{ inputs.image }}
+          DOOPS_HELM_ASSET: ${{ inputs.chart }}
+          DOOPS_SERVICE_SCOPE: ${{ inputs.scope }}
+          DOOPS_CHANGE_REASON: ${{ inputs.reason }}
+          DOOPS_ACCEPTANCE: ${{ inputs.acceptance }}
+          DOOPS_CREDENTIAL: ${{ inputs.credential }}
+        run: bash backend/scripts/deploy-workload.sh

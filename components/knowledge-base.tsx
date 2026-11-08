@@ -1,0 +1,445 @@
+"use client"
+
+import { useCallback, useEffect, useRef, useState } from "react"
+import { callTool, extractText, type Session, type Target } from "@/lib/client"
+import { TOOLS } from "@/lib/gateway"
+import { Markdown } from "./markdown"
+import {
+  FileTextIcon,
+  SaveIcon,
+  RefreshIcon,
+  PlusIcon,
+  TrashIcon,
+  CheckIcon,
+} from "./icons"
+import { useAppDialog } from "./app-dialog"
+import { Button, SegmentedControl } from "./ui"
+
+// 知识库根目录（持久化，不随会话工作区清理）
+const KB_ROOT = "/root/kb"
+type Mode = "edit" | "preview" | "split"
+
+function shq(s: string) {
+  return "'" + s.replace(/'/g, "'\\''") + "'"
+}
+
+export function KnowledgeBase({
+  session,
+  target,
+  sessionId,
+}: {
+  session: Session
+  target: Target
+  sessionId: string
+}) {
+  const [docs, setDocs] = useState<string[]>([])
+  const [listBusy, setListBusy] = useState(false)
+  const [listErr, setListErr] = useState("")
+
+  const [openDoc, setOpenDoc] = useState<string | null>(null)
+  const [content, setContent] = useState("")
+  const [dirty, setDirty] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [mode, setMode] = useState<Mode>("split")
+  const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null)
+  const taRef = useRef<HTMLTextAreaElement>(null)
+  const { confirm, prompt, dialog } = useAppDialog()
+
+  const docPath = useCallback((name: string) => `${KB_ROOT}/${name}`, [])
+
+  const refresh = useCallback(async () => {
+    setListBusy(true)
+    setListErr("")
+    let buf = ""
+    try {
+      // 确保目录存在后再列举
+      await callTool(
+        session,
+        {
+          cluster: target.cluster,
+          instance: target.instance,
+          tool: TOOLS.shell,
+          arguments: { session_id: sessionId, command: `mkdir -p ${shq(KB_ROOT)}; ls -1Ap ${shq(KB_ROOT)}` },
+        },
+        (ev) => {
+          if (ev.type === "output") buf += ev.data
+          else if (ev.type === "result") buf += extractText(ev.result)
+          else if (ev.type === "error") setListErr(ev.error)
+        },
+      )
+      const names = buf
+        .split("\n")
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith("exit code") && !l.startsWith("$"))
+        .filter((l) => !l.endsWith("/") && /\.md$/i.test(l))
+      setDocs(names.sort((a, b) => a.localeCompare(b)))
+    } catch (err) {
+      setListErr((err as Error).message)
+    } finally {
+      setListBusy(false)
+    }
+  }, [session, target.cluster, target.instance, sessionId])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  async function openFile(name: string) {
+    if (
+      dirty &&
+      !(await confirm({
+        title: "放弃未保存的修改",
+        message: "当前文档有未保存的修改，确定切换吗？",
+        confirmLabel: "切换",
+        tone: "danger",
+      }))
+    ) {
+      return
+    }
+    setBusy(true)
+    setStatus(null)
+    setListErr("")
+    let buf = ""
+    try {
+      await callTool(
+        session,
+        {
+          cluster: target.cluster,
+          instance: target.instance,
+          tool: TOOLS.fileRead,
+          arguments: { session_id: sessionId, path: docPath(name) },
+        },
+        (ev) => {
+          if (ev.type === "output") buf += ev.data
+          else if (ev.type === "result") buf += extractText(ev.result)
+          else if (ev.type === "error") setStatus({ kind: "err", text: ev.error })
+        },
+      )
+      setOpenDoc(name)
+      setContent(buf)
+      setDirty(false)
+      setMode("preview")
+    } catch (err) {
+      const text = (err as Error).message
+      setStatus({ kind: "err", text })
+      setListErr(text)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function save() {
+    if (!openDoc || busy) return
+    setBusy(true)
+    setStatus(null)
+    try {
+      await callTool(
+        session,
+        {
+          cluster: target.cluster,
+          instance: target.instance,
+          tool: TOOLS.fileWrite,
+          arguments: { session_id: sessionId, path: docPath(openDoc), content },
+        },
+        (ev) => {
+          if (ev.type === "error") setStatus({ kind: "err", text: ev.error })
+          else if (ev.type === "result") {
+            setStatus({ kind: "ok", text: "已保存" })
+            setDirty(false)
+          }
+        },
+      )
+      // 新建文档保存后刷新列表
+      if (!docs.includes(openDoc)) refresh()
+    } catch (err) {
+      setStatus({ kind: "err", text: (err as Error).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function newDoc() {
+    const entered = await prompt({
+      title: "新建文档",
+      message: "名称会自动补全 .md 后缀。",
+      label: "文档名称",
+      placeholder: "运行手册",
+      confirmLabel: "创建",
+    })
+    if (!entered) return
+    let name = entered
+    name = name.trim()
+    if (!/\.md$/i.test(name)) name += ".md"
+    if (!validDocName(name)) {
+      setListErr("文档名只能是单层 Markdown 文件名，不能包含路径")
+      return
+    }
+    if (docs.includes(name)) {
+      openFile(name)
+      return
+    }
+    setOpenDoc(name)
+    setContent(`# ${name.replace(/\.md$/i, "")}\n\n`)
+    setDirty(true)
+    setMode("split")
+    setStatus({ kind: "ok", text: "编辑后点击保存即可创建" })
+    setTimeout(() => taRef.current?.focus(), 0)
+  }
+
+  function validDocName(name: string) {
+    return /^[^\\/\u0000]+\.md$/i.test(name) && name !== ".md" && !name.includes("..")
+  }
+
+  async function renameDoc(name: string) {
+    if (!docs.includes(name)) {
+      setListErr("请先保存文档，再重命名")
+      return
+    }
+    if (openDoc === name && dirty && !(await confirm({
+      title: "放弃未保存的修改",
+      message: "重命名会以已保存的内容为准。确定继续吗？",
+      confirmLabel: "继续",
+      tone: "danger",
+    }))) {
+      return
+    }
+    const entered = await prompt({
+      title: "重命名文档",
+      message: "名称会自动补全 .md 后缀。",
+      label: "新名称",
+      defaultValue: name.replace(/\.md$/i, ""),
+      confirmLabel: "重命名",
+    })
+    if (!entered) return
+    let next = entered.trim()
+    if (!/\.md$/i.test(next)) next += ".md"
+    if (next === name) return
+    if (!validDocName(next)) {
+      setListErr("文档名只能是单层 Markdown 文件名，不能包含路径")
+      return
+    }
+    if (docs.includes(next)) {
+      setListErr("已有同名文档")
+      return
+    }
+    setBusy(true)
+    setStatus(null)
+    try {
+      await callTool(
+        session,
+        {
+          cluster: target.cluster,
+          instance: target.instance,
+          tool: TOOLS.shell,
+          arguments: { session_id: sessionId, command: `mv -- ${shq(docPath(name))} ${shq(docPath(next))}` },
+        },
+        () => {},
+      )
+      if (openDoc === name) {
+        setOpenDoc(next)
+        setDirty(false)
+      }
+      setStatus({ kind: "ok", text: "已重命名" })
+      refresh()
+    } catch (err) {
+      setStatus({ kind: "err", text: (err as Error).message })
+      setListErr((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function deleteDoc(name: string) {
+    if (
+      !(await confirm({
+        title: "删除文档",
+        message: `确定删除文档「${name}」？此操作不可恢复。`,
+        confirmLabel: "删除",
+        tone: "danger",
+      }))
+    ) {
+      return
+    }
+    setBusy(true)
+    try {
+      await callTool(
+        session,
+        {
+          cluster: target.cluster,
+          instance: target.instance,
+          tool: TOOLS.shell,
+          arguments: { session_id: sessionId, command: `rm -f ${shq(docPath(name))}` },
+        },
+        () => {},
+      )
+      if (openDoc === name) {
+        setOpenDoc(null)
+        setContent("")
+        setDirty(false)
+      }
+      refresh()
+    } catch (err) {
+      setStatus({ kind: "err", text: (err as Error).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex h-full min-h-0">
+      {/* 文档列表 */}
+      <aside className="flex w-56 shrink-0 flex-col border-r bg-card/40">
+        <div className="flex items-center justify-between gap-1 border-b px-3 py-2">
+          <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+            <FileTextIcon width={14} height={14} className="text-primary" />
+            知识库
+          </span>
+          <div className="flex items-center gap-0.5">
+            <button
+              onClick={newDoc}
+              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              title="新建文档"
+            >
+              <PlusIcon width={15} height={15} />
+            </button>
+            <button
+              onClick={refresh}
+              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              title="刷新"
+            >
+              <RefreshIcon width={14} height={14} className={listBusy ? "animate-spin" : ""} />
+            </button>
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
+          {listErr ? (
+            <p className="px-2 py-3 text-xs text-destructive">{listErr}</p>
+          ) : docs.length === 0 ? (
+            <p className="px-2 py-3 text-xs text-muted-foreground">
+              {listBusy ? "加载中…" : "暂无文档，点击 + 新建"}
+            </p>
+          ) : (
+            docs.map((name) => (
+              <div
+                key={name}
+                className={`group flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm transition-colors ${
+                  openDoc === name ? "bg-primary/10 text-foreground" : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                <button
+                  onClick={() => openFile(name)}
+                  className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                >
+                  <FileTextIcon width={13} height={13} className="shrink-0" />
+                  <span className="truncate">{name.replace(/\.md$/i, "")}</span>
+                </button>
+                <button
+                  onClick={() => renameDoc(name)}
+                  className="shrink-0 rounded px-1 text-[11px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                  title="重命名"
+                >
+                  改名
+                </button>
+                <button
+                  onClick={() => deleteDoc(name)}
+                  className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                  title="删除"
+                >
+                  <TrashIcon width={13} height={13} />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </aside>
+
+      {/* 编辑区 */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        {openDoc ? (
+          <>
+            <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card px-3 py-2">
+              <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                {openDoc.replace(/\.md$/i, "")}
+                {dirty && <span className="h-1.5 w-1.5 rounded-full bg-primary" title="未保存" />}
+              </span>
+              <div className="ml-auto flex items-center gap-2">
+                <SegmentedControl
+                  value={mode}
+                  onChange={setMode}
+                  ariaLabel="知识库编辑模式"
+                  options={[
+                    { value: "edit", label: "编辑" },
+                    { value: "split", label: "分屏" },
+                    { value: "preview", label: "预览" },
+                  ]}
+                />
+                {status && (
+                  <span
+                    className={`flex items-center gap-1 text-xs ${
+                      status.kind === "ok" ? "text-success" : "text-destructive"
+                    }`}
+                  >
+                    {status.kind === "ok" && <CheckIcon width={12} height={12} />}
+                    {status.text}
+                  </span>
+                )}
+                <Button
+                  onClick={save}
+                  disabled={busy || !dirty}
+                  variant="primary"
+                >
+                  <SaveIcon width={14} height={14} /> 保存
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex min-h-0 flex-1">
+              {(mode === "edit" || mode === "split") && (
+                <textarea
+                  ref={taRef}
+                  value={content}
+                  onChange={(e) => {
+                    setContent(e.target.value)
+                    setDirty(true)
+                  }}
+                  spellCheck={false}
+                  placeholder="在此输入 Markdown 内容…"
+                  className={`min-h-0 flex-1 resize-none bg-background p-4 font-mono text-sm leading-relaxed text-foreground outline-none ${
+                    mode === "split" ? "border-r" : ""
+                  }`}
+                />
+              )}
+              {(mode === "preview" || mode === "split") && (
+                <div className="min-h-0 flex-1 overflow-y-auto bg-background px-6 py-5">
+                  {content.trim() ? (
+                    <div className={mode === "preview" ? "mx-auto max-w-3xl" : ""}>
+                      <Markdown content={content} />
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">预览区：开始输入即可看到渲染效果</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 text-center text-muted-foreground">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <FileTextIcon width={26} height={26} />
+            </div>
+            <p className="max-w-sm text-pretty text-sm">
+              在 {target.instance} 上在线维护 Markdown 知识库文档，支持边写边预览
+            </p>
+            <Button
+              onClick={newDoc}
+              variant="primary"
+            >
+              <PlusIcon width={15} height={15} /> 新建文档
+            </Button>
+          </div>
+        )}
+      </div>
+      {dialog}
+    </div>
+  )
+}

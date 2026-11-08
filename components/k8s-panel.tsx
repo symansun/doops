@@ -1,0 +1,345 @@
+"use client"
+
+import { Boxes, Play, Square } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import { callTool, extractText, type Session, type Target, type ToolCancel } from "@/lib/client"
+import {
+  EMPTY_K8S_LOG,
+  K8S_LOG_MAX_LINES,
+  K8S_OPERATIONS,
+  K8S_OUTPUT_HINTS,
+  appendK8sLog,
+  createK8sFormStore,
+  describeK8sFailure,
+  isK8sMutation,
+  k8sConfirmText,
+  k8sFields,
+  k8sFormAfterRun,
+  k8sResultHint,
+  runK8s,
+  type K8sField,
+  type K8sInput,
+  type K8sLog,
+  type K8sLogKind,
+  type K8sOperation,
+} from "@/lib/k8s"
+
+const READ_OPERATIONS = (Object.keys(K8S_OPERATIONS) as K8sOperation[]).filter((op) => !K8S_OPERATIONS[op].mutation)
+const WRITE_OPERATIONS = (Object.keys(K8S_OPERATIONS) as K8sOperation[]).filter((op) => K8S_OPERATIONS[op].mutation)
+
+const OUTPUT_OPTIONS = ["", "wide", "yaml", "json", "name"]
+
+const NAME_LABEL: Partial<Record<K8sOperation, string>> = {
+  get: "名称（可选）",
+  "configmap-keys": "ConfigMap 名称（可选）",
+  describe: "资源名称",
+  "helm-history": "Release",
+  "helm-status": "Release",
+  "helm-values": "Release",
+  cordon: "节点名称",
+  uncordon: "节点名称",
+  "delete-pod": "Pod 名称",
+}
+
+const RESOURCE_PLACEHOLDER: Partial<Record<K8sOperation, string>> = {
+  logs: "pod/api-0 或 deployment/api",
+  events: "可选：deployment/api",
+  "rollout-status": "deployment/api",
+  "rollout-restart": "deployment/api",
+  scale: "deployment/api",
+}
+
+// Raw output kept for explaining a failure; kubectl prints its error near the end.
+const FAILURE_EVIDENCE_CHARS = 16_000
+
+const inputClass = "min-w-0 rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-ring disabled:opacity-60"
+
+// The panel unmounts when the tab changes. The form is kept for the same login
+// and target only, so reopening the tab on another target or after another
+// login never shows the previous namespace.
+const savedForms = createK8sFormStore()
+
+export function K8sPanel({
+  session,
+  target,
+  sessionId,
+  onRunningChange,
+}: {
+  session: Session
+  target: Target
+  sessionId: string
+  onRunningChange: (running: boolean) => void
+}) {
+  const targetKey = target.key
+  const [input, setInput] = useState<K8sInput>(() => savedForms.load(session, targetKey))
+  const [log, setLog] = useState<K8sLog>(EMPTY_K8S_LOG)
+  const [running, setRunning] = useState(false)
+  const [stopPending, setStopPending] = useState(false)
+  const [error, setError] = useState("")
+  const cancelRef = useRef<ToolCancel | null>(null)
+  const stopRequestedRef = useRef(false)
+  const evidenceRef = useRef("")
+  const logRef = useRef<HTMLPreElement>(null)
+  const spec = K8S_OPERATIONS[input.operation]
+  const mutation = isK8sMutation(input.operation)
+  const fields = k8sFields(input)
+  const uses = (field: K8sField) => fields.includes(field)
+
+  useEffect(() => {
+    logRef.current?.scrollTo({ top: logRef.current.scrollHeight })
+  }, [log])
+
+  useEffect(() => {
+    savedForms.save(session, targetKey, input)
+  }, [session, targetKey, input])
+
+  function update(patch: Partial<K8sInput>) {
+    // Any change to what will be sent invalidates a previous write confirmation.
+    setInput((current) => ({ ...current, ...patch, confirm: patch.confirm ?? false }))
+    setError("")
+  }
+
+  function selectOperation(operation: K8sOperation) {
+    const kind = operation === "top" ? "pods" : operation === "get" || operation === "describe" ? input.kind || "pods" : input.kind
+    update({ operation, kind })
+  }
+
+  function push(kind: K8sLogKind, text: string) {
+    setLog((current) => appendK8sLog(current, kind, text))
+  }
+
+  async function run() {
+    if (running || stopPending) return
+    const submitted = input
+    const where = { cluster: target.cluster, instance: target.instance }
+    setError("")
+    setRunning(true)
+    setStopPending(false)
+    onRunningChange(true)
+    cancelRef.current = null
+    stopRequestedRef.current = false
+    evidenceRef.current = ""
+    let started = false
+    try {
+      await runK8s(
+        (opts) => {
+          started = true
+          setLog(appendK8sLog(EMPTY_K8S_LOG, "info", `目标 ${where.cluster}/${where.instance} · ${spec.label}`))
+          return callTool(
+            session,
+            { ...opts, onCancelReady: (cancel) => { cancelRef.current = cancel } },
+            (event) => {
+              if (event.type === "output") {
+                evidenceRef.current = (evidenceRef.current + event.data).slice(-FAILURE_EVIDENCE_CHARS)
+                push("out", event.data)
+              }
+              if (event.type === "result") {
+                const text = extractText(event.result)
+                if (text) push("info", text)
+              }
+            },
+          )
+        },
+        where,
+        sessionId,
+        submitted,
+      )
+      const hint = k8sResultHint(evidenceRef.current)
+      if (hint) push("info", hint)
+    } catch (err) {
+      if ((err as Error).name === "AbortError") {
+        if (stopRequestedRef.current) push("info", "已停止")
+      } else {
+        const message = (err as Error).message
+        if (!started) {
+          // Validation failed in the browser; nothing was sent.
+          setError(message)
+        } else {
+          const failure = describeK8sFailure(message, {
+            target: where,
+            output: evidenceRef.current,
+            mutation: isK8sMutation(submitted.operation),
+            stopRequested: stopRequestedRef.current,
+          })
+          setError(failure.text)
+          push("err", failure.text)
+          if (failure.text !== message.trim()) push("info", `原始错误：${message.trim()}`)
+        }
+      }
+    } finally {
+      // A write that reached the Gateway needs a new confirmation, whatever its outcome.
+      if (started) setInput((current) => (current.operation === submitted.operation ? k8sFormAfterRun(current) : current))
+      setRunning(false)
+      setStopPending(false)
+      onRunningChange(false)
+      cancelRef.current = null
+    }
+  }
+
+  function stop() {
+    if (!cancelRef.current || stopPending) return
+    stopRequestedRef.current = true
+    setStopPending(true)
+    push("info", "已请求停止，等待远端终态；请勿立即重试")
+    void cancelRef.current().catch((err) => {
+      setStopPending(false)
+      push("err", `停止请求失败：${(err as Error).message}`)
+    })
+  }
+
+  const disabled = running || stopPending
+  const helmRelease = input.operation.startsWith("helm-") && input.operation !== "helm-list"
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-card px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Boxes aria-hidden="true" className="size-4 text-primary" />
+          <div className="min-w-0">
+            <h2 className="truncate text-sm font-semibold text-foreground">Kubernetes 运维</h2>
+            <p className="truncate text-xs text-muted-foreground">doops_k8s · {target.cluster}/{target.instance} · 与 CLI doops k8s 同一工具</p>
+          </div>
+        </div>
+      </header>
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+        <div className="flex flex-col gap-2">
+          <OperationGroup title="只读" operations={READ_OPERATIONS} active={input.operation} disabled={disabled} onSelect={selectOperation} />
+          <OperationGroup title="写操作（需确认）" operations={WRITE_OPERATIONS} active={input.operation} disabled={disabled} onSelect={selectOperation} danger />
+        </div>
+        {spec.cli && <p className="font-mono text-xs text-muted-foreground">doops k8s {spec.cli}</p>}
+
+        <div className="grid gap-2 sm:grid-cols-3">
+          {uses("kind") && (input.operation === "top" ? (
+            <select aria-label="资源类型" value={input.kind} disabled={disabled} onChange={(e) => update({ kind: e.target.value })} className={inputClass}>
+              <option value="pods">pods</option>
+              <option value="nodes">nodes</option>
+            </select>
+          ) : (
+            <input aria-label="资源类型" value={input.kind} disabled={disabled} onChange={(e) => update({ kind: e.target.value })} placeholder="资源类型，如 pods、deployment" className={inputClass} />
+          ))}
+          {uses("name") && (
+            <input aria-label={NAME_LABEL[input.operation] || "名称"} value={input.name} disabled={disabled} onChange={(e) => update({ name: e.target.value })} placeholder={NAME_LABEL[input.operation] || "名称"} className={inputClass} />
+          )}
+          {uses("resource") && (
+            <input aria-label="资源 kind/name" value={input.resource} disabled={disabled} onChange={(e) => update({ resource: e.target.value })} placeholder={RESOURCE_PLACEHOLDER[input.operation] || "kind/name"} className={inputClass} />
+          )}
+          {uses("namespace") && (
+            <input aria-label="命名空间" value={input.namespace} disabled={disabled || input.allNamespaces} onChange={(e) => update({ namespace: e.target.value })} placeholder={helmRelease ? "命名空间（必填）" : "命名空间（留空为 Agent 默认）"} className={inputClass} />
+          )}
+          {uses("selector") && (
+            <input aria-label="标签选择器" value={input.selector} disabled={disabled} onChange={(e) => update({ selector: e.target.value })} placeholder="标签选择器，如 app=api" className={inputClass} />
+          )}
+          {uses("output") && (
+            <select aria-label="输出格式" value={OUTPUT_OPTIONS.includes(input.output) ? input.output : ""} disabled={disabled} onChange={(e) => update({ output: e.target.value })} className={inputClass}>
+              {OUTPUT_OPTIONS.map((value) => <option key={value} value={value}>{value ? `输出 ${value}` : "默认输出"}</option>)}
+            </select>
+          )}
+          {uses("container") && (
+            <input aria-label="容器" value={input.container} disabled={disabled} onChange={(e) => update({ container: e.target.value })} placeholder="容器（可选）" className={inputClass} />
+          )}
+          {uses("tail") && (
+            <input aria-label="日志行数" inputMode="numeric" value={input.tail} disabled={disabled} onChange={(e) => update({ tail: e.target.value })} placeholder="最近行数（留空为全部）" className={inputClass} />
+          )}
+          {uses("since") && (
+            <input aria-label="时间范围" value={input.since} disabled={disabled} onChange={(e) => update({ since: e.target.value })} placeholder="时间范围，如 10m" className={inputClass} />
+          )}
+          {uses("timeout") && (
+            <input aria-label="超时" value={input.timeout} disabled={disabled} onChange={(e) => update({ timeout: e.target.value })} placeholder="超时，如 120s" className={inputClass} />
+          )}
+          {uses("replicas") && (
+            <input aria-label="副本数" inputMode="numeric" value={input.replicas} disabled={disabled} onChange={(e) => update({ replicas: e.target.value })} placeholder="副本数" className={inputClass} />
+          )}
+        </div>
+        <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+          {uses("allNamespaces") && (
+            <label className="flex items-center gap-1.5">
+              <input type="checkbox" checked={input.allNamespaces} disabled={disabled} onChange={(e) => update({ allNamespaces: e.target.checked, namespace: e.target.checked ? "" : input.namespace })} />
+              全部命名空间（-A）
+            </label>
+          )}
+          {uses("previous") && (
+            <label className="flex items-center gap-1.5">
+              <input type="checkbox" checked={input.previous} disabled={disabled} onChange={(e) => update({ previous: e.target.checked })} />
+              上一个容器实例（--previous）
+            </label>
+          )}
+        </div>
+        {K8S_OUTPUT_HINTS[input.operation] && <p className="text-xs text-muted-foreground">{K8S_OUTPUT_HINTS[input.operation]}</p>}
+        {(input.operation === "get" || input.operation === "describe") && <p className="text-xs text-muted-foreground">Secret 与 ServiceAccount 不开放读取。</p>}
+
+        {mutation && (
+          <label className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-foreground">
+            <input type="checkbox" className="mt-0.5" checked={input.confirm} disabled={disabled} onChange={(e) => update({ confirm: e.target.checked })} />
+            <span>{k8sConfirmText(target, input)}</span>
+          </label>
+        )}
+
+        <div className="flex items-center gap-2">
+          {running ? (
+            <button type="button" onClick={stop} disabled={stopPending || !cancelRef.current} className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs text-foreground disabled:opacity-50">
+              <Square aria-hidden="true" className="size-3.5" /> {stopPending ? "正在停止" : "停止"}
+            </button>
+          ) : (
+            <button type="button" onClick={() => void run()} disabled={disabled || (mutation && !input.confirm)} className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-50 ${mutation ? "bg-destructive text-destructive-foreground" : "bg-primary text-primary-foreground"}`}>
+              <Play aria-hidden="true" className="size-3.5" /> {mutation ? "确认执行" : "执行"}
+            </button>
+          )}
+          {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+        </div>
+
+        <pre ref={logRef} aria-label="执行输出" className="min-h-48 flex-1 overflow-auto whitespace-pre-wrap break-all rounded-md border bg-muted/40 p-3 font-mono text-xs">
+          {log.entries.length === 0 ? <span className="text-muted-foreground">选择操作并执行，输出显示在这里。</span> : (
+            <>
+              {log.dropped > 0 && (
+                <span className="text-muted-foreground">{`… 已省略前 ${log.dropped} 行输出，仅显示最近 ${K8S_LOG_MAX_LINES} 行；需要完整日志请缩小行数或时间范围\n`}</span>
+              )}
+              {log.entries.map((entry, index) => (
+                <span key={index} className={entry.kind === "err" ? "text-destructive" : entry.kind === "info" ? "text-muted-foreground" : "text-foreground"}>
+                  {entry.text}
+                </span>
+              ))}
+            </>
+          )}
+        </pre>
+      </div>
+    </div>
+  )
+}
+
+function OperationGroup({
+  title,
+  operations,
+  active,
+  disabled,
+  danger,
+  onSelect,
+}: {
+  title: string
+  operations: K8sOperation[]
+  active: K8sOperation
+  disabled: boolean
+  danger?: boolean
+  onSelect: (operation: K8sOperation) => void
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={title}>
+      <span className="w-28 shrink-0 text-xs text-muted-foreground">{title}</span>
+      {operations.map((operation) => (
+        <button
+          key={operation}
+          type="button"
+          aria-pressed={active === operation}
+          disabled={disabled}
+          onClick={() => onSelect(operation)}
+          className={`rounded-md border px-2 py-1 text-xs transition-colors disabled:opacity-50 ${
+            active === operation
+              ? danger ? "border-destructive bg-destructive text-destructive-foreground" : "border-primary bg-primary text-primary-foreground"
+              : danger ? "text-destructive hover:border-destructive/60" : "text-muted-foreground hover:border-primary/50 hover:text-foreground"
+          }`}
+        >
+          {K8S_OPERATIONS[operation].label}
+        </button>
+      ))}
+    </div>
+  )
+}

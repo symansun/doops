@@ -1,0 +1,12 @@
+import type { PermissionRequest } from "../generated/agent_workbench/v2/session_pb.js";
+import { ToolPhase } from "../generated/agent_workbench/v2/tool_pb.js";
+import { PlanStepStatus, SessionResourceStatus, SessionStatus, TimelineItemStatus } from "../generated/agent_workbench/v2/session_state_pb.js";
+import type { AgentActivityItem, AgentConnectionStatus, AgentMessageItem, AgentPlanStep, AgentSessionStatus, AgentToolStatus } from "../contracts.js";
+export declare function projectSessionStatus(status: SessionStatus): AgentSessionStatus;
+export declare function sessionStatusLabel(status: SessionStatus): string;
+export declare function projectMessageStatus(status: TimelineItemStatus): AgentMessageItem["status"];
+export declare function projectActivityStatus(status: TimelineItemStatus): AgentActivityItem["status"];
+export declare function projectPlanStepStatus(status: PlanStepStatus): AgentPlanStep["status"];
+export declare function projectToolStatus(status: ToolPhase): AgentToolStatus;
+export declare function projectResourceStatus(status: SessionResourceStatus): AgentConnectionStatus;
+export declare function projectPermissionActivityStatus(request: PermissionRequest | undefined): AgentActivityItem["status"];

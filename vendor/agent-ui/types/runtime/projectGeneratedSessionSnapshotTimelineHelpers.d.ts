@@ -1,0 +1,12 @@
+import type { ContentBlock } from "../generated/agent_workbench/v2/content_pb.js";
+import { MessageRole } from "../generated/agent_workbench/v2/session_state_pb.js";
+import type { PermissionRequest, PlanStep } from "../generated/agent_workbench/v2/session_pb.js";
+import type { AgentActivityItem, AgentPlanStep } from "../contracts.js";
+import { projectSessionStatus } from "./projectGeneratedSessionSnapshotStatuses.js";
+export declare function conversationFacingSystemBlocks(blocks: readonly ContentBlock[]): ContentBlock[];
+export declare function projectPlanStep(step: PlanStep): AgentPlanStep;
+export declare function planDetail(steps: readonly PlanStep[]): string;
+export declare function messageRole(role: MessageRole): "user" | "assistant" | "system";
+export declare function statusActivity(status: Parameters<typeof projectSessionStatus>[0]): AgentActivityItem["status"];
+export declare function permissionTitle(request: PermissionRequest | undefined): string;
+export declare function unsupportedTimeline(id: string, detail: string): AgentActivityItem;

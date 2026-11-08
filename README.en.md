@@ -3,21 +3,19 @@
 # DoOps
 
 <p align="center">
-  <img src="docs/images/slogan-en.svg" alt="Manage any machine — no SSH required." width="760">
+  <img src="docs/images/slogan-en.svg" alt="不用 SSH，也能运维任何一台机器。" width="760">
 </p>
 
-> This project is open source under the [MIT License](LICENSE).
+> Original DoOps code is available under the [MIT License](LICENSE). Third-party components retain their own licenses; see [Third-party components](THIRD_PARTY_NOTICES.md).
 
-**Core contributors: 孙勇 (Sun Yong), 高家祺 (Gao Jiaqi), 宋晨宇 (Song Chenyu).** See [Contributors](#contributors) for the exact attribution order.
+**Core contributors: 孙勇 (Sun Yong), 高家祺 (Gao Jiaqi), 宋晨宇 (Song Chenyu).** See [Contributors](#contributors) for the attribution order.
 
-**Still paying the price for SSH ports, jump hosts, key distribution, NAT, and private-network isolation?** `doops` removes all of that:
+**Still managing SSH ports, jump hosts, key distribution, NAT, and private-network isolation?** `doops` provides one entry point:
 
-- **One command straight to any private-network machine**: the agent dials out to the public gateway over a long-lived connection — no public IP, VPN, jump host, or bastion required
-- **Zero SSH asset burden**: no more maintaining SSH users, ports, passwords, and key inventories; reconnects and network isolation are no longer obstacles
-- **Built for agents and automation**: the CLI, the console, and multi-domain skills share a single auditable execution path, so AI can safely troubleshoot, inspect, and deploy instead of relying on manual copy-paste
-- **Secure by default**: unified authentication, per-target/action authorization, end-to-end audit logging, and high-risk operations denied by default
-
-Troubleshooting, inspection, deployment, file sync — every remote operation goes through one entry point, every step is recorded, and every execution can be reviewed.
+- **Reach private-network machines with one command**: the agent establishes an outbound, persistent connection to the public gateway; no public IP, VPN, jump host, or bastion is required on the target.
+- **Reduce SSH administration**: daily operations share the gateway connection instead of separate SSH users, ports, passwords, and key inventories.
+- **Built for agents and automation**: the CLI, console, and domain skills use the same auditable execution path for troubleshooting, inspection, deployment, and file synchronization.
+- **Central authentication and authorization**: grants apply to the exact `cluster/instance`, with execution auditing and agent command guardrails.
 
 ## UI Preview
 
@@ -25,21 +23,24 @@ Troubleshooting, inspection, deployment, file sync — every remote operation go
 
 ![DoOps Console overview](docs/images/doops-console.png)
 
-DoOps is a unified entry point: it combines agents, a console, a CLI, and multi-domain skills into one ops toolkit covering servers, Kubernetes, websites, databases, files, and inspection workflows — all under the same authentication, authorization, and audit stack for day-to-day operations.
+DoOps combines agents, a console, a CLI, and domain skills for servers, Kubernetes, websites, databases, files, and inspections under the same authentication, authorization, and audit model.
 
 ## Repository Layout
 
 | Path | Description |
-| :--- | :--- |
-| `agent/` | Source of the edge executor `doops-agent` (Go) |
-| `gateway/` | Source of the public control plane `doops-gateway` (Go) |
-| `skills/` | doops CLI source, prebuilt binaries, and ops skills |
-| `scripts/` | Install, build, and release scripts |
-| `docs/` | Protocol, API, deployment, and operations docs |
-| `test/` | Test and acceptance cases |
-| `Dockerfile*` | Build entry points for the base image and the light-update image |
+| --- | --- |
+| `app/`, `components/`, `lib/` | Next.js console, API proxies, and gateway session adapters |
+| `backend/agent/` | Shared agent/gateway runtime and DoSql/DoWeb skills |
+| `backend/gateway/` | Gateway Go module entry point |
+| `backend/cli/` | DoOps CLI Go module |
+| `backend/skills/` | Operator skill installed into user projects |
+| `backend/docs/` | API, permissions, installation, deployment, and operations guides |
+| `backend/scripts/`, `backend/test/` | Build/release scripts and contract checks |
+| `backend/deploy/helm/` | Agent Helm chart, without live environment inventories |
+| `docs/` | Public guides, architecture diagrams, and maintenance policy |
+| `vendor/agent-ui/` | Locally included UI dependency with its original license |
 
-This repo neither contains nor publishes the `do-agent` binary; to run `doops ask` you must provide an image that includes `do-agent` yourself (see "Base image" below).
+The complete web console and backend are maintained here. The former root directories `agent/`, `gateway/`, and `skills/doops-cli/` have moved to the paths above. GitHub [symansun/doops](https://github.com/symansun/doops) is the sole public home for source, Issues, Pull Requests, Actions, and Releases. Releases are built from reviewed commits on `main`; local uncommitted work is excluded.
 
 ## Architecture
 
@@ -47,438 +48,106 @@ This repo neither contains nor publishes the `do-agent` binary; to run `doops as
   <img src="docs/images/architecture-en.svg" alt="DoOps architecture diagram" width="1100">
 </p>
 
-The system has two orthogonal dimensions:
+Clients authenticate through the gateway, which authorizes exact targets and audits operations. Agents register with the gateway and perform controlled command, file, database, website, and Kubernetes operations. The gateway implementation lives in [`backend/agent/internal/server/`](backend/agent/internal/server/README.md); the console accesses the same control plane through this repository's API adapters.
 
-- Connection mode: the CLI/skill connects to the gateway; private-network agents register themselves with the gateway
-- Execution mode: the fast path `exec/read/write/push/pull/info/check/clean`, and the slow path `ask` / follow-up `chat`
+- [Backend usage and architecture](backend/README.md)
+- [API and protocol](backend/docs/DOOPS_API_GUIDE.md)
+- [Installation guide](backend/docs/CLUSTER_INSTALL_GUIDE.md)
+- [Agent UI integration](docs/agent-ui-integration.md)
+- [Managed credential lifecycle](backend/docs/CREDENTIAL_RESOURCES.md)
+- [Release and rollback](backend/docs/BUILD_DEPLOY_SOP.md)
 
-Component roles:
+## Database and Website Operations
 
-- Client: `doops` CLI + doops skill
-- Public control plane: `gateway/` builds `doops-gateway`, handling RBAC, audit, queueing, and routing to private-network agents
-- Edge executor: `agent/` builds `doops-agent`, handling exec, push/pull, files, and AI tasks on target machines
-- Runtime security boundary: `doops-agent` starts only `doops-agent`, `do-agent`, and `buildkitd` by default; SSH and WebIDE are not started by default
-- Connectivity: the CLI/skill reaches the gateway on `42222`; the gateway reaches private-network agents through the already-established agent WebSocket
-- Authentication: users connect to the gateway with a gateway user token; agents register with the gateway without a token — they only need `gateway-url`, `cluster`, and `instance`
-- Code sync: the gateway uses Git HTTP; it only relays Git requests through the reverse tunnel of the established agent WebSocket, and no longer uses tar chunk uploads as the `push/pull` path
-- Image builds: standardized on `buildctl + buildkitd`
-
-## Target Naming Convention
-
-`cluster/instance` is the gateway's routing key; the names are defined by your own deployment. Examples:
-
-- `prod / master-1`
-- `staging / worker-1`
-- `edge / gpu-node-1`
-
-Only one agent should be online for a given `cluster/instance` at any time; a duplicate registration replaces the old connection.
-
-## Protocol and Endpoints
-
-- CLI to gateway: `WS /v1/rpc?cluster=<cluster>&instance=<instance>`
-- Private-network agent to gateway: `WS /v1/agent/connect?cluster=<cluster>&instance=<instance>`
-- Code sync: `Git HTTP /v1/git/<cluster>/<instance>/<session>.git`
-- Health check: `GET /health`
-- The OpenAI-compatible model endpoint is configured via `API_BASE_URL` (default example: `https://llm.example.com/v1`)
-
-## Base Image and Build
-
-The agent image has two layers:
-
-| Image | Dockerfile | Contents | Change frequency |
-| :--- | :--- | :--- | :--- |
-| Base image | `Dockerfile.base` / `Dockerfile.base.light` | sandbox, do-agent, BuildKit, system tools | Low |
-| Light-update image | `Dockerfile` / `agent/Dockerfile` | `doops-agent`, skills, docs, entrypoint | High |
-
-Required before building:
-
-- `DO_AGENT_IMAGE`: an image containing `/usr/local/bin/do-agent`. This repo does not ship `do-agent`; provide your own.
-- `DOOPS_AGENT_BASE_IMAGE`: the base image tag, default `doops-base:latest`.
+DoSql and DoWeb share gateway login, exact target grants, and auditing. Database requests use `query`, `plan`, or `discover`; mutations require explicit `apply`:
 
 ```bash
-# 1. 构建基础镜像（推荐 base-light，纯净 agent 运行时）
-docker build -f Dockerfile.base.light \
-  --build-arg DO_AGENT_IMAGE=<your-doagent-image> \
-  -t doops-base:latest .
-
-# 2. 构建轻更新镜像
-docker build \
-  --build-arg DOOPS_AGENT_BASE_IMAGE=doops-base:latest \
-  -t <your-registry>/doops:dev .
+doops -session db-check sql --target <target> --mode query --request 'Count rows in orders'
+doops -session db-plan sql --target <target> --mode plan --request 'Plan an external_id column for orders'
+doops -session db-discover sql --target <target> --mode discover --request 'List database workloads'
+doops -session db-change sql --target <target> --mode apply --file change.sql --verify 'SELECT external_id FROM orders WHERE 1 = 0'
 ```
 
-Day-to-day upgrades only require replacing the light-update image; rebuild the base image only when the sandbox, do-agent, BuildKit, or system packages change.
+Credentials are resolved from managed resources bound to the target. Keep passwords, tokens, and credential-bearing connection strings out of commands, prompts, logs, and documentation. See the [usage guide](backend/docs/DOOPS_USAGE_GUIDE.md) and [credential resources](backend/docs/CREDENTIAL_RESOURCES.md).
 
-## Gateway Source Entry Point
-
-`doops-gateway` is a first-class component; its source lives at the top level of the repo:
-
-```bash
-bash scripts/build-gateway.sh
-./bin/doops-gateway serve -db /var/lib/doops-gateway/gateway.db -port 42222
-```
-
-The compatibility entry `agent/cmd/gateway` is still kept, but only as a wrapper for the legacy build path; new docs and new deployments should use `gateway/`.
-
-See [docs/DOOPS_API_GUIDE.md](docs/DOOPS_API_GUIDE.md) for the API guide aimed at external systems, covering login, target queries, WebSocket JSON-RPC, natural-language deployment, progress streaming, and audit queries.
-
-## Verifying a Deployment
-
-After deploying, verify the chain in this order:
-
-```bash
-doops list
-doops targets --target <gateway-target>
-doops -session smoke exec --target <gateway-target> --cmd 'hostname'
-doops -session smoke push --target <gateway-target> --src <small-dir>
-doops -session smoke ask --target <gateway-target> --msg '<read-only task>'
-```
-
-Only when `targets` shows the `cluster/instance` online has the agent actually registered with the gateway; if `ask` fails, first check whether `settings.json` in `doagent-config` has a valid API Key and `API_BASE_URL` configured.
-
-## Fixed Paths
-
-- CLI: `~/.local/bin/doops`
-- Authoritative skill source: `skills/SKILL.md`
-- Skill install target: `<project>/.agent/skills/doops/SKILL.md`
-- The CLI's only default config: `~/.agent/skills/doops/config.json`
-- CLI token cache: `~/.agent/skills/doops/auth.json`
-- Prebuilt CLI: `skills/doops-cli/bin/doops-<os>-<arch>`
-- Agent local token: `/root/.doops/agent-token` on the server side; only for legacy direct connections or local `/ws` protection, not for gateway registration
-
-`~/.config/doops/config.json`, `~/.doops/auth.json`, and a project's `.doops/` are legacy paths or runtime leftovers and must not be treated as current configuration. `DOOPS_CONFIG=/path/to/config.json` is only for testing and emergency explicit overrides.
-
-## Read This First: The Installation Model
-
-Two things are easy to confuse in DoOps, so the docs separate them up front:
-
-1. **Agent deployment form**: how `doops-agent` runs on the target machine.
-2. **Connection mode**: how the CLI/skill connects to that agent.
-
-### Agent Deployment Forms
-
-| Form | How to identify | When to use | Containerized |
-| :--- | :--- | :--- | :--- |
-| K8s/DaemonSet | `kubectl get pod -A -l app=doops-agent` shows a Pod | K8s/K3s cluster nodes; recommended standard install | Yes |
-| Docker/nerdctl container | `docker ps` or `nerdctl ps` shows a container named `doops-agent` | Single machines or nodes without DaemonSet; recommended standard install | Yes |
-| Bare binary/systemd | `ps -ef | grep doops-agent` shows `/usr/local/bin/doops-agent -port ...`, but no Pod/container | Temporary bootstrap, legacy node compatibility | No |
-
-For example, if you see this on a machine:
-
-```text
-/usr/local/bin/doops-agent -port 42222 ...
-```
-
-while `kubectl get pod -A -l app=doops-agent` shows no Pod and `docker ps` shows no `doops-agent` container, then it is a **bare-binary direct install**, not a K8s/K3s image install. A bare binary does not automatically get the doagent, BuildKit, skills, and self-healing capabilities bundled in the container image; for production, upgrade to K8s/DaemonSet or container mode.
-
-### Gateway Connection
-
-A standard target only configures the gateway:
-
-| Where the CLI/skill connects | How the target agent must run |
-| :--- | :--- |
-| `ws(s)://<gateway>/v1/rpc` | The private-network agent actively connects to the public gateway with `-gateway-url ... -cluster ... -instance ...` |
-
-Whether a node "can be operated on" depends on whether its agent has actively registered with the gateway. Only when `doops targets --target <gateway-target>` shows the corresponding `cluster/instance` online will subsequent `exec/ask/push/pull` succeed. If a node is just a local bare-binary install without `-gateway-url`, it will not automatically appear in the gateway.
-
-## Client Installation and Connection
-
-### 1. Install the CLI and the Skill
-
-The authoritative source of the doops skill is `skills/SKILL.md` in this repo. Do not hand-write or reverse-maintain the skill in user projects; the install script only copies `skills/SKILL.md` from this repo into the business project's `.agent/skills/doops/SKILL.md`.
+## Development and Verification
 
 ```bash
 git clone https://github.com/symansun/doops.git
 cd doops
-bash scripts/install.sh --project /absolute/path/to/your/project
+(cd backend/agent && go test ./...)
+(cd backend/gateway && go test ./...)
+(cd backend/cli && go test ./...)
+python3 -m pytest backend/test -q
+corepack pnpm@11.7.0 install --frozen-lockfile
+corepack pnpm@11.7.0 test:gateway-policy
+corepack pnpm@11.7.0 test:console
+corepack pnpm@11.7.0 exec tsc --noEmit
+corepack pnpm@11.7.0 build
 ```
 
-By default the script downloads the CLI binary and skill bundle for your platform from GitHub Releases (sha256-verified against the `checksums.txt` published with each release); use `--version vX.Y.Z` to pin a version. The `--from-source` mode keeps using the in-repo prebuilt CLI from `skills/doops-cli/bin/doops-<os>-<arch>` and requires a full repo checkout.
+Use `corepack pnpm@11.7.0 dev` for console development. Production deployments must set `DOOPS_CONSOLE_ALLOWED_GATEWAYS` to the actual gateway origins; demo mode is available only in development. Browser acceptance covers login, authorized targets, errors, empty states, and desktop/mobile layouts.
 
-This step does the following:
+## Installation and Releases
 
-1. Installs the CLI for your platform to `~/.local/bin/doops`
-2. Installs `skills/SKILL.md` to `/absolute/path/to/your/project/.agent/skills/doops/SKILL.md`
-
-If `~/.local/bin` is not yet on your `PATH`:
+Versioned CLI/gateway binaries are distributed through [GitHub Releases](https://github.com/symansun/doops/releases). Select an explicitly published tag; the installer downloads `doops-<os>-<arch>` and `checksums.txt`, verifies the checksum and CLI release/commit/contract identity, and obtains the skill and documentation from the same GitHub commit archive. No locally fetched release commit is required.
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+curl --fail --location --output /tmp/doops-install.sh \
+  https://raw.githubusercontent.com/symansun/doops/main/scripts/install.sh
+bash /tmp/doops-install.sh --version <release-tag> --project /absolute/path/to/project
 ```
 
-You can also write the gateway target configuration directly during installation.
+Replace `<release-tag>` with the published version you selected. No clone is required.
+From a clone, `bash scripts/install.sh` accepts the same arguments. To upgrade the CLI
+and skill, rerun this command with the next published tag. For Agent upgrades, follow
+the [installation and upgrade guide](backend/docs/CLUSTER_INSTALL_GUIDE.md).
+
+The supported CLI path is `~/.local/bin/doops`. Before replacing the installation, the installer rejects missing release sources, failed checksums, and invalid configuration. It does not mix in unpublished workspace files.
+
+Container release repositories are `ghcr.io/symansun/doops-agent`, `ghcr.io/symansun/doops-web`, and `ghcr.io/symansun/doops-base-light`. Deployment requires the selected image's verified digest. The agent image excludes the gateway binary; runtime inputs are recorded in [`backend/runtime-versions.env`](backend/runtime-versions.env).
+
+The release workflow creates a draft, uploads and reads back all required assets, and only then makes the release public. Use the selected release's asset list and Actions run as its publication and verification record. Service deployment has separate verification for the authorized target.
+
+Remote operations select a target and carry a session. After installation or upgrade, use an authorized account to verify:
 
 ```bash
-bash scripts/install.sh \
-  --project /absolute/path/to/your/project \
-  --target-name prod \
-  --target-gateway https://gateway.example.com \
-  --target-cluster prod \
-  --target-instance master-1 \
-  --target-aliases p \
-  --target-token '<GATEWAY_USER_TOKEN>' \
-  --use 'prod via gateway'
+doops -session acceptance login --target <target>
+doops -session acceptance targets --target <target>
+doops -session acceptance exec --target <target> --cmd 'hostname'
 ```
 
-The skill is synced into the project directory during installation. A standard target's config must include `gateway`/`cluster`/`instance`; `token` is the gateway user token.
-
-- Targets support short names and aliases — e.g., primary name `prod` with alias `p`. Later, `doops -session smoke exec --target p --cmd hostname` resolves to the same `prod/master-1`.
-
-## Gateway User Administration
-
-Users, passwords, tokens, authorization, and audit logs are all maintained centrally by the gateway — never stored in business projects.
-
-The product layer exposes only `doops` as the day-to-day entry point. Issuing accounts, issuing tokens, granting permissions, audit queries, and audit cleanup are admin capabilities and should be consolidated under the `doops admin ...` entry; business projects and skills should not guide users to call the gateway's internal maintenance commands directly.
-
-Authorization model:
-
-- A regular user token has full target operation capability by default; legacy scopes granting only `targets:list` are also treated as full-featured target access for compatibility, avoiding "can see but can't operate". When isolation is needed, explicitly narrow `cluster/instance/action`.
-- Global administrators must be explicitly granted the `admin` permission.
-- Audit records are traceable by `user_id`, `token_id`, `cluster`, `instance`, `action`, `session`, and `status`.
-
-Troubleshooting:
-
-- `401 Unauthorized`: the token is invalid or expired; authentication failed
-- `403 Forbidden`: the token is valid, but the user has been explicitly narrowed and lacks permission for the current `cluster/instance/action`, or lacks the gateway admin `admin` permission
-
-### 2. Add a Private-Network Cluster Target via the Gateway
-
-The gateway's users, user tokens, and authorization are maintained by an administrator. Agents do not need a pre-issued token to register with the gateway; the business-side config only consumes user tokens issued by the admin and never touches the gateway database directly.
-
-The gateway supports username/password login: exchange credentials for a user token first, then operate with the token:
-
-```bash
-doops login --target prod-master --gateway https://gateway.example.com --username alice
-```
-
-A private-network agent actively connects to the public gateway:
-
-```bash
-doops-agent \
-  -gateway-url https://gateway.example.com \
-  -cluster prod \
-  -instance master-1 \
-```
-
-Configure the gateway target on the client:
-
-```bash
-doops add \
-  --name prod-master \
-  --gateway https://gateway.example.com \
-  --cluster prod \
-  --instance master-1 \
-  --aliases prod,master \
-  --token '<USER_TOKEN>' \
-  --use 'prod cluster via gateway'
-```
-
-doops supports `http` / `https` gateways; `http` is automatically converted to the `ws` scheme used by the WebSocket tunnel.
-For public-network production, `https` / `wss` is recommended, but neither the CLI nor the agent will refuse to connect just because the gateway is HTTP.
-
-Verify:
-
-```bash
-doops targets --target prod-master
-doops -session smoke exec --target prod-master --cmd 'hostname'
-```
-
-### 3. Verify the Connection
-
-```bash
-doops list
-doops targets --target prod-master
-doops -session smoke exec --target prod-master --cmd 'hostname'
-doops -session smoke ask --target prod-master --msg '用一句话说明当前机器状态'
-```
-
-## Installing the Agent on Servers
-
-If `doops-agent` is already running on the target machine and registered with the gateway, you only need to configure the gateway target and gateway user token on the client — no SSH required.
-
-SSH is only used to install the agent onto a machine for the first time, or for self-recovery when the agent is completely unavailable; it is not the day-to-day connection method.
-
-### Identify the Current Deployment Form First
-
-```bash
-kubectl get pod -A -l app=doops-agent -o wide 2>/dev/null || true
-docker ps --format '{{.Names}} {{.Image}} {{.Ports}}' 2>/dev/null | grep doops-agent || true
-nerdctl ps --format '{{.Names}} {{.Image}} {{.Ports}}' 2>/dev/null | grep doops-agent || true
-ps -ef | grep '[d]oops-agent' || true
-ss -lntp | grep ':42222' || true
-```
-
-Decision rules:
-
-- Pod present: manage as K8s/DaemonSet.
-- A container named `doops-agent` present: manage as container mode.
-- Only a `/usr/local/bin/doops-agent -port ...` process: this is a bare-binary direct install, not a containerized install.
-- Port listening but WebSocket EOF: usually an old agent, mismatched startup flags, or port 42222 taken by the wrong process.
-
-### Option A: Standard K8s/DaemonSet Install
-
-Suitable for this repo's default K3s/containerd layout.
-
-```bash
-kubectl create namespace doops-system --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n doops-system create secret generic registry-credentials \
-  --from-literal=username="$REGISTRY_USER" \
-  --from-literal=password="$REGISTRY_PASS" \
-  --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n doops-system apply -f agent/agent-config.yaml
-kubectl -n doops-system apply -f agent/agent.yaml
-```
-
-### Option B: Standard Docker/nerdctl Container Install
-
-For nodes that have no DaemonSet but can run containers on the host. The container must use the standard name `doops-agent`.
-
-```bash
-docker run -d --name doops-agent \
-  --privileged --pid=host --network=host \
-  --restart=unless-stopped \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /root/.kube:/root/.kube:ro \
-  -v /etc/kubernetes:/etc/kubernetes:ro \
-  -e DO_AGENT_MODEL='openai/gpt-5.4' \
-  <your-registry>/doops:<release> \
-  -port 42222 \
-  -gateway-url https://gateway.example.com \
-  -cluster prod \
-  -instance master-1 \
-```
-
-If the target environment uses containerd/nerdctl, replace `docker run` with `nerdctl run` and keep the arguments identical. Verify after startup:
-
-```bash
-docker ps --filter name=doops-agent
-docker logs --tail=100 doops-agent
-curl -fsS http://127.0.0.1:42222/health
-```
-
-### Option C: One-Shot SSH Bootstrap of a Bare Binary
-
-Use only when the target machine has no `doops-agent` yet and you need SSH to bootstrap a bare process:
-
-```bash
-doops install \
-  --name prod-node \
-  --ip 192.0.2.20 \
-  --ssh-user root \
-  --ssh-password '<SSH_PASSWORD>' \
-  --ssh-port 22 \
-  --agent-token '<OPTIONAL_AGENT_TOKEN>'
-```
-
-`--agent-token` only protects the local `/ws` of legacy bare processes; it is not a gateway registration credential. After bootstrapping, still join the gateway with `-gateway-url ... -cluster ... -instance ...` and configure the gateway target on the client.
-
-Note: `doops install` is currently an SSH bootstrap/compatibility entry and may launch the agent as a bare binary or as a container, depending on the target machine's runtime capabilities and the flags. For production standardization, prefer **Option A (K8s/DaemonSet)** or **Option B (container mode)**.
-
-Starting from the current version, `doops install` no longer treats "the process is up" as a successful install. After installation it actively connects back to the newly installed agent and runs a capability self-check, verifying at least:
-
-- The agent itself responds
-- A container runtime is visible (`nerdctl` / `docker` / `podman`)
-- Whether `kubectl` or a kubeconfig is visible
-- Whether `buildctl` and `/run/buildkit/buildkitd.sock` are visible
-
-Of these, `agent responds` and `container runtime` are required — a failure there fails the install outright; `kubectl` and `buildkit` are shown explicitly as `OK` or `MISSING`, so a half-working environment is never misreported as "ready".
-
-### Option D: Maintainer Release of `doops-agent`
-
-`deploy.sh` is the maintainer release entry point: it builds the agent image from this repo, pushes it, and rolls it out to the cluster:
-
-```bash
-DOOPS_IMAGE=<your-registry>/doops:<release> bash deploy.sh prod-node
-```
-
-`DOOPS_IMAGE` specifies the target image to release; if unset, a placeholder address is used and you must replace it yourself. It prefers to release over an existing doops connection. Only when the target agent is unavailable does it read `ssh_user`, `ssh_port`, and `ssh_password` from the config for a one-shot SSH recovery; the agent connection credential is always `token`.
-
-## Common Commands
-
-```bash
-doops list
-doops -session demo exec --target prod-node --cmd 'uptime && df -h'
-doops -session demo ask --target prod-node --msg '检查磁盘和内存压力，给出结论'
-doops -session demo push --target prod-node --src .
-doops -session demo pull --target prod-node --dest ./demo-output
-doops -session demo write --target prod-node --path /root/ws/demo/pod.yaml --file ./pod.yaml
-doops -session demo exec --target prod-node --cmd 'ls -la /root/ws/demo'
-```
-
-Command reference:
-
-| Command | Description |
-| :--- | :--- |
-| `doops add --gateway --cluster --instance --token` | Add a gateway target |
-| `doops list` | List nodes configured on the client |
-| `doops exec` | Run deterministic commands inside the remote agent container |
-| `doops ask` | Hand off to the remote doagent for autonomous analysis and execution |
-| `doops push` | Sync local code to `/root/ws/$SESSION`, respecting `.gitignore`/`.doopsignore` |
-| `doops pull` | Pull the remote `/root/ws/$SESSION` workspace locally, Git-based |
-| `doops read` | Read small remote text files; not for downloading large files or binaries |
-| `doops write` | Write small remote text files; supports `--content`, `--file`, and stdin |
-| `doops clean` | Clean the remote workspace |
-| `doops upgrade` | Push an image upgrade to online agents via the gateway |
-
-### Batch-Upgrading Agents via the Gateway
-
-The user must have the `agent:upgrade` or `admin` permission. Dry-run first, then roll out cluster by cluster:
-
-```bash
-doops -session upgrade_demo upgrade \
-  --target prod \
-  --cluster prod \
-  --image <your-registry>/doops:<release> \
-  --mode k8s \
-  --namespace doops-system \
-  --workload daemonset/doops-agent \
-  --container doops-agent \
-  --dry-run
-```
-
-Without `--dry-run`, the upgrade is pushed to the matching online `cluster/instance`s. K8s/DaemonSet mode runs `kubectl set image` and `rollout status`; bare-binary agents explicitly refuse image upgrades.
-
-## Maintainer Notes
-
-Rebuild and commit the multi-platform CLIs:
-
-```bash
-bash scripts/build-cli.sh --all
-ls -lh skills/doops-cli/bin/
-```
-
-Prebuilt artifacts are committed to `skills/doops-cli/bin/`; the install script copies from there to `~/.local/bin/doops`.
-
-## Boundaries
-
-- Day-to-day `doops` connections do not rely on SSH.
-- In a standard target config, `token` means only the gateway user token.
-- Agents need no token to register with the gateway; the `doops-agent token` is only for legacy direct connections or local `/ws` protection.
-- `ssh_password` is retained only as an SSH bootstrap parameter.
-- The `bash` subcommand is still a legacy SSH interactive entry; prefer `doops exec` and `doops ask`.
+Deployments, database writes, and upgrades follow their respective authorization, verification, and rollback guides.
 
 ## Agent Command Guardrails
 
-On the agent side, every `exec` passes through a built-in command guardrail ([dispatcher](agent/internal/dispatcher/dispatcher.go)) before running; a match refuses execution and is written to the session audit log (`.doops-audit-log`, marked with `blocked=1` and the rule ID). Built-in rules cover: recursive deletion of root/system directories, `dd` writes to block devices, `mkfs`/partitioning tools, shutdown/reboot, fork bombs, recursive permission changes on root, overwriting critical `/etc` files, downloading and directly executing remote scripts, and killing all processes. Matching first collapses whitespace and lowercases the command to defeat obfuscation such as `rm  -rf  /` or `RM -RF /`.
+Before agent `exec`, the [dispatcher](backend/agent/internal/dispatcher/dispatcher.go) normalizes whitespace and letter case, then evaluates ten named built-in rules. A match refuses execution and records `blocked=1` and the rule ID in `.doops-audit-log`:
 
-The guardrail can be tuned via agent environment variables:
+| Rule ID | Command pattern |
+| --- | --- |
+| `disk.rm_root` | Recursive deletion of root/system directories |
+| `disk.dd_device` | `dd` writes to block devices |
+| `disk.mkfs` | Filesystem formatting |
+| `disk.partition` | Partitioning and disk wiping tools |
+| `sys.shutdown` | Shutdown and reboot |
+| `sys.fork_bomb` | Fork bombs |
+| `perm.chmod_root` | Recursive permission changes on root |
+| `fs.overwrite_key_files` | Overwriting critical `/etc` files |
+| `net.pipe_shell` | Downloading scripts directly into an interpreter |
+| `proc.kill_all` | Killing all processes |
 
-- `DOOPS_BLOCK_EXTRA`: append custom regexes, semicolon-separated (applied to the normalized command)
-- `DOOPS_BLOCK_DISABLE`: disable built-in rules by rule ID, comma-separated, e.g. `net.pipe_shell`
-- `DOOPS_BLOCK_OFF=1`: turn the guardrail off completely (emergencies only)
-
-The guardrail is one layer of defense in depth, not a security boundary: it cannot cover every obfuscation (encoding, variable expansion, indirect execution via script files). Day-to-day operating discipline still rests on skill discipline and least privilege.
+Agent environment variables control these rules: `DOOPS_BLOCK_EXTRA` appends semicolon-separated regexes, `DOOPS_BLOCK_DISABLE` disables comma-separated rule IDs, and `DOOPS_BLOCK_OFF=1` disables guardrails for emergencies. Regex guardrails cannot cover every encoded or indirect command; target authorization and operating discipline still apply.
 
 ## Contributors
 
-Core contributors to this project, in attribution order:
+Core contributors, in attribution order:
 
 1. 孙勇 (Sun Yong)
 2. 高家祺 (Gao Jiaqi)
 3. 宋晨宇 (Song Chenyu)
 
-Contributions via Issues and Pull Requests are welcome.
+Contributions through Issues and Pull Requests are welcome.
 
 ## License
 
-This project is open source under the [MIT License](LICENSE).
+Original DoOps code uses the [MIT License](LICENSE). The included `@agent-cloud/agent-ui` component retains its [Business Source License 1.1](vendor/agent-ui/LICENSE), authorship, and use restrictions. See [Third-party components](THIRD_PARTY_NOTICES.md) for the dependency notices and local adjustments.

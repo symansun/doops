@@ -1,0 +1,31 @@
+import { type ReactNode } from "react";
+import type { AgentSessionRuntime, AgentSessionSnapshot, AgentTimelineItem } from "./contracts.js";
+import type { ContentRendererRegistry } from "./registry/ContentRendererRegistry.js";
+import type { ToolRendererRegistry } from "./registry/ToolRendererRegistry.js";
+import type { AgentContentRendererRegistration } from "./react/contentRendererTypes.js";
+import type { AgentToolRendererRegistration } from "./react/rendererTypes.js";
+import type { WorkspaceFileSource } from "./conversation/mentions/workspaceFileSource.js";
+import type { SessionRecovery } from "./sessionRecoveryActions.js";
+import type { AgentWorkspacePresentation } from "./userWorkspacePresentation.js";
+import type { WorkspaceCodeReference } from "./workbench/workspaceCodeReference.js";
+import type { ComposerModelControlRenderer } from "./composerModelControl.js";
+export interface AgentConversationSurfaceProps {
+    composer?: ReactNode;
+    contentRenderers?: ContentRendererRegistry<AgentContentRendererRegistration>;
+    executionTrace?: ReactNode;
+    items: AgentTimelineItem[];
+    onError: (cause: unknown) => void;
+    presentation: AgentWorkspacePresentation;
+    mobile?: boolean;
+    runtime: AgentSessionRuntime;
+    renderModelControl?: ComposerModelControlRenderer;
+    snapshot: AgentSessionSnapshot;
+    toolRenderers?: ToolRendererRegistry<AgentToolRendererRegistration>;
+    workspaceFiles?: WorkspaceFileSource;
+    mentionHarness?: string | null;
+    sessionRecovery?: SessionRecovery;
+    codeReferences?: readonly WorkspaceCodeReference[];
+    onCodeReferencesSent?: () => void;
+    onRemoveCodeReference?: (index: number) => void;
+}
+export declare function AgentConversationSurface({ composer: hostComposer, contentRenderers, executionTrace, items, onError, presentation, mobile, runtime, renderModelControl, snapshot, toolRenderers, workspaceFiles, mentionHarness, sessionRecovery, codeReferences, onCodeReferencesSent, onRemoveCodeReference, }: AgentConversationSurfaceProps): import("react/jsx-runtime").JSX.Element;

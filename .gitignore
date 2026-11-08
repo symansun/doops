@@ -5,19 +5,28 @@
 /doops
 bin/doops
 bin/doops-gateway
-skills/doops-cli/doops
-/gateway/gateway
+bin/doops-webui
+/bin/
+backend/bin/
+backend/cli/doops
 
 # Agent 二进制 (所有变体)
 **/doops-agent
 **/doops-agent-*
 **/agent-mcp-linux-*
 /agent/agent
+!backend/deploy/helm/doops-agent/
+!backend/deploy/helm/doops-agent/**
 
 # 打包发行物
 dist/*
-!skills/doops-cli/bin/
-!skills/doops-cli/bin/*
+backend/cli/bin/
+
+# Frontend dependencies / build output
+node_modules/
+.next/
+next-env.d.ts
+tsconfig.tsbuildinfo
 
 # ========================================
 # 运行时临时文件
@@ -27,13 +36,24 @@ __pycache__/
 *.py[cod]
 .doops/
 .agents/
-.agent/skills/doops/auth.json
-.agent/skills/doops/config.json
-.agent/skills/doops/history.jsonl
-.agent/skills/doops/sessions.json
-skills/doops-cli/.doops/
+# Installed Skill copy. The canonical source is backend/skills/SKILL.md and
+# backend/docs/*.md; scripts/install.sh copies them into the project from the
+# release commit, so a checked-in copy here would only drift.
+.agent/skills/doops/
+backend/cli/.doops/
 tmp_agent/
 tmp-openwork/
+/backend/.ci-agent-base-image
+
+# Local scratch areas from ad-hoc browser / media tests. Project tests live
+# under backend/test and source examples should be added in a named package.
+/examples/*
+!/examples/skills/
+/test/
+
+# Local preservation area for untracked historical artifacts and potentially sensitive
+# scan evidence removed from the canonical source tree.
+/.local/
 
 # ========================================
 # 操作系统 / 编辑器
@@ -41,3 +61,9 @@ tmp-openwork/
 .DS_Store
 *.swp
 *.swo
+
+# Release outputs and source-check tools
+backend/dist/
+backend/cli/cli/doops/doops
+backend/gateway/gateway
+.pytest_cache/

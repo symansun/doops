@@ -2,33 +2,99 @@ name: CI
 
 on:
   push:
+    branches: ["**"]
   pull_request:
+  workflow_call:
+    inputs:
+      source-ref:
+        type: string
+        default: ""
+
+permissions:
+  contents: read
 
 jobs:
   go:
+    name: Go (${{ matrix.module }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        module: [agent, gateway, skills/doops-cli]
+        module: [agent, gateway, cli]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          go-version-file: ${{ matrix.module }}/go.mod
-      - name: Build
-        working-directory: ${{ matrix.module }}
-        run: go build ./...
-      - name: Test
-        working-directory: ${{ matrix.module }}
-        run: go test ./...
+          ref: ${{ inputs.source-ref || github.sha }}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.25.14"
+          cache-dependency-path: backend/${{ matrix.module }}/go.sum
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - run: go test ./... -count=1 -timeout=20m
+        working-directory: backend/${{ matrix.module }}
 
-  image-contract:
+  contracts:
+    name: Release and installation contracts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source-ref || github.sha }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
-      - run: pip install pytest
-      - run: pytest -q test/test_sandbox_image_contract.py
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v3.22.1
+      - run: python -m pip install --disable-pip-version-check pytest pyyaml
+      - run: python -m pytest backend/test -q
+
+  web:
+    name: Web build and functional checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source-ref || github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - run: corepack enable && corepack prepare pnpm@11.7.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:gateway-policy && pnpm test:console
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm build
+
+  race:
+    name: Linux execution lifecycle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source-ref || github.sha }}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.25.14"
+          cache-dependency-path: backend/agent/go.sum
+      - run: go test -race ./internal/server -run 'TestGitHTTP|TestAgentGitCancellation|TestExecutionGuard|TestExecutionLifecycle|TestBackgroundRPC' -count=1 -timeout=20m
+        working-directory: backend/agent
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source-ref || github.sha }}
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: "8.24.3"
+      - name: Scan exact checked-out source
+        run: gitleaks dir --redact --no-banner --config .gitleaks.toml .
