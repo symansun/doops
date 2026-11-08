@@ -71,6 +71,10 @@ if [[ "$ROLLBACK" == "false" ]]; then
   [[ -n "$IMAGE" ]] || { echo "必须指定 --image <registry/repo>" >&2; exit 2; }
 fi
 
+[[ "$CANARY" =~ ^[0-9]+$ ]] || { echo "--canary 必须是 0-99 的整数（0=跳过灰度直接全量）" >&2; exit 2; }
+[[ "$CANARY" -lt 100 ]] || { echo "--canary 必须小于 100（100 与直接全量等价，省略即可）" >&2; exit 2; }
+[[ "$CANARY_SECONDS" =~ ^[0-9]+$ ]] || { echo "--canary-seconds 必须是非负整数" >&2; exit 2; }
+
 STATE_FILE="${STATE_DIR}/${APP}"
 UPSTREAM_CONF="${UPSTREAM_DIR}/${APP}-upstream.conf"
 
@@ -92,13 +96,13 @@ current_slot() {
 
 # 生成 upstream 配置：$1=blue 权重（0=下线），$2=green 权重
 write_upstream() {
-  local bw="$1" gw="$2" line="" nl=$'\n'
-  [[ "$bw" -gt 0 ]] && line="  server 127.0.0.1:${BLUE_PORT} weight=${bw};"
+  local bw="$1" gw="$2" body=""
+  [[ "$bw" -gt 0 ]] && body="  server 127.0.0.1:${BLUE_PORT} weight=${bw};"
   if [[ "$gw" -gt 0 ]]; then
-    [[ -n "$line" ]] && line="${line}${nl}"
-    line="${line}  server 127.0.0.1:${GREEN_PORT} weight=${gw};"
+    [[ -n "$body" ]] && body="${body}"$'\n'
+    body="${body}  server 127.0.0.1:${GREEN_PORT} weight=${gw};"
   fi
-  remote "printf 'upstream ${APP} {\n${line}\n}\n' > '${UPSTREAM_CONF}' && nginx -t && nginx -s reload"
+  remote "printf 'upstream ${APP} {\n${body}\n}\n' > '${UPSTREAM_CONF}' && nginx -t && nginx -s reload"
 }
 
 wait_healthy() { # $1=port $2=描述
@@ -131,7 +135,7 @@ STANDBY_PORT="$(slot_port "$STANDBY")"
 ACTIVE_PORT="$(slot_port "$ACTIVE")"
 
 echo "==> [1/5] 当前活跃=${ACTIVE}(:${ACTIVE_PORT})，部署 ${IMAGE}:${VERSION} 到 standby=${STANDBY}(:${STANDBY_PORT})"
-remote "docker pull '${IMAGE}:${VERSION}' && docker rm -f '${APP}-${STANDBY}' 2>/dev/null || true"
+remote "docker pull '${IMAGE}:${VERSION}' && { docker rm -f '${APP}-${STANDBY}' 2>/dev/null || true; }"
 remote "docker run -d --name '${APP}-${STANDBY}' --restart unless-stopped -p 127.0.0.1:${STANDBY_PORT}:${CONTAINER_PORT} '${IMAGE}:${VERSION}'"
 
 echo "==> [2/5] standby 槽位健康检查（未接流量）"

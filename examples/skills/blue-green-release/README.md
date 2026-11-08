@@ -72,6 +72,17 @@ bash examples/skills/blue-green-release/run.sh --target prod --rollback
 
 任一环节失败脚本以非零退出：standby 健康检查失败时线上无影响；切换后 LB 检查失败时立即执行 `--rollback` 即可恢复。
 
+## 故障处理
+
+| 现象 | 原因与处置 |
+| --- | --- |
+| `[1/5]` 拉取镜像失败 | 脚本立即中止，线上无影响。检查镜像名/tag 是否存在、目标节点到 registry 的连通性与凭据 |
+| `[2/5]` standby 健康检查超时 | 新容器未正常提供 `/health`。`docker logs <app>-<slot>` 排查；确认 `--container-port` 与镜像内服务端口一致 |
+| `nginx -t` 报错 | upstream 配置语法错误，reload 不会执行，线上无影响。检查 `cat /etc/nginx/conf.d/<app>-upstream.conf` |
+| 灰度期指标异常 | Ctrl-C 中止后执行 `--rollback` 切回旧槽位（旧容器全程保留） |
+| 状态文件丢失/损坏 | 默认回落 blue 为活跃槽位；与实际不符时手工修正：`echo green > /var/lib/bluegreen/<app>` |
+| `--canary 100` 被拒绝 | 100% 灰度与直接全量等价，省略 `--canary` 即可 |
+
 ## 测试说明
 
 1. 链路自检：先跑 `bash deploy/e2e/smoke.sh --mode process` 确认 doops 链路可用。
