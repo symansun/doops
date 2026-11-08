@@ -37,6 +37,11 @@ jobs:
               go build -trimpath -ldflags='-s -w' -o /tmp/dist/doops-gateway-linux-$arch ./cmd/gateway
           done
 
+      - name: Package skill bundle
+        run: |
+          set -e
+          tar -czf /tmp/dist/doops-skill.tar.gz skills/SKILL.md docs scripts/install.sh
+
       - name: Checksums
         run: cd /tmp/dist && shasum -a 256 * > checksums.txt
 

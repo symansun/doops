@@ -193,10 +193,12 @@ cd doops
 bash scripts/install.sh --project /absolute/path/to/your/project
 ```
 
+By default the script downloads the CLI binary and skill bundle for your platform from GitHub Releases (sha256-verified against the `checksums.txt` published with each release); use `--version vX.Y.Z` to pin a version. The `--from-source` mode keeps using the in-repo prebuilt CLI from `skills/doops-cli/bin/doops-<os>-<arch>` and requires a full repo checkout.
+
 This step does the following:
 
-1. Copies the prebuilt CLI for your platform from `skills/doops-cli/bin/doops-<os>-<arch>` in this repo to `~/.local/bin/doops`
-2. Installs this repo's `skills/SKILL.md` to `/absolute/path/to/your/project/.agent/skills/doops/SKILL.md`
+1. Installs the CLI for your platform to `~/.local/bin/doops`
+2. Installs `skills/SKILL.md` to `/absolute/path/to/your/project/.agent/skills/doops/SKILL.md`
 
 If `~/.local/bin` is not yet on your `PATH`:
 
