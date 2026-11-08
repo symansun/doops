@@ -310,6 +310,10 @@ Gateway 把该 target 上 active 的 `modelProvider` 凭据物化到 doagent 的
 `/root/.agent/settings.json`。已连接的 Agent 如果已经持有这个版本，不再重复探测。
 该 target 没有绑定，或绑定尚未 promote 时，不会从别的 target 取模型。
 
+首次下发与重连直接走原生模型物化，不预先清除已下发的配置，也不要求
+Kubernetes 或 kubeconfig。Agent 先执行模型探测，成功后才写入新配置；
+探测失败会返回错误并保留现有配置，不将失败标记为已下发。
+
 ```json
 {
   "model": "openai/gpt-5.4",
