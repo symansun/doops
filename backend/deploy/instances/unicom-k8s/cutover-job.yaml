@@ -35,4 +35,4 @@ spec:
       volumes:
         - name: release
           configMap:
-            name: doagent-unicom-042-assets
+            name: doagent-unicom-042-assets-r2

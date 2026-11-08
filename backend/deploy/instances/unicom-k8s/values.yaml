@@ -23,16 +23,9 @@ tolerations:
   key: node-role.kubernetes.io/control-plane
   operator: Exists
 volumeMounts:
-- mountPath: /opt/doagent_config/settings.json
-  name: doagent-settings
-  readOnly: true
 - name: agent-home
   mountPath: /root
 volumes:
-- hostPath:
-    path: /opt/doops-agent/config/settings.json
-    type: File
-  name: doagent-settings
 - name: agent-home
   hostPath:
     path: /var/lib/doops-agent
