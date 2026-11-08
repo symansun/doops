@@ -1,6 +1,49 @@
 # DoOps Roadmap
 
-## v0.2.0 —— 加固与发布（当前迭代）
+## v0.3.0 迭代计划（2026-11-08 制定，来源：11-08 会议纪要）
+
+主题：控制台打通 + DevOps 规范固化 + 审批与审计强化 + 飞书 AI 集成
+
+会议纪要要求："DoOps 演进要有排期计划"，下一步两个主方向：①打通控制台，让网站 Agent 直接完成部署任务；②把 DevOps 规范/工程化经验固化进工具。
+
+### P0 开发
+1. **控制台最小闭环（设计先行）**：Web 控制台 + AI 助手，覆盖资源查询（服务器/K8s）、部署变更两个场景；先交控制台架构设计文档与 API 草案，再做最小可点通闭环
+2. **DevOps 发布规范 skill 化**：把"选分支 → 测试/预发直接发 → 生产走审批"的发布流程固化为 skill（GitOps 式），解决多人通过自然语言并发操作同一环境无规范冲突的问题
+3. **生产发布审批流**：gateway 侧审批环节（发起 → 审批人确认 → 放行执行），与护栏/审计联动
+
+### P1 开发
+4. **审计强化**：审计导出（JSONL/CSV）、留存策略、高危操作告警通道；客户真实上线前必须完成
+5. **平滑发布/灰度**：双容器平滑切换的参考实现与示例 skill
+6. **飞书 AI 集成**：飞书机器人 @ 机器人下达运维任务（webhook → doops gateway 桥接），与数字员工工程对接
+
+### 运营事项（线下执行，非代码）
+- 给小浩开 DoOps 账号 + GitHub 代码权限
+
+### 发布检查单
+- [ ] 控制台设计文档评审通过
+- [ ] 发布规范 skill 在 staging 环境走通一次完整发布
+- [ ] 审批流单测 + E2E
+- [ ] CHANGELOG v0.3.0 定稿
+- [ ] tag v0.3.0 → Release 产物冒烟
+
+## v0.2.2（✅ 已发布，2026-11-08）
+
+主题：可观测性 + 上手体验 + 安全加固 + Skills 生态
+
+### P0 开发（✅ 已完成）
+1. **gateway /metrics（Prometheus）**：在线 agent 数、WS 连接数、活跃操作数、工具调用计数（按 action/status）、护栏拦截计数；回环放行，非回环需 `DOOPS_METRICS_TOKEN`
+2. **install.sh 直连 Release**：默认从 GitHub Release 下载 CLI + `doops-skill.tar.gz` 并做 sha256 校验；`--version` 锁版本，`--from-source` 保留仓库内预构建路径
+
+### P1 开发（✅ 已完成）
+3. **token TTL 与轮换**：`token list` / `token revoke -id` 轮换管理，吊销即失效（TTL 过期校验与 CLI 401 重新登录提示此前已就绪）
+4. **Skills 示例库**：`examples/skills/` 三个开箱即用示例（nginx 巡检、证书到期巡检、日志收集打包），各含 README + 测试说明
+
+### P0 测试（✅ 已完成）
+5. /metrics 端点单测 + E2E 冒烟 metrics 断言
+6. install.sh 干净环境（临时 HOME、无仓库检出）Release 下载安装冒烟通过
+7. token 过期/轮换单测（store 层）通过
+
+## v0.2.0 —— 加固与发布（✅ 已完成）
 
 主题：把 v0.1 补齐的护栏与错误体系做成可发布、可验证、可演示的正式版本。
 
@@ -42,28 +85,3 @@
 - CLI 错误分层可操作化（fatalErr + Hint），修复 gateway-only 校验错位回归
 - 三语 README（中/英/俄）、界面预览、架构图、微信公众号指南
 
----
-
-## v0.2.2 迭代计划（2026-11-08 制定）
-
-主题：可观测性 + 上手体验 + 安全加固 + Skills 生态（四线并行，P0 先行）
-
-### P0 开发
-1. **gateway /metrics（Prometheus）**：在线 agent 数、工具调用计数（按 action/结果）、护栏拦截计数、WS 连接数；端点默认仅监听回环或需 token
-2. **install.sh 直连 Release**：默认从 GitHub Release 下载对应平台二进制 + sha256 校验，`--from-source` 保留源码构建路径
-
-### P1 开发
-3. **token TTL 与轮换**：用户 token 支持过期时间，CLI 侧过期自动提示重新登录（errhint 已分层，接入即可）
-4. **Skills 示例库**：`examples/skills/` 新增 3 个开箱即用示例（nginx 巡检、证书到期巡检、日志收集打包），各含 README + 测试说明
-
-### P0 测试
-5. /metrics 端点单测 + E2E 冒烟中加入 metrics 断言
-6. install.sh 在干净容器（无 Go）中跑通下载安装
-7. token 过期/轮换的单测与集成测试
-
-### 发布检查单
-- [ ] 三模块 build + test 全绿
-- [ ] pytest 契约测试通过
-- [ ] E2E 冒烟（process 模式）通过
-- [ ] CHANGELOG v0.2.2 定稿
-- [ ] tag v0.2.2 → Release 产物冒烟
