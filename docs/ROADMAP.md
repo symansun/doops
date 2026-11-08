@@ -41,3 +41,29 @@
 - agent 命令护栏：10 类规则、审计落盘（`blocked=1 rule=<id>`）、`DOOPS_BLOCK_*` 配置
 - CLI 错误分层可操作化（fatalErr + Hint），修复 gateway-only 校验错位回归
 - 三语 README（中/英/俄）、界面预览、架构图、微信公众号指南
+
+---
+
+## v0.2.2 迭代计划（2026-11-08 制定）
+
+主题：可观测性 + 上手体验 + 安全加固 + Skills 生态（四线并行，P0 先行）
+
+### P0 开发
+1. **gateway /metrics（Prometheus）**：在线 agent 数、工具调用计数（按 action/结果）、护栏拦截计数、WS 连接数；端点默认仅监听回环或需 token
+2. **install.sh 直连 Release**：默认从 GitHub Release 下载对应平台二进制 + sha256 校验，`--from-source` 保留源码构建路径
+
+### P1 开发
+3. **token TTL 与轮换**：用户 token 支持过期时间，CLI 侧过期自动提示重新登录（errhint 已分层，接入即可）
+4. **Skills 示例库**：`examples/skills/` 新增 3 个开箱即用示例（nginx 巡检、证书到期巡检、日志收集打包），各含 README + 测试说明
+
+### P0 测试
+5. /metrics 端点单测 + E2E 冒烟中加入 metrics 断言
+6. install.sh 在干净容器（无 Go）中跑通下载安装
+7. token 过期/轮换的单测与集成测试
+
+### 发布检查单
+- [ ] 三模块 build + test 全绿
+- [ ] pytest 契约测试通过
+- [ ] E2E 冒烟（process 模式）通过
+- [ ] CHANGELOG v0.2.2 定稿
+- [ ] tag v0.2.2 → Release 产物冒烟
