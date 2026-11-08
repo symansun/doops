@@ -1,3 +1,5 @@
+<p align="right"><b>中文</b> | <a href="README.en.md">English</a> | <a href="README.ru.md">Русский</a></p>
+
 # DoOps
 
 <p align="center">
