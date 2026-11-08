@@ -721,7 +721,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		cmd, stdoutPipe, stderrPipe, err := executeRawCommand(execCtx, args.Command)
 		if err != nil {
 			resultText := "Error starting command: " + err.Error()
-			writeJSON(buildSuccessResponse(reqID, resultText))
+			writeJSON(buildToolErrorResponse(reqID, resultText))
 			return
 		}
 
