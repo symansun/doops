@@ -1,0 +1,32 @@
+name: Demo Health
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      DEMO_BASE_URL: https://doops.l8ai.cn
+    steps:
+      - name: HTTP 健康检查（GET /health）
+        run: |
+          code=$(curl -sS -o /tmp/health.body -w '%{http_code}' --max-time 20 "$DEMO_BASE_URL/health")
+          echo "GET $DEMO_BASE_URL/health -> HTTP $code, body: $(cat /tmp/health.body)"
+          [ "$code" = "200" ]
+
+      - name: 认证检查（POST /v1/auth/login）
+        env:
+          DOOPS_DEMO_PASSWORD: ${{ secrets.DOOPS_DEMO_PASSWORD }}
+        run: |
+          code=$(curl -sS -o /tmp/login.body -w '%{http_code}' --max-time 20 \
+            -X POST "$DEMO_BASE_URL/v1/auth/login" \
+            -H 'Content-Type: application/json' \
+            -d "{\"username\":\"admin\",\"password\":\"$DOOPS_DEMO_PASSWORD\"}")
+          echo "POST $DEMO_BASE_URL/v1/auth/login -> HTTP $code"
+          [ "$code" = "200" ]
+          grep -q '"token"' /tmp/login.body
+          echo "login ok, token issued"
