@@ -126,8 +126,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 			requireConfig(configErr)
 			server := findServer(servers, target)
 			if server == nil {
-				fmt.Printf("Error: Server '%s' not found.\n", target)
-				os.Exit(1)
+				fatalServerNotFound(target)
 			}
 			gateway = server.Gateway
 			if token == "" {
@@ -140,8 +139,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 		}
 		targets, err := fetchGatewayTargets(gateway, token)
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			fatalErr(err)
 		}
 		fmt.Printf("%-18s %-18s %-8s %-16s %-7s %-7s %-28s %-24s\n", "CLUSTER", "INSTANCE", "BUSY", "STATUS", "ACTIVE", "QUEUED", "RESOURCES", "LAST_SEEN")
 		fmt.Println(strings.Repeat("-", 132))
@@ -177,8 +175,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 			requireConfig(configErr)
 			server := findServer(servers, target)
 			if server == nil {
-				fmt.Printf("Error: Server '%s' not found.\n", target)
-				os.Exit(1)
+				fatalServerNotFound(target)
 			}
 			if gateway == "" {
 				gateway = server.Gateway
@@ -193,8 +190,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 			os.Exit(1)
 		}
 		if err := unlockGatewayTarget(gateway, token, cluster, instance); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			fatalErr(err)
 		}
 		fmt.Printf("Unlocked %s/%s\n", cluster, instance)
 
@@ -233,8 +229,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 			requireConfig(configErr)
 			server := findServer(servers, target)
 			if server == nil {
-				fmt.Printf("Error: Server '%s' not found.\n", target)
-				os.Exit(1)
+				fatalServerNotFound(target)
 			}
 			if gateway == "" {
 				gateway = server.Gateway
@@ -254,8 +249,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 			Expires: expires,
 		})
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			fatalErr(err)
 		}
 		if strings.TrimSpace(saveAs) != "" {
 			auth, _ := LoadAuth()
@@ -341,8 +335,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
-			os.Exit(1)
+			fatalServerNotFound(target)
 		}
 		if strings.TrimSpace(server.Gateway) != "" {
 			fmt.Printf("Error: target '%s' is gateway-only; interactive SSH bash is not supported. Use doops -session <id> exec --target %s --cmd '<command>'.\n", target, target)
@@ -397,8 +390,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 			arguments["path"] = path
 			content, err := resolveWriteContent(contentStr, fileStr, subFlag.Args(), os.Stdin)
 			if err != nil {
-				fmt.Printf("Error: %v\n", err)
-				os.Exit(1)
+				fatalErr(err)
 			}
 			arguments["content"] = content
 		case "read":
@@ -409,8 +401,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 		}
 
 		if err := client.Call(toolName, arguments); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			fatalErr(err)
 		}
 
 		// Log History
@@ -457,8 +448,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
-			os.Exit(1)
+			fatalServerNotFound(target)
 		}
 
 		fmt.Printf("\033[93m[TARGETING]\033[0m Interactive Bash on %s (%s)\n", server.Name, server.IP)
@@ -497,8 +487,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 		}
 
 		if err := InstallAgent(name, ip, sshUser, sshPassword, sshPort, agentPort, binaryPath, *localFlag, agentToken, llmConfig); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			fatalErr(err)
 		}
 		RecordHistory(name, "system", "install-agent")
 
@@ -532,8 +521,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
-			os.Exit(1)
+			fatalServerNotFound(target)
 		}
 
 		isGateway := strings.TrimSpace(server.Gateway) != "" || strings.TrimSpace(gateway) != ""
@@ -709,13 +697,11 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
-			os.Exit(1)
+			fatalServerNotFound(target)
 		}
 
 		if err := Push(*server, src, dest, dryRun, nil, *sessionName); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			fatalErr(err)
 		}
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("push %s -> %s", src, dest))
 
@@ -744,12 +730,10 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
-			os.Exit(1)
+			fatalServerNotFound(target)
 		}
 		if err := Pull(*server, dest, *sessionName); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			fatalErr(err)
 		}
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("pull -> %s", dest))
 
@@ -777,8 +761,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
-			os.Exit(1)
+			fatalServerNotFound(target)
 		}
 
 		token := ResolveToken(server.Name, server.Token)
@@ -787,8 +770,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 		defer client.Close()
 
 		if err := Clean(client, workspace); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			fatalErr(err)
 		}
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("clean workspace=%s", workspace))
 
@@ -825,8 +807,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 			requireConfig(configErr)
 			server := findServer(servers, target)
 			if server == nil {
-				fmt.Printf("Error: Server '%s' not found.\n", target)
-				os.Exit(1)
+				fatalServerNotFound(target)
 			}
 			base = *server
 		} else {
@@ -845,8 +826,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 			DryRun:    dryRun,
 			Session:   *sessionName,
 		}, *verbose); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			fatalErr(err)
 		}
 
 	case "check":
@@ -875,8 +855,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
-			os.Exit(1)
+			fatalServerNotFound(target)
 		}
 
 		token := ResolveToken(server.Name, server.Token)
@@ -885,8 +864,7 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 		defer client.Close()
 
 		if err := CheckDeployment(client, namespace, deployment, image); err != nil {
-			fmt.Printf("Error: %v\n", err)
-			os.Exit(1)
+			fatalErr(err)
 		}
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("check %s/%s", namespace, deployment))
 
@@ -941,8 +919,7 @@ func runAdminOperationsList(args []string, servers []Server, configErr error) {
 	gateway, token := resolveAdminGatewayFlags("admin operations list", args, servers, configErr, nil)
 	ops, err := GatewayAdminOperationsList(gateway, token)
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+		fatalErr(err)
 	}
 	fmt.Printf("%-12s %-8s %-18s %-18s %-8s %-16s %-8s %-8s %s\n", "ID", "KIND", "CLUSTER", "INSTANCE", "ACTION", "SESSION", "AGE", "USER", "SUMMARY")
 	fmt.Println(strings.Repeat("-", 132))
@@ -959,8 +936,7 @@ func runAdminOperationCancel(args []string, servers []Server, configErr error) {
 	var opID string
 	gateway, token := resolveAdminGatewayFlags("admin operations cancel", args, servers, configErr, &opID)
 	if err := GatewayAdminOperationCancel(gateway, token, opID); err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+		fatalErr(err)
 	}
 	fmt.Printf("Canceled operation %s\n", opID)
 }
@@ -979,8 +955,7 @@ func resolveAdminGatewayFlags(name string, args []string, servers []Server, conf
 		requireConfig(configErr)
 		server := findServer(servers, target)
 		if server == nil {
-			fmt.Printf("Error: Server '%s' not found.\n", target)
-			os.Exit(1)
+			fatalServerNotFound(target)
 		}
 		if gateway == "" {
 			gateway = server.Gateway
