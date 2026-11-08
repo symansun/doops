@@ -1,0 +1,69 @@
+# Live Helm values recorded 2026-11-08; DoAgent 0.2.42 / DoOps v1.3.123.
+gateway:
+  cluster: doops-edu
+  instance: edu-coder
+  url: https://doops.l8ai.cn
+hostAccess:
+  enabled: false
+hostAliases: []
+image:
+  digest: sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a
+  pullPolicy: IfNotPresent
+  repository: docker.cnb.cool/l8ai/ai/doops.sh
+imagePullSecrets: []
+kubeconfig:
+  source: mounted
+nodeSelector:
+  kubernetes.io/hostname: 192.168.0.24
+proxy:
+  allowedHosts: ''
+tolerations: []
+volumeMounts:
+- mountPath: /etc/kubernetes/admin.conf
+  name: kube-admin
+  readOnly: true
+- mountPath: /root/.kube/config
+  name: kube-admin
+  readOnly: true
+- mountPath: /root
+  name: agent-home
+- mountPath: /run/containerd/containerd.sock
+  name: containerd-socket
+- mountPath: /usr/local/bin/nerdctl
+  name: nerdctl-bin
+  readOnly: true
+- mountPath: /usr/local/bin/nerdctl.real
+  name: nerdctl-real-bin
+  readOnly: true
+- mountPath: /usr/bin/crictl
+  name: crictl-bin
+  readOnly: true
+volumes:
+- hostPath:
+    path: /etc/kubernetes/admin.conf
+    type: File
+  name: kube-admin
+- hostPath:
+    path: /var/lib/doops-agent
+    type: DirectoryOrCreate
+  name: agent-home
+- hostPath:
+    path: /run/containerd/containerd.sock
+    type: Socket
+  name: containerd-socket
+- hostPath:
+    path: /usr/bin/nerdctl
+    type: File
+  name: nerdctl-bin
+- hostPath:
+    path: /usr/local/bin/nerdctl.real
+    type: File
+  name: nerdctl-real-bin
+- hostPath:
+    path: /usr/bin/crictl
+    type: File
+  name: crictl-bin
+workload:
+  name: doops-agent
+  selectorLabels:
+    app: doops-agent
