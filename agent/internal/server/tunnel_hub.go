@@ -43,6 +43,8 @@ type GatewayHub struct {
 	activeOpsMu sync.Mutex
 	activeOps   map[string]*gatewayActiveOperation
 	activeSeq   uint64
+
+	metrics gatewayMetrics
 }
 
 var errGatewayClientDisconnected = errors.New("gateway client disconnected")
@@ -224,6 +226,7 @@ func (h *GatewayHub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/audit", h.HandleAudit)
 	mux.HandleFunc("/v1/admin/tokens", h.HandleAdminTokens)
 	mux.HandleFunc("/v1/admin/operations", h.HandleAdminOperations)
+	mux.HandleFunc("/metrics", h.HandleMetrics)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -582,6 +585,8 @@ func (h *GatewayHub) HandleClientRPC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	atomic.AddInt64(&h.metrics.wsClients, 1)
+	defer atomic.AddInt64(&h.metrics.wsClients, -1)
 
 	var connMu sync.Mutex
 	writeJSON := func(v interface{}) error {
@@ -664,6 +669,10 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 		StartedAt:      time.Now().UTC(),
 	})
 	finishAudit := func(status, errMsg, tail string, bytesOut int64) {
+		h.metrics.recordToolCall(string(action), status)
+		if strings.Contains(errMsg, "command blocked by agent guardrail") {
+			atomic.AddInt64(&h.metrics.guardrailBlocked, 1)
+		}
 		_ = h.store.FinishAudit(auditID, AuditFinish{
 			Status:   status,
 			Error:    errMsg,

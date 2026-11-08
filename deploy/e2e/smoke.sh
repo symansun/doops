@@ -171,6 +171,16 @@ assert_audit_content() {
   log "审计落盘断言通过"
 }
 
+assert_metrics() {
+  log "断言 gateway /metrics (127.0.0.1:${GATEWAY_PORT}/metrics)"
+  local body
+  body="$(curl -fsS "http://127.0.0.1:${GATEWAY_PORT}/metrics")" || fail "无法拉取 /metrics"
+  echo "$body" | grep -q '^doops_gateway_agents_online 1$' || fail "metrics 缺少 agents_online=1"
+  echo "$body" | grep -q 'doops_gateway_tool_calls_total{action="exec",status="success"}' \
+    || fail "metrics 缺少 exec/success 工具调用计数"
+  log "metrics 断言通过"
+}
+
 # ---------------------------------------------------------------------------
 # compose 模式
 # ---------------------------------------------------------------------------
@@ -216,6 +226,7 @@ run_compose() {
   cli_add_and_login
   wait_agent_online
   cli_exec_assert
+  assert_metrics
 
   log "断言 agent 容器内审计日志 /root/ws/${SESSION}/.doops-audit-log"
   local audit
@@ -261,6 +272,7 @@ run_process() {
   cli_add_and_login
   wait_agent_online
   cli_exec_assert
+  assert_metrics
 
   log "断言 agent 工作区审计日志 ${WORKDIR}/ws/${SESSION}/.doops-audit-log"
   local audit_file="${WORKDIR}/ws/${SESSION}/.doops-audit-log"
