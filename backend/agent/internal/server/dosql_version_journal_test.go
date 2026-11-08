@@ -211,14 +211,163 @@ func TestDoSQLVersionJournalNeverStoresSecretsOrUnboundedStatements(t *testing.T
 
 func TestDoSQLVersionJournalPathIsPerEngineAndDatabase(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", filepath.Join(t.TempDir(), "ws"))
-	pg, my := doSQLVersionJournalPath("postgres", "testdb"), doSQLVersionJournalPath("mysql", "testdb")
+	path := func(engine, database string) string {
+		t.Helper()
+		path, err := doSQLVersionJournalPath(doSQLTarget{Engine: engine, Address: "db.test:1234", Database: database})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	pg, my := path("postgres", "testdb"), path("mysql", "testdb")
 	if pg == my {
 		t.Fatal("two engines with the same database name share one version history")
 	}
-	if strings.Contains(filepath.Base(doSQLVersionJournalPath("postgres", "../../etc/passwd")), "/") {
+	if strings.Contains(filepath.Base(path("postgres", "../../etc/passwd")), "/") {
 		t.Fatal("database name escaped the journal directory")
 	}
-	if filepath.Dir(doSQLVersionJournalPath("postgres", "../../etc/passwd")) != filepath.Dir(pg) {
+	if filepath.Dir(path("postgres", "../../etc/passwd")) != filepath.Dir(pg) {
 		t.Fatal("a hostile database name changed the journal directory")
+	}
+	if path("postgres", "a/b") == path("postgres", "a_b") {
+		t.Fatal("database names that previously sanitized identically share a journal")
+	}
+}
+
+func TestDoSQLVersionIdentityNormalizesEndpointsAndIgnoresCredentials(t *testing.T) {
+	t.Setenv("DOOPS_WORKSPACE_ROOT", filepath.Join(t.TempDir(), "ws"))
+	for _, tc := range []struct{ engine, scheme, port string }{
+		{"postgres", "postgres", "5432"}, {"mysql", "mysql", "3306"},
+		{"oracle", "oracle", "1521"}, {"mssql", "sqlserver", "1433"},
+		{"mongodb", "mongodb", "27017"},
+	} {
+		t.Run(tc.engine, func(t *testing.T) {
+			first, err := doSQLConnectionTarget(tc.engine, "app", map[string]string{
+				"connection_uri": tc.scheme + "://old:synthetic-old@DB.test/app",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rotated, err := doSQLConnectionTarget(tc.engine, "app", map[string]string{
+				"connection_uri": tc.scheme + "://new:synthetic-new@db.test:" + tc.port + "/app",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			a, err := doSQLVersionJournalPath(first)
+			if err != nil {
+				t.Fatal(err)
+			}
+			b, err := doSQLVersionJournalPath(rotated)
+			if err != nil || a != b {
+				t.Fatalf("credential rotation/default port changed identity: %q %q %v", a, b, err)
+			}
+			if strings.Contains(a, "synthetic") || strings.Contains(a, "DB.test") || strings.Contains(a, "db.test") {
+				t.Fatal("journal path contains connection material")
+			}
+		})
+	}
+	a, err := doSQLConnectionTarget("mongodb", "app", map[string]string{"connection_uri": "mongodb://u:p@db-a.test,db-b.test/app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := doSQLConnectionTarget("mongodb", "app", map[string]string{"connection_uri": "mongodb://v:q@db-b.test:27017,db-a.test:27017/app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pathA, err := doSQLVersionJournalPath(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pathB, err := doSQLVersionJournalPath(b)
+	if err != nil || pathA != pathB {
+		t.Fatalf("MongoDB seed order/default ports changed identity: %q %q %v", pathA, pathB, err)
+	}
+	ext, err := doSQLExternalTarget("extsql", "app", "extsql://u:p@db.test/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := doSQLVersionJournalPath(ext); err == nil || !strings.Contains(err.Error(), "explicit numeric port") {
+		t.Fatalf("external engine guessed a default port: %v", err)
+	}
+	ext.Address = "DB.test:05432"
+	first, err := doSQLVersionJournalPath(ext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ext.Address, ext.DSN = "db.test:5432", "extsql://new:synthetic-new@db.test:5432/app"
+	second, err := doSQLVersionJournalPath(ext)
+	if err != nil || first != second {
+		t.Fatalf("explicit external endpoint changed identity: %q %q %v", first, second, err)
+	}
+}
+
+func TestDoSQLVersionJournalsIsolateEndpointsAndPreserveRotationHistory(t *testing.T) {
+	t.Setenv("DOOPS_WORKSPACE_ROOT", filepath.Join(t.TempDir(), "ws"))
+	a := doSQLTarget{Engine: "postgres", Database: "app", Address: "db-a.test:5432"}
+	b := doSQLTarget{Engine: "postgres", Database: "app", Address: "db-b.test:5432"}
+	pathA, err := doSQLVersionJournalPath(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pathB, err := doSQLVersionJournalPath(b)
+	if err != nil || pathA == pathB {
+		t.Fatalf("distinct endpoints collided: %v", err)
+	}
+	for _, path := range []string{pathA, pathB} {
+		if version, err := beginDoSQLVersion(path, "first", "credential-v1", "fp", []string{"UPDATE t SET a=1"}); err != nil || version != 1 {
+			t.Fatalf("first version = %d, %v", version, err)
+		}
+	}
+	a.DSN = "postgres://new:synthetic-rotation@db-a.test:5432/app"
+	rotated, err := doSQLVersionJournalPath(a)
+	if err != nil || rotated != pathA {
+		t.Fatalf("rotation selected a new journal: %v", err)
+	}
+	if version, err := beginDoSQLVersion(rotated, "rotated", "credential-v2", "fp", []string{"UPDATE t SET a=2"}); err != nil || version != 2 {
+		t.Fatalf("rotation version = %d, %v", version, err)
+	}
+	if err := os.WriteFile(pathA, []byte("corrupt\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := beginDoSQLVersion(pathA, "blocked", "credential-v2", "fp", nil); err == nil {
+		t.Fatal("corrupt history was accepted")
+	}
+	if version, err := beginDoSQLVersion(pathB, "independent", "credential-b", "fp", nil); err != nil || version != 2 {
+		t.Fatalf("another endpoint's corrupt journal blocked B: %d, %v", version, err)
+	}
+}
+
+func TestDoSQLVersionJournalRequiresExplicitLegacyMigration(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DOOPS_WORKSPACE_ROOT", filepath.Join(root, "ws"))
+	target := doSQLTarget{Engine: "postgres", Database: "app", Address: "db-a.test:5432"}
+	path, err := doSQLVersionJournalPath(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(root, ".doops-dosql-versions", "postgres__app.jsonl")
+	if _, err := beginDoSQLVersion(legacy, "legacy-op", "old-binding", "fp", nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, address := range []string{"db-a.test:5432", "db-b.test:5432"} {
+		target.Address = address
+		if got, err := doSQLVersionJournalPath(target); got != "" || err == nil || !strings.Contains(err.Error(), "dosql_version_journal_migration_required") {
+			t.Fatalf("legacy journal was silently adopted for %s: %q %v", address, got, err)
+		}
+	}
+	// Explicit operator migration after verifying the entire old file's owner.
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(legacy, path); err != nil {
+		t.Fatal(err)
+	}
+	target.Address = "db-a.test:5432"
+	if got, err := doSQLVersionJournalPath(target); err != nil || got != path {
+		t.Fatalf("explicit migration rejected: %q %v", got, err)
+	}
+	if version, err := beginDoSQLVersion(path, "new-op", "rotated-binding", "fp", nil); err != nil || version != 2 {
+		t.Fatalf("migration lost historical numbering: %d, %v", version, err)
 	}
 }

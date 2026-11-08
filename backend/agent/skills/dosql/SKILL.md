@@ -53,6 +53,17 @@ For MongoDB, use a structured `mongoOperation`; raw JavaScript is not accepted.
 Changes go through `apply`, not through `query`, `discover`, a generic
 `doops ask`, Bash, `psql`, or a local connection file.
 
+Direct MySQL apply owns the transaction boundary: caller transaction controls,
+autocommit changes and executable comments are rejected. Dry-run rejects
+implicit-commit and unsupported side-effecting syntax before execution; rollback
+still requires transactional tables and does not prove that stored functions or
+triggers have no external effects. Version journals identify the declared
+engine, endpoint list and database, preserving history across credential
+rotation. An ambiguous legacy journal blocks writes until its ownership is
+explicitly reconciled; never bypass it or silently start another history.
+Connection URI restrictions and the legacy migration procedure are owned by
+[the usage guide](../../../docs/DOOPS_USAGE_GUIDE.md#dosql-直接执行-sql).
+
 ## Intended Capabilities
 
 - Resolve the target project, environment and database asset.
