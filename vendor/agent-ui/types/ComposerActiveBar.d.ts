@@ -1,0 +1,20 @@
+import type { ComposerModelControlRenderer } from "./composerModelControl.js";
+import type { SessionRecovery } from "./sessionRecoveryActions.js";
+import type { AgentSessionRuntime, AgentSessionSnapshot } from "./contracts.js";
+import type { AgentWorkspacePresentation } from "./userWorkspacePresentation.js";
+import type { ComposerAttachmentDraft } from "./conversation/useComposerAttachments.js";
+export declare function ComposerActiveBar({ attachmentDraft, canQueue, canCompose, hasDraft, isRunning, onError, presentation, runtime, renderModelControl, sending, sessionRecovery, showInterrupt, snapshot, }: {
+    attachmentDraft: ComposerAttachmentDraft;
+    canQueue: boolean;
+    canCompose: boolean;
+    hasDraft: boolean;
+    isRunning: boolean;
+    onError: (error: unknown) => void;
+    presentation: AgentWorkspacePresentation;
+    runtime: AgentSessionRuntime;
+    renderModelControl?: ComposerModelControlRenderer;
+    sending: boolean;
+    sessionRecovery?: SessionRecovery;
+    showInterrupt: boolean;
+    snapshot: AgentSessionSnapshot;
+}): import("react/jsx-runtime").JSX.Element;

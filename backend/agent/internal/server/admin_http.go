@@ -1,0 +1,372 @@
+package server
+
+import (
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+)
+
+type adminUserCreateRequest struct {
+	Name     string `json:"name"`
+	Password string `json:"password"`
+	Admin    bool   `json:"admin"`
+}
+
+type adminUserPasswordRequest struct {
+	UserID   string `json:"user_id"`
+	User     string `json:"user"`
+	Password string `json:"password"`
+}
+
+type adminUserDisableRequest struct {
+	UserID   string `json:"user_id"`
+	Disabled bool   `json:"disabled"`
+}
+
+type adminGrantRequest struct {
+	UserID   string   `json:"user_id"`
+	User     string   `json:"user"`
+	Cluster  string   `json:"cluster"`
+	Instance string   `json:"instance"`
+	Actions  []string `json:"actions"`
+}
+
+type adminInstanceRequest struct {
+	Cluster  string `json:"cluster"`
+	Instance string `json:"instance"`
+}
+
+type adminInstanceInfo struct {
+	Cluster     string    `json:"cluster"`
+	Instance    string    `json:"instance"`
+	Status      string    `json:"status"`
+	Remote      string    `json:"remote,omitempty"`
+	Busy        bool      `json:"busy"`
+	ActiveOps   int       `json:"active_ops"`
+	QueuedOps   int       `json:"queued_ops"`
+	ConnectedAt time.Time `json:"connected_at,omitempty"`
+	LastSeen    time.Time `json:"last_seen,omitempty"`
+	Archived    bool      `json:"archived"`
+	ArchivedAt  time.Time `json:"archived_at,omitempty"`
+	ArchivedBy  string    `json:"archived_by,omitempty"`
+}
+
+func adminInstanceStatus(st AgentStatus) adminInstanceInfo {
+	return adminInstanceInfo{
+		Cluster: st.Cluster, Instance: st.Instance, Status: "offline", Remote: st.Remote,
+		ConnectedAt: st.ConnectedAt, LastSeen: st.LastSeen,
+		Archived: !st.ArchivedAt.IsZero(), ArchivedAt: st.ArchivedAt, ArchivedBy: st.ArchivedBy,
+	}
+}
+
+func (h *GatewayHub) readAdminInstanceRequest(w http.ResponseWriter, r *http.Request) (adminInstanceRequest, bool) {
+	var req adminInstanceRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return adminInstanceRequest{}, false
+	}
+	req.Cluster = strings.TrimSpace(req.Cluster)
+	req.Instance = strings.TrimSpace(req.Instance)
+	if req.Cluster == "" || req.Instance == "" {
+		http.Error(w, "cluster and instance are required", http.StatusBadRequest)
+		return adminInstanceRequest{}, false
+	}
+	return req, true
+}
+
+// HandleAdminUsers 处理 GET(列出) 与 POST(创建) 用户。
+func (h *GatewayHub) HandleAdminUsers(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		users, err := h.store.ListUsers()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSONHTTP(w, map[string]interface{}{"users": users})
+	case http.MethodPost:
+		var req adminUserCreateRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(req.Name) == "" {
+			http.Error(w, "name is required", http.StatusBadRequest)
+			return
+		}
+		user, err := h.store.CreateUserWithPassword(CreateUserRequest{Name: req.Name, Password: req.Password})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Admin {
+			if err := h.store.SetUserAdmin(user.ID, true); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		writeJSONHTTP(w, map[string]interface{}{
+			"id":       user.ID,
+			"name":     user.Name,
+			"is_admin": req.Admin,
+		})
+	default:
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// HandleAdminUserPassword 处理设置用户密码。
+func (h *GatewayHub) HandleAdminUserPassword(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req adminUserPasswordRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	userID, err := h.resolveUserID(req.UserID, req.User)
+	if err != nil {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	if err := h.store.SetUserPassword(userID, req.Password); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSONHTTP(w, map[string]interface{}{"user_id": userID, "updated": true})
+}
+
+// HandleAdminUserDisable 启用/停用用户。
+func (h *GatewayHub) HandleAdminUserDisable(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req adminUserDisableRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if err := h.store.SetUserDisabled(req.UserID, req.Disabled); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSONHTTP(w, map[string]interface{}{"user_id": req.UserID, "disabled": req.Disabled})
+}
+
+// HandleAdminGrants 处理 GET(列出)、POST(新增)、DELETE(删除) 授权。
+func (h *GatewayHub) HandleAdminGrants(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		grants, err := h.store.ListGrants(strings.TrimSpace(r.URL.Query().Get("user")))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSONHTTP(w, map[string]interface{}{"grants": grants})
+	case http.MethodPost:
+		var req adminGrantRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		userID, err := h.resolveUserID(req.UserID, req.User)
+		if err != nil {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+		if err := rejectPerActionGrant(req.Actions); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		grant := ScopeGrant{Cluster: req.Cluster, Instance: req.Instance}
+		if err := h.store.GrantUser(userID, grant); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSONHTTP(w, map[string]interface{}{"user_id": userID, "granted": true})
+	case http.MethodDelete:
+		id, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("id")), 10, 64)
+		if err != nil {
+			http.Error(w, "invalid id", http.StatusBadRequest)
+			return
+		}
+		if err := h.store.DeleteGrant(id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "grant not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSONHTTP(w, map[string]interface{}{"id": id, "deleted": true})
+	default:
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// HandleAdminInstances lists known instances and merges live connection state.
+// The default result is the active window only. include=history also returns
+// older offline records that are still inside the retention window, including
+// archived records. Grants, tokens, credential bindings and audit history are
+// not affected by either view.
+func (h *GatewayHub) HandleAdminInstances(w http.ResponseWriter, r *http.Request) {
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	includeHistory, err := parseInstanceInclude(strings.TrimSpace(r.URL.Query().Get("include")))
+	if err != nil {
+		http.Error(w, "invalid include", http.StatusBadRequest)
+		return
+	}
+	statuses, err := h.store.ListAgentStatus()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	live := make(map[string]GatewayTarget)
+	for _, t := range h.ListTargets() {
+		live[tunnelKey(t.Cluster, t.Instance)] = t
+	}
+	now := time.Now().UTC()
+	out := make([]adminInstanceInfo, 0, len(statuses))
+	for _, st := range statuses {
+		info := adminInstanceStatus(st)
+		if t, ok := live[tunnelKey(st.Cluster, st.Instance)]; ok {
+			info.Status = "online"
+			info.Busy = t.Busy
+			info.ActiveOps = t.ActiveOps
+			info.QueuedOps = t.QueuedOps
+		}
+		if !includeHistory && !agentInstanceActive(info.Status, info.LastSeen, now) {
+			continue
+		}
+		out = append(out, info)
+	}
+	writeJSONHTTP(w, map[string]interface{}{"instances": out})
+}
+
+// HandleAdminInstanceArchive archives an offline instance record without
+// deleting its grants, tokens, credential bindings, or audit history.
+func (h *GatewayHub) HandleAdminInstanceArchive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	auth, err := h.authenticateUser(r)
+	if err != nil {
+		h.writeUserAuthError(w, r, err)
+		return
+	}
+	if !h.store.UserIsPlatformAdmin(auth.UserID) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+	req, ok := h.readAdminInstanceRequest(w, r)
+	if !ok {
+		return
+	}
+	status, err := h.store.ArchiveAgentStatus(req.Cluster, req.Instance, auth.UserID, time.Now().UTC())
+	switch {
+	case err == nil:
+		writeJSONHTTP(w, adminInstanceStatus(status))
+	case errors.Is(err, ErrAgentStatusNotFound):
+		http.Error(w, "instance not found", http.StatusNotFound)
+	case errors.Is(err, ErrAgentStatusOnline):
+		http.Error(w, "instance is online", http.StatusConflict)
+	default:
+		http.Error(w, "failed to archive instance", http.StatusInternalServerError)
+	}
+}
+
+// HandleAdminInstanceUnarchive restores an archived instance to the normal
+// history view. It is intentionally idempotent for known records.
+func (h *GatewayHub) HandleAdminInstanceUnarchive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !h.requireAdmin(w, r) {
+		return
+	}
+	req, ok := h.readAdminInstanceRequest(w, r)
+	if !ok {
+		return
+	}
+	status, err := h.store.UnarchiveAgentStatus(req.Cluster, req.Instance)
+	if errors.Is(err, ErrAgentStatusNotFound) {
+		http.Error(w, "instance not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "failed to unarchive instance", http.StatusInternalServerError)
+		return
+	}
+	writeJSONHTTP(w, adminInstanceStatus(status))
+}
+
+func (h *GatewayHub) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
+	auth, err := h.authenticateUser(r)
+	if err != nil {
+		h.writeUserAuthError(w, r, err)
+		return false
+	}
+	if !h.store.UserIsPlatformAdmin(auth.UserID) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// resolveUserID 优先用 user_id，否则按用户名查找。
+func (h *GatewayHub) resolveUserID(userID, userName string) (string, error) {
+	if id := strings.TrimSpace(userID); id != "" {
+		if _, err := h.store.FindUserByID(id); err != nil {
+			return "", err
+		}
+		return id, nil
+	}
+	user, err := h.store.FindUserByName(userName)
+	if err != nil {
+		return "", err
+	}
+	return user.ID, nil
+}
+
+// A grant always covers the whole target. "target:use" is what older CLIs send
+// by default and means exactly that; any narrower action list would silently
+// widen into full access, so it is refused instead.
+func rejectPerActionGrant(raw []string) error {
+	for _, a := range raw {
+		if strings.TrimSpace(strings.ToLower(a)) != "target:use" {
+			return errors.New("per-action grants were removed; a grant covers the whole target")
+		}
+	}
+	return nil
+}

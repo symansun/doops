@@ -1,0 +1,31 @@
+import type { ReactNode } from "react";
+import type { AgentArtifactItem } from "../agentArtifactContracts.js";
+import type { AgentToolActivityItem } from "../agentToolContracts.js";
+import type { AgentSessionRuntime } from "../contracts.js";
+import type { ContentRendererRegistry } from "../registry/ContentRendererRegistry.js";
+import type { ToolRendererRegistry } from "../registry/ToolRendererRegistry.js";
+import type { AgentContentRendererRegistration } from "./contentRendererTypes.js";
+import type { AgentToolRendererRegistration } from "./rendererTypes.js";
+import type { WorkbenchContainerMode } from "./useWorkbenchContainerMode.js";
+import type { WorkbenchMode } from "../workbench/codeWorkspaceSource.js";
+import type { AgentResultScope } from "../agentResultScope.js";
+export interface ResultWorkbenchProps {
+    artifacts: AgentArtifactItem[];
+    contentRenderers?: ContentRendererRegistry<AgentContentRendererRegistration>;
+    conversation: ReactNode;
+    forcePane?: boolean;
+    mode: WorkbenchContainerMode;
+    pane?: ReactNode | null;
+    goalPane?: ReactNode | null;
+    paneLabel?: string;
+    presentation?: "developer" | "user";
+    runtime: AgentSessionRuntime;
+    sessionId: string;
+    workspaceArtifacts?: readonly AgentArtifactItem[];
+    toolRenderers?: ToolRendererRegistry<AgentToolRendererRegistration>;
+    tools?: AgentToolActivityItem[];
+    verifiedArtifactsOnly?: boolean;
+    workbenchMode?: WorkbenchMode;
+    resultScope?: AgentResultScope;
+}
+export declare function ResultWorkbench({ artifacts, contentRenderers, conversation, forcePane, mode, pane, goalPane, paneLabel, presentation, runtime, sessionId, workspaceArtifacts, toolRenderers, tools, verifiedArtifactsOnly, workbenchMode, resultScope, }: ResultWorkbenchProps): import("react/jsx-runtime").JSX.Element;

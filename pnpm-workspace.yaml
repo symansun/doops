@@ -1,0 +1,5 @@
+packages:
+  - '.'
+  - 'vendor/agent-ui'
+allowBuilds:
+  sharp: true

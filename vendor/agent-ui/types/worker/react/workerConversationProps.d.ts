@@ -1,0 +1,35 @@
+import type { AgentArtifactItem } from "../../agentArtifactContracts.js";
+import type { AgentWorkspaceProps } from "../../agentWorkspaceProps.js";
+import type { AgentWorkspaceLocale } from "../../agentWorkspaceText.js";
+import type { WorkerRef } from "../contracts.js";
+import type { AgentAdapterBridge } from "../agentAdapterBridge.js";
+import type { WorkspaceView } from "../../WorkspaceViewTabs.js";
+export interface WorkerConversationProps {
+    workerRef: WorkerRef;
+    adapter?: AgentWorkspaceProps["adapter"];
+    onAdapterBridgeReady?: (bridge: AgentAdapterBridge | undefined) => void;
+    presentation?: AgentWorkspaceProps["presentation"];
+    mobile?: AgentWorkspaceProps["mobile"];
+    mobileTerminalToolbar?: AgentWorkspaceProps["mobileTerminalToolbar"];
+    locale?: AgentWorkspaceLocale;
+    className?: string;
+    clientLabel?: string;
+    contentRenderers?: AgentWorkspaceProps["contentRenderers"];
+    domainPanel?: AgentWorkspaceProps["domainPanel"];
+    headerActions?: AgentWorkspaceProps["headerActions"];
+    renderModelControl?: AgentWorkspaceProps["renderModelControl"];
+    inspectorTabs?: AgentWorkspaceProps["inspectorTabs"];
+    inspectorPanel?: AgentWorkspaceProps["inspectorPanel"];
+    showFullscreen?: AgentWorkspaceProps["showFullscreen"];
+    toolRenderers?: AgentWorkspaceProps["toolRenderers"];
+    workspaceArtifacts?: readonly AgentArtifactItem[];
+    terminalRuntime?: AgentWorkspaceProps["terminalRuntime"];
+    onReadyChange?: (ready: boolean) => void;
+    defaultView?: WorkspaceView;
+    goal?: AgentWorkspaceProps["goal"];
+    onWake?: () => void;
+    workbenchMode?: AgentWorkspaceProps["workbenchMode"];
+    defaultWorkbenchMode?: AgentWorkspaceProps["defaultWorkbenchMode"];
+    onWorkbenchModeChange?: AgentWorkspaceProps["onWorkbenchModeChange"];
+    preferenceScope?: AgentWorkspaceProps["preferenceScope"];
+}

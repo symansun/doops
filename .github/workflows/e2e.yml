@@ -2,26 +2,35 @@ name: E2E Smoke
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   smoke:
+    name: Gateway login, command execution and audit
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-
-      # 取舍说明：冒烟链路（gateway SQLite + agent 反向注册 + CLI login/exec/审计）
-      # 与是否运行在容器内无关，进程级即可完整覆盖；直接 go build 可复用
-      # setup-go 的模块缓存，避免拉取 golang/alpine 基础镜像与镜像构建开销，
-      # 在 10 分钟超时预算内更快、更稳定。容器化路径仍可在本地通过
-      # `bash deploy/e2e/smoke.sh --mode compose` 验证。
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          go-version-file: agent/go.mod
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.25.14"
           cache-dependency-path: |
-            agent/go.sum
-            skills/doops-cli/go.sum
-
-      - name: Run E2E smoke (process mode)
+            backend/agent/go.sum
+            backend/gateway/go.sum
+            backend/cli/go.sum
+      - name: Run real E2E smoke on Linux
         run: bash deploy/e2e/smoke.sh --mode process
+      - name: Preserve sanitized failure logs
+        if: failure() && env.DOOPS_E2E_LOG_DIR != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-failure-logs
+          path: ${{ env.DOOPS_E2E_LOG_DIR }}
+          if-no-files-found: error
+          retention-days: 7

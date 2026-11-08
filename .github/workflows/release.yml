@@ -2,51 +2,187 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing semantic tag on main
+        required: true
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-doops
+  cancel-in-progress: false
 
 jobs:
-  build:
+  source:
+    name: Verify release source
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.source.outputs.tag }}
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+      - id: source
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          READ_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          commit="$(git rev-parse HEAD)"
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$commit"
+          git merge-base --is-ancestor "$commit" origin/main
+          published="$(GH_TOKEN="$READ_TOKEN" gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == \"$RELEASE_TAG\" and .draft == false) | .id")"
+          test -z "$published" || { echo "Release is already published and immutable" >&2; exit 1; }
+          printf 'tag=%s\ncommit=%s\n' "$RELEASE_TAG" "$commit" >> "$GITHUB_OUTPUT"
+
+  verify:
+    needs: source
+    uses: ./.github/workflows/ci.yml
+    with:
+      source-ref: ${{ needs.source.outputs.commit }}
+
+  assets:
+    name: Build CLI and Gateway assets
+    needs: [source, verify]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          go-version-file: skills/doops-cli/go.mod
+          ref: ${{ needs.source.outputs.commit }}
+      - name: Build release assets
+        env:
+          DOOPS_CLI_VERSION: ${{ needs.source.outputs.tag }}
+          DOOPS_CLI_COMMIT: ${{ needs.source.outputs.commit }}
+        run: bash backend/scripts/build-cli-release.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: doops-release-assets
+          path: backend/dist/cli/
+          if-no-files-found: error
 
-      - name: Build CLI binaries
-        working-directory: skills/doops-cli/cli/doops
+  images:
+    name: Publish verified GHCR images
+    needs: [source, verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      agent: ${{ steps.images.outputs.agent }}
+      web: ${{ steps.images.outputs.web }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.source.outputs.commit }}
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install registry tooling
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+      - name: Resolve immutable agent base
+        env:
+          DOOPS_DO_AGENT_IMAGE: ${{ vars.DOOPS_DO_AGENT_IMAGE }}
+          DOOPS_SOURCE_COMMIT: ${{ needs.source.outputs.commit }}
         run: |
-          set -e
-          mkdir -p /tmp/dist
-          for t in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
-            GOOS=${t%-*} GOARCH=${t#*-} CGO_ENABLED=0 \
-              go build -trimpath -ldflags='-s -w' -o /tmp/dist/doops-$t .
+          : "${DOOPS_DO_AGENT_IMAGE:?Set DOOPS_DO_AGENT_IMAGE to the verified GHCR runtime digest before releasing}"
+          DOOPS_BASE_IMAGE_OUTPUT="$PWD/backend/.ci-agent-base-image" bash backend/scripts/resolve-agent-base-image.sh
+      - name: Build and verify Agent and Web images
+        id: images
+        env:
+          DOOPS_DO_AGENT_IMAGE: ${{ vars.DOOPS_DO_AGENT_IMAGE }}
+          DOOPS_SOURCE_COMMIT: ${{ needs.source.outputs.commit }}
+          DOOPS_RELEASE_TAG: ${{ needs.source.outputs.tag }}
+          DOOPS_PUBLISH_LATEST: "0"
+        run: |
+          DOOPS_AGENT_BASE_IMAGE_OVERRIDE="$(cat backend/.ci-agent-base-image)"
+          export DOOPS_AGENT_BASE_IMAGE_OVERRIDE
+          bash backend/scripts/build-agent-image.sh
+          bash backend/scripts/build-web-image.sh
+          docker pull "ghcr.io/symansun/doops-agent:$DOOPS_RELEASE_TAG"
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "ghcr.io/symansun/doops-agent:$DOOPS_RELEASE_TAG")"
+          [[ "$digest" =~ ^ghcr.io/symansun/doops-agent@sha256:[0-9a-f]{64}$ ]]
+          printf 'agent=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+          docker pull "ghcr.io/symansun/doops-web:$DOOPS_RELEASE_TAG"
+          web_digest="$(docker inspect --format '{{index .RepoDigests 0}}' "ghcr.io/symansun/doops-web:$DOOPS_RELEASE_TAG")"
+          [[ "$web_digest" =~ ^ghcr.io/symansun/doops-web@sha256:[0-9a-f]{64}$ ]]
+          printf 'web=%s\n' "$web_digest" >> "$GITHUB_OUTPUT"
+          for public_image in "$digest" "$web_digest" "$DOOPS_AGENT_BASE_IMAGE_OVERRIDE" "$DOOPS_DO_AGENT_IMAGE"; do
+            skopeo inspect --no-creds --raw "docker://$public_image" > "$RUNNER_TEMP/public-manifest.json" || {
+              echo "GHCR package must be public before releasing: ${public_image%@*}" >&2
+              exit 1
+            }
+            actual="sha256:$(sha256sum "$RUNNER_TEMP/public-manifest.json" | cut -d ' ' -f 1)"
+            test "$actual" = "${public_image##*@}"
           done
 
-      - name: Build agent and gateway binaries (linux)
-        working-directory: agent
-        run: |
-          set -e
-          for arch in amd64 arm64; do
-            GOOS=linux GOARCH=$arch CGO_ENABLED=0 \
-              go build -trimpath -ldflags='-s -w' -o /tmp/dist/doops-agent-linux-$arch ./cmd/agent
-            GOOS=linux GOARCH=$arch CGO_ENABLED=0 \
-              go build -trimpath -ldflags='-s -w' -o /tmp/dist/doops-gateway-linux-$arch ./cmd/gateway
-          done
-
-      - name: Package skill bundle
-        run: |
-          set -e
-          tar -czf /tmp/dist/doops-skill.tar.gz skills/SKILL.md docs scripts/install.sh
-
-      - name: Checksums
-        run: cd /tmp/dist && shasum -a 256 * > checksums.txt
-
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
+  publish:
+    name: Publish immutable GitHub Release
+    needs: [source, assets, images]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          files: /tmp/dist/*
-          generate_release_notes: true
+          ref: ${{ needs.source.outputs.commit }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: doops-release-assets
+          path: backend/dist/cli
+      - name: Publish draft, verify assets, then release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_COMMIT: ${{ needs.source.outputs.commit }}
+          RELEASE_TAG: ${{ needs.source.outputs.tag }}
+          AGENT_IMAGE: ${{ needs.images.outputs.agent }}
+        run: |
+          node backend/scripts/publish-cli-release.mjs \
+            --repo "${GITHUB_REPOSITORY}" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${RELEASE_COMMIT}" \
+            --dir backend/dist/cli \
+            --image "${AGENT_IMAGE}"
+      - name: Verify public downloads and release identity
+        env:
+          DOOPS_RELEASE_TAG: ${{ needs.source.outputs.tag }}
+          DOOPS_RELEASE_COMMIT: ${{ needs.source.outputs.commit }}
+        run: bash backend/scripts/verify-published-cli-release.sh
+      - name: Install released CLI and matching Skill in isolation
+        env:
+          RELEASE_TAG: ${{ needs.source.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.source.outputs.commit }}
+        run: |
+          install_root="$(mktemp -d)"
+          mkdir "$install_root/project" "$install_root/home"
+          HOME="$install_root/home" bash backend/scripts/install.sh --version "$RELEASE_TAG" --project "$install_root/project"
+          test "$("$install_root/home/.local/bin/doops" version)" = "release=$RELEASE_TAG commit=$RELEASE_COMMIT"
+          test -f "$install_root/project/.agent/skills/doops/SKILL.md"
+          grep -Fx "skill_commit=$RELEASE_COMMIT" "$install_root/home/.local/share/doops/install.txt"
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Promote verified latest aliases
+        env:
+          AGENT_IMAGE: ${{ needs.images.outputs.agent }}
+          WEB_IMAGE: ${{ needs.images.outputs.web }}
+        run: |
+          docker pull "$AGENT_IMAGE"
+          docker tag "$AGENT_IMAGE" ghcr.io/symansun/doops-agent:latest
+          docker push ghcr.io/symansun/doops-agent:latest
+          docker pull "$WEB_IMAGE"
+          docker tag "$WEB_IMAGE" ghcr.io/symansun/doops-web:latest
+          docker push ghcr.io/symansun/doops-web:latest

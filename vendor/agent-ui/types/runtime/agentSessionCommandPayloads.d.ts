@@ -1,0 +1,13 @@
+import type { AgentAttachmentReference, AgentArtifactActionCommand, AgentPermissionResolution } from "../contracts.js";
+import type { AgentExtensionCommand } from "../agentFormSurface.js";
+import type { AgentToolActionCommand } from "../agentToolContracts.js";
+import type { CreateAgentCommandEnvelopeInput } from "./createAgentCommandEnvelope.js";
+type CommandPayload = CreateAgentCommandEnvelopeInput["command"];
+export declare function sendPromptPayload(text: string, attachments?: AgentAttachmentReference[]): CommandPayload;
+export declare function interruptPayload(turnId?: string): CommandPayload;
+export declare function configurationPayload(patch: Record<string, unknown>): CommandPayload;
+export declare function permissionPayload(permissionRequestId: string, resolution: AgentPermissionResolution): CommandPayload;
+export declare function artifactActionPayload(command: AgentArtifactActionCommand): CommandPayload;
+export declare function extensionPayload(command: AgentExtensionCommand): CommandPayload;
+export declare function toolActionPayload(action: AgentToolActionCommand): CommandPayload;
+export {};

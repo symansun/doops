@@ -1,0 +1,3 @@
+import type { WorkerConversationProps } from "./workerConversationProps.js";
+export type { WorkerConversationProps } from "./workerConversationProps.js";
+export declare function WorkerConversation({ workerRef, adapter: providedAdapter, onAdapterBridgeReady, presentation, mobile, mobileTerminalToolbar, locale, className, clientLabel, contentRenderers, domainPanel, headerActions, renderModelControl, inspectorTabs, inspectorPanel, showFullscreen, toolRenderers, workspaceArtifacts, terminalRuntime, onReadyChange, defaultView, goal, onWake, workbenchMode, defaultWorkbenchMode, onWorkbenchModeChange, preferenceScope, }: WorkerConversationProps): import("react/jsx-runtime").JSX.Element;

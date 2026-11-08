@@ -1,0 +1,2 @@
+import type { SessionConversationComposerProps } from "./sessionConversationComposerProps.js";
+export declare function SessionConversationComposer({ onError, onSendingChange, presentation, mobile, runtime, renderModelControl, snapshot, workspaceFiles, mentionHarness, sessionRecovery, codeReferences, onCodeReferencesSent, onRemoveCodeReference, }: SessionConversationComposerProps): import("react/jsx-runtime").JSX.Element;

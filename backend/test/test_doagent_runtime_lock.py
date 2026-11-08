@@ -1,0 +1,111 @@
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+CI = ROOT.parent / ".github/workflows/release.yml"
+RUNTIME = ROOT / "runtime-versions.env"
+IMAGE_BUILD = ROOT / "scripts" / "build-agent-image.sh"
+BASE_IMAGE_BUILD = ROOT / "scripts" / "build-agent-base-image.sh"
+LIGHT_BASE = ROOT / "Dockerfile.base.light"
+DOCKERFILES = (ROOT / "Dockerfile", LIGHT_BASE)
+
+
+def test_doagent_runtime_lock_includes_exact_source_revision():
+    runtime = dict(
+        line.split("=", 1)
+        for line in RUNTIME.read_text().splitlines()
+        if line and not line.startswith("#")
+    )
+    revision = runtime["DO_AGENT_REVISION"]
+
+    assert len(revision) == 40
+    assert runtime["DO_AGENT_VERSION"] == "0.2.42"
+    assert runtime["DO_AGENT_INDEX_DIGEST"].startswith("sha256:")
+    assert len(runtime["DO_AGENT_INDEX_DIGEST"]) == 71
+    assert 'DOOPS_DO_AGENT_IMAGE' in IMAGE_BUILD.read_text()
+    assert 'Runtime must use the verified GHCR digest' in IMAGE_BUILD.read_text()
+
+    image_build = IMAGE_BUILD.read_text()
+    assert '--build-arg DO_AGENT_REVISION="${DO_AGENT_REVISION}"' in image_build
+    assert '--build-arg DOOPS_RELEASE_TAG="${DOOPS_RELEASE_TAG}"' in image_build
+    assert 'release=${DOOPS_RELEASE_TAG} commit=${DOOPS_SOURCE_COMMIT}' in image_build
+    assert '[[ "${DOOPS_PUBLISH_LATEST:-}" == "1" && "${DOOPS_RELEASE_TAG}" != "latest" ]]' in image_build
+    assert 'latest_image="${DOOPS_AGENT_IMAGE_REPOSITORY}:latest"' in image_build
+    assert 'docker push "${latest_image}"' in image_build
+    workflow = CI.read_text()
+    assert 'DOOPS_PUBLISH_LATEST: "0"' in workflow
+    assert "Promote verified latest aliases" in workflow
+    assert 'DOOPS_SOURCE_COMMIT: ${{ needs.source.outputs.commit }}' in workflow
+    assert 'DOOPS_RELEASE_TAG: ${{ needs.source.outputs.tag }}' in workflow
+    assert 'git merge-base --is-ancestor' in workflow
+    assert 'build-agent-image.sh' in workflow
+    assert (
+        'test "${ACTUAL_DOAGENT_REVISION}" = "${DO_AGENT_REVISION}"'
+        in image_build
+    )
+
+    for dockerfile in (ROOT / "Dockerfile",):
+        text = dockerfile.read_text()
+        assert "ARG DO_AGENT_REVISION" in text
+        assert "ARG DOOPS_RELEASE_TAG" in text
+        assert "release.Version=${DOOPS_RELEASE_TAG}" in text
+        assert (
+            'LABEL org.l8ai.doagent.revision="${DO_AGENT_REVISION}"'
+            in text
+        )
+
+
+def resolve_source():
+    return (ROOT / "scripts" / "resolve-agent-base-image.sh").read_text()
+
+
+def test_agent_runtime_keeps_ssh_client_and_rejects_ssh_server():
+    base = LIGHT_BASE.read_text()
+
+    assert "openssh-client" in base
+    assert "openssh-server openssh-client" not in base
+    assert "ssh -V" in base
+    assert "! command -v sshd" in base
+
+    for dockerfile in (ROOT / "Dockerfile",):
+        text = dockerfile.read_text()
+        assert "ssh -V" in text
+        assert "! command -v sshd" in text
+
+    image_build = IMAGE_BUILD.read_text()
+    assert "--entrypoint /usr/bin/ssh" in image_build
+    assert "ssh client" in image_build
+    assert "command -v sshd" in image_build
+    assert "DOOPS_AGENT_BASE_IMAGE_OVERRIDE" in image_build
+
+    base_image_build = BASE_IMAGE_BUILD.read_text()
+    assert "--entrypoint /usr/bin/ssh" in base_image_build
+    assert "command -v sshd" in base_image_build
+    assert "DOOPS_BASE_IMAGE_OUTPUT" in base_image_build
+
+    ci = CI.read_text()
+    assert "resolve-agent-base-image.sh" in ci
+    assert "build-agent-base-image.sh" not in ci
+    assert "backend/.ci-agent-base-image" in ci
+    assert "runtime-versions.env" in resolve_source()
+
+    # The base is rebuilt only when its inputs change, so unchanged base layers
+    # stay cached on every target node across releases.
+    resolve = (ROOT / "scripts" / "resolve-agent-base-image.sh").read_text()
+    assert "Dockerfile.base.light" in resolve
+    assert "runtime-versions.env" in resolve
+    assert "grep -v '^DOOPS_AGENT_BASE_IMAGE='" in resolve
+    assert 'BASE_TAG="inputs-${INPUT_HASH}"' in resolve
+    assert "scripts/build-agent-base-image.sh" in resolve
+    assert "@sha256:[0-9a-f]{64}$" in resolve
+
+
+
+def test_only_init_reaps_orphan_processes():
+    gateway = (ROOT / "agent/internal/server/gateway.go").read_text()
+    assert "Wait4(" not in gateway
+    for name in ("agent-entrypoint.sh", "sandbox-entrypoint.sh"):
+        entrypoint = (ROOT / "agent" / name).read_text()
+        assert 'tini -s -- /app/doops-agent "$@"' in entrypoint
+        assert "tini is required for process cleanup" in entrypoint
+        assert "falling back to direct" not in entrypoint

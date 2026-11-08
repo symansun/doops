@@ -5,28 +5,43 @@ on:
     - cron: "*/30 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   health:
+    if: vars.DOOPS_DEMO_BASE_URL != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      DEMO_BASE_URL: https://doops.l8ai.cn
+      DEMO_BASE_URL: ${{ vars.DOOPS_DEMO_BASE_URL }}
     steps:
-      - name: HTTP 健康检查（GET /health）
+      - name: Verify public health
         run: |
-          code=$(curl -sS -o /tmp/health.body -w '%{http_code}' --max-time 20 "$DEMO_BASE_URL/health")
-          echo "GET $DEMO_BASE_URL/health -> HTTP $code, body: $(cat /tmp/health.body)"
-          [ "$code" = "200" ]
-
-      - name: 认证检查（POST /v1/auth/login）
+          [[ "$DEMO_BASE_URL" == https://* ]]
+          code=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 20 "$DEMO_BASE_URL/health")
+          test "$code" = 200
+      - name: Verify password authentication
         env:
           DOOPS_DEMO_PASSWORD: ${{ secrets.DOOPS_DEMO_PASSWORD }}
+          DOOPS_DEMO_USERNAME: ${{ vars.DOOPS_DEMO_USERNAME }}
         run: |
-          code=$(curl -sS -o /tmp/login.body -w '%{http_code}' --max-time 20 \
-            -X POST "$DEMO_BASE_URL/v1/auth/login" \
-            -H 'Content-Type: application/json' \
-            -d "{\"username\":\"admin\",\"password\":\"$DOOPS_DEMO_PASSWORD\"}")
-          echo "POST $DEMO_BASE_URL/v1/auth/login -> HTTP $code"
-          [ "$code" = "200" ]
-          grep -q '"token"' /tmp/login.body
-          echo "login ok, token issued"
+          : "${DOOPS_DEMO_PASSWORD:?Configure a synthetic demo password}"
+          : "${DOOPS_DEMO_USERNAME:?Configure the demo account}"
+          umask 077
+          temporary=$(mktemp -d)
+          trap 'rm -rf "$temporary"' EXIT
+          python3 - "$temporary/login.json" <<'PY'
+          import json, os, sys
+          with open(sys.argv[1], "w") as destination:
+              json.dump({"username": os.environ["DOOPS_DEMO_USERNAME"], "password": os.environ["DOOPS_DEMO_PASSWORD"], "name": "demo-health"}, destination)
+          PY
+          code=$(curl --silent --show-error --output "$temporary/response.json" --write-out '%{http_code}' --max-time 20 \
+            --header 'Content-Type: application/json' --data-binary "@$temporary/login.json" "$DEMO_BASE_URL/v1/auth/login")
+          test "$code" = 200
+          python3 - "$temporary/response.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1]) as response:
+              value = json.load(response)
+          assert isinstance(value.get("token"), str) and value["token"], "login response missing token"
+          PY
