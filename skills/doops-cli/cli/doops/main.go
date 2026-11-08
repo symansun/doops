@@ -337,12 +337,8 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 		if server == nil {
 			fatalServerNotFound(target)
 		}
-		if strings.TrimSpace(server.Gateway) != "" {
-			fmt.Printf("Error: target '%s' is gateway-only; interactive SSH bash is not supported. Use doops -session <id> exec --target %s --cmd '<command>'.\n", target, target)
-			os.Exit(1)
-		}
-		if strings.TrimSpace(server.IP) == "" {
-			fmt.Printf("Error: target '%s' has no SSH IP configured.\n", target)
+		if strings.TrimSpace(server.IP) == "" && strings.TrimSpace(server.Gateway) == "" {
+			fmt.Printf("Error: target '%s' has neither SSH IP nor gateway configured.\n", target)
 			os.Exit(1)
 		}
 
@@ -449,6 +445,10 @@ DoOps 分布式服务器管理工具 (DoOps CLI)
 		server := findServer(servers, target)
 		if server == nil {
 			fatalServerNotFound(target)
+		}
+		if strings.TrimSpace(server.Gateway) != "" {
+			fmt.Printf("Error: target '%s' is gateway-only; interactive SSH bash is not supported. Use doops -session <id> exec --target %s --cmd '<command>'.\n", target, target)
+			os.Exit(1)
 		}
 
 		fmt.Printf("\033[93m[TARGETING]\033[0m Interactive Bash on %s (%s)\n", server.Name, server.IP)
