@@ -291,12 +291,12 @@ func (gw *Gateway) ServeWebSocketConn(conn *websocket.Conn, remoteAddr string) {
 						activeToolMu.Unlock()
 						cancel()
 					}()
-					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, writeJSON)
+					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, params.CallerScopes, writeJSON)
 				}()
 			} else {
 				go func() {
 					defer cancel()
-					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, writeJSON)
+					gw.handleToolCallOverWS(ctx, req.ID, params.Name, params.Arguments, params.CallerScopes, writeJSON)
 				}()
 			}
 		}
@@ -330,7 +330,8 @@ func appendBlockedAudit(sessionID, ruleID, command string) {
 type notificationSender func(text string)
 
 // handleToolCallOverWS 处理具体的 MCP tool 调用（复用原有的处理逻辑，但直接向 WS 写入结果）
-func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, toolName string, argBytes json.RawMessage, writeJSON func(v interface{})) {
+// callerScopes 是 gateway 转发 exec 帧时注入的调用方 scope 摘要；缺省（旧 gateway/直连）时护栏照常生效。
+func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, toolName string, argBytes json.RawMessage, callerScopes []string, writeJSON func(v interface{})) {
 	var sessionID string
 	var argsMap map[string]interface{}
 	json.Unmarshal(argBytes, &argsMap)
@@ -361,8 +362,10 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	case "doops_shell":
 		var args api.ShellParams
 		json.Unmarshal(argBytes, &args)
-		// 命令护栏：命中即拒绝并写审计（含规则 ID，便于追溯与豁免配置）
-		if gw.Dispatcher != nil {
+		bypassedByScope := dispatcher.ScopeBypassesGuardrail(callerScopes)
+		// 命令护栏：命中即拒绝并写审计（含规则 ID，便于追溯与豁免配置）。
+		// 调用方 scopes 含 admin / exec:privileged 时跳过规则匹配，审计照常写入并追加 bypassed_by_scope=1。
+		if gw.Dispatcher != nil && !bypassedByScope {
 			if path, rule := gw.Dispatcher.ClassifyCommand(args.Command); path == dispatcher.PathBlocked {
 				log.Printf("⛔ WS Exec blocked: [%s] rule=%s cmd=%s", sessionID, rule.ID, args.Command)
 				appendBlockedAudit(sessionID, rule.ID, args.Command)
@@ -370,6 +373,9 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 					fmt.Sprintf("command blocked by agent guardrail [%s]: %s", rule.ID, rule.Desc)))
 				return
 			}
+		}
+		if bypassedByScope {
+			log.Printf("⚠️ WS Exec guardrail bypassed by scope: [%s] cmd=%s", sessionID, args.Command)
 		}
 
 		log.Printf("🖥️  WS Exec: [%s] %s", sessionID, args.Command)
@@ -423,6 +429,9 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 			}
 
 			entry := fmt.Sprintf("# [%s] exit=%d\n%s\n", time.Now().Format("2006-01-02 15:04:05"), exitCode, args.Command)
+			if bypassedByScope {
+				entry = fmt.Sprintf("# [%s] exit=%d bypassed_by_scope=1\n%s\n", time.Now().Format("2006-01-02 15:04:05"), exitCode, args.Command)
+			}
 			if f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
 				f.WriteString(entry)
 				f.Close()

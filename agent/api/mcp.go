@@ -33,6 +33,9 @@ type ShellParams struct {
 type ToolCallParams struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+	// CallerScopes 是 gateway 转发 exec 类调用帧时注入的调用方 scope 摘要（可选，向后兼容）。
+	// gateway 转发前会覆盖/清除客户端自带的同名字段，agent 侧以此判定护栏豁免。
+	CallerScopes []string `json:"caller_scopes,omitempty"`
 }
 
 // FileWriteParams 用于 doops_file_write 远程文件写入。

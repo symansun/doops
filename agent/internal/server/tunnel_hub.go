@@ -679,6 +679,13 @@ func (h *GatewayHub) handleGatewayToolCall(auth TokenAuth, cluster, instance str
 		writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
 		return nil
 	}
+	// 注入调用方 scope 摘要（仅 exec 类转发帧携带），覆盖/清除客户端伪造的同名字段；
+	// 非 exec 调用一律清空，保证 agent 只在 exec 帧上看到 gateway 背书的 caller_scopes。
+	if action == ActionExec {
+		params.CallerScopes = h.store.UserScopeActions(auth.UserID, cluster, instance)
+	} else {
+		params.CallerScopes = nil
+	}
 	agent := h.getAgent(cluster, instance)
 	if agent == nil {
 		errMsg := fmt.Sprintf("target offline: %s/%s", cluster, instance)
@@ -1098,14 +1105,18 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 		a.pendingMu.Unlock()
 	}()
 
+	frameParams := map[string]interface{}{
+		"name":      params.Name,
+		"arguments": params.Arguments,
+	}
+	if len(params.CallerScopes) > 0 {
+		frameParams["caller_scopes"] = params.CallerScopes
+	}
 	if err := a.writeJSON(map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  "tools/call",
 		"id":      id,
-		"params": map[string]interface{}{
-			"name":      params.Name,
-			"arguments": params.Arguments,
-		},
+		"params":  frameParams,
 	}); err != nil {
 		return err
 	}

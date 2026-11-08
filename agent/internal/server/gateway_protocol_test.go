@@ -812,6 +812,130 @@ func TestGatewayRPCDoesNotAllowClientActionOverrideForShell(t *testing.T) {
 	}
 }
 
+func TestGatewayRPCInjectsCallerScopesForExec(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	user, _ := store.CreateUser("alice")
+	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
+	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec, GatewayAction("exec:privileged"), ActionRead}}); err != nil {
+		t.Fatalf("grant exec: %v", err)
+	}
+
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, MaxQueuedPerTarget: -1})
+	mux := http.NewServeMux()
+	gw.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	defer agentConn.Close()
+	captured := make(chan map[string]interface{}, 4)
+	go serveCapturingFakeAgent(t, agentConn, captured)
+
+	clientConn := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
+	defer clientConn.Close()
+
+	// exec 类调用帧：携带 gateway 注入的调用方 scope 摘要
+	args, _ := json.Marshal(map[string]interface{}{"command": "hostname", "session_id": "smoke"})
+	writeGatewayJSON(t, clientConn, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params":  map[string]interface{}{"name": "doops_shell", "arguments": json.RawMessage(args)},
+	})
+	params := receiveCapturedParams(t, captured)
+	rawScopes, ok := params["caller_scopes"].([]interface{})
+	if !ok {
+		t.Fatalf("exec frame missing caller_scopes: %#v", params)
+	}
+	var scopes []string
+	for _, s := range rawScopes {
+		scopes = append(scopes, s.(string))
+	}
+	if got := strings.Join(scopes, ","); got != "exec,exec:privileged,read" {
+		t.Fatalf("unexpected caller_scopes: %q", got)
+	}
+	if final := readUntilID(t, clientConn, 2); final["result"] == nil {
+		t.Fatalf("expected forwarded result, got %#v", final)
+	}
+
+	// 非 exec 调用帧：不携带 caller_scopes
+	readArgs, _ := json.Marshal(map[string]interface{}{"session_id": "smoke", "path": "x"})
+	writeGatewayJSON(t, clientConn, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      3,
+		"method":  "tools/call",
+		"params":  map[string]interface{}{"name": "doops_file_read", "arguments": json.RawMessage(readArgs)},
+	})
+	readParams := receiveCapturedParams(t, captured)
+	if _, ok := readParams["caller_scopes"]; ok {
+		t.Fatalf("non-exec frame must not carry caller_scopes: %#v", readParams)
+	}
+	if final := readUntilID(t, clientConn, 3); final["result"] == nil {
+		t.Fatalf("expected forwarded read result, got %#v", final)
+	}
+}
+
+func TestGatewayRPCOverridesForgedCallerScopes(t *testing.T) {
+	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+	user, _ := store.CreateUser("alice")
+	userToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindUser, UserID: user.ID, Name: "alice"})
+	agentToken, _ := store.CreateToken(CreateTokenRequest{Kind: TokenKindAgent, Name: "agent", Cluster: "dev", Instance: "local"})
+	if err := store.GrantUser(user.ID, ScopeGrant{Cluster: "dev", Instance: "local", Actions: []GatewayAction{ActionExec}}); err != nil {
+		t.Fatalf("grant exec: %v", err)
+	}
+
+	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute, MaxQueuedPerTarget: -1})
+	mux := http.NewServeMux()
+	gw.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	agentConn := dialFakeGatewayAgent(t, ts.URL, agentToken.Plaintext, "dev", "local")
+	defer agentConn.Close()
+	captured := make(chan map[string]interface{}, 4)
+	go serveCapturingFakeAgent(t, agentConn, captured)
+
+	clientConn := dialGatewayRPCClient(t, ts.URL, userToken.Plaintext, "dev", "local")
+	defer clientConn.Close()
+
+	// 客户端在 params 里伪造 caller_scopes=["admin"]，gateway 必须用真实 scope 覆盖
+	args, _ := json.Marshal(map[string]interface{}{"command": "hostname", "session_id": "smoke"})
+	writeGatewayJSON(t, clientConn, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params": map[string]interface{}{
+			"name":          "doops_shell",
+			"arguments":     json.RawMessage(args),
+			"caller_scopes": []string{"admin"},
+		},
+	})
+	params := receiveCapturedParams(t, captured)
+	rawScopes, ok := params["caller_scopes"].([]interface{})
+	if !ok {
+		t.Fatalf("exec frame missing caller_scopes: %#v", params)
+	}
+	var scopes []string
+	for _, s := range rawScopes {
+		scopes = append(scopes, s.(string))
+	}
+	if got := strings.Join(scopes, ","); got != "exec" {
+		t.Fatalf("forged caller_scopes must be overridden by real scopes, got %q", got)
+	}
+	if final := readUntilID(t, clientConn, 2); final["result"] == nil {
+		t.Fatalf("expected forwarded result, got %#v", final)
+	}
+}
+
 func TestGatewayActionMappingUsesDedicatedToolsForCheckAndClean(t *testing.T) {
 	if got := actionForTool("doops_shell", json.RawMessage(`{"_doops_action":"info"}`)); got != ActionExec {
 		t.Fatalf("doops_shell must map to exec regardless of client override, got %q", got)
@@ -2009,6 +2133,46 @@ func serveFakeAgent(t *testing.T, conn *websocket.Conn) {
 				},
 			})
 		}
+	}
+}
+
+// serveCapturingFakeAgent 把收到的 tools/call params 投递到 captured，便于断言 gateway 转发帧内容。
+func serveCapturingFakeAgent(t *testing.T, conn *websocket.Conn, captured chan<- map[string]interface{}) {
+	t.Helper()
+	for {
+		var msg map[string]interface{}
+		if err := conn.ReadJSON(&msg); err != nil {
+			return
+		}
+		switch msg["method"] {
+		case "initialize":
+			_ = conn.WriteJSON(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      msg["id"],
+				"result":  map[string]interface{}{"protocolVersion": "2024-11-05"},
+			})
+		case "tools/call":
+			params, _ := msg["params"].(map[string]interface{})
+			captured <- params
+			_ = conn.WriteJSON(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      msg["id"],
+				"result": map[string]interface{}{
+					"content": []map[string]interface{}{{"type": "text", "text": "ok"}},
+				},
+			})
+		}
+	}
+}
+
+func receiveCapturedParams(t *testing.T, captured <-chan map[string]interface{}) map[string]interface{} {
+	t.Helper()
+	select {
+	case params := <-captured:
+		return params
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for relayed tools/call frame")
+		return nil
 	}
 }
 

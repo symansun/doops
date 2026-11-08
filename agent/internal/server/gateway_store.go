@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -545,6 +546,43 @@ func gatewayActionAllows(granted, requested GatewayAction) bool {
 		return true
 	}
 	return false
+}
+
+// UserScopeActions 返回用户在指定 cluster/instance 上被授予的 action 列表（去重并排序）。
+// gateway 转发 exec 类调用帧时用它生成 caller_scopes 摘要，供 agent 侧判定护栏豁免。
+func (s *GatewayStore) UserScopeActions(userID, cluster, instance string) []string {
+	if userID == "" {
+		return nil
+	}
+	rows, err := s.db.Query(`SELECT cluster, instance, actions_json FROM grants WHERE user_id = ?`, userID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	seen := make(map[string]bool)
+	var scopes []string
+	for rows.Next() {
+		var clusterPattern, instancePattern, rawActions string
+		if err := rows.Scan(&clusterPattern, &instancePattern, &rawActions); err != nil {
+			return nil
+		}
+		if !scopeMatches(clusterPattern, cluster) || !scopeMatches(instancePattern, instance) {
+			continue
+		}
+		var actions []GatewayAction
+		if json.Unmarshal([]byte(rawActions), &actions) != nil {
+			continue
+		}
+		for _, action := range actions {
+			scope := string(action)
+			if scope != "" && !seen[scope] {
+				seen[scope] = true
+				scopes = append(scopes, scope)
+			}
+		}
+	}
+	sort.Strings(scopes)
+	return scopes
 }
 
 func defaultGatewayUserActionAllows(action GatewayAction) bool {

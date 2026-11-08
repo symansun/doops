@@ -301,6 +301,65 @@ func TestGuardrailExtraViaEnv(t *testing.T) {
 	}
 }
 
+// 集成：调用方 scopes 含 admin / exec:privileged 时护栏豁免放行，审计照常写入并追加 bypassed_by_scope=1。
+func TestGuardrailBypassedByScopeViaWS(t *testing.T) {
+	conn, root := setupGuardrailWS(t)
+
+	// 命中 disk.dd_device 但执行层天然无害（设备不存在/无权限），验证放行而非依赖命令成功
+	cases := []struct {
+		session string
+		scopes  []string
+	}{
+		{"guard-bypass-admin", []string{"exec", "admin"}},
+		{"guard-bypass-privileged", []string{"exec:privileged"}},
+	}
+	for _, tc := range cases {
+		result := callToolResultWithScopes(t, conn, "doops_shell", map[string]interface{}{
+			"session_id": tc.session,
+			"command":    "dd if=/dev/zero of=/dev/sda count=0",
+		}, tc.scopes)
+		if strings.Contains(rpcErrorText(result), "agent guardrail") {
+			t.Fatalf("scopes %v: expected guardrail bypass, got %q", tc.scopes, rpcErrorText(result))
+		}
+		audit := readAuditLog(t, root, tc.session)
+		if !strings.Contains(audit, "bypassed_by_scope=1") {
+			t.Fatalf("scopes %v: audit missing bypassed_by_scope=1:\n%s", tc.scopes, audit)
+		}
+		if !strings.Contains(audit, "dd if=/dev/zero of=/dev/sda count=0") {
+			t.Fatalf("scopes %v: audit missing command:\n%s", tc.scopes, audit)
+		}
+	}
+}
+
+// 集成：无特权 scope（或完全不携带 scope 字段，兼容旧 gateway）的调用仍被护栏拦截。
+func TestGuardrailStillBlocksWithoutPrivilegedScopeViaWS(t *testing.T) {
+	conn, root := setupGuardrailWS(t)
+
+	// 帧携带 scope 但无特权值：仍拦截
+	result := callToolResultWithScopes(t, conn, "doops_shell", map[string]interface{}{
+		"session_id": "guard-noscope",
+		"command":    "rm -rf /",
+	}, []string{"exec"})
+	if !strings.Contains(rpcErrorText(result), "disk.rm_root") {
+		t.Fatalf("expected disk.rm_root block for non-privileged scopes, got %q", rpcErrorText(result))
+	}
+	// 帧完全没有 caller_scopes 字段：仍拦截
+	result = callToolResult(t, conn, "doops_shell", map[string]interface{}{
+		"session_id": "guard-noscope",
+		"command":    "rm -rf /",
+	})
+	if !strings.Contains(rpcErrorText(result), "disk.rm_root") {
+		t.Fatalf("expected disk.rm_root block without scope field, got %q", rpcErrorText(result))
+	}
+	audit := readAuditLog(t, root, "guard-noscope")
+	if !strings.Contains(audit, "blocked=1 rule=disk.rm_root") {
+		t.Fatalf("audit missing blocked entry:\n%s", audit)
+	}
+	if strings.Contains(audit, "bypassed_by_scope=1") {
+		t.Fatalf("blocked call must not carry bypass marker:\n%s", audit)
+	}
+}
+
 func TestAgentWebSocketRejectsDockerNewlineInjection(t *testing.T) {
 	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
 	gw := NewGateway("0")
@@ -853,6 +912,35 @@ func callToolResult(t *testing.T, conn *websocket.Conn, tool string, args map[st
 		"params": map[string]interface{}{
 			"name":      tool,
 			"arguments": json.RawMessage(rawArgs),
+		},
+	}); err != nil {
+		t.Fatalf("call %s: %v", tool, err)
+	}
+	for {
+		var msg map[string]interface{}
+		if err := conn.ReadJSON(&msg); err != nil {
+			t.Fatalf("read %s response: %v", tool, err)
+		}
+		if _, ok := msg["method"]; ok {
+			continue
+		}
+		return msg
+	}
+}
+
+// callToolResultWithScopes 模拟 gateway 转发帧：params 携带 caller_scopes 摘要。
+func callToolResultWithScopes(t *testing.T, conn *websocket.Conn, tool string, args map[string]interface{}, scopes []string) map[string]interface{} {
+	t.Helper()
+	rawArgs, _ := json.Marshal(args)
+	id := float64(len(tool) + len(rawArgs) + len(scopes))
+	if err := conn.WriteJSON(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  "tools/call",
+		"params": map[string]interface{}{
+			"name":          tool,
+			"arguments":     json.RawMessage(rawArgs),
+			"caller_scopes": scopes,
 		},
 	}); err != nil {
 		t.Fatalf("call %s: %v", tool, err)
