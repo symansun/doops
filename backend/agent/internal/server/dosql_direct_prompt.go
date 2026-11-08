@@ -65,8 +65,12 @@ func handleDirectDoSQLPrompt(ctx context.Context, sessionID string, args api.Age
 	}
 	// A real apply takes its version before touching the database; if the
 	// journal cannot record it, nothing runs. Queries and dry-runs are not versions.
-	journalPath := doSQLVersionJournalPath(engine, database)
+	var journalPath string
 	if !request.ReadOnly && !request.DryRun {
+		journalPath, err = doSQLVersionJournalPath(target)
+		if err != nil {
+			return "", fmt.Errorf("%w (operation_id=%s): nothing was executed", err, report.OperationID)
+		}
 		version, err := beginDoSQLVersion(journalPath, report.OperationID, binding.Name, report.StatementFingerprint, request.Statements)
 		if err != nil {
 			return "", fmt.Errorf("%w (operation_id=%s): nothing was executed", err, report.OperationID)

@@ -87,6 +87,9 @@ func doSQLMSSQLTarget(databaseName, raw string) (doSQLTarget, error) {
 	if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "sqlserver" && parsed.Scheme != "mssql") {
 		return doSQLTarget{}, errors.New("dosql_connection_uri_invalid: mssql credential needs connection_uri sqlserver://user:password@host:port/database")
 	}
+	if err := doSQLValidateTargetURI("mssql", parsed); err != nil {
+		return doSQLTarget{}, err
+	}
 	database := strings.Trim(parsed.Path, "/")
 	if database != databaseName {
 		return doSQLTarget{}, fmt.Errorf("dosql_database_name_mismatch: credential points to %q, request names %q", database, databaseName)
@@ -106,6 +109,9 @@ func doSQLURITarget(engine, driver, databaseName, raw string, schemes []string, 
 	if err != nil || parsed.Hostname() == "" || !containsDoSQLString(schemes, parsed.Scheme) {
 		return doSQLTarget{}, fmt.Errorf("dosql_connection_uri_invalid: %s credential needs connection_uri %s://user:password@host:port/database", engine, schemes[0])
 	}
+	if err := doSQLValidateTargetURI(engine, parsed); err != nil {
+		return doSQLTarget{}, err
+	}
 	database := strings.Trim(parsed.Path, "/")
 	if database != databaseName {
 		return doSQLTarget{}, fmt.Errorf("dosql_database_name_mismatch: credential points to %q, request names %q", database, databaseName)
@@ -114,10 +120,80 @@ func doSQLURITarget(engine, driver, databaseName, raw string, schemes []string, 
 	if port == "" {
 		port = defaultPort
 	}
+	address := net.JoinHostPort(parsed.Hostname(), port)
+	if engine == "mongodb" || engine == "postgres" {
+		var endpoints, hosts, ports []string
+		for _, host := range strings.Split(parsed.Host, ",") {
+			endpoint, err := url.Parse(engine + "://" + host)
+			if err != nil || endpoint.Hostname() == "" {
+				return doSQLTarget{}, errors.New("dosql_connection_uri_invalid: invalid database endpoint")
+			}
+			port := endpoint.Port()
+			hosts = append(hosts, endpoint.Hostname())
+			if port != "" {
+				ports = append(ports, port)
+			}
+			if port == "" {
+				port = defaultPort
+			}
+			endpoints = append(endpoints, net.JoinHostPort(endpoint.Hostname(), port))
+		}
+		if engine == "postgres" {
+			// pgx compacts explicitly supplied ports, pairs them by host
+			// index, then reuses the first port for remaining hosts.
+			if len(ports) == 0 {
+				ports = []string{defaultPort}
+			}
+			for i, host := range hosts {
+				port := ports[0]
+				if i < len(ports) {
+					port = ports[i]
+				}
+				endpoints[i] = net.JoinHostPort(host, port)
+			}
+		}
+		address = strings.Join(endpoints, ",")
+	}
+	// The driver must receive the same explicit endpoint as the journal.
+	// In particular, pgx otherwise takes an omitted port from PGPORT.
+	parsed.Host = address
+	if engine == "postgres" {
+		parsed.Scheme = "postgres"
+	}
 	return doSQLTarget{
 		Engine: engine, Driver: driver, DSN: parsed.String(), Database: database,
-		Address: net.JoinHostPort(parsed.Hostname(), port),
+		Address: address,
 	}, nil
+}
+
+func doSQLValidateTargetURI(engine string, parsed *url.URL) error {
+	if parsed.Path == "/" || parsed.Path != "/"+strings.Trim(parsed.Path, "/") || parsed.Fragment != "" {
+		return errors.New("dosql_connection_uri_invalid: use exactly /database without a trailing slash or fragment")
+	}
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return errors.New("dosql_connection_uri_invalid: malformed query options")
+	}
+	// These driver options can replace or add to the authority/path target.
+	// Reject them before selecting a journal, instead of silently discarding
+	// them or hashing connection strings that contain rotating credentials.
+	var forbidden []string
+	switch engine {
+	case "postgres":
+		forbidden = []string{"host", "hostaddr", "port", "database", "dbname", "service", "servicefile"}
+	case "mssql":
+		forbidden = []string{"server", "port", "database", "failoverpartner", "failoverport"}
+	case "oracle":
+		forbidden = []string{"connstr", "server", "service name", "sid", "instance name", "unix socket"}
+	case "mongodb":
+		forbidden = []string{"host", "port", "database", "dbname"}
+	}
+	for key := range query {
+		if containsDoSQLString(forbidden, strings.ToLower(key)) {
+			return errors.New("dosql_connection_uri_target_override_unsupported: put the endpoint and database in URI authority/path, without target or failover query options")
+		}
+	}
+	return nil
 }
 
 func doSQLMySQLTarget(databaseName, raw, prefix, user, password string) (doSQLTarget, error) {

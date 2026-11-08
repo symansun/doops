@@ -62,6 +62,10 @@ func splitDoSQLStatements(engine, text string) ([]string, error) {
 			index = end - 1
 			continue
 		case char == '/' && index+1 < len(runes) && runes[index+1] == '*':
+			if engine == "mysql" && (index+2 < len(runes) && runes[index+2] == '!' ||
+				index+3 < len(runes) && runes[index+2] == 'M' && runes[index+3] == '!') {
+				return nil, errors.New("dosql_statement_executable_comment_unsupported")
+			}
 			end := strings.Index(string(runes[index+2:]), "*/")
 			if end < 0 {
 				return nil, errors.New("dosql_statement_unterminated_comment")
@@ -108,6 +112,11 @@ func splitDoSQLStatements(engine, text string) ([]string, error) {
 		return nil, errors.New("dosql_statement_batch_too_large")
 	}
 	for _, statement := range statements {
+		if engine == "mysql" {
+			if _, err := doSQLMySQLStatementWords(statement); err != nil {
+				return nil, err
+			}
+		}
 		words := doSQLLeadingKeywords(statement, 4)
 		if len(words) == 0 {
 			return nil, errors.New("dosql_statement_invalid")
@@ -228,6 +237,79 @@ var doSQLImplicitCommitKeywords = map[string]bool{
 	"LOCK": true, "UNLOCK": true, "FLUSH": true, "COMMENT": true, "AUDIT": true,
 }
 
+// MySQL executes versioned comments as SQL. Reject them instead of treating
+// their contents as inert comments at the transaction boundary.
+func doSQLMySQLStatementWords(statement string) ([]string, error) {
+	runes := []rune(statement)
+	var words []string
+	for i := 0; i < len(runes); {
+		switch {
+		case runes[i] == '#' || runes[i] == '-' && i+2 < len(runes) && runes[i+1] == '-' && unicode.IsSpace(runes[i+2]):
+			for i < len(runes) && runes[i] != '\n' {
+				i++
+			}
+		case runes[i] == '/' && i+1 < len(runes) && runes[i+1] == '*':
+			if i+2 < len(runes) && runes[i+2] == '!' ||
+				i+3 < len(runes) && runes[i+2] == 'M' && runes[i+3] == '!' {
+				return nil, errors.New("dosql_statement_executable_comment_unsupported")
+			}
+			i += 2
+			for i+1 < len(runes) && !(runes[i] == '*' && runes[i+1] == '/') {
+				i++
+			}
+			if i+1 >= len(runes) {
+				return nil, errors.New("dosql_statement_unterminated_comment")
+			}
+			i += 2
+		case runes[i] == '\'' || runes[i] == '"' || runes[i] == '`':
+			end := doSQLClosingQuote(runes, i, runes[i], runes[i] != '`')
+			if end < 0 {
+				return nil, errors.New("dosql_statement_unterminated_quote")
+			}
+			if runes[i] == '`' || runes[i] == '"' {
+				words = append(words, strings.ToUpper(string(runes[i+1:end])))
+			}
+			i = end + 1
+		case doSQLIdentifierRune(runes[i]):
+			start := i
+			for i < len(runes) && doSQLIdentifierRune(runes[i]) {
+				i++
+			}
+			words = append(words, strings.ToUpper(string(runes[start:i])))
+		default:
+			i++
+		}
+	}
+	if len(words) == 0 {
+		return nil, errors.New("dosql_statement_invalid")
+	}
+	if doSQLTransactionKeywords[words[0]] || words[0] == "XA" ||
+		words[0] == "SET" && (containsDoSQLString(words[1:], "AUTOCOMMIT") || containsDoSQLString(words[1:], "TRANSACTION")) {
+		return words, errors.New("dosql_statement_transaction_control_forbidden: DoSql owns the transaction and autocommit settings")
+	}
+	return words, nil
+}
+
+// This is a syntax boundary, not a storage-engine or stored-function audit.
+// Transactional DML is supported; nontransactional tables and function/trigger
+// side effects remain outside the rollback guarantee.
+func doSQLMySQLDryRunSafe(words []string) bool {
+	switch words[0] {
+	case "INSERT", "UPDATE", "DELETE", "REPLACE":
+		return true
+	case "SELECT", "WITH", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "VALUES", "TABLE":
+		for i := 1; i < len(words); i++ {
+			if words[i-1] == "INTO" && (words[i] == "OUTFILE" || words[i] == "DUMPFILE") {
+				return false
+			}
+		}
+		return true
+	}
+	// Session/admin state, stored procedures and dynamic SQL cannot be
+	// certified as rollback-safe from the submitted statement.
+	return false
+}
+
 // Unknown (external) engines are assumed to commit DDL implicitly: claiming a
 // rollback that the engine cannot honour is worse than refusing a dry run.
 func doSQLEngineCommitsDDLImplicitly(engine string) bool {
@@ -244,6 +326,27 @@ func doSQLCommitsImplicitly(engine, statement string) bool {
 	if !doSQLEngineCommitsDDLImplicitly(engine) {
 		return false
 	}
-	words := doSQLLeadingKeywords(statement, 1)
-	return len(words) == 1 && doSQLImplicitCommitKeywords[words[0]]
+	words := doSQLLeadingKeywords(statement, 3)
+	if len(words) == 0 {
+		return false
+	}
+	if engine == "mysql" {
+		words, _ = doSQLMySQLStatementWords(statement)
+		if len(words) == 0 {
+			return false
+		}
+		switch words[0] {
+		// MySQL 8.4 implicit-commit categories beyond the shared DDL map:
+		// administration, data loading, plugin/import and replication control.
+		// LOAD DATA depends on the storage engine; treat it conservatively.
+		// dev.mysql.com/doc/refman/8.4/en/implicit-commit.html
+		case "CHECK", "CACHE", "LOAD", "IMPORT", "INSTALL", "UNINSTALL", "BEGIN", "START", "STOP", "CHANGE":
+			return true
+		case "RESET":
+			return len(words) < 2 || words[1] != "PERSIST"
+		case "SET":
+			return len(words) > 1 && words[1] == "PASSWORD" || containsDoSQLString(words[1:], "AUTOCOMMIT")
+		}
+	}
+	return doSQLImplicitCommitKeywords[words[0]]
 }

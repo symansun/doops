@@ -170,3 +170,11 @@ func writeExecutable(t *testing.T, path, body string) {
 		t.Fatal(err)
 	}
 }
+
+func TestDiscoverDatabaseCandidatesWhenKubectlMissing(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	_, err := discoverDatabaseCandidates(t.Context())
+	if err == nil || err.Error() != "dosql_discovery_unavailable" {
+		t.Fatalf("kubectl failure must be dosql_discovery_unavailable, got %v", err)
+	}
+}

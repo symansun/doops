@@ -8,9 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,9 +56,40 @@ type doSQLVersionSummary struct {
 	Committed   bool
 }
 
-func doSQLVersionJournalPath(engine, database string) string {
-	name := doSQLJournalNameUnsafe.ReplaceAllString(engine+"__"+database, "_")
-	return filepath.Join(filepath.Dir(workspaceRoot()), ".doops-dosql-versions", name+".jsonl")
+func doSQLVersionJournalPath(target doSQLTarget) (string, error) {
+	engine := strings.ToLower(strings.TrimSpace(target.Engine))
+	if engine == "" || target.Address == "" || target.Database == "" {
+		return "", errors.New("dosql_version_identity_required: engine, endpoint and database are required")
+	}
+	endpoints := strings.Split(target.Address, ",")
+	for i, endpoint := range endpoints {
+		host, port, err := net.SplitHostPort(endpoint)
+		number, portErr := strconv.Atoi(port)
+		if err != nil || host == "" || portErr != nil || number < 1 || number > 65535 {
+			return "", errors.New("dosql_version_identity_required: endpoint must include an explicit numeric port; external drivers must declare it in connection_uri")
+		}
+		host = strings.ToLower(host)
+		if ip := net.ParseIP(host); ip != nil {
+			host = ip.String()
+		}
+		endpoints[i] = net.JoinHostPort(host, strconv.Itoa(number))
+	}
+	sort.Strings(endpoints)
+	address := strings.Join(endpoints, ",")
+	// Address is the credential-free endpoint from the connection parser. Never
+	// hash a DSN, username, credential ID or version: rotations keep this identity.
+	identity, _ := json.Marshal([]string{engine, address, target.Database})
+	sum := sha256.Sum256(identity)
+	root := filepath.Join(filepath.Dir(workspaceRoot()), ".doops-dosql-versions")
+	path := filepath.Join(root, "v2", hex.EncodeToString(sum[:])+".jsonl")
+	legacyName := doSQLJournalNameUnsafe.ReplaceAllString(engine+"__"+target.Database, "_")
+	legacyPath := filepath.Join(root, legacyName+".jsonl")
+	if _, err := os.Lstat(legacyPath); err == nil {
+		return "", fmt.Errorf("dosql_version_journal_migration_required: %q has no endpoint identity; stop SQL writes and back it up, verify that every entry belongs to this endpoint before moving it unchanged to %q (never overwrite an existing journal); if ownership is unknown or mixed, archive it separately and explicitly start a new history", legacyPath, path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", errors.New("dosql_version_journal_unavailable")
+	}
+	return path, nil
 }
 
 func doSQLEntryHash(entry doSQLVersionEntry) string {

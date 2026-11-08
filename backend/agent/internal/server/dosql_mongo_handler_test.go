@@ -44,7 +44,14 @@ func TestDirectDoSQLHandlerMongoRecordsVersions(t *testing.T) {
 			CredentialBindings: []api.AgentCredentialBinding{binding},
 		})
 	}
-	path := doSQLVersionJournalPath("mongodb", target.Database)
+	journalTarget, err := doSQLConnectionTarget("mongodb", target.Database, map[string]string{"connection_uri": target.DSN})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := doSQLVersionJournalPath(journalTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_ = os.Remove(path)
 
 	insert := `{"collection":"zz_mh_a","op":"insertMany","documents":[{"k":1},{"k":2}]}`

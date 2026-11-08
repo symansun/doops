@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"os"
 	"path/filepath"
@@ -182,6 +183,33 @@ func TestRealDoSQLMySQLRollbackBoundaries(t *testing.T) {
 			t.Fatalf("DML survived a failed batch: %s", got)
 		}
 	})
+	t.Run("unsafe statements cannot commit preceding DML", func(t *testing.T) {
+		for _, statement := range []string{
+			"CHECK TABLE zz_rb_a", "CACHE INDEX zz_rb_a IN DEFAULT", "LOAD INDEX INTO CACHE zz_rb_a",
+			"ANALYZE TABLE zz_rb_a", "OPTIMIZE TABLE zz_rb_a", "REPAIR TABLE zz_rb_a",
+			"SET autocommit=1", "SET @@SESSION.autocommit=ON",
+			"/*!80000 SET autocommit=1 */", "CHECK /*!80000 TABLE */ zz_rb_a",
+		} {
+			for _, dry := range []bool{false, true} {
+				result, err := realDoSQLRun(t, target, true, dry, "",
+					"UPDATE zz_rb_a SET v='changed' WHERE id=1", statement)
+				if err == nil || result.Status != "rejected" || result.Committed || len(result.Statements) != 0 {
+					t.Fatalf("dry=%t statement=%q: %+v %v", dry, statement, result, err)
+				}
+				if got := realDoSQLScalar(t, target, "SELECT v FROM zz_rb_a WHERE id=1"); got != "orig" {
+					t.Fatalf("rejected %q changed stored data: %s", statement, got)
+				}
+			}
+		}
+		result, err := realDoSQLRun(t, target, true, true, "",
+			"SET autocommit=0", "UPDATE zz_rb_a SET v='changed' WHERE id=1", "SET autocommit=1")
+		if err == nil || result.Status != "rejected" || len(result.Statements) != 0 {
+			t.Fatalf("original autocommit reproducer accepted: %+v %v", result, err)
+		}
+		if got := realDoSQLScalar(t, target, "SELECT v FROM zz_rb_a WHERE id=1"); got != "orig" {
+			t.Fatalf("autocommit reproducer changed stored data: %s", got)
+		}
+	})
 	t.Run("failed verification rolls back DML", func(t *testing.T) {
 		_, err := realDoSQLRun(t, target, true, false, "SELECT 1/0 FROM zz_rb_nope",
 			"UPDATE zz_rb_a SET v = 'changed' WHERE id = 1")
@@ -238,6 +266,60 @@ func TestRealDoSQLMySQLRollbackBoundaries(t *testing.T) {
 	})
 }
 
+func TestRealDoSQLMySQLServerImplicitCommitExamples(t *testing.T) {
+	target := realDoSQLTarget(t, "mysql")
+	realDoSQLCleanup(t, target, "zz_commit_probe")
+	if _, err := realDoSQLRun(t, target, true, false, "",
+		"CREATE TABLE zz_commit_probe (id int PRIMARY KEY, v int) ENGINE=InnoDB"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := realDoSQLRun(t, target, true, false, "", "INSERT INTO zz_commit_probe VALUES (1,1)"); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open(target.Driver, target.DSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, statement := range []string{
+		"CHECK TABLE zz_commit_probe", "CACHE INDEX zz_commit_probe IN DEFAULT",
+		"LOAD INDEX INTO CACHE zz_commit_probe", "SET autocommit=1",
+	} {
+		t.Run(statement, func(t *testing.T) {
+			if _, err := realDoSQLRun(t, target, true, false, "", "UPDATE zz_commit_probe SET v=1"); err != nil {
+				t.Fatal(err)
+			}
+			conn, err := db.Conn(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			// Deliberately bypass the executor guard only in this disposable
+			// engine probe, to establish the server's actual commit semantics.
+			if _, err := conn.ExecContext(t.Context(), "SET autocommit=0"); err != nil {
+				t.Fatal(err)
+			}
+			tx, err := conn.BeginTx(t.Context(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+			if _, err := tx.ExecContext(t.Context(), "UPDATE zz_commit_probe SET v=2"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.ExecContext(t.Context(), statement); err != nil {
+				t.Fatal(err)
+			}
+			if err := tx.Rollback(); err != nil {
+				t.Fatal(err)
+			}
+			if got := realDoSQLScalar(t, target, "SELECT v FROM zz_commit_probe WHERE id=1"); got != "2" {
+				t.Fatalf("expected server implicit commit to survive ROLLBACK, stored=%s", got)
+			}
+		})
+	}
+}
+
 // The handler records one version per real apply, before and after it runs.
 func TestDirectDoSQLHandlerRecordsVersions(t *testing.T) {
 	target := realDoSQLTarget(t, "postgres")
@@ -266,7 +348,14 @@ func TestDirectDoSQLHandlerRecordsVersions(t *testing.T) {
 			CredentialBindings: []api.AgentCredentialBinding{binding},
 		})
 	}
-	path := doSQLVersionJournalPath("postgres", "testdb")
+	journalTarget, err := doSQLConnectionTarget("postgres", "testdb", map[string]string{"connection_uri": uri})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := doSQLVersionJournalPath(journalTarget)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_ = os.Remove(path)
 
 	if _, err := run("ask", "SELECT 1", false); err != nil {

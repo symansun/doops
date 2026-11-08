@@ -138,8 +138,12 @@ func handleDoSQLCopy(ctx context.Context, sessionID string, args api.AgentPrompt
 	if args.SQLDryRun {
 		report.Mode = "copy_dry_run"
 	}
-	journalPath := doSQLVersionJournalPath(dest.Engine, dest.Database)
+	var journalPath string
 	if !args.SQLDryRun {
+		journalPath, err = doSQLVersionJournalPath(destTarget)
+		if err != nil {
+			return "", fmt.Errorf("%w (operation_id=%s): nothing was executed", err, report.OperationID)
+		}
 		version, err := beginDoSQLVersion(journalPath, report.OperationID, report.Credential, report.StatementFingerprint, statements)
 		if err != nil {
 			return "", fmt.Errorf("%w (operation_id=%s): nothing was executed", err, report.OperationID)
