@@ -10,12 +10,19 @@ requires: []
 conflicts: []
 ---
 
-结构化工具（K8s/Helm 读取、Helm 发布、DoWeb、DoSql）没覆盖的事用 shell：文件、进程、
-网络探测、包管理、镜像工具（`buildctl`、`skopeo`）等。
+结构化工具没覆盖的文件、进程、网络探测或镜像工具操作，生成确定命令交给上层通过
+`doops -session <s> exec --target <t>` 执行。当前 ask 会话没有 shell 工具，不绕过工具列表。
+只处理目标和范围已明确的任务；仅方案/诊断不变更，缺关键目标或授权时返回缺项，
+不猜测对象。已有具体授权沿用，不逐命令重复确认。
 
-- 系统是 Ubuntu/Debian 或 Alpine，包管理器 `apt-get` 或 `apk`。
-- 长命令加 `timeout`；关键步骤失败就停（`set -eu`）。
-- 临时文件放 `/tmp/doops-*`。
-- 凭据从环境变量或已绑定的受管凭据文件读取，不要打印出来。
-- Go 代理用 `GOPROXY=https://proxy.golang.org,direct`。
-- 在 `ask --apply` 里，K8s/Helm 变更用 `mcp_doops_helm`；shell 里的 kubectl/helm 变更不算发布证据。
+- 按已核实的 OS、工具和身份生成命令；不固定包管理器，不因缺 sudo 自动安装或提权。
+  代理、入口和工作目录取自项目及调用环境；每次 exec 需要工作区时显式 cd。
+- Bash 脚本用 `set -euo pipefail`；其它 shell 保留等价的关键步骤和管道失败检查。
+  不用 `|| true` 吞掉验证、权限或连接失败，不把删除重建当通用幂等手段。
+- 长命令设有界超时，由上层使用 `exec --bg` 等待终态；不自行 nohup 或放到后台。
+- 需要临时文件时用 `mktemp -d /tmp/doops-XXXXXX`；只清理本轮独占目录，不清理前缀通配符。
+  依赖它的任务结束后才清理；失败保留必要诊断并报告位置。
+- 使用受管凭据引用；不打印、展开或把秘密内联进命令、prompt、日志、工作区，禁用敏感链路的 xtrace。
+- K8s/Helm 发布仍用 `mcp_doops_helm`；运维变更交上层
+  `doops -session <s> k8s --target <t> ... --confirm`，数据库变更交上层
+  `doops -session <s> sql --target <t> --mode apply --sql/--file`，不改用 shell。
