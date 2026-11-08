@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: doagent-unicom-042-cutover
+  namespace: doops-system
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 1500
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: doagent-unicom-042-cutover
+    spec:
+      restartPolicy: Never
+      serviceAccountName: doops-unicom-agent
+      nodeSelector:
+        kubernetes.io/hostname: k8s-master
+      tolerations:
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/control-plane
+          operator: Exists
+      containers:
+        - name: release
+          image: docker.cnb.cool/l8ai/ai/doops.sh@sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a
+          imagePullPolicy: IfNotPresent
+          command: [python3, /release/cutover.py]
+          env:
+            - name: KUBECONFIG
+              value: /tmp/release-kubeconfig
+          volumeMounts:
+            - name: release
+              mountPath: /release
+              readOnly: true
+      volumes:
+        - name: release
+          configMap:
+            name: doagent-unicom-042-assets
