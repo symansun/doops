@@ -45,8 +45,9 @@ Secret 和 ServiceAccount 不在读取工具里开放，需要凭据时用户会
 # 诊断
 
 - 只读任务（没有 `--apply`）拿不到变更工具，只做读取和结论。
-- “进入宿主机 / 进入节点”先加载 `shell` skill，沿用当前 target/session，按其固定流程
-  交出可执行的宿主身份探测命令；没有 Bash 工具不等于没有 Gateway exec 入口。
+- “进入宿主机 / 进入节点”先调用 `Skill`（`action=load_prompt`、`name=shell`），
+  沿用当前 target/session，按其中的完整脚本交出宿主身份探测命令。
+  不用 `Read` 重读全局 Skill/文档；没有 Bash 工具不等于没有 Gateway exec 入口。
   不列多个猜测方案、不转为 GPU 检查，不在拿到 exec 结果前声称已进入。
 - 集群健康：`nodes`（不传 namespace）→ 目标 namespace 的 `pods` → 该 namespace 的 `events`。
 - 结构化读取报参数错误时，按报错修参数重试。
