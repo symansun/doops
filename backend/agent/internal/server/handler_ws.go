@@ -802,7 +802,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		defer cancelExec()
 		cmd, stdoutPipe, stderrPipe, err := executeRawCommand(execCtx, fullCmd)
 		if err != nil {
-			writeJSON(buildSuccessResponse(reqID, "Error starting command: "+err.Error()))
+			writeJSON(buildToolErrorResponse(reqID, "Error starting command: "+err.Error()))
 			return
 		}
 
