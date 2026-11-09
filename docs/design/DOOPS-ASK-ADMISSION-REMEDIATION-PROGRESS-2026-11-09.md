@@ -72,9 +72,11 @@ rev2 `d8352e27` 的修复：
   `TestAgentPromptMachineResultQueuedCleansItsOwnSession`、error+result 优先级 → ok
 - rev2 回归：`go test ./internal/server -run 'TestAgentPrompt|TestAgentCancellation|TestAgentApply|TestExecution|TestPrompt|TestClassifyDoagent|TestDocker|TestRelay|TestAgentSSE|TestDoagent|TestSubscribe'` → ok（48.2s）
 - `git diff --check` → CLEAN
+- final 全量（`2fbb150f` + 本进度提交）：`go test ./internal/server -count=1 -timeout 900s` → ok，524.436s（exit 0）
 - rev3：新增 `TestGatewayRelayForwardsPromptAdmissionCategory`（GatewayHub relay 端到端：apply 收到
   `-32603 doagent_prompt_queued` 必须原样到达客户端；未知原因的 apply 失败仍被改写成
   `execution_outcome_unknown`）→ PASS；文档补充 `globalPosition` 前提与凭据回滚例外。
+- 文档契约：`python3 -m pytest backend/test/test_natural_language_deployment_contract.py backend/test/test_stale_contracts.py backend/test/test_doc_links.py` → 10 passed，1 failed（见"基线既有失败"）
 
 复评结论（rev2 `d8352e27`，delta review）：**approve-with-followups，无阻塞项**。
 
@@ -88,8 +90,6 @@ rev2 `d8352e27` 的修复：
 2. cleanup_unknown 目前审计状态为 `error` 而非 `outcome_unknown`，且系统没有自动的 unresolved-execution 围栏；唯一保护是"禁止自动重试"规则。是否升级为不同审计终态需要在 A4/A2 里决定。
 3. `relayErrorAuditText` 现在保留 Agent 的 prompt 错误原文（Agent 侧均为常量类别，风险低）；若未来 Agent 错误文本可能含敏感内容，需要在 Gateway 侧加类别白名单。
 4. 凭据准备回滚失败仍会产生 `credential_apply_outcome_unknown`（真实凭据不确定护栏，不属于本次 P0）。
-
-- 文档契约：`python3 -m pytest backend/test/test_natural_language_deployment_contract.py backend/test/test_stale_contracts.py backend/test/test_doc_links.py` → 10 passed，1 failed（见"基线既有失败"）
 
 未覆盖（显式依赖 A3 与后续包）：
 
