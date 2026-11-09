@@ -3,8 +3,8 @@
 - 任务书：[DOOPS-ASK-ADMISSION-REMEDIATION-TASKBOOK-2026-11-09.md](./DOOPS-ASK-ADMISSION-REMEDIATION-TASKBOOK-2026-11-09.md)
 - 实施分支：`doops-admission-remediation`（worktree `/tmp/doops-admission-remediation`）
 - 基线：`66769eef`（main，2026-11-09 16:23 +08）
-- 分支内容：`8e7d6e0a`（A1）+ `d56ada0d`（A9，cherry-pick 自 `0c6f539d`，原分支 `doops-docker-start-failure`）
-- 状态：A0 完成；A1 已实现、待独立评审结论；A9 完成；其余未开始
+- 分支内容：`8e7d6e0a`（A1 初版）+ `d56ada0d`（A9，cherry-pick 自 `0c6f539d`）+ `16f5f81d`（进度）+ `d8352e27`（A1 rev2，修复独立评审发现）
+- 状态：A0 完成；A1 已实现并经一轮评审打回、rev2 已修复待复评；A9 完成；其余未开始
 - 本文件只记录已执行的动作与可复现证据；未执行的包不写成已完成
 
 ## A0 工作区、变更归属与发布冻结
@@ -39,12 +39,38 @@
   - 准入日志只含 category、队列作用域/位置、RPC code，不含 prompt 内容或凭据。
 - 文档：`backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md`（该主题权威文档）新增"准入前拒绝不是未知结果"规则。
 
+独立评审记录（重要）：初版 `8e7d6e0a` 被评审 **reject**，四项发现全部成立：
+
+1. **Gateway 端到端重写（critical）**：Agent 返回的新类别在 Gateway 进程被
+   `remoteMutationFailed` 重写成 `-32008 execution_outcome_unknown`，`ask --apply` 仍显示原症状；
+   审计也丢掉类别。
+2. **归属判定不成立**：`entry == nil` 不是"本次请求独占 session"的证明；并发首次 prompt 可同时满足，
+   doagent `session/new` 会复用同 id → session 级 cancel 可能打到别人的 turn/排队项。
+3. **wire 形状变化**：error 与 result 并存时旧代码按 transport-unknown 处理，新分类器误判为 rejected。
+4. **文档过度声明**：把"queued 不产生 unknown / 不必回读 mutation"写成无条件事实。
+
+rev2 `d8352e27` 的修复：
+
+- `execution_lifecycle.go` 新增 `promptPreAdmissionReply`，`remoteMutationFailed` 对四个准入前稳定类别
+  返回 false → Gateway 原样转发；未知原因仍保留 mutation-unknown 护栏。
+- `tunnel_hub.go` 新增 `relayErrorAuditText`，prompt 审计记录稳定类别而非格式化 envelope
+  （后者会被 sanitize 成 `credential_operation_failed`）。
+- queued 清理只对"本次请求铸出唯一 session id"的 `response_format=json` prompt 执行（session id 增加
+  递增后缀）；流式/复用 session 一律不 cancel，返回 `doagent_prompt_queue_cleanup_unknown`。
+- 分类器恢复 error+result 的保守优先级（transport failure）。
+- 文档重写为可证明的表述，并明确"共享 session 的可重试 queued"依赖 doagent 请求级取消（A3）。
+
 验证（本分支实测）：
 
 - 新增定向测试：`TestClassifyDoagentPromptAdmission`（15 个应答形状）+ 6 个 WS 级行为测试
   （global queued、per-session queued、复用 session、no_prompt、empty prompt、accepted 缺 turnId）→ ok
 - 回归：`go test ./internal/server -run 'TestAgentPrompt|TestAgentCancellation|TestAgentApply|TestAgentSSE|TestDoagent|TestSubscribe'` → ok（19.3s）
 - 全量：`go test ./internal/server -count=1` → ok，549.858s（exit 0）
+- rev2 定向测试：`TestPromptPreAdmissionCategoriesAreNotMutationUnknown`、
+  `TestPromptAuditKeepsTheAdmissionCategory`（Gateway 侧类别转发/审计）、
+  `TestAgentPromptStreamingQueuedSessionIsNotCancelled`、
+  `TestAgentPromptMachineResultQueuedCleansItsOwnSession`、error+result 优先级 → ok
+- rev2 回归：`go test ./internal/server -run 'TestAgentPrompt|TestAgentCancellation|TestAgentApply|TestExecution|TestPrompt|TestClassifyDoagent|TestDocker|TestRelay|TestAgentSSE|TestDoagent|TestSubscribe'` → ok（48.2s）
 - `git diff --check` → CLEAN
 - 文档契约：`python3 -m pytest backend/test/test_natural_language_deployment_contract.py backend/test/test_stale_contracts.py backend/test/test_doc_links.py` → 10 passed，1 failed（见"基线既有失败"）
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -366,5 +367,39 @@ func TestPromptAuditKeepsTheAdmissionCategory(t *testing.T) {
 	envelope := map[string]interface{}{"code": -32603, "message": "synthetic"}
 	if got := relayErrorAuditText("doops_shell", envelope); got == "synthetic" {
 		t.Fatal("non-prompt tools must keep the formatted envelope text")
+	}
+}
+
+func TestGatewayRelayForwardsPromptAdmissionCategory(t *testing.T) {
+	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+	agent := f.agent(t, "prompt-admission-agent")
+	client := f.client(t, f.admin)
+
+	lifecycleSend(t, client, 2, "doops_agent_prompt", "prompt-admission-session", map[string]interface{}{
+		"operation":   "apply",
+		"instruction": "deploy the chart",
+	})
+	agent.complete(t, agent.call(t, "doops_agent_prompt", "prompt-admission-session"), doagentPromptQueued)
+	response := lifecycleResponse(t, client, 2, doagentPromptQueued)
+	errorObject, _ := response["error"].(map[string]interface{})
+	message, _ := errorObject["message"].(string)
+	if message != doagentPromptQueued {
+		t.Fatalf("apply relay rewrote the admission category: %q", message)
+	}
+	if strings.Contains(message, "execution_outcome_unknown") {
+		t.Fatalf("apply relay still reports an unknown mutation outcome: %q", message)
+	}
+
+	// A genuine apply failure with an unknown reason must keep the guardrail.
+	lifecycleSend(t, client, 3, "doops_agent_prompt", "prompt-genuine-failure", map[string]interface{}{
+		"operation":   "apply",
+		"instruction": "deploy the chart",
+	})
+	agent.complete(t, agent.call(t, "doops_agent_prompt", "prompt-genuine-failure"), "doagent_internal_failure")
+	unknown := lifecycleResponse(t, client, 3, "execution_outcome_unknown")
+	unknownError, _ := unknown["error"].(map[string]interface{})
+	unknownMessage, _ := unknownError["message"].(string)
+	if !strings.Contains(unknownMessage, "execution_outcome_unknown: remote error: doagent_internal_failure") {
+		t.Fatalf("an apply failure with an unknown reason lost the mutation-unknown guardrail: %q", unknownMessage)
 	}
 }
