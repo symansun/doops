@@ -8,7 +8,7 @@ DoOps 将 Web 控制台、命令行工具、目标节点 Agent 和 AI 运维能�
 
 项目采用 **Gateway-first** 架构。目标 Agent 主动建立反向连接，日常操作通过网关鉴权、授权、路由与审计，不要求为每一次运维任务单独建立 SSH 会话。首次自举、网关宿主机维护等场景仍可能使用 SSH。
 
-**核心贡献者：孙勇、高家祺、宋晨宇、王振普。** 具体署名顺序见[贡献者](#contributors)。
+**核心贡献者：孙勇、高家祺、宋晨宇。** 具体署名顺序见[贡献者](#contributors)。
 
 [项目仓库](https://github.com/symansun/doops) · [问题反馈](https://github.com/symansun/doops/issues) · [贡献指南](CONTRIBUTING.md) · [安全政策](SECURITY.md) · [许可证](LICENSE)
 
@@ -681,7 +681,6 @@ Web 页面不负责自动部署目标 Agent。检查 Gateway 地址、用户权�
 | 1 | **孙勇** | 第一贡献人 |
 | 2 | **高家祺** | 第二贡献人 |
 | 3 | **宋晨宇** | 第三贡献人 |
-| 4 | **王振普** | 第四贡献人 |
 
 感谢所有通过代码、设计、测试、文档与使用反馈参与项目建设的贡献者。
 
