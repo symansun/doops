@@ -1,10 +1,11 @@
 # DoOps ask 准入阻塞整改进度
 
 - 任务书：[DOOPS-ASK-ADMISSION-REMEDIATION-TASKBOOK-2026-11-09.md](./DOOPS-ASK-ADMISSION-REMEDIATION-TASKBOOK-2026-11-09.md)
-- 实施分支：`doops-admission-remediation`（worktree `/tmp/doops-admission-remediation`）
-- 基线：`66769eef`（main，2026-11-09 16:23 +08）
-- 分支内容：`8e7d6e0a`（A1 初版）+ `d56ada0d`（A9，cherry-pick 自 `0c6f539d`）+ `16f5f81d`（进度）+ `d8352e27`（A1 rev2）+ `2fbb150f`（relay 集成测试 + 文档修正）
-- 状态：A0 完成；A1 经独立评审打回 → rev2 修复 → 复评 **approve-with-followups（无阻塞项）**；A9 完成；其余未开始
+- 实施分支：`doops-admission-remediation`（worktree `.worktrees/a1-remediation`，/tmp 会被外部清理）
+- 基线：`66769eef`（main，2026-11-09 16:23 +08）；主仓此后继续前进，合入前必须 rebase
+- 分支内容：`8e7d6e0a`（A1 初版）+ `d56ada0d`（A9）+ `16f5f81d`/`b7879fe9`/`4b47adbe`（进度证据）+ `d8352e27`（A1 rev2）+ `2fbb150f`（relay 集成测试 + 文档修正）+ `5a91f0b3`（环境变更）+ `fcd7a3ce`（A1 rev3：请求级 queued 取消）
+- 相关分支：`doops-web-admission-contract` @ `679bd80a`（A2）；doagent 仓库 `doagent-admission-remediation` @ `30cadc8`（A3，基于生产 pin `08ecb019`）
+- 状态：A0/A1（含 rev2/rev3）/A9/A2/A3 均已提交；A1 rev3 与 A3 已完成独立复核；其余包未开始
 - 本文件只记录已执行的动作与可复现证据；未执行的包不写成已完成
 
 ## A0 工作区、变更归属与发布冻结
@@ -112,6 +113,42 @@ rev2 `d8352e27` 的修复：
   实测返回 `-32601` 且不产生 Gateway 审计行。因此"审计状态为 error"目前只在响应契约层成立
   （`buildToolErrorResponse` → `result.isError=true`，是 `tunnel_hub.go` 映射审计 error 的输入）；
   打通 Gateway 路由属于授权/路由变更，需单独立项。
+
+## A1 rev3：请求级 queued 取消（与 A3 对接）
+
+实现：commit `fcd7a3ce`（3 文件，+143/−17）。
+
+- `promptAdmission` 增加可选 `queueRequestID`（来自 doagent 的 `result.queueRequestId`）。
+- `settleQueuedPromptWS`：有 token 时用 `session/cancel {sessionId, queueRequestId}` 精确删除该排队项；
+  只有 doagent 明确回 `queued_cancelled` 才返回可重试的 `doagent_prompt_queued`；`queued_not_found`
+  或 transport 未确认返回 `doagent_prompt_queue_cleanup_unknown`。
+- 无 token（0.2.42 及更早）保持 rev2 的兼容规则逐字不变：只有本次铸出的机器结果 session 才做
+  session 级清理，其余一律 cleanup_unknown，不发 session 级 cancel。
+- 测试：token 捕获、定向 cancel 载荷断言（sessionId + 精确 queueRequestId）、not_found 保持
+  cleanup_unknown、无 token 旧路径不变。
+- 验证：定向准入用例 ok（1.0s）；定向回归 `TestAgentPrompt|TestAgentCancellation|TestAgentApply|
+  TestExecution|TestPrompt|TestClassifyDoagent|TestDocker|TestRelay|TestAgentSSE|TestDoagent|TestSubscribe`
+  ok（49.1s）；全量 `go test ./internal/server -count=1` 结果见下方最新记录。
+
+## A3 doagent 根修（doagent 仓库，已独立复核）
+
+分支 `doagent-admission-remediation`（基于生产 pin `08ecb019` = v0.2.42），3 个提交：
+
+- `bef0d9e`：queued 应答带 opaque `queueRequestId`；`session/cancel` 支持按 token 精确删除
+  （`queued_cancelled`/`queued_not_found`，无参数路径逐字不变）；独立全局队列 drain worker（permit
+  释放唤醒 + 有界超时显式终止，终态用 `cancelled` + stopReason `admission_queue_timeout`）。
+- `8cfd28a`：`recover_stale_running_prompt` 共享 CAS helper + 定时主动扫描（不再依赖"同 session 再来
+  一次 prompt"），健康长任务在配置界内不被回收。
+- `30cadc8`：队列上界在 permit 可用性之前判定，零 permit 时也保证显式终止。
+
+独立复核（Lead，独立 worktree + 独立 target）：`cargo test --offline --lib -- acp:: --test-threads=1`
+→ **338 passed / 0 failed / 2 ignored**；新增用例门 `proactive two_recovery_workers healthy_running_turn
+queue_timeout_terminates stale_prompt admission` → **17 passed**；`cargo fmt --check` 干净。
+部署前提已核实：doagent 的 Dockerfile 与 CNB CI 均以 `--features "browser,i18n,web"` 构建，pump/scanner
+所在的 `web` feature 在生产镜像中生效。
+
+未做（按裁决）：A3.4 `runtime/status` admission 字段——pin 上不存在该 RPC，新增协议方法属于 A4，不放进
+bugfix；A3.1.5 顺序调整作为 A4 follow-up 记录。
 
 ## 环境变更记录（2026-11-09 夜）
 
