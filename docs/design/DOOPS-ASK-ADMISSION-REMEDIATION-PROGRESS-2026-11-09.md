@@ -3,8 +3,8 @@
 - 任务书：[DOOPS-ASK-ADMISSION-REMEDIATION-TASKBOOK-2026-11-09.md](./DOOPS-ASK-ADMISSION-REMEDIATION-TASKBOOK-2026-11-09.md)
 - 实施分支：`doops-admission-remediation`（worktree `/tmp/doops-admission-remediation`）
 - 基线：`66769eef`（main，2026-11-09 16:23 +08）
-- 分支内容：`8e7d6e0a`（A1 初版）+ `d56ada0d`（A9，cherry-pick 自 `0c6f539d`）+ `16f5f81d`（进度）+ `d8352e27`（A1 rev2，修复独立评审发现）
-- 状态：A0 完成；A1 已实现并经一轮评审打回、rev2 已修复待复评；A9 完成；其余未开始
+- 分支内容：`8e7d6e0a`（A1 初版）+ `d56ada0d`（A9，cherry-pick 自 `0c6f539d`）+ `16f5f81d`（进度）+ `d8352e27`（A1 rev2）+ `2fbb150f`（relay 集成测试 + 文档修正）
+- 状态：A0 完成；A1 经独立评审打回 → rev2 修复 → 复评 **approve-with-followups（无阻塞项）**；A9 完成；其余未开始
 - 本文件只记录已执行的动作与可复现证据；未执行的包不写成已完成
 
 ## A0 工作区、变更归属与发布冻结
@@ -72,6 +72,23 @@ rev2 `d8352e27` 的修复：
   `TestAgentPromptMachineResultQueuedCleansItsOwnSession`、error+result 优先级 → ok
 - rev2 回归：`go test ./internal/server -run 'TestAgentPrompt|TestAgentCancellation|TestAgentApply|TestExecution|TestPrompt|TestClassifyDoagent|TestDocker|TestRelay|TestAgentSSE|TestDoagent|TestSubscribe'` → ok（48.2s）
 - `git diff --check` → CLEAN
+- rev3：新增 `TestGatewayRelayForwardsPromptAdmissionCategory`（GatewayHub relay 端到端：apply 收到
+  `-32603 doagent_prompt_queued` 必须原样到达客户端；未知原因的 apply 失败仍被改写成
+  `execution_outcome_unknown`）→ PASS；文档补充 `globalPosition` 前提与凭据回滚例外。
+
+复评结论（rev2 `d8352e27`，delta review）：**approve-with-followups，无阻塞项**。
+
+- Gateway 转发覆盖 relay 终态路径（两处调用点），客户端拿到原样类别，审计保留类别。
+- 铸出 session 的唯一性成立，流式/复用 session 不再有任何 session 级 cancel。
+- 文档不再过度声明；error+result 恢复保守优先级；无护栏回归。
+
+复评遗留 followups（记录，待后续包处理）：
+
+1. `doagent_prompt_queue_cleanup_unknown` 需要被 A2 的前端错误契约覆盖（任务书 A2 清单未列出该类别），并按"禁止自动重试、先核对队列/审计"处理。
+2. cleanup_unknown 目前审计状态为 `error` 而非 `outcome_unknown`，且系统没有自动的 unresolved-execution 围栏；唯一保护是"禁止自动重试"规则。是否升级为不同审计终态需要在 A4/A2 里决定。
+3. `relayErrorAuditText` 现在保留 Agent 的 prompt 错误原文（Agent 侧均为常量类别，风险低）；若未来 Agent 错误文本可能含敏感内容，需要在 Gateway 侧加类别白名单。
+4. 凭据准备回滚失败仍会产生 `credential_apply_outcome_unknown`（真实凭据不确定护栏，不属于本次 P0）。
+
 - 文档契约：`python3 -m pytest backend/test/test_natural_language_deployment_contract.py backend/test/test_stale_contracts.py backend/test/test_doc_links.py` → 10 passed，1 failed（见"基线既有失败"）
 
 未覆盖（显式依赖 A3 与后续包）：
