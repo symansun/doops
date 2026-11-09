@@ -1383,7 +1383,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			}
 			if rpcErr, ok := msg.Parsed["error"]; ok && rpcErr != nil {
 				finalStatus = "error"
-				finalErr = fmt.Sprintf("%v", rpcErr)
+				finalErr = relayErrorAuditText(params.Name, rpcErr)
 				knownApplyFailure = true
 			}
 			raw, _ := json.Marshal(msg.Parsed)
@@ -1493,6 +1493,21 @@ func sanitizeAgentPromptAudit(toolName, errMsg, tail string) (string, string) {
 		errMsg = agentPromptAuditCategory(errMsg)
 	}
 	return errMsg, ""
+}
+
+// relayErrorAuditText keeps the audit text stable. A prompt error message is
+// already a stable category, so recording the formatted envelope would make
+// every prompt failure sanitize to credential_operation_failed and lose the
+// category the operator and the audit need.
+func relayErrorAuditText(tool string, rpcErr interface{}) string {
+	if tool == "doops_agent_prompt" {
+		if errorObject, ok := rpcErr.(map[string]interface{}); ok {
+			if message, _ := errorObject["message"].(string); strings.TrimSpace(message) != "" {
+				return strings.TrimSpace(message)
+			}
+		}
+	}
+	return fmt.Sprintf("%v", rpcErr)
 }
 
 // agentPromptAuditCategory keeps only stable categories for prompt audits. An

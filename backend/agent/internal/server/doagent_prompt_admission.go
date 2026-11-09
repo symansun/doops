@@ -64,6 +64,12 @@ func classifyDoagentPromptAdmission(response map[string]interface{}) promptAdmis
 		return promptAdmission{kind: promptAdmissionMalformed, detail: "empty response"}
 	}
 	if rpcErr, ok := response["error"]; ok && rpcErr != nil {
+		if response["result"] != nil {
+			// An error envelope that still carries a result proves neither an
+			// admission nor a pre-admission refusal. Keep the old conservative
+			// rule: treat it as a transport failure and probe the session.
+			return promptAdmission{kind: promptAdmissionTransportFailed, detail: "error with result"}
+		}
 		errorObject, _ := rpcErr.(map[string]interface{})
 		data, _ := errorObject["data"].(map[string]interface{})
 		admission := promptAdmission{rpcCode: doagentIntField(errorObject, "code")}
@@ -138,15 +144,15 @@ const doagentPromptNoPrompt = "doagent_prompt_no_prompt"
 //
 // doagent 0.2.42 has no request-scoped cancel: the only cleanup primitive is a
 // session-wide session/cancel, which also stops the session's active turn and
-// drops every other request queued there. That is safe only when this Agent
-// created the session for this one prompt. A global-admission reply proves the
-// session was idle, so the fresh, dedicated session holds nothing but this
-// request's queue entry. Any other queued reply (a reused session, or a
-// per-session FIFO reply that proves another turn is running) must not be
-// cancelled, and the Gateway cannot prove the entry is gone, so it reports the
-// cleanup as unknown and forbids automatic retry.
-func settleQueuedPromptWS(ctx context.Context, reqID interface{}, doagentURL, targetSessionID string, sessionDedicated bool, admission promptAdmission, writeJSON func(v interface{})) {
-	if admission.queueScope == promptQueueGlobal && sessionDedicated {
+// drops every other request queued there. The only session this Agent can prove
+// it owns is the machine-result session whose id it mints for this one prompt;
+// streaming prompts reuse the caller's session, so a cancel there could hit
+// another concurrent request. A global-admission reply proves the session was
+// idle when the prompt was queued, but that alone does not make a shared
+// session safe to cancel, so only the minted session is cleaned up here. Any
+// other queued reply reports cleanup as unknown and forbids automatic retry.
+func settleQueuedPromptWS(ctx context.Context, reqID interface{}, doagentURL, targetSessionID string, sessionMintedForPrompt bool, admission promptAdmission, writeJSON func(v interface{})) {
+	if admission.queueScope == promptQueueGlobal && sessionMintedForPrompt {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), doagentCancellationTimeout)
 		defer cancel()
 		if err := cancelDoagentSessionQueue(cleanupCtx, doagentURL, targetSessionID); err != nil {
