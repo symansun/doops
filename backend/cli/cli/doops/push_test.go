@@ -622,9 +622,12 @@ func assertBinaryUsesGitSyncPushBackend(t *testing.T, bin string) {
 		}
 	}
 	required := []string{
-		"git push -f",
+		"HEAD:master",
 		"doops-sync-",
 		"AutoSync",
+		"DoopsPullSnapshot",
+		"update-ref refs/heads/doops-pull",
+		"pull-commit:%s",
 		"Git workspace transport requires a gateway target",
 		"credential.helper=",
 	}
