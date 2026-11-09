@@ -1955,8 +1955,20 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 		return fmt.Errorf("%w: dispatch failed: %v", errGatewayAgentDisconnected, err)
 	}
 
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
+	waitCtx, cancelWait := context.WithTimeout(ctx, timeout)
+	defer cancelWait()
+	interruptionError := func() error {
+		if waitCtx.Err() == nil {
+			return nil
+		}
+		if err := cancelAndWait(); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return fmt.Errorf("operation timed out")
+	}
 	var forwardErr error
 	forwardMessage := func(msg gatewayWSMessage) (bool, error) {
 		if msg.Parsed == nil {
@@ -1985,6 +1997,10 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 		return false, nil
 	}
 	for {
+		// A busy output queue must not starve cancellation or the deadline.
+		if err := interruptionError(); err != nil {
+			return err
+		}
 		if msg, ok, queueErr := ch.dequeue(); queueErr != nil {
 			if err := cancelAndWait(); err != nil {
 				return err
@@ -1998,19 +2014,13 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 		}
 
 		select {
-		case <-ctx.Done():
-			if err := cancelAndWait(); err != nil {
-				return err
-			}
-			return ctx.Err()
+		case <-waitCtx.Done():
 		case <-ch.notify:
-		case <-timer.C:
-			if err := cancelAndWait(); err != nil {
-				return err
-			}
-			return fmt.Errorf("operation timed out")
 		case <-a.closed:
 			for {
+				if err := interruptionError(); err != nil {
+					return err
+				}
 				msg, ok, queueErr := ch.dequeue()
 				if queueErr != nil {
 					if err := cancelAndWait(); err != nil {
