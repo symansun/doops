@@ -21,6 +21,50 @@ export function agentErrorMessage(raw: string | null | undefined): string | null
   return message
 }
 
+// Stable categories for a refused doops_agent_prompt: the Gateway classifies doagent's
+// session/prompt reply once (backend/agent/internal/server/doagent_prompt_admission.go) and
+// returns these literal wire categories. The console classifies them in one place as well, so no
+// page has to guess protocol text again.
+export type AgentAdmissionKind = "queued" | "queue_cleanup_unknown" | "no_prompt" | "rejected" | "unknown" | "other"
+
+export interface AgentAdmission {
+  kind: AgentAdmissionKind
+  // Whether the same task may be submitted again: a queued admission provably created no turn, so
+  // it may be retried -- preferably in a NEW session, which does not inherit a stale per-session queue.
+  retryable: boolean
+  // Whether the target may already have changed, so the operator must verify before retrying.
+  needsMutationRecheck: boolean
+}
+
+// The category can sit anywhere in the text: the same one arrives as "doagent_prompt_queued",
+// "remote error: doagent_prompt_queued" (CLI) or "-32008 execution_outcome_unknown: prompt_turn_id_missing".
+// The unknown outcome always wins: an older Gateway wraps a pre-admission failure as
+// "execution_outcome_unknown: remote error: doagent_prompt_queued", and that fail-closed mutation
+// gate must never be downgraded to a retryable admission category.
+const ADMISSION_RULES: readonly (AgentAdmission & { pattern: RegExp })[] = [
+  // The queue entry may still execute: cleanup was never confirmed, so never retry automatically.
+  { kind: "queue_cleanup_unknown", retryable: false, needsMutationRecheck: true, pattern: /\bdoagent_prompt_queue_cleanup_unknown\b/ },
+  { kind: "queued", retryable: true, needsMutationRecheck: false, pattern: /\bdoagent_prompt_queued\b/ },
+  { kind: "no_prompt", retryable: false, needsMutationRecheck: false, pattern: /\bdoagent_prompt_no_prompt\b/ },
+  { kind: "rejected", retryable: false, needsMutationRecheck: false, pattern: /\bdoagent_prompt_rejected\b/ },
+]
+
+const OUTCOME_UNKNOWN = /\bexecution_outcome_unknown\b/
+const NOT_ADMITTED: AgentAdmission = { kind: "other", retryable: false, needsMutationRecheck: false }
+const OUTCOME_UNKNOWN_POLICY: AgentAdmission = { kind: "unknown", retryable: false, needsMutationRecheck: true }
+
+// classifyAgentAdmission maps a session error (message plus, where the caller keeps it, the receipt
+// code) to the admission category and its retry policy. "unknown" is the existing outcome-unknown
+// contract: the target may already have changed, so nothing may be replayed automatically.
+export function classifyAgentAdmission(raw: string | null | undefined, code?: string | null): AgentAdmission {
+  const message = (raw ?? "").trim()
+  if (code === "doops_apply_outcome_unknown" || OUTCOME_UNKNOWN.test(message)) return { ...OUTCOME_UNKNOWN_POLICY }
+  for (const { pattern, ...policy } of ADMISSION_RULES) {
+    if (pattern.test(message)) return { ...policy }
+  }
+  return { ...NOT_ADMITTED }
+}
+
 // The console keeps the AI assistant mounted while other tabs are open so a
 // running task survives tab switches. createVisibilityScopedRuntime wraps its
 // runtime so the hidden assistant does not render its connection error; the
