@@ -9,6 +9,9 @@ bin/doops-webui
 /bin/
 backend/bin/
 backend/cli/doops
+# 已误入库的开发机编译产物（2026-11-09 审计清理）
+/backend/gateway/gateway
+/backend/cli/cli/doops/doops
 
 # Agent 二进制 (所有变体)
 **/doops-agent
