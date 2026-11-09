@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="180" viewBox="0 0 1400 180" role="img" aria-label="不用 SSH，也能运维任何一台机器。">
+  <defs>
+    <linearGradient id="sloganGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00C896"/>
+      <stop offset="55%" stop-color="#22B8CF"/>
+      <stop offset="100%" stop-color="#3B82F6"/>
+    </linearGradient>
+  </defs>
+  <text x="700" y="116" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Noto Sans SC','Source Han Sans SC',sans-serif" font-size="76" font-weight="700" fill="url(#sloganGradient)">不用 SSH，也能运维任何一台机器。</text>
+</svg>
