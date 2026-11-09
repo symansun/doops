@@ -1351,6 +1351,11 @@ type agentPromptExecutionContext struct {
 }
 
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
+// doagentPromptSessionSequence makes every machine-result doagent session id
+// unique to one prompt, so the Gateway can prove that a session-wide cancel
+// only touches that prompt's own queue entry.
+var doagentPromptSessionSequence atomic.Uint64
+
 func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, attachments []api.AgentPromptAttachment, model string, responseFormat string, execution agentPromptExecutionContext, pushProgress notificationSender, writeJSON func(v interface{})) {
 	ctx, cancelExecution := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancelExecution()
@@ -1396,16 +1401,18 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		entry.lastUsed = time.Now()
 		gw.sessionMapMu.Unlock()
 	}
-	// A session this Agent created for this one prompt holds no other operator
-	// and no other turn. That decides whether a queued reply may be cleaned up
-	// with the only primitive doagent 0.2.42 has: a session-wide cancel.
-	sessionDedicated := entry == nil
+	// Only a machine-result prompt gets a session id minted for this one call
+	// (the sequence suffix below makes it unique). That is the only session a
+	// queued reply may be cleaned up from with doagent 0.2.42's session-wide
+	// cancel; a streaming prompt reuses the caller's session and may share it
+	// with a concurrent request.
+	sessionMintedForPrompt := responseFormat == "json"
 
 	// 首次会话：创建 doagent session 并注入系统提示词
 	if targetSessionID == "" {
 		requestedSessionID := doopsSessionID
 		if responseFormat == "json" {
-			requestedSessionID = fmt.Sprintf("%s-json-%d", doopsSessionID, time.Now().UnixNano())
+			requestedSessionID = fmt.Sprintf("%s-json-%d-%d", doopsSessionID, time.Now().UnixNano(), doagentPromptSessionSequence.Add(1))
 		}
 		var systemPrompt string
 		sysPromptPaths := []string{"/app/skills/system_prompt.md", "/app/self-docs/agent/skills/system_prompt.md"}
@@ -1626,7 +1633,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		writeJSON(buildErrorResponse(reqID, -32602, doagentPromptNoPrompt))
 		return
 	case promptAdmissionQueuedNoTurn:
-		settleQueuedPromptWS(ctx, reqID, doagentURL, targetSessionID, sessionDedicated, admission, writeJSON)
+		settleQueuedPromptWS(ctx, reqID, doagentURL, targetSessionID, sessionMintedForPrompt, admission, writeJSON)
 		return
 	case promptAdmissionRejected:
 		writeJSON(buildErrorResponse(reqID, -32003, "doagent_prompt_rejected"))

@@ -95,15 +95,19 @@ Agent 只拒绝删除根目录（`rm -rf /`、`rm -rf /*`），报错 `blocked_c
 已验签的 Helm 工具明确失败按失败结束，不归为未知结果；同轮另一工具成功不能掩盖失败。
 准入前的拒绝不是未知结果：目标 doagent 以普通 HTTP 200 结果返回 `status=queued`（进程级 turn
 permit 全忙，或该 session 已有 turn 在跑）或 `status=no_prompt`（prompt 为空）时，没有 admit
-任何 turn，也没有 mutation 开始。Gateway 分别返回 `doagent_prompt_queued` 和
-`doagent_prompt_no_prompt`（参数错误，补齐非空任务后重试），不产生 `execution_outcome_unknown`，
-也不要求发布者去 target 上核对 mutation。`queued` 的清理只有在目标 session 是为本次 prompt
-新建、且应答带 `globalPosition`（说明排队时该 session 空闲）时才执行，并对该 session 发一次
-`session/cancel`；复用 session 或只有 `queuePosition` 的排队说明该 session 还有别的 turn 或
-请求，Gateway 不得取消它，此时返回 `doagent_prompt_queue_cleanup_unknown`：本请求没有 turn，
-但后台是否仍会执行无法证明，禁止自动重试，先核对队列与审计。空 prompt 在发送给 doagent 之前就被
-拒绝，上游 `no_prompt` 应答同样不触发任何 cancel。只有缺失或畸形的 prompt 应答（accepted 缺
-turnId、result 非对象、未知 status、transport 失败）保留未知结果语义。
+任何 turn，也没有 mutation 开始。Agent 把它们分别归为 `doagent_prompt_queued` /
+`doagent_prompt_queue_cleanup_unknown` 和 `doagent_prompt_no_prompt`（参数错误，补齐非空任务后
+重试）；Gateway 转发这些稳定类别，不再把它们重写成 `execution_outcome_unknown`，审计也保留同一
+类别。只有缺失或畸形的 prompt 应答（accepted 缺 turnId、result 非对象、error 与 result 并存、
+未知 status、transport 失败）保留未知结果语义。
+`queued` 的后台风险只有在 Gateway 能证明该 session 只属于本次请求时才能消除：目前只有
+`response_format=json` 的机器结果 prompt 会为本次调用生成唯一 session id，此时 Gateway 对该
+session 发一次 `session/cancel` 后返回 `doagent_prompt_queued`；该 cancel 是尽力清理，ACK 不等于
+逐字节确认，精确的请求级取消仍需 doagent 提供。复用 session 的流式 prompt（包括 `ask --apply`）
+不得被 session 级取消命中，因此一律返回 `doagent_prompt_queue_cleanup_unknown`：本请求没有 turn，
+但排队项可能稍后执行，禁止自动重试，先核对队列与审计；等 doagent 支持请求级取消后才可能对共享
+session 返回可重试的 `doagent_prompt_queued`。空 prompt 在发送给 doagent 之前就被拒绝，上游
+`no_prompt` 应答同样不触发任何 cancel。
 当前锁按 target 路由
 隔离，没有跨 target 的 release/数据库统一锁或执行器 fencing，不支持安全强制抢占。
 

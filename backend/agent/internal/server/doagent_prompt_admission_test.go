@@ -46,6 +46,7 @@ func TestClassifyDoagentPromptAdmission(t *testing.T) {
 		{name: "pre-admission validation error", response: promptRPCError(-32602, nil), kind: promptAdmissionRejected},
 		{name: "internal rpc error", response: promptRPCError(-32000, nil), kind: promptAdmissionTransportFailed},
 		{name: "admission timeout", response: promptRPCError(-32000, map[string]interface{}{"data": map[string]interface{}{"failureClass": "admission_timeout"}}), kind: promptAdmissionTransportFailed},
+		{name: "error with result", response: map[string]interface{}{"jsonrpc": "2.0", "error": map[string]interface{}{"code": -32602, "message": "synthetic"}, "result": map[string]interface{}{"status": "accepted", "turnId": "turn-3"}}, kind: promptAdmissionTransportFailed},
 		{name: "nil response", response: nil, kind: promptAdmissionMalformed},
 	}
 
@@ -162,7 +163,7 @@ func promptWireError(t *testing.T, result map[string]interface{}) (int, string) 
 	return int(code), message
 }
 
-func TestAgentPromptGlobalQueuedAdmissionIsCapacityNotUnknown(t *testing.T) {
+func TestAgentPromptStreamingQueuedSessionIsNotCancelled(t *testing.T) {
 	doagent, calls := newPromptAdmissionDoagent(t, func() map[string]interface{} {
 		return promptRPCResult(map[string]interface{}{"status": "queued", "queuePosition": 1, "globalPosition": 0, "delivery": "sse"})
 	})
@@ -175,12 +176,35 @@ func TestAgentPromptGlobalQueuedAdmissionIsCapacityNotUnknown(t *testing.T) {
 		"instruction": "deploy the chart",
 	})
 	code, message := promptWireError(t, result)
+	if code != -32603 || message != doagentPromptCleanupUnknown {
+		t.Fatalf("wire error = %d/%q, want -32603/%q", code, message, doagentPromptCleanupUnknown)
+	}
+	_, promptCalls, cancelCalls := calls.counts()
+	if promptCalls != 1 || cancelCalls != 0 {
+		t.Fatalf("calls: prompt=%d cancel=%d, want 1/0 (a streaming prompt reuses a possibly shared session)", promptCalls, cancelCalls)
+	}
+}
+
+func TestAgentPromptMachineResultQueuedCleansItsOwnSession(t *testing.T) {
+	doagent, calls := newPromptAdmissionDoagent(t, func() map[string]interface{} {
+		return promptRPCResult(map[string]interface{}{"status": "queued", "queuePosition": 1, "globalPosition": 0, "delivery": "sse"})
+	})
+	defer doagent.Close()
+	_, conn, cleanup := dialPromptAdmissionAgent(t, doagent.URL)
+	defer cleanup()
+
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id":      "queued-machine",
+		"instruction":     "deploy the chart",
+		"response_format": "json",
+	})
+	code, message := promptWireError(t, result)
 	if code != -32603 || message != doagentPromptQueued {
 		t.Fatalf("wire error = %d/%q, want -32603/%q", code, message, doagentPromptQueued)
 	}
 	_, promptCalls, cancelCalls := calls.counts()
 	if promptCalls != 1 || cancelCalls != 1 {
-		t.Fatalf("calls: prompt=%d cancel=%d, want 1/1", promptCalls, cancelCalls)
+		t.Fatalf("calls: prompt=%d cancel=%d, want 1/1 (a minted machine-result session may be cleaned up)", promptCalls, cancelCalls)
 	}
 }
 
@@ -296,5 +320,51 @@ func TestAgentPromptEmptyInstructionNeverReachesDoagent(t *testing.T) {
 	rpcCalls, _, _ := calls.counts()
 	if rpcCalls != 0 {
 		t.Fatalf("rpc calls = %d, want 0", rpcCalls)
+	}
+}
+
+func TestPromptPreAdmissionCategoriesAreNotMutationUnknown(t *testing.T) {
+	applyArgs := json.RawMessage(`{"operation":"apply"}`)
+	for _, category := range promptPreAdmissionCategories {
+		response := map[string]interface{}{"error": map[string]interface{}{"code": -32603, "message": category}}
+		if !promptPreAdmissionReply(response) {
+			t.Fatalf("%s must be recognized as a pre-admission answer", category)
+		}
+		if remoteMutationFailed("doops_agent_prompt", applyArgs, response) {
+			t.Fatalf("%s must not be rewritten into a mutation-unknown outcome", category)
+		}
+	}
+
+	genuineFailure := map[string]interface{}{"error": map[string]interface{}{"code": -32603, "message": "doagent_internal_failure"}}
+	if promptPreAdmissionReply(genuineFailure) {
+		t.Fatal("an unstructured failure must not be treated as a pre-admission answer")
+	}
+	if !remoteMutationFailed("doops_agent_prompt", applyArgs, genuineFailure) {
+		t.Fatal("an apply prompt failure with an unknown reason must keep the mutation-unknown guardrail")
+	}
+
+	withResult := map[string]interface{}{
+		"error":  map[string]interface{}{"code": -32603, "message": "doagent_prompt_queued"},
+		"result": map[string]interface{}{"isError": true},
+	}
+	if promptPreAdmissionReply(withResult) {
+		t.Fatal("an error envelope with a structured result is not a pre-admission answer")
+	}
+}
+
+func TestPromptAuditKeepsTheAdmissionCategory(t *testing.T) {
+	for _, category := range promptPreAdmissionCategories {
+		auditText := relayErrorAuditText("doops_agent_prompt", map[string]interface{}{"code": -32603, "message": category})
+		if auditText != category {
+			t.Fatalf("audit text = %q, want %q", auditText, category)
+		}
+		if got := agentPromptAuditCategory(auditText); got != category {
+			t.Fatalf("audit category = %q, want %q", got, category)
+		}
+	}
+
+	envelope := map[string]interface{}{"code": -32603, "message": "synthetic"}
+	if got := relayErrorAuditText("doops_shell", envelope); got == "synthetic" {
+		t.Fatal("non-prompt tools must keep the formatted envelope text")
 	}
 }
