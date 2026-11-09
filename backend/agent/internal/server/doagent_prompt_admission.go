@@ -46,6 +46,7 @@ const (
 type promptAdmission struct {
 	kind           promptAdmissionKind
 	turnID         string
+	queueRequestID string
 	queueScope     promptQueueScope
 	queuePosition  int
 	globalPosition int
@@ -108,9 +109,10 @@ func classifyDoagentPromptAdmission(response map[string]interface{}) promptAdmis
 			return promptAdmission{kind: promptAdmissionAccepted, turnID: turnID}
 		}
 		admission := promptAdmission{
-			kind:          promptAdmissionQueuedNoTurn,
-			queueScope:    promptQueueSession,
-			queuePosition: doagentIntField(result, "queuePosition"),
+			kind:           promptAdmissionQueuedNoTurn,
+			queueScope:     promptQueueSession,
+			queuePosition:  doagentIntField(result, "queuePosition"),
+			queueRequestID: strings.TrimSpace(doagentStringField(result, "queueRequestId")),
 		}
 		if global, ok := result["globalPosition"]; ok && global != nil {
 			// doagent consults the global gate only while the session is idle, so
@@ -152,6 +154,24 @@ const doagentPromptNoPrompt = "doagent_prompt_no_prompt"
 // session safe to cancel, so only the minted session is cleaned up here. Any
 // other queued reply reports cleanup as unknown and forbids automatic retry.
 func settleQueuedPromptWS(ctx context.Context, reqID interface{}, doagentURL, targetSessionID string, sessionMintedForPrompt bool, admission promptAdmission, writeJSON func(v interface{})) {
+	if admission.queueRequestID != "" {
+		// doagent named this queue entry, so the cleanup can remove exactly one
+		// request and is safe even in a session the Gateway shares with another
+		// caller.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), doagentCancellationTimeout)
+		defer cancel()
+		status, err := cancelDoagentQueuedRequest(cleanupCtx, doagentURL, targetSessionID, admission.queueRequestID)
+		if err != nil || status != "queued_cancelled" {
+			log.Printf("doagent prompt queue cleanup unconfirmed: doagent_session=%s queue_request=%s status=%s error=%v",
+				targetSessionID, admission.queueRequestID, status, err)
+			writeJSON(buildErrorResponse(reqID, -32603, doagentPromptCleanupUnknown))
+			return
+		}
+		writeJSON(buildErrorResponse(reqID, -32603, doagentPromptQueued))
+		return
+	}
+	// Older doagent answers carry no token; the only cleanup primitive there is a
+	// session-wide cancel, safe only for a session this request minted itself.
 	if admission.queueScope == promptQueueGlobal && sessionMintedForPrompt {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), doagentCancellationTimeout)
 		defer cancel()
@@ -165,6 +185,27 @@ func settleQueuedPromptWS(ctx context.Context, reqID interface{}, doagentURL, ta
 		return
 	}
 	writeJSON(buildErrorResponse(reqID, -32603, doagentPromptCleanupUnknown))
+}
+
+// cancelDoagentQueuedRequest removes exactly the queued request the reply named.
+// It reports doagent's status (queued_cancelled / queued_not_found) so the
+// caller can tell a confirmed cleanup from an unconfirmed one.
+func cancelDoagentQueuedRequest(ctx context.Context, baseURL, sessionID, queueRequestID string) (string, error) {
+	response, err := doagentRPCContext(ctx, baseURL, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      "cancel-queued-" + queueRequestID,
+		"method":  "session/cancel",
+		"params": map[string]interface{}{
+			"sessionId":      sessionID,
+			"queueRequestId": queueRequestID,
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	result, _ := response["result"].(map[string]interface{})
+	status, _ := result["status"].(string)
+	return status, nil
 }
 
 // cancelDoagentSessionQueue sends the only cleanup primitive doagent 0.2.42

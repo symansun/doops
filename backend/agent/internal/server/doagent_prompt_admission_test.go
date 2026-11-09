@@ -72,10 +72,18 @@ func TestClassifyDoagentPromptAdmission(t *testing.T) {
 }
 
 type promptAdmissionCalls struct {
-	mu          sync.Mutex
-	rpcCalls    int
-	promptCalls int
-	cancelCalls int
+	mu               sync.Mutex
+	rpcCalls         int
+	promptCalls      int
+	cancelCalls      int
+	cancelStatus     string
+	lastCancelParams map[string]interface{}
+}
+
+func (c *promptAdmissionCalls) lastCancel() map[string]interface{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastCancelParams
 }
 
 func (c *promptAdmissionCalls) counts() (rpc, prompt, cancel int) {
@@ -120,10 +128,16 @@ func newPromptAdmissionDoagent(t *testing.T, promptReply func() map[string]inter
 				reply["id"] = request["id"]
 				_ = json.NewEncoder(w).Encode(reply)
 			case "session/cancel":
+				params, _ := request["params"].(map[string]interface{})
 				calls.mu.Lock()
 				calls.cancelCalls++
+				calls.lastCancelParams = params
+				status := calls.cancelStatus
 				calls.mu.Unlock()
-				_ = json.NewEncoder(w).Encode(map[string]interface{}{"jsonrpc": "2.0", "id": request["id"], "result": map[string]interface{}{"status": "cancelling"}})
+				if status == "" {
+					status = "cancelling"
+				}
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"jsonrpc": "2.0", "id": request["id"], "result": map[string]interface{}{"status": status}})
 			default:
 				t.Errorf("unexpected rpc method: %v", method)
 			}
@@ -401,5 +415,74 @@ func TestGatewayRelayForwardsPromptAdmissionCategory(t *testing.T) {
 	unknownMessage, _ := unknownError["message"].(string)
 	if !strings.Contains(unknownMessage, "execution_outcome_unknown: remote error: doagent_internal_failure") {
 		t.Fatalf("an apply failure with an unknown reason lost the mutation-unknown guardrail: %q", unknownMessage)
+	}
+}
+
+func TestClassifyDoagentPromptAdmissionCapturesQueueToken(t *testing.T) {
+	admission := classifyDoagentPromptAdmission(promptRPCResult(map[string]interface{}{
+		"status": "queued", "queuePosition": 2, "queueRequestId": "qreq_synthetic_1",
+	}))
+	if admission.kind != promptAdmissionQueuedNoTurn {
+		t.Fatalf("kind = %s, want %s", admission.kind, promptAdmissionQueuedNoTurn)
+	}
+	if admission.queueRequestID != "qreq_synthetic_1" {
+		t.Fatalf("queue request id = %q, want %q", admission.queueRequestID, "qreq_synthetic_1")
+	}
+	if embedded := classifyDoagentPromptAdmission(promptRPCResult(map[string]interface{}{"status": "queued"})); embedded.queueRequestID != "" {
+		t.Fatalf("a token-free queued reply must stay token-free, got %q", embedded.queueRequestID)
+	}
+}
+
+func TestAgentPromptQueuedTokenIsCancelledByRequest(t *testing.T) {
+	doagent, calls := newPromptAdmissionDoagent(t, func() map[string]interface{} {
+		return promptRPCResult(map[string]interface{}{
+			"status": "queued", "queuePosition": 1, "queueRequestId": "qreq_synthetic_2", "delivery": "sse",
+		})
+	})
+	defer doagent.Close()
+	calls.cancelStatus = "queued_cancelled"
+	_, conn, cleanup := dialPromptAdmissionAgent(t, doagent.URL)
+	defer cleanup()
+
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id":  "queued-token",
+		"instruction": "deploy the chart",
+	})
+	code, message := promptWireError(t, result)
+	if code != -32603 || message != doagentPromptQueued {
+		t.Fatalf("wire error = %d/%q, want -32603/%q", code, message, doagentPromptQueued)
+	}
+	_, promptCalls, cancelCalls := calls.counts()
+	if promptCalls != 1 || cancelCalls != 1 {
+		t.Fatalf("calls: prompt=%d cancel=%d, want 1/1", promptCalls, cancelCalls)
+	}
+	params := calls.lastCancel()
+	if params["queueRequestId"] != "qreq_synthetic_2" || params["sessionId"] != "queued-token" {
+		t.Fatalf("targeted cancel params = %#v, want the session and the reply's queue token", params)
+	}
+}
+
+func TestAgentPromptQueuedTokenNotFoundStaysCleanupUnknown(t *testing.T) {
+	doagent, calls := newPromptAdmissionDoagent(t, func() map[string]interface{} {
+		return promptRPCResult(map[string]interface{}{
+			"status": "queued", "queuePosition": 1, "queueRequestId": "qreq_synthetic_3", "delivery": "sse",
+		})
+	})
+	defer doagent.Close()
+	calls.cancelStatus = "queued_not_found"
+	_, conn, cleanup := dialPromptAdmissionAgent(t, doagent.URL)
+	defer cleanup()
+
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id":  "queued-token-missing",
+		"instruction": "deploy the chart",
+	})
+	code, message := promptWireError(t, result)
+	if code != -32603 || message != doagentPromptCleanupUnknown {
+		t.Fatalf("wire error = %d/%q, want -32603/%q", code, message, doagentPromptCleanupUnknown)
+	}
+	_, _, cancelCalls := calls.counts()
+	if cancelCalls != 1 {
+		t.Fatalf("cancel calls = %d, want 1 targeted attempt", cancelCalls)
 	}
 }
