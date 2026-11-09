@@ -64,6 +64,27 @@ func executeDoSQLDirect(ctx context.Context, request doSQLDirectRequest) (doSQLD
 	if request.Target.Driver == doSQLExternalDriver {
 		return executeDoSQLExternal(ctx, request)
 	}
+	if request.Target.Engine == "mysql" {
+		statements := append([]string(nil), request.Statements...)
+		if strings.TrimSpace(request.Verification) != "" {
+			statements = append(statements, request.Verification)
+		}
+		for index, statement := range statements {
+			words, err := doSQLMySQLStatementWords(statement)
+			if err != nil {
+				result.Status = "rejected"
+				return result, fmt.Errorf("%w: statement %d", err, index+1)
+			}
+			if request.DryRun && !doSQLMySQLDryRunSafe(words) && !doSQLCommitsImplicitly("mysql", statement) {
+				result.Status = "rejected"
+				return result, fmt.Errorf("dosql_dry_run_statement_unsupported: statement %d cannot be guaranteed to roll back", index+1)
+			}
+			if request.DryRun && index == len(request.Statements) && doSQLCommitsImplicitly("mysql", statement) {
+				result.Status = "rejected"
+				return result, errors.New("dosql_verification_invalid: verification cannot commit the transaction")
+			}
+		}
+	}
 	if request.DryRun {
 		// Checked before connecting: running the DDL is what would leak it.
 		for index, statement := range request.Statements {
