@@ -102,8 +102,8 @@ permit 全忙，或该 session 已有 turn 在跑）或 `status=no_prompt`（pro
 未知 status、transport 失败）保留未知结果语义。
 `queued` 的后台风险按应答是否带 `queueRequestId` 决定：目标 doagent 返回该 opaque token 时，
 Gateway 用它调用 `session/cancel` 做请求级取消，只有 doagent 明确回 `queued_cancelled` 才返回可
-重试的 `doagent_prompt_queued`（本请求没有 turn，换新 session 重试）；`queued_not_found` 或
-transport 未确认时仍返回 `doagent_prompt_queue_cleanup_unknown`。没有 token 的旧版 doagent 保持
+重试的 `doagent_prompt_queued`（本请求没有 turn，换新 session 重试）；`queued_not_found` 或任何非 `queued_cancelled` 的应答（含
+transport 失败）仍返回 `doagent_prompt_queue_cleanup_unknown`。没有 token 的旧版 doagent 保持
 兼容规则：只有 `response_format=json` 的机器结果 prompt 会为本次调用生成唯一 session id，且应答带
 `globalPosition`（说明排队时该 session 空闲）时，Gateway 才对该 session 发一次 `session/cancel`
 后返回 `doagent_prompt_queued`；该 cancel 是尽力清理，ACK 不等于逐字节确认。复用 session 的流式

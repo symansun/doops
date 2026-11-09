@@ -77,6 +77,7 @@ type promptAdmissionCalls struct {
 	promptCalls      int
 	cancelCalls      int
 	cancelStatus     string
+	cancelHTTPStatus int
 	lastCancelParams map[string]interface{}
 }
 
@@ -133,7 +134,12 @@ func newPromptAdmissionDoagent(t *testing.T, promptReply func() map[string]inter
 				calls.cancelCalls++
 				calls.lastCancelParams = params
 				status := calls.cancelStatus
+				httpStatus := calls.cancelHTTPStatus
 				calls.mu.Unlock()
+				if httpStatus != 0 {
+					w.WriteHeader(httpStatus)
+					return
+				}
 				if status == "" {
 					status = "cancelling"
 				}
@@ -484,5 +490,56 @@ func TestAgentPromptQueuedTokenNotFoundStaysCleanupUnknown(t *testing.T) {
 	_, _, cancelCalls := calls.counts()
 	if cancelCalls != 1 {
 		t.Fatalf("cancel calls = %d, want 1 targeted attempt", cancelCalls)
+	}
+}
+
+func TestClassifyDoagentPromptAdmissionIgnoresUnusableQueueTokens(t *testing.T) {
+	for name, value := range map[string]interface{}{
+		"whitespace": "   ",
+		"number":     float64(42),
+		"object":     map[string]interface{}{"id": "x"},
+		"null":       nil,
+	} {
+		admission := classifyDoagentPromptAdmission(promptRPCResult(map[string]interface{}{
+			"status": "queued", "queuePosition": 1, "queueRequestId": value,
+		}))
+		if admission.kind != promptAdmissionQueuedNoTurn {
+			t.Fatalf("%s: kind = %s, want %s", name, admission.kind, promptAdmissionQueuedNoTurn)
+		}
+		if admission.queueRequestID != "" {
+			t.Fatalf("%s: token = %q, want empty so the legacy path is used", name, admission.queueRequestID)
+		}
+	}
+}
+
+func TestAgentPromptQueuedTokenCancelUnconfirmedStaysCleanupUnknown(t *testing.T) {
+	cases := map[string]func(*promptAdmissionCalls){
+		"status_cancelling": func(c *promptAdmissionCalls) { c.cancelStatus = "cancelling" },
+		"transport_failure": func(c *promptAdmissionCalls) { c.cancelHTTPStatus = http.StatusInternalServerError },
+	}
+	for name, configure := range cases {
+		t.Run(name, func(t *testing.T) {
+			doagent, calls := newPromptAdmissionDoagent(t, func() map[string]interface{} {
+				return promptRPCResult(map[string]interface{}{
+					"status": "queued", "queuePosition": 1, "queueRequestId": "qreq_synthetic_4", "delivery": "sse",
+				})
+			})
+			defer doagent.Close()
+			configure(calls)
+			_, conn, cleanup := dialPromptAdmissionAgent(t, doagent.URL)
+			defer cleanup()
+
+			result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+				"session_id":  "queued-token-unconfirmed",
+				"instruction": "deploy the chart",
+			})
+			code, message := promptWireError(t, result)
+			if code != -32603 || message != doagentPromptCleanupUnknown {
+				t.Fatalf("wire error = %d/%q, want -32603/%q", code, message, doagentPromptCleanupUnknown)
+			}
+			if _, _, cancelCalls := calls.counts(); cancelCalls != 1 {
+				t.Fatalf("cancel calls = %d, want 1 targeted attempt", cancelCalls)
+			}
+		})
 	}
 }
