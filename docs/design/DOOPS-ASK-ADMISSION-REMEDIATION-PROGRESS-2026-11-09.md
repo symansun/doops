@@ -113,6 +113,17 @@ rev2 `d8352e27` 的修复：
   （`buildToolErrorResponse` → `result.isError=true`，是 `tunnel_hub.go` 映射审计 error 的输入）；
   打通 Gateway 路由属于授权/路由变更，需单独立项。
 
+## 环境变更记录（2026-11-09 夜）
+
+- 用户主仓在整改期间继续前进：实施基线 `66769eef` 之后 main 已有新提交（最近观测到
+  `4e9f4b7c`，含 `7222d997 chore(repo): stop tracking compiled gateway and cli binaries` 等）。
+  因此 A1/A9 分支合入前必须先 rebase 到当时的 main 并重跑全量验证；本文件不声称已 rebase。
+- `/tmp/doops-admission-remediation` 曾被外部清理删除（仅工作目录，不是提交）。分支 ref
+  `doops-admission-remediation` 与其全部提交保存在用户仓库中，已在新路径
+  `/tmp/doops-a1-remediation` 重建并复核通过（`go test ./internal/server -run '<A1+A9 定向>' ` → ok 12.9s）。
+- 任务书原路径 `docs/design/DOOPS-ASK-ADMISSION-REMEDIATION-TASKBOOK-2026-11-09.md` 已被用户归档到
+  `.local/dev-process-archive/20261109/docs/design/`，内容未丢失；A3/A2 按归档路径阅读。
+
 ## 基线既有失败（非本轮引入）
 
 `backend/test/test_stale_contracts.py::test_retired_guidance_does_not_reappear` 在**干净的
