@@ -100,15 +100,17 @@ permit 全忙，或该 session 已有 turn 在跑）或 `status=no_prompt`（pro
 重试）；Gateway 转发这些稳定类别，不再把它们重写成 `execution_outcome_unknown`，审计也保留同一
 类别。只有缺失或畸形的 prompt 应答（accepted 缺 turnId、result 非对象、error 与 result 并存、
 未知 status、transport 失败）保留未知结果语义。
-`queued` 的后台风险只有在 Gateway 能证明该 session 只属于本次请求时才能消除：目前只有
-`response_format=json` 的机器结果 prompt 会为本次调用生成唯一 session id，且应答带
-`globalPosition`（说明排队时该 session 空闲）时，Gateway 才对该 session 发一次
-`session/cancel` 后返回 `doagent_prompt_queued`；该 cancel 是尽力清理，ACK 不等于逐字节确认，
-精确的请求级取消仍需 doagent 提供。凭据准备回滚失败仍按凭据不确定处理，不套用准入前类别。复用 session 的流式 prompt（包括 `ask --apply`）
-不得被 session 级取消命中，因此一律返回 `doagent_prompt_queue_cleanup_unknown`：本请求没有 turn，
-但排队项可能稍后执行，禁止自动重试，先核对队列与审计；等 doagent 支持请求级取消后才可能对共享
-session 返回可重试的 `doagent_prompt_queued`。空 prompt 在发送给 doagent 之前就被拒绝，上游
-`no_prompt` 应答同样不触发任何 cancel。
+`queued` 的后台风险按应答是否带 `queueRequestId` 决定：目标 doagent 返回该 opaque token 时，
+Gateway 用它调用 `session/cancel` 做请求级取消，只有 doagent 明确回 `queued_cancelled` 才返回可
+重试的 `doagent_prompt_queued`（本请求没有 turn，换新 session 重试）；`queued_not_found` 或
+transport 未确认时仍返回 `doagent_prompt_queue_cleanup_unknown`。没有 token 的旧版 doagent 保持
+兼容规则：只有 `response_format=json` 的机器结果 prompt 会为本次调用生成唯一 session id，且应答带
+`globalPosition`（说明排队时该 session 空闲）时，Gateway 才对该 session 发一次 `session/cancel`
+后返回 `doagent_prompt_queued`；该 cancel 是尽力清理，ACK 不等于逐字节确认。复用 session 的流式
+prompt（包括尚无 token 的 `ask --apply`）不得被 session 级取消命中，此时返回
+`doagent_prompt_queue_cleanup_unknown`：本请求没有 turn，但排队项可能稍后执行，禁止自动重试，
+先核对队列与审计。凭据准备回滚失败仍按凭据不确定处理，不套用准入前类别。空 prompt 在发送给
+doagent 之前就被拒绝，上游 `no_prompt` 应答同样不触发任何 cancel。
 当前锁按 target 路由
 隔离，没有跨 target 的 release/数据库统一锁或执行器 fencing，不支持安全强制抢占。
 
