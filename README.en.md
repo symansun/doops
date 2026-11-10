@@ -404,6 +404,8 @@ doops -session diagnose-001 ask \
 
 Use it after valid model configuration and appropriate cluster permissions are in place. The prompt above asks for a read-only check of the current Kubernetes nodes and abnormal Pods, listing evidence, possible causes, and follow-up suggestions without performing repairs. "Read-only" in the prompt is a task requirement and does not replace system permission control; important operations still require reviewing results and real execution evidence.
 
+Read-only database queries use `doops -session <s> sql --target <t> --mode query --request '<request>'`; change plans/applies plus `--credential` and `--verify` are covered in the [usage guide](backend/docs/DOOPS_USAGE_GUIDE.md).
+
 ### Synchronize code and pull results back
 
 ```bash
