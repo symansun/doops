@@ -234,7 +234,8 @@ export PATH="$HOME/.local/bin:$PATH"
 | 默认目标配置 | `~/.agent/skills/doops/config.json` |
 | 登录缓存 | `~/.agent/skills/doops/auth.json` |
 
-公开仓库的 tag 发布由 GitHub Actions 自动构建（[release workflow](.github/workflows/release.yml)）。需要从 GitHub
+公开仓库的 tag 发布由 GitHub Actions 自动构建（[release workflow](.github/workflows/release.yml)），发布线固定为
+`v0.2.x` 补丁递增；切换 minor/major 系列需要维护者修改仓库变量 `DOOPS_RELEASE_SERIES`。需要从 GitHub
 Release 安装时，把发布资产来源显式指向该发布：
 
 ```bash

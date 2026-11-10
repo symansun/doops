@@ -50,11 +50,20 @@ jobs:
           GH_REPO: ${{ github.repository }}
           EVENT_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
           PUBLISH_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.publish || github.event_name == 'push' }}
+          ALLOWED_SERIES: ${{ vars.DOOPS_RELEASE_SERIES || '0.2' }}
         run: |
           set -euo pipefail
           tag="${EVENT_TAG}"
           if [[ ! "${tag}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "release tag must look like vMAJOR.MINOR.PATCH (optional -prerelease suffix): ${tag}" >&2
+            exit 1
+          fi
+          # The public line releases v0.2.x patch increments only. Moving to a new
+          # minor/major series needs a maintainer decision, expressed by setting the
+          # DOOPS_RELEASE_SERIES repository variable (for example 0.3).
+          series="v$(printf '%s' "${tag}" | sed -E 's/^v([0-9]+\.[0-9]+)\..*$/\1/')"
+          if [[ "${series}" != "v${ALLOWED_SERIES}" ]]; then
+            echo "release series ${series}.x is not authorized; this repository publishes v${ALLOWED_SERIES}.x only. A maintainer must change the DOOPS_RELEASE_SERIES repository variable to authorize a new series." >&2
             exit 1
           fi
           git fetch --force --no-tags origin "refs/heads/main:refs/remotes/origin/main"
