@@ -9,8 +9,8 @@ Both must be correct.
 
 ```bash
 node /app/skills/doweb/scripts/doweb.mjs domain-set \
-  --domain aihub.org.cn \
-  --host-ip 114.55.61.32 \
+  --domain example.com \
+  --host-ip <agent-host-ip> \
   --provider aliyun
 ```
 
@@ -19,21 +19,21 @@ must be managed through DNS tooling such as AliDNS, BIND or DoDNS.
 
 ## Exact Records and Wildcards
 
-If `*.aihub.org.cn` exists, any new hostname without an exact record can inherit
+If `*.example.com` exists, any new hostname without an exact record can inherit
 the wildcard answer.
 
 Example:
 
 ```text
-*.aihub.org.cn A 114.55.61.32
-*.aihub.org.cn A 192.168.150.228
+*.example.com A <agent-host-ip>
+*.example.com A 192.168.150.228
 ```
 
-Then `proxy-106.aihub.org.cn` may resolve to both addresses unless an exact
+Then `proxy-106.example.com` may resolve to both addresses unless an exact
 record overrides it:
 
 ```text
-proxy-106.aihub.org.cn A 114.55.61.32
+proxy-106.example.com A <agent-host-ip>
 ```
 
 Every returned A record must serve the same hostname. If one IP has the DoWeb
@@ -50,8 +50,8 @@ When local `dig` looks suspicious, verify with DNS-over-HTTPS or a clean remote
 node:
 
 ```bash
-curl -sS 'https://dns.google/resolve?name=proxy-106.aihub.org.cn&type=A'
-curl -sS 'https://cloudflare-dns.com/dns-query?name=proxy-106.aihub.org.cn&type=A' \
+curl -sS 'https://dns.google/resolve?name=proxy-106.example.com&type=A'
+curl -sS 'https://cloudflare-dns.com/dns-query?name=proxy-106.example.com&type=A' \
   -H 'accept: application/dns-json'
 ```
 
@@ -60,8 +60,8 @@ curl -sS 'https://cloudflare-dns.com/dns-query?name=proxy-106.aihub.org.cn&type=
 Use `curl --resolve` to separate DNS from Nginx behavior:
 
 ```bash
-curl --resolve proxy-106.aihub.org.cn:80:114.55.61.32 \
-  http://proxy-106.aihub.org.cn/
+curl --resolve proxy-106.example.com:80:<agent-host-ip> \
+  http://proxy-106.example.com/
 ```
 
 If forced access succeeds but normal access fails, inspect DNS, local proxy,
@@ -102,7 +102,7 @@ Nginx server blocks and health checks.
 For public DoWeb sites:
 
 ```text
-<site>.aihub.org.cn A 114.55.61.32
+<site>.example.com A <agent-host-ip>
 ```
 
 Avoid returning private addresses from public DNS unless the private address is
