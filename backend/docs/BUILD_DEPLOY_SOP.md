@@ -550,7 +550,8 @@ Agent 完全不可用时，SSH 仅用于 Agent 自恢复，恢复后仍须完成
    `workflow_dispatch`（默认 dry-run，不创建 Release）。tag 必须已存在且指向 `main` 上的提交；
    已存在的 Release 拒绝重建，已发布资产不可变。
 2. **CI 门禁**：发布前直接复用 `.github/workflows/ci.yml`（`workflow_call`），tag 不会绕过
-   main 的检查。
+   main 的检查；secret scan 只在 branch push/PR 上运行——tag 和手工发布没有增量 commit 范围，
+   全历史扫描会把历史上已存在的测试 fixture 当成泄漏，tag 指向的提交在合入 main 时已扫描。
 3. **构建**：`backend/scripts/build-cli.sh --all` 在固定 `go1.25.14` builder 身份下产出
    `doops-{darwin,linux}-{amd64,arm64}`、`doops-gateway-linux-amd64` 和 `checksums.txt`；
    发布前校验 sha256、`release=<tag> commit=<commit>` 身份和 `doops.sh/cli-contract/v3`。

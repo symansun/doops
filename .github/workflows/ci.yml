@@ -61,6 +61,14 @@ jobs:
 
   secret-scan:
     name: Secret scan
+    # Branch pushes and pull requests carry the commit range gitleaks should scan.
+    # The release workflow reuses this workflow for tag pushes and manual
+    # dispatch, where gitleaks would scan the full history (historical fixtures
+    # and canaries) instead of a change; those commits were already scanned when
+    # they landed on main.
+    if: >-
+      (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) ||
+      github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
