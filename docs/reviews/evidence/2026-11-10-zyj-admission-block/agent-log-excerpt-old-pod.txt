@@ -1,0 +1,13 @@
+# source: kubectl -n ai logs doops-agent-668f996958-49nl5 (v1.3.124 Agent, do-agent 0.2.42), pod deleted during recovery
+# note: timestamps are UTC; +8h for Asia/Shanghai
+2026/11/10 01:05:03 🤖 WS Running doagent via ACP HTTP: session=lead-diag-20261110a structured=false model=
+[session/new] no file-backed messages for lead-diag-20261110a: No such file or directory (os error 2)
+2026/11/10 01:05:03 🔗 Bound Doops Session lead-diag-20261110a -> doagent Session lead-diag-20261110a
+2026/11/10 01:05:03 🧭 Session lead-diag-20261110a using native doagent mode auto
+[SSE] Client connected: session=lead-diag-20261110a
+[GC admission] Queued prompt for session lead-diag-20261110a (global position ~0), queue length: 1
+[RequestQueue] Cleared 1 queued prompt(s)
+
+# same pattern on the user's prior attempts (from --tail=200 grep, UTC):
+2026/11/09 ... [GC admission] Queued prompt for session <redacted> (global position ~0), queue length: 1
+[RequestQueue] Cleared 1 queued prompt(s)
