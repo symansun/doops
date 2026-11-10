@@ -14,8 +14,9 @@
 - [x] 取消/超时与明确未准入终态的竞态；保留真实执行未知的保护，未知结果不触发确定失败的凭据回滚。
 - [x] 复用 `runtime/gcStats` 提供实时准入状态；CLI `targets --admission` 回读内部名额/排队，
   普通 targets 明确标注 Gateway 计数的边界。
-- [ ] 终审追加：队列出队后、创建 turn 前校验失败必须发布准确且唯一的失败终态。
-- [ ] 运行产物、pin 和授权目标发布验收。不得猜测未发布镜像摘要或把源码测试写成线上成功。
+- [x] 终审追加：队列项在同一 session 写锁内完成可失败准备后才出队；失败按准确 ID 清理并发布唯一终态。
+- [x] doagent 终审修复产物、provenance 和 runtime pin 已核对。
+- [ ] DoOps CNB 生产线同步及授权目标发布验收；源码和镜像验证不能替代线上成功。
 
 ### 职责收敛
 
@@ -42,11 +43,39 @@
   包含 14 个 GC/队列/HTTP 受控功能场景，后续出队失败窗口另行验证。
 - DoOps CLI 全套通过；Gateway 包通过；Python 契约 350 passed、8 subtests passed。
   第一轮 Agent 全套达到默认 10 分钟总上限，且发现旧测试仍要求共享 session 取消。
-  这些断言已更新为共享/独占场景并定向通过；最终 Agent 全套正在用 20 分钟上限重跑。
+  这些断言已更新为共享/独占场景并定向通过；最终 Agent 全套于 2026-11-11 00:03:29 +08:00
+  完成，6 包通过、2 包无测试，`internal/server` 619.027s，无失败。
 - Gateway 48 个明确未执行屏障、16 个未知终态屏障、6 个凭据/审计场景及定向 race 通过。
   新诊断使用真实 WebSocket handler/HTTP runtime fixture；旧非 JSON 或缺失字段不得显示为空闲。
 - 未升级 zyj，未执行业务 Helm mutation。当前只读 ask 成功不能证明线上已消除 permit 泄漏，
   受管 Helm 发布、回滚及目标升级仍需匹配产物后的线上验收。
+
+### 2026-11-11 续办
+
+- doagent 终审修复已提交并 push 到 CNB `main`：
+  `e4d052e62392fbc7a3ef02cb22765215f53e301f`。已 `git fetch origin main` 并核对远端包含该提交。
+  17 个真实 GC/SQLite/HTTP 受控功能场景通过；ACP 全套 391 passed、2 个原有 ignored。
+  独立 delta 复核确认失败终态唯一、重复派发不影响 active/successor、失败不泄漏 permit。
+- DoOps 准入与诊断代码已随 `572eb015` 合入 GitHub `main`；跨层终审未发现新增确证阻塞。
+  本轮 CLI 全套通过（20.576s），编译后 `targets --help` 包含 `--admission`。
+- `admission-review-20261111` 在 `zyj` 的两次只读 ask 分别返回
+  `ADMISSION-OK-20261111-A`、`ADMISSION-OK-20261111-B`，均 exit 0。
+  直接回读 do-agent 仍为 `0.2.42`，Agent revision 仍为
+  `081f24ab4e92535bce87c23889e242a1ee5f0886`；
+  Helm `ai/doops-agent` 仍为 revision 49、deployed。
+- 终审修复 snapshot CI `cnb-fc3-1k734757n` 成功，2026-11-11 00:29:19 +08:00 推送
+  `docker.cnb.cool/l8ai/ai/doagent:e4d052e6`。已回读 CNB provenance 和 registry 内容摘要：
+  revision 为 `e4d052e62392fbc7a3ef02cb22765215f53e301f`，version 为 `0.2.44`，
+  index 为 `sha256:7fc59346c17bd6bee1377d16d865768ba5b5ebcadde3681d32242c65a9a48b14`，
+  linux/amd64 为 `sha256:52c48f17724861a35e0fb5d328ad4b6797b61caa2b42e8ce042bc149a35101f9`。
+  `backend/runtime-versions.env` 与版本契约测试同步采用此产物；
+  首批 `b28dad1e` 镜像含 setup 窗口，不作为最终 pin。
+- 已拉取固定 digest 的 CI 镜像，在隔离网络、无宿主机挂载的 linux/amd64 容器中运行实际
+  `do-agent --version` 与 ACP `initialize`，核对 version、revision 和
+  `rejectWhenBusy=true` 全部通过。runtime lock、部署契约、文档链接与旧契约扫描合计
+  14 项通过；这只验证运行产物及构建前置条件，未构建或部署 DoOps Agent 镜像。
+- GitHub 与 CNB DoOps 主线没有共同祖先，不能直接 fast-forward 或强推覆盖生产线。
+  此处明确区分 GitHub 代码已交付、CNB 生产发布尚未交付，不能只报“已 push”掩盖差异。
 
 本轮停止条件：上述代码路径的功能场景通过、跨仓协议一致、独立复核无新增阻塞，记录未交付环节。
 每个修复最多进行三轮“修改→定向验证→复核”；同一外部阻塞连续出现三次则留下具体证据并升级，

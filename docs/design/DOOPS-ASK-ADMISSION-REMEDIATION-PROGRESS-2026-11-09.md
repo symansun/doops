@@ -1,5 +1,10 @@
 # DoOps ask 准入阻塞整改进度
 
+> 以下保留 2026-11-09 至 2026-11-10 初期实施的历史证据，分支、worktree、兼容清理和
+> “未开始”状态不代表当前实现。当前整改、提交与线上验收状态见
+> [用户阻塞复评](../reviews/2026-11-10-user-blockers-review.md)；
+> 当前协议以 [自然语言部署契约](../../backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md) 为准。
+
 - 任务书：`DOOPS-ASK-ADMISSION-REMEDIATION-TASKBOOK-2026-11-09.md`（用户已归档到 `.local/dev-process-archive/20261109/docs/design/`，不在本分支）
 - 实施分支：`doops-admission-remediation`（worktree `.worktrees/a1-remediation`，/tmp 会被外部清理）
 - 基线：`66769eef`（cnb/main，2026-11-09 16:23 +08；本仓库本地 `main` 是 GitHub v0.2.x 线，不是生产线）。合入前基线核对见"合入前基线与 rebase 核对"
