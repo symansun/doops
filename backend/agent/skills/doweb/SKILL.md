@@ -129,8 +129,10 @@ by silently switching to a different path or skipping validation.
 
 ## Unified Authorization Boundary
 
-- Gateway authenticates the user and checks `targets:list`, `ask` or `exec` on
-  the exact `cluster/instance`.
+- Gateway authenticates the user and checks the grant on the exact
+  `cluster/instance`. One DoOps Agent is one authorization unit: a grant opens
+  every operation on that target, and `list`/`ask`/`exec` are internal action
+  labels the Gateway derives from the call, never separate permissions.
 - DoWeb receives only the selected target, site request and optional managed
   credential resource names. Passwords, SSH keys and Gateway tokens never enter
   SiteSpec, state JSON, prompts or logs.
