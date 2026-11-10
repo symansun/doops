@@ -66,10 +66,12 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
 - Do not add or restore `EnvironmentRegistry`, `EnvironmentDefinition`, `DeploymentTemplate`,
   `deploy/environments.yaml`, `doops cicd run`, prompt-derived deployment scope, `CICDReport`, or
   `doops_cicd_result` as a deployment root or compatibility path.
-- Gateway authorization is (user, cluster, instance) only; a grant covers every operation on the
-  target and its bound credentials. Platform admin is a user flag. Gateway has no per-action
-  grants, execution quotas, operation admin, unlock, audit-optimize, scheduler, or repo registry;
-  do not reintroduce them.
+- A DoOps Agent (one cluster/instance target) is the authorization unit: Gateway authorization
+  is (user, cluster, instance) only, and a grant opens every operation on that target and its
+  bound credentials. Openness is the default: do not add per-action or per-operation restrictions
+  and do not narrow what a target grant covers. Platform admin is a user flag. Gateway has no
+  per-action grants, execution quotas, operation admin, unlock, audit-optimize, scheduler, or repo
+  registry; do not reintroduce them.
 - `deploy/helm/<name>/` contains runtime assets only. It must not become an environment registry,
   credential store, target selector, or deployment authorization source.
 - Agent upgrade has one hard constraint: an Agent cannot replace its own workload from its own

@@ -262,7 +262,7 @@ doops admin token revoke --target <gateway-target> --id <token-id>
 
 - 创建/禁用用户，设置或重置密码。
 - 创建、吊销、轮换 user token。
-- 授权只按 (user, cluster, instance)：有 grant 即可完整使用该 target 及其绑定的凭据；平台管理员是用户的 `is_admin` 标记，不是 grant。
+- 授权只按 (user, cluster, instance)：一个 DoOps Agent 就是一个授权单元，有 grant 即可完整使用该 target 的全部操作及其绑定的凭据，不设 per-action 授权（开放性优先）；Gateway 内部按工具推导 action 只用于审计分类，不是独立权限。平台管理员是用户的 `is_admin` 标记，不是 grant。
 - 按 `user_id`、`token_id`、`cluster`、`instance`、`action`、`session`、`status` 查询审计。
 - 按保留周期清理过期审计，清理前保留可追溯导出。
 
