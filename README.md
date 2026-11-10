@@ -57,12 +57,12 @@ DoOps 不替代 Kubernetes 本身，也不是完整的监控时序数据库、IT
 | --- | --- | --- |
 | Web 控制台 | 登录、目标选择、命令和 AI 任务界面、节点信息、审计及管理入口 | 基于 Next.js；部分文件、知识库和模型配置界面仍需与后端契约联调 |
 | 统一 Gateway | Agent 注册、目标路由、用户鉴权、作用域授权、排队与并发控制 | SQLite 保存控制面状态；公网访问需部署 TLS 反向代理 |
-| Agent 反向连接 | 目标节点主动连接 Gateway，以 `cluster/instance` 标识执行目标 | 生产环境可为精确 target 启用 enrollment token；用户 Token 不用于 Agent 注册 |
+| Agent 反向连接 | 目标节点主动连接 Gateway，以 `cluster/instance` 标识执行目标 | 注册只声明 cluster/instance，不需要注册令牌；用户 Token 不用于 Agent 注册 |
 | 确定性命令执行 | `exec` 运行命令并返回输出；支持后台任务、日志及状态查询 | 不是持久 PTY；命令具有 Agent 进程对应的系统权限 |
 | Git 工作区同步 | `push/pull` 通过 Git HTTP 和 Agent 隧道同步会话工作区 | 拉取与清理存在覆盖、删除风险；不是永久备份机制 |
 | 小文本文件操作 | 在指定 session 内执行 `read/write` | 使用工作区相对路径；大文件和二进制使用 `push/pull` |
 | AI 运维任务 | `ask` 通过 ACP HTTP 与 SSE 接入 doagent | 需要可用的 doagent 服务、模型配置及相应目标权限 |
-| 自然语言业务发布 | `ask --apply` 读取任务指定的镜像、Chart、凭据和验收条件，并通过结构化 Helm 工具执行 | 业务发布不使用 `cicd run`、环境注册表或未审阅的 YAML 工作流 |
+| 自然语言业务发布 | `ask --apply` 读取任务指定的镜像、Chart、凭据和验收条件，并通过结构化 Helm 工具执行 | 业务发布不使用环境注册表、模板化发布或未审阅的 YAML 工作流 |
 | 凭据资源管理 | 提供版本化凭据、授权、Bundle 和运行期材料化能力 | 启用加密存储需稳定配置 Gateway 密钥；不代表所有日志均自动脱敏 |
 | 运维工作台 | 集成 DoSql、DoWeb、Kubernetes 观察和受控变更入口 | 具体能力以目标 Agent、凭据绑定和对应 Skill 的验收结果为准 |
 | Agent 升级入口 | 提供带权限检查的升级通知和生命周期协调 | Kubernetes 与 Docker 路径能力不同，不能假设 Docker 模式会自动替换容器 |
@@ -149,7 +149,7 @@ Gateway 和 Agent 若运行在同一宿主机网络中，必须避免默认端�
 - **连接已有环境**：需要 Gateway 地址、用户 Token、已注册的 Agent 和目标授权。
 - **安装预构建 CLI**：支持 Linux/macOS 的 amd64、arm64；需 Bash、`shasum` 及常用 Unix 工具。代码同步还需要 Git。
 - **从源码构建**：需要 Go、Node.js、pnpm 和 Git。
-- **完整 Agent 容器**：还需可访问的镜像、按环境启用的 Agent enrollment 配置、模型配置；操作 Kubernetes 时需有效的集群凭据。
+- **完整 Agent 容器**：还需可访问的镜像、Gateway URL 与 cluster/instance 配置、模型配置；操作 Kubernetes 时需有效的集群凭据。
 
 > CLI 提供多个客户端平台制品，不代表 Agent 镜像也是多架构发布。当前 Agent 镜像发布流程以 `linux/amd64` 为基线。
 
@@ -281,7 +281,7 @@ doops -session diagnose targets --target <自动发现的 target> --admission
 doops -session inspect-001 exec --target <自动发现的 target> --cmd 'hostname'
 ```
 
-已有目标需要重新密码登录时，可省略 `--password`，让终端隐藏输入：
+已有目标需要重新密码登录时，直接运行以下命令即可；密码只能由终端隐藏输入（或 `--token-stdin` 导入），CLI 没有 `--password` 参数：
 
 ```bash
 doops login --target <name> --username alice
@@ -327,7 +327,7 @@ backend/bin/doops-gateway token create \
   -name initial-console -expires 24h
 ```
 
-用户 Token 会输出一次，请立即私密保存。示例中的全局 `admin` 仅用于首次受信任初始化，**不要作为普通用户默认权限**。生产 Agent 的 enrollment token 由部署侧按精确 target 配置；当前 Gateway CLI 不提供通用的 `agent-token create` 命令。
+用户 Token 会输出一次，请立即私密保存。示例中的全局 `admin` 仅用于首次受信任初始化，**不要作为普通用户默认权限**。Agent 反向注册只声明 `cluster/instance`，Gateway 不为普通 Agent 签发注册凭据；当前 Gateway CLI 也不提供通用的 `agent-token create` 命令。
 
 启动 Gateway：
 
@@ -358,7 +358,7 @@ backend/bin/doops-agent \
 
 这只是注册与基础执行链路的联调示例，不会自动安装 doagent、模型、BuildKit 或 Kubernetes 工具。实际服务器注册时，将地址换为可达的 HTTPS Gateway，并按目标网络设置 Agent 监听范围。
 
-当 Gateway 为该 target 启用了 enrollment 校验时，再通过 `DOOPS_AGENT_ENROLL_TOKEN` 或 `-agent-enroll-token` 提供绑定到精确 `cluster/instance` 的注册令牌；未启用时不要把用户 Token 或业务凭据当作 Agent 注册凭据。
+普通 Agent 注册不需要额外注册凭据，也不要把用户 Token 或业务凭据当作 Agent 注册凭据。只有启用 Edge 公网隧道（`-edge`，默认关闭、生产未上线）时才用 `-edge-enroll-token`，见 [Edge 隧道设计](backend/docs/design/DOOPS_EDGE_TUNNEL.md)。
 
 ### 4. 完整 Agent 容器与 Kubernetes 部署
 
@@ -367,7 +367,7 @@ backend/bin/doops-agent \
 完整部署至少需要：
 
 1. 可访问、可信且固定版本或 digest 的基础镜像与应用镜像。
-2. Gateway URL、cluster、instance，以及启用 enrollment 时绑定到该 target 的 `DOOPS_AGENT_ENROLL_TOKEN`。
+2. Gateway URL，以及与该 target 绑定的 cluster、instance。
 3. 已在 Gateway 创建、验证并提升的 `modelProvider` 凭据；Agent 连接后由 Gateway 材料化到 `/root/.agent/settings.json`。
 4. 必需的卷挂载与持久化；Kubernetes 环境需有效的 `/root/.kube/config`。
 5. 经审阅的 RBAC、网络策略、节点选择、镜像拉取凭据和资源配置。
@@ -490,7 +490,7 @@ doops -session release-check ask \
 
 发布任务必须给出 target、服务范围、Chart 或仓库资产、镜像版本或其可核验来源、原因和验收条件。`--credential` 只传受管凭据资源名，不在参数、prompt、日志或工作区中传递密文。目标 Agent 通过结构化 `mcp_doops_helm upgrade-install` 执行发布，并返回 dry-run、实际变更和最终资源状态证据。
 
-普通发布不使用旧的 `cicd run`、环境注册表或 prompt 推导的部署范围，也不要求先执行 `push` 或读取操作机 kubeconfig。详细契约见[自然语言业务发布](backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md)和[凭据资源](backend/docs/CREDENTIAL_RESOURCES.md)。
+普通发布不使用环境注册表、模板化发布或 prompt 推导的部署范围，也不要求先执行 `push` 或读取操作机 kubeconfig。详细契约见[自然语言业务发布](backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md)和[凭据资源](backend/docs/CREDENTIAL_RESOURCES.md)。
 
 ### 标准 Helm Agent 升级
 
@@ -533,7 +533,7 @@ doops -session agent-upgrade upgrade \
 | --- | --- | --- |
 | `DOOPS_CONFIG` | 覆盖 CLI 默认配置文件路径 | 不是 Web 控制台的 Gateway 配置 |
 | `-gateway-url`、`-cluster`、`-instance` | Agent 注册位置和身份 | 裸二进制应显式传参；不要假定 Helm 中的同名环境变量会自动生效 |
-| `DOOPS_AGENT_ENROLL_TOKEN`、`-agent-enroll-token` | Agent 向 Gateway 注册使用的 target-scoped enrollment 凭据 | 仅在 Gateway 启用 enrollment 时设置，并且必须绑定到精确的 cluster/instance |
+| `-edge`、`-edge-enroll-token` | Edge 公网隧道开关及其 enrollment 凭据 | 默认关闭、生产未上线；普通 Agent 注册不使用注册令牌，见 [Edge 隧道设计](backend/docs/design/DOOPS_EDGE_TUNNEL.md) |
 | `DOOPS_WORKSPACE_ROOT` | Agent 会话工作区根目录 | 默认 `/root/ws`；修改后需调整相关脚本路径 |
 | `DOOPS_GATEWAY_SECRET_KEY` | Gateway 加密凭据的密钥材料 | 启用凭据功能时安全注入、持久保存并备份 |
 | `DO_AGENT_PORT`、`DO_AGENT_URL` | Agent 内部 ACP 服务地址 | 默认端口 `9000`、地址 `http://127.0.0.1:9000`；自定义时保持一致 |
@@ -542,7 +542,7 @@ doops -session agent-upgrade upgrade \
 
 ### 权限与凭据原则
 
-1. **区分用户 Token 与 Agent enrollment token**：前者用于操作 Gateway，后者只在启用 enrollment 时用于精确 target 的 Agent 反向注册，两者不是可互换的密码。
+1. **区分用户 Token 与 Agent 注册标识**：前者用于操作 Gateway；普通 Agent 反向注册只用 `cluster/instance` 标识，不需要令牌，两者不是可互换的密码。
 2. **明确授权范围与动作**：不要将 `admin`、通配符或省略 actions 的授权当作普通用户模板。
 3. **审阅管理端的默认授权**：不同创建入口的默认行为可能不同，不要假定所有新用户天然符合最小权限。
 4. **限制高权限能力**：`exec`、集群凭据、宿主目录和运行时 socket 都可能具有较大影响范围。
@@ -596,7 +596,7 @@ doops/
 | [集群安装指南](backend/docs/CLUSTER_INSTALL_GUIDE.md) | 集群接入参考 |
 | [自然语言业务发布](backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md) | 业务发布职责边界与验收原则 |
 
-部分历史后端文档以 `backend/` 作为当前目录，示例中的 `scripts/...` 不一定能从仓库根目录直接执行。当前主 Web 应用在仓库根目录；旧 Go WebUI 的 `8088` 端口与构建脚本仅用于 legacy 维护，不是 Next.js 的部署入口。
+部分历史后端文档以 `backend/` 作为当前目录，示例中的 `scripts/...` 不一定能从仓库根目录直接执行。当前 Web 应用在仓库根目录；执行示例时按文档标注的工作目录操作。
 
 <a id="development"></a>
 ## 开发、构建与测试
@@ -641,7 +641,7 @@ bash backend/scripts/build-cli.sh --all
 
 ### 页面可以打开，为什么看不到节点？
 
-Web 页面不负责自动部署目标 Agent。检查 Gateway 地址、用户权限、Agent enrollment 配置，以及 cluster/instance 是否匹配。`doops list` 只显示本地配置；在线状态应查看 `doops targets`。
+Web 页面不负责自动部署目标 Agent。检查 Gateway 地址、用户权限、Agent 是否以匹配的 cluster/instance 注册。`doops list` 只显示本地配置；在线状态应查看 `doops targets`。
 
 ### 为什么 `exec` 可用，`ask` 不可用？
 
@@ -661,7 +661,7 @@ Web 页面不负责自动部署目标 Agent。检查 Gateway 地址、用户权�
 
 - 文件、知识库、模型配置及相关 AI 页面存在与后端路径、参数契约的适配事项，不应把“页面存在”当作已全链路可用。
 - 知识库界面主要围绕 Markdown 文件管理，不是已实现的向量检索或 RAG 服务。
-- 业务发布的凭据预检和执行以 `ask --apply`、`NATURAL_LANGUAGE_DEPLOYMENT.md` 及 `CREDENTIAL_RESOURCES.md` 为准，不要把旧的 `DeploymentTemplate` 或 `cicd run` 当作当前入口。
+- 业务发布的凭据预检和执行以 `ask --apply`、`NATURAL_LANGUAGE_DEPLOYMENT.md` 及 `CREDENTIAL_RESOURCES.md` 为准，不要用已退休的发布入口替代本流程。
 - Agent 升级的 Docker 分支不等于自动完成容器替换，实际替换需要外部管理机制配合。
 - 工作区可能自动清理，后台任务也不提供无条件的重启持久化保证。
 - 当前 Agent 镜像、Helm 默认值和历史环境清单不构成“所有平台一键部署”的承诺。

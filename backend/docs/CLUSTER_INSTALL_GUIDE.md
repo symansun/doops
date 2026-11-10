@@ -7,7 +7,9 @@
 ## 先选部署对象
 
 本文是 Agent 安装与升级的入口。不要把 CLI 安装、Agent 注册、操作员登录和
-Agent 镜像升级当作同一件事。下列脚本命令均从仓库 `backend/` 执行。
+Agent 镜像升级当作同一件事。下列脚本都在 `backend/scripts/` 下：在仓库根目录执行时
+写 `bash backend/scripts/...`，在 `backend/` 目录内执行时写 `bash scripts/...`；
+根目录的 `scripts/install.sh` 是转发入口，两种写法等价。
 
 | 当前状态 | 使用入口 | 前提 |
 | :--- | :--- | :--- |
@@ -54,52 +56,74 @@ doops -session preflight exec --target <自动发现的 target> --cmd hostname
 所以必须先有 git 和一份包含该提交的仓库克隆：
 
 1. 安装 git：macOS 用 `brew install git`，Debian/Ubuntu 用 `apt install git`。
-2. 克隆仓库，二选一（需要对应平台的访问权限）：
-   `git clone https://cnb.cool/l8ai/ai/doops.sh.git` 或
-   `git clone https://github.com/symansun/doops.git`。
-3. 在仓库根目录执行 `git fetch --tags`，再运行安装脚本：
+2. 先确定要安装的发布 tag。两条发布线的 Release 资产互不相通，`--version` 必须来自对应的发布源：
 
-```bash
-git fetch --tags
-# 推荐：只提供 Gateway URL；安装后首次登录会自动发现并写回可见 target 路由
-bash backend/scripts/install.sh \
-  --version <tag> \
-  --project <项目绝对路径> \
-  --target-gateway <gateway-url>
-```
+   | 发布线 | 仓库 | Release 资产 | 当前 tag | `--gateway` 首登发现 |
+   | :--- | :--- | :--- | :--- | :--- |
+   | 公开线 | `github.com/symansun/doops` | GitHub Releases | `v0.2.3` | 支持 |
+   | CNB 生产线 | `cnb.cool/l8ai/ai/doops.sh` | CNB Release Assets（`install.sh` 默认源） | `v1.3.126` | 不支持，用四项显式路由 |
 
-4. 确认 `~/.local/bin` 在 `PATH` 中，再执行首次登录；没有本地路由时用 `--gateway`，
-   密码交互或 token stdin 都可以：
+   克隆时**固定到该 tag**。CNB 仓库的默认分支是 `master`（旧扁平布局，没有 `backend/`），
+   不带 `--branch` 克隆会拿到它：
 
-```bash
-doops login --gateway <gateway-url>
-printf '%s' "$TOKEN" | doops login --gateway <gateway-url> --token-stdin
-doops list
-doops targets --target <自动发现的 target>
-```
+   ```bash
+   git clone --branch <tag> --depth 1 https://github.com/symansun/doops.git
+   # 或：git clone --branch <tag> --depth 1 https://cnb.cool/l8ai/ai/doops.sh.git
+   cd doops
+   ```
 
-首次登录会调用 `GET /v1/targets`，把该账号可见的在线 target 写回
-`~/.agent/skills/doops/config.json`；已有路由的名称、别名和描述不会被改写。
-因此操作员不需要事先知道 Agent 的 `cluster/instance`。
+   已经克隆了 main 时，先 `git fetch --tags && git checkout <tag>` 再继续。
+3. 安装 CLI 和 Skill。装公开线（`v0.2.x`）时把资产来源指向 GitHub Releases，并只给
+   `--target-gateway`，用首登发现：
 
-只有需要**在登录前固定一条路由**，或使用尚不支持 `--gateway` 的旧发布 CLI 时，才用显式路由模式：
+   ```bash
+   DOOPS_RELEASE_ASSET_BASE="https://github.com/symansun/doops/releases/download" \
+     bash scripts/install.sh \
+       --version v0.2.3 \
+       --project <项目绝对路径> \
+       --target-gateway <gateway-url>
+   ```
 
-```bash
-bash backend/scripts/install.sh \
-  --version <tag> \
-  --project <项目绝对路径> \
-  --target-name <name> \
-  --target-gateway <gateway-url> \
-  --target-cluster <cluster> \
-  --target-instance <instance> \
-  --use '<说明>'
-```
+   装 CNB 生产线（`v1.3.x`）时用默认 CNB 源，并给四项显式路由——该线当前发布 CLI 没有
+   `--gateway`：
+
+   ```bash
+   bash scripts/install.sh \
+     --version v1.3.126 \
+     --project <项目绝对路径> \
+     --target-name <name> \
+     --target-gateway <gateway-url> \
+     --target-cluster <cluster> \
+     --target-instance <instance> \
+     --use '<说明>'
+   ```
+
+   只给 `--target-gateway` 而发布 CLI 不支持 `--gateway` 时，安装器会告警并提示改用四项显式路由。
+4. 确认 `~/.local/bin` 在 `PATH` 中，再按发布能力首次登录并验证。首登发现（`v0.2.3` 起）：
+
+   ```bash
+   doops login --gateway <gateway-url>
+   printf '%s' "$TOKEN" | doops login --gateway <gateway-url> --token-stdin
+   doops list
+   doops targets --target <自动发现的 target>
+   ```
+
+   显式路由（`v1.3.x` 生产线）：
+
+   ```bash
+   doops login --target <name>
+   doops targets --target <name>
+   doops -session setup exec --target <name> --cmd hostname
+   ```
+
+   首次登录会调用 `GET /v1/targets`，把该账号可见的在线 target 写回
+   `~/.agent/skills/doops/config.json`；已有路由的名称、别名和描述不会被改写。
+   因此操作员不需要事先知道 Agent 的 `cluster/instance`。
 
 约束：
 
-- 安装前确认 `<tag>` 的 CNB Release 已发布 CLI 二进制和 `checksums.txt`，不要凭 tag 列表假定可用。
-- 只给 `--target-gateway` 的首次登录发现要求发布 CLI 支持 `--gateway`；旧发布上安装器会明确提示，
-  此时升级发布或改用显式路由模式（四项全给）。
+- 安装前确认 `<tag>` 在对应发布源已发布 CLI 二进制和 `checksums.txt`：公开线看 GitHub Releases，
+  生产线看 CNB Release Assets，不要凭 tag 列表假定可用。
 - 本地缺少发布提交时脚本报 `Release commit ... is unavailable in local git objects` 并退出，
   不会自动 fetch，也不会混装其它版本。先 `git fetch --tags` 或 `git pull` 再重试。
 - 安装结果：CLI 在 `~/.local/bin/doops`；同一发布提交的 Skill/docs 写入

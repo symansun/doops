@@ -31,7 +31,7 @@ commit 校验候选 Agent，因此使用该脚本时 CLI 必须与候选制品�
 | 已具备控制器的 Helm Agent 镜像 | `doops -session <s> upgrade --target <t> --image <repository:tag 或 repository@sha256:<digest>` | 集群内 Job 复用 Agent 挂载，不读取本机 kubeconfig |
 | K8S 首次安装、旧 Helm Agent 接入控制器、显式 Helm 配置变更 | `scripts/release-managed-agent.sh` | 指定外部控制器的 kubeconfig；没有 Helm release 的现有 workload 不自动接管 |
 | 已有独立 Docker Agent | `scripts/release-host-agent.sh` | 外部宿主 SSH；不依赖旧 Agent、K8S 或 Helm |
-| 空 Ubuntu/Debian 服务器 | `scripts/bootstrap-host-agent.sh` | 外部 root；安装 Docker/Compose，必须提供模型 settings；不覆盖已有 Agent |
+| 空 Ubuntu/Debian 服务器 | `scripts/bootstrap-host-agent.sh` | 外部 root；安装 Docker/Compose，不要求预置模型 settings，Agent 连接后由 Gateway 下发模型；不覆盖已有 Agent |
 | Gateway 控制面 | `scripts/deploy-gateway.sh --no-build` | 已核验 CI 产物，通过宿主机 SSH 发布，不通过 Agent target |
 
 `-session` 用于操作上下文和审计关联，不是要求创建 Git worktree 或先 `doops push`。
@@ -64,8 +64,8 @@ bash scripts/fetch-gateway-release.sh \
   --source-commit <verified-release-commit>
 
 bash scripts/deploy-gateway.sh \
-  --host 106.54.197.139 \
-  --user ubuntu \
+  --host <gateway-ssh-host> \
+  --user <gateway-ssh-user> \
   --binary bin/doops-gateway \
   --no-build \
   --source-commit <verified-main-commit> \
@@ -75,10 +75,9 @@ bash scripts/deploy-gateway.sh \
 
 当前 gateway 维护主机：
 
-- SSH 地址：`106.54.197.139`
-- SSH 用户：`ubuntu`
+- SSH 地址与用户：由运维密钥库或维护人保管，文档、示例和提交信息只保留占位符。
 - Gateway URL：`https://doops.l8ai.cn`
-- SSH 凭据由运维密钥库或维护人保管，禁止写入仓库、日志、提交信息和文档正文。
+- SSH 凭据、生产 IP 和登录用户禁止写入仓库、日志、提交信息和文档正文。
 
 这条脚本只走 SSH/SCP，在宿主机真实 root 下完成：
 
@@ -140,8 +139,9 @@ doops -session release-<commit> ask \
 
 `--apply` 是本次 mutation 的显式授权，不是兼容开关。任务返回的文本声明不能作为成功证据；验收必须来自本轮实际命令、Kubernetes 状态、健康检查和功能测试。需要凭据时只传 `--credential <resource-name>` 元数据引用，Gateway 必须按当前用户的 target 操作权限和凭据 target binding 授权。公开 prompt、doagent 上下文、CLI 输出和日志不得接收凭据 payload；Gateway 仅通过内部凭据物化调用向目标 Agent 短暂传递 payload。
 
-doagent 会话默认使用 `restricted` 权限，普通任务只额外放行 `mcp_doops_k8s_read`；
-该读取工具不得读取 Secret、ServiceAccount 或其它凭据载体。只有 `--apply` 对应的原生
+doagent 会话默认使用 `restricted` 权限；普通 `ask` 与 `--apply` 各自暴露的工具面见
+[自然语言发布](NATURAL_LANGUAGE_DEPLOYMENT.md)。K8s 读取工具不得读取 Secret、
+ServiceAccount 或其它凭据载体。只有 `--apply` 对应的原生
 `build` 模式允许 `mcp_doops_helm` mutation；apply 成功只接受规范化后的
 `doops_helm` 可信完成证据。MCP 启动失败、工具缺失或仅出现其它工具调用时，发布必须
 失败关闭。
@@ -281,14 +281,19 @@ imageID 与候选 digest、`do-agent --version` 和实际功能路径。
   not found）、registry 连不上或超时、pull secret 读不到或不是 registry 凭据。
   这些都不是镜像已丢，不能用 `--allow-missing-rollback-baseline` 放行。
 
-默认 fail closed。`rollback_baseline_image_unavailable` 的标准切换是下面的发新停旧，
-不使用 `--allow-missing-rollback-baseline`。该开关只在运维明确拒绝更换
+默认 fail closed。`rollback_baseline_image_unavailable` 的标准处置是下面的手工发新停旧
+（仓库里没有对应的自动化实现），不使用 `--allow-missing-rollback-baseline`。该开关只在运维明确拒绝更换
 `cluster/instance`、并接受原地升级失败后无法拉回旧镜像时使用；它只作为参数传给
 Agent（`allow_missing_rollback_baseline`），Job 日志会留下可见的 `warning:`。
 
 ### 回滚镜像缺失时发新停旧
 
-回滚镜像已从 registry 消失时，原地 `doops upgrade` 不能在失败后拉回旧 Pod。默认切换是 0-1：模糊匹配到唯一的旧 release，装上唯一的新 release，验收通过后卸载旧 release。这是长期通道，不是临时 target。回滚镜像仍在仓库、并且不更换 workload 身份时，继续用 `doops upgrade`。
+这一节是手工 runbook：0-1 并存切换（临时 release 名、验收后卸载旧 release）没有自动化
+实现，下面的步骤全部由发布者在外部控制端执行，候选镜像内的一次性 Job 也按实例单独准备
+（已核验实例见[已核验实例的发新停旧](#已核验实例的发新停旧)）；`doops upgrade` 只做同名
+release 的原地升级。
+
+回滚镜像已从 registry 消失时，原地 `doops upgrade` 不能在失败后拉回旧 Pod。手工切换按 0-1 进行：先人工匹配到唯一的旧 release，装上唯一的新 release，验收通过后卸载旧 release。这是长期通道，不是临时 target。回滚镜像仍在仓库、并且不更换 workload 身份时，继续用 `doops upgrade`。
 
 候选镜像先解析成 digest 再写入 Deployment。`latest` 只用于解析，不留在运行中的 tag 上。多架构索引用索引 digest，验收时的 `imageID` 必须等于这次解析出的 digest。候选镜像里的 `doops-agent -version` 给出 release 和 40 位 `release_commit`。这条路径不要求操作机 CLI 事先与候选镜像同 commit；切过去之后，下一次原地升级前再安装同 commit 的 CLI。
 
@@ -370,11 +375,12 @@ python3 scripts/reinstall-k8s-agent.py run  --cluster <gateway-cluster> --instan
 失败时不改动任何资源；把上一份可用的 Deployment（已有的收编/重装备份优先，其次是 live）、
 清单和 Helm values 写入 `doops-reinstall-backup-<workload>` ConfigMap 与本机备份目录；
 卸载旧 release，删除 Deployment、同 selector 的 ReplicaSet/Pod 以及 `doops-adopt-*`、
-`doops-self-upgrade-*` 残留，Terminating 超过 60 秒的 Pod 强制删除 API 记录；从模型
-settings 来源复制出 Chart Secret 后 `helm upgrade --install`；等待新 Pod Ready
-（Ready 即 Gateway 隧道已连接）且 imageID 与拉取检查的运行时 digest 一致。任一步失败
-自动卸载新 release 并重新应用备份的 Deployment；`restore` 子命令可手动执行同一恢复。
-模型 settings、ServiceAccount 和拉取凭据 Secret 保留不删，payload 不打印、不落盘。
+`doops-self-upgrade-*` 残留，Terminating 超过 60 秒的 Pod 强制删除 API 记录；按 Chart
+values 直接 `helm upgrade --install`（模型由 Gateway 在 Agent 连接后下发，没有要复制的
+模型 settings Secret）；等待新 Pod Ready（Ready 即 Gateway 隧道已连接）且 imageID 与拉取
+检查的运行时 digest 一致。任一步失败自动卸载新 release 并重新应用备份的 Deployment；
+`restore` 子命令可手动执行同一恢复。ServiceAccount 和拉取凭据 Secret 保留不删，
+payload 不打印、不落盘。
 Gateway 离线时该脚本不经 Gateway，完成后须用 `doops targets` 核对 `RELEASE_COMMIT`
 与脚本输出的候选 commit 一致，再按[集群接入指南](CLUSTER_INSTALL_GUIDE.md)验收。
 

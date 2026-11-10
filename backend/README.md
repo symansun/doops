@@ -162,7 +162,7 @@ CNB 非同名制品必须使用仓库下级路径，例如 `docker.cnb.cool/l8ai
 - CLI 唯一默认配置：`~/.agent/skills/doops/config.json`
 - Gateway 登录态：`~/.agent/skills/doops/auth.json`
 - Gateway target 只保存路由；同一 Gateway 的所有 target 共享按 Gateway URL 保存的一份登录态
-- CLI 发布资产：CNB Release 的 `doops-<os>-<arch>` 与 `checksums.txt`
+- CLI 发布资产：`DOOPS_RELEASE_ASSET_BASE` 指向的 Release 上的 `doops-<os>-<arch>` 与 `checksums.txt`（默认 CNB Release Assets；GitHub 公开发布线 v0.2.x 用 GitHub Release 地址）
 
 `~/.config/doops/`、`~/.doops/` 和项目 `.doops/` 不属于当前 CLI 状态目录。`DOOPS_CONFIG=/path/to/config.json` 只改变配置文件位置，不放宽 Gateway-only schema 校验。
 
@@ -217,7 +217,7 @@ bash scripts/install.sh --version <release-tag> --project /absolute/path/to/your
 
 这一步会完成：
 
-1. 从 CNB Release Assets 下载指定版本的 CLI 和 `checksums.txt`，校验后原子替换 `~/.local/bin/doops`
+1. 从 `DOOPS_RELEASE_ASSET_BASE`（默认 CNB Release Assets）下载指定版本的 CLI 和 `checksums.txt`，校验后原子替换 `~/.local/bin/doops`
 2. 把同一 commit 的 `skills/SKILL.md` 和 `docs/*.md` 同步到当前项目及全局客户端副本；分发范围、运行态保留和失败恢复见[安装指南](docs/CLUSTER_INSTALL_GUIDE.md)
 
 若本地 Git 对象缺少该提交或必需文件，安装器在覆盖现有安装前停止；获取指定发布提交后
@@ -307,8 +307,8 @@ doops add \
 doops login --target prod-master
 ```
 
-doops 支持 `http` / `https` gateway；`http` 会自动转换为 WebSocket 隧道使用的 `ws`。
-公网生产环境建议使用 `https` / `wss`，但 CLI 和 agent 不会因为 gateway 是 HTTP 而拒绝连接。
+CLI 和 agent 对非回环 gateway 都要求 `https` / `wss`：明文 `http` / `ws` 会被拒绝，只有本机回环地址，或显式设置 `DOOPS_ALLOW_INSECURE_GATEWAY=1` 的受控测试例外才放行。
+TLS 与用户鉴权要求见 [API 指南](docs/DOOPS_API_GUIDE.md)。
 
 验证：
 
@@ -385,7 +385,7 @@ doops -session demo push --target gpu-ampere01 --src .
 doops -session demo pull --target gpu-ampere01 --dest ./demo-output
 doops -session demo image build --target gpu-ampere01 --context /root/ws/demo --output oci --output-path /tmp/demo.oci
 doops -session demo image copy --target gpu-ampere01 --source oci-archive:/tmp/demo.oci --destination docker://registry.example.com/team/demo:release
-doops -session demo write --target gpu-ampere01 --path /root/ws/demo/pod.yaml --file ./pod.yaml
+doops -session demo write --target gpu-ampere01 --storage gateway --path pod.yaml --file ./pod.yaml
 doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 ```
 

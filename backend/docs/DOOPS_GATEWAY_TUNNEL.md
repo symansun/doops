@@ -136,10 +136,9 @@ bash scripts/release-managed-agent.sh \
 
 ## Managed Gateway Host
 
-当前受管 gateway 主机信息：
+当前受管 gateway 主机的公开信息。真实 SSH 地址与维护用户只保存在内部 runbook 或密钥库，
+文档与示例统一使用文档保留地址 `203.0.113.10` 和维护用户 `doops-admin`：
 
-- SSH 地址：`106.54.197.139`
-- SSH 用户：`ubuntu`
 - Gateway 服务端口：`42222`
 - Gateway URL：`https://doops.l8ai.cn`
 - 维护用途：发布和自恢复 `doops-gateway` 控制面，不作为普通 `doops-agent` target 使用。
@@ -148,8 +147,8 @@ bash scripts/release-managed-agent.sh \
 
 ```bash
 bash scripts/deploy-gateway.sh \
-  --host 106.54.197.139 \
-  --user ubuntu \
+  --host 203.0.113.10 \
+  --user doops-admin \
   --source-commit <verified-main-commit> \
   --verify-target gw-edu-coder \
   --verify-session gateway-release-<release>
@@ -169,22 +168,38 @@ bash scripts/deploy-gateway.sh \
 - `doops_workspace_*` 是低层文件传输工具；通用 CLI 的目录同步使用 Git HTTP
   `push/pull`。这些接口不属于发布授权协议，发布任务不得用文件同步替代明确的
   target、范围、镜像、原因和验收条件。
-- 密码登录签发短期 user token，默认 24 小时过期；过期 token 会在登录时顺手清理。
+- 密码登录签发短期 user token，默认 24 小时过期。登录只签发新 token，不清理过期记录；`GET /v1/admin/tokens` 返回 `expires_at` / `revoked` 供管理员判断，鉴权失败按 `gateway_auth_expired` 等稳定类别返回。
 - token 校验通过 token id 定位单行哈希，避免多人多 token 时全表 bcrypt 扫描。
 - 同一 `cluster/instance` 的普通调用可并发；只有 workspace 写入、精确资源和 Agent 自升级互斥，
   详见 Multi-User Behavior。
 
 ## Endpoints
 
+用户接口（user token）：
+
+- `POST /v1/auth/login`、`GET /v1/auth/me`
 - `GET /health`
 - `GET /v1/targets`
+- `GET/DELETE /v1/audit`（DELETE 是平台管理员的审计清理）
+- `/v1/credentials`、`/v1/credentials/<id>/...`、`/v1/credential-bundles`（凭据语义见 [CREDENTIAL_RESOURCES.md](CREDENTIAL_RESOURCES.md)）
+
+管理员接口（平台管理员 `is_admin`）：
+
 - `GET/POST /v1/admin/users`
 - `POST /v1/admin/users/password`
 - `POST /v1/admin/users/disable`
 - `GET/POST/DELETE /v1/admin/grants`
+- `GET /v1/admin/instances`、`POST /v1/admin/instances/archive`、`POST /v1/admin/instances/unarchive`
+- `GET/POST/DELETE /v1/admin/tokens`
+- `GET/POST/DELETE /v1/admin/proxy-routes`
+
+隧道与代理接口：
+
 - `WS /v1/agent/connect?cluster=<cluster>&instance=<instance>`
 - `WS /v1/rpc?cluster=<cluster>&instance=<instance>`
+- `WS /v1/edge/connect?cluster=<cluster>&instance=<instance>`（Edge 隧道；Gateway `-edge-listen` 默认空，未启用时不监听，见 [design/DOOPS_EDGE_TUNNEL.md](design/DOOPS_EDGE_TUNNEL.md)）
 - `GET/POST /v1/git/<cluster>/<instance>/<session>.git/...`
+- `GET/POST /`（按 Host 匹配代理路由的公网网站代理）
 
 旧 gateway 草稿端点和共享 token 模式已经废弃。
 
@@ -213,7 +228,7 @@ provenance 一致；旧的本地 `bin/doops-gateway` 会在上传前拒绝。`--
 发布前后 target 基线，不通过 target 传输或替换 Gateway。不要用
 `doops exec/push/write` 或 base64 分片部署 `doops-gateway`。
 
-手工构建入口在仓库一级目录 `gateway/`：
+手工构建入口是 `backend/gateway/`；在 `backend/` 目录下执行（脚本内部切到 `gateway/` 构建）：
 
 ```bash
 bash scripts/build-gateway.sh
@@ -226,6 +241,9 @@ bash scripts/build-gateway.sh
   -max-queued-per-target 10 \
   -target-queue-timeout 10m
 ```
+
+Edge 公网流量入口 `-edge-listen` / `-edge-proxy-protocol` 默认关闭，当前生产未启用；
+已实现与未上线边界见 [design/DOOPS_EDGE_TUNNEL.md](design/DOOPS_EDGE_TUNNEL.md)。
 
 Token 只打印一次，数据库里只保存哈希。
 
@@ -421,6 +439,9 @@ Target config stores routing only. Run `doops login --target prod-master` once;
 the resulting Gateway login state is shared by every target using the same
 Gateway URL.
 
+首次接入也可以跳过手写配置：`doops login --gateway https://gateway.example.com` 登录后
+会拉取该账号可见的在线 target 并写入配置；已有配置时 `--target` 只刷新对应 Gateway 的登录态。
+
 或者：
 
 ```bash
@@ -499,18 +520,24 @@ doops -session agent-upgrade upgrade \
 - agent 上下线状态写入 SQLite，在线目标由内存连接表提供，断线时立即标记 offline。
 - agent 重连替换旧连接时，旧连接的关闭不会把新连接错误标记为 offline。
 - 实例记录会自动过滤和清理。活跃窗口是 7 天：在线实例，以及离线但 `last_seen` 距今不超过 7 天（含恰好 7 天）的实例，出现在 `GET /v1/admin/instances` 的默认结果里。没有心跳时间的离线记录不算活跃。`include=history` 才一并返回尚未删除的历史记录，包括已归档记录；`include` 的其它取值返回 `400`。控制台实例页用 `include=history` 拉取后自行折叠历史和已归档记录；概览的纳管数量和配置发布使用默认结果，不列出历史实例。归档只改变展示，不改变这套保留期。
-- Gateway 进程启动时，以及之后每小时，删除离线超过 90 天的 `agent_status` 行。恰好 90 天保留。没有 `last_seen` 时用 `updated_at`；两者都没有则保留。状态为 online 的行不删除，删除语句再次要求 `status = 'offline'`，避免清理过程中重连的实例被删掉。删除只移除连接状态，不删除用户授权、令牌、凭据绑定、审计、代理路由或 Edge 路由。Agent 再次连接时会重新写入该 `cluster/instance`。
+- Gateway 进程启动时，以及之后每小时，运行两条离线实例清理，实际保留期由它们共同决定：
+  `DeleteStaleOfflineAgents` 删除 `status=offline` 且 `last_seen` 可解析、早于 24 小时的记录；
+  `PruneOfflineAgentStatus` 删除超过 90 天保留窗口的离线记录（没有 `last_seen` 时用 `updated_at`，
+  两者都没有则保留）。因此 `last_seen` 可解析的离线记录实际在 24 小时后被删除，90 天窗口
+  只对缺少 `last_seen` 的记录生效。状态为 online 的行不删除，删除语句再次要求 `status = 'offline'`，
+  避免清理过程中重连的实例被删掉。删除只移除连接状态，不删除用户授权、令牌、凭据绑定、审计、
+  代理路由或 Edge 路由。Agent 再次连接时会重新写入该 `cluster/instance`。
 - `ask --apply` 发生客户端或隧道断连时，当前等待路径取消并保留真实审计状态。系统不恢复或
   重放 mutation；实际状态不确定时必须返回 outcome unknown，并由
   操作者核查目标资源。
-- 审计记录包含 user、token、target、action、session、命令摘要、状态、错误和输出尾部；输出尾部使用有界缓冲，默认只保留 8 KiB 尾部摘要。
+- 审计记录包含 user、token、target、action、session、命令摘要、状态、错误和输出尾部；输出尾部使用有界缓冲，默认只保留 8 KiB 尾部摘要。`/v1/audit` 支持按 `user_id`、`cluster`、`instance`、`session`、`action`、`status` 过滤；没有 `token_id` 过滤维度。
 - `/v1/audit` 的下列筛选组合都有按 `id` 倒序的索引（`audit_indexes.sql`）：用户、用户+session、
   目标、单独 action 或 status、用户或目标再加 action/status、目标内的 session、单独 session
   （凭据的资源级审计不带目标，session 存凭据 ID）。只按 `cluster` 或只按 `instance` 过滤
   （只有 `doops-gateway audit list` 或手写的 `/v1/audit` 查询会这样发）不在覆盖范围内，会退化为
   排序或全表扫描。Gateway 启动时在一个事务里补建缺失的索引，
   并用 `EXPLAIN QUERY PLAN` 确认每个组合用到对应索引，任一不符则回滚并启动失败，期限 4 分钟。
-  结果顺序和 `before_id` 分页不变。已有库升级后首次启动要补建索引，耗时随审计行数增长。
+  结果顺序不变（按 `id` 倒序）。已有库升级后首次启动要补建索引，耗时随审计行数增长。
 - gateway 模式只转发操作流量和 Git HTTP 流量，不保存仓库快照。`cos` 模式把对象字节交给腾讯云 COS 桶 `doops-1253657668`：16 MiB 及以下由 Gateway 用受管凭据单次 PutObject，更大的对象由客户端持预签名直接 PUT。字节不进 Gateway SQLite，也不进 Git 对象库。Gateway 不把自己变成对象存储。
 
 ## Current Managed Targets

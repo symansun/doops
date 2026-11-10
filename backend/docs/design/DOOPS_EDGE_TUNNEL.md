@@ -1,6 +1,6 @@
 # doops-edge：Agent 反向代理 + Gateway 动态域名映射
 
-设计日期 2026-09-06。状态：阶段 1–3 已实现（协议、调度、本地 e2e）；阶段 4 管理 API/CLI 与阶段 5 nginx/DNS 未上线。`-edge-listen` 与 agent `-edge` 默认关闭。
+设计日期 2026-09-06。状态：阶段 1–3 已实现（协议、调度、本地 e2e）。阶段 4 只落地了 store 层路由/令牌 CRUD、`-edge-conns` 与三层配额；管理 API/CLI、路由快照热加载、聚合统计未上线。阶段 5 nginx/DNS 与生产发布未上线。`-edge-listen` 与 agent `-edge` 默认关闭。
 
 `doops-edge` 是 doops.sh 的新增模块，与现有运维控制面（`ops` 隧道）和 Git 隧道并列
 且互不共享连接。它解决一类现有能力覆盖不到的问题：**内网站点没有公网入口，但需要让
@@ -97,7 +97,7 @@ P2 的三类流量在 passthrough 模式下**都不需要隧道做任何特殊�
 
 ### 3.2 与 doops.l8ai.cn 共用同一个 443（P1）
 
-现有 `backend/gateway/nginx/doops-proxy.conf` 已用 `stream` + `ssl_preread` 做 SNI 分流。
+现有 `backend/gateway/nginx/doops-proxy.conf` 只有 http 层（TLS 在 nginx 终止，443 server 直接 proxy 到控制面），**没有** `stream` / `ssl_preread` 配置；下面的 stream 结构是阶段 5 待落地的改造，不是现状。
 为满足 G3（加域名不改 nginx），map 的语义必须**反过来写**——控制面走显式白名单，其余下沉：
 
 ```nginx
@@ -179,7 +179,7 @@ P1 决定了 nginx 前置，于是 Gateway 的 `Accept()` 拿到的源地址全�
 | `0x06` | `PAUSE` | 双向 | 空，请求对端暂停该 `conn_id` 的 `DATA` |
 | `0x07` | `RESUME` | 双向 | 空 |
 | `0x10` | `ROUTES` | GW → Agent | 路由快照 JSON（含 `version`），`conn_id` 为 0 |
-| `0x11` | `STATS` | Agent → GW | 周期性聚合计数 JSON，`conn_id` 为 0 |
+| `0x11` | `STATS` | Agent → GW | 周期性聚合计数 JSON，`conn_id` 为 0（阶段 4，未上线：当前无发送方与统计表） |
 
 `conn_id` 由 Gateway 单向分配（每条 Edge WS 内自增，回绕时跳过在用值），Agent 不分配，
 因此不存在双方同时分配导致的 ID 冲突。`conn_id = 0` 保留给隧道级控制帧。
@@ -331,7 +331,7 @@ Edge 隧道断开时**不做会话保持**，理由是 passthrough 下网关不�
 任何"重放续传"都会破坏 TLS 记录序号。行为：
 
 1. session 上所有 `conn_id` 立即 `Close()`，公网侧连接被重置。
-2. Agent 以指数退避重连（1s 起，30s 上限，带 jitter），与 `ops` 隧道的退避状态机独立。
+2. Agent 以指数退避重连（1s 起、每次翻倍、30s 上限，无 jitter），与 `ops` 隧道的退避状态机独立。
 3. 重连后 `conn_id` 从 0 重新分配，Gateway 下发最新 `ROUTES` 快照。
 4. 浏览器自行重连。HTTP 接口重试即恢复；WebSocket 业务需自身有重连逻辑
    （noVNC / webide 均有），这一点要写进 JM 的用户告知。
@@ -351,11 +351,20 @@ Edge 只搬 TCP。若源站 Ingress 通告 `Alt-Svc: h3=...`，浏览器会尝�
 | 文件 | 职责 |
 | :--- | :--- |
 | `internal/server/edge_frame.go` | 帧编解码，Gateway 与 Agent 同包共用一份实现 |
+| `internal/server/edge_bytes.go` | 帧 payload 游标读取与拷贝辅助 |
+| `internal/server/edge_config.go` | `DOOPS_EDGE_*` 环境变量与默认值 |
 | `internal/server/edge_conn.go` | `conn_id` 状态机、半关闭、per-conn 队列 |
 | `internal/server/edge_sched.go` | 加权轮转 writer、控制帧优先队列、内存预算 |
-| `internal/server/edge_tunnel.go` | `ServeEdgeWebSocket`：帧分派、session 生命周期 |
+| `internal/server/edge_agent.go` | `ServeEdgeWebSocket`：Agent 侧帧分派、session 生命周期 |
+| `internal/server/edge_ws.go` | Gateway 侧 `edgeWSSession`：收发循环、ping、writer |
+| `internal/server/edge_registry.go` | `EdgeRegistry`、`/v1/edge/connect`、session 选择 |
+| `internal/server/edge_listener.go` | 公网 listener：SNI/PROXY 解析、配额、分发 |
+| `internal/server/edge_route.go` | 路由解析、快照构建与匹配 |
+| `internal/server/edge_sni.go` | ClientHello / SNI 提取 |
+| `internal/server/edge_proxyproto.go` | PROXY protocol v1/v2 解析 |
 | `internal/server/edge_backend.go` | 后端白名单校验、拨号超时、keepalive、连接计数 |
-| `cmd/agent/edge.go` | `runEdgeTunnel`：N 条 Edge WS 的连接、重连、退避 |
+| `internal/server/gateway_store_edge.go` | `edge_routes` / `edge_enrollments` / `edge_agent_status` 迁移与 CRUD |
+| `cmd/agent/edge.go` | `runEdgeTunnels`：N 条 Edge WS 的连接、重连、退避 |
 
 `edge_frame.go` / `edge_conn.go` / `edge_sched.go` 被两端共用，是本模块唯一的共享层，
 避免 Gateway 和 Agent 各写一份编解码导致协议漂移。
@@ -404,20 +413,22 @@ P2 的"很多域名站点"全部指向同一个 Ingress，所以白名单仍然�
 
 ```go
 type EdgeRegistry struct {
-    mu       sync.RWMutex
-    sessions map[edgeKey][]*edgeSession   // key: cluster/instance，N 条并行隧道
-    routes   atomic.Pointer[edgeRouteSnapshot]
-    budget   *edgeMemBudget
+    store       *GatewayStore
+    mu          sync.Mutex
+    sessions    map[string][]*edgeGatewaySession  // key: cluster/instance，N 条并行隧道
+    generations map[string]uint64
+    routes      atomic.Pointer[edgeRouteSnapshot]
 }
 ```
 
-同一 `cluster/instance` 允许最多 `-edge-conns` 条 session；超出的新连接被拒绝，
-避免 agent 反复重连时旧 session 堆积。每条 session 带 `generation`，
-agent 重启后旧 session 的心跳超时会被清理（语义与 `agent_registry.go` 一致）。
+Gateway 侧对每个 `cluster/instance` 固定保留最多 8 条 session（`defaultEdgeMaxSessionsPerTarget`），
+超出的新连接被拒绝，避免 agent 反复重连时旧 session 堆积；agent 侧 `-edge-conns` 只决定自己开几条。
+每条 session 带 `generation`，agent 重启后旧 session 的心跳超时会被清理
+（语义与 `agent_registry.go` 一致）。
 
 ### 6.2 `edge_routes` 表与热生效（G3）
 
-`gateway_store.go` 的 `migrate()` 追加：
+`gateway_store_edge.go` 的 `migrateEdge()` 追加（比设计稿多一张 `edge_route_revision` 版本表）：
 
 ```sql
 CREATE TABLE IF NOT EXISTS edge_routes (
@@ -451,8 +462,9 @@ CREATE TABLE IF NOT EXISTS edge_agent_status (
 
 热生效机制：
 
-1. 任何写 `edge_routes` 的 API 成功后，重新 `SELECT` 全表构建 `edgeRouteSnapshot`，
-   `version` 递增，`atomic.Pointer` 原子替换。
+1. 写 `edge_routes` 后重新 `SELECT` 全表构建 `edgeRouteSnapshot`，`version` 递增，
+   `atomic.Pointer` 原子替换。**当前状态：`EdgeRegistry.Reload()` 只在 Gateway 启动时调用，
+   写路由的 API/CLI 尚未上线，“运行中改路由立即生效”还不成立，需要重启 Gateway。**
 2. 数据面查路由只读快照：零锁竞争、**零 SQLite 查询**。
    `gateway_store.go` 里 `SetMaxOpenConns(1)`，数据面在连接路径上查库会被串行化死锁级放大，
    所以快照是硬要求而非优化。
@@ -465,8 +477,8 @@ CREATE TABLE IF NOT EXISTS edge_agent_status (
 ```go
 type edgeRouteSnapshot struct {
     version  int64
-    exact    map[string]*edgeRoute   // amp.jm.example.com
-    wildcard map[string]*edgeRoute   // key 为去掉 "*." 的父域：jm.example.com
+    exact    map[string]EdgeRoute   // amp.jm.example.com
+    wildcard map[string]EdgeRoute   // key 为去掉 "*." 的父域：jm.example.com
 }
 ```
 
@@ -485,7 +497,7 @@ SNI 提取自己实现，不引 `crypto/tls`：只解析 TLS record header 与 C
 
 ### 6.4 Edge listener
 
-`-edge-listen`（默认空即关闭）指定监听地址，JM 部署为 `127.0.0.1:42443`。
+`-edge-listen`（默认空即关闭）指定监听地址；JM 计划部署为 `127.0.0.1:42443`（阶段 5，尚未部署）。
 接受连接后：
 
 1. 解析 PROXY protocol 头，得到真实客户端 IP（§3.3）。
@@ -500,6 +512,7 @@ per-IP 配额依赖 §3.3 的真实 IP，两者是绑定的。
 
 ### 6.5 HTTP 路由与权限
 
+**以下管理路由与 action 属于阶段 4，尚未实现**；当前已注册的只有 `/v1/edge/connect`。
 `gatewaycmd.go` 现有 mux 追加：
 
 | 路由 | 用途 | 鉴权 |
@@ -543,8 +556,10 @@ CREATE TABLE IF NOT EXISTS edge_enrollments (
 ```
 
 `/v1/edge/connect` 校验 `Authorization: Bearer <token>`，token 绑定的
-`cluster/instance` 与请求参数不一致直接 401。签发走
-`doops edge enroll create --cluster jm --instance gw-jm`，明文只返回一次。
+`cluster/instance` 与请求参数不一致直接 401。签发计划走
+`doops edge enroll create --cluster jm --instance gw-jm`，明文只返回一次；
+**当前只有 store 层 `CreateEdgeEnrollment` / `RevokeEdgeEnrollment`，没有 API/CLI 入口（阶段 4），
+生产上还无法签发令牌。**
 
 ### 7.2 三层双向白名单
 
@@ -599,10 +614,12 @@ CREATE TABLE IF NOT EXISTS edge_conn_stats (
 
 聚合窗口 60s，内存累加后批量落一行。绝不做 per-connection 插入——
 SQLite 单写连接下 per-conn 插入会直接成为吞吐瓶颈。
+**当前状态：`edge_conn_stats` 表与 `DOOPS_EDGE_STATS_WINDOW` 尚未实现，没有聚合落库（阶段 4）。**
 
 ## 8. CLI
 
-`backend/cli/` 新增 `edge` 子命令。
+**以下 `edge` 子命令属于阶段 4，尚未实现**（`backend/cli/` 当前没有 `edge` 命令）。
+计划在 `backend/cli/` 新增 `edge` 子命令。
 
 ```bash
 # 路由
@@ -658,7 +675,8 @@ doops edge status --dry-run-host grafana.jm.example.com   # 只报路由判定�
 - `edge_sched_test.go`：**公平性断言**——一路持续大流 + 一路小请求，
   小请求 p99 排队延迟应在 `N × quantum / 带宽` 上界内；控制帧永远先于 `DATA`。
 - `edge_budget_test.go`：预算触发 `PAUSE`/`RESUME` 阈值、持续满触发隧道关闭。
-- `edge_backend_test.go`：白名单命中 / 不命中 / CIDR 形式 / 端口不符。
+- 白名单命中 / 不命中 / CIDR 形式 / 端口不符：没有独立的 `edge_backend_test.go`，
+  由 `edge_enroll_test.go` 覆盖。
 
 端到端（本地，Gateway + Agent 同机，后端为自签 TLS 服务）：
 
@@ -682,8 +700,8 @@ doops edge status --dry-run-host grafana.jm.example.com   # 只报路由判定�
 | :--- | :--- | :--- |
 | 1 | `edge_frame` / `edge_sni` / `edge_proxyproto` / `edge_route` 快照 + store migration | 单测全绿，两个二进制现有行为不变 |
 | 2 | `edge_conn` 状态机 + `edge_sched` 调度与预算 | `edge_sched_test` 公平性与 `edge_conn_test` 半关闭全绿 |
-| 3 | `EdgeRegistry` + `/v1/edge/connect` + `runEdgeTunnel` + enrollment token | 本地 e2e：一条精确路由跑通 HTTPS、WebSocket、1 GiB 双向 |
-| 4 | Admin API + CLI + 热生效 + 配额 + 聚合统计 + `-edge-conns` | 运行中 `route add` 立即生效；`route rm` 不断在途连接 |
+| 3 | `EdgeRegistry` + `/v1/edge/connect` + `runEdgeTunnels` + enrollment token | 本地 e2e：一条精确路由跑通 HTTPS、WebSocket、1 GiB 双向 |
+| 4 | Admin API + CLI + 热生效 + 配额 + 聚合统计 + `-edge-conns`（部分完成：store CRUD、配额、`-edge-conns` 已落地；Admin API/CLI、热生效、聚合统计未上线） | 运行中 `route add` 立即生效；`route rm` 不断在途连接 |
 | 5 | nginx `default` 下沉与 `proxy_protocol`、生产发布、JM 路由与 deny 清单、DNS 切换 | JM 站点公网可用，`doops exec` 不受影响 |
 | 6（可选） | `http-terminate` 模式 | 无可信证书的源站也能接入 |
 
@@ -721,7 +739,7 @@ Agent 侧（JM 内网，出网只需 443 到 `doops.l8ai.cn`）：
 -edge-conns 2
 ```
 
-DNS（BIND，见 `gateway-bind-deployment.md`）：把 `jm.example.com` 与
+DNS（BIND）：把 `jm.example.com` 与
 `*.jm.example.com` 从 `192.168.150.228` 改为 Edge 的公网 IP。
 因为 §7.3 的 deny 清单已在网关侧生效，通配 DNS 可以整体切换。
 
@@ -739,7 +757,7 @@ DNS（BIND，见 `gateway-bind-deployment.md`）：把 `jm.example.com` 与
 | `DOOPS_EDGE_CONN_ID_QUARANTINE` | 30s | `conn_id` 回收隔离期 |
 | `DOOPS_EDGE_MAX_CONNS` | 4096 | Gateway 全局并发 Edge 连接 |
 | `DOOPS_EDGE_MAX_CONNS_PER_IP` | 64 | 单源真实 IP 并发上限 |
-| `DOOPS_EDGE_STATS_WINDOW` | 60s | 聚合统计落库窗口 |
+| `DOOPS_EDGE_STATS_WINDOW` | 60s | 聚合统计落库窗口（阶段 4，尚未实现） |
 
 沿用现有：`DOOPS_MAX_WS_MESSAGE_BYTES` 约束整个 WS 消息大小；
 `agentWSPingInterval` / `agentWSDataWriteTimeout` 复用 `handler_ws.go` 的心跳参数。

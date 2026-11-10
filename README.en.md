@@ -57,12 +57,12 @@ DoOps does not replace Kubernetes itself, and it is not a complete monitoring ti
 | --- | --- | --- |
 | Web console | Login, target selection, command and AI task interface, node information, audit, and administration entry points | Built on Next.js; some file, knowledge base, and model configuration pages still need contract alignment with the backend |
 | Unified gateway | Agent registration, target routing, user authentication, scoped authorization, queueing, and concurrency control | SQLite stores control-plane state; public access requires a TLS reverse proxy |
-| Agent reverse connection | Target nodes connect out to the gateway and identify execution targets by `cluster/instance` | Production may enable an enrollment token for an exact target; user tokens are not used for agent registration |
+| Agent reverse connection | Target nodes connect out to the gateway and identify execution targets by `cluster/instance` | Registration only declares cluster/instance and needs no registration token; user tokens are not used for agent registration |
 | Deterministic command execution | `exec` runs commands and returns output; background tasks, logs, and status queries are supported | Not a persistent PTY; commands have the system privileges of the agent process |
 | Git workspace synchronization | `push/pull` synchronize session workspaces over Git HTTP and the agent tunnel | Pull and clean can overwrite or delete data; not a permanent backup mechanism |
 | Small text file operations | `read/write` inside a named session | Use workspace-relative paths; use `push/pull` for large files and binaries |
 | AI operations tasks | `ask` reaches doagent over ACP HTTP and SSE | Requires a reachable doagent service, model configuration, and the corresponding target permission |
-| Natural-language workload delivery | `ask --apply` reads the image, chart, credentials, and acceptance criteria specified by the task, and executes through structured Helm tools | Workload delivery does not use `cicd run`, environment registries, or unreviewed YAML workflows |
+| Natural-language workload delivery | `ask --apply` reads the image, chart, credentials, and acceptance criteria specified by the task, and executes through structured Helm tools | Workload delivery does not use environment registries, template-driven releases, or unreviewed YAML workflows |
 | Credential resource management | Versioned credentials, authorization, bundles, and runtime materialization | Enabling encrypted storage requires a stable gateway key; it does not mean all logs are automatically redacted |
 | Operations workbench | Integrates DoSql, DoWeb, Kubernetes observation, and controlled change entry points | Actual capability depends on the target agent, credential bindings, and the acceptance results of the corresponding skill |
 | Agent upgrade entry point | Provides permission-checked upgrade notifications and lifecycle coordination | Kubernetes and Docker paths differ; do not assume Docker mode replaces the container automatically |
@@ -149,7 +149,7 @@ Prepare dependencies according to how you will use DoOps:
 - **Connecting to an existing environment**: you need the gateway address, a user token, a registered agent, and target authorization.
 - **Installing a prebuilt CLI**: Linux/macOS amd64 and arm64 are supported; Bash, `shasum`, and common Unix tools are required. Code synchronization also needs Git.
 - **Building from source**: you need Go, Node.js, pnpm, and Git.
-- **Full agent container**: you also need reachable images, agent enrollment configuration enabled per environment, and model configuration; operating Kubernetes requires valid cluster credentials.
+- **Full agent container**: you also need reachable images, a gateway URL plus cluster/instance configuration, and model configuration; operating Kubernetes requires valid cluster credentials.
 
 > The CLI ships artifacts for several client platforms, but that does not mean the agent image is also published for multiple architectures. The current agent image release process is based on `linux/amd64`.
 
@@ -236,6 +236,17 @@ Main install locations:
 | Default target configuration | `~/.agent/skills/doops/config.json` |
 | Login cache | `~/.agent/skills/doops/auth.json` |
 
+Public tag releases are built automatically by GitHub Actions ([release workflow](.github/workflows/release.yml)). To install
+from the GitHub Release assets, point the installer at that release:
+
+```bash
+DOOPS_RELEASE_ASSET_BASE="https://github.com/<owner>/<repo>/releases/download" \
+  bash scripts/install.sh --version <release-tag> --project /absolute/path/to/existing-project
+```
+
+CNB Release Assets remain the default source; `DOOPS_RELEASE_ASSET_BASE` accepts only https (loopback addresses
+are for tests), and the sha256, `release=... commit=...` identity, and CLI contract checks are unchanged.
+
 Installation updates the DoOps skill and companion documentation in the target project. Back up those files first if you have modified them yourself. CLI configuration and caches contain sensitive information; file permission protection is not encrypted storage, so do not commit them to Git.
 
 ### 2. First login and target discovery
@@ -270,7 +281,7 @@ doops -session diagnose targets --target <discovered-target> --admission
 doops -session inspect-001 exec --target <discovered-target> --cmd 'hostname'
 ```
 
-To sign in again for an existing route, omit `--password` and let the terminal hide the input:
+To sign in again for an existing route, just run the command below; the password is read only as hidden terminal input (or imported with `--token-stdin`), and the CLI has no `--password` flag:
 
 ```bash
 doops login --target <name> --username alice
@@ -316,7 +327,7 @@ backend/bin/doops-gateway token create \
   -name initial-console -expires 24h
 ```
 
-The user token is printed once; save it privately right away. The global `admin` in the example is only for the first trusted initialization — **do not use it as the default permission for ordinary users**. Enrollment tokens for production agents are configured by the deployment side per exact target; the current gateway CLI does not provide a general `agent-token create` command.
+The user token is printed once; save it privately right away. The global `admin` in the example is only for the first trusted initialization — **do not use it as the default permission for ordinary users**. Agent reverse registration only declares `cluster/instance`; the gateway issues no registration credential for ordinary agents, and the current gateway CLI does not provide a general `agent-token create` command either.
 
 Start the gateway:
 
@@ -347,7 +358,7 @@ backend/bin/doops-agent \
 
 This is only an integration example for registration and the basic execution path; it does not install doagent, models, BuildKit, or Kubernetes tooling automatically. For real server registration, replace the address with a reachable HTTPS gateway and set the agent listen scope according to the target network.
 
-When the gateway has enrollment verification enabled for that target, provide the registration token bound to the exact `cluster/instance` through `DOOPS_AGENT_ENROLL_TOKEN` or `-agent-enroll-token`; when enrollment is not enabled, do not use user tokens or business credentials as agent registration credentials.
+Ordinary agent registration needs no extra registration credential, so never use user tokens or business credentials as agent registration credentials. Only the Edge public tunnel (`-edge`, off by default and not in production) uses `-edge-enroll-token`; see the [Edge tunnel design](backend/docs/design/DOOPS_EDGE_TUNNEL.md).
 
 ### 4. Full agent container and Kubernetes deployment
 
@@ -356,7 +367,7 @@ The current agent image separates a base layer from an application layer: the ba
 A full deployment requires at least:
 
 1. Accessible, trusted base and application images pinned to a version or digest.
-2. The gateway URL, cluster, and instance, plus `DOOPS_AGENT_ENROLL_TOKEN` bound to that target when enrollment is enabled.
+2. The gateway URL, plus the cluster and instance bound to that target.
 3. A `modelProvider` credential that has been created, verified, and promoted in the gateway; after the agent connects, the gateway materializes it to `/root/.agent/settings.json`.
 4. The required volume mounts and persistence; a Kubernetes environment needs a valid `/root/.kube/config`.
 5. Reviewed RBAC, network policy, node selection, image pull credentials, and resource configuration.
@@ -479,7 +490,7 @@ doops -session release-check ask \
 
 A delivery task must state the target, service scope, chart or repository assets, image version or its verifiable source, reason, and acceptance criteria. The prompt above asks the target agent to publish service `api` on target `control-node` using the chart, namespace, and verified image digest specified by the task, for the reason "fix classroom permissions", with acceptance that the Deployment, Pod, Service, Endpoints, and `/health` all pass. `--credential` carries only a managed credential resource name and never passes ciphertext in arguments, prompts, logs, or workspaces. The target agent performs the delivery through the structured `mcp_doops_helm upgrade-install` tool and returns dry-run, actual change, and final resource state evidence.
 
-Ordinary delivery does not use the old `cicd run`, environment registries, or prompt-derived deployment scope, and does not require running `push` first or reading the operator machine's kubeconfig. For the detailed contract, see [Natural-language workload delivery](backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md) and [Credential resources](backend/docs/CREDENTIAL_RESOURCES.md).
+Ordinary delivery does not use environment registries, template-driven releases, or prompt-derived deployment scope, and does not require running `push` first or reading the operator machine's kubeconfig. For the detailed contract, see [Natural-language workload delivery](backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md) and [Credential resources](backend/docs/CREDENTIAL_RESOURCES.md).
 
 ### Standard Helm agent upgrade
 
@@ -522,7 +533,7 @@ See the [build and deployment SOP](backend/docs/BUILD_DEPLOY_SOP.md) and the [cl
 | --- | --- | --- |
 | `DOOPS_CONFIG` | Overrides the default CLI configuration file path | Not the gateway configuration for the web console |
 | `-gateway-url`, `-cluster`, `-instance` | Agent registration location and identity | Pass them explicitly for a bare binary; do not assume that same-named environment variables in Helm take effect automatically |
-| `DOOPS_AGENT_ENROLL_TOKEN`, `-agent-enroll-token` | Target-scoped enrollment credential an agent uses to register with the gateway | Set it only when the gateway enables enrollment, and it must be bound to the exact cluster/instance |
+| `-edge`, `-edge-enroll-token` | Edge public tunnel switch and its enrollment credential | Off by default and not in production; ordinary agent registration uses no registration token, see the [Edge tunnel design](backend/docs/design/DOOPS_EDGE_TUNNEL.md) |
 | `DOOPS_WORKSPACE_ROOT` | Root directory for agent session workspaces | Defaults to `/root/ws`; adjust related script paths after changing it |
 | `DOOPS_GATEWAY_SECRET_KEY` | Key material for gateway credential encryption | Inject securely, persist, and back it up when credential features are enabled |
 | `DO_AGENT_PORT`, `DO_AGENT_URL` | Agent internal ACP service address | Default port `9000`, address `http://127.0.0.1:9000`; keep them consistent when customizing |
@@ -531,7 +542,7 @@ See the [build and deployment SOP](backend/docs/BUILD_DEPLOY_SOP.md) and the [cl
 
 ### Permission and credential principles
 
-1. **Distinguish user tokens from agent enrollment tokens**: the former operates the gateway; the latter is used only for reverse registration of an exact target when enrollment is enabled. They are not interchangeable passwords.
+1. **Distinguish user tokens from the agent registration identity**: the former operates the gateway; an ordinary agent registers in reverse with only its `cluster/instance` and needs no token. They are not interchangeable passwords.
 2. **Make the authorization scope and actions explicit**: do not use `admin`, wildcards, or grants without actions as a template for ordinary users.
 3. **Review default authorization on the management side**: different creation entry points may behave differently; do not assume that every new user naturally satisfies least privilege.
 4. **Limit high-privilege capabilities**: `exec`, cluster credentials, host directories, and runtime sockets can all have a wide impact.
@@ -568,6 +579,7 @@ doops/
 ├── docs/                        # Design documents and implementation records
 ├── Dockerfile.web              # Next.js production image
 ├── .github/workflows/ci.yml    # GitHub CI
+├── .github/workflows/release.yml # GitHub tag release: build, verify, publish, re-verify
 ├── .cnb.yml                    # CNB checks and agent image release
 ├── CONTRIBUTING.md
 └── SECURITY.md
@@ -584,7 +596,7 @@ doops/
 | [Cluster installation guide](backend/docs/CLUSTER_INSTALL_GUIDE.md) | Cluster onboarding reference |
 | [Natural-language workload delivery](backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md) | Delivery responsibility boundaries and acceptance principles |
 
-Some historical backend documents use `backend/` as the current directory, so `scripts/...` in their examples cannot necessarily be run directly from the repository root. The main web application is now at the repository root; the old Go WebUI's `8088` port and build scripts are kept only for legacy maintenance and are not the Next.js deployment entry point.
+Some historical backend documents use `backend/` as the current directory, so `scripts/...` in their examples cannot necessarily be run directly from the repository root. The web application is at the repository root; run examples from the working directory each document states.
 
 <a id="development"></a>
 ## Development, build, and test
@@ -629,7 +641,7 @@ Also check before committing:
 
 ### The page opens, so why can't I see any nodes?
 
-The web page does not deploy target agents automatically. Check the gateway address, user permissions, agent enrollment configuration, and whether cluster/instance match. `doops list` only shows local configuration; for online status, check `doops targets`.
+The web page does not deploy target agents automatically. Check the gateway address, user permissions, and whether the agent registered with a matching cluster/instance. `doops list` only shows local configuration; for online status, check `doops targets`.
 
 ### Why does `exec` work but `ask` not?
 
@@ -649,7 +661,7 @@ The source is still being completed, and these boundaries matter:
 
 - File, knowledge base, model configuration, and related AI pages still have adaptation work for backend path and parameter contracts; "the page exists" should not be taken as the whole chain being available.
 - The knowledge base interface mainly manages Markdown files; it is not an implemented vector search or RAG service.
-- Credential preflight and execution for workload delivery follow `ask --apply`, `NATURAL_LANGUAGE_DEPLOYMENT.md`, and `CREDENTIAL_RESOURCES.md`; do not treat the old `DeploymentTemplate` or `cicd run` as the current entry point.
+- Credential preflight and execution for workload delivery follow `ask --apply`, `NATURAL_LANGUAGE_DEPLOYMENT.md`, and `CREDENTIAL_RESOURCES.md`; do not substitute a retired release entry point for this flow.
 - The Docker branch of agent upgrade is not the same as completing container replacement automatically; the actual replacement needs an external management mechanism.
 - Workspaces may be cleaned up automatically, and background tasks do not provide an unconditional persistence guarantee across restarts.
 - The current agent image, Helm defaults, and historical environment manifests do not amount to a promise of "one-command deployment on every platform".
