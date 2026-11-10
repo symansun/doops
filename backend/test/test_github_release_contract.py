@@ -6,6 +6,8 @@ These checks assert structure: gated by CI, immutable, verified after publishing
 built with the same builder identity the release scripts require. Wording is not locked.
 """
 
+import subprocess
+import tarfile
 from pathlib import Path
 
 import yaml
@@ -18,6 +20,7 @@ CI = WORKFLOWS / "ci.yml"
 BUILD_CLI = ROOT / "backend" / "scripts" / "build-cli.sh"
 VERIFY = ROOT / "backend" / "scripts" / "verify-published-cli-release.sh"
 INSTALL = ROOT / "backend" / "scripts" / "install.sh"
+PACKAGE_SKILL = ROOT / "backend" / "scripts" / "package-skill-release.sh"
 
 # builder identity backend/scripts/build-cli.sh --all insists on
 RELEASE_BUILDER = "1.25.14"
@@ -30,6 +33,7 @@ RELEASE_ASSETS = (
     "doops-gateway-linux-amd64",
     "doops-linux-amd64",
     "doops-linux-arm64",
+    "doops-skill.tar.gz",
 )
 
 
@@ -138,7 +142,7 @@ def test_release_asset_names_match_the_build_script_contract():
     assert "doops-linux" in build_script
     assert "linux/amd64" in build_script
     for name in RELEASE_ASSETS:
-        if name == "checksums.txt":
+        if name in ("checksums.txt", "doops-skill.tar.gz"):
             continue
         platform = name[len("doops-"):]
         if platform.startswith("gateway-"):
@@ -158,3 +162,36 @@ def test_install_and_verify_scripts_accept_the_github_release_mirror():
     assert "https://cnb.cool/l8ai/ai/doops.sh/-/releases/download" in install
     assert "DOOPS_RELEASE_ASSET_BASE:-" in install
     assert "DOOPS_RELEASE_ASSET_BASE:-" in verify
+
+
+def test_build_packages_skill_bundle_and_checksums_it():
+    build = load_workflow(RELEASE)["jobs"]["build"]
+    runs = run_text(build)
+    assert "backend/scripts/package-skill-release.sh" in runs
+    script = PACKAGE_SKILL.read_text(encoding="utf-8")
+    assert "skills/SKILL.md" in script
+    assert "docs/*.md" in script
+    assert "doops-skill.tar.gz" in script
+    assert "checksums.txt" in script
+    verify_runs = run_text(load_workflow(RELEASE)["jobs"]["verify"])
+    assert "doops-skill.tar.gz" in verify_runs
+
+
+def test_package_skill_release_script_builds_cnb_installer_layout(tmp_path):
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "checksums.txt").write_text("a  doops-linux-amd64\n", encoding="utf-8")
+
+    subprocess.run(["bash", str(PACKAGE_SKILL), str(dist)], check=True)
+    subprocess.run(["bash", str(PACKAGE_SKILL), str(dist)], check=True)
+
+    with tarfile.open(dist / "doops-skill.tar.gz", "r:gz") as archive:
+        names = set(archive.getnames())
+    assert "skills/SKILL.md" in names
+    assert any(name.startswith("docs/") and name.endswith(".md") for name in names)
+    assert "scripts/install.sh" in names
+
+    lines = (dist / "checksums.txt").read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "a  doops-linux-amd64"
+    skill_lines = [line for line in lines if line.endswith("  doops-skill.tar.gz")]
+    assert len(skill_lines) == 1

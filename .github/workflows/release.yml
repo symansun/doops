@@ -99,8 +99,10 @@ jobs:
       id-token: write          # actions/attest-build-provenance signs with OIDC
       attestations: write
     steps:
-      - name: Checkout
+      - name: Checkout release commit
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -119,6 +121,9 @@ jobs:
           DOOPS_CLI_OUT: ${{ runner.temp }}/bin/doops-host
           DOOPS_CLI_RELEASE_DIR: ${{ runner.temp }}/dist
         run: bash backend/scripts/build-cli.sh --all
+
+      - name: Package skill release asset
+        run: bash backend/scripts/package-skill-release.sh "${RUNNER_TEMP}/dist"
 
       - name: Verify built assets before publishing
         env:
@@ -219,6 +224,24 @@ jobs:
           for artifact in dist/doops-*; do
             gh attestation verify "${artifact}" --repo "${GH_REPO}"
           done
+
+      - name: Verify published skill bundle
+        env:
+          DOOPS_RELEASE_ASSET_BASE: ${{ github.server_url }}/${{ github.repository }}/releases/download
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          base="${DOOPS_RELEASE_ASSET_BASE}/${TAG}"
+          tmp="${RUNNER_TEMP}/published-skill"
+          mkdir -p "${tmp}"
+          curl --fail --location --silent --show-error --output "${tmp}/checksums.txt" "${base}/checksums.txt"
+          curl --fail --location --silent --show-error --output "${tmp}/doops-skill.tar.gz" "${base}/doops-skill.tar.gz"
+          expected="$(awk -v file="doops-skill.tar.gz" '$2 == file { print $1 }' "${tmp}/checksums.txt")"
+          actual="$(sha256sum "${tmp}/doops-skill.tar.gz" | awk '{print $1}')"
+          test -n "${expected}"
+          test "${actual}" = "${expected}"
+          tar -tzf "${tmp}/doops-skill.tar.gz" | grep -qx 'skills/SKILL.md'
+          tar -tzf "${tmp}/doops-skill.tar.gz" | grep -Eq '^docs/[^/]+\.md$'
 
       - name: Install the published release end to end
         env:

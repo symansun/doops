@@ -1059,3 +1059,12 @@ def run_installer(
         capture_output=True,
         check=False,
     )
+
+
+def test_scripts_install_wrapper_execs_backend_installer():
+    root = Path(__file__).resolve().parents[2]
+    wrapper = root / "scripts" / "install.sh"
+    assert wrapper.is_file(), wrapper
+    assert wrapper.stat().st_mode & 0o111, "wrapper must be executable"
+    text = wrapper.read_text(encoding="utf-8")
+    assert "backend/scripts/install.sh" in text
