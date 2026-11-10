@@ -359,9 +359,31 @@ func authorizeDoSQLDatabaseAsset(ctx context.Context, params doSQLParams, namesp
 		return matches[0], nil
 	}
 	if len(matches) > 1 {
-		return doSQLDatabaseCandidate{}, errors.New("dosql_database_asset_ambiguous")
+		return doSQLDatabaseCandidate{}, fmt.Errorf("dosql_database_asset_ambiguous: requested engine=%s database=%q namespace=%s; matching candidates: %s",
+			params.Engine, params.DatabaseName, namespace, summarizeDatabaseCandidates(matches))
 	}
-	return doSQLDatabaseCandidate{}, errors.New("dosql_database_asset_not_found")
+	return doSQLDatabaseCandidate{}, fmt.Errorf("dosql_database_asset_not_found: requested engine=%s database=%q namespace=%s; available candidates: %s",
+		params.Engine, params.DatabaseName, namespace, summarizeDatabaseCandidates(candidates))
+}
+
+// summarizeDatabaseCandidates gives the model the identifiers it may choose
+// from without exposing Secret data. The caller can then stop guessing asset
+// IDs from a different cluster or namespace.
+func summarizeDatabaseCandidates(candidates []doSQLDatabaseCandidate) string {
+	const limit = 8
+	parts := make([]string, 0, limit)
+	for _, candidate := range candidates {
+		if len(parts) >= limit {
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s(engine=%s,db=%q,ns=%s,source=%s,status=%s)",
+			candidate.DatabaseAssetID, candidate.Engine, candidate.DatabaseName,
+			candidate.Namespace, candidate.Source, candidate.Status))
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func databaseAssetID(cluster, instance, namespace, name, engine string) string {

@@ -835,6 +835,19 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 	case "doops_node_info":
 		var args api.NodeInfoParams
 		json.Unmarshal(argBytes, &args)
+		if args.Section != "" {
+			if args.Section != "admission" {
+				writeJSON(buildErrorResponse(reqID, -32602, "unsupported node info section"))
+				return
+			}
+			result, err := readDoagentAdmission(ctx, configuredDoagentURL())
+			if err != nil {
+				writeJSON(buildErrorResponse(reqID, -32603, err.Error()))
+			} else {
+				writeJSON(buildSuccessResponse(reqID, result))
+			}
+			return
+		}
 
 		cmdStr := strings.Join([]string{
 			"echo '--- System Info ---'",
@@ -1352,8 +1365,7 @@ type agentPromptExecutionContext struct {
 
 // handleAgentPromptWS 封装 doops_agent_prompt 处理逻辑，通过 ACP HTTP API 调用本地 doagent 服务。
 // doagentPromptSessionSequence makes every machine-result doagent session id
-// unique to one prompt, so the Gateway can prove that a session-wide cancel
-// only touches that prompt's own queue entry.
+// unique to one prompt so machine-result tool traces cannot include an old turn.
 var doagentPromptSessionSequence atomic.Uint64
 
 func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, doopsSessionID string, instr string, attachments []api.AgentPromptAttachment, model string, responseFormat string, execution agentPromptExecutionContext, pushProgress notificationSender, writeJSON func(v interface{})) {
@@ -1385,6 +1397,10 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		writeJSON(buildErrorResponse(reqID, -32603, "doagent_unavailable"))
 		return
 	}
+	if err := requireDoagentPromptAdmission(ctx, doagentURL); err != nil {
+		writeJSON(buildErrorResponse(reqID, -32603, err.Error()))
+		return
+	}
 	// Machine-result prompts use a fresh doagent session so their tool trace
 	// catalog and turn_finished boundary cannot include a previous turn.
 	var entry *sessionEntry
@@ -1401,13 +1417,6 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		entry.lastUsed = time.Now()
 		gw.sessionMapMu.Unlock()
 	}
-	// Only a machine-result prompt gets a session id minted for this one call
-	// (the sequence suffix below makes it unique). That is the only session a
-	// queued reply may be cleaned up from with doagent 0.2.42's session-wide
-	// cancel; a streaming prompt reuses the caller's session and may share it
-	// with a concurrent request.
-	sessionMintedForPrompt := responseFormat == "json"
-
 	// 首次会话：创建 doagent session 并注入系统提示词
 	if targetSessionID == "" {
 		requestedSessionID := doopsSessionID
@@ -1566,7 +1575,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 			return
 		}
 	case <-ctx.Done():
-		writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
+		writeJSON(buildErrorResponse(reqID, -32007, doagentPromptCancelledBeforeAdmission))
 		return
 	}
 
@@ -1583,6 +1592,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		promptValue = content
 	}
 	promptParams := map[string]interface{}{"sessionId": targetSessionID, "prompt": promptValue}
+	promptParams["mode"] = "reject"
 	allowedTools := doagentAllowedTools(execution.RequireToolEvidence, execution.Skill)
 	promptParams["allowedTools"] = allowedTools
 	promptParams["mutationAuthorized"] = execution.RequireToolEvidence
@@ -1606,7 +1616,7 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	}
 	promptParams["responseMode"] = "stream"
 	if ctx.Err() != nil {
-		writeJSON(buildErrorResponse(reqID, -32007, "operation canceled"))
+		writeJSON(buildErrorResponse(reqID, -32007, doagentPromptCancelledBeforeAdmission))
 		return
 	}
 	promptResponse, promptErr := doagentRPCContext(ctx, doagentURL, map[string]interface{}{
@@ -1633,7 +1643,13 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		writeJSON(buildErrorResponse(reqID, -32602, doagentPromptNoPrompt))
 		return
 	case promptAdmissionQueuedNoTurn:
-		settleQueuedPromptWS(ctx, reqID, doagentURL, targetSessionID, sessionMintedForPrompt, admission, writeJSON)
+		settleQueuedPromptWS(ctx, reqID, doagentURL, targetSessionID, admission, writeJSON)
+		return
+	case promptAdmissionBusy:
+		writeJSON(buildErrorResponse(reqID, -32603, doagentPromptBusy))
+		return
+	case promptAdmissionTimedOut:
+		writeJSON(buildErrorResponse(reqID, -32603, doagentPromptAdmissionTimeout))
 		return
 	case promptAdmissionRejected:
 		writeJSON(buildErrorResponse(reqID, -32003, "doagent_prompt_rejected"))
@@ -1642,7 +1658,11 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 		// A malformed or transport-failed answer can hide an accepted prompt.
 		// Without its turn ID even a cancel ACK cannot prove which execution has
 		// stopped, so keep the unknown-outcome protection.
-		_ = cancelDoagentPrompt(ctx, doagentURL, targetSessionID, nil, &terminalSeen, doagentCancellationTimeout)
+		if responseFormat == "json" {
+			// This session belongs exclusively to this prompt. Shared streaming
+			// sessions may contain another turn whose cancellation we do not own.
+			_ = cancelDoagentPrompt(ctx, doagentURL, targetSessionID, nil, &terminalSeen, doagentCancellationTimeout)
+		}
 		reason := "prompt_turn_id_missing"
 		if admission.kind == promptAdmissionTransportFailed {
 			reason = "prompt_transport_failed"

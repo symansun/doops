@@ -44,7 +44,7 @@ func sqlBindingNext(err error, target string) error {
 			"doops guide database   # choose Secret keys for the requested database's engine",
 			importSecret+"   # bind the requested database, then rerun with the original --database; do not switch databases"))
 	case strings.Contains(message, "dosql_database_required"):
-		return fmt.Errorf("%s", withNext(message, "rerun with --database <name> from the list above"))
+		return fmt.Errorf("%s", withNext(message, "rerun with --database <database> (the database part of engine/database in the list above)"))
 	case strings.Contains(message, "credential_version_not_found"):
 		return fmt.Errorf("%s", withNext(message,
 			"doops credential configure --target "+target+" --id <id> --namespace <ns> --use database --from-secret <secret> --keys <keys>"))
@@ -280,7 +280,9 @@ func buildSQLInstruction(mode sqlMode, databaseHint, request string) string {
 		hint = "\n数据库提示：" + strings.TrimSpace(databaseHint)
 	}
 	return strings.TrimSpace(fmt.Sprintf(
-		"使用 DoSql skill 处理当前 DoOps Gateway target。%s%s\n不要读取或索取密码、连接串或 token；不要绕过 DoSql CLI、journal、evidence 和 Gateway 授权。\n用户需求：%s",
+		"使用 DoSql skill 处理当前 DoOps Gateway target。%s%s\n不要读取或索取密码、连接串或 token；不要绕过 DoSql CLI、journal、evidence 和 Gateway 授权。\n"+
+			"查询前先用 mcp_dosql_read 的 discover 获取候选；只能使用本次返回的 database_asset_id，不要猜测、复用其它集群的 id 或凭据；候选的 engine 必须与 credential 匹配。同一错误最多重试一次，第二次仍失败就停止并报告候选，不要循环调用工具。\n"+
+			"用户需求：%s",
 		purpose, hint, strings.TrimSpace(request),
 	))
 }

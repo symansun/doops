@@ -47,7 +47,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 可用命令:
   list        列出已配置的 Gateway target 路由
   sync        把当前登录能看到的在线 target 补进本机路由；不改已有路由，不删除离线路由
-  targets     查看已配置 target 在 gateway 上是否在线
+  targets     查看 Gateway 操作状态；--admission 回读 do-agent 内部名额与队列
   capabilities 检查 target Agent 的协议能力
   exec        在目标 Agent 进程目录执行 Shell 命令；工作目录请显式 cd
   ssh         通过结构化 argv 代理 SSH，避免多层命令引号被远端 shell 重解析
@@ -158,7 +158,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		if configErr != nil {
 			if os.IsNotExist(configErr) {
 				fmt.Println("No doops nodes configured.")
-				fmt.Println("Add a gateway target with: doops add --name <name> --gateway <gateway-url> --cluster <cluster> --instance <instance>")
+				fmt.Println("First login (discovers visible targets): doops login --gateway <gateway-url>")
+				fmt.Println("To pin a route first: doops add --name <name> --gateway <gateway-url> --cluster <cluster> --instance <instance>")
 				return
 			}
 			fmt.Printf("Error loading config: %v\n", configErr)
@@ -171,8 +172,10 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 
 	case "targets":
 		var target string
+		var admission bool
 		targetsFlag := flag.NewFlagSet("targets", flag.ExitOnError)
 		targetsFlag.StringVar(&target, "target", "", "Configured target to query")
+		targetsFlag.BoolVar(&admission, "admission", false, "Read live do-agent turn permits and queues")
 		targetsFlag.Parse(cmdArgs)
 		if target == "" {
 			fmt.Println("Error: --target is required")
@@ -219,6 +222,20 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 				releaseCommit = "<unknown>"
 			}
 			fmt.Printf("%-18s %-18s %-8v %-16s %-7d %-7d %-40s %-28s %-24s\n", item.Cluster, item.Instance, item.Busy, status, item.ActiveOps, item.QueuedOps, releaseCommit, resources, item.LastSeen.Format(time.RFC3339))
+		}
+		fmt.Println("ACTIVE/QUEUED count Gateway operations, not do-agent turn permits or prompt queues.")
+		if admission {
+			client := NewMCPClient(*server, ss, resolveSession(*sessionName), *verbose)
+			client.Token = token
+			result, err := client.CallAndCapture("doops_node_info", map[string]interface{}{"section": "admission"})
+			client.Close()
+			if err == nil {
+				err = printAdmissionStatus(os.Stdout, result)
+			}
+			if err != nil {
+				fmt.Printf("Error reading do-agent admission: %v\n", err)
+				os.Exit(1)
+			}
 		}
 
 	case "admin":
@@ -1287,7 +1304,8 @@ func requireConfig(err error) {
 		return
 	}
 	fmt.Printf("Error: no doops node config found: %v\n", err)
-	fmt.Println("Add a gateway target with: doops add --name <name> --gateway <gateway-url> --cluster <cluster> --instance <instance>")
+	fmt.Println("First login (discovers visible targets): doops login --gateway <gateway-url>")
+	fmt.Println("To pin a route first: doops add --name <name> --gateway <gateway-url> --cluster <cluster> --instance <instance>")
 	os.Exit(1)
 }
 
@@ -1302,8 +1320,8 @@ func ResolveToken(server Server) (string, error) {
 	if p := auth.GetGateway(server.Gateway); p != "" {
 		return p, nil
 	}
-	return "", fmt.Errorf("no login for Gateway %s; run `doops login --target %s`",
-		gatewayAuthKey(server.Gateway), server.Name)
+	return "", fmt.Errorf("no login for Gateway %s; run `doops login --target %s` or `doops login --gateway %s`",
+		gatewayAuthKey(server.Gateway), server.Name, gatewayAuthKey(server.Gateway))
 }
 
 func mustResolveToken(server Server) string {

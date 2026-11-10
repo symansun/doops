@@ -24,6 +24,7 @@ type doSQLDirectReport struct {
 	StatementFingerprint string            `json:"statement_fingerprint"`
 	Version              int64             `json:"version,omitempty"`
 	VersionRecordError   string            `json:"version_record_error,omitempty"`
+	JournalPath          string            `json:"journal_path,omitempty"`
 	EvidencePath         string            `json:"evidence_path,omitempty"`
 	Result               doSQLDirectResult `json:"result"`
 }
@@ -76,6 +77,7 @@ func handleDirectDoSQLPrompt(ctx context.Context, sessionID string, args api.Age
 			return "", fmt.Errorf("%w (operation_id=%s): nothing was executed", err, report.OperationID)
 		}
 		report.Version = version
+		report.JournalPath = journalPath
 	}
 	result, execErr := executeDoSQLDirect(ctx, request)
 	report.Result = result
@@ -195,7 +197,7 @@ func resolveDirectDoSQLBinding(ctx context.Context, bindings []api.AgentCredenti
 		if len(candidates) == 1 && len(unusable) == 0 {
 			return candidates[0], nil
 		}
-		return doSQLBindingCandidate{}, fmt.Errorf("dosql_database_required: target binds %s; pass --database <name>",
+		return doSQLBindingCandidate{}, fmt.Errorf("dosql_database_required: target binds %s (name=engine/database); pass --database <database>",
 			describeDoSQLCandidates(candidates, unusable))
 	}
 	var matches []doSQLBindingCandidate
@@ -204,11 +206,21 @@ func resolveDirectDoSQLBinding(ctx context.Context, bindings []api.AgentCredenti
 			matches = append(matches, candidate)
 		}
 	}
+	if len(matches) == 0 {
+		// Users copy the credential/binding name shown by "credential list".
+		// Accept it as an alias for the database name when it is unique, so a
+		// valid listed binding does not fail as if it were unbound.
+		for _, candidate := range candidates {
+			if candidate.Binding.Name == database || candidate.Binding.ResourceName == database {
+				matches = append(matches, candidate)
+			}
+		}
+	}
 	switch len(matches) {
 	case 1:
 		return matches[0], nil
 	case 0:
-		return doSQLBindingCandidate{}, fmt.Errorf("dosql_database_not_bound: no database credential on this target points to %q; target binds %s",
+		return doSQLBindingCandidate{}, fmt.Errorf("dosql_database_not_bound: no database credential on this target points to %q; target binds %s (name=engine/database); pass --database <database>",
 			database, describeDoSQLCandidates(candidates, unusable))
 	}
 	names := make([]string, 0, len(matches))

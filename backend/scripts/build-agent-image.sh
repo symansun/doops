@@ -30,6 +30,17 @@ ACTUAL_DOAGENT_VERSION="$(docker run --rm --entrypoint /usr/local/bin/do-agent "
 test "${ACTUAL_DOAGENT_VERSION}" = "${DO_AGENT_VERSION}"
 ACTUAL_DOAGENT_REVISION="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${DO_AGENT_IMAGE}")"
 test "${ACTUAL_DOAGENT_REVISION}" = "${DO_AGENT_REVISION}"
+printf '%s\n' '{"jsonrpc":"2.0","id":"verify-admission","method":"initialize","params":{}}' |
+  docker run --rm -i --entrypoint /usr/local/bin/do-agent "${DO_AGENT_IMAGE}" acp --cwd /tmp |
+  python3 -c '
+import json, sys
+replies = [json.loads(line) for line in sys.stdin if line.strip()]
+assert any(
+    reply.get("id") == "verify-admission"
+    and reply.get("result", {}).get("agentCapabilities", {}).get("promptCapabilities", {}).get("rejectWhenBusy") is True
+    for reply in replies
+), "Pinned do-agent does not support rejectWhenBusy; do not publish this Agent image"
+'
 
 docker pull "${BASE_IMAGE}"
 docker build \

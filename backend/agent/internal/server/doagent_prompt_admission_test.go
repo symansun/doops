@@ -1,12 +1,15 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -46,7 +49,11 @@ func TestClassifyDoagentPromptAdmission(t *testing.T) {
 		{name: "pre-admission session error", response: promptRPCError(-32001, nil), kind: promptAdmissionRejected},
 		{name: "pre-admission validation error", response: promptRPCError(-32602, nil), kind: promptAdmissionRejected},
 		{name: "internal rpc error", response: promptRPCError(-32000, nil), kind: promptAdmissionTransportFailed},
+		{name: "busy without queueing", response: promptRPCError(-32000, map[string]interface{}{"message": "doagent_prompt_busy: global turn capacity is exhausted"}), kind: promptAdmissionBusy},
 		{name: "admission timeout", response: promptRPCError(-32000, map[string]interface{}{"data": map[string]interface{}{"failureClass": "admission_timeout"}}), kind: promptAdmissionTransportFailed},
+		{name: "request withdrawn before admission", response: promptRPCError(-32000, map[string]interface{}{"data": map[string]interface{}{"failureClass": "admission_timeout", "executionStarted": false, "retryable": true}}), kind: promptAdmissionTimedOut},
+		{name: "timeout after execution started", response: promptRPCError(-32000, map[string]interface{}{"data": map[string]interface{}{"failureClass": "admission_timeout", "executionStarted": true, "retryable": true}}), kind: promptAdmissionTransportFailed},
+		{name: "preparation result unknown", response: promptRPCError(-32000, map[string]interface{}{"data": map[string]interface{}{"failureClass": "admission_outcome_unknown", "retryable": false}}), kind: promptAdmissionTransportFailed},
 		{name: "error with result", response: map[string]interface{}{"jsonrpc": "2.0", "error": map[string]interface{}{"code": -32602, "message": "synthetic"}, "result": map[string]interface{}{"status": "accepted", "turnId": "turn-3"}}, kind: promptAdmissionTransportFailed},
 		{name: "nil response", response: nil, kind: promptAdmissionMalformed},
 	}
@@ -79,6 +86,16 @@ type promptAdmissionCalls struct {
 	cancelStatus     string
 	cancelHTTPStatus int
 	lastCancelParams map[string]interface{}
+	rejectWhenBusy   interface{}
+	lastPromptParams map[string]interface{}
+}
+
+func doagentAdmissionCapabilities() map[string]interface{} {
+	return map[string]interface{}{
+		"agentCapabilities": map[string]interface{}{
+			"promptCapabilities": map[string]interface{}{"rejectWhenBusy": true},
+		},
+	}
 }
 
 func (c *promptAdmissionCalls) lastCancel() map[string]interface{} {
@@ -98,7 +115,7 @@ func (c *promptAdmissionCalls) counts() (rpc, prompt, cancel int) {
 // a real doagent reply shape.
 func newPromptAdmissionDoagent(t *testing.T, promptReply func() map[string]interface{}) (*httptest.Server, *promptAdmissionCalls) {
 	t.Helper()
-	calls := &promptAdmissionCalls{}
+	calls := &promptAdmissionCalls{rejectWhenBusy: true}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/rpc":
@@ -111,6 +128,13 @@ func newPromptAdmissionDoagent(t *testing.T, promptReply func() map[string]inter
 			calls.rpcCalls++
 			calls.mu.Unlock()
 			switch method, _ := request["method"].(string); method {
+			case "initialize":
+				calls.mu.Lock()
+				capability := calls.rejectWhenBusy
+				calls.mu.Unlock()
+				result := doagentAdmissionCapabilities()
+				result["agentCapabilities"].(map[string]interface{})["promptCapabilities"].(map[string]interface{})["rejectWhenBusy"] = capability
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"jsonrpc": "2.0", "id": request["id"], "result": result})
 			case "session/new":
 				params, _ := request["params"].(map[string]interface{})
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -123,6 +147,7 @@ func newPromptAdmissionDoagent(t *testing.T, promptReply func() map[string]inter
 			case "session/prompt":
 				calls.mu.Lock()
 				calls.promptCalls++
+				calls.lastPromptParams, _ = request["params"].(map[string]interface{})
 				calls.mu.Unlock()
 				reply := promptReply()
 				reply["jsonrpc"] = "2.0"
@@ -206,7 +231,7 @@ func TestAgentPromptStreamingQueuedSessionIsNotCancelled(t *testing.T) {
 	}
 }
 
-func TestAgentPromptMachineResultQueuedCleansItsOwnSession(t *testing.T) {
+func TestAgentPromptMachineResultDoesNotTreatSessionCancelAckAsQueueCleanup(t *testing.T) {
 	doagent, calls := newPromptAdmissionDoagent(t, func() map[string]interface{} {
 		return promptRPCResult(map[string]interface{}{"status": "queued", "queuePosition": 1, "globalPosition": 0, "delivery": "sse"})
 	})
@@ -220,12 +245,63 @@ func TestAgentPromptMachineResultQueuedCleansItsOwnSession(t *testing.T) {
 		"response_format": "json",
 	})
 	code, message := promptWireError(t, result)
-	if code != -32603 || message != doagentPromptQueued {
-		t.Fatalf("wire error = %d/%q, want -32603/%q", code, message, doagentPromptQueued)
+	if code != -32603 || message != doagentPromptCleanupUnknown {
+		t.Fatalf("wire error = %d/%q, want -32603/%q", code, message, doagentPromptCleanupUnknown)
 	}
 	_, promptCalls, cancelCalls := calls.counts()
-	if promptCalls != 1 || cancelCalls != 1 {
-		t.Fatalf("calls: prompt=%d cancel=%d, want 1/1 (a minted machine-result session may be cleaned up)", promptCalls, cancelCalls)
+	if promptCalls != 1 || cancelCalls != 0 {
+		t.Fatalf("calls: prompt=%d cancel=%d, want 1/0; a session ACK does not prove request cleanup", promptCalls, cancelCalls)
+	}
+}
+
+func TestAgentPromptRejectsRuntimeWithoutBusyAdmissionBeforeSendingPrompt(t *testing.T) {
+	for _, capability := range []interface{}{nil, false, "true"} {
+		t.Run(fmt.Sprint(capability), func(t *testing.T) {
+			doagent, calls := newPromptAdmissionDoagent(t, func() map[string]interface{} {
+				t.Error("unsupported runtime received a prompt")
+				return nil
+			})
+			defer doagent.Close()
+			calls.rejectWhenBusy = capability
+			_, conn, cleanup := dialPromptAdmissionAgent(t, doagent.URL)
+			defer cleanup()
+			result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+				"session_id": "unsupported-admission", "instruction": "inspect the target",
+			})
+			_, message := promptWireError(t, result)
+			if message != doagentPromptAdmissionUnsupported {
+				t.Fatalf("error = %q", message)
+			}
+			rpc, prompts, cancels := calls.counts()
+			if rpc != 1 || prompts != 0 || cancels != 0 {
+				t.Fatalf("unsupported runtime calls: rpc=%d prompt=%d cancel=%d", rpc, prompts, cancels)
+			}
+		})
+	}
+}
+
+func TestAgentPromptBusyDoesNotLeaveBackgroundQueuedWork(t *testing.T) {
+	doagent, calls := newPromptAdmissionDoagent(t, func() map[string]interface{} {
+		return promptRPCError(-32000, map[string]interface{}{"message": "doagent_prompt_busy: global turn capacity is exhausted"})
+	})
+	defer doagent.Close()
+	_, conn, cleanup := dialPromptAdmissionAgent(t, doagent.URL)
+	defer cleanup()
+	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+		"session_id": "reject-busy", "instruction": "inspect the target",
+	})
+	_, message := promptWireError(t, result)
+	if message != doagentPromptBusy {
+		t.Fatalf("error = %q", message)
+	}
+	_, prompts, cancels := calls.counts()
+	if prompts != 1 || cancels != 0 {
+		t.Fatalf("calls: prompt=%d cancel=%d", prompts, cancels)
+	}
+	calls.mu.Lock()
+	defer calls.mu.Unlock()
+	if calls.lastPromptParams["mode"] != "reject" {
+		t.Fatalf("prompt must reject instead of enqueueing: %#v", calls.lastPromptParams)
 	}
 }
 
@@ -300,24 +376,86 @@ func TestAgentPromptNoPromptReplyIsInputErrorWithoutCancel(t *testing.T) {
 }
 
 func TestAgentPromptAcceptedWithoutTurnIDStaysUnknown(t *testing.T) {
+	for _, format := range []string{"", "json"} {
+		t.Run("response_format="+format, func(t *testing.T) {
+			doagent, calls := newPromptAdmissionDoagent(t, func() map[string]interface{} {
+				return promptRPCResult(map[string]interface{}{"status": "accepted"})
+			})
+			defer doagent.Close()
+			_, conn, cleanup := dialPromptAdmissionAgent(t, doagent.URL)
+			defer cleanup()
+
+			result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
+				"session_id": "accepted-without-turn", "instruction": "deploy the chart",
+				"response_format": format,
+			})
+			code, message := promptWireError(t, result)
+			if code != -32603 || message != promptOutcomeUnknown("prompt_turn_id_missing") {
+				t.Fatalf("wire error = %d/%q, want unknown outcome", code, message)
+			}
+			_, promptCalls, cancelCalls := calls.counts()
+			wantCancel := 0
+			if format == "json" {
+				wantCancel = 1
+			}
+			if promptCalls != 1 || cancelCalls != wantCancel {
+				t.Fatalf("calls: prompt=%d cancel=%d, want 1/%d; only an exclusively owned session may be cancelled",
+					promptCalls, cancelCalls, wantCancel)
+			}
+		})
+	}
+}
+
+func TestAgentPromptCancelledBeforeSendDoesNotBecomeUnknown(t *testing.T) {
 	doagent, calls := newPromptAdmissionDoagent(t, func() map[string]interface{} {
-		return promptRPCResult(map[string]interface{}{"status": "accepted"})
+		t.Error("cancelled request must not send a prompt")
+		return nil
 	})
 	defer doagent.Close()
-	_, conn, cleanup := dialPromptAdmissionAgent(t, doagent.URL)
-	defer cleanup()
-
-	result := callToolResult(t, conn, "doops_agent_prompt", map[string]interface{}{
-		"session_id":  "accepted-without-turn",
-		"instruction": "deploy the chart",
-	})
-	code, message := promptWireError(t, result)
-	if code != -32603 || message != promptOutcomeUnknown("prompt_turn_id_missing") {
-		t.Fatalf("wire error = %d/%q, want -32603/%q", code, message, promptOutcomeUnknown("prompt_turn_id_missing"))
+	subscribing := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/events" {
+			close(subscribing)
+			<-r.Context().Done()
+			return
+		}
+		doagent.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	t.Setenv("DO_AGENT_URL", server.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan interface{}, 1)
+	go NewGateway().handleAgentPromptWS(
+		ctx, 1, "cancel-before-prompt", "read-only inspection", nil, "", "",
+		agentPromptExecutionContext{}, func(notificationEvent) {}, func(v interface{}) { done <- v },
+	)
+	select {
+	case <-subscribing:
+	case <-time.After(3 * time.Second):
+		t.Fatal("SSE subscription did not start")
 	}
-	_, promptCalls, cancelCalls := calls.counts()
-	if promptCalls != 1 || cancelCalls != 1 {
-		t.Fatalf("calls: prompt=%d cancel=%d, want 1/1 (an unaccounted turn still gets the cancel probe)", promptCalls, cancelCalls)
+	cancel()
+	select {
+	case raw := <-done:
+		data, _ := json.Marshal(raw)
+		var reply map[string]interface{}
+		if err := json.Unmarshal(data, &reply); err != nil {
+			t.Fatal(err)
+		}
+		_, category := promptWireError(t, reply)
+		if category != doagentPromptCancelledBeforeAdmission && category != "doagent_sse_unavailable" {
+			t.Fatalf("pre-prompt cancel was not explicitly classified: %s", data)
+		}
+		if !promptReplyProvesNoExecution("doops_agent_prompt", reply) {
+			t.Fatalf("pre-prompt terminal lost its non-execution evidence: %s", data)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancellation did not finish")
+	}
+	_, prompts, cancels := calls.counts()
+	if prompts != 0 || cancels != 0 {
+		t.Fatalf("pre-admission cancellation sent prompts=%d cancels=%d", prompts, cancels)
 	}
 }
 

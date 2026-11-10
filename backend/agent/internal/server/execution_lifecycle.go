@@ -88,12 +88,16 @@ func executionResponseCanceled(response map[string]interface{}) bool {
 	return ok && code == -32007
 }
 
-// promptPreAdmissionCategories are the stable answers a target Agent gives for
-// a prompt that was decided before admission. No turn exists for them and no
-// mutation can have started, so they are not mutation outcomes.
+// These categories are forwarded without losing their meaning. The
+// cleanup_unknown category is deliberately absent: a queued request may still
+// execute, so the Gateway must report execution_outcome_unknown for it.
 var promptPreAdmissionCategories = []string{
+	"doagent_prompt_busy",
+	"doagent_prompt_admission_unsupported",
+	"doagent_prompt_admission_unavailable",
+	"doagent_prompt_admission_timeout",
+	"doagent_prompt_cancelled_before_admission",
 	"doagent_prompt_queued",
-	"doagent_prompt_queue_cleanup_unknown",
 	"doagent_prompt_queue_timeout",
 	"doagent_prompt_no_prompt",
 	"doagent_prompt_rejected",
