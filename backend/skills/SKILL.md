@@ -23,9 +23,8 @@ description: |
 | Web 控制台 | `docs/DOOPS_WEBUI.md` |
 | DoSql / DoWeb 等统一工作台 skill | `docs/UNIFIED_OPERATIONS_WORKBENCH.md` |
 
-权威源码是 doops.sh 仓库的 `backend/skills/SKILL.md`；项目里的 `.agent/skills/doops/` 是
-安装副本，只能通过 `scripts/install.sh` 从 Release CLI 内嵌 commit 同步，不要直接改副本。
-`docs/` 源码在 `backend/docs/`，安装后相对 skill。
+权威源码是仓库 `backend/skills/SKILL.md`；`.agent/skills/doops/` 是安装副本，只能由
+`scripts/install.sh` 从 Release CLI 内嵌 commit 同步，不要直接改。`docs/` 源码在 `backend/docs/`。
 
 ## 红线
 
@@ -101,6 +100,7 @@ description: |
 | token | `doops -session <s> admin token create\|list\|revoke --target <t> ...`（私密签发见使用指南；普通 ask 不提供） |
 | Helm Agent 升级 / 回滚 | `doops -session <s> upgrade --target <t> --image <ref>`（`--dry-run` 只预览）；`doops -session <s> upgrade --target <t> --rollback` |
 | CI 非交互登录 | `printf '%s' "$TOKEN" \| doops -session <s> login --target <t> --token-stdin` |
+| 首次登录 | `doops -session <s> login --gateway <url>`（自动发现 target） |
 
 DoSql 必须从 `doops sql` 进入；普通 `ask` 不保证注入 DoSql 工具。Gateway 默认绑定当前 target
 上全部 active `use=database` 凭据，有多个数据库凭据时用 `--database <name>` 选库；同一库绑了
@@ -112,8 +112,8 @@ DoSql 必须从 `doops sql` 进入；普通 `ask` 不保证注入 DoSql 工具�
 
 ## 场景链路
 
-场景链路由 CLI 自己给出，和当前安装的二进制一致：`doops guide` 列出场景，
-`doops guide <onboard|diagnose|release|credential|database|upgrade|user|files>` 打印按顺序执行的命令。
+场景链路由 CLI 给出，和已安装二进制一致：`doops guide` 列出场景，
+`doops guide <onboard|diagnose|release|credential|database|upgrade|user|files>` 打印顺序命令。
 命令失败时核对 `next:` 的前提与授权再执行；它不扩大授权，也不允许重放结果未知的变更。
 
 ## 安装与升级

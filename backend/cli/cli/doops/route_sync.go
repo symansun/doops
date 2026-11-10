@@ -198,3 +198,46 @@ func syncGatewaySeeds(servers []Server, target string) ([]Server, error) {
 	}
 	return seeds, nil
 }
+
+// persistVisibleGatewayRoutes stores local routes for Gateway targets the
+// current login can see but that are not configured yet. It is used by the
+// first login, where no local route exists to select the Gateway from.
+func persistVisibleGatewayRoutes(servers []Server, gateway string, live []GatewayTarget) ([]Server, error) {
+	_, added := mergeLiveGatewayRoutes(servers, gateway, live)
+	if len(added) == 0 {
+		return servers, nil
+	}
+	return persistNewRoutes(added)
+}
+
+// persistNewRoutes merges already-authorized routes into the on-disk config
+// without rewriting existing names, aliases or descriptions.
+func persistNewRoutes(added []Server) ([]Server, error) {
+	current, _, err := LoadConfig()
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		current = nil
+	}
+	updated := current
+	for _, route := range added {
+		if findSameRoute(updated, route.Gateway, route.Cluster, route.Instance) != "" {
+			continue
+		}
+		var batch []Server
+		updated, batch = mergeLiveGatewayRoutes(updated, route.Gateway, []GatewayTarget{{
+			Cluster: route.Cluster, Instance: route.Instance,
+		}})
+		if len(batch) == 0 {
+			continue
+		}
+	}
+	if len(updated) == len(current) {
+		return current, nil
+	}
+	if err := saveServers(updated); err != nil {
+		return nil, err
+	}
+	return updated, nil
+}

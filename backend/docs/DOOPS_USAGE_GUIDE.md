@@ -593,8 +593,15 @@ Confirm the session name before cleaning. Do not share one session across unrela
 ```bash
 doops login --target jm --username alice
 printf '%s' "$DOOPS_GATEWAY_TOKEN" | doops login --target jm --token-stdin
+doops login --gateway https://gateway.example.com --username alice   # first login; discovers visible targets
+doops login --gateway https://gateway.example.com --token-stdin < token.txt
 doops logout --target jm
+doops logout --gateway https://gateway.example.com                    # no local route yet
 ```
+
+本地还没有 target 路由时，用 `--gateway <url>` 做首次登录：CLI 先交换或导入 token，再调用
+`GET /v1/targets` 把该账号可见的在线 target 写回本机路由（已有路由的名称、别名和描述不改）。
+`--gateway` 与 `--target` 同时给出时必须指向同一个 Gateway；`--target` 仍要求路由已存在。
 
 CI 和自动化只用 `--token-stdin` 传入已有 Gateway user token，不能与 `--username` 混用。
 密码登录使用终端隐藏输入。`login --token` 和 `login --password` 已移除，旧脚本须改为
