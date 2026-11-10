@@ -144,8 +144,55 @@ def test_installer_requires_complete_gateway_route_before_replacing_cli():
         )
 
         assert result.returncode == 2
-        assert "requires --target-name, --target-gateway, --target-cluster, and --target-instance" in result.stderr
+        assert (
+            "Explicit route mode requires --target-name, --target-gateway, --target-cluster, and --target-instance"
+            in result.stderr
+        )
         assert cli.read_text() == "existing-cli"
+
+
+def test_installer_gateway_only_mode_prepares_first_login_without_route(tmp_path):
+    repo, release_commit = prepare_synthetic_repo(
+        tmp_path / "source",
+        skill="release skill\n",
+        docs={"release.md": "release docs\n"},
+    )
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    home.mkdir()
+    project.mkdir()
+    fake_bin, release_env = prepare_fake_cli_release(
+        tmp_path / "release",
+        "v-test",
+        commit=release_commit,
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(repo / "backend" / "scripts" / "install.sh"),
+            "--version",
+            "v-test",
+            "--project",
+            str(project),
+            "--target-gateway",
+            "https://gateway.example.com",
+        ],
+        env={
+            **os.environ,
+            **release_env,
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not (home / ".agent" / "skills" / "doops" / "config.json").exists()
+    assert "login --gateway https://gateway.example.com" in result.stdout
+    assert "no local route was written" in result.stdout
 
 
 def test_installer_rejects_legacy_only_config_before_replacing_any_artifact(tmp_path):

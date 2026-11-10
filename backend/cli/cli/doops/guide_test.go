@@ -165,7 +165,7 @@ func TestFailuresNameTheNextCommand(t *testing.T) {
 	}{
 		{"typo in target suggests the closest", targetNotFound(servers, "gw-edu-codr"), []string{`did you mean "gw-edu-coder"`, "next: rerun with --target gw-edu-coder"}},
 		{"unrelated target lists the configured ones", targetNotFound(servers, "prod"), []string{"configured targets: gw-edu-coder, gw-zyj", "next: doops list"}},
-		{"no targets yet says how to add one", targetNotFound(nil, "x"), []string{"next: doops add --name"}},
+		{"no targets yet says how to log in first", targetNotFound(nil, "x"), []string{"next: doops login --gateway"}},
 		{"typo in command suggests the closest", unknownCommand("exce"), []string{`did you mean "exec"`, "next: doops exec -h"}},
 		{"unknown command points to the guide", unknownCommand("frobnicate"), []string{"next: doops guide"}},
 		{"nested ssh in exec becomes a doops ssh command", sshCommandSuggestion("t", "ssh ops@db 'uptime'"), []string{"doops ssh --target t --host ops@db --"}},

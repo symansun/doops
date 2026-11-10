@@ -213,14 +213,16 @@ docker run --rm --name doops-console \
 <a id="cli-quickstart"></a>
 ## Quick start: CLI and project skill
 
-The following examples assume an administrator has already provided the gateway, a user token, and target information.
+The following examples assume the administrator has provided the gateway URL and a login credential; target routes are discovered on the first login.
 
 ### 1. Installation
 
 Run from the DoOps repository root; the business project directory given by `--project` must already exist:
 
 ```bash
-bash scripts/install.sh --version <release-tag> --project /absolute/path/to/existing-project
+# Recommended: provide only the gateway URL; the first login discovers targets
+bash scripts/install.sh --version <release-tag> --project /absolute/path/to/existing-project \
+  --target-gateway https://gateway.example.com
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
@@ -236,48 +238,42 @@ Main install locations:
 
 Installation updates the DoOps skill and companion documentation in the target project. Back up those files first if you have modified them yourself. CLI configuration and caches contain sensitive information; file permission protection is not encrypted storage, so do not commit them to Git.
 
-### 2. Configure a target
+### 2. First login and target discovery
 
 The following is a placeholder example; replace it with the information provided by your administrator:
 
 ```bash
-doops add \
-  --name demo-node \
-  --gateway https://gateway.example.com \
-  --cluster demo \
-  --instance node-1
+# With no local route, use --gateway for the first login; password login or token stdin both work
+doops login --gateway https://gateway.example.com
+printf '%s' "$TOKEN" | doops login --gateway https://gateway.example.com --token-stdin
 
-# First login uses the gateway account password; login state is shared per gateway URL
-doops login --target demo-node
+doops list
 ```
 
-- `demo-node` is a local alias on the client.
-- `demo/node-1` must correspond to a target actually registered in the gateway.
-- `doops add` only stores the gateway route and does not store a target token; user login state is kept separately in the local auth cache.
-- Do not leave real credentials in public logs, scripts, or shared terminal history; password login uses interactive input or `--token-stdin`.
-
-`doops login --gateway <gateway-url>` can also perform the first login when no target is configured, and discovers the routes visible to the current account. `doops login --target ...` requires the target route to exist and cannot replace first-time target creation.
+- The first login calls `GET /v1/targets` and writes the online targets visible to this account back to local routes; existing route names, aliases and descriptions are preserved.
+- Operators do not need to know an Agent's `cluster/instance` in advance.
+- Pre-create a route with `doops add --name <name> --gateway <url> --cluster <cluster> --instance <instance>` only when you must pin a route before login (or use a released CLI that does not support `--gateway`), then run `doops login --target <name>`.
+- `doops add` stores routing only and never stores a target token; login state lives in the local auth cache.
+- Do not leave real credentials in public logs, scripts or shared terminal history; password login uses interactive input or `--token-stdin`.
 
 ### 3. Check the connection
 
 ```bash
-# A target configured locally does not mean it is online
+# A local route does not mean the target is online
 doops list
 
 # Targets actually online and visible in the gateway
-doops targets --target demo-node
+doops targets --target <discovered-target>
+doops -session diagnose targets --target <discovered-target> --admission
 
 # Run a simple check on the specified target
-doops -session inspect-001 exec --target demo-node --cmd 'hostname'
+doops -session inspect-001 exec --target <discovered-target> --cmd 'hostname'
 ```
 
-When an existing target needs to sign in with a password again, you can omit `--password` and let the terminal hide the input:
+To sign in again for an existing route, omit `--password` and let the terminal hide the input:
 
 ```bash
-doops login \
-  --target demo-node \
-  --gateway https://gateway.example.com \
-  --username alice
+doops login --target <name> --username alice
 ```
 
 <a id="self-host"></a>
