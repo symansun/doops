@@ -2,7 +2,7 @@
 gateway:
   cluster: doops-235
   instance: hdu-235
-  url: https://doops.l8ai.cn
+  url: https://doops.aiedulab.cn
 hostAccess:
   enabled: false
 hostAliases: []

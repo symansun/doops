@@ -3,7 +3,7 @@
 gateway:
   cluster: doops-zyj
   instance: zyj-test
-  url: https://doops.l8ai.cn
+  url: https://doops.aiedulab.cn
 image:
   digest: sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a
   pullPolicy: IfNotPresent

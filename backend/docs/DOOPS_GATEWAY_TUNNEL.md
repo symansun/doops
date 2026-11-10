@@ -141,7 +141,7 @@ bash scripts/release-managed-agent.sh \
 - SSH 地址：`106.54.197.139`
 - SSH 用户：`ubuntu`
 - Gateway 服务端口：`42222`
-- Gateway URL：`https://doops.l8ai.cn`
+- Gateway URL：`https://doops.aiedulab.cn`
 - 维护用途：发布和自恢复 `doops-gateway` 控制面，不作为普通 `doops-agent` target 使用。
 
 维护凭据不得写入仓库。需要发布 gateway 时使用：

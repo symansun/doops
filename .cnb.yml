@@ -144,7 +144,7 @@ main:
             )
             .ci-bin/doops add \
               --name "${DOOPS_TARGET}" \
-              --gateway "https://doops.l8ai.cn" \
+              --gateway "https://doops.aiedulab.cn" \
               --cluster "${DOOPS_CLUSTER}" \
               --instance "${DOOPS_INSTANCE}" \
               --use "CNB natural-language release"
