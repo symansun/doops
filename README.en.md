@@ -576,7 +576,7 @@ doops/
 │   ├── Dockerfile              # Agent application image
 │   ├── Dockerfile.base.light   # Agent lightweight base image
 │   └── runtime-versions.env    # Pinned runtime versions and image sources
-├── docs/                        # Design documents and implementation records
+├── docs/                        # Internal design records (product docs live in backend/docs)
 ├── Dockerfile.web              # Next.js production image
 ├── .github/workflows/ci.yml    # GitHub CI
 ├── .github/workflows/release.yml # GitHub tag release: build, verify, publish, re-verify
@@ -587,6 +587,7 @@ doops/
 
 | Document | Purpose |
 | --- | --- |
+| [Documentation index](backend/docs/README.md) | Entry point, status, and authority for all product docs |
 | [CLI usage guide](backend/docs/DOOPS_USAGE_GUIDE.md) | Command selection, sessions, synchronization, and task management |
 | [API integration guide](backend/docs/DOOPS_API_GUIDE.md) | Login, targets, RPC, progress streaming, and audit |
 | [Gateway tunnel and execution lifecycle](backend/docs/DOOPS_GATEWAY_TUNNEL.md) | Agent reverse connection, execution lifecycle, and concurrency boundaries |
