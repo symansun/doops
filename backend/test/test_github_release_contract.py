@@ -75,6 +75,8 @@ def test_release_is_gated_by_the_reusable_ci_workflow():
     condition = ci["jobs"]["secret-scan"]["if"]
     assert "refs/tags/" in condition
     assert "github.event_name == 'pull_request'" in condition
+    # The release contract tests themselves gate the release workflow.
+    assert "contract-tests" in ci["jobs"]
 
 
 def test_publish_requires_a_green_ci_and_stays_least_privileged():
