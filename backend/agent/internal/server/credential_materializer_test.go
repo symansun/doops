@@ -605,7 +605,7 @@ func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T
 	var chartRequests atomic.Int64
 	helmRepo := managedHelmTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		chartRequests.Add(1)
-		if r.URL.Path != "/charts/aiedulab/zhiyong/education/zhiyong/v/1.0.0.tgz" {
+		if r.URL.Path != "/charts/example/zhiyong/education/zhiyong/v/1.0.0.tgz" {
 			http.NotFound(w, r)
 			return
 		}
@@ -630,10 +630,10 @@ func TestMaterializeHelmAndGitCredentialsVerifyRemoteWithoutLeaking(t *testing.T
 				Kind: "deployment", Name: "doops-agent-live",
 			},
 			HelmRelease: "doops-agent",
-			HelmChart:   helmRepo.URL + "/charts/aiedulab/zhiyong/education/zhiyong/v/1.0.0.tgz",
+			HelmChart:   helmRepo.URL + "/charts/example/zhiyong/education/zhiyong/v/1.0.0.tgz",
 		},
 		Payload: mustJSON(t, map[string]string{
-			"url":      helmRepo.URL + "/charts/aiedulab/zhiyong/education",
+			"url":      helmRepo.URL + "/charts/example/zhiyong/education",
 			"username": "helm",
 			"password": "helm-canary-secret",
 		}),

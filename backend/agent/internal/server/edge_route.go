@@ -251,7 +251,7 @@ func edgeRouteDecisionFor(route EdgeRoute) edgeRouteDecision {
 }
 
 // edgeParentDomain 去掉最左一级标签。单级通配语义与 TLS 通配证书一致：
-// *.jm.aiedulab.cn 匹配 a.jm.aiedulab.cn，不匹配 a.b.jm.aiedulab.cn。
+// *.jm.example.com 匹配 a.jm.example.com，不匹配 a.b.jm.example.com。
 func edgeParentDomain(host string) (string, bool) {
 	dot := strings.IndexByte(host, '.')
 	if dot < 0 || dot+1 >= len(host) {

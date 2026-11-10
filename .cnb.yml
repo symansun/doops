@@ -121,7 +121,7 @@ main:
       runner:
         cpus: 2
       imports:
-        - https://cnb.cool/aiedulab/zhiyong/secret/-/blob/main/zhiyong-deploy-secrets.yml
+        - https://cnb.cool/example/zhiyong/secret/-/blob/main/zhiyong-deploy-secrets.yml
       docker:
         image: docker.io/library/golang:1.25-alpine@sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec70241cdac97bf84b59
       stages:
@@ -144,7 +144,7 @@ main:
             )
             .ci-bin/doops add \
               --name "${DOOPS_TARGET}" \
-              --gateway "https://doops.aiedulab.cn" \
+              --gateway "https://doops.l8ai.cn" \
               --cluster "${DOOPS_CLUSTER}" \
               --instance "${DOOPS_INSTANCE}" \
               --use "CNB natural-language release"
@@ -296,10 +296,10 @@ $:
       docker:
         image: docker.cnb.cool/l8ai/agentcloud/webide-codex:git-f3f43aa51d033d975b89fcfeec8c0a3abc8066e2
       imports:
-        - https://cnb.cool/aiedulab/zhiyong/secret/-/blob/main/codex-dev-env.yml
+        - https://cnb.cool/example/zhiyong/secret/-/blob/main/codex-dev-env.yml
       env:
         CODEX_HOME: /home/coder/.codex
-        CODEX_BASE_URL: https://token.aiedulab.cn
+        CODEX_BASE_URL: https://token.example.com
         CODEX_MODEL: gpt-5.5
         CNB_WELCOME_CMD: codex-dev-init && codex --version
       stages:

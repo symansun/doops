@@ -100,7 +100,7 @@ func TestOpenGatewayStoreUpgradesPreEdgeDatabaseWithoutBreakingOpsTokens(t *test
 		t.Fatalf("upgrade must create edge enrollments: %v", err)
 	}
 	if _, err := upgraded.CreateEdgeRoute(CreateEdgeRouteRequest{
-		Hostname: "amp.jm.aiedulab.cn",
+		Hostname: "amp.jm.example.com",
 		Cluster:  "jm",
 		Instance: "gw-jm",
 		Backend:  "192.168.150.228:443",

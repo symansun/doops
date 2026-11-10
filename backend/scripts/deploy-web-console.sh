@@ -15,7 +15,7 @@ Options:
   --user USER         SSH user. Default: ubuntu.
   --port PORT         SSH port. Default: 22.
   --image IMAGE       Immutable Web image digest. Required.
-  --gateway URL       Allowed Gateway origin. Default: https://doops.aiedulab.cn.
+  --gateway URL       Allowed Gateway origin. Default: https://doops.l8ai.cn.
   --dry-run           Verify host, Docker, current container, and image only.
 EOF
 }
@@ -24,7 +24,7 @@ HOST=""
 SSH_USER="ubuntu"
 SSH_PORT="22"
 IMAGE=""
-GATEWAY="https://doops.aiedulab.cn"
+GATEWAY="https://doops.l8ai.cn"
 DRY_RUN=false
 
 while [[ $# -gt 0 ]]; do

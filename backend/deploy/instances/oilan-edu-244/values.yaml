@@ -11,7 +11,7 @@ workload:
 imagePullSecrets: []
 
 gateway:
-  url: https://doops.aiedulab.cn
+  url: https://doops.l8ai.cn
   cluster: doops-oilan
   instance: oilan-node
 

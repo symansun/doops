@@ -7,7 +7,7 @@ First installation on an empty Ubuntu/Debian Docker host (run as root).
 Installs Docker Engine and Compose if absent; never replaces an existing Agent.
 
   bash backend/scripts/bootstrap-host-agent.sh \
-    --version vX.Y.Z --gateway https://doops.aiedulab.cn \
+    --version vX.Y.Z --gateway https://doops.l8ai.cn \
     --cluster doops-unicom --instance unicom-1
 
 Required: --version, --gateway, --cluster, --instance

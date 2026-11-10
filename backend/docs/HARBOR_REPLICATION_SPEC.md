@@ -12,7 +12,7 @@
 | 集群 | DoOps target | Registry | Harbor namespace |
 |---|---|---|---|
 | Oilan / Test | `gw-edu-coder` | `repo.l8ai.cn:8443` | `harbor-system` |
-| 腾讯 ZYJ | `gw-zyj` | `repo.aiedulab.cn` | `harbor` |
+| 腾讯 ZYJ | `gw-zyj` | `repo.example.com` | `harbor` |
 
 ## 2. Harbor 对象
 
@@ -28,10 +28,10 @@
 | 字段 | 值 |
 |---|---|
 | 方向 | Pull（源为 `cnb-upstream`） |
-| 源资源过滤 name | 精确到仓库路径，例如 `aiedulab/zhiyong/education/zhiyong-*` |
+| 源资源过滤 name | 精确到仓库路径，例如 `example/zhiyong/education/zhiyong-*` |
 | tag 过滤 | agentcloud 用 `git-*`，zhiyong 用 `sha-*`，不放行 `latest`。已验证 Harbor 支持 `*` 通配 |
 | 资源类型 | image |
-| 目标 namespace | 本集群项目名，`dest_namespace_replace_count` 取 `-1`（展平全部层级）。已验证：源 `aiedulab/zhiyong/k8s/nginx` 落到 `sync-test/nginx` |
+| 目标 namespace | 本集群项目名，`dest_namespace_replace_count` 取 `-1`（展平全部层级）。已验证：源 `example/zhiyong/k8s/nginx` 落到 `sync-test/nginx` |
 | 覆盖 | 关闭。这两类 tag 不可变，已存在则跳过 |
 | 触发 | 手动。CNB 构建成功后由发布流程触发一次 |
 | 启用 | 是 |
@@ -125,7 +125,7 @@ V2 的结果决定方案是否成立：若集群出网到 CNB 不通，改用经
 
 | 步骤 | 结果 |
 |---|---|
-| V1 | 通过。盘点时 Harbor 无端点、无规则；已有项目 `agentcloud`（id 226）、`aiedulab`（id 11）、`zhiyong`（id 342） |
+| V1 | 通过。盘点时 Harbor 无端点、无规则；已有项目 `agentcloud`（id 226）、`example-org`（id 11）、`zhiyong`（id 342） |
 | V3 | 通过。端点 `cnb-upstream`（id=2），basic 认证指向 CNB，状态 healthy |
 | V4 | 通过。规则改为每个 CNB 仓库一条，命名 `cnb-<project>-<repo>`，手动触发 |
 | V5 | 通过。agentcloud 执行 1906 Succeed，`agentcloud/backend` digest 与 CNB 一致（`sha256:6f66b840...ebf9b`）；zhiyong 执行 1908 Succeed，`zhiyong/zhiyong-frontend` digest 与 CNB 一致（`sha256:8ffb395d...dc701d`） |
@@ -138,11 +138,11 @@ V2 的结果决定方案是否成立：若集群出网到 CNB 不通，改用经
 | 6 | `cnb-agentcloud-backend` | `agentcloud` | `l8ai/agentcloud/backend` | `git-*` |
 | 7 | `cnb-agentcloud-web` | `agentcloud` | `l8ai/agentcloud/web` | `git-*` |
 | 8 | `cnb-agentcloud-relay` | `agentcloud` | `l8ai/agentcloud/relay` | `git-*` |
-| 9 | `cnb-zhiyong-frontend` | `zhiyong` | `aiedulab/zhiyong/education/zhiyong-frontend` | `sha-*` |
-| 10 | `cnb-zhiyong-lab-api` | `zhiyong` | `aiedulab/zhiyong/education/zhiyong-lab-api` | `sha-*` |
-| 11 | `cnb-zhiyong-course-api` | `zhiyong` | `aiedulab/zhiyong/education/zhiyong-course-api` | `sha-*` |
-| 12 | `cnb-zhiyong-ai-api` | `zhiyong` | `aiedulab/zhiyong/education/zhiyong-ai-api` | `sha-*` |
-| 13 | `cnb-zhiyong-exam-api` | `zhiyong` | `aiedulab/zhiyong/education/zhiyong-exam-api` | `sha-*` |
+| 9 | `cnb-zhiyong-frontend` | `zhiyong` | `example/zhiyong/education/zhiyong-frontend` | `sha-*` |
+| 10 | `cnb-zhiyong-lab-api` | `zhiyong` | `example/zhiyong/education/zhiyong-lab-api` | `sha-*` |
+| 11 | `cnb-zhiyong-course-api` | `zhiyong` | `example/zhiyong/education/zhiyong-course-api` | `sha-*` |
+| 12 | `cnb-zhiyong-ai-api` | `zhiyong` | `example/zhiyong/education/zhiyong-ai-api` | `sha-*` |
+| 13 | `cnb-zhiyong-exam-api` | `zhiyong` | `example/zhiyong/education/zhiyong-exam-api` | `sha-*` |
 
 `l8ai/agentcloud/mobile` 和 `l8ai/agentcloud/web-admin` 在 CNB 上没有 tag，不建规则。
 
@@ -167,7 +167,7 @@ V2 的结果决定方案是否成立：若集群出网到 CNB 不通，改用经
 
 | 项 | 结果 |
 |---|---|
-| 匹配行为 | 生效。CNB 侧 `aiedulab/zhiyong/education/zhiyong-lab-api` 有 10 个 `sha-*` tag，Harbor 侧 `zhiyong/zhiyong-lab-api` 同样拿到 10 个 |
+| 匹配行为 | 生效。CNB 侧 `example/zhiyong/education/zhiyong-lab-api` 有 10 个 `sha-*` tag，Harbor 侧 `zhiyong/zhiyong-lab-api` 同样拿到 10 个 |
 | digest 校验 | 10 个全部与 CNB 一致，mismatch 0，no-cnb 0 |
 | 结论 | `sha-*` 通配同样可用 |
 
@@ -175,7 +175,7 @@ V2 的结果决定方案是否成立：若集群出网到 CNB 不通，改用经
 
 实测发现，后续脚本必须遵守：
 
-- CNB 匿名拉取返回 401，端点必须配置 CNB 凭据。令牌只读即可，已验证对 `aiedulab/zhiyong/k8s/nginx`、`aiedulab/zhiyong/education/zhiyong-lab-api`、`l8ai/agentcloud/backend`、`l8ai/agentcloud/web`、`l8ai/agentcloud/relay` 的 token 与 tags 请求返回 200。
+- CNB 匿名拉取返回 401，端点必须配置 CNB 凭据。令牌只读即可，已验证对 `example/zhiyong/k8s/nginx`、`example/zhiyong/education/zhiyong-lab-api`、`l8ai/agentcloud/backend`、`l8ai/agentcloud/web`、`l8ai/agentcloud/relay` 的 token 与 tags 请求返回 200。
 - `PUT /registries/{id}` 的凭据字段是扁平的 `credential_type`、`access_key`、`access_secret`。嵌套的 `{"credential":{...}}` 请求返回 200，但凭据没有写入，Harbor 不报错。每次写入后必须读回端点，确认 `access_key` 有值且 `access_secret` 已设置。
 - 创建规则的请求体不能同时给出源和目标两侧的 registry 对象，否则报 `either src_registry or dest_registry should be empty and the other one shouldn't be empty`。本地 Harbor 是目标侧，只填 `dest_namespace` 和 `dest_namespace_replace_count`；源侧填 `{"id":2,"name":"cnb-upstream"}` 即可。
 - 创建规则后不要用 HTTP 201 判断成功，要按名称查询规则 id 并确认大于 0，再触发。
@@ -215,7 +215,7 @@ doops -session <s> exec --target <t> --cmd 'python3 /root/harbor-replication.py 
 规则 id 6 和 10、不可变规则 id 38 全部复用，`run` 未发出任何写请求。
 
 规则名由 `--policy-prefix`（默认 `cnb`）、项目名和源仓库最后一段拼成，并去掉与项目名重复的
-前缀，因此 `aiedulab/zhiyong/education/zhiyong-lab-api` 得到 `cnb-zhiyong-lab-api`，
+前缀，因此 `example/zhiyong/education/zhiyong-lab-api` 得到 `cnb-zhiyong-lab-api`，
 与第 5 节表中已有的 8 条规则名逐字一致。若改成按完整路径命名，脚本会在已有规则旁边再建一条
 重复规则——这是实测中发现并修掉的缺陷。
 
@@ -243,7 +243,7 @@ doops -session <s> exec --target <t> --cmd 'python3 /root/harbor-replication.py 
 | 仓库 | 执行 | 结果 |
 |---|---|---|
 | `l8ai/agentcloud/backend` | 1918 + 1923 | `matched=11/11`、`mismatched=0`、`missing=0`、`extra=19`，`harbor_replication=complete` |
-| `aiedulab/zhiyong/education/zhiyong-lab-api` | 1924 | `matched=11/11`、`mismatched=0`、`missing=0`、`extra=10`，`harbor_replication=complete` |
+| `example/zhiyong/education/zhiyong-lab-api` | 1924 | `matched=11/11`、`mismatched=0`、`missing=0`、`extra=10`，`harbor_replication=complete` |
 
 过程中 `missing` 随拷贝推进单调下降（agentcloud 11 → 2 → 0），`mismatched` 始终为 0。
 一次触发只搬触发时刻源侧已有的 tag：执行 1918 启动时源侧 10 个 item，期间 CNB 又发布 1 个，
@@ -311,11 +311,11 @@ zhiyong 五个仓库在实测期间上游一直在发布，`sha-*` 从 12 涨到
 | `l8ai/agentcloud/backend` | 11 | 11 | 19 |
 | `l8ai/agentcloud/web` | 11 | 11 | 0 |
 | `l8ai/agentcloud/relay` | 11 | 11 | 0 |
-| `aiedulab/zhiyong/education/zhiyong-frontend` | 19 | 19 | 1 |
-| `aiedulab/zhiyong/education/zhiyong-lab-api` | 19 | 19 | 10 |
-| `aiedulab/zhiyong/education/zhiyong-course-api` | 19 | 19 | 0 |
-| `aiedulab/zhiyong/education/zhiyong-ai-api` | 19 | 19 | 0 |
-| `aiedulab/zhiyong/education/zhiyong-exam-api` | 19 | 19 | 0 |
+| `example/zhiyong/education/zhiyong-frontend` | 19 | 19 | 1 |
+| `example/zhiyong/education/zhiyong-lab-api` | 19 | 19 | 10 |
+| `example/zhiyong/education/zhiyong-course-api` | 19 | 19 | 0 |
+| `example/zhiyong/education/zhiyong-ai-api` | 19 | 19 | 0 |
+| `example/zhiyong/education/zhiyong-exam-api` | 19 | 19 | 0 |
 
 追赶过程（执行 1925–1951，27 次，全部 Succeed、零失败）：zhiyong 的 `sha-*`
 从 12 一路涨到 19，每轮校验都会撞上新发布的 tag，循环因此跑了多轮才在一轮里
@@ -423,7 +423,7 @@ cron 一致时才判定为 reuse。这是幂等性的边界——同一个命令
 - 另一个集群（腾讯 ZYJ）到 CNB 的出网连通性。
 - 机器人账号替代 admin 的权限范围。机器人已能列规则、列端点、列仓库和 artifact，
   但"用机器人创建端点和规则"这条路径还没有完整跑过一遍，当前配置是用 admin 建的。
-- Oilan 的 `values.yaml` 仍指向 `repo.aiedulab.cn:8443`，与矩阵中的 `repo.l8ai.cn:8443` 不一致，需先修正再切换。
+- Oilan 的 `values.yaml` 仍指向 `repo.example.com:8443`，与矩阵中的 `repo.l8ai.cn:8443` 不一致，需先修正再切换。
   已确认 `repo.l8ai.cn:8443` 是本集群 Harbor 的外部入口（证书 `CN=*.l8ai.cn`，`/api/v2.0/systeminfo` 返回 200），
-  `repo.aiedulab.cn` 从本机不可达。
+  `repo.example.com` 从本机不可达。
 - 保留策略的 N 值。CNB 侧已有自己的 tag 清理策略，Harbor 侧的 N 值要与它协调，避免两边都留全量历史。

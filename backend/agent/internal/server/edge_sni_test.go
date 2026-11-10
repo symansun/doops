@@ -10,43 +10,43 @@ import (
 )
 
 func TestExtractTLSServerNameFromRealClientHello(t *testing.T) {
-	hello := captureClientHello(t, &tls.Config{ServerName: "amp.jm.aiedulab.cn"})
+	hello := captureClientHello(t, &tls.Config{ServerName: "amp.jm.example.com"})
 	serverName, err := extractTLSServerName(hello)
 	if err != nil {
 		t.Fatalf("extract server name: %v", err)
 	}
-	if serverName != "amp.jm.aiedulab.cn" {
-		t.Fatalf("server name = %q, want amp.jm.aiedulab.cn", serverName)
+	if serverName != "amp.jm.example.com" {
+		t.Fatalf("server name = %q, want amp.jm.example.com", serverName)
 	}
 }
 
 func TestExtractTLSServerNameLowercasesHost(t *testing.T) {
-	hello := captureClientHello(t, &tls.Config{ServerName: "AMP.JM.AieduLab.CN"})
+	hello := captureClientHello(t, &tls.Config{ServerName: "AMP.JM.Example.COM"})
 	serverName, err := extractTLSServerName(hello)
 	if err != nil {
 		t.Fatalf("extract server name: %v", err)
 	}
-	if serverName != "amp.jm.aiedulab.cn" {
+	if serverName != "amp.jm.example.com" {
 		t.Fatalf("server name = %q, want it lowercased", serverName)
 	}
 }
 
 func TestExtractTLSServerNameAcceptsFragmentedRecords(t *testing.T) {
-	hello := captureClientHello(t, &tls.Config{ServerName: "webide.jm.aiedulab.cn"})
+	hello := captureClientHello(t, &tls.Config{ServerName: "webide.jm.example.com"})
 	for _, chunk := range []int{1, 17, 64} {
 		fragmented := refragmentClientHello(t, hello, chunk)
 		serverName, err := extractTLSServerName(fragmented)
 		if err != nil {
 			t.Fatalf("extract from %d-byte fragments: %v", chunk, err)
 		}
-		if serverName != "webide.jm.aiedulab.cn" {
+		if serverName != "webide.jm.example.com" {
 			t.Fatalf("server name from %d-byte fragments = %q", chunk, serverName)
 		}
 	}
 }
 
 func TestExtractTLSServerNameReportsIncompleteUntilHelloIsWhole(t *testing.T) {
-	hello := captureClientHello(t, &tls.Config{ServerName: "amp.jm.aiedulab.cn"})
+	hello := captureClientHello(t, &tls.Config{ServerName: "amp.jm.example.com"})
 	for size := 1; size < len(hello); size++ {
 		if _, err := extractTLSServerName(hello[:size]); !errors.Is(err, errEdgeHelloIncomplete) {
 			t.Fatalf("extract from first %d of %d bytes: err = %v, want errEdgeHelloIncomplete", size, len(hello), err)
@@ -70,7 +70,7 @@ func TestExtractTLSServerNameRejectsNonTLSTrafficImmediately(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"http request", "GET / HTTP/1.1\r\nHost: amp.jm.aiedulab.cn\r\n\r\n", "not a tls handshake record"},
+		{"http request", "GET / HTTP/1.1\r\nHost: amp.jm.example.com\r\n\r\n", "not a tls handshake record"},
 		{"ssh banner", "SSH-2.0-OpenSSH_9.6\r\n", "not a tls handshake record"},
 		{"bad record version", "\x16\x02\x03\x00\x05hello", "unsupported tls record version"},
 		{"empty record", "\x16\x03\x01\x00\x00", "empty tls handshake record"},
@@ -94,7 +94,7 @@ func TestExtractTLSServerNameRejectsNonTLSTrafficImmediately(t *testing.T) {
 
 func TestExtractTLSServerNameRejectsHelloOverLimit(t *testing.T) {
 	t.Setenv("DOOPS_EDGE_HELLO_BYTES", "128")
-	hello := captureClientHello(t, &tls.Config{ServerName: "amp.jm.aiedulab.cn"})
+	hello := captureClientHello(t, &tls.Config{ServerName: "amp.jm.example.com"})
 	if len(hello) <= 128 {
 		t.Skipf("captured hello is only %d bytes, cannot exceed the 128-byte limit", len(hello))
 	}
@@ -107,7 +107,7 @@ func TestExtractTLSServerNameRejectsHelloOverLimit(t *testing.T) {
 // TestExtractTLSServerNameSurvivesCorruptedBytes 保证任何字节序列都只产生 error，
 // 不 panic：这段解析直接暴露在公网 443 上，是唯一无鉴权的输入面。
 func TestExtractTLSServerNameSurvivesCorruptedBytes(t *testing.T) {
-	hello := captureClientHello(t, &tls.Config{ServerName: "amp.jm.aiedulab.cn"})
+	hello := captureClientHello(t, &tls.Config{ServerName: "amp.jm.example.com"})
 	for offset := 0; offset < len(hello); offset++ {
 		for _, mask := range []byte{0xFF, 0x01, 0x80} {
 			corrupted := make([]byte, len(hello))

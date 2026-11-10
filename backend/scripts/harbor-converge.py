@@ -31,15 +31,15 @@ TARGETS = [
     {"policy_id": 8, "project": "agentcloud", "repository": "l8ai/agentcloud/relay",
      "tag_pattern": "git-*"},
     {"policy_id": 9, "project": "zhiyong",
-     "repository": "aiedulab/zhiyong/education/zhiyong-frontend", "tag_pattern": "sha-*"},
+     "repository": "example/zhiyong/education/zhiyong-frontend", "tag_pattern": "sha-*"},
     {"policy_id": 10, "project": "zhiyong",
-     "repository": "aiedulab/zhiyong/education/zhiyong-lab-api", "tag_pattern": "sha-*"},
+     "repository": "example/zhiyong/education/zhiyong-lab-api", "tag_pattern": "sha-*"},
     {"policy_id": 11, "project": "zhiyong",
-     "repository": "aiedulab/zhiyong/education/zhiyong-course-api", "tag_pattern": "sha-*"},
+     "repository": "example/zhiyong/education/zhiyong-course-api", "tag_pattern": "sha-*"},
     {"policy_id": 12, "project": "zhiyong",
-     "repository": "aiedulab/zhiyong/education/zhiyong-ai-api", "tag_pattern": "sha-*"},
+     "repository": "example/zhiyong/education/zhiyong-ai-api", "tag_pattern": "sha-*"},
     {"policy_id": 13, "project": "zhiyong",
-     "repository": "aiedulab/zhiyong/education/zhiyong-exam-api", "tag_pattern": "sha-*"},
+     "repository": "example/zhiyong/education/zhiyong-exam-api", "tag_pattern": "sha-*"},
 ]
 
 

@@ -70,7 +70,7 @@ func TestEnforceSecureGatewayURLTellsOperatorToUseHTTPS(t *testing.T) {
 		t.Fatal("expected insecure non-loopback gateway to be rejected")
 	}
 	msg := err.Error()
-	for _, want := range []string{"https://", "wss://", "https://doops.aiedulab.cn"} {
+	for _, want := range []string{"https://", "wss://", "https://doops.l8ai.cn"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("insecure gateway error missing %q: %v", want, err)
 		}

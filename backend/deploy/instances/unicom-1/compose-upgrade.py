@@ -128,7 +128,7 @@ def main(apply=False):
         assert labels["com.docker.compose.project.config_files"] == str(SOURCE)
         assert labels["com.docker.compose.service"] == CONTAINER
         assert old["Config"]["Cmd"] == [
-            "-gateway-url", "https://doops.aiedulab.cn",
+            "-gateway-url", "https://doops.l8ai.cn",
             "-cluster", "doops-unicom", "-instance", "unicom-1"
         ]
         live_kubeconfig = Path(f"/proc/{old['State']['Pid']}/root/root/.kube/config")
