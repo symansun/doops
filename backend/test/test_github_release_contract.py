@@ -96,6 +96,17 @@ def test_publish_requires_a_green_ci_and_stays_least_privileged():
     assert verify["permissions"] == {"contents": "read", "attestations": "read"}
 
 
+def test_release_series_needs_explicit_maintainer_authorization():
+    prepare = load_workflow(RELEASE)["jobs"]["prepare"]
+    resolve = next(step for step in steps_of(prepare) if step.get("id") == "resolve")
+    allowed = resolve["env"]["ALLOWED_SERIES"]
+    assert "vars.DOOPS_RELEASE_SERIES" in allowed  # maintainer-only repository variable
+    assert "0.2" in allowed  # current public series, v0.2.x patch increments only
+    runs = run_text(prepare)
+    assert "series=" in runs
+    assert "not authorized" in runs
+
+
 def test_prepare_rejects_off_main_and_already_published_tags():
     runs = run_text(load_workflow(RELEASE)["jobs"]["prepare"])
     assert "refs/tags/" in runs
