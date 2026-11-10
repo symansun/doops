@@ -19,16 +19,16 @@ blog/
 
 ## 中文
 
-- [DoOps 能做什么：业务功能与管理功能全景](zh/doops-core-features.md)
-  —— 业务功能（通道/远程运维/K8s 与交付/镜像/数据库/网站/AI）+ 支撑管理（身份与授权/审计与凭据/节点与 Agent/任务与可靠性/控制台与规模化），每条能力标注真实边界；9 张配图。
+- [DoOps 能做什么：业务功能、管理底座与 AI 原生](zh/doops-core-features.md)
+  —— 三部分：业务功能（通道/远程运维/K8s 与交付/镜像/数据库/网站/AI）、支撑管理（身份与授权/审计与凭据/节点与 Agent/任务与可靠性/控制台与规模化）、AI 原生设计（为什么这些能力长成这样）；10 张配图。
 - [再见 SSH 之后：DoOps 是什么，安全靠什么保证](zh/after-goodbye-ssh-what-is-doops-and-security.md)
   —— 逐条回应《再见，SSH。》评论区的质疑：先讲架构（一扇门、多集群、反向连接、内网/公网/分域多网关三种部署形态），
   再讲安全靠什么保证（七道门），最后说清两种角色（企业怎么管、开发者怎么用）与边界分工。8 张配图。
 
 ## English
 
-- [What DoOps Can Do: Business Capabilities and the Management Plane](en/doops-core-features.md)
-  —— Business capabilities (connectivity, remote ops, K8s & delivery, images, database, web, AI) plus the management plane (identity & grants, audit & credentials, agents, reliability, console & scale), each with its real boundary. 9 figures.
+- [What DoOps Can Do: Business Capabilities, the Management Plane, and AI-Native Design](en/doops-core-features.md)
+  —— Three parts: business capabilities (connectivity, remote ops, K8s & delivery, images, database, web, AI), the management plane (identity & grants, audit & credentials, agents, reliability, console & scale), and AI-native design (why the capabilities look the way they do). 10 figures.
 - [After Goodbye, SSH: What DoOps Is, and How Its Security Is Guaranteed](en/after-goodbye-ssh-what-is-doops-and-security.md)
   —— A point-by-point reply to the comments on "Goodbye, SSH.": the architecture first (one gate, many clusters,
   outbound agents, and three deployment topologies), then the seven gates behind its security, and finally the
@@ -36,8 +36,8 @@ blog/
 
 ## Русский
 
-- [Что умеет DoOps: бизнес-возможности и плоскость управления](ru/doops-core-features.md)
-  —— Бизнес-возможности (подключение, удалённая эксплуатация, K8s и доставка, образы, БД, веб, AI) и плоскость управления (доступы, аудит и учётные данные, агенты, надёжность, консоль и масштабирование), у каждой — реальные границы. 9 иллюстраций.
+- [Что умеет DoOps: бизнес-возможности, плоскость управления и AI-нативность](ru/doops-core-features.md)
+  —— Три части: бизнес-возможности (подключение, удалённая эксплуатация, K8s и доставка, образы, БД, веб, AI), плоскость управления (доступы, аудит и учётные данные, агенты, надёжность, консоль и масштабирование) и AI-нативный дизайн (почему возможности выглядят именно так). 10 иллюстраций.
 - [После «Прощай, SSH»: что такое DoOps и как обеспечивается безопасность](ru/after-goodbye-ssh-what-is-doops-and-security.md)
   —— Постраничный ответ комментаторам статьи «Прощай, SSH»: сначала архитектура (одни ворота, множество кластеров,
   исходящие соединения агентов, три топологии развёртывания), затем «семь дверей» безопасности, и наконец две роли
