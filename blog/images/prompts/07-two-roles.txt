@@ -1,0 +1,15 @@
+Minimalist editorial technical illustration, flat vector line-art diagram. Pure white background. Thin uniform black strokes about 2px, geometric, no shading. Panels filled with very light grey (#F2F3F2) and outlined in thin black. One single accent color: deep teal-green #0E7C66, used sparingly. Generous negative space, calm Swiss infographic look, flat straight-on front view, wide horizontal composition, wide empty margins.
+
+A SIMPLE LEFT-RIGHT SPLIT DIAGRAM: two equal rounded-rectangle panels facing each other on one thin ground line, with ONE tall gateway door standing exactly in the middle seam between them, drawn with the deep teal-green accent outline and the small word "Gateway" underneath it.
+
+LEFT PANEL: only three elements, evenly spaced vertically. The small word "Admins" at its top center. Below it, first a group of three tiny human figures; second a small list or matrix, a neat little grid of squares with one single cell filled deep teal-green; third an open ledger book with a few ruled lines.
+
+RIGHT PANEL: only three elements, evenly spaced vertically. The small word "Developers" at its top center. Below it, first one tiny human figure standing next to a small robot head; second a terminal window, a plain rounded rectangle with a small chevron and one blank bar and no letters inside it at all; third a small git mark, one round node joined by two short curved arrows pointing in opposite directions, one of them deep teal-green.
+
+One solid thin black arrow goes from the right panel into the middle doorway.
+
+Nothing else is written anywhere, the terminal stays completely blank, and the whole picture is airy with large empty white space.
+
+TEXT RULE: the only text allowed is "Admins", "Developers", "Gateway", spelled exactly, in a clean geometric sans-serif, small and neat. Invent nothing else.
+
+no Chinese characters, no CJK glyphs, no Japanese, no Korean, no gibberish letters, no fake text, no misspellings, no captions, no sentences, no legend, no extra numerals, no watermark, no logo, no signature, no gradients, no shadows, no 3D, no isometric view, no photorealism, no neon, no dark background, no clutter, no dense detail, no emoji, no outer frame around the canvas.

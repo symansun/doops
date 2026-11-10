@@ -1,0 +1,13 @@
+Minimalist editorial technical illustration, flat vector line-art diagram for a professional magazine article. Pure white background (#FFFFFF). Thin uniform black strokes about 2px, geometric construction, no shading, no texture. Large containers filled with very light warm grey (#F2F3F2) and outlined in thin black. Exactly one accent color: deep teal-green #0E7C66, used sparingly for one highlighted element or for a few small arrows. Generous negative space, calm Swiss infographic aesthetic, flat straight-on front elevation view, wide horizontal composition, content centered with wide empty margins on all sides.
+
+A BALANCED TWO-COLUMN DIVISION-OF-RESPONSIBILITY DIAGRAM. A single thin dashed vertical line divides the canvas exactly in half, top to bottom.
+
+LEFT COLUMN: the heading "DoOps" in small clean letters, centered at the top of the column. Below the heading, three identical rounded square tiles stacked vertically with even spacing, each tile a thin black outline with a light grey fill, each containing one simple line icon: top tile a framed gateway door, middle tile an open ledger book, bottom tile a safe with a round dial. The gateway door icon uses the deep teal-green accent outline.
+
+RIGHT COLUMN: the heading "You" in small clean letters, centered at the top of the column. Below the heading, three identical rounded square tiles stacked vertically with even spacing, each a thin black outline with a light grey fill, each containing one simple line icon: top tile a certificate sheet with a ribbon and a small padlock, middle tile a network globe made of a few lines and nodes, bottom tile an approval stamp with a check mark. One of these three icons may use the deep teal-green accent outline, only one.
+
+The two columns mirror each other exactly in size and vertical rhythm, calm, airy, lots of white space, no arrows, no extra marks, no other words.
+
+TEXT RULE: the only text allowed in the entire image is "DoOps", "You", spelled exactly like that, rendered in a clean geometric sans-serif, small and neat, lots of space around it. Invent nothing else.
+
+no Chinese characters, no CJK glyphs, no Japanese, no Korean, no Arabic script, no gibberish letters, no fake text, no lorem ipsum, no misspellings, no small captions, no long sentences, no paragraphs, no legend, no annotations beyond the exact labels listed, no extra numerals, no watermarks, no logos, no signatures, no gradients, no drop shadows, no 3D, no isometric view, no photorealism, no neon, no glow, no dark background, no paper texture, no clutter, no dense detail, no emoji, no clip-art, no outer frame or border around the canvas.
