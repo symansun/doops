@@ -68,6 +68,9 @@ def test_release_is_gated_by_the_reusable_ci_workflow():
     release = load_workflow(RELEASE)
     gate = release["jobs"]["gate"]
     assert gate["uses"] == "./.github/workflows/ci.yml"
+    # A rejected tag fails in prepare; do not spend a full test run on it.
+    needs = gate["needs"]
+    assert needs == "prepare" or needs == ["prepare"]
     ci = load_workflow(CI)
     assert "workflow_call" in triggers(ci)
     # gitleaks scans full history on tag/dispatch events; only branch pushes and
