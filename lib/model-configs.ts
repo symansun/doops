@@ -34,31 +34,19 @@ export interface ModelConfig {
 const STORE_KEY = "doops.modelConfigs.v1"
 
 const SEED: ModelConfig[] = [
+  // 不预置任何厂商或模型：模型由 Gateway 系统设置按 target 下发
+  // （modelProvider 凭据），技能与前端都不绑定具体模型。
   {
-    id: "cfg_gpt",
-    name: "OpenAI 兼容 · GPT",
+    id: "cfg_model",
+    name: "模型配置（由 Gateway 下发）",
     kind: "model",
     provider: "openai-compatible",
-    model: "openai/gpt-5.4",
-    base_url: "https://api.openai.com/v1",
+    model: "",
+    base_url: "",
     api_key: "",
     temperature: 0.2,
     max_tokens: 8192,
-    models: ["openai/gpt-5.4", "openai/gpt-5-mini"],
-    updated_at: new Date().toISOString(),
-    published_at: new Date(Date.now() - 86400_000).toISOString(),
-  },
-  {
-    id: "cfg_claude",
-    name: "Anthropic · Claude",
-    kind: "model",
-    provider: "anthropic",
-    model: "anthropic/claude-opus-4.6",
-    base_url: "https://api.anthropic.com",
-    api_key: "",
-    temperature: 0.3,
-    max_tokens: 16384,
-    models: ["anthropic/claude-opus-4.6", "anthropic/claude-haiku-4"],
+    models: [],
     updated_at: new Date().toISOString(),
   },
   {
