@@ -21,8 +21,18 @@ import {
   restoreSelection,
   saveSelection,
 } from "@/lib/console-persistence"
+import type { StorageLike } from "@/lib/console-persistence"
 import { interruptedBannerNotices, interruptedBannerView } from "@/lib/interrupted-banner"
 import { installJournalUnloadHandlers } from "@/lib/unload-journal"
+import type { ChangelogRelease } from "@/lib/changelog"
+import {
+  autoOpenDecision,
+  hasUnseenVersions,
+  localDay,
+  readWhatsNewState,
+  recordLastVersion,
+  setQuietDay,
+} from "@/lib/whats-new"
 import { ConnectScreen } from "./connect-screen"
 import { TargetSwitcher } from "./target-switcher"
 import { TerminalPanel } from "./terminal-panel"
@@ -42,6 +52,7 @@ import { DashboardPanel } from "./dashboard-panel"
 import { DeployView } from "./deploy-view"
 import { CicdGuide } from "./cicd-guide"
 import { OnboardingGuide } from "./onboarding-guide"
+import { WhatsNewDialog, type WhatsNewMode } from "./whats-new-dialog"
 import {
   TerminalIcon,
   SparkIcon,
@@ -83,7 +94,25 @@ const LEGACY_DEMO_KEY = "doops.demo"
 const ONBOARD_KEY = "doops.onboarded"
 const DEMO_ENABLED = isDemoAllowed()
 
-export function ConsoleShell() {
+// 「更新内容」的已读版本和「今天不再弹出」只写本机 localStorage。隐私模式或禁用
+// 存储时访问会抛错，按首次访问处理：手动入口仍然可用，只是每次都不弹出。
+function browserLocalStorage(): StorageLike | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage
+  } catch {
+    return null
+  }
+}
+
+type WhatsNewOpen = {
+  mode: WhatsNewMode
+  /** The version seen before this open; the dialog's "since" range starts after it. */
+  sinceVersion: string | null
+  /** Whether newer versions existed before this open, for the default range. */
+  hasUnseen: boolean
+}
+
+export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[] }) {
   const [session, setSession] = useState<Session | null>(null)
   const [defaultGateway, setDefaultGateway] = useState("")
   const [targets, setTargets] = useState<Target[]>([])
@@ -118,6 +147,72 @@ export function ConsoleShell() {
   // own when the connection comes back. Nothing is retried automatically.
   const [offline, setOffline] = useState(false)
   const [showGuide, setShowGuide] = useState(false)
+  // The release the built console shows. The server passes the parsed
+  // CHANGELOG.md down, so the dialog has no fetch of its own.
+  const releaseVersion = changelog[0]?.version ?? ""
+  const [whatsNewOpen, setWhatsNewOpen] = useState<WhatsNewOpen | null>(null)
+  const [whatsNewUnread, setWhatsNewUnread] = useState(false)
+  const autoOpenChecked = useRef(false)
+  const autoOpenHandled = useRef(false)
+  const [autoOpenPending, setAutoOpenPending] = useState(false)
+
+  const openWhatsNew = useCallback(
+    (mode: WhatsNewMode) => {
+      if (!releaseVersion) return
+      // Any open (manual included) counts as having seen the current version,
+      // so neither a reload nor a second open re-opens the automatic dialog.
+      autoOpenHandled.current = true
+      const storage = browserLocalStorage()
+      const state = readWhatsNewState(storage)
+      setWhatsNewOpen({
+        mode,
+        sinceVersion: state.lastVersion,
+        hasUnseen: hasUnseenVersions(state, releaseVersion),
+      })
+      recordLastVersion(storage, releaseVersion)
+      setWhatsNewUnread(false)
+    },
+    [releaseVersion],
+  )
+
+  const closeWhatsNew = useCallback(
+    (options: { quietToday: boolean }) => {
+      const storage = browserLocalStorage()
+      if (options.quietToday) setQuietDay(storage, localDay())
+      if (releaseVersion) recordLastVersion(storage, releaseVersion)
+      setWhatsNewUnread(false)
+      setWhatsNewOpen(null)
+    },
+    [releaseVersion],
+  )
+
+  // Read the remembered version once: a first visit records it silently, an
+  // upgrade asks for the automatic dialog, and "today" keeps that dialog (and
+  // the unread dot) out of the way while the manual entry stays available.
+  useEffect(() => {
+    if (autoOpenChecked.current) return
+    autoOpenChecked.current = true
+    if (!releaseVersion) return
+    const storage = browserLocalStorage()
+    const state = readWhatsNewState(storage)
+    setWhatsNewUnread(hasUnseenVersions(state, releaseVersion))
+    const decision = autoOpenDecision({ state, currentVersion: releaseVersion, today: localDay() })
+    if (decision === "record") {
+      recordLastVersion(storage, releaseVersion)
+      return
+    }
+    if (decision === "open") setAutoOpenPending(true)
+  }, [releaseVersion])
+
+  // The automatic dialog waits for a restored session and for the onboarding
+  // guide to be out of the way, and opens at most once per page load.
+  useEffect(() => {
+    if (!autoOpenPending || autoOpenHandled.current) return
+    if (!session || showGuide) return
+    setAutoOpenPending(false)
+    openWhatsNew("auto")
+  }, [autoOpenPending, session, showGuide, openWhatsNew])
+
   const codeWorkspace = useMemo(() => {
     if (!session || !selected) return null
     return createDoopsCodeWorkspace({ session, target: selected, sessionId })
@@ -348,6 +443,25 @@ export function ConsoleShell() {
         <div className="flex shrink-0 items-center gap-2">
           <span className="hidden text-xs text-muted-foreground sm:inline">{displayUserName(session)}</span>
           <button
+            onClick={() => openWhatsNew("manual")}
+            disabled={!releaseVersion}
+            data-testid="whats-new-button"
+            title={releaseVersion ? "更新内容" : "当前版本没有更新内容"}
+            className="relative flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <HistoryIcon width={14} height={14} />
+            <span className="hidden sm:inline">更新内容</span>
+            {whatsNewUnread && releaseVersion && (
+              <>
+                <span className="sr-only">有新版本</span>
+                <span
+                  aria-hidden="true"
+                  className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-primary ring-2 ring-card"
+                />
+              </>
+            )}
+          </button>
+          <button
             onClick={() => setShowGuide(true)}
             title="新手引导"
             className="flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
@@ -384,6 +498,16 @@ export function ConsoleShell() {
       </nav>
 
       {showGuide && <OnboardingGuide onClose={closeGuide} />}
+
+      {whatsNewOpen && releaseVersion && changelog.length > 0 && (
+        <WhatsNewDialog
+          releases={changelog}
+          mode={whatsNewOpen.mode}
+          sinceVersion={whatsNewOpen.sinceVersion}
+          hasUnseen={whatsNewOpen.hasUnseen}
+          onClose={closeWhatsNew}
+        />
+      )}
 
       {offline && (
         <div role="alert" data-testid="offline-banner" className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning">
