@@ -346,6 +346,40 @@ TEXT RULE: the only text allowed in the entire image is "Users", "Token", "Grant
 no Chinese characters, no CJK glyphs, no Japanese, no Korean, no Arabic script, no gibberish letters, no fake text, no lorem ipsum, no misspellings, no small captions, no long sentences, no paragraphs, no legend, no annotations beyond the exact labels listed, no extra numerals, no watermarks, no logos, no signatures, no gradients, no drop shadows, no 3D, no isometric view, no photorealism, no neon, no glow, no dark background, no paper texture, no clutter, no dense detail, no emoji, no clip-art, no outer frame or border around the canvas.
 ```
 
+## 2c. 图 11 · `ai-native.png` — AI 原生：人和 AI 是同一类使用者
+
+> 本节由 task-18 追加。文章新增「AI 原生」视角：AI 不是叠在运维工具外面的聊天框，而是**和人类一样的正式使用者**，从第一天就共享同一套身份、授权与审计。
+
+- **讲哪个点**：上下两条线合起来只说明一件事——Human 与 AI 以**同等身份**走到同一扇门、拿同一枚 Token；能力边界由 Tools 白名单 + Skills 决定；做过的事回到 Audit / Verify。图里刻意不给 Human 和 AI 之间画箭头，两者地位对等。
+- **画面布局**：上层并排 Human（人形）与 AI（机器人头），两条短箭头汇聚到中间一枚 Token 圆盘 → 向下进入墨绿拱门 Gateway；门的右侧一张 Tools 卡片（四行图标 + 勾，卡内无字）+ 一叠书 Skills（卡与书之间细双向虚线）；门的正下方一条实线下指 Cluster 六边形集群；底部一条墨绿虚线长弧从 Cluster 绕回左下角的 Audit 账本，账本旁一枚 Verify 徽章。
+- **元素**：人形、机器人头、圆令牌、墨绿拱门、Tools 卡（终端 chevron / 六边形 / 船舵 / 地球+节点，每行一个勾）、三本书、六边形集群含三个 Pod、账本、带勾圆徽章。
+- **图内文字**：`Human` / `AI` / `Token` / `Gateway` / `Tools` / `Skills` / `Cluster` / `Audit` / `Verify`
+- **prompt 文件**：`prompts/features/11-ai-native.txt`
+
+```
+Minimalist editorial technical illustration, flat vector line-art diagram for a professional magazine article. Pure white background (#FFFFFF). Thin uniform black strokes about 2px, geometric construction, no shading, no texture. Large containers filled with very light warm grey (#F2F3F2) and outlined in thin black. Exactly one accent color: deep teal-green #0E7C66, used sparingly for one highlighted element or for a few small arrows. Generous negative space, calm Swiss infographic aesthetic, flat straight-on front elevation view, wide horizontal composition, content centered with wide empty margins on all sides.
+
+A LAYERED "AI NATIVE" ARCHITECTURE DIAGRAM, read from top to bottom with one return arrow at the bottom.
+
+TOP, side by side above the door: TWO operators of equal standing, drawn the same size, standing on the same invisible line: on the left one simple human figure with the single word "Human" underneath, on the right one small robot head with the single word "AI" underneath. Their two icons are identical in visual weight; no arrow between them.
+
+Both operators are joined by two short thin solid black arrows that meet at ONE small round disc placed just below and between them, with the single word "Token" beside the disc. From that token disc one short solid arrow goes down into one gateway door drawn in deep teal-green outline, with the single word "Gateway" directly underneath the door.
+
+RIGHT OF THE DOOR: one tall rounded-rectangle card with a thin outline and a light grey fill, headed only by the single word "Tools" at its top edge; inside the card four short rows are stacked, each row holding one small simple line icon on the left and a small check mark on the right, with NO words inside:
+row one a terminal chevron, row two a hexagon, row three a ship wheel, row four a globe with two nodes.
+A short solid arrow runs from the gateway door into this card. To the right of the card stands a stack of three upright books, with the single word "Skills" underneath. One thin dashed line joins the card and the book stack, with small arrowheads at both ends.
+
+BELOW THE DOOR: one solid arrow goes straight down into one hexagon cluster icon containing three tiny pods, with the single word "Cluster" underneath it.
+
+BOTTOM LEFT AND THE RETURN PATH: one long dashed deep teal-green arrow curves from the cluster along the bottom of the picture to the left, and ends at one small open ledger book with the single word "Audit" underneath. Right beside that ledger sits one small round badge with a check mark inside it and the single word "Verify" underneath.
+
+Everything is small and airy; thin arrows with small arrowheads; large empty white space; nothing else is written anywhere, and the tool card stays wordless inside.
+
+TEXT RULE: the only text allowed in the entire image is "Human", "AI", "Token", "Gateway", "Tools", "Skills", "Cluster", "Audit", "Verify", spelled exactly like that, rendered in a clean geometric sans-serif, small and neat, lots of space around it. Invent nothing else.
+
+no Chinese characters, no CJK glyphs, no Japanese, no Korean, no Arabic script, no gibberish letters, no fake text, no lorem ipsum, no misspellings, no small captions, no long sentences, no paragraphs, no legend, no annotations beyond the exact labels listed, no extra numerals, no watermarks, no logos, no signatures, no gradients, no drop shadows, no 3D, no isometric view, no photorealism, no neon, no glow, no dark background, no paper texture, no clutter, no dense detail, no emoji, no clip-art, no outer frame or border around the canvas.
+```
+
 ## 3. 生成与自检记录
 
 | # | 文件 | 生成次数 | 自检结论（乱码/中文/构图） |
@@ -360,10 +394,12 @@ no Chinese characters, no CJK glyphs, no Japanese, no Korean, no Arabic script, 
 | 8 | governance-scale.png | 1（57.9s） | 1752×897；标签 Token / Grant / Audit / Vault / Queue / Gateway 全部正确，无中文无乱码。底层五枚能力块五条虚线汇聚进墨绿拱门，上层三组六边形集群也汇入同一扇门。可用。 |
 | 9 | business-map.png | 1（35.1s） | 1536×1024；标签 DoOps / SSH / K8s / Helm / Images / SQL / Web / AI 全部拼写正确，无中文无乱码。中心 DoOps 方块内墨绿小门，七块等大瓦片辐条成环；七个图标轮廓（窗口/六边形/船舵/集装箱/圆柱/浏览器/芯片）互不混淆。可用。 |
 | 10 | management-map.png | 1（24.1s） | 1774×887；标签 Users / Token / Grant / Audit / Vault / Agents / Queue / API 全部拼写正确，无中文无乱码。八块一字排开，八条等长虚线向内汇聚到中央底座（板内为墨绿账本 + 拱门），底座不写字。可用。 |
+| 11 | ai-native.png | 1（119.7s） | 1752×897；标签 Human / AI / Token / Gateway / Tools / Skills / Cluster / Audit / Verify 九个全部拼写正确，无中文无乱码。上层 Human 与 AI 等重并排 → 汇入同一枚 Token → 墨绿拱门 Gateway → 右侧 Tools 卡（四行图标+勾，卡内无字）↔ Skills 书堆 → 下方 Cluster 集群；墨绿虚线自 Cluster 回到右下 Verify 徽章与 Audit 账本。可用；画面偏右、左侧上方留白较大，若追求完全平衡可再居中一次。 |
 
 ## 4. 结论与建议
 
-- 共 10 张全部**一次生成即合格**，无需重试：无中文、无乱码、英文标签逐个核对拼写正确，构图可读，留白与前 8 张一致。
+- 共 11 张全部**一次生成即合格**，无需重试：无中文、无乱码、英文标签逐个核对拼写正确，构图可读，留白与前 8 张一致。
+- `ai-native.png`（图 11）用「Human 与 AI 等重并排、无箭头」表达"AI 是同一类正式使用者"，用 Tools 卡 + Skills 书堆表达能力边界，用 Cluster → Verify → Audit 的墨绿虚线回流表达"做过的事有记录、变更靠证据"；一次通过，仅画面重心略偏右。
 - 两张总览图（`business-map.png` / `management-map.png`）作为功能全景文章的"业务面 / 管理面"门面，均一次通过；business-map 的环略欠严格等角但七块大小一致、辐条匀称，无需重画。
 - **建议优先重画**：`capability-map.png`（图 1）——九块能力瓦片沿环的分布略不匀（不是严格等角），作为封面级"地图"值得再出一版把环摆正；其余 7 张可直接用。
 - 次要可选项：`four-entries.png` 的门是圆角矩形而非拱门，若要与 `capability-map` / `governance-scale` 的门型完全统一，可顺带重出。

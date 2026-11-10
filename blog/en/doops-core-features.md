@@ -1,6 +1,6 @@
 ---
-title: "What DoOps Can Do: Business Capabilities and the Management Plane"
-subtitle: "Seven business capability areas and five management capability groups, re-inventoried from the user's point of view"
+title: "What DoOps Can Do: Business Capabilities, the Management Plane, and AI-Native Design"
+subtitle: "Seven business capability areas, five management capability groups, and why it was designed for AI from day one"
 lang: en
 date: 2026-11-11
 slug: doops-core-features
@@ -11,14 +11,14 @@ tags: [DoOps, operations, Kubernetes, AI]
 
 <p align="right"><a href="../zh/doops-core-features.md">中文</a> | <b>English</b> | <a href="../ru/doops-core-features.md">Русский</a></p>
 
-# What DoOps Can Do: Business Capabilities and the Management Plane
+# What DoOps Can Do: Business Capabilities, the Management Plane, and AI-Native Design
 
 The previous post was about architecture and security. This one switches to the user's point of view and answers two different questions:
 
 - **A business colleague asks**: what exactly can it get done for me?
 - **A platform or admin colleague asks**: across multiple teams and clusters, how are these capabilities kept under control?
 
-So the inventory below comes in two parts: **seven business capability areas** (what it can do), and **five supporting management capability groups** (how it is kept under control). Both share one identity, authorization, and audit layer — and that is the essential difference between DoOps and "a pile of scripts plus a pile of permissions."
+So what follows comes in three parts: **seven business capability areas** (what it can do), **five supporting management capability groups** (how it is kept under control), and one thread running through both — **AI-native design** (why these capabilities ended up shaped the way they are). All three share one identity, authorization, and audit layer, and that is the essential difference between DoOps and "a pile of scripts plus a pile of permissions."
 
 ![The overall capability map](../images/capability-map.png)
 
@@ -174,6 +174,41 @@ The boundary: an image is a CI artifact. Building and copying on the target mach
 
 ---
 
+## Part Three · AI-native: why these capabilities are shaped this way
+
+DoOps is not "an operations tool with an AI chat box bolted on." From day one, AI has been a formal class of user standing alongside people — with its own entry point, permissions, audit trail, tools, and evidence chain. The business and management capabilities above are shaped the way they are, in large part, because of that design premise.
+
+![AI-native design](../images/ai-native.png)
+
+*Figure 10 · AI and people share the same identity, authorization, and audit; what the AI can do is decided by the tool allowlist and the Skill, what it did is recorded, and changes rest on evidence*
+
+### 12. AI is a formal user, not a bolt-on
+
+- **It has its own entry point**: AI connects through the Skill in the editor or the Agent interface, instead of simulating keystrokes into a terminal;
+- **It shares the same identity**: an AI's operations go through the same token, grant, and audit; revoking a grant or disabling it takes effect immediately for the AI too;
+- **It does not share every tool**: diagnosis (ask) and change (apply) get different tool lists — diagnosis can run commands, while change may only use structured change tools and needs a change authorization.
+
+### 13. Six details designed for AI
+
+1. **Structured primitives, not a simulated terminal**: operations are tool calls, and inputs and outputs are machine-readable (structured results, stable error codes); there is no interactive PTY and no "screen scraping." The AI does not have to understand the shell's quirks, and people and programs receive the same facts.
+2. **Interfaces built for automation**: the CLI, the web console, and the AI are all just clients of the same API; the JSON-RPC tool surface, Git HTTP, and REST management interfaces can be called directly from CI; retry semantics are explicit — when the outcome is unknown, nothing is replayed automatically.
+3. **Permissions come from the same place as people's**: an AI overstepping is a person overstepping, and revoking a grant takes effect immediately; there is no "AI-only back door."
+4. **Capability is taught through Skills**: six built-in Skills (shell / Kubernetes / images / databases / websites / distillation) plus a project's own SKILL.md codify the team's SOPs into procedures the AI can follow; the model delivers per target, and credentials never land in the prompt.
+5. **Success rests on evidence, not on words**: a change goes through preflight → apply → verify, reading back the live objects and the digest; the model saying "done" does not count, only final-state evidence does; an unknown outcome stays "unknown" — nothing pretends to have succeeded.
+6. **Traceability is the floor**: audit covers five layers — commands, execution, changes, data, and credentials; bookkeeping comes before execution; if audit is unavailable, requests are refused.
+
+### 14. The cost and the boundaries of AI-native design
+
+AI-native is not a marketing word; it means some trade-offs:
+
+- The AI has real execution capability — **a tool allowlist is not a sandbox** — so watch the audit and keep grants minimal;
+- Changes still need human review — we let the AI "propose and verify," but we did not hand it the power to decide whether a change should happen;
+- The model's "intelligence" is not provided by DoOps — DoOps only gets the tools, permissions, evidence, and records right; the model itself is configured per target.
+
+In one sentence: **being AI-native, for DoOps, is not about putting AI at the front; it is about designing AI as an executor that must be authorized, audited, and verified.**
+
+---
+
 ## Closing: business capability decides whether the work gets done, management capability decides whether it stays under control
 
 Back to the two questions from the start:
@@ -181,6 +216,6 @@ Back to the two questions from the start:
 - **What can it do for the business?** Connectivity, remote operations, Kubernetes and delivery, images, databases, websites, AI — seven kinds of capability that cover the main path of day-to-day operations and releases;
 - **How is it governed?** Identity, authorization, audit, credentials, nodes, tasks, console — five capability groups that ensure these operations have an owner, a record, and a way to be reclaimed.
 
-The seven business capability areas and the five management capability groups **share one identity, authorization, and audit layer**. That is why it can serve as an operations tool and be managed as a team's infrastructure at the same time.
+The seven business capability areas, the five management capability groups, and one AI-native design thread **share the same identity, authorization, and audit layer**. That is why it can serve as an operations tool, be managed as a team's infrastructure, and let AI take part with confidence.
 
 If you only want to try one thing first, start with two: run one `exec` for read-only troubleshooting, and one `ask` to watch how the AI calls tools; then open the admin pages and see what those two operations look like in the audit log.
