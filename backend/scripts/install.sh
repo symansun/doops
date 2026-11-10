@@ -6,8 +6,11 @@ usage() {
 Doops CLI / Skill 安装脚本（不部署或升级 Agent）
 
 用法:
-  bash scripts/install.sh --version v1.2.3 --project /path/to/project
+  # 推荐：Gateway 登录模式，只提供 Gateway URL
+  bash scripts/install.sh --version v1.2.3 --project /path/to/project \
+    --target-gateway https://gateway.example.com
 
+  # 可选：显式路由模式，登录前固定一条路由（四项全给）
   bash scripts/install.sh \
     --version v1.2.3 \
     --project /path/to/project \
@@ -33,9 +36,11 @@ Doops CLI / Skill 安装脚本（不部署或升级 Agent）
 
 更新行为:
   不带 --target-* 时只更新 CLI 和 Skill，不改已有 config.json
+  只给 --target-gateway 时同样不改路由；安装后执行 doops login --gateway <url> 首次登录，
+  CLI 自动发现该账号可见的在线 target 并写回本机路由
   同步全局和当前项目中已有的 .codex/.agents DoOps 副本；保留 auth/config 等运行态
   CLI、全部 Skill/docs 和回执任一替换失败时整体恢复；恢复失败保留备份并报告位置
-  带 --target-* 时按 name 新增或更新 canonical config 中的对应 target，保留其它 targets 和 llm 配置
+  四个 --target-* 全给时按 name 新增或更新 canonical config 中的对应 target，保留其它 targets 和 llm 配置
 
 Skill 维护规则:
   权威源码在 doops.sh 仓库 backend/skills/SKILL.md
@@ -43,8 +48,12 @@ Skill 维护规则:
   本地缺少对应提交时先获取该发布提交再重试；安装器不会自动 fetch 或混装其它版本
 
 连接模式:
- 标准入口只有 Gateway 模式:
-    --target-gateway + --target-cluster/--target-instance
+  推荐 Gateway 登录模式：只提供 --target-gateway
+    安装后执行 doops login --gateway <url>（或 --token-stdin 导入 token）；
+    首次登录自动发现并写回该账号可见的 target 路由，操作员不需要知道 cluster/instance。
+    该模式要求发布 CLI 支持 --gateway；旧版本会给出显式路由的提示。
+  显式路由模式：--target-name + --target-gateway + --target-cluster + --target-instance
+    在首次登录前固定一条路由；适合旧发布或必须预置路由的场景。
   target 配置只保存路由；安装后通过 doops login 为整个 Gateway 建立统一登录态。
 
 如果只是临时连受控实验 gateway，且它还没有 TLS，可以在客户端显式设置 `DOOPS_ALLOW_INSECURE_GATEWAY=1`，但不要把它当成生产标准写法。
@@ -74,6 +83,7 @@ TARGET_CLUSTER=""
 TARGET_INSTANCE=""
 TARGET_ALIASES=""
 TARGET_USE="Doops managed node"
+TARGET_USE_SET=false
 CNB_RELEASE_ASSET_BASE="https://cnb.cool/l8ai/ai/doops.sh/-/releases/download"
 RELEASE_ASSET_BASE="${DOOPS_RELEASE_ASSET_BASE:-${CNB_RELEASE_ASSET_BASE}}"
 RELEASE_ASSET_BASE="${RELEASE_ASSET_BASE%/}"
@@ -476,6 +486,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --use)
       TARGET_USE="${2:-}"
+      TARGET_USE_SET=true
       shift 2
       ;;
     -h|--help)
@@ -494,9 +505,18 @@ PROJECT_PATH="$(cd "${PROJECT_PATH}" && pwd)"
 SKILL_DEST="${PROJECT_PATH}/.agent/skills/doops"
 CANONICAL_CONFIG_FILE="${HOME}/.agent/skills/doops/config.json"
 
-if [[ -n "${TARGET_GATEWAY}" || -n "${TARGET_NAME}" || -n "${TARGET_CLUSTER}" || -n "${TARGET_INSTANCE}" ]]; then
-  if [[ -z "${TARGET_GATEWAY}" || -z "${TARGET_NAME}" || -z "${TARGET_CLUSTER}" || -z "${TARGET_INSTANCE}" ]]; then
-    echo "Gateway target installation requires --target-name, --target-gateway, --target-cluster, and --target-instance" >&2
+TARGET_MODE="none"
+if [[ -n "${TARGET_GATEWAY}" || -n "${TARGET_NAME}" || -n "${TARGET_CLUSTER}" || -n "${TARGET_INSTANCE}" || -n "${TARGET_ALIASES}" || "${TARGET_USE_SET}" == true ]]; then
+  if [[ -z "${TARGET_GATEWAY}" ]]; then
+    echo "Gateway routing requires --target-gateway" >&2
+    exit 2
+  fi
+  if [[ -z "${TARGET_NAME}" && -z "${TARGET_CLUSTER}" && -z "${TARGET_INSTANCE}" && -z "${TARGET_ALIASES}" && "${TARGET_USE_SET}" != true ]]; then
+    TARGET_MODE="gateway"
+  elif [[ -n "${TARGET_NAME}" && -n "${TARGET_CLUSTER}" && -n "${TARGET_INSTANCE}" ]]; then
+    TARGET_MODE="explicit"
+  else
+    echo "Explicit route mode requires --target-name, --target-gateway, --target-cluster, and --target-instance; pass only --target-gateway for gateway login mode" >&2
     exit 2
   fi
 fi
@@ -511,17 +531,34 @@ INSTALL_COMMITTED=true
 
 echo "[3/4] Preparing canonical doops config"
 
-if [[ -n "${TARGET_GATEWAY}" ]]; then
+if [[ "${TARGET_MODE}" == "explicit" ]]; then
   add_args=(add --name "${TARGET_NAME}" --gateway "${TARGET_GATEWAY}" --cluster "${TARGET_CLUSTER}" --instance "${TARGET_INSTANCE}" --use "${TARGET_USE}")
   if [[ -n "${TARGET_ALIASES}" ]]; then
     add_args+=(--aliases "${TARGET_ALIASES}")
   fi
   (cd "${PROJECT_PATH}" && DOOPS_CONFIG= "${CLI_OUT}" "${add_args[@]}")
   echo "  Gateway config upserted in ${CANONICAL_CONFIG_FILE}"
+elif [[ "${TARGET_MODE}" == "gateway" ]]; then
+  cat <<EOF
+  Gateway login mode: no local route was written.
+  Run the first login after install to discover and persist visible targets:
+    ${CLI_OUT} login --gateway ${TARGET_GATEWAY}
+    printf '%s' "\$TOKEN" | ${CLI_OUT} login --gateway ${TARGET_GATEWAY} --token-stdin
+    ${CLI_OUT} list
+EOF
+  if ! "${CLI_OUT}" login --help 2>&1 | grep -q -- "-gateway"; then
+    cat >&2 <<EOF
+  Warning: ${RELEASE_TAG} CLI does not support --gateway first login.
+  Install a release that includes first-login target discovery, or rerun with an explicit route:
+    --target-name <name> --target-gateway ${TARGET_GATEWAY} --target-cluster <cluster> --target-instance <instance>
+EOF
+  fi
 else
   cat <<EOF
   Canonical config not changed automatically.
-  To make the project immediately connectable in gateway mode, rerun with:
+  To connect in gateway login mode, run this after install:
+    ${CLI_OUT} login --gateway <gateway-url>
+  To pin a route before login, rerun with all four:
     --target-name --target-gateway --target-cluster --target-instance [--use]
 EOF
 fi
@@ -546,12 +583,23 @@ Quick verify:
   cd "${PROJECT_PATH}"
   ${CLI_OUT} version
   ${CLI_OUT} list
-  ${CLI_OUT} -session setup login --target ${TARGET_NAME:-<target-name>}
-  ${CLI_OUT} -session smoke exec --target ${TARGET_NAME:-<target-name>} --cmd "hostname"
 EOF
 
-if [[ -n "${TARGET_GATEWAY}" ]]; then
+if [[ "${TARGET_MODE}" == "gateway" ]]; then
   cat <<EOF
-  ${CLI_OUT} -session setup targets --target ${TARGET_NAME:-<gateway-target-name>}
+Gateway login mode next step:
+  ${CLI_OUT} login --gateway ${TARGET_GATEWAY}
+  ${CLI_OUT} list
+EOF
+elif [[ "${TARGET_MODE}" == "explicit" ]]; then
+  cat <<EOF
+  ${CLI_OUT} -session setup login --target ${TARGET_NAME:-<target-name>}
+  ${CLI_OUT} -session smoke exec --target ${TARGET_NAME:-<target-name>} --cmd "hostname"
+  ${CLI_OUT} -session setup targets --target ${TARGET_NAME:-<target-name>}
+EOF
+else
+  cat <<EOF
+No local route configured; log in with the Gateway URL:
+  ${CLI_OUT} login --gateway <gateway-url>
 EOF
 fi

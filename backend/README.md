@@ -230,24 +230,26 @@ bash scripts/install.sh --version <release-tag> --project /absolute/path/to/your
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-也可以安装时直接写入 gateway 目标配置。
+也可以安装时只提供 Gateway URL；安装后首次登录会自动发现可见 target 并写回路由：
 
 ```bash
 bash scripts/install.sh \
   --version <release-tag> \
   --project /absolute/path/to/your/project \
-  --target-name jm \
-  --target-gateway https://gateway.example.com \
-  --target-cluster doops-jm \
-  --target-instance jm-228 \
-  --target-aliases jy \
-  --use 'JM via gateway'
+  --target-gateway https://gateway.example.com
 ```
 
-Skill 会随安装同步，安装回执记录全部 `skill_path`。标准 target 的配置只包含
-`gateway`/`cluster`/`instance` 路由。安装后运行一次
-`doops login --target jm`，登录态会供同一 Gateway 的全部 target 使用。本地还没有路由时可省略
-`--target`，用 `doops login --gateway <gateway-url>` 首次登录：CLI 会发现在线 target 并写回本机路由。
+Skill 会随安装同步，安装回执记录全部 `skill_path`。安装后运行：
+
+```bash
+doops login --gateway https://gateway.example.com
+doops list
+```
+
+登录态会供同一 Gateway 的全部 target 使用；首次登录会发现在线 target 并写回本机路由。
+只有需要在登录前固定一条路由（或使用的发布 CLI 尚不支持 `--gateway`）时，
+才用完整的四项 `--target-name/--target-gateway/--target-cluster/--target-instance` 预置路由，
+再 `doops login --target <name>`。
 
 - target 支持短名和别名，例如主名 `jm`，别名 `jy`。后续 `doops -session smoke exec --target jy --cmd hostname` 会解析到同一个 `doops-jm/jm-228`。
 

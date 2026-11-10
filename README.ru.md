@@ -213,14 +213,16 @@ docker run --rm --name doops-console \
 <a id="cli-quickstart"></a>
 ## Быстрый старт: CLI и проектный Skill
 
-Примеры ниже предполагают, что администратор уже предоставил Gateway, пользовательский Token и информацию о target.
+Примеры ниже предполагают, что администратор предоставил URL Gateway и учётные данные; маршруты target обнаруживаются при первом входе.
 
 ### 1. Установка
 
 Выполните в корне репозитория DoOps; каталог бизнес-проекта, указанный в `--project`, должен уже существовать:
 
 ```bash
-bash scripts/install.sh --version <release-tag> --project /absolute/path/to/existing-project
+# Рекомендуется: укажите только URL Gateway; первый вход обнаружит target
+bash scripts/install.sh --version <release-tag> --project /absolute/path/to/existing-project \
+  --target-gateway https://gateway.example.com
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
@@ -236,48 +238,42 @@ export PATH="$HOME/.local/bin:$PATH"
 
 Установка обновляет DoOps Skill и сопутствующую документацию в целевом проекте. Если вы изменяли эти файлы самостоятельно, сначала сделайте резервную копию. Конфигурация и кэш CLI содержат чувствительные данные; защита прав на файлы не заменяет шифрованное хранение, не коммитьте их в Git.
 
-### 2. Настройка target
+### 2. Первый вход и обнаружение target
 
 Ниже приведён пример с заполнителями; замените их данными, предоставленными администратором:
 
 ```bash
-doops add \
-  --name demo-node \
-  --gateway https://gateway.example.com \
-  --cluster demo \
-  --instance node-1
+# Если локального маршрута нет, для первого входа используйте --gateway; подходит вход по паролю или token stdin
+doops login --gateway https://gateway.example.com
+printf '%s' "$TOKEN" | doops login --gateway https://gateway.example.com --token-stdin
 
-# При первом входе используются логин и пароль Gateway; состояние входа общее для одного URL Gateway
-doops login --target demo-node
+doops list
 ```
 
-- `demo-node` — локальный псевдоним на стороне клиента.
-- `demo/node-1` должен соответствовать реально зарегистрированному target в Gateway.
-- `doops add` сохраняет только маршрут Gateway и не сохраняет target token; состояние входа пользователя хранится отдельно в локальном кэше auth.
+- При первом входе CLI вызывает `GET /v1/targets` и записывает в локальные маршруты онлайн-target, видимые этой учётной записи; имена, псевдонимы и описания существующих маршрутов не меняются.
+- Оператору не нужно заранее знать `cluster/instance` Agent.
+- Маршрут можно создать заранее через `doops add --name <name> --gateway <url> --cluster <cluster> --instance <instance>` только если нужно зафиксировать его до входа (или используется релиз CLI без поддержки `--gateway`); затем выполните `doops login --target <name>`.
+- `doops add` сохраняет только маршрут и не сохраняет target token; состояние входа хранится в локальном кэше auth.
 - Реальные учётные данные не должны оставаться в публичных логах, скриптах или общей истории терминала; для входа по паролю используйте интерактивный ввод или `--token-stdin`.
-
-`doops login --gateway <gateway-url>` позволяет также выполнить первый вход без предварительно настроенного target и обнаружить маршруты, видимые текущей учётной записи. `doops login --target ...` требует, чтобы маршрут target уже существовал, и не заменяет первичное создание target.
 
 ### 3. Проверка подключения
 
 ```bash
-# Target настроен локально, но это не означает, что он онлайн
+# Локальный маршрут не означает, что target онлайн
 doops list
 
 # Target, реально находящиеся онлайн и видимые в Gateway
-doops targets --target demo-node
+doops targets --target <discovered-target>
+doops -session diagnose targets --target <discovered-target> --admission
 
 # Простая проверка на указанном target
-doops -session inspect-001 exec --target demo-node --cmd 'hostname'
+doops -session inspect-001 exec --target <discovered-target> --cmd 'hostname'
 ```
 
-Если для существующего target требуется повторный вход по паролю, можно опустить `--password`, и терминал скроет ввод:
+Если для существующего маршрута нужен повторный вход по паролю, опустите `--password` — терминал скроет ввод:
 
 ```bash
-doops login \
-  --target demo-node \
-  --gateway https://gateway.example.com \
-  --username alice
+doops login --target <name> --username alice
 ```
 
 <a id="self-host"></a>

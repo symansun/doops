@@ -213,14 +213,16 @@ docker run --rm --name doops-console \
 <a id="cli-quickstart"></a>
 ## 快速开始：CLI 与项目 Skill
 
-以下示例假设管理员已经提供 Gateway、用户 Token 和目标信息。
+以下示例假设管理员已经提供 Gateway 地址和登录凭据；target 路由在首次登录时自动发现。
 
 ### 1. 安装
 
 在 DoOps 仓库根目录执行；`--project` 指定的业务项目目录应已存在：
 
 ```bash
-bash scripts/install.sh --version <release-tag> --project /absolute/path/to/existing-project
+# 推荐：只提供 Gateway URL，首次登录自动发现 target
+bash scripts/install.sh --version <release-tag> --project /absolute/path/to/existing-project \
+  --target-gateway https://gateway.example.com
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
@@ -247,27 +249,23 @@ sha256、`release=... commit=...` 身份和 CLI contract 校验保持不变。
 
 安装会更新目标项目中的 DoOps Skill 及配套文档。若曾自行修改这些文件，请先备份。CLI 配置与缓存包含敏感信息，文件权限保护不等于加密存储，不要提交到 Git。
 
-### 2. 配置目标
+### 2. 首次登录并发现目标
 
 以下为占位示例，需换成管理员提供的信息：
 
 ```bash
-doops add \
-  --name demo-node \
-  --gateway https://gateway.example.com \
-  --cluster demo \
-  --instance node-1
+# 没有本地路由时用 --gateway 首次登录；密码交互或 token stdin 都可以
+doops login --gateway https://gateway.example.com
+printf '%s' "$TOKEN" | doops login --gateway https://gateway.example.com --token-stdin
 
-# 首次登录使用 Gateway 账号密码；登录态按 Gateway URL 共享
-doops login --target demo-node
+doops list
 ```
 
-- `demo-node` 是客户端本地别名。
-- `demo/node-1` 必须对应 Gateway 中真实注册的目标。
+- 首次登录会调用 `GET /v1/targets`，把该账号可见的在线 target 写回本机路由；已有路由的名称、别名和描述不会被改写。
+- 操作员不需要预先知道 Agent 的 `cluster/instance`。
+- 只有需要在登录前固定一条路由（或使用尚不支持 `--gateway` 的旧发布 CLI）时，才先用 `doops add --name <name> --gateway <url> --cluster <cluster> --instance <instance>` 预置路由，再 `doops login --target <name>`。
 - `doops add` 只保存 Gateway 路由，不保存 target token；用户登录态单独保存在本地 auth 缓存。
 - 实际凭据不要保留在公开日志、脚本或共享终端历史中；密码登录使用交互式输入或 `--token-stdin`。
-
-`doops login --gateway <gateway-url>` 也可在没有预配置 target 时首次登录，并发现当前账号可见的路由。`doops login --target ...` 要求目标路由已存在，不能代替首次目标创建。
 
 ### 3. 检查连接
 
@@ -276,19 +274,17 @@ doops login --target demo-node
 doops list
 
 # Gateway 中实际在线且可见的目标
-doops targets --target demo-node
+doops targets --target <自动发现的 target>
+doops -session diagnose targets --target <自动发现的 target> --admission
 
 # 在指定目标进行简单检查
-doops -session inspect-001 exec --target demo-node --cmd 'hostname'
+doops -session inspect-001 exec --target <自动发现的 target> --cmd 'hostname'
 ```
 
 已有目标需要重新密码登录时，可省略 `--password`，让终端隐藏输入：
 
 ```bash
-doops login \
-  --target demo-node \
-  --gateway https://gateway.example.com \
-  --username alice
+doops login --target <name> --username alice
 ```
 
 <a id="self-host"></a>

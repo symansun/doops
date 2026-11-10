@@ -34,12 +34,14 @@ doops -session agent-upgrade upgrade \
 当前 CLI 会将升级后的 Agent commit 与自身 commit 比较，因此先安装候选镜像
 同版 CLI；升级前旧 Agent 不需要与 CLI 同版。
 
-操作员在一台管理机上登录一次，同一 Gateway 的 targets 共用登录态：
+操作员在一台管理机上登录一次，同一 Gateway 的 targets 共用登录态。尚无本地路由时按 Gateway 首次登录，
+CLI 会自动发现并写回可见 target 路由：
 
 ```bash
-doops -session setup login --target <configured-target>
-doops -session preflight targets --target <configured-target>
-doops -session preflight exec --target <configured-target> --cmd hostname
+doops -session setup login --gateway <gateway-url>
+doops -session preflight list
+doops -session preflight targets --target <自动发现的 target>
+doops -session preflight exec --target <自动发现的 target> --cmd hostname
 ```
 
 登录支持账号密码交互，不必另外找管理员签发 token。已有登录不要重建隔离配置：
@@ -59,6 +61,30 @@ doops -session preflight exec --target <configured-target> --cmd hostname
 
 ```bash
 git fetch --tags
+# 推荐：只提供 Gateway URL；安装后首次登录会自动发现并写回可见 target 路由
+bash backend/scripts/install.sh \
+  --version <tag> \
+  --project <项目绝对路径> \
+  --target-gateway <gateway-url>
+```
+
+4. 确认 `~/.local/bin` 在 `PATH` 中，再执行首次登录；没有本地路由时用 `--gateway`，
+   密码交互或 token stdin 都可以：
+
+```bash
+doops login --gateway <gateway-url>
+printf '%s' "$TOKEN" | doops login --gateway <gateway-url> --token-stdin
+doops list
+doops targets --target <自动发现的 target>
+```
+
+首次登录会调用 `GET /v1/targets`，把该账号可见的在线 target 写回
+`~/.agent/skills/doops/config.json`；已有路由的名称、别名和描述不会被改写。
+因此操作员不需要事先知道 Agent 的 `cluster/instance`。
+
+只有需要**在登录前固定一条路由**，或使用尚不支持 `--gateway` 的旧发布 CLI 时，才用显式路由模式：
+
+```bash
 bash backend/scripts/install.sh \
   --version <tag> \
   --project <项目绝对路径> \
@@ -69,12 +95,11 @@ bash backend/scripts/install.sh \
   --use '<说明>'
 ```
 
-4. 确认 `~/.local/bin` 在 `PATH` 中，再按上文登录并验证：`doops login --target <name>`、
-   `doops list`、`doops targets --target <name>`。
-
 约束：
 
 - 安装前确认 `<tag>` 的 CNB Release 已发布 CLI 二进制和 `checksums.txt`，不要凭 tag 列表假定可用。
+- 只给 `--target-gateway` 的首次登录发现要求发布 CLI 支持 `--gateway`；旧发布上安装器会明确提示，
+  此时升级发布或改用显式路由模式（四项全给）。
 - 本地缺少发布提交时脚本报 `Release commit ... is unavailable in local git objects` 并退出，
   不会自动 fetch，也不会混装其它版本。先 `git fetch --tags` 或 `git pull` 再重试。
 - 安装结果：CLI 在 `~/.local/bin/doops`；同一发布提交的 Skill/docs 写入
@@ -232,7 +257,7 @@ Agent 自恢复可以通过 SSH 到该主机执行受控流程；日常业务仍
 ```bash
 sudo bash backend/scripts/bootstrap-host-agent.sh \
   --version v1.3.48 \
-  --gateway https://doops.l8ai.cn \
+  --gateway https://doops.aiedulab.cn \
   --cluster doops-unicom --instance unicom-1
 ```
 
@@ -259,7 +284,7 @@ sudo docker compose -f /opt/doops-agent/compose.yaml up -d --wait --wait-timeout
 token；安装后的完整命令验收在已登录的管理机执行：
 
 ```bash
-doops add --name gw-unicom --gateway https://doops.l8ai.cn \
+doops add --name gw-unicom --gateway https://doops.aiedulab.cn \
   --cluster doops-unicom --instance unicom-1
 doops -session unicom-install targets --target gw-unicom
 doops -session unicom-install exec --target gw-unicom --cmd hostname
