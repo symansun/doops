@@ -546,11 +546,9 @@ Agent 完全不可用时，SSH 仅用于 Agent 自恢复，恢复后仍须完成
 公开 GitHub 仓库的 `vX.Y.Z` tag 由 [`.github/workflows/release.yml`](../../.github/workflows/release.yml)
 自动构建并发布；生产镜像与部署仍走 CNB（见第三节、第四节），两条发布路径互不替代。
 
-1. **版本线与触发**：GitHub 公开线固定发 `v0.2.x` 补丁（可带 `-rc.N` 预发布后缀）；只接受
-   `push` 的 `v0.2.x` tag 和手工 `workflow_dispatch`（默认 dry-run，不创建 Release）。切换到新的
-   minor/major 系列属于维护者决策：先把仓库变量 `DOOPS_RELEASE_SERIES`（默认 `0.2`）改成新系列
-   （例如 `0.3`），否则该系列 tag 一律被拒绝。tag 必须已存在且指向 `main` 上的提交；已存在的
-   Release 拒绝重建，已发布资产不可变。
+1. **触发与准入**：只接受 `push` 的 `vX.Y.Z` tag（可带 `-rc.N` 预发布后缀）和手工
+   `workflow_dispatch`（默认 dry-run，不创建 Release）。tag 必须已存在且指向 `main` 上的提交；
+   已存在的 Release 拒绝重建，已发布资产不可变。
 2. **CI 门禁**：发布前直接复用 `.github/workflows/ci.yml`（`workflow_call`），tag 不会绕过
    main 的检查（Go/Web 测试、`backend/test` 契约测试）；secret scan 只在 branch push/PR 上运行——tag 和手工发布没有增量 commit 范围，
    全历史扫描会把历史上已存在的测试 fixture 当成泄漏，tag 指向的提交在合入 main 时已扫描。
