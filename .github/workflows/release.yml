@@ -240,8 +240,11 @@ jobs:
           actual="$(sha256sum "${tmp}/doops-skill.tar.gz" | awk '{print $1}')"
           test -n "${expected}"
           test "${actual}" = "${expected}"
-          tar -tzf "${tmp}/doops-skill.tar.gz" | grep -qx 'skills/SKILL.md'
-          tar -tzf "${tmp}/doops-skill.tar.gz" | grep -Eq '^docs/[^/]+\.md$'
+          entries="${tmp}/entries.txt"
+          tar -tzf "${tmp}/doops-skill.tar.gz" > "${entries}"
+          grep -qx 'skills/SKILL.md' "${entries}"
+          grep -Eq '^docs/[^/]+\.md$' "${entries}"
+          grep -qx 'scripts/install.sh' "${entries}"
 
       - name: Install the published release end to end
         env:
