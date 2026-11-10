@@ -1,0 +1,13 @@
+Minimalist editorial technical illustration, flat vector line-art diagram for a professional magazine article. Pure white background (#FFFFFF). Thin uniform black strokes about 2px, geometric construction, no shading, no texture. Large containers filled with very light warm grey (#F2F3F2) and outlined in thin black. Exactly one accent color: deep teal-green #0E7C66, used sparingly for one highlighted element or for a few small arrows. Generous negative space, calm Swiss infographic aesthetic, flat straight-on front elevation view, wide horizontal composition, content centered with wide empty margins on all sides.
+
+LEFT-AND-RIGHT COMPARISON DIAGRAM, split by one thin black vertical hairline exactly at the center, both halves share the same horizon.
+
+LEFT HALF ("SSH" world): three small identical machine boxes stacked vertically, each machine box has one small door with a round handle on its front, drawn slightly ajar. Next to each machine stands one tiny simple human figure holding an old-fashioned key. A short solid black arrow runs from each human into that machine's door (traffic goes inward). A few loose keys float in the empty space of the left half. The single word "SSH" sits at the top-left corner of this half, small and black.
+
+RIGHT HALF ("DoOps" world): in the middle sits ONE tall arched gateway door with a thin black frame, highlighted with a deep teal-green outline, and a small round handle. Above the gateway, two tiny human figures and one small robot head stand together holding a single round disc-shaped token. One solid arrow goes from them down into the open gateway. Below the gateway, three plain machine boxes without doors; from each of these three machines a dashed deep teal-green arrow curves upward into the gateway, showing the machines connect outward to the single door. The single word "DoOps" sits at the top-right corner of this half.
+
+The single word "Gateway" is placed just above the arched door, small and neat.
+
+TEXT RULE: the only text allowed in the entire image is "SSH", "DoOps", "Gateway", spelled exactly like that, rendered in a clean geometric sans-serif, small and neat, lots of space around it. Invent nothing else.
+
+no Chinese characters, no CJK glyphs, no Japanese, no Korean, no Arabic script, no gibberish letters, no fake text, no lorem ipsum, no misspellings, no small captions, no long sentences, no paragraphs, no legend, no annotations beyond the exact labels listed, no extra numerals, no watermarks, no logos, no signatures, no gradients, no drop shadows, no 3D, no isometric view, no photorealism, no neon, no glow, no dark background, no paper texture, no clutter, no dense detail, no emoji, no clip-art, no outer frame or border around the canvas.
