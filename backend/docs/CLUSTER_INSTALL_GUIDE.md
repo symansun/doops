@@ -257,7 +257,7 @@ Agent 自恢复可以通过 SSH 到该主机执行受控流程；日常业务仍
 ```bash
 sudo bash backend/scripts/bootstrap-host-agent.sh \
   --version v1.3.48 \
-  --gateway https://doops.aiedulab.cn \
+  --gateway https://doops.l8ai.cn \
   --cluster doops-unicom --instance unicom-1
 ```
 
@@ -284,7 +284,7 @@ sudo docker compose -f /opt/doops-agent/compose.yaml up -d --wait --wait-timeout
 token；安装后的完整命令验收在已登录的管理机执行：
 
 ```bash
-doops add --name gw-unicom --gateway https://doops.aiedulab.cn \
+doops add --name gw-unicom --gateway https://doops.l8ai.cn \
   --cluster doops-unicom --instance unicom-1
 doops -session unicom-install targets --target gw-unicom
 doops -session unicom-install exec --target gw-unicom --cmd hostname

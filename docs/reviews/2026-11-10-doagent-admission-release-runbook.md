@@ -104,9 +104,9 @@ DOOPS_AGENT_BASE_IMAGE=docker.cnb.cool/l8ai/ai/doops.sh/base-light@sha256:906cbe
 
 ### 2.3 Harbor 复制（仅在目标确认走 Harbor 时）
 
-- 规范 `backend/docs/HARBOR_REPLICATION_SPEC.md` 状态是 **草案**；V1-V7 只在 `gw-edu-coder` 实测，腾讯 ZYJ Harbor `repo.aiedulab.cn` 只出现在矩阵（`HARBOR_REPLICATION_SPEC.md:12-16`），**未验证** [确证]。
+- 规范 `backend/docs/HARBOR_REPLICATION_SPEC.md` 状态是 **草案**；V1-V7 只在 `gw-edu-coder` 实测，腾讯 ZYJ Harbor `repo.example.com` 只出现在矩阵（`HARBOR_REPLICATION_SPEC.md:12-16`），**未验证** [确证]。
 - 文档曾引用 `sync_cnb_release_image`/`promote-staged-images.sh`，但当前树中不存在（本机审计 `.local/doc-audit/core-findings.md` F26 判为 STALE）[确证]。
-- 结论：**若 zyj 现有 Deployment 的 image 指向 `repo.aiedulab.cn`，本 runbook 的镜像链路需增加一段未验证的 Harbor 复制步骤，必须先升级为决策项 D5，不得直接执行。**
+- 结论：**若 zyj 现有 Deployment 的 image 指向 `repo.example.com`，本 runbook 的镜像链路需增加一段未验证的 Harbor 复制步骤，必须先升级为决策项 D5，不得直接执行。**
 
 ---
 
@@ -218,7 +218,7 @@ bash backend/scripts/install.sh --version v1.3.127 --project <项目绝对路径
    doops -session zyj-upgrade k8s --target zyj helm status doops-agent -n ai
    ```
    - image 指向 `docker.cnb.cool/...` → 走 4.3。
-   - image 指向 `repo.aiedulab.cn...` → 先停，走决策 D5（Harbor 复制未验证）。
+   - image 指向 `repo.example.com...` → 先停，走决策 D5（Harbor 复制未验证）。
 4. **能力与基线自检**（只读）：
    ```bash
    doops -session zyj-upgrade targets --target zyj          # RELEASE_COMMIT 应为 081f24ab...；STATUS idle
@@ -317,7 +317,7 @@ doops -session zyj-smoke-20261110 ask --target zyj \
 |---|---|---|---|
 | B1 | Gateway token 过期 | 事故记录 6.1；所有 Gateway 操作（含升级）前必须 `doops login --target zyj`。**不要在我方再尝试远端命令，先向用户要登录窗口** | 用户/Lead |
 | B2 | doagent 新版本基线未定 | A3 基于 0.2.42，而 doagent `main` 已到 0.2.44；0.2.43/0.2.44 镜像 tag 已被占用（tag 不可复用，tag 流水线会 `reject existing version image`）。必须先 rebase 并确定 0.2.45 | A3 负责人 + 用户（D1） |
-| B3 | zyj 运行镜像来源未复核 | repo 内无 `352fa6ef...` 记录；需只读回读 Deployment image。若为 `repo.aiedulab.cn` Harbor，则复制链路未验证（D5） | 执行人 |
+| B3 | zyj 运行镜像来源未复核 | repo 内无 `352fa6ef...` 记录；需只读回读 Deployment image。若为 `repo.example.com` Harbor，则复制链路未验证（D5） | 执行人 |
 | B4 | CNB 发布授权未落实 | tag push + `cnb build start-build` 需要 `l8ai/ai/doops.sh` 权限；仓库内无记录哪个账号/是否有审批 | 用户（D3） |
 
 ### 6.2 风险

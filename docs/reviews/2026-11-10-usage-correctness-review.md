@@ -5,7 +5,7 @@
 ## 1. 审查环境
 
 - 代码：本地 HEAD `d9ae9909`（包含 gateway 首登 `fc4b68ff`）；已发布 `v1.3.126`（commit `76abae08`）
-- Gateway：`https://doops.aiedulab.cn`（TLS 正常）
+- Gateway：`https://doops.l8ai.cn`（TLS 正常）
 - 实测 target：`gw-test` → `doops-zyj/zyj-test`，在线，release_commit `76abae08`
 - 隔离测试：登录/添加/删除/同步用临时 `HOME` + 临时 `DOOPS_CONFIG`；只读命令用主配置；文件/工作区测试用临时 session 并 clean
 - 除 1 次“省略 -session”验证外，所有 Gateway/Agent 调用都显式带 `-session`
@@ -20,7 +20,7 @@
 
 ### 2.2 登录与会话存储
 
-- HEAD 实测：`login --gateway https://doops.aiedulab.cn --token-stdin` → rc=0，**自动发现 11 个可见 target**，写回 0600 `config.json`/`auth.json`。
+- HEAD 实测：`login --gateway https://doops.l8ai.cn --token-stdin` → rc=0，**自动发现 11 个可见 target**，写回 0600 `config.json`/`auth.json`。
 - 同一 Gateway 一次登录供全部 target 共用；`login --target <t>` 用于已有路由的后续登录。
 - `logout --gateway`/`logout --target` 只删除本地登录，不吊销 Gateway token。
 - `login --gateway` 与 `login --target` 同时给出且 gateway 不匹配时，明确报错。

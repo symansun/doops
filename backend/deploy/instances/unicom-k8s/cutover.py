@@ -71,7 +71,7 @@ def main():
     assert [r["revision"] for r in json.loads(history) if r["status"] == "deployed"] == [5]
     values = run("helm", "get", "values", OLD_RELEASE, "-n", NAMESPACE, "-o", "json")
     assert json.loads(values)["gateway"] == {
-        "cluster": "doops-unicom", "instance": "unicom-k8s", "url": "https://doops.aiedulab.cn"
+        "cluster": "doops-unicom", "instance": "unicom-k8s", "url": "https://doops.l8ai.cn"
     }
     manifest = run("helm", "get", "manifest", OLD_RELEASE, "-n", NAMESPACE)
     objects = [x for x in yaml.safe_load_all(manifest) if x]

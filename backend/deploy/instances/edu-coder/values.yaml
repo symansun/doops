@@ -2,7 +2,7 @@
 gateway:
   cluster: doops-edu
   instance: edu-coder
-  url: https://doops.aiedulab.cn
+  url: https://doops.l8ai.cn
 hostAccess:
   enabled: false
 hostAliases: []

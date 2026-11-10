@@ -12,7 +12,7 @@ func TestEdgeFrameRoundTripPreservesHeaderAndPayload(t *testing.T) {
 		name  string
 		frame edgeFrame
 	}{
-		{"open", edgeFrame{Type: edgeFrameOpen, ConnID: 7, Payload: mustEncodeEdgeOpen(t, 12, "amp.jm.aiedulab.cn")}},
+		{"open", edgeFrame{Type: edgeFrameOpen, ConnID: 7, Payload: mustEncodeEdgeOpen(t, 12, "amp.jm.example.com")}},
 		{"open ack", edgeFrame{Type: edgeFrameOpenAck, ConnID: 7}},
 		{"data", edgeFrame{Type: edgeFrameData, ConnID: 4294967295, Payload: bytes.Repeat([]byte{0xAB}, 1024)}},
 		{"shutdown", edgeFrame{Type: edgeFrameShutdown, ConnID: 1}},
@@ -91,7 +91,7 @@ func TestEdgeFrameRejectsPayloadOverLimitOnEncode(t *testing.T) {
 }
 
 func TestEdgeOpenPayloadRoundTrip(t *testing.T) {
-	payload, err := encodeEdgeOpenPayload(4096, "amp.jm.aiedulab.cn")
+	payload, err := encodeEdgeOpenPayload(4096, "amp.jm.example.com")
 	if err != nil {
 		t.Fatalf("encode open payload: %v", err)
 	}
@@ -102,16 +102,16 @@ func TestEdgeOpenPayloadRoundTrip(t *testing.T) {
 	if routeID != 4096 {
 		t.Fatalf("route id = %d, want 4096", routeID)
 	}
-	if serverName != "amp.jm.aiedulab.cn" {
-		t.Fatalf("server name = %q, want amp.jm.aiedulab.cn", serverName)
+	if serverName != "amp.jm.example.com" {
+		t.Fatalf("server name = %q, want amp.jm.example.com", serverName)
 	}
 }
 
 func TestEdgeOpenPayloadRejectsInvalidInput(t *testing.T) {
-	if _, err := encodeEdgeOpenPayload(0, "amp.jm.aiedulab.cn"); err == nil {
+	if _, err := encodeEdgeOpenPayload(0, "amp.jm.example.com"); err == nil {
 		t.Fatal("encode accepted route id 0")
 	}
-	if _, err := encodeEdgeOpenPayload(1<<32, "amp.jm.aiedulab.cn"); err == nil {
+	if _, err := encodeEdgeOpenPayload(1<<32, "amp.jm.example.com"); err == nil {
 		t.Fatal("encode accepted a route id above uint32")
 	}
 	if _, err := encodeEdgeOpenPayload(1, "   "); err == nil {

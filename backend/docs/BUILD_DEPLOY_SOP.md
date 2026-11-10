@@ -77,7 +77,7 @@ bash scripts/deploy-gateway.sh \
 
 - SSH 地址：`106.54.197.139`
 - SSH 用户：`ubuntu`
-- Gateway URL：`https://doops.aiedulab.cn`
+- Gateway URL：`https://doops.l8ai.cn`
 - SSH 凭据由运维密钥库或维护人保管，禁止写入仓库、日志、提交信息和文档正文。
 
 这条脚本只走 SSH/SCP，在宿主机真实 root 下完成：

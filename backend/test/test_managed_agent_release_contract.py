@@ -274,7 +274,7 @@ def test_release_rejects_invalid_host_alias_before_contacting_a_target():
             "--namespace",
             "doops-system",
             "--host-alias",
-            "https://jm.aiedulab.cn=not-an-ip",
+            "https://jm.example.com=not-an-ip",
             "--image",
             "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "a" * 64,
             "--dry-run",
@@ -304,9 +304,9 @@ def test_release_rejects_conflicting_host_aliases():
             "--namespace",
             "doops-system",
             "--host-alias",
-            "jm.aiedulab.cn=47.114.103.22",
+            "jm.example.com=47.114.103.22",
             "--host-alias",
-            "jm.aiedulab.cn=192.168.150.228",
+            "jm.example.com=192.168.150.228",
             "--image",
             "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "a" * 64,
             "--dry-run",
@@ -318,5 +318,5 @@ def test_release_rejects_conflicting_host_aliases():
     )
 
     assert result.returncode == 2
-    assert "assigns conflicting IPs to jm.aiedulab.cn" in result.stderr
+    assert "assigns conflicting IPs to jm.example.com" in result.stderr
     assert "TARGETING" not in result.stdout

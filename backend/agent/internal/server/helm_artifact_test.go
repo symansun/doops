@@ -88,7 +88,7 @@ func managedHelmTestServer(t *testing.T, handler http.Handler) *httptest.Server 
 
 func TestFetchManagedHelmChartDownloadsAuthorizedCNBArtifact(t *testing.T) {
 	const canary = "managed-helm-canary-secret"
-	const chartPath = "/charts/aiedulab/zhiyong/education/zhiyong/v/1.0.0.tgz"
+	const chartPath = "/charts/example/zhiyong/education/zhiyong/v/1.0.0.tgz"
 	chart := managedHelmTestArchive(t, managedHelmTestEntries())
 	var requests atomic.Int64
 	server := managedHelmTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +103,7 @@ func TestFetchManagedHelmChartDownloadsAuthorizedCNBArtifact(t *testing.T) {
 		}
 		_, _ = w.Write(chart)
 	}))
-	repository := server.URL + "/charts/aiedulab/zhiyong/education"
+	repository := server.URL + "/charts/example/zhiyong/education"
 	for _, repo := range []string{repository, repository + "/", server.URL + chartPath} {
 		body, digest, err := fetchManagedHelmChart(context.Background(), repo, "helm", canary, server.URL+chartPath)
 		if err != nil || !bytes.Equal(body, chart) || digest != fmt.Sprintf("sha256:%x", sha256.Sum256(chart)) {
@@ -181,7 +181,7 @@ func TestFetchManagedHelmChartRejectsInvalidURLsAndUnauthorizedScopeBeforeHTTP(t
 	}{
 		{"missing chart", repository, "", "helm_chart_invalid"},
 		{"named chart", repository, "team/app", "helm_chart_invalid"},
-		{"OCI", repository, "oci://helm.cnb.cool/aiedulab/zhiyong/education/zhiyong", "managed_helm_oci_unsupported"},
+		{"OCI", repository, "oci://helm.cnb.cool/example/zhiyong/education/zhiyong", "managed_helm_oci_unsupported"},
 		{"OCI repository", "oci://helm.cnb.cool/charts/team", chart, "helm_repository_invalid"},
 		{"HTTP", repository, strings.Replace(chart, "https:", "http:", 1), "helm_chart_invalid"},
 		{"HTTP repository", strings.Replace(repository, "https:", "http:", 1), chart, "helm_repository_invalid"},

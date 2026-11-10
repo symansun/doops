@@ -10,7 +10,7 @@ import (
 func TestCreateEdgeRouteNormalizesAndPersists(t *testing.T) {
 	store := openEdgeTestStore(t)
 	route, err := store.CreateEdgeRoute(CreateEdgeRouteRequest{
-		Hostname: "  AMP.JM.AieduLab.CN.  ",
+		Hostname: "  AMP.JM.Example.COM.  ",
 		Cluster:  " jm ",
 		Instance: " gw-jm ",
 		Backend:  " 192.168.150.228:443 ",
@@ -19,7 +19,7 @@ func TestCreateEdgeRouteNormalizesAndPersists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create edge route: %v", err)
 	}
-	if route.Hostname != "amp.jm.aiedulab.cn" {
+	if route.Hostname != "amp.jm.example.com" {
 		t.Fatalf("hostname = %q, want it canonicalized", route.Hostname)
 	}
 	if route.Cluster != "jm" || route.Instance != "gw-jm" || route.Backend != "192.168.150.228:443" {
@@ -46,7 +46,7 @@ func TestCreateEdgeRouteNormalizesAndPersists(t *testing.T) {
 func TestCreateEdgeRouteAcceptsDenyRuleWithoutBackend(t *testing.T) {
 	store := openEdgeTestStore(t)
 	route, err := store.CreateEdgeRoute(CreateEdgeRouteRequest{
-		Hostname: "grafana.jm.aiedulab.cn",
+		Hostname: "grafana.jm.example.com",
 		Disabled: true,
 		Note:     "仅运维",
 	})
@@ -67,37 +67,37 @@ func TestCreateEdgeRouteRejectsIncompleteInput(t *testing.T) {
 	}{
 		{
 			"enabled without backend",
-			CreateEdgeRouteRequest{Hostname: "amp.jm.aiedulab.cn", Cluster: "jm", Instance: "gw-jm"},
+			CreateEdgeRouteRequest{Hostname: "amp.jm.example.com", Cluster: "jm", Instance: "gw-jm"},
 			"an enabled edge route requires a backend",
 		},
 		{
 			"forwarding without target",
-			CreateEdgeRouteRequest{Hostname: "amp.jm.aiedulab.cn", Backend: "192.168.150.228:443"},
+			CreateEdgeRouteRequest{Hostname: "amp.jm.example.com", Backend: "192.168.150.228:443"},
 			"requires both cluster and instance",
 		},
 		{
 			"deny naming a target",
-			CreateEdgeRouteRequest{Hostname: "grafana.jm.aiedulab.cn", Cluster: "jm", Disabled: true},
+			CreateEdgeRouteRequest{Hostname: "grafana.jm.example.com", Cluster: "jm", Disabled: true},
 			"must not name a cluster or instance",
 		},
 		{
 			"invalid hostname",
-			CreateEdgeRouteRequest{Hostname: "amp_1.jm.aiedulab.cn", Cluster: "jm", Instance: "gw-jm", Backend: "192.168.150.228:443"},
+			CreateEdgeRouteRequest{Hostname: "amp_1.jm.example.com", Cluster: "jm", Instance: "gw-jm", Backend: "192.168.150.228:443"},
 			"invalid character",
 		},
 		{
 			"invalid backend",
-			CreateEdgeRouteRequest{Hostname: "amp.jm.aiedulab.cn", Cluster: "jm", Instance: "gw-jm", Backend: "192.168.150.228"},
+			CreateEdgeRouteRequest{Hostname: "amp.jm.example.com", Cluster: "jm", Instance: "gw-jm", Backend: "192.168.150.228"},
 			"must be host:port",
 		},
 		{
 			"invalid mode",
-			CreateEdgeRouteRequest{Hostname: "amp.jm.aiedulab.cn", Cluster: "jm", Instance: "gw-jm", Backend: "192.168.150.228:443", Mode: "socks5"},
+			CreateEdgeRouteRequest{Hostname: "amp.jm.example.com", Cluster: "jm", Instance: "gw-jm", Backend: "192.168.150.228:443", Mode: "socks5"},
 			"unsupported edge route mode",
 		},
 		{
 			"negative max conns",
-			CreateEdgeRouteRequest{Hostname: "amp.jm.aiedulab.cn", Cluster: "jm", Instance: "gw-jm", Backend: "192.168.150.228:443", MaxConns: -1},
+			CreateEdgeRouteRequest{Hostname: "amp.jm.example.com", Cluster: "jm", Instance: "gw-jm", Backend: "192.168.150.228:443", MaxConns: -1},
 			"must not be negative",
 		},
 	}
@@ -115,7 +115,7 @@ func TestCreateEdgeRouteRejectsIncompleteInput(t *testing.T) {
 func TestCreateEdgeRouteRejectsDuplicateHostname(t *testing.T) {
 	store := openEdgeTestStore(t)
 	request := CreateEdgeRouteRequest{
-		Hostname: "amp.jm.aiedulab.cn",
+		Hostname: "amp.jm.example.com",
 		Cluster:  "jm",
 		Instance: "gw-jm",
 		Backend:  "192.168.150.228:443",
@@ -123,7 +123,7 @@ func TestCreateEdgeRouteRejectsDuplicateHostname(t *testing.T) {
 	if _, err := store.CreateEdgeRoute(request); err != nil {
 		t.Fatalf("create first route: %v", err)
 	}
-	request.Hostname = "AMP.jm.aiedulab.cn."
+	request.Hostname = "AMP.jm.example.com."
 	_, err := store.CreateEdgeRoute(request)
 	if !errors.Is(err, ErrEdgeRouteExists) {
 		t.Fatalf("create error = %v, want ErrEdgeRouteExists", err)
@@ -132,7 +132,7 @@ func TestCreateEdgeRouteRejectsDuplicateHostname(t *testing.T) {
 
 func TestUpdateEdgeRouteRevalidatesMergedResult(t *testing.T) {
 	store := openEdgeTestStore(t)
-	deny, err := store.CreateEdgeRoute(CreateEdgeRouteRequest{Hostname: "grafana.jm.aiedulab.cn", Disabled: true})
+	deny, err := store.CreateEdgeRoute(CreateEdgeRouteRequest{Hostname: "grafana.jm.example.com", Disabled: true})
 	if err != nil {
 		t.Fatalf("create deny route: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestUpdateEdgeRouteRevalidatesMergedResult(t *testing.T) {
 	if !promoted.Enabled || promoted.Backend != backend || promoted.IsDeny() {
 		t.Fatalf("promoted route = %+v, want an enabled forwarding route", promoted)
 	}
-	if promoted.Hostname != "grafana.jm.aiedulab.cn" {
+	if promoted.Hostname != "grafana.jm.example.com" {
 		t.Fatalf("hostname = %q, want it unchanged by an update", promoted.Hostname)
 	}
 }
@@ -180,7 +180,7 @@ func TestEdgeRouteRevisionAdvancesOnEveryWrite(t *testing.T) {
 	}
 
 	route, err := store.CreateEdgeRoute(CreateEdgeRouteRequest{
-		Hostname: "amp.jm.aiedulab.cn",
+		Hostname: "amp.jm.example.com",
 		Cluster:  "jm",
 		Instance: "gw-jm",
 		Backend:  "192.168.150.228:443",
@@ -217,12 +217,12 @@ func TestEdgeRouteRevisionAdvancesOnEveryWrite(t *testing.T) {
 // 端到端复现 §12 的 JM 落地顺序：先落 deny 清单，再开通配转发。
 func TestLoadEdgeRouteSnapshotServesJMRoutingPlan(t *testing.T) {
 	store := openEdgeTestStore(t)
-	for _, host := range []string{"grafana.jm.aiedulab.cn", "harbor.jm.aiedulab.cn"} {
+	for _, host := range []string{"grafana.jm.example.com", "harbor.jm.example.com"} {
 		if _, err := store.CreateEdgeRoute(CreateEdgeRouteRequest{Hostname: host, Disabled: true, Note: "仅运维"}); err != nil {
 			t.Fatalf("create deny route %s: %v", host, err)
 		}
 	}
-	for _, host := range []string{"jm.aiedulab.cn", "*.jm.aiedulab.cn"} {
+	for _, host := range []string{"jm.example.com", "*.jm.example.com"} {
 		if _, err := store.CreateEdgeRoute(CreateEdgeRouteRequest{
 			Hostname: host,
 			Cluster:  "jm",
@@ -235,19 +235,19 @@ func TestLoadEdgeRouteSnapshotServesJMRoutingPlan(t *testing.T) {
 
 	snapshot := mustLoadEdgeSnapshot(t, store)
 	for host, want := range map[string]edgeRouteStatus{
-		"jm.aiedulab.cn":         edgeRouteAllowed,
-		"amp.jm.aiedulab.cn":     edgeRouteAllowed,
-		"webide.jm.aiedulab.cn":  edgeRouteAllowed,
-		"grafana.jm.aiedulab.cn": edgeRouteDenied,
-		"harbor.jm.aiedulab.cn":  edgeRouteDenied,
-		"a.b.jm.aiedulab.cn":     edgeRouteMissing,
-		"amp.oilan.aiedulab.cn":  edgeRouteMissing,
+		"jm.example.com":         edgeRouteAllowed,
+		"amp.jm.example.com":     edgeRouteAllowed,
+		"webide.jm.example.com":  edgeRouteAllowed,
+		"grafana.jm.example.com": edgeRouteDenied,
+		"harbor.jm.example.com":  edgeRouteDenied,
+		"a.b.jm.example.com":     edgeRouteMissing,
+		"amp.oilan.example.com":  edgeRouteMissing,
 	} {
 		if got := snapshot.match(host).Status; got != want {
 			t.Fatalf("match %s = %s, want %s", host, got, want)
 		}
 	}
-	if backend := snapshot.match("amp.jm.aiedulab.cn").Route.Backend; backend != "192.168.150.228:443" {
+	if backend := snapshot.match("amp.jm.example.com").Route.Backend; backend != "192.168.150.228:443" {
 		t.Fatalf("amp backend = %q, want the JM ingress", backend)
 	}
 }

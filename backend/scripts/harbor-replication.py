@@ -367,7 +367,7 @@ def policy_name_for(prefix, project, repository):
     for a repository that already has one. The upstream path is irrelevant to
     the name, since the copy is flattened to its last segment anyway, and a
     leading project name in that segment is dropped so that
-    `aiedulab/zhiyong/education/zhiyong-frontend` under project `zhiyong`
+    `example/zhiyong/education/zhiyong-frontend` under project `zhiyong`
     reads `cnb-zhiyong-frontend` rather than `cnb-zhiyong-zhiyong-frontend`.
     """
     base = repository.strip("/").split("/")[-1]

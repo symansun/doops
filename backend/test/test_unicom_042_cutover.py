@@ -35,7 +35,7 @@ class CutoverTests(unittest.TestCase):
                 return '[{"revision": 5, "status": "deployed"}]'
             if args[:3] == ("helm", "get", "values"):
                 return json.dumps({"gateway": {"cluster": "doops-unicom",
-                    "instance": "unicom-k8s", "url": "https://doops.aiedulab.cn"}})
+                    "instance": "unicom-k8s", "url": "https://doops.l8ai.cn"}})
             if args[:3] == ("helm", "get", "manifest"):
                 return manifest
             if args[:3] == ("helm", "show", "chart"):

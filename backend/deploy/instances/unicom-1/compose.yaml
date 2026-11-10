@@ -5,7 +5,7 @@ services:
     container_name: doops-agent
     command:
     - -gateway-url
-    - https://doops.aiedulab.cn
+    - https://doops.l8ai.cn
     - -cluster
     - doops-unicom
     - -instance

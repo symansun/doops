@@ -65,7 +65,7 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert release_branches == ["main"]
     assert len(deploy_pipelines) == 1
     assert deploy_pipelines[0]["imports"] == [
-        "https://cnb.cool/aiedulab/zhiyong/secret/-/blob/main/"
+        "https://cnb.cool/example/zhiyong/secret/-/blob/main/"
         "zhiyong-deploy-secrets.yml"
     ]
     deploy_script = deploy_pipelines[0]["stages"][1]["script"]
@@ -78,7 +78,7 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "validate_single_line" in deploy_script
     assert 'test "${#image_digest}" -eq 64' in deploy_script
     assert 'DOOPS_HELM_ASSET must be an explicit https:// chart URL' in deploy_script
-    assert '"https://doops.aiedulab.cn"' in cnb
+    assert '"https://doops.l8ai.cn"' in cnb
     assert '-session "${DOOPS_SESSION}" push' not in cnb
     assert "--src backend" not in cnb
     assert "使用 chart ${DOOPS_HELM_ASSET}" in cnb

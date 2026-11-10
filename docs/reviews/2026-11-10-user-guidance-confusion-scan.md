@@ -16,12 +16,12 @@
 | `README.en.md` / `README.ru.md` | 仍教用户先 `doops add` 四参数再登录，和中文 README 不一致 | 同步为 gateway-first；四参数仅作为显式路由的例外 |
 | `backend/README.md` | 安装示例仍要求 `--target-name/cluster/instance` | 主示例改为只给 `--target-gateway`；保留显式路由说明 |
 | `components/onboarding-guide.tsx` | 展示不存在的 `curl https://get.doops.sh`，并声称安装会自动注册 Agent | 删除假命令和自动注册表述；改为「选择已接入 target；Agent 接入与授权由管理员完成」 |
-| `components/connect-screen.tsx` | 网关输入框占位仍是 `https://doops.l8ai.cn` | 更新为 `https://doops.aiedulab.cn` |
+| `components/connect-screen.tsx` | 网关输入框占位仍是 `https://doops.l8ai.cn` | 更新为 `https://doops.l8ai.cn` |
 | `backend/docs/CLUSTER_INSTALL_GUIDE.md` | 操作员登录示例先 `login --target`、且含旧域名 | 改为先 `login --gateway`；旧域名改新域名 |
 | `backend/docs/DOOPS_USAGE_GUIDE.md` | 登录示例把 `login --target` 放在首登位置 | 首登/无路由改为 `login --gateway`；target 登录放到已有路由之后 |
 | `backend/cli/cli/doops/main.go` | 无配置/无登录时只提示 `doops add` 四参数 | 先提示 `doops login --gateway`；`doops add` 作为离线路由兜底；无登录错误补充 gateway 方式 |
 | `backend/cli/cli/doops/next.go` | 无 target 时的 `next:` 只给 `doops add` | 改为先给 `doops login --gateway`，再给显式路由兜底 |
-| `backend/skills/config/servers.json` | 示例 Gateway 为旧域名 | 更新为 `https://doops.aiedulab.cn` |
+| `backend/skills/config/servers.json` | 示例 Gateway 为旧域名 | 更新为 `https://doops.l8ai.cn` |
 | `backend/gateway/nginx/doops-proxy.conf` | 版本化代理配置只含旧域名 | 更新为新域名，和线上代理一致 |
 | `backend/scripts/deploy-gateway.sh`、`deploy-web-console.sh`、`deploy-gateway-tls-proxy.sh`、`bootstrap-host-agent.sh` | 默认/校验 URL 仍是旧域名 | 更新为新域名 |
 | `backend/deploy/instances/*`（values/compose/cutover） | 已部署/将部署的 Agent 仍指向旧域名 | 更新为新域名；下一次 Agent 发布即使用新地址 |

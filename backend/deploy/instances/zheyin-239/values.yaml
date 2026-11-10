@@ -5,14 +5,14 @@ doagentSettings:
 gateway:
   cluster: doops-zheyin
   instance: node-239
-  url: https://doops.aiedulab.cn
+  url: https://doops.l8ai.cn
 hostAliases: []
 image:
   digest: sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a
   pullPolicy: Always
   repository: docker.cnb.cool/l8ai/ai/doops.sh
 imagePullSecrets:
-- name: aiedulab-regcred
+- name: registry-regcred
 modelRouting:
   policy: single-model
 nodeSelector:

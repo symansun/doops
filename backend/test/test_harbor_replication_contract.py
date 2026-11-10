@@ -266,9 +266,9 @@ def test_policy_name_is_stable_for_every_configured_repository():
         ("agentcloud", "l8ai/agentcloud/backend", "cnb-agentcloud-backend"),
         ("agentcloud", "l8ai/agentcloud/web", "cnb-agentcloud-web"),
         ("agentcloud", "l8ai/agentcloud/relay", "cnb-agentcloud-relay"),
-        ("zhiyong", "aiedulab/zhiyong/education/zhiyong-frontend", "cnb-zhiyong-frontend"),
-        ("zhiyong", "aiedulab/zhiyong/education/zhiyong-lab-api", "cnb-zhiyong-lab-api"),
-        ("zhiyong", "aiedulab/zhiyong/education/zhiyong-exam-api", "cnb-zhiyong-exam-api"),
+        ("zhiyong", "example/zhiyong/education/zhiyong-frontend", "cnb-zhiyong-frontend"),
+        ("zhiyong", "example/zhiyong/education/zhiyong-lab-api", "cnb-zhiyong-lab-api"),
+        ("zhiyong", "example/zhiyong/education/zhiyong-exam-api", "cnb-zhiyong-exam-api"),
     ]
     for project, repository, expected in cases:
         assert module.policy_name_for("cnb", project, repository) == expected
@@ -781,5 +781,5 @@ def test_harbor_flattens_the_upstream_path_to_its_last_segment():
 
     assert module.harbor_repository_for("l8ai/agentcloud/backend") == "backend"
     assert module.harbor_repository_for(
-        "aiedulab/zhiyong/education/zhiyong-lab-api"
+        "example/zhiyong/education/zhiyong-lab-api"
     ) == "zhiyong-lab-api"

@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Deploy the versioned TLS reverse proxy config for doops.aiedulab.cn.
+Deploy the versioned TLS reverse proxy config for doops.l8ai.cn.
 
 Usage:
   bash scripts/deploy-gateway-tls-proxy.sh --host 106.54.197.139 [options]
@@ -110,12 +110,12 @@ sudo -n cp "$config" "$backup"
 sudo -n cp "$candidate" "$config"
 sudo -n chmod 0644 "$config"
 sudo -n docker exec "$container" nginx -t
-sudo -n docker exec "$container" nginx -T 2>&1 | grep -q "server_name doops.aiedulab.cn;"
+sudo -n docker exec "$container" nginx -T 2>&1 | grep -q "server_name doops.l8ai.cn;"
 sudo -n docker exec "$container" nginx -s reload
 sleep 1
-code="$(curl --noproxy '*' --resolve doops.aiedulab.cn:443:127.0.0.1 -sS -o /dev/null -w '%{http_code}' --max-time 10 https://doops.aiedulab.cn/v1/targets)"
+code="$(curl --noproxy '*' --resolve doops.l8ai.cn:443:127.0.0.1 -sS -o /dev/null -w '%{http_code}' --max-time 10 https://doops.l8ai.cn/v1/targets)"
 test "$code" = "401"
-web_code="$(curl --noproxy '*' --resolve doops.aiedulab.cn:443:127.0.0.1 -sS -o /dev/null -w '%{http_code}' --max-time 10 https://doops.aiedulab.cn/)"
+web_code="$(curl --noproxy '*' --resolve doops.l8ai.cn:443:127.0.0.1 -sS -o /dev/null -w '%{http_code}' --max-time 10 https://doops.l8ai.cn/)"
 test "$web_code" = "200"
 committed=true
 trap - EXIT
