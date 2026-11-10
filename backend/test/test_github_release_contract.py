@@ -68,7 +68,13 @@ def test_release_is_gated_by_the_reusable_ci_workflow():
     release = load_workflow(RELEASE)
     gate = release["jobs"]["gate"]
     assert gate["uses"] == "./.github/workflows/ci.yml"
-    assert "workflow_call" in triggers(load_workflow(CI))
+    ci = load_workflow(CI)
+    assert "workflow_call" in triggers(ci)
+    # gitleaks scans full history on tag/dispatch events; only branch pushes and
+    # pull requests carry a change range, so the release gate skips it.
+    condition = ci["jobs"]["secret-scan"]["if"]
+    assert "refs/tags/" in condition
+    assert "github.event_name == 'pull_request'" in condition
 
 
 def test_publish_requires_a_green_ci_and_stays_least_privileged():
