@@ -1,5 +1,0 @@
-# command: doops -session lead-diag-20261110b ask --target zyj -msg '只读诊断：不要修改任何资源。请只回答 OK。'
-# time: 2026-11-10 09:09 Asia/Shanghai (after doops-agent pod recreate)
-[TARGETING] Server: gw-zyj (https://doops.l8ai.cn -> doops-zyj/zyj), Use: ZYJ control plane
-OK
-EXIT=0

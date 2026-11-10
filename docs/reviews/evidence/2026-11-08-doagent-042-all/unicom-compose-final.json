@@ -1,6 +1,0 @@
-{
-  "checkedAt": "2026-11-08T16:22:58.163823+08:00",
-  "returncode": 0,
-  "output": "[TARGETING] Server: unicom-k8s (https://doops.l8ai.cn -> doops-unicom/unicom-k8s), Use: Unicom Kubernetes agent\n{\"receipt\": {\"phase\": \"complete\", \"containerID\": \"3eba9048d97ded2f3e2ed9884833942d93f3825be19ff74ca3df1b2a61089233\", \"image\": \"docker.cnb.cool/l8ai/ai/doops.sh@sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a\", \"commit\": \"8683d67174e19a1750e9b19de99a0816cdb8ea79\"}, \"normalizedComposeMatchesGit\": true, \"health\": \"healthy\", \"rollbackImageID\": \"sha256:8eea00f3b42fe3fbeeb916e5a58f45107b986e15cc66ca9e0735678807ac536c\", \"originalConfigBackup\": true}\n",
-  "error": ""
-}

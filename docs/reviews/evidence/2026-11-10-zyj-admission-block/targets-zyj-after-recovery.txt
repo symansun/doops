@@ -1,2 +1,0 @@
-CLUSTER            INSTANCE           BUSY     STATUS           ACTIVE  QUEUED  RELEASE_COMMIT                           RESOURCES                    LAST_SEEN
-doops-zyj          zyj                false    idle             0       0       081f24ab4e92535bce87c23889e242a1ee5f0886                              2026-11-10T01:10:08Z

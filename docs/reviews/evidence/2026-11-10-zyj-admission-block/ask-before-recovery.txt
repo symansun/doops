@@ -1,5 +1,0 @@
-# command: doops -session lead-diag-20261110a ask --target zyj -msg '只读诊断：不要修改任何资源。请只回答 OK。'
-# time: 2026-11-10 09:05 Asia/Shanghai (pod log 01:05Z)
-[TARGETING] Server: gw-zyj (https://doops.l8ai.cn -> doops-zyj/zyj), Use: ZYJ control plane
-Error: remote error: execution_outcome_unknown: prompt_turn_id_missing
-EXIT=1

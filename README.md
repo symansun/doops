@@ -576,7 +576,7 @@ doops/
 │   ├── Dockerfile              # Agent 应用镜像
 │   ├── Dockerfile.base.light   # Agent 轻量基础镜像
 │   └── runtime-versions.env    # 固定运行时版本与镜像来源
-├── docs/                        # 设计文档与实施记录
+├── docs/                        # 内部设计记录（产品文档在 backend/docs）
 ├── Dockerfile.web              # Next.js 生产镜像
 ├── .github/workflows/ci.yml    # GitHub CI（push/PR）
 ├── .github/workflows/release.yml # GitHub tag 发布：构建、校验、发布、复验
@@ -587,6 +587,7 @@ doops/
 
 | 文档 | 用途 |
 | --- | --- |
+| [文档索引](backend/docs/README.md) | 全部产品文档的入口、状态与权威说明 |
 | [CLI 使用指南](backend/docs/DOOPS_USAGE_GUIDE.md) | 命令选择、会话、同步和任务管理 |
 | [API 接入指南](backend/docs/DOOPS_API_GUIDE.md) | 登录、目标、RPC、进度流与审计 |
 | [Gateway 隧道与执行生命周期](backend/docs/DOOPS_GATEWAY_TUNNEL.md) | Agent 反向连接、执行生命周期和并发边界 |

@@ -74,6 +74,6 @@ Functional acceptance remains incomplete: first delivery of an active
 Kubernetes. Generic credential cleanup attempts a Kubernetes Secret read when
 no native model delivery record exists. The attempted binding was revoked;
 neither a fabricated record nor a foreign kubeconfig was installed.
-See `docs/reviews/2026-11-08-doagent-042-all-environments.md` for the reproduction,
-source path, current evidence, and required repair. `host_upgrade_ready` alone
-does not mean the model smoke passed.
+See the internal 2026-11-08 DoAgent 0.2.42 all-environments archive for the
+reproduction, source path, current evidence, and required repair.
+`host_upgrade_ready` alone does not mean the model smoke passed.

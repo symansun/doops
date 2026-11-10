@@ -1,7 +1,0 @@
-{
-  "at": "2026-11-08T16:04:01.204068+08:00",
-  "target": "unicom-k8s",
-  "exit": 0,
-  "stdout": "[TARGETING] Server: unicom-k8s (https://doops.l8ai.cn -> doops-unicom/unicom-k8s), Use: Unicom Kubernetes agent\n[tool:mcp_doops_k8s_read]\n[tool:mcp_doops_k8s_read]\n读取结果（doops-system / deployment doops-agent）：\n\n- **readyReplicas**: 1（replicas 1 / updatedReplicas 1 / availableReplicas 1，1/1 Ready）\n- **完整镜像摘要**: `docker.cnb.cool/l8ai/ai/doops.sh@sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a`\n- 其他状态：Available=True、Progressing=True，ReplicaSet `doops-agent-6cc9c96f85`，创建于 2026-11-08T08:01:54Z\n\n仅执行了只读 get 操作，未做任何写入、部署、删除或修改。\n\nRELEASE_SMOKE_UNICOM_042\n",
-  "stderr": ""
-}

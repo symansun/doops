@@ -1,7 +1,0 @@
-# source: kubectl -n ai logs deploy/doops-agent --tail=80 (new pod after recreate), UTC
-4:✅ doagent config: runtime settings ready; model is delivered by the Gateway
-7:[do-agent gc] runtime mode=Lite budget_mb=3200 concurrent_turns=2 memory_sessions=16
-8:[do-agent gc] worker thread started (old_gc=60s rss=10s)
-9:[do-agent acp-http] listening on 127.0.0.1:9000
-16:2026/11/10 01:06:38 🚦 health endpoints: /health/live (always 200), /health/ready (200 when tunnel connected)
-19:2026/11/10 01:06:38    Git handler ready for Gateway reverse-tunnel requests

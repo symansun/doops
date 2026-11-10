@@ -576,7 +576,7 @@ doops/
 │   ├── Dockerfile              # Прикладной образ Agent
 │   ├── Dockerfile.base.light   # Лёгкий базовый образ Agent
 │   └── runtime-versions.env    # Фиксированные версии среды выполнения и источники образов
-├── docs/                        # Проектные документы и записи о реализации
+├── docs/                        # Внутренние проектные записи (документация продукта — в backend/docs)
 ├── Dockerfile.web              # Продуктивный образ Next.js
 ├── .github/workflows/ci.yml    # GitHub CI
 ├── .github/workflows/release.yml # Релиз по GitHub tag: сборка, проверка, публикация, перепроверка
@@ -587,6 +587,7 @@ doops/
 
 | Документ | Назначение |
 | --- | --- |
+| [Индекс документации](backend/docs/README.md) | Точка входа, статус и источник истины для документации продукта |
 | [Руководство по использованию CLI](backend/docs/DOOPS_USAGE_GUIDE.md) | Выбор команд, сессии, синхронизация и управление задачами |
 | [Руководство по подключению API](backend/docs/DOOPS_API_GUIDE.md) | Вход, target, RPC, поток прогресса и аудит |
 | [Туннель Gateway и жизненный цикл выполнения](backend/docs/DOOPS_GATEWAY_TUNNEL.md) | Обратное подключение Agent, жизненный цикл выполнения и границы параллелизма |
