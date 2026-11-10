@@ -14,37 +14,37 @@ import (
 
 func TestCreateAndVerifyEdgeEnrollmentBindsClusterInstance(t *testing.T) {
 	store := openEdgeTestStore(t)
-	created, err := store.CreateEdgeEnrollment("jm", "gw-jm")
+	created, err := store.CreateEdgeEnrollment("demo", "gw-demo")
 	if err != nil {
 		t.Fatalf("create enrollment: %v", err)
 	}
 	if created.Plaintext == "" || !strings.HasPrefix(created.Plaintext, "dge_een_") {
 		t.Fatalf("plaintext = %q, want a dge_een_ token shown once", created.Plaintext)
 	}
-	got, err := store.VerifyEdgeEnrollment(created.Plaintext, "jm", "gw-jm")
+	got, err := store.VerifyEdgeEnrollment(created.Plaintext, "demo", "gw-demo")
 	if err != nil {
 		t.Fatalf("verify: %v", err)
 	}
 	if got.ID != created.ID {
 		t.Fatalf("id = %s, want %s", got.ID, created.ID)
 	}
-	if _, err := store.VerifyEdgeEnrollment(created.Plaintext, "jm", "other"); !errors.Is(err, ErrUnauthorized) {
+	if _, err := store.VerifyEdgeEnrollment(created.Plaintext, "demo", "other"); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("wrong instance: %v, want unauthorized", err)
 	}
-	if _, err := store.VerifyEdgeEnrollment("dge_een_een_deadbeef_nope", "jm", "gw-jm"); !errors.Is(err, ErrUnauthorized) {
+	if _, err := store.VerifyEdgeEnrollment("dge_een_een_deadbeef_nope", "demo", "gw-demo"); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("unknown token: %v, want unauthorized", err)
 	}
 	if err := store.RevokeEdgeEnrollment(created.ID); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	if _, err := store.VerifyEdgeEnrollment(created.Plaintext, "jm", "gw-jm"); !errors.Is(err, ErrUnauthorized) {
+	if _, err := store.VerifyEdgeEnrollment(created.Plaintext, "demo", "gw-demo"); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("revoked token: %v, want unauthorized", err)
 	}
 }
 
 func TestEdgeConnectRequiresEnrollmentToken(t *testing.T) {
 	store := openEdgeTestStore(t)
-	created, err := store.CreateEdgeEnrollment("jm", "gw-jm")
+	created, err := store.CreateEdgeEnrollment("demo", "gw-demo")
 	if err != nil {
 		t.Fatalf("create enrollment: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestEdgeConnectRequiresEnrollmentToken(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/edge/connect?cluster=jm&instance=gw-jm"
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/edge/connect?cluster=demo&instance=gw-demo"
 	_, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err == nil {
 		t.Fatal("connect without a token should fail")
@@ -73,9 +73,9 @@ func TestEdgeConnectRequiresEnrollmentToken(t *testing.T) {
 	if _, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Authorization": []string{"Bearer nope"}}); err == nil {
 		t.Fatal("connect with a garbage token should fail")
 	}
-	wrong := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/edge/connect?cluster=jm&instance=other"
+	wrong := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/edge/connect?cluster=demo&instance=other"
 	if _, _, err := websocket.DefaultDialer.Dial(wrong, http.Header{"Authorization": []string{"Bearer " + created.Plaintext}}); err == nil {
-		t.Fatal("token bound to gw-jm must not open a session as other")
+		t.Fatal("token bound to gw-demo must not open a session as other")
 	}
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Authorization": []string{"Bearer " + created.Plaintext}})
@@ -84,11 +84,11 @@ func TestEdgeConnectRequiresEnrollmentToken(t *testing.T) {
 	}
 	defer conn.Close()
 	deadline := time.Now().Add(2 * time.Second)
-	for hub.edge.SessionCount("jm", "gw-jm") == 0 && time.Now().Before(deadline) {
+	for hub.edge.SessionCount("demo", "gw-demo") == 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
-	if hub.edge.SessionCount("jm", "gw-jm") != 1 {
-		t.Fatalf("session count = %d, want 1", hub.edge.SessionCount("jm", "gw-jm"))
+	if hub.edge.SessionCount("demo", "gw-demo") != 1 {
+		t.Fatalf("session count = %d, want 1", hub.edge.SessionCount("demo", "gw-demo"))
 	}
 }
 

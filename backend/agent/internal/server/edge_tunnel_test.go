@@ -22,7 +22,7 @@ import (
 
 func TestEdgeTunnelRelaysHTTPSWebSocketAndLargePayload(t *testing.T) {
 	store := openEdgeTestStore(t)
-	enroll, err := store.CreateEdgeEnrollment("jm", "gw-jm")
+	enroll, err := store.CreateEdgeEnrollment("demo", "gw-demo")
 	if err != nil {
 		t.Fatalf("enrollment: %v", err)
 	}
@@ -31,8 +31,8 @@ func TestEdgeTunnelRelaysHTTPSWebSocketAndLargePayload(t *testing.T) {
 	backend := startTLSBackend(t, tlsCfg)
 	if _, err := store.CreateEdgeRoute(CreateEdgeRouteRequest{
 		Hostname: "local.test",
-		Cluster:  "jm",
-		Instance: "gw-jm",
+		Cluster:  "demo",
+		Instance: "gw-demo",
 		Backend:  backend,
 	}); err != nil {
 		t.Fatalf("create route: %v", err)
@@ -53,7 +53,7 @@ func TestEdgeTunnelRelaysHTTPSWebSocketAndLargePayload(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = listener.Close() })
 
-	agentWS := "ws" + strings.TrimPrefix(gw.URL, "http") + "/v1/edge/connect?cluster=jm&instance=gw-jm"
+	agentWS := "ws" + strings.TrimPrefix(gw.URL, "http") + "/v1/edge/connect?cluster=demo&instance=gw-demo"
 	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, http.Header{
 		"Authorization": []string{"Bearer " + enroll.Plaintext},
 	})
@@ -74,10 +74,10 @@ func TestEdgeTunnelRelaysHTTPSWebSocketAndLargePayload(t *testing.T) {
 	})
 
 	deadline := time.Now().Add(3 * time.Second)
-	for hub.edge.SessionCount("jm", "gw-jm") == 0 && time.Now().Before(deadline) {
+	for hub.edge.SessionCount("demo", "gw-demo") == 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
-	if hub.edge.SessionCount("jm", "gw-jm") == 0 {
+	if hub.edge.SessionCount("demo", "gw-demo") == 0 {
 		t.Fatal("edge session never came online")
 	}
 	time.Sleep(50 * time.Millisecond)

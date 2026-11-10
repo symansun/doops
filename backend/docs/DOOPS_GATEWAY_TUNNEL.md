@@ -10,7 +10,7 @@ flowchart LR
     CLI["doops CLI / Skill"] -->|"WS /v1/rpc\nGit HTTP /v1/git\nuser token"| GW["doops-gateway"]
     AG1["doops-agent\ndoops-oilan/oilan-node"] -->|"WS /v1/agent/connect\ncluster/instance"| GW
     AG2["doops-agent\ndoops-edu/edu-coder"] -->|"WS /v1/agent/connect\ncluster/instance"| GW
-    AG3["doops-agent\ndoops-jm/jm-228"] -->|"WS /v1/agent/connect\ncluster/instance"| GW
+    AG3["doops-agent\ndoops-demo/demo-228"] -->|"WS /v1/agent/connect\ncluster/instance"| GW
     DB["SQLite\nusers / tokens / grants / audit / targets"] <--> GW
 
     GW -->|"route by cluster/instance"| AG1
@@ -520,11 +520,10 @@ doops -session agent-upgrade upgrade \
 - agent 上下线状态写入 SQLite，在线目标由内存连接表提供，断线时立即标记 offline。
 - agent 重连替换旧连接时，旧连接的关闭不会把新连接错误标记为 offline。
 - 实例记录会自动过滤和清理。活跃窗口是 7 天：在线实例，以及离线但 `last_seen` 距今不超过 7 天（含恰好 7 天）的实例，出现在 `GET /v1/admin/instances` 的默认结果里。没有心跳时间的离线记录不算活跃。`include=history` 才一并返回尚未删除的历史记录，包括已归档记录；`include` 的其它取值返回 `400`。控制台实例页用 `include=history` 拉取后自行折叠历史和已归档记录；概览的纳管数量和配置发布使用默认结果，不列出历史实例。归档只改变展示，不改变这套保留期。
-- Gateway 进程启动时，以及之后每小时，运行两条离线实例清理，实际保留期由它们共同决定：
-  `DeleteStaleOfflineAgents` 删除 `status=offline` 且 `last_seen` 可解析、早于 24 小时的记录；
-  `PruneOfflineAgentStatus` 删除超过 90 天保留窗口的离线记录（没有 `last_seen` 时用 `updated_at`，
-  两者都没有则保留）。因此 `last_seen` 可解析的离线记录实际在 24 小时后被删除，90 天窗口
-  只对缺少 `last_seen` 的记录生效。状态为 online 的行不删除，删除语句再次要求 `status = 'offline'`，
+- Gateway 进程启动时先清理一次，之后每小时再清理一次，只有一条清理路径：
+  `PruneOfflineAgentStatus` 删除 `status=offline` 且超过 90 天保留窗口的实例记录（优先用
+  `last_seen`，缺失时用 `updated_at`，两者都没有则保留）。7 天活跃窗口只决定默认列表是否
+  显示，不参与删除。状态为 online 的行不删除，删除语句再次要求 `status = 'offline'`，
   避免清理过程中重连的实例被删掉。删除只移除连接状态，不删除用户授权、令牌、凭据绑定、审计、
   代理路由或 Edge 路由。Agent 再次连接时会重新写入该 `cluster/instance`。
 - `ask --apply` 发生客户端或隧道断连时，当前等待路径取消并保留真实审计状态。系统不恢复或
@@ -546,7 +545,7 @@ doops -session agent-upgrade upgrade \
 
 - `doops-oilan / oilan-node`，oilan 集群，标准 k3s 部署
 - `doops-edu / edu-coder`，edu-coder 集群
-- `doops-jm / jm-228` -> JM 集群
+- `doops-demo / demo-228` -> DEMO 集群
 - `doops-zheyin / node-239` -> 浙音集群
 - `doops-114 / vm-114` -> 114 集群
 - `doops-235 / hdu-235` -> 杭电节点

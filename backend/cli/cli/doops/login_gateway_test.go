@@ -27,19 +27,19 @@ func TestResolveLoginGatewayAllowsFirstLoginWithoutConfig(t *testing.T) {
 }
 
 func TestResolveLoginGatewayRejectsTargetWithoutConfig(t *testing.T) {
-	_, _, err := resolveLoginGateway("jm", "", nil, os.ErrNotExist)
+	_, _, err := resolveLoginGateway("demo", "", nil, os.ErrNotExist)
 	if err == nil || !strings.Contains(err.Error(), "--gateway") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestResolveLoginGatewayKeepsTargetBehaviour(t *testing.T) {
-	servers := []Server{{Name: "jm", Aliases: []string{"jy"}, Gateway: "https://gateway.example.com", Cluster: "doops-jm", Instance: "jm-228"}}
+	servers := []Server{{Name: "demo", Aliases: []string{"jy"}, Gateway: "https://gateway.example.com", Cluster: "doops-demo", Instance: "demo-228"}}
 	gateway, server, err := resolveLoginGateway("jy", "", servers, nil)
-	if err != nil || server == nil || server.Name != "jm" || gateway != "https://gateway.example.com" {
+	if err != nil || server == nil || server.Name != "demo" || gateway != "https://gateway.example.com" {
 		t.Fatalf("gateway = %q server = %#v err = %v", gateway, server, err)
 	}
-	if _, _, err := resolveLoginGateway("jm", "https://other.example.com", servers, nil); err == nil {
+	if _, _, err := resolveLoginGateway("demo", "https://other.example.com", servers, nil); err == nil {
 		t.Fatal("a gateway that does not match the target was accepted")
 	}
 }

@@ -8,8 +8,8 @@ import (
 func TestMergeLiveGatewayRoutesAddsOnlyMissingAuthorizedTargets(t *testing.T) {
 	existing := []Server{
 		{
-			Name: "gw-jm", Aliases: []string{"jm"}, Use: "hand written",
-			Gateway: "https://doops.example.com/", Cluster: "doops-jm", Instance: "jm-228",
+			Name: "gw-demo", Aliases: []string{"demo"}, Use: "hand written",
+			Gateway: "https://doops.example.com/", Cluster: "doops-demo", Instance: "demo-228",
 		},
 		{
 			Name: "old-offline", Use: "keep me",
@@ -18,7 +18,7 @@ func TestMergeLiveGatewayRoutesAddsOnlyMissingAuthorizedTargets(t *testing.T) {
 	}
 	live := []GatewayTarget{
 		{Cluster: "unicom", Instance: "unicom-1"},
-		{Cluster: "doops-jm", Instance: "jm-228"},
+		{Cluster: "doops-demo", Instance: "demo-228"},
 		{Cluster: " ", Instance: "blank"},
 		{Cluster: "*", Instance: "*"},
 		{Cluster: "unicom", Instance: "unicom-1"},
@@ -31,7 +31,7 @@ func TestMergeLiveGatewayRoutesAddsOnlyMissingAuthorizedTargets(t *testing.T) {
 	if added[0].Gateway != "https://doops.example.com" || added[0].Use != "Synced from Gateway" || len(added[0].Aliases) != 0 {
 		t.Fatalf("new route changed identity fields: %#v", added[0])
 	}
-	if len(updated) != 3 || updated[0].Name != "gw-jm" || updated[0].Use != "hand written" || len(updated[0].Aliases) != 1 {
+	if len(updated) != 3 || updated[0].Name != "gw-demo" || updated[0].Use != "hand written" || len(updated[0].Aliases) != 1 {
 		t.Fatalf("existing route was rewritten: %#v", updated[0])
 	}
 	if updated[1].Name != "old-offline" {
@@ -72,7 +72,7 @@ func TestSanitizeRouteNameKeepsAStableTargetName(t *testing.T) {
 
 func TestSyncGatewaySeedsSelectsOneGatewayOrEveryGateway(t *testing.T) {
 	servers := []Server{
-		{Name: "jm", Gateway: "https://doops.example.com", Cluster: "doops-jm", Instance: "jm-228"},
+		{Name: "demo", Gateway: "https://doops.example.com", Cluster: "doops-demo", Instance: "demo-228"},
 		{Name: "zy", Aliases: []string{"zheyin"}, Gateway: "https://doops.example.com/", Cluster: "doops-zheyin", Instance: "node-239"},
 		{Name: "oilan", Gateway: "https://oilan.example.com", Cluster: "oilan", Instance: "oilan"},
 	}
@@ -81,7 +81,7 @@ func TestSyncGatewaySeedsSelectsOneGatewayOrEveryGateway(t *testing.T) {
 		t.Fatalf("alias seed = %#v, %v", one, err)
 	}
 	all, err := syncGatewaySeeds(servers, "")
-	if err != nil || len(all) != 2 || all[0].Name != "jm" || all[1].Name != "oilan" {
+	if err != nil || len(all) != 2 || all[0].Name != "demo" || all[1].Name != "oilan" {
 		t.Fatalf("all seeds = %#v, %v", all, err)
 	}
 	if _, err := syncGatewaySeeds(servers, "missing"); err == nil || !strings.Contains(err.Error(), "missing") {

@@ -27,12 +27,12 @@ func TestCOSPushRejectsMissingTokenAndCredentialBeforeTransfer(t *testing.T) {
 		t.Fatal(err)
 	}
 	transfer := &recordingTransfer{t: t}
-	_, err := pushSnapshot(Server{Name: "jm"}, src, "", false, nil, "sess_1", nil, "cos", "cos-bucket", "", transfer)
+	_, err := pushSnapshot(Server{Name: "demo"}, src, "", false, nil, "sess_1", nil, "cos", "cos-bucket", "", transfer)
 	if err == nil || err.Error() != "gateway_auth_missing" || transfer.calls != 0 {
 		t.Fatalf("missing token error = %v, calls = %d", err, transfer.calls)
 	}
 	transfer.probeErr = errString("cos_bucket_unavailable")
-	_, err = pushSnapshot(Server{Name: "jm"}, src, "", false, nil, "sess_1", nil, "cos", "", "token", transfer)
+	_, err = pushSnapshot(Server{Name: "demo"}, src, "", false, nil, "sess_1", nil, "cos", "", "token", transfer)
 	if err == nil || err.Error() != "cos_bucket_unavailable" || transfer.calls != 1 {
 		t.Fatalf("empty credential still uses cos, error = %v, calls = %d", err, transfer.calls)
 	}
@@ -44,7 +44,7 @@ func TestCOSPushStaysOnCOSWhenProbeFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	transfer := &recordingTransfer{t: t, probeErr: errString("cos_bucket_unavailable")}
-	_, err := pushSnapshot(Server{Name: "jm", Gateway: "https://gateway.example", Cluster: "dev", Instance: "local"}, src, "", false, nil, "sess_1", nil, "cos", "cos-bucket", "token", transfer)
+	_, err := pushSnapshot(Server{Name: "demo", Gateway: "https://gateway.example", Cluster: "dev", Instance: "local"}, src, "", false, nil, "sess_1", nil, "cos", "cos-bucket", "token", transfer)
 	if err == nil || err.Error() != "cos_bucket_unavailable" {
 		t.Fatalf("probe error = %v", err)
 	}

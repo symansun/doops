@@ -309,7 +309,7 @@ CLI 推荐入口：
 
 ```bash
 doops admin token create \
-  --target jm \
+  --target demo \
   --user alice \
   --name ci-deploy \
   --expires 720h
@@ -529,7 +529,7 @@ Agent 在 `initialize` 响应的 `capabilities.protocols.structuredSSH` 中声�
 CLI 对应入口：
 
 ```bash
-doops -session ops ssh --target jm --host ops@app.internal \
+doops -session ops ssh --target demo --host ops@app.internal \
   --option=BatchMode=yes -- bash -lc 'hostname && systemctl status api'
 ```
 

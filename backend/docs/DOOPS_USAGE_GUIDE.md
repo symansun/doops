@@ -264,7 +264,7 @@ CLI 原样输出通知文本（含 JSON、空行、分块）；超时会请求�
 
 ```bash
 doops admin token create \
-  --target jm \
+  --target demo \
   --user gaojiaqi \
   --name maintenance \
   --expires 720h
@@ -275,18 +275,18 @@ doops admin token create \
 
 ```bash
 doops admin token create \
-  --target jm \
+  --target demo \
   --user gaojiaqi \
   --name maintenance \
   --expires 720h \
-  --save-as jm
+  --save-as demo
 ```
 
 查看 token 元数据和撤销旧 token：
 
 ```bash
-doops admin token list --target jm
-doops admin token revoke --target jm --id <token-id>
+doops admin token list --target demo
+doops admin token revoke --target demo --id <token-id>
 ```
 
 列表只返回 ID、前缀、归属和状态，不返回 token 明文。管理员凭据只从
@@ -427,7 +427,7 @@ DOOPS_CONFIG=<temporary-dir>/config.json \
 ## Exec
 
 ```bash
-doops -session ops exec --target jm --cmd 'hostname && df -h && free -h'
+doops -session ops exec --target demo --cmd 'hostname && df -h && free -h'
 ```
 
 Use `exec` for deterministic commands, read-only checks, and known deployment scripts.
@@ -438,7 +438,7 @@ Use `exec` for deterministic commands, read-only checks, and known deployment sc
 日志或工作区。
 
 ```bash
-doops -session ops ssh --target jm --host ops@app.internal \
+doops -session ops ssh --target demo --host ops@app.internal \
   --option=BatchMode=yes -- bash -lc 'hostname && systemctl status api'
 ```
 
@@ -451,7 +451,7 @@ CLI 只拦截直接以 `ssh`、`/usr/bin/ssh` 或 `/bin/ssh` 开头的 `exec` �
 ## Ask
 
 ```bash
-doops -session ops ask --target jm --msg '只读检查 Kubernetes 节点状态，给出结论和风险'
+doops -session ops ask --target demo --msg '只读检查 Kubernetes 节点状态，给出结论和风险'
 ```
 
 Use `ask` for diagnostics that require exploration. The target must have doagent/model configuration available.
@@ -554,8 +554,8 @@ CLI 与 Agent 不验证 CI 来源。Agent 自身升级不走这条路径，见�
 ## Push
 
 ```bash
-doops -session build push --target jm --src .
-doops -session build exec --target jm --cmd 'ls -la /root/ws/build | head'
+doops -session build push --target demo --src .
+doops -session build exec --target demo --cmd 'ls -la /root/ws/build | head'
 ```
 
 `push` defaults to COS. The bucket, endpoint, region, and keys come from the Gateway process configuration, not from `--credential`. Pass `--storage gateway` to keep the Git workspace sync:
@@ -572,7 +572,7 @@ Do not reimplement push with tar/base64/chunk upload. `doops_workspace_*` chunk 
 ## Pull
 
 ```bash
-doops -session build pull --target jm --dest ./doops-build-output
+doops -session build pull --target demo --dest ./doops-build-output
 ```
 
 Use `pull` for large files, archives, SQL dumps, images, videos, and generated assets. Do not use `read` or `exec base64` for downloads.
@@ -582,10 +582,10 @@ Use `pull` for large files, archives, SQL dumps, images, videos, and generated a
 ## Read And Write
 
 ```bash
-doops -session ops read --target jm --path deploy.sh
-doops -session ops write --target jm --path notes.txt --content 'hello'
-doops -session ops write --target jm --path pod.yaml --file ./pod.yaml
-cat ./pod.yaml | doops -session ops write --target jm --path pod.yaml
+doops -session ops read --target demo --path deploy.sh
+doops -session ops write --target demo --path notes.txt --content 'hello'
+doops -session ops write --target demo --path pod.yaml --file ./pod.yaml
+cat ./pod.yaml | doops -session ops write --target demo --path pod.yaml
 ```
 
 File API paths are relative to the named session workspace. The Web file browser
@@ -602,7 +602,7 @@ operations for other host paths.
 ## Clean
 
 ```bash
-doops -session build clean --target jm --workspace build
+doops -session build clean --target demo --workspace build
 ```
 
 Confirm the session name before cleaning. Do not share one session across unrelated tasks.
@@ -615,10 +615,10 @@ doops login --gateway https://gateway.example.com --username alice
 printf '%s' "$DOOPS_GATEWAY_TOKEN" | doops login --gateway https://gateway.example.com --token-stdin
 
 # 已有路由后的常规登录
-doops login --target jm --username alice
-printf '%s' "$DOOPS_GATEWAY_TOKEN" | doops login --target jm --token-stdin
+doops login --target demo --username alice
+printf '%s' "$DOOPS_GATEWAY_TOKEN" | doops login --target demo --token-stdin
 
-doops logout --target jm
+doops logout --target demo
 doops logout --gateway https://gateway.example.com
 ```
 

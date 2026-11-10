@@ -28,8 +28,8 @@ def load():
     return _MODULE
 
 
-def jm_deployment(**overrides):
-    """Shape of the live gw-jm unmanaged Agent Deployment."""
+def demo_deployment(**overrides):
+    """Shape of the live gw-demo unmanaged Agent Deployment."""
     deployment = {
         "apiVersion": "apps/v1",
         "kind": "Deployment",
@@ -47,8 +47,8 @@ def jm_deployment(**overrides):
                         "image": "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "2" * 64,
                         "env": [
                             {"name": "DOOPS_GATEWAY_URL", "value": "https://doops.l8ai.cn"},
-                            {"name": "DOOPS_GATEWAY_CLUSTER", "value": "doops-jm"},
-                            {"name": "DOOPS_GATEWAY_INSTANCE", "value": "jm-228"},
+                            {"name": "DOOPS_GATEWAY_CLUSTER", "value": "doops-demo"},
+                            {"name": "DOOPS_GATEWAY_INSTANCE", "value": "demo-228"},
                             {"name": "KUBECONFIG", "value": "/tmp/doops-kubeconfig"},
                             {"name": "DO_AGENT_MODEL_ROUTING_POLICY", "value": "single-model"},
                         ],
@@ -76,7 +76,7 @@ def jm_deployment(**overrides):
 
 class FakeCluster:
     def __init__(self, deployment=None, releases=(), fail=None):
-        self.deployment = deployment or jm_deployment()
+        self.deployment = deployment or demo_deployment()
         self.releases = list(releases)
         self.fail = fail or {}
         self.calls = []
@@ -97,7 +97,7 @@ class FakeCluster:
         if "get" in args and "configmap" in args and "doops-agent-settings" in args:
             return json.dumps({"data": {"settings.json": SETTINGS_CANARY}})
         if "get" in args and "configmap" in args:
-            return json.dumps({"data": {"deployment.json": json.dumps(jm_deployment())}})
+            return json.dumps({"data": {"deployment.json": json.dumps(demo_deployment())}})
         if "get" in args and "secrets" in args:
             return json.dumps({"items": [{"metadata": {"name": "sh.helm.release.v1.doops-agent.v1"}}]})
         if "get" in args and "pod" in args:
@@ -118,7 +118,7 @@ class FakeCluster:
 def adopt(module, cluster, **kwargs):
     module.run = cluster
     params = dict(namespace="doops-system", workload="doops-agent", release="doops-agent",
-                  cluster="doops-jm", instance="jm-228", image=IMAGE,
+                  cluster="doops-demo", instance="demo-228", image=IMAGE,
                   verifier=lambda *a, **k: "new-pod-uid")
     params.update(kwargs)
     return module.adopt(**params)
@@ -126,15 +126,15 @@ def adopt(module, cluster, **kwargs):
 
 @pytest.mark.parametrize("name,cluster,error", [
     ("existing release", FakeCluster(releases=["doops-agent"]), "already exists"),
-    ("two replicas", FakeCluster(jm_deployment(**{"spec.replicas": 2})), "exactly one replica"),
+    ("two replicas", FakeCluster(demo_deployment(**{"spec.replicas": 2})), "exactly one replica"),
     ("default service account",
-     FakeCluster(jm_deployment(**{"spec.template.spec.serviceAccountName": "default"})), "dedicated ServiceAccount"),
+     FakeCluster(demo_deployment(**{"spec.template.spec.serviceAccountName": "default"})), "dedicated ServiceAccount"),
     ("selector expressions",
-     FakeCluster(jm_deployment(**{"spec.selector": {"matchLabels": {"app": "doops-agent"},
+     FakeCluster(demo_deployment(**{"spec.selector": {"matchLabels": {"app": "doops-agent"},
                                                     "matchExpressions": [{"key": "x", "operator": "Exists"}]}})),
      "matchLabels only"),
     ("other helm owner",
-     FakeCluster(jm_deployment(**{"metadata.annotations": {"meta.helm.sh/release-name": "other"}})), "owned by Helm"),
+     FakeCluster(demo_deployment(**{"metadata.annotations": {"meta.helm.sh/release-name": "other"}})), "owned by Helm"),
 ])
 def test_preflight_refuses_before_any_mutation(name, cluster, error):
     module = load()
@@ -209,7 +209,7 @@ def test_restore_failure_is_reported_explicitly():
 @pytest.mark.parametrize("host_access", [None, True, False])
 def test_generated_values_render_with_the_real_chart(tmp_path, host_access):
     module = load()
-    deployment = jm_deployment()
+    deployment = demo_deployment()
     repository, digest = module.parse_image(IMAGE)
     values = module.chart_values(deployment, "doops-agent", repository, digest)
     assert "doagentSettings" not in values and "modelRouting" not in values
@@ -228,7 +228,7 @@ def test_generated_values_render_with_the_real_chart(tmp_path, host_access):
     assert container["image"] == IMAGE
     env = {e["name"]: e["value"] for e in container["env"]}
     assert env["DOOPS_KUBECONFIG_SOURCE"] == "serviceAccount"
-    assert env["DOOPS_GATEWAY_CLUSTER"] == "doops-jm" and env["DOOPS_GATEWAY_INSTANCE"] == "jm-228"
+    assert env["DOOPS_GATEWAY_CLUSTER"] == "doops-demo" and env["DOOPS_GATEWAY_INSTANCE"] == "demo-228"
     assert "DO_AGENT_MODEL_ROUTING_POLICY" not in env
     assert pod["hostPID"] is (host_access is not False)
     if host_access is False:

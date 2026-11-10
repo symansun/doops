@@ -251,7 +251,7 @@ doops list
 才用完整的四项 `--target-name/--target-gateway/--target-cluster/--target-instance` 预置路由，
 再 `doops login --target <name>`。
 
-- target 支持短名和别名，例如主名 `jm`，别名 `jy`。后续 `doops -session smoke exec --target jy --cmd hostname` 会解析到同一个 `doops-jm/jm-228`。
+- target 支持短名和别名，例如主名 `demo`，别名 `jy`。后续 `doops -session smoke exec --target jy --cmd hostname` 会解析到同一个 `doops-demo/demo-228`。
 
 ## Gateway 用户维护
 
@@ -427,12 +427,12 @@ Gateway 身份和可共享的 `/root/.kube` 或 `/root/.kube/config` 挂载。Jo
 
 ```bash
 doops -session agent-upgrade upgrade \
-  --target jm \
+  --target demo \
   --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest> \
   --dry-run
 
 doops -session agent-upgrade upgrade \
-  --target jm \
+  --target demo \
   --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest>
 ```
 

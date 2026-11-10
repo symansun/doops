@@ -16,7 +16,7 @@ import (
 
 func TestFilterUpgradeTargets(t *testing.T) {
 	targets := []GatewayTarget{
-		{Cluster: "doops-jm", Instance: "jm-228"},
+		{Cluster: "doops-demo", Instance: "demo-228"},
 		{Cluster: "doops-89", Instance: "master-node"},
 		{Cluster: "doops-89", Instance: "worker"},
 	}
@@ -24,9 +24,9 @@ func TestFilterUpgradeTargets(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("expected two doops-89 targets, got %#v", got)
 	}
-	got = filterUpgradeTargets(targets, "*", "jm-228")
-	if len(got) != 1 || got[0].Cluster != "doops-jm" {
-		t.Fatalf("expected jm target, got %#v", got)
+	got = filterUpgradeTargets(targets, "*", "demo-228")
+	if len(got) != 1 || got[0].Cluster != "doops-demo" {
+		t.Fatalf("expected demo target, got %#v", got)
 	}
 	got = filterUpgradeTargets(targets, "missing", "*")
 	if len(got) != 0 {
