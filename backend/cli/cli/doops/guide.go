@@ -20,11 +20,15 @@ var guideScenarios = map[string]guideScenario{
 	"onboard": {
 		summary: "connect this machine to a Gateway target",
 		steps: []string{
-			"doops add --name <t> --gateway <url> --cluster <c> --instance <i>",
-			"doops login --target <t> --username <u>          # CI: printf '%s' \"$TOKEN\" | doops login --target <t> --token-stdin",
-			"doops sync --target <t>                          # add the other live agents on this Gateway to local routes",
+			"doops login --gateway <url> --username <u>       # first login; discovers the live targets this account can use",
+			"doops list                                       # stored routes; a route is named after its instance",
+			"doops login --target <t> --username <u>          # later logins; CI: printf '%s' \"$TOKEN\" | doops login --target <t> --token-stdin",
+			"doops sync --target <t>                          # add live agents that appeared after the first login",
 			"doops targets --target <t>",
 			"doops exec --target <t> --cmd hostname            # online heartbeat is not enough; this proves the command channel",
+		},
+		notes: []string{
+			"a target the first login cannot discover, for example an Agent that is still offline, is added deliberately: doops add --name <t> --gateway <url> --cluster <c> --instance <i>",
 		},
 	},
 	"diagnose": {

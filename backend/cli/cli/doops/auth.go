@@ -105,6 +105,36 @@ func (s *AuthStore) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// resolveLoginGateway picks the Gateway URL for login and logout. A configured
+// target resolves its Gateway URL; --gateway allows the first login before any
+// local route exists. When both are given they must name the same Gateway.
+func resolveLoginGateway(target, gateway string, servers []Server, configErr error) (string, *Server, error) {
+	target = strings.TrimSpace(target)
+	gateway = strings.TrimSpace(gateway)
+	if target == "" && gateway == "" {
+		return "", nil, fmt.Errorf("one of --target or --gateway is required; use --gateway <url> for the first login")
+	}
+	var server *Server
+	if target != "" {
+		if configErr != nil {
+			return "", nil, fmt.Errorf("cannot use --target without a valid local config: %w; use --gateway <url> for the first login", configErr)
+		}
+		server = findServer(servers, target)
+		if server == nil {
+			return "", nil, errTargetNotFound(servers, target)
+		}
+		if gateway == "" {
+			gateway = server.Gateway
+		} else if gatewayAuthKey(gateway) != gatewayAuthKey(server.Gateway) {
+			return "", nil, fmt.Errorf("--gateway %q does not match the Gateway of target %q", gateway, target)
+		}
+	}
+	if _, err := gatewayAuthLoginURL(gateway); err != nil {
+		return "", nil, err
+	}
+	return gateway, server, nil
+}
+
 func GetAuthPath() string {
 	return filepath.Join(ensureDoopsStateDir(), "auth.json")
 }

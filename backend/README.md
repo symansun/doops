@@ -246,7 +246,8 @@ bash scripts/install.sh \
 
 Skill 会随安装同步，安装回执记录全部 `skill_path`。标准 target 的配置只包含
 `gateway`/`cluster`/`instance` 路由。安装后运行一次
-`doops login --target jm`，登录态会供同一 Gateway 的全部 target 使用。
+`doops login --target jm`，登录态会供同一 Gateway 的全部 target 使用。本地还没有路由时可省略
+`--target`，用 `doops login --gateway <gateway-url>` 首次登录：CLI 会发现在线 target 并写回本机路由。
 
 - target 支持短名和别名，例如主名 `jm`，别名 `jy`。后续 `doops -session smoke exec --target jy --cmd hostname` 会解析到同一个 `doops-jm/jm-228`。
 
@@ -273,9 +274,11 @@ gateway 由管理员维护用户、user token 和授权。agent 部署只声明�
 `cluster/instance`；业务侧 CLI 配置只消费管理员发放的 user token，不直接维护
 gateway 数据库。
 
-gateway 支持用户名密码登录，先换取 user token 再用 token 操作：
+gateway 支持用户名密码登录，先换取 user token 再用 token 操作；本地还没有路由时可先用
+Gateway URL 首次登录并自动发现可见路由：
 
 ```bash
+doops login --gateway https://gateway.example.com --username alice
 doops login --target prod-master --username alice
 ```
 
@@ -390,7 +393,7 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 | :--- | :--- |
 | `doops add --gateway --cluster --instance` | 添加 gateway target 路由 |
 | `doops -session <s> remove --target <name>` | Gateway 查询确认不可见后，淘汰本机离线 target 路由 |
-| `doops login --target <name>` | 登录该 target 所属 Gateway |
+| `doops login --target <name>` | 登录该 target 所属 Gateway；`doops login --gateway <url>` 可在无本地路由时首次登录并发现路由 |
 | `doops list` | 列出客户端已配置的 Gateway target 路由 |
 | `doops sync [--target <name>]` | 把当前登录可见、本地还没有的在线 target 补进本机路由 |
 | `doops -session <s> capabilities --target <t> --require structuredSSH` | 校验在线 Agent 已声明结构化 SSH 协议；缺失时失败关闭 |
@@ -458,4 +461,4 @@ CNB 的 `main` push 会构建并推送以 commit SHA 命名的 Agent 镜像。�
 - agent 反向注册只声明 `cluster/instance`，不读取或发送注册 token。
 - CLI target schema 只有 `name/aliases/use/gateway/cluster/instance`。
 - `targets`、`sql`、`upgrade` 和 `credential` 只接受配置 target，不接受临时 Gateway 或 user token。
-- 缺少 Gateway 登录态时远程命令直接失败，必须先执行 `doops login --target <name>`。
+- 缺少 Gateway 登录态时远程命令直接失败，必须先执行 `doops login --target <name>`；首次登录可用 `doops login --gateway <url>`。

@@ -70,8 +70,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   upgrade     仅升级标准 Helm doops-agent；--dry-run 只预览参数，正式升级由目标集群内 Job 执行
   add         添加 gateway target
   remove      仅在 target 确认离线时删除本机 gateway target 配置
-  login       登录 Gateway，或校验并导入已有 user token
-  logout      仅删除本机 Gateway 登录记录，不撤销 token
+  login       登录 Gateway；--gateway <url> 首次登录并自动发现 targets，或导入已有 user token
+  logout      仅删除本机 Gateway 登录记录（--target 或 --gateway 指定 Gateway），不撤销 token
   check       检查线上服务容器配置的镜像与最新构建是否一致
 
 选项:
@@ -634,27 +634,23 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		fmt.Print(string(data))
 
 	case "login":
-		var target, username, label string
+		var target, gateway, username, label string
 		var tokenStdin bool
 		loginFlag := flag.NewFlagSet("login", flag.ExitOnError)
-		loginFlag.StringVar(&target, "target", "", "Target server name")
+		loginFlag.StringVar(&target, "target", "", "Configured target name (optional when --gateway is used)")
+		loginFlag.StringVar(&gateway, "gateway", "", "Gateway URL for first login and target discovery")
 		loginFlag.BoolVar(&tokenStdin, "token-stdin", false, "Validate and import a Gateway token from stdin without issuing another token")
 		loginFlag.StringVar(&username, "username", "", "Gateway username")
 		loginFlag.StringVar(&label, "name", "", "Token label for password login")
 		loginFlag.Parse(cmdArgs)
 
-		if target == "" {
-			fmt.Println("Error: --target is required")
+		resolvedGateway, server, err := resolveLoginGateway(target, gateway, servers, configErr)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
 			loginFlag.Usage()
 			os.Exit(1)
 		}
-		requireConfig(configErr)
-		server := findServer(servers, target)
-		if server == nil {
-			fmt.Println(targetNotFound(servers, target))
-			os.Exit(1)
-		}
-		gateway := server.Gateway
+		gateway = resolvedGateway
 		auth, err := LoadAuth()
 		if err != nil {
 			fmt.Printf("Error loading credentials: %v\n", err)
@@ -709,7 +705,27 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Printf("Error saving credentials: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Successfully cached gateway token for %s\n", gatewayAuthKey(gateway))
+		if server == nil {
+			live, err := fetchGatewayTargets(gateway, credential.Token)
+			if err != nil {
+				fmt.Printf("Error: gateway login succeeded but target discovery failed: %v\n", err)
+				os.Exit(1)
+			}
+			routes, err := persistVisibleGatewayRoutes(servers, gateway, live)
+			if err != nil {
+				fmt.Printf("Error: gateway login succeeded but saving discovered targets failed: %v\n", err)
+				os.Exit(1)
+			}
+			discovered := len(routes) - len(servers)
+			fmt.Printf("Successfully logged in to Gateway %s; discovered %d target(s)\n", gatewayAuthKey(gateway), discovered)
+			if len(live) == 0 {
+				fmt.Println("No online targets are visible for this account.")
+			} else if discovered == 0 {
+				fmt.Printf("All %d visible target(s) are already configured.\n", len(live))
+			}
+		} else {
+			fmt.Printf("Successfully cached gateway token for %s\n", gatewayAuthKey(gateway))
+		}
 		if previous.TokenID != "" && previous.TokenID != credential.TokenID {
 			fmt.Printf("replaced_token_id=%s\n", previous.TokenID)
 			fmt.Printf("replaced_username=%s\n", previous.Username)
@@ -725,20 +741,16 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		}
 
 	case "logout":
-		var target string
+		var target, gateway string
 		logoutFlag := flag.NewFlagSet("logout", flag.ExitOnError)
-		logoutFlag.StringVar(&target, "target", "", "Target server name")
+		logoutFlag.StringVar(&target, "target", "", "Configured target name")
+		logoutFlag.StringVar(&gateway, "gateway", "", "Gateway URL when no local target is configured")
 		logoutFlag.Parse(cmdArgs)
 
-		if target == "" {
-			fmt.Println("Error: --target is required")
+		resolvedGateway, _, err := resolveLoginGateway(target, gateway, servers, configErr)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
 			logoutFlag.Usage()
-			os.Exit(1)
-		}
-		requireConfig(configErr)
-		server := findServer(servers, target)
-		if server == nil {
-			fmt.Println(targetNotFound(servers, target))
 			os.Exit(1)
 		}
 		auth, err := LoadAuth()
@@ -746,12 +758,12 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			fmt.Printf("Error loading credentials: %v\n", err)
 			os.Exit(1)
 		}
-		auth.RemoveGateway(server.Gateway)
+		auth.RemoveGateway(resolvedGateway)
 		if err := auth.Save(); err != nil {
 			fmt.Printf("Error saving credentials: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Removed local login for gateway %s; Gateway token was not revoked\n", gatewayAuthKey(server.Gateway))
+		fmt.Printf("Removed local login for gateway %s; Gateway token was not revoked\n", gatewayAuthKey(resolvedGateway))
 
 	case "add":
 		var name, aliases, use, gateway, cluster, instance string
