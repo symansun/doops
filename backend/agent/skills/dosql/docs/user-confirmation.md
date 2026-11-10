@@ -62,8 +62,8 @@ test fixture, not a general change planner, confirmation service or executor.
 ## Execution Gate
 
 There is no signed-approval artifact. A change is admitted by the Gateway:
-the caller needs `exec` on the selected target and the target must carry a
-database credential binding. The change then runs through
+the caller needs the grant on the selected target (one Agent = one
+authorization unit) and the target must carry a database credential binding. The change then runs through
 `doops sql --mode apply --sql/--file`, which submits the statements verbatim,
 runs rollback-capable batches with the optional read-only `--verify` in one
 transaction, and records a version in the per-database hash-chained journal

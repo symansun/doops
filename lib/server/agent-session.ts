@@ -5,6 +5,7 @@ import {
   CommandReceiptSchema, CommandReceiptState, MessageRole, SessionSnapshotSchema,
   SessionStatus, TimelineItemStatus, AgentEventSchema, type CommandEnvelope, type CommandReceipt,
 } from "@agent-cloud/agent-ui/protocol"
+import { classifyAgentAdmission } from "../agent-error"
 import { deploymentRequest, type DeploymentInput } from "../deployment"
 import { consumeAgentAttachment } from "./agent-attachments"
 import { AgentGatewayError, agentGatewayCall, type AgentGatewayContext } from "./agent-gateway-rpc"
@@ -23,6 +24,13 @@ const sessions = new Map<string, HostedSession>()
 // Gateway admission answers (tunnel_hub.go handleGatewayToolCall) given only after the token and target grant pass.
 const gatewayBusy = /^(?:target busy|target queue (?:full|timeout)|session has an active operation)/
 
+// Only a real busy answer proves the hosted operation is still running. A refused admission
+// (doagent_prompt_queued and friends) creates no turn, so the page must never reattach to it as if
+// it were an active operation.
+function gatewayBusyAnswer(message: string): boolean {
+  return gatewayBusy.test(message) && classifyAgentAdmission(message).kind === "other"
+}
+
 export async function authorizedAgentSession(context: AgentGatewayContext, signal: AbortSignal): Promise<HostedSession> {
   const key = createHash("sha256").update(JSON.stringify([context.gateway, context.token, context.cluster, context.instance, context.sessionId])).digest("hex")
   let raw: string
@@ -32,7 +40,7 @@ export async function authorizedAgentSession(context: AgentGatewayContext, signa
     // running command counts: once it ends, a busy answer comes from other work on the session (a write, a push)
     // and the cached snapshot would skip the protocol and model checks below.
     const hosted = sessions.get(key)
-    if (hosted?.active && error instanceof AgentGatewayError && gatewayBusy.test(error.message)) {
+    if (hosted?.active && error instanceof AgentGatewayError && gatewayBusyAnswer(error.message)) {
       hosted.touchedAt = Date.now()
       return hosted
     }
@@ -191,7 +199,12 @@ async function runOperation(hosted: HostedSession, context: AgentGatewayContext,
     terminalEvents = projection.finishMessage(TimelineItemStatus.COMPLETED)
   } catch (error) {
     failure = error instanceof Error ? error.message : "智能体执行失败"
-    uncertain = !(error instanceof AgentGatewayError) || error.outcome === "unknown"
+    // A queued admission provably created no turn, so it is not an active/uncertain operation and
+    // may be retried in a new session. An unknown outcome or an unconfirmed queue cleanup may still
+    // have run, so those keep the replay guard and the apply's doops_apply_outcome_unknown code.
+    const admission = classifyAgentAdmission(failure)
+    uncertain = admission.needsMutationRecheck ||
+      (admission.kind === "other" && (!(error instanceof AgentGatewayError) || error.outcome === "unknown"))
     canceled = error instanceof AgentGatewayError && error.canceled
     try { await updates } catch (updateError) { failure = updateError instanceof Error ? updateError.message : "ACP 事件无效" }
     terminalEvents = projection.finishMessage(canceled ? TimelineItemStatus.CANCELLED : TimelineItemStatus.FAILED)

@@ -20,7 +20,7 @@ health-check status.
 ## Domain Assignment
 
 `domain-set` records trusted base-domain metadata, for example
-`aihub.org.cn -> 114.55.61.32`. A deploy may use either an explicit `--domain`
+`example.com -> <agent-host-ip>`. A deploy may use either an explicit `--domain`
 or a registered `--domain-base`. With `--domain-base`, DoWeb derives
 `<site_id>.<base_domain>`, checks existing site state for conflicts, and fails
 before writing release files if the domain is already owned by another site.

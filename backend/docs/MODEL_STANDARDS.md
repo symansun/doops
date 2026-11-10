@@ -89,17 +89,21 @@ Ordinary workload deployments always use
 `doops -session <session> ask --target <target> --apply` and do not require a
 local kubeconfig.
 
-## Standard Endpoint
+## Model Selection
 
-```text
-https://api.minimaxi.com/anthropic
+This repository ships **no default provider, endpoint or model**. The model is
+chosen per target in the Gateway and delivered as a `modelProvider` credential
+(see [CREDENTIAL_RESOURCES.md](CREDENTIAL_RESOURCES.md#model-provider)); `doops ask`
+runs with whatever that binding delivers.
+
+Skills, images and Chart values stay model-agnostic: never hard-code a vendor,
+endpoint, model ID, API-key shape or "use model X" instruction in a skill, a
+document or a deployment value. Configure or rotate the model through the
+`modelProvider` lifecycle; inspect what a target currently has:
+
+```bash
+doops -session <session> credential list --target <target>
 ```
-
-## Standard Model
-
-| Task Type | Model ID |
-|-----------|----------|
-| Default / Coding / Summary | `minimax/MiniMax-M3` |
 
 ## Troubleshooting
 

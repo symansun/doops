@@ -1,6 +1,6 @@
 import { gatewayAuthCode } from "./gateway-auth.ts"
 import type { Target } from "./gateway"
-import { AGENT_MODEL_MISSING_HINT } from "./agent-error.ts"
+import { AGENT_MODEL_MISSING_HINT, classifyAgentAdmission } from "./agent-error.ts"
 
 export interface DeploymentInput {
   services: string
@@ -347,7 +347,21 @@ export function deploymentOutcome(state: { status: string; error: string | null 
   if (state.status !== "failed") return outcome("idle", "填写并确认发布信息后，执行过程显示在这里")
   const code = errorCode(state.error)
   const message = agentErrorText(state.error)
-  if (code === "doops_apply_outcome_unknown" || /execution_outcome_unknown|结果未确认|终态未确认/.test(message)) {
+  const admission = classifyAgentAdmission(state.error, code)
+  // A refused admission is not a release result: it says whether anything could have run at all.
+  if (admission.kind === "queued") {
+    return outcome("failed", "目标容量忙，本次发布没有执行",
+      "目标当前没有空闲的执行容量，本次发布没有开始，也不需要核对 Helm 或 Deployment。可以点「新发布」换一个 session 重试，或等容量释放后重新提交。")
+  }
+  if (admission.kind === "queue_cleanup_unknown") {
+    return outcome("unknown", "发布结果未确认",
+      "Gateway 无法确认排队请求已从队列移除，后台可能仍会执行。请先在「审计」核对队列和本次操作，再到「Kubernetes」核对 release 状态；控制台不会自动重试。")
+  }
+  if (admission.kind === "no_prompt") {
+    return outcome("failed", "发布任务内容为空", "Agent 没有收到任何任务内容，本次发布没有执行。请补全发布信息后重新提交。")
+  }
+  // Other categories (including doagent_prompt_rejected) keep their existing failure wording below.
+  if (admission.needsMutationRecheck || /结果未确认|终态未确认/.test(message)) {
     return outcome("unknown", "发布结果未确认",
       "Agent 返回终态前连接中断，目标可能已经变更。请在「Kubernetes」核对 release 的 helm-history 和工作负载状态，或在「审计」查看本次操作。控制台不会自动重试。")
   }
@@ -413,6 +427,13 @@ export function deploymentOutcome(state: { status: string; error: string | null 
 export function deploymentSubmitError(raw: string): string {
   const code = errorCode(raw)
   const message = agentErrorText(raw)
+  const admission = classifyAgentAdmission(raw, code)
+  if (admission.kind === "queued") return "目标容量忙，本次发布没有执行。请点「新发布」换一个 session 重试，或等容量释放后再提交。"
+  if (admission.kind === "queue_cleanup_unknown") return "排队请求的清理结果未确认，后台可能仍会执行。请在「审计」核对队列与本次操作，并核对 release 状态后再决定。"
+  if (admission.kind === "no_prompt") return "发布任务内容为空，本次没有提交。请补全发布信息后再提交。"
+  // An unknown outcome may already have changed the target; it is never a safe retry. A rejected
+  // admission keeps its existing failure wording below.
+  if (admission.needsMutationRecheck) return "提交请求没有收到确认，发布可能已经开始。请查看执行过程或「审计」，先核对 Helm/Deployment 后再决定是否重新提交。"
   if (/运行中的任务/.test(message)) return "上一次发布还在执行，本次没有提交。请等它结束后再提交。"
   if (/禁止重放|不能复用此会话|结果未确认/.test(message)) return "上一次发布结果未确认，本次没有提交。请先在「Kubernetes」核对 release 状态，再点「新发布」。"
   if (/command_position_mismatch|cursor_/.test(message)) return "执行过程刚刚更新，本次没有提交。请核对后重新勾选授权再提交。"

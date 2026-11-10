@@ -57,7 +57,7 @@ nsenter -t 1 -m -u -i -n -- sh -c '
    `Read` 限制在 session 工作区，不能用于读取全局 Skill 或 `/app/self-docs`。
    Web AI 助手返回原始 `bash` 代码块；“在此执行”预填命令，提交后由 Web
    绑定当前 target/session 走同一条 Gateway exec。不要把 CLI 命令放进 Web 的代码块，
-   它会在 Agent 内执行。ask 自身不获得 Bash 工具，也不会自动执行回复里的代码。
+   它会在 Agent 内执行。apply 会话不获得 Bash 工具；只读 ask 会话包含 Bash，可直接执行探测脚本，但不会自动执行回复里的代码。
    Web 的命令输出和退出状态只显示在执行栏，当前不会自动反馈到模型上下文；
    模型没有收到结果时停在“命令已准备好”，不声称能够轮询或已经进入。
 4. 执行方只有在 exec 返回退出码 0 且身份验证通过时，才报告“已在所选 Agent 所在节点执行”。

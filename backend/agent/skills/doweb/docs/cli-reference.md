@@ -75,8 +75,8 @@ Record trusted base-domain metadata for automatic subdomain assignment.
 
 ```bash
 node /app/skills/doweb/scripts/doweb.mjs domain-set \
-  --domain aihub.org.cn \
-  --host-ip 114.55.61.32 \
+  --domain example.com \
+  --host-ip <agent-host-ip> \
   --provider aliyun
 
 node /app/skills/doweb/scripts/doweb.mjs domain-list
@@ -108,9 +108,9 @@ Static frontend:
 ```bash
 node /app/skills/doweb/scripts/doweb.mjs deploy \
   --site-id vibe-demo \
-  --domain-base aihub.org.cn \
+  --domain-base example.com \
   --dist dist \
-  --health-url http://vibe-demo.aihub.org.cn/
+  --health-url http://vibe-demo.example.com/
 ```
 
 Root reverse proxy:
@@ -118,10 +118,10 @@ Root reverse proxy:
 ```bash
 node /app/skills/doweb/scripts/doweb.mjs deploy \
   --site-id proxy-106 \
-  --domain proxy-106.aihub.org.cn \
+  --domain proxy-106.example.com \
   --dist dist \
-  --proxy /=http://106.54.197.139/ \
-  --health-url http://proxy-106.aihub.org.cn/
+  --proxy /=http://<gateway-ip>/ \
+  --health-url http://proxy-106.example.com/
 ```
 
 Load-balanced proxy:

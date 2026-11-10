@@ -1,4 +1,5 @@
 import { gatewayAuthMessage } from "./gateway-auth.ts"
+import { classifyAgentAdmission } from "./agent-error.ts"
 // 镜像构建、复制与 Registry 同步的表单到 doops_shell 参数映射。
 // 命令沿用 CLI backend/cli/cli/doops/image.go、registry_sync.go 的工具和参数，另外：
 // - 每个失败点打印一行 doops_image_error=<类别> 标记并保留原退出码，界面据此给出原因；
@@ -569,7 +570,7 @@ export function explainImageFailure(
 ): ImageFailure {
   const raw = message.trim()
   const where = `${opts.target.cluster}/${opts.target.instance}`
-  if (raw.includes("execution_outcome_unknown")) {
+  if (classifyAgentAdmission(raw).kind === "unknown") {
     return { kind: "unknown", text: `远端终态未确认：请先核对目标路径或 Registry 的实际状态，不要直接重新执行（${raw}）` }
   }
   if (raw.includes("请求派发前已停止") || raw.includes("before dispatch")) {

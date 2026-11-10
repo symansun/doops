@@ -76,12 +76,12 @@ Use `domain-set` before automatic publishing:
 
 ```bash
 node /app/skills/doweb/scripts/doweb.mjs domain-set \
-  --domain aihub.org.cn \
-  --host-ip 114.55.61.32 \
+  --domain example.com \
+  --host-ip <agent-host-ip> \
   --provider aliyun
 ```
 
 When a user asks to publish a site without giving a full hostname, doagent should
-pick a stable site id and call deploy with `--domain-base aihub.org.cn`. DoWeb
-then uses `<site_id>.aihub.org.cn`, records the assigned domain in site state,
+pick a stable site id and call deploy with `--domain-base example.com`. DoWeb
+then uses `<site_id>.example.com`, records the assigned domain in site state,
 and rejects conflicts if another site already uses that hostname.

@@ -404,6 +404,8 @@ doops -session diagnose-001 ask \
 
 在具备有效模型配置和适当集群权限后使用。提示词中的“只读”是任务要求，不代替系统权限控制；重要操作仍需审阅结果和真实执行证据。
 
+数据库只读查询使用 `doops -session <s> sql --target <t> --mode query --request '<request>'`；变更计划/执行以及 `--credential`、`--verify` 见[使用指南](backend/docs/DOOPS_USAGE_GUIDE.md)。
+
 ### 同步代码与拉回结果
 
 ```bash
