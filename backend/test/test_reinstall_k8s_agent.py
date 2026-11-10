@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from test_adopt_agent import IMAGE, SETTINGS_CANARY, jm_deployment
+from test_adopt_agent import IMAGE, SETTINGS_CANARY, demo_deployment
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "reinstall-k8s-agent.py"
@@ -35,12 +35,12 @@ def stuck_pod(name):
 
 
 class FakeCluster:
-    """kubectl/helm boundary for the gw-jm shape: a broken Agent plus an adoption leftover."""
+    """kubectl/helm boundary for the gw-demo shape: a broken Agent plus an adoption leftover."""
 
     def __init__(self, deployment="live", releases=(), configmaps=None, serviceaccounts=("doops-agent",),
                  pods=None, fail=None):
         self.objects = {
-            "deployment": {"doops-agent": jm_deployment()} if deployment == "live" else {},
+            "deployment": {"doops-agent": demo_deployment()} if deployment == "live" else {},
             "configmap": {"doops-agent-settings": {"data": {"settings.json": SETTINGS_CANARY}}},
             "serviceaccount": {name: {} for name in serviceaccounts},
             "secret": {},
@@ -100,7 +100,7 @@ def reinstall(module, cluster, **kwargs):
     module.A.run = cluster
     module.resolve_image = lambda image: IMAGE
     params = dict(namespace="doops-system", workload="doops-agent", release="doops-agent",
-                  cluster="doops-jm", instance="jm-228", image="docker.cnb.cool/l8ai/ai/doops.sh:latest",
+                  cluster="doops-demo", instance="demo-228", image="docker.cnb.cool/l8ai/ai/doops.sh:latest",
                   checker=lambda *a, **k: (RUNTIME_DIGEST, "release=v1.3.78 commit=" + "e" * 40),
                   deleter=lambda *a, **k: cluster.calls.append(["deleter"]),
                   verifier=lambda *a, **k: "new-pod-uid")
@@ -167,10 +167,10 @@ def test_plan_lists_leftovers_without_mutating(module):
 
 @pytest.mark.parametrize("configmaps,want", [
     ({}, "deployment/doops-agent"),
-    ({"doops-adopt-backup-doops-agent": {"data": {"deployment.json": json.dumps(jm_deployment())}}},
+    ({"doops-adopt-backup-doops-agent": {"data": {"deployment.json": json.dumps(demo_deployment())}}},
      "configmap/doops-adopt-backup-doops-agent"),
     ({"doops-adopt-backup-doops-agent": {"data": {"deployment.json": "{}"}},
-      "doops-reinstall-backup-doops-agent": {"data": {"source.json": json.dumps(jm_deployment())}}},
+      "doops-reinstall-backup-doops-agent": {"data": {"source.json": json.dumps(demo_deployment())}}},
      "configmap/doops-reinstall-backup-doops-agent"),
 ])
 def test_source_prefers_the_last_known_good_backup(module, configmaps, want):
@@ -179,7 +179,7 @@ def test_source_prefers_the_last_known_good_backup(module, configmaps, want):
 
 
 def test_backup_rebuilds_a_deleted_deployment(module):
-    backup = {"doops-adopt-backup-doops-agent": {"data": {"deployment.json": json.dumps(jm_deployment())}}}
+    backup = {"doops-adopt-backup-doops-agent": {"data": {"deployment.json": json.dumps(demo_deployment())}}}
     plan = reinstall(module, FakeCluster(deployment=None, configmaps=backup), plan_only=True)
     assert plan["delete"]["deployment"] == ""
 
@@ -333,7 +333,7 @@ def pullcheck_cluster(phases):
 def test_pull_check_reports_the_runtime_digest_or_the_pull_error(phases, want, error):
     module = load()
     module.A.run, calls = pullcheck_cluster(phases)
-    pod_spec = {"nodeSelector": {"kubernetes.io/hostname": "jm-228"}, "imagePullSecrets": [{"name": "cnb"}]}
+    pod_spec = {"nodeSelector": {"kubernetes.io/hostname": "demo-228"}, "imagePullSecrets": [{"name": "cnb"}]}
     if error:
         with pytest.raises(module.ReinstallError, match=error):
             module.pull_check("doops-system", IMAGE, pod_spec, clock=lambda: 0, sleep=lambda _s: None)

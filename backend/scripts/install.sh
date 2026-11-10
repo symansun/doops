@@ -14,12 +14,12 @@ Doops CLI / Skill 安装脚本（不部署或升级 Agent）
   bash scripts/install.sh \
     --version v1.2.3 \
     --project /path/to/project \
-    --target-name jm \
+    --target-name demo \
     --target-gateway https://gateway.example.com \
-    --target-cluster doops-jm \
-    --target-instance jm-228 \
+    --target-cluster doops-demo \
+    --target-instance demo-228 \
     --target-aliases jy,oilan \
-    --use 'JM via gateway'
+    --use 'DEMO via gateway'
 
 安装结果:
   CLI:   ~/.local/bin/doops

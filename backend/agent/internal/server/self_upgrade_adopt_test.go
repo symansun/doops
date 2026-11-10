@@ -14,7 +14,7 @@ func adoptTestProcess(t *testing.T, releases string, applied *string) upgradePro
 	t.Helper()
 	pod := `{"spec":{"nodeName":"node-a","serviceAccountName":"doops-agent","containers":[{"name":"doops-agent","image":"registry.example/doops:old","volumeMounts":[]}],"volumes":[]}}`
 	return upgradeProcess{
-		namespace: "doops-system", hostname: "doops-agent-abc", cluster: "doops-jm", instance: "jm-228",
+		namespace: "doops-system", hostname: "doops-agent-abc", cluster: "doops-demo", instance: "demo-228",
 		run: func(ctx context.Context, stdin, name string, args ...string) ([]byte, error) {
 			joined := name + " " + strings.Join(args, " ")
 			switch {
@@ -63,8 +63,8 @@ func TestStartSelfUpgradeAdoptsWhenNoHelmReleaseExists(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !strings.Contains(applied, "/app/adopt_agent.py run") ||
-				!strings.Contains(applied, `"value":"doops-jm"`) ||
-				!strings.Contains(applied, `"value":"jm-228"`) ||
+				!strings.Contains(applied, `"value":"doops-demo"`) ||
+				!strings.Contains(applied, `"value":"demo-228"`) ||
 				!strings.Contains(applied, `"serviceAccountName":"doops-agent"`) ||
 				!strings.Contains(applied, "DOOPS_UPGRADE_KUBECONFIG_SOURCE") {
 				t.Fatalf("adoption Job is incomplete: %s", applied)

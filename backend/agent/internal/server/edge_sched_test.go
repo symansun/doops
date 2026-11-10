@@ -20,7 +20,7 @@ func TestEdgeSchedulerControlFramesJumpTheDataQueue(t *testing.T) {
 			t.Fatalf("enqueue DATA: ok=%v err=%v", ok, err)
 		}
 	}
-	open := edgeFrame{Type: edgeFrameOpen, ConnID: 9, Payload: mustEncodeEdgeOpen(t, 1, "amp.jm.example.com")}
+	open := edgeFrame{Type: edgeFrameOpen, ConnID: 9, Payload: mustEncodeEdgeOpen(t, 1, "amp.demo.example.com")}
 	if err := sched.EnqueueControl(open); err != nil {
 		t.Fatalf("enqueue OPEN: %v", err)
 	}

@@ -6,7 +6,7 @@
 且互不共享连接。它解决一类现有能力覆盖不到的问题：**内网站点没有公网入口，但需要让
 普通浏览器用户直接访问**。
 
-首个落地对象是 JM 环境，其 Ingress 只有校内地址 `192.168.150.228:443`，
+首个落地对象是 DEMO 环境，其 Ingress 只有校内地址 `192.168.150.228:443`，
 学校侧不提供 DNAT。
 
 ## 一句话原理
@@ -63,13 +63,13 @@
 
 ```mermaid
 flowchart LR
-    B["浏览器 / API 客户端\n多个 *.jm.example.com"]
+    B["浏览器 / API 客户端\n多个 *.demo.example.com"]
     NG["nginx stream :443\nssl_preread + proxy_protocol"]
     GWE["doops-gateway\nedge listener :42443"]
     ER["EdgeRegistry\n+ edge_routes 原子快照"]
     WS["Edge WS x N\nwss://doops.l8ai.cn/v1/edge/connect"]
-    AG["doops-agent (jm/gw-jm)"]
-    ING["JM Ingress\n192.168.150.228:443"]
+    AG["doops-agent (demo/gw-demo)"]
+    ING["DEMO Ingress\n192.168.150.228:443"]
 
     B -->|"TCP + TLS(SNI)"| NG
     NG -->|"default 全部下沉"| GWE
@@ -80,7 +80,7 @@ flowchart LR
 ```
 
 数据面全程不解 TLS：Gateway 只读 ClientHello 的 `server_name` 扩展做路由，
-其余字节原样搬运。证书由 JM 集群内的 `example-org-wildcard-tls` 提供。
+其余字节原样搬运。证书由 DEMO 集群内的 `example-org-wildcard-tls` 提供。
 
 ### 3.1 passthrough 对三类流量为什么是最优选择
 
@@ -334,13 +334,13 @@ Edge 隧道断开时**不做会话保持**，理由是 passthrough 下网关不�
 2. Agent 以指数退避重连（1s 起、每次翻倍、30s 上限，无 jitter），与 `ops` 隧道的退避状态机独立。
 3. 重连后 `conn_id` 从 0 重新分配，Gateway 下发最新 `ROUTES` 快照。
 4. 浏览器自行重连。HTTP 接口重试即恢复；WebSocket 业务需自身有重连逻辑
-   （noVNC / webide 均有），这一点要写进 JM 的用户告知。
+   （noVNC / webide 均有），这一点要写进 DEMO 的用户告知。
 
 ### 4.11 明确不支持 HTTP/3
 
 Edge 只搬 TCP。若源站 Ingress 通告 `Alt-Svc: h3=...`，浏览器会尝试 UDP 443
 并在失败后回落 TCP，表现为首次访问多几百毫秒延迟。
-因此 JM Ingress 必须确认未启用 HTTP/3、未发送 `Alt-Svc`。
+因此 DEMO Ingress 必须确认未启用 HTTP/3、未发送 `Alt-Svc`。
 
 ## 5. Agent 侧设计
 
@@ -399,7 +399,7 @@ Gateway 通过 `ROUTES` 帧下发 `backend`，但 **agent 不信任它**：
 并记本地审计。这样即使 Gateway 被攻破、`edge_routes` 被改成 `10.0.0.1:22`，
 agent 也不会变成内网跳板。
 
-JM 的参数是 `-edge-backend-allow 192.168.150.228:443`，只此一项。
+DEMO 的参数是 `-edge-backend-allow 192.168.150.228:443`，只此一项。
 P2 的"很多域名站点"全部指向同一个 Ingress，所以白名单仍然只有一条——
 新增域名不需要改 agent 参数，这是 G3 的一部分。
 
@@ -433,7 +433,7 @@ Gateway 侧对每个 `cluster/instance` 固定保留最多 8 条 session（`defa
 ```sql
 CREATE TABLE IF NOT EXISTS edge_routes (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    hostname      TEXT NOT NULL,           -- amp.jm.example.com 或 *.jm.example.com
+    hostname      TEXT NOT NULL,           -- amp.demo.example.com 或 *.demo.example.com
     cluster       TEXT NOT NULL,
     instance      TEXT NOT NULL,
     backend       TEXT NOT NULL,           -- 192.168.150.228:443
@@ -477,19 +477,19 @@ CREATE TABLE IF NOT EXISTS edge_agent_status (
 ```go
 type edgeRouteSnapshot struct {
     version  int64
-    exact    map[string]EdgeRoute   // amp.jm.example.com
-    wildcard map[string]EdgeRoute   // key 为去掉 "*." 的父域：jm.example.com
+    exact    map[string]EdgeRoute   // amp.demo.example.com
+    wildcard map[string]EdgeRoute   // key 为去掉 "*." 的父域：demo.example.com
 }
 ```
 
 匹配顺序：**精确 → 单级通配 → 未命中拒绝**。
-单级通配语义与 TLS 通配证书一致：`*.jm.example.com` 匹配 `a.jm.example.com`，
-不匹配 `a.b.jm.example.com`。
+单级通配语义与 TLS 通配证书一致：`*.demo.example.com` 匹配 `a.demo.example.com`，
+不匹配 `a.b.demo.example.com`。
 
 这个优先级顺序顺带解决了通配路由的暴露面问题（§7.3），不需要额外的 deny 表：
 **一条 `enabled=0` 的精确路由就是一条 deny 规则**，因为它优先于通配命中，
-命中后因 `enabled=0` 被拒。所以配了 `*.jm.example.com` 之后，
-给 `grafana.jm.example.com` 加一条禁用的精确路由即可把它挡在公网之外。
+命中后因 `enabled=0` 被拒。所以配了 `*.demo.example.com` 之后，
+给 `grafana.demo.example.com` 加一条禁用的精确路由即可把它挡在公网之外。
 
 SNI 提取自己实现，不引 `crypto/tls`：只解析 TLS record header 与 ClientHello 的
 `server_name` 扩展，最多读 `DOOPS_EDGE_HELLO_BYTES`（默认 4 KiB）。
@@ -497,7 +497,7 @@ SNI 提取自己实现，不引 `crypto/tls`：只解析 TLS record header 与 C
 
 ### 6.4 Edge listener
 
-`-edge-listen`（默认空即关闭）指定监听地址；JM 计划部署为 `127.0.0.1:42443`（阶段 5，尚未部署）。
+`-edge-listen`（默认空即关闭）指定监听地址；DEMO 计划部署为 `127.0.0.1:42443`（阶段 5，尚未部署）。
 接受连接后：
 
 1. 解析 PROXY protocol 头，得到真实客户端 IP（§3.3）。
@@ -537,7 +537,7 @@ ActionEdgeView  GatewayAction = "edge:view"
 
 ### 7.1 Edge enrollment token（不能沿用 ops 的开放注册）
 
-`ops` 隧道目前允许 agent 自注册。Edge 不能照抄：谁注册成 `jm/gw-jm`，
+`ops` 隧道目前允许 agent 自注册。Edge 不能照抄：谁注册成 `demo/gw-demo`，
 谁就接走该 agent 名下**所有域名**的流量，自带证书即可做中间人。
 P2 的"很多域名站点"把这个后果放大到整站。
 
@@ -557,7 +557,7 @@ CREATE TABLE IF NOT EXISTS edge_enrollments (
 
 `/v1/edge/connect` 校验 `Authorization: Bearer <token>`，token 绑定的
 `cluster/instance` 与请求参数不一致直接 401。签发计划走
-`doops edge enroll create --cluster jm --instance gw-jm`，明文只返回一次；
+`doops edge enroll create --cluster demo --instance gw-demo`，明文只返回一次；
 **当前只有 store 层 `CreateEdgeEnrollment` / `RevokeEdgeEnrollment`，没有 API/CLI 入口（阶段 4），
 生产上还无法签发令牌。**
 
@@ -573,24 +573,24 @@ CREATE TABLE IF NOT EXISTS edge_enrollments (
 
 ### 7.3 通配路由的暴露面（P2 必须处理）
 
-P2 要求支持大量域名，所以通配路由是必选。代价是 `*.jm.example.com` 一条路由会把
-JM Ingress 上**所有** host 暴露到公网，包括 Grafana、Harbor、MinIO 控制台。
+P2 要求支持大量域名，所以通配路由是必选。代价是 `*.demo.example.com` 一条路由会把
+DEMO Ingress 上**所有** host 暴露到公网，包括 Grafana、Harbor、MinIO 控制台。
 Edge 不做 L7 过滤，只能在 SNI 层面处理。
 
 处理方式（利用 §6.3 的优先级，不需要新表）：
 
 ```bash
-doops edge route add --hostname '*.jm.example.com' --cluster jm --instance gw-jm \
+doops edge route add --hostname '*.demo.example.com' --cluster demo --instance gw-demo \
     --backend 192.168.150.228:443
 # 逐个把运维类 host 加为禁用的精确路由 = deny
-doops edge route add --hostname grafana.jm.example.com --disabled --note "运维台不出公网"
-doops edge route add --hostname harbor.jm.example.com  --disabled --note "运维台不出公网"
-doops edge route add --hostname minio.jm.example.com    --disabled --note "运维台不出公网"
+doops edge route add --hostname grafana.demo.example.com --disabled --note "运维台不出公网"
+doops edge route add --hostname harbor.demo.example.com  --disabled --note "运维台不出公网"
+doops edge route add --hostname minio.demo.example.com    --disabled --note "运维台不出公网"
 ```
 
 deny 清单必须在开通配路由**之前**落库，否则中间存在暴露窗口。
 上线前用 `doops edge status --dry-run-host <host>` 逐个核对判定结果。
-JM 的完整 host 清单需要从集群 Ingress 实际枚举，作为上线前置检查项（§12）。
+DEMO 的完整 host 清单需要从集群 Ingress 实际枚举，作为上线前置检查项（§12）。
 
 ### 7.4 审计与隐私
 
@@ -624,21 +624,21 @@ SQLite 单写连接下 per-conn 插入会直接成为吞吐瓶颈。
 ```bash
 # 路由
 doops edge route list
-doops edge route add --hostname amp.jm.example.com \
-    --cluster jm --instance gw-jm --backend 192.168.150.228:443 \
-    --mode tls-passthrough --note "JM AMP 公网入口"
-doops edge route add --hostname grafana.jm.example.com --disabled --note "deny"
-doops edge route disable --hostname amp.jm.example.com [--drain]
-doops edge route rm --hostname amp.jm.example.com
+doops edge route add --hostname amp.demo.example.com \
+    --cluster demo --instance gw-demo --backend 192.168.150.228:443 \
+    --mode tls-passthrough --note "DEMO AMP 公网入口"
+doops edge route add --hostname grafana.demo.example.com --disabled --note "deny"
+doops edge route disable --hostname amp.demo.example.com [--drain]
+doops edge route rm --hostname amp.demo.example.com
 
 # 注册令牌
-doops edge enroll create --cluster jm --instance gw-jm
+doops edge enroll create --cluster demo --instance gw-demo
 doops edge enroll revoke --id <id>
 
 # 观测与核对
 doops edge status
-doops edge status --hostname amp.jm.example.com
-doops edge status --dry-run-host grafana.jm.example.com   # 只报路由判定，不建连
+doops edge status --hostname amp.demo.example.com
+doops edge status --dry-run-host grafana.demo.example.com   # 只报路由判定，不建连
 ```
 
 `route add` 成功即生效，无需任何重启——这是本模块对运维体验的核心承诺。
@@ -702,36 +702,36 @@ doops edge status --dry-run-host grafana.jm.example.com   # 只报路由判定�
 | 2 | `edge_conn` 状态机 + `edge_sched` 调度与预算 | `edge_sched_test` 公平性与 `edge_conn_test` 半关闭全绿 |
 | 3 | `EdgeRegistry` + `/v1/edge/connect` + `runEdgeTunnels` + enrollment token | 本地 e2e：一条精确路由跑通 HTTPS、WebSocket、1 GiB 双向 |
 | 4 | Admin API + CLI + 热生效 + 配额 + 聚合统计 + `-edge-conns`（部分完成：store CRUD、配额、`-edge-conns` 已落地；Admin API/CLI、热生效、聚合统计未上线） | 运行中 `route add` 立即生效；`route rm` 不断在途连接 |
-| 5 | nginx `default` 下沉与 `proxy_protocol`、生产发布、JM 路由与 deny 清单、DNS 切换 | JM 站点公网可用，`doops exec` 不受影响 |
+| 5 | nginx `default` 下沉与 `proxy_protocol`、生产发布、DEMO 路由与 deny 清单、DNS 切换 | DEMO 站点公网可用，`doops exec` 不受影响 |
 | 6（可选） | `http-terminate` 模式 | 无可信证书的源站也能接入 |
 
 阶段 1–4 全部在本地完成，不碰生产。阶段 5 才需要授权的 Gateway 发布。
 
-## 12. JM 落地清单
+## 12. DEMO 落地清单
 
 上线前置检查：
 
-1. 枚举 JM 集群所有 Ingress host，划分"对外"与"仅运维"两类。
+1. 枚举 DEMO 集群所有 Ingress host，划分"对外"与"仅运维"两类。
 2. `zhiyong-ingress` 的 TLS secret 名改为 `example-org-wildcard-tls`，
    否则 passthrough 过来的握手会拿到错误证书。这一项独立于 Edge，需并行修复。
-3. 确认 JM Ingress 未启用 HTTP/3、未发送 `Alt-Svc`（§4.11）。
+3. 确认 DEMO Ingress 未启用 HTTP/3、未发送 `Alt-Svc`（§4.11）。
 
 Gateway 侧（deny 清单先落库，再开通配）：
 
 ```bash
-doops edge enroll create --cluster jm --instance gw-jm      # 明文 token 只显示一次
+doops edge enroll create --cluster demo --instance gw-demo      # 明文 token 只显示一次
 for h in grafana harbor minio prometheus; do
-  doops edge route add --hostname "$h.jm.example.com" --disabled --note "仅运维"
+  doops edge route add --hostname "$h.demo.example.com" --disabled --note "仅运维"
 done
-doops edge route add --hostname jm.example.com --cluster jm --instance gw-jm \
+doops edge route add --hostname demo.example.com --cluster demo --instance gw-demo \
     --backend 192.168.150.228:443
-doops edge route add --hostname '*.jm.example.com' --cluster jm --instance gw-jm \
+doops edge route add --hostname '*.demo.example.com' --cluster demo --instance gw-demo \
     --backend 192.168.150.228:443
-doops edge status --dry-run-host grafana.jm.example.com      # 期望 denied
-doops edge status --dry-run-host amp.jm.example.com          # 期望命中通配
+doops edge status --dry-run-host grafana.demo.example.com      # 期望 denied
+doops edge status --dry-run-host amp.demo.example.com          # 期望命中通配
 ```
 
-Agent 侧（JM 内网，出网只需 443 到 `doops.l8ai.cn`）：
+Agent 侧（DEMO 内网，出网只需 443 到 `doops.l8ai.cn`）：
 
 ```
 -edge -edge-enroll-token <token> \
@@ -739,8 +739,8 @@ Agent 侧（JM 内网，出网只需 443 到 `doops.l8ai.cn`）：
 -edge-conns 2
 ```
 
-DNS（BIND）：把 `jm.example.com` 与
-`*.jm.example.com` 从 `192.168.150.228` 改为 Edge 的公网 IP。
+DNS（BIND）：把 `demo.example.com` 与
+`*.demo.example.com` 从 `192.168.150.228` 改为 Edge 的公网 IP。
 因为 §7.3 的 deny 清单已在网关侧生效，通配 DNS 可以整体切换。
 
 ## 13. 配置项汇总

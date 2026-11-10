@@ -5,9 +5,10 @@ import (
 	"time"
 )
 
-// These windows are the instance-list contract. The console uses the same
-// numbers in lib/instance-activity.ts; DOOPS_GATEWAY_TUNNEL.md is the
-// authoritative description.
+// These windows are the instance-list contract and are enforced by one
+// cleanup path only (PruneOfflineAgentStatus, started by
+// StartOfflineInstanceReaper). The console mirrors the active window in
+// lib/admin-views.ts; DOOPS_GATEWAY_TUNNEL.md is the authoritative description.
 const (
 	// ActiveInstanceWindow keeps an offline instance in the default list.
 	// Exactly this age is still active; anything older is history.

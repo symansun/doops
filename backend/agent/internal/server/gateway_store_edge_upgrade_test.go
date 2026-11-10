@@ -28,7 +28,7 @@ func TestOpenGatewayStoreFreshInstallCreatesEdgeSchema(t *testing.T) {
 			t.Fatalf("fresh install missing table %s", table)
 		}
 	}
-	if _, err := store.CreateEdgeEnrollment("jm", "gw-jm"); err != nil {
+	if _, err := store.CreateEdgeEnrollment("demo", "gw-demo"); err != nil {
 		t.Fatalf("fresh install must accept an edge enrollment: %v", err)
 	}
 }
@@ -53,8 +53,8 @@ func TestOpenGatewayStoreUpgradesPreEdgeDatabaseWithoutBreakingOpsTokens(t *test
 		t.Fatalf("create token: %v", err)
 	}
 	if err := store.GrantUser(user.ID, ScopeGrant{
-		Cluster:  "jm",
-		Instance: "gw-jm",
+		Cluster:  "demo",
+		Instance: "gw-demo",
 	}); err != nil {
 		t.Fatalf("grant user: %v", err)
 	}
@@ -93,16 +93,16 @@ func TestOpenGatewayStoreUpgradesPreEdgeDatabaseWithoutBreakingOpsTokens(t *test
 	if auth.UserID != user.ID {
 		t.Fatalf("upgraded token user = %s, want %s", auth.UserID, user.ID)
 	}
-	if !upgraded.UserCanUseTarget(auth.UserID, "jm", "gw-jm") {
+	if !upgraded.UserCanUseTarget(auth.UserID, "demo", "gw-demo") {
 		t.Fatal("upgrade must keep the existing target grant")
 	}
-	if _, err := upgraded.CreateEdgeEnrollment("jm", "gw-jm"); err != nil {
+	if _, err := upgraded.CreateEdgeEnrollment("demo", "gw-demo"); err != nil {
 		t.Fatalf("upgrade must create edge enrollments: %v", err)
 	}
 	if _, err := upgraded.CreateEdgeRoute(CreateEdgeRouteRequest{
-		Hostname: "amp.jm.example.com",
-		Cluster:  "jm",
-		Instance: "gw-jm",
+		Hostname: "amp.demo.example.com",
+		Cluster:  "demo",
+		Instance: "gw-demo",
 		Backend:  "192.168.150.228:443",
 	}); err != nil {
 		t.Fatalf("upgrade must accept an edge route: %v", err)

@@ -93,15 +93,15 @@ func TestBuildGatewayAgentURLDefaultsToSecureScheme(t *testing.T) {
 }
 
 func TestBuildGatewayEdgeURLRewritesAgentPath(t *testing.T) {
-	got, err := buildGatewayEdgeURL("https://gateway.example.com", "jm", "gw-jm")
+	got, err := buildGatewayEdgeURL("https://gateway.example.com", "demo", "gw-demo")
 	if err != nil {
 		t.Fatalf("build edge url: %v", err)
 	}
-	want := "wss://gateway.example.com/v1/edge/connect?cluster=jm&instance=gw-jm"
+	want := "wss://gateway.example.com/v1/edge/connect?cluster=demo&instance=gw-demo"
 	if got != want {
 		t.Fatalf("edge URL mismatch\nwant: %s\n got: %s", want, got)
 	}
-	got, err = buildGatewayEdgeURL("https://gateway.example.com/v1/agent/connect", "jm", "gw-jm")
+	got, err = buildGatewayEdgeURL("https://gateway.example.com/v1/agent/connect", "demo", "gw-demo")
 	if err != nil {
 		t.Fatalf("rewrite agent path: %v", err)
 	}

@@ -8,8 +8,8 @@
 
 Run from backend/ on a host whose kubectl and helm reach the target cluster:
 
-  python3 scripts/reinstall-k8s-agent.py plan --cluster doops-jm --instance jm-228
-  python3 scripts/reinstall-k8s-agent.py run  --cluster doops-jm --instance jm-228
+  python3 scripts/reinstall-k8s-agent.py plan --cluster doops-demo --instance demo-228
+  python3 scripts/reinstall-k8s-agent.py run  --cluster doops-demo --instance demo-228
 
 Nothing is deleted before the image has been pulled and started on the cluster.
 Model settings stay inside the cluster; payloads are never printed or written to disk.
