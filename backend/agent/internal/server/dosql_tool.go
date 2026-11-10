@@ -145,6 +145,9 @@ func handleDoSQLTool(ctx context.Context, raw json.RawMessage) (string, error) {
 	if params.Operation == "discover" {
 		return discoverDatabaseCandidates(ctx)
 	}
+	if params.Operation == "query" {
+		applyDoSQLResolution(&params)
+	}
 	if params.CredentialRef == "" || params.DatabaseName == "" || !validDatabaseName(params.DatabaseName) {
 		return "", errors.New("dosql_request_invalid")
 	}
