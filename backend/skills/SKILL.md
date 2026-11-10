@@ -76,7 +76,7 @@ description: |
 
 | 需求 | 命令 |
 | :--- | :--- |
-| 本地 target / 在线检查 | `doops -session <s> list`（只列本机已配置 target，不会自动补入新上线的 target；合并 Gateway 可见 target 用 `doops -session <s> sync`）；`doops -session <s> targets --target <t>` |
+| 本地 target / 在线检查 | `doops -session <s> list`（已登录时自动补上新上线的 target）；`doops -session <s> targets --target <t>` |
 | 确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'` |
 | 进入 K8s Agent 所在节点 | `doops -session <s> exec --target <t> --cmd 'nsenter -t 1 -m -u -i -n -- hostname'`（须 `hostAccess.enabled=true`；Gateway 按 `exec` 授权并审计） |
 | 长任务 | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` |
@@ -127,7 +127,7 @@ DoSql 必须从 `doops sql` 进入；普通 `ask` 不保证注入 DoSql 工具�
 
 ## 故障入口
 
-- `401` 且 `code=gateway_auth_*`：读取具体分类（`missing`/`invalid`/`expired`/`revoked`/`user_disabled`/`invalid_expiry`/`unavailable`）。
+- `401` 且 `code=gateway_auth_*`：读取具体分类（missing/invalid/expired/revoked/disabled/expiry）。
   `edge_enrollment_auth_failed` 是边缘通道 enrollment token 问题。裸 `401` 不归因于受管凭据。
 - `403`：已认证但权限不足。
 - `credential_*` 错误与 `credential preflight failed`：见 `docs/CREDENTIAL_RESOURCES.md`。
