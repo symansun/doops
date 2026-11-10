@@ -934,62 +934,6 @@ func (s *GatewayStore) ArchiveAgentStatus(cluster, instance, actorID string, at 
 	return agent, nil
 }
 
-// StaleOfflineAgentRetention is how long an offline instance record stays
-// before Gateway deletes it. Grants, tokens, credential bindings and audit
-// history are not part of that record and are left in place.
-const StaleOfflineAgentRetention = 24 * time.Hour
-
-// DeleteStaleOfflineAgents removes offline instance records whose last_seen is
-// at or before now-maxAge. Online records and rows with a missing or unparseable
-// last_seen stay. The delete is conditional on status still being offline, so a
-// reconnect that lands between the scan and the delete is kept.
-func (s *GatewayStore) DeleteStaleOfflineAgents(now time.Time, maxAge time.Duration) (int64, error) {
-	if maxAge <= 0 {
-		return 0, fmt.Errorf("stale offline agent retention must be positive")
-	}
-	cutoff := now.UTC().Add(-maxAge)
-	rows, err := s.db.Query(`SELECT cluster, instance, last_seen FROM agent_status WHERE status = 'offline'`)
-	if err != nil {
-		return 0, err
-	}
-	type staleAgent struct{ cluster, instance string }
-	var stale []staleAgent
-	for rows.Next() {
-		var cluster, instance, lastSeen string
-		if err := rows.Scan(&cluster, &instance, &lastSeen); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		seen, err := parseTime(lastSeen)
-		if lastSeen == "" || err != nil || seen.After(cutoff) {
-			continue
-		}
-		stale = append(stale, staleAgent{cluster, instance})
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return 0, err
-	}
-	if err := rows.Close(); err != nil {
-		return 0, err
-	}
-	var deleted int64
-	for _, agent := range stale {
-		res, err := s.db.Exec(`DELETE FROM agent_status
-			WHERE cluster = ? AND instance = ? AND status = 'offline'`,
-			agent.cluster, agent.instance)
-		if err != nil {
-			return deleted, err
-		}
-		n, err := res.RowsAffected()
-		if err != nil {
-			return deleted, err
-		}
-		deleted += n
-	}
-	return deleted, nil
-}
-
 // UnarchiveAgentStatus clears the archive mark; a record that is not archived
 // is returned unchanged.
 func (s *GatewayStore) UnarchiveAgentStatus(cluster, instance string) (AgentStatus, error) {

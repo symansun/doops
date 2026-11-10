@@ -77,15 +77,6 @@ func serve(args []string) {
 	}
 	defer store.Close()
 
-	retired, err := store.DeleteStaleOfflineAgents(time.Now().UTC(), server.StaleOfflineAgentRetention)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if retired > 0 {
-		log.Printf("[gateway] retired %d offline instance records older than %s", retired, server.StaleOfflineAgentRetention)
-	}
-	go reapStaleOfflineAgents(store)
-
 	hub := server.NewGatewayHub(store, server.GatewayHubOptions{
 		LoginTokenTTL:      *loginTokenTTL,
 		OperationTimeout:   *operationTimeout,
@@ -112,21 +103,6 @@ func serve(args []string) {
 	}
 	if err := http.ListenAndServe(":"+*port, mux); err != nil {
 		log.Fatal(err)
-	}
-}
-
-func reapStaleOfflineAgents(store *server.GatewayStore) {
-	ticker := time.NewTicker(time.Hour)
-	defer ticker.Stop()
-	for range ticker.C {
-		retired, err := store.DeleteStaleOfflineAgents(time.Now().UTC(), server.StaleOfflineAgentRetention)
-		if err != nil {
-			log.Printf("[gateway] stale instance sweep failed: %v", err)
-			continue
-		}
-		if retired > 0 {
-			log.Printf("[gateway] retired %d offline instance records older than %s", retired, server.StaleOfflineAgentRetention)
-		}
 	}
 }
 
