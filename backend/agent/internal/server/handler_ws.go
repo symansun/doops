@@ -1096,6 +1096,20 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 					return
 				}
 				defer cleanup()
+				if strings.EqualFold(strings.TrimSpace(args.Skill), "dosql") &&
+					strings.TrimSpace(args.SQLDatabase) != "" && !doSQLDirectRequested(args) {
+					resolution, hint, resolveErr := resolveDoSQLPromptResolution(ctx, args.CredentialBindings,
+						args.SQLDatabase, readDoSQLSecretData, discoverDatabaseCandidateList)
+					if resolveErr == nil {
+						args.Instruction += "\n\n" + hint
+						if cleanupResolution, writeErr := writeDoSQLResolution(sessionID, resolution); writeErr == nil {
+							defer cleanupResolution()
+						}
+					} else {
+						args.Instruction += "\n\n[DoSQL server-side resolution failed] " +
+							sanitizeSecretText(resolveErr.Error()) + "；不要猜测 credential/asset，直接报告该错误。"
+					}
+				}
 			}
 		}
 		if doSQLDirectRequested(args) || doSQLCopyRequested(args) {
