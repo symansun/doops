@@ -174,10 +174,10 @@ func TestDoSQLPostgresMultiHostPreservesDriverEndpoints(t *testing.T) {
 		})
 	}
 	for _, authority := range []string{
-		"db-a.test:5432,db-b.test", "db-a.test:5433,db-b.test", "[::1]:5432,[::2]:5433",
+		"db-a.test:5432,db-b.test", "db-a.test:5433,db-b.test",
 	} {
-		// net/url (also used by pgx) rejects these authorities. Keep the
-		// existing rejection rather than treating them as supported forms.
+		// A host that omits its port cannot be paired by pgx on any supported
+		// toolchain, so this stays a rejection the Agent must mirror.
 		raw := "postgres://synthetic:synthetic@" + authority + "/app?sslmode=disable"
 		if _, err := pgconn.ParseConfig(raw); err == nil {
 			t.Fatalf("driver now supports %q; extend positive coverage", authority)
@@ -185,6 +185,39 @@ func TestDoSQLPostgresMultiHostPreservesDriverEndpoints(t *testing.T) {
 		if _, err := doSQLConnectionTarget("postgres", "app", map[string]string{"connection_uri": raw}); err == nil {
 			t.Fatalf("accepted an authority the linked driver rejects: %q", authority)
 		}
+	}
+	for _, authority := range []string{"[::1]:5432,[::2]:5433"} {
+		// net/url's bracketed-IPv6 host validation tightened after Go 1.24:
+		// Go 1.24 accepts a bracketed IPv6 multi-host authority and pgx splits it
+		// into the same endpoints, while newer toolchains reject the repeated '['
+		// before pgx can split it. Keep the contract independent of the stdlib
+		// version instead of one toolchain's parser: the Agent accepts exactly the
+		// authority the linked driver accepts and journals that driver's endpoints.
+		t.Run(authority, func(t *testing.T) {
+			raw := "postgres://synthetic:synthetic@" + authority + "/app?sslmode=disable"
+			original, driverErr := pgconn.ParseConfig(raw)
+			target, targetErr := doSQLConnectionTarget("postgres", "app", map[string]string{"connection_uri": raw})
+			if driverErr != nil {
+				if targetErr == nil {
+					t.Fatalf("accepted an authority the linked driver rejects: %q", authority)
+				}
+				return
+			}
+			if targetErr != nil {
+				t.Fatalf("rejected an authority the linked driver accepts: %q: %v", authority, targetErr)
+			}
+			effective, err := pgconn.ParseConfig(target.DSN)
+			if err != nil {
+				t.Fatal("pgx rejected the rewritten multi-host URI")
+			}
+			if !reflect.DeepEqual(endpoints(original), endpoints(effective)) ||
+				strings.Join(endpoints(effective), ",") != target.Address || effective.Database != target.Database {
+				t.Fatalf("driver endpoints changed: original=%v effective=%v journal=%s", endpoints(original), endpoints(effective), target.Address)
+			}
+			if _, err := doSQLVersionJournalPath(target); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

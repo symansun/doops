@@ -104,11 +104,11 @@ func workspaceReadList(root *os.Root, rawDir string) (string, error) {
 		if entry.Type()&os.ModeSymlink != 0 {
 			continue
 		}
-		info, infoErr := entry.Info()
+		relative := filepath.Join(dir, entry.Name())
+		info, infoErr := workspaceReadEntryInfo(root, relative)
 		if infoErr != nil {
 			return "", infoErr
 		}
-		relative := filepath.Join(dir, entry.Name())
 		item := map[string]interface{}{
 			"name": entry.Name(), "path": filepath.ToSlash(relative),
 			"type": map[bool]string{true: "directory", false: "file"}[entry.IsDir()],
@@ -128,6 +128,16 @@ func workspaceReadList(root *os.Root, rawDir string) (string, error) {
 		return result[i]["path"].(string) < result[j]["path"].(string)
 	})
 	return workspaceReadJSON(map[string]interface{}{"entries": result})
+}
+
+// workspaceReadEntryInfo reports metadata for a directory entry read through an
+// os.Root with the same link semantics as fs.DirEntry.Info. DirEntry.Info
+// resolves the entry against the root's name, and Go 1.24 keeps only the
+// relative name when a root is opened with Root.OpenRoot, so Info would lstat a
+// process-relative path instead of the session path. Root.Lstat stays
+// descriptor-relative on every supported Go version.
+func workspaceReadEntryInfo(root *os.Root, path string) (fs.FileInfo, error) {
+	return root.Lstat(path)
 }
 
 func workspaceReadFile(root *os.Root, path string) (string, error) {
@@ -231,7 +241,7 @@ func workspaceReadSearch(root *os.Root, query string) (string, error) {
 		if !entry.Type().IsRegular() {
 			return nil
 		}
-		info, err := entry.Info()
+		info, err := workspaceReadEntryInfo(root, filepath.FromSlash(path))
 		if err != nil {
 			return err
 		}
