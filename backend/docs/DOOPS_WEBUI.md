@@ -74,6 +74,57 @@ Deploy Gateway and Web from matching successful CI artifacts with the canonical
 host scripts. Record the binary source commit, Web digest, health, reconnects and
 rollback artifact. Local fixtures do not establish live Helm or production-user acceptance.
 
+## What's New in the Console
+
+The console answers "what changed in this release" from the repository's
+`CHANGELOG.md`, not from a Gateway feed. `Dockerfile.web` copies that file into
+the Web image; `lib/server/changelog.ts` reads it while the page is rendered and
+`lib/changelog.ts` parses it, so `app/console/page.tsx` hands plain release
+data to the shell. The dialog needs no Gateway RPC and no runtime HTTP request,
+so it keeps working with an air-gapped Gateway.
+
+- The current version is the newest versioned entry in `CHANGELOG.md`.
+  `[Unreleased]` is parsed but never shown: it belongs to a release that does
+  not exist yet. Empty releases, repeated version sections and headings without
+  a version are ignored. A pending change becomes visible by renaming the
+  heading to `## [<version>] — YYYY-MM-DD`; the date stays optional.
+- Content is merged across the releases in range: sections are ordered as
+  Added, Changed, Performance, Fixed, Security, Deprecated and Removed, and an
+  unknown `###` heading falls into 其他. Every item keeps the version it
+  arrived in, and an item repeated across releases is shown once.
+- Inline formatting is limited to `code`, **bold** and http(s) links. Other
+  Markdown, including raw HTML, is rendered as text; a non-http(s) link target
+  stays plain text.
+- The header entry is always available when releases exist, and disabled when
+  the image carries no changelog. It shows a dot while the browser's last seen
+  version is older than the current one; a first visit has no remembered
+  version and therefore no dot.
+- The dialog shows one merged view: a "v<current> 更新内容" title, a subtitle with
+  the version count and range, one heading per non-empty category with an item
+  count, and every item tagged with the version it arrived in. The automatic
+  popup shows the releases since the browser's last visit. The manual entry can
+  switch between "since last visit" and the latest 10, 20, 50 or 100 releases;
+  when nothing is new since the recorded version it falls back to the latest 10
+  releases and says so. It closes through the Close button, Escape or the
+  overlay.
+- After an upgrade the dialog opens once by itself, unless the browser asked not
+  to be popped up again today ("今天不再弹出"). A first visit only records the
+  current version, so a new user is not shown history. The automatic popup waits
+  until the session is restored and the onboarding guide is closed, and opens at
+  most once per page load. Opening the dialog, automatic or manual, records the
+  current version and clears the dot, so a reload does not open it again. The
+  quiet choice suppresses automatic popups for the current local day only; it
+  never disables the header entry.
+- State lives in browser localStorage only, under `LAST_VERSION_KEY` and
+  `QUIET_DAY_KEY` (defined in `lib/whats-new.ts`). It stores version strings and
+  a local day, never a token or identity, and nothing is reported to the
+  Gateway. A browser that blocks storage behaves like a first visit and can
+  still open the dialog manually.
+- A missing, unreadable or empty `CHANGELOG.md` is not an error: the console
+  renders, the dialog has no notes and its entry is disabled.
+- A user-visible change updates `CHANGELOG.md` in the same change and moves its
+  `[Unreleased]` entries under the release heading when the version is cut.
+
 ## 部署
 
 - 生产控制台是仓库根目录的 Next.js 应用，由 `Dockerfile.web` 构建、CNB 发布为
