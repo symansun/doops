@@ -34,7 +34,7 @@ Secret 和 ServiceAccount 不在读取工具里开放，需要凭据时用户会
   `session_id` 由运行时绑定，chart/values 可以是 session 工作区里的相对路径。
 - 工具报错时，按 `错误码: 原因` 处理；只有明确未开始变更的参数/预检失败，才在原授权内
   修正后调用。变更失败、验证失败或终态未知时先只读核对现状，报告原因与证据，不自动重放变更。
-- 只有 `mcp_doops_helm`/`mcp_doops_web` 的结果算 `ask --apply` 的变更证据。这里没有 shell；
+- 只有 `mcp_doops_helm`/`mcp_doops_web` 的结果算 `ask --apply` 的变更证据。apply 会话没有 shell；
   需要跑任意命令时，交回上层用 `doops -session <s> exec --target <t> --cmd '<cmd>'`。
 - 任务要升级承载你自己的 Agent 时，你不能在这里做：Agent 进程替换不了自己。交回上层运行
   `doops -session <s> upgrade --target <t> --image <ref>`，它由集群内 Job 执行，不需要操作机 kubeconfig。
