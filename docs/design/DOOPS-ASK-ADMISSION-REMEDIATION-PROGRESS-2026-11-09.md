@@ -1,8 +1,8 @@
 # DoOps ask 准入阻塞整改进度
 
-- 任务书：[DOOPS-ASK-ADMISSION-REMEDIATION-TASKBOOK-2026-11-09.md](./DOOPS-ASK-ADMISSION-REMEDIATION-TASKBOOK-2026-11-09.md)
+- 任务书：`DOOPS-ASK-ADMISSION-REMEDIATION-TASKBOOK-2026-11-09.md`（用户已归档到 `.local/dev-process-archive/20261109/docs/design/`，不在本分支）
 - 实施分支：`doops-admission-remediation`（worktree `.worktrees/a1-remediation`，/tmp 会被外部清理）
-- 基线：`66769eef`（main，2026-11-09 16:23 +08）；主仓此后继续前进，合入前必须 rebase
+- 基线：`66769eef`（cnb/main，2026-11-09 16:23 +08；本仓库本地 `main` 是 GitHub v0.2.x 线，不是生产线）。合入前基线核对见"合入前基线与 rebase 核对"
 - 分支内容：`8e7d6e0a`（A1 初版）+ `d56ada0d`（A9）+ `16f5f81d`/`b7879fe9`/`4b47adbe`（进度证据）+ `d8352e27`（A1 rev2）+ `2fbb150f`（relay 集成测试 + 文档修正）+ `5a91f0b3`（环境变更）+ `fcd7a3ce`（A1 rev3：请求级 queued 取消）
 - 相关分支：`doops-web-admission-contract` @ `679bd80a`（A2）；doagent 仓库 `doagent-admission-remediation` @ `30cadc8`（A3，基于生产 pin `08ecb019`）
 - 状态：A0/A1（含 rev2/rev3）/A9/A2/A3 均已提交；A1 rev3 与 A3 已完成独立复核；其余包未开始
@@ -12,7 +12,7 @@
 
 已完成：
 
-- 用户工作区未改动。`main` 为 `66769eef`，脏项为 1 个 ` M README.md` + 33 个未跟踪文档/证据目录；整改全部在干净 worktree 进行。
+- 用户工作区未改动。`cnb/main` 为 `66769eef`（本地 `main` 是 GitHub v0.2.x 线），脏项为 1 个 ` M README.md` + 33 个未跟踪文档/证据目录；整改全部在干净 worktree 进行。
 - 新 worktree 与分支：
   - `/tmp/doops-admission-remediation` → `doops-admission-remediation`（A1 + A9 合入目标）
   - `/tmp/doops-docker-start-failure` → `doops-docker-start-failure`（A9 实施，保留独立提交）
@@ -152,14 +152,37 @@ bugfix；A3.1.5 顺序调整作为 A4 follow-up 记录。
 
 ## 环境变更记录（2026-11-09 夜）
 
-- 用户主仓在整改期间继续前进：实施基线 `66769eef` 之后 main 已有新提交（最近观测到
-  `4e9f4b7c`，含 `7222d997 chore(repo): stop tracking compiled gateway and cli binaries` 等）。
-  因此 A1/A9 分支合入前必须先 rebase 到当时的 main 并重跑全量验证；本文件不声称已 rebase。
+- 环境记录纠偏（2026-11-10）：整改期间继续前进的是本地 `main`/GitHub v0.2.x 线（`v0.2.2` 基线，
+  观测到 `4e9f4b7c`、`d601a35d` 等；`4e9f4b7c` 不是 `cnb/main` 的祖先），CNB 生产线 `cnb/main`
+  自基线 `66769eef` 起未前进。原记录"合入前必须先 rebase 到当时的 main"基于错误归属，已由下节
+  现场回读纠正；合入基线以 `cnb/main` 为准。
 - `/tmp/doops-admission-remediation` 曾被外部清理删除（仅工作目录，不是提交）。分支 ref
   `doops-admission-remediation` 与其全部提交保存在用户仓库中，已在新路径
   `/tmp/doops-a1-remediation` 重建并复核通过（`go test ./internal/server -run '<A1+A9 定向>' ` → ok 12.9s）。
 - 任务书原路径 `docs/design/DOOPS-ASK-ADMISSION-REMEDIATION-TASKBOOK-2026-11-09.md` 已被用户归档到
   `.local/dev-process-archive/20261109/docs/design/`，内容未丢失；A3/A2 按归档路径阅读。
+
+## 合入前基线与 rebase 核对（2026-11-10，a1-land）
+
+- 生产线：CNB `cnb/main` 是 v1.3.x 发布线，最新发布 tag 为 `v1.3.126`（`76abae08`），远端无更新的
+  `v1.3.127+` tag；本地 `main`/`origin/main` 是 GitHub `v0.2.2` 线
+  （`git describe --tags main` → `v0.2.2-1079-gd601a35d`），不是合入基线与发布依据。
+- 基线关系（现场回读）：`git ls-remote cnb refs/heads/main` → `66769eef`，与分支基线相同；
+  `git merge-base --is-ancestor cnb/main HEAD` 成立，`HEAD..cnb/main` = 0 个提交、`cnb/main..HEAD` = 11 个；
+  `git describe --tags 66769eef` → `v1.3.126-58-g66769eef`，基线包含最新发布 tag。
+- rebase 结论：分支已基于当前 `cnb/main`，`git rebase cnb/main` 输出 "Current branch ... is up to date"，
+  无冲突、无提交改写；A1（含 rev2/rev3）、A9 与全部证据提交保留，合入目标为 `cnb/main`。
+- 合入前复核（worktree `.worktrees/a1-remediation`，分支 HEAD `1ef51421` 的代码）：
+  - `cd backend/agent && go test ./internal/server -count=1 -timeout=10m` → ok，535.411s（exit 0）
+  - `cd backend/agent && go test ./... -count=1 -timeout=10m` → 8 个包全部 ok（`internal/server` 522.616s，其余包 <4s，exit 0）
+  - `cd backend/cli && go test ./... -count=1 -timeout=10m` → `ok doops/cli/doops 20.452s`（exit 0）
+  - `git diff --check` → CLEAN；`gofmt -l`（本分支改动的 Go 文件）→ 无输出
+  - `python3 -m pytest backend/test/test_natural_language_deployment_contract.py backend/test/test_stale_contracts.py backend/test/test_doc_links.py -q` → 10 passed，1 failed（`README.md` 基线既有失败，见下节；本分支未改 `README.md`）
+- A1 行为核对：queued/未准入返回 `doagent_prompt_queued`（或 `doagent_prompt_queue_cleanup_unknown`）、
+  `doagent_prompt_no_prompt`、`doagent_prompt_rejected` 稳定类别，Gateway 原文转发、审计保留类别，
+  不再改写为 `execution_outcome_unknown`；session 级清理只对本次铸出的机器结果 session 且只发一次；
+  请求级取消仅在带 `queueRequestId` 且 doagent 明确 `queued_cancelled` 时返回可重试 queued。与
+  `backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md` 一致，无需新增行为文档或第二事实来源。
 
 ## 基线既有失败（非本轮引入）
 
