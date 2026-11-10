@@ -21,8 +21,8 @@ logins. First Agent installation and recovery remain external DoOps procedures.
 
 ```bash
 node /app/skills/doweb/scripts/doweb.mjs domain-set \
-  --domain aihub.org.cn \
-  --host-ip 114.55.61.32 \
+  --domain example.com \
+  --host-ip <agent-host-ip> \
   --provider aliyun
 ```
 
@@ -34,16 +34,16 @@ assignment. It does not change public DNS records.
 ```bash
 node /app/skills/doweb/scripts/doweb.mjs deploy \
   --site-id vibe-demo \
-  --domain-base aihub.org.cn \
+  --domain-base example.com \
   --dist dist \
-  --health-url http://vibe-demo.aihub.org.cn/
+  --health-url http://vibe-demo.example.com/
 ```
 
 Validation:
 
 ```bash
-curl --resolve vibe-demo.aihub.org.cn:80:114.55.61.32 \
-  http://vibe-demo.aihub.org.cn/
+curl --resolve vibe-demo.example.com:80:<agent-host-ip> \
+  http://vibe-demo.example.com/
 ```
 
 Use `--resolve` when public DNS has not propagated or when wildcard/multi-A DNS
@@ -54,9 +54,9 @@ may route the request to another gateway.
 ```bash
 node /app/skills/doweb/scripts/doweb.mjs deploy \
   --site-id proxy-106 \
-  --domain proxy-106.aihub.org.cn \
+  --domain proxy-106.example.com \
   --dist dist \
-  --proxy /=http://106.54.197.139/
+  --proxy /=http://<gateway-ip>/
 ```
 
 When `--proxy /=...` is used, DoWeb renders a root proxy location and does not
@@ -78,7 +78,7 @@ State keeps the latest releases under:
 ```bash
 node /app/skills/doweb/scripts/doweb.mjs check \
   --site-id vibe-demo \
-  --health-url http://vibe-demo.aihub.org.cn/
+  --health-url http://vibe-demo.example.com/
 ```
 
 This runs `nginx -t` and optional HTTP checks.
