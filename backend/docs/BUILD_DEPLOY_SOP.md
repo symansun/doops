@@ -540,3 +540,33 @@ Agent 完全不可用时，SSH 仅用于 Agent 自恢复，恢复后仍须完成
 已有独立 Docker Agent 按上述 DockerHost 入口保持运行方式发布。非 Helm 的 K8S
 `agent.yaml`、二进制 bind-mount 或裸机 tar 不在该入口范围；需先明确其受支持的发布或
 迁移方案。
+
+## 五、GitHub Actions 标签发布（开放仓库）
+
+公开 GitHub 仓库的 `vX.Y.Z` tag 由 [`.github/workflows/release.yml`](../../.github/workflows/release.yml)
+自动构建并发布；生产镜像与部署仍走 CNB（见第三节、第四节），两条发布路径互不替代。
+
+1. **触发与准入**：只接受 `push` 的 `vX.Y.Z` tag（可带 `-rc.N` 预发布后缀）和手工
+   `workflow_dispatch`（默认 dry-run，不创建 Release）。tag 必须已存在且指向 `main` 上的提交；
+   已存在的 Release 拒绝重建，已发布资产不可变。
+2. **CI 门禁**：发布前直接复用 `.github/workflows/ci.yml`（`workflow_call`），tag 不会绕过
+   main 的检查。
+3. **构建**：`backend/scripts/build-cli.sh --all` 在固定 `go1.25.14` builder 身份下产出
+   `doops-{darwin,linux}-{amd64,arm64}`、`doops-gateway-linux-amd64` 和 `checksums.txt`；
+   发布前校验 sha256、`release=<tag> commit=<commit>` 身份和 `doops.sh/cli-contract/v3`。
+4. **发布**：`gh release create --verify-tag --generate-notes`（预发布加 `--prerelease`），
+   只有 publish job 拥有 `contents: write`；二进制同时生成 GitHub build provenance attestation。
+5. **发布后复验**：从 GitHub Release URL 重新下载资产，运行
+   `backend/scripts/verify-published-cli-release.sh` 复核 checksums 与身份，`gh attestation verify`
+   校验来源，并用 `backend/scripts/install.sh`（`DOOPS_RELEASE_ASSET_BASE` 指向该 Release）
+   完成一次端到端安装。
+6. **安装来源**：`install.sh` 默认仍从 CNB Release Assets 下载；`DOOPS_RELEASE_ASSET_BASE`
+   只接受 https（回环地址用于测试），不会放宽 sha256、身份或 contract 校验。
+7. **契约测试**：`backend/test/test_github_release_contract.py` 锁定触发条件、CI 门禁、
+   不可变发布、资产集合、builder 身份和复验步骤。
+
+手工 dry-run（只构建与复验，不创建 Release）：
+
+```bash
+gh workflow run release.yml -f tag=<release-tag> -f publish=false
+```

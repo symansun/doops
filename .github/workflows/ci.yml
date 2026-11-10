@@ -4,6 +4,8 @@ on:
   push:
     branches: ["**"]
   pull_request:
+  # Reused by .github/workflows/release.yml as the release gate.
+  workflow_call:
 
 permissions:
   contents: read

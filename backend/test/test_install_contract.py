@@ -25,12 +25,18 @@ def test_cli_install_downloads_named_release_asset_and_replaces_binary_atomicall
     text = INSTALL.read_text()
 
     assert '--version is required' in text
-    assert 'https://cnb.cool/l8ai/ai/doops.sh/-/releases/download/${RELEASE_TAG}' in text
+    assert 'CNB_RELEASE_ASSET_BASE="https://cnb.cool/l8ai/ai/doops.sh/-/releases/download"' in text
+    assert 'RELEASE_ASSET_BASE="${DOOPS_RELEASE_ASSET_BASE:-${CNB_RELEASE_ASSET_BASE}}"' in text
+    assert '"${RELEASE_ASSET_BASE}/${RELEASE_TAG}/checksums.txt"' in text
+    assert '"${RELEASE_ASSET_BASE}/${RELEASE_TAG}/${artifact}"' in text
+    assert 'DOOPS_RELEASE_ASSET_BASE must be an https URL' in text
     assert 'curl --fail --location --silent --show-error' in text
     assert 'install -m 0755 "${candidate}" "${replacement}"' in text
     assert 'mv -f "${replacement}" "${CLI_OUT}"' in text
     assert 'receipt="${receipt_dir}/install.txt"' in text
-    assert "source=cnb-release-assets" in text
+    assert 'RELEASE_SOURCE="cnb-release-assets"' in text
+    assert '"source=${RELEASE_SOURCE}"' in text
+    assert 'RELEASE_SOURCE="${RELEASE_ASSET_BASE}"' in text
     assert "skill_commit" in text
     assert '"${candidate}" version' in text
     assert "doops.sh/cli-contract/v3" in text
@@ -860,7 +866,9 @@ def test_tag_pipeline_publishes_and_verifies_release_assets():
     assert "asset-upload-url" in publish
     assert 'CNB_TOKEN is required' in publish
     assert "Agent image: ${image}" in publish
-    assert "https://cnb.cool/${RELEASE_REPO}/-/releases/download/${RELEASE_TAG}" in verify
+    assert 'RELEASE_ASSET_BASE="${DOOPS_RELEASE_ASSET_BASE:-https://cnb.cool/${DOOPS_RELEASE_REPO:-l8ai/ai/doops.sh}/-/releases/download}"' in verify
+    assert '"${RELEASE_ASSET_BASE}/${RELEASE_TAG}/${name}"' in verify
+    assert "must be an https URL" in verify
     assert "Published CLI identity mismatch" in verify
     assert "Published CLI identity marker missing" in verify
 
