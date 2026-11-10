@@ -1,4 +1,5 @@
 import { gatewayAuthMessage } from "./gateway-auth.ts"
+import { classifyAgentAdmission } from "./agent-error.ts"
 // Web form for the Agent doops_k8s tool. The payload mirrors buildK8SRequest in
 // backend/cli/cli/doops/k8s.go so the console and `doops k8s` call the same contract.
 
@@ -486,7 +487,7 @@ export function describeK8sFailure(message: string, context: K8sFailureContext):
   const where = `${context.target.cluster}/${context.target.instance}`
   const evidence = `${raw}\n${context.output}`
 
-  if (raw.includes("execution_outcome_unknown")) {
+  if (classifyAgentAdmission(raw).kind === "unknown") {
     if (!context.mutation) {
       return { kind: "unknown", text: "查询结果未确认：连接在收到终态前中断。只读操作不改变集群，可以重新查询。" }
     }

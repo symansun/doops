@@ -26,7 +26,8 @@ conflicts: []
 1. 使用本 Skill 下方的完整探测脚本，校验 `/host`、PID 1 根目录和进入前后的 mount
    namespace。`Skill` 的 `load_prompt` 已加载脚本，不再调用 `Read` 读取 Skill 或
    `/app/self-docs`：`Read` 只能访问当前工作区，无法读取这些全局文件。
-2. 当前 ask 没有 Bash/ExecuteCode 是既定分工。输出一个完整的原始 `bash` 代码块，
+2. 当前会话提供 `Bash` 工具时直接在其中执行；会话没有 `Bash`、或需要用户可复核的
+   确定性命令与完整 Gateway 审计时，输出一个完整的原始 `bash` 代码块，
    不包 `doops exec`、不含占位符。Web 的“在此执行”会预填命令，用户提交后沿当前
    target/session 走 Gateway exec；上层有 CLI 时，将脚本作为
    `doops -session <s> exec --target <t> --cmd` 的参数，沿用已有授权执行。

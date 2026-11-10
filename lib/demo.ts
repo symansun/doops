@@ -110,15 +110,13 @@ export const DEMO_SETTINGS_PATH = "/root/.agent/settings.json"
 
 const DEMO_SETTINGS = `{
   "provider": "openai-compatible",
-  "model": "openai/gpt-5.4",
+  "model": "<provider>/<model>",
   "base_url": "https://api.example.com/v1",
   "api_key": "sk-demo-3f9a2b7c8d1e4f5061728394a5b6c7d8",
   "temperature": 0.2,
   "max_tokens": 4096,
   "models": [
-    "openai/gpt-5.4",
-    "anthropic/claude-opus-4.6",
-    "google/gemini-3-flash"
+    "<provider>/<model>"
   ]
 }
 `

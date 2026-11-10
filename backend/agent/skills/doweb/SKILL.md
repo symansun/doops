@@ -32,13 +32,13 @@ node /app/skills/doweb/scripts/doweb.mjs install-nginx \
   --mode docker
 
 node /app/skills/doweb/scripts/doweb.mjs domain-set \
-  --domain aihub.org.cn \
-  --host-ip 114.55.61.32 \
+  --domain example.com \
+  --host-ip <agent-host-ip> \
   --provider aliyun
 
 node /app/skills/doweb/scripts/doweb.mjs deploy \
   --site-id demo \
-  --domain-base aihub.org.cn \
+  --domain-base example.com \
   --dist dist \
   --proxy /api/=https://api.example.com
 ```
@@ -56,7 +56,7 @@ Supported commands:
   `nginx -t` validation. Use `--mode host` explicitly when a host already runs
   Nginx on 80/443. SSH bootstrap is a separate first-install procedure and is
   not a normal DoWeb user entrypoint.
-- `domain-set`: register a usable base domain such as `aihub.org.cn` with its
+- `domain-set`: register a usable base domain such as `example.com` with its
   host IP and provider metadata.
 - `domain-list`: list registered base domains.
 - `deploy`: copy a customer-built dist release, activate `current`, write Nginx
@@ -129,8 +129,10 @@ by silently switching to a different path or skipping validation.
 
 ## Unified Authorization Boundary
 
-- Gateway authenticates the user and checks `targets:list`, `ask` or `exec` on
-  the exact `cluster/instance`.
+- Gateway authenticates the user and checks the grant on the exact
+  `cluster/instance`. One DoOps Agent is one authorization unit: a grant opens
+  every operation on that target, and `list`/`ask`/`exec` are internal action
+  labels the Gateway derives from the call, never separate permissions.
 - DoWeb receives only the selected target, site request and optional managed
   credential resource names. Passwords, SSH keys and Gateway tokens never enter
   SiteSpec, state JSON, prompts or logs.

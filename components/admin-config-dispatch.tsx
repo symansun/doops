@@ -557,7 +557,7 @@ function ConfigEditor({
               className="input w-full font-mono"
               value={cfg.model ?? ""}
               onChange={(e) => set({ model: e.target.value })}
-              placeholder="openai/gpt-5.4"
+              placeholder="<provider>/<model>"
             />
           </Row>
           <Row label="Base URL">
@@ -565,7 +565,7 @@ function ConfigEditor({
               className="input w-full font-mono"
               value={cfg.base_url ?? ""}
               onChange={(e) => set({ base_url: e.target.value })}
-              placeholder="https://api.openai.com/v1"
+              placeholder="https://<endpoint>/v1"
             />
           </Row>
           <Row label="API 密钥">
@@ -610,7 +610,7 @@ function ConfigEditor({
               className="input w-full font-mono"
               value={(cfg.models ?? []).join(", ")}
               onChange={(e) => set({ models: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
-              placeholder="openai/gpt-5.4, openai/gpt-5-mini"
+              placeholder="<provider>/<model>, <provider>/<model>"
             />
           </Row>
         </>

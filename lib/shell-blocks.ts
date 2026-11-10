@@ -1,4 +1,5 @@
 import { gatewayAuthMessage } from "./gateway-auth.ts"
+import { classifyAgentAdmission } from "./agent-error.ts"
 // AI 助手回复里的 shell 代码块只作为“建议命令”交给用户；执行一律由用户确认后
 // 走终端页同一条 doops_shell 路径。这里只做纯文本解析和参数构造，不拼接凭据。
 
@@ -420,7 +421,7 @@ function classifyShellFailure(
 ): Omit<ShellFailure, "tone"> {
   const raw = message.trim()
   const where = `${opts.target.cluster}/${opts.target.instance}`
-  if (raw.includes("execution_outcome_unknown")) {
+  if (classifyAgentAdmission(raw).kind === "unknown") {
     // 用户点了停止、Gateway 报告命令在执行中被打断：这是用户自己的停止，但不能当作干净结束。
     if (opts.stopRequested && raw.includes(INTERRUPTED_MUTATION)) {
       return { kind: "interrupted", text: "已停止：命令在执行中被打断，可能已经执行了一部分。请先核对实际状态，再决定是否重新执行" }

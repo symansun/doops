@@ -88,12 +88,47 @@ func executionResponseCanceled(response map[string]interface{}) bool {
 	return ok && code == -32007
 }
 
+// promptPreAdmissionCategories are the stable answers a target Agent gives for
+// a prompt that was decided before admission. No turn exists for them and no
+// mutation can have started, so they are not mutation outcomes.
+var promptPreAdmissionCategories = []string{
+	"doagent_prompt_queued",
+	"doagent_prompt_queue_cleanup_unknown",
+	"doagent_prompt_no_prompt",
+	"doagent_prompt_rejected",
+}
+
+// promptPreAdmissionReply reports whether a prompt answer is a pre-admission
+// refusal the Gateway must forward unchanged. remoteMutationFailed would
+// otherwise rewrite every -32603 answer into execution_outcome_unknown, which is
+// the misclassification these categories exist to remove.
+func promptPreAdmissionReply(response map[string]interface{}) bool {
+	if _, ok := response["result"].(map[string]interface{}); ok {
+		return false
+	}
+	rpcError, ok := response["error"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	message, _ := rpcError["message"].(string)
+	message = strings.TrimSpace(message)
+	for _, category := range promptPreAdmissionCategories {
+		if message == category {
+			return true
+		}
+	}
+	return false
+}
+
 func remoteMutationFailed(tool string, args json.RawMessage, response map[string]interface{}) bool {
 	if tool != "doops_ssh" && tool != "doops_agent_prompt" && tool != "doops_k8s" && tool != "doops_web" &&
 		tool != "doops_credential_materialize" && tool != "doops_credential_cleanup" {
 		return false
 	}
 	if !interruptionNeedsReconciliation(tool, args) {
+		return false
+	}
+	if promptPreAdmissionReply(response) {
 		return false
 	}
 	if _, ok := response["result"].(map[string]interface{}); ok {
