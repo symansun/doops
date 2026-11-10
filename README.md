@@ -234,6 +234,17 @@ export PATH="$HOME/.local/bin:$PATH"
 | 默认目标配置 | `~/.agent/skills/doops/config.json` |
 | 登录缓存 | `~/.agent/skills/doops/auth.json` |
 
+公开仓库的 tag 发布由 GitHub Actions 自动构建（[release workflow](.github/workflows/release.yml)）。需要从 GitHub
+Release 安装时，把发布资产来源显式指向该发布：
+
+```bash
+DOOPS_RELEASE_ASSET_BASE="https://github.com/<owner>/<repo>/releases/download" \
+  bash scripts/install.sh --version <release-tag> --project /absolute/path/to/existing-project
+```
+
+默认来源仍是 CNB Release Assets；`DOOPS_RELEASE_ASSET_BASE` 只接受 https（回环地址仅用于测试），
+sha256、`release=... commit=...` 身份和 CLI contract 校验保持不变。
+
 安装会更新目标项目中的 DoOps Skill 及配套文档。若曾自行修改这些文件，请先备份。CLI 配置与缓存包含敏感信息，文件权限保护不等于加密存储，不要提交到 Git。
 
 ### 2. 配置目标
@@ -571,7 +582,8 @@ doops/
 │   └── runtime-versions.env    # 固定运行时版本与镜像来源
 ├── docs/                        # 设计文档与实施记录
 ├── Dockerfile.web              # Next.js 生产镜像
-├── .github/workflows/ci.yml    # GitHub CI
+├── .github/workflows/ci.yml    # GitHub CI（push/PR）
+├── .github/workflows/release.yml # GitHub tag 发布：构建、校验、发布、复验
 ├── .cnb.yml                    # CNB 检查与 Agent 镜像发布
 ├── CONTRIBUTING.md
 └── SECURITY.md

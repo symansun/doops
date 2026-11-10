@@ -1,0 +1,234 @@
+name: Release
+
+# Builds the versioned CLI/Gateway release assets from an existing tag and
+# publishes them as an immutable GitHub Release. The full CI workflow is reused
+# as the gate, so a tag never publishes code that has not passed the same checks
+# as main. Published assets are re-downloaded, re-verified and installed again
+# from the GitHub Release URL after publishing.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build (for example v0.3.0)"
+        required: true
+        type: string
+      publish:
+        description: "Create the GitHub Release after verification (false = dry run)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      commit: ${{ steps.resolve.outputs.commit }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+      publish: ${{ steps.resolve.outputs.publish }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve and validate tag
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+          PUBLISH_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.publish || github.event_name == 'push' }}
+        run: |
+          set -euo pipefail
+          tag="${EVENT_TAG}"
+          if [[ ! "${tag}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "release tag must look like vMAJOR.MINOR.PATCH (optional -prerelease suffix): ${tag}" >&2
+            exit 1
+          fi
+          git fetch --force --no-tags origin "refs/heads/main:refs/remotes/origin/main"
+          if ! git rev-parse --verify --quiet "refs/tags/${tag}^{commit}" >/dev/null; then
+            echo "tag ${tag} does not exist; create and push the tag first" >&2
+            exit 1
+          fi
+          commit="$(git rev-parse --verify "refs/tags/${tag}^{commit}")"
+          if ! git merge-base --is-ancestor "${commit}" refs/remotes/origin/main; then
+            echo "tag ${tag} points at ${commit}, which is not on main; releases come from the main line" >&2
+            exit 1
+          fi
+          if [[ "${PUBLISH_INPUT}" == "true" ]] && gh release view "${tag}" >/dev/null 2>&1; then
+            echo "release ${tag} already exists; published releases are immutable" >&2
+            exit 1
+          fi
+          prerelease=false
+          if [[ "${tag}" == *-* ]]; then
+            prerelease=true
+          fi
+          {
+            echo "tag=${tag}"
+            echo "commit=${commit}"
+            echo "prerelease=${prerelease}"
+            echo "publish=${PUBLISH_INPUT}"
+          } >> "$GITHUB_OUTPUT"
+          echo "release ${tag} from ${commit} (publish=${PUBLISH_INPUT}, prerelease=${prerelease})"
+
+  gate:
+    name: CI gate
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build release assets
+    needs: [prepare, gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write          # actions/attest-build-provenance signs with OIDC
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # backend/scripts/build-cli.sh --all refuses any other builder identity
+          # and releases must be built with the immutability-pinned toolchain.
+          go-version: "1.25.14"
+          cache-dependency-path: |
+            backend/cli/go.sum
+            backend/gateway/go.sum
+
+      - name: Build immutable release assets
+        env:
+          DOOPS_CLI_VERSION: ${{ needs.prepare.outputs.tag }}
+          DOOPS_CLI_COMMIT: ${{ needs.prepare.outputs.commit }}
+          DOOPS_CLI_OUT: ${{ runner.temp }}/bin/doops-host
+          DOOPS_CLI_RELEASE_DIR: ${{ runner.temp }}/dist
+        run: bash backend/scripts/build-cli.sh --all
+
+      - name: Verify built assets before publishing
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/dist"
+          sha256sum --check --strict checksums.txt
+          test "$(./doops-linux-amd64 version)" = "release=${TAG} commit=${COMMIT}"
+          test "$(./doops-linux-amd64 --contract)" = "doops.sh/cli-contract/v3"
+          test "$(./doops-gateway-linux-amd64 version)" = "release=${TAG} commit=${COMMIT}"
+          printf '%s\n' doops-* | sort > "${RUNNER_TEMP}/built.txt"
+          awk '{print $2}' checksums.txt | sort > "${RUNNER_TEMP}/checksummed.txt"
+          diff -u "${RUNNER_TEMP}/built.txt" "${RUNNER_TEMP}/checksummed.txt"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            ${{ runner.temp }}/dist/doops-*
+            ${{ runner.temp }}/dist/checksums.txt
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: ${{ runner.temp }}/dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: [prepare, build]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Publish immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "release ${TAG} already exists; published releases are immutable" >&2
+            exit 1
+          fi
+          args=(--verify-tag --generate-notes --title "${TAG}")
+          if [[ "${PRERELEASE}" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "${TAG}" dist/* "${args[@]}"
+
+  verify:
+    name: Verify published release
+    needs: [prepare, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Verify published checksums and identity
+        env:
+          DOOPS_RELEASE_ASSET_BASE: ${{ github.server_url }}/${{ github.repository }}/releases/download
+          DOOPS_RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          DOOPS_RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: bash backend/scripts/verify-published-cli-release.sh
+
+      - name: Verify build provenance attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for artifact in dist/doops-*; do
+            gh attestation verify "${artifact}" --repo "${GH_REPO}"
+          done
+
+      - name: Install the published release end to end
+        env:
+          DOOPS_RELEASE_ASSET_BASE: ${{ github.server_url }}/${{ github.repository }}/releases/download
+          TAG: ${{ needs.prepare.outputs.tag }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: |
+          set -euo pipefail
+          home="${RUNNER_TEMP}/install-home"
+          project="${RUNNER_TEMP}/install-project"
+          mkdir -p "${home}" "${project}"
+          HOME="${home}" DOOPS_RELEASE_ASSET_BASE="${DOOPS_RELEASE_ASSET_BASE}" \
+            bash backend/scripts/install.sh --version "${TAG}" --project "${project}"
+          test "$("${home}/.local/bin/doops" version)" = "release=${TAG} commit=${COMMIT}"
+          test -f "${project}/.agent/skills/doops/SKILL.md"

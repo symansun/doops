@@ -3,7 +3,8 @@ set -euo pipefail
 
 RELEASE_TAG="${DOOPS_RELEASE_TAG:-}"
 RELEASE_COMMIT="${DOOPS_RELEASE_COMMIT:-}"
-RELEASE_REPO="${DOOPS_RELEASE_REPO:-l8ai/ai/doops.sh}"
+RELEASE_ASSET_BASE="${DOOPS_RELEASE_ASSET_BASE:-https://cnb.cool/${DOOPS_RELEASE_REPO:-l8ai/ai/doops.sh}/-/releases/download}"
+RELEASE_ASSET_BASE="${RELEASE_ASSET_BASE%/}"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TEMP_DIR}"' EXIT
 
@@ -20,11 +21,25 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 1
 fi
 
+# Release asset URLs come from one https base per publisher (CNB by default,
+# or the GitHub Release mirror) so checksums and identity checks stay the same.
+assert_asset_base() {
+  case "${RELEASE_ASSET_BASE}" in
+    https://*) ;;
+    http://127.0.0.1:*) ;;
+    http://localhost:*) ;;
+    *)
+      echo "DOOPS_RELEASE_ASSET_BASE must be an https URL (loopback http is accepted for tests)" >&2
+      return 1
+      ;;
+  esac
+}
+
 download_asset() {
   local name="$1"
   curl --fail --location --silent --show-error \
     --output "${TEMP_DIR}/${name}" \
-    "https://cnb.cool/${RELEASE_REPO}/-/releases/download/${RELEASE_TAG}/${name}"
+    "${RELEASE_ASSET_BASE}/${RELEASE_TAG}/${name}"
 }
 
 sha256_file() {
@@ -35,6 +50,8 @@ sha256_file() {
   fi
   shasum -a 256 "${file}" | awk '{print $1}'
 }
+
+assert_asset_base
 
 download_asset checksums.txt
 for artifact in doops-darwin-amd64 doops-darwin-arm64 doops-linux-amd64 doops-linux-arm64; do
@@ -76,4 +93,4 @@ if [[ "$("${TEMP_DIR}/${gateway}" version)" != "release=${RELEASE_TAG} commit=${
   exit 1
 fi
 
-echo "CNB Release Assets verified for ${RELEASE_TAG}."
+echo "Release assets verified for ${RELEASE_TAG} (${RELEASE_ASSET_BASE})."

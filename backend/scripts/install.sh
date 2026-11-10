@@ -26,7 +26,9 @@ Doops CLI / Skill 安装脚本（不部署或升级 Agent）
   Config: ~/.agent/skills/doops/config.json
 
 安装包来源:
-  CLI 只从 CNB Release Assets 下载指定 --version 的 doops-<os>-<arch> 与 checksums.txt
+  CLI 从发布 Release Assets 下载指定 --version 的 doops-<os>-<arch> 与 checksums.txt
+  默认 CNB；需要从 GitHub Release 等镜像安装时设置 DOOPS_RELEASE_ASSET_BASE 为该发布的
+  releases/download 前缀（只接受 https，回环地址可用于测试）
   普通用户安装不在用户机器或 target 机器上编译
 
 更新行为:
@@ -72,6 +74,13 @@ TARGET_CLUSTER=""
 TARGET_INSTANCE=""
 TARGET_ALIASES=""
 TARGET_USE="Doops managed node"
+CNB_RELEASE_ASSET_BASE="https://cnb.cool/l8ai/ai/doops.sh/-/releases/download"
+RELEASE_ASSET_BASE="${DOOPS_RELEASE_ASSET_BASE:-${CNB_RELEASE_ASSET_BASE}}"
+RELEASE_ASSET_BASE="${RELEASE_ASSET_BASE%/}"
+RELEASE_SOURCE="cnb-release-assets"
+if [[ "${RELEASE_ASSET_BASE}" != "${CNB_RELEASE_ASSET_BASE}" ]]; then
+  RELEASE_SOURCE="${RELEASE_ASSET_BASE}"
+fi
 
 restore_install_path() {
   local destination="$1" backup="$2"
@@ -199,7 +208,7 @@ write_install_receipt() {
     "commit=${RELEASE_COMMIT}"
     "skill_commit=${RELEASE_COMMIT}"
     "contract=doops.sh/cli-contract/v3"
-    "source=cnb-release-assets"
+    "source=${RELEASE_SOURCE}"
     "path=${CLI_OUT}"
   )
   for destination in "${SKILL_DESTINATIONS[@]}"; do
@@ -325,9 +334,19 @@ EOF
   fi
 
   if [[ -z "${RELEASE_TAG}" ]]; then
-    echo "--version is required; CLI releases are immutable CNB Release Assets." >&2
+    echo "--version is required; CLI releases are immutable release assets." >&2
     exit 1
   fi
+  # Checksums and identity markers must travel over https; loopback http stays
+  # available for local verification only.
+  case "${RELEASE_ASSET_BASE}" in
+    https://*) ;;
+    http://127.0.0.1:*|http://localhost:*) ;;
+    *)
+      echo "DOOPS_RELEASE_ASSET_BASE must be an https URL (loopback http is accepted for tests)" >&2
+      exit 1
+      ;;
+  esac
 
   if ! command -v curl >/dev/null 2>&1; then
     echo "curl is required to download CLI release assets" >&2
@@ -344,10 +363,10 @@ EOF
 
   curl --fail --location --silent --show-error \
     --output "${checksums}" \
-    "https://cnb.cool/l8ai/ai/doops.sh/-/releases/download/${RELEASE_TAG}/checksums.txt"
+    "${RELEASE_ASSET_BASE}/${RELEASE_TAG}/checksums.txt"
   curl --fail --location --silent --show-error \
     --output "${candidate}" \
-    "https://cnb.cool/l8ai/ai/doops.sh/-/releases/download/${RELEASE_TAG}/${artifact}"
+    "${RELEASE_ASSET_BASE}/${RELEASE_TAG}/${artifact}"
 
   expected="$(awk -v file="${artifact}" '$2 == file { print $1 }' "${checksums}")"
   if [[ -z "${expected}" ]]; then
@@ -421,7 +440,7 @@ EOF
     echo "Failed to replace CLI at ${CLI_OUT}" >&2
     exit 1
   fi
-  echo "  CLI installed from CNB Release Assets: ${RELEASE_TAG}/${artifact}"
+  echo "  CLI installed from release assets: ${RELEASE_ASSET_BASE}/${RELEASE_TAG}/${artifact}"
   echo "  CLI installed to ${CLI_OUT}"
 }
 

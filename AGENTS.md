@@ -57,9 +57,11 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
   session path isolation, and dry-run/final Deployment verification intact. Full asset, optional
   `expected_image`, and migration contracts belong in
   [NATURAL_LANGUAGE_DEPLOYMENT.md](backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md).
-- CNB CI tests, builds, scans, and publishes immutable artifacts. Gateway authenticates users,
-  authorizes targets and credentials, routes traffic, and audits. The selected target Agent
-  performs the actual Kubernetes or Helm mutation and returns live evidence.
+- CNB CI tests, builds, scans, and publishes immutable artifacts. GitHub Actions publishes the
+  public tag release assets (CLI and Gateway binaries) from tags on `main`, gated by the same CI
+  workflow and re-verified after publishing; CNB remains the production image and deployment path.
+  Gateway authenticates users, authorizes targets and credentials, routes traffic, and audits. The
+  selected target Agent performs the actual Kubernetes or Helm mutation and returns live evidence.
 - For image/version inputs, the publisher must establish
   the exact CI source-commit and registry-digest provenance before invoking the command. The CLI
   and Agent validate the allowed input form and live result; they do not verify CI origin.
@@ -136,8 +138,10 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
 - The only supported installed CLI path is `~/.local/bin/doops`.
 - Build-tree binaries such as `backend/cli/bin/*` and binaries embedded inside a Skill
   directory are development artifacts, not supported user entrypoints.
-- Users install a checksummed, versioned CNB Release Asset through
-  `backend/scripts/install.sh --version <tag> --project <absolute-project-path>`.
+- Users install a checksummed, versioned release asset through
+  `backend/scripts/install.sh --version <tag> --project <absolute-project-path>`. CNB Release
+  Assets stay the default source; `DOOPS_RELEASE_ASSET_BASE` points the same sha256, identity and
+  contract checks at the GitHub Release mirror.
 - Before replacement, the installer must validate an existing config with the downloaded release
   CLI's own Go parser. Do not maintain a second Python, Node, jq, or shell JSON schema.
 - The canonical Skill source is `backend/skills/SKILL.md`. The installer copies it and
