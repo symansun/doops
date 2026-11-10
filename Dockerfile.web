@@ -15,6 +15,8 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY app ./app
 COPY components ./components
 COPY lib ./lib
+# The console reads its release log at build time (lib/server/changelog.ts).
+COPY CHANGELOG.md ./CHANGELOG.md
 COPY next.config.mjs package.json pnpm-lock.yaml pnpm-workspace.yaml postcss.config.mjs tsconfig.json ./
 RUN pnpm build
 
@@ -27,6 +29,9 @@ ENV PORT=3000
 
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+# The console prerenders the release log, but keep the file in the runtime image
+# so a future dynamic /console keeps working with the same cwd contract.
+COPY --from=builder /app/CHANGELOG.md ./CHANGELOG.md
 
 USER node
 EXPOSE 3000
