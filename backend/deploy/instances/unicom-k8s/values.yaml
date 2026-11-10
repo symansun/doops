@@ -1,7 +1,7 @@
 gateway:
   cluster: doops-unicom
   instance: unicom-k8s
-  url: https://doops.l8ai.cn
+  url: https://doops.aiedulab.cn
 hostAccess:
   enabled: true
 hostAliases: []

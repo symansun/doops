@@ -27,8 +27,8 @@ def test_web_console_host_deploy_is_immutable_and_rollback_capable():
     assert nginx.count("proxy_pass http://127.0.0.1:42222;") == 4
     assert "proxy_pass http://127.0.0.1:3000;" in nginx
 
-    assert "https://doops.l8ai.cn/v1/targets" in proxy_deploy
-    assert "https://doops.l8ai.cn/" in proxy_deploy
+    assert "https://doops.aiedulab.cn/v1/targets" in proxy_deploy
+    assert "https://doops.aiedulab.cn/" in proxy_deploy
     assert 'test "$web_code" = "200"' in proxy_deploy
     assert 'SSH=(ssh -p "$SSH_PORT" "${SSH_USER}@${HOST}")' in proxy_deploy
     assert 'SCP=(scp -P "$SSH_PORT")' in proxy_deploy

@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// Edge listener 通常挂在 nginx stream 之后（一个公网 IP 上与 doops.l8ai.cn 共用 443），
+// Edge listener 通常挂在 nginx stream 之后（一个公网 IP 上与 doops.aiedulab.cn 共用 443），
 // 此时 Accept 拿到的对端地址恒为 127.0.0.1，只有 PROXY protocol 头能给出真实客户端 IP
 //（docs/design/DOOPS_EDGE_TUNNEL.md §3.3）。
 
