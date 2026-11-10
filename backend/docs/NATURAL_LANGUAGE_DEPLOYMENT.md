@@ -93,24 +93,33 @@ Agent 只拒绝删除根目录（`rm -rf /`、`rm -rf /*`），报错 `blocked_c
 排队和取消机制串行，执行结束及清理完成后释放 lease；审计落盘失败返回错误并独立重试原始证据，
 不再保留执行锁。人工声明不能替代真实终态或强制释放活动 lease。
 已验签的 Helm 工具明确失败按失败结束，不归为未知结果；同轮另一工具成功不能掩盖失败。
-准入前的拒绝不是未知结果：目标 doagent 以普通 HTTP 200 结果返回 `status=queued`（进程级 turn
-permit 全忙，或该 session 已有 turn 在跑）或 `status=no_prompt`（prompt 为空）时，没有 admit
-任何 turn，也没有 mutation 开始。Agent 把它们分别归为 `doagent_prompt_queued` /
-`doagent_prompt_queue_cleanup_unknown` 和 `doagent_prompt_no_prompt`（参数错误，补齐非空任务后
-重试）；Gateway 转发这些稳定类别，不再把它们重写成 `execution_outcome_unknown`，审计也保留同一
-类别。只有缺失或畸形的 prompt 应答（accepted 缺 turnId、result 非对象、error 与 result 并存、
-未知 status、transport 失败）保留未知结果语义。
-`queued` 的后台风险按应答是否带 `queueRequestId` 决定：目标 doagent 返回该 opaque token 时，
-Gateway 用它调用 `session/cancel` 做请求级取消，只有 doagent 明确回 `queued_cancelled` 才返回可
-重试的 `doagent_prompt_queued`（本请求没有 turn，换新 session 重试）；`queued_not_found` 或任何非 `queued_cancelled` 的应答（含
-transport 失败）仍返回 `doagent_prompt_queue_cleanup_unknown`。没有 token 的旧版 doagent 保持
-兼容规则：只有 `response_format=json` 的机器结果 prompt 会为本次调用生成唯一 session id，且应答带
-`globalPosition`（说明排队时该 session 空闲）时，Gateway 才对该 session 发一次 `session/cancel`
-后返回 `doagent_prompt_queued`；该 cancel 是尽力清理，ACK 不等于逐字节确认。复用 session 的流式
-prompt（包括尚无 token 的 `ask --apply`）不得被 session 级取消命中，此时返回
-`doagent_prompt_queue_cleanup_unknown`：本请求没有 turn，但排队项可能稍后执行，禁止自动重试，
-先核对队列与审计。凭据准备回滚失败仍按凭据不确定处理，不套用准入前类别。空 prompt 在发送给
-doagent 之前就被拒绝，上游 `no_prompt` 应答同样不触发任何 cancel。
+DoOps 在发送 prompt 前检查
+`initialize.agentCapabilities.promptCapabilities.rejectWhenBusy=true`，然后固定使用
+`params.mode=reject`。session 忙或全局 turn 名额耗尽时返回 `doagent_prompt_busy`，
+该请求未进入队列、未创建 turn，可在容量恢复后重新提交，不会在 CLI 报错后后台执行。
+能力缺失返回 `doagent_prompt_admission_unsupported`；初始化失败返回
+`doagent_prompt_admission_unavailable`。两者都发生在发送 prompt 前，必须修复或升级目标
+运行时，不能改用旧排队路径继续执行。DoOps 与支持该能力的 do-agent 必须成套交付。
+Agent 镜像构建会调用被 pin 运行时的 `initialize` 校验同一能力；版本和 revision 标签匹配
+但能力缺失同样不能发布。
+
+如果已声明该能力的运行时仍返回 `queued`，属于协议违约。只有携带 `queueRequestId`
+且请求级取消明确返回 `queued_cancelled`，才能返回可重试的 `doagent_prompt_queued`。
+无 token、`queued_not_found`、取消失败均返回 `doagent_prompt_queue_cleanup_unknown`；
+排队项可能已执行，禁止自动重试，先核对内部准入状态及变更事实。session 级取消 ACK
+不能证明某一排队项已移除，不再用它推断可重试。
+Gateway 将清理未知记为 `outcome_unknown`，保留原始类别，也不按确定失败撤回准备好的凭据；
+取消/超时不能将已观察到的未知终态改写成普通取消。
+
+空 prompt 返回 `doagent_prompt_no_prompt`，不发送取消。缺失或畸形的 prompt 应答、
+transport 失败仍保留 `execution_outcome_unknown`；未知准入不能取消可能共享的流式 session。
+Gateway 在 deadline/取消竞态中保留已经收到的明确未执行终态，清理未知或已开始的 mutation
+仍按未知结果处理。凭据准备回滚失败仍按凭据不确定处理，不套用准入前类别。
+HTTP 准入超时只有同时带 `failureClass=admission_timeout`、`executionStarted=false`、
+`retryable=true` 才表示请求已在准备/准入前原子撤回，映射为
+`doagent_prompt_admission_timeout`。准备已经开始、应答尚未确认时保留未知结果，不能重放。
+Agent 在发送 prompt 前收到取消则返回 `doagent_prompt_cancelled_before_admission`；
+这个明确未执行类别与已发送之后的普通取消分开处理。
 非流式 ACP 调用在排队期限内未获得准入时返回 `doagent_prompt_queue_timeout`，这是准入前的明确失败，
 不代表 mutation 已开始，也不应被重写成 `execution_outcome_unknown`。
 当前锁按 target 路由

@@ -117,7 +117,7 @@ func TestSQLBindingNextGuidesEachBindingFailure(t *testing.T) {
 		{"binding missing", fmt.Errorf("dosql_database_binding_missing"), []string{"next:", "credential configure", "--use database", "--from-secret", "--keys <engine-specific-keys>", "doops guide database"}},
 		{"credential missing", fmt.Errorf("dosql_credential_missing: run credential configure"), []string{"--from-secret"}},
 		{"not bound", fmt.Errorf("dosql_database_not_bound: x"), []string{"credential list", "--from-secret", "original --database", "do not switch databases"}},
-		{"database required", fmt.Errorf("dosql_database_required: target binds a"), []string{"--database <name>"}},
+		{"database required", fmt.Errorf("dosql_database_required: target binds a"), []string{"--database <database>"}},
 		{"version missing", fmt.Errorf("credential_version_not_found"), []string{"--id <id>"}},
 		{"unrelated", fmt.Errorf("dosql_statement_failed"), nil},
 	}

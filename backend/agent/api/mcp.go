@@ -243,4 +243,5 @@ type TaskInfo struct {
 // NodeInfoParams 用于 doops_node_info 查看节点信息
 type NodeInfoParams struct {
 	SessionID string `json:"session_id,omitempty"`
+	Section   string `json:"section,omitempty"`
 }

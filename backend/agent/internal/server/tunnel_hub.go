@@ -1902,6 +1902,31 @@ func (a *GatewayAgent) heartbeat(payload string) {
 	a.stateMu.Unlock()
 }
 
+// A pre-admission category alone is not enough: cleanup_unknown can still run.
+func promptReplyProvesNoExecution(tool string, response map[string]interface{}) bool {
+	if tool != "doops_agent_prompt" || response["result"] != nil || !promptPreAdmissionReply(response) {
+		return false
+	}
+	rpcError, _ := response["error"].(map[string]interface{})
+	message, _ := rpcError["message"].(string)
+	return strings.TrimSpace(message) != doagentPromptCleanupUnknown
+}
+
+func promptReplyUnknownError(tool string, response map[string]interface{}) error {
+	if tool != "doops_agent_prompt" {
+		return nil
+	}
+	if executionResponseUnknown(response) {
+		return executionUnknownFromResponse(response)
+	}
+	rpcError, _ := response["error"].(map[string]interface{})
+	message, _ := rpcError["message"].(string)
+	if strings.TrimSpace(message) == doagentPromptCleanupUnknown {
+		return fmt.Errorf("%w: %s", errExecutionOutcomeUnknown, doagentPromptCleanupUnknown)
+	}
+	return nil
+}
+
 func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallParams, timeout time.Duration, forward func(gatewayWSMessage) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -1911,19 +1936,6 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 	defer a.unregisterPending(id)
 	uncertainIfInterrupted := interruptionNeedsReconciliation(params.Name, params.Arguments)
 	uncertainWithoutTerminal := missingTerminalNeedsReconciliation(params.Name, params.Arguments)
-	cancelAndWait := func() error {
-		if err := a.waitPendingCancel(ch); err != nil {
-			if !uncertainWithoutTerminal && errors.Is(err, errExecutionOutcomeUnknown) {
-				return nil
-			}
-			return err
-		}
-		// Local termination cannot fence a remote controller or detached process.
-		if uncertainIfInterrupted {
-			return errExecutionOutcomeUnknown
-		}
-		return nil
-	}
 	sessionID := extractSession(params.Arguments)
 	routeNotifications := params.Name != "doops_task_status"
 	a.pendingMu.Lock()
@@ -1972,29 +1984,23 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 
 	waitCtx, cancelWait := context.WithTimeout(ctx, timeout)
 	defer cancelWait()
-	interruptionError := func() error {
-		if waitCtx.Err() == nil {
-			return nil
-		}
-		if err := cancelAndWait(); err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return fmt.Errorf("operation timed out")
-	}
 	var forwardErr error
 	forwardMessage := func(msg gatewayWSMessage) (bool, error) {
 		if msg.Parsed == nil {
 			return false, nil
 		}
 		if _, ok := msg.Parsed["id"]; ok {
+			// An unknown prompt must not enter the known-failure callback:
+			// it can still be using the credentials prepared for this request.
+			if err := promptReplyUnknownError(params.Name, msg.Parsed); err != nil {
+				return true, err
+			}
 			if (uncertainWithoutTerminal && executionResponseUnknown(msg.Parsed)) ||
 				remoteMutationFailed(params.Name, params.Arguments, msg.Parsed) {
 				return true, executionUnknownFromResponse(msg.Parsed)
 			}
-			if uncertainIfInterrupted && (ctx.Err() != nil || executionResponseCanceled(msg.Parsed)) {
+			if uncertainIfInterrupted && !promptReplyProvesNoExecution(params.Name, msg.Parsed) &&
+				(ctx.Err() != nil || executionResponseCanceled(msg.Parsed)) {
 				return true, fmt.Errorf("%w: mutation was interrupted before it finished", errExecutionOutcomeUnknown)
 			}
 			if forwardErr == nil {
@@ -2011,13 +2017,51 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 		}
 		return false, nil
 	}
+	cancelAndWait := func() (bool, error) {
+		err := a.waitPendingCancel(ch)
+		// A terminal may race the disconnect selected by waitPendingCancel.
+		// Read the saved reply only after its publication barrier has closed.
+		select {
+		case <-ch.terminal:
+			if err := promptReplyUnknownError(params.Name, ch.terminalMessage.Parsed); err != nil {
+				return true, err
+			}
+			if promptReplyProvesNoExecution(params.Name, ch.terminalMessage.Parsed) {
+				return forwardMessage(ch.terminalMessage)
+			}
+		default:
+		}
+		if err != nil {
+			if !uncertainWithoutTerminal && errors.Is(err, errExecutionOutcomeUnknown) {
+				return false, nil
+			}
+			return true, err
+		}
+		// Local termination cannot fence a remote controller or detached process.
+		if uncertainIfInterrupted {
+			return true, errExecutionOutcomeUnknown
+		}
+		return false, nil
+	}
+	interruptionResult := func() (bool, error) {
+		if waitCtx.Err() == nil {
+			return false, nil
+		}
+		if done, err := cancelAndWait(); done {
+			return true, err
+		}
+		if err := ctx.Err(); err != nil {
+			return true, err
+		}
+		return true, fmt.Errorf("operation timed out")
+	}
 	for {
 		// A busy output queue must not starve cancellation or the deadline.
-		if err := interruptionError(); err != nil {
+		if done, err := interruptionResult(); done {
 			return err
 		}
 		if msg, ok, queueErr := ch.dequeue(); queueErr != nil {
-			if err := cancelAndWait(); err != nil {
+			if done, err := cancelAndWait(); done {
 				return err
 			}
 			return queueErr
@@ -2033,12 +2077,12 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 		case <-ch.notify:
 		case <-a.closed:
 			for {
-				if err := interruptionError(); err != nil {
+				if done, err := interruptionResult(); done {
 					return err
 				}
 				msg, ok, queueErr := ch.dequeue()
 				if queueErr != nil {
-					if err := cancelAndWait(); err != nil {
+					if done, err := cancelAndWait(); done {
 						return err
 					}
 					return queueErr
@@ -2056,16 +2100,8 @@ func (a *GatewayAgent) relayToolCall(ctx context.Context, params api.ToolCallPar
 					!(errors.Is(ch.terminalErr, errExecutionOutcomeUnknown) && !uncertainWithoutTerminal) {
 					return ch.terminalErr
 				}
-				if remoteMutationFailed(params.Name, params.Arguments, ch.terminalMessage.Parsed) {
-					return executionUnknownFromResponse(ch.terminalMessage.Parsed)
-				}
-				if uncertainIfInterrupted && (ctx.Err() != nil || executionResponseCanceled(ch.terminalMessage.Parsed)) {
-					return fmt.Errorf("%w: mutation was interrupted before it finished", errExecutionOutcomeUnknown)
-				}
-				if forwardErr != nil {
-					return forwardErr
-				}
-				return forward(ch.terminalMessage)
+				_, err := forwardMessage(ch.terminalMessage)
+				return err
 			default:
 				if !uncertainWithoutTerminal {
 					return errGatewayAgentDisconnected

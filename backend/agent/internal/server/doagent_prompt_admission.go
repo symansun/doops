@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strings"
 )
@@ -26,6 +27,8 @@ const (
 	promptAdmissionQueuedNoTurn    promptAdmissionKind = "queued_no_turn"
 	promptAdmissionNoPrompt        promptAdmissionKind = "no_prompt"
 	promptAdmissionRejected        promptAdmissionKind = "rejected"
+	promptAdmissionBusy            promptAdmissionKind = "busy"
+	promptAdmissionTimedOut        promptAdmissionKind = "timed_out"
 	promptAdmissionTransportFailed promptAdmissionKind = "transport_failed"
 	promptAdmissionMalformed       promptAdmissionKind = "malformed"
 )
@@ -75,10 +78,21 @@ func classifyDoagentPromptAdmission(response map[string]interface{}) promptAdmis
 		data, _ := errorObject["data"].(map[string]interface{})
 		admission := promptAdmission{rpcCode: doagentIntField(errorObject, "code")}
 		if data["failureClass"] == "admission_timeout" {
-			// A 202 admission timeout proves the prompt was not admitted yet, but
-			// not that no later turn starts; keep the unknown-outcome protection.
+			// Only an atomic withdrawal before preparation/admission proves the
+			// request cannot start later. Older timeout replies lack that fact.
+			if data["executionStarted"] == false && data["retryable"] == true {
+				admission.kind = promptAdmissionTimedOut
+				admission.detail = "request withdrawn before admission"
+				return admission
+			}
 			admission.kind = promptAdmissionTransportFailed
 			admission.detail = "admission_timeout"
+			return admission
+		}
+		message, _ := errorObject["message"].(string)
+		if admission.rpcCode == -32000 && (message == doagentPromptBusy || strings.HasPrefix(message, doagentPromptBusy+":")) {
+			admission.kind = promptAdmissionBusy
+			admission.detail = "busy request was not queued"
 			return admission
 		}
 		switch admission.rpcCode {
@@ -142,18 +156,40 @@ const doagentPromptCleanupUnknown = "doagent_prompt_queue_cleanup_unknown"
 // doagentPromptNoPrompt is the stable category for an empty prompt.
 const doagentPromptNoPrompt = "doagent_prompt_no_prompt"
 
-// settleQueuedPromptWS decides what a queued admission means on the wire.
-//
-// doagent 0.2.42 has no request-scoped cancel: the only cleanup primitive is a
-// session-wide session/cancel, which also stops the session's active turn and
-// drops every other request queued there. The only session this Agent can prove
-// it owns is the machine-result session whose id it mints for this one prompt;
-// streaming prompts reuse the caller's session, so a cancel there could hit
-// another concurrent request. A global-admission reply proves the session was
-// idle when the prompt was queued, but that alone does not make a shared
-// session safe to cancel, so only the minted session is cleaned up here. Any
-// other queued reply reports cleanup as unknown and forbids automatic retry.
-func settleQueuedPromptWS(ctx context.Context, reqID interface{}, doagentURL, targetSessionID string, sessionMintedForPrompt bool, admission promptAdmission, writeJSON func(v interface{})) {
+const doagentPromptBusy = "doagent_prompt_busy"
+const doagentPromptAdmissionUnsupported = "doagent_prompt_admission_unsupported"
+const doagentPromptAdmissionUnavailable = "doagent_prompt_admission_unavailable"
+const doagentPromptAdmissionTimeout = "doagent_prompt_admission_timeout"
+const doagentPromptCancelledBeforeAdmission = "doagent_prompt_cancelled_before_admission"
+
+// Reject busy requests before they become background work. Checking the
+// capability before each prompt also detects a runtime replaced at the same URL.
+func requireDoagentPromptAdmission(ctx context.Context, baseURL string) error {
+	response, err := doagentRPCContext(ctx, baseURL, map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      "prompt-admission-capability",
+		"method":  "initialize",
+		"params":  map[string]interface{}{},
+	})
+	if err != nil {
+		return errors.New(doagentPromptAdmissionUnavailable)
+	}
+	result, ok := response["result"].(map[string]interface{})
+	if !ok || response["error"] != nil {
+		return errors.New(doagentPromptAdmissionUnavailable)
+	}
+	capabilities, _ := result["agentCapabilities"].(map[string]interface{})
+	prompt, _ := capabilities["promptCapabilities"].(map[string]interface{})
+	if supported, _ := prompt["rejectWhenBusy"].(bool); !supported {
+		return errors.New(doagentPromptAdmissionUnsupported)
+	}
+	return nil
+}
+
+// A queued response violates the negotiated rejectWhenBusy contract. Only an
+// exact request cancellation can establish that it will not execute later.
+func settleQueuedPromptWS(ctx context.Context, reqID interface{}, doagentURL, targetSessionID string, admission promptAdmission, writeJSON func(v interface{})) {
+	log.Printf("doagent violated rejectWhenBusy admission contract: doagent_session=%s", targetSessionID)
 	if admission.queueRequestID != "" {
 		// doagent named this queue entry, so the cleanup can remove exactly one
 		// request and is safe even in a session the Gateway shares with another
@@ -164,20 +200,6 @@ func settleQueuedPromptWS(ctx context.Context, reqID interface{}, doagentURL, ta
 		if err != nil || status != "queued_cancelled" {
 			log.Printf("doagent prompt queue cleanup unconfirmed: doagent_session=%s queue_request=%s status=%s error=%v",
 				targetSessionID, admission.queueRequestID, status, err)
-			writeJSON(buildErrorResponse(reqID, -32603, doagentPromptCleanupUnknown))
-			return
-		}
-		writeJSON(buildErrorResponse(reqID, -32603, doagentPromptQueued))
-		return
-	}
-	// Older doagent answers carry no token; the only cleanup primitive there is a
-	// session-wide cancel, safe only for a session this request minted itself.
-	if admission.queueScope == promptQueueGlobal && sessionMintedForPrompt {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), doagentCancellationTimeout)
-		defer cancel()
-		if err := cancelDoagentSessionQueue(cleanupCtx, doagentURL, targetSessionID); err != nil {
-			log.Printf("doagent prompt queue cleanup failed: doagent_session=%s global_position=%d error=%s",
-				targetSessionID, admission.globalPosition, sanitizeSecretText(err.Error()))
 			writeJSON(buildErrorResponse(reqID, -32603, doagentPromptCleanupUnknown))
 			return
 		}
@@ -206,20 +228,6 @@ func cancelDoagentQueuedRequest(ctx context.Context, baseURL, sessionID, queueRe
 	result, _ := response["result"].(map[string]interface{})
 	status, _ := result["status"].(string)
 	return status, nil
-}
-
-// cancelDoagentSessionQueue sends the only cleanup primitive doagent 0.2.42
-// offers. A successful RPC means the cancel was acknowledged; it does not prove
-// the queue entry was removed, so callers must use it only where the whole
-// session belongs to the request being cleaned up.
-func cancelDoagentSessionQueue(ctx context.Context, baseURL, sessionID string) error {
-	_, err := doagentRPCContext(ctx, baseURL, map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      "cancel-" + sessionID,
-		"method":  "session/cancel",
-		"params":  map[string]interface{}{"sessionId": sessionID},
-	})
-	return err
 }
 
 // logDoagentPromptAdmission records the classified admission without prompt

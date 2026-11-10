@@ -772,6 +772,10 @@ socket。镜像构建使用 CLI 的通用 `image build`，高级场景仍可通�
 {"session_id": "smoke"}
 ```
 
+指定 `{"session_id":"smoke","section":"admission"}` 时，只读取 do-agent
+`runtime/gcStats.admission.current`，返回名额、占用 turn 和排队 session；
+字段定义及失败语义见 [使用指南](DOOPS_USAGE_GUIDE.md)。该诊断不依赖模型准入。
+
 需要该 target 的 grant（审计动作记为 `info`）。
 
 ### `doops_database_inventory`

@@ -465,6 +465,8 @@ func newCancellationDoagentMock(t *testing.T, promptFailure string, cancelStatus
 		}
 		result := map[string]interface{}{}
 		switch request["method"] {
+		case "initialize":
+			result = doagentAdmissionCapabilities()
 		case "session/new":
 			result["sessionId"] = "cancel-agent-session"
 		case "session/setMode":
@@ -629,22 +631,34 @@ func TestAgentCancellationPromptDisconnectKeepsSSEForCleanup(t *testing.T) {
 
 func TestAgentCancellationLostAdmissionIsUnknown(t *testing.T) {
 	for _, failure := range []string{"transport", "admission_timeout", "missing_turn", "inflight"} {
-		t.Run(failure, func(t *testing.T) {
-			mock := newCancellationDoagentMock(t, failure, "not_running")
-			_, conn, messages := cancellationTestAgent(t)
-			sendCancellationTestTool(t, conn, "doops_agent_prompt", map[string]interface{}{
-				"session_id": "lost-admission", "instruction": "synthetic task",
+		for _, format := range []string{"", "json"} {
+			t.Run(failure+"/response_format="+format, func(t *testing.T) {
+				mock := newCancellationDoagentMock(t, failure, "not_running")
+				_, conn, messages := cancellationTestAgent(t)
+				sendCancellationTestTool(t, conn, "doops_agent_prompt", map[string]interface{}{
+					"session_id": "lost-admission", "instruction": "synthetic task",
+					"response_format": format,
+				})
+				awaitCancellationTestSignal(t, mock.prompted)
+				if failure == "inflight" {
+					sendCancellationTestCancel(t, conn)
+				}
+				if format == "json" {
+					awaitCancellationTestSignal(t, mock.canceled)
+				}
+				final := awaitCancellationTestMessage(t, messages, func(m map[string]interface{}) bool { return m["id"] == float64(42) })
+				if !strings.Contains(fmt.Sprint(final["error"]), "execution_outcome_unknown") {
+					t.Fatalf("lost admission incorrectly treated as stopped: %#v", final)
+				}
+				if format == "" {
+					select {
+					case <-mock.canceled:
+						t.Fatal("lost admission canceled a potentially shared session")
+					default:
+					}
+				}
 			})
-			awaitCancellationTestSignal(t, mock.prompted)
-			if failure == "inflight" {
-				sendCancellationTestCancel(t, conn)
-			}
-			awaitCancellationTestSignal(t, mock.canceled)
-			final := awaitCancellationTestMessage(t, messages, func(m map[string]interface{}) bool { return m["id"] == float64(42) })
-			if !strings.Contains(fmt.Sprint(final["error"]), "execution_outcome_unknown") {
-				t.Fatalf("lost admission incorrectly treated as stopped: %#v", final)
-			}
-		})
+		}
 	}
 }
 

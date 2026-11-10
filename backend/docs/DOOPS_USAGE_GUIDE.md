@@ -14,6 +14,7 @@ prints it to stderr, and proceeds; pass that name again to continue in the same 
 | List configured targets | `doops list` | Local config only; not live gateway state. |
 | Copy newly online targets into local routes | `doops sync [--target <gateway-target>]` | Adds live targets this login can use and that are missing locally. Does not rename existing routes or remove offline ones. |
 | List live gateway agents | `doops -session <s> targets --target <gateway-target>` | Checks only that configured route. It does not list or save the Gateway's other agents. |
+| Inspect prompt admission | `doops -session <s> targets --target <gateway-target> --admission` | Reads live do-agent permits, owning turns and queued sessions without a model. |
 | Retire an offline target | `doops -session <s> remove --target <gateway-target>` | Removes only the local route after a successful Gateway query confirms the exact route is not currently visible; online, unreachable, or unauthorized targets are refused. |
 | Check Agent protocol capability | `doops -session <s> capabilities --target <t> --require structuredSSH` | Fails closed when the online Agent is too old for structured SSH. |
 | Add a Gateway target | `doops add --name <n> --gateway <url> --cluster <c> --instance <i>` | Stores routing only; never stores a target token. |
@@ -37,8 +38,8 @@ prints it to stderr, and proceeds; pass that name again to continue in the same 
 | DoWeb controlled publish | `doops -session <s> web --target <t> --mode apply --credential <web-resource> --request '<site, dist, domain, proxy, acceptance>'` | Requires the target grant and `nginx -t`/reload/health evidence. |
 | Push a local directory | `doops -session <s> push --target <t> --src <dir>` | Syncs into `/root/ws/<session>`. |
 | Pull a remote workspace | `doops -session <s> pull --target <t> --dest <dir>` | Use for large files and binary assets. |
-| Read small text | `doops -session <s> read --target <t> --path <file>` | Small text only. |
-| Write small text | `doops -session <s> write --target <t> --path <file> --file <local>` | Also supports `--content` and stdin. |
+| Read small text | `doops -session <s> read --target <t> --path <file>` | Small text only. Default COS mode prints a presigned GET; use `--storage gateway` to print content. Paths are relative to the session workspace. |
+| Write small text | `doops -session <s> write --target <t> --path <file> --file <local>` | Also supports `--content` and stdin. Default COS mode stores the object and prints a presigned GET; use `--storage gateway` for a direct session-workspace write. Paths are relative. |
 | Read system information | `doops -session <s> info --target <t>` | CPU, memory and disk metadata. |
 | Use structured Kubernetes operations | `doops -session <s> k8s --target <t> ...` | Restricted operational interface; publishing uses `ask --apply`. |
 | Clean workspace | `doops -session <s> clean --target <t> --workspace <s>` | Cleans `/root/ws/<workspace>`. |
@@ -70,6 +71,14 @@ Gateway 直接解析保存的 target/database 绑定和 active version，不让�
 不带 `--credential` 时，Gateway 按 ID 绑定当前 target 上全部 active 的
 `use=database` 凭据。只有一个绑定时直接使用；有多个时按 `--database` 匹配凭据指向的数据库，
 未指定时返回 `dosql_database_required` 并列出各绑定指向的 `engine/database`。
+`--database` 的值取列表里的 **database 部分**（例如 `lab_management`）；
+为兼容从 `credential list` 复制名称的习惯，也接受唯一的 credential/binding 名并解析到其 database。
+同一数据库绑了多个账号时用 `--credential <name>` 选择账号。
+
+真实 apply 返回 `version`、`journal_path` 和 `evidence_path`；query/dry-run 返回
+`evidence_path` 但不占 version。`journal_path` 是目标上的 per-database hash 链
+journal（begin/end + statement 指纹 + committed/verified），用于审计和恢复；
+`evidence_path` 是本次 operation 的完整 statement/columns/rows 证据。
 同一个库绑了多个账号（例如只做 DML 的应用账号和做 DDL 的迁移账号）时，用
 `--credential <name|cred_id>` 指定本次使用哪一个；它只用于 `--sql/--file`，只能选中当前 target
 上已绑定的 database 凭据，不新增任何授权。名字不在当前 target 的 database 绑定里时返回
@@ -223,6 +232,13 @@ Agent 未提供完整 `RELEASE_COMMIT` 时只能视为旧运行时，升级验�
 To remove a stale local route, use `doops -session <s> remove --target <gateway-target>`. The command first queries the configured Gateway and refuses to modify the config if the Gateway is unreachable, authentication fails, or the exact route is currently visible. It does not delete Gateway grants, audit records, proxy routes, or historical agent status.
 
 `doops targets` 的状态：
+
+这些状态只描述 Gateway 操作计数。`ACTIVE=0 / QUEUED=0` 不代表 do-agent 内部名额空闲。
+增加 `--admission` 会通过节点信息 RPC 读取 `runtime/gcStats` 的 `admission.current`：
+`limit`、`inUse`、`available`、`holders`（session/turn）及
+`queues`（session、queued、oldestWaitSecs）。已取得但尚未归属 turn 的局部名额计入
+`inUse`，不出现在 `holders`。该读取不运行模型、不创建 prompt、不重启运行时；
+旧 Agent/运行时不支持或读取失败时明确报错，不能将缺失数据显示为零。
 
 - `busy=true` 只表示 Agent 自升级占用整个 target；普通操作不会置位。
 - `status=active` 且 `busy=false` 表示有 session 在跑。Shell/SSH/bg/apply 可并发，同 session 也不串行，
@@ -591,12 +607,16 @@ Confirm the session name before cleaning. Do not share one session across unrela
 ## Login And Logout
 
 ```bash
+# 首次登录 / 尚无本地路由：直接给 Gateway URL，CLI 会自动发现并写回可见 target
+doops login --gateway https://gateway.example.com --username alice
+printf '%s' "$DOOPS_GATEWAY_TOKEN" | doops login --gateway https://gateway.example.com --token-stdin
+
+# 已有路由后的常规登录
 doops login --target jm --username alice
 printf '%s' "$DOOPS_GATEWAY_TOKEN" | doops login --target jm --token-stdin
-doops login --gateway https://gateway.example.com --username alice   # first login; discovers visible targets
-doops login --gateway https://gateway.example.com --token-stdin < token.txt
+
 doops logout --target jm
-doops logout --gateway https://gateway.example.com                    # no local route yet
+doops logout --gateway https://gateway.example.com
 ```
 
 本地还没有 target 路由时，用 `--gateway <url>` 做首次登录：CLI 先交换或导入 token，再调用

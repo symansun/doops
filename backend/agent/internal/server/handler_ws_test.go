@@ -618,9 +618,7 @@ func TestAgentPromptNotificationIncludesAssistantDeltaKind(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"jsonrpc": "2.0",
 					"id":      req["id"],
-					"result": map[string]interface{}{
-						"capabilities": map[string]interface{}{"cicdStructuredReport": true},
-					},
+					"result":  doagentAdmissionCapabilities(),
 				})
 			case "session/new":
 				params, _ := req["params"].(map[string]interface{})
@@ -762,7 +760,7 @@ func TestAgentPromptRefreshesPermissionModeForReusedSession(t *testing.T) {
 			case "initialize":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"jsonrpc": "2.0", "id": id,
-					"result": map[string]interface{}{"capabilities": map[string]interface{}{}},
+					"result": doagentAdmissionCapabilities(),
 				})
 			case "session/new":
 				params, _ := req["params"].(map[string]interface{})
@@ -1256,6 +1254,10 @@ func TestAgentPromptReturnsAdmissionErrorImmediately(t *testing.T) {
 				return
 			}
 			switch req["method"] {
+			case "initialize":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0", "id": req["id"], "result": doagentAdmissionCapabilities(),
+				})
 			case "session/new":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"jsonrpc": "2.0",
@@ -1348,6 +1350,10 @@ func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed bool) {
 			}
 			id := request["id"]
 			switch request["method"] {
+			case "initialize":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"jsonrpc": "2.0", "id": id, "result": doagentAdmissionCapabilities(),
+				})
 			case "session/new":
 				params, ok := request["params"].(map[string]interface{})
 				if !ok {
