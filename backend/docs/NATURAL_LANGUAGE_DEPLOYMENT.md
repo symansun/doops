@@ -111,6 +111,8 @@ prompt（包括尚无 token 的 `ask --apply`）不得被 session 级取消命�
 `doagent_prompt_queue_cleanup_unknown`：本请求没有 turn，但排队项可能稍后执行，禁止自动重试，
 先核对队列与审计。凭据准备回滚失败仍按凭据不确定处理，不套用准入前类别。空 prompt 在发送给
 doagent 之前就被拒绝，上游 `no_prompt` 应答同样不触发任何 cancel。
+非流式 ACP 调用在排队期限内未获得准入时返回 `doagent_prompt_queue_timeout`，这是准入前的明确失败，
+不代表 mutation 已开始，也不应被重写成 `execution_outcome_unknown`。
 当前锁按 target 路由
 隔离，没有跨 target 的 release/数据库统一锁或执行器 fencing，不支持安全强制抢占。
 

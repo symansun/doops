@@ -94,8 +94,18 @@ func executionResponseCanceled(response map[string]interface{}) bool {
 var promptPreAdmissionCategories = []string{
 	"doagent_prompt_queued",
 	"doagent_prompt_queue_cleanup_unknown",
+	"doagent_prompt_queue_timeout",
 	"doagent_prompt_no_prompt",
 	"doagent_prompt_rejected",
+	"doagent_unavailable",
+	"doagent_session_create_failed",
+	"doagent_session_create_invalid",
+	"doagent_permission_mode_configuration_failed",
+	"doagent_model_configuration_failed",
+	"doagent_mode_configuration_failed",
+	"doagent_attachment_upload_failed",
+	"doagent_sse_unavailable",
+	"doagent_mutation_authority_unavailable",
 }
 
 // promptPreAdmissionReply reports whether a prompt answer is a pre-admission
