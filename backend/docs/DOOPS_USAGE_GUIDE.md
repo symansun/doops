@@ -43,7 +43,7 @@ prints it to stderr, and proceeds; pass that name again to continue in the same 
 | Read system information | `doops -session <s> info --target <t>` | CPU, memory and disk metadata. |
 | Use structured Kubernetes operations | `doops -session <s> k8s --target <t> ...` | Restricted operational interface; publishing uses `ask --apply`. |
 | Clean workspace | `doops -session <s> clean --target <t> --workspace <s>` | Cleans `/root/ws/<workspace>`. |
-| Check an image deployment | `doops check ...` | Compares configured service image with build metadata. |
+| Check an image deployment | `doops check --target <t> --deployment <d> --namespace <ns> --image <repo/image>` | Compares the Deployment's main container image with the exact image you pass; `--namespace` defaults to `default`. |
 | Upgrade a managed Helm Agent | `doops -session <s> upgrade --target <t> --image <repository:tag 或 repository@sha256:<digest>` | In-cluster Job only. `--dry-run` previews parameters. |
 | Release an existing standalone Docker Agent | External `scripts/release-host-agent.sh` | Explicit DockerHost controller, not CLI fallback; real read-only `--dry-run`. See [SOP](BUILD_DEPLOY_SOP.md#独立-dockerhost-发布). |
 | Cache token | `doops login ...` | Gateway login can exchange username/password for user token. |
@@ -590,7 +590,10 @@ cat ./pod.yaml | doops -session ops write --target jm --path pod.yaml
 
 File API paths are relative to the named session workspace. The Web file browser
 uses the same paths for open, save, new-file and upload, and its navigation stays
-inside that workspace. Use explicit Shell operations for host paths.
+inside that workspace. The one absolute form accepted is a knowledge-base file,
+`<DOOPS_KB_ROOT>/<name>.md` (default `/root/kb`); any other absolute path,
+including `/root/ws/<session>/...`, is rejected as unsafe. Use explicit Shell
+operations for other host paths.
 
 `read` and `write` are for small text files and short scripts. Use `push/pull` for directories and binary assets.
 

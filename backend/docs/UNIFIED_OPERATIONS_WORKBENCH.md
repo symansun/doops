@@ -21,7 +21,7 @@ doops-agent: tool dispatch -> selected skill
         +-- other skills: their domain rules and evidence
 ```
 
-Web 登录后只返回用户名和 Gateway 标识。Gateway user token 放在当前工作台的 HttpOnly
+Web 登录后只返回用户身份和会话元数据（Gateway、用户名、管理员标记、token ID 与签发/到期时间），不返回 token。Gateway user token 放在当前工作台的 HttpOnly
 session cookie 中，浏览器业务请求不再把 token 放进 React state、localStorage、表单或
 skill 参数。CLI 仍直接使用 `doops login` 保存的 Gateway token；两种入口最终都调用同一
 Gateway `/v1/auth/login`、`/v1/targets`、`/v1/rpc` 和凭据 API。
@@ -47,8 +47,8 @@ Workbench session、附件上传。缺少 session 时统一返回未建立 Gatew
 
 DoSql 已接入受限的数据库 MCP 工具和 Gateway 受管凭据到数据库 adapter 的内部绑定。
 `doops sql`、控制台数据库页和 DoSql skill 共用 Gateway 登录、target 授权、
-审计和 session；skill 不实现第二套认证，也不能通过 Bash、本地连接文件、环境变量或
-密码 prompt 绕过授权。只读查询和变更都会进入 DoSql 的 journal/evidence 生命周期，
+审计和 session；skill 不实现第二套认证，也不能通过 Bash、本地连接文件、环境变量、
+密码或 prompt 绕过授权。只读查询和变更都会进入 DoSql 的 journal/evidence 生命周期，
 SQL 变更通过 `doops sql --mode apply --sql/--file` 原样提交，使用 target 上绑定的数据库凭据并记录版本；
 可回滚批次在事务内执行，隐式提交 DDL 的限制及独立执行、回读验收见
 [使用指南](DOOPS_USAGE_GUIDE.md#dosql-直接执行-sql)。

@@ -204,7 +204,8 @@ grant 吊销或轮换时只清理自己下发的条目。轮换到另一个 regi
 一并移除。
 
 `doops registry sync` 与 `doops image copy` 默认使用这个文件，不必再传 authfile 路径；
-`--source-authfile` / `--target-authfile` 保留为覆盖项，用于目标把 registry 配置放在别处的情况。
+`doops registry sync` 的 `--source-authfile`/`--target-authfile` 和 `doops image copy` 的
+`--source-authfile`/`--destination-authfile` 保留为覆盖项，用于目标把 registry 配置放在别处的情况。
 凭据本身始终不进入命令参数。
 
 重新物化只发给握手时声明 `registryAuthfile` 协议（`doops.sh/registry-authfile/v1`）的 Agent。

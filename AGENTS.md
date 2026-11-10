@@ -16,16 +16,18 @@ DoOps architecture, security, release, and verification boundaries.
 |---|---|---|
 | Gateway + Agent runtime | `backend/agent/internal/server/` | One shared package; see its `README.md` for the file-prefix index |
 | Gateway entrypoint | `backend/gateway/main.go` | 11-line wrapper that calls `backend/agent/pkg/gatewaycmd` |
-| Agent entrypoint | `backend/agent/cmd/agent/` | Imports `internal/server` and `internal/dispatcher` |
+| Agent entrypoint | `backend/agent/cmd/agent/` | Imports `internal/server`, which drives `internal/dispatcher` |
 | CLI | `backend/cli/cli/doops/` | Separate Go module named `doops` |
 | Agent-side skills | `backend/agent/skills/` | Copied into the Agent image; includes `dosql/` and `doweb/` |
 | Operator Skill | `backend/skills/SKILL.md` + `backend/docs/*.md` | Installed into projects by `backend/scripts/install.sh` |
 | Helm Charts | `backend/deploy/helm/` | Runtime assets only |
 | Release scripts | `backend/scripts/` | Python contract tests live in `backend/test/` |
 | Web console | `app/`, `components/`, `lib/` (Next.js) | Built from `Dockerfile.web` |
+| Release notes | `CHANGELOG.md` | Bundled into the Web image; the console's 更新内容 dialog reads it |
 
-`bin/`, `backend/bin/`, `DoSuite/`, `DoSecurity/`, `.next/`, and `node_modules/` are ignored local
-artifacts. Do not read, search, or execute them; they include stale binaries.
+`bin/`, `backend/bin/`, `backend/cli/bin/`, `.next/`, `node_modules/`, `.agent/skills/doops/` (the
+installed Skill copy), and the local `/examples/`, `/test/`, `/.local/` scratch areas are ignored
+artifacts. Do not treat them as sources, and do not read or execute stale binaries in them.
 
 ## Topic Ownership
 
@@ -41,6 +43,10 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
 | External API | `backend/docs/DOOPS_API_GUIDE.md` |
 | Installation and onboarding | `backend/docs/CLUSTER_INSTALL_GUIDE.md` |
 | Day-to-day commands | `backend/docs/DOOPS_USAGE_GUIDE.md` |
+| Web console behavior | `backend/docs/DOOPS_WEBUI.md` |
+| Model settings | `backend/docs/MODEL_STANDARDS.md` |
+| Edge tunnel design | `backend/docs/design/DOOPS_EDGE_TUNNEL.md` |
+| Release notes (console 更新内容) | `CHANGELOG.md` |
 
 ## Canonical Architecture
 
@@ -157,7 +163,10 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
 ## Required Documentation
 
 A behavior change updates, in the same change, the one authoritative document that owns its topic
-(see Topic Ownership), plus CLI `--help` text and README when user-visible commands change.
+(see Topic Ownership), plus CLI `--help` text and README when user-visible commands change. A
+user-visible change also records an entry under `## [Unreleased]` in `CHANGELOG.md`, which the
+console reads as the release log; a release replaces that heading with `## [version] — YYYY-MM-DD`
+and never rewrites the published entries.
 `backend/skills/SKILL.md` keeps only red lines, command selection, and links; update it only when a
 red line or a command entry changes. Other documents link to the owner instead of restating it.
 

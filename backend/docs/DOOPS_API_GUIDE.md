@@ -49,7 +49,7 @@ version 后只向 HTTP 返回版本元数据。公开 RPC 禁止调用该工具�
         -> shell / kubectl / buildkit / doagent AI
 ```
 
-Gateway 负责鉴权、授权、目标路由、单目标 busy 隔离、审计记录、WebSocket JSON-RPC 转发和 Git HTTP 反向隧道。
+Gateway 负责鉴权、授权、目标路由、按 target/session 作用域的并发隔离（target 级独占只用于 Agent 自升级）、审计记录、WebSocket JSON-RPC 转发和 Git HTTP 反向隧道。
 
 ## 基础地址和鉴权
 
@@ -121,7 +121,7 @@ ok
 
 ## 用户登录换取 Token
 
-密码登录是可选能力，返回短期 user token。长期自动化任务应使用 Gateway 管理员签发的服务 token。
+密码登录是可选能力，返回短期 user token。长期自动化任务应使用 Gateway 管理员签发的长期 user token。
 默认登录 token 有 24 小时有效期；每次成功登录都会创建新的 token ID，不会自动复用或撤销旧 token。
 客户端应根据 `token_id`、`issued_at` 和 `expires_at` 记录替换关系，并通过管理员接口显式撤销旧 token。
 登录不删除过期 token 的记录；旧凭证继续返回明确的过期原因，便于审计和轮换核对。
@@ -205,9 +205,9 @@ Content-Type: application/json
 {"name":"alice","password":"<PASSWORD_FROM_SECURE_INPUT>","admin":false}
 ```
 
-当前 `POST /v1/admin/users` 会在创建成功后自动添加一条 `*/*` grant。普通用户创建流程
-必须在交付账号前删除该 bootstrap grant，并创建精确 `cluster/instance/actions` grant。
-如果收窄失败，立即停用用户。
+`POST /v1/admin/users` 只创建账号，不创建任何 target grant。交付账号前必须创建精确的
+`cluster/instance` grant；grant 覆盖整个 target，没有 actions 维度。创建 grant 失败时
+立即停用用户。
 
 设置密码和启用/停用用户：
 
@@ -271,7 +271,7 @@ GET /v1/admin/instances?include=history
 Authorization: Bearer <ADMIN_USER_TOKEN>
 ```
 
-`include` 只接受 `history`，其它值返回 `400`。活跃窗口、90 天自动清理，以及清理不触碰的授权、令牌、凭据、审计和路由，见 [DOOPS_GATEWAY_TUNNEL.md](DOOPS_GATEWAY_TUNNEL.md) 的 Reliability Notes。
+`include` 只接受 `history`，其它值返回 `400`。活跃窗口、清理时机，以及清理不触碰的授权、令牌、凭据、审计和路由，见 [DOOPS_GATEWAY_TUNNEL.md](DOOPS_GATEWAY_TUNNEL.md) 的 Reliability Notes。
 
 ## 管理员签发用户 Token
 
@@ -339,24 +339,25 @@ Authorization: Bearer <USER_TOKEN>
       "instance": "oilan-node",
       "key": "doops-oilan/oilan-node",
       "release_commit": "0123456789abcdef0123456789abcdef01234567",
-	      "remote": "10.0.0.12:47128",
-	      "connected_at": "2026-05-14T12:00:00Z",
-	      "last_seen": "2026-05-14T12:00:10Z",
-	      "busy": false,
-	      "status": "active",
-	      "active_ops": 1,
-	      "queued_ops": 0,
-	      "resources": ["workspace:deploy-20260519"],
-	      "sessions": ["deploy-20260519"]
-	    }
-	  ]
-	}
+      "remote": "10.0.0.12:47128",
+      "connected_at": "2026-05-14T12:00:00Z",
+      "last_seen": "2026-05-14T12:00:10Z",
+      "busy": false,
+      "status": "active",
+      "active_ops": 1,
+      "queued_ops": 0,
+      "resources": ["workspace:deploy-20260519"],
+      "sessions": ["deploy-20260519"]
+    }
+  ]
+}
 ```
 
 常见错误：
 
 - `401 Unauthorized`：token 缺失、无效、过期或已撤销。
-- `403 Forbidden`：token 有效，但无权查询目标列表。
+
+列表按调用方的 grant 过滤；没有任何匹配 grant 时返回空 `targets` 数组，不返回 `403`。
 
 `busy` 只表示 Agent 自升级持有 target 级独占 lease；普通变更和排队 session 使用
 `target + session` 作用域的共享 lease，同一 session 内的 Shell/SSH/bg/apply 也可并发，
@@ -461,13 +462,15 @@ CLI 和 Gateway（包括内部调度调用）在后台任务派发前校验，�
   "jsonrpc": "2.0",
   "method": "notifications/message",
   "params": {
+    "request_id": 2,
     "sessionID": "deploy_20260514",
-    "data": "一行 stdout 或 stderr\n"
+    "data": "一行 stdout 或 stderr\n",
+    "kind": "raw"
   }
 }
 ```
 
-最终响应会使用与请求相同的 `id`。
+最终响应会使用与请求相同的 `id`。通知的 `params.request_id` 由 Gateway 按发起请求的 `id` 填入，是调用方关联流式输出与请求的唯一依据；`params.kind` 取 `raw`、`tool`、`error`、`assistant_delta` 之一。
 
 ## 工具列表
 
@@ -1008,10 +1011,10 @@ Gateway 重启时遗留的 `running` 落为 `error`；已派发且需要变更�
 `agent_status` 记录，绝不删除或更改该实例的用户授权、令牌、凭据绑定或审计历史。Agent 下次
 成功连接时，Gateway 自动清除归档标记。
 
-Gateway 在启动时以及之后每小时，删除 `status=offline` 且 `last_seen` 早于 24 小时的实例记录。
-在线记录、缺少或无法解析 `last_seen` 的记录保留。删除只作用于实例记录；用户授权、令牌、
-凭据绑定和审计历史不动。Agent 再次连接会写入一条新的实例记录。24 小时内离线的记录仍保留，
-可按下面的接口归档或恢复。
+Gateway 在启动时以及之后每小时清理离线实例记录，保留期规则见
+[DOOPS_GATEWAY_TUNNEL.md](DOOPS_GATEWAY_TUNNEL.md) 的 Reliability Notes。清理只作用于实例记录；
+用户授权、令牌、凭据绑定和审计历史不动。Agent 再次连接会写入一条新的实例记录。
+尚未删除的离线记录可按下述接口归档或恢复。
 
 ```http
 POST /v1/admin/instances/archive
@@ -1047,7 +1050,8 @@ Content-Type: application/json
 }
 ```
 
-`GET /v1/admin/instances` 返回全部已知记录，以便管理员能发现并恢复归档实例；每条记录新增
+`GET /v1/admin/instances` 默认只返回活跃窗口内的记录；`include=history` 才包含保留期内的
+历史和已归档记录，以便管理员发现并恢复归档实例；每条记录新增
 `archived`、可选的 `archived_at` 和 `archived_by`。归档在线实例返回 `409`；未知实例返回
 `404`。重复归档和对已恢复记录再次恢复都是幂等的成功操作。
 
@@ -1072,20 +1076,20 @@ HTTP 错误：
 
 - `400`：查询参数或请求体缺失、非法。
 - `401`：token 缺失、无效、过期或已撤销。
-- `403`：token 有效，但缺少目标或动作权限。
+- `403`：token 有效，但缺少该 target 的 grant，或非平台管理员调用了管理接口。
 - `404`：路由或请求的资源不存在。
 - `405`：HTTP 方法不允许。
 - `409`：请求与当前资源状态冲突，例如尝试归档在线实例。
+- `503`：Gateway 鉴权或审计存储不可用（如 `gateway_auth_unavailable`、`audit_unavailable`），请求未被接受。
 
 JSON-RPC 错误：
 
 - `-32601`：未知方法或未知 Doops 工具。
 - `-32602`：请求参数非法。
 - `-32603`：Gateway 或目标 agent 内部执行失败。
-- `-32003`：目标或动作权限不足。
+- `-32003`：缺少该 target 的 grant、凭据控制面工具被公开调用，或代理上游不在白名单。
 - `-32004`：目标离线。
 - `-32005`：目标忙、目标队列满或等待超时。
-- `-32006`：全局或单用户并发限制超限。
 - `-32007`：操作取消；不能单凭客户端取消 ACK 推断执行停止。
 - `-32008`：`execution_outcome_unknown`，本次调用缺少可信终态或外部 mutation 被中断，
   不代表成功，不自动重放；历史未知审计不阻断新任务，活动任务仍受实际资源锁约束。

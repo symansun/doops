@@ -33,7 +33,7 @@
 | 资源类型 | image |
 | 目标 namespace | 本集群项目名，`dest_namespace_replace_count` 取 `-1`（展平全部层级）。已验证：源 `example/zhiyong/k8s/nginx` 落到 `sync-test/nginx` |
 | 覆盖 | 关闭。这两类 tag 不可变，已存在则跳过 |
-| 触发 | 手动。CNB 构建成功后由发布流程触发一次 |
+| 触发 | `scheduled` + `0 0 * * * *`（Harbor 6 字段 cron）。发布流程仍可在推送完成后手动触发一次，见第 6 节 |
 | 启用 | 是 |
 
 4. 不可变 tag 规则：项目里对 `git-*`、`sha-*` 开启 tag immutability，仓库范围用 `**` 覆盖项目下所有仓库。
@@ -69,7 +69,8 @@
 4. 用 digest 校验：Harbor 中该 tag 的 digest 必须等于 CNB 的 digest，revision 标签必须等于源提交。
 5. Helm 部署使用本集群 Harbor 的 `repo@sha256:<digest>`。
 
-现有 `sync_cnb_release_image`（本机 pull、tag、push）和 `promote-staged-images.sh` 在此流程落地后可以删除，不保留兼容路径。
+复制只走 Harbor 原生复制规则；配置与收敛脚本是 `backend/scripts/harbor-replication.py` 和
+`backend/scripts/harbor-converge.py`，不保留本机 pull/tag/push 的兼容路径。
 
 发布时触发复制，规则应精确到本次要发布的那个 tag，而不是走 `git-*` 全量通配。全量通配
 在实测中跑了 20 分钟仍未结束，因为每个 tag 都要按 CNB 的实际带宽逐层拉下来。按 tag 触发

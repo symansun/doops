@@ -33,8 +33,11 @@ revocation remains a separate explicit action. Neither operation renews a token.
   explicit structured ACP event capability and never downgrades to the old chat
   engine. This source change needs a new shared package publication and matching
   Agent/Web rollout; local fixture evidence is not production acceptance.
-- AI diagnostics query Agent runtime metadata instead of reading settings or API
-  keys. Diagnostics use `operation=ask`; the deployment form requires an explicit confirmation and sends `operation=apply` with target, release, namespace,
+- AI diagnostics run on the Agent and query runtime metadata instead of reading
+  settings or API keys. The console sends them, and the database and website pages
+  use the same prompt RPC with `operation=ask` (the website page sends
+  `operation=apply` only for an approved change). The deployment form requires an
+  explicit confirmation and sends `operation=apply` with target, release, namespace,
   remote Chart, controlled image, CI commit/evidence, reason and acceptance.
 - Helm success must include the final live Deployment and task acceptance.
   Native MCP `isError`, protocol errors and interrupted streams remain failures.
