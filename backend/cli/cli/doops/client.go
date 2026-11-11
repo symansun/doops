@@ -122,7 +122,15 @@ func (c *MCPClient) connect() error {
 func (c *MCPClient) connectWithVerification(expectedRelease, requiredProtocol string) (err error) {
 	defer func() {
 		if c.UpgradeOperationID != "" && err != nil {
-			err = errors.New(redactUpgradeText(err.Error(), c.Token))
+			var rpcErr *gatewayRPCError
+			if errors.As(err, &rpcErr) {
+				data, _ := redactUpgradeValue(rpcErr.Data, c.Token).(map[string]interface{})
+				err = fmt.Errorf("initialize failed: %w", &gatewayRPCError{
+					Code: rpcErr.Code, Message: redactUpgradeText(rpcErr.Message, c.Token), Data: data,
+				})
+			} else {
+				err = errors.New(redactUpgradeText(err.Error(), c.Token))
+			}
 		}
 	}()
 	c.mu.Lock()
@@ -414,7 +422,9 @@ func validateInitializeResponse(initID int64, evt wsEvent) error {
 		return fmt.Errorf("initialize failed: unexpected response id")
 	}
 	if rpcErr, ok := msg["error"].(map[string]interface{}); ok {
-		return fmt.Errorf("initialize failed: %v", rpcErr["message"])
+		code, _ := rpcErr["code"].(float64)
+		data, _ := rpcErr["data"].(map[string]interface{})
+		return fmt.Errorf("initialize failed: %w", &gatewayRPCError{Code: code, Message: fmt.Sprint(rpcErr["message"]), Data: data})
 	}
 	result, ok := msg["result"].(map[string]interface{})
 	if !ok {
@@ -439,12 +449,18 @@ func (c *MCPClient) RequireProtocol(protocol string) error {
 	if err := c.connectWithVerification("", protocol); err != nil {
 		return err
 	}
-	protocols, _ := c.capabilities["protocols"].(map[string]interface{})
+	if c.capabilities == nil {
+		return fmt.Errorf("initialize verification failed: missing capabilities")
+	}
+	protocols, validProtocols := c.capabilities["protocols"].(map[string]interface{})
+	if _, present := c.capabilities["protocols"]; present && !validProtocols {
+		return fmt.Errorf("initialize verification failed: malformed protocols")
+	}
 	if !protocolCapabilityCompatible(protocol, protocols[protocol]) {
-		return fmt.Errorf(
+		return &upgradeVerificationError{category: "upgrade_verification_protocol_missing", error: fmt.Errorf(
 			"target Agent does not advertise protocol %q; upgrade the Agent before using this operation",
 			protocol,
-		)
+		)}
 	}
 	return nil
 }
@@ -457,21 +473,27 @@ func (c *MCPClient) RequireAgentRelease(expected string) error {
 	if err := c.connectWithVerification(expected, ""); err != nil {
 		return err
 	}
-	actual, _ := c.capabilities["releaseCommit"].(string)
+	if c.capabilities == nil {
+		return fmt.Errorf("initialize verification failed: missing capabilities")
+	}
+	actual, validCommit := c.capabilities["releaseCommit"].(string)
+	if _, present := c.capabilities["releaseCommit"]; present && !validCommit {
+		return fmt.Errorf("initialize verification failed: malformed release commit")
+	}
 	actual = strings.TrimSpace(actual)
 	if actual == "" {
-		return fmt.Errorf("target Agent did not advertise a DoOps release commit")
+		return &upgradeVerificationError{category: "upgrade_verification_commit_mismatch", error: fmt.Errorf("target Agent did not advertise a DoOps release commit")}
 	}
 	if actual != expected {
 		// The CLI and the Agent are released as a pair. The Agent reports the
 		// commit it was built from, so a difference means this CLI and that
 		// Agent are not the same release, not that the Agent is broken.
-		return fmt.Errorf(
+		return &upgradeVerificationError{category: "upgrade_verification_commit_mismatch", error: fmt.Errorf(
 			"target Agent release commit mismatch: got %s, want %s; "+
 				"the CLI and the Agent are released as a pair, so install the CLI "+
 				"that matches the target Agent before upgrading it",
 			actual, expected,
-		)
+		)}
 	}
 	return nil
 }

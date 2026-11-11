@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
 	"time"
 )
 
@@ -25,12 +27,23 @@ DELETE FROM audit_events WHERE julianday(started_at) < julianday(?)
 			AND terminal.job = json_extract(CASE WHEN json_valid(audit_events.tail) THEN audit_events.tail ELSE '{}' END, '$.result.job')
 	))`
 
-// The deletion and its receipt share a transaction. An unavailable audit write
-// must leave every original event intact, including unknown execution outcomes.
+// PurgeAuditBefore requires a current platform admin for remote callers.
 func (s *GatewayStore) PurgeAuditBefore(auth TokenAuth, before time.Time) (int64, error) {
 	if !s.UserIsPlatformAdmin(auth.UserID) {
 		return 0, ErrUnauthorized
 	}
+	return s.purgeAuditBefore(auth.UserID, auth.TokenID, before)
+}
+
+// PurgeLocalAuditBefore is for the local maintenance command with direct database
+// access only. HTTP handlers must use PurgeAuditBefore for authorization.
+func (s *GatewayStore) PurgeLocalAuditBefore(before time.Time) (int64, error) {
+	return s.purgeAuditBefore(fmt.Sprintf("local:uid:%d", os.Geteuid()), "", before)
+}
+
+// The deletion and its receipt share a transaction. An unavailable audit write
+// must leave every original event intact, including unknown execution outcomes.
+func (s *GatewayStore) purgeAuditBefore(userID, tokenID string, before time.Time) (int64, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
@@ -39,7 +52,7 @@ func (s *GatewayStore) PurgeAuditBefore(auth TokenAuth, before time.Time) (int64
 	result, err := tx.Exec(`INSERT INTO audit_events
 		(user_id, token_id, action, session, command_summary, status, started_at)
 		VALUES (?, ?, 'audit:purge', 'audit-purge', ?, 'running', ?)`,
-		auth.UserID, auth.TokenID, "audit:purge before="+formatTime(before.UTC()), formatTime(time.Now().UTC()))
+		userID, tokenID, "audit:purge before="+formatTime(before.UTC()), formatTime(time.Now().UTC()))
 	if err != nil {
 		return 0, err
 	}

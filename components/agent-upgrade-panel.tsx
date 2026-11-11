@@ -7,7 +7,7 @@ import { AuditPanel } from "./audit-panel"
 
 const agentImagePattern = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[a-f0-9]{64})$/
 const phases = { dry_run: "参数预览", preflight: "预检", apply: "升级", rollback: "回滚" }
-const statuses: Record<AgentUpgradeOperation["status"], string> = { running: "正在执行", paused: "观察已暂停", failed: "失败", verified: "验收通过", audit_failed: "审计失败", previewed: "预览完成", preflight_passed: "预检通过，未提交升级", outcome_unknown: "结果未确认" }
+const statuses: Record<AgentUpgradeOperation["status"], string> = { running: "正在执行", paused: "观察已暂停", failed: "失败", verified: "验收通过", audit_failed: "审计失败", previewed: "预览完成", preflight_passed: "预检通过，未提交升级", outcome_unknown: "结果未确认", rolled_back: "已恢复前一版本" }
 const buttonClass = "flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50 disabled:cursor-not-allowed"
 
 type Props = { session: Session; target: Target; sessionId: string }
@@ -19,6 +19,8 @@ function restoreOperation(raw: string): AgentUpgradeOperation {
       !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value.sessionId) || value.sessionId.includes("..") ||
       !Object.hasOwn(phases, value.phase) || !Object.hasOwn(statuses, value.status) ||
       !Number.isFinite(value.deadline) ||
+      (value.verificationComplete !== undefined && typeof value.verificationComplete !== "boolean") ||
+      (value.rollbackReason !== undefined && !["upgrade_verification_protocol_missing", "upgrade_verification_commit_mismatch"].includes(value.rollbackReason)) ||
       (value.auditFailure !== undefined && (!value.auditFailure || !Number.isSafeInteger(value.auditFailure.audit_id) || value.auditFailure.audit_id <= 0 ||
         value.auditFailure.upgrade_operation_id !== value.id || value.auditFailure.result == null || !value.auditError)) ||
       !["image", "sourceCommit", "expectedCommit", "ciURL", "output", "error", "auditError"].every((key) => typeof value[key as keyof AgentUpgradeOperation] === "string") ||
@@ -83,13 +85,14 @@ function UpgradePanel({ session, target, sessionId }: Props) {
     setRunning(true)
     setError("")
     setConfirmed(false)
+    let latest = next
     try {
       // Persist the operation identity before any request can create a Job.
       sessionStorage.setItem(upgradeStorageKey(session, target), JSON.stringify(next))
       setStorageError("")
-      await runAgentUpgrade(session, target, next, ac.signal, save, resume)
+      await runAgentUpgrade(session, target, next, ac.signal, value => { latest = value; save(value) }, resume)
     } catch (err) {
-      if (mounted.current) setError(err instanceof Error && err.name === "AbortError" ? "已停止观察，集群 Job 可能继续执行" : err instanceof Error ? err.message : "升级请求失败")
+      if (mounted.current) setError(latest.error || (err instanceof Error && err.name === "AbortError" ? "已停止观察，集群 Job 可能继续执行" : err instanceof Error ? err.message : "升级请求失败"))
     } finally {
       if (mounted.current) setRunning(false)
       abortRef.current = null
@@ -124,7 +127,8 @@ function UpgradePanel({ session, target, sessionId }: Props) {
   }
 
   const canResume = Boolean(operation?.job && operation?.namespace && ["running", "paused", "audit_failed", "outcome_unknown"].includes(operation.status))
-  const unresolved = Boolean(operation && ["running", "paused", "outcome_unknown"].includes(operation.status))
+  const unresolved = Boolean(operation && (["running", "paused", "outcome_unknown"].includes(operation.status) ||
+    (operation.status === "audit_failed" && operation.job && !operation.verificationComplete)))
   const offline = target.status === "offline"
   const disabled = running || !ready || offline || unresolved || Boolean(storageError) || session.demo === true
 
@@ -158,6 +162,7 @@ function UpgradePanel({ session, target, sessionId }: Props) {
           {operation.job && <p className="break-all font-mono text-xs text-muted-foreground">Job {operation.namespace}/{operation.job} · release {operation.release}</p>}
           {operation.expectedCommit && <p className="break-all font-mono text-xs text-muted-foreground">expected_release_commit={operation.expectedCommit}</p>}
           {operation.status === "verified" && <p className="text-sm text-success">Job、实际 release_commit 与 structuredSSH 已核验</p>}
+          {operation.verificationComplete && operation.status === "audit_failed" && <p role="status" className="text-sm text-warning">{operation.phase === "preflight" ? "预检已完成，未提交升级" : operation.phase === "rollback" ? "回滚版本验收通过，审计尚未完成" : "升级版本验收通过，审计尚未完成"}</p>}
           {operation.status === "outcome_unknown" && <p role="alert" className="text-sm text-warning">Job 可能已经创建；请恢复观察或查看本次审计核对结果，不要重复提交升级。</p>}
           {operation.auditError && <p role="alert" className="break-words text-sm text-destructive">{operation.auditError}</p>}
           {(error || operation.error) && <p role="alert" className="break-words text-sm text-destructive">{error || operation.error}</p>}

@@ -256,7 +256,7 @@ func auditList(args []string) {
 func auditPurge(args []string) {
 	fs := flag.NewFlagSet("audit purge", flag.ExitOnError)
 	dbPath := fs.String("db", defaultGatewayDB, "SQLite database path")
-	before := fs.String("before", "", "Delete audit rows before this RFC3339 timestamp")
+	before := fs.String("before", "", "Delete eligible completed audit rows before this RFC3339 timestamp and record a local operator receipt")
 	fs.Parse(args)
 	if strings.TrimSpace(*before) == "" {
 		log.Fatal("-before is required")
@@ -267,7 +267,7 @@ func auditPurge(args []string) {
 	}
 	store := mustStore(*dbPath)
 	defer store.Close()
-	deleted, err := store.DeleteAuditBefore(cutoff)
+	deleted, err := store.PurgeLocalAuditBefore(cutoff)
 	if err != nil {
 		log.Fatal(err)
 	}

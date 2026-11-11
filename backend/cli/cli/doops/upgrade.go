@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"regexp"
 	"strings"
@@ -390,6 +391,11 @@ func (op *upgradeOperation) waitForSelfUpgrade(acceptance string, rollbackOnProb
 }
 
 func (op *upgradeOperation) rollbackAfterProbeFailure(namespace, release string, probeErr error) error {
+	var verificationErr *upgradeVerificationError
+	if !errors.As(probeErr, &verificationErr) ||
+		verificationErr.category != "upgrade_verification_protocol_missing" && verificationErr.category != "upgrade_verification_commit_mismatch" {
+		return fmt.Errorf("upgrade verification inconclusive; no rollback started: %w", probeErr)
+	}
 	op.printf("verification probe failed: %v\n==> starting rollback job\n", probeErr)
 	out, err := op.callUpgradeTool(map[string]interface{}{
 		"rollback":  true,
@@ -411,26 +417,91 @@ func (op *upgradeOperation) probeAgentRelease(expected string) error {
 	defer client.Close()
 	err := client.RequireAgentRelease(expected)
 	op.printf("release probe expected_release_commit=%s actual=%v error=%v\n", expected, client.capabilities["releaseCommit"], err)
-	return err
+	return op.verificationResult(err, expected, "")
 }
 
 func (op *upgradeOperation) probeStructuredSSH() error {
-	deadline := time.Now().Add(time.Minute)
-	var last error
-	for {
-		client := op.client()
-		err := client.RequireProtocol("structuredSSH")
-		client.Close()
-		op.printf("protocol probe structuredSSH error=%v\n", err)
-		if err == nil {
-			return nil
-		}
-		last = err
-		if time.Now().After(deadline) || !upgradeRetryable(err) {
-			return last
-		}
-		time.Sleep(upgradePollInterval)
+	client := op.client()
+	defer client.Close()
+	err := client.RequireProtocol("structuredSSH")
+	op.printf("protocol probe structuredSSH error=%v\n", err)
+	return op.verificationResult(err, "", "structuredSSH")
+}
+
+type upgradeVerificationError struct {
+	error
+	category string
+}
+
+func (e *upgradeVerificationError) Unwrap() error { return e.error }
+
+// An initialize audit failure is not a failed target probe. Only a correlated,
+// internally consistent verification receipt can establish either outcome.
+func (op *upgradeOperation) verificationResult(err error, expectedRelease, requiredProtocol string) error {
+	var verificationErr *upgradeVerificationError
+	if err == nil || errors.As(err, &verificationErr) {
+		return err
 	}
+	var rpcErr *gatewayRPCError
+	if !errors.As(err, &rpcErr) {
+		return &upgradeVerificationError{error: err}
+	}
+	auditFailed := rpcErr.Code == -32603 && rpcErr.Message == "audit_completion_failed"
+	if !auditFailed && rpcErr.Code != -32003 {
+		return &upgradeVerificationError{error: err}
+	}
+	if auditFailed {
+		auditErr := fmt.Errorf("audit_completion_failed audit_id=%v operation=%s: %w", rpcErr.Data["audit_id"], op.id, err)
+		if op.auditErr == nil {
+			op.auditErr = auditErr
+		}
+		op.printf("WARNING: %v; operation remains unsuccessful; checking returned verification evidence\n", auditErr)
+	}
+	data, marshalErr := json.Marshal(redactUpgradeValue(map[string]interface{}{
+		"expected_release_commit": expectedRelease, "required_protocol": requiredProtocol,
+		"rpc_error": map[string]interface{}{"Code": rpcErr.Code, "Message": rpcErr.Message, "Data": rpcErr.Data},
+	}, op.token))
+	if marshalErr != nil {
+		return &upgradeVerificationError{error: errors.Join(err, fmt.Errorf("record verification result: %w", marshalErr))}
+	}
+	op.output.Write(data)
+	op.output.WriteByte('\n')
+	inconclusive := &upgradeVerificationError{error: fmt.Errorf("missing or malformed matching verification evidence: %w", err)}
+	auditID, validAuditID := rpcErr.Data["audit_id"].(float64)
+	result, _ := rpcErr.Data["result"].(map[string]interface{})
+	fields, _ := result["structuredContent"].(map[string]interface{})
+	isError, validIsError := result["isError"].(bool)
+	actual, validActual := fields["release_commit"].(string)
+	protocolReady, validProtocol := fields["structured_ssh"].(bool)
+	category, validCategory := fields["category"].(string)
+	if !validAuditID || auditID <= 0 || math.Trunc(auditID) != auditID ||
+		rpcErr.Data["upgrade_operation_id"] != op.id || fields["upgrade_operation_id"] != op.id ||
+		fields["phase"] != "verify" || fields["expected_release_commit"] != expectedRelease ||
+		fields["required_protocol"] != requiredProtocol || !validIsError || !validActual || !validProtocol || !validCategory ||
+		isError != (category != "") || !auditFailed && rpcErr.Message != category {
+		return inconclusive
+	}
+	if category == "" {
+		if fields["outcome"] != "success" || requiredProtocol != "" && !protocolReady || expectedRelease != "" && actual != expectedRelease {
+			return inconclusive
+		}
+		return nil
+	}
+	validFailure := false
+	switch category {
+	case "upgrade_verification_protocol_missing":
+		validFailure = fields["outcome"] == "error" && requiredProtocol != "" && !protocolReady
+	case "upgrade_verification_commit_mismatch":
+		validFailure = fields["outcome"] == "error" && expectedRelease != "" && actual != expectedRelease
+	case "upgrade_verification_target_offline":
+		validFailure = fields["outcome"] == "offline" && actual == "" && !protocolReady
+	case "upgrade_verification_forbidden":
+		validFailure = fields["outcome"] == "forbidden"
+	}
+	if !validFailure {
+		return inconclusive
+	}
+	return &upgradeVerificationError{error: fmt.Errorf("%s: %w", category, err), category: category}
 }
 
 func parseUpgradeAcceptance(out string) (string, string, string, error) {

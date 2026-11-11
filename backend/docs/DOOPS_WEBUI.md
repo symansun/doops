@@ -51,7 +51,13 @@ revocation remains a separate explicit action. Neither operation renews a token.
   joins all stages with one operation ID. Accepted is not completed: the page
   observes that Job, verifies the Gateway protocol and the expected release commit.
   A rollback uses the commit recorded in its historical receipt. Audit completion
-  errors retain the accepted Job for verification and remain visible failures.
+  errors retain the accepted Job for verification and remain visible failures,
+  including failures from the final initialize probe. Completed version verification
+  releases the execution controls while the audit warning stays visible; the page
+  does not wait for audit storage to recover. An unresolved Job still requires
+  observation before another mutation. A definite final protocol or commit rejection
+  starts one rollback and verifies the historical commit. Audit-only failures,
+  network uncertainty and stopped observation do not start a rollback.
   The latest operation is kept in sessionStorage, scoped to Gateway, user and
   target, for resuming observation without resubmitting a mutation. The operation's
   audit records are available from the upgrade panel. First-upgrade and installation

@@ -34,6 +34,8 @@ type upgradeGatewayScenario struct {
 	missingAuditResult    bool
 	sensitiveResult       bool
 	verificationError     string
+	verificationReply     func(map[string]interface{}, string) map[string]interface{}
+	verificationResponse  func(map[string]interface{}, map[string]interface{}) bool
 }
 
 type upgradeGatewayTrace struct {
@@ -92,7 +94,7 @@ func newUpgradeAuditGateway(t *testing.T, scenario upgradeGatewayScenario) (Serv
 				}
 				if expected, _ := params["expected_release_commit"].(string); expected != "" && expected != commit {
 					delete(response, "result")
-					response["error"] = map[string]interface{}{"code": -32003, "message": "target Agent release commit mismatch"}
+					response["error"] = upgradeVerificationRPCError(params, commit, "upgrade_verification_commit_mismatch", false)
 				}
 				if params["required_protocol"] != nil && scenario.verificationError != "" {
 					message := "upgrade_verification_failed password=SYNTHETIC_VERIFY_CANARY"
@@ -105,6 +107,17 @@ func newUpgradeAuditGateway(t *testing.T, scenario upgradeGatewayScenario) (Serv
 						result["isError"] = true
 						result["content"] = []map[string]string{{"type": "text", "text": message}}
 					}
+				}
+				if scenario.verificationReply != nil && (params["required_protocol"] != nil || params["expected_release_commit"] != nil) {
+					if rpcErr := scenario.verificationReply(params, commit); rpcErr != nil {
+						delete(response, "result")
+						response["error"] = rpcErr
+					}
+				}
+				if scenario.verificationResponse != nil && (params["required_protocol"] != nil || params["expected_release_commit"] != nil) &&
+					!scenario.verificationResponse(params, response) {
+					trace.mu.Unlock()
+					return
 				}
 			case "tools/call":
 				params := req["params"].(map[string]interface{})
@@ -243,7 +256,7 @@ func TestUpgradeAuditGatewayWorkflow(t *testing.T) {
 		}, wantError: "matching operation and result evidence", wantApply: 1},
 		{name: "verified rollback", rollback: true, wantRollback: 1},
 		{name: "rollback missing commit", rollback: true, scenario: upgradeGatewayScenario{rollbackCommitMissing: true}, wantError: "missing a valid expected_release_commit", wantRollback: 1},
-		{name: "rollback wrong commit", rollback: true, scenario: upgradeGatewayScenario{rollbackCommitWrong: true}, wantError: "release commit mismatch", wantRollback: 1},
+		{name: "rollback wrong commit", rollback: true, scenario: upgradeGatewayScenario{rollbackCommitWrong: true}, wantError: "upgrade_verification_commit_mismatch", wantRollback: 1},
 		{name: "automatic rollback missing commit", scenario: upgradeGatewayScenario{
 			wrongUpgradeCommit: true, rollbackCommitMissing: true,
 		}, wantError: "rollback failed", wantApply: 1, wantObserved: 1, wantRollback: 1},
