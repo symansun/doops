@@ -70,6 +70,7 @@ import {
   GitIcon,
   KeyIcon,
 } from "./icons"
+import { BrandLockup } from "./brand"
 
 const AgentUiPanel = dynamic(() => import("./agent-ui-panel").then((module) => module.AgentUiPanel), {
   loading: () => <div role="status" className="flex h-full items-center justify-center text-sm text-muted-foreground">正在加载 AI 助手...</div>,
@@ -441,14 +442,11 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
 
   return (
     <div className="flex h-dvh w-full flex-col">
-      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card px-4 py-2.5">
+      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/50 bg-card/80 px-4 py-2.5 backdrop-blur">
         <div className="flex min-w-0 flex-1 items-center gap-2 lg:flex-initial">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
-            <ServerIcon width={16} height={16} />
-          </div>
-          <span className="hidden truncate text-sm font-semibold text-foreground lg:inline">
-            Doops Console
-          </span>
+          <Link href="/" aria-label="DoOps 首页" className="shrink-0 transition-opacity hover:opacity-90">
+            <BrandLockup height={22} />
+          </Link>
           {(view === "console" || view === "deploy") && (
             <TargetSwitcher
               targets={targets}
@@ -636,7 +634,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                   variant="primary"
                   size="sm"
                 >
-                  部署 Doops Agent
+                  部署 DoOps Agent
                 </Button>
                 <Button
                   onClick={() => selectTab("overview")}

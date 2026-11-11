@@ -52,7 +52,8 @@ const RESOURCE_PLACEHOLDER: Partial<Record<K8sOperation, string>> = {
 // Raw output kept for explaining a failure; kubectl prints its error near the end.
 const FAILURE_EVIDENCE_CHARS = 16_000
 
-const inputClass = "min-w-0 rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-ring disabled:opacity-60"
+const inputClass =
+  "min-w-0 rounded-xl border border-border/70 bg-background/60 px-3.5 py-2 text-sm outline-none transition-colors placeholder:text-muted-foreground/80 hover:border-border focus:border-primary/60 focus:bg-background focus:ring-2 focus:ring-primary/20 disabled:opacity-60"
 
 // The panel unmounts when the tab changes. The form is kept for the same login
 // and target only, so reopening the tab on another target or after another
@@ -268,7 +269,7 @@ export function K8sPanel({
         {(input.operation === "get" || input.operation === "describe") && <p className="text-xs text-muted-foreground">Secret 与 ServiceAccount 不开放读取。</p>}
 
         {mutation && (
-          <label className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-foreground">
+          <label className="flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/5 px-3.5 py-2.5 text-xs text-foreground">
             <input type="checkbox" className="mt-0.5" checked={input.confirm} disabled={disabled} onChange={(e) => update({ confirm: e.target.checked })} />
             <span>{k8sConfirmText(target, input)}</span>
           </label>
@@ -276,18 +277,18 @@ export function K8sPanel({
 
         <div className="flex items-center gap-2">
           {running ? (
-            <button type="button" onClick={stop} disabled={stopPending || !cancelRef.current} className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs text-foreground disabled:opacity-50">
+            <button type="button" onClick={stop} disabled={stopPending || !cancelRef.current} className="flex items-center gap-1.5 rounded-full border border-border/70 bg-card/40 px-3.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-foreground/25 disabled:opacity-50">
               <Square aria-hidden="true" className="size-3.5" /> {stopPending ? "正在停止" : "停止"}
             </button>
           ) : (
-            <button type="button" onClick={() => void run()} disabled={disabled || (mutation && !input.confirm)} className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-50 ${mutation ? "bg-destructive text-destructive-foreground" : "bg-primary text-primary-foreground"}`}>
+            <button type="button" onClick={() => void run()} disabled={disabled || (mutation && !input.confirm)} className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50 ${mutation ? "bg-destructive text-destructive-foreground" : "bg-primary text-primary-foreground"}`}>
               <Play aria-hidden="true" className="size-3.5" /> {mutation ? "确认执行" : "执行"}
             </button>
           )}
           {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
         </div>
 
-        <pre ref={logRef} aria-label="执行输出" className="min-h-48 flex-1 overflow-auto whitespace-pre-wrap break-all rounded-md border bg-muted/40 p-3 font-mono text-xs">
+        <pre ref={logRef} aria-label="执行输出" className="min-h-48 flex-1 overflow-auto whitespace-pre-wrap break-all rounded-xl border border-border/60 bg-background/60 p-3.5 font-mono text-xs">
           {log.entries.length === 0 ? <span className="text-muted-foreground">选择操作并执行，输出显示在这里。</span> : (
             <>
               {log.dropped > 0 && (
@@ -323,7 +324,7 @@ function OperationGroup({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={title}>
-      <span className="w-28 shrink-0 text-xs text-muted-foreground">{title}</span>
+      <span className="w-28 shrink-0 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{title}</span>
       {operations.map((operation) => (
         <button
           key={operation}
@@ -331,10 +332,14 @@ function OperationGroup({
           aria-pressed={active === operation}
           disabled={disabled}
           onClick={() => onSelect(operation)}
-          className={`rounded-md border px-2 py-1 text-xs transition-colors disabled:opacity-50 ${
+          className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
             active === operation
-              ? danger ? "border-destructive bg-destructive text-destructive-foreground" : "border-primary bg-primary text-primary-foreground"
-              : danger ? "text-destructive hover:border-destructive/60" : "text-muted-foreground hover:border-primary/50 hover:text-foreground"
+              ? danger
+                ? "border-transparent bg-destructive text-destructive-foreground shadow-sm"
+                : "border-transparent bg-primary text-primary-foreground shadow-sm"
+              : danger
+                ? "border-border/60 bg-card/40 text-destructive hover:border-destructive/60"
+                : "border-border/60 bg-card/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
           }`}
         >
           {K8S_OPERATIONS[operation].label}

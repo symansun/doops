@@ -1,5 +1,10 @@
 <p align="right"><b>中文</b> | <a href="README.en.md">English</a> | <a href="README.ru.md">Русский</a></p>
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="public/brand/doops-lockup-dark.png">
+  <img src="public/brand/doops-lockup.png" alt="DoOps" width="240">
+</picture>
+
 # DoOps
 
 **面向服务器与 Kubernetes 环境的 AI 辅助运维控制台、统一网关与 Agent 执行通道。**

@@ -6,6 +6,7 @@ import { fetchTargets, login, persistTokenSession, type Session } from "@/lib/cl
 import { DEMO_TOKEN } from "@/lib/demo"
 import { isDemoAllowed } from "@/lib/demo-policy"
 import { PlugIcon, ServerIcon, SparkIcon } from "./icons"
+import { BrandStacked } from "./brand"
 import { Button, Input, SegmentedControl, Textarea } from "./ui"
 
 const DEMO_ENABLED = isDemoAllowed()
@@ -68,19 +69,18 @@ export function ConnectScreen({
   }
 
   return (
-    <main className="flex min-h-dvh items-center justify-center p-4">
-      <div className="w-full max-w-md">
+    <main className="relative flex min-h-dvh items-center justify-center overflow-hidden p-4">
+      <div aria-hidden className="hero-ambient pointer-events-none absolute inset-0 opacity-60" />
+      <div className="relative w-full max-w-md">
         <div className="mb-8 flex flex-col items-center text-center">
-          <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/15 text-primary">
-            <ServerIcon width={24} height={24} />
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Doops Console</h1>
-          <p className="mt-1 text-sm text-muted-foreground text-balance">
+          <h1 className="sr-only">DoOps Console</h1>
+          <BrandStacked height={88} className="mb-5" />
+          <p className="max-w-sm text-sm leading-relaxed text-muted-foreground text-balance">
             智能运维控制台 · 连接 doops-gateway 执行命令、自然语言运维与部署
           </p>
         </div>
 
-        <div className="rounded-xl border bg-card p-6 shadow-sm">
+        <div className="card-surface p-6 sm:p-7">
           <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
             Gateway 地址
           </label>

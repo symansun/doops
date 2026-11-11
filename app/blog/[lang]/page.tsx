@@ -35,8 +35,8 @@ export default async function BlogLangIndexPage({ params }: LangPageProps) {
 
   return (
     <div>
-      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border/60 pb-5">
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{ui.allPosts}</h1>
+      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border/40 pb-5">
+        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{ui.allPosts}</h1>
         <span className="text-xs text-muted-foreground">
           {BLOG_LANG_LABELS[lang]} · {posts.length}
         </span>
@@ -47,8 +47,11 @@ export default async function BlogLangIndexPage({ params }: LangPageProps) {
       ) : (
         <div>
           {posts.map((post) => (
-            <article key={post.slug} className="border-b border-border/60 py-8 last:border-0 last:pb-0">
-              <Link href={`/blog/${lang}/${post.slug}`} className="group flex flex-col gap-5 sm:flex-row sm:items-start">
+            <article key={post.slug} className="border-b border-border/40 py-8 last:border-0 last:pb-0">
+              <Link
+                href={`/blog/${lang}/${post.slug}`}
+                className="group -mx-4 flex flex-col gap-5 rounded-2xl px-4 py-2 transition-colors hover:bg-foreground/[0.025] sm:flex-row sm:items-start"
+              >
                 <div className="min-w-0 flex-1">
                   {post.series ? (
                     <span className="mb-2 inline-block rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
@@ -84,8 +87,12 @@ export default async function BlogLangIndexPage({ params }: LangPageProps) {
                   ) : null}
                 </div>
                 {post.cover ? (
-                  <div className="w-full shrink-0 sm:w-44">
-                    <BlogCover src={post.cover} alt={post.title} className="aspect-[16/10] object-cover" />
+                  <div className="w-full shrink-0 overflow-hidden rounded-xl ring-1 ring-border/60 sm:w-44">
+                    <BlogCover
+                      src={post.cover}
+                      alt={post.title}
+                      className="aspect-[16/10] object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                    />
                   </div>
                 ) : null}
               </Link>

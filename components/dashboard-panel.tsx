@@ -268,7 +268,7 @@ function CurrentMachineSection({
 }) {
   if (!selected) {
     return (
-      <section className="rounded-xl border bg-card p-5">
+      <section className="card-surface p-5">
         <SectionTitle icon={ServerIcon} title="当前机器" />
         <p className="py-8 text-center text-sm text-muted-foreground">
           请在顶部选择一台机器，查看其运行状态与快捷操作。
@@ -278,7 +278,7 @@ function CurrentMachineSection({
   }
 
   return (
-    <section className="rounded-xl border bg-card p-5">
+    <section className="card-surface p-5">
       <SectionTitle icon={ServerIcon} title="当前机器" />
       <div className="mb-4 flex items-start gap-3">
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary">
@@ -362,7 +362,7 @@ function CurrentMachineSection({
 
 function ClusterOverviewSection({ clusters }: { clusters: ClusterSummary[] }) {
   return (
-    <section className="rounded-xl border bg-card p-5">
+    <section className="card-surface p-5">
       <SectionTitle icon={LayersIcon} title="集群概览" />
       <p className="mb-4 text-xs text-muted-foreground">
         按集群汇总 Agent 隧道连接、活跃会话与任务负载。
@@ -414,7 +414,7 @@ function RecentActivitySection({
   failedCount: number
 }) {
   return (
-    <section className="rounded-xl border bg-card p-5">
+    <section className="card-surface p-5">
       <SectionTitle icon={HistoryIcon} title="近期活动" />
       {error ? (
         <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-8 text-center text-sm text-destructive">
@@ -553,12 +553,12 @@ function StatCard({
         ? "bg-warning/20 text-warning"
         : "bg-muted text-muted-foreground"
   return (
-    <div className="flex items-center gap-3 rounded-xl border bg-card p-4">
-      <span className={`flex h-10 w-10 items-center justify-center rounded-lg ${toneCls}`}>
+    <div className="card-surface card-interactive flex items-center gap-3 p-4">
+      <span className={`flex h-10 w-10 items-center justify-center rounded-xl ring-1 ring-inset ring-foreground/5 ${toneCls}`}>
         <Icon width={20} height={20} />
       </span>
       <div className="min-w-0">
-        <div className="text-2xl font-semibold leading-none text-foreground">{value}</div>
+        <div className="text-2xl font-semibold leading-none tabular-nums text-foreground">{value}</div>
         <div className="mt-1 text-xs text-muted-foreground">{label}</div>
         {hint ? <div className="mt-0.5 truncate text-[11px] text-muted-foreground/80">{hint}</div> : null}
       </div>
@@ -580,7 +580,7 @@ function QuickAction({
   return (
     <button
       onClick={onClick}
-      className="group flex items-center gap-3 rounded-lg border bg-background p-3 text-left transition-colors hover:border-primary/50 hover:bg-muted"
+      className="group flex items-center gap-3 rounded-xl border border-border/60 bg-background/60 p-3 text-left transition-colors hover:border-primary/40 hover:bg-muted/60"
     >
       <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/15 text-primary">
         <Icon width={18} height={18} />
@@ -686,7 +686,7 @@ function fmtRelative(iso: string): string {
 function EmptyState({ isAdmin, onDeployAgent }: { isAdmin: boolean; onDeployAgent: () => void }) {
   const copy = emptyTargetsCopy(isAdmin)
   return (
-    <div className="rounded-xl border bg-card p-8 text-center">
+    <div className="card-surface p-8 text-center">
       <span className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted text-muted-foreground">
         <PlugIcon width={26} height={26} />
       </span>
@@ -703,7 +703,7 @@ function EmptyState({ isAdmin, onDeployAgent }: { isAdmin: boolean; onDeployAgen
           >
             <span className="mb-1.5 flex items-center gap-2 text-sm font-medium text-foreground">
               <RocketIcon width={16} height={16} className="text-primary" />
-              部署 Doops Agent
+              部署 DoOps Agent
             </span>
             <span className="text-xs leading-relaxed text-muted-foreground">
               有服务器权限？按部署指南几分钟即可接入一台机器。

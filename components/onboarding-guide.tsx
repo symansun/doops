@@ -7,7 +7,7 @@ import { ServerIcon, SparkIcon, TerminalIcon } from "./icons"
 const STEPS = [
   {
     icon: ServerIcon,
-    title: "欢迎使用 Doops 控制台",
+    title: "欢迎使用 DoOps 控制台",
     body: "这是一个让运维像聊天一样简单的平台。下面用三步带你快速上手，全程不到一分钟。",
     tip: "如果你只是想先看看效果，可以直接关闭本引导，使用演示数据探索。",
   },
@@ -49,7 +49,7 @@ export function OnboardingGuide({ onClose }: { onClose: () => void }) {
               <span
                 key={i}
                 className={`h-1.5 rounded-full transition-all ${
-                  i === step ? "w-5 bg-primary" : "w-1.5 bg-muted"
+                  i === step ? "brand-gradient w-5" : "w-1.5 bg-muted"
                 }`}
               />
             ))}

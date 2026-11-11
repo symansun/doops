@@ -661,9 +661,9 @@ export function FilesPanel({
             </span>
             <span className="truncate pl-2 font-mono text-muted-foreground">{upload.current}</span>
           </div>
-          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+          <div className="progress-track mt-1.5 h-1.5">
             <div
-              className="h-full rounded-full bg-primary transition-all"
+              className="progress-fill"
               style={{ width: `${upload.total ? (upload.done / upload.total) * 100 : 0}%` }}
             />
           </div>

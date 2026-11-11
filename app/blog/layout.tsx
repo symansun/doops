@@ -1,8 +1,8 @@
 import Link from "next/link"
 import type { ReactNode } from "react"
 
+import { BrandLockup } from "@/components/brand"
 import { BlogLangSwitch } from "@/components/blog-lang-switch"
-import { FileTextIcon } from "@/components/icons"
 import { slugMap } from "@/lib/blog"
 
 export const metadata = {
@@ -17,13 +17,13 @@ export default async function BlogLayout({ children }: { children: ReactNode }) 
 
   return (
     <div className="min-h-dvh bg-background text-foreground">
-      <header className="sticky top-0 z-20 border-b border-border/60 bg-background/85 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
-          <Link href="/blog/zh" className="flex items-center gap-2 transition-opacity hover:opacity-80">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-              <FileTextIcon width={18} height={18} />
+      <header className="site-header">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-x-4 gap-y-2 px-4">
+          <Link href="/blog/zh" className="flex items-center gap-2.5 transition-opacity hover:opacity-80">
+            <BrandLockup height={24} />
+            <span className="border-l border-border pl-2.5 text-xs font-medium tracking-tight text-muted-foreground">
+              Blog
             </span>
-            <span className="text-sm font-semibold tracking-tight">DoOps Blog</span>
           </Link>
           <div className="flex items-center gap-3">
             <nav className="hidden items-center gap-3 text-xs text-muted-foreground sm:flex">
@@ -39,12 +39,12 @@ export default async function BlogLayout({ children }: { children: ReactNode }) 
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl px-4 py-10 sm:py-14">{children}</main>
+      <main className="mx-auto w-full max-w-6xl px-4 py-12 sm:py-16">{children}</main>
 
-      <footer className="border-t border-border/60">
-        <div className="mx-auto flex max-w-6xl flex-col items-center gap-1 px-4 py-8 text-center text-xs text-muted-foreground">
-          <span>DoOps · doops.sh</span>
-          <span className="text-muted-foreground/70">文章内容来自仓库 blog/ 目录，随镜像一同构建。</span>
+      <footer className="border-t border-border/40">
+        <div className="mx-auto flex max-w-6xl flex-col items-center gap-3 px-4 py-10 text-center text-xs text-muted-foreground">
+          <BrandLockup height={20} />
+          <span className="text-muted-foreground/80">文章内容来自仓库 blog/ 目录，随镜像一同构建。</span>
         </div>
       </footer>
     </div>

@@ -343,7 +343,7 @@ function shellOutput(cmd: string): string[] {
     ]
   if (/systemctl status|service/.test(c))
     return [
-      "● doops-app.service - Doops Application\n",
+      "● doops-app.service - DoOps Application\n",
       "   Loaded: loaded (/etc/systemd/system/doops-app.service; enabled)\n",
       "   Active: active (running) since Mon 2026-06-22 03:11:40 UTC; 5 days ago\n",
       " Main PID: 1287 (doops-app)\n",

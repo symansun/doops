@@ -324,3 +324,176 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--muted-foreground);
 }
+
+/* ---------------------------------------------------------------------------
+   DoOps brand layer: palette, base rendering rules and marketing primitives.
+   Appended after the control system above so these values win.
+--------------------------------------------------------------------------- */
+:root {
+  --background: oklch(0.16 0.02 262);
+  --foreground: oklch(0.92 0.006 252);
+  --card: oklch(0.2 0.02 262);
+  --card-foreground: oklch(0.92 0.006 252);
+  --popover: oklch(0.2 0.02 262);
+  --popover-foreground: oklch(0.92 0.006 252);
+
+  /* Brand blue from the DoOps mark; filled elements always carry light text. */
+  --primary: oklch(0.58 0.22 266);
+  --primary-foreground: oklch(0.985 0.006 250);
+
+  --secondary: oklch(0.27 0.018 262);
+  --secondary-foreground: oklch(0.92 0.006 252);
+
+  --muted: oklch(0.25 0.016 262);
+  --muted-foreground: oklch(0.72 0.012 252);
+
+  /* Brand teal sampled from the mark, used for selections. */
+  --accent: oklch(0.78 0.14 194);
+  --accent-foreground: oklch(0.16 0.02 262);
+
+  --border: oklch(0.3 0.018 262);
+  --input: oklch(0.3 0.018 262);
+  --ring: oklch(0.7 0.16 266);
+
+  /* Duo from the logo: blue -> teal. */
+  --brand-blue: oklch(0.56 0.24 265);
+  --brand-teal: oklch(0.78 0.14 194);
+  --brand-gradient: linear-gradient(135deg, var(--brand-blue) 0%, var(--brand-teal) 100%);
+
+  color-scheme: dark;
+  accent-color: var(--primary);
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--ring) 75%, transparent);
+  outline-offset: 2px;
+}
+
+/* Preflight dims placeholders; keep hints readable on the dark surfaces. */
+::placeholder {
+  color: var(--muted-foreground);
+  opacity: 1;
+}
+
+::selection {
+  background-color: color-mix(in oklch, var(--primary) 35%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@layer components {
+  .btn-lg {
+    min-height: 2.75rem;
+    padding: 0.625rem 1.375rem;
+    border-radius: 9999px;
+    font-size: 0.9375rem;
+  }
+
+  .btn-md {
+    min-height: 2.375rem;
+    padding: 0.5rem 1.125rem;
+    border-radius: 9999px;
+    font-size: 0.875rem;
+  }
+
+  /* Elevated card surface: hairline top highlight + soft drop shadow. */
+  .card-surface {
+    border-radius: 1rem;
+    border: 1px solid color-mix(in oklch, var(--border) 72%, transparent);
+    background-image: linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--card) 86%, white 4%) 0%,
+      var(--card) 100%
+    );
+    box-shadow:
+      inset 0 1px 0 0 color-mix(in oklch, white 4%, transparent),
+      0 24px 48px -32px rgb(0 0 0 / 0.9);
+  }
+
+  .card-interactive {
+    transition:
+      transform 200ms ease,
+      border-color 200ms ease,
+      box-shadow 200ms ease;
+  }
+  .card-interactive:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in oklch, var(--primary) 40%, var(--border));
+    box-shadow:
+      inset 0 1px 0 0 color-mix(in oklch, white 6%, transparent),
+      0 30px 60px -34px rgb(0 0 0 / 1);
+  }
+
+  /* Frosted, sticky site header shared by the marketing pages and blog. */
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    border-bottom: 1px solid color-mix(in oklch, var(--border) 55%, transparent);
+    background-color: color-mix(in oklch, var(--background) 78%, transparent);
+    backdrop-filter: blur(18px) saturate(1.3);
+  }
+
+  /* Ambient hero lighting: brand blue and teal at very low opacity. */
+  .hero-ambient {
+    background-image:
+      radial-gradient(
+        55% 45% at 50% 0%,
+        color-mix(in oklch, var(--brand-blue) 22%, transparent) 0%,
+        transparent 72%
+      ),
+      radial-gradient(
+        35% 35% at 82% 8%,
+        color-mix(in oklch, var(--brand-teal) 10%, transparent) 0%,
+        transparent 70%
+      );
+  }
+
+  .text-gradient {
+    background-image: var(--brand-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+
+  /* Progress: recessed track, brand-gradient fill. */
+  .progress-track {
+    overflow: hidden;
+    border-radius: 9999px;
+    background-color: var(--muted);
+    box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.35);
+  }
+  .progress-fill {
+    height: 100%;
+    border-radius: 9999px;
+    background-image: var(--brand-gradient);
+    box-shadow: 0 0 12px -2px color-mix(in oklch, var(--brand-teal) 45%, transparent);
+    transition: width 200ms ease;
+  }
+}

@@ -11,7 +11,7 @@ export interface EmptyTargetsCopy {
 
 const ADMIN_COPY: EmptyTargetsCopy = {
   title: "还没有纳管的机器",
-  description: "Doops 通过在你的服务器上安装一个轻量 agent 来工作。你可以自己部署一台，或联系管理员为你接入。",
+  description: "DoOps 通过在你的服务器上安装一个轻量 agent 来工作。你可以自己部署一台，或联系管理员为你接入。",
   showDeployAgent: true,
   contactTitle: "联系管理员",
   contactHint: "没有服务器权限或不确定 gateway 地址与 cluster/instance？请管理员为你接入机器。",

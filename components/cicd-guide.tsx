@@ -102,7 +102,7 @@ doops -session "$DOOPS_SESSION" ask \\
     if (provider === "github") {
       return {
         lang: ".github/workflows/deploy.yml",
-        code: `name: Deploy via Doops
+        code: `name: Deploy via DoOps
 on:
   push:
     branches: [main]
@@ -114,11 +114,11 @@ jobs:
       DOOPS_VERSION: <PINNED_DOOPS_VERSION>
     steps:
       - uses: actions/checkout@v4
-      - name: Install released Doops CLI
+      - name: Install released DoOps CLI
         run: |
           git clone --depth 1 --branch "$DOOPS_VERSION" https://github.com/symansun/doops.git /tmp/doops-release
           bash /tmp/doops-release/backend/scripts/install.sh --version "$DOOPS_VERSION" --project "$GITHUB_WORKSPACE"
-      - name: Trigger Doops deploy
+      - name: Trigger DoOps deploy
         env:
           DOOPS_GATEWAY: "${gw}"
           DOOPS_API_KEY: \${{ secrets.DOOPS_API_KEY }}
@@ -183,7 +183,7 @@ jobs:
           <GitIcon width={13} height={13} />
           CI/CD 接入
         </div>
-        <h1 className="text-2xl font-semibold text-balance">将 Doops 接入 CI/CD</h1>
+        <h1 className="text-2xl font-semibold text-balance">将 DoOps 接入 CI/CD</h1>
         <p className="mt-2 text-pretty text-sm leading-relaxed text-muted-foreground">
           流水线通过明确的自然语言任务调用 DoOps。任务直接说明 target、服务范围、不可变镜像 digest、变更原因和验收条件。
         </p>

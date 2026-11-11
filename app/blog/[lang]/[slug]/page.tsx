@@ -57,13 +57,15 @@ export default async function BlogPostPage({ params }: SlugPageProps) {
         ← {ui.backToAll}
       </Link>
 
-      <header className="mt-6 border-b border-border/60 pb-8">
+      <header className="mt-6 border-b border-border/40 pb-8">
         {post.series ? (
-          <span className="inline-block rounded-full bg-muted px-2.5 py-0.5 text-[11px] text-muted-foreground">
+          <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary ring-1 ring-inset ring-primary/20">
             {post.series}
           </span>
         ) : null}
-        <h1 className="mt-3 text-2xl leading-tight font-semibold tracking-tight sm:text-[2rem]">{post.title}</h1>
+        <h1 className="mt-4 text-balance text-3xl leading-[1.15] font-semibold tracking-tight sm:text-[2.6rem]">
+          {post.title}
+        </h1>
         {post.subtitle ? (
           <p className="mt-3 text-base leading-relaxed text-muted-foreground">{post.subtitle}</p>
         ) : null}
@@ -89,7 +91,7 @@ export default async function BlogPostPage({ params }: SlugPageProps) {
           </div>
         ) : null}
         {post.cover ? (
-          <div className="mt-7">
+          <div className="mt-8 overflow-hidden rounded-2xl ring-1 ring-border/60">
             <BlogCover src={post.cover} alt={post.title} />
           </div>
         ) : null}

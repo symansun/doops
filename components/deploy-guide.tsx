@@ -16,6 +16,7 @@ import {
   LayersIcon,
   FileIcon,
 } from "./icons"
+import { BrandLockup } from "./brand"
 
 // 架构拓扑中的双向连接箭头
 function ArrowFlow() {
@@ -209,9 +210,9 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
             <PlugIcon width={13} height={13} className="text-primary" />
             部署指南
           </span>
-          <h1 className="text-2xl font-semibold text-balance">部署 Doops Agent</h1>
+          <h1 className="text-2xl font-semibold text-balance">部署 DoOps Agent</h1>
           <p className="mt-2 text-pretty text-sm leading-relaxed text-muted-foreground">
-            Doops 通过在你的服务器上安装一个轻量 agent 来工作。Agent 主动连接 Gateway，机器无需暴露公网端口。接入后即可远程执行命令、管理文件、用 AI 完成部署与巡检。
+            DoOps 通过在你的服务器上安装一个轻量 agent 来工作。Agent 主动连接 Gateway，机器无需暴露公网端口。接入后即可远程执行命令、管理文件、用 AI 完成部署与巡检。
           </p>
           <p className="mt-3 text-sm text-muted-foreground">安装或升级前核对成功 CI、完整 source commit 和不可变镜像 digest，再拉取已核验制品：</p>
           <Cmd>{"docker pull <IMAGE_REPOSITORY>@sha256:<VERIFIED_DIGEST>"}</Cmd>
@@ -371,18 +372,12 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
 export function DeployGuide() {
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <header className="sticky top-0 z-20 border-b border-border/60 bg-background/80 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-          <Link href="/" className="flex items-center gap-2 text-sm font-semibold">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <ServerIcon width={16} height={16} />
-            </span>
-            Doops
+      <header className="site-header">
+        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4">
+          <Link href="/" className="flex items-center transition-opacity hover:opacity-90">
+            <BrandLockup height={28} />
           </Link>
-          <Link
-            href="/console"
-            className="flex items-center gap-1 rounded-lg border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-muted"
-          >
+          <Link href="/console" className="btn btn-primary btn-sm">
             进入控制台
             <ChevronRightIcon width={15} height={15} />
           </Link>
