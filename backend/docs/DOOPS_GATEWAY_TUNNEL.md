@@ -510,6 +510,11 @@ CLI/控制台生成 `upgrade_operation_id`，贯通预检、执行、观察和�
 审计收尾失败返回 `audit_completion_failed`，其 `error.data` 保留 `audit_id`、
 `upgrade_operation_id` 和原始 MCP `result`，供客户端继续核验已提交 Job；错误不会变成成功，
 也不会自动重放 mutation。Gateway 保留原终态重试落库，并记录脱敏恢复证据。
+最终 `initialize` 的 `phase=verify` 也保留上述错误数据；其 `result.structuredContent`
+包含实际/预期 commit、所需协议、`structured_ssh`、验收 `outcome` 和 `category`。
+客户端将审计写入故障与目标验收失败分别处理：已确认的业务验收可结束等待，原审计错误
+继续保留并可见，不等待后台落库重试。只有最终 commit 不匹配或协议明确缺失才触发
+自动回滚；审计故障、断连、离线或权限拒绝不作为回滚依据。
 
 ```bash
 doops -session agent-upgrade upgrade \
@@ -561,6 +566,8 @@ doops -session agent-upgrade upgrade \
   回执落库失败则整个清理回滚。运行中、执行中、`outcome_unknown` 和清理回执不被删除；
   `accepted/observing` 在同一目标、operation、Job 的后续终态证据到达前也不删除。
   未知结果没有自动到期或“手动标记成功”入口。审计库没有自动清理策略，保留期由管理员明确执行。
+  本机 `doops-gateway audit purge` 使用相同事务与保护规则，回执记录
+  `local:uid:<有效 UID>`，不冒用 Gateway 用户或 token；HTTP 清理仍要求平台管理员身份。
 - `/v1/audit` 的下列筛选组合都有按 `id` 倒序的索引（`audit_indexes.sql`）：用户、用户+session、
   目标、单独 action 或 status、用户或目标再加 action/status、目标内的 session、单独 session
   （凭据的资源级审计不带目标，session 存凭据 ID）。只按 `cluster` 或只按 `instance` 过滤

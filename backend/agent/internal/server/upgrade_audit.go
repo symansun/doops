@@ -155,11 +155,20 @@ func (h *ClientService) auditUpgradeVerification(auth TokenAuth, cluster, instan
 	case args.ExpectedCommit != "" && actual != args.ExpectedCommit:
 		status, category = "error", "upgrade_verification_commit_mismatch"
 	}
-	evidence, _ := json.Marshal(map[string]interface{}{
+	metadata := map[string]interface{}{
 		"phase": "verify", "upgrade_operation_id": args.OperationID, "release_commit": actual,
 		"expected_release_commit": args.ExpectedCommit, "required_protocol": args.RequiredProtocol,
 		"structured_ssh": protocolReady, "outcome": status, "category": category,
-	})
+	}
+	evidence, _ := json.Marshal(metadata)
+	verificationFailure := func(code int, message string) *api.JSONRPCResponse {
+		response := failure(code, message)
+		response.Error.Data = map[string]interface{}{
+			"audit_id": id, "upgrade_operation_id": args.OperationID,
+			"result": map[string]interface{}{"isError": category != "", "structuredContent": metadata},
+		}
+		return response
+	}
 	finish := AuditFinish{Status: status, Error: category, Tail: string(evidence), EndedAt: time.Now().UTC()}
 	if err := h.store.FinishAudit(id, finish); err != nil {
 		op := h.registerActiveOperation(GatewayActiveOperation{
@@ -168,10 +177,10 @@ func (h *ClientService) auditUpgradeVerification(auth TokenAuth, cluster, instan
 		}, func() {})
 		_ = h.finishExecutionAudit(id, finish)
 		h.finishActiveOperation(op)
-		return failure(-32603, "audit_completion_failed")
+		return verificationFailure(-32603, "audit_completion_failed")
 	}
 	if category != "" {
-		return failure(-32003, category)
+		return verificationFailure(-32003, category)
 	}
 	return nil
 }

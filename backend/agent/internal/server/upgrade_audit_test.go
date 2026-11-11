@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/user/doops/agent/api"
 )
 
 type upgradeAuditCall struct {
@@ -426,5 +427,44 @@ func TestGatewayUpgradeFinalVerificationIsAudited(t *testing.T) {
 			!strings.Contains(events[0].CommandSummary, "phase=verify") || !strings.Contains(events[0].Tail, strings.Repeat("a", 40)) {
 			t.Fatalf("verification evidence missing or incorrect: %#v %v", events, err)
 		}
+	}
+}
+
+func TestUpgradeVerificationAuditFailurePreservesActualOutcome(t *testing.T) {
+	for _, tc := range []struct{ name, actual, category, outcome string }{
+		{"healthy", strings.Repeat("a", 40), "", "success"},
+		{"wrong_commit", strings.Repeat("b", 40), "upgrade_verification_commit_mismatch", "error"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
+			auth, err := f.store.VerifyUserToken(f.admin.Plaintext)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.store.db.Exec(`CREATE TRIGGER fail_verify_finish BEFORE UPDATE ON audit_events BEGIN SELECT RAISE(FAIL, 'injected audit finish failure'); END`); err != nil {
+				t.Fatal(err)
+			}
+			params, _ := json.Marshal(map[string]string{"upgrade_operation_id": "verify-fault", "session_id": "verify-session", "expected_release_commit": strings.Repeat("a", 40), "required_protocol": "structuredSSH"})
+			response := f.hub.client.auditUpgradeVerification(auth, "dev", "local", api.JSONRPCRequest{ID: 1, Params: params}, &GatewayAgent{ReleaseCommit: tc.actual, StructuredSSH: true})
+			if response == nil || response.Error == nil || response.Error.Message != "audit_completion_failed" {
+				t.Fatalf("expected audit failure: %#v", response)
+			}
+			// Release the injected fault even on assertion failure so retry workers can finish.
+			t.Cleanup(func() { _, _ = f.store.db.Exec(`DROP TRIGGER IF EXISTS fail_verify_finish`) })
+			data, ok := response.Error.Data.(map[string]interface{})
+			if !ok || data["upgrade_operation_id"] != "verify-fault" || data["audit_id"] == nil {
+				t.Fatalf("missing correlated evidence: %#v", response.Error.Data)
+			}
+			result := data["result"].(map[string]interface{})
+			fields := result["structuredContent"].(map[string]interface{})
+			if fields["phase"] != "verify" || fields["release_commit"] != tc.actual || fields["outcome"] != tc.outcome || fields["category"] != tc.category || fields["structured_ssh"] != true || result["isError"] != (tc.category != "") {
+				t.Fatalf("actual verification evidence lost: %#v", result)
+			}
+			for _, op := range f.hub.client.listActiveOperations() {
+				if op.State != "finalizing" {
+					t.Fatalf("audit failure holds execution active: %#v", op)
+				}
+			}
+		})
 	}
 }
