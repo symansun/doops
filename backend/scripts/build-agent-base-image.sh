@@ -9,11 +9,20 @@ fi
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "${REPO_ROOT}/runtime-versions.env"
 
-: "${CNB_DOCKER_REGISTRY:?CNB_DOCKER_REGISTRY is required}"
-: "${CNB_REPO_SLUG_LOWERCASE:?CNB_REPO_SLUG_LOWERCASE is required}"
-: "${CNB_COMMIT:?CNB_COMMIT is required}"
+: "${DOOPS_IMAGE_REGISTRY:?DOOPS_IMAGE_REGISTRY is required}"
+: "${DOOPS_IMAGE_REPOSITORY:?DOOPS_IMAGE_REPOSITORY is required}"
+: "${DOOPS_SOURCE_COMMIT:?DOOPS_SOURCE_COMMIT is required}"
+: "${DO_AGENT_IMAGE:?DO_AGENT_IMAGE is required: <registry>/<repository>@sha256:<digest>}"
+if [[ ! "${DOOPS_SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "DOOPS_SOURCE_COMMIT must be a full 40-character commit SHA" >&2
+  exit 1
+fi
+if [[ "${DO_AGENT_IMAGE}" != *"@${DO_AGENT_INDEX_DIGEST}" ]]; then
+  echo "DO_AGENT_IMAGE must be pinned to DO_AGENT_INDEX_DIGEST (${DO_AGENT_INDEX_DIGEST}): ${DO_AGENT_IMAGE}" >&2
+  exit 1
+fi
 
-BASE_REPOSITORY="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/base-light"
+BASE_REPOSITORY="${DOOPS_IMAGE_REGISTRY}/${DOOPS_IMAGE_REPOSITORY}/base-light"
 BASE_IMAGE="${BASE_REPOSITORY}:${DOOPS_BASE_RELEASE_TAG}"
 
 docker pull "${DO_AGENT_IMAGE}"
@@ -36,7 +45,7 @@ docker build \
   --build-arg DO_AGENT_INDEX_DIGEST="${DO_AGENT_INDEX_DIGEST}" \
   --build-arg DO_AGENT_PLATFORM="${DO_AGENT_PLATFORM}" \
   --build-arg DO_AGENT_PLATFORM_DIGEST="${DO_AGENT_PLATFORM_DIGEST}" \
-  --label org.opencontainers.image.revision="${CNB_COMMIT}" \
+  --label org.opencontainers.image.revision="${DOOPS_SOURCE_COMMIT}" \
   --label org.opencontainers.image.version="${DOOPS_BASE_RELEASE_TAG}" \
   -f "${REPO_ROOT}/Dockerfile.base.light" \
   -t "${BASE_IMAGE}" \

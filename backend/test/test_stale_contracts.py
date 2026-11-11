@@ -76,7 +76,7 @@ def _files(root: Path, suffixes=SOURCE_SUFFIXES):
 
 
 def _code_and_contract_files():
-    yield ROOT / ".cnb.yml"
+    yield from _files(ROOT / ".github" / "workflows", {".yml", ".yaml"})
     for name in ("agent", "gateway", "scripts", "deploy", "skills"):
         yield from _files(BACKEND / name)
     yield from _files(BACKEND / "docs", {".md"})

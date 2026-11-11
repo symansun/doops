@@ -15,6 +15,7 @@ interface RpcBody {
   tool?: string
   arguments: Record<string, unknown>
   requiredProtocol?: "structuredSSH"
+  expectedReleaseCommit?: string
   requestId?: string
   cancelRequestId?: string
 }
@@ -59,6 +60,10 @@ export async function POST(req: Request) {
   }
 
   const { cluster, instance, tool, arguments: args } = body
+  if (body.expectedReleaseCommit !== undefined &&
+      (typeof body.expectedReleaseCommit !== "string" || !/^[a-f0-9]{40}$/.test(body.expectedReleaseCommit))) {
+    return Response.json({ error: "expectedReleaseCommit 必须是完整提交 SHA" }, { status: 400 })
+  }
   if (!cluster || !instance) {
     return Response.json({ error: "缺少 cluster / instance" }, { status: 400 })
   }
@@ -225,7 +230,15 @@ export async function POST(req: Request) {
           return
         }
         send({ type: "open", request_id: requestId })
-        ws.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }))
+        ws.send(JSON.stringify({
+          jsonrpc: "2.0", id: 1, method: "initialize",
+          params: body.requiredProtocol || body.expectedReleaseCommit ? {
+            upgrade_operation_id: args.upgrade_operation_id,
+            session_id: args.session_id,
+            expected_release_commit: body.expectedReleaseCommit,
+            required_protocol: body.requiredProtocol,
+          } : {},
+        }))
       })
 
       ws.on("message", (raw: WebSocket.RawData) => {
@@ -241,7 +254,7 @@ export async function POST(req: Request) {
         if (msg.id === 1 && (msg.result !== undefined || msg.error !== undefined)) {
           if (msg.error) {
             terminal = true
-            send({ type: "error", error: msg.error?.message || "initialize 失败" })
+            send({ type: "error", error: msg.error?.message || "initialize 失败", code: msg.error?.code, data: msg.error?.data })
             ws.close()
             return
           }
@@ -250,6 +263,15 @@ export async function POST(req: Request) {
             if (body.requiredProtocol !== "structuredSSH" || protocol?.schemaVersion !== "doops.sh/structured-ssh/v1" || protocol?.tool !== "doops_ssh" || protocol?.structuredArgv !== true) {
               terminal = true
               send({ type: "error", error: "目标 Agent 缺少 structuredSSH 协议能力，升级验收未通过" })
+              ws.close()
+              return
+            }
+          }
+          if (body.expectedReleaseCommit !== undefined) {
+            const actual = msg.result?.capabilities?.releaseCommit
+            if (actual !== body.expectedReleaseCommit) {
+              terminal = true
+              send({ type: "error", error: `Agent release_commit 验收失败：实际 ${typeof actual === "string" ? actual : "未提供"}，预期 ${body.expectedReleaseCommit}` })
               ws.close()
               return
             }
@@ -285,9 +307,9 @@ export async function POST(req: Request) {
           sawToolEvent = true
           clearSilenceTimer()
           if (msg.error) {
-            send({ type: "error", error: msg.error?.message || "执行失败", code: msg.error?.code })
+            send({ type: "error", error: msg.error?.message || "执行失败", code: msg.error?.code, data: msg.error?.data })
           } else if (msg.result?.isError) {
-            send({ type: "error", error: msg.result.content?.map((item: { text?: string }) => item.text || "").join("") || "工具执行失败" })
+            send({ type: "error", error: msg.result.content?.map((item: { text?: string }) => item.text || "").join("") || "工具执行失败", data: { result: msg.result } })
           } else if (msg.result !== undefined) {
             send({ type: "result", result: msg.result })
           } else {

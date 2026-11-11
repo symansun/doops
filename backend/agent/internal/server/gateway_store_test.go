@@ -750,30 +750,32 @@ func TestGatewayStoreDoesNotLetStaleAgentTouchOverwriteLifecycle(t *testing.T) {
 	}
 }
 
-func TestGatewayStoreRetiresRunningUpgradeOperations(t *testing.T) {
+func TestGatewayStoreRecoversUpgradeAuditWithoutAnUnusedLedger(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	defer store.Close()
 
-	now := formatTime(time.Now().UTC())
-	if _, err := store.db.Exec(`INSERT INTO upgrade_operations
-		(id, cluster, instance, image, old_generation, old_runtime_id, status, phase, error, started_at, updated_at)
-		VALUES ('upg_test', 'dev', 'local', 'registry.example/doops@sha256:abc', 3, 'runtime-old',
-		        'running', 'waiting_reconnect', '', ?, ?)`, now, now); err != nil {
-		t.Fatalf("seed legacy upgrade operation: %v", err)
+	var tables int
+	if err := store.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'upgrade_operations'`).Scan(&tables); err != nil || tables != 0 {
+		t.Fatalf("unexpected unused upgrade ledger: count=%d err=%v", tables, err)
 	}
-	const reason = interruptedUpgradeRetiredReason
-	if err := store.RetireRunningUpgradeOperations(reason); err != nil {
-		t.Fatalf("retire running upgrades: %v", err)
+	id, err := store.StartAudit(AuditEvent{
+		Action: ActionAgentUpgrade, Cluster: "dev", Instance: "local",
+		CorrelationID: "upg-restart", CommandSummary: "doops_agent_upgrade phase=apply",
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	var phase, status, errorText string
-	if err := store.db.QueryRow(`SELECT phase, status, error FROM upgrade_operations WHERE id = 'upg_test'`).
-		Scan(&phase, &status, &errorText); err != nil {
-		t.Fatalf("read retired upgrade operation: %v", err)
+	if err := store.MarkExecutionDispatched(id); err != nil {
+		t.Fatal(err)
 	}
-	if phase != "self_upgrade_retired" || status != "error" || errorText != reason {
-		t.Fatalf("unexpected retired operation: phase=%q status=%q error=%q", phase, status, errorText)
+	if err := store.RecoverInterruptedExecutions(); err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.ListAuditFiltered(AuditFilter{CorrelationID: "upg-restart"})
+	if err != nil || len(events) != 1 || events[0].Status != "outcome_unknown" || events[0].CommandSummary != "doops_agent_upgrade phase=apply" {
+		t.Fatalf("restart lost upgrade audit identity: events=%#v err=%v", events, err)
 	}
 }

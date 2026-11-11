@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	buildrelease "github.com/user/doops/agent/pkg/release"
 	"gopkg.in/yaml.v3"
 )
 
@@ -24,22 +25,20 @@ import (
 // is not the process the rollout deletes.
 
 const (
-	interruptedUpgradeRetiredReason = "interrupted agent upgrade was retired on gateway startup"
-	selfUpgradeLabelKey             = "app.kubernetes.io/name"
-	selfUpgradeLabelValue           = "doops-self-upgrade"
-	selfUpgradeChartPrefix          = "doops-agent"
-	selfUpgradeContainer            = "doops-agent"
-	selfUpgradeChartPath            = "/app/deploy/helm/doops-agent"
+	selfUpgradeLabelKey    = "app.kubernetes.io/name"
+	selfUpgradeLabelValue  = "doops-self-upgrade"
+	selfUpgradeChartPrefix = "doops-agent"
+	selfUpgradeContainer   = "doops-agent"
+	selfUpgradeChartPath   = "/app/deploy/helm/doops-agent"
 )
 
 var errNoManagedRelease = errors.New("no managed doops-agent Helm release")
 
 var (
-	imageRepositoryPattern  = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`)
-	imageTagPattern         = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
-	imageDigestPattern      = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
-	selfUpgradeJobPattern   = regexp.MustCompile(`^doops-self-upgrade-[a-f0-9]{8}$`)
-	selfUpgradeRBJobPattern = regexp.MustCompile(`^doops-self-upgrade-rb-[a-f0-9]{8}$`)
+	imageRepositoryPattern = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`)
+	imageTagPattern        = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
+	imageDigestPattern     = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+	selfUpgradeJobPattern  = regexp.MustCompile(`^doops-self-upgrade-[a-f0-9]{24}-(preflight|apply|rollback)$`)
 )
 
 type upgradeExec func(ctx context.Context, stdin string, name string, args ...string) ([]byte, error)
@@ -100,7 +99,18 @@ func validateAgentUpgradeDispatch(args agentUpgradeParams) error {
 	return err
 }
 
-func upgradeAgent(ctx context.Context, args agentUpgradeParams, proc upgradeProcess) (string, error) {
+func upgradeAgent(ctx context.Context, args agentUpgradeParams, proc upgradeProcess) (text string, err error) {
+	defer func() {
+		if err != nil && selfUpgradeFailureCategory(err.Error()) == "" {
+			err = fmt.Errorf("category=upgrade_%s_failed %w", agentUpgradePhase(args), err)
+		}
+	}()
+	if err := validateAgentUpgradeDispatch(args); err != nil {
+		return "", err
+	}
+	if err := validateUpgradeEvidenceParams(args); err != nil {
+		return "", err
+	}
 	if strings.TrimSpace(args.ObserveJob) != "" && args.Rollback {
 		return "", fmt.Errorf("observe_job cannot be combined with rollback")
 	}
@@ -192,8 +202,9 @@ func (p upgradeProcess) startSelfUpgradeJob(ctx context.Context, args agentUpgra
 	if err != nil {
 		return "", err
 	}
-	jobName := "doops-self-upgrade-" + upgradeImageID(args.Image)
-	if err := p.replaceFinishedJob(ctx, namespace, jobName); err != nil {
+	phase := agentUpgradePhase(args)
+	jobName := selfUpgradeJobName(args.UpgradeOperationID, phase)
+	if err := p.requireNoActiveUpgrade(ctx, namespace); err != nil {
 		return "", err
 	}
 	manifest, err := selfUpgradeJobManifest(jobName, namespace, pod, selfUpgradePlan{
@@ -208,16 +219,18 @@ func (p upgradeProcess) startSelfUpgradeJob(ctx context.Context, args agentUpgra
 		instance:                     p.instance,
 		preflight:                    args.Preflight,
 		allowMissingRollbackBaseline: args.AllowMissingRollbackBaseline,
+		evidence:                     args,
+		phase:                        phase,
 	})
 	if err != nil {
 		return "", err
 	}
 	if err := p.applyJob(ctx, namespace, manifest); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w job=%s namespace=%s", err, jobName, namespace)
 	}
 	return fmt.Sprintf(
-		"self-upgrade-accepted job=%s namespace=%s release=%s workload=%s image=%s",
-		jobName, namespace, release, workload, strings.TrimSpace(args.Image),
+		"self-upgrade-accepted job=%s namespace=%s release=%s workload=%s image=%s digest=%s expected_release_commit=%s upgrade_operation_id=%s phase=%s",
+		jobName, namespace, release, workload, strings.TrimSpace(args.Image), digest, args.ExpectedReleaseCommit, args.UpgradeOperationID, phase,
 	), nil
 }
 
@@ -237,8 +250,8 @@ func (p upgradeProcess) startRollbackJob(ctx context.Context, args agentUpgradeP
 	if err != nil {
 		return "", err
 	}
-	jobName := "doops-self-upgrade-rb-" + randomHex(4)
-	rollbackImage, revision, err := p.rollbackImage(ctx, namespace, release, workload)
+	jobName := selfUpgradeJobName(args.UpgradeOperationID, "rollback")
+	rollbackImage, revision, commit, err := p.rollbackImage(ctx, namespace, release, workload)
 	if err != nil {
 		return "", err
 	}
@@ -246,45 +259,49 @@ func (p upgradeProcess) startRollbackJob(ctx context.Context, args agentUpgradeP
 	if err != nil {
 		return "", err
 	}
-	if err := p.replaceFinishedJob(ctx, namespace, jobName); err != nil {
+	if err := p.requireNoActiveUpgrade(ctx, namespace); err != nil {
 		return "", err
 	}
+	args.ExpectedReleaseCommit = commit
 	manifest, err := selfUpgradeJobManifest(jobName, namespace, pod, selfUpgradePlan{
-		image:      rollbackImage,
-		repository: repository,
-		digest:     digest,
-		release:    release,
-		workload:   workload,
-		revision:   revision,
-		script:     selfUpgradeRollbackScript,
+		image:           rollbackImage,
+		controllerImage: pod.image,
+		repository:      repository,
+		digest:          digest,
+		release:         release,
+		workload:        workload,
+		revision:        revision,
+		script:          selfUpgradeRollbackScript,
+		evidence:        args,
+		phase:           "rollback",
 	})
 	if err != nil {
 		return "", err
 	}
 	if err := p.applyJob(ctx, namespace, manifest); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w job=%s namespace=%s", err, jobName, namespace)
 	}
 	return fmt.Sprintf(
-		"self-upgrade-accepted job=%s namespace=%s release=%s workload=%s image=rollback",
-		jobName, namespace, release, workload,
+		"self-upgrade-accepted job=%s namespace=%s release=%s workload=%s image=%s digest=%s expected_release_commit=%s upgrade_operation_id=%s phase=rollback",
+		jobName, namespace, release, workload, rollbackImage, digest, commit, args.UpgradeOperationID,
 	), nil
 }
 
-func (p upgradeProcess) rollbackImage(ctx context.Context, namespace, release, workload string) (string, int, error) {
+func (p upgradeProcess) rollbackImage(ctx context.Context, namespace, release, workload string) (string, int, string, error) {
 	out, err := p.command(ctx, "", "helm", "history", release, "-n", namespace, "-o", "json")
 	if err != nil {
-		return "", 0, commandError("read rollback history", out, err)
+		return "", 0, "", commandError("read rollback history", out, err)
 	}
 	var history []struct {
 		Revision int    `json:"revision"`
 		Status   string `json:"status"`
 	}
 	if err := json.Unmarshal(out, &history); err != nil {
-		return "", 0, fmt.Errorf("parse rollback history: %w", err)
+		return "", 0, "", fmt.Errorf("category=rollback_evidence_invalid parse rollback history: %w", err)
 	}
 	out, err = p.command(ctx, "", "kubectl", "-n", namespace, "get", "configmap", "doops-upgrade-verified-"+release, "--ignore-not-found", "-o", "json")
 	if err != nil {
-		return "", 0, commandError("read verified rollback evidence", out, err)
+		return "", 0, "", commandError("read verified rollback evidence", out, err)
 	}
 	var stored struct {
 		Data map[string]string `json:"data"`
@@ -294,12 +311,14 @@ func (p upgradeProcess) rollbackImage(ctx context.Context, namespace, release, w
 		Release       string `json:"release"`
 		Workload      string `json:"workload"`
 		Revisions     map[string]struct {
-			Image string `json:"image"`
+			Image         string `json:"image"`
+			ReleaseCommit string `json:"release_commit"`
+			Outcome       string `json:"outcome"`
 		} `json:"revisions"`
 	}
 	if json.Unmarshal(out, &stored) != nil || json.Unmarshal([]byte(stored.Data["evidence.json"]), &evidence) != nil ||
 		evidence.SchemaVersion != 1 || evidence.Release != release || evidence.Workload != workload {
-		return "", 0, fmt.Errorf("verified rollback evidence is missing or invalid; use the authorized external controller")
+		return "", 0, "", fmt.Errorf("category=rollback_evidence_invalid verified rollback evidence is missing or invalid; use the authorized external controller")
 	}
 	current, previous := 0, 0
 	for _, row := range history {
@@ -313,11 +332,15 @@ func (p upgradeProcess) rollbackImage(ctx context.Context, namespace, release, w
 		}
 	}
 	if previous == 0 {
-		return "", 0, fmt.Errorf("no previously verified superseded revision")
+		return "", 0, "", fmt.Errorf("category=rollback_evidence_invalid no previously verified superseded revision")
+	}
+	verified := evidence.Revisions[fmt.Sprint(previous)]
+	if !buildrelease.ValidCommit(verified.ReleaseCommit) || verified.Outcome != "succeeded" {
+		return "", 0, "", fmt.Errorf("category=rollback_commit_unknown historical revision %d has no verified release_commit", previous)
 	}
 	out, err = p.command(ctx, "", "helm", "get", "manifest", release, "-n", namespace, "--revision", fmt.Sprint(previous))
 	if err != nil {
-		return "", 0, commandError("read rollback manifest", out, err)
+		return "", 0, "", commandError("read rollback manifest", out, err)
 	}
 	decoder := yaml.NewDecoder(strings.NewReader(string(out)))
 	var images []string
@@ -342,13 +365,13 @@ func (p upgradeProcess) rollbackImage(ctx context.Context, namespace, release, w
 		if err := decoder.Decode(&doc); err == io.EOF {
 			break
 		} else if err != nil {
-			return "", 0, fmt.Errorf("parse rollback manifest: %w", err)
+			return "", 0, "", fmt.Errorf("category=rollback_evidence_invalid parse rollback manifest: %w", err)
 		}
 		if doc.Kind != "Deployment" || doc.Metadata.Name != workload {
 			continue
 		}
 		if doc.Metadata.Namespace != "" && doc.Metadata.Namespace != namespace {
-			return "", 0, fmt.Errorf("rollback workload namespace mismatch")
+			return "", 0, "", fmt.Errorf("category=rollback_evidence_invalid rollback workload namespace mismatch")
 		}
 		for _, container := range doc.Spec.Template.Spec.Containers {
 			if container.Name == selfUpgradeContainer {
@@ -357,47 +380,76 @@ func (p upgradeProcess) rollbackImage(ctx context.Context, namespace, release, w
 		}
 	}
 	if len(images) != 1 {
-		return "", 0, fmt.Errorf("rollback manifest must contain exactly one Agent image")
+		return "", 0, "", fmt.Errorf("category=rollback_evidence_invalid rollback manifest must contain exactly one Agent image")
 	}
 	if _, _, err := parsePinnedImage(images[0]); err != nil {
-		return "", 0, fmt.Errorf("rollback requires an immutable historical image: %w", err)
+		return "", 0, "", fmt.Errorf("category=rollback_evidence_invalid rollback requires an immutable historical image: %w", err)
 	}
 	if evidence.Revisions[fmt.Sprint(previous)].Image != images[0] {
-		return "", 0, fmt.Errorf("rollback manifest does not match verified evidence")
+		return "", 0, "", fmt.Errorf("category=rollback_evidence_invalid rollback manifest does not match verified evidence")
 	}
-	return images[0], previous, nil
+	return images[0], previous, verified.ReleaseCommit, nil
 }
 
 func (p upgradeProcess) observeSelfUpgrade(ctx context.Context, args agentUpgradeParams) (string, error) {
 	jobName := strings.TrimSpace(args.ObserveJob)
-	if !selfUpgradeJobPattern.MatchString(jobName) && !selfUpgradeRBJobPattern.MatchString(jobName) {
-		return "", fmt.Errorf("observe_job must name a doops self-upgrade job")
+	if !selfUpgradeJobPattern.MatchString(jobName) {
+		return "", fmt.Errorf("category=invalid_upgrade_request observe_job must name a doops self-upgrade job")
 	}
 	namespace, err := p.agentNamespace(args.Namespace)
 	if err != nil {
 		return "", err
 	}
-	phase, found, err := p.jobPhase(ctx, namespace, jobName)
+	job, found, err := p.readUpgradeJob(ctx, namespace, jobName)
 	if err != nil {
 		return "", err
 	}
-	if !found {
-		return "", fmt.Errorf("self-upgrade job %s was not found", jobName)
+	if found && (job.Metadata.Annotations["doops.sh/upgrade-operation-id"] != args.UpgradeOperationID ||
+		selfUpgradeJobName(args.UpgradeOperationID, job.Metadata.Annotations["doops.sh/phase"]) != jobName) {
+		return "", fmt.Errorf("category=upgrade_operation_mismatch Job does not belong to upgrade_operation_id")
 	}
-	logs := p.jobLogs(ctx, namespace, jobName)
-	switch phase {
-	case "succeeded":
-		return fmt.Sprintf("self-upgrade-succeeded job=%s namespace=%s\n%s", jobName, namespace, logs), nil
-	case "failed":
-		// A failed upgrade names its reason with a stable category, so the
-		// operator reads why the release was left alone instead of guessing.
-		if category := selfUpgradeFailureCategory(logs); category != "" {
-			return fmt.Sprintf("self-upgrade-failed job=%s namespace=%s category=%s\n%s", jobName, namespace, category, logs), nil
+	header := fmt.Sprintf("job=%s namespace=%s phase=observe upgrade_operation_id=%s", jobName, namespace, args.UpgradeOperationID)
+	for _, field := range []string{"release", "image", "digest", "expected_release_commit", "phase"} {
+		value := job.Metadata.Annotations["doops.sh/"+strings.ReplaceAll(field, "_", "-")]
+		if field == "phase" {
+			field = "job_phase"
 		}
-		return fmt.Sprintf("self-upgrade-failed job=%s namespace=%s\n%s", jobName, namespace, logs), nil
-	default:
-		return fmt.Sprintf("self-upgrade-running job=%s namespace=%s", jobName, namespace), nil
+		if value != "" {
+			header += " " + field + "=" + value
+		}
 	}
+	if found && job.phase() == "running" {
+		return fmt.Sprintf("self-upgrade-running %s", header), nil
+	}
+	receipt, receiptErr := p.readUpgradeReceipt(ctx, namespace, jobName, args.UpgradeOperationID)
+	if receiptErr == nil {
+		if found && receipt["outcome"] != job.phase() {
+			return "", fmt.Errorf("category=upgrade_receipt_conflict Job and durable receipt disagree")
+		}
+		for _, key := range []string{"release", "workload", "image", "expected_release_commit"} {
+			expected := job.Metadata.Annotations["doops.sh/"+strings.ReplaceAll(key, "_", "-")]
+			if found && expected != "" && receipt[key] != expected {
+				return "", fmt.Errorf("category=upgrade_receipt_conflict Job and receipt identity disagree")
+			}
+		}
+		evidence, _ := json.Marshal(receipt)
+		return fmt.Sprintf("self-upgrade-%s %s\n%s", receipt["outcome"], header, evidence), nil
+	}
+	if !found || job.phase() == "succeeded" {
+		return "", receiptErr
+	}
+	// A deadline or killed controller may never have written a receipt. Preserve
+	// that explicit evidence gap; arbitrary command/Pod output is not audit data.
+	category := firstNonEmptyString(selfUpgradeFailureCategory(p.jobLogs(ctx, namespace, jobName)), "upgrade_job_failed")
+	for _, condition := range job.Status.Conditions {
+		if condition.Status == "True" && condition.Reason == "DeadlineExceeded" {
+			category = "upgrade_job_deadline_exceeded"
+		}
+	}
+	evidence, _ := json.Marshal(map[string]string{
+		"category": category, "receipt_error": selfUpgradeFailureCategory(receiptErr.Error()),
+	})
+	return fmt.Sprintf("self-upgrade-failed %s category=%s\n%s", header, category, evidence), nil
 }
 
 func (p upgradeProcess) agentNamespace(requested string) (string, error) {
@@ -639,27 +691,13 @@ func nodeNameForVolume(volume json.RawMessage, nodeName string) (string, error) 
 	return "", nil
 }
 
-func (p upgradeProcess) replaceFinishedJob(ctx context.Context, namespace, jobName string) error {
+func (p upgradeProcess) requireNoActiveUpgrade(ctx context.Context, namespace string) error {
 	active, err := p.activeSelfUpgrade(ctx, namespace)
 	if err != nil {
 		return err
 	}
 	if active != "" {
-		return fmt.Errorf("self-upgrade job %s is already running", active)
-	}
-	phase, found, err := p.jobPhase(ctx, namespace, jobName)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return nil
-	}
-	if phase == "running" {
-		return fmt.Errorf("self-upgrade job %s is already running", jobName)
-	}
-	out, err := p.command(ctx, "", "kubectl", "-n", namespace, "delete", "job", jobName, "--ignore-not-found")
-	if err != nil {
-		return commandError("delete finished self-upgrade job", out, err)
+		return fmt.Errorf("category=upgrade_busy self-upgrade job %s is already running", active)
 	}
 	return nil
 }
@@ -674,9 +712,7 @@ func (p upgradeProcess) activeSelfUpgrade(ctx context.Context, namespace string)
 			Metadata struct {
 				Name string `json:"name"`
 			} `json:"metadata"`
-			Status struct {
-				Active int `json:"active"`
-			} `json:"status"`
+			Status selfUpgradeJobStatus `json:"status"`
 		} `json:"items"`
 	}
 	if len(strings.TrimSpace(string(out))) == 0 {
@@ -686,39 +722,65 @@ func (p upgradeProcess) activeSelfUpgrade(ctx context.Context, namespace string)
 		return "", fmt.Errorf("parse self-upgrade jobs: %w", err)
 	}
 	for _, item := range listed.Items {
-		if item.Status.Active > 0 {
+		if (&selfUpgradeJob{Status: item.Status}).phase() == "running" {
 			return item.Metadata.Name, nil
 		}
 	}
 	return "", nil
 }
 
-func (p upgradeProcess) jobPhase(ctx context.Context, namespace, jobName string) (string, bool, error) {
-	out, err := p.command(ctx, "", "kubectl", "-n", namespace, "get", "job", jobName, "-o", "json")
-	if err != nil {
-		if isNotFound(out, err) {
-			return "", false, nil
+type selfUpgradeJobStatus struct {
+	Active     int `json:"active"`
+	Succeeded  int `json:"succeeded"`
+	Failed     int `json:"failed"`
+	Conditions []struct {
+		Type   string `json:"type"`
+		Status string `json:"status"`
+		Reason string `json:"reason"`
+	} `json:"conditions"`
+}
+
+type selfUpgradeJob struct {
+	Metadata struct {
+		Annotations map[string]string `json:"annotations"`
+	} `json:"metadata"`
+	Status selfUpgradeJobStatus `json:"status"`
+}
+
+func (job *selfUpgradeJob) phase() string {
+	for _, condition := range job.Status.Conditions {
+		if condition.Status == "True" {
+			if condition.Type == "Failed" {
+				return "failed"
+			}
+			if condition.Type == "Complete" {
+				return "succeeded"
+			}
 		}
-		return "", false, commandError("read self-upgrade job", out, err)
-	}
-	var job struct {
-		Status struct {
-			Active    int `json:"active"`
-			Succeeded int `json:"succeeded"`
-			Failed    int `json:"failed"`
-		} `json:"status"`
-	}
-	if err := json.Unmarshal(out, &job); err != nil {
-		return "", false, fmt.Errorf("parse self-upgrade job: %w", err)
 	}
 	switch {
 	case job.Status.Succeeded > 0:
-		return "succeeded", true, nil
+		return "succeeded"
 	case job.Status.Failed > 0:
-		return "failed", true, nil
+		return "failed"
 	default:
-		return "running", true, nil
+		return "running"
 	}
+}
+
+func (p upgradeProcess) readUpgradeJob(ctx context.Context, namespace, jobName string) (selfUpgradeJob, bool, error) {
+	var job selfUpgradeJob
+	out, err := p.command(ctx, "", "kubectl", "-n", namespace, "get", "job", jobName, "-o", "json")
+	if err != nil {
+		if isNotFound(out, err) {
+			return job, false, nil
+		}
+		return job, false, commandError("read self-upgrade job", out, err)
+	}
+	if err := json.Unmarshal(out, &job); err != nil {
+		return job, false, fmt.Errorf("category=upgrade_job_invalid parse self-upgrade job: %w", err)
+	}
+	return job, true, nil
 }
 
 func (p upgradeProcess) jobLogs(ctx context.Context, namespace, jobName string) string {
@@ -731,25 +793,31 @@ func (p upgradeProcess) jobLogs(ctx context.Context, namespace, jobName string) 
 }
 
 func (p upgradeProcess) applyJob(ctx context.Context, namespace string, manifest []byte) error {
-	out, err := p.command(ctx, string(manifest), "kubectl", "-n", namespace, "apply", "-f", "-")
+	out, err := p.command(ctx, string(manifest), "kubectl", "-n", namespace, "create", "-f", "-")
 	if err != nil {
-		return commandError("create self-upgrade job", out, err)
+		if strings.Contains(strings.ToLower(string(out)), "alreadyexists") || strings.Contains(strings.ToLower(string(out)), "already exists") {
+			return fmt.Errorf("category=upgrade_job_exists this operation phase already has a Job; observe the existing Job")
+		}
+		return fmt.Errorf("category=upgrade_job_create_unknown %w", commandError("create self-upgrade job", out, err))
 	}
 	return nil
 }
 
 type selfUpgradePlan struct {
-	image      string
-	repository string
-	tag        string
-	digest     string
-	release    string
-	workload   string
-	revision   int
-	script     string
-	cluster    string
-	instance   string
-	preflight  bool
+	image           string
+	controllerImage string
+	repository      string
+	tag             string
+	digest          string
+	release         string
+	workload        string
+	revision        int
+	script          string
+	cluster         string
+	instance        string
+	preflight       bool
+	evidence        agentUpgradeParams
+	phase           string
 	// allowMissingRollbackBaseline lets the operator accept an upgrade whose
 	// rollback baseline image can no longer be pulled.
 	allowMissingRollbackBaseline bool
@@ -766,7 +834,7 @@ func selfUpgradeJobManifest(jobName, namespace string, pod selfUpgradePod, plan 
 	if strings.TrimSpace(pod.image) == "" && plan.image == "" {
 		return nil, fmt.Errorf("self-upgrade job image is required")
 	}
-	image := plan.image
+	image := firstNonEmptyString(plan.controllerImage, plan.image)
 	if image == "" {
 		image = pod.image
 	}
@@ -774,6 +842,29 @@ func selfUpgradeJobManifest(jobName, namespace string, pod selfUpgradePod, plan 
 		{"name": "DOOPS_UPGRADE_NAMESPACE", "value": namespace},
 		{"name": "DOOPS_UPGRADE_RELEASE", "value": plan.release},
 		{"name": "DOOPS_UPGRADE_WORKLOAD", "value": plan.workload},
+	}
+	annotations := map[string]string{
+		"doops.sh/release": plan.release, "doops.sh/workload": plan.workload,
+		"doops.sh/image": plan.image, "doops.sh/digest": plan.digest,
+		"doops.sh/upgrade-operation-id":    plan.evidence.UpgradeOperationID,
+		"doops.sh/expected-release-commit": plan.evidence.ExpectedReleaseCommit,
+		"doops.sh/source-commit":           plan.evidence.SourceCommit, "doops.sh/ci-url": plan.evidence.CIURL,
+		"doops.sh/requester-id": plan.evidence.RequesterID, "doops.sh/audit-id": fmt.Sprint(plan.evidence.AuditID),
+		"doops.sh/session-id": plan.evidence.SessionID, "doops.sh/phase": plan.phase,
+		"doops.sh/created-at":                      time.Now().UTC().Format(time.RFC3339Nano),
+		"doops.sh/job":                             jobName,
+		"doops.sh/allow-missing-rollback-baseline": fmt.Sprint(plan.allowMissingRollbackBaseline),
+	}
+	for _, key := range []string{"upgrade-operation-id", "expected-release-commit", "source-commit", "ci-url",
+		"requester-id", "audit-id", "session-id", "phase", "created-at", "job"} {
+		name := strings.ToUpper(strings.ReplaceAll(key, "-", "_"))
+		if key == "upgrade-operation-id" {
+			name = "OPERATION_ID"
+		}
+		env = append(env, map[string]string{
+			"name":  "DOOPS_UPGRADE_" + name,
+			"value": annotations["doops.sh/"+key],
+		})
 	}
 	if plan.allowMissingRollbackBaseline {
 		env = append(env, map[string]string{"name": "DOOPS_UPGRADE_ALLOW_MISSING_ROLLBACK_BASELINE", "value": "1"})
@@ -796,7 +887,7 @@ func selfUpgradeJobManifest(jobName, namespace string, pod selfUpgradePod, plan 
 		env = append(env, map[string]string{"name": "DOOPS_UPGRADE_IMAGE", "value": plan.image})
 	}
 	pullPolicy := "Always"
-	if plan.digest != "" {
+	if strings.Contains(image, "@sha256:") {
 		pullPolicy = "IfNotPresent"
 	}
 	pullSecrets := make([]map[string]string, 0, len(pod.imagePullSecrets))
@@ -845,17 +936,15 @@ func selfUpgradeJobManifest(jobName, namespace string, pod selfUpgradePod, plan 
 			"labels": map[string]string{
 				selfUpgradeLabelKey: selfUpgradeLabelValue,
 			},
-			"annotations": map[string]string{
-				"doops.sh/release":  plan.release,
-				"doops.sh/workload": plan.workload,
-			},
+			"annotations": annotations,
 		},
 		"spec": map[string]interface{}{
 			"backoffLimit":            0,
-			"ttlSecondsAfterFinished": 600,
+			"ttlSecondsAfterFinished": 7 * 24 * 60 * 60,
 			"activeDeadlineSeconds":   1200,
 			"template": map[string]interface{}{
 				"metadata": map[string]interface{}{
+					"annotations": annotations,
 					"labels": map[string]string{
 						selfUpgradeLabelKey: selfUpgradeLabelValue,
 					},
@@ -912,9 +1001,9 @@ func parsePinnedImage(image string) (string, string, error) {
 	return repository, digest, nil
 }
 
-func upgradeImageID(image string) string {
-	digest := sha256.Sum256([]byte(strings.TrimSpace(image)))
-	return hex.EncodeToString(digest[:])[:8]
+func selfUpgradeJobName(operationID, phase string) string {
+	digest := sha256.Sum256([]byte(operationID))
+	return "doops-self-upgrade-" + hex.EncodeToString(digest[:])[:24] + "-" + phase
 }
 
 func validateK8sName(kind, name string, max int) error {
@@ -932,12 +1021,9 @@ func isNotFound(out []byte, err error) bool {
 	return strings.Contains(text, "notfound") || strings.Contains(text, "not found")
 }
 
-func commandError(action string, out []byte, err error) error {
-	text := strings.TrimSpace(string(out))
-	if text == "" {
-		return fmt.Errorf("%s: %w", action, err)
-	}
-	return fmt.Errorf("%s: %s", action, tailText(text, 2000))
+func commandError(action string, _ []byte, _ error) error {
+	// Kubernetes/Helm diagnostics can echo submitted objects and credentials.
+	return fmt.Errorf("%s failed", action)
 }
 
 func tailText(text string, limit int) string {
@@ -948,7 +1034,42 @@ func tailText(text string, limit int) string {
 	return utf8Tail(text, limit)
 }
 
-const selfUpgradeKubeconfigPrelude = `set -eu
+const selfUpgradeEvidencePrelude = `set -eu
+umask 077
+failure_category=upgrade_preflight_failed
+emit_upgrade_event() {
+  python3 - "$1" "$2" <<'PY'
+import json, os, sys
+sys.path.insert(0, "/app")
+from adopt_agent import evidence_context, evidence_exception_hook, write_operation_receipt
+sys.excepthook = evidence_exception_hook
+record = evidence_context(os.environ["DOOPS_UPGRADE_NAMESPACE"], os.environ["DOOPS_UPGRADE_WORKLOAD"],
+                          os.environ["DOOPS_UPGRADE_RELEASE"], os.environ.get("DOOPS_UPGRADE_IMAGE", ""))
+record.update(outcome=sys.argv[1], category=sys.argv[2])
+if sys.argv[1] in ("succeeded", "failed"):
+    record = write_operation_receipt(sys.argv[1], sys.argv[2])
+print(json.dumps(record, sort_keys=True))
+PY
+}
+finish_upgrade() {
+  status="$1"
+  trap - EXIT
+  if [ -s "${TMPDIR:-/tmp}/doops-upgrade-terminal.json" ]; then exit "$status"; fi
+  if [ "$status" -eq 0 ]; then
+    emit_upgrade_event succeeded "" || exit 1
+  else
+    category_file="${TMPDIR:-/tmp}/doops-upgrade-category"
+    if [ -s "$category_file" ]; then failure_category="$(cat "$category_file")"; fi
+    echo "category=${failure_category}" >&2
+    emit_upgrade_event failed "$failure_category" || exit 1
+  fi
+  exit "$status"
+}
+trap 'finish_upgrade $?' EXIT
+emit_upgrade_event running ""
+`
+
+const selfUpgradeKubeconfigPrelude = selfUpgradeEvidencePrelude + `failure_category=kubeconfig_unavailable
 sleep 5
 source=/root/.kube/config
 export KUBECONFIG=/tmp/doops-kubeconfig
@@ -966,6 +1087,7 @@ fi
 ns="$DOOPS_UPGRADE_NAMESPACE"
 release="$DOOPS_UPGRADE_RELEASE"
 workload="$DOOPS_UPGRADE_WORKLOAD"
+failure_category=upgrade_preflight_failed
 `
 
 const selfUpgradeDeploymentVerifier = `verify_deployment() {
@@ -975,6 +1097,9 @@ import os
 import re
 import subprocess
 import sys
+sys.path.insert(0, "/app")
+from adopt_agent import evidence_context, evidence_exception_hook, verified_release_commit, write_verified_receipt
+sys.excepthook = evidence_exception_hook
 
 namespace, expected_workload, expected_image, identity_source, record = sys.argv[1:6]
 deployment = json.loads(subprocess.check_output(
@@ -1056,6 +1181,7 @@ if not re.fullmatch(r"sha256:[0-9a-f]{64}", pinned_digest):
 expected_digest = pinned_digest
 controller_node = ""
 runtime_class = ""
+expected_commit = os.environ.get("DOOPS_UPGRADE_EXPECTED_RELEASE_COMMIT", "")
 if identity_source == "baseline":
     baseline = json.loads(os.environ["DOOPS_UPGRADE_BASELINE"])
     if expected_image != baseline.get("image"):
@@ -1063,6 +1189,7 @@ if identity_source == "baseline":
     expected_digest = baseline.get("digest") or ""
     controller_node = baseline.get("node") or ""
     runtime_class = baseline.get("runtime_class") or ""
+    expected_commit = baseline.get("release_commit") or ""
     if not controller_node or not re.fullmatch(r"sha256:[0-9a-f]{64}", expected_digest):
         raise SystemExit("Rollback baseline runtime identity is missing")
 elif identity_source == "controller":
@@ -1088,6 +1215,7 @@ elif identity_source == "controller":
         raise SystemExit("Controller Pod imageID has no valid sha256 digest")
 else:
     raise SystemExit("Unknown runtime identity source")
+verified_pods = []
 for pod in pods:
     metadata = pod.get("metadata") or {}
     uid = str(metadata.get("uid") or "")
@@ -1130,35 +1258,18 @@ for pod in pods:
             "Agent Pod on node " + pod_node + " reports a digest that matches neither the pinned image"
             " nor the controller runtime on node " + controller_node
         )
+    actual_commit = verified_release_commit(namespace, metadata["name"], expected_commit)
+    verified_pods.append({"podUID": uid, "runtimeDigest": actual_digest, "node": pod_node,
+                          "runtimeClass": runtime_class, "release_commit": actual_commit})
     print("pod_verified uid=" + uid + " imageID=" + image_id + " node=" + pod_node)
-print("deployment_verified=" + name + " generation=" + str(generation))
+print("deployment_verified=" + name + " generation=" + str(generation) + " release_commit=" + actual_commit)
 if record == "record":
     release = os.environ["DOOPS_UPGRADE_RELEASE"]
-    rows = json.loads(subprocess.check_output(
-        ["helm", "history", release, "-n", namespace, "-o", "json"], timeout=30,
-    ))
-    deployed = [int(row["revision"]) for row in rows if row["status"] == "deployed"]
-    if len(deployed) != 1:
-        raise SystemExit("Cannot bind verification to one deployed Helm revision")
-    receipt_name = "doops-upgrade-verified-" + release
-    raw = subprocess.check_output(
-        ["kubectl", "-n", namespace, "get", "configmap", receipt_name, "--ignore-not-found", "-o", "json"], timeout=30,
-    ).strip()
-    receipt = json.loads(json.loads(raw)["data"]["evidence.json"]) if raw else {
-        "schemaVersion": 1, "release": release, "workload": expected_workload, "revisions": {},
-    }
-    if receipt.get("schemaVersion") != 1 or receipt.get("release") != release or receipt.get("workload") != expected_workload:
-        raise SystemExit("Verified revision evidence scope mismatch")
-    revisions = receipt["revisions"]
-    revisions[str(deployed[0])] = {"image": expected_image, "runtimeDigest": actual_digest,
-                                  "podUID": uid, "node": pod_node, "runtimeClass": runtime_class}
-    retained = {str(row["revision"]) for row in rows}
-    receipt["revisions"] = {key: value for key, value in revisions.items() if key in retained}
-    manifest = {"apiVersion": "v1", "kind": "ConfigMap",
-                "metadata": {"name": receipt_name, "namespace": namespace},
-                "data": {"evidence.json": json.dumps(receipt, sort_keys=True)}}
-    subprocess.run(["kubectl", "-n", namespace, "apply", "-f", "-"],
-                   input=json.dumps(manifest).encode(), check=True, timeout=30)
+    evidence = evidence_context(namespace, expected_workload, release, expected_image)
+    evidence.update(verified_pods[0], pods=verified_pods, outcome="succeeded", category="",
+                    verification_stage=os.environ.get("DOOPS_UPGRADE_VERIFICATION_STAGE", identity_source),
+                    expected_release_commit=expected_commit)
+    write_verified_receipt(namespace, release, expected_workload, evidence)
 PY
 }
 `
@@ -1186,6 +1297,10 @@ var selfUpgradeFailureCategories = []string{
 // carried, or "" when the failure has no category. The category is part of the
 // Job log, so it survives the Job, the observation and the CLI report.
 func selfUpgradeFailureCategory(logs string) string {
+	matches := upgradeCategoryPattern.FindAllStringSubmatch(logs, -1)
+	if len(matches) > 0 {
+		return matches[len(matches)-1][1]
+	}
 	for _, category := range selfUpgradeFailureCategories {
 		if strings.Contains(logs, category) {
 			return category
@@ -1308,12 +1423,13 @@ if any(marker in lowered for marker in REFUSED_MARKERS):
     fail(CATEGORY_PROBE_FAILED, "the registry refused the pull credentials")
 if any(marker in lowered for marker in MISSING_MARKERS):
     fail(CATEGORY_UNAVAILABLE, "the registry has no manifest for this image")
-fail(CATEGORY_PROBE_FAILED, "the manifest check failed: " + (detail.splitlines() or [""])[-1][-300:])
+fail(CATEGORY_PROBE_FAILED, "the registry manifest check failed")
 PY
 )" || {
   case "$rollback_baseline_probe" in
     *rollback_baseline_image_unavailable*)
       if [ "${DOOPS_UPGRADE_ALLOW_MISSING_ROLLBACK_BASELINE:-0}" != "1" ]; then
+        failure_category=rollback_baseline_image_unavailable
         echo "$rollback_baseline_probe" >&2
         exit 1
       fi
@@ -1330,6 +1446,7 @@ PY
 // selfUpgradeApplyChecks holds every check that runs before the first change, so
 // the preflight Job and the apply Job cannot disagree about what is admissible.
 const selfUpgradeApplyChecks = selfUpgradeRevisionImage + selfUpgradeRBACGuard + `repository="$DOOPS_UPGRADE_REPOSITORY"
+failure_category=rollback_baseline_image_unresolved
 tag="${DOOPS_UPGRADE_TAG:-}"
 digest="${DOOPS_UPGRADE_DIGEST:-}"
 target="$DOOPS_UPGRADE_IMAGE"
@@ -1358,6 +1475,9 @@ test -n "$previous" || { echo "rollback_baseline_image_unresolved: the release m
 selector_json="$(kubectl -n "$ns" get deployment "$workload" -o json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d["spec"]["selector"]["matchLabels"], separators=(",", ":"), sort_keys=True))')"
 baseline="$(python3 - "$ns" "$previous_image" "$selector_json" <<'PY'
 import json, re, subprocess, sys
+sys.path.insert(0, "/app")
+from adopt_agent import evidence_exception_hook, verified_release_commit
+sys.excepthook = evidence_exception_hook
 ns, image, labels = sys.argv[1:4]
 selector = ",".join(f"{key}={value}" for key, value in sorted(json.loads(labels).items()))
 pods = json.loads(subprocess.check_output(
@@ -1375,7 +1495,9 @@ if not (pod.get("metadata") or {}).get("uid") or not spec.get("nodeName") or not
 digest = str(status.get("imageID") or "").split("://")[-1].rsplit("@", 1)[-1]
 if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
     raise SystemExit("Rollback baseline runtime digest is invalid")
+commit = verified_release_commit(ns, pod["metadata"]["name"])
 print(json.dumps({"image": image, "digest": digest, "node": spec["nodeName"],
+                 "release_commit": commit,
                  "runtime_class": spec.get("runtimeClassName") or "",
                  "service_account": spec.get("serviceAccountName") or "",
                  "tolerations": spec.get("tolerations") or [],
@@ -1384,13 +1506,17 @@ print(json.dumps({"image": image, "digest": digest, "node": spec["nodeName"],
 PY
 )"
 export DOOPS_UPGRADE_BASELINE="$baseline"
+failure_category=rollback_baseline_verification_failed
 verify_deployment "$previous_image" baseline ${verify_record-record}
+failure_category=rollback_baseline_image_unresolved
 rollback_baseline_image="$(revision_image "$previous")"
 test "$rollback_baseline_image" = "$previous_image" || {
   echo "rollback_baseline_image_unresolved: the rollback revision image differs from the live Agent image" >&2
   exit 1
 }
-` + selfUpgradeRollbackBaselineProbe + `values="${TMPDIR:-/tmp}/doops-upgrade-values.json"
+failure_category=rollback_baseline_probe_failed
+` + selfUpgradeRollbackBaselineProbe + `failure_category=upgrade_values_failed
+values="${TMPDIR:-/tmp}/doops-upgrade-values.json"
 helm get values "$release" -n "$ns" -o json >"$values"
 python3 - "$values" "$repository" "$tag" "$digest" "$selector_json" <<'PY'
 import json, sys
@@ -1409,7 +1535,9 @@ values.setdefault("workload", {})["selectorLabels"] = json.loads(selector_json)
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(values, fh)
 PY
-` + selfUpgradeStaleVolumeMounts + `verify_controller_rbac "$previous_manifest" "$rendered_manifest"
+failure_category=stale_volume_mounts_unresolved
+` + selfUpgradeStaleVolumeMounts + `failure_category=rbac_controller_identity_changed
+verify_controller_rbac "$previous_manifest" "$rendered_manifest"
 `
 
 // A ServiceAccount controller cannot let Helm add, remove or rebind its own
@@ -1618,12 +1746,13 @@ PY
 // The preflight Job starts from the target image, so a successful start already
 // means the image was pulled to the node. It changes nothing: it only repeats the
 // apply checks and asks the API server to dry-run the same Helm upgrade.
-const selfUpgradePreflightScript = selfUpgradeKubeconfigPrelude + selfUpgradeDeploymentVerifier + "verify_record=\n" + selfUpgradeApplyChecks + `helm upgrade "$release" "$chart" -n "$ns" -f "$values" --timeout 180s --wait=false --dry-run=server >/dev/null
+const selfUpgradePreflightScript = selfUpgradeKubeconfigPrelude + selfUpgradeDeploymentVerifier + "verify_record=\n" + selfUpgradeApplyChecks + `failure_category=helm_dry_run_failed
+helm upgrade "$release" "$chart" -n "$ns" -f "$values" --timeout 180s --wait=false --dry-run=server >/dev/null
 echo "preflight-passed image=${target}"
 `
 
 // Adoption has no Helm release to dry-run yet; starting the Job still proves the pull.
-const selfUpgradePullOnlyScript = `echo "preflight-passed image=${DOOPS_UPGRADE_IMAGE}"
+const selfUpgradePullOnlyScript = selfUpgradeKubeconfigPrelude + `echo "preflight-passed image=${DOOPS_UPGRADE_IMAGE}"
 `
 
 const selfUpgradeApplyScript = selfUpgradeKubeconfigPrelude + selfUpgradeDeploymentVerifier + selfUpgradeApplyChecks + selfUpgradeRestoreVolumeMounts + `mutated=false
@@ -1641,7 +1770,7 @@ rollback_release() {
     echo "Error: automatic rollback failed: rolled-back Deployment did not become ready" >&2
     return 1
   fi
-  if ! verify_deployment "$previous_image" baseline record; then
+  if ! DOOPS_UPGRADE_VERIFICATION_STAGE=rollback verify_deployment "$previous_image" baseline record; then
     echo "Error: automatic rollback failed: rolled-back Deployment final state is not verified" >&2
     return 1
   fi
@@ -1653,29 +1782,38 @@ cleanup() {
   if [ "$status" -ne 0 ] && [ "$mutated" = true ]; then
     if ! rollback_release; then
       echo "Error: automatic rollback failed; manual intervention is required" >&2
-      exit 1
+      printf '%s' automatic_rollback_failed >"${TMPDIR:-/tmp}/doops-upgrade-category"
+      export DOOPS_UPGRADE_ROLLBACK_OUTCOME=failed
+      finish_upgrade 1
     fi
+    export DOOPS_UPGRADE_ROLLBACK_OUTCOME=succeeded
   fi
-  exit "$status"
+  finish_upgrade "$status"
 }
 trap cleanup EXIT
-helm upgrade "$release" "$chart" -n "$ns" -f "$values" --timeout 180s --wait=false --dry-run=server
+failure_category=helm_dry_run_failed
+helm upgrade "$release" "$chart" -n "$ns" -f "$values" --timeout 180s --wait=false --dry-run=server >/dev/null
 if [ -s "$stale_mounts" ]; then
   # Back the mounts up in the cluster before the first change, so the evidence
   # survives this Job even when the rollback cannot run.
+  failure_category=mount_backup_failed
   kubectl -n "$ns" apply -f "$mount_backup"
 fi
 mutated=true
 if [ -s "$stale_mounts" ]; then
+  failure_category=mount_removal_failed
   kubectl -n "$ns" patch deployment "$workload" --type=json -p "$(cat "$remove_mounts_patch")"
   echo "stale_volume_mounts_removed workload=${workload}"
 fi
-helm upgrade "$release" "$chart" -n "$ns" -f "$values" --timeout 180s --wait=false
+failure_category=helm_upgrade_failed
+helm upgrade "$release" "$chart" -n "$ns" -f "$values" --timeout 180s --wait=false >/dev/null
+failure_category=release_verification_failed
 deadline=$(( $(date +%s) + 600 ))
 while [ "$(date +%s)" -lt "$deadline" ]; do
   if verify_deployment "$target"; then
     sleep 15
     if verify_deployment "$target" controller record; then
+      emit_upgrade_event succeeded "" || { failure_category=verification_receipt_failed; exit 1; }
       echo "self-upgrade complete image=${target}"
       exit 0
     fi
@@ -1687,6 +1825,7 @@ exit 1
 `
 
 const selfUpgradeRollbackScript = selfUpgradeKubeconfigPrelude + selfUpgradeDeploymentVerifier + selfUpgradeRevisionImage + selfUpgradeRBACGuard + `previous="$DOOPS_UPGRADE_REVISION"
+failure_category=rollback_evidence_invalid
 python3 - "$ns" "$release" "$previous" <<'PY'
 import json, subprocess, sys
 ns, release, revision = sys.argv[1:4]
@@ -1697,14 +1836,41 @@ if len(current) != 1 or not any(int(row["revision"]) == int(revision) < current[
 PY
 expected="$(revision_image "$previous")"
 test "$expected" = "$DOOPS_UPGRADE_IMAGE" || { echo "rollback revision image changed after admission" >&2; exit 1; }
+DOOPS_UPGRADE_BASELINE="$(python3 - "$ns" "$release" "$workload" "$previous" <<'PY'
+import json, os, re, subprocess, sys
+sys.path.insert(0, "/app")
+from adopt_agent import report_failure
+ns, release, workload, revision = sys.argv[1:]
+stored = json.loads(subprocess.check_output(
+    ["kubectl", "-n", ns, "get", "configmap", "doops-upgrade-verified-" + release, "-o", "json"], timeout=30))
+receipt = json.loads(stored["data"]["evidence.json"])
+entry = receipt["revisions"][revision]
+if receipt.get("release") != release or receipt.get("workload") != workload or receipt.get("schemaVersion") != 1:
+    raise SystemExit("category=rollback_evidence_invalid rollback receipt scope changed")
+if (entry.get("outcome") != "succeeded" or not re.fullmatch(r"[0-9a-f]{40}", entry.get("release_commit", ""))
+        or entry["release_commit"] != os.environ["DOOPS_UPGRADE_EXPECTED_RELEASE_COMMIT"]
+        or entry["image"] != os.environ["DOOPS_UPGRADE_IMAGE"]):
+    report_failure("rollback_commit_unknown")
+    raise SystemExit("category=rollback_commit_unknown historical verified commit changed or is unknown")
+if not re.fullmatch(r"sha256:[0-9a-f]{64}", entry.get("runtimeDigest", "")) or not entry.get("node"):
+    raise SystemExit("category=rollback_evidence_invalid historical runtime identity is missing")
+print(json.dumps({"image": entry["image"], "digest": entry["runtimeDigest"], "node": entry["node"],
+                  "runtime_class": entry.get("runtimeClass", ""), "release_commit": entry["release_commit"]}))
+PY
+)"
+export DOOPS_UPGRADE_BASELINE
 current_manifest="${TMPDIR:-/tmp}/doops-rollback-current-manifest.yaml"
 rollback_manifest="${TMPDIR:-/tmp}/doops-rollback-target-manifest.yaml"
 helm get manifest "$release" -n "$ns" >"$current_manifest"
 helm get manifest "$release" -n "$ns" --revision "$previous" >"$rollback_manifest"
+failure_category=rbac_controller_identity_changed
 verify_controller_rbac "$current_manifest" "$rollback_manifest"
+failure_category=helm_rollback_failed
 helm rollback "$release" "$previous" -n "$ns" --timeout 300s --wait
+failure_category=rollback_rollout_failed
 kubectl -n "$ns" rollout status "deployment/${workload}" --timeout 300s
-verify_deployment "$expected" controller record
+failure_category=rollback_verification_failed
+verify_deployment "$expected" baseline record
 echo "self-upgrade rolled back to ${previous}"
 `
 
@@ -1728,7 +1894,8 @@ func adoptionTarget(requestedRelease, requestedWorkload string) (string, string,
 	return release, workload, nil
 }
 
-const selfUpgradeAdoptScript = selfUpgradeKubeconfigPrelude + `python3 /app/adopt_agent.py run \
+const selfUpgradeAdoptScript = selfUpgradeKubeconfigPrelude + `failure_category=adopt_failed
+python3 /app/adopt_agent.py run \
   --namespace "$ns" --workload "$workload" --release "$release" \
   --cluster "$DOOPS_GATEWAY_CLUSTER" --instance "$DOOPS_GATEWAY_INSTANCE" \
   --image "$DOOPS_UPGRADE_IMAGE"

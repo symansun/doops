@@ -9,6 +9,9 @@
 The adopted Agent receives its model provider from the Gateway; no settings are copied.
 """
 import argparse
+import base64
+import datetime
+import hashlib
 import json
 import os
 import re
@@ -27,14 +30,149 @@ PINNED_IMAGE = re.compile(r"^([a-z0-9.:/_-]+)@(sha256:[0-9a-f]{64})$")
 
 
 class AdoptError(Exception):
-    pass
+    def __init__(self, message, category="adopt_preflight_failed"):
+        self.category = category
+        super().__init__(f"category={category} {message}")
+
+
+def evidence_context(namespace, workload, release, image):
+    context = {key: os.environ.get("DOOPS_UPGRADE_" + key.upper(), "") for key in (
+        "requester_id", "session_id", "audit_id",
+        "expected_release_commit", "source_commit", "ci_url", "phase", "job", "created_at",
+    )}
+    context["upgrade_operation_id"] = os.environ.get("DOOPS_UPGRADE_OPERATION_ID", "")
+    context.update(namespace=namespace, workload=workload, release=release, image=image,
+                   digest=image.rsplit("@", 1)[1] if "@sha256:" in image else "",
+                   time=datetime.datetime.now(datetime.timezone.utc).isoformat())
+    return context
+
+
+def verified_release_commit(namespace, pod, expected=None):
+    """Read the running Pod, never substitute the requested commit for evidence."""
+    try:
+        version = run(["kubectl", "-n", namespace, "exec", pod, "-c", CONTAINER,
+                       "--", "/app/doops-agent", "-version"], timeout=30)
+        run(["kubectl", "-n", namespace, "exec", pod, "-c", CONTAINER,
+             "--", "curl", "-fsS", "--max-time", "5", "http://127.0.0.1:42222/health/ready"], timeout=30)
+    except (AdoptError, OSError, subprocess.SubprocessError) as exc:
+        raise AdoptError("cannot read Agent release and Gateway readiness", "release_probe_failed") from exc
+    match = re.fullmatch(r"release=\S+ commit=([0-9a-f]{40})\s*", version)
+    if not match:
+        raise AdoptError("Agent reported an unknown release commit", "release_commit_unknown")
+    actual = match.group(1)
+    if expected is not None:
+        if not re.fullmatch(r"[0-9a-f]{40}", expected):
+            raise AdoptError("expected release commit is unknown", "release_commit_unknown")
+        if actual != expected:
+            raise AdoptError(f"Agent commit {actual} differs from expected {expected}", "release_commit_mismatch")
+    return actual
+
+
+def write_verified_receipt(namespace, release, workload, evidence):
+    if evidence.get("outcome") != "succeeded" or not re.fullmatch(r"[0-9a-f]{40}", evidence.get("release_commit", "")):
+        raise AdoptError("cannot persist unverified release identity", "verification_receipt_invalid")
+    try:
+        rows = json.loads(run(["helm", "history", release, "-n", namespace, "-o", "json"], timeout=30))
+        deployed = [int(row["revision"]) for row in rows if row["status"] == "deployed"]
+        if len(deployed) != 1:
+            raise AdoptError("receipt requires one deployed Helm revision", "verification_receipt_invalid")
+        name = "doops-upgrade-verified-" + release
+        raw = run(["kubectl", "-n", namespace, "get", "configmap", name, "--ignore-not-found", "-o", "json"], timeout=30).strip()
+        receipt = json.loads(json.loads(raw)["data"]["evidence.json"]) if raw else {
+            "schemaVersion": 1, "release": release, "workload": workload, "revisions": {},
+        }
+        if receipt.get("schemaVersion") != 1 or receipt.get("release") != release or receipt.get("workload") != workload:
+            raise AdoptError("receipt scope mismatch", "verification_receipt_invalid")
+        evidence = dict(evidence, revision=deployed[0])
+        evidence["verified_at"] = evidence.get("time") or datetime.datetime.now(datetime.timezone.utc).isoformat()
+        key = str(deployed[0])
+        previous = receipt["revisions"].get(key)
+        if previous and previous.get("release_commit"):
+            if any(previous.get(field) != evidence.get(field) for field in ("image", "release_commit")):
+                raise AdoptError("historical revision identity changed", "verification_receipt_invalid")
+        else:
+            receipt["revisions"][key] = evidence
+        # Keep prior revisions even when Helm history has been compacted, and do
+        # not reattribute an old revision to the operator verifying it today.
+        receipt["last_verification"] = evidence
+        manifest = {"apiVersion": "v1", "kind": "ConfigMap",
+                    "metadata": {"name": name, "namespace": namespace},
+                    "data": {"evidence.json": json.dumps(receipt, sort_keys=True)}}
+        run(["kubectl", "-n", namespace, "apply", "-f", "-"], stdin=json.dumps(manifest), timeout=30)
+        save_verification(evidence)
+    except AdoptError as exc:
+        if exc.category == "verification_receipt_invalid":
+            raise
+        raise AdoptError("verification receipt persistence failed", "verification_receipt_failed") from exc
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as exc:
+        raise AdoptError("verification receipt persistence failed", "verification_receipt_failed") from exc
+
+
+def save_verification(evidence):
+    path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "doops-upgrade-verification.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(evidence, fh, sort_keys=True)
+
+
+def write_operation_receipt(outcome, category=""):
+    """Keep terminal evidence independently of Job/Pod TTL and Helm history."""
+    namespace = os.environ["DOOPS_UPGRADE_NAMESPACE"]
+    record = evidence_context(namespace, os.environ["DOOPS_UPGRADE_WORKLOAD"],
+                              os.environ["DOOPS_UPGRADE_RELEASE"], os.environ["DOOPS_UPGRADE_IMAGE"])
+    job = record["job"]
+    identity = hashlib.sha256(record["upgrade_operation_id"].encode()).hexdigest()[:24]
+    if record["phase"] not in ("preflight", "apply", "rollback") or job != f"doops-self-upgrade-{identity}-{record['phase']}":
+        raise AdoptError("operation receipt identity is invalid", "verification_receipt_invalid")
+    path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "doops-upgrade-verification.json")
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            verified = json.load(fh)
+        if verified.get("job") != job or verified.get("upgrade_operation_id") != record["upgrade_operation_id"]:
+            raise AdoptError("verification belongs to another operation", "verification_receipt_invalid")
+        record["verification"] = verified
+    if outcome == "succeeded" and record["phase"] != "preflight":
+        verified = record.get("verification", {})
+        if (verified.get("image") != record["image"] or verified.get("outcome") != "succeeded"
+                or verified.get("release_commit") != record["expected_release_commit"]
+                or not re.fullmatch(r"[0-9a-f]{40}", verified.get("release_commit", ""))):
+            raise AdoptError("successful operation requires verified runtime evidence", "verification_receipt_invalid")
+    record.update(schemaVersion=1, outcome=outcome, category=category,
+                  rollback_outcome=os.environ.get("DOOPS_UPGRADE_ROLLBACK_OUTCOME", ""))
+    name = job.replace("doops-self-upgrade-", "doops-upgrade-receipt-", 1)
+    manifest = {"apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": name, "namespace": namespace,
+                             "annotations": {"doops.sh/upgrade-operation-id": record["upgrade_operation_id"],
+                                             "doops.sh/job": job}},
+                "data": {"evidence.json": json.dumps(record, sort_keys=True)}}
+    try:
+        run(["kubectl", "-n", namespace, "apply", "-f", "-"], stdin=json.dumps(manifest), timeout=30)
+    except (AdoptError, OSError, subprocess.SubprocessError) as exc:
+        raise AdoptError("operation receipt persistence failed", "verification_receipt_failed") from exc
+    # The shell must not rewrite a child's terminal result: environment changes
+    # (notably an adoption restore outcome) cannot propagate to its parent.
+    with open(os.path.join(os.environ.get("TMPDIR", "/tmp"), "doops-upgrade-terminal.json"), "w", encoding="utf-8") as fh:
+        json.dump(record, fh, sort_keys=True)
+    return record
+
+
+def report_failure(category):
+    # The shell controller reads this small category file when its EXIT trap
+    # reports the terminal result, preserving a specific verifier failure.
+    with open(os.path.join(os.environ.get("TMPDIR", "/tmp"), "doops-upgrade-category"), "w", encoding="utf-8") as fh:
+        fh.write(category)
+
+
+def evidence_exception_hook(kind, exc, traceback):
+    category = exc.category if isinstance(exc, AdoptError) else "release_verification_failed"
+    report_failure(category)
+    print(f"category={category} verification failed", file=sys.stderr)
 
 
 def run(args, stdin=None, timeout=120):
     result = subprocess.run(args, input=stdin, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
-        # stdout may carry Secret data and is never surfaced.
-        raise AdoptError(f"{' '.join(args[:4])} failed: {result.stderr.strip()[-400:]}")
+        # API diagnostics can echo submitted objects, including Secret data.
+        raise AdoptError(f"{args[0]} command failed", "cluster_command_failed")
     return result.stdout
 
 
@@ -43,7 +181,11 @@ def kget(namespace, *args):
 
 
 def backup_name(workload):
-    return f"doops-adopt-backup-{workload}"[:63]
+    operation = os.environ.get("DOOPS_UPGRADE_OPERATION_ID", "")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", operation):
+        raise AdoptError("upgrade_operation_id is required for the backup", "adopt_backup_failed")
+    identity = hashlib.sha256((workload + ":" + operation).encode()).hexdigest()[:24]
+    return "doops-adopt-backup-" + identity
 
 
 def agent_container(deployment):
@@ -139,18 +281,30 @@ def clean_object(obj):
     return obj
 
 
-def write_backup(namespace, workload, deployment):
+def write_backup(namespace, workload, deployment, baseline):
     """Back up the Deployment; any legacy settings object is left untouched."""
     name = backup_name(workload)
+    attribution = evidence_context(namespace, workload, os.environ.get("DOOPS_UPGRADE_RELEASE", ""),
+                                   agent_container(deployment)["image"])
     backup = {
         "apiVersion": "v1",
-        "kind": "ConfigMap",
-        "metadata": {"name": name, "namespace": namespace, "labels": {ADOPTED_LABEL: "doops-upgrade"}},
+        "kind": "Secret",
+        "type": "Opaque",
+        "immutable": True,
+        "metadata": {"name": name, "namespace": namespace, "labels": {ADOPTED_LABEL: "doops-upgrade"},
+                     "annotations": {"doops.sh/" + key.replace("_", "-"): str(value)
+                                     for key, value in attribution.items()}},
         "data": {
-            "deployment.json": json.dumps(clean_object(json.loads(json.dumps(deployment))), sort_keys=True),
+            "deployment.json": base64.b64encode(json.dumps(clean_object(json.loads(json.dumps(deployment))), sort_keys=True).encode()).decode(),
+            "baseline.json": base64.b64encode(json.dumps(baseline, sort_keys=True).encode()).decode(),
         },
     }
-    run(["kubectl", "-n", namespace, "apply", "-f", "-"], stdin=json.dumps(backup))
+    # create avoids last-applied plaintext annotations and refuses to replace
+    # evidence from an earlier attempt of this operation.
+    try:
+        run(["kubectl", "-n", namespace, "create", "-f", "-"], stdin=json.dumps(backup))
+    except (AdoptError, OSError, subprocess.SubprocessError) as exc:
+        raise AdoptError("cannot persist the complete rollback backup Secret", "adopt_backup_failed") from exc
     return name
 
 
@@ -175,28 +329,36 @@ def helm_install(namespace, release, values, chart, dry_run=False):
         os.unlink(path)
 
 
-def runtime_digest_of(pod):
+def runtime_digest_of(pod, container=CONTAINER):
     for status in (pod.get("status") or {}).get("containerStatuses") or []:
         digest = str(status.get("imageID") or "").split("://")[-1].rsplit("@", 1)[-1]
-        if re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        if status.get("name") == container and re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
             return digest
     return ""
 
 
-def controller_runtime_digest(namespace, fallback):
+def controller_runtime_digest(namespace, image):
     """The adoption Job runs the target image on the cluster runtime, so its own
     imageID is the runtime digest to expect; an OCI index digest can differ."""
     name = os.environ.get("HOSTNAME", "")
     if not name:
-        return fallback
+        raise AdoptError("controller Pod name is missing", "controller_identity_unverified")
     try:
-        return runtime_digest_of(kget(namespace, "pod", name)) or fallback
-    except AdoptError:
-        return fallback
+        pod = kget(namespace, "pod", name)
+    except (AdoptError, OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise AdoptError("controller Pod could not be read", "controller_identity_unverified") from exc
+    spec = pod.get("spec") or {}
+    container = next((c for c in spec.get("containers") or [] if c.get("name") == "controller"), {})
+    ready = any(c.get("name") == "controller" and c.get("ready")
+                for c in (pod.get("status") or {}).get("containerStatuses") or [])
+    digest = runtime_digest_of(pod, "controller")
+    if not digest or not ready or not spec.get("nodeName") or container.get("image") != image:
+        raise AdoptError("controller runtime identity is not verified", "controller_identity_unverified")
+    return digest
 
 
 def verify(namespace, workload, image, deadline_seconds=600, interval=5, clock=time.time, sleep=time.sleep,
-           runtime_digest=None):
+           runtime_digest=None, expected_commit=None):
     expected = runtime_digest or parse_image(image)[1]
     deadline = clock() + deadline_seconds
     last = "not checked"
@@ -214,25 +376,52 @@ def verify(namespace, workload, image, deadline_seconds=600, interval=5, clock=t
             selector = ",".join(f"{k}={v}" for k, v in sorted(spec["selector"]["matchLabels"].items()))
             pods = [p for p in kget(namespace, "pods", "-l", selector).get("items") or []
                     if not p["metadata"].get("deletionTimestamp")]
-            ready = [p for p in pods if any(
-                c.get("name") == CONTAINER and c.get("ready") and expected in (c.get("imageID") or "")
-                for c in (p.get("status") or {}).get("containerStatuses") or [])]
+            ready = [p for p in pods if (p.get("status") or {}).get("phase") == "Running"
+                     and any(c.get("type") == "Ready" and c.get("status") == "True"
+                             for c in (p.get("status") or {}).get("conditions") or [])
+                     and any(c.get("name") == CONTAINER and c.get("image") == image
+                             for c in (p.get("spec") or {}).get("containers") or [])
+                     and any(c.get("name") == CONTAINER and c.get("ready")
+                             for c in (p.get("status") or {}).get("containerStatuses") or [])
+                     and runtime_digest_of(p) == expected]
             if ready and len(pods) == len(ready):
-                return ready[0]["metadata"]["uid"]
+                commits = {verified_release_commit(namespace, p["metadata"]["name"], expected_commit) for p in ready}
+                if len(commits) != 1:
+                    raise AdoptError("Agent Pods report different commits", "release_commit_mismatch")
+                pod = ready[0]
+                if not pod["metadata"].get("uid") or not pod["spec"].get("nodeName"):
+                    raise AdoptError("Pod UID or node is missing", "release_verification_failed")
+                return {"podUID": pod["metadata"]["uid"], "release_commit": commits.pop(),
+                        "runtimeDigest": runtime_digest_of(pod), "node": pod["spec"]["nodeName"],
+                        "runtimeClass": pod["spec"].get("runtimeClassName", "")}
             last = "Pod runtime digest does not match the target"
         sleep(interval)
-    raise AdoptError(f"verification failed: {last}")
+    raise AdoptError(f"verification failed: {last}", "release_verification_failed")
 
 
-def restore(namespace, workload, release):
-    backup = kget(namespace, "configmap", backup_name(workload))
-    deployment = json.loads(backup["data"]["deployment.json"])
+def restore(namespace, workload, release, baseline=None):
+    backup = kget(namespace, "secret", backup_name(workload))
+    deployment = json.loads(base64.b64decode(backup["data"]["deployment.json"], validate=True))
+    if baseline is None:
+        baseline = json.loads(base64.b64decode(backup["data"]["baseline.json"], validate=True))
+    if (deployment["metadata"].get("name") != workload or deployment["metadata"].get("namespace") != namespace
+            or not re.fullmatch(r"[0-9a-f]{40}", baseline.get("release_commit", ""))
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", baseline.get("runtimeDigest", ""))):
+        raise AdoptError("restore backup scope or verified identity is invalid", "adopt_restore_failed")
     # Drop the Helm record without letting Helm delete the restored workload.
     for secret in kget(namespace, "secrets", "-l", f"owner=helm,name={release}").get("items") or []:
         run(["kubectl", "-n", namespace, "delete", "secret", secret["metadata"]["name"], "--ignore-not-found"])
     run(["kubectl", "-n", namespace, "replace", "--force", "-f", "-"], stdin=json.dumps(deployment), timeout=180)
     run(["kubectl", "-n", namespace, "rollout", "status", f"deployment/{workload}", "--timeout", "300s"], timeout=320)
-    return "restored"
+    image = agent_container(deployment)["image"]
+    evidence = verify(namespace, workload, image,
+                      runtime_digest=baseline["runtimeDigest"], expected_commit=baseline["release_commit"])
+    evidence.update(evidence_context(namespace, workload, release, image), phase="rollback", outcome="succeeded",
+                    category="", expected_release_commit=baseline["release_commit"],
+                    verified_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    verification_stage="rollback")
+    save_verification(evidence)
+    return evidence
 
 
 def adopt(namespace, workload, release, cluster, instance, image, chart=CHART, plan_only=False, verifier=verify):
@@ -243,23 +432,43 @@ def adopt(namespace, workload, release, cluster, instance, image, chart=CHART, p
         return {"phase": "plan", "release": release, "workload": workload, "image": image,
                 "serviceAccount": values["serviceAccount"]["name"], "backup": backup_name(workload),
                 "keptVolumes": [v["name"] for v in values["volumes"]]}
-    write_backup(namespace, workload, deployment)
-    mutated = False
+    expected = os.environ.get("DOOPS_UPGRADE_EXPECTED_RELEASE_COMMIT", "")
+    if not re.fullmatch(r"[0-9a-f]{40}", expected):
+        raise AdoptError("expected release commit is required", "release_commit_unknown")
+    old_image = agent_container(deployment)["image"]
+    # A verified baseline is required even for an unmanaged workload; otherwise
+    # restoration could not prove which version was restored.
+    selector = ",".join(f"{k}={v}" for k, v in sorted(deployment["spec"]["selector"]["matchLabels"].items()))
+    pods = [p for p in kget(namespace, "pods", "-l", selector).get("items") or []
+            if not p["metadata"].get("deletionTimestamp")]
+    if len(pods) != 1 or not runtime_digest_of(pods[0]):
+        raise AdoptError("unmanaged baseline runtime is unknown", "rollback_commit_unknown")
+    baseline = verifier(namespace, workload, old_image, runtime_digest=runtime_digest_of(pods[0]))
+    write_backup(namespace, workload, deployment, baseline)
+    category = "adopt_mutation_failed"
     try:
         mark_for_helm(namespace, workload, release)
-        mutated = True
         helm_install(namespace, release, values, chart, dry_run=True)
         helm_install(namespace, release, values, chart)
-        uid = verifier(namespace, workload, image, runtime_digest=controller_runtime_digest(namespace, digest))
+        category = "release_verification_failed"
+        evidence = verifier(namespace, workload, image, runtime_digest=controller_runtime_digest(namespace, image),
+                            expected_commit=expected)
+        time.sleep(15)
+        evidence = verifier(namespace, workload, image, runtime_digest=controller_runtime_digest(namespace, image),
+                            expected_commit=expected)
+        evidence.update(evidence_context(namespace, workload, release, image), outcome="succeeded", category="")
+        category = "verification_receipt_failed"
+        write_verified_receipt(namespace, release, workload, evidence)
+        write_operation_receipt("succeeded")
     except Exception as exc:
-        if mutated:
-            try:
-                restore(namespace, workload, release)
-            except Exception as restore_exc:
-                raise AdoptError(f"{exc}; automatic restore failed: {restore_exc}") from exc
-            raise AdoptError(f"{exc}; backup restored") from exc
-        raise
-    return {"phase": "adopted", "release": release, "workload": workload, "image": image, "podUID": uid}
+        try:
+            restore(namespace, workload, release, baseline)
+            os.environ["DOOPS_UPGRADE_ROLLBACK_OUTCOME"] = "succeeded"
+        except Exception as restore_exc:
+            os.environ["DOOPS_UPGRADE_ROLLBACK_OUTCOME"] = "failed"
+            raise AdoptError("automatic restore failed", "adopt_restore_failed") from restore_exc
+        raise AdoptError("adoption failed; backup restored", exc.category if isinstance(exc, AdoptError) else category) from exc
+    return evidence
 
 
 def main(argv=None):
@@ -275,7 +484,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.action == "restore":
-            print(json.dumps({"phase": restore(args.namespace, args.workload, args.release)}))
+            print(json.dumps(restore(args.namespace, args.workload, args.release), sort_keys=True))
             return 0
         if not args.cluster or not args.instance:
             raise AdoptError("--cluster and --instance are required")
@@ -283,8 +492,18 @@ def main(argv=None):
                        args.image, chart=args.chart, plan_only=args.action == "plan")
         print(json.dumps(result, sort_keys=True))
         return 0
-    except AdoptError as exc:
-        print(f"adopt failed: {exc}", file=sys.stderr)
+    except (AdoptError, OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as exc:
+        category = exc.category if isinstance(exc, AdoptError) else "adopt_failed"
+        report_failure(category)
+        evidence = evidence_context(args.namespace, args.workload, args.release, args.image)
+        evidence.update(outcome="failed", category=category)
+        if args.action == "run":
+            try:
+                evidence = write_operation_receipt("failed", category)
+            except (AdoptError, OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+                report_failure("verification_receipt_failed")
+                evidence["category"] = "verification_receipt_failed"
+        print(json.dumps(evidence, sort_keys=True), file=sys.stderr)
         return 1
 
 

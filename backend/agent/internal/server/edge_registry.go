@@ -264,21 +264,50 @@ func (s *edgeGatewaySession) pipePublic(ctx context.Context, id uint32, conn net
 			_ = detached.Close()
 		}
 	}()
+	pipeEdgeTCP(ctx, s.ws, id, conn)
+}
+
+// Keep the socket and its admission reservation until both FINs have drained.
+// A scheduler close or tunnel shutdown must also interrupt a blocked TCP Read.
+func pipeEdgeTCP(ctx context.Context, ws *edgeWSSession, id uint32, conn net.Conn) {
+	stream, status := ws.sched.Lookup(id)
+	if status != edgeIDLive {
+		return
+	}
+	defer ws.sched.LocalClose(id, edgeCloseNormal, "")
+	finished := make(chan struct{})
+	defer close(finished)
+	go func() {
+		select {
+		case <-stream.done:
+		case <-ws.closed:
+		case <-ctx.Done():
+		case <-finished:
+			return
+		}
+		_ = conn.Close()
+	}()
 	buf := make([]byte, int(edgeFramePayloadBytes()))
 	for {
 		n, err := conn.Read(buf)
 		if n > 0 {
-			if waitErr := s.ws.sched.WaitEnqueue(ctx, id, buf[:n]); waitErr != nil {
-				_ = s.ws.sched.LocalClose(id, edgeCloseUpstreamFailure, waitErr.Error())
+			if waitErr := ws.sched.WaitEnqueue(ctx, id, buf[:n]); waitErr != nil {
+				_ = ws.sched.LocalClose(id, edgeCloseUpstreamFailure, waitErr.Error())
 				return
 			}
 		}
 		if errors.Is(err, io.EOF) {
-			_ = s.ws.sched.LocalShutdown(id)
+			if err := ws.sched.LocalShutdown(id); err == nil {
+				select {
+				case <-stream.done:
+				case <-ws.closed:
+				case <-ctx.Done():
+				}
+			}
 			return
 		}
 		if err != nil {
-			_ = s.ws.sched.LocalClose(id, edgeCloseUpstreamFailure, err.Error())
+			_ = ws.sched.LocalClose(id, edgeCloseUpstreamFailure, err.Error())
 			return
 		}
 	}

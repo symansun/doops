@@ -46,11 +46,12 @@ export function reconcileTargets(previous: readonly Target[], next: readonly Tar
 }
 
 // reconcileSelected keeps the selected target while it is still listed, and the
-// same object while its content is unchanged.
-export function reconcileSelected(current: Target | null, targets: readonly Target[]): Target | null {
+// same object while its content is unchanged. An in-flight command keeps its
+// target even if a poll temporarily omits it, so the command owner stays mounted.
+export function reconcileSelected(current: Target | null, targets: readonly Target[], commandRunning = false): Target | null {
   if (!current) return targets[0] ?? null
   const still = targets.find((target) => target.key === current.key)
-  if (!still) return targets[0] ?? null
+  if (!still) return commandRunning ? current : targets[0] ?? null
   return sameTarget(current, still) ? current : still
 }
 

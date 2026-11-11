@@ -154,6 +154,7 @@ type GatewayAgent struct {
 	CredentialPlanProtocol string    `json:"credential_plan_protocol,omitempty"`
 	StructuredSSH          bool      `json:"structured_ssh,omitempty"`
 	ExecutionLifecycle     bool      `json:"execution_lifecycle,omitempty"`
+	UpgradeAudit           bool      `json:"upgrade_audit,omitempty"`
 	RegistryAuthfile       bool      `json:"registry_authfile,omitempty"`
 	ConnectedAt            time.Time `json:"connected_at"`
 	LastSeen               time.Time `json:"last_seen"`
@@ -497,9 +498,6 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 		panic(err)
 	}
 	hub.edge = edge
-	if err := store.RetireRunningUpgradeOperations(interruptedUpgradeRetiredReason); err != nil {
-		panic(err)
-	}
 	if err := store.RecoverInterruptedExecutions(); err != nil {
 		panic(fmt.Errorf("recover interrupted executions: %w", err))
 	}
@@ -806,6 +804,8 @@ func (h *GatewayHub) HandleAudit(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			if errors.Is(err, ErrUnauthorized) {
 				http.Error(w, "Forbidden", http.StatusForbidden)
+			} else if errors.Is(err, errInvalidAuditFilter) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
 			} else {
 				http.Error(w, "audit_unavailable", http.StatusServiceUnavailable)
 			}
@@ -857,9 +857,9 @@ func (h *GatewayHub) HandleAudit(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid before; use RFC3339", http.StatusBadRequest)
 			return
 		}
-		deleted, err := h.store.DeleteAuditBefore(before)
+		deleted, err := h.store.PurgeAuditBefore(auth, before)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, "audit_purge_failed", http.StatusServiceUnavailable)
 			return
 		}
 		writeJSONHTTP(w, auditPurgeResponse{Deleted: deleted})
@@ -948,6 +948,11 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 		}
 		switch req.Method {
 		case "initialize":
+			agent := h.registry.Get(cluster, instance)
+			if failure := h.auditUpgradeVerification(auth, cluster, instance, req, agent); failure != nil {
+				writeJSON(*failure)
+				continue
+			}
 			writeJSON(api.JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
@@ -958,7 +963,7 @@ func (h *ClientService) HandleClientRPC(w http.ResponseWriter, r *http.Request) 
 						"version":       release.Version,
 						"releaseCommit": release.Commit,
 					},
-					"capabilities": clientCapabilities(h.registry.Get(cluster, instance)),
+					"capabilities": clientCapabilities(agent),
 				},
 			})
 		case "tools/call":
@@ -1108,9 +1113,21 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		writeJSON(buildErrorResponse(req.ID, -32601, "unknown doops action for tool: "+params.Name))
 		return nil
 	}
+	if action == ActionAgentUpgrade {
+		arguments, err := prepareUpgradeAuditArguments(params.Arguments, auth, 0)
+		if err != nil {
+			return writeJSON(buildErrorResponse(req.ID, -32602, err.Error()))
+		}
+		params.Arguments = arguments
+	}
 	startAudit := h.store.StartAudit
-	if params.Name == "doops_file_write" {
+	if params.Name == "doops_file_write" || action == ActionAgentUpgrade {
 		startAudit = h.store.startMutationAudit
+	}
+	correlationID, digest := "", ""
+	if action == ActionAgentUpgrade {
+		correlationID = extractStringArg(params.Arguments, "upgrade_operation_id")
+		_, digest, _ = strings.Cut(extractStringArg(params.Arguments, "image"), "@")
 	}
 	auditID, auditErr := startAudit(AuditEvent{
 		UserID:         auth.UserID,
@@ -1120,11 +1137,16 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		Action:         action,
 		Session:        extractSession(params.Arguments),
 		CommandSummary: summarizeToolCall(params.Name, params.Arguments),
+		CorrelationID:  correlationID,
+		Digest:         digest,
 		StartedAt:      time.Now().UTC(),
 	})
 	if auditErr != nil {
 		writeJSON(buildErrorResponse(req.ID, -32603, "audit_unavailable"))
 		return nil
+	}
+	if action == ActionAgentUpgrade {
+		params.Arguments, _ = prepareUpgradeAuditArguments(params.Arguments, auth, auditID)
 	}
 	var opID string
 	var pendingFinish *AuditFinish
@@ -1143,9 +1165,13 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		h.finishActiveOperation(id)
 	}()
 	finishAudit := func(status, errMsg, tail string, bytesOut int64) error {
-		errMsg, tail = sanitizeAgentPromptAudit(params.Name, errMsg, tail)
+		if action != ActionAgentUpgrade {
+			errMsg, tail = sanitizeAgentPromptAudit(params.Name, errMsg, tail)
+		}
 		errMsg = sanitizeSecretText(errMsg)
-		tail = sanitizeSecretText(tail)
+		if action != ActionAgentUpgrade {
+			tail = sanitizeSecretText(tail)
+		}
 		finish := AuditFinish{
 			Status:   status,
 			Error:    errMsg,
@@ -1158,6 +1184,10 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			pendingFinish = &finish
 			log.Printf("[gateway] audit_completion_failed: id=%d", auditID)
 			return err
+		}
+		if action == ActionAgentUpgrade && status != "observing" {
+			log.Printf("[gateway] agent upgrade audit=%d operation=%s phase=%s status=%s category=%q",
+				auditID, correlationID, upgradeAuditPhase(params.Arguments), status, errMsg)
 		}
 		return nil
 	}
@@ -1198,6 +1228,12 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		return nil
 	}
 	if action == ActionAgentUpgrade {
+		if !agent.UpgradeAudit {
+			errMsg := "upgrade_audit_protocol_required: target Agent must advertise upgradeAudit v1 before an upgrade can be submitted"
+			finishAudit("blocked", errMsg, "", 0)
+			writeJSON(buildErrorResponse(req.ID, -32003, errMsg))
+			return nil
+		}
 		var args agentUpgradeParams
 		if err := json.Unmarshal(params.Arguments, &args); err != nil {
 			errMsg := fmt.Sprintf("invalid agent upgrade params: %v", err)
@@ -1351,6 +1387,7 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 	knownApplyFailure := false
 	var fileWriteResult []byte
 	var finalResponse []byte
+	var upgradeEvidence string
 
 	err = agent.relayToolCall(opCtx, params, h.opts.OperationTimeout, func(msg gatewayWSMessage) error {
 		if method, _ := msg.Parsed["method"].(string); method == "notifications/message" {
@@ -1375,9 +1412,16 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		if id, ok := msg.Parsed["id"]; ok {
 			msg.Parsed["id"] = req.ID
 			if result, ok := msg.Parsed["result"].(map[string]interface{}); ok {
+				if action == ActionAgentUpgrade {
+					finalStatus, finalErr, upgradeEvidence = upgradeAuditResult(result, params.Arguments)
+					bytesOut += int64(len(resultContentText(result)))
+					knownApplyFailure = finalStatus == "error" || finalStatus == "busy"
+				}
 				if isErr, ok := result["isError"]; ok && fmt.Sprintf("%v", isErr) == "true" {
-					finalStatus = "error"
-					finalErr = resultContentText(result)
+					if action != ActionAgentUpgrade {
+						finalStatus = "error"
+						finalErr = resultContentText(result)
+					}
 					knownApplyFailure = true
 				}
 			}
@@ -1402,7 +1446,11 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 		}
 	}
 	if err != nil {
-		if errors.Is(err, errExecutionOutcomeUnknown) {
+		if action == ActionAgentUpgrade && upgradeAuditMutation(params.Arguments) && len(finalResponse) == 0 {
+			finalStatus = "outcome_unknown"
+			finalErr = "upgrade outcome unknown; the controller Job may have been created: " + sanitizeSecretText(err.Error())
+			finalResponse, _ = json.Marshal(buildErrorResponse(req.ID, -32008, finalErr))
+		} else if errors.Is(err, errExecutionOutcomeUnknown) {
 			finalStatus = "outcome_unknown"
 			// Keep the reason: the code alone cannot say which check failed.
 			finalErr = sanitizeSecretText(err.Error())
@@ -1421,14 +1469,22 @@ func (h *ClientService) handleGatewayToolCall(ctx context.Context, auth TokenAut
 			finalResponse, _ = json.Marshal(buildErrorResponse(req.ID, -32603, finalErr))
 		}
 	}
-	if err := finishAudit(finalStatus, finalErr, tail.String(), bytesOut); err != nil {
+	auditTail := tail.String()
+	if action == ActionAgentUpgrade {
+		// Upgrade evidence is redacted field by field before JSON encoding.
+		// Text redaction here can consume JSON quotes and corrupt the receipt.
+		auditTail = upgradeEvidence
+	}
+	if err := finishAudit(finalStatus, finalErr, auditTail, bytesOut); err != nil {
 		h.finishActiveOperation(opID)
 		operationFinished = true
-		failure, _ := json.Marshal(buildErrorResponse(
-			req.ID,
-			-32603,
-			"audit_completion_failed; execution outcome requires verification",
-		))
+		response := buildErrorResponse(req.ID, -32603, "audit_completion_failed; execution outcome requires verification")
+		if action == ActionAgentUpgrade {
+			response = upgradeAuditCompletionError(req.ID, auditID, params.Arguments, finalResponse)
+			log.Printf("[gateway] upgrade audit completion pending: audit=%d operation=%s evidence=%s",
+				auditID, correlationID, upgradeEvidence)
+		}
+		failure, _ := json.Marshal(response)
 		return writeRaw(failure)
 	}
 	// Persist the terminal audit state before releasing the resource lease. The
@@ -1451,6 +1507,9 @@ func clientCapabilities(agent *GatewayAgent) map[string]interface{} {
 	}
 	if agent != nil && agent.ExecutionLifecycle {
 		protocols[executionLifecycleProtocol] = executionLifecycleCapability()
+	}
+	if agent != nil && agent.UpgradeAudit {
+		protocols[upgradeAuditProtocol] = upgradeAuditCapability()
 	}
 	capabilities := map[string]interface{}{
 		"tools": map[string]interface{}{},
@@ -1720,6 +1779,7 @@ func (a *GatewayAgent) applyInitializeResult(result map[string]interface{}) {
 	capabilities, _ := result["capabilities"].(map[string]interface{})
 	protocols, ok := capabilities["protocols"].(map[string]interface{})
 	a.ExecutionLifecycle = executionLifecycleCapabilityCompatible(protocols[executionLifecycleProtocol])
+	a.UpgradeAudit = upgradeAuditCapabilityCompatible(protocols[upgradeAuditProtocol])
 	// An Agent that does not advertise this rejects an authfile_only request
 	// outright, because it decodes the materialization request strictly.
 	a.RegistryAuthfile = registryAuthfileCapabilityCompatible(protocols[registryAuthfileProtocol])
@@ -2813,9 +2873,7 @@ func summarizeToolCall(tool string, args json.RawMessage) string {
 			return tool + " " + sessionID
 		}
 	case "doops_agent_upgrade":
-		if image, _ := m["image"].(string); image != "" {
-			return tool + " " + image
-		}
+		return summarizeUpgradeAudit(args)
 	case "doops_database_inventory":
 		return "doops_database_inventory"
 	case "doops_k8s":

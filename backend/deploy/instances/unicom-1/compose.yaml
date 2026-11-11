@@ -11,7 +11,7 @@ services:
     - -instance
     - unicom-1
     entrypoint: null
-    image: docker.cnb.cool/l8ai/ai/doops.sh@sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a
+    image: registry.example.com/doops-agent@sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a
     network_mode: host
     pid: host
     privileged: true

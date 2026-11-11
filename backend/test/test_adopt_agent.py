@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -10,12 +11,14 @@ ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / "agent" / "adopt_agent.py"
 CHART = ROOT / "deploy" / "helm" / "doops-agent"
 DIGEST = "sha256:" + "a" * 64
-IMAGE = "docker.cnb.cool/l8ai/ai/doops.sh@" + DIGEST
+IMAGE = "registry.example.com/doops-agent@" + DIGEST
 SETTINGS_CANARY = '{"apiKey":"synthetic-settings-canary"}'
 
 
 _MODULE = None
 CONTROLLER_DIGEST = "sha256:" + "c" * 64
+COMMIT = "a" * 40
+OLD_COMMIT = "b" * 40
 
 
 def load():
@@ -28,13 +31,30 @@ def load():
     return _MODULE
 
 
+@pytest.fixture(autouse=True)
+def upgrade_environment(monkeypatch, tmp_path):
+    for key, value in {
+        "DOOPS_UPGRADE_OPERATION_ID": "adopt-test",
+        "DOOPS_UPGRADE_EXPECTED_RELEASE_COMMIT": COMMIT,
+        "DOOPS_UPGRADE_NAMESPACE": "doops-system", "DOOPS_UPGRADE_RELEASE": "doops-agent",
+        "DOOPS_UPGRADE_WORKLOAD": "doops-agent", "DOOPS_UPGRADE_IMAGE": IMAGE,
+        "DOOPS_UPGRADE_PHASE": "apply", "DOOPS_UPGRADE_REQUESTER_ID": "test-user",
+        "DOOPS_UPGRADE_SESSION_ID": "adopt-test", "DOOPS_UPGRADE_AUDIT_ID": "42",
+        "DOOPS_UPGRADE_JOB": "doops-self-upgrade-" + hashlib.sha256(b"adopt-test").hexdigest()[:24] + "-apply",
+        "HOSTNAME": "controller", "TMPDIR": str(tmp_path),
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(load().time, "sleep", lambda _: None)
+
+
 def demo_deployment(**overrides):
     """Shape of the live gw-demo unmanaged Agent Deployment."""
     deployment = {
         "apiVersion": "apps/v1",
         "kind": "Deployment",
         "metadata": {"name": "doops-agent", "namespace": "doops-system", "uid": "u1",
-                     "resourceVersion": "9", "labels": {"app": "doops-agent"}},
+                     "resourceVersion": "9", "generation": 1, "labels": {"app": "doops-agent"}},
+        "status": {"observedGeneration": 1, "updatedReplicas": 1, "readyReplicas": 1, "availableReplicas": 1},
         "spec": {
             "replicas": 1,
             "selector": {"matchLabels": {"app": "doops-agent"}},
@@ -44,7 +64,7 @@ def demo_deployment(**overrides):
                     "serviceAccountName": "doops-agent",
                     "containers": [{
                         "name": "doops-agent",
-                        "image": "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "2" * 64,
+                        "image": "registry.example.com/doops-agent@sha256:" + "2" * 64,
                         "env": [
                             {"name": "DOOPS_GATEWAY_URL", "value": "https://doops.l8ai.cn"},
                             {"name": "DOOPS_GATEWAY_CLUSTER", "value": "doops-demo"},
@@ -81,6 +101,8 @@ class FakeCluster:
         self.fail = fail or {}
         self.calls = []
         self.applied = []
+        self.backup = None
+        self.receipt = None
 
     def __call__(self, args, stdin=None, timeout=120):
         self.calls.append(args)
@@ -90,6 +112,12 @@ class FakeCluster:
                 raise load().AdoptError(message)
         if args[:2] == ["helm", "list"]:
             return json.dumps([{"name": r} for r in self.releases])
+        if args[:2] == ["helm", "history"]:
+            return '[{"revision":1,"status":"deployed"}]'
+        if args[:2] == ["helm", "upgrade"]:
+            if "--dry-run=server" not in args:
+                self.deployment["spec"]["template"]["spec"]["containers"][0]["image"] = IMAGE
+            return ""
         if args[0] == "helm":
             return ""
         if "get" in args and "deployment" in args:
@@ -97,14 +125,34 @@ class FakeCluster:
         if "get" in args and "configmap" in args and "doops-agent-settings" in args:
             return json.dumps({"data": {"settings.json": SETTINGS_CANARY}})
         if "get" in args and "configmap" in args:
-            return json.dumps({"data": {"deployment.json": json.dumps(demo_deployment())}})
+            return json.dumps(self.receipt) if self.receipt else ""
+        if "get" in args and "secret" in args:
+            return json.dumps(self.backup)
         if "get" in args and "secrets" in args:
             return json.dumps({"items": [{"metadata": {"name": "sh.helm.release.v1.doops-agent.v1"}}]})
         if "get" in args and "pod" in args:
-            return json.dumps({"status": {"containerStatuses": [
-                {"name": "controller", "imageID": "registry.example/doops@" + CONTROLLER_DIGEST}]}})
-        if "apply" in args or "replace" in args:
-            self.applied.append(json.loads(stdin))
+            return json.dumps({"spec": {"nodeName": "node-a", "containers": [{"name": "controller", "image": IMAGE}]},
+                               "status": {"containerStatuses": [
+                {"name": "controller", "ready": True, "imageID": "registry.example/doops@" + CONTROLLER_DIGEST}]}})
+        if "get" in args and "pods" in args:
+            image = self.deployment["spec"]["template"]["spec"]["containers"][0]["image"]
+            return json.dumps({"items": [{"metadata": {"name": "agent-pod", "uid": "new-pod-uid"},
+                "spec": {"nodeName": "node-a", "containers": [{"name": "doops-agent", "image": image}]},
+                "status": {"phase": "Running", "conditions": [{"type": "Ready", "status": "True"}],
+                           "containerStatuses": [{"name": "doops-agent", "ready": True, "imageID": image}]}}]})
+        if "/app/doops-agent -version" in text:
+            return "release=test commit=" + OLD_COMMIT
+        if "create" in args or "apply" in args or "replace" in args:
+            obj = json.loads(stdin)
+            self.applied.append(obj)
+            if "create" in args:
+                self.backup = obj
+            elif "replace" in args:
+                self.deployment = obj
+                self.deployment["metadata"]["generation"] = 1
+                self.deployment["status"] = demo_deployment()["status"]
+            else:
+                self.receipt = obj
         return ""
 
     def index(self, needle):
@@ -112,14 +160,20 @@ class FakeCluster:
 
     def mutations(self):
         return [c for c in self.calls if c[0] == "helm" and c[1] == "upgrade"
-                or any(v in c for v in ("apply", "label", "annotate", "replace", "delete"))]
+                or any(v in c for v in ("create", "apply", "label", "annotate", "replace", "delete"))]
+
+
+def verified(_namespace, _workload, image, **kwargs):
+    return {"podUID": "new-pod-uid", "node": "node-a", "runtimeClass": "",
+            "runtimeDigest": kwargs["runtime_digest"],
+            "release_commit": COMMIT if image == IMAGE else OLD_COMMIT}
 
 
 def adopt(module, cluster, **kwargs):
     module.run = cluster
     params = dict(namespace="doops-system", workload="doops-agent", release="doops-agent",
                   cluster="doops-demo", instance="demo-228", image=IMAGE,
-                  verifier=lambda *a, **k: "new-pod-uid")
+                  verifier=verified)
     params.update(kwargs)
     return module.adopt(**params)
 
@@ -168,15 +222,14 @@ def test_run_backs_up_before_mutation_and_never_prints_settings(capsys):
     module = load()
     cluster = FakeCluster()
     result = adopt(module, cluster)
-    assert result["phase"] == "adopted" and result["podUID"] == "new-pod-uid"
-    backup = cluster.index("apply -f -")
+    assert result["phase"] == "apply" and result["podUID"] == "new-pod-uid"
+    backup = cluster.index("create -f -")
     assert backup < cluster.index("label deployment") < cluster.index("helm upgrade --install")
     first_apply = cluster.applied[0]
-    assert first_apply["kind"] == "ConfigMap" and "deployment.json" in first_apply["data"]
+    assert first_apply["kind"] == "Secret" and "deployment.json" in first_apply["data"]
     assert SETTINGS_CANARY not in json.dumps(first_apply)
-    # The model provider comes from the Gateway: no settings Secret is created
-    # and the legacy settings object is never read.
-    assert not any(obj["kind"] == "Secret" for obj in cluster.applied)
+    # Only the rollback backup is a Secret; legacy model settings are never read.
+    assert [obj for obj in cluster.applied if obj["kind"] == "Secret"] == [first_apply]
     assert not any("doops-agent-settings" in " ".join(c) for c in cluster.calls)
     assert SETTINGS_CANARY not in json.dumps(result) + capsys.readouterr().out
 
@@ -185,8 +238,10 @@ def test_verification_failure_restores_backup():
     module = load()
     cluster = FakeCluster()
 
-    def failing(*_args, **_kwargs):
-        raise module.AdoptError("new Pod is not ready")
+    def failing(namespace, workload, image, **kwargs):
+        if image == IMAGE:
+            raise module.AdoptError("new Pod is not ready")
+        return verified(namespace, workload, image, **kwargs)
 
     with pytest.raises(module.AdoptError, match="backup restored"):
         adopt(module, cluster, verifier=failing)
@@ -199,8 +254,10 @@ def test_restore_failure_is_reported_explicitly():
     module = load()
     cluster = FakeCluster(fail={"replace --force": "apiserver unavailable"})
 
-    def failing(*_args, **_kwargs):
-        raise module.AdoptError("new Pod is not ready")
+    def failing(namespace, workload, image, **kwargs):
+        if image == IMAGE:
+            raise module.AdoptError("new Pod is not ready")
+        return verified(namespace, workload, image, **kwargs)
 
     with pytest.raises(module.AdoptError, match="automatic restore failed"):
         adopt(module, cluster, verifier=failing)
@@ -243,31 +300,24 @@ def test_generated_values_render_with_the_real_chart(tmp_path, host_access):
         ]
 
 
-@pytest.mark.parametrize("hostname,want", [
-    ("", "sha256:" + IMAGE.rsplit("sha256:", 1)[1]),
-    ("doops-self-upgrade-abc", CONTROLLER_DIGEST),
-])
-def test_verifier_expects_the_controller_runtime_digest(monkeypatch, hostname, want):
+def test_verifier_expects_the_controller_runtime_digest(monkeypatch):
+    module = load()
+    monkeypatch.setenv("HOSTNAME", "doops-self-upgrade-abc")
+    seen = {}
+
+    def verifier(*args, **kwargs):
+        seen["digest"] = kwargs.get("runtime_digest")
+        return verified(*args, **kwargs)
+
+    assert adopt(module, FakeCluster(), verifier=verifier)["phase"] == "apply"
+    assert seen["digest"] == CONTROLLER_DIGEST
+
+
+@pytest.mark.parametrize("hostname", ["", "gone"])
+def test_missing_controller_identity_fails_and_restores(monkeypatch, hostname):
     module = load()
     monkeypatch.setenv("HOSTNAME", hostname)
-    seen = {}
-
-    def verifier(*_args, **kwargs):
-        seen["digest"] = kwargs.get("runtime_digest")
-        return "new-pod-uid"
-
-    assert adopt(module, FakeCluster(), verifier=verifier)["phase"] == "adopted"
-    assert seen["digest"] == want
-
-
-def test_missing_controller_pod_falls_back_to_the_image_digest(monkeypatch):
-    module = load()
-    monkeypatch.setenv("HOSTNAME", "gone")
-    seen = {}
-
-    def verifier(*_args, **kwargs):
-        seen["digest"] = kwargs.get("runtime_digest")
-        return "new-pod-uid"
-
-    adopt(module, FakeCluster(fail={"get pod gone": "pod not found"}), verifier=verifier)
-    assert seen["digest"] == "sha256:" + IMAGE.rsplit("sha256:", 1)[1]
+    cluster = FakeCluster(fail={"get pod gone": "pod not found"})
+    with pytest.raises(module.AdoptError, match="controller_identity_unverified"):
+        adopt(module, cluster)
+    assert cluster.index("helm upgrade --install") < cluster.index("replace --force")

@@ -52,8 +52,6 @@ def test_gateway_release_fetches_the_ci_binary_from_release_assets():
 
     build = (ROOT / "scripts" / "build-cli.sh").read_text()
     assert "doops-gateway-linux-amd64" in build
-    publish = (ROOT / "scripts" / "publish-cli-release.mjs").read_text()
-    assert '"doops-gateway-linux-amd64"' in publish
 
     dockerfile = (ROOT / "Dockerfile").read_text()
     assert "COPY --from=builder /app/doops-gateway" not in dockerfile

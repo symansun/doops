@@ -8,7 +8,7 @@ Deploy the Next.js DoOps console to the audited Gateway host boundary.
 Usage:
   bash backend/scripts/deploy-web-console.sh \
     --host 106.54.197.139 \
-    --image docker.cnb.cool/l8ai/ai/doops.sh/web@sha256:<digest>
+    --image registry.example.com/doops-agent/web@sha256:<digest>
 
 Options:
   --host HOST         Gateway SSH host or IP. Required.

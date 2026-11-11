@@ -90,16 +90,6 @@ func (ss *SessionStore) Set(target, sessionName, sessionID string) {
 	ss.Save()
 }
 
-func (ss *SessionStore) GetOrCreate(target, sessionName string) string {
-	sid := ss.Get(target, sessionName)
-	if sid == "" {
-		// The WebSocket gateway owns remote session mapping. Empty means the
-		// next request should let the agent create or resume the remote session.
-		return ""
-	}
-	return sid
-}
-
 type LLMConfig struct {
 	APIKey  string `json:"api_key"`
 	Model   string `json:"model"`

@@ -85,10 +85,10 @@ fi
 systemctl enable --now docker
 docker info >/dev/null
 docker compose version >/dev/null
-REPOSITORY=docker.cnb.cool/l8ai/ai/doops.sh
+REPOSITORY="${DOOPS_AGENT_IMAGE_REPOSITORY:?DOOPS_AGENT_IMAGE_REPOSITORY is required (registry/repository of the published Agent image)}"
 docker pull --platform "$PLATFORM" "$REPOSITORY:$RELEASE_VERSION"
 IMAGE="$(docker image inspect --format '{{index .RepoDigests 0}}' "$REPOSITORY:$RELEASE_VERSION")"
-[[ "$IMAGE" =~ ^docker.cnb.cool/l8ai/ai/doops.sh@sha256:[a-f0-9]{64}$ ]] || { echo "Registry digest missing" >&2; exit 1; }
+[[ "$IMAGE" =~ ^"${REPOSITORY}"@sha256:[a-f0-9]{64}$ ]] || { echo "Registry digest missing" >&2; exit 1; }
 IDENTITY="$(docker run --rm --network none --platform "$PLATFORM" --entrypoint /app/doops-agent "$IMAGE" -version)"
 [[ "$IDENTITY" =~ ^release=${RELEASE_VERSION}[[:space:]]commit=[a-f0-9]{40}$ ]] || { echo "Image release identity mismatch" >&2; exit 1; }
 

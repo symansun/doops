@@ -1,6 +1,9 @@
 import importlib.util
 import io
 import json
+import os
+import subprocess
+import sys
 import urllib.error
 from email.message import Message
 from pathlib import Path
@@ -11,7 +14,6 @@ from test_adopt_agent import IMAGE, SETTINGS_CANARY, demo_deployment
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "reinstall-k8s-agent.py"
-RUNTIME_DIGEST = "sha256:" + "d" * 64
 
 _MODULE = None
 
@@ -59,61 +61,51 @@ class FakeCluster:
         }
         self.fail = fail or {}
         self.calls = []
-        self.applied = []
 
     def __call__(self, args, stdin=None, timeout=120):
         self.calls.append(args)
+        assert stdin is None, "inspection must not submit resource manifests"
         text = " ".join(args)
         for marker, message in self.fail.items():
             if marker in text:
                 raise load().ReinstallError(message)
         if args[:2] == ["helm", "list"]:
             return json.dumps([{"name": r} for r in self.releases])
-        if args[:3] == ["helm", "get", "values"]:
-            return "{}"
-        if args[0] == "helm":
-            return ""
+        assert args[:1] == ["kubectl"], f"unexpected local tool: {args}"
         verb, rest = args[3], args[4:]
+        assert verb == "get", f"inspection attempted mutation: {args}"
         if verb == "get":
             kind = rest[0]
             if kind in self.lists:
                 return json.dumps({"items": self.lists[kind]})
             name = rest[1]
             if name not in self.objects[kind]:
+                if "--ignore-not-found" in args:
+                    return ""
                 raise not_found(kind, name)
             return json.dumps(self.objects[kind][name])
-        if verb == "apply":
-            obj = json.loads(stdin)
-            self.applied.append(obj)
-            self.objects[obj["kind"].lower()][obj["metadata"]["name"]] = obj
-        return ""
-
-    def index(self, needle):
-        return next(i for i, call in enumerate(self.calls) if needle in " ".join(call))
 
     def mutations(self):
         return [c for c in self.calls if (c[0] == "helm" and c[1] in ("upgrade", "uninstall"))
                 or any(v in c for v in ("apply", "delete", "replace", "label", "annotate"))]
 
 
-def reinstall(module, cluster, **kwargs):
+def plan(module, cluster, **kwargs):
     module.A.run = cluster
     module.resolve_image = lambda image: IMAGE
     params = dict(namespace="doops-system", workload="doops-agent", release="doops-agent",
-                  cluster="doops-demo", instance="demo-228", image="docker.cnb.cool/l8ai/ai/doops.sh:latest",
-                  checker=lambda *a, **k: (RUNTIME_DIGEST, "release=v1.3.78 commit=" + "e" * 40),
-                  deleter=lambda *a, **k: cluster.calls.append(["deleter"]),
-                  verifier=lambda *a, **k: "new-pod-uid")
+                  cluster="doops-demo", instance="demo-228", image="registry.example.com/doops-agent:latest")
     params.update(kwargs)
-    return module.reinstall(**params)
+    return module.plan(**params)
 
 
 @pytest.fixture
 def module():
     module = load()
-    resolve = module.resolve_image
+    resolve, run = module.resolve_image, module.A.run
     yield module
     module.resolve_image = resolve
+    module.A.run = run
 
 
 # --- refusals before any mutation -------------------------------------------
@@ -130,39 +122,29 @@ def test_prepare_refuses_before_any_mutation(module, name, cluster, kwargs, erro
         cluster.objects["deployment"]["doops-agent"]["metadata"]["annotations"] = {
             "meta.helm.sh/release-name": owner}
     with pytest.raises(module.ReinstallError, match=error):
-        reinstall(module, cluster, **kwargs)
+        plan(module, cluster, **kwargs)
     assert cluster.mutations() == [], name
-
-
-def test_failed_pull_check_deletes_nothing(module):
-    cluster = FakeCluster()
-
-    def failing(*_a, **_k):
-        raise module.ReinstallError("image cannot start on the cluster (ImagePullBackOff)")
-
-    with pytest.raises(module.ReinstallError, match="ImagePullBackOff"):
-        reinstall(module, cluster, checker=failing)
-    assert ["deleter"] not in cluster.calls
-    assert cluster.mutations() == []
 
 
 # --- plan and source selection ----------------------------------------------
 
 def test_plan_lists_leftovers_without_mutating(module):
     cluster = FakeCluster()
-    plan = reinstall(module, cluster, plan_only=True)
-    assert plan["phase"] == "plan" and plan["image"] == IMAGE
-    assert plan["source"] == "deployment/doops-agent"
+    result = plan(module, cluster)
+    assert result["phase"] == "plan" and result["image"] == IMAGE
+    assert result["readOnly"] is True and result["mutationSupported"] is False
+    assert result["source"] == "deployment/doops-agent"
     # The model provider comes from the Gateway; reinstall reads no settings object.
-    assert "settingsSource" not in plan
-    delete = plan["delete"]
-    assert delete["deployment"] == "doops-agent" and delete["helmRelease"] == ""
-    assert delete["pods"] == ["doops-agent-57f4d9d5f4-957bx", "doops-agent-6c8848bd9-nlbp9", "doops-adopt-run"]
-    assert delete["stuckPods"] == ["doops-agent-57f4d9d5f4-957bx"]
-    assert delete["replicasets"] == ["doops-agent-6c8848bd9"]
-    assert delete["jobs"] == ["doops-self-upgrade-abc"]
+    assert "settingsSource" not in result
+    inventory = result["inventory"]
+    assert inventory["deployment"] == "doops-agent" and inventory["helmRelease"] == ""
+    assert inventory["pods"] == ["doops-agent-57f4d9d5f4-957bx", "doops-agent-6c8848bd9-nlbp9", "doops-adopt-run"]
+    assert inventory["stuckPods"] == ["doops-agent-57f4d9d5f4-957bx"]
+    assert inventory["replicasets"] == ["doops-agent-6c8848bd9"]
+    assert inventory["jobs"] == ["doops-self-upgrade-abc"]
     assert cluster.mutations() == []
-    assert SETTINGS_CANARY not in json.dumps(plan)
+    assert SETTINGS_CANARY not in json.dumps(result)
+    assert not any("secret" in call for call in cluster.calls)
 
 
 @pytest.mark.parametrize("configmaps,want", [
@@ -174,88 +156,90 @@ def test_plan_lists_leftovers_without_mutating(module):
      "configmap/doops-reinstall-backup-doops-agent"),
 ])
 def test_source_prefers_the_last_known_good_backup(module, configmaps, want):
-    plan = reinstall(module, FakeCluster(configmaps=configmaps), plan_only=True)
-    assert plan["source"] == want
+    result = plan(module, FakeCluster(configmaps=configmaps))
+    assert result["source"] == want
 
 
-def test_backup_rebuilds_a_deleted_deployment(module):
+def test_backup_can_be_inspected_after_deployment_is_deleted(module):
     backup = {"doops-adopt-backup-doops-agent": {"data": {"deployment.json": json.dumps(demo_deployment())}}}
-    plan = reinstall(module, FakeCluster(deployment=None, configmaps=backup), plan_only=True)
-    assert plan["delete"]["deployment"] == ""
+    cluster = FakeCluster(deployment=None, configmaps=backup)
+    result = plan(module, cluster)
+    assert result["inventory"]["deployment"] == ""
+    assert result["source"] == "configmap/doops-adopt-backup-doops-agent"
+    assert cluster.mutations() == []
 
 
-# --- run ----------------------------------------------------------------------
-
-def test_run_orders_check_backup_delete_install(module, capsys, tmp_path):
-    cluster = FakeCluster(releases=["doops-agent"])
-    seen = {}
-
-    def verifier(namespace, workload, image, runtime_digest=None):
-        seen.update(image=image, digest=runtime_digest)
-        return "new-pod-uid"
-
-    result = reinstall(module, cluster, verifier=verifier, backup_dir=str(tmp_path / "bk"))
-    assert result["phase"] == "installed" and result["podUID"] == "new-pod-uid"
-    assert seen == {"image": IMAGE, "digest": RUNTIME_DIGEST}
-    order = [cluster.index("doops-reinstall-backup") if False else cluster.calls.index(next(
-        c for c in cluster.calls if c[3:4] == ["apply"])), cluster.calls.index(["deleter"]),
-        cluster.index("helm upgrade --install doops-agent")]
-    assert order == sorted(order)
-    assert cluster.applied[0]["metadata"]["name"] == "doops-reinstall-backup-doops-agent"
-    assert not any(o["kind"] == "Secret" for o in cluster.applied)
-    dry, real = [c for c in cluster.calls if c[:2] == ["helm", "upgrade"]]
-    assert "--dry-run=server" in dry and "--dry-run=server" not in real
-    files = {p.name for p in (tmp_path / "bk").iterdir()}
-    assert files == {"source.json", "inventory.json", "live.json", "helm-values.json"}
-    assert all(oct(p.stat().st_mode)[-3:] == "600" for p in (tmp_path / "bk").iterdir())
-    printed = capsys.readouterr()
-    for text in (json.dumps(result), json.dumps(cluster.applied[0]), printed.out, printed.err):
-        assert SETTINGS_CANARY not in text
-    assert all(SETTINGS_CANARY not in p.read_text() for p in (tmp_path / "bk").iterdir())
+@pytest.mark.parametrize("error", ["Forbidden", "API connection refused", "resource not found in authorized scope"])
+def test_inspection_errors_are_not_treated_as_absent_backups(module, error):
+    cluster = FakeCluster(fail={"get configmap": error})
+    with pytest.raises(module.ReinstallError, match=error):
+        plan(module, cluster)
+    assert cluster.calls[-1][4] == "configmap"
+    assert cluster.mutations() == []
 
 
-@pytest.mark.parametrize("stage", ["helm upgrade --install", "verify"])
-def test_failure_after_delete_restores_the_backup(module, stage):
-    cluster = FakeCluster(fail={"helm upgrade --install": "schema rejected"} if stage != "verify" else {})
+def test_new_controller_backup_naming_is_not_used_for_legacy_inspection(module, monkeypatch):
+    def unexpected(*args):
+        pytest.fail("legacy ConfigMap inspection must not depend on upgrade operation context")
 
-    def verifier(*_a, **_k):
-        raise module.ReinstallError("verification failed: new Pod is not ready")
-
-    with pytest.raises(module.ReinstallError, match="backup restored"):
-        reinstall(module, cluster, verifier=verifier)
-    restored = cluster.applied[-1]
-    assert restored["kind"] == "Deployment" and restored["metadata"]["name"] == "doops-agent"
-    assert "resourceVersion" not in restored["metadata"]
+    monkeypatch.setattr(module.A, "backup_name", unexpected)
+    assert plan(module, FakeCluster())["source"] == "deployment/doops-agent"
 
 
-def test_restore_failure_is_reported(module):
-    cluster = FakeCluster()
+# --- retired mutation entrypoints -------------------------------------------
 
-    def verifier(*_a, **_k):
-        cluster.fail["apply -f -"] = "apiserver unavailable"
-        raise module.ReinstallError("verification failed")
+@pytest.mark.parametrize("action", ["run", "restore"])
+@pytest.mark.parametrize("complete_args", [False, True])
+def test_retired_actions_fail_before_io_or_credential_selection(module, monkeypatch, tmp_path, capsys,
+                                                               action, complete_args):
+    def unexpected(*args, **kwargs):
+        pytest.fail("retired mutation reached network, inspection or an external command")
 
-    with pytest.raises(module.ReinstallError, match="automatic restore failed: apiserver unavailable"):
-        reinstall(module, cluster, verifier=verifier)
+    monkeypatch.setattr(module, "plan", unexpected)
+    monkeypatch.setattr(module, "resolve_image", unexpected)
+    monkeypatch.setattr(module.A, "run", unexpected)
+    monkeypatch.setenv("KUBECONFIG", "unchanged-inspection-config")
+    backup_dir = tmp_path / "must-not-be-created"
+    args = [action]
+    if complete_args:
+        args += [
+            "--cluster", "doops-demo", "--instance", "demo-228",
+            "--kubeconfig", "SYNTHETIC_KUBECONFIG_MUST_NOT_BE_USED",
+            "--backup-dir", str(backup_dir),
+            "--image", "https://must-not-be-contacted.example/image",
+        ]
+    with pytest.raises(SystemExit) as exited:
+        module.main(args)
+    assert exited.value.code == 2
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "local_reinstall_disabled" in output.err
+    assert "not reinstall/restore" in output.err
+    assert "online-authorized-management-target" in output.err
+    assert "No generic recovery Job" in output.err
+    assert "SYNTHETIC_KUBECONFIG" not in output.err
+    assert os.environ["KUBECONFIG"] == "unchanged-inspection-config"
+    assert not backup_dir.exists()
 
 
-# --- delete -------------------------------------------------------------------
-
-def test_delete_old_force_removes_only_pods_still_present(module):
-    cluster = FakeCluster(releases=["doops-agent"])
-    module.A.run = cluster
-    found = {"helmRelease": "doops-agent", "pods": ["doops-agent-57f4d9d5f4-957bx", "gone-pod"],
-             "replicasets": ["doops-agent-6c8848bd9"], "jobs": []}
-    clock = iter(range(0, 1000, 30))
-    module.delete_old("doops-system", "doops-agent", found, clock=lambda: next(clock), sleep=lambda _s: None)
-    assert cluster.index("helm uninstall doops-agent") < cluster.index("delete deployment doops-agent")
-    forced = [c for c in cluster.calls if "--force" in c]
-    assert forced == [["kubectl", "-n", "doops-system", "delete", "pods", "doops-agent-57f4d9d5f4-957bx",
-                       "--grace-period=0", "--force", "--ignore-not-found"]]
-    assert not any("jobs" in c and "delete" in c for c in cluster.calls)
+def test_no_local_mutation_helpers_remain_importable(module):
+    for name in ("reinstall", "restore", "pull_check", "pullcheck_manifest", "write_backup", "delete_old"):
+        assert not hasattr(module, name)
 
 
-# --- image resolution and pull check ------------------------------------------
+@pytest.mark.parametrize("args,error", [
+    (["plan"], "plan requires --cluster and --instance"),
+    (["plan", "--cluster", "c", "--instance", "i", "--backup-dir", "/unused"], "--backup-dir is retired"),
+])
+def test_plan_requires_identity_and_rejects_backup_writes(module, monkeypatch, capsys, args, error):
+    monkeypatch.setattr(module, "plan", lambda *a: pytest.fail("invalid planning arguments reached inspection"))
+    with pytest.raises(SystemExit) as exited:
+        module.main(args)
+    assert exited.value.code == 2
+    assert error in capsys.readouterr().err
+
+
+# --- read-only image resolution ----------------------------------------------
 
 class Response(io.BytesIO):
     def __init__(self, body=b"", headers=None):
@@ -275,11 +259,12 @@ def registry(digest="sha256:" + "f" * 64, token=b'{"token":"t"}'):
     def urlopen(request, timeout=30):
         calls.append(request)
         if isinstance(request, str):
-            assert "scope=repository%3Al8ai%2Fai%2Fdoops.sh%3Apull" in request
+            assert "scope=repository%3Adoops-agent%3Apull" in request
             return Response(token)
+        assert request.get_method() == "HEAD"
         if "Authorization" not in request.headers:
             headers = Message()
-            headers["WWW-Authenticate"] = 'Bearer realm="https://docker.cnb.cool/service/token",service="cnb-registry"'
+            headers["WWW-Authenticate"] = 'Bearer realm="https://registry.example.com/service/token",service="doops-registry"'
             raise urllib.error.HTTPError(request.full_url, 401, "unauthorized", headers, None)
         return Response(headers={"Docker-Content-Digest": digest})
 
@@ -287,8 +272,8 @@ def registry(digest="sha256:" + "f" * 64, token=b'{"token":"t"}'):
 
 
 @pytest.mark.parametrize("image,want", [
-    ("docker.cnb.cool/l8ai/ai/doops.sh:latest", "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "f" * 64),
-    ("docker.cnb.cool/l8ai/ai/doops.sh", "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "f" * 64),
+    ("registry.example.com/doops-agent:latest", "registry.example.com/doops-agent@sha256:" + "f" * 64),
+    ("registry.example.com/doops-agent", "registry.example.com/doops-agent@sha256:" + "f" * 64),
     (IMAGE, IMAGE),
 ])
 def test_resolve_image_pins_tags_to_the_registry_digest(image, want):
@@ -298,51 +283,91 @@ def test_resolve_image_pins_tags_to_the_registry_digest(image, want):
 
 @pytest.mark.parametrize("image,urlopen,error", [
     ("doops.sh:latest", registry()[0], "registry host"),
-    ("docker.cnb.cool/l8ai/ai/doops.sh:latest", registry(digest="")[0], "pinned"),
-    ("docker.cnb.cool/l8ai/ai/doops.sh:latest", registry(token=b"{}")[0], "no token"),
+    ("registry.example.com/doops-agent:latest", registry(digest="")[0], "pinned"),
+    ("registry.example.com/doops-agent:latest", registry(token=b"{}")[0], "no token"),
 ])
 def test_resolve_image_rejects_unpinnable_references(image, urlopen, error):
     with pytest.raises(load().ReinstallError, match=error):
         load().resolve_image(image, urlopen=urlopen)
 
 
-def pullcheck_cluster(phases):
-    phases = iter(phases)
-    calls = []
+@pytest.fixture
+def cli(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls_file = tmp_path / "calls.jsonl"
+    state = tmp_path / "cluster.json"
+    cluster = FakeCluster(releases=["doops-agent"])
+    deployment = cluster.objects["deployment"]["doops-agent"]
+    deployment["spec"]["template"]["spec"]["containers"][0]["env"].append(
+        {"name": "LEGACY_SECRET_CANARY", "value": SETTINGS_CANARY})
+    state.write_text(json.dumps({"objects": cluster.objects, "lists": cluster.lists}))
+    tool = f"#!{sys.executable}\n" + """
+import json
+import os
+import sys
+from pathlib import Path
 
-    def run(args, stdin=None, timeout=120):
-        calls.append(args)
-        if args[3] == "get" and args[4] == "pod":
-            phase, reason = next(phases)
-            status = {"phase": phase, "containerStatuses": [{
-                "name": "pullcheck", "imageID": "docker.cnb.cool/l8ai/ai/doops.sh@" + RUNTIME_DIGEST,
-                "state": {"waiting": {"reason": reason}} if reason else {}}]}
-            return json.dumps({"status": status})
-        if args[3] == "logs":
-            return "release=v1.3.78 commit=" + "e" * 40 + "\n"
-        return "Warning Failed pod/doops-reinstall-pullcheck dial tcp: i/o timeout" if args[3] == "get" else ""
-
-    return run, calls
-
-
-@pytest.mark.parametrize("phases,want,error", [
-    ([("Pending", "ContainerCreating"), ("Succeeded", "")], RUNTIME_DIGEST, None),
-    ([("Pending", "ImagePullBackOff")] * 6, None, "ImagePullBackOff"),
-    ([("Failed", "")], None, "exited non-zero"),
-])
-def test_pull_check_reports_the_runtime_digest_or_the_pull_error(phases, want, error):
-    module = load()
-    module.A.run, calls = pullcheck_cluster(phases)
-    pod_spec = {"nodeSelector": {"kubernetes.io/hostname": "demo-228"}, "imagePullSecrets": [{"name": "cnb"}]}
-    if error:
-        with pytest.raises(module.ReinstallError, match=error):
-            module.pull_check("doops-system", IMAGE, pod_spec, clock=lambda: 0, sleep=lambda _s: None)
+name, args = Path(sys.argv[0]).name, sys.argv[1:]
+with open(os.environ["REINSTALL_TEST_CALLS"], "a") as stream:
+    stream.write(json.dumps([name, *args]) + "\\n")
+state = json.loads(Path(os.environ["REINSTALL_TEST_STATE"]).read_text())
+if name == "helm" and args[:1] == ["list"]:
+    print(json.dumps([{"name": "doops-agent"}]))
+elif name == "kubectl" and args[2:3] == ["get"]:
+    kind = args[3]
+    if kind in state["lists"]:
+        print(json.dumps({"items": state["lists"][kind]}))
     else:
-        digest, line = module.pull_check("doops-system", IMAGE, pod_spec, clock=lambda: 0, sleep=lambda _s: None)
-        assert digest == want and line.startswith("release=v1.3.78")
-    manifest = json.loads(next(c for c in calls if c[3] == "apply") and module.json.dumps(
-        module.pullcheck_manifest("doops-system", IMAGE, pod_spec)))
-    assert manifest["spec"]["nodeSelector"] == pod_spec["nodeSelector"]
-    assert manifest["spec"]["imagePullSecrets"] == pod_spec["imagePullSecrets"]
-    assert manifest["spec"]["automountServiceAccountToken"] is False
-    assert calls[-1][3:5] == ["delete", "pod"]
+        obj = state["objects"][kind].get(args[4])
+        if obj is not None:
+            print(json.dumps(obj))
+        elif "--ignore-not-found" not in args:
+            raise SystemExit(1)
+else:
+    raise SystemExit("unexpected controller command")
+"""
+    for name in ("kubectl", "helm", "doops", "docker", "ssh"):
+        executable = bin_dir / name
+        executable.write_text(tool)
+        executable.chmod(0o755)
+
+    def run(action, extra=()):
+        env = {
+            **os.environ, "PATH": str(bin_dir), "HOME": str(tmp_path),
+            "PYTHONDONTWRITEBYTECODE": "1", "REINSTALL_TEST_CALLS": str(calls_file),
+            "REINSTALL_TEST_STATE": str(state),
+        }
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), action, "--cluster", "doops-demo", "--instance", "demo-228",
+             "--image", IMAGE, *extra],
+            cwd=ROOT, env=env, capture_output=True, text=True, timeout=10, check=False,
+        )
+        calls = [json.loads(line) for line in calls_file.read_text().splitlines()] if calls_file.exists() else []
+        return result, calls
+
+    return run
+
+
+@pytest.mark.parametrize("action", ["run", "restore"])
+def test_retired_cli_never_contacts_cluster_or_invokes_upgrade(cli, action):
+    result, calls = cli(action)
+    assert result.returncode == 2
+    assert "local_reinstall_disabled" in result.stderr
+    assert result.stdout == ""
+    assert calls == []
+
+
+def test_real_planning_cli_reads_only_metadata_and_never_creates_backup(cli, tmp_path):
+    result, calls = cli("plan", ["--kubeconfig", str(tmp_path / "read-only-config")])
+    assert result.returncode == 0, result.stderr
+    output = json.loads(result.stdout)
+    assert output["phase"] == "plan"
+    assert output["readOnly"] is True and output["mutationSupported"] is False
+    assert output["image"] == IMAGE and output["inventory"]["helmRelease"] == "doops-agent"
+    assert output["source"] == "deployment/doops-agent"
+    assert SETTINGS_CANARY not in result.stdout + result.stderr
+    assert calls
+    assert all(c[:2] == ["helm", "list"] or (c[0] == "kubectl" and c[3] == "get") for c in calls)
+    assert not any("secret" in c or "doops-agent-settings" in c for c in calls)
+    assert not list(tmp_path.glob("doops-agent-backup-*"))

@@ -63,14 +63,16 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
   session path isolation, and dry-run/final Deployment verification intact. Full asset, optional
   `expected_image`, and migration contracts belong in
   [NATURAL_LANGUAGE_DEPLOYMENT.md](backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md).
-- CNB CI tests, builds, scans, and publishes immutable artifacts. GitHub Actions publishes the
-  public tag release assets (CLI and Gateway binaries) from tags on `main`, gated by the same CI
-  workflow and re-verified after publishing; CNB remains the production image and deployment path.
-  Gateway authenticates users, authorizes targets and credentials, routes traffic, and audits. The
-  selected target Agent performs the actual Kubernetes or Helm mutation and returns live evidence.
+- GitHub Actions tests, scans, and publishes the public tag release assets (CLI, Gateway binaries,
+  and the Skill bundle) from tags on `main`, gated by the same CI workflow and re-verified after
+  publishing. Production images are built and pushed by the operator with explicit
+  registry/repository/tag and a full source commit; the repository contains no image publishing
+  pipeline. Gateway authenticates users, authorizes targets and credentials, routes traffic, and
+  audits. The selected target Agent performs the actual Kubernetes or Helm mutation and returns
+  live evidence.
 - For image/version inputs, the publisher must establish
-  the exact CI source-commit and registry-digest provenance before invoking the command. The CLI
-  and Agent validate the allowed input form and live result; they do not verify CI origin.
+  the exact source-commit and registry-digest provenance before invoking the command. The CLI
+  and Agent validate the allowed input form and live result; they do not verify build origin.
 - Do not add or restore `EnvironmentRegistry`, `EnvironmentDefinition`, `DeploymentTemplate`,
   `deploy/environments.yaml`, `doops cicd run`, prompt-derived deployment scope, `CICDReport`, or
   `doops_cicd_result` as a deployment root or compatibility path.
@@ -145,9 +147,9 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
 - Build-tree binaries such as `backend/cli/bin/*` and binaries embedded inside a Skill
   directory are development artifacts, not supported user entrypoints.
 - Users install a checksummed, versioned release asset through
-  `backend/scripts/install.sh --version <tag> --project <absolute-project-path>`. CNB Release
-  Assets stay the default source; `DOOPS_RELEASE_ASSET_BASE` points the same sha256, identity and
-  contract checks at the GitHub Release mirror.
+  `backend/scripts/install.sh --version <tag> --project <absolute-project-path>`. GitHub Releases
+  (`https://github.com/symansun/doops/releases/download`) are the only install source;
+  `DOOPS_RELEASE_ASSET_BASE` may point the same sha256, identity and contract checks at a mirror.
 - Before replacement, the installer must validate an existing config with the downloaded release
   CLI's own Go parser. Do not maintain a second Python, Node, jq, or shell JSON schema.
 - The canonical Skill source is `backend/skills/SKILL.md`. The installer copies it and
@@ -179,7 +181,7 @@ Pick the highest tier the change touches:
 | Tier | Applies to | Done when |
 |---|---|---|
 | T0 | Docs, tests, or refactors with no behavior change | Relevant local tests pass, `git diff --check` is clean, the branch is pushed, and required CI passes |
-| T1 | CLI, Agent, Gateway, or Web behavior | T0, plus the checks below for the touched components, published release assets, `backend/scripts/install.sh` installing the released CLI and Skill, and touched components deployed from the matching immutable CI artifact |
+| T1 | CLI, Agent, Gateway, or Web behavior | T0, plus the checks below for the touched components, published release assets, `backend/scripts/install.sh` installing the released CLI and Skill, and touched components deployed from the matching immutable build or release artifact |
 | T2 | Credentials, CI/CD, permissions, payload boundaries, release contracts | T1, plus the full Given/When/Then matrix and the online synthetic credential lifecycle below |
 
 Skill and docs changes reach user projects with the next release; a T0 change does not need its own

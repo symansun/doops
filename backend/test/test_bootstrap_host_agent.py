@@ -35,7 +35,7 @@ def run_bootstrap(tmp_path, failure="", extra_args=()):
 printf '%s\\n' "$*" >> "$TEST_CALLS"
 case "$*" in
   "ps -aq"*) [[ "$TEST_FAILURE" != existing ]] || echo existing-container ;;
-  "image inspect"*) printf 'docker.cnb.cool/l8ai/ai/doops.sh@sha256:%064d\\n' 0 ;;
+  "image inspect"*) printf 'registry.example.com/doops-agent@sha256:%064d\\n' 0 ;;
   run*) printf 'release=v1.3.48 commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n' ;;
   exec*) [[ "$TEST_FAILURE" != version ]] || exit 1
     printf 'release=v1.3.48 commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n' ;;
@@ -53,6 +53,7 @@ esac
          "--gateway", "https://gateway.example.com",
          "--cluster", "doops-test", "--instance", "node-1", *extra_args],
         env={**os.environ, "PATH": f"{commands}:{os.environ['PATH']}",
+             "DOOPS_AGENT_IMAGE_REPOSITORY": "registry.example.com/doops-agent",
              "TEST_FAILURE": failure, "TEST_CALLS": str(log)},
         capture_output=True, text=True, timeout=20,
     )
@@ -73,7 +74,7 @@ def test_bootstrap_writes_pinned_persistent_deployment_and_waits(tmp_path):
     assert not any("doagent_config" in value for value in service["volumes"])
     assert "agent-state:/root/.agent" in service["volumes"]
     assert "up -d --wait --wait-timeout 240" in calls
-    assert "pull --platform linux/amd64 docker.cnb.cool/l8ai/ai/doops.sh:v1.3.48" in calls
+    assert "pull --platform linux/amd64 registry.example.com/doops-agent:v1.3.48" in calls
     assert "Agent registered: doops-test/node-1" in result.stdout
 
 
@@ -124,3 +125,10 @@ def test_docker_repository_setup_can_resume_but_does_not_overwrite_conflicts(tmp
 def test_bootstrap_rejects_incomplete_input_without_mutation(args):
     result = subprocess.run(["bash", str(SCRIPT), *args], capture_output=True, timeout=5)
     assert result.returncode == 2
+
+
+def test_bootstrap_requires_an_explicit_agent_image_repository():
+    script = SCRIPT.read_text()
+
+    assert "DOOPS_AGENT_IMAGE_REPOSITORY:?" in script
+    assert "is required (registry/repository of the published Agent image)" in script

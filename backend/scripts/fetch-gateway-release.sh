@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Download the CI-built doops-gateway binary from a CNB release and verify it.
+Download the CI-built doops-gateway binary from a GitHub release and verify it.
 
 Usage:
   bash scripts/fetch-gateway-release.sh \
@@ -14,7 +14,8 @@ EOF
 }
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-RELEASE_REPO="${DOOPS_RELEASE_REPO:-l8ai/ai/doops.sh}"
+RELEASE_REPO="${DOOPS_RELEASE_REPO:-symansun/doops}"
+RELEASE_ASSET_BASE="${DOOPS_RELEASE_ASSET_BASE:-https://github.com/${RELEASE_REPO}/releases/download}"
 ASSET="doops-gateway-linux-amd64"
 OUTPUT="${REPO_ROOT}/bin/doops-gateway"
 SOURCE_COMMIT=""
@@ -61,7 +62,7 @@ command -v curl >/dev/null || {
 
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TEMP_DIR}"' EXIT
-base="https://cnb.cool/${RELEASE_REPO}/-/releases/download/${RELEASE_TAG}"
+base="${RELEASE_ASSET_BASE%/}/${RELEASE_TAG}"
 curl --fail --location --silent --show-error --output "${TEMP_DIR}/checksums.txt" "${base}/checksums.txt"
 curl --fail --location --silent --show-error --output "${TEMP_DIR}/${ASSET}" "${base}/${ASSET}"
 

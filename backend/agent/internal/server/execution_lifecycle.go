@@ -51,12 +51,17 @@ func requiresExecutionOutcomeGuard(action GatewayAction, tool string, args json.
 	if tool == "doops_agent_prompt" && extractStringArg(args, "operation") != "apply" {
 		return false
 	}
+	if tool == "doops_agent_upgrade" && !upgradeAuditMutation(args) {
+		return false
+	}
 	return !isConcurrentReadOnlyAction(action) && !isConcurrentQuery(action, resourceKey)
 }
 
 func interruptionNeedsReconciliation(tool string, args json.RawMessage) bool {
 	switch tool {
-	case "doops_shell", "doops_ssh", "doops_bg", "doops_agent_upgrade",
+	case "doops_agent_upgrade":
+		return upgradeAuditMutation(args)
+	case "doops_shell", "doops_ssh", "doops_bg",
 		"doops_credential_materialize", "doops_credential_cleanup":
 		return true
 	case "doops_agent_prompt":

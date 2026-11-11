@@ -9,7 +9,7 @@ export async function GET(req: Request) {
   try {
     const incoming = new URL(req.url)
     const qs = new URLSearchParams()
-    for (const k of ["cluster", "instance", "session", "action", "status", "user_id", "view", "limit"]) {
+    for (const k of ["cluster", "instance", "session", "action", "status", "user_id", "view", "limit", "correlation_id", "before_id", "since", "until", "hide_upgrade_observe"]) {
       const v = incoming.searchParams.get(k)
       if (v) qs.set(k, v)
     }

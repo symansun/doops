@@ -219,6 +219,7 @@ P1 决定了 nginx 前置，于是 Gateway 的 `Accept()` 拿到的源地址全�
   而不是 `RST`。这一点直接决定文件上传能否正常收尾：如果发 `RST`，
   Ingress 会把已收完的上传判为客户端中断。
 - `SHUTDOWN` **不**释放 `conn_id`，只有 `CLOSE` 或两向都 `SHUTDOWN` 才释放。
+- Gateway 与 Agent 的 TCP reader 在单侧 EOF 后等待流终态，不直接关闭双向 socket；连接配额也保留至终态。隧道关闭、上下文取消和打开超时必须唤醒等待并释放连接。
 - `CLOSE` 是硬关闭，对应 `RST` 或异常路径，丢弃该 conn 所有排队帧。
 - `conn_id` 释放后进入 `DOOPS_EDGE_CONN_ID_QUARANTINE`（默认 30s）隔离期
   再回收，避免延迟到达的帧落到新连接上。

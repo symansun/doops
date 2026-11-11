@@ -14,7 +14,7 @@ description: |
 | 日常命令、用户与 token、凭据命令 | `docs/DOOPS_USAGE_GUIDE.md` |
 | 业务发布（`ask --apply`、Helm 资产） | `docs/NATURAL_LANGUAGE_DEPLOYMENT.md` |
 | 凭据生命周期与错误类别 | `docs/CREDENTIAL_RESOURCES.md` |
-| Harbor 镜像复制与 CNB 同步 | `docs/HARBOR_REPLICATION_SPEC.md` |
+| Harbor 镜像复制与上游同步 | `docs/HARBOR_REPLICATION_SPEC.md` |
 | Agent / Gateway 发布与回滚 | `docs/BUILD_DEPLOY_SOP.md` |
 | 执行生命周期、并发、取消、代理 | `docs/DOOPS_GATEWAY_TUNNEL.md` |
 | HTTP / WebSocket API | `docs/DOOPS_API_GUIDE.md` |
@@ -50,18 +50,17 @@ description: |
   `doops k8s ... --confirm`，它不是发布入口。
 - 进入 Kubernetes Agent 所在节点只走 `doops exec` 里的 `nsenter`，并且该 Deployment 的
   `hostAccess.enabled` 必须为 `true`。这是 Gateway 的普通 `exec`：目标 grant 决定能否执行，
-  审计记下用户、target、session 和完整命令。不要用 `kubectl exec`、`docker exec` 或直连
+  审计记下用户、target、session 和有界命令摘要（最多 512 字节尾部）。不要用 `kubectl exec`、`docker exec` 或直连
   `42222` 绕过。`hostNetwork` 保持关闭，`/host` 只读。细节见 `docs/PHYSICAL_HOST_ACCESS.md`。
 - 嵌套 SSH 只用 `doops ssh` 的结构化入口，不拼进 `exec --cmd`。
 - 小文本用 `read/write`，目录和大文件用 `push/pull`；不用 base64、tar 或分片替代。
 - `pull` 用新目录；已有 Git 目标会被 `reset --hard`，仅复用本任务无本地改动的下载目录，不能用业务仓库。
 - 长任务用 `exec --bg`，不在 `exec` 里用 `&`、`nohup`、`setsid`。
-- 发布镜像只由 CI 构建，不在业务 target 或本机构建。
-- Agent 不替换自己。升级入口按运行方式选择，互不自动 fallback：
-  回滚镜像仍在仓库且不更换 workload 时用 `doops upgrade`；否则按
-  `docs/BUILD_DEPLOY_SOP.md` 做 0-1 发新停旧：模糊匹配到唯一旧 release，验收后卸载，
-  不把旧副本留在 0，不用 `--allow-missing-rollback-baseline`；
-  K8S 首装、旧 Helm Agent、显式 Helm 配置变更用 `scripts/release-managed-agent.sh`；
+- 发布镜像只由受控构建流程（CI 或指定构建主机）构建，不在业务 target 或本机构建。
+- Agent 不替换自己。K8s Agent 声明 `upgradeAudit` v1 后用 `doops upgrade`，
+  操作编号贯通预检、升级、验收和回滚；`scripts/release-managed-agent.sh` 仅委托同一 Gateway 入口。
+  不用本地 kubeconfig 绕过审计。旧 Agent 首升或配置变更须按
+  `docs/BUILD_DEPLOY_SOP.md` 单独审查独立 Job，不能直接替换承载当前进程的 workload；
   独立 Docker Agent 用 `scripts/release-host-agent.sh`；
   空服务器用 `scripts/bootstrap-host-agent.sh`。
 - Gateway 本体只用 `scripts/deploy-gateway.sh --source-commit <commit>` 从宿主机 SSH 发布，

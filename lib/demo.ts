@@ -106,8 +106,6 @@ export const DEMO_AUDIT: AuditEvent[] = [
 ]
 
 // 演示文件系统：目录 -> 条目(目录以 / 结尾)；文件 -> 内容
-export const DEMO_SETTINGS_PATH = "/root/.agent/settings.json"
-
 const DEMO_SETTINGS = `{
   "provider": "openai-compatible",
   "model": "<provider>/<model>",

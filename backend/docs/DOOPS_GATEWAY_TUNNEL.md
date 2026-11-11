@@ -223,7 +223,7 @@ bash scripts/deploy-gateway.sh \
 ```
 
 脚本只走 SSH/SCP，并在宿主机真实 root 下校验 DB、备份二进制、替换、重启和
-校验 `/proc/<pid>/exe` hash。`--source-commit` 必须与 CNB 镜像和候选二进制的
+校验 `/proc/<pid>/exe` hash。`--source-commit` 必须与本次构建和候选二进制的
 provenance 一致；旧的本地 `bin/doops-gateway` 会在上传前拒绝。`--verify-target` 只用于复用本机 DoOps CLI 的认证检查
 发布前后 target 基线，不通过 target 传输或替换 Gateway。不要用
 `doops exec/push/write` 或 base64 分片部署 `doops-gateway`。
@@ -391,7 +391,7 @@ docker run -d --name doops-agent \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /root/.kube:/root/.kube:ro \
   -v /etc/kubernetes:/etc/kubernetes:ro \
-  docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest-from-successful-CI> \
+  registry.example.com/doops-agent@sha256:<digest-from-successful-build> \
   -port 42222 \
   -gateway-url https://gateway.example.com \
   -cluster prod \
@@ -480,24 +480,40 @@ Agent 进程不执行承载自身的 Helm mutation。直接在 Agent 里跑 `kub
 `doops upgrade` 让 Agent 创建一个独立 Job。Job 复用 Agent 已挂载的 kubeconfig，
 按 Chart 的 `maxSurge=1`、`maxUnavailable=0` 拉起新 Pod，并在新 Pod 未持续就绪时回滚。
 镜像可以是 `repository:tag` 或 `repository@sha256:<64 hex>`。tag 使用 `Always` 拉取，
-并校验 Deployment 镜像规格、Pod Ready 和实际 `imageID`；`--dry-run` 只预演。历史挂起的自升级 operation
-会在 Gateway 启动时立即标记失败，不会继续占槽等待 replacement。
+并校验 Deployment 镜像规格、Pod Ready 和实际 `imageID`；`--dry-run` 只预演。
+升级台账统一使用 `audit_events`，不再创建或维护没有写入者的 `upgrade_operations` 表；
+已有数据库的旧表不会自动删除。Gateway 重启后，已派发但缺终态的审计保留为 `outcome_unknown`。
 
 前置条件是在线 Agent 已包含控制器、标准 Helm Deployment 和精确 Gateway 身份，
 并有可供 Job 共享的 `/root/.kube` 或 `/root/.kube/config` volume，以及所需集群权限。
 缺少这些条件是目标运行配置问题，不得把普通业务发布引导成寻找操作机 kubeconfig。
-CLI 必须显式传 `-session`；Job accepted 仅代表已提交，不代表升级成功。只有 Job 完成、
-最终 Deployment 验证和协议探针通过后才能报告成功。
+操作规范要求显式传 `-session`；CLI 未传时会自动生成并打印 session。Gateway 在派发前要求
+Agent 声明 `upgradeAudit` v1；旧协议目标返回 `upgrade_audit_protocol_required`，不会先创建
+Job 再补做协议检查。Job accepted 仅代表已提交，不代表升级成功。只有 Job 完成、
+最终 Deployment 验证、协议探针和实际 release commit 核验通过后才能报告成功。
+CLI/控制台的最终探针在同一 operation 下写入 `phase=verify` 审计，记录 Agent 实际
+commit、所需协议与通过/失败原因；Gateway 自身 commit 不作为 Agent 验收依据。
+
+CLI/控制台生成 `upgrade_operation_id`，贯通预检、执行、观察和回滚，Gateway 写入
+`correlation_id` 并以认证身份覆盖 `requester_id` 和 `audit_id`。Job 注解与验收回执使用
+同一编号。请求的 phase、风险开关、镜像与期望 commit，以及结构化结果和脱敏输出，
+一起进入有界 JSON 审计证据；`accepted` 表示提交，`observing` 表示仍运行，失败写
+`error`，只有对应阶段成功才写 `success`。缺少或不匹配的结构化结果显式失败。
+
+已派发的升级或回滚失去终态时记录 `outcome_unknown`，不能把客户端断连当作集群变更取消。
+审计收尾失败返回 `audit_completion_failed`，其 `error.data` 保留 `audit_id`、
+`upgrade_operation_id` 和原始 MCP `result`，供客户端继续核验已提交 Job；错误不会变成成功，
+也不会自动重放 mutation。Gateway 保留原终态重试落库，并记录脱敏恢复证据。
 
 ```bash
 doops -session agent-upgrade upgrade \
   --target prod-master \
-  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest> \
+  --image registry.example.com/doops-agent@sha256:<digest> \
   --dry-run
 
 doops -session agent-upgrade upgrade \
   --target prod-master \
-  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest>
+  --image registry.example.com/doops-agent@sha256:<digest>
 ```
 
 ## Reliability Notes
@@ -529,7 +545,16 @@ doops -session agent-upgrade upgrade \
 - `ask --apply` 发生客户端或隧道断连时，当前等待路径取消并保留真实审计状态。系统不恢复或
   重放 mutation；实际状态不确定时必须返回 outcome unknown，并由
   操作者核查目标资源。
-- 审计记录包含 user、token、target、action、session、命令摘要、状态、错误和输出尾部；输出尾部使用有界缓冲，默认只保留 8 KiB 尾部摘要。`/v1/audit` 支持按 `user_id`、`cluster`、`instance`、`session`、`action`、`status` 过滤；没有 `token_id` 过滤维度。
+- 审计记录包含 user、token、target、action、session、命令摘要、状态、错误和输出尾部。存储上限为
+  8 KiB；普通工具的敏感信息清洗还会把文本收敛到最多 1,200 字节，prompt/配置写入有更严格
+  的内容边界。升级使用完整的有界 JSON 证据，错误文本最多 1,200 字节。`/v1/audit` 支持
+  `user_id`、`cluster`、`instance`、`session`、`action`、`status`、`correlation_id`，
+  以及 `before_id` 游标、RFC3339 `since`（含）/`until`（不含）。`hide_upgrade_observe=true`
+  只隐藏 `observing` 轮询，保留成功和失败终态；没有 `token_id` 过滤维度。
+- 管理员清理已结束记录时，在同一数据库事务写入 `audit:purge` 回执（操作者、截止时间、删除数量）。
+  回执落库失败则整个清理回滚。运行中、执行中、`outcome_unknown` 和清理回执不被删除；
+  `accepted/observing` 在同一目标、operation、Job 的后续终态证据到达前也不删除。
+  未知结果没有自动到期或“手动标记成功”入口。审计库没有自动清理策略，保留期由管理员明确执行。
 - `/v1/audit` 的下列筛选组合都有按 `id` 倒序的索引（`audit_indexes.sql`）：用户、用户+session、
   目标、单独 action 或 status、用户或目标再加 action/status、目标内的 session、单独 session
   （凭据的资源级审计不带目标，session 存凭据 ID）。只按 `cluster` 或只按 `instance` 过滤

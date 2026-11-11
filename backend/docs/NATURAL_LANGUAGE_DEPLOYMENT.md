@@ -46,10 +46,9 @@ doops -session release-<commit> ask --target <target> --apply \
 凭据运行时只要求该 target 的 grant；已有目标绑定不需逐操作员重授权。
 数据库绑定直接读取保存的 metadata，凭据 namespace 由配置决定，不依赖模型规划。
 
-CNB CI 可以在镜像版本已确定后调用同一命令。发布者必须在调用前独立核对精确 CI
+构建成功后的 CI 可以在镜像版本已确定时调用同一命令。发布者必须在调用前独立核对精确
 source commit、registry digest 和构建成功证据；CLI、Agent 和 Helm 工具不自动验证
-CI provenance。仓库提供的
-`api_trigger_deploy_agent` 只负责准备临时 Gateway 登录并提交这条自然语言任务；它不
+provenance。CI 调用只负责准备临时 Gateway 登录并提交这条自然语言任务；它不
 同步当前仓库、不创建 target 隔离 workspace，也不是独立部署协议，不读取环境注册表。
 
 Agent 必须把 doagent 会话创建为 `auto`。普通 `ask` 暴露内置读取工具、
@@ -134,7 +133,7 @@ volumeMounts 和 volumes。发布任务统一调用 `mcp_doops_helm upgrade-inst
 `oci://` 尚不支持，不能自动替换引用或新增 fallback。
 普通升级统一执行 `--reset-values`，输入顺序为 Chart 默认值、按顺序零或多个任务指定的 `value_files`、非敏感 Chart-specific `set_strings`；覆盖键及类型由 Chart schema 决定。
 真实 mutation 前使用相同输入执行 server-side dry-run 并校验渲染 manifest。
-受管 CNB Chart 通过官方 Helm HTTPS 下载接口认证读取。凭据权限继承目标操作权限，
+受管 Chart 通过任务指定的 Helm HTTPS 下载接口认证读取。凭据权限继承目标操作权限，
 不逐项匹配 namespace、workload、release、Chart 版本和仓库路径；当前包校验后一次
 staging，dry-run 与实际 Helm 使用相同文件。允许任务指定的 `value_files` 和 `set_strings`。
 这些覆盖不扩大凭据授权；认证或摘要失败不重试匿名、旧登录态或其它资产。
@@ -247,7 +246,8 @@ spec 中的容器镜像与渲染结果一致，updated/ready/available replicas 
 且没有 unavailable replicas；hook Job 必须已成功完成。只满足 Helm revision 或 Pod
 Ready 不构成发布成功。
 
-CNB CI 负责测试、构建和发布制品。Gateway 负责鉴权、审计、资源锁和凭据预物化。
+CI 负责测试、构建和发布制品；生产镜像由操作方以显式 registry/repository/tag 和源提交
+构建推送。Gateway 负责鉴权、审计、资源锁和凭据预物化。
 实际业务 Helm/Kubernetes mutation 由 target 指向的 Agent/doagent 在目标运行环境执行；
 普通业务发布与 Agent 镜像构建是两条独立路径。
 标准 Helm `doops-agent` 自身升级走 `doops upgrade`：仅适用于 Agent 自身 namespace 中的标准

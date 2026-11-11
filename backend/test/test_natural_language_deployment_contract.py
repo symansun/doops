@@ -7,7 +7,6 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 AGENT_RULES = ROOT / "AGENTS.md"
 BACKEND = ROOT / "backend"
-CNB = ROOT / ".cnb.yml"
 CLI = BACKEND / "cli" / "cli" / "doops" / "main.go"
 CREDENTIAL_CLI = BACKEND / "cli" / "cli" / "doops" / "credential_commands.go"
 CREDENTIAL_PREFLIGHT = (
@@ -29,16 +28,6 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     helm_mcp = (
         BACKEND / "agent" / "internal" / "server" / "k8s_mcp_stdio.go"
     ).read_text(encoding="utf-8")
-    cnb = CNB.read_text(encoding="utf-8")
-    cnb_config = yaml.safe_load(cnb)
-    main_pipeline = cnb.split("\nmaster:", 1)[0]
-    fallback_pipeline = cnb.split("\n$:", 1)[1]
-    release_branches = [
-        branch
-        for branch, events in cnb_config.items()
-        if isinstance(events, dict) and "api_trigger_deploy_agent" in events
-    ]
-    deploy_pipelines = cnb_config["main"]["api_trigger_deploy_agent"]
 
     assert 'cliContractVersion = "doops.sh/cli-contract/v3"' in cli
     assert 'BoolVar(&apply, "apply"' in cli
@@ -59,45 +48,6 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "Current DoOps session_id" not in handler_ws
     assert '"value_files": map[string]interface{}' in helm_mcp
     assert '"values": map[string]interface{}' not in helm_mcp
-    assert "api_trigger_deploy_agent" in main_pipeline
-    assert "api_trigger_deploy_agent" not in fallback_pipeline
-    assert "api_trigger_bootstrap_release_runner" not in cnb
-    assert release_branches == ["main"]
-    assert len(deploy_pipelines) == 1
-    assert deploy_pipelines[0]["imports"] == [
-        "https://cnb.cool/example/zhiyong/secret/-/blob/main/"
-        "zhiyong-deploy-secrets.yml"
-    ]
-    deploy_script = deploy_pipelines[0]["stages"][1]["script"]
-    prepare_script = deploy_pipelines[0]["stages"][0]["script"]
-    assert ': "${DOOPS_SESSION:?DOOPS_SESSION is required}"' in prepare_script
-    assert '-session "${DOOPS_SESSION}" login' in prepare_script
-    assert '-session "${DOOPS_SESSION}" targets' in prepare_script
-    assert "grep -Eq" not in deploy_script
-    assert "validate_simple_name" in deploy_script
-    assert "validate_single_line" in deploy_script
-    assert 'test "${#image_digest}" -eq 64' in deploy_script
-    assert 'DOOPS_HELM_ASSET must be an explicit https:// chart URL' in deploy_script
-    assert '"https://doops.l8ai.cn"' in cnb
-    assert '-session "${DOOPS_SESSION}" push' not in cnb
-    assert "--src backend" not in cnb
-    assert "使用 chart ${DOOPS_HELM_ASSET}" in cnb
-    assert "--src ." not in main_pipeline
-    assert '-session "${DOOPS_SESSION}" ask' in cnb
-    assert "--apply" in cnb
-    assert "--token-stdin" in cnb
-    assert '--token "${DOOPS_GATEWAY_TOKEN}"' not in cnb
-    assert "auto-harness-secret" not in cnb
-    assert 'test "${CNB_BRANCH}" = "main"' in cnb
-    assert "DOOPS_IMAGE" in cnb
-    assert "@sha256:" in cnb
-    assert "deploy/environments.yaml" not in cnb
-    assert "doops cicd" not in cnb
-    assert "execute-doops-cicd" not in cnb
-    assert "106.54.197.139:42222" not in cnb
-    assert "validate_simple_name" in cnb
-    assert '*[!A-Za-z0-9._-]*' in cnb
-    assert 'test "${#image_digest}" -eq 64' in cnb
 
 
 def test_release_guidance_does_not_build_images_on_business_targets():

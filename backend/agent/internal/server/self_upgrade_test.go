@@ -12,17 +12,19 @@ import (
 )
 
 const testPinnedDigest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const testUpgradeCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const testBaselineCommit = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 func testPinnedImage() string {
 	return "registry.example/doops@" + "sha256:" + testPinnedDigest
 }
 
 func TestParsePinnedImage(t *testing.T) {
-	repository, digest, err := parsePinnedImage("docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + testPinnedDigest)
+	repository, digest, err := parsePinnedImage("registry.example.com/doops-agent@sha256:" + testPinnedDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if repository != "docker.cnb.cool/l8ai/ai/doops.sh" || digest != "sha256:"+testPinnedDigest {
+	if repository != "registry.example.com/doops-agent" || digest != "sha256:"+testPinnedDigest {
 		t.Fatalf("parsed repository=%s digest=%s", repository, digest)
 	}
 	for _, image := range []string{
@@ -352,6 +354,8 @@ spec:
 		{"duplicate workload", manifest + "---\n" + manifest, true},
 		{"missing evidence", manifest, true},
 		{"evidence image mismatch", manifest, true},
+		{"missing verified commit", manifest, true},
+		{"unverified commit", manifest, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := upgradeProcess{run: func(ctx context.Context, stdin, name string, args ...string) ([]byte, error) {
@@ -364,9 +368,16 @@ spec:
 					if tc.name == "evidence image mismatch" {
 						image = testPinnedImage()
 					}
+					commit, outcome := testBaselineCommit, "succeeded"
+					if tc.name == "missing verified commit" {
+						commit = ""
+					}
+					if tc.name == "unverified commit" {
+						outcome = "failed"
+					}
 					evidence, _ := json.Marshal(map[string]interface{}{
 						"schemaVersion": 1, "release": "doops-agent-live", "workload": "doops-agent",
-						"revisions": map[string]interface{}{"7": map[string]string{"image": image}},
+						"revisions": map[string]interface{}{"7": map[string]string{"image": image, "release_commit": commit, "outcome": outcome}},
 					})
 					raw, _ := json.Marshal(map[string]interface{}{"data": map[string]string{"evidence.json": string(evidence)}})
 					return raw, nil
@@ -382,8 +393,8 @@ spec:
 				}
 				return []byte(tc.manifest), nil
 			}}
-			got, revision, err := p.rollbackImage(t.Context(), "kz-ops", "doops-agent-live", "doops-agent")
-			if (err != nil) != tc.wantErr || (!tc.wantErr && (got != wanted || revision != 7)) {
+			got, revision, commit, err := p.rollbackImage(t.Context(), "kz-ops", "doops-agent-live", "doops-agent")
+			if (err != nil) != tc.wantErr || (!tc.wantErr && (got != wanted || revision != 7 || commit != testBaselineCommit)) {
 				t.Fatalf("rollback artifact = %q, %v", got, err)
 			}
 		})
@@ -395,7 +406,7 @@ func TestSelfUpgradeReceiptFailurePreventsMutation(t *testing.T) {
 	env := selfUpgradeScriptEnv(path)
 	env["RECEIPT_FAIL"] = "1"
 	out, err := runSelfUpgradeScript(t, selfUpgradeApplyScript, selfUpgradeFakeCommands(), env)
-	if err == nil || !strings.Contains(out, "verification receipt persistence failed") {
+	if err == nil || !strings.Contains(out, "category=verification_receipt_failed") {
 		t.Fatalf("missing durable baseline must fail: %v\n%s", err, out)
 	}
 	log, err := os.ReadFile(path)
@@ -600,19 +611,29 @@ esac
 
 func selfUpgradeScriptEnv(callLog string) map[string]string {
 	return map[string]string{
-		"DOOPS_UPGRADE_REVISION":   "4",
-		"RECEIPT_FILE":             callLog + ".receipt",
-		"HOSTNAME":                 "upgrade-controller",
-		"CALL_LOG":                 callLog,
-		"KUBECTL_CALLS":            callLog + ".kubectl",
-		"DATE_CALLS":               callLog + ".date",
-		"ROLLBACK_MARKER":          callLog + ".rollback",
-		"DOOPS_UPGRADE_NAMESPACE":  "kz-ops",
-		"DOOPS_UPGRADE_RELEASE":    "doops-agent-live",
-		"DOOPS_UPGRADE_WORKLOAD":   "doops-agent",
-		"DOOPS_UPGRADE_REPOSITORY": "registry.example/doops",
-		"DOOPS_UPGRADE_DIGEST":     "sha256:" + testPinnedDigest,
-		"DOOPS_UPGRADE_IMAGE":      testPinnedImage(),
+		"DOOPS_UPGRADE_REVISION":                "4",
+		"RECEIPT_FILE":                          callLog + ".receipt",
+		"OPERATION_RECEIPT_FILE":                callLog + ".operation-receipt",
+		"HOSTNAME":                              "upgrade-controller",
+		"CALL_LOG":                              callLog,
+		"KUBECTL_CALLS":                         callLog + ".kubectl",
+		"DATE_CALLS":                            callLog + ".date",
+		"ROLLBACK_MARKER":                       callLog + ".rollback",
+		"DOOPS_UPGRADE_NAMESPACE":               "kz-ops",
+		"DOOPS_UPGRADE_RELEASE":                 "doops-agent-live",
+		"DOOPS_UPGRADE_WORKLOAD":                "doops-agent",
+		"DOOPS_UPGRADE_REPOSITORY":              "registry.example/doops",
+		"DOOPS_UPGRADE_DIGEST":                  "sha256:" + testPinnedDigest,
+		"DOOPS_UPGRADE_IMAGE":                   testPinnedImage(),
+		"DOOPS_UPGRADE_OPERATION_ID":            "test-operation",
+		"DOOPS_UPGRADE_JOB":                     selfUpgradeJobName("test-operation", "apply"),
+		"DOOPS_UPGRADE_EXPECTED_RELEASE_COMMIT": testUpgradeCommit,
+		"DOOPS_UPGRADE_PHASE":                   "apply",
+		"DOOPS_UPGRADE_REQUESTER_ID":            "operator-1",
+		"DOOPS_UPGRADE_SESSION_ID":              "session-1",
+		"DOOPS_UPGRADE_AUDIT_ID":                "42",
+		"DOOPS_UPGRADE_SOURCE_COMMIT":           testUpgradeCommit,
+		"DOOPS_UPGRADE_CI_URL":                  "https://ci.example/build/42",
 	}
 }
 
@@ -629,7 +650,32 @@ func runSelfUpgradeScript(t *testing.T, script string, commands map[string]strin
 	if body == script {
 		t.Fatal("script does not contain the kubeconfig prelude")
 	}
-	command := `set -eu
+	if script == selfUpgradeRollbackScript {
+		extraEnv["DOOPS_UPGRADE_EXPECTED_RELEASE_COMMIT"] = testBaselineCommit
+		extraEnv["DOOPS_UPGRADE_PHASE"] = "rollback"
+		entry := map[string]string{
+			"image":         firstNonEmptyString(extraEnv["OLD_IMAGE"], "registry.example/doops:old"),
+			"runtimeDigest": firstNonEmptyString(extraEnv["OLD_RUNTIME_DIGEST"], "sha256:"+testPinnedDigest),
+			"node":          "node-a", "release_commit": testBaselineCommit, "outcome": "succeeded",
+		}
+		evidence, _ := json.Marshal(map[string]interface{}{
+			"schemaVersion": 1, "release": "doops-agent-live", "workload": "doops-agent",
+			"revisions": map[string]interface{}{extraEnv["DOOPS_UPGRADE_REVISION"]: entry},
+		})
+		receipt, _ := json.Marshal(map[string]interface{}{"data": map[string]string{"evidence.json": string(evidence)}})
+		if err := os.WriteFile(extraEnv["RECEIPT_FILE"], receipt, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if script == selfUpgradePreflightScript || script == selfUpgradePullOnlyScript {
+		extraEnv["DOOPS_UPGRADE_PHASE"] = "preflight"
+	}
+	extraEnv["DOOPS_UPGRADE_JOB"] = selfUpgradeJobName(extraEnv["DOOPS_UPGRADE_OPERATION_ID"], extraEnv["DOOPS_UPGRADE_PHASE"])
+	prelude := ""
+	if script == selfUpgradeApplyScript || script == selfUpgradePreflightScript || script == selfUpgradePullOnlyScript || script == selfUpgradeRollbackScript {
+		prelude = selfUpgradeEvidencePrelude
+	}
+	command := prelude + `
 ns="$DOOPS_UPGRADE_NAMESPACE"
 release="$DOOPS_UPGRADE_RELEASE"
 workload="$DOOPS_UPGRADE_WORKLOAD"
@@ -638,6 +684,11 @@ workload="$DOOPS_UPGRADE_WORKLOAD"
 	env := append([]string{}, os.Environ()...)
 	env = append(env, "PATH="+binDir+":"+os.Getenv("PATH"))
 	env = append(env, "TMPDIR="+t.TempDir())
+	pythonPath, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env = append(env, "PYTHONPATH="+pythonPath)
 	for key, value := range extraEnv {
 		env = append(env, key+"="+value)
 	}
@@ -652,7 +703,7 @@ func selfUpgradeFakeCommands() map[string]string {
 exit 0
 `,
 		// skopeo answers with the registry's own wording, taken from the live
-		// docker.cnb.cool responses: a missing digest is "artifact ... not found",
+		// registry responses: a missing digest is "artifact ... not found",
 		// a refused credential is "unauthorized: requested access ... denied".
 		"skopeo": `#!/bin/sh
 set -eu
@@ -727,6 +778,10 @@ case "${1:-}" in
   history)
     if [ -n "${HELM_HISTORY:-}" ]; then
       printf '%s\n' "$HELM_HISTORY"
+    elif [ -f "$ROLLBACK_MARKER" ]; then
+      printf '%s\n' '[{"revision":5,"status":"superseded"},{"revision":6,"status":"failed"},{"revision":7,"status":"deployed"}]'
+    elif [ -f "$CALL_LOG.mutation" ]; then
+      printf '%s\n' '[{"revision":4,"status":"superseded"},{"revision":5,"status":"superseded"},{"revision":6,"status":"deployed"}]'
     else
       printf '%s\n' '[{"revision":4,"status":"superseded"},{"revision":5,"status":"deployed"},{"revision":6,"status":"failed"}]'
     fi
@@ -749,8 +804,10 @@ case "${1:-}" in
           echo "helm dry-run failed" >&2
           exit 19
         fi
+        exit 0
         ;;
     esac
+    : >"$CALL_LOG.mutation"
     exit 0
     ;;
   rollback)
@@ -770,16 +827,39 @@ esac
 set -eu
 printf 'kubectl %s\n' "$*" >> "$CALL_LOG"
 case "$*" in
+  *"exec agent-pod -c doops-agent -- /app/doops-agent -version"*)
+    commit="${BASELINE_COMMIT-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
+    if [ -f "$CALL_LOG.mutation" ] && [ ! -f "$ROLLBACK_MARKER" ]; then
+      commit="${ACTUAL_COMMIT-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+    fi
+    printf 'release=v-test commit=%s\n' "$commit"
+    ;;
+  *"exec agent-pod -c doops-agent -- curl"*)
+    if [ "${GATEWAY_NOT_READY:-0}" = "1" ] && [ -f "$CALL_LOG.mutation" ] && [ ! -f "$ROLLBACK_MARKER" ]; then exit 22; fi
+    printf 'ready\n'
+    ;;
   "auth whoami -o json")
     if [ "${AUTH_WHOAMI_DENIED:-0}" = "1" ]; then echo "auth whoami forbidden" >&2; exit 21; fi
     printf '{"status":{"userInfo":{"username":"%s"}}}\n' "${AUTH_USERNAME-kubernetes-admin}"
     ;;
   *"get configmap"*)
-    if [ -f "$RECEIPT_FILE" ]; then cat "$RECEIPT_FILE"; fi
+    case "$*" in
+      *doops-upgrade-receipt-*) file="$OPERATION_RECEIPT_FILE" ;;
+      *) file="$RECEIPT_FILE" ;;
+    esac
+    if [ -f "$file" ]; then cat "$file"; fi
     ;;
   *"apply -f -"*)
     if [ "${RECEIPT_FAIL:-0}" = "1" ]; then echo "verification receipt persistence failed" >&2; exit 17; fi
-    cat >"$RECEIPT_FILE"
+    payload="$(cat)"
+    case "$payload" in
+      *doops-upgrade-receipt-*)
+        if [ "${OPERATION_RECEIPT_FAIL:-0}" = "1" ]; then exit 17; fi
+        file="$OPERATION_RECEIPT_FILE"
+        ;;
+      *) file="$RECEIPT_FILE" ;;
+    esac
+    printf '%s' "$payload" >"$file"
     ;;
   *"apply -f "*)
     # The stale mount backup is applied from a file before the first change.
@@ -804,7 +884,7 @@ case "$*" in
   *"get secret"*)
     case "${PULL_SECRET:-}" in
       missing)
-        echo 'Error from server (NotFound): secrets "cnb-pull" not found' >&2
+        echo 'Error from server (NotFound): secrets "registry-pull" not found' >&2
         exit 1
         ;;
       opaque)
@@ -864,7 +944,7 @@ case "$*" in
       esac
     fi
     pull_secrets=""
-    if [ -n "${PULL_SECRET:-}" ]; then pull_secrets=',"imagePullSecrets":[{"name":"cnb-pull"}]'; fi
+    if [ -n "${PULL_SECRET:-}" ]; then pull_secrets=',"imagePullSecrets":[{"name":"registry-pull"}]'; fi
     printf '{"items":[{"metadata":{"name":"agent-pod","uid":"%s"},"spec":{"nodeName":"%s"%s,"containers":[{"name":"doops-agent","image":"%s"}]},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"name":"doops-agent","ready":%s,"imageID":"%s"}]}}]}\n' "$uid" "$node" "$pull_secrets" "$image" "$ready" "$image_id"
     ;;
   *"get deployment"*)
@@ -942,7 +1022,7 @@ func TestSelfUpgradeJobUsesSharedKubeconfigVolume(t *testing.T) {
 		nodeName:           "node-a",
 		serviceAccountName: "default",
 		runtimeClassName:   "verified-runtime",
-		imagePullSecrets:   []string{"cnb"},
+		imagePullSecrets:   []string{"registry-pull"},
 		mount:              jobVolumeMount{Name: "kube", MountPath: "/root/.kube", ReadOnly: true},
 		volume:             json.RawMessage(`{"name":"kube","secret":{"secretName":"cluster-admin"}}`),
 	}
@@ -1025,7 +1105,7 @@ func TestStartSelfUpgradeCreatesJobWithoutHelmMutation(t *testing.T) {
 				return []byte(`[{"name":"doops-agent-live","chart":"doops-agent-0.1.0"}]`), nil
 			case name == "helm" && strings.Contains(joined, "get values"):
 				return []byte(`{"gateway":{"cluster":"doops-edu","instance":"edu-coder"},"workload":{"name":"doops-agent"}}`), nil
-			case strings.Contains(joined, "apply"):
+			case strings.Contains(joined, "create"):
 				applied = stdin
 				return []byte("job.batch/doops-self-upgrade-aaaaaaaa created\n"), nil
 			default:
@@ -1035,13 +1115,12 @@ func TestStartSelfUpgradeCreatesJobWithoutHelmMutation(t *testing.T) {
 		},
 	}
 	out, err := proc.startSelfUpgradeJob(context.Background(), agentUpgradeParams{
-		Image: testPinnedImage(),
-		Mode:  "k8s",
+		Image: testPinnedImage(), Mode: "k8s", UpgradeOperationID: "operation-123", ExpectedReleaseCommit: testUpgradeCommit,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "self-upgrade-accepted job=doops-self-upgrade-"+upgradeImageID(testPinnedImage())+" namespace=kz-ops release=doops-agent-live") {
+	if !strings.Contains(out, "self-upgrade-accepted job="+selfUpgradeJobName("operation-123", "apply")+" namespace=kz-ops release=doops-agent-live") {
 		t.Fatalf("acceptance = %s", out)
 	}
 	if !strings.Contains(applied, "helm rollback") || strings.Contains(applied, "set image") {
@@ -1087,9 +1166,9 @@ func TestObserveSelfUpgradeReportsTerminalPhase(t *testing.T) {
 			joined := strings.Join(args, " ")
 			switch {
 			case strings.Contains(joined, "get job"):
-				return []byte(`{"status":{"succeeded":1}}`), nil
-			case strings.Contains(joined, "logs"):
-				return []byte("self-upgrade complete image=registry.example/doops@sha256:" + testPinnedDigest + "\n"), nil
+				return []byte(`{"metadata":{"annotations":{"doops.sh/upgrade-operation-id":"operation-123","doops.sh/phase":"apply"}},"status":{"succeeded":1}}`), nil
+			case strings.Contains(joined, "get configmap"):
+				return testOperationReceipt("operation-123", "kz-ops", "apply"), nil
 			default:
 				t.Fatalf("unexpected observe command %s", joined)
 				return nil, nil
@@ -1097,12 +1176,12 @@ func TestObserveSelfUpgradeReportsTerminalPhase(t *testing.T) {
 		},
 	}
 	out, err := proc.observeSelfUpgrade(context.Background(), agentUpgradeParams{
-		ObserveJob: "doops-self-upgrade-" + testPinnedDigest[:8],
+		ObserveJob: selfUpgradeJobName("operation-123", "apply"), UpgradeOperationID: "operation-123",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "self-upgrade-succeeded") || !strings.Contains(out, "self-upgrade complete") {
+	if !strings.Contains(out, "self-upgrade-succeeded") || !strings.Contains(out, `"release_commit":"`+testUpgradeCommit+`"`) {
 		t.Fatalf("observe = %s", out)
 	}
 }
@@ -1111,7 +1190,7 @@ const selfUpgradePodFixture = `{
   "spec": {
     "nodeName": "node-a",
     "serviceAccountName": "default",
-    "imagePullSecrets": [{"name": "cnb"}],
+    "imagePullSecrets": [{"name": "registry-pull"}],
     "containers": [{
       "name": "doops-agent",
       "image": "registry.example/doops:old",

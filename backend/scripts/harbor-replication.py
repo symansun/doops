@@ -10,7 +10,7 @@ Run it inside the target cluster through the audited Gateway path:
 
   doops -session <s> exec --target <t> --cmd 'python3 /root/ws/harbor-replication.py run \
     --harbor-url https://core.harbor.svc:443 --harbor-credential <credential-id> \
-    --upstream-url https://docker.cnb.cool --upstream-credential <credential-id> \
+    --upstream-url https://registry.example.com --upstream-credential <credential-id> \
     --credential-namespace harbor-system --project agentcloud \
     --repository l8ai/agentcloud/backend --tag-pattern "git-*"'
 
@@ -368,7 +368,7 @@ def policy_name_for(prefix, project, repository):
     the name, since the copy is flattened to its last segment anyway, and a
     leading project name in that segment is dropped so that
     `example/zhiyong/education/zhiyong-frontend` under project `zhiyong`
-    reads `cnb-zhiyong-frontend` rather than `cnb-zhiyong-zhiyong-frontend`.
+    reads `mirror-zhiyong-frontend` rather than `mirror-zhiyong-zhiyong-frontend`.
     """
     base = repository.strip("/").split("/")[-1]
     if base.startswith(project + "-"):
@@ -822,18 +822,18 @@ def parse_args(argv):
     parser.add_argument("--harbor-password-key", default="HARBOR_ADMIN_PASSWORD",
                         help="Credential key holding the Harbor password (default: %(default)s)")
     parser.add_argument("--upstream-url", required=True,
-                        help="Upstream registry URL, for example https://docker.cnb.cool")
+                        help="Upstream registry URL, for example https://registry.example.com")
     parser.add_argument("--upstream-credential", required=True,
                         help="Managed credential id holding the upstream registry login")
-    parser.add_argument("--upstream-username-key", default="CNB_USERNAME",
+    parser.add_argument("--upstream-username-key", default="UPSTREAM_USERNAME",
                         help="Credential key holding the upstream user name (default: %(default)s)")
-    parser.add_argument("--upstream-token-key", default="CNB_TOKEN",
+    parser.add_argument("--upstream-token-key", default="UPSTREAM_TOKEN",
                         help="Credential key holding the upstream token (default: %(default)s)")
     parser.add_argument("--credential-namespace", required=True,
                         help="Namespace where the managed credentials are materialized")
-    parser.add_argument("--registry-name", default="cnb-upstream",
+    parser.add_argument("--registry-name", default="upstream",
                         help="Harbor registry endpoint name (default: %(default)s)")
-    parser.add_argument("--policy-prefix", default="cnb",
+    parser.add_argument("--policy-prefix", default="mirror",
                         help="Prefix for every policy name, which decides reuse "
                              "(default: %(default)s)")
     parser.add_argument("--project", required=True,

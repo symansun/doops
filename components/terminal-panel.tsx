@@ -26,12 +26,14 @@ export function TerminalPanel({
   sessionId,
   prefill = null,
   onPrefillApplied,
+  onRunningChange,
 }: {
   session: Session
   target: Target
   sessionId: string
   prefill?: TerminalPrefill | null
   onPrefillApplied?: (nonce: number) => void
+  onRunningChange?: (running: boolean) => void
 }) {
   const [command, setCommand] = useState("")
   const appliedPrefillRef = useRef(0)
@@ -92,6 +94,7 @@ export function TerminalPanel({
     // cut off; it is cleared when the command ends.
     const journalId = commandJournal.begin(session, { targetKey: target.key, sessionId, command: cmd, source: "terminal" })
     setRunning(true)
+    onRunningChange?.(true)
     setProgress("")
     setStopPending(false)
     stopRequestedRef.current = false
@@ -131,6 +134,7 @@ export function TerminalPanel({
       if (!settled) fail("连接已结束，未收到工具执行结果")
       commandJournal.end(session, journalId)
       setRunning(false)
+      onRunningChange?.(false)
       setProgress("")
       setStopPending(false)
       cancelRef.current = null

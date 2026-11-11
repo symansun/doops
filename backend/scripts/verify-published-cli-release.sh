@@ -3,7 +3,7 @@ set -euo pipefail
 
 RELEASE_TAG="${DOOPS_RELEASE_TAG:-}"
 RELEASE_COMMIT="${DOOPS_RELEASE_COMMIT:-}"
-RELEASE_ASSET_BASE="${DOOPS_RELEASE_ASSET_BASE:-https://cnb.cool/${DOOPS_RELEASE_REPO:-l8ai/ai/doops.sh}/-/releases/download}"
+RELEASE_ASSET_BASE="${DOOPS_RELEASE_ASSET_BASE:-https://github.com/symansun/doops/releases/download}"
 RELEASE_ASSET_BASE="${RELEASE_ASSET_BASE%/}"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TEMP_DIR}"' EXIT
@@ -21,8 +21,9 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 1
 fi
 
-# Release asset URLs come from one https base per publisher (CNB by default,
-# or the GitHub Release mirror) so checksums and identity checks stay the same.
+# Release asset URLs come from one https base (GitHub Releases by default, or
+# a mirror through DOOPS_RELEASE_ASSET_BASE) so checksums and identity checks
+# stay the same.
 assert_asset_base() {
   case "${RELEASE_ASSET_BASE}" in
     https://*) ;;

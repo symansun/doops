@@ -165,7 +165,8 @@ def main(argv):
     parser.add_argument("--harbor-url", default="http://harbor-core.harbor-system.svc")
     parser.add_argument("--harbor-credential", required=True,
                         help="Managed credential id holding the Harbor password")
-    parser.add_argument("--upstream-url", default="https://docker.cnb.cool")
+    parser.add_argument("--upstream-url", required=True,
+                        help="Upstream registry URL, for example https://registry.example.com")
     parser.add_argument("--upstream-credential", required=True,
                         help="Managed credential id holding the upstream token")
     parser.add_argument("--credential-namespace", default="harbor-system")
@@ -192,8 +193,8 @@ def main(argv):
     harbor_password = module.require_key(
         harbor_values, "HARBOR_ADMIN_PASSWORD", "Harbor credential"
     )
-    upstream_user = module.require_key(upstream_values, "CNB_USERNAME", "upstream credential")
-    upstream_token = module.require_key(upstream_values, "CNB_TOKEN", "upstream credential")
+    upstream_user = module.require_key(upstream_values, "UPSTREAM_USERNAME", "upstream credential")
+    upstream_token = module.require_key(upstream_values, "UPSTREAM_TOKEN", "upstream credential")
 
     client = module.HarborClient(args.harbor_url, harbor_user, harbor_password)
     info = client.system_info()

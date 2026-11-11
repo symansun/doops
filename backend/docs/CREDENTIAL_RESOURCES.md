@@ -94,9 +94,9 @@ apiVersion: doops.sh/v1
 kind: DevelopmentCredentialRequirements
 target: gw-114-k8s
 credentials:
-  - credentialRef: cnb-development
+  - credentialRef: dev-git
     use: gitCheckout
-  - credentialRef: cnb-registry
+  - credentialRef: dev-registry
     use: imagePull
 ```
 
@@ -250,9 +250,8 @@ key 和 value 都不能为空。
 验证以本次请求的 Chart URL 和受管 payload 仓库 URL 为下载边界，带 HTTP Basic 读取真实 `.tgz`，
 校验 gzip/tar、`Chart.yaml`、`values.yaml` 并返回包摘要，不读取 `index.yaml`。
 下载 URL 必须属于 payload URL 的 HTTPS origin；仓库路径不参与权限匹配。重定向、私网地址、无效包和超限失败关闭，
-不会改为匿名请求。CNB 的 payload URL 可用 `https://helm.cnb.cool`，Chart 使用其官方
-`/charts/<repo>/<name>/v/<version>.tgz` 接口。当前 remote 仅支持 HTTPS `.tgz`
-下载，不支持 `oci://`；调用方须在任务中指定 HTTPS Chart，不会猜测、自动替换仓库路径或 fallback。
+不会改为匿名请求。当前 remote 仅支持 HTTPS `.tgz` 下载，不支持 `oci://`；调用方须在任务中指定
+HTTPS Chart，不会猜测、自动替换仓库路径或 fallback。
 
 Helm target binding 只绑定 target 的 cluster/instance 和 use=helmPull，不再把 namespace、workload、
 release 或 Chart URL 写成 Gateway 授权条件。实际请求仍必须从受管凭据 payload 的仓库 URL
