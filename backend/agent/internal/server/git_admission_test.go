@@ -16,7 +16,7 @@ func TestGatewayGitHTTPAdmissionRecordsKnownTerminal(t *testing.T) {
 		status string
 		code   int
 	}{
-		{"canceled after lease", GatewayHubOptions{}, "canceled", http.StatusConflict},
+		{"canceled after lease", GatewayHubOptions{MaxQueuedPerTarget: 1, TargetQueueTimeout: 3 * time.Second}, "canceled", http.StatusConflict},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newExecutionLifecycleFixture(t, tc.opts)
@@ -34,15 +34,29 @@ func TestGatewayGitHTTPAdmissionRecordsKnownTerminal(t *testing.T) {
 				f.hub.HandleGitHTTP(response, request)
 				close(done)
 			}
+			resourceKey := gitResourceKey(ActionPull, "dev", "local", "git-admission")
+			held, err := agent.acquireActionLeaseForSession(ctx, ActionPull, resourceKey, "git-admission", 0, time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer held.Release()
+			go run()
+			requireEventually(t, time.Second, func() bool {
+				agent.opsMu.Lock()
+				defer agent.opsMu.Unlock()
+				slot := agent.resources[resourceKey]
+				return slot != nil && slot.queued == 1
+			})
 			func() {
-				// Pause setBusy after acquiring the lease, before dispatch.
-				agent.stateMu.Lock()
-				defer agent.stateMu.Unlock()
-				go run()
+				// Pause lease attachment after acquisition, before dispatch.
+				f.hub.client.activeOpsMu.Lock()
+				defer f.hub.client.activeOpsMu.Unlock()
+				held.Release()
 				requireEventually(t, time.Second, func() bool {
 					agent.opsMu.Lock()
 					defer agent.opsMu.Unlock()
-					return agent.readers == 1
+					slot := agent.resources[resourceKey]
+					return agent.readers == 1 && slot != nil && slot.queued == 0
 				})
 				cancel()
 			}()

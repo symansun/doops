@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -29,7 +28,6 @@ type SessionInfo struct {
 type SessionStore struct {
 	Path     string
 	Sessions map[string]SessionInfo
-	mu       sync.Mutex
 }
 
 func NewSessionStore() *SessionStore {
@@ -62,14 +60,6 @@ func (ss *SessionStore) load() {
 	}
 }
 
-func (ss *SessionStore) Save() {
-	ss.mu.Lock()
-	defer ss.mu.Unlock()
-
-	data, _ := json.MarshalIndent(ss.Sessions, "", "    ")
-	os.WriteFile(ss.Path, data, 0644)
-}
-
 func (ss *SessionStore) Get(target, sessionName string) string {
 	key := target + ":" + sessionName
 	info, ok := ss.Sessions[key]
@@ -77,17 +67,6 @@ func (ss *SessionStore) Get(target, sessionName string) string {
 		return ""
 	}
 	return info.ID
-}
-
-func (ss *SessionStore) Set(target, sessionName, sessionID string) {
-	key := target + ":" + sessionName
-	ss.mu.Lock()
-	ss.Sessions[key] = SessionInfo{
-		ID:        sessionID,
-		Timestamp: float64(time.Now().Unix()),
-	}
-	ss.mu.Unlock()
-	ss.Save()
 }
 
 type LLMConfig struct {

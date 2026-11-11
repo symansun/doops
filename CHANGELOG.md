@@ -6,6 +6,17 @@
 
 分类标题只使用 `### Added` / `### Changed` / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
 
+## [Unreleased]
+
+### Fixed
+
+- COS 快照从 Git tree 保存执行位，下载及 Agent 同步在新建和覆盖时恢复 `0755/0644`；缺失元数据的旧快照在写入前明确拒绝并提示重新 push，旧对象保留；按实际连接和选定 Agent 校验协议能力，避免混用旧端静默丢失执行位
+- CLI 总帮助明确默认 `pull` 下载已上传的 COS 快照；获取远端当前工作区及生成产物需使用 `pull --storage gateway`
+
+### Removed
+
+- 删除 Gateway 未参与实际准入或公开状态计算的旧 Busy 副本，以及 CLI 无生产调用的会话缓存写入方法；历史会话读取和目标状态接口保持原有行为
+
 ## [0.3.0] — 2026-11-11
 
 ### Changed

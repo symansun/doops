@@ -111,7 +111,18 @@ func TestCLIRemoveUsesSessionAndPreservesConfigWhenNotOffline(t *testing.T) {
 			if err := auth.Save(); err != nil {
 				t.Fatalf("write auth: %v", err)
 			}
-			NewSessionStore().Set("probe", test.session, "cached-session-must-not-replace-explicit-session")
+			cachedSessions, err := json.Marshal(map[string]SessionInfo{
+				"probe:" + test.session: {
+					ID:        "cached-session-must-not-replace-explicit-session",
+					Timestamp: float64(time.Now().Unix()),
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(defaultSessionStorePath(), cachedSessions, 0o644); err != nil {
+				t.Fatalf("write historical sessions: %v", err)
+			}
 
 			args := []string{"remove", "--target", "old"}
 			if test.session != "" {

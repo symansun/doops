@@ -23,6 +23,11 @@ func handleCOSSync(argBytes json.RawMessage) (string, error) {
 	if err := validateSession(args.SessionID); err != nil {
 		return "", err
 	}
+	for _, file := range args.Files {
+		if _, err := validateCOSSyncFile(args.SessionID, file); err != nil {
+			return "", err
+		}
+	}
 	client := &http.Client{
 		Timeout: 2 * time.Minute,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -38,10 +43,7 @@ func handleCOSSync(argBytes json.RawMessage) (string, error) {
 }
 
 func downloadCOSObject(client *http.Client, sessionID string, file cosSyncFile) error {
-	if err := validateCOSSyncURL(file.URL); err != nil {
-		return err
-	}
-	dest, err := resolveWorkspaceFilePath(sessionID, file.Path)
+	dest, err := validateCOSSyncFile(sessionID, file)
 	if err != nil {
 		return err
 	}
@@ -57,7 +59,7 @@ func downloadCOSObject(client *http.Client, sessionID string, file cosSyncFile) 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("cos sync download failed")
 	}
-	if file.Size >= 0 && resp.ContentLength >= 0 && resp.ContentLength != file.Size {
+	if resp.ContentLength >= 0 && resp.ContentLength != file.Size {
 		return fmt.Errorf("cos sync size mismatch")
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
@@ -75,7 +77,27 @@ func downloadCOSObject(client *http.Client, sessionID string, file cosSyncFile) 
 	if written != file.Size {
 		return fmt.Errorf("cos sync size mismatch")
 	}
-	return nil
+	mode := os.FileMode(0o644)
+	if *file.Executable {
+		mode = 0o755
+	}
+	if err := output.Chmod(mode); err != nil {
+		return err
+	}
+	return output.Close()
+}
+
+func validateCOSSyncFile(sessionID string, file cosSyncFile) (string, error) {
+	if file.Executable == nil {
+		return "", fmt.Errorf("%s: push again from the original source to record executable files", cosErrPermissionsMissing)
+	}
+	if file.Size < 0 {
+		return "", cosFail(cosErrManifestInvalid)
+	}
+	if err := validateCOSSyncURL(file.URL); err != nil {
+		return "", err
+	}
+	return resolveWorkspaceFilePath(sessionID, file.Path)
 }
 
 func validateCOSSyncURL(raw string) error {

@@ -52,6 +52,9 @@ type MCPClient struct {
 	conn         *websocket.Conn // WebSocket 长连接
 	reqCounter   int64           // 请求 ID 计数器（原子递增）
 	capabilities map[string]interface{}
+	// Enabled only by the COS snapshot client; every connection must advertise
+	// the Gateway's executable-bit contract before snapshot calls can be sent.
+	requireCOSSnapshotExecutable bool
 
 	// --- WS 消息分发 ---
 	// 所有 WS 消息通过 dispatchLoop 读取并按 request ID 分发
@@ -124,6 +127,11 @@ func (c *MCPClient) connectWithVerification(expectedRelease, requiredProtocol st
 	}()
 	c.mu.Lock()
 	if c.connected {
+		if err := c.cosSnapshotGatewayErrorLocked(); err != nil {
+			c.closeConnectionLocked(c.conn)
+			c.mu.Unlock()
+			return err
+		}
 		c.mu.Unlock()
 		if c.UpgradeOperationID != "" && (expectedRelease != "" || requiredProtocol != "") {
 			return c.verifyConnectedUpgrade(expectedRelease, requiredProtocol)
@@ -228,6 +236,10 @@ func (c *MCPClient) connectWithVerification(expectedRelease, requiredProtocol st
 		return fmt.Errorf("initialize handshake timed out")
 	}
 
+	if err := c.cosSnapshotGatewayErrorLocked(); err != nil {
+		c.closeConnectionLocked(conn)
+		return err
+	}
 	c.connected = true
 	c.log("CLIENT:CONNECTED", "Persistent WebSocket connection established")
 	return nil
@@ -529,9 +541,13 @@ func (c *MCPClient) writeRequest(conn *websocket.Conn, request interface{}, dead
 	}
 	c.mu.Lock()
 	connected := c.connected && c.conn == conn
+	protocolErr := c.cosSnapshotGatewayErrorLocked()
 	c.mu.Unlock()
 	if !connected || conn == nil {
 		return errors.New("request not sent: connection is not available")
+	}
+	if protocolErr != nil {
+		return protocolErr
 	}
 	if !time.Now().Before(deadline) {
 		return fmt.Errorf("request not sent: %w", context.DeadlineExceeded)

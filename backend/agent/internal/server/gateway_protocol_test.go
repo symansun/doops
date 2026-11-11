@@ -1494,9 +1494,8 @@ func TestGatewayTargetBusySnapshotUsesTargetScopedUpgradeSlot(t *testing.T) {
 		sessionWriters: make(map[string]int),
 	}
 
-	agent.setBusy(true)
 	if got := agent.snapshot(); got.Busy {
-		t.Fatalf("stale busy flag must not mark an idle target busy: %#v", got)
+		t.Fatalf("idle target must not be marked busy: %#v", got)
 	}
 
 	if err := agent.acquireForAction(context.Background(), ActionAgentUpgrade, "target:dev/local", 0, time.Second); err != nil {

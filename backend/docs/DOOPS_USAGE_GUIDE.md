@@ -565,6 +565,8 @@ doops -session build exec --target demo --cmd 'ls -la /root/ws/build | head'
 
 The default upload uses the Gateway's COS configuration. A missing Gateway COS key or a failed bucket check stops in `cos` and does not fall back to Git. When the Agent is online the snapshot is also copied into `/root/ws/<session>`; otherwise the objects remain in COS and the result says the workspace was not synced.
 
+COS snapshots preserve the executable bit recorded in the Git snapshot. New files and replacements restore as `0755` (executable) or `0644` (not executable); they do not inherit an old destination file's executable bit. Only regular Git files are supported: symbolic links and other tree types are rejected before upload instead of being flattened. Push checks the Gateway's snapshot capability on each connection; the Gateway checks the selected Agent before sending a sync. Upgrade the unsupported component when either capability is missing. Ordinary COS `read/write` do not require snapshot capabilities.
+
 Agent 的 Git handler 只接受 Gateway 反向隧道中的进程内调用，不暴露本地
 HTTP `/git` 入口。
 
@@ -585,6 +587,8 @@ Default `pull` reads the snapshot manifest from the Gateway's COS bucket and dow
 ```bash
 doops -session build pull --target demo --dest ./uploaded-snapshot
 ```
+
+COS pull validates the entire manifest before writing files. A snapshot without executable metadata returns `cos_snapshot_permissions_missing`: push again from the original source using the current CLI to create a complete snapshot. Existing objects are not deleted or guessed into a new permission state. This is an executable-bit contract, not a backup of UID/GID, ACLs or all POSIX mode bits; see the [COS API contract](DOOPS_API_GUIDE.md#cos-存储模式).
 
 ## Read And Write
 

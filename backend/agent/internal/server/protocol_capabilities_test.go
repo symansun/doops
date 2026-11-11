@@ -5,6 +5,52 @@ import (
 	"testing"
 )
 
+func TestCOSSnapshotGatewayCapabilityIsSeparateFromAgent(t *testing.T) {
+	for _, agent := range []*GatewayAgent{nil, {}, {COSSnapshotExecutable: true}} {
+		capabilities := clientCapabilities(agent)
+		gatewayProtocols, _ := capabilities["gatewayProtocols"].(map[string]interface{})
+		if !cosSnapshotExecutableCapabilityCompatible(gatewayProtocols[cosSnapshotExecutableProtocol]) {
+			t.Fatalf("Gateway capability absent: %#v", capabilities)
+		}
+		protocols, _ := capabilities["protocols"].(map[string]interface{})
+		if _, exists := protocols[cosSnapshotExecutableProtocol]; exists {
+			t.Fatalf("Gateway capability confused with Agent projection: %#v", capabilities)
+		}
+	}
+	current := &GatewayAgent{}
+	initialize := gatewayTestInitializeResult("cos")
+	initialize["capabilities"].(map[string]interface{})["protocols"].(map[string]interface{})[cosSnapshotExecutableProtocol] = cosSnapshotExecutableCapability()
+	current.applyInitializeResult(initialize)
+	if !current.COSSnapshotExecutable {
+		t.Fatal("Agent capability not decoded")
+	}
+	current.applyInitializeResult(gatewayTestInitializeResult("legacy"))
+	if current.COSSnapshotExecutable {
+		t.Fatal("Agent capability survived replacement metadata")
+	}
+}
+
+func TestCOSSnapshotAgentAdvertisesCapabilityOverWebSocket(t *testing.T) {
+	gw := NewGateway()
+	server := newGatewayAuthorizedAgentServer(t, gw)
+	defer server.Close()
+	conn := dialAgentTestWS(t, server.URL)
+	defer conn.Close()
+	if err := conn.WriteJSON(map[string]interface{}{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]interface{}{}}); err != nil {
+		t.Fatal(err)
+	}
+	var response map[string]interface{}
+	if err := conn.ReadJSON(&response); err != nil {
+		t.Fatal(err)
+	}
+	result, _ := response["result"].(map[string]interface{})
+	capabilities, _ := result["capabilities"].(map[string]interface{})
+	protocols, _ := capabilities["protocols"].(map[string]interface{})
+	if !cosSnapshotExecutableCapabilityCompatible(protocols[cosSnapshotExecutableProtocol]) {
+		t.Fatalf("Agent did not advertise executable sync: %#v", response)
+	}
+}
+
 func TestStructuredSSHCapabilityRequiresExactSchema(t *testing.T) {
 	if !structuredSSHCapabilityCompatible(structuredSSHCapability()) {
 		t.Fatal("current structured SSH capability must be accepted")

@@ -30,19 +30,21 @@ const (
 )
 
 const (
-	cosErrCredentialMissing = "cos_credential_missing"
-	cosErrNotConfigured     = "cos_not_configured"
-	cosErrCredentialInvalid = "cos_credential_invalid"
-	cosErrBucketMismatch    = "cos_bucket_mismatch"
-	cosErrBucketUnavailable = "cos_bucket_unavailable"
-	cosErrKeyRejected       = "cos_key_rejected"
-	cosErrGatewayPutLimit   = "cos_gateway_put_limit"
-	cosErrSizeMismatch      = "cos_size_mismatch"
-	cosErrPutFailed         = "cos_put_failed"
-	cosErrObjectMissing     = "cos_object_missing"
-	cosErrManifestInvalid   = "cos_manifest_invalid"
-	cosErrWorkspaceNotSync  = "cos_workspace_not_synced"
-	cosErrWorkspaceStale    = "cos_workspace_not_updated"
+	cosErrCredentialMissing        = "cos_credential_missing"
+	cosErrNotConfigured            = "cos_not_configured"
+	cosErrCredentialInvalid        = "cos_credential_invalid"
+	cosErrBucketMismatch           = "cos_bucket_mismatch"
+	cosErrBucketUnavailable        = "cos_bucket_unavailable"
+	cosErrKeyRejected              = "cos_key_rejected"
+	cosErrGatewayPutLimit          = "cos_gateway_put_limit"
+	cosErrSizeMismatch             = "cos_size_mismatch"
+	cosErrPutFailed                = "cos_put_failed"
+	cosErrObjectMissing            = "cos_object_missing"
+	cosErrManifestInvalid          = "cos_manifest_invalid"
+	cosErrWorkspaceNotSync         = "cos_workspace_not_synced"
+	cosErrWorkspaceStale           = "cos_workspace_not_updated"
+	cosErrPermissionsMissing       = "cos_snapshot_permissions_missing"
+	cosErrAgentSnapshotUnsupported = "cos_agent_snapshot_executable_unsupported"
 )
 
 type cosFailure struct {
@@ -395,9 +397,10 @@ type cosResult struct {
 }
 
 type cosSyncFile struct {
-	Path string `json:"path"`
-	URL  string `json:"url"`
-	Size int64  `json:"size"`
+	Path       string `json:"path"`
+	URL        string `json:"url"`
+	Size       int64  `json:"size"`
+	Executable *bool  `json:"executable"`
 }
 
 type cosManifest struct {
@@ -406,8 +409,9 @@ type cosManifest struct {
 }
 
 type cosManifestEntry struct {
-	Path string `json:"path"`
-	Size int64  `json:"size"`
+	Path       string `json:"path"`
+	Size       int64  `json:"size"`
+	Executable *bool  `json:"executable"`
 }
 
 type cosService struct {
@@ -467,6 +471,17 @@ func (s *cosService) put(ctx context.Context, bucket cosBucket, call cosCall, re
 	key, err := s.objectKey(call)
 	if err != nil {
 		return cosResult{}, err
+	}
+	if call.Kind == "snapshots" {
+		rel, err := cleanCOSRel(call.Path)
+		if err != nil {
+			return cosResult{}, err
+		}
+		if strings.HasSuffix(rel, "/.doops/manifest.json") {
+			if _, err := validateCOSManifest(call.Body, strings.TrimSuffix(rel, "/.doops/manifest.json")); err != nil {
+				return cosResult{}, err
+			}
+		}
 	}
 	contentType := "application/octet-stream"
 	if call.Kind == "snapshots" && (strings.HasSuffix(call.Path, "/.doops/manifest.json") || call.Path == "latest.json") {
@@ -587,9 +602,9 @@ func (s *cosService) syncWorkspace(ctx context.Context, bucket cosBucket, call c
 	if err != nil {
 		return cosResult{}, err
 	}
-	var manifest cosManifest
-	if err := json.Unmarshal(body, &manifest); err != nil || manifest.Commit != call.Path {
-		return cosResult{}, cosFail(cosErrManifestInvalid)
+	manifest, err := validateCOSManifest(body, call.Path)
+	if err != nil {
+		return cosResult{}, err
 	}
 	files := make([]cosSyncFile, 0, len(manifest.Files))
 	for _, entry := range manifest.Files {
@@ -605,7 +620,7 @@ func (s *cosService) syncWorkspace(ctx context.Context, bucket cosBucket, call c
 		if err != nil {
 			return cosResult{}, err
 		}
-		files = append(files, cosSyncFile{Path: rel, URL: url, Size: entry.Size})
+		files = append(files, cosSyncFile{Path: rel, URL: url, Size: entry.Size, Executable: entry.Executable})
 	}
 	result.Commit = call.Path
 	result.Key = key
@@ -615,6 +630,9 @@ func (s *cosService) syncWorkspace(ctx context.Context, bucket cosBucket, call c
 	}
 	status, err := s.sync(ctx, call.Cluster, call.Instance, call.SessionID, files)
 	if err != nil {
+		if cosCategory(err) == cosErrAgentSnapshotUnsupported {
+			return cosResult{}, err
+		}
 		if cosCategory(err) == cosErrWorkspaceNotSync || strings.Contains(err.Error(), "target offline") {
 			result.WorkspaceStatus = cosErrWorkspaceNotSync
 			return result, nil
@@ -627,6 +645,27 @@ func (s *cosService) syncWorkspace(ctx context.Context, bucket cosBucket, call c
 	}
 	result.WorkspaceStatus = status
 	return result, nil
+}
+
+// Validate the complete snapshot before storing its manifest or dispatching
+// any file. Missing metadata cannot safely mean "not executable".
+func validateCOSManifest(body []byte, commit string) (cosManifest, error) {
+	var manifest cosManifest
+	if err := json.Unmarshal(body, &manifest); err != nil || manifest.Commit != commit {
+		return cosManifest{}, cosFail(cosErrManifestInvalid)
+	}
+	for _, entry := range manifest.Files {
+		if entry.Executable == nil {
+			return cosManifest{}, cosFail(cosErrPermissionsMissing)
+		}
+		if entry.Size < 0 {
+			return cosManifest{}, cosFail(cosErrManifestInvalid)
+		}
+		if _, err := cleanCOSRel(entry.Path); err != nil {
+			return cosManifest{}, err
+		}
+	}
+	return manifest, nil
 }
 
 func cosResultFields(result cosResult) (map[string]interface{}, error) {
@@ -654,6 +693,9 @@ func decodeCOSBody(contentB64 string) ([]byte, error) {
 
 func formatCOSError(err error) string {
 	category := cosCategory(err)
+	if category == cosErrPermissionsMissing {
+		return category + ": push again from the original source to record executable files"
+	}
 	if category == "" {
 		return cosErrPutFailed
 	}

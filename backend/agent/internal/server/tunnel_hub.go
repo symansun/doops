@@ -156,10 +156,10 @@ type GatewayAgent struct {
 	ExecutionLifecycle     bool      `json:"execution_lifecycle,omitempty"`
 	UpgradeAudit           bool      `json:"upgrade_audit,omitempty"`
 	RegistryAuthfile       bool      `json:"registry_authfile,omitempty"`
+	COSSnapshotExecutable  bool      `json:"cos_snapshot_executable,omitempty"`
 	ConnectedAt            time.Time `json:"connected_at"`
 	LastSeen               time.Time `json:"last_seen"`
 	HeartbeatAt            time.Time `json:"heartbeat_at,omitempty"`
-	Busy                   bool      `json:"busy"`
 	Status                 string    `json:"status,omitempty"`
 	BusyReason             string    `json:"busy_reason,omitempty"`
 	ActiveOps              int       `json:"active_ops,omitempty"`
@@ -1513,6 +1513,10 @@ func clientCapabilities(agent *GatewayAgent) map[string]interface{} {
 	}
 	capabilities := map[string]interface{}{
 		"tools": map[string]interface{}{},
+		// Gateway-owned protocols apply even when the selected Agent is offline.
+		"gatewayProtocols": map[string]interface{}{
+			cosSnapshotExecutableProtocol: cosSnapshotExecutableCapability(),
+		},
 	}
 	if agent != nil && release.ValidCommit(agent.ReleaseCommit) {
 		capabilities["releaseCommit"] = agent.ReleaseCommit
@@ -1783,6 +1787,7 @@ func (a *GatewayAgent) applyInitializeResult(result map[string]interface{}) {
 	// An Agent that does not advertise this rejects an authfile_only request
 	// outright, because it decodes the materialization request strictly.
 	a.RegistryAuthfile = registryAuthfileCapabilityCompatible(protocols[registryAuthfileProtocol])
+	a.COSSnapshotExecutable = cosSnapshotExecutableCapabilityCompatible(protocols[cosSnapshotExecutableProtocol])
 	if !ok {
 		return
 	}
@@ -2346,7 +2351,6 @@ func (a *GatewayAgent) acquireExclusive(ctx context.Context, lockKey string, max
 			}
 			a.sessionWriters[lockKey]++
 			a.opsMu.Unlock()
-			a.setBusy(true)
 			return nil
 		}
 		if a.stateChanged == nil {
@@ -2392,7 +2396,6 @@ func (a *GatewayAgent) releaseExclusive(lockKey string) {
 		delete(a.sessionWriters, lockKey)
 	}
 	a.opsMu.Unlock()
-	a.setBusy(false)
 	a.signalStateChange()
 }
 
@@ -2404,7 +2407,6 @@ func (a *GatewayAgent) acquireReadOnly() error {
 	}
 	a.readers++
 	a.opsMu.Unlock()
-	a.setBusy(false)
 	return nil
 }
 
@@ -2422,11 +2424,7 @@ func (a *GatewayAgent) releaseReadOnly() {
 	if a.readers > 0 {
 		a.readers--
 	}
-	idle := a.readers == 0 && a.writers == 0
 	a.opsMu.Unlock()
-	if idle {
-		a.setBusy(false)
-	}
 	a.signalStateChange()
 }
 
@@ -2453,7 +2451,6 @@ func (a *GatewayAgent) acquireResource(ctx context.Context, key, session string,
 		slot.session = session
 		a.readers++
 		a.opsMu.Unlock()
-		a.setBusy(true)
 		return nil
 	default:
 	}
@@ -2496,7 +2493,6 @@ func (a *GatewayAgent) acquireResource(ctx context.Context, key, session string,
 		slot.session = session
 		a.readers++
 		a.opsMu.Unlock()
-		a.setBusy(true)
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -2522,11 +2518,7 @@ func (a *GatewayAgent) releaseResource(key string) {
 	if a.readers > 0 {
 		a.readers--
 	}
-	idle := a.readers == 0 && a.writers == 0
 	a.opsMu.Unlock()
-	if idle {
-		a.setBusy(false)
-	}
 	a.signalStateChange()
 }
 
@@ -2558,12 +2550,6 @@ func isConcurrentQuery(action GatewayAction, resourceKey string) bool {
 func isExclusiveOperation(action GatewayAction, resourceKey string) bool {
 	return action == ActionAgentUpgrade || strings.HasPrefix(resourceKey, "target:") || strings.HasPrefix(resourceKey, "target-mutation:") ||
 		(resourceKey == "" && !isConcurrentReadOnlyAction(action))
-}
-
-func (a *GatewayAgent) setBusy(busy bool) {
-	a.stateMu.Lock()
-	a.Busy = busy
-	a.stateMu.Unlock()
 }
 
 type targetRuntimeState struct {

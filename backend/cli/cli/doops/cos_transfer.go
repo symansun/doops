@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	cosBucketName         = "doops-1253657668"
-	cosGatewayPutMaxBytes = int64(16 << 20)
+	cosBucketName               = "doops-1253657668"
+	cosGatewayPutMaxBytes       = int64(16 << 20)
+	cosSnapshotExecutableSchema = "doops.sh/cos-snapshot-executable/v1"
 )
 
 type cosObjectResult struct {
@@ -32,6 +33,7 @@ type cosObjectResult struct {
 
 type cosTransfer interface {
 	Probe() error
+	ProbeSnapshot() error
 	Put(kind, rel string, body []byte) (cosObjectResult, error)
 	PutFile(kind, rel, filePath string, size int64) (cosObjectResult, error)
 	Get(kind, rel string) ([]byte, error)
@@ -63,6 +65,9 @@ func cosCategories() []string {
 		"cos_put_failed",
 		"cos_object_missing",
 		"cos_manifest_invalid",
+		"cos_snapshot_permissions_missing",
+		"cos_snapshot_executable_unsupported",
+		"cos_agent_snapshot_executable_unsupported",
 		"cos_workspace_not_synced",
 		"cos_workspace_not_updated",
 		"audit_unavailable",
@@ -77,6 +82,14 @@ func cosError(err error) error {
 	message := err.Error()
 	for _, category := range cosCategories() {
 		if strings.Contains(message, category) {
+			switch category {
+			case "cos_snapshot_permissions_missing":
+				return fmt.Errorf("cos_snapshot_permissions_missing: push again from the original source to record executable files")
+			case "cos_snapshot_executable_unsupported":
+				return fmt.Errorf("cos_snapshot_executable_unsupported: upgrade the Gateway before uploading snapshots")
+			case "cos_agent_snapshot_executable_unsupported":
+				return fmt.Errorf("cos_agent_snapshot_executable_unsupported: upgrade the Agent before syncing snapshots")
+			}
 			return fmt.Errorf("%s", category)
 		}
 	}
@@ -97,6 +110,11 @@ func newGatewayCOS(server Server, token, session string) (*gatewayCOS, error) {
 }
 
 func (g *gatewayCOS) call(operation, kind, rel string, extra map[string]interface{}) (cosObjectResult, error) {
+	if kind == "snapshots" && (operation == "put" || operation == "presign_put" || operation == "confirm" || operation == "sync") {
+		g.client.mu.Lock()
+		g.client.requireCOSSnapshotExecutable = true
+		g.client.mu.Unlock()
+	}
 	args := map[string]interface{}{
 		"operation": operation,
 		"kind":      kind,
@@ -118,6 +136,27 @@ func (g *gatewayCOS) call(operation, kind, rel string, extra map[string]interfac
 func (g *gatewayCOS) Probe() error {
 	_, err := g.call("probe", "", "latest.json", nil)
 	return err
+}
+
+func (g *gatewayCOS) ProbeSnapshot() error {
+	g.client.mu.Lock()
+	g.client.requireCOSSnapshotExecutable = true
+	g.client.mu.Unlock()
+	return g.Probe()
+}
+
+// Called with the client lock held, against the capabilities of its current
+// connection. Agent protocols cannot establish what the Gateway understands.
+func (c *MCPClient) cosSnapshotGatewayErrorLocked() error {
+	if !c.requireCOSSnapshotExecutable {
+		return nil
+	}
+	protocols, _ := c.capabilities["gatewayProtocols"].(map[string]interface{})
+	protocol, _ := protocols["cosSnapshotExecutable"].(map[string]interface{})
+	if protocol["schemaVersion"] != cosSnapshotExecutableSchema || protocol["executable"] != true {
+		return fmt.Errorf("cos_snapshot_executable_unsupported: upgrade the Gateway before uploading snapshots")
+	}
+	return nil
 }
 
 func (g *gatewayCOS) Put(kind, rel string, body []byte) (cosObjectResult, error) {
@@ -210,7 +249,11 @@ func putPresigned(presign cosObjectResult, body io.Reader, size int64) error {
 	return nil
 }
 
-func downloadPresigned(rawURL, dest string, size int64) error {
+func downloadPresigned(rawURL, dest string, size int64, executable bool) error {
+	mode := os.FileMode(0o644)
+	if executable {
+		mode = 0o755
+	}
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
 		return fmt.Errorf("cos_object_missing")
@@ -226,7 +269,7 @@ func downloadPresigned(rawURL, dest string, size int64) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
-	output, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	output, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
 	if err != nil {
 		return err
 	}
@@ -242,7 +285,7 @@ func downloadPresigned(rawURL, dest string, size int64) error {
 	if written != size {
 		return fmt.Errorf("cos_size_mismatch")
 	}
-	return nil
+	return output.Chmod(mode)
 }
 
 func localRelPath(root, rel string) (string, error) {
@@ -263,8 +306,9 @@ func localRelPath(root, rel string) (string, error) {
 }
 
 type cosManifestFile struct {
-	Path string `json:"path"`
-	Size int64  `json:"size"`
+	Path       string `json:"path"`
+	Size       int64  `json:"size"`
+	Executable *bool  `json:"executable"`
 }
 
 type cosSnapshotManifest struct {
@@ -274,6 +318,25 @@ type cosSnapshotManifest struct {
 
 func uploadCOSSnapshot(root string, files []string, commit string, transfer cosTransfer) (string, error) {
 	manifest := cosSnapshotManifest{Commit: commit}
+	tree, err := gitCommandOutput(root, "ls-tree", "-r", "-z", commit)
+	if err != nil {
+		return "", err
+	}
+	executables := make(map[string]bool)
+	for _, entry := range strings.Split(tree, "\x00") {
+		if entry == "" {
+			continue
+		}
+		header, name, ok := strings.Cut(entry, "\t")
+		fields := strings.Fields(header)
+		if !ok || len(fields) != 3 {
+			return "", fmt.Errorf("invalid snapshot tree")
+		}
+		if fields[1] != "blob" || (fields[0] != "100644" && fields[0] != "100755") {
+			return "", fmt.Errorf("cos_snapshot_file_type_unsupported: %s", name)
+		}
+		executables[name] = fields[0] == "100755"
+	}
 	for _, rel := range files {
 		if rel == ".git" || strings.HasPrefix(rel, ".git/") {
 			continue
@@ -286,10 +349,17 @@ func uploadCOSSnapshot(root string, files []string, commit string, transfer cosT
 		if info.IsDir() {
 			continue
 		}
-		if _, err := transfer.PutFile("snapshots", commit+"/"+rel, full, info.Size()); err != nil {
+		executable, ok := executables[rel]
+		if !ok {
+			return "", fmt.Errorf("snapshot file is missing from commit: %s", rel)
+		}
+		manifest.Files = append(manifest.Files, cosManifestFile{Path: rel, Size: info.Size(), Executable: &executable})
+	}
+	for _, file := range manifest.Files {
+		full := filepath.Join(root, filepath.FromSlash(file.Path))
+		if _, err := transfer.PutFile("snapshots", commit+"/"+file.Path, full, file.Size); err != nil {
 			return "", err
 		}
-		manifest.Files = append(manifest.Files, cosManifestFile{Path: rel, Size: info.Size()})
 	}
 	body, err := json.Marshal(manifest)
 	if err != nil {
@@ -388,6 +458,17 @@ func pullCOS(server Server, dest, session, credential, token, commit string, tra
 	if err := json.Unmarshal(raw, &manifest); err != nil || manifest.Commit != commit {
 		return fmt.Errorf("cos_manifest_invalid")
 	}
+	for _, file := range manifest.Files {
+		if file.Executable == nil {
+			return fmt.Errorf("cos_snapshot_permissions_missing: push again from the original source to record executable files")
+		}
+		if file.Size < 0 {
+			return fmt.Errorf("cos_manifest_invalid")
+		}
+		if _, err := localRelPath(absDest, file.Path); err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(absDest, 0o755); err != nil {
 		return err
 	}
@@ -400,7 +481,7 @@ func pullCOS(server Server, dest, session, credential, token, commit string, tra
 		if err != nil {
 			return err
 		}
-		if err := downloadPresigned(presign.URL, target, file.Size); err != nil {
+		if err := downloadPresigned(presign.URL, target, file.Size, *file.Executable); err != nil {
 			return err
 		}
 	}

@@ -64,7 +64,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   version     查看 DoOps 发布身份（release tag 和精确提交）
   session     生成并输出一个新的唯一 Session ID
   push        极速增量推送本地代码到远端沙盒 (固定至 /root/ws/$SESSION)
-  pull        基于 Git 拉取远端 session 工作区到本地目录
+  pull        下载已上传的 COS 快照；--storage gateway 获取远端当前工作区
   clean       清理远端节点上的工作区隔离沙盒
   admin       gateway 管理命令：用户、target 授权和 API key
   upgrade     由独立 Job 预检、升级或收编 K8S Agent；记录操作编号与验收证据，--dry-run 只预览
@@ -906,7 +906,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		pushFlag.StringVar(&dest, "dest", "", "Remote destination (用于推导 session 隔离标识)")
 		pushFlag.BoolVar(&dryRun, "dry-run", false, "Preview only, don't actually sync")
 		pushFlag.StringVar(&pushSession, "session", "", "Session ID (can also be set before subcommand)")
-		pushFlag.StringVar(&storageMode, "storage", "cos", "Storage mode: cos (default, Gateway COS config) or gateway (local relay)")
+		pushFlag.StringVar(&storageMode, "storage", "cos", "Storage mode: cos (default, preserves Git executable bits; requires snapshot-capable Gateway/Agent) or gateway (local relay)")
 		pushFlag.StringVar(&credentialName, "credential", "", "Ignored for cos; COS settings come from the Gateway")
 		pushFlag.Parse(cmdArgs)
 
@@ -956,7 +956,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		pullFlag.StringVar(&target, "target", "", "Target server name")
 		pullFlag.StringVar(&dest, "dest", "", "Local destination directory (default: ./<session>)")
 		pullFlag.StringVar(&pullSession, "session", "", "Session ID (can also be set before subcommand)")
-		pullFlag.StringVar(&storageMode, "storage", "cos", "Storage mode: cos (default, Gateway COS config) or gateway (local relay)")
+		pullFlag.StringVar(&storageMode, "storage", "cos", "Storage mode: cos (default, uploaded snapshot with executable metadata) or gateway (current remote workspace)")
 		pullFlag.StringVar(&credentialName, "credential", "", "Ignored for cos; COS settings come from the Gateway")
 		pullFlag.StringVar(&commit, "commit", "", "Snapshot commit to pull; only used by the default cos mode")
 		pullFlag.Parse(cmdArgs)

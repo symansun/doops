@@ -57,7 +57,7 @@ func TestCOSPullRejectsEscapingManifestPath(t *testing.T) {
 	transfer := &recordingTransfer{t: t}
 	transfer.objects = map[string][]byte{
 		"snapshots/latest.json": []byte(`{"commit":"` + strings.Repeat("a", 40) + `"}`),
-		"snapshots/" + strings.Repeat("a", 40) + "/.doops/manifest.json": []byte(`{"commit":"` + strings.Repeat("a", 40) + `","files":[{"path":"../outside","size":1}]}`),
+		"snapshots/" + strings.Repeat("a", 40) + "/.doops/manifest.json": []byte(`{"commit":"` + strings.Repeat("a", 40) + `","files":[{"path":"../outside","size":1,"executable":false}]}`),
 	}
 	err := pullCOS(Server{}, t.TempDir(), "sess_1", "cos-bucket", "token", "", transfer)
 	if err == nil || err.Error() != "cos_key_rejected" {
@@ -81,6 +81,8 @@ func (r *recordingTransfer) Probe() error {
 	r.calls++
 	return r.probeErr
 }
+
+func (r *recordingTransfer) ProbeSnapshot() error { return r.Probe() }
 
 func (r *recordingTransfer) Put(kind, rel string, body []byte) (cosObjectResult, error) {
 	r.puts++

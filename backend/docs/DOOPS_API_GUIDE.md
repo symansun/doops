@@ -722,7 +722,13 @@ sessions/<user-id>/<session-id>/snapshots/<commit>/<path>
 
 Gateway 配置项是 `DOOPS_COS_ACCESS_KEY_ID`、`DOOPS_COS_SECRET_ACCESS_KEY`、`DOOPS_COS_ENDPOINT`、`DOOPS_COS_REGION`、`DOOPS_COS_BUCKET`。后三项省略时分别是 `https://cos.ap-guangzhou.myqcloud.com`、`ap-guangzhou`、`doops-1253657668`。密钥不进入 prompt、审计、日志或仓库。HeadBucket 失败时返回 `cos_bucket_unavailable`。
 
-Agent 在线时，`push --storage cos` 上传完成后通知该 session 的 Agent 把对象同步到 `/root/ws/<session>`。同步失败时结果写明 `cos_workspace_not_updated`。Agent 不在线时对象仍然有效，结果写明 `cos_workspace_not_synced`。Git HTTP 仍只服务 `gateway` 模式。
+清单中的每个普通文件必须携带布尔型 `executable`，写入者以快照 Git tree 的 `100755` / `100644` 为准。下载和 Agent 同步均在整份清单校验通过后才写文件，并将新建及覆盖文件的权限设为 `0755` / `0644`，不继承目的文件的旧执行位。不承诺完整 POSIX mode、UID/GID、ACL 或扩展属性保真。缺失或 null 返回 `cos_snapshot_permissions_missing` 并提示从原来源重新 push；错误类型返回 `cos_manifest_invalid`。旧对象保留，但不能伪造缺失的执行位并报告恢复成功。
+
+COS 新快照只接受 Git tree 中的普通文件；符号链接、gitlink 等其它类型返回 `cos_snapshot_file_type_unsupported`，在任何对象上传前停止，不将它们静默展开成普通文件。Gateway 写入清单对象时也执行相同的元数据校验，旧客户端不能用缺执行位的清单覆盖已经完整的快照清单。
+
+Gateway 在 `initialize.capabilities.gatewayProtocols.cosSnapshotExecutable` 声明自身支持；Agent 在自己的 `initialize.capabilities.protocols.cosSnapshotExecutable` 声明支持，两者都使用 `schemaVersion="doops.sh/cos-snapshot-executable/v1"` 与 `executable=true`。CLI 对每次实际连接核对 Gateway 自有能力，不能把上次连接或 Agent 的声明当作 Gateway 的证明。Gateway 对实际选中的同一个 Agent 在派发前核对能力；重连后不会把新实例默认为支持。普通 `read/write` 不受快照能力要求影响。
+
+Agent 在线且支持该协议时，`push --storage cos` 上传完成后通知该 session 的 Agent 把对象同步到 `/root/ws/<session>`。Gateway 不支持时 CLI 在上传前返回 `cos_snapshot_executable_unsupported`；Agent 不支持时返回 `cos_agent_snapshot_executable_unsupported`，不派发同步、不报告成功。其它同步失败仍写明 `cos_workspace_not_updated`。Agent 不在线时对象仍然有效，结果写明 `cos_workspace_not_synced`。Git HTTP 仍只服务 `gateway` 模式。
 
 ### `doops_workspace_read`
 
@@ -754,7 +760,7 @@ doops pull --storage gateway <- /v1/git/<cluster>/<instance>/<session>.git <- ag
 ```
 
 `doops_workspace_begin`、`doops_workspace_chunk`、`doops_workspace_commit`、`doops_workspace_pull_begin`、`doops_workspace_pull_chunk` 是低层 JSON-RPC 文件传输工具，不是声明式发布协议的一部分。
-低层 pull 导出当前工作区 HEAD 的快照，bundle 中的 `master` 来自专用 bare 仓库的快照引用；不会读取或改写工作区自身的 `master` 分支，支持 main、其它分支及 detached HEAD。
+低层 pull 在当前 HEAD 创建快照提交，并保持当前分支或 detached HEAD 状态；bundle 中的 `master` 来自专用 bare 仓库的快照引用，不依赖工作区有名为 `master` 的分支。当前分支本身为 master 时，快照提交会正常推进该分支。
 
 需要同步当前远端工作区时直接执行：
 

@@ -59,7 +59,7 @@ DoOps 不替代 Kubernetes 本身，也不是完整的监控时序数据库、IT
 | 统一 Gateway | Agent 注册、目标路由、用户鉴权、作用域授权、排队与并发控制 | SQLite 保存控制面状态；公网访问需部署 TLS 反向代理 |
 | Agent 反向连接 | 目标节点主动连接 Gateway，以 `cluster/instance` 标识执行目标 | 注册只声明 cluster/instance，不需要注册令牌；用户 Token 不用于 Agent 注册 |
 | 确定性命令执行 | `exec` 运行命令并返回输出；支持后台任务、日志及状态查询 | 不是持久 PTY；命令具有 Agent 进程对应的系统权限 |
-| Git 工作区同步 | `push/pull` 通过 Git HTTP 和 Agent 隧道同步会话工作区 | 拉取与清理存在覆盖、删除风险；不是永久备份机制 |
+| 快照与工作区同步 | `push/pull` 默认使用 COS 快照；`--storage gateway` 通过 Git HTTP 同步当前工作区 | 拉取与清理存在覆盖、删除风险；不是永久备份机制 |
 | 小文本文件操作 | 在指定 session 内执行 `read/write` | 使用工作区相对路径；大文件和二进制使用 `push/pull` |
 | AI 运维任务 | `ask` 通过 ACP HTTP 与 SSE 接入 doagent | 需要可用的 doagent 服务、模型配置及相应目标权限 |
 | 自然语言业务发布 | `ask --apply` 读取任务指定的镜像、Chart、凭据和验收条件，并通过结构化 Helm 工具执行 | 业务发布不使用环境注册表、模板化发布或未审阅的 YAML 工作流 |
@@ -419,16 +419,16 @@ doops -session build-001 push --target demo-node --src .
 
 doops -session build-001 exec \
   --target demo-node \
-  --cmd 'cd /root/ws/build-001 && git status --short'
+  --cmd 'ls -la /root/ws/build-001'
 
-doops -session build-001 pull \
+doops -session build-001 pull --storage gateway \
   --target demo-node \
   --dest ./doops-build-output
 ```
 
 上例使用默认容器工作区；若设置了 `DOOPS_WORKSPACE_ROOT`，应同步调整 shell 中的路径。
 
-- `push/pull` 的标准路径是 Git HTTP，经 Gateway 反向隧道转发，不是手写 tar/base64 分块传输。
+- 默认 COS push/pull 保存和下载上传快照；上例显式使用 `pull --storage gateway` 取回当前远端工作区。COS 快照保存 Git 执行位，缺失执行位的旧快照需从原来源重新 push；协议升级要求见[使用指南](backend/docs/DOOPS_USAGE_GUIDE.md#push)。
 - 推送会考虑 `.gitignore` 与 `.doopsignore`，请确认必要的部署文件未被排除。
 - 拉回结果应选择专用输出目录；对已有目标仓库的同步可能覆盖本地修改，不要指向重要的未提交工作区。
 

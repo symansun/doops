@@ -467,6 +467,12 @@ doops -session build push --target prod-master --src .
 
 ## Authorization
 
+COS 快照同步的能力声明区分处理者：Gateway 的 `gatewayProtocols.cosSnapshotExecutable`
+声明清单执行位处理能力，Agent 的 `protocols.cosSnapshotExecutable` 声明落盘能力。
+两者都为 `doops.sh/cos-snapshot-executable/v1`、`executable=true`。CLI 按实际 WebSocket
+连接校验 Gateway；内部同步派发检查同一个选定 Agent，不用版本号或历史连接推断支持。
+清单、旧快照错误和文件模式语义以 [COS API 合同](DOOPS_API_GUIDE.md#cos-存储模式) 为准。
+
 Grant 只有 `cluster`、`instance` 两个维度，`*` 是唯一通配。有 grant 的用户可以执行该 target 的
 全部操作，包括 exec、ask、读写、push/pull、Agent 升级和使用该 target 绑定的凭据。平台管理员
 （用户 `is_admin`）可使用全部 target，并管理用户、grant、token 和代理路由。凭据资源由 owner

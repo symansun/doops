@@ -137,7 +137,7 @@ func pushSnapshot(
 				return "", err
 			}
 			defer closeTransfer()
-			if err := transfer.Probe(); err != nil {
+			if err := transfer.ProbeSnapshot(); err != nil {
 				return "", err
 			}
 		}

@@ -59,7 +59,7 @@ DoOps does not replace Kubernetes itself, and it is not a complete monitoring ti
 | Unified gateway | Agent registration, target routing, user authentication, scoped authorization, queueing, and concurrency control | SQLite stores control-plane state; public access requires a TLS reverse proxy |
 | Agent reverse connection | Target nodes connect out to the gateway and identify execution targets by `cluster/instance` | Registration only declares cluster/instance and needs no registration token; user tokens are not used for agent registration |
 | Deterministic command execution | `exec` runs commands and returns output; background tasks, logs, and status queries are supported | Not a persistent PTY; commands have the system privileges of the agent process |
-| Git workspace synchronization | `push/pull` synchronize session workspaces over Git HTTP and the agent tunnel | Pull and clean can overwrite or delete data; not a permanent backup mechanism |
+| Snapshot and workspace synchronization | `push/pull` use COS snapshots by default; `--storage gateway` synchronizes the current workspace over Git HTTP | Pull and clean can overwrite or delete data; not a permanent backup mechanism |
 | Small text file operations | `read/write` inside a named session | Use workspace-relative paths; use `push/pull` for large files and binaries |
 | AI operations tasks | `ask` reaches doagent over ACP HTTP and SSE | Requires a reachable doagent service, model configuration, and the corresponding target permission |
 | Natural-language workload delivery | `ask --apply` reads the image, chart, credentials, and acceptance criteria specified by the task, and executes through structured Helm tools | Workload delivery does not use environment registries, template-driven releases, or unreviewed YAML workflows |
@@ -420,16 +420,16 @@ doops -session build-001 push --target demo-node --src .
 
 doops -session build-001 exec \
   --target demo-node \
-  --cmd 'cd /root/ws/build-001 && git status --short'
+  --cmd 'ls -la /root/ws/build-001'
 
-doops -session build-001 pull \
+doops -session build-001 pull --storage gateway \
   --target demo-node \
   --dest ./doops-build-output
 ```
 
 The example above uses the default container workspace; if `DOOPS_WORKSPACE_ROOT` is set, adjust the paths in the shell accordingly.
 
-- The standard `push/pull` path is Git HTTP, forwarded through the gateway's reverse tunnel, not hand-written tar/base64 chunked transfer.
+- Default COS push/pull store and download uploaded snapshots; the example explicitly uses `pull --storage gateway` to retrieve the current remote workspace. COS snapshots preserve Git executable bits; old snapshots without this metadata require a new push from the original source. See the [usage guide](backend/docs/DOOPS_USAGE_GUIDE.md#push) for protocol requirements.
 - Push takes `.gitignore` and `.doopsignore` into account; make sure required deployment files are not excluded.
 - Choose a dedicated output directory for pulled results; synchronizing into an existing target repository can overwrite local modifications, so do not point it at important uncommitted work.
 

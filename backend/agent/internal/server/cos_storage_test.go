@@ -189,7 +189,7 @@ func TestCOSSyncWritesPresignedObjectIntoWorkspace(t *testing.T) {
 	text, err := handleCOSSync(mustJSON(t, map[string]interface{}{
 		"session_id": "sess_1",
 		"files": []map[string]interface{}{
-			{"path": "dir/a.txt", "url": server.URL + "/a.txt", "size": len(payload)},
+			{"path": "dir/a.txt", "url": server.URL + "/a.txt", "size": len(payload), "executable": false},
 		},
 	}))
 	if err != nil {
@@ -204,7 +204,7 @@ func TestCOSSyncWritesPresignedObjectIntoWorkspace(t *testing.T) {
 	}
 	if _, err := handleCOSSync(mustJSON(t, map[string]interface{}{
 		"session_id": "sess_1",
-		"files":      []map[string]interface{}{{"path": "../outside", "url": server.URL, "size": 1}},
+		"files":      []map[string]interface{}{{"path": "../outside", "url": server.URL, "size": 1, "executable": false}},
 	})); err == nil {
 		t.Fatal("sync accepted a path outside the session")
 	}

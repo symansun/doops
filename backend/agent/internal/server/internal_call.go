@@ -93,6 +93,17 @@ func (h *ClientService) RunInternalToolCall(ctx context.Context, cluster, instan
 		CommandSummary: "internal " + tool,
 	}, cancel, agent)
 	defer h.finishActiveOperation(opID)
+	// Check the exact selected Agent that will receive this call. A registry
+	// lookup in the COS service could otherwise validate a replaced connection.
+	if tool == "doops_cos_sync" && !agent.COSSnapshotExecutable {
+		err := cosFail(cosErrAgentSnapshotUnsupported)
+		if auditErr := h.finishExecutionAudit(auditID, AuditFinish{
+			Status: "blocked", Error: err.Error(), EndedAt: time.Now().UTC(),
+		}); auditErr != nil {
+			return "", fmt.Errorf("execution_audit_completion_failed: %w", auditErr)
+		}
+		return "", err
+	}
 	if err := agent.requireExecutionLifecycle(tool); err != nil {
 		if auditErr := h.finishExecutionAudit(auditID, AuditFinish{
 			Status: "blocked", Error: err.Error(), EndedAt: time.Now().UTC(),
