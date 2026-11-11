@@ -82,11 +82,6 @@ Each topic has one authoritative document. Expand a rule only there; elsewhere, 
   registry; do not reintroduce them.
 - `deploy/helm/<name>/` contains runtime assets only. It must not become an environment registry,
   credential store, target selector, or deployment authorization source.
-- Instance retention has exactly one cleanup path: `PruneOfflineAgentStatus` applies
-  `OfflineInstanceRetention` (90 days) from `StartOfflineInstanceReaper` (once at startup, then
-  hourly). The 7-day `ActiveInstanceWindow` only decides the default instance list. Do not add a
-  second sweep, a per-status retention window, or a scheduled delete; `backend/test/test_stale_contracts.py`
-  retires the removed sweep symbols.
 - Agent upgrade has one hard constraint: an Agent cannot replace its own workload from its own
   process, because the rollout kills that process. The replacement always runs in a separate
   controller: an in-cluster Job started by `doops upgrade` (or, for a first upgrade the old Agent

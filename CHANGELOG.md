@@ -21,7 +21,7 @@
 ### Changed
 
 - 公开仓库结构收口：内部设计归档与评审草稿不再随仓库发布，产品文档统一由 `backend/docs/README.md` 索引，对外文章移入 `blog/`；三个 README 的文档入口同步更新
-- 离线实例只保留一条清理路径：移除 Gateway 启动时与每小时的 24 小时 sweep，记录统一按 90 天保留窗口在启动时清理一次、之后每小时清理；7 天活跃窗口只决定默认列表，不再触发删除（历史 target 与发布证据保留到 90 天）
+- 离线实例记录不再按 24 小时定时删除：Gateway 在启动时清理一次、之后每小时按 90 天保留窗口清理；7 天活跃窗口只决定默认列表
 - 安装文档固定到发布 tag，并区分两条发布线的资产来源：公开发布线（`v0.2.x`，GitHub Releases）支持 `doops login --gateway` 首登发现，CNB 生产线（`v1.3.x`，`install.sh` 默认的 CNB Release Assets）不支持，需四项显式路由；CNB 仓库默认分支 `master` 仍是旧扁平布局，克隆时必须 checkout tag
 
 ### Fixed

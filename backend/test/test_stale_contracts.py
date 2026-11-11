@@ -32,11 +32,6 @@ RETIRED_IDENTIFIERS = (
     "image.tag=release-YYYYMMDD",
     "add-image-pull-secret",
     "auto-harness-secret",
-    # The legacy 24-hour offline-instance sweep. Retention has one path only:
-    # PruneOfflineAgentStatus (90-day window, started by StartOfflineInstanceReaper).
-    "StaleOfflineAgentRetention",
-    "DeleteStaleOfflineAgents",
-    "reapStaleOfflineAgents",
 )
 
 # Retired operator guidance. Scanned only in documents and prompts; some of these strings
@@ -65,8 +60,6 @@ RETIRED_GUIDANCE = (
     "才可通过前台 `doops exec` 执行 SSH 恢复",
     "单机或没有 DaemonSet 的节点，推荐标准安装",
     "生产环境建议升级成 K8s/DaemonSet 或容器模式",
-    "离线超过 24 小时的实例记录由 Gateway 自动删除",
-    "记录保留到显式删除",
 )
 
 SOURCE_SUFFIXES = {".go", ".sh", ".py", ".mjs", ".js", ".ts", ".tsx", ".yaml", ".yml", ".json", ".md", ".tpl"}
