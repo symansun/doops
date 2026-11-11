@@ -1,6 +1,9 @@
 import json
 import os
+import shutil
+import signal
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -9,10 +12,17 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / "scripts" / "release-managed-agent.sh"
-IMAGE = ROOT / "scripts" / "doops-release-image.sh"
 CHART = ROOT / "deploy" / "helm" / "doops-agent" / "templates" / "deployment.yaml"
 VALUES = ROOT / "deploy" / "helm" / "doops-agent" / "values.yaml"
 SCHEMA = ROOT / "deploy" / "helm" / "doops-agent" / "values.schema.json"
+PINNED_IMAGE = "registry.example.test/doops-agent@sha256:" + "a" * 64
+RELEASE_ARGS = [
+    "--target", "synthetic-agent",
+    "--session", "audit-upgrade-test",
+    "--release", "doops-agent",
+    "--namespace", "agents-test",
+    "--image", PINNED_IMAGE,
+]
 
 
 @pytest.mark.parametrize("host_access", [None, True, False])
@@ -65,258 +75,200 @@ def test_agent_chart_requires_an_explicit_proxy_upstream_allowlist():
     }
 
 
-def test_single_managed_agent_release_script():
-    text = RELEASE.read_text()
-    helper = IMAGE.read_text()
+@pytest.fixture
+def run_release(tmp_path):
+    """Run the real shell entrypoint with no access to operator tools or login."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("bash", "cat"):
+        (bin_dir / name).symlink_to(shutil.which(name))
+    calls_file = tmp_path / "calls.jsonl"
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("SYNTHETIC_KUBECONFIG_PAYLOAD_MUST_NOT_BE_READ")
+    tool = f"#!{sys.executable}\n" + """
+import json
+import os
+import signal
+import sys
+from pathlib import Path
 
-    assert not (ROOT / "scripts" / "upgrade-managed-agent.sh").exists()
-    assert not (ROOT / "scripts" / "install-managed-agent.sh").exists()
-    assert "--wait=false" in text
-    assert "--reuse-values" not in text
-    assert "kubectl set image" not in text
-    assert "doops exec --bg" not in text
-    assert "doops_cmd push" not in text
-    assert "doops_cmd exec" not in text
-    assert 'upgrade --install "${RELEASE}" "${CHART_DIR}"' in text
-    assert 'helm rollback "${RELEASE}" "${previous_revision}"' in text
-    assert 'if ! helm rollback "${RELEASE}" "${previous_revision}"' in text
-    assert 'if ! verify_final_deployment_state "${workload}" "${current_image}"; then' in text
-    assert "Error: Helm rollback command failed" in text
-    assert "--dry-run=server" in text
-    assert "rollback_complete=true" in text
-    assert "candidate_failure_observation" in text
-    assert "trap 'exit 130' INT" in text
-    assert "trap 'exit 143' TERM" in text
-    assert "hostNetwork agents cannot hand off" in text
-    assert "candidate chart must disable hostNetwork" in text
-    assert "sandbox-entrypoint.sh" in text
-    assert "not a normal workload deployment" in text
-    assert "ordinary workload releases, use:" in text
-    assert "external operator kubeconfig" in text
-    assert 'deploy.get("spec")' in text
-    assert '"selector", {}).get("matchLabels")' in text
-    assert 'values.setdefault("workload", {})["selectorLabels"]' in text
-    assert "live Deployment selector does not match template labels" in text
-    assert "deploy/helm/doops-agent" in text
-    assert "went offline for 30s during handoff" in text
-    assert "--values" in text
-    assert "--kubeconfig" in text
-    assert "--cluster" in text
-    assert "--instance" in text
-    assert "Gateway target resolves to" in text
-    assert "--proxy-allowed-hosts" in text
-    assert 'values.setdefault("proxy", {})["allowedHosts"] = proxy_allowed_hosts' in text
-    assert "normalize_proxy_allowed_hosts" in text
-    assert "replacement Agent proxy allowlist does not match live Helm values" in text
-    assert 'container_env.get("DOOPS_PROXY_ALLOW_HOSTS", "")' in text
-    assert 'os.environ.get("DOOPS_PROXY_ALLOW_HOSTS", "")' not in text
-    assert "--host-alias" in text
-    assert 'values["hostAliases"] = entries' in text
-    assert "normalize_host_aliases" in text
-    assert "replacement Agent host aliases do not match live Helm values" in text
-    assert "replacement Agent did not resolve" in text
-    assert "pre-release-pods.json" in text
-    assert '--cmd hostname' in text
-    assert 'kubectl -n "${NAMESPACE}" exec "${replacement_pod}"' in text
-    assert "doops -session" in text
-    assert "doops capabilities --help" in text
-    assert "installed doops CLI does not expose a full release commit" in text
-    assert text.index("doops capabilities --help") < text.index(
-        'helm_status_output=""'
-    )
-    assert "lacks the capabilities protocol probe" in text
-    assert 'doops -session "${SESSION}-capabilities" capabilities \\' in text
-    assert '--target "${TARGET}" --require structuredSSH' in text
-    assert "did not advertise structuredSSH" in text
-    assert "replacement Agent release commit mismatch" in text
-    assert "Kubernetes API is unreachable or rejected the kubeconfig" in text
-    assert 'kubectl version --request-timeout=10s' in text
-    assert "was not found or is not readable" in text
-    assert "only when the Kubernetes API is reachable" in text
-    assert "@sha256:" in helper
-    assert "docker.cnb.cool/l8ai/ai/doops.sh" in helper
+name = Path(sys.argv[0]).name
+with open(os.environ["RELEASE_TEST_CALLS"], "a") as stream:
+    stream.write(json.dumps({
+        "tool": name, "args": sys.argv[1:],
+        "kubeconfig": os.environ.get("KUBECONFIG"),
+    }) + "\\n")
+if name != "doops":
+    raise SystemExit("local controller tool must never execute")
+if os.environ.get("RELEASE_TEST_SIGNAL"):
+    os.kill(os.getpid(), signal.SIGTERM)
+sys.stdout.write(os.environ["RELEASE_TEST_STDOUT"])
+sys.stderr.write(os.environ["RELEASE_TEST_STDERR"])
+raise SystemExit(int(os.environ["RELEASE_TEST_STATUS"]))
+"""
+    for name in ("doops", "helm", "kubectl", "docker", "ssh", "scp", "curl", "wget"):
+        executable = bin_dir / name
+        executable.write_text(tool)
+        executable.chmod(0o755)
+
+    def run(args=None, *, status=0, stdout="", stderr="", terminate=False, cli=True):
+        if not cli:
+            (bin_dir / "doops").unlink()
+        env = {
+            **os.environ,
+            "PATH": str(bin_dir),
+            "KUBECONFIG": str(kubeconfig),
+            "RELEASE_TEST_CALLS": str(calls_file),
+            "RELEASE_TEST_STATUS": str(status),
+            "RELEASE_TEST_STDOUT": stdout,
+            "RELEASE_TEST_STDERR": stderr,
+            "RELEASE_TEST_SIGNAL": "1" if terminate else "",
+        }
+        result = subprocess.run(
+            ["bash", str(RELEASE), *(RELEASE_ARGS if args is None else args)],
+            cwd=ROOT, env=env, text=True, capture_output=True, check=False, timeout=10,
+        )
+        calls = [json.loads(line) for line in calls_file.read_text().splitlines()] if calls_file.exists() else []
+        return result, calls
+
+    return run
 
 
-def test_existing_release_requires_an_external_kubeconfig_before_target_contact():
-    env = os.environ.copy()
-    env.pop("KUBECONFIG", None)
-    result = subprocess.run(
-        [
-            "bash",
-            str(RELEASE),
-            "--target",
-            "not-a-real-target",
-            "--session",
-            "external-controller",
-            "--cluster",
-            "doops-test",
-            "--instance",
-            "node-1",
-            "--release",
-            "doops-agent",
-            "--namespace",
-            "doops-system",
-            "--image",
-            "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "a" * 64,
-            "--dry-run",
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_release_delegates_the_whole_transaction_to_gateway_upgrade(run_release, dry_run):
+    output = "PREVIEW parameters only\n" if dry_run else "OK upgrade Job and protocol verified\n"
+    args = RELEASE_ARGS + (["--dry-run"] if dry_run else [])
+    result, calls = run_release(args, stdout=output)
+
+    assert result.returncode == 0
+    assert result.stdout == output
+    assert result.stderr == ""
+    assert calls == [{
+        "tool": "doops",
+        "args": [
+            "-session", "audit-upgrade-test", "upgrade",
+            "--target", "synthetic-agent", "--mode", "k8s",
+            "--release", "doops-agent", "--namespace", "agents-test",
+            "--image", PINNED_IMAGE,
+            *(["--dry-run"] if dry_run else []),
         ],
-        cwd=ROOT,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+        "kubeconfig": None,
+    }]
 
+
+@pytest.mark.parametrize("status,message", [
+    (1, "forbidden: target grant required"),
+    (1, "configured target is offline"),
+    (1, "Gateway connection refused"),
+    (1, "audit_unavailable"),
+    (1, "audit_completion_failed; execution outcome requires verification"),
+    (2, "unknown tool: doops_agent_upgrade"),
+    (1, "preflight failed, nothing was changed: rollback_baseline_image_unavailable"),
+    (1, "release commit mismatch; automatic rollback completed"),
+    (1, "automatic rollback failed; intervention required"),
+    (127, "installed CLI does not support upgrade"),
+])
+def test_gateway_failure_never_retries_or_runs_a_local_controller(run_release, status, message):
+    result, calls = run_release(status=status, stdout="upgrade progress\n", stderr=message + "\n")
+    assert result.returncode == status
+    assert result.stdout == "upgrade progress\n"
+    assert result.stderr == message + "\n"
+    assert len(calls) == 1
+    assert calls[0]["tool"] == "doops"
+    assert calls[0]["args"][2] == "upgrade"
+    assert calls[0]["kubeconfig"] is None
+
+
+def test_release_preserves_cli_process_signal_semantics(run_release):
+    result, calls = run_release(terminate=True)
+    assert result.returncode == -signal.SIGTERM
+    assert len(calls) == 1
+    assert calls[0]["tool"] == "doops"
+    assert result.stdout == result.stderr == ""
+
+
+@pytest.mark.parametrize("flag", [
+    "--kubeconfig", "--values", "--chart-dir", "--cluster", "--instance",
+    "--timeout", "--handoff-timeout", "--proxy-allowed-hosts", "--host-alias", "--version",
+])
+@pytest.mark.parametrize("equals", [False, True])
+def test_retired_options_fail_before_any_tool_and_do_not_echo_payload(run_release, flag, equals):
+    canary = "SYNTHETIC_RETIRED_ARGUMENT_MUST_NOT_BE_LOGGED"
+    option = [f"{flag}={canary}"] if equals else [flag, canary]
+    result, calls = run_release(RELEASE_ARGS + option)
     assert result.returncode == 2
-    assert "not a normal workload deployment" in result.stderr
-    assert "external operator kubeconfig is required" in result.stderr
-    assert "For a Helm-managed Agent with the self-upgrade controller" in result.stderr
-    assert "upgrade --target <target> --image <repository>@sha256:<digest>" in result.stderr
-    assert "does not require a local kubeconfig" in result.stderr
-    assert "because the current Agent cannot replace its own Deployment" not in result.stderr
-    assert "TARGETING" not in result.stdout
+    assert f"{flag} is retired" in result.stderr
+    assert canary not in result.stdout + result.stderr
+    assert calls == []
 
 
-def test_bootstrap_requires_explicit_kubeconfig_before_running_cluster_tools():
-    env = os.environ.copy()
-    env.pop("KUBECONFIG", None)
-    result = subprocess.run(
-        [
-            "bash", str(RELEASE),
-            "--release", "doops-agent",
-            "--namespace", "doops-system",
-            "--values", "/not-a-real-values-file",
-            "--image", "registry.example/doops@sha256:" + "a" * 64,
-            "--dry-run",
-        ],
-        cwd=ROOT,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_new_cluster_install_is_closed_even_with_local_kubeconfig(run_release, dry_run):
+    args = [
+        "--release", "doops-agent", "--namespace", "agents-test",
+        "--image", PINNED_IMAGE, "--values", "/synthetic/complete-values.yaml",
+        "--kubeconfig", "/synthetic/kubeconfig",
+        *(["--dry-run"] if dry_run else []),
+    ]
+    result, calls = run_release(args)
     assert result.returncode == 2
-    assert "--kubeconfig (or KUBECONFIG) is required" in result.stderr
-    assert "Release complete:" not in result.stdout
+    assert "--values is retired" in result.stderr
+    assert calls == []
 
 
-def test_release_rejects_proxy_urls_before_contacting_a_target():
-    result = subprocess.run(
-        [
-            "bash",
-            str(RELEASE),
-            "--target",
-            "not-a-real-target",
-            "--session",
-            "proxy-validation",
-            "--release",
-            "doops-agent",
-            "--namespace",
-            "doops-system",
-            "--proxy-allowed-hosts",
-            "https://internal.example.com:8443/path",
-            "--image",
-            "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "a" * 64,
-            "--dry-run",
-        ],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-
+@pytest.mark.parametrize("flag", ["--target", "--session", "--release", "--namespace", "--image"])
+@pytest.mark.parametrize("value", [None, "", "   ", "--dry-run"])
+def test_required_inputs_cannot_be_omitted_or_misparsed(run_release, flag, value):
+    index = RELEASE_ARGS.index(flag)
+    args = RELEASE_ARGS[:index] + RELEASE_ARGS[index + 2:]
+    if value is not None:
+        args.extend([flag, value])
+    result, calls = run_release(args)
     assert result.returncode == 2
-    assert "entries must be exact hostnames or IPs" in result.stderr
-    assert "TARGETING" not in result.stdout
+    assert flag in result.stderr
+    assert calls == []
 
 
-def test_release_rejects_empty_proxy_entries():
-    result = subprocess.run(
-        [
-            "bash",
-            str(RELEASE),
-            "--target",
-            "not-a-real-target",
-            "--session",
-            "proxy-validation",
-            "--release",
-            "doops-agent",
-            "--namespace",
-            "doops-system",
-            "--proxy-allowed-hosts",
-            "127.0.0.1,,internal.example.com",
-            "--image",
-            "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "a" * 64,
-            "--dry-run",
-        ],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-
+@pytest.mark.parametrize("image", [
+    "registry.example.test/doops-agent:v1.2.3",
+    "registry.example.test/doops-agent",
+    "registry.example.test/doops-agent@sha256:" + "a" * 63,
+    "registry.example.test/doops-agent@sha256:" + "z" * 64,
+    "registry.example.test/doops-agent@sha256:" + "a" * 64 + "\n",
+])
+def test_image_must_be_pinned_without_local_resolution(run_release, image):
+    result, calls = run_release(RELEASE_ARGS[:-1] + [image])
     assert result.returncode == 2
-    assert "contains an empty entry" in result.stderr
-    assert "TARGETING" not in result.stdout
+    assert "--image must be repository@sha256:<64-hex>" in result.stderr
+    assert calls == []
 
 
-def test_release_rejects_invalid_host_alias_before_contacting_a_target():
-    result = subprocess.run(
-        [
-            "bash",
-            str(RELEASE),
-            "--target",
-            "not-a-real-target",
-            "--session",
-            "host-alias-validation",
-            "--release",
-            "doops-agent",
-            "--namespace",
-            "doops-system",
-            "--host-alias",
-            "https://demo.example.com=not-an-ip",
-            "--image",
-            "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "a" * 64,
-            "--dry-run",
-        ],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-
+@pytest.mark.parametrize("extra", [
+    ["unexpected-positional"],
+    ["--token", "SYNTHETIC_TOKEN_MUST_NOT_BE_LOGGED"],
+    ["--allow-missing-rollback-baseline"],
+    ["--rollback"],
+])
+def test_unknown_arguments_cannot_change_or_bypass_the_transaction(run_release, extra):
+    result, calls = run_release(RELEASE_ARGS + extra)
     assert result.returncode == 2
-    assert "--host-alias HOST must be an exact hostname" in result.stderr
-    assert "TARGETING" not in result.stdout
+    assert "unsupported argument" in result.stderr
+    assert "SYNTHETIC_TOKEN_MUST_NOT_BE_LOGGED" not in result.stdout + result.stderr
+    assert calls == []
 
 
-def test_release_rejects_conflicting_host_aliases():
-    result = subprocess.run(
-        [
-            "bash",
-            str(RELEASE),
-            "--target",
-            "not-a-real-target",
-            "--session",
-            "host-alias-validation",
-            "--release",
-            "doops-agent",
-            "--namespace",
-            "doops-system",
-            "--host-alias",
-            "demo.example.com=47.114.103.22",
-            "--host-alias",
-            "demo.example.com=192.168.150.228",
-            "--image",
-            "docker.cnb.cool/l8ai/ai/doops.sh@sha256:" + "a" * 64,
-            "--dry-run",
-        ],
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+def test_missing_cli_cannot_reach_local_tools(run_release):
+    result, calls = run_release(cli=False)
+    assert result.returncode == 1
+    assert "install the published doops CLI" in result.stderr
+    assert calls == []
 
-    assert result.returncode == 2
-    assert "assigns conflicting IPs to demo.example.com" in result.stderr
-    assert "TARGETING" not in result.stdout
+
+def test_help_states_preview_and_first_upgrade_limits_without_running_tools(run_release):
+    result, calls = run_release(["--help"])
+    assert result.returncode == 0
+    assert "Gateway parameter preview only" in result.stdout
+    assert "does not implement that first-upgrade path" in result.stdout
+    assert "doops -session <s> exec --target <t>" in result.stdout
+    assert "backup" in result.stdout and "automatic rollback" in result.stdout
+    assert calls == []

@@ -29,9 +29,9 @@ Doops CLI / Skill 安装脚本（不部署或升级 Agent）
   Config: ~/.agent/skills/doops/config.json
 
 安装包来源:
-  CLI 从发布 Release Assets 下载指定 --version 的 doops-<os>-<arch> 与 checksums.txt
-  默认 CNB；需要从 GitHub Release 等镜像安装时设置 DOOPS_RELEASE_ASSET_BASE 为该发布的
-  releases/download 前缀（只接受 https，回环地址可用于测试）
+  CLI 从 GitHub Releases 下载指定 --version 的 doops-<os>-<arch> 与 checksums.txt
+  默认 https://github.com/symansun/doops/releases/download；需要从其它镜像安装时设置
+  DOOPS_RELEASE_ASSET_BASE 为该发布的 releases/download 前缀（只接受 https，回环地址可用于测试）
   普通用户安装不在用户机器或 target 机器上编译
 
 更新行为:
@@ -84,13 +84,10 @@ TARGET_INSTANCE=""
 TARGET_ALIASES=""
 TARGET_USE="Doops managed node"
 TARGET_USE_SET=false
-CNB_RELEASE_ASSET_BASE="https://cnb.cool/l8ai/ai/doops.sh/-/releases/download"
-RELEASE_ASSET_BASE="${DOOPS_RELEASE_ASSET_BASE:-${CNB_RELEASE_ASSET_BASE}}"
+GITHUB_RELEASE_ASSET_BASE="https://github.com/symansun/doops/releases/download"
+RELEASE_ASSET_BASE="${DOOPS_RELEASE_ASSET_BASE:-${GITHUB_RELEASE_ASSET_BASE}}"
 RELEASE_ASSET_BASE="${RELEASE_ASSET_BASE%/}"
-RELEASE_SOURCE="cnb-release-assets"
-if [[ "${RELEASE_ASSET_BASE}" != "${CNB_RELEASE_ASSET_BASE}" ]]; then
-  RELEASE_SOURCE="${RELEASE_ASSET_BASE}"
-fi
+RELEASE_SOURCE="${RELEASE_ASSET_BASE}"
 
 restore_install_path() {
   local destination="$1" backup="$2"

@@ -92,6 +92,10 @@
 
 html {
   background-color: var(--background);
+  /* Always reserve the vertical scrollbar: pages that do not scroll would
+     otherwise center their content ~5px to the right of pages that do, and the
+     left/right margins stop matching between routes. */
+  overflow-y: scroll;
 }
 
 body {

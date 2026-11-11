@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { fetchAudit, type AuditEvent, type Session, type Target } from "@/lib/client"
+import { fetchAudit, sessionIsAdmin, type AuditEvent, type Session, type Target } from "@/lib/client"
 import {
   AUDIT_ACTIONS,
   AUDIT_STATUSES,
@@ -9,6 +9,9 @@ import {
   type AuditScope,
 } from "@/lib/gateway"
 import { HistoryIcon, RefreshIcon } from "./icons"
+
+const PAGE_SIZE = 50
+const inputClass = "h-9 min-w-0 rounded-md border bg-background px-2.5 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/25"
 
 function fmtTime(s?: string) {
   if (!s) return "—"
@@ -19,33 +22,50 @@ function fmtTime(s?: string) {
   }
 }
 
+function duration(event: AuditEvent) {
+  if (!event.started_at || !event.ended_at) return "—"
+  const milliseconds = Date.parse(event.ended_at) - Date.parse(event.started_at)
+  return Number.isFinite(milliseconds) && milliseconds >= 0 ? `${(milliseconds / 1000).toFixed(2)} s` : "—"
+}
+
 export function AuditPanel({
   session,
   target,
   sessionId,
+  operationId = "",
 }: {
   session: Session
   target: Target
   sessionId: string
+  operationId?: string
 }) {
   const [events, setEvents] = useState<AuditEvent[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
-  const [scope, setScope] = useState<AuditScope>("target")
+  const [scope, setScope] = useState<AuditScope>(operationId ? "operation" : "target")
   const [action, setAction] = useState("")
   const [status, setStatus] = useState("")
   // 输入框的草稿；按回车或点「查询」后才写入 credentialId 并发起查询。
   const [credentialInput, setCredentialInput] = useState("")
   const [credentialId, setCredentialId] = useState("")
+  const [operationInput, setOperationInput] = useState(operationId)
+  const [correlationId, setCorrelationId] = useState(operationId)
+  const [since, setSince] = useState("")
+  const [until, setUntil] = useState("")
+  const [hideObserve, setHideObserve] = useState(true)
+  const [hasMore, setHasMore] = useState(false)
   const [hint, setHint] = useState("")
   const requestId = useRef(0)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (beforeId?: number) => {
     const id = ++requestId.current
     setError("")
     setHint("")
-    setEvents([])
-    const plan = auditQueryParams({ scope, target, sessionId, credentialId, action, status, limit: 50 })
+    if (beforeId === undefined) {
+      setEvents([])
+      setHasMore(false)
+    }
+    const plan = auditQueryParams({ scope, target, sessionId, credentialId, action, status, limit: PAGE_SIZE, correlationId, beforeId, since, until, hideUpgradeObserve: hideObserve })
     if (!plan.ok) {
       setLoading(false)
       if (plan.reason === "missing") setHint(plan.message)
@@ -59,13 +79,13 @@ export function AuditPanel({
       if (id !== requestId.current) return
       if (r.error) {
         setError(r.status === 403 ? "当前账号无权查看此审计范围" : r.error)
-        setEvents([])
       } else {
-        setEvents(r.events || [])
+        const page = r.events || []
+        setEvents((previous) => beforeId === undefined ? page : [...previous, ...page.filter((event) => !previous.some((item) => item.id === event.id))])
+        setHasMore(page.length === PAGE_SIZE)
       }
     } catch (err) {
       if (id !== requestId.current) return
-      setEvents([])
       setError(err instanceof Error ? err.message : "查询审计失败")
     } finally {
       if (id === requestId.current) setLoading(false)
@@ -73,7 +93,7 @@ export function AuditPanel({
     // The target poll replaces the object on every heartbeat; reload only when
     // the target itself changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, target.cluster, target.instance, sessionId, scope, action, status, credentialId])
+  }, [session, target.cluster, target.instance, sessionId, scope, action, status, credentialId, correlationId, since, until, hideObserve])
 
   function submitCredential() {
     const next = credentialInput.trim()
@@ -101,12 +121,13 @@ export function AuditPanel({
             <option value="target">该目标</option>
             <option value="session">本会话</option>
             <option value="self">本人跨目标</option>
-            <option value="global">全局（管理员）</option>
+            <option value="global" disabled={!sessionIsAdmin(session)}>全局（管理员）</option>
             <option value="credential">按凭据</option>
+            <option value="operation">按操作</option>
           </select>
           {scope === "credential" && (
             <form
-              className="flex items-center gap-2"
+              className="flex w-full flex-wrap items-center gap-2 sm:w-auto"
               onSubmit={(e) => {
                 e.preventDefault()
                 submitCredential()
@@ -117,7 +138,7 @@ export function AuditPanel({
                 onChange={(e) => setCredentialInput(e.target.value)}
                 placeholder="cred_…"
                 spellCheck={false}
-                className="h-9 w-72 rounded-md border bg-background px-2.5 font-mono text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/25"
+                className={`${inputClass} w-full font-mono sm:w-72`}
                 aria-label="凭据 ID"
               />
               <button
@@ -127,6 +148,19 @@ export function AuditPanel({
               >
                 查询
               </button>
+            </form>
+          )}
+          {scope === "operation" && (
+            <form className="flex w-full flex-wrap items-center gap-2 sm:w-auto" onSubmit={(e) => {
+              e.preventDefault()
+              const next = operationInput.trim()
+              setOperationInput(next)
+              if (next === correlationId) void load()
+              else setCorrelationId(next)
+            }}>
+              <input aria-label="操作 ID" value={operationInput} onChange={(e) => setOperationInput(e.target.value)} spellCheck={false}
+                className={`${inputClass} w-full font-mono sm:w-80`} placeholder="upgrade_operation_id" />
+              <button type="submit" disabled={loading} className="h-9 rounded-md border px-3 text-sm hover:bg-muted disabled:opacity-50">查询</button>
             </form>
           )}
           <select
@@ -161,27 +195,32 @@ export function AuditPanel({
             <span className="break-all font-mono text-sm text-foreground">{sessionId}</span>
           )}
           <button
-            onClick={load}
+            onClick={() => load()}
             disabled={loading}
             className="flex h-9 items-center gap-1.5 rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
           >
             <RefreshIcon width={14} height={14} className={loading ? "animate-spin" : ""} /> 刷新
           </button>
         </div>
+        <div className="flex w-full flex-wrap items-center gap-3 text-sm text-muted-foreground">
+          <label className="flex min-w-0 flex-wrap items-center gap-2">开始时间<input type="datetime-local" aria-label="开始时间" value={since} onChange={(e) => setSince(e.target.value)} className={inputClass} /></label>
+          <label className="flex min-w-0 flex-wrap items-center gap-2">结束时间<input type="datetime-local" aria-label="结束时间" value={until} onChange={(e) => setUntil(e.target.value)} className={inputClass} /></label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={!hideObserve} onChange={(e) => setHideObserve(!e.target.checked)} />显示升级进行中的轮询</label>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
         <p className="mb-4 max-w-4xl text-sm leading-6 text-muted-foreground">
-          普通用户仅查看本人记录；管理员可查看全局，凭据审计另按授权范围可见。最近 50 条。
+          普通用户仅查看本人记录；管理员可查看全局，凭据审计另按授权范围可见。每页 50 条，已加载 {events.length} 条。
           {scope === "credential" && " 按凭据查询覆盖创建、写入版本、激活、授权、验证和吊销；部署时使用凭据、从 Secret 导入记在部署会话下，请按「该目标」或「本会话」查询。"}
         </p>
         {hint && <p className="mb-3 text-sm text-muted-foreground">{hint}</p>}
         {error && (
-          <p className="mb-3 rounded-lg bg-destructive/15 px-3 py-2 text-sm text-destructive">
+          <p role="alert" className="mb-3 rounded-lg bg-destructive/15 px-3 py-2 text-sm text-destructive">
             {error}
           </p>
         )}
-        {loading && <p className="mb-3 text-sm text-muted-foreground">正在查询审计记录…</p>}
+        {loading && <p role="status" className="mb-3 text-sm text-muted-foreground">正在查询审计记录…</p>}
         {!error && !hint && events.length === 0 && !loading && (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
             <HistoryIcon width={28} height={28} />
@@ -199,7 +238,7 @@ export function AuditPanel({
                   className={`rounded-md px-2 py-1 text-sm font-medium ${
                     e.status === "success"
                       ? "bg-success/15 text-success"
-                      : e.status === "running" || e.status === "executing"
+                      : ["running", "executing", "accepted", "observing"].includes(e.status || "")
                         ? "bg-warning/15 text-warning"
                         : "bg-destructive/15 text-destructive"
                   }`}
@@ -211,6 +250,16 @@ export function AuditPanel({
                 </span>
               </div>
               <div className="mt-3 grid min-w-0 gap-x-5 gap-y-1.5 text-sm leading-6 text-muted-foreground sm:grid-cols-2">
+                <span className="break-all"><strong className="font-medium text-foreground/80">审计 ID</strong> {e.id}</span>
+                <span><strong className="font-medium text-foreground/80">耗时</strong> {duration(e)}</span>
+                <span className="break-all"><strong className="font-medium text-foreground/80">输入 / 输出</strong> {e.bytes_in ?? 0} / {e.bytes_out ?? 0} B</span>
+                {e.correlation_id && (
+                  <button className="min-w-0 break-all text-left font-mono text-primary underline underline-offset-2" onClick={() => {
+                    setOperationInput(e.correlation_id!)
+                    setCorrelationId(e.correlation_id!)
+                    setScope("operation")
+                  }} title="查询本操作的审计记录">操作 {e.correlation_id}</button>
+                )}
                 <span className="min-w-0 break-all"><strong className="font-medium text-foreground/80">用户</strong> {e.user_id || "—"}</span>
                 <span className="min-w-0 break-all"><strong className="font-medium text-foreground/80">Token</strong> {e.token_id || "—"}</span>
                 <span className="min-w-0 break-all"><strong className="font-medium text-foreground/80">目标</strong> {e.cluster || "—"}/{e.instance || "—"}</span>
@@ -232,6 +281,12 @@ export function AuditPanel({
             </li>
           ))}
         </ul>
+        {events.length > 0 && (
+          <div className="mt-4 flex justify-center">
+            {hasMore ? <button disabled={loading} onClick={() => load(events[events.length - 1].id)} className="rounded-md border px-4 py-2 text-sm hover:bg-muted disabled:opacity-50">加载更早记录</button>
+              : <p className="text-sm text-muted-foreground">已加载全部匹配记录</p>}
+          </div>
+        )}
       </div>
     </div>
   )

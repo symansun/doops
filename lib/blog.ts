@@ -57,11 +57,6 @@ export function blogRoot(root: string = process.cwd()): string {
   return join(root, "blog")
 }
 
-/** `blog/images`, the only directory the image route may serve from. */
-export function blogImagesRoot(root: string = process.cwd()): string {
-  return join(blogRoot(root), "images")
-}
-
 /**
  * Split a Markdown document into front matter and body. Documents without a
  * leading `---` block are returned as body-only, so a missing header never

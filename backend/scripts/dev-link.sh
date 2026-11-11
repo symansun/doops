@@ -13,7 +13,7 @@
 #
 # 它不做什么:
 #   不发布、不打 tag、不碰 Gateway 或任何 target。正式发布仍然走
-#   backend/scripts/install.sh 从 CNB Release Assets 安装。
+#   backend/scripts/install.sh 从 GitHub Releases 安装。
 #
 # 用法:
 #   bash scripts/dev-link.sh              # 构建 + 建链
@@ -73,16 +73,6 @@ done
 
 PROJECT_PATH="$(cd "${PROJECT_PATH}" && pwd)"
 SKILL_DIR="${PROJECT_PATH}/.agent/skills/doops"
-
-link_target() {
-  # 打印当前路径是否已经是指向期望目标的软链接。
-  local path="$1"
-  local want="$2"
-  [[ -L "${path}" ]] || return 1
-  local have
-  have="$(cd "$(dirname "${path}")" && readlink "${path}")"
-  [[ "${have}" == "${want}" ]]
-}
 
 unlink_path() {
   local path="$1"

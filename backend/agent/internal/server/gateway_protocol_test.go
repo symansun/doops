@@ -1392,12 +1392,9 @@ func TestGatewayDispatchesTaggedAndPinnedAgentUpgrade(t *testing.T) {
 	if gw.getAgent("dev", "local") == nil {
 		t.Fatal("tagged self-upgrade disconnected the agent")
 	}
-	var running int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM upgrade_operations WHERE status = 'running'`).Scan(&running); err != nil {
-		t.Fatalf("count running upgrade operations: %v", err)
-	}
-	if running != 0 {
-		t.Fatalf("tagged self-upgrade left %d running operations", running)
+	events, err := store.ListAuditFiltered(AuditFilter{Action: ActionAgentUpgrade, Limit: 10})
+	if err != nil || len(events) != 1 || events[0].CorrelationID == "" || events[0].Tail == "" {
+		t.Fatalf("upgrade did not persist correlated result evidence: events=%#v err=%v", events, err)
 	}
 
 	dryRunArgs, _ := json.Marshal(map[string]interface{}{
@@ -3128,7 +3125,7 @@ func gatewayTestInitializeResult(runtimeID string) map[string]interface{} {
 	return map[string]interface{}{
 		"protocolVersion": "2024-11-05",
 		"runtimeId":       runtimeID,
-		"capabilities":    map[string]interface{}{"protocols": map[string]interface{}{}},
+		"capabilities":    map[string]interface{}{"protocols": map[string]interface{}{upgradeAuditProtocol: upgradeAuditCapability()}},
 	}
 }
 
@@ -3165,6 +3162,16 @@ func serveFakeAgentWithRuntimeID(t *testing.T, conn *websocket.Conn, runtimeID s
 			})
 		case "tools/call":
 			params, _ := msg["params"].(map[string]interface{})
+			if params["name"] == "doops_agent_upgrade" {
+				args, _ := params["arguments"].(map[string]interface{})
+				outcome := "accepted"
+				if args["dry_run"] == true {
+					outcome = "dry_run"
+				}
+				result := upgradeAuditTestResult(upgradeAuditCall{args: args}, outcome, "self-upgrade-"+outcome)
+				_ = conn.WriteJSON(map[string]interface{}{"jsonrpc": "2.0", "id": msg["id"], "result": result})
+				continue
+			}
 			_ = conn.WriteJSON(map[string]interface{}{
 				"jsonrpc": "2.0",
 				"method":  "notifications/message",

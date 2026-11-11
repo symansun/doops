@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import { useEffect, useState } from "react"
 import { fetchTargets, login, persistTokenSession, type Session } from "@/lib/client"
 import { DEMO_TOKEN } from "@/lib/demo"
@@ -178,6 +179,12 @@ export function ConnectScreen({
 
         <p className="mt-4 text-center text-xs text-muted-foreground">
           登录会话由当前工作台的 HttpOnly Cookie 保存，业务请求统一经过 Gateway 授权。
+        </p>
+
+        <p className="mt-2 text-center text-xs">
+          <Link href="/blog" className="text-primary underline-offset-4 hover:underline">
+            查看博客 / Blog
+          </Link>
         </p>
       </div>
     </main>

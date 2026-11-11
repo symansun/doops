@@ -55,26 +55,30 @@ target 只来自本机 Gateway-only `config.json` 与 Gateway 当前在线注册
 
 ## 当前镜像与协议
 
-当前维护版 agent 默认采用轻量双镜像发布。不带标签的 `docker pull` 使用 `latest`，它指向最近一次成功的 main CI 或版本发布构建；固定版本仍使用完整 commit SHA、发布标签或 digest。
+当前维护版 agent 默认采用轻量双镜像发布。镜像由操作方以显式 registry/repository/tag 构建并推送，
+本仓库不含镜像发布流水线；不带标签的 `docker pull` 使用 `latest`，它只表示最近一次推送的构建，
+固定版本仍使用完整 commit SHA、发布标签或 digest。
 
 ```bash
-docker pull docker.cnb.cool/l8ai/ai/doops.sh
-docker pull docker.cnb.cool/l8ai/ai/doops.sh/web
+docker pull registry.example.com/doops-agent
+docker pull registry.example.com/doops-web
 ```
 
 ```text
-docker.cnb.cool/l8ai/ai/doops.sh:latest                 # 最近一次成功构建的 Agent 镜像，等同于不写标签
-docker.cnb.cool/l8ai/ai/doops.sh/web:latest             # 最近一次成功构建的 Web 控制台镜像
-docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>  # 基础工具：buildkit / kubectl / Python+PyYAML / Helm / git / ssh client / tini / bash
-docker.cnb.cool/l8ai/ai/doops.sh:<release>             # doops-agent / 精确 doagent / skills / docs / entrypoint
+registry.example.com/doops-agent:latest                 # 最近一次推送构建的 Agent 镜像，等同于不写标签
+registry.example.com/doops-web:latest                   # 最近一次推送构建的 Web 控制台镜像
+registry.example.com/doops-agent/base-light:<release>   # 基础工具：buildkit / kubectl / Python+PyYAML / Helm / git / ssh client / tini / bash
+registry.example.com/doops-agent:<release>              # doops-agent / 精确 doagent / skills / docs / entrypoint
 ```
 
-`Dockerfile` 不提供可用的可变基础镜像默认值；占位地址会在遗漏参数时立即失败。构建时必须显式传入本次不可变 `DOOPS_AGENT_BASE_IMAGE` 和 `DO_AGENT_VERSION`，当前运行架构固定为 `linux/amd64`。
+`Dockerfile` 不提供可用的可变基础镜像默认值；缺参数会立即失败。构建时必须显式传入本次不可变的
+`DOOPS_AGENT_BASE_IMAGE` 和 `DO_AGENT_IMAGE`；`DO_AGENT_VERSION` 等版本基线从 `runtime-versions.env`
+读取并在构建时校验，当前运行架构固定为 `linux/amd64`。
 
 ```text
 Dockerfile.base.light                     # 轻量基础镜像：doagent / buildkit / kubectl / Python+PyYAML / Helm / git / ssh client / tini / bash
-docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>
-docker.cnb.cool/l8ai/ai/doops.sh:<release>
+registry.example.com/doops-agent/base-light:<release>
+registry.example.com/doops-agent:<release>
 ```
 
 `base-light` 的目标是作为纯 `doops-agent` 运行时，不再默认继承 WebIDE 启动器或
@@ -87,9 +91,10 @@ SSH 服务端。镜像保留 `ssh` 客户端，已在线 Agent 可通过结构�
 - 基础镜像源码：`Dockerfile.base.light`
 - doAgent 版本基线：`runtime-versions.env`
 - 更新镜像源码：`Dockerfile`
-- doagent 来源：最终镜像直接从 `runtime-versions.env` 的不可变 `DO_AGENT_IMAGE` 复制，不依赖基础镜像内的历史二进制
+- doagent 来源：最终镜像从显式传入的 `DO_AGENT_IMAGE` 复制，不依赖基础镜像内的历史二进制；
+  `runtime-versions.env` 保留版本与 digest 元数据用于校验
 - DoOps 只有一个发布版本：CLI、Gateway 和 Agent 统一嵌入同一个发布标签，并同时报告
-  本次 CI 的完整 `CNB_COMMIT` 作为不可变 provenance；`doops targets` 的
+  本次构建的完整 40 位源提交作为不可变 provenance；`doops targets` 的
   `RELEASE_COMMIT` 必须与 CLI 的 commit 一致
 - `DO_AGENT_VERSION` / `DO_AGENT_REVISION` 只记录内置 doagent 依赖 provenance，不是
   DoOps 发布版本；`cli-contract/v3` 只通过 `doops --contract` 暴露为协议兼容性检查，
@@ -110,8 +115,8 @@ SSH 服务端。镜像保留 `ssh` 客户端，已在线 Agent 可通过结构�
 本轮维护已清理的技术债：
 
 - 将 doagent 依赖镜像固定为公开 doAgent 的版本标签和 OCI digest，并在每层镜像中校验二进制版本
-- 将 agent 发布拆为 `doops.sh/base-light:<release>` 和 `doops.sh:<release>`，避免每次代码更新都拉取多 GiB 基础层
-- 统一发布脚本与 DaemonSet 使用 CI 产出的不可变镜像 digest
+- 将 agent 发布拆为基础镜像 `<registry>/<repository>/base-light:<release>` 和 `<registry>/<repository>:<release>`，避免每次代码更新都拉取多 GiB 基础层
+- 统一发布脚本与 DaemonSet 使用受控构建产出的不可变镜像 digest
 - 关闭默认攻击面：`agent-entrypoint.sh` 改为仅在显式 `DOOPS_ENABLE_SSHD=1` / `DOOPS_ENABLE_WEBIDE=1` 时才启动 SSH 或 WebIDE
 - 标准运行镜像保留出站 SSH 客户端，但不安装或启动 SSH 服务端
 - 将 doagent 旧叙述收敛为当前 doagent ACP HTTP 路径
@@ -134,25 +139,30 @@ bash scripts/build-gateway.sh
 
 面向外部系统的 API 使用指南见 [docs/DOOPS_API_GUIDE.md](docs/DOOPS_API_GUIDE.md)，包括登录、目标查询、WebSocket JSON-RPC、自然语言部署、进度流和审计查询。
 
-## Agent 双镜像发布
+## Agent 双镜像构建
 
-版本化 CNB Release Workflow 负责测试、构建并发布两类镜像：
+本仓库不含镜像发布流水线。操作方使用 `scripts/build-agent-base-image.sh`、
+`scripts/build-agent-image.sh` 构建并推送两类镜像；脚本要求显式给出
+`DOOPS_IMAGE_REGISTRY`、`DOOPS_IMAGE_REPOSITORY`、`DOOPS_SOURCE_COMMIT`（完整 40 位）
+和 `DOOPS_IMAGE_TAG`（基础镜像脚本用 `DOOPS_BASE_RELEASE_TAG`），并显式传入已固定 digest 的
+`DO_AGENT_IMAGE`、`DOOPS_AGENT_BASE_IMAGE`；缺任一输入立即失败：
 
 ```text
-docker.cnb.cool/l8ai/ai/doops.sh/base-light:<release>
-docker.cnb.cool/l8ai/ai/doops.sh:<release>
+registry.example.com/doops-agent/base-light:<release>
+registry.example.com/doops-agent:<release>
 ```
 
 分层边界：
 
-- `doops.sh/base-light`：doagent、BuildKit、kubectl、系统包、通用运行工具；变化频率低，拉取成本高。
-- `doops.sh`：`/app/doops-agent`、`/app/skills`、`/app/self-docs`、entrypoint；变化频率高，拉取成本低。
+- `doops-agent/base-light`：doagent、BuildKit、kubectl、系统包、通用运行工具；变化频率低，拉取成本高。
+- `doops-agent`：`/app/doops-agent`、`/app/skills`、`/app/self-docs`、entrypoint；变化频率高，拉取成本低。
 
-禁止把基础 rootfs 压平成每次 release 都变化的大层。CI 可以生成 release tag
-供制品发现，但线上升级必须把选中的 `doops.sh` 解析并固定为 OCI digest；节点仍可
+禁止把基础 rootfs 压平成每次 release 都变化的大层。操作方可以推送 release tag
+供制品发现，但线上升级必须把选中的 `doops-agent` 解析并固定为 OCI digest；节点仍可
 复用已缓存的基础层，同时避免 tag 漂移造成不可复现发布。
 
-CNB 非同名制品必须使用仓库下级路径，例如 `docker.cnb.cool/l8ai/ai/doops.sh/base-light:v1`。不要写成 `docker.cnb.cool/l8ai/ai/doops.sh-base-light:v1`，那会发布到另一个制品名，也无法被当前 release 流水线复用。
+基础镜像必须作为独立 repository 发布（例如 `<registry>/<repository>/base-light`）；
+不要把它做成 Agent repository 的某种别名。
 
 ## 固定路径
 
@@ -162,7 +172,8 @@ CNB 非同名制品必须使用仓库下级路径，例如 `docker.cnb.cool/l8ai
 - CLI 唯一默认配置：`~/.agent/skills/doops/config.json`
 - Gateway 登录态：`~/.agent/skills/doops/auth.json`
 - Gateway target 只保存路由；同一 Gateway 的所有 target 共享按 Gateway URL 保存的一份登录态
-- CLI 发布资产：`DOOPS_RELEASE_ASSET_BASE` 指向的 Release 上的 `doops-<os>-<arch>` 与 `checksums.txt`（默认 CNB Release Assets；GitHub 公开发布线 v0.2.x 用 GitHub Release 地址）
+- CLI 发布资产：`DOOPS_RELEASE_ASSET_BASE` 指向的 Release 上的 `doops-<os>-<arch>` 与 `checksums.txt`
+  （默认 `https://github.com/symansun/doops/releases/download`）
 
 `~/.config/doops/`、`~/.doops/` 和项目 `.doops/` 不属于当前 CLI 状态目录。`DOOPS_CONFIG=/path/to/config.json` 只改变配置文件位置，不放宽 Gateway-only schema 校验。
 
@@ -210,14 +221,14 @@ doops skill 的权威源码在本仓库 `skills/SKILL.md`。不要在用户项�
 安装脚本从下载的 CLI 内嵌 commit 读取 skill/docs，不复制当前未发布工作区。
 
 ```bash
-git clone https://cnb.cool/l8ai/ai/doops.sh.git
-cd doops.sh
+git clone https://github.com/symansun/doops.git
+cd doops
 bash scripts/install.sh --version <release-tag> --project /absolute/path/to/your/project
 ```
 
 这一步会完成：
 
-1. 从 `DOOPS_RELEASE_ASSET_BASE`（默认 CNB Release Assets）下载指定版本的 CLI 和 `checksums.txt`，校验后原子替换 `~/.local/bin/doops`
+1. 从 `DOOPS_RELEASE_ASSET_BASE`（默认 `https://github.com/symansun/doops/releases/download`）下载指定版本的 CLI 和 `checksums.txt`，校验后原子替换 `~/.local/bin/doops`
 2. 把同一 commit 的 `skills/SKILL.md` 和 `docs/*.md` 同步到当前项目及全局客户端副本；分发范围、运行态保留和失败恢复见[安装指南](docs/CLUSTER_INSTALL_GUIDE.md)
 
 若本地 Git 对象缺少该提交或必需文件，安装器在覆盖现有安装前停止；获取指定发布提交后
@@ -428,12 +439,12 @@ Gateway 身份和可共享的 `/root/.kube` 或 `/root/.kube/config` 挂载。Jo
 ```bash
 doops -session agent-upgrade upgrade \
   --target demo \
-  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest> \
+  --image registry.example.com/doops-agent@sha256:<digest> \
   --dry-run
 
 doops -session agent-upgrade upgrade \
   --target demo \
-  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest>
+  --image registry.example.com/doops-agent@sha256:<digest>
 ```
 
 镜像支持 tag 或不可变 digest。Job 在 Agent 进程外执行 Helm；Job 内失败会尝试回滚，Job 成功后协议探针失败的回滚仍依赖 target 可连接。还没有该控制器的旧 Agent 仍用 `scripts/release-managed-agent.sh`。入口及前提统一见 [集群接入指南](docs/CLUSTER_INSTALL_GUIDE.md)。
@@ -448,13 +459,14 @@ Job、最终 Deployment 状态和能力检查通过后才报告 `OK`。新集群
 
 ```bash
 git tag v1.2.4
-git push cnb v1.2.4
-cnb build start-build --repo l8ai/ai/doops.sh --tag v1.2.4 --event api_trigger_release
+git push origin v1.2.4
 ```
 
-发版流水线运行在云原生开发节点上，扣开发配额；CNB 不允许 tag_push 事件使用 vscode service，所以推 tag 不会自动发版，需要用上面的命令从该 tag 触发。
-
-CNB 的 `main` push 会构建并推送以 commit SHA 命名的 Agent 镜像。从 tag 触发的 `api_trigger_release` 则在完整测试后推送同 tag 的 Agent 与 Web 镜像并同时更新 `latest`，构建四个平台 CLI、生成 `checksums.txt`、上传到同名 Release，并从公开下载入口回读校验。二进制不进入 Git。
+`.github/workflows/release.yml` 在 tag 上复用完整 CI（Go/Web 测试、Python 契约测试和 secret scan）
+作为门禁，`backend/scripts/build-cli.sh --all` 构建四个平台 CLI、`doops-gateway-linux-amd64`
+和 `doops-skill.tar.gz`，生成 `checksums.txt`，上传为不可变 GitHub Release，并从公开下载入口
+回读校验后重新安装验证。二进制不进入 Git。Agent 与 Web 镜像不在本仓库发布：由操作方显式
+提供 registry/repository/tag 与源提交构建推送。
 
 ## 边界
 

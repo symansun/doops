@@ -88,6 +88,8 @@ jobs:
     # A rejected tag fails in prepare; do not spend a full test run on it.
     needs: prepare
     uses: ./.github/workflows/ci.yml
+    with:
+      source_commit: ${{ needs.prepare.outputs.commit }}
 
   build:
     name: Build release assets

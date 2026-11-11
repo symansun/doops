@@ -423,14 +423,5 @@ func ensureCOSTransfer(server Server, session, token string, transfer cosTransfe
 }
 
 func pushCOS(server Server, src, dest string, dryRun bool, session, credential, token string, transfer cosTransfer) (string, error) {
-	modeTransfer := transfer
-	if !dryRun && modeTransfer == nil {
-		client, err := newGatewayCOS(server, token, session)
-		if err != nil {
-			return "", err
-		}
-		defer client.Close()
-		modeTransfer = client
-	}
-	return pushSnapshot(server, src, dest, dryRun, nil, session, nil, "cos", credential, token, modeTransfer)
+	return pushSnapshot(server, src, dest, dryRun, nil, session, nil, "cos", credential, token, transfer)
 }

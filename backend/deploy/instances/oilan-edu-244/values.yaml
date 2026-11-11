@@ -1,5 +1,5 @@
 image:
-  repository: docker.cnb.cool/l8ai/ai/doops.sh
+  repository: registry.example.com/doops-agent
   digest: sha256:7b3e213db1cdb4e4576e2f985b3edef2a8c12fb4ce773840e8e67d4df5ea096b
   pullPolicy: Always
 

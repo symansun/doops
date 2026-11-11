@@ -1,6 +1,0 @@
-workspace:
-  launch:
-    button:
-      name: VS Code + Codex
-      description: 预装 code-server 和 Codex，启动时注入 API Key，执行不再等待授权
-    autoOpenWebIDE: true

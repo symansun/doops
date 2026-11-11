@@ -137,10 +137,6 @@ func (r *AgentRegistry) Unregister(agent *GatewayAgent) error {
 	return nil
 }
 
-func (r *AgentRegistry) Touch(agent *GatewayAgent, lastSeen time.Time) error {
-	return r.TouchContext(context.Background(), agent, lastSeen)
-}
-
 func (r *AgentRegistry) TouchContext(ctx context.Context, agent *GatewayAgent, lastSeen time.Time) error {
 	r.mu.RLock()
 	current := r.sessions[agent.Key]

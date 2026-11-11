@@ -177,10 +177,6 @@ function splitVersion(version: string): { core: number[]; pre: string[] } {
   return { core, pre }
 }
 
-export function latestRelease(releases: ChangelogRelease[]): ChangelogRelease | null {
-  return releases.length ? releases[0] : null
-}
-
 // Range selection: "since" is the version seen last (exclusive, so the dialog
 // starts at the release after it), "count" is the latest N releases. An
 // unknown "since" older than the first entry means "show everything"; one at

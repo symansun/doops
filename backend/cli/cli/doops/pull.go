@@ -174,10 +174,3 @@ func runGit(env []string, dir string, args ...string) error {
 	}
 	return nil
 }
-
-func firstLine(s string) string {
-	if idx := strings.IndexByte(s, '\n'); idx >= 0 {
-		return strings.TrimSpace(s[:idx])
-	}
-	return strings.TrimSpace(s)
-}

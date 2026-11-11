@@ -32,6 +32,7 @@ export interface AuditEvent {
   bytes_out?: number
   started_at?: string
   ended_at?: string
+  correlation_id?: string
 }
 
 export interface AuditSummary {
@@ -44,7 +45,7 @@ export interface AuditSummary {
   status?: Record<string, number>
 }
 
-export type AuditScope = "target" | "session" | "self" | "global" | "credential"
+export type AuditScope = "target" | "session" | "self" | "global" | "credential" | "operation"
 
 export const AUDIT_ACTIONS = [
   "exec",
@@ -58,6 +59,7 @@ export const AUDIT_ACTIONS = [
   "clean",
   "proxy",
   "agent:upgrade",
+  "audit:purge",
   "targets:list",
   "credential:create",
   "credential:metadata",
@@ -75,6 +77,8 @@ export const AUDIT_ACTIONS = [
 export const AUDIT_STATUSES = [
   "running",
   "executing",
+  "accepted",
+  "observing",
   "outcome_unknown",
   "success",
   "error",
@@ -94,6 +98,11 @@ export interface AuditQueryInput {
   action: string
   status: string
   limit: number
+  correlationId?: string
+  beforeId?: number
+  since?: string
+  until?: string
+  hideUpgradeObserve?: boolean
 }
 
 export type AuditQueryPlan =
@@ -105,6 +114,9 @@ const CREDENTIAL_ID = /^cred_[0-9a-f]{24}$/
 // 审计页的查询参数。凭据的资源级审计（写入版本、激活、授权、验证、吊销）不带目标，
 // session 字段存凭据 ID，所以「按凭据」只发 session=<id>；可见性由 Gateway 按本人和凭据归属判断。
 export function auditQueryParams(input: AuditQueryInput): AuditQueryPlan {
+  if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 200) {
+    return { ok: false, reason: "invalid", message: "每页条数须为 1–200" }
+  }
   const params: Record<string, string> = { limit: String(input.limit) }
   switch (input.scope) {
     case "target":
@@ -128,7 +140,24 @@ export function auditQueryParams(input: AuditQueryInput): AuditQueryPlan {
       params.session = id
       break
     }
+    case "operation":
+      if (!input.correlationId?.trim()) return { ok: false, reason: "missing", message: "填写操作 ID 后查询该操作的审计记录" }
+      params.correlation_id = input.correlationId.trim()
+      break
   }
+  if (input.beforeId !== undefined) {
+    if (!Number.isSafeInteger(input.beforeId) || input.beforeId <= 0) return { ok: false, reason: "invalid", message: "审计分页游标无效" }
+    params.before_id = String(input.beforeId)
+  }
+  for (const [key, value] of [["since", input.since], ["until", input.until]] as const) {
+    if (!value) continue
+    if (Number.isNaN(Date.parse(value))) return { ok: false, reason: "invalid", message: "审计时间格式无效" }
+    params[key] = new Date(value).toISOString()
+  }
+  if (params.since && params.until && params.since >= params.until) {
+    return { ok: false, reason: "invalid", message: "开始时间必须早于结束时间" }
+  }
+  if (input.hideUpgradeObserve !== undefined) params.hide_upgrade_observe = String(input.hideUpgradeObserve)
   if (input.action) params.action = input.action
   if (input.status) params.status = input.status
   return { ok: true, params }
@@ -153,15 +182,6 @@ export function toWsBase(gateway: string): string {
   if (trimmed.startsWith("http://")) return "ws://" + trimmed.slice("http://".length)
   if (trimmed.startsWith("wss://") || trimmed.startsWith("ws://")) return trimmed
   return "ws://" + trimmed
-}
-
-// 规整 http 基地址
-export function toHttpBase(gateway: string): string {
-  const trimmed = gateway.trim().replace(/\/+$/, "")
-  if (trimmed.startsWith("ws://")) return "http://" + trimmed.slice("ws://".length)
-  if (trimmed.startsWith("wss://")) return "https://" + trimmed.slice("wss://".length)
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) return trimmed
-  return "http://" + trimmed
 }
 
 export function resolveDefaultGateway(savedGateway: string | null, currentOrigin: string): string {

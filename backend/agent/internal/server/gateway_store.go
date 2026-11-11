@@ -197,14 +197,18 @@ type AuditFinish struct {
 }
 
 type AuditFilter struct {
-	UserID   string
-	Cluster  string
-	Instance string
-	Session  string
-	Action   GatewayAction
-	Status   string
-	Limit    int
-	BeforeID int64
+	UserID             string
+	Cluster            string
+	Instance           string
+	Session            string
+	Action             GatewayAction
+	Status             string
+	Limit              int
+	BeforeID           int64
+	CorrelationID      string
+	Since              time.Time
+	Until              time.Time
+	HideUpgradeObserve bool
 	// VisibleToUser restricts a non-admin query to that user's own events and
 	// events that reference a credential they own. Empty means no extra scope.
 	VisibleToUser string
@@ -326,19 +330,6 @@ func (s *GatewayStore) migrate() error {
 			archived_at TEXT NOT NULL DEFAULT '',
 			archived_by TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY(cluster, instance)
-		)`,
-		`CREATE TABLE IF NOT EXISTS upgrade_operations (
-			id TEXT PRIMARY KEY,
-			cluster TEXT NOT NULL,
-			instance TEXT NOT NULL,
-			image TEXT NOT NULL,
-			old_generation INTEGER NOT NULL,
-			old_runtime_id TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL,
-			phase TEXT NOT NULL,
-			error TEXT NOT NULL DEFAULT '',
-			started_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS audit_events (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -518,9 +509,6 @@ func (s *GatewayStore) migrate() error {
 		return err
 	}
 	if err := s.ensureColumn("agent_status", "archived_by", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-	if err := s.ensureColumn("upgrade_operations", "old_runtime_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	for _, column := range []struct {
@@ -827,10 +815,6 @@ func (s *GatewayStore) MarkAllAgentsOffline() error {
 	return err
 }
 
-func (s *GatewayStore) TouchAgent(cluster, instance string, generation uint64, lastSeen time.Time) error {
-	return s.TouchAgentContext(context.Background(), cluster, instance, generation, lastSeen)
-}
-
 func (s *GatewayStore) TouchAgentContext(
 	ctx context.Context,
 	cluster,
@@ -948,14 +932,6 @@ func (s *GatewayStore) UnarchiveAgentStatus(cluster, instance string) (AgentStat
 	return s.agentStatus(s.db, cluster, instance)
 }
 
-func (s *GatewayStore) RetireRunningUpgradeOperations(errMsg string) error {
-	_, err := s.db.Exec(`UPDATE upgrade_operations
-		SET phase = 'self_upgrade_retired', status = 'error', error = ?, updated_at = ?
-		WHERE status = 'running'`,
-		errMsg, formatTime(time.Now().UTC()))
-	return err
-}
-
 func (s *GatewayStore) StartAudit(event AuditEvent) (int64, error) {
 	if event.StartedAt.IsZero() {
 		event.StartedAt = time.Now().UTC()
@@ -1017,7 +993,7 @@ func finishAuditWith(execer auditExecer, id int64, finish AuditFinish) error {
 			digest = CASE WHEN ? = '' THEN digest ELSE ? END,
 			ended_at = ?
 		WHERE id = ? AND status IN ('running', 'executing')`,
-		finish.Status, finish.Error, trimTail(finish.Tail, 8192), finish.BytesIn, finish.BytesOut,
+		finish.Status, utf8Tail(redactSecretText(finish.Error), 1200), trimTail(finish.Tail, 8192), finish.BytesIn, finish.BytesOut,
 		finish.CommandSummary, finish.CommandSummary,
 		finish.Cluster, finish.Cluster, finish.Instance, finish.Instance,
 		finish.VersionID, finish.VersionID, finish.GrantID, finish.GrantID,
@@ -1105,6 +1081,21 @@ func auditFilterQuery(filter AuditFilter) (string, []any) {
 		conditions = append(conditions, "id < ?")
 		args = append(args, filter.BeforeID)
 	}
+	if v := strings.TrimSpace(filter.CorrelationID); v != "" {
+		conditions = append(conditions, "correlation_id = ?")
+		args = append(args, v)
+	}
+	if !filter.Since.IsZero() {
+		conditions = append(conditions, "julianday(started_at) >= julianday(?)")
+		args = append(args, formatTime(filter.Since.UTC()))
+	}
+	if !filter.Until.IsZero() {
+		conditions = append(conditions, "julianday(started_at) < julianday(?)")
+		args = append(args, formatTime(filter.Until.UTC()))
+	}
+	if filter.HideUpgradeObserve {
+		conditions = append(conditions, "NOT (action = 'agent:upgrade' AND status = 'observing')")
+	}
 	if v := strings.TrimSpace(filter.UserID); v != "" {
 		conditions = append(conditions, "user_id = ?")
 		args = append(args, v)
@@ -1159,18 +1150,11 @@ func credentialAuditScopeJSON(scope *CredentialGrantScope) (string, error) {
 }
 
 func (s *GatewayStore) DeleteAuditBefore(before time.Time) (int64, error) {
-	res, err := s.db.Exec(`DELETE FROM audit_events WHERE started_at < ?
-		AND status NOT IN ('running', 'executing', 'outcome_unknown')`, formatTime(before.UTC()))
+	res, err := s.db.Exec(deleteCompletedAuditSQL, formatTime(before.UTC()))
 	if err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()
-}
-
-func scopeMatches(pattern, value string) bool {
-	pattern = strings.TrimSpace(pattern)
-	value = strings.TrimSpace(value)
-	return pattern == "*" || pattern == value
 }
 
 func firstNonEmpty(values ...string) string {

@@ -1,5 +1,6 @@
 "use client"
 
+import Link from "next/link"
 import dynamic from "next/dynamic"
 import type { AgentSessionRuntime } from "@agent-cloud/agent-ui"
 import { Boxes, Database, Globe2 } from "lucide-react"
@@ -93,6 +94,7 @@ const GW_KEY = "doops.gateway"
 const LEGACY_DEMO_KEY = "doops.demo"
 const ONBOARD_KEY = "doops.onboarded"
 const DEMO_ENABLED = isDemoAllowed()
+const TERMINAL_RUNNING_MESSAGE = "终端命令仍在执行，请先等待结束或停止命令，再切换目标、会话或页面"
 
 // 「更新内容」的已读版本和「今天不再弹出」只写本机 localStorage。隐私模式或禁用
 // 存储时访问会抛错，按首次访问处理：手动入口仍然可用，只是每次都不弹出。
@@ -122,13 +124,21 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   const [terminalPrefill, setTerminalPrefill] = useState<TerminalPrefill | null>(null)
   // 终端标签按需挂载；记录已消费的 nonce，避免重新进入终端时再次预填旧命令。
   const [consumedPrefillNonce, setConsumedPrefillNonce] = useState(0)
+  const terminalRunning = useRef(false)
   const runInTerminal = useCallback((command: string) => {
+    if (terminalRunning.current) { setError(TERMINAL_RUNNING_MESSAGE); return }
     setTerminalPrefill((previous) => nextTerminalPrefill(previous, command))
     setTab("terminal")
   }, [])
   const [view, setView] = useState<"console" | "deploy" | "cicd" | "admin">("console")
   const [authLoading, setAuthLoading] = useState(true)
+  const [disconnecting, setDisconnecting] = useState(false)
   const [skillRunning, setSkillRunning] = useState(false)
+  const onTerminalRunningChange = useCallback((running: boolean) => {
+    terminalRunning.current = running
+    setSkillRunning(running)
+    if (!running) setError((current) => current === TERMINAL_RUNNING_MESSAGE ? "" : current)
+  }, [])
   const [execRunning, setExecRunning] = useState(false)
   const [loading, setLoading] = useState(false)
   const [refreshVersion, setRefreshVersion] = useState(0)
@@ -289,7 +299,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
           if (restored.selected) setTab("terminal")
         }
       } else {
-        setSelected((cur) => reconcileSelected(cur, t))
+        setSelected((cur) => reconcileSelected(cur, t, terminalRunning.current))
       }
     } catch (err) {
       setTargetsError((err as Error).message)
@@ -338,7 +348,10 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   }
 
   function logout() {
+    if (blockTerminalSwitch()) return
     if (skillRunning) { setError("请先等待当前操作结束，再退出登录"); return }
+    if (disconnecting) return
+    setDisconnecting(true)
     const current = session
     void (async () => {
       try {
@@ -355,17 +368,36 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
         setSession(null)
         setTargets([])
         setSelected(null)
+        setDisconnecting(false)
       }
     })()
   }
 
   // Switching views clears the operation error, like a refresh the user asked for.
   function openView(next: typeof view) {
+    if (next !== view && blockTerminalSwitch()) return
     setError("")
     setView(next)
   }
 
+  function blockTerminalSwitch() {
+    if (!terminalRunning.current) return false
+    setError(TERMINAL_RUNNING_MESSAGE)
+    return true
+  }
+
+  function selectTab(next: Tab) {
+    if (next !== tab && blockTerminalSwitch()) return
+    setTab(next)
+  }
+
+  function changeSession(next: string) {
+    if (next !== sessionId && blockTerminalSwitch()) return
+    setSessionId(next)
+  }
+
   function selectTarget(t: Target) {
+    if (blockTerminalSwitch()) return
     const blocker = targetSwitchBlocker({
       skillRunning,
       agentBusy: Boolean(agentRuntime && isDoopsAgentSessionBusy(agentRuntime.getSnapshot(sessionId))),
@@ -381,8 +413,8 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
     setTab((cur) => (cur === "overview" || cur === "terminal" ? "ask" : cur))
   }
 
-  if (authLoading) {
-    return <main className="flex min-h-dvh items-center justify-center text-sm text-muted-foreground">正在恢复登录会话...</main>
+  if (authLoading || disconnecting) {
+    return <main className="flex min-h-dvh items-center justify-center text-sm text-muted-foreground">{disconnecting ? "正在断开连接..." : "正在恢复登录会话..."}</main>
   }
 
   if (!session) {
@@ -398,7 +430,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   const openCredentials = credentials
     ? () => {
         openView(credentials.view)
-        setTab(credentials.tab)
+        selectTab(credentials.tab)
       }
     : undefined
 
@@ -442,6 +474,17 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <span className="hidden text-xs text-muted-foreground sm:inline">{displayUserName(session)}</span>
+          <Link
+            href="/blog"
+            onClick={(event) => {
+              if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && blockTerminalSwitch()) event.preventDefault()
+            }}
+            title="博客"
+            className="flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
+          >
+            <SparkIcon width={14} height={14} />
+            <span className="hidden sm:inline">博客</span>
+          </Link>
           <button
             onClick={() => openWhatsNew("manual")}
             disabled={!releaseVersion}
@@ -528,6 +571,11 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
         </div>
       )}
       {(error || targetsError) && <div role="alert" className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive">{[error, targetsError].filter(Boolean).join("；")}</div>}
+      {terminalRunning.current && selected && (
+        <div role="status" className="shrink-0 border-b bg-card px-4 py-2 text-sm text-muted-foreground">
+          {selected.cluster}/{selected.instance} · {sessionId}：{TERMINAL_RUNNING_MESSAGE}
+        </div>
+      )}
       {restoreNotice && (
         <div role="status" className="flex shrink-0 items-center gap-2 border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning">
           <span className="min-w-0 flex-1">{restoreNotice}</span>
@@ -555,7 +603,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
               return (
                 <button
                   key={t.id}
-                  onClick={() => setTab(t.id)}
+                  onClick={() => selectTab(t.id)}
                   disabled={skillRunning}
                   title={t.secondary ? "高级：直接执行 shell 命令" : undefined}
                   className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm transition-colors ${
@@ -591,7 +639,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
               onDeployAgent={() => openView("deploy")}
               onOpenTab={(nextTab, target) => {
                 if (target) selectTarget(target)
-                setTab(nextTab)
+                selectTab(nextTab)
               }}
             />
           ) : !selected ? (
@@ -606,7 +654,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                   部署 Doops Agent
                 </button>
                 <button
-                  onClick={() => setTab("overview")}
+                  onClick={() => selectTab("overview")}
                   className="rounded-lg border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
                 >
                   返回概览
@@ -623,7 +671,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                     <input
                       value={sessionId}
                       disabled={skillRunning}
-                      onChange={(e) => setSessionId(e.target.value)}
+                      onChange={(e) => changeSession(e.target.value)}
                       className="w-44 rounded-md border bg-background px-2 py-1 font-mono text-xs text-foreground outline-none focus:border-ring"
                     />
                   </label>
@@ -675,6 +723,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                     sessionId={sessionId}
                     prefill={prefillToApply(terminalPrefill, consumedPrefillNonce) === null ? null : terminalPrefill}
                     onPrefillApplied={setConsumedPrefillNonce}
+                    onRunningChange={onTerminalRunningChange}
                   />
                 )}
                 {tab === "files" && (
@@ -683,7 +732,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                     session={session}
                     target={selected}
                     sessionId={sessionId}
-                    onSessionChange={setSessionId}
+                    onSessionChange={changeSession}
                   />
                 )}
                 {tab === "kb" && (
@@ -727,7 +776,7 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
             codeWorkspace={codeWorkspace}
             active={view === "console" && tab === "ask"}
             onConfigureModel={openCredentials}
-            onSessionChange={setSessionId}
+            onSessionChange={changeSession}
             onExecRunningChange={setExecRunning}
           />
         </div>

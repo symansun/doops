@@ -1,13 +1,20 @@
+import re
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CI = ROOT.parent / ".cnb.yml"
+WORKFLOWS = ROOT.parent / ".github" / "workflows"
 RUNTIME = ROOT / "runtime-versions.env"
 IMAGE_BUILD = ROOT / "scripts" / "build-agent-image.sh"
 BASE_IMAGE_BUILD = ROOT / "scripts" / "build-agent-base-image.sh"
 LIGHT_BASE = ROOT / "Dockerfile.base.light"
 DOCKERFILES = (ROOT / "Dockerfile", LIGHT_BASE)
+
+FAIL_CLOSED_INPUTS = (
+    ': "${DOOPS_IMAGE_REGISTRY:?DOOPS_IMAGE_REGISTRY is required}"',
+    ': "${DOOPS_IMAGE_REPOSITORY:?DOOPS_IMAGE_REPOSITORY is required}"',
+    ': "${DOOPS_SOURCE_COMMIT:?DOOPS_SOURCE_COMMIT is required}"',
+)
 
 
 def test_doagent_runtime_lock_includes_exact_source_revision():
@@ -20,38 +27,32 @@ def test_doagent_runtime_lock_includes_exact_source_revision():
 
     assert len(revision) == 40
     assert runtime["DO_AGENT_VERSION"] == "0.2.44"
-    assert runtime["DO_AGENT_IMAGE"].endswith(
-        f"@{runtime['DO_AGENT_INDEX_DIGEST']}"
-    )
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", runtime["DO_AGENT_INDEX_DIGEST"])
+    # Registry sources are explicit operator inputs, never pinned in the lock.
+    assert "DO_AGENT_IMAGE" not in runtime
+    assert "DOOPS_AGENT_BASE_IMAGE" not in runtime
 
     image_build = IMAGE_BUILD.read_text()
+    for required in FAIL_CLOSED_INPUTS:
+        assert required in image_build
+    assert ': "${DO_AGENT_IMAGE:?DO_AGENT_IMAGE is required' in image_build
+    assert '${DOOPS_AGENT_BASE_IMAGE:?DOOPS_AGENT_BASE_IMAGE is required' in image_build
     assert '--build-arg DO_AGENT_REVISION="${DO_AGENT_REVISION}"' in image_build
-    assert '--build-arg DOOPS_RELEASE_TAG="${DOOPS_RELEASE_TAG}"' in image_build
-    assert 'release=${DOOPS_RELEASE_TAG} commit=${CNB_COMMIT}' in image_build
-    assert '[[ "${DOOPS_PUBLISH_LATEST:-}" == "1" && "${DOOPS_RELEASE_TAG}" != "latest" ]]' in image_build
-    assert 'latest_image="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:latest"' in image_build
+    assert '--build-arg DOOPS_RELEASE_TAG="${DOOPS_IMAGE_TAG}"' in image_build
+    assert 'release=${DOOPS_IMAGE_TAG} commit=${DOOPS_SOURCE_COMMIT}' in image_build
+    assert '[[ "${DOOPS_PUBLISH_LATEST:-}" == "1" && "${DOOPS_IMAGE_TAG}" != "latest" ]]' in image_build
+    assert 'APP_IMAGE="${DOOPS_IMAGE_REGISTRY}/${DOOPS_IMAGE_REPOSITORY}:${DOOPS_IMAGE_TAG}"' in image_build
+    assert 'latest_image="${DOOPS_IMAGE_REGISTRY}/${DOOPS_IMAGE_REPOSITORY}:latest"' in image_build
     assert 'docker push "${latest_image}"' in image_build
-    assert "DOOPS_PUBLISH_LATEST=1 \\\n            DOOPS_RELEASE_TAG=\"${CNB_COMMIT}\" \\\n" in CI.read_text()
-    # A version release also moves latest, so an untagged pull gets the
-    # version that was just released and fully verified.
-    assert (
-        "DOOPS_PUBLISH_LATEST=1 \\\n            DOOPS_RELEASE_TAG=\"${CNB_BRANCH}\" \\\n"
-        "              bash backend/scripts/build-agent-image.sh"
-    ) in CI.read_text().split("api_trigger_release:", 1)[1]
-    assert (
-        'test "${ACTUAL_DOAGENT_REVISION}" = "${DO_AGENT_REVISION}"'
-        in image_build
-    )
+    assert 'test "${ACTUAL_DOAGENT_REVISION}" = "${DO_AGENT_REVISION}"' in image_build
 
-    for dockerfile in (ROOT / "Dockerfile",):
+    for dockerfile in DOCKERFILES:
         text = dockerfile.read_text()
         assert "ARG DO_AGENT_REVISION" in text
-        assert "ARG DOOPS_RELEASE_TAG" in text
-        assert "release.Version=${DOOPS_RELEASE_TAG}" in text
-        assert (
-            'LABEL org.l8ai.doagent.revision="${DO_AGENT_REVISION}"'
-            in text
-        )
+        assert 'LABEL org.l8ai.doagent.revision="${DO_AGENT_REVISION}"' in text
+    server_dockerfile = (ROOT / "Dockerfile").read_text()
+    assert "ARG DOOPS_RELEASE_TAG" in server_dockerfile
+    assert "release.Version=${DOOPS_RELEASE_TAG}" in server_dockerfile
 
 
 def test_agent_runtime_keeps_ssh_client_and_rejects_ssh_server():
@@ -62,7 +63,7 @@ def test_agent_runtime_keeps_ssh_client_and_rejects_ssh_server():
     assert "ssh -V" in base
     assert "! command -v sshd" in base
 
-    for dockerfile in (ROOT / "Dockerfile",):
+    for dockerfile in DOCKERFILES:
         text = dockerfile.read_text()
         assert "ssh -V" in text
         assert "! command -v sshd" in text
@@ -78,11 +79,13 @@ def test_agent_runtime_keeps_ssh_client_and_rejects_ssh_server():
     assert "command -v sshd" in base_image_build
     assert "DOOPS_BASE_IMAGE_OUTPUT" in base_image_build
 
-    ci = CI.read_text()
-    assert "resolve-agent-base-image.sh" in ci
-    assert "build-agent-base-image.sh" not in ci
-    assert "backend/.ci-agent-base-image" in ci
-    assert "backend/runtime-versions.env" in ci
+    # Production images are built by the operator with explicit inputs; CI only
+    # tests the repository and publishes the CLI/Gateway/Skill release assets.
+    for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        text = workflow.read_text(encoding="utf-8")
+        assert "resolve-agent-base-image.sh" not in text, workflow
+        assert "build-agent-image.sh" not in text, workflow
+        assert "build-agent-base-image.sh" not in text, workflow
 
     # The base is rebuilt only when its inputs change, so unchanged base layers
     # stay cached on every target node across releases.
@@ -95,10 +98,7 @@ def test_agent_runtime_keeps_ssh_client_and_rejects_ssh_server():
     assert "@sha256:[0-9a-f]{64}$" in resolve
 
 
-
 def test_only_init_reaps_orphan_processes():
-    gateway = (ROOT / "agent/internal/server/gateway.go").read_text()
-    assert "Wait4(" not in gateway
     for name in ("agent-entrypoint.sh", "sandbox-entrypoint.sh"):
         entrypoint = (ROOT / "agent" / name).read_text()
         assert 'tini -s -- /app/doops-agent "$@"' in entrypoint

@@ -129,6 +129,9 @@ func (l *EdgeListener) dispatch(conn net.Conn, hello []byte, serverName string, 
 	if err != nil {
 		return
 	}
+	defer session.ws.sched.LocalClose(stream.ID(), edgeCloseNormal, "")
+	session.attach(stream.ID(), conn)
+	defer session.detach(stream.ID())
 	payload, err := encodeEdgeOpenPayload(route.ID, serverName)
 	if err != nil {
 		return
@@ -141,16 +144,15 @@ func (l *EdgeListener) dispatch(conn net.Conn, hello []byte, serverName string, 
 		_ = session.ws.sched.LocalClose(stream.ID(), edgeCloseUpstreamFailure, "hello not queued")
 		return
 	}
-	session.attach(stream.ID(), conn)
 	session.pipePublic(context.Background(), stream.ID(), conn)
 }
 
 func (l *EdgeListener) admit(ip string, route EdgeRoute) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.global.Load() >= edgeMaxConns() {
 		return false
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	if int64(l.perIP[ip]) >= edgeMaxConnsPerIP() {
 		return false
 	}
@@ -164,8 +166,8 @@ func (l *EdgeListener) admit(ip string, route EdgeRoute) bool {
 }
 
 func (l *EdgeListener) release(ip string, route EdgeRoute) {
-	l.global.Add(-1)
 	l.mu.Lock()
+	l.global.Add(-1)
 	l.perIP[ip]--
 	if l.perIP[ip] <= 0 {
 		delete(l.perIP, ip)

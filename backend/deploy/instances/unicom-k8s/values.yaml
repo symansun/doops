@@ -6,7 +6,7 @@ hostAccess:
   enabled: true
 hostAliases: []
 image:
-  repository: docker.cnb.cool/l8ai/ai/doops.sh
+  repository: registry.example.com/doops-agent
   digest: sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a
   pullPolicy: IfNotPresent
 imagePullSecrets: []

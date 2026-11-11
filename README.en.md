@@ -236,16 +236,16 @@ Main install locations:
 | Default target configuration | `~/.agent/skills/doops/config.json` |
 | Login cache | `~/.agent/skills/doops/auth.json` |
 
-Public tag releases are built automatically by GitHub Actions ([release workflow](.github/workflows/release.yml)). To install
-from the GitHub Release assets, point the installer at that release:
+Public tag releases are built and published automatically by GitHub Actions ([release workflow](.github/workflows/release.yml));
+installation uses GitHub Releases assets only:
 
 ```bash
-DOOPS_RELEASE_ASSET_BASE="https://github.com/<owner>/<repo>/releases/download" \
-  bash scripts/install.sh --version <release-tag> --project /absolute/path/to/existing-project
+bash scripts/install.sh --version <release-tag> --project /absolute/path/to/existing-project
 ```
 
-CNB Release Assets remain the default source; `DOOPS_RELEASE_ASSET_BASE` accepts only https (loopback addresses
-are for tests), and the sha256, `release=... commit=...` identity, and CLI contract checks are unchanged.
+The default source is `https://github.com/symansun/doops/releases/download`; `DOOPS_RELEASE_ASSET_BASE` accepts only
+https (loopback addresses are for tests) and only serves to point the same sha256, `release=... commit=...` identity,
+and CLI contract checks at a mirror.
 
 Installation updates the DoOps skill and companion documentation in the target project. Back up those files first if you have modified them yourself. CLI configuration and caches contain sensitive information; file permission protection is not encrypted storage, so do not commit them to Git.
 
@@ -378,7 +378,7 @@ Recommended reading:
 - [Build and deployment SOP](backend/docs/BUILD_DEPLOY_SOP.md)
 - [Cluster installation guide](backend/docs/CLUSTER_INSTALL_GUIDE.md)
 - [Agent Helm chart](backend/deploy/helm/doops-agent/)
-- [Pinned runtime versions](backend/runtime-versions.env)
+- [Runtime version baseline](backend/runtime-versions.env)
 
 The Helm chart's key defaults are empty and must be completed for the actual environment; installing it as-is does not give you a usable production agent. Namespace, address, permission, and certificate settings in historical manifests should also be reviewed item by item.
 
@@ -575,12 +575,11 @@ doops/
 │   ├── test/                    # Python contract and deployment checks
 │   ├── Dockerfile              # Agent application image
 │   ├── Dockerfile.base.light   # Agent lightweight base image
-│   └── runtime-versions.env    # Pinned runtime versions and image sources
+│   └── runtime-versions.env    # Runtime versions and image digests for validation
 ├── docs/                        # Internal design records (product docs live in backend/docs)
 ├── Dockerfile.web              # Next.js production image
 ├── .github/workflows/ci.yml    # GitHub CI
 ├── .github/workflows/release.yml # GitHub tag release: build, verify, publish, re-verify
-├── .cnb.yml                    # CNB checks and agent image release
 ├── CONTRIBUTING.md
 └── SECURITY.md
 ```
@@ -615,7 +614,7 @@ pnpm build
 
 The repository root has no Go module, so do not merge the three Go checks into a single `go test ./...` run at the root. For the front end you can also run `pnpm test:gateway-policy` and `pnpm test:console`; `pnpm build` is the production build.
 
-CNB also includes Python contract checks. After preparing Python 3, pytest, PyYAML, Helm, and the related test dependencies, run:
+GitHub CI also includes Python contract checks. After preparing Python 3, pytest, PyYAML, Helm, and the related test dependencies, run:
 
 ```bash
 python3 -m pytest backend/test -q

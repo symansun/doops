@@ -1,24 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ -z "${DOOPS_RELEASE_TAG:-}" ]]; then
-  echo "DOOPS_RELEASE_TAG is required" >&2
+if [[ -z "${DOOPS_IMAGE_TAG:-}" ]]; then
+  echo "DOOPS_IMAGE_TAG is required" >&2
   exit 1
 fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "${REPO_ROOT}/runtime-versions.env"
 
-: "${CNB_DOCKER_REGISTRY:?CNB_DOCKER_REGISTRY is required}"
-: "${CNB_REPO_SLUG_LOWERCASE:?CNB_REPO_SLUG_LOWERCASE is required}"
-: "${CNB_COMMIT:?CNB_COMMIT is required}"
-if [[ ! "${CNB_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "CNB_COMMIT must be a full 40-character commit SHA" >&2
+: "${DOOPS_IMAGE_REGISTRY:?DOOPS_IMAGE_REGISTRY is required}"
+: "${DOOPS_IMAGE_REPOSITORY:?DOOPS_IMAGE_REPOSITORY is required}"
+: "${DOOPS_SOURCE_COMMIT:?DOOPS_SOURCE_COMMIT is required}"
+: "${DO_AGENT_IMAGE:?DO_AGENT_IMAGE is required: <registry>/<repository>@sha256:<digest>}"
+if [[ ! "${DOOPS_SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "DOOPS_SOURCE_COMMIT must be a full 40-character commit SHA" >&2
+  exit 1
+fi
+if [[ "${DO_AGENT_IMAGE}" != *"@${DO_AGENT_INDEX_DIGEST}" ]]; then
+  echo "DO_AGENT_IMAGE must be pinned to DO_AGENT_INDEX_DIGEST (${DO_AGENT_INDEX_DIGEST}): ${DO_AGENT_IMAGE}" >&2
   exit 1
 fi
 
-BASE_IMAGE="${DOOPS_AGENT_BASE_IMAGE_OVERRIDE:-${DOOPS_AGENT_BASE_IMAGE}}"
-APP_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${DOOPS_RELEASE_TAG}"
+BASE_IMAGE="${DOOPS_AGENT_BASE_IMAGE_OVERRIDE:-${DOOPS_AGENT_BASE_IMAGE:?DOOPS_AGENT_BASE_IMAGE is required: <registry>/<repository>@sha256:<digest>}}"
+APP_IMAGE="${DOOPS_IMAGE_REGISTRY}/${DOOPS_IMAGE_REPOSITORY}:${DOOPS_IMAGE_TAG}"
 
 if [[ ! "${BASE_IMAGE}" =~ @sha256:[0-9a-f]{64}$ ]]; then
   echo "DOOPS agent base image must be pinned by digest: ${BASE_IMAGE}" >&2
@@ -52,10 +57,10 @@ docker build \
   --build-arg DO_AGENT_INDEX_DIGEST="${DO_AGENT_INDEX_DIGEST}" \
   --build-arg DO_AGENT_PLATFORM="${DO_AGENT_PLATFORM}" \
   --build-arg DO_AGENT_PLATFORM_DIGEST="${DO_AGENT_PLATFORM_DIGEST}" \
-  --build-arg DOOPS_RELEASE_TAG="${DOOPS_RELEASE_TAG}" \
-  --build-arg DOOPS_SOURCE_COMMIT="${CNB_COMMIT}" \
-  --label org.opencontainers.image.revision="${CNB_COMMIT}" \
-  --label org.opencontainers.image.version="${DOOPS_RELEASE_TAG}" \
+  --build-arg DOOPS_RELEASE_TAG="${DOOPS_IMAGE_TAG}" \
+  --build-arg DOOPS_SOURCE_COMMIT="${DOOPS_SOURCE_COMMIT}" \
+  --label org.opencontainers.image.revision="${DOOPS_SOURCE_COMMIT}" \
+  --label org.opencontainers.image.version="${DOOPS_IMAGE_TAG}" \
   -f "${REPO_ROOT}/Dockerfile" \
   -t "${APP_IMAGE}" \
   "${REPO_ROOT}"
@@ -63,7 +68,7 @@ docker build \
 ACTUAL_BASE_IMAGE="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.base.name" }}' "${APP_IMAGE}")"
 test "${ACTUAL_BASE_IMAGE}" = "${BASE_IMAGE}"
 ACTUAL_SOURCE_COMMIT="$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${APP_IMAGE}")"
-test "${ACTUAL_SOURCE_COMMIT}" = "${CNB_COMMIT}"
+test "${ACTUAL_SOURCE_COMMIT}" = "${DOOPS_SOURCE_COMMIT}"
 ACTUAL_DOAGENT_IMAGE="$(docker inspect --format '{{ index .Config.Labels "org.l8ai.doagent.image" }}' "${APP_IMAGE}")"
 test "${ACTUAL_DOAGENT_IMAGE}" = "${DO_AGENT_IMAGE}"
 ACTUAL_DOAGENT_REVISION="$(docker inspect --format '{{ index .Config.Labels "org.l8ai.doagent.revision" }}' "${APP_IMAGE}")"
@@ -71,7 +76,7 @@ test "${ACTUAL_DOAGENT_REVISION}" = "${DO_AGENT_REVISION}"
 docker run --rm --entrypoint /app/doops-agent "${APP_IMAGE}" -help >/dev/null
 test "$(
   docker run --rm --entrypoint /app/doops-agent "${APP_IMAGE}" -version
-)" = "release=${DOOPS_RELEASE_TAG} commit=${CNB_COMMIT}"
+)" = "release=${DOOPS_IMAGE_TAG} commit=${DOOPS_SOURCE_COMMIT}"
 if docker run --rm --entrypoint /bin/sh "${APP_IMAGE}" -c 'test -e /app/doops-gateway'; then
   echo "Agent image must not contain the Gateway binary; it ships as a release asset" >&2
   exit 1
@@ -90,11 +95,11 @@ if docker run --rm --entrypoint /bin/sh "${APP_IMAGE}" \
   exit 1
 fi
 docker push "${APP_IMAGE}"
-if [[ "${DOOPS_PUBLISH_LATEST:-}" == "1" && "${DOOPS_RELEASE_TAG}" != "latest" ]]; then
-  latest_image="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:latest"
+if [[ "${DOOPS_PUBLISH_LATEST:-}" == "1" && "${DOOPS_IMAGE_TAG}" != "latest" ]]; then
+  latest_image="${DOOPS_IMAGE_REGISTRY}/${DOOPS_IMAGE_REPOSITORY}:latest"
   docker tag "${APP_IMAGE}" "${latest_image}"
   docker push "${latest_image}"
-  echo "Published Agent image latest: ${latest_image} from ${DOOPS_RELEASE_TAG}"
+  echo "Published Agent image latest: ${latest_image} from ${DOOPS_IMAGE_TAG}"
 fi
 
 echo "Published Agent image: ${APP_IMAGE}"

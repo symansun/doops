@@ -34,7 +34,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 发布对象:
   普通业务 workload: ask --apply，不要求本机 kubeconfig 或先执行 push
   已具备自升级控制器的 Helm Agent 镜像: upgrade，由集群内 Job 执行
-  旧 Helm Agent/K8S 首次接入: scripts/release-managed-agent.sh，外部 kubeconfig
+  K8S 升级需 upgradeAudit v1；旧 Agent 首升须单独审查经 Gateway exec 提交的独立 Job，见 BUILD_DEPLOY_SOP
   已有独立 Docker Agent: backend/scripts/release-host-agent.sh，正式外部宿主控制，不是 upgrade fallback，不要求迁 K8S
     必须显式提供 SSH --port、不可变镜像 digest、CI source commit 和 release；脚本 --dry-run 是真实只读预检
     严格校验主机密钥；可引用已认证私有 SSH socket，不接收密码/token；保留配置和旧容器，失败外部回滚
@@ -67,7 +67,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   pull        基于 Git 拉取远端 session 工作区到本地目录
   clean       清理远端节点上的工作区隔离沙盒
   admin       gateway 管理命令：用户、target 授权和 API key
-  upgrade     仅升级标准 Helm doops-agent；--dry-run 只预览参数，正式升级由目标集群内 Job 执行
+  upgrade     由独立 Job 预检、升级或收编 K8S Agent；记录操作编号与验收证据，--dry-run 只预览
   add         添加 gateway target
   remove      仅在 target 确认离线时删除本机 gateway target 配置
   login       登录 Gateway；--gateway <url> 首次登录并自动发现 targets，或导入已有 user token
@@ -1041,7 +1041,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		RecordHistory(server.Name, *sessionName, fmt.Sprintf("clean workspace=%s", workspace))
 
 	case "upgrade":
-		var target, image, mode, namespace, workload, container, release, upgradeSession string
+		var target, image, mode, namespace, workload, container, release, upgradeSession, sourceCommit, ciURL string
 		var dryRun, rollback, allowMissingRollbackBaseline bool
 		upgradeFlag := flag.NewFlagSet("upgrade", flag.ExitOnError)
 		upgradeFlag.StringVar(&target, "target", "", "Configured Gateway target")
@@ -1052,8 +1052,10 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		upgradeFlag.StringVar(&container, "container", "", "Container name; managed upgrades use doops-agent")
 		upgradeFlag.StringVar(&release, "release", "", "Optional Helm release; discovered when omitted")
 		upgradeFlag.StringVar(&upgradeSession, "session", "", "Session ID")
+		upgradeFlag.StringVar(&sourceCommit, "source-commit", "", "Optional full CI source commit recorded with the upgrade audit")
+		upgradeFlag.StringVar(&ciURL, "ci-url", "", "Optional HTTPS CI record URL without credentials, query or fragment")
 		upgradeFlag.BoolVar(&dryRun, "dry-run", false, "Preview parameters only; does not verify live release, mounts or permissions, or create a Job")
-		upgradeFlag.BoolVar(&rollback, "rollback", false, "Roll the managed Helm release back to the previous successful revision")
+		upgradeFlag.BoolVar(&rollback, "rollback", false, "Restore the previous verified revision and check its recorded release commit")
 		upgradeFlag.BoolVar(&allowMissingRollbackBaseline, "allow-missing-rollback-baseline", false, "Proceed when the image an automatic rollback would restore is gone from the registry; the automatic rollback can then not restore the backup")
 		upgradeFlag.Parse(cmdArgs)
 		if upgradeSession != "" && *sessionName == "" {
@@ -1081,6 +1083,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 			DryRun:                       dryRun,
 			Rollback:                     rollback,
 			Session:                      *sessionName,
+			SourceCommit:                 sourceCommit,
+			CIURL:                        ciURL,
 			AllowMissingRollbackBaseline: allowMissingRollbackBaseline,
 		}, *verbose); err != nil {
 			fmt.Printf("Error: %v\n", err)
@@ -1292,11 +1296,6 @@ func resolveAdminTargetFlags(name string, args []string, servers []Server, confi
 		os.Exit(1)
 	}
 	return *server, mustResolveToken(*server)
-}
-
-func resolveAdminGatewayFlags(name string, args []string, servers []Server, configErr error, opID *string) (string, string) {
-	server, token := resolveAdminTargetFlags(name, args, servers, configErr, opID)
-	return server.Gateway, token
 }
 
 func requireConfig(err error) {

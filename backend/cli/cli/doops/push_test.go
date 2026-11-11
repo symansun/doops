@@ -17,7 +17,7 @@ import (
 func TestWriteWorkspaceSourceManifestBindsImmutableRevision(t *testing.T) {
 	root := t.TempDir()
 	source := &WorkspaceSourceIdentity{
-		Repository: "https://cnb.cool/l8ai/example.git",
+		Repository: "https://github.com/example/example.git",
 		Revision:   strings.Repeat("a", 40),
 		Branch:     "main",
 	}
@@ -58,7 +58,7 @@ func TestWriteWorkspaceSourceManifestRejectsInvalidBranchWithoutTrimming(t *test
 		t.Run(fmt.Sprintf("%q", test.branch), func(t *testing.T) {
 			root := t.TempDir()
 			rel, err := writeWorkspaceSourceManifest(root, &WorkspaceSourceIdentity{
-				Repository: "https://cnb.cool/l8ai/example.git",
+				Repository: "https://github.com/example/example.git",
 				Revision:   strings.Repeat("a", 40),
 				Branch:     test.branch,
 			})
@@ -99,7 +99,7 @@ func TestPushWorkspaceSnapshotRejectsInvalidBranchBeforeRemotePush(t *testing.T)
 		nil,
 		"invalid-branch",
 		&WorkspaceSourceIdentity{
-			Repository: "https://cnb.cool/l8ai/example.git",
+			Repository: "https://github.com/example/example.git",
 			Revision:   strings.Repeat("a", 40),
 			Branch:     "main ",
 		},
@@ -130,7 +130,7 @@ func TestStageWorkspaceSnapshotCommitsSourceManifestWithoutDirtyingSource(t *tes
 		t.Fatalf("resolve source revision: %v", err)
 	}
 	source := &WorkspaceSourceIdentity{
-		Repository: "https://cnb.cool/l8ai/example.git",
+		Repository: "https://github.com/example/example.git",
 		Revision:   strings.TrimSpace(string(revisionBytes)),
 		Branch:     "main",
 	}

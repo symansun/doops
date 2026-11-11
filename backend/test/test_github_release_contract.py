@@ -1,7 +1,7 @@
 """Lock the GitHub tag-release contract.
 
 The public repository line publishes CLI/Gateway release assets from a tag through
-`.github/workflows/release.yml`; CNB keeps the production image and deployment path.
+`.github/workflows/release.yml`; GitHub Releases is the only install/publish path.
 These checks assert structure: gated by CI, immutable, verified after publishing, and
 built with the same builder identity the release scripts require. Wording is not locked.
 """
@@ -103,6 +103,27 @@ def test_publish_requires_a_green_ci_and_stays_least_privileged():
     assert verify["permissions"] == {"contents": "read", "attestations": "read"}
 
 
+def test_release_gate_tests_the_same_commit_as_the_asset_build():
+    jobs = load_workflow(RELEASE)["jobs"]
+    build_checkout = next(step for step in steps_of(jobs["build"])
+                          if step.get("uses", "").startswith("actions/checkout@"))
+    selected_commit = "${{ needs.prepare.outputs.commit }}"
+    assert jobs["gate"]["with"]["source_commit"] == selected_commit
+    assert build_checkout["with"]["ref"] == selected_commit
+
+    ci = load_workflow(CI)
+    source_input = triggers(ci)["workflow_call"]["inputs"]["source_commit"]
+    assert source_input["required"] is True
+    assert source_input["type"] == "string"
+    checkouts = [step for job in ci["jobs"].values() for step in steps_of(job)
+                 if step.get("uses", "").startswith("actions/checkout@")]
+    assert checkouts
+    # Release calls use the resolved tag SHA; standalone push/PR checks keep
+    # their own event SHA instead of accidentally testing a default branch.
+    for checkout in checkouts:
+        assert checkout["with"]["ref"] == "${{ inputs.source_commit || github.sha }}"
+
+
 def test_prepare_rejects_off_main_and_already_published_tags():
     runs = run_text(load_workflow(RELEASE)["jobs"]["prepare"])
     assert "refs/tags/" in runs
@@ -150,18 +171,16 @@ def test_release_asset_names_match_the_build_script_contract():
         assert platform in build_script, name
 
 
-def test_install_and_verify_scripts_accept_the_github_release_mirror():
+def test_install_and_verify_scripts_use_github_release_assets_by_default():
     verify = VERIFY.read_text(encoding="utf-8")
     install = INSTALL.read_text(encoding="utf-8")
     for text in (verify, install):
         assert "DOOPS_RELEASE_ASSET_BASE" in text
-    # CNB stays the default publisher; GitHub is an explicit, https-only mirror.
-    assert "https://cnb.cool/" in verify
-    assert "l8ai/ai/doops.sh" in verify
-    assert "/-/releases/download" in verify
-    assert "https://cnb.cool/l8ai/ai/doops.sh/-/releases/download" in install
-    assert "DOOPS_RELEASE_ASSET_BASE:-" in install
-    assert "DOOPS_RELEASE_ASSET_BASE:-" in verify
+    # GitHub Releases is the default; DOOPS_RELEASE_ASSET_BASE is the only mirror.
+    assert 'GITHUB_RELEASE_ASSET_BASE="https://github.com/symansun/doops/releases/download"' in install
+    assert 'RELEASE_ASSET_BASE="${DOOPS_RELEASE_ASSET_BASE:-${GITHUB_RELEASE_ASSET_BASE}}"' in install
+    assert 'RELEASE_SOURCE="${RELEASE_ASSET_BASE}"' in install
+    assert 'RELEASE_ASSET_BASE="${DOOPS_RELEASE_ASSET_BASE:-https://github.com/symansun/doops/releases/download}"' in verify
 
 
 def test_build_packages_skill_bundle_and_checksums_it():
@@ -177,7 +196,7 @@ def test_build_packages_skill_bundle_and_checksums_it():
     assert "doops-skill.tar.gz" in verify_runs
 
 
-def test_package_skill_release_script_builds_cnb_installer_layout(tmp_path):
+def test_package_skill_release_script_builds_installer_layout(tmp_path):
     dist = tmp_path / "dist"
     dist.mkdir()
     (dist / "checksums.txt").write_text("a  doops-linux-amd64\n", encoding="utf-8")

@@ -22,7 +22,7 @@ def test_dev_link_keeps_the_release_install_as_the_only_supported_entrypoint():
 
     # The development link must never become a second install path: the
     # supported user entrypoint stays ~/.local/bin/doops installed by
-    # install.sh from CNB Release Assets.
+    # install.sh from GitHub Release assets.
     assert 'backend/scripts/install.sh' in text
     # A real install product is preserved, never deleted.
     assert 'mv "${CLI_OUT}" "${CLI_OUT}.release"' in text
@@ -44,7 +44,6 @@ def test_dev_link_does_not_publish_or_touch_a_target():
     text = DEV_LINK.read_text()
 
     for forbidden in (
-        "cnb build start-build",
         "git tag",
         "git push",
         "helm upgrade",

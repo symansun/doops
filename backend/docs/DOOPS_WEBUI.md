@@ -41,18 +41,32 @@ revocation remains a separate explicit action. Neither operation renews a token.
   remote Chart, controlled image, CI commit/evidence, reason and acceptance.
 - Helm success must include the final live Deployment and task acceptance.
   Native MCP `isError`, protocol errors and interrupted streams remain failures.
-- Existing managed Agents have an image-reference upgrade/rollback form. An accepted
-  Job is not a completed release; the page observes the same Job and checks the
-  Gateway protocol. Verify the serving Pod/imageID/runtime and affected functions.
-  First installation runs from the external controller with a cluster kubeconfig.
+- While a terminal command is running, target/session and in-console navigation
+  remain locked so the original output and Stop control stay available. A failed
+  stop request keeps the lock until a remote terminal result arrives. Background
+  target refreshes do not replace a running terminal's target. Disconnecting an
+  idle session displays a pending screen so a new command cannot start mid-logout.
+- Agents advertising `upgradeAudit` v1 have an image-reference upgrade/rollback form.
+  The console runs preflight before apply, sends the source commit and CI URL, and
+  joins all stages with one operation ID. Accepted is not completed: the page
+  observes that Job, verifies the Gateway protocol and the expected release commit.
+  A rollback uses the commit recorded in its historical receipt. Audit completion
+  errors retain the accepted Job for verification and remain visible failures.
+  The latest operation is kept in sessionStorage, scoped to Gateway, user and
+  target, for resuming observation without resubmitting a mutation. The operation's
+  audit records are available from the upgrade panel. First-upgrade and installation
+  limits are defined in [BUILD_DEPLOY_SOP.md](BUILD_DEPLOY_SOP.md).
 - Credential pages manage create, staged payload, target bindings, persisted version
   metadata, verify, promote, grant revocation and resource revocation. Payload
   input uses the credential endpoint only and never enters an AI task.
   The `凭据组` button creates a credential bundle and looks one up by name; a
   bundle holds credential IDs only. Steps and limits are in
   [CREDENTIAL_RESOURCES.md](CREDENTIAL_RESOURCES.md#bundle).
-- The audit page exposes target/session/self/global scopes and action/status
-  filters. Users can read their own history; global audit requires platform admin.
+- The audit page exposes target/session/self/global scopes, action/status, operation
+  ID and time filters, and cursor pagination. Routine `observing` upgrade polls are
+  hidden by default; terminal observations remain visible. Each row shows its audit
+  ID, operation ID, elapsed time, byte counts and available evidence.
+  Users can read their own history; global audit requires platform admin.
   Credential owners also see events that reference their credentials. Audit
   query indexes are created when the Gateway starts.
 - The database page routes through the same `doops_agent_prompt` Gateway RPC and
@@ -73,8 +87,9 @@ revocation remains a separate explicit action. Neither operation renews a token.
 The complete Web/CLI/skill boundary and authorization matrix is documented in
 `UNIFIED_OPERATIONS_WORKBENCH.md`.
 
-Deploy Gateway and Web from matching successful CI artifacts with the canonical
-host scripts. Record the binary source commit, Web digest, health, reconnects and
+Deploy Gateway and Web from matching published artifacts — GitHub Release assets for
+Gateway and explicit operator-built image digests for Web — with the canonical host
+scripts. Record the binary source commit, Web digest, health, reconnects and
 rollback artifact. Local fixtures do not establish live Helm or production-user acceptance.
 
 ## What's New in the Console
@@ -130,8 +145,8 @@ so it keeps working with an air-gapped Gateway.
 
 ## 部署
 
-- 生产控制台是仓库根目录的 Next.js 应用，由 `Dockerfile.web` 构建、CNB 发布为
-  `<repo>/web:<tag>` 镜像。
+- 生产控制台是仓库根目录的 Next.js 应用，由 `Dockerfile.web` 构建，由操作方以显式
+  registry/repository/tag 推送，例如 `registry.example.com/doops-web:<tag>`。
 - Gateway 主机上的正式发布使用 `backend/scripts/deploy-web-console.sh`，只接受
   immutable image digest，先在 `127.0.0.1:3001` 启动候选容器并验证，再替换
   `doops-web`；旧容器保留为 rollback。随后用

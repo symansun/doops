@@ -236,16 +236,15 @@ export PATH="$HOME/.local/bin:$PATH"
 | 默认目标配置 | `~/.agent/skills/doops/config.json` |
 | 登录缓存 | `~/.agent/skills/doops/auth.json` |
 
-公开仓库的 tag 发布由 GitHub Actions 自动构建（[release workflow](.github/workflows/release.yml)）。需要从 GitHub
-Release 安装时，把发布资产来源显式指向该发布：
+公开仓库的 tag 发布由 GitHub Actions 自动构建并发布（[release workflow](.github/workflows/release.yml)），
+安装只使用 GitHub Releases 资产：
 
 ```bash
-DOOPS_RELEASE_ASSET_BASE="https://github.com/<owner>/<repo>/releases/download" \
-  bash scripts/install.sh --version <release-tag> --project /absolute/path/to/existing-project
+bash scripts/install.sh --version <release-tag> --project /absolute/path/to/existing-project
 ```
 
-默认来源仍是 CNB Release Assets；`DOOPS_RELEASE_ASSET_BASE` 只接受 https（回环地址仅用于测试），
-sha256、`release=... commit=...` 身份和 CLI contract 校验保持不变。
+默认源为 `https://github.com/symansun/doops/releases/download`；`DOOPS_RELEASE_ASSET_BASE` 只接受 https
+（回环地址仅用于测试），仅用于把同一套 sha256、`release=... commit=...` 身份和 CLI contract 校验指向镜像。
 
 安装会更新目标项目中的 DoOps Skill 及配套文档。若曾自行修改这些文件，请先备份。CLI 配置与缓存包含敏感信息，文件权限保护不等于加密存储，不要提交到 Git。
 
@@ -378,7 +377,7 @@ backend/bin/doops-agent \
 - [构建与部署 SOP](backend/docs/BUILD_DEPLOY_SOP.md)
 - [集群安装指南](backend/docs/CLUSTER_INSTALL_GUIDE.md)
 - [Agent Helm Chart](backend/deploy/helm/doops-agent/)
-- [固定运行时版本](backend/runtime-versions.env)
+- [运行时版本基线](backend/runtime-versions.env)
 
 Helm Chart 的关键默认值为空，需要根据实际环境补全；不能直接安装后就获得可用的生产 Agent。历史清单中的命名空间、地址、权限及证书设置也应逐项审阅。
 
@@ -494,7 +493,8 @@ doops -session release-check ask \
 
 ### 标准 Helm Agent 升级
 
-已经具备自升级控制器的 Helm Agent 使用 `doops upgrade`；升级 Job 在目标集群内执行，Agent 进程不直接替换自己：
+已声明 `upgradeAudit` v1 的 K8s Agent 使用 `doops upgrade`；独立 Job 先预检再执行升级，
+Agent 进程不直接替换自己。未纳入 Helm 的 Deployment 可由同一控制器备份并收编：
 
 ```bash
 doops -session agent-upgrade upgrade \
@@ -508,7 +508,10 @@ doops -session agent-upgrade upgrade \
   --dry-run
 ```
 
-`doops upgrade` 只处理标准 Helm Agent 的镜像替换或回滚，不修改业务 workload、代理 allowlist 或其它 Helm 配置。升级前后应核对 CLI 与 Agent 的 release commit、Pod Ready、Gateway 重连和实际镜像 digest。
+`doops upgrade` 不修改业务 workload、代理 allowlist 或其它 Helm 配置。CLI 输出操作编号，
+将预检、执行、观察和回滚关联到同一审计链；失败结果与类别持久保存，`ACCEPTED` 仅表示 Job
+受理。`OK` 要求 Job、Gateway 协议和实际 release commit 均通过核验，回滚也须匹配历史回执
+中的 commit。控制台审计支持按操作编号查询、分页和时间筛选。
 
 ### 首次安装与非标准 Agent
 
@@ -517,8 +520,8 @@ doops -session agent-upgrade upgrade \
 | 场景 | 入口 | 关键前提 |
 | --- | --- | --- |
 | 空 Ubuntu/Debian 服务器 | `backend/scripts/bootstrap-host-agent.sh` | root、明确发布版本、唯一 cluster/instance；脚本安装 Docker/Compose 并验证 Gateway 隧道 |
-| K8s 首次安装或显式 Helm 配置变更 | `backend/scripts/release-managed-agent.sh` | 外部控制器 kubeconfig、Helm、kubectl 和完整 values |
-| 旧 Helm Agent 或命令通道损坏 | `backend/scripts/release-managed-agent.sh` | 先完成 dry-run、备份和接管验收 |
+| 已支持 `upgradeAudit` v1 的 K8s Agent | `doops upgrade` 或 `backend/scripts/release-managed-agent.sh` | 在线 target、匹配版本的 CLI、已核验镜像；脚本只委托 Gateway |
+| K8s 首装、旧 Agent 首升或 Helm 配置变更 | 按构建与部署 SOP 单独审查方案 | 旧的本地升级/重装脚本变更入口已停用；升级必须经 Gateway 提交独立控制器 |
 | 已有独立 Docker Agent | `backend/scripts/release-host-agent.sh` | 外部 DockerHost 控制、显式 SSH 端口、不可变镜像和主机密钥校验 |
 | Gateway 控制面 | `backend/scripts/deploy-gateway.sh --no-build` | 使用已核验的 CI Release Asset，不通过 Agent target 发布自身 |
 
@@ -575,12 +578,11 @@ doops/
 │   ├── test/                    # Python 契约与部署检查
 │   ├── Dockerfile              # Agent 应用镜像
 │   ├── Dockerfile.base.light   # Agent 轻量基础镜像
-│   └── runtime-versions.env    # 固定运行时版本与镜像来源
+│   └── runtime-versions.env    # 运行时版本与镜像 digest 校验元数据
 ├── docs/                        # 内部设计记录（产品文档在 backend/docs）
 ├── Dockerfile.web              # Next.js 生产镜像
 ├── .github/workflows/ci.yml    # GitHub CI（push/PR）
 ├── .github/workflows/release.yml # GitHub tag 发布：构建、校验、发布、复验
-├── .cnb.yml                    # CNB 检查与 Agent 镜像发布
 ├── CONTRIBUTING.md
 └── SECURITY.md
 ```
@@ -615,7 +617,7 @@ pnpm build
 
 根目录没有 Go 模块，请不要把三条 Go 检查合并为在根目录运行 `go test ./...`。前端还可运行 `pnpm test:gateway-policy` 和 `pnpm test:console`；`pnpm build` 用于生产构建。
 
-CNB 还包含 Python 契约检查。准备 Python 3、pytest、PyYAML、Helm 及相关测试依赖后执行：
+GitHub CI 还包含 Python 契约检查。准备 Python 3、pytest、PyYAML、Helm 及相关测试依赖后执行：
 
 ```bash
 python3 -m pytest backend/test -q
