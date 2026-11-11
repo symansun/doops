@@ -29,6 +29,7 @@ import {
   LayersIcon,
   UsersIcon,
 } from "./icons"
+import { Button } from "./ui"
 
 type QuickTab = "terminal" | "ask" | "files" | "kb"
 
@@ -130,7 +131,7 @@ export function DashboardPanel({
 
   return (
     <div className="h-full overflow-auto">
-      <div className="mx-auto max-w-screen-2xl px-5 py-6">
+      <div className="px-4 py-6">
         <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold text-foreground text-balance">
@@ -140,14 +141,14 @@ export function DashboardPanel({
               Agent 隧道连接、控制台会话与任务执行的一屏总览。
             </p>
           </div>
-          <button
+          <Button
             onClick={onRefresh}
             disabled={loading}
-            className="flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            size="sm"
           >
             <RefreshIcon width={15} height={15} className={loading ? "animate-spin" : ""} />
             刷新
-          </button>
+          </Button>
         </div>
 
         {targets.length === 0 ? (
@@ -199,7 +200,7 @@ export function DashboardPanel({
               />
             </div>
 
-            <div className="mb-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <div className="mb-4 grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
               <CurrentMachineSection
                 selected={selected}
                 cluster={selectedCluster}

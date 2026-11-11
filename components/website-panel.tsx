@@ -6,6 +6,7 @@ import { callTool, extractText, type Session, type Target, type ToolCancel } fro
 import { TOOLS } from "@/lib/gateway"
 import { addAgentRunNote, addAgentRunOutput, addAgentRunResult, startAgentRun, type AgentRun, type AgentRunNote } from "@/lib/agent-output"
 import { AgentRunOutput } from "@/components/agent-run-output"
+import { Button, Input, Select, SegmentedControl, Textarea } from "./ui"
 
 type WebsiteMode = "check" | "plan" | "apply"
 
@@ -131,34 +132,34 @@ export function WebsitePanel({
             <p className="truncate text-xs text-muted-foreground">DoWeb · {target.cluster}/{target.instance}</p>
           </div>
         </div>
-        <div className="flex items-center gap-1 rounded-md border bg-background p-0.5" role="group" aria-label="网站操作模式">
-          {(["check", "plan", "apply"] as const).map((value) => (
-            <button key={value} type="button" aria-pressed={mode === value} disabled={running} onClick={() => { setMode(value); setConfirmed(false) }} className={`rounded px-2 py-1 text-xs transition-colors ${mode === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-              {modeLabel(value)}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          value={mode}
+          disabled={running}
+          ariaLabel="网站操作模式"
+          onChange={(value) => { setMode(value); setConfirmed(false) }}
+          options={(["check", "plan", "apply"] as const).map((value) => ({ value, label: modeLabel(value) }))}
+        />
       </header>
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
         <div className="flex flex-wrap gap-2">
           {QUICK_REQUESTS.map((item) => (
-            <button key={item.label} type="button" disabled={running} onClick={() => { setMode(item.mode); setRequest(item.request); setConfirmed(false); setError("") }} className="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground disabled:opacity-50">
+            <Button key={item.label} type="button" size="sm" disabled={running} onClick={() => { setMode(item.mode); setRequest(item.request); setConfirmed(false); setError("") }} className="text-xs text-muted-foreground hover:border-primary/50 hover:text-foreground">
               {item.label}
-            </button>
+            </Button>
           ))}
         </div>
         <div className="grid gap-2 sm:grid-cols-3">
-          <input aria-label="站点 ID" value={siteID} onChange={(event) => { setSiteID(event.target.value); setConfirmed(false) }} disabled={running} placeholder="站点 ID" className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-ring" />
-          <input aria-label="域名" value={domain} onChange={(event) => { setDomain(event.target.value); setConfirmed(false) }} disabled={running} placeholder="域名，例如 app.example.com" className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-ring" />
-          <input aria-label="dist 路径" value={dist} onChange={(event) => { setDist(event.target.value); setConfirmed(false) }} disabled={running} placeholder="当前 session 的 dist 路径" className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-ring" />
+          <Input aria-label="站点 ID" value={siteID} onChange={(event) => { setSiteID(event.target.value); setConfirmed(false) }} disabled={running} placeholder="站点 ID" />
+          <Input aria-label="域名" value={domain} onChange={(event) => { setDomain(event.target.value); setConfirmed(false) }} disabled={running} placeholder="域名，例如 app.example.com" />
+          <Input aria-label="dist 路径" value={dist} onChange={(event) => { setDist(event.target.value); setConfirmed(false) }} disabled={running} placeholder="当前 session 的 dist 路径" />
         </div>
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">Nginx<select aria-label="Nginx 运行方式" value={runtimeMode} disabled={running} onChange={(event) => { setRuntimeMode(event.target.value as "host" | "docker"); setConfirmed(false) }} className="rounded-md border bg-background px-2 py-1.5 text-foreground"><option value="host">Host</option><option value="docker">Docker</option></select></label>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">Nginx<Select scale="sm" aria-label="Nginx 运行方式" value={runtimeMode} disabled={running} onChange={(event) => { setRuntimeMode(event.target.value as "host" | "docker"); setConfirmed(false) }}><option value="host">Host</option><option value="docker">Docker</option></Select></label>
         <label className="flex min-h-28 grow shrink-0 flex-col gap-1.5">
           <span className="text-xs font-medium text-foreground">操作需求</span>
-          <textarea aria-label="操作需求" value={request} onChange={(event) => { setRequest(event.target.value); setConfirmed(false) }} disabled={running} placeholder="描述站点、域名、dist、代理、TLS 或巡检目标。" className="min-h-28 flex-1 resize-y rounded-md border bg-background px-3 py-2 text-sm leading-6 outline-none focus:border-ring focus:ring-2 focus:ring-ring/20 disabled:opacity-60" />
+          <Textarea aria-label="操作需求" value={request} onChange={(event) => { setRequest(event.target.value); setConfirmed(false) }} disabled={running} placeholder="描述站点、域名、dist、代理、TLS 或巡检目标。" className="min-h-28 flex-1 resize-y text-sm leading-6 focus:ring-2 focus:ring-ring/20" />
         </label>
         {mode === "apply" && <>
-          <input aria-label="受管凭据" value={credentials} onChange={(event) => { setCredentials(event.target.value); setConfirmed(false) }} disabled={running} placeholder="受管凭据资源名，可填写多个，用空格分隔" className="rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-ring" />
+          <Input aria-label="受管凭据" value={credentials} onChange={(event) => { setCredentials(event.target.value); setConfirmed(false) }} disabled={running} placeholder="受管凭据资源名，可填写多个，用空格分隔" />
           <label className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-muted-foreground">
             <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} disabled={running} className="mt-0.5 accent-primary" />
             <span>我已阅读 SiteSpec、Nginx 验证、健康检查和回滚范围，允许 DoWeb 在 Gateway 授权后执行。</span>
@@ -166,7 +167,7 @@ export function WebsitePanel({
         </>}
         {error && <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}
         <div className="flex items-center justify-end gap-2">
-          {running || stopPending ? <button type="button" onClick={stop} disabled={stopPending} className="flex items-center gap-1.5 rounded-md border border-destructive/50 px-3 py-2 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-60"><Square aria-hidden="true" className="size-3.5" /> {stopPending ? "停止中…" : "停止"}</button> : <button type="button" onClick={() => void run()} disabled={!request.trim()} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"><Send aria-hidden="true" className="size-3.5" /> {mode === "apply" ? "提交受控变更" : "运行 DoWeb"}</button>}
+          {running || stopPending ? <Button type="button" onClick={stop} disabled={stopPending} variant="danger-outline"><Square aria-hidden="true" className="size-3.5" /> {stopPending ? "停止中…" : "停止"}</Button> : <Button type="button" onClick={() => void run()} disabled={!request.trim()} variant="primary"><Send aria-hidden="true" className="size-3.5" /> {mode === "apply" ? "提交受控变更" : "运行 DoWeb"}</Button>}
         </div>
         <section className="min-h-40 rounded-md border bg-background/60 p-3" aria-live="polite">
           <AgentRunOutput run={agentRun} running={running} empty="SiteSpec、nginx -t、reload、健康检查和回滚证据会由目标 Agent 返回，并进入统一 Gateway 审计。" />

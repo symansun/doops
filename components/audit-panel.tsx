@@ -9,9 +9,9 @@ import {
   type AuditScope,
 } from "@/lib/gateway"
 import { HistoryIcon, RefreshIcon } from "./icons"
+import { Button, Input, Select } from "./ui"
 
 const PAGE_SIZE = 50
-const inputClass = "h-9 min-w-0 rounded-md border bg-background px-2.5 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/25"
 
 function fmtTime(s?: string) {
   if (!s) return "—"
@@ -112,10 +112,10 @@ export function AuditPanel({
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-card px-4 py-3">
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <select
+          <Select
             value={scope}
             onChange={(e) => setScope(e.target.value as AuditScope)}
-            className="h-9 rounded-md border bg-background px-2.5 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/25"
+            scale="sm"
             aria-label="审计范围"
           >
             <option value="target">该目标</option>
@@ -124,7 +124,7 @@ export function AuditPanel({
             <option value="global" disabled={!sessionIsAdmin(session)}>全局（管理员）</option>
             <option value="credential">按凭据</option>
             <option value="operation">按操作</option>
-          </select>
+          </Select>
           {scope === "credential" && (
             <form
               className="flex w-full flex-wrap items-center gap-2 sm:w-auto"
@@ -133,21 +133,20 @@ export function AuditPanel({
                 submitCredential()
               }}
             >
-              <input
+              <Input
                 value={credentialInput}
                 onChange={(e) => setCredentialInput(e.target.value)}
                 placeholder="cred_…"
                 spellCheck={false}
-                className={`${inputClass} w-full font-mono sm:w-72`}
+                className="w-full font-mono sm:w-72"
                 aria-label="凭据 ID"
               />
-              <button
+              <Button
                 type="submit"
                 disabled={loading}
-                className="h-9 rounded-md border px-3 text-sm text-foreground transition-colors hover:bg-muted disabled:opacity-50"
               >
                 查询
-              </button>
+              </Button>
             </form>
           )}
           {scope === "operation" && (
@@ -158,15 +157,15 @@ export function AuditPanel({
               if (next === correlationId) void load()
               else setCorrelationId(next)
             }}>
-              <input aria-label="操作 ID" value={operationInput} onChange={(e) => setOperationInput(e.target.value)} spellCheck={false}
-                className={`${inputClass} w-full font-mono sm:w-80`} placeholder="upgrade_operation_id" />
-              <button type="submit" disabled={loading} className="h-9 rounded-md border px-3 text-sm hover:bg-muted disabled:opacity-50">查询</button>
+              <Input aria-label="操作 ID" value={operationInput} onChange={(e) => setOperationInput(e.target.value)} spellCheck={false}
+                className="w-full font-mono sm:w-80" placeholder="upgrade_operation_id" />
+              <Button type="submit" disabled={loading}>查询</Button>
             </form>
           )}
-          <select
+          <Select
             value={action}
             onChange={(e) => setAction(e.target.value)}
-            className="h-9 rounded-md border bg-background px-2.5 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/25"
+            scale="sm"
             aria-label="审计动作"
           >
             <option value="">全部动作</option>
@@ -175,11 +174,11 @@ export function AuditPanel({
                 {item}
               </option>
             ))}
-          </select>
-          <select
+          </Select>
+          <Select
             value={status}
             onChange={(e) => setStatus(e.target.value)}
-            className="h-9 rounded-md border bg-background px-2.5 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/25"
+            scale="sm"
             aria-label="审计状态"
           >
             <option value="">全部状态</option>
@@ -188,23 +187,23 @@ export function AuditPanel({
                 {item}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="flex items-center gap-2">
           {scope === "session" && (
             <span className="break-all font-mono text-sm text-foreground">{sessionId}</span>
           )}
-          <button
+          <Button
             onClick={() => load()}
             disabled={loading}
-            className="flex h-9 items-center gap-1.5 rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+            size="sm"
           >
             <RefreshIcon width={14} height={14} className={loading ? "animate-spin" : ""} /> 刷新
-          </button>
+          </Button>
         </div>
         <div className="flex w-full flex-wrap items-center gap-3 text-sm text-muted-foreground">
-          <label className="flex min-w-0 flex-wrap items-center gap-2">开始时间<input type="datetime-local" aria-label="开始时间" value={since} onChange={(e) => setSince(e.target.value)} className={inputClass} /></label>
-          <label className="flex min-w-0 flex-wrap items-center gap-2">结束时间<input type="datetime-local" aria-label="结束时间" value={until} onChange={(e) => setUntil(e.target.value)} className={inputClass} /></label>
+          <label className="flex min-w-0 flex-wrap items-center gap-2">开始时间<Input type="datetime-local" aria-label="开始时间" value={since} onChange={(e) => setSince(e.target.value)} /></label>
+          <label className="flex min-w-0 flex-wrap items-center gap-2">结束时间<Input type="datetime-local" aria-label="结束时间" value={until} onChange={(e) => setUntil(e.target.value)} /></label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={!hideObserve} onChange={(e) => setHideObserve(!e.target.checked)} />显示升级进行中的轮询</label>
         </div>
       </div>
@@ -216,7 +215,7 @@ export function AuditPanel({
         </p>
         {hint && <p className="mb-3 text-sm text-muted-foreground">{hint}</p>}
         {error && (
-          <p role="alert" className="mb-3 rounded-lg bg-destructive/15 px-3 py-2 text-sm text-destructive">
+          <p role="alert" className="status-error mb-3">
             {error}
           </p>
         )}
@@ -283,7 +282,7 @@ export function AuditPanel({
         </ul>
         {events.length > 0 && (
           <div className="mt-4 flex justify-center">
-            {hasMore ? <button disabled={loading} onClick={() => load(events[events.length - 1].id)} className="rounded-md border px-4 py-2 text-sm hover:bg-muted disabled:opacity-50">加载更早记录</button>
+            {hasMore ? <Button disabled={loading} onClick={() => load(events[events.length - 1].id)}>加载更早记录</Button>
               : <p className="text-sm text-muted-foreground">已加载全部匹配记录</p>}
           </div>
         )}

@@ -4,13 +4,16 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@agent-cloud/agent-ui@0.1.4': ce5393496526173470b34f69c1588f5d7333ee0a54447750e4de9f521cc8ee81
+
 importers:
 
   .:
     dependencies:
       '@agent-cloud/agent-ui':
         specifier: 0.1.4
-        version: 0.1.4(@xterm/addon-fit@0.11.0)(@xterm/xterm@6.0.0)(lucide-react@0.577.0(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react-markdown@10.1.0(@types/react@19.2.17)(react@19.2.7))(react@19.2.7)(remark-gfm@4.0.1)
+        version: 0.1.4(patch_hash=ce5393496526173470b34f69c1588f5d7333ee0a54447750e4de9f521cc8ee81)(@xterm/addon-fit@0.11.0)(@xterm/xterm@6.0.0)(lucide-react@0.577.0(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react-markdown@10.1.0(@types/react@19.2.17)(react@19.2.7))(react@19.2.7)(remark-gfm@4.0.1)
       '@bufbuild/protobuf':
         specifier: 2.16.0
         version: 2.16.0
@@ -73,7 +76,7 @@ importers:
 packages:
 
   '@agent-cloud/agent-ui@0.1.4':
-    resolution: {integrity: sha512-hJaJ6pFP8D8YNWaX0KMxtqHe+yn6S6jB2+frnmpinXj8vJcTH8PYOFZhRv2JHKHTvv+ATeklEHA3wfYy2WWKMA==}
+    resolution: {integrity: sha512-hJaJ6pFP8D8YNWaX0KMxtqHe+yn6S6jB2+frnmpinXj8vJcTH8PYOFZhRv2JHKHTvv+ATeklEHA3wfYy2WWKMA==, tarball: https://npm.cnb.cool/l8ai/npm-common/-/packages/@agent-cloud/agent-ui/-/@agent-cloud/agent-ui-0.1.4.tgz}
     peerDependencies:
       '@xterm/addon-fit': '*'
       '@xterm/xterm': '*'
@@ -1515,7 +1518,7 @@ packages:
 
 snapshots:
 
-  '@agent-cloud/agent-ui@0.1.4(@xterm/addon-fit@0.11.0)(@xterm/xterm@6.0.0)(lucide-react@0.577.0(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react-markdown@10.1.0(@types/react@19.2.17)(react@19.2.7))(react@19.2.7)(remark-gfm@4.0.1)':
+  '@agent-cloud/agent-ui@0.1.4(patch_hash=ce5393496526173470b34f69c1588f5d7333ee0a54447750e4de9f521cc8ee81)(@xterm/addon-fit@0.11.0)(@xterm/xterm@6.0.0)(lucide-react@0.577.0(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react-markdown@10.1.0(@types/react@19.2.17)(react@19.2.7))(react@19.2.7)(remark-gfm@4.0.1)':
     dependencies:
       '@bufbuild/protobuf': 2.16.0
       '@codemirror/commands': 6.11.1

@@ -75,7 +75,7 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {dialog}
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b bg-card px-5 py-3">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b bg-card px-4 py-3">
         <div className="min-w-0">
           <h2 className="text-base font-semibold">发布业务工作负载</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">

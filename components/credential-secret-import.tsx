@@ -1,5 +1,6 @@
 "use client"
 
+import { Input } from "./ui"
 import { useState } from "react"
 import type { Session, Target } from "@/lib/client"
 import { randomSession } from "@/lib/gateway"
@@ -135,8 +136,8 @@ function Field({
   return (
     <label className="flex flex-col gap-1 text-xs text-muted-foreground">
       {label}
-      <input
-        className="input font-mono text-xs"
+      <Input
+        className="font-mono text-xs"
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}

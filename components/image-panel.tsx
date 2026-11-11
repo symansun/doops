@@ -2,6 +2,7 @@
 
 import { Boxes, Send, Square } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
+import { Button, Input, Select, SegmentedControl } from "./ui"
 import { callTool, extractText, type Session, type Target, type ToolCancel } from "@/lib/client"
 import {
   appendImageOutput,
@@ -31,7 +32,6 @@ const MODES: { id: ImageMode; label: string; hint: string }[] = [
   { id: "sync", label: "Registry 同步", hint: "doops registry sync：把同一 tag 的多个镜像从源 Registry 同步到目标 Registry" },
 ]
 
-const INPUT_CLASS = "min-w-0 rounded-md border bg-background px-2 py-2 text-sm text-foreground outline-none focus:border-ring"
 const LABEL_CLASS = "flex min-w-0 flex-col gap-1 text-xs text-muted-foreground"
 
 interface RunSummary {
@@ -227,25 +227,18 @@ export function ImagePanel({
             <p className="truncate text-xs text-muted-foreground">BuildKit · Skopeo · {target.cluster}/{target.instance}</p>
           </div>
         </div>
-        <div className="flex items-center gap-1 rounded-md border bg-background p-0.5" role="group" aria-label="镜像操作">
-          {MODES.map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              aria-pressed={mode === m.id}
-              disabled={running}
-              onClick={() => { setMode(m.id); changed() }}
-              className={`rounded px-2 py-1 text-xs transition-colors ${mode === m.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          value={mode}
+          onChange={(value) => { setMode(value); changed() }}
+          disabled={running}
+          ariaLabel="镜像操作"
+          options={MODES.map(({ id, label }) => ({ value: id, label }))}
+        />
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         <form
-          className="mx-auto flex w-full max-w-3xl flex-col gap-3"
+          className="flex w-full flex-col gap-3"
           onSubmit={(event) => { event.preventDefault(); void run() }}
         >
           <p className="text-xs text-muted-foreground">{current.hint}。私有 Registry 使用 Gateway 为本目标下发的 authfile，界面不接收凭据内容；只有目标把 authfile 放在别处时才需要填写远端路径。</p>
@@ -253,28 +246,28 @@ export function ImagePanel({
             {mode === "build" && (
               <>
                 <label className={LABEL_CLASS}>构建上下文目录
-                  <input aria-label="构建上下文目录" required value={build.context} onChange={(e) => updateBuild("context", e.target.value)} placeholder="/root/ws/app" className={INPUT_CLASS} />
+                  <Input aria-label="构建上下文目录" required value={build.context} onChange={(e) => updateBuild("context", e.target.value)} placeholder="/root/ws/app" />
                 </label>
                 <label className={LABEL_CLASS}>Dockerfile（可选）
-                  <input aria-label="Dockerfile" value={build.dockerfile} onChange={(e) => updateBuild("dockerfile", e.target.value)} placeholder="默认 <上下文>/Dockerfile" className={INPUT_CLASS} />
+                  <Input aria-label="Dockerfile" value={build.dockerfile} onChange={(e) => updateBuild("dockerfile", e.target.value)} placeholder="默认 <上下文>/Dockerfile" />
                 </label>
                 <label className={LABEL_CLASS}>平台（逗号分隔，可选）
-                  <input aria-label="平台" value={build.platform} onChange={(e) => updateBuild("platform", e.target.value)} placeholder="linux/amd64,linux/arm64" className={INPUT_CLASS} />
+                  <Input aria-label="平台" value={build.platform} onChange={(e) => updateBuild("platform", e.target.value)} placeholder="linux/amd64,linux/arm64" />
                 </label>
                 <label className={LABEL_CLASS}>输出方式
-                  <select aria-label="输出方式" value={build.output} onChange={(e) => { const output = e.target.value as ImageBuildInput["output"]; setBuild((c) => ({ ...c, output, push: output === "oci" ? false : c.push })); changed() }} className={INPUT_CLASS}>
+                  <Select aria-label="输出方式" value={build.output} onChange={(e) => { const output = e.target.value as ImageBuildInput["output"]; setBuild((c) => ({ ...c, output, push: output === "oci" ? false : c.push })); changed() }}>
                     <option value="oci">OCI 归档</option>
                     <option value="image">镜像</option>
-                  </select>
+                  </Select>
                 </label>
                 {build.output === "oci" ? (
                   <label className={`${LABEL_CLASS} sm:col-span-2`}>OCI 归档路径
-                    <input aria-label="OCI 归档路径" required value={build.outputPath} onChange={(e) => updateBuild("outputPath", e.target.value)} placeholder="/root/ws/app.oci" className={INPUT_CLASS} />
+                    <Input aria-label="OCI 归档路径" required value={build.outputPath} onChange={(e) => updateBuild("outputPath", e.target.value)} placeholder="/root/ws/app.oci" />
                   </label>
                 ) : (
                   <>
                     <label className={LABEL_CLASS}>镜像引用
-                      <input aria-label="镜像引用" required value={build.image} onChange={(e) => updateBuild("image", e.target.value)} placeholder="registry.example.com/team/app:v1.2.3" className={INPUT_CLASS} />
+                      <Input aria-label="镜像引用" required value={build.image} onChange={(e) => updateBuild("image", e.target.value)} placeholder="registry.example.com/team/app:v1.2.3" />
                     </label>
                     <label className="flex items-center gap-2 self-end pb-2 text-xs text-muted-foreground">
                       <input type="checkbox" checked={build.push} onChange={(e) => updateBuild("push", e.target.checked)} />
@@ -288,19 +281,19 @@ export function ImagePanel({
             {mode === "copy" && (
               <>
                 <label className={`${LABEL_CLASS} sm:col-span-2`}>源镜像（含传输方式）
-                  <input aria-label="源镜像" required value={copy.source} onChange={(e) => updateCopy("source", e.target.value)} placeholder="docker://registry.example.com/team/app:v1" className={INPUT_CLASS} />
+                  <Input aria-label="源镜像" required value={copy.source} onChange={(e) => updateCopy("source", e.target.value)} placeholder="docker://registry.example.com/team/app:v1" />
                 </label>
                 <label className={`${LABEL_CLASS} sm:col-span-2`}>目标镜像（含传输方式）
-                  <input aria-label="目标镜像" required value={copy.destination} onChange={(e) => updateCopy("destination", e.target.value)} placeholder="docker://mirror.example.com/team/app:v1 或 oci-archive:/root/ws/app.oci" className={INPUT_CLASS} />
+                  <Input aria-label="目标镜像" required value={copy.destination} onChange={(e) => updateCopy("destination", e.target.value)} placeholder="docker://mirror.example.com/team/app:v1 或 oci-archive:/root/ws/app.oci" />
                 </label>
                 <label className={LABEL_CLASS}>源 authfile 远端路径（可选）
-                  <input aria-label="源 authfile" value={copy.sourceAuthfile} onChange={(e) => updateCopy("sourceAuthfile", e.target.value)} placeholder="默认使用 Gateway 下发的 authfile" className={INPUT_CLASS} />
+                  <Input aria-label="源 authfile" value={copy.sourceAuthfile} onChange={(e) => updateCopy("sourceAuthfile", e.target.value)} placeholder="默认使用 Gateway 下发的 authfile" />
                 </label>
                 <label className={LABEL_CLASS}>目标 authfile 远端路径（可选）
-                  <input aria-label="目标 authfile" value={copy.destinationAuthfile} onChange={(e) => updateCopy("destinationAuthfile", e.target.value)} placeholder="默认使用 Gateway 下发的 authfile" className={INPUT_CLASS} />
+                  <Input aria-label="目标 authfile" value={copy.destinationAuthfile} onChange={(e) => updateCopy("destinationAuthfile", e.target.value)} placeholder="默认使用 Gateway 下发的 authfile" />
                 </label>
                 <label className={LABEL_CLASS}>单步超时（秒）
-                  <input aria-label="超时" type="number" min={1} max={86400} step={1} value={copy.timeout} onChange={(e) => updateCopy("timeout", Number(e.target.value))} className={INPUT_CLASS} />
+                  <Input aria-label="超时" type="number" min={1} max={86400} step={1} value={copy.timeout} onChange={(e) => updateCopy("timeout", Number(e.target.value))} />
                 </label>
                 <div className="flex flex-col justify-end gap-1 pb-1 text-xs text-muted-foreground">
                   <label className="flex items-center gap-2"><input type="checkbox" checked={copy.all} onChange={(e) => updateCopy("all", e.target.checked)} />复制全部平台 manifest（--all）</label>
@@ -312,25 +305,25 @@ export function ImagePanel({
             {mode === "sync" && (
               <>
                 <label className={LABEL_CLASS}>源 Registry 路径
-                  <input aria-label="源 Registry" required value={sync.sourceRegistry} onChange={(e) => updateSync("sourceRegistry", e.target.value)} placeholder="registry.example.com/source/team" className={INPUT_CLASS} />
+                  <Input aria-label="源 Registry" required value={sync.sourceRegistry} onChange={(e) => updateSync("sourceRegistry", e.target.value)} placeholder="registry.example.com/source/team" />
                 </label>
                 <label className={LABEL_CLASS}>目标 Registry 路径
-                  <input aria-label="目标 Registry" required value={sync.targetRegistry} onChange={(e) => updateSync("targetRegistry", e.target.value)} placeholder="harbor.example.com/mirror/team" className={INPUT_CLASS} />
+                  <Input aria-label="目标 Registry" required value={sync.targetRegistry} onChange={(e) => updateSync("targetRegistry", e.target.value)} placeholder="harbor.example.com/mirror/team" />
                 </label>
                 <label className={LABEL_CLASS}>不可变 tag
-                  <input aria-label="tag" required value={sync.tag} onChange={(e) => updateSync("tag", e.target.value)} placeholder="release-20261101" className={INPUT_CLASS} />
+                  <Input aria-label="tag" required value={sync.tag} onChange={(e) => updateSync("tag", e.target.value)} placeholder="release-20261101" />
                 </label>
                 <label className={LABEL_CLASS}>单步超时（秒）
-                  <input aria-label="超时" type="number" min={1} max={86400} step={1} value={sync.timeout} onChange={(e) => updateSync("timeout", Number(e.target.value))} className={INPUT_CLASS} />
+                  <Input aria-label="超时" type="number" min={1} max={86400} step={1} value={sync.timeout} onChange={(e) => updateSync("timeout", Number(e.target.value))} />
                 </label>
                 <label className={`${LABEL_CLASS} sm:col-span-2`}>镜像名（不含 Registry 和 tag，逗号或空格分隔）
-                  <input aria-label="镜像名" required value={sync.images} onChange={(e) => updateSync("images", e.target.value)} placeholder="api, worker" className={INPUT_CLASS} />
+                  <Input aria-label="镜像名" required value={sync.images} onChange={(e) => updateSync("images", e.target.value)} placeholder="api, worker" />
                 </label>
                 <label className={LABEL_CLASS}>源 authfile 远端路径（可选）
-                  <input aria-label="源 authfile" value={sync.sourceAuthfile} onChange={(e) => updateSync("sourceAuthfile", e.target.value)} placeholder="默认使用 Gateway 下发的 authfile" className={INPUT_CLASS} />
+                  <Input aria-label="源 authfile" value={sync.sourceAuthfile} onChange={(e) => updateSync("sourceAuthfile", e.target.value)} placeholder="默认使用 Gateway 下发的 authfile" />
                 </label>
                 <label className={LABEL_CLASS}>目标 authfile 远端路径（可选）
-                  <input aria-label="目标 authfile" value={sync.targetAuthfile} onChange={(e) => updateSync("targetAuthfile", e.target.value)} placeholder="默认使用 Gateway 下发的 authfile" className={INPUT_CLASS} />
+                  <Input aria-label="目标 authfile" value={sync.targetAuthfile} onChange={(e) => updateSync("targetAuthfile", e.target.value)} placeholder="默认使用 Gateway 下发的 authfile" />
                 </label>
               </>
             )}
@@ -343,20 +336,20 @@ export function ImagePanel({
           </label>
           {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
           <div className="flex flex-wrap items-center gap-2">
-            <button type="submit" disabled={!confirmed || running || stopPending} className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50">
+            <Button type="submit" disabled={!confirmed || running || stopPending} variant="primary">
               <Send aria-hidden="true" className="size-4" />执行{current.label}
-            </button>
+            </Button>
             {running && (
-              <button type="button" onClick={stop} disabled={stopPending} className="inline-flex items-center gap-1.5 rounded-md border px-3 py-2 text-sm text-foreground disabled:opacity-50">
+              <Button type="button" onClick={stop} disabled={stopPending}>
                 <Square aria-hidden="true" className="size-4" />{stopPending ? "停止中…" : "停止"}
-              </button>
+              </Button>
             )}
             {stopNote && <span role="status" className="text-xs text-muted-foreground">{stopNote}</span>}
           </div>
         </form>
 
         {summary && (
-          <section aria-label="执行结果" className="mx-auto mt-4 w-full max-w-3xl rounded-md border bg-card p-3 text-xs">
+          <section aria-label="执行结果" className="mt-4 w-full rounded-md border bg-card p-3 text-xs">
             {summary.failure ? (
               <p role="alert" className="text-destructive">{summary.failure.text}</p>
             ) : (
@@ -383,7 +376,7 @@ export function ImagePanel({
         )}
 
         {header && (
-          <div className="mx-auto mt-4 w-full max-w-3xl">
+          <div className="mt-4 w-full">
             <p className="text-xs text-muted-foreground">{header}{running && progress ? ` · ${progress}` : ""}</p>
             {outputText && (
               <pre

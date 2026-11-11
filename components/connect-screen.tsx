@@ -6,6 +6,7 @@ import { fetchTargets, login, persistTokenSession, type Session } from "@/lib/cl
 import { DEMO_TOKEN } from "@/lib/demo"
 import { isDemoAllowed } from "@/lib/demo-policy"
 import { PlugIcon, ServerIcon, SparkIcon } from "./icons"
+import { Button, Input, SegmentedControl, Textarea } from "./ui"
 
 const DEMO_ENABLED = isDemoAllowed()
 
@@ -83,48 +84,36 @@ export function ConnectScreen({
           <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
             Gateway 地址
           </label>
-          <input
+          <Input
             aria-label="Gateway 地址"
             value={gateway}
             onChange={(e) => setGateway(e.target.value)}
             placeholder="https://doops.l8ai.cn"
-            className="mb-4 w-full rounded-lg border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+            className="mb-4 w-full font-mono"
           />
 
-          <div className="mb-4 inline-flex rounded-lg border bg-background p-1 text-sm">
-            <button
-              onClick={() => setMode("password")}
-              className={`rounded-md px-3 py-1.5 transition-colors ${
-                mode === "password"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              账号密码
-            </button>
-            <button
-              onClick={() => setMode("token")}
-              className={`rounded-md px-3 py-1.5 transition-colors ${
-                mode === "token"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              粘贴 Token
-            </button>
-          </div>
+          <SegmentedControl
+            value={mode}
+            onChange={setMode}
+            className="mb-4"
+            ariaLabel="登录方式"
+            options={[
+              { value: "password", label: "账号密码" },
+              { value: "token", label: "粘贴 Token" },
+            ]}
+          />
 
           {mode === "password" ? (
             <div className="flex flex-col gap-3">
-              <input
+              <Input
                 aria-label="用户名"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="用户名"
                 autoComplete="username"
-                className="w-full rounded-lg border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+                className="w-full"
               />
-              <input
+              <Input
                 aria-label="密码"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -132,33 +121,34 @@ export function ConnectScreen({
                 type="password"
                 placeholder="密码"
                 autoComplete="current-password"
-                className="w-full rounded-lg border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+                className="w-full"
               />
             </div>
           ) : (
-            <textarea
+            <Textarea
               value={token}
               onChange={(e) => setToken(e.target.value)}
               placeholder="dgw_user_xxx"
               rows={3}
-              className="w-full resize-none rounded-lg border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/30"
+              className="min-h-24 w-full resize-none font-mono"
             />
           )}
 
           {error && (
-            <p className="mt-3 rounded-lg bg-destructive/15 px-3 py-2 text-sm text-destructive">
+            <p role="alert" className="status-error mt-3">
               {error}
             </p>
           )}
 
-          <button
+          <Button
             onClick={connect}
             disabled={busy}
-            className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            variant="primary"
+            className="mt-4 w-full"
           >
             <PlugIcon width={16} height={16} />
             {busy ? "连接中…" : "连接"}
-          </button>
+          </Button>
 
           <div className="my-4 flex items-center gap-3">
             <span className="h-px flex-1 bg-border" />
@@ -167,13 +157,13 @@ export function ConnectScreen({
           </div>
 
           {DEMO_ENABLED && (
-            <button
+            <Button
               onClick={enterDemo}
-              className="flex w-full items-center justify-center gap-2 rounded-lg border border-primary/40 bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary transition-colors hover:bg-primary/20"
+              className="w-full"
             >
               <SparkIcon width={16} height={16} />
               进入演示模式（无需连接 gateway）
-            </button>
+            </Button>
           )}
         </div>
 

@@ -1,5 +1,6 @@
 "use client"
 
+import { Button, Select, Input, Textarea } from "./ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Session } from "@/lib/client"
 import type { Target } from "@/lib/gateway"
@@ -222,18 +223,18 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
             <p className="text-xs text-muted-foreground">浏览器本地保存模板，发布时通过 doops 写入所选节点</p>
           </div>
           <div className="flex items-center gap-1.5">
-            <button
+            <Button
               onClick={() => startNew("model")}
-              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              variant="primary" size="sm"
             >
               <PlusIcon width={14} height={14} /> 大模型
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={() => startNew("file")}
-              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+              size="sm"
             >
               <PlusIcon width={14} height={14} /> 配置文件
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -299,12 +300,12 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
                       >
                         {unpublished ? (c.published_at ? "有改动" : "未发布") : "已发布"}
                       </span>
-                      <button
+                      <Button
                         onClick={() => startEdit(c)}
-                        className="rounded-md border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted"
+                        size="sm"
                       >
                         编辑
-                      </button>
+                      </Button>
                       <button
                         onClick={() => deleteConfig(c.id)}
                         className="rounded-md border border-destructive/40 px-2 py-1 text-destructive transition-colors hover:bg-destructive/10"
@@ -330,25 +331,25 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
             </h2>
             <p className="text-xs text-muted-foreground">选择模板与目标实例，应用后写入节点并标记本地发布时间</p>
           </div>
-          <button
+          <Button
             onClick={loadInst}
             disabled={loadingInst}
-            className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            size="sm"
           >
             <RefreshIcon width={14} height={14} className={loadingInst ? "animate-spin" : ""} /> 刷新实例
-          </button>
+          </Button>
         </div>
 
         <div className="flex flex-wrap items-end gap-2 border-b bg-muted/30 px-4 py-3">
           <label className="flex min-w-48 flex-1 flex-col gap-1.5">
             <span className="text-xs font-medium text-muted-foreground">要发布的配置</span>
-            <select
+            <Select
               value={dispatchCfg}
               onChange={(e) => {
                 setDispatchError("")
                 setDispatchCfg(e.target.value)
               }}
-              className="input"
+
             >
               <option value="">选择一个配置…</option>
               {configs.map((c) => (
@@ -357,16 +358,16 @@ export function AdminConfigDispatch({ session }: { session: Session }) {
                   {c.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
-          <button
+          <Button
             onClick={publish}
             disabled={dispatching || !dispatchCfg || selectedCount === 0}
-            className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+            variant="primary"
           >
             <RocketIcon width={15} height={15} />
             {dispatching ? "发布中…" : `发布上线 (${selectedCount})`}
-          </button>
+          </Button>
         </div>
         {dispatchError && (
           <p className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
@@ -501,8 +502,8 @@ function ConfigEditor({
       </div>
 
       <Row label="配置名称">
-        <input
-          className="input w-full"
+        <Input
+          className="w-full"
           value={cfg.name}
           onChange={(e) => set({ name: e.target.value })}
           placeholder={isFile ? "如：Nginx 反代配置" : "如：生产 GPT 配置"}
@@ -512,16 +513,16 @@ function ConfigEditor({
       {isFile ? (
         <>
           <Row label="目标路径 (节点上的绝对路径)">
-            <input
-              className="input w-full font-mono"
+            <Input
+              className="w-full font-mono"
               value={cfg.path ?? ""}
               onChange={(e) => set({ path: e.target.value })}
               placeholder="/etc/nginx/conf.d/doops.conf"
             />
           </Row>
           <Row label="格式">
-            <select
-              className="input w-full"
+            <Select
+              className="w-full"
               value={cfg.format ?? "text"}
               onChange={(e) => set({ format: e.target.value })}
             >
@@ -530,11 +531,11 @@ function ConfigEditor({
               <option value="yaml">YAML</option>
               <option value="env">ENV</option>
               <option value="ini">INI / Conf</option>
-            </select>
+            </Select>
           </Row>
           <Row label="文件内容">
-            <textarea
-              className="input min-h-[14rem] w-full resize-y font-mono text-xs leading-relaxed"
+            <Textarea
+              className="min-h-[14rem] w-full resize-y font-mono text-xs leading-relaxed"
               value={cfg.content ?? ""}
               onChange={(e) => set({ content: e.target.value })}
               spellCheck={false}
@@ -545,24 +546,24 @@ function ConfigEditor({
       ) : (
         <>
           <Row label="Provider">
-            <input
-              className="input w-full"
+            <Input
+              className="w-full"
               value={cfg.provider ?? ""}
               onChange={(e) => set({ provider: e.target.value })}
               placeholder="openai-compatible / anthropic"
             />
           </Row>
           <Row label="模型 ID">
-            <input
-              className="input w-full font-mono"
+            <Input
+              className="w-full font-mono"
               value={cfg.model ?? ""}
               onChange={(e) => set({ model: e.target.value })}
               placeholder="<provider>/<model>"
             />
           </Row>
           <Row label="Base URL">
-            <input
-              className="input w-full font-mono"
+            <Input
+              className="w-full font-mono"
               value={cfg.base_url ?? ""}
               onChange={(e) => set({ base_url: e.target.value })}
               placeholder="https://<endpoint>/v1"
@@ -570,8 +571,8 @@ function ConfigEditor({
           </Row>
           <Row label="API 密钥">
             <div className="flex items-center gap-1.5">
-              <input
-                className="input w-full font-mono"
+              <Input
+                className="w-full font-mono"
                 type={showKey ? "text" : "password"}
                 value={cfg.api_key ?? ""}
                 onChange={(e) => set({ api_key: e.target.value })}
@@ -588,8 +589,8 @@ function ConfigEditor({
           </Row>
           <div className="grid grid-cols-2 gap-3">
             <Row label="Temperature">
-              <input
-                className="input w-full"
+              <Input
+                className="w-full"
                 type="number"
                 step="0.1"
                 value={cfg.temperature ?? ""}
@@ -597,8 +598,8 @@ function ConfigEditor({
               />
             </Row>
             <Row label="Max Tokens">
-              <input
-                className="input w-full"
+              <Input
+                className="w-full"
                 type="number"
                 value={cfg.max_tokens ?? ""}
                 onChange={(e) => set({ max_tokens: e.target.value === "" ? undefined : Number(e.target.value) })}
@@ -606,8 +607,8 @@ function ConfigEditor({
             </Row>
           </div>
           <Row label="候选模型 (逗号分隔)">
-            <input
-              className="input w-full font-mono"
+            <Input
+              className="w-full font-mono"
               value={(cfg.models ?? []).join(", ")}
               onChange={(e) => set({ models: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
               placeholder="<provider>/<model>, <provider>/<model>"
@@ -623,18 +624,18 @@ function ConfigEditor({
       )}
 
       <div className="mt-1 flex items-center gap-2">
-        <button
+        <Button
           onClick={onSave}
-          className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+          variant="primary"
         >
           <SaveIcon width={15} height={15} /> 保存配置
-        </button>
-        <button
+        </Button>
+        <Button
           onClick={onCancel}
-          className="rounded-lg border px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted"
+
         >
           取消
-        </button>
+        </Button>
         <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground">
           <KeyIcon width={12} height={12} /> 仅保存在浏览器本地，发布后才写入节点
         </span>

@@ -202,7 +202,7 @@ const TROUBLE = [
 // onEnterConsole 提供时（控制台内嵌），底部 CTA 变为「刷新机器列表」回调；否则链接到 /console
 export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => void }) {
   return (
-    <div className="mx-auto max-w-6xl px-4 py-10">
+    <div className="px-4 py-10">
         {/* 标题 */}
         <div className="mb-8">
           <span className="mb-3 inline-flex items-center gap-1.5 rounded-full border bg-card px-3 py-1 text-xs text-muted-foreground">
@@ -388,7 +388,9 @@ export function DeployGuide() {
           </Link>
         </div>
       </header>
-      <DeployGuideBody />
+      <div className="mx-auto max-w-6xl">
+        <DeployGuideBody />
+      </div>
     </main>
   )
 }

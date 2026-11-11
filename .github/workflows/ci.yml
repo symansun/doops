@@ -60,6 +60,9 @@ jobs:
       - name: Test gateway proxy policy
         run: pnpm test:gateway-policy
 
+      - name: Test web console
+        run: pnpm test:console
+
       - name: Typecheck web console
         run: pnpm exec tsc --noEmit
 

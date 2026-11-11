@@ -54,6 +54,7 @@ import { DeployView } from "./deploy-view"
 import { CicdGuide } from "./cicd-guide"
 import { OnboardingGuide } from "./onboarding-guide"
 import { WhatsNewDialog, type WhatsNewMode } from "./whats-new-dialog"
+import { Button, Input, PageTabs } from "./ui"
 import {
   TerminalIcon,
   SparkIcon,
@@ -439,13 +440,13 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
   const interruptedBanner = interruptedBannerView(interruptedNotices)
 
   return (
-    <div className="flex h-dvh flex-col">
-      <header className="flex shrink-0 items-center justify-between border-b bg-card px-4 py-2.5">
-        <div className="flex min-w-0 max-w-full items-center gap-2 overflow-x-auto">
+    <div className="flex h-dvh w-full flex-col">
+      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card px-4 py-2.5">
+        <div className="flex min-w-0 flex-1 items-center gap-2 lg:flex-initial">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
             <ServerIcon width={16} height={16} />
           </div>
-          <span className="hidden truncate text-sm font-semibold text-foreground sm:inline">
+          <span className="hidden truncate text-sm font-semibold text-foreground lg:inline">
             Doops Console
           </span>
           {(view === "console" || view === "deploy") && (
@@ -485,12 +486,13 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
             <SparkIcon width={14} height={14} />
             <span className="hidden sm:inline">博客</span>
           </Link>
-          <button
+          <Button
             onClick={() => openWhatsNew("manual")}
             disabled={!releaseVersion}
             data-testid="whats-new-button"
             title={releaseVersion ? "更新内容" : "当前版本没有更新内容"}
-            className="relative flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+            size="sm"
+            className="relative"
           >
             <HistoryIcon width={14} height={14} />
             <span className="hidden sm:inline">更新内容</span>
@@ -503,21 +505,21 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                 />
               </>
             )}
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={() => setShowGuide(true)}
             title="新手引导"
-            className="flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
+            size="sm"
           >
             <HelpIcon width={14} height={14} /> <span className="hidden sm:inline">帮助</span>
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={logout}
             title="断开连接"
-            className="flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
+            size="sm"
           >
             <LogoutIcon width={14} height={14} /> <span className="hidden sm:inline">断开</span>
-          </button>
+          </Button>
         </div>
       </header>
       {/* Below 640px the view entries get a row of their own, so every one of
@@ -596,37 +598,19 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
       ) : (
       <div className={tab === "ask" && selected ? "flex shrink-0" : "flex min-h-0 flex-1"}>
         <main className="flex min-w-0 flex-1 flex-col">
-          <nav className="flex shrink-0 gap-1 overflow-x-auto border-b bg-card px-2">
-            {TABS.map((t) => {
-              const Icon = t.icon
-              const active = tab === t.id
-              return (
-                <button
-                  key={t.id}
-                  onClick={() => selectTab(t.id)}
-                  disabled={skillRunning}
-                  title={t.secondary ? "高级：直接执行 shell 命令" : undefined}
-                  className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm transition-colors ${
-                    t.secondary ? "ml-auto" : ""
-                  } ${
-                    active
-                      ? "border-primary text-foreground"
-                      : t.secondary
-                        ? "border-transparent text-muted-foreground/70 hover:text-foreground"
-                        : "border-transparent text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  <Icon width={16} height={16} />
-                  {t.label}
-                  {t.secondary && (
-                    <span className="rounded bg-muted px-1 py-0.5 text-[10px] font-normal text-muted-foreground">
-                      高级
-                    </span>
-                  )}
-                </button>
-              )
-            })}
-          </nav>
+          <PageTabs
+            value={tab}
+            onChange={selectTab}
+            disabled={skillRunning}
+            ariaLabel="控制台功能"
+            items={TABS.map(({ id, label, icon: Icon, secondary }) => ({
+              id,
+              icon: <Icon width={16} height={16} />,
+              label: <>{label}{secondary && <span className="rounded bg-muted px-1 py-0.5 text-[10px] font-normal text-muted-foreground">高级</span>}</>,
+              secondary,
+              title: secondary ? "高级：直接执行 shell 命令" : undefined,
+            }))}
+          />
 
           {tab === "overview" ? (
             <DashboardPanel
@@ -647,18 +631,19 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
               <ServerIcon width={32} height={32} />
               <p className="text-sm">还没有可用的机器，部署 agent 或联系管理员接入后即可使用此功能</p>
               <div className="flex flex-wrap items-center justify-center gap-2">
-                <button
+                <Button
                   onClick={() => openView("deploy")}
-                  className="rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                  variant="primary"
+                  size="sm"
                 >
                   部署 Doops Agent
-                </button>
-                <button
+                </Button>
+                <Button
                   onClick={() => selectTab("overview")}
-                  className="rounded-lg border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-muted"
+                  size="sm"
                 >
                   返回概览
-                </button>
+                </Button>
               </div>
             </div>
           ) : tab === "ask" ? null : (
@@ -668,11 +653,12 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-b bg-card px-4 py-1.5">
                   <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     session
-                    <input
+                    <Input
                       value={sessionId}
                       disabled={skillRunning}
                       onChange={(e) => changeSession(e.target.value)}
-                      className="w-44 rounded-md border bg-background px-2 py-1 font-mono text-xs text-foreground outline-none focus:border-ring"
+                      scale="sm"
+                      className="w-44 font-mono"
                     />
                   </label>
                 </div>
@@ -806,15 +792,15 @@ function ViewButton({
 }) {
   const Icon = VIEW_ICONS[entry.id]
   return (
-    <button
+    <Button
       disabled={disabled}
       onClick={() => onSelect(entry.id)}
       aria-current={active ? "page" : undefined}
-      className={`flex items-center gap-1 whitespace-nowrap rounded-md text-xs font-medium transition-colors ${className} ${
-        active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-      }`}
+      size="sm"
+      variant={active ? "primary" : "ghost"}
+      className={`whitespace-nowrap ${className}`}
     >
       {Icon && <Icon width={13} height={13} />} {entry.label}
-    </button>
+    </Button>
   )
 }

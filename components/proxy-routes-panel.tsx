@@ -1,5 +1,6 @@
 "use client"
 
+import { Input, Select } from "./ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Session } from "@/lib/client"
 import {
@@ -286,23 +287,23 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
               <div className="flex flex-wrap items-end gap-3">
                 <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                   域名
-                  <input
+                  <Input
                     value={form.host}
                     onChange={(e) => patch({ host: e.target.value })}
-                    className="input w-52"
+                    className="w-52"
                     placeholder="app.example.com"
                   />
                 </label>
                 {instances && instances.length > 0 && (
                   <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                     已注册实例
-                    <select
+                    <Select
                       value={knownTarget ? targetKey : ""}
                       onChange={(e) => {
                         const [cluster, ...rest] = e.target.value.split("/")
                         if (e.target.value) patch({ cluster, instance: rest.join("/") })
                       }}
-                      className="input w-48"
+                      className="w-48"
                     >
                       <option value="">手动填写…</option>
                       {instances.map((i) => (
@@ -311,33 +312,33 @@ export function ProxyRoutesPanel({ session }: { session: Session }) {
                           {i.status === "online" ? "" : "（离线）"}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
                 )}
                 <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                   集群
-                  <input
+                  <Input
                     value={form.cluster}
                     onChange={(e) => patch({ cluster: e.target.value })}
-                    className="input w-32"
+                    className="w-32"
                     placeholder="prod-cn"
                   />
                 </label>
                 <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                   实例
-                  <input
+                  <Input
                     value={form.instance}
                     onChange={(e) => patch({ instance: e.target.value })}
-                    className="input w-32"
+                    className="w-32"
                     placeholder="web-01"
                   />
                 </label>
                 <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                   上游地址
-                  <input
+                  <Input
                     value={form.upstream}
                     onChange={(e) => patch({ upstream: e.target.value })}
-                    className="input w-56"
+                    className="w-56"
                     placeholder="http://127.0.0.1:8080"
                   />
                 </label>
