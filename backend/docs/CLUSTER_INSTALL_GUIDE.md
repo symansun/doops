@@ -52,43 +52,44 @@ doops -session preflight exec --target <自动发现的 target> --cmd hostname
 
 ### 操作员客户端安装（git、CLI、Skill）
 
-新操作员机器按下面顺序执行。`install.sh` 从下载的 CLI 内嵌的发布提交读取 Skill 和文档，
-所以必须先有 git 和一份包含该提交的仓库克隆：
+新机器只需要安装 CLI 和 Skill。先确认两条发布线，Release 资产互不相通：
+
+| 发布线 | 仓库 / 当前 tag | Release 资产 | 首次登录 |
+| :--- | :--- | :--- | :--- |
+| 公开线 | `github.com/symansun/doops` / `v0.2.6` | GitHub Releases | 支持 `doops login --gateway` |
+| CNB 生产线 | `cnb.cool/l8ai/ai/doops.sh` / `v1.3.126` | CNB Release Assets | 不支持，用显式路由 |
+
+注意：CNB 仓库默认分支 `master` 是公开线分发器（扁平布局，没有 `backend/`），它下载
+GitHub Release 的公开线 CLI；不要用默认分支的 `scripts/install.sh` 安装 CNB `v1.3.x`
+生产线。CNB 生产线必须固定 `v1.3.126` tag 并使用 `backend/scripts/install.sh`。
 
 1. 安装 git：macOS 用 `brew install git`，Debian/Ubuntu 用 `apt install git`。
-2. 先确定要安装的发布 tag。两条发布线的 Release 资产互不相通，`--version` 必须来自对应的发布源：
+2. 安装公开线（推荐新机器，网关首登）：
 
-   | 发布线 | 仓库 | Release 资产 | 当前 tag | `--gateway` 首登发现 |
-   | :--- | :--- | :--- | :--- | :--- |
-   | 公开线 | `github.com/symansun/doops` | GitHub Releases | `v0.2.3` | 支持 |
-   | CNB 生产线 | `cnb.cool/l8ai/ai/doops.sh` | CNB Release Assets（`install.sh` 默认源） | `v1.3.126` | 不支持，用四项显式路由 |
+   ```bash
+   git clone --depth 1 https://cnb.cool/l8ai/ai/doops.sh.git
+   cd doops.sh
+   bash scripts/install.sh --project <项目绝对路径>
+   export PATH="$HOME/.local/bin:$PATH"
+   doops login --gateway <gateway-url>
+   doops list
+   ```
 
-   克隆时**固定到该 tag**。CNB 仓库的默认分支是 `master`（旧扁平布局，没有 `backend/`），
-   不带 `--branch` 克隆会拿到它：
+   `scripts/install.sh` 默认下载 GitHub Release 最新公开线；也可以在 GitHub 仓库固定 tag：
 
    ```bash
    git clone --branch <tag> --depth 1 https://github.com/symansun/doops.git
-   # 或：git clone --branch <tag> --depth 1 https://cnb.cool/l8ai/ai/doops.sh.git
    cd doops
-   ```
-
-   已经克隆了 main 时，先 `git fetch --tags && git checkout <tag>` 再继续。
-3. 安装 CLI 和 Skill。装公开线（`v0.2.x`）时把资产来源指向 GitHub Releases，并只给
-   `--target-gateway`，用首登发现：
-
-   ```bash
    DOOPS_RELEASE_ASSET_BASE="https://github.com/symansun/doops/releases/download" \
-     bash scripts/install.sh \
-       --version v0.2.3 \
-       --project <项目绝对路径> \
-       --target-gateway <gateway-url>
+     bash scripts/install.sh --version <tag> --project <项目绝对路径> --target-gateway <gateway-url>
    ```
 
-   装 CNB 生产线（`v1.3.x`）时用默认 CNB 源，并给四项显式路由——该线当前发布 CLI 没有
-   `--gateway`：
+3. 安装 CNB 生产线（需要显式路由；当前 CLI 不支持 `--gateway`）：
 
    ```bash
-   bash scripts/install.sh \
+   git clone --branch v1.3.126 --depth 1 https://cnb.cool/l8ai/ai/doops.sh.git
+   cd doops.sh
+   bash backend/scripts/install.sh \
      --version v1.3.126 \
      --project <项目绝对路径> \
      --target-name <name> \
@@ -98,27 +99,20 @@ doops -session preflight exec --target <自动发现的 target> --cmd hostname
      --use '<说明>'
    ```
 
-   只给 `--target-gateway` 而发布 CLI 不支持 `--gateway` 时，安装器会告警并提示改用四项显式路由。
-4. 确认 `~/.local/bin` 在 `PATH` 中，再按发布能力首次登录并验证。首登发现（`v0.2.3` 起）：
+4. 首次登录并验证。
+
+   公开线（首登发现，不需要提前知道 cluster/instance）：
 
    ```bash
-   doops login --gateway <gateway-url>
    printf '%s' "$TOKEN" | doops login --gateway <gateway-url> --token-stdin
    doops list
    doops targets --target <自动发现的 target>
-   ```
-
-   显式路由（`v1.3.x` 生产线）：
-
-   ```bash
-   doops login --target <name>
-   doops targets --target <name>
-   doops -session setup exec --target <name> --cmd hostname
+   doops -session setup exec --target <自动发现的 target> --cmd hostname
    ```
 
    首次登录会调用 `GET /v1/targets`，把该账号可见的在线 target 写回
    `~/.agent/skills/doops/config.json`；已有路由的名称、别名和描述不会被改写。
-   因此操作员不需要事先知道 Agent 的 `cluster/instance`。
+   CNB 生产线用 `doops login --target <name>`，然后 `doops targets --target <name>`。
 
 约束：
 
