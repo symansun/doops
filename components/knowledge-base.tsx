@@ -13,6 +13,7 @@ import {
   CheckIcon,
 } from "./icons"
 import { useAppDialog } from "./app-dialog"
+import { SegmentedControl, Input } from "./ui"
 
 // 知识库根目录（持久化，不随会话工作区清理）
 const KB_ROOT = "/root/kb"
@@ -207,7 +208,7 @@ export function KnowledgeBase({
       <label htmlFor="kb-new-doc" className="mb-1 block text-[11px] text-muted-foreground">
         文档名称，自动补全 .md
       </label>
-      <input
+      <Input
         id="kb-new-doc"
         ref={nameRef}
         value={draftName}
@@ -222,7 +223,7 @@ export function KnowledgeBase({
           }
         }}
         placeholder="运行手册"
-        className="input w-full text-sm"
+        className="w-full text-sm"
       />
       {nameErr && <p className="mt-1 text-[11px] text-destructive">{nameErr}</p>}
       <div className={`flex justify-end gap-1.5 ${compact ? "mt-1.5" : ""}`}>
@@ -281,16 +282,6 @@ export function KnowledgeBase({
     }
   }
 
-  const modeBtn = (m: Mode, label: string) => (
-    <button
-      onClick={() => setMode(m)}
-      className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-        mode === m ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-      }`}
-    >
-      {label}
-    </button>
-  )
 
   return (
     <div className="flex h-full min-h-0">
@@ -364,11 +355,16 @@ export function KnowledgeBase({
                 {dirty && <span className="h-1.5 w-1.5 rounded-full bg-primary" title="未保存" />}
               </span>
               <div className="ml-auto flex items-center gap-2">
-                <div className="flex items-center gap-0.5 rounded-lg border bg-muted/40 p-0.5">
-                  {modeBtn("edit", "编辑")}
-                  {modeBtn("split", "分屏")}
-                  {modeBtn("preview", "预览")}
-                </div>
+                <SegmentedControl
+                  value={mode}
+                  onChange={setMode}
+                  ariaLabel="知识库编辑模式"
+                  options={[
+                    { value: "edit", label: "编辑" },
+                    { value: "split", label: "分屏" },
+                    { value: "preview", label: "预览" },
+                  ]}
+                />
                 {status && (
                   <span
                     className={`flex items-center gap-1 text-xs ${

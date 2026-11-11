@@ -27,6 +27,7 @@ import {
   type CredentialVersion,
 } from "@/lib/credentials"
 import { useAppDialog } from "./app-dialog"
+import { SegmentedControl, Button, Select, Input, Textarea } from "./ui"
 import {
   BanIcon,
   CheckIcon,
@@ -287,20 +288,15 @@ export function CredentialPanel({ session, target }: { session: Session; target:
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex rounded-md border bg-background p-0.5 text-xs">
-            <button
-              onClick={() => setView("target")}
-              className={`rounded px-2.5 py-1.5 ${view === "target" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
-            >
-              当前目标可用
-            </button>
-            <button
-              onClick={() => setView("managed")}
-              className={`rounded px-2.5 py-1.5 ${view === "managed" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
-            >
-              我管理的
-            </button>
-          </div>
+          <SegmentedControl
+            value={view}
+            onChange={setView}
+            ariaLabel="凭据范围"
+            options={[
+              { value: "target", label: "当前目标可用" },
+              { value: "managed", label: "我管理的" },
+            ]}
+          />
           <button
             onClick={load}
             disabled={loading}
@@ -442,29 +438,29 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                 <td className="sticky right-0 z-10 border-l border-border/60 bg-background px-3 py-3">
                   <div className="flex flex-wrap justify-end gap-1.5 [&>button]:whitespace-nowrap">
                     {view === "managed" && resource.state === "active" && canImportFromSecret(resource.type) && (
-                      <button
+                      <Button
                         onClick={() => setAction({ kind: "import", credential: resource })}
-                        className="rounded-md border px-2 py-1 text-xs text-foreground hover:bg-muted"
+                        size="sm"
                       >
                         从 Secret 导入
-                      </button>
+                      </Button>
                     )}
                     {view === "managed" && resource.state === "active" && !session.demo && (
                       <>
-                        <button
+                        <Button
                           onClick={() => setAction({ kind: "payload", credential: resource })}
-                          className="rounded-md border px-2 py-1 text-xs text-foreground hover:bg-muted"
+                          size="sm"
                         >
                           写入版本
-                        </button>
+                        </Button>
                         {version && (
                           <>
-                            <button
+                            <Button
                               onClick={() => setAction({ kind: "version", credential: resource, version })}
-                              className="rounded-md border px-2 py-1 text-xs text-foreground hover:bg-muted"
+                              size="sm"
                             >
                               查看版本
-                            </button>
+                            </Button>
                             {version.state === "staged" && (
                               <>
                                 <button
@@ -477,12 +473,12 @@ export function CredentialPanel({ session, target }: { session: Session; target:
                             )}
                           </>
                         )}
-                        <button
+                        <Button
                           onClick={() => setAction({ kind: "binding", credential: resource })}
-                          className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-foreground hover:bg-muted"
+                          size="sm"
                         >
                           <ShieldIcon width={12} height={12} /> 绑定目标
-                        </button>
+                        </Button>
                         <button
                           onClick={() => revoke(resource)}
                           title="吊销凭据"
@@ -616,19 +612,19 @@ function VersionDialog({
           页面只保存 Gateway 返回的版本元数据；payload 不会进入页面状态、任务上下文或公开请求结果。
         </p>
         <div className="flex justify-end gap-2">
-          <button
+          <Button
             onClick={onClose}
-            className="rounded-md border px-3 py-2 text-xs text-foreground hover:bg-muted"
+            size="sm"
           >
             关闭
-          </button>
+          </Button>
           {version.state === "staged" && (
-            <button
+            <Button
               onClick={onPromote}
-              className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:opacity-90"
+              variant="primary" size="sm"
             >
               激活版本
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -687,19 +683,19 @@ function VerifyDialog({
           将按该 target 验证 staged version；namespace 等运行参数只用于物化，不参与授权。
         </p>
         <div className="flex justify-end gap-2">
-          <button
+          <Button
             onClick={onClose}
-            className="rounded-md border px-3 py-2 text-xs text-foreground hover:bg-muted"
+            size="sm"
           >
             取消
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={submit}
             disabled={busy || version.state !== "staged" || binding.state !== "active"}
-            className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            variant="primary" size="sm"
           >
             {busy ? "验证中" : "验证 target"}
-          </button>
+          </Button>
         </div>
       </div>
     </DialogFrame>
@@ -782,8 +778,8 @@ function VersionSummary({
         <>
           <label className="flex flex-wrap items-center gap-1.5">
             <span>版本</span>
-            <select
-              className="input min-w-48 py-1 text-[11px]"
+            <Select
+              className="min-w-48 py-1 text-[11px]"
               value={selectedVersion?.id ?? ""}
               onChange={(event) => onSelect(event.target.value)}
             >
@@ -792,7 +788,7 @@ function VersionSummary({
                   {version.state} · {version.id}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           {selectedVersion ? (
             <>
@@ -857,8 +853,7 @@ function CreateCredentialForm({
     <div className="flex flex-wrap items-end gap-3 border-b bg-muted/30 px-4 py-3">
       <label className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground">
         资源名称
-        <input
-          className="input"
+        <Input
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="registry-oilan"
@@ -866,19 +861,19 @@ function CreateCredentialForm({
       </label>
       <label className="flex flex-col gap-1 text-xs text-muted-foreground">
         归属
-        <select
-          className="input min-w-32"
+        <Select
+          className="min-w-32"
           value={scope}
           onChange={(event) => setScope(event.target.value as CredentialScope)}
         >
           <option value="personal">个人</option>
           <option value="platform">平台</option>
-        </select>
+        </Select>
       </label>
       <label className="flex flex-col gap-1 text-xs text-muted-foreground">
         类型
-        <select
-          className="input min-w-44"
+        <Select
+          className="min-w-44"
           value={type}
           onChange={(event) => setType(event.target.value as CredentialType)}
         >
@@ -887,21 +882,21 @@ function CreateCredentialForm({
               {label}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
-      <button
+      <Button
         onClick={onCancel}
-        className="rounded-md border px-3 py-2 text-xs text-foreground hover:bg-muted"
+        size="sm"
       >
         取消
-      </button>
-      <button
+      </Button>
+      <Button
         onClick={submit}
         disabled={busy || !name.trim()}
-        className="rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
+        variant="primary" size="sm"
       >
         {busy ? "创建中" : "创建"}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -986,23 +981,23 @@ function PayloadDialog({
         <p className="text-xs text-muted-foreground">
           内容只发送一次并加密持久化，提交后不会在页面或 API 中回显。
         </p>
-        <textarea
+        <Textarea
           value={payload}
           onChange={(event) => setPayload(event.target.value)}
           rows={9}
           spellCheck={false}
           autoComplete="off"
-          className="input w-full resize-y font-mono text-xs"
+          className="w-full resize-y font-mono text-xs"
           placeholder='{"server":"registry.example.com","username":"deploy","password":"..."}'
         />
         <div className="flex justify-end">
-          <button
+          <Button
             onClick={submit}
             disabled={busy || !payload.trim()}
-            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            variant="primary" size="sm"
           >
             <SaveIcon width={14} height={14} /> {busy ? "写入中" : "写入暂存版本"}
-          </button>
+          </Button>
         </div>
       </div>
     </DialogFrame>
@@ -1057,10 +1052,10 @@ function BindingDialog({
         {credential.type === "opaque" ? (
           <label className="flex flex-col gap-1 text-xs text-muted-foreground">
             用途
-            <select className="input" value={use} onChange={(event) => setSelectedUse(event.target.value as CredentialUse)}>
+            <Select value={use} onChange={(event) => setSelectedUse(event.target.value as CredentialUse)}>
               <option value="opaqueSecret">Opaque Secret</option>
               <option value="database">数据库连接</option>
-            </select>
+            </Select>
           </label>
         ) : <ReadOnlyField label="用途" value={use} />}
         <TextField
@@ -1086,13 +1081,13 @@ function BindingDialog({
           </div>
         )}
         <div className="flex justify-end sm:col-span-2">
-          <button
+          <Button
             onClick={submit}
             disabled={busy || !namespace.trim()}
-            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
+            variant="primary" size="sm"
           >
             <ShieldIcon width={14} height={14} /> {busy ? "绑定中" : "确认绑定"}
-          </button>
+          </Button>
         </div>
       </div>
     </DialogFrame>
@@ -1113,8 +1108,7 @@ function TextField({
   return (
     <label className="flex flex-col gap-1 text-xs text-muted-foreground">
       {label}
-      <input
-        className="input"
+      <Input
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}

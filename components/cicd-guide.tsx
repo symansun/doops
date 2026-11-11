@@ -13,6 +13,7 @@ import {
   TerminalIcon,
   RocketIcon,
 } from "./icons"
+import { SegmentedControl, Input } from "./ui"
 
 // 可复制的代码块
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
@@ -175,7 +176,7 @@ jobs:
   }, [provider, gw])
 
   return (
-    <div className="mx-auto max-w-3xl px-5 py-10">
+    <div className="px-4 py-10">
       {/* 标题 */}
       <div className="mb-8">
         <div className="mb-3 inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs font-medium text-muted-foreground">
@@ -202,13 +203,13 @@ jobs:
         <div className="flex flex-col gap-3 rounded-xl border bg-card p-4">
           <label className="flex flex-col gap-1.5 text-xs font-medium text-muted-foreground">
             网关地址 (Gateway)
-            <input
+            <Input
               value={gateway}
               onChange={(e) => setGateway(e.target.value)}
               placeholder="https://gateway.example.com"
               aria-invalid={gatewayError ? true : undefined}
               aria-describedby={gatewayError ? "cicd-gateway-error" : undefined}
-              className={`w-full rounded-md border bg-background px-3 py-2 font-mono text-sm text-foreground outline-none focus:border-ring ${
+              className={`w-full font-mono ${
                 gatewayError ? "border-destructive" : ""
               }`}
             />
@@ -285,21 +286,13 @@ jobs:
         </p>
 
         {/* 平台切换 */}
-        <div className="mb-1 flex flex-wrap gap-1 rounded-lg border bg-muted/40 p-0.5">
-          {PROVIDERS.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => setProvider(p.id)}
-              className={`flex-1 whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                provider === p.id
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
+        <SegmentedControl
+          value={provider}
+          onChange={setProvider}
+          className="mb-1 flex w-full flex-wrap"
+          ariaLabel="CI/CD 平台"
+          options={PROVIDERS.map((p) => ({ value: p.id, label: p.label }))}
+        />
 
         <CodeBlock code={snippet.code} lang={snippet.lang} />
 

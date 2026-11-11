@@ -1,5 +1,6 @@
 "use client"
 
+import { Button } from "./ui"
 import { useState } from "react"
 import { ServerIcon, SparkIcon, TerminalIcon } from "./icons"
 
@@ -31,7 +32,7 @@ export function OnboardingGuide({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-2xl border bg-card p-6 shadow-xl">
+      <div className="w-full max-w-lg rounded-xl border bg-card p-6 shadow-xl">
         <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/15 text-primary">
           <Icon width={24} height={24} />
         </div>
@@ -54,26 +55,26 @@ export function OnboardingGuide({ onClose }: { onClose: () => void }) {
             ))}
           </div>
           <div className="flex items-center gap-2">
-            <button
+            <Button
               onClick={onClose}
-              className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+              variant="ghost"
             >
               跳过
-            </button>
+            </Button>
             {step > 0 && (
-              <button
+              <Button
                 onClick={() => setStep((s) => s - 1)}
-                className="rounded-lg border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-muted"
+
               >
                 上一步
-              </button>
+              </Button>
             )}
-            <button
+            <Button
               onClick={() => (last ? onClose() : setStep((s) => s + 1))}
-              className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              variant="primary"
             >
               {last ? "开始使用" : "下一步"}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

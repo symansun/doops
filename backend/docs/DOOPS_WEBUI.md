@@ -162,3 +162,18 @@ so it keeps working with an air-gapped Gateway.
   `DOOPS_CONSOLE_ALLOWED_GATEWAYS=https://doops.example.com`。控制台只接受精确
   origin，未配置时生产代理接口拒绝请求；除本机 loopback 外，生产 Gateway 必须使用
   HTTPS。
+
+## Console layout and shared controls
+
+[`DESIGN.md`](../../DESIGN.md) defines console spacing, semantic tokens and control states.
+Console views fill the available width with a 16px gutter; only public pages, dialogs
+and document previews use bounded reading widths. Desktop and mobile share the same
+components. Use `components/ui.tsx` for buttons, inputs, selects, textareas, segmented
+controls and page tabs; keep business behavior and permission checks in the host panel.
+
+The pinned `@agent-cloud/agent-ui@0.1.4` display patch is tracked in `patches/`
+and applied by pnpm in local and Docker builds. Tool activity remains in the
+conversation list; the developer trace retains independent interactions without
+rendering the same execution/tool items again. Titles that repeat the workspace
+path or translated tool label are omitted; tool results, actions and textual
+progress stages/messages remain available, including progress without a fraction.

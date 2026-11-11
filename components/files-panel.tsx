@@ -1,5 +1,6 @@
 "use client"
 
+import { Button } from "./ui"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { callTool, extractText, type Session, type Target } from "@/lib/client"
 import { TOOLS } from "@/lib/gateway"
@@ -451,7 +452,7 @@ export function FilesPanel({
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* 上传工具条（含 session） */}
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card/60 px-3 py-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card/60 px-4 py-2">
         {onSessionChange ? (
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             session
@@ -485,20 +486,20 @@ export function FilesPanel({
             multiple
             onChange={(e) => handleUpload(e.target.files)}
           />
-          <button
+          <Button
             onClick={() => fileInputRef.current?.click()}
             disabled={upload?.active}
-            className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            size="sm"
           >
             <UploadIcon width={14} height={14} /> 上传文件
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={() => dirInputRef.current?.click()}
             disabled={upload?.active}
-            className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            size="sm"
           >
             <FolderUpIcon width={14} height={14} /> 上传文件夹
-          </button>
+          </Button>
           <button
             onClick={() => setShowCmd((v) => !v)}
             className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors hover:bg-muted ${
@@ -508,27 +509,26 @@ export function FilesPanel({
             <CopyIcon width={14} height={14} /> 上传命令
           </button>
           <span className="mx-1 h-4 w-px bg-border" aria-hidden />
-          <button
+          <Button
             onClick={() => {
               setCheckErr("")
               setCheckOpen((v) => !v)
             }}
             disabled={maint?.running}
             title="核对 Deployment 主容器镜像是否与期望一致"
-            className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50 ${
-              checkOpen ? "border-primary/50" : ""
-            }`}
+            size="sm"
+            className={checkOpen ? "border-primary/50" : ""}
           >
             <RocketIcon width={14} height={14} /> 检查部署
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={cleanWorkspace}
             disabled={maint?.running}
             title="删除本会话的整个工作区和 Git 裸仓库"
-            className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+            size="sm"
           >
             <TrashIcon width={14} height={14} /> 清理工作区
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -637,13 +637,13 @@ export function FilesPanel({
             <p className="text-xs text-muted-foreground">
               大文件 / 整个目录用 CLI 极速同步（Git HTTP），上传到 <code className="font-mono">/root/ws/{sessionId}</code>
             </p>
-            <button
+            <Button
               onClick={copyCommand}
-              className="flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              variant="primary" size="sm"
             >
               {copied ? <CheckIcon width={13} height={13} /> : <CopyIcon width={13} height={13} />}
               {copied ? "已复制" : "复制命令"}
-            </button>
+            </Button>
           </div>
           <pre className="overflow-x-auto rounded-lg border bg-background p-3 font-mono text-xs leading-relaxed text-foreground">
             {pushCommand}
@@ -670,9 +670,9 @@ export function FilesPanel({
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         {/* 文件浏览器 */}
-        <aside className="flex w-64 shrink-0 flex-col border-r bg-card/40">
+        <aside className="flex max-h-52 w-full shrink-0 flex-col border-b bg-card/40 md:max-h-none md:w-64 md:border-r md:border-b-0">
           <div className="flex items-center justify-between gap-1 border-b px-3 py-2">
             <span className="text-xs font-medium text-muted-foreground">文件浏览器</span>
             <div className="flex items-center gap-1">
@@ -751,7 +751,7 @@ export function FilesPanel({
         </aside>
 
         {/* 编辑器 */}
-        <section className="flex min-w-0 flex-1 flex-col">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex shrink-0 items-center justify-between gap-2 border-b bg-card px-3 py-2">
             <span className="truncate font-mono text-xs text-muted-foreground">
               {openPath || "未打开文件"}

@@ -4,11 +4,11 @@ import { useEffect, useRef, useState } from "react"
 import { History, RefreshCw, Rocket, RotateCcw, Square } from "lucide-react"
 import { runAgentUpgrade, upgradeStorageKey, type AgentUpgradeOperation, type Session, type Target } from "@/lib/client"
 import { AuditPanel } from "./audit-panel"
+import { Button, Input } from "./ui"
 
 const agentImagePattern = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[a-f0-9]{64})$/
 const phases = { dry_run: "参数预览", preflight: "预检", apply: "升级", rollback: "回滚" }
 const statuses: Record<AgentUpgradeOperation["status"], string> = { running: "正在执行", paused: "观察已暂停", failed: "失败", verified: "验收通过", audit_failed: "审计失败", previewed: "预览完成", preflight_passed: "预检通过，未提交升级", outcome_unknown: "结果未确认", rolled_back: "已恢复前一版本" }
-const buttonClass = "flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50 disabled:cursor-not-allowed"
 
 type Props = { session: Session; target: Target; sessionId: string }
 
@@ -133,7 +133,7 @@ function UpgradePanel({ session, target, sessionId }: Props) {
   const disabled = running || !ready || offline || unresolved || Boolean(storageError) || session.demo === true
 
   return (
-    <section className="mx-auto flex w-full max-w-5xl flex-col gap-3 px-4 py-5">
+    <section className="flex w-full min-w-0 flex-col gap-3 px-4 py-5">
       <h2 className="text-base font-medium">升级现有 Agent</h2>
       <p className="break-all text-sm text-muted-foreground">{target.cluster}/{target.instance} · {sessionId}</p>
       {!ready && <p role="status" className="text-sm text-muted-foreground">正在恢复升级记录…</p>}
@@ -142,17 +142,17 @@ function UpgradePanel({ session, target, sessionId }: Props) {
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {([["Agent 镜像", image, setImage], ["Agent 来源提交", commit, setCommit], ["Agent CI 记录 URL", ci, setCI]] as const).map(([label, value, setter]) => (
           <label key={label} className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">{label}
-            <input aria-label={label} value={value} disabled={running || !ready} spellCheck={false} onChange={(e) => { setter(e.target.value); setConfirmed(false) }} className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50" />
+            <Input aria-label={label} value={value} disabled={running || !ready} spellCheck={false} onChange={(e) => { setter(e.target.value); setConfirmed(false) }} />
           </label>
         ))}
       </div>
       <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={disabled} onChange={(e) => setConfirmed(e.target.checked)} className="mt-1" />授权本次 Agent 变更，已核对 CI 来源和回滚范围</label>
       <div className="flex flex-wrap gap-2">
-        <button disabled={disabled || !image || !commit || !ci} onClick={() => start("dry_run")} className={buttonClass}><RefreshCw aria-hidden="true" className="size-4 shrink-0" />参数预览</button>
-        <button disabled={disabled || !confirmed || !image || !commit || !ci} onClick={() => start("preflight")} className={`${buttonClass} bg-primary text-primary-foreground hover:bg-primary/90`}><Rocket aria-hidden="true" className="size-4 shrink-0" />预检并升级</button>
-        <button disabled={disabled || !confirmed} onClick={() => start("rollback")} className={buttonClass}><RotateCcw aria-hidden="true" className="size-4 shrink-0" />回滚前一成功版本</button>
-        {canResume && <button disabled={running || !ready || offline} onClick={() => operation && execute(operation, true)} className={buttonClass}><RefreshCw aria-hidden="true" className="size-4 shrink-0" />恢复观察</button>}
-        {running && <button onClick={() => abortRef.current?.abort()} className={buttonClass}><Square aria-hidden="true" className="size-4 shrink-0" />停止观察</button>}
+        <Button disabled={disabled || !image || !commit || !ci} onClick={() => start("dry_run")}><RefreshCw aria-hidden="true" className="size-4 shrink-0" />参数预览</Button>
+        <Button disabled={disabled || !confirmed || !image || !commit || !ci} onClick={() => start("preflight")} variant="primary"><Rocket aria-hidden="true" className="size-4 shrink-0" />预检并升级</Button>
+        <Button disabled={disabled || !confirmed} onClick={() => start("rollback")}><RotateCcw aria-hidden="true" className="size-4 shrink-0" />回滚前一成功版本</Button>
+        {canResume && <Button disabled={running || !ready || offline} onClick={() => operation && execute(operation, true)}><RefreshCw aria-hidden="true" className="size-4 shrink-0" />恢复观察</Button>}
+        {running && <Button onClick={() => abortRef.current?.abort()}><Square aria-hidden="true" className="size-4 shrink-0" />停止观察</Button>}
       </div>
       {storageError && <p role="alert" className="break-words text-sm text-destructive">{storageError}</p>}
       {operation && (
@@ -167,7 +167,7 @@ function UpgradePanel({ session, target, sessionId }: Props) {
           {operation.auditError && <p role="alert" className="break-words text-sm text-destructive">{operation.auditError}</p>}
           {(error || operation.error) && <p role="alert" className="break-words text-sm text-destructive">{error || operation.error}</p>}
           {operation.output && <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border p-3 text-xs">{operation.output}</pre>}
-          <button aria-expanded={showAudit} onClick={() => setShowAudit(!showAudit)} className={`${buttonClass} self-start`}><History aria-hidden="true" className="size-4" />{showAudit ? "收起本次审计" : "查看本次审计"}</button>
+          <Button aria-expanded={showAudit} onClick={() => setShowAudit(!showAudit)} className="self-start"><History aria-hidden="true" className="size-4" />{showAudit ? "收起本次审计" : "查看本次审计"}</Button>
         </div>
       )}
       {!operation && error && <p role="alert" className="break-words text-sm text-destructive">{error}</p>}

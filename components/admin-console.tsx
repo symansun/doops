@@ -1,5 +1,6 @@
 "use client"
 
+import { Button, Select, Input, PageTabs } from "./ui"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import type { Session } from "@/lib/client"
 import {
@@ -99,26 +100,16 @@ export function AdminConsole({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <nav className="flex shrink-0 gap-1 overflow-x-auto border-b bg-card px-2">
-        {ADMIN_TABS.map((t) => {
-          const Icon = t.icon
-          const active = tab === t.id
-          return (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm transition-colors ${
-                active
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Icon width={16} height={16} />
-              {t.label}
-            </button>
-          )
-        })}
-      </nav>
+      <PageTabs
+        ariaLabel="管理"
+        value={tab}
+        onChange={setTab}
+        items={ADMIN_TABS.map(({ id, label, icon: Icon }) => ({
+          id,
+          label,
+          icon: <Icon width={16} height={16} />,
+        }))}
+      />
       <div className="min-h-0 flex-1 overflow-auto">
         {tab === "instances" && <InstancesView session={session} />}
         {tab === "config" && <AdminConfigDispatch session={session} />}
@@ -152,13 +143,13 @@ function Toolbar({
       </div>
       <div className="flex items-center gap-2">
         {children}
-        <button
+        <Button
           onClick={onRefresh}
           disabled={loading}
-          className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+          size="sm"
         >
           <RefreshIcon width={14} height={14} className={loading ? "animate-spin" : ""} /> 刷新
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -259,11 +250,11 @@ function InstancesView({ session }: { session: Session }) {
         onRefresh={load}
         loading={loading}
       >
-        <select
+        <Select
           aria-label="按集群筛选"
           value={cluster}
           onChange={(e) => setCluster(e.target.value)}
-          className="input w-56 text-xs"
+          className="w-56 text-xs"
         >
           <option value="">全部集群（{clusterOptions.length}）</option>
           {clusterOptions.map((option) => (
@@ -271,7 +262,7 @@ function InstancesView({ session }: { session: Session }) {
               {option.name}（在线 {option.online}/{option.total}）
             </option>
           ))}
-        </select>
+        </Select>
       </Toolbar>
       <ErrorBar msg={error} />
       <div className="overflow-x-auto p-4">
@@ -457,12 +448,12 @@ function UsersView({ session }: { session: Session }) {
         onRefresh={load}
         loading={loading}
       >
-        <button
+        <Button
           onClick={() => setShowCreate((v) => !v)}
-          className="flex items-center gap-1.5 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+          variant="primary" size="sm"
         >
           <PlusIcon width={14} height={14} /> 新建用户
-        </button>
+        </Button>
       </Toolbar>
       <ErrorBar msg={error} />
 
@@ -470,20 +461,20 @@ function UsersView({ session }: { session: Session }) {
         <div className="mx-4 mt-3 flex flex-wrap items-end gap-3 rounded-lg border bg-muted/40 p-3">
           <label className="flex flex-col gap-1 text-xs text-muted-foreground">
             用户名
-            <input
+            <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="input w-40"
+              className="w-40"
               placeholder="ops-wang"
             />
           </label>
           <label className="flex flex-col gap-1 text-xs text-muted-foreground">
             初始密码
-            <input
+            <Input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="input w-40"
+              className="w-40"
               placeholder="••••••••"
             />
           </label>
@@ -491,13 +482,13 @@ function UsersView({ session }: { session: Session }) {
             <input type="checkbox" checked={admin} onChange={(e) => setAdmin(e.target.checked)} />
             授予 admin
           </label>
-          <button
+          <Button
             onClick={submit}
             disabled={busy || !name.trim() || !password.trim()}
-            className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-40"
+            variant="primary" size="sm"
           >
             {busy ? "创建中…" : "创建"}
-          </button>
+          </Button>
         </div>
       )}
 
@@ -537,12 +528,12 @@ function UsersView({ session }: { session: Session }) {
                 <td className="px-3 py-2.5 text-xs text-muted-foreground">{fmtTime(u.created_at)}</td>
                 <td className="px-3 py-2.5">
                   <div className="flex items-center justify-end gap-1.5">
-                    <button
+                    <Button
                       onClick={() => resetPassword(u)}
-                      className="rounded-md border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted"
+                      size="sm"
                     >
                       改密码
-                    </button>
+                    </Button>
                     <button
                       onClick={() => toggleDisabled(u)}
                       className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors hover:bg-muted ${
@@ -680,12 +671,12 @@ function GrantsView({ session }: { session: Session }) {
         onRefresh={load}
         loading={loading}
       >
-        <button
+        <Button
           onClick={() => setShowCreate((v) => !v)}
-          className="flex items-center gap-1.5 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+          variant="primary" size="sm"
         >
           <PlusIcon width={14} height={14} /> 新建授权
-        </button>
+        </Button>
       </Toolbar>
       <ErrorBar msg={error} />
 
@@ -694,18 +685,18 @@ function GrantsView({ session }: { session: Session }) {
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               用户
-              <select value={userId} onChange={(e) => setUserId(e.target.value)} className="input w-44">
+              <Select value={userId} onChange={(e) => setUserId(e.target.value)} className="w-44">
                 <option value="">选择用户…</option>
                 {users.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               集群
-              <select aria-label="集群" value={cluster} onChange={(e) => selectCluster(e.target.value)} className="input w-44">
+              <Select aria-label="集群" value={cluster} onChange={(e) => selectCluster(e.target.value)} className="w-44">
                 <option value="">选择集群…</option>
                 {scope.map((item) => (
                   <option key={item.name} value={item.name}>
@@ -713,16 +704,16 @@ function GrantsView({ session }: { session: Session }) {
                   </option>
                 ))}
                 <option value={GRANT_ALL}>全部集群（*）</option>
-              </select>
+              </Select>
             </label>
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               实例
-              <select
+              <Select
                 aria-label="实例"
                 value={instance}
                 onChange={(e) => setInstance(e.target.value)}
                 disabled={!cluster || cluster === GRANT_ALL}
-                className="input w-44 disabled:opacity-60"
+                className="w-44 disabled:opacity-60"
               >
                 {cluster === GRANT_ALL ? (
                   <option value={GRANT_ALL}>全部实例（*）</option>
@@ -737,7 +728,7 @@ function GrantsView({ session }: { session: Session }) {
                     {cluster && <option value={GRANT_ALL}>该集群全部实例（*）</option>}
                   </>
                 )}
-              </select>
+              </Select>
             </label>
           </div>
           {instancesError && <p className="text-xs text-destructive">{instancesError}</p>}
@@ -753,13 +744,13 @@ function GrantsView({ session }: { session: Session }) {
             授权后用户可使用该 target 的全部运维能力（含 Agent 升级）和它绑定的凭据；平台管理员和凭据管理不随 grant 下发。
           </p>
           <div>
-            <button
+            <Button
               onClick={submit}
               disabled={busy || !validation.ok}
-              className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-40"
+              variant="primary" size="sm"
             >
               {busy ? "授权中…" : "授权"}
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -782,12 +773,12 @@ function GrantsView({ session }: { session: Session }) {
                 <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">{g.instance}</td>
                 <td className="px-3 py-2.5">
                   <div className="flex justify-end">
-                    <button
+                    <Button
                       onClick={() => remove(g.id)}
-                      className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-destructive transition-colors hover:bg-muted"
+                      size="sm" className="text-destructive"
                     >
                       <TrashIcon width={12} height={12} /> 删除
-                    </button>
+                    </Button>
                   </div>
                 </td>
               </tr>
@@ -910,15 +901,15 @@ function TokensView({ session }: { session: Session }) {
           <input type="checkbox" checked={showRevoked} onChange={(e) => setShowRevoked(e.target.checked)} />
           显示已撤销（{revokedTotal}）
         </label>
-        <button
+        <Button
           onClick={() => {
             setShowCreate((v) => !v)
             setCreated("")
           }}
-          className="flex items-center gap-1.5 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+          variant="primary" size="sm"
         >
           <PlusIcon width={14} height={14} /> 签发令牌
-        </button>
+        </Button>
       </Toolbar>
       <ErrorBar msg={error} />
 
@@ -927,37 +918,37 @@ function TokensView({ session }: { session: Session }) {
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               所属用户
-              <select value={userName} onChange={(e) => setUserName(e.target.value)} className="input w-40">
+              <Select value={userName} onChange={(e) => setUserName(e.target.value)} className="w-40">
                 <option value="">选择用户…</option>
                 {users.map((u) => (
                   <option key={u.id} value={u.name}>
                     {u.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               备注名
-              <input value={name} onChange={(e) => setName(e.target.value)} className="input w-36" placeholder="可选" />
+              <Input value={name} onChange={(e) => setName(e.target.value)} className="w-36" placeholder="可选" />
             </label>
-            <button
+            <Button
               onClick={submit}
               disabled={busy || !userName}
-              className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-40"
+              variant="primary" size="sm"
             >
               {busy ? "签发中…" : "签发"}
-            </button>
+            </Button>
           </div>
           {created && (
             <div className="flex items-center gap-2 rounded-lg border border-success/40 bg-success/10 p-2.5">
               <span className="text-xs text-muted-foreground">请立即复制（仅显示一次）：</span>
               <code className="flex-1 truncate font-mono text-xs text-foreground">{created}</code>
-              <button
+              <Button
                 onClick={() => navigator.clipboard?.writeText(created)}
-                className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted"
+                size="sm"
               >
                 <CopyIcon width={12} height={12} /> 复制
-              </button>
+              </Button>
             </div>
           )}
         </div>
@@ -1017,12 +1008,12 @@ function TokensView({ session }: { session: Session }) {
                       <td className="px-3 py-2.5">
                         <div className="flex justify-end">
                           {!t.revoked && (
-                            <button
+                            <Button
                               onClick={() => revoke(t.id)}
-                              className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-destructive transition-colors hover:bg-muted"
+                              size="sm" className="text-destructive"
                             >
                               <BanIcon width={12} height={12} /> 撤销
-                            </button>
+                            </Button>
                           )}
                         </div>
                       </td>

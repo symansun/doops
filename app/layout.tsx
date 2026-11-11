@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next"
-import "./globals.css"
 import "@agent-cloud/agent-ui/styles.css"
+import "./globals.css"
 
 export const metadata: Metadata = {
   title: "Doops · 全方位智能运维工具",

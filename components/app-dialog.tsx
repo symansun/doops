@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react"
 import { createPortal } from "react-dom"
+import { Button, Input } from "./ui"
 
 export type ConfirmOptions = {
   title: string
@@ -167,7 +168,7 @@ function AppDialog({
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={message ? messageId : undefined}
-        className="w-full max-w-md rounded-lg border bg-card shadow-xl"
+        className="w-full max-w-md rounded-xl border bg-card shadow-xl"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="border-b px-4 py-3">
@@ -191,7 +192,7 @@ function AppDialog({
           {request.kind === "prompt" ? (
             <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
               {request.options.label || "内容"}
-              <input
+              <Input
                 ref={inputRef}
                 value={value}
                 onChange={(event) => {
@@ -203,29 +204,28 @@ function AppDialog({
                 autoComplete={request.options.inputType === "password" ? "new-password" : "off"}
                 spellCheck={false}
                 aria-invalid={error ? true : undefined}
-                className="input w-full"
+                className="w-full"
               />
             </label>
           ) : null}
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
           <div className="flex justify-end gap-2 pt-1">
-            <button
+            <Button
               ref={cancelRef}
               type="button"
               onClick={cancel}
-              className="rounded-md border px-3 py-2 text-xs text-foreground transition-colors hover:bg-muted"
+              size="sm"
             >
               {request.options.cancelLabel || "取消"}
-            </button>
-            <button
+            </Button>
+            <Button
               ref={confirmRef}
               type="submit"
-              className={`rounded-md px-3 py-2 text-xs font-medium transition-opacity hover:opacity-90 ${
-                danger ? "bg-destructive text-destructive-foreground" : "bg-primary text-primary-foreground"
-              }`}
+              size="sm"
+              variant={danger ? "danger" : "primary"}
             >
               {request.options.confirmLabel || "确认"}
-            </button>
+            </Button>
           </div>
         </form>
       </div>

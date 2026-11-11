@@ -1,5 +1,6 @@
 "use client"
 
+import { Input, Select } from "./ui"
 import { useEffect, useState } from "react"
 import type { Session, Target } from "@/lib/client"
 import {
@@ -130,8 +131,8 @@ function ViewBundle({
     <div className="flex items-end gap-2">
       <label className="flex flex-1 flex-col gap-1 text-xs text-muted-foreground">
         凭据组名称
-        <input
-          className="input"
+        <Input
+
           value={name}
           onChange={(event) => setName(event.target.value)}
           onKeyDown={(event) => event.key === "Enter" && name.trim() && !busy && submit()}
@@ -208,18 +209,18 @@ function CreateBundle({
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground">
           凭据组名称
-          <input className="input" value={name} onChange={(event) => setName(event.target.value)} placeholder="release" />
+          <Input  value={name} onChange={(event) => setName(event.target.value)} placeholder="release" />
         </label>
         <label className="flex flex-col gap-1 text-xs text-muted-foreground">
           归属
-          <select
-            className="input min-w-32"
+          <Select
+            className="min-w-32"
             value={scope}
             onChange={(event) => setScope(event.target.value as CredentialScope)}
           >
             <option value="personal">个人</option>
             <option value="platform">平台（仅平台管理员）</option>
-          </select>
+          </Select>
         </label>
       </div>
       <fieldset className="rounded-md border">
