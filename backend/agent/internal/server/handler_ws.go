@@ -358,6 +358,7 @@ func (gw *Gateway) serveWebSocketConn(conn *websocket.Conn, remoteAddr string, o
 							"credentialPlan":         credentialPlanCapability(),
 							"structuredSSH":          structuredSSHCapability(),
 							"executionLifecycle":     executionLifecycleCapability(),
+							upgradeAuditProtocol:     upgradeAuditCapability(),
 							registryAuthfileProtocol: registryAuthfileCapability(),
 						},
 					},
@@ -933,12 +934,7 @@ func (gw *Gateway) handleToolCallOverWS(ctx context.Context, reqID interface{}, 
 		}
 
 	case "doops_agent_upgrade":
-		result, err := handleAgentUpgrade(argBytes)
-		if err != nil {
-			writeJSON(buildToolErrorResponse(reqID, err.Error()))
-		} else {
-			writeJSON(buildSuccessResponse(reqID, result))
-		}
+		writeJSON(buildAgentUpgradeResponse(reqID, argBytes))
 
 	case "doops_bg":
 		var args api.BgExecParams

@@ -6,11 +6,11 @@
 set -euo pipefail
 
 : "${DOOPS_BASE_IMAGE_OUTPUT:?DOOPS_BASE_IMAGE_OUTPUT is required}"
-: "${CNB_DOCKER_REGISTRY:?CNB_DOCKER_REGISTRY is required}"
-: "${CNB_REPO_SLUG_LOWERCASE:?CNB_REPO_SLUG_LOWERCASE is required}"
+: "${DOOPS_IMAGE_REGISTRY:?DOOPS_IMAGE_REGISTRY is required}"
+: "${DOOPS_IMAGE_REPOSITORY:?DOOPS_IMAGE_REPOSITORY is required}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BASE_REPOSITORY="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/base-light"
+BASE_REPOSITORY="${DOOPS_IMAGE_REGISTRY}/${DOOPS_IMAGE_REPOSITORY}/base-light"
 
 # DOOPS_AGENT_BASE_IMAGE is the output of this resolution, not one of its inputs.
 INPUT_HASH="$(

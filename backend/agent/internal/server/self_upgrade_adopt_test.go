@@ -26,7 +26,7 @@ func adoptTestProcess(t *testing.T, releases string, applied *string) upgradePro
 				return []byte(`{"items":[]}`), nil
 			case strings.Contains(joined, "get job "):
 				return []byte(`Error from server (NotFound)`), errNotFoundForTest
-			case strings.Contains(joined, "apply -f -"):
+			case strings.Contains(joined, "create -f -"):
 				*applied = stdin
 				return []byte("job created"), nil
 			}

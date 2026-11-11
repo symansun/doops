@@ -1,87 +1,172 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { callTool, extractText, type Session, type Target } from "@/lib/client"
-import { RefreshIcon, RocketIcon, StopIcon } from "./icons"
+import { History, RefreshCw, Rocket, RotateCcw, Square } from "lucide-react"
+import { runAgentUpgrade, upgradeStorageKey, type AgentUpgradeOperation, type Session, type Target } from "@/lib/client"
+import { AuditPanel } from "./audit-panel"
 
-const agentImagePattern = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[a-f0-9]{64})$/
+const agentImagePattern = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[a-f0-9]{64})$/
+const phases = { dry_run: "参数预览", preflight: "预检", apply: "升级", rollback: "回滚" }
+const statuses: Record<AgentUpgradeOperation["status"], string> = { running: "正在执行", paused: "观察已暂停", failed: "失败", verified: "验收通过", audit_failed: "审计失败", previewed: "预览完成", preflight_passed: "预检通过，未提交升级", outcome_unknown: "结果未确认" }
+const buttonClass = "flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50 disabled:cursor-not-allowed"
 
-export function AgentUpgradePanel({ session, target, sessionId }: { session: Session; target: Target; sessionId: string }) {
+type Props = { session: Session; target: Target; sessionId: string }
+
+function restoreOperation(raw: string): AgentUpgradeOperation {
+  const value = JSON.parse(raw) as AgentUpgradeOperation
+  if (!value || typeof value !== "object" ||
+      !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(value.id) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value.sessionId) || value.sessionId.includes("..") ||
+      !Object.hasOwn(phases, value.phase) || !Object.hasOwn(statuses, value.status) ||
+      !Number.isFinite(value.deadline) ||
+      (value.auditFailure !== undefined && (!value.auditFailure || !Number.isSafeInteger(value.auditFailure.audit_id) || value.auditFailure.audit_id <= 0 ||
+        value.auditFailure.upgrade_operation_id !== value.id || value.auditFailure.result == null || !value.auditError)) ||
+      !["image", "sourceCommit", "expectedCommit", "ciURL", "output", "error", "auditError"].every((key) => typeof value[key as keyof AgentUpgradeOperation] === "string") ||
+      !["job", "namespace", "release"].every((key) => value[key as keyof AgentUpgradeOperation] === undefined || typeof value[key as keyof AgentUpgradeOperation] === "string")) {
+    throw new Error("已保存的升级记录格式无效，无法恢复；请按操作 ID 核对审计")
+  }
+  return value.status === "running" ? { ...value, status: "paused", error: "上次页面观察已中断；可恢复观察，未重放变更请求" } : value
+}
+
+export function AgentUpgradePanel(props: Props) {
+  return <UpgradePanel key={JSON.stringify([props.session.gateway, props.session.username, props.session.tokenId, props.target.cluster, props.target.instance])} {...props} />
+}
+
+function UpgradePanel({ session, target, sessionId }: Props) {
   const [image, setImage] = useState("")
   const [commit, setCommit] = useState("")
   const [ci, setCI] = useState("")
   const [confirmed, setConfirmed] = useState(false)
   const [running, setRunning] = useState(false)
-  const [output, setOutput] = useState("")
+  const [ready, setReady] = useState(false)
+  const [operation, setOperation] = useState<AgentUpgradeOperation | null>(null)
   const [error, setError] = useState("")
+  const [storageError, setStorageError] = useState("")
+  const [showAudit, setShowAudit] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
-  useEffect(() => () => abortRef.current?.abort(), [])
+  const mounted = useRef(false)
 
-  async function invoke(arguments_: Record<string, unknown>, signal: AbortSignal, verifyProtocol = false) {
-    let result = ""
-    await callTool(session, { cluster: target.cluster, instance: target.instance, tool: "doops_agent_upgrade", arguments: { session_id: sessionId, ...arguments_ }, signal, requiredProtocol: verifyProtocol ? "structuredSSH" : undefined }, (event) => {
-      if (event.type === "result") result = extractText(event.result)
-    })
-    return result.trim()
+  useEffect(() => {
+    mounted.current = true
+    try {
+      const raw = sessionStorage.getItem(upgradeStorageKey(session, target))
+      if (raw) {
+        const restored = restoreOperation(raw)
+        setOperation(restored)
+        setImage(restored.image)
+        setCommit(restored.sourceCommit)
+        setCI(restored.ciURL)
+      }
+    } catch (err) {
+      setStorageError(err instanceof Error ? err.message : "无法读取升级记录")
+    }
+    setReady(true)
+    return () => { mounted.current = false; abortRef.current?.abort() }
+    // The parent key owns user/target changes. Session selection does not change a saved operation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function save(next: AgentUpgradeOperation) {
+    if (!mounted.current) return
+    setOperation(next)
+    try {
+      sessionStorage.setItem(upgradeStorageKey(session, target), JSON.stringify(next))
+    } catch {
+      if (mounted.current) setStorageError("升级记录保存失败，刷新后可能无法恢复；请保留当前页面并核对本次审计")
+    }
   }
-  async function run(rollback: boolean, preview: boolean) {
-    if (running || (!preview && !confirmed)) return
-    setError("")
-    if (!rollback && !agentImagePattern.test(image)) { setError("Agent 镜像必须为 repository:tag 或 repository@sha256:<64 位 digest>"); return }
-    if (!preview && !rollback && (!/^[a-f0-9]{40}$/.test(commit) || !ci.startsWith("https://"))) { setError("请填写完整来源提交和成功 CI 记录 URL"); return }
+
+  async function execute(next: AgentUpgradeOperation, resume = false) {
+    if (abortRef.current) return
     const ac = new AbortController()
     abortRef.current = ac
     setRunning(true)
-    setOutput("")
+    setError("")
+    setConfirmed(false)
     try {
-      const accepted = await invoke(rollback ? { rollback: true } : { image, dry_run: preview, mode: "k8s" }, ac.signal)
-      setOutput(accepted)
-      if (preview) {
-        if (!accepted.startsWith("dry-run: ")) throw new Error("Agent 未返回有效预览")
+      // Persist the operation identity before any request can create a Job.
+      sessionStorage.setItem(upgradeStorageKey(session, target), JSON.stringify(next))
+      setStorageError("")
+      await runAgentUpgrade(session, target, next, ac.signal, save, resume)
+    } catch (err) {
+      if (mounted.current) setError(err instanceof Error && err.name === "AbortError" ? "已停止观察，集群 Job 可能继续执行" : err instanceof Error ? err.message : "升级请求失败")
+    } finally {
+      if (mounted.current) setRunning(false)
+      abortRef.current = null
+    }
+  }
+
+  function start(phase: "dry_run" | "preflight" | "rollback") {
+    if (running || !ready || (phase !== "dry_run" && !confirmed)) return
+    setError("")
+    const sourceCommit = commit.trim()
+    const ciURL = ci.trim()
+    if (phase !== "rollback") {
+      if (!agentImagePattern.test(image.trim())) { setError("Agent 镜像必须为 repository:tag 或 repository@sha256:<64 位 digest>"); return }
+      try {
+        const url = new URL(ciURL)
+        if (!/^[a-f0-9]{40}$/.test(sourceCommit) || url.protocol !== "https:" || url.username || url.password || url.search || url.hash) throw new Error()
+      } catch {
+        setError("请填写 40 位来源提交和不含用户名、密码、查询参数或片段的 HTTPS CI 记录 URL")
         return
       }
-      const fields = Object.fromEntries(accepted.split("\n", 1)[0].split(/\s+/).slice(1).map((field) => field.split("=")))
-      if (!accepted.startsWith("self-upgrade-accepted ") || !fields.job || !fields.namespace || !fields.release) throw new Error("Agent 未接受升级 Job；请核对控制器版本与 Helm 运行配置")
-      const deadline = Date.now() + 21 * 60 * 1000
-      while (Date.now() < deadline) {
-        await new Promise<void>((resolve, reject) => {
-          const cancel = () => { clearTimeout(timer); reject(new DOMException("操作已取消", "AbortError")) }
-          const timer = setTimeout(() => { ac.signal.removeEventListener("abort", cancel); resolve() }, 5000)
-          if (ac.signal.aborted) cancel()
-          else ac.signal.addEventListener("abort", cancel, { once: true })
-        })
-        const observation = await invoke({ observe_job: fields.job, namespace: fields.namespace }, ac.signal)
-        setOutput(observation)
-        const header = observation.split("\n", 1)[0]
-        if (!header.includes(`job=${fields.job}`) || !header.includes(`namespace=${fields.namespace}`)) throw new Error("观察结果与本次升级 Job 不一致")
-        if (header.startsWith("self-upgrade-failed ")) throw new Error("升级 Job 失败，请查看结果并验证回滚状态")
-        if (header.startsWith("self-upgrade-succeeded ")) {
-          await invoke({ observe_job: fields.job, namespace: fields.namespace }, ac.signal, true)
-          setOutput(`${observation}\nJob 与 structuredSSH 协议已核验。仍需核对 Gateway 实际服务 Pod 的 UID、imageID、运行版本与功能验收。`)
-          return
-        }
-        if (!header.startsWith("self-upgrade-running ")) throw new Error("Agent 返回了无效的升级状态")
-      }
-      throw new Error("升级 Job 观察超时，需要核对目标状态")
-    } catch (err) { setError((err as Error).name === "AbortError" ? "已停止页面观察；已提交的 Job 继续由集群内控制器执行" : (err as Error).message) }
-    finally { setRunning(false); abortRef.current = null; setConfirmed(false) }
+    }
+    const next: AgentUpgradeOperation = {
+      id: crypto.randomUUID(), sessionId, phase, status: "running",
+      image: phase === "rollback" ? "" : image.trim(),
+      sourceCommit: phase === "rollback" ? "" : sourceCommit,
+      expectedCommit: phase === "rollback" ? "" : sourceCommit,
+      ciURL: phase === "rollback" ? "" : ciURL,
+      deadline: Date.now() + 21 * 60_000, output: "", error: "", auditError: "",
+    }
+    setShowAudit(false)
+    void execute(next)
   }
+
+  const canResume = Boolean(operation?.job && operation?.namespace && ["running", "paused", "audit_failed", "outcome_unknown"].includes(operation.status))
+  const unresolved = Boolean(operation && ["running", "paused", "outcome_unknown"].includes(operation.status))
+  const offline = target.status === "offline"
+  const disabled = running || !ready || offline || unresolved || Boolean(storageError) || session.demo === true
+
   return (
-    <section className="mx-auto flex max-w-3xl flex-col gap-3 px-4 py-5">
+    <section className="mx-auto flex w-full max-w-5xl flex-col gap-3 px-4 py-5">
       <h2 className="text-base font-medium">升级现有 Agent</h2>
       <p className="break-all text-sm text-muted-foreground">{target.cluster}/{target.instance} · {sessionId}</p>
+      {!ready && <p role="status" className="text-sm text-muted-foreground">正在恢复升级记录…</p>}
+      {offline && <p role="status" className="text-sm text-warning">目标当前离线，恢复连接后可继续观察</p>}
+      {session.demo && <p role="status" className="text-sm text-muted-foreground">演示会话不执行 Agent 升级</p>}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {([ ["Agent 镜像", image, setImage], ["Agent 来源提交", commit, setCommit], ["Agent CI 记录 URL", ci, setCI] ] as const).map(([label, value, setter]) => <label key={label} className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">{label}<input aria-label={label} value={value} disabled={running} onChange={(e) => { setter(e.target.value); setConfirmed(false) }} className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm text-foreground" /></label>)}
+        {([["Agent 镜像", image, setImage], ["Agent 来源提交", commit, setCommit], ["Agent CI 记录 URL", ci, setCI]] as const).map(([label, value, setter]) => (
+          <label key={label} className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">{label}
+            <input aria-label={label} value={value} disabled={running || !ready} spellCheck={false} onChange={(e) => { setter(e.target.value); setConfirmed(false) }} className="min-w-0 rounded-md border bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50" />
+          </label>
+        ))}
       </div>
-      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={running} onChange={(e) => setConfirmed(e.target.checked)} className="mt-1" />授权本次 Agent 变更，已核对 CI 来源和回滚范围</label>
+      <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={disabled} onChange={(e) => setConfirmed(e.target.checked)} className="mt-1" />授权本次 Agent 变更，已核对 CI 来源和回滚范围</label>
       <div className="flex flex-wrap gap-2">
-        <button disabled={running || !image} onClick={() => run(false, true)} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm disabled:opacity-50"><RefreshIcon width={14} height={14} />参数预览</button>
-        <button disabled={running || !confirmed || !image} onClick={() => run(false, false)} className="flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50"><RocketIcon width={14} height={14} />确认升级</button>
-        <button disabled={running || !confirmed} onClick={() => run(true, false)} className="rounded-md border px-3 py-2 text-sm disabled:opacity-50">回滚前一成功版本</button>
-        {running && <button onClick={() => abortRef.current?.abort()} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm"><StopIcon width={14} height={14} />停止观察</button>}
+        <button disabled={disabled || !image || !commit || !ci} onClick={() => start("dry_run")} className={buttonClass}><RefreshCw aria-hidden="true" className="size-4 shrink-0" />参数预览</button>
+        <button disabled={disabled || !confirmed || !image || !commit || !ci} onClick={() => start("preflight")} className={`${buttonClass} bg-primary text-primary-foreground hover:bg-primary/90`}><Rocket aria-hidden="true" className="size-4 shrink-0" />预检并升级</button>
+        <button disabled={disabled || !confirmed} onClick={() => start("rollback")} className={buttonClass}><RotateCcw aria-hidden="true" className="size-4 shrink-0" />回滚前一成功版本</button>
+        {canResume && <button disabled={running || !ready || offline} onClick={() => operation && execute(operation, true)} className={buttonClass}><RefreshCw aria-hidden="true" className="size-4 shrink-0" />恢复观察</button>}
+        {running && <button onClick={() => abortRef.current?.abort()} className={buttonClass}><Square aria-hidden="true" className="size-4 shrink-0" />停止观察</button>}
       </div>
-      {error && <p role="alert" className="break-words text-sm text-destructive">{error}</p>}
-      {output && <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border p-3 text-xs">{output}</pre>}
+      {storageError && <p role="alert" className="break-words text-sm text-destructive">{storageError}</p>}
+      {operation && (
+        <div className="flex min-w-0 flex-col gap-2 border-t pt-4">
+          <p role="status" className={`text-sm font-medium ${operation.status === "verified" ? "text-success" : ["failed", "audit_failed"].includes(operation.status) ? "text-destructive" : "text-foreground"}`}>{phases[operation.phase]} · {statuses[operation.status]}</p>
+          <p className="break-all font-mono text-xs text-muted-foreground">操作 {operation.id} · session {operation.sessionId}</p>
+          {operation.job && <p className="break-all font-mono text-xs text-muted-foreground">Job {operation.namespace}/{operation.job} · release {operation.release}</p>}
+          {operation.expectedCommit && <p className="break-all font-mono text-xs text-muted-foreground">expected_release_commit={operation.expectedCommit}</p>}
+          {operation.status === "verified" && <p className="text-sm text-success">Job、实际 release_commit 与 structuredSSH 已核验</p>}
+          {operation.status === "outcome_unknown" && <p role="alert" className="text-sm text-warning">Job 可能已经创建；请恢复观察或查看本次审计核对结果，不要重复提交升级。</p>}
+          {operation.auditError && <p role="alert" className="break-words text-sm text-destructive">{operation.auditError}</p>}
+          {(error || operation.error) && <p role="alert" className="break-words text-sm text-destructive">{error || operation.error}</p>}
+          {operation.output && <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border p-3 text-xs">{operation.output}</pre>}
+          <button aria-expanded={showAudit} onClick={() => setShowAudit(!showAudit)} className={`${buttonClass} self-start`}><History aria-hidden="true" className="size-4" />{showAudit ? "收起本次审计" : "查看本次审计"}</button>
+        </div>
+      )}
+      {!operation && error && <p role="alert" className="break-words text-sm text-destructive">{error}</p>}
+      {showAudit && operation && <div className="min-h-80 border-t"><AuditPanel key={operation.id} session={session} target={target} sessionId={operation.sessionId} operationId={operation.id} /></div>}
     </section>
   )
 }

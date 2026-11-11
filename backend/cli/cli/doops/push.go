@@ -130,10 +130,13 @@ func pushSnapshot(
 		if strings.TrimSpace(token) == "" {
 			return "", fmt.Errorf("gateway_auth_missing")
 		}
-		if !dryRun && transfer == nil {
-			return "", fmt.Errorf("cos_not_configured")
-		}
 		if !dryRun {
+			var closeTransfer func()
+			transfer, closeTransfer, err = ensureCOSTransfer(server, sessionID, token, transfer)
+			if err != nil {
+				return "", err
+			}
+			defer closeTransfer()
 			if err := transfer.Probe(); err != nil {
 				return "", err
 			}

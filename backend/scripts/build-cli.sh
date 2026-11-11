@@ -14,7 +14,7 @@ usage() {
   默认输出:
     bin/doops
 
-  发布产物写入临时目录，再上传到同名版本的 CNB Release Assets:
+  发布产物写入临时目录，再上传到同名版本的 GitHub Release:
     dist/cli/doops-darwin-amd64
     dist/cli/doops-darwin-arm64
     dist/cli/doops-linux-amd64

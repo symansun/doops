@@ -17,7 +17,7 @@ IMAGE_DIGEST = "sha256:" + ("b" * 64)
 def deployment_values(workload_name, instance, agent_home, selector_labels=None):
     values = {
         "image": {
-            "repository": "docker.cnb.cool/l8ai/ai/doops.sh",
+            "repository": "registry.example.com/doops-agent",
             "digest": IMAGE_DIGEST,
             "pullPolicy": "Always",
         },
@@ -216,7 +216,7 @@ def test_oilan_agent_renders_without_model_settings(tmp_path, host_access):
         }
     ]
     assert deployment["spec"]["template"]["spec"]["imagePullSecrets"] == []
-    assert container["image"] == f"docker.cnb.cool/l8ai/ai/doops.sh@{IMAGE_DIGEST}"
+    assert container["image"] == f"registry.example.com/doops-agent@{IMAGE_DIGEST}"
     assert "DOOPS_ALLOW_INSECURE_GATEWAY" not in {
         item["name"] for item in container["env"]
     }

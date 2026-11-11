@@ -22,7 +22,7 @@ Fixed release inputs:
   `8683d67174e19a1750e9b19de99a0816cdb8ea79`
 - DoAgent `0.2.42`
 - Candidate image
-  `docker.cnb.cool/l8ai/ai/doops.sh@sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a`
+  `registry.example.com/doops-agent@sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a`
 - Existing container: `doops-agent`
 - Gateway identity: `doops-silicon/vm-49`
 

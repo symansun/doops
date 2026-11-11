@@ -166,6 +166,8 @@ def args_for(**overrides):
         "--harbor-credential", "cred_harbor",
         "--upstream-url", "https://upstream.example.com",
         "--upstream-credential", "cred_upstream",
+        "--registry-name", "upstream",
+        "--policy-prefix", "mirror",
         "--credential-namespace", "harbor-system",
         "--project", "agentcloud",
         "--repository", "l8ai/agentcloud/backend",
@@ -189,6 +191,8 @@ def args_with_trigger():
         "--repository", "l8ai/agentcloud/backend",
         "--tag-pattern", "git-*",
         "--trigger",
+        "--registry-name", "upstream",
+        "--policy-prefix", "mirror",
     ])
 
 
@@ -198,13 +202,13 @@ def args_with_trigger():
 def configured_harbor():
     """A Harbor that already holds everything the script would create."""
     return FakeHarbor(
-        registries=[{"id": 2, "name": "cnb-upstream",
+        registries=[{"id": 2, "name": "upstream",
                      "url": "https://upstream.example.com", "type": "docker-registry",
                      "insecure": False,
                      "credential": {"access_key": "robot", "access_secret": "*****"}}],
         projects=[{"project_id": 226, "name": "agentcloud"}],
         policies=[{
-            "id": 6, "name": "cnb-agentcloud-backend", "enabled": True,
+            "id": 6, "name": "mirror-agentcloud-backend", "enabled": True,
             "dest_namespace": "agentcloud", "dest_namespace_replace_count": -1,
             "filters": [{"type": "name", "value": "l8ai/agentcloud/backend"},
                         {"type": "tag", "value": "git-*"}],
@@ -222,12 +226,12 @@ def test_second_run_reuses_every_object_and_writes_nothing():
 
     result = module.run(harbor, args_for(), "robot", UPSTREAM_TOKEN_CANARY)
 
-    assert result["registry"] == {"name": "cnb-upstream", "id": 2, "created": False}
+    assert result["registry"] == {"name": "upstream", "id": 2, "created": False}
     assert result["project"] == {"name": "agentcloud", "id": 226, "created": False}
     assert result["immutable_rule"] == {"id": 38, "created": False}
     assert result["policies"] == [{
         "repository": "l8ai/agentcloud/backend",
-        "policy": "cnb-agentcloud-backend",
+        "policy": "mirror-agentcloud-backend",
         "policy_id": 6,
         "created": False,
     }]
@@ -263,15 +267,15 @@ def test_policy_name_is_stable_for_every_configured_repository():
     """A second run must derive the same name, or it creates a duplicate policy."""
     module = load()
     cases = [
-        ("agentcloud", "l8ai/agentcloud/backend", "cnb-agentcloud-backend"),
-        ("agentcloud", "l8ai/agentcloud/web", "cnb-agentcloud-web"),
-        ("agentcloud", "l8ai/agentcloud/relay", "cnb-agentcloud-relay"),
-        ("zhiyong", "example/zhiyong/education/zhiyong-frontend", "cnb-zhiyong-frontend"),
-        ("zhiyong", "example/zhiyong/education/zhiyong-lab-api", "cnb-zhiyong-lab-api"),
-        ("zhiyong", "example/zhiyong/education/zhiyong-exam-api", "cnb-zhiyong-exam-api"),
+        ("agentcloud", "l8ai/agentcloud/backend", "mirror-agentcloud-backend"),
+        ("agentcloud", "l8ai/agentcloud/web", "mirror-agentcloud-web"),
+        ("agentcloud", "l8ai/agentcloud/relay", "mirror-agentcloud-relay"),
+        ("zhiyong", "example/zhiyong/education/zhiyong-frontend", "mirror-zhiyong-frontend"),
+        ("zhiyong", "example/zhiyong/education/zhiyong-lab-api", "mirror-zhiyong-lab-api"),
+        ("zhiyong", "example/zhiyong/education/zhiyong-exam-api", "mirror-zhiyong-exam-api"),
     ]
     for project, repository, expected in cases:
-        assert module.policy_name_for("cnb", project, repository) == expected
+        assert module.policy_name_for("mirror", project, repository) == expected
 
 
 def test_existing_policy_with_other_filters_is_updated_not_duplicated():
@@ -292,7 +296,7 @@ def test_existing_policy_with_other_filters_is_updated_not_duplicated():
 def test_pull_policy_names_only_the_source_registry():
     """Harbor rejects a body that fills in both registry sides."""
     module = load()
-    body = module.policy_body("cnb-agentcloud-backend", 2, "agentcloud",
+    body = module.policy_body("mirror-agentcloud-backend", 2, "agentcloud",
                               "l8ai/agentcloud/backend", "git-*")
 
     assert body["src_registry"] == {"id": 2}
@@ -306,7 +310,7 @@ def test_pull_policy_names_only_the_source_registry():
 def test_a_cron_makes_the_policy_pull_on_its_own():
     """A manual trigger only copies what the upstream served at that moment."""
     module = load()
-    body = module.policy_body("cnb-agentcloud-backend", 2, "agentcloud",
+    body = module.policy_body("mirror-agentcloud-backend", 2, "agentcloud",
                               "l8ai/agentcloud/backend", "git-*", "0 * * * *")
 
     assert body["trigger"]["type"] == "scheduled"
@@ -352,7 +356,7 @@ def test_the_cron_syntax_harbor_accepts_is_pinned():
     form is what this script must produce and what the cluster is set to.
     """
     module = load()
-    body = module.policy_body("cnb-agentcloud-backend", 2, "agentcloud",
+    body = module.policy_body("mirror-agentcloud-backend", 2, "agentcloud",
                               "l8ai/agentcloud/backend", "git-*", "0 0 * * * *")
 
     cron = body["trigger"]["trigger_settings"]["cron"]
@@ -381,6 +385,22 @@ def test_the_cron_is_a_command_line_option_and_defaults_to_manual():
     ]).cron == "0 0 * * * *"
 
 
+def test_upstream_inputs_are_explicit_and_fail_closed():
+    """No upstream registry or credential may come from a baked-in default."""
+    module = load()
+
+    with pytest.raises(SystemExit):
+        module.parse_args([
+            "plan", "--harbor-url", "http://h", "--harbor-credential", "cred_h",
+            "--credential-namespace", "harbor-system", "--project", "agentcloud",
+            "--repository", "l8ai/agentcloud/backend",
+        ])
+
+    parsed = args_for()
+    assert parsed.upstream_url == "https://upstream.example.com"
+    assert parsed.upstream_credential == "cred_upstream"
+
+
 def test_project_is_created_without_a_registry_id():
     """registry_id 0 is rejected and a real id would make a proxy cache."""
     module = load()
@@ -401,7 +421,7 @@ def test_registry_endpoint_that_silently_drops_the_credential_fails_closed():
     """Harbor answers 200 on a PUT whose credential it did not store."""
     module = load()
     harbor = FakeHarbor(
-        registries=[{"id": 2, "name": "cnb-upstream",
+        registries=[{"id": 2, "name": "upstream",
                      "url": "https://upstream.example.com",
                      "type": "docker-registry", "insecure": False}],
         store_credential=False,
@@ -409,7 +429,7 @@ def test_registry_endpoint_that_silently_drops_the_credential_fails_closed():
 
     with pytest.raises(module.HarborError) as failure:
         module.ensure_registry_endpoint(
-            harbor, "cnb-upstream", "https://upstream.example.com",
+            harbor, "upstream", "https://upstream.example.com",
             "robot", UPSTREAM_TOKEN_CANARY, False,
         )
 
@@ -563,14 +583,14 @@ def test_a_missing_credential_names_what_is_materialized_and_no_values(monkeypat
 
 def test_a_credential_without_the_requested_key_names_only_key_names():
     module = load()
-    values = {"CNB_USERNAME": "robot", "CNB_TOKEN": UPSTREAM_TOKEN_CANARY}
+    values = {"UPSTREAM_USERNAME": "robot", "UPSTREAM_TOKEN": UPSTREAM_TOKEN_CANARY}
 
     with pytest.raises(module.CredentialError) as failure:
-        module.require_key(values, "CNB_PASSWORD", "upstream credential")
+        module.require_key(values, "UPSTREAM_PASSWORD", "upstream credential")
 
     message = str(failure.value)
-    assert "CNB_PASSWORD" in message
-    assert "CNB_USERNAME" in message
+    assert "UPSTREAM_PASSWORD" in message
+    assert "UPSTREAM_USERNAME" in message
     assert UPSTREAM_TOKEN_CANARY not in message, "a key error must not leak a value"
 
 
@@ -590,13 +610,13 @@ def test_no_credential_payload_reaches_the_result_or_the_requests(capsys):
 def test_a_credential_written_to_harbor_is_never_logged(capsys):
     module = load()
     harbor = FakeHarbor(
-        registries=[{"id": 2, "name": "cnb-upstream",
+        registries=[{"id": 2, "name": "upstream",
                      "url": "https://upstream.example.com",
                      "type": "docker-registry", "insecure": False}],
     )
 
     module.ensure_registry_endpoint(
-        harbor, "cnb-upstream", "https://upstream.example.com",
+        harbor, "upstream", "https://upstream.example.com",
         "robot", UPSTREAM_TOKEN_CANARY, False,
     )
 
@@ -628,7 +648,7 @@ def test_credentials_are_never_passed_as_command_line_arguments():
     assert parsed.harbor_credential == "cred_harbor"
     assert parsed.upstream_credential == "cred_upstream"
     assert parsed.harbor_password_key == "HARBOR_ADMIN_PASSWORD"
-    assert parsed.upstream_token_key == "CNB_TOKEN"
+    assert args_for(upstream_token_key="UPSTREAM_TOKEN").upstream_token_key == "UPSTREAM_TOKEN"
 
 
 # -------------------------------------------------------------- script contract
@@ -723,7 +743,7 @@ def test_plan_is_read_only():
     module = load()
     harbor = configured_harbor()
 
-    rows = module.plan(harbor, args_for(), module.find_registry(harbor, "cnb-upstream"))
+    rows = module.plan(harbor, args_for(), module.find_registry(harbor, "upstream"))
 
     assert harbor.posted == []
     assert harbor.puts == []

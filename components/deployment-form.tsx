@@ -33,7 +33,7 @@ function sections(selector: DeploymentInput["selector"]): { title: string; descr
     ] },
     { title: "来源证据", description: "核对过的 CI 来源，以及发布需要的受管凭据。", fields: [
       { key: "commit", label: "来源提交 SHA", placeholder: "完整 40 位 SHA", mono: true, wide: true },
-      { key: "ci", label: "成功 CI 记录", placeholder: "https://cnb.cool/…/build/logs/…", hint: "仅 HTTPS", mono: true, wide: true },
+      { key: "ci", label: "成功 CI 记录", placeholder: "https://github.com/…/actions/runs/…", hint: "仅 HTTPS", mono: true, wide: true },
       { key: "credentials", label: "凭据资源名", placeholder: "registry-reader, helm-charts", hint: "受管凭据的资源名，逗号或空格分隔；不要填写密钥内容", optional: true, mono: true, wide: true },
     ] },
     { title: "变更说明", description: "原因和可机器核验的验收条件会原样交给 Agent。", fields: [

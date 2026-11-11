@@ -74,7 +74,7 @@ export function CicdGuide(_props: { session: Session }) {
         lang: "bash",
         code: `# 安装固定 Release 的 CLI 与同一提交的 Skill；不向业务 target 同步源码
 export DOOPS_VERSION="<PINNED_DOOPS_VERSION>"
-git clone --depth 1 --branch "$DOOPS_VERSION" https://cnb.cool/l8ai/ai/doops.sh.git /tmp/doops-release
+git clone --depth 1 --branch "$DOOPS_VERSION" https://github.com/symansun/doops.git /tmp/doops-release
 bash /tmp/doops-release/backend/scripts/install.sh --version "$DOOPS_VERSION" --project "$PWD"
 export PATH="$HOME/.local/bin:$PATH"
 export DOOPS_GATEWAY="${gw}"
@@ -115,7 +115,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install released Doops CLI
         run: |
-          git clone --depth 1 --branch "$DOOPS_VERSION" https://cnb.cool/l8ai/ai/doops.sh.git /tmp/doops-release
+          git clone --depth 1 --branch "$DOOPS_VERSION" https://github.com/symansun/doops.git /tmp/doops-release
           bash /tmp/doops-release/backend/scripts/install.sh --version "$DOOPS_VERSION" --project "$GITHUB_WORKSPACE"
       - name: Trigger Doops deploy
         env:
@@ -153,7 +153,7 @@ jobs:
   script:
     - |
       apk add --no-cache bash curl git
-      git clone --depth 1 --branch "$DOOPS_VERSION" https://cnb.cool/l8ai/ai/doops.sh.git /tmp/doops-release
+      git clone --depth 1 --branch "$DOOPS_VERSION" https://github.com/symansun/doops.git /tmp/doops-release
       bash /tmp/doops-release/backend/scripts/install.sh --version "$DOOPS_VERSION" --project "$CI_PROJECT_DIR"
       export PATH="$HOME/.local/bin:$PATH"
       export DOOPS_SESSION="release-$CI_COMMIT_SHORT_SHA"

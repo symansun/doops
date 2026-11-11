@@ -149,7 +149,8 @@ doops -session db-schema sql --target <t> --mode query --database orders \
   `dosql_version_journal_corrupt`，两者都拒绝执行。query 和 dry-run 不产生版本。日志只在
   Agent 的 `/root` 是持久卷时跨重启保留。
 - 结果是带 `operation_id`、`statement_fingerprint` 的 JSON，证据写入目标 session 工作区
-  `.dosql/operations/<operation_id>.evidence.json`，可用 `pull` 取回。
+  `.dosql/operations/<operation_id>.evidence.json`，用 `pull --storage gateway` 取回当前远端工作区；
+  默认 COS pull 只下载此前上传的快照，不包含远端执行后新生成的证据。
 - query 和 apply 都只要求该 target 的 grant；数据库选择规则同上一节。
 
 MongoDB 也走 `--sql/--file`，但语句是 JSON 操作，不是 SQL。一批可以是 JSON 数组，也可以是连续多个文档：
@@ -513,9 +514,9 @@ apiVersion: doops.sh/v1
 kind: DevelopmentCredentialRequirements
 target: gw-114-k8s
 credentials:
-  - credentialRef: cnb-development
+  - credentialRef: dev-git
     use: gitCheckout
-  - credentialRef: cnb-registry
+  - credentialRef: dev-registry
     use: imagePull
 ```
 
@@ -571,13 +572,19 @@ Do not reimplement push with tar/base64/chunk upload. `doops_workspace_*` chunk 
 
 ## Pull
 
+取回远端执行后生成的文件，显式选择当前工作区：
+
 ```bash
-doops -session build pull --target demo --dest ./doops-build-output
+doops -session build pull --storage gateway --target demo --dest ./doops-build-output
 ```
 
-Use `pull` for large files, archives, SQL dumps, images, videos, and generated assets. Do not use `read` or `exec base64` for downloads.
+Use `pull --storage gateway` for files generated in the remote workspace, including archives, SQL dumps, images, and videos. It creates a snapshot of the current remote files before downloading. Do not use `read` or `exec base64` for downloads.
 
-`pull` reads the snapshot manifest from the Gateway's COS bucket and downloads that commit into `--dest`. `--commit` selects a snapshot. `--storage gateway` keeps the Git pull.
+Default `pull` reads the snapshot manifest from the Gateway's COS bucket and downloads the previously uploaded commit into `--dest`. `--commit` selects an uploaded snapshot. COS pull does not export files created or changed on the Agent after the upload:
+
+```bash
+doops -session build pull --target demo --dest ./uploaded-snapshot
+```
 
 ## Read And Write
 
@@ -704,12 +711,12 @@ doops credential list --target <t> --view managed  # 本人管理的凭据
 | 场景 | 入口 |
 | :--- | :--- |
 | 安装或更新 CLI / Skill（不动 Agent） | `bash scripts/install.sh --version <vX.Y.Z> --project "$PWD"` |
-| 已有自升级控制器的 Helm Agent | `doops upgrade`（下方示例） |
-| K8S 首装、旧 Helm Agent、`--proxy-allowed-hosts` / `--host-alias` 等 Helm 配置变更 | `scripts/release-managed-agent.sh`，操作机 kubeconfig |
+| 已声明 `upgradeAudit` v1 的 K8s Agent | `doops upgrade`（下方示例）；`release-managed-agent.sh` 只委托此入口 |
+| K8S 首装、旧 Agent 首升或 Helm 配置变更 | 按 SOP 单独审查；旧脚本的本地变更入口已停用，升级必须经 Gateway 提交独立 Job |
 | 已有独立 Docker Agent | `scripts/release-host-agent.sh`，见 SOP“独立 DockerHost 发布” |
 | 空 Ubuntu/Debian 服务器 | `scripts/bootstrap-host-agent.sh`，见 [`CLUSTER_INSTALL_GUIDE.md`](CLUSTER_INSTALL_GUIDE.md#空服务器-docker-首装) |
 
-安装器从 CNB Release Asset 下载带校验的 CLI 到 `~/.local/bin/doops`，回执写在
+安装器从 GitHub Release 下载带校验的 CLI 到 `~/.local/bin/doops`，回执写在
 `~/.local/share/doops/install.txt`，其中 `commit` 与 `skill_commit` 一致。Skill/docs 取自 CLI
 内嵌 commit，不取当前工作区；缺少该 commit 时安装在替换前停止。
 
@@ -724,10 +731,18 @@ doops -session agent-upgrade upgrade --target <t> --rollback
 - `OK` 表示 Job、`structuredSSH` 探针和 `release_commit` 已核验；之后仍要用同一 target 的
   `exec hostname` 确认实际服务的 Pod，并验证功能路径。
 - `doops upgrade` 只换 Agent 镜像或回滚，不改 `proxy.allowedHosts`、`hostAliases` 等 Helm 配置。
+- 每个目标生成一个 `upgrade_operation_id`，CLI 输出 operation/session 并把成功或失败结果写入
+  本地 history。审计查询使用 `correlation_id=<operation>`，预检、执行、观察和自动回滚共享此编号。
+  历史、终端和 verbose 输出中的凭据会脱敏；来源元数据在网络请求及历史写入前校验，拒绝值不回显。
+- 可用 `--source-commit <40hex>` 和 `--ci-url <https-url>` 记录发布来源；URL 不接受凭据、
+  query 或 fragment。这是操作者提交的来源元数据，不替代调用前核验 CI 与 digest。
+- `--rollback` 要求历史回执包含已验证的 `release_commit`；缺失或实际 commit 不一致时不会打印 `OK`。
+  审计收尾失败时 CLI 保留 `audit_completion_failed`，继续观察已受理 Job 并完成验收或必要回滚，
+  最终仍返回非零，不重复提交升级。
 
 ## BuildKit Availability
 
-Release images are built by CNB CI from the exact source commit. BuildKit in an
+Release images are built by the controlled build pipeline (CI or a designated build host) from the exact source commit. BuildKit in an
 Agent is a runtime capability, not permission to build release images on a
 business target or to make `push` a prerequisite for `ask --apply`.
 Check availability without starting a build:

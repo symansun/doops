@@ -740,26 +740,27 @@ Agent 在线时，`push --storage cos` 上传完成后通知该 session 的 Agen
 读取以当前 session 目录为文件系统根，拒绝越界符号链接。尚未创建的会话工作区显示为空；
 没有 Git 仓库时仍返回实际文件供成果查看，并明确标记 `gitStatus=no_repository`。
 `read` 返回 `content`、`encoding`（`utf-8` 或 `base64`）、`contentType`、`bytes` 和 `binary`；
-预览沿用 `DOOPS_MAX_FILE_READ_BYTES` 上限（默认 1 MiB），大资产仍使用 `doops pull`。
+预览沿用 `DOOPS_MAX_FILE_READ_BYTES` 上限（默认 1 MiB），远端生成的大资产使用 `doops pull --storage gateway`；默认 COS pull 下载此前上传的快照。
 搜索直接遍历当前工作区，不依赖宿主机 grep；跳过 `.git`、`node_modules`、符号链接和二进制，
 遇到超过预览上限的文件返回 `truncated=true`，实际读取错误明确失败。
 
 ### Workspace 同步协议
 
-通用文件同步 CLI 使用 Git HTTP：
+显式选择 `--storage gateway` 的工作区同步 CLI 使用 Git HTTP（默认 COS 快照模式见上文）：
 
 ```text
-doops push -> /v1/git/<cluster>/<instance>/<session>.git -> agent /git/<session>.git
-doops pull <- /v1/git/<cluster>/<instance>/<session>.git <- agent /git/<session>.git
+doops push --storage gateway -> /v1/git/<cluster>/<instance>/<session>.git -> agent /git/<session>.git
+doops pull --storage gateway <- /v1/git/<cluster>/<instance>/<session>.git <- agent /git/<session>.git
 ```
 
 `doops_workspace_begin`、`doops_workspace_chunk`、`doops_workspace_commit`、`doops_workspace_pull_begin`、`doops_workspace_pull_chunk` 是低层 JSON-RPC 文件传输工具，不是声明式发布协议的一部分。
+低层 pull 导出当前工作区 HEAD 的快照，bundle 中的 `master` 来自专用 bare 仓库的快照引用；不会读取或改写工作区自身的 `master` 分支，支持 main、其它分支及 detached HEAD。
 
-普通文件同步应直接执行：
+需要同步当前远端工作区时直接执行：
 
 ```bash
-doops -session <session> push --target <target> --src <dir>
-doops -session <session> pull --target <target> --dest <dir>
+doops -session <session> push --storage gateway --target <target> --src <dir>
+doops -session <session> pull --storage gateway --target <target> --dest <dir>
 ```
 
 ### `doops_node_info`
@@ -826,14 +827,21 @@ socket。镜像构建使用 CLI 的通用 `image build`，高级场景仍可通�
 
 ```json
 {
-  "image": "docker.cnb.cool/l8ai/ai/doops.sh@sha256:<digest>",
+  "image": "registry.example.com/doops-agent@sha256:<digest>",
   "mode": "k8s",
   "release": "doops-agent-live",
+  "upgrade_operation_id": "upg-example-20261111",
+  "session_id": "agent-upgrade",
+  "expected_release_commit": "1111111111111111111111111111111111111111",
   "dry_run": false
 }
 ```
 
-需要该 target 的 grant；升级期间 Agent 独占 target。
+需要该 target 的 grant；每次升级 RPC 独占 target。Agent 必须声明 `upgradeAudit` v1
+（`{"version":1,"structuredResult":true}`）；Gateway 在派发前拒绝缺少该能力的目标。
+`upgrade_operation_id` 使用 1–128 位字母数字、`_`、`-`，首位为字母数字。
+CLI/控制台为同一次目标升级的所有阶段复用编号；直接调用省略时 Gateway 为该 RPC 生成编号。
+`requester_id`、`audit_id` 由 Gateway 按认证身份覆盖，不能由调用方指定归属。
 
 `image` 接受 `repository:tag` 或 `repository@sha256:<64 hex>`，包括 `dry_run: true` 的预演请求。
 tag 使用 `Always` 拉取并校验实际 `imageID`；回滚仍只接受历史已验证的 digest 镜像。
@@ -841,11 +849,27 @@ tag 使用 `Always` 拉取并校验实际 `imageID`；回滚仍只接受历史�
 `observe_job` 读取 Job 状态。`rollback: true` 创建回滚 Job。namespace 必须是 Agent
 自己的 namespace。Job 使用 Agent 已挂载的 kubeconfig，不接收操作机 kubeconfig。
 新 Pod 未持续就绪时 Job 回滚；CLI 在成功后检查 `structuredSSH`，探针失败会再创建回滚 Job。
+`preflight: true` 创建独立预检 Job，成功后才提交实际升级。正式升级必须给出
+`expected_release_commit`（完整 40 位小写 SHA）；可选 `source_commit`、`ci_url`
+记录调用方核验的 CI 来源。CI URL 必须为 HTTPS，禁止用户信息、查询参数和 fragment。
 
 Agent 必须已经包含该控制器，并挂载可共享的 `/root/.kube` 或 `/root/.kube/config`。
 `self-upgrade-accepted` 仅表示 Job 已提交；调用方继续以精确 `job + namespace`
 观察 `self-upgrade-running/failed/succeeded` 首行状态，不能从日志中的成功字样推断结果。
-CLI 的 `-session` 必传；预演不作为升级完成证据，回滚失败也必须单独报告。
+操作规范要求显式指定 CLI `-session`；实现未传时自动生成并打印，不应依赖它作为操作关联键。
+MCP `result.structuredContent` 给出 `phase/outcome/category/job/namespace/release/image/digest`、
+`expected_release_commit/upgrade_operation_id` 等适用字段；失败、busy、unknown 同时
+返回 `isError=true`。Gateway 审计中受理为 `accepted`、普通轮询为 `observing`，
+失败为 `error`，成功阶段为 `success`，未知为 `outcome_unknown`。预演不构成部署证据。
+审计 JSON 保存请求元数据、结构化结果及脱敏输出；通过 `correlation_id` 关联整条升级链。
+
+终态审计写入失败返回 JSON-RPC `-32603 / audit_completion_failed`；
+`error.data={audit_id,upgrade_operation_id,result}` 保留原 MCP 结果供继续观察与验收。
+客户端不能因此重发变更或显示成功；CLI 最终返回非零。断连不能证明独立 Job 已停止。
+最终协议和版本验收通过带 `upgrade_operation_id/session_id` 及
+`expected_release_commit/required_protocol` 的 `initialize` 请求进入审计，阶段为 `verify`。
+Gateway 记录目标 Agent 实际报告的 commit 与协议能力，不使用 Gateway 自身版本替代。
+不匹配返回明确错误并保留同一操作编号，后续回滚可关联到失败的验收记录。
 
 Controller Job 固定在当前 Agent 节点并保留 runtime class，仍为非特权且只共享
 kubeconfig。Deployment/Pod 的 spec 镜像必须精确匹配请求的不可变引用；实际 imageID
@@ -853,8 +877,10 @@ kubeconfig。Deployment/Pod 的 spec 镜像必须精确匹配请求的不可变�
 自动回滚核对升级前捕获的运行身份。完整验证后持久化 revision/image/Pod UID/runtime
 证据到自身 namespace 的 `doops-upgrade-verified-<release>` ConfigMap；写入失败不报告成功。
 手动回滚只选有该证据且仍 superseded 的具体 revision，不推断所有 superseded 都成功。
-Job 使用选定 revision 镜像并复核 revision、namespace 和镜像；无证据的旧 release
-必须经外部控制器回滚，不能在新控制器里跳过验证。
+回执必须包含已验证的实际 `release_commit`；Job 与客户端均核验恢复版本。无历史 commit
+的回执明确拒绝回滚，不能跳过验证；需单独审查经 Gateway 提交的独立恢复方案。
+Job 名按 operation 和 phase 确定，预检不被 apply 删除，同编号同阶段不会重新执行。
+Job 留存 7 天，Gateway 已持久化的结果证据不依赖 Job TTL。
 
 ## 自然语言发布 API 对接模式
 
@@ -908,6 +934,9 @@ Authorization: Bearer <USER_TOKEN>
   不取消其他过滤条件，平台管理员也可用 `user_id=self` 只查本人。
 - 过滤和权限检查在 `limit` 截断前完成；`limit` 为 1–500，省略或超范围时为 100。
   审计存储读取失败返回 `503 audit_unavailable`，不伪装成空列表。
+- `before_id` 为上一页末条 ID，返回更早记录；`correlation_id` 精确匹配操作编号；
+  `since`（含）/`until`（不含）使用 RFC3339。非法游标、时间或时间范围返回 `400`。
+  `hide_upgrade_observe=true` 仅隐藏 `status=observing` 的普通轮询，终态仍可见。
 
 响应：
 
@@ -943,6 +972,8 @@ GET /v1/audit?session=deploy_20260514
 GET /v1/audit?user_id=self
 GET /v1/audit?view=global
 GET /v1/audit?view=global&session=cred_xxx
+GET /v1/audit?correlation_id=upg-example-20261111&limit=50&before_id=123
+GET /v1/audit?action=agent:upgrade&hide_upgrade_observe=true&since=2026-11-01T00:00:00Z
 ```
 
 凭据的资源级审计（写入版本、激活、授权、验证、吊销）不带 `cluster/instance`，
@@ -1061,6 +1092,11 @@ Content-Type: application/json
 DELETE /v1/audit?before=2026-01-01T00:00:00Z
 Authorization: Bearer <ADMIN_USER_TOKEN>
 ```
+
+清理与 `audit:purge` 回执在同一事务提交；回执含管理员身份、
+截止时间和删除数量，写入失败则清理回滚并返回 `503 audit_purge_failed`。运行中、
+执行中、未知结果及清理回执不删除。`accepted/observing` 只有存在同一目标、操作编号和
+Job 的后续成功或失败终态证据才可删除。未知结果的保留规则见执行生命周期，不自动归档或到期。
 
 响应：
 

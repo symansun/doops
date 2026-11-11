@@ -101,7 +101,8 @@ func (c *edgeFakeClock) Advance(d time.Duration) {
 }
 
 type edgeConn struct {
-	id uint32
+	id   uint32
+	done chan struct{}
 
 	mu              sync.Mutex
 	acked           bool
@@ -129,6 +130,7 @@ func newEdgeConn(id uint32, queueCap int, now time.Time, openingTimeout time.Dur
 	}
 	return &edgeConn{
 		id:              id,
+		done:            make(chan struct{}),
 		queueCap:        queueCap,
 		openedAt:        now,
 		openingDeadline: now.Add(openingTimeout),
@@ -472,6 +474,9 @@ func (t *edgeConnIDTable) Lookup(id uint32) (*edgeConn, edgeIDStatus) {
 func (t *edgeConnIDTable) Release(id uint32) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if conn, live := t.live[id]; live {
+		close(conn.done)
+	}
 	delete(t.live, id)
 	t.quarantine[id] = t.clock.Now().Add(t.quarantineFor)
 }

@@ -16,7 +16,7 @@ SOURCE = Path("/opt/doops-agent/compose.yaml")
 STATE = Path("/var/lib/doops-releases/unicom1-042-20261108")
 CONTAINER = "doops-agent"
 OLD_ID = "fc58d9a6253b1f29b9185b2cbafcfa04e84a0d82b6d10018866963b6745c7335"
-IMAGE = "docker.cnb.cool/l8ai/ai/doops.sh@sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a"
+IMAGE = "registry.example.com/doops-agent@sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a"
 COMMIT = "8683d67174e19a1750e9b19de99a0816cdb8ea79"
 MOUNT = "/etc/kubernetes/admin.conf:/root/.kube/config:ro"
 

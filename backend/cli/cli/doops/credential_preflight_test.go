@@ -30,12 +30,12 @@ func TestCredentialPreflightChecksProjectRequirementsWithoutExposingPayload(t *t
 			t.Fatalf("unexpected authorization header")
 		}
 		_, _ = w.Write([]byte(`{"credentials":[
-			{"id":"cred_git","name":"cnb-development","scope":"personal","type":"gitToken","state":"active",
+			{"id":"cred_git","name":"development-git","scope":"personal","type":"gitToken","state":"active",
 			 "grants":[{"id":"grant_git","state":"active","scope":{"use":"gitCheckout"}}],
 			 "payload":"` + payloadCanary + `"},
-			{"id":"cred_registry","name":"cnb-registry","scope":"platform","type":"registry","state":"active",
+			{"id":"cred_registry","name":"development-registry","scope":"platform","type":"registry","state":"active",
 			 "grants":[{"id":"grant_registry","state":"active","scope":{"use":"imagePull"}}]},
-			{"id":"cred_database","name":"cnb-database","scope":"personal","type":"opaque","state":"active",
+			{"id":"cred_database","name":"development-database","scope":"personal","type":"opaque","state":"active",
 			 "grants":[{"id":"grant_database","state":"active","scope":{"use":"database"}}]}
 		]}`))
 	}))
@@ -47,11 +47,11 @@ apiVersion: doops.sh/v1
 kind: DevelopmentCredentialRequirements
 target: gw-dev
 credentials:
-  - credentialRef: cnb-development
+  - credentialRef: development-git
     use: gitCheckout
-  - credentialRef: cnb-registry
+  - credentialRef: development-registry
     use: imagePull
-  - credentialRef: cnb-database
+  - credentialRef: development-database
     use: database
 `)
 	command := exec.Command(binary, "-session", "dev-preflight", "credential", "preflight", "--manifest", manifest)
@@ -65,9 +65,9 @@ credentials:
 	}
 	text := string(output)
 	for _, expected := range []string{
-		"credential_ref=cnb-development use=gitCheckout credential_id=cred_git status=ready",
-		"credential_ref=cnb-registry use=imagePull credential_id=cred_registry status=ready",
-		"credential_ref=cnb-database use=database credential_id=cred_database status=ready",
+		"credential_ref=development-git use=gitCheckout credential_id=cred_git status=ready",
+		"credential_ref=development-registry use=imagePull credential_id=cred_registry status=ready",
+		"credential_ref=development-database use=database credential_id=cred_database status=ready",
 		"credential_preflight=ready target=gw-dev requirements=3",
 	} {
 		if !strings.Contains(text, expected) {
@@ -138,7 +138,7 @@ apiVersion: doops.sh/v1
 kind: DevelopmentCredentialRequirements
 target: gw-dev
 credentials:
-  - credentialRef: cnb-development
+  - credentialRef: development-git
     use: gitCheckout
     password: must-not-be-accepted
 `)
@@ -152,9 +152,9 @@ apiVersion: doops.sh/v1
 kind: DevelopmentCredentialRequirements
 target: gw-dev
 credentials:
-  - credentialRef: cnb-development
+  - credentialRef: development-git
     use: gitCheckout
-  - credentialRef: cnb-development
+  - credentialRef: development-git
     use: gitCheckout
 `)
 	_, err = readDevelopmentCredentialManifest(duplicate)
@@ -191,7 +191,7 @@ apiVersion: doops.sh/v1
 kind: DevelopmentCredentialRequirements
 target: gw-dev
 credentials:
-  - credentialRef: cnb-development
+  - credentialRef: development-git
     use: gitCheckout
 `)
 	var output bytes.Buffer

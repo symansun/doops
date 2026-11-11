@@ -6,7 +6,7 @@ func TestHelmCredentialScopeOnlyBindsTargetAndUse(t *testing.T) {
 	base := CredentialGrantScope{
 		Cluster: "cluster-a", Instance: "instance-a", Namespace: "apps", Use: CredentialUseHelmPull,
 		Workload: CredentialPlanWorkload{Kind: "deployment", Name: "frontend"}, HelmRelease: "zhiyong",
-		HelmChart: "https://helm.cnb.cool/charts/team/app/v/0.1.0-zyj.gold.tgz",
+		HelmChart: "https://helm.example.com/charts/team/app/v/0.1.0-zyj.gold.tgz",
 	}
 	for name, mutate := range map[string]func(*CredentialGrantScope){
 		"namespace": func(scope *CredentialGrantScope) { scope.Namespace = "other" },
@@ -32,7 +32,7 @@ func TestHelmCredentialScopeKeepsTargetExact(t *testing.T) {
 	base := CredentialGrantScope{
 		Cluster: "cluster-a", Instance: "instance-a", Namespace: "apps", Use: CredentialUseHelmPull,
 		Workload: CredentialPlanWorkload{Kind: "deployment", Name: "frontend"}, HelmRelease: "zhiyong",
-		HelmChart: "https://helm.cnb.cool/charts/team/app/v/0.1.0-zyj.gold.tgz",
+		HelmChart: "https://helm.example.com/charts/team/app/v/0.1.0-zyj.gold.tgz",
 	}
 	for name, mutate := range map[string]func(*CredentialGrantScope){
 		"cluster":  func(scope *CredentialGrantScope) { scope.Cluster = "cluster-b" },
@@ -65,7 +65,7 @@ func TestHelmCredentialGrantRotationReusesOneActiveGrant(t *testing.T) {
 	base := CredentialGrantScope{
 		Cluster: "cluster-a", Instance: "instance-a", Namespace: "apps", Use: CredentialUseHelmPull,
 		Workload: CredentialPlanWorkload{Kind: "deployment", Name: "frontend"}, HelmRelease: "zhiyong",
-		HelmChart: "https://helm.cnb.cool/charts/team/app/v/0.1.0-zyj.gold.tgz",
+		HelmChart: "https://helm.example.com/charts/team/app/v/0.1.0-zyj.gold.tgz",
 	}
 	first, err := store.CreateCredentialGrant(CredentialGrantCreateRequest{
 		CredentialID: resource.ID, Scope: base, CreatedBy: owner.ID,

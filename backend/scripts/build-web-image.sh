@@ -1,29 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ -z "${DOOPS_RELEASE_TAG:-}" ]]; then
-  echo "DOOPS_RELEASE_TAG is required" >&2
+if [[ -z "${DOOPS_IMAGE_TAG:-}" ]]; then
+  echo "DOOPS_IMAGE_TAG is required" >&2
   exit 1
 fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-: "${CNB_DOCKER_REGISTRY:?CNB_DOCKER_REGISTRY is required}"
-: "${CNB_REPO_SLUG_LOWERCASE:?CNB_REPO_SLUG_LOWERCASE is required}"
-: "${CNB_COMMIT:?CNB_COMMIT is required}"
+: "${DOOPS_IMAGE_REGISTRY:?DOOPS_IMAGE_REGISTRY is required}"
+: "${DOOPS_IMAGE_REPOSITORY:?DOOPS_IMAGE_REPOSITORY is required}"
+: "${DOOPS_SOURCE_COMMIT:?DOOPS_SOURCE_COMMIT is required}"
+if [[ ! "${DOOPS_SOURCE_COMMIT}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "DOOPS_SOURCE_COMMIT must be a full 40-character commit SHA" >&2
+  exit 1
+fi
 
-WEB_IMAGE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/web:${DOOPS_RELEASE_TAG}"
+WEB_IMAGE="${DOOPS_IMAGE_REGISTRY}/${DOOPS_IMAGE_REPOSITORY}/web:${DOOPS_IMAGE_TAG}"
 
 docker build \
   --platform linux/amd64 \
-  --label org.opencontainers.image.revision="${CNB_COMMIT}" \
-  --label org.opencontainers.image.version="${DOOPS_RELEASE_TAG}" \
+  --label org.opencontainers.image.revision="${DOOPS_SOURCE_COMMIT}" \
+  --label org.opencontainers.image.version="${DOOPS_IMAGE_TAG}" \
   -f "${REPO_ROOT}/../Dockerfile.web" \
   -t "${WEB_IMAGE}" \
   "${REPO_ROOT}/.."
 
-test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${WEB_IMAGE}")" = "${CNB_COMMIT}"
-test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "${WEB_IMAGE}")" = "${DOOPS_RELEASE_TAG}"
+test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${WEB_IMAGE}")" = "${DOOPS_SOURCE_COMMIT}"
+test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.version" }}' "${WEB_IMAGE}")" = "${DOOPS_IMAGE_TAG}"
 
 container="$(docker run -d --rm \
   -e DOOPS_CONSOLE_ALLOWED_GATEWAYS=https://doops.invalid \
@@ -42,11 +46,11 @@ docker rm -f "${container}" >/dev/null
 trap - EXIT
 
 docker push "${WEB_IMAGE}"
-if [[ "${DOOPS_PUBLISH_LATEST:-}" == "1" && "${DOOPS_RELEASE_TAG}" != "latest" ]]; then
-  latest_image="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}/web:latest"
+if [[ "${DOOPS_PUBLISH_LATEST:-}" == "1" && "${DOOPS_IMAGE_TAG}" != "latest" ]]; then
+  latest_image="${DOOPS_IMAGE_REGISTRY}/${DOOPS_IMAGE_REPOSITORY}/web:latest"
   docker tag "${WEB_IMAGE}" "${latest_image}"
   docker push "${latest_image}"
-  echo "Published Web image latest: ${latest_image} from ${DOOPS_RELEASE_TAG}"
+  echo "Published Web image latest: ${latest_image} from ${DOOPS_IMAGE_TAG}"
 fi
 
 echo "Published Web image: ${WEB_IMAGE}"

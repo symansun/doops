@@ -78,16 +78,23 @@ type cleanWorkspaceParams struct {
 }
 
 type agentUpgradeParams struct {
-	Image      string `json:"image"`
-	Mode       string `json:"mode"`
-	Namespace  string `json:"namespace"`
-	Workload   string `json:"workload"`
-	Container  string `json:"container"`
-	Release    string `json:"release"`
-	DryRun     bool   `json:"dry_run"`
-	ObserveJob string `json:"observe_job"`
-	Rollback   bool   `json:"rollback"`
-	Preflight  bool   `json:"preflight"`
+	UpgradeOperationID    string `json:"upgrade_operation_id"`
+	ExpectedReleaseCommit string `json:"expected_release_commit"`
+	SourceCommit          string `json:"source_commit"`
+	CIURL                 string `json:"ci_url"`
+	RequesterID           string `json:"requester_id"`
+	AuditID               int64  `json:"audit_id"`
+	SessionID             string `json:"session_id"`
+	Image                 string `json:"image"`
+	Mode                  string `json:"mode"`
+	Namespace             string `json:"namespace"`
+	Workload              string `json:"workload"`
+	Container             string `json:"container"`
+	Release               string `json:"release"`
+	DryRun                bool   `json:"dry_run"`
+	ObserveJob            string `json:"observe_job"`
+	Rollback              bool   `json:"rollback"`
+	Preflight             bool   `json:"preflight"`
 	// AllowMissingRollbackBaseline lets an operator proceed on purpose when
 	// the image a rollback would restore is gone from the registry. The
 	// default is fail closed, because without that image the third upgrade
@@ -416,7 +423,10 @@ func handleWorkspacePullBegin(argBytes json.RawMessage) (string, error) {
 	}
 	bundleID := generateID()
 	bundlePath := workspacePullBundlePath(bundleID)
-	if err := runCommand(wsPath, "git", "bundle", "create", bundlePath, "master"); err != nil {
+	// The snapshot was pushed from the workspace's current HEAD to this bare
+	// repository. Its master is the snapshot, not the workspace's own branch.
+	repoPath := filepath.Join("/tmp/repos", sessionID+".git")
+	if err := runCommand("", "git", "--git-dir", repoPath, "bundle", "create", bundlePath, "master"); err != nil {
 		return "", err
 	}
 	info, err := os.Stat(bundlePath)
@@ -522,7 +532,7 @@ func ensureWorkspaceGitSnapshot(wsPath, sessionID string) error {
 	if err := ensureBareRepo(repoPath); err != nil {
 		return err
 	}
-	return runCommand(wsPath, "git", "push", "-f", repoPath, "HEAD:master")
+	return runCommand(wsPath, "git", "push", "-f", repoPath, "HEAD:refs/heads/master")
 }
 
 func ensureBareRepo(repoPath string) error {

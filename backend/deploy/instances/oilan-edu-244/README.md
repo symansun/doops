@@ -51,7 +51,7 @@ After bootstrap, use the released CLI's managed update path:
 ```sh
 doops -session oilan-update upgrade --target gw-oilan-node \
   --namespace doops-oilan --release oilan-agent \
-  --image docker.cnb.cool/l8ai/ai/doops.sh@sha256:7b3e213db1cdb4e4576e2f985b3edef2a8c12fb4ce773840e8e67d4df5ea096b
+  --image registry.example.com/doops-agent@sha256:7b3e213db1cdb4e4576e2f985b3edef2a8c12fb4ce773840e8e67d4df5ea096b
 ```
 
 This means an operator-authorized image update executed automatically by an

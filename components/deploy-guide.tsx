@@ -73,8 +73,8 @@ const STEPS: Step[] = [
     title: "准备授权的集群管理上下文",
     body: (
       <ul className="ml-4 list-disc space-y-1 text-sm text-muted-foreground">
-        <li>准备可联网访问 gateway 的 Linux 服务器或持有 kubeconfig 的 CI / 管理主机</li>
-        <li>首次接入新集群必须具备外部控制器 kubeconfig 及对应集群管理权限</li>
+        <li>确认目标集群可出站访问 Gateway，并由已授权的集群管理流程实施初装</li>
+        <li>准备经审查的 GitOps Chart / values、集群身份和初装清理方案</li>
         <li>
           向管理员确认 <span className="font-medium text-foreground">gateway 地址</span>、{" "}
           <span className="font-medium text-foreground">cluster</span> 与{" "}
@@ -100,22 +100,18 @@ const STEPS: Step[] = [
   {
     n: 3,
     icon: RocketIcon,
-    title: "新集群使用 Helm bootstrap",
+    title: "新集群按已审查 GitOps 流程初装",
     body: (
       <div className="space-y-2 text-sm text-muted-foreground">
         <p>
-          新集群尚无 Agent 时，使用外部控制器执行本仓库 Helm bootstrap。
-          这是首次接入路径，需要显式提供授权 kubeconfig；当前页面不会替你申请或绕过该权限。
+          仅在尚无同身份 Agent、Helm release、Deployment 或恢复对象时初装。
+          将固定版本的 Chart、完整 values、镜像 digest 和清理方案纳入目标集群的 GitOps 仓库，
+          审查后通过集群已有的授权管理流程创建新资源。
         </p>
-        <Cmd>
-          {
-            "bash backend/scripts/release-managed-agent.sh \\\n  --release <HELM_RELEASE> \\\n  --namespace <NAMESPACE> \\\n  --values <REVIEWED_COMPLETE_VALUES.yaml> \\\n  --kubeconfig <EXTERNAL_CONTROLLER_KUBECONFIG> \\\n  --image <IMAGE_REPOSITORY>@sha256:<VERIFIED_CI_DIGEST>"
-          }
-        </Cmd>
         <p className="text-xs">
-          从仓库根目录执行。--values 路径只做 bootstrap、Helm wait 和最终 Deployment 检查，不自动完成 Gateway 接管或失败回滚。
-          旧 Agent 若无自升级控制器，需管理员使用该脚本的现有 release 模式，提供 --target、--session、--cluster、--instance，
-          不传 --values，不重新 bootstrap 或手工替换容器。
+          按仓库 <span className="font-mono">backend/docs/CLUSTER_INSTALL_GUIDE.md</span> 的“安装”章节执行。
+          当前没有 K8S Agent 自动 installer；完成 Gateway 注册和安装验收后再使用 target。
+          已有对象离线或损坏属于恢复，不能重新初装覆盖。
         </p>
       </div>
     ),
@@ -123,21 +119,27 @@ const STEPS: Step[] = [
   {
     n: 4,
     icon: TerminalIcon,
-    title: "现有 controller-ready Agent 用 doops upgrade",
+    title: "现有 Agent 确认 upgradeAudit v1 后升级",
     body: (
       <div className="space-y-2 text-sm text-muted-foreground">
         <p>
-          已有标准 Helm-managed Agent、匹配的 Helm release 和自升级控制器时，只更新 Agent 镜像：
-          该路径由集群内 Job 复用 Agent 挂载的 kubeconfig，不需要操作机 kubeconfig。
+          已有标准 Helm-managed Agent、匹配的 Helm release、新控制器和 upgradeAudit v1 时，
+          登录获授权的 Gateway target，使用与候选 Agent 制品同 commit 的正式 CLI 升级。
+          独立 Job 通过共享 kubeconfig 或专用 ServiceAccount 执行预检、备份、验收和失败自动回滚。
         </p>
         <Cmd>
-          {"doops -session agent-upgrade-<RELEASE_ID> upgrade \\\n  --target <CONFIGURED_GATEWAY_TARGET> \\\n  --image docker.cnb.cool/l8ai/ai/doops.sh:latest"}
+          {"doops -session agent-upgrade-<RELEASE_ID> upgrade \\\n  --target <CONFIGURED_GATEWAY_TARGET> \\\n  --image <IMAGE_REPOSITORY>@sha256:<VERIFIED_DIGEST> \\\n  --source-commit <VERIFIED_40_HEX_CI_COMMIT> \\\n  --ci-url <VERIFIED_HTTPS_CI_URL>"}
         </Cmd>
         <p className="text-xs">
-          <span className="font-mono">:latest</span> 跟随 main 最新构建。固定版本写成{" "}
-          <span className="font-mono">docker.cnb.cool/l8ai/ai/doops.sh@sha256:&lt;digest&gt;</span>。
-          doops upgrade 只适用于 controller-ready 的现有 Helm release；structuredSSH 声明不代表具备自升级控制器。
-          显式 Helm 配置变更使用外部脚本的现有 release 模式，不重新 bootstrap。
+          发布者先核对 CI 成功证据、完整 source commit 与镜像 digest；CI URL 不含凭据、查询参数或片段。
+          structuredSSH 声明不能代替 upgradeAudit v1 和新控制器。
+          旧 Agent 首升需通过在线、已授权且具备集群权限的 Gateway exec 通道提交经审查的独立 Job，
+          不能在 Agent 自身或 exec --bg 进程里运行替换自身的 Helm 命令。
+        </p>
+        <p className="text-xs">
+          首升没有通用自动提交入口；Helm 配置变更也须先进入仓库 Chart / values，再经 Gateway 独立 Job 收敛。
+          按 <span className="font-mono">backend/docs/BUILD_DEPLOY_SOP.md</span> 审查备份、验收和自动回滚；
+          release-managed-agent.sh 仅委托受审计的 upgrade，不能绕过旧协议、权限或审计限制，也不提供初装或配置变更入口。
         </p>
       </div>
     ),
@@ -153,7 +155,7 @@ const STEPS: Step[] = [
           {"doops -session install-verify targets --target <CONFIGURED_GATEWAY_TARGET>\ndoops -session install-verify exec --target <CONFIGURED_GATEWAY_TARGET> --cmd 'do-agent --version'\ndoops -session install-verify capabilities --target <CONFIGURED_GATEWAY_TARGET> --require structuredSSH"}
         </Cmd>
         <p className="text-xs">
-          还需核验最终 Deployment spec/status、实际 Pod UID/Ready/imageID、服务健康和关键功能路径；
+          还需核验最终 Deployment spec/status、实际 Pod UID/Ready/imageID、Gateway 上的 release_commit 和 upgradeAudit v1、服务健康及关键功能路径；
           target 在线或 structuredSSH 协议声明不能代替完整验收。失败时停止宣告成功，按已确认的回滚路径处理。
         </p>
       </div>
@@ -180,15 +182,15 @@ const STEPS: Step[] = [
 const TROUBLE = [
   {
     q: "首次接入被权限阻塞",
-    a: "首次接入新集群需要外部控制器的集群 kubeconfig、完整 reviewed values 和核验过的 CI 镜像 digest。当前页面不提供集群管理权限。",
+    a: "由集群已有的授权管理流程实施经审查的 GitOps 初装，准备完整 values、固定 CI 镜像 digest 和清理方案。当前没有自动 installer，页面不提供集群管理权限。",
   },
   {
     q: "已有 workload 但没有 Helm release",
-    a: "release-managed-agent.sh 会在 Helm release 缺失时停止，不执行 adoption。先完成独立、明确的 Helm adoption，再按现有 release 路径验收。",
+    a: "已有 Deployment 属于收编或恢复，不能重新初装。按发布 SOP 审查备份、验收和自动回滚，由在线授权的 Gateway 管理通道提交独立 Job；不能用本机脚本绕过审计。",
   },
   {
     q: "现有 Agent 不能使用 doops upgrade",
-    a: "确认它是标准 Helm-managed Deployment，位于自身 namespace，已有匹配 release、控制器和可由 Job 共享的 /root/.kube 或 /root/.kube/config 挂载。缺少任一条件时回到外部控制器路径。",
+    a: "核对匹配的 Helm release、新控制器、upgradeAudit v1，以及 Job 可用的共享 kubeconfig 或专用 ServiceAccount。旧协议首升须经 Gateway 提交经审查的独立 Job；没有在线授权管理通道时停止，不能改走本机 Helm。",
   },
   {
     q: "机器没有出现在控制台",
@@ -211,11 +213,11 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
           <p className="mt-2 text-pretty text-sm leading-relaxed text-muted-foreground">
             Doops 通过在你的服务器上安装一个轻量 agent 来工作。Agent 主动连接 Gateway，机器无需暴露公网端口。接入后即可远程执行命令、管理文件、用 AI 完成部署与巡检。
           </p>
-          <p className="mt-3 text-sm text-muted-foreground">拉取当前 main 构建的最新镜像。不写标签就是 <span className="font-mono text-foreground">latest</span>：</p>
-          <Cmd>{"docker pull docker.cnb.cool/l8ai/ai/doops.sh"}</Cmd>
+          <p className="mt-3 text-sm text-muted-foreground">安装或升级前核对成功 CI、完整 source commit 和不可变镜像 digest，再拉取已核验制品：</p>
+          <Cmd>{"docker pull <IMAGE_REPOSITORY>@sha256:<VERIFIED_DIGEST>"}</Cmd>
           <p className="text-xs text-muted-foreground">
-            控制台镜像是 <span className="font-mono">docker.cnb.cool/l8ai/ai/doops.sh/web:latest</span>。
-            需要固定版本时使用完整 commit 标签或 <span className="font-mono">@sha256:&lt;digest&gt;</span>。
+            控制台镜像由操作者单独指定仓库，同样固定为 <span className="font-mono">&lt;IMAGE_REPOSITORY&gt;@sha256:&lt;VERIFIED_DIGEST&gt;</span>。
+            拉取镜像不等于已完成安装或升级，仍需按下列流程实施和验收。
           </p>
         </div>
 
@@ -227,7 +229,7 @@ export function DeployGuideBody({ onEnterConsole }: { onEnterConsole?: () => voi
               自己部署
             </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
-              有集群 kubeconfig？按下面路径完成首次接入或受控升级。
+              已获集群管理授权？按下面的 GitOps 初装或 Gateway 升级路径实施。
             </p>
           </div>
           <div className="rounded-xl border bg-card p-4">

@@ -28,10 +28,22 @@ export type RpcEvent =
   | { type: "open" }
   | { type: "output"; data: string; session?: string; kind?: string }
   | { type: "result"; result: unknown }
-  | { type: "error"; error: string; code?: number }
+  | { type: "error"; error: string; code?: number; data?: unknown }
   | { type: "done" }
 
 export type ToolCancel = () => Promise<void>
+
+export class RpcError extends Error {
+  code?: number
+  data?: unknown
+
+  constructor(message: string, code?: number, data?: unknown) {
+    super(message)
+    this.name = "RpcError"
+    this.code = code
+    this.data = data
+  }
+}
 
 function authHeaders(s: Session): HeadersInit {
   void s
@@ -124,9 +136,19 @@ export async function fetchAudit(
   params: Record<string, string>,
 ): Promise<{ events?: AuditEvent[]; summary?: AuditSummary; error?: string; status?: number }> {
   if (s.demo) {
-    const { DEMO_AUDIT } = await import("./demo")
-    const inst = params.instance
-    const events = inst ? DEMO_AUDIT.filter((e) => !e.instance || e.instance === inst) : DEMO_AUDIT
+    const { DEMO_AUDIT } = await import("./demo.ts")
+    const events = DEMO_AUDIT.filter((e) =>
+      (!params.instance || e.instance === params.instance) &&
+      (!params.cluster || e.cluster === params.cluster) &&
+      (!params.session || e.session === params.session) &&
+      (!params.action || e.action === params.action) &&
+      (!params.status || e.status === params.status) &&
+      (!params.correlation_id || e.correlation_id === params.correlation_id) &&
+      (!params.before_id || e.id < Number(params.before_id)) &&
+      (!params.since || Boolean(e.started_at && Date.parse(e.started_at) >= Date.parse(params.since))) &&
+      (!params.until || Boolean(e.started_at && Date.parse(e.started_at) < Date.parse(params.until))) &&
+      !(params.hide_upgrade_observe === "true" && e.action === "agent:upgrade" && e.status === "observing"),
+    ).sort((a, b) => b.id - a.id).slice(0, Number(params.limit) || 50)
     return { events, summary: summarizeAuditEvents(events) }
   }
   const qs = new URLSearchParams(params)
@@ -155,7 +177,7 @@ function summarizeAuditEvents(events: AuditEvent[]): AuditSummary {
     summary.bytes_in += event.bytes_in || 0
     summary.bytes_out += event.bytes_out || 0
     summary.status![status] = (summary.status![status] || 0) + 1
-    if (status === "running") summary.running += 1
+    if (["running", "executing", "accepted", "observing"].includes(status)) summary.running += 1
     else if (status === "success") summary.success += 1
     else summary.failed += 1
   }
@@ -172,6 +194,7 @@ export async function callTool(
     arguments: Record<string, unknown>
     signal?: AbortSignal
     requiredProtocol?: "structuredSSH"
+    expectedReleaseCommit?: string
     onCancelReady?: (cancel: ToolCancel) => void
   },
   onEvent: (ev: RpcEvent) => void,
@@ -226,6 +249,7 @@ export async function callTool(
       tool: opts.tool,
       arguments: opts.arguments,
       requiredProtocol: opts.requiredProtocol,
+      expectedReleaseCommit: opts.expectedReleaseCommit,
       requestId,
     }),
     signal: opts.signal,
@@ -250,7 +274,7 @@ export async function callTool(
   const decoder = new TextDecoder()
   let buffer = ""
   let terminal = false
-  let failure = ""
+  let failure: RpcError | undefined
   function receive(line: string) {
     let event: RpcEvent
     try { event = JSON.parse(line) as RpcEvent } catch { throw new Error("运维服务返回了无效事件") }
@@ -258,14 +282,14 @@ export async function callTool(
     if (event.type === "result") {
       terminal = true
       if ((event.result as { isError?: boolean })?.isError) {
-        failure = extractText(event.result) || "工具执行失败"
-        onEvent({ type: "error", error: failure })
+        failure = new RpcError(extractText(event.result) || "工具执行失败", undefined, { result: event.result })
+        onEvent({ type: "error", error: failure.message, data: failure.data })
         return
       }
     }
     if (event.type === "error") {
       terminal = true
-      failure = event.error || "工具执行失败"
+      failure = new RpcError(event.error || "工具执行失败", event.code, event.data)
     }
     onEvent(event)
   }
@@ -286,8 +310,8 @@ export async function callTool(
   if (buffer.trim()) {
     receive(buffer.trim())
   }
-  if (!terminal) throw new Error("连接已结束，未收到工具执行结果")
-  if (failure) throw new Error(failure)
+  if (!terminal) throw new RpcError("连接已结束，未收到工具执行结果", -32008)
+  if (failure) throw failure
   } finally { reader.releaseLock() }
 }
 
@@ -306,5 +330,212 @@ export function extractText(result: unknown): string {
     return JSON.stringify(r, null, 2)
   } catch {
     return String(result)
+  }
+}
+
+export interface AgentUpgradeOperation {
+  id: string
+  sessionId: string
+  phase: "dry_run" | "preflight" | "apply" | "rollback"
+  status: "running" | "paused" | "failed" | "verified" | "audit_failed" | "previewed" | "preflight_passed" | "outcome_unknown"
+  image: string
+  sourceCommit: string
+  expectedCommit: string
+  ciURL: string
+  job?: string
+  namespace?: string
+  release?: string
+  deadline: number
+  output: string
+  error: string
+  auditError: string
+  auditFailure?: { audit_id: number; upgrade_operation_id: string; result: unknown }
+}
+
+export function upgradeStorageKey(s: Session, target: Pick<Target, "cluster" | "instance">): string {
+  const identity = s.username ? `user:${s.username}` : s.tokenId ? `token-id:${s.tokenId}` : ""
+  if (!identity) throw new Error("当前登录缺少用户标识，无法隔离保存升级记录")
+  return `doops.agent-upgrade.v1:${JSON.stringify([s.gateway, identity, target.cluster, target.instance])}`
+}
+
+function upgradeResponse(result: unknown) {
+  const fields = (result as { structuredContent?: Record<string, unknown> } | null)?.structuredContent
+  if (!fields || typeof fields !== "object" || typeof fields.outcome !== "string") {
+    throw new Error("Agent 未返回有效的 structuredContent 升级结果")
+  }
+  for (const field of ["job", "namespace", "release", "expected_release_commit", "upgrade_operation_id", "phase", "job_phase"]) {
+    if (fields[field] !== undefined && typeof fields[field] !== "string") throw new Error("Agent 升级结果字段无效")
+  }
+  return { status: `self-upgrade-${fields.outcome}`, fields: fields as Record<string, string> }
+}
+
+function waitForUpgradePoll(signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const cancel = () => { clearTimeout(timer); reject(new DOMException("观察已停止", "AbortError")) }
+    const timer = setTimeout(() => { signal.removeEventListener("abort", cancel); resolve() }, 5000)
+    if (signal.aborted) cancel()
+    else signal.addEventListener("abort", cancel, { once: true })
+  })
+}
+
+// A resumed operation only observes its saved Job; it can never dispatch apply.
+export async function runAgentUpgrade(
+  session: Session,
+  target: Pick<Target, "cluster" | "instance">,
+  initial: AgentUpgradeOperation,
+  signal: AbortSignal,
+  onChange: (operation: AgentUpgradeOperation) => void,
+  resume = false,
+): Promise<void> {
+  let operation = { ...initial }
+  let auditFailure = operation.auditError ? new RpcError("audit_completion_failed", -32603, operation.auditFailure) : undefined
+  const update = (change: Partial<AgentUpgradeOperation>) => {
+    operation = { ...operation, ...change }
+    onChange(operation)
+  }
+  async function invoke(args: Record<string, unknown>, verify = false) {
+    signal.throwIfAborted()
+    let result: unknown
+    try {
+      await callTool(session, {
+        ...target, tool: "doops_agent_upgrade", signal,
+        requiredProtocol: verify ? "structuredSSH" : undefined,
+        expectedReleaseCommit: verify ? operation.expectedCommit : undefined,
+        arguments: {
+          session_id: operation.sessionId,
+          upgrade_operation_id: operation.id,
+          ...(operation.sourceCommit && { source_commit: operation.sourceCommit, ci_url: operation.ciURL }),
+          ...(operation.expectedCommit && { expected_release_commit: operation.expectedCommit }),
+          ...args,
+        },
+      }, (event) => { if (event.type === "result") result = event.result })
+    } catch (error) {
+      if (!(error instanceof RpcError)) {
+        if (!args.observe_job && !args.dry_run && (error instanceof TypeError || signal.aborted)) update({ status: "outcome_unknown" })
+        throw error
+      }
+      const data = error.data as { audit_id?: number; upgrade_operation_id?: string; result?: unknown } | undefined
+      const isAuditFailure = error.message === "audit_completion_failed" && error.code === -32603 &&
+        typeof data?.audit_id === "number" && Number.isSafeInteger(data.audit_id) && data.audit_id > 0 &&
+        data.upgrade_operation_id === operation.id && data.result != null
+      if (isAuditFailure) {
+        auditFailure ??= error
+        update({
+          auditError: operation.auditError || `审计终态写入失败（审计 ID ${data.audit_id}，操作 ${operation.id}）。Job 继续验收，本次操作不能标记成功。`,
+          auditFailure: operation.auditFailure ?? { audit_id: data.audit_id!, upgrade_operation_id: operation.id, result: data.result },
+        })
+      }
+      if (error.code === -32008) update({ status: "outcome_unknown" })
+      if (data?.result !== undefined) {
+        update({ output: extractText(data.result) })
+        let fields: Record<string, string>
+        try { fields = upgradeResponse(data.result).fields } catch { throw error }
+        if (fields.upgrade_operation_id === operation.id) {
+          if (fields.outcome === "failed") update({ status: "failed" })
+          if (fields.outcome === "unknown") {
+            update({ status: "outcome_unknown" })
+            if (!args.observe_job && fields.phase === operation.phase && fields.job && fields.namespace) {
+              update({ job: fields.job, namespace: fields.namespace, release: fields.release })
+            }
+          }
+        }
+      }
+      if (!isAuditFailure) throw error
+      result = data.result
+      if ((result as { isError?: boolean } | null)?.isError) throw error
+    }
+    update({ output: extractText(result) })
+    return result
+  }
+  function checkObservation(result: unknown) {
+    const parsed = upgradeResponse(result)
+    if (parsed.fields.job !== operation.job || parsed.fields.namespace !== operation.namespace ||
+        parsed.fields.upgrade_operation_id !== operation.id || parsed.fields.phase !== "observe" ||
+        parsed.fields.job_phase !== operation.phase || !parsed.fields.release ||
+        (operation.release && parsed.fields.release !== operation.release) ||
+        (operation.expectedCommit && parsed.fields.expected_release_commit !== operation.expectedCommit)) {
+      throw new Error("观察结果与本次升级 Job 或操作 ID 不一致")
+    }
+    // An unknown create result can carry only the deterministic Job identity.
+    // Recover the missing receipt fields from that Job's correlated observation.
+    if (!operation.release) update({ release: parsed.fields.release })
+    if (operation.phase === "rollback" && !operation.expectedCommit && /^[a-f0-9]{40}$/.test(parsed.fields.expected_release_commit || "")) {
+      update({ expectedCommit: parsed.fields.expected_release_commit })
+    }
+    if (parsed.status === "self-upgrade-failed") {
+      update({ status: "failed" })
+      throw new Error(`升级 Job 失败：${extractText(result)}`)
+    }
+    if (!["self-upgrade-running", "self-upgrade-succeeded"].includes(parsed.status)) throw new Error("Agent 返回了无效的升级状态")
+    return parsed.status
+  }
+  async function accept(phase: AgentUpgradeOperation["phase"]) {
+    update({ phase, job: undefined, namespace: undefined, release: undefined, deadline: Date.now() + 21 * 60_000 })
+    const result = await invoke(phase === "rollback" ? { rollback: true } : { image: operation.image, mode: "k8s", preflight: phase === "preflight" })
+    update({ status: "outcome_unknown" })
+    const { status, fields } = upgradeResponse(result)
+    if (status !== "self-upgrade-accepted" || !fields.job || !fields.namespace || !fields.release ||
+        fields.upgrade_operation_id !== operation.id || fields.phase !== phase) {
+      throw new Error("Agent 未返回本次升级 Job 的有效受理回执；请按操作 ID 核对审计")
+    }
+    update({ status: "running", job: fields.job, namespace: fields.namespace, release: fields.release })
+    if (phase === "rollback") {
+      if (!/^[a-f0-9]{40}$/.test(fields.expected_release_commit || "")) throw new Error("回滚已受理，但缺少有效 expected_release_commit，无法完成验收")
+      update({ expectedCommit: fields.expected_release_commit })
+    } else if (fields.expected_release_commit !== operation.expectedCommit) {
+      throw new Error("Job 回执的 expected_release_commit 与本次来源提交不一致")
+    }
+  }
+  async function observe() {
+    if (!operation.job || !operation.namespace) throw new Error("没有可恢复观察的 Job，请按操作 ID 核对审计；不要重复提交")
+    while (true) {
+      const args = { observe_job: operation.job, namespace: operation.namespace }
+      const result = await invoke(args)
+      if (checkObservation(result) === "self-upgrade-succeeded") {
+        if (operation.phase !== "preflight") {
+          if (!/^[a-f0-9]{40}$/.test(operation.expectedCommit)) throw new Error("缺少预期 release_commit，不能标记验收成功")
+          const verified = await invoke(args, true)
+          if (checkObservation(verified) !== "self-upgrade-succeeded") throw new Error("最终验收时 Job 不再处于成功状态")
+        }
+        return
+      }
+      if (Date.now() >= operation.deadline) throw new Error("Job 观察超时，请核对目标状态；已提交的 Job 继续由集群控制器执行")
+      await waitForUpgradePoll(signal)
+    }
+  }
+  try {
+    update({ status: "running", error: "" })
+    if (resume) {
+      await observe()
+    } else if (operation.phase === "dry_run") {
+      const result = await invoke({ image: operation.image, mode: "k8s", dry_run: true })
+      if (upgradeResponse(result).status !== "self-upgrade-dry_run") throw new Error("Agent 未返回有效预览")
+    } else {
+      if (operation.phase === "preflight") {
+        await accept("preflight")
+        await observe()
+        signal.throwIfAborted()
+        if (operation.auditError) {
+          update({ status: "audit_failed", error: "预检审计未完成，已停止后续 apply" })
+          throw auditFailure
+        }
+        await accept("apply")
+      } else if (operation.phase === "rollback") {
+        await accept("rollback")
+      } else {
+        throw new Error("升级必须先完成预检")
+      }
+      await observe()
+    }
+    if (auditFailure) throw auditFailure
+    update({ status: operation.phase === "dry_run" ? "previewed" : operation.phase === "preflight" ? "preflight_passed" : "verified" })
+  } catch (error) {
+    update({
+      status: operation.auditError ? "audit_failed" : operation.status === "outcome_unknown" ? "outcome_unknown" : operation.status === "failed" || !operation.job ? "failed" : "paused",
+      error: operation.error || (error instanceof Error && error.name === "AbortError"
+        ? "已停止页面观察；已提交的 Job 继续由集群内控制器执行"
+        : error instanceof Error ? error.message : "升级请求失败"),
+    })
+    throw error
   }
 }

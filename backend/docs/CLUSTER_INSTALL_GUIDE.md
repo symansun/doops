@@ -15,26 +15,30 @@ Agent 镜像升级当作同一件事。下列脚本都在 `backend/scripts/` 下
 | :--- | :--- | :--- |
 | 只安装客户端和 Skill | `bash scripts/install.sh --version <tag> --project <项目绝对路径>` | 不部署 Agent；不修改线上 Helm |
 | 空 Ubuntu/Debian 服务器首次 Docker 接入 | `bash scripts/bootstrap-host-agent.sh ...` | root、唯一 cluster/instance、指定发布版本；模型由 Gateway 下发 |
-| 已有标准 Helm Agent，命令通道和升级控制器可用 | `doops -session <s> upgrade --target <t> --image <已核验镜像>` | 操作员已登录 Gateway；Agent 有共享 kubeconfig 或专用 ServiceAccount |
-| 旧 Helm Agent 或命令通道损坏，需要外部恢复 | `bash scripts/release-managed-agent.sh ...` | 操作机 kubeconfig、Helm、kubectl、python3，以及可查询目标的 Gateway 登录 |
-| K8S Agent 离线、镜像拉取失败或收编中断，需清理重装 | `python3 scripts/reinstall-k8s-agent.py plan\|run --cluster <c> --instance <i>` | 能访问该集群的 kubectl、helm、python3；流程见 [BUILD_DEPLOY_SOP.md](BUILD_DEPLOY_SOP.md) |
-| 没有 Agent 的新集群 | 同一外部脚本的 `--values` 模式 | 完整 values 与操作机 kubeconfig；安装后另做 Gateway 验收 |
+| 已有标准 Helm Agent，支持新控制器和 `upgradeAudit v1` | `doops -session <s> upgrade --target <t> --image <已核验镜像>` | 已登录且获授权 Gateway；Agent 有共享 kubeconfig 或专用 ServiceAccount |
+| 旧协议 Agent 首升、命令通道损坏或已有对象恢复 | 经 Gateway `doops -session <s> exec --target <管理target>` 提交经审查的独立 Job | 需在线授权管理通道；没有通用自动首升/恢复入口，不能用本机脚本替换自身 |
+| 检查 K8S Agent 或历史恢复对象 | `python3 scripts/reinstall-k8s-agent.py plan --cluster <c> --instance <i>` | 仅只读检查；`run`/`restore` 已在代码中禁用，结果不构成恢复授权 |
+| 尚无同身份 Agent、release 或恢复对象的首次安装 | 手工 GitOps 初装，见下文“安装” | 审查仓库 Chart/values，使用集群已有管理流程；当前没有自动 installer |
 | 已有独立 Docker Agent | `release-host-agent.sh` | 见下文 DockerHost 流程 |
 
-标准 Helm Agent 的日常镜像升级是一条命令。`latest` 指向最近一次成功的 main CI 或版本发布构建，不写标签的 `docker pull` 就是它：
+标准 Helm Agent 的日常镜像升级是一条命令。镜像由操作方以显式 registry/repository/tag 构建并推送，
+本仓库不含镜像发布流水线；`latest` 只表示最近一次推送的构建，不能证明来源：
 
 ```bash
-docker pull docker.cnb.cool/l8ai/ai/doops.sh
+docker pull registry.example.com/doops-agent
 
 doops -session agent-upgrade upgrade \
   --target <configured-target> \
-  --image docker.cnb.cool/l8ai/ai/doops.sh:latest
+  --image registry.example.com/doops-agent@sha256:<verified-digest>
 ```
 
-`--image` 也接受其它发布 tag 或 `repository@sha256:<verified-ci-digest>`。tag 不是不可变版本证据。`--dry-run` 只预览参数，
+`--image` 也接受其它发布 tag 或 `repository@sha256:<verified-digest>`。tag 不是不可变版本证据。`--dry-run` 只预览参数，
 不能证明控制器、挂载或权限可用。没有命令通道的旧 Agent 不能用这条命令自恢复。
 当前 CLI 会将升级后的 Agent commit 与自身 commit 比较，因此先安装候选镜像
 同版 CLI；升级前旧 Agent 不需要与 CLI 同版。
+新 Gateway 在派发前检查 `upgradeAudit v1`，旧协议目标会被 blocked 并报
+`upgrade_audit_protocol_required`，不会先创建 Job 再检查响应格式。
+版本不同不等于协议兼容；旧协议的文本成功不能替代升级审计能力。
 
 操作员在一台管理机上登录一次，同一 Gateway 的 targets 共用登录态。尚无本地路由时按 Gateway 首次登录，
 CLI 会自动发现并写回可见 target 路由：
@@ -56,50 +60,29 @@ doops -session preflight exec --target <自动发现的 target> --cmd hostname
 所以必须先有 git 和一份包含该提交的仓库克隆：
 
 1. 安装 git：macOS 用 `brew install git`，Debian/Ubuntu 用 `apt install git`。
-2. 先确定要安装的发布 tag。两条发布线的 Release 资产互不相通，`--version` 必须来自对应的发布源：
-
-   | 发布线 | 仓库 | Release 资产 | 当前 tag | `--gateway` 首登发现 |
-   | :--- | :--- | :--- | :--- | :--- |
-   | 公开线 | `github.com/symansun/doops` | GitHub Releases | `v0.2.3` | 支持 |
-   | CNB 生产线 | `cnb.cool/l8ai/ai/doops.sh` | CNB Release Assets（`install.sh` 默认源） | `v1.3.126` | 不支持，用四项显式路由 |
-
-   克隆时**固定到该 tag**。CNB 仓库的默认分支是 `master`（旧扁平布局，没有 `backend/`），
-   不带 `--branch` 克隆会拿到它：
+2. 先确定要安装的发布 tag。唯一发布与安装源是 GitHub Releases
+   （`https://github.com/symansun/doops/releases/download`）；默认分支是 `main`，
+   克隆时**固定到该 tag**：
 
    ```bash
    git clone --branch <tag> --depth 1 https://github.com/symansun/doops.git
-   # 或：git clone --branch <tag> --depth 1 https://cnb.cool/l8ai/ai/doops.sh.git
    cd doops
    ```
 
    已经克隆了 main 时，先 `git fetch --tags && git checkout <tag>` 再继续。
-3. 安装 CLI 和 Skill。装公开线（`v0.2.x`）时把资产来源指向 GitHub Releases，并只给
-   `--target-gateway`，用首登发现：
-
-   ```bash
-   DOOPS_RELEASE_ASSET_BASE="https://github.com/symansun/doops/releases/download" \
-     bash scripts/install.sh \
-       --version v0.2.3 \
-       --project <项目绝对路径> \
-       --target-gateway <gateway-url>
-   ```
-
-   装 CNB 生产线（`v1.3.x`）时用默认 CNB 源，并给四项显式路由——该线当前发布 CLI 没有
-   `--gateway`：
+3. 安装 CLI 和 Skill。默认资产来源即 GitHub Releases；只给 `--target-gateway`，
+   由首次登录发现 target：
 
    ```bash
    bash scripts/install.sh \
-     --version v1.3.126 \
+     --version <tag> \
      --project <项目绝对路径> \
-     --target-name <name> \
-     --target-gateway <gateway-url> \
-     --target-cluster <cluster> \
-     --target-instance <instance> \
-     --use '<说明>'
+     --target-gateway <gateway-url>
    ```
 
-   只给 `--target-gateway` 而发布 CLI 不支持 `--gateway` 时，安装器会告警并提示改用四项显式路由。
-4. 确认 `~/.local/bin` 在 `PATH` 中，再按发布能力首次登录并验证。首登发现（`v0.2.3` 起）：
+   `DOOPS_RELEASE_ASSET_BASE` 只用于把资产来源指向镜像；sha256、`release=... commit=...`
+   身份和 CLI contract 校验不变。
+4. 确认 `~/.local/bin` 在 `PATH` 中，再首次登录并验证：
 
    ```bash
    doops login --gateway <gateway-url>
@@ -108,22 +91,14 @@ doops -session preflight exec --target <自动发现的 target> --cmd hostname
    doops targets --target <自动发现的 target>
    ```
 
-   显式路由（`v1.3.x` 生产线）：
-
-   ```bash
-   doops login --target <name>
-   doops targets --target <name>
-   doops -session setup exec --target <name> --cmd hostname
-   ```
-
    首次登录会调用 `GET /v1/targets`，把该账号可见的在线 target 写回
    `~/.agent/skills/doops/config.json`；已有路由的名称、别名和描述不会被改写。
    因此操作员不需要事先知道 Agent 的 `cluster/instance`。
 
 约束：
 
-- 安装前确认 `<tag>` 在对应发布源已发布 CLI 二进制和 `checksums.txt`：公开线看 GitHub Releases，
-  生产线看 CNB Release Assets，不要凭 tag 列表假定可用。
+- 安装前确认 `<tag>` 已在 GitHub Release 发布 CLI 二进制和 `checksums.txt`，
+  不要凭 tag 列表假定可用。
 - 本地缺少发布提交时脚本报 `Release commit ... is unavailable in local git objects` 并退出，
   不会自动 fetch，也不会混装其它版本。先 `git fetch --tags` 或 `git pull` 再重试。
 - 安装结果：CLI 在 `~/.local/bin/doops`；同一发布提交的 Skill/docs 写入
@@ -167,32 +142,37 @@ HEAD，而 Agent 升级后会校验 Agent 的 `release_commit` 是否等于 CLI 
 所以升级 Agent 必须用与候选 Agent 制品同 commit 的正式 CLI，不能用开发链接版。
 `bash backend/scripts/dev-link.sh --unlink` 可以断开软链接。
 
-### 外部脚本已知限制
+### 脚本入口与协议边界
 
 - `install.sh` 只更新 CLI/Skill，成功不代表 Agent 已升级。
 - target 显示 idle 但 `RELEASE_COMMIT` 为 `<unknown>`、只读命令返回
   `execution_outcome_unknown` 时，不是完整健康状态，不能据此执行 `doops upgrade`。
-- 外部脚本的已有 release 模式依赖 Gateway 登录；本机 kubeconfig 授权与 Gateway
-  操作员授权是两个独立边界。
-- 外部脚本 `--version` 调用 Docker 拉取镜像解析 digest。K3s/containerd 操作机没有
-  Docker 时直接传已核验的 `--image`，不要仅为解析版本安装 Docker。
-- 外部脚本直接比较请求 digest 与 CRI `imageID`，并用本机 CLI commit 校验新 Agent
-  commit。OCI index、平台 manifest 和 CRI imageID 可能不同；这两项限制修复前，
-  index digest 命令不能视为已验证的一键恢复命令，CLI 也须与候选制品同版。
+- `release-managed-agent.sh` 只委托 Gateway `doops upgrade --mode k8s`，依赖同一
+  target 授权、`upgradeAudit v1`、预检、独立 Job、备份、验收和自动回滚。
+  `KUBECONFIG` 不读取也不转发；`--kubeconfig`、`--values`、`--version`、
+  `--cluster`、`--instance` 和旧 Helm 配置变更参数均直接拒绝。
+- 脚本只接受发布者已经核验的不可变 `--image` digest，不在本机用 Docker 解析 tag。
+  CLI 须与候选 Agent 制品同 commit，完整镜像与实际功能验收见
+  [BUILD_DEPLOY_SOP.md](BUILD_DEPLOY_SOP.md)。
+- `reinstall-k8s-agent.py` 只保留 `plan`：通过本机只读访问检查现有 Deployment、
+  历史 ConfigMap 备份来源和资源清单，不创建备份、不启动拉取测试 Pod。
+  `run`/`restore` 已 fail closed，不能用作首装、升级或恢复的执行入口。
 
-已有 release 的外部恢复参数形式：
+具备协议能力的在线 Agent，可使用以下升级委托入口：
 
 ```bash
 bash scripts/release-managed-agent.sh \
   --target <target> --session <session> \
-  --cluster <cluster> --instance <instance> \
   --release <helm-release> --namespace <namespace> \
-  --kubeconfig <external-controller-kubeconfig> \
   --image <repository>@sha256:<verified-ci-digest> \
   --dry-run
 ```
 
-dry-run 通过后再执行正式恢复，完成后按本节做安装验收。
+这里的 `--dry-run` 仅预览参数，不是 server-side Helm dry-run，也不验证 live release、
+挂载、权限或可恢复基线。正式升级使用相同参数去掉 `--dry-run`，由 CLI 和独立 Job
+完成真实预检、备份、验收及失败自动回滚。旧协议首升必须另行审查完整独立 Job，
+通过仍可用的授权 Gateway `exec` 通道提交；本仓库尚无通用提交配方。
+没有在线授权管理通道时停止已有 Agent 的变更，不能切换本机 kubeconfig 或重跑初装。
 
 ## Kubernetes / K3s
 
@@ -236,33 +216,29 @@ Kubernetes `cluster-admin` 也不等于已取得其他节点或 hypervisor 的�
 
 ### 安装
 
-新集群首次安装使用本仓库 `scripts/release-managed-agent.sh` 和
-`deploy/helm/doops-agent`。以下示例从仓库 `backend/` 执行，完整 values 必须明确
-`gateway.cluster/instance`、workload 与运行配置，镜像 digest 必须来自已核验的 CI：
+当前没有 K8S Agent 自动 installer。首次安装支持**手工 GitOps 初装**：
+使用本仓库 `deploy/helm/doops-agent` 的已审查版本和完整 values，
+由集群已经建立的授权管理流程实施，不调用已退役的脚本参数。
 
-```bash
-bash scripts/release-managed-agent.sh \
-  --release <helm-release> \
-  --namespace <namespace> \
-  --values <reviewed-complete-values.yaml> \
-  --kubeconfig <external-controller-kubeconfig> \
-  --image <repository>@sha256:<verified-ci-digest>
-```
+1. 先核实目标集群和新 `gateway.cluster/instance`。同身份不能已有在线 Agent，
+   也不能存在待升级、收编、恢复的 release、Deployment 或备份。离线不等于从未安装。
+2. 将 Chart 版本、namespace/release/workload、固定镜像 digest、专用 ServiceAccount、
+   受控凭据引用、完整 values 和初装清理方案放入目标集群的 GitOps 仓库，审查后实施。
+   明确 `gateway.url/cluster/instance` 和集群权限；不将 token、kubeconfig payload
+   或模型配置写入 values/Git。发布者保留 CI 来源、完整 commit 和 digest 证据。
+3. 通过集群已有 GitOps 控制器或经审查的人工 GitOps 流程创建新资源。此步骤建立首个
+   Agent 身份，不覆盖现有实例；失败按本次清理方案仅处理本次创建的资源。
+4. 检查 Deployment 收敛、实际新 Pod Ready 和 imageID，登录 Gateway 并核对唯一
+   `cluster/instance`、`release_commit`、`upgradeAudit v1`，再完成下文安装验收。
+   未完成 Gateway 注册与验收前，不宣称 target 已可用。
 
-外部控制器可以是持有集群 kubeconfig 的管理主机或 CI，不要求一定运行在开发机。首次安装或
-Agent 自恢复可以通过 SSH 到该主机执行受控流程；日常业务仍通过明确 target 的
-`ask --apply`，不以本机 kubeconfig 或 `push` 为前提。
-新身份要先确认没有同 `cluster/instance` 的在线实例。
-
-本仓库的 `scripts/release-managed-agent.sh` 用于新集群安装、旧 Helm Agent 首次启用
-自升级控制器，以及显式 Agent Helm 配置变更。新集群的 `--values` 模式
-是 bootstrap-only，只做 Helm wait 和最终 Deployment 检查，不做 Gateway 接管或自动回滚；
-完成后必须继续执行本节安装验收。已有 workload 但没有 Helm release 时，按
-[BUILD_DEPLOY_SOP.md](BUILD_DEPLOY_SOP.md) 的收编流程先纳入 Helm。纳入后镜像替换用
-`doops upgrade`，不需要操作机 kubeconfig；升级 Job 使用 Agent 挂载的 kubeconfig，没有挂载时
-使用 Agent 自己的 ServiceAccount。
-`doops upgrade` 只替换 Agent 镜像或回滚，不修改 `proxy.allowedHosts` 或 `hostAliases`；
-这些配置仍只能通过该外部 Helm 脚本显式传入。
+初装完成后，Agent 生命周期切换统一通过授权、受审计的 Gateway：
+在线且支持新协议的目标使用 `doops upgrade`；旧协议首升、收编、重装和恢复
+按 [BUILD_DEPLOY_SOP.md](BUILD_DEPLOY_SOP.md) 审查独立 Job 后经 Gateway 提交。
+不能重复套用“手工初装”来更新已有 Agent，或用其规避离线、权限、审计及协议错误。
+`doops upgrade` 不修改 `proxy.allowedHosts` 或 `hostAliases`；
+这类配置变更进入仓库 Chart/values，再由符合备份、验收和自动回滚要求的受审计独立 Job 收敛，
+当前脚本不提供配置变更入口。普通业务仍通过明确 target 的 `ask --apply` 发布。
 
 旧副本卡在 Terminating 时，先核对替代 Pod 已接管 Gateway，再检查事件、finalizer 和
 节点运行时；不能仅凭一分钟超时就强制删除，也不要对同一身份再跑一次安装器。

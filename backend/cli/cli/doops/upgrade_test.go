@@ -88,10 +88,19 @@ func TestParseUpgradeAcceptanceRejectsLogAndDuplicateFields(t *testing.T) {
 		"OK\nself-upgrade-accepted job=job namespace=ops release=agent",
 		"self-upgrade-accepted job=first job=second namespace=ops release=agent",
 		"self-upgrade-accepted job=job namespace=ops",
+		"self-upgrade-accepted job=job namespace= release=agent",
+		"self-upgrade-accepted job=job namespace=ops release=agent digest= digest=sha256:abc",
 	} {
 		if _, _, _, err := parseUpgradeAcceptance(out); err == nil {
 			t.Fatalf("invalid acceptance was accepted: %s", out)
 		}
+	}
+}
+
+func TestParseUpgradeAcceptanceAllowsEmptyOptionalDigestForTaggedImage(t *testing.T) {
+	_, _, _, err := parseUpgradeAcceptance("self-upgrade-accepted job=job namespace=ops release=agent image=registry.example/doops:v1 digest=")
+	if err != nil {
+		t.Fatalf("tagged image acceptance rejected: %v", err)
 	}
 }
 
@@ -187,6 +196,7 @@ func TestUpgradeAgentsRequiresVerifiedResult(t *testing.T) {
 						text := test.acceptance
 						if args["rollback"] == true {
 							rollbacks.Add(1)
+							text += " expected_release_commit=" + strings.Repeat("a", 40)
 						}
 						if args["image"] != nil && args["preflight"] != true && args["dry_run"] != true && args["rollback"] != true {
 							applies.Add(1)
@@ -197,6 +207,7 @@ func TestUpgradeAgentsRequiresVerifiedResult(t *testing.T) {
 						}
 						result = map[string]interface{}{
 							"content": []map[string]string{{"type": "text", "text": text}},
+							"isError": strings.HasPrefix(text, "self-upgrade-failed "),
 						}
 					default:
 						continue
@@ -368,6 +379,7 @@ func TestUpgradeAgentsPreflightFailureChangesNothingAndReportsTheCategory(t *tes
 						}
 						result = map[string]interface{}{
 							"content": []map[string]string{{"type": "text", "text": text}},
+							"isError": strings.HasPrefix(text, "self-upgrade-failed "),
 						}
 					default:
 						continue

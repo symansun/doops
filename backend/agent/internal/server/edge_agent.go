@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -185,25 +184,7 @@ func (a *edgeAgentTunnel) reject(id uint32, reason edgeCloseReason, detail strin
 
 func (a *edgeAgentTunnel) pipeBackend(id uint32, conn net.Conn) {
 	defer a.drop(id)
-	buf := make([]byte, int(edgeFramePayloadBytes()))
-	ctx := context.Background()
-	for {
-		n, err := conn.Read(buf)
-		if n > 0 {
-			if waitErr := a.ws.sched.WaitEnqueue(ctx, id, buf[:n]); waitErr != nil {
-				_ = a.ws.sched.LocalClose(id, edgeCloseUpstreamFailure, waitErr.Error())
-				return
-			}
-		}
-		if errors.Is(err, io.EOF) {
-			_ = a.ws.sched.LocalShutdown(id)
-			return
-		}
-		if err != nil {
-			_ = a.ws.sched.LocalClose(id, edgeCloseUpstreamFailure, err.Error())
-			return
-		}
-	}
+	pipeEdgeTCP(context.Background(), a.ws, id, conn)
 }
 
 func (a *edgeAgentTunnel) attach(id uint32, conn net.Conn) {

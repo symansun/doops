@@ -42,6 +42,8 @@ type MCPClient struct {
 	SessionName  string
 	Verbose      bool
 	Token        string
+	// UpgradeOperationID correlates upgrade calls and their initialize probes.
+	UpgradeOperationID string
 
 	// --- 持久连接状态 ---
 	mu           sync.Mutex
@@ -70,6 +72,7 @@ type wsEvent struct {
 type gatewayRPCError struct {
 	Code    float64
 	Message string
+	Data    map[string]interface{}
 }
 
 func (e *gatewayRPCError) Error() string {
@@ -96,6 +99,9 @@ func NewMCPClient(target Server, ss *SessionStore, sessionName string, verbose b
 // log 打印调试日志（仅 verbose 模式）
 func (c *MCPClient) log(step, msg string) {
 	if c.Verbose {
+		if c.UpgradeOperationID != "" {
+			msg = redactUpgradeText(msg, c.Token)
+		}
 		fmt.Printf("\033[94m[%s]\033[0m %s\n", step, msg)
 	}
 }
@@ -107,12 +113,24 @@ func (c *MCPClient) nextReqID() int64 {
 
 // connect 建立与 agent 的持久 WebSocket 连接并完成 MCP initialize 握手。
 func (c *MCPClient) connect() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	return c.connectWithVerification("", "")
+}
 
+func (c *MCPClient) connectWithVerification(expectedRelease, requiredProtocol string) (err error) {
+	defer func() {
+		if c.UpgradeOperationID != "" && err != nil {
+			err = errors.New(redactUpgradeText(err.Error(), c.Token))
+		}
+	}()
+	c.mu.Lock()
 	if c.connected {
+		c.mu.Unlock()
+		if c.UpgradeOperationID != "" && (expectedRelease != "" || requiredProtocol != "") {
+			return c.verifyConnectedUpgrade(expectedRelease, requiredProtocol)
+		}
 		return nil
 	}
+	defer c.mu.Unlock()
 
 	wsURL, err := c.targetWebSocketURL()
 	if err != nil {
@@ -167,13 +185,7 @@ func (c *MCPClient) connect() error {
 		"jsonrpc": "2.0",
 		"method":  "initialize",
 		"id":      initID,
-		"params": map[string]interface{}{
-			"protocolVersion": "2024-11-05",
-			"clientInfo": map[string]string{
-				"name":    "doops-go-cli",
-				"version": "2.0",
-			},
-		},
+		"params":  c.initializeParams(expectedRelease, requiredProtocol),
 	}); err != nil {
 		c.conn.Close()
 		return fmt.Errorf("initialization failed: %v", err)
@@ -219,6 +231,53 @@ func (c *MCPClient) connect() error {
 	c.connected = true
 	c.log("CLIENT:CONNECTED", "Persistent WebSocket connection established")
 	return nil
+}
+
+func (c *MCPClient) initializeParams(expectedRelease, requiredProtocol string) map[string]interface{} {
+	params := map[string]interface{}{
+		"protocolVersion": "2024-11-05",
+		"clientInfo":      map[string]string{"name": "doops-go-cli", "version": "2.0"},
+	}
+	if c.UpgradeOperationID != "" {
+		params["upgrade_operation_id"] = c.UpgradeOperationID
+		params["session_id"] = c.SessionName
+		if expectedRelease != "" {
+			params["expected_release_commit"] = expectedRelease
+		}
+		if requiredProtocol != "" {
+			params["required_protocol"] = requiredProtocol
+		}
+	}
+	return params
+}
+
+// A cached capability check cannot produce a Gateway verification receipt.
+// Reused upgrade clients send a fresh initialize without replaying tool calls.
+func (c *MCPClient) verifyConnectedUpgrade(expectedRelease, requiredProtocol string) error {
+	id := c.nextReqID()
+	conn, ch := c.registerCall(id)
+	defer c.unregisterPending(id)
+	deadline := time.Now().Add(5 * time.Second)
+	if err := c.writeRequest(conn, map[string]interface{}{
+		"jsonrpc": "2.0", "id": id, "method": "initialize",
+		"params": c.initializeParams(expectedRelease, requiredProtocol),
+	}, deadline); err != nil {
+		return err
+	}
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case evt := <-ch:
+		if err := validateInitializeResponse(id, evt); err != nil {
+			return err
+		}
+		c.mu.Lock()
+		c.capabilities = initializeCapabilities(evt)
+		c.mu.Unlock()
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("initialize verification timed out")
+	}
 }
 
 func isTransientWebSocketHandshakeError(err error) bool {
@@ -345,8 +404,12 @@ func validateInitializeResponse(initID int64, evt wsEvent) error {
 	if rpcErr, ok := msg["error"].(map[string]interface{}); ok {
 		return fmt.Errorf("initialize failed: %v", rpcErr["message"])
 	}
-	if _, ok := msg["result"].(map[string]interface{}); !ok {
+	result, ok := msg["result"].(map[string]interface{})
+	if !ok {
 		return fmt.Errorf("initialize failed: missing result")
+	}
+	if toolResultIsError(result) {
+		return fmt.Errorf("initialize failed: %s", toolResultText(result, "verification failed"))
 	}
 	return nil
 }
@@ -361,7 +424,7 @@ func (c *MCPClient) RequireProtocol(protocol string) error {
 	if err := validateRequiredProtocol(protocol); err != nil {
 		return err
 	}
-	if err := c.connect(); err != nil {
+	if err := c.connectWithVerification("", protocol); err != nil {
 		return err
 	}
 	protocols, _ := c.capabilities["protocols"].(map[string]interface{})
@@ -375,12 +438,12 @@ func (c *MCPClient) RequireProtocol(protocol string) error {
 }
 
 func (c *MCPClient) RequireAgentRelease(expected string) error {
-	if err := c.connect(); err != nil {
-		return err
-	}
 	expected = strings.TrimSpace(expected)
 	if expected == "" {
 		return fmt.Errorf("expected DoOps release commit is empty")
+	}
+	if err := c.connectWithVerification(expected, ""); err != nil {
+		return err
 	}
 	actual, _ := c.capabilities["releaseCommit"].(string)
 	actual = strings.TrimSpace(actual)
@@ -681,13 +744,35 @@ func (c *MCPClient) Call(toolName string, arguments map[string]interface{}) erro
 
 // CallAndCapture 在持久连接上执行 MCP tool call，捕获结果文本而非打印。
 func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interface{}) (string, error) {
+	text, _, err := c.callAndCaptureResult(toolName, arguments)
+	return text, err
+}
+
+func (c *MCPClient) callAndCaptureResult(toolName string, arguments map[string]interface{}) (output string, result map[string]interface{}, err error) {
+	defer func() {
+		if c.UpgradeOperationID == "" {
+			return
+		}
+		output = redactUpgradeText(output, c.Token)
+		result, _ = redactUpgradeValue(result, c.Token).(map[string]interface{})
+		var rpcErr *gatewayRPCError
+		if errors.As(err, &rpcErr) {
+			data, _ := redactUpgradeValue(rpcErr.Data, c.Token).(map[string]interface{})
+			err = &gatewayRPCError{Code: rpcErr.Code, Message: redactUpgradeText(rpcErr.Message, c.Token), Data: data}
+		} else if err != nil {
+			err = errors.New(redactUpgradeText(err.Error(), c.Token))
+		}
+	}()
 	// 确保连接已建立
 	if err := c.connect(); err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	// 注入 session_id
-	if sid := c.SessionStore.Get(c.Target.Name, c.SessionName); sid != "" {
+	if c.UpgradeOperationID != "" {
+		arguments["session_id"] = c.SessionName
+		arguments["upgrade_operation_id"] = c.UpgradeOperationID
+	} else if sid := c.SessionStore.Get(c.Target.Name, c.SessionName); sid != "" {
 		arguments["session_id"] = sid
 	} else {
 		arguments["session_id"] = c.SessionName
@@ -700,7 +785,7 @@ func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interfa
 
 	// 发送 tool call
 	deadline := time.Now().Add(c.callTimeout())
-	err := c.writeRequest(conn, map[string]interface{}{
+	err = c.writeRequest(conn, map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  "tools/call",
 		"id":      reqID,
@@ -710,7 +795,7 @@ func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interfa
 		},
 	}, deadline)
 	if err != nil {
-		return "", fmt.Errorf("tool call failed: %w", err)
+		return "", nil, fmt.Errorf("tool call failed: %w", err)
 	}
 
 	var capturedOutput strings.Builder
@@ -724,9 +809,9 @@ func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interfa
 		case evt := <-ch:
 			if evt.IsError {
 				if timedOut {
-					return capturedOutput.String(), executionOutcomeUnknownError()
+					return capturedOutput.String(), nil, executionOutcomeUnknownError()
 				}
-				return capturedOutput.String(), fmt.Errorf("connection lost: %s", evt.Raw)
+				return capturedOutput.String(), nil, fmt.Errorf("connection lost: %s", evt.Raw)
 			}
 
 			msg := evt.Parsed
@@ -747,30 +832,37 @@ func (c *MCPClient) CallAndCapture(toolName string, arguments map[string]interfa
 
 			if id, ok := msg["id"].(float64); ok && int64(id) == reqID {
 				if result, ok := msg["result"].(map[string]interface{}); ok {
-					if toolResultIsError(result) {
-						return capturedOutput.String(), fmt.Errorf("%s", toolResultText(result, "tool returned an error"))
-					}
 					if text := toolResultText(result, ""); text != "" {
 						capturedOutput.WriteString(text)
 					}
+					if toolResultIsError(result) {
+						return capturedOutput.String(), result, fmt.Errorf("%s", toolResultText(result, "tool returned an error"))
+					}
 					if capturedOutput.Len() > 0 {
-						return capturedOutput.String(), nil
+						return capturedOutput.String(), result, nil
 					}
 				} else if rpcErr, ok := msg["error"].(map[string]interface{}); ok {
 					code, _ := rpcErr["code"].(float64)
-					return capturedOutput.String(), &gatewayRPCError{Code: code, Message: fmt.Sprint(rpcErr["message"])}
+					data, _ := rpcErr["data"].(map[string]interface{})
+					rpcError := &gatewayRPCError{Code: code, Message: fmt.Sprint(rpcErr["message"]), Data: data}
+					var result map[string]interface{}
+					if code == -32603 && rpcError.Message == "audit_completion_failed" {
+						result, _ = data["result"].(map[string]interface{})
+						capturedOutput.WriteString(toolResultText(result, ""))
+					}
+					return capturedOutput.String(), result, rpcError
 				}
 
-				return capturedOutput.String(), fmt.Errorf("no result received")
+				return capturedOutput.String(), nil, fmt.Errorf("no result received")
 			}
 		case <-timeout.C:
 			if timedOut {
-				return capturedOutput.String(), executionOutcomeUnknownError()
+				return capturedOutput.String(), nil, executionOutcomeUnknownError()
 			}
 			timedOut = true
 			cancelDeadline := time.Now().Add(executionCancellationTimeout)
 			if err := c.requestCancellation(conn, reqID, cancelDeadline); err != nil {
-				return capturedOutput.String(), executionOutcomeUnknownError()
+				return capturedOutput.String(), nil, executionOutcomeUnknownError()
 			}
 			timeout.Reset(time.Until(cancelDeadline))
 		}

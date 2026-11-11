@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Package the operator Skill/docs for a GitHub Release.
 #
-# The CNB distribution installer downloads doops-skill.tar.gz and expects the
+# The GitHub Release installer downloads doops-skill.tar.gz and expects the
 # archive to contain skills/SKILL.md and docs/*.md at those paths. This script
 # converts the repository layout into that release layout, appends the tarball
 # to checksums.txt, and is safe to run once per release build.

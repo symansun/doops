@@ -21,7 +21,7 @@ Skill 或 Agent 镜像发布。
 | [DoWeb 工作台集成](DOWEB_INTEGRATION.md) | DoWeb 在统一工作台中的接入 | 现行 |
 | [统一运维工作台](UNIFIED_OPERATIONS_WORKBENCH.md) | 工作台整体模型与边界 | 现行 |
 | [物理机访问](PHYSICAL_HOST_ACCESS.md) | 物理机/宿主机访问与硬件检查 | 环境相关 |
-| [CNB Helm 工作区契约](CNB_HELM_WORKSPACE_CONTRACT.md) | CNB Helm workspace 契约 | 现行契约 |
+| [Helm 工作区契约](HELM_WORKSPACE_CONTRACT.md) | 受管 Helm 工作区契约与资产源 | 现行契约 |
 | [Harbor 镜像同步规范](HARBOR_REPLICATION_SPEC.md) | Harbor 镜像同步配置 | 草案 |
 | [DoOps Edge 设计](design/DOOPS_EDGE_TUNNEL.md) | Agent 反向代理与 Gateway 动态域名映射 | 设计（未上线） |
 

@@ -1,22 +1,28 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
 )
 
 type UpgradeOptions struct {
-	Image     string
-	Mode      string
-	Namespace string
-	Workload  string
-	Container string
-	Release   string
-	DryRun    bool
-	Rollback  bool
-	Session   string
+	Image        string
+	Mode         string
+	Namespace    string
+	Workload     string
+	Container    string
+	Release      string
+	DryRun       bool
+	Rollback     bool
+	Session      string
+	SourceCommit string
+	CIURL        string
 	// AllowMissingRollbackBaseline lets the operator upgrade an Agent whose
 	// rollback baseline image is gone from the registry. The default is fail
 	// closed: without that image an automatic rollback could not restore the
@@ -25,15 +31,48 @@ type UpgradeOptions struct {
 }
 
 var (
-	upgradePollInterval  = 5 * time.Second
-	upgradeWait          = 21 * time.Minute
-	cliImageRepository   = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`)
-	cliImageTag          = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
-	cliImageDigest       = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
-	releaseCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	upgradePollInterval    = 5 * time.Second
+	upgradeWait            = 21 * time.Minute
+	cliImageRepository     = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$`)
+	cliImageTag            = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
+	cliImageDigest         = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+	releaseCommitPattern   = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	upgradeSessionPattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+	upgradeMetadataPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,252}$`)
 )
 
+type upgradeOperation struct {
+	server          Server
+	token           string
+	session         string
+	verbose         bool
+	id              string
+	expectedRelease string
+	sourceCommit    string
+	ciURL           string
+	output          strings.Builder
+	auditErr        error
+}
+
+func (op *upgradeOperation) printf(format string, args ...interface{}) {
+	text := redactUpgradeText(fmt.Sprintf(format, args...), op.token)
+	fmt.Print(text)
+	op.output.WriteString(text)
+}
+
+func (op *upgradeOperation) client() *MCPClient {
+	client := NewMCPClient(op.server, NewSessionStore(), op.session, op.verbose)
+	client.Token = op.token
+	client.UpgradeOperationID = op.id
+	return client
+}
+
 func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
+	opts.Image = strings.TrimSpace(opts.Image)
+	opts.Session = strings.TrimSpace(opts.Session)
+	if err := validateUpgradeMetadata(opts); err != nil {
+		return err
+	}
 	if opts.Rollback {
 		if strings.TrimSpace(opts.Image) != "" {
 			return fmt.Errorf("rollback does not take an image")
@@ -74,74 +113,87 @@ func UpgradeAgents(base Server, opts UpgradeOptions, verbose bool) error {
 	if len(selected) == 0 {
 		return fmt.Errorf("configured target is offline: %s/%s", base.Cluster, base.Instance)
 	}
-	failures := 0
-	var firstFailure error
+	var failures []error
 	for _, target := range selected {
 		server := base
 		server.Name = target.Key
 		server.Gateway = base.Gateway
 		server.Cluster = target.Cluster
 		server.Instance = target.Instance
-		args := upgradeArguments(opts)
-		if opts.Rollback {
-			fmt.Printf("==> rolling back %s/%s\n", target.Cluster, target.Instance)
-		} else {
-			fmt.Printf("==> upgrading %s/%s image=%s\n", target.Cluster, target.Instance, opts.Image)
+		var operationID [16]byte
+		if _, err := rand.Read(operationID[:]); err != nil {
+			return fmt.Errorf("create upgrade operation id: %w", err)
 		}
-		if !opts.DryRun && !opts.Rollback {
-			// The preflight Job starts from the target image, so it pulls the image
-			// to the node and repeats every pre-change check. Nothing is changed
-			// unless it passes.
-			if err := runUpgradePreflight(server, token, session, verbose, opts); err != nil {
-				fmt.Printf("FAIL %s/%s: preflight failed, nothing was changed: %v\n", target.Cluster, target.Instance, err)
-				failures++
-				if firstFailure == nil {
-					firstFailure = fmt.Errorf("%s/%s: preflight failed, nothing was changed: %w", target.Cluster, target.Instance, err)
-				}
-				continue
-			}
-		}
-		out, err := callUpgradeTool(server, token, session, verbose, args)
-		if err != nil {
-			fmt.Printf("FAIL %s/%s: %v\n", target.Cluster, target.Instance, err)
-			failures++
-			continue
-		}
-		out = strings.TrimSpace(out)
-		if opts.DryRun {
-			if !strings.HasPrefix(out, "dry-run: ") {
-				fmt.Printf("FAIL %s/%s: invalid dry-run result: %s\n", target.Cluster, target.Instance, out)
-				failures++
-				continue
-			}
-			fmt.Printf("PREVIEW %s/%s: %s\n", target.Cluster, target.Instance, out)
-			continue
-		}
-		if _, _, _, err := parseUpgradeAcceptance(out); err != nil {
-			fmt.Printf("FAIL %s/%s: %v\n", target.Cluster, target.Instance, err)
-			failures++
-			continue
-		}
-		fmt.Printf("ACCEPTED %s/%s: %s\n", target.Cluster, target.Instance, out)
-		if err := waitForSelfUpgrade(server, token, session, verbose, out, !opts.Rollback, expectedRelease); err != nil {
-			fmt.Printf("FAIL %s/%s: %v\n", target.Cluster, target.Instance, err)
-			failures++
-			continue
+		op := &upgradeOperation{
+			server: server, token: token, session: session, verbose: verbose,
+			id: fmt.Sprintf("upgrade_%x", operationID), expectedRelease: expectedRelease,
+			sourceCommit: opts.SourceCommit, ciURL: opts.CIURL,
 		}
 		action := "upgrade"
 		if opts.Rollback {
 			action = "rollback"
 		}
-		fmt.Printf("OK %s/%s: %s Job and structuredSSH protocol verified\n", target.Cluster, target.Instance, action)
-		fmt.Println(withNext("verify the release", "doops targets --target "+base.Name+"   # RELEASE_COMMIT is the new commit", "doops capabilities --target "+base.Name+" --require structuredSSH"))
-	}
-	if failures > 0 {
-		if firstFailure != nil {
-			return firstFailure
+		op.printf("==> %s %s/%s operation=%s session=%s image=%s\n", action, target.Cluster, target.Instance, op.id, session, opts.Image)
+		runErr := op.run(opts)
+		resultErr := errors.Join(runErr, op.auditErr)
+		if resultErr != nil {
+			resultErr = errors.New(redactUpgradeText(resultErr.Error(), op.token))
 		}
-		return fmt.Errorf("upgrade failed on %d/%d target(s)", failures, len(selected))
+		status := "success"
+		if resultErr != nil {
+			status = "error"
+			op.printf("FAIL %s/%s operation=%s session=%s: %v\n", target.Cluster, target.Instance, op.id, session, resultErr)
+		}
+		result := HistoryResult{UpgradeOperationID: op.id, Status: status, Output: op.output.String()}
+		if resultErr != nil {
+			result.Error = resultErr.Error()
+		}
+		if err := RecordHistory(target.Cluster+"/"+target.Instance, session, action, result); err != nil {
+			op.printf("FAIL operation=%s session=%s: could not record upgrade history: %v\n", op.id, session, err)
+			resultErr = errors.Join(resultErr, fmt.Errorf("record upgrade history: %w", err))
+		}
+		if resultErr != nil {
+			failures = append(failures, fmt.Errorf("%s/%s operation=%s: %w", target.Cluster, target.Instance, op.id, resultErr))
+			continue
+		}
+		if opts.DryRun {
+			fmt.Printf("PREVIEW %s/%s operation=%s session=%s\n", target.Cluster, target.Instance, op.id, session)
+		} else {
+			fmt.Printf("OK %s/%s operation=%s session=%s: %s Job, structuredSSH protocol and release_commit verified\n", target.Cluster, target.Instance, op.id, session, action)
+			fmt.Println(withNext("verify the release", "doops targets --target "+base.Name+"   # compare RELEASE_COMMIT with the verified commit", "doops capabilities --target "+base.Name+" --require structuredSSH"))
+		}
 	}
-	return nil
+	return errors.Join(failures...)
+}
+
+func (op *upgradeOperation) run(opts UpgradeOptions) error {
+	if !opts.DryRun && !opts.Rollback {
+		if err := op.runUpgradePreflight(opts); err != nil {
+			return fmt.Errorf("preflight failed, nothing was changed: %w", err)
+		}
+		// Finish observing the preflight, but do not start a new mutation when
+		// its audit could not be persisted.
+		if op.auditErr != nil {
+			return fmt.Errorf("preflight completed but its audit failed; upgrade was not started")
+		}
+	}
+	out, err := op.callUpgradeTool(upgradeArguments(opts))
+	if err != nil {
+		return err
+	}
+	out = strings.TrimSpace(out)
+	if opts.DryRun {
+		if !strings.HasPrefix(out, "dry-run: ") {
+			return fmt.Errorf("invalid dry-run result: %s", out)
+		}
+		op.printf("%s\n", out)
+		return nil
+	}
+	if _, _, _, err := parseUpgradeAcceptance(out); err != nil {
+		return err
+	}
+	op.printf("ACCEPTED %s/%s: %s\n", op.server.Cluster, op.server.Instance, out)
+	return op.waitForSelfUpgrade(out, !opts.Rollback, op.expectedRelease)
 }
 
 func upgradeArguments(opts UpgradeOptions) map[string]interface{} {
@@ -170,11 +222,11 @@ func upgradeArguments(opts UpgradeOptions) map[string]interface{} {
 // runUpgradePreflight pulls the target image on the Agent's node and runs every
 // pre-change check without modifying the release. It returns only after the Job
 // reached a terminal state.
-func runUpgradePreflight(server Server, token, session string, verbose bool, opts UpgradeOptions) error {
+func (op *upgradeOperation) runUpgradePreflight(opts UpgradeOptions) error {
 	args := upgradeArguments(opts)
 	args["preflight"] = true
-	fmt.Printf("==> preflight: pulling %s and checking the release\n", opts.Image)
-	out, err := callUpgradeTool(server, token, session, verbose, args)
+	op.printf("==> preflight: pulling %s and checking the release\n", opts.Image)
+	out, err := op.callUpgradeTool(args)
 	if err != nil {
 		return err
 	}
@@ -187,11 +239,12 @@ func runUpgradePreflight(server Server, token, session string, verbose bool, opt
 		if time.Now().After(deadline) {
 			return fmt.Errorf("preflight job %s did not finish (the image may not be pullable)", job)
 		}
-		observed, err := callUpgradeTool(server, token, session, verbose, map[string]interface{}{
-			"observe_job": job,
-			"namespace":   namespace,
+		observed, err := op.callUpgradeTool(map[string]interface{}{
+			"observe_job":             job,
+			"namespace":               namespace,
+			"expected_release_commit": op.expectedRelease,
 		})
-		if err == nil {
+		if err == nil || strings.HasPrefix(observed, "self-upgrade-failed ") {
 			_, fields, parseErr := parseUpgradeResponse(observed)
 			if parseErr != nil {
 				return parseErr
@@ -207,7 +260,7 @@ func runUpgradePreflight(server Server, token, session string, verbose bool, opt
 		case "failed":
 			return fmt.Errorf("%s", strings.TrimSpace(observed))
 		case "succeeded":
-			fmt.Printf("preflight passed for %s\n", opts.Image)
+			op.printf("preflight passed for %s\n", opts.Image)
 			return nil
 		default:
 			if err != nil {
@@ -218,29 +271,81 @@ func runUpgradePreflight(server Server, token, session string, verbose bool, opt
 	}
 }
 
-func callUpgradeTool(server Server, token, session string, verbose bool, args map[string]interface{}) (string, error) {
-	client := NewMCPClient(server, NewSessionStore(), session, verbose)
-	client.Token = token
+func (op *upgradeOperation) callUpgradeTool(args map[string]interface{}) (string, error) {
+	args["upgrade_operation_id"] = op.id
+	if op.expectedRelease != "" && args["rollback"] != true && args["observe_job"] == nil {
+		args["expected_release_commit"] = op.expectedRelease
+	}
+	if op.sourceCommit != "" {
+		args["source_commit"] = op.sourceCommit
+	}
+	if op.ciURL != "" {
+		args["ci_url"] = op.ciURL
+	}
+	client := op.client()
 	defer client.Close()
-	return client.CallAndCapture("doops_agent_upgrade", args)
+	out, result, err := client.callAndCaptureResult("doops_agent_upgrade", args)
+	step := map[string]interface{}{"arguments": args, "result": result, "output": out}
+	if err != nil {
+		step["error"] = err.Error()
+	}
+	var rpcErr *gatewayRPCError
+	if errors.As(err, &rpcErr) {
+		step["rpc_error"] = map[string]interface{}{"Code": rpcErr.Code, "Message": rpcErr.Message, "Data": rpcErr.Data}
+	}
+	data, marshalErr := json.Marshal(redactUpgradeValue(step, op.token))
+	if marshalErr != nil {
+		return out, errors.Join(err, fmt.Errorf("record upgrade result: %w", marshalErr))
+	}
+	op.output.Write(data)
+	op.output.WriteByte('\n')
+	if rpcErr != nil && rpcErr.Code == -32603 && rpcErr.Message == "audit_completion_failed" {
+		auditID, validAuditID := rpcErr.Data["audit_id"].(float64)
+		operationID, _ := rpcErr.Data["upgrade_operation_id"].(string)
+		auditErr := fmt.Errorf("audit_completion_failed audit_id=%.0f operation=%s: %w", auditID, operationID, rpcErr)
+		if op.auditErr == nil {
+			op.auditErr = auditErr
+		}
+		op.printf("WARNING: %v; operation remains unsuccessful; verifying returned Job evidence\n", auditErr)
+		if !validAuditID || auditID <= 0 || operationID != op.id || result == nil || strings.TrimSpace(out) == "" {
+			return out, fmt.Errorf("audit_completion_failed did not include matching operation and result evidence: %w", rpcErr)
+		}
+		// Only this explicit Gateway error carries a completed execution result.
+		// Retain the audit failure while allowing its Job to reach verification.
+		if toolResultIsError(result) {
+			return out, fmt.Errorf("%s", toolResultText(result, "tool returned an error"))
+		}
+		return out, nil
+	}
+	return out, err
 }
 
-func waitForSelfUpgrade(server Server, token, session string, verbose bool, acceptance string, rollbackOnProbeFailure bool, expectedRelease string) error {
+func (op *upgradeOperation) waitForSelfUpgrade(acceptance string, rollbackOnProbeFailure bool, expectedRelease string) error {
 	job, namespace, release, err := parseUpgradeAcceptance(acceptance)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("==> waiting for self-upgrade job %s\n", job)
+	_, acceptanceFields, _ := parseUpgradeResponse(acceptance)
+	if !rollbackOnProbeFailure {
+		expectedRelease = acceptanceFields["expected_release_commit"]
+	}
+	// Even a malformed rollback receipt may describe an already running Job.
+	// Observe it to completion before rejecting missing verification evidence.
+	op.printf("==> waiting for self-upgrade job %s\n", job)
 	deadline := time.Now().Add(upgradeWait)
 	for {
 		if time.Now().After(deadline) {
 			return fmt.Errorf("self-upgrade job %s did not finish", job)
 		}
-		out, err := callUpgradeTool(server, token, session, verbose, map[string]interface{}{
+		args := map[string]interface{}{
 			"observe_job": job,
 			"namespace":   namespace,
-		})
-		if err == nil {
+		}
+		if expectedRelease != "" {
+			args["expected_release_commit"] = expectedRelease
+		}
+		out, err := op.callUpgradeTool(args)
+		if err == nil || strings.HasPrefix(out, "self-upgrade-failed ") {
 			_, fields, parseErr := parseUpgradeResponse(out)
 			if parseErr != nil {
 				return parseErr
@@ -256,23 +361,24 @@ func waitForSelfUpgrade(server Server, token, session string, verbose bool, acce
 		case "failed":
 			return fmt.Errorf("%s", strings.TrimSpace(out))
 		case "succeeded":
-			fmt.Printf("%s\n", strings.TrimSpace(out))
-			if err := probeStructuredSSH(server, token, session, verbose); err != nil {
+			op.printf("%s\n", strings.TrimSpace(out))
+			if !releaseCommitPattern.MatchString(expectedRelease) {
+				return fmt.Errorf("rollback acceptance is missing a valid expected_release_commit")
+			}
+			if err := op.probeStructuredSSH(); err != nil {
 				if !rollbackOnProbeFailure {
 					return fmt.Errorf("rollback Job completed but Gateway protocol verification failed: %w", err)
 				}
-				return rollbackAfterProbeFailure(server, token, session, verbose, namespace, release, err)
+				return op.rollbackAfterProbeFailure(namespace, release, err)
 			}
-			fmt.Printf("protocol=structuredSSH status=ready\n")
-			if expectedRelease != "" {
-				if err := probeAgentRelease(server, token, session, verbose, expectedRelease); err != nil {
-					if !rollbackOnProbeFailure {
-						return fmt.Errorf("rollback Job completed but Agent release verification failed: %w", err)
-					}
-					return rollbackAfterProbeFailure(server, token, session, verbose, namespace, release, err)
+			op.printf("protocol=structuredSSH status=ready\n")
+			if err := op.probeAgentRelease(expectedRelease); err != nil {
+				if !rollbackOnProbeFailure {
+					return fmt.Errorf("rollback Job completed but Agent release verification failed: %w", err)
 				}
-				fmt.Printf("release_commit=%s status=ready\n", expectedRelease)
+				return op.rollbackAfterProbeFailure(namespace, release, err)
 			}
+			op.printf("release_commit=%s status=ready\n", expectedRelease)
 			return nil
 		default:
 			if err != nil {
@@ -283,39 +389,39 @@ func waitForSelfUpgrade(server Server, token, session string, verbose bool, acce
 	}
 }
 
-func rollbackAfterProbeFailure(server Server, token, session string, verbose bool, namespace, release string, probeErr error) error {
-	fmt.Printf("structuredSSH probe failed: %v\n", probeErr)
-	fmt.Println("==> starting rollback job")
-	out, err := callUpgradeTool(server, token, session, verbose, map[string]interface{}{
+func (op *upgradeOperation) rollbackAfterProbeFailure(namespace, release string, probeErr error) error {
+	op.printf("verification probe failed: %v\n==> starting rollback job\n", probeErr)
+	out, err := op.callUpgradeTool(map[string]interface{}{
 		"rollback":  true,
 		"namespace": namespace,
 		"release":   release,
 	})
 	if err != nil {
-		return fmt.Errorf("structuredSSH probe failed: %v; rollback was not accepted: %w", probeErr, err)
+		return fmt.Errorf("verification probe failed: %v; rollback was not accepted: %w", probeErr, err)
 	}
-	fmt.Printf("%s\n", strings.TrimSpace(out))
-	if err := waitForSelfUpgrade(server, token, session, verbose, out, false, ""); err != nil {
-		return fmt.Errorf("structuredSSH probe failed: %v; rollback failed: %w", probeErr, err)
+	op.printf("%s\n", strings.TrimSpace(out))
+	if err := op.waitForSelfUpgrade(out, false, ""); err != nil {
+		return fmt.Errorf("verification probe failed: %v; rollback failed: %w", probeErr, err)
 	}
-	return fmt.Errorf("structuredSSH probe failed and the release was rolled back: %v", probeErr)
+	return fmt.Errorf("verification probe failed and the release was rolled back: %v", probeErr)
 }
 
-func probeAgentRelease(server Server, token, session string, verbose bool, expected string) error {
-	client := NewMCPClient(server, NewSessionStore(), session, verbose)
-	client.Token = token
+func (op *upgradeOperation) probeAgentRelease(expected string) error {
+	client := op.client()
 	defer client.Close()
-	return client.RequireAgentRelease(expected)
+	err := client.RequireAgentRelease(expected)
+	op.printf("release probe expected_release_commit=%s actual=%v error=%v\n", expected, client.capabilities["releaseCommit"], err)
+	return err
 }
 
-func probeStructuredSSH(server Server, token, session string, verbose bool) error {
+func (op *upgradeOperation) probeStructuredSSH() error {
 	deadline := time.Now().Add(time.Minute)
 	var last error
 	for {
-		client := NewMCPClient(server, NewSessionStore(), session, verbose)
-		client.Token = token
+		client := op.client()
 		err := client.RequireProtocol("structuredSSH")
 		client.Close()
+		op.printf("protocol probe structuredSSH error=%v\n", err)
 		if err == nil {
 			return nil
 		}
@@ -347,7 +453,8 @@ func parseUpgradeResponse(out string) (string, map[string]string, error) {
 	fields := map[string]string{}
 	for _, field := range parts[1:] {
 		key, value, ok := strings.Cut(field, "=")
-		if !ok || key == "" || value == "" || fields[key] != "" {
+		_, duplicate := fields[key]
+		if !ok || key == "" || duplicate {
 			return "", nil, fmt.Errorf("invalid self-upgrade response header: %s", line)
 		}
 		fields[key] = value
@@ -356,13 +463,16 @@ func parseUpgradeResponse(out string) (string, map[string]string, error) {
 }
 
 func classifyUpgradeObservation(out string, err error) string {
+	status, _, parseErr := parseUpgradeResponse(out)
+	if parseErr == nil && status == "self-upgrade-failed" {
+		return "failed"
+	}
 	if err != nil {
 		if upgradeRetryable(err) {
 			return "retry"
 		}
 		return "error"
 	}
-	status, _, parseErr := parseUpgradeResponse(out)
 	if parseErr != nil {
 		return "error"
 	}
@@ -398,6 +508,9 @@ func upgradeRetryable(err error) bool {
 
 func validateUpgradeImage(image string) error {
 	image = strings.TrimSpace(image)
+	if len(image) > 512 {
+		return fmt.Errorf("agent upgrade image must not exceed 512 bytes")
+	}
 	at := strings.LastIndex(image, "@sha256:")
 	if at > 0 {
 		repository := image[:at]
@@ -411,6 +524,33 @@ func validateUpgradeImage(image string) error {
 	slash := strings.LastIndex(image, "/")
 	if colon <= slash || !cliImageRepository.MatchString(image[:colon]) || !cliImageTag.MatchString(image[colon+1:]) {
 		return fmt.Errorf("agent upgrade image must be repository:tag or repository@sha256:<64 hex digits>")
+	}
+	return nil
+}
+
+// Validate before authentication, network access, printing or history capture.
+// Errors identify the field without echoing the rejected value.
+func validateUpgradeMetadata(opts UpgradeOptions) error {
+	if opts.SourceCommit != "" && !releaseCommitPattern.MatchString(opts.SourceCommit) {
+		return fmt.Errorf("source-commit must be a full lowercase commit SHA")
+	}
+	if opts.CIURL != "" {
+		u, err := url.Parse(opts.CIURL)
+		if err != nil || len(opts.CIURL) > 512 || u.Scheme != "https" || u.Hostname() == "" ||
+			u.User != nil || u.RawQuery != "" || u.ForceQuery || strings.Contains(opts.CIURL, "#") {
+			return fmt.Errorf("ci-url must be an HTTPS URL without credentials, query or fragment")
+		}
+	}
+	if opts.Session != "" && (!upgradeSessionPattern.MatchString(opts.Session) || strings.Contains(opts.Session, "..")) {
+		return fmt.Errorf("session must be a bounded operation identifier")
+	}
+	for _, field := range []struct{ name, value string }{
+		{"mode", opts.Mode}, {"namespace", opts.Namespace}, {"workload", opts.Workload},
+		{"container", opts.Container}, {"release", opts.Release},
+	} {
+		if field.value != "" && !upgradeMetadataPattern.MatchString(field.value) {
+			return fmt.Errorf("invalid %s metadata", field.name)
+		}
 	}
 	return nil
 }

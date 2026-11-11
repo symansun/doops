@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -13,15 +15,26 @@ type HistoryEntry struct {
 	Session   string `json:"session"`
 	Command   string `json:"command"`
 	Source    string `json:"source"`
+	*HistoryResult
 }
 
-func RecordHistory(target, session, command string) error {
+type HistoryResult struct {
+	UpgradeOperationID string `json:"upgrade_operation_id"`
+	Status             string `json:"status"`
+	Output             string `json:"output"`
+	Error              string `json:"error,omitempty"`
+}
+
+func RecordHistory(target, session, command string, result ...HistoryResult) error {
 	entry := HistoryEntry{
 		Timestamp: time.Now().Format(time.RFC3339),
 		Target:    target,
 		Session:   session,
 		Command:   command,
 		Source:    "cli",
+	}
+	if len(result) > 0 {
+		entry.HistoryResult = &result[0]
 	}
 
 	data, err := json.Marshal(entry)
@@ -46,4 +59,60 @@ func RecordHistory(target, session, command string) error {
 
 func historyLogPath() string {
 	return filepath.Join(ensureDoopsStateDir(), "history.jsonl")
+}
+
+var upgradeSecretKey = regexp.MustCompile(`(?i)(password|passwd|secret|token|api[_-]?key|private[_-]?key|authorization|cookie|payload)$`)
+
+var upgradeTextRedactions = []struct {
+	pattern *regexp.Regexp
+	replace string
+}{
+	{regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----`), "[REDACTED PRIVATE KEY]"},
+	{regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://)[^/@\s]+@`), "${1}[REDACTED]@"},
+	{regexp.MustCompile(`(?i)((?:Bearer|Basic)\s+)[A-Za-z0-9._~+/=-]+`), "${1}[REDACTED]"},
+	{regexp.MustCompile(`(?i)((?:[A-Za-z0-9_.-]*(?:password|passwd|secret|token|api[_-]?key|private[_-]?key|signature|credential)|sig|auth|authorization|cookie)["']?\s*[=:]\s*)(?:"(?:\\.|[^"\\])*"|'[^']*'|[^\s,;}&"']+)`), "${1}[REDACTED]"},
+	{regexp.MustCompile(`\bsk-[A-Za-z0-9_-]+`), "[REDACTED]"},
+}
+
+// Sanitize values before JSON encoding; rewriting an encoded receipt can corrupt
+// its quotes. Keep operation/job/commit evidence and full non-sensitive log text.
+func redactUpgradeText(text, token string) string {
+	if token != "" {
+		text = strings.ReplaceAll(text, token, "[REDACTED]")
+	}
+	for _, rule := range upgradeTextRedactions {
+		text = rule.pattern.ReplaceAllString(text, rule.replace)
+	}
+	return text
+}
+
+func redactUpgradeValue(value interface{}, token string) interface{} {
+	switch value := value.(type) {
+	case string:
+		return redactUpgradeText(value, token)
+	case map[string]interface{}:
+		if value == nil {
+			return nil
+		}
+		clean := make(map[string]interface{}, len(value))
+		for key, item := range value {
+			if upgradeSecretKey.MatchString(key) {
+				clean[key] = "[REDACTED]"
+			} else {
+				clean[key] = redactUpgradeValue(item, token)
+			}
+		}
+		return clean
+	case []interface{}:
+		if value == nil {
+			return nil
+		}
+		clean := make([]interface{}, len(value))
+		for i, item := range value {
+			clean[i] = redactUpgradeValue(item, token)
+		}
+		return clean
+	default:
+		return value
+	}
 }

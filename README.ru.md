@@ -236,16 +236,16 @@ export PATH="$HOME/.local/bin:$PATH"
 | Конфигурация target по умолчанию | `~/.agent/skills/doops/config.json` |
 | Кэш входа | `~/.agent/skills/doops/auth.json` |
 
-Публичные релизы по тегу собираются автоматически через GitHub Actions ([release workflow](.github/workflows/release.yml)). Чтобы установить
-из GitHub Release, укажите установщику источник артефактов:
+Публичные релизы по тегу собираются и публикуются автоматически через GitHub Actions ([release workflow](.github/workflows/release.yml));
+установка использует только артефакты GitHub Releases:
 
 ```bash
-DOOPS_RELEASE_ASSET_BASE="https://github.com/<owner>/<repo>/releases/download" \
-  bash scripts/install.sh --version <release-tag> --project /absolute/path/to/existing-project
+bash scripts/install.sh --version <release-tag> --project /absolute/path/to/existing-project
 ```
 
-Источником по умолчанию остаётся CNB Release Assets; `DOOPS_RELEASE_ASSET_BASE` принимает только https (loopback-адреса
-только для тестов), проверки sha256, идентичности `release=... commit=...` и CLI contract не меняются.
+Источник по умолчанию — `https://github.com/symansun/doops/releases/download`; `DOOPS_RELEASE_ASSET_BASE` принимает только https
+(loopback-адреса только для тестов) и служит лишь для указания зеркала тех же артефактов с неизменными проверками sha256,
+идентичности `release=... commit=...` и CLI contract.
 
 Установка обновляет DoOps Skill и сопутствующую документацию в целевом проекте. Если вы изменяли эти файлы самостоятельно, сначала сделайте резервную копию. Конфигурация и кэш CLI содержат чувствительные данные; защита прав на файлы не заменяет шифрованное хранение, не коммитьте их в Git.
 
@@ -378,7 +378,7 @@ backend/bin/doops-agent \
 - [SOP по сборке и развёртыванию](backend/docs/BUILD_DEPLOY_SOP.md)
 - [Руководство по установке кластера](backend/docs/CLUSTER_INSTALL_GUIDE.md)
 - [Helm Chart агента](backend/deploy/helm/doops-agent/)
-- [Фиксированные версии среды выполнения](backend/runtime-versions.env)
+- [Базовые версии среды выполнения](backend/runtime-versions.env)
 
 Ключевые значения Helm Chart по умолчанию пусты и должны быть заполнены под реальную среду; сразу после установки нельзя получить рабочего продуктивного Agent. Названия пространств имён, адреса, права и настройки сертификатов в исторических манифестах также следует проверять по пунктам.
 
@@ -575,12 +575,11 @@ doops/
 │   ├── test/                    # Python-проверки контрактов и развёртывания
 │   ├── Dockerfile              # Прикладной образ Agent
 │   ├── Dockerfile.base.light   # Лёгкий базовый образ Agent
-│   └── runtime-versions.env    # Фиксированные версии среды выполнения и источники образов
+│   └── runtime-versions.env    # Версии среды выполнения и digest образов для проверки
 ├── docs/                        # Внутренние проектные записи (документация продукта — в backend/docs)
 ├── Dockerfile.web              # Продуктивный образ Next.js
 ├── .github/workflows/ci.yml    # GitHub CI
 ├── .github/workflows/release.yml # Релиз по GitHub tag: сборка, проверка, публикация, перепроверка
-├── .cnb.yml                    # Проверки CNB и публикация образа Agent
 ├── CONTRIBUTING.md
 └── SECURITY.md
 ```
@@ -615,7 +614,7 @@ pnpm build
 
 В корне нет модуля Go, поэтому не объединяйте три проверки Go в один запуск `go test ./...` из корня. Во фронтенде также можно запускать `pnpm test:gateway-policy` и `pnpm test:console`; `pnpm build` используется для продуктивной сборки.
 
-CNB также включает проверки Python-контрактов. Подготовьте Python 3, pytest, PyYAML, Helm и соответствующие тестовые зависимости и выполните:
+GitHub CI также включает проверки Python-контрактов. Подготовьте Python 3, pytest, PyYAML, Helm и соответствующие тестовые зависимости и выполните:
 
 ```bash
 python3 -m pytest backend/test -q

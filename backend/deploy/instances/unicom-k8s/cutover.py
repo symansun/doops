@@ -13,7 +13,7 @@ NAMESPACE = "doops-system"
 OLD_RELEASE = "doops-unicom"
 NEW_RELEASE = "doops-agent"
 RECEIPT = "doagent-unicom-042-cutover"
-IMAGE = "docker.cnb.cool/l8ai/ai/doops.sh@sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a"
+IMAGE = "registry.example.com/doops-agent@sha256:fd20c510411d9dde8e2061ed390e3b91877781ade2d4400a39b715280524b02a"
 COMMIT = "8683d67174e19a1750e9b19de99a0816cdb8ea79"
 KUBECTL = ["kubectl", "--request-timeout=20s", "-n", NAMESPACE]
 

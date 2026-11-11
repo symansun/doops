@@ -231,11 +231,11 @@ func TestSelfUpgradeRollbackBaselineProbeClassifiesTheRegistryAnswer(t *testing.
 		{name: "a refusal worded as not found is still a refusal", skopeo: "refused-not-found",
 			wantCategory: selfUpgradeCategoryRollbackBaselineProbeFailed, wantReason: "the registry refused the pull credentials"},
 		{name: "the registry is unreachable", skopeo: "unreachable",
-			wantCategory: selfUpgradeCategoryRollbackBaselineProbeFailed, wantReason: "the manifest check failed"},
+			wantCategory: selfUpgradeCategoryRollbackBaselineProbeFailed, wantReason: "the registry manifest check failed"},
 		{name: "the pull secret cannot be read", skopeo: "ok", pullSecret: "missing",
-			wantCategory: selfUpgradeCategoryRollbackBaselineProbeFailed, wantReason: "the pull secret cnb-pull could not be read"},
+			wantCategory: selfUpgradeCategoryRollbackBaselineProbeFailed, wantReason: "the pull secret registry-pull could not be read"},
 		{name: "the pull secret is not a registry credential", skopeo: "ok", pullSecret: "opaque",
-			wantCategory: selfUpgradeCategoryRollbackBaselineProbeFailed, wantReason: "the pull secret cnb-pull is not a registry credential"},
+			wantCategory: selfUpgradeCategoryRollbackBaselineProbeFailed, wantReason: "the pull secret registry-pull is not a registry credential"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			callLog := filepath.Join(t.TempDir(), "calls.log")
@@ -277,7 +277,7 @@ func TestSelfUpgradeRollbackBaselineProbeClassifiesTheRegistryAnswer(t *testing.
 			} else if !strings.Contains(log, "skopeo inspect --raw") || !strings.Contains(log, "docker://registry.example/doops:old") {
 				t.Fatalf("the baseline manifest was not read:\n%s", log)
 			}
-			if tc.pullSecret != "" && !strings.Contains(log, "kubectl -n kz-ops get secret cnb-pull -o json") {
+			if tc.pullSecret != "" && !strings.Contains(log, "kubectl -n kz-ops get secret registry-pull -o json") {
 				t.Fatalf("the Agent pull secret was not read from the Agent namespace:\n%s", log)
 			}
 			if tc.wantAuthfile {
