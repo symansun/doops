@@ -226,7 +226,7 @@ func TestRunReverseTunnelUpdatesReadyStateOnConnectAndDisconnect(t *testing.T) {
 	done := make(chan struct{})
 	gw := server.NewGateway()
 	go func() {
-		runReverseTunnel(gw, "wss://gateway.example.com", "dev", "instance", 1*time.Millisecond)
+		runReverseTunnel(gw, "wss://gateway.example.com", "dev", "instance", "synthetic-enrollment", 1*time.Millisecond)
 		close(done)
 	}()
 
@@ -244,7 +244,7 @@ func TestRunReverseTunnelUpdatesReadyStateOnConnectAndDisconnect(t *testing.T) {
 	if isReverseTunnelConnected() {
 		t.Fatal("reverse tunnel should be not ready after serve returns")
 	}
-	if authorization != "" {
-		t.Fatalf("reverse tunnel registration must not send authorization, got %q", authorization)
+	if authorization != "Bearer synthetic-enrollment" {
+		t.Fatalf("reverse tunnel registration must send its enrollment token, got %q", authorization)
 	}
 }

@@ -18,6 +18,7 @@ def render(*overrides, namespace="agents-test", check=True):
         "--set", "gateway.url=https://gateway.example.test",
         "--set", "gateway.cluster=test-cluster",
         "--set", "gateway.instance=test-agent",
+        "--set", "gateway.enrollmentTokenSecret=doops-agent-enrollment",
     ]
     for value in overrides:
         flag = "--set-string" if value.startswith("serviceAccount.name=") else "--set"

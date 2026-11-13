@@ -33,6 +33,7 @@ def test_agent_chart_hands_off_without_dropping_the_live_replica(host_access):
         "--set", "gateway.url=https://gateway.example.test",
         "--set", "gateway.cluster=test-cluster",
         "--set", "gateway.instance=test-agent",
+        "--set", "gateway.enrollmentTokenSecret=doops-agent-enrollment",
         "--set", "image.repository=registry.example.test/doops-agent",
         "--set", "image.tag=test",
     ]
@@ -52,12 +53,35 @@ def test_agent_chart_hands_off_without_dropping_the_live_replica(host_access):
     assert pod["hostNetwork"] is False
     assert pod["hostPID"] is (host_access is not False)
     assert "/app/sandbox-entrypoint.sh" in container["command"][-1]
+    enrollment = next(item for item in container["env"] if item["name"] == "DOOPS_AGENT_ENROLL_TOKEN")
+    assert enrollment["valueFrom"]["secretKeyRef"] == {
+        "name": "doops-agent-enrollment", "key": "token",
+    }
+    assert "value" not in enrollment
     for name, endpoint in (
         ("startupProbe", "live"), ("readinessProbe", "ready"), ("livenessProbe", "live")
     ):
         probe = container[name]["exec"]["command"][-1]
         assert f"http://127.0.0.1:42222/health/{endpoint}" in probe
         assert ("pgrep" in probe) is (host_access is False)
+
+
+def test_agent_chart_keeps_open_registration_without_enrollment_secret():
+    result = subprocess.run(
+        [
+            "helm", "template", "doops-agent", str(VALUES.parent),
+            "--set", "workload.name=doops-agent",
+            "--set", "gateway.url=https://gateway.example.test",
+            "--set", "gateway.cluster=test-cluster",
+            "--set", "gateway.instance=test-agent",
+            "--set", "image.repository=registry.example.test/doops-agent",
+            "--set", "image.tag=test",
+        ],
+        capture_output=True, text=True, check=True,
+    )
+    deployment = next(item for item in yaml.safe_load_all(result.stdout) if item)
+    names = [item["name"] for item in deployment["spec"]["template"]["spec"]["containers"][0]["env"]]
+    assert "DOOPS_AGENT_ENROLL_TOKEN" not in names
 
 
 def test_agent_chart_requires_an_explicit_proxy_upstream_allowlist():

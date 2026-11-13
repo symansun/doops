@@ -8,27 +8,33 @@ Installs Docker Engine and Compose if absent; never replaces an existing Agent.
 
   bash backend/scripts/bootstrap-host-agent.sh \
     --version vX.Y.Z --gateway https://doops.l8ai.cn \
-    --cluster doops-unicom --instance unicom-1
+    --cluster doops-unicom --instance unicom-1 \
+    --enroll-token-file /root/agent-enrollment.env
 
 Required: --version, --gateway, --cluster, --instance
+--enroll-token-file is optional. Omit it and the Agent registers as it does
+today. When provided, the file is copied to mode 0600 and is not printed. It
+must contain DOOPS_AGENT_ENROLL_TOKEN for this exact cluster and instance.
+A user token does not register the Agent. Enforcement starts only after this
+Agent has connected with that token.
 The Agent receives its model provider from the Gateway after it connects;
-no model settings or credentials are copied to the host.
-No Gateway operator token is required for Agent registration.
-Files: /opt/doops-agent/compose.yaml
+no model settings are copied to the host.
+Files: /opt/doops-agent/compose.yaml and /opt/doops-agent/enrollment.env
 No host ports or host Docker socket are exposed to the container.
 EOF
 }
 
-RELEASE_VERSION="" GATEWAY="" CLUSTER="" INSTANCE=""
+RELEASE_VERSION="" GATEWAY="" CLUSTER="" INSTANCE="" ENROLL_TOKEN_FILE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --version|--gateway|--cluster|--instance)
+    --version|--gateway|--cluster|--instance|--enroll-token-file)
       [[ $# -ge 2 && -n "$2" ]] || { usage >&2; exit 2; }
       case "$1" in
         --version) RELEASE_VERSION="$2" ;;
         --gateway) GATEWAY="$2" ;;
         --cluster) CLUSTER="$2" ;;
         --instance) INSTANCE="$2" ;;
+        --enroll-token-file) ENROLL_TOKEN_FILE="$2" ;;
       esac
       shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -40,6 +46,9 @@ done
 for identity in "$CLUSTER" "$INSTANCE"; do
   [[ "$identity" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]] || { echo "Explicit cluster and instance required" >&2; exit 2; }
 done
+if [[ -n "$ENROLL_TOKEN_FILE" ]]; then
+  [[ -s "$ENROLL_TOKEN_FILE" ]] || { echo "--enroll-token-file must point to a non-empty file" >&2; exit 2; }
+fi
 [[ "$(id -u)" == 0 ]] || { echo "Run with sudo or as root" >&2; exit 1; }
 exec 9>/run/lock/doops-agent-bootstrap.lock
 flock -n 9 || { echo "Another Agent installation is running" >&2; exit 1; }
@@ -93,37 +102,41 @@ IDENTITY="$(docker run --rm --network none --platform "$PLATFORM" --entrypoint /
 [[ "$IDENTITY" =~ ^release=${RELEASE_VERSION}[[:space:]]commit=[a-f0-9]{40}$ ]] || { echo "Image release identity mismatch" >&2; exit 1; }
 
 install -d -m 0700 /opt/doops-agent
-python3 - "$IMAGE" "$PLATFORM" "$GATEWAY" "$CLUSTER" "$INSTANCE" <<'PY'
+if [[ -n "$ENROLL_TOKEN_FILE" ]]; then
+  install -m 0600 "$ENROLL_TOKEN_FILE" /opt/doops-agent/enrollment.env
+fi
+python3 - "$IMAGE" "$PLATFORM" "$GATEWAY" "$CLUSTER" "$INSTANCE" "$ENROLL_TOKEN_FILE" <<'PY'
 import json
 import pathlib
 import sys
 
-image, platform, gateway, cluster, instance = sys.argv[1:]
+image, platform, gateway, cluster, instance, enroll = sys.argv[1:]
+service = {
+    "image": image,
+    "platform": platform,
+    "container_name": "doops-agent",
+    "restart": "unless-stopped",
+    "privileged": True,
+    "command": ["-listen", "0.0.0.0", "-gateway-url", gateway,
+                "-cluster", cluster, "-instance", instance],
+}
+if enroll:
+    service["env_file"] = ["/opt/doops-agent/enrollment.env"]
+service["volumes"] = [
+    "workspace:/root/ws",
+    "agent-state:/root/.agent",
+]
+service["healthcheck"] = {
+    "test": ["CMD", "curl", "-fsS", "--max-time", "3",
+             "http://127.0.0.1:42222/health/ready"],
+    "interval": "5s", "timeout": "4s", "retries": 36,
+    "start_period": "20s",
+}
+service["logging"] = {"driver": "json-file",
+                      "options": {"max-size": "10m", "max-file": "3"}}
 config = {
     "name": "doops-agent",
-    "services": {
-        "agent": {
-            "image": image,
-            "platform": platform,
-            "container_name": "doops-agent",
-            "restart": "unless-stopped",
-            "privileged": True,
-            "command": ["-listen", "0.0.0.0", "-gateway-url", gateway,
-                        "-cluster", cluster, "-instance", instance],
-            "volumes": [
-                "workspace:/root/ws",
-                "agent-state:/root/.agent",
-            ],
-            "healthcheck": {
-                "test": ["CMD", "curl", "-fsS", "--max-time", "3",
-                         "http://127.0.0.1:42222/health/ready"],
-                "interval": "5s", "timeout": "4s", "retries": 36,
-                "start_period": "20s",
-            },
-            "logging": {"driver": "json-file",
-                        "options": {"max-size": "10m", "max-file": "3"}},
-        }
-    },
+    "services": {"agent": service},
     "volumes": {"workspace": {}, "agent-state": {}},
 }
 path = pathlib.Path("/opt/doops-agent/compose.yaml")

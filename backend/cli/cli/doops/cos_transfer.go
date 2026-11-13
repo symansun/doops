@@ -1,15 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -17,6 +20,58 @@ const (
 	cosGatewayPutMaxBytes       = int64(16 << 20)
 	cosSnapshotExecutableSchema = "doops.sh/cos-snapshot-executable/v1"
 )
+
+// cosIOStall bounds a half-open COS transfer. Progress resets the deadline,
+// so a large snapshot can finish while a stalled socket cannot wait forever.
+var cosIOStall = 60 * time.Second
+
+// cosDo uses the process transport, including a test CA installed on
+// http.DefaultTransport, and adds a stall deadline on the socket.
+func cosDo(req *http.Request) (*http.Response, error) {
+	return (&http.Client{Transport: cosRoundTripper()}).Do(req)
+}
+
+func cosRoundTripper() http.RoundTripper {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok || base == nil {
+		return http.DefaultTransport
+	}
+	tr := base.Clone()
+	next := tr.DialContext
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		var conn net.Conn
+		var err error
+		if next != nil {
+			conn, err = next(ctx, network, addr)
+		} else {
+			conn, err = dialer.DialContext(ctx, network, addr)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &stallConn{Conn: conn}, nil
+	}
+	if tr.TLSHandshakeTimeout == 0 {
+		tr.TLSHandshakeTimeout = 10 * time.Second
+	}
+	if tr.ResponseHeaderTimeout == 0 {
+		tr.ResponseHeaderTimeout = 60 * time.Second
+	}
+	return tr
+}
+
+type stallConn struct{ net.Conn }
+
+func (c *stallConn) Read(p []byte) (int, error) {
+	_ = c.Conn.SetReadDeadline(time.Now().Add(cosIOStall))
+	return c.Conn.Read(p)
+}
+
+func (c *stallConn) Write(p []byte) (int, error) {
+	_ = c.Conn.SetWriteDeadline(time.Now().Add(cosIOStall))
+	return c.Conn.Write(p)
+}
 
 type cosObjectResult struct {
 	Storage         string            `json:"storage"`
@@ -237,7 +292,7 @@ func putPresigned(presign cosObjectResult, body io.Reader, size int64) error {
 		}
 		req.Header.Set(key, value)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := cosDo(req)
 	if err != nil {
 		return fmt.Errorf("cos_put_failed")
 	}
@@ -258,7 +313,7 @@ func downloadPresigned(rawURL, dest string, size int64, executable bool) error {
 	if err != nil {
 		return fmt.Errorf("cos_object_missing")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := cosDo(req)
 	if err != nil {
 		return fmt.Errorf("cos_object_missing")
 	}

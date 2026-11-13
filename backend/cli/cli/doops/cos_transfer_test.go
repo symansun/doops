@@ -1,10 +1,12 @@
 package main
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStorageModeDefaultsToCOS(t *testing.T) {
@@ -115,4 +117,34 @@ func (r *recordingTransfer) PresignGet(kind, rel string) (cosObjectResult, error
 
 func (r *recordingTransfer) Sync(string) (string, error) {
 	return "synced", nil
+}
+
+func TestDownloadPresignedStopsWhenTheBodyStalls(t *testing.T) {
+	previous := cosIOStall
+	cosIOStall = 200 * time.Millisecond
+	t.Cleanup(func() { cosIOStall = previous })
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n"))
+		time.Sleep(time.Second)
+	}()
+
+	started := time.Now()
+	err = downloadPresigned("http://"+listener.Addr().String()+"/snapshot", filepath.Join(t.TempDir(), "snapshot"), 4, false)
+	if err == nil {
+		t.Fatal("stalled download succeeded")
+	}
+	if time.Since(started) > time.Second {
+		t.Fatalf("stalled download waited %s", time.Since(started))
+	}
 }

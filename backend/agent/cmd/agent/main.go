@@ -83,6 +83,7 @@ func main() {
 	reconnectDelay := flag.Duration("reconnect-delay", time.Second, "Reverse tunnel reconnect delay")
 	edge := flag.Bool("edge", false, "Enable Edge public reverse tunnel")
 	edgeGatewayURL := flag.String("edge-gateway-url", "", "Edge gateway URL; defaults to -gateway-url with /v1/edge/connect")
+	enrollTokenFlag := flag.String("enroll-token", "", "Optional enrollment token for this cluster and instance; defaults to DOOPS_AGENT_ENROLL_TOKEN. Required only after this target has connected once with an issued token")
 	edgeEnrollToken := flag.String("edge-enroll-token", "", "Edge enrollment token")
 	edgeBackendAllow := flag.String("edge-backend-allow", "", "Comma-separated host:port or cidr:port backends the Edge tunnel may dial")
 	edgeConns := flag.Int("edge-conns", 1, "Parallel Edge WebSocket sessions")
@@ -98,6 +99,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	enrollToken := strings.TrimSpace(*enrollTokenFlag)
+	if enrollToken == "" {
+		enrollToken = strings.TrimSpace(os.Getenv("DOOPS_AGENT_ENROLL_TOKEN"))
+	}
+
 	gw := server.NewGateway()
 
 	// Start TTL GC running in the background routines
@@ -106,7 +112,7 @@ func main() {
 
 	// doagent ACP HTTP 服务由 entrypoint.sh 在容器启动时拉起（port 9000）
 
-	go runReverseTunnel(gw, *gatewayURL, *cluster, *instance, *reconnectDelay)
+	go runReverseTunnel(gw, *gatewayURL, *cluster, *instance, enrollToken, *reconnectDelay)
 	if *edge {
 		if strings.TrimSpace(*edgeEnrollToken) == "" || strings.TrimSpace(*edgeBackendAllow) == "" {
 			log.Fatal("-edge requires -edge-enroll-token and -edge-backend-allow")
@@ -158,7 +164,7 @@ func setReverseTunnelConnected(connected bool) {
 	atomic.StoreInt32(&reverseTunnelConnected, 0)
 }
 
-func runReverseTunnel(gw *server.Gateway, rawURL, cluster, instance string, reconnectDelay time.Duration) {
+func runReverseTunnel(gw *server.Gateway, rawURL, cluster, instance, enrollToken string, reconnectDelay time.Duration) {
 	setReverseTunnelConnected(false)
 	if reconnectDelay <= 0 {
 		reconnectDelay = time.Second
@@ -178,7 +184,11 @@ func runReverseTunnel(gw *server.Gateway, rawURL, cluster, instance string, reco
 		}
 
 		log.Printf("🌉 connecting reverse tunnel to %s (cluster=%s instance=%s)", tunnelURL, cluster, instance)
-		conn, resp, err := reverseTunnelDial(tunnelURL, nil)
+		var header http.Header
+		if token := strings.TrimSpace(enrollToken); token != "" {
+			header = http.Header{"Authorization": []string{"Bearer " + token}}
+		}
+		conn, resp, err := reverseTunnelDial(tunnelURL, header)
 		if err != nil {
 			if resp != nil {
 				log.Printf("❌ reverse tunnel dial failed: %v (HTTP %s)", err, resp.Status)

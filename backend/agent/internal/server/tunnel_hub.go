@@ -26,6 +26,8 @@ type GatewayHubOptions struct {
 	TargetQueueTimeout   time.Duration
 	TargetReconnectGrace time.Duration
 	LoginTokenTTL        time.Duration
+	LoginFailureLimit    int
+	LoginFailureWindow   time.Duration
 	MaxQueuedPerTarget   int
 }
 
@@ -38,6 +40,7 @@ type GatewayHub struct {
 	edge         *EdgeRegistry
 
 	credentialMutationLocks sync.Map
+	loginFailures           *loginFailureLimiter
 }
 
 type contextMutex struct {
@@ -477,13 +480,20 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	if opts.LoginTokenTTL <= 0 {
 		opts.LoginTokenTTL = 24 * time.Hour
 	}
+	if opts.LoginFailureLimit <= 0 {
+		opts.LoginFailureLimit = 10
+	}
+	if opts.LoginFailureWindow <= 0 {
+		opts.LoginFailureWindow = time.Minute
+	}
 	if opts.MaxQueuedPerTarget <= 0 {
 		opts.MaxQueuedPerTarget = 0
 	}
 	hub := &GatewayHub{
-		store:    store,
-		opts:     opts,
-		registry: registry,
+		store:         store,
+		opts:          opts,
+		registry:      registry,
+		loginFailures: newLoginFailureLimiter(),
 	}
 	hub.registration = NewAgentRegistrationHandler(
 		registry,
@@ -576,12 +586,26 @@ func (h *GatewayHub) HandleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid login request", http.StatusBadRequest)
 		return
 	}
+	clientIP := loginClientIP(r)
+	if h.loginFailures.limited(clientIP, req.Username, time.Now(), h.opts.LoginFailureLimit, h.opts.LoginFailureWindow) {
+		_, _ = h.store.VerifyUserPassword(req.Username, req.Password)
+		w.Header().Set("Retry-After", "60")
+		writeDoopsError(w, http.StatusTooManyRequests, "", doopsErrorResponse{
+			Error:      "rate_limited",
+			Code:       "gateway_login_rate_limited",
+			AuthDomain: "gateway",
+			Message:    "Gateway password login is temporarily unavailable for this client",
+			NextAction: "Wait and retry, or use an existing Gateway user token",
+		})
+		return
+	}
 	user, err := h.store.VerifyUserPassword(req.Username, req.Password)
 	if err != nil {
 		if !errors.Is(err, ErrUnauthorized) {
 			writeGatewayAuthError(w, `Bearer realm="doops-gateway"`, err)
 			return
 		}
+		h.loginFailures.record(clientIP, req.Username, time.Now(), h.opts.LoginFailureWindow)
 		writeDoopsError(w, http.StatusUnauthorized, "", doopsErrorResponse{
 			Error:      "unauthorized",
 			Code:       "gateway_login_invalid_credentials",

@@ -1,11 +1,14 @@
 import { readAllowedAuth } from "@/lib/gateway-policy"
 import { gatewayProxyErrorResponse, gatewayUnreachableResponse } from "@/lib/server/gateway-errors"
+import { rejectCrossOriginMutation } from "@/lib/server/same-origin"
 
 export async function proxyGatewayRequest(
   req: Request,
   path: string,
   options: { errorLabel?: string } = {},
 ): Promise<Response> {
+  const rejected = rejectCrossOriginMutation(req)
+  if (rejected) return rejected
   const { gateway, token } = readAllowedAuth(req)
   if (!gateway || !token) {
     return Response.json({ error: "未建立 Gateway 会话", message: "未建立 Gateway 会话，请重新登录", status: 401 }, { status: 401 })

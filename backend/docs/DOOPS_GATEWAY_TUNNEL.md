@@ -157,10 +157,13 @@ bash scripts/deploy-gateway.sh \
 第一版是 SQLite + 单活可靠部署：
 
 - SQLite WAL 数据库：用户、token、权限、审计。
-- agent 注册 gateway 不使用 token，只携带声明的 `cluster/instance`；用户操作继续由 user token 和权限控制。
-- `/v1/agent/connect` 当前按设计开放注册。未来如增加 Agent 工作负载身份，
-  必须作为独立协议扩展并绑定 `cluster/instance`，不得复用 Gateway user token
-  或重新引入 CLI per-target token。
+- Agent 注册默认只声明 `cluster/instance`，已在线的 Agent 不因升级 Gateway 或 Agent 而断开。
+  需要收紧某个 target 时，在 Gateway 主机执行
+  `doops-gateway enroll create -cluster <cluster> -instance <instance>`。
+  明文只出现在该命令的标准输出里。先把 token 放到该 Agent 的 `-enroll-token` 或
+  `DOOPS_AGENT_ENROLL_TOKEN`（Helm 用可选的 `gateway.enrollmentTokenSecret` 注入）。
+  当前会话保持在线。该 Agent 用这份 token 连上一次之后，这个 target 的后续连接才必须带它。
+  吊销后该 target 回到原来的开放注册。不要使用 Gateway user token 或受管凭据。
 
 - user token 只能操作有 grant 的 target。
 - gateway 转发 doops JSON-RPC 操作流量和 Git HTTP 请求，不做裸 TCP 隧道。
@@ -195,7 +198,7 @@ bash scripts/deploy-gateway.sh \
 
 隧道与代理接口：
 
-- `WS /v1/agent/connect?cluster=<cluster>&instance=<instance>`
+- `WS /v1/agent/connect?cluster=<cluster>&instance=<instance>`。该 target 尚未确认 enrollment 时不需要请求头；确认之后带 `Authorization: Bearer <enrollment token>`
 - `WS /v1/rpc?cluster=<cluster>&instance=<instance>`
 - `WS /v1/edge/connect?cluster=<cluster>&instance=<instance>`（Edge 隧道；Gateway `-edge-listen` 默认空，未启用时不监听，见 [design/DOOPS_EDGE_TUNNEL.md](design/DOOPS_EDGE_TUNNEL.md)）
 - `GET/POST /v1/git/<cluster>/<instance>/<session>.git/...`
@@ -205,8 +208,8 @@ bash scripts/deploy-gateway.sh \
 
 ## Start Gateway
 
-用户、user token 和授权由管理员维护。Agent 部署只声明绑定的
-`cluster/instance`，注册连接不使用 token。Gateway 用户接口仍严格校验 user token。
+用户、user token 和授权由管理员维护。Agent 注册默认保持开放；某个 target 确认了
+enrollment 之后，该 target 才改用绑定到它的 enrollment token。Gateway 用户接口仍严格校验 user token。
 产品和 skill 的日常入口是 `doops`；gateway 内部维护命令不作为业务用户操作手册暴露。
 
 gateway 是独立发布包，不登记为 doops target，也不通过任何 target 发布自己。
@@ -403,6 +406,7 @@ doops-agent \
   -gateway-url https://gateway.example.com \
   -cluster prod \
   -instance master-1 \
+  -enroll-token "$DOOPS_AGENT_ENROLL_TOKEN" \
 ```
 
 如果省略 `-instance`，agent 使用主机名。agent 断线后会自动重连；gateway

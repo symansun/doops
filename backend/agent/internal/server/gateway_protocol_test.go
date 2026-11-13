@@ -54,30 +54,16 @@ func TestGatewayHTTPListsTargetsForGrantedUserToken(t *testing.T) {
 	defer ts.Close()
 
 	agentWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev&instance=local"
-	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer stale-registration-token"}})
+	agentConn, resp, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer stale-registration-token"}})
 	if err != nil {
-		t.Fatalf("dial agent websocket: %v", err)
+		t.Fatalf("open registration must keep accepting an agent before an enrollment is confirmed: %v", err)
 	}
-	defer agentConn.Close()
-	go func() {
-		for {
-			var msg map[string]interface{}
-			if err := agentConn.ReadJSON(&msg); err != nil {
-				return
-			}
-			if msg["method"] == "initialize" {
-				_ = agentConn.WriteJSON(map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      msg["id"],
-					"result": map[string]interface{}{
-						"protocolVersion": "2024-11-05",
-					},
-				})
-			}
-		}
-	}()
+	_ = agentConn.Close()
+	if resp != nil && resp.Body != nil {
+		resp.Body.Close()
+	}
 
-	resp, err := http.Get(ts.URL + "/v1/targets")
+	resp, err = http.Get(ts.URL + "/v1/targets")
 	if err != nil {
 		t.Fatalf("get targets without token: %v", err)
 	}
@@ -116,7 +102,7 @@ func TestGatewayHTTPListsTargetsForGrantedUserToken(t *testing.T) {
 	resp.Body.Close()
 }
 
-func TestGatewayAgentRegistrationDoesNotRequireToken(t *testing.T) {
+func TestGatewayAgentRegistrationStaysOpenUntilEnrollmentIsConfirmed(t *testing.T) {
 	store, err := OpenGatewayStore(t.TempDir() + "/gateway.db")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -124,37 +110,24 @@ func TestGatewayAgentRegistrationDoesNotRequireToken(t *testing.T) {
 	defer store.Close()
 
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
+	delivered := 0
+	gw.registration.onRegistered = func(*GatewayAgent) { delivered++ }
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
 	agentWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev&instance=local"
-	agentConn, _, err := websocket.DefaultDialer.Dial(agentWS, nil)
+	openConn, _, err := websocket.DefaultDialer.Dial(agentWS, nil)
 	if err != nil {
-		t.Fatalf("agent registration without token should connect: %v", err)
+		t.Fatalf("existing agent must register before an enrollment is confirmed: %v", err)
 	}
-	defer agentConn.Close()
-	go func() {
-		for {
-			var msg map[string]interface{}
-			if err := agentConn.ReadJSON(&msg); err != nil {
-				return
-			}
-			if msg["method"] == "initialize" {
-				_ = agentConn.WriteJSON(map[string]interface{}{
-					"jsonrpc": "2.0",
-					"id":      msg["id"],
-					"result": map[string]interface{}{
-						"protocolVersion": "2024-11-05",
-					},
-				})
-			}
-		}
-	}()
-
+	defer openConn.Close()
+	go serveFakeAgent(t, openConn)
+	var openAgent *GatewayAgent
 	requireEventually(t, time.Second, func() bool {
-		return gw.getAgent("dev", "local") != nil
+		openAgent = gw.getAgent("dev", "local")
+		return openAgent != nil && delivered == 1
 	})
 
 	badWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev"
@@ -168,15 +141,55 @@ func TestGatewayAgentRegistrationDoesNotRequireToken(t *testing.T) {
 		}
 		t.Fatalf("expected HTTP 400 for missing instance, got %d", resp.StatusCode)
 	}
+	resp.Body.Close()
 
-	resp, err = http.Get(ts.URL + "/v1/targets")
+	created, err := store.CreateAgentEnrollment("dev", "local")
 	if err != nil {
-		t.Fatalf("get targets without user token: %v", err)
+		t.Fatalf("create enrollment: %v", err)
 	}
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("targets must still require user token, got %d", resp.StatusCode)
+	if current := gw.getAgent("dev", "local"); current != openAgent || delivered != 1 {
+		t.Fatal("issuing an enrollment disconnected the live agent")
+	}
+	pending, _, err := websocket.DefaultDialer.Dial(agentWS, nil)
+	if err != nil {
+		t.Fatalf("target must stay open until the issued token has been used: %v", err)
+	}
+	_ = pending.Close()
+
+	other := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev&instance=other"
+	otherConn, _, err := websocket.DefaultDialer.Dial(other, nil)
+	if err != nil {
+		t.Fatalf("another target must stay open: %v", err)
+	}
+	_ = otherConn.Close()
+
+	enrolled, _, err := websocket.DefaultDialer.Dial(agentWS, http.Header{"Authorization": []string{"Bearer " + created.Plaintext}})
+	if err != nil {
+		t.Fatalf("dial enrolled agent: %v", err)
+	}
+	defer enrolled.Close()
+	go serveFakeAgent(t, enrolled)
+	var ready *GatewayAgent
+	requireEventually(t, time.Second, func() bool {
+		ready = gw.getAgent("dev", "local")
+		return ready != nil && ready != openAgent && delivered == 2
+	})
+
+	if _, resp, err = websocket.DefaultDialer.Dial(agentWS, nil); err == nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
+		t.Fatal("open registration remained after the enrollment was confirmed")
 	}
 	resp.Body.Close()
+	if current := gw.getAgent("dev", "local"); current != ready || delivered != 2 {
+		t.Fatal("unauthenticated candidate replaced the enrolled session")
+	}
+	untouched, resp, err := websocket.DefaultDialer.Dial(other, http.Header{"Authorization": []string{"Bearer " + created.Plaintext}})
+	if err != nil {
+		t.Fatalf("token for another target must not close that target: %v", err)
+	}
+	_ = untouched.Close()
+	if resp != nil && resp.Body != nil {
+		resp.Body.Close()
+	}
 }
 
 func TestCredentialPlanCapabilityRequiresExactContract(t *testing.T) {
@@ -241,11 +254,7 @@ func TestGatewayAgentCandidateDoesNotReplaceReadySessionBeforeInitialize(t *test
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	agentWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev&instance=local"
-	readyConn, _, err := websocket.DefaultDialer.Dial(agentWS, nil)
-	if err != nil {
-		t.Fatalf("dial ready agent: %v", err)
-	}
+	readyConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer readyConn.Close()
 	go serveFakeAgent(t, readyConn)
 
@@ -255,10 +264,7 @@ func TestGatewayAgentCandidateDoesNotReplaceReadySessionBeforeInitialize(t *test
 		return readyAgent != nil
 	})
 
-	candidateConn, _, err := websocket.DefaultDialer.Dial(agentWS, nil)
-	if err != nil {
-		t.Fatalf("dial candidate agent: %v", err)
-	}
+	candidateConn := dialFakeGatewayAgent(t, ts.URL, "dev", "local")
 	defer candidateConn.Close()
 
 	time.Sleep(100 * time.Millisecond)

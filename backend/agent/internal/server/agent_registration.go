@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strings"
@@ -43,6 +44,30 @@ func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "cluster and instance are required", http.StatusBadRequest)
 		return
 	}
+	// Targets without a confirmed enrollment stay open, so an already deployed
+	// Agent keeps registering with cluster and instance alone. Enforcement
+	// starts only after that Agent has connected once with the issued token.
+	locked, err := h.registry.store.TargetHasActiveAgentEnrollment(cluster, instance)
+	if err != nil {
+		http.Error(w, "agent enrollment unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	enrollmentID := ""
+	if token := bearerToken(r); token != "" {
+		enrollment, verifyErr := h.registry.store.VerifyAgentEnrollment(token, cluster, instance)
+		if verifyErr == nil {
+			enrollmentID = enrollment.ID
+		} else if !errors.Is(verifyErr, ErrUnauthorized) {
+			http.Error(w, "agent enrollment unavailable", http.StatusServiceUnavailable)
+			return
+		} else if locked {
+			writeAgentEnrollmentRequired(w)
+			return
+		}
+	} else if locked {
+		writeAgentEnrollmentRequired(w)
+		return
+	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("[gateway] agent websocket upgrade failed: %v", err)
@@ -51,7 +76,7 @@ func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	session := newGatewayAgentSession(
 		cluster,
 		instance,
-		"",
+		enrollmentID,
 		r.RemoteAddr,
 		conn,
 		h.messageBudget,
@@ -79,6 +104,20 @@ func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		<-session.closed
 		return
 	}
+	if enrollmentID == "" {
+		locked, err = h.registry.store.TargetHasActiveAgentEnrollment(cluster, instance)
+		if err != nil || locked {
+			log.Printf("[gateway] agent registration closed while connecting: %s", session.Key)
+			_ = conn.Close()
+			<-session.closed
+			return
+		}
+	} else if err := h.registry.store.ConfirmAgentEnrollment(enrollmentID); err != nil {
+		log.Printf("[gateway] agent enrollment confirm failed: %s: %v", session.Key, err)
+		_ = conn.Close()
+		<-session.closed
+		return
+	}
 	if err := h.registry.Register(session); err != nil {
 		log.Printf("[gateway] agent registration failed: %s: %v", session.Key, err)
 		_ = conn.Close()
@@ -96,6 +135,16 @@ func (h *AgentRegistrationHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		log.Printf("[gateway] agent offline persistence failed: %s generation=%d: %v", session.Key, session.Generation, err)
 	}
 	log.Printf("[gateway] agent offline: %s generation=%d", session.Key, session.Generation)
+}
+
+func writeAgentEnrollmentRequired(w http.ResponseWriter) {
+	writeDoopsError(w, http.StatusUnauthorized, `Bearer realm="doops-agent"`, doopsErrorResponse{
+		Error:      "unauthorized",
+		Code:       "agent_enrollment_auth_failed",
+		AuthDomain: "agent_enrollment",
+		Message:    "Agent enrollment token is missing, invalid, revoked, or bound to another target",
+		NextAction: "Use the active enrollment token issued for this exact cluster and instance; do not use a Gateway user token or managed credential",
+	})
 }
 
 func waitForInitialAgentHeartbeat(session *GatewayAgent, timeout time.Duration) bool {

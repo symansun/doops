@@ -8,6 +8,18 @@
 
 ## [Unreleased]
 
+### Security
+
+- 可为单个 target 签发 enrollment token。已在线 Agent 保持连接；该 Agent 用 token 连上一次之后，这个 target 的后续注册才需要它。未签发的 target 仍按原来的 cluster/instance 注册。不要使用 user token
+- 控制台的变更请求要求 `Origin` 与控制台自身来源一致
+- 密码登录对连续失败限速；未知用户名和错误密码走同一条口令校验
+
+### Fixed
+
+- Gateway HTTP 服务设置请求头读取超时和空闲连接超时
+- CLI 访问 COS 预签名地址时，连接、TLS、响应头以及读写停滞都有时限
+- CI 运行 DoSql 的 Node 测试，并在 Go 测试前安装 PyYAML；Go 测试超时放宽到 20 分钟
+
 ## [0.3.1] — 2026-11-12
 
 ### Added

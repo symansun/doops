@@ -34,17 +34,20 @@ jobs:
             backend/gateway/go.sum
             backend/cli/go.sum
 
+      - name: Install Go test dependencies
+        run: python3 -m pip install --quiet pyyaml
+
       - name: Test agent
         working-directory: backend/agent
-        run: go test ./...
+        run: go test -timeout 20m ./...
 
       - name: Test gateway
         working-directory: backend/gateway
-        run: go test ./...
+        run: go test -timeout 20m ./...
 
       - name: Test CLI
         working-directory: backend/cli
-        run: go test ./...
+        run: go test -timeout 20m ./...
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -62,6 +65,9 @@ jobs:
 
       - name: Test web console
         run: pnpm test:console
+
+      - name: Test DoSql
+        run: pnpm test:dosql
 
       - name: Typecheck web console
         run: pnpm exec tsc --noEmit

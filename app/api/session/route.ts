@@ -6,6 +6,7 @@ import {
   setGatewaySession,
 } from "@/lib/gateway-policy"
 import { readGatewayIdentity } from "@/lib/server/gateway-identity"
+import { rejectCrossOriginMutation } from "@/lib/server/same-origin"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -38,6 +39,8 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const rejected = rejectCrossOriginMutation(req)
+  if (rejected) return rejected
   let body: { gateway?: string; token?: string }
   try {
     body = await req.json()
@@ -63,7 +66,9 @@ export async function POST(req: Request) {
   }
 }
 
-export async function DELETE() {
+export async function DELETE(req: Request) {
+  const rejected = rejectCrossOriginMutation(req)
+  if (rejected) return rejected
   const headers = new Headers({ "Content-Type": "application/json" })
   clearGatewaySession(headers)
   return new Response(JSON.stringify({ ok: true }), { status: 200, headers })

@@ -4,6 +4,7 @@ import { CommandEnvelopeSchema, CommandReceiptSchema, SessionCursorSchema, Sessi
 import { gatewayPolicyResponse, readAllowedAuth } from "@/lib/gateway-policy"
 import { AgentGatewayError, type AgentGatewayContext } from "@/lib/server/agent-gateway-rpc"
 import { authorizedAgentSession, executeAgentCommand } from "@/lib/server/agent-session"
+import { rejectCrossOriginMutation } from "@/lib/server/same-origin"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -42,6 +43,8 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const rejected = rejectCrossOriginMutation(req)
+  if (rejected) return rejected
   try {
     const body = await req.json()
     const scope = context(req, body)

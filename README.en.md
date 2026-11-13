@@ -358,7 +358,7 @@ backend/bin/doops-agent \
 
 This is only an integration example for registration and the basic execution path; it does not install doagent, models, BuildKit, or Kubernetes tooling automatically. For real server registration, replace the address with a reachable HTTPS gateway and set the agent listen scope according to the target network.
 
-Ordinary agent registration needs no extra registration credential, so never use user tokens or business credentials as agent registration credentials. Only the Edge public tunnel (`-edge`, off by default and not in production) uses `-edge-enroll-token`; see the [Edge tunnel design](backend/docs/design/DOOPS_EDGE_TUNNEL.md).
+Agent registration uses cluster and instance. An Agent that is already online stays connected across an upgrade. After that target connects once with an issued enrollment token, later registrations for it must present that token. Never use a user token or business credential as the registration credential. The Edge public tunnel (`-edge`, off by default and not in production) uses a separate `-edge-enroll-token`; see the [Edge tunnel design](backend/docs/design/DOOPS_EDGE_TUNNEL.md).
 
 ### 4. Full agent container and Kubernetes deployment
 
@@ -533,7 +533,8 @@ See the [build and deployment SOP](backend/docs/BUILD_DEPLOY_SOP.md) and the [cl
 | --- | --- | --- |
 | `DOOPS_CONFIG` | Overrides the default CLI configuration file path | Not the gateway configuration for the web console |
 | `-gateway-url`, `-cluster`, `-instance` | Agent registration location and identity | Pass them explicitly for a bare binary; do not assume that same-named environment variables in Helm take effect automatically |
-| `-edge`, `-edge-enroll-token` | Edge public tunnel switch and its enrollment credential | Off by default and not in production; ordinary agent registration uses no registration token, see the [Edge tunnel design](backend/docs/design/DOOPS_EDGE_TUNNEL.md) |
+| `-enroll-token` | Optional Agent enrollment token | `DOOPS_AGENT_ENROLL_TOKEN` is also accepted. It becomes required only after this target has connected with it; do not use a user token |
+| `-edge`, `-edge-enroll-token` | Edge public tunnel switch and its enrollment credential | Off by default and not in production; this is separate from the agent enrollment token, see the [Edge tunnel design](backend/docs/design/DOOPS_EDGE_TUNNEL.md) |
 | `DOOPS_WORKSPACE_ROOT` | Root directory for agent session workspaces | Defaults to `/root/ws`; adjust related script paths after changing it |
 | `DOOPS_GATEWAY_SECRET_KEY` | Key material for gateway credential encryption | Inject securely, persist, and back it up when credential features are enabled |
 | `DO_AGENT_PORT`, `DO_AGENT_URL` | Agent internal ACP service address | Default port `9000`, address `http://127.0.0.1:9000`; keep them consistent when customizing |
