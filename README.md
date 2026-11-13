@@ -267,7 +267,7 @@ doops list
 
 - 首次登录会调用 `GET /v1/targets`，把该账号可见的在线 target 写回本机路由；已有路由的名称、别名和描述不会被改写。
 - 操作员不需要预先知道 Agent 的 `cluster/instance`。
-- 只有需要在登录前固定一条路由（或使用尚不支持 `--gateway` 的旧发布 CLI）时，才先用 `doops add --name <name> --gateway <url> --cluster <cluster> --instance <instance>` 预置路由，再 `doops login --target <name>`。
+- 只有需要在登录前固定一条路由（或使用尚不支持 `--gateway` 的旧发布 CLI）时，才先用 `doops add --name <name> --gateway <url> --cluster <cluster> --instance <instance>` 预置路由，再 `doops login --gateway <url>`（`--target <name>` 仍可作为别名）。
 - `doops add` 只保存 Gateway 路由，不保存 target token；用户登录态单独保存在本地 auth 缓存。
 - 实际凭据不要保留在公开日志、脚本或共享终端历史中；密码登录使用交互式输入或 `--token-stdin`。
 
@@ -288,7 +288,7 @@ doops -session inspect-001 exec --target <自动发现的 target> --cmd 'hostnam
 已有目标需要重新密码登录时，直接运行以下命令即可；密码只能由终端隐藏输入（或 `--token-stdin` 导入），CLI 没有 `--password` 参数：
 
 ```bash
-doops login --target <name> --username alice
+doops login --gateway <name|url> --username alice
 ```
 
 <a id="self-host"></a>

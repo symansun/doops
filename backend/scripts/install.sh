@@ -590,7 +590,7 @@ Gateway login mode next step:
 EOF
 elif [[ "${TARGET_MODE}" == "explicit" ]]; then
   cat <<EOF
-  ${CLI_OUT} -session setup login --target ${TARGET_NAME:-<target-name>}
+  ${CLI_OUT} -session setup login --gateway ${TARGET_GATEWAY:-<gateway-url>}
   ${CLI_OUT} -session smoke exec --target ${TARGET_NAME:-<target-name>} --cmd "hostname"
   ${CLI_OUT} -session setup targets --target ${TARGET_NAME:-<target-name>}
 EOF

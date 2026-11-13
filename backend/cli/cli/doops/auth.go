@@ -105,14 +105,15 @@ func (s *AuthStore) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// resolveLoginGateway picks the Gateway URL for login and logout. A configured
-// target resolves its Gateway URL; --gateway allows the first login before any
-// local route exists. When both are given they must name the same Gateway.
+// resolveLoginGateway picks the Gateway URL for login and logout. Login is per
+// Gateway: --gateway accepts a URL or a configured target name that resolves
+// to that Gateway. --target remains a backward-compatible alias. When both are
+// given they must name the same Gateway.
 func resolveLoginGateway(target, gateway string, servers []Server, configErr error) (string, *Server, error) {
 	target = strings.TrimSpace(target)
 	gateway = strings.TrimSpace(gateway)
 	if target == "" && gateway == "" {
-		return "", nil, fmt.Errorf("one of --target or --gateway is required; use --gateway <url> for the first login")
+		return "", nil, fmt.Errorf("--gateway is required to log in (login is per Gateway, not per target); --target still works as an alias that resolves to the target's Gateway")
 	}
 	var server *Server
 	if target != "" {
@@ -125,14 +126,67 @@ func resolveLoginGateway(target, gateway string, servers []Server, configErr err
 		}
 		if gateway == "" {
 			gateway = server.Gateway
-		} else if gatewayAuthKey(gateway) != gatewayAuthKey(server.Gateway) {
-			return "", nil, fmt.Errorf("--gateway %q does not match the Gateway of target %q", gateway, target)
+		} else {
+			resolved, err := resolveGatewayRef(gateway, servers, configErr)
+			if err != nil {
+				return "", nil, err
+			}
+			if gatewayAuthKey(resolved) != gatewayAuthKey(server.Gateway) {
+				return "", nil, fmt.Errorf("--gateway %q does not match the Gateway of target %q", gateway, target)
+			}
+			gateway = resolved
 		}
+		if _, err := gatewayAuthLoginURL(gateway); err != nil {
+			return "", nil, err
+		}
+		return gateway, server, nil
 	}
-	if _, err := gatewayAuthLoginURL(gateway); err != nil {
+	resolved, err := resolveGatewayRef(gateway, servers, configErr)
+	if err != nil {
 		return "", nil, err
 	}
-	return gateway, server, nil
+	if _, err := gatewayAuthLoginURL(resolved); err != nil {
+		return "", nil, err
+	}
+	// --gateway always takes the Gateway login path, including target discovery.
+	return resolved, nil, nil
+}
+
+// looksLikeGatewayURL reports whether raw should be parsed as a URL rather than
+// a configured target/Gateway name. Bare names such as "gw-test" are not URLs,
+// even though url.Parse would accept them as https://gw-test.
+func looksLikeGatewayURL(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	if strings.Contains(raw, "://") {
+		return true
+	}
+	if strings.EqualFold(raw, "localhost") || strings.HasPrefix(strings.ToLower(raw), "localhost:") {
+		return true
+	}
+	return strings.ContainsAny(raw, ".:[]")
+}
+
+func resolveGatewayRef(gateway string, servers []Server, configErr error) (string, error) {
+	gateway = strings.TrimSpace(gateway)
+	if gateway == "" {
+		return "", fmt.Errorf("missing --gateway")
+	}
+	if looksLikeGatewayURL(gateway) {
+		if _, err := gatewayAuthLoginURL(gateway); err != nil {
+			return "", err
+		}
+		return gateway, nil
+	}
+	if configErr != nil {
+		return "", fmt.Errorf("%q is not a Gateway URL; use --gateway <url> for the first login: %w", gateway, configErr)
+	}
+	if server := findServer(servers, gateway); server != nil && strings.TrimSpace(server.Gateway) != "" {
+		return server.Gateway, nil
+	}
+	return "", fmt.Errorf("%q is not a Gateway URL or a configured target name; use --gateway <url>", gateway)
 }
 
 func GetAuthPath() string {

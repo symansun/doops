@@ -43,7 +43,7 @@ def test_cli_install_downloads_named_release_asset_and_replaces_binary_atomicall
     assert 'skills/doops-cli/bin' not in text
     assert 'backend/cli/bin' not in text
     assert '"${candidate}" --contract' in text
-    assert '${CLI_OUT} -session setup login --target ${TARGET_NAME:-<target-name>}' in text
+    assert '${CLI_OUT} -session setup login --gateway ${TARGET_GATEWAY:-<gateway-url>}' in text
     assert 'DOOPS_CONFIG= "${candidate}" list' in text
     assert "python3 - " not in text
     assert text.index('Existing doops config rejected by release CLI') < text.index(

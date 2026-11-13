@@ -260,7 +260,7 @@ doops list
 登录态会供同一 Gateway 的全部 target 使用；首次登录会发现在线 target 并写回本机路由。
 只有需要在登录前固定一条路由（或使用的发布 CLI 尚不支持 `--gateway`）时，
 才用完整的四项 `--target-name/--target-gateway/--target-cluster/--target-instance` 预置路由，
-再 `doops login --target <name>`。
+再 `doops login --gateway <url>`（`--target <name>` 仍可作为别名）。
 
 - target 支持短名和别名，例如主名 `demo`，别名 `jy`。后续 `doops -session smoke exec --target jy --cmd hostname` 会解析到同一个 `doops-demo/demo-228`。
 
@@ -292,7 +292,7 @@ Gateway URL 首次登录并自动发现可见路由：
 
 ```bash
 doops login --gateway https://gateway.example.com --username alice
-doops login --target prod-master --username alice
+doops login --gateway https://gateway.example.com --username alice
 ```
 
 内网 agent 主动连接公网 gateway：
@@ -315,7 +315,7 @@ doops add \
   --aliases prod,master \
   --use 'prod cluster via gateway'
 
-doops login --target prod-master
+doops login --gateway https://gateway.example.com
 ```
 
 CLI 和 agent 对非回环 gateway 都要求 `https` / `wss`：明文 `http` / `ws` 会被拒绝，只有本机回环地址，或显式设置 `DOOPS_ALLOW_INSECURE_GATEWAY=1` 的受控测试例外才放行。
@@ -406,7 +406,7 @@ doops -session demo exec --target gpu-ampere01 --cmd 'ls -la /root/ws/demo'
 | :--- | :--- |
 | `doops add --gateway --cluster --instance` | 添加 gateway target 路由 |
 | `doops -session <s> remove --target <name>` | Gateway 查询确认不可见后，淘汰本机离线 target 路由 |
-| `doops login --target <name>` | 登录该 target 所属 Gateway；`doops login --gateway <url>` 可在无本地路由时首次登录并发现路由 |
+| `doops login --gateway <name|url>` | 登录指定 Gateway（登录属于 Gateway）；`--target <name>` 仍可作为别名 |
 | `doops list` | 列出客户端已配置的 Gateway target 路由 |
 | `doops sync [--target <name>]` | 把当前登录可见、本地还没有的在线 target 补进本机路由 |
 | `doops -session <s> capabilities --target <t> --require structuredSSH` | 校验在线 Agent 已声明结构化 SSH 协议；缺失时失败关闭 |
@@ -475,4 +475,4 @@ git push origin v1.2.4
 - agent 反向注册只声明 `cluster/instance`，不读取或发送注册 token。
 - CLI target schema 只有 `name/aliases/use/gateway/cluster/instance`。
 - `targets`、`sql`、`upgrade` 和 `credential` 只接受配置 target，不接受临时 Gateway 或 user token。
-- 缺少 Gateway 登录态时远程命令直接失败，必须先执行 `doops login --target <name>`；首次登录可用 `doops login --gateway <url>`。
+- 缺少 Gateway 登录态时远程命令直接失败，必须先执行 `doops login --gateway <name|url>`；`--target <name>` 仍可作为别名。

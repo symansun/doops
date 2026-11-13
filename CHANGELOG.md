@@ -8,6 +8,11 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 密码登录 token 的默认有效期从 24 小时改为 30 天，并在使用过程中自动顺延，但距签发时间最长不超过 90 天。可用 `-login-token-ttl` 和 `-login-token-max-lifetime` 调整。管理员签发的服务 token 不受影响
+- `doops login` 以 `--gateway <name|url>` 指定 Gateway（登录属于 Gateway，不是 target）；`--target` 仍可作为别名解析到对应 Gateway
+
 ### Security
 
 - 可为单个 target 签发 enrollment token。已在线 Agent 保持连接；该 Agent 用 token 连上一次之后，这个 target 的后续注册才需要它。未签发的 target 仍按原来的 cluster/instance 注册。不要使用 user token
@@ -21,6 +26,8 @@
 
 ### Fixed
 
+- 密码登录会话在持续使用时不再于 24 小时后被强制退出；控制台会刷新登录 Cookie，过期后直接回到登录页
+- 同一用户未过期的密码登录 token 超过 10 个时，新登录会撤销最早的旧 token
 - Gateway HTTP 服务设置请求头读取超时和空闲连接超时
 - CLI 访问 COS 预签名地址时，连接、TLS、响应头以及读写停滞都有时限
 - CI 运行 DoSql 的 Node 测试，并在 Go 测试前安装 PyYAML；Go 测试超时放宽到 20 分钟

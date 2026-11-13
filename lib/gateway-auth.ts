@@ -17,3 +17,31 @@ export function gatewayAuthMessage(raw: string): string | undefined {
   const code = gatewayAuthCode(raw)
   return code ? GATEWAY_AUTH_MESSAGES[code] : undefined
 }
+
+const LOST_GATEWAY_SESSION_CODES = new Set([
+  "gateway_auth_missing",
+  "gateway_auth_invalid",
+  "gateway_auth_expired",
+  "gateway_auth_revoked",
+  "gateway_auth_user_disabled",
+  "gateway_auth_invalid_expiry",
+])
+
+export class GatewaySessionError extends Error {
+  status: number
+  code?: string
+
+  constructor(message: string, opts: { status: number; code?: string } = { status: 0 }) {
+    super(message)
+    this.name = "GatewaySessionError"
+    this.status = opts.status
+    this.code = opts.code
+  }
+}
+
+export function isLostGatewaySession(err: unknown): boolean {
+  if (!(err instanceof GatewaySessionError)) return false
+  if (err.code === "gateway_auth_unavailable") return false
+  if (err.code && LOST_GATEWAY_SESSION_CODES.has(err.code)) return true
+  return err.status === 401
+}

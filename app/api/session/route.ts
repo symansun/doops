@@ -21,18 +21,23 @@ export async function GET(req: Request) {
     if (identity.error) {
       const headers = new Headers({ "Content-Type": "application/json" })
       const authenticationFailed = identity.error.status === 401
-      if (authenticationFailed) clearGatewaySession(headers)
-      return new Response(JSON.stringify({
-        ...(authenticationFailed ? { session: null } : {}),
-        ...await identity.error.json(),
-      }), {
+      if (authenticationFailed) {
+        clearGatewaySession(headers)
+        headers.set("Cache-Control", "no-store")
+        // Return 200 so the console can go to the login page without treating
+        // an expired or revoked cookie as a restore failure.
+        return new Response(JSON.stringify({ session: null }), { status: 200, headers })
+      }
+      return new Response(JSON.stringify(await identity.error.json()), {
         status: identity.error.status,
         headers,
       })
     }
-    return Response.json({
+    const headers = new Headers({ "Content-Type": "application/json", "Cache-Control": "no-store" })
+    setGatewaySession(headers, { ...identity.session, token: stored.token })
+    return new Response(JSON.stringify({
       session: identity.session,
-    }, { headers: { "Cache-Control": "no-store" } })
+    }), { status: 200, headers })
   } catch (error) {
     return gatewayPolicyResponse(error) || Response.json({ error: "无法验证 Gateway 会话" }, { status: 502 })
   }

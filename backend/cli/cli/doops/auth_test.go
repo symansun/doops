@@ -150,7 +150,7 @@ func TestResolveTokenRequiresGatewayLogin(t *testing.T) {
 		Cluster:  "prod",
 		Instance: "node",
 	}
-	if _, err := ResolveToken(server); err == nil || !strings.Contains(err.Error(), "doops login --target prod") {
+	if _, err := ResolveToken(server); err == nil || !strings.Contains(err.Error(), "doops login --gateway https://gateway.example.com") {
 		t.Fatalf("expected explicit login requirement, got %v", err)
 	}
 }

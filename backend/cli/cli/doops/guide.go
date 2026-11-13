@@ -22,7 +22,7 @@ var guideScenarios = map[string]guideScenario{
 		steps: []string{
 			"doops login --gateway <url> --username <u>       # first login; discovers the live targets this account can use",
 			"doops list                                       # stored routes; a route is named after its instance",
-			"doops login --target <t> --username <u>          # later logins; CI: printf '%s' \"$TOKEN\" | doops login --target <t> --token-stdin",
+			"doops login --gateway <name|url> --username <u>  # later logins; --target still works as an alias",
 			"doops sync --target <t>                          # add live agents that appeared after the first login",
 			"doops targets --target <t>",
 			"doops exec --target <t> --cmd hostname            # online heartbeat is not enough; this proves the command channel",

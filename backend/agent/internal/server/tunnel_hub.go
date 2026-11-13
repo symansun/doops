@@ -21,14 +21,15 @@ import (
 )
 
 type GatewayHubOptions struct {
-	AgentLease           time.Duration
-	OperationTimeout     time.Duration
-	TargetQueueTimeout   time.Duration
-	TargetReconnectGrace time.Duration
-	LoginTokenTTL        time.Duration
-	LoginFailureLimit    int
-	LoginFailureWindow   time.Duration
-	MaxQueuedPerTarget   int
+	AgentLease            time.Duration
+	OperationTimeout      time.Duration
+	TargetQueueTimeout    time.Duration
+	TargetReconnectGrace  time.Duration
+	LoginTokenTTL         time.Duration
+	LoginTokenMaxLifetime time.Duration
+	LoginFailureLimit     int
+	LoginFailureWindow    time.Duration
+	MaxQueuedPerTarget    int
 }
 
 type GatewayHub struct {
@@ -477,9 +478,7 @@ func NewGatewayHub(store *GatewayStore, opts GatewayHubOptions) *GatewayHub {
 	if opts.TargetReconnectGrace <= 0 {
 		opts.TargetReconnectGrace = 10 * time.Second
 	}
-	if opts.LoginTokenTTL <= 0 {
-		opts.LoginTokenTTL = 24 * time.Hour
-	}
+	opts.LoginTokenTTL, opts.LoginTokenMaxLifetime = normalizeLoginTokenLifetimes(opts.LoginTokenTTL, opts.LoginTokenMaxLifetime)
 	if opts.LoginFailureLimit <= 0 {
 		opts.LoginFailureLimit = 10
 	}
@@ -623,10 +622,16 @@ func (h *GatewayHub) HandleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		UserID:    user.ID,
 		Name:      name,
 		ExpiresAt: time.Now().UTC().Add(h.opts.LoginTokenTTL),
+		IssuedVia: tokenIssuedViaPasswordLogin,
 	})
 	if err != nil {
 		http.Error(w, "failed to create token", http.StatusInternalServerError)
 		return
+	}
+	if revoked, err := h.store.RevokeExcessPasswordLoginTokens(user.ID, token.ID, passwordLoginTokenCap, time.Now().UTC()); err != nil {
+		log.Printf("[gateway] failed to cap password-login tokens for user %s: %v", user.ID, err)
+	} else if revoked > 0 {
+		log.Printf("[gateway] revoked %d older password-login token(s) for user %s", revoked, user.ID)
 	}
 	writeJSONHTTP(w, gatewayLoginResponse{
 		Token:     token.Plaintext,
@@ -1637,19 +1642,30 @@ func (h *GatewayHub) ListTargets() []GatewayTarget {
 }
 
 func (h *GatewayHub) authenticateUser(r *http.Request) (TokenAuth, error) {
-	return authenticateGatewayUser(h.store, r)
+	return authenticateGatewayUser(h.store, h.opts, r)
 }
 
 func (h *ClientService) authenticateUser(r *http.Request) (TokenAuth, error) {
-	return authenticateGatewayUser(h.store, r)
+	return authenticateGatewayUser(h.store, h.opts, r)
 }
 
-func authenticateGatewayUser(store *GatewayStore, r *http.Request) (TokenAuth, error) {
+func authenticateGatewayUser(store *GatewayStore, opts GatewayHubOptions, r *http.Request) (TokenAuth, error) {
 	token := bearerToken(r)
 	if token == "" && strings.TrimSpace(r.Header.Get("Authorization")) != "" {
 		return TokenAuth{}, authFailure(AuthFailureInvalid)
 	}
-	return store.VerifyUserToken(token)
+	return verifyAndRenewUserToken(store, opts, token)
+}
+
+func verifyAndRenewUserToken(store *GatewayStore, opts GatewayHubOptions, token string) (TokenAuth, error) {
+	auth, err := store.VerifyUserToken(token)
+	if err != nil {
+		return auth, err
+	}
+	if err := store.MaybeRenewPasswordLoginToken(auth, opts.LoginTokenTTL, opts.LoginTokenMaxLifetime, time.Now().UTC()); err != nil {
+		logPasswordLoginRenewalError(auth.TokenID, err)
+	}
+	return auth, nil
 }
 
 func (h *ClientService) writeUserAuthError(w http.ResponseWriter, _ *http.Request, err error) {
@@ -1713,7 +1729,7 @@ func gatewayAuthErrorResponse(err error) doopsErrorResponse {
 	message := "Gateway authentication could not be verified"
 	nextAction := "Retry the request; if the Gateway is unavailable, inspect Gateway health and logs"
 	if code != "gateway_auth_unavailable" {
-		nextAction = "Run doops login for this Gateway target; do not replace the Gateway token with a managed credential or business API key"
+		nextAction = "Run doops login --gateway <gateway-url> for this Gateway; do not replace the Gateway token with a managed credential or business API key"
 	}
 	switch code {
 	case "gateway_auth_missing":

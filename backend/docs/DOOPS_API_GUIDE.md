@@ -124,9 +124,9 @@ ok
 
 ## 用户登录换取 Token
 
-密码登录是可选能力，返回短期 user token。长期自动化任务应使用 Gateway 管理员签发的长期 user token。
-默认登录 token 有 24 小时有效期；每次成功登录都会创建新的 token ID，不会自动复用或撤销旧 token。
-客户端应根据 `token_id`、`issued_at` 和 `expires_at` 记录替换关系，并通过管理员接口显式撤销旧 token。
+密码登录是可选能力，返回可续期的 user token。长期自动化任务应使用 Gateway 管理员签发的长期 user token。
+默认登录 token 的滑动有效期为 30 天：只要仍在使用，过期时间会延长为当前时间加 30 天，但距签发时间最长不超过 90 天。可用 `-login-token-ttl` 和 `-login-token-max-lifetime` 调整。管理员签发的 token（含不设过期时间的服务 token）不会自动续期。
+每次成功登录都会创建新的 token ID；同一用户未过期的密码登录 token 超过 10 个时，最早的旧 token 会被撤销。客户端应根据 `token_id`、`issued_at` 和 `expires_at` 记录替换关系。
 登录不删除过期 token 的记录；旧凭证继续返回明确的过期原因，便于审计和轮换核对。
 
 ```http

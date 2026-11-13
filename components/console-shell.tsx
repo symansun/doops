@@ -6,6 +6,7 @@ import type { AgentSessionRuntime } from "@agent-cloud/agent-ui"
 import { Boxes, Database, Globe2 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { clearServerSession, fetchTargets, restoreServerSession, sessionIsAdmin, type Session, type Target } from "@/lib/client"
+import { isLostGatewaySession } from "@/lib/gateway-auth"
 import { randomSession, resolveDefaultGateway } from "@/lib/gateway"
 import { isDemoAllowed } from "@/lib/demo-policy"
 import { DEMO_TOKEN } from "@/lib/demo"
@@ -304,6 +305,19 @@ export function ConsoleShell({ changelog = [] }: { changelog?: ChangelogRelease[
         setSelected((cur) => reconcileSelected(cur, t, terminalRunning.current))
       }
     } catch (err) {
+      if (isLostGatewaySession(err)) {
+        try {
+          if (!session.demo) await clearServerSession()
+        } catch {
+          // Cookie clear is best-effort; the session is already unusable.
+        }
+        setSession(null)
+        setTargets([])
+        setSelected(null)
+        setTargetsError("")
+        setError((err as Error).message || "登录已过期，请重新登录")
+        return
+      }
       setTargetsError((err as Error).message)
     } finally {
       setLoading(false)

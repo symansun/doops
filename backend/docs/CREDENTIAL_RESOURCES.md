@@ -24,7 +24,7 @@ inventory 和 audit。`DOOPS_GATEWAY_SECRET_KEY` 是必需的加密主密钥；G
 ## 登录和隔离
 
 ```bash
-doops login --target <target> --username <user>
+doops login --gateway <name|url> --username <user>
 ```
 
 登录态按规范化 Gateway URL 保存。同一 Gateway 下所有 configured target 共用一次登录，

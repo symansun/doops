@@ -7,7 +7,7 @@ export interface GatewaySession {
   expiresAt?: string
 }
 
-const SESSION_MAX_AGE = 60 * 60 * 24 * 7
+const SESSION_MAX_AGE = 60 * 60 * 24 * 90
 const SESSION_GATEWAY_COOKIE = "doops_session_gateway"
 const SESSION_TOKEN_COOKIE = "doops_session_token"
 const SESSION_USERNAME_COOKIE = "doops_session_username"
