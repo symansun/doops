@@ -11,7 +11,7 @@ import (
 
 func TestResolveLoginGatewayRequiresTargetOrGateway(t *testing.T) {
 	_, _, err := resolveLoginGateway("", "", nil, nil)
-	if err == nil || !strings.Contains(err.Error(), "--target or --gateway") {
+	if err == nil || !strings.Contains(err.Error(), "--gateway is required") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -116,5 +116,23 @@ func TestFirstLoginDiscoveryPersistsVisibleTargets(t *testing.T) {
 	}
 	if len(disk) != 1 || findSameRoute(disk, live.URL, "doops-zyj", "zyj-test") != "zyj-test" {
 		t.Fatalf("saved routes = %#v", disk)
+	}
+}
+
+func TestResolveLoginGatewayAcceptsConfiguredName(t *testing.T) {
+	servers := []Server{{Name: "gw-test", Aliases: []string{"demo"}, Gateway: "https://gateway.example.com", Cluster: "doops-demo", Instance: "demo-228"}}
+	gateway, server, err := resolveLoginGateway("", "gw-test", servers, nil)
+	if err != nil || server != nil || gateway != "https://gateway.example.com" {
+		t.Fatalf("name as --gateway should resolve to its Gateway and still run discovery: gateway=%q server=%#v err=%v", gateway, server, err)
+	}
+	gateway, server, err = resolveLoginGateway("", "demo", servers, nil)
+	if err != nil || server != nil || gateway != "https://gateway.example.com" {
+		t.Fatalf("alias as --gateway: gateway=%q server=%#v err=%v", gateway, server, err)
+	}
+	if _, _, err := resolveLoginGateway("", "unknown-gw", servers, nil); err == nil || !strings.Contains(err.Error(), "not a Gateway URL or a configured target name") {
+		t.Fatalf("unknown name: %v", err)
+	}
+	if _, _, err := resolveLoginGateway("", "gw-test", nil, os.ErrNotExist); err == nil || !strings.Contains(err.Error(), "--gateway <url>") {
+		t.Fatalf("name without config must ask for a URL: %v", err)
 	}
 }

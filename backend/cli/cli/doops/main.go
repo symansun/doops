@@ -70,7 +70,7 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   upgrade     由独立 Job 预检、升级或收编 K8S Agent；记录操作编号与验收证据，--dry-run 只预览
   add         添加 gateway target
   remove      仅在 target 确认离线时删除本机 gateway target 配置
-  login       登录 Gateway；--gateway <url> 首次登录并自动发现 targets，或导入已有 user token
+  login       登录 Gateway；--gateway <name|url> 指定 Gateway（登录属于 Gateway 而不是 target）；--target 仍可作为别名
   logout      仅删除本机 Gateway 登录记录（--target 或 --gateway 指定 Gateway），不撤销 token
   check       检查线上服务容器配置的镜像与最新构建是否一致
 
@@ -654,8 +654,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
 		var target, gateway, username, label string
 		var tokenStdin bool
 		loginFlag := flag.NewFlagSet("login", flag.ExitOnError)
-		loginFlag.StringVar(&target, "target", "", "Configured target name (optional when --gateway is used)")
-		loginFlag.StringVar(&gateway, "gateway", "", "Gateway URL for first login and target discovery")
+		loginFlag.StringVar(&gateway, "gateway", "", "Gateway URL or a configured target name that resolves to that Gateway")
+		loginFlag.StringVar(&target, "target", "", "Backward-compatible alias: resolve this target's Gateway and log in there")
 		loginFlag.BoolVar(&tokenStdin, "token-stdin", false, "Validate and import a Gateway token from stdin without issuing another token")
 		loginFlag.StringVar(&username, "username", "", "Gateway username")
 		loginFlag.StringVar(&label, "name", "", "Token label for password login")
@@ -1319,8 +1319,8 @@ func ResolveToken(server Server) (string, error) {
 	if p := auth.GetGateway(server.Gateway); p != "" {
 		return p, nil
 	}
-	return "", fmt.Errorf("no login for Gateway %s; run `doops login --target %s` or `doops login --gateway %s`",
-		gatewayAuthKey(server.Gateway), server.Name, gatewayAuthKey(server.Gateway))
+	return "", fmt.Errorf("no login for Gateway %s; run `doops login --gateway %s`",
+		gatewayAuthKey(server.Gateway), gatewayAuthKey(server.Gateway))
 }
 
 func mustResolveToken(server Server) string {

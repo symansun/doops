@@ -293,8 +293,9 @@ doops admin token revoke --target demo --id <token-id>
 列表只返回 ID、前缀、归属和状态，不返回 token 明文。管理员凭据只从
 `--target` 对应的本地受限存储读取，不得通过命令行参数传入。
 不带 `--expires` 的 token 不返回 `expires_at`，表示没有到期时间；不会显示为
-`0001-01-01T00:00:00Z`。密码登录默认签发 24 小时 token，每次登录都会产生新的
-token ID；CLI 会在替换本机记录时打印旧、新 token ID，但不会自动撤销旧 token。
+`0001-01-01T00:00:00Z`。密码登录默认签发 30 天可续期 token（距签发最长 90 天），
+每次登录都会产生新的 token ID；同一用户未过期的密码登录 token 超过 10 个时，
+最早的旧 token 会被撤销。CLI 会在替换本机记录时打印旧、新 token ID。
 
 ## Gateway Users And Target Grants
 
@@ -405,7 +406,7 @@ routing-only targets 写入其 `config.json`，并让 `DOOPS_CONFIG` 指向该�
 
 ```bash
 DOOPS_CONFIG=<temporary-dir>/config.json \
-  doops login --target <allowed-target> --username alice --name user-create-smoke
+  doops login --gateway <gateway-url> --username alice --name user-create-smoke
 
 DOOPS_CONFIG=<temporary-dir>/config.json \
   doops targets --target <allowed-target>
@@ -626,8 +627,9 @@ doops login --gateway https://gateway.example.com --username alice
 printf '%s' "$DOOPS_GATEWAY_TOKEN" | doops login --gateway https://gateway.example.com --token-stdin
 
 # 已有路由后的常规登录
-doops login --target demo --username alice
-printf '%s' "$DOOPS_GATEWAY_TOKEN" | doops login --target demo --token-stdin
+doops login --gateway https://gateway.example.com --username alice
+printf '%s' "$DOOPS_GATEWAY_TOKEN" | doops login --gateway https://gateway.example.com --token-stdin
+# --target <name> still works as an alias that resolves to that target's Gateway
 
 doops logout --target demo
 doops logout --gateway https://gateway.example.com

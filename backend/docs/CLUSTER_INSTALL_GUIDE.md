@@ -290,7 +290,7 @@ doops -session unicom-install targets --target gw-unicom
 doops -session unicom-install exec --target gw-unicom --cmd hostname
 ```
 
-尚未登录的管理机先执行 `doops -session setup login --target gw-unicom`。
+尚未登录的管理机先执行 `doops -session setup login --gateway <gateway-url>`。
 本地健康仅证明隧道连接；管理端 RPC 和 AI 请求还须真实验收，不能仅凭启动完成宣称
 全部功能可用。已有 Docker Agent 后续发布仍走下面的外部升级入口。
 
@@ -341,7 +341,7 @@ Gateway heartbeat、Agent 版本或容器运行时任一失败，安装都应直
 
 2. **登录 Gateway**:
    ```bash
-   doops -session install-verify login --target new-cluster
+   doops -session install-verify login --gateway <gateway-url>
    ```
 
 3. **确认精确身份已注册**:

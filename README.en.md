@@ -263,7 +263,7 @@ doops list
 
 - The first login calls `GET /v1/targets` and writes the online targets visible to this account back to local routes; existing route names, aliases and descriptions are preserved.
 - Operators do not need to know an Agent's `cluster/instance` in advance.
-- Pre-create a route with `doops add --name <name> --gateway <url> --cluster <cluster> --instance <instance>` only when you must pin a route before login (or use a released CLI that does not support `--gateway`), then run `doops login --target <name>`.
+- Pre-create a route with `doops add --name <name> --gateway <url> --cluster <cluster> --instance <instance>` only when you must pin a route before login (or use a released CLI that does not support `--gateway`), then run `doops login --gateway <url>` (`--target <name>` still works as an alias).
 - `doops add` stores routing only and never stores a target token; login state lives in the local auth cache.
 - Do not leave real credentials in public logs, scripts or shared terminal history; password login uses interactive input or `--token-stdin`.
 
@@ -284,7 +284,7 @@ doops -session inspect-001 exec --target <discovered-target> --cmd 'hostname'
 To sign in again for an existing route, just run the command below; the password is read only as hidden terminal input (or imported with `--token-stdin`), and the CLI has no `--password` flag:
 
 ```bash
-doops login --target <name> --username alice
+doops login --gateway <name|url> --username alice
 ```
 
 <a id="self-host"></a>

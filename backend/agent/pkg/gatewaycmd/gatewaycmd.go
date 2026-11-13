@@ -47,7 +47,8 @@ func serve(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	port := fs.String("port", "42222", "Public doops-gateway port")
 	dbPath := fs.String("db", defaultGatewayDB, "SQLite database path")
-	loginTokenTTL := fs.Duration("login-token-ttl", 24*time.Hour, "Password-login token TTL")
+	loginTokenTTL := fs.Duration("login-token-ttl", server.DefaultLoginTokenTTL, "Password-login sliding token TTL")
+	loginTokenMaxLifetime := fs.Duration("login-token-max-lifetime", server.DefaultLoginTokenMaxLifetime, "Absolute max lifetime for a password-login token, including renewals")
 	operationTimeout := fs.Duration("operation-timeout", 30*time.Minute, "Maximum runtime for one forwarded operation")
 	// Retired limits stay parseable so existing unit files keep starting.
 	retiredGlobalLimit := fs.Int("max-concurrent-operations", 0, "Retired; ignored")
@@ -80,10 +81,11 @@ func serve(args []string) {
 	defer store.Close()
 
 	hub := server.NewGatewayHub(store, server.GatewayHubOptions{
-		LoginTokenTTL:      *loginTokenTTL,
-		OperationTimeout:   *operationTimeout,
-		TargetQueueTimeout: *targetQueueTimeout,
-		MaxQueuedPerTarget: *maxQueuedPerTarget,
+		LoginTokenTTL:         *loginTokenTTL,
+		LoginTokenMaxLifetime: *loginTokenMaxLifetime,
+		OperationTimeout:      *operationTimeout,
+		TargetQueueTimeout:    *targetQueueTimeout,
+		MaxQueuedPerTarget:    *maxQueuedPerTarget,
 	})
 	hub.StartOfflineInstanceReaper(time.Hour)
 
@@ -95,6 +97,7 @@ func serve(args []string) {
 	log.Printf("   agent endpoint: ws://127.0.0.1:%s/v1/agent/connect", *port)
 	log.Printf("   edge endpoint:  ws://127.0.0.1:%s/v1/edge/connect", *port)
 	log.Printf("   client endpoint: ws://127.0.0.1:%s/v1/rpc?cluster=<cluster>&instance=<instance>", *port)
+	log.Printf("   login token ttl=%s max-lifetime=%s", *loginTokenTTL, *loginTokenMaxLifetime)
 	if strings.TrimSpace(*edgeListen) != "" {
 		listener, err := hub.StartEdgeListener(*edgeListen, *edgeProxyProtocol)
 		if err != nil {

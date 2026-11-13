@@ -263,7 +263,7 @@ doops list
 
 - При первом входе CLI вызывает `GET /v1/targets` и записывает в локальные маршруты онлайн-target, видимые этой учётной записи; имена, псевдонимы и описания существующих маршрутов не меняются.
 - Оператору не нужно заранее знать `cluster/instance` Agent.
-- Маршрут можно создать заранее через `doops add --name <name> --gateway <url> --cluster <cluster> --instance <instance>` только если нужно зафиксировать его до входа (или используется релиз CLI без поддержки `--gateway`); затем выполните `doops login --target <name>`.
+- Маршрут можно создать заранее через `doops add --name <name> --gateway <url> --cluster <cluster> --instance <instance>` только если нужно зафиксировать его до входа (или используется релиз CLI без поддержки `--gateway`); затем выполните `doops login --gateway <url>` (`--target <name>` по-прежнему работает как синоним).
 - `doops add` сохраняет только маршрут и не сохраняет target token; состояние входа хранится в локальном кэше auth.
 - Реальные учётные данные не должны оставаться в публичных логах, скриптах или общей истории терминала; для входа по паролю используйте интерактивный ввод или `--token-stdin`.
 
@@ -284,7 +284,7 @@ doops -session inspect-001 exec --target <discovered-target> --cmd 'hostname'
 Если для существующего маршрута нужен повторный вход по паролю, просто выполните команду ниже: пароль вводится только в терминале со скрытым вводом (или импортируется через `--token-stdin`), флага `--password` в CLI нет:
 
 ```bash
-doops login --target <name> --username alice
+doops login --gateway <name|url> --username alice
 ```
 
 <a id="self-host"></a>

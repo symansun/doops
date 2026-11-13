@@ -2,6 +2,7 @@
 
 import type { Target, AuditEvent, AuditSummary } from "./gateway"
 import { consoleFetch } from "./network-error.ts"
+import { GatewaySessionError } from "./gateway-auth.ts"
 
 export type { Target, AuditEvent, AuditSummary }
 
@@ -127,7 +128,12 @@ export async function fetchTargets(s: Session): Promise<Target[]> {
   const res = await consoleFetch("/api/targets", { headers: authHeaders(s) })
   const data = await res.json()
   // message 是代理给页面的中文说明；error 可能是 Gateway 类别原文。
-  if (!res.ok) throw new Error(data.message || data.error || "查询目标失败")
+  if (!res.ok) {
+    throw new GatewaySessionError(data.message || data.error || "查询目标失败", {
+      status: res.status,
+      code: typeof data.code === "string" ? data.code : undefined,
+    })
+  }
   return (data.targets || []) as Target[]
 }
 

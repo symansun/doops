@@ -98,8 +98,8 @@ description: |
 | 网站代理路由 | `doops -session <s> admin proxy list\|set\|delete --target <t> ...`（`set --id` 只改传入字段） |
 | token | `doops -session <s> admin token create\|list\|revoke --target <t> ...`（私密签发见使用指南；普通 ask 不提供） |
 | Helm Agent 升级 / 回滚 | `doops -session <s> upgrade --target <t> --image <ref>`（`--dry-run` 只预览）；`doops -session <s> upgrade --target <t> --rollback` |
-| CI 非交互登录 | `printf '%s' "$TOKEN" \| doops -session <s> login --target <t> --token-stdin` |
-| 首次登录 | `doops -session <s> login --gateway <url>`（自动发现 target） |
+| CI 非交互登录 | `printf '%s' "$TOKEN" \| doops -session <s> login --gateway <u> --token-stdin` |
+| 首次登录 | `doops -session <s> login --gateway <url>`（自动发现target） |
 
 DoSql 必须从 `doops sql` 进入；普通 `ask` 不保证注入 DoSql 工具。Gateway 默认绑定当前 target
 上全部 active `use=database` 凭据，有多个数据库凭据时用 `--database <name>` 选库；同一库绑了

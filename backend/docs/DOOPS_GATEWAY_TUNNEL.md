@@ -189,7 +189,7 @@ bash scripts/deploy-gateway.sh \
 - `doops_workspace_*` 是低层文件传输工具；通用 CLI 的目录同步使用 Git HTTP
   `push/pull`。这些接口不属于发布授权协议，发布任务不得用文件同步替代明确的
   target、范围、镜像、原因和验收条件。
-- 密码登录签发短期 user token，默认 24 小时过期。登录只签发新 token，不清理过期记录；`GET /v1/admin/tokens` 返回 `expires_at` / `revoked` 供管理员判断，鉴权失败按 `gateway_auth_expired` 等稳定类别返回。
+- 密码登录签发可续期 user token，默认滑动 30 天、距签发最长 90 天。成功的已认证请求会延长 `expires_at`（写入有节流）。管理员签发的服务 token 不自动续期。同一用户未过期的密码登录 token 超过 10 个时撤销最早的旧 token。登录不清理过期记录；`GET /v1/admin/tokens` 返回 `expires_at` / `revoked` 供管理员判断，鉴权失败按 `gateway_auth_expired` 等稳定类别返回。
 - token 校验通过 token id 定位单行哈希，避免多人多 token 时全表 bcrypt 扫描。
 - 同一 `cluster/instance` 的普通调用可并发；只有 workspace 写入、精确资源和 Agent 自升级互斥，
   详见 Multi-User Behavior。
@@ -257,7 +257,8 @@ bash scripts/build-gateway.sh
 
 ```bash
 ./bin/doops-gateway serve -db /var/lib/doops-gateway/gateway.db -port 42222 \
-  -login-token-ttl 24h \
+  -login-token-ttl 720h \
+  -login-token-max-lifetime 2160h \
   -operation-timeout 30m \
   -max-queued-per-target 10 \
   -target-queue-timeout 10m
@@ -353,7 +354,7 @@ doops admin token revoke --target <gateway-target> --id <token-id>
   workspace 锁和 session mutation 都使用有界等待队列；同 session 冲突在允许排队时会等待
   reader/resource 终态，只有队列满、排队关闭或超时才返回
   `target busy`/`target queue timeout`。`-max-queued-per-target` 设为负数可关闭排队。
-- `-login-token-ttl` 控制密码登录生成 token 的有效期；长期自动化应使用管理员发放的可轮换服务 token。
+- `-login-token-ttl` 控制密码登录 token 的滑动有效期（默认 30 天）；`-login-token-max-lifetime` 控制含续期在内的绝对寿命（默认 90 天）。长期自动化应使用管理员发放的可轮换服务 token。Gateway 进程由 `doops-gateway serve` 启动，这些标志写在 Gateway 的服务单元或启动参数里，不属于 `doops-agent` Helm chart。
 
 取消只能由发起方在原 RPC 连接上通过 `tools/cancel` 请求（CLI 超时或 Ctrl-C、Web 停止按钮）。
 
@@ -458,7 +459,7 @@ doops-agent \
 }
 ```
 
-Target config stores routing only. Run `doops login --target prod-master` once;
+Target config stores routing only. Run `doops login --gateway <gateway-url>` once;
 the resulting Gateway login state is shared by every target using the same
 Gateway URL.
 
@@ -475,7 +476,7 @@ doops add \
   --cluster prod \
   --instance master-1
 
-doops login --target prod-master
+doops login --gateway https://gateway.example.com
 ```
 
 ## Use

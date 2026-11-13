@@ -154,7 +154,7 @@ func gitResourceKey(action GatewayAction, cluster, instance, session string) str
 
 func (h *ClientService) authenticateGitUser(r *http.Request) (TokenAuth, error) {
 	if _, password, ok := r.BasicAuth(); ok && strings.TrimSpace(password) != "" {
-		return h.store.VerifyUserToken(password)
+		return verifyAndRenewUserToken(h.store, h.opts, password)
 	}
 	return h.authenticateUser(r)
 }

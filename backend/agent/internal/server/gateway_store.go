@@ -116,6 +116,7 @@ type CreateTokenRequest struct {
 	Cluster   string
 	Instance  string
 	ExpiresAt time.Time
+	IssuedVia string
 }
 
 type CreatedToken struct {
@@ -304,6 +305,7 @@ func (s *GatewayStore) migrate() error {
 			expires_at TEXT NOT NULL DEFAULT '',
 			revoked_at TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
+			issued_via TEXT NOT NULL DEFAULT '',
 			FOREIGN KEY(user_id) REFERENCES users(id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_tokens_kind ON tokens(kind)`,
@@ -505,6 +507,12 @@ func (s *GatewayStore) migrate() error {
 	if err := s.migrateGrantActions(); err != nil {
 		return err
 	}
+	if err := s.ensureColumn("tokens", "issued_via", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.backfillPasswordLoginTokens(); err != nil {
+		return err
+	}
 	if err := s.ensureColumn("agent_status", "generation", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
@@ -676,11 +684,12 @@ func (s *GatewayStore) CreateToken(req CreateTokenRequest) (CreatedToken, error)
 	if name == "" {
 		name = string(req.Kind) + " token"
 	}
+	issuedVia := strings.TrimSpace(req.IssuedVia)
 	_, err = s.db.Exec(`INSERT INTO tokens
-		(id, kind, user_id, name, prefix, hash, cluster, instance, expires_at, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(id, kind, user_id, name, prefix, hash, cluster, instance, expires_at, created_at, issued_via)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, string(req.Kind), req.UserID, name, prefix, string(hash),
-		strings.TrimSpace(req.Cluster), strings.TrimSpace(req.Instance), expires, formatTime(createdAt))
+		strings.TrimSpace(req.Cluster), strings.TrimSpace(req.Instance), expires, formatTime(createdAt), issuedVia)
 	if err != nil {
 		return CreatedToken{}, err
 	}
