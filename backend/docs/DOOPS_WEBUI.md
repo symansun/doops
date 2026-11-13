@@ -162,6 +162,11 @@ so it keeps working with an air-gapped Gateway.
   `DOOPS_CONSOLE_ALLOWED_GATEWAYS=https://doops.example.com`。控制台只接受精确
   origin，未配置时生产代理接口拒绝请求；除本机 loopback 外，生产 Gateway 必须使用
   HTTPS。
+- 控制台的变更请求（POST/PUT/PATCH/DELETE）要求浏览器 `Origin` 与控制台同源，并拒绝
+  `Sec-Fetch-Site` 为跨站的请求；同一可注册域下的兄弟站点也会被拒绝。默认按 `Host`
+  或 `X-Forwarded-Host` 与 `X-Forwarded-Proto` 推断控制台来源，适用于仓库里的 TLS 反向代理
+  配置。反向代理不传这些头、或控制台有多个对外地址时，设置
+  `DOOPS_CONSOLE_ORIGIN=https://doops.example.com`（多个用英文逗号分隔），设置后只接受这些 origin。
 
 ## Console layout and shared controls
 

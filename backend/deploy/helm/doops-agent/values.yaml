@@ -29,6 +29,11 @@ gateway:
   url: ""
   cluster: ""
   instance: ""
+  # Optional Secret holding this target's enrollment token. Empty keeps the
+  # existing open registration. After the Agent connects with the token, later
+  # connections to this target must present it.
+  enrollmentTokenSecret: ""
+  enrollmentTokenKey: token
 
 proxy:
   # Empty rejects every public proxy upstream until an operator explicitly allows one.

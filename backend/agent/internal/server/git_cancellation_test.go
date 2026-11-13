@@ -306,10 +306,7 @@ func TestAgentGitCancellationRetainsUnknownOnRealGateway(t *testing.T) {
 		}
 		_, _ = io.WriteString(w, "next Git request completed")
 	})}
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v1/agent/connect?cluster=dev&instance=local", nil)
-	if err != nil {
-		t.Fatalf("connect real Agent to Gateway: %v", err)
-	}
+	conn := dialFakeGatewayAgent(t, server.URL, "dev", "local")
 	go func() {
 		defer close(agentDone)
 		agent.ServeGatewayWebSocketConnWithReady(conn, "git-cancellation-agent", nil)

@@ -5,12 +5,15 @@ import {
 } from "@/lib/gateway-policy"
 import { readGatewayIdentity } from "@/lib/server/gateway-identity"
 import { gatewayErrorResponse } from "@/lib/server/gateway-errors"
+import { rejectCrossOriginMutation } from "@/lib/server/same-origin"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 // 透传到 gateway POST /v1/auth/login，返回 user token
 export async function POST(req: Request) {
+  const rejected = rejectCrossOriginMutation(req)
+  if (rejected) return rejected
   let body: { gateway?: string; username?: string; password?: string; name?: string }
   try {
     body = await req.json()

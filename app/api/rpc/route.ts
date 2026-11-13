@@ -5,6 +5,7 @@ import {
   readAllowedAuth,
 } from "@/lib/gateway-policy"
 import { readGatewayUpgradeRejection } from "@/lib/server/gateway-upgrade"
+import { rejectCrossOriginMutation } from "@/lib/server/same-origin"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -38,6 +39,8 @@ const activeRpcCalls = new Map<string, ActiveRpcCall>()
 // 浏览器 POST 工具调用，服务端注入 Bearer token，
 // 并把 notifications/message 与最终结果以 NDJSON 行流式回传。
 export async function POST(req: Request) {
+  const rejected = rejectCrossOriginMutation(req)
+  if (rejected) return rejected
   let gateway: string
   let token: string
   try {

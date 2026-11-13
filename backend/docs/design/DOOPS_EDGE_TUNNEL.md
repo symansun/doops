@@ -536,7 +536,9 @@ ActionEdgeView  GatewayAction = "edge:view"
 
 ## 7. 安全边界
 
-### 7.1 Edge enrollment token（不能沿用 ops 的开放注册）
+### 7.1 Edge enrollment token
+
+Agent 反向注册默认保持开放；某个 target 确认 enrollment 之后才使用自己的 token，见 [Gateway 隧道](../DOOPS_GATEWAY_TUNNEL.md)。Edge 不复用那份 token，也不复用 user token。
 
 `ops` 隧道目前允许 agent 自注册。Edge 不能照抄：谁注册成 `demo/gw-demo`，
 谁就接走该 agent 名下**所有域名**的流量，自带证书即可做中间人。

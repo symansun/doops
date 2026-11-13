@@ -362,7 +362,7 @@ backend/bin/doops-agent \
 
 这只是注册与基础执行链路的联调示例，不会自动安装 doagent、模型、BuildKit 或 Kubernetes 工具。实际服务器注册时，将地址换为可达的 HTTPS Gateway，并按目标网络设置 Agent 监听范围。
 
-普通 Agent 注册不需要额外注册凭据，也不要把用户 Token 或业务凭据当作 Agent 注册凭据。只有启用 Edge 公网隧道（`-edge`，默认关闭、生产未上线）时才用 `-edge-enroll-token`，见 [Edge 隧道设计](backend/docs/design/DOOPS_EDGE_TUNNEL.md)。
+Agent 注册默认只使用 cluster/instance，已在线的 Agent 不会因为升级而断开。某个 target 确认了 enrollment 之后，才改用绑定到该 target 的 token；不要把用户 Token 或业务凭据当作注册凭据。Edge 公网隧道（`-edge`，默认关闭、生产未上线）另用 `-edge-enroll-token`，见 [Edge 隧道设计](backend/docs/design/DOOPS_EDGE_TUNNEL.md)。
 
 ### 4. 完整 Agent 容器与 Kubernetes 部署
 
@@ -541,7 +541,9 @@ doops -session agent-upgrade upgrade \
 | --- | --- | --- |
 | `DOOPS_CONFIG` | 覆盖 CLI 默认配置文件路径 | 不是 Web 控制台的 Gateway 配置 |
 | `-gateway-url`、`-cluster`、`-instance` | Agent 注册位置和身份 | 裸二进制应显式传参；不要假定 Helm 中的同名环境变量会自动生效 |
-| `-edge`、`-edge-enroll-token` | Edge 公网隧道开关及其 enrollment 凭据 | 默认关闭、生产未上线；普通 Agent 注册不使用注册令牌，见 [Edge 隧道设计](backend/docs/design/DOOPS_EDGE_TUNNEL.md) |
+| `DOOPS_AGENT_ENROLL_TOKEN` | 可选的 Agent enrollment token | 优先用环境变量（Helm：`gateway.enrollmentTokenSecret`），不要用 `-enroll-token` 命令行参数。该 target 用它连通过一次之后才强制；迁移与恢复见 [Gateway 隧道](backend/docs/DOOPS_GATEWAY_TUNNEL.md)；不要使用 user token |
+| `DOOPS_CONSOLE_ORIGIN` | 可选，Web 控制台对外的来源，如 `https://doops.example.com` | 控制台的变更请求要求 `Origin` 同源。默认按 `Host`/`X-Forwarded-Host` 与 `X-Forwarded-Proto` 推断；反向代理不传这些头时显式设置 |
+| `-edge`、`-edge-enroll-token` | Edge 公网隧道开关及其 enrollment 凭据 | 默认关闭、生产未上线；与 Agent enrollment token 不是同一份，见 [Edge 隧道设计](backend/docs/design/DOOPS_EDGE_TUNNEL.md) |
 | `DOOPS_WORKSPACE_ROOT` | Agent 会话工作区根目录 | 默认 `/root/ws`；修改后需调整相关脚本路径 |
 | `DOOPS_GATEWAY_SECRET_KEY` | Gateway 加密凭据的密钥材料 | 启用凭据功能时安全注入、持久保存并备份 |
 | `DO_AGENT_PORT`、`DO_AGENT_URL` | Agent 内部 ACP 服务地址 | 默认端口 `9000`、地址 `http://127.0.0.1:9000`；自定义时保持一致 |

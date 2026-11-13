@@ -6,6 +6,7 @@ import {
 } from "@/lib/server/agent-attachments"
 import { AgentGatewayError } from "@/lib/server/agent-gateway-rpc"
 import { authorizedAgentSession } from "@/lib/server/agent-session"
+import { rejectCrossOriginMutation } from "@/lib/server/same-origin"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -13,6 +14,8 @@ export const dynamic = "force-dynamic"
 const IDENTIFIER = /^(?!.*\.\.)[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 
 export async function POST(req: Request) {
+  const rejected = rejectCrossOriginMutation(req)
+  if (rejected) return rejected
   try {
     const auth = readAllowedAuth(req)
     if (!auth.gateway || !auth.token) throw new AgentGatewayError("未建立 Gateway 会话", 401)

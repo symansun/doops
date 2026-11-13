@@ -75,6 +75,13 @@ spec:
               value: {{ .Values.gateway.cluster | quote }}
             - name: DOOPS_GATEWAY_INSTANCE
               value: {{ .Values.gateway.instance | quote }}
+            {{- if .Values.gateway.enrollmentTokenSecret }}
+            - name: DOOPS_AGENT_ENROLL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.gateway.enrollmentTokenSecret | quote }}
+                  key: {{ .Values.gateway.enrollmentTokenKey | default "token" | quote }}
+            {{- end }}
             - name: DOOPS_PROXY_ALLOW_HOSTS
               value: {{ .Values.proxy.allowedHosts | quote }}
             - name: KUBECONFIG

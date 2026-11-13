@@ -83,6 +83,7 @@ func main() {
 	reconnectDelay := flag.Duration("reconnect-delay", time.Second, "Reverse tunnel reconnect delay")
 	edge := flag.Bool("edge", false, "Enable Edge public reverse tunnel")
 	edgeGatewayURL := flag.String("edge-gateway-url", "", "Edge gateway URL; defaults to -gateway-url with /v1/edge/connect")
+	enrollTokenFlag := flag.String("enroll-token", "", "Optional enrollment token for this cluster and instance; defaults to DOOPS_AGENT_ENROLL_TOKEN. Required only after this target has connected once with an issued token")
 	edgeEnrollToken := flag.String("edge-enroll-token", "", "Edge enrollment token")
 	edgeBackendAllow := flag.String("edge-backend-allow", "", "Comma-separated host:port or cidr:port backends the Edge tunnel may dial")
 	edgeConns := flag.Int("edge-conns", 1, "Parallel Edge WebSocket sessions")
@@ -98,6 +99,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	enrollToken := strings.TrimSpace(*enrollTokenFlag)
+	if enrollToken == "" {
+		enrollToken = strings.TrimSpace(os.Getenv("DOOPS_AGENT_ENROLL_TOKEN"))
+	}
+
 	gw := server.NewGateway()
 
 	// Start TTL GC running in the background routines
@@ -106,7 +112,7 @@ func main() {
 
 	// doagent ACP HTTP 服务由 entrypoint.sh 在容器启动时拉起（port 9000）
 
-	go runReverseTunnel(gw, *gatewayURL, *cluster, *instance, *reconnectDelay)
+	go runReverseTunnel(gw, *gatewayURL, *cluster, *instance, enrollToken, *reconnectDelay)
 	if *edge {
 		if strings.TrimSpace(*edgeEnrollToken) == "" || strings.TrimSpace(*edgeBackendAllow) == "" {
 			log.Fatal("-edge requires -edge-enroll-token and -edge-backend-allow")
@@ -158,13 +164,14 @@ func setReverseTunnelConnected(connected bool) {
 	atomic.StoreInt32(&reverseTunnelConnected, 0)
 }
 
-func runReverseTunnel(gw *server.Gateway, rawURL, cluster, instance string, reconnectDelay time.Duration) {
+func runReverseTunnel(gw *server.Gateway, rawURL, cluster, instance, enrollToken string, reconnectDelay time.Duration) {
 	setReverseTunnelConnected(false)
 	if reconnectDelay <= 0 {
 		reconnectDelay = time.Second
 	}
 	cluster = strings.TrimSpace(cluster)
 	instance = strings.TrimSpace(instance)
+	var authBackoff time.Duration
 
 	for {
 		if reverseTunnelContinue != nil && !reverseTunnelContinue() {
@@ -178,16 +185,31 @@ func runReverseTunnel(gw *server.Gateway, rawURL, cluster, instance string, reco
 		}
 
 		log.Printf("🌉 connecting reverse tunnel to %s (cluster=%s instance=%s)", tunnelURL, cluster, instance)
-		conn, resp, err := reverseTunnelDial(tunnelURL, nil)
+		var header http.Header
+		if token := strings.TrimSpace(enrollToken); token != "" {
+			header = http.Header{"Authorization": []string{"Bearer " + token}}
+		}
+		conn, resp, err := reverseTunnelDial(tunnelURL, header)
 		if err != nil {
+			wait := reconnectDelay
 			if resp != nil {
 				log.Printf("❌ reverse tunnel dial failed: %v (HTTP %s)", err, resp.Status)
+				if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+					authBackoff = nextReverseTunnelAuthBackoff(authBackoff, reconnectDelay)
+					wait = authBackoff
+					if strings.TrimSpace(enrollToken) == "" {
+						log.Printf("🔑 gateway requires an enrollment token for cluster=%s instance=%s; set DOOPS_AGENT_ENROLL_TOKEN to the token issued by `doops-gateway enroll create` for this target, or revoke the target's enrollment on the Gateway. Retrying in %s", cluster, instance, wait)
+					} else {
+						log.Printf("🔑 gateway rejected the enrollment token for cluster=%s instance=%s; check DOOPS_AGENT_ENROLL_TOKEN matches an active enrollment for this exact target (`doops-gateway enroll list`). Retrying in %s", cluster, instance, wait)
+					}
+				}
 			} else {
 				log.Printf("❌ reverse tunnel dial failed: %v", err)
 			}
-			time.Sleep(reconnectDelay)
+			time.Sleep(wait)
 			continue
 		}
+		authBackoff = 0
 
 		log.Printf("✅ reverse tunnel connected: cluster=%s instance=%s", cluster, instance)
 		func() {
@@ -199,6 +221,28 @@ func runReverseTunnel(gw *server.Gateway, rawURL, cluster, instance string, reco
 		log.Printf("⚠️ reverse tunnel disconnected; reconnecting in %s", reconnectDelay)
 		time.Sleep(reconnectDelay)
 	}
+}
+
+// reverseTunnelMaxAuthBackoff caps the retry interval after the Gateway
+// refuses registration (401/403), so a misconfigured token does not hammer the
+// Gateway while the Agent still recovers on its own once the token is fixed.
+const reverseTunnelMaxAuthBackoff = 60 * time.Second
+
+func nextReverseTunnelAuthBackoff(current, base time.Duration) time.Duration {
+	if base <= 0 {
+		base = time.Second
+	}
+	if current < base {
+		return base
+	}
+	next := current * 2
+	if next > reverseTunnelMaxAuthBackoff || next <= 0 {
+		next = reverseTunnelMaxAuthBackoff
+	}
+	if next < base {
+		next = base
+	}
+	return next
 }
 
 func buildGatewayAgentURL(rawURL, cluster, instance string) (string, error) {

@@ -157,10 +157,31 @@ bash scripts/deploy-gateway.sh \
 第一版是 SQLite + 单活可靠部署：
 
 - SQLite WAL 数据库：用户、token、权限、审计。
-- agent 注册 gateway 不使用 token，只携带声明的 `cluster/instance`；用户操作继续由 user token 和权限控制。
-- `/v1/agent/connect` 当前按设计开放注册。未来如增加 Agent 工作负载身份，
-  必须作为独立协议扩展并绑定 `cluster/instance`，不得复用 Gateway user token
-  或重新引入 CLI per-target token。
+- Agent 注册默认只声明 `cluster/instance`，已在线的 Agent 不因升级 Gateway 或 Agent 而断开。
+  需要收紧某个 target 时，在 Gateway 主机执行
+  `doops-gateway enroll create -cluster <cluster> -instance <instance>`。
+  明文只出现在该命令的标准输出里。先把 token 放到该 Agent 的环境变量
+  `DOOPS_AGENT_ENROLL_TOKEN`（Helm 用可选的 `gateway.enrollmentTokenSecret` 引用 Secret 注入；
+  不要放在 `-enroll-token` 命令行参数里，参数会出现在进程列表和 Pod spec 中）。
+  当前会话保持在线。该 Agent 用这份 token 连上一次之后，这个 target 的后续连接才必须带它。
+  吊销后该 target 回到原来的开放注册。不要使用 Gateway user token 或受管凭据。
+
+### Agent enrollment 迁移与恢复
+
+- 顺序：Gateway 先升级到支持 enrollment 的版本 → `enroll create` → 把 token 写入 Secret →
+  Agent 用**单独一次** Helm revision 只加 `gateway.enrollmentTokenSecret`（不要和镜像或其他
+  values 变更放在同一个 revision），确认重连成功、`doops-gateway enroll list` 显示
+  `enforced=true`。这样之后回滚镜像版本时不会退到一个没有 token 的 revision。
+- 回滚 Agent 到加入 token 之前的 Helm revision、或者用不认识 `gateway.enrollmentTokenSecret`
+  的旧 Chart（旧 `values.schema.json` 会拒绝这两个值）重新安装，都会让 Agent 不再带 token；
+  如果该 target 已经 `enforced=true`，Agent 会被拒绝并按退避（最长约 60 秒）重试。
+- 恢复：在 Gateway 主机上 `doops-gateway enroll list` 找到该 target 的 id，执行
+  `doops-gateway enroll revoke -id <id>`，该 target 立即回到开放注册，Agent 下一次重试即可连上；
+  之后再重新签发并按上面的顺序收紧。
+- `adopt` 只接受通过 `valueFrom.secretKeyRef` 注入的 `DOOPS_AGENT_ENROLL_TOKEN`，会把它映射为
+  `gateway.enrollmentTokenSecret`/`enrollmentTokenKey`；明文值或 `-enroll-token` 参数会被拒绝，
+  以免接管后丢失 token。
+- 未签发或未确认 enrollment 的 target 与之前版本行为一致；新版本 Agent 带 token 连旧 Gateway 也可以正常注册。
 
 - user token 只能操作有 grant 的 target。
 - gateway 转发 doops JSON-RPC 操作流量和 Git HTTP 请求，不做裸 TCP 隧道。
@@ -195,7 +216,7 @@ bash scripts/deploy-gateway.sh \
 
 隧道与代理接口：
 
-- `WS /v1/agent/connect?cluster=<cluster>&instance=<instance>`
+- `WS /v1/agent/connect?cluster=<cluster>&instance=<instance>`。该 target 尚未确认 enrollment 时不需要请求头；确认之后带 `Authorization: Bearer <enrollment token>`
 - `WS /v1/rpc?cluster=<cluster>&instance=<instance>`
 - `WS /v1/edge/connect?cluster=<cluster>&instance=<instance>`（Edge 隧道；Gateway `-edge-listen` 默认空，未启用时不监听，见 [design/DOOPS_EDGE_TUNNEL.md](design/DOOPS_EDGE_TUNNEL.md)）
 - `GET/POST /v1/git/<cluster>/<instance>/<session>.git/...`
@@ -205,8 +226,8 @@ bash scripts/deploy-gateway.sh \
 
 ## Start Gateway
 
-用户、user token 和授权由管理员维护。Agent 部署只声明绑定的
-`cluster/instance`，注册连接不使用 token。Gateway 用户接口仍严格校验 user token。
+用户、user token 和授权由管理员维护。Agent 注册默认保持开放；某个 target 确认了
+enrollment 之后，该 target 才改用绑定到它的 enrollment token。Gateway 用户接口仍严格校验 user token。
 产品和 skill 的日常入口是 `doops`；gateway 内部维护命令不作为业务用户操作手册暴露。
 
 gateway 是独立发布包，不登记为 doops target，也不通过任何 target 发布自己。
@@ -395,8 +416,10 @@ docker run -d --name doops-agent \
   -port 42222 \
   -gateway-url https://gateway.example.com \
   -cluster prod \
-  -instance master-1 \
+  -instance master-1
 ```
+
+需要 enrollment 时通过环境变量 `DOOPS_AGENT_ENROLL_TOKEN` 提供 token，不要写在命令行上。
 
 ```bash
 doops-agent \

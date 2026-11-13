@@ -279,12 +279,7 @@ func TestGatewayHTTPProxyTimeoutCancelsAgentRequest(t *testing.T) {
 
 func connectProxyTestAgent(t *testing.T, gatewayURL string, agentGateway *Gateway, cluster, instance string) *websocket.Conn {
 	t.Helper()
-	wsURL := "ws" + strings.TrimPrefix(gatewayURL, "http") +
-		"/v1/agent/connect?cluster=" + cluster + "&instance=" + instance
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("dial gateway agent tunnel: %v", err)
-	}
+	conn := dialFakeGatewayAgent(t, gatewayURL, cluster, instance)
 	go agentGateway.ServeGatewayWebSocketConnWithReady(conn, "proxy-test-agent", nil)
 	return conn
 }

@@ -35,6 +35,8 @@ func Run(args []string) {
 		grant(args)
 	case "audit":
 		audit(args)
+	case "enroll":
+		enroll(args)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
 		os.Exit(2)
@@ -101,8 +103,21 @@ func serve(args []string) {
 		defer listener.Close()
 		log.Printf("   edge listen: %s proxy_protocol=%v", listener.Addr, *edgeProxyProtocol)
 	}
-	if err := http.ListenAndServe(":"+*port, mux); err != nil {
+	// ReadTimeout and WriteTimeout stay unset. They would apply to hijacked
+	// agent, client, and edge tunnels. Slow header reads and idle keep-alives
+	// are bounded separately.
+	if err := gatewayHTTPServer(":"+*port, mux).ListenAndServe(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func gatewayHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    1 << 20,
 	}
 }
 
@@ -149,6 +164,59 @@ func userPasswd(args []string) {
 		log.Fatal(err)
 	}
 	fmt.Printf("password=updated user=%s\n", u.Name)
+}
+
+func enroll(args []string) {
+	if len(args) == 0 || (args[0] != "create" && args[0] != "list" && args[0] != "revoke") {
+		fmt.Fprintln(os.Stderr, "usage: doops-gateway enroll create -cluster <cluster> -instance <instance> [-db path]")
+		fmt.Fprintln(os.Stderr, "       doops-gateway enroll list [-db path]")
+		fmt.Fprintln(os.Stderr, "       doops-gateway enroll revoke -id <id> [-db path]")
+		os.Exit(2)
+	}
+	switch args[0] {
+	case "list":
+		fs := flag.NewFlagSet("enroll list", flag.ExitOnError)
+		dbPath := fs.String("db", defaultGatewayDB, "SQLite database path")
+		fs.Parse(args[1:])
+		store := mustStore(*dbPath)
+		defer store.Close()
+		rows, err := store.ListAgentEnrollments()
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, row := range rows {
+			fmt.Printf("id=%s cluster=%s instance=%s prefix=%s revoked=%t enforced=%t created_at=%s\n",
+				row.ID, row.Cluster, row.Instance, row.Prefix, row.Revoked, row.Enforced, row.CreatedAt.UTC().Format(time.RFC3339))
+		}
+	case "revoke":
+		fs := flag.NewFlagSet("enroll revoke", flag.ExitOnError)
+		id := fs.String("id", "", "Enrollment id")
+		dbPath := fs.String("db", defaultGatewayDB, "SQLite database path")
+		fs.Parse(args[1:])
+		if strings.TrimSpace(*id) == "" {
+			log.Fatal("enrollment id is required")
+		}
+		store := mustStore(*dbPath)
+		defer store.Close()
+		if err := store.RevokeAgentEnrollment(*id); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("id=%s revoked=true\n", strings.TrimSpace(*id))
+	default:
+		fs := flag.NewFlagSet("enroll create", flag.ExitOnError)
+		cluster := fs.String("cluster", "", "Cluster name")
+		instance := fs.String("instance", "", "Instance name")
+		dbPath := fs.String("db", defaultGatewayDB, "SQLite database path")
+		fs.Parse(args[1:])
+		store := mustStore(*dbPath)
+		defer store.Close()
+		created, err := store.CreateAgentEnrollment(*cluster, *instance)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("id=%s\ncluster=%s\ninstance=%s\ntoken=%s\n", created.ID, created.Cluster, created.Instance, created.Plaintext)
+		fmt.Println("warning=store this enrollment token now; only its hash is saved. The connected Agent stays online until it reconnects. Put the token on that Agent first; enforcement starts after it connects with this token")
+	}
 }
 
 func userToken(args []string) {

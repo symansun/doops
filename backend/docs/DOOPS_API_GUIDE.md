@@ -101,9 +101,12 @@ Gateway 签发的用户 token 格式为
 这些错误只描述 Gateway user token，不表示受管凭据 `credential_invalid`。如果响应只有裸
 `401 Unauthorized`，调用方必须将认证域视为未确定，不得直接把错误归因于受管凭据。
 
-`/v1/edge/connect` 使用独立的 enrollment token。失败时返回
-`code=edge_enrollment_auth_failed` 和 `auth_domain=edge_enrollment`，不能使用 Gateway
-user token 或受管凭据替代。
+`/v1/agent/connect` 在该 target 还没有确认 enrollment 时保持开放注册。确认之后必须带绑定到该
+cluster/instance 的 enrollment token，失败时返回 `code=agent_enrollment_auth_failed` 和
+`auth_domain=agent_enrollment`。已在线的 Agent 不会因为签发或升级而断开。
+`/v1/edge/connect` 使用另一份 enrollment token。失败时返回
+`code=edge_enrollment_auth_failed` 和 `auth_domain=edge_enrollment`。
+两处都不能使用 Gateway user token 或受管凭据替代。
 
 `X-Doops-Key` 不属于当前协议，Gateway 不接受该字段。
 

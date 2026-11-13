@@ -25,6 +25,9 @@ func TestAgentBinaryHelpDocumentsEdgeOffByDefault(t *testing.T) {
 	if !strings.Contains(help, "Enable Edge public reverse tunnel") {
 		t.Fatalf("agent help must describe -edge\n%s", help)
 	}
+	if !strings.Contains(help, "-enroll-token") {
+		t.Fatalf("agent help must document -enroll-token\n%s", help)
+	}
 	if !strings.Contains(help, "-edge-enroll-token") || !strings.Contains(help, "-edge-backend-allow") {
 		t.Fatalf("agent help must document enrollment and backend allow-list flags\n%s", help)
 	}

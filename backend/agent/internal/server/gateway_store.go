@@ -493,6 +493,9 @@ func (s *GatewayStore) migrate() error {
 	if err := s.migrateEdge(); err != nil {
 		return err
 	}
+	if err := s.migrateAgentEnrollments(); err != nil {
+		return err
+	}
 	if err := s.ensureColumn("users", "password_hash", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
@@ -609,22 +612,42 @@ func (s *GatewayStore) SetUserPassword(userID, password string) error {
 	return nil
 }
 
+// dummyPasswordHash keeps the missing-user path on the same bcrypt cost as a
+// real password check. Both outcomes return ErrUnauthorized.
+var dummyPasswordHash = func() []byte {
+	hash, err := bcrypt.GenerateFromPassword([]byte("doops-login-timing-equalizer"), bcrypt.DefaultCost)
+	if err != nil {
+		panic(err)
+	}
+	return hash
+}()
+
 func (s *GatewayStore) VerifyUserPassword(name, password string) (GatewayUser, error) {
 	user, err := s.FindUserByName(name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return GatewayUser{}, ErrUnauthorized
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return GatewayUser{}, err
 	}
-	if user.PasswordHash == "" {
-		return GatewayUser{}, ErrUnauthorized
-	}
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
-			return GatewayUser{}, ErrUnauthorized
+	hash := dummyPasswordHash
+	stored := false
+	if err == nil && user.PasswordHash != "" {
+		candidate := []byte(user.PasswordHash)
+		if _, costErr := bcrypt.Cost(candidate); costErr != nil {
+			// A stored hash that cannot be parsed is an authentication outage.
+			// Still spend a bcrypt comparison so this path is not faster than a rejection.
+			_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(password))
+			return GatewayUser{}, costErr
 		}
-		return GatewayUser{}, err
+		hash = candidate
+		stored = true
+	} else {
+		user = GatewayUser{}
+	}
+	compareErr := bcrypt.CompareHashAndPassword(hash, []byte(password))
+	if !stored || errors.Is(compareErr, bcrypt.ErrMismatchedHashAndPassword) {
+		return GatewayUser{}, ErrUnauthorized
+	}
+	if compareErr != nil {
+		return GatewayUser{}, compareErr
 	}
 	return user, nil
 }

@@ -321,3 +321,52 @@ def test_missing_controller_identity_fails_and_restores(monkeypatch, hostname):
     with pytest.raises(module.AdoptError, match="controller_identity_unverified"):
         adopt(module, cluster)
     assert cluster.index("helm upgrade --install") < cluster.index("replace --force")
+
+
+def _with_env(extra, **container_overrides):
+    deployment = demo_deployment()
+    container = deployment["spec"]["template"]["spec"]["containers"][0]
+    container["env"] = container["env"] + extra
+    container.update(container_overrides)
+    return deployment
+
+
+def test_adoption_keeps_the_enrollment_token_secret(tmp_path):
+    module = load()
+    deployment = _with_env([{"name": "DOOPS_AGENT_ENROLL_TOKEN",
+                             "valueFrom": {"secretKeyRef": {"name": "doops-agent-enroll", "key": "enroll"}}}])
+    module.validate_deployment(deployment, "doops-demo", "demo-228")
+    repository, digest = module.parse_image(IMAGE)
+    values = module.chart_values(deployment, "doops-agent", repository, digest)
+    assert values["gateway"]["enrollmentTokenSecret"] == "doops-agent-enroll"
+    assert values["gateway"]["enrollmentTokenKey"] == "enroll"
+    path = tmp_path / "values.json"
+    path.write_text(json.dumps(values))
+    result = subprocess.run(["helm", "template", "doops-agent", str(CHART), "-n", "doops-system", "-f", str(path)],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    rendered = [d for d in yaml.safe_load_all(result.stdout) if d][0]
+    env = {e["name"]: e for e in rendered["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["DOOPS_AGENT_ENROLL_TOKEN"]["valueFrom"]["secretKeyRef"] == {"name": "doops-agent-enroll", "key": "enroll"}
+
+
+def test_adoption_without_enrollment_token_leaves_values_unchanged():
+    module = load()
+    repository, digest = module.parse_image(IMAGE)
+    values = module.chart_values(demo_deployment(), "doops-agent", repository, digest)
+    assert "enrollmentTokenSecret" not in values["gateway"]
+
+
+@pytest.mark.parametrize("deployment,error", [
+    (_with_env([{"name": "DOOPS_AGENT_ENROLL_TOKEN", "value": "synthetic-not-a-token"}]), "must come from a Secret"),
+    (_with_env([{"name": "DOOPS_AGENT_ENROLL_TOKEN", "valueFrom": {"configMapKeyRef": {"name": "x", "key": "y"}}}]),
+     "must come from a Secret"),
+    (_with_env([], args=["-enroll-token", "synthetic-not-a-token"]), "-enroll-token"),
+    (_with_env([], args=["--enroll-token=synthetic-not-a-token"]), "-enroll-token"),
+])
+def test_adoption_refuses_enrollment_tokens_it_cannot_carry(deployment, error):
+    module = load()
+    cluster = FakeCluster(deployment)
+    with pytest.raises(module.AdoptError, match=error):
+        adopt(module, cluster)
+    assert cluster.mutations() == []

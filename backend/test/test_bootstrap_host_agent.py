@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/bootstrap-host-agent.sh"
 
 
-def run_bootstrap(tmp_path, failure="", extra_args=()):
+def run_bootstrap(tmp_path, failure="", extra_args=(), enroll=True):
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     config_dir = tmp_path / "installed"
@@ -48,10 +48,16 @@ esac
         command.write_text("#!/bin/bash\nset -e\n" + body + "\n")
         command.chmod(0o755)
     log = tmp_path / "calls"
+    token_file = tmp_path / "enroll.env"
+    token_file.write_text("DOOPS_AGENT_ENROLL_TOKEN=synthetic-enrollment-canary\n")
+    command = ["bash", str(script), "--version", "v1.3.48",
+               "--gateway", "https://gateway.example.com",
+               "--cluster", "doops-test", "--instance", "node-1"]
+    if enroll:
+        command.extend(["--enroll-token-file", str(token_file)])
+    command.extend(extra_args)
     result = subprocess.run(
-        ["bash", str(script), "--version", "v1.3.48",
-         "--gateway", "https://gateway.example.com",
-         "--cluster", "doops-test", "--instance", "node-1", *extra_args],
+        command,
         env={**os.environ, "PATH": f"{commands}:{os.environ['PATH']}",
              "DOOPS_AGENT_IMAGE_REPOSITORY": "registry.example.com/doops-agent",
              "TEST_FAILURE": failure, "TEST_CALLS": str(log)},
@@ -67,6 +73,10 @@ def test_bootstrap_writes_pinned_persistent_deployment_and_waits(tmp_path):
     service = compose["services"]["agent"]
     assert "@sha256:" in service["image"]
     assert service["command"][-4:] == ["-cluster", "doops-test", "-instance", "node-1"]
+    assert service["env_file"] == [str(path / "enrollment.env")]
+    compose_text = (path / "compose.yaml").read_text()
+    assert "synthetic-enrollment-canary" not in compose_text
+    assert (path / "enrollment.env").read_text() == "DOOPS_AGENT_ENROLL_TOKEN=synthetic-enrollment-canary\n"
     assert not service.get("ports")
     assert not any("docker.sock" in value for value in service["volumes"])
     # The model provider comes from the Gateway; nothing model-related is installed.
@@ -85,6 +95,14 @@ def test_bootstrap_stops_failed_container_without_claiming_success(tmp_path, fai
     assert " stop\n" in calls
     assert path.exists()
     assert "Agent registered:" not in result.stdout
+
+
+def test_bootstrap_without_enrollment_keeps_the_existing_registration(tmp_path):
+    result, path, _calls = run_bootstrap(tmp_path, enroll=False)
+    assert result.returncode == 0, result.stderr
+    service = json.loads((path / "compose.yaml").read_text())["services"]["agent"]
+    assert "env_file" not in service
+    assert not (path / "enrollment.env").exists()
 
 
 def test_bootstrap_refuses_existing_agent(tmp_path):
