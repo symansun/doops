@@ -199,6 +199,30 @@ def env_map(container):
     return {e["name"]: e.get("value", "") for e in container.get("env") or [] if "valueFrom" not in e}
 
 
+ENROLL_TOKEN_ENV = "DOOPS_AGENT_ENROLL_TOKEN"
+
+
+def enrollment_token_ref(container):
+    """Return the Secret reference for the Agent enrollment token, if any.
+
+    The Chart only renders the token from a Secret. A token passed any other
+    way would be dropped by adoption and could strand the Agent once its
+    target enforces enrollment, so adoption refuses it instead.
+    """
+    for arg in list(container.get("command") or []) + list(container.get("args") or []):
+        if str(arg).lstrip("-").split("=", 1)[0] == "enroll-token":
+            raise AdoptError("adoption cannot carry an -enroll-token argument; "
+                             "move the token into a Secret referenced by " + ENROLL_TOKEN_ENV)
+    for entry in container.get("env") or []:
+        if entry.get("name") != ENROLL_TOKEN_ENV:
+            continue
+        ref = (entry.get("valueFrom") or {}).get("secretKeyRef")
+        if not ref or not ref.get("name") or "value" in entry:
+            raise AdoptError(ENROLL_TOKEN_ENV + " must come from a Secret (valueFrom.secretKeyRef) to be adopted")
+        return {"enrollmentTokenSecret": ref["name"], "enrollmentTokenKey": ref.get("key") or "token"}
+    return {}
+
+
 def service_account(pod_spec):
     return pod_spec.get("serviceAccountName") or pod_spec.get("serviceAccount") or "default"
 
@@ -239,6 +263,7 @@ def validate_deployment(deployment, cluster, instance):
         raise AdoptError("deployment Gateway identity does not match this Agent")
     if not env.get("DOOPS_GATEWAY_URL"):
         raise AdoptError("deployment env DOOPS_GATEWAY_URL is required")
+    enrollment_token_ref(container)
 
 
 def chart_values(deployment, workload, repository, digest):
@@ -262,6 +287,7 @@ def chart_values(deployment, workload, repository, digest):
             "url": env["DOOPS_GATEWAY_URL"],
             "cluster": env["DOOPS_GATEWAY_CLUSTER"],
             "instance": env["DOOPS_GATEWAY_INSTANCE"],
+            **enrollment_token_ref(container),
         },
         "proxy": {"allowedHosts": env.get("DOOPS_PROXY_ALLOW_HOSTS", "")},
         "nodeSelector": pod.get("nodeSelector") or {},

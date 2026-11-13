@@ -264,7 +264,6 @@ func OpenGatewayStore(path string) (*GatewayStore, error) {
 			return nil, err
 		}
 	}
-	trackOpenGatewayStore(store)
 	return store, nil
 }
 
@@ -279,7 +278,6 @@ func (s *GatewayStore) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	untrackOpenGatewayStore(s)
 	return s.db.Close()
 }
 

@@ -4,27 +4,10 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
-	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
-
-// openGatewayStores lets tests find the store opened by the current test.
-// Agent registration itself never consults this set.
-var openGatewayStores sync.Map
-
-func trackOpenGatewayStore(store *GatewayStore) {
-	if store != nil {
-		openGatewayStores.Store(store, struct{}{})
-	}
-}
-
-func untrackOpenGatewayStore(store *GatewayStore) {
-	if store != nil {
-		openGatewayStores.Delete(store)
-	}
-}
 
 func (s *GatewayStore) migrateAgentEnrollments() error {
 	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS agent_enrollments (

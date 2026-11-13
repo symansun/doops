@@ -33,8 +33,6 @@ description: |
   不消费该参数，带上也不代表审计或隔离；同一工作区复用原名，`pull` 必须使用已有 session。
 - CLI 只接受 Gateway target；没有直连 target、SSH target 或按 target 保存的 token。
   Gateway 登录态按 Gateway URL 共享，target 配置只存路由。Agent 注册默认不用 token。
-  某个 target 确认了 enrollment 之后，才使用绑定到该 cluster/instance 的 enrollment token，
-  不用 user token 或受管凭据。已在线的 Agent 不因这项能力而断开。
 - 凭据 payload 只走 stdin，不进入命令参数、prompt、日志、文档、提交或工作区。
   运行时只传 `--credential <resource-name>`（DoSql 自动绑定，见下文），只要求该 target 的 grant。
   不要用 `exec` 输出密码再让用户粘贴；已有目标 Secret 用 `credential configure --from-secret` 导入。
@@ -129,7 +127,7 @@ DoSql 必须从 `doops sql` 进入；普通 `ask` 不保证注入 DoSql 工具�
 ## 故障入口
 
 - `401` 且 `code=gateway_auth_*`：读取具体分类（missing/invalid/expired/revoked/disabled/expiry）。
-  `agent_enrollment_auth_failed` 是 Agent enrollment token 问题，`edge_enrollment_auth_failed` 是边缘通道 enrollment token 问题。裸 `401` 不归因于受管凭据。
+  `*_enrollment_auth_failed` 是 Agent/Edge enrollment token 问题。裸 `401` 不归因于受管凭据。
 - `403`：已认证但权限不足。
 - `credential_*` 错误与 `credential preflight failed`：见 `docs/CREDENTIAL_RESOURCES.md`。
 - 报错都是 `错误码: 原因`，原因就是要修的东西，不要只看错误码去猜：

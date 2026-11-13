@@ -171,6 +171,7 @@ func runReverseTunnel(gw *server.Gateway, rawURL, cluster, instance, enrollToken
 	}
 	cluster = strings.TrimSpace(cluster)
 	instance = strings.TrimSpace(instance)
+	var authBackoff time.Duration
 
 	for {
 		if reverseTunnelContinue != nil && !reverseTunnelContinue() {
@@ -190,14 +191,25 @@ func runReverseTunnel(gw *server.Gateway, rawURL, cluster, instance, enrollToken
 		}
 		conn, resp, err := reverseTunnelDial(tunnelURL, header)
 		if err != nil {
+			wait := reconnectDelay
 			if resp != nil {
 				log.Printf("❌ reverse tunnel dial failed: %v (HTTP %s)", err, resp.Status)
+				if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+					authBackoff = nextReverseTunnelAuthBackoff(authBackoff, reconnectDelay)
+					wait = authBackoff
+					if strings.TrimSpace(enrollToken) == "" {
+						log.Printf("🔑 gateway requires an enrollment token for cluster=%s instance=%s; set DOOPS_AGENT_ENROLL_TOKEN to the token issued by `doops-gateway enroll create` for this target, or revoke the target's enrollment on the Gateway. Retrying in %s", cluster, instance, wait)
+					} else {
+						log.Printf("🔑 gateway rejected the enrollment token for cluster=%s instance=%s; check DOOPS_AGENT_ENROLL_TOKEN matches an active enrollment for this exact target (`doops-gateway enroll list`). Retrying in %s", cluster, instance, wait)
+					}
+				}
 			} else {
 				log.Printf("❌ reverse tunnel dial failed: %v", err)
 			}
-			time.Sleep(reconnectDelay)
+			time.Sleep(wait)
 			continue
 		}
+		authBackoff = 0
 
 		log.Printf("✅ reverse tunnel connected: cluster=%s instance=%s", cluster, instance)
 		func() {
@@ -209,6 +221,28 @@ func runReverseTunnel(gw *server.Gateway, rawURL, cluster, instance, enrollToken
 		log.Printf("⚠️ reverse tunnel disconnected; reconnecting in %s", reconnectDelay)
 		time.Sleep(reconnectDelay)
 	}
+}
+
+// reverseTunnelMaxAuthBackoff caps the retry interval after the Gateway
+// refuses registration (401/403), so a misconfigured token does not hammer the
+// Gateway while the Agent still recovers on its own once the token is fixed.
+const reverseTunnelMaxAuthBackoff = 60 * time.Second
+
+func nextReverseTunnelAuthBackoff(current, base time.Duration) time.Duration {
+	if base <= 0 {
+		base = time.Second
+	}
+	if current < base {
+		return base
+	}
+	next := current * 2
+	if next > reverseTunnelMaxAuthBackoff || next <= 0 {
+		next = reverseTunnelMaxAuthBackoff
+	}
+	if next < base {
+		next = base
+	}
+	return next
 }
 
 func buildGatewayAgentURL(rawURL, cluster, instance string) (string, error) {

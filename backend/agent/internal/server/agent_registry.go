@@ -2,11 +2,16 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
 	"time"
 )
+
+// ErrAgentEnrollmentRequired rejects a session without an enrollment for a
+// target whose enrollment is already confirmed.
+var ErrAgentEnrollmentRequired = errors.New("agent enrollment required")
 
 // AgentRegistry is the single owner of live agent sessions and their persisted
 // connectivity state.
@@ -55,6 +60,20 @@ func (r *AgentRegistry) Register(agent *GatewayAgent) error {
 		r.retired[key] = removeRetiredRuntimeID(r.retired[key], agent.RuntimeID)
 	}
 	old := r.sessions[key]
+	if agent.TokenID == "" {
+		// Checked again under the registry lock: a session that passed the
+		// handler's open-registration check must not replace an Agent whose
+		// target confirmed its enrollment in the meantime.
+		locked, err := r.store.TargetHasActiveAgentEnrollment(agent.Cluster, agent.Instance)
+		if err != nil {
+			r.mu.Unlock()
+			return fmt.Errorf("check agent enrollment: %w", err)
+		}
+		if locked {
+			r.mu.Unlock()
+			return fmt.Errorf("%w for %s", ErrAgentEnrollmentRequired, key)
+		}
+	}
 	generation := r.generations[key] + 1
 	agent.Generation = generation
 	if err := r.store.MarkAgentOnline(AgentStatus{

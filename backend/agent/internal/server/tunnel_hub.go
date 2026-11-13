@@ -588,7 +588,6 @@ func (h *GatewayHub) HandleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	clientIP := loginClientIP(r)
 	if h.loginFailures.limited(clientIP, req.Username, time.Now(), h.opts.LoginFailureLimit, h.opts.LoginFailureWindow) {
-		_, _ = h.store.VerifyUserPassword(req.Username, req.Password)
 		w.Header().Set("Retry-After", "60")
 		writeDoopsError(w, http.StatusTooManyRequests, "", doopsErrorResponse{
 			Error:      "rate_limited",

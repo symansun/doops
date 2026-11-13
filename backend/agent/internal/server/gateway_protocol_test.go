@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -110,8 +111,8 @@ func TestGatewayAgentRegistrationStaysOpenUntilEnrollmentIsConfirmed(t *testing.
 	defer store.Close()
 
 	gw := NewGatewayHub(store, GatewayHubOptions{AgentLease: time.Minute})
-	delivered := 0
-	gw.registration.onRegistered = func(*GatewayAgent) { delivered++ }
+	var delivered atomic.Int32
+	gw.registration.onRegistered = func(*GatewayAgent) { delivered.Add(1) }
 	mux := http.NewServeMux()
 	gw.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -127,7 +128,7 @@ func TestGatewayAgentRegistrationStaysOpenUntilEnrollmentIsConfirmed(t *testing.
 	var openAgent *GatewayAgent
 	requireEventually(t, time.Second, func() bool {
 		openAgent = gw.getAgent("dev", "local")
-		return openAgent != nil && delivered == 1
+		return openAgent != nil && delivered.Load() == 1
 	})
 
 	badWS := "ws" + strings.TrimPrefix(ts.URL, "http") + "/v1/agent/connect?cluster=dev"
@@ -147,7 +148,7 @@ func TestGatewayAgentRegistrationStaysOpenUntilEnrollmentIsConfirmed(t *testing.
 	if err != nil {
 		t.Fatalf("create enrollment: %v", err)
 	}
-	if current := gw.getAgent("dev", "local"); current != openAgent || delivered != 1 {
+	if current := gw.getAgent("dev", "local"); current != openAgent || delivered.Load() != 1 {
 		t.Fatal("issuing an enrollment disconnected the live agent")
 	}
 	pending, _, err := websocket.DefaultDialer.Dial(agentWS, nil)
@@ -172,14 +173,14 @@ func TestGatewayAgentRegistrationStaysOpenUntilEnrollmentIsConfirmed(t *testing.
 	var ready *GatewayAgent
 	requireEventually(t, time.Second, func() bool {
 		ready = gw.getAgent("dev", "local")
-		return ready != nil && ready != openAgent && delivered == 2
+		return ready != nil && ready != openAgent && delivered.Load() == 2
 	})
 
 	if _, resp, err = websocket.DefaultDialer.Dial(agentWS, nil); err == nil || resp == nil || resp.StatusCode != http.StatusUnauthorized {
 		t.Fatal("open registration remained after the enrollment was confirmed")
 	}
 	resp.Body.Close()
-	if current := gw.getAgent("dev", "local"); current != ready || delivered != 2 {
+	if current := gw.getAgent("dev", "local"); current != ready || delivered.Load() != 2 {
 		t.Fatal("unauthenticated candidate replaced the enrolled session")
 	}
 	untouched, resp, err := websocket.DefaultDialer.Dial(other, http.Header{"Authorization": []string{"Bearer " + created.Plaintext}})

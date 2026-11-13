@@ -13,6 +13,11 @@
 - 可为单个 target 签发 enrollment token。已在线 Agent 保持连接；该 Agent 用 token 连上一次之后，这个 target 的后续注册才需要它。未签发的 target 仍按原来的 cluster/instance 注册。不要使用 user token
 - 控制台的变更请求要求 `Origin` 与控制台自身来源一致
 - 密码登录对连续失败限速；未知用户名和错误密码走同一条口令校验
+- 登录限速按客户端地址和「地址 + 用户名」分别计数，不会单凭用户名把别人锁在外面；经本机或内网反向代理时按代理传来的客户端地址计数；计数表有上限，被限速的请求不再做口令校验
+- 某个 target 确认 enrollment 之后，未带 token 的连接即使已经通过握手，也不能顶替已在线的 Agent
+- Agent 注册被 Gateway 以 401/403 拒绝时按指数退避重试（最长约 60 秒），连上后复位，并在日志里提示检查 `DOOPS_AGENT_ENROLL_TOKEN`
+- 控制台同源校验在 TLS 反向代理后按 `X-Forwarded-Proto`/`X-Forwarded-Host` 推断来源，也可用 `DOOPS_CONSOLE_ORIGIN` 显式指定
+- `adopt` 接管 Agent 时保留通过 Secret 注入的 enrollment token，无法保留的注入方式会直接拒绝接管
 
 ### Fixed
 
