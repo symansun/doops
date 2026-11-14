@@ -114,6 +114,23 @@ func handleNativeHelmRequest(w http.ResponseWriter, request *http.Request, recor
 		http.Error(w, "native_helm_context_unavailable", http.StatusForbidden)
 		return
 	}
+	repository, err := managedHelmURL(record.Auth.URL)
+	if err != nil {
+		http.Error(w, "helm_repository_invalid", http.StatusInternalServerError)
+		return
+	}
+	chart, err := managedHelmURL(input.Chart)
+	if err != nil {
+		http.Error(w, "helm_chart_invalid", http.StatusBadRequest)
+		return
+	}
+	// A bound credential authenticates its own origin; it does not restrict
+	// which public Charts the target may download.
+	if !strings.EqualFold(repository.Hostname(), chart.Hostname()) ||
+		managedHelmPort(repository) != managedHelmPort(chart) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(record.Auth)
 }

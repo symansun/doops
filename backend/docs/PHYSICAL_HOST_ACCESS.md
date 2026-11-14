@@ -185,10 +185,8 @@ doops -session <s> ssh --target <vm-target> --host user@<physical-host> \
 ## 4. 仅在明确要求新接入时安装
 
 确需长期接入且获安装授权后，按 [集群接入指南](CLUSTER_INSTALL_GUIDE.md) 的
-Kubernetes / K3s Helm 流程执行，使用仓库 `backend/scripts/release-managed-agent.sh`
-与 `backend/deploy/helm/doops-agent`，准备已审查 values、授权 kubeconfig 和已核验
-CI 镜像 digest，并完成指南中的安装验收。新集群 bootstrap 不代表已完成 Gateway
-接管验收，也不提供自动回滚。
+Kubernetes / K3s GitOps 初装流程执行，并完成其中的安装验收。
+Agent 升级和配置变更的入口统一见 [构建与部署 SOP](BUILD_DEPLOY_SOP.md)。
 
 上述安装流程不替代已有独立 Docker Agent 的正式外部发布；后者不要求先迁 K8S。
 本文不提供无 Agent 主机的独立 Docker 高权限安装配方，不宣称 ESXi 可以直接运行 Linux Agent 容器。

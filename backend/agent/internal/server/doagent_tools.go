@@ -23,7 +23,7 @@ func doagentAllowedTools(apply bool, skill string) []string {
 	}
 	if apply {
 		switch skill {
-		case "":
+		case "", "k8s", "image-build":
 			tools = append(tools, "mcp_doops_helm")
 		case "doweb":
 			tools = append(tools, "mcp_doops_web")

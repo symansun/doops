@@ -73,13 +73,20 @@ DoOps 首先解决的是“够得着”：
 
 ![Kubernetes 与交付](../images/k8s-delivery.png)
 
-*图 5 · 观察 → preflight → apply → verify 三段式交付*
+*图 5 · Helm 原生执行返回已部署修订；任务级验收单独进行*
 
 **看**：Pod、Deployment、Service、事件、日志、top、rollout 状态、Helm 的 list/history/status/values（只回 key 路径）、ConfigMap 键名。
 
 **动**：重启、扩缩、cordon/uncordon、删 Pod 这些写操作必须显式确认，并走 target 级变更租约；**Secret 和 ServiceAccount 连读都不开放**。
 
-**交付**：Helm 发布拆成 preflight（dry-run 先渲染校验）→ apply（真正执行）→ verify（读回 revision 与实时对象逐项比对，配合 expected_image 识别“命令成功但镜像没变”）。也可以直接用自然语言发布：任务里写清目标、范围、镜像来源、原因和可机器校验的验收条件，完成后给出验证证据。
+**交付**：`doops_helm` 将选定的 Chart、values 和 Helm 选项交给原生
+`helm upgrade --install --wait`，再读回 release。只有本次调用对应的 release 为
+`deployed`，且 revision 与 description 都匹配本次 mutation，才报告成功。Chart 可以只含
+任意合法资源，不要求 workload 或 Ingress；Helm 不额外强制二次确认、重置 values、server
+dry-run 或 CI/镜像 provenance 门禁。明确的原生 Helm 命令也可以通过单独审计的 `exec`
+路径执行。资产、凭据 origin 和失败细节见
+[Helm 发布契约](../../backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md)。自然语言发布仍可在任务中写明
+target、范围、原因和需要的任务级验收条件。
 
 此外还有两件配套：`check` 比对线上镜像与构建一致性；Agent 自升级走独立 Job（备份 → 升级 → 校验 → 失败回滚），不让 Agent 在运行中替换自己。
 
@@ -87,14 +94,15 @@ DoOps 首先解决的是“够得着”：
 
 ![镜像与制品](../images/artifacts.png)
 
-*图 6 · 镜像的权威来源是 CI；目标侧只做复制与同步，Harbor 按 pull 方式收敛*
+*图 6 · 构建与仓库流程准备镜像；目标侧负责复制与同步*
 
 - **构建**：在目标 Agent 上用 BuildKit 出 OCI 镜像，支持多平台、输出本地或直接推送；
 - **复制**：仓库之间按 digest 复制，避免“看起来一样、实际不同”；
 - **仓库同步**：批量同步，源与目标都做 digest 校验；
 - **Harbor 收敛**：CI → 本集群 Harbor 的 pull 模式，有定时任务与校验脚本，不做集群间互拷。
 
-边界：镜像是 CI 的产物，目标机上的构建/复制只是执行面，不能替代 CI——否则“线上跑的是哪个 commit”就说不清。
+边界：构建和 provenance 记录可以来自 CI 或指定的构建主机。目标侧构建与复制属于执行能力；
+Helm 发布使用任务明确给出的镜像和 Chart 事实，不把 CI 或 provenance 作为额外前置条件。
 
 ### 五、数据库与网站：两个专业运维入口
 
@@ -115,7 +123,7 @@ DoOps 首先解决的是“够得着”：
 *图 8 · AI 拿到的不是一台 shell，而是一份工具白名单；Skill 决定它在这个目标能做什么*
 
 - **诊断模式（ask）**：可以读文件、查状态、跑命令，帮你想清楚问题；
-- **变更模式（apply）**：只给结构化变更工具（Helm 或网站发布二选一），需要变更授权，产出验证证据；
+- **变更模式（apply）**：使用结构化变更工具，需要变更授权，产出验证证据；明确的原生 Helm 命令仍可通过单独审计的 `exec` 路径执行；
 - **不会发生的组合**：诊断拿不到变更工具，变更拿不到自由 Bash，数据库/未知 Skill 不继承变更能力；
 - **成功判定**：由变更授权、attestation 和终态证据共同判定，模型口头说“已完成”不算数；
 - **Skill**：Agent 内置 shell、K8s、镜像构建、数据库、网站、蒸馏等 6 个 Skill，团队也可以写自己的 SKILL.md 固化 SOP。
@@ -186,7 +194,7 @@ DoOps 不是“给运维工具加了个 AI 聊天框”。从第一天起，AI �
 
 - **有自己的入口**：AI 通过编辑器里的 Skill 或 Agent 接口接入，而不是模拟键盘敲终端；
 - **共享同一套身份**：AI 的操作同样走 token、grant、审计；撤权或禁用对它同样即时生效；
-- **不共享全部工具**：诊断（ask）和变更（apply）拿到的工具列表不同——诊断可以跑命令，变更只能用结构化变更工具，并且需要变更授权。
+- **不共享全部工具**：诊断（ask）和变更（apply）拿到的工具列表不同——apply 轮次使用结构化变更工具并需要变更授权，明确命令则走单独审计的 `exec` 路径。
 
 ### 十三、为 AI 设计的六个细节
 
@@ -194,7 +202,9 @@ DoOps 不是“给运维工具加了个 AI 聊天框”。从第一天起，AI �
 2. **接口面向自动化**：CLI、Web、AI 都只是同一个 API 的客户端；JSON-RPC 工具面、Git HTTP、REST 管理接口，CI 可以直接调用；重试语义明确——结果未知时不自动重放。
 3. **权限与人类同源**：AI 的越权就是人的越权，grant 撤销即时生效；不存在“AI 专用后门”。
 4. **能力靠 Skill 教**：内置 6 个 Skill（shell / K8s / 镜像 / 数据库 / 网站 / 蒸馏）+ 项目自定义 SKILL.md，把团队的 SOP 固化成 AI 能照着执行的流程；模型按 target 交付，凭据不落在提示词里。
-5. **成功靠证据，不靠嘴**：变更走 preflight → apply → verify，读回实时对象与 digest；模型说“完成”不算，终态证据才算；结果未知就保留“未知”，不假装成功。
+5. **成功靠证据，不靠嘴**：Helm 成功依据是原生命令以及本次 release 已 deployed 且
+   revision 匹配的回执；任务要求的业务健康或镜像检查属于单独验收。模型说“完成”不算，
+   结果未知就保留“未知”，不假装成功。
 6. **可追溯是底线**：审计覆盖命令、执行、变更、数据、凭据五层；先记账再执行；审计不可用即拒绝服务。
 
 ### 十四、AI 原生的代价与边界

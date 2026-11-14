@@ -55,6 +55,9 @@ async function uploadDoopsAttachment(
   sessionId: string,
   file: File,
 ): Promise<AgentAttachmentReference> {
+  if (options.session.demo) {
+    return { id: `demo-${crypto.randomUUID()}`, name: file.name, mediaType: file.type || "application/octet-stream", bytes: file.size }
+  }
   const form = new FormData()
   form.set("cluster", options.target.cluster)
   form.set("instance", options.target.instance)

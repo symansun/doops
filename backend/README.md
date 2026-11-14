@@ -94,15 +94,15 @@ SSH 服务端。镜像保留 `ssh` 客户端，已在线 Agent 可通过结构�
 - doagent 来源：最终镜像从显式传入的 `DO_AGENT_IMAGE` 复制，不依赖基础镜像内的历史二进制；
   `runtime-versions.env` 保留版本与 digest 元数据用于校验
 - DoOps 只有一个发布版本：CLI、Gateway 和 Agent 统一嵌入同一个发布标签，并同时报告
-  本次构建的完整 40 位源提交作为不可变 provenance；`doops targets` 的
-  `RELEASE_COMMIT` 必须与 CLI 的 commit 一致
+  本次构建的完整 40 位源提交作为不可变 provenance；已安装 CLI 和目标 Agent
+  可处于不同版本。Agent 自身升级的版本验收见 [构建与部署 SOP](docs/BUILD_DEPLOY_SOP.md)
 - `DO_AGENT_VERSION` / `DO_AGENT_REVISION` 只记录内置 doagent 依赖 provenance，不是
   DoOps 发布版本；`cli-contract/v3` 只通过 `doops --contract` 暴露为协议兼容性检查，
   不进入正常版本输出
 - 网关二进制：`/app/doops-agent`
 - doagent AI 内核：`/usr/local/bin/do-agent`
 - 构建闸门：独立 `DO_AGENT_IMAGE` 和最终镜像必须确认 `/usr/local/bin/do-agent --version` 与声明的 `DO_AGENT_VERSION` 完全一致；基础镜像只负责 BuildKit、kubectl、Python/PyYAML、Helm 等工具，并固定到 OCI digest
-- 发布原则：最终镜像同时固定 `DOOPS_AGENT_BASE_IMAGE` 和 `DO_AGENT_IMAGE`；app 镜像 push 前必须校验两者 label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --version` 与声明版本一致、`buildctl --version`、Python/PyYAML 与 Helm。部署由明确的自然语言任务进入 Gateway；任务必须给出 target、服务范围、镜像版本、变更原因和验收条件。
+- 发布原则：最终镜像同时固定 `DOOPS_AGENT_BASE_IMAGE` 和 `DO_AGENT_IMAGE`；app 镜像 push 前必须校验两者 label、`/app/doops-agent -help`、`/usr/local/bin/do-agent --version` 与声明版本一致、`buildctl --version`、Python/PyYAML 与 Helm。普通业务 Helm 发布见 [业务发布契约](docs/NATURAL_LANGUAGE_DEPLOYMENT.md)。
 
 协议与端点：
 
@@ -345,44 +345,19 @@ doops -session smoke ask --target prod-master --msg '用一句话说明当前机
 不是日常 DoOps 连接方式。在线 Agent 的出站 SSH 使用结构化 `doops ssh` 入口，
 保留每个远端 argv，避免多层命令引号被远端 shell 破坏。
 
-新集群首次安装使用本仓库 Helm bootstrap 脚本，由持有集群 kubeconfig 的管理主机或 CI 执行；
-完整 values 必须明确 `gateway.cluster/instance`。控制器就绪后的镜像更新使用
-`doops upgrade`，普通业务使用 `ask --apply`，两者均不需要开发机 kubeconfig。见
-[docs/CLUSTER_INSTALL_GUIDE.md](docs/CLUSTER_INSTALL_GUIDE.md)：
+K8s 首次安装按 [集群接入指南](docs/CLUSTER_INSTALL_GUIDE.md) 的 GitOps 流程执行，
+values 明确 `gateway.cluster/instance`，新身份不能与现有在线实例冲突。
+已支持 `upgradeAudit` v1 的在线 Agent 使用 `doops upgrade`；
+`scripts/release-managed-agent.sh` 只委托同一升级入口。
+旧 Agent 首升及配置变更按 [构建与部署 SOP](docs/BUILD_DEPLOY_SOP.md) 审查独立 Job。
 
-```bash
-bash scripts/release-managed-agent.sh \
-  --release <helm-release> \
-  --namespace <namespace> \
-  --values <reviewed-complete-values.yaml> \
-  --kubeconfig <external-controller-kubeconfig> \
-  --image <repository>@sha256:<verified-ci-digest>
-```
+### 维护者发布 Helm release
 
-以上脚本从 `backend/` 执行。新身份不能与现有在线实例冲突；旧 Helm Agent 的一次性
-控制器升级需走已有 release 模式，不传 `--values`。不得重跑外部清单安装器或用
-`kubectl set image`、`docker run` 换镜像。
-
-### 维护者发布业务 workload
-
-发布者通过 `doops ask --apply` 提交明确的自然语言任务。任务必须直接给出 Gateway
-target、服务范围、不可变镜像 digest、变更原因和验收条件；需要凭据时仅以可重复的
-`--credential <resource-name>` 元数据引用声明。Gateway 绑定用户、target 和 session，
-凭据只按 target 绑定并在目标 doops-agent 的内部控制面物化；公开
-prompt、doagent 上下文和 metadata binding 不接收凭据 payload。完整流程见
-[docs/NATURAL_LANGUAGE_DEPLOYMENT.md](docs/NATURAL_LANGUAGE_DEPLOYMENT.md) 和
-[docs/CREDENTIAL_RESOURCES.md](docs/CREDENTIAL_RESOURCES.md)。
-
-`doops upgrade` 升级 Helm 托管的 doops-agent。Agent 创建集群内 Job，复用自己已经挂载的
-kubeconfig，不需要操作机 kubeconfig。Agent 进程不修改自身 workload。镜像支持
-`repository:tag` 或 `repository@sha256:<64 hex>`，发布优先使用已核验的 digest。
-还没有该控制器的旧 Agent 和新集群第一次接入仍走
-外部 `scripts/release-managed-agent.sh` 路径；已有 target 必须已有 Helm release，
-脚本不自动接管未受管 workload。显式修改 Helm 运行配置也走该外部路径。
-普通业务 workload 由 target 指向的 Agent/doagent
-执行发布；不要用 `kubectl set image` 改 Agent。正式业务发布统一使用 Gateway 上的
-`doops ask --apply`；CI 可以在镜像
-构建成功后调用同一自然语言入口，但不拥有另一套环境注册表或结构化发布协议。
+业务 Helm 发布可以使用 `doops ask --apply` 自然语言任务，或通过 `doops exec`
+执行用户明确授权的原生命令。DoOps 负责 target 授权、执行和审计，不定义业务发布资格。
+参数、资产和结果要求统一见
+[业务发布契约](docs/NATURAL_LANGUAGE_DEPLOYMENT.md)，凭据生命周期见
+[凭据文档](docs/CREDENTIAL_RESOURCES.md)。
 
 ## 常用命令
 
@@ -432,9 +407,9 @@ SQL 的 `--dry-run` 只适用于可回滚批次；MySQL/Oracle 隐式提交 DDL 
 
 ### Agent 自升级
 
-`doops upgrade` 要求在线 Agent 已包含自升级控制器、标准 Helm Deployment、精确
-Gateway 身份和可共享的 `/root/.kube` 或 `/root/.kube/config` 挂载。Job 复用该挂载，
-不需要操作机 kubeconfig。源码修改不代表已安装 CLI、Gateway 或线上 Agent 已更新：
+`doops upgrade` 由独立 Job 执行；在线 Agent 的控制器、身份和集群权限要求见
+[构建与部署 SOP](docs/BUILD_DEPLOY_SOP.md#四-agent-部署与热更新机制)。
+源码修改不代表已安装 CLI、Gateway 或线上 Agent 已更新：
 
 ```bash
 doops -session agent-upgrade upgrade \
@@ -447,7 +422,7 @@ doops -session agent-upgrade upgrade \
   --image registry.example.com/doops-agent@sha256:<digest>
 ```
 
-镜像支持 tag 或不可变 digest。Job 在 Agent 进程外执行 Helm；Job 内失败会尝试回滚，Job 成功后协议探针失败的回滚仍依赖 target 可连接。还没有该控制器的旧 Agent 仍用 `scripts/release-managed-agent.sh`。入口及前提统一见 [集群接入指南](docs/CLUSTER_INSTALL_GUIDE.md)。
+镜像支持 tag 或不可变 digest。Job 在 Agent 进程外执行 Helm；Job 内失败会尝试回滚，Job 成功后协议探针失败的回滚仍依赖 target 可连接。旧 Agent 首升的入口及前提统一见 [构建与部署 SOP](docs/BUILD_DEPLOY_SOP.md)。
 
 `-session` 必传；`PREVIEW` 仅表示预演，`ACCEPTED` 仅表示 Job 已提交。升级只有在
 Job、最终 Deployment 状态和能力检查通过后才报告 `OK`。新集群 bootstrap 的资源就绪

@@ -40,19 +40,87 @@ func fetchManagedHelmChart(ctx context.Context, repositoryURL, username, passwor
 	if err != nil || !strings.HasSuffix(endpoint.Path, ".tgz") {
 		return nil, "", errors.New("helm_chart_invalid")
 	}
+	// A credential is only sent to its own origin. A Chart from another origin
+	// is fetched anonymously, so public Charts are never blocked by an unrelated
+	// private repository binding and private credentials never reach that host.
 	if !strings.EqualFold(repository.Hostname(), endpoint.Hostname()) ||
 		managedHelmPort(repository) != managedHelmPort(endpoint) {
-		return nil, "", errors.New("helm_chart_scope_mismatch")
+		username, password = "", ""
 	}
 	if (username == "") != (password == "") {
 		return nil, "", errors.New("managed_helm_auth_incomplete")
 	}
+	response, client, err := fetchManagedHelmResponse(ctx, endpoint, username, password)
+	if err != nil {
+		return nil, "", err
+	}
+	defer client.CloseIdleConnections()
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("helm_artifact_http_%d", response.StatusCode)
+	}
+	if response.ContentLength > managedHelmCompressedLimit {
+		return nil, "", errors.New("helm_chart_too_large")
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, managedHelmCompressedLimit+1))
+	if err != nil {
+		var requestErr *url.Error
+		if errors.As(err, &requestErr) {
+			err = requestErr.Err
+		}
+		return nil, "", fmt.Errorf("helm_repository_unavailable: %s:%s: reading chart response: %s",
+			endpoint.Hostname(), managedHelmPort(endpoint), sanitizeSecretText(err.Error()))
+	}
+	if len(body) > managedHelmCompressedLimit {
+		return nil, "", errors.New("helm_chart_too_large")
+	}
+	if err := validateManagedHelmChart(ctx, body); err != nil {
+		return nil, "", err
+	}
+	sum := sha256.Sum256(body)
+	return body, fmt.Sprintf("sha256:%x", sum), nil
+}
+
+func fetchManagedHelmResponse(ctx context.Context, endpoint *url.URL, username, password string) (*http.Response, *http.Client, error) {
+	for redirects := 0; ; redirects++ {
+		response, client, err := requestManagedHelmArtifact(ctx, endpoint, username, password)
+		if err != nil {
+			return nil, nil, err
+		}
+		switch response.StatusCode {
+		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+			// Authenticated repository responses never redirect credentials.
+			if username != "" {
+				return response, client, nil
+			}
+		default:
+			return response, client, nil
+		}
+		next, err := response.Location()
+		response.Body.Close()
+		client.CloseIdleConnections()
+		if redirects >= 9 {
+			return nil, nil, errors.New("helm_chart_redirect_limit")
+		}
+		// CDN redirects may carry a server-issued signed query. Never echo it
+		// in errors, and validate/pin the new HTTPS destination on every hop.
+		if err != nil || next.Scheme != "https" || next.User != nil || next.Fragment != "" || next.Opaque != "" {
+			return nil, nil, errors.New("helm_chart_redirect_invalid")
+		}
+		if _, err := managedHelmURL(next.Scheme + "://" + next.Host); err != nil {
+			return nil, nil, errors.New("helm_chart_redirect_invalid")
+		}
+		endpoint = next
+	}
+}
+
+func requestManagedHelmArtifact(ctx context.Context, endpoint *url.URL, username, password string) (*http.Response, *http.Client, error) {
 	if _, err := resolveCredentialHost(ctx, endpoint.Hostname()); err != nil {
-		return nil, "", errors.New("helm_repository_unavailable")
+		return nil, nil, errors.New("helm_repository_unavailable")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
-		return nil, "", errors.New("helm_chart_invalid")
+		return nil, nil, errors.New("helm_chart_invalid")
 	}
 	if username != "" && password != "" {
 		request.SetBasicAuth(username, password)
@@ -63,30 +131,27 @@ func fetchManagedHelmChart(ctx context.Context, repositoryURL, username, passwor
 	// DialContext pins the authorized host; environment proxies must not change its destination.
 	transport.Proxy = nil
 	transport.DisableCompression = true
-	defer client.CloseIdleConnections()
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, "", errors.New("helm_repository_unavailable")
+		client.CloseIdleConnections()
+		var requestErr *url.Error
+		if errors.As(err, &requestErr) {
+			// The wrapper includes the full URL, including a CDN's signed query.
+			err = requestErr.Err
+		}
+		detail := err.Error()
+		// Protocol errors may quote response bytes that echo the request's auth.
+		for _, secret := range []string{username, password, strings.TrimPrefix(request.Header.Get("Authorization"), "Basic ")} {
+			if secret != "" {
+				quoted := strconv.Quote(secret)
+				detail = strings.ReplaceAll(detail, quoted[1:len(quoted)-1], "...REDACTED")
+				detail = strings.ReplaceAll(detail, secret, "...REDACTED")
+			}
+		}
+		return nil, nil, fmt.Errorf("helm_repository_unavailable: %s:%s: %s",
+			endpoint.Hostname(), managedHelmPort(endpoint), sanitizeSecretText(detail))
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("helm_artifact_http_%d", response.StatusCode)
-	}
-	if response.ContentLength > managedHelmCompressedLimit {
-		return nil, "", errors.New("helm_chart_too_large")
-	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, managedHelmCompressedLimit+1))
-	if err != nil {
-		return nil, "", errors.New("helm_chart_invalid")
-	}
-	if len(body) > managedHelmCompressedLimit {
-		return nil, "", errors.New("helm_chart_too_large")
-	}
-	if err := validateManagedHelmChart(ctx, body); err != nil {
-		return nil, "", err
-	}
-	sum := sha256.Sum256(body)
-	return body, fmt.Sprintf("sha256:%x", sum), nil
+	return response, client, nil
 }
 
 func managedHelmURL(raw string) (*url.URL, error) {
@@ -139,7 +204,7 @@ func validateManagedHelmChart(ctx context.Context, body []byte) error {
 	archive := tar.NewReader(expanded)
 	seen := make(map[string]bool)
 	var root string
-	var chartYAML, valuesYAML []byte
+	var chartYAML []byte
 	for {
 		if err := ctx.Err(); err != nil {
 			return errors.New("helm_repository_unavailable")
@@ -185,18 +250,13 @@ func validateManagedHelmChart(ctx context.Context, body []byte) error {
 		if header.Size > managedHelmExpandedLimit || header.Size >= expanded.N {
 			return errors.New("helm_chart_too_large")
 		}
-		if name == root+"/Chart.yaml" || name == root+"/values.yaml" {
+		if name == root+"/Chart.yaml" {
 			if header.Typeflag != tar.TypeReg || header.Size > managedHelmYAMLLimit {
 				return invalid
 			}
-			content, err := io.ReadAll(archive)
+			chartYAML, err = io.ReadAll(archive)
 			if err != nil {
 				return invalid
-			}
-			if name == root+"/Chart.yaml" {
-				chartYAML = content
-			} else {
-				valuesYAML = content
 			}
 		}
 	}
@@ -219,7 +279,7 @@ func validateManagedHelmChart(ctx context.Context, body []byte) error {
 			return invalid
 		}
 	}
-	if compressed.Len() != 0 || chartYAML == nil || valuesYAML == nil {
+	if compressed.Len() != 0 || chartYAML == nil {
 		return invalid
 	}
 	var metadata struct {
@@ -230,10 +290,6 @@ func validateManagedHelmChart(ctx context.Context, body []byte) error {
 	if decodeManagedHelmYAML(chartYAML, &metadata) != nil ||
 		(metadata.APIVersion != "v1" && metadata.APIVersion != "v2") ||
 		metadata.Name != root || strings.TrimSpace(metadata.Version) == "" {
-		return invalid
-	}
-	var values map[string]any
-	if decodeManagedHelmYAML(valuesYAML, &values) != nil {
 		return invalid
 	}
 	return nil

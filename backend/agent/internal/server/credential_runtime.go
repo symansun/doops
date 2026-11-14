@@ -182,21 +182,12 @@ func (h *GatewayHub) resolveExplicitCredentials(
 		if err != nil {
 			return nil, err
 		}
-		// A task that names its own Helm credential has already settled which
-		// repository the Chart comes from, so discovery stays out of it.
+		// Explicit Helm references narrow the candidates. Otherwise the Agent
+		// selects among all target bindings once the actual Chart origin is known.
 		if !credentialReferencesIncludeHelm(names, entries) {
-			discovered := helmCredentialIDs(entries)
-			switch len(discovered) {
-			case 0:
-				if len(names) == 0 {
-					return nil, nil
-				}
-			case 1:
-				names = append(names, discovered...)
-			default:
-				// Several Helm repositories are bound; which one this Chart comes
-				// from is the task's to state, not the Gateway's to guess.
-				return nil, ErrCredentialAmbiguous
+			names = append(names, helmCredentialIDs(entries)...)
+			if len(names) == 0 {
+				return nil, nil
 			}
 		}
 	}
@@ -240,6 +231,7 @@ func (h *GatewayHub) resolveExplicitCredentials(
 	}
 	names = uniqueCredentialReferences(names)
 	authorized := make([]authorizedCredentialMaterialization, 0, len(names))
+	seenHelmIDs := make(map[string]struct{}, len(names))
 	for _, name := range names {
 		request := CredentialUseRequest{
 			ActorID: auth.UserID,
@@ -253,6 +245,12 @@ func (h *GatewayHub) resolveExplicitCredentials(
 		resolved, err := h.store.AuthorizeCredentialUse(request)
 		if err != nil {
 			return nil, err
+		}
+		if resolved.Resource.Type == CredentialTypeHelmRepository {
+			if _, seen := seenHelmIDs[resolved.Resource.ID]; seen {
+				continue
+			}
+			seenHelmIDs[resolved.Resource.ID] = struct{}{}
 		}
 		use := credentialUseForType(resolved.Resource.Type)
 		if skill == "dosql" {

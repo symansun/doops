@@ -21,7 +21,7 @@ interface RpcBody {
   cancelRequestId?: string
 }
 
-const AGENT_PROMPT_SILENCE_MS = 45_000
+const AGENT_PROMPT_EXECUTION_MS = 30 * 60_000
 const RPC_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 
 interface ActiveRpcCall {
@@ -147,7 +147,7 @@ export async function POST(req: Request) {
         send({ type: "done" })
         closed = true
         clearCancelTimer()
-        clearSilenceTimer()
+        clearExecutionTimer()
         activeRpcCalls.delete(requestId)
         req.signal.removeEventListener("abort", requestCancellation)
         try {
@@ -161,13 +161,12 @@ export async function POST(req: Request) {
       let dispatched = false
       let cancelSent = false
       let terminal = false
-      let sawToolEvent = false
-      let silenceTimer: ReturnType<typeof setTimeout> | null = null
+      let executionTimer: ReturnType<typeof setTimeout> | null = null
       let cancelTimer: ReturnType<typeof setTimeout> | null = null
-      const clearSilenceTimer = () => {
-        if (silenceTimer) {
-          clearTimeout(silenceTimer)
-          silenceTimer = null
+      const clearExecutionTimer = () => {
+        if (executionTimer) {
+          clearTimeout(executionTimer)
+          executionTimer = null
         }
       }
       const clearCancelTimer = () => {
@@ -176,13 +175,13 @@ export async function POST(req: Request) {
           cancelTimer = null
         }
       }
-      const armSilenceTimer = () => {
-        clearSilenceTimer()
+      const armExecutionTimer = () => {
+        clearExecutionTimer()
         if (tool !== "doops_agent_prompt") return
-        silenceTimer = setTimeout(() => {
-          if (closed || sawToolEvent) return
+        executionTimer = setTimeout(() => {
+          if (closed || terminal) return
           requestCancellation()
-        }, AGENT_PROMPT_SILENCE_MS)
+        }, AGENT_PROMPT_EXECUTION_MS)
       }
       const finishUncertain = () => {
         if (terminal || closed) return
@@ -204,7 +203,7 @@ export async function POST(req: Request) {
       requestCancellation = () => {
         if (terminal) return
         cancellationRequested = true
-        clearSilenceTimer()
+        clearExecutionTimer()
         if (!dispatched) {
           terminal = true
           send({ type: "error", error: "请求派发前已停止", code: -32007 })
@@ -288,7 +287,7 @@ export async function POST(req: Request) {
             }),
           )
           dispatched = true
-          armSilenceTimer()
+          armExecutionTimer()
           sendCancel()
           return
         }
@@ -296,8 +295,6 @@ export async function POST(req: Request) {
         // 流式输出通知
         if (msg.method === "notifications/message") {
           if (msg.params?.sessionID !== args.session_id || msg.params?.request_id !== callId) return
-          sawToolEvent = true
-          clearSilenceTimer()
           const data = msg.params?.data ?? ""
           send({ type: "output", data, kind: msg.params?.kind, session: msg.params?.sessionID })
           return
@@ -307,8 +304,7 @@ export async function POST(req: Request) {
         if (msg.id === callId) {
           terminal = true
           clearCancelTimer()
-          sawToolEvent = true
-          clearSilenceTimer()
+          clearExecutionTimer()
           if (msg.error) {
             send({ type: "error", error: msg.error?.message || "执行失败", code: msg.error?.code, data: msg.error?.data })
           } else if (msg.result?.isError) {
@@ -325,7 +321,7 @@ export async function POST(req: Request) {
       // Gateway refuses login or target access before the upgrade with a plain HTTP
       // status. Nothing was dispatched, so this is a terminal error, never an unknown outcome.
       ws.on("unexpected-response", async (_request, response) => {
-        clearSilenceTimer()
+        clearExecutionTimer()
         if (!terminal) {
           terminal = true
           const rejection = await readGatewayUpgradeRejection(response)
@@ -337,14 +333,14 @@ export async function POST(req: Request) {
       })
 
       ws.on("error", (err: Error) => {
-        clearSilenceTimer()
+        clearExecutionTimer()
         if (!terminal && dispatched) finishUncertain()
         else if (!terminal) send({ type: "error", error: `连接错误: ${err.message}` })
         finish()
       })
 
       ws.on("close", () => {
-        clearSilenceTimer()
+        clearExecutionTimer()
         clearCancelTimer()
         if (!terminal && dispatched) finishUncertain()
         else if (!terminal) send({ type: "error", error: "Gateway 连接已结束，未收到执行结果" })

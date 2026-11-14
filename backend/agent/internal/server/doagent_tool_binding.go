@@ -37,6 +37,8 @@ type doagentToolTrace struct {
 	PublicResultDigest              string
 	inputJSON                       json.RawMessage
 	resultJSON                      json.RawMessage
+	sequence                        uint64
+	terminalSequence                uint64
 	expectedSessionID               string
 	expectedMutationAuthorityDigest string
 }
@@ -44,6 +46,7 @@ type doagentToolTrace struct {
 type doagentToolTraceCollector struct {
 	mu                              sync.Mutex
 	calls                           map[string]doagentToolTrace
+	sequence                        uint64
 	collectAgentReport              bool
 	expectedSessionID               string
 	expectedMutationAuthorityDigest string
@@ -132,8 +135,10 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 	defer c.mu.Unlock()
 
 	trace, exists := c.calls[toolCallID]
+	c.sequence++
 	if !exists {
 		trace.ToolCallID = toolCallID
+		trace.sequence = c.sequence
 	}
 	if toolName := doagentToolName(update); toolName != "" {
 		if trace.ToolName != "" && trace.ToolName != toolName {
@@ -209,6 +214,9 @@ func (c *doagentToolTraceCollector) collect(update map[string]interface{}) error
 	}
 	if (trace.Status == "completed" || trace.Status == "failed") && trace.ObservedAt == "" {
 		trace.ObservedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	if (trace.Status == "completed" || trace.Status == "failed") && trace.terminalSequence == 0 {
+		trace.terminalSequence = c.sequence
 	}
 	if value, exists := update["mutationAuthorized"]; exists {
 		authorized, ok := value.(bool)
@@ -380,26 +388,56 @@ func (c *doagentToolTraceCollector) structuredResult(requireAgentReport bool) (s
 }
 
 func (c *doagentToolTraceCollector) verifiedMutationResult() (string, map[string]interface{}, error) {
-	traces := c.completed()
-	if len(traces) == 0 {
-		return "", nil, fmt.Errorf("verified mutation result was not emitted")
-	}
+	traces := c.orderedTraces()
 	mutations := make([]interface{}, 0, len(traces))
-	for _, trace := range traces {
-		result, err := trace.verifiedResult()
-		if err != nil {
-			return "", nil, fmt.Errorf("decode verified mutation result: %w", err)
+	verified, outcome := true, "succeeded"
+	for i, trace := range traces {
+		tool := modelVisibleDoagentToolName(trace.ToolName)
+		if tool != "doops_helm" && tool != "doops_web" {
+			continue
 		}
-		mutations = append(mutations, map[string]interface{}{
-			"tool":         modelVisibleDoagentToolName(trace.ToolName),
+		entry := map[string]interface{}{
+			"tool":         tool,
 			"tool_call_id": trace.ToolCallID,
-			"result":       result,
-		})
+			"status":       trace.Status,
+		}
+		reason := trace.terminalMutationReason()
+		switch reason {
+		case "", "tool_result_failed", "execution_outcome_unknown":
+			result, err := trace.verifiedResult()
+			if err != nil {
+				return "", nil, fmt.Errorf("decode verified mutation result: %w", err)
+			}
+			entry["verified"], entry["result"] = true, result
+			if reason == "execution_outcome_unknown" {
+				outcome = "unknown"
+			} else if reason == "tool_result_failed" {
+				if resolvedBy := correctedHelmCall(traces, i); resolvedBy != "" {
+					entry["resolved_by"] = resolvedBy
+				} else if outcome != "unknown" {
+					outcome = "failed"
+				}
+			}
+		default:
+			entry["verified"], entry["reason"] = false, reason
+			verified, outcome = false, "unknown"
+		}
+		mutations = append(mutations, entry)
+	}
+	if len(mutations) == 0 {
+		verified, outcome = false, "failed"
 	}
 	report := map[string]interface{}{
 		"kind":      "doops.verified-mutation",
-		"verified":  true,
+		"verified":  verified,
+		"outcome":   outcome,
 		"mutations": mutations,
+	}
+	c.mu.Lock()
+	summary := c.finalMessage
+	c.mu.Unlock()
+	if strings.TrimSpace(summary) != "" {
+		report["summary"] = redactSecretText(summary)
 	}
 	encoded, err := stableDoagentJSON(report)
 	if err != nil {
@@ -408,14 +446,29 @@ func (c *doagentToolTraceCollector) verifiedMutationResult() (string, map[string
 	return string(encoded), report, nil
 }
 
-func (c *doagentToolTraceCollector) completed() []doagentToolTrace {
+func (c *doagentToolTraceCollector) orderedTraces() []doagentToolTrace {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	traces := make([]doagentToolTrace, 0, len(c.calls))
-	for _, trace := range c.calls {
+	for id, trace := range c.calls {
+		trace.ToolCallID = id
 		trace.expectedSessionID = c.expectedSessionID
 		trace.expectedMutationAuthorityDigest = c.expectedMutationAuthorityDigest
+		traces = append(traces, trace)
+	}
+	sort.Slice(traces, func(i, j int) bool {
+		if traces[i].sequence == traces[j].sequence {
+			return traces[i].ToolCallID < traces[j].ToolCallID
+		}
+		return traces[i].sequence < traces[j].sequence
+	})
+	return traces
+}
+
+func (c *doagentToolTraceCollector) completed() []doagentToolTrace {
+	var traces []doagentToolTrace
+	for _, trace := range c.orderedTraces() {
 		if trace.eligible() {
 			traces = append(traces, trace)
 		}
@@ -444,17 +497,19 @@ func (c *doagentToolTraceCollector) rejectionSummary() string {
 }
 
 func (c *doagentToolTraceCollector) requireCompletedToolEvidence() error {
-	c.mu.Lock()
-	for _, trace := range c.calls {
-		trace.expectedSessionID = c.expectedSessionID
-		trace.expectedMutationAuthorityDigest = c.expectedMutationAuthorityDigest
+	if unresolved := c.unresolvedMutationSummary(); unresolved != "" {
+		return fmt.Errorf("doagent_apply_tool_evidence_missing: %s", unresolved)
+	}
+	traces := c.orderedTraces()
+	for i, trace := range traces {
 		if trace.terminalMutationReason() == "tool_result_failed" {
-			c.mu.Unlock()
+			if correctedHelmCall(traces, i) != "" {
+				continue
+			}
 			return fmt.Errorf("doagent_apply_tool_failed: %s: %s",
 				modelVisibleDoagentToolName(trace.ToolName), trace.failedResultText())
 		}
 	}
-	c.mu.Unlock()
 	if len(c.completed()) != 0 {
 		return nil
 	}
@@ -462,6 +517,77 @@ func (c *doagentToolTraceCollector) requireCompletedToolEvidence() error {
 		return fmt.Errorf("doagent_apply_tool_evidence_missing: %s", rejected)
 	}
 	return fmt.Errorf("doagent_apply_tool_evidence_missing")
+}
+
+// A later serial success can recover a known failure of the same Helm intent.
+// Unexecuted validation/preparation errors may also correct invalid parameters.
+func correctedHelmCall(traces []doagentToolTrace, index int) string {
+	failed := traces[index]
+	if modelVisibleDoagentToolName(failed.ToolName) != "doops_helm" ||
+		failed.terminalSequence == 0 || failed.terminalMutationReason() != "tool_result_failed" {
+		return ""
+	}
+	result, _ := failed.verifiedResult()
+	facts, _ := result["structuredContent"].(map[string]interface{})
+	executed := facts["executionStarted"] == true && facts["phase"] == "execution"
+	unexecuted := facts["executionStarted"] == false &&
+		(facts["phase"] == "validation" || facts["phase"] == "preparation")
+	if !executed && !unexecuted {
+		return ""
+	}
+	value, err := decodeDoagentJSONValue(failed.inputJSON)
+	input, ok := value.(map[string]interface{})
+	if err != nil || !ok {
+		return ""
+	}
+	release := strings.TrimSpace(stringField(input, "release"))
+	namespace := strings.TrimSpace(stringField(input, "namespace"))
+	operation := strings.ToLower(strings.TrimSpace(stringField(input, "operation")))
+	if release == "" || namespace == "" || (executed && !stringSliceContains(helmMutationOperations, operation)) {
+		return ""
+	}
+	for _, next := range traces[index+1:] {
+		if next.sequence <= failed.terminalSequence ||
+			modelVisibleDoagentToolName(next.ToolName) != "doops_helm" || !next.eligible() {
+			continue
+		}
+		nextValue, err := decodeDoagentJSONValue(next.inputJSON)
+		nextInput, ok := nextValue.(map[string]interface{})
+		if err != nil || !ok {
+			continue
+		}
+		nextOperation := strings.ToLower(strings.TrimSpace(stringField(nextInput, "operation")))
+		if stringSliceContains(helmMutationOperations, operation) && operation != nextOperation {
+			continue
+		}
+		if executed {
+			switch operation {
+			case "upgrade-install":
+				source, nextSource := strings.TrimSpace(stringField(input, "asset_source")), strings.TrimSpace(stringField(nextInput, "asset_source"))
+				if source == "" {
+					source = helmAssetSourceRemote
+				}
+				if nextSource == "" {
+					nextSource = helmAssetSourceRemote
+				}
+				chart := strings.TrimSpace(stringField(input, "chart"))
+				if chart == "" || chart != strings.TrimSpace(stringField(nextInput, "chart")) || source != nextSource {
+					continue
+				}
+			case "rollback":
+				revision, ok := input["revision"].(json.Number)
+				number, err := revision.Int64()
+				if !ok || err != nil || number <= 0 || revision != nextInput["revision"] {
+					continue
+				}
+			}
+		}
+		if release == strings.TrimSpace(stringField(nextInput, "release")) &&
+			namespace == strings.TrimSpace(stringField(nextInput, "namespace")) {
+			return next.ToolCallID
+		}
+	}
+	return ""
 }
 
 func (c *doagentToolTraceCollector) hasFailedSQLRead() bool {
@@ -515,9 +641,6 @@ func (trace doagentToolTrace) eligible() bool {
 }
 
 func (trace doagentToolTrace) ineligibilityReason() string {
-	if trace.Status != "completed" {
-		return "status_not_completed"
-	}
 	return trace.terminalMutationReason()
 }
 
@@ -596,10 +719,6 @@ func (trace doagentToolTrace) runtimeMutationAttestationReason() string {
 	if err != nil || trace.InputDigest != expectedInputDigest {
 		return "input_digest_mismatch"
 	}
-	confirm, _ := inputObject["confirm"].(bool)
-	if !confirm {
-		return "mutation_confirmation_missing"
-	}
 	if trace.MutationAuthorized == nil || !*trace.MutationAuthorized {
 		return "mutation_not_authorized"
 	}
@@ -610,17 +729,13 @@ func (trace doagentToolTrace) runtimeMutationAttestationReason() string {
 	if trace.ExecutionMode != "apply" {
 		return "execution_mode_invalid"
 	}
-	operation := stringField(inputObject, "operation")
-	allowedOperations := helmMutationOperations
-	if tool == "doops_web" {
-		allowedOperations = webMutationOperations
-	}
-	if !stringSliceContains(allowedOperations, operation) {
-		return "mutation_operation_invalid"
-	}
 	result, err := trace.verifiedResult()
 	if err != nil {
 		return "public_result_invalid"
+	}
+	facts, _ := result["structuredContent"].(map[string]interface{})
+	if facts["executionOutcome"] == "unknown" {
+		return "execution_outcome_unknown"
 	}
 	isError, ok := result["isError"].(bool)
 	if !ok {
@@ -628,6 +743,21 @@ func (trace doagentToolTrace) runtimeMutationAttestationReason() string {
 	}
 	if isError {
 		return "tool_result_failed"
+	}
+	// An attested rejection can have invalid arguments; only success proves a mutation.
+	if tool == "doops_web" {
+		confirm, _ := inputObject["confirm"].(bool)
+		if !confirm {
+			return "mutation_confirmation_missing"
+		}
+	}
+	operation := strings.ToLower(strings.TrimSpace(stringField(inputObject, "operation")))
+	allowedOperations := helmMutationOperations
+	if tool == "doops_web" {
+		allowedOperations = webMutationOperations
+	}
+	if !stringSliceContains(allowedOperations, operation) {
+		return "mutation_operation_invalid"
 	}
 	if trace.Status != "completed" {
 		return "status_result_mismatch"

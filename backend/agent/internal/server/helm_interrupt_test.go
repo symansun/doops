@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,9 +25,6 @@ rollback)
   if [ -n "$ROLLBACK_FAIL" ]; then printf 'Error: %s\n' "$ROLLBACK_FAIL" >&2; exit 1; fi
   exit 0;;
 esac
-for arg in "$@"; do
-  if [ "$arg" = "--dry-run=server" ]; then printf '%s' "$DRY_JSON"; exit 0; fi
-done
 prev=""; desc=""
 for arg in "$@"; do
   if [ "$prev" = "--description" ]; then desc="$arg"; fi
@@ -79,8 +77,9 @@ func TestSettleInterruptedHelmRelease(t *testing.T) {
 			history: history(entry("5", "deployed", "old"), entry("6", "failed", mine)),
 		},
 		{
-			name:    "revision deployed needs no settle",
+			name:    "deployed revision contradicts command failure",
 			history: history(entry("5", "superseded", "old"), entry("6", "deployed", mine)),
+			want:    "deployed despite the command failure", wantErr: true,
 		},
 		{
 			name:         "pending revision is rolled back to the last deployed one",
@@ -91,7 +90,7 @@ func TestSettleInterruptedHelmRelease(t *testing.T) {
 		{
 			name:    "pending install with nothing to roll back to",
 			history: history(entry("1", "pending-install", mine)),
-			want:    "revision 1 is pending-install and there is no deployed revision",
+			want:    "revision 1 is pending-install and there is no deployed revision", wantErr: true,
 		},
 		{
 			name:         "rollback failure names Helm's reason",
@@ -104,6 +103,7 @@ func TestSettleInterruptedHelmRelease(t *testing.T) {
 		{
 			name:    "other terminal state is left alone",
 			history: history(entry("5", "deployed", "old"), entry("6", "superseded", mine)),
+			want:    "did not record this revision as failed", wantErr: true,
 		},
 	}
 	for _, tt := range tests {
@@ -124,6 +124,9 @@ func TestSettleInterruptedHelmRelease(t *testing.T) {
 			if tt.wantErr {
 				if err == nil || !strings.HasPrefix(err.Error(), "helm_interrupted: ") || !strings.Contains(err.Error(), tt.want) {
 					t.Fatalf("error = %v, want helm_interrupted containing %q", err, tt.want)
+				}
+				if !errors.Is(err, errExecutionOutcomeUnknown) {
+					t.Fatalf("unconfirmed release state became a known failure: %v", err)
 				}
 			} else if err != nil {
 				t.Fatalf("settle failed: %v", err)
@@ -156,8 +159,6 @@ func TestRunHelmCommandInterruptedUpgradeNeverStaysPending(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			root := installInterruptFakeHelm(t)
 			t.Setenv("MINE_STATUS", tt.mineStatus)
-			manifest := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: app\nspec:\n  template:\n    spec:\n      containers:\n        - image: registry.example/app@" + testHelmDigest + "\n"
-			t.Setenv("DRY_JSON", helmDryRunJSON(t, manifest))
 			previous := helmTerminationGrace
 			helmTerminationGrace = 2 * time.Second
 			t.Cleanup(func() { helmTerminationGrace = previous })
@@ -171,6 +172,9 @@ func TestRunHelmCommandInterruptedUpgradeNeverStaysPending(t *testing.T) {
 			_, err = runHelmCommand(ctx, command, func(notificationEvent) {})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want it to contain %q", err, tt.want)
+			}
+			if !errors.Is(err, errExecutionOutcomeUnknown) {
+				t.Fatalf("interrupted execution lost its unknown outcome: %v", err)
 			}
 			if tt.wantInterrupt && !strings.HasPrefix(err.Error(), "helm_interrupted: ") {
 				t.Fatalf("error = %v, want helm_interrupted", err)
@@ -213,7 +217,7 @@ func TestBuildHelmCommandBoundsTheWaitTimeout(t *testing.T) {
 		})
 	}
 	// Rollback shares the bound.
-	params := api.HelmParams{SessionID: "release", Operation: "rollback", Release: "app", Namespace: "apps", Revision: 2, Timeout: "20m", Confirm: true}
+	params := api.HelmParams{SessionID: "release", Operation: "rollback", Release: "app", Namespace: "apps", Revision: 2, Timeout: "20m"}
 	if _, err := buildHelmCommand(params); err == nil {
 		t.Fatal("rollback accepted a timeout beyond the call budget")
 	}
@@ -241,9 +245,6 @@ history)
 rollback)
   printf '%s\n' "$@" > "$ROOT/rollback-args"; exit 0;;
 esac
-for arg in "$@"; do
-  if [ "$arg" = "--dry-run=server" ]; then printf '%s' "$DRY_JSON"; exit 0; fi
-done
 prev=""; desc=""
 for arg in "$@"; do
   if [ "$prev" = "--description" ]; then desc="$arg"; fi
@@ -260,9 +261,6 @@ exit 1
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("ROOT", root)
 	t.Setenv("DOOPS_WORKSPACE_ROOT", root)
-	manifest := "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: app\nspec:\n  template:\n    spec:\n      containers:\n        - image: registry.example/app@" + testHelmDigest + "\n"
-	t.Setenv("DRY_JSON", helmDryRunJSON(t, manifest))
-
 	command, err := buildHelmCommand(testHelmParams())
 	if err != nil {
 		t.Fatal(err)

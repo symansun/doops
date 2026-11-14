@@ -73,13 +73,21 @@ One detail: a timeout, a dropped connection, or termination by a signal is marke
 
 ![Kubernetes and delivery](../images/k8s-delivery.png)
 
-*Figure 5 · Observe → preflight → apply → verify: three-stage delivery*
+*Figure 5 · Native Helm execution returns the deployed revision; task-level checks remain separate*
 
 **Look**: pods, Deployments, Services, events, logs, top, rollout status, Helm's list/history/status/values (key paths only), and ConfigMap key names.
 
 **Move**: restarts, scaling, cordon/uncordon, and pod deletion — these write operations must be explicitly confirmed and run under a target-level change lease; **Secrets and ServiceAccounts are not even readable**.
 
-**Deliver**: a Helm release is split into preflight (dry-run renders and validates first) → apply (the real execution) → verify (read the revision back and compare it item by item against the live objects, with expected_image catching "the command succeeded but the image did not change"). You can also deliver in natural language directly: state the target, the scope, the image source, the reason, and machine-checkable acceptance criteria in the task, and receive verification evidence when it finishes.
+**Deliver**: `doops_helm` passes the selected Chart, values, and Helm options to native
+`helm upgrade --install --wait`, then reads the release back. It reports success only when
+this call's release is `deployed` with its matching revision and description. A Chart may
+contain any legal resources, including no workload or Ingress; Helm adds no second confirmation,
+forced values reset, server dry-run, or CI/image provenance gate. Explicit native Helm commands
+can also run through `exec` with their own exit and audit result. See the
+[Helm deployment contract](../../backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md) for asset,
+credential-origin, and failure details. Natural-language delivery still lets you state the
+target, scope, reason, and any task-level acceptance criteria.
 
 Two more pieces come alongside: `check` compares the live image against the build for consistency; and Agent self-upgrade runs as a separate Job (backup → upgrade → verify → roll back on failure), so an Agent never replaces itself while running.
 
@@ -87,14 +95,16 @@ Two more pieces come alongside: `check` compares the live image against the buil
 
 ![Images and artifacts](../images/artifacts.png)
 
-*Figure 6 · CI is the authoritative source of images; the target side only copies and synchronizes, and Harbor converges by pull*
+*Figure 6 · Build and registry workflows prepare images; the target side copies and synchronizes them*
 
 - **Build**: produce OCI images with BuildKit on the target Agent, with multi-platform support and output to a local file or a direct push;
 - **Copy**: copy between registries by digest, so nothing "looks the same but is actually different";
 - **Registry synchronization**: bulk synchronization, with digest verification on both source and target;
 - **Harbor convergence**: a pull model from CI → this cluster's Harbor, with scheduled jobs and verification scripts; no copying between clusters.
 
-The boundary: an image is a CI artifact. Building and copying on the target machine are only the execution side and cannot replace CI — otherwise "which commit is running in production" cannot be stated clearly.
+The boundary: build and provenance records may come from CI or a designated build host. Target-side
+building and copying are execution capabilities; a Helm release uses the image and Chart facts
+specified by the task and does not add a CI or provenance precondition.
 
 ### 5. Databases and websites: two specialist operations entry points
 
@@ -115,7 +125,7 @@ The boundary: an image is a CI artifact. Building and copying on the target mach
 *Figure 8 · What the AI gets is not a shell, but a tool allowlist; the Skill decides what it can do on that target*
 
 - **Diagnosis mode (ask)**: can read files, check state, and run commands to help you think a problem through;
-- **Change mode (apply)**: gets only structured change tools (Helm or website publishing, one or the other), requires a change authorization, and produces verification evidence;
+- **Change mode (apply)**: gets structured change tools, requires a change authorization, and produces verification evidence; explicit native Helm commands remain available through the separately audited `exec` path;
 - **Combinations that never happen**: diagnosis cannot get change tools, change cannot get a free-form Bash, and database or unknown Skills do not inherit change capability;
 - **Success determination**: decided jointly by the change authorization, the attestation, and final-state evidence; the model saying "done" does not count;
 - **Skill**: the Agent ships with six built-in Skills — shell, Kubernetes, image builds, databases, websites, and distillation — and a team can also write its own SKILL.md to codify an SOP.
@@ -186,7 +196,7 @@ DoOps is not "an operations tool with an AI chat box bolted on." From day one, A
 
 - **It has its own entry point**: AI connects through the Skill in the editor or the Agent interface, instead of simulating keystrokes into a terminal;
 - **It shares the same identity**: an AI's operations go through the same token, grant, and audit; revoking a grant or disabling it takes effect immediately for the AI too;
-- **It does not share every tool**: diagnosis (ask) and change (apply) get different tool lists — diagnosis can run commands, while change may only use structured change tools and needs a change authorization.
+- **It does not share every tool**: diagnosis (ask) and change (apply) get different tool lists — an apply turn uses structured change tools and needs a change authorization, while explicit native commands use the separately audited `exec` path.
 
 ### 13. Six details designed for AI
 
@@ -194,7 +204,10 @@ DoOps is not "an operations tool with an AI chat box bolted on." From day one, A
 2. **Interfaces built for automation**: the CLI, the web console, and the AI are all just clients of the same API; the JSON-RPC tool surface, Git HTTP, and REST management interfaces can be called directly from CI; retry semantics are explicit — when the outcome is unknown, nothing is replayed automatically.
 3. **Permissions come from the same place as people's**: an AI overstepping is a person overstepping, and revoking a grant takes effect immediately; there is no "AI-only back door."
 4. **Capability is taught through Skills**: six built-in Skills (shell / Kubernetes / images / databases / websites / distillation) plus a project's own SKILL.md codify the team's SOPs into procedures the AI can follow; the model delivers per target, and credentials never land in the prompt.
-5. **Success rests on evidence, not on words**: a change goes through preflight → apply → verify, reading back the live objects and the digest; the model saying "done" does not count, only final-state evidence does; an unknown outcome stays "unknown" — nothing pretends to have succeeded.
+5. **Success rests on evidence, not on words**: for Helm, success is the native command plus a
+   receipt that this call's release is deployed at its matching revision; task-specific health or
+   image checks are separate acceptance evidence. The model saying "done" does not count, and an
+   unknown outcome stays "unknown" — nothing pretends to have succeeded.
 6. **Traceability is the floor**: audit covers five layers — commands, execution, changes, data, and credentials; bookkeeping comes before execution; if audit is unavailable, requests are refused.
 
 ### 14. The cost and the boundaries of AI-native design

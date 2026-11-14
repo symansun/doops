@@ -8,52 +8,37 @@ import {
   type DeploymentInput,
 } from "@/lib/deployment"
 
-type TextKey = Exclude<keyof DeploymentInput, "selector">
+type TextKey = keyof DeploymentInput
 type Field = { key: TextKey; label: string; hint?: string; placeholder?: string; optional?: boolean; mono?: boolean; wide?: boolean; multiline?: boolean }
 
-const EMPTY: DeploymentInput = { services: "", release: "", namespace: "", chart: "", values: "", repository: "", selector: "digest", version: "", commit: "", ci: "", reason: "", acceptance: "", credentials: "" }
-const REQUIRED: TextKey[] = ["services", "release", "namespace", "chart", "repository", "version", "commit", "ci", "reason", "acceptance"]
+const EMPTY: DeploymentInput = { release: "", namespace: "", chart: "", values: "", message: "", credentials: "" }
+const REQUIRED: TextKey[] = ["release", "namespace", "chart"]
 
-function sections(selector: DeploymentInput["selector"]): { title: string; description: string; fields: Field[]; selector?: boolean }[] {
+function sections(): { title: string; description: string; fields: Field[] }[] {
   return [
-    { title: "发布范围", description: "本次变更涉及的服务与 Helm release。", fields: [
-      { key: "services", label: "服务范围", placeholder: "api, worker", wide: true },
+    { title: "Helm 发布", description: "DoOps 只传递请求，目标 Agent 按原生 Helm 处理 Chart。", fields: [
       { key: "release", label: "Helm release", placeholder: "my-app", mono: true },
       { key: "namespace", label: "Namespace", placeholder: "apps", mono: true },
+      { key: "chart", label: "Chart", placeholder: "https://charts.example.com/my-app-1.2.0.tgz 或 session 相对路径", hint: "地址、路径和资源类型由目标 Helm 处理", mono: true, wide: true },
+      { key: "values", label: "Values", placeholder: "https://charts.example.com/values.yaml 或 session 相对路径", hint: "可选；多个值文件按填写顺序传给 Helm", optional: true, mono: true, wide: true },
     ] },
-    { title: "Helm 资产", description: "Agent 只使用这里指定的远程 Chart 和 values。", fields: [
-      { key: "chart", label: "Chart 地址", placeholder: "https://charts.example.com/my-app-1.2.0.tgz", hint: "仅 HTTPS，不含内嵌凭据", mono: true, wide: true },
-      { key: "values", label: "Values 地址", placeholder: "https://charts.example.com/values-prod.yaml", hint: "多个地址用空格分隔，按顺序叠加", optional: true, mono: true, wide: true },
-    ] },
-    { title: "镜像版本", description: "版本必须来自已通过的 CI，页面和 Agent 都不会猜测。", selector: true, fields: [
-      { key: "repository", label: "镜像仓库", placeholder: "registry.example.com/team/my-app", hint: "不含 tag 或 digest", mono: true, wide: true },
-      selector === "digest"
-        ? { key: "version", label: "镜像 digest", placeholder: "sha256:…", hint: "sha256: 加 64 位十六进制", mono: true, wide: true }
-        : { key: "version", label: "镜像 tag", placeholder: "v2.3.1", hint: "业务自有的发布 tag", mono: true, wide: true },
-    ] },
-    { title: "来源证据", description: "核对过的 CI 来源，以及发布需要的受管凭据。", fields: [
-      { key: "commit", label: "来源提交 SHA", placeholder: "完整 40 位 SHA", mono: true, wide: true },
-      { key: "ci", label: "成功 CI 记录", placeholder: "https://github.com/…/actions/runs/…", hint: "仅 HTTPS", mono: true, wide: true },
-      { key: "credentials", label: "凭据资源名", placeholder: "registry-reader, helm-charts", hint: "受管凭据的资源名，逗号或空格分隔；不要填写密钥内容", optional: true, mono: true, wide: true },
-    ] },
-    { title: "变更说明", description: "原因和可机器核验的验收条件会原样交给 Agent。", fields: [
-      { key: "reason", label: "变更原因", placeholder: "例如：修复资源回收问题", multiline: true, wide: true },
-      { key: "acceptance", label: "验收条件", placeholder: "例如：Deployment 达到期望副本数，Pod imageID 与 digest 一致，/healthz 返回 200", multiline: true, wide: true },
+    { title: "请求说明", description: "可补充变更原因、镜像值、业务范围或验收要求；这些内容不会变成发布准入条件。", fields: [
+      { key: "message", label: "任务说明", placeholder: "例如：升级现有 release，使用 values 中的镜像；发布后检查 /healthz", optional: true, multiline: true, wide: true },
+      { key: "credentials", label: "凭据资源名", placeholder: "helm-charts, registry-reader", hint: "可选；只填写受管凭据资源名，不填写密钥内容", optional: true, mono: true, wide: true },
     ] },
   ]
 }
 
-type Check = { state: "incomplete"; missing: number } | { state: "invalid"; message: string } | { state: "ok"; image: string; credentials: string[] }
+type Check = { state: "incomplete"; missing: number } | { state: "invalid"; message: string } | { state: "ok"; credentials: string[] }
 
 function precheck(target: Target, input: DeploymentInput): Check {
   const missing = REQUIRED.filter((key) => !input[key].trim()).length
   if (missing) return { state: "incomplete", missing }
   try {
     const request = deploymentRequest(target, input)
-    return { state: "ok", image: `${input.repository}${input.selector === "digest" ? "@" : ":"}${input.version}`, credentials: request.credential_refs }
+    return { state: "ok", credentials: request.credential_refs }
   } catch (error) {
-    // `new URL` raises an English TypeError for malformed addresses.
-    return { state: "invalid", message: error instanceof TypeError ? "Chart、Values 或 CI 地址不是有效 URL" : (error as Error).message }
+    return { state: "invalid", message: error instanceof Error ? error.message : "发布字段无效" }
   }
 }
 
@@ -68,52 +53,42 @@ export function DeploymentForm({ target, loadDraft, saveDraft, canSubmit, blocke
   saveDraft: (text: string | null) => void
   canSubmit: boolean
   blockedReason?: string
-  onDeploy: (input: DeploymentInput, confirmed: boolean) => Promise<void>
+  onDeploy: (input: DeploymentInput) => Promise<void>
 }) {
   const [input, setInput] = useState<DeploymentInput>(() => parseDeploymentDraft(loadDraft()) || EMPTY)
-  const [confirmed, setConfirmed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
   const check = useMemo(() => precheck(target, input), [target, input])
-  const controls = deploymentFormControls({ canSubmit, valid: check.state === "ok", submitting, confirmed })
+  const controls = deploymentFormControls({ canSubmit, valid: check.state === "ok", submitting })
   useEffect(() => { saveDraft(deploymentDraftText(input)) }, [saveDraft, input])
   // The guard lives across renders, so it calls the current onDeploy (which reads the current Agent availability).
   const deploy = useRef(onDeploy)
   deploy.current = onDeploy
   // A double click submits twice before React re-renders the disabled button; the second call is dropped.
-  const submit = useRef(singleFlight(async (release: DeploymentInput, authorized: boolean) => {
+  const submit = useRef(singleFlight(async (release: DeploymentInput) => {
     setError("")
     setSubmitting(true)
-    try { await deploy.current(release, authorized); setConfirmed(false) } catch (err) { setError(deploymentSubmitError((err as Error).message)) } finally { setSubmitting(false) }
+    try { await deploy.current(release) } catch (err) { setError(deploymentSubmitError((err as Error).message)) } finally { setSubmitting(false) }
   }))
   function change(key: keyof DeploymentInput, value: string) {
     setInput((current) => ({ ...current, [key]: value }))
-    setConfirmed(false)
     setError("")
   }
 
   return (
     <form className="flex flex-col gap-4" onSubmit={(event) => {
       event.preventDefault()
-      // Enter in a field also submits; the same gate as the button applies.
+      // Enter in a field also submits; the same channel and validation checks apply.
       if (controls.submitDisabled) return
-      void submit.current(input, confirmed)
+      void submit.current(input)
     }}>
       <fieldset disabled={controls.fieldsDisabled} className="flex min-w-0 flex-col gap-4">
-        {sections(input.selector).map((section) => (
+        {sections().map((section) => (
           <section key={section.title} className="rounded-lg border bg-card p-4">
             <header className="mb-3">
               <h3 className="text-sm font-medium">{section.title}</h3>
               <p className="mt-0.5 text-xs text-muted-foreground">{section.description}</p>
             </header>
-            {section.selector && (
-              <div role="radiogroup" aria-label="镜像版本方式" className="mb-3 inline-flex rounded-md border bg-muted/40 p-0.5">
-                {([["digest", "Digest"], ["tag", "Release tag"]] as const).map(([value, label]) => (
-                  <button key={value} type="button" role="radio" aria-checked={input.selector === value} onClick={() => change("selector", value)}
-                    className={`rounded px-3 py-1 text-xs font-medium transition-colors ${input.selector === value ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>{label}</button>
-                ))}
-              </div>
-            )}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {section.fields.map((field) => (
                 <label key={field.key} className={`flex min-w-0 flex-col gap-1.5 ${field.wide ? "sm:col-span-2" : ""}`}>
@@ -136,7 +111,7 @@ export function DeploymentForm({ target, loadDraft, saveDraft, canSubmit, blocke
         <dl className="grid grid-cols-[5rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs">
           <dt className="text-muted-foreground">目标</dt><dd className="break-all font-mono">{target.cluster}/{target.instance}</dd>
           <dt className="text-muted-foreground">Release</dt><dd className="break-all font-mono">{input.namespace && input.release ? `${input.namespace}/${input.release}` : "—"}</dd>
-          <dt className="text-muted-foreground">镜像</dt><dd className="break-all font-mono">{check.state === "ok" ? check.image : "—"}</dd>
+          <dt className="text-muted-foreground">Chart</dt><dd className="break-all font-mono">{input.chart || "—"}</dd>
           <dt className="text-muted-foreground">凭据</dt>
           <dd className="flex flex-wrap gap-1">{check.state === "ok" && check.credentials.length
             ? check.credentials.map((name) => <span key={name} className="rounded bg-muted px-1.5 py-0.5 font-mono">{name}</span>)
@@ -146,13 +121,9 @@ export function DeploymentForm({ target, loadDraft, saveDraft, canSubmit, blocke
           {check.state === "ok" ? <CheckCircle2 aria-hidden="true" className="mt-px size-3.5 shrink-0" /> : check.state === "invalid" ? <CircleAlert aria-hidden="true" className="mt-px size-3.5 shrink-0" /> : <CircleDashed aria-hidden="true" className="mt-px size-3.5 shrink-0" />}
           <span className="break-words">{check.state === "ok" ? "格式校验通过；提交后服务端会按同一规则再次校验" : check.state === "invalid" ? check.message : `还有 ${check.missing} 项必填信息未填写`}</span>
         </p>
-        <label className={`mt-4 flex items-start gap-2 rounded-md border p-3 text-sm ${confirmed ? "border-primary/60 bg-primary/5" : ""} ${controls.confirmDisabled ? "opacity-60" : "cursor-pointer"}`}>
-          <input type="checkbox" aria-label="授权本次目标变更" checked={confirmed && !controls.confirmDisabled} disabled={controls.confirmDisabled} onChange={(e) => setConfirmed(e.target.checked)} className="mt-0.5" />
-          <span>授权本次目标变更。我已核对 CI 来源、镜像和发布范围。</span>
-        </label>
         {error && <p role="alert" className="mt-3 break-words rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>}
         <button disabled={controls.submitDisabled} className="mt-4 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40">
-          <Rocket aria-hidden="true" className="size-4" />{submitting ? "正在提交…" : "确认发布"}
+          <Rocket aria-hidden="true" className="size-4" />{submitting ? "正在提交…" : "提交发布"}
         </button>
         {!canSubmit && blockedReason && <p className="mt-2 text-center text-[11px] text-muted-foreground">{blockedReason}</p>}
       </section>

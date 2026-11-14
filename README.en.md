@@ -476,9 +476,9 @@ More commands are in the [usage guide](backend/docs/DOOPS_USAGE_GUIDE.md). If pa
 <a id="delivery"></a>
 ## Workload delivery and agent upgrade
 
-DoOps converges ordinary business workload delivery onto `ask --apply`, and leaves agent self-upgrade to a separate controller or an external release script. Both paths require an explicit target, change scope, image facts, reason, and machine-checkable acceptance criteria; a model answer, a page hint, or a single health code cannot by itself prove that a delivery is complete.
+DoOps converges ordinary Helm release delivery onto `ask --apply`, and leaves agent self-upgrade to a separate controller or an external release script. Both paths retain the actual execution terminal state and audit trail; business scope, image facts, reason, and acceptance criteria are supplied when the task needs them, not imposed as one DoOps admission gate. A model answer, a page hint, or a single health code cannot by itself prove that a delivery is complete.
 
-### Ordinary business workload delivery
+### Helm release delivery
 
 ```bash
 doops -session release-check ask \
@@ -488,7 +488,7 @@ doops -session release-check ask \
   --msg '在 target control-node 发布服务 api；使用任务指定的 Chart、namespace 和已核验镜像 digest；原因：修复课堂权限；验收：Deployment、Pod、Service、Endpoint 与 /health 均通过。'
 ```
 
-A delivery task must state the target, service scope, chart or repository assets, image version or its verifiable source, reason, and acceptance criteria. The prompt above asks the target agent to publish service `api` on target `control-node` using the chart, namespace, and verified image digest specified by the task, for the reason "fix classroom permissions", with acceptance that the Deployment, Pod, Service, Endpoints, and `/health` all pass. `--credential` carries only a managed credential resource name and never passes ciphertext in arguments, prompts, logs, or workspaces. The target agent performs the delivery through the structured `mcp_doops_helm upgrade-install` tool and returns dry-run, actual change, and final resource state evidence.
+The channel requires an explicit target, release, namespace, and Chart. Image details, business scope, reason, and acceptance checks are task data when applicable; they are not global DoOps admission requirements. `--credential` carries only a managed credential resource name and never passes ciphertext in arguments, prompts, logs, or workspaces. The target agent performs the release through the structured `mcp_doops_helm upgrade-install` tool and returns the native Helm terminal state.
 
 Ordinary delivery does not use environment registries, template-driven releases, or prompt-derived deployment scope, and does not require running `push` first or reading the operator machine's kubeconfig. For the detailed contract, see [Natural-language workload delivery](backend/docs/NATURAL_LANGUAGE_DEPLOYMENT.md) and [Credential resources](backend/docs/CREDENTIAL_RESOURCES.md).
 
@@ -517,8 +517,8 @@ Choose the entry point by runtime form; they do not downgrade to each other auto
 | Scenario | Entry point | Key prerequisites |
 | --- | --- | --- |
 | Empty Ubuntu/Debian server | `backend/scripts/bootstrap-host-agent.sh` | root, an explicit release version, a unique cluster/instance; the script installs Docker/Compose and verifies the gateway tunnel |
-| First K8s installation or an explicit Helm configuration change | `backend/scripts/release-managed-agent.sh` | External controller kubeconfig, Helm, kubectl, and complete values |
-| Old Helm agent or a broken command channel | `backend/scripts/release-managed-agent.sh` | Complete dry-run, backup, and takeover acceptance first |
+| K8s Agent advertising `upgradeAudit` v1 | `doops upgrade` or `backend/scripts/release-managed-agent.sh` | Online target, matching CLI and verified image; the script delegates to the Gateway |
+| First K8s installation, first upgrade of an old Agent, or Helm configuration changes | Review the procedure in the deployment SOP | Use GitOps for initial installation and an independent controller through the Gateway for upgrades |
 | Existing standalone Docker agent | `backend/scripts/release-host-agent.sh` | External DockerHost control, explicit SSH port, immutable image, and host key verification |
 | Gateway control plane | `backend/scripts/deploy-gateway.sh --no-build` | Uses a verified CI Release Asset; does not publish itself through an agent target |
 

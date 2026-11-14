@@ -7,6 +7,7 @@ description: |
 ## 定位
 
 本 skill 只放红线、命令选择和文档导航。规则细节只在对应主题文档里展开，按需读取：
+DoOps 提供执行通道、target 授权和审计；是否发布及业务准入要求由用户和项目决定。
 
 | 主题 | 文档 |
 | :--- | :--- |
@@ -41,13 +42,14 @@ description: |
 - `ask` 的文字回答是模型写的摘要，不是状态证据，可能写错 revision 或答非所问。发布前后的
   Helm release、Deployment、Pod 状态用 `doops exec`（`helm history`、`kubectl get -o json`）
   或 `doops k8s` 只读入口回读，以回读结果为准。
-- 诊断/方案的 `ask` 写明只读；`--apply` 传递 target、范围、授权动作、原因与验收。
-  沿用已有授权，新增对象或影响才确认。
-- 业务 workload 只用 `doops ask --apply` 发布。任务写明 target、服务范围、镜像版本或其
-  授权来源、原因、验收条件；镜像版本不靠猜。发布者调用前自行核对 CI commit 与 digest。
-- 业务 workload 的发布收敛只走 `ask --apply` 内的 `mcp_doops_helm`，不用 shell kubectl、
-  `kubectl set image` 或文本声明冒充成功。运维类变更（重启、扩缩、cordon、删 Pod）用
-  `doops k8s ... --confirm`，它不是发布入口。
+- 诊断/方案的 `ask` 写明只读；`--apply` 传递本次变更授权。超出授权范围才补充确认，
+  不按 Chart 资源种类重复授权。
+- Helm 发布可用 `ask --apply`/`mcp_doops_helm`，也可用 `doops exec` 执行明确授权的
+  原生命令。参数和终态契约见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`。
+- 发布出错后主动读取回执和目标状态，在已有授权内定位并修正可修复问题，持续反馈
+  原因、修正和验证进度；不将可自行取得的参数、配置或检查交给用户重复操作。
+  缺失终态先只读核对，保留原始结果；具体恢复边界见自然语言发布文档。
+- 运维类变更（重启、扩缩、cordon、删 Pod）用 `doops k8s ... --confirm`；文本不算证据。
 - 进入 Kubernetes Agent 所在节点只走 `doops exec` 里的 `nsenter`，并且该 Deployment 的
   `hostAccess.enabled` 必须为 `true`。这是 Gateway 的普通 `exec`：目标 grant 决定能否执行，
   审计记下用户、target、session 和有界命令摘要（最多 512 字节尾部）。不要用 `kubectl exec`、`docker exec` 或直连
@@ -56,19 +58,11 @@ description: |
 - 小文本用 `read/write`，目录和大文件用 `push/pull`；不用 base64、tar 或分片替代。
 - `pull` 用新目录；已有 Git 目标会被 `reset --hard`，仅复用本任务无本地改动的下载目录，不能用业务仓库。
 - 长任务用 `exec --bg`，不在 `exec` 里用 `&`、`nohup`、`setsid`。
-- 发布镜像只由受控构建流程（CI 或指定构建主机）构建，不在业务 target 或本机构建。
-- Agent 不替换自己。K8s Agent 声明 `upgradeAudit` v1 后用 `doops upgrade`，
-  操作编号贯通预检、升级、验收和回滚；`scripts/release-managed-agent.sh` 仅委托同一 Gateway 入口。
-  不用本地 kubeconfig 绕过审计。旧 Agent 首升或配置变更须按
-  `docs/BUILD_DEPLOY_SOP.md` 单独审查独立 Job，不能直接替换承载当前进程的 workload；
-  独立 Docker Agent 用 `scripts/release-host-agent.sh`；
-  空服务器用 `scripts/bootstrap-host-agent.sh`。
-- Gateway 本体只用 `scripts/deploy-gateway.sh --source-commit <commit>` 从宿主机 SSH 发布，
-  不登记为 target，不通过 target 发布。
+- DoOps 自身镜像构建、Agent 独立控制器升级和 Gateway 宿主机发布统一见
+  `docs/BUILD_DEPLOY_SOP.md`。这些维护要求不作为普通业务 Helm 发布的准入条件；
+  Agent 不能从自身进程替换承载它的 workload。
 - 签发 token、建用户会输出秘密；按使用指南 “Gateway Admin Tokens” 存入 `0600` 私密文件，
   不读回对话。`--save-as` 不隐藏输出；无私密交付位置不签发，不 SSH 改 Gateway DB。
-- 发布前核对 `doops version` 与 target 的 `release_commit` 一致；`cli-contract/v3` 和
-  `structuredSSH` 都不证明 Agent 版本或自升级能力。
 
 ## 命令选择
 
@@ -76,7 +70,7 @@ description: |
 | :--- | :--- |
 | 路由 / 在线 / 准入 | `doops -session <s> list`（本地）；`doops -session <s> sync --target <t>`（补路由）；`doops -session <s> targets --target <t> [--admission]` |
 | 确定性命令 | `doops -session <s> exec --target <t> --cmd '<cmd>'` |
-| 进入 K8s Agent 所在节点 | `doops -session <s> exec --target <t> --cmd 'nsenter -t 1 -m -u -i -n -- hostname'`（须 `hostAccess.enabled=true`；Gateway 按 `exec` 授权并审计） |
+| 进入 K8s Agent 所在节点 | `doops -session <s> exec --target <t> --cmd 'nsenter -t 1 -m -u -i -n -- hostname'`（须 `hostAccess.enabled=true`；Gateway 按 target grant 授权并审计） |
 | 长任务 | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` |
 | 嵌套 SSH | `doops -session <s> ssh --target <t> --host <user@host> -- <cmd> [args...]` |
 | 诊断分析 | `doops -session <s> ask --target <t> --msg '只读检查 <对象与问题>，禁止变更；返回证据与结论'` |
@@ -91,7 +85,7 @@ description: |
 | DoWeb | `doops -session <s> web --target <t> --mode check\|plan\|apply --request '<req>'` |
 | 小文本读写 | `doops -session <s> read --target <t> --path <file>`；`doops -session <s> write --target <t> --path <file> --file <local>` |
 | 工作区推送 / 下载 | `doops -session <s> push --target <t> --src <dir>`；`doops -session <existing-session> pull --target <t> --dest <new-download-dir>` |
-| OCI 镜像 | `doops -session <s> image build\|copy --target <t> ...`；`doops -session <s> registry sync --target <t> ...`（CI 构建；推送/复制需授权） |
+| OCI 镜像 | `doops -session <s> image build\|copy --target <t> ...`；`doops -session <s> registry sync --target <t> ...`（按任务选择构建目标；推送/复制需授权） |
 | 一次配置凭据 | `doops -session <s> credential configure --target <t> --id <id> ...` |
 | 开发凭据预检 | `doops -session <s> credential preflight --manifest .agent/doops-credentials.yaml` |
 | 用户与授权 | `doops -session <s> admin user create\|list --target <t> ...`；`doops -session <s> admin grant list\|add\|delete --target <t> ...` |
@@ -131,7 +125,7 @@ DoSql 必须从 `doops sql` 进入；普通 `ask` 不保证注入 DoSql 工具�
 - `403`：已认证但权限不足。
 - `credential_*` 错误与 `credential preflight failed`：见 `docs/CREDENTIAL_RESOURCES.md`。
 - 报错都是 `错误码: 原因`，原因就是要修的东西，不要只看错误码去猜：
-  `helm_preflight_failed|helm_manifest_invalid|helm_no_workload|helm_image_mismatch|helm_mutation_failed|helm_verification_failed`
+  `helm_mutation_failed|helm_mutation_invalid_result|helm_verification_failed|helm_interrupted`
   （含义见 `docs/NATURAL_LANGUAGE_DEPLOYMENT.md`）；`doagent_apply_tool_failed: <工具>: <工具错误>` 是工具自己的失败，
   模型文字说"成功"不算数；`execution_outcome_unknown: <原因>` 不重放 mutation，按原因去 target 上核对；
   `blocked_command(delete_root_filesystem)` 是 exec 唯一拦截的命令。

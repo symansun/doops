@@ -231,13 +231,15 @@ func TestNamingTheHelmCredentialDoesNotSelectItTwice(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	authorized, err := f.hub.resolveExplicitCredentials(
-		auth, "dev", "local", "release app in apps", []string{helm.Name}, ActionExec, "", "", "")
-	if err != nil {
-		t.Fatalf("resolve credentials: %v", err)
-	}
-	if len(authorized) != 1 || authorized[0].Authorized.Resource.ID != helm.ID {
-		t.Fatalf("named Helm credential must be selected once, got %#v", authorized)
+	for _, names := range [][]string{{helm.Name}, {helm.ID}, {helm.Name, helm.ID}, {helm.ID, helm.Name}} {
+		authorized, err := f.hub.resolveExplicitCredentials(
+			auth, "dev", "local", "release app in apps", names, ActionExec, "", "", "")
+		if err != nil {
+			t.Fatalf("resolve credentials: %v", err)
+		}
+		if len(authorized) != 1 || authorized[0].Authorized.Resource.ID != helm.ID {
+			t.Fatalf("named Helm credential must be selected once, count=%d", len(authorized))
+		}
 	}
 }
 
@@ -302,10 +304,7 @@ func TestNamingACredentialBesideTheAutomaticOneNeverReturnsPayloads(t *testing.T
 	}
 }
 
-// Ambiguity is still reported when the task names a non-Helm credential and
-// several Helm repositories are bound: which repository the Chart comes from
-// stays the task's to state.
-func TestNamingANonHelmCredentialStillReportsHelmAmbiguity(t *testing.T) {
+func TestNamingANonHelmCredentialKeepsAllHelmCandidates(t *testing.T) {
 	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("m", 32))
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
 	helmAutoCredential(t, f, f.admin, "first-helm", helmAutoScope())
@@ -317,28 +316,46 @@ func TestNamingANonHelmCredentialStillReportsHelmAmbiguity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = f.hub.resolveExplicitCredentials(
+	authorized, err := f.hub.resolveExplicitCredentials(
 		auth, "dev", "local", "release app in apps", []string{opaque.Name}, ActionExec, "", "", "")
-	if got := credentialErrorCategory(err); got != "credential_reference_ambiguous" {
-		t.Fatalf("category = %q, want credential_reference_ambiguous (err=%v)", got, err)
+	if err != nil || len(authorized) != 3 {
+		t.Fatalf("expected named credential and both Helm candidates: count=%d err=%v", len(authorized), err)
 	}
 }
 
-// Which repository a Chart comes from is the task's to state. Two bound Helm
-// credentials must report ambiguity instead of a guess.
-func TestSeveralBoundHelmCredentialsReportAmbiguity(t *testing.T) {
+// Neither a public URL nor a workspace path requires choosing a private
+// repository at the Gateway. The Agent matches the actual Chart origin.
+func TestSeveralBoundHelmCredentialsWaitForTheActualChart(t *testing.T) {
 	t.Setenv("DOOPS_GATEWAY_SECRET_KEY", strings.Repeat("m", 32))
 	f := newExecutionLifecycleFixture(t, GatewayHubOptions{})
-	helmAutoCredential(t, f, f.admin, "first-helm", helmAutoScope())
-	helmAutoCredential(t, f, f.admin, "second-helm", helmAutoScope())
+	first, _ := helmAutoCredential(t, f, f.admin, "first-helm", helmAutoScope())
+	second, _ := helmAutoCredential(t, f, f.admin, "second-helm", helmAutoScope())
 	auth, err := f.store.VerifyUserToken(f.admin.Plaintext)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = f.hub.resolveExplicitCredentials(
-		auth, "dev", "local", "release app in apps", nil, ActionExec, "", "", "")
-	if got := credentialErrorCategory(err); got != "credential_reference_ambiguous" {
-		t.Fatalf("category = %q, want credential_reference_ambiguous (err=%v)", got, err)
+	for _, instruction := range []string{
+		"release app in apps",
+		"release app from https://public.example.test/app.tgz",
+		"release app from session workspace charts/app",
+	} {
+		authorized, err := f.hub.resolveExplicitCredentials(
+			auth, "dev", "local", instruction, nil, ActionExec, "", "", "")
+		if err != nil || len(authorized) != 2 {
+			t.Fatalf("expected both Helm candidates before Chart selection: count=%d err=%v", len(authorized), err)
+		}
+		selected := map[string]bool{}
+		for _, item := range authorized {
+			selected[item.Authorized.Resource.ID] = true
+		}
+		if !selected[first.ID] || !selected[second.ID] {
+			t.Fatal("candidate selection lost a target-bound credential")
+		}
+		encoded, err := json.Marshal(authorized)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertCredentialCanaryNotInText(t, "candidate selection", string(encoded), helmAutoCanary)
 	}
 }
 
@@ -353,7 +370,7 @@ func TestNamedHelmCredentialStillTakesPrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Two are bound, so discovery would be ambiguous; the name settles it.
+	// Explicit selection narrows the candidates even when several are bound.
 	authorized, err := f.hub.resolveExplicitCredentials(
 		auth, "dev", "local", "release app in apps", []string{"first-helm"}, ActionExec, "", "", "")
 	if err != nil {

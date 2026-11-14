@@ -440,6 +440,9 @@ CLI 和 Gateway（包括内部调度调用）在后台任务派发前校验，�
 终态、取消和未知结果仍由 Gateway 统一处理。workspace 写入等本地操作缺失终态时同样
 如实保留未知结果；执行结束及连接清理后释放 lease。审计持久化失败报告
 `audit_completion_failed` 并独立重试原始终态，不保留执行锁；历史未知审计不参与新任务准入。
+`notifications/message` 中的工具状态通知会继续转发到 CLI；CLI 将工具开始、进展和结束状态
+作为 `[tool:<name>] <status>` 进度行显示。它们只表示观察到的工具状态，不替代原始 RPC
+终态或 apply 的可信结构化回执。
 
 工具调用格式：
 
@@ -590,10 +593,9 @@ mutation evidence. The deterministic `doops_web` RPC maps reads to `ask` and
 mutations to `exec`; website writes hold a target-wide lease because Nginx
 activation/reload is shared. See `DOWEB_INTEGRATION.md` for parameters and mounts.
 
-向目标 AI agent 下发诊断、运维或发布任务。发布任务必须使用
-`operation=apply`，并在自然语言中明确 target、服务范围、原因、任务指定的资产和验收条件。
-业务镜像版本来自任务或任务指定的仓库、Chart、values、现有 release 的只读证据，
-不得猜测，也不要求已明确资产中的事实再粘贴到 prompt。
+向目标 AI agent 下发诊断、运维或发布任务。发布任务使用
+`operation=apply`，并明确 target、release、namespace 和 Chart；镜像、原因和业务验收按任务需要提供。
+DoOps 不把业务信息转换成全局发布门禁。
 
 参数：
 
@@ -614,6 +616,9 @@ session 后按 `cluster/instance/use` 授权和物化，namespace、workload、i
 required keys 只作为执行元数据。普通发布使用 `operation=apply`；DoSql 使用下面的
 自动绑定契约。CLI 用户应优先使用 `doops sql`，它会设置正确的 DoSql skill/tool boundary。
 通用 `ask` 不会自动注入 DoSql 工具，也不能附带数据库凭据。payload 永远不进入 prompt、日志或返回事件。
+Helm apply 不要求额外的 `confirm` 字段；上面的 `confirm=true` 只属于
+DoWeb 的受管变更工具。Helm 的成功、失败和凭据 origin 边界见
+[`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
 
 #### DoSql 参数契约
 
@@ -856,13 +861,14 @@ CLI/控制台为同一次目标升级的所有阶段复用编号；直接调用�
 tag 使用 `Always` 拉取并校验实际 `imageID`；回滚仍只接受历史已验证的 digest 镜像。
 `dry_run: true` 只返回预演。
 `observe_job` 读取 Job 状态。`rollback: true` 创建回滚 Job。namespace 必须是 Agent
-自己的 namespace。Job 使用 Agent 已挂载的 kubeconfig，不接收操作机 kubeconfig。
+自己的 namespace。Job 使用目标 Agent 的 Kubernetes 身份，不接收操作机 kubeconfig。
 新 Pod 未持续就绪时 Job 回滚；CLI 在成功后检查 `structuredSSH`，探针失败会再创建回滚 Job。
 `preflight: true` 创建独立预检 Job，成功后才提交实际升级。正式升级必须给出
 `expected_release_commit`（完整 40 位小写 SHA）；可选 `source_commit`、`ci_url`
 记录调用方核验的 CI 来源。CI URL 必须为 HTTPS，禁止用户信息、查询参数和 fragment。
 
-Agent 必须已经包含该控制器，并挂载可共享的 `/root/.kube` 或 `/root/.kube/config`。
+Agent 的控制器及共享 kubeconfig / 专用 ServiceAccount 前提统一见
+[构建与部署 SOP](BUILD_DEPLOY_SOP.md#四-agent-部署与热更新机制)。
 `self-upgrade-accepted` 仅表示 Job 已提交；调用方继续以精确 `job + namespace`
 观察 `self-upgrade-running/failed/succeeded` 首行状态，不能从日志中的成功字样推断结果。
 操作规范要求显式指定 CLI `-session`；实现未传时自动生成并打印，不应依赖它作为操作关联键。
@@ -893,8 +899,8 @@ Job 留存 7 天，Gateway 已持久化的结果证据不依赖 Job TTL。
 
 ## 自然语言发布 API 对接模式
 
-平台通过 `doops ask --apply` 发送明确的发布任务。任务必须明确 target、
-服务范围、变更原因、任务指定的资产和验收条件；业务镜像版本必须来自任务或任务指定的仓库、Chart、values、现有 release 的只读证据，不猜测，也不要求重复粘贴已明确资产中的事实。
+平台通过 `doops ask --apply` 发送明确的发布任务。任务明确 target、release、
+namespace 和 Chart；其它参数和业务验收按任务需要提供，不由 DoOps 统一裁决。
 需要凭据时，调用方显式提供一个或多个 metadata-only credential resource
 name；Gateway 根据用户对该 target 的 grant 直接读取 target/use 绑定并物化，
 不调用模型生成授权 scope。凭据 payload 不进入公开 prompt、doagent 上下文、CLI 输出、日志或
@@ -909,13 +915,21 @@ Helm target binding 只绑定 target 的 cluster/instance 和 use=helmPull；nam
 受管 Helm 发布允许任务指定的 `value_files` 和非敏感 `set_strings`，不强制 bundled-only，
 认证、target 权限、包校验与单次 staging 保留；失败不改走匿名或旧登录态。
 
-`mcp_doops_helm upgrade-install` 显式提供 `release`、`namespace`、`chart` 和 `confirm=true`；
-`session_id` 由运行时绑定。`asset_source` 默认 `remote`（HTTPS `.tgz`，当前不支持 OCI），
-也可显式使用 `workspace`。`value_files` 是可选有序列表，`set_strings` 是非敏感
-Chart-specific 字符串覆盖；`expected_image` 可选且只接受显式输入，不从 values 推导。
-普通升级统一 `--reset-values`，取消隐式保留历史 values，自动执行 server dry-run 和最终
-Deployment 校验。完整参数、安全边界与迁移说明见
+`mcp_doops_helm upgrade-install` 接收运行时绑定的 `session_id`、`release`、`namespace` 和
+`chart`，以及可选的 `asset_source`、有序 `value_files`、非敏感 `set_strings`、`timeout`、
+`atomic` 和 `take_ownership`。Helm 发布不增加二次确认字段或全局镜像匹配字段。
+`asset_source` 默认是 `remote`（HTTPS `.tgz`，当前不支持 OCI），也可显式使用 `workspace`。
+DoOps 按给定顺序把 values 和覆盖传给原生 Helm，不强制重置历史 values 或 server-side
+dry-run，也不要求 Chart 包含 workload 或 Ingress。`upgrade-install` 使用
+`helm upgrade --install --wait`；成功回执只有在本次 release 的 status 为 `deployed` 且
+revision、description 都归属于本次 mutation 时才包含 `release deployed: revision <n>`。
+明确的原生 Helm 命令也可通过 `doops_shell`/`exec` 执行，其退出状态和回读证据独立于
+结构化 `ask --apply` 证明。完整参数、安全边界、目标授权、凭据 origin 和失败语义见
 [`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
+`ask --apply` 的成功或失败以可信结构化工具回执为准；模型最后一句话、普通流式文本或
+其它无关工具的成功不能替代或覆盖本次 Helm 结果。明确标记为未执行的 validation/preparation
+失败后，针对同一 target、release、namespace 的修正调用可以继续成功；真实执行失败和
+`outcome_unknown` 不能由无关成功清除。
 
 业务服务的生产发布由目标 Agent 执行。`doops-agent` 自身镜像替换不走 `ask --apply`，
 走 `doops upgrade`。调用方必须以同一 session 的真实健康检查和关键业务验收作为完成证据。
@@ -999,6 +1013,14 @@ Gateway 对前台、后台、SSH、prompt 和 `ask --apply` 统一维护执行�
 按请求 ID 路由流式事件，不按 session 覆盖并发请求。取消 ACK 不是原始调用的终态；
 调用被取消、超时或断连且没有足够终态证据时写入 `outcome_unknown`，不能把本地等待
 结束当成远端 mutation 已停止。结构化 SSH 仍由 `structuredSSH` 参数协议保护。
+
+Web Agent 会话在 Gateway `initialize` 成功后撤销 45 秒连接计时，普通 prompt/apply
+从派发起采用 30 分钟总期限，不再按首输出等待时间取消；后续进展也不会重置总期限。
+`mode=metadata` 仍有独立的 45 秒请求期限。控制台 `/api/rpc` 的 `doops_agent_prompt`
+同样采用 30 分钟总期限。到期后请求取消，并最多等待 15 秒接收原 RPC 的实际终态；
+取消 ACK 不结束等待，仍缺少终态时报告未知结果，不自动重放变更。
+CLI 继续转发工具开始、进展和结束状态通知，供调用方观察工具生命周期；这些通知是进度，
+不是 apply 完成证据。Apply 的可信成功或失败回执由 Gateway/Agent 的结构化工具结果决定。
 
 CLI/Web 可在原 `/v1/rpc` WebSocket 上取消自己的请求，不需要管理员权限：
 
@@ -1151,7 +1173,8 @@ JSON-RPC 错误：
 
 - 所有远程操作必须设置有意义的 `session_id`。
 - 文件传输使用 `push/pull`，`read/write` 只用于小文本。
-- 可重复部署使用 `doops_shell`；首次适配、排障和探索使用 `doops_agent_prompt`。
-- Kubernetes 变更必须先做 server-side dry-run，再真实 apply。
+- 可重复部署和明确的原生 Helm 命令使用 `doops_shell`；首次适配、排障和自然语言发布使用
+  `doops_agent_prompt`。Helm 发布沿用原生 values 与等待语义，具体回执和失败处理见
+  [`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
 - 升级 agent 镜像前，先确认新镜像已能在目标环境拉取。
 - 生成的脚本和报告放在 `/root/ws/<session>`，成为产品流程后要拉回源码仓库。

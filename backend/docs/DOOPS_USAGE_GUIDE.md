@@ -18,14 +18,14 @@ prints it to stderr, and proceeds; pass that name again to continue in the same 
 | Retire an offline target | `doops -session <s> remove --target <gateway-target>` | Removes only the local route after a successful Gateway query confirms the exact route is not currently visible; online, unreachable, or unauthorized targets are refused. |
 | Check Agent protocol capability | `doops -session <s> capabilities --target <t> --require structuredSSH` | Fails closed when the online Agent is too old for structured SSH. |
 | Add a Gateway target | `doops add --name <n> --gateway <url> --cluster <c> --instance <i>` | Stores routing only; never stores a target token. |
-| Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Known checks and explicitly requested operations; standard releases use `ask --apply`. |
+| Run deterministic shell | `doops -session <s> exec --target <t> --cmd '<cmd>'` | Runs explicitly requested commands, including native Helm releases; see [delivery contract](NATURAL_LANGUAGE_DEPLOYMENT.md). |
 | Sync OCI images | `doops -session <s> registry sync --target <t> --source-registry <src> --target-registry <dst> --tag <release> --image <name>` | Generic target-side `skopeo copy --all`, bounded timeout/retry, and manifest digest verification; auth payloads never enter CLI arguments. `--source-authfile` / `--target-authfile` are optional overrides for the authfile the Gateway delivered to the target. |
 | Build an OCI image | `doops -session <s> image build --target <t> --context <remote-dir> --output oci --output-path <remote-file>` | Generic BuildKit build; supports `--platform` and `--output image --image <ref> --push` for a registry push. |
 | Copy an OCI image | `doops -session <s> image copy --target <t> --source <ref> --destination <ref>` | Generic Skopeo transport-to-transport copy with optional authfiles and raw manifest digest verification. |
 | Run nested SSH safely | `doops -session <s> ssh --target <t> --host <user@host> -- <command> [args...]` | Preserves remote argv across nested shells. |
 | Run a long build | `doops -session <s> exec --bg --target <t> --cmd '<cmd>'` | One RPC waits for the Agent task's terminal result; no task-status polling or command retries. |
 | Ask the edge agent to reason | `doops -session <s> ask --target <t> --msg '<task>'` | Best for diagnostics and multi-step investigation. |
-| Run a release | `doops -session <s> ask --target <t> --apply --credential <name> --msg '<facts>'` | Canonical business workload CI/CD entry. |
+| Run a release | `doops -session <s> ask --target <t> --apply [--credential <name>...] --msg '<facts>'` | Natural-language release with mutation authorization. |
 | DoSql read-only query or scan | `doops -session <s> sql --target <t> --mode query [--database <name>] --request '<request>'` | Automatically binds every active database credential on the selected Gateway target; `--database` picks among several. No local connection file is read. |
 | DoSql live schema inspection | `doops -session <s> sql --target <t> --mode query [--database <name>] --request '读取指定 database_asset_id 的表、列或索引结构'` | Uses one read-only engine catalog/information-schema query. `discover` only finds Kubernetes database assets; it does not inspect live tables. |
 | DoSql change plan | `doops -session <s> sql --target <t> --mode plan --request '<request>'` | Returns business summary, risk and verification evidence without mutation. |
@@ -41,7 +41,7 @@ prints it to stderr, and proceeds; pass that name again to continue in the same 
 | Read small text | `doops -session <s> read --target <t> --path <file>` | Small text only. Default COS mode prints a presigned GET; use `--storage gateway` to print content. Paths are relative to the session workspace. |
 | Write small text | `doops -session <s> write --target <t> --path <file> --file <local>` | Also supports `--content` and stdin. Default COS mode stores the object and prints a presigned GET; use `--storage gateway` for a direct session-workspace write. Paths are relative. |
 | Read system information | `doops -session <s> info --target <t>` | CPU, memory and disk metadata. |
-| Use structured Kubernetes operations | `doops -session <s> k8s --target <t> ...` | Restricted operational interface; publishing uses `ask --apply`. |
+| Use structured Kubernetes operations | `doops -session <s> k8s --target <t> ...` | Structured reads and operational changes; Helm delivery entries are in the [delivery contract](NATURAL_LANGUAGE_DEPLOYMENT.md). |
 | Clean workspace | `doops -session <s> clean --target <t> --workspace <s>` | Cleans `/root/ws/<workspace>`. |
 | Check an image deployment | `doops check --target <t> --deployment <d> --namespace <ns> --image <repo/image>` | Compares the Deployment's main container image with the exact image you pass; `--namespace` defaults to `default`. |
 | Upgrade a managed Helm Agent | `doops -session <s> upgrade --target <t> --image <repository:tag 或 repository@sha256:<digest>` | In-cluster Job only. `--dry-run` previews parameters. |
@@ -221,10 +221,11 @@ DoOps 通用镜像工具链。镜像构建使用明确给出的 `exec` 命令调
 （本机命令历史）、`sessions.json`（本机会话缓存）。`~/.config/doops/config.json`、
 `~/.doops/auth.json` 和项目 `.doops/` 是旧路径，不作为当前配置依据。
 
-`doops version` 的 `release` 是唯一 DoOps 发布版本，`commit` 是该版本对应的完整
-源码 provenance；`doops targets` 的 `RELEASE_COMMIT` 必须与它一致。输出中的
-`cli-contract/v3` 只通过 `doops --contract` 检查协议兼容性，不是另一个发布版本。
-Agent 未提供完整 `RELEASE_COMMIT` 时只能视为旧运行时，升级验收不会通过。
+`doops version` 的 `release` 和 `commit` 标识已安装 CLI；
+`doops targets` 的 `RELEASE_COMMIT` 标识目标 Agent。日常操作不要求两者同版，
+所需能力按实际调用检查。Agent 自身升级的候选制品与版本验收见
+[构建与部署 SOP](BUILD_DEPLOY_SOP.md)。`cli-contract/v3` 通过 `doops --contract`
+检查协议兼容性，不是另一个发布版本。
 
 `doops list` reads local config. `doops targets --target <t>` asks the Gateway whether that one configured route is visible. A target can be listed locally but unavailable in the Gateway because it is offline or because the logged-in user lacks the exact target grant; the CLI does not collapse these cases into a definitive offline diagnosis. A newly registered agent does not appear in `doops list` until its route is stored locally.
 
@@ -450,6 +451,11 @@ doops -session ops ssh --target demo --host ops@app.internal \
 CLI 只拦截直接以 `ssh`、`/usr/bin/ssh` 或 `/bin/ssh` 开头的 `exec` 命令，不是完整 Shell
 分析器；包装命令仍须由调用者改用结构化入口。
 
+`exec` 也可执行明确给出的原生 Helm `upgrade/install/rollback/uninstall`。该路径遵循
+target 授权、session 隔离和完整退出审计，使用命令自身的退出状态与回读结果；它不替代
+`ask --apply` 的可信结构化工具证明。Helm 资产、凭据和失败语义见
+[`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
+
 ## Ask
 
 ```bash
@@ -538,8 +544,9 @@ materialization 路径。
 
 ## CI/CD And Apply
 
-普通业务 workload 用 `doops ask --apply` 发布。任务写明 target、服务范围、镜像版本或其授权来源、
-原因和验收条件；Helm 资产参数、`--reset-values`、可选 `expected_image`、凭据预物化和验收见
+自然语言发布用 `doops ask --apply`。任务写明 target、release、namespace、Chart 和选用的
+values/Helm 选项；需要时再写明镜像事实、原因和业务验收条件。Helm 的原生 values 语义、
+凭据预物化、成功回执和失败处理见
 [`NATURAL_LANGUAGE_DEPLOYMENT.md`](NATURAL_LANGUAGE_DEPLOYMENT.md)。
 
 ```bash
@@ -547,11 +554,13 @@ doops -session release-<commit> ask \
   --target <configured-target> \
   --apply \
   --credential <resource-name> \
-  --msg '在 <target> 的 namespace <namespace> 发布 deployment/<workload>，镜像 <repository>@sha256:<verified-ci-digest>；使用 chart https://charts.example/<name>.tgz；原因：<reason>；验收：rollout、最终 Deployment spec/status、实际镜像、Service/Endpoint 和健康检查通过。'
+  --msg '在 <target> 的 namespace <namespace> 安装或升级 release <release>，使用 chart https://charts.example/<name>.tgz；原因：<reason>；如需业务验收：<acceptance-condition>。'
 ```
 
-`--credential` 可重复，只传资源名。发布者调用前自行核对 CI source commit 和镜像 digest；
-CLI 与 Agent 不验证 CI 来源。Agent 自身升级不走这条路径，见下文 Upgrade。
+`--credential` 可重复，只传 resource name；Gateway 按 target grant 选择凭据，并只向匹配的
+HTTPS origin 发送认证。CI 可以调用同一命令，但 CI 记录、镜像证明和 provenance 不是 Helm
+发布的前置门禁；CLI、Agent 和 Helm 工具不自动证明构建来源。Agent 自身升级不走这条路径，
+见下文 Upgrade。
 
 ## Push
 

@@ -12,12 +12,14 @@ import {
 } from "@agent-cloud/agent-ui/protocol"
 import type { Session, Target } from "./client"
 import { consoleFetch } from "./network-error.ts"
+import { createDemoAgentSessionTransport } from "./demo-agent-session"
 
-export function createDoopsAgentSessionTransport({ target, sessionId }: {
+export function createDoopsAgentSessionTransport({ session, target, sessionId }: {
   session: Session
   target: Target
   sessionId: string
 }): AgentWorkbenchSessionTransport {
+  if (session.demo) return createDemoAgentSessionTransport(sessionId)
   const scope = { cluster: target.cluster, instance: target.instance, session_id: sessionId }
   async function request(url: string, init: RequestInit): Promise<Response> {
     try {

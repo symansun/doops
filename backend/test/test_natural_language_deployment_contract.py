@@ -39,7 +39,7 @@ def test_v3_release_contract_is_explicit_natural_language_apply():
     assert "session.token" not in ci_guide
     assert "--apply" in ci_guide
     assert ci_guide.count("--credential") >= 4
-    assert ci_guide.count("<IMAGE_REPOSITORY>@sha256:<IMAGE_DIGEST>") == 3
+    assert ci_guide.count("optional image") == 3
     assert "<IMAGE_VERSION>" not in ci_guide
     assert "curlimages/curl" not in ci_guide
     assert "image: alpine:3.22@sha256:<PINNED_ALPINE_DIGEST>" in ci_guide

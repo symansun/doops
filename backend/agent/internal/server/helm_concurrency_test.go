@@ -82,7 +82,7 @@ if [ "$1" = "status" ]; then
   revision="$(cat "${state}/current-revision")"
   description="$(cat "${state}/current-description")"
   printf 'status revision=%s\n' "$revision" >>"${log}"
-  printf '{"version":%s,"info":{"description":"%s"}}\n' "$revision" "$description"
+  printf '{"version":%s,"info":{"status":"deployed","description":"%s"}}\n' "$revision" "$description"
   exit 0
 fi
 
@@ -141,7 +141,7 @@ JSON
 	if secondResult.err != nil {
 		t.Fatalf("current concurrent session failed: %v", secondResult.err)
 	}
-	if !strings.Contains(secondResult.verification, "final Helm workload spec verified") {
+	if !strings.Contains(secondResult.verification, "release deployed: revision 2") {
 		t.Fatalf("current session verification missing: %q", secondResult.verification)
 	}
 	if firstResult.err == nil || !strings.HasPrefix(firstResult.err.Error(), "helm_verification_failed: ") {
@@ -153,9 +153,6 @@ JSON
 		t.Fatal(err)
 	}
 	log := string(logBytes)
-	if !strings.Contains(log, "manifest revision=1") || !strings.Contains(log, "manifest revision=2") {
-		t.Fatalf("manifest reads were not pinned to both mutation revisions: %q", log)
-	}
 	if !strings.Contains(log, "status revision=2") {
 		t.Fatalf("current release was not rechecked after acceptance: %q", log)
 	}

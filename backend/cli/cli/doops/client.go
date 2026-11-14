@@ -79,7 +79,17 @@ type gatewayRPCError struct {
 }
 
 func (e *gatewayRPCError) Error() string {
-	return fmt.Sprintf("remote error: %s", e.Message)
+	message := fmt.Sprintf("remote error: %s", e.Message)
+	report, ok := e.Data["structuredContent"].(map[string]interface{})
+	if !ok || report["kind"] != "doops.verified-mutation" {
+		return message
+	}
+	// This report is public Gateway evidence; other RPC data may contain secrets.
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		return fmt.Sprintf("%s\nencode doops.verified-mutation receipt: %v", message, err)
+	}
+	return message + "\n" + string(encoded)
 }
 
 func executionOutcomeUnknownError() error {
@@ -762,7 +772,9 @@ func (c *MCPClient) Call(toolName string, arguments map[string]interface{}) erro
 						return fmt.Errorf("%s", errMsg)
 					}
 				} else if rpcErr, ok := msg["error"].(map[string]interface{}); ok {
-					return fmt.Errorf("remote error: %v", rpcErr["message"])
+					code, _ := rpcErr["code"].(float64)
+					data, _ := rpcErr["data"].(map[string]interface{})
+					return &gatewayRPCError{Code: code, Message: fmt.Sprint(rpcErr["message"]), Data: data}
 				}
 				return nil // 收到最终结果，完成
 			}
@@ -971,7 +983,9 @@ func (c *MCPClient) CallStructured(toolName string, arguments map[string]interfa
 				return nil
 			}
 			if rpcErr, ok := msg["error"].(map[string]interface{}); ok {
-				return fmt.Errorf("remote error: %v", rpcErr["message"])
+				code, _ := rpcErr["code"].(float64)
+				data, _ := rpcErr["data"].(map[string]interface{})
+				return &gatewayRPCError{Code: code, Message: fmt.Sprint(rpcErr["message"]), Data: data}
 			}
 			return fmt.Errorf("tool %s returned no result", toolName)
 		case <-timeout.C:

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,7 +38,7 @@ func TestK8SMCPStdioExposesBoundedDomainTools(t *testing.T) {
 		required, _ := schema["required"].([]interface{})
 		expectedRequired := "operation"
 		if name == "helm" {
-			expectedRequired = "operation,release,namespace,confirm"
+			expectedRequired = "operation,release,namespace"
 		}
 		if strings.Join(interfaceStrings(required), ",") != expectedRequired {
 			t.Fatalf("unexpected required fields: %#v", required)
@@ -65,10 +66,13 @@ func TestK8SMCPStdioExposesBoundedDomainTools(t *testing.T) {
 			if _, exists := properties["values"]; exists {
 				t.Fatalf("ambiguous legacy values field remains exposed: %#v", properties)
 			}
-			for _, requiredProperty := range []string{"asset_source", "value_files", "set_strings", "expected_image"} {
+			for _, requiredProperty := range []string{"asset_source", "value_files", "set_strings"} {
 				if _, exists := properties[requiredProperty]; !exists {
 					t.Fatalf("helm schema missing %q: %#v", requiredProperty, properties)
 				}
+			}
+			if _, exists := properties["expected_image"]; exists {
+				t.Fatalf("removed expected_image gate remains exposed: %#v", properties)
 			}
 			setStrings, _ := properties["set_strings"].(map[string]interface{})
 			description := setStrings["description"].(string)
@@ -85,10 +89,6 @@ func TestK8SMCPStdioExposesBoundedDomainTools(t *testing.T) {
 			if !strings.Contains(valueFiles["description"].(string), "ordered") ||
 				!strings.Contains(valueFiles["description"].(string), "HTTP(S)") {
 				t.Fatalf("helm values source contract missing: %#v", valueFiles)
-			}
-			expectedImage, _ := properties["expected_image"].(map[string]interface{})
-			if !strings.Contains(expectedImage["description"].(string), "repository@sha256") {
-				t.Fatalf("helm expected image contract missing: %#v", expectedImage)
 			}
 		}
 	}
@@ -121,9 +121,9 @@ func TestK8SMCPStdioExposesIndependentDoSQLTools(t *testing.T) {
 	}
 }
 
-func TestK8SMCPStdioHelmToolPreservesConfirmationBoundary(t *testing.T) {
+func TestK8SMCPStdioHelmToolDoesNotAddASecondConfirmationGate(t *testing.T) {
 	input := strings.NewReader(
-		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"helm","arguments":{"operation":"upgrade-install","release":"app","namespace":"apps","chart":"deploy/helm/app"}}}` + "\n",
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"helm","arguments":{"operation":"unsupported","release":"app","namespace":"apps"}}}` + "\n",
 	)
 	var output bytes.Buffer
 	if err := runK8SMCPStdioContext(
@@ -134,8 +134,51 @@ func TestK8SMCPStdioHelmToolPreservesConfirmationBoundary(t *testing.T) {
 	); err != nil {
 		t.Fatalf("run MCP server: %v", err)
 	}
-	if !strings.Contains(output.String(), "confirm=true is required") {
-		t.Fatalf("helm confirmation error missing: %s", output.String())
+	if strings.Contains(output.String(), "confirm=true is required") {
+		t.Fatalf("Helm still has a duplicate confirmation gate: %s", output.String())
+	}
+}
+
+func TestK8SMCPStdioHelmInvalidArgumentsAreToolErrors(t *testing.T) {
+	for _, arguments := range []string{
+		`{}`,
+		`{"operation":"unsupported"}`,
+		`{"operation":42}`,
+		`null`,
+		`[]`,
+		`{"operation":"rollback","release":"app","namespace":"apps","revision":0}`,
+		`{"operation":"rollback","release":"app","namespace":"apps","revision":2,"unknown":true}`,
+		`{"operation":"rollback","release":"app","namespace":"apps","revision":2,"timeout":"0s"}`,
+		`{"operation":"rollback","session_id":"other"}`,
+	} {
+		t.Run(arguments, func(t *testing.T) {
+			input := strings.NewReader(`{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"helm","arguments":` + arguments + "}}\n")
+			var output bytes.Buffer
+			if err := runK8SMCPStdioContext(t.Context(), input, &output,
+				func() (string, error) { return "validation-test", nil }); err != nil {
+				t.Fatal(err)
+			}
+			response := decodeK8SMCPResponse(t, output.Bytes())
+			if _, exists := response["error"]; exists {
+				t.Fatalf("known Helm argument rejection used JSON-RPC error: %#v", response)
+			}
+			result, _ := response["result"].(map[string]interface{})
+			if result["isError"] != true {
+				t.Fatalf("invalid Helm arguments were not rejected: %#v", response)
+			}
+			facts, _ := result["structuredContent"].(map[string]interface{})
+			if facts["executionStarted"] != false || facts["phase"] != "validation" {
+				t.Fatalf("argument rejection lacks execution facts: %#v", result)
+			}
+			content, _ := result["content"].([]interface{})
+			if len(content) != 1 || content[0].(map[string]interface{})["text"] == "" {
+				t.Fatalf("argument rejection lost its reason: %#v", response)
+			}
+			text := content[0].(map[string]interface{})["text"].(string)
+			if !strings.Contains(text, `"executionStarted":false`) || !strings.Contains(text, `"phase":"validation"`) {
+				t.Fatalf("model cannot see safe correction facts: %q", text)
+			}
+		})
 	}
 }
 
@@ -213,6 +256,23 @@ exit 7
 	}
 }
 
+func TestK8SMCPStdioHelmSessionPreparationFailureIsAttestable(t *testing.T) {
+	input := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"helm","arguments":{"operation":"rollback","release":"app","namespace":"apps","revision":2}}}` + "\n")
+	var output bytes.Buffer
+	if err := runK8SMCPStdioContext(t.Context(), input, &output, func() (string, error) {
+		return "", errors.New("MCP working directory is not a bound DoOps session workspace")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	response := decodeK8SMCPResponse(t, output.Bytes())
+	result, _ := response["result"].(map[string]interface{})
+	facts, _ := result["structuredContent"].(map[string]interface{})
+	if response["error"] != nil || result["isError"] != true ||
+		facts["phase"] != "preparation" || facts["executionStarted"] != false {
+		t.Fatalf("session preparation failure lost its MCP receipt: %#v", response)
+	}
+}
+
 func TestK8SMCPStdioHelmExecutionFailureIsToolError(t *testing.T) {
 	bin := t.TempDir()
 	writeK8SMCPExecutable(t, bin, "helm", `#!/bin/sh
@@ -223,7 +283,7 @@ exit 9
 	t.Setenv("DOOPS_WORKSPACE_ROOT", t.TempDir())
 
 	input := strings.NewReader(
-		`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"helm","arguments":{"operation":"rollback","release":"app","namespace":"apps","revision":2,"confirm":true}}}` + "\n",
+		`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"helm","arguments":{"operation":"rollback","release":"app","namespace":"apps","revision":2}}}` + "\n",
 	)
 	var output bytes.Buffer
 	if err := runK8SMCPStdioContext(
@@ -246,6 +306,10 @@ exit 9
 	text := content[0].(map[string]interface{})["text"].(string)
 	if !strings.HasPrefix(text, "helm_mutation_failed: ") {
 		t.Fatalf("unexpected stable execution error: %q", text)
+	}
+	facts, _ := result["structuredContent"].(map[string]interface{})
+	if facts["executionStarted"] != true || facts["phase"] != "execution" {
+		t.Fatalf("execution failure lost its execution facts: %#v", result)
 	}
 	if strings.Contains(output.String(), "stdio-helm-canary") {
 		t.Fatalf("execution error leaked secret output: %s", output.String())
@@ -310,7 +374,7 @@ func TestK8SMCPStdioMalformedCallRemainsJSONRPCError(t *testing.T) {
 
 func TestK8SMCPStdioRejectsModelSuppliedSession(t *testing.T) {
 	input := strings.NewReader(
-		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"helm","arguments":{"session_id":"target-alias","operation":"rollback","release":"app","namespace":"apps","revision":2,"confirm":true}}}` + "\n",
+		`{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"helm","arguments":{"session_id":"target-alias","operation":"rollback","release":"app","namespace":"apps","revision":2}}}` + "\n",
 	)
 	var output bytes.Buffer
 	if err := runK8SMCPStdioContext(

@@ -104,47 +104,60 @@ func authorizedHelmCredential(ctx context.Context, params api.HelmParams) (*helm
 	if decoder.Decode(&lease) != nil || decoder.Decode(&struct{}{}) != io.EOF || lease.SessionID != params.SessionID {
 		return nil, "", errors.New("helm_credential_lease_invalid")
 	}
-	var matched *api.AgentCredentialBinding
-	for index := range lease.Bindings {
-		binding := &lease.Bindings[index]
-		if matched != nil {
-			return nil, "", errors.New("helm_credential_binding_ambiguous")
+	var matched *helmRepositoryAuth
+	var digest string
+	for _, binding := range lease.Bindings {
+		auth, err := requestHelmCredential(ctx, params, binding)
+		if err != nil {
+			return nil, "", err
 		}
-		matched = binding
+		if auth == nil {
+			continue
+		}
+		if matched != nil {
+			return nil, "", errors.New("helm_credential_binding_ambiguous: multiple credentials match the chart HTTPS origin; select one with --credential")
+		}
+		matched, digest = auth, binding.Digest
 	}
-	if matched == nil {
-		return nil, "", nil
-	}
+	return matched, digest, nil
+}
+
+// The private broker returns credentials only for its HTTPS origin, or 204
+// for an unrelated Chart. Broker failures must not become anonymous downloads.
+func requestHelmCredential(ctx context.Context, params api.HelmParams, binding api.AgentCredentialBinding) (*helmRepositoryAuth, error) {
 	requestBody, err := json.Marshal(map[string]interface{}{
 		"session_id": params.SessionID, "namespace": params.Namespace,
-		"release": params.Release, "chart": params.Chart, "binding": matched,
+		"release": params.Release, "chart": params.Chart, "binding": binding,
 	})
 	if err != nil {
-		return nil, "", errors.New("helm_credential_payload_invalid")
+		return nil, errors.New("helm_credential_payload_invalid")
 	}
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", matched.ContextSocket)
+		return (&net.Dialer{}).DialContext(ctx, "unix", binding.ContextSocket)
 	}}
 	defer transport.CloseIdleConnections()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://native/helm", strings.NewReader(string(requestBody)))
 	if err != nil {
-		return nil, "", errors.New("helm_native_context_unavailable")
+		return nil, errors.New("helm_native_context_unavailable")
 	}
 	response, err := (&http.Client{Transport: transport}).Do(request)
 	if err != nil {
-		return nil, "", errors.New("helm_native_context_unavailable")
+		return nil, errors.New("helm_native_context_unavailable")
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusNoContent {
+		return nil, nil
+	}
 	if response.StatusCode != http.StatusOK {
-		return nil, "", errors.New("helm_native_context_unavailable")
+		return nil, errors.New("helm_native_context_unavailable")
 	}
 	var auth helmRepositoryAuth
-	decoder = json.NewDecoder(io.LimitReader(response.Body, 1<<20))
+	decoder := json.NewDecoder(io.LimitReader(response.Body, 1<<20))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&auth) != nil || decoder.Decode(&struct{}{}) != io.EOF {
-		return nil, "", errors.New("helm_credential_payload_invalid")
+		return nil, errors.New("helm_credential_payload_invalid")
 	}
-	return &auth, matched.Digest, nil
+	return &auth, nil
 }
 
 func validNativeHelmSocketPath(path string) bool {

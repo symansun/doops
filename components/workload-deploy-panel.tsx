@@ -15,7 +15,7 @@ import { browserSessionStorage, loadDeployState, saveDeployDraft, saveDeploySess
 import { useAppDialog } from "./app-dialog"
 import { DeploymentForm } from "./deployment-form"
 
-// Business workload release: the same confirmed `doops.operations/apply` command as `doops ask --apply`,
+// Helm release channel: the same `doops.operations/apply` command as `doops ask --apply`,
 // sent through the hosted agent session so the native timeline shows the trace and the Agent's live evidence.
 export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpenUpgrade }: {
   session: Session
@@ -77,9 +77,9 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
       {dialog}
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b bg-card px-4 py-3">
         <div className="min-w-0">
-          <h2 className="text-base font-semibold">发布业务工作负载</h2>
+          <h2 className="text-base font-semibold">发布 Helm release</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            等同 <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">doops ask --target {target.cluster}/{target.instance} --apply</code>，由目标 Agent 执行 Helm 变更并返回实时证据。
+            等同 <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">doops ask --target {target.cluster}/{target.instance} --apply</code>，由目标 Agent 执行用户给出的 Helm 请求并返回实时证据。
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -107,11 +107,11 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
             saveDraft={saveDraft}
             canSubmit={availability.canSubmit}
             blockedReason={availability.canSubmit ? undefined : availability.blockedReason}
-            onDeploy={async (input: DeploymentInput, confirmed: boolean) => {
-              // The form already gates on canSubmit; this keeps every submission path behind the same check.
+            onDeploy={async (input: DeploymentInput) => {
+              // The form gates on channel availability; Gateway authorization remains authoritative.
               if (!availability.canSubmit) throw new Error(availability.blockedReason)
               if (!runtime.executeExtension) throw new Error("当前智能体不支持部署变更")
-              await runtime.executeExtension(sessionId, crypto.randomUUID(), deploymentExtensionCommand(target, input, confirmed))
+              await runtime.executeExtension(sessionId, crypto.randomUUID(), deploymentExtensionCommand(target, input))
             }}
           />
         </div>
@@ -119,7 +119,7 @@ export function WorkloadDeployPanel({ session, target, onOpenCredentials, onOpen
           <div className="flex shrink-0 items-center justify-between border-b px-4 py-2">
             <div className="min-w-0">
               <h3 className="text-sm font-medium">执行过程</h3>
-              <p className="truncate text-[11px] text-muted-foreground">rollout 与最终 Deployment 状态以 Agent 返回为准；工具失败、连接中断或缺少终态都不算成功</p>
+              <p className="truncate text-[11px] text-muted-foreground">以 Helm release 的实际终态为准；工具失败、连接中断或缺少终态都不算成功</p>
             </div>
             {busy && snapshot.capabilities.interrupt && (
               <button type="button" disabled={stopping || snapshot.connection !== "connected"} onClick={() => void stop()}
@@ -193,7 +193,7 @@ function ConnectionBadge({ snapshot, availability }: { snapshot: AgentSessionSna
   const connecting = snapshot.connection === "connecting" || snapshot.connection === "reconnecting"
   const [tone, label] = availability.canSubmit
     ? ["bg-emerald-500", "Agent 已就绪"]
-    : snapshot.connection === "connected" ? ["bg-amber-500", isDoopsAgentSessionBusy(snapshot) ? "发布执行中" : "不能发布"]
+    : snapshot.connection === "connected" ? ["bg-amber-500", isDoopsAgentSessionBusy(snapshot) ? "发布执行中" : "通道不可用"]
       : connecting ? ["bg-amber-500 animate-pulse", "正在连接 Agent"] : ["bg-destructive", "Agent 不可用"]
   return (
     <span className="flex h-8 max-w-64 items-center gap-1.5 rounded-md border px-2.5 text-xs text-muted-foreground" title={availability.canSubmit ? undefined : availability.blockedReason}>

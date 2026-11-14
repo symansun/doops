@@ -27,7 +27,7 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `
 Doops 分布式服务器管理工具 (doops.sh CLI)
-专为 AI Agent 设计的自然语言运维工具。发布任务须明确 target、范围、原因和验收；镜像与 Chart 参数可从任务指定的资产读取。
+专为 AI Agent 设计的自然语言运维通道。发布请求须明确 target、release、namespace 和 Chart；其它业务信息按任务需要提供。
 
 配置文件路径: ~/.agent/skills/doops/config.json（唯一默认配置；DOOPS_CONFIG 可显式覆盖）
 
@@ -81,8 +81,8 @@ Doops 分布式服务器管理工具 (doops.sh CLI)
   -help       显示此帮助信息
 
 	自然语言发布示例:
-	  # --apply 允许本次任务做变更；任务本身必须给出所有发布事实。
-	  doops -session release-<commit> ask --target <target> --apply --msg "在 target <target> 发布服务范围 api，release app，namespace apps，chart https://charts.example/app.tgz，镜像 <repository>@sha256:<digest>；原因：修复课堂权限；验收：最终 Deployment spec/generation/副本、实际镜像、Service/Endpoint 和 /health 均通过。"
+	  # --apply 授权本次任务做变更；目标 Agent 按原生 Helm 处理请求。
+	  doops -session release-<id> ask --target <target> --apply --msg "在 target <target> 的 namespace apps 安装或升级 release app，使用 chart https://charts.example/app.tgz。"
 `)
 	}
 	flag.Parse()

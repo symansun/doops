@@ -110,29 +110,10 @@ Gateway：读取后路由被别人改过就返回 409，路由已被删除就返
 `DOOPS_PROXY_ALLOW_HOSTS`；默认空值会拒绝所有上游。这个配置不是公网域名
 allowlist，而是 Agent 所在网络允许访问的上游主机 allowlist。
 
-已有自升级控制器的 Helm Agent 用 `doops upgrade`；Job 复用 Agent 已挂载的
-kubeconfig，操作机不需要 kubeconfig。普通 workload 发布使用
-`doops ask --apply`，也不需要本机 kubeconfig。
-
-`doops upgrade` 仅更新镜像并保留现有 values，不修改代理 allowlist。新集群 bootstrap、
-已有 Helm Agent 首次启用自升级控制器，或本节显式修改运行配置时，使用
-`scripts/release-managed-agent.sh`，由外部控制器显式提供 kubeconfig。脚本不自动接管
-未受 Helm 管理的 workload；已有 target 路径要求 release 已存在：
-
-```bash
-bash scripts/release-managed-agent.sh \
-  --target <target> \
-  --session <session> \
-  --cluster <gateway-cluster> \
-  --instance <gateway-instance> \
-  --release <release> \
-  --namespace <namespace> \
-  --kubeconfig <operator-kubeconfig> \
-  --proxy-allowed-hosts 127.0.0.1,internal.example.com \
-  --image <repository>@sha256:<digest>
-```
-
-当前 Agent 进程不执行自身 Helm mutation。省略 allowlist 参数会保留现网值；传空字符串会显式恢复为拒绝全部。
+`doops upgrade` 只更新 Agent 镜像或回滚，不修改代理 allowlist。
+首次安装及 `proxy.allowedHosts` 等 Agent 配置变更统一按
+[构建与部署 SOP](BUILD_DEPLOY_SOP.md) 选择入口和独立控制器；
+当前 `release-managed-agent.sh` 仅委托 Gateway 升级，不接受本机 kubeconfig 或配置变更参数。
 
 ## Managed Gateway Host
 
@@ -186,9 +167,9 @@ bash scripts/deploy-gateway.sh \
 - user token 只能操作有 grant 的 target。
 - gateway 转发 doops JSON-RPC 操作流量和 Git HTTP 请求，不做裸 TCP 隧道。
 - `read` / `write` / `push` / `pull` 默认走 Gateway 配置的 COS。桶、endpoint、region 和密钥只读 Gateway 进程环境：`DOOPS_COS_BUCKET`、`DOOPS_COS_ENDPOINT`、`DOOPS_COS_REGION`、`DOOPS_COS_ACCESS_KEY_ID`、`DOOPS_COS_SECRET_ACCESS_KEY`。调用方不能改这些值。`--storage gateway` 才走 Git HTTP：`/v1/git/<cluster>/<instance>/<session>.git/...`，再通过目标 agent 已建立的反向 WebSocket 透传给 agent 本地 `/git/<session>.git/...`。Git HTTP 不服务默认的 `cos` 模式。
-- `doops_workspace_*` 是低层文件传输工具；通用 CLI 的目录同步使用 Git HTTP
-  `push/pull`。这些接口不属于发布授权协议，发布任务不得用文件同步替代明确的
-  target、范围、镜像、原因和验收条件。
+- `doops_workspace_*` 是低层文件传输工具；CLI `push/pull` 的存储模式见上条。
+  文件同步只准备资产，不授权执行变更；业务发布入口及参数见
+  [业务发布契约](NATURAL_LANGUAGE_DEPLOYMENT.md)。
 - 密码登录签发可续期 user token，默认滑动 30 天、距签发最长 90 天。成功的已认证请求会延长 `expires_at`（写入有节流）。管理员签发的服务 token 不自动续期。同一用户未过期的密码登录 token 超过 10 个时撤销最早的旧 token。登录不清理过期记录；`GET /v1/admin/tokens` 返回 `expires_at` / `revoked` 供管理员判断，鉴权失败按 `gateway_auth_expired` 等稳定类别返回。
 - token 校验通过 token id 定位单行哈希，避免多人多 token 时全表 bcrypt 扫描。
 - 同一 `cluster/instance` 的普通调用可并发；只有 workspace 写入、精确资源和 Agent 自升级互斥，
@@ -507,16 +488,16 @@ Grant 只有 `cluster`、`instance` 两个维度，`*` 是唯一通配。有 gra
 Agent 进程不执行承载自身的 Helm mutation。直接在 Agent 里跑 `kubectl set image` 或
 `helm upgrade` 会在滚动更新时把回滚方一起杀掉，新 Pod 启动失败后目标可能永久离线。
 
-`doops upgrade` 让 Agent 创建一个独立 Job。Job 复用 Agent 已挂载的 kubeconfig，
+`doops upgrade` 让 Agent 创建一个独立 Job，使用目标 Agent 的 Kubernetes 身份，
 按 Chart 的 `maxSurge=1`、`maxUnavailable=0` 拉起新 Pod，并在新 Pod 未持续就绪时回滚。
 镜像可以是 `repository:tag` 或 `repository@sha256:<64 hex>`。tag 使用 `Always` 拉取，
 并校验 Deployment 镜像规格、Pod Ready 和实际 `imageID`；`--dry-run` 只预演。
 升级台账统一使用 `audit_events`，不再创建或维护没有写入者的 `upgrade_operations` 表；
 已有数据库的旧表不会自动删除。Gateway 重启后，已派发但缺终态的审计保留为 `outcome_unknown`。
 
-前置条件是在线 Agent 已包含控制器、标准 Helm Deployment 和精确 Gateway 身份，
-并有可供 Job 共享的 `/root/.kube` 或 `/root/.kube/config` volume，以及所需集群权限。
-缺少这些条件是目标运行配置问题，不得把普通业务发布引导成寻找操作机 kubeconfig。
+控制器、Helm release、共享 kubeconfig 或专用 ServiceAccount 的要求统一见
+[构建与部署 SOP](BUILD_DEPLOY_SOP.md#四-agent-部署与热更新机制)。
+缺少升级条件时报告实际配置问题，不把 Agent 自身升级要求套用于普通业务发布。
 操作规范要求显式传 `-session`；CLI 未传时会自动生成并打印 session。Gateway 在派发前要求
 Agent 声明 `upgradeAudit` v1；旧协议目标返回 `upgrade_audit_protocol_required`，不会先创建
 Job 再补做协议检查。Job accepted 仅代表已提交，不代表升级成功。只有 Job 完成、
@@ -561,11 +542,9 @@ doops -session agent-upgrade upgrade \
 - gateway 按 `cluster/instance` 和资源键隔离操作；独立结构化 workspace 可并发。
   不同 target 指向同一 release/数据库时尚无统一所有权或执行器 fencing；不得用另一
   target 绕过已有锁，也不能将当前实现描述为安全抢占或分布式 release 锁。
-- 发布通过 `doops ask --apply` 的明确自然语言任务进入 Gateway。任务必须给出
-  target、服务范围、镜像版本、原因和验收条件；`--credential <resource-name>` 只传递
-  metadata-only 引用。Gateway 将引用绑定用户、target 和 session；凭据使用只要求该 target 的 grant，凭据本身按 target binding/use 解析。workload、image 和 Helm scope
-  是本次执行事实，不是凭据授权条件。公开 prompt、doagent 上下文和 metadata binding
-  不接收凭据 payload；Gateway 仅通过内部物化调用向目标 Agent 短暂传递 payload。
+- 业务发布入口、参数及终态见 [业务发布契约](NATURAL_LANGUAGE_DEPLOYMENT.md)；
+  凭据授权和物化见 [凭据文档](CREDENTIAL_RESOURCES.md)。
+  Gateway 不另设业务发布准入条件。
 - `/v1/targets` 中 `busy=true` 只表示 target-wide 阻塞；普通 session 运行显示为 `status=active`、`busy=false`，并在 `resources` 中标出锁住的资源。
 - gateway 会主动对 agent WebSocket 发 ping，agent pong 后刷新租约和 SQLite `last_seen`。
 - agent 上下线状态写入 SQLite，在线目标由内存连接表提供，断线时立即标记 offline。

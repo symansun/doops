@@ -66,7 +66,7 @@ export const DEMO_AUDIT: AuditEvent[] = [
     user_id: "gaojiaqi",
     cluster: "prod-cn",
     instance: "web-01",
-    action: "doops_shell",
+    action: "exec",
     session: "console-a1b2c3d4",
     command_summary: "systemctl status doops-app",
     status: "success",
@@ -80,7 +80,7 @@ export const DEMO_AUDIT: AuditEvent[] = [
     user_id: "gaojiaqi",
     cluster: "prod-cn",
     instance: "web-02",
-    action: "doops_agent_prompt",
+    action: "ask",
     session: "deploy-zz99",
     command_summary: "部署最新版本到 web-02 并滚动重启",
     status: "success",
@@ -94,7 +94,7 @@ export const DEMO_AUDIT: AuditEvent[] = [
     user_id: "ops-bot",
     cluster: "staging",
     instance: "db-01",
-    action: "doops_file_write",
+    action: "write",
     session: "console-77aa",
     command_summary: "写入 /etc/pgbouncer/pgbouncer.ini",
     status: "success",
@@ -108,13 +108,13 @@ export const DEMO_AUDIT: AuditEvent[] = [
 // 演示文件系统：目录 -> 条目(目录以 / 结尾)；文件 -> 内容
 const DEMO_SETTINGS = `{
   "provider": "openai-compatible",
-  "model": "<provider>/<model>",
+  "model": "demo/ops-assistant",
   "base_url": "https://api.example.com/v1",
   "api_key": "sk-demo-3f9a2b7c8d1e4f5061728394a5b6c7d8",
   "temperature": 0.2,
   "max_tokens": 4096,
-  "models": [
-    "<provider>/<model>"
+    "models": [
+    "demo/ops-assistant"
   ]
 }
 `
@@ -220,8 +220,10 @@ function demoFileContent(path: string): string {
   if (path.includes("settings.json")) return DEMO_SETTINGS
   if (path.endsWith("deploy.sh"))
     return "#!/usr/bin/env bash\nset -euo pipefail\nIMAGE=doops/app:${1:-latest}\nbuildctl build --frontend dockerfile.v0 --local context=. --output type=image,name=$IMAGE\nkubectl set image deployment/app app=$IMAGE\nkubectl rollout status deployment/app\n"
-  if (path.endsWith(".md"))
+  if (path.endsWith("doops-report.md"))
     return "# 部署报告\n\n- 镜像: doops/app:1.8.3\n- 滚动更新: 成功\n- 健康检查: /healthz 200\n- 耗时: 48s\n"
+  if (path.endsWith(".md"))
+    return "# 工作区记录\n\n这是演示数据，没有连接真实节点。\n"
   if (path.endsWith(".yaml"))
     return "server:\n  port: 8080\n  workers: 4\nlog:\n  level: info\n"
   if (path.endsWith(".log"))
@@ -428,6 +430,57 @@ function k8sOutput(args: Record<string, unknown>): string[] {
   }
 }
 
+export function demoAssistantReply(prompt: string): string {
+  const p = prompt.toLowerCase()
+  if (/状态|检查|巡检|status|健康|检查一下/.test(p)) {
+    return `## 巡检结果：节点健康 ✅
+
+**总体状态**：负载正常、核心服务全部存活、无错误日志。以下是演示数据，没有连接真实节点。
+
+| 检查项 | 结果 | 说明 |
+| --- | --- | --- |
+| 系统负载 | 正常 | load 0.18，低于告警阈值 |
+| 服务存活 | 正常 | \`doops-app\` / \`nginx\` / \`redis\` 均 active |
+| 磁盘使用 | 正常 | 根分区 37% |
+| 错误日志 | 无 | 近 1 小时无 error 级日志 |
+
+**建议**：无需处理，保持当前监控频率即可。`
+  }
+  if (/回滚|rollback|上一个版本|恢复/.test(p)) {
+    return `## 回滚完成 ✅
+
+已将 \`current\` 切回上一个稳定版本 **releases/1.8.2**。这是演示数据，没有改动真实服务。
+
+**执行步骤**
+
+1. 定位上一个稳定版本 \`releases/1.8.2\`
+2. 切换软链并重载服务：
+
+\`\`\`bash
+ln -sfn releases/1.8.2 current
+systemctl reload doops-app
+\`\`\`
+
+3. 健康检查 \`/healthz\` 返回 **200 OK**`
+  }
+  return `## 部署完成 ✅
+
+已将 **doops-app** 滚动升级到 \`1.8.3\`。这是演示数据，没有改动真实集群。
+
+**变更摘要**
+
+- 新增发布：\`releases/1.8.3\`
+- \`current\` 软链已指向新版本
+- \`nginx\` 平滑重载，连接无中断
+- 健康检查 \`/healthz\` → **200 OK**
+
+完整报告已写入 \`doops-report.md\`。`
+}
+
+export function demoApplyReply(): string {
+  return "演示发布完成。这是本地假数据，没有改动真实集群。真实发布以 Helm release 回执为准，业务验收按任务执行。"
+}
+
 export async function demoCallTool(
   opts: { tool: string; arguments: Record<string, unknown>; signal?: AbortSignal },
   onEvent: (ev: RpcEvent) => void,
@@ -457,7 +510,7 @@ export async function demoCallTool(
     }
     if (args.operation === "apply") {
       await emitChunks(["[演示] 收到发布授权；未操作真实目标。\n", "[演示工具] mcp_doops_helm upgrade-install\n"], onEvent, signal, 200)
-      onEvent({ type: "output", kind: "assistant_delta", data: "演示发布完成。真实发布需核对最终 Deployment spec/status、实际 imageID 和功能验收。" })
+      onEvent({ type: "output", kind: "assistant_delta", data: demoApplyReply() })
       onEvent({ type: "result", result: { content: [{ type: "text", text: "Operation complete." }] } })
       onEvent({ type: "done" })
       return
@@ -465,7 +518,7 @@ export async function demoCallTool(
     const prompt = String(args.instruction || args.prompt || args.task || "")
     const p = prompt.toLowerCase()
     let chunks: string[]
-    let summary: string
+    const summary = demoAssistantReply(prompt)
 
     if (/状态|检查|巡检|status|健康|检查一下/.test(p)) {
       chunks = [
@@ -478,18 +531,6 @@ export async function demoCallTool(
         "[observe] 磁盘 37%，无 error 级日志\n",
         "[done] 巡检完成，节点健康。\n",
       ]
-      summary = `## 巡检结果：节点健康 ✅
-
-**总体状态**：负载正常、核心服务全部存活、无错误日志。
-
-| 检查项 | 结果 | 说明 |
-| --- | --- | --- |
-| 系统负载 | 正常 | load 0.18，低于告警阈值 |
-| 服务存活 | 正常 | \`doops-app\` / \`nginx\` / \`redis\` 均 active |
-| 磁盘使用 | 正常 | 根分区 37% |
-| 错误日志 | 无 | 近 1 小时无 error 级日志 |
-
-**建议**：无需处理，保持当前监控频率即可。`
     } else if (/回滚|rollback|上一个版本|恢复/.test(p)) {
       chunks = [
         `[plan] 收到任务：${prompt}\n`,
@@ -498,23 +539,6 @@ export async function demoCallTool(
         "[step 2/2] 健康检查 /healthz…\n",
         "[done] 已回滚至 1.8.2，服务恢复正常。\n",
       ]
-      summary = `## 回滚完成 ✅
-
-已将 \`current\` 切回上一个稳定版本 **releases/1.8.2**，服务平滑重载，未中断请求。
-
-**执行步骤**
-
-1. 定位上一个稳定版本 \`releases/1.8.2\`
-2. 切换软链并重载服务：
-
-\`\`\`bash
-ln -sfn releases/1.8.2 current
-systemctl reload doops-app
-\`\`\`
-
-3. 健康检查 \`/healthz\` 返回 **200 OK**
-
-> 如需进一步排查 1.8.3 的问题，可在测试环境复现后再重新发布。`
     } else {
       chunks = [
         `[plan] 收到任务：${prompt}\n`,
@@ -526,25 +550,6 @@ systemctl reload doops-app
         "[step 4/4] 健康检查 /healthz 返回 200，部署完成。\n",
         "[done] 已将 doops-app 滚动升级到 1.8.3，无停机。\n",
       ]
-      summary = `## 部署完成 ✅
-
-已将 **doops-app** 滚动升级到 \`1.8.3\`，全程无停机。
-
-**变更摘要**
-
-- 新增发布：\`releases/1.8.3\`
-- \`current\` 软链已指向新版本
-- \`nginx\` 平滑重载，连接无中断
-- 健康检查 \`/healthz\` → **200 OK**
-
-**关键命令**
-
-\`\`\`bash
-ln -sfn releases/1.8.3 current
-nginx -s reload
-\`\`\`
-
-完整报告已写入 \`doops-report.md\`。`
     }
 
     await emitChunks(chunks, onEvent, signal, 340)

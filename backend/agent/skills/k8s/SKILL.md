@@ -1,6 +1,6 @@
 ---
 name: k8s
-description: 用 doops 结构化工具读 Kubernetes/Helm 状态并发布业务 workload
+description: 用 doops 结构化工具读 Kubernetes/Helm 状态并管理 Helm release
 triggers:
   keywords: [k8s, kubernetes, kubectl, pod, deployment, namespace, daemonset, ingress, helm, rollout]
   regex: "kubectl\\s+|k8s|kubernetes|helm\\s+|rollout"
@@ -25,7 +25,7 @@ conflicts: []
 | `events` | — | 整个 namespace 省略 `resource`；只看一个对象用 `resource=pod/<name>` |
 | `top` | `kind` | `kind=pods namespace=apps` |
 | `rollout-status` | `resource` | `resource=deployment/api namespace=apps` |
-| `helm-history` / `helm-status` | `name`、`namespace` | `name=<release>`；发布前先读 history 记下回滚目标。status 只给修订、状态和时间，不给 values/manifest/notes |
+| `helm-history` / `helm-status` | `name`、`namespace` | `name=<release>`；可读 history 记录回滚目标。status 只给修订、状态和时间，不给 values/manifest/notes |
 | `helm-list` | — | `namespace=<ns>` 或 `all_namespaces=true` |
 | `helm-values` | `name`、`namespace` | 只返回 key 路径，看 chart 支持哪些配置 |
 | `configmap-keys` | — | `namespace=apps` 或 `all_namespaces=true`；可加 `name`、`selector`。只返回 ConfigMap 的键名，不返回值；不要对 ConfigMap 用 `describe` 或 `output=json` |
@@ -36,32 +36,30 @@ Secret、ServiceAccount 不开放读取。
 
 ## 发布：`mcp_doops_helm`
 
-- 仅在 `ask --apply` 且任务已有具体发布/回滚授权时进入；沿用授权不重复确认，
-  但新对象或新增影响返回上层确认。核对 CI 制品与目标镜像，构建/推送失败不继续发布。
+- `ask --apply` 已传递变更授权，沿用目标和范围，不增加 Helm 字段或逐对象重复确认。
+  用户明确给出的原生 Helm 命令也可由上层经 `doops exec` 执行，保留其独立终态和审计。
 - `upgrade-install`：`release`、`namespace`、`chart`（HTTPS `.tgz`，或 `asset_source=workspace`
-  时的 session 相对路径）、`confirm=true`；可选 `value_files`、`set_strings`、`expected_image`、
-  `timeout`。只改镜像也走这里。
-- `rollback`：`release`、`namespace`、`revision`、`confirm=true`。
-- 工具自己做 server dry-run → helm → 核对每个渲染出的工作负载（含其它 namespace 的对象、
-  hook Job、initContainers），并等滚动完成。你只需一次调用。
-- 只含 Ingress 的 release 也能发：Ingress 按路由核对（class、每条 route 的 host/path/
-  pathType 与后端 Service、TLS），引用的后端 Service 必须存在。Ingress 没有容器，
-  这种 release 不要传 `expected_image`。
-- 渲染出的对象已存在但不归 Helm 管（报 `invalid ownership metadata`）：只有任务明确要求纳入
-  本 release 时才传 `take_ownership=true`；不要用 kubectl 手工补 Helm 标签。
+  时的 session 相对路径）；可选 `value_files`、`set_strings`、`timeout`、`atomic`、
+  `take_ownership`。values 合并沿用 Helm 原生语义。
+- `rollback`：`release`、`namespace`、`revision`；`uninstall`：`release`、`namespace`。
+- upgrade-install 直接执行原生 Helm `--wait`，随后核对 release status=deployed，
+  且 revision/description 属于本次执行。没有额外 server dry-run、manifest 类型白名单、
+  镜像策略或工作负载/Ingress 二次验收。
+- 仅含 NetworkPolicy、ConfigMap、Ingress 或其它合法资源的 Chart 照常发布，
+  不要求存在 workload、镜像、CI 成功记录或业务健康证明。
+- `atomic=true` 和 `take_ownership=true` 由用户选择，默认不启用；Helm 的 ownership、
+  schema、Kubernetes API、等待超时和下载/认证错误如实返回，不通过改标签或关闭校验掩盖。
 - 失败返回 `错误码: 原因`：
-  - `helm_preflight_failed`：Helm 渲染报错，原因是 Helm 的原话，通常是 values 或 chart 问题。
-  - `helm_manifest_invalid` / `helm_no_workload`：chart 渲染结果有问题（没有可核对的工作负载
-    或 Ingress）。
-  - `helm_image_mismatch`：`expected_image` 不在渲染结果里，原因列出了实际渲染的镜像。
-  - `helm_mutation_failed`：Helm 执行失败，原因是 Helm 的原话。
-  - `helm_verification_failed`：线上对象和渲染结果不一致或超时未就绪，原因指出是哪个对象。
-- 发布前可以对比现有 workload 和新 chart 的 command/args/env/probes/volumes，确认没有漏掉运行参数。
-- 发布后用有界 `rollout-status`、`get pods`、有限 `logs` 和任务给的功能路径做验收，
-  核对预期镜像/imageID、generation 和就绪副本；Running 或 revision 增加不代表成功。
-  工具返回验证失败或带终态的 rollout 超时就报告失败并保留对象、错误、events 和有限日志；
-  RPC 断连、取消 ACK 或缺少终态按 `outcome_unknown` 处理，不自动重放或回滚变更。
-  不吞掉退出码。
+  - `helm_mutation_failed`：原生 Helm 执行失败，保留脱敏后的实际原因。
+  - `helm_mutation_invalid_result`：缺少可归属本次执行的结果。
+  - `helm_verification_failed`：release 状态、revision 或 description 不符合本次执行。
+  - `helm_interrupted`：调用预算耗尽，保留实际 release 状态和中断原因。
+- 按任务另行做适用的 rollout、日志、健康与功能检查；分别报告 Helm 发布和业务验收结果，
+  不把 release 成功说成全业务健康，也不把额外验收作为所有 Chart 的发布门禁。
+- 保留错误回执和可信证明；RPC 断连、取消 ACK 或缺少终态按 `outcome_unknown` 处理，
+  不自动重放变更，不吞退出码，不借用其它调用的成功。
+- 失败后先读相关状态和配置，在已有授权内修复根因并继续验证；同一目标的明确失败可
+  由后续同意图成功纠正，保留两次回执并反馈修复过程。不能只报告错误或要求用户重做检查。
 
 ## 运维变更
 
