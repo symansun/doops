@@ -236,6 +236,7 @@ function receipt(command: CommandEnvelope, state: CommandReceiptState, message?:
     state,
     receivedAt: command.issuedAt,
     updatedAt: new Date().toISOString(),
+    ...(command.command.case === "extension" ? { interactionKind: "extension" } : {}),
     ...(message ? { error: { code: "demo_cancelled", message } } : {}),
   })
 }

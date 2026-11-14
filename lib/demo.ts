@@ -478,7 +478,7 @@ systemctl reload doops-app
 }
 
 export function demoApplyReply(): string {
-  return "演示发布完成。这是本地假数据，没有改动真实集群。真实发布需要核对 Deployment、镜像和健康检查。"
+  return "演示发布完成。这是本地假数据，没有改动真实集群。真实发布以 Helm release 回执为准，业务验收按任务执行。"
 }
 
 export async function demoCallTool(

@@ -26,11 +26,12 @@ const credentialPatterns = [
   /\bauthorization\s*:\s*(?:bearer|basic)\s+\S+/i, /\b(?:bearer|basic)\s+[A-Za-z0-9+/=_-]{8,}\b/i,
 ]
 const secretKeys = new Set(["token", "password", "auth", "authorization", "cookie", "data", "stringdata", "secret", "sig", "clientsecret", "apikey", "privatekey", "registrypassword"])
-const secretKeySuffixes = ["token", "password", "privatekey", "clientsecret", "apikey", "accesskey", "secretkey", "credential", "pat", "passphrase", "dockerconfigjson", "sshidentity", "signature"]
+const secretKeySuffixes = ["token", "password", "privatekey", "clientsecret", "apikey", "accesskey", "secretkey", "credential", "githubpat", "gitlabpat", "passphrase", "dockerconfigjson", "sshidentity", "signature"]
 
 function secretLikeKey(key: string): boolean {
   const normalized = key.trim().toLowerCase().replace(/[_\-. ]/g, "")
-  return secretKeys.has(normalized) || secretKeySuffixes.some((suffix) => normalized.endsWith(suffix))
+  return secretKeys.has(normalized) || /(?:^|[^a-z0-9])pat$/i.test(key.trim()) ||
+    /[a-z0-9](?:Pat|PAT)$/.test(key.trim()) || secretKeySuffixes.some((suffix) => normalized.endsWith(suffix))
 }
 
 function queryKeys(value: string): string[] {
