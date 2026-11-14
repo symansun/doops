@@ -119,7 +119,11 @@ exit 0`
 						result["sessionId"] = agentSessionID
 					case "session/setMode":
 					case "session/prompt":
-						promptReady <- request["params"].(map[string]interface{})
+						params := request["params"].(map[string]interface{})
+						if params["completionReview"] != true {
+							t.Error("apply omitted doagent completion review")
+						}
+						promptReady <- params
 						result["status"], result["turnId"] = "accepted", turnID
 					default:
 						t.Errorf("unexpected RPC: %v", request["method"])
