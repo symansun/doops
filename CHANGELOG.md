@@ -6,6 +6,13 @@
 
 分类标题只使用 `### Added` / `### Changed` / `### Deprecated` / `### Removed` / `### Fixed` / `### Security`（可选 `### Performance`）；条目以 `- ` 开头，续行缩进；允许行内 `code`、**粗体** 与 Markdown 链接，不要使用表格或 HTML。
 
+## [Unreleased]
+
+### Fixed
+
+- `ask --apply` 显式启用 doagent 的完成复核；模型过早给出结论时在原授权和同一轮次内继续处理未完成事项，工具失败回执与未知终态仍完整保留
+- 清理 skill 与运维文档中遇错立即停止、重复要求用户操作及历史未知结果永久阻塞 target 的旧指导
+
 ## [0.3.2] — 2026-11-15
 
 ### Changed

@@ -109,8 +109,12 @@ release/namespace、同一 operation 和原意图时才可记为修复：upgrade
 模型说明单列为 `summary`，不作为终态。缺失目标不得从后续调用倒推。
 缺失结果或证明、传输中断和取消仍保持未知结果，不能用失败文本替代证据。
 Agent 应主动反馈定位、修正和验证进度；等待工具时通道持续报告最后观察到的事件及等待时间。
-同一问题连续三次没有新证据或修正时停止该尝试，报告已完成的排查、实际阻因与下一步；
-不能原样反复调用或无限等待。单轮仍受 30 分钟总期限约束，未知变更不自动重放。
+`ask --apply` 显式传递 `completionReview=true`，由 doagent 的现有执行循环复核最终
+回答与本轮工具证据；任务尚未完成时在同一轮次中继续诊断和修正，不重新提交整个发布任务。
+完成复核使用 doagent 的有界 continuation 计数，整个调用仍受 30 分钟总期限约束；
+复核只是继续执行的提示，最终成功仍以 DoOps 验证的工具回执为准。
+同一问题连续三次没有新证据或修正时应停止该尝试，报告已完成的排查、实际阻因与下一步；
+不能原样反复调用或无限等待。未知变更不自动重放。
 DoOps 在发送 prompt 前检查
 `initialize.agentCapabilities.promptCapabilities.rejectWhenBusy=true`，然后固定使用
 `params.mode=reject`。session 忙或全局 turn 名额耗尽时返回 `doagent_prompt_busy`，

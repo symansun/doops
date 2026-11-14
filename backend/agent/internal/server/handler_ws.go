@@ -1608,6 +1608,8 @@ func (gw *Gateway) handleAgentPromptWS(ctx context.Context, reqID interface{}, d
 	promptParams["allowedTools"] = allowedTools
 	promptParams["mutationAuthorized"] = execution.RequireToolEvidence
 	if execution.RequireToolEvidence {
+		// doagent owns bounded continuation within the same authorized turn.
+		promptParams["completionReview"] = true
 		authorityID, issuedAt, authorityToken, authorityDigest, authorityErr :=
 			newMutationAuthorization(targetSessionID, allowedTools, mutationContext, time.Now())
 		if authorityErr != nil {

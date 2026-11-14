@@ -38,7 +38,7 @@ prompts, and canonical skills.
   model prompts, and operator/runtime skills.
 - [x] Remove custom Helm policy and preserve native command/result handling.
 - [x] Verify functional success/failure paths and run relevant regression checks.
-- [ ] Review changes, commit/push, and verify CI.
+- [x] Review the Helm gate and receipt changes, commit/push, and verify CI.
 - [ ] Publish/install matching artifacts and verify the deployed target.
 
 ## Current Findings
@@ -59,9 +59,10 @@ prompts, and canonical skills.
   preparation errors to known Helm execution failures, preserving the original
   intent and both receipts. Verify stdio-to-WebSocket behavior and unknown
   outcome controls before committing.
-- Gateway reread still reports the old `gw-test` commit above, idle with no
-  active or queued operation. PR #12 currently contains the earlier fix only;
-  its green CI does not cover the uncommitted gate cleanup.
+- PR #12 merged the gate cleanup and receipt changes as
+  `fe01a931ebef3eda84c1099303b0151b88210508`. Main CI run `43617931524`
+  and release run `43619006463` both passed; GitHub Release `v0.3.2` is
+  published.
 
 ## Execution Bounds
 
@@ -106,3 +107,22 @@ published release, update installed Skill copies or prove online acceptance.
 - Online reread confirms `gw-test` routes to `doops-zyj/zyj-test`, still running
   `76abae08a36d920c0058486d2d8ab86880c4c121`. Published and deployed acceptance is
   not yet established.
+
+## Autonomous Recovery Follow-through (2026-11-15)
+
+- [x] Reread `gw-test`: the installed Agent still reports the old commit,
+  doagent is `0.2.42`, and no `loki` release exists in namespace `test`.
+- [x] Enable the existing doagent completion review for authorized apply turns;
+  preserve the single turn, original mutation authority and all tool receipts.
+- [ ] Review and verify against the pinned doagent `0.2.44` source commit
+  `e4d052e62392fbc7a3ef02cb22765215f53e301f`, then commit/push the follow-up.
+- [ ] Install the released CLI and canonical skills; obtain an immutable Agent
+  artifact from the existing controlled build path and verify the target version.
+- [ ] Verify a NetworkPolicy-only release and the original Loki Chart through
+  the deployed managed tool; retain the tool result, exit state and readback.
+
+Recovery completes only when actual tool evidence confirms the requested result.
+The existing doagent completion review bounds continuation, and the DoOps prompt
+has a 30-minute deadline. Unknown mutation outcomes require readback before any
+new action; a model summary cannot resolve them. Three corrective iterations
+without new evidence identify a concrete dependency rather than repeat a mutation.
