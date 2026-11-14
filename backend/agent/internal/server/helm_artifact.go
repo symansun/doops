@@ -42,32 +42,17 @@ func fetchManagedHelmChart(ctx context.Context, repositoryURL, username, passwor
 	}
 	if !strings.EqualFold(repository.Hostname(), endpoint.Hostname()) ||
 		managedHelmPort(repository) != managedHelmPort(endpoint) {
-		return nil, "", errors.New("helm_chart_scope_mismatch")
+		return nil, "", fmt.Errorf("helm_chart_scope_mismatch: credential origin %s:%s does not match chart origin %s:%s",
+			repository.Hostname(), managedHelmPort(repository), endpoint.Hostname(), managedHelmPort(endpoint))
 	}
 	if (username == "") != (password == "") {
 		return nil, "", errors.New("managed_helm_auth_incomplete")
 	}
-	if _, err := resolveCredentialHost(ctx, endpoint.Hostname()); err != nil {
-		return nil, "", errors.New("helm_repository_unavailable")
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	response, client, err := fetchManagedHelmResponse(ctx, endpoint, username, password)
 	if err != nil {
-		return nil, "", errors.New("helm_chart_invalid")
+		return nil, "", err
 	}
-	if username != "" && password != "" {
-		request.SetBasicAuth(username, password)
-	}
-	request.Header.Set("Accept-Encoding", "identity")
-	client := credentialHTTPClient(endpoint)
-	transport := client.Transport.(*http.Transport)
-	// DialContext pins the authorized host; environment proxies must not change its destination.
-	transport.Proxy = nil
-	transport.DisableCompression = true
 	defer client.CloseIdleConnections()
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, "", errors.New("helm_repository_unavailable")
-	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("helm_artifact_http_%d", response.StatusCode)
@@ -87,6 +72,70 @@ func fetchManagedHelmChart(ctx context.Context, repositoryURL, username, passwor
 	}
 	sum := sha256.Sum256(body)
 	return body, fmt.Sprintf("sha256:%x", sum), nil
+}
+
+func fetchManagedHelmResponse(ctx context.Context, endpoint *url.URL, username, password string) (*http.Response, *http.Client, error) {
+	for redirects := 0; ; redirects++ {
+		response, client, err := requestManagedHelmArtifact(ctx, endpoint, username, password)
+		if err != nil {
+			return nil, nil, err
+		}
+		switch response.StatusCode {
+		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+			// Authenticated repository responses never redirect credentials.
+			if username != "" {
+				return response, client, nil
+			}
+		default:
+			return response, client, nil
+		}
+		next, err := response.Location()
+		response.Body.Close()
+		client.CloseIdleConnections()
+		if redirects >= 9 {
+			return nil, nil, errors.New("helm_chart_redirect_limit")
+		}
+		// CDN redirects may carry a server-issued signed query. Never echo it
+		// in errors, and validate/pin the new HTTPS destination on every hop.
+		if err != nil || next.Scheme != "https" || next.User != nil || next.Fragment != "" || next.Opaque != "" {
+			return nil, nil, errors.New("helm_chart_redirect_invalid")
+		}
+		if _, err := managedHelmURL(next.Scheme + "://" + next.Host); err != nil {
+			return nil, nil, errors.New("helm_chart_redirect_invalid")
+		}
+		endpoint = next
+	}
+}
+
+func requestManagedHelmArtifact(ctx context.Context, endpoint *url.URL, username, password string) (*http.Response, *http.Client, error) {
+	if _, err := resolveCredentialHost(ctx, endpoint.Hostname()); err != nil {
+		return nil, nil, errors.New("helm_repository_unavailable")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return nil, nil, errors.New("helm_chart_invalid")
+	}
+	if username != "" && password != "" {
+		request.SetBasicAuth(username, password)
+	}
+	request.Header.Set("Accept-Encoding", "identity")
+	client := credentialHTTPClient(endpoint)
+	transport := client.Transport.(*http.Transport)
+	// DialContext pins the authorized host; environment proxies must not change its destination.
+	transport.Proxy = nil
+	transport.DisableCompression = true
+	response, err := client.Do(request)
+	if err != nil {
+		client.CloseIdleConnections()
+		var requestErr *url.Error
+		if errors.As(err, &requestErr) {
+			// The wrapper includes the full URL, including a CDN's signed query.
+			err = requestErr.Err
+		}
+		return nil, nil, fmt.Errorf("helm_repository_unavailable: %s:%s: %s",
+			endpoint.Hostname(), managedHelmPort(endpoint), sanitizeSecretText(err.Error()))
+	}
+	return response, client, nil
 }
 
 func managedHelmURL(raw string) (*url.URL, error) {

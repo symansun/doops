@@ -249,13 +249,14 @@ key 和 value 都不能为空。
 
 验证以本次请求的 Chart URL 和受管 payload 仓库 URL 为下载边界，带 HTTP Basic 读取真实 `.tgz`，
 校验 gzip/tar、`Chart.yaml`、`values.yaml` 并返回包摘要，不读取 `index.yaml`。
-下载 URL 必须属于 payload URL 的 HTTPS origin；仓库路径不参与权限匹配。重定向、私网地址、无效包和超限失败关闭，
+带凭据的下载 URL 必须属于 payload URL 的 HTTPS origin；仓库路径不参与权限匹配。认证请求的重定向、私网地址、无效包和超限失败关闭，
 不会改为匿名请求。当前 remote 仅支持 HTTPS `.tgz` 下载，不支持 `oci://`；调用方须在任务中指定
 HTTPS Chart，不会猜测、自动替换仓库路径或 fallback。
 
 Helm target binding 只绑定 target 的 cluster/instance 和 use=helmPull，不再把 namespace、workload、
-release 或 Chart URL 写成 Gateway 授权条件。实际请求仍必须从受管凭据 payload 的仓库 URL
-同源下载，并通过 Chart 内容校验；这保证凭据不会被发往无关 host，
+release 或 Chart URL 写成 Gateway 授权条件。Agent broker 按凭据 payload 的仓库 URL
+与本次 Chart 的 hostname、有效端口选择认证；不同源时不返回凭据 payload，
+Chart 从自己的来源匿名下载，并通过相同的包内容校验。这保证凭据不会被发往无关 host，
 同时允许同一 target 使用多个 namespace、release 和 Chart。
 
 `ask --apply` 不必再用 `--credential` 点名 helmPull 凭据：授权已经由该 target 上的 active
@@ -265,7 +266,13 @@ grant 决定，Gateway 按 (user, cluster, instance) 发现并按稳定 ID 选�
 `credential_reference_ambiguous`，由任务用 `--credential <name>` 指明 Chart 来自哪个仓库，
 Gateway 不猜。
 
-点名一个 helmPull 凭据时它始终优先：该 Chart 来自哪个仓库已由任务定下，发现不再参与，
+公共 Chart 不需要新增凭据或授权记录。即使 target 已绑定私有仓库凭据，来源不同的公共
+Chart 仍直接匿名请求，不会先携带私有凭据尝试下载。匿名请求支持至多 9 次 HTTPS 重定向，
+以支持 GitHub Release 等公共 CDN；每跳独立校验并固定目标地址，拒绝私网、HTTP、
+userinfo 与无效端口，不转发 Authorization 或 Cookie。CDN 返回的签名查询串仅用于下载，
+不进入错误文本。认证失败不会转成匿名重试。
+
+点名一个 helmPull 凭据时它始终优先进入候选绑定：发现不再参与，
 也不会因为 target 上还绑着别的 Helm 仓库而报歧义。点名 `registry`、`tls`、`opaque` 不收回
 Chart 下载的凭据：这些类型按下一段必须点名，而 Chart 仍用该 target 自己的 helmPull 凭据，
 两者同时生效。所以「私有仓库 Chart + 运行期 Secret」是一条命令，不需要在点名运行期凭据和
@@ -276,7 +283,7 @@ broker，prompt 结束即删，不碰任何集群对象。`registry`、`tls`、`
 里创建或替换 Kubernetes Secret，因此仍必须由调用方显式 `--credential` 点名。dosql 的自动
 database 选择和 doweb 的网站变更不受影响。
 
-仓库要求认证而该 target 没有绑定 helmPull 凭据时，匿名下载会被仓库拒绝；此时报
+仓库要求认证而该 target 没有绑定同源 helmPull 凭据时，匿名下载会被仓库拒绝；此时报
 `helm_chart_requires_credential`（保留原始 `helm_artifact_http_401`/`_403` 便于排查），
 CLI 随错误给出 `credential list`、`credential configure --use helmPull` 和重跑命令。
 

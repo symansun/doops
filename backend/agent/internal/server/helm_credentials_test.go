@@ -204,6 +204,31 @@ func TestManagedHelmChartAllowsNewReleaseAndChartVersions(t *testing.T) {
 	if _, _, err := authorizedHelmCredential(t.Context(), params); err != nil {
 		t.Fatalf("target-scoped credential must allow new deployment metadata: %v", err)
 	}
+	public := managedHelmTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Error("unrelated private repository credential sent to public chart origin")
+		}
+		_, _ = w.Write(chart)
+	}))
+	params.Chart = public.URL + "/loki.tgz"
+	params.ValueFiles = nil
+	auth, digest, err := authorizedHelmCredential(t.Context(), params)
+	if err != nil || auth != nil || digest != "" {
+		t.Fatalf("unrelated origin must not receive credential payload: auth present=%t digest=%q err=%v", auth != nil, digest, err)
+	}
+	publicCommand, err := buildHelmCommand(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupPublic, err := prepareManagedHelmChart(t.Context(), params, &publicCommand)
+	if err != nil {
+		t.Fatalf("public chart blocked by bound private credential: %v", err)
+	}
+	defer cleanupPublic()
+	if publicCommand.args[2] == params.Chart {
+		t.Fatal("public chart was not staged")
+	}
+	params.Chart = server.URL + "/releases/assets/app-v2.tgz"
 	params.Release = "app"
 	chart = managedHelmTestArchive(t, append(managedHelmTestEntries(), managedHelmTestEntry{
 		header: tar.Header{Name: "zhiyong/README.md"}, body: []byte("changed chart"),

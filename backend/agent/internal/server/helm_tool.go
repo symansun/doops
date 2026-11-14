@@ -251,8 +251,8 @@ func prepareManagedHelmChart(ctx context.Context, params api.HelmParams, command
 	if !strings.HasPrefix(params.Chart, "https://") {
 		return nil, fmt.Errorf("helm_chart_requires_explicit_https_download_reference")
 	}
-	// No lease means the target has no Helm credential bound: a public Chart
-	// still downloads anonymously from its own origin.
+	// A public Chart downloads anonymously when no bound credential matches
+	// its origin, even if this target also uses private repositories.
 	anonymous := auth == nil
 	if anonymous {
 		parsed, err := url.Parse(params.Chart)

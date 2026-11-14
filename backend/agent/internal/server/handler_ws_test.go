@@ -1316,14 +1316,18 @@ func TestAgentPromptReturnsAdmissionErrorImmediately(t *testing.T) {
 }
 
 func TestAgentApplySucceedsAfterVerifiedHelmWhenFinalTurnFails(t *testing.T) {
-	testAgentApplyTerminalHelmResult(t, false)
+	testAgentApplyTerminalHelmResult(t, false, false)
 }
 
 func TestAgentApplyKnownHelmFailureDoesNotBecomeUnknown(t *testing.T) {
-	testAgentApplyTerminalHelmResult(t, true)
+	testAgentApplyTerminalHelmResult(t, true, false)
 }
 
-func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed bool) {
+func TestAgentApplyEmptyHelmArgumentsThenScopeFailureIsTerminal(t *testing.T) {
+	testAgentApplyTerminalHelmResult(t, true, true)
+}
+
+func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed, invalidArgumentsFirst bool) {
 	t.Helper()
 	workspace := t.TempDir()
 	t.Setenv("DOOPS_WORKSPACE_ROOT", workspace)
@@ -1433,9 +1437,13 @@ func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed bool) {
 			if toolFailed {
 				toolStatus, turnStatus = "failed", "completed"
 				stopReason, turnError = "end_turn", ""
+				failure := "helm_verification_failed"
+				if invalidArgumentsFirst {
+					failure = "helm_chart_scope_mismatch"
+				}
 				failedResult := map[string]interface{}{
 					"isError": true,
-					"content": []interface{}{map[string]interface{}{"type": "text", "text": "helm_verification_failed"}},
+					"content": []interface{}{map[string]interface{}{"type": "text", "text": failure}},
 				}
 				trace.resultJSON, _ = json.Marshal(failedResult)
 				trace.AttestedResultDigest, _ = digestRuntimeAttestationJSON(failedResult)
@@ -1460,15 +1468,7 @@ func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed bool) {
 				fmt.Fprintf(w, "data: %s\n\n", data)
 				flusher.Flush()
 			}
-			writeEvent(map[string]interface{}{
-				"sessionUpdate": "tool_call",
-				"turnId":        turnID,
-				"toolCallId":    trace.ToolCallID,
-				"toolName":      trace.ToolName,
-				"status":        "in_progress",
-				"rawInput":      rawInput,
-			})
-			writeEvent(map[string]interface{}{
+			toolUpdate := map[string]interface{}{
 				"sessionUpdate":            "tool_call_update",
 				"turnId":                   turnID,
 				"toolCallId":               trace.ToolCallID,
@@ -1487,7 +1487,41 @@ func testAgentApplyTerminalHelmResult(t *testing.T, toolFailed bool) {
 				"scopeDigest":              trace.ScopeDigest,
 				"inputDigest":              trace.InputDigest,
 				"resultDigest":             trace.AttestedResultDigest,
+			}
+			if invalidArgumentsFirst {
+				rejected := callK8SMCPTool(t.Context(), k8sMCPRequest{
+					ID: 10, Params: json.RawMessage(`{"name":"helm","arguments":{}}`),
+				}, doopsSessionID)
+				if rejected.Error != nil {
+					t.Errorf("Helm argument rejection must be attestable: %#v", rejected.Error)
+					return
+				}
+				emptyInput := map[string]interface{}{}
+				rejectedTrace := attestedMutationTraceForSession(t, "mcp_doops_helm", emptyInput, doopsSessionID, authorityDigest)
+				rejectedUpdate := make(map[string]interface{}, len(toolUpdate))
+				for key, value := range toolUpdate {
+					rejectedUpdate[key] = value
+				}
+				rejectedUpdate["toolCallId"] = "invalid-arguments"
+				rejectedUpdate["rawInput"] = map[string]interface{}{"toolName": trace.ToolName, "args": emptyInput}
+				rejectedUpdate["inputDigest"] = rejectedTrace.InputDigest
+				rejectedUpdate["rawOutput"] = rejected.Result
+				rejectedUpdate["resultDigest"], err = digestRuntimeAttestationJSON(rejected.Result)
+				if err != nil {
+					t.Errorf("digest rejected Helm result: %v", err)
+					return
+				}
+				writeEvent(rejectedUpdate)
+			}
+			writeEvent(map[string]interface{}{
+				"sessionUpdate": "tool_call",
+				"turnId":        turnID,
+				"toolCallId":    trace.ToolCallID,
+				"toolName":      trace.ToolName,
+				"status":        "in_progress",
+				"rawInput":      rawInput,
 			})
+			writeEvent(toolUpdate)
 			writeEvent(map[string]interface{}{
 				"sessionUpdate": "turn_finished",
 				"turnId":        turnID,

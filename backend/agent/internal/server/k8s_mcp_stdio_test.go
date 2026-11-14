@@ -139,6 +139,36 @@ func TestK8SMCPStdioHelmToolPreservesConfirmationBoundary(t *testing.T) {
 	}
 }
 
+func TestK8SMCPStdioHelmInvalidArgumentsAreToolErrors(t *testing.T) {
+	for _, arguments := range []string{
+		`{}`,
+		`{"operation":"unsupported","confirm":true}`,
+		`{"operation":42}`,
+		`{"operation":"rollback","session_id":"other","confirm":true}`,
+	} {
+		t.Run(arguments, func(t *testing.T) {
+			input := strings.NewReader(`{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"helm","arguments":` + arguments + "}}\n")
+			var output bytes.Buffer
+			if err := runK8SMCPStdioContext(t.Context(), input, &output,
+				func() (string, error) { return "validation-test", nil }); err != nil {
+				t.Fatal(err)
+			}
+			response := decodeK8SMCPResponse(t, output.Bytes())
+			if _, exists := response["error"]; exists {
+				t.Fatalf("known Helm argument rejection used JSON-RPC error: %#v", response)
+			}
+			result, _ := response["result"].(map[string]interface{})
+			if result["isError"] != true {
+				t.Fatalf("invalid Helm arguments were not rejected: %#v", response)
+			}
+			content, _ := result["content"].([]interface{})
+			if len(content) != 1 || content[0].(map[string]interface{})["text"] == "" {
+				t.Fatalf("argument rejection lost its reason: %#v", response)
+			}
+		})
+	}
+}
+
 func TestK8SMCPStdioRejectsRemovedK8sMutationTool(t *testing.T) {
 	input := strings.NewReader(
 		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"k8s","arguments":{"operation":"rollout-restart","resource":"deployment/app"}}}` + "\n",

@@ -92,6 +92,92 @@ func TestApplyVerifiedToolFailureIsTerminalButNeverSuccessful(t *testing.T) {
 	}
 }
 
+func TestApplyInvalidHelmArgumentsRequireTrustedFailureEvidence(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*doagentToolTrace)
+		reason string
+	}{
+		{"verified rejection", func(*doagentToolTrace) {}, ""},
+		{"missing raw output", func(trace *doagentToolTrace) { trace.resultJSON = nil }, "raw_output_missing"},
+		{"missing attestation", func(trace *doagentToolTrace) { trace.AttestationSchema = "" }, "attestation_schema_invalid"},
+		{"wrong tool", func(trace *doagentToolTrace) { trace.AttestedTool = "web" }, "attested_tool_mismatch"},
+		{"wrong evidence kind", func(trace *doagentToolTrace) { trace.EvidenceKind = "display-text" }, "evidence_kind_invalid"},
+		{"wrong session", func(trace *doagentToolTrace) { trace.CanonicalScope["runtimeSessionId"] = "other" }, "session_binding_mismatch"},
+		{"wrong scope", func(trace *doagentToolTrace) { trace.CanonicalScope["server"] = "other" }, "canonical_scope_mismatch"},
+		{"forged scope digest", func(trace *doagentToolTrace) { trace.ScopeDigest = "" }, "scope_digest_mismatch"},
+		{"forged input digest", func(trace *doagentToolTrace) { trace.InputDigest = "" }, "input_digest_mismatch"},
+		{"forged result digest", func(trace *doagentToolTrace) { trace.AttestedResultDigest = "" }, "public_result_invalid"},
+		{"missing authorization", func(trace *doagentToolTrace) { trace.MutationAuthorized = nil }, "mutation_not_authorized"},
+		{"unauthorized", func(trace *doagentToolTrace) { trace.MutationAuthorized = boolPointer(false) }, "mutation_not_authorized"},
+		{"wrong authority", func(trace *doagentToolTrace) { trace.MutationAuthorityDigest = "" }, "mutation_authority_binding_mismatch"},
+		{"wrong execution mode", func(trace *doagentToolTrace) { trace.ExecutionMode = "dry-run" }, "execution_mode_invalid"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			trace := attestedMutationTrace(t, "mcp_doops_helm", map[string]interface{}{})
+			trace.Status = "failed"
+			result := map[string]interface{}{
+				"isError": true,
+				"content": []interface{}{map[string]interface{}{"type": "text", "text": "helm tool requires a supported mutating operation"}},
+			}
+			trace.resultJSON, _ = json.Marshal(result)
+			trace.AttestedResultDigest, _ = digestRuntimeAttestationJSON(result)
+			test.mutate(&trace)
+			collector := newDoagentToolTraceCollector(false)
+			bindApplyCollector(collector, "apply-test")
+			collector.calls["invalid-arguments"] = trace
+			if got := collector.completed(); len(got) != 0 {
+				t.Fatal("argument rejection counted as successful mutation")
+			}
+			want := ""
+			if test.reason != "" {
+				want = "doops_helm=" + test.reason
+			}
+			if got := collector.unresolvedMutationSummary(); got != want {
+				t.Fatalf("unresolved mutation = %q, want %q", got, want)
+			}
+			if test.reason == "" {
+				if err := collector.requireCompletedToolEvidence(); err == nil ||
+					err.Error() != "doagent_apply_tool_failed: doops_helm: helm tool requires a supported mutating operation" {
+					t.Fatalf("trusted argument rejection did not return its failure: %v", err)
+				}
+			}
+			collector.calls["success"] = attestedMutationTrace(t, "mcp_doops_helm", map[string]interface{}{
+				"operation": "rollback", "confirm": true,
+			})
+			if got := collector.unresolvedMutationSummary(); got != want {
+				t.Fatalf("another success changed the rejected call's evidence: %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestApplySuccessfulHelmResultStillRequiresValidArguments(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		input  map[string]interface{}
+		reason string
+	}{
+		{"missing confirmation", map[string]interface{}{"operation": "rollback"}, "mutation_confirmation_missing"},
+		{"false confirmation", map[string]interface{}{"operation": "rollback", "confirm": false}, "mutation_confirmation_missing"},
+		{"missing operation", map[string]interface{}{"confirm": true}, "mutation_operation_invalid"},
+		{"invalid operation", map[string]interface{}{"operation": "unsupported", "confirm": true}, "mutation_operation_invalid"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			collector := newDoagentToolTraceCollector(false)
+			bindApplyCollector(collector, "apply-test")
+			collector.calls["invalid-success"] = attestedMutationTrace(t, "mcp_doops_helm", test.input)
+			if got := collector.unresolvedMutationSummary(); got != "doops_helm="+test.reason {
+				t.Fatalf("invalid success evidence accepted: %q", got)
+			}
+			if len(collector.completed()) != 0 {
+				t.Fatal("invalid success counted as completed mutation")
+			}
+		})
+	}
+}
+
 func TestApplyRejectsUnrelatedCompletedToolEvidence(t *testing.T) {
 	collector := newDoagentToolTraceCollector(false)
 	collector.calls["call-1"] = doagentToolTrace{

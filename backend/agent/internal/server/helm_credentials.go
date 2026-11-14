@@ -135,6 +135,9 @@ func authorizedHelmCredential(ctx context.Context, params api.HelmParams) (*helm
 		return nil, "", errors.New("helm_native_context_unavailable")
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusNoContent {
+		return nil, "", nil
+	}
 	if response.StatusCode != http.StatusOK {
 		return nil, "", errors.New("helm_native_context_unavailable")
 	}

@@ -92,6 +92,9 @@ Agent 只拒绝删除根目录（`rm -rf /`、`rm -rf /*`），报错 `blocked_c
 排队和取消机制串行，执行结束及清理完成后释放 lease；审计落盘失败返回错误并独立重试原始证据，
 不再保留执行锁。人工声明不能替代真实终态或强制释放活动 lease。
 已验签的 Helm 工具明确失败按失败结束，不归为未知结果；同轮另一工具成功不能掩盖失败。
+已知 Helm 工具的参数拒绝也必须返回 `isError=true` 的结构化工具结果并生成证明；
+已验证的失败不要求无效输入满足成功变更的 `confirm` 或 operation 条件。
+缺失结果或证明、传输中断和取消仍保持未知结果，不能用失败文本替代证据。
 DoOps 在发送 prompt 前检查
 `initialize.agentCapabilities.promptCapabilities.rejectWhenBusy=true`，然后固定使用
 `params.mode=reject`。session 忙或全局 turn 名额耗尽时返回 `doagent_prompt_busy`，
@@ -137,6 +140,9 @@ volumeMounts 和 volumes。发布任务统一调用 `mcp_doops_helm upgrade-inst
 不逐项匹配 namespace、workload、release、Chart 版本和仓库路径；当前包校验后一次
 staging，dry-run 与实际 Helm 使用相同文件。允许任务指定的 `value_files` 和 `set_strings`。
 这些覆盖不扩大凭据授权；认证或摘要失败不重试匿名、旧登录态或其它资产。
+绑定私有仓库凭据不会限制公共 Chart：下载前按仓库与 Chart 的 HTTPS origin 选择认证，
+不匹配时匿名下载公共包，支持经逐跳目标校验的 HTTPS CDN 重定向，不携带私有仓库凭据。
+凭据选择与重定向边界见 [受管凭据](CREDENTIAL_RESOURCES.md#helm-repository)。
 
 需要使用已绑定 session workspace 中的 Helm 资产时，任务必须显式传
 `asset_source=workspace`。此模式接受任意 session 相对 Chart 目录，必须包含 regular

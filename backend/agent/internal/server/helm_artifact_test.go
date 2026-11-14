@@ -210,14 +210,95 @@ func TestFetchManagedHelmChartRejectsInvalidURLsAndUnauthorizedScopeBeforeHTTP(t
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			body, digest, err := fetchManagedHelmChart(context.Background(), test.repository, "helm", "url-canary-secret", test.chart)
-			if err == nil || err.Error() != test.want || body != nil || digest != "" {
+			if err == nil || strings.SplitN(err.Error(), ": ", 2)[0] != test.want || body != nil || digest != "" {
 				t.Fatalf("body nil=%t digest=%q error=%v, want %s", body == nil, digest, err, test.want)
+			}
+			if test.want == "helm_chart_scope_mismatch" &&
+				(!strings.Contains(err.Error(), "credential origin 127.0.0.1:") ||
+					!strings.Contains(err.Error(), "chart origin ")) {
+				t.Fatalf("origin mismatch must name the compared fields: %v", err)
 			}
 			assertCredentialCanaryNotInText(t, "error", err.Error(), "url-canary-secret")
 		})
 	}
 	if requests.Load() != 0 {
 		t.Fatalf("unauthorized requests=%d", requests.Load())
+	}
+}
+
+func TestPublicHelmChartFollowsHTTPSRedirectWithoutCredentials(t *testing.T) {
+	chart := managedHelmTestArchive(t, managedHelmTestEntries())
+	var requests atomic.Int64
+	destination := managedHelmTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Header.Get("Authorization") != "" || r.Header.Get("Cookie") != "" ||
+			r.URL.Query().Get("signature") != "synthetic-signature" {
+			t.Error("public CDN request carried credentials or lost its signed query")
+		}
+		_, _ = w.Write(chart)
+	}))
+	source := managedHelmTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Header.Get("Authorization") != "" {
+			t.Error("public chart source received credentials")
+		}
+		http.SetCookie(w, &http.Cookie{Name: "session", Value: "synthetic-cookie"})
+		http.Redirect(w, r, destination.URL+"/asset?signature=synthetic-signature", http.StatusFound)
+	}))
+	body, _, err := fetchManagedHelmChart(t.Context(), source.URL, "", "", source.URL+"/chart.tgz")
+	if err != nil || !bytes.Equal(body, chart) || requests.Load() != 2 {
+		t.Fatalf("public redirect: matches=%t requests=%d err=%v", bytes.Equal(body, chart), requests.Load(), err)
+	}
+}
+
+func TestPublicHelmChartRejectsUnsafeRedirectsAndLoops(t *testing.T) {
+	for _, location := range []string{
+		"http://example.test/chart.tgz",
+		"https://user:synthetic-password@example.test/chart.tgz",
+		"https://example.test:65536/chart.tgz",
+		"/chart.tgz",
+	} {
+		t.Run(location, func(t *testing.T) {
+			var requests atomic.Int64
+			server := managedHelmTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				http.Redirect(w, r, location, http.StatusFound)
+			}))
+			_, _, err := fetchManagedHelmChart(t.Context(), server.URL, "", "", server.URL+"/chart.tgz")
+			want := "helm_chart_redirect_invalid"
+			wantRequests := int64(1)
+			if location == "/chart.tgz" {
+				want, wantRequests = "helm_chart_redirect_limit", 10
+			}
+			if err == nil || err.Error() != want || requests.Load() != wantRequests {
+				t.Fatalf("redirect err=%v requests=%d, want %s/%d", err, requests.Load(), want, wantRequests)
+			}
+		})
+	}
+}
+
+func TestPublicHelmChartRejectsPrivateRedirectDestination(t *testing.T) {
+	server := managedHelmTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://169.254.169.254/chart.tgz?signature=synthetic", http.StatusFound)
+	}))
+	allowedHost, _ := url.Parse(server.URL)
+	credentialPrivateEndpointAllowed = func(host string) bool { return host == allowedHost.Hostname() }
+	_, _, err := fetchManagedHelmChart(t.Context(), server.URL, "", "", server.URL+"/chart.tgz")
+	if err == nil || err.Error() != "helm_repository_unavailable" {
+		t.Fatalf("private redirect destination accepted: %v", err)
+	}
+}
+
+func TestPublicHelmChartNetworkErrorDoesNotExposeSignedQuery(t *testing.T) {
+	destination := managedHelmTestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	destination.Close()
+	source := managedHelmTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, destination.URL+"/asset?signature=synthetic-signed-canary", http.StatusFound)
+	}))
+	_, _, err := fetchManagedHelmChart(t.Context(), source.URL, "", "", source.URL+"/chart.tgz")
+	if err == nil || !strings.HasPrefix(err.Error(), "helm_repository_unavailable: 127.0.0.1:") ||
+		!strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "synthetic-signed-canary") {
+		t.Fatalf("network failure lost its cause or exposed the signed URL: %v", err)
 	}
 }
 

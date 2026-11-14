@@ -596,10 +596,6 @@ func (trace doagentToolTrace) runtimeMutationAttestationReason() string {
 	if err != nil || trace.InputDigest != expectedInputDigest {
 		return "input_digest_mismatch"
 	}
-	confirm, _ := inputObject["confirm"].(bool)
-	if !confirm {
-		return "mutation_confirmation_missing"
-	}
 	if trace.MutationAuthorized == nil || !*trace.MutationAuthorized {
 		return "mutation_not_authorized"
 	}
@@ -609,14 +605,6 @@ func (trace doagentToolTrace) runtimeMutationAttestationReason() string {
 	}
 	if trace.ExecutionMode != "apply" {
 		return "execution_mode_invalid"
-	}
-	operation := stringField(inputObject, "operation")
-	allowedOperations := helmMutationOperations
-	if tool == "doops_web" {
-		allowedOperations = webMutationOperations
-	}
-	if !stringSliceContains(allowedOperations, operation) {
-		return "mutation_operation_invalid"
 	}
 	result, err := trace.verifiedResult()
 	if err != nil {
@@ -628,6 +616,19 @@ func (trace doagentToolTrace) runtimeMutationAttestationReason() string {
 	}
 	if isError {
 		return "tool_result_failed"
+	}
+	// An attested rejection can have invalid arguments; only success proves a mutation.
+	confirm, _ := inputObject["confirm"].(bool)
+	if !confirm {
+		return "mutation_confirmation_missing"
+	}
+	operation := stringField(inputObject, "operation")
+	allowedOperations := helmMutationOperations
+	if tool == "doops_web" {
+		allowedOperations = webMutationOperations
+	}
+	if !stringSliceContains(allowedOperations, operation) {
+		return "mutation_operation_invalid"
 	}
 	if trace.Status != "completed" {
 		return "status_result_mismatch"

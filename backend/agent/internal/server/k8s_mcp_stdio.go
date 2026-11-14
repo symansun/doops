@@ -181,7 +181,7 @@ func callK8SMCPToolDomain(
 		}
 	case helmMCPToolName:
 		if !k8sMCPOperationAllowed(call.Arguments, helmMutationOperations) {
-			return mcpErrorResponse(request.ID, -32602, "helm tool requires a supported mutating operation")
+			return buildToolErrorResponse(request.ID, "helm tool requires a supported mutating operation")
 		}
 	case webMCPToolName:
 		if !k8sMCPOperationAllowed(call.Arguments, webMutationOperations) {
@@ -200,6 +200,9 @@ func callK8SMCPToolDomain(
 	}
 	boundArguments, err := bindK8SMCPSession(call.Arguments, boundSessionID)
 	if err != nil {
+		if call.Name == helmMCPToolName {
+			return buildToolErrorResponse(request.ID, sanitizeSecretText(err.Error()))
+		}
 		return mcpErrorResponse(request.ID, -32602, err.Error())
 	}
 	// doagent stops and restarts this server when a call reaches its tool
