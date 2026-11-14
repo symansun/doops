@@ -114,10 +114,14 @@ published release, update installed Skill copies or prove online acceptance.
   doagent is `0.2.42`, and no `loki` release exists in namespace `test`.
 - [x] Enable the existing doagent completion review for authorized apply turns;
   preserve the single turn, original mutation authority and all tool receipts.
-- [ ] Review and verify against the pinned doagent `0.2.44` source commit
-  `e4d052e62392fbc7a3ef02cb22765215f53e301f`, then commit/push the follow-up.
-- [ ] Install the released CLI and canonical skills; obtain an immutable Agent
-  artifact from the existing controlled build path and verify the target version.
+- [x] Review and verify against the pinned doagent `0.2.44` source commit
+  `e4d052e62392fbc7a3ef02cb22765215f53e301f`. Follow-up
+  `cec8f0fd2c5bab57bbc2e5ca64d46f819b1169a3` is pushed in PR #13;
+  both CI runs passed Go, contract and secret checks.
+- [x] Confirm CLI and global Skill installation from release `v0.3.2`,
+  commit `fe01a931ebef3eda84c1099303b0151b88210508`.
+- [ ] Obtain an immutable Agent artifact from the existing controlled build
+  path and verify the target version.
 - [ ] Verify a NetworkPolicy-only release and the original Loki Chart through
   the deployed managed tool; retain the tool result, exit state and readback.
 
@@ -126,3 +130,28 @@ The existing doagent completion review bounds continuation, and the DoOps prompt
 has a 30-minute deadline. Unknown mutation outcomes require readback before any
 new action; a model summary cannot resolve them. Three corrective iterations
 without new evidence identify a concrete dependency rather than repeat a mutation.
+
+## Recovery And Installed Guidance Verification (2026-11-15)
+
+- Pinned doagent tests executed an initial failing tool call, rejected a
+  premature final reply, and executed a corrected call successfully in the same
+  user request. Three tests passed, covering repair, bounded continuation and
+  invalid review output. Model replies were deterministic fixtures; this does
+  not establish deployed model behavior.
+- The Agent MCP/SSE/WebSocket tests verify complete failure and correction
+  receipts, progress, terminal results and preservation of unknown outcomes.
+- The development link script now moves old Skill/docs and historical backup
+  entries outside the Skill load tree, preserves old links, and does not
+  recreate backups for an unchanged link. The 22 focused shell/document
+  contract tests pass.
+- Old `docs.release` and `*.devlink-backup` entries were moved out of the
+  repository's installed Skill tree. The parent workspace also held a separate
+  old Skill copy. Its formal reinstall failed before replacement with a
+  GitHub Release TLS error; it is now explicitly linked to the canonical
+  development sources, with the old files retained under `.local/`.
+  This development link is not a successful release installation.
+- The release task published `v0.3.2`, but Agent image push failed because the
+  controlled Docker builder lacks registry authentication. The current registry
+  credential setup verifies a Kubernetes Secret and cannot provision this
+  standalone builder. No target upgrade is claimed: `gw-test` still reports
+  `76abae08a36d920c0058486d2d8ab86880c4c121`.
